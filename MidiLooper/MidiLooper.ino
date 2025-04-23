@@ -19,6 +19,13 @@ bool lastStopState = HIGH;
 unsigned long lastDebounceTime = 0;
 const unsigned long debounceDelay = 50;
 
+const float BPM = 100.0;
+const int BEATS_PER_BAR = 4;  // 4/4 time
+
+const uint32_t beatLength = 60000.0 / BPM;             // ms per beat
+const uint32_t barLength = beatLength * BEATS_PER_BAR; // ms per bar
+
+bool waitingForQuantizedStop = false;
 
 unsigned long t=0;
 
@@ -85,6 +92,13 @@ void startRecording() {
   isPlaying = false;
   eventCount = 0;
   recordStartTime = millis();
+}
+
+void stopRecordingQuantized() {
+  if (!isRecording) return;
+
+  waitingForQuantizedStop = true;
+  Serial.println("Waiting to quantize stop to next bar...");
 }
 
 void stopRecordingAndStartLoop() {
@@ -188,16 +202,31 @@ void loop() {
   bool currentRecord = digitalRead(buttonRecordPin);
   bool currentPlayStop = digitalRead(buttonStopPin); // shared button now
 
+  if (waitingForQuantizedStop) {
+    uint32_t now = millis() - recordStartTime;
+    if (now % barLength < 10) {  // Close to bar boundary
+      waitingForQuantizedStop = false;
+      isRecording = false;
+      loopLength = ((now + barLength - 1) / barLength) * barLength;
+      loopStartTime = millis();
+      isPlaying = true;
+      playbackIndex = 0;
+      Serial.print("Quantized loop length: ");
+      Serial.print(loopLength);
+      Serial.println(" ms");
+    }
+  }
+
   if ((millis() - lastDebounceTime) > debounceDelay) {
     if (currentRecord != lastRecordState) {
       lastDebounceTime = millis();
       if (currentRecord == LOW) {
-        if (!isRecording && !isPlaying) {
-          startRecording();
-        } else if (isRecording) {
-          stopRecordingAndStartLoop();
-        }
-      }
+  if (!isRecording && !isPlaying) {
+    startRecording();
+  } else if (isRecording && !waitingForQuantizedStop) {
+    stopRecordingQuantized(); // quantized stop now
+  }
+}
     }
 
     if (currentPlayStop != lastStopState) {
