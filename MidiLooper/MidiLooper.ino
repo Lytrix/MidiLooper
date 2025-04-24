@@ -3,10 +3,9 @@
 #include <SD.h> 
 #include <MIDI.h>
 
-#define NOTE_ON  0x90
-#define NOTE_OFF 0x80
-#define CC       0xB0
-#define PB       0xE0
+// Event storage
+#define MAX_TRACKS 4
+#define MAX_EVENTS 512
 
 // initialize the library by associating any needed LCD interface pin
 // with the arduino pin number it is connected to
@@ -15,6 +14,9 @@ LiquidCrystal lcd(rs, en, d4, d5, d6, d7);
 
 const int recButtonPin = 9;
 const int playButtonPin = 10;
+const unsigned long holdThreshold = 1000; // 1 second
+bool playButtonHeld = false;
+unsigned long playButtonPressTime = 0;
 
 Bounce recButton = Bounce();
 Bounce playButton = Bounce();
@@ -27,30 +29,32 @@ const unsigned long debounceDelay = 50;
 volatile unsigned long lastRecInterrupt = 0;
 volatile unsigned long lastPlayInterrupt = 0;
 
-
 MIDI_CREATE_INSTANCE(HardwareSerial, Serial8, MIDI);
-
-// Event storage
-const int MAX_EVENTS = 512;
 
 struct MidiEvent {
   uint32_t pulseOffset; // Clock pulse offset from loop start
   byte type, data1, data2;
 };
 
-MidiEvent loopEvents[MAX_EVENTS];
-int eventCount = 0;
+struct MidiTrack {
+  MidiEvent loopEvents[MAX_EVENTS];
+  int eventCount = 0;
+  bool playing = false;
+  bool loopRecorded = false;
+  bool loopRecording = false;
+  bool loopRecordingArmed = false;
+  uint32_t loopStartPulse = 0;
+  uint32_t loopLengthPulses = 0;
+  uint32_t recordStartPulse = 0;
+  uint32_t lastEventPulse = 0;
+  byte midiChannel = 1;  // New: default to MIDI channel 1
+};
 
-bool recording = false;
-bool recordingArmed = false;
-bool playing = false;
-bool loopRecorded = false;
+MidiTrack tracks[MAX_TRACKS];
+int activeTrack = 0; // Currently selected track for loopRecording
 
 // Clock tracking
 volatile uint32_t clockPulses = 0;
-uint32_t loopStartPulse = 0;
-uint32_t loopLengthPulses = 0;
-uint32_t recordStartPulse = 0;
 uint32_t lastBarPulse = 0;
 
 const int pulsesPerBeat = 24;
@@ -64,61 +68,90 @@ void onClock() {
  // Detect bar boundary (only once per bar)
   if (clockPulses % pulsesPerBar == 0 && clockPulses != lastBarPulse) {
     lastBarPulse = clockPulses;
-
-    if (recordingArmed) {
-      recordingArmed = false;
-      recording = true;
-      recordStartPulse = clockPulses;
-      //loopStartPulse = clockPulses;
-      eventCount = 0;
-      Serial.println("Recording started cleanly at bar");
+    for (int i = 0; i < MAX_TRACKS; i++) {
+      MidiTrack& t = tracks[i];
+      if (t.loopRecordingArmed) {
+        t.loopRecordingArmed = false;
+        t.loopRecording = true;
+        t.recordStartPulse = clockPulses;
+        //loopStartPulse = clockPulses;
+        t.eventCount = 0;
+        Serial.println("Recording started cleanly at bar");
+      }
     }
   }
-
-  if (playing && loopRecorded && loopLengthPulses > 0) {
-    uint32_t relPulse = (clockPulses - loopStartPulse) % loopLengthPulses;
-    for (int i = 0; i < eventCount; i++) {
-      if (loopEvents[i].pulseOffset == relPulse) {
-        MIDI.send(loopEvents[i].type, loopEvents[i].data1, loopEvents[i].data2, 1);
+  for (int i = 0; i < MAX_TRACKS; i++) {
+    MidiTrack& t = tracks[i];
+    if (t.playing && t.loopRecorded && t.loopLengthPulses > 0) {
+      uint32_t relPulse = (clockPulses - t.loopStartPulse) % t.loopLengthPulses;
+      for (int j = 0; j < t.eventCount; j++) {
+        if (t.loopEvents[j].pulseOffset == relPulse) {
+          MIDI.send(t.loopEvents[j].type, t.loopEvents[j].data1, t.loopEvents[j].data2, t.midiChannel);
+        }
       }
     }
   }
 }
+ 
+void switchTrack() {
+  activeTrack = (activeTrack + 1) % MAX_TRACKS;
+  lcd.setCursor(0, 1);
+  lcd.print("Switched to T");
+  lcd.print(activeTrack + 1);
+  lcd.print("       "); // clear leftover chars
+  Serial.print("Switched to Track ");
+  Serial.println(activeTrack + 1);
+  delay(500); // Give user visual confirmation
+}
+
 
 void onStart() {
   clockPulses = 0;
-  loopStartPulse = 0;
+  for (int i = 0; i < MAX_TRACKS; i++) {
+    MidiTrack& t = tracks[i];
+    t.loopStartPulse = 0;
+  }
   Serial.println("Clock Start");
 }
 
 void onStop() {
-  playing = false;
-  recording = false;
+  for (int i = 0; i < MAX_TRACKS; i++) {
+    MidiTrack& t = tracks[i];
+    t.playing = false;
+    t.loopRecording = false;
+  }
   Serial.println("Clock Stop");
 }
 
 void onNoteOn(byte ch, byte note, byte vel) {
-  if (recording && eventCount < MAX_EVENTS) {
-    if (!firstEventCaptured) {
-      loopStartPulse = clockPulses;
-      recordStartPulse = clockPulses;
+  MidiTrack& t = tracks[activeTrack];
+  if (t.loopRecording && t.eventCount < MAX_EVENTS) {
+    uint32_t pulse = clockPulses;
+     if (t.eventCount == 0) {
+      t.loopStartPulse = clockPulses;
+      t.recordStartPulse = clockPulses;
       firstEventCaptured = true;
     }
-    loopEvents[eventCount++] = {clockPulses - loopStartPulse, midi::NoteOn, note, vel};
+    t.loopEvents[t.eventCount++] = {clockPulses - t.loopStartPulse, midi::NoteOn, note, vel};
+    t.lastEventPulse = pulse;
   }
   else {
-    Serial.println("Event buffer full!");
+    Serial.println("Event buffer full from track: ");
+    Serial.println(activeTrack+1);
   }
 }
 
 void onNoteOff(byte ch, byte note, byte vel) {
-  if (recording && eventCount < MAX_EVENTS) {
-     if (!firstEventCaptured) {
-      loopStartPulse = clockPulses;
-      recordStartPulse = clockPulses;
+  MidiTrack& t = tracks[activeTrack];
+  if (t.loopRecording && t.eventCount < MAX_EVENTS) {
+     uint32_t pulse = clockPulses;
+     if (t.eventCount == 0) {
+      t.loopStartPulse = clockPulses;
+      t.recordStartPulse = clockPulses;
       firstEventCaptured = true;
     }
-    loopEvents[eventCount++] = {clockPulses - loopStartPulse, midi::NoteOff, note, vel};
+    t.loopEvents[t.eventCount++] = {clockPulses - t.loopStartPulse, midi::NoteOff, note, vel};
+    t.lastEventPulse = pulse;
   }
   else {
     Serial.println("Event buffer full!");
@@ -126,13 +159,16 @@ void onNoteOff(byte ch, byte note, byte vel) {
 }
 
 void onControlChange(byte ch, byte num, byte val) {
-  if (recording && eventCount < MAX_EVENTS) {
-     if (!firstEventCaptured) {
-      loopStartPulse = clockPulses;
-      recordStartPulse = clockPulses;
+  MidiTrack& t = tracks[activeTrack];
+  if (t.loopRecording && t.eventCount < MAX_EVENTS) {
+    uint32_t pulse = clockPulses;
+      if (t.eventCount == 0) {
+      t.loopStartPulse = clockPulses;
+      t.recordStartPulse = clockPulses;
       firstEventCaptured = true;
     }
-    loopEvents[eventCount++] = {clockPulses - loopStartPulse, midi::ControlChange, num, val};
+    t.loopEvents[t.eventCount++] = {clockPulses - t.loopStartPulse, midi::ControlChange, num, val};
+    t.lastEventPulse = pulse;
   }
   else {
     Serial.println("Event buffer full!");
@@ -140,58 +176,69 @@ void onControlChange(byte ch, byte num, byte val) {
 }
 
 void onPitchBend(byte ch, int bend) {
-  if (recording && eventCount < MAX_EVENTS) {
-     if (!firstEventCaptured) {
-      loopStartPulse = clockPulses;
-      recordStartPulse = clockPulses;
+  MidiTrack& t = tracks[activeTrack];
+  if (t.loopRecording && t.eventCount < MAX_EVENTS) {
+    uint32_t pulse = clockPulses;
+    if (t.eventCount == 0) {
+      t.loopStartPulse = clockPulses;
+      t.recordStartPulse = clockPulses;
       firstEventCaptured = true;
     }
     byte lsb = bend & 0x7F;
     byte msb = (bend >> 7) & 0x7F;
-    loopEvents[eventCount++] = {clockPulses - loopStartPulse, midi::PitchBend, lsb, msb};
+    t.loopEvents[t.eventCount++] = {clockPulses - t.loopStartPulse, midi::PitchBend, lsb, msb};
+    t.lastEventPulse = pulse;
   }
   else {
-    Serial.println("Event buffer full!");
+    Serial.println("Event buffer pitchbend full track: ");
+    Serial.println(activeTrack);
   }
 }
 
 
 void onRecordButtonPressed() {
-  if (!recording) {
-    recordingArmed = true;
+  MidiTrack& t = tracks[activeTrack];
+  if (!t.loopRecording) {
+    t.loopRecordingArmed = true;
     Serial.println("Recording armed");
   }
 }
 
 void startRecording() {
-  recording = true;
-  playing = false;
-  eventCount = 0;
-  loopStartPulse = (clockPulses / pulsesPerBar) * pulsesPerBar; // quantize start
+  MidiTrack& t = tracks[activeTrack];
+  t.loopRecording = true;
+  t.playing = false;
+  t.eventCount = 0;
+  t.loopStartPulse = (clockPulses / pulsesPerBar) * pulsesPerBar; // quantize start
   lcd.setCursor(0, 1);
   lcd.print("Recording started");
   Serial.println("Recording started");
 }
 
 void stopRecording() {
-   if (!recording) return;
+  MidiTrack& t = tracks[activeTrack];
+  if (!t.loopRecording) return;
 
-  recording = false;
+  t.loopRecording = false;
   // Quantize loop length to nearest bar from record start
-  loopLengthPulses = ((clockPulses - recordStartPulse + pulsesPerBar - 1) / pulsesPerBar) * pulsesPerBar;
+  //loopLengthPulses = ((clockPulses - recordStartPulse + pulsesPerBar - 1) / pulsesPerBar) * pulsesPerBar;
+  t.loopLengthPulses = ((t.lastEventPulse - t.loopStartPulse + pulsesPerBar - 1) / pulsesPerBar) * pulsesPerBar;
 
-  // Set playback to begin from the start of the recording
-  loopStartPulse = recordStartPulse;
-  playing = true;
-  loopRecorded = (eventCount > 0);
+  // Set playback to begin from the start of the loopRecording
+  t.loopStartPulse = t.recordStartPulse;
+  t.playing = true;
+  t.loopRecorded = (t.eventCount > 0);
   Serial.print("Recording stopped. Loop length: ");
-  Serial.println(loopLengthPulses);
+
+  int loopBars = t.loopLengthPulses / pulsesPerBar + 1;
+  Serial.println(loopBars);
 }
 
 void startPlayback() {
-  if (loopRecorded && loopLengthPulses > 0) {
-    playing = true;
-    loopStartPulse = (clockPulses / pulsesPerBar) * pulsesPerBar; // quantize
+   MidiTrack& t = tracks[activeTrack];
+  if (t.loopRecorded && t.loopLengthPulses > 0) {
+    t.playing = true;
+    t.loopStartPulse = (clockPulses / pulsesPerBar) * pulsesPerBar; // quantize
     lcd.setCursor(0, 1);
     lcd.print("Playback started");
     Serial.println("Playback started");
@@ -199,8 +246,10 @@ void startPlayback() {
 }
 
 void stopPlayback() {
-  playing = false;
-  Serial.println("Playback stopped");
+  MidiTrack& t = tracks[activeTrack];
+  t.playing = false;
+  Serial.println("Playback stopped track: ");
+  Serial.println(activeTrack);
 }
 
 void onRecButton() {
@@ -227,20 +276,21 @@ char barGrid[BAR_STEPS + 1];
 uint32_t currentBar = 0;
 
 void buildBarGrid(uint32_t barIndex) {
+  MidiTrack& t = tracks[activeTrack];
   memset(barGrid, '-', BAR_STEPS);
   barGrid[BAR_STEPS] = '\0';
 
   uint32_t startPulse = barIndex * pulsesPerBar;
   uint32_t endPulse = startPulse + pulsesPerBar;
 
-  for (int i = 0; i < eventCount; i++) {
-    uint32_t pulse = loopEvents[i].pulseOffset;
+  for (int i = 0; i < t.eventCount; i++) {
+    uint32_t pulse = t.loopEvents[i].pulseOffset;
     if (pulse < startPulse || pulse >= endPulse) continue;
 
     uint32_t step = ((pulse - startPulse) * BAR_STEPS) / pulsesPerBar;
     if (step >= BAR_STEPS) step = BAR_STEPS - 1;
 
-    switch (loopEvents[i].type) {
+    switch (t.loopEvents[i].type) {
       case midi::NoteOn:
         barGrid[step] = '*'; break;
       case midi::ControlChange:
@@ -257,29 +307,37 @@ void buildBarGrid(uint32_t barIndex) {
 }
 
 void overlayPlayhead() {
-  uint32_t playPulse = (clockPulses - loopStartPulse) % loopLengthPulses;
+   MidiTrack& t = tracks[activeTrack];
+  uint32_t playPulse = (clockPulses - t.loopStartPulse) % t.loopLengthPulses;
   uint32_t playStep = ((playPulse % pulsesPerBar) * BAR_STEPS) / pulsesPerBar;
   if (playStep >= BAR_STEPS) playStep = BAR_STEPS - 1;
   barGrid[playStep] = '>';
 }
 
 void updateDisplay() {
-  currentBar = ((clockPulses - loopStartPulse) / pulsesPerBar) % (loopLengthPulses / pulsesPerBar);
+  MidiTrack& t = tracks[activeTrack];
+  currentBar = ((clockPulses - t.loopStartPulse) / pulsesPerBar) % (t.loopLengthPulses / pulsesPerBar);
   buildBarGrid(currentBar);
   
   lcd.setCursor(0, 0);
   
-  if (recording) lcd.print("Rec ");
-  else if (recordingArmed) lcd.print("Arm ");
-  else if (playing) lcd.print("Play");
+  if (t.loopRecording) lcd.print("Rec ");
+  else if (t.loopRecordingArmed) lcd.print("Arm ");
+  else if (t.playing) lcd.print("Play");
   else lcd.print("Idle");
   
   overlayPlayhead();
   lcd.setCursor(0, 1);
   lcd.print(barGrid);
 
+  lcd.setCursor(14, 0);
+  if (t.midiChannel < 10) {
+    lcd.print(" ");
+  }
+  lcd.print(t.midiChannel);
+
   // Show current bar
-  uint32_t pulses = (clockPulses - loopStartPulse) % loopLengthPulses;
+  uint32_t pulses = (clockPulses - t.loopStartPulse) % t.loopLengthPulses;
   int bar = pulses / pulsesPerBar;
   int beat = (pulses % pulsesPerBar) / (pulsesPerBar / 4);
 
@@ -291,7 +349,7 @@ void updateDisplay() {
   // Show event count
   lcd.setCursor(12, 0);
   lcd.print("*");
-  lcd.print(eventCount);
+  lcd.print(t.eventCount);
   //lcd.print("        "); // Clear remaining
 }
 
@@ -312,40 +370,69 @@ void setup() {
   pinMode(playButtonPin, INPUT_PULLUP);
 
   recButton.attach(recButtonPin);
-  recButton.interval(10);  // 10 ms debounce
+  recButton.interval(5);  // 5 ms debounce
 
   playButton.attach(playButtonPin);
-  playButton.interval(10); // 10 ms debounce
+  playButton.interval(5); // 5 ms debounce
 
   // set up the LCD's number of columns and rows:
   lcd.begin(16, 2);
   // Print a message to the LCD.
   lcd.setCursor(0, 0);
-  lcd.print("MIDI Looper Ready");
+  lcd.print("MIDI Looper v0.1");
   delay(1000);
   lcd.clear();
-
   Serial.println("Teensy Real-Time MIDI Looper Ready.");
 }
+
+void buttonState() {
+  MidiTrack& t = tracks[activeTrack];
+
+  recButton.update();
+  playButton.update();
+
+  // Record button toggle
+  if (recButton.fell()) {
+    if (!t.loopRecording)
+      startRecording();
+    else
+      stopRecording();
+  }
+
+  // Handle play button press
+  if (playButton.fell()) {
+    playButtonPressTime = millis();
+    playButtonHeld = false;
+  }
+
+  // Long hold to switch track
+  if (playButton.read() == LOW && !playButtonHeld) {
+    if (millis() - playButtonPressTime > holdThreshold) {
+      playButtonHeld = true;
+      switchTrack(); // Long press action
+    }
+  }
+
+  // Short press toggle playback
+  if (playButton.rose()) {
+    if (!playButtonHeld) {
+      if (!t.playing)
+        startPlayback();
+      else
+        stopPlayback();
+    }
+  }
+}
+
+
+
 
 static unsigned long lastUpdate = 0;
 
 void loop() {
   MIDI.read();
+  buttonState();
 
-  recButton.update();
-  playButton.update();
-
-  if (recButton.fell()) {
-    if (!recording) startRecording();
-    else stopRecording();
-  }
-
-  if (playButton.fell()) {
-    if (!playing) startPlayback();
-    else stopPlayback();
-  }
-  
   if (millis() - lastUpdate > 100) {
     updateDisplay();
     lastUpdate = millis();
