@@ -12,6 +12,8 @@
 const int rs = 12, en = 11, d4 = 32, d5 = 31, d6 = 30, d7 = 29;
 LiquidCrystal lcd(rs, en, d4, d5, d6, d7);
 
+static unsigned long lastScreenUpdate = 0;
+
 const int recButtonPin = 9;
 const int playButtonPin = 10;
 const unsigned long holdThreshold = 1000; // 1 second
@@ -424,16 +426,11 @@ void buttonState() {
   }
 }
 
-
-
-
-static unsigned long lastUpdate = 0;
-
 void loop() {
   MIDI.read();
   buttonState();
 
-  if (millis() - lastUpdate > 100) {
+  if (millis() - lastScreenUpdate > 100) {
     updateDisplay();
     lastUpdate = millis();
   }
