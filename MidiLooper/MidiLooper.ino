@@ -1,353 +1,354 @@
 #include <LiquidCrystal.h>
+#include <Bounce2.h>
 #include <SD.h> 
 #include <MIDI.h>
-#include "Button.h"
 
-#define NOTE_OFF_EVENT 0x80 
-#define NOTE_ON_EVENT 0x90 
-#define CONTROL_CHANGE_EVENT 0xB0 
-#define PITCH_BEND_EVENT 0xE0 
-
-
-MIDI_CREATE_INSTANCE(HardwareSerial, Serial8, MIDI);
-
-const int buttonRecordPin = 9;
-const int buttonStopPin = 10;
-
-bool lastRecordState = HIGH;
-bool lastStopState = HIGH;
-unsigned long lastDebounceTime = 0;
-const unsigned long debounceDelay = 50;
-
-const float BPM = 100.0;
-const int BEATS_PER_BAR = 4;  // 4/4 time
-
-const uint32_t beatLength = 60000.0 / BPM;             // ms per beat
-const uint32_t barLength = beatLength * BEATS_PER_BAR; // ms per bar
-
-bool waitingForQuantizedStop = false;
-
-unsigned long t=0;
+#define NOTE_ON  0x90
+#define NOTE_OFF 0x80
+#define CC       0xB0
+#define PB       0xE0
 
 // initialize the library by associating any needed LCD interface pin
 // with the arduino pin number it is connected to
 const int rs = 12, en = 11, d4 = 32, d5 = 31, d6 = 30, d7 = 29;
 LiquidCrystal lcd(rs, en, d4, d5, d6, d7);
 
+const int recButtonPin = 9;
+const int playButtonPin = 10;
+
+Bounce recButton = Bounce();
+Bounce playButton = Bounce();
+
+volatile bool recTrigger = false;
+volatile bool playTrigger = false;
+bool firstEventCaptured = false;
+
+const unsigned long debounceDelay = 50;
+volatile unsigned long lastRecInterrupt = 0;
+volatile unsigned long lastPlayInterrupt = 0;
+
+
+MIDI_CREATE_INSTANCE(HardwareSerial, Serial8, MIDI);
+
+// Event storage
 const int MAX_EVENTS = 512;
 
-enum MidiType {
-  NoteOn,
-  NoteOff,
-  ControlChange,
-  PitchBend
-};
-
 struct MidiEvent {
-  MidiType type;
-  byte data1;
-  int data2;
-  uint32_t timestamp;
+  uint32_t pulseOffset; // Clock pulse offset from loop start
+  byte type, data1, data2;
 };
 
-MidiEvent events[MAX_EVENTS];
+MidiEvent loopEvents[MAX_EVENTS];
 int eventCount = 0;
 
-bool isRecording = false;
-bool isPlaying = false;
+bool recording = false;
+bool recordingArmed = false;
+bool playing = false;
+bool loopRecorded = false;
 
-uint32_t recordStartTime = 0;
-uint32_t loopLength = 0;
-uint32_t loopStartTime = 0;
-int playbackIndex = 0;
+// Clock tracking
+volatile uint32_t clockPulses = 0;
+uint32_t loopStartPulse = 0;
+uint32_t loopLengthPulses = 0;
+uint32_t recordStartPulse = 0;
+uint32_t lastBarPulse = 0;
 
-void recordEvent(MidiType type, byte d1, int d2) {
-  if (eventCount >= MAX_EVENTS) return;
-  events[eventCount].type = type;
-  events[eventCount].data1 = d1;
-  events[eventCount].data2 = d2;
-  events[eventCount].timestamp = millis() - recordStartTime;
-  eventCount++;
+const int pulsesPerBeat = 24;
+const int beatsPerBar = 4;
+const int pulsesPerBar = pulsesPerBeat * beatsPerBar;
+
+// Incoming MIDI Clock Handlers
+void onClock() {
+  clockPulses++;
+  
+ // Detect bar boundary (only once per bar)
+  if (clockPulses % pulsesPerBar == 0 && clockPulses != lastBarPulse) {
+    lastBarPulse = clockPulses;
+
+    if (recordingArmed) {
+      recordingArmed = false;
+      recording = true;
+      recordStartPulse = clockPulses;
+      //loopStartPulse = clockPulses;
+      eventCount = 0;
+      Serial.println("Recording started cleanly at bar");
+    }
+  }
+
+  if (playing && loopRecorded && loopLengthPulses > 0) {
+    uint32_t relPulse = (clockPulses - loopStartPulse) % loopLengthPulses;
+    for (int i = 0; i < eventCount; i++) {
+      if (loopEvents[i].pulseOffset == relPulse) {
+        MIDI.send(loopEvents[i].type, loopEvents[i].data1, loopEvents[i].data2, 1);
+      }
+    }
+  }
 }
 
-void handleNoteOn(byte ch, byte note, byte vel) {
-  if (isRecording) recordEvent(NoteOn, note, vel);
+void onStart() {
+  clockPulses = 0;
+  loopStartPulse = 0;
+  Serial.println("Clock Start");
 }
 
-void handleNoteOff(byte ch, byte note, byte vel) {
-  if (isRecording) recordEvent(NoteOff, note, vel);
+void onStop() {
+  playing = false;
+  recording = false;
+  Serial.println("Clock Stop");
 }
 
-void handleCC(byte cc, byte val) {
-  if (isRecording) recordEvent(ControlChange, cc, val);
+void onNoteOn(byte ch, byte note, byte vel) {
+  if (recording && eventCount < MAX_EVENTS) {
+    if (!firstEventCaptured) {
+      loopStartPulse = clockPulses;
+      recordStartPulse = clockPulses;
+      firstEventCaptured = true;
+    }
+    loopEvents[eventCount++] = {clockPulses - loopStartPulse, midi::NoteOn, note, vel};
+  }
+  else {
+    Serial.println("Event buffer full!");
+  }
 }
 
-void handlePitchBend(int bend) {
-  if (isRecording) recordEvent(PitchBend, 0, bend);
+void onNoteOff(byte ch, byte note, byte vel) {
+  if (recording && eventCount < MAX_EVENTS) {
+     if (!firstEventCaptured) {
+      loopStartPulse = clockPulses;
+      recordStartPulse = clockPulses;
+      firstEventCaptured = true;
+    }
+    loopEvents[eventCount++] = {clockPulses - loopStartPulse, midi::NoteOff, note, vel};
+  }
+  else {
+    Serial.println("Event buffer full!");
+  }
+}
+
+void onControlChange(byte ch, byte num, byte val) {
+  if (recording && eventCount < MAX_EVENTS) {
+     if (!firstEventCaptured) {
+      loopStartPulse = clockPulses;
+      recordStartPulse = clockPulses;
+      firstEventCaptured = true;
+    }
+    loopEvents[eventCount++] = {clockPulses - loopStartPulse, midi::ControlChange, num, val};
+  }
+  else {
+    Serial.println("Event buffer full!");
+  }
+}
+
+void onPitchBend(byte ch, int bend) {
+  if (recording && eventCount < MAX_EVENTS) {
+     if (!firstEventCaptured) {
+      loopStartPulse = clockPulses;
+      recordStartPulse = clockPulses;
+      firstEventCaptured = true;
+    }
+    byte lsb = bend & 0x7F;
+    byte msb = (bend >> 7) & 0x7F;
+    loopEvents[eventCount++] = {clockPulses - loopStartPulse, midi::PitchBend, lsb, msb};
+  }
+  else {
+    Serial.println("Event buffer full!");
+  }
+}
+
+
+void onRecordButtonPressed() {
+  if (!recording) {
+    recordingArmed = true;
+    Serial.println("Recording armed");
+  }
 }
 
 void startRecording() {
-  Serial.println("Recording...");
-  isRecording = true;
-  isPlaying = false;
+  recording = true;
+  playing = false;
   eventCount = 0;
-  recordStartTime = millis();
+  loopStartPulse = (clockPulses / pulsesPerBar) * pulsesPerBar; // quantize start
+  lcd.setCursor(0, 1);
+  lcd.print("Recording started");
+  Serial.println("Recording started");
 }
 
-void stopRecordingQuantized() {
-  if (!isRecording) return;
+void stopRecording() {
+   if (!recording) return;
 
-  waitingForQuantizedStop = true;
-  Serial.println("Waiting to quantize stop to next bar...");
+  recording = false;
+  // Quantize loop length to nearest bar from record start
+  loopLengthPulses = ((clockPulses - recordStartPulse + pulsesPerBar - 1) / pulsesPerBar) * pulsesPerBar;
+
+  // Set playback to begin from the start of the recording
+  loopStartPulse = recordStartPulse;
+  playing = true;
+  loopRecorded = (eventCount > 0);
+  Serial.print("Recording stopped. Loop length: ");
+  Serial.println(loopLengthPulses);
 }
 
-void stopRecordingAndStartLoop() {
-  isRecording = false;
-  if (eventCount > 0) {
-    loopLength = events[eventCount - 1].timestamp;
-    loopStartTime = millis();
-    playbackIndex = 0;
-    isPlaying = true;
-    Serial.print("Loop recorded. Length: ");
-    Serial.print(loopLength);
-    Serial.println(" ms");
-  } else {
-    Serial.println("No events recorded.");
+void startPlayback() {
+  if (loopRecorded && loopLengthPulses > 0) {
+    playing = true;
+    loopStartPulse = (clockPulses / pulsesPerBar) * pulsesPerBar; // quantize
+    lcd.setCursor(0, 1);
+    lcd.print("Playback started");
+    Serial.println("Playback started");
   }
 }
 
-uint32_t lastLoopTime = 0;
+void stopPlayback() {
+  playing = false;
+  Serial.println("Playback stopped");
+}
 
-void checkPlayback() {
-  if (!isPlaying || eventCount == 0) return;
-
-  uint32_t currentTime = millis();
-  uint32_t loopTime = (currentTime - loopStartTime) % loopLength;
-
-  // Detect loop restart
-  if (loopTime < lastLoopTime) {
-    playbackIndex = 0;  // Restart event playback
+void onRecButton() {
+  unsigned long now = millis();
+  if (now - lastRecInterrupt > debounceDelay) {
+    recTrigger = true;
+    lastRecInterrupt = now;
   }
-  lastLoopTime = loopTime;
+}
 
-  // Play events up to current loop time
-  while (playbackIndex < eventCount && events[playbackIndex].timestamp <= loopTime) {
-    const MidiEvent& ev = events[playbackIndex];
-    switch (ev.type) {
-      case NoteOn:
-        MIDI.sendNoteOn(ev.data1, ev.data2, 1);
-        break;
-      case NoteOff:
-        MIDI.sendNoteOff(ev.data1, ev.data2, 1);
-        break;
-      case ControlChange:
-        MIDI.sendControlChange(ev.data1, ev.data2, 1);
-        break;
-      case PitchBend:
-        MIDI.sendPitchBend(ev.data2, 1);
-        break;
+void onPlayButton() {
+  unsigned long now = millis();
+  if (now - lastPlayInterrupt > debounceDelay) {
+    playTrigger = true;
+    lastPlayInterrupt = now;
+  }
+}
+
+#define GRID_STEPS 16
+char grid[GRID_STEPS + 1];  // +1 for null-terminator
+
+#define BAR_STEPS 16
+char barGrid[BAR_STEPS + 1];
+uint32_t currentBar = 0;
+
+void buildBarGrid(uint32_t barIndex) {
+  memset(barGrid, '-', BAR_STEPS);
+  barGrid[BAR_STEPS] = '\0';
+
+  uint32_t startPulse = barIndex * pulsesPerBar;
+  uint32_t endPulse = startPulse + pulsesPerBar;
+
+  for (int i = 0; i < eventCount; i++) {
+    uint32_t pulse = loopEvents[i].pulseOffset;
+    if (pulse < startPulse || pulse >= endPulse) continue;
+
+    uint32_t step = ((pulse - startPulse) * BAR_STEPS) / pulsesPerBar;
+    if (step >= BAR_STEPS) step = BAR_STEPS - 1;
+
+    switch (loopEvents[i].type) {
+      case midi::NoteOn:
+        barGrid[step] = '*'; break;
+      case midi::ControlChange:
+        barGrid[step] = 'C'; break;
+      case midi::PitchBend:
+        barGrid[step] = 'B'; break;
+      default:
+        barGrid[step] = '+';
     }
-    playbackIndex++;
+    // Overlay cursor
+    overlayPlayhead();
+
   }
 }
 
-void stopLoop() {
-  isPlaying = false;
-  playbackIndex = 0;
-  Serial.println("Loop stopped.");
-
-  // Optional: All Notes Off on channel 1
-  for (int cc = 123; cc <= 127; cc++) {
-    MIDI.sendControlChange(cc, 0, 1);
-  }
+void overlayPlayhead() {
+  uint32_t playPulse = (clockPulses - loopStartPulse) % loopLengthPulses;
+  uint32_t playStep = ((playPulse % pulsesPerBar) * BAR_STEPS) / pulsesPerBar;
+  if (playStep >= BAR_STEPS) playStep = BAR_STEPS - 1;
+  barGrid[playStep] = '>';
 }
 
-void startLoop() {
-  if (eventCount == 0 || loopLength == 0) return;
+void updateDisplay() {
+  currentBar = ((clockPulses - loopStartPulse) / pulsesPerBar) % (loopLengthPulses / pulsesPerBar);
+  buildBarGrid(currentBar);
+  
+  lcd.setCursor(0, 0);
+  
+  if (recording) lcd.print("Rec ");
+  else if (recordingArmed) lcd.print("Arm ");
+  else if (playing) lcd.print("Play");
+  else lcd.print("Idle");
+  
+  overlayPlayhead();
+  lcd.setCursor(0, 1);
+  lcd.print(barGrid);
 
-  isPlaying = true;
-  playbackIndex = 0;
-  loopStartTime = millis();
-  lastLoopTime = 0;
-  Serial.println("Loop playback started.");
+  // Show current bar
+  uint32_t pulses = (clockPulses - loopStartPulse) % loopLengthPulses;
+  int bar = pulses / pulsesPerBar;
+  int beat = (pulses % pulsesPerBar) / (pulsesPerBar / 4);
+
+  lcd.setCursor(6, 0);
+  lcd.print(bar + 1);
+  lcd.print(":");
+  lcd.print(beat + 1);
+
+  // Show event count
+  lcd.setCursor(12, 0);
+  lcd.print("*");
+  lcd.print(eventCount);
+  //lcd.print("        "); // Clear remaining
 }
+
 
 void setup() {
   Serial.begin(57600);
   MIDI.begin(MIDI_CHANNEL_OMNI);
   
-  MIDI.setHandleNoteOn(handleNoteOn);
-  MIDI.setHandleNoteOff(handleNoteOff);
-  MIDI.setHandleControlChange(handleCC);
-  MIDI.setHandlePitchBend(handlePitchBend);
+  MIDI.setHandleClock(onClock);
+  MIDI.setHandleStart(onStart);
+  MIDI.setHandleStop(onStop);
+  MIDI.setHandleNoteOn(onNoteOn);
+  MIDI.setHandleNoteOff(onNoteOff);
+  MIDI.setHandleControlChange(onControlChange);
+  MIDI.setHandlePitchBend(onPitchBend);
+  
+  pinMode(recButtonPin, INPUT_PULLUP);
+  pinMode(playButtonPin, INPUT_PULLUP);
 
-  Serial.println("Teensy Real-Time MIDI Looper Ready.");
-  Serial.println("Commands: 'r' to record, 's' to stop+loop");
-	
+  recButton.attach(recButtonPin);
+  recButton.interval(10);  // 10 ms debounce
+
+  playButton.attach(playButtonPin);
+  playButton.interval(10); // 10 ms debounce
+
   // set up the LCD's number of columns and rows:
   lcd.begin(16, 2);
   // Print a message to the LCD.
- // lcd.print("hello, world!");
-  
-  pinMode(buttonRecordPin, INPUT_PULLUP);
-  pinMode(buttonStopPin, INPUT_PULLUP);
+  lcd.setCursor(0, 0);
+  lcd.print("MIDI Looper Ready");
+  delay(1000);
+  lcd.clear();
 
+  Serial.println("Teensy Real-Time MIDI Looper Ready.");
 }
-int type, note, velocity, channel, d1, d2;
+
+static unsigned long lastUpdate = 0;
+
 void loop() {
   MIDI.read();
-  checkPlayback();
 
-  // Debounced read
-  bool currentRecord = digitalRead(buttonRecordPin);
-  bool currentPlayStop = digitalRead(buttonStopPin); // shared button now
+  recButton.update();
+  playButton.update();
 
-  if (waitingForQuantizedStop) {
-    uint32_t now = millis() - recordStartTime;
-    if (now % barLength < 10) {  // Close to bar boundary
-      waitingForQuantizedStop = false;
-      isRecording = false;
-      loopLength = ((now + barLength - 1) / barLength) * barLength;
-      loopStartTime = millis();
-      isPlaying = true;
-      playbackIndex = 0;
-      Serial.print("Quantized loop length: ");
-      Serial.print(loopLength);
-      Serial.println(" ms");
-    }
+  if (recButton.fell()) {
+    if (!recording) startRecording();
+    else stopRecording();
   }
 
-  if ((millis() - lastDebounceTime) > debounceDelay) {
-    if (currentRecord != lastRecordState) {
-      lastDebounceTime = millis();
-      if (currentRecord == LOW) {
-  if (!isRecording && !isPlaying) {
-    startRecording();
-  } else if (isRecording && !waitingForQuantizedStop) {
-    stopRecordingQuantized(); // quantized stop now
+  if (playButton.fell()) {
+    if (!playing) startPlayback();
+    else stopPlayback();
   }
-}
-    }
-
-    if (currentPlayStop != lastStopState) {
-      lastDebounceTime = millis();
-      if (currentPlayStop == LOW) {
-        if (isPlaying) {
-          stopLoop();
-        } else if (!isRecording && eventCount > 0 && loopLength > 0) {
-          startLoop();
-        }
-      }
-    }
+  
+  if (millis() - lastUpdate > 100) {
+    updateDisplay();
+    lastUpdate = millis();
   }
-
-  lastRecordState = currentRecord;
-  lastStopState = currentPlayStop;
-
-
-  // if (Serial.available()) {
-  //   char cmd = Serial.read();
-  //   if (cmd == 'r') {
-  //     startRecording();
-  //   } else if (cmd == 's') {
-  //     stopRecordingAndStartLoop();
-  //   } else if (cmd == 'x') {
-  //     stopLoop();
-  //   }
-  // }
-  if (MIDI.read()){
-    byte type = MIDI.getType();
-    switch (type) {
-      case midi::NoteOn:
-        note = MIDI.getData1();
-        velocity = MIDI.getData2();
-        channel = MIDI.getChannel();
-        if (velocity > 0) {
-          lcd.setCursor(0, 0);
-          lcd.print("CHN");
-          lcd.setCursor(0, 1);
-          if (channel < 10) {
-              lcd.print(' ');
-          }
-          lcd.print(' ');
-          lcd.print(channel);
-          lcd.setCursor(4, 0);
-          lcd.print("KEY");
-          lcd.setCursor(4, 1);
-          if (note < 100) {
-              lcd.print(' ');
-          }
-          if (note < 10) {
-              lcd.print(' ');
-          }
-          lcd.print( note);
-
-          lcd.setCursor(8, 0);
-          lcd.print("VEL");
-          lcd.setCursor(8, 1);
-          if (velocity < 100) {
-             lcd.print(' ');
-          }
-          if (velocity < 10) {
-              lcd.print(' ');
-          }
-          lcd.print(velocity);
-          //Serial.println(String("Note On:  ch=") + channel + ", note=" + note + ", velocity=" + velocity);
-        } else {
-          lcd.setCursor(0, 1);
-          lcd.print("            ");
-          //Serial.println(String("Note Off: ch=") + channel + ", note=" + note);
-        }
-        break;
-      case midi::NoteOff:
-        note = MIDI.getData1();
-        velocity = MIDI.getData2();
-        channel = MIDI.getChannel();
-        lcd.setCursor(0, 1);
-        lcd.print("            ");
-        //Serial.println(String("Note Off: ch=") + channel + ", note=" + note + ", velocity=" + velocity);
-        break;
-      default:
-        d1 = MIDI.getData1();
-        d2 = MIDI.getData2();
-        
-       // Serial.println(String("Message, type=") + type + ", data = " + d1 + " " + d2);
-    }
-    t = millis();
-  }
-
-  // if (millis() - t > 10000) {
-  //   t += 10000;
-  //  // Serial.println("(inactivity)");
-  // }
-  // set the cursor to column 0, line 1
-  // (note: line 1 is the second row, since counting begins with 0):
-  //  if (button1.released()) {
-  //   lcd.setCursor(12, 0);
-  //   lcd.print(" ");
-  //   //Serial.println("FUNC Button is not pressed...");
-  // }
-  // if (button1.pressed()) {
-  //    lcd.setCursor(12, 0);
-  //    lcd.print("F");
-  //    startRecording();
-  //    //Serial.println("FUNC Button pressed!!!");
-  // }
- 
-  // if (button2.released()) {
-  //   lcd.setCursor(12, 1);
-  //   lcd.print(" ");
-  //   //Serial.println("REC Button is not pressed...");
-  // } 
-  // if (button2.pressed()) {
-  //   lcd.setCursor(12, 1);
-  //   lcd.print("R");
-  //   stopRecordingAndStartLoop();
-  //    //Serial.println("REC Button pressed!!!");
-  // }
-
-  //lcd.setCursor(0, 1);
-  // print the number of seconds since reset:
-  //lcd.print(millis() / 1000);
 }
 
