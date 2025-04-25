@@ -602,6 +602,7 @@ void startRecording() {
   t.playing = false;
   t.eventCount = 0;
   t.loopStartPulse = (currentPulse / pulsesPerBar) * pulsesPerBar; // quantize start
+  t.loopLengthPulses = 0;
   lcd.setCursor(0, 0);
   lcd.print("Rec ");
   Serial.println("Recording started");
@@ -687,7 +688,22 @@ void undoTrack() {
     Serial.println("No backup found for undo");
     
   }
-}
+//}
+
+// unsigned long lastRecTapTime = 0;
+// const unsigned long doubleTapThreshold = 250; // ms
+
+// void eraseLoop(int trackIndex) {
+//   MidiTrack& track = tracks[trackIndex];
+//   track.eventCount = 0;
+//   track.loopRecorded = false;
+//   track.playing = false;
+//   track.loopLengthPulses = 0;
+//   track.loopStartPulse = 0;
+//   Serial.print("Erased loop for track ");
+//   Serial.println(trackIndex + 1);
+// }
+
 
 // -------------------------------------------
 // Buttons
@@ -713,15 +729,28 @@ void buttonState() {
     }
   }
 
-  // Record button toggle
+  // Record button toggle or double tap to delete loop
   if (recButton.fell()) {
-    if (!recButtonHeld) {
-      if (!t.loopRecording)
-        startRecording();
-      else
-        stopRecording();
+  unsigned long now = millis();
+
+  // if (now - lastRecTapTime < doubleTapThreshold) {
+  //   // Double-tap detected
+  //   eraseLoop(activeTrack);  // or eraseAllLoops()
+  //   lastRecTapTime = 0;      // reset to avoid triple tap
+  // } else {
+    // First tap
+      if (!recButtonHeld) {
+        if (!t.loopRecording)
+          startRecording();
+        else
+          stopRecording();
+        }
+      }
+      //lastRecTapTime = now;
     }
-  }
+  // }
+
+
 
   // Handle rec button press
   if (playButton.fell()) {
@@ -832,7 +861,7 @@ void updateDisplay() {
     lcd.setCursor(0, 1);
     lcd.print(barGrid);
 
-    lcd.setCursor(14, 0);
+    lcd.setCursor(10, 0);
     if (t.midiChannel < 10) {
       lcd.print(" ");
     }
@@ -843,7 +872,7 @@ void updateDisplay() {
     int bar = pulses / pulsesPerBar;
     int beat = (pulses % pulsesPerBar) / (pulsesPerBar / 4);
 
-    lcd.setCursor(6, 0);
+    lcd.setCursor(5, 0);
     lcd.print(bar + 1);
     lcd.print(":");
     lcd.print(beat + 1);
@@ -851,7 +880,7 @@ void updateDisplay() {
     // Show event count
     lcd.setCursor(12, 0);
     lcd.print("*");
-    lcd.print(t.eventCount);
+    //lcd.print(t.eventCount);
     //lcd.print("        "); // Clear remaining  
 }
 
