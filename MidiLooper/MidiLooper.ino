@@ -41,7 +41,7 @@ Bounce recButton = Bounce();
 Bounce playButton = Bounce();
 
 // Clock tracking variables
-volatile uint32_t clockPulses = 0;
+volatile uint32_t currentPulse = 0;
 uint32_t lastBarPulse = 0;
 
 const int pulsesPerBeat = 24;
@@ -55,6 +55,9 @@ bool firstEventCaptured = false;
 const unsigned long debounceDelay = 50;
 volatile unsigned long lastRecInterrupt = 0;
 volatile unsigned long lastPlayInterrupt = 0;
+
+// Global Array to store notes which are still in Note on state
+bool activeNotes[128] = {false};
 
 // Midi variables
 MIDI_CREATE_INSTANCE(HardwareSerial, Serial8, MIDI);
@@ -90,18 +93,18 @@ int activeTrack = 0; // Currently selected track for loopRecording
 // ---------------------------------------------------------------------
 
 void onClock() {
-  clockPulses++; //speed of the pulses are set by the external clock at 24 pulses per quarter note
+  currentPulse++; //speed of the pulses are set by the external clock at 24 pulses per quarter note
   
  // Detect bar boundary (only once per bar)
-  if (clockPulses % pulsesPerBar == 0 && clockPulses != lastBarPulse) {
-    lastBarPulse = clockPulses;
+  if (currentPulse % pulsesPerBar == 0 && currentPulse != lastBarPulse) {
+    lastBarPulse = currentPulse;
     for (int i = 0; i < MAX_TRACKS; i++) {
       MidiTrack& t = tracks[i];
       if (t.loopRecordingArmed) {
         t.loopRecordingArmed = false;
         t.loopRecording = true;
-        t.recordStartPulse = clockPulses;
-        t.loopStartPulse = clockPulses;
+        t.recordStartPulse = currentPulse;
+        t.loopStartPulse = currentPulse;
         t.eventCount = 0;
         Serial.println("Recording started cleanly at bar");
       }
@@ -111,7 +114,7 @@ void onClock() {
   for (int i = 0; i < MAX_TRACKS; i++) {
     MidiTrack& t = tracks[i];
     if (t.playing && t.loopRecorded && t.loopLengthPulses > 0) {
-      uint32_t relPulse = (clockPulses - t.loopStartPulse) % t.loopLengthPulses;
+      uint32_t relPulse = (currentPulse - t.loopStartPulse) % t.loopLengthPulses;
       for (int j = 0; j < t.eventCount; j++) {
         if (t.loopEvents[j].pulseOffset == relPulse) {
           MIDI.send(t.loopEvents[j].type, t.loopEvents[j].data1, t.loopEvents[j].data2, t.midiChannel);
@@ -441,7 +444,7 @@ void loadAllTracksFromRaw() {
 // -------------------------------------------
 
 void onStart() {
-  clockPulses = 0;
+  currentPulse = 0;
   for (int i = 0; i < MAX_TRACKS; i++) {
     MidiTrack& t = tracks[i];
     t.loopStartPulse = 0;
@@ -455,20 +458,29 @@ void onStop() {
     //t.playing = false;
     t.loopRecording = false;
   }
+  
+  // Send all Notes off
+  for (int ch = 1; ch <= 16; ch++) {
+    MIDI.sendControlChange(123, 0, ch); // 123 = All Notes Off
+  }
+  
   Serial.println("Clock Stop");
 }
 
 void onNoteOn(byte ch, byte note, byte vel) {
   MidiTrack& t = tracks[activeTrack];
   if (t.loopRecording && t.eventCount < MAX_EVENTS) {
-    uint32_t pulse = clockPulses;
+    uint32_t pulse = currentPulse;
     if (t.eventCount == 0) {
-      t.loopStartPulse = clockPulses;
-      t.recordStartPulse = clockPulses;
+      t.loopStartPulse = currentPulse;
+      t.recordStartPulse = currentPulse;
       firstEventCaptured = true;
     }
-    t.loopEvents[t.eventCount++] = {clockPulses - t.loopStartPulse, midi::NoteOn, note, vel};
+    t.loopEvents[t.eventCount++] = {currentPulse - t.loopStartPulse, midi::NoteOn, note, vel};
     t.lastEventPulse = pulse;
+
+    // Store Note On state (to resolve note off when stopping recording)
+    activeNotes[note] = true;
   } else {
     Serial.print("Event buffer full from track: ");
     Serial.println(activeTrack+1);
@@ -478,16 +490,18 @@ void onNoteOn(byte ch, byte note, byte vel) {
 void onNoteOff(byte ch, byte note, byte vel) {
   MidiTrack& t = tracks[activeTrack];
   if (t.loopRecording && t.eventCount < MAX_EVENTS) {
-     uint32_t pulse = clockPulses;
-     if (t.eventCount == 0) {
-      t.loopStartPulse = clockPulses;
-      t.recordStartPulse = clockPulses;
+    uint32_t pulse = currentPulse;
+    if (t.eventCount == 0) {
+      t.loopStartPulse = currentPulse;
+      t.recordStartPulse = currentPulse;
       firstEventCaptured = true;
     }
-    t.loopEvents[t.eventCount++] = {clockPulses - t.loopStartPulse, midi::NoteOff, note, vel};
+    t.loopEvents[t.eventCount++] = {currentPulse - t.loopStartPulse, midi::NoteOff, note, vel};
     t.lastEventPulse = pulse;
-  }
-  else {
+
+    // Set note back to false to not use in note off logic after stopping recording
+    activeNotes[note] = false;
+  } else {
     Serial.println("Event buffer full!");
   }
 }
@@ -495,13 +509,13 @@ void onNoteOff(byte ch, byte note, byte vel) {
 void onControlChange(byte ch, byte num, byte val) {
   MidiTrack& t = tracks[activeTrack];
   if (t.loopRecording && t.eventCount < MAX_EVENTS) {
-    uint32_t pulse = clockPulses;
+    uint32_t pulse = currentPulse;
       if (t.eventCount == 0) {
-      t.loopStartPulse = clockPulses;
-      t.recordStartPulse = clockPulses;
+      t.loopStartPulse = currentPulse;
+      t.recordStartPulse = currentPulse;
       firstEventCaptured = true;
     }
-    t.loopEvents[t.eventCount++] = {clockPulses - t.loopStartPulse, midi::ControlChange, num, val};
+    t.loopEvents[t.eventCount++] = {currentPulse - t.loopStartPulse, midi::ControlChange, num, val};
     t.lastEventPulse = pulse;
   }
   else {
@@ -512,15 +526,15 @@ void onControlChange(byte ch, byte num, byte val) {
 void onPitchBend(byte ch, int bend) {
   MidiTrack& t = tracks[activeTrack];
   if (t.loopRecording && t.eventCount < MAX_EVENTS) {
-    uint32_t pulse = clockPulses;
+    uint32_t pulse = currentPulse;
     if (t.eventCount == 0) {
-      t.loopStartPulse = clockPulses;
-      t.recordStartPulse = clockPulses;
+      t.loopStartPulse = currentPulse;
+      t.recordStartPulse = currentPulse;
       firstEventCaptured = true;
     }
     byte lsb = bend & 0x7F;
     byte msb = (bend >> 7) & 0x7F;
-    t.loopEvents[t.eventCount++] = {clockPulses - t.loopStartPulse, midi::PitchBend, lsb, msb};
+    t.loopEvents[t.eventCount++] = {currentPulse - t.loopStartPulse, midi::PitchBend, lsb, msb};
     t.lastEventPulse = pulse;
   }
   else {
@@ -552,17 +566,42 @@ void onRecordButtonPressed() {
   }
 }
 
+uint32_t computeLoopLengthFromEvents(MidiEvent* events, int eventCount, uint32_t pulsesPerBar) {
+  if (eventCount == 0) return 0;
+
+  // Sort events in-place by pulseOffset
+  std::sort(events, events + eventCount, [](const MidiEvent& a, const MidiEvent& b) {
+    return a.pulseOffset < b.pulseOffset;
+  });
+
+  // Determine the last meaningful event offset
+  uint32_t lastEventOffset = 0;
+  for (int i = 0; i < eventCount; i++) {
+    byte type = events[i].type & 0xF0;
+    if (type == 0x90 || type == 0x80 || type == 0xB0) { // NoteOn, NoteOff, ControlChange
+      if (events[i].pulseOffset > lastEventOffset) {
+        lastEventOffset = events[i].pulseOffset;
+      }
+    }
+  }
+
+  // Round up to the next full bar
+  uint32_t loopLength = ((lastEventOffset / pulsesPerBar) + 1) * pulsesPerBar;
+  return loopLength;
+}
+
+
 void startRecording() {
   MidiTrack& t = tracks[activeTrack];
 
   // Backup current loop
   t.backupEventCount = t.eventCount;
   memcpy(t.backupEvents, t.loopEvents, sizeof(MidiEvent) * t.eventCount);
-
+  
   t.loopRecording = true;
   t.playing = false;
   t.eventCount = 0;
-  t.loopStartPulse = (clockPulses / pulsesPerBar) * pulsesPerBar; // quantize start
+  t.loopStartPulse = (currentPulse / pulsesPerBar) * pulsesPerBar; // quantize start
   lcd.setCursor(0, 0);
   lcd.print("Rec ");
   Serial.println("Recording started");
@@ -572,9 +611,25 @@ void stopRecording() {
   MidiTrack& t = tracks[activeTrack];
   if (!t.loopRecording) return;
 
+  // Add note off for all notes which still are in note on state on endPulse
+  uint32_t endPulse = currentPulse - t.loopStartPulse;
+
+  for (int note = 0; note < 128; note++) {
+    if (activeNotes[note]) {
+      // Insert a Note Off at the end of the loop
+      if (t.eventCount < MAX_EVENTS) {
+        t.loopEvents[t.eventCount++] = {
+          endPulse, midi::NoteOff, note, 0
+        };
+      }
+      activeNotes[note] = false;
+    }
+  }
+
   t.loopRecording = false;
   // Quantize loop length to nearest bar from record start
-  t.loopLengthPulses = ((t.lastEventPulse - t.loopStartPulse + pulsesPerBar - 1) / pulsesPerBar) * pulsesPerBar;
+  // t.loopLengthPulses = ((t.lastEventPulse - t.loopStartPulse + pulsesPerBar - 1) / pulsesPerBar) * pulsesPerBar;
+  t.loopLengthPulses = computeLoopLengthFromEvents(t.loopEvents, t.eventCount, pulsesPerBar);
 
   // Set playback to begin from the start of the loopRecording
   t.loopStartPulse = t.recordStartPulse;
@@ -598,7 +653,7 @@ void startPlayback() {
    MidiTrack& t = tracks[activeTrack];
   if (t.loopRecorded && t.loopLengthPulses > 0) {
     t.playing = true;
-    t.loopStartPulse = (clockPulses / pulsesPerBar) * pulsesPerBar; // quantize
+    t.loopStartPulse = (currentPulse / pulsesPerBar) * pulsesPerBar; // quantize
     lcd.setCursor(0, 0);
     lcd.print("Play");
     Serial.println("Playback started");
@@ -737,7 +792,7 @@ void buildBarGrid(uint32_t barIndex) {
 
 void overlayPlayhead() {
   MidiTrack& t = tracks[activeTrack];
-  uint32_t playPulse = (clockPulses - t.loopStartPulse) % t.loopLengthPulses;
+  uint32_t playPulse = (currentPulse - t.loopStartPulse) % t.loopLengthPulses;
   uint32_t playStep = ((playPulse % pulsesPerBar) * BAR_STEPS) / pulsesPerBar;
   if (playStep >= BAR_STEPS) playStep = BAR_STEPS - 1;
   barGrid[playStep] = '>';
@@ -759,7 +814,7 @@ void updateDisplay() {
     MidiTrack& t = tracks[activeTrack];
     
     if (t.loopLengthPulses > 0) {
-      currentBar = ((clockPulses - t.loopStartPulse) / pulsesPerBar) % (t.loopLengthPulses / pulsesPerBar);
+      currentBar = ((currentPulse - t.loopStartPulse) / pulsesPerBar) % (t.loopLengthPulses / pulsesPerBar);
     } else {
       currentBar = 0; // prevent dived by 0
     }
@@ -784,7 +839,7 @@ void updateDisplay() {
     lcd.print(t.midiChannel);
 
     // Show current bar
-    uint32_t pulses = (clockPulses - t.loopStartPulse) % t.loopLengthPulses;
+    uint32_t pulses = (currentPulse - t.loopStartPulse) % t.loopLengthPulses;
     int bar = pulses / pulsesPerBar;
     int beat = (pulses % pulsesPerBar) / (pulsesPerBar / 4);
 
