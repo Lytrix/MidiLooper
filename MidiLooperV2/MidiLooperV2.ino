@@ -6,6 +6,12 @@
 #define NUM_TRACKS 4
 #define MAX_EVENTS 1024
 
+// Define bar length
+#define TICKS_PER_QUARTER_NOTE 24
+#define BEATS_PER_BAR 4
+#define TICKS_PER_BAR (TICKS_PER_QUARTER_NOTE * BEATS_PER_BAR)  // = 96
+
+// Track oe
 // LCD Pins (adjust as needed)
 LiquidCrystal lcd(12, 11, 32, 31, 30, 29);
 
@@ -18,7 +24,7 @@ Bounce recordButton = Bounce();
 // === Clock Timing ===
 volatile uint32_t clockTicks = 0;
 uint32_t loopLengthTicks = 0;
-uint32_t loopStartTime = 0;
+uint32_t loopStartTick = 0;
 bool loopRunning = false;
 bool clockRunning = false;
 
@@ -61,7 +67,7 @@ void updateLCD() {
   if (!loopRunning || loopLengthTicks == 0) {
     lcd.print("Loop: <not set>   ");
   } else {
-    uint32_t loopPos = (clockTicks - loopStartTime) % loopLengthTicks;
+    uint32_t loopPos = (clockTicks - loopStartTick) % loopLengthTicks;
     int progressCols = (loopPos * 16) / loopLengthTicks;
     for (int i = 0; i < 16; i++) {
       if (i < progressCols) lcd.write(byte(255));
@@ -80,6 +86,16 @@ void updateLCD() {
     if (i == currentTrack) lcd.print("]");
     else lcd.print(" ");
   }
+
+  // Show current bar
+  uint32_t measures = (clockTicks - loopStartTick) % loopLengthTicks;
+  int bar = measures / TICKS_PER_BAR;
+  int beat = (measures % TICKS_PER_BAR) / (TICKS_PER_BAR / BEATS_PER_BAR);
+
+  lcd.setCursor(13, 1);
+  lcd.print(bar + 1);
+  lcd.print(":");
+  lcd.print(beat + 1);
 }
 
 // === MIDI Clock Handlers ===
@@ -90,7 +106,7 @@ void onClock() {
 
 void onStart() {
   clockTicks = 0;
-  loopStartTime = 0;
+  loopStartTick = 0;
   clockRunning = true;
   loopRunning = true;
   updateLCD();
@@ -110,16 +126,7 @@ void handleNoteOn(byte channel, byte note, byte velocity) {
     return;
   }
 
-  // Overdub suppression
-  if (track.state == OVERDUBBING) {
-    for (int i = 0; i < track.notesThisTickCount; i++) {
-      if (track.notesThisTick[i] == note) {
-        return; // Suppress duplicate overdub
-      }
-    }
-  }
-
-  uint32_t time = (loopLengthTicks > 0) ? (clockTicks - loopStartTime) % loopLengthTicks : (clockTicks - loopStartTime);
+  uint32_t time = (loopLengthTicks > 0) ? (clockTicks - loopStartTick) % loopLengthTicks : (clockTicks - loopStartTick);
 
   if ((track.state == RECORDING || track.state == OVERDUBBING) && track.eventCount < MAX_EVENTS) {
     track.events[track.eventCount++] = { time, 0x90, note, velocity };
@@ -128,7 +135,7 @@ void handleNoteOn(byte channel, byte note, byte velocity) {
 
 void handleNoteOff(byte channel, byte note, byte velocity) {
   Track &track = tracks[currentTrack];
-  uint32_t time = (loopLengthTicks > 0) ? (clockTicks - loopStartTime) % loopLengthTicks : (clockTicks - loopStartTime);
+  uint32_t time = (loopLengthTicks > 0) ? (clockTicks - loopStartTick) % loopLengthTicks : (clockTicks - loopStartTick);
 
   if ((track.state == RECORDING || track.state == OVERDUBBING) && track.eventCount < MAX_EVENTS) {
     track.events[track.eventCount++] = { time, 0x80, note, velocity };
@@ -137,25 +144,24 @@ void handleNoteOff(byte channel, byte note, byte velocity) {
 
 // === Track Playback ===
 void playTrack(Track &track) {
-  if ((track.state != RECORDING && track.state != OVERDUBBING && track.state != PLAYBACK) || loopLengthTicks == 0 || track.muted) return;
+  if ((track.state != RECORDING 
+    && track.state != OVERDUBBING 
+    && track.state != PLAYBACK) 
+    || loopLengthTicks == 0 
+    || track.muted) return;
 
-  uint32_t loopPos = (clockTicks - loopStartTime) % loopLengthTicks;
+  uint32_t loopPos = (clockTicks - loopStartTick) % loopLengthTicks;
 
   if (track.lastTickChecked != loopPos) {
-    track.notesThisTickCount = 0;
     track.lastTickChecked = loopPos;
   }
 
-  if (track.state == OVERDUBBING || track.state == PLAYBACK && loopLengthTicks > 0) {
+  if (track.state != RECORDING && loopLengthTicks > 0) {
     for (int i = 0; i < track.eventCount; i++) {
       if (track.events[i].timestamp == loopPos) {
         MIDI.send(track.events[i].type,
                   track.events[i].data1,
                   track.events[i].data2, track.midiChannel);
-
-        if (track.notesThisTickCount < 32 && track.events[i].type == 0x90 && track.events[i].data2 > 0) {
-          track.notesThisTick[track.notesThisTickCount++] = track.events[i].data1;
-        }
       }
     }
   }
@@ -169,13 +175,13 @@ void handleTrackState(int i) {
       tracks[i].eventCount = 0;
       tracks[i].muted = false;
       if (!loopRunning) {
-        loopStartTime = clockTicks;
+        loopStartTick = clockTicks;
         loopRunning = true;
       }
       break;
     case RECORDING:
       if (i == 0) {
-        loopLengthTicks = clockTicks - loopStartTime;
+        loopLengthTicks = clockTicks - loopStartTick;
       }
       tracks[i].state = OVERDUBBING;
       break;
@@ -228,7 +234,7 @@ void loop() {
 
   trackSelectButton.update();
   recordButton.update();
-
+  
   if (trackSelectButton.fell()) {
     currentTrack = (currentTrack + 1) % NUM_TRACKS;
     updateLCD();
