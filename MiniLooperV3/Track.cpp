@@ -65,8 +65,6 @@ void Track::togglePlayStop() {
   }
 }
 
-bool muted = false;  // Add this inside your Track class
-
 void Track::toggleMuteTrack() {
   muted = !muted;
 }
@@ -100,6 +98,7 @@ void Track::recordMidiEvent(midi::MidiType type, byte channel, byte data1, byte 
   }
 }
 
+
 void Track::playEvents(uint32_t currentTick, bool isAudible) {
   if (!isAudible) return;  // global setting if playing is stopped
   if (muted) return;       // local mute flag stored for each track
@@ -131,11 +130,26 @@ void Track::playEvents(uint32_t currentTick, bool isAudible) {
 void Track::sendMidiEvent(const MidiEvent& evt) {
   if (state != TRACK_PLAYING && state != TRACK_OVERDUBBING) return;
 
+  isPlayingBack = true;  // Mark playback so noteOn/noteOff ignores it
+
+
+  Serial.print("[Playback] ");
+  Serial.print(evt.tick);
+  Serial.print(": ");
+  Serial.print(evt.type == midi::NoteOn ? "NoteOn" : evt.type == midi::NoteOff ? "NoteOff"
+                                                                               : "Other");
+  Serial.print(" note=");
+  Serial.print(evt.data1);
+  Serial.print(" vel=");
+  Serial.println(evt.data2);
+
   switch (evt.type) {
     case midi::NoteOn:
+      Serial.printf("Play NoteOn ch=%d note=%d vel=%d\n", evt.channel, evt.data1, evt.data2);
       midiHandler.sendNoteOn(evt.channel, evt.data1, evt.data2);
       break;
     case midi::NoteOff:
+      Serial.printf("Play NoteOff ch=%d note=%d vel=%d\n", evt.channel, evt.data1, evt.data2);
       midiHandler.sendNoteOff(evt.channel, evt.data1, evt.data2);
       break;
     case midi::ControlChange:
@@ -148,14 +162,11 @@ void Track::sendMidiEvent(const MidiEvent& evt) {
       midiHandler.sendAfterTouch(evt.channel, evt.data1);
       break;
     default:
+      Serial.printf("[Playback] %d: Unknown MIDI type=%d data1=%d data2=%d\n", evt.tick, evt.type, evt.data1, evt.data2);
       break;
   }
-}
 
-void Track::process(uint32_t currentTick, bool isAudible) {
-  if (state == TRACK_PLAYING || state == TRACK_OVERDUBBING) {
-    playEvents(currentTick, isAudible);
-  }
+  isPlayingBack = false;  // Unset after done
 }
 
 // Shortcuts to check the "state" variable in each track function
@@ -205,33 +216,33 @@ const std::vector<NoteEvent>& Track::getNoteEvents() const {
 }
 
 void Track::noteOn(uint8_t note, uint8_t velocity, uint32_t tick) {
+  if (isPlayingBack) return;  // Ignore playback-triggered events
+
   if (state == TRACK_RECORDING || state == TRACK_OVERDUBBING) {
+    Serial.print("[Record] NoteOn: ");
+    Serial.print(note);
+    Serial.print(" @ ");
+    Serial.println(tick);
+
     pendingNotes[note] = { tick, velocity };  // remember when this note started
 
-    MidiEvent midiEvent;
-    midiEvent.tick = tick - startTick;
-    midiEvent.type = midi::NoteOn;
-    midiEvent.channel = 1;  // hardcode or set dynamically
-    midiEvent.data1 = note;
-    midiEvent.data2 = velocity;  // velocity 0 is fine for NoteOff
-    events.push_back(midiEvent); 
+    // Record a MIDI event correctly
+    recordMidiEvent(midi::NoteOn, 1, note, velocity, tick);
   }
 }
 
 void Track::noteOff(uint8_t note, uint8_t velocity, uint32_t tick) {
-  
+  if (isPlayingBack) return;  // Ignore playback-triggered events
   auto it = pendingNotes.find(note);
   if (it != pendingNotes.end()) {
     if (state == TRACK_RECORDING || state == TRACK_OVERDUBBING) {
-      // Create a Midi event to send out
-      MidiEvent midiEvent;
-      midiEvent.tick = tick - startTick;
-      midiEvent.type = midi::NoteOff;
-      midiEvent.channel = 1;  // hardcode or set dynamically
-      midiEvent.data1 = note;
-      midiEvent.data2 = 0;  // velocity 0 is fine for NoteOff
+      Serial.print("[Record] NoteOff: ");
+      Serial.print(note);
+      Serial.print(" @ ");
+      Serial.println(tick);
 
-      events.push_back(midiEvent);
+      // Record a MIDI event correctly
+      recordMidiEvent(midi::NoteOff, 1, note, 0, tick);  // velocity 0 fin
     }
     // Create a finalized NoteEvent
     NoteEvent noteEvent;
@@ -242,8 +253,8 @@ void Track::noteOff(uint8_t note, uint8_t velocity, uint32_t tick) {
 
     noteEvents.push_back(noteEvent);
     pendingNotes.erase(it);
+  } else {
+    Serial.printf("WARNING: NoteOff for note %d with no matching NoteOn!\n", note);
   }
-  // If no matching note found, optionally handle error
-
 }
 // -------------------------------------------------------------

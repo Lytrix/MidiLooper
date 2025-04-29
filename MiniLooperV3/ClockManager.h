@@ -15,26 +15,27 @@ public:
 
   uint32_t getCurrentTick();
 
-  uint32_t microsPerTick;
-  volatile uint32_t lastMidiClockTime;
-  volatile uint32_t lastInternalTickTime;
-  const uint32_t midiClockTimeout = 500000; // 500ms = if no MIDI clock pulses for 0.5s, assume external clock lost
+  // --- Order these exactly as they should be initialized ---
+  uint32_t microsPerTick;                        // 1
+  volatile uint32_t currentTick;                // 2
+  volatile uint32_t lastMidiClockTime;          // 3
+  volatile uint32_t lastInternalTickTime;       // 4
+  const uint32_t midiClockTimeout = 500000;     // 5
+  bool pendingStart = false;                    // 6
+  bool externalClockPresent;                    // 7
 
+  // --- Methods ---
   void setupClock();
   void updateInternalClock();
-  void onMidiClockPulse(); // call this from your MIDI handler when MIDI clock message received
+  void onMidiClockPulse();
   void checkClockSource();
   void onMidiStart();
   void onMidiStop();
-
-  bool pendingStart = false;
-  bool externalClockPresent;
-  
   void setBpm(uint16_t newBpm);
   void setTicksPerQuarterNote(uint16_t newTicks);
 
 private:
-  volatile uint32_t currentTick;
+  void updateAllTracks(uint32_t currentTick);
 };
 
 extern ClockManager clockManager;

@@ -71,10 +71,8 @@ void handleLooperState() {
     case LOOPER_RECORDING:
       break;
     case LOOPER_PLAYING:
-      track.process(now, true);
       break;
     case LOOPER_OVERDUBBING:
-      track.process(now, true);
       break;
   }
 }

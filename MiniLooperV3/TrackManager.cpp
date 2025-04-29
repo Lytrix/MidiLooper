@@ -148,7 +148,7 @@ bool TrackManager::isTrackAudible(uint8_t trackIndex) const {
 void TrackManager::updateAllTracks(uint32_t currentTick) {
   for (uint8_t i = 0; i < NUM_TRACKS; i++) {
     bool audible = isTrackAudible(i);
-    tracks[i].process(currentTick, audible);
+    tracks[i].playEvents(currentTick, audible);
   }
 }
 

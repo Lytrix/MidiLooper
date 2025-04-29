@@ -46,8 +46,6 @@ struct NoteEvent {
 class Track {
 public:
   Track();
-
-  void process(uint32_t currentTick, bool isAudible);
   
   void startRecording(uint32_t startTick);
   void stopRecording();
@@ -88,14 +86,14 @@ public:
   void playEvents(uint32_t currentTick, bool isAudible);
 
 private:
-
+  bool isPlayingBack;  // to be ignored by Teensy central router to be recorded during overdub
   void sendMidiEvent(const MidiEvent& evt);
   bool isMuted() const;
-  bool muted;
+  bool muted = false; 
   TrackState state;
 
   
- std::unordered_map<uint8_t, PendingNote> pendingNotes; // note + velocity on -> startTick
+  std::unordered_map<uint8_t, PendingNote> pendingNotes; // note + velocity on -> startTick
   
   std::vector<MidiEvent> events;     // full MIDI stream (optional)
   std::vector<NoteEvent> noteEvents; // finalized notes (only NoteOn/NoteOff)

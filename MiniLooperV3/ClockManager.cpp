@@ -1,27 +1,30 @@
 // ClockManager.cpp
 #include "ClockManager.h"
-#include "Globals.h" // only if you need bpm, ticksPerQuarterNote, etc.
+#include "Globals.h"
 #include <IntervalTimer.h>
 #include "TrackManager.h"
 
-ClockManager clockManager;  // Correct global instance
+ClockManager clockManager;  // Global instance
 
 IntervalTimer clockTimer;
 
 ClockManager::ClockManager()
   : microsPerTick(0),
+    currentTick(0),
     lastMidiClockTime(0),
     lastInternalTickTime(0),
-    currentTick(0),
-    externalClockPresent(true)
-{
-}
+    pendingStart(false),
+    externalClockPresent(false)
+{}
 
 
-// Te most important TICK of all :)
 uint32_t ClockManager::getCurrentTick() {
-  return currentTick;
+  noInterrupts();
+  uint32_t tick = currentTick;
+  interrupts();
+  return tick;
 }
+
 
 void ClockManager::setupClock() {
   microsPerTick = 60000000UL / (bpm * ticksPerQuarterNote);
@@ -29,63 +32,51 @@ void ClockManager::setupClock() {
 }
 
 void ClockManager::setBpm(uint16_t newBpm) {
-    bpm = newBpm;
-    microsPerTick = 60000000UL / (bpm * ticksPerQuarterNote);
-    clockTimer.update(microsPerTick); // <- update timer immediately
+  bpm = newBpm;
+  microsPerTick = 60000000UL / (bpm * ticksPerQuarterNote);
+  clockTimer.update(microsPerTick);
 }
 
 void ClockManager::setTicksPerQuarterNote(uint16_t newTicks) {
-    ticksPerQuarterNote = newTicks;
-    microsPerTick = 60000000UL / (bpm * ticksPerQuarterNote);
-    clockTimer.update(microsPerTick);
+  ticksPerQuarterNote = newTicks;
+  microsPerTick = 60000000UL / (bpm * ticksPerQuarterNote);
+  clockTimer.update(microsPerTick);
 }
 
-
+// Called by hardware timer if externalClock is NOT present
 void ClockManager::updateInternalClock() {
   if (!externalClockPresent) {
     currentTick++;
-    // Update all tracks playback
-    for (int i = 0; i < trackManager.getTrackCount(); ++i) {
-        Track& track = trackManager.getTrack(i);
-
-        if (track.isPlaying() || track.isOverdubbing()) {   // <-- check BOTH playing and overdubbing
-          track.playEvents(currentTick, true);
-        }
-    }
+    updateAllTracks(currentTick);
     lastInternalTickTime = micros();
   }
 }
 
+// Called by MIDI clock tick (F8)
 void ClockManager::onMidiClockPulse() {
   externalClockPresent = true;
   currentTick++;
 
   if (pendingStart) {
-    // Quantize start to bar boundary
-    const uint32_t ticksPerBar = ticksPerQuarterNote * 4; // Assuming 4/4 time
+    // Quantize to bar boundary
+    const uint32_t ticksPerBar = ticksPerQuarterNote * 4;
     if (currentTick % ticksPerBar == 0) {
       currentTick = 0;
       pendingStart = false;
-      // Optionally: trigger playback start here if needed
     }
   }
 
-  // Update all tracks playback
-  for (int i = 0; i < trackManager.getTrackCount(); ++i) {
-    Track& track = trackManager.getTrack(i);
-
-    if (track.isPlaying() || track.isOverdubbing()) {   // <-- check BOTH playing and overdubbing
-      track.playEvents(currentTick, true);
-    }
-  }
+  updateAllTracks(currentTick);
   lastMidiClockTime = micros();
 }
 
+// Check regularly (e.g., from loop()) to detect loss of MIDI clock
 void ClockManager::checkClockSource() {
-  uint32_t now = micros();
-  if (externalClockPresent && (now - lastMidiClockTime > midiClockTimeout)) {
-    externalClockPresent = false; // fall back to internal clock
-  }
+  // uint32_t now = micros();
+  // if (externalClockPresent && (now - lastMidiClockTime > midiClockTimeout)) {
+  //   externalClockPresent = false;
+  //   Serial.println("MIDI clock lost, falling back to internal clock.");
+  // }
 }
 
 void ClockManager::onMidiStart() {
@@ -95,5 +86,15 @@ void ClockManager::onMidiStart() {
 }
 
 void ClockManager::onMidiStop() {
-  externalClockPresent = false;
+  // externalClockPresent = false;
+}
+
+// Common playback update for all tracks
+void ClockManager::updateAllTracks(uint32_t tick) {
+  for (int i = 0; i < trackManager.getTrackCount(); ++i) {
+    Track& track = trackManager.getTrack(i);
+    if (track.isPlaying() || track.isOverdubbing()) {
+      track.playEvents(tick, true);
+    }
+  }
 }
