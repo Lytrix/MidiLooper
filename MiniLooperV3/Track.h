@@ -48,7 +48,7 @@ public:
   Track();
   
   void startRecording(uint32_t startTick);
-  void stopRecording();
+  void stopRecording(uint32_t currentTick);
   void startPlaying();
   void stopPlaying();
   void togglePlayStop();

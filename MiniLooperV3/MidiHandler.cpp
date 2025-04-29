@@ -102,12 +102,12 @@ void MidiHandler::handleMidiMessage(byte type, byte channel, byte data1, byte da
 
 // You would implement your actual MIDI input reaction here:
 void MidiHandler::handleNoteOn(byte channel, byte note, byte velocity, uint32_t tickNow) { 
-  trackManager.getTrack(selectedTrack).recordMidiEvent(midi::NoteOn, channel, note, velocity, tickNow);
+  //trackManager.getTrack(selectedTrack).recordMidiEvent(midi::NoteOn, channel, note, velocity, tickNow);
   trackManager.getTrack(selectedTrack).noteOn(note, velocity, tickNow);
 }
 
 void MidiHandler::handleNoteOff(byte channel, byte note, byte velocity, uint32_t tickNow) { 
-  trackManager.getTrack(selectedTrack).recordMidiEvent(midi::NoteOff, channel, note, velocity, tickNow);
+  //trackManager.getTrack(selectedTrack).recordMidiEvent(midi::NoteOff, channel, note, velocity, tickNow);
   trackManager.getTrack(selectedTrack).noteOff(note, velocity, tickNow);
 }
 

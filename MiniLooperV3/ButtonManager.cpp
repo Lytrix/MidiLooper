@@ -51,8 +51,8 @@ void ButtonManager::handleButton(uint8_t index, ButtonAction action)
                 }
                 else if (track.isRecording()) {
                     Serial.println("Button A short press: Start Overdubbing");
-                    track.stopRecording();
-                    //track.startPlaying();
+                    track.stopRecording(clockManager.getCurrentTick());
+                    track.startPlaying();
                     track.startOverdubbing();
                     if (track.hasData()) {
                        Serial.println("Data recorded.");

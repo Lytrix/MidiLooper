@@ -1,6 +1,7 @@
 // TrackManager.cpp
 
 #include "Globals.h"
+#include "ClockManager.h"
 #include "TrackManager.h"
 
 TrackManager trackManager;  // initiate class to reuse in ino file.
@@ -26,7 +27,7 @@ void TrackManager::stopRecordingTrack(uint8_t trackIndex) {
   uint32_t recordedLength = tracks[trackIndex].getLength();
 
   if (trackIndex < NUM_TRACKS) {
-    tracks[trackIndex].stopRecording();
+    tracks[trackIndex].stopRecording(clockManager.getCurrentTick());
   }
   if (masterLoopLength == 0) {
     // First recording ever → become the master loop length
