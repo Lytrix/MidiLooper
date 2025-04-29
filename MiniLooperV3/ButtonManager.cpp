@@ -54,16 +54,18 @@ void ButtonManager::handleButton(uint8_t index, ButtonAction action)
                     track.stopRecording(clockManager.getCurrentTick());
                     track.startPlaying();
                     track.startOverdubbing();
+
                     if (track.hasData()) {
                        Serial.println("Data recorded.");
                     }
+
                     Serial.print("Track recorded ");
                     Serial.print(track.getEventCount());
                     Serial.println(" events.");
                 }
                 else if (track.isOverdubbing()) {
                     Serial.println("Button A short press: Stop Overdubbing");
-                    track.stopOverdubbing();
+                    track.stopOverdubbing(clockManager.getCurrentTick());
                 }
                 else if (track.isPlaying()) {
                     Serial.println("Button A short press: Start live overdubbing");

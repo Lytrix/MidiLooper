@@ -53,7 +53,7 @@ public:
   void stopPlaying();
   void togglePlayStop();
   void startOverdubbing();
-  void stopOverdubbing();
+  void stopOverdubbing(uint32_t currentTick);
   void clear();
 
   void recordMidiEvent(midi::MidiType type, byte channel, byte data1, byte data2, uint32_t currentTick);
