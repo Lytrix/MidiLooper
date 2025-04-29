@@ -1,20 +1,32 @@
-// Looper.h
 #ifndef LOOPER_H
 #define LOOPER_H
 
 #include <Arduino.h>
 #include "LooperState.h"
 
-// Functions to control the looper
-void setupLooper();
-void updateLooper();
-void startRecording();
-void stopRecording();
-void startPlayback();
-void stopPlayback();
-void startOverdub();
-void stopOverdub();
+class Looper {
+public:
+  Looper();
 
-extern LooperState looperState; // so other files (like Display) can know
+  void setup();
+  void update();
 
-#endif
+  void startRecording();
+  void stopRecording();
+  void startPlayback();
+  void stopPlayback();
+  void startOverdub();
+  void stopOverdub();
+
+  LooperState getState() const;
+
+private:
+  void handleState();
+  void requestStateTransition(LooperState targetState, bool quantize);
+
+  LooperState state;
+};
+
+extern Looper looper;  // Global instance
+
+#endif // LOOPER_H

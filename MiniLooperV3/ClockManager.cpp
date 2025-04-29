@@ -1,40 +1,99 @@
 // ClockManager.cpp
-#include "Globals.h"
-#include "Clock.h"
 #include "ClockManager.h"
+#include "Globals.h" // only if you need bpm, ticksPerQuarterNote, etc.
 #include <IntervalTimer.h>
+#include "TrackManager.h"
+
+ClockManager clockManager;  // Correct global instance
 
 IntervalTimer clockTimer;
 
-ClockSource clockSource = CLOCK_INTERNAL;
-
-volatile uint32_t lastMidiClockTime = 0;
-volatile uint32_t lastInternalTickTime = 0;
-uint32_t microsPerTick = 0;
-
-void setupClock() {
-  microsPerTick = 60000000 / (bpm * ticksPerQuarterNote);
-  clockTimer.begin(updateInternalClock, microsPerTick);
+ClockManager::ClockManager()
+  : microsPerTick(0),
+    lastMidiClockTime(0),
+    lastInternalTickTime(0),
+    currentTick(0),
+    externalClockPresent(true)
+{
 }
 
-void updateInternalClock() {
-  if (clockSource == CLOCK_INTERNAL) {
+
+// Te most important TICK of all :)
+uint32_t ClockManager::getCurrentTick() {
+  return currentTick;
+}
+
+void ClockManager::setupClock() {
+  microsPerTick = 60000000UL / (bpm * ticksPerQuarterNote);
+  clockTimer.begin([] { clockManager.updateInternalClock(); }, microsPerTick);
+}
+
+void ClockManager::setBpm(uint16_t newBpm) {
+    bpm = newBpm;
+    microsPerTick = 60000000UL / (bpm * ticksPerQuarterNote);
+    clockTimer.update(microsPerTick); // <- update timer immediately
+}
+
+void ClockManager::setTicksPerQuarterNote(uint16_t newTicks) {
+    ticksPerQuarterNote = newTicks;
+    microsPerTick = 60000000UL / (bpm * ticksPerQuarterNote);
+    clockTimer.update(microsPerTick);
+}
+
+
+void ClockManager::updateInternalClock() {
+  if (!externalClockPresent) {
     currentTick++;
+    // Update all tracks playback
+    for (int i = 0; i < trackManager.getTrackCount(); ++i) {
+        Track& track = trackManager.getTrack(i);
+
+        if (track.isPlaying() || track.isOverdubbing()) {   // <-- check BOTH playing and overdubbing
+          track.playEvents(currentTick, true);
+        }
+    }
     lastInternalTickTime = micros();
   }
 }
 
-void onMidiClockPulse() {
+void ClockManager::onMidiClockPulse() {
+  externalClockPresent = true;
   currentTick++;
-  lastMidiClockTime = micros();
-  clockSource = CLOCK_EXTERNAL;
-}
 
-void checkClockSource() {
-  uint32_t now = micros();
-  if (clockSource == CLOCK_EXTERNAL) {
-    if (now - lastMidiClockTime > midiClockTimeout) {
-      clockSource = CLOCK_INTERNAL;
+  if (pendingStart) {
+    // Quantize start to bar boundary
+    const uint32_t ticksPerBar = ticksPerQuarterNote * 4; // Assuming 4/4 time
+    if (currentTick % ticksPerBar == 0) {
+      currentTick = 0;
+      pendingStart = false;
+      // Optionally: trigger playback start here if needed
     }
   }
+
+  // Update all tracks playback
+  for (int i = 0; i < trackManager.getTrackCount(); ++i) {
+    Track& track = trackManager.getTrack(i);
+
+    if (track.isPlaying() || track.isOverdubbing()) {   // <-- check BOTH playing and overdubbing
+      track.playEvents(currentTick, true);
+    }
+  }
+  lastMidiClockTime = micros();
+}
+
+void ClockManager::checkClockSource() {
+  uint32_t now = micros();
+  if (externalClockPresent && (now - lastMidiClockTime > midiClockTimeout)) {
+    externalClockPresent = false; // fall back to internal clock
+  }
+}
+
+void ClockManager::onMidiStart() {
+  pendingStart = true;
+  externalClockPresent = true;
+  lastMidiClockTime = micros();
+}
+
+void ClockManager::onMidiStop() {
+  externalClockPresent = false;
 }

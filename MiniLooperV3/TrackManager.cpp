@@ -145,8 +145,6 @@ bool TrackManager::isTrackAudible(uint8_t trackIndex) const {
   }
 }
 
-
-
 void TrackManager::updateAllTracks(uint32_t currentTick) {
   for (uint8_t i = 0; i < NUM_TRACKS; i++) {
     bool audible = isTrackAudible(i);
@@ -186,4 +184,14 @@ uint32_t TrackManager::getTrackLength(uint8_t trackIndex) const {
     return tracks[trackIndex].getLength();
   }
   return 0;
+}
+
+Track& TrackManager::getTrack(uint8_t index)
+{
+    return tracks[index];
+}
+
+uint8_t TrackManager::getTrackCount() const
+{
+    return NUM_TRACKS;
 }

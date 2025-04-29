@@ -3,10 +3,9 @@
 #ifndef TRACKMANAGER_H
 #define TRACKMANAGER_H
 
+#include "Globals.h"
 #include <Arduino.h>
 #include "Track.h"
-
-#define NUM_TRACKS 4  // Change this to however many tracks you want
 
 class TrackManager {
 public:
@@ -52,6 +51,10 @@ public:
 
   TrackState getTrackState(uint8_t trackIndex) const;
   uint32_t getTrackLength(uint8_t trackIndex) const;
+
+  Track& getTrack(uint8_t trackIndex);      
+  uint8_t getTrackCount() const;
+
 
   bool pendingRecord[NUM_TRACKS];
   bool pendingStop[NUM_TRACKS];

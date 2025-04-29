@@ -1,37 +1,36 @@
-#include "Globals.h"
-#include "Looper.h"
-#include "LooperState.h"
-#include "Clock.h"
 #include "ClockManager.h"
-#include "TrackManager.h"
-//#include "ButtonManager.h"
-//#include "DisplayManager.h"
-
 #include "MidiHandler.h"
-
+#include "TrackManager.h"
+#include "Looper.h"
+#include "ButtonManager.h"
+#include "DisplayManager.h"
 
 void setup() {
-  //setupGlobals();
-  setupClock();
-  setupLooper();
-  //setupButtons();
-  //setupDisplay();
-  setupMidi();
+  clockManager.setupClock();
+  midiHandler.setup();
+  looper.setup();
+  buttonManager.setup({9, 10});
+  displayManager.setup();
 }
 
 void loop() {
-  checkClockSource();  // keep clock source updated
-  //updateButtons();
-  updateLooper();
-  //updateDisplay();
-
-  handleMidiInput();
+  clockManager.checkClockSource();  // keep clock source updated
+  midiHandler.handleInput();
   
-  uint32_t currentTick = Clock::getCurrentTick(); // PPQN ticks
+  uint32_t tickNow = clockManager.getCurrentTick();
+  trackManager.handleQuantizedStart(tickNow); 
+  trackManager.handleQuantizedStop(tickNow);
+  trackManager.updateAllTracks(tickNow);
+   
+  buttonManager.update();
+  //buttonManager.updateButtons(); // perform logic
+  looper.update();
 
-  trackManager.handleQuantizedStart(currentTick); 
-  trackManager.handleQuantizedStop(currentTick);
-
-  trackManager.updateAllTracks(currentTick);
+  static uint32_t lastDisplayUpdate = 0;
+  if (millis() - lastDisplayUpdate > 30) { // Update display every ~30ms
+    displayManager.update();
+    lastDisplayUpdate = millis();
+  }
+  
 }
 

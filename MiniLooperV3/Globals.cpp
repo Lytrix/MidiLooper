@@ -3,6 +3,8 @@
 
 volatile uint32_t currentTick = 0; // Define it once.
 
+uint8_t selectedTrack = 0;
+
 float bpm = 120.0;
 uint32_t ticksPerQuarterNote = 24;
 uint32_t quartersPerBar = 4;

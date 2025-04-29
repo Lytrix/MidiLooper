@@ -6,9 +6,6 @@
 #include "TrackManager.h"
 #include "MidiHandler.h"
 
-
-Track track1;
-
 LooperState looperState = LOOPER_IDLE;
 
 static LooperState pendingState = LOOPER_IDLE;
@@ -35,7 +32,7 @@ void actuallyTransition() {
   // Enter new state
   switch (looperState) {
     case LOOPER_RECORDING:
-      track1.clear();
+      track.clear();
       break;
     case LOOPER_PLAYING:
       break;
@@ -74,10 +71,10 @@ void handleLooperState() {
     case LOOPER_RECORDING:
       break;
     case LOOPER_PLAYING:
-      track1.playEvents(now, true);
+      track.process(now, true);
       break;
     case LOOPER_OVERDUBBING:
-      track1.playEvents(now, true);
+      track.process(now, true);
       break;
   }
 }
