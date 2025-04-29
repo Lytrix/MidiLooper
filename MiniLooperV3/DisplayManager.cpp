@@ -79,8 +79,8 @@ void DisplayManager::showPianoRoll() {
     bool foundNote = false;
 
     for (const auto& note : notes) {
-      if (tick >= note.startTick && tick < note.endTick) {
-        if (tick == note.startTick) {
+      if (tick >= note.startLoopTick && tick < note.endTick) {
+        if (tick == note.startLoopTick) {
           lcd.write(noteName(note.note));
         } else {
           lcd.write('#');
@@ -95,9 +95,6 @@ void DisplayManager::showPianoRoll() {
     }
   }
 }
-
-
-
 
 // Converts MIDI note number to a letter (basic version)
 char DisplayManager::noteName(uint8_t midiNote) {

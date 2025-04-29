@@ -25,7 +25,7 @@ struct MidiEvent {
 };
 
 struct PendingNote {
-  uint32_t startTick;
+  uint32_t startLoopTick;
   uint8_t velocity;
 };
 
@@ -35,7 +35,7 @@ struct PendingNote {
 struct NoteEvent {
   uint8_t note;
   uint8_t velocity;
-  uint32_t startTick;
+  uint32_t startLoopTick;
   uint32_t endTick;
   // bool isNoteOn;
 };
@@ -47,7 +47,7 @@ class Track {
 public:
   Track();
   
-  void startRecording(uint32_t startTick);
+  void startRecording(uint32_t startLoopTick);
   void stopRecording(uint32_t currentTick);
   void startPlaying();
   void stopPlaying();
@@ -93,14 +93,14 @@ private:
   TrackState state;
 
   
-  std::unordered_map<uint8_t, PendingNote> pendingNotes; // note + velocity on -> startTick
+  std::unordered_map<uint8_t, PendingNote> pendingNotes; // note + velocity on -> startLoopTick
   
   std::vector<MidiEvent> events;     // full MIDI stream (optional)
   std::vector<NoteEvent> noteEvents; // finalized notes (only NoteOn/NoteOff)
 
-  uint32_t startTick;
-  uint32_t lengthTicks;
-  uint16_t playbackIndex;  // New: index of where we are in the event list
+  uint32_t startLoopTick;
+  uint32_t loopLengthTicks;
+  uint16_t nextEventIndex;  // New: index of where we are in the event list
 };
 
 extern Track track;

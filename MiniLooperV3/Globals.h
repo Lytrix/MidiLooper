@@ -8,6 +8,11 @@
 
 #define NUM_TRACKS 4  // Change this to however many tracks you want
 
+// 🛠 Define internal PPQN scale
+#define INTERNAL_PPQN 192
+#define MIDI_CLOCK_PPQN 24
+#define TICKS_PER_CLOCK (INTERNAL_PPQN / MIDI_CLOCK_PPQN)
+
 // LCD Pin definitions
 const int LCD_RS = 12;
 const int LCD_ENABLE = 11;

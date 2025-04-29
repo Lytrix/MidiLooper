@@ -4,53 +4,55 @@
 
 Track track;
 
-
 Track::Track()
   : state(TRACK_STOPPED),
-    startTick(0),
-    lengthTicks(0),
-    playbackIndex(0) {}
+    startLoopTick(0),
+    loopLengthTicks(0),
+    nextEventIndex(0) {}
 
 void Track::startRecording(uint32_t currentTick) {
   events.clear();
-  startTick = currentTick;
+  startLoopTick = currentTick;
   state = TRACK_RECORDING;
   Serial.println("Recording started.");
 }
 
 
 void Track::stopRecording(uint32_t currentTick) {
-  lengthTicks = currentTick - startTick;
+  loopLengthTicks = currentTick - startLoopTick;
   state = TRACK_STOPPED_RECORDING;
-  playbackIndex = 0;
+  nextEventIndex = 0;
   Serial.println("Recording stopped.");
 }
 
 // void Track::stopRecording() {
 //   if (!events.empty()) {
-//     lengthTicks = events.back().tick + 1;
+//     loopLengthTicks = events.back().tick + 1;
 //   }
 //   state = TRACK_STOPPED_RECORDING;  // ✅ ready for overdub instead
 //   Serial.println("Recording stopped, ready to overdub.");
 // }
 
 void Track::startPlaying() {
-  if (lengthTicks > 0) {
+  if (loopLengthTicks > 0) {
     state = TRACK_PLAYING;
   }
 }
 
 void Track::startOverdubbing() {
   state = TRACK_OVERDUBBING;
- 
+  
+  // 🛠 Align to current loop phase curcial when switching from stopOverdubbing
+  startLoopTick = currentTick - ((currentTick - startLoopTick) % loopLengthTicks);
+
   Serial.println("Overdubbing started.");
   //}
 }
 
 void Track::stopOverdubbing(uint32_t currentTick) {
   state = TRACK_PLAYING;
-  //startTick = currentTick;     // 🔁 Resync loop
-  //playbackIndex = 0;           // ⏮️ Reset event scanning
+  startLoopTick = currentTick;     // 🔁 Resync loop
+  nextEventIndex = 0;           // ⏮️ Reset event scanning
   Serial.println("Overdubbing stopped, back to playback.");
 }
 
@@ -85,9 +87,9 @@ size_t Track::getEventCount() const {
 void Track::clear() {
   events.clear();      // Remove all recorded MIDI events
   noteEvents.clear();  // Remove any note-specific events if you have a separate list
-  startTick = 0;       // Reset the recording start tick
-  lengthTicks = 0;     // Reset the track length
-  // playbackIndex = 0;      // Reset playback position
+  startLoopTick = 0;       // Reset the recording start tick
+  loopLengthTicks = 0;     // Reset the track length
+  // nextEventIndex = 0;      // Reset playback position
   state = TRACK_STOPPED;  // Set state to stopped (or idle, depending on your design)
   Serial.println("Track erased.");
 }
@@ -95,8 +97,8 @@ void Track::clear() {
 void Track::recordMidiEvent(midi::MidiType type, byte channel, byte data1, byte data2, uint32_t currentTick) {
   if ((Track::isRecording() && !Track::isPlaying()) || Track::isOverdubbing()) {
 
-    // for recording and overdub recalculate where the ticks relative to lengthTicks
-    uint32_t tickInLoop = (currentTick - startTick) % lengthTicks; 
+    // for recording and overdub recalculate where the ticks relative to loopLengthTicks
+    uint32_t tickInLoop = (currentTick - startLoopTick) % loopLengthTicks; 
     
     // Prevent recording duplicate events at the same tick with same parameters
     for (auto& e : events) {
@@ -108,43 +110,45 @@ void Track::recordMidiEvent(midi::MidiType type, byte channel, byte data1, byte 
         return;  // Duplicate event, skip it
       }
     }
-
-    MidiEvent evt = { (currentTick - startTick), type, channel, data1, data2 };
+    Serial.printf("Recording event at tick %lu (currentTick=%lu, startLoopTick=%lu, loopLengthTicks=%lu)\n", tickInLoop, currentTick, startLoopTick, loopLengthTicks);
+    
+    MidiEvent evt = { (currentTick - startLoopTick), type, channel, data1, data2 };
     events.push_back(evt);
+    
   }
 }
 
 
 
 void Track::playEvents(uint32_t currentTick, bool isAudible) {
-  if (!isAudible) return;  // Skip if global playback is off
-  if (muted) return;       // Skip if this track is muted
+  if (!isAudible) return;  // global setting if playing is stopped
+  if (muted) return;       // local mute flag stored for each track
 
-  if (events.empty() || lengthTicks == 0) return;  // Nothing to play
+  if (events.empty() || loopLengthTicks == 0) return;
 
   // 🔁 Get tick relative to the start of the loop
-  uint32_t tickInLoop = (currentTick - startTick) % lengthTicks;
+  uint32_t tickInLoop = (currentTick - startLoopTick) % loopLengthTicks;
 
   // 🎬 Transition from RECORDING or OVERDUBBING to OVERDUBBING after 1 full loop
-  if ((isRecording() || isOverdubbing()) && (currentTick - startTick >= lengthTicks)) {
+  if ((isRecording() || isOverdubbing()) && (currentTick - startLoopTick >= loopLengthTicks)) {
+    // tickInLoop == 0 && (
     state = TRACK_OVERDUBBING;
-    startTick = currentTick;
-    playbackIndex = 0;
+    startLoopTick = currentTick;
+    nextEventIndex = 0;
   }
 
   // ▶️ Play all events scheduled up to the current tick
-  while (playbackIndex < events.size() && events[playbackIndex].tick <= tickInLoop) {
-    const MidiEvent& evt = events[playbackIndex];
+  while (nextEventIndex < events.size() && events[nextEventIndex].tick <= tickInLoop) {
+    const MidiEvent& evt = events[nextEventIndex];
     sendMidiEvent(evt);
-    playbackIndex++;
+    nextEventIndex++;
   }
 
   // 🔄 At loop start, reset playback index to start scanning from beginning
   if (tickInLoop == 0) {
-    playbackIndex = 0;
+    nextEventIndex = 0;
   }
 }
-
 
 void Track::sendMidiEvent(const MidiEvent& evt) {
   if (state != TRACK_PLAYING && state != TRACK_OVERDUBBING) return;
@@ -217,10 +221,10 @@ bool Track::isPlaying() const {
 }
 
 uint32_t Track::getLength() const {
-  return lengthTicks;
+  return loopLengthTicks;
 }
 void Track::setLength(uint32_t ticks) {
-  lengthTicks = ticks;
+  loopLengthTicks = ticks;
 }
 
 TrackState Track::getState() const {
@@ -267,7 +271,7 @@ void Track::noteOff(uint8_t note, uint8_t velocity, uint32_t tick) {
         NoteEvent noteEvent;
         noteEvent.note = note;
         noteEvent.velocity = it->second.velocity;
-        noteEvent.startTick = it->second.startTick;
+        noteEvent.startLoopTick = it->second.startLoopTick;
         noteEvent.endTick = tick;
 
         noteEvents.push_back(noteEvent);

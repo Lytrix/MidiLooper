@@ -25,6 +25,10 @@ uint32_t ClockManager::getCurrentTick() {
   return tick;
 }
 
+// Call this once for every MIDI clock tick
+void ClockManager::onMidiClockTick() {
+  currentTick += TICKS_PER_CLOCK;
+}
 
 void ClockManager::setupClock() {
   microsPerTick = 60000000UL / (bpm * ticksPerQuarterNote);

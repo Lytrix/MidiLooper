@@ -35,6 +35,7 @@ public:
   void setTicksPerQuarterNote(uint16_t newTicks);
 
 private:
+  void onMidiClockTick();
   void updateAllTracks(uint32_t currentTick);
 };
 
