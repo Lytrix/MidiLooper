@@ -1,7 +1,7 @@
 # Midi Looper #
 
 
-![midilooper.jpg](images/midilooper.jpg)
+![midilooper.jpg](Images/midilooper.jpg)
 
 
 This Midilooper has been created with help of chatgpt. It has proven to be a great tutor to help me guide and understand every added feature's logic. It saved me a lot of time looking for the correct approach or answers on how to tackle things.
