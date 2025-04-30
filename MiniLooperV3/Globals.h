@@ -27,11 +27,8 @@ const int LCD_D5 = 31;
 const int LCD_D6 = 30;
 const int LCD_D7 = 29;
 
-extern uint8_t selectedTrack;
-
 // Timing
 extern float bpm;
-extern volatile uint32_t currentTick;  // updated by timer interrupt or MIDI clock
 extern uint32_t ticksPerQuarterNote;   // usually 24 for standard MIDI clock
 extern uint32_t quartersPerBar;
 extern const uint32_t ticksPerBar; // 4/4

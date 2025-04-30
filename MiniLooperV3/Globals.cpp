@@ -1,15 +1,12 @@
 // Globals.cpp
 #include "Globals.h"
+#include "ClockManager.h"
 
 bool DEBUG = true;
 bool DEBUG_MIDI = false;
 bool DEBUG_NOTES = false;
 bool DEBUG_BUTTONS = false;
-bool DEBUG_DISPLAY = true;
-
-volatile uint32_t currentTick = 0; // Define it once.
-
-uint8_t selectedTrack = 0;
+bool DEBUG_DISPLAY = false;
 
 float bpm = 120.0;
 uint32_t ticksPerQuarterNote = 24;
@@ -19,10 +16,10 @@ const uint32_t ticksPerBar = ticksPerQuarterNote * quartersPerBar; // 4/4
 static uint32_t lastBarTick = 0;
 
 bool isBarBoundary() {
-  uint32_t ticksSinceLastBar = currentTick - lastBarTick;
+  uint32_t ticksSinceLastBar = clockManager.getCurrentTick() - lastBarTick;
 
   if (ticksSinceLastBar >= ticksPerBar) {
-    lastBarTick = currentTick;
+    lastBarTick = clockManager.getCurrentTick();
     return true;
   }
   return false;

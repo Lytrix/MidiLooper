@@ -63,10 +63,10 @@ void ButtonManager::handleButton(uint8_t index, ButtonAction action)
                     }
 
                     if(DEBUG_BUTTONS) Serial.print("Track recorded ");
-                    if(DEBUG) Serial.print(track.getEventCount());
-                    if(DEBUG) Serial.println(" Midi events.");
+                    if(DEBUG) Serial.print(track.getMidiEventCount());
+                    if(DEBUG) Serial.println(" Midi midiEvents.");
                     if(DEBUG) Serial.print(track.getNoteEventCount());
-                    if(DEBUG) Serial.println(" Note events.");
+                    if(DEBUG) Serial.println(" Note midiEvents.");
                 }
                 else if (track.isOverdubbing()) {
                     if(DEBUG_BUTTONS) Serial.println("Button A short press: Stop Overdubbing");
