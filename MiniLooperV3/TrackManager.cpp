@@ -1,10 +1,8 @@
-// TrackManager.cpp
-
 #include "Globals.h"
 #include "ClockManager.h"
 #include "TrackManager.h"
 
-TrackManager trackManager;  // initiate class to reuse in ino file.
+TrackManager trackManager;
 
 TrackManager::TrackManager() {
   for (uint8_t i = 0; i < NUM_TRACKS; i++) {
@@ -17,21 +15,21 @@ TrackManager::TrackManager() {
   masterLoopLength = 0;
 }
 
+// Recording & Overdubbing ------------------------------------
+
 void TrackManager::startRecordingTrack(uint8_t trackIndex, uint32_t currentTick) {
-    tracks[trackIndex].startRecording(currentTick);
+  if (trackIndex >= NUM_TRACKS) return;
+  tracks[trackIndex].startRecording(currentTick);
 }
 
 void TrackManager::stopRecordingTrack(uint8_t trackIndex) {
   if (trackIndex >= NUM_TRACKS) return;
 
   uint32_t recordedLength = tracks[trackIndex].getLength();
+  tracks[trackIndex].stopRecording(clockManager.getCurrentTick());
 
-  if (trackIndex < NUM_TRACKS) {
-    tracks[trackIndex].stopRecording(clockManager.getCurrentTick());
-  }
   if (masterLoopLength == 0) {
-    // First recording ever → become the master loop length
-    setMasterLoopLength(recordedLength);
+    setMasterLoopLength(recordedLength);  // First loop sets master length
   }
 
   if (autoAlignEnabled) {
@@ -40,49 +38,11 @@ void TrackManager::stopRecordingTrack(uint8_t trackIndex) {
 }
 
 void TrackManager::queueRecordingTrack(uint8_t trackIndex) {
-  if (trackIndex < NUM_TRACKS) {
-    pendingRecord[trackIndex] = true;
-  }
+  if (trackIndex < NUM_TRACKS) pendingRecord[trackIndex] = true;
 }
 
 void TrackManager::queueStopRecordingTrack(uint8_t trackIndex) {
-  if (trackIndex < NUM_TRACKS) {
-    pendingStop[trackIndex] = true;
-  }
-}
-
-void TrackManager::handleQuantizedStart(uint32_t currentTick) {
-  if (currentTick % ticksPerBar == 0) { // **Start of Bar!**
-    for (uint8_t i = 0; i < NUM_TRACKS; i++) {
-      if (pendingRecord[i]) {
-        startRecordingTrack(i, currentTick);
-        pendingRecord[i] = false;
-      }
-    }
-  }
-}
-
-void TrackManager::handleQuantizedStop(uint32_t currentTick) {
-  if (currentTick % ticksPerBar == 0) { // **Start of Bar!**
-    for (uint8_t i = 0; i < NUM_TRACKS; i++) {
-      if (pendingStop[i]) {
-        stopRecordingTrack(i);
-        pendingStop[i] = false;
-      }
-    }
-  }
-}
-
-void TrackManager::startPlayingTrack(uint8_t trackIndex) {
-  if (trackIndex < NUM_TRACKS) {
-    tracks[trackIndex].startPlaying();
-  }
-}
-
-void TrackManager::stopPlayingTrack(uint8_t trackIndex) {
-  if (trackIndex < NUM_TRACKS) {
-    tracks[trackIndex].stopPlaying();
-  }
+  if (trackIndex < NUM_TRACKS) pendingStop[trackIndex] = true;
 }
 
 void TrackManager::overdubTrack(uint8_t trackIndex) {
@@ -91,70 +51,87 @@ void TrackManager::overdubTrack(uint8_t trackIndex) {
   }
 }
 
-void TrackManager::clearTrack(uint8_t trackIndex) {
-  if (trackIndex < NUM_TRACKS) {
-    tracks[trackIndex].clear();
+// Quantized Actions ------------------------------------------
+
+void TrackManager::handleQuantizedStart(uint32_t currentTick) {
+  if (currentTick % ticksPerBar != 0) return;
+
+  for (uint8_t i = 0; i < NUM_TRACKS; i++) {
+    if (pendingRecord[i]) {
+      startRecordingTrack(i, currentTick);
+      pendingRecord[i] = false;
+    }
   }
 }
 
-void TrackManager::muteTrack(uint8_t trackIndex) {
-  if (trackIndex < NUM_TRACKS) {
-    muted[trackIndex] = true;
+void TrackManager::handleQuantizedStop(uint32_t currentTick) {
+  if (currentTick % ticksPerBar != 0) return;
+
+  for (uint8_t i = 0; i < NUM_TRACKS; i++) {
+    if (pendingStop[i]) {
+      stopRecordingTrack(i);
+      pendingStop[i] = false;
+    }
   }
+}
+
+// Playback Control -------------------------------------------
+
+void TrackManager::startPlayingTrack(uint8_t trackIndex) {
+  if (trackIndex < NUM_TRACKS) tracks[trackIndex].startPlaying(clockManager.getCurrentTick());
+}
+
+void TrackManager::stopPlayingTrack(uint8_t trackIndex) {
+  if (trackIndex < NUM_TRACKS) tracks[trackIndex].stopPlaying();
+}
+
+void TrackManager::clearTrack(uint8_t trackIndex) {
+  if (trackIndex < NUM_TRACKS) tracks[trackIndex].clear();
+}
+
+void TrackManager::updateAllTracks(uint32_t currentTick) {
+  for (uint8_t i = 0; i < NUM_TRACKS; i++) {
+    bool audible = isTrackAudible(i);
+    tracks[i].playMidiEvents(currentTick, audible);
+  }
+}
+
+// Mute / Solo ------------------------------------------------
+
+void TrackManager::muteTrack(uint8_t trackIndex) {
+  if (trackIndex < NUM_TRACKS) muted[trackIndex] = true;
 }
 
 void TrackManager::unmuteTrack(uint8_t trackIndex) {
-  if (trackIndex < NUM_TRACKS) {
-    muted[trackIndex] = false;
-  }
+  if (trackIndex < NUM_TRACKS) muted[trackIndex] = false;
 }
 
 void TrackManager::toggleMuteTrack(uint8_t trackIndex) {
-  if (trackIndex < NUM_TRACKS) {
-    muted[trackIndex] = !muted[trackIndex];
-  }
+  if (trackIndex < NUM_TRACKS) muted[trackIndex] = !muted[trackIndex];
 }
 
 void TrackManager::soloTrack(uint8_t trackIndex) {
-  if (trackIndex < NUM_TRACKS) {
-    soloed[trackIndex] = true;
-  }
+  if (trackIndex < NUM_TRACKS) soloed[trackIndex] = true;
 }
 
 void TrackManager::unsoloTrack(uint8_t trackIndex) {
-  if (trackIndex < NUM_TRACKS) {
-    soloed[trackIndex] = false;
-  }
+  if (trackIndex < NUM_TRACKS) soloed[trackIndex] = false;
 }
 
 bool TrackManager::anyTrackSoloed() const {
   for (uint8_t i = 0; i < NUM_TRACKS; i++) {
-    if (soloed[i]) {
-      return true;
-    }
+    if (soloed[i]) return true;
   }
   return false;
 }
 
 bool TrackManager::isTrackAudible(uint8_t trackIndex) const {
   if (trackIndex >= NUM_TRACKS) return false;
-
-  if (anyTrackSoloed()) {
-    return soloed[trackIndex];
-  } else {
-    return !muted[trackIndex];
-  }
+  return anyTrackSoloed() ? soloed[trackIndex] : !muted[trackIndex];
 }
 
-void TrackManager::updateAllTracks(uint32_t currentTick) {
-  for (uint8_t i = 0; i < NUM_TRACKS; i++) {
-    bool audible = isTrackAudible(i);
-    tracks[i].playEvents(currentTick, audible);
-  }
-}
+// Master Loop Length -----------------------------------------
 
-
-// Set master loop length ---------------------
 void TrackManager::enableAutoAlign(bool enabled) {
   autoAlignEnabled = enabled;
 }
@@ -171,42 +148,32 @@ uint32_t TrackManager::getMasterLoopLength() const {
   return masterLoopLength;
 }
 
-// ---------------------
+// Track Info Accessors ---------------------------------------
 
 TrackState TrackManager::getTrackState(uint8_t trackIndex) const {
-  if (trackIndex < NUM_TRACKS) {
-    return tracks[trackIndex].getState();
-  }
-  return TRACK_STOPPED; // Default fallback
+  return (trackIndex < NUM_TRACKS) ? tracks[trackIndex].getState() : TRACK_STOPPED;
 }
 
 uint32_t TrackManager::getTrackLength(uint8_t trackIndex) const {
-  if (trackIndex < NUM_TRACKS) {
-    return tracks[trackIndex].getLength();
-  }
-  return 0;
+  return (trackIndex < NUM_TRACKS) ? tracks[trackIndex].getLength() : 0;
 }
 
 void TrackManager::setSelectedTrack(uint8_t index) {
-    if (index < NUM_TRACKS) {
-        selectedTrack = index;
-    }
+  if (index < NUM_TRACKS) selectedTrack = index;
 }
 
 uint8_t TrackManager::getSelectedTrackIndex() {
-    return selectedTrack;
+  return selectedTrack;
 }
 
 Track& TrackManager::getSelectedTrack() {
-    return tracks[selectedTrack];
+  return tracks[selectedTrack];
 }
 
-Track& TrackManager::getTrack(uint8_t index)
-{
-    return tracks[index];
+Track& TrackManager::getTrack(uint8_t index) {
+  return tracks[index];
 }
 
-uint8_t TrackManager::getTrackCount() const
-{
-    return NUM_TRACKS;
+uint8_t TrackManager::getTrackCount() const {
+  return NUM_TRACKS;
 }

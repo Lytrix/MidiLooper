@@ -1,6 +1,7 @@
 #include "Globals.h"
 #include "Track.h"
 #include "MidiHandler.h"
+#include "ClockManager.h"
 
 // Track class implementation
 
@@ -10,6 +11,7 @@ Track::Track()
     trackState(TRACK_STOPPED),
     startLoopTick(0),
     loopLengthTicks(0),
+    lastTickInLoop(0),
     pendingNotes(),
     midiEvents(),
     noteEvents()
@@ -40,21 +42,21 @@ void Track::stopRecording(uint32_t currentTick) {
   Serial.println("Recording stopped.");
 }
 
-void Track::startPlaying() {
+void Track::startPlaying(uint32_t currentTick) {
   if (loopLengthTicks > 0) {
+    startLoopTick = currentTick - ((currentTick - startLoopTick) % loopLengthTicks);
     trackState = TRACK_PLAYING;
+    Serial.println("Start Playing.");
   }
 }
 
 void Track::startOverdubbing(uint32_t currentTick) {
   trackState = TRACK_OVERDUBBING;
-  startLoopTick = currentTick - ((currentTick - startLoopTick) % loopLengthTicks);
   Serial.println("Overdubbing started.");
 }
 
 void Track::stopOverdubbing(uint32_t currentTick) {
   trackState = TRACK_PLAYING;
-  startLoopTick = currentTick;
   Serial.println("Overdubbing stopped, back to playback.");
 }
 
@@ -63,7 +65,7 @@ void Track::stopPlaying() {
 }
 
 void Track::togglePlayStop() {
-  isPlaying() ? stopPlaying() : startPlaying();
+  isPlaying() ? stopPlaying() : startPlaying(clockManager.getCurrentTick());
 }
 
 void Track::toggleMuteTrack() {
@@ -95,7 +97,7 @@ void Track::clear() {
   Serial.println("Track erased.");
 }
 
-void Track::recordMidiEvent(midi::MidiType type, byte channel, byte data1, byte data2, uint32_t currentTick) {
+void Track::recordMidiEvents(midi::MidiType type, byte channel, byte data1, byte data2, uint32_t currentTick) {
   if ((isRecording() && !isPlaying()) || isOverdubbing()) {
     uint32_t tickRelative = currentTick - startLoopTick;
 
@@ -115,27 +117,33 @@ void Track::recordMidiEvent(midi::MidiType type, byte channel, byte data1, byte 
   }
 }
 
-void Track::playEvents(uint32_t currentTick, bool isAudible) {
+void Track::playMidiEvents(uint32_t currentTick, bool isAudible) {
   if (!isAudible || muted || midiEvents.empty() || loopLengthTicks == 0) return;
 
   uint32_t tickInLoop = (currentTick - startLoopTick) % loopLengthTicks;
-
+          
   // Transition to overdub after full loop if recording/overdubbing
   if ((isRecording() || isOverdubbing()) && (currentTick - startLoopTick >= loopLengthTicks)) {
     trackState = TRACK_OVERDUBBING;
-    startLoopTick = currentTick;
   }
 
   // Reset playback at start of each loop
-  if ((currentTick - startLoopTick) % loopLengthTicks == 0) {
-    nextEventIndex = 0;
-  }
+  // if ((currentTick - startLoopTick) % loopLengthTicks == 0) {
+  //   nextEventIndex = 0;
+  // }
+
+    if ((lastTickInLoop > tickInLoop)) {
+      nextEventIndex = 0;
+    }
+    lastTickInLoop = tickInLoop;
+
 
   // Match absolute midiEvent tick with relative loop tick
   while (nextEventIndex < midiEvents.size()) {
     const MidiEvent& midiEvent = midiEvents[nextEventIndex];
-    uint32_t eventTickInLoop = (midiEvent.tick - startLoopTick + loopLengthTicks) % loopLengthTicks;
-
+    //uint32_t eventTickInLoop = (midiEvent.tick - startLoopTick + loopLengthTicks) % loopLengthTicks;
+    uint32_t eventTickInLoop = midiEvent.tick % loopLengthTicks;
+    
     if (eventTickInLoop == tickInLoop) {
       sendMidiEvent(midiEvent);
       nextEventIndex++;
@@ -237,7 +245,7 @@ void Track::noteOn(uint8_t channel, uint8_t note, uint8_t velocity, uint32_t tic
 
   if (trackState == TRACK_RECORDING || trackState == TRACK_OVERDUBBING) {
     pendingNotes[{note, channel}] = PendingNote{tick, velocity};
-    recordMidiEvent(midi::NoteOn, channel, note, velocity, tick);
+    recordMidiEvents(midi::NoteOn, channel, note, velocity, tick);
     if (DEBUG_NOTES) {
       Serial.print("[Record] NoteOn: ");
       Serial.print(note);
@@ -253,7 +261,7 @@ void Track::noteOff(uint8_t channel, uint8_t note, uint8_t velocity, uint32_t ti
   if (trackState == TRACK_RECORDING || trackState == TRACK_OVERDUBBING) {
     auto it = pendingNotes.find({note, channel});
     if (it != pendingNotes.end()) {
-      recordMidiEvent(midi::NoteOff, channel, note, 0, tick);  // velocity 0 to mark end
+      recordMidiEvents(midi::NoteOff, channel, note, 0, tick);  // velocity 0 to mark end
 
       NoteEvent noteEvent;
       noteEvent.note = note;

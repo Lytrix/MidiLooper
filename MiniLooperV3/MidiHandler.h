@@ -12,33 +12,38 @@ class MidiHandler {
 public:
   MidiHandler();
 
+  // --- Initialization ---
   void setup();
-  void handleInput();
 
+  // --- Input Handling ---
+  void handleMidiInput();
   void handleMidiMessage(byte type, byte channel, byte data1, byte data2, InputSource source);
 
+  // --- MIDI Output ---
   void sendNoteOn(byte channel, byte note, byte velocity);
   void sendNoteOff(byte channel, byte note, byte velocity);
   void sendControlChange(byte channel, byte control, byte value);
   void sendPitchBend(byte channel, int value);
   void sendAfterTouch(byte channel, byte pressure);
 
+  // --- Clock / Transport Output ---
   void sendClock();
   void sendStart();
   void sendStop();
   void sendContinueMIDI();
 
+  // --- Output Routing ---
   void setOutputUSB(bool enable);
   void setOutputSerial(bool enable);
 
 private:
-  bool outputUSB;
-  bool outputSerial;
+  bool outputUSB = true;
+  bool outputSerial = true;
 
-  // --- missing private declarations (now added) ---
-  void handleNoteOn(byte channel, byte note, byte velocity, uint32_t currentTick);
-  void handleNoteOff(byte channel, byte note, byte velocity, uint32_t currentTick);
-  void handleControlChange(byte channel, byte control, byte value, uint32_t currentTick);
+  // --- Message Handlers ---
+  void handleNoteOn(byte channel, byte note, byte velocity, uint32_t tickNow);
+  void handleNoteOff(byte channel, byte note, byte velocity, uint32_t tickNow);
+  void handleControlChange(byte channel, byte control, byte value, uint32_t tickNow);
   void handlePitchBend(byte channel, int pitchValue);
   void handleAfterTouch(byte channel, byte pressure);
   void handleMidiStart();
@@ -48,4 +53,4 @@ private:
 
 extern MidiHandler midiHandler;
 
-#endif
+#endif // MIDIHANDLER_H
