@@ -74,4 +74,3 @@ New Loop ready for overdub to add the notes in the first bar.
 | `ClockManager` | `currentTick`                       | All other modules             | Provides global timing for sync and quantization                       |
 | `DisplayManager`| —                                   | `TrackManager`, `Track`       | Displays NoteEvents, loop status, and other track information          |
 
-- LooperState: Tracks the state machine for looping.
