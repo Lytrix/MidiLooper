@@ -8,6 +8,7 @@
 
 LooperState looperState = LOOPER_IDLE;
 
+
 static LooperState pendingState = LOOPER_IDLE;
 static bool pendingQuantized = false;   // <- NEW
 static bool transitionArmed = false;    // <- NEW
@@ -32,7 +33,6 @@ void actuallyTransition() {
   // Enter new state
   switch (looperState) {
     case LOOPER_RECORDING:
-      track.clear();
       break;
     case LOOPER_PLAYING:
       break;

@@ -6,6 +6,12 @@
 
 #include <Arduino.h>
 
+extern bool DEBUG;
+extern bool DEBUG_MIDI;
+extern bool DEBUG_NOTES;
+extern bool DEBUG_BUTTONS;
+extern bool DEBUG_DISPLAY;
+
 #define NUM_TRACKS 4  // Change this to however many tracks you want
 
 // 🛠 Define internal PPQN scale
@@ -20,7 +26,6 @@ const int LCD_D4 = 32;
 const int LCD_D5 = 31;
 const int LCD_D6 = 30;
 const int LCD_D7 = 29;
-
 
 extern uint8_t selectedTrack;
 

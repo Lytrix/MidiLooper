@@ -2,13 +2,25 @@
 #include "Track.h"
 #include "MidiHandler.h"
 
-Track track;
+// Track track; Don't initiate it, else you will create a duplicate which lease to empty arrays
 
 Track::Track()
   : state(TRACK_STOPPED),
     startLoopTick(0),
     loopLengthTicks(0),
     nextEventIndex(0) {}
+
+const std::vector<MidiEvent>& Track::getEvents() const {
+  return events;
+}
+
+const std::vector<NoteEvent>& Track::getNoteEvents() const {
+  return noteEvents;
+}
+
+uint32_t Track::getStartLoopTick() const {
+  return startLoopTick;
+}
 
 void Track::startRecording(uint32_t currentTick) {
   events.clear();
@@ -39,7 +51,7 @@ void Track::startPlaying() {
   }
 }
 
-void Track::startOverdubbing() {
+void Track::startOverdubbing(uint32_t currentTick) {
   state = TRACK_OVERDUBBING;
   
   // 🛠 Align to current loop phase curcial when switching from stopOverdubbing
@@ -84,6 +96,10 @@ size_t Track::getEventCount() const {
   return events.size();
 }
 
+size_t Track::getNoteEventCount() const {
+  return noteEvents.size();
+}
+
 void Track::clear() {
   events.clear();      // Remove all recorded MIDI events
   noteEvents.clear();  // Remove any note-specific events if you have a separate list
@@ -95,14 +111,12 @@ void Track::clear() {
 }
 
 void Track::recordMidiEvent(midi::MidiType type, byte channel, byte data1, byte data2, uint32_t currentTick) {
-  if ((Track::isRecording() && !Track::isPlaying()) || Track::isOverdubbing()) {
+  if ((isRecording() && !isPlaying()) || isOverdubbing()) {
+    uint32_t tickRelative = currentTick - startLoopTick;
 
-    // for recording and overdub recalculate where the ticks relative to loopLengthTicks
-    uint32_t tickInLoop = (currentTick - startLoopTick) % loopLengthTicks; 
-    
     // Prevent recording duplicate events at the same tick with same parameters
     for (auto& e : events) {
-      if (e.tick == tickInLoop && 
+      if (e.tick == tickRelative && 
           e.type == type && 
           e.channel == channel && 
           e.data1 == data1 && 
@@ -110,43 +124,53 @@ void Track::recordMidiEvent(midi::MidiType type, byte channel, byte data1, byte 
         return;  // Duplicate event, skip it
       }
     }
-    Serial.printf("Recording event at tick %lu (currentTick=%lu, startLoopTick=%lu, loopLengthTicks=%lu)\n", tickInLoop, currentTick, startLoopTick, loopLengthTicks);
-    
-    MidiEvent evt = { (currentTick - startLoopTick), type, channel, data1, data2 };
+
+    if (DEBUG) {
+      Serial.printf("[RECORD] Event @ tick %lu (current=%lu, start=%lu, loop=%lu)\n", 
+                    tickRelative, currentTick, startLoopTick, loopLengthTicks);
+    }
+
+    MidiEvent evt = { tickRelative, type, channel, data1, data2 };
     events.push_back(evt);
-    
   }
 }
 
 
 
 void Track::playEvents(uint32_t currentTick, bool isAudible) {
-  if (!isAudible) return;  // global setting if playing is stopped
-  if (muted) return;       // local mute flag stored for each track
+  if (!isAudible || muted || events.empty() || loopLengthTicks == 0) return;
 
-  if (events.empty() || loopLengthTicks == 0) return;
-
-  // 🔁 Get tick relative to the start of the loop
   uint32_t tickInLoop = (currentTick - startLoopTick) % loopLengthTicks;
 
-  // 🎬 Transition from RECORDING or OVERDUBBING to OVERDUBBING after 1 full loop
+  // Transition to overdub after full loop if recording/overdubbing
   if ((isRecording() || isOverdubbing()) && (currentTick - startLoopTick >= loopLengthTicks)) {
-    // tickInLoop == 0 && (
     state = TRACK_OVERDUBBING;
     startLoopTick = currentTick;
     nextEventIndex = 0;
   }
 
-  // ▶️ Play all events scheduled up to the current tick
-  while (nextEventIndex < events.size() && events[nextEventIndex].tick <= tickInLoop) {
-    const MidiEvent& evt = events[nextEventIndex];
-    sendMidiEvent(evt);
-    nextEventIndex++;
+  // Reset playback at start of each loop
+  if ((currentTick - startLoopTick) % loopLengthTicks == 0) {
+    nextEventIndex = 0;
   }
 
-  // 🔄 At loop start, reset playback index to start scanning from beginning
-  if (tickInLoop == 0) {
-    nextEventIndex = 0;
+  // Now correctly match absolute event tick with relative loop tick
+  while (nextEventIndex < events.size()) {
+    const MidiEvent& event = events[nextEventIndex];
+
+    // Convert absolute event tick to loop-relative position
+    uint32_t eventTickInLoop = (event.tick - startLoopTick + loopLengthTicks) % loopLengthTicks;
+
+    if (eventTickInLoop == tickInLoop) {
+      sendMidiEvent(event);
+      if (DEBUG) Serial.printf("[PLAY] Note %d @ tick %lu (current %lu, loop start %lu)\n", event.data1, eventTickInLoop, currentTick, startLoopTick);
+      nextEventIndex++;
+    } else if (eventTickInLoop > tickInLoop) {
+      break;  // Stop if events are for later in the loop
+    } else {
+      // Catch up missed or out-of-sync events
+      nextEventIndex++;
+    }
   }
 }
 
@@ -155,24 +179,24 @@ void Track::sendMidiEvent(const MidiEvent& evt) {
 
   isPlayingBack = true;  // Mark playback so noteOn/noteOff ignores it
 
-
-  Serial.print("[Playback] ");
-  Serial.print(evt.tick);
-  Serial.print(": ");
-  Serial.print(evt.type == midi::NoteOn ? "NoteOn" : evt.type == midi::NoteOff ? "NoteOff"
-                                                                               : "Other");
-  Serial.print(" note=");
-  Serial.print(evt.data1);
-  Serial.print(" vel=");
-  Serial.println(evt.data2);
-
+  if (DEBUG_MIDI) {
+    Serial.print("[Playback] ");
+    Serial.print(evt.tick);
+    Serial.print(": ");
+    Serial.print(evt.type == midi::NoteOn ? "NoteOn" : evt.type == midi::NoteOff ? "NoteOff"
+                                                                                : "Other");
+    Serial.print(" note=");
+    Serial.print(evt.data1);
+    Serial.print(" vel=");
+    Serial.println(evt.data2);
+  }
   switch (evt.type) {
     case midi::NoteOn:
-      Serial.printf("Play NoteOn ch=%d note=%d vel=%d\n", evt.channel, evt.data1, evt.data2);
+       if (DEBUG_MIDI) Serial.printf("Play NoteOn ch=%d note=%d vel=%d\n", evt.channel, evt.data1, evt.data2);
       midiHandler.sendNoteOn(evt.channel, evt.data1, evt.data2);
       break;
     case midi::NoteOff:
-      Serial.printf("Play NoteOff ch=%d note=%d vel=%d\n", evt.channel, evt.data1, evt.data2);
+      if (DEBUG_MIDI) Serial.printf("Play NoteOff ch=%d note=%d vel=%d\n", evt.channel, evt.data1, evt.data2);
       midiHandler.sendNoteOff(evt.channel, evt.data1, evt.data2);
       break;
     case midi::ControlChange:
@@ -185,7 +209,7 @@ void Track::sendMidiEvent(const MidiEvent& evt) {
       midiHandler.sendAfterTouch(evt.channel, evt.data1);
       break;
     default:
-      Serial.printf("[Playback] %d: Unknown MIDI type=%d data1=%d data2=%d\n", evt.tick, evt.type, evt.data1, evt.data2);
+      if (DEBUG_MIDI) Serial.printf("[Playback] %d: Unknown MIDI type=%d data1=%d data2=%d\n", evt.tick, evt.type, evt.data1, evt.data2);
       break;
   }
 
@@ -235,56 +259,86 @@ TrackState Track::getState() const {
 // Display functions
 // -------------------------------------------------------------
 
-const std::vector<MidiEvent>& Track::getEvents() const {
-  return events;
-}
 
-const std::vector<NoteEvent>& Track::getNoteEvents() const {
-  return noteEvents;
-}
-
-void Track::noteOn(uint8_t note, uint8_t velocity, uint32_t tick) {
+void Track::noteOn(uint8_t channel, uint8_t note, uint8_t velocity, uint32_t tick) {
   if (isPlayingBack) return;  // Ignore playback-triggered events
 
   if (state == TRACK_RECORDING || state == TRACK_OVERDUBBING) {
-    pendingNotes[note] = { tick, velocity };  // remember when this note started
+    //pendingNotes[{note, 1}] = { tick, velocity };  // remember when this note started
+    auto key = std::make_pair(note, channel);
+    pendingNotes[key] = PendingNote{ .startNoteTick = tick,  .velocity = velocity };
+    //pendingNotes[{note, channel}] = { tick, velocity };  // remember when this note started
     // Record a MIDI event correctly
-    recordMidiEvent(midi::NoteOn, 1, note, velocity, tick);
-
-    Serial.print("[Record] NoteOn: ");
-    Serial.print(note);
-    Serial.print(" @ ");
-    Serial.println(tick);
+    recordMidiEvent(midi::NoteOn, channel, note, velocity, tick);
+    if (DEBUG_NOTES){
+      Serial.print("[Record] NoteOn: ");
+      Serial.print(note);
+      Serial.print(" @ ");
+      Serial.println(tick);
+    }
   }
 }
 
-void Track::noteOff(uint8_t note, uint8_t velocity, uint32_t tick) {
+void Track::noteOff(uint8_t channel, uint8_t note, uint8_t velocity, uint32_t tick) {
   if (isPlayingBack) return;  // Ignore playback-triggered events
+
   if (state == TRACK_RECORDING || state == TRACK_OVERDUBBING) {
-      auto it = pendingNotes.find(note);
-      if (it != pendingNotes.end()) {
+    auto key = std::make_pair(note, channel);
+    auto it = pendingNotes.find(key);
 
-        // Record a MIDI event correctly
-        recordMidiEvent(midi::NoteOff, 1, note, 0, tick);  // velocity 0 fin
+    if (it != pendingNotes.end()) {
+      // Record a MIDI event correctly
+      recordMidiEvent(midi::NoteOff, channel, note, 0, tick);  // velocity 0 to mark end
 
-        // Create a finalized NoteEvent
-        NoteEvent noteEvent;
-        noteEvent.note = note;
-        noteEvent.velocity = it->second.velocity;
-        noteEvent.startLoopTick = it->second.startLoopTick;
-        noteEvent.endTick = tick;
+      // Create a finalized NoteEvent
+      NoteEvent noteEvent;
+      noteEvent.note = note;
+      noteEvent.velocity = it->second.velocity;
+      noteEvent.startNoteTick = it->second.startNoteTick;
+      noteEvent.endNoteTick = tick;
 
-        noteEvents.push_back(noteEvent);
-        pendingNotes.erase(it);
+      noteEvents.push_back(noteEvent);
+      pendingNotes.erase(it);
 
+      if (DEBUG_MIDI) {
         Serial.print("[Record] NoteOff: ");
         Serial.print(note);
         Serial.print(" @ ");
         Serial.println(tick);
+      }
+
+      if (DEBUG_NOTES) {
+        Serial.print("Start: ");
+        Serial.print(noteEvent.startNoteTick);
+        Serial.print(", End: ");
+        Serial.println(noteEvent.endNoteTick);
+      }
+      if (DEBUG) {
+        Serial.print("Pushed note: ");
+        Serial.println(noteEvent.note);
+        Serial.print("Total notes: ");
+        Serial.println(noteEvents.size());
+      }
+    } else {
+      // 🔁 This block was unreachable before — now it logs unmatched NoteOffs
+      Serial.printf("[Warning] NoteOff for note %d on ch %d with no matching NoteOn\n", note, channel);
     }
-  } 
-  // else {
-  //   Serial.printf("WARNING: NoteOff for note %d with no matching NoteOn!\n", note);
-  // }
+  }
 }
+
+void Track::printNoteEvents() const {
+  Serial.println("---- NoteEvents ----");
+  for (const auto& note : noteEvents) {
+    Serial.print("Note: ");
+    Serial.print(note.note);
+    Serial.print("  Velocity: ");
+    Serial.print(note.velocity);
+    Serial.print("  StartTick: ");
+    Serial.print(note.startNoteTick);
+    Serial.print("  EndTick: ");
+    Serial.println(note.endNoteTick);
+  }
+  Serial.println("---------------------");
+}
+
 // -------------------------------------------------------------

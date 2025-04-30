@@ -1,11 +1,13 @@
-#include "ButtonManager.h"
 #include "Globals.h"
+#include "ButtonManager.h"
 #include "ClockManager.h"
 #include "TrackManager.h"
 
 ButtonManager buttonManager;
 
 ButtonManager::ButtonManager() {}
+
+
 
 void ButtonManager::setup(const std::vector<uint8_t>& pins)
 {
@@ -39,47 +41,50 @@ void ButtonManager::update()
 
 void ButtonManager::handleButton(uint8_t index, ButtonAction action)
 {
+    // Get selected track from trackManager and set it to variable track
+    const auto& track = trackManager.getSelectedTrack();
     if (index == 0) { 
         // --------- Button A: Record - Overdub - Play, Clear Track --------
-        Track& track = trackManager.getTrack(selectedTrack);
-
         switch (action) {
             case BUTTON_SHORT_PRESS:
                 if (!track.isRecording() && !track.isOverdubbing() && !track.isArmed() && !track.isPlaying()) {
-                    Serial.println("Button A short press: Start Recording");
+                    if(DEBUG_BUTTONS) Serial.println("Button A short press: Start Recording");
+                    
                     track.startRecording(clockManager.getCurrentTick());
                 }
                 else if (track.isRecording()) {
-                    Serial.println("Button A short press: Start Overdubbing");
+                    if(DEBUG_BUTTONS) Serial.println("Button A short press: Start Overdubbing");
                     track.stopRecording(clockManager.getCurrentTick());
                     track.startPlaying();
-                    track.startOverdubbing();
-
+                    track.startOverdubbing(clockManager.getCurrentTick());
+                    if(DEBUG) trackManager.getSelectedTrack().printNoteEvents();
                     if (track.hasData()) {
                        Serial.println("Data recorded.");
                     }
 
-                    Serial.print("Track recorded ");
-                    Serial.print(track.getEventCount());
-                    Serial.println(" events.");
+                    if(DEBUG_BUTTONS) Serial.print("Track recorded ");
+                    if(DEBUG) Serial.print(track.getEventCount());
+                    if(DEBUG) Serial.println(" Midi events.");
+                    if(DEBUG) Serial.print(track.getNoteEventCount());
+                    if(DEBUG) Serial.println(" Note events.");
                 }
                 else if (track.isOverdubbing()) {
-                    Serial.println("Button A short press: Stop Overdubbing");
+                    if(DEBUG_BUTTONS) Serial.println("Button A short press: Stop Overdubbing");
                     track.stopOverdubbing(clockManager.getCurrentTick());
                 }
                 else if (track.isPlaying()) {
-                    Serial.println("Button A short press: Start live overdubbing");
-                    track.startOverdubbing();
+                    if(DEBUG_BUTTONS)  Serial.println("Button A short press: Start live overdubbing");
+                    track.startOverdubbing(clockManager.getCurrentTick());
                 }
                 else {
-                    Serial.println("Button A short press: Toggle Play/Stop");
+                    if(DEBUG_BUTTONS) Serial.println("Button A short press: Toggle Play/Stop");
                     track.togglePlayStop();
                 }
                 break;
 
             case BUTTON_LONG_PRESS:
-                Serial.println("Button A long press: Erase Track");
-                track.clear();
+                if(DEBUG_BUTTONS) Serial.println("Button A long press: Erase Track");
+                trackManager.getSelectedTrack().clear();
                 break;
 
             default:
@@ -92,15 +97,15 @@ void ButtonManager::handleButton(uint8_t index, ButtonAction action)
         case BUTTON_SHORT_PRESS:
             // Switch track
             selectedTrack = (selectedTrack + 1) % trackManager.getTrackCount();
-            Serial.print("Button B short press: Switched to track ");
-            Serial.println(selectedTrack);
+            if(DEBUG_BUTTONS) Serial.print("Button B short press: Switched to track ");
+            if(DEBUG_BUTTONS) Serial.println(selectedTrack);
             break;
 
         case BUTTON_LONG_PRESS: {
-            track = &trackManager.getTrack(selectedTrack);
+            track = &trackManager.getSelectedTrack();
             track->toggleMuteTrack();
-            Serial.print("Button B long press: Toggled mute on track ");
-            Serial.println(selectedTrack);
+            if(DEBUG_BUTTONS) Serial.print("Button B long press: Toggled mute on track ");
+            if(DEBUG_BUTTONS) Serial.println(selectedTrack);
             break;
         }
 

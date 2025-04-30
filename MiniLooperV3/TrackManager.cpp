@@ -87,7 +87,7 @@ void TrackManager::stopPlayingTrack(uint8_t trackIndex) {
 
 void TrackManager::overdubTrack(uint8_t trackIndex) {
   if (trackIndex < NUM_TRACKS) {
-    tracks[trackIndex].startOverdubbing();
+    tracks[trackIndex].startOverdubbing(clockManager.getCurrentTick());
   }
 }
 
@@ -185,6 +185,20 @@ uint32_t TrackManager::getTrackLength(uint8_t trackIndex) const {
     return tracks[trackIndex].getLength();
   }
   return 0;
+}
+
+void TrackManager::setSelectedTrack(uint8_t index) {
+    if (index < NUM_TRACKS) {
+        selectedTrack = index;
+    }
+}
+
+uint8_t TrackManager::getSelectedTrack() const {
+    return selectedTrack;
+}
+
+Track& TrackManager::getSelectedTrack() {
+    return tracks[selectedTrack];
 }
 
 Track& TrackManager::getTrack(uint8_t index)

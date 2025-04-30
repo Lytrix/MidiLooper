@@ -1,6 +1,12 @@
 // Globals.cpp
 #include "Globals.h"
 
+bool DEBUG = true;
+bool DEBUG_MIDI = false;
+bool DEBUG_NOTES = false;
+bool DEBUG_BUTTONS = false;
+bool DEBUG_DISPLAY = true;
+
 volatile uint32_t currentTick = 0; // Define it once.
 
 uint8_t selectedTrack = 0;

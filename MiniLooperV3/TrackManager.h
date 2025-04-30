@@ -11,6 +11,10 @@ class TrackManager {
 public:
   TrackManager();
 
+  void setSelectedTrack(uint8_t index);
+  uint8_t getSelectedTrack() const;
+  Track& getSelectedTrack();
+
   void updateAllTracks(uint32_t currentTick);
 
   void startRecordingTrack(uint8_t trackIndex, uint32_t currentTick);
@@ -52,7 +56,8 @@ public:
   TrackState getTrackState(uint8_t trackIndex) const;
   uint32_t getTrackLength(uint8_t trackIndex) const;
 
-  Track& getTrack(uint8_t trackIndex);      
+  Track& getTrack(uint8_t trackIndex); 
+     
   uint8_t getTrackCount() const;
 
 
@@ -63,7 +68,8 @@ private:
   Track tracks[NUM_TRACKS];
   bool muted[NUM_TRACKS];
   bool soloed[NUM_TRACKS];
-  
+
+  uint8_t selectedTrack = 0;
 };
 
 extern TrackManager trackManager;
