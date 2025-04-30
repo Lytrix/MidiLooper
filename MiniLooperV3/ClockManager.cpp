@@ -1,31 +1,39 @@
-// ClockManager.cpp
 #include "ClockManager.h"
 #include "Globals.h"
 #include <IntervalTimer.h>
 #include "TrackManager.h"
 
 ClockManager clockManager;  // Global instance
-
 IntervalTimer clockTimer;
 
 ClockManager::ClockManager()
-  : microsPerTick(0),
+  : pendingStart(false),
+    microsPerTick(0),
     currentTick(0),
     lastMidiClockTime(0),
     lastInternalTickTime(0),
-    pendingStart(false),
     externalClockPresent(false)
 {}
 
-
-uint32_t ClockManager::getCurrentTick() {
+uint32_t ClockManager::getCurrentTick() const {
   noInterrupts();
   uint32_t tick = currentTick;
   interrupts();
   return tick;
 }
 
-// Call this once for every MIDI clock tick
+bool ClockManager::isExternalClockPresent() const {
+  return externalClockPresent;
+}
+
+void ClockManager::setExternalClockPresent(bool present) {
+  externalClockPresent = present;
+}
+
+void ClockManager::setLastMidiClockTime(uint32_t time) {
+  lastMidiClockTime = time;
+}
+
 void ClockManager::onMidiClockTick() {
   currentTick += TICKS_PER_CLOCK;
 }
@@ -47,7 +55,6 @@ void ClockManager::setTicksPerQuarterNote(uint16_t newTicks) {
   clockTimer.update(microsPerTick);
 }
 
-// Called by hardware timer if externalClock is NOT present
 void ClockManager::updateInternalClock() {
   if (!externalClockPresent) {
     currentTick++;
@@ -56,13 +63,11 @@ void ClockManager::updateInternalClock() {
   }
 }
 
-// Called by MIDI clock tick (F8)
 void ClockManager::onMidiClockPulse() {
   externalClockPresent = true;
   currentTick++;
 
   if (pendingStart) {
-    // Quantize to bar boundary
     const uint32_t ticksPerBar = ticksPerQuarterNote * 4;
     if (currentTick % ticksPerBar == 0) {
       currentTick = 0;
@@ -74,13 +79,8 @@ void ClockManager::onMidiClockPulse() {
   lastMidiClockTime = micros();
 }
 
-// Check regularly (e.g., from loop()) to detect loss of MIDI clock
 void ClockManager::checkClockSource() {
-  // uint32_t now = micros();
-  // if (externalClockPresent && (now - lastMidiClockTime > midiClockTimeout)) {
-  //   externalClockPresent = false;
-  //   Serial.println("MIDI clock lost, falling back to internal clock.");
-  // }
+  // Future enhancement: detect clock loss
 }
 
 void ClockManager::onMidiStart() {
@@ -93,7 +93,6 @@ void ClockManager::onMidiStop() {
   // externalClockPresent = false;
 }
 
-// Common playback update for all tracks
 void ClockManager::updateAllTracks(uint32_t tick) {
   for (int i = 0; i < trackManager.getTrackCount(); ++i) {
     Track& track = trackManager.getTrack(i);

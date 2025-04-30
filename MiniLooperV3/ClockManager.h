@@ -1,4 +1,3 @@
-// ClockManager.h
 #ifndef CLOCKMANAGER_H
 #define CLOCKMANAGER_H
 
@@ -13,28 +12,38 @@ class ClockManager {
 public:
   ClockManager();
 
-  uint32_t getCurrentTick();
+  // --- State flags ---
+  bool pendingStart;
 
-  // --- Order these exactly as they should be initialized ---
-  uint32_t microsPerTick;                        // 1
-  volatile uint32_t currentTick;                // 2
-  volatile uint32_t lastMidiClockTime;          // 3
-  volatile uint32_t lastInternalTickTime;       // 4
-  const uint32_t midiClockTimeout = 500000;     // 5
-  bool pendingStart = false;                    // 6
-  bool externalClockPresent;                    // 7
-
-  // --- Methods ---
+  // --- Public methods ---
   void setupClock();
   void updateInternalClock();
   void onMidiClockPulse();
-  void checkClockSource();
   void onMidiStart();
   void onMidiStop();
+  void checkClockSource();
   void setBpm(uint16_t newBpm);
   void setTicksPerQuarterNote(uint16_t newTicks);
 
+  // --- Accessors ---
+  uint32_t getCurrentTick() const;
+  bool isExternalClockPresent() const;
+  void setExternalClockPresent(bool present);
+  void setLastMidiClockTime(uint32_t time);
+
 private:
+  // --- Timing data ---
+  uint32_t microsPerTick;
+  volatile uint32_t currentTick;
+  volatile uint32_t lastMidiClockTime;
+  volatile uint32_t lastInternalTickTime;
+
+  // --- Clock detection ---
+  bool externalClockPresent;
+  const uint32_t midiClockTimeout = 500000; // 500ms: timeout for external clock  
+  //  it’s not dependent on dynamic input, there’s no need to initialize it in the constructor.
+
+  // --- Internal handlers ---
   void onMidiClockTick();
   void updateAllTracks(uint32_t currentTick);
 };

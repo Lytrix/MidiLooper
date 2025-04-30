@@ -126,8 +126,8 @@ void MidiHandler::handleMidiStop() {
 }
 
 void MidiHandler::handleMidiContinue() {
-  clockManager.externalClockPresent = true;
-  clockManager.lastMidiClockTime = micros();
+  clockManager.setExternalClockPresent(true);
+  clockManager.setLastMidiClockTime(micros());
 }
 
 // ---------------------------------------------------------------------------

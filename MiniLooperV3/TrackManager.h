@@ -15,6 +15,8 @@ public:
   uint8_t getSelectedTrackIndex();
   Track& getSelectedTrack();
 
+  uint8_t selectedTrack;
+  
   void updateAllTracks(uint32_t currentTick);
 
   void startRecordingTrack(uint8_t trackIndex, uint32_t currentTick);
@@ -68,8 +70,6 @@ private:
   Track tracks[NUM_TRACKS];
   bool muted[NUM_TRACKS];
   bool soloed[NUM_TRACKS];
-
-  uint8_t selectedTrack = 0;
 };
 
 extern TrackManager trackManager;
