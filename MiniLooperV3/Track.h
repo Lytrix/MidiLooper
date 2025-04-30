@@ -66,7 +66,7 @@ public:
   void stopRecording(uint32_t currentTick);
 
   // Playback control
-  void startPlaying();
+  void startPlaying(uint32_t currentTick);
   void stopPlaying();
   void togglePlayStop();
 
@@ -79,8 +79,8 @@ public:
   void toggleMuteTrack();
 
   // MIDI events
-  void recordMidiEvent(midi::MidiType type, byte channel, byte data1, byte data2, uint32_t currentTick);
-  void playEvents(uint32_t currentTick, bool isAudible);
+  void recordMidiEvents(midi::MidiType type, byte channel, byte data1, byte data2, uint32_t currentTick);
+  void playMidiEvents(uint32_t currentTick, bool isAudible);
   void printNoteEvents() const;
 
   // Note events
@@ -116,6 +116,7 @@ private:
   TrackState trackState;
   uint32_t startLoopTick;
   uint32_t loopLengthTicks;
+  uint32_t lastTickInLoop;
   uint16_t nextEventIndex;
 
   // Event storage

@@ -4,7 +4,6 @@
 #include "TrackManager.h"
 #include <MIDI.h>
 
-
 MIDI_CREATE_INSTANCE(HardwareSerial, Serial8, MIDIserial); // Teensy Serial8 for 5-pin DIN MIDI
 
 MidiHandler midiHandler;  // Global instance
@@ -16,47 +15,39 @@ void MidiHandler::setup() {
   MIDIserial.begin(MIDI_CHANNEL_OMNI); // Listen to all channels
 }
 
-
-void MidiHandler::handleInput() {
-  // ---- Read USB MIDI ----
+void MidiHandler::handleMidiInput() {
+  // --- USB MIDI Input ---
   while (usbMIDI.read()) {
-    byte type = usbMIDI.getType();
-    byte channel = usbMIDI.getChannel();
-    byte data1 = usbMIDI.getData1();
-    byte data2 = usbMIDI.getData2();
-    InputSource source = SOURCE_USB;
-
-    handleMidiMessage(type, channel, data1, data2, source);
+    handleMidiMessage(
+      usbMIDI.getType(),
+      usbMIDI.getChannel(),
+      usbMIDI.getData1(),
+      usbMIDI.getData2(),
+      SOURCE_USB
+    );
   }
 
-  // ---- Read Serial MIDI (5-pin DIN) ----
+  // --- Serial MIDI Input (DIN) ---
   while (MIDIserial.read()) {
-    byte type = MIDIserial.getType();
-    byte channel = MIDIserial.getChannel();
-    byte data1 = MIDIserial.getData1();
-    byte data2 = MIDIserial.getData2();
-    InputSource source = SOURCE_SERIAL;
-
-    handleMidiMessage(type, channel, data1, data2, source);
+    handleMidiMessage(
+      MIDIserial.getType(),
+      MIDIserial.getChannel(),
+      MIDIserial.getData1(),
+      MIDIserial.getData2(),
+      SOURCE_SERIAL
+    );
   }
 }
 
-
-
-// ---------------------------------------------------------------------------
-// Midi Input handlers
-// ---------------------------------------------------------------------------
-
-
 void MidiHandler::handleMidiMessage(byte type, byte channel, byte data1, byte data2, InputSource source) {
   uint32_t tickNow = clockManager.getCurrentTick();
+
   switch (type) {
     case midi::NoteOn:
-      if (data2 > 0) {
+      if (data2 > 0)
         handleNoteOn(channel, data1, data2, tickNow);
-      } else {
+      else
         handleNoteOff(channel, data1, data2, tickNow); // velocity 0 = NoteOff
-      }
       break;
 
     case midi::NoteOff:
@@ -68,7 +59,7 @@ void MidiHandler::handleMidiMessage(byte type, byte channel, byte data1, byte da
       break;
 
     case midi::PitchBend:
-      handlePitchBend(channel, (data2 << 7) | data1); // Combine for 14-bit value
+      handlePitchBend(channel, (data2 << 7) | data1); // 14-bit value
       break;
 
     case midi::AfterTouchChannel:
@@ -92,36 +83,36 @@ void MidiHandler::handleMidiMessage(byte type, byte channel, byte data1, byte da
       break;
 
     default:
-      // Ignore other messages for now
-      break;
+      break; // Ignore unsupported messages
   }
 }
 
-
-
-
-// You would implement your actual MIDI input reaction here:
-void MidiHandler::handleNoteOn(byte channel, byte note, byte velocity, uint32_t tickNow) { 
-  //trackManager.getTrack(selectedTrack).recordMidiEvent(midi::NoteOn, channel, note, velocity, tickNow);
+// --- Individual Message Handlers ---
+void MidiHandler::handleNoteOn(byte channel, byte note, byte velocity, uint32_t tickNow) {
   trackManager.getSelectedTrack().noteOn(channel, note, velocity, tickNow);
 }
 
-void MidiHandler::handleNoteOff(byte channel, byte note, byte velocity, uint32_t tickNow) { 
-  //trackManager.getTrack(selectedTrack).recordMidiEvent(midi::NoteOff, channel, note, velocity, tickNow);
+void MidiHandler::handleNoteOff(byte channel, byte note, byte velocity, uint32_t tickNow) {
   trackManager.getSelectedTrack().noteOff(channel, note, velocity, tickNow);
 }
 
 void MidiHandler::handleControlChange(byte channel, byte control, byte value, uint32_t tickNow) {
-  trackManager.getSelectedTrack().recordMidiEvent(midi::ControlChange, channel, control, value, tickNow);
+  trackManager.getSelectedTrack().recordMidiEvents(midi::ControlChange, channel, control, value, tickNow);
 }
-void MidiHandler::handlePitchBend(byte channel, int pitchValue) { /* ... */ }
-void MidiHandler::handleAfterTouch(byte channel, byte pressure) { /* ... */ }
 
-void MidiHandler::handleMidiStart() { 
+void MidiHandler::handlePitchBend(byte channel, int pitchValue) {
+  // Not yet implemented
+}
+
+void MidiHandler::handleAfterTouch(byte channel, byte pressure) {
+  // Not yet implemented
+}
+
+void MidiHandler::handleMidiStart() {
   clockManager.onMidiStart();
 }
 
-void MidiHandler::handleMidiStop() { 
+void MidiHandler::handleMidiStop() {
   clockManager.onMidiStop();
 }
 
@@ -130,56 +121,54 @@ void MidiHandler::handleMidiContinue() {
   clockManager.setLastMidiClockTime(micros());
 }
 
-// ---------------------------------------------------------------------------
-// Midi Output handlers
-// ---------------------------------------------------------------------------
-
+// --- MIDI Output ---
 void MidiHandler::sendNoteOn(byte channel, byte note, byte velocity) {
-  if (outputUSB) usbMIDI.sendNoteOn(note, velocity, channel);
+  if (outputUSB)    usbMIDI.sendNoteOn(note, velocity, channel);
   if (outputSerial) MIDIserial.sendNoteOn(note, velocity, channel);
 }
 
 void MidiHandler::sendNoteOff(byte channel, byte note, byte velocity) {
-  if (outputUSB) usbMIDI.sendNoteOff(note, velocity, channel);
+  if (outputUSB)    usbMIDI.sendNoteOff(note, velocity, channel);
   if (outputSerial) MIDIserial.sendNoteOff(note, velocity, channel);
 }
 
 void MidiHandler::sendControlChange(byte channel, byte control, byte value) {
-  if (outputUSB) usbMIDI.sendControlChange(control, value, channel);
+  if (outputUSB)    usbMIDI.sendControlChange(control, value, channel);
   if (outputSerial) MIDIserial.sendControlChange(control, value, channel);
 }
 
 void MidiHandler::sendPitchBend(byte channel, int value) {
-  if (outputUSB) usbMIDI.sendPitchBend(value, channel);
+  if (outputUSB)    usbMIDI.sendPitchBend(value, channel);
   if (outputSerial) MIDIserial.sendPitchBend(value, channel);
 }
 
 void MidiHandler::sendAfterTouch(byte channel, byte pressure) {
-  if (outputUSB) usbMIDI.sendAfterTouch(pressure, channel);
+  if (outputUSB)    usbMIDI.sendAfterTouch(pressure, channel);
   if (outputSerial) MIDIserial.sendAfterTouch(pressure, channel);
 }
 
-// Clock + transport messages
+// --- Clock / Transport Output ---
 void MidiHandler::sendClock() {
-  if (outputUSB) usbMIDI.sendRealTime(usbMIDI.Clock);
+  if (outputUSB)    usbMIDI.sendRealTime(usbMIDI.Clock);
   if (outputSerial) MIDIserial.sendRealTime(midi::Clock);
 }
 
 void MidiHandler::sendStart() {
-  if (outputUSB) usbMIDI.sendRealTime(usbMIDI.Start);
+  if (outputUSB)    usbMIDI.sendRealTime(usbMIDI.Start);
   if (outputSerial) MIDIserial.sendRealTime(midi::Start);
 }
 
 void MidiHandler::sendStop() {
-  if (outputUSB) usbMIDI.sendRealTime(usbMIDI.Stop);
+  if (outputUSB)    usbMIDI.sendRealTime(usbMIDI.Stop);
   if (outputSerial) MIDIserial.sendRealTime(midi::Stop);
 }
 
 void MidiHandler::sendContinueMIDI() {
-  if (outputUSB) usbMIDI.sendRealTime(usbMIDI.Continue);
+  if (outputUSB)    usbMIDI.sendRealTime(usbMIDI.Continue);
   if (outputSerial) MIDIserial.sendRealTime(midi::Continue);
 }
 
+// --- Output Routing ---
 void MidiHandler::setOutputUSB(bool enable) {
   outputUSB = enable;
 }

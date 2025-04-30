@@ -12,7 +12,7 @@ ClockManager::ClockManager()
     currentTick(0),
     lastMidiClockTime(0),
     lastInternalTickTime(0),
-    externalClockPresent(false)
+    externalClockPresent(true)
 {}
 
 uint32_t ClockManager::getCurrentTick() const {
@@ -97,7 +97,7 @@ void ClockManager::updateAllTracks(uint32_t tick) {
   for (int i = 0; i < trackManager.getTrackCount(); ++i) {
     Track& track = trackManager.getTrack(i);
     if (track.isPlaying() || track.isOverdubbing()) {
-      track.playEvents(tick, true);
+      track.playMidiEvents(tick, true);
     }
   }
 }

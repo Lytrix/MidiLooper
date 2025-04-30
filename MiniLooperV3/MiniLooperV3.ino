@@ -15,7 +15,7 @@ void setup() {
 
 void loop() {
   clockManager.checkClockSource();  // keep clock source updated
-  midiHandler.handleInput();
+  midiHandler.handleMidiInput();
   
   uint32_t tickNow = clockManager.getCurrentTick();
   trackManager.handleQuantizedStart(tickNow); 
@@ -27,7 +27,7 @@ void loop() {
   looper.update();
 
   static uint32_t lastDisplayUpdate = 0;
-  if (millis() - lastDisplayUpdate > 30) { // Update display every ~30ms
+  if (millis() - lastDisplayUpdate > 50) { // Update display every ~30ms
     displayManager.update();
     lastDisplayUpdate = millis();
   }
