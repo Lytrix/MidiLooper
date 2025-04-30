@@ -35,7 +35,7 @@ The midi circuit is based on https://www.pjrc.com/teensy/td_libs_MIDI.html
 - Reload last used state and loops on startup
 
   - 2 button operation        
-```
+
 | **Button** | **Times Pressed** | **Press Type** | **Current State**              | **Action**                                               | **Next State**              |
 |------------|-------------------|----------------|--------------------------------|----------------------------------------------------------|-----------------------------|
 | A          | 1                 | Short          | Not armed/recording/playing    | Start recording                                          | `TRACK_RECORDING`           |
@@ -45,7 +45,7 @@ The midi circuit is based on https://www.pjrc.com/teensy/td_libs_MIDI.html
 | A          | Any               | Long           | Any                            | 🔥 Clear selected track (erase all events)               | `TRACK_STOPPED`             |
 | B          | 1 (each time)     | Short          | Any                            | Switch to next track                                     | (Next track selected)       |
 | B          | Any               | Long           | Any                            | Toggle mute on current track                             | (Same, toggle mute flag)    |
-````
+
 - Retroactive bar-quantized recording (record complete bars, but allow earlier recording start)
 ```
 | 1   2   3   4 | 1   2   3   4 |  
