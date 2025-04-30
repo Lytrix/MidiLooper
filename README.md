@@ -35,15 +35,23 @@ The midi circuit is based on https://www.pjrc.com/teensy/td_libs_MIDI.html
 - Reload last used state and loops on startup
 - 2 button operation        
 
-| **Button** | **Times Pressed** | **Press Type** | **Current State**              | **Action**                                               | **Next State**              |
-|------------|-------------------|----------------|--------------------------------|----------------------------------------------------------|-----------------------------|
-| A          | 1                 | Short          | Not armed/recording/playing    | Start recording                                          | `TRACK_RECORDING`           |
-| A          | 2                 | Short          | `TRACK_RECORDING`              | Stop recording → Start playing + overdubbing            | `TRACK_OVERDUBBING`         |
-| A          | 3                 | Short          | `TRACK_OVERDUBBING`            | Stop overdubbing                                         | `TRACK_PLAYING`             |
-| A          | ≥4                | Short          | `TRACK_PLAYING`                | Start live overdubbing                                   | `TRACK_OVERDUBBING`         |
-| A          | Any               | Long           | Any                            | 🔥 Clear selected track (erase all events)               | `TRACK_STOPPED`             |
-| B          | 1 (each time)     | Short          | Any                            | Switch to next track                                     | (Next track selected)       |
-| B          | Any               | Long           | Any                            | Toggle mute on current track                             | (Same, toggle mute flag)    |
+## 🔴 Button A – Recording, Overdubbing, Playback Control ##
+
+| **Pressed** | **Press Type** | **Current State**              | **Action**                                               | **Next State**              |
+|-------------------|----------------|--------------------------------|----------------------------------------------------------|-----------------------------|
+| 1x                | Short          | Not armed/recording/playing    | Start recording                                          | `TRACK_RECORDING`           |
+| 2x                | Short          | `TRACK_RECORDING`              | Stop recording → Start playing + overdubbing            | `TRACK_OVERDUBBING`         |
+| 3x                | Short          | `TRACK_OVERDUBBING`            | Stop overdubbing                                         | `TRACK_PLAYING`             |
+| ≥4x               | Short          | `TRACK_PLAYING`                | Start live overdubbing                                   | `TRACK_OVERDUBBING`         |
+| Any               | Long           | Any                            | 🔥 Clear selected track                                  | `TRACK_STOPPED`             |
+
+## 🔵 Button B – Track Select and Mute Control ##
+
+| **Pressed** | **Press Type** | **Current State** | **Action**                   | **Next State**             |
+|-------------------|----------------|-------------------|------------------------------|----------------------------|
+| Every             | Short          | Any               | Select next track            | (Switches to next track)   |
+| Any               | Long           | Any               | Toggle mute on current track | (Mute toggled)             |
+
 
 - Retroactive bar-quantized recording (record complete bars, but allow earlier recording start)
 ```
