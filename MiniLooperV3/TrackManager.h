@@ -12,7 +12,7 @@ public:
   TrackManager();
 
   void setSelectedTrack(uint8_t index);
-  uint8_t getSelectedTrack() const;
+  uint8_t getSelectedTrackIndex();
   Track& getSelectedTrack();
 
   void updateAllTracks(uint32_t currentTick);
@@ -57,7 +57,6 @@ public:
   uint32_t getTrackLength(uint8_t trackIndex) const;
 
   Track& getTrack(uint8_t trackIndex); 
-  Track& getSelectedTrack();
      
   uint8_t getTrackCount() const;
 

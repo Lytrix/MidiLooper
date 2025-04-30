@@ -94,21 +94,21 @@ void ButtonManager::handleButton(uint8_t index, ButtonAction action)
     // --------- Button B: Track Switch, Mute/Unmute --------
     Track* track = nullptr; // set varibables outside of switch statement to safely use it as a pointer.
     switch (action) {
-        case BUTTON_SHORT_PRESS:
+        case BUTTON_SHORT_PRESS: {
             // Switch track
-            selectedTrack = (selectedTrack + 1) % trackManager.getTrackCount();
+            uint8_t newIndex = (trackManager.getSelectedTrackIndex() + 1) % trackManager.getTrackCount();
+            trackManager.setSelectedTrack(newIndex);     
             if(DEBUG_BUTTONS) Serial.print("Button B short press: Switched to track ");
-            if(DEBUG_BUTTONS) Serial.println(selectedTrack);
+            if(DEBUG_BUTTONS) Serial.println(newIndex);
+            }
             break;
-
         case BUTTON_LONG_PRESS: {
             track = &trackManager.getSelectedTrack();
             track->toggleMuteTrack();
             if(DEBUG_BUTTONS) Serial.print("Button B long press: Toggled mute on track ");
-            if(DEBUG_BUTTONS) Serial.println(selectedTrack);
+            if(DEBUG_BUTTONS) Serial.println(trackManager.getSelectedTrackIndex());
+            }
             break;
-        }
-
         default:
             break;
       }

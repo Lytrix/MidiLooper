@@ -1,6 +1,9 @@
 # Midi Looper #
 
 
+![midilooper.jpg](images/midilooper.jpg)
+
+
 This Midilooper has been created with help of chatgpt. It has proven to be a great tutor to help me guide and understand every added feature's logic. It saved me a lot of time looking for the correct approach or answers on how to tackle things.
 
 The main inspiration was taken from this minimalistic 4 track looper using only 2 buttons and 4 digits:
