@@ -101,7 +101,7 @@ private:
   void sendMidiEvent(const MidiEvent& evt);
   bool isMuted() const;
   bool muted = false; 
-  TrackState state;
+  TrackState trackState;
 
   std::unordered_map<std::pair<uint8_t, uint8_t>, PendingNote, PairHash> pendingNotes; // note + velocity on -> startLoopTick
   std::vector<MidiEvent> events;     // full MIDI stream (optional)
@@ -109,7 +109,7 @@ private:
 
   uint32_t startLoopTick;
   uint32_t loopLengthTicks;
-  uint16_t nextEventIndex;  // New: index of where we are in the event list
+  uint16_t nextEventIndex;  // New: index of where we are in the midiEvent list
 };
 
 

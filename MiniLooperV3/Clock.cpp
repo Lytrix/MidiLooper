@@ -1,7 +1,7 @@
 #include "Globals.h"
 #include "Clock.h"
 
-// Private state
+// Private trackState
 namespace {
   volatile uint32_t tickCount = 0;
   bool externalClock = false;

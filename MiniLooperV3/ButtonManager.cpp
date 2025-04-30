@@ -42,7 +42,7 @@ void ButtonManager::update()
 void ButtonManager::handleButton(uint8_t index, ButtonAction action)
 {
     // Get selected track from trackManager and set it to variable track
-    const auto& track = trackManager.getSelectedTrack();
+    auto& track = trackManager.getSelectedTrack();
     if (index == 0) { 
         // --------- Button A: Record - Overdub - Play, Clear Track --------
         switch (action) {

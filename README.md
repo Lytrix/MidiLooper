@@ -64,16 +64,14 @@ New Loop ready for overdub to add the notes in the first bar.
 ```
 
 
-## Module breakdown ##
+## 🔧 Module Relationships and Data Flow ##
 
-- Globals		: Shared variables or constants.
-- TrackManager  : Controls which track is modified
-- Track			: Handle sequencing and recording.
-- LooperState	: tracks main state of the looper
-- ButtonManager : Manages physical button input.
-- Clock 		: Timing and sync
-- ClockManager  : Timing sync. Also fires of the each tick to process playEvents and midiRecordEvents.
-- MidiHandler	: Handles MIDI input/output.
-- DisplayManager: Showing status/info and notes per loop on a 16x2 LCD.
+| Module         | Key Data                            | Connected Modules             | Purpose                                                                 |
+|----------------|--------------------------------------|-------------------------------|-------------------------------------------------------------------------|
+| `ButtonManager`| Button press type, `millis()`       | `TrackManager`, `ClockManager`| Triggers recording/playback/overdub/mute/clear actions                 |
+| `TrackManager` | `selectedTrack`, `masterLoopLength` | `Track`, `ClockManager`       | Manages track states and coordination, handles quantized events        |
+| `Track`        | `MidiEvent`, `NoteEvent`, `startLoopTick`, `loopLengthTicks` | N/A                        | Stores and manages MIDI/Note data, performs playback and recording     |
+| `ClockManager` | `currentTick`                       | All other modules             | Provides global timing for sync and quantization                       |
+| `DisplayManager`| —                                   | `TrackManager`, `Track`       | Displays NoteEvents, loop status, and other track information          |
 
 - LooperState: Tracks the state machine for looping.

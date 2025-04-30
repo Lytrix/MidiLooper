@@ -63,7 +63,7 @@ void handleTransition() {
 void handleLooperState() {
   handleTransition();
 
-  uint32_t now = millis();
+  //uint32_t now = millis();
 
   switch (looperState) {
     case LOOPER_IDLE:

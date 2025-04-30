@@ -57,6 +57,7 @@ public:
   uint32_t getTrackLength(uint8_t trackIndex) const;
 
   Track& getTrack(uint8_t trackIndex); 
+  Track& getSelectedTrack();
      
   uint8_t getTrackCount() const;
 

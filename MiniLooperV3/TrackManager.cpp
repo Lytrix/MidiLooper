@@ -193,7 +193,7 @@ void TrackManager::setSelectedTrack(uint8_t index) {
     }
 }
 
-uint8_t TrackManager::getSelectedTrack() const {
+uint8_t TrackManager::getSelectedTrack() {
     return selectedTrack;
 }
 

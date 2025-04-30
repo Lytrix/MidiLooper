@@ -71,10 +71,10 @@ void DisplayManager::showTrackStates() {
   lcd.setCursor(0, 0);
 
   for (uint8_t i = 0; i < trackManager.getTrackCount(); i++) {
-    TrackState state = trackManager.getTrackState(i);
+    TrackState trackState = trackManager.getTrackState(i);
 
     char symbol = ' ';
-    switch (state) {
+    switch (trackState) {
       case TRACK_RECORDING:    symbol = 'R'; break;
       case TRACK_PLAYING:      symbol = 'P'; break;
       case TRACK_OVERDUBBING:  symbol = 'O'; break;
