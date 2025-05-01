@@ -1,7 +1,7 @@
 #include "Globals.h"
-#include "ButtonManager.h"
 #include "ClockManager.h"
 #include "TrackManager.h"
+#include "ButtonManager.h"
 
 ButtonManager buttonManager;
 

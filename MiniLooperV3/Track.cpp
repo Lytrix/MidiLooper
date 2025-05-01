@@ -1,7 +1,7 @@
 #include "Globals.h"
 #include "Track.h"
-#include "MidiHandler.h"
 #include "ClockManager.h"
+#include "MidiHandler.h"
 
 // Track class implementation
 

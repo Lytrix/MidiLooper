@@ -1,4 +1,5 @@
-#pragma once
+#ifndef BUTTONMANAGER_H
+#define BUTTONMANAGER_H
 
 #include <Bounce2.h>
 #include <vector>
@@ -25,3 +26,5 @@ private:
     void handleButton(uint8_t index, ButtonAction action);
 };
 extern ButtonManager buttonManager;
+
+#endif // BUTTONMANAGER_H

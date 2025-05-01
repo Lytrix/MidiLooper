@@ -1,4 +1,5 @@
-#pragma once
+#ifndef CLOCK_H
+#define CLOCK_H
 
 #include <Arduino.h>
 
@@ -9,3 +10,5 @@ namespace Clock {
   
   bool isExternalClockActive();
 }
+
+#endif // CLOCK_H

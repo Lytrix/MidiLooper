@@ -4,9 +4,8 @@
 #pragma once
 
 #include <Arduino.h>
-#include <LiquidCrystal.h>
-#include "TrackManager.h"
-#include "Track.h"
+
+class NoteEvent;
 
 // --------------------
 // DisplayManager handles all LCD UI

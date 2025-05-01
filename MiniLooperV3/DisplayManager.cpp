@@ -2,7 +2,9 @@
 #include <MIDI.h>
 #include <LiquidCrystal.h>
 #include "ClockManager.h"
+#include "TrackManager.h"
 #include "DisplayManager.h"
+
 
 LiquidCrystal lcd(LCD_RS, LCD_ENABLE, LCD_D4, LCD_D5, LCD_D6, LCD_D7);
 DisplayManager displayManager;  // Global instance
