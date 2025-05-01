@@ -4,10 +4,12 @@
 #include <Arduino.h>
 #include "Globals.h"
 #include "Track.h"
+#include "ClockManager.h"
 
 class TrackManager {
 public:
   TrackManager();
+  void setup();  // Initialize track manager state
 
   // --- Track Selection ---
   void setSelectedTrack(uint8_t index);
@@ -17,6 +19,7 @@ public:
   uint8_t getTrackCount() const;
 
   // --- Track Updates ---
+  void update(uint32_t currentTick);  // Update all tracks and handle pending operations
   void updateAllTracks(uint32_t currentTick);
 
   // --- Recording ---
@@ -53,16 +56,16 @@ public:
   uint32_t getTrackLength(uint8_t trackIndex) const;
 
 private:
-  Track tracks[NUM_TRACKS];
+  Track tracks[Config::NUM_TRACKS];
 
   uint8_t selectedTrack = 0;
   bool autoAlignEnabled = true;
   uint32_t masterLoopLength = 0;
 
-  bool muted[NUM_TRACKS] = {false};
-  bool soloed[NUM_TRACKS] = {false};
-  bool pendingRecord[NUM_TRACKS] = {false};
-  bool pendingStop[NUM_TRACKS] = {false};
+  bool muted[Config::NUM_TRACKS] = {false};
+  bool soloed[Config::NUM_TRACKS] = {false};
+  bool pendingRecord[Config::NUM_TRACKS] = {false};
+  bool pendingStop[Config::NUM_TRACKS] = {false};
 
   //friend class UI; // Optional: if you have a UI or debug class needing internal access
 };

@@ -2,6 +2,7 @@
 #include "ClockManager.h"
 #include "TrackManager.h"
 #include "ButtonManager.h"
+#include "Logger.h"
 
 ButtonManager buttonManager;
 
@@ -67,7 +68,7 @@ void ButtonManager::handleButton(uint8_t index, ButtonAction action) {
                     track.stopRecording(clockManager.getCurrentTick());
                     track.startPlaying(clockManager.getCurrentTick());
                     track.startOverdubbing(clockManager.getCurrentTick());
-                    if (DEBUG) track.printNoteEvents();
+                    if (DEBUG_BUTTONS) track.printNoteEvents();
                 } else if (track.isOverdubbing()) {
                     if (DEBUG_BUTTONS) Serial.println("Button A: Stop Overdub");
                     track.stopOverdubbing(clockManager.getCurrentTick());

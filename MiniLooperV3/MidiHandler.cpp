@@ -3,6 +3,7 @@
 #include "ClockManager.h"
 #include "TrackManager.h"
 #include "MidiHandler.h"
+#include "Logger.h"
 
 
 MIDI_CREATE_INSTANCE(HardwareSerial, Serial8, MIDIserial); // Teensy Serial8 for 5-pin DIN MIDI
@@ -13,7 +14,7 @@ MidiHandler::MidiHandler()
   : outputUSB(true), outputSerial(true) {}
 
 void MidiHandler::setup() {
-  MIDIserial.begin(MIDI_CHANNEL_OMNI); // Listen to all channels
+  MIDIserial.begin(MidiConfig::CHANNEL_OMNI); // Listen to all channels
 }
 
 void MidiHandler::handleMidiInput() {
