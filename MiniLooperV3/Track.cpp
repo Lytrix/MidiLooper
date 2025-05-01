@@ -29,39 +29,82 @@ uint32_t Track::getStartLoopTick() const {
   return startLoopTick;
 }
 
+TrackState Track::getState() const {
+  return trackState;
+}
+
+bool Track::isValidStateTransition(TrackState newState) const {
+  return TrackStateMachine::isValidTransition(trackState, newState);
+}
+
+bool Track::setState(TrackState newState) {
+  if (!isValidStateTransition(newState)) {
+    if (DEBUG) {
+      Serial.printf("Invalid state transition from %d to %d\n", trackState, newState);
+    }
+    return false;
+  }
+  return transitionState(newState);
+}
+
+bool Track::transitionState(TrackState newState) {
+  if (!isValidStateTransition(newState)) {
+    return false;
+  }
+
+  TrackState oldState = trackState;
+  trackState = newState;
+
+  if (DEBUG) {
+    Serial.printf("Track state transition: %d -> %d\n", oldState, newState);
+  }
+
+  return true;
+}
+
 void Track::startRecording(uint32_t currentTick) {
+  if (!setState(TRACK_RECORDING)) {
+    return;
+  }
   midiEvents.clear();
   startLoopTick = currentTick;
-  trackState = TRACK_RECORDING;
   Serial.println("Recording started.");
 }
 
 void Track::stopRecording(uint32_t currentTick) {
+  if (!setState(TRACK_STOPPED_RECORDING)) {
+    return;
+  }
   loopLengthTicks = currentTick - startLoopTick;
-  trackState = TRACK_STOPPED_RECORDING;
   Serial.println("Recording stopped.");
 }
 
 void Track::startPlaying(uint32_t currentTick) {
   if (loopLengthTicks > 0) {
+    if (!setState(TRACK_PLAYING)) {
+      return;
+    }
     startLoopTick = currentTick - ((currentTick - startLoopTick) % loopLengthTicks);
-    trackState = TRACK_PLAYING;
     Serial.println("Start Playing.");
   }
 }
 
 void Track::startOverdubbing(uint32_t currentTick) {
-  trackState = TRACK_OVERDUBBING;
+  if (!setState(TRACK_OVERDUBBING)) {
+    return;
+  }
   Serial.println("Overdubbing started.");
 }
 
 void Track::stopOverdubbing(uint32_t currentTick) {
-  trackState = TRACK_PLAYING;
+  if (!setState(TRACK_STOPPED_OVERDUBBING)) {
+    return;
+  }
   Serial.println("Overdubbing stopped, back to playback.");
 }
 
 void Track::stopPlaying() {
-  trackState = TRACK_STOPPED;
+  setState(TRACK_STOPPED);
 }
 
 void Track::togglePlayStop() {
@@ -122,9 +165,13 @@ void Track::playMidiEvents(uint32_t currentTick, bool isAudible) {
 
   uint32_t tickInLoop = (currentTick - startLoopTick) % loopLengthTicks;
           
-  // Transition to overdub after full loop if recording/overdubbing
+  // Only allow state transition if we're in a valid state
   if ((isRecording() || isOverdubbing()) && (currentTick - startLoopTick >= loopLengthTicks)) {
-    trackState = TRACK_OVERDUBBING;
+    if (isRecording()) {
+      setState(TRACK_STOPPED_RECORDING);
+    } else if (isOverdubbing()) {
+      setState(TRACK_STOPPED_OVERDUBBING);
+    }
   }
 
   // Reset playback at start of each loop
@@ -233,10 +280,6 @@ uint32_t Track::getLength() const {
 
 void Track::setLength(uint32_t ticks) {
   loopLengthTicks = ticks;
-}
-
-TrackState Track::getState() const {
-  return trackState;
 }
 
 // Display functions
