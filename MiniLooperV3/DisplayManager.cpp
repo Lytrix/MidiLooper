@@ -15,14 +15,13 @@ void DisplayManager::setup() {
 }
 
 void DisplayManager::update() {
-  showTrackStates();  // Top row
+   // Top row
+  showTrackStates(); 
 
   const auto& track = trackManager.getSelectedTrack();
   const auto& notes = track.getNoteEvents();
-  // Update scroll offset based on currentTick
-
-  //displaySimpleNoteBar(notes, clockManager.getCurrentTick(), track.getLength(), track.getStartLoopTick(), lcd);
-  uint32_t fixedCursorPosition = 4;  // Fixed cursor at the middle of the display
+  
+  // Bottom row
   drawNotePageWithNoteEvents(notes,  track.getLength(), clockManager.getCurrentTick(), track.getStartLoopTick());
   if (DEBUG_DISPLAY) {
     Serial.println("Calling displaySimpleNoteBar...");
@@ -57,70 +56,6 @@ void DisplayManager::showTrackStates() {
   }
 }
 
-
-// --------------------
-// Simple 1D note bar with playhead
-// --------------------
-void displaySimpleNoteBar(const std::vector<NoteEvent>& notes, uint32_t currentTick, uint32_t loopLengthTicks, uint32_t startLoopTick, LiquidCrystal& lcd) {
-  char line[17] = "                ";  // 16 chars
-  const uint8_t resolution = 16;
-
-
-
-  uint32_t tickInLoop = (currentTick - startLoopTick) % loopLengthTicks;
-
-  for (const auto& ne : notes) {
-    uint32_t start = ne.startNoteTick % loopLengthTicks;
-    uint32_t end = ne.endNoteTick % loopLengthTicks;
-    if (end < start) end += loopLengthTicks;
-
-    uint8_t startPos = map(start, 0, loopLengthTicks, 0, resolution);
-    uint8_t endPos   = map(end,   0, loopLengthTicks, 0, resolution);
-
-    startPos = constrain(startPos, 0, resolution - 1);
-    endPos   = constrain(endPos, startPos + 1, resolution);
-
-    for (uint8_t i = startPos; i < endPos && i < resolution; ++i) {
-      line[i] = 0xFF;
-    }
-  }
-
-  uint8_t playheadPos = map(tickInLoop, 0, loopLengthTicks, 0, resolution);
-  if (line[playheadPos] != 0xFF) {
-    line[playheadPos] = '|';
-  }
-
-  lcd.setCursor(0, 1);
-  lcd.print(line);
-}
-
-// --------------------
-// Alternate full-line bar renderer
-// --------------------
-void displayNoteBarAllInOneLine(const Track& track, LiquidCrystal& lcd) {
-  char line[17];
-  memset(line, ' ', 16);
-  line[16] = '\0';
-
-  const uint8_t resolution = 16;
-  uint32_t loopLengthTicks = track.getLength();
-
-  for (const auto& ne : track.getNoteEvents()) {
-    uint8_t start = map(ne.startNoteTick % loopLengthTicks, 0, loopLengthTicks, 0, resolution);
-    uint8_t end   = map(ne.endNoteTick   % loopLengthTicks, 0, loopLengthTicks, 0, resolution);
-
-    if (end > resolution) end = resolution;
-    if (start >= end) end = start + 1;
-
-    for (uint8_t i = start; i < end && i < resolution; i++) {
-      line[i] = 0xFF;
-    }
-  }
-
-  lcd.setCursor(0, 1);
-  lcd.print(line);
-}
-
 // --------------------
 // Multi-line "pixel" note view using custom characters
 // --------------------
@@ -136,27 +71,27 @@ void clearCustomChars() {
 
 
 
-void drawNotePageWithNoteEvents(const std::vector<NoteEvent>& notes,
+void DisplayManager::drawNotePageWithNoteEvents(const std::vector<NoteEvent>& notes,
                                 uint32_t loopLengthTicks,
                                 uint32_t currentTick,
                                 uint32_t startLoopTick) {
   clearCustomChars();
 
 
-// === Bar/Beat Counter ===
-uint32_t ticksPerBeat = loopLengthTicks / 16;  // Assuming 4 bars, 4 beats per bar
-uint32_t tickInLoop = (currentTick - startLoopTick) % loopLengthTicks;
+  // === Bar/Beat Counter ===
+  uint32_t ticksPerBeat = loopLengthTicks / 16;  // Assuming 4 bars, 4 beats per bar
+  uint32_t tickInLoop = (currentTick - startLoopTick) % loopLengthTicks;
 
-uint32_t beat = (tickInLoop / ticksPerBeat) % 4 + 1;  // 1-based beat
-uint32_t bar  = (tickInLoop / (ticksPerBeat * 4)) + 1; // 1-based bar
+  uint32_t beat = (tickInLoop / ticksPerBeat) % 4 + 1;  // 1-based beat
+  uint32_t bar  = (tickInLoop / (ticksPerBeat * 4)) + 1; // 1-based bar
 
-char counterText[6];
-snprintf(counterText, sizeof(counterText), "%u:%u", bar, beat);
+  char counterText[6];
+  snprintf(counterText, sizeof(counterText), "%u:%u", bar, beat);
 
-// Place it in bottom right (last 3-5 characters of row 1)
-int counterCol = 16 - strlen(counterText);  // Adjust based on text width
-lcd.setCursor(counterCol, 1);
-lcd.print(counterText);
+  // Place it in bottom right (last 3-5 characters of row 1)
+  int counterCol = 16 - strlen(counterText);  // Adjust based on text width
+  lcd.setCursor(counterCol, 1);
+  lcd.print(counterText);
 
   // Show original and duplicate (next-loop) notes
   for (const NoteEvent& originalNote : notes) {

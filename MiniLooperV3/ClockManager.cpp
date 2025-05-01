@@ -12,7 +12,8 @@ ClockManager::ClockManager()
     currentTick(0),
     lastMidiClockTime(0),
     lastInternalTickTime(0),
-    externalClockPresent(true)
+    externalClockPresent(false)
+    
 {}
 
 uint32_t ClockManager::getCurrentTick() const {
@@ -28,10 +29,6 @@ bool ClockManager::isExternalClockPresent() const {
 
 void ClockManager::setExternalClockPresent(bool present) {
   externalClockPresent = present;
-}
-
-void ClockManager::setLastMidiClockTime(uint32_t time) {
-  lastMidiClockTime = time;
 }
 
 void ClockManager::onMidiClockTick() {
@@ -76,7 +73,11 @@ void ClockManager::onMidiClockPulse() {
   }
 
   updateAllTracks(currentTick);
-  lastMidiClockTime = micros();
+  lastMidiClockTime = setLastMidiClockTime(micros());
+}
+
+uint32_t ClockManager::setLastMidiClockTime(uint32_t lastMidiClockTime){
+  return lastMidiClockTime;
 }
 
 void ClockManager::checkClockSource() {
