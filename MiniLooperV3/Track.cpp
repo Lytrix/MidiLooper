@@ -2,6 +2,7 @@
 #include "Track.h"
 #include "ClockManager.h"
 #include "MidiHandler.h"
+#include "Logger.h"
 
 // Track class implementation
 
@@ -39,9 +40,7 @@ bool Track::isValidStateTransition(TrackState newState) const {
 
 bool Track::setState(TrackState newState) {
   if (!isValidStateTransition(newState)) {
-    if (DEBUG) {
-      Serial.printf("Invalid state transition from %d to %d\n", trackState, newState);
-    }
+    logger.log(CAT_STATE, LOG_WARNING, "Invalid state transition from %d to %d", trackState, newState);
     return false;
   }
   return transitionState(newState);
@@ -55,10 +54,17 @@ bool Track::transitionState(TrackState newState) {
   TrackState oldState = trackState;
   trackState = newState;
 
-  if (DEBUG) {
-    Serial.printf("Track state transition: %d -> %d\n", oldState, newState);
-  }
+  const char* stateNames[] = {
+    "STOPPED",
+    "ARMED",
+    "RECORDING",
+    "STOPPED_RECORDING",
+    "PLAYING",
+    "OVERDUBBING",
+    "STOPPED_OVERDUBBING"
+  };
 
+  logger.logStateTransition("Track", stateNames[oldState], stateNames[newState]);
   return true;
 }
 
@@ -68,7 +74,7 @@ void Track::startRecording(uint32_t currentTick) {
   }
   midiEvents.clear();
   startLoopTick = currentTick;
-  Serial.println("Recording started.");
+  logger.logTrackEvent("Recording started", currentTick);
 }
 
 void Track::stopRecording(uint32_t currentTick) {
@@ -76,7 +82,7 @@ void Track::stopRecording(uint32_t currentTick) {
     return;
   }
   loopLengthTicks = currentTick - startLoopTick;
-  Serial.println("Recording stopped.");
+  logger.logTrackEvent("Recording stopped", currentTick, "length=%lu", loopLengthTicks);
 }
 
 void Track::startPlaying(uint32_t currentTick) {
@@ -85,7 +91,7 @@ void Track::startPlaying(uint32_t currentTick) {
       return;
     }
     startLoopTick = currentTick - ((currentTick - startLoopTick) % loopLengthTicks);
-    Serial.println("Start Playing.");
+    logger.logTrackEvent("Playback started", currentTick);
   }
 }
 
@@ -93,18 +99,19 @@ void Track::startOverdubbing(uint32_t currentTick) {
   if (!setState(TRACK_OVERDUBBING)) {
     return;
   }
-  Serial.println("Overdubbing started.");
+  logger.logTrackEvent("Overdubbing started", currentTick);
 }
 
 void Track::stopOverdubbing(uint32_t currentTick) {
   if (!setState(TRACK_STOPPED_OVERDUBBING)) {
     return;
   }
-  Serial.println("Overdubbing stopped, back to playback.");
+  logger.logTrackEvent("Overdubbing stopped", currentTick);
 }
 
 void Track::stopPlaying() {
   setState(TRACK_STOPPED);
+  logger.logTrackEvent("Playback stopped", clockManager.getCurrentTick());
 }
 
 void Track::togglePlayStop() {
@@ -137,7 +144,7 @@ void Track::clear() {
   startLoopTick = 0;
   loopLengthTicks = 0;
   trackState = TRACK_STOPPED;
-  Serial.println("Track erased.");
+  logger.logTrackEvent("Track cleared", clockManager.getCurrentTick());
 }
 
 void Track::recordMidiEvents(midi::MidiType type, byte channel, byte data1, byte data2, uint32_t currentTick) {
@@ -151,10 +158,12 @@ void Track::recordMidiEvents(midi::MidiType type, byte channel, byte data1, byte
       }
     }
 
-    if (DEBUG) {
-      Serial.printf("[RECORD] midiEvent @ tick %lu (current=%lu, start=%lu, loop=%lu)\n", 
-                    tickRelative, currentTick, startLoopTick, loopLengthTicks);
-    }
+    logger.logMidiEvent(
+      type == midi::NoteOn ? "NoteOn" : 
+      type == midi::NoteOff ? "NoteOff" : 
+      type == midi::ControlChange ? "ControlChange" : "Other",
+      channel, data1, data2
+    );
 
     midiEvents.push_back(MidiEvent{ tickRelative, type, channel, data1, data2 });
   }
@@ -208,18 +217,13 @@ void Track::sendMidiEvent(const MidiEvent& evt) {
 
   isPlayingBack = true;  // Mark playback so noteOn/noteOff ignores it
 
-  if (DEBUG_MIDI) {
-    Serial.print("[Playback] ");
-    Serial.print(evt.tick);
-    Serial.print(": ");
-    Serial.print(evt.type == midi::NoteOn ? "NoteOn" : evt.type == midi::NoteOff ? "NoteOff" : "Other");
-    Serial.print(" note=");
-    Serial.print(evt.data1);
-    Serial.print(" vel=");
-    Serial.println(evt.data2);
-  }
+  logger.logMidiEvent(
+    evt.type == midi::NoteOn ? "NoteOn" : 
+    evt.type == midi::NoteOff ? "NoteOff" : 
+    evt.type == midi::ControlChange ? "ControlChange" : "Other",
+    evt.channel, evt.data1, evt.data2
+  );
 
-  // Send appropriate MIDI event
   switch (evt.type) {
     case midi::NoteOn:
       midiHandler.sendNoteOn(evt.channel, evt.data1, evt.data2);
@@ -235,11 +239,6 @@ void Track::sendMidiEvent(const MidiEvent& evt) {
       break;
     case midi::AfterTouchChannel:
       midiHandler.sendAfterTouch(evt.channel, evt.data1);
-      break;
-    default:
-      if (DEBUG_MIDI) {
-        Serial.printf("[Playback] %d: Unknown MIDI type=%d data1=%d data2=%d\n", evt.tick, evt.type, evt.data1, evt.data2);
-      }
       break;
   }
 

@@ -4,9 +4,9 @@
 #include "ClockManager.h"
 #include "TrackManager.h"
 #include "DisplayManager.h"
+#include "Logger.h"
 
-
-LiquidCrystal lcd(LCD_RS, LCD_ENABLE, LCD_D4, LCD_D5, LCD_D6, LCD_D7);
+LiquidCrystal lcd(LCD::RS, LCD::ENABLE, LCD::D4, LCD::D5, LCD::D6, LCD::D7);
 DisplayManager displayManager;  // Global instance
 
 DisplayManager::DisplayManager() {}
@@ -25,10 +25,9 @@ void DisplayManager::update() {
   
   // Bottom row
   drawNotePageWithNoteEvents(notes,  track.getLength(), clockManager.getCurrentTick(), track.getStartLoopTick());
-  if (DEBUG_DISPLAY) {
-    Serial.println("Calling displaySimpleNoteBar...");
-    Serial.print("Note count: ");
-    Serial.println(notes.size());
+  if (debugLevel & DEBUG_DISPLAY) {
+    logger.debug("Calling displaySimpleNoteBar...");
+    logger.debug("Note count: %d", notes.size());
   }
 }
 
@@ -71,14 +70,11 @@ void clearCustomChars() {
   memset(customChars, 0, sizeof(customChars));
 }
 
-
-
 void DisplayManager::drawNotePageWithNoteEvents(const std::vector<NoteEvent>& notes,
                                 uint32_t loopLengthTicks,
                                 uint32_t currentTick,
                                 uint32_t startLoopTick) {
   clearCustomChars();
-
 
   // === Bar/Beat Counter ===
   uint32_t ticksPerBeat = loopLengthTicks / 16;  // Assuming 4 bars, 4 beats per bar
@@ -120,7 +116,6 @@ void DisplayManager::drawNotePageWithNoteEvents(const std::vector<NoteEvent>& no
     // ... inside the drawing loop:
     int clamped = constrain(note.note, minNote, maxNote);
     int y = map(clamped, minNote, maxNote, 7, 0);  // Top = high notes
-
 
       int32_t noteStart = note.startNoteTick;
       int32_t noteEnd   = note.endNoteTick;

@@ -2,6 +2,7 @@
 #include "Globals.h"
 #include <IntervalTimer.h>
 #include "TrackManager.h"
+#include "Logger.h"
 
 ClockManager clockManager;  // Global instance
 IntervalTimer clockTimer;
@@ -31,11 +32,7 @@ void ClockManager::setExternalClockPresent(bool present) {
   externalClockPresent = present;
 }
 
-void ClockManager::onMidiClockTick() {
-  currentTick += TICKS_PER_CLOCK;
-}
-
-void ClockManager::setupClock() {
+void ClockManager::setup() {
   microsPerTick = 60000000UL / (bpm * ticksPerQuarterNote);
   clockTimer.begin([] { clockManager.updateInternalClock(); }, microsPerTick);
 }
@@ -101,4 +98,14 @@ void ClockManager::updateAllTracks(uint32_t tick) {
       track.playMidiEvents(tick, true);
     }
   }
+}
+
+void ClockManager::handleMidiClock() {
+  if (!externalClockPresent) {
+    externalClockPresent = true;
+    logger.info("External MIDI clock detected");
+  }
+  
+  // Update internal clock based on MIDI clock
+  currentTick += Config::TICKS_PER_CLOCK;
 }

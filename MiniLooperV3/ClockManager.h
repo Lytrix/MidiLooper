@@ -16,14 +16,15 @@ public:
   bool pendingStart;
 
   // --- Public methods ---
-  void setupClock();
+  void setup();
   void updateInternalClock();
   void onMidiClockPulse();
   void onMidiStart();
   void onMidiStop();
-  void checkClockSource();
+  void checkClockSource();  // TODO: Implement clock source detection and switching
   void setBpm(uint16_t newBpm);
   void setTicksPerQuarterNote(uint16_t newTicks);
+  void handleMidiClock();  // Handle incoming MIDI clock messages
 
   // --- Accessors ---
   uint32_t getCurrentTick() const;
@@ -43,7 +44,6 @@ private:
   const uint32_t midiClockTimeout = 500000; // 500ms: timeout for external clock
 
   // --- Internal handlers ---
-  void onMidiClockTick();
   void updateAllTracks(uint32_t currentTick);
 };
 

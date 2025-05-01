@@ -1,36 +1,39 @@
+#include "Globals.h"
+#include "Logger.h"
 #include "ClockManager.h"
 #include "MidiHandler.h"
 #include "TrackManager.h"
-#include "Looper.h"
 #include "ButtonManager.h"
 #include "DisplayManager.h"
+#include "Looper.h"
 
 void setup() {
-  clockManager.setupClock();
+  // Initialize logger first
+  logger.setup(LOG_DEBUG);  // Set to LOG_INFO for production
+  
+  // Load configuration
+  loadConfig();
+  
+  // Initialize other components
+  clockManager.setup();
   midiHandler.setup();
-  looper.setup();
-  buttonManager.setup({9, 10});
+  buttonManager.setup({Buttons::RECORD, Buttons::PLAY});
   displayManager.setup();
+  looper.setup();
+  
+  logger.info("MiniLooperV3 initialized");
 }
 
 void loop() {
-  clockManager.checkClockSource();  // keep clock source updated
+  // Update clock first
+  clockManager.updateInternalClock();
+  uint32_t currentTick = clockManager.getCurrentTick();
+  
+  // Update other components
   midiHandler.handleMidiInput();
-  
-  uint32_t tickNow = clockManager.getCurrentTick();
-  trackManager.handleQuantizedStart(tickNow); 
-  trackManager.handleQuantizedStop(tickNow);
-  trackManager.updateAllTracks(tickNow);
-   
   buttonManager.update();
-  //buttonManager.updateButtons(); // perform logic
+  trackManager.updateAllTracks(currentTick);
+  displayManager.update();
   looper.update();
-
-  static uint32_t lastDisplayUpdate = 0;
-  if (millis() - lastDisplayUpdate > 40) { // Update display every ~30ms
-    displayManager.update();
-    lastDisplayUpdate = millis();
-  }
-  
 }
 
