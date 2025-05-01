@@ -1,8 +1,9 @@
 #include "Globals.h"
-#include "MidiHandler.h"
+#include <MIDI.h>
 #include "ClockManager.h"
 #include "TrackManager.h"
-#include <MIDI.h>
+#include "MidiHandler.h"
+
 
 MIDI_CREATE_INSTANCE(HardwareSerial, Serial8, MIDIserial); // Teensy Serial8 for 5-pin DIN MIDI
 

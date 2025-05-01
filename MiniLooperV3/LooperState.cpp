@@ -1,6 +1,5 @@
 #include "Globals.h"      // Shared timing, bar length, etc.
 #include "LooperState.h"
-#include "Track.h"
 #include "TrackManager.h"
 #include "MidiHandler.h"
 
