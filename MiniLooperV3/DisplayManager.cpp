@@ -19,10 +19,11 @@ void DisplayManager::update() {
 
   const auto& track = trackManager.getSelectedTrack();
   const auto& notes = track.getNoteEvents();
+  // Update scroll offset based on currentTick
 
-  displaySimpleNoteBar(notes, clockManager.getCurrentTick(), track.getLength(), track.getStartLoopTick(), lcd);
-
-  //drawNotePageWithNoteEvents(notes, track.getLength(), clockManager.getCurrentTick(),track.getStartLoopTick());
+  //displaySimpleNoteBar(notes, clockManager.getCurrentTick(), track.getLength(), track.getStartLoopTick(), lcd);
+  uint32_t fixedCursorPosition = 4;  // Fixed cursor at the middle of the display
+  drawNotePageWithNoteEvents(notes,  track.getLength(), clockManager.getCurrentTick(), track.getStartLoopTick());
   if (DEBUG_DISPLAY) {
     Serial.println("Calling displaySimpleNoteBar...");
     Serial.print("Note count: ");
@@ -133,49 +134,89 @@ void clearCustomChars() {
   memset(customChars, 0, sizeof(customChars));
 }
 
-void drawNotePageWithNoteEvents(const std::vector<NoteEvent>& notes, uint32_t loopLengthTicks, uint32_t currentTick, uint32_t startLoopTick) {
+
+
+void drawNotePageWithNoteEvents(const std::vector<NoteEvent>& notes,
+                                uint32_t loopLengthTicks,
+                                uint32_t currentTick,
+                                uint32_t startLoopTick) {
   clearCustomChars();
 
-  for (const NoteEvent& note : notes) {
-    int clamped = constrain(note.note, 28, 84);
-    int y = map(clamped, 36, 84, 0, 7);
 
-    int xStart = ((note.startNoteTick % loopLengthTicks) * DISPLAY_WIDTH_PIXELS) / loopLengthTicks;
-    int xEnd   = ((note.endNoteTick % loopLengthTicks)  * DISPLAY_WIDTH_PIXELS) / loopLengthTicks;
-    // if (xEnd < xStart) xEnd += loopLengthTicks;
+// === Bar/Beat Counter ===
+uint32_t ticksPerBeat = loopLengthTicks / 16;  // Assuming 4 bars, 4 beats per bar
+uint32_t tickInLoop = (currentTick - startLoopTick) % loopLengthTicks;
 
-    xStart = constrain(xStart, 0, DISPLAY_WIDTH_PIXELS - 1);
-    xEnd   = constrain(xEnd, xStart + 1, DISPLAY_WIDTH_PIXELS - 1);
+uint32_t beat = (tickInLoop / ticksPerBeat) % 4 + 1;  // 1-based beat
+uint32_t bar  = (tickInLoop / (ticksPerBeat * 4)) + 1; // 1-based bar
 
-    for (int x = xStart; x <= xEnd; x++) {
-      int charIndex = x / PIXELS_PER_CHAR;
-      int bitIndex  = x % PIXELS_PER_CHAR;
-      customChars[charIndex][y] |= (1 << (4 - bitIndex));
+char counterText[6];
+snprintf(counterText, sizeof(counterText), "%u:%u", bar, beat);
+
+// Place it in bottom right (last 3-5 characters of row 1)
+int counterCol = 16 - strlen(counterText);  // Adjust based on text width
+lcd.setCursor(counterCol, 1);
+lcd.print(counterText);
+
+  // Show original and duplicate (next-loop) notes
+  for (const NoteEvent& originalNote : notes) {
+    for (int loopOffset = 0; loopOffset <= 1; ++loopOffset) {
+      NoteEvent note = originalNote;
+      note.startNoteTick += loopOffset * loopLengthTicks;
+      note.endNoteTick   += loopOffset * loopLengthTicks;
+
+    // Step 1: Find min and max played notes
+    int minNote = 127;
+    int maxNote = 0;
+    for (const NoteEvent& note : notes) {
+      if (note.note < minNote) minNote = note.note;
+      if (note.note > maxNote) maxNote = note.note;
+    }
+
+    // Optional: Clamp to a sensible MIDI range
+    minNote = constrain(minNote, 0, 127);
+    maxNote = constrain(maxNote, 0, 127);
+
+    // Ensure a range of at least 1 to avoid divide-by-zero
+    if (minNote == maxNote) maxNote = minNote + 1;
+
+    // ... inside the drawing loop:
+    int clamped = constrain(note.note, minNote, maxNote);
+    int y = map(clamped, minNote, maxNote, 7, 0);  // Top = high notes
+
+
+      int32_t noteStart = note.startNoteTick;
+      int32_t noteEnd   = note.endNoteTick;
+
+      int32_t length = noteEnd - noteStart;
+
+      for (int32_t i = 0; i <= length; i++) {
+        int32_t t = noteStart + i;
+        int32_t relativeTick = t - (startLoopTick + tickInLoop);
+
+        if (relativeTick < 0 || relativeTick >= (int32_t)loopLengthTicks)
+          continue;
+
+        int x = (relativeTick * DISPLAY_WIDTH_PIXELS) / loopLengthTicks;
+        if (x < 0 || x >= DISPLAY_WIDTH_PIXELS) continue;
+
+        int charIndex = x / PIXELS_PER_CHAR;
+        int bitIndex  = x % PIXELS_PER_CHAR;
+
+        if (charIndex >= 0 && charIndex < 8)
+          customChars[charIndex][y] |= (1 << (4 - bitIndex));
+      }
     }
   }
 
-  // Add bar marker (at half)
-  int barTick = loopLengthTicks / 2;
-  int markerX = (barTick * DISPLAY_WIDTH_PIXELS) / loopLengthTicks;
-  int mChar = markerX / PIXELS_PER_CHAR;
-  int mBit  = markerX % PIXELS_PER_CHAR;
-  for (int y = 0; y < 8; y++) {
-    customChars[mChar][y] |= (1 << (4 - mBit));
-  }
-
-  // Add playhead at bottom
-  int playheadX = ((currentTick -startLoopTick)) * DISPLAY_WIDTH_PIXELS / loopLengthTicks;
-  int pChar = playheadX / PIXELS_PER_CHAR;
-  int pBit  = playheadX % PIXELS_PER_CHAR;
-  customChars[pChar][7] |= (1 << (4 - pBit));  // Playhead uses bottom pixel
-
+  // Upload to LCD
   for (int i = 0; i < 8; i++) {
     lcd.createChar(i, customChars[i]);
   }
 
   lcd.setCursor(0, 1);
-  for (int i = 0; i < 10; i++) {
-    lcd.write(i % 8);  // Display characters 0–7 repeatedly
+  for (int i = 0; i < 8; i++) {
+    lcd.write(i);
   }
 }
 

@@ -27,7 +27,7 @@ void loop() {
   looper.update();
 
   static uint32_t lastDisplayUpdate = 0;
-  if (millis() - lastDisplayUpdate > 50) { // Update display every ~30ms
+  if (millis() - lastDisplayUpdate > 40) { // Update display every ~30ms
     displayManager.update();
     lastDisplayUpdate = millis();
   }
