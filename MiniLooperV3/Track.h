@@ -6,15 +6,40 @@
 #include <MIDI.h>
 #include <unordered_map>
 
-// Track states
+// Track states with clear transitions
 enum TrackState {
-  TRACK_STOPPED,
-  TRACK_ARMED,
-  TRACK_RECORDING,
-  TRACK_STOPPED_RECORDING,
-  TRACK_OVERDUBBING,
-  TRACK_STOPPED_OVERDUBBING,
-  TRACK_PLAYING
+  TRACK_STOPPED,           // Initial state, no recording or playback
+  TRACK_ARMED,            // Ready to start recording
+  TRACK_RECORDING,        // Recording first layer
+  TRACK_STOPPED_RECORDING,// First layer recorded, ready for playback or overdub
+  TRACK_PLAYING,          // Playing back recorded content
+  TRACK_OVERDUBBING,      // Recording additional layers while playing
+  TRACK_STOPPED_OVERDUBBING // Additional layer recorded, back to playback
+};
+
+// State transition validation
+class TrackStateMachine {
+public:
+  static bool isValidTransition(TrackState current, TrackState next) {
+    switch (current) {
+      case TRACK_STOPPED:
+        return next == TRACK_ARMED;
+      case TRACK_ARMED:
+        return next == TRACK_RECORDING;
+      case TRACK_RECORDING:
+        return next == TRACK_STOPPED_RECORDING;
+      case TRACK_STOPPED_RECORDING:
+        return next == TRACK_PLAYING || next == TRACK_OVERDUBBING;
+      case TRACK_PLAYING:
+        return next == TRACK_OVERDUBBING || next == TRACK_STOPPED;
+      case TRACK_OVERDUBBING:
+        return next == TRACK_STOPPED_OVERDUBBING;
+      case TRACK_STOPPED_OVERDUBBING:
+        return next == TRACK_PLAYING;
+      default:
+        return false;
+    }
+  }
 };
 
 // MIDI event structure
@@ -56,6 +81,8 @@ public:
 
   // State management
   TrackState getState() const;
+  bool setState(TrackState newState);  // Returns true if transition was valid
+  bool isValidStateTransition(TrackState newState) const;
 
   // Getter functions for events
   const std::vector<MidiEvent>& getEvents() const;
@@ -123,6 +150,9 @@ private:
   std::unordered_map<std::pair<uint8_t, uint8_t>, PendingNote, PairHash> pendingNotes;
   std::vector<MidiEvent> midiEvents;
   std::vector<NoteEvent> noteEvents;
+
+  // State management
+  bool transitionState(TrackState newState);  // Internal state transition method
 };
 
 #endif
