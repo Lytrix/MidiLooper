@@ -29,7 +29,7 @@ public:
   uint32_t getCurrentTick() const;
   bool isExternalClockPresent() const;
   void setExternalClockPresent(bool present);
-  void setLastMidiClockTime(uint32_t time);
+  uint32_t setLastMidiClockTime(uint32_t lastMidiClockTime);
 
 private:
   // --- Timing data ---
@@ -40,8 +40,7 @@ private:
 
   // --- Clock detection ---
   bool externalClockPresent;
-  const uint32_t midiClockTimeout = 500000; // 500ms: timeout for external clock  
-  //  it’s not dependent on dynamic input, there’s no need to initialize it in the constructor.
+  const uint32_t midiClockTimeout = 500000; // 500ms: timeout for external clock
 
   // --- Internal handlers ---
   void onMidiClockTick();
