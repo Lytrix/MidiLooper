@@ -8,38 +8,15 @@
 
 // Track states with clear transitions
 enum TrackState {
-  TRACK_STOPPED,           // Initial state, no recording or playback
+  TRACK_EMPTY,            // Initial state Empty track
+  TRACK_STOPPED,          // No recording or playback
   TRACK_ARMED,            // Ready to start recording
   TRACK_RECORDING,        // Recording first layer
   TRACK_STOPPED_RECORDING,// First layer recorded, ready for playback or overdub
   TRACK_PLAYING,          // Playing back recorded content
   TRACK_OVERDUBBING,      // Recording additional layers while playing
-  TRACK_STOPPED_OVERDUBBING // Additional layer recorded, back to playback
-};
-
-// State transition validation
-class TrackStateMachine {
-public:
-  static bool isValidTransition(TrackState current, TrackState next) {
-    switch (current) {
-      case TRACK_STOPPED:
-        return next == TRACK_ARMED;
-      case TRACK_ARMED:
-        return next == TRACK_RECORDING;
-      case TRACK_RECORDING:
-        return next == TRACK_STOPPED_RECORDING;
-      case TRACK_STOPPED_RECORDING:
-        return next == TRACK_PLAYING || next == TRACK_OVERDUBBING;
-      case TRACK_PLAYING:
-        return next == TRACK_OVERDUBBING || next == TRACK_STOPPED;
-      case TRACK_OVERDUBBING:
-        return next == TRACK_STOPPED_OVERDUBBING;
-      case TRACK_STOPPED_OVERDUBBING:
-        return next == TRACK_PLAYING;
-      default:
-        return false;
-    }
-  }
+  TRACK_STOPPED_OVERDUBBING, // Additional layer recorded, back to playback
+  NUM_TRACK_STATES        // Always helpful to validate range
 };
 
 // MIDI event structure
@@ -83,6 +60,7 @@ public:
   TrackState getState() const;
   bool setState(TrackState newState);  // Returns true if transition was valid
   bool isValidStateTransition(TrackState newState) const;
+  const char* getStateName(TrackState state);
 
   // Getter functions for events
   const std::vector<MidiEvent>& getEvents() const;
@@ -125,6 +103,7 @@ public:
   void setLength(uint32_t ticks);
 
   // Track state checks
+  bool isEmpty() const;
   bool isArmed() const;
   bool isRecording() const;
   bool isStoppedRecording() const;

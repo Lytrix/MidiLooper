@@ -5,11 +5,14 @@ LogLevel Logger::currentLevel = LOG_INFO;
 bool Logger::isInitialized = false;
 Logger logger;
 
+static char logBuffer[128];  // Shared buffer for formatted log output
+
 void Logger::setup(LogLevel level) {
   currentLevel = level;
   isInitialized = true;
   Serial.begin(115200);
-  info("Logger initialized with level %d", level);
+  Serial.print("Logger initialized with level: ");
+  Serial.println(level);
 }
 
 void Logger::printTimestamp() {
@@ -41,9 +44,9 @@ void Logger::error(const char* format, ...) {
   printPrefix(LOG_ERROR);
   va_list args;
   va_start(args, format);
-  Serial.printf(format, args);
+  vsnprintf(logBuffer, sizeof(logBuffer), format, args);
   va_end(args);
-  Serial.println();
+  Serial.println(logBuffer);
 }
 
 void Logger::warning(const char* format, ...) {
@@ -51,9 +54,9 @@ void Logger::warning(const char* format, ...) {
   printPrefix(LOG_WARNING);
   va_list args;
   va_start(args, format);
-  Serial.printf(format, args);
+  vsnprintf(logBuffer, sizeof(logBuffer), format, args);
   va_end(args);
-  Serial.println();
+  Serial.println(logBuffer);
 }
 
 void Logger::info(const char* format, ...) {
@@ -61,9 +64,9 @@ void Logger::info(const char* format, ...) {
   printPrefix(LOG_INFO);
   va_list args;
   va_start(args, format);
-  Serial.printf(format, args);
+  vsnprintf(logBuffer, sizeof(logBuffer), format, args);
   va_end(args);
-  Serial.println();
+  Serial.println(logBuffer);
 }
 
 void Logger::debug(const char* format, ...) {
@@ -71,9 +74,9 @@ void Logger::debug(const char* format, ...) {
   printPrefix(LOG_DEBUG);
   va_list args;
   va_start(args, format);
-  Serial.printf(format, args);
+  vsnprintf(logBuffer, sizeof(logBuffer), format, args);
   va_end(args);
-  Serial.println();
+  Serial.println(logBuffer);
 }
 
 void Logger::trace(const char* format, ...) {
@@ -81,9 +84,9 @@ void Logger::trace(const char* format, ...) {
   printPrefix(LOG_TRACE);
   va_list args;
   va_start(args, format);
-  Serial.printf(format, args);
+  vsnprintf(logBuffer, sizeof(logBuffer), format, args);
   va_end(args);
-  Serial.println();
+  Serial.println(logBuffer);
 }
 
 void Logger::log(LogCategory category, LogLevel level, const char* format, ...) {
@@ -91,9 +94,9 @@ void Logger::log(LogCategory category, LogLevel level, const char* format, ...) 
   printPrefix(level, category);
   va_list args;
   va_start(args, format);
-  Serial.printf(format, args);
+  vsnprintf(logBuffer, sizeof(logBuffer), format, args);
   va_end(args);
-  Serial.println();
+  Serial.println(logBuffer);
 }
 
 void Logger::logStateTransition(const char* component, const char* fromState, const char* toState) {
@@ -118,9 +121,10 @@ void Logger::logTrackEvent(const char* event, uint32_t tick, const char* format,
     Serial.print(" (");
     va_list args;
     va_start(args, format);
-    Serial.printf(format, args);
+    vsnprintf(logBuffer, sizeof(logBuffer), format, args);
     va_end(args);
+    Serial.print(logBuffer);
     Serial.print(")");
   }
   Serial.println();
-} 
+}

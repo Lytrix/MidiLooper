@@ -3,13 +3,14 @@
 #include "ClockManager.h"
 #include "MidiHandler.h"
 #include "Logger.h"
+#include "TrackStateMachine.h"
 
 // Track class implementation
 
 Track::Track()
   : isPlayingBack(false),
     muted(false),
-    trackState(TRACK_STOPPED),
+    trackState(TRACK_EMPTY),
     startLoopTick(0),
     loopLengthTicks(0),
     lastTickInLoop(0),
@@ -39,32 +40,28 @@ bool Track::isValidStateTransition(TrackState newState) const {
 }
 
 bool Track::setState(TrackState newState) {
-  if (!isValidStateTransition(newState)) {
-    logger.log(CAT_STATE, LOG_WARNING, "Invalid state transition from %d to %d", trackState, newState);
+  if (!TrackStateMachine::isValidTransition(trackState, newState)) {
+    logger.log(CAT_STATE, LOG_WARNING, "Invalid state transition from %s to %s",
+               TrackStateMachine::toString(trackState),
+               TrackStateMachine::toString(newState));
     return false;
   }
   return transitionState(newState);
 }
 
+const char* Track::getStateName(TrackState state) {
+  return TrackStateMachine::toString(state);
+}
+
 bool Track::transitionState(TrackState newState) {
-  if (!isValidStateTransition(newState)) {
+  if (!TrackStateMachine::isValidTransition(trackState, newState)) {
     return false;
   }
 
   TrackState oldState = trackState;
   trackState = newState;
 
-  const char* stateNames[] = {
-    "STOPPED",
-    "ARMED",
-    "RECORDING",
-    "STOPPED_RECORDING",
-    "PLAYING",
-    "OVERDUBBING",
-    "STOPPED_OVERDUBBING"
-  };
-
-  logger.logStateTransition("Track", stateNames[oldState], stateNames[newState]);
+  logger.logStateTransition("Track", TrackStateMachine::toString(oldState), TrackStateMachine::toString(newState));
   return true;
 }
 
@@ -139,6 +136,12 @@ size_t Track::getNoteEventCount() const {
 }
 
 void Track::clear() {
+  
+  if (trackState == TRACK_EMPTY) {
+    logger.debug("Track already empty; ignoring clear");
+    return;
+  }
+  
   midiEvents.clear();
   noteEvents.clear();
   startLoopTick = 0;
@@ -173,26 +176,11 @@ void Track::playMidiEvents(uint32_t currentTick, bool isAudible) {
   if (!isAudible || muted || midiEvents.empty() || loopLengthTicks == 0) return;
 
   uint32_t tickInLoop = (currentTick - startLoopTick) % loopLengthTicks;
-          
-  // Only allow state transition if we're in a valid state
-  if ((isRecording() || isOverdubbing()) && (currentTick - startLoopTick >= loopLengthTicks)) {
-    if (isRecording()) {
-      setState(TRACK_STOPPED_RECORDING);
-    } else if (isOverdubbing()) {
-      setState(TRACK_STOPPED_OVERDUBBING);
-    }
+
+  if ((lastTickInLoop > tickInLoop)) {
+    nextEventIndex = 0;
   }
-
-  // Reset playback at start of each loop
-  // if ((currentTick - startLoopTick) % loopLengthTicks == 0) {
-  //   nextEventIndex = 0;
-  // }
-
-    if ((lastTickInLoop > tickInLoop)) {
-      nextEventIndex = 0;
-    }
-    lastTickInLoop = tickInLoop;
-
+  lastTickInLoop = tickInLoop;
 
   // Match absolute midiEvent tick with relative loop tick
   while (nextEventIndex < midiEvents.size()) {
@@ -273,6 +261,10 @@ void Track::sendMidiEvent(const MidiEvent& evt) {
   }
 
   isPlayingBack = false;  // Reset playback state
+}
+
+bool Track::isEmpty() const{
+  return trackState == TRACK_EMPTY;
 }
 
 bool Track::isStopped() const {

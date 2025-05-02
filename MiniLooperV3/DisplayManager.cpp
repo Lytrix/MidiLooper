@@ -39,6 +39,7 @@ void DisplayManager::showTrackStates() {
     char symbol = ' ';
 
     switch (state) {
+      case TRACK_EMPTY:        symbol = '-'; break;
       case TRACK_RECORDING:    symbol = 'R'; break;
       case TRACK_PLAYING:      symbol = 'P'; break;
       case TRACK_OVERDUBBING:  symbol = 'O'; break;
@@ -80,8 +81,8 @@ void DisplayManager::drawNotePageWithNoteEvents(const std::vector<NoteEvent>& no
   uint32_t ticksPerBeat = loopLengthTicks / 16;  // Assuming 4 bars, 4 beats per bar
   uint32_t tickInLoop = (currentTick - startLoopTick) % loopLengthTicks;
 
-  uint32_t beat = (tickInLoop / ticksPerBeat) % 4 + 1;  // 1-based beat
-  uint32_t bar  = (tickInLoop / (ticksPerBeat * 4)) + 1; // 1-based bar
+  uint8_t beat = (tickInLoop / ticksPerBeat) % 4 + 1;  // 1-based beat
+  uint8_t bar  = (tickInLoop / (ticksPerBeat * 4)) + 1; // 1-based bar
 
   char counterText[6];
   snprintf(counterText, sizeof(counterText), "%u:%u", bar, beat);
