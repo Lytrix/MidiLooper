@@ -35,6 +35,12 @@ void ButtonManager::setup(const std::vector<uint8_t>& pins) {
 }
 
 void ButtonManager::update() {
+    static unsigned long bootTime = millis();
+
+    if (millis() - bootTime < 500) {
+        return;  // ignore button input for 500ms after boot
+    }
+
     for (size_t i = 0; i < buttons.size(); ++i) {
         buttons[i].update();
 
@@ -54,13 +60,14 @@ void ButtonManager::update() {
 }
 
 void ButtonManager::handleButton(uint8_t index, ButtonAction action) {
+    
     auto& track = trackManager.getSelectedTrack();
 
     if (index == 0) {
         // Button A: Record / Overdub / Play / Clear
         switch (action) {
             case BUTTON_SHORT_PRESS:
-                if (!track.isRecording() && !track.isOverdubbing() && !track.isArmed() && !track.isPlaying()) {
+                if (track.isEmpty()) {
                     if (DEBUG_BUTTONS) Serial.println("Button A: Start Recording");
                     track.startRecording(clockManager.getCurrentTick());
                 } else if (track.isRecording()) {
@@ -72,6 +79,7 @@ void ButtonManager::handleButton(uint8_t index, ButtonAction action) {
                 } else if (track.isOverdubbing()) {
                     if (DEBUG_BUTTONS) Serial.println("Button A: Stop Overdub");
                     track.stopOverdubbing(clockManager.getCurrentTick());
+                    track.startPlaying(clockManager.getCurrentTick());
                 } else if (track.isPlaying()) {
                     if (DEBUG_BUTTONS) Serial.println("Button A: Live Overdub");
                     track.startOverdubbing(clockManager.getCurrentTick());
@@ -82,6 +90,11 @@ void ButtonManager::handleButton(uint8_t index, ButtonAction action) {
                 break;
 
             case BUTTON_LONG_PRESS:
+                if (!track.hasData()) {
+                    logger.debug("Clear ignored — track is empty");
+                return;
+                }
+
                 if (DEBUG_BUTTONS) Serial.println("Button A: Clear Track");
                 track.clear();
                 break;
@@ -103,6 +116,10 @@ void ButtonManager::handleButton(uint8_t index, ButtonAction action) {
             }
 
             case BUTTON_LONG_PRESS:
+                if (!track.hasData()) {
+                    logger.debug("Mute ignored — track is empty");
+                return;
+                }
                 track.toggleMuteTrack();
                 if (DEBUG_BUTTONS) {
                     Serial.print("Button B: Toggled mute on track ");

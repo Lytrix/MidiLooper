@@ -52,10 +52,10 @@ namespace MidiConfig {
 // Track and Timing Configuration
 // --------------------
 namespace Config {
-  const int NUM_TRACKS = 4;               // Number of looper tracks
-  const int INTERNAL_PPQN = 192;          // Internal resolution for timing
-  const int TICKS_PER_CLOCK = (INTERNAL_PPQN / 24);  // 8 ticks per MIDI clock pulse (24 PPQN)
-  const int QUARTERS_PER_BAR = 4;         // Time signature numerator (4/4 time)
+  constexpr uint8_t  NUM_TRACKS = 4;               // Number of looper tracks
+  constexpr uint8_t  INTERNAL_PPQN = 192;          // Internal resolution for timing
+  constexpr uint8_t  TICKS_PER_CLOCK = (INTERNAL_PPQN / 24);  // 8 ticks per MIDI clock pulse (24 PPQN)
+  constexpr uint8_t  QUARTERS_PER_BAR = 4;         // Time signature numerator (4/4 time)
 }
 
 // --------------------

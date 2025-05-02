@@ -122,7 +122,7 @@ bool TrackManager::anyTrackSoloed() const {
 
 bool TrackManager::isTrackAudible(uint8_t trackIndex) const {
   if (trackIndex >= Config::NUM_TRACKS) return false;
-  return anyTrackSoloed() ? soloed[trackIndex] : !muted[trackIndex];
+  return !tracks[trackIndex].isMuted();
 }
 
 // Master Loop Length -----------------------------------------
