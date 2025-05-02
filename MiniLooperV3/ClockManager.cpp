@@ -17,6 +17,7 @@ ClockManager::ClockManager()
     
 {}
 
+
 uint32_t ClockManager::getCurrentTick() const {
   noInterrupts();
   uint32_t tick = currentTick;
@@ -49,10 +50,11 @@ void ClockManager::setTicksPerQuarterNote(uint16_t newTicks) {
   clockTimer.update(microsPerTick);
 }
 
+
 void ClockManager::updateInternalClock() {
   if (!externalClockPresent) {
     currentTick++;
-    updateAllTracks(currentTick);
+    trackManager.updateAllTracks(currentTick);  // Let TrackManager handle it
     lastInternalTickTime = micros();
   }
 }
@@ -69,7 +71,7 @@ void ClockManager::onMidiClockPulse() {
     }
   }
 
-  updateAllTracks(currentTick);
+  trackManager.updateAllTracks(currentTick);
   lastMidiClockTime = setLastMidiClockTime(micros());
 }
 
@@ -89,15 +91,6 @@ void ClockManager::onMidiStart() {
 
 void ClockManager::onMidiStop() {
   // externalClockPresent = false;
-}
-
-void ClockManager::updateAllTracks(uint32_t tick) {
-  for (int i = 0; i < trackManager.getTrackCount(); ++i) {
-    Track& track = trackManager.getTrack(i);
-    if (track.isPlaying() || track.isOverdubbing()) {
-      track.playMidiEvents(tick, true);
-    }
-  }
 }
 
 void ClockManager::handleMidiClock() {

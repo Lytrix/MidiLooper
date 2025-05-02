@@ -9,11 +9,14 @@ float bpm = 120.0f;
 uint32_t ticksPerQuarterNote = MidiConfig::PPQN;
 uint32_t quartersPerBar = Config::QUARTERS_PER_BAR;
 const uint32_t ticksPerBar = ticksPerQuarterNote * quartersPerBar;
+uint32_t lastDisplayUpdate = 0;
+uint32_t now = millis();
 
 // --------------------
 // Internal tracking
 // --------------------
-static uint32_t lastBarTick = 0;
+//static uint32_t lastBarTick = 0;
+
 
 // --------------------
 // Check if we're at the start of a new bar

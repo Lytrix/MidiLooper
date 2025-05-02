@@ -132,11 +132,11 @@ public:
   bool isStoppedOverdubbing() const;
   bool isPlaying() const;
   bool isStopped() const;
+  bool isMuted() const;
 
 private:
   bool isPlayingBack;  // Flag to ignore playback events during overdub
   void sendMidiEvent(const MidiEvent& evt);
-  bool isMuted() const;
 
   // Track data
   bool muted;

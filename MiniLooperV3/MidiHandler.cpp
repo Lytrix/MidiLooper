@@ -61,11 +61,15 @@ void MidiHandler::handleMidiMessage(byte type, byte channel, byte data1, byte da
       break;
 
     case midi::PitchBend:
-      handlePitchBend(channel, (data2 << 7) | data1); // 14-bit value
+      handlePitchBend(channel, (data2 << 7) | data1, tickNow); // 14-bit value
       break;
 
     case midi::AfterTouchChannel:
-      handleAfterTouch(channel, data1);
+      handleAfterTouch(channel, data1, tickNow);
+      break;
+    
+    case midi::ProgramChange:
+      handleProgramChange(channel, data1, tickNow);
       break;
 
     case midi::Clock:
@@ -102,12 +106,16 @@ void MidiHandler::handleControlChange(byte channel, byte control, byte value, ui
   trackManager.getSelectedTrack().recordMidiEvents(midi::ControlChange, channel, control, value, tickNow);
 }
 
-void MidiHandler::handlePitchBend(byte channel, int pitchValue) {
+void MidiHandler::handlePitchBend(byte channel, int pitchValue, uint32_t tickNow) {
   // Not yet implemented
 }
 
-void MidiHandler::handleAfterTouch(byte channel, byte pressure) {
+void MidiHandler::handleAfterTouch(byte channel, byte pressure, uint32_t tickNow) {
   // Not yet implemented
+}
+
+void MidiHandler::handleProgramChange(byte channel, byte program, uint32_t tickNow) {
+   trackManager.getSelectedTrack().recordMidiEvents(midi::ProgramChange, channel, program, 0, tickNow);
 }
 
 void MidiHandler::handleMidiStart() {
@@ -147,6 +155,11 @@ void MidiHandler::sendPitchBend(byte channel, int value) {
 void MidiHandler::sendAfterTouch(byte channel, byte pressure) {
   if (outputUSB)    usbMIDI.sendAfterTouch(pressure, channel);
   if (outputSerial) MIDIserial.sendAfterTouch(pressure, channel);
+}
+
+void MidiHandler::sendProgramChange(byte channel, byte program) {
+  if (outputUSB)    usbMIDI.sendProgramChange(program, channel);
+  if (outputSerial) MIDIserial.sendProgramChange(program, channel);
 }
 
 // --- Clock / Transport Output ---

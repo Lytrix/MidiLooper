@@ -217,12 +217,27 @@ void Track::sendMidiEvent(const MidiEvent& evt) {
 
   isPlayingBack = true;  // Mark playback so noteOn/noteOff ignores it
 
-  logger.logMidiEvent(
-    evt.type == midi::NoteOn ? "NoteOn" : 
-    evt.type == midi::NoteOff ? "NoteOff" : 
-    evt.type == midi::ControlChange ? "ControlChange" : "Other",
-    evt.channel, evt.data1, evt.data2
-  );
+  const char* typeStr;
+
+  switch (evt.type) {
+    case midi::NoteOn:
+      typeStr = "NoteOn";
+      break;
+    case midi::NoteOff:
+      typeStr = "NoteOff";
+      break;
+    case midi::ControlChange:
+      typeStr = "ControlChange";
+      break;
+    case midi::ProgramChange:
+      typeStr = "Program Change";
+      break;
+    default:
+      typeStr = "Other";
+      break;
+  }
+
+  logger.logMidiEvent(typeStr, evt.channel, evt.data1, evt.data2);
 
   switch (evt.type) {
     case midi::NoteOn:
@@ -239,6 +254,21 @@ void Track::sendMidiEvent(const MidiEvent& evt) {
       break;
     case midi::AfterTouchChannel:
       midiHandler.sendAfterTouch(evt.channel, evt.data1);
+      break;
+    case midi::ProgramChange:
+      midiHandler.sendProgramChange(evt.channel, evt.data1);
+      break;
+    case midi::Clock:
+    case midi::Start:
+    case midi::Stop:
+    // Clock events might be handled by your ClockManager, so skip them here.
+      break;
+    case midi::InvalidType:
+      logger.log(CAT_MIDI, LOG_WARNING, "Invalid Type: data1=%d, data2=%d", evt.data1, evt.data2);
+      break;
+    default:
+      logger.log(CAT_MIDI, LOG_INFO, "Unhandled MIDI type: %d (ch=%d, d1=%d, d2=%d)",
+                 evt.type, evt.channel, evt.data1, evt.data2);
       break;
   }
 

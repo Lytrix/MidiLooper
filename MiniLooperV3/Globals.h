@@ -32,6 +32,7 @@ namespace LCD {
   const int D5     = 31;    // Data 5
   const int D6     = 30;    // Data 6
   const int D7     = 29;    // Data 7
+  const uint32_t DISPLAY_UPDATE_INTERVAL = 100; // in ms 
 }
 
 // Button Configuration
@@ -64,7 +65,8 @@ extern float bpm;                          // Current tempo
 extern uint32_t ticksPerQuarterNote;       // MIDI resolution
 extern uint32_t quartersPerBar;            // Time signature numerator
 extern const uint32_t ticksPerBar;         // Computed as ticksPerQuarterNote * quartersPerBar
-
+extern uint32_t now;                       // Current time
+extern uint32_t lastDisplayUpdate;    
 // --------------------
 // System Functions
 // --------------------

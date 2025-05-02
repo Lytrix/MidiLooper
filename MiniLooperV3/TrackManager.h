@@ -19,8 +19,8 @@ public:
   uint8_t getTrackCount() const;
 
   // --- Track Updates ---
-  void update(uint32_t currentTick);  // Update all tracks and handle pending operations
-  void updateAllTracks(uint32_t currentTick);
+  void updateAllTracks(uint32_t currentTick);  // Update all tracks and handle pending operations
+  // updateAllTracks is deprecated - use update instead
 
   // --- Recording ---
   void startRecordingTrack(uint8_t trackIndex, uint32_t currentTick);
