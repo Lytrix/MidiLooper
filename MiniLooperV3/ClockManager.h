@@ -42,9 +42,6 @@ private:
   // --- Clock detection ---
   bool externalClockPresent;
   const uint32_t midiClockTimeout = 500000; // 500ms: timeout for external clock
-
-  // --- Internal handlers ---
-  void updateAllTracks(uint32_t currentTick);
 };
 
 extern ClockManager clockManager;

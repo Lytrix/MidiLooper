@@ -25,6 +25,7 @@ public:
   void sendControlChange(byte channel, byte control, byte value);
   void sendPitchBend(byte channel, int value);
   void sendAfterTouch(byte channel, byte pressure);
+  void sendProgramChange(byte channel, byte program);
 
   // --- Clock / Transport Output ---
   void sendClock();
@@ -44,8 +45,9 @@ private:
   void handleNoteOn(byte channel, byte note, byte velocity, uint32_t tickNow);
   void handleNoteOff(byte channel, byte note, byte velocity, uint32_t tickNow);
   void handleControlChange(byte channel, byte control, byte value, uint32_t tickNow);
-  void handlePitchBend(byte channel, int pitchValue);
-  void handleAfterTouch(byte channel, byte pressure);
+  void handlePitchBend(byte channel, int pitchValue, uint32_t tickNow);
+  void handleAfterTouch(byte channel, byte pressure, uint32_t tickNow);
+  void handleProgramChange(byte channel, byte program, uint32_t tickNow);
   void handleMidiStart();
   void handleMidiStop();
   void handleMidiContinue();

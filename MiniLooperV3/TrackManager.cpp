@@ -91,13 +91,6 @@ void TrackManager::clearTrack(uint8_t trackIndex) {
   if (trackIndex < Config::NUM_TRACKS) tracks[trackIndex].clear();
 }
 
-void TrackManager::update(uint32_t currentTick) {
-  for (uint8_t i = 0; i < Config::NUM_TRACKS; i++) {
-    bool audible = isTrackAudible(i);
-    tracks[i].playMidiEvents(currentTick, audible);
-  }
-}
-
 // Mute / Solo ------------------------------------------------
 
 void TrackManager::muteTrack(uint8_t trackIndex) {
@@ -186,6 +179,7 @@ void TrackManager::setup() {
 }
 
 void TrackManager::updateAllTracks(uint32_t currentTick) {
+  // Called from ClockManager.internalUpdateClockTick and updateMidiCLockTick
   for (uint8_t i = 0; i < Config::NUM_TRACKS; i++) {
     if (pendingRecord[i]) {
       startRecordingTrack(i, currentTick);
