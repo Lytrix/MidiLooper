@@ -80,6 +80,7 @@ void Track::stopRecording(uint32_t currentTick) {
   }
   loopLengthTicks = currentTick - startLoopTick;
   logger.logTrackEvent("Recording stopped", currentTick, "length=%lu", loopLengthTicks);
+  logger.debug("Loop length = %lu ticks", loopLengthTicks);
 }
 
 void Track::startPlaying(uint32_t currentTick) {
@@ -152,7 +153,22 @@ void Track::clear() {
 
 void Track::recordMidiEvents(midi::MidiType type, byte channel, byte data1, byte data2, uint32_t currentTick) {
   if ((isRecording() && !isPlaying()) || isOverdubbing()) {
-    uint32_t tickRelative = currentTick - startLoopTick;
+    uint32_t tickRelative;
+
+    // First pass: build the loop
+    if (isRecording() && !isPlaying()) {
+      tickRelative = currentTick - startLoopTick;
+
+    // Overdub passes: wrap every hit back into the loop
+    } else if (isOverdubbing()) {
+      // defensive: loopLengthTicks was set when you stopped recording
+      if (loopLengthTicks == 0) return;
+      tickRelative = (currentTick - startLoopTick) % loopLengthTicks;
+
+    } else {
+      return;
+    }
+
 
     // Prevent duplicate midiEvents at the same tick with same parameters
     for (const auto& e : midiEvents) {
@@ -177,24 +193,31 @@ void Track::playMidiEvents(uint32_t currentTick, bool isAudible) {
 
   uint32_t tickInLoop = (currentTick - startLoopTick) % loopLengthTicks;
 
-  if ((lastTickInLoop > tickInLoop)) {
+  // Detect loop wrap by comparing to lastTickInLoop
+  if (tickInLoop < lastTickInLoop) {
     nextEventIndex = 0;
+    logger.debug("=== Loop wrapped at tick %lu, dumping all midiEvents ===", currentTick);
+    for (size_t i = 0; i < midiEvents.size(); ++i) {
+      const auto &e = midiEvents[i];
+      logger.debug(
+        "  [%2u] tick=%lu  type=%d  ch=%d  d1=%d  d2=%d",
+        i, e.tick, (int)e.type, e.channel, e.data1, e.data2
+      );
+    }
   }
   lastTickInLoop = tickInLoop;
 
-  // Match absolute midiEvent tick with relative loop tick
+  // Normal playback pass
   while (nextEventIndex < midiEvents.size()) {
-    const MidiEvent& midiEvent = midiEvents[nextEventIndex];
-    //uint32_t eventTickInLoop = (midiEvent.tick - startLoopTick + loopLengthTicks) % loopLengthTicks;
-    uint32_t eventTickInLoop = midiEvent.tick % loopLengthTicks;
-    
-    if (eventTickInLoop == tickInLoop) {
-      sendMidiEvent(midiEvent);
+    const MidiEvent& evt = midiEvents[nextEventIndex];
+    uint32_t evLoopTick = evt.tick % loopLengthTicks;
+
+    if (evLoopTick == tickInLoop) {
+      sendMidiEvent(evt);
       nextEventIndex++;
-    } else if (eventTickInLoop > tickInLoop) {
-      break;  // Stop if midiEvents are for later in the loop
+    } else if (evLoopTick > tickInLoop) {
+      break;
     } else {
-      // Catch up missed or out-of-sync midiEvents
       nextEventIndex++;
     }
   }
