@@ -17,14 +17,14 @@ void DisplayManager::setup() {
 }
 
 void DisplayManager::update() {
-   // Top row
-  showTrackStates(); 
+  // Top row
+  showTrackStates();
 
   const auto& track = trackManager.getSelectedTrack();
   const auto& notes = track.getNoteEvents();
-  
+
   // Bottom row
-  drawNotePageWithNoteEvents(notes,  track.getLength(), clockManager.getCurrentTick(), track.getStartLoopTick());
+  drawNotePageWithNoteEvents(notes, track.getLength(), clockManager.getCurrentTick(), track.getStartLoopTick());
   if (debugLevel & DEBUG_DISPLAY) {
     logger.debug("Calling displaySimpleNoteBar...");
     logger.debug("Note count: %d", notes.size());
@@ -39,12 +39,12 @@ void DisplayManager::showTrackStates() {
     char symbol = ' ';
 
     switch (state) {
-      case TRACK_EMPTY:        symbol = '-'; break;
-      case TRACK_RECORDING:    symbol = 'R'; break;
-      case TRACK_PLAYING:      symbol = 'P'; break;
-      case TRACK_OVERDUBBING:  symbol = 'O'; break;
-      case TRACK_STOPPED:      symbol = 'S'; break;
-      default:                 symbol = '?'; break;
+      case TRACK_EMPTY: symbol = '-'; break;
+      case TRACK_RECORDING: symbol = 'R'; break;
+      case TRACK_PLAYING: symbol = 'P'; break;
+      case TRACK_OVERDUBBING: symbol = 'O'; break;
+      case TRACK_STOPPED: symbol = 'S'; break;
+      default: symbol = '?'; break;
     }
 
     if (!trackManager.isTrackAudible(i)) {
@@ -72,17 +72,19 @@ void clearCustomChars() {
 }
 
 void DisplayManager::drawNotePageWithNoteEvents(const std::vector<NoteEvent>& notes,
-                                uint32_t loopLengthTicks,
-                                uint32_t currentTick,
-                                uint32_t startLoopTick) {
+                                                uint32_t loopLengthTicks,
+                                                uint32_t currentTick,
+                                                uint32_t startLoopTick) {
   clearCustomChars();
 
   // === Bar/Beat Counter ===
   uint32_t ticksPerBeat = loopLengthTicks / 16;  // Assuming 4 bars, 4 beats per bar
+ 
+  // --- 1) Compute current play‐head position in the loop ---
   uint32_t tickInLoop = (currentTick - startLoopTick) % loopLengthTicks;
 
-  uint8_t beat = (tickInLoop / ticksPerBeat) % 4 + 1;  // 1-based beat
-  uint8_t bar  = (tickInLoop / (ticksPerBeat * 4)) + 1; // 1-based bar
+  uint8_t beat = (tickInLoop / ticksPerBeat) % 4 + 1;   // 1-based beat
+  uint8_t bar = (tickInLoop / (ticksPerBeat * 4)) + 1;  // 1-based bar
 
   char counterText[6];
   snprintf(counterText, sizeof(counterText), "%u:%u", bar, beat);
@@ -92,63 +94,65 @@ void DisplayManager::drawNotePageWithNoteEvents(const std::vector<NoteEvent>& no
   lcd.setCursor(counterCol, 1);
   lcd.print(counterText);
 
-  // Show original and duplicate (next-loop) notes
-  for (const NoteEvent& originalNote : notes) {
-    for (int loopOffset = 0; loopOffset <= 1; ++loopOffset) {
-      NoteEvent note = originalNote;
-      note.startNoteTick += loopOffset * loopLengthTicks;
-      note.endNoteTick   += loopOffset * loopLengthTicks;
+  clearCustomChars();
 
-    // Step 1: Find min and max played notes
-    int minNote = 127;
-    int maxNote = 0;
-    for (const NoteEvent& note : notes) {
-      if (note.note < minNote) minNote = note.note;
-      if (note.note > maxNote) maxNote = note.note;
-    }
+  if (notes.empty() || loopLengthTicks == 0) {
+    // nothing to draw
+    lcd.setCursor(0,1);
+    lcd.print("                ");
+    return;
+  }
 
-    // Optional: Clamp to a sensible MIDI range
-    minNote = constrain(minNote, 0, 127);
-    maxNote = constrain(maxNote, 0, 127);
+ 
+  // --- 2) Compute vertical scale ---
+  int minNote = 127, maxNote = 0;
+  for (auto &n : notes) {
+    minNote = min(minNote, (int)n.note);
+    maxNote = max(maxNote, (int)n.note);
+  }
+  if (minNote == maxNote) maxNote = minNote + 1;
 
-    // Ensure a range of at least 1 to avoid divide-by-zero
-    if (minNote == maxNote) maxNote = minNote + 1;
+  // --- 3) Draw each note (start→end) into the 8‐character window ---
+  for (const auto &orig : notes) {
+    // fold note into first loop
+    uint32_t s0 = orig.startNoteTick % loopLengthTicks;
+    uint32_t e0 = orig.endNoteTick   % loopLengthTicks;
 
-    // ... inside the drawing loop:
-    int clamped = constrain(note.note, minNote, maxNote);
-    int y = map(clamped, minNote, maxNote, 7, 0);  // Top = high notes
+    // map to Y row
+    int clamped = constrain(orig.note, minNote, maxNote);
+    int y = map(clamped, minNote, maxNote, /*top*/7, /*bot*/0);
 
-      int32_t noteStart = note.startNoteTick;
-      int32_t noteEnd   = note.endNoteTick;
-
-      int32_t length = noteEnd - noteStart;
-
-      for (int32_t i = 0; i <= length; i++) {
-        int32_t t = noteStart + i;
-        int32_t relativeTick = t - (startLoopTick + tickInLoop);
-
-        if (relativeTick < 0 || relativeTick >= (int32_t)loopLengthTicks)
-          continue;
-
-        int x = (relativeTick * DISPLAY_WIDTH_PIXELS) / loopLengthTicks;
-        if (x < 0 || x >= DISPLAY_WIDTH_PIXELS) continue;
-
-        int charIndex = x / PIXELS_PER_CHAR;
-        int bitIndex  = x % PIXELS_PER_CHAR;
-
-        if (charIndex >= 0 && charIndex < 8)
-          customChars[charIndex][y] |= (1 << (4 - bitIndex));
+    // helper to draw a span [a..b] in the window
+    auto drawSpan = [&](uint32_t a, uint32_t b){
+      for (uint32_t t = a; t <= b; ++t) {
+        // bring t relative to play-head, wrapping
+        uint32_t rel = (t + loopLengthTicks - tickInLoop) % loopLengthTicks;
+        // shift into pixel space
+        uint32_t xpix = (rel * (DISPLAY_WIDTH_PIXELS)) / loopLengthTicks;
+        int ci = xpix / PIXELS_PER_CHAR;
+        int bi = xpix % PIXELS_PER_CHAR;
+        if (ci >= 0 && ci < 8) {
+          customChars[ci][y] |= (1 << (4 - bi));
+        }
       }
+    };
+
+    // if the note spans without wrap
+    if (e0 >= s0) {
+      drawSpan(s0, e0);
+    } else {
+      // wrapped note body: [s0..end] + [0..e0]
+      drawSpan(s0, loopLengthTicks - 1);
+      drawSpan(0, e0);
     }
   }
 
-  // Upload to LCD
-  for (int i = 0; i < 8; i++) {
+  // --- 4) Upload to LCD and write row 1 ---
+  for (int i = 0; i < 8; ++i) {
     lcd.createChar(i, customChars[i]);
   }
-
-  lcd.setCursor(0, 1);
-  for (int i = 0; i < 8; i++) {
+  lcd.setCursor(0,1);
+  for (int i = 0; i < 8; ++i) {
     lcd.write(i);
   }
 }
