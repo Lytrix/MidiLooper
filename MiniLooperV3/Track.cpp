@@ -81,23 +81,11 @@ void Track::stopRecording(uint32_t currentTick) {
     // Transition to stopped-recording state
     if (!setState(TRACK_STOPPED_RECORDING)) return;
 
-    // Quantize recording start to the bar boundary with dual-side grace threshold
-    uint32_t originalStart    = startLoopTick;
-    uint32_t barIndex         = originalStart / ticksPerBar;
-    uint32_t remainderStart   = originalStart % ticksPerBar;
-    const uint32_t startThreshold = ticksPerBar / 8;  // 1/8 bar grace at start
-    uint32_t quantizedStart;
-    if (remainderStart <= startThreshold) {
-        // if starting just after bar, snap back to bar start
-        quantizedStart = barIndex * ticksPerBar;
-    } else if (remainderStart >= ticksPerBar - startThreshold) {
-        // if starting just before next bar, snap forward
-        quantizedStart = (barIndex + 1) * ticksPerBar;
-    } else {
-        // normal quantization to current bar start
-        quantizedStart = barIndex * ticksPerBar;
-    }
-    uint32_t offset = originalStart - quantizedStart;
+    // Quantize recording start to the bar boundary
+    uint32_t originalStart   = startLoopTick;
+    uint32_t barIndex        = originalStart / ticksPerBar;
+    uint32_t quantizedStart  = barIndex * ticksPerBar;
+    uint32_t offset          = originalStart - quantizedStart;
 
     // Shift all recorded events relative to the new start
     for (auto &evt : midiEvents) {
@@ -112,53 +100,31 @@ void Track::stopRecording(uint32_t currentTick) {
     // Update loop start tick
     startLoopTick = quantizedStart;
 
-    // Ensure any dangling note-ons get a forced Note-Off at stop by leveraging noteOff logic
-    {
-        // Temporarily override state to allow noteOff processing
-        TrackState prevState = trackState;
-        trackState = TRACK_RECORDING;
-        uint32_t offAbsTick = currentTick;
-        // Issue a noteOff for each pending note (key = pair<note,channel>)
-        for (const auto &entry : pendingNotes) {
-    // Extract note, channel and velocity from PendingNote
-    const PendingNote &pending = entry.second;
-    uint8_t note     = pending.note;     
-    uint8_t channel  = pending.channel;  
-    uint8_t velocity = pending.velocity;
-    // Issue NoteOff with original velocity or zero if you prefer
-    noteOff(channel, note, 0, offAbsTick);
-}
-        // Clear any remaining pending notes
-        pendingNotes.clear();
-        // Restore previous state
-        trackState = prevState;
-    }
-
     // Compute last event tick
     uint32_t lastEventTick = 0;
     for (const auto &evt : midiEvents) {
         lastEventTick = std::max(lastEventTick, evt.tick);
     }
 
-    // Determine number of bars based on threshold at end
-    uint32_t baseBars       = lastEventTick / ticksPerBar;
-    uint32_t remainderEnd   = lastEventTick % ticksPerBar;
-    const uint32_t endThreshold = ticksPerBar / 8;  // 1/8 bar grace at end
+    // Determine number of bars based on threshold
+    uint32_t baseBars = lastEventTick / ticksPerBar;
+    uint32_t remainder = lastEventTick % ticksPerBar;
+
+    // Threshold: if note is only slightly over the bar, round down
+    const uint32_t thresholdMargin = ticksPerBar / 8;  // adjust as needed (1/8 bar)
     uint32_t bars;
-    if (remainderEnd <= endThreshold) {
-        // just into next bar: round down
+    if (remainder <= thresholdMargin) {
         bars = baseBars;
     } else {
-        // further into next bar: round up
         bars = baseBars + 1;
     }
-    // Ensure at least one bar for empty loops
+    // Ensure at least one bar
     if (bars == 0) bars = 1;
 
     // Set loop length
     loopLengthTicks = bars * ticksPerBar;
 
-    logger.logTrackEvent("Recording stopped (grace start/end & forced note-off)",
+    logger.logTrackEvent("Recording stopped (allow empty loops, threshold rounding)",
                          currentTick,
                          "start=%lu, length=%lu",
                          startLoopTick,
@@ -167,8 +133,6 @@ void Track::stopRecording(uint32_t currentTick) {
     // Transition into playing state, even if loop is empty
     setState(TRACK_PLAYING);
 }
-
-
 
 void Track::startPlaying(uint32_t currentTick) {
   if (loopLengthTicks > 0) {
