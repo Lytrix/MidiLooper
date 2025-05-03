@@ -81,7 +81,6 @@ void Track::stopRecording(uint32_t currentTick) {
   }
   loopLengthTicks = currentTick - startLoopTick;
   logger.logTrackEvent("Recording stopped", currentTick, "length=%lu", loopLengthTicks);
-  logger.debug("Loop length = %lu ticks", loopLengthTicks);
 }
 
 void Track::startPlaying(uint32_t currentTick) {
@@ -347,12 +346,6 @@ void Track::noteOn(uint8_t channel, uint8_t note, uint8_t velocity, uint32_t tic
   if (trackState == TRACK_RECORDING || trackState == TRACK_OVERDUBBING) {
     pendingNotes[{note, channel}] = PendingNote{tick, velocity};
     recordMidiEvents(midi::NoteOn, channel, note, velocity, tick);
-    if (DEBUG_NOTES) {
-      Serial.print("[Record] NoteOn: ");
-      Serial.print(note);
-      Serial.print(" @ ");
-      Serial.println(tick);
-    }
   }
 }
 
@@ -364,6 +357,7 @@ void Track::noteOff(uint8_t channel, uint8_t note, uint8_t velocity, uint32_t ti
     if (it != pendingNotes.end()) {
       recordMidiEvents(midi::NoteOff, channel, note, 0, tick);  // velocity 0 to mark end
 
+      // Store final note event with previous startNoteTick from Note On information
       NoteEvent noteEvent;
       noteEvent.note = note;
       noteEvent.velocity = it->second.velocity;
@@ -372,28 +366,26 @@ void Track::noteOff(uint8_t channel, uint8_t note, uint8_t velocity, uint32_t ti
 
       noteEvents.push_back(noteEvent);
 
-      // **Keep them sorted by start time**
+      // **Keep them sorted by start time to ensure proper rending on the LCD when overdubbing**
       std::sort(noteEvents.begin(), noteEvents.end(),
                 [](auto &a, auto &b){ return a.startNoteTick < b.startNoteTick; });
 
-
       pendingNotes.erase(it);
 
-      if (DEBUG_MIDI) {
-        Serial.print("[Record] NoteOff: ");
-        Serial.print(note);
-        Serial.print(" @ ");
-        Serial.println(tick);
+     if (DEBUG_MIDI) {
+        logger.log(CAT_TRACK, LOG_DEBUG, "Record NoteOff: %d @ %lu", note, tick);
       }
       if (DEBUG_NOTES) {
-        Serial.print("Start: ");
-        Serial.print(noteEvent.startNoteTick);
-        Serial.print(", End: ");
-        Serial.println(noteEvent.endNoteTick);
+        logger.log(CAT_TRACK, LOG_DEBUG,
+                   "NoteEvent start=%lu end=%lu",
+                   noteEvent.startNoteTick,
+                   noteEvent.endNoteTick);
       }
     } else {
       // Log unmatched NoteOffs
-      Serial.printf("[Warning] NoteOff for note %d on ch %d with no matching NoteOn\n", note, channel);
+      logger.log(CAT_MIDI, LOG_WARNING,
+                 "NoteOff for note %d on ch %d with no matching NoteOn",
+                 note, channel);
     }
   }
 }
