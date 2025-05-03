@@ -40,13 +40,14 @@ The midi circuit is based on https://www.pjrc.com/teensy/td_libs_MIDI.html
 
 ## 🔴 Button A – Recording, Overdubbing, Playback Control ##
 
-| Press #     | From State               | To State           | Symbol Change | Key Action          |
-| ----------- | ------------------------ | ------------------ | ------------- | ------------------- |
-| 1× (single) | TRACK\_EMPTY             | TRACK\_RECORDING   | – → R         | `startRecording()`  |
-| (internal)  | TRACK\_STOPPED_RECORDING | TRACK\_PLAYING     | (not shown)   | `stoppedRecording()`|
-| 2× (single) | TRACK\_PLAYING           | TRACK\_OVERDUBBING | P → O         | `startOverdub()`    |
-| 3× (single) | TRACK\_OVERDUBBING       | TRACK\_PLAYING     | O → P         | `stopOverdub()`     |
-| Long        | (any)                    | TRACK\_EMPTY       | → –           | `clearTrack()`      |
+| Press #     | From State               | To State                 | Symbol Change | Key Action          |
+| ----------- | ------------------------ | ------------------------ | ------------- | ------------------- |
+| 1× (single) | TRACK\_EMPTY             | TRACK\_RECORDING         | – → R         | `startRecording()`  |
+| (internal)  | TRACK\_RECORDING         | TRACK\_STOPPED__RECORDING| (not shown)   | `stoppedRecording()`|
+| (internal)  | TRACK\_STOPPED_RECORDING | TRACK\_PLAYING           | (not shown)   | `startPlaying()`    |
+| 2× (single) | TRACK\_PLAYING           | TRACK\_OVERDUBBING       | P → O         | `startOverdub()`    |
+| 3× (single) | TRACK\_OVERDUBBING       | TRACK\_PLAYING           | O → P         | `stopOverdub()`     |
+| Long        | (any)                    | TRACK\_EMPTY             | → –           | `clearTrack()`      |
 
 
 ## 🔵 Button B – Track Select and Mute Control ##
