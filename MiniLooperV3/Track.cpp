@@ -371,6 +371,12 @@ void Track::noteOff(uint8_t channel, uint8_t note, uint8_t velocity, uint32_t ti
       noteEvent.endNoteTick = tick;
 
       noteEvents.push_back(noteEvent);
+
+      // **Keep them sorted by start time**
+      std::sort(noteEvents.begin(), noteEvents.end(),
+                [](auto &a, auto &b){ return a.startNoteTick < b.startNoteTick; });
+
+
       pendingNotes.erase(it);
 
       if (DEBUG_MIDI) {
