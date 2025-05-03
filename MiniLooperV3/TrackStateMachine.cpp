@@ -12,22 +12,19 @@ bool isValidTransition(TrackState current, TrackState next) {
             return next == TRACK_RECORDING || next == TRACK_EMPTY;
 
         case TRACK_RECORDING:
-            return next == TRACK_STOPPED_RECORDING;
+            return next == TRACK_STOPPED_RECORDING || next == TRACK_EMPTY;
 
         case TRACK_STOPPED_RECORDING:
             return next == TRACK_PLAYING || next == TRACK_OVERDUBBING || next == TRACK_EMPTY;
 
         case TRACK_PLAYING:
-            return next == TRACK_OVERDUBBING || next == TRACK_STOPPED;
+            return next == TRACK_OVERDUBBING || next == TRACK_STOPPED || next == TRACK_EMPTY;
 
         case TRACK_OVERDUBBING:
-            return next == TRACK_STOPPED_OVERDUBBING || next == TRACK_STOPPED;
-
-        case TRACK_STOPPED_OVERDUBBING:
-            return next == TRACK_PLAYING || next == TRACK_OVERDUBBING;
+            return next == TRACK_PLAYING || next == TRACK_EMPTY;
 
         case TRACK_STOPPED:
-            return next == TRACK_PLAYING || next == TRACK_ARMED || next == TRACK_RECORDING;
+            return next == TRACK_PLAYING || next == TRACK_OVERDUBBING || next == TRACK_ARMED || next == TRACK_EMPTY;
 
         default:
             return false;
@@ -43,7 +40,6 @@ const char* toString(TrackState state) {
         case TRACK_STOPPED_RECORDING:  return "STOPPED_RECORDING";
         case TRACK_PLAYING:            return "PLAYING";
         case TRACK_OVERDUBBING:        return "OVERDUBBING";
-        case TRACK_STOPPED_OVERDUBBING:return "STOPPED_OVERDUBBING";
         default:                       return "UNKNOWN";
     }
 }

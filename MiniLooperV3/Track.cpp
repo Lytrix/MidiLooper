@@ -75,26 +75,29 @@ void Track::startRecording(uint32_t currentTick) {
   logger.logTrackEvent("Recording started", currentTick);
 }
 
-// void Track::stopRecording(uint32_t currentTick) {
-//   if (!setState(TRACK_STOPPED_RECORDING)) {
-//     return;
-//   }
-//   loopLengthTicks = currentTick - startLoopTick;
-//   logger.logTrackEvent("Recording stopped", currentTick, "length=%lu", loopLengthTicks);
-// }
-
-
-// Track.cpp — updated stopRecording with bar-quantized start and rounded loop length
-
+// stopRecording with bar-quantized start and rounded loop length
+// Also added a thresholdMargin to round down preventing an entire emppty bar being recorded
 void Track::stopRecording(uint32_t currentTick) {
     // Transition to stopped-recording state
     if (!setState(TRACK_STOPPED_RECORDING)) return;
 
-    // Quantize recording start to the bar boundary
-    uint32_t originalStart   = startLoopTick;
-    uint32_t barIndex        = originalStart / ticksPerBar;
-    uint32_t quantizedStart  = barIndex * ticksPerBar;
-    uint32_t offset          = originalStart - quantizedStart;
+    // Quantize recording start to the bar boundary with dual-side grace threshold
+    uint32_t originalStart    = startLoopTick;
+    uint32_t barIndex         = originalStart / ticksPerBar;
+    uint32_t remainderStart   = originalStart % ticksPerBar;
+    const uint32_t startThreshold = ticksPerBar / 8;  // 1/8 bar grace at start
+    uint32_t quantizedStart;
+    if (remainderStart <= startThreshold) {
+        // if starting just after bar, snap back to bar start
+        quantizedStart = barIndex * ticksPerBar;
+    } else if (remainderStart >= ticksPerBar - startThreshold) {
+        // if starting just before next bar, snap forward
+        quantizedStart = (barIndex + 1) * ticksPerBar;
+    } else {
+        // normal quantization to current bar start
+        quantizedStart = barIndex * ticksPerBar;
+    }
+    uint32_t offset = originalStart - quantizedStart;
 
     // Shift all recorded events relative to the new start
     for (auto &evt : midiEvents) {
@@ -102,22 +105,60 @@ void Track::stopRecording(uint32_t currentTick) {
     }
     // Keep events sorted
     std::sort(midiEvents.begin(), midiEvents.end(),
-              [](const MidiEvent &a, const MidiEvent &b) { return a.tick < b.tick; });
+              [](const MidiEvent &a, const MidiEvent &b) {
+                  return a.tick < b.tick;
+              });
 
     // Update loop start tick
     startLoopTick = quantizedStart;
 
-    // Compute loop length, ensuring at least one full bar for empty loops
+    // Ensure any dangling note-ons get a forced Note-Off at stop by leveraging noteOff logic
+    {
+        // Temporarily override state to allow noteOff processing
+        TrackState prevState = trackState;
+        trackState = TRACK_RECORDING;
+        uint32_t offAbsTick = currentTick;
+        // Issue a noteOff for each pending note (key = pair<note,channel>)
+        for (const auto &entry : pendingNotes) {
+    // Extract note, channel and velocity from PendingNote
+    const PendingNote &pending = entry.second;
+    uint8_t note     = pending.note;     
+    uint8_t channel  = pending.channel;  
+    uint8_t velocity = pending.velocity;
+    // Issue NoteOff with original velocity or zero if you prefer
+    noteOff(channel, note, 0, offAbsTick);
+}
+        // Clear any remaining pending notes
+        pendingNotes.clear();
+        // Restore previous state
+        trackState = prevState;
+    }
+
+    // Compute last event tick
     uint32_t lastEventTick = 0;
     for (const auto &evt : midiEvents) {
         lastEventTick = std::max(lastEventTick, evt.tick);
     }
-    // Round up to full bars
-    uint32_t bars = (lastEventTick + ticksPerBar - 1) / ticksPerBar;
+
+    // Determine number of bars based on threshold at end
+    uint32_t baseBars       = lastEventTick / ticksPerBar;
+    uint32_t remainderEnd   = lastEventTick % ticksPerBar;
+    const uint32_t endThreshold = ticksPerBar / 8;  // 1/8 bar grace at end
+    uint32_t bars;
+    if (remainderEnd <= endThreshold) {
+        // just into next bar: round down
+        bars = baseBars;
+    } else {
+        // further into next bar: round up
+        bars = baseBars + 1;
+    }
+    // Ensure at least one bar for empty loops
     if (bars == 0) bars = 1;
+
+    // Set loop length
     loopLengthTicks = bars * ticksPerBar;
 
-    logger.logTrackEvent("Recording stopped (allow empty loops)",
+    logger.logTrackEvent("Recording stopped (grace start/end & forced note-off)",
                          currentTick,
                          "start=%lu, length=%lu",
                          startLoopTick,
@@ -182,20 +223,28 @@ size_t Track::getNoteEventCount() const {
   return noteEvents.size();
 }
 
+// Clears the current track data and returns to the EMPTY state
 void Track::clear() {
-  
-  if (trackState == TRACK_EMPTY) {
-    logger.debug("Track already empty; ignoring clear");
-    return;
-  }
-  
-  midiEvents.clear();
-  noteEvents.clear();
-  startLoopTick = 0;
-  loopLengthTicks = 0;
-  trackState = TRACK_STOPPED;
-  logger.logTrackEvent("Track cleared", clockManager.getCurrentTick());
+    if (trackState == TRACK_EMPTY) {
+        logger.debug("Track already empty; ignoring clear");
+        return;
+    }
+
+    // Remove all recorded events
+    midiEvents.clear();
+    noteEvents.clear();
+
+    // Reset timing
+    startLoopTick = 0;
+    loopLengthTicks = 0;
+
+    // Go back to "never recorded"
+    setState(TRACK_EMPTY);
+
+    // Log the clear action
+    logger.logTrackEvent("Track cleared", clockManager.getCurrentTick());
 }
+
 
 void Track::recordMidiEvents(midi::MidiType type, byte channel, byte data1, byte data2, uint32_t currentTick) {
   if ((isRecording() && !isPlaying()) || isOverdubbing()) {
@@ -390,7 +439,13 @@ void Track::noteOn(uint8_t channel, uint8_t note, uint8_t velocity, uint32_t tic
   if (isPlayingBack) return;  // Ignore playback-triggered midiEvents
 
   if (trackState == TRACK_RECORDING || trackState == TRACK_OVERDUBBING) {
-    pendingNotes[{note, channel}] = PendingNote{tick, velocity};
+    // Now store note & channel in the PendingNote struct
+    pendingNotes[{note, channel}] = PendingNote{
+      /* note: */        note,
+      /* channel: */     channel,
+      /* startNoteTick:*/ tick,
+      /* velocity: */    velocity
+    };
     recordMidiEvents(midi::NoteOn, channel, note, velocity, tick);
   }
 }
@@ -399,16 +454,19 @@ void Track::noteOff(uint8_t channel, uint8_t note, uint8_t velocity, uint32_t ti
   if (isPlayingBack) return;  // Ignore playback-triggered midiEvents
 
   if (trackState == TRACK_RECORDING || trackState == TRACK_OVERDUBBING) {
-    auto it = pendingNotes.find({note, channel});
+    auto key = std::make_pair(note, channel);
+    auto it = pendingNotes.find(key);
     if (it != pendingNotes.end()) {
       recordMidiEvents(midi::NoteOff, channel, note, 0, tick);  // velocity 0 to mark end
 
       // Store final note event with previous startNoteTick from Note On information
-      NoteEvent noteEvent;
-      noteEvent.note = note;
-      noteEvent.velocity = it->second.velocity;
-      noteEvent.startNoteTick = it->second.startNoteTick;
-      noteEvent.endNoteTick = tick;
+     // Now pull startTick & velocity from the PendingNote
+      NoteEvent noteEvent {
+        /* .note = */           note,
+        /* .velocity = */       it->second.velocity,
+        /* .startNoteTick = */  it->second.startNoteTick,
+        /* .endNoteTick = */    tick
+      };
 
       noteEvents.push_back(noteEvent);
 
