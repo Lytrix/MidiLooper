@@ -75,13 +75,54 @@ void Track::startRecording(uint32_t currentTick) {
   logger.logTrackEvent("Recording started", currentTick);
 }
 
+// void Track::stopRecording(uint32_t currentTick) {
+//   if (!setState(TRACK_STOPPED_RECORDING)) {
+//     return;
+//   }
+//   loopLengthTicks = currentTick - startLoopTick;
+//   logger.logTrackEvent("Recording stopped", currentTick, "length=%lu", loopLengthTicks);
+// }
+
+
+// Track.cpp — updated stopRecording with bar-quantized start and rounded loop length
+
 void Track::stopRecording(uint32_t currentTick) {
-  if (!setState(TRACK_STOPPED_RECORDING)) {
-    return;
-  }
-  loopLengthTicks = currentTick - startLoopTick;
-  logger.logTrackEvent("Recording stopped", currentTick, "length=%lu", loopLengthTicks);
+    // Transition to stopped-recording state
+    if (!setState(TRACK_STOPPED_RECORDING)) return;
+
+    // Quantize the recording start to the beginning of its bar
+    uint32_t originalStart   = startLoopTick;
+    uint32_t barIndex        = originalStart / ticksPerBar;
+    uint32_t quantizedStart  = barIndex * ticksPerBar;
+    uint32_t offset          = originalStart - quantizedStart;
+
+    // Shift all recorded events so they align relative to the bar boundary
+    for (auto &evt : midiEvents) {
+        evt.tick += offset;
+    }
+
+    // Ensure events remain sorted by tick
+    std::sort(midiEvents.begin(), midiEvents.end(),
+              [](const MidiEvent &a, const MidiEvent &b) { return a.tick < b.tick; });
+
+    // Update track start
+    startLoopTick = quantizedStart;
+
+    // Compute loop length based on events, rounded up to full bars
+    uint32_t lastEventTick = 0;
+    for (const auto &evt : midiEvents) {
+        lastEventTick = std::max(lastEventTick, evt.tick);
+    }
+    uint32_t bars = (lastEventTick + ticksPerBar - 1) / ticksPerBar;
+    loopLengthTicks = bars * ticksPerBar;
+
+    logger.logTrackEvent("Recording stopped (quantized, rounded)",
+                         currentTick,
+                         "start=%lu, length=%lu",
+                         startLoopTick,
+                         loopLengthTicks);
 }
+
 
 void Track::startPlaying(uint32_t currentTick) {
   if (loopLengthTicks > 0) {
