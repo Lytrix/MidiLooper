@@ -30,8 +30,10 @@ struct MidiEvent {
 
 // Pending note structure
 struct PendingNote {
-  uint32_t startNoteTick;
-  uint8_t velocity;
+  uint8_t note;            // MIDI note number
+  uint8_t channel;         // MIDI channel
+  uint32_t startNoteTick;  // tick when note-on occurred
+  uint8_t velocity;        // note-on velocity
 };
 
 // Hash function for pair (used in unordered_map)

@@ -74,7 +74,7 @@ void ButtonManager::handleButton(uint8_t index, ButtonAction action) {
                     if (DEBUG_BUTTONS) Serial.println("Button A: Switch to Overdub");
                     track.stopRecording(clockManager.getCurrentTick());
                     track.startPlaying(clockManager.getCurrentTick());
-                    track.startOverdubbing(clockManager.getCurrentTick());
+                    //track.startOverdubbing(clockManager.getCurrentTick()); // TODO make optional to directly go to overdubbing
                     if (DEBUG_BUTTONS) track.printNoteEvents();
                 } else if (track.isOverdubbing()) {
                     if (DEBUG_BUTTONS) Serial.println("Button A: Stop Overdub");
@@ -94,9 +94,8 @@ void ButtonManager::handleButton(uint8_t index, ButtonAction action) {
                     logger.debug("Clear ignored — track is empty");
                 return;
                 }
-
-                if (DEBUG_BUTTONS) Serial.println("Button A: Clear Track");
                 track.clear();
+                if (DEBUG_BUTTONS) logger.debug("Button A: Clear Track");
                 break;
 
             default:
