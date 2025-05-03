@@ -90,38 +90,43 @@ void Track::stopRecording(uint32_t currentTick) {
     // Transition to stopped-recording state
     if (!setState(TRACK_STOPPED_RECORDING)) return;
 
-    // Quantize the recording start to the beginning of its bar
+    // Quantize recording start to the bar boundary
     uint32_t originalStart   = startLoopTick;
     uint32_t barIndex        = originalStart / ticksPerBar;
     uint32_t quantizedStart  = barIndex * ticksPerBar;
     uint32_t offset          = originalStart - quantizedStart;
 
-    // Shift all recorded events so they align relative to the bar boundary
+    // Shift all recorded events relative to the new start
     for (auto &evt : midiEvents) {
         evt.tick += offset;
     }
-
-    // Ensure events remain sorted by tick
+    // Keep events sorted
     std::sort(midiEvents.begin(), midiEvents.end(),
               [](const MidiEvent &a, const MidiEvent &b) { return a.tick < b.tick; });
 
-    // Update track start
+    // Update loop start tick
     startLoopTick = quantizedStart;
 
-    // Compute loop length based on events, rounded up to full bars
+    // Compute loop length, ensuring at least one full bar for empty loops
     uint32_t lastEventTick = 0;
     for (const auto &evt : midiEvents) {
         lastEventTick = std::max(lastEventTick, evt.tick);
     }
+    // Round up to full bars
     uint32_t bars = (lastEventTick + ticksPerBar - 1) / ticksPerBar;
+    if (bars == 0) bars = 1;
     loopLengthTicks = bars * ticksPerBar;
 
-    logger.logTrackEvent("Recording stopped (quantized, rounded)",
+    logger.logTrackEvent("Recording stopped (allow empty loops)",
                          currentTick,
                          "start=%lu, length=%lu",
                          startLoopTick,
                          loopLengthTicks);
+
+    // Transition into playing state, even if loop is empty
+    setState(TRACK_PLAYING);
 }
+
 
 
 void Track::startPlaying(uint32_t currentTick) {
