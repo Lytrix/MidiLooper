@@ -4,6 +4,7 @@
 #include "MidiHandler.h"
 #include "Logger.h"
 #include "TrackStateMachine.h"
+#include <algorithm>  // for std::sort
 
 // Track class implementation
 
@@ -185,43 +186,56 @@ void Track::recordMidiEvents(midi::MidiType type, byte channel, byte data1, byte
     );
 
     midiEvents.push_back(MidiEvent{ tickRelative, type, channel, data1, data2 });
+
+     // **Keep events sorted by tick** so playback scanning never misses a wrapped-back note during overdubbing
+    std::sort(midiEvents.begin(), midiEvents.end(),
+            [](auto &a, auto &b){ return a.tick < b.tick; });
+
   }
 }
 
 void Track::playMidiEvents(uint32_t currentTick, bool isAudible) {
-  if (!isAudible || muted || midiEvents.empty() || loopLengthTicks == 0) return;
+  if (!isAudible || muted || midiEvents.empty() || loopLengthTicks == 0)
+    return;
 
+  // Compute position in the loop
   uint32_t tickInLoop = (currentTick - startLoopTick) % loopLengthTicks;
 
-  // Detect loop wrap by comparing to lastTickInLoop
+  // Reset at loop boundary
   if (tickInLoop < lastTickInLoop) {
     nextEventIndex = 0;
-    logger.debug("=== Loop wrapped at tick %lu, dumping all midiEvents ===", currentTick);
-    for (size_t i = 0; i < midiEvents.size(); ++i) {
-      const auto &e = midiEvents[i];
-      logger.debug(
-        "  [%2u] tick=%lu  type=%d  ch=%d  d1=%d  d2=%d",
-        i, e.tick, (int)e.type, e.channel, e.data1, e.data2
-      );
-    }
+    logger.debug("Loop wrapped, resetting index");
+    // optional: dump events again here
   }
+
+  // Remember where we were
+  uint32_t prevTickInLoop = lastTickInLoop;
   lastTickInLoop = tickInLoop;
 
-  // Normal playback pass
+  // Now send anything whose tick falls in (prevTickInLoop, tickInLoop]
   while (nextEventIndex < midiEvents.size()) {
-    const MidiEvent& evt = midiEvents[nextEventIndex];
-    uint32_t evLoopTick = evt.tick % loopLengthTicks;
+    const MidiEvent &evt = midiEvents[nextEventIndex];
+    uint32_t evTick = evt.tick % loopLengthTicks;
 
-    if (evLoopTick == tickInLoop) {
+    logger.debug("Checking evt[%d] → evTick=%lu  prev=%lu…%lu",
+                 nextEventIndex, evTick, prevTickInLoop, tickInLoop);
+
+    // If this event just *now* should fire:
+    if ( prevTickInLoop < evTick && evTick <= tickInLoop ) {
       sendMidiEvent(evt);
       nextEventIndex++;
-    } else if (evLoopTick > tickInLoop) {
+    }
+    // If it’s still coming later in this pass, bail out:
+    else if (evTick > tickInLoop) {
       break;
-    } else {
+    }
+    // Otherwise we missed it entirely—skip it so we don't hang:
+    else {
       nextEventIndex++;
     }
   }
 }
+
 
 void Track::sendMidiEvent(const MidiEvent& evt) {
   if (trackState != TRACK_PLAYING && trackState != TRACK_OVERDUBBING) return;
