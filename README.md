@@ -40,20 +40,20 @@ The midi circuit is based on https://www.pjrc.com/teensy/td_libs_MIDI.html
 
 ## 🔴 Button A – Recording, Overdubbing, Playback Control ##
 
-| **Pressed** | **Press Type** | **Current State**              | **Action**                                               | **Next State**              |
-|-------------------|----------------|--------------------------------|----------------------------------------------------------|-----------------------------|
-| 1x                | Short          | Not armed/recording/playing    | Start recording                                          | `TRACK_RECORDING`           |
-| 2x                | Short          | `TRACK_RECORDING`              | Stop recording → Start playing + overdubbing            | `TRACK_OVERDUBBING`         |
-| 3x                | Short          | `TRACK_OVERDUBBING`            | Stop overdubbing                                         | `TRACK_PLAYING`             |
-| ≥4x               | Short          | `TRACK_PLAYING`                | Start live overdubbing                                   | `TRACK_OVERDUBBING`         |
-| Any               | Long           | Any                            | 🔥 Clear selected track                                  | `TRACK_STOPPED`             |
+| Press #     | From State         | To State           | Symbol Change | Key Action         |
+| ----------- | ------------------ | ------------------ | ------------- | ------------------ |
+| 1× (single) | TRACK\_EMPTY       | TRACK\_RECORDING   | – → R         | `startRecording()` |
+| 2× (single) | TRACK\_PLAYING     | TRACK\_OVERDUBBING | P → O         | `startOverdub()`   |
+| 3× (single) | TRACK\_OVERDUBBING | TRACK\_PLAYING     | O → P         | `stopOverdub()`    |
+| Long        | (any)              | TRACK\_EMPTY       | → –           | `clearTrack()`     |
+
 
 ## 🔵 Button B – Track Select and Mute Control ##
 
-| **Pressed** | **Press Type** | **Current State** | **Action**                   | **Next State**             |
-|-------------------|----------------|-------------------|------------------------------|----------------------------|
-| Every             | Short          | Any               | Select next track            | (Switches to next track)   |
-| Any               | Long           | Any               | Toggle mute on current track | (Mute toggled)             |
+|  Press #    | From State         | To State           | Key Action                 |
+| ----------- | ------------------ | ------------------ | -------------------------- |
+| 1× (single) | Selected Track     | Select next track  | `setSelectedTrack()`       |
+| Long        | (any               | TRACK\_MUTED       | `isAudible(0)`             |
 
 
 - Retroactive bar-quantized recording (record complete bars, but allow earlier recording start)
