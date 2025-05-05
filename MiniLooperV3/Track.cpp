@@ -70,68 +70,117 @@ void Track::startRecording(uint32_t currentTick) {
   if (!setState(TRACK_RECORDING)) {
     return;
   }
+  // Clear out any old data
   midiEvents.clear();
+  noteEvents.clear();         // for your piano-roll / display
+  pendingNotes.clear();       // any hanging NoteOns
+  nextEventIndex = 0;         // so playback will start from the top
+  lastTickInLoop = 0;
+
+  // Stamp the new start tick
   startLoopTick = currentTick;
   logger.logTrackEvent("Recording started", currentTick);
 }
 
-// stopRecording with bar-quantized start and rounded loop length
-// Also added a thresholdMargin to round down preventing an entire emppty bar being recorded
-void Track::stopRecording(uint32_t currentTick) {
-    // Transition to stopped-recording state
-    if (!setState(TRACK_STOPPED_RECORDING)) return;
+// -------------------------
+// Helpers for stopRecording 
+// -------------------------
 
-    // Quantize recording start to the bar boundary
-    uint32_t originalStart   = startLoopTick;
-    uint32_t barIndex        = originalStart / ticksPerBar;
-    uint32_t quantizedStart  = barIndex * ticksPerBar;
-    uint32_t offset          = originalStart - quantizedStart;
+static constexpr float  END_GRACE_FRACTION = 0.125f;  // 1/8 bar
+static constexpr float  START_GRACE_FRACTION = 0.125f;
 
-    // Shift all recorded events relative to the new start
+uint32_t Track::quantizeStart(uint32_t original) const {
+    return (original / ticksPerBar) * ticksPerBar;
+}
+
+void Track::shiftMidiEvents(int32_t offset) {
     for (auto &evt : midiEvents) {
         evt.tick += offset;
     }
-    // Keep events sorted
     std::sort(midiEvents.begin(), midiEvents.end(),
-              [](const MidiEvent &a, const MidiEvent &b) {
-                  return a.tick < b.tick;
-              });
+              [](auto &a, auto &b){ return a.tick < b.tick; });
+}
 
-    // Update loop start tick
-    startLoopTick = quantizedStart;
+uint32_t Track::findLastEventTick() const {
+    uint32_t last = 0;
+    for (auto &evt : midiEvents) {
+        last = std::max(last, evt.tick);
+    }
+    return last;
+}
 
-    // Compute last event tick
-    uint32_t lastEventTick = 0;
-    for (const auto &evt : midiEvents) {
-        lastEventTick = std::max(lastEventTick, evt.tick);
+uint32_t Track::computeLoopLengthTicks(uint32_t lastTick) const {
+    // How many full bars your last event has fully passed
+    uint32_t fullBars = lastTick / ticksPerBar;
+    // How far into the next bar your last event lands
+    uint32_t rem      = lastTick % ticksPerBar;
+    // A small “grace” (e.g. 1/8 bar) to allow tiny overshoots without padding
+    uint32_t grace    = ticksPerBar / 8;
+
+    // If you’ve only crept a little into the next bar, stay in the current one:
+    if (rem <= grace) {
+        // If nothing at all, ensure at least one bar:
+        return (fullBars > 0 ? fullBars : 1) * ticksPerBar;
+    }
+    // Otherwise include the bar containing your last event:
+    return (fullBars + 1) * ticksPerBar;
+}
+
+void Track::finalizePendingNotes(uint32_t offAbsTick) {
+    // Temporarily pretend we're still recording so noteOff() will queue things
+    TrackState prev = trackState;
+    trackState = TRACK_RECORDING;
+
+    // 1) Copy out the pending keys
+    std::vector<std::pair<uint8_t,uint8_t>> toClose;
+    toClose.reserve(pendingNotes.size());
+    for (auto const &kv : pendingNotes) {
+        toClose.push_back(kv.first);
     }
 
-    // Determine number of bars based on threshold
-    uint32_t baseBars = lastEventTick / ticksPerBar;
-    uint32_t remainder = lastEventTick % ticksPerBar;
-
-    // Threshold: if note is only slightly over the bar, round down
-    const uint32_t thresholdMargin = ticksPerBar / 8;  // adjust as needed (1/8 bar)
-    uint32_t bars;
-    if (remainder <= thresholdMargin) {
-        bars = baseBars;
-    } else {
-        bars = baseBars + 1;
+    // 2) Emit a noteOff() for each key (this will record the NoteEvent
+    //    but no longer erase inside the map)
+    for (auto const &key : toClose) {
+        uint8_t note    = key.first;
+        uint8_t channel = key.second;
+        noteOff(channel, note, 0, offAbsTick);
     }
-    // Ensure at least one bar
-    if (bars == 0) bars = 1;
 
-    // Set loop length
-    loopLengthTicks = bars * ticksPerBar;
+    // 3) Now safely clear all remaining pending notes
+    pendingNotes.clear();
 
-    logger.logTrackEvent("Recording stopped (allow empty loops, threshold rounding)",
-                         currentTick,
-                         "start=%lu, length=%lu",
-                         startLoopTick,
-                         loopLengthTicks);
+    // Restore the real state
+    trackState = prev;
+}
 
-    // Transition into playing state, even if loop is empty
-    setState(TRACK_PLAYING);
+
+// The stopRecording 
+
+void Track::stopRecording(uint32_t currentTick) {
+  if (!setState(TRACK_STOPPED_RECORDING)) return;
+
+  // 1) Quantize & shift as before
+  uint32_t origStart = startLoopTick;
+  uint32_t qStart    = quantizeStart(origStart);
+  int32_t  offset    = int32_t(origStart) - int32_t(qStart);
+  shiftMidiEvents(offset);
+  startLoopTick      = qStart;
+
+  // 2) Close out any still-held notes
+  finalizePendingNotes(currentTick);
+
+  // 3) Find the last event tick (including the forced NoteOffs)
+  uint32_t lastTick = findLastEventTick();
+
+  // 4) Compute loopLengthTicks with your grace logic
+  loopLengthTicks = computeLoopLengthTicks(lastTick);
+
+  logger.logTrackEvent("Recording stopped (with forced NoteOffs)",
+                       currentTick,
+                       "start=%lu length=%lu",
+                       startLoopTick, loopLengthTicks);
+
+  setState(TRACK_PLAYING);
 }
 
 void Track::startPlaying(uint32_t currentTick) {
@@ -159,6 +208,10 @@ void Track::stopOverdubbing(uint32_t currentTick) {
 }
 
 void Track::stopPlaying() {
+  // first kill all sounding notes
+  sendAllNotesOff();
+
+  // then transition to the stopped state
   setState(TRACK_STOPPED);
   logger.logTrackEvent("Playback stopped", clockManager.getCurrentTick());
 }
@@ -228,7 +281,6 @@ void Track::recordMidiEvents(midi::MidiType type, byte channel, byte data1, byte
       return;
     }
 
-
     // Prevent duplicate midiEvents at the same tick with same parameters
     for (const auto& e : midiEvents) {
       if (e.tick == tickRelative && e.type == type && e.channel == channel && e.data1 == data1 && e.data2 == data2) {
@@ -294,7 +346,6 @@ void Track::playMidiEvents(uint32_t currentTick, bool isAudible) {
   }
 }
 
-
 void Track::sendMidiEvent(const MidiEvent& evt) {
   if (trackState != TRACK_PLAYING && trackState != TRACK_OVERDUBBING) return;
 
@@ -356,6 +407,16 @@ void Track::sendMidiEvent(const MidiEvent& evt) {
   }
 
   isPlayingBack = false;  // Reset playback state
+}
+
+void Track::sendAllNotesOff() {
+  // Control Change 123 = All Notes Off
+  for (uint8_t ch = 0; ch < 16; ++ch) {
+    midiHandler.sendControlChange(ch, 123, 0);
+  }
+  // also clear any half-open pending notes so they don't get forced later
+  pendingNotes.clear();
+  logger.logTrackEvent("All Notes Off sent", clockManager.getCurrentTick());
 }
 
 bool Track::isEmpty() const{
@@ -431,7 +492,6 @@ void Track::noteOff(uint8_t channel, uint8_t note, uint8_t velocity, uint32_t ti
         /* .startNoteTick = */  it->second.startNoteTick,
         /* .endNoteTick = */    tick
       };
-
       noteEvents.push_back(noteEvent);
 
       // **Keep them sorted by start time to ensure proper rending on the LCD when overdubbing**
