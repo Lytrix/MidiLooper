@@ -24,10 +24,12 @@ public:
 private:
     std::vector<Bounce> buttons;
      // Must be sized to #buttons
-    std::vector<uint32_t> lastTapTime;
     std::vector<uint32_t> pressTimes;
-    
-    static constexpr uint16_t DOUBLE_TAP_WINDOW = 300;  // ms
+    std::vector<uint32_t> lastTapTime;
+    std::vector<bool> pendingShortPress;
+    std::vector<uint32_t> shortPressExpireTime;
+
+    static constexpr uint16_t DOUBLE_TAP_WINDOW = 250;  // ms
     static const uint16_t LONG_PRESS_TIME = 500; // ms
 
     void handleButton(uint8_t index, ButtonAction action);

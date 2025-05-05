@@ -114,10 +114,10 @@ uint32_t Track::computeLoopLengthTicks(uint32_t lastTick) const {
     uint32_t fullBars = lastTick / ticksPerBar;
     // How far into the next bar your last event lands
     uint32_t rem      = lastTick % ticksPerBar;
-    // A small “grace” (e.g. 1/8 bar) to allow tiny overshoots without padding
+    // A small "grace" (e.g. 1/8 bar) to allow tiny overshoots without padding
     uint32_t grace    = ticksPerBar / 8;
 
-    // If you’ve only crept a little into the next bar, stay in the current one:
+    // If you've only crept a little into the next bar, stay in the current one:
     if (rem <= grace) {
         // If nothing at all, ensure at least one bar:
         return (fullBars > 0 ? fullBars : 1) * ticksPerBar;
@@ -180,7 +180,8 @@ void Track::stopRecording(uint32_t currentTick) {
                        "start=%lu length=%lu",
                        startLoopTick, loopLengthTicks);
 
-  setState(TRACK_PLAYING);
+  // 5) Start overdubbing immediately
+  startOverdubbing(currentTick);
 }
 
 void Track::startPlaying(uint32_t currentTick) {
@@ -206,14 +207,14 @@ void Track::startOverdubbing(uint32_t currentTick) {
   logger.logTrackEvent("Overdubbing started", currentTick);
 }
 
-void Track::stopOverdubbing(uint32_t currentTick) {
-  if (!setState(TRACK_STOPPED_OVERDUBBING)) {
-    return;
-  }
-  logger.logTrackEvent("Overdubbing stopped", currentTick);
+void Track::stopOverdubbing() {
+  setState(TRACK_PLAYING);
+  logger.logTrackEvent("Overdubbing stopped", clockManager.getCurrentTick());
 }
 
 void Track::stopPlaying() {
+  if (isEmpty()) return; // Nothing to stop, empty track
+  
   // first kill all sounding notes
   sendAllNotesOff();
 
@@ -269,8 +270,8 @@ void Track::clear() {
 }
 
 bool Track::canUndoOverdub() const {
-  // must have at least one snapshot, no new events since, and be playing or overdubbing
-  return !_midiHistory.empty();
+  // must have at least one snapshot and be in playing or overdubbing state
+  return !_midiHistory.empty() && (trackState == TRACK_PLAYING || trackState == TRACK_OVERDUBBING);
 }
 
 void Track::undoOverdub() {
@@ -279,20 +280,34 @@ void Track::undoOverdub() {
     return;
   }
 
+  // Store current state to restore it after undo
+  TrackState currentState = trackState;
+
   // 1. Restore the last-snapshot
   midiEvents = std::move(_midiHistory.back());
   noteEvents = std::move(_noteHistory.back());
   _midiHistory.pop_back();
   _noteHistory.pop_back();
 
-  // // 2. Recompute your loop length
-  // uint32_t lastTick      = findLastEventTick();          // your helper
-  // loopLengthTicks        = computeLoopLengthTicks(lastTick);
+  // 2. Recompute loop length to ensure it's correct
+  uint32_t lastTick = findLastEventTick();
+  loopLengthTicks = computeLoopLengthTicks(lastTick);
 
-  // 3. Reset the “new‐event” flag so you can undo again if you never record more
+  // 3. Reset the "new-event" flag so you can undo again if you never record more
   _hasNewEventsSinceSnapshot = false;
 
-  // 4. Log it (state stays PLAYING or OVERDUBBING as-is)
+  // 4. If we were in overdubbing mode, we need to transition through STOPPED
+  if (currentState == TRACK_OVERDUBBING) {
+    setState(TRACK_STOPPED);
+    setState(TRACK_OVERDUBBING);
+  }
+  // If we were in playing mode, we need to transition through STOPPED
+  else if (currentState == TRACK_PLAYING) {
+    setState(TRACK_STOPPED);
+    setState(TRACK_PLAYING);
+  }
+
+  // 5. Log it
   logger.logTrackEvent("Overdub undone", clockManager.getCurrentTick());
 }
 
@@ -372,7 +387,7 @@ void Track::playMidiEvents(uint32_t currentTick, bool isAudible) {
       sendMidiEvent(evt);
       nextEventIndex++;
     }
-    // If it’s still coming later in this pass, bail out:
+    // If it's still coming later in this pass, bail out:
     else if (evTick > tickInLoop) {
       break;
     }
@@ -478,10 +493,6 @@ bool Track::isStoppedRecording() const {
 
 bool Track::isOverdubbing() const {
   return trackState == TRACK_OVERDUBBING;
-}
-
-bool Track::isStoppedOverdubbing() const {
-  return trackState == TRACK_STOPPED_OVERDUBBING;
 }
 
 bool Track::isPlaying() const {

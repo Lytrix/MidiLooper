@@ -9,15 +9,14 @@
 
 // Track states with clear transitions
 enum TrackState {
-  TRACK_EMPTY,            // Initial state Empty track
-  TRACK_STOPPED,          // No recording or playback
-  TRACK_ARMED,            // Ready to start recording
-  TRACK_RECORDING,        // Recording first layer
-  TRACK_STOPPED_RECORDING,// First layer recorded, ready for playback or overdub
-  TRACK_PLAYING,          // Playing back recorded content
-  TRACK_OVERDUBBING,      // Recording additional layers while playing
-  TRACK_STOPPED_OVERDUBBING, // Additional layer recorded, back to playback
-  NUM_TRACK_STATES        // Always helpful to validate range
+  TRACK_EMPTY,              // Initial state Empty track
+  TRACK_STOPPED,            // No recording or playback
+  TRACK_ARMED,              // Ready to start recording
+  TRACK_RECORDING,          // Recording first layer
+  TRACK_STOPPED_RECORDING,  // First layer recorded, ready for playback or overdub
+  TRACK_PLAYING,            // Playing back recorded content
+  TRACK_OVERDUBBING,        // Recording additional layers while playing
+  NUM_TRACK_STATES          // Always helpful to validate range
 };
 
 // MIDI event structure
@@ -39,7 +38,7 @@ struct PendingNote {
 
 // Hash function for pair (used in unordered_map)
 struct PairHash {
-  template <class T1, class T2>
+  template<class T1, class T2>
   std::size_t operator()(const std::pair<T1, T2>& p) const {
     auto h1 = std::hash<T1>{}(p.first);
     auto h2 = std::hash<T2>{}(p.second);
@@ -71,7 +70,7 @@ public:
 
   // Helpers for stopRecording
   uint32_t quantizeStart(uint32_t originalStart) const;
-  void     shiftMidiEvents(int32_t offset);
+  void shiftMidiEvents(int32_t offset);
   uint32_t findLastEventTick() const;
   uint32_t computeLoopLengthTicks(uint32_t lastEventTick) const;
   // For any notes still in pendingNotes, emit a NoteOff at offAbsTick
@@ -88,7 +87,7 @@ public:
 
   // Overdubbing control
   void startOverdubbing(uint32_t currentTick);
-  void stopOverdubbing(uint32_t currentTick);
+  void stopOverdubbing();
   bool canUndoOverdub() const;
   void undoOverdub();
 
@@ -100,7 +99,7 @@ public:
   void recordMidiEvents(midi::MidiType type, byte channel, byte data1, byte data2, uint32_t currentTick);
   void playMidiEvents(uint32_t currentTick, bool isAudible);
   void printNoteEvents() const;
-  /// Send an “All Notes Off” (CC 123) on every channel and clear any pending notes.
+  /// Send an "All Notes Off" (CC 123) on every channel and clear any pending notes.
   void sendAllNotesOff();
 
   // Note events
@@ -123,7 +122,6 @@ public:
   bool isRecording() const;
   bool isStoppedRecording() const;
   bool isOverdubbing() const;
-  bool isStoppedOverdubbing() const;
   bool isPlaying() const;
   bool isStopped() const;
   bool isMuted() const;
@@ -145,9 +143,9 @@ private:
   std::vector<MidiEvent> midiEvents;
   std::vector<NoteEvent> noteEvents;
 
-  std::deque<std::vector<MidiEvent>> _midiHistory;    // snapshots before each overdub
+  std::deque<std::vector<MidiEvent>> _midiHistory;  // snapshots before each overdub
   std::deque<std::vector<NoteEvent>> _noteHistory;
-  bool _hasNewEventsSinceSnapshot = false;            // flips to true on any new event
+  bool _hasNewEventsSinceSnapshot = false;  // flips to true on any new event
 
   // State management
   bool transitionState(TrackState newState);  // Internal state transition method
