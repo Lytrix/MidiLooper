@@ -278,18 +278,16 @@ void Track::undoOverdub() {
     return;
   }
 
-  do {
-    midiEvents = std::move(_midiHistory.back());
-    noteEvents = std::move(_noteHistory.back());
-    _midiHistory.pop_back();
-    _noteHistory.pop_back();
-  } while (!_hasNewEventsSinceSnapshot && !_midiHistory.empty());
+  midiEvents = std::move(_midiHistory.back());
+  noteEvents = std::move(_noteHistory.back());
+
+  _midiHistory.pop_back();
+  _noteHistory.pop_back();
 
   _hasNewEventsSinceSnapshot = false;
 
   logger.logTrackEvent("Overdub undone", clockManager.getCurrentTick());
 }
-
 size_t Track::getUndoableCount() const {
   return _midiHistory.size();
 }
@@ -350,6 +348,20 @@ void Track::playMidiEvents(uint32_t currentTick, bool isAudible) {
     nextEventIndex = 0;
     logger.debug("Loop wrapped, resetting index");
     // optional: dump events again here
+       if (isOverdubbing() && _hasNewEventsSinceSnapshot) {
+        logger.debug("Snapshotting new overdub pass");
+
+        _midiHistory.push_back(midiEvents);
+        _noteHistory.push_back(noteEvents);
+
+        _hasNewEventsSinceSnapshot = false;
+
+        // Optional: clamp history size
+        if (_midiHistory.size() > Config::MAX_UNDO_HISTORY) {
+            _midiHistory.pop_front();
+            _noteHistory.pop_front();
+        }
+    }
   }
 
   // Remember where we were
@@ -522,6 +534,7 @@ void Track::noteOff(uint8_t channel, uint8_t note, uint8_t velocity, uint32_t ti
         /* .startNoteTick = */  it->second.startNoteTick,
         /* .endNoteTick = */    tick
       };
+      _hasNewEventsSinceSnapshot = true;
       noteEvents.push_back(noteEvent);
 
       // **Keep them sorted by start time to ensure proper rending on the LCD when overdubbing**
