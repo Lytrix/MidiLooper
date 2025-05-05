@@ -196,13 +196,6 @@ void Track::startPlaying(uint32_t currentTick) {
 
 void Track::startOverdubbing(uint32_t currentTick) {
   if (!setState(TRACK_OVERDUBBING)) { return; }
-
-  // Store midiNotes and noteEvents in dedicated History buffer
-  _midiHistory .push_back(midiEvents);
-  _noteHistory .push_back(noteEvents);
-
-  _hasNewEventsSinceSnapshot = false;            // no new events yet
-
   logger.logTrackEvent("Overdubbing started", currentTick);
 }
 
@@ -288,6 +281,7 @@ void Track::undoOverdub() {
 
   logger.logTrackEvent("Overdub undone", clockManager.getCurrentTick());
 }
+
 size_t Track::getUndoableCount() const {
   return _midiHistory.size();
 }
