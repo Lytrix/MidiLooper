@@ -2,7 +2,8 @@
 #include "ClockManager.h"
 
 // Debug level (can be combined using bitwise OR)
-uint8_t debugLevel = DEBUG_ERROR | DEBUG_WARNING | DEBUG_INFO | DEBUG_MIDI | DEBUG_NOTES;
+//uint8_t debugLevel = DEBUG_ERROR | DEBUG_WARNING | DEBUG_INFO | DEBUG_MIDI | DEBUG_NOTES;
+uint8_t debugLevel = DEBUG_ERROR | DEBUG_WARNING | DEBUG_INFO | DEBUG_NOTES;
 //uint8_t debugLevel = DEBUG_INFO;
 
 // Runtime settings

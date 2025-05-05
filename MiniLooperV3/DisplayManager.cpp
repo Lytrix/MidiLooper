@@ -22,7 +22,7 @@ void DisplayManager::update() {
   uint32_t loopLengthTicks = track.getLength();
   uint32_t currentTick = clockManager.getCurrentTick();
   uint32_t startLoopTick = track.getStartLoopTick();
-  uint8_t getUndoCount = track.getUndoableCount();
+  uint8_t getUndoCount = track.getUndoCount();
 
   // Bottom row
   drawPianoRoll(notes, loopLengthTicks, currentTick, startLoopTick);

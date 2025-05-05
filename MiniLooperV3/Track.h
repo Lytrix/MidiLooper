@@ -110,8 +110,21 @@ public:
   // Event counters
   size_t getMidiEventCount() const;
   size_t getNoteEventCount() const;
-  size_t getUndoableCount() const;
-   
+  
+  // Undo functions
+  size_t getUndoCount() const; // Number of available undo steps
+  bool canUndo() const; // Returns true if there is at least one undoable state
+  void popLastUndo();   // Remove and return the last undo snapshot
+  const std::vector<MidiEvent>& peekLastMidiSnapshot() const; // Peek at the latest MIDI snapshot (const view)
+  const std::vector<NoteEvent>& peekLastNoteSnapshot() const; // Peek at the latest NoteEvent snapshot (const view)
+  // Read-only access to undo history (optional)
+  std::deque<std::vector<MidiEvent>>& getMidiHistory() { return _midiHistory; }
+  std::deque<std::vector<NoteEvent>>& getNoteHistory() { return _noteHistory; }
+  const std::vector<MidiEvent>& getCurrentMidiSnapshot() const;
+  const std::vector<NoteEvent>& getCurrentNoteSnapshot() const;
+
+  void  pushUndoSnapshot();  // For initial start overdub.
+
   // Track length control
   uint32_t getStartLoopTick() const;
   uint32_t getLength() const;
@@ -143,10 +156,14 @@ private:
   std::unordered_map<std::pair<uint8_t, uint8_t>, PendingNote, PairHash> pendingNotes;
   std::vector<MidiEvent> midiEvents;
   std::vector<NoteEvent> noteEvents;
-
+  
+  // Undo management
   std::deque<std::vector<MidiEvent>> _midiHistory;  // snapshots before each overdub
   std::deque<std::vector<NoteEvent>> _noteHistory;
+  size_t _midiEventCountAtLastSnapshot = 0;
+size_t _noteEventCountAtLastSnapshot = 0;
   bool _hasNewEventsSinceSnapshot = false;  // flips to true on any new event
+  bool _suppressNextSnapshot = false;
 
   // State management
   bool transitionState(TrackState newState);  // Internal state transition method
