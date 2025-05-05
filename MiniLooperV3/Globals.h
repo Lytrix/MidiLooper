@@ -56,6 +56,7 @@ namespace Config {
   constexpr uint8_t  INTERNAL_PPQN = 192;          // Internal resolution for timing
   constexpr uint8_t  TICKS_PER_CLOCK = (INTERNAL_PPQN / 24);  // 8 ticks per MIDI clock pulse (24 PPQN)
   constexpr uint8_t  QUARTERS_PER_BAR = 4;         // Time signature numerator (4/4 time)
+  constexpr uint8_t  MAX_UNDO_HISTORY = 99;
 }
 
 // --------------------
@@ -67,6 +68,7 @@ extern uint32_t quartersPerBar;            // Time signature numerator
 extern const uint32_t ticksPerBar;         // Computed as ticksPerQuarterNote * quartersPerBar
 extern uint32_t now;                       // Current time
 extern uint32_t lastDisplayUpdate;    
+
 // --------------------
 // System Functions
 // --------------------
