@@ -20,7 +20,8 @@ private:
     void drawPianoRoll(const std::vector<NoteEvent>& notes, uint32_t loopLengthTicks, uint32_t currentTick, uint32_t startLoopTick);
     void drawBarBeatCounter(uint32_t loopLengthTicks, uint32_t currentTick, uint32_t startLoopTick);
     void showTrackStates(uint8_t selectedTrackId);  // Top row: Track statuses
-
+    void drawUndoCounter(uint8_t getUndoCount);
+    
     bool blinkState = false;
     unsigned long lastBlinkTime = 0;
     static const unsigned long blinkInterval = 400;  // blink every 500ms

@@ -110,7 +110,8 @@ public:
   // Event counters
   size_t getMidiEventCount() const;
   size_t getNoteEventCount() const;
-
+  size_t getUndoableCount() const;
+   
   // Track length control
   uint32_t getStartLoopTick() const;
   uint32_t getLength() const;

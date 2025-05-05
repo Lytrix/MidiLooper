@@ -22,9 +22,11 @@ void DisplayManager::update() {
   uint32_t loopLengthTicks = track.getLength();
   uint32_t currentTick = clockManager.getCurrentTick();
   uint32_t startLoopTick = track.getStartLoopTick();
+  uint8_t getUndoCount = track.getUndoableCount();
 
   // Bottom row
   drawPianoRoll(notes, loopLengthTicks, currentTick, startLoopTick);
+  drawUndoCounter(getUndoCount);
   drawBarBeatCounter(loopLengthTicks, currentTick, startLoopTick);
 
   if (debugLevel & DEBUG_DISPLAY) {
@@ -94,6 +96,12 @@ void clearCustomChars() {
   memset(customChars, 0, sizeof(customChars));
 }
 
+void DisplayManager::drawUndoCounter(uint8_t getUndoCount) {
+  lcd.setCursor(9, 1);
+  lcd.print("U:");
+  lcd.print(getUndoCount);
+}
+
 // Draws the bar:beat counter on row 1
 void DisplayManager::drawBarBeatCounter(uint32_t loopLengthTicks,
                                         uint32_t currentTick,
@@ -124,7 +132,7 @@ void DisplayManager::drawPianoRoll(const std::vector<NoteEvent>& notes,
     if (notes.empty() || loopLengthTicks == 0) {
         // clear row
         lcd.setCursor(0, 1);
-        lcd.print("                ");
+        lcd.print("        ");
         return;
     }
 
