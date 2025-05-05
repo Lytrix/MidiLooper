@@ -195,13 +195,12 @@ void Track::startPlaying(uint32_t currentTick) {
 }
 
 void Track::startOverdubbing(uint32_t currentTick) {
-  if (!setState(TRACK_OVERDUBBING)) {
-    return;
-  }
+  if (!setState(TRACK_OVERDUBBING)) { return; }
 
-  // Sore midiNotes and noteEvents in dedicated History buffer
+  // Store midiNotes and noteEvents in dedicated History buffer
   _midiHistory .push_back(midiEvents);
   _noteHistory .push_back(noteEvents);
+
   _hasNewEventsSinceSnapshot = false;            // no new events yet
 
   logger.logTrackEvent("Overdubbing started", currentTick);
@@ -214,9 +213,7 @@ void Track::stopOverdubbing() {
 
 void Track::stopPlaying() {
   if (isEmpty()) return; // Nothing to stop, empty track
-  
-  // first kill all sounding notes
-  sendAllNotesOff();
+  sendAllNotesOff();  // first kill all sounding notes
 
   // then transition to the stopped state
   setState(TRACK_STOPPED);
@@ -270,47 +267,32 @@ void Track::clear() {
 }
 
 bool Track::canUndoOverdub() const {
+  logger.debug("Number of midiHistory events: %d", _midiHistory.size());
   // must have at least one snapshot and be in playing or overdubbing state
   return !_midiHistory.empty() && (trackState == TRACK_PLAYING || trackState == TRACK_OVERDUBBING);
 }
 
 void Track::undoOverdub() {
-  if (!canUndoOverdub()) {
-    logger.log(CAT_TRACK, LOG_WARNING, "Cannot undo overdub right now");
+  if (_midiHistory.empty()) {
+    logger.log(CAT_TRACK, LOG_WARNING, "No overdub layers to undo");
     return;
   }
 
-  // Store current state to restore it after undo
-  TrackState currentState = trackState;
+  do {
+    midiEvents = std::move(_midiHistory.back());
+    noteEvents = std::move(_noteHistory.back());
+    _midiHistory.pop_back();
+    _noteHistory.pop_back();
+  } while (!_hasNewEventsSinceSnapshot && !_midiHistory.empty());
 
-  // 1. Restore the last-snapshot
-  midiEvents = std::move(_midiHistory.back());
-  noteEvents = std::move(_noteHistory.back());
-  _midiHistory.pop_back();
-  _noteHistory.pop_back();
-
-  // 2. Recompute loop length to ensure it's correct
-  uint32_t lastTick = findLastEventTick();
-  loopLengthTicks = computeLoopLengthTicks(lastTick);
-
-  // 3. Reset the "new-event" flag so you can undo again if you never record more
   _hasNewEventsSinceSnapshot = false;
 
-  // 4. If we were in overdubbing mode, we need to transition through STOPPED
-  if (currentState == TRACK_OVERDUBBING) {
-    setState(TRACK_STOPPED);
-    setState(TRACK_OVERDUBBING);
-  }
-  // If we were in playing mode, we need to transition through STOPPED
-  else if (currentState == TRACK_PLAYING) {
-    setState(TRACK_STOPPED);
-    setState(TRACK_PLAYING);
-  }
-
-  // 5. Log it
   logger.logTrackEvent("Overdub undone", clockManager.getCurrentTick());
 }
 
+size_t Track::getUndoableCount() const {
+  return _midiHistory.size();
+}
 
 
 void Track::recordMidiEvents(midi::MidiType type, byte channel, byte data1, byte data2, uint32_t currentTick) {
