@@ -102,7 +102,7 @@ void ButtonManager::handleButton(uint8_t index, ButtonAction action) {
     if (index == 0) {
         switch (action) {
             case BUTTON_DOUBLE_PRESS:
-                if (track.canUndoOverdub()) {
+                if (track.canUndo()) {
                     if (DEBUG_BUTTONS) Serial.println("Button A: Undo Overdub");
                     track.undoOverdub();
                 }
