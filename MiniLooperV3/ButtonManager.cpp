@@ -24,6 +24,8 @@ void ButtonManager::setup(const std::vector<uint8_t>& pins) {
     buttons.resize(countPins);
     pressTimes.resize(countPins);
     lastTapTime.resize(countPins, 0);
+    pendingShortPress.resize(countPins, false);
+    shortPressExpireTime.resize(countPins, 0);
 
     for (size_t i = 0; i < countPins; ++i) {
         buttons[i].attach(pins[i], INPUT_PULLUP);
@@ -39,37 +41,53 @@ void ButtonManager::setup(const std::vector<uint8_t>& pins) {
 
 void ButtonManager::update() {
     static unsigned long bootTime = millis();
-    if (millis() - bootTime < 500) return;  // ignore first 500ms
+    if (millis() - bootTime < 500) return;
+
+    uint32_t now = millis();
 
     for (size_t i = 0; i < buttons.size(); ++i) {
         buttons[i].update();
 
         if (buttons[i].fell()) {
-            pressTimes[i] = millis();
+            pressTimes[i] = now;
         }
+
         if (buttons[i].rose()) {
-            uint32_t duration = millis() - pressTimes[i];
-            ButtonAction action = (duration >= LONG_PRESS_TIME)
-                                  ? BUTTON_LONG_PRESS
-                                  : BUTTON_SHORT_PRESS;
-
-            // promote to DOUBLE_PRESS if it really is one:
-            if (action == BUTTON_SHORT_PRESS && isDoubleTap(i)) {
-                action = BUTTON_DOUBLE_PRESS;
+            uint32_t duration = now - pressTimes[i];
+            if (duration >= LONG_PRESS_TIME) {
+                handleButton(i, BUTTON_LONG_PRESS);
+            } else {
+                // Delay decision for short press vs. double tap
+                if (now - lastTapTime[i] <= DOUBLE_TAP_WINDOW) {
+                    // Detected second tap in window → double
+                    lastTapTime[i] = 0;
+                    pendingShortPress[i] = false;
+                    handleButton(i, BUTTON_DOUBLE_PRESS);
+                } else {
+                    // First tap
+                    lastTapTime[i] = now;
+                    pendingShortPress[i] = true;
+                    shortPressExpireTime[i] = now + DOUBLE_TAP_WINDOW;
+                }
             }
+        }
 
-            handleButton(i, action);
+        // Fire short press if timeout expired and no second tap arrived
+        if (pendingShortPress[i] && now >= shortPressExpireTime[i]) {
+            pendingShortPress[i] = false;
+            handleButton(i, BUTTON_SHORT_PRESS);
         }
     }
 }
+
 
 /// Returns true if this SHORT_PRESS is the second tap within the window
 bool ButtonManager::isDoubleTap(uint8_t idx) {
     uint32_t now = millis();
     logger.debug("Doubletap count:%d - %d", now, lastTapTime[idx]);
-    // if the previous tap was within the window, it’s a double-tap:
+    // if the previous tap was within the window, it's a double-tap:
     if (now - lastTapTime[idx] <= DOUBLE_TAP_WINDOW) {
-        lastTapTime[idx] = 0;   // reset so a third tap doesn’t re-trigger
+        lastTapTime[idx] = 0;   // reset so a third tap doesn't re-trigger
         return true;
     }
     // otherwise record this as the first tap:
@@ -84,8 +102,7 @@ void ButtonManager::handleButton(uint8_t index, ButtonAction action) {
     if (index == 0) {
         switch (action) {
             case BUTTON_DOUBLE_PRESS:
-                if (track.canUndoOverdub() && (track.isOverdubbing() || track.isPlaying())) {
-                    track.isOverdubbing();
+                if (track.canUndoOverdub()) {
                     if (DEBUG_BUTTONS) Serial.println("Button A: Undo Overdub");
                     track.undoOverdub();
                 }
