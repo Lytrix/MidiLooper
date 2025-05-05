@@ -197,6 +197,12 @@ void Track::startOverdubbing(uint32_t currentTick) {
   if (!setState(TRACK_OVERDUBBING)) {
     return;
   }
+
+  // Sore midiNotes and noteEvents in dedicated History buffer
+  _midiHistory .push_back(midiEvents);
+  _noteHistory .push_back(noteEvents);
+  _hasNewEventsSinceSnapshot = false;            // no new events yet
+
   logger.logTrackEvent("Overdubbing started", currentTick);
 }
 
@@ -262,6 +268,35 @@ void Track::clear() {
     logger.logTrackEvent("Track cleared", clockManager.getCurrentTick());
 }
 
+bool Track::canUndoOverdub() const {
+  // must have at least one snapshot, no new events since, and be playing or overdubbing
+  return !_midiHistory.empty();
+}
+
+void Track::undoOverdub() {
+  if (!canUndoOverdub()) {
+    logger.log(CAT_TRACK, LOG_WARNING, "Cannot undo overdub right now");
+    return;
+  }
+
+  // 1. Restore the last-snapshot
+  midiEvents = std::move(_midiHistory.back());
+  noteEvents = std::move(_noteHistory.back());
+  _midiHistory.pop_back();
+  _noteHistory.pop_back();
+
+  // // 2. Recompute your loop length
+  // uint32_t lastTick      = findLastEventTick();          // your helper
+  // loopLengthTicks        = computeLoopLengthTicks(lastTick);
+
+  // 3. Reset the “new‐event” flag so you can undo again if you never record more
+  _hasNewEventsSinceSnapshot = false;
+
+  // 4. Log it (state stays PLAYING or OVERDUBBING as-is)
+  logger.logTrackEvent("Overdub undone", clockManager.getCurrentTick());
+}
+
+
 
 void Track::recordMidiEvents(midi::MidiType type, byte channel, byte data1, byte data2, uint32_t currentTick) {
   if ((isRecording() && !isPlaying()) || isOverdubbing()) {
@@ -296,7 +331,9 @@ void Track::recordMidiEvents(midi::MidiType type, byte channel, byte data1, byte
     );
 
     midiEvents.push_back(MidiEvent{ tickRelative, type, channel, data1, data2 });
-
+    // and anywhere you actually record a new event (e.g. in recordMidiEvents or noteOn/noteOff):
+    _hasNewEventsSinceSnapshot = true;
+    
      // **Keep events sorted by tick** so playback scanning never misses a wrapped-back note during overdubbing
     std::sort(midiEvents.begin(), midiEvents.end(),
             [](auto &a, auto &b){ return a.tick < b.tick; });

@@ -4,7 +4,8 @@
 #include <Arduino.h>
 #include <vector>
 #include <MIDI.h>
-#include <unordered_map>
+#include <unordered_map>  // For pendingNotes
+#include <deque>          // For undo
 
 // Track states with clear transitions
 enum TrackState {
@@ -88,6 +89,8 @@ public:
   // Overdubbing control
   void startOverdubbing(uint32_t currentTick);
   void stopOverdubbing(uint32_t currentTick);
+  bool canUndoOverdub() const;
+  void undoOverdub();
 
   // Track management
   void clear();
@@ -141,6 +144,10 @@ private:
   std::unordered_map<std::pair<uint8_t, uint8_t>, PendingNote, PairHash> pendingNotes;
   std::vector<MidiEvent> midiEvents;
   std::vector<NoteEvent> noteEvents;
+
+  std::deque<std::vector<MidiEvent>> _midiHistory;    // snapshots before each overdub
+  std::deque<std::vector<NoteEvent>> _noteHistory;
+  bool _hasNewEventsSinceSnapshot = false;            // flips to true on any new event
 
   // State management
   bool transitionState(TrackState newState);  // Internal state transition method
