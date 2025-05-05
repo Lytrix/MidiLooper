@@ -68,6 +68,14 @@ public:
   const std::vector<MidiEvent>& getEvents() const;
   const std::vector<NoteEvent>& getNoteEvents() const;
 
+  // Helpers for stopRecording
+  uint32_t quantizeStart(uint32_t originalStart) const;
+  void     shiftMidiEvents(int32_t offset);
+  uint32_t findLastEventTick() const;
+  uint32_t computeLoopLengthTicks(uint32_t lastEventTick) const;
+  // For any notes still in pendingNotes, emit a NoteOff at offAbsTick
+  void finalizePendingNotes(uint32_t offAbsTick);
+
   // Recording control
   void startRecording(uint32_t startLoopTick);
   void stopRecording(uint32_t currentTick);
@@ -89,6 +97,8 @@ public:
   void recordMidiEvents(midi::MidiType type, byte channel, byte data1, byte data2, uint32_t currentTick);
   void playMidiEvents(uint32_t currentTick, bool isAudible);
   void printNoteEvents() const;
+  /// Send an “All Notes Off” (CC 123) on every channel and clear any pending notes.
+  void sendAllNotesOff();
 
   // Note events
   void noteOn(uint8_t channel, uint8_t note, uint8_t velocity, uint32_t tick);
