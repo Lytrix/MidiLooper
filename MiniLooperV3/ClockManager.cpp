@@ -4,7 +4,7 @@
 #include "TrackManager.h"
 #include "Logger.h"
 
-ClockManager clockManager;  // Global instance
+ClockManager clockManager;  // Global instance initiated
 IntervalTimer clockTimer;
 
 ClockManager::ClockManager()
@@ -34,19 +34,19 @@ void ClockManager::setExternalClockPresent(bool present) {
 }
 
 void ClockManager::setup() {
-  microsPerTick = 60000000UL / (bpm * ticksPerQuarterNote);
+  microsPerTick = 60000000UL / (bpm * MidiConfig::PPQN);
   clockTimer.begin([] { clockManager.updateInternalClock(); }, microsPerTick);
 }
 
 void ClockManager::setBpm(uint16_t newBpm) {
   bpm = newBpm;
-  microsPerTick = 60000000UL / (bpm * ticksPerQuarterNote);
+  microsPerTick = 60000000UL / (bpm * MidiConfig::PPQN);
   clockTimer.update(microsPerTick);
 }
 
 void ClockManager::setTicksPerQuarterNote(uint16_t newTicks) {
   ticksPerQuarterNote = newTicks;
-  microsPerTick = 60000000UL / (bpm * ticksPerQuarterNote);
+  microsPerTick = 60000000UL / (bpm * MidiConfig::PPQN);
   clockTimer.update(microsPerTick);
 }
 
@@ -64,7 +64,7 @@ void ClockManager::onMidiClockPulse() {
   currentTick++;
 
   if (pendingStart) {
-    const uint32_t ticksPerBar = ticksPerQuarterNote * 4;
+    const uint32_t ticksPerBar = MidiConfig::PPQN * 4;
     if (currentTick % ticksPerBar == 0) {
       currentTick = 0;
       pendingStart = false;

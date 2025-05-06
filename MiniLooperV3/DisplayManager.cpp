@@ -26,7 +26,7 @@ void DisplayManager::update() {
 
   uint32_t loopLengthTicks;
 
-  // grow loop length while recording
+  // grow loop length while recording to be able to display in piano roll
   if (track.isRecording() && track.getLength() == 0) {
       // simulate provisional loop length for display
       loopLengthTicks = clockManager.getCurrentTick() - track.getStartLoopTick();
@@ -34,7 +34,6 @@ void DisplayManager::update() {
   } else {
       loopLengthTicks = track.getLength();
   }
-
 
   // Bottom row
   drawPianoRoll(notes, loopLengthTicks, currentTick, startLoopTick);
@@ -93,8 +92,6 @@ void DisplayManager::showTrackStates(uint8_t selectedTrack) {
   }
 }
 
-
-
 // --------------------
 // Multi-line "pixel" note view using custom characters
 // --------------------
@@ -123,23 +120,14 @@ void DisplayManager::drawBarBeatCounter(uint32_t loopLengthTicks,
                                         uint32_t currentTick,
                                         uint32_t startLoopTick) {
     uint32_t elapsedTicks = currentTick - startLoopTick;
-     const auto& track = trackManager.getSelectedTrack();
+    const auto& track = trackManager.getSelectedTrack();
 
-    // Define fallback values based on your system
-    constexpr uint32_t fallbackTicksPerBeat = 24;  // e.g. 48 ticks/beat = 192 ticks/bar
-    constexpr uint32_t fallbackTicksPerBar = fallbackTicksPerBeat * 4;
-    uint32_t ticksPerBar;
-    // Use actual loop length if defined, otherwise fallback
-    if(track.isRecording()){
-        ticksPerBar = fallbackTicksPerBar;
-    } else {
-        ticksPerBar = loopLengthTicks / 4 ;
-    }
-    
-    uint32_t ticksPerBeat = ticksPerBar / 4;
+    // Use PPQN when in record state, because actual loop length is still being defined
+    uint32_t displayTicksPerBar = track.isRecording() ? MidiConfig::PPQN * 4 : loopLengthTicks;
+    uint32_t displayTicksPerBeat = displayTicksPerBar / 4;
 
-    uint8_t beat = (elapsedTicks / ticksPerBeat) % 4 + 1;
-    uint8_t bar  = (elapsedTicks / ticksPerBar) + 1;
+    uint8_t beat = (elapsedTicks / displayTicksPerBeat) % 4 + 1;
+    uint8_t bar  = (elapsedTicks / displayTicksPerBar) + 1;
 
     char buf[6];
     snprintf(buf, sizeof(buf), "%u:%u", bar, beat);

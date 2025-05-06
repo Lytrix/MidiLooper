@@ -24,7 +24,7 @@ private:
   void handleState();
   void requestStateTransition(LooperState targetState, bool quantize);
 
-  LooperState _state;
+  LooperState state;
 };
 
 extern Looper looper;  // Global instance

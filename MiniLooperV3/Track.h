@@ -36,7 +36,11 @@ struct PendingNote {
   uint8_t velocity;        // note-on velocity
 };
 
-// Hash function 
+// Hash function for pair (used in unordered_map)
+struct PairHash {
+  template<class T1, class T2>
+  std::size_t operator()(const std::pair<T1, T2>& p) const {
+    auto h1 = std::hash<T1>{}(p.first);
     auto h2 = std::hash<T2>{}(p.second);
     return h1 ^ (h2 << 1);
   }
@@ -111,8 +115,7 @@ public:
   size_t getUndoCount() const; // Number of available undo steps
   bool canUndo() const; // Returns true if there is at least one undoable state
   void popLastUndo();   // Remove and return the last undo snapshot
-  const std::vector<MidiEvent>& peekLastMidiSnapshot() const; // Peek at the latest MIDI snapshot (const view)
-  const std::vector<NoteEvent>& peekLastNoteSnapshot() const; // Peek at the latest NoteEvent snapshot (const view)
+  
   // Read-only access to undo history (optional)
   std::deque<std::vector<MidiEvent>>& getMidiHistory() { return _midiHistory; }
   std::deque<std::vector<NoteEvent>>& getNoteHistory() { return _noteHistory; }
@@ -137,29 +140,30 @@ public:
   bool isMuted() const;
 
 private:
-  bool _isPlayingBack;  // Flag to ignore playback events during overdub
+  bool isPlayingBack;  // Flag to ignore playback events during overdub
   void sendMidiEvent(const MidiEvent& evt);
 
   // Track data
-  bool _muted;
-  TrackState _trackState;
-  uint32_t _startLoopTick;
-  uint32_t _loopLengthTicks;
-  uint32_t _lastTickInLoop;
-  uint16_t _nextEventIndex;
+  bool muted;
+  TrackState trackState;
+  uint32_t startLoopTick;
+  uint32_t loopLengthTicks;
+  uint32_t lastTickInLoop;
+  uint16_t nextEventIndex;
+  static const uint32_t TICKS_PER_BAR;
 
   // Event storage
   std::unordered_map<std::pair<uint8_t, uint8_t>, PendingNote, PairHash> pendingNotes;
-  std::vector<MidiEvent> _midiEvents;
-  std::vector<NoteEvent> _noteEvents;
+  std::vector<MidiEvent> midiEvents;
+  std::vector<NoteEvent> noteEvents;
   
   // Undo management
+  bool _hasNewEventsSinceSnapshot = false;  // flips to true on any new event
+  bool _suppressNextSnapshot = false; // If undo has been executed during the loop
   std::deque<std::vector<MidiEvent>> _midiHistory;  // snapshots before each overdub
   std::deque<std::vector<NoteEvent>> _noteHistory;
   size_t _midiEventCountAtLastSnapshot = 0;
-size_t _noteEventCountAtLastSnapshot = 0;
-  bool _hasNewEventsSinceSnapshot = false;  // flips to true on any new event
-  bool _suppressNextSnapshot = false;
+  size_t _noteEventCountAtLastSnapshot = 0;
 
   // State management
   bool transitionState(TrackState newState);  // Internal state transition method

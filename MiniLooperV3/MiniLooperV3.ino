@@ -28,7 +28,7 @@ void setup() {
 
   trackManager.setup();
 
-  // Step 3: Log all initial track states
+  // Log initial track states
   for (uint8_t i = 0; i < trackManager.getTrackCount(); ++i) {
     TrackState state = trackManager.getTrack(i).getState();
     logger.debug("Track %d state: %s", i, trackManager.getTrack(i).getStateName(state));
