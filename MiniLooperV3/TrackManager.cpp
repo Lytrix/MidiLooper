@@ -22,6 +22,7 @@ TrackManager::TrackManager() {
 void TrackManager::startRecordingTrack(uint8_t trackIndex, uint32_t currentTick) {
   if (trackIndex >= Config::NUM_TRACKS) return;
   tracks[trackIndex].startRecording(currentTick);
+  tracks[trackIndex].isArmed();  // sets state to TRACK_ARMED and logs
 }
 
 void TrackManager::stopRecordingTrack(uint8_t trackIndex) {
@@ -179,17 +180,23 @@ void TrackManager::setup() {
 }
 
 void TrackManager::updateAllTracks(uint32_t currentTick) {
-  // Called from ClockManager.internalUpdateClockTick and updateMidiCLockTick
+  // Called from ClockManager.internalUpdateClockTick and updateMidiClockTick
   for (uint8_t i = 0; i < Config::NUM_TRACKS; i++) {
     if (pendingRecord[i]) {
-      startRecordingTrack(i, currentTick);
-      pendingRecord[i] = false;
+      // Wait for the next bar boundary
+      if ((currentTick % Track::getTicksPerBar()) == 0) {
+        startRecordingTrack(i, currentTick);
+        pendingRecord[i] = false;
+      }
     }
+
     if (pendingStop[i]) {
       stopRecordingTrack(i);
       pendingStop[i] = false;
     }
+
     bool audible = isTrackAudible(i);
     tracks[i].playMidiEvents(currentTick, audible);
   }
 }
+

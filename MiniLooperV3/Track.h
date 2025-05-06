@@ -130,6 +130,9 @@ public:
   uint32_t getStartLoopTick() const;
   uint32_t getLength() const;
   void setLength(uint32_t ticks);
+  
+  // Tempo accessors
+  static uint32_t getTicksPerBar();
 
   // Track state checks
   bool isEmpty() const;
