@@ -22,12 +22,12 @@ public:
     bool isDoubleTap(uint8_t idx);
 
 private:
-    std::vector<Bounce> buttons;
+    std::vector<Bounce> _buttons;
      // Must be sized to #buttons
-    std::vector<uint32_t> pressTimes;
-    std::vector<uint32_t> lastTapTime;
-    std::vector<bool> pendingShortPress;
-    std::vector<uint32_t> shortPressExpireTime;
+    std::vector<uint32_t> _pressTimes;
+    std::vector<uint32_t> _lastTapTime;
+    std::vector<bool> _pendingShortPress;
+    std::vector<uint32_t> _shortPressExpireTime;
 
     static constexpr uint16_t DOUBLE_TAP_WINDOW = 300;  // ms
     static const uint16_t LONG_PRESS_TIME = 500; // ms
