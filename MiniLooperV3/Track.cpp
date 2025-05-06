@@ -87,11 +87,10 @@ void Track::startRecording(uint32_t currentTick) {
 // Helpers for stopRecording 
 // -------------------------
 
-static constexpr float  END_GRACE_FRACTION = 0.125f;  // 1/8 bar
-static constexpr float  START_GRACE_FRACTION = 0.125f;
+const uint32_t Track::TICKS_PER_BAR = MidiConfig::PPQN * Config::QUARTERS_PER_BAR;
 
 uint32_t Track::quantizeStart(uint32_t original) const {
-    return (original / ticksPerBar) * ticksPerBar;
+    return (original / TICKS_PER_BAR) * TICKS_PER_BAR;
 }
 
 void Track::shiftMidiEvents(int32_t offset) {
@@ -112,19 +111,19 @@ uint32_t Track::findLastEventTick() const {
 
 uint32_t Track::computeLoopLengthTicks(uint32_t lastTick) const {
     // How many full bars your last event has fully passed
-    uint32_t fullBars = lastTick / ticksPerBar;
+    uint32_t fullBars = lastTick / TICKS_PER_BAR;
     // How far into the next bar your last event lands
-    uint32_t rem      = lastTick % ticksPerBar;
+    uint32_t rem      = lastTick % TICKS_PER_BAR;
     // A small "grace" (e.g. 1/8 bar) to allow tiny overshoots without padding
-    uint32_t grace    = ticksPerBar / 8;
+    uint32_t grace    = TICKS_PER_BAR / 8;
 
     // If you've only crept a little into the next bar, stay in the current one:
     if (rem <= grace) {
         // If nothing at all, ensure at least one bar:
-        return (fullBars > 0 ? fullBars : 1) * ticksPerBar;
+        return (fullBars > 0 ? fullBars : 1) * TICKS_PER_BAR;
     }
     // Otherwise include the bar containing your last event:
-    return (fullBars + 1) * ticksPerBar;
+    return (fullBars + 1) * TICKS_PER_BAR;
 }
 
 void Track::finalizePendingNotes(uint32_t offAbsTick) {
@@ -298,13 +297,6 @@ bool Track::canUndo() const {
   return !_midiHistory.empty();
 }
 
-const std::vector<MidiEvent>& Track::peekLastMidiSnapshot() const {
-  return _midiHistory.back();
-}
-
-const std::vector<NoteEvent>& Track::peekLastNoteSnapshot() const {
-  return _noteHistory.back();
-}
 void Track::popLastUndo() {
     if (_midiHistory.empty() || _noteHistory.empty()) {
         logger.log(CAT_TRACK, LOG_WARNING, "Attempted to pop undo snapshot, but none exist");
@@ -324,8 +316,8 @@ void Track::undoOverdub() {
     }
 
     // Restore the last snapshot
-    midiEvents = peekLastMidiSnapshot();
-    noteEvents = peekLastNoteSnapshot();
+    midiEvents = getCurrentMidiSnapshot();
+    noteEvents = getCurrentNoteSnapshot();
 
     // Update snapshot counts to avoid duplicate undo recording
     _midiEventCountAtLastSnapshot = midiEvents.size();

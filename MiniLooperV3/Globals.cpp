@@ -8,9 +8,6 @@ uint8_t debugLevel = DEBUG_ERROR | DEBUG_WARNING | DEBUG_INFO | DEBUG_NOTES;
 
 // Runtime settings
 float bpm = 120.0f;
-uint32_t ticksPerQuarterNote = MidiConfig::PPQN;
-uint32_t quartersPerBar = Config::QUARTERS_PER_BAR;
-const uint32_t ticksPerBar = ticksPerQuarterNote * quartersPerBar;
 uint32_t lastDisplayUpdate = 0;
 uint32_t now = millis();
 

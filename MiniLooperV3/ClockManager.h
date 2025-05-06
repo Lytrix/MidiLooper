@@ -34,13 +34,13 @@ public:
 
 private:
   // --- Timing data ---
-  uint32_t _microsPerTick;
+  uint32_t microsPerTick;
   volatile uint32_t currentTick;
   volatile uint32_t lastMidiClockTime;
   volatile uint32_t lastInternalTickTime;
 
   // --- Clock detection ---
-  bool _externalClockPresent;
+  bool externalClockPresent;
   const uint32_t midiClockTimeout = 500000; // 500ms: timeout for external clock
 };
 

@@ -6,13 +6,12 @@
 
 ButtonManager buttonManager;
 
-// Debounce interval in milliseconds
-static const uint16_t DEFAULT_DEBOUNCE_INTERVAL = 10;
-
 ButtonManager::ButtonManager() {
     buttons.clear();
     pressTimes.clear();
     lastTapTime.clear();
+    pendingShortPress.clear();
+    shortPressExpireTime.clear();
 
     if (DEBUG_BUTTONS) {
         Serial.println("ButtonManager constructor called.");
@@ -78,21 +77,6 @@ void ButtonManager::update() {
             handleButton(i, BUTTON_SHORT_PRESS);
         }
     }
-}
-
-
-/// Returns true if this SHORT_PRESS is the second tap within the window
-bool ButtonManager::isDoubleTap(uint8_t idx) {
-    uint32_t now = millis();
-    logger.debug("Doubletap count:%d - %d", now, lastTapTime[idx]);
-    // if the previous tap was within the window, it's a double-tap:
-    if (now - lastTapTime[idx] <= DOUBLE_TAP_WINDOW) {
-        lastTapTime[idx] = 0;   // reset so a third tap doesn't re-trigger
-        return true;
-    }
-    // otherwise record this as the first tap:
-    lastTapTime[idx] = now;
-    return false;
 }
 
 void ButtonManager::handleButton(uint8_t index, ButtonAction action) {
