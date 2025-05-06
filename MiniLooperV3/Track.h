@@ -117,8 +117,10 @@ public:
   void popLastUndo();   // Remove and return the last undo snapshot
   
   // Read-only access to undo history (optional)
-  std::deque<std::vector<MidiEvent>>& getMidiHistory() { return _midiHistory; }
-  std::deque<std::vector<NoteEvent>>& getNoteHistory() { return _noteHistory; }
+  const std::vector<MidiEvent>& peekLastMidiSnapshot() const; // Peek at the latest MIDI snapshot (const view)
+  const std::vector<NoteEvent>& peekLastNoteSnapshot() const; // Peek at the latest NoteEvent snapshot (const view)
+  std::deque<std::vector<MidiEvent>>& getMidiHistory() { return midiHistory; }
+  std::deque<std::vector<NoteEvent>>& getNoteHistory() { return noteHistory; }
   const std::vector<MidiEvent>& getCurrentMidiSnapshot() const;
   const std::vector<NoteEvent>& getCurrentNoteSnapshot() const;
 
@@ -158,12 +160,12 @@ private:
   std::vector<NoteEvent> noteEvents;
   
   // Undo management
-  bool _hasNewEventsSinceSnapshot = false;  // flips to true on any new event
-  bool _suppressNextSnapshot = false; // If undo has been executed during the loop
-  std::deque<std::vector<MidiEvent>> _midiHistory;  // snapshots before each overdub
-  std::deque<std::vector<NoteEvent>> _noteHistory;
-  size_t _midiEventCountAtLastSnapshot = 0;
-  size_t _noteEventCountAtLastSnapshot = 0;
+  bool hasNewEventsSinceSnapshot = false;  // flips to true on any new event
+  bool suppressNextSnapshot = false; // If undo has been executed during the loop
+  std::deque<std::vector<MidiEvent>> midiHistory;  // snapshots before each overdub
+  std::deque<std::vector<NoteEvent>> noteHistory;
+  size_t midiEventCountAtLastSnapshot = 0;
+  size_t noteEventCountAtLastSnapshot = 0;
 
   // State management
   bool transitionState(TrackState newState);  // Internal state transition method

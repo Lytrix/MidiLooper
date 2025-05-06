@@ -73,7 +73,7 @@ void Track::startRecording(uint32_t currentTick) {
   }
   // Clear out any old data
   midiEvents.clear();
-  noteEvents.clear();         // for your piano-roll / display
+  noteEvents.clear();         // for piano-roll / display and editing
   pendingNotes.clear();       // any hanging NoteOns
   nextEventIndex = 0;         // so playback will start from the top
   lastTickInLoop = 0;
@@ -199,7 +199,7 @@ void Track::startOverdubbing(uint32_t currentTick) {
 
   // Snapshot the current state
   pushUndoSnapshot();                  // <— this encapsulates the snapshot logic
-  _hasNewEventsSinceSnapshot = false;  // <— must be reset so only actual notes mark it dirty
+  hasNewEventsSinceSnapshot = false;  // <— must be reset so only actual notes mark it dirty
 
   logger.logTrackEvent("Overdubbing started", currentTick);
 }
@@ -259,8 +259,8 @@ void Track::clear() {
     loopLengthTicks = 0;
 
     // Clear undo history
-    _midiHistory.clear();
-    _noteHistory.clear();
+    midiHistory.clear();
+    noteHistory.clear();
 
     // Go back to "never recorded"
     setState(TRACK_EMPTY);
@@ -282,29 +282,37 @@ const std::vector<NoteEvent>& Track::getCurrentNoteSnapshot() const {
 }
 
 void Track::pushUndoSnapshot() {
-    _midiHistory.push_back(midiEvents);
-    _noteHistory.push_back(noteEvents);
-    _midiEventCountAtLastSnapshot = midiEvents.size();
-    _noteEventCountAtLastSnapshot = noteEvents.size();
+    getMidiHistory().push_back(midiEvents);
+    getNoteHistory().push_back(noteEvents);
+    midiEventCountAtLastSnapshot = midiEvents.size();
+    noteEventCountAtLastSnapshot = noteEvents.size();
 }
 
 
 size_t Track::getUndoCount() const {
-  return _midiHistory.size();
+  return midiHistory.size();
 }
 
 bool Track::canUndo() const {
-  return !_midiHistory.empty();
+  return !midiHistory.empty();
 }
 
+const std::vector<MidiEvent>& Track::peekLastMidiSnapshot() const {
+   return midiHistory.back();
+ }
+ 
+ const std::vector<NoteEvent>& Track::peekLastNoteSnapshot() const {
+   return noteHistory.back();
+ }
+
 void Track::popLastUndo() {
-    if (_midiHistory.empty() || _noteHistory.empty()) {
+    if (midiHistory.empty() || noteHistory.empty()) {
         logger.log(CAT_TRACK, LOG_WARNING, "Attempted to pop undo snapshot, but none exist");
         return;
     }
 
-    _midiHistory.pop_back();
-    _noteHistory.pop_back();
+    midiHistory.pop_back();
+    noteHistory.pop_back();
 }
 
 // The real UNDO!
@@ -316,26 +324,23 @@ void Track::undoOverdub() {
     }
 
     // Restore the last snapshot
-    midiEvents = getCurrentMidiSnapshot();
-    noteEvents = getCurrentNoteSnapshot();
+     midiEvents = peekLastMidiSnapshot();
+     noteEvents = peekLastNoteSnapshot();
 
     // Update snapshot counts to avoid duplicate undo recording
-    _midiEventCountAtLastSnapshot = midiEvents.size();
-    _noteEventCountAtLastSnapshot = noteEvents.size();
+    midiEventCountAtLastSnapshot = midiEvents.size();
+    noteEventCountAtLastSnapshot = noteEvents.size();
 
     // Remove it from history
     popLastUndo();
 
-    _hasNewEventsSinceSnapshot = false;
+    hasNewEventsSinceSnapshot = false;
 
     logger.debug("Undo restored snapshot: midiEvents=%d noteEvents=%d  snapshotSize=%d",
                  midiEvents.size(), noteEvents.size(), getUndoCount());
 
     logger.logTrackEvent("Overdub undone", clockManager.getCurrentTick());
 }
-
-
-
 
 
 void Track::recordMidiEvents(midi::MidiType type, byte channel, byte data1, byte data2, uint32_t currentTick) {
@@ -392,20 +397,20 @@ void Track::playMidiEvents(uint32_t currentTick, bool isAudible) {
     nextEventIndex = 0;
     logger.debug("Loop wrapped, resetting index");
     // optional: dump events again here
-    if (isOverdubbing() && _hasNewEventsSinceSnapshot) {
+    if (isOverdubbing() && hasNewEventsSinceSnapshot) {
       logger.debug("Snapshotting new overdub pass");
 
-      _midiHistory.push_back(midiEvents);
-      _noteHistory.push_back(noteEvents);
+      midiHistory.push_back(midiEvents);
+      noteHistory.push_back(noteEvents);
 
-      _hasNewEventsSinceSnapshot = false;
+      hasNewEventsSinceSnapshot = false;
 
       logger.debug("Undo snapshot created: midiEvents=%d noteEvents=%d  totalSnapshots=%d",
                   midiEvents.size(), noteEvents.size(), getUndoCount());
 
-      if (_midiHistory.size() > Config::MAX_UNDO_HISTORY) {
-          _midiHistory.pop_front();
-          _noteHistory.pop_front();
+      if (midiHistory.size() > Config::MAX_UNDO_HISTORY) {
+          midiHistory.pop_front();
+          noteHistory.pop_front();
       }
     }
   }
@@ -571,7 +576,7 @@ void Track::noteOn(uint8_t channel, uint8_t note, uint8_t velocity, uint32_t tic
         tick // Temporary end time — will be updated in noteOff()
       };
       noteEvents.push_back(tempEvent);
-      _hasNewEventsSinceSnapshot = true;
+      hasNewEventsSinceSnapshot = true;
     }
   }
 }
@@ -585,7 +590,7 @@ void Track::noteOff(uint8_t channel, uint8_t note, uint8_t velocity, uint32_t ti
     auto it = pendingNotes.find(key);
     if (it != pendingNotes.end()) {
       recordMidiEvents(midi::NoteOff, channel, note, 0, tick);  // Use velocity 0 to mark end
-      _hasNewEventsSinceSnapshot = true;
+      hasNewEventsSinceSnapshot = true;
 
       const auto& pending = it->second;
 
