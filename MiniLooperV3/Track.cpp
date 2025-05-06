@@ -110,19 +110,19 @@ uint32_t Track::findLastEventTick() const {
 }
 
 uint32_t Track::computeLoopLengthTicks(uint32_t lastTick) const {
-    // How many full bars your last event has fully passed
     uint32_t fullBars = lastTick / TICKS_PER_BAR;
-    // How far into the next bar your last event lands
     uint32_t rem      = lastTick % TICKS_PER_BAR;
-    // A small "grace" (e.g. 1/8 bar) to allow tiny overshoots without padding
-    uint32_t grace    = TICKS_PER_BAR / 8;
+    uint32_t grace    = TICKS_PER_BAR / 6;  // More generous grace window
 
-    // If you've only crept a little into the next bar, stay in the current one:
     if (rem <= grace) {
-        // If nothing at all, ensure at least one bar:
         return (fullBars > 0 ? fullBars : 1) * TICKS_PER_BAR;
     }
-    // Otherwise include the bar containing your last event:
+
+    // Special case: very short pass (accidental press?)
+    if (lastTick < TICKS_PER_BAR / 2) {
+        return TICKS_PER_BAR;
+    }
+
     return (fullBars + 1) * TICKS_PER_BAR;
 }
 
@@ -166,11 +166,11 @@ void Track::stopRecording(uint32_t currentTick) {
   shiftMidiEvents(offset);
   startLoopTick      = qStart;
 
+  // 2) Find the last real event tick (excluding the forced NoteOffs)
+  uint32_t lastTick = findLastEventTick();
+
   // 2) Close out any still-held notes
   finalizePendingNotes(currentTick);
-
-  // 3) Find the last event tick (including the forced NoteOffs)
-  uint32_t lastTick = findLastEventTick();
 
   // 4) Compute loopLengthTicks with your grace logic
   loopLengthTicks = computeLoopLengthTicks(lastTick);
@@ -180,6 +180,7 @@ void Track::stopRecording(uint32_t currentTick) {
                        "start=%lu length=%lu",
                        startLoopTick, loopLengthTicks);
 
+  logger.debug("Final ticks: last=%lu", lastTick);
   // 5) Start overdubbing immediately
   startOverdubbing(currentTick);
 }
@@ -523,6 +524,10 @@ void Track::sendAllNotesOff() {
   // also clear any half-open pending notes so they don't get forced later
   pendingNotes.clear();
   logger.logTrackEvent("All Notes Off sent", clockManager.getCurrentTick());
+}
+
+uint32_t Track::getTicksPerBar() {
+    return TICKS_PER_BAR;
 }
 
 bool Track::isEmpty() const{
