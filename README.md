@@ -34,21 +34,22 @@ The midi circuit is based on https://www.pjrc.com/teensy/td_libs_MIDI.html
 - 192 PPQN internal clock for live recording
 - 24 PPQN midi Sync
 - 16x2 information display
+- 2 button operation   
+- 99 Undos per track     
 - Automatic saving of Loops on SD card
 - Reload last used state and loops on startup
-- 2 button operation        
 
 ## 🔴 Button A – Recording, Overdubbing, Playback Control ##
 
-| Press #     | From State               | To State                  | Symbol Change | Key Action           |
-| ----------- | ------------------------ | ------------------------- | ------------- | -------------------- |
-| 1× (single) | `TRACK_EMPTY`            | `TRACK_RECORDING`         | – → R         | `startRecording()`   |
-| (internal)  | `TRACK_RECORDING`        | `TRACK_STOPPED_RECORDING` | (not shown)   | `stopRecording()`    |
-| (internal)  | `TRACK_STOPPED_RECORDING`| `TRACK_PLAYING`           | (not shown)   | `startPlaying()`     |
-| 2× (single) | `TRACK_PLAYING`          | `TRACK_OVERDUBBING`       | P → O         | `startOverdubbing()` |
-| 3× (single) | `TRACK_OVERDUBBING`      | `TRACK_PLAYING`           | O → P         | `stopOverdubbing()`  |
-| **Double**  | no change                | no change                 | no change     | `undoOverdub()`      |
-| Long        | (any)                    | `TRACK_EMPTY`             | → –           | `clearTrack()`       |
+| Press #     | From State               | To State                 | Symbol Change | Key Action           |
+| ----------- | ------------------------ | ------------------------ | ------------- | -------------------- |
+| 1× (single) | `TRACK_EMPTY`            | `TRACK_RECORDING`        | – → R         | `startRecording()`   |
+| (internal)  | `TRACK_RECORDING`        | `TRACK_STOPPED_RECORDING`| (not shown)   | `stopRecording()`    |
+| (internal)  | `TRACK_STOPPED_RECORDING`| `TRACK_PLAYING`          | (not shown)   | `startPlaying()`     |
+| 2× (single) | `TRACK_PLAYING`          | `TRACK_OVERDUBBING`      | P → O         | `startOverdubbing()` |
+| 3× (single) | `TRACK_OVERDUBBING`      | `TRACK_PLAYING`          | O → P         | `stopOverdubbing()`  |
+| **Double**  | no change                | no change                | no change     | `undoOverdub()`      |
+| Long        | (any)                    | `TRACK_EMPTY`            | → –           | `clearTrack()`       |
 
 
 ## 🔵 Button B – Track Select and Mute Control ##

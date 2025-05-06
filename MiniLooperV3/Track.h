@@ -141,21 +141,21 @@ public:
   bool isMuted() const;
 
 private:
-  bool isPlayingBack;  // Flag to ignore playback events during overdub
+  bool _isPlayingBack;  // Flag to ignore playback events during overdub
   void sendMidiEvent(const MidiEvent& evt);
 
   // Track data
-  bool muted;
-  TrackState trackState;
-  uint32_t startLoopTick;
-  uint32_t loopLengthTicks;
-  uint32_t lastTickInLoop;
-  uint16_t nextEventIndex;
+  bool _muted;
+  TrackState _trackState;
+  uint32_t _startLoopTick;
+  uint32_t _loopLengthTicks;
+  uint32_t _lastTickInLoop;
+  uint16_t _nextEventIndex;
 
   // Event storage
   std::unordered_map<std::pair<uint8_t, uint8_t>, PendingNote, PairHash> pendingNotes;
-  std::vector<MidiEvent> midiEvents;
-  std::vector<NoteEvent> noteEvents;
+  std::vector<MidiEvent> _midiEvents;
+  std::vector<NoteEvent> _noteEvents;
   
   // Undo management
   std::deque<std::vector<MidiEvent>> _midiHistory;  // snapshots before each overdub
