@@ -18,11 +18,13 @@ public:
     void flashBarCounterHighlight(); // highlight an asterix if a noteon/Off pair is successfully recorded
 
 private:
+    // --- Building blocks ---
     void drawPianoRoll(const std::vector<NoteEvent>& notes, uint32_t loopLengthTicks, uint32_t currentTick, uint32_t startLoopTick);
     void drawBarBeatCounter(uint32_t loopLengthTicks, uint32_t currentTick, uint32_t startLoopTick);
-    void showTrackStates(uint8_t selectedTrackId);  // Top row: Track statuses
+    void drawTrackStates(uint8_t selectedTrackId);  // Top row: Track statuses
     void drawUndoCounter(uint8_t getUndoCount);
 
+    // --- Blinker variables ---
     bool highlightBarCounter = false;
     uint32_t highlightUntil = 0;
     bool blinkState = false;

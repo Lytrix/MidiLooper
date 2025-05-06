@@ -17,15 +17,14 @@ void DisplayManager::setup() {
 }
 
 void DisplayManager::update() {
+  // --- Used variables in draw methods ---
   const auto& track = trackManager.getSelectedTrack();
   const auto& notes = track.getNoteEvents();
-  
   uint32_t currentTick = clockManager.getCurrentTick();
   uint32_t startLoopTick = track.getStartLoopTick();
   uint8_t getUndoCount = track.getUndoCount();
 
   uint32_t loopLengthTicks;
-
   // grow loop length while recording to be able to display in piano roll
   if (track.isRecording() && track.getLength() == 0) {
       // simulate provisional loop length for display
@@ -45,11 +44,11 @@ void DisplayManager::update() {
     logger.debug("Note count: %d", notes.size());
   }
    // Top row
-  showTrackStates(trackManager.getSelectedTrackIndex());
+  drawTrackStates(trackManager.getSelectedTrackIndex());
 }
 
-// DisplayManager.cpp — show track states with blinking symbol on selected track number
-void DisplayManager::showTrackStates(uint8_t selectedTrack) {
+// DisplayManager.cpp — Draw track states with blinking symbol on selected track number
+void DisplayManager::drawTrackStates(uint8_t selectedTrack) {
   // --- 1) Update blink state timer ---
   unsigned long now = millis();
   if (now - lastBlinkTime >= blinkInterval) {
@@ -92,9 +91,9 @@ void DisplayManager::showTrackStates(uint8_t selectedTrack) {
   }
 }
 
-// --------------------
-// Multi-line "pixel" note view using custom characters
-// --------------------
+
+// DisplayManager.cpp — Multi-line "pixel" note helpers to use custom characters ---
+
 #define PIXELS_PER_CHAR 5
 #define DISPLAY_CHARS 16
 #define DISPLAY_WIDTH_PIXELS (DISPLAY_CHARS * PIXELS_PER_CHAR)
@@ -116,6 +115,7 @@ void DisplayManager::flashBarCounterHighlight() {
   highlightUntil = millis() + 150;  // Highlight for 150ms
 }
 
+// DisplayManager.cpp — Bar/Beat Counter "4:1"
 void DisplayManager::drawBarBeatCounter(uint32_t loopLengthTicks,
                                         uint32_t currentTick,
                                         uint32_t startLoopTick) {
@@ -145,7 +145,7 @@ void DisplayManager::drawBarBeatCounter(uint32_t loopLengthTicks,
 }
 
 
-// Draws the 8-character piano roll on row 1 using custom chars
+// DisplayManager.cpp — Draws the 8-character piano roll on row 1 using custom chars
 void DisplayManager::drawPianoRoll(const std::vector<NoteEvent>& notes,
                                    uint32_t loopLengthTicks,
                                    uint32_t currentTick,

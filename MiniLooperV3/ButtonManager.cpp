@@ -39,8 +39,9 @@ void ButtonManager::setup(const std::vector<uint8_t>& pins) {
 }
 
 void ButtonManager::update() {
+    // Ignore states when booting up, pullup change is else detected as button press
     static unsigned long bootTime = millis();
-    if (millis() - bootTime < 500) return;
+    if (millis() - bootTime < 1000) return;
 
     uint32_t now = millis();
 
