@@ -198,7 +198,6 @@ void Track::startOverdubbing(uint32_t currentTick) {
   if (!setState(TRACK_OVERDUBBING)) return;
 
   // Snapshot the current state
-  pushUndoSnapshot();                  // <— this encapsulates the snapshot logic
   hasNewEventsSinceSnapshot = false;  // <— must be reset so only actual notes mark it dirty
 
   logger.logTrackEvent("Overdubbing started", currentTick);
@@ -356,7 +355,7 @@ void Track::recordMidiEvents(midi::MidiType type, byte channel, byte data1, byte
       // defensive: loopLengthTicks was set when you stopped recording
       if (loopLengthTicks == 0) return;
       tickRelative = (currentTick - startLoopTick) % loopLengthTicks;
-
+      
     } else {
       return;
     }
@@ -374,6 +373,10 @@ void Track::recordMidiEvents(midi::MidiType type, byte channel, byte data1, byte
       type == midi::ControlChange ? "ControlChange" : "Other",
       channel, data1, data2
     );
+    if (isOverdubbing() && !hasNewEventsSinceSnapshot) {
+      pushUndoSnapshot();
+      hasNewEventsSinceSnapshot = true;
+    }
 
     midiEvents.push_back(MidiEvent{ tickRelative, type, channel, data1, data2 });
     // and anywhere you actually record a new event (e.g. in recordMidiEvents or noteOn/noteOff):
@@ -394,25 +397,31 @@ void Track::playMidiEvents(uint32_t currentTick, bool isAudible) {
 
   // Reset at loop boundary
   if (tickInLoop < lastTickInLoop) {
+     if (isOverdubbing()) {
+      // Always reset after the wrap, even if no snapshot was created to force a new overdub undo in recordMidi
+      hasNewEventsSinceSnapshot = false;
+    }
+    
     nextEventIndex = 0;
     logger.debug("Loop wrapped, resetting index");
+   
     // optional: dump events again here
-    if (isOverdubbing() && hasNewEventsSinceSnapshot) {
-      logger.debug("Snapshotting new overdub pass");
+    // if (isOverdubbing() && hasNewEventsSinceSnapshot) {
+    //   logger.debug("Snapshotting new overdub pass");
 
-      midiHistory.push_back(midiEvents);
-      noteHistory.push_back(noteEvents);
+    //   midiHistory.push_back(midiEvents);
+    //   noteHistory.push_back(noteEvents);
 
-      hasNewEventsSinceSnapshot = false;
+    //   hasNewEventsSinceSnapshot = false;
 
       logger.debug("Undo snapshot created: midiEvents=%d noteEvents=%d  totalSnapshots=%d",
                   midiEvents.size(), noteEvents.size(), getUndoCount());
 
-      if (midiHistory.size() > Config::MAX_UNDO_HISTORY) {
-          midiHistory.pop_front();
-          noteHistory.pop_front();
-      }
-    }
+    //   if (midiHistory.size() > Config::MAX_UNDO_HISTORY) {
+    //       midiHistory.pop_front();
+    //       noteHistory.pop_front();
+    //   }
+    // }
   }
 
   // Remember where we were
@@ -576,7 +585,7 @@ void Track::noteOn(uint8_t channel, uint8_t note, uint8_t velocity, uint32_t tic
         tick // Temporary end time — will be updated in noteOff()
       };
       noteEvents.push_back(tempEvent);
-      hasNewEventsSinceSnapshot = true;
+      // hasNewEventsSinceSnapshot = true;
     }
   }
 }
