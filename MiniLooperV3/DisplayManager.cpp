@@ -19,10 +19,22 @@ void DisplayManager::setup() {
 void DisplayManager::update() {
   const auto& track = trackManager.getSelectedTrack();
   const auto& notes = track.getNoteEvents();
-  uint32_t loopLengthTicks = track.getLength();
+  
   uint32_t currentTick = clockManager.getCurrentTick();
   uint32_t startLoopTick = track.getStartLoopTick();
   uint8_t getUndoCount = track.getUndoCount();
+
+  uint32_t loopLengthTicks;
+
+  // grow loop length while recording
+  if (track.isRecording() && track.getLength() == 0) {
+      // simulate provisional loop length for display
+      loopLengthTicks = clockManager.getCurrentTick() - track.getStartLoopTick();
+      if (loopLengthTicks == 0) loopLengthTicks = 1;  // prevent divide-by-zero
+  } else {
+      loopLengthTicks = track.getLength();
+  }
+
 
   // Bottom row
   drawPianoRoll(notes, loopLengthTicks, currentTick, startLoopTick);
@@ -102,24 +114,48 @@ void DisplayManager::drawUndoCounter(uint8_t getUndoCount) {
   lcd.print(getUndoCount);
 }
 
-// Draws the bar:beat counter on row 1
+void DisplayManager::flashBarCounterHighlight() {
+  highlightBarCounter = true;
+  highlightUntil = millis() + 150;  // Highlight for 150ms
+}
+
 void DisplayManager::drawBarBeatCounter(uint32_t loopLengthTicks,
                                         uint32_t currentTick,
                                         uint32_t startLoopTick) {
-    // Compute position in the loop
-    uint32_t tickInLoop = (currentTick - startLoopTick) % loopLengthTicks;
-    uint32_t ticksPerBeat = loopLengthTicks / 16;  // assuming 4 bars, 4 beats
+    uint32_t elapsedTicks = currentTick - startLoopTick;
+     const auto& track = trackManager.getSelectedTrack();
 
-    uint8_t beat = (tickInLoop / ticksPerBeat) % 4 + 1;
-    uint8_t bar  = (tickInLoop / (ticksPerBeat * 4)) + 1;
+    // Define fallback values based on your system
+    constexpr uint32_t fallbackTicksPerBeat = 24;  // e.g. 48 ticks/beat = 192 ticks/bar
+    constexpr uint32_t fallbackTicksPerBar = fallbackTicksPerBeat * 4;
+    uint32_t ticksPerBar;
+    // Use actual loop length if defined, otherwise fallback
+    if(track.isRecording()){
+        ticksPerBar = fallbackTicksPerBar;
+    } else {
+        ticksPerBar = loopLengthTicks / 4 ;
+    }
+    
+    uint32_t ticksPerBeat = ticksPerBar / 4;
+
+    uint8_t beat = (elapsedTicks / ticksPerBeat) % 4 + 1;
+    uint8_t bar  = (elapsedTicks / ticksPerBar) + 1;
 
     char buf[6];
     snprintf(buf, sizeof(buf), "%u:%u", bar, beat);
     int col = 16 - strlen(buf);
 
     lcd.setCursor(col, 1);
-    lcd.print(buf);
+
+    if (highlightBarCounter && millis() < highlightUntil) {
+        lcd.print("*");
+        lcd.print(buf + 1);
+    } else {
+        lcd.print(buf);
+        highlightBarCounter = false;
+    }
 }
+
 
 // Draws the 8-character piano roll on row 1 using custom chars
 void DisplayManager::drawPianoRoll(const std::vector<NoteEvent>& notes,

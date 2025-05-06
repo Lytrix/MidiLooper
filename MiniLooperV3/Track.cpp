@@ -5,6 +5,7 @@
 #include "Logger.h"
 #include "TrackStateMachine.h"
 #include <algorithm>  // for std::sort
+#include "DisplayManager.h"
 
 // Track class implementation
 
@@ -556,63 +557,81 @@ void Track::setLength(uint32_t ticks) {
 
 // Display functions
 void Track::noteOn(uint8_t channel, uint8_t note, uint8_t velocity, uint32_t tick) {
-  if (isPlayingBack) return;  // Ignore playback-triggered midiEvents
+  if (isPlayingBack) return;  // Ignore playback-triggered MIDI events
 
   if (trackState == TRACK_RECORDING || trackState == TRACK_OVERDUBBING) {
-    // Now store note & channel in the PendingNote struct
+    // Store pending note for later duration fix
     pendingNotes[{note, channel}] = PendingNote{
-      /* note: */        note,
-      /* channel: */     channel,
-      /* startNoteTick:*/ tick,
-      /* velocity: */    velocity
+      note,
+      channel,
+      tick,
+      velocity
     };
-    _hasNewEventsSinceSnapshot = true;
+
     recordMidiEvents(midi::NoteOn, channel, note, velocity, tick);
+
+    // Show immediate temporary visual during RECORDING
+    if (trackState == TRACK_RECORDING) {
+      NoteEvent tempEvent {
+        note,
+        velocity,
+        tick,
+        tick // Temporary end time — will be updated in noteOff()
+      };
+      noteEvents.push_back(tempEvent);
+      _hasNewEventsSinceSnapshot = true;
+    }
   }
 }
 
+ 
 void Track::noteOff(uint8_t channel, uint8_t note, uint8_t velocity, uint32_t tick) {
-  if (isPlayingBack) return;  // Ignore playback-triggered midiEvents
+  if (isPlayingBack) return;
 
   if (trackState == TRACK_RECORDING || trackState == TRACK_OVERDUBBING) {
     auto key = std::make_pair(note, channel);
     auto it = pendingNotes.find(key);
     if (it != pendingNotes.end()) {
-      recordMidiEvents(midi::NoteOff, channel, note, 0, tick);  // velocity 0 to mark end
+      recordMidiEvents(midi::NoteOff, channel, note, 0, tick);  // Use velocity 0 to mark end
+      _hasNewEventsSinceSnapshot = true;
 
-      // Store final note event with previous startNoteTick from Note On information
-     // Now pull startTick & velocity from the PendingNote
-      NoteEvent noteEvent {
-        /* .note = */           note,
-        /* .velocity = */       it->second.velocity,
-        /* .startNoteTick = */  it->second.startNoteTick,
-        /* .endNoteTick = */    tick
-      };
-      noteEvents.push_back(noteEvent);
+      const auto& pending = it->second;
 
-      // **Keep them sorted by start time to ensure proper rending on the LCD when overdubbing**
-      std::sort(noteEvents.begin(), noteEvents.end(),
-                [](auto &a, auto &b){ return a.startNoteTick < b.startNoteTick; });
+      // Try to find and update the temp NoteEvent (if created in RECORDING mode)
+      for (auto& evt : noteEvents) {
+        if (evt.note == note &&
+            evt.startNoteTick == pending.startNoteTick &&
+            evt.endNoteTick == pending.startNoteTick) {
+          evt.endNoteTick = tick;
+          goto done;
+        }
+      }
 
+      // If not found, just add new one (in case we missed a NoteOn)
+      noteEvents.push_back(NoteEvent{
+        note,
+        pending.velocity,
+        pending.startNoteTick,
+        tick
+      });
+      displayManager.flashBarCounterHighlight();
+    done:
       pendingNotes.erase(it);
 
-     if (DEBUG_MIDI) {
-        logger.log(CAT_TRACK, LOG_DEBUG, "Record NoteOff: %d @ %lu", note, tick);
-      }
       if (DEBUG_NOTES) {
         logger.log(CAT_TRACK, LOG_DEBUG,
                    "NoteEvent start=%lu end=%lu",
-                   noteEvent.startNoteTick,
-                   noteEvent.endNoteTick);
+                   pending.startNoteTick,
+                   tick);
       }
     } else {
-      // Log unmatched NoteOffs
       logger.log(CAT_MIDI, LOG_WARNING,
                  "NoteOff for note %d on ch %d with no matching NoteOn",
                  note, channel);
     }
   }
 }
+
 
 void Track::printNoteEvents() const {
   Serial.println("---- NoteEvents ----");

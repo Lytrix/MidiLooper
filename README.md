@@ -40,14 +40,15 @@ The midi circuit is based on https://www.pjrc.com/teensy/td_libs_MIDI.html
 
 ## 🔴 Button A – Recording, Overdubbing, Playback Control ##
 
-| Press #     | From State               | To State                 | Symbol Change | Key Action          |
-| ----------- | ------------------------ | ------------------------ | ------------- | ------------------- |
-| 1× (single) | TRACK\_EMPTY             | TRACK\_RECORDING         | – → R         | `startRecording()`  |
-| (internal)  | TRACK\_RECORDING         | TRACK\_STOPPED__RECORDING| (not shown)   | `stoppedRecording()`|
-| (internal)  | TRACK\_STOPPED_RECORDING | TRACK\_PLAYING           | (not shown)   | `startPlaying()`    |
-| 2× (single) | TRACK\_PLAYING           | TRACK\_OVERDUBBING       | P → O         | `startOverdub()`    |
-| 3× (single) | TRACK\_OVERDUBBING       | TRACK\_PLAYING           | O → P         | `stopOverdub()`     |
-| Long        | (any)                    | TRACK\_EMPTY             | → –           | `clearTrack()`      |
+| Press #     | From State               | To State                  | Symbol Change | Key Action           |
+| ----------- | ------------------------ | ------------------------- | ------------- | -------------------- |
+| 1× (single) | `TRACK_EMPTY`            | `TRACK_RECORDING`         | – → R         | `startRecording()`   |
+| (internal)  | `TRACK_RECORDING`        | `TRACK_STOPPED_RECORDING` | (not shown)   | `stopRecording()`    |
+| (internal)  | `TRACK_STOPPED_RECORDING`| `TRACK_PLAYING`           | (not shown)   | `startPlaying()`     |
+| 2× (single) | `TRACK_PLAYING`          | `TRACK_OVERDUBBING`       | P → O         | `startOverdubbing()` |
+| 3× (single) | `TRACK_OVERDUBBING`      | `TRACK_PLAYING`           | O → P         | `stopOverdubbing()`  |
+| **Double**  | no change                | no change                 | no change     | `undoOverdub()`      |
+| Long        | (any)                    | `TRACK_EMPTY`             | → –           | `clearTrack()`       |
 
 
 ## 🔵 Button B – Track Select and Mute Control ##
