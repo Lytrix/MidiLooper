@@ -11,8 +11,7 @@ enum LooperState {
 };
 
 // --- State Control API ---
-void handleLooperState();  // Call this regularly (e.g., once per loop)
-void requestStateTransition(LooperState newState, bool quantize = false); // Queues a transition (optionally quantized)
+void handleLooperState();  // Call  // Queues a transition (optionally quantized)
 
 extern LooperState looperState;
 
