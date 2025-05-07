@@ -6,7 +6,6 @@
 #include "TrackStateMachine.h"
 #include <algorithm>  // for std::sort
 #include "DisplayManager.h"
-#include "stdint.h"
 
 // Track class implementation
 
@@ -79,9 +78,8 @@ void Track::startRecording(uint32_t currentTick) {
   nextEventIndex = 0;         // so playback will start from the top
   lastTickInLoop = 0;
 
-  // Stamp the new start tick quantized to a beat.
-  //startLoopTick = currentTick;
-  startLoopTick = (currentTick / TICKS_PER_BAR) * TICKS_PER_BAR;
+  // Stamp the new start tick
+  startLoopTick = currentTick;
   logger.logTrackEvent("Recording started", currentTick);
 }
 
@@ -101,15 +99,6 @@ void Track::shiftMidiEvents(int32_t offset) {
     }
     std::sort(midiEvents.begin(), midiEvents.end(),
               [](auto &a, auto &b){ return a.tick < b.tick; });
-}
-
-void Track::shiftNoteEvents(int32_t offset) {
-    for (auto &evt : noteEvents) {
-        evt.startNoteTick += offset;
-        evt.endNoteTick += offset;
-    }
-    std::sort(noteEvents.begin(), noteEvents.end(),
-              [](auto &a, auto &b){ return a.startNoteTick < b.startNoteTick; });
 }
 
 uint32_t Track::findLastEventTick() const {
@@ -135,11 +124,6 @@ uint32_t Track::computeLoopLengthTicks(uint32_t lastTick) const {
     }
 
     return (fullBars + 1) * TICKS_PER_BAR;
-}
-
-void Track::resetPlaybackState(uint32_t currentTick) {
-    nextEventIndex = 0;
-    lastTickInLoop = (currentTick - startLoopTick) % loopLengthTicks;
 }
 
 void Track::finalizePendingNotes(uint32_t offAbsTick) {
@@ -175,37 +159,31 @@ void Track::finalizePendingNotes(uint32_t offAbsTick) {
 void Track::stopRecording(uint32_t currentTick) {
   if (!setState(TRACK_STOPPED_RECORDING)) return;
 
-  // Close any held notes
+  // 1) Quantize & shift as before
+  uint32_t origStart = startLoopTick;
+  uint32_t qStart    = quantizeStart(origStart);
+  int32_t  offset    = int32_t(origStart) - int32_t(qStart);
+  shiftMidiEvents(offset);
+  startLoopTick      = qStart;
+
+  // 2) Find the last real event tick (excluding the forced NoteOffs)
+  uint32_t lastTick = findLastEventTick();
+
+  // 2) Close out any still-held notes
   finalizePendingNotes(currentTick);
 
-  // Use the latest end time from note events to determine loop length
-  uint32_t lastNoteEnd = 0;
-  for (const auto& e : noteEvents) {
-    lastNoteEnd = std::max(lastNoteEnd, e.endNoteTick);
-  }
+  // 4) Compute loopLengthTicks with your grace logic
+  loopLengthTicks = computeLoopLengthTicks(lastTick);
 
-  // Use direct difference to determine loop length
-  uint32_t rawLength = std::max(uint32_t(1), lastNoteEnd - startLoopTick);
-uint32_t rem       = rawLength % TICKS_PER_BAR;
-uint32_t grace     = TICKS_PER_BAR / 2;  // Allow 1/8 bar grace window
+  logger.logTrackEvent("Recording stopped (with forced NoteOffs)",
+                       currentTick,
+                       "start=%lu length=%lu",
+                       startLoopTick, loopLengthTicks);
 
-if (rem <= grace) {
-    loopLengthTicks = (rawLength / TICKS_PER_BAR) * TICKS_PER_BAR;
-} else {
-    loopLengthTicks = ((rawLength / TICKS_PER_BAR) + 1) * TICKS_PER_BAR;
-}
-
-  // Reset playback state for next pass
-  nextEventIndex = 0;
-  lastTickInLoop = 0;
-
-  logger.logTrackEvent("Recording stopped", currentTick, "start=%lu length=%lu", startLoopTick, loopLengthTicks);
-  logger.debug("Final ticks: lastNoteEnd=%lu", lastNoteEnd);
-
+  logger.debug("Final ticks: last=%lu", lastTick);
+  // 5) Start overdubbing immediately
   startOverdubbing(currentTick);
 }
-
-
 
 void Track::startPlaying(uint32_t currentTick) {
   if (loopLengthTicks > 0) {

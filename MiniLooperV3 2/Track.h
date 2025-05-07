@@ -71,13 +71,11 @@ public:
   // Helpers for stopRecording
   uint32_t quantizeStart(uint32_t originalStart) const;
   void shiftMidiEvents(int32_t offset);
-  void shiftNoteEvents(int32_t offset);
   uint32_t findLastEventTick() const;
   uint32_t computeLoopLengthTicks(uint32_t lastEventTick) const;
   // For any notes still in pendingNotes, emit a NoteOff at offAbsTick
   void finalizePendingNotes(uint32_t offAbsTick);
-  void resetPlaybackState(uint32_t currentTick);
-  
+
   // Recording control
   void startRecording(uint32_t startLoopTick);
   void stopRecording(uint32_t currentTick);
