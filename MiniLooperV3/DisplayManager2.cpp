@@ -110,5 +110,5 @@ void DisplayManager2::update() {
     snprintf(buf, sizeof(buf), "Tick:%lu Len:%lu", dispTick, lengthLoop);
     _u8g2.drawStr(0, 64 - 4, buf);
 
-    _u8g2.sendBuffer();
+    _u8g2.sendBuffer(); c
 }
