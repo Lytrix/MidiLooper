@@ -1,0 +1,24 @@
+{
+    "name": "DisplayManager",
+    "version": "1.0.0",
+    "description": "Display manager library for SSD1322 OLED display",
+    "keywords": "display, oled, ssd1322",
+    "repository": {
+        "type": "git",
+        "url": "https://github.com/yourusername/DisplayManager.git"
+    },
+    "authors": [
+        {
+            "name": "Your Name",
+            "email": "your.email@example.com",
+            "maintainer": true
+        }
+    ],
+    "license": "MIT",
+    "frameworks": "arduino",
+    "platforms": "teensy",
+    "build": {
+        "srcDir": "src",
+        "includeDir": "include"
+    }
+} 
