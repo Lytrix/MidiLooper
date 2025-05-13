@@ -5,8 +5,8 @@
 #include "MidiHandler.h"
 #include "TrackManager.h"
 #include "ButtonManager.h"
-#include "DisplayManager.h"
-#include "DisplayManager2.h"
+#include "DisplayManager/DisplayManager.h"
+#include "DisplayManager/DisplayManager2.h"
 #include "Looper.h"
 #include "Track.h"
 

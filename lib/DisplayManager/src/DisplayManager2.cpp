@@ -1,4 +1,3 @@
-
 // DisplayManager2.cpp
 #include "DisplayManager2.h"
 #include "TrackManager.h"
