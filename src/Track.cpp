@@ -5,7 +5,7 @@
 #include "Logger.h"
 #include "TrackStateMachine.h"
 #include <algorithm>  // for std::sort
-#include "DisplayManager/DisplayManager.h"
+#include "DisplayManager.h"
 #include "stdint.h"
 
 // Track class implementation
