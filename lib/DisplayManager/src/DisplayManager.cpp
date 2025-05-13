@@ -1,9 +1,9 @@
+#include "DisplayManager.h"
 #include "Globals.h"
 #include <MIDI.h>
 #include <LiquidCrystal.h>
 #include "ClockManager.h"
 #include "TrackManager.h"
-#include "DisplayManager.h"
 #include "Logger.h"
 
 LiquidCrystal lcd(LCD::RS, LCD::ENABLE, LCD::D4, LCD::D5, LCD::D6, LCD::D7);
