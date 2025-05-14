@@ -3,22 +3,26 @@
 #include "TrackManager.h"
 #include "ClockManager.h"
 #include "Globals.h"
+#include "SSD1322_Config.h"
 
 // adafruit fonts - use the build path
 #include <FreeMono12pt7b.h>
 #include <FreeSansOblique9pt7b.h>
 
 // SPI Pins for Teensy 4.1
-#define OLED_CLOCK 13
-#define OLED_DATA 11  // MOSI
-#define OLED_CS 10
-#define OLED_DC 9
-#define OLED_RESET 8
+// #define OLED_CLOCK 13
+// #define OLED_DATA 11  // MOSI
+// #define OLED_CS 10
+// #define OLED_DC 9
+// #define OLED_RESET 8
 
 DisplayManager2 displayManager2;
 
-DisplayManager2::DisplayManager2() : _display(OLED_CS, OLED_DC, BUFFER_HEIGHT, BUFFER_WIDTH, OLED_RESET) {
-    // The SSD1322 constructor already calls SPI.begin()
+DisplayManager2::DisplayManager2() :
+    _config(),
+    _display(_config.OLED_CS_PIN, _config.OLED_DC_PIN, _config.BUFFER_HEIGHT, _config.BUFFER_WIDTH, _config.OLED_RESET_PIN)
+{
+    // Don't initialize SPI here - it will be done in setup()
 }
 
 // Helper function to clear the display buffer
@@ -29,46 +33,32 @@ void DisplayManager2::clearDisplayBuffer() {
 
 void DisplayManager2::setup() {
     Serial.println("DisplayManager2: Setting up SSD1322 display...");
-    
-    // Initialize SPI - required for Teensy
+
+    // Set pin modes for SPI control pins (as in example)
+    pinMode(_config.OLED_CS_PIN, OUTPUT);
+    pinMode(_config.OLED_DC_PIN, OUTPUT);
+
+    // Initialize SPI
     SPI.begin();
-    
-    // Reset the display
-    digitalWrite(OLED_RESET, LOW);
-    delay(10);
-    digitalWrite(OLED_RESET, HIGH);
-    delay(100);
-    
-    Serial.println("DisplayManager2: Initializing display...");
-    
+    delay(500); // Longer delay as in example
+
     // Initialize display
     _display.api.SSD1322_API_init();
-    
-    Serial.println("DisplayManager2: Display initialized");
-    
-    // Set buffer size - ensure it matches the display's actual dimensions
-    _display.gfx.set_buffer_size(BUFFER_WIDTH, BUFFER_HEIGHT);
-    
-    // Clear the display 
+
+    // Set buffer size and clear display
+    _display.gfx.set_buffer_size(_config.BUFFER_WIDTH, _config.BUFFER_HEIGHT);
     clearDisplayBuffer();
-    
-    // Set contrast before displaying anything
-    _display.api.SSD1322_API_set_contrast(255);
-    
+
+    // Now proceed with your drawing/demo code
     Serial.println("DisplayManager2: Drawing startup text...");
-    
-    // Display startup text - position for 256x64 display
-    _display.gfx.select_font(&FreeMono12pt7b);
-    _display.gfx.draw_text(_frameBuffer, "MidiLooper", 100, 20, 15); // 15 is max brightness
-    _display.gfx.draw_text(_frameBuffer, "v0.2", 120, 40, 15);
+    Serial.println("Selecting font...");
+    _display.gfx.select_font(&FreeSansOblique9pt7b);
+    Serial.println("Font selected.");
+    Serial.println("Drawing text...");
+    _display.gfx.draw_pixel(_frameBuffer, 10, 10, 15);
     _display.gfx.send_buffer_to_OLED(_frameBuffer, 0, 0);
-    
     Serial.println("DisplayManager2: Text sent to display");
-    
-    // Show startup text for 2 seconds
     delay(2000);
-    
-    // Clear buffer again before setting up the main display
     clearDisplayBuffer();
 }
 
