@@ -3,25 +3,21 @@
 #include "TrackManager.h"
 #include "ClockManager.h"
 #include "Globals.h"
-#include "SSD1322_Config.h"
 
 // adafruit fonts - use the build path
 #include <FreeMono12pt7b.h>
 #include <FreeSansOblique9pt7b.h>
 
 // SPI Pins for Teensy 4.1
-// #define OLED_CLOCK 13
-// #define OLED_DATA 11  // MOSI
-// #define OLED_CS 10
-// #define OLED_DC 9
-// #define OLED_RESET 8
+#define OLED_CLOCK 13
+#define OLED_DATA 11  // MOSI
+#define OLED_CS 10
+#define OLED_DC 9
+#define OLED_RESET 8
 
 DisplayManager2 displayManager2;
 
-DisplayManager2::DisplayManager2() :
-    _config(),
-    _display(_config.OLED_CS_PIN, _config.OLED_DC_PIN, _config.BUFFER_HEIGHT, _config.BUFFER_WIDTH, _config.OLED_RESET_PIN)
-{
+DisplayManager2::DisplayManager2() : _display(OLED_CS, OLED_DC, BUFFER_HEIGHT, BUFFER_WIDTH, OLED_RESET) {
     // Don't initialize SPI here - it will be done in setup()
 }
 
@@ -35,8 +31,8 @@ void DisplayManager2::setup() {
     Serial.println("DisplayManager2: Setting up SSD1322 display...");
 
     // Set pin modes for SPI control pins (as in example)
-    pinMode(_config.OLED_CS_PIN, OUTPUT);
-    pinMode(_config.OLED_DC_PIN, OUTPUT);
+    pinMode(OLED_CS, OUTPUT);
+    pinMode(OLED_DC, OUTPUT);
 
     // Initialize SPI
     SPI.begin();
@@ -46,16 +42,18 @@ void DisplayManager2::setup() {
     _display.api.SSD1322_API_init();
 
     // Set buffer size and clear display
-    _display.gfx.set_buffer_size(_config.BUFFER_WIDTH, _config.BUFFER_HEIGHT);
+    _display.gfx.set_buffer_size(BUFFER_WIDTH, BUFFER_HEIGHT);
     clearDisplayBuffer();
 
     // Now proceed with your drawing/demo code
     Serial.println("DisplayManager2: Drawing startup text...");
     Serial.println("Selecting font...");
-    _display.gfx.select_font(&FreeSansOblique9pt7b);
+    _display.gfx.select_font(&FreeMono12pt7b);
     Serial.println("Font selected.");
     Serial.println("Drawing text...");
-    _display.gfx.draw_pixel(_frameBuffer, 10, 10, 15);
+    _display.gfx.draw_text(_frameBuffer, "MidiLooper", 100, 20, 15);
+    _display.gfx.draw_text(_frameBuffer, "v0.2", 120, 40, 15);
+    Serial.println("Text drawn.");
     _display.gfx.send_buffer_to_OLED(_frameBuffer, 0, 0);
     Serial.println("DisplayManager2: Text sent to display");
     delay(2000);
