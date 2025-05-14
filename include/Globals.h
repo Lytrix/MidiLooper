@@ -37,8 +37,8 @@ namespace LCD {
 
 // Button Configuration
 namespace Buttons {
-  const int RECORD = 9;     // Record/Overdub button
-  const int PLAY   = 10;    // Play/Stop button
+  const int RECORD = 34;     // Record/Overdub button
+  const int PLAY   = 33;    // Play/Stop button
 }
 
 // MIDI Configuration

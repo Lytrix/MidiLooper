@@ -13,10 +13,11 @@ public:
     DisplayManager2();
     void setup();
     void update();
+    void clearDisplayBuffer();
 
 private:
     static constexpr uint32_t DRAW_INTERVAL = 1000 / 30;  // 30 FPS
-    static constexpr uint16_t BUFFER_WIDTH = 128;
+    static constexpr uint16_t BUFFER_WIDTH = 256;
     static constexpr uint16_t BUFFER_HEIGHT = 64;
     uint32_t _prevDrawTick = 0;
     SSD1322 _display;
