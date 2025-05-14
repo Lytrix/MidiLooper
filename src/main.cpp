@@ -1,3 +1,4 @@
+
 #include <Arduino.h>
 #include "Globals.h"
 #include "Logger.h"
@@ -34,7 +35,7 @@ void setup() {
   }
 
   // Initialize other components
-  // clockManager.setup(); internal clock
+  clockManager.setup();
   midiHandler.setup();
   buttonManager.setup({Buttons::RECORD, Buttons::PLAY});
   displayManager.setup();
@@ -44,25 +45,21 @@ void setup() {
   
 }
 
-static uint32_t lastDraw = 0;
-  
 void loop() {
-
+  uint32_t now = millis();
   // Update clock first — will internally TrackManager.updateAlltracks if tick advanced both internal and external Midi
-  //clockManager.updateInternalClock();
+  // clockManager.updateInternalClock();
   midiHandler.handleMidiInput();
 
   // Update less time sensitive modules
   buttonManager.update();
   looper.update();
+  
   // Only update display if enough time has passed
-  if (millis() - lastDraw >= 30) {   // redraw at ≤30 Hz
-    lastDraw = millis();
+  if (now - lastDisplayUpdate >= LCD::DISPLAY_UPDATE_INTERVAL) {
     displayManager.update();
-    auto t0 = micros();
     displayManager2.update();
-    auto dt = micros() - t0;
-    //logger.debug("draw time: %d µs", dt);
+    lastDisplayUpdate = now;
   }
 }
 

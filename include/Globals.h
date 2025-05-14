@@ -32,13 +32,13 @@ namespace LCD {
   const int D5     = 31;    // Data 5
   const int D6     = 30;    // Data 6
   const int D7     = 29;    // Data 7
-  const uint32_t DISPLAY_UPDATE_INTERVAL = 60; // in ms 
+  const uint32_t DISPLAY_UPDATE_INTERVAL = 100; // in ms 
 }
 
 // Button Configuration
 namespace Buttons {
-  const int RECORD = 34;     // Record/Overdub button
-  const int PLAY   = 33;    // Play/Stop button
+  const int RECORD = 37;     // Record/Overdub button
+  const int PLAY   = 36;    // Play/Stop button
 }
 
 // MIDI Configuration
