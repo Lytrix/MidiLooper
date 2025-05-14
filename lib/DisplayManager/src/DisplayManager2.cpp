@@ -36,7 +36,7 @@ void DisplayManager2::setup() {
 
     // Initialize SPI
     SPI.begin();
-    delay(500); // Longer delay as in example
+    delay(100); // Longer delay as in example
 
     // Initialize display
     _display.api.SSD1322_API_init();
@@ -56,17 +56,13 @@ void DisplayManager2::setup() {
     Serial.println("Text drawn.");
     _display.gfx.send_buffer_to_OLED(_frameBuffer, 0, 0);
     Serial.println("DisplayManager2: Text sent to display");
-    delay(2000);
+    delay(1000);
     clearDisplayBuffer();
 }
 
 void DisplayManager2::update() {
-    constexpr uint32_t TICKS_PER_BAR = MidiConfig::PPQN * Config::QUARTERS_PER_BAR;
+    // Get current global tick count for display timing
     uint32_t currentTick = clockManager.getCurrentTick();
-    
-    // Throttle updates
-    if (currentTick - _prevDrawTick < DRAW_INTERVAL) return;
-    _prevDrawTick = currentTick;
 
     // Clear frame buffer
     _display.gfx.fill_buffer(_frameBuffer, 0);
@@ -79,9 +75,9 @@ void DisplayManager2::update() {
     // Draw piano roll when loop valid
     const NoteEvent* activeNote = nullptr;
     if (lengthLoop > 0) {
-        // Compute position in loop
+        // Compute position in loop based on currentTick and startLoop
         uint32_t loopPos = (currentTick >= startLoop)
-            ? (currentTick - startLoop) % lengthLoop
+            ? ((currentTick - startLoop) % lengthLoop)
             : 0;
 
         // Draw each note as a horizontal bar
@@ -138,12 +134,7 @@ void DisplayManager2::update() {
     }
     _display.gfx.draw_text(_frameBuffer, buf, 10, 48, 15);  // 15 is max brightness
     
-    // Display tick within loop and loop length
-    uint32_t dispTick = (currentTick >= startLoop)
-        ? (currentTick - startLoop) % lengthLoop
-        : 0;
-    snprintf(buf, sizeof(buf), "Tick:%lu Len:%lu", dispTick, lengthLoop);
-    _display.gfx.draw_text(_frameBuffer, buf, 10, 60, 15);
+    // Display tick within loop and loop length (removed for compile and speed)
 
     // Send buffer to display
     _display.gfx.send_buffer_to_OLED(_frameBuffer, 0, 0);
