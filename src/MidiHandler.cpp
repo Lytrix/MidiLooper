@@ -71,7 +71,7 @@ void MidiHandler::handleMidiMessage(byte type, byte channel, byte data1, byte da
       break;
 
     case midi::Clock:
-      clockManager.handleMidiClock();
+      clockManager.onMidiClockPulse();
       break;
 
     case midi::Start:
@@ -126,7 +126,6 @@ void MidiHandler::handleMidiStop() {
     Track &t = trackManager.getTrack(i);
     t.sendAllNotesOff();
     t.stopPlaying();  // update LCD state to STOPPED if desired
-    t.resetPlaybackState(clockManager.getCurrentTick());
   }
   clockManager.onMidiStop();
 }

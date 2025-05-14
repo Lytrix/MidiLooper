@@ -41,8 +41,8 @@ void DisplayManager::update() {
   }
 
   // Bottom row
-  //drawPianoRoll(notes, loopLengthTicks, currentTick, startLoopTick);
-  //drawUndoCounter(getUndoCount);
+  drawPianoRoll(notes, loopLengthTicks, currentTick, startLoopTick);
+  drawUndoCounter(getUndoCount);
   //drawBarBeatCounter(loopLengthTicks, currentTick, startLoopTick);
 
   if (debugLevel & DEBUG_DISPLAY) {

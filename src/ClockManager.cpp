@@ -13,7 +13,7 @@ ClockManager::ClockManager()
     currentTick(0),
     lastMidiClockTime(0),
     lastInternalTickTime(0),
-    externalClockPresent(true)
+    externalClockPresent(false)
     
 {}
 
@@ -61,8 +61,7 @@ void ClockManager::updateInternalClock() {
 
 void ClockManager::onMidiClockPulse() {
   externalClockPresent = true;
-  
-  currentTick += Config::TICKS_PER_CLOCK;
+  currentTick++;
 
   if (pendingStart) {
     const uint32_t ticksPerBar = MidiConfig::PPQN * 4;
@@ -99,7 +98,7 @@ void ClockManager::handleMidiClock() {
     externalClockPresent = true;
     logger.info("External MIDI clock detected");
   }
+  
   // Update internal clock based on MIDI clock
-  trackManager.updateAllTracks(currentTick);
-  currentTick++;//= Config::TICKS_PER_CLOCK;
+  currentTick += Config::TICKS_PER_CLOCK;
 }
