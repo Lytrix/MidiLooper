@@ -14,6 +14,12 @@ DisplayManager::DisplayManager() {}
 void DisplayManager::setup() {
   lcd.begin(16, 2);
   lcd.clear();
+  lcd.setCursor(3,0);
+  lcd.print("MidiLooper");
+  lcd.setCursor(9,1);
+  lcd.print("v0.2");
+  delay(4000);
+  lcd.clear();
 }
 
 void DisplayManager::update() {
@@ -35,9 +41,9 @@ void DisplayManager::update() {
   }
 
   // Bottom row
-  drawPianoRoll(notes, loopLengthTicks, currentTick, startLoopTick);
-  drawUndoCounter(getUndoCount);
-  drawBarBeatCounter(loopLengthTicks, currentTick, startLoopTick);
+  //drawPianoRoll(notes, loopLengthTicks, currentTick, startLoopTick);
+  //drawUndoCounter(getUndoCount);
+  //drawBarBeatCounter(loopLengthTicks, currentTick, startLoopTick);
 
   if (debugLevel & DEBUG_DISPLAY) {
     logger.debug("Calling drawPianoRoll...");
