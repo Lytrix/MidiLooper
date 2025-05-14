@@ -46,19 +46,18 @@ void setup() {
 
 void loop() {
   uint32_t now = millis();
-  // Update clock first — will internally TrackManager.updateAlltracks if tick advanced both internal and external Midi
-  // clockManager.updateInternalClock();
+  // Poll MIDI input
   midiHandler.handleMidiInput();
 
   // Update less time sensitive modules
   buttonManager.update();
   looper.update();
-  
-  // Only update display if enough time has passed
+
+  // Only update display if enough time has passed (steady-rate)
   if (now - lastDisplayUpdate >= LCD::DISPLAY_UPDATE_INTERVAL) {
+    lastDisplayUpdate = now;
     displayManager.update();
     displayManager2.update();
-    lastDisplayUpdate = now;
   }
 }
 

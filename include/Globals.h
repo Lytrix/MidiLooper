@@ -32,7 +32,7 @@ namespace LCD {
   const int D5     = 31;    // Data 5
   const int D6     = 30;    // Data 6
   const int D7     = 29;    // Data 7
-  const uint32_t DISPLAY_UPDATE_INTERVAL = 100; // in ms 
+  const uint32_t DISPLAY_UPDATE_INTERVAL = 2; // in ms (approx. 500Hz)
 }
 
 // Button Configuration
