@@ -39,12 +39,14 @@ void setup() {
   buttonManager.setup({Buttons::RECORD, Buttons::PLAY});
   displayManager.setup();
   displayManager2.setup();
+  Serial.println("Main: Dispaly Setup done");
   looper.setup();
-  
+
   
 }
 
 void loop() {
+  Serial.println("Main: Loop");
   uint32_t now = millis();
   // Poll MIDI input
   midiHandler.handleMidiInput();
