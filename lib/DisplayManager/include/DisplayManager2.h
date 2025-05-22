@@ -21,5 +21,5 @@ private:
     static constexpr uint16_t BUFFER_HEIGHT = 64;
     uint32_t _prevDrawTick = 0;
     SSD1322 _display;
-    uint8_t _frameBuffer[BUFFER_WIDTH * BUFFER_HEIGHT / 2];  // 4-bit per pixel
+    //uint8_t _frameBuffer[BUFFER_WIDTH * BUFFER_HEIGHT / 2];  // 4-bit per pixel
 }; extern DisplayManager2 displayManager2;
