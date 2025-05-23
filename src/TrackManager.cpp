@@ -21,6 +21,14 @@ TrackManager::TrackManager() {
 
 void TrackManager::startRecordingTrack(uint8_t trackIndex, uint32_t currentTick) {
   if (trackIndex >= Config::NUM_TRACKS) return;
+  // Only allow recording if the clock is running (internal or external)
+  if (!clockManager.isClockRunning()) {
+    // Arm the track and set pendingRecord so it will start when the clock starts
+    tracks[trackIndex].setState(TRACK_ARMED);
+    pendingRecord[trackIndex] = true;
+    logger.log(CAT_TRACK, LOG_INFO, "Track %d armed, waiting for clock to start recording", trackIndex);
+    return;
+  }
   tracks[trackIndex].startRecording(currentTick);
   tracks[trackIndex].isArmed();  // sets state to TRACK_ARMED and logs
 }
@@ -184,7 +192,8 @@ void TrackManager::updateAllTracks(uint32_t currentTick) {
   for (uint8_t i = 0; i < Config::NUM_TRACKS; i++) {
     if (pendingRecord[i]) {
       // Wait for the next bar boundary
-      if ((currentTick % Track::getTicksPerBar()) == 0) {
+      //if (currentTick == 0 || (currentTick % Track::getTicksPerBar()) == 0) {
+      if (currentTick == 0 || (currentTick % Track::getTicksPerBar()) == 0) {
         startRecordingTrack(i, currentTick);
         pendingRecord[i] = false;
       }

@@ -30,6 +30,7 @@ public:
   uint32_t getCurrentTick() const;
   bool isExternalClockPresent() const;
   void setExternalClockPresent(bool present);
+  bool isClockRunning() const; // Returns true if either the internal or external clock is running
   uint32_t setLastMidiClockTime(uint32_t lastMidiClockTime);
 
 private:

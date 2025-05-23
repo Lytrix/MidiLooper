@@ -82,6 +82,10 @@ void Track::startRecording(uint32_t currentTick) {
   // Stamp the new start tick quantized to a beat.
   startLoopTick = currentTick;
   //startLoopTick = (currentTick / TICKS_PER_BAR) * TICKS_PER_BAR;
+  // Reset tick to 0 for new recording
+  //startLoopTick = 0;
+  //clockManager.currentTick = 0; // <-- You may need to make currentTick public or add a setter
+ 
   logger.logTrackEvent("Recording started", currentTick);
 }
 
@@ -89,7 +93,7 @@ void Track::startRecording(uint32_t currentTick) {
 // Helpers for stopRecording 
 // -------------------------
 
-const uint32_t Track::TICKS_PER_BAR = MidiConfig::PPQN * Config::QUARTERS_PER_BAR;
+const uint32_t Track::TICKS_PER_BAR = Config::TICKS_PER_BAR;
 
 uint32_t Track::quantizeStart(uint32_t original) const {
     return (original / TICKS_PER_BAR) * TICKS_PER_BAR;
@@ -198,7 +202,7 @@ void Track::stopRecording(uint32_t currentTick) {
   // Reset playback state for next pass
   nextEventIndex = 0;
   lastTickInLoop = 0;
-
+  startLoopTick = 0;
   logger.logTrackEvent("Recording stopped", currentTick, "start=%lu length=%lu", startLoopTick, loopLengthTicks);
   logger.debug("Final ticks: lastNoteEnd=%lu", lastNoteEnd);
 
@@ -212,7 +216,12 @@ void Track::startPlaying(uint32_t currentTick) {
     if (!setState(TRACK_PLAYING)) {
       return;
     }
-    startLoopTick = currentTick - ((currentTick - startLoopTick) % loopLengthTicks);
+   // startLoopTick = 0;
+    // This is the old way to start playing. playing from the absolute tick when it was origionally recorded
+    //startLoopTick = currentTick - startLoopTick;
+    startLoopTick = 0;
+    // for support to pickup in the middle or quintized start live looping to master clock:
+    //startLoopTick = currentTick - ((currentTick - startLoopTick) % loopLengthTicks);
     logger.logTrackEvent("Playback started", currentTick);
   }
 }
@@ -230,6 +239,10 @@ void Track::startOverdubbing(uint32_t currentTick) {
 void Track::stopOverdubbing() {
   setState(TRACK_PLAYING);
   logger.logTrackEvent("Overdubbing stopped", clockManager.getCurrentTick());
+
+  // Reset playback state
+  startLoopTick = 0;
+  resetPlaybackState(0);
 }
 
 void Track::stopPlaying() {

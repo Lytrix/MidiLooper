@@ -131,7 +131,7 @@ void DisplayManager2::update() {
     constexpr int TRACK_MARGIN = 20;
 
     auto& track = trackManager.getSelectedTrack();
-    uint32_t startLoop = track.getStartLoopTick();
+    uint32_t startLoop = 0; // Always start at bar 1 visually
     uint32_t lengthLoop = track.getLength();
     const auto& notes = track.getNoteEvents();
 
@@ -139,11 +139,49 @@ void DisplayManager2::update() {
     const NoteEvent* activeNote = nullptr;
     const NoteEvent* lastPlayedNote = nullptr;
     uint32_t lastPlayedTick = 0;
+    const int pianoRollY0 = 0;
+    const int pianoRollY1 = 31;
     if (lengthLoop > 0) {
         // Compute position in loop based on currentTick and startLoop
         uint32_t loopPos = (currentTick >= startLoop)
             ? ((currentTick - startLoop) % lengthLoop)
             : 0;
+
+        // Draw bar/beat/sixteenth grid lines
+        const int barBrightness = 3;      // 50%
+        const int beatBrightness = 2;     // 25%
+        const int sixteenthBrightness = 1;// 10%
+        const uint32_t ticksPerBar = Config::TICKS_PER_BAR;
+        const uint32_t ticksPerBeat = Config::TICKS_PER_QUARTER_NOTE;
+        const uint32_t ticksPerSixteenth = Config::TICKS_PER_QUARTER_NOTE / 4;
+
+        // Bar lines (solid, 10% brightness)
+        for (uint32_t t = 0; t < lengthLoop; t += ticksPerBar) {
+            int x = TRACK_MARGIN + map(t, 0, lengthLoop, 0, BUFFER_WIDTH - 1 - TRACK_MARGIN);
+            _display.gfx.draw_vline(_display.api.getFrameBuffer(), x, pianoRollY0, pianoRollY1, barBrightness);
+        }
+        // Beat lines (dotted)
+        bool showBeat = (lengthLoop <= 9 * ticksPerBar);
+        if (showBeat) {
+        for (uint32_t t = ticksPerBeat; t < lengthLoop; t += ticksPerBeat) {
+            if (t % ticksPerBar == 0) continue; // skip bar lines
+            int x = TRACK_MARGIN + map(t, 0, lengthLoop, 0, BUFFER_WIDTH - 1 - TRACK_MARGIN);
+            for (int y = pianoRollY0; y <= pianoRollY1; y += 2) {
+                _display.gfx.draw_pixel(_display.api.getFrameBuffer(), x, y, beatBrightness);
+            }
+        }
+        }
+        // Sixteenth lines (wider dotted)
+        bool showSixteenth = (lengthLoop <= 5 * ticksPerBar);
+        if (showSixteenth) {
+        for (uint32_t t = ticksPerSixteenth; t < lengthLoop; t += ticksPerSixteenth) {
+            if (t % ticksPerBar == 0 || t % ticksPerBeat == 0) continue; // skip bar/beat lines
+            int x = TRACK_MARGIN + map(t, 0, lengthLoop, 0, BUFFER_WIDTH - 1 - TRACK_MARGIN);
+            for (int y = pianoRollY0; y <= pianoRollY1; y += 4) {
+                _display.gfx.draw_pixel(_display.api.getFrameBuffer(), x, y, sixteenthBrightness);
+            }
+        }
+        }
 
         // Draw each note as a horizontal bar
         for (const auto& e : notes) {
@@ -183,13 +221,17 @@ void DisplayManager2::update() {
                 : (loopPos >= s && loopPos < eTick);
             if (inNote) activeNote = &e;
             // Track the last note played (most recent start before or at loopPos)
-            if (s <= loopPos && absStart >= lastPlayedTick && absEnd > loopPos) {
+            if (s <= loopPos && absStart >= lastPlayedTick) {
                 lastPlayedNote = &e;
                 lastPlayedTick = absStart;
             }
         }
+        // After the loop, if no note was found for this loopPos, fallback to the last note in the loop
+        if (!lastPlayedNote && !notes.empty()) {
+            lastPlayedNote = &notes.back();
+        }
         int cx = TRACK_MARGIN + map(loopPos, 0, lengthLoop, 0, BUFFER_WIDTH - 1 - TRACK_MARGIN);
-        _display.gfx.draw_vline(_display.api.getFrameBuffer(), cx, 0, 32, 15);
+        _display.gfx.draw_vline(_display.api.getFrameBuffer(), cx, 0, 32, barBrightness);
     }
 
     // Draw info area
@@ -279,14 +321,14 @@ void DisplayManager2::update() {
     char startStr[24] = {0};
 
     if (lastPlayedNote) {
-        ticksToBarsBeats16thTicks2Dec(lastPlayedNote->startNoteTick, startStr, sizeof(startStr), true);
+        ticksToBarsBeats16thTicks2Dec(lastPlayedNote->startNoteTick % lengthLoop, startStr, sizeof(startStr), true);
         noteVal = lastPlayedNote->note;
         lenVal = lastPlayedNote->endNoteTick - lastPlayedNote->startNoteTick;
         velVal = lastPlayedNote->velocity;
         validNote = (noteVal <= 127 && velVal <= 127 && lenVal < 10000);
     } else if (!notes.empty()) {
         const auto& last = notes.back();
-        ticksToBarsBeats16thTicks2Dec(last.startNoteTick, startStr, sizeof(startStr), true);
+        ticksToBarsBeats16thTicks2Dec(last.startNoteTick % lengthLoop, startStr, sizeof(startStr), true);
         noteVal = last.note;
         lenVal = last.endNoteTick - last.startNoteTick;
         velVal = last.velocity;

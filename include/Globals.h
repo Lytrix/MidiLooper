@@ -32,7 +32,7 @@ namespace LCD {
   const int D5     = 31;    // Data 5
   const int D6     = 30;    // Data 6
   const int D7     = 29;    // Data 7
-  const uint32_t DISPLAY_UPDATE_INTERVAL = 20; // in ms (approx. 500Hz)
+  const uint32_t DISPLAY_UPDATE_INTERVAL = 30 ; // in ms (approx. 333Hz)
 }
 
 // Button Configuration
@@ -60,7 +60,7 @@ namespace Config {
   constexpr uint32_t TICKS_PER_BAR = INTERNAL_PPQN * QUARTERS_PER_BAR; // 768 or your default value (ticksPerQuarterNote * quartersPerBar)
   constexpr uint8_t  MAX_UNDO_HISTORY = 99;
 }
-
+ 
 // --------------------
 // Runtime Settings
 // --------------------
