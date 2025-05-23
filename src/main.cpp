@@ -37,7 +37,6 @@ void setup() {
   clockManager.setup();
   midiHandler.setup();
   buttonManager.setup({Buttons::RECORD, Buttons::PLAY});
-  displayManager.setup();
   displayManager2.setup();
   Serial.println("Main: Dispaly Setup done");
   looper.setup();
@@ -46,7 +45,7 @@ void setup() {
 }
 
 void loop() {
-  Serial.println("Main: Loop");
+  //Serial.println("Main: Loop");
   uint32_t now = millis();
   // Poll MIDI input
   midiHandler.handleMidiInput();
@@ -58,7 +57,6 @@ void loop() {
   // Only update display if enough time has passed (steady-rate)
   if (now - lastDisplayUpdate >= LCD::DISPLAY_UPDATE_INTERVAL) {
     lastDisplayUpdate = now;
-    displayManager.update();
     displayManager2.update();
   }
 }

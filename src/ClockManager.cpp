@@ -7,6 +7,8 @@
 ClockManager clockManager;  // Global instance initiated
 IntervalTimer clockTimer;
 
+bool sequencerRunning = true;
+
 ClockManager::ClockManager()
   : pendingStart(false),
     microsPerTick(0),
@@ -52,24 +54,30 @@ void ClockManager::setTicksPerQuarterNote(uint16_t newTicks) {
 
 
 void ClockManager::updateInternalClock() {
-  if (!externalClockPresent) {
-    currentTick++;
-    trackManager.updateAllTracks(currentTick);  // Let TrackManager handle it
-    lastInternalTickTime = micros();
-  }
+  if (!sequencerRunning) return;
+  currentTick++;
+  trackManager.updateAllTracks(currentTick);  // Let TrackManager handle it
+  lastInternalTickTime = micros();
 }
 
 void ClockManager::onMidiClockPulse() {
+  if (!sequencerRunning) return;
   externalClockPresent = true;
-  currentTick++;
-
-  if (pendingStart) {
-    const uint32_t ticksPerBar = MidiConfig::PPQN * 4;
-    if (currentTick % ticksPerBar == 0) {
-      currentTick = 0;
-      pendingStart = false;
+  //Avoid snapping if currentTick is 0.
+  if (currentTick != 0) {
+    uint32_t expectedTick = ((currentTick / 8) + 1) * 8;
+    if (currentTick != expectedTick) {
+        currentTick = expectedTick; // Resync to MIDI clock
     }
   }
+  
+  // if (pendingStart) {
+  //   // const uint32_t ticksPerBar = MidiConfig::PPQN * 4;
+  //   // if (currentTick % ticksPerBar == 0) {
+  //     currentTick = 0;
+  //     pendingStart = false;
+  //   // }
+  // }
 
   trackManager.updateAllTracks(currentTick);
   lastMidiClockTime = setLastMidiClockTime(micros());
@@ -84,13 +92,15 @@ void ClockManager::checkClockSource() {
 }
 
 void ClockManager::onMidiStart() {
-  pendingStart = true;
+  sequencerRunning = true;
+  pendingStart = false;
   externalClockPresent = true;
   lastMidiClockTime = micros();
+  currentTick = 0;
 }
 
 void ClockManager::onMidiStop() {
-  // externalClockPresent = false;
+  sequencerRunning = false;
 }
 
 void ClockManager::handleMidiClock() {

@@ -80,8 +80,8 @@ void Track::startRecording(uint32_t currentTick) {
   lastTickInLoop = 0;
 
   // Stamp the new start tick quantized to a beat.
-  //startLoopTick = currentTick;
-  startLoopTick = (currentTick / TICKS_PER_BAR) * TICKS_PER_BAR;
+  startLoopTick = currentTick;
+  //startLoopTick = (currentTick / TICKS_PER_BAR) * TICKS_PER_BAR;
   logger.logTrackEvent("Recording started", currentTick);
 }
 
@@ -186,14 +186,14 @@ void Track::stopRecording(uint32_t currentTick) {
 
   // Use direct difference to determine loop length
   uint32_t rawLength = std::max(uint32_t(1), lastNoteEnd - startLoopTick);
-uint32_t rem       = rawLength % TICKS_PER_BAR;
-uint32_t grace     = TICKS_PER_BAR / 2;  // Allow 1/8 bar grace window
+  uint32_t rem       = rawLength % TICKS_PER_BAR;
+  uint32_t grace     = TICKS_PER_BAR / 2;  // Allow 1/8 bar grace window
 
-if (rem <= grace) {
-    loopLengthTicks = (rawLength / TICKS_PER_BAR) * TICKS_PER_BAR;
-} else {
-    loopLengthTicks = ((rawLength / TICKS_PER_BAR) + 1) * TICKS_PER_BAR;
-}
+  if (rem <= grace) {
+      loopLengthTicks = (rawLength / TICKS_PER_BAR) * TICKS_PER_BAR;
+  } else {
+      loopLengthTicks = ((rawLength / TICKS_PER_BAR) + 1) * TICKS_PER_BAR;
+  }
 
   // Reset playback state for next pass
   nextEventIndex = 0;

@@ -3,10 +3,10 @@
 #include "TrackManager.h"
 #include "ClockManager.h"
 #include "Globals.h"
-
+#include "SSD1322_Config.h"
 #include <Font5x7Fixed.h>
 #include <Font5x7FixedMono.h>
-    
+
 DisplayManager2 displayManager2;
 
 DisplayManager2::DisplayManager2() : _display() {
@@ -38,8 +38,8 @@ static char trackStateToLetter(TrackState state, bool muted) {
     }
 }
 
-// Helper: Convert ticks to Bars:Beats:16th:Ticks string
-static void ticksToBarsBeats16thTicks(uint32_t ticks, char* out, size_t outSize, bool leadingZeros = false) {
+// Helper: Convert ticks to Bars:Beats:16th:Ticks string, with option to limit ticks to 2 decimals
+static void ticksToBarsBeats16thTicks2Dec(uint32_t ticks, char* out, size_t outSize, bool leadingZeros = false) {
     uint32_t bar = ticks / Config::TICKS_PER_BAR + 1;
     uint32_t ticksInBar = ticks % Config::TICKS_PER_BAR;
     uint32_t beat = ticksInBar / Config::TICKS_PER_QUARTER_NOTE + 1;
@@ -47,30 +47,34 @@ static void ticksToBarsBeats16thTicks(uint32_t ticks, char* out, size_t outSize,
     uint32_t sixteenthTicks = Config::TICKS_PER_QUARTER_NOTE / 4;
     uint32_t sixteenth = ticksInBeat / sixteenthTicks + 1;
     uint32_t ticksIn16th = ticksInBeat % sixteenthTicks;
+    // Limit ticks to 2 decimals (max 99)
+    uint32_t ticks2dec = (ticksIn16th > 99) ? 99 : ticksIn16th;
     if (leadingZeros) {
-        snprintf(out, outSize, "%02lu:%02lu:%02lu:%02lu", bar, beat, sixteenth, ticksIn16th);
+        snprintf(out, outSize, "%02lu:%02lu:%02lu:%02lu", bar, beat, sixteenth, ticks2dec);
     } else {
-        snprintf(out, outSize, "%lu:%lu:%lu:%lu", bar, beat, sixteenth, ticksIn16th);
+        snprintf(out, outSize, "%lu:%lu:%lu:%lu", bar, beat, sixteenth, ticks2dec);
     }
 }
 
 void DisplayManager2::drawTrackStatus(uint8_t selectedTrack, uint32_t currentMillis) {
     // Font and layout
     _display.gfx.select_font(&Font5x7FixedMono);
-    constexpr int x = 2; // left margin
-    constexpr int y0 = 14; // top margin
-    constexpr int yStep = 14; // vertical spacing between tracks
+    constexpr int x = 0; // left margin
+    constexpr int char_height = 7; // Font5x7FixedMono is 7px high
+    constexpr int trackCount = 8;
+    constexpr int step = (DISPLAY_HEIGHT - char_height) / (trackCount - 1);
+
     constexpr int minPulse = 4; // 25% of 15
     constexpr int maxPulse = 11; // 75% of 15
+    constexpr int minBrightness = 8; // 50% of 15
+    constexpr int maxBrightness = 15; // 100% of 15
 
-    uint8_t trackCount = trackManager.getTrackCount();
     for (uint8_t i = 0; i < trackCount; ++i) {
         char label[2] = {0};
         label[0] = trackStateToLetter(trackManager.getTrackState(i), !trackManager.isTrackAudible(i));
-        int y = y0 + i * yStep;
+        int y = i * step + char_height;
         uint8_t brightness = 15;
         if (i == selectedTrack) {
-            // Pulsate brightness
             float phase = _pulsePhase;
             brightness = minPulse + (maxPulse - minPulse) * (0.5f + 0.5f * sinf(phase * 2 * 3.1415926f));
         } else {
@@ -133,6 +137,8 @@ void DisplayManager2::update() {
 
     // Draw piano roll when loop valid
     const NoteEvent* activeNote = nullptr;
+    const NoteEvent* lastPlayedNote = nullptr;
+    uint32_t lastPlayedTick = 0;
     if (lengthLoop > 0) {
         // Compute position in loop based on currentTick and startLoop
         uint32_t loopPos = (currentTick >= startLoop)
@@ -176,43 +182,140 @@ void DisplayManager2::update() {
                 ? (loopPos >= s || loopPos < eTick)
                 : (loopPos >= s && loopPos < eTick);
             if (inNote) activeNote = &e;
+            // Track the last note played (most recent start before or at loopPos)
+            if (s <= loopPos && absStart >= lastPlayedTick && absEnd > loopPos) {
+                lastPlayedNote = &e;
+                lastPlayedTick = absStart;
+            }
         }
         int cx = TRACK_MARGIN + map(loopPos, 0, lengthLoop, 0, BUFFER_WIDTH - 1 - TRACK_MARGIN);
         _display.gfx.draw_vline(_display.api.getFrameBuffer(), cx, 0, 32, 15);
     }
 
     // Draw info area
-    // 1. Current position (playhead) as musical time, with leading zeros
+    // 1. Current position (playhead) as musical time, with leading zeros and 2 decimals for ticks
     char posStr[24];
-    ticksToBarsBeats16thTicks(currentTick, posStr, sizeof(posStr), true); // true = leading zeros
+    ticksToBarsBeats16thTicks2Dec(currentTick, posStr, sizeof(posStr), true); // true = leading zeros
     char loopLine[32];
     if (lengthLoop > 0 && Config::TICKS_PER_BAR > 0) {
         uint32_t bars = lengthLoop / Config::TICKS_PER_BAR;
-        snprintf(loopLine, sizeof(loopLine), "LOOP: %lu", bars);
+        snprintf(loopLine, sizeof(loopLine), "LOOP:%lu", bars);
     } else {
-        snprintf(loopLine, sizeof(loopLine), "LOOP: -");
+        snprintf(loopLine, sizeof(loopLine), "LOOP:-");
     }
     // Calculate spacing after posStr to align LOOP: and NOTE:
     const char* alignSpaces = " "; // 1 space for alignment
     char posAndLoop[64];
     snprintf(posAndLoop, sizeof(posAndLoop), "%s%s%s", posStr, alignSpaces, loopLine);
-    _display.gfx.draw_text(_display.api.getFrameBuffer(), posAndLoop, TRACK_MARGIN + 10, 36, 15); // Top info line
+    // Lower brightness by 1/8 every 100 bars, min 1/8
+    uint32_t bar = currentTick / Config::TICKS_PER_BAR + 1;
+    uint8_t maxBrightness = 15;
+    uint8_t brightnessStep = maxBrightness / 8;
+    uint8_t brightness = maxBrightness - ((bar / 100) * brightnessStep);
+    if (brightness < brightnessStep) brightness = brightnessStep;
+    // Draw posAndLoop with per-character font and brightness
+    int x = TRACK_MARGIN;
+    int y = DISPLAY_HEIGHT - 12;
+    const char* p = posAndLoop;
+    while (*p) {
+        char c[2] = {*p, 0};
+        uint8_t charBrightness;
+        if (*p == ':') {
+            charBrightness = brightness / 2;
+        } else if ((*p >= 'A' && *p <= 'Z') || (*p >= 'a' && *p <= 'z')) {
+            charBrightness = brightness / 4;
+        } else {
+            charBrightness = brightness;
+        }
+        // Select font: digits, '-', and ':' use mono, rest use normal
+        if (((*p >= '0' && *p <= '9') || *p == '-' || *p == ':')) {
+            _display.gfx.select_font(&Font5x7FixedMono);
+        } else {
+            _display.gfx.select_font(&Font5x7Fixed);
+        }
+        _display.gfx.draw_text(_display.api.getFrameBuffer(), c, x, y, charBrightness);
+        x += 6;
+        ++p;
+    }
+    // Draw undo count right-aligned, max 99, styled per character and font
+    uint8_t undoCount = trackManager.getSelectedTrack().getUndoCount();
+    char undoStr[6];
+    if (undoCount == 0) {
+        snprintf(undoStr, sizeof(undoStr), "U:--");
+    } else {
+        if (undoCount > 99) undoCount = 99;
+        snprintf(undoStr, sizeof(undoStr), "U:%02u", undoCount);
+    }
+    int undoLen = 0;
+    for (const char* up = undoStr; *up; ++up) ++undoLen;
+    int undoX = BUFFER_WIDTH - (undoLen * 6) - 2;
+    const char* up = undoStr;
+    while (*up) {
+        char c[2] = {*up, 0};
+        uint8_t charBrightness;
+        if (*up == ':') {
+            charBrightness = brightness / 2;
+        } else if ((*up >= 'A' && *up <= 'Z') || (*up >= 'a' && *up <= 'z')) {
+            charBrightness = brightness / 4;
+        } else {
+            charBrightness = brightness;
+        }
+        // Select font: digits, '-', and ':' use mono, rest use normal
+        if (((*up >= '0' && *up <= '9') || *up == '-' || *up == ':')) {
+            _display.gfx.select_font(&Font5x7FixedMono);
+        } else {
+            _display.gfx.select_font(&Font5x7Fixed);
+        }
+        _display.gfx.draw_text(_display.api.getFrameBuffer(), c, undoX, y, charBrightness);
+        undoX += 6;
+        ++up;
+    }
 
     // 2. Note info line: SS:SS:SSS   NOTE: --- LEN: --- VEL: ---
     char noteLine[96];
-    if (activeNote) {
-        char startStr[24];
-        ticksToBarsBeats16thTicks(activeNote->startNoteTick, startStr, sizeof(startStr), true);
-        snprintf(noteLine, sizeof(noteLine), "%s%sNOTE:%3u LEN:%3lu VEL:%3u", startStr, alignSpaces, activeNote->note, activeNote->endNoteTick - activeNote->startNoteTick, activeNote->velocity);
+    bool validNote = false;
+    uint8_t noteVal = 0, velVal = 0;
+    uint32_t lenVal = 0;
+    char startStr[24] = {0};
+
+    if (lastPlayedNote) {
+        ticksToBarsBeats16thTicks2Dec(lastPlayedNote->startNoteTick, startStr, sizeof(startStr), true);
+        noteVal = lastPlayedNote->note;
+        lenVal = lastPlayedNote->endNoteTick - lastPlayedNote->startNoteTick;
+        velVal = lastPlayedNote->velocity;
+        validNote = (noteVal <= 127 && velVal <= 127 && lenVal < 10000);
     } else if (!notes.empty()) {
         const auto& last = notes.back();
-        char startStr[24];
-        ticksToBarsBeats16thTicks(last.startNoteTick, startStr, sizeof(startStr), true);
-        snprintf(noteLine, sizeof(noteLine), "%s%sNOTE: %3u LEN: %3lu VEL: %3u", startStr, alignSpaces, last.note, last.endNoteTick - last.startNoteTick, last.velocity);
+        ticksToBarsBeats16thTicks2Dec(last.startNoteTick, startStr, sizeof(startStr), true);
+        noteVal = last.note;
+        lenVal = last.endNoteTick - last.startNoteTick;
+        velVal = last.velocity;
+        validNote = (noteVal <= 127 && velVal <= 127 && lenVal < 10000);
+    }
+
+    if (validNote) {
+        snprintf(noteLine, sizeof(noteLine), "%s%sNOTE:%3u LEN:%3lu VEL:%3u", startStr, alignSpaces, noteVal, lenVal, velVal);
     } else {
         snprintf(noteLine, sizeof(noteLine), "--:--:--:--%sNOTE:--- LEN:--- VEL:---", alignSpaces);
     }
-    _display.gfx.draw_text(_display.api.getFrameBuffer(), noteLine, TRACK_MARGIN + 10, 52, 15); // Info line below, minimal spacing
+    // Draw noteLine with all ':' at 50% brightness, digits at full, letters at 75%
+    x = TRACK_MARGIN;
+    y = DISPLAY_HEIGHT;
+    p = noteLine;
+    while (*p) {
+        char c[2] = {*p, 0};
+        uint8_t charBrightness;
+        if (*p == ':') {
+            charBrightness = brightness / 2;
+        } else if ((*p >= 'A' && *p <= 'Z') || (*p >= 'a' && *p <= 'z') || (*p == '-')) {
+            charBrightness = brightness / 4;
+        } else {
+            charBrightness = brightness;
+        }
+        _display.gfx.draw_text(_display.api.getFrameBuffer(), c, x, y, charBrightness);
+        x += 6;
+        ++p;
+    }
     
     // Send buffer to display
    _display.api.display();
