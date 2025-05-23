@@ -32,19 +32,19 @@ namespace LCD {
   const int D5     = 31;    // Data 5
   const int D6     = 30;    // Data 6
   const int D7     = 29;    // Data 7
-  const uint32_t DISPLAY_UPDATE_INTERVAL = 2; // in ms (approx. 500Hz)
+  const uint32_t DISPLAY_UPDATE_INTERVAL = 20; // in ms (approx. 500Hz)
 }
 
 // Button Configuration
 namespace Buttons {
-  const int RECORD = 37;     // Record/Overdub button
-  const int PLAY   = 36;    // Play/Stop button
+  const int RECORD = 37;      // Record/Overdub button
+  const int PLAY   = 36;      // Play/Stop button
 }
 
 // MIDI Configuration
 namespace MidiConfig {
-  const int CHANNEL = 1;    // Default MIDI channel
-  const int PPQN = 24;      // MIDI clock pulses per quarter note
+  const int CHANNEL = 1;      // Default MIDI channel
+  const int PPQN = 24;        // MIDI clock pulses per quarter note
   const int CHANNEL_OMNI = 0; // Channel for listening to all MIDI channels
 }
 
@@ -52,10 +52,12 @@ namespace MidiConfig {
 // Track and Timing Configuration
 // --------------------
 namespace Config {
-  constexpr uint8_t  NUM_TRACKS = 4;               // Number of looper tracks
-  constexpr uint8_t  INTERNAL_PPQN = 192;          // Internal resolution for timing
-  constexpr uint8_t  TICKS_PER_CLOCK = (INTERNAL_PPQN / 24);  // 8 ticks per MIDI clock pulse (24 PPQN)
-  constexpr uint8_t  QUARTERS_PER_BAR = 4;         // Time signature numerator (4/4 time)
+  constexpr uint8_t  NUM_TRACKS = 4;                                   // Number of looper tracks
+  constexpr uint8_t  INTERNAL_PPQN = 192;                              // Internal resolution for timing
+  constexpr uint8_t  QUARTERS_PER_BAR = 4;                             // Time signature numerator (4/4 time) 
+  constexpr uint8_t  TICKS_PER_QUARTER_NOTE = INTERNAL_PPQN;           // For Musical Time naming consistency
+  constexpr uint8_t  TICKS_PER_CLOCK = (INTERNAL_PPQN / 24);           // 8 ticks per MIDI clock pulse (24 PPQN)
+  constexpr uint32_t TICKS_PER_BAR = INTERNAL_PPQN * QUARTERS_PER_BAR; // 768 or your default value (ticksPerQuarterNote * quartersPerBar)
   constexpr uint8_t  MAX_UNDO_HISTORY = 99;
 }
 

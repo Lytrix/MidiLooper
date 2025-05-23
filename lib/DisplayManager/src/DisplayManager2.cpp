@@ -4,10 +4,9 @@
 #include "ClockManager.h"
 #include "Globals.h"
 
-// adafruit fonts - use the build path
-#include <FreeMono12pt7b.h>
-#include <FreeSansOblique9pt7b.h>
-
+#include <Font5x7Fixed.h>
+#include <Font5x7FixedMono.h>
+    
 DisplayManager2 displayManager2;
 
 DisplayManager2::DisplayManager2() : _display() {
@@ -24,6 +23,63 @@ void DisplayManager2::clearDisplayBuffer() {
     Serial.println("DisplayManager2: Display buffer displayed");
 }
 
+// Helper: Map TrackState to status letter
+static char trackStateToLetter(TrackState state, bool muted) {
+    if (muted) return 'M';
+    switch (state) {
+        case TRACK_EMPTY:       return '-';
+        case TRACK_RECORDING:   return 'R';
+        case TRACK_PLAYING:     return 'P';
+        case TRACK_OVERDUBBING: return 'O';
+        case TRACK_STOPPED:     return 'S';
+        case TRACK_ARMED:       return 'A';
+        case TRACK_STOPPED_RECORDING: return 'r';
+        default:                return '?';
+    }
+}
+
+// Helper: Convert ticks to Bars:Beats:16th:Ticks string
+static void ticksToBarsBeats16thTicks(uint32_t ticks, char* out, size_t outSize, bool leadingZeros = false) {
+    uint32_t bar = ticks / Config::TICKS_PER_BAR + 1;
+    uint32_t ticksInBar = ticks % Config::TICKS_PER_BAR;
+    uint32_t beat = ticksInBar / Config::TICKS_PER_QUARTER_NOTE + 1;
+    uint32_t ticksInBeat = ticksInBar % Config::TICKS_PER_QUARTER_NOTE;
+    uint32_t sixteenthTicks = Config::TICKS_PER_QUARTER_NOTE / 4;
+    uint32_t sixteenth = ticksInBeat / sixteenthTicks + 1;
+    uint32_t ticksIn16th = ticksInBeat % sixteenthTicks;
+    if (leadingZeros) {
+        snprintf(out, outSize, "%02lu:%02lu:%02lu:%02lu", bar, beat, sixteenth, ticksIn16th);
+    } else {
+        snprintf(out, outSize, "%lu:%lu:%lu:%lu", bar, beat, sixteenth, ticksIn16th);
+    }
+}
+
+void DisplayManager2::drawTrackStatus(uint8_t selectedTrack, uint32_t currentMillis) {
+    // Font and layout
+    _display.gfx.select_font(&Font5x7FixedMono);
+    constexpr int x = 2; // left margin
+    constexpr int y0 = 14; // top margin
+    constexpr int yStep = 14; // vertical spacing between tracks
+    constexpr int minPulse = 4; // 25% of 15
+    constexpr int maxPulse = 11; // 75% of 15
+
+    uint8_t trackCount = trackManager.getTrackCount();
+    for (uint8_t i = 0; i < trackCount; ++i) {
+        char label[2] = {0};
+        label[0] = trackStateToLetter(trackManager.getTrackState(i), !trackManager.isTrackAudible(i));
+        int y = y0 + i * yStep;
+        uint8_t brightness = 15;
+        if (i == selectedTrack) {
+            // Pulsate brightness
+            float phase = _pulsePhase;
+            brightness = minPulse + (maxPulse - minPulse) * (0.5f + 0.5f * sinf(phase * 2 * 3.1415926f));
+        } else {
+            brightness = 8;
+        }
+        _display.gfx.draw_text(_display.api.getFrameBuffer(), label, x, y, brightness);
+    }
+}
+
 void DisplayManager2::setup() {
     Serial.println("DisplayManager2: Setting up SSD1322 display...");
 
@@ -38,7 +94,7 @@ void DisplayManager2::setup() {
     // Now proceed with your drawing/demo code
     Serial.println("DisplayManager2: Drawing startup text...");
     Serial.println("Selecting font...");
-    _display.gfx.select_font(&FreeMono12pt7b);
+    _display.gfx.select_font(&Font5x7Fixed);
     Serial.println("Font selected.");
     Serial.println("Drawing text...");
     _display.gfx.draw_text(_display.api.getFrameBuffer(), "MidiLooper", 50, 20, 15);
@@ -53,9 +109,22 @@ void DisplayManager2::setup() {
 void DisplayManager2::update() {
     // Get current global tick count for display timing
     uint32_t currentTick = clockManager.getCurrentTick();
+    uint32_t now = millis();
+
+    // Update pulse phase for selected track
+    float dt = (now - _lastPulseUpdate) / 1000.0f;
+    _pulsePhase += dt * PULSE_SPEED;
+    if (_pulsePhase > 1.0f) _pulsePhase -= 1.0f;
+    _lastPulseUpdate = now;
 
     // Clear frame buffer
     _display.gfx.fill_buffer(_display.api.getFrameBuffer(), 0);
+
+    // Draw vertical track status on the left
+    drawTrackStatus(trackManager.getSelectedTrackIndex(), now);
+
+    // Margin for piano roll
+    constexpr int TRACK_MARGIN = 20;
 
     auto& track = trackManager.getSelectedTrack();
     uint32_t startLoop = track.getStartLoopTick();
@@ -89,15 +158,15 @@ void DisplayManager2::update() {
             int y = map(e.note, minPitch, maxPitch == minPitch ? minPitch + 1 : maxPitch, 31, 0);
 
             if (eTick < s) {
-                int x0 = map(s, 0, lengthLoop, 0, BUFFER_WIDTH - 1);
+                int x0 = TRACK_MARGIN + map(s, 0, lengthLoop, 0, BUFFER_WIDTH - 1 - TRACK_MARGIN);
                 int x1 = BUFFER_WIDTH - 1;
                 _display.gfx.draw_rect_filled(_display.api.getFrameBuffer(), x0, y, x1, y, 15);  // 15 is max brightness
-                int x2 = 0;
-                int x3 = map(eTick, 0, lengthLoop, 0, BUFFER_WIDTH - 1);
+                int x2 = TRACK_MARGIN;
+                int x3 = TRACK_MARGIN + map(eTick, 0, lengthLoop, 0, BUFFER_WIDTH - 1 - TRACK_MARGIN);
                 _display.gfx.draw_rect_filled(_display.api.getFrameBuffer(), x2, y, x3, y, 15);
             } else {
-                int x0 = map(s, 0, lengthLoop, 0, BUFFER_WIDTH - 1);
-                int x1 = map(eTick, 0, lengthLoop, 0, BUFFER_WIDTH - 1);
+                int x0 = TRACK_MARGIN + map(s, 0, lengthLoop, 0, BUFFER_WIDTH - 1 - TRACK_MARGIN);
+                int x1 = TRACK_MARGIN + map(eTick, 0, lengthLoop, 0, BUFFER_WIDTH - 1 - TRACK_MARGIN);
                 if (x1 < x0) x1 = x0;
                 _display.gfx.draw_rect_filled(_display.api.getFrameBuffer(), x0, y, x1, y, 15);
             }
@@ -108,24 +177,43 @@ void DisplayManager2::update() {
                 : (loopPos >= s && loopPos < eTick);
             if (inNote) activeNote = &e;
         }
-        int cx = map(loopPos, 0, lengthLoop, 0, BUFFER_WIDTH - 1);
+        int cx = TRACK_MARGIN + map(loopPos, 0, lengthLoop, 0, BUFFER_WIDTH - 1 - TRACK_MARGIN);
         _display.gfx.draw_vline(_display.api.getFrameBuffer(), cx, 0, 32, 15);
     }
 
-    // Draw info text in bottom area
-    char buf[32];
+    // Draw info area
+    // 1. Current position (playhead) as musical time, with leading zeros
+    char posStr[24];
+    ticksToBarsBeats16thTicks(currentTick, posStr, sizeof(posStr), true); // true = leading zeros
+    char loopLine[32];
+    if (lengthLoop > 0 && Config::TICKS_PER_BAR > 0) {
+        uint32_t bars = lengthLoop / Config::TICKS_PER_BAR;
+        snprintf(loopLine, sizeof(loopLine), "LOOP: %lu", bars);
+    } else {
+        snprintf(loopLine, sizeof(loopLine), "LOOP: -");
+    }
+    // Calculate spacing after posStr to align LOOP: and NOTE:
+    const char* alignSpaces = " "; // 1 space for alignment
+    char posAndLoop[64];
+    snprintf(posAndLoop, sizeof(posAndLoop), "%s%s%s", posStr, alignSpaces, loopLine);
+    _display.gfx.draw_text(_display.api.getFrameBuffer(), posAndLoop, TRACK_MARGIN + 10, 36, 15); // Top info line
+
+    // 2. Note info line: SS:SS:SSS   NOTE: --- LEN: --- VEL: ---
+    char noteLine[96];
     if (activeNote) {
-        snprintf(buf, sizeof(buf), "Note:%3u Vel:%3u Len:%lu", activeNote->note, activeNote->velocity, activeNote->endNoteTick - activeNote->startNoteTick);
+        char startStr[24];
+        ticksToBarsBeats16thTicks(activeNote->startNoteTick, startStr, sizeof(startStr), true);
+        snprintf(noteLine, sizeof(noteLine), "%s%sNOTE:%3u LEN:%3lu VEL:%3u", startStr, alignSpaces, activeNote->note, activeNote->endNoteTick - activeNote->startNoteTick, activeNote->velocity);
     } else if (!notes.empty()) {
         const auto& last = notes.back();
-        snprintf(buf, sizeof(buf), "Note:%3u Vel:%3u", last.note, last.velocity);
+        char startStr[24];
+        ticksToBarsBeats16thTicks(last.startNoteTick, startStr, sizeof(startStr), true);
+        snprintf(noteLine, sizeof(noteLine), "%s%sNOTE: %3u LEN: %3lu VEL: %3u", startStr, alignSpaces, last.note, last.endNoteTick - last.startNoteTick, last.velocity);
     } else {
-        snprintf(buf, sizeof(buf), "Note:--- Vel:---");
+        snprintf(noteLine, sizeof(noteLine), "--:--:--:--%sNOTE:--- LEN:--- VEL:---", alignSpaces);
     }
-    _display.gfx.draw_text(_display.api.getFrameBuffer(), buf, 10, 48, 15);  // 15 is max brightness
+    _display.gfx.draw_text(_display.api.getFrameBuffer(), noteLine, TRACK_MARGIN + 10, 52, 15); // Info line below, minimal spacing
     
-    // Display tick within loop and loop length (removed for compile and speed)
-
     // Send buffer to display
-    _display.api.display();
+   _display.api.display();
 }
