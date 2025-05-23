@@ -97,6 +97,7 @@ void ClockManager::onMidiStart() {
   externalClockPresent = true;
   lastMidiClockTime = micros();
   currentTick = 0;
+  trackManager.updateAllTracks(currentTick);
 }
 
 void ClockManager::onMidiStop() {
@@ -111,4 +112,9 @@ void ClockManager::handleMidiClock() {
   
   // Update internal clock based on MIDI clock
   currentTick += Config::TICKS_PER_CLOCK;
+}
+
+// Returns true if either the internal or external clock is running
+bool ClockManager::isClockRunning() const {
+    return sequencerRunning || externalClockPresent;
 }
