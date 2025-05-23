@@ -81,6 +81,11 @@ void DisplayManager2::drawTrackStatus(uint8_t selectedTrack, uint32_t currentMil
             brightness = 8;
         }
         _display.gfx.draw_text(_display.api.getFrameBuffer(), label, x, y, brightness);
+        // Draw track number next to state letter at 25% brightness
+        char numStr[3];
+        snprintf(numStr, sizeof(numStr), "%d", i + 1);
+        uint8_t numBrightness = (i == selectedTrack) ? 15 : 4; // 100% if selected, else 25%
+        _display.gfx.draw_text(_display.api.getFrameBuffer(), numStr, x + 10, y, numBrightness);
     }
 }
 
