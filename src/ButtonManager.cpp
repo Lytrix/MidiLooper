@@ -2,6 +2,7 @@
 #include "ClockManager.h"
 #include "TrackManager.h"
 #include "ButtonManager.h"
+#include "StorageManager.h"
 #include "Logger.h"
 
 ButtonManager buttonManager;
@@ -41,7 +42,7 @@ void ButtonManager::setup(const std::vector<uint8_t>& pins) {
 void ButtonManager::update() {
     // Ignore states when booting up, pullup change is else detected as button press
     static unsigned long bootTime = millis();
-    if (millis() - bootTime < 1000) return;
+    if (millis() - bootTime < 2000) return;
 
     uint32_t now = millis();
 
@@ -82,6 +83,7 @@ void ButtonManager::update() {
 
 void ButtonManager::handleButton(uint8_t index, ButtonAction action) {
     auto& track = trackManager.getSelectedTrack();
+    uint8_t idx = trackManager.getSelectedTrackIndex();
     uint32_t now = clockManager.getCurrentTick();
 
     if (index == 0) {
@@ -95,21 +97,17 @@ void ButtonManager::handleButton(uint8_t index, ButtonAction action) {
             case BUTTON_SHORT_PRESS:
                 if (track.isEmpty()) {
                     if (DEBUG_BUTTONS) Serial.println("Button A: Start Recording");
-                    track.startRecording(now);
-
+                    trackManager.startRecordingTrack(idx, now);
                 } else if (track.isRecording()) {
-                    if (DEBUG_BUTTONS) Serial.println("Button A: Switch to Overdub");
-                    track.stopRecording(now);
+                    if (DEBUG_BUTTONS) Serial.println("Button A: Stop Recording");
+                    trackManager.stopRecordingTrack(idx);
                     track.startPlaying(now);
-
                 } else if (track.isOverdubbing()) {
                     if (DEBUG_BUTTONS) Serial.println("Button A: Stop Overdub");
                     track.startPlaying(now);
-
                 } else if (track.isPlaying()) {
                     if (DEBUG_BUTTONS) Serial.println("Button A: Live Overdub");
-                    track.startOverdubbing(now);
-
+                    trackManager.startOverdubbingTrack(idx);
                 } else {
                     if (DEBUG_BUTTONS) Serial.println("Button A: Toggle Play/Stop");
                     track.togglePlayStop();
@@ -120,7 +118,9 @@ void ButtonManager::handleButton(uint8_t index, ButtonAction action) {
                 if (!track.hasData()) {
                     logger.debug("Clear ignored — track is empty");
                 } else {
+                    track.pushClearTrackSnapshot();
                     track.clear();
+                    StorageManager::saveState(looperState);
                     if (DEBUG_BUTTONS) Serial.println("Button A: Clear Track");
                 }
                 break;
@@ -132,6 +132,15 @@ void ButtonManager::handleButton(uint8_t index, ButtonAction action) {
     else if (index == 1) {
         // Button B: switch / mute unchanged
         switch (action) {
+            case BUTTON_DOUBLE_PRESS:
+                if (track.canUndoClearTrack()) {
+                    if (DEBUG_BUTTONS) Serial.println("Button A: Undo Clear Track");
+                    track.undoClearTrack();
+                    StorageManager::saveState(looperState);
+                } else {
+                    if (DEBUG_BUTTONS) Serial.println("Nothing to undo for clear/mute.");
+                }                
+                break;
             case BUTTON_SHORT_PRESS: {
                 uint8_t newIndex = (trackManager.getSelectedTrackIndex() + 1)
                                    % trackManager.getTrackCount();
@@ -146,7 +155,7 @@ void ButtonManager::handleButton(uint8_t index, ButtonAction action) {
                 if (!track.hasData()) {
                     logger.debug("Mute ignored — track is empty");
                 } else {
-                    track.toggleMuteTrack();
+                    track.toggleMuteTrack();            
                     if (DEBUG_BUTTONS) {
                         Serial.print("Button B: Toggled mute on track ");
                         Serial.println(trackManager.getSelectedTrackIndex());

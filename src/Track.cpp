@@ -6,10 +6,12 @@
 #include "TrackStateMachine.h"
 #include <algorithm>  // for std::sort
 #include "DisplayManager.h"
+#include "StorageManager.h"
 #include "stdint.h"
 
+// -------------------------
 // Track class implementation
-
+// -------------------------
 Track::Track()
   : isPlayingBack(false),
     muted(false),
@@ -22,6 +24,10 @@ Track::Track()
     noteEvents()
  {}
 
+// -------------------------
+// Getters
+// -------------------------
+
 const std::vector<MidiEvent>& Track::getEvents() const {
   return midiEvents;
 }
@@ -33,6 +39,11 @@ const std::vector<NoteEvent>& Track::getNoteEvents() const {
 uint32_t Track::getStartLoopTick() const {
   return startLoopTick;
 }
+
+
+// -------------------------
+// State management
+// -------------------------
 
 TrackState Track::getState() const {
   return trackState;
@@ -67,6 +78,13 @@ bool Track::transitionState(TrackState newState) {
   logger.logStateTransition("Track", TrackStateMachine::toString(oldState), TrackStateMachine::toString(newState));
   return true;
 }
+
+// Required for loading state from SD card else the state machine will corrupt the state
+void Track::forceSetState(TrackState newState) { trackState = newState; }
+
+// -------------------------
+// Recording control
+// -------------------------
 
 void Track::startRecording(uint32_t currentTick) {
   if (!setState(TRACK_RECORDING)) {
@@ -173,8 +191,9 @@ void Track::finalizePendingNotes(uint32_t offAbsTick) {
     trackState = prev;
 }
 
-
-// The stopRecording 
+// -------------------------
+// Stop recording
+// -------------------------
 
 void Track::stopRecording(uint32_t currentTick) {
   if (!setState(TRACK_STOPPED_RECORDING)) return;
@@ -209,7 +228,9 @@ void Track::stopRecording(uint32_t currentTick) {
   startOverdubbing(currentTick);
 }
 
-
+// -------------------------
+// Start playing
+// -------------------------
 
 void Track::startPlaying(uint32_t currentTick) {
   if (loopLengthTicks > 0) {
@@ -225,6 +246,10 @@ void Track::startPlaying(uint32_t currentTick) {
     logger.logTrackEvent("Playback started", currentTick);
   }
 }
+
+// -------------------------
+// Start overdubbing
+// -------------------------
 
 void Track::startOverdubbing(uint32_t currentTick) {
   if (!setState(TRACK_OVERDUBBING)) return;
@@ -243,7 +268,12 @@ void Track::stopOverdubbing() {
   // Reset playback state
   startLoopTick = 0;
   resetPlaybackState(0);
+  StorageManager::saveState(looperState); // Save after overdubbing
 }
+
+// -------------------------
+// Stop playing
+// -------------------------
 
 void Track::stopPlaying() {
   if (isEmpty()) return; // Nothing to stop, empty track
@@ -254,9 +284,17 @@ void Track::stopPlaying() {
   logger.logTrackEvent("Playback stopped", clockManager.getCurrentTick());
 }
 
+// -------------------------
+// Toggle play/stop
+// -------------------------
+
 void Track::togglePlayStop() {
   isPlaying() ? stopPlaying() : startPlaying(clockManager.getCurrentTick());
 }
+
+// -------------------------
+// Toggle mute
+// -------------------------
 
 void Track::toggleMuteTrack() {
   muted = !muted;
@@ -277,6 +315,10 @@ size_t Track::getMidiEventCount() const {
 size_t Track::getNoteEventCount() const {
   return noteEvents.size();
 }
+
+// -------------------------
+// Track Clear
+// -------------------------
 
 // Clears the current track data and returns to the EMPTY state
 void Track::clear() {
@@ -302,6 +344,10 @@ void Track::clear() {
 
     // Log the clear action
     logger.logTrackEvent("Track cleared", clockManager.getCurrentTick());
+    
+    // TBD, do I need to save here? Or better to ignore deletes before storing?
+    //StorageManager::saveState(looperState); // Save after recording
+
 }
 
 // ----------------------
@@ -375,6 +421,7 @@ void Track::undoOverdub() {
                  midiEvents.size(), noteEvents.size(), getUndoCount());
 
     logger.logTrackEvent("Overdub undone", clockManager.getCurrentTick());
+    StorageManager::saveState(looperState); // Save after performing an undo
 }
 
 
@@ -449,10 +496,6 @@ void Track::playMidiEvents(uint32_t currentTick, bool isAudible) {
     //   noteHistory.push_back(noteEvents);
 
     //   hasNewEventsSinceSnapshot = false;
-
-      logger.debug("Undo snapshot created: midiEvents=%d noteEvents=%d  totalSnapshots=%d",
-                  midiEvents.size(), noteEvents.size(), getUndoCount());
-
     //   if (midiHistory.size() > Config::MAX_UNDO_HISTORY) {
     //       midiHistory.pop_front();
     //       noteHistory.pop_front();
@@ -692,4 +735,49 @@ void Track::printNoteEvents() const {
     Serial.println(note.endNoteTick);
   }
   Serial.println("---------------------");
+}
+
+// -------------------------
+// Undo Track clear control
+// -------------------------
+
+void Track::pushClearTrackSnapshot() {
+    clearMidiHistory.push_back(midiEvents);
+    clearNoteHistory.push_back(noteEvents);
+    clearLengthHistory.push_back(loopLengthTicks);
+    clearStateHistory.push_back(trackState);
+    
+    if (clearMidiHistory.size() > Config::MAX_UNDO_HISTORY) clearMidiHistory.pop_front();
+    if (clearNoteHistory.size() > Config::MAX_UNDO_HISTORY) clearNoteHistory.pop_front();
+    if (clearLengthHistory.size() > Config::MAX_UNDO_HISTORY) clearLengthHistory.pop_front();
+    if (clearStateHistory.size() > Config::MAX_UNDO_HISTORY) clearStateHistory.pop_front();
+}
+
+void Track::undoClearTrack() {
+    // Restore the last snapshot of the track
+    if (!clearMidiHistory.empty() && !clearNoteHistory.empty()) {
+        midiEvents = clearMidiHistory.back();
+        noteEvents = clearNoteHistory.back();
+        clearMidiHistory.pop_back();
+        clearNoteHistory.pop_back();
+    }
+    // Restore the last state of the track
+    if (!clearStateHistory.empty()) {
+        forceSetState(clearStateHistory.back());
+        clearStateHistory.pop_back();
+    }
+    // Restore the last length of the track
+    if (!clearLengthHistory.empty()) {
+        loopLengthTicks = clearLengthHistory.back();
+        clearLengthHistory.pop_back();
+    }
+    // If the track has data but is not in a visible state, set to STOPPED
+    if (!midiEvents.empty() && (trackState == TRACK_EMPTY)) {
+        setState(TRACK_STOPPED);
+    }
+
+}
+
+bool Track::canUndoClearTrack() const {
+    return (!clearMidiHistory.empty() && !clearNoteHistory.empty());
 }

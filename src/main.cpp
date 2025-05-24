@@ -9,6 +9,7 @@
 #include "DisplayManager2.h"
 #include "Looper.h"
 #include "Track.h"
+#include "Globals.h"
 
 void setup() {
   // Simple led Check to see if Teensy is responding
@@ -22,16 +23,25 @@ void setup() {
 
   // Initialize logger first with Serial.begin
   logger.setup(LOG_DEBUG);  // Set to LOG_INFO for production
-  // Load configuration
-  loadConfig();
+  // Initialize looper and load last project and states
+  looper.setup();
+  //loadConfig();
 
   trackManager.setup();
 
-  // Log initial track states
+  // // Log initial track states
   for (uint8_t i = 0; i < trackManager.getTrackCount(); ++i) {
     TrackState state = trackManager.getTrack(i).getState();
     logger.debug("Track %d state: %s", i, trackManager.getTrack(i).getStateName(state));
   }
+
+
+  for (uint8_t t = 0; t < Config::NUM_TRACKS; ++t) {
+    Track &track = trackManager.getTrack(t);
+    // ... after setState ...
+    Serial.print("Track "); Serial.print(t); Serial.print(" loaded state: ");
+    Serial.println(track.getStateName(track.getState()));
+}
 
   // Initialize other components
   clockManager.setup();
