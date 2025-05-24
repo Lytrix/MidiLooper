@@ -124,13 +124,11 @@ void DisplayManager2::drawPianoRoll(uint32_t currentTick, Track& selectedTrack) 
     const auto& notes = track.getNoteEvents();
 
     // Draw piano roll when loop valid
-    const NoteEvent* activeNote = nullptr;
-    const NoteEvent* lastPlayedNote = nullptr;
+
     setLastPlayedNote(nullptr); // Reset at the start
     uint32_t bestTick = 0;
     const NoteEvent* bestNote = nullptr;
 
-    uint32_t lastPlayedTick = 0;
     const int pianoRollY0 = 0;
     const int pianoRollY1 = 31;
     if (lengthLoop > 0) {
