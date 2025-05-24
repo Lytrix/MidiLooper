@@ -33,7 +33,8 @@ private:
     static constexpr int maxPulse = 10;      // 75% of  16 steps
     static constexpr int minBrightness = 8;  // 50%  16 steps
     static constexpr int maxBrightness = 15; // 90%   16 steps
-
+    
+    const NoteEvent* activeNote = nullptr;
     const NoteEvent* lastPlayedNote = nullptr;
     uint32_t _prevDrawTick = 0;
     SSD1322 _display;
