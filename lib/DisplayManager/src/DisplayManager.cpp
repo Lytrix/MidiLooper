@@ -5,6 +5,7 @@
 #include "ClockManager.h"
 #include "TrackManager.h"
 #include "Logger.h"
+#include "TrackUndo.h"
 
 LiquidCrystal lcd(LCD::RS, LCD::ENABLE, LCD::D4, LCD::D5, LCD::D6, LCD::D7);
 DisplayManager displayManager;  // Global instance
@@ -28,7 +29,7 @@ void DisplayManager::update() {
   const auto& notes = track.getNoteEvents();
   uint32_t currentTick = clockManager.getCurrentTick();
   uint32_t startLoopTick = track.getStartLoopTick();
-  uint8_t getUndoCount = track.getUndoCount();
+  uint8_t getUndoCount = TrackUndo::getUndoCount(track);
 
   uint32_t loopLengthTicks;
   // grow loop length while recording to be able to display in piano roll

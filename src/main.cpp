@@ -17,7 +17,8 @@ void setup() {
   digitalWrite(LED_BUILTIN, HIGH);  // Turn on LED for 200ms
   delay(200);
   digitalWrite(LED_BUILTIN, LOW);
-
+  
+  buttonManager.setup({Buttons::RECORD, Buttons::PLAY});
   Serial.begin(115200);
   while (!Serial && millis() < 2000) delay(10);  // Teensy-safe wait
 
@@ -46,7 +47,7 @@ void setup() {
   // Initialize other components
   clockManager.setup();
   midiHandler.setup();
-  buttonManager.setup({Buttons::RECORD, Buttons::PLAY});
+ 
   displayManager2.setup();
   Serial.println("Main: Dispaly Setup done");
   looper.setup();
