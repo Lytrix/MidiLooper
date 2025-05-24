@@ -12,7 +12,7 @@ https://iestyn-lewis.github.io/4by8/
 ## Hardware ##
 - 1x Teensy 4.1
 - 2x momentary button
-- 1x liquid lcd display 16x2
+- 1x 256x64 4bit monochrome display (there is also code for using a liquid lcd display 16x2)
 - 1x 6N137
 
 The midi circuit is based on https://www.pjrc.com/teensy/td_libs_MIDI.html
