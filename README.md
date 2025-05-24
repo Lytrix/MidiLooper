@@ -18,13 +18,16 @@ https://iestyn-lewis.github.io/4by8/
 The midi circuit is based on https://www.pjrc.com/teensy/td_libs_MIDI.html
 
 ## Features ##
+Multi-track MIDI looper with full undo/redo, auto-save/load, and clear visual feedback—ready for live performance or creative studio work!
+
 - 4 Midi Tracks
 - 192 PPQN internal clock for live recording
 - 24 PPQN midi Sync
 - 16x2 information display
 - 2 button operation   
-- 99 Undos per track     
-- Automatic saving of Loops on SD card
+- 99 Undos per track
+- Track clear Undo     
+- Automatic saving after each edit and full recall of your Loops on SD card when powering up.
 - Reload last used state and loops on startup
 
 ## 🔴 Button A – Recording, Overdubbing, Playback Control ##
