@@ -33,7 +33,7 @@ public:
   // --- Playback / Overdub ---
   void startPlayingTrack(uint8_t trackIndex);
   void stopPlayingTrack(uint8_t trackIndex);
-  void overdubTrack(uint8_t trackIndex);
+  void startOverdubbingTrack(uint8_t trackIndex);
   void clearTrack(uint8_t trackIndex);
 
   // --- Mute / Solo ---

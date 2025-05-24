@@ -63,6 +63,8 @@ public:
   bool setState(TrackState newState);  // Returns true if transition was valid
   bool isValidStateTransition(TrackState newState) const;
   const char* getStateName(TrackState state);
+  // For loading state from SD card else the state machine will corrupt the state
+  void forceSetState(TrackState newState); 
 
   // Getter functions for events
   const std::vector<MidiEvent>& getEvents() const;
@@ -74,6 +76,7 @@ public:
   void shiftNoteEvents(int32_t offset);
   uint32_t findLastEventTick() const;
   uint32_t computeLoopLengthTicks(uint32_t lastEventTick) const;
+
   // For any notes still in pendingNotes, emit a NoteOff at offAbsTick
   void finalizePendingNotes(uint32_t offAbsTick);
   void resetPlaybackState(uint32_t currentTick);
@@ -97,6 +100,11 @@ public:
   void clear();
   void toggleMuteTrack();
 
+  // Undo control
+  void undoClearTrack();
+  void pushClearTrackSnapshot();
+  bool canUndoClearTrack() const;
+
   // MIDI events
   void recordMidiEvents(midi::MidiType type, byte channel, byte data1, byte data2, uint32_t currentTick);
   void playMidiEvents(uint32_t currentTick, bool isAudible);
@@ -117,7 +125,7 @@ public:
   size_t getUndoCount() const; // Number of available undo steps
   bool canUndo() const; // Returns true if there is at least one undoable state
   void popLastUndo();   // Remove and return the last undo snapshot
-  
+
   // Read-only access to undo history (optional)
   const std::vector<MidiEvent>& peekLastMidiSnapshot() const; // Peek at the latest MIDI snapshot (const view)
   const std::vector<NoteEvent>& peekLastNoteSnapshot() const; // Peek at the latest NoteEvent snapshot (const view)
@@ -146,6 +154,10 @@ public:
   bool isStopped() const;
   bool isMuted() const;
 
+  // Add to public section of Track to be able to save the events
+  std::vector<MidiEvent>& getMidiEvents() { return midiEvents; }
+  std::vector<NoteEvent>& getNoteEvents() { return noteEvents; }
+  
 private:
   bool isPlayingBack;  // Flag to ignore playback events during overdub
   void sendMidiEvent(const MidiEvent& evt);
@@ -171,9 +183,16 @@ private:
   std::deque<std::vector<NoteEvent>> noteHistory;
   size_t midiEventCountAtLastSnapshot = 0;
   size_t noteEventCountAtLastSnapshot = 0;
-
+  
   // State management
   bool transitionState(TrackState newState);  // Internal state transition method
+
+  // Undo clear track control
+  std::deque<std::vector<MidiEvent>> clearMidiHistory;
+  std::deque<std::vector<NoteEvent>> clearNoteHistory;
+  std::deque<TrackState> clearStateHistory; // Track state history for clear track
+  std::deque<uint32_t> clearLengthHistory; // Track length history for clear track
+  
 };
 
 #endif

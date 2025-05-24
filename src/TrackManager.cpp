@@ -1,6 +1,7 @@
 #include "Globals.h"
 #include "ClockManager.h"
 #include "TrackManager.h"
+#include "StorageManager.h"
 #include "Logger.h"
 
 TrackManager trackManager;
@@ -34,11 +35,13 @@ void TrackManager::startRecordingTrack(uint8_t trackIndex, uint32_t currentTick)
 }
 
 void TrackManager::stopRecordingTrack(uint8_t trackIndex) {
+  Serial.println("stopRecordingTrack called");
   if (trackIndex >= Config::NUM_TRACKS) return;
 
-  uint32_t recordedLength = tracks[trackIndex].getLength();
-  tracks[trackIndex].stopRecording(clockManager.getCurrentTick());
 
+  tracks[trackIndex].stopRecording(clockManager.getCurrentTick());
+  uint32_t recordedLength = tracks[trackIndex].getLength();
+  
   if (masterLoopLength == 0) {
     setMasterLoopLength(recordedLength);  // First loop sets master length
   }
@@ -46,6 +49,8 @@ void TrackManager::stopRecordingTrack(uint8_t trackIndex) {
   if (autoAlignEnabled) {
     tracks[trackIndex].setLength(masterLoopLength);
   }
+  Serial.println("Saving state after recording");
+  StorageManager::saveState(looperState); // Save after recording
 }
 
 void TrackManager::queueRecordingTrack(uint8_t trackIndex) {
@@ -56,7 +61,7 @@ void TrackManager::queueStopRecordingTrack(uint8_t trackIndex) {
   if (trackIndex < Config::NUM_TRACKS) pendingStop[trackIndex] = true;
 }
 
-void TrackManager::overdubTrack(uint8_t trackIndex) {
+void TrackManager::startOverdubbingTrack(uint8_t trackIndex) {
   if (trackIndex < Config::NUM_TRACKS) {
     tracks[trackIndex].startOverdubbing(clockManager.getCurrentTick());
   }
