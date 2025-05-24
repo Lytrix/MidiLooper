@@ -7,6 +7,8 @@
 #include <unordered_map>  // For pendingNotes
 #include <deque>          // For undo
 
+class TrackUndo; // Forward declaration
+
 // Track states with clear transitions
 enum TrackState {
   TRACK_EMPTY,              // Initial state Empty track
@@ -93,17 +95,10 @@ public:
   // Overdubbing control
   void startOverdubbing(uint32_t currentTick);
   void stopOverdubbing();
-  bool canUndoOverdub() const;
-  void undoOverdub();
 
   // Track management
   void clear();
   void toggleMuteTrack();
-
-  // Undo control
-  void undoClearTrack();
-  void pushClearTrackSnapshot();
-  bool canUndoClearTrack() const;
 
   // MIDI events
   void recordMidiEvents(midi::MidiType type, byte channel, byte data1, byte data2, uint32_t currentTick);
@@ -121,21 +116,6 @@ public:
   size_t getMidiEventCount() const;
   size_t getNoteEventCount() const;
   
-  // Undo functions
-  size_t getUndoCount() const; // Number of available undo steps
-  bool canUndo() const; // Returns true if there is at least one undoable state
-  void popLastUndo();   // Remove and return the last undo snapshot
-
-  // Read-only access to undo history (optional)
-  const std::vector<MidiEvent>& peekLastMidiSnapshot() const; // Peek at the latest MIDI snapshot (const view)
-  const std::vector<NoteEvent>& peekLastNoteSnapshot() const; // Peek at the latest NoteEvent snapshot (const view)
-  std::deque<std::vector<MidiEvent>>& getMidiHistory() { return midiHistory; }
-  std::deque<std::vector<NoteEvent>>& getNoteHistory() { return noteHistory; }
-  const std::vector<MidiEvent>& getCurrentMidiSnapshot() const;
-  const std::vector<NoteEvent>& getCurrentNoteSnapshot() const;
-
-  void  pushUndoSnapshot();  // For initial start overdub.
-
   // Track length control
   uint32_t getStartLoopTick() const;
   uint32_t getLength() const;
@@ -159,6 +139,7 @@ public:
   std::vector<NoteEvent>& getNoteEvents() { return noteEvents; }
   
 private:
+  friend class TrackUndo;
   bool isPlayingBack;  // Flag to ignore playback events during overdub
   void sendMidiEvent(const MidiEvent& evt);
 
@@ -176,23 +157,24 @@ private:
   std::vector<MidiEvent> midiEvents;
   std::vector<NoteEvent> noteEvents;
   
-  // Undo management
-  bool hasNewEventsSinceSnapshot = false;  // flips to true on any new event
-  bool suppressNextSnapshot = false; // If undo has been executed during the loop
-  std::deque<std::vector<MidiEvent>> midiHistory;  // snapshots before each overdub
-  std::deque<std::vector<NoteEvent>> noteHistory;
-  size_t midiEventCountAtLastSnapshot = 0;
-  size_t noteEventCountAtLastSnapshot = 0;
-  
   // State management
   bool transitionState(TrackState newState);  // Internal state transition method
 
+  // Undo management
+  bool hasNewEventsSinceSnapshot = false;
+  bool suppressNextSnapshot = false;
+  std::deque<std::vector<MidiEvent>> midiHistory;
+  std::deque<std::vector<NoteEvent>> noteHistory;
+  size_t midiEventCountAtLastSnapshot = 0;
+  size_t noteEventCountAtLastSnapshot = 0;
   // Undo clear track control
   std::deque<std::vector<MidiEvent>> clearMidiHistory;
   std::deque<std::vector<NoteEvent>> clearNoteHistory;
-  std::deque<TrackState> clearStateHistory; // Track state history for clear track
-  std::deque<uint32_t> clearLengthHistory; // Track length history for clear track
-  
+  std::deque<TrackState> clearStateHistory;
+  std::deque<uint32_t> clearLengthHistory;
+
 };
+
+#include "TrackUndo.h"
 
 #endif

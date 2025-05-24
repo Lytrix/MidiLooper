@@ -4,6 +4,7 @@
 #include "ButtonManager.h"
 #include "StorageManager.h"
 #include "Logger.h"
+#include "TrackUndo.h"
 
 ButtonManager buttonManager;
 
@@ -27,9 +28,17 @@ void ButtonManager::setup(const std::vector<uint8_t>& pins) {
     pendingShortPress.resize(countPins, false);
     shortPressExpireTime.resize(countPins, 0);
 
+    uint32_t t0 = millis();
+
+    // seed pressTimes so that initial rises are harmless
+    pressTimes.assign(countPins, t0);
+
     for (size_t i = 0; i < countPins; ++i) {
         buttons[i].attach(pins[i], INPUT_PULLUP);
         buttons[i].interval(DEFAULT_DEBOUNCE_INTERVAL);
+        // prime the debouncer to clear any pending transitions
+        buttons[i].update();
+        buttons[i].update();
     }
 
     if (DEBUG_BUTTONS) {
@@ -41,10 +50,14 @@ void ButtonManager::setup(const std::vector<uint8_t>& pins) {
 
 void ButtonManager::update() {
     // Ignore states when booting up, pullup change is else detected as button press
-    static unsigned long bootTime = millis();
-    if (millis() - bootTime < 2000) return;
-
+       // still ignore the first second of boot-up
+    static uint32_t bootTime = millis();
     uint32_t now = millis();
+    if (now - bootTime < 1000) {
+        // make sure Bounce keeps its state up-to-date
+        for (auto& b : buttons) b.update();
+        return;
+    }
 
     for (size_t i = 0; i < buttons.size(); ++i) {
         buttons[i].update();
@@ -54,8 +67,14 @@ void ButtonManager::update() {
         }
 
         if (buttons[i].rose()) {
+            // never fire on a rise if we never saw a fall
+            if (pressTimes[i] == 0) {
+                pressTimes[i] = now;
+                continue;
+            }
+            
             uint32_t duration = now - pressTimes[i];
-            if (duration >= LONG_PRESS_TIME) {
+            if (duration >= LONG_PRESS_TIME ) {
                 handleButton(i, BUTTON_LONG_PRESS);
             } else {
                 // Delay decision for short press vs. double tap
@@ -89,9 +108,9 @@ void ButtonManager::handleButton(uint8_t index, ButtonAction action) {
     if (index == 0) {
         switch (action) {
             case BUTTON_DOUBLE_PRESS:
-                if (track.canUndo()) {
+                if (TrackUndo::canUndo(track)) {
                     if (DEBUG_BUTTONS) Serial.println("Button A: Undo Overdub");
-                    track.undoOverdub();
+                    TrackUndo::undoOverdub(track);
                 }
                 break;
             case BUTTON_SHORT_PRESS:
@@ -118,7 +137,7 @@ void ButtonManager::handleButton(uint8_t index, ButtonAction action) {
                 if (!track.hasData()) {
                     logger.debug("Clear ignored — track is empty");
                 } else {
-                    track.pushClearTrackSnapshot();
+                    TrackUndo::pushClearTrackSnapshot(track);
                     track.clear();
                     StorageManager::saveState(looperState);
                     if (DEBUG_BUTTONS) Serial.println("Button A: Clear Track");
@@ -133,9 +152,9 @@ void ButtonManager::handleButton(uint8_t index, ButtonAction action) {
         // Button B: switch / mute unchanged
         switch (action) {
             case BUTTON_DOUBLE_PRESS:
-                if (track.canUndoClearTrack()) {
+                if (TrackUndo::canUndoClearTrack(track)) {
                     if (DEBUG_BUTTONS) Serial.println("Button A: Undo Clear Track");
-                    track.undoClearTrack();
+                    TrackUndo::undoClearTrack(track);
                     StorageManager::saveState(looperState);
                 } else {
                     if (DEBUG_BUTTONS) Serial.println("Nothing to undo for clear/mute.");

@@ -6,6 +6,7 @@
 #include "SSD1322_Config.h"
 #include <Font5x7Fixed.h>
 #include <Font5x7FixedMono.h>
+#include "TrackUndo.h"
 
 DisplayManager2 displayManager2;
 
@@ -273,7 +274,7 @@ void DisplayManager2::drawInfoArea(uint32_t currentTick, Track& selectedTrack) {
         ++p;
     }
     // Draw undo count right-aligned, max 99, styled per character and font
-    uint8_t undoCount = trackManager.getSelectedTrack().getUndoCount();
+    uint8_t undoCount = TrackUndo::getUndoCount(selectedTrack);
     char undoStr[6];
     if (undoCount == 0) {
         snprintf(undoStr, sizeof(undoStr), "U:--");

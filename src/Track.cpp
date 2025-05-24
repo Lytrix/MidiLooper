@@ -350,81 +350,6 @@ void Track::clear() {
 
 }
 
-// ----------------------
-// Undo helper functions 
-// ----------------------
-
-const std::vector<MidiEvent>& Track::getCurrentMidiSnapshot() const {
-    return midiEvents;
-}
-
-const std::vector<NoteEvent>& Track::getCurrentNoteSnapshot() const {
-    return noteEvents;
-}
-
-void Track::pushUndoSnapshot() {
-    getMidiHistory().push_back(midiEvents);
-    getNoteHistory().push_back(noteEvents);
-    midiEventCountAtLastSnapshot = midiEvents.size();
-    noteEventCountAtLastSnapshot = noteEvents.size();
-}
-
-
-size_t Track::getUndoCount() const {
-  return midiHistory.size();
-}
-
-bool Track::canUndo() const {
-  return !midiHistory.empty();
-}
-
-const std::vector<MidiEvent>& Track::peekLastMidiSnapshot() const {
-   return midiHistory.back();
- }
- 
- const std::vector<NoteEvent>& Track::peekLastNoteSnapshot() const {
-   return noteHistory.back();
- }
-
-void Track::popLastUndo() {
-    if (midiHistory.empty() || noteHistory.empty()) {
-        logger.log(CAT_TRACK, LOG_WARNING, "Attempted to pop undo snapshot, but none exist");
-        return;
-    }
-
-    midiHistory.pop_back();
-    noteHistory.pop_back();
-}
-
-// The real UNDO!
-
-void Track::undoOverdub() {
-    if (!canUndo()) {
-        logger.log(CAT_TRACK, LOG_WARNING, "Cannot undo overdub right now");
-        return;
-    }
-
-    // Restore the last snapshot
-     midiEvents = peekLastMidiSnapshot();
-     noteEvents = peekLastNoteSnapshot();
-
-    // Update snapshot counts to avoid duplicate undo recording
-    midiEventCountAtLastSnapshot = midiEvents.size();
-    noteEventCountAtLastSnapshot = noteEvents.size();
-
-    // Remove it from history
-    popLastUndo();
-
-    hasNewEventsSinceSnapshot = false;
-
-    logger.debug("Undo restored snapshot: midiEvents=%d noteEvents=%d  snapshotSize=%d",
-                 midiEvents.size(), noteEvents.size(), getUndoCount());
-
-    logger.logTrackEvent("Overdub undone", clockManager.getCurrentTick());
-    StorageManager::saveState(looperState); // Save after performing an undo
-}
-
-
 void Track::recordMidiEvents(midi::MidiType type, byte channel, byte data1, byte data2, uint32_t currentTick) {
   if ((isRecording() && !isPlaying()) || isOverdubbing()) {
     uint32_t tickRelative;
@@ -457,7 +382,7 @@ void Track::recordMidiEvents(midi::MidiType type, byte channel, byte data1, byte
       channel, data1, data2
     );
     if (isOverdubbing() && !hasNewEventsSinceSnapshot) {
-      pushUndoSnapshot();
+      TrackUndo::pushUndoSnapshot(*this);
       hasNewEventsSinceSnapshot = true;
     }
 
@@ -721,7 +646,6 @@ void Track::noteOff(uint8_t channel, uint8_t note, uint8_t velocity, uint32_t ti
   }
 }
 
-
 void Track::printNoteEvents() const {
   Serial.println("---- NoteEvents ----");
   for (const auto& note : noteEvents) {
@@ -737,47 +661,4 @@ void Track::printNoteEvents() const {
   Serial.println("---------------------");
 }
 
-// -------------------------
-// Undo Track clear control
-// -------------------------
 
-void Track::pushClearTrackSnapshot() {
-    clearMidiHistory.push_back(midiEvents);
-    clearNoteHistory.push_back(noteEvents);
-    clearLengthHistory.push_back(loopLengthTicks);
-    clearStateHistory.push_back(trackState);
-    
-    if (clearMidiHistory.size() > Config::MAX_UNDO_HISTORY) clearMidiHistory.pop_front();
-    if (clearNoteHistory.size() > Config::MAX_UNDO_HISTORY) clearNoteHistory.pop_front();
-    if (clearLengthHistory.size() > Config::MAX_UNDO_HISTORY) clearLengthHistory.pop_front();
-    if (clearStateHistory.size() > Config::MAX_UNDO_HISTORY) clearStateHistory.pop_front();
-}
-
-void Track::undoClearTrack() {
-    // Restore the last snapshot of the track
-    if (!clearMidiHistory.empty() && !clearNoteHistory.empty()) {
-        midiEvents = clearMidiHistory.back();
-        noteEvents = clearNoteHistory.back();
-        clearMidiHistory.pop_back();
-        clearNoteHistory.pop_back();
-    }
-    // Restore the last state of the track
-    if (!clearStateHistory.empty()) {
-        forceSetState(clearStateHistory.back());
-        clearStateHistory.pop_back();
-    }
-    // Restore the last length of the track
-    if (!clearLengthHistory.empty()) {
-        loopLengthTicks = clearLengthHistory.back();
-        clearLengthHistory.pop_back();
-    }
-    // If the track has data but is not in a visible state, set to STOPPED
-    if (!midiEvents.empty() && (trackState == TRACK_EMPTY)) {
-        setState(TRACK_STOPPED);
-    }
-
-}
-
-bool Track::canUndoClearTrack() const {
-    return (!clearMidiHistory.empty() && !clearNoteHistory.empty());
-}

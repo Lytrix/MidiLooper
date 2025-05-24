@@ -3,6 +3,7 @@
 #include "Globals.h"
 #include <SD.h>
 #include <Arduino.h>
+#include "TrackUndo.h"
 
 #define STORAGE_FILENAME "/midilooper_state.raw"
 #define STORAGE_VERSION 1
@@ -67,7 +68,7 @@ bool StorageManager::saveState(const LooperState& state) {
         if (!writeRaw(file, &noteCount, sizeof(noteCount))) { Serial.print("[StorageManager] ERROR: Failed to write noteCount for track "); Serial.println(t); file.close(); return false; }
         if (noteCount > 0 && !writeRaw(file, noteEvents.data(), noteCount * sizeof(NoteEvent))) { Serial.print("[StorageManager] ERROR: Failed to write noteEvents for track "); Serial.println(t); file.close(); return false; }
         // Undo history (midi)
-        const auto &midiHistory = track.getMidiHistory();
+        const auto &midiHistory = TrackUndo::getMidiHistory(track);
         uint32_t undoCount = midiHistory.size();
         if (!writeRaw(file, &undoCount, sizeof(undoCount))) { Serial.print("[StorageManager] ERROR: Failed to write undoCount for track "); Serial.println(t); file.close(); return false; }
         for (const auto &snapshot : midiHistory) {
@@ -76,7 +77,7 @@ bool StorageManager::saveState(const LooperState& state) {
             if (snapCount > 0 && !writeRaw(file, snapshot.data(), snapCount * sizeof(MidiEvent))) { Serial.print("[StorageManager] ERROR: Failed to write midiHistory snapshot for track "); Serial.println(t); file.close(); return false; }
         }
         // Undo history (note)
-        const auto &noteHistory = track.getNoteHistory();
+        const auto &noteHistory = TrackUndo::getNoteHistory(track);
         uint32_t noteUndoCount = noteHistory.size();
         if (!writeRaw(file, &noteUndoCount, sizeof(noteUndoCount))) { Serial.print("[StorageManager] ERROR: Failed to write noteUndoCount for track "); Serial.println(t); file.close(); return false; }
         for (const auto &snapshot : noteHistory) {
@@ -146,7 +147,7 @@ bool StorageManager::loadState(LooperState& state) {
         // Undo history (midi)
         uint32_t undoCount = 0;
         if (!readRaw(file, &undoCount, sizeof(undoCount))) { Serial.print("[StorageManager] ERROR: Failed to read undoCount for track "); Serial.println(t); file.close(); return false; }
-        auto &midiHistory = track.getMidiHistory();
+        auto &midiHistory = TrackUndo::getMidiHistory(track);
         midiHistory.clear();
         for (uint32_t u = 0; u < undoCount; ++u) {
             uint32_t snapCount = 0;
@@ -158,7 +159,7 @@ bool StorageManager::loadState(LooperState& state) {
         // Undo history (note)
         uint32_t noteUndoCount = 0;
         if (!readRaw(file, &noteUndoCount, sizeof(noteUndoCount))) { Serial.print("[StorageManager] ERROR: Failed to read noteUndoCount for track "); Serial.println(t); file.close(); return false; }
-        auto &noteHistory = track.getNoteHistory();
+        auto &noteHistory = TrackUndo::getNoteHistory(track);
         noteHistory.clear();
         for (uint32_t u = 0; u < noteUndoCount; ++u) {
             uint32_t snapCount = 0;

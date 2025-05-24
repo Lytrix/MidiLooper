@@ -1,6 +1,7 @@
 #ifndef BUTTONMANAGER_H
 #define BUTTONMANAGER_H
 
+#include <Arduino.h>
 #include <Bounce2.h>
 #include <vector>
 
@@ -31,7 +32,7 @@ private:
     std::vector<uint32_t> shortPressExpireTime;
 
     static constexpr uint16_t DOUBLE_TAP_WINDOW = 300;  // ms
-    static const uint16_t LONG_PRESS_TIME = 500; // ms
+    static const uint16_t LONG_PRESS_TIME = 800; // ms
 
     void handleButton(uint8_t index, ButtonAction action);
 };
