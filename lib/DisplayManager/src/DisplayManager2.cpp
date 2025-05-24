@@ -57,6 +57,12 @@ static void ticksToBarsBeats16thTicks2Dec(uint32_t ticks, char* out, size_t outS
 }
 
 void DisplayManager2::drawTrackStatus(uint8_t selectedTrack, uint32_t currentMillis) {
+    // Update pulse phase for state of the selected track
+    float dt = (now - _lastPulseUpdate) / 1000.0f;
+    _pulsePhase += dt * PULSE_SPEED;
+    if (_pulsePhase > 1.0f) _pulsePhase -= 1.0f;
+    _lastPulseUpdate = now;
+    
     // Font and layout
     _display.gfx.select_font(&Font5x7FixedMono);
     constexpr int x = 0; // left margin
@@ -64,10 +70,6 @@ void DisplayManager2::drawTrackStatus(uint8_t selectedTrack, uint32_t currentMil
     constexpr int trackCount = 8;
     constexpr int step = (DISPLAY_HEIGHT - char_height) / (trackCount - 1);
 
-    constexpr int minPulse = 4; // 25% of 15
-    constexpr int maxPulse = 11; // 75% of 15
-    constexpr int minBrightness = 8; // 50% of 15
-    constexpr int maxBrightness = 15; // 100% of 15
 
     for (uint8_t i = 0; i < trackCount; ++i) {
         char label[2] = {0};
@@ -115,27 +117,8 @@ void DisplayManager2::setup() {
     clearDisplayBuffer();
 }
 
-void DisplayManager2::update() {
-    // Get current global tick count for display timing
-    uint32_t currentTick = clockManager.getCurrentTick();
-    uint32_t now = millis();
-
-    // Update pulse phase for selected track
-    float dt = (now - _lastPulseUpdate) / 1000.0f;
-    _pulsePhase += dt * PULSE_SPEED;
-    if (_pulsePhase > 1.0f) _pulsePhase -= 1.0f;
-    _lastPulseUpdate = now;
-
-    // Clear frame buffer
-    _display.gfx.fill_buffer(_display.api.getFrameBuffer(), 0);
-
-    // Draw vertical track status on the left
-    drawTrackStatus(trackManager.getSelectedTrackIndex(), now);
-
-    // Margin for piano roll
-    constexpr int TRACK_MARGIN = 20;
-
-    auto& track = trackManager.getSelectedTrack();
+void DisplayManager2::drawPianoRoll(uint32_t currentTick, Track& selectedTrack) {
+    auto& track = selectedTrack;
     uint32_t startLoop = 0; // Always start at bar 1 visually
     uint32_t lengthLoop = track.getLength();
     const auto& notes = track.getNoteEvents();
@@ -143,6 +126,10 @@ void DisplayManager2::update() {
     // Draw piano roll when loop valid
     const NoteEvent* activeNote = nullptr;
     const NoteEvent* lastPlayedNote = nullptr;
+    setLastPlayedNote(nullptr); // Reset at the start
+    uint32_t bestTick = 0;
+    const NoteEvent* bestNote = nullptr;
+
     uint32_t lastPlayedTick = 0;
     const int pianoRollY0 = 0;
     const int pianoRollY1 = 31;
@@ -225,43 +212,46 @@ void DisplayManager2::update() {
                 ? (loopPos >= s || loopPos < eTick)
                 : (loopPos >= s && loopPos < eTick);
             if (inNote) activeNote = &e;
-            // Track the last note played (most recent start before or at loopPos)
-            if (s <= loopPos && absStart >= lastPlayedTick) {
-                lastPlayedNote = &e;
-                lastPlayedTick = absStart;
-            }
+           // Find the note with the largest start <= loopPos (wrapping)
+           if (s <= loopPos && (bestNote == nullptr || s > bestTick)) {
+              bestTick = s;
+              bestNote = &e;
+           }
         }
-        // After the loop, if no note was found for this loopPos, fallback to the last note in the loop
-        if (!lastPlayedNote && !notes.empty()) {
-            lastPlayedNote = &notes.back();
+        if (bestNote) {
+            setLastPlayedNote(bestNote);
+        } else if (!notes.empty()) {
+            setLastPlayedNote(&notes.back());
         }
         int cx = TRACK_MARGIN + map(loopPos, 0, lengthLoop, 0, BUFFER_WIDTH - 1 - TRACK_MARGIN);
         _display.gfx.draw_vline(_display.api.getFrameBuffer(), cx, 0, 32, barBrightness);
     }
+}
 
-    // Draw info area
+// Draw info area
+void DisplayManager2::drawInfoArea(uint32_t currentTick, Track& selectedTrack) {
     // 1. Current position (playhead) as musical time, with leading zeros and 2 decimals for ticks
     char posStr[24];
-    ticksToBarsBeats16thTicks2Dec(currentTick, posStr, sizeof(posStr), true); // true = leading zeros
     char loopLine[32];
+    // Get length of loop
+    uint32_t lengthLoop = selectedTrack.getLength();
+    
+    ticksToBarsBeats16thTicks2Dec(currentTick, posStr, sizeof(posStr), true); // true = leading zeros
     if (lengthLoop > 0 && Config::TICKS_PER_BAR > 0) {
         uint32_t bars = lengthLoop / Config::TICKS_PER_BAR;
         snprintf(loopLine, sizeof(loopLine), "LOOP:%lu", bars);
     } else {
         snprintf(loopLine, sizeof(loopLine), "LOOP:-");
     }
-    // Calculate spacing after posStr to align LOOP: and NOTE:
-    const char* alignSpaces = " "; // 1 space for alignment
     char posAndLoop[64];
-    snprintf(posAndLoop, sizeof(posAndLoop), "%s%s%s", posStr, alignSpaces, loopLine);
+    snprintf(posAndLoop, sizeof(posAndLoop), "%s%s%s", posStr, " ", loopLine); // 1 space for alignment
     // Lower brightness by 1/8 every 100 bars, min 1/8
     uint32_t bar = currentTick / Config::TICKS_PER_BAR + 1;
-    uint8_t maxBrightness = 15;
     uint8_t brightnessStep = maxBrightness / 8;
     uint8_t brightness = maxBrightness - ((bar / 100) * brightnessStep);
     if (brightness < brightnessStep) brightness = brightnessStep;
     // Draw posAndLoop with per-character font and brightness
-    int x = TRACK_MARGIN;
+    int x = DisplayManager2::TRACK_MARGIN;
     int y = DISPLAY_HEIGHT - 12;
     const char* p = posAndLoop;
     while (*p) {
@@ -295,7 +285,7 @@ void DisplayManager2::update() {
     }
     int undoLen = 0;
     for (const char* up = undoStr; *up; ++up) ++undoLen;
-    int undoX = BUFFER_WIDTH - (undoLen * 6) - 2;
+    int undoX = DISPLAY_WIDTH - (undoLen * 6) - 2;
     const char* up = undoStr;
     while (*up) {
         char c[2] = {*up, 0};
@@ -317,13 +307,18 @@ void DisplayManager2::update() {
         undoX += 6;
         ++up;
     }
+}
 
+void DisplayManager2::drawNoteInfo(uint32_t currentTick, Track& selectedTrack) {
     // 2. Note info line: SS:SS:SSS   NOTE: --- LEN: --- VEL: ---
     char noteLine[96];
     bool validNote = false;
     uint8_t noteVal = 0, velVal = 0;
     uint32_t lenVal = 0;
     char startStr[24] = {0};
+    const auto& notes = selectedTrack.getNoteEvents();
+    uint32_t lengthLoop = selectedTrack.getLength();
+    const NoteEvent* lastPlayedNote = getLastPlayedNote();
 
     if (lastPlayedNote) {
         ticksToBarsBeats16thTicks2Dec(lastPlayedNote->startNoteTick % lengthLoop, startStr, sizeof(startStr), true);
@@ -341,29 +336,50 @@ void DisplayManager2::update() {
     }
 
     if (validNote) {
-        snprintf(noteLine, sizeof(noteLine), "%s%sNOTE:%3u LEN:%3lu VEL:%3u", startStr, alignSpaces, noteVal, lenVal, velVal);
+        snprintf(noteLine, sizeof(noteLine), "%s%sNOTE:%3u LEN:%3lu VEL:%3u", startStr, " ", noteVal, lenVal, velVal);
     } else {
-        snprintf(noteLine, sizeof(noteLine), "--:--:--:--%sNOTE:--- LEN:--- VEL:---", alignSpaces);
+        snprintf(noteLine, sizeof(noteLine), "--:--:--:--%sNOTE:--- LEN:--- VEL:---", " ");
     }
     // Draw noteLine with all ':' at 50% brightness, digits at full, letters at 75%
-    x = TRACK_MARGIN;
-    y = DISPLAY_HEIGHT;
-    p = noteLine;
+    int x = DisplayManager2::TRACK_MARGIN;
+    int y = DISPLAY_HEIGHT;
+    const char* p = noteLine;
     while (*p) {
         char c[2] = {*p, 0};
         uint8_t charBrightness;
         if (*p == ':') {
-            charBrightness = brightness / 2;
+            charBrightness = maxBrightness / 2;
         } else if ((*p >= 'A' && *p <= 'Z') || (*p >= 'a' && *p <= 'z') || (*p == '-')) {
-            charBrightness = brightness / 4;
+            charBrightness = maxBrightness / 4;
         } else {
-            charBrightness = brightness;
+            charBrightness = maxBrightness;
         }
         _display.gfx.draw_text(_display.api.getFrameBuffer(), c, x, y, charBrightness);
         x += 6;
         ++p;
     }
+} 
+
+void DisplayManager2::update() {
+    // Get current global tick count for display timing
+    uint32_t currentTick = clockManager.getCurrentTick();
+    uint32_t now = millis();
+
+    // Clear frame buffer
+    _display.gfx.fill_buffer(_display.api.getFrameBuffer(), 0);
+
+    // Draw vertical track status on the left
+    drawTrackStatus(trackManager.getSelectedTrackIndex(), now);
     
+    // Draw piano roll
+    drawPianoRoll(currentTick, trackManager.getSelectedTrack());
+
+    // Draw info area
+    drawInfoArea(currentTick, trackManager.getSelectedTrack());
+
+    // Draw note info
+    drawNoteInfo(currentTick, trackManager.getSelectedTrack());
+
     // Send buffer to display
    _display.api.display();
 }
