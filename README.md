@@ -23,32 +23,36 @@ Multi-track MIDI looper with full undo/redo, auto-save/load, and clear visual fe
 - 4 Midi Tracks
 - 192 PPQN internal clock for live recording
 - 24 PPQN midi Sync
-- 16x2 information display
+- 16x2 or graphical information display
 - 2 button operation   
-- 99 Undos per track
-- Track clear Undo     
-- Automatic saving after each edit and full recall of your Loops on SD card when powering up.
+- 99 Undos per track (overdub and clear)
+- Track clear Undo (restore last cleared track)
+- Overdub Undo (revert last overdub layer)
+- Automatic saving after each edit (record, overdub, undo, clear) and full recall of your Loops on SD card when powering up.
 - Reload last used state and loops on startup
+- Robust state machine for all track transitions
+- Visual feedback for all actions and states
 
-## 🔴 Button A – Recording, Overdubbing, Playback Control ##
+## 🔴 Button A – Recording, Overdubbing, Playback, Undo, and Clear ##
 
 | Press #     | From State               | To State                 | Symbol Change | Key Action           |
 | ----------- | ------------------------ | ------------------------ | ------------- | -------------------- |
 | 1× (single) | `TRACK_EMPTY`            | `TRACK_RECORDING`        | – → R         | `startRecording()`   |
 | (internal)  | `TRACK_RECORDING`        | `TRACK_STOPPED_RECORDING`| (not shown)   | `stopRecording()`    |
 | (internal)  | `TRACK_STOPPED_RECORDING`| `TRACK_PLAYING`          | (not shown)   | `startPlaying()`     |
-| 2× (single) | `TRACK_PLAYING`          | `TRACK_OVERDUBBING`      | P → O         | `startOverdubbing()` |
-| 3× (single) | `TRACK_OVERDUBBING`      | `TRACK_PLAYING`          | O → P         | `stopOverdubbing()`  |
-| **Double**  | no change                | no change                | no change     | `undoOverdub()`      |
-| Long        | (any)                    | `TRACK_EMPTY`            | → –           | `clearTrack()`       |
+| 1× (single) | `TRACK_PLAYING`          | `TRACK_OVERDUBBING`      | P → O         | `startOverdubbing()` |
+| 1× (single) | `TRACK_OVERDUBBING`      | `TRACK_PLAYING`          | O → P         | `stopOverdubbing()`  |
+| **Double**  | Any (with undo history)  | No change                | No change     | `undoOverdub()`      |
+| Long        | Any (with data)          | `TRACK_EMPTY`            | → –           | `clearTrack()`       |
 
 
-## 🔵 Button B – Track Select and Mute Control ##
+## 🔵 Button B – Track Select, Mute, and Clear Undo ##
 
 |  Press #    | From State         | To State           | Key Action                 |
 | ----------- | ------------------ | ------------------ | -------------------------- |
 | 1× (single) | Selected Track     | Select next track  | `setSelectedTrack()`       |
-| Long        | (any               | TRACK\_MUTED       | `isAudible(0)`             |
+| Long        | Any                | Mute/Unmute        | `toggleMuteTrack()`        |
+| **Double**  | Cleared track      | Restore last clear | `undoClearTrack()`         |
 
 
 - Retroactive bar-quantized recording (record complete bars, but allow earlier recording start)
@@ -62,15 +66,22 @@ New Loop ready for overdub to add the notes in the first bar.
 ```
 
 
+## 🔄 Undo/Redo System ##
+- **Overdub Undo:** Instantly revert the last overdub layer on any track (Button A double press).
+- **Clear Undo:** Restore the last cleared track (Button B double press).
+- **Per-track history:** Each track maintains its own undo/redo history for both overdubs and clears.
+- **Auto-save:** All changes (record, overdub, undo, clear) are saved to SD card immediately.
+
 ## 🔧 Module Relationships and Data Flow ##
 
 | Module         | Key Data                            | Connected Modules             | Purpose                                                                 |
 |----------------|--------------------------------------|-------------------------------|-------------------------------------------------------------------------|
-| `ButtonManager`| Button press type, `millis()`       | `TrackManager`, `ClockManager`| Triggers recording/playback/overdub/mute/clear actions                 |
-| `TrackManager` | `selectedTrack`, `masterLoopLength` | `Track`, `ClockManager`       | Manages track states and coordination, handles quantized events        |
-| `Track`        | `MidiEvent`, `NoteEvent`, `startLoopTick`, `loopLengthTicks` | N/A                        | Stores and manages MIDI/Note data, performs playback and recording     |
-| `ClockManager` | `currentTick`                       | All other modules             | Provides global timing for sync and quantization                       |
-| `DisplayManager`| —                                   | `TrackManager`, `Track`       | Displays NoteEvents, loop status, and other track information          |
+| `ButtonManager`| Button press type, `millis()`       | `TrackManager`, `ClockManager`| Triggers recording/playback/overdub/mute/clear/undo actions             |
+| `TrackManager` | `selectedTrack`, `masterLoopLength` | `Track`, `ClockManager`       | Manages track states and coordination, handles quantized events         |
+| `Track`        | `MidiEvent`, `NoteEvent`, `startLoopTick`, `loopLengthTicks` | N/A                        | Stores and manages MIDI/Note data, performs playback and recording      |
+| `TrackUndo`    | Undo/redo/clear history per track    | `Track`                       | Manages all undo/redo/clear operations and history for each track       |
+| `ClockManager` | `currentTick`                       | All other modules             | Provides global timing for sync and quantization                        |
+| `DisplayManager`| —                                   | `TrackManager`, `Track`       | Displays NoteEvents, loop status, and other track information           |
 
 
 
