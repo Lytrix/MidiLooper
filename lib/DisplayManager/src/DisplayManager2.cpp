@@ -118,6 +118,20 @@ void DisplayManager2::setup() {
     clearDisplayBuffer();
 }
 
+
+int DisplayManager2::tickToScreenX(uint32_t tick) {
+    uint32_t loopLength = trackManager.getSelectedTrack().getLength();
+    return TRACK_MARGIN + map(tick, 0, loopLength, 0, BUFFER_WIDTH - 1 - TRACK_MARGIN);
+}
+
+int DisplayManager2::noteToScreenY(uint8_t note) {
+    // Example: map MIDI note range to screen height
+    int minNote = 36; // C2
+    int maxNote = 84; // C6
+    return DISPLAY_HEIGHT - ((note - minNote) * DISPLAY_HEIGHT) / (maxNote - minNote + 1);
+}
+
+
 void DisplayManager2::drawPianoRoll(uint32_t currentTick, Track& selectedTrack) {
     auto& track = selectedTrack;
     uint32_t startLoop = 0; // Always start at bar 1 visually
@@ -224,6 +238,26 @@ void DisplayManager2::drawPianoRoll(uint32_t currentTick, Track& selectedTrack) 
         }
         int cx = TRACK_MARGIN + map(loopPos, 0, lengthLoop, 0, BUFFER_WIDTH - 1 - TRACK_MARGIN);
         _display.gfx.draw_vline(_display.api.getFrameBuffer(), cx, 0, 32, barBrightness);
+        
+        
+        // --- Edit bracket and note highlight ---
+        if (editManager.getContext() == EDIT_NOTE) {
+            uint32_t bracketTick = editManager.getBracketTick();
+            int selectedNoteIdx = editManager.getSelectedNoteIdx();
+            const auto& notes = trackManager.getSelectedTrack().getNoteEvents();
+
+            // Convert bracketTick to screen X position
+            int bracketX = TRACK_MARGIN + map(bracketTick, 0, lengthLoop, 0, BUFFER_WIDTH - 1 - TRACK_MARGIN);
+            // Draw bracket (e.g., vertical line or rectangle)
+            _display.gfx.draw_vline(_display.api.getFrameBuffer(), bracketX, 0, pianoRollY1, BRACKET_COLOR);
+
+            // Highlight selected note if any
+            if (selectedNoteIdx != -1 && selectedNoteIdx < notes.size()) {
+                int noteY = noteToScreenY(notes[selectedNoteIdx].note); // implement this mapping
+                // Draw a rectangle or highlight around the note
+                _display.gfx.draw_rect_filled(_display.api.getFrameBuffer(), bracketX-2, noteY-2, 5, 5, HIGHLIGHT_COLOR);
+            }
+        }
     }
 }
 

@@ -24,14 +24,14 @@ extern uint8_t debugLevel;  // Set in Globals.cpp
 // --------------------
 // Hardware Configuration
 // --------------------
-// LCD Display Configuration
+// LCD Display Configuration deactived, so no pins set
 namespace LCD {
-  const int RS     = 28;    // Register Select
-  const int ENABLE = 27;    // Enable
-  const int D4     = 32;    // Data 4
-  const int D5     = 31;    // Data 5
-  const int D6     = 30;    // Data 6
-  const int D7     = 29;    // Data 7
+  const int RS     = 255;    // Register Select
+  const int ENABLE = 255;    // Enable
+  const int D4     = 255;    // Data 4
+  const int D5     = 255;    // Data 5
+  const int D6     = 255;    // Data 6
+  const int D7     = 255;    // Data 7
   const uint32_t DISPLAY_UPDATE_INTERVAL = 30 ; // in ms (approx. 333Hz)
 }
 
@@ -39,6 +39,9 @@ namespace LCD {
 namespace Buttons {
   const int RECORD = 37;      // Record/Overdub button
   const int PLAY   = 36;      // Play/Stop button
+  const int ENCODER_PIN_A = 29;
+  const int ENCODER_PIN_B = 30;
+  const int ENCODER_BUTTON_PIN = 31;
 }
 
 // MIDI Configuration
@@ -58,6 +61,7 @@ namespace Config {
   constexpr uint8_t  TICKS_PER_QUARTER_NOTE = INTERNAL_PPQN;           // For Musical Time naming consistency
   constexpr uint8_t  TICKS_PER_CLOCK = (INTERNAL_PPQN / 24);           // 8 ticks per MIDI clock pulse (24 PPQN)
   constexpr uint32_t TICKS_PER_BAR = INTERNAL_PPQN * QUARTERS_PER_BAR; // 768 or your default value (ticksPerQuarterNote * quartersPerBar)
+  constexpr uint32_t TICKS_PER_16TH_STEP = INTERNAL_PPQN / 4;          // 192 / 4 = 48 Ticks
   constexpr uint8_t  MAX_UNDO_HISTORY = 99;
 }
  

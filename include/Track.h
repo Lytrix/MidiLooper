@@ -115,7 +115,7 @@ public:
   // Event counters
   size_t getMidiEventCount() const;
   size_t getNoteEventCount() const;
-  
+
   // Track length control
   uint32_t getStartLoopTick() const;
   uint32_t getLength() const;
@@ -137,7 +137,7 @@ public:
   // Add to public section of Track to be able to save the events
   std::vector<MidiEvent>& getMidiEvents() { return midiEvents; }
   std::vector<NoteEvent>& getNoteEvents() { return noteEvents; }
-  
+
 private:
   friend class TrackUndo;
   bool isPlayingBack;  // Flag to ignore playback events during overdub
@@ -159,7 +159,7 @@ private:
   
   // State management
   bool transitionState(TrackState newState);  // Internal state transition method
-
+  
   // Undo management
   bool hasNewEventsSinceSnapshot = false;
   bool suppressNextSnapshot = false;

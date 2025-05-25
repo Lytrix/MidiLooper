@@ -4,8 +4,8 @@
 #include "MidiHandler.h"
 #include "Logger.h"
 #include "TrackStateMachine.h"
+#include "LooperState.h"
 #include <algorithm>  // for std::sort
-#include "DisplayManager.h"
 #include "StorageManager.h"
 #include "stdint.h"
 
@@ -268,7 +268,7 @@ void Track::stopOverdubbing() {
   // Reset playback state
   startLoopTick = 0;
   resetPlaybackState(0);
-  StorageManager::saveState(looperState); // Save after overdubbing
+  StorageManager::saveState(looperState.getLooperState()); // Save after overdubbing
 }
 
 // -------------------------
@@ -628,7 +628,6 @@ void Track::noteOff(uint8_t channel, uint8_t note, uint8_t velocity, uint32_t ti
         pending.startNoteTick,
         tick
       });
-      displayManager.flashBarCounterHighlight();
     done:
       pendingNotes.erase(it);
 

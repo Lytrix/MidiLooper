@@ -23,7 +23,7 @@ Multi-track MIDI looper with full undo/redo, auto-save/load, and clear visual fe
 - 4 Midi Tracks
 - 192 PPQN internal clock for live recording
 - 24 PPQN midi Sync
-- 16x2 or graphical information display
+- 256x64 display and 16x2 display driver
 - 2 button operation   
 - 99 Undos per track (overdub and clear)
 - Track clear Undo (restore last cleared track)
