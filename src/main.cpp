@@ -5,8 +5,8 @@
 #include "MidiHandler.h"
 #include "TrackManager.h"
 #include "ButtonManager.h"
-#include "DisplayManager.h"
 #include "DisplayManager2.h"
+#include "LooperState.h"
 #include "Looper.h"
 #include "Track.h"
 #include "Globals.h"
@@ -18,7 +18,7 @@ void setup() {
   delay(200);
   digitalWrite(LED_BUILTIN, LOW);
   
-  buttonManager.setup({Buttons::RECORD, Buttons::PLAY});
+  buttonManager.setup({Buttons::RECORD, Buttons::PLAY, Buttons::ENCODER_BUTTON_PIN});
   Serial.begin(115200);
   while (!Serial && millis() < 2000) delay(10);  // Teensy-safe wait
 
@@ -61,10 +61,14 @@ void loop() {
   // Poll MIDI input
   midiHandler.handleMidiInput();
 
+  // Update looper state to set button logic
+  looperState.update();
+
   // Update less time sensitive modules
   buttonManager.update();
   looper.update();
 
+  
   // Only update display if enough time has passed (steady-rate)
   if (now - lastDisplayUpdate >= LCD::DISPLAY_UPDATE_INTERVAL) {
     lastDisplayUpdate = now;

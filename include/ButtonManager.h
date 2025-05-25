@@ -12,12 +12,21 @@ enum ButtonAction {
     BUTTON_LONG_PRESS
 };
 
+enum ButtonId {
+    BUTTON_A = 0,
+    BUTTON_B = 1,
+    BUTTON_ENCODER = 2
+};
+
+
+
 class ButtonManager {
 public:
     ButtonManager();
 
     void setup(const std::vector<uint8_t>& pins);
     void update();
+    void handleButton(ButtonId button, ButtonAction action);
 
     // Debounce interval in milliseconds accessable for all functions
     static const uint16_t DEFAULT_DEBOUNCE_INTERVAL = 10;
@@ -32,9 +41,10 @@ private:
     std::vector<uint32_t> shortPressExpireTime;
 
     static constexpr uint16_t DOUBLE_TAP_WINDOW = 300;  // ms
-    static const uint16_t LONG_PRESS_TIME = 800; // ms
+    static const uint16_t LONG_PRESS_TIME = 600; // ms
 
-    void handleButton(uint8_t index, ButtonAction action);
+    int encoderPosition = 0;
+    int lastEncoderPosition = 0;
 };
 extern ButtonManager buttonManager;
 

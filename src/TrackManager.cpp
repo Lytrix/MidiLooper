@@ -2,6 +2,7 @@
 #include "ClockManager.h"
 #include "TrackManager.h"
 #include "StorageManager.h"
+#include "LooperState.h"
 #include "Logger.h"
 
 TrackManager trackManager;
@@ -50,7 +51,7 @@ void TrackManager::stopRecordingTrack(uint8_t trackIndex) {
     tracks[trackIndex].setLength(masterLoopLength);
   }
   Serial.println("Saving state after recording");
-  StorageManager::saveState(looperState); // Save after recording
+  StorageManager::saveState(looperState.getLooperState()); // Save after recording
 }
 
 void TrackManager::queueRecordingTrack(uint8_t trackIndex) {

@@ -1,7 +1,9 @@
+
+#include <Arduino.h>
+#include "LooperState.h"
 #include "Looper.h"
 #include "StorageManager.h"
 #include <SD.h>
-#include <Arduino.h>
 
 Looper looper;  // Global instance
 
@@ -14,7 +16,7 @@ void Looper::setup() {
   SD.begin(BUILTIN_SDCARD); // or your SD chip select pin
 
   // Try to load previous state
-  if (!StorageManager::loadState(looperState)) {
+  if (!StorageManager::loadState(looperState.getLooperState())) {
       // Optionally: print a message or handle first-time setup
       Serial.println("No previous looper state found or failed to load.");
   } else {

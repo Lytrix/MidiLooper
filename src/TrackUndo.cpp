@@ -1,8 +1,8 @@
 #include "TrackUndo.h"
 #include "StorageManager.h"
+#include "LooperState.h"
 #include "Logger.h"
 #include "ClockManager.h"
-#include "DisplayManager.h"
 #include "Globals.h"
 
 // Undo overdub
@@ -27,7 +27,7 @@ void TrackUndo::undoOverdub(Track& track) {
     logger.debug("Undo restored snapshot: midiEvents=%d noteEvents=%d  snapshotSize=%d",
                  track.midiEvents.size(), track.noteEvents.size(), getUndoCount(track));
     logger.logTrackEvent("Overdub undone", clockManager.getCurrentTick());
-    StorageManager::saveState(looperState);
+    StorageManager::saveState(looperState.getLooperState());
 }
 
 size_t TrackUndo::getUndoCount(const Track& track) {
@@ -101,7 +101,6 @@ void TrackUndo::undoClearTrack(Track& track) {
     if (!track.midiEvents.empty() && (track.trackState == TRACK_EMPTY)) {
         track.setState(TRACK_STOPPED);
     }
-    displayManager.update();
 }
 
 bool TrackUndo::canUndoClearTrack(const Track& track) {
