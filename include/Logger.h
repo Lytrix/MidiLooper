@@ -2,6 +2,7 @@
 #define LOGGER_H
 
 #include <Arduino.h>
+#include "MidiEvent.h"
 
 // Log levels
 enum LogLevel {
@@ -41,7 +42,7 @@ public:
   static void logStateTransition(const char* component, const char* fromState, const char* toState);
   
   // MIDI event logging
-  static void logMidiEvent(const char* type, uint8_t channel, uint8_t data1, uint8_t data2);
+  static void logMidiEvent(const MidiEvent& evt);
   
   // Track event logging
   static void logTrackEvent(const char* event, uint32_t tick, const char* format = nullptr, ...);

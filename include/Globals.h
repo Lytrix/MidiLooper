@@ -39,8 +39,8 @@ namespace LCD {
 namespace Buttons {
   const int RECORD = 37;      // Record/Overdub button
   const int PLAY   = 36;      // Play/Stop button
-  const int ENCODER_PIN_A = 29;
-  const int ENCODER_PIN_B = 30;
+  const int ENCODER_PIN_A = 30;
+  const int ENCODER_PIN_B = 29;
   const int ENCODER_BUTTON_PIN = 31;
 }
 

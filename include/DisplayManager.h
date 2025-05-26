@@ -2,15 +2,26 @@
 
 #include <Arduino.h>
 #include "SSD1322.h"
-#include "Track.h"   // where NoteEvent is declared
+#include "Track.h"
 #include "TrackManager.h"   // for trackManager
 #include "ClockManager.h"   // for clockManager
 #include "Globals.h"
 #include "EditManager.h"
+#include <vector>
+#include <cstdint>
+#include "MidiEvent.h"
 
-class DisplayManager2 {
+// Helper struct for display only
+struct DisplayNote {
+    uint8_t note;
+    uint8_t velocity;
+    uint32_t startTick;
+    uint32_t endTick;
+};
+
+class DisplayManager {
 public:
-    DisplayManager2();
+    DisplayManager();
     void setup();
     void update();
     void clearDisplayBuffer();
@@ -24,8 +35,17 @@ public:
     
     uint32_t lastPlayedTick = 0;
 
-    const NoteEvent* getLastPlayedNote() const { return lastPlayedNote; }
-    void setLastPlayedNote(const NoteEvent* note) { lastPlayedNote = note; }
+    // If you want to track the last played note for display, use this:
+    DisplayNote lastPlayedDisplayNote = {0, 0, 0, 0};
+    // Or remove if not needed
+    // const DisplayNote* getLastPlayedNote() const { return &lastPlayedDisplayNote; }
+    // void setLastPlayedNote(const DisplayNote* note) { if (note) lastPlayedDisplayNote = *note; }
+
+    // Helper functions for piano roll rendering
+    void drawGridLines(uint32_t lengthLoop, int pianoRollY0, int pianoRollY1);
+    void drawNoteBar(const DisplayNote& e, int y, uint32_t s, uint32_t eTick, uint32_t lengthLoop, int noteBrightness);
+    void drawAllNotes(const std::vector<MidiEvent>& midiEvents, uint32_t startLoop, uint32_t lengthLoop, int minPitch, int maxPitch);
+    void drawBracket(uint32_t bracketTick, uint32_t lengthLoop, int pianoRollY1);
 
 private:
     // Pulse and brightness for selected track
@@ -38,8 +58,6 @@ private:
     static constexpr int BRACKET_COLOR = 8;
     static constexpr int HIGHLIGHT_COLOR = 10;  
 
-    const NoteEvent* activeNote = nullptr;
-    const NoteEvent* lastPlayedNote = nullptr;
     uint32_t _prevDrawTick = 0;
     SSD1322 _display;
     // Blinker/pulse state for selected track
@@ -60,4 +78,4 @@ private:
     void drawInfoArea(uint32_t currentTick, Track& selectedTrack);
     // Note info rendering
     void drawNoteInfo(uint32_t currentTick, Track& selectedTrack);
-}; extern DisplayManager2 displayManager2;
+}; extern DisplayManager displayManager;

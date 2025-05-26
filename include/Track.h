@@ -1,11 +1,14 @@
 #ifndef TRACK_H
 #define TRACK_H
 
+#pragma once
+#include <cstdint>
 #include <Arduino.h>
 #include <vector>
-#include <MIDI.h>
 #include <unordered_map>  // For pendingNotes
 #include <deque>          // For undo
+#include "MidiEvent.h"
+#include "MidiHandler.h"
 
 class TrackUndo; // Forward declaration
 
@@ -19,15 +22,6 @@ enum TrackState {
   TRACK_PLAYING,            // Playing back recorded content
   TRACK_OVERDUBBING,        // Recording additional layers while playing
   NUM_TRACK_STATES          // Always helpful to validate range
-};
-
-// MIDI event structure
-struct MidiEvent {
-  uint32_t tick;
-  midi::MidiType type;  // MIDI event type (e.g., 0x80, 0x90)
-  byte channel;
-  byte data1;
-  byte data2;
 };
 
 // Pending note structure
@@ -48,14 +42,6 @@ struct PairHash {
   }
 };
 
-// Finalized note event structure (NoteOn/NoteOff)
-struct NoteEvent {
-  uint8_t note;
-  uint8_t velocity;
-  uint32_t startNoteTick;
-  uint32_t endNoteTick;
-};
-
 class Track {
 public:
   Track();
@@ -70,12 +56,10 @@ public:
 
   // Getter functions for events
   const std::vector<MidiEvent>& getEvents() const;
-  const std::vector<NoteEvent>& getNoteEvents() const;
 
   // Helpers for stopRecording
   uint32_t quantizeStart(uint32_t originalStart) const;
   void shiftMidiEvents(int32_t offset);
-  void shiftNoteEvents(int32_t offset);
   uint32_t findLastEventTick() const;
   uint32_t computeLoopLengthTicks(uint32_t lastEventTick) const;
 
@@ -114,7 +98,6 @@ public:
 
   // Event counters
   size_t getMidiEventCount() const;
-  size_t getNoteEventCount() const;
 
   // Track length control
   uint32_t getStartLoopTick() const;
@@ -136,7 +119,6 @@ public:
 
   // Add to public section of Track to be able to save the events
   std::vector<MidiEvent>& getMidiEvents() { return midiEvents; }
-  std::vector<NoteEvent>& getNoteEvents() { return noteEvents; }
 
 private:
   friend class TrackUndo;
@@ -155,7 +137,6 @@ private:
   // Event storage
   std::unordered_map<std::pair<uint8_t, uint8_t>, PendingNote, PairHash> pendingNotes;
   std::vector<MidiEvent> midiEvents;
-  std::vector<NoteEvent> noteEvents;
   
   // State management
   bool transitionState(TrackState newState);  // Internal state transition method
@@ -164,12 +145,9 @@ private:
   bool hasNewEventsSinceSnapshot = false;
   bool suppressNextSnapshot = false;
   std::deque<std::vector<MidiEvent>> midiHistory;
-  std::deque<std::vector<NoteEvent>> noteHistory;
   size_t midiEventCountAtLastSnapshot = 0;
-  size_t noteEventCountAtLastSnapshot = 0;
   // Undo clear track control
   std::deque<std::vector<MidiEvent>> clearMidiHistory;
-  std::deque<std::vector<NoteEvent>> clearNoteHistory;
   std::deque<TrackState> clearStateHistory;
   std::deque<uint32_t> clearLengthHistory;
 
