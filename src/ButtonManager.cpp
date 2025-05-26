@@ -111,27 +111,44 @@ void ButtonManager::update() {
     }
 
     // --- Encoder handling ---
+    static uint32_t lastEncoderTime = 0;
     long newEncoderPos = encoder.read() / 4; // adjust divisor for your encoder
-    if (newEncoderPos != encoderPosition) {
-        lastEncoderPosition = encoderPosition;
-        encoderPosition = newEncoderPos;
+    int rawDelta = newEncoderPos - encoderPosition;
+    if (rawDelta != 0) {
+        uint32_t now = millis();
+        uint32_t interval = now - lastEncoderTime;
+        lastEncoderTime = now;
+        int accel = 1;
+        if (editManager.getCurrentState() == editManager.getStartNoteState()) {
+            if (interval < 50) accel = 24;
+            else if (interval < 75) accel = 4;
+            else if (interval < 100) accel = 2;
+        } else {
+            // Edit mode: slow down encoder
+            if (interval < 50) accel = 4;
+            else if (interval < 75) accel = 3;
+            else if (interval < 100) accel = 2;
+        }
+        // else accel = 1;
+        int finalDelta = rawDelta * accel;
         if (editManager.getCurrentState() != nullptr) {
             // In edit mode: encoder changes value
-            int delta = encoderPosition - lastEncoderPosition;
-            editManager.onEncoderTurn(trackManager.getSelectedTrack(), delta);
+            editManager.onEncoderTurn(trackManager.getSelectedTrack(), finalDelta);
             if (DEBUG_BUTTONS) {
                 Serial.print("[EDIT] Encoder value change: ");
-                Serial.println(delta);
+                Serial.println(finalDelta);
             }
         } else {
-            // Not in edit mode, print encoder position for debug
+            // Not in edit mode, print encoder position and delta for debug
             if (DEBUG_BUTTONS) {
                 Serial.print("Encoder position: ");
-                Serial.println(encoderPosition);
+                Serial.println(newEncoderPos);
+                Serial.print("Encoder delta: ");
+                Serial.println(rawDelta);
             }
         }
+        encoderPosition = newEncoderPos; // Only update after using the delta
     }
-
 }
 
 void ButtonManager::handleButton(ButtonId button, ButtonAction action) {
@@ -237,7 +254,7 @@ void ButtonManager::handleButton(ButtonId button, ButtonAction action) {
                     }
                     break;
                 case BUTTON_LONG_PRESS:
-                    if (editManager.getCurrentState() != nullptr) {
+                    if (looperState.getEditContext() != EDIT_NONE) {
                         logger.debug("Exit edit mode");
                         editManager.exitEditMode(trackManager.getSelectedTrack());
                     }   

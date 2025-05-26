@@ -88,6 +88,13 @@ bool StorageManager::saveState(const LooperState& state) {
             if (snapCount > 0 && !writeRaw(file, snapshot.data(), snapCount * sizeof(MidiEvent))) { Serial.print("[StorageManager] ERROR: Failed to write midiHistory snapshot for track "); Serial.println(t); file.close(); return false; }
         }
     }
+    // Save selected track index
+    uint8_t selectedTrackIdx = trackManager.getSelectedTrackIndex();
+    if (!file.write(&selectedTrackIdx, sizeof(selectedTrackIdx))) {
+        Serial.println("[StorageManager] ERROR: Failed to write selected track index");
+        file.close();
+        return false;
+    }
     file.close();
     Serial.println("[StorageManager] State saved successfully.");
     return true;
@@ -246,6 +253,19 @@ bool StorageManager::loadState(LooperState& state) {
         }
         // Store loaded data for this track
         tracksData[t] = {loadedTrackState, muted, startLoopTick, loopLengthTicks, midiEvents, midiHistory};
+    }
+    // Try to read selected track index (if present)
+    uint8_t selectedTrackIdx = 0;
+    if ((file.size() - file.position()) >= sizeof(selectedTrackIdx)) {
+        if (!readRaw(file, &selectedTrackIdx, sizeof(selectedTrackIdx))) {
+            Serial.println("[StorageManager] ERROR: Failed to read selected track index");
+            file.close();
+            return false;
+        }
+        trackManager.setSelectedTrack(selectedTrackIdx);
+    } else {
+        // Backward compatibility: default to track 0
+        trackManager.setSelectedTrack(0);
     }
     file.close();
     Serial.println("[StorageManager] State loaded successfully.");

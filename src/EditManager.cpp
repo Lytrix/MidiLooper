@@ -23,7 +23,12 @@ void EditManager::setState(EditState* newState, Track& track, uint32_t startTick
 }
 
 void EditManager::onEncoderTurn(Track& track, int delta) {
-    if (currentState) currentState->onEncoderTurn(*this, track, delta);
+    if (currentState) {
+        int step = (delta > 0) ? 1 : -1;
+        for (int i = 0; i < abs(delta); ++i) {
+            currentState->onEncoderTurn(*this, track, step);
+        }
+    }
 }
 
 void EditManager::onButtonPress(Track& track) {

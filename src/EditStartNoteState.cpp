@@ -59,13 +59,13 @@ void EditStartNoteState::onEncoderTurn(EditManager& manager, Track& track, int d
         return (evt.type == midi::NoteOff || (evt.type == midi::NoteOn && evt.data.noteData.velocity == 0)) && evt.data.noteData.note == dn.note && evt.tick == dn.endTick;
     });
     if (onIt == midiEvents.end() || offIt == midiEvents.end()) return;
-    // Move start tick by delta, keep length constant
-    int32_t newStart = (int32_t)dn.startTick + delta;
-    if (newStart < 0) newStart = 0;
-    if (newStart >= (int32_t)loopLength) newStart = loopLength - 1;
+    // Move start tick by delta, keep length constant, handle wrap-around
+    int32_t newStart = ((int32_t)dn.startTick + delta + (int32_t)loopLength) % (int32_t)loopLength;
     int32_t noteLen = (int32_t)dn.endTick - (int32_t)dn.startTick;
-    int32_t newEnd = newStart + noteLen;
-    if (newEnd > (int32_t)loopLength) newEnd = loopLength;
+    if (noteLen < 0) noteLen += loopLength; // handle wrapped notes
+    int32_t newEnd = (newStart + noteLen) % (int32_t)loopLength;
+    // Prevent zero-length note
+    if (newEnd == newStart) newEnd = (newStart + 1) % (int32_t)loopLength;
     // Update events
     onIt->tick = newStart;
     offIt->tick = newEnd;

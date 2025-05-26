@@ -319,7 +319,7 @@ void DisplayManager::drawInfoArea(uint32_t currentTick, Track& selectedTrack) {
         } else if ((*p >= 'A' && *p <= 'Z') || (*p >= 'a' && *p <= 'z')) {
             charBrightness = brightness / 4;
         } else {
-            charBrightness = brightness;
+            charBrightness = brightness / 3;
         }
         // Select font: digits, '-', and ':' use mono, rest use normal
         if (((*p >= '0' && *p <= '9') || *p == '-' || *p == ':')) {
@@ -352,7 +352,7 @@ void DisplayManager::drawInfoArea(uint32_t currentTick, Track& selectedTrack) {
         } else if ((*up >= 'A' && *up <= 'Z') || (*up >= 'a' && *up <= 'z')) {
             charBrightness = brightness / 4;
         } else {
-            charBrightness = brightness;
+            charBrightness = brightness / 3;
         }
         // Select font: digits, '-', and ':' use mono, rest use normal
         if (((*up >= '0' && *up <= '9') || *up == '-' || *up == ':')) {
@@ -429,10 +429,7 @@ void DisplayManager::drawNoteInfo(uint32_t currentTick, Track& selectedTrack) {
     }
 
     if (noteToShow) {
-        Serial.print("drawNoteInfo: note=");
-    Serial.print(noteToShow->note);
-    Serial.print(" tick=");
-        Serial.println(displayStartTick);
+        // Prepare the time string
         ticksToBarsBeats16thTicks2Dec(displayStartTick % lengthLoop, startStr, sizeof(startStr), true);
         noteVal = noteToShow->note;
         lenVal = noteToShow->endTick - noteToShow->startTick;
@@ -448,19 +445,42 @@ void DisplayManager::drawNoteInfo(uint32_t currentTick, Track& selectedTrack) {
     int x = DisplayManager::TRACK_MARGIN;
     int y = DISPLAY_HEIGHT;
     const char* p = noteLine;
-    while (*p) {
-        char c[2] = {*p, 0};
-        uint8_t charBrightness;
-        if (*p == ':') {
-            charBrightness = maxBrightness / 2;
-        } else if ((*p >= 'A' && *p <= 'Z') || (*p >= 'a' && *p <= 'z') || (*p == '-')) {
-            charBrightness = maxBrightness / 4;
-        } else {
-            charBrightness = maxBrightness;
+
+    // Draw rectangle and inverted font for time string if in EditStartNoteState
+    bool editStartNote = (editManager.getCurrentState() == editManager.getStartNoteState());
+    // intselectedIdx = editManager.getSelectedNoteIdx();
+    bool noteSelected = (selectedIdx >= 0 && selectedIdx < (int)notes.size());
+    if (noteToShow) {
+        // Draw the time string (ticksToBarsBeats16thTicks2Dec)
+        int timeStrLen = 11; // "00:00:00:00"
+        for (int i = 0; i < timeStrLen; ++i) {
+            char c[2] = {startStr[i], 0};
+            _display.gfx.select_font(&Font5x7FixedMono);
+            uint8_t charBrightness;
+            if (editManager.getCurrentState() == editManager.getStartNoteState() && noteSelected) {
+                charBrightness = 15;
+            } else {
+                charBrightness = maxBrightness/3;
+            }
+            _display.gfx.draw_text(_display.api.getFrameBuffer(), c, x + i * 6, y, charBrightness);
         }
-        _display.gfx.draw_text(_display.api.getFrameBuffer(), c, x, y, charBrightness);
-        x += 6;
-        ++p;
+        // Draw the rest of the info line (note, len, vel) as normal, using original brightness logic
+        int infoX = x + timeStrLen * 6 + 6; // 1 char space after time
+        const char* infoPtr = noteLine + timeStrLen;
+        while (*infoPtr) {
+            char c[2] = {*infoPtr, 0};
+            uint8_t charBrightness;
+            if (*infoPtr == ':') {
+                charBrightness = maxBrightness / 2;
+            } else if ((*infoPtr >= 'A' && *infoPtr <= 'Z') || (*infoPtr >= 'a' && *infoPtr <= 'z') || (*infoPtr == '-')) {
+                charBrightness = maxBrightness / 4;
+            } else {
+                charBrightness = maxBrightness/3;
+            }
+            _display.gfx.draw_text(_display.api.getFrameBuffer(), c, infoX, y, charBrightness);
+            infoX += 6;
+            ++infoPtr;
+        }
     }
 }
 
