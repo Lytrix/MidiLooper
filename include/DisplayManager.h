@@ -78,4 +78,5 @@ private:
     void drawInfoArea(uint32_t currentTick, Track& selectedTrack);
     // Note info rendering
     void drawNoteInfo(uint32_t currentTick, Track& selectedTrack);
+    void drawInfoField(const char* label, const char* value, int x, int y, bool highlight, uint8_t defaultBrightness = 5);
 }; extern DisplayManager displayManager;

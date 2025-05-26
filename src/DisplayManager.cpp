@@ -8,8 +8,24 @@
 #include <Font5x7FixedMono.h>
 #include "TrackUndo.h"
 #include <map>
+#include <string>
 
 DisplayManager displayManager;
+
+// Generic helper to draw a label:value field at (x, y) with optional highlight brightness
+void DisplayManager::drawInfoField(const char* label, const char* value, int x, int y, bool highlight, uint8_t defaultBrightness = 5) {
+    
+    int labelLen = strlen(label);
+    int labelWidth = labelLen * 6;
+    int colonWidth = 6;
+
+    uint8_t brightness = highlight ? 15 : defaultBrightness;
+    // Always use mono font for info fields
+    _display.gfx.select_font(&Font5x7Fixed);
+    _display.gfx.draw_text(_display.api.getFrameBuffer(), label, x, y, brightness / 3 + 2);
+    _display.gfx.draw_text(_display.api.getFrameBuffer(), ":", x+labelWidth, y, 4);
+    _display.gfx.draw_text(_display.api.getFrameBuffer(), value, x+labelWidth+colonWidth, y, brightness);
+}
 
 DisplayManager::DisplayManager() : _display() {
     // Don't initialize SPI here - it will be done in setup()
@@ -289,89 +305,49 @@ void DisplayManager::drawPianoRoll(uint32_t currentTick, Track& selectedTrack) {
 void DisplayManager::drawInfoArea(uint32_t currentTick, Track& selectedTrack) {
     // 1. Current position (playhead) as musical time, with leading zeros and 2 decimals for ticks
     char posStr[24];
-    char loopLine[32];
+    char loopLine[8];
     // Get length of loop
     uint32_t lengthLoop = selectedTrack.getLength();
     
     ticksToBarsBeats16thTicks2Dec(currentTick, posStr, sizeof(posStr), true); // true = leading zeros
     if (lengthLoop > 0 && Config::TICKS_PER_BAR > 0) {
         uint32_t bars = lengthLoop / Config::TICKS_PER_BAR;
-        snprintf(loopLine, sizeof(loopLine), "LOOP:%lu", bars);
+        snprintf(loopLine, sizeof(loopLine), "%lu", bars);
     } else {
-        snprintf(loopLine, sizeof(loopLine), "LOOP:-");
+        snprintf(loopLine, sizeof(loopLine), "-");
     }
-    char posAndLoop[64];
-    snprintf(posAndLoop, sizeof(posAndLoop), "%s%s%s", posStr, " ", loopLine); // 1 space for alignment
-    // Lower brightness by 1/8 every 100 bars, min 1/8
-    uint32_t bar = currentTick / Config::TICKS_PER_BAR + 1;
-    uint8_t brightnessStep = maxBrightness / 8;
-    uint8_t brightness = maxBrightness - ((bar / 100) * brightnessStep);
-    if (brightness < brightnessStep) brightness = brightnessStep;
-    // Draw posAndLoop with per-character font and brightness
+    // Draw position string
     int x = DisplayManager::TRACK_MARGIN;
     int y = DISPLAY_HEIGHT - 12;
-    const char* p = posAndLoop;
-    while (*p) {
-        char c[2] = {*p, 0};
-        uint8_t charBrightness;
-        if (*p == ':') {
-            charBrightness = brightness / 2;
-        } else if ((*p >= 'A' && *p <= 'Z') || (*p >= 'a' && *p <= 'z')) {
-            charBrightness = brightness / 4;
-        } else {
-            charBrightness = brightness / 3;
-        }
-        // Select font: digits, '-', and ':' use mono, rest use normal
-        if (((*p >= '0' && *p <= '9') || *p == '-' || *p == ':')) {
-            _display.gfx.select_font(&Font5x7FixedMono);
-        } else {
-            _display.gfx.select_font(&Font5x7Fixed);
-        }
-        _display.gfx.draw_text(_display.api.getFrameBuffer(), c, x, y, charBrightness);
-        x += 6;
-        ++p;
+    _display.gfx.select_font(&Font5x7FixedMono);
+    int timeStrLen = strlen(posStr);
+    for (int i = 0; i < timeStrLen; ++i) {
+        char c[2] = {posStr[i], 0};
+        // Dim ":" with 8/3 brightness, rest is 5
+        uint8_t charBrightness = (c[0] == ':') ? 8/3 : 5;
+        _display.gfx.draw_text(_display.api.getFrameBuffer(), c, x + i * 6, y, charBrightness);
     }
-    // Draw undo count right-aligned, max 99, styled per character and font
+
+
+    // Draw LOOP field
+    
+    int loopX = x + 12 * 6; // after posStr (11 chars + 1 space)
+    drawInfoField("LOOP", loopLine, loopX, y, false, 5);
+    // Draw undo count right-aligned, max 99
     uint8_t undoCount = TrackUndo::getUndoCount(selectedTrack);
-    char undoStr[6];
+    char undoStr[4];
     if (undoCount == 0) {
-        snprintf(undoStr, sizeof(undoStr), "U:--");
+        snprintf(undoStr, sizeof(undoStr), "--");
     } else {
         if (undoCount > 99) undoCount = 99;
-        snprintf(undoStr, sizeof(undoStr), "U:%02u", undoCount);
+        snprintf(undoStr, sizeof(undoStr), "%02u", undoCount);
     }
-    int undoLen = 0;
-    for (const char* up = undoStr; *up; ++up) ++undoLen;
-    int undoX = DISPLAY_WIDTH - (undoLen * 6) - 2;
-    const char* up = undoStr;
-    while (*up) {
-        char c[2] = {*up, 0};
-        uint8_t charBrightness;
-        if (*up == ':') {
-            charBrightness = brightness / 2;
-        } else if ((*up >= 'A' && *up <= 'Z') || (*up >= 'a' && *up <= 'z')) {
-            charBrightness = brightness / 4;
-        } else {
-            charBrightness = brightness / 3;
-        }
-        // Select font: digits, '-', and ':' use mono, rest use normal
-        if (((*up >= '0' && *up <= '9') || *up == '-' || *up == ':')) {
-            _display.gfx.select_font(&Font5x7FixedMono);
-        } else {
-            _display.gfx.select_font(&Font5x7Fixed);
-        }
-        _display.gfx.draw_text(_display.api.getFrameBuffer(), c, undoX, y, charBrightness);
-        undoX += 6;
-        ++up;
-    }
+    int undoX = DISPLAY_WIDTH - 4 * 6; // right-aligned, enough space for "U:99"
+    drawInfoField("U", undoStr, undoX, y, false, 5);
 }
 
 // --- Draw note info using midiEvents ---
 void DisplayManager::drawNoteInfo(uint32_t currentTick, Track& selectedTrack) {
-    char noteLine[96];
-    bool validNote = false;
-    uint8_t noteVal = 0, velVal = 0;
-    uint32_t lenVal = 0;
     char startStr[24] = {0};
     const auto& midiEvents = selectedTrack.getEvents();
     uint32_t lengthLoop = selectedTrack.getLength();
@@ -383,7 +359,6 @@ void DisplayManager::drawNoteInfo(uint32_t currentTick, Track& selectedTrack) {
     if (selectedIdx >= 0 && selectedIdx < (int)notes.size()) {
         noteToShow = &notes[selectedIdx];
         displayStartTick = noteToShow->startTick;
-        // If in EditStartNoteState, get the actual tick from the underlying midi event
         if (editManager.getCurrentState() == editManager.getStartNoteState()) {
             const auto& midiEventsNonConst = selectedTrack.getMidiEvents();
             auto onIt = std::find_if(midiEventsNonConst.begin(), midiEventsNonConst.end(), [&](const MidiEvent& evt) {
@@ -398,15 +373,12 @@ void DisplayManager::drawNoteInfo(uint32_t currentTick, Track& selectedTrack) {
             }
         }
     }
-    // If not in edit mode or no note selected, show currently playing note if available
     if (!noteToShow && !notes.empty()) {
         if (editManager.getCurrentState() == nullptr) {
-            // Not in edit mode: show currently playing note
             uint32_t tickInLoop = (lengthLoop > 0) ? (currentTick % lengthLoop) : currentTick;
             for (const auto& n : notes) {
                 uint32_t s = n.startTick % lengthLoop;
                 uint32_t e = n.endTick % lengthLoop;
-                // Handle wrap-around notes
                 bool isPlaying = (s <= e)
                     ? (tickInLoop >= s && tickInLoop < e)
                     : (tickInLoop >= s || tickInLoop < e);
@@ -416,71 +388,55 @@ void DisplayManager::drawNoteInfo(uint32_t currentTick, Track& selectedTrack) {
                     break;
                 }
             }
-            // If no note is currently playing, show last note
             if (!noteToShow) {
                 noteToShow = &notes.back();
                 displayStartTick = noteToShow->startTick;
             }
         } else {
-            // In edit mode but no note selected: fallback
             noteToShow = &notes.back();
             displayStartTick = noteToShow->startTick;
         }
     }
 
+    char noteStr[4] = "---";
+    char lenStr[4] = "---";
+    char velStr[4] = "---";
+    bool validNote = false;
     if (noteToShow) {
-        // Prepare the time string
         ticksToBarsBeats16thTicks2Dec(displayStartTick % lengthLoop, startStr, sizeof(startStr), true);
-        noteVal = noteToShow->note;
-        lenVal = noteToShow->endTick - noteToShow->startTick;
-        velVal = noteToShow->velocity;
+        uint8_t noteVal = noteToShow->note;
+        uint32_t lenVal = noteToShow->endTick - noteToShow->startTick;
+        uint8_t velVal = noteToShow->velocity;
         validNote = (noteVal <= 127 && velVal <= 127 && lenVal < 10000);
-    }
-
-    if (validNote) {
-        snprintf(noteLine, sizeof(noteLine), "%s%sNOTE:%3u LEN:%3lu VEL:%3u", startStr, " ", noteVal, lenVal, velVal);
-    } else {
-        snprintf(noteLine, sizeof(noteLine), "--:--:--:--%sNOTE:--- LEN:--- VEL:---", " ");
+        if (validNote) {
+            snprintf(noteStr, sizeof(noteStr), "%3u", noteVal);
+            snprintf(lenStr, sizeof(lenStr), "%3lu", lenVal);
+            snprintf(velStr, sizeof(velStr), "%3u", velVal);
+        }
     }
     int x = DisplayManager::TRACK_MARGIN;
     int y = DISPLAY_HEIGHT;
-    const char* p = noteLine;
-
-    // Draw rectangle and inverted font for time string if in EditStartNoteState
-    bool editStartNote = (editManager.getCurrentState() == editManager.getStartNoteState());
-    // intselectedIdx = editManager.getSelectedNoteIdx();
-    bool noteSelected = (selectedIdx >= 0 && selectedIdx < (int)notes.size());
-    if (noteToShow) {
-        // Draw the time string (ticksToBarsBeats16thTicks2Dec)
-        int timeStrLen = 11; // "00:00:00:00"
-        for (int i = 0; i < timeStrLen; ++i) {
-            char c[2] = {startStr[i], 0};
-            _display.gfx.select_font(&Font5x7FixedMono);
-            uint8_t charBrightness;
-            if (editManager.getCurrentState() == editManager.getStartNoteState() && noteSelected) {
-                charBrightness = 15;
-            } else {
-                charBrightness = maxBrightness/3;
-            }
-            _display.gfx.draw_text(_display.api.getFrameBuffer(), c, x + i * 6, y, charBrightness);
-        }
-        // Draw the rest of the info line (note, len, vel) as normal, using original brightness logic
-        int infoX = x + timeStrLen * 6 + 6; // 1 char space after time
-        const char* infoPtr = noteLine + timeStrLen;
-        while (*infoPtr) {
-            char c[2] = {*infoPtr, 0};
-            uint8_t charBrightness;
-            if (*infoPtr == ':') {
-                charBrightness = maxBrightness / 2;
-            } else if ((*infoPtr >= 'A' && *infoPtr <= 'Z') || (*infoPtr >= 'a' && *infoPtr <= 'z') || (*infoPtr == '-')) {
-                charBrightness = maxBrightness / 4;
-            } else {
-                charBrightness = maxBrightness/3;
-            }
-            _display.gfx.draw_text(_display.api.getFrameBuffer(), c, infoX, y, charBrightness);
-            infoX += 6;
-            ++infoPtr;
-        }
+    // Draw the time string (ticksToBarsBeats16thTicks2Dec)
+    bool isStartNote = (editManager.getCurrentState() == editManager.getStartNoteState());
+    _display.gfx.select_font(&Font5x7FixedMono);
+    int timeStrLen = strlen(startStr);
+    for (int i = 0; i < timeStrLen; ++i) {
+        char c[2] = {startStr[i], 0};
+        uint8_t charBrightness = (c[0] == ':') ? 8/3 : (isStartNote ? 15 : 5);
+        _display.gfx.draw_text(_display.api.getFrameBuffer(), c, x + i * 6, y, charBrightness);
+    }
+    // Draw NOTE, LEN, VEL fields using drawInfoField
+    int infoX = x + timeStrLen * 6 + 6; // after time string
+    bool inPitchEdit = (editManager.getCurrentState() == editManager.getPitchNoteState());
+    struct InfoField { const char* label; const char* value; bool highlight; };
+    InfoField fields[] = {
+        {"NOTE", noteStr, inPitchEdit},
+        {"LEN", lenStr, false},
+        {"VEL", velStr, false}
+    };
+    for (int i = 0; i < 3; ++i) {
+        drawInfoField(fields[i].label, fields[i].value, infoX, y, fields[i].highlight, 5);
+        infoX += strlen(fields[i].label) * 6 + 6 + strlen(fields[i].value) * 6 + 6; // label + colon + value + space
     }
 }
 

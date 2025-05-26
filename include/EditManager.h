@@ -3,6 +3,7 @@
 #include "EditState.h"
 #include "EditNoteState.h"
 #include "EditStartNoteState.h"
+#include "EditPitchNoteState.h"
 #include <vector>
 
 // Forward declarations
@@ -43,7 +44,11 @@ public:
     // Get state instances
     EditNoteState* getNoteState() { return &noteState; }
     EditStartNoteState* getStartNoteState() { return &startNoteState; }
+    EditPitchNoteState* getPitchNoteState() { return &pitchNoteState; }
     // Add more state getters as needed
+
+    void enterPitchEditMode(Track& track);
+    void exitPitchEditMode(Track& track);
 
 private:
     uint32_t bracketTick = 0;
@@ -57,6 +62,8 @@ private:
     EditState* currentState = nullptr;
     EditNoteState noteState;
     EditStartNoteState startNoteState;
+    EditPitchNoteState pitchNoteState;
+    EditState* previousState = nullptr;
     // Add more states as needed
 };
 
