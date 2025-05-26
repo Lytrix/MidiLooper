@@ -200,8 +200,9 @@ static std::vector<DisplayNote> reconstructNotes(const std::vector<MidiEvent>& m
 void DisplayManager::drawAllNotes(const std::vector<MidiEvent>& midiEvents, uint32_t startLoop, uint32_t lengthLoop, int minPitch, int maxPitch) {
     auto notes = reconstructNotes(midiEvents, lengthLoop);
 
-    // Get selection info
-    bool highlight = (editManager.getContext() == EDIT_NOTE);
+    // Highlight if in note or start note edit state
+    bool highlight = (editManager.getCurrentState() == editManager.getNoteState() ||
+                      editManager.getCurrentState() == editManager.getStartNoteState());
     int selectedNoteIdx = highlight ? editManager.getSelectedNoteIdx() : -1;
 
     for (int noteIdx = 0; noteIdx < notes.size(); ++noteIdx) {
@@ -217,7 +218,8 @@ void DisplayManager::drawAllNotes(const std::vector<MidiEvent>& midiEvents, uint
 
 // --- Helper: Draw bracket ---
 void DisplayManager::drawBracket(unsigned long a, unsigned long b, int c) {
-    if (editManager.getContext() == EDIT_NOTE) {
+    if (editManager.getCurrentState() == editManager.getNoteState() ||
+        editManager.getCurrentState() == editManager.getStartNoteState()) {
         uint32_t bracketTick = editManager.getBracketTick();
         int selectedNoteIdx = editManager.getSelectedNoteIdx();
         const auto& notes = trackManager.getSelectedTrack().getEvents();
@@ -376,20 +378,62 @@ void DisplayManager::drawNoteInfo(uint32_t currentTick, Track& selectedTrack) {
     auto notes = reconstructNotes(midiEvents, lengthLoop);
 
     const DisplayNote* noteToShow = nullptr;
-
-    if (editManager.getContext() == EDIT_NOTE) {
-        int selectedNoteIdx = editManager.getSelectedNoteIdx();
-        if (selectedNoteIdx != -1 && selectedNoteIdx < notes.size()) {
-            noteToShow = &notes[selectedNoteIdx];
+    uint32_t displayStartTick = 0;
+    int selectedIdx = editManager.getSelectedNoteIdx();
+    if (selectedIdx >= 0 && selectedIdx < (int)notes.size()) {
+        noteToShow = &notes[selectedIdx];
+        displayStartTick = noteToShow->startTick;
+        // If in EditStartNoteState, get the actual tick from the underlying midi event
+        if (editManager.getCurrentState() == editManager.getStartNoteState()) {
+            const auto& midiEventsNonConst = selectedTrack.getMidiEvents();
+            auto onIt = std::find_if(midiEventsNonConst.begin(), midiEventsNonConst.end(), [&](const MidiEvent& evt) {
+                return evt.type == midi::NoteOn &&
+                       evt.data.noteData.note == noteToShow->note &&
+                       evt.tick == noteToShow->startTick;
+            });
+            if (onIt != midiEventsNonConst.end()) {
+                displayStartTick = onIt->tick;
+            } else {
+                displayStartTick = noteToShow->startTick;
+            }
         }
     }
-    // If not in edit mode or no note selected, show last note if available
+    // If not in edit mode or no note selected, show currently playing note if available
     if (!noteToShow && !notes.empty()) {
-        noteToShow = &notes.back();
+        if (editManager.getCurrentState() == nullptr) {
+            // Not in edit mode: show currently playing note
+            uint32_t tickInLoop = (lengthLoop > 0) ? (currentTick % lengthLoop) : currentTick;
+            for (const auto& n : notes) {
+                uint32_t s = n.startTick % lengthLoop;
+                uint32_t e = n.endTick % lengthLoop;
+                // Handle wrap-around notes
+                bool isPlaying = (s <= e)
+                    ? (tickInLoop >= s && tickInLoop < e)
+                    : (tickInLoop >= s || tickInLoop < e);
+                if (isPlaying) {
+                    noteToShow = &n;
+                    displayStartTick = n.startTick;
+                    break;
+                }
+            }
+            // If no note is currently playing, show last note
+            if (!noteToShow) {
+                noteToShow = &notes.back();
+                displayStartTick = noteToShow->startTick;
+            }
+        } else {
+            // In edit mode but no note selected: fallback
+            noteToShow = &notes.back();
+            displayStartTick = noteToShow->startTick;
+        }
     }
 
     if (noteToShow) {
-        ticksToBarsBeats16thTicks2Dec(noteToShow->startTick % lengthLoop, startStr, sizeof(startStr), true);
+        Serial.print("drawNoteInfo: note=");
+    Serial.print(noteToShow->note);
+    Serial.print(" tick=");
+        Serial.println(displayStartTick);
+        ticksToBarsBeats16thTicks2Dec(displayStartTick % lengthLoop, startStr, sizeof(startStr), true);
         noteVal = noteToShow->note;
         lenVal = noteToShow->endTick - noteToShow->startTick;
         velVal = noteToShow->velocity;
