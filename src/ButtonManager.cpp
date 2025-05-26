@@ -115,21 +115,21 @@ void ButtonManager::update() {
     if (newEncoderPos != encoderPosition) {
         lastEncoderPosition = encoderPosition;
         encoderPosition = newEncoderPos;
-        if (looperState.getEditContext() != EDIT_NONE) {
-            // In edit mode: encoder changes value (simulate value change)
+        if (editManager.getCurrentState() != nullptr) {
+            // In edit mode: encoder changes value
             int delta = encoderPosition - lastEncoderPosition;
-            editManager.moveBracket(delta, trackManager.getSelectedTrack(), Config::TICKS_PER_16TH_STEP);
+            editManager.onEncoderTurn(trackManager.getSelectedTrack(), delta);
             if (DEBUG_BUTTONS) {
                 Serial.print("[EDIT] Encoder value change: ");
                 Serial.println(delta);
             }
-            // TODO: Apply value change to selected note/param/track
-        } else 
+        } else {
             // Not in edit mode, print encoder position for debug
             if (DEBUG_BUTTONS) {
                 Serial.print("Encoder position: ");
                 Serial.println(encoderPosition);
             }
+        }
     }
 
 }
@@ -223,34 +223,23 @@ void ButtonManager::handleButton(ButtonId button, ButtonAction action) {
         case BUTTON_ENCODER:
             switch (action) {
                 case BUTTON_SHORT_PRESS:
-                    if (looperState.getEditContext() == EDIT_NONE) {
-                        looperState.enterEditMode(EDIT_NOTE);
-                        editManager.enterEditMode(EDIT_NOTE, clockManager.getCurrentTick());
-                        if (DEBUG_BUTTONS) Serial.println("Encoder Button: Enter Edit Mode (EDIT_NOTE)");
+                    if (editManager.getCurrentState() == nullptr) {
+                        // Enter note edit mode
+                        editManager.enterEditMode(editManager.getNoteState(), clockManager.getCurrentTick());
+                        if (DEBUG_BUTTONS) Serial.println("Encoder Button: Enter Edit Mode (Note)");
                     } else {
-                        // Cycle through edit types
-                        EditContext ctx = looperState.getEditContext();
-                        int ctxInt = static_cast<int>(ctx);
-                        int numContexts = 3; // EDIT_NOTE, EDIT_PARAM, EDIT_TRACK
-                        ctxInt++;
-                        if (ctxInt > numContexts) ctxInt = 1;
-                        looperState.setEditContext(static_cast<EditContext>(ctxInt));
+                        // Switch to next state (for now, just stay in note state)
+                        editManager.switchToNextState(trackManager.getSelectedTrack());
                         if (DEBUG_BUTTONS) {
-                            Serial.print("Encoder Button: Edit context changed to: ");
-                            switch (looperState.getEditContext()) {
-                                case EDIT_NOTE: Serial.println("EDIT_NOTE"); break;
-                                case EDIT_PARAM: Serial.println("EDIT_PARAM"); break;
-                                case EDIT_TRACK: Serial.println("EDIT_TRACK"); break;
-                                default: Serial.println("UNKNOWN"); break;
-                            }
+                            Serial.print("Encoder Button: Switched to state: ");
+                            Serial.println(editManager.getCurrentState()->getName());
                         }
                     }
                     break;
                 case BUTTON_LONG_PRESS:
-                    if (looperState.getEditContext() != EDIT_NONE) {
+                    if (editManager.getCurrentState() != nullptr) {
                         logger.debug("Exit edit mode");
-                        looperState.exitEditMode();
-                        editManager.exitEditMode();
+                        editManager.exitEditMode(trackManager.getSelectedTrack());
                     }   
                     break;
                 default:
