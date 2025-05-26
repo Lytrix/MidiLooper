@@ -6,33 +6,77 @@
 #include "LooperState.h"
 #include "Globals.h"
 #include "TrackManager.h"
+#include "MidiEvent.h"
+#include <map>
 
 EditManager editManager;
+
+// Helper struct for display/edit only
+struct DisplayNote {
+    uint8_t note;
+    uint8_t velocity;
+    uint32_t startTick;
+    uint32_t endTick;
+};
+
+// Reconstruct notes from midiEvents for the current loop
+static std::vector<DisplayNote> reconstructNotes(const std::vector<MidiEvent>& midiEvents, uint32_t loopLength) {
+    std::vector<DisplayNote> notes;
+    std::map<uint8_t, DisplayNote> activeNotes; // note -> DisplayNote
+    for (const auto& evt : midiEvents) {
+        if (evt.type == midi::NoteOn && evt.data.noteData.velocity > 0) {
+            // Start a new note
+            DisplayNote dn{evt.data.noteData.note, evt.data.noteData.velocity, evt.tick, evt.tick};
+            activeNotes[evt.data.noteData.note] = dn;
+        } else if ((evt.type == midi::NoteOff) || (evt.type == midi::NoteOn && evt.data.noteData.velocity == 0)) {
+            // End a note
+            auto it = activeNotes.find(evt.data.noteData.note);
+            if (it != activeNotes.end()) {
+                it->second.endTick = evt.tick;
+                notes.push_back(it->second);
+                activeNotes.erase(it);
+            }
+        }
+    }
+    // Any notes still active wrap to end of loop
+    for (auto& kv : activeNotes) {
+        kv.second.endTick = loopLength;
+        notes.push_back(kv.second);
+    }
+    return notes;
+}
 
 EditManager::EditManager() {}
 
 void EditManager::enterEditMode(EditContext ctx, uint32_t startTick) {
     context = ctx;
     uint32_t loopLength = trackManager.getSelectedTrack().getLength();
+    uint32_t ticksPerStep = Config::TICKS_PER_16TH_STEP;
+    const uint32_t SNAP_WINDOW = 24; // ticks
     if (loopLength == 0) {
         bracketTick = 0;
+        selectedNoteIdx = -1;
     } else {
-        startTick = startTick % loopLength;
-        // Snap to nearest note at or before startTick, or previous 16th step
-        const auto& notes = trackManager.getSelectedTrack().getNoteEvents();
-        int bestIdx = -1;
-        uint32_t bestTick = 0;
+        // Find the closest note to startTick (wrapping)
+        const auto& midiEvents = trackManager.getSelectedTrack().getEvents();
+        auto notes = reconstructNotes(midiEvents, loopLength);
+        int snapIdx = -1;
+        uint32_t minDist = SNAP_WINDOW + 1;
         for (int i = 0; i < (int)notes.size(); ++i) {
-            if (notes[i].startNoteTick <= startTick && notes[i].startNoteTick >= bestTick) {
-                bestTick = notes[i].startNoteTick;
-                bestIdx = i;
+            uint32_t noteTick = notes[i].startTick % loopLength;
+            uint32_t dist = std::min((noteTick + loopLength - (startTick % loopLength)) % loopLength,
+                                     ((startTick % loopLength) + loopLength - noteTick) % loopLength);
+            if (dist < minDist) {
+                minDist = dist;
+                snapIdx = i;
             }
         }
-        if (bestIdx != -1) {
-            bracketTick = notes[bestIdx].startNoteTick % loopLength;
-            selectedNoteIdx = bestIdx;
+        if (snapIdx != -1 && minDist <= SNAP_WINDOW) {
+            bracketTick = notes[snapIdx].startTick % loopLength;
+            selectedNoteIdx = snapIdx;
         } else {
-            bracketTick = ((startTick / Config::TICKS_PER_16TH_STEP) * Config::TICKS_PER_16TH_STEP) % loopLength;
+            // Snap to nearest 16th step from tick 0
+            bracketTick = ((startTick + ticksPerStep / 2) / ticksPerStep) * ticksPerStep % loopLength;
             selectedNoteIdx = -1;
         }
     }
@@ -50,7 +94,8 @@ void EditManager::exitEditMode() {
 const uint32_t SNAP_WINDOW = 24; // ticks
 
 void EditManager::moveBracket(int delta, const Track& track, uint32_t ticksPerStep) {
-    const auto& notes = track.getNoteEvents();
+    const auto& midiEvents = track.getEvents();
+    auto notes = reconstructNotes(midiEvents, track.getLength());
     uint32_t loopLength = track.getLength();
     if (loopLength == 0) return;
 
@@ -61,7 +106,7 @@ void EditManager::moveBracket(int delta, const Track& track, uint32_t ticksPerSt
         int snapIdx = -1;
         uint32_t minDist = SNAP_WINDOW + 1;
         for (int i = 0; i < (int)notes.size(); ++i) {
-            uint32_t noteTick = notes[i].startNoteTick % loopLength;
+            uint32_t noteTick = notes[i].startTick % loopLength;
             uint32_t dist = std::min((noteTick + loopLength - targetTick) % loopLength,
                                      (targetTick + loopLength - noteTick) % loopLength);
             if (dist < minDist) {
@@ -70,7 +115,7 @@ void EditManager::moveBracket(int delta, const Track& track, uint32_t ticksPerSt
             }
         }
         if (snapIdx != -1 && minDist <= SNAP_WINDOW) {
-            bracketTick = notes[snapIdx].startNoteTick % loopLength;
+            bracketTick = notes[snapIdx].startTick % loopLength;
             selectedNoteIdx = snapIdx;
         } else {
             bracketTick = targetTick;
@@ -83,7 +128,7 @@ void EditManager::moveBracket(int delta, const Track& track, uint32_t ticksPerSt
         int snapIdx = -1;
         uint32_t minDist = SNAP_WINDOW + 1;
         for (int i = 0; i < (int)notes.size(); ++i) {
-            uint32_t noteTick = notes[i].startNoteTick % loopLength;
+            uint32_t noteTick = notes[i].startTick % loopLength;
             uint32_t dist = std::min((noteTick + loopLength - targetTick) % loopLength,
                                      (targetTick + loopLength - noteTick) % loopLength);
             if (dist < minDist) {
@@ -92,7 +137,7 @@ void EditManager::moveBracket(int delta, const Track& track, uint32_t ticksPerSt
             }
         }
         if (snapIdx != -1 && minDist <= SNAP_WINDOW) {
-            bracketTick = notes[snapIdx].startNoteTick % loopLength;
+            bracketTick = notes[snapIdx].startTick % loopLength;
             selectedNoteIdx = snapIdx;
         } else {
             bracketTick = targetTick;

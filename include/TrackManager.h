@@ -59,7 +59,7 @@ private:
   Track tracks[Config::NUM_TRACKS];
 
   uint8_t selectedTrack = 0;
-  bool autoAlignEnabled = true;
+  bool autoAlignEnabled = false;
   uint32_t masterLoopLength = 0;
 
   bool muted[Config::NUM_TRACKS] = {false};

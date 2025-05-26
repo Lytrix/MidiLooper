@@ -20,8 +20,7 @@ Track::Track()
     loopLengthTicks(0),
     lastTickInLoop(0),
     pendingNotes(),
-    midiEvents(),
-    noteEvents()
+    midiEvents()
  {}
 
 // -------------------------
@@ -30,10 +29,6 @@ Track::Track()
 
 const std::vector<MidiEvent>& Track::getEvents() const {
   return midiEvents;
-}
-
-const std::vector<NoteEvent>& Track::getNoteEvents() const {
-  return noteEvents;
 }
 
 uint32_t Track::getStartLoopTick() const {
@@ -92,18 +87,12 @@ void Track::startRecording(uint32_t currentTick) {
   }
   // Clear out any old data
   midiEvents.clear();
-  noteEvents.clear();         // for piano-roll / display and editing
   pendingNotes.clear();       // any hanging NoteOns
   nextEventIndex = 0;         // so playback will start from the top
   lastTickInLoop = 0;
 
   // Stamp the new start tick quantized to a beat.
   startLoopTick = currentTick;
-  //startLoopTick = (currentTick / TICKS_PER_BAR) * TICKS_PER_BAR;
-  // Reset tick to 0 for new recording
-  //startLoopTick = 0;
-  //clockManager.currentTick = 0; // <-- You may need to make currentTick public or add a setter
- 
   logger.logTrackEvent("Recording started", currentTick);
 }
 
@@ -123,15 +112,6 @@ void Track::shiftMidiEvents(int32_t offset) {
     }
     std::sort(midiEvents.begin(), midiEvents.end(),
               [](auto &a, auto &b){ return a.tick < b.tick; });
-}
-
-void Track::shiftNoteEvents(int32_t offset) {
-    for (auto &evt : noteEvents) {
-        evt.startNoteTick += offset;
-        evt.endNoteTick += offset;
-    }
-    std::sort(noteEvents.begin(), noteEvents.end(),
-              [](auto &a, auto &b){ return a.startNoteTick < b.startNoteTick; });
 }
 
 uint32_t Track::findLastEventTick() const {
@@ -201,14 +181,8 @@ void Track::stopRecording(uint32_t currentTick) {
   // Close any held notes
   finalizePendingNotes(currentTick);
 
-  // Use the latest end time from note events to determine loop length
-  uint32_t lastNoteEnd = 0;
-  for (const auto& e : noteEvents) {
-    lastNoteEnd = std::max(lastNoteEnd, e.endNoteTick);
-  }
-
-  // Use direct difference to determine loop length
-  uint32_t rawLength = std::max(uint32_t(1), lastNoteEnd - startLoopTick);
+  // Use the actual time between start and stop as the loop length
+  uint32_t rawLength = currentTick - startLoopTick;
   uint32_t rem       = rawLength % TICKS_PER_BAR;
   uint32_t grace     = TICKS_PER_BAR / 2;  // Allow 1/8 bar grace window
 
@@ -223,7 +197,7 @@ void Track::stopRecording(uint32_t currentTick) {
   lastTickInLoop = 0;
   startLoopTick = 0;
   logger.logTrackEvent("Recording stopped", currentTick, "start=%lu length=%lu", startLoopTick, loopLengthTicks);
-  logger.debug("Final ticks: lastNoteEnd=%lu", lastNoteEnd);
+  logger.debug("Final ticks: currentTick=%lu startLoopTick=%lu rawLength=%lu", currentTick, startLoopTick, rawLength);
 
   startOverdubbing(currentTick);
 }
@@ -312,10 +286,6 @@ size_t Track::getMidiEventCount() const {
   return midiEvents.size();
 }
 
-size_t Track::getNoteEventCount() const {
-  return noteEvents.size();
-}
-
 // -------------------------
 // Track Clear
 // -------------------------
@@ -329,7 +299,6 @@ void Track::clear() {
 
     // Remove all recorded events
     midiEvents.clear();
-    noteEvents.clear();
 
     // Reset timing
     startLoopTick = 0;
@@ -337,17 +306,12 @@ void Track::clear() {
 
     // Clear undo history
     midiHistory.clear();
-    noteHistory.clear();
 
     // Go back to "never recorded"
     setState(TRACK_EMPTY);
 
     // Log the clear action
     logger.logTrackEvent("Track cleared", clockManager.getCurrentTick());
-    
-    // TBD, do I need to save here? Or better to ignore deletes before storing?
-    //StorageManager::saveState(looperState); // Save after recording
-
 }
 
 void Track::recordMidiEvents(midi::MidiType type, byte channel, byte data1, byte data2, uint32_t currentTick) {
@@ -370,26 +334,47 @@ void Track::recordMidiEvents(midi::MidiType type, byte channel, byte data1, byte
 
     // Prevent duplicate midiEvents at the same tick with same parameters
     for (const auto& e : midiEvents) {
-      if (e.tick == tickRelative && e.type == type && e.channel == channel && e.data1 == data1 && e.data2 == data2) {
+      if (e.tick == tickRelative && e.type == type && e.channel == channel && e.data.noteData.note == data1 && e.data.noteData.velocity == data2) {
         return;  // Skip duplicate event
       }
     }
 
-    logger.logMidiEvent(
-      type == midi::NoteOn ? "NoteOn" : 
-      type == midi::NoteOff ? "NoteOff" : 
-      type == midi::ControlChange ? "ControlChange" : "Other",
-      channel, data1, data2
-    );
+  
     if (isOverdubbing() && !hasNewEventsSinceSnapshot) {
       TrackUndo::pushUndoSnapshot(*this);
       hasNewEventsSinceSnapshot = true;
     }
 
-    midiEvents.push_back(MidiEvent{ tickRelative, type, channel, data1, data2 });
-    // and anywhere you actually record a new event (e.g. in recordMidiEvents or noteOn/noteOff):
-    
-     // **Keep events sorted by tick** so playback scanning never misses a wrapped-back note during overdubbing
+    switch (type) {
+        case midi::NoteOn:
+            midiEvents.push_back(MidiEvent::NoteOn(tickRelative, channel, data1, data2));
+            break;
+        case midi::NoteOff:
+            midiEvents.push_back(MidiEvent::NoteOff(tickRelative, channel, data1, data2));
+            break;
+        case midi::ControlChange:
+            midiEvents.push_back(MidiEvent::ControlChange(tickRelative, channel, data1, data2));
+            break;
+        case midi::ProgramChange:
+            midiEvents.push_back(MidiEvent::ProgramChange(tickRelative, channel, data1));
+            break;
+        case midi::AfterTouchChannel:
+            midiEvents.push_back(MidiEvent::ChannelAftertouch(tickRelative, channel, data1));
+            break;
+        case midi::PitchBend:
+            midiEvents.push_back(MidiEvent::PitchBend(tickRelative, channel, (int16_t)((data2 << 7) | data1)));
+            break;
+        // Add other cases as needed
+        default:
+            // Optionally handle or ignore other types
+            break;
+    }
+
+    // Log the event
+    if (!midiEvents.empty()) {
+        logger.logMidiEvent(midiEvents.back());
+    }
+    // **Keep events sorted by tick** so playback scanning never misses a wrapped-back note during overdubbing
     std::sort(midiEvents.begin(), midiEvents.end(),
             [](auto &a, auto &b){ return a.tick < b.tick; });
 
@@ -458,64 +443,8 @@ void Track::playMidiEvents(uint32_t currentTick, bool isAudible) {
 
 void Track::sendMidiEvent(const MidiEvent& evt) {
   if (trackState != TRACK_PLAYING && trackState != TRACK_OVERDUBBING) return;
-
   isPlayingBack = true;  // Mark playback so noteOn/noteOff ignores it
-
-  const char* typeStr;
-
-  switch (evt.type) {
-    case midi::NoteOn:
-      typeStr = "NoteOn";
-      break;
-    case midi::NoteOff:
-      typeStr = "NoteOff";
-      break;
-    case midi::ControlChange:
-      typeStr = "ControlChange";
-      break;
-    case midi::ProgramChange:
-      typeStr = "Program Change";
-      break;
-    default:
-      typeStr = "Other";
-      break;
-  }
-
-  logger.logMidiEvent(typeStr, evt.channel, evt.data1, evt.data2);
-
-  switch (evt.type) {
-    case midi::NoteOn:
-      midiHandler.sendNoteOn(evt.channel, evt.data1, evt.data2);
-      break;
-    case midi::NoteOff:
-      midiHandler.sendNoteOff(evt.channel, evt.data1, evt.data2);
-      break;
-    case midi::ControlChange:
-      midiHandler.sendControlChange(evt.channel, evt.data1, evt.data2);
-      break;
-    case midi::PitchBend:
-      midiHandler.sendPitchBend(evt.channel, (evt.data2 << 7) | evt.data1);
-      break;
-    case midi::AfterTouchChannel:
-      midiHandler.sendAfterTouch(evt.channel, evt.data1);
-      break;
-    case midi::ProgramChange:
-      midiHandler.sendProgramChange(evt.channel, evt.data1);
-      break;
-    case midi::Clock:
-    case midi::Start:
-    case midi::Stop:
-    // Clock events might be handled by your ClockManager, so skip them here.
-      break;
-    case midi::InvalidType:
-      logger.log(CAT_MIDI, LOG_WARNING, "Invalid Type: data1=%d, data2=%d", evt.data1, evt.data2);
-      break;
-    default:
-      logger.log(CAT_MIDI, LOG_INFO, "Unhandled MIDI type: %d (ch=%d, d1=%d, d2=%d)",
-                 evt.type, evt.channel, evt.data1, evt.data2);
-      break;
-  }
-
+  midiHandler.sendMidiEvent(evt);
   isPlayingBack = false;  // Reset playback state
 }
 
@@ -583,22 +512,9 @@ void Track::noteOn(uint8_t channel, uint8_t note, uint8_t velocity, uint32_t tic
     };
 
     recordMidiEvents(midi::NoteOn, channel, note, velocity, tick);
-
-    // Show immediate temporary visual during RECORDING
-    if (trackState == TRACK_RECORDING) {
-      NoteEvent tempEvent {
-        note,
-        velocity,
-        tick,
-        tick // Temporary end time — will be updated in noteOff()
-      };
-      noteEvents.push_back(tempEvent);
-      // hasNewEventsSinceSnapshot = true;
-    }
   }
 }
 
- 
 void Track::noteOff(uint8_t channel, uint8_t note, uint8_t velocity, uint32_t tick) {
   if (isPlayingBack) return;
 
@@ -608,56 +524,13 @@ void Track::noteOff(uint8_t channel, uint8_t note, uint8_t velocity, uint32_t ti
     if (it != pendingNotes.end()) {
       recordMidiEvents(midi::NoteOff, channel, note, 0, tick);  // Use velocity 0 to mark end
       hasNewEventsSinceSnapshot = true;
-
-      const auto& pending = it->second;
-
-      // Try to find and update the temp NoteEvent (if created in RECORDING mode)
-      for (auto& evt : noteEvents) {
-        if (evt.note == note &&
-            evt.startNoteTick == pending.startNoteTick &&
-            evt.endNoteTick == pending.startNoteTick) {
-          evt.endNoteTick = tick;
-          goto done;
-        }
-      }
-
-      // If not found, just add new one (in case we missed a NoteOn)
-      noteEvents.push_back(NoteEvent{
-        note,
-        pending.velocity,
-        pending.startNoteTick,
-        tick
-      });
-    done:
       pendingNotes.erase(it);
-
-      if (DEBUG_NOTES) {
-        logger.log(CAT_TRACK, LOG_DEBUG,
-                   "NoteEvent start=%lu end=%lu",
-                   pending.startNoteTick,
-                   tick);
-      }
     } else {
       logger.log(CAT_MIDI, LOG_WARNING,
                  "NoteOff for note %d on ch %d with no matching NoteOn",
                  note, channel);
     }
   }
-}
-
-void Track::printNoteEvents() const {
-  Serial.println("---- NoteEvents ----");
-  for (const auto& note : noteEvents) {
-    Serial.print("Note: ");
-    Serial.print(note.note);
-    Serial.print("  Velocity: ");
-    Serial.print(note.velocity);
-    Serial.print("  StartTick: ");
-    Serial.print(note.startNoteTick);
-    Serial.print("  EndTick: ");
-    Serial.println(note.endNoteTick);
-  }
-  Serial.println("---------------------");
 }
 
 

@@ -14,7 +14,7 @@ TrackManager::TrackManager() {
     muted[i] = false;
     soloed[i] = false;
   }
-  autoAlignEnabled = true;
+  autoAlignEnabled = false;
   masterLoopLength = 0;
 }
 
@@ -104,6 +104,18 @@ void TrackManager::stopPlayingTrack(uint8_t trackIndex) {
 
 void TrackManager::clearTrack(uint8_t trackIndex) {
   if (trackIndex < Config::NUM_TRACKS) tracks[trackIndex].clear();
+
+  // Check if all tracks are empty
+  bool allEmpty = true;
+  for (uint8_t i = 0; i < Config::NUM_TRACKS; ++i) {
+    if (!tracks[i].isEmpty()) {
+      allEmpty = false;
+      break;
+    }
+  }
+  if (allEmpty) {
+    masterLoopLength = 0;
+  }
 }
 
 // Mute / Solo ------------------------------------------------

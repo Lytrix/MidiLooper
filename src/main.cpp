@@ -5,7 +5,7 @@
 #include "MidiHandler.h"
 #include "TrackManager.h"
 #include "ButtonManager.h"
-#include "DisplayManager2.h"
+#include "DisplayManager.h"
 #include "LooperState.h"
 #include "Looper.h"
 #include "Track.h"
@@ -48,7 +48,7 @@ void setup() {
   clockManager.setup();
   midiHandler.setup();
  
-  displayManager2.setup();
+  displayManager.setup();
   Serial.println("Main: Dispaly Setup done");
   looper.setup();
 
@@ -72,7 +72,7 @@ void loop() {
   // Only update display if enough time has passed (steady-rate)
   if (now - lastDisplayUpdate >= LCD::DISPLAY_UPDATE_INTERVAL) {
     lastDisplayUpdate = now;
-    displayManager2.update();
+    displayManager.update();
   }
 }
 

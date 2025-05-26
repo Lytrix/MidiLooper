@@ -3,6 +3,7 @@
 #include <deque>
 #include "Track.h"
 #include "TrackStateMachine.h"
+#include "MidiEvent.h"
 
 class TrackUndo {
 public:
@@ -14,11 +15,8 @@ public:
     static bool canUndo(const Track& track);
     static void popLastUndo(Track& track);
     static const std::vector<MidiEvent>& peekLastMidiSnapshot(const Track& track);
-    static const std::vector<NoteEvent>& peekLastNoteSnapshot(const Track& track);
     static std::deque<std::vector<MidiEvent>>& getMidiHistory(Track& track);
-    static std::deque<std::vector<NoteEvent>>& getNoteHistory(Track& track);
     static const std::vector<MidiEvent>& getCurrentMidiSnapshot(const Track& track);
-    static const std::vector<NoteEvent>& getCurrentNoteSnapshot(const Track& track);
     // Undo clear
     static void pushClearTrackSnapshot(Track& track);
     static void undoClearTrack(Track& track);

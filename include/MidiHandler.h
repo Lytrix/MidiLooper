@@ -2,6 +2,7 @@
 #define MIDIHANDLER_H
 
 #include <Arduino.h>
+#include "MidiEvent.h"
 
 enum InputSource {
   SOURCE_USB,
@@ -20,12 +21,15 @@ public:
   void handleMidiMessage(byte type, byte channel, byte data1, byte data2, InputSource source);
 
   // --- MIDI Output ---
-  void sendNoteOn(byte channel, byte note, byte velocity);
-  void sendNoteOff(byte channel, byte note, byte velocity);
-  void sendControlChange(byte channel, byte control, byte value);
-  void sendPitchBend(byte channel, int value);
-  void sendAfterTouch(byte channel, byte pressure);
-  void sendProgramChange(byte channel, byte program);
+  // Use the new MidiEvent constructors for all MIDI output
+  void sendMidiEvent(const MidiEvent& event); // Unified event-based output
+
+  void sendNoteOn(uint8_t channel, uint8_t note, uint8_t velocity);
+  void sendNoteOff(uint8_t channel, uint8_t note, uint8_t velocity);
+  void sendControlChange(uint8_t channel, uint8_t control, uint8_t value);
+  void sendPitchBend(uint8_t channel, int16_t value);
+  void sendAfterTouch(uint8_t channel, uint8_t pressure);
+  void sendProgramChange(uint8_t channel, uint8_t program);
 
   // --- Clock / Transport Output ---
   void sendClock();

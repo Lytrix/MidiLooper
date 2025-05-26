@@ -1,5 +1,6 @@
 #include "Logger.h"
 #include <stdarg.h>
+#include "MidiEvent.h"
 
 LogLevel Logger::currentLevel = LOG_INFO;
 bool Logger::isInitialized = false;
@@ -106,10 +107,32 @@ void Logger::logStateTransition(const char* component, const char* fromState, co
   Serial.println();
 }
 
-void Logger::logMidiEvent(const char* type, uint8_t channel, uint8_t data1, uint8_t data2) {
+void Logger::logMidiEvent(const MidiEvent& evt) {
   if (currentLevel < LOG_DEBUG) return;
   printPrefix(LOG_DEBUG, CAT_MIDI);
-  Serial.printf("%s: ch=%d, data1=%d, data2=%d", type, channel, data1, data2);
+  switch (evt.type) {
+    case midi::NoteOn:
+      Serial.printf("NoteOn: ch=%d, note=%d, vel=%d", evt.channel, evt.data.noteData.note, evt.data.noteData.velocity);
+      break;
+    case midi::NoteOff:
+      Serial.printf("NoteOff: ch=%d, note=%d, vel=%d", evt.channel, evt.data.noteData.note, evt.data.noteData.velocity);
+      break;
+    case midi::ControlChange:
+      Serial.printf("ControlChange: ch=%d, cc=%d, val=%d", evt.channel, evt.data.ccData.cc, evt.data.ccData.value);
+      break;
+    case midi::ProgramChange:
+      Serial.printf("ProgramChange: ch=%d, program=%d", evt.channel, evt.data.program);
+      break;
+    case midi::PitchBend:
+      Serial.printf("PitchBend: ch=%d, value=%d", evt.channel, evt.data.pitchBend);
+      break;
+    case midi::AfterTouchChannel:
+      Serial.printf("AfterTouch: ch=%d, pressure=%d", evt.channel, evt.data.channelPressure);
+      break;
+    default:
+      Serial.printf("MIDI type=%d, ch=%d", evt.type, evt.channel);
+      break;
+  }
   Serial.println();
 }
 
