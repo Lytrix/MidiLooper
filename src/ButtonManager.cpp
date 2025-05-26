@@ -110,6 +110,27 @@ void ButtonManager::update() {
         }
     }
 
+    // --- Encoder button hold/release logic ---
+    static bool wasEncoderButtonHeld = false;
+    bool encoderButtonHeld = false;
+    if (buttons.size() > BUTTON_ENCODER) {
+        encoderButtonHeld = buttons[BUTTON_ENCODER].read() == LOW; // LOW = pressed/held
+    }
+    if (encoderButtonHeld && !wasEncoderButtonHeld) {
+        // Just started holding
+        if (editManager.getCurrentState() == editManager.getNoteState() ||
+            editManager.getCurrentState() == editManager.getStartNoteState()) {
+            editManager.enterPitchEditMode(trackManager.getSelectedTrack());
+        }
+    }
+    if (!encoderButtonHeld && wasEncoderButtonHeld) {
+        // Just released
+        if (editManager.getCurrentState() == editManager.getPitchNoteState()) {
+            editManager.exitPitchEditMode(trackManager.getSelectedTrack());
+        }
+    }
+    wasEncoderButtonHeld = encoderButtonHeld;
+
     // --- Encoder handling ---
     static uint32_t lastEncoderTime = 0;
     long newEncoderPos = encoder.read() / 4; // adjust divisor for your encoder

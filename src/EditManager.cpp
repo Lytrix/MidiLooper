@@ -265,3 +265,13 @@ void EditManager::selectPrevNote(const Track& track) {
     moveBracket(-1, track, 1);
 }
 
+void EditManager::enterPitchEditMode(Track& track) {
+    previousState = currentState;
+    setState(&pitchNoteState, track, bracketTick);
+}
+
+void EditManager::exitPitchEditMode(Track& track) {
+    if (previousState) setState(previousState, track, bracketTick);
+    previousState = nullptr;
+}
+
