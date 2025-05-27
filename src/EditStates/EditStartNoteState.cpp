@@ -186,10 +186,20 @@ void EditStartNoteState::onEncoderTurn(EditManager& manager, Track& track, int d
     std::vector<DisplayNote> notesToDelete;
     std::vector<EditManager::MovingNoteIdentity::DeletedNote> notesToRestore;
     
-    // Check if we should restore any previously deleted notes
+    // Check if we should restore any previously deleted/shortened notes
     for (const auto& deletedNote : manager.movingNote.deletedNotes) {
         // Check if the deleted note no longer overlaps with the moving note
-        bool overlaps = ((uint32_t)newStart < deletedNote.endTick) && (deletedNote.startTick < newEnd);
+        bool overlaps;
+        
+        // Handle wrapped moving note case
+        if (newEnd < (uint32_t)newStart) {
+            // Moving note wraps around loop boundary
+            // It overlaps if deleted note overlaps with either part of the wrapped note
+            overlaps = (deletedNote.startTick < newEnd) || ((uint32_t)newStart < deletedNote.endTick);
+        } else {
+            // Normal case - moving note doesn't wrap
+            overlaps = ((uint32_t)newStart < deletedNote.endTick) && (deletedNote.startTick < newEnd);
+        }
         
         if (!overlaps) {
             notesToRestore.push_back(deletedNote);
@@ -210,11 +220,22 @@ void EditStartNoteState::onEncoderTurn(EditManager& manager, Track& track, int d
             (note.startTick != currentStart || note.endTick != currentEnd)) {
             
             // Check if this note overlaps with the new position
-            bool overlaps = ((uint32_t)newStart < note.endTick) && (note.startTick < newEnd);
+            bool overlaps;
+            
+            // Handle wrapped moving note case
+            if (newEnd < (uint32_t)newStart) {
+                // Moving note wraps around loop boundary
+                // It overlaps if note overlaps with either part of the wrapped note
+                overlaps = (note.startTick < newEnd) || ((uint32_t)newStart < note.endTick);
+            } else {
+                // Normal case - moving note doesn't wrap
+                overlaps = ((uint32_t)newStart < note.endTick) && (note.startTick < newEnd);
+            }
             
             if (overlaps) {
                 // For right-to-left movement (negative delta), try to shorten the note instead of deleting
-                if (delta < 0 && note.startTick < (uint32_t)newStart) {
+                if (delta < 0 && note.startTick < (uint32_t)newStart && newEnd >= (uint32_t)newStart) {
+                    // Only try shortening if moving note doesn't wrap (to avoid complex cases)
                     // Calculate what the new end would be if we shorten it
                     uint32_t newNoteEnd = (uint32_t)newStart;
                     uint32_t shortenedLength = newNoteEnd - note.startTick;
@@ -231,7 +252,7 @@ void EditStartNoteState::onEncoderTurn(EditManager& manager, Track& track, int d
                                    note.note, note.startTick, note.endTick);
                     }
                 } else {
-                    // For left-to-right movement or other cases, delete the note
+                    // For left-to-right movement, wrapped notes, or other cases, delete the note
                     notesToDelete.push_back(note);
                     logger.debug("Will delete overlapping note: pitch=%d, start=%lu, end=%lu", 
                                note.note, note.startTick, note.endTick);
@@ -263,6 +284,34 @@ void EditStartNoteState::onEncoderTurn(EditManager& manager, Track& track, int d
     onIt->tick = newStart;
     offIt->tick = newEnd;
     
+    // Shorten overlapping notes
+    for (const auto& [noteToShorten, newEndTick] : notesToShorten) {
+        // Find and update the note's end event
+        auto endIt = std::find_if(midiEvents.begin(), midiEvents.end(), [&](MidiEvent& evt) {
+            return (evt.type == midi::NoteOff || (evt.type == midi::NoteOn && evt.data.noteData.velocity == 0)) && 
+                   evt.data.noteData.note == noteToShorten.note && 
+                   evt.tick == noteToShorten.endTick;
+        });
+        
+        if (endIt != midiEvents.end()) {
+            // Store the original note for potential restoration
+            EditManager::MovingNoteIdentity::DeletedNote originalNote;
+            originalNote.note = noteToShorten.note;
+            originalNote.velocity = noteToShorten.velocity;
+            originalNote.startTick = noteToShorten.startTick;
+            originalNote.endTick = noteToShorten.endTick;
+            manager.movingNote.deletedNotes.push_back(originalNote);
+            
+            // Update the end tick to shorten the note
+            endIt->tick = newEndTick;
+            
+            logger.debug("Shortened note: pitch=%d, start=%lu, end=%lu->%lu", 
+                       noteToShorten.note, noteToShorten.startTick, noteToShorten.endTick, newEndTick);
+        } else {
+            logger.debug("Warning: Could not find end event for note to shorten");
+        }
+    }
+    
     // Delete overlapping notes from MIDI events
     for (const auto& noteToDelete : notesToDelete) {
         auto it = midiEvents.begin();
@@ -290,27 +339,64 @@ void EditStartNoteState::onEncoderTurn(EditManager& manager, Track& track, int d
     std::vector<EditManager::MovingNoteIdentity::DeletedNote> notesToRemoveFromDeleted;
     
     for (const auto& noteToRestore : notesToRestore) {
-        // Add NoteOn event
-        MidiEvent onEvent;
-        onEvent.type = midi::NoteOn;
-        onEvent.tick = noteToRestore.startTick;
-        onEvent.data.noteData.note = noteToRestore.note;
-        onEvent.data.noteData.velocity = noteToRestore.velocity;
-        midiEvents.push_back(onEvent);
+        // Check if this is a shortened note (has a NoteOn event but different end)
+        auto onIt = std::find_if(midiEvents.begin(), midiEvents.end(), [&](const MidiEvent& evt) {
+            return evt.type == midi::NoteOn && evt.data.noteData.velocity > 0 &&
+                   evt.data.noteData.note == noteToRestore.note && 
+                   evt.tick == noteToRestore.startTick;
+        });
         
-        // Add NoteOff event
-        MidiEvent offEvent;
-        offEvent.type = midi::NoteOff;
-        offEvent.tick = noteToRestore.endTick;
-        offEvent.data.noteData.note = noteToRestore.note;
-        offEvent.data.noteData.velocity = 0;
-        midiEvents.push_back(offEvent);
+        if (onIt != midiEvents.end()) {
+            // This is a shortened note - find its current end event
+            // We need to find the CLOSEST end event after the start that belongs to this note
+            auto endIt = midiEvents.end();
+            uint32_t closestEndTick = UINT32_MAX;
+            
+            for (auto it = midiEvents.begin(); it != midiEvents.end(); ++it) {
+                if ((it->type == midi::NoteOff || (it->type == midi::NoteOn && it->data.noteData.velocity == 0)) && 
+                    it->data.noteData.note == noteToRestore.note && 
+                    it->tick > noteToRestore.startTick && 
+                    it->tick < closestEndTick) {
+                    endIt = it;
+                    closestEndTick = it->tick;
+                }
+            }
+            
+            if (endIt != midiEvents.end()) {
+                // Only extend if the current end is shorter than the original
+                if (endIt->tick < noteToRestore.endTick) {
+                    endIt->tick = noteToRestore.endTick;
+                    logger.debug("Extended shortened note: pitch=%d, start=%lu, end=%lu->%lu", 
+                               noteToRestore.note, noteToRestore.startTick, closestEndTick, noteToRestore.endTick);
+                } else {
+                    logger.debug("Note already at correct length: pitch=%d, start=%lu, end=%lu", 
+                               noteToRestore.note, noteToRestore.startTick, endIt->tick);
+                }
+            } else {
+                logger.debug("Warning: Could not find shortened note end event to extend");
+            }
+        } else {
+            // This is a completely deleted note - recreate it
+            MidiEvent onEvent;
+            onEvent.type = midi::NoteOn;
+            onEvent.tick = noteToRestore.startTick;
+            onEvent.data.noteData.note = noteToRestore.note;
+            onEvent.data.noteData.velocity = noteToRestore.velocity;
+            midiEvents.push_back(onEvent);
+            
+            MidiEvent offEvent;
+            offEvent.type = midi::NoteOff;
+            offEvent.tick = noteToRestore.endTick;
+            offEvent.data.noteData.note = noteToRestore.note;
+            offEvent.data.noteData.velocity = 0;
+            midiEvents.push_back(offEvent);
+            
+            logger.debug("Restored deleted note: pitch=%d, start=%lu, end=%lu", 
+                       noteToRestore.note, noteToRestore.startTick, noteToRestore.endTick);
+        }
         
         // Mark for removal from deleted notes list
         notesToRemoveFromDeleted.push_back(noteToRestore);
-        
-        logger.debug("Restored note: pitch=%d, start=%lu, end=%lu", 
-                   noteToRestore.note, noteToRestore.startTick, noteToRestore.endTick);
     }
     
     // Remove restored notes from deleted notes list (do this after restoration to avoid iterator issues)
