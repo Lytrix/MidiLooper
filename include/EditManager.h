@@ -4,7 +4,9 @@
 #include "EditNoteState.h"
 #include "EditStartNoteState.h"
 #include "EditPitchNoteState.h"
+#include "MidiEvent.h"
 #include <vector>
+#include <map>
 
 // Forward declarations
 class Track;
@@ -40,6 +42,9 @@ public:
     int getSelectedNoteIdx() const { return selectedNoteIdx; }
     // Reset selection
     void resetSelection() { selectedNoteIdx = -1; }
+    void setSelectedNoteIdx(int idx) { selectedNoteIdx = idx; }
+    // Allow direct setting of the bracket tick (for precise note movement)
+    void setBracketTick(uint32_t tick) { bracketTick = tick; }
 
     // Get state instances
     EditNoteState* getNoteState() { return &noteState; }
@@ -49,6 +54,16 @@ public:
 
     void enterPitchEditMode(Track& track);
     void exitPitchEditMode(Track& track);
+
+    struct RemovedNote {
+        uint8_t note;
+        uint8_t velocity;
+        uint32_t startTick;
+        uint32_t endTick;
+        std::vector<MidiEvent> events; // The original events for restoration
+    };
+    // Map: Track* -> note -> list of removed notes
+    std::map<const Track*, std::map<uint8_t, std::vector<RemovedNote>>> temporarilyRemovedNotes;
 
 private:
     uint32_t bracketTick = 0;
