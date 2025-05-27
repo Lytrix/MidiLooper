@@ -65,6 +65,15 @@ public:
     // Map: Track* -> note -> list of removed notes
     std::map<const Track*, std::map<uint8_t, std::vector<RemovedNote>>> temporarilyRemovedNotes;
 
+    struct MovingNoteIdentity {
+        uint8_t note = 0;
+        uint32_t origStart = 0;
+        uint32_t origEnd = 0;
+        int wrapCount = 0; // how many times the note has wrapped
+        bool active = false;
+    };
+    MovingNoteIdentity movingNote;
+
 private:
     uint32_t bracketTick = 0;
     int selectedNoteIdx = -1; // -1 means no note selected

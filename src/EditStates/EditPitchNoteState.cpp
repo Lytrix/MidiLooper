@@ -28,24 +28,30 @@ void EditPitchNoteState::onEncoderTurn(EditManager& manager, Track& track, int d
         uint32_t endTick;
     };
     std::vector<DisplayNote> notes;
-    std::map<uint8_t, DisplayNote> activeNotes;
+    std::map<uint8_t, std::vector<DisplayNote>> activeNoteStacks; // Stack per note pitch
+    
     for (const auto& evt : midiEvents) {
         if (evt.type == midi::NoteOn && evt.data.noteData.velocity > 0) {
             DisplayNote dn{evt.data.noteData.note, evt.data.noteData.velocity, evt.tick, evt.tick};
-            activeNotes[evt.data.noteData.note] = dn;
+            activeNoteStacks[evt.data.noteData.note].push_back(dn);
         } else if ((evt.type == midi::NoteOff) || (evt.type == midi::NoteOn && evt.data.noteData.velocity == 0)) {
-            auto it = activeNotes.find(evt.data.noteData.note);
-            if (it != activeNotes.end()) {
-                it->second.endTick = evt.tick;
-                notes.push_back(it->second);
-                activeNotes.erase(it);
+            // End a note - pop from stack for this pitch (LIFO for overlapping notes)
+            auto& stack = activeNoteStacks[evt.data.noteData.note];
+            if (!stack.empty()) {
+                DisplayNote& dn = stack.back();
+                dn.endTick = evt.tick;
+                notes.push_back(dn);
+                stack.pop_back();
             }
         }
     }
-    for (auto& kv : activeNotes) {
-        kv.second.endTick = loopLength;
-        notes.push_back(kv.second);
+    for (auto& [pitch, stack] : activeNoteStacks) {
+        for (auto& dn : stack) {
+            dn.endTick = loopLength;
+            notes.push_back(dn);
+        }
     }
+    
     if (noteIdx >= (int)notes.size()) return;
     // Find the corresponding MidiEvent indices for this note
     const auto& dn = notes[noteIdx];
