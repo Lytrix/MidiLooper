@@ -69,8 +69,20 @@ public:
         uint8_t note = 0;
         uint32_t origStart = 0;
         uint32_t origEnd = 0;
+        uint32_t lastStart = 0;  // Track previous position for direction detection
+        uint32_t lastEnd = 0;    // Track previous end position
         int wrapCount = 0; // how many times the note has wrapped
         bool active = false;
+        int movementDirection = 0; // -1 = left, 0 = none, 1 = right
+        std::vector<MidiEvent> deletedEvents; // Events that were deleted due to overlap
+        std::vector<uint32_t> deletedEventIndices; // Original indices for restoration
+        
+        // Simple note storage for restoration
+        struct DeletedNote {
+            uint8_t note, velocity;
+            uint32_t startTick, endTick;
+        };
+        std::vector<DeletedNote> deletedNotes;
     };
     MovingNoteIdentity movingNote;
 

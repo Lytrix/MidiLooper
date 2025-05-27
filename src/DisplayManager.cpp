@@ -227,9 +227,6 @@ void DisplayManager::drawAllNotes(const std::vector<MidiEvent>& midiEvents, uint
     int highlight = (editManager.getCurrentState() == editManager.getNoteState() ||
                       editManager.getCurrentState() == editManager.getStartNoteState());
     int selectedNoteIdx = highlight ? editManager.getSelectedNoteIdx() : -1;
-    
-    logger.debug("drawAllNotes: %zu notes, highlight=%d, selectedNoteIdx=%d", 
-                 notes.size(), highlight, selectedNoteIdx);
 
     for (int noteIdx = 0; noteIdx < (int)notes.size(); ++noteIdx) {
         const auto& e = notes[noteIdx];
@@ -243,11 +240,6 @@ void DisplayManager::drawAllNotes(const std::vector<MidiEvent>& midiEvents, uint
         int y = map(e.note, minPitch, maxPitch == minPitch ? minPitch + 1 : maxPitch, 31, 0);
         // Use a different brightness for the selected note
         int noteBrightness = (highlight && noteIdx == selectedNoteIdx) ? 15 : 8; // 15=max, 8=normal
-        
-        logger.debug("Note %d: note=%d, start=%lu->%lu, end=%lu->%lu, brightness=%d, selected=%s", 
-                     noteIdx, e.note, e.startTick, s, e.endTick, eTick, noteBrightness,
-                     (noteIdx == selectedNoteIdx) ? "YES" : "NO");
-        
         drawNoteBar(e, y, s, eTick, lengthLoop, noteBrightness);
     }
 }
@@ -269,8 +261,6 @@ void DisplayManager::drawBracket(unsigned long a, unsigned long b, int c) {
 
 // --- Helper: Draw a single note bar ---
 void DisplayManager::drawNoteBar(const DisplayNote& e, int y, uint32_t s, uint32_t eTick, uint32_t lengthLoop, int noteBrightness) {
-    logger.debug("drawNoteBar: note=%d, s=%lu, eTick=%lu, lengthLoop=%lu, wrapped=%s", 
-                 e.note, s, eTick, lengthLoop, (eTick < s || eTick > lengthLoop) ? "YES" : "NO");
     
     // Check if this is a wrapped note:
     // 1. endTick < startTick (classic wrap case)
@@ -283,7 +273,6 @@ void DisplayManager::drawNoteBar(const DisplayNote& e, int y, uint32_t s, uint32
         int x0 = TRACK_MARGIN + map(s, 0, lengthLoop, 0, DISPLAY_WIDTH - 1 - TRACK_MARGIN);
         int x1 = TRACK_MARGIN + map(eTick, 0, lengthLoop, 0, DISPLAY_WIDTH - 1 - TRACK_MARGIN);
         if (x1 < x0) x1 = x0;
-        logger.debug("Drawing normal note: x0=%d, x1=%d, y=%d", x0, x1, y);
         _display.gfx.draw_rect_filled(_display.api.getFrameBuffer(), x0, y, x1, y, noteBrightness);
     } else {
         // Wrapped note: draw two segments
