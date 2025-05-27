@@ -167,8 +167,8 @@ void MidiHandler::sendMidiEvent(const MidiEvent& event) {
             if (outputSerial) MIDIserial.sendSysEx(event.data.sysexData.length, event.data.sysexData.data, true);
             break;
         case midi::TimeCodeQuarterFrame:
-            if (outputUSB) usbMIDI.sendRealTime(0xF1);
-            if (outputSerial) MIDIserial.sendRealTime(0xF1);
+            if (outputUSB) usbMIDI.sendRealTime(midi::MidiType::TimeCodeQuarterFrame);
+            if (outputSerial) MIDIserial.sendRealTime(midi::MidiType::TimeCodeQuarterFrame);
             break;
         case midi::SongPosition:
             if (outputUSB) usbMIDI.sendSongPosition(event.data.songPosition);

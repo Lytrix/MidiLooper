@@ -112,15 +112,23 @@ void ButtonManager::update() {
 
     // --- Encoder button hold/release logic ---
     static bool wasEncoderButtonHeld = false;
+    static uint32_t encoderButtonHoldStart = 0;
+    const uint32_t ENCODER_HOLD_DELAY = 250; // ms
     bool encoderButtonHeld = false;
     if (buttons.size() > BUTTON_ENCODER) {
         encoderButtonHeld = buttons[BUTTON_ENCODER].read() == LOW; // LOW = pressed/held
     }
     if (encoderButtonHeld && !wasEncoderButtonHeld) {
         // Just started holding
-        if (editManager.getCurrentState() == editManager.getNoteState() ||
-            editManager.getCurrentState() == editManager.getStartNoteState()) {
+        encoderButtonHoldStart = now;
+    }
+    if (encoderButtonHeld && (now - encoderButtonHoldStart >= ENCODER_HOLD_DELAY) &&
+        (editManager.getCurrentState() == editManager.getNoteState() ||
+         editManager.getCurrentState() == editManager.getStartNoteState())) {
+        static bool pitchEditActive = false;
+        if (!pitchEditActive) {
             editManager.enterPitchEditMode(trackManager.getSelectedTrack());
+            pitchEditActive = true;
         }
     }
     if (!encoderButtonHeld && wasEncoderButtonHeld) {
@@ -128,6 +136,9 @@ void ButtonManager::update() {
         if (editManager.getCurrentState() == editManager.getPitchNoteState()) {
             editManager.exitPitchEditMode(trackManager.getSelectedTrack());
         }
+        encoderButtonHoldStart = 0;
+        static bool pitchEditActive = false;
+        pitchEditActive = false;
     }
     wasEncoderButtonHeld = encoderButtonHeld;
 

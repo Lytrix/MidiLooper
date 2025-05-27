@@ -23,7 +23,7 @@ static bool readRaw(File &file, void *data, size_t size) {
         return false;
     }
     int bytesRead = file.read((uint8_t*)data, size);
-    if (bytesRead != size) {
+    if (bytesRead != (int)size) {
         Serial.print("[StorageManager] readRaw: expected ");
         Serial.print(size);
         Serial.print(" bytes, got ");

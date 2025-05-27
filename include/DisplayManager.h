@@ -27,11 +27,9 @@ public:
     void clearDisplayBuffer();
 
     // Margin for piano roll, info area and note info
-    static constexpr int TRACK_MARGIN = 20; 
+    static constexpr int TRACK_MARGIN = 22; 
     // Display buffer size
     static constexpr uint32_t DRAW_INTERVAL = 1000 / 30;  // 30 FPS
-    static constexpr uint16_t BUFFER_WIDTH = 256;
-    static constexpr uint16_t BUFFER_HEIGHT = 64;
     
     uint32_t lastPlayedTick = 0;
 
@@ -78,5 +76,5 @@ private:
     void drawInfoArea(uint32_t currentTick, Track& selectedTrack);
     // Note info rendering
     void drawNoteInfo(uint32_t currentTick, Track& selectedTrack);
-    void drawInfoField(const char* label, const char* value, int x, int y, bool highlight, uint8_t defaultBrightness = 5);
+    void drawInfoField(const char* label, const char* value, int x, int y, bool highlight, uint8_t defaultBrightness);
 }; extern DisplayManager displayManager;
