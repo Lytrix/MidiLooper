@@ -1,6 +1,5 @@
-#include <MIDI.h>
-
 #pragma once
+#include <MIDI.h>
 #include <cstdint>
 #include <algorithm> // For std::clamp
 

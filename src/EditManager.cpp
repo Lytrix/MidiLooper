@@ -36,105 +36,52 @@ void EditManager::onButtonPress(Track& track) {
 }
 
 void EditManager::selectClosestNote(Track& track, uint32_t startTick) {
+    // Simplified: pick the single nearest note by tick, ignoring pitch and grouping
     uint32_t loopLength = track.getLength();
-    uint32_t ticksPerStep = Config::TICKS_PER_16TH_STEP;
-    const uint32_t SNAP_WINDOW = 24; // ticks
-    const uint32_t NOTE_SELECT_WINDOW = 24; // ticks, for close note selection
-    if (loopLength == 0) {
-        bracketTick = 0;
-        selectedNoteIdx = -1;
-        notesAtBracketTick.clear();
-        notesAtBracketIdx = 0;
-    } else {
-        const auto& midiEvents = track.getEvents();
-        struct DisplayNote {
-            uint8_t note;
-            uint8_t velocity;
-            uint32_t startTick;
-            uint32_t endTick;
-        };
-        std::vector<DisplayNote> notes;
-        std::map<uint8_t, DisplayNote> activeNotes;
-        for (const auto& evt : midiEvents) {
-            if (evt.type == midi::NoteOn && evt.data.noteData.velocity > 0) {
-                DisplayNote dn{evt.data.noteData.note, evt.data.noteData.velocity, evt.tick, evt.tick};
-                activeNotes[evt.data.noteData.note] = dn;
-            } else if ((evt.type == midi::NoteOff) || (evt.type == midi::NoteOn && evt.data.noteData.velocity == 0)) {
-                auto it = activeNotes.find(evt.data.noteData.note);
-                if (it != activeNotes.end()) {
-                    it->second.endTick = evt.tick;
-                    notes.push_back(it->second);
-                    activeNotes.erase(it);
-                }
-            }
-        }
-        for (auto& kv : activeNotes) {
-            kv.second.endTick = loopLength;
-            notes.push_back(kv.second);
-        }
-        // Find all notes within NOTE_SELECT_WINDOW ticks of the bracket
-        notesAtBracketTick.clear();
-        for (int i = 0; i < (int)notes.size(); ++i) {
-            uint32_t noteTick = notes[i].startTick % loopLength;
-            uint32_t bracketMod = startTick % loopLength;
-            uint32_t dist = (noteTick > bracketMod)
-                ? noteTick - bracketMod
-                : bracketMod - noteTick;
-            // Account for wrap-around
-            dist = std::min(dist, loopLength - dist);
-            if (dist <= NOTE_SELECT_WINDOW) {
-                notesAtBracketTick.push_back(i);
-            }
-        }
-        // Sort by tick, then by pitch (lowest to highest)
-        std::sort(notesAtBracketTick.begin(), notesAtBracketTick.end(), [&](int a, int b) {
-            if (notes[a].startTick != notes[b].startTick)
-                return notes[a].startTick < notes[b].startTick;
-            return notes[a].note < notes[b].note;
-        });
-        // Sticky selection: keep selectedNoteIdx if possible
-        int stickyIdx = -1;
-        for (int i = 0; i < (int)notesAtBracketTick.size(); ++i) {
-            if (notesAtBracketTick[i] == selectedNoteIdx) {
-                stickyIdx = i;
-                break;
-            }
-        }
-        if (!notesAtBracketTick.empty()) {
-            if (stickyIdx != -1) {
-                notesAtBracketIdx = stickyIdx;
-                selectedNoteIdx = notesAtBracketTick[stickyIdx];
-            } else {
-                notesAtBracketIdx = 0;
-                selectedNoteIdx = notesAtBracketTick[0];
-            }
-            bracketTick = notes[selectedNoteIdx].startTick % loopLength;
-        } else {
-            // No note in window, find closest as before
-            int snapIdx = -1;
-            uint32_t minDist = SNAP_WINDOW + 1;
-            for (int i = 0; i < (int)notes.size(); ++i) {
-                uint32_t noteTick = notes[i].startTick % loopLength;
-                uint32_t dist = std::min((noteTick + loopLength - (startTick % loopLength)) % loopLength,
-                                         ((startTick % loopLength) + loopLength - noteTick) % loopLength);
-                if (dist < minDist) {
-                    minDist = dist;
-                    snapIdx = i;
-                }
-            }
-            if (snapIdx != -1 && minDist <= SNAP_WINDOW) {
-                bracketTick = notes[snapIdx].startTick % loopLength;
-                selectedNoteIdx = snapIdx;
-                notesAtBracketTick = {snapIdx};
-                notesAtBracketIdx = 0;
-            } else {
-                bracketTick = ((startTick + ticksPerStep / 2) / ticksPerStep) * ticksPerStep % loopLength;
-                selectedNoteIdx = -1;
-                notesAtBracketTick.clear();
-                notesAtBracketIdx = 0;
+    const auto& midiEvents = track.getEvents();
+    struct DisplayNote { uint8_t note; uint8_t velocity; uint32_t startTick; uint32_t endTick; };
+    std::vector<DisplayNote> notes;
+    std::map<uint8_t, DisplayNote> activeNotes;
+    // Reconstruct note list
+    for (const auto& evt : midiEvents) {
+        if (evt.type == midi::NoteOn && evt.data.noteData.velocity > 0) {
+            activeNotes[evt.data.noteData.note] = {evt.data.noteData.note, evt.data.noteData.velocity, evt.tick, evt.tick};
+        } else if (evt.type == midi::NoteOff || (evt.type == midi::NoteOn && evt.data.noteData.velocity == 0)) {
+            auto it = activeNotes.find(evt.data.noteData.note);
+            if (it != activeNotes.end()) {
+                it->second.endTick = evt.tick;
+                notes.push_back(it->second);
+                activeNotes.erase(it);
             }
         }
     }
+    for (auto& kv : activeNotes) {
+        kv.second.endTick = loopLength;
+        notes.push_back(kv.second);
+    }
+    // If no notes, just place bracket at exact tick
+    if (notes.empty()) {
+        bracketTick = startTick % loopLength;
+        selectedNoteIdx = -1;
+        hasMovedBracket = true;
+        return;
+    }
+    // Find nearest by tick distance
+    uint32_t modStart = startTick % loopLength;
+    uint32_t bestDist = loopLength;
+    int bestIdx = 0;
+    for (int i = 0; i < (int)notes.size(); ++i) {
+        uint32_t noteTick = notes[i].startTick % loopLength;
+        uint32_t dist = std::min((noteTick + loopLength - modStart) % loopLength,
+                                 (modStart + loopLength - noteTick) % loopLength);
+        if (dist < bestDist) {
+            bestDist = dist;
+            bestIdx = i;
+        }
+    }
+    // Update selection and bracket
+    selectedNoteIdx = bestIdx;
+    bracketTick = notes[bestIdx].startTick % loopLength;
     hasMovedBracket = true;
 }
 

@@ -152,9 +152,9 @@ void ButtonManager::update() {
         lastEncoderTime = now;
         int accel = 1;
         if (editManager.getCurrentState() == editManager.getStartNoteState()) {
-            if (interval < 50) accel = 24;
-            else if (interval < 75) accel = 4;
-            else if (interval < 100) accel = 2;
+            if (interval < 25) accel = 24;
+            else if (interval < 50) accel = 8;
+            else if (interval < 100) accel = 4;
         } else {
             // Edit mode: slow down encoder
             if (interval < 50) accel = 4;
