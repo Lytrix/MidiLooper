@@ -117,7 +117,7 @@ void DisplayManager::setup() {
 
     // Set buffer size and clear display
     Serial.println("DisplayManager: Setting buffer size");
-    _display.gfx.set_buffer_size(BUFFER_WIDTH, BUFFER_HEIGHT);
+    _display.gfx.set_buffer_size(DISPLAY_WIDTH, DISPLAY_HEIGHT);
     clearDisplayBuffer();
 
     // Now proceed with your drawing/demo code
@@ -138,7 +138,7 @@ void DisplayManager::setup() {
 
 int DisplayManager::tickToScreenX(uint32_t tick) {
     uint32_t loopLength = trackManager.getSelectedTrack().getLength();
-    return TRACK_MARGIN + map(tick, 0, loopLength, 0, BUFFER_WIDTH - 1 - TRACK_MARGIN);
+    return TRACK_MARGIN + map(tick, 0, loopLength, 0, DISPLAY_WIDTH - 1 - TRACK_MARGIN);
 }
 
 int DisplayManager::noteToScreenY(uint8_t note) {
@@ -158,7 +158,7 @@ void DisplayManager::drawGridLines(uint32_t lengthLoop, int pianoRollY0, int pia
     const uint32_t ticksPerSixteenth = Config::TICKS_PER_QUARTER_NOTE / 4;
     // Bar lines
     for (uint32_t t = 0; t < lengthLoop; t += ticksPerBar) {
-        int x = TRACK_MARGIN + map(t, 0, lengthLoop, 0, BUFFER_WIDTH - 1 - TRACK_MARGIN);
+        int x = TRACK_MARGIN + map(t, 0, lengthLoop, 0, DISPLAY_WIDTH - 1 - TRACK_MARGIN);
         _display.gfx.draw_vline(_display.api.getFrameBuffer(), x, pianoRollY0, pianoRollY1, barBrightness);
     }
     // Beat lines
@@ -166,7 +166,7 @@ void DisplayManager::drawGridLines(uint32_t lengthLoop, int pianoRollY0, int pia
     if (showBeat) {
         for (uint32_t t = ticksPerBeat; t < lengthLoop; t += ticksPerBeat) {
             if (t % ticksPerBar == 0) continue;
-            int x = TRACK_MARGIN + map(t, 0, lengthLoop, 0, BUFFER_WIDTH - 1 - TRACK_MARGIN);
+            int x = TRACK_MARGIN + map(t, 0, lengthLoop, 0, DISPLAY_WIDTH - 1 - TRACK_MARGIN);
             for (int y = pianoRollY0; y <= pianoRollY1; y += 2) {
                 _display.gfx.draw_pixel(_display.api.getFrameBuffer(), x, y, beatBrightness);
             }
@@ -177,7 +177,7 @@ void DisplayManager::drawGridLines(uint32_t lengthLoop, int pianoRollY0, int pia
     if (showSixteenth) {
         for (uint32_t t = ticksPerSixteenth; t < lengthLoop; t += ticksPerSixteenth) {
             if (t % ticksPerBar == 0 || t % ticksPerBeat == 0) continue;
-            int x = TRACK_MARGIN + map(t, 0, lengthLoop, 0, BUFFER_WIDTH - 1 - TRACK_MARGIN);
+            int x = TRACK_MARGIN + map(t, 0, lengthLoop, 0, DISPLAY_WIDTH - 1 - TRACK_MARGIN);
             for (int y = pianoRollY0; y <= pianoRollY1; y += 4) {
                 _display.gfx.draw_pixel(_display.api.getFrameBuffer(), x, y, sixteenthBrightness);
             }
@@ -217,11 +217,11 @@ void DisplayManager::drawAllNotes(const std::vector<MidiEvent>& midiEvents, uint
     auto notes = reconstructNotes(midiEvents, lengthLoop);
 
     // Highlight if in note or start note edit state
-    bool highlight = (editManager.getCurrentState() == editManager.getNoteState() ||
+    int highlight = (editManager.getCurrentState() == editManager.getNoteState() ||
                       editManager.getCurrentState() == editManager.getStartNoteState());
     int selectedNoteIdx = highlight ? editManager.getSelectedNoteIdx() : -1;
 
-    for (int noteIdx = 0; noteIdx < notes.size(); ++noteIdx) {
+    for (int noteIdx = 0; noteIdx < (int)notes.size(); ++noteIdx) {
         const auto& e = notes[noteIdx];
         uint32_t s = (e.startTick >= startLoop) ? (e.startTick - startLoop) % lengthLoop : (lengthLoop - (startLoop - e.startTick) % lengthLoop) % lengthLoop;
         uint32_t eTick = (e.endTick >= startLoop) ? (e.endTick - startLoop) % lengthLoop : (lengthLoop - (startLoop - e.endTick) % lengthLoop) % lengthLoop;
@@ -237,14 +237,11 @@ void DisplayManager::drawBracket(unsigned long a, unsigned long b, int c) {
     if (editManager.getCurrentState() == editManager.getNoteState() ||
         editManager.getCurrentState() == editManager.getStartNoteState()) {
         uint32_t bracketTick = editManager.getBracketTick();
-        int selectedNoteIdx = editManager.getSelectedNoteIdx();
-        const auto& notes = trackManager.getSelectedTrack().getEvents();
         uint32_t lengthLoop = trackManager.getSelectedTrack().getLength();
-        const int pianoRollY0 = 0;
         const int pianoRollY1 = 31;
 
         // Convert bracketTick to screen X position
-        int bracketX = TRACK_MARGIN + map(bracketTick, 0, lengthLoop, 0, BUFFER_WIDTH - 1 - TRACK_MARGIN);
+        int bracketX = TRACK_MARGIN + map(bracketTick, 0, lengthLoop, 0, DISPLAY_WIDTH - 1 - TRACK_MARGIN);
         // Draw bracket (e.g., vertical line or rectangle)
         _display.gfx.draw_vline(_display.api.getFrameBuffer(), bracketX, 0, pianoRollY1, BRACKET_COLOR);
     }
@@ -253,15 +250,15 @@ void DisplayManager::drawBracket(unsigned long a, unsigned long b, int c) {
 // --- Helper: Draw a single note bar ---
 void DisplayManager::drawNoteBar(const DisplayNote& e, int y, uint32_t s, uint32_t eTick, uint32_t lengthLoop, int noteBrightness) {
     if (eTick < s) {
-        int x0 = TRACK_MARGIN + map(s, 0, lengthLoop, 0, BUFFER_WIDTH - 1 - TRACK_MARGIN);
-        int x1 = BUFFER_WIDTH - 1;
+        int x0 = TRACK_MARGIN + map(s, 0, lengthLoop, 0, DISPLAY_WIDTH - 1 - TRACK_MARGIN);
+        int x1 = DISPLAY_WIDTH - 1;
         _display.gfx.draw_rect_filled(_display.api.getFrameBuffer(), x0, y, x1, y, noteBrightness);
         int x2 = TRACK_MARGIN;
-        int x3 = TRACK_MARGIN + map(eTick, 0, lengthLoop, 0, BUFFER_WIDTH - 1 - TRACK_MARGIN);
+        int x3 = TRACK_MARGIN + map(eTick, 0, lengthLoop, 0, DISPLAY_WIDTH - 1 - TRACK_MARGIN);
         _display.gfx.draw_rect_filled(_display.api.getFrameBuffer(), x2, y, x3, y, noteBrightness);
     } else {
-        int x0 = TRACK_MARGIN + map(s, 0, lengthLoop, 0, BUFFER_WIDTH - 1 - TRACK_MARGIN);
-        int x1 = TRACK_MARGIN + map(eTick, 0, lengthLoop, 0, BUFFER_WIDTH - 1 - TRACK_MARGIN);
+        int x0 = TRACK_MARGIN + map(s, 0, lengthLoop, 0, DISPLAY_WIDTH - 1 - TRACK_MARGIN);
+        int x1 = TRACK_MARGIN + map(eTick, 0, lengthLoop, 0, DISPLAY_WIDTH - 1 - TRACK_MARGIN);
         if (x1 < x0) x1 = x0;
         _display.gfx.draw_rect_filled(_display.api.getFrameBuffer(), x0, y, x1, y, noteBrightness);
     }
@@ -296,7 +293,7 @@ void DisplayManager::drawPianoRoll(uint32_t currentTick, Track& selectedTrack) {
         drawAllNotes(midiEvents, startLoop, lengthLoop, minPitch, maxPitch); // includes selected note
         drawBracket(editManager.getBracketTick(), lengthLoop, pianoRollY1);
       
-        int cx = TRACK_MARGIN + map(loopPos, 0, lengthLoop, 0, BUFFER_WIDTH - 1 - TRACK_MARGIN);
+        int cx = TRACK_MARGIN + map(loopPos, 0, lengthLoop, 0, DISPLAY_WIDTH - 1 - TRACK_MARGIN);
         _display.gfx.draw_vline(_display.api.getFrameBuffer(), cx, 0, 32, 3);
     }
 }
@@ -399,7 +396,7 @@ void DisplayManager::drawNoteInfo(uint32_t currentTick, Track& selectedTrack) {
     }
 
     char noteStr[4] = "---";
-    char lenStr[4] = "---";
+    char lenStr[6] = "---";
     char velStr[4] = "---";
     bool validNote = false;
     if (noteToShow) {
