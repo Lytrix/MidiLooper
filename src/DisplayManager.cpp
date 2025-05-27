@@ -7,6 +7,7 @@
 #include <Font5x7Fixed.h>
 #include <Font5x7FixedMono.h>
 #include "TrackUndo.h"
+#include "Logger.h"
 #include <map>
 #include <string>
 
@@ -188,27 +189,33 @@ void DisplayManager::drawGridLines(uint32_t lengthLoop, int pianoRollY0, int pia
 // Reconstruct notes from midiEvents for the current loop
 static std::vector<DisplayNote> reconstructNotes(const std::vector<MidiEvent>& midiEvents, uint32_t loopLength) {
     std::vector<DisplayNote> notes;
-    std::map<uint8_t, DisplayNote> activeNotes; // note -> DisplayNote
+    std::map<uint8_t, std::vector<DisplayNote>> activeNoteStacks; // Stack per note pitch
+    
     for (const auto& evt : midiEvents) {
         if (evt.type == midi::NoteOn && evt.data.noteData.velocity > 0) {
-            // Start a new note
+            // Start a new note - push to stack for this pitch
             DisplayNote dn{evt.data.noteData.note, evt.data.noteData.velocity, evt.tick, evt.tick};
-            activeNotes[evt.data.noteData.note] = dn;
+            activeNoteStacks[evt.data.noteData.note].push_back(dn);
         } else if ((evt.type == midi::NoteOff) || (evt.type == midi::NoteOn && evt.data.noteData.velocity == 0)) {
-            // End a note
-            auto it = activeNotes.find(evt.data.noteData.note);
-            if (it != activeNotes.end()) {
-                it->second.endTick = evt.tick;
-                notes.push_back(it->second);
-                activeNotes.erase(it);
+            // End a note - pop from stack for this pitch (LIFO for overlapping notes)
+            auto& stack = activeNoteStacks[evt.data.noteData.note];
+            if (!stack.empty()) {
+                DisplayNote& dn = stack.back();
+                dn.endTick = evt.tick;
+                notes.push_back(dn);
+                stack.pop_back();
             }
         }
     }
+    
     // Any notes still active wrap to end of loop
-    for (auto& kv : activeNotes) {
-        kv.second.endTick = loopLength;
-        notes.push_back(kv.second);
+    for (auto& [pitch, stack] : activeNoteStacks) {
+        for (auto& dn : stack) {
+            dn.endTick = loopLength;
+            notes.push_back(dn);
+        }
     }
+    
     return notes;
 }
 
@@ -220,14 +227,27 @@ void DisplayManager::drawAllNotes(const std::vector<MidiEvent>& midiEvents, uint
     int highlight = (editManager.getCurrentState() == editManager.getNoteState() ||
                       editManager.getCurrentState() == editManager.getStartNoteState());
     int selectedNoteIdx = highlight ? editManager.getSelectedNoteIdx() : -1;
+    
+    logger.debug("drawAllNotes: %zu notes, highlight=%d, selectedNoteIdx=%d", 
+                 notes.size(), highlight, selectedNoteIdx);
 
     for (int noteIdx = 0; noteIdx < (int)notes.size(); ++noteIdx) {
         const auto& e = notes[noteIdx];
-        uint32_t s = (e.startTick >= startLoop) ? (e.startTick - startLoop) % lengthLoop : (lengthLoop - (startLoop - e.startTick) % lengthLoop) % lengthLoop;
-        uint32_t eTick = (e.endTick >= startLoop) ? (e.endTick - startLoop) % lengthLoop : (lengthLoop - (startLoop - e.endTick) % lengthLoop) % lengthLoop;
+        
+        uint32_t s = e.startTick;
+        uint32_t eTick = e.endTick;
+        
+        // Don't apply any modulo operations - preserve the original tick values
+        // The drawNoteBar function will handle wrapped notes correctly
+        
         int y = map(e.note, minPitch, maxPitch == minPitch ? minPitch + 1 : maxPitch, 31, 0);
         // Use a different brightness for the selected note
         int noteBrightness = (highlight && noteIdx == selectedNoteIdx) ? 15 : 8; // 15=max, 8=normal
+        
+        logger.debug("Note %d: note=%d, start=%lu->%lu, end=%lu->%lu, brightness=%d, selected=%s", 
+                     noteIdx, e.note, e.startTick, s, e.endTick, eTick, noteBrightness,
+                     (noteIdx == selectedNoteIdx) ? "YES" : "NO");
+        
         drawNoteBar(e, y, s, eTick, lengthLoop, noteBrightness);
     }
 }
@@ -249,18 +269,44 @@ void DisplayManager::drawBracket(unsigned long a, unsigned long b, int c) {
 
 // --- Helper: Draw a single note bar ---
 void DisplayManager::drawNoteBar(const DisplayNote& e, int y, uint32_t s, uint32_t eTick, uint32_t lengthLoop, int noteBrightness) {
-    if (eTick < s) {
-        int x0 = TRACK_MARGIN + map(s, 0, lengthLoop, 0, DISPLAY_WIDTH - 1 - TRACK_MARGIN);
-        int x1 = DISPLAY_WIDTH - 1;
-        _display.gfx.draw_rect_filled(_display.api.getFrameBuffer(), x0, y, x1, y, noteBrightness);
-        int x2 = TRACK_MARGIN;
-        int x3 = TRACK_MARGIN + map(eTick, 0, lengthLoop, 0, DISPLAY_WIDTH - 1 - TRACK_MARGIN);
-        _display.gfx.draw_rect_filled(_display.api.getFrameBuffer(), x2, y, x3, y, noteBrightness);
-    } else {
+    logger.debug("drawNoteBar: note=%d, s=%lu, eTick=%lu, lengthLoop=%lu, wrapped=%s", 
+                 e.note, s, eTick, lengthLoop, (eTick < s || eTick > lengthLoop) ? "YES" : "NO");
+    
+    // Check if this is a wrapped note:
+    // 1. endTick < startTick (classic wrap case)
+    // 2. endTick > loopLength (note extends beyond loop boundary)
+    // Note: endTick == loopLength is NOT wrapped - it's a normal note ending at loop boundary
+    bool isWrapped = (eTick < s) || (eTick > lengthLoop);
+    
+    if (!isWrapped && eTick >= s) {
+        // Normal note within loop boundary
         int x0 = TRACK_MARGIN + map(s, 0, lengthLoop, 0, DISPLAY_WIDTH - 1 - TRACK_MARGIN);
         int x1 = TRACK_MARGIN + map(eTick, 0, lengthLoop, 0, DISPLAY_WIDTH - 1 - TRACK_MARGIN);
         if (x1 < x0) x1 = x0;
+        logger.debug("Drawing normal note: x0=%d, x1=%d, y=%d", x0, x1, y);
         _display.gfx.draw_rect_filled(_display.api.getFrameBuffer(), x0, y, x1, y, noteBrightness);
+    } else {
+        // Wrapped note: draw two segments
+        uint32_t wrappedEndTick = eTick % lengthLoop;
+        
+        // Calculate screen positions
+        int x0 = TRACK_MARGIN + map(s % lengthLoop, 0, lengthLoop, 0, DISPLAY_WIDTH - 1 - TRACK_MARGIN);
+        int xEnd = TRACK_MARGIN + map(lengthLoop, 0, lengthLoop, 0, DISPLAY_WIDTH - 1 - TRACK_MARGIN);
+        int x1 = TRACK_MARGIN + map(0, 0, lengthLoop, 0, DISPLAY_WIDTH - 1 - TRACK_MARGIN);
+        int x2 = TRACK_MARGIN + map(wrappedEndTick, 0, lengthLoop, 0, DISPLAY_WIDTH - 1 - TRACK_MARGIN);
+        
+        logger.debug("Drawing wrapped note: segment1 x0=%d to xEnd=%d, segment2 x1=%d to x2=%d, y=%d (originalEnd=%lu, wrappedEnd=%lu)", 
+                     x0, xEnd, x1, x2, y, eTick, wrappedEndTick);
+        
+        // Draw from start to end of loop (segment 1)
+        if (s % lengthLoop < lengthLoop) {
+            _display.gfx.draw_rect_filled(_display.api.getFrameBuffer(), x0, y, xEnd, y, noteBrightness);
+        }
+        
+        // Draw from 0 to wrapped endTick (segment 2)
+        if (wrappedEndTick > 0) {
+            _display.gfx.draw_rect_filled(_display.api.getFrameBuffer(), x1, y, x2, y, noteBrightness);
+        }
     }
 }
 
@@ -402,7 +448,14 @@ void DisplayManager::drawNoteInfo(uint32_t currentTick, Track& selectedTrack) {
     if (noteToShow) {
         ticksToBarsBeats16thTicks2Dec(displayStartTick % lengthLoop, startStr, sizeof(startStr), true);
         uint8_t noteVal = noteToShow->note;
-        uint32_t lenVal = noteToShow->endTick - noteToShow->startTick;
+        // Calculate note length, handling wrap-around case
+        uint32_t lenVal;
+        if (noteToShow->endTick >= noteToShow->startTick) {
+            lenVal = noteToShow->endTick - noteToShow->startTick;
+        } else {
+            // Wrapped note: endTick < startTick
+            lenVal = (lengthLoop - noteToShow->startTick) + noteToShow->endTick;
+        }
         uint8_t velVal = noteToShow->velocity;
         validNote = (noteVal <= 127 && velVal <= 127 && lenVal < 10000);
         if (validNote) {
