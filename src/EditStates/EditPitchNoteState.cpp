@@ -7,6 +7,9 @@
 #include "Logger.h"
 #include <map>
 #include "TrackUndo.h"
+#include "NoteUtils.h"
+
+using DisplayNote = NoteUtils::DisplayNote;
 
 void EditPitchNoteState::onEnter(EditManager& manager, Track& track, uint32_t startTick) {
     logger.debug("Entered EditPitchNoteState");
@@ -25,37 +28,8 @@ void EditPitchNoteState::onEncoderTurn(EditManager& manager, Track& track, int d
     if (noteIdx < 0) return;
     auto& midiEvents = track.getMidiEvents();
     uint32_t loopLength = track.getLength();
-    // Reconstruct notes
-    struct DisplayNote {
-        uint8_t note;
-        uint8_t velocity;
-        uint32_t startTick;
-        uint32_t endTick;
-    };
-    std::vector<DisplayNote> notes;
-    std::map<uint8_t, std::vector<DisplayNote>> activeNoteStacks; // Stack per note pitch
-    
-    for (const auto& evt : midiEvents) {
-        if (evt.type == midi::NoteOn && evt.data.noteData.velocity > 0) {
-            DisplayNote dn{evt.data.noteData.note, evt.data.noteData.velocity, evt.tick, evt.tick};
-            activeNoteStacks[evt.data.noteData.note].push_back(dn);
-        } else if ((evt.type == midi::NoteOff) || (evt.type == midi::NoteOn && evt.data.noteData.velocity == 0)) {
-            // End a note - pop from stack for this pitch (LIFO for overlapping notes)
-            auto& stack = activeNoteStacks[evt.data.noteData.note];
-            if (!stack.empty()) {
-                DisplayNote& dn = stack.back();
-                dn.endTick = evt.tick;
-                notes.push_back(dn);
-                stack.pop_back();
-            }
-        }
-    }
-    for (auto& [pitch, stack] : activeNoteStacks) {
-        for (auto& dn : stack) {
-            dn.endTick = loopLength;
-            notes.push_back(dn);
-        }
-    }
+    // Reconstruct notes using shared utility
+    auto notes = NoteUtils::reconstructNotes(midiEvents, loopLength);
     
     if (noteIdx >= (int)notes.size()) return;
     // Find the corresponding MidiEvent indices for this note

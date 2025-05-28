@@ -19,7 +19,6 @@ void TrackUndo::undoOverdub(Track& track) {
     track.midiEvents = peekLastMidiSnapshot(track);
     track.midiEventCountAtLastSnapshot = track.midiEvents.size();
     popLastUndo(track);
-    track.hasNewEventsSinceSnapshot = false;
     logger.debug("Undo restored snapshot: midiEvents=%d snapshotSize=%d",
                  track.midiEvents.size(), getUndoCount(track));
     logger.logTrackEvent("Overdub undone", clockManager.getCurrentTick());

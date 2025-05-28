@@ -227,10 +227,6 @@ void Track::startPlaying(uint32_t currentTick) {
 
 void Track::startOverdubbing(uint32_t currentTick) {
   if (!setState(TRACK_OVERDUBBING)) return;
-
-  // Snapshot the current state
-  hasNewEventsSinceSnapshot = false;  // <— must be reset so only actual notes mark it dirty
-
   logger.logTrackEvent("Overdubbing started", currentTick);
 }
 
@@ -339,12 +335,6 @@ void Track::recordMidiEvents(midi::MidiType type, byte channel, byte data1, byte
       }
     }
 
-  
-    if (isOverdubbing() && !hasNewEventsSinceSnapshot) {
-      TrackUndo::pushUndoSnapshot(*this);
-      hasNewEventsSinceSnapshot = true;
-    }
-
     switch (type) {
         case midi::NoteOn:
             midiEvents.push_back(MidiEvent::NoteOn(tickRelative, channel, data1, data2));
@@ -390,27 +380,8 @@ void Track::playMidiEvents(uint32_t currentTick, bool isAudible) {
 
   // Reset at loop boundary
   if (tickInLoop < lastTickInLoop) {
-     if (isOverdubbing()) {
-      // Always reset after the wrap, even if no snapshot was created to force a new overdub undo in recordMidi
-      hasNewEventsSinceSnapshot = false;
-    }
-    
     nextEventIndex = 0;
     logger.debug("Loop wrapped, resetting index");
-   
-    // optional: dump events again here
-    // if (isOverdubbing() && hasNewEventsSinceSnapshot) {
-    //   logger.debug("Snapshotting new overdub pass");
-
-    //   midiHistory.push_back(midiEvents);
-    //   noteHistory.push_back(noteEvents);
-
-    //   hasNewEventsSinceSnapshot = false;
-    //   if (midiHistory.size() > Config::MAX_UNDO_HISTORY) {
-    //       midiHistory.pop_front();
-    //       noteHistory.pop_front();
-    //   }
-    // }
   }
 
   // Remember where we were
@@ -523,7 +494,6 @@ void Track::noteOff(uint8_t channel, uint8_t note, uint8_t velocity, uint32_t ti
     auto it = pendingNotes.find(key);
     if (it != pendingNotes.end()) {
       recordMidiEvents(midi::NoteOff, channel, note, 0, tick);  // Use velocity 0 to mark end
-      hasNewEventsSinceSnapshot = true;
       pendingNotes.erase(it);
     } else {
       logger.log(CAT_MIDI, LOG_WARNING,
