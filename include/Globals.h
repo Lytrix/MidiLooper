@@ -29,6 +29,7 @@
 #define DEBUG_BUTTONS  0x20
 #define DEBUG_DISPLAY  0x40
 #define DEBUG_STATE    0x80
+#define DEBUG_MOVE_NOTES 0x100
 #define DEBUG_ALL      0xFF
 
 extern uint8_t debugLevel;  // Set in Globals.cpp

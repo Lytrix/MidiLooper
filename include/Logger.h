@@ -1,5 +1,4 @@
-#ifndef LOGGER_H
-#define LOGGER_H
+#pragma once
 
 #include <Arduino.h>
 #include "MidiEvent.h"
@@ -21,7 +20,8 @@ enum LogCategory {
   CAT_CLOCK = 3,
   CAT_TRACK = 4,
   CAT_BUTTON = 5,
-  CAT_DISPLAY = 6
+  CAT_DISPLAY = 6,
+  CAT_MOVE_NOTES = 7
 };
 
 /**
@@ -61,9 +61,13 @@ public:
   // Track event logging
   static void logTrackEvent(const char* event, uint32_t tick, const char* format = nullptr, ...);
 
+  // Enable or disable logging for a given category
+  static void setCategoryEnabled(LogCategory category, bool enabled);
+
 private:
   static LogLevel currentLevel;
   static bool isInitialized;
+  static bool categoryEnabled[];
   
   static void printPrefix(LogLevel level, LogCategory category = CAT_GENERAL);
   static void printTimestamp();
@@ -72,6 +76,4 @@ private:
 };
 
 // Global logger instance
-extern Logger logger;
-
-#endif // LOGGER_H 
+extern Logger logger; 
