@@ -34,4 +34,24 @@ std::vector<NoteUtils::DisplayNote> NoteUtils::reconstructNotes(const std::vecto
     }
 
     return notes;
+}
+
+// Build a fast lookup index for NoteOn/NoteOff events
+NoteUtils::EventIndex NoteUtils::buildEventIndex(const std::vector<MidiEvent>& midiEvents) {
+    using Key = NoteUtils::Key;
+    EventIndexMap onIndex;
+    EventIndexMap offIndex;
+    onIndex.reserve(midiEvents.size());
+    offIndex.reserve(midiEvents.size());
+    for (size_t i = 0; i < midiEvents.size(); ++i) {
+        const auto& evt = midiEvents[i];
+        bool isOn = (evt.type == midi::NoteOn && evt.data.noteData.velocity > 0);
+        bool isOff = (evt.type == midi::NoteOff || (evt.type == midi::NoteOn && evt.data.noteData.velocity == 0));
+        if (isOn || isOff) {
+            Key key = ((Key)evt.data.noteData.note << 32) | evt.tick;
+            if (isOn) onIndex[key] = i;
+            else offIndex[key] = i;
+        }
+    }
+    return {std::move(onIndex), std::move(offIndex)};
 } 
