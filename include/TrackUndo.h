@@ -21,4 +21,10 @@ public:
     static void pushClearTrackSnapshot(Track& track);
     static void undoClearTrack(Track& track);
     static bool canUndoClearTrack(const Track& track);
+    /**
+     * @brief Compute a simple rolling hash (FNV-1a) over the track's current MIDI events
+     * @param track The track to hash
+     * @return 32-bit hash of current midiEvents
+     */
+    static uint32_t computeMidiHash(const Track& track);
 }; 

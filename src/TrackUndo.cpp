@@ -84,4 +84,16 @@ void TrackUndo::undoClearTrack(Track& track) {
 
 bool TrackUndo::canUndoClearTrack(const Track& track) {
     return (!track.clearMidiHistory.empty());
+}
+
+// Compute a rolling FNV-1a hash of the track's current midiEvents
+uint32_t TrackUndo::computeMidiHash(const Track& track) {
+    uint32_t hash = 2166136261u;
+    for (auto const& evt : track.getMidiEvents()) {
+        hash ^= static_cast<uint32_t>(evt.type); hash *= 16777619u;
+        hash ^= evt.tick;                    hash *= 16777619u;
+        hash ^= evt.data.noteData.note;      hash *= 16777619u;
+        hash ^= evt.data.noteData.velocity;  hash *= 16777619u;
+    }
+    return hash;
 } 

@@ -9,6 +9,8 @@
 #include "TrackManager.h"
 #include "MidiEvent.h"
 #include <map>
+#include "TrackUndo.h"
+#include "Logger.h"
 
 EditManager editManager;
 
@@ -17,8 +19,31 @@ EditManager::EditManager() {
 }
 
 void EditManager::setState(EditState* newState, Track& track, uint32_t startTick) {
-    if (currentState) currentState->onExit(*this, track);
+    // If we're switching away from an edit state, commit or discard its undo snapshot
+    if (currentState) {
+        // Handle hash-based commit-on-exit for start-note edits
+        if (currentState == &startNoteState) {
+            auto* s = static_cast<EditStartNoteState*>(currentState);
+            if (TrackUndo::computeMidiHash(track) == s->getInitialHash()) {
+                TrackUndo::popLastUndo(track);
+                logger.debug("No net change in start-note edit, popped undo snapshot");
+            }
+        }
+        // Handle hash-based commit-on-exit for pitch-note edits
+        else if (currentState == &pitchNoteState) {
+            auto* p = static_cast<EditPitchNoteState*>(currentState);
+            if (TrackUndo::computeMidiHash(track) == p->getInitialHash()) {
+                TrackUndo::popLastUndo(track);
+                logger.debug("No net change in pitch edit, popped undo snapshot");
+            }
+        }
+        currentState->onExit(*this, track);
+    }
     currentState = newState;
+    // If entering a note-edit or pitch-edit state, record undo count to freeze display
+    if (currentState == &startNoteState || currentState == &pitchNoteState) {
+        undoCountOnStateEnter = TrackUndo::getUndoCount(track);
+    }
     if (currentState) currentState->onEnter(*this, track, startTick);
 }
 
@@ -233,5 +258,14 @@ void EditManager::enterPitchEditMode(Track& track) {
 void EditManager::exitPitchEditMode(Track& track) {
     if (previousState) setState(previousState, track, bracketTick);
     previousState = nullptr;
+}
+
+size_t EditManager::getDisplayUndoCount(const Track& track) const {
+    // During active edit states, show the frozen count
+    if (currentState == &startNoteState || currentState == &pitchNoteState) {
+        return undoCountOnStateEnter;
+    }
+    // Otherwise show actual undo count
+    return TrackUndo::getUndoCount(track);
 }
 

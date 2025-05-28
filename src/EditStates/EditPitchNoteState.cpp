@@ -6,9 +6,14 @@
 #include <cstdint>
 #include "Logger.h"
 #include <map>
+#include "TrackUndo.h"
 
 void EditPitchNoteState::onEnter(EditManager& manager, Track& track, uint32_t startTick) {
     logger.debug("Entered EditPitchNoteState");
+    // Commit-on-enter: snapshot and hash initial MIDI events
+    initialHash = TrackUndo::computeMidiHash(track);
+    TrackUndo::pushUndoSnapshot(track);
+    logger.debug("Snapshot on enter (pitch), initial hash: %u", initialHash);
 }
 
 void EditPitchNoteState::onExit(EditManager& manager, Track& track) {
