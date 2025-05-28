@@ -333,7 +333,7 @@ void EditStartNoteState::onEnter(EditManager& manager, Track& track, uint32_t st
     if (idx >= 0) {
         // Don't rebuild notes here - just preserve the current selection
         // and set up the moving note identity for tracking
-        uint32_t loopLength = track.getLength();
+        uint32_t loopLength = track.getLoopLength();
         
         // Reconstruct notes using shared utility
         auto& midiEvents = track.getMidiEvents();
@@ -385,7 +385,7 @@ void EditStartNoteState::onEncoderTurn(EditManager& manager, Track& track, int d
     logger.debug("EditStartNoteState::onEncoderTurn called with delta=%d", delta);
     
     auto& midiEvents = track.getMidiEvents();
-    uint32_t loopLength = track.getLength();
+    uint32_t loopLength = track.getLoopLength();
     
     logger.debug("=== LOOP INFO ===");
     logger.debug("Loop length: %lu ticks", loopLength);

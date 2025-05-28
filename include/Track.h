@@ -68,8 +68,6 @@ public:
   // For loading state from SD card else the state machine will corrupt the state
   void forceSetState(TrackState newState); 
 
-  // Getter functions for events
-  const std::vector<MidiEvent>& getEvents() const;
 
   // Helpers for stopRecording
   uint32_t quantizeStart(uint32_t originalStart) const;
@@ -115,8 +113,8 @@ public:
 
   // Track length control
   uint32_t getStartLoopTick() const;
-  uint32_t getLength() const;
-  void setLength(uint32_t ticks);
+  uint32_t getLoopLength() const;
+  void setLoopLength(uint32_t ticks);
   
   // Tempo accessors
   static uint32_t getTicksPerBar();
@@ -133,6 +131,7 @@ public:
 
   // Add to public section of Track to be able to save the events
   std::vector<MidiEvent>& getMidiEvents() { return midiEvents; }
+
   /// Immutable access to midiEvents (for const Track)
   const std::vector<MidiEvent>& getMidiEvents() const { return midiEvents; }
 

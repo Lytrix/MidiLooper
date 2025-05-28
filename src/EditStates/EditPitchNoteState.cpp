@@ -27,7 +27,7 @@ void EditPitchNoteState::onEncoderTurn(EditManager& manager, Track& track, int d
     int noteIdx = manager.getSelectedNoteIdx();
     if (noteIdx < 0) return;
     auto& midiEvents = track.getMidiEvents();
-    uint32_t loopLength = track.getLength();
+    uint32_t loopLength = track.getLoopLength();
     // Reconstruct notes using shared utility
     auto notes = NoteUtils::reconstructNotes(midiEvents, loopLength);
     
