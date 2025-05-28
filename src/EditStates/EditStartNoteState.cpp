@@ -337,11 +337,8 @@ void EditStartNoteState::onEnter(EditManager& manager, Track& track, uint32_t st
             manager.movingNote.origEnd = notes[idx].endTick;
             manager.movingNote.lastStart = notes[idx].startTick;
             manager.movingNote.lastEnd = notes[idx].endTick;
-            manager.movingNote.wrapCount = 0;
             manager.movingNote.active = true;
             manager.movingNote.movementDirection = 0;
-            manager.movingNote.deletedEvents.clear();
-            manager.movingNote.deletedEventIndices.clear();
             // Set bracket to this note's start
             manager.setBracketTick(notes[idx].startTick);
             logger.debug("Set up moving note identity: note=%d, start=%lu, end=%lu", 
