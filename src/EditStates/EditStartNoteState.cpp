@@ -86,6 +86,43 @@ static bool notesOverlap(uint32_t start1, uint32_t end1, uint32_t start2, uint32
     return overlap;
 }
 
+// Helper to detect and categorize overlapping notes
+void EditStartNoteState::findOverlaps(const std::vector<DisplayNote>& currentNotes,
+                                      uint8_t movingNotePitch,
+                                      uint32_t currentStart,
+                                      uint32_t newStart,
+                                      uint32_t newEnd,
+                                      int delta,
+                                      uint32_t loopLength,
+                                      std::vector<std::pair<DisplayNote, uint32_t>>& notesToShorten,
+                                      std::vector<DisplayNote>& notesToDelete) {
+    for (const auto& note : currentNotes) {
+        if (note.note != movingNotePitch) continue;
+        if (note.startTick == currentStart) continue;
+        bool overlaps = notesOverlap(newStart, newEnd, note.startTick, note.endTick, loopLength);
+        if (!overlaps) continue;
+        if (delta < 0 && note.startTick < newStart) {
+            uint32_t newNoteEnd = newStart;
+            uint32_t shortenedLength = calculateNoteLength(note.startTick, newNoteEnd, loopLength);
+            if (shortenedLength >= Config::TICKS_PER_16TH_STEP) {
+                notesToShorten.push_back({note, newNoteEnd});
+                logger.debug("Will shorten note: pitch=%d, start=%lu, end=%lu->%lu, length=%lu", 
+                             note.note, note.startTick, note.endTick, newNoteEnd, shortenedLength);
+            } else {
+                notesToDelete.push_back(note);
+                logger.debug("Will delete note (too short after shortening): pitch=%d, start=%lu, end=%lu", 
+                             note.note, note.startTick, note.endTick);
+            }
+        } else {
+            notesToDelete.push_back(note);
+            logger.debug("Will delete overlapping note: pitch=%d, start=%lu, end=%lu", 
+                         note.note, note.startTick, note.endTick);
+        }
+    }
+    logger.debug("Found %zu notes to shorten and %zu notes to delete", 
+                 notesToShorten.size(), notesToDelete.size());
+}
+
 // 1. onEnter(): set up moving note identity and bracket.
 void EditStartNoteState::onEnter(EditManager& manager, Track& track, uint32_t startTick) {
     logger.debug("Entered EditStartNoteState");
@@ -247,57 +284,10 @@ void EditStartNoteState::onEncoderTurn(EditManager& manager, Track& track, int d
     logger.debug("Found %zu notes to restore, %zu total deleted notes", 
                  notesToRestore.size(), manager.movingNote.deletedNotes.size());
     
-    // Store notes to shorten
-    std::vector<std::pair<DisplayNote, uint32_t>> notesToShorten; // note and new end tick
-    
-    // Check for overlaps with other notes and determine what to do
-    {
-        for (const auto& note : currentNotes) {
-            // Skip if this is not the same pitch (different notes can't overlap in MIDI)
-            if (note.note != movingNotePitch) {
-                continue;
-            }
-            
-            // Skip the currently moving note (identified by its original startTick before update)
-            if (note.startTick == currentStart) {
-                continue;
-            }
-            
-            // Check for overlap using consistent wrapped coordinates
-            bool overlaps = notesOverlap(newStart, newEnd, note.startTick, note.endTick, loopLength);
-            
-            logger.debug("Checking overlap: moving note %lu-%lu vs existing note %lu-%lu, overlaps=%s", 
-                        newStart, newEnd, note.startTick, note.endTick, overlaps ? "YES" : "NO");
-            
-            if (overlaps) {
-                // For right-to-left movement (negative delta), try to shorten the note instead of deleting
-                if (delta < 0 && note.startTick < newStart) {
-                    // Calculate what the new end would be if we shorten it
-                    uint32_t newNoteEnd = newStart;
-                    uint32_t shortenedLength = calculateNoteLength(note.startTick, newNoteEnd, loopLength);
-                    
-                    // Only shorten if the result would be at least 48 ticks (1/16th note)
-                    if (shortenedLength >= Config::TICKS_PER_16TH_STEP) {
-                        notesToShorten.push_back({note, newNoteEnd});
-                        logger.debug("Will shorten note: pitch=%d, start=%lu, end=%lu->%lu, length=%lu", 
-                                   note.note, note.startTick, note.endTick, newNoteEnd, shortenedLength);
-                    } else {
-                        // Too short after shortening, delete it
-                        notesToDelete.push_back(note);
-                        logger.debug("Will delete note (too short after shortening): pitch=%d, start=%lu, end=%lu", 
-                                   note.note, note.startTick, note.endTick);
-                    }
-                } else {
-                    // For left-to-right movement or other cases, delete the note
-                    notesToDelete.push_back(note);
-                    logger.debug("Will delete overlapping note: pitch=%d, start=%lu, end=%lu", 
-                               note.note, note.startTick, note.endTick);
-                }
-            }
-        }
-    }
-    
-    logger.debug("Found %zu notes to delete", notesToDelete.size());
+    // Detect and categorize overlaps in one shared helper
+    std::vector<std::pair<DisplayNote, uint32_t>> notesToShorten;
+    findOverlaps(currentNotes, movingNotePitch, currentStart, newStart, newEnd, delta, loopLength,
+                 notesToShorten, notesToDelete);
     
     // Move the selected note's MIDI events
     auto onIt = std::find_if(midiEvents.begin(), midiEvents.end(), [&](MidiEvent& evt) {
