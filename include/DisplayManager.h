@@ -10,14 +10,10 @@
 #include <vector>
 #include <cstdint>
 #include "MidiEvent.h"
+#include "NoteUtils.h"
 
-// Helper struct for display only
-struct DisplayNote {
-    uint8_t note;
-    uint8_t velocity;
-    uint32_t startTick;
-    uint32_t endTick;
-};
+// Shared struct for UI note representation
+using DisplayNote = NoteUtils::DisplayNote;
 
 /**
  * @class DisplayManager

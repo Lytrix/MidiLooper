@@ -10,6 +10,7 @@
 #include "Logger.h"
 #include <map>
 #include <string>
+#include "NoteUtils.h"
 
 DisplayManager displayManager;
 
@@ -186,42 +187,9 @@ void DisplayManager::drawGridLines(uint32_t lengthLoop, int pianoRollY0, int pia
     }
 }
 
-// Reconstruct notes from midiEvents for the current loop
-static std::vector<DisplayNote> reconstructNotes(const std::vector<MidiEvent>& midiEvents, uint32_t loopLength) {
-    std::vector<DisplayNote> notes;
-    std::map<uint8_t, std::vector<DisplayNote>> activeNoteStacks; // Stack per note pitch
-    
-    for (const auto& evt : midiEvents) {
-        if (evt.type == midi::NoteOn && evt.data.noteData.velocity > 0) {
-            // Start a new note - push to stack for this pitch
-            DisplayNote dn{evt.data.noteData.note, evt.data.noteData.velocity, evt.tick, evt.tick};
-            activeNoteStacks[evt.data.noteData.note].push_back(dn);
-        } else if ((evt.type == midi::NoteOff) || (evt.type == midi::NoteOn && evt.data.noteData.velocity == 0)) {
-            // End a note - pop from stack for this pitch (LIFO for overlapping notes)
-            auto& stack = activeNoteStacks[evt.data.noteData.note];
-            if (!stack.empty()) {
-                DisplayNote& dn = stack.back();
-                dn.endTick = evt.tick;
-                notes.push_back(dn);
-                stack.pop_back();
-            }
-        }
-    }
-    
-    // Any notes still active wrap to end of loop
-    for (auto& [pitch, stack] : activeNoteStacks) {
-        for (auto& dn : stack) {
-            dn.endTick = loopLength;
-            notes.push_back(dn);
-        }
-    }
-    
-    return notes;
-}
-
 // --- Helper: Draw all notes ---
 void DisplayManager::drawAllNotes(const std::vector<MidiEvent>& midiEvents, uint32_t startLoop, uint32_t lengthLoop, int minPitch, int maxPitch) {
-    auto notes = reconstructNotes(midiEvents, lengthLoop);
+    auto notes = NoteUtils::reconstructNotes(midiEvents, lengthLoop);
 
     // Highlight if in note, start-note, or pitch-note edit state
     int highlight = (editManager.getCurrentState() == editManager.getNoteState() ||
@@ -317,7 +285,7 @@ void DisplayManager::drawPianoRoll(uint32_t currentTick, Track& selectedTrack) {
         // Compute min/max pitch for scaling
         int minPitch = 127;
         int maxPitch = 0;
-        auto notes = reconstructNotes(midiEvents, lengthLoop);
+        auto notes = NoteUtils::reconstructNotes(midiEvents, lengthLoop);
         for (const auto& n : notes) {
             if (n.note < minPitch) minPitch = n.note;
             if (n.note > maxPitch) maxPitch = n.note;
@@ -383,7 +351,7 @@ void DisplayManager::drawNoteInfo(uint32_t currentTick, Track& selectedTrack) {
     char startStr[24] = {0};
     const auto& midiEvents = selectedTrack.getEvents();
     uint32_t lengthLoop = selectedTrack.getLength();
-    auto notes = reconstructNotes(midiEvents, lengthLoop);
+    auto notes = NoteUtils::reconstructNotes(midiEvents, lengthLoop);
 
     const DisplayNote* noteToShow = nullptr;
     uint32_t displayStartTick = 0;

@@ -156,8 +156,6 @@ private:
   bool transitionState(TrackState newState);  // Internal state transition method
   
   // Undo management
-  bool hasNewEventsSinceSnapshot = false;
-  bool suppressNextSnapshot = false;
   std::deque<std::vector<MidiEvent>> midiHistory;
   size_t midiEventCountAtLastSnapshot = 0;
   // Undo clear track control

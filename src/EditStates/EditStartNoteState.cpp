@@ -9,6 +9,9 @@
 #include <map>
 #include "Globals.h"
 #include "TrackUndo.h"
+#include "NoteUtils.h"
+
+using DisplayNote = NoteUtils::DisplayNote;
 
 /**
  * @class EditStartNoteState
@@ -96,42 +99,9 @@ void EditStartNoteState::onEnter(EditManager& manager, Track& track, uint32_t st
         // and set up the moving note identity for tracking
         uint32_t loopLength = track.getLength();
         
-        // Use the same note reconstruction as DisplayManager to get consistent indices
+        // Reconstruct notes using shared utility
         auto& midiEvents = track.getMidiEvents();
-        struct DisplayNote { uint8_t note, velocity; uint32_t startTick, endTick; };
-        std::vector<DisplayNote> notes;
-        std::map<uint8_t, std::vector<DisplayNote>> activeNoteStacks; // Stack per pitch for proper LIFO matching
-        
-        for (const auto& evt : midiEvents) {
-            if (evt.type == midi::NoteOn && evt.data.noteData.velocity > 0) {
-                // Start a new note
-                DisplayNote dn{evt.data.noteData.note, evt.data.noteData.velocity, evt.tick, evt.tick};
-                activeNoteStacks[evt.data.noteData.note].push_back(dn);
-            } else if ((evt.type == midi::NoteOff) || (evt.type == midi::NoteOn && evt.data.noteData.velocity == 0)) {
-                // End a note - use LIFO (stack) matching for proper note pairing
-                auto& stack = activeNoteStacks[evt.data.noteData.note];
-                if (!stack.empty()) {
-                    DisplayNote& dn = stack.back(); // Get most recent note of this pitch
-                    dn.endTick = evt.tick;
-                    
-                    // Handle wrap-around: if note crosses loop boundary, make it wrapped
-                    if (dn.startTick < loopLength && evt.tick >= loopLength) {
-                        // Note crosses loop boundary - make it wrapped
-                        dn.endTick = evt.tick % loopLength;
-                    }
-                    
-                    notes.push_back(dn);
-                    stack.pop_back(); // Remove from stack (LIFO)
-                }
-            }
-        }
-        // Any notes still active wrap to end of loop
-        for (auto& [pitch, stack] : activeNoteStacks) {
-            for (auto& dn : stack) {
-            dn.endTick = loopLength;
-            notes.push_back(dn);
-            }
-        }
+        std::vector<DisplayNote> notes = NoteUtils::reconstructNotes(midiEvents, loopLength);
         
         if (idx < (int)notes.size()) {
             // Record persistent identity for the currently selected note
@@ -161,7 +131,7 @@ void EditStartNoteState::onEnter(EditManager& manager, Track& track, uint32_t st
 // 3. onExit(): clear move mode state.
 void EditStartNoteState::onExit(EditManager& manager, Track& track) {
     logger.debug("Exited EditStartNoteState");
-
+    
     // Clear any stored deleted events when exiting edit mode
     if (!manager.movingNote.deletedEvents.empty()) {
         logger.debug("Clearing %zu deleted events on exit", manager.movingNote.deletedEvents.size());
@@ -235,54 +205,7 @@ void EditStartNoteState::onEncoderTurn(EditManager& manager, Track& track, int d
     }
     
     // Reconstruct notes for overlap detection and selection
-        struct DisplayNote { uint8_t note, velocity; uint32_t startTick, endTick; };
-        std::vector<DisplayNote> currentNotes;
-        std::map<uint8_t, std::vector<DisplayNote>> activeNoteStacks;
-        
-        for (const auto& evt : midiEvents) {
-            if (evt.type == midi::NoteOn && evt.data.noteData.velocity > 0) {
-                DisplayNote dn{evt.data.noteData.note, evt.data.noteData.velocity, evt.tick, evt.tick};
-                activeNoteStacks[evt.data.noteData.note].push_back(dn);
-            } else if ((evt.type == midi::NoteOff) || (evt.type == midi::NoteOn && evt.data.noteData.velocity == 0)) {
-                auto& stack = activeNoteStacks[evt.data.noteData.note];
-                if (!stack.empty()) {
-                    DisplayNote& dn = stack.back();
-                // Keep the actual MIDI event tick for proper note identification
-                // Don't wrap here - let display/playback handle wrapping
-                    dn.endTick = evt.tick;
-                
-                // Only add notes with reasonable lengths to prevent corruption
-                uint32_t noteLength = calculateNoteLength(dn.startTick, dn.endTick, loopLength);
-                if (noteLength > 0 && noteLength <= loopLength * 2) { // Allow wrapped notes up to 2x loop length
-                    currentNotes.push_back(dn);
-                    logger.debug("Added note: pitch=%d, start=%lu, end=%lu, length=%lu", 
-                               dn.note, dn.startTick, dn.endTick, noteLength);
-                } else {
-                    logger.debug("Skipped invalid note: pitch=%d, start=%lu, end=%lu, length=%lu", 
-                               dn.note, dn.startTick, dn.endTick, noteLength);
-                }
-                
-                stack.pop_back();
-            }
-        }
-    }
-    
-    // Handle orphaned notes - but validate them first to prevent impossible notes
-        for (auto& [pitch, stack] : activeNoteStacks) {
-            for (auto& dn : stack) {
-            // Check if this is a reasonable note length
-            uint32_t proposedLength = loopLength - dn.startTick;
-            if (proposedLength <= loopLength && proposedLength > 0) {
-                dn.endTick = loopLength;
-                currentNotes.push_back(dn);
-                logger.debug("Added orphaned note in final reconstruction: pitch=%d, start=%lu, end=%lu, length=%lu", 
-                           dn.note, dn.startTick, dn.endTick, proposedLength);
-            } else {
-                logger.debug("Skipped invalid orphaned note in final reconstruction: pitch=%d, start=%lu, would be length=%lu", 
-                           dn.note, dn.startTick, proposedLength);
-            }
-        }
-    }
+    std::vector<DisplayNote> currentNotes = NoteUtils::reconstructNotes(midiEvents, loopLength);
     
     // Store notes to delete and restore
     std::vector<DisplayNote> notesToDelete;
@@ -718,127 +641,27 @@ void EditStartNoteState::onEncoderTurn(EditManager& manager, Track& track, int d
     manager.setBracketTick(newStart);
     
     // Reconstruct notes to find the new selected index
-    currentNotes.clear();
-    activeNoteStacks.clear();
-    
-    logger.debug("=== FINAL NOTE RECONSTRUCTION ===");
-    
-    for (const auto& evt : midiEvents) {
-        if (evt.type == midi::NoteOn && evt.data.noteData.velocity > 0) {
-            DisplayNote dn{evt.data.noteData.note, evt.data.noteData.velocity, evt.tick, evt.tick};
-            activeNoteStacks[evt.data.noteData.note].push_back(dn);
-            logger.debug("Found NoteOn: pitch=%d, tick=%lu", evt.data.noteData.note, evt.tick);
-        } else if ((evt.type == midi::NoteOff) || (evt.type == midi::NoteOn && evt.data.noteData.velocity == 0)) {
-            auto& stack = activeNoteStacks[evt.data.noteData.note];
-            if (!stack.empty()) {
-                DisplayNote& dn = stack.back();
-                dn.endTick = evt.tick;
-                
-                logger.debug("Found NoteOff: pitch=%d, startTick=%lu, endTick=%lu", 
-                           evt.data.noteData.note, dn.startTick, dn.endTick);
-                
-                // Check if this note wraps around the loop boundary (end < start) or extends past loop length
-                if (dn.endTick < dn.startTick || dn.endTick > loopLength) {
-                    // This is a wrapped note - create two display segments
-                    // Segment 1: from startTick to loop end
-                    DisplayNote segment1 = dn;
-                    segment1.endTick = loopLength;
-                    uint32_t segment1Length = loopLength - dn.startTick;
-                    
-                    if (segment1Length > 0) {
-                        currentNotes.push_back(segment1);
-                        logger.debug("Added wrapped note segment 1: pitch=%d, start=%lu, end=%lu, length=%lu", 
-                                   segment1.note, segment1.startTick, segment1.endTick, segment1Length);
-                    }
-                    
-                    // Segment 2: from 0 to original endTick (wrapped position)
-                    // For notes extending past loop or wrapped, wrap the endTick
-                    uint32_t wrappedEndTick = (dn.endTick > loopLength ? dn.endTick % loopLength : dn.endTick);
-                    if (wrappedEndTick > 0) {
-                        DisplayNote segment2 = dn;
-                        segment2.startTick = 0;
-                        segment2.endTick = wrappedEndTick;
-                        uint32_t segment2Length = wrappedEndTick;
-                        
-                        currentNotes.push_back(segment2);
-                        logger.debug("Added wrapped note segment 2: pitch=%d, start=%lu, end=%lu, length=%lu", 
-                                   segment2.note, segment2.startTick, segment2.endTick, segment2Length);
-                    }
-                } else {
-                    // Normal note - no wrapping
-                    uint32_t noteLength = calculateNoteLength(dn.startTick, dn.endTick, loopLength);
-                    if (noteLength > 0) {
-                        currentNotes.push_back(dn);
-                        logger.debug("Added normal note: pitch=%d, start=%lu, end=%lu, length=%lu", 
-                                   dn.note, dn.startTick, dn.endTick, noteLength);
-                    }
-                }
-                
-                stack.pop_back();
-            }
-        }
-    }
-    
-    // Handle orphaned notes - but validate them first to prevent impossible notes
-    for (auto& [pitch, stack] : activeNoteStacks) {
-        for (auto& dn : stack) {
-            // Check if this is a reasonable note length
-            uint32_t proposedLength = loopLength - dn.startTick;
-            if (proposedLength <= loopLength && proposedLength > 0) {
-            dn.endTick = loopLength;
-                currentNotes.push_back(dn);
-                logger.debug("Added orphaned note in final reconstruction: pitch=%d, start=%lu, end=%lu, length=%lu", 
-                           dn.note, dn.startTick, dn.endTick, proposedLength);
-            } else {
-                logger.debug("Skipped invalid orphaned note in final reconstruction: pitch=%d, start=%lu, would be length=%lu", 
-                           dn.note, dn.startTick, proposedLength);
-            }
-        }
-    }
-    
-    // Find the moved note's new index
+    auto finalNotes = NoteUtils::reconstructNotes(midiEvents, loopLength);
     int newSelectedIdx = -1;
-    {
-        // For wrapped notes, we want to select the first segment (the one that starts at newStart)
-        for (int i = 0; i < (int)currentNotes.size(); i++) {
-            if (currentNotes[i].note == movingNotePitch && 
-                currentNotes[i].startTick == newStart) {
-                
-                // Check if this could be our moved note
-                bool isOurNote = false;
-                
-                if (newEnd >= loopLength) {
-                    // This is a wrapped note - select the segment that starts at newStart and ends at loopLength
-                    isOurNote = (currentNotes[i].endTick == loopLength);
-                } else {
-                    // Normal note - match exact end position
-                    isOurNote = (currentNotes[i].endTick == (newEnd >= loopLength ? loopLength : newEnd)); // match raw or wrapped segment
-                }
-                
-                if (isOurNote) {
-                    newSelectedIdx = i;
-                    logger.debug("Found moved note at index %d: start=%lu, end=%lu (wrapped=%s)", 
-                               i, currentNotes[i].startTick, currentNotes[i].endTick, 
-                               (newEnd >= loopLength) ? "yes" : "no");
-                    break;
-                }
-            }
-        }
-        
-        // If we didn't find an exact match, try to find any note with the same pitch and start
-        if (newSelectedIdx == -1) {
-            for (int i = 0; i < (int)currentNotes.size(); i++) {
-                if (currentNotes[i].note == movingNotePitch && 
-                    currentNotes[i].startTick == newStart) {
+    // Try exact match on pitch, start, and end
+    for (int i = 0; i < (int)finalNotes.size(); ++i) {
+        if (finalNotes[i].note == movingNotePitch &&
+            finalNotes[i].startTick == newStart &&
+            finalNotes[i].endTick == newEnd) {
             newSelectedIdx = i;
-                    logger.debug("Found moved note at index %d (fallback match): start=%lu, end=%lu", 
-                               i, currentNotes[i].startTick, currentNotes[i].endTick);
             break;
-                }
+        }
+    }
+    // Fallback: match only pitch and start
+    if (newSelectedIdx < 0) {
+        for (int i = 0; i < (int)finalNotes.size(); ++i) {
+            if (finalNotes[i].note == movingNotePitch &&
+                finalNotes[i].startTick == newStart) {
+                newSelectedIdx = i;
+                break;
             }
         }
     }
-    
     if (newSelectedIdx >= 0) {
         manager.setSelectedNoteIdx(newSelectedIdx);
         logger.debug("Updated selectedNoteIdx to %d for moved note", newSelectedIdx);
