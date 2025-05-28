@@ -130,19 +130,8 @@ void EditStartNoteState::applyShortenOrDelete(std::vector<MidiEvent>& midiEvents
                                               const std::vector<DisplayNote>& notesToDelete,
                                               EditManager& manager,
                                               uint32_t loopLength) {
-    // Build quick index of NoteOn/NoteOff events by (pitch,tick)
-    using Key = uint64_t;
-    std::unordered_map<Key, size_t> onIndex, offIndex;
-    for (size_t i = 0; i < midiEvents.size(); ++i) {
-        const auto& evt = midiEvents[i];
-        bool isOn = (evt.type == midi::NoteOn && evt.data.noteData.velocity > 0);
-        bool isOffEvt = (evt.type == midi::NoteOff || (evt.type == midi::NoteOn && evt.data.noteData.velocity == 0));
-        if (isOn || isOffEvt) {
-            Key key = ((Key)evt.data.noteData.note << 32) | evt.tick;
-            if (isOn) onIndex[key] = i;
-            else offIndex[key] = i;
-        }
-    }
+    // Build quick index via shared utility
+    auto [onIndex, offIndex] = NoteUtils::buildEventIndex(midiEvents);
     // Shorten overlapping notes using index
     for (const auto& [dn, newEnd] : notesToShorten) {
         // Record original for undo
@@ -156,14 +145,14 @@ void EditStartNoteState::applyShortenOrDelete(std::vector<MidiEvent>& midiEvents
         logger.debug("Stored original note before shortening: pitch=%d, start=%lu, end=%lu, length=%lu",
                      original.note, original.startTick, original.endTick, original.originalLength);
         // Adjust its NoteOff event via index
-        Key offKey = ((Key)dn.note << 32) | dn.endTick;
+        auto offKey = (NoteUtils::Key(dn.note) << 32) | dn.endTick;
         auto itOff = offIndex.find(offKey);
         if (itOff != offIndex.end()) {
             size_t idx = itOff->second;
             midiEvents[idx].tick = newEnd;
             // Update index for new tick
             offIndex.erase(itOff);
-            Key newKey = ((Key)dn.note << 32) | newEnd;
+            auto newKey = (NoteUtils::Key(dn.note) << 32) | newEnd;
             offIndex[newKey] = idx;
         }
     }
@@ -204,19 +193,8 @@ static void restoreNotes(std::vector<MidiEvent>& midiEvents,
                          const std::vector<EditManager::MovingNoteIdentity::DeletedNote>& notesToRestore,
                          EditManager& manager,
                          uint32_t loopLength) {
-    // Build quick index of NoteOn/NoteOff events by (pitch,tick)
-    using Key = uint64_t;
-    std::unordered_map<Key, size_t> onIndex, offIndex;
-    for (size_t i = 0; i < midiEvents.size(); ++i) {
-        const auto& evt = midiEvents[i];
-        bool isOn = (evt.type == midi::NoteOn && evt.data.noteData.velocity > 0);
-        bool isOffEvt = (evt.type == midi::NoteOff || (evt.type == midi::NoteOn && evt.data.noteData.velocity == 0));
-        if (isOn || isOffEvt) {
-            Key key = ((Key)evt.data.noteData.note << 32) | evt.tick;
-            if (isOn) onIndex[key] = i;
-            else offIndex[key] = i;
-        }
-    }
+    // Build quick index via shared utility
+    auto [onIndex, offIndex] = NoteUtils::buildEventIndex(midiEvents);
     // Debug existing notes before restoration
     logger.log(CAT_MOVE_NOTES, LOG_DEBUG, "=== EXISTING NOTES BEFORE RESTORATION ===");
     for (const auto& evt : midiEvents) {
@@ -245,11 +223,11 @@ static void restoreNotes(std::vector<MidiEvent>& midiEvents,
         uint32_t targetEnd = nr.startTick + nr.originalLength;
         bool didRestore = false;
         // Try to extend an existing shortened note via index
-        Key onKey = ((Key)nr.note << 32) | nr.startTick;
+        auto onKey = (NoteUtils::Key(nr.note) << 32) | nr.startTick;
         auto itOn = onIndex.find(onKey);
         if (itOn != onIndex.end()) {
             // Find its NoteOff event by original endTick
-            Key offKey = ((Key)nr.note << 32) | nr.endTick;
+            auto offKey = (NoteUtils::Key(nr.note) << 32) | nr.endTick;
             auto itOff = offIndex.find(offKey);
             if (itOff != offIndex.end() && midiEvents[itOff->second].tick < targetEnd) {
                 midiEvents[itOff->second].tick = targetEnd;
