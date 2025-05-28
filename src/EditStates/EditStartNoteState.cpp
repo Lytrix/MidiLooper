@@ -204,6 +204,19 @@ static void restoreNotes(std::vector<MidiEvent>& midiEvents,
                          const std::vector<EditManager::MovingNoteIdentity::DeletedNote>& notesToRestore,
                          EditManager& manager,
                          uint32_t loopLength) {
+    // Build quick index of NoteOn/NoteOff events by (pitch,tick)
+    using Key = uint64_t;
+    std::unordered_map<Key, size_t> onIndex, offIndex;
+    for (size_t i = 0; i < midiEvents.size(); ++i) {
+        const auto& evt = midiEvents[i];
+        bool isOn = (evt.type == midi::NoteOn && evt.data.noteData.velocity > 0);
+        bool isOffEvt = (evt.type == midi::NoteOff || (evt.type == midi::NoteOn && evt.data.noteData.velocity == 0));
+        if (isOn || isOffEvt) {
+            Key key = ((Key)evt.data.noteData.note << 32) | evt.tick;
+            if (isOn) onIndex[key] = i;
+            else offIndex[key] = i;
+        }
+    }
     // Debug existing notes before restoration
     logger.log(CAT_MOVE_NOTES, LOG_DEBUG, "=== EXISTING NOTES BEFORE RESTORATION ===");
     for (const auto& evt : midiEvents) {
@@ -230,32 +243,30 @@ static void restoreNotes(std::vector<MidiEvent>& midiEvents,
     std::vector<EditManager::MovingNoteIdentity::DeletedNote> restored;
     for (const auto& nr : notesToRestore) {
         uint32_t targetEnd = nr.startTick + nr.originalLength;
-        // Try to extend existing shortened note
         bool didRestore = false;
-        auto onIt = std::find_if(midiEvents.begin(), midiEvents.end(), [&](const MidiEvent& me){
-            return me.type == midi::NoteOn && me.data.noteData.velocity > 0 && me.data.noteData.note == nr.note && me.tick == nr.startTick;
-        });
-        if (onIt != midiEvents.end()) {
-            auto offIt = std::find_if(midiEvents.begin(), midiEvents.end(), [&](const MidiEvent& me){
-                return (me.type == midi::NoteOff || (me.type == midi::NoteOn && me.data.noteData.velocity == 0)) &&
-                       me.data.noteData.note == nr.note && me.tick > nr.startTick;
-            });
-            if (offIt != midiEvents.end() && offIt->tick < targetEnd) {
-                offIt->tick = targetEnd;
+        // Try to extend an existing shortened note via index
+        Key onKey = ((Key)nr.note << 32) | nr.startTick;
+        auto itOn = onIndex.find(onKey);
+        if (itOn != onIndex.end()) {
+            // Find its NoteOff event by original endTick
+            Key offKey = ((Key)nr.note << 32) | nr.endTick;
+            auto itOff = offIndex.find(offKey);
+            if (itOff != offIndex.end() && midiEvents[itOff->second].tick < targetEnd) {
+                midiEvents[itOff->second].tick = targetEnd;
                 logger.debug("Extended note: pitch=%d, start=%lu, new end=%lu", nr.note, nr.startTick, targetEnd);
             }
             didRestore = true;
         } else {
             // Recreate deleted note
             MidiEvent onEvt;
-            onEvt.type = midi::NoteOn;
             onEvt.tick = nr.startTick;
+            onEvt.type = midi::NoteOn;
             onEvt.data.noteData.note = nr.note;
             onEvt.data.noteData.velocity = nr.velocity;
             midiEvents.push_back(onEvt);
             MidiEvent offEvt;
-            offEvt.type = midi::NoteOff;
             offEvt.tick = targetEnd;
+            offEvt.type = midi::NoteOff;
             offEvt.data.noteData.note = nr.note;
             offEvt.data.noteData.velocity = 0;
             midiEvents.push_back(offEvt);
