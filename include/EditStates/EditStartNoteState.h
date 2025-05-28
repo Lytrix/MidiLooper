@@ -41,5 +41,19 @@ private:
                               std::vector<std::pair<DisplayNote, uint32_t>>& notesToShorten,
                               std::vector<DisplayNote>& notesToDelete);
 
+    /**
+     * @brief Apply shortening or deletion to MIDI events based on overlap decisions.
+     * @param midiEvents List of MIDI events to modify.
+     * @param notesToShorten Notes to shorten (pair of DisplayNote, new end tick).
+     * @param notesToDelete Notes to delete entirely.
+     * @param manager EditManager for recording deleted originals in undo list.
+     * @param loopLength Loop length in ticks.
+     */
+    static void applyShortenOrDelete(std::vector<MidiEvent>& midiEvents,
+                                     const std::vector<std::pair<DisplayNote, uint32_t>>& notesToShorten,
+                                     const std::vector<DisplayNote>& notesToDelete,
+                                     EditManager& manager,
+                                     uint32_t loopLength);
+
     uint32_t initialHash = 0; // hash of midiEvents at onEnter for undo commit-on-exit
 }; 
