@@ -81,6 +81,7 @@ public:
         struct DeletedNote {
             uint8_t note, velocity;
             uint32_t startTick, endTick;
+            uint32_t originalLength; // Store original note length for consistent restoration
         };
         std::vector<DeletedNote> deletedNotes;
     };
