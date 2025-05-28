@@ -113,6 +113,7 @@ void ButtonManager::update() {
     // --- Encoder button hold/release logic ---
     static bool wasEncoderButtonHeld = false;
     static uint32_t encoderButtonHoldStart = 0;
+    static bool pitchEditActive = false;
     const uint32_t ENCODER_HOLD_DELAY = 250; // ms
     bool encoderButtonHeld = false;
     if (buttons.size() > BUTTON_ENCODER) {
@@ -125,7 +126,6 @@ void ButtonManager::update() {
     if (encoderButtonHeld && (now - encoderButtonHoldStart >= ENCODER_HOLD_DELAY) &&
         (editManager.getCurrentState() == editManager.getNoteState() ||
          editManager.getCurrentState() == editManager.getStartNoteState())) {
-        static bool pitchEditActive = false;
         if (!pitchEditActive) {
             editManager.enterPitchEditMode(trackManager.getSelectedTrack());
             pitchEditActive = true;
@@ -137,7 +137,6 @@ void ButtonManager::update() {
             editManager.exitPitchEditMode(trackManager.getSelectedTrack());
         }
         encoderButtonHoldStart = 0;
-        static bool pitchEditActive = false;
         pitchEditActive = false;
     }
     wasEncoderButtonHeld = encoderButtonHeld;

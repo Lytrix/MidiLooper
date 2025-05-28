@@ -223,9 +223,10 @@ static std::vector<DisplayNote> reconstructNotes(const std::vector<MidiEvent>& m
 void DisplayManager::drawAllNotes(const std::vector<MidiEvent>& midiEvents, uint32_t startLoop, uint32_t lengthLoop, int minPitch, int maxPitch) {
     auto notes = reconstructNotes(midiEvents, lengthLoop);
 
-    // Highlight if in note or start note edit state
+    // Highlight if in note, start-note, or pitch-note edit state
     int highlight = (editManager.getCurrentState() == editManager.getNoteState() ||
-                      editManager.getCurrentState() == editManager.getStartNoteState());
+                     editManager.getCurrentState() == editManager.getStartNoteState() ||
+                     editManager.getCurrentState() == editManager.getPitchNoteState());
     int selectedNoteIdx = highlight ? editManager.getSelectedNoteIdx() : -1;
 
     for (int noteIdx = 0; noteIdx < (int)notes.size(); ++noteIdx) {
@@ -246,8 +247,10 @@ void DisplayManager::drawAllNotes(const std::vector<MidiEvent>& midiEvents, uint
 
 // --- Helper: Draw bracket ---
 void DisplayManager::drawBracket(unsigned long a, unsigned long b, int c) {
+    // Draw bracket in note, start-note, or pitch-note edit states
     if (editManager.getCurrentState() == editManager.getNoteState() ||
-        editManager.getCurrentState() == editManager.getStartNoteState()) {
+        editManager.getCurrentState() == editManager.getStartNoteState() ||
+        editManager.getCurrentState() == editManager.getPitchNoteState()) {
         uint32_t bracketTick = editManager.getBracketTick();
         uint32_t lengthLoop = trackManager.getSelectedTrack().getLength();
         const int pianoRollY1 = 31;
