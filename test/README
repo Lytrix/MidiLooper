@@ -1,4 +1,3 @@
-
 This directory is intended for PlatformIO Test Runner and project tests.
 
 Unit Testing is a software testing method by which individual units of
@@ -9,3 +8,26 @@ in the development cycle.
 
 More information about PlatformIO Unit Testing:
 - https://docs.platformio.org/en/latest/advanced/unit-testing/index.html
+
+-------------------------
+Running tests
+-------------------------
+* Native host-side tests (compile and run manually):
+    g++ -std=c++11 -o test/<name> test/<name>.cpp && ./test/<name>
+* All native tests via PlatformIO:
+    pio test -e native
+* On-device tests (MCU via PlatformIO):
+    pio test -e teensy41
+
+Current test suite contents:
+- test_wrapped_notes           : verifies wrapped note segmentation (two segments).
+- test_display_consistency     : ensures DisplayManager and EditStartNoteState agree.
+- test_wrap_logic              : unit tests for wrapPosition() and calculateNoteLength().
+- test_delete_restore          : left-to-right deletion and restoration logic.
+- test_shorten_delete_restore  : right-to-left shorten, delete, and restore logic.
+- test_serial_midi_input_read.cpp : verifies MidiEvent NoteOn/NoteOff constructors and parsing logic.
+
+Adding new tests:
+* Create a new C++ file under test/, named with the "test_" prefix.
+* Implement a main() that returns zero on success or non-zero on failure, and/or use Unity assertions.
+* Run via PlatformIO or manually as above.
