@@ -10,6 +10,7 @@
 #include "Globals.h"
 #include "TrackUndo.h"
 #include "NoteUtils.h"
+#include <unordered_map>
 
 using DisplayNote = NoteUtils::DisplayNote;
 
@@ -129,7 +130,20 @@ void EditStartNoteState::applyShortenOrDelete(std::vector<MidiEvent>& midiEvents
                                               const std::vector<DisplayNote>& notesToDelete,
                                               EditManager& manager,
                                               uint32_t loopLength) {
-    // Shorten overlapping notes
+    // Build quick index of NoteOn/NoteOff events by (pitch,tick)
+    using Key = uint64_t;
+    std::unordered_map<Key, size_t> onIndex, offIndex;
+    for (size_t i = 0; i < midiEvents.size(); ++i) {
+        const auto& evt = midiEvents[i];
+        bool isOn = (evt.type == midi::NoteOn && evt.data.noteData.velocity > 0);
+        bool isOffEvt = (evt.type == midi::NoteOff || (evt.type == midi::NoteOn && evt.data.noteData.velocity == 0));
+        if (isOn || isOffEvt) {
+            Key key = ((Key)evt.data.noteData.note << 32) | evt.tick;
+            if (isOn) onIndex[key] = i;
+            else offIndex[key] = i;
+        }
+    }
+    // Shorten overlapping notes using index
     for (const auto& [dn, newEnd] : notesToShorten) {
         // Record original for undo
         EditManager::MovingNoteIdentity::DeletedNote original;
@@ -141,16 +155,19 @@ void EditStartNoteState::applyShortenOrDelete(std::vector<MidiEvent>& midiEvents
         manager.movingNote.deletedNotes.push_back(original);
         logger.debug("Stored original note before shortening: pitch=%d, start=%lu, end=%lu, length=%lu",
                      original.note, original.startTick, original.endTick, original.originalLength);
-        // Find its NoteOff event and adjust tick
-        for (auto& evt : midiEvents) {
-            bool isOff = (evt.type == midi::NoteOff || (evt.type == midi::NoteOn && evt.data.noteData.velocity == 0));
-            if (isOff && evt.data.noteData.note == dn.note && evt.tick == dn.endTick) {
-                evt.tick = newEnd;
-                break;
-            }
+        // Adjust its NoteOff event via index
+        Key offKey = ((Key)dn.note << 32) | dn.endTick;
+        auto itOff = offIndex.find(offKey);
+        if (itOff != offIndex.end()) {
+            size_t idx = itOff->second;
+            midiEvents[idx].tick = newEnd;
+            // Update index for new tick
+            offIndex.erase(itOff);
+            Key newKey = ((Key)dn.note << 32) | newEnd;
+            offIndex[newKey] = idx;
         }
     }
-    // Delete overlapping notes entirely
+    // Delete overlapping notes entirely (could similarly use onIndex/offIndex)
     for (const auto& dn : notesToDelete) {
         int deletedCount = 0;
         auto it = midiEvents.begin();
@@ -353,6 +370,7 @@ void EditStartNoteState::onEnter(EditManager& manager, Track& track, uint32_t st
         manager.movingNote.active = false;
         manager.selectClosestNote(track, startTick);
     }
+    manager.movingNote.deletedNotes.clear();
 }
 
 // 3. onExit(): clear move mode state.
@@ -369,6 +387,8 @@ void EditStartNoteState::onExit(EditManager& manager, Track& track) {
     // Reset movement tracking
     manager.movingNote.movementDirection = 0;
     manager.movingNote.active = false;
+    // IDEA: if you want to restore the original length of the note when starting a new move, then remove this line
+    manager.movingNote.deletedNotes.clear();
 }
 
 // 2. onEncoderTurn(): move a note's start/end based on encoder spinning.
