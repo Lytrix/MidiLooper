@@ -182,6 +182,86 @@ void EditStartNoteState::applyShortenOrDelete(std::vector<MidiEvent>& midiEvents
     }
 }
 
+// Helper to restore deleted or shortened notes after movement
+static void restoreNotes(std::vector<MidiEvent>& midiEvents,
+                         const std::vector<EditManager::MovingNoteIdentity::DeletedNote>& notesToRestore,
+                         EditManager& manager,
+                         uint32_t loopLength) {
+    // Debug existing notes before restoration
+    logger.debug("=== EXISTING NOTES BEFORE RESTORATION ===");
+    for (const auto& evt : midiEvents) {
+        if (evt.type == midi::NoteOn && evt.data.noteData.velocity > 0) {
+            // find matching NoteOff
+            auto offIt = std::find_if(midiEvents.begin(), midiEvents.end(), [&](const MidiEvent& me){
+                return (me.type == midi::NoteOff || (me.type == midi::NoteOn && me.data.noteData.velocity == 0)) &&
+                       me.data.noteData.note == evt.data.noteData.note && me.tick > evt.tick;
+            });
+            if (offIt != midiEvents.end()) {
+                uint32_t length = calculateNoteLength(evt.tick, offIt->tick, loopLength);
+                logger.debug("Existing note: pitch=%d, start=%lu, end=%lu, length=%lu", evt.data.noteData.note, evt.tick, offIt->tick, length);
+            }
+        }
+    }
+    // Restoration analysis
+    logger.debug("=== RESTORATION ANALYSIS ===");
+    logger.debug("Total deleted notes: %zu", manager.movingNote.deletedNotes.size());
+    for (const auto& dn : manager.movingNote.deletedNotes) {
+        logger.debug("Deleted note: pitch=%d, start=%lu, end=%lu, length=%lu", dn.note, dn.startTick, dn.endTick, dn.originalLength);
+    }
+    std::vector<EditManager::MovingNoteIdentity::DeletedNote> restored;
+    for (const auto& nr : notesToRestore) {
+        uint32_t targetEnd = nr.startTick + nr.originalLength;
+        // Try to extend existing shortened note
+        bool didRestore = false;
+        auto onIt = std::find_if(midiEvents.begin(), midiEvents.end(), [&](const MidiEvent& me){
+            return me.type == midi::NoteOn && me.data.noteData.velocity > 0 && me.data.noteData.note == nr.note && me.tick == nr.startTick;
+        });
+        if (onIt != midiEvents.end()) {
+            auto offIt = std::find_if(midiEvents.begin(), midiEvents.end(), [&](const MidiEvent& me){
+                return (me.type == midi::NoteOff || (me.type == midi::NoteOn && me.data.noteData.velocity == 0)) &&
+                       me.data.noteData.note == nr.note && me.tick > nr.startTick;
+            });
+            if (offIt != midiEvents.end() && offIt->tick < targetEnd) {
+                offIt->tick = targetEnd;
+                logger.debug("Extended note: pitch=%d, start=%lu, new end=%lu", nr.note, nr.startTick, targetEnd);
+            }
+            didRestore = true;
+        } else {
+            // Recreate deleted note
+            MidiEvent onEvt;
+            onEvt.type = midi::NoteOn;
+            onEvt.tick = nr.startTick;
+            onEvt.data.noteData.note = nr.note;
+            onEvt.data.noteData.velocity = nr.velocity;
+            midiEvents.push_back(onEvt);
+            MidiEvent offEvt;
+            offEvt.type = midi::NoteOff;
+            offEvt.tick = targetEnd;
+            offEvt.data.noteData.note = nr.note;
+            offEvt.data.noteData.velocity = 0;
+            midiEvents.push_back(offEvt);
+            logger.debug("Restored deleted note: pitch=%d, start=%lu, end=%lu", nr.note, nr.startTick, targetEnd);
+            didRestore = true;
+        }
+        if (didRestore) restored.push_back(nr);
+    }
+    // Remove restored from deleted list
+    for (const auto& r : restored) {
+        manager.movingNote.deletedNotes.erase(
+            std::remove_if(manager.movingNote.deletedNotes.begin(), manager.movingNote.deletedNotes.end(),
+                [&](const auto& dn){ return dn.note==r.note && dn.startTick==r.startTick && dn.endTick==r.endTick; }),
+            manager.movingNote.deletedNotes.end());
+    }
+    // Cleanup impossible entries
+    for (auto it = manager.movingNote.deletedNotes.begin(); it != manager.movingNote.deletedNotes.end(); ) {
+        if (it->note != manager.movingNote.note || it->originalLength > loopLength || it->startTick >= loopLength) {
+            it = manager.movingNote.deletedNotes.erase(it);
+        } else {
+            ++it;
+        }
+    }
+}
+
 // 1. onEnter(): set up moving note identity and bracket.
 void EditStartNoteState::onEnter(EditManager& manager, Track& track, uint32_t startTick) {
     logger.debug("Entered EditStartNoteState");
@@ -378,213 +458,9 @@ void EditStartNoteState::onEncoderTurn(EditManager& manager, Track& track, int d
     std::sort(midiEvents.begin(), midiEvents.end(),
               [](auto const &a, auto const &b){ return a.tick < b.tick; });
     
-    // Debug: Show all existing notes before restoration
-    logger.debug("=== EXISTING NOTES BEFORE RESTORATION ===");
-    std::map<uint8_t, std::vector<std::pair<uint32_t, uint32_t>>> existingNotesByPitch;
-    for (const auto& evt : midiEvents) {
-        if (evt.type == midi::NoteOn && evt.data.noteData.velocity > 0) {
-            // Find matching NoteOff
-            for (const auto& endEvt : midiEvents) {
-                if ((endEvt.type == midi::NoteOff || (endEvt.type == midi::NoteOn && endEvt.data.noteData.velocity == 0)) &&
-                    endEvt.data.noteData.note == evt.data.noteData.note && endEvt.tick > evt.tick) {
-                    uint32_t length = calculateNoteLength(evt.tick, endEvt.tick, loopLength);
-                    logger.debug("Existing note: pitch=%d, start=%lu, end=%lu, length=%lu", 
-                               evt.data.noteData.note, evt.tick, endEvt.tick, length);
-                    existingNotesByPitch[evt.data.noteData.note].push_back({evt.tick, endEvt.tick});
-                    break;
-                }
-            }
-        }
-    }
-    
     // Restore notes that should be restored based on movement
-    std::vector<EditManager::MovingNoteIdentity::DeletedNote> notesToRemoveFromDeleted;
+    restoreNotes(midiEvents, notesToRestore, manager, loopLength);
     
-    logger.debug("=== RESTORATION ANALYSIS ===");
-    logger.debug("Total deleted notes: %zu", manager.movingNote.deletedNotes.size());
-    for (const auto& dn : manager.movingNote.deletedNotes) {
-        logger.debug("Deleted note: pitch=%d, start=%lu, end=%lu, length=%lu", 
-                   dn.note, dn.startTick, dn.endTick, dn.originalLength);
-    }
-    
-    for (const auto& noteToRestore : notesToRestore) {
-        logger.debug("Attempting to restore note: pitch=%d, start=%lu, stored_end=%lu, length=%lu", 
-                     noteToRestore.note, noteToRestore.startTick, noteToRestore.endTick, noteToRestore.originalLength);
-        
-        // Calculate the target end tick using stored original length
-        uint32_t targetEndTick = noteToRestore.startTick + noteToRestore.originalLength;
-        
-        // Check for and remove ultra-short conflicting notes that are likely corrupted
-        bool removedCorruptedNote = false;
-            auto it = midiEvents.begin();
-            while (it != midiEvents.end()) {
-            if (it->type == midi::NoteOn && it->data.noteData.velocity > 0 && 
-                it->data.noteData.note == noteToRestore.note) {
-                
-                // Find the end of this existing note
-                uint32_t existingEnd = it->tick;
-                auto endIt = midiEvents.end();
-                for (auto endSearch = midiEvents.begin(); endSearch != midiEvents.end(); ++endSearch) {
-                    if ((endSearch->type == midi::NoteOff || (endSearch->type == midi::NoteOn && endSearch->data.noteData.velocity == 0)) &&
-                        endSearch->data.noteData.note == noteToRestore.note && endSearch->tick > it->tick) {
-                        existingEnd = endSearch->tick;
-                        endIt = endSearch;
-                        break;
-                    }
-                }
-                
-                // Check if this is an ultra-short note (1-2 ticks) that conflicts with restoration
-                uint32_t noteLength = existingEnd - it->tick;
-                bool isUltraShort = (noteLength <= 2);
-                bool conflictsWithRestore = notesOverlap(noteToRestore.startTick, targetEndTick, it->tick, existingEnd, loopLength);
-                
-                if (isUltraShort && conflictsWithRestore) {
-                    logger.debug("Removing corrupted ultra-short note that blocks restoration: pitch=%d, start=%lu, end=%lu, length=%lu", 
-                               it->data.noteData.note, it->tick, existingEnd, noteLength);
-                    
-                    // Remove both NoteOn and NoteOff events
-                    if (endIt != midiEvents.end()) {
-                        // Remove NoteOff first (higher index)
-                        midiEvents.erase(endIt);
-                    }
-                    // Remove NoteOn
-                    it = midiEvents.erase(it);
-                    removedCorruptedNote = true;
-                    continue; // Don't increment it since we erased
-                }
-            }
-                    ++it;
-        }
-        
-        if (removedCorruptedNote) {
-            logger.debug("Removed corrupted notes blocking restoration - retrying conflict detection");
-        }
-        
-        // Check if restoring this note would conflict with any remaining existing notes
-        bool hasConflict = false;
-        for (const auto& evt : midiEvents) {
-            if (evt.type == midi::NoteOn && evt.data.noteData.velocity > 0 && 
-                evt.data.noteData.note == noteToRestore.note) {
-                
-                // Find the end of this existing note
-                uint32_t existingEnd = evt.tick; // Default if no end found
-                for (const auto& endEvt : midiEvents) {
-                    if ((endEvt.type == midi::NoteOff || (endEvt.type == midi::NoteOn && endEvt.data.noteData.velocity == 0)) &&
-                        endEvt.data.noteData.note == noteToRestore.note && endEvt.tick > evt.tick) {
-                        existingEnd = endEvt.tick;
-                        break;
-                    }
-                }
-                
-                // Check for overlap with what we want to restore
-                if (notesOverlap(noteToRestore.startTick, targetEndTick, evt.tick, existingEnd, loopLength)) {
-                    hasConflict = true;
-                    logger.debug("Cannot restore note: conflicts with existing note at %lu-%lu", evt.tick, existingEnd);
-                    break;
-                }
-            }
-        }
-        
-        if (!hasConflict) {
-            // Check if this is a shortened note (has a NoteOn event but different end)
-            auto onIt = std::find_if(midiEvents.begin(), midiEvents.end(), [&](const MidiEvent& evt) {
-                return evt.type == midi::NoteOn && evt.data.noteData.velocity > 0 &&
-                   evt.data.noteData.note == noteToRestore.note && 
-                   evt.tick == noteToRestore.startTick;
-            });
-            
-            if (onIt != midiEvents.end()) {
-                // This is a shortened note - find its current end event and extend it
-                auto endIt = midiEvents.end();
-                uint32_t closestEndTick = UINT32_MAX;
-                
-                for (auto it = midiEvents.begin(); it != midiEvents.end(); ++it) {
-                    if ((it->type == midi::NoteOff || (it->type == midi::NoteOn && it->data.noteData.velocity == 0)) && 
-                        it->data.noteData.note == noteToRestore.note && 
-                        it->tick > noteToRestore.startTick && 
-                        it->tick < closestEndTick) {
-                        endIt = it;
-                        closestEndTick = it->tick;
-                    }
-                }
-                
-                if (endIt != midiEvents.end() && endIt->tick < targetEndTick) {
-                    endIt->tick = targetEndTick;
-                    logger.debug("Extended shortened note: pitch=%d, start=%lu, end=%lu->%lu (length=%lu)", 
-                               noteToRestore.note, noteToRestore.startTick, closestEndTick, targetEndTick, noteToRestore.originalLength);
-                }
-            } else {
-                // This is a completely deleted note - recreate it
-                MidiEvent onEvent;
-                onEvent.type = midi::NoteOn;
-                onEvent.tick = noteToRestore.startTick;
-                onEvent.data.noteData.note = noteToRestore.note;
-                onEvent.data.noteData.velocity = noteToRestore.velocity;
-                midiEvents.push_back(onEvent);
-                
-                MidiEvent offEvent;
-                offEvent.type = midi::NoteOff;
-                offEvent.tick = targetEndTick;
-                offEvent.data.noteData.note = noteToRestore.note;
-                offEvent.data.noteData.velocity = 0;
-                midiEvents.push_back(offEvent);
-                
-                logger.debug("Restored deleted note: pitch=%d, start=%lu, end=%lu (length=%lu)", 
-                           noteToRestore.note, noteToRestore.startTick, targetEndTick, noteToRestore.originalLength);
-            }
-            
-            // Mark for removal from deleted notes list
-            notesToRemoveFromDeleted.push_back(noteToRestore);
-        }
-    }
-    
-    // Remove restored notes from deleted notes list (do this after restoration to avoid iterator issues)
-    for (const auto& noteToRemove : notesToRemoveFromDeleted) {
-        auto it = std::find_if(manager.movingNote.deletedNotes.begin(), 
-                             manager.movingNote.deletedNotes.end(),
-                             [&](const auto& dn) {
-            return dn.note == noteToRemove.note && 
-                   dn.startTick == noteToRemove.startTick && 
-                   dn.endTick == noteToRemove.endTick;
-        });
-        if (it != manager.movingNote.deletedNotes.end()) {
-            manager.movingNote.deletedNotes.erase(it);
-            logger.debug("Removed restored note from deleted list: pitch=%d, start=%lu, end=%lu", 
-                       noteToRemove.note, noteToRemove.startTick, noteToRemove.endTick);
-        }
-    }
-    
-    // Clean up only truly corrupted entries from the deleted list
-    auto it = manager.movingNote.deletedNotes.begin();
-    while (it != manager.movingNote.deletedNotes.end()) {
-        bool isCorrupted = false;
-        
-        // Only remove notes that are clearly corrupted (impossible characteristics)
-        if (it->note != movingNotePitch) {
-            isCorrupted = true;
-            logger.debug("Removing deleted note from different pitch: pitch=%d (current pitch=%d)", 
-                       it->note, movingNotePitch);
-        }
-        // Check for impossible length (longer than the entire loop)
-        else if (it->originalLength > loopLength) {
-            isCorrupted = true;
-            logger.debug("Removing corrupted deleted note with impossible length: length=%lu > loopLength=%lu", 
-                       it->originalLength, loopLength);
-        }
-        // Check for impossible start position
-        else if (it->startTick >= loopLength) {
-            isCorrupted = true;
-            logger.debug("Removing corrupted deleted note with impossible start: start=%lu >= loopLength=%lu", 
-                       it->startTick, loopLength);
-        }
-        
-        if (isCorrupted) {
-            it = manager.movingNote.deletedNotes.erase(it);
-        } else {
-            ++it;
-        }
-    }
-
     // Sort events by tick
     std::sort(midiEvents.begin(), midiEvents.end(),
               [](auto const &a, auto const &b){ return a.tick < b.tick; });
