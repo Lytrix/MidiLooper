@@ -18,8 +18,24 @@ enum ButtonId {
     BUTTON_ENCODER = 2
 };
 
-
-
+/**
+ * @class ButtonManager
+ * @brief Manages hardware button/debounce logic and detects press actions and encoder turns.
+ *
+ * Uses Bounce2 to debounce a configurable set of input pins. The update() method must
+ * be called regularly (e.g., in loop()) to poll button states. It classifies button events
+ * into ButtonAction types: none, short press, double press, or long press, and routes them
+ * to handleButton() for application-specific handling. The encoder push is treated like a
+ * button (ButtonId::BUTTON_ENCODER). Encoder rotation is tracked via internal position counters.
+ *
+ * Configuration:
+ *   - setup(pins): initialize pins for debouncing.
+ *   - DEFAULT_DEBOUNCE_INTERVAL: debounce time in ms.
+ *
+ * Timing constants:
+ *   - DOUBLE_TAP_WINDOW: max interval for double-press detection (ms).
+ *   - LONG_PRESS_TIME: threshold for long-press detection (ms).
+ */
 class ButtonManager {
 public:
     ButtonManager();

@@ -6,6 +6,24 @@
 #include "Track.h"
 #include "ClockManager.h"
 
+/**
+ * @class TrackManager
+ * @brief Oversees multiple Track instances, handling selection, recording, playback,
+ * overdubbing, mute/solo, and loop synchronization.
+ *
+ * The TrackManager maintains an array of Track objects (one per MIDI track),
+ * provides methods to select the active track, start/stop recording, playback,
+ * overdub, clear, and manage mute/solo status. It also supports quantized
+ * start/stop operations, auto-align to master loop length, and querying track
+ * states and lengths.
+ *
+ * Timing and clock interaction:
+ *   - updateAllTracks(currentTick) is driven by the global clock (ClockManager);
+ *     it must be called regularly with the current tick to advance each Track's
+ *     state machine (playback, overdub, pending NoteOffs, quantized events).
+ *   - TrackManager consumes the global tick to schedule recording start/stop,
+ *     playback loops, overdub timing, and note finalization in each Track.
+ */
 class TrackManager {
 public:
   TrackManager();

@@ -1,3 +1,15 @@
+/**
+ * @file Globals.h
+ * @brief Global configuration, hardware pin definitions, timing constants, and runtime state for the MIDI looper.
+ *
+ * Defines:
+ *  - Debug levels (DEBUG_* flags) and global debugLevel variable.
+ *  - LCD, button, and encoder hardware pin assignments in LCD and Buttons namespaces.
+ *  - Default MIDI channel and PPQN in MidiConfig namespace.
+ *  - Track count, internal PPQN, time signature, and loop timing constants in Config namespace.
+ *  - Runtime settings: bpm, ticksPerQuarterNote, quartersPerBar, ticksPerBar, and display timing.
+ *  - System helper functions: setupGlobals(), isBarBoundary(), loadConfig(), saveConfig().
+ */
 #ifndef GLOBALS_H
 #define GLOBALS_H
 
@@ -78,8 +90,10 @@ extern uint32_t lastDisplayUpdate;
 // --------------------
 // System Functions
 // --------------------
-void setupGlobals();                       // Initialize system configuration
 bool isBarBoundary();                      // Check if current tick is on bar boundary
+
+// Still to be implemented on EEPROM
+void setupGlobals();                       // Initialize system configuration
 void loadConfig();                         // Load configuration from persistent storage
 void saveConfig();                         // Save configuration to persistent storage
 

@@ -5,6 +5,24 @@
 #include "TrackStateMachine.h"
 #include "MidiEvent.h"
 
+/**
+ * @class TrackUndo
+ * @brief Manages undo history for track MIDI events.
+ *
+ * This class maintains snapshots of a Track's MIDI event list to support
+ * undoable operations. Typical usage:
+ *   - pushUndoSnapshot(track): record current MIDI state before an overdub or edit.
+ *   - undoOverdub(track): restore the last snapshot and remove it from history.
+ *   - popLastUndo(track): discard the last snapshot without restoring (e.g., if an edit
+ *     yields no net changes using a hash).
+ *   - getUndoCount / canUndo: query available undo snapshots.
+ *
+ * For full-track clear operations, separate clear-track snapshots are managed via
+ * pushClearTrackSnapshot and undoClearTrack.
+ *
+ * Internally, snapshots are stored in deques of std::vector<MidiEvent> for efficient
+ * push/pop operations.
+ */
 class TrackUndo {
 public:
     friend class Track;

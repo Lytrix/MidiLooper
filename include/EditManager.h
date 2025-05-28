@@ -11,7 +11,16 @@
 // Forward declarations
 class Track;
 
-// Manages all state and logic for edit overlays (note, param, track, etc.)
+/**
+ * @class EditManager
+ * @brief Implements the state machine for note- and parameter-edit overlays.
+ *
+ * Coordinates EditState instances (NoteState, StartNoteState, PitchNoteState) to handle
+ * encoder movements and button presses for selecting notes, moving note start positions,
+ * and changing note pitches. Tracks the bracket position over the piano roll, manages
+ * commit-on-enter/commit-on-exit undo snapshots via TrackUndo, and delegates display
+ * updates to DisplayManager for visual feedback.
+ */
 class EditManager {
 public:
     EditManager();

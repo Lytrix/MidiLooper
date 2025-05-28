@@ -19,6 +19,20 @@ struct DisplayNote {
     uint32_t endTick;
 };
 
+/**
+ * @class DisplayManager
+ * @brief Renders the graphical user interface for the MIDI looper.
+ *
+ * The DisplayManager draws all components of the looper UI onto the SSD1322 display:
+ *  - Piano roll view with note bars and playhead cursor
+ *  - Note selection bracket and highlight
+ *  - Track status indicators and program/editor overlays
+ *  - Info area displaying loop length, undo count, and transport position
+ *  - Note detail area showing selected note parameters (pitch, length, velocity)
+ *
+ * It consumes MIDI event data, clock ticks, and state from EditManager and TrackManager,
+ * and must have its update() method called regularly (e.g., at ~30 FPS) to refresh the display.
+ */
 class DisplayManager {
 public:
     DisplayManager();
