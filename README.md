@@ -32,16 +32,17 @@ Multi-track MIDI looper with full undo/redo, auto-save/load, and clear visual fe
 - Reload last used state and loops on startup
 - Robust state machine for all track transitions
 - Visual feedback for all actions and states
-+## ✏️ Note Editor ##
-+- Piano-roll note editor integrated into the looper UI
-+- Encoder-driven movement of note start positions, with seamless wrap-around support
-+- Raw note end tick stored intact; wrapping logic is deferred to display and playback layers
-+- Intelligent overlap resolution:
-+  - Left-to-right moves delete overlapping notes
-+  - Right-to-left moves shorten overlapping notes (down to a 1/16th-step) and delete if too short
-+  - Direction-aware restoration of previously deleted or shortened notes when moving away
-+- Selection bracket and highlight visually track the moving note
-+- Host-side unit tests in `test/` to validate wrap logic and edit behavior
+
+## ✏️ Note Editor ##
+- Piano-roll note editor integrated into the looper UI
+- Encoder-driven movement of note start positions, with seamless wrap-around support
+- Raw note end tick stored intact; wrapping logic is deferred to display and playback layers
+- Intelligent overlap resolution:
+  - Left-to-right moves delete overlapping notes
+  - Right-to-left moves shorten overlapping notes (down to a 1/16th-step) and delete if too short
+  - Direction-aware restoration of previously deleted or shortened notes when moving away
+- Selection bracket and highlight visually track the moving note
+- Host-side unit tests in `test/` to validate wrap logic and edit behavior
 
 ## 🔴 Button A – Recording, Overdubbing, Playback, Undo, and Clear ##
 
