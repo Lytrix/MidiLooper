@@ -8,7 +8,6 @@
 #include "Logger.h"
 #include <map>
 #include "Globals.h"
-#include <stdexcept>
 
 /**
  * @class EditStartNoteState
@@ -30,6 +29,59 @@
  *   9. Sort the MIDI event list, update manager.movingNote.lastStart/lastEnd and bracket, and reselect the moved note index.
  */
 
+// Helper functions for wrap-around calculations and overlap detection
+static uint32_t wrapPosition(int32_t position, uint32_t loopLength) {
+    if (position < 0) {
+        position = (int32_t)loopLength + position;
+        while (position < 0) {
+            position += (int32_t)loopLength;
+        }
+    } else if (position >= (int32_t)loopLength) {
+        position = position % (int32_t)loopLength;
+    }
+    return (uint32_t)position;
+}
+
+static uint32_t calculateNoteLength(uint32_t start, uint32_t end, uint32_t loopLength) {
+    if (end >= start) {
+        return end - start;
+    } else {
+        return (loopLength - start) + end;
+    }
+}
+
+static bool notesOverlap(uint32_t start1, uint32_t end1, uint32_t start2, uint32_t end2, uint32_t loopLength) {
+    // Convert to unwrapped positions for comparison
+    uint32_t unwrappedEnd1 = end1;
+    uint32_t unwrappedEnd2 = end2;
+    
+    // Check if notes are wrapped (end < start means wrapped)
+    bool wrapped1 = (end1 < start1);
+    bool wrapped2 = (end2 < start2);
+    
+    if (wrapped1) {
+        unwrappedEnd1 = end1 + loopLength;
+    }
+    if (wrapped2) {
+        unwrappedEnd2 = end2 + loopLength;
+    }
+    
+    // Now check overlap using unwrapped positions
+    // Note1: [start1, unwrappedEnd1], Note2: [start2, unwrappedEnd2]
+    bool overlap = (start1 < unwrappedEnd2) && (start2 < unwrappedEnd1);
+    
+    // If both notes are unwrapped, also check for loop-wrapped overlaps
+    if (!wrapped1 && !wrapped2) {
+        // Check if note1 wraps around and overlaps with note2
+        bool note1WrapsAndOverlaps = (start1 + loopLength < unwrappedEnd2) && (start2 < end1 + loopLength);
+        // Check if note2 wraps around and overlaps with note1
+        bool note2WrapsAndOverlaps = (start2 + loopLength < unwrappedEnd1) && (start1 < end2 + loopLength);
+        overlap = overlap || note1WrapsAndOverlaps || note2WrapsAndOverlaps;
+    }
+    
+    return overlap;
+}
+
 // 1. onEnter(): set up moving note identity and bracket.
 void EditStartNoteState::onEnter(EditManager& manager, Track& track, uint32_t startTick) {
     logger.debug("Entered EditStartNoteState");
@@ -43,71 +95,46 @@ void EditStartNoteState::onEnter(EditManager& manager, Track& track, uint32_t st
         auto& midiEvents = track.getMidiEvents();
         struct DisplayNote { uint8_t note, velocity; uint32_t startTick, endTick; };
         std::vector<DisplayNote> notes;
-        std::vector<DisplayNote> activeNotes; // Changed from map to vector to handle multiple notes of same pitch
+        std::map<uint8_t, std::vector<DisplayNote>> activeNoteStacks; // Stack per pitch for proper LIFO matching
         
         for (const auto& evt : midiEvents) {
             if (evt.type == midi::NoteOn && evt.data.noteData.velocity > 0) {
                 // Start a new note
                 DisplayNote dn{evt.data.noteData.note, evt.data.noteData.velocity, evt.tick, evt.tick};
-                activeNotes.push_back(dn);
+                activeNoteStacks[evt.data.noteData.note].push_back(dn);
             } else if ((evt.type == midi::NoteOff) || (evt.type == midi::NoteOn && evt.data.noteData.velocity == 0)) {
-                // End a note - find the matching active note (FIFO for same pitch)
-                auto it = std::find_if(activeNotes.begin(), activeNotes.end(), [&](const DisplayNote& dn) {
-                    return dn.note == evt.data.noteData.note;
-                });
-                if (it != activeNotes.end()) {
-                    it->endTick = evt.tick;
+                // End a note - use LIFO (stack) matching for proper note pairing
+                auto& stack = activeNoteStacks[evt.data.noteData.note];
+                if (!stack.empty()) {
+                    DisplayNote& dn = stack.back(); // Get most recent note of this pitch
+                    dn.endTick = evt.tick;
                     
                     // Handle wrap-around: if note crosses loop boundary, make it wrapped
-                    if (it->startTick < loopLength && evt.tick >= loopLength) {
+                    if (dn.startTick < loopLength && evt.tick >= loopLength) {
                         // Note crosses loop boundary - make it wrapped
-                        it->endTick = evt.tick % loopLength;
+                        dn.endTick = evt.tick % loopLength;
                     }
                     
-                    notes.push_back(*it);
-                    activeNotes.erase(it);
+                    notes.push_back(dn);
+                    stack.pop_back(); // Remove from stack (LIFO)
                 }
             }
         }
         // Any notes still active wrap to end of loop
-        for (auto& dn : activeNotes) {
+        for (auto& [pitch, stack] : activeNoteStacks) {
+            for (auto& dn : stack) {
             dn.endTick = loopLength;
             notes.push_back(dn);
+            }
         }
         
         if (idx < (int)notes.size()) {
             // Record persistent identity for the currently selected note
-            // CRITICAL: We need to store the actual MIDI event positions, not display positions
-            // For wrapped notes, the display shows endTick < startTick, but MIDI events 
-            // are stored at their actual tick positions (may be > loopLength)
             manager.movingNote.note = notes[idx].note;
             manager.movingNote.origStart = notes[idx].startTick;
             manager.movingNote.origEnd = notes[idx].endTick;
-            
-            // Find the actual MIDI event positions for tracking
-            uint8_t selectedPitch = notes[idx].note;
-            uint32_t selectedStart = notes[idx].startTick;
-            uint32_t selectedDisplayEnd = notes[idx].endTick;
-            
-            // Find the actual NoteOff event position in MIDI events
-            uint32_t actualMidiEndTick = selectedDisplayEnd;
-            if (selectedDisplayEnd < selectedStart) {
-                // This is a wrapped note - find the actual NoteOff position
-                for (const auto& evt : midiEvents) {
-                    if ((evt.type == midi::NoteOff || (evt.type == midi::NoteOn && evt.data.noteData.velocity == 0)) && 
-                        evt.data.noteData.note == selectedPitch && 
-                        evt.tick > selectedStart) {
-                        actualMidiEndTick = evt.tick;
-                        logger.debug("Found actual MIDI end position %lu for wrapped note (display end=%lu)", 
-                                   actualMidiEndTick, selectedDisplayEnd);
-                        break;
-                    }
-                }
-            }
-            
-            // Store the actual MIDI event positions for reliable tracking
-            manager.movingNote.lastStart = selectedStart;
-            manager.movingNote.lastEnd = actualMidiEndTick;  // Store actual MIDI position, not display position
+            manager.movingNote.lastStart = notes[idx].startTick;
+            manager.movingNote.lastEnd = notes[idx].endTick;
             manager.movingNote.wrapCount = 0;
             manager.movingNote.active = true;
             manager.movingNote.movementDirection = 0;
@@ -115,8 +142,8 @@ void EditStartNoteState::onEnter(EditManager& manager, Track& track, uint32_t st
             manager.movingNote.deletedEventIndices.clear();
             // Set bracket to this note's start
             manager.setBracketTick(notes[idx].startTick);
-            logger.debug("Set up moving note identity: note=%d, start=%lu, actualEnd=%lu, displayEnd=%lu", 
-                         selectedPitch, selectedStart, actualMidiEndTick, selectedDisplayEnd);
+            logger.debug("Set up moving note identity: note=%d, start=%lu, end=%lu", 
+                         notes[idx].note, notes[idx].startTick, notes[idx].endTick);
         }
     } else {
         manager.movingNote.active = false;
@@ -147,6 +174,10 @@ void EditStartNoteState::onEncoderTurn(EditManager& manager, Track& track, int d
     auto& midiEvents = track.getMidiEvents();
     uint32_t loopLength = track.getLength();
     
+    logger.debug("=== LOOP INFO ===");
+    logger.debug("Loop length: %lu ticks", loopLength);
+    logger.debug("Loop length in bars: %lu", loopLength / Config::TICKS_PER_BAR);
+    
     if (loopLength == 0) {
         logger.debug("Loop length is 0, cannot move notes");
         return;
@@ -174,51 +205,29 @@ void EditStartNoteState::onEncoderTurn(EditManager& manager, Track& track, int d
     logger.debug("Moving note: pitch=%d, start=%lu, end=%lu", 
                  movingNotePitch, currentStart, currentEnd);
     
-    // Calculate note length
-    uint32_t noteLen;
+    // Calculate note length and new positions with wrap-around
+    // displayEnd accounts for currentEnd possibly > loopLength
+    uint32_t displayCurrentEnd = (currentEnd >= loopLength) ? (currentEnd % loopLength) : currentEnd;
+    uint32_t noteLen = calculateNoteLength(currentStart, displayCurrentEnd, loopLength);
+    int32_t rawNewStart = (int32_t)currentStart + delta;
+    uint32_t newStart = wrapPosition(rawNewStart, loopLength);
+    // actual MIDI new end (no modulo) and display end for UI/overlap logic
+    uint32_t newEnd = newStart + noteLen;
+    uint32_t displayNewEnd = newEnd % loopLength; // only for UI/debug; storage uses raw newEnd
     
-    // currentEnd is now the actual MIDI event position, we need to calculate display length
-    uint32_t displayEnd = currentEnd;
-    if (currentEnd >= loopLength) {
-        // MIDI event is stored beyond loop boundary - calculate wrapped display position
-        displayEnd = currentEnd % loopLength;
-    }
+    logger.debug("Movement: start %lu->%lu, end actual %lu (display %lu), length=%lu", 
+                 currentStart, newStart, newEnd, displayNewEnd, noteLen);
     
-    if (displayEnd >= currentStart) {
-        noteLen = displayEnd - currentStart;
+    // Calculate how many more steps are needed to reach loop boundary
+    uint32_t distanceToWrap = 0;
+    if (newEnd < loopLength) {
+        distanceToWrap = loopLength - newEnd;
+        logger.debug("Distance to loop boundary: %lu ticks (%lu steps)", distanceToWrap, distanceToWrap);
     } else {
-        // Wrapped note
-        noteLen = (loopLength - currentStart) + displayEnd;
+        logger.debug("Note WILL WRAP - newEnd=%lu >= loopLength=%lu", newEnd, loopLength);
     }
     
-    if (noteLen == 0) {
-        noteLen = 1;
-    }
-    
-    logger.debug("Note length calculation: actualEnd=%lu, displayEnd=%lu, length=%lu", 
-                 currentEnd, displayEnd, noteLen);
-    
-    // Calculate new position
-    int32_t newStart = (int32_t)currentStart + delta;
-    
-    // Handle wrap-around
-    if (newStart < 0) {
-        newStart = (int32_t)loopLength + newStart;
-        while (newStart < 0) {
-            newStart += (int32_t)loopLength;
-        }
-    } else if (newStart >= (int32_t)loopLength) {
-        newStart = newStart % (int32_t)loopLength;
-    }
-    
-    // Calculate new end position
-    // We need to maintain whether the note will wrap or not based on its length
-    uint32_t newEnd = (uint32_t)newStart + noteLen;
-    
-    logger.debug("Movement: start %lu->%d, end %lu->%lu, length=%lu", 
-                 currentStart, newStart, currentEnd, newEnd, noteLen);
-    
-    // Reconstruct current notes to find overlaps
+    // Reconstruct notes for overlap detection and selection
         struct DisplayNote { uint8_t note, velocity; uint32_t startTick, endTick; };
         std::vector<DisplayNote> currentNotes;
         std::map<uint8_t, std::vector<DisplayNote>> activeNoteStacks;
@@ -231,32 +240,76 @@ void EditStartNoteState::onEncoderTurn(EditManager& manager, Track& track, int d
                 auto& stack = activeNoteStacks[evt.data.noteData.note];
                 if (!stack.empty()) {
                     DisplayNote& dn = stack.back();
+                // Keep the actual MIDI event tick for proper note identification
+                // Don't wrap here - let display/playback handle wrapping
                     dn.endTick = evt.tick;
+                
+                // Only add notes with reasonable lengths to prevent corruption
+                uint32_t noteLength = calculateNoteLength(dn.startTick, dn.endTick, loopLength);
+                if (noteLength > 0 && noteLength <= loopLength * 2) { // Allow wrapped notes up to 2x loop length
                     currentNotes.push_back(dn);
-                    stack.pop_back();
+                    logger.debug("Added note: pitch=%d, start=%lu, end=%lu, length=%lu", 
+                               dn.note, dn.startTick, dn.endTick, noteLength);
+                } else {
+                    logger.debug("Skipped invalid note: pitch=%d, start=%lu, end=%lu, length=%lu", 
+                               dn.note, dn.startTick, dn.endTick, noteLength);
                 }
+                
+                stack.pop_back();
             }
         }
+    }
+    
+    // Handle orphaned notes - but validate them first to prevent impossible notes
         for (auto& [pitch, stack] : activeNoteStacks) {
             for (auto& dn : stack) {
+            // Check if this is a reasonable note length
+            uint32_t proposedLength = loopLength - dn.startTick;
+            if (proposedLength <= loopLength && proposedLength > 0) {
                 dn.endTick = loopLength;
                 currentNotes.push_back(dn);
+                logger.debug("Added orphaned note in final reconstruction: pitch=%d, start=%lu, end=%lu, length=%lu", 
+                           dn.note, dn.startTick, dn.endTick, proposedLength);
+            } else {
+                logger.debug("Skipped invalid orphaned note in final reconstruction: pitch=%d, start=%lu, would be length=%lu", 
+                           dn.note, dn.startTick, proposedLength);
             }
         }
-        
+    }
+    
     // Store notes to delete and restore
     std::vector<DisplayNote> notesToDelete;
     std::vector<EditManager::MovingNoteIdentity::DeletedNote> notesToRestore;
     
     // Check if we should restore any previously deleted/shortened notes
     {
-        uint32_t displayMoveStart = (uint32_t)newStart;
-        uint32_t displayMoveEnd = (newEnd >= loopLength) ? (newEnd % loopLength) : newEnd;
         for (const auto& deletedNote : manager.movingNote.deletedNotes) {
-            if (!notesOverlap(displayMoveStart, displayMoveEnd, deletedNote.startTick, deletedNote.endTick)) {
-                notesToRestore.push_back(deletedNote);
-                logger.debug("Will restore note: pitch=%d, start=%lu, end=%lu", 
-                             deletedNote.note, deletedNote.startTick, deletedNote.endTick);
+            // Only consider restoring notes of the same pitch as the note being moved
+            if (deletedNote.note == movingNotePitch) {
+                // Check if the deleted note overlaps with the new position
+                // Use display coordinates consistently for overlap detection
+                bool hasOverlap = notesOverlap(newStart, newEnd,
+                                             deletedNote.startTick, deletedNote.endTick, loopLength);
+                
+                // Additional check: only restore if we're moving away from the deleted note
+                bool movingAway = false;
+                if (manager.movingNote.movementDirection > 0) {
+                    // Moving right (positive delta) - restore notes to the left
+                    movingAway = (deletedNote.endTick <= currentStart);
+                } else if (manager.movingNote.movementDirection < 0) {
+                    // Moving left (negative delta) - restore notes to the right  
+                    movingAway = (deletedNote.startTick >= currentStart + noteLen);
+                }
+                
+                if (!hasOverlap && movingAway) {
+                    notesToRestore.push_back(deletedNote);
+                    logger.debug("Will restore note: pitch=%d, start=%lu, end=%lu (no overlap with %lu-%lu, moving away)", 
+                                 deletedNote.note, deletedNote.startTick, deletedNote.endTick, newStart, newEnd);
+                } else {
+                    logger.debug("Cannot restore note: pitch=%d, start=%lu, end=%lu (overlap=%s, movingAway=%s)", 
+                                 deletedNote.note, deletedNote.startTick, deletedNote.endTick, 
+                                 hasOverlap ? "yes" : "no", movingAway ? "yes" : "no");
+                }
             }
         }
     }
@@ -267,34 +320,31 @@ void EditStartNoteState::onEncoderTurn(EditManager& manager, Track& track, int d
     // Store notes to shorten
     std::vector<std::pair<DisplayNote, uint32_t>> notesToShorten; // note and new end tick
     
-    // Find notes that will overlap with the moved note
-    for (const auto& note : currentNotes) {
-        if (note.note == movingNotePitch && 
-            (note.startTick != currentStart || note.endTick != currentEnd)) {
-            
-            // Check if this note overlaps with the new position
-            // Calculate display positions for overlap checking
-            uint32_t moveStart = (uint32_t)newStart;
-            uint32_t moveEnd = (newEnd >= loopLength) ? (newEnd % loopLength) : newEnd;
-            bool overlaps;
-            
-            // Handle wrapped moving note case
-            if (moveEnd < moveStart) {
-                // Moving note wraps around loop boundary
-                // It overlaps if note overlaps with either part of the wrapped note
-                overlaps = (note.startTick < moveEnd) || (moveStart < note.endTick);
-            } else {
-                // Normal case - moving note doesn't wrap
-                overlaps = (moveStart < note.endTick) && (note.startTick < moveEnd);
+    // Check for overlaps with other notes and determine what to do
+    {
+        for (const auto& note : currentNotes) {
+            // Skip if this is not the same pitch (different notes can't overlap in MIDI)
+            if (note.note != movingNotePitch) {
+                continue;
             }
+            
+            // Skip the currently moving note (identified by its original startTick before update)
+            if (note.startTick == currentStart) {
+                continue;
+            }
+            
+            // Check for overlap using consistent wrapped coordinates
+            bool overlaps = notesOverlap(newStart, newEnd, note.startTick, note.endTick, loopLength);
+            
+            logger.debug("Checking overlap: moving note %lu-%lu vs existing note %lu-%lu, overlaps=%s", 
+                        newStart, newEnd, note.startTick, note.endTick, overlaps ? "YES" : "NO");
             
             if (overlaps) {
                 // For right-to-left movement (negative delta), try to shorten the note instead of deleting
-                if (delta < 0 && note.startTick < moveStart && moveEnd >= moveStart) {
-                    // Only try shortening if moving note doesn't wrap (to avoid complex cases)
+                if (delta < 0 && note.startTick < newStart) {
                     // Calculate what the new end would be if we shorten it
-                    uint32_t newNoteEnd = moveStart;
-                    uint32_t shortenedLength = newNoteEnd - note.startTick;
+                    uint32_t newNoteEnd = newStart;
+                    uint32_t shortenedLength = calculateNoteLength(note.startTick, newNoteEnd, loopLength);
                     
                     // Only shorten if the result would be at least 48 ticks (1/16th note)
                     if (shortenedLength >= Config::TICKS_PER_16TH_STEP) {
@@ -308,7 +358,7 @@ void EditStartNoteState::onEncoderTurn(EditManager& manager, Track& track, int d
                                    note.note, note.startTick, note.endTick);
                     }
                 } else {
-                    // For left-to-right movement, wrapped notes, or other cases, delete the note
+                    // For left-to-right movement or other cases, delete the note
                     notesToDelete.push_back(note);
                     logger.debug("Will delete overlapping note: pitch=%d, start=%lu, end=%lu", 
                                note.note, note.startTick, note.endTick);
@@ -319,76 +369,113 @@ void EditStartNoteState::onEncoderTurn(EditManager& manager, Track& track, int d
     
     logger.debug("Found %zu notes to delete", notesToDelete.size());
     
-    // Step 7: Move the selected note's MIDI events
-    // Find and update the actual MIDI events for the note we're moving
-    
-    logger.debug("Looking for NoteOn at tick %lu for pitch %d", currentStart, movingNotePitch);
+    // Move the selected note's MIDI events
     auto onIt = std::find_if(midiEvents.begin(), midiEvents.end(), [&](MidiEvent& evt) {
         return evt.type == midi::NoteOn && 
                evt.data.noteData.note == movingNotePitch && 
                evt.tick == currentStart;
     });
     
-    // Now currentEnd is the actual MIDI event position, so we can search directly
-    logger.debug("Looking for NoteOff at tick %lu for pitch %d", currentEnd, movingNotePitch);
+    // Find the NoteOff event - need to handle both wrapped and unwrapped coordinates
     auto offIt = std::find_if(midiEvents.begin(), midiEvents.end(), [&](MidiEvent& evt) {
-        return (evt.type == midi::NoteOff || (evt.type == midi::NoteOn && evt.data.noteData.velocity == 0)) && 
-               evt.data.noteData.note == movingNotePitch && 
-               evt.tick == currentEnd;
+        if ((evt.type == midi::NoteOff || (evt.type == midi::NoteOn && evt.data.noteData.velocity == 0)) && 
+            evt.data.noteData.note == movingNotePitch) {
+            // Try matching with both the current end and the original end coordinates
+            return (evt.tick == currentEnd) || (evt.tick == manager.movingNote.origEnd);
+        }
+        return false;
     });
     
     if (onIt == midiEvents.end() || offIt == midiEvents.end()) {
-        logger.debug("Could not find MIDI events for selected note (looking for start=%lu, end=%lu)", 
-                     currentStart, currentEnd);
+        logger.debug("Could not find MIDI events for selected note - searching alternatives");
+        
+        // Debug: show all MIDI events for this pitch to understand what's available
+        for (const auto& evt : midiEvents) {
+            if (evt.data.noteData.note == movingNotePitch) {
+                logger.debug("Available MIDI event: type=%s, tick=%lu", 
+                           (evt.type == midi::NoteOn) ? "NoteOn" : "NoteOff", evt.tick);
+            }
+        }
         return;
     }
     
-    logger.debug("Found MIDI events: NoteOn at %lu, NoteOff at %lu", onIt->tick, offIt->tick);
-    
-    // Move the note
+    // Update the MIDI events with raw end to preserve full note length
     onIt->tick = newStart;
-    offIt->tick = newEnd;
+    offIt->tick = newEnd;  // Store raw end (no chopping)
     
-    // Shorten overlapping notes
-    for (const auto& [noteToShorten, newEndTick] : notesToShorten) {
-        // Find and update the note's end event
-        auto endIt = std::find_if(midiEvents.begin(), midiEvents.end(), [&](MidiEvent& evt) {
-            return (evt.type == midi::NoteOff || (evt.type == midi::NoteOn && evt.data.noteData.velocity == 0)) && 
-                   evt.data.noteData.note == noteToShorten.note && 
-                   evt.tick == noteToShorten.endTick;
-        });
-        
-        if (endIt != midiEvents.end()) {
-            // Store the original note for potential restoration
-            EditManager::MovingNoteIdentity::DeletedNote originalNote;
-            originalNote.note = noteToShorten.note;
-            originalNote.velocity = noteToShorten.velocity;
-            originalNote.startTick = noteToShorten.startTick;
-            originalNote.endTick = noteToShorten.endTick;
-            manager.movingNote.deletedNotes.push_back(originalNote);
-            
-            // Update the end tick to shorten the note
-            endIt->tick = newEndTick;
-            
-            logger.debug("Shortened note: pitch=%d, start=%lu, end=%lu->%lu", 
-                       noteToShorten.note, noteToShorten.startTick, noteToShorten.endTick, newEndTick);
-        } else {
-            logger.debug("Warning: Could not find end event for note to shorten");
+    // Update tracking coordinates - preserve raw start/end
+    manager.movingNote.lastStart = newStart;
+    manager.movingNote.lastEnd = newEnd;
+    
+    logger.debug("Updated MIDI events: NoteOn at %lu, NoteOff at %lu", onIt->tick, offIt->tick);
+    
+    // Debug: Count existing events for this pitch at newStart
+    int noteOnCount = 0;
+    for (const auto& evt : midiEvents) {
+        if (evt.type == midi::NoteOn && evt.data.noteData.velocity > 0 && 
+            evt.data.noteData.note == movingNotePitch && evt.tick == newStart) {
+            noteOnCount++;
+        }
+    }
+    logger.debug("Found %d NoteOn events for pitch %d at tick %lu", noteOnCount, movingNotePitch, newStart);
+    
+    // Debug: Show all MIDI events before processing
+    logger.debug("=== ALL MIDI EVENTS BEFORE PROCESSING ===");
+    for (const auto& evt : midiEvents) {
+        if (evt.data.noteData.note == 51) { // Focus on pitch 51 where the problem occurs
+            logger.debug("MIDI Event: type=%s, pitch=%d, tick=%lu, velocity=%d", 
+                       (evt.type == midi::NoteOn) ? "NoteOn" : "NoteOff",
+                       evt.data.noteData.note, evt.tick, evt.data.noteData.velocity);
         }
     }
     
-    // Delete overlapping notes from MIDI events
+    // Apply shortening and deletion to notes that overlap
+    for (const auto& noteToShorten : notesToShorten) {
+        // Store the original note for potential restoration
+        EditManager::MovingNoteIdentity::DeletedNote originalNote;
+        originalNote.note = noteToShorten.first.note;
+        originalNote.velocity = noteToShorten.first.velocity;
+        originalNote.startTick = noteToShorten.first.startTick;
+        originalNote.endTick = noteToShorten.first.endTick;
+        // Store the original length for consistent restoration
+        originalNote.originalLength = calculateNoteLength(noteToShorten.first.startTick, noteToShorten.first.endTick, loopLength);
+        manager.movingNote.deletedNotes.push_back(originalNote);
+        
+        logger.debug("Stored original note before shortening: pitch=%d, start=%lu, end=%lu, length=%lu", 
+                     originalNote.note, originalNote.startTick, originalNote.endTick, originalNote.originalLength);
+
+        // Find and shorten the overlapping note
+        for (auto& evt : midiEvents) {
+            if ((evt.type == midi::NoteOff || (evt.type == midi::NoteOn && evt.data.noteData.velocity == 0)) &&
+                evt.data.noteData.note == noteToShorten.first.note && 
+                evt.tick == noteToShorten.first.endTick) {
+                evt.tick = noteToShorten.second;  // Shorten to the new end tick
+                break;
+            }
+        }
+    }
+    
     for (const auto& noteToDelete : notesToDelete) {
+        // Delete the overlapping note completely
         auto it = midiEvents.begin();
+        int deletedCount = 0;
         while (it != midiEvents.end()) {
             if ((it->type == midi::NoteOn && it->data.noteData.velocity > 0 &&
                  it->data.noteData.note == noteToDelete.note && it->tick == noteToDelete.startTick) ||
                 ((it->type == midi::NoteOff || (it->type == midi::NoteOn && it->data.noteData.velocity == 0)) &&
                  it->data.noteData.note == noteToDelete.note && it->tick == noteToDelete.endTick)) {
+                logger.debug("Deleting MIDI event: type=%s, pitch=%d, tick=%lu", 
+                           (it->type == midi::NoteOn) ? "NoteOn" : "NoteOff", 
+                           it->data.noteData.note, it->tick);
                 it = midiEvents.erase(it);
+                deletedCount++;
             } else {
                 ++it;
             }
+        }
+        
+        if (deletedCount != 2) {
+            logger.debug("Warning: Expected to delete 2 events for note, but deleted %d events", deletedCount);
         }
         
         // Store deleted note for potential restoration
@@ -397,48 +484,176 @@ void EditStartNoteState::onEncoderTurn(EditManager& manager, Track& track, int d
         deletedNote.velocity = noteToDelete.velocity;
         deletedNote.startTick = noteToDelete.startTick;
         deletedNote.endTick = noteToDelete.endTick;
+        // Store the original length for consistent restoration
+        deletedNote.originalLength = calculateNoteLength(noteToDelete.startTick, noteToDelete.endTick, loopLength);
         manager.movingNote.deletedNotes.push_back(deletedNote);
+        
+        logger.debug("Stored deleted note: pitch=%d, start=%lu, end=%lu, length=%lu", 
+                     deletedNote.note, deletedNote.startTick, deletedNote.endTick, deletedNote.originalLength);
     }
     
-    // Restore notes that no longer overlap
+    // Sort events by tick BEFORE restoration to ensure clean state
+    std::sort(midiEvents.begin(), midiEvents.end(),
+              [](auto const &a, auto const &b){ return a.tick < b.tick; });
+    
+    // Debug: Show all existing notes before restoration
+    logger.debug("=== EXISTING NOTES BEFORE RESTORATION ===");
+    std::map<uint8_t, std::vector<std::pair<uint32_t, uint32_t>>> existingNotesByPitch;
+    for (const auto& evt : midiEvents) {
+        if (evt.type == midi::NoteOn && evt.data.noteData.velocity > 0) {
+            // Find matching NoteOff
+            for (const auto& endEvt : midiEvents) {
+                if ((endEvt.type == midi::NoteOff || (endEvt.type == midi::NoteOn && endEvt.data.noteData.velocity == 0)) &&
+                    endEvt.data.noteData.note == evt.data.noteData.note && endEvt.tick > evt.tick) {
+                    uint32_t length = calculateNoteLength(evt.tick, endEvt.tick, loopLength);
+                    logger.debug("Existing note: pitch=%d, start=%lu, end=%lu, length=%lu", 
+                               evt.data.noteData.note, evt.tick, endEvt.tick, length);
+                    existingNotesByPitch[evt.data.noteData.note].push_back({evt.tick, endEvt.tick});
+                    break;
+                }
+            }
+        }
+    }
+    
+    // Restore notes that should be restored based on movement
     std::vector<EditManager::MovingNoteIdentity::DeletedNote> notesToRemoveFromDeleted;
     
+    logger.debug("=== RESTORATION ANALYSIS ===");
+    logger.debug("Total deleted notes: %zu", manager.movingNote.deletedNotes.size());
+    for (const auto& dn : manager.movingNote.deletedNotes) {
+        logger.debug("Deleted note: pitch=%d, start=%lu, end=%lu, length=%lu", 
+                   dn.note, dn.startTick, dn.endTick, dn.originalLength);
+    }
+    
     for (const auto& noteToRestore : notesToRestore) {
-        // Remove only the original NoteOn event for this restored note
-        midiEvents.erase(std::remove_if(midiEvents.begin(), midiEvents.end(), [&](const MidiEvent& evt) {
-            return evt.type == midi::NoteOn &&
-                   evt.data.noteData.note == noteToRestore.note &&
-                   evt.data.noteData.velocity == noteToRestore.velocity &&
+        logger.debug("Attempting to restore note: pitch=%d, start=%lu, stored_end=%lu, length=%lu", 
+                     noteToRestore.note, noteToRestore.startTick, noteToRestore.endTick, noteToRestore.originalLength);
+        
+        // Calculate the target end tick using stored original length
+        uint32_t targetEndTick = noteToRestore.startTick + noteToRestore.originalLength;
+        
+        // Check for and remove ultra-short conflicting notes that are likely corrupted
+        bool removedCorruptedNote = false;
+            auto it = midiEvents.begin();
+            while (it != midiEvents.end()) {
+            if (it->type == midi::NoteOn && it->data.noteData.velocity > 0 && 
+                it->data.noteData.note == noteToRestore.note) {
+                
+                // Find the end of this existing note
+                uint32_t existingEnd = it->tick;
+                auto endIt = midiEvents.end();
+                for (auto endSearch = midiEvents.begin(); endSearch != midiEvents.end(); ++endSearch) {
+                    if ((endSearch->type == midi::NoteOff || (endSearch->type == midi::NoteOn && endSearch->data.noteData.velocity == 0)) &&
+                        endSearch->data.noteData.note == noteToRestore.note && endSearch->tick > it->tick) {
+                        existingEnd = endSearch->tick;
+                        endIt = endSearch;
+                        break;
+                    }
+                }
+                
+                // Check if this is an ultra-short note (1-2 ticks) that conflicts with restoration
+                uint32_t noteLength = existingEnd - it->tick;
+                bool isUltraShort = (noteLength <= 2);
+                bool conflictsWithRestore = notesOverlap(noteToRestore.startTick, targetEndTick, it->tick, existingEnd, loopLength);
+                
+                if (isUltraShort && conflictsWithRestore) {
+                    logger.debug("Removing corrupted ultra-short note that blocks restoration: pitch=%d, start=%lu, end=%lu, length=%lu", 
+                               it->data.noteData.note, it->tick, existingEnd, noteLength);
+                    
+                    // Remove both NoteOn and NoteOff events
+                    if (endIt != midiEvents.end()) {
+                        // Remove NoteOff first (higher index)
+                        midiEvents.erase(endIt);
+                    }
+                    // Remove NoteOn
+                    it = midiEvents.erase(it);
+                    removedCorruptedNote = true;
+                    continue; // Don't increment it since we erased
+                }
+            }
+                    ++it;
+        }
+        
+        if (removedCorruptedNote) {
+            logger.debug("Removed corrupted notes blocking restoration - retrying conflict detection");
+        }
+        
+        // Check if restoring this note would conflict with any remaining existing notes
+        bool hasConflict = false;
+        for (const auto& evt : midiEvents) {
+            if (evt.type == midi::NoteOn && evt.data.noteData.velocity > 0 && 
+                evt.data.noteData.note == noteToRestore.note) {
+                
+                // Find the end of this existing note
+                uint32_t existingEnd = evt.tick; // Default if no end found
+                for (const auto& endEvt : midiEvents) {
+                    if ((endEvt.type == midi::NoteOff || (endEvt.type == midi::NoteOn && endEvt.data.noteData.velocity == 0)) &&
+                        endEvt.data.noteData.note == noteToRestore.note && endEvt.tick > evt.tick) {
+                        existingEnd = endEvt.tick;
+                        break;
+                    }
+                }
+                
+                // Check for overlap with what we want to restore
+                if (notesOverlap(noteToRestore.startTick, targetEndTick, evt.tick, existingEnd, loopLength)) {
+                    hasConflict = true;
+                    logger.debug("Cannot restore note: conflicts with existing note at %lu-%lu", evt.tick, existingEnd);
+                    break;
+                }
+            }
+        }
+        
+        if (!hasConflict) {
+            // Check if this is a shortened note (has a NoteOn event but different end)
+            auto onIt = std::find_if(midiEvents.begin(), midiEvents.end(), [&](const MidiEvent& evt) {
+                return evt.type == midi::NoteOn && evt.data.noteData.velocity > 0 &&
+                   evt.data.noteData.note == noteToRestore.note && 
                    evt.tick == noteToRestore.startTick;
-        }), midiEvents.end());
-        // Remove only the original NoteOff event for this restored note
-        midiEvents.erase(std::remove_if(midiEvents.begin(), midiEvents.end(), [&](const MidiEvent& evt) {
-            return ((evt.type == midi::NoteOff) ||
-                    (evt.type == midi::NoteOn && evt.data.noteData.velocity == 0)) &&
-                   evt.data.noteData.note == noteToRestore.note &&
-                   evt.tick == noteToRestore.endTick;
-        }), midiEvents.end());
-        
-        // Create the note with its original stored positions
-        MidiEvent onEvent;
-        onEvent.type = midi::NoteOn;
-        onEvent.tick = noteToRestore.startTick;
-        onEvent.data.noteData.note = noteToRestore.note;
-        onEvent.data.noteData.velocity = noteToRestore.velocity;
-        midiEvents.push_back(onEvent);
-        
-        MidiEvent offEvent;
-        offEvent.type = midi::NoteOff;
-        offEvent.tick = noteToRestore.endTick;
-        offEvent.data.noteData.note = noteToRestore.note;
-        offEvent.data.noteData.velocity = 0;
-        midiEvents.push_back(offEvent);
-        
-        logger.debug("Restored note with original positions: pitch=%d, start=%lu, end=%lu", 
-                   noteToRestore.note, noteToRestore.startTick, noteToRestore.endTick);
-        
-        // Mark for removal from deleted notes list
-        notesToRemoveFromDeleted.push_back(noteToRestore);
+            });
+            
+            if (onIt != midiEvents.end()) {
+                // This is a shortened note - find its current end event and extend it
+                auto endIt = midiEvents.end();
+                uint32_t closestEndTick = UINT32_MAX;
+                
+                for (auto it = midiEvents.begin(); it != midiEvents.end(); ++it) {
+                    if ((it->type == midi::NoteOff || (it->type == midi::NoteOn && it->data.noteData.velocity == 0)) && 
+                        it->data.noteData.note == noteToRestore.note && 
+                        it->tick > noteToRestore.startTick && 
+                        it->tick < closestEndTick) {
+                        endIt = it;
+                        closestEndTick = it->tick;
+                    }
+                }
+                
+                if (endIt != midiEvents.end() && endIt->tick < targetEndTick) {
+                    endIt->tick = targetEndTick;
+                    logger.debug("Extended shortened note: pitch=%d, start=%lu, end=%lu->%lu (length=%lu)", 
+                               noteToRestore.note, noteToRestore.startTick, closestEndTick, targetEndTick, noteToRestore.originalLength);
+                }
+            } else {
+                // This is a completely deleted note - recreate it
+                MidiEvent onEvent;
+                onEvent.type = midi::NoteOn;
+                onEvent.tick = noteToRestore.startTick;
+                onEvent.data.noteData.note = noteToRestore.note;
+                onEvent.data.noteData.velocity = noteToRestore.velocity;
+                midiEvents.push_back(onEvent);
+                
+                MidiEvent offEvent;
+                offEvent.type = midi::NoteOff;
+                offEvent.tick = targetEndTick;
+                offEvent.data.noteData.note = noteToRestore.note;
+                offEvent.data.noteData.velocity = 0;
+                midiEvents.push_back(offEvent);
+                
+                logger.debug("Restored deleted note: pitch=%d, start=%lu, end=%lu (length=%lu)", 
+                           noteToRestore.note, noteToRestore.startTick, targetEndTick, noteToRestore.originalLength);
+            }
+            
+            // Mark for removal from deleted notes list
+            notesToRemoveFromDeleted.push_back(noteToRestore);
+        }
     }
     
     // Remove restored notes from deleted notes list (do this after restoration to avoid iterator issues)
@@ -457,51 +672,163 @@ void EditStartNoteState::onEncoderTurn(EditManager& manager, Track& track, int d
         }
     }
     
+    // Clean up only truly corrupted entries from the deleted list
+    auto it = manager.movingNote.deletedNotes.begin();
+    while (it != manager.movingNote.deletedNotes.end()) {
+        bool isCorrupted = false;
+        
+        // Only remove notes that are clearly corrupted (impossible characteristics)
+        if (it->note != movingNotePitch) {
+            isCorrupted = true;
+            logger.debug("Removing deleted note from different pitch: pitch=%d (current pitch=%d)", 
+                       it->note, movingNotePitch);
+        }
+        // Check for impossible length (longer than the entire loop)
+        else if (it->originalLength > loopLength) {
+            isCorrupted = true;
+            logger.debug("Removing corrupted deleted note with impossible length: length=%lu > loopLength=%lu", 
+                       it->originalLength, loopLength);
+        }
+        // Check for impossible start position
+        else if (it->startTick >= loopLength) {
+            isCorrupted = true;
+            logger.debug("Removing corrupted deleted note with impossible start: start=%lu >= loopLength=%lu", 
+                       it->startTick, loopLength);
+        }
+        
+        if (isCorrupted) {
+            it = manager.movingNote.deletedNotes.erase(it);
+        } else {
+            ++it;
+        }
+    }
+
     // Sort events by tick
     std::sort(midiEvents.begin(), midiEvents.end(),
               [](auto const &a, auto const &b){ return a.tick < b.tick; });
-    
-    // Update moving note tracking
-    manager.movingNote.lastStart = newStart;
-    manager.movingNote.lastEnd = newEnd;  // Store actual MIDI position
-    
-    // Set bracket to new position
+
+    // Set bracket to new position (already updated tracking above)
     manager.setBracketTick(newStart);
     
     // Reconstruct notes to find the new selected index
     currentNotes.clear();
     activeNoteStacks.clear();
     
+    logger.debug("=== FINAL NOTE RECONSTRUCTION ===");
+    
     for (const auto& evt : midiEvents) {
         if (evt.type == midi::NoteOn && evt.data.noteData.velocity > 0) {
             DisplayNote dn{evt.data.noteData.note, evt.data.noteData.velocity, evt.tick, evt.tick};
             activeNoteStacks[evt.data.noteData.note].push_back(dn);
+            logger.debug("Found NoteOn: pitch=%d, tick=%lu", evt.data.noteData.note, evt.tick);
         } else if ((evt.type == midi::NoteOff) || (evt.type == midi::NoteOn && evt.data.noteData.velocity == 0)) {
             auto& stack = activeNoteStacks[evt.data.noteData.note];
             if (!stack.empty()) {
                 DisplayNote& dn = stack.back();
                 dn.endTick = evt.tick;
-                currentNotes.push_back(dn);
+                
+                logger.debug("Found NoteOff: pitch=%d, startTick=%lu, endTick=%lu", 
+                           evt.data.noteData.note, dn.startTick, dn.endTick);
+                
+                // Check if this note wraps around the loop boundary (end < start) or extends past loop length
+                if (dn.endTick < dn.startTick || dn.endTick > loopLength) {
+                    // This is a wrapped note - create two display segments
+                    // Segment 1: from startTick to loop end
+                    DisplayNote segment1 = dn;
+                    segment1.endTick = loopLength;
+                    uint32_t segment1Length = loopLength - dn.startTick;
+                    
+                    if (segment1Length > 0) {
+                        currentNotes.push_back(segment1);
+                        logger.debug("Added wrapped note segment 1: pitch=%d, start=%lu, end=%lu, length=%lu", 
+                                   segment1.note, segment1.startTick, segment1.endTick, segment1Length);
+                    }
+                    
+                    // Segment 2: from 0 to original endTick (wrapped position)
+                    // For notes extending past loop or wrapped, wrap the endTick
+                    uint32_t wrappedEndTick = (dn.endTick > loopLength ? dn.endTick % loopLength : dn.endTick);
+                    if (wrappedEndTick > 0) {
+                        DisplayNote segment2 = dn;
+                        segment2.startTick = 0;
+                        segment2.endTick = wrappedEndTick;
+                        uint32_t segment2Length = wrappedEndTick;
+                        
+                        currentNotes.push_back(segment2);
+                        logger.debug("Added wrapped note segment 2: pitch=%d, start=%lu, end=%lu, length=%lu", 
+                                   segment2.note, segment2.startTick, segment2.endTick, segment2Length);
+                    }
+                } else {
+                    // Normal note - no wrapping
+                    uint32_t noteLength = calculateNoteLength(dn.startTick, dn.endTick, loopLength);
+                    if (noteLength > 0) {
+                        currentNotes.push_back(dn);
+                        logger.debug("Added normal note: pitch=%d, start=%lu, end=%lu, length=%lu", 
+                                   dn.note, dn.startTick, dn.endTick, noteLength);
+                    }
+                }
+                
                 stack.pop_back();
             }
         }
     }
+    
+    // Handle orphaned notes - but validate them first to prevent impossible notes
     for (auto& [pitch, stack] : activeNoteStacks) {
         for (auto& dn : stack) {
+            // Check if this is a reasonable note length
+            uint32_t proposedLength = loopLength - dn.startTick;
+            if (proposedLength <= loopLength && proposedLength > 0) {
             dn.endTick = loopLength;
-            currentNotes.push_back(dn);
+                currentNotes.push_back(dn);
+                logger.debug("Added orphaned note in final reconstruction: pitch=%d, start=%lu, end=%lu, length=%lu", 
+                           dn.note, dn.startTick, dn.endTick, proposedLength);
+            } else {
+                logger.debug("Skipped invalid orphaned note in final reconstruction: pitch=%d, start=%lu, would be length=%lu", 
+                           dn.note, dn.startTick, proposedLength);
+            }
         }
     }
     
     // Find the moved note's new index
     int newSelectedIdx = -1;
-    uint32_t displayNewEnd = (newEnd >= loopLength) ? (newEnd % loopLength) : newEnd;
-    for (int i = 0; i < (int)currentNotes.size(); i++) {
-        if (currentNotes[i].note == movingNotePitch && 
-            currentNotes[i].startTick == (uint32_t)newStart &&
-            currentNotes[i].endTick == displayNewEnd) {
+    {
+        // For wrapped notes, we want to select the first segment (the one that starts at newStart)
+        for (int i = 0; i < (int)currentNotes.size(); i++) {
+            if (currentNotes[i].note == movingNotePitch && 
+                currentNotes[i].startTick == newStart) {
+                
+                // Check if this could be our moved note
+                bool isOurNote = false;
+                
+                if (newEnd >= loopLength) {
+                    // This is a wrapped note - select the segment that starts at newStart and ends at loopLength
+                    isOurNote = (currentNotes[i].endTick == loopLength);
+                } else {
+                    // Normal note - match exact end position
+                    isOurNote = (currentNotes[i].endTick == (newEnd >= loopLength ? loopLength : newEnd)); // match raw or wrapped segment
+                }
+                
+                if (isOurNote) {
+                    newSelectedIdx = i;
+                    logger.debug("Found moved note at index %d: start=%lu, end=%lu (wrapped=%s)", 
+                               i, currentNotes[i].startTick, currentNotes[i].endTick, 
+                               (newEnd >= loopLength) ? "yes" : "no");
+                    break;
+                }
+            }
+        }
+        
+        // If we didn't find an exact match, try to find any note with the same pitch and start
+        if (newSelectedIdx == -1) {
+            for (int i = 0; i < (int)currentNotes.size(); i++) {
+                if (currentNotes[i].note == movingNotePitch && 
+                    currentNotes[i].startTick == newStart) {
             newSelectedIdx = i;
+                    logger.debug("Found moved note at index %d (fallback match): start=%lu, end=%lu", 
+                               i, currentNotes[i].startTick, currentNotes[i].endTick);
             break;
+                }
+            }
         }
     }
     
@@ -512,6 +839,18 @@ void EditStartNoteState::onEncoderTurn(EditManager& manager, Track& track, int d
         logger.debug("Warning: Could not find moved note in final note list");
     }
     
+    // Debug: Show all MIDI events after processing
+    logger.debug("=== ALL MIDI EVENTS AFTER PROCESSING ===");
+    for (const auto& evt : midiEvents) {
+        if (evt.data.noteData.note == 51) { // Focus on pitch 51 where the problem occurs
+            logger.debug("MIDI Event: type=%s, pitch=%d, tick=%lu, velocity=%d", 
+                       (evt.type == midi::NoteOn) ? "NoteOn" : "NoteOff",
+                       evt.data.noteData.note, evt.tick, evt.data.noteData.velocity);
+        }
+    }
+    
+    logger.debug("Updated selectedNoteIdx to %d for moved note", newSelectedIdx);
+    
     logger.debug("EditStartNoteState::onEncoderTurn completed successfully");
 }
 
@@ -519,97 +858,4 @@ void EditStartNoteState::onEncoderTurn(EditManager& manager, Track& track, int d
 void EditStartNoteState::onButtonPress(EditManager& manager, Track& track) {
     // Switch back to note state
     manager.setState(manager.getNoteState(), track, manager.getBracketTick());
-}
-
-// Private helper method implementations
-
-bool EditStartNoteState::validatePreconditions(EditManager& manager, Track& track) {
-    // Validate basic conditions required for note movement
-    // These early checks prevent crashes and undefined behavior
-    uint32_t loopLength = track.getLength();
-    if (loopLength == 0) {
-        logger.debug("Loop length is 0, cannot move notes");
-        return false;
-    }
-    
-    if (!manager.movingNote.active) {
-        logger.debug("No active moving note, cannot move");
-        return false;
-    }
-    
-    return true;
-}
-
-void EditStartNoteState::updateMovementDirection(EditManager& manager, int delta) {
-    // Track movement direction for different overlap handling strategies
-    // Positive delta = moving left (earlier in time)
-    // Negative delta = moving right (later in time)
-    // Direction affects whether we try to shorten vs delete overlapping notes
-    if (delta > 0) {
-        manager.movingNote.movementDirection = 1; // Moving left (positive delta)
-    } else if (delta < 0) {
-        manager.movingNote.movementDirection = -1; // Moving right (negative delta)
-    }
-}
-
-uint32_t EditStartNoteState::calculateNoteLength(uint32_t start, uint32_t end, uint32_t loopLength) {
-    // Calculate note length handling wrapped notes that cross loop boundary
-    // Wrapped notes occur when start > end due to loop wraparound
-    uint32_t noteLen;
-    if (end >= start) {
-        // Normal case: note doesn't wrap around loop boundary
-        noteLen = end - start;
-    } else {
-        // Wrapped note: spans across loop boundary (e.g. start=950, end=50 in 1000-tick loop)
-        // Length = distance to end of loop + distance from start of loop
-        noteLen = (loopLength - start) + end;
-    }
-    
-    return (noteLen == 0) ? 1 : noteLen; // Ensure minimum length of 1 tick to prevent zero-length notes
-}
-
-uint32_t EditStartNoteState::wrapPosition(int32_t position, uint32_t loopLength) {
-    // Handle position wrapping around loop boundaries
-    // This is critical for seamless looping behavior
-    if (position < 0) {
-        // Moving backwards past start of loop - wrap to end
-        position = (int32_t)loopLength + position;
-        while (position < 0) {
-            // Handle multiple loop wraps for large negative deltas
-            position += (int32_t)loopLength;
-        }
-    } else if (position >= (int32_t)loopLength) {
-        // Moving forwards past end of loop - wrap to start
-        position = position % (int32_t)loopLength;
-    }
-    
-    return (uint32_t)position;
-}
-
-bool EditStartNoteState::notesOverlap(uint32_t start1, uint32_t end1, uint32_t start2, uint32_t end2) {
-    // Comprehensive overlap detection that handles wrapped notes
-    // This is complex because notes can wrap around the loop boundary
-    // Standard overlap logic fails when end < start due to wrapping
-    bool note1Wrapped = (end1 < start1);
-    bool note2Wrapped = (end2 < start2);
-    
-    if (note1Wrapped && note2Wrapped) {
-        // Both notes wrap around loop boundary - they always overlap somewhere
-        // This is because wrapped notes span the majority of the loop
-        return true;
-    } else if (note1Wrapped) {
-        // Note 1 wraps around loop boundary, note 2 is normal
-        // Note 1 occupies [start1, loopEnd] and [0, end1]
-        // Check if note 2 intersects either segment
-        return (start2 < end1) || (start1 < end2);
-    } else if (note2Wrapped) {
-        // Note 2 wraps around loop boundary, note 1 is normal
-        // Note 2 occupies [start2, loopEnd] and [0, end2]
-        // Check if note 1 intersects either segment
-        return (start1 < end2) || (start2 < end1);
-    } else {
-        // Neither note wraps - use standard interval overlap check
-        // Two intervals [a,b] and [c,d] overlap if a < d AND c < b
-        return (start1 < end2) && (start2 < end1);
-    }
 } 

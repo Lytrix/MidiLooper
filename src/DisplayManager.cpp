@@ -286,10 +286,7 @@ void DisplayManager::drawNoteBar(const DisplayNote& e, int y, uint32_t s, uint32
         int xEnd = TRACK_MARGIN + map(lengthLoop, 0, lengthLoop, 0, DISPLAY_WIDTH - 1 - TRACK_MARGIN);
         int x1 = TRACK_MARGIN + map(0, 0, lengthLoop, 0, DISPLAY_WIDTH - 1 - TRACK_MARGIN);
         int x2 = TRACK_MARGIN + map(wrappedEndTick, 0, lengthLoop, 0, DISPLAY_WIDTH - 1 - TRACK_MARGIN);
-        
-        logger.debug("Drawing wrapped note: segment1 x0=%d to xEnd=%d, segment2 x1=%d to x2=%d, y=%d (originalEnd=%lu, wrappedEnd=%lu)", 
-                     x0, xEnd, x1, x2, y, eTick, wrappedEndTick);
-        
+         
         // Draw from start to end of loop (segment 1)
         if (s % lengthLoop < lengthLoop) {
             _display.gfx.draw_rect_filled(_display.api.getFrameBuffer(), x0, y, xEnd, y, noteBrightness);
