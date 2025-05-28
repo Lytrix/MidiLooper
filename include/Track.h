@@ -42,6 +42,20 @@ struct PairHash {
   }
 };
 
+/**
+ * @class Track
+ * @brief Manages the lifecycle, storage, playback, and undo history of a MIDI track.
+ *
+ * A Track maintains a sequence of MidiEvent objects for recording, playback, and overdubbing.
+ * It uses a state machine (TrackState) to transition between empty, recording, stopped,
+ * playing, and overdubbing modes. PendingNote structures buffer incoming NoteOn events
+ * until their corresponding NoteOff, ensuring proper timing and ordering. Loop length
+ * and quantization helpers define the track's playback boundaries.
+ *
+ * Undo history is maintained via friend class TrackUndo, which snapshots the midiEvents
+ * vector to allow undoing overdubs or clears. Track also supports muting, clearing,
+ * and sending all-notes-off commands.
+ */
 class Track {
 public:
   Track();

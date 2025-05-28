@@ -8,6 +8,15 @@ enum ClockSource {
   CLOCK_EXTERNAL
 };
 
+/**
+ * @class ClockManager
+ * @brief Provides and manages the global timing (tick) source for the MIDI looper.
+ *
+ * Generates an internal clock based on microsecond timing (configurable BPM and ticks-per-quarter-note)
+ * and/or processes external MIDI clock pulses. Handles MIDI Start/Stop commands, tracks the
+ * current playback tick, and detects external clock presence with a timeout. Other modules call
+ * getCurrentTick() to synchronize playback, recording, and UI updates.
+ */
 class ClockManager {
 public:
   ClockManager();

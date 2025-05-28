@@ -9,6 +9,17 @@ enum InputSource {
   SOURCE_SERIAL
 };
 
+/**
+ * @class MidiHandler
+ * @brief Central MIDI input/output router and dispatcher.
+ *
+ * Reads incoming MIDI messages from USB or Serial sources, parses them, and
+ * dispatches to internal handlers (note on/off, control change, pitch bend,
+ * aftertouch, program change, clock, start/stop/continue). Output methods
+ * provide a unified API (sendMidiEvent/sendNoteOn/sendClock/etc.) with
+ * configurable routing to USB and/or Serial ports via setOutputUSB()
+ * and setOutputSerial().
+ */
 class MidiHandler {
 public:
   MidiHandler();

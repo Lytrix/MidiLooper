@@ -21,6 +21,17 @@ enum EditContext {
   EDIT_TRACK
 };
 
+/**
+ * @class LooperStateManager
+ * @brief Manages the global looper operating mode and overlay contexts.
+ *
+ * LooperStateManager drives the core looper modes (idle, recording, playing, overdubbing)
+ * defined by the `LooperState` enum. State transitions can be queued via
+ * requestStateTransition(newState, quantize) for optionally quantized changes.
+ * It also handles entering/exiting edit and settings overlays with `EditContext`.
+ * The `update()` method should be invoked regularly (e.g., in the main loop) to
+ * process pending transitions and update internal flags.
+ */
 class LooperStateManager {
 public:
     void update();  // Call this regularly (e.g., once per loop)

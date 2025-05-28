@@ -24,6 +24,20 @@ enum LogCategory {
   CAT_DISPLAY = 6
 };
 
+/**
+ * @class Logger
+ * @brief Central logging utility with leveled and categorized message output.
+ *
+ * Provides static methods to log messages at various levels (ERROR, WARNING, INFO, DEBUG, TRACE)
+ * and categories (general, state, midi, clock, track, button, display). Supports:
+ *  - Formatted printf-style messages
+ *  - Category-specific logging via log()
+ *  - State transition logging
+ *  - MIDI and track event logging with structured information
+ *
+ * The log level can be configured at runtime using setup(), and output is
+ * prefixed with timestamps, levels, and categories.
+ */
 class Logger {
 public:
   static void setup(LogLevel level = LOG_INFO);

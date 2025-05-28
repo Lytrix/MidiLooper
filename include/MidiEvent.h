@@ -3,6 +3,19 @@
 #include <cstdint>
 #include <algorithm> // For std::clamp
 
+/**
+ * @struct MidiEvent
+ * @brief Encapsulates a timestamped MIDI message with data payload.
+ *
+ * Stores the tick at which the event occurs, the MIDI message type, channel,
+ * and a union of possible data payloads (note on/off, control change, pitch bend,
+ * aftertouch, program change, SysEx, clock/transport messages, etc.).
+ * Provides static factory methods (NoteOn, NoteOff, ControlChange, etc.) and
+ * clamping utility functions to enforce valid MIDI ranges.
+ * @note This struct is tightly coupled to the external MIDI library (<MIDI.h>) and
+ *       uses the midi::MidiType enumeration defined there; changes to that enum
+ *       may require corresponding updates here.
+ */
 struct MidiEvent {
     uint32_t tick;           // When this event occurs
     midi::MidiType type;     // What kind of MIDI event, Note, CC, Pitch Bend, etc.
