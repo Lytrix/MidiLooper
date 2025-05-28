@@ -11,6 +11,9 @@
 #include <map>
 #include "TrackUndo.h"
 #include "Logger.h"
+#include "NoteUtils.h"
+
+using DisplayNote = NoteUtils::DisplayNote;
 
 EditManager editManager;
 
@@ -61,51 +64,25 @@ void EditManager::onButtonPress(Track& track) {
 }
 
 void EditManager::selectClosestNote(Track& track, uint32_t startTick) {
-    // Simplified: pick the single nearest note by tick, ignoring pitch and grouping
-    uint32_t loopLength = track.getLength();
     const auto& midiEvents = track.getEvents();
-    struct DisplayNote { uint8_t note; uint8_t velocity; uint32_t startTick; uint32_t endTick; };
-    std::vector<DisplayNote> notes;
-    std::map<uint8_t, std::vector<DisplayNote>> activeNoteStacks; // Stack per note pitch
-    
-    // Reconstruct note list
-    for (const auto& evt : midiEvents) {
-        if (evt.type == midi::NoteOn && evt.data.noteData.velocity > 0) {
-            DisplayNote dn{evt.data.noteData.note, evt.data.noteData.velocity, evt.tick, evt.tick};
-            activeNoteStacks[evt.data.noteData.note].push_back(dn);
-        } else if ((evt.type == midi::NoteOff) || (evt.type == midi::NoteOn && evt.data.noteData.velocity == 0)) {
-            // End a note - pop from stack for this pitch (LIFO for overlapping notes)
-            auto& stack = activeNoteStacks[evt.data.noteData.note];
-            if (!stack.empty()) {
-                DisplayNote& dn = stack.back();
-                dn.endTick = evt.tick;
-                notes.push_back(dn);
-                stack.pop_back();
-            }
-        }
-    }
-    for (auto& [pitch, stack] : activeNoteStacks) {
-        for (auto& dn : stack) {
-            dn.endTick = loopLength;
-            notes.push_back(dn);
-        }
-    }
+    // Reconstruct note list using shared helper
+    auto notes = NoteUtils::reconstructNotes(midiEvents, track.getLength());
     
     // If no notes, just place bracket at exact tick
     if (notes.empty()) {
-        bracketTick = startTick % loopLength;
+        bracketTick = startTick % track.getLength();
         selectedNoteIdx = -1;
         hasMovedBracket = true;
         return;
     }
     // Find nearest by tick distance
-    uint32_t modStart = startTick % loopLength;
-    uint32_t bestDist = loopLength;
+    uint32_t modStart = startTick % track.getLength();
+    uint32_t bestDist = track.getLength();
     int bestIdx = 0;
     for (int i = 0; i < (int)notes.size(); ++i) {
-        uint32_t noteTick = notes[i].startTick % loopLength;
-        uint32_t dist = std::min((noteTick + loopLength - modStart) % loopLength,
-                                 (modStart + loopLength - noteTick) % loopLength);
+        uint32_t noteTick = notes[i].startTick % track.getLength();
+        uint32_t dist = std::min((noteTick + track.getLength() - modStart) % track.getLength(),
+                                 (modStart + track.getLength() - noteTick) % track.getLength());
         if (dist < bestDist) {
             bestDist = dist;
             bestIdx = i;
@@ -113,7 +90,7 @@ void EditManager::selectClosestNote(Track& track, uint32_t startTick) {
     }
     // Update selection and bracket
     selectedNoteIdx = bestIdx;
-    bracketTick = notes[bestIdx].startTick % loopLength;
+    bracketTick = notes[bestIdx].startTick % track.getLength();
     hasMovedBracket = true;
 }
 
@@ -164,38 +141,10 @@ void EditManager::exitEditMode(Track& track) {
 
 void EditManager::moveBracket(int delta, const Track& track, uint32_t ticksPerStep) {
     const auto& midiEvents = track.getEvents();
-    struct DisplayNote {
-        uint8_t note;
-        uint8_t velocity;
-        uint32_t startTick;
-        uint32_t endTick;
-    };
-    std::vector<DisplayNote> notes;
-    std::map<uint8_t, std::vector<DisplayNote>> activeNoteStacks; // Stack per note pitch
     uint32_t loopLength = track.getLength();
     if (loopLength == 0) return;
-    
-    for (const auto& evt : midiEvents) {
-        if (evt.type == midi::NoteOn && evt.data.noteData.velocity > 0) {
-            DisplayNote dn{evt.data.noteData.note, evt.data.noteData.velocity, evt.tick, evt.tick};
-            activeNoteStacks[evt.data.noteData.note].push_back(dn);
-        } else if ((evt.type == midi::NoteOff) || (evt.type == midi::NoteOn && evt.data.noteData.velocity == 0)) {
-            // End a note - pop from stack for this pitch (LIFO for overlapping notes)
-            auto& stack = activeNoteStacks[evt.data.noteData.note];
-            if (!stack.empty()) {
-                DisplayNote& dn = stack.back();
-                dn.endTick = evt.tick;
-                notes.push_back(dn);
-                stack.pop_back();
-            }
-        }
-    }
-    for (auto& [pitch, stack] : activeNoteStacks) {
-        for (auto& dn : stack) {
-            dn.endTick = loopLength;
-            notes.push_back(dn);
-        }
-    }
+    // Reconstruct note list using shared helper
+    auto notes = NoteUtils::reconstructNotes(midiEvents, loopLength);
     
     const uint32_t SNAP_WINDOW = 24;
     if (delta > 0) {
