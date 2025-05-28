@@ -197,21 +197,17 @@ static void restoreNotes(std::vector<MidiEvent>& midiEvents,
                          NoteUtils::EventIndexMap& offIndex) {
     // Debug existing notes before restoration
     logger.log(CAT_MOVE_NOTES, LOG_DEBUG, "=== EXISTING NOTES BEFORE RESTORATION ===");
-    for (const auto& evt : midiEvents) {
-        if (evt.type == midi::NoteOn && evt.data.noteData.velocity > 0) {
-            // find matching NoteOff
-            auto offIt = std::find_if(midiEvents.begin(), midiEvents.end(), [&](const MidiEvent& me){
-                return (me.type == midi::NoteOff || (me.type == midi::NoteOn && me.data.noteData.velocity == 0)) &&
-                       me.data.noteData.note == evt.data.noteData.note && me.tick > evt.tick;
-            });
-            if (offIt != midiEvents.end()) {
-                uint32_t length = calculateNoteLength(evt.tick, offIt->tick, loopLength);
-                #ifdef DEBUG_MOVE_NOTES
-                logger.log(CAT_MOVE_NOTES, LOG_DEBUG, "Existing note: pitch=%d, start=%lu, end=%lu, length=%lu", evt.data.noteData.note, evt.tick, offIt->tick, length);
-                #endif
-            }
+    #ifdef DEBUG_MOVE_NOTES
+    {
+        auto existingNotes = NoteUtils::reconstructNotes(midiEvents, loopLength);
+        for (const auto& dn : existingNotes) {
+            uint32_t length = calculateNoteLength(dn.startTick, dn.endTick, loopLength);
+            logger.log(CAT_MOVE_NOTES, LOG_DEBUG,
+                       "Existing note: pitch=%d, start=%lu, end=%lu, length=%lu",
+                       dn.note, dn.startTick, dn.endTick, length);
         }
     }
+    #endif
     // Restoration analysis
     logger.debug("=== RESTORATION ANALYSIS ===");
     logger.debug("Total deleted notes: %zu", manager.movingNote.deletedNotes.size());
@@ -325,10 +321,12 @@ static void finalReconstructAndSelect(
 // 1. onEnter(): set up moving note identity and bracket.
 void EditStartNoteState::onEnter(EditManager& manager, Track& track, uint32_t startTick) {
     logger.debug("Entered EditStartNoteState");
+    
     // Commit-on-enter: snapshot and hash initial MIDIEVENTS
     initialHash = TrackUndo::computeMidiHash(track);
     TrackUndo::pushUndoSnapshot(track);
     logger.debug("Snapshot on enter, initial hash: %u", initialHash);
+    
     int idx = manager.getSelectedNoteIdx();
     if (idx >= 0) {
         // Don't rebuild notes here - just preserve the current selection
