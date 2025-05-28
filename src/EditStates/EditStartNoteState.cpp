@@ -13,13 +13,13 @@
  * @class EditStartNoteState
  * @brief Implements:
  *   1. onEnter() – set up moving note identity and bracket.
- *   2. onEncoderTurn() – move a note's start/end (detailed in Flow of onEncoderTurn).
+ *   2. onEncoderTurn() – move a note's start/end (detailed in Flow of onEncoderTurn; stores raw end and defers any wrapping to display/playback layers).
  *   3. onExit() – clear move mode state.
  *   4. onButtonPress() – exit move mode and return to NoteState.
  *
  * Flow of onEncoderTurn():
  *   1. Read current moving-note identity (pitch, lastStart, lastEnd).
- *   2. Compute newStart = lastStart + δ (wrapping at loopLength), then newEnd = newStart + noteLen.
+ *   2. Compute newStart = lastStart + δ (wrapping at loopLength), then compute raw newEnd = newStart + noteLen (no chopping at loop boundary); store raw newEnd in MIDI and defer wrapping to display/playback.
  *   3. Reconstruct all DisplayNotes from MIDI events into currentNotes.
  *   4. From manager.movingNote.deletedNotes decide which notes to restore (no longer overlapping).
  *   5. Scan currentNotes for ones that overlap the moved note; for right-to-left motion try to shorten them, otherwise queue them for deletion.
