@@ -512,19 +512,19 @@ void EditStartNoteState::onEncoderTurn(EditManager& manager, Track& track, int d
     
     // Move the selected note's NoteOn/NoteOff events before adjusting overlaps
     {
-        auto onIt = std::find_if(midiEvents.begin(), midiEvents.end(), [&](MidiEvent& evt) {
+    auto onIt = std::find_if(midiEvents.begin(), midiEvents.end(), [&](MidiEvent& evt) {
             return evt.type == midi::NoteOn &&
                    evt.data.noteData.note == movingNotePitch &&
                    evt.tick == currentStart;
-        });
-        auto offIt = std::find_if(midiEvents.begin(), midiEvents.end(), [&](MidiEvent& evt) {
+    });
+    auto offIt = std::find_if(midiEvents.begin(), midiEvents.end(), [&](MidiEvent& evt) {
             bool isOff = (evt.type == midi::NoteOff) || (evt.type == midi::NoteOn && evt.data.noteData.velocity == 0);
             return isOff && evt.data.noteData.note == movingNotePitch &&
                    evt.tick == currentEnd;
         });
         if (onIt != midiEvents.end() && offIt != midiEvents.end()) {
-            onIt->tick = newStart;
-            offIt->tick = newEnd;
+    onIt->tick = newStart;
+    offIt->tick = newEnd;
             manager.movingNote.lastStart = newStart;
             manager.movingNote.lastEnd = newEnd;
             logger.debug("Moved note events: pitch=%u start->%lu end->%lu", movingNotePitch, newStart, newEnd);

@@ -1,7 +1,6 @@
 #include <iostream>
 #include <vector>
 #include <cstdint>
-#include <unity.h>
 
 // Replicated helpers
 static uint32_t wrapPosition(int32_t position, uint32_t loopLength) {

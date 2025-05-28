@@ -3,6 +3,11 @@
 #include "NoteUtils.h"
 #include <vector>
 #include <utility>
+#include <cstdint>
+#include "MidiEvent.h"
+// Forward declarations
+class EditManager;
+class Track;
 
 class EditStartNoteState : public EditState {
 public:

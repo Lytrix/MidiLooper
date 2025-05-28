@@ -1,7 +1,6 @@
 #include <iostream>
 #include <vector>
 #include <cstdint>
-#include <unity.h>
 
 // Stubbed MIDI types and MidiEvent for host-side test
 namespace midi {

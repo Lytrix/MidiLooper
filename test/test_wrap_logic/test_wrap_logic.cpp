@@ -1,6 +1,6 @@
 #include <iostream>
 #include <cstdint>
-#include <unity.h>
+
 // Replicated helper functions from EditStartNoteState.cpp
 static uint32_t wrapPosition(int32_t position, uint32_t loopLength) {
     if (position < 0) {
