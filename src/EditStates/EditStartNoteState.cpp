@@ -262,6 +262,57 @@ static void restoreNotes(std::vector<MidiEvent>& midiEvents,
     }
 }
 
+// Helper to finalize reconstruction and selection after movement
+static void finalReconstructAndSelect(
+    std::vector<MidiEvent>& midiEvents,
+    EditManager& manager,
+    uint8_t movingNotePitch,
+    uint32_t newStart,
+    uint32_t newEnd,
+    uint32_t loopLength) {
+    // Sort events by tick
+    std::sort(midiEvents.begin(), midiEvents.end(),
+              [](const MidiEvent &a, const MidiEvent &b){ return a.tick < b.tick; });
+    // Update bracket to moved note start
+    manager.setBracketTick(newStart);
+    // Reconstruct final notes and select moved note
+    auto finalNotes = NoteUtils::reconstructNotes(midiEvents, loopLength);
+    int newSelectedIdx = -1;
+    // Exact match on pitch/start/end
+    for (int i = 0; i < (int)finalNotes.size(); ++i) {
+        if (finalNotes[i].note == movingNotePitch &&
+            finalNotes[i].startTick == newStart &&
+            finalNotes[i].endTick == newEnd) {
+            newSelectedIdx = i;
+            break;
+        }
+    }
+    // Fallback: match only pitch and start
+    if (newSelectedIdx < 0) {
+        for (int i = 0; i < (int)finalNotes.size(); ++i) {
+            if (finalNotes[i].note == movingNotePitch &&
+                finalNotes[i].startTick == newStart) {
+                newSelectedIdx = i;
+                break;
+            }
+        }
+    }
+    if (newSelectedIdx >= 0) {
+        manager.setSelectedNoteIdx(newSelectedIdx);
+        logger.debug("Updated selectedNoteIdx to %d for moved note", newSelectedIdx);
+    } else {
+        logger.debug("Warning: Could not find moved note in final note list");
+    }
+    // Debug: log all MIDI events after processing
+    logger.debug("=== ALL MIDI EVENTS AFTER PROCESSING ===");
+    for (const auto& evt : midiEvents) {
+        logger.debug("MIDI Event: type=%s, pitch=%d, tick=%lu, velocity=%d",
+                     (evt.type == midi::NoteOn) ? "NoteOn" : "NoteOff",
+                     evt.data.noteData.note, evt.tick, evt.data.noteData.velocity);
+    }
+    logger.debug("EditStartNoteState::onEncoderTurn completed successfully");
+}
+
 // 1. onEnter(): set up moving note identity and bracket.
 void EditStartNoteState::onEnter(EditManager& manager, Track& track, uint32_t startTick) {
     logger.debug("Entered EditStartNoteState");
@@ -454,62 +505,11 @@ void EditStartNoteState::onEncoderTurn(EditManager& manager, Track& track, int d
     // Apply shorten/delete in one helper
     applyShortenOrDelete(midiEvents, notesToShorten, notesToDelete, manager, loopLength);
     
-    // Sort events by tick BEFORE restoration to ensure clean state
-    std::sort(midiEvents.begin(), midiEvents.end(),
-              [](auto const &a, auto const &b){ return a.tick < b.tick; });
-    
     // Restore notes that should be restored based on movement
     restoreNotes(midiEvents, notesToRestore, manager, loopLength);
     
-    // Sort events by tick
-    std::sort(midiEvents.begin(), midiEvents.end(),
-              [](auto const &a, auto const &b){ return a.tick < b.tick; });
-
-    // Set bracket to new position (already updated tracking above)
-    manager.setBracketTick(newStart);
-    
-    // Reconstruct notes to find the new selected index
-    auto finalNotes = NoteUtils::reconstructNotes(midiEvents, loopLength);
-    int newSelectedIdx = -1;
-    // Try exact match on pitch, start, and end
-    for (int i = 0; i < (int)finalNotes.size(); ++i) {
-        if (finalNotes[i].note == movingNotePitch &&
-            finalNotes[i].startTick == newStart &&
-            finalNotes[i].endTick == newEnd) {
-            newSelectedIdx = i;
-            break;
-        }
-    }
-    // Fallback: match only pitch and start
-    if (newSelectedIdx < 0) {
-        for (int i = 0; i < (int)finalNotes.size(); ++i) {
-            if (finalNotes[i].note == movingNotePitch &&
-                finalNotes[i].startTick == newStart) {
-                newSelectedIdx = i;
-                break;
-            }
-        }
-    }
-    if (newSelectedIdx >= 0) {
-        manager.setSelectedNoteIdx(newSelectedIdx);
-        logger.debug("Updated selectedNoteIdx to %d for moved note", newSelectedIdx);
-    } else {
-        logger.debug("Warning: Could not find moved note in final note list");
-    }
-    
-    // Debug: Show all MIDI events after processing
-    logger.debug("=== ALL MIDI EVENTS AFTER PROCESSING ===");
-    for (const auto& evt : midiEvents) {
-        if (evt.data.noteData.note == 51) { // Focus on pitch 51 where the problem occurs
-            logger.debug("MIDI Event: type=%s, pitch=%d, tick=%lu, velocity=%d", 
-                       (evt.type == midi::NoteOn) ? "NoteOn" : "NoteOff",
-                       evt.data.noteData.note, evt.tick, evt.data.noteData.velocity);
-        }
-    }
-    
-    logger.debug("Updated selectedNoteIdx to %d for moved note", newSelectedIdx);
-    
-    logger.debug("EditStartNoteState::onEncoderTurn completed successfully");
+    // Helper to finalize reconstruction and selection after movement
+    finalReconstructAndSelect(midiEvents, manager, movingNotePitch, newStart, newEnd, loopLength);
 }
 
 // 4. onButtonPress(): exit move mode and return to NoteState.
