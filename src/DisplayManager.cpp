@@ -139,7 +139,7 @@ void DisplayManager::setup() {
 
 
 int DisplayManager::tickToScreenX(uint32_t tick) {
-    uint32_t loopLength = trackManager.getSelectedTrack().getLength();
+    uint32_t loopLength = trackManager.getSelectedTrack().getLoopLength();
     return TRACK_MARGIN + map(tick, 0, loopLength, 0, DISPLAY_WIDTH - 1 - TRACK_MARGIN);
 }
 
@@ -220,7 +220,7 @@ void DisplayManager::drawBracket(unsigned long a, unsigned long b, int c) {
         editManager.getCurrentState() == editManager.getStartNoteState() ||
         editManager.getCurrentState() == editManager.getPitchNoteState()) {
         uint32_t bracketTick = editManager.getBracketTick();
-        uint32_t lengthLoop = trackManager.getSelectedTrack().getLength();
+        uint32_t lengthLoop = trackManager.getSelectedTrack().getLoopLength();
         const int pianoRollY1 = 31;
 
         // Convert bracketTick to screen X position
@@ -271,8 +271,8 @@ void DisplayManager::drawNoteBar(const DisplayNote& e, int y, uint32_t s, uint32
 void DisplayManager::drawPianoRoll(uint32_t currentTick, Track& selectedTrack) {
     auto& track = selectedTrack;
     uint32_t startLoop = 0; // Always start at bar 1 visually
-    uint32_t lengthLoop = track.getLength();
-    const auto& midiEvents = track.getEvents();
+    uint32_t lengthLoop = track.getLoopLength();
+    const auto& midiEvents = track.getMidiEvents();
 
     //setLastPlayedNote(nullptr); // Reset at the start
     const int pianoRollY0 = 0;
@@ -307,7 +307,7 @@ void DisplayManager::drawInfoArea(uint32_t currentTick, Track& selectedTrack) {
     char posStr[24];
     char loopLine[8];
     // Get length of loop
-    uint32_t lengthLoop = selectedTrack.getLength();
+    uint32_t lengthLoop = selectedTrack.getLoopLength();
     
     ticksToBarsBeats16thTicks2Dec(currentTick, posStr, sizeof(posStr), true); // true = leading zeros
     if (lengthLoop > 0 && Config::TICKS_PER_BAR > 0) {
@@ -349,8 +349,8 @@ void DisplayManager::drawInfoArea(uint32_t currentTick, Track& selectedTrack) {
 // --- Draw note info using midiEvents ---
 void DisplayManager::drawNoteInfo(uint32_t currentTick, Track& selectedTrack) {
     char startStr[24] = {0};
-    const auto& midiEvents = selectedTrack.getEvents();
-    uint32_t lengthLoop = selectedTrack.getLength();
+    const auto& midiEvents = selectedTrack.getMidiEvents();
+    uint32_t lengthLoop = selectedTrack.getLoopLength();
     auto notes = NoteUtils::reconstructNotes(midiEvents, lengthLoop);
 
     const DisplayNote* noteToShow = nullptr;

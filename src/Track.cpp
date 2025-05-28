@@ -27,10 +27,6 @@ Track::Track()
 // Getters
 // -------------------------
 
-const std::vector<MidiEvent>& Track::getEvents() const {
-  return midiEvents;
-}
-
 uint32_t Track::getStartLoopTick() const {
   return startLoopTick;
 }
@@ -461,11 +457,11 @@ bool Track::isPlaying() const {
   return trackState == TRACK_PLAYING;
 }
 
-uint32_t Track::getLength() const {
+uint32_t Track::getLoopLength() const {
   return loopLengthTicks;
 }
 
-void Track::setLength(uint32_t ticks) {
+void Track::setLoopLength(uint32_t ticks) {
   loopLengthTicks = ticks;
 }
 

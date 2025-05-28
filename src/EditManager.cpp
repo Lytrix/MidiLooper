@@ -64,25 +64,25 @@ void EditManager::onButtonPress(Track& track) {
 }
 
 void EditManager::selectClosestNote(Track& track, uint32_t startTick) {
-    const auto& midiEvents = track.getEvents();
+    const auto& midiEvents = track.getMidiEvents();
     // Reconstruct note list using shared helper
-    auto notes = NoteUtils::reconstructNotes(midiEvents, track.getLength());
+    auto notes = NoteUtils::reconstructNotes(midiEvents, track.getLoopLength());
     
     // If no notes, just place bracket at exact tick
     if (notes.empty()) {
-        bracketTick = startTick % track.getLength();
+        bracketTick = startTick % track.getLoopLength();
         selectedNoteIdx = -1;
         hasMovedBracket = true;
         return;
     }
     // Find nearest by tick distance
-    uint32_t modStart = startTick % track.getLength();
-    uint32_t bestDist = track.getLength();
+    uint32_t modStart = startTick % track.getLoopLength();
+    uint32_t bestDist = track.getLoopLength();
     int bestIdx = 0;
     for (int i = 0; i < (int)notes.size(); ++i) {
-        uint32_t noteTick = notes[i].startTick % track.getLength();
-        uint32_t dist = std::min((noteTick + track.getLength() - modStart) % track.getLength(),
-                                 (modStart + track.getLength() - noteTick) % track.getLength());
+        uint32_t noteTick = notes[i].startTick % track.getLoopLength();
+        uint32_t dist = std::min((noteTick + track.getLoopLength() - modStart) % track.getLoopLength(),
+                                 (modStart + track.getLoopLength() - noteTick) % track.getLoopLength());
         if (dist < bestDist) {
             bestDist = dist;
             bestIdx = i;
@@ -90,7 +90,7 @@ void EditManager::selectClosestNote(Track& track, uint32_t startTick) {
     }
     // Update selection and bracket
     selectedNoteIdx = bestIdx;
-    bracketTick = notes[bestIdx].startTick % track.getLength();
+    bracketTick = notes[bestIdx].startTick % track.getLoopLength();
     hasMovedBracket = true;
 }
 
@@ -140,8 +140,8 @@ void EditManager::exitEditMode(Track& track) {
 }
 
 void EditManager::moveBracket(int delta, const Track& track, uint32_t ticksPerStep) {
-    const auto& midiEvents = track.getEvents();
-    uint32_t loopLength = track.getLength();
+    const auto& midiEvents = track.getMidiEvents();
+    uint32_t loopLength = track.getLoopLength();
     if (loopLength == 0) return;
     // Reconstruct note list using shared helper
     auto notes = NoteUtils::reconstructNotes(midiEvents, loopLength);

@@ -70,11 +70,11 @@ bool StorageManager::saveState(const LooperState& state) {
         if (!writeRaw(file, &muted, sizeof(muted))) { Serial.print("[StorageManager] ERROR: Failed to write muted for track "); Serial.println(t); file.close(); return false; }
         // Timing
         uint32_t startLoopTick = track.getStartLoopTick();
-        uint32_t loopLengthTicks = track.getLength();
+        uint32_t loopLengthTicks = track.getLoopLength();
         if (!writeRaw(file, &startLoopTick, sizeof(startLoopTick))) { Serial.print("[StorageManager] ERROR: Failed to write startLoopTick for track "); Serial.println(t); file.close(); return false; }
         if (!writeRaw(file, &loopLengthTicks, sizeof(loopLengthTicks))) { Serial.print("[StorageManager] ERROR: Failed to write loopLengthTicks for track "); Serial.println(t); file.close(); return false; }
         // MidiEvents
-        const auto &midiEvents = track.getEvents();
+        const auto &midiEvents = track.getMidiEvents();
         uint32_t midiCount = midiEvents.size();
         if (!writeRaw(file, &midiCount, sizeof(midiCount))) { Serial.print("[StorageManager] ERROR: Failed to write midiCount for track "); Serial.println(t); file.close(); return false; }
         if (midiCount > 0 && !writeRaw(file, midiEvents.data(), midiCount * sizeof(MidiEvent))) { Serial.print("[StorageManager] ERROR: Failed to write midiEvents for track "); Serial.println(t); file.close(); return false; }
@@ -277,7 +277,7 @@ bool StorageManager::loadState(LooperState& state) {
         Track &track = trackManager.getTrack(t);
         track.forceSetState(tracksData[t].state);
         if (tracksData[t].muted != track.isMuted()) track.toggleMuteTrack();
-        track.setLength(tracksData[t].loopLengthTicks);
+        track.setLoopLength(tracksData[t].loopLengthTicks);
         track.getMidiEvents() = tracksData[t].midiEvents;
         auto &midiHistory = TrackUndo::getMidiHistory(track);
         midiHistory.clear();

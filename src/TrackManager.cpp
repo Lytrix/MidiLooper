@@ -41,14 +41,14 @@ void TrackManager::stopRecordingTrack(uint8_t trackIndex) {
 
 
   tracks[trackIndex].stopRecording(clockManager.getCurrentTick());
-  uint32_t recordedLength = tracks[trackIndex].getLength();
+  uint32_t recordedLength = tracks[trackIndex].getLoopLength();
   
   if (masterLoopLength == 0) {
     setMasterLoopLength(recordedLength);  // First loop sets master length
   }
 
   if (autoAlignEnabled) {
-    tracks[trackIndex].setLength(masterLoopLength);
+    tracks[trackIndex].setLoopLength(masterLoopLength);
   }
   Serial.println("Saving state after recording");
   StorageManager::saveState(looperState.getLooperState()); // Save after recording
@@ -177,7 +177,7 @@ TrackState TrackManager::getTrackState(uint8_t trackIndex) const {
 }
 
 uint32_t TrackManager::getTrackLength(uint8_t trackIndex) const {
-  return (trackIndex < Config::NUM_TRACKS) ? tracks[trackIndex].getLength() : 0;
+  return (trackIndex < Config::NUM_TRACKS) ? tracks[trackIndex].getLoopLength() : 0;
 }
 
 void TrackManager::setSelectedTrack(uint8_t index) {
