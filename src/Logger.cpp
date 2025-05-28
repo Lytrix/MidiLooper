@@ -4,6 +4,8 @@
 
 LogLevel Logger::currentLevel = LOG_INFO;
 bool Logger::isInitialized = false;
+// By default, all categories enabled except MOVE_NOTES
+bool Logger::categoryEnabled[] = { true, true, true, true, true, true, true, false };
 Logger logger;
 
 static char logBuffer[128];  // Shared buffer for formatted log output
@@ -14,6 +16,13 @@ void Logger::setup(LogLevel level) {
   Serial.begin(115200);
   Serial.print("Logger initialized with level: ");
   Serial.println(level);
+}
+
+// Enable or disable logging for a given category
+void Logger::setCategoryEnabled(LogCategory category, bool enabled) {
+  if (category >= CAT_GENERAL && category <= CAT_MOVE_NOTES) {
+    categoryEnabled[category] = enabled;
+  }
 }
 
 void Logger::printTimestamp() {
@@ -27,8 +36,10 @@ void Logger::printLevel(LogLevel level) {
 }
 
 void Logger::printCategory(LogCategory category) {
-  const char* categories[] = {"GEN", "STATE", "MIDI", "CLOCK", "TRACK", "BTN", "DISP"};
-  Serial.printf("[%s] ", categories[category]);
+  const char* categories[] = {"GEN", "STATE", "MIDI", "CLOCK", "TRACK", "BTN", "DISP", "MOVE"};
+  if (category < (int)(sizeof(categories)/sizeof(categories[0]))) {
+    Serial.printf("[%s] ", categories[category]);
+  }
 }
 
 void Logger::printPrefix(LogLevel level, LogCategory category) {
@@ -92,6 +103,7 @@ void Logger::trace(const char* format, ...) {
 
 void Logger::log(LogCategory category, LogLevel level, const char* format, ...) {
   if (currentLevel < level) return;
+  if (!categoryEnabled[category]) return;
   printPrefix(level, category);
   va_list args;
   va_start(args, format);

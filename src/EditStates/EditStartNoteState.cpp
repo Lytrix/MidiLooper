@@ -188,7 +188,7 @@ static void restoreNotes(std::vector<MidiEvent>& midiEvents,
                          EditManager& manager,
                          uint32_t loopLength) {
     // Debug existing notes before restoration
-    logger.debug("=== EXISTING NOTES BEFORE RESTORATION ===");
+    logger.log(CAT_MOVE_NOTES, LOG_DEBUG, "=== EXISTING NOTES BEFORE RESTORATION ===");
     for (const auto& evt : midiEvents) {
         if (evt.type == midi::NoteOn && evt.data.noteData.velocity > 0) {
             // find matching NoteOff
@@ -198,7 +198,9 @@ static void restoreNotes(std::vector<MidiEvent>& midiEvents,
             });
             if (offIt != midiEvents.end()) {
                 uint32_t length = calculateNoteLength(evt.tick, offIt->tick, loopLength);
-                logger.debug("Existing note: pitch=%d, start=%lu, end=%lu, length=%lu", evt.data.noteData.note, evt.tick, offIt->tick, length);
+                #ifdef DEBUG_MOVE_NOTES
+                logger.log(CAT_MOVE_NOTES, LOG_DEBUG, "Existing note: pitch=%d, start=%lu, end=%lu, length=%lu", evt.data.noteData.note, evt.tick, offIt->tick, length);
+                #endif
             }
         }
     }
@@ -303,13 +305,14 @@ static void finalReconstructAndSelect(
     } else {
         logger.debug("Warning: Could not find moved note in final note list");
     }
-    // Debug: log all MIDI events after processing
-    logger.debug("=== ALL MIDI EVENTS AFTER PROCESSING ===");
+    // MIDI-event dump (visible when CAT_MOVE_NOTES is enabled)
+    logger.log(CAT_MOVE_NOTES, LOG_DEBUG, "=== ALL MIDI EVENTS AFTER PROCESSING ===");
     for (const auto& evt : midiEvents) {
-        logger.debug("MIDI Event: type=%s, pitch=%d, tick=%lu, velocity=%d",
-                     (evt.type == midi::NoteOn) ? "NoteOn" : "NoteOff",
-                     evt.data.noteData.note, evt.tick, evt.data.noteData.velocity);
+        logger.log(CAT_MOVE_NOTES, LOG_DEBUG, "MIDI Event: type=%s, pitch=%d, tick=%lu, velocity=%d",
+                   (evt.type == midi::NoteOn) ? "NoteOn" : "NoteOff",
+                   evt.data.noteData.note, evt.tick, evt.data.noteData.velocity);
     }
+    // Completion log
     logger.debug("EditStartNoteState::onEncoderTurn completed successfully");
 }
 
