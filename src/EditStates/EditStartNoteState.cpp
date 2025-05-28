@@ -124,14 +124,14 @@ void EditStartNoteState::findOverlaps(const std::vector<DisplayNote>& currentNot
                  notesToShorten.size(), notesToDelete.size());
 }
 
-// Apply shorten/delete decisions on the raw MIDI event list
+// Apply shorten/delete decisions on the raw MIDI event list, reusing prebuilt indexes
 void EditStartNoteState::applyShortenOrDelete(std::vector<MidiEvent>& midiEvents,
                                               const std::vector<std::pair<DisplayNote, uint32_t>>& notesToShorten,
                                               const std::vector<DisplayNote>& notesToDelete,
                                               EditManager& manager,
-                                              uint32_t loopLength) {
-    // Build quick index via shared utility
-    auto [onIndex, offIndex] = NoteUtils::buildEventIndex(midiEvents);
+                                              uint32_t loopLength,
+                                              NoteUtils::EventIndexMap& onIndex,
+                                              NoteUtils::EventIndexMap& offIndex) {
     // Shorten overlapping notes using index
     for (const auto& [dn, newEnd] : notesToShorten) {
         // Record original for undo
@@ -188,13 +188,13 @@ void EditStartNoteState::applyShortenOrDelete(std::vector<MidiEvent>& midiEvents
     }
 }
 
-// Helper to restore deleted or shortened notes after movement
+// Helper to restore deleted or shortened notes after movement, reusing prebuilt indexes
 static void restoreNotes(std::vector<MidiEvent>& midiEvents,
                          const std::vector<EditManager::MovingNoteIdentity::DeletedNote>& notesToRestore,
                          EditManager& manager,
-                         uint32_t loopLength) {
-    // Build quick index via shared utility
-    auto [onIndex, offIndex] = NoteUtils::buildEventIndex(midiEvents);
+                         uint32_t loopLength,
+                         NoteUtils::EventIndexMap& onIndex,
+                         NoteUtils::EventIndexMap& offIndex) {
     // Debug existing notes before restoration
     logger.log(CAT_MOVE_NOTES, LOG_DEBUG, "=== EXISTING NOTES BEFORE RESTORATION ===");
     for (const auto& evt : midiEvents) {
@@ -483,6 +483,8 @@ void EditStartNoteState::onEncoderTurn(EditManager& manager, Track& track, int d
     logger.debug("Found %zu notes to restore, %zu total deleted notes", 
                  notesToRestore.size(), manager.movingNote.deletedNotes.size());
     
+    // Build event index once and reuse
+    auto [onIndex, offIndex] = NoteUtils::buildEventIndex(midiEvents);
     // Detect and categorize overlaps in one shared helper
     std::vector<std::pair<DisplayNote, uint32_t>> notesToShorten;
     findOverlaps(currentNotes, movingNotePitch, currentStart, newStart, newEnd, delta, loopLength,
@@ -511,11 +513,22 @@ void EditStartNoteState::onEncoderTurn(EditManager& manager, Track& track, int d
         }
     }
     
-    // Apply shorten/delete in one helper
-    applyShortenOrDelete(midiEvents, notesToShorten, notesToDelete, manager, loopLength);
+    // Apply shorten/delete using shared index
+    applyShortenOrDelete(midiEvents,
+                         notesToShorten,
+                         notesToDelete,
+                         manager,
+                         loopLength,
+                         onIndex,
+                         offIndex);
     
-    // Restore notes that should be restored based on movement
-    restoreNotes(midiEvents, notesToRestore, manager, loopLength);
+    // Restore notes that should be restored based on movement, reusing index
+    restoreNotes(midiEvents,
+                 notesToRestore,
+                 manager,
+                 loopLength,
+                 onIndex,
+                 offIndex);
     
     // Helper to finalize reconstruction and selection after movement
     finalReconstructAndSelect(midiEvents, manager, movingNotePitch, newStart, newEnd, loopLength);
