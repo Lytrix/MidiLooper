@@ -1,6 +1,7 @@
 #include <iostream>
 #include <vector>
 #include <cstdint>
+#include <unity.h>
 
 // Replicated helpers from EditStartNoteState.cpp
 static uint32_t wrapPosition(int32_t position, uint32_t loopLength) {
