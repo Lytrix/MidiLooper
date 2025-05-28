@@ -133,6 +133,8 @@ public:
 
   // Add to public section of Track to be able to save the events
   std::vector<MidiEvent>& getMidiEvents() { return midiEvents; }
+  /// Immutable access to midiEvents (for const Track)
+  const std::vector<MidiEvent>& getMidiEvents() const { return midiEvents; }
 
 private:
   friend class TrackUndo;
