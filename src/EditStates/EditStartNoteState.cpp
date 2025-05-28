@@ -8,6 +8,7 @@
 #include "Logger.h"
 #include <map>
 #include "Globals.h"
+#include "TrackUndo.h"
 
 /**
  * @class EditStartNoteState
@@ -85,6 +86,10 @@ static bool notesOverlap(uint32_t start1, uint32_t end1, uint32_t start2, uint32
 // 1. onEnter(): set up moving note identity and bracket.
 void EditStartNoteState::onEnter(EditManager& manager, Track& track, uint32_t startTick) {
     logger.debug("Entered EditStartNoteState");
+    // Commit-on-enter: snapshot and hash initial MIDIEVENTS
+    initialHash = TrackUndo::computeMidiHash(track);
+    TrackUndo::pushUndoSnapshot(track);
+    logger.debug("Snapshot on enter, initial hash: %u", initialHash);
     int idx = manager.getSelectedNoteIdx();
     if (idx >= 0) {
         // Don't rebuild notes here - just preserve the current selection
@@ -144,6 +149,8 @@ void EditStartNoteState::onEnter(EditManager& manager, Track& track, uint32_t st
             manager.setBracketTick(notes[idx].startTick);
             logger.debug("Set up moving note identity: note=%d, start=%lu, end=%lu", 
                          notes[idx].note, notes[idx].startTick, notes[idx].endTick);
+            // Reset commit-on-exit snapshot flag; will push on first actual move
+            manager.movingNote.undoSnapshotPushed = false;
         }
     } else {
         manager.movingNote.active = false;
@@ -154,7 +161,7 @@ void EditStartNoteState::onEnter(EditManager& manager, Track& track, uint32_t st
 // 3. onExit(): clear move mode state.
 void EditStartNoteState::onExit(EditManager& manager, Track& track) {
     logger.debug("Exited EditStartNoteState");
-    
+
     // Clear any stored deleted events when exiting edit mode
     if (!manager.movingNote.deletedEvents.empty()) {
         logger.debug("Clearing %zu deleted events on exit", manager.movingNote.deletedEvents.size());

@@ -366,7 +366,7 @@ void DisplayManager::drawInfoArea(uint32_t currentTick, Track& selectedTrack) {
     int loopX = x + 12 * 6; // after posStr (11 chars + 1 space)
     drawInfoField("LOOP", loopLine, loopX, y, false, 5);
     // Draw undo count right-aligned, max 99
-    uint8_t undoCount = TrackUndo::getUndoCount(selectedTrack);
+    uint8_t undoCount = static_cast<uint8_t>(editManager.getDisplayUndoCount(selectedTrack));
     char undoStr[4];
     if (undoCount == 0) {
         snprintf(undoStr, sizeof(undoStr), "--");

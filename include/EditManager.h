@@ -84,14 +84,22 @@ public:
             uint32_t originalLength; // Store original note length for consistent restoration
         };
         std::vector<DeletedNote> deletedNotes;
+        bool undoSnapshotPushed = false; // snapshot only once after first movement
     };
     MovingNoteIdentity movingNote;
+
+    /**
+     * @brief Returns the undo count to display: frozen during edit states, real count otherwise
+     */
+    size_t getDisplayUndoCount(const Track& track) const;
 
 private:
     uint32_t bracketTick = 0;
     int selectedNoteIdx = -1; // -1 means no note selected
     bool hasMovedBracket = false; // true if the bracket has been moved since entering edit mode
-    
+    // Temporarily store undo count when entering an edit state to freeze display until exit
+    size_t undoCountOnStateEnter = 0;
+
     /// @brief If multiple notes at bracket, cycle through them before moving bracket
     int notesAtBracketIdx = 0;
     std::vector<int> notesAtBracketTick;
