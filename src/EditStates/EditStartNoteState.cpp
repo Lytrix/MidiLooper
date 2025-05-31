@@ -1,3 +1,6 @@
+//  Copyright (c)  2025 Lytrix (Eelke Jager)
+//  Licensed under the PolyForm Noncommercial 1.0.0
+
 #include "EditStartNoteState.h"
 #include "EditManager.h"
 #include "MidiEvent.h"
