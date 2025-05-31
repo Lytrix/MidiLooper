@@ -1,3 +1,6 @@
+//  Copyright (c)  2025 Lytrix (Eelke Jager)
+//  Licensed under the PolyForm Noncommercial 1.0.0
+
 /**
  * @file Globals.h
  * @brief Global configuration, hardware pin definitions, timing constants, and runtime state for the MIDI looper.
@@ -52,8 +55,8 @@ namespace LCD {
 namespace Buttons {
   const int RECORD = 37;      // Record/Overdub button
   const int PLAY   = 36;      // Play/Stop button
-  const int ENCODER_PIN_A = 30;
-  const int ENCODER_PIN_B = 29;
+  const int ENCODER_PIN_A = 29;
+  const int ENCODER_PIN_B = 30;
   const int ENCODER_BUTTON_PIN = 31;
 }
 

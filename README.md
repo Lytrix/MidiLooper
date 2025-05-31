@@ -110,3 +110,8 @@ MidiLooperV3 (Started off from a framework in C++, hope it will be more stable t
 https://chatgpt.com/share/680e98f9-2a64-800b-abb2-4e1bd359c90f
 
 Developing the SSD1322 circular DMA logic was a lot of fun using Cursor. It was really helpfull to have an LLM model explain someone elses 2000+ lines of code in how the logic worked I wanted to port to this display. 
+
+© 2025 Lytrix (Eelke Jager)
+Licensed under the PolyForm Noncommercial 1.0.0.  
+Private use for further development with mentioning me as author is allowed. 
+For any commercial use or distribution please contact me for a separate license.  
