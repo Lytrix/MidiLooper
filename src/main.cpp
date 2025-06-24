@@ -27,6 +27,7 @@ void setup() {
 
   // Initialize logger first with Serial.begin
   logger.setup(LOG_DEBUG);  // Set to LOG_INFO for production
+  logger.setCategoryEnabled(CAT_MIDI, true);  // Ensure MIDI logging is enabled
   // Initialize looper and load last project and states
   looper.setup();
   //loadConfig();

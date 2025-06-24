@@ -11,12 +11,47 @@
 MIDI_CREATE_INSTANCE(HardwareSerial, Serial8, MIDIserial);  // Teensy Serial8 for 5-pin DIN MIDI
 
 MidiHandler midiHandler;  // Global instance
+MidiHandler* MidiHandler::instance = nullptr;  // Static instance pointer
+
+// Helper function to get readable MIDI message type name
+const char* getMidiTypeName(byte type) {
+  switch (type) {
+    case midi::NoteOn: return "NoteOn";
+    case midi::NoteOff: return "NoteOff";
+    case midi::ControlChange: return "CC";
+    case midi::PitchBend: return "PitchBend";
+    case midi::AfterTouchChannel: return "AfterTouch";
+    case midi::ProgramChange: return "ProgChange";
+    case midi::Clock: return "Clock";
+    case midi::Start: return "Start";
+    case midi::Stop: return "Stop";
+    case midi::Continue: return "Continue";
+    default: return "Unknown";
+  }
+}
 
 MidiHandler::MidiHandler()
-  : outputUSB(true), outputSerial(true) {}
+  : outputUSB(true), outputSerial(true), hub1(usbHost), usbHostMIDI(usbHost) {}
 
 void MidiHandler::setup() {
   MIDIserial.begin(MidiConfig::CHANNEL_OMNI);  // Listen to all channels
+  
+  // Setup USB Host MIDI
+  logger.info("Starting USB Host MIDI...");
+  usbHost.begin();
+  instance = this;  // Set static instance pointer for callbacks
+  
+  // Set up USB Host MIDI message handlers for logging
+  usbHostMIDI.setHandleNoteOn(usbHostNoteOn);
+  usbHostMIDI.setHandleNoteOff(usbHostNoteOff);
+  usbHostMIDI.setHandleControlChange(usbHostControlChange);
+  usbHostMIDI.setHandleProgramChange(usbHostProgramChange);
+  usbHostMIDI.setHandlePitchChange(usbHostPitchChange);
+  usbHostMIDI.setHandleAfterTouchChannel(usbHostAfterTouchChannel);
+  usbHostMIDI.setHandleClock(usbHostClock);
+  usbHostMIDI.setHandleStart(usbHostStart);
+  usbHostMIDI.setHandleStop(usbHostStop);
+  usbHostMIDI.setHandleContinue(usbHostContinue);
 }
 
 void MidiHandler::handleMidiInput() {
@@ -39,10 +74,43 @@ void MidiHandler::handleMidiInput() {
       MIDIserial.getData2(),
       SOURCE_SERIAL);
   }
+  
+  // --- USB Host MIDI Input ---
+  usbHost.Task();  // Update USB host state
+  
+  // Check if USB Host MIDI device is connected and log status changes
+  static bool lastConnected = false;
+  bool currentlyConnected = usbHostMIDI;
+  if (currentlyConnected != lastConnected) {
+    if (currentlyConnected) {
+      logger.info("USB Host MIDI device connected!");
+    } else {
+      logger.info("USB Host MIDI device disconnected!");
+    }
+    lastConnected = currentlyConnected;
+  }
+  
+  usbHostMIDI.read();  // Process USB host MIDI messages (handlers will be called)
 }
 
 void MidiHandler::handleMidiMessage(byte type, byte channel, byte data1, byte data2, InputSource source) {
   uint32_t tickNow = clockManager.getCurrentTick();
+
+  // Log incoming MIDI messages
+  const char* sourceStr = (source == SOURCE_USB) ? "USB" : 
+                          (source == SOURCE_SERIAL) ? "Serial" : 
+                          (source == SOURCE_USB_HOST) ? "USB Host" : "Unknown";
+  logger.log(CAT_MIDI, LOG_DEBUG, "%s MIDI: type=%s ch=%d d1=%d d2=%d", 
+             sourceStr, getMidiTypeName(type), channel, data1, data2);
+
+  // Additional detailed logging for note messages
+  if (type == midi::NoteOn || type == midi::NoteOff) {
+    const char* noteNames[] = {"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"};
+    int octave = (data1 / 12) - 1;
+    const char* noteName = noteNames[data1 % 12];
+    logger.log(CAT_MIDI, LOG_DEBUG, "  -> Note: %s%d (MIDI note %d), Velocity: %d", 
+               noteName, octave, data1, data2);
+  }
 
   switch (type) {
     case midi::NoteOn:
@@ -256,4 +324,65 @@ void MidiHandler::setOutputUSB(bool enable) {
 
 void MidiHandler::setOutputSerial(bool enable) {
   outputSerial = enable;
+}
+
+// --- Static USB Host MIDI Callbacks ---
+void MidiHandler::usbHostNoteOn(uint8_t channel, uint8_t note, uint8_t velocity) {
+  if (instance) {
+    instance->handleMidiMessage(midi::NoteOn, channel, note, velocity, SOURCE_USB_HOST);
+  }
+}
+
+void MidiHandler::usbHostNoteOff(uint8_t channel, uint8_t note, uint8_t velocity) {
+  if (instance) {
+    instance->handleMidiMessage(midi::NoteOff, channel, note, velocity, SOURCE_USB_HOST);
+  }
+}
+
+void MidiHandler::usbHostControlChange(uint8_t channel, uint8_t control, uint8_t value) {
+  if (instance) {
+    instance->handleMidiMessage(midi::ControlChange, channel, control, value, SOURCE_USB_HOST);
+  }
+}
+
+void MidiHandler::usbHostProgramChange(uint8_t channel, uint8_t program) {
+  if (instance) {
+    instance->handleMidiMessage(midi::ProgramChange, channel, program, 0, SOURCE_USB_HOST);
+  }
+}
+
+void MidiHandler::usbHostPitchChange(uint8_t channel, int pitch) {
+  if (instance) {
+    instance->handleMidiMessage(midi::PitchBend, channel, pitch & 0x7F, (pitch >> 7) & 0x7F, SOURCE_USB_HOST);
+  }
+}
+
+void MidiHandler::usbHostAfterTouchChannel(uint8_t channel, uint8_t pressure) {
+  if (instance) {
+    instance->handleMidiMessage(midi::AfterTouchChannel, channel, pressure, 0, SOURCE_USB_HOST);
+  }
+}
+
+void MidiHandler::usbHostClock() {
+  if (instance) {
+    instance->handleMidiMessage(midi::Clock, 0, 0, 0, SOURCE_USB_HOST);
+  }
+}
+
+void MidiHandler::usbHostStart() {
+  if (instance) {
+    instance->handleMidiMessage(midi::Start, 0, 0, 0, SOURCE_USB_HOST);
+  }
+}
+
+void MidiHandler::usbHostStop() {
+  if (instance) {
+    instance->handleMidiMessage(midi::Stop, 0, 0, 0, SOURCE_USB_HOST);
+  }
+}
+
+void MidiHandler::usbHostContinue() {
+  if (instance) {
+    instance->handleMidiMessage(midi::Continue, 0, 0, 0, SOURCE_USB_HOST);
+  }
 }

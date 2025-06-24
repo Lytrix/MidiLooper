@@ -6,10 +6,12 @@
 
 #include <Arduino.h>
 #include "MidiEvent.h"
+#include <USBHost_t36.h>
 
 enum InputSource {
   SOURCE_USB,
-  SOURCE_SERIAL
+  SOURCE_SERIAL,
+  SOURCE_USB_HOST
 };
 
 /**
@@ -55,9 +57,29 @@ public:
   void setOutputUSB(bool enable);
   void setOutputSerial(bool enable);
 
+  // --- Static USB Host MIDI Callbacks ---
+  static void usbHostNoteOn(uint8_t channel, uint8_t note, uint8_t velocity);
+  static void usbHostNoteOff(uint8_t channel, uint8_t note, uint8_t velocity);
+  static void usbHostControlChange(uint8_t channel, uint8_t control, uint8_t value);
+  static void usbHostProgramChange(uint8_t channel, uint8_t program);  
+  static void usbHostPitchChange(uint8_t channel, int pitch);
+  static void usbHostAfterTouchChannel(uint8_t channel, uint8_t pressure);
+  static void usbHostClock();
+  static void usbHostStart();
+  static void usbHostStop();
+  static void usbHostContinue();
+
 private:
   bool outputUSB = true;
   bool outputSerial = true;
+
+  // USB Host objects
+  USBHost usbHost;
+  USBHub hub1;
+  MIDIDevice_BigBuffer usbHostMIDI;
+
+  // Static instance pointer for callbacks
+  static MidiHandler* instance;
 
   // --- Message Handlers ---
   void handleNoteOn(byte channel, byte note, byte velocity, uint32_t tickNow);
