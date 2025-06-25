@@ -38,10 +38,6 @@ public:
     static const std::vector<MidiEvent>& peekLastMidiSnapshot(const Track& track);
     static std::deque<std::vector<MidiEvent>>& getMidiHistory(Track& track);
     static const std::vector<MidiEvent>& getCurrentMidiSnapshot(const Track& track);
-    // Clear undo history getters
-    static std::deque<std::vector<MidiEvent>>& getClearMidiHistory(Track& track);
-    static std::deque<TrackState>& getClearStateHistory(Track& track);
-    static std::deque<uint32_t>& getClearLengthHistory(Track& track);
     // Undo clear
     static void pushClearTrackSnapshot(Track& track);
     static void undoClearTrack(Track& track);

@@ -230,6 +230,7 @@ void Track::startOverdubbing(uint32_t currentTick) {
   
   // Create undo snapshot before starting overdub
   TrackUndo::pushUndoSnapshot(*this);
+  logger.info("Overdub snapshot created: events=%d, snapshots=%d", midiEvents.size(), midiHistory.size());
   
   logger.logTrackEvent("Overdubbing started", currentTick);
 }
@@ -238,6 +239,7 @@ void Track::startOverdubbing(uint32_t currentTick) {
 void Track::stopOverdubbing() {
   setState(TRACK_PLAYING);
   logger.logTrackEvent("Overdubbing stopped", clockManager.getCurrentTick());
+  logger.info("Overdub stopped: events=%d, snapshots=%d", midiEvents.size(), midiHistory.size());
 
   // Reset playback state
   startLoopTick = 0;
