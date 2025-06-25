@@ -7,6 +7,7 @@
 #include "MidiHandler.h"
 #include "Logger.h"
 #include "MidiEvent.h"
+#include "MidiButtonManager.h"
 
 MIDI_CREATE_INSTANCE(HardwareSerial, Serial8, MIDIserial);  // Teensy Serial8 for 5-pin DIN MIDI
 
@@ -329,18 +330,30 @@ void MidiHandler::setOutputSerial(bool enable) {
 // --- Static USB Host MIDI Callbacks ---
 void MidiHandler::usbHostNoteOn(uint8_t channel, uint8_t note, uint8_t velocity) {
   if (instance) {
+    // Route button notes to MidiButtonManager
+    midiButtonManager.handleMidiNote(channel, note, velocity, true);
+    
+    // Route to regular MIDI handling
     instance->handleMidiMessage(midi::NoteOn, channel, note, velocity, SOURCE_USB_HOST);
   }
 }
 
 void MidiHandler::usbHostNoteOff(uint8_t channel, uint8_t note, uint8_t velocity) {
   if (instance) {
+    // Route button notes to MidiButtonManager
+    midiButtonManager.handleMidiNote(channel, note, velocity, false);
+    
+    // Route to regular MIDI handling
     instance->handleMidiMessage(midi::NoteOff, channel, note, velocity, SOURCE_USB_HOST);
   }
 }
 
 void MidiHandler::usbHostControlChange(uint8_t channel, uint8_t control, uint8_t value) {
   if (instance) {
+    // Route encoder CC to MidiButtonManager
+    midiButtonManager.handleMidiEncoder(channel, control, value);
+    
+    // Route to regular MIDI handling
     instance->handleMidiMessage(midi::ControlChange, channel, control, value, SOURCE_USB_HOST);
   }
 }

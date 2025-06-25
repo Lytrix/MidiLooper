@@ -20,6 +20,21 @@ void EditPitchNoteState::onEnter(EditManager& manager, Track& track, uint32_t st
     initialHash = TrackUndo::computeMidiHash(track);
     TrackUndo::pushUndoSnapshot(track);
     logger.debug("Snapshot on enter (pitch), initial hash: %u", initialHash);
+    
+    // Move bracket to the start of the selected note for pitch editing
+    if (manager.getSelectedNoteIdx() >= 0) {
+        auto& midiEvents = track.getMidiEvents();
+        uint32_t loopLength = track.getLoopLength();
+        auto notes = NoteUtils::reconstructNotes(midiEvents, loopLength);
+        
+        if (manager.getSelectedNoteIdx() < (int)notes.size()) {
+            auto& selectedNote = notes[manager.getSelectedNoteIdx()];
+            uint32_t noteStart = selectedNote.startTick;
+            manager.setBracketTick(noteStart % loopLength);
+            
+            logger.debug("EditPitchNoteState: Moved bracket to note start position %lu", noteStart % loopLength);
+        }
+    }
 }
 
 void EditPitchNoteState::onExit(EditManager& manager, Track& track) {

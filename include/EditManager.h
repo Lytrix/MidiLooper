@@ -5,7 +5,9 @@
 #include <cstdint>
 #include "EditState.h"
 #include "EditNoteState.h"
+#include "EditStates/EditSelectNoteState.h"
 #include "EditStartNoteState.h"
+#include "EditLengthNoteState.h"
 #include "EditPitchNoteState.h"
 #include "MidiEvent.h"
 #include <vector>
@@ -57,10 +59,13 @@ public:
     void setSelectedNoteIdx(int idx) { selectedNoteIdx = idx; }
     // Allow direct setting of the bracket tick (for precise note movement)
     void setBracketTick(uint32_t tick) { bracketTick = tick; }
+    void setHasMovedBracket(bool moved) { hasMovedBracket = moved; }
 
     // Get state instances
     EditNoteState* getNoteState() { return &noteState; }
+    EditSelectNoteState* getSelectNoteState() { return &selectNoteState; }
     EditStartNoteState* getStartNoteState() { return &startNoteState; }
+    EditLengthNoteState* getLengthNoteState() { return &lengthNoteState; }
     EditPitchNoteState* getPitchNoteState() { return &pitchNoteState; }
     // Add more state getters as needed
 
@@ -118,7 +123,9 @@ private:
 
     EditState* currentState = nullptr;
     EditNoteState noteState;
+    EditSelectNoteState selectNoteState;
     EditStartNoteState startNoteState;
+    EditLengthNoteState lengthNoteState;
     EditPitchNoteState pitchNoteState;
     EditState* previousState = nullptr;
     // Add more states as needed
