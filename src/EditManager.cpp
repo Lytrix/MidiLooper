@@ -3,6 +3,7 @@
 
 #include "EditManager.h"
 #include "EditNoteState.h"
+#include "EditStates/EditSelectNoteState.h"
 #include "Track.h"
 #include <algorithm>
 #include <vector>
@@ -35,6 +36,14 @@ void EditManager::setState(EditState* newState, Track& track, uint32_t startTick
                 logger.debug("No net change in start-note edit, popped undo snapshot");
             }
         }
+        // Handle hash-based commit-on-exit for length-note edits
+        else if (currentState == &lengthNoteState) {
+            auto* l = static_cast<EditLengthNoteState*>(currentState);
+            if (TrackUndo::computeMidiHash(track) == l->getInitialHash()) {
+                TrackUndo::popLastUndo(track);
+                logger.debug("No net change in length-note edit, popped undo snapshot");
+            }
+        }
         // Handle hash-based commit-on-exit for pitch-note edits
         else if (currentState == &pitchNoteState) {
             auto* p = static_cast<EditPitchNoteState*>(currentState);
@@ -47,7 +56,7 @@ void EditManager::setState(EditState* newState, Track& track, uint32_t startTick
     }
     currentState = newState;
     // If entering a note-edit or pitch-edit state, record undo count to freeze display
-    if (currentState == &startNoteState || currentState == &pitchNoteState) {
+    if (currentState == &startNoteState || currentState == &lengthNoteState || currentState == &pitchNoteState) {
         undoCountOnStateEnter = TrackUndo::getUndoCount(track);
     }
     if (currentState) currentState->onEnter(*this, track, startTick);
@@ -214,7 +223,7 @@ void EditManager::exitPitchEditMode(Track& track) {
 
 size_t EditManager::getDisplayUndoCount(const Track& track) const {
     // During active edit states, show the frozen count
-    if (currentState == &startNoteState || currentState == &pitchNoteState) {
+    if (currentState == &startNoteState || currentState == &lengthNoteState || currentState == &pitchNoteState) {
         return undoCountOnStateEnter;
     }
     // Otherwise show actual undo count

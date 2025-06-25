@@ -56,6 +56,19 @@ const std::vector<MidiEvent>& TrackUndo::getCurrentMidiSnapshot(const Track& tra
     return track.midiEvents;
 }
 
+// Clear undo history getters
+std::deque<std::vector<MidiEvent>>& TrackUndo::getClearMidiHistory(Track& track) {
+    return track.clearMidiHistory;
+}
+
+std::deque<TrackState>& TrackUndo::getClearStateHistory(Track& track) {
+    return track.clearStateHistory;
+}
+
+std::deque<uint32_t>& TrackUndo::getClearLengthHistory(Track& track) {
+    return track.clearLengthHistory;
+}
+
 // Undo clear
 void TrackUndo::pushClearTrackSnapshot(Track& track) {
     track.clearMidiHistory.push_back(track.midiEvents);

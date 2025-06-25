@@ -7,6 +7,7 @@
 #include "MidiHandler.h"
 #include "Logger.h"
 #include "TrackStateMachine.h"
+#include "TrackUndo.h"
 #include "LooperState.h"
 #include <algorithm>  // for std::sort
 #include "StorageManager.h"
@@ -226,6 +227,10 @@ void Track::startPlaying(uint32_t currentTick) {
 
 void Track::startOverdubbing(uint32_t currentTick) {
   if (!setState(TRACK_OVERDUBBING)) return;
+  
+  // Create undo snapshot before starting overdub
+  TrackUndo::pushUndoSnapshot(*this);
+  
   logger.logTrackEvent("Overdubbing started", currentTick);
 }
 

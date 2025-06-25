@@ -194,9 +194,11 @@ void DisplayManager::drawGridLines(uint32_t lengthLoop, int pianoRollY0, int pia
 void DisplayManager::drawAllNotes(const std::vector<MidiEvent>& midiEvents, uint32_t startLoop, uint32_t lengthLoop, int minPitch, int maxPitch) {
     auto notes = NoteUtils::reconstructNotes(midiEvents, lengthLoop);
 
-    // Highlight if in note, start-note, or pitch-note edit state
+    // Highlight if in note, select-note, start-note, length-note, or pitch-note edit state
     int highlight = (editManager.getCurrentState() == editManager.getNoteState() ||
+                     editManager.getCurrentState() == editManager.getSelectNoteState() ||
                      editManager.getCurrentState() == editManager.getStartNoteState() ||
+                     editManager.getCurrentState() == editManager.getLengthNoteState() ||
                      editManager.getCurrentState() == editManager.getPitchNoteState());
     int selectedNoteIdx = highlight ? editManager.getSelectedNoteIdx() : -1;
 
@@ -218,9 +220,11 @@ void DisplayManager::drawAllNotes(const std::vector<MidiEvent>& midiEvents, uint
 
 // --- Helper: Draw bracket ---
 void DisplayManager::drawBracket(unsigned long a, unsigned long b, int c) {
-    // Draw bracket in note, start-note, or pitch-note edit states
+    // Draw bracket in note, select-note, start-note, length-note, or pitch-note edit states
     if (editManager.getCurrentState() == editManager.getNoteState() ||
+        editManager.getCurrentState() == editManager.getSelectNoteState() ||
         editManager.getCurrentState() == editManager.getStartNoteState() ||
+        editManager.getCurrentState() == editManager.getLengthNoteState() ||
         editManager.getCurrentState() == editManager.getPitchNoteState()) {
         uint32_t bracketTick = editManager.getBracketTick();
         uint32_t lengthLoop = trackManager.getSelectedTrack().getLoopLength();
@@ -427,7 +431,8 @@ void DisplayManager::drawNoteInfo(uint32_t currentTick, Track& selectedTrack) {
     int x = DisplayManager::TRACK_MARGIN;
     int y = DISPLAY_HEIGHT;
     // Draw the time string (ticksToBarsBeats16thTicks2Dec)
-    bool isStartNote = (editManager.getCurrentState() == editManager.getStartNoteState());
+    bool isStartNote = (editManager.getCurrentState() == editManager.getSelectNoteState() || 
+                        editManager.getCurrentState() == editManager.getStartNoteState());
     _display.gfx.select_font(&Font5x7FixedMono);
     int timeStrLen = strlen(startStr);
     for (int i = 0; i < timeStrLen; ++i) {

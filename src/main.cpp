@@ -8,10 +8,13 @@
 #include "MidiHandler.h"
 #include "TrackManager.h"
 #include "ButtonManager.h"
+#include "MidiButtonManager.h"
 #include "DisplayManager.h"
 #include "LooperState.h"
 #include "Looper.h"
 #include "Track.h"
+#include "EditManager.h"
+#include "EditStates/EditSelectNoteState.h"
 #include "Globals.h"
 
 void setup() {
@@ -21,7 +24,9 @@ void setup() {
   delay(200);
   digitalWrite(LED_BUILTIN, LOW);
   
-  buttonManager.setup({Buttons::RECORD, Buttons::PLAY, Buttons::ENCODER_BUTTON_PIN});
+  // Setup MIDI Button Manager instead of physical buttons
+  midiButtonManager.setup();
+  
   Serial.begin(115200);
   while (!Serial && millis() < 2000) delay(10);  // Teensy-safe wait
 
@@ -68,10 +73,15 @@ void loop() {
   // Update looper state to set button logic
   looperState.update();
 
-  // Update less time sensitive modules
-  buttonManager.update();
+  // Update MIDI button manager instead of physical buttons
+  midiButtonManager.update();
   looper.update();
 
+  // Update SELECT mode for overdubbing if active
+  if (editManager.getCurrentState() == editManager.getSelectNoteState()) {
+    auto* selectState = static_cast<EditSelectNoteState*>(editManager.getSelectNoteState());
+    selectState->updateForOverdubbing(editManager, trackManager.getSelectedTrack());
+  }
   
   // Only update display if enough time has passed (steady-rate)
   if (now - lastDisplayUpdate >= LCD::DISPLAY_UPDATE_INTERVAL) {

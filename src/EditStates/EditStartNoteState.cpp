@@ -391,16 +391,45 @@ void EditStartNoteState::onEncoderTurn(EditManager& manager, Track& track, int d
     logger.debug("=== LOOP INFO ===");
     logger.debug("Loop length: %lu ticks", loopLength);
     logger.debug("Loop length in bars: %lu", loopLength / Config::TICKS_PER_BAR);
+    logger.debug("MIDI events count: %zu", midiEvents.size());
+    logger.debug("Selected note index: %d", manager.getSelectedNoteIdx());
     
     if (loopLength == 0) {
-        logger.debug("Loop length is 0, cannot move notes");
+        logger.debug("EditStartNoteState: Loop length is 0, cannot move notes");
         return;
     }
     
     // If we don't have an active moving note, set it up
     if (!manager.movingNote.active) {
-        logger.debug("No active moving note, cannot move");
-        return;
+        logger.debug("EditStartNoteState: No active moving note, movingNote.active = false");
+        logger.debug("EditStartNoteState: Attempting to activate moving note...");
+        
+        // Try to activate based on selected note
+        if (manager.getSelectedNoteIdx() >= 0) {
+            auto notes = NoteUtils::reconstructNotes(midiEvents, loopLength);
+            if (manager.getSelectedNoteIdx() < (int)notes.size()) {
+                auto& note = notes[manager.getSelectedNoteIdx()];
+                manager.movingNote.note = note.note;
+                manager.movingNote.origStart = note.startTick;
+                manager.movingNote.origEnd = note.endTick;
+                manager.movingNote.lastStart = note.startTick;
+                manager.movingNote.lastEnd = note.endTick;
+                manager.movingNote.active = true;
+                manager.movingNote.movementDirection = 0;
+                logger.debug("EditStartNoteState: Activated moving note: pitch=%d, start=%lu, end=%lu", 
+                             note.note, note.startTick, note.endTick);
+            } else {
+                logger.debug("EditStartNoteState: Selected note index %d out of range (notes size: %zu)", 
+                             manager.getSelectedNoteIdx(), notes.size());
+            }
+        } else {
+            logger.debug("EditStartNoteState: No note selected (selectedNoteIdx = %d)", manager.getSelectedNoteIdx());
+        }
+        
+        if (!manager.movingNote.active) {
+            logger.debug("EditStartNoteState: Still no active moving note, cannot move");
+            return;
+        }
     }
     
     // Update movement direction
