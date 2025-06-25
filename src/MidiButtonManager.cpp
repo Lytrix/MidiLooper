@@ -167,9 +167,12 @@ void MidiButtonManager::handleButton(MidiButtonId button, MidiButtonAction actio
         case MIDI_BUTTON_A:
             switch (action) {
                 case MIDI_BUTTON_DOUBLE_PRESS:
+                    logger.info("MIDI Button A: Double press detected");
                     if (TrackUndo::canUndo(track)) {
-                        logger.info("MIDI Button A: Undo Overdub");
+                        logger.info("MIDI Button A: Undo Overdub (snapshots=%d)", TrackUndo::getUndoCount(track));
                         TrackUndo::undoOverdub(track);
+                    } else {
+                        logger.info("MIDI Button A: No undo snapshots available (count=%d)", TrackUndo::getUndoCount(track));
                     }
                     break;
                 case MIDI_BUTTON_SHORT_PRESS:
@@ -183,7 +186,7 @@ void MidiButtonManager::handleButton(MidiButtonId button, MidiButtonAction actio
                         track.startPlaying(now);
                     } else if (track.isOverdubbing()) {
                         logger.info("MIDI Button A: Stop Overdub");
-                        track.startPlaying(now);
+                        track.stopOverdubbing();
                     } else if (track.isPlaying()) {
                         logger.info("MIDI Button A: Live Overdub");
                         trackManager.startOverdubbingTrack(idx);

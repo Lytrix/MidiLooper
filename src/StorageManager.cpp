@@ -9,7 +9,7 @@
 #include "TrackUndo.h"
 
 #define STORAGE_FILENAME "/midilooper_state.raw"
-#define STORAGE_VERSION 2
+#define STORAGE_VERSION 1
 
 // Helper to write raw data
 static bool writeRaw(File &file, const void *data, size_t size) {
@@ -84,35 +84,14 @@ bool StorageManager::saveState(const LooperState& state) {
         // Undo history (midi)
         const auto &midiHistory = TrackUndo::getMidiHistory(track);
         uint32_t undoCount = midiHistory.size();
+        Serial.print("[StorageManager] Saving Track "); Serial.print(t); 
+        Serial.print(": events="); Serial.print(midiEvents.size());
+        Serial.print(", undo_snapshots="); Serial.println(undoCount);
         if (!writeRaw(file, &undoCount, sizeof(undoCount))) { Serial.print("[StorageManager] ERROR: Failed to write undoCount for track "); Serial.println(t); file.close(); return false; }
         for (const auto &snapshot : midiHistory) {
             uint32_t snapCount = snapshot.size();
             if (!writeRaw(file, &snapCount, sizeof(snapCount))) { Serial.print("[StorageManager] ERROR: Failed to write midiHistory snapCount for track "); Serial.println(t); file.close(); return false; }
             if (snapCount > 0 && !writeRaw(file, snapshot.data(), snapCount * sizeof(MidiEvent))) { Serial.print("[StorageManager] ERROR: Failed to write midiHistory snapshot for track "); Serial.println(t); file.close(); return false; }
-        }
-        // Clear undo history (midi)
-        const auto &clearMidiHistory = TrackUndo::getClearMidiHistory(track);
-        uint32_t clearMidiCount = clearMidiHistory.size();
-        if (!writeRaw(file, &clearMidiCount, sizeof(clearMidiCount))) { Serial.print("[StorageManager] ERROR: Failed to write clearMidiCount for track "); Serial.println(t); file.close(); return false; }
-        for (const auto &snapshot : clearMidiHistory) {
-            uint32_t snapCount = snapshot.size();
-            if (!writeRaw(file, &snapCount, sizeof(snapCount))) { Serial.print("[StorageManager] ERROR: Failed to write clearMidiHistory snapCount for track "); Serial.println(t); file.close(); return false; }
-            if (snapCount > 0 && !writeRaw(file, snapshot.data(), snapCount * sizeof(MidiEvent))) { Serial.print("[StorageManager] ERROR: Failed to write clearMidiHistory snapshot for track "); Serial.println(t); file.close(); return false; }
-        }
-        // Clear undo history (state)
-        const auto &clearStateHistory = TrackUndo::getClearStateHistory(track);
-        uint32_t clearStateCount = clearStateHistory.size();
-        if (!writeRaw(file, &clearStateCount, sizeof(clearStateCount))) { Serial.print("[StorageManager] ERROR: Failed to write clearStateCount for track "); Serial.println(t); file.close(); return false; }
-        for (const auto &state : clearStateHistory) {
-            uint32_t stateVal = (uint32_t)state;
-            if (!writeRaw(file, &stateVal, sizeof(stateVal))) { Serial.print("[StorageManager] ERROR: Failed to write clearStateHistory state for track "); Serial.println(t); file.close(); return false; }
-        }
-        // Clear undo history (length)
-        const auto &clearLengthHistory = TrackUndo::getClearLengthHistory(track);
-        uint32_t clearLengthCount = clearLengthHistory.size();
-        if (!writeRaw(file, &clearLengthCount, sizeof(clearLengthCount))) { Serial.print("[StorageManager] ERROR: Failed to write clearLengthCount for track "); Serial.println(t); file.close(); return false; }
-        for (const auto &length : clearLengthHistory) {
-            if (!writeRaw(file, &length, sizeof(length))) { Serial.print("[StorageManager] ERROR: Failed to write clearLengthHistory length for track "); Serial.println(t); file.close(); return false; }
         }
     }
     // Save selected track index
@@ -143,12 +122,9 @@ bool StorageManager::loadState(LooperState& state) {
         return false;
     }
     Serial.println("[StorageManager] Version read OK");
-    if (version != STORAGE_VERSION && version != 1) {
+    if (version != STORAGE_VERSION) {
         Serial.print("[StorageManager] ERROR: Version mismatch. Found: ");
-        Serial.print(version);
-        Serial.print(", expected ");
-        Serial.print(STORAGE_VERSION);
-        Serial.println(" or 1 (legacy)");
+        Serial.println(version);
         file.close();
         return false;
     }
@@ -192,9 +168,6 @@ bool StorageManager::loadState(LooperState& state) {
         uint32_t loopLengthTicks;
         std::vector<MidiEvent> midiEvents;
         std::vector<std::vector<MidiEvent>> midiHistory;
-        std::vector<std::vector<MidiEvent>> clearMidiHistory;
-        std::vector<TrackState> clearStateHistory;
-        std::vector<uint32_t> clearLengthHistory;
     };
     std::vector<TrackLoadData> tracksData(numTracks);
 
@@ -284,79 +257,8 @@ bool StorageManager::loadState(LooperState& state) {
             }
             midiHistory.push_back(snapshot);
         }
-        // Clear undo history (midi) - only for version 2+
-        std::vector<std::vector<MidiEvent>> clearMidiHistory;
-        std::vector<TrackState> clearStateHistory;
-        std::vector<uint32_t> clearLengthHistory;
-        
-        if (version >= 2) {
-            uint32_t clearMidiCount = 0;
-            if (!readRaw(file, &clearMidiCount, sizeof(clearMidiCount))) {
-                Serial.print("[StorageManager] ERROR: Failed to read clearMidiCount for track "); Serial.println(t);
-                file.close();
-                return false;
-            }
-            for (uint32_t u = 0; u < clearMidiCount; ++u) {
-                uint32_t snapCount = 0;
-                if (!readRaw(file, &snapCount, sizeof(snapCount))) {
-                    Serial.print("[StorageManager] ERROR: Failed to read clearMidiHistory snapCount for track "); Serial.println(t);
-                    file.close();
-                    return false;
-                }
-                // Check for struct size mismatch or corrupt file for clear snapshot
-                size_t snapBytesNeeded = snapCount * sizeof(MidiEvent);
-                if ((file.size() - file.position()) < snapBytesNeeded) {
-                    Serial.print("[StorageManager] ERROR: Not enough bytes for clearMidiHistory snapshot. Expected ");
-                    Serial.print(snapBytesNeeded);
-                    Serial.print(" bytes, but only ");
-                    Serial.print(file.size() - file.position());
-                    Serial.println(" available. This may indicate a MidiEvent struct size mismatch.");
-                    file.close();
-                    return false;
-                }
-                std::vector<MidiEvent> snapshot(snapCount);
-                if (snapCount > 0 && !readRaw(file, snapshot.data(), snapCount * sizeof(MidiEvent))) {
-                    Serial.print("[StorageManager] ERROR: Failed to read clearMidiHistory snapshot for track "); Serial.println(t);
-                    file.close();
-                    return false;
-                }
-                clearMidiHistory.push_back(snapshot);
-            }
-            // Clear undo history (state)
-            uint32_t clearStateCount = 0;
-            if (!readRaw(file, &clearStateCount, sizeof(clearStateCount))) {
-                Serial.print("[StorageManager] ERROR: Failed to read clearStateCount for track "); Serial.println(t);
-                file.close();
-                return false;
-            }
-            for (uint32_t u = 0; u < clearStateCount; ++u) {
-                uint32_t stateVal = 0;
-                if (!readRaw(file, &stateVal, sizeof(stateVal))) {
-                    Serial.print("[StorageManager] ERROR: Failed to read clearStateHistory state for track "); Serial.println(t);
-                    file.close();
-                    return false;
-                }
-                clearStateHistory.push_back((TrackState)stateVal);
-            }
-            // Clear undo history (length)
-            uint32_t clearLengthCount = 0;
-            if (!readRaw(file, &clearLengthCount, sizeof(clearLengthCount))) {
-                Serial.print("[StorageManager] ERROR: Failed to read clearLengthCount for track "); Serial.println(t);
-                file.close();
-                return false;
-            }
-            for (uint32_t u = 0; u < clearLengthCount; ++u) {
-                uint32_t length = 0;
-                if (!readRaw(file, &length, sizeof(length))) {
-                    Serial.print("[StorageManager] ERROR: Failed to read clearLengthHistory length for track "); Serial.println(t);
-                    file.close();
-                    return false;
-                }
-                clearLengthHistory.push_back(length);
-            }
-        }
         // Store loaded data for this track
-        tracksData[t] = {loadedTrackState, muted, startLoopTick, loopLengthTicks, midiEvents, midiHistory, clearMidiHistory, clearStateHistory, clearLengthHistory};
+        tracksData[t] = {loadedTrackState, muted, startLoopTick, loopLengthTicks, midiEvents, midiHistory};
     }
     // Try to read selected track index (if present)
     uint8_t selectedTrackIdx = 0;
@@ -382,28 +284,17 @@ bool StorageManager::loadState(LooperState& state) {
         track.forceSetState(tracksData[t].state);
         if (tracksData[t].muted != track.isMuted()) track.toggleMuteTrack();
         track.setLoopLength(tracksData[t].loopLengthTicks);
+        // Set startLoopTick directly since there's no public setter
+        track.startLoopTick = tracksData[t].startLoopTick;
         track.getMidiEvents() = tracksData[t].midiEvents;
         auto &midiHistory = TrackUndo::getMidiHistory(track);
         midiHistory.clear();
         for (const auto& snapshot : tracksData[t].midiHistory) {
             midiHistory.push_back(snapshot);
         }
-        // Restore clear undo history
-        auto &clearMidiHistory = TrackUndo::getClearMidiHistory(track);
-        clearMidiHistory.clear();
-        for (const auto& snapshot : tracksData[t].clearMidiHistory) {
-            clearMidiHistory.push_back(snapshot);
-        }
-        auto &clearStateHistory = TrackUndo::getClearStateHistory(track);
-        clearStateHistory.clear();
-        for (const auto& state : tracksData[t].clearStateHistory) {
-            clearStateHistory.push_back(state);
-        }
-        auto &clearLengthHistory = TrackUndo::getClearLengthHistory(track);
-        clearLengthHistory.clear();
-        for (const auto& length : tracksData[t].clearLengthHistory) {
-            clearLengthHistory.push_back(length);
-        }
+        Serial.print("[StorageManager] Track "); Serial.print(t); 
+        Serial.print(" loaded: events="); Serial.print(tracksData[t].midiEvents.size());
+        Serial.print(", undo_snapshots="); Serial.println(tracksData[t].midiHistory.size());
     }
     return true;
 } 

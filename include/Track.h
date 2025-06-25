@@ -140,6 +140,7 @@ public:
 
 private:
   friend class TrackUndo;
+  friend class StorageManager;  // Allow StorageManager to access private members for loading
   bool isPlayingBack;  // Flag to ignore playback events during overdub
   void sendMidiEvent(const MidiEvent& evt);
 
