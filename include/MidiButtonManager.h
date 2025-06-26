@@ -24,7 +24,7 @@ enum MidiButtonId {
  * @class MidiButtonManager
  * @brief Manages MIDI note-based button logic, replacing physical buttons with MIDI notes.
  *
- * Monitors USB Host MIDI channel 1 for specific notes:
+ * Monitors MIDI channel 16 for specific notes:
  *   - C2 (MIDI note 36) = Button A (Record/Overdub)
  *   - D2 (MIDI note 38) = Button B (Play/Stop)  
  *   - E2 (MIDI note 40) = Encoder Button
@@ -47,6 +47,7 @@ public:
 
     // Encoder handling
     void handleMidiEncoder(uint8_t channel, uint8_t ccNumber, uint8_t value);
+    void handleMidiPitchbend(uint8_t channel, int16_t pitchValue);
     void processEncoderMovement(int delta);
 
 private:
@@ -63,7 +64,7 @@ private:
     
     static constexpr uint16_t DOUBLE_TAP_WINDOW = 300;  // ms
     static constexpr uint16_t LONG_PRESS_TIME = 600;   // ms
-    static constexpr uint8_t MIDI_CHANNEL = 1;         // Channel to monitor
+    static constexpr uint8_t MIDI_CHANNEL = 16;        // Channel to monitor
     
     // MIDI note assignments
     static constexpr uint8_t NOTE_C2 = 36;  // Button A
@@ -71,10 +72,19 @@ private:
     static constexpr uint8_t NOTE_D2 = 38;  // Encoder Button
     
     // MIDI constants for encoder CC
-    static constexpr uint8_t ENCODER_CC_CHANNEL = 1;
+    static constexpr uint8_t ENCODER_CC_CHANNEL = 16;
     static constexpr uint8_t ENCODER_CC_NUMBER = 16;
     static constexpr uint8_t ENCODER_UP_VALUE = 1;    // CC value for encoder up (was down)
     static constexpr uint8_t ENCODER_DOWN_VALUE = 65;  // CC value for encoder down (was up)
+    
+    // MIDI constants for program changes
+    static constexpr uint8_t PROGRAM_CHANGE_CHANNEL = 16;
+    
+    // MIDI constants for pitchbend navigation
+    static constexpr uint8_t PITCHBEND_CHANNEL = 16;
+    static constexpr int16_t PITCHBEND_MIN = 0;      // d1=0 d2=0 (full MIDI range minimum)
+    static constexpr int16_t PITCHBEND_MAX = 16383;  // d1=127 d2=127 (full MIDI range maximum)
+    static constexpr int16_t PITCHBEND_CENTER = 8192; // Center position
 
     // Encoder state
     int midiEncoderPosition = 0;
@@ -83,6 +93,10 @@ private:
     bool wasEncoderButtonHeld = false;
     uint32_t encoderButtonHoldStart = 0;
     static constexpr uint32_t ENCODER_HOLD_DELAY = 250; // ms
+    
+    // Pitchbend navigation state
+    int16_t lastPitchbendValue = PITCHBEND_CENTER;
+    bool pitchbendInitialized = false;
     
     // Edit mode cycling
     enum EditModeState {
@@ -96,6 +110,7 @@ private:
     void cycleEditMode(Track& track);
     void enterNextEditMode(Track& track);
     void deleteSelectedNote(Track& track);
+    void sendEditModeProgram(EditModeState mode);
 
     MidiButtonId getNoteButtonId(uint8_t note);
     bool isValidNote(uint8_t note);

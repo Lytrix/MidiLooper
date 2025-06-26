@@ -164,19 +164,35 @@ void MidiHandler::handleMidiMessage(byte type, byte channel, byte data1, byte da
 
 // --- Individual Message Handlers ---
 void MidiHandler::handleNoteOn(byte channel, byte note, byte velocity, uint32_t tickNow) {
+  // Route button notes to MidiButtonManager
+  midiButtonManager.handleMidiNote(channel, note, velocity, true);
+  
+  // Route to track recording
   trackManager.getSelectedTrack().noteOn(channel, note, velocity, tickNow);
 }
 
 void MidiHandler::handleNoteOff(byte channel, byte note, byte velocity, uint32_t tickNow) {
+  // Route button notes to MidiButtonManager
+  midiButtonManager.handleMidiNote(channel, note, velocity, false);
+  
+  // Route to track recording
   trackManager.getSelectedTrack().noteOff(channel, note, velocity, tickNow);
 }
 
 void MidiHandler::handleControlChange(byte channel, byte control, byte value, uint32_t tickNow) {
+  // Route encoder CC to MidiButtonManager
+  midiButtonManager.handleMidiEncoder(channel, control, value);
+  
+  // Route to track recording
   trackManager.getSelectedTrack().recordMidiEvents(midi::ControlChange, channel, control, value, tickNow);
 }
 
 void MidiHandler::handlePitchBend(byte channel, int pitchValue, uint32_t tickNow) {
-  // Not yet implemented
+  // Route pitchbend to MidiButtonManager for navigation
+  midiButtonManager.handleMidiPitchbend(channel, pitchValue);
+  
+  // Route to track recording
+  trackManager.getSelectedTrack().recordMidiEvents(midi::PitchBend, channel, pitchValue & 0x7F, (pitchValue >> 7) & 0x7F, tickNow);
 }
 
 void MidiHandler::handleAfterTouch(byte channel, byte pressure, uint32_t tickNow) {
@@ -366,6 +382,10 @@ void MidiHandler::usbHostProgramChange(uint8_t channel, uint8_t program) {
 
 void MidiHandler::usbHostPitchChange(uint8_t channel, int pitch) {
   if (instance) {
+    // Route pitchbend to MidiButtonManager for navigation
+    midiButtonManager.handleMidiPitchbend(channel, pitch);
+    
+    // Route to regular MIDI handling
     instance->handleMidiMessage(midi::PitchBend, channel, pitch & 0x7F, (pitch >> 7) & 0x7F, SOURCE_USB_HOST);
   }
 }
