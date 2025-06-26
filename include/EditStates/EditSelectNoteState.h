@@ -29,6 +29,9 @@ public:
     // Called to update bracket position during overdubbing
     void updateForOverdubbing(EditManager& manager, Track& track);
     
+public:
+    static void sendTargetPitchbend(EditManager& manager, Track& track);
+
 private:
     void selectNextNoteSequential(EditManager& manager, Track& track);
     void selectPreviousNoteSequential(EditManager& manager, Track& track);

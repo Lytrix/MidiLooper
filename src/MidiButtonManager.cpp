@@ -11,6 +11,7 @@
 #include "TrackUndo.h"
 #include "EditManager.h"
 #include "EditStates/EditLengthNoteState.h"
+#include "EditStates/EditSelectNoteState.h"
 #include "NoteUtils.h"
 
 MidiButtonManager midiButtonManager;
@@ -257,6 +258,7 @@ void MidiButtonManager::handleButton(MidiButtonId button, MidiButtonAction actio
                     if (currentEditMode != EDIT_MODE_NONE) {
                         currentEditMode = EDIT_MODE_NONE;
                         editManager.exitEditMode(track);
+                        sendEditModeProgram(currentEditMode);  // Send program 0 for NONE mode
                         logger.info("MIDI Encoder: Long press - exited edit mode");
                     }
                     break;
@@ -288,6 +290,152 @@ void MidiButtonManager::handleMidiEncoder(uint8_t channel, uint8_t ccNumber, uin
                channel, ccNumber, value, delta);
     
     processEncoderMovement(delta);
+}
+
+void MidiButtonManager::handleMidiPitchbend(uint8_t channel, int16_t pitchValue) {
+    // Only handle pitchbend on the specified channel
+    if (channel != PITCHBEND_CHANNEL) {
+        return;
+    }
+    
+    logger.log(CAT_MIDI, LOG_DEBUG, "MIDI Pitchbend: ch=%d value=%d", channel, pitchValue);
+    
+    // Initialize on first pitchbend message
+    if (!pitchbendInitialized) {
+        lastPitchbendValue = pitchValue;
+        pitchbendInitialized = true;
+        logger.log(CAT_MIDI, LOG_DEBUG, "Pitchbend initialized to %d", pitchValue);
+        return;
+    }
+    
+    // Only process if we're in an edit mode
+    if (currentEditMode == EDIT_MODE_NONE) {
+        lastPitchbendValue = pitchValue;
+        logger.log(CAT_MIDI, LOG_DEBUG, "Pitchbend ignored: not in edit mode (mode=%d)", currentEditMode);
+        return;
+    }
+    
+    logger.log(CAT_MIDI, LOG_DEBUG, "Pitchbend processing: mode=%d (1=SELECT, 2=START, 3=LENGTH, 4=PITCH)", currentEditMode);
+    
+    // Map pitchbend range to selection/navigation
+    Track& track = trackManager.getSelectedTrack();
+    
+    if (currentEditMode == EDIT_MODE_SELECT) {
+        // In SELECT mode: navigate through notes AND 16th steps intelligently
+        auto& midiEvents = track.getMidiEvents();
+        uint32_t loopLength = track.getLoopLength();
+        
+        if (loopLength > 0) {
+            // Calculate total number of 16th steps in the loop
+            uint32_t numSteps = loopLength / Config::TICKS_PER_16TH_STEP;
+            logger.log(CAT_MIDI, LOG_DEBUG, "Pitchbend navigation: loopLength=%lu, numSteps=%lu, noteCount=%lu", 
+                       loopLength, numSteps, midiEvents.size());
+            
+            if (numSteps > 0) {
+                // Create a combined list of notes and empty 16th step positions
+                auto notes = NoteUtils::reconstructNotes(midiEvents, loopLength);
+                std::vector<uint32_t> allPositions;  // Positions to navigate through
+                std::vector<bool> isNotePosition;    // True if position has a note, false if empty step
+                std::vector<int> noteIndices;       // Note index if it's a note position, -1 if step
+                
+                // Add all 16th step positions
+                for (uint32_t step = 0; step < numSteps; step++) {
+                    uint32_t stepTick = step * Config::TICKS_PER_16TH_STEP;
+                    
+                    // Check if there's a note within 24 ticks of this step position
+                    int nearbyNoteIdx = -1;
+                    for (int i = 0; i < (int)notes.size(); i++) {
+                        if (abs((int32_t)notes[i].startTick - (int32_t)stepTick) <= 24) {
+                            nearbyNoteIdx = i;
+                            break;
+                        }
+                    }
+                    
+                    if (nearbyNoteIdx >= 0) {
+                        // There's a note near this step - add the note position
+                        allPositions.push_back(notes[nearbyNoteIdx].startTick);
+                        isNotePosition.push_back(true);
+                        noteIndices.push_back(nearbyNoteIdx);
+                        logger.log(CAT_MIDI, LOG_DEBUG, "Step %lu: Note found at tick %lu (idx=%d)", 
+                                   step, notes[nearbyNoteIdx].startTick, nearbyNoteIdx);
+                    } else {
+                        // No note near this step - add the empty step position
+                        allPositions.push_back(stepTick);
+                        isNotePosition.push_back(false);
+                        noteIndices.push_back(-1);
+                        logger.log(CAT_MIDI, LOG_DEBUG, "Step %lu: Empty step at tick %lu", step, stepTick);
+                    }
+                }
+                
+                logger.log(CAT_MIDI, LOG_DEBUG, "Navigation setup: loopLength=%lu, numSteps=%lu, totalPositions=%lu", 
+                           loopLength, numSteps, allPositions.size());
+                
+                // Remove duplicate positions (when multiple notes are close to same step)
+                for (int i = allPositions.size() - 1; i > 0; i--) {
+                    if (allPositions[i] == allPositions[i-1]) {
+                        logger.log(CAT_MIDI, LOG_DEBUG, "Removing duplicate position at tick %lu", allPositions[i]);
+                        allPositions.erase(allPositions.begin() + i);
+                        isNotePosition.erase(isNotePosition.begin() + i);
+                        noteIndices.erase(noteIndices.begin() + i);
+                    }
+                }
+                
+                logger.log(CAT_MIDI, LOG_DEBUG, "Final navigation positions: %lu", allPositions.size());
+                
+                if (!allPositions.empty()) {
+                    // Map pitchbend to position index (0 to allPositions.size()-1)
+                    int posIndex = map(pitchValue, PITCHBEND_MIN, PITCHBEND_MAX, 0, allPositions.size() - 1);
+                    posIndex = constrain(posIndex, 0, (int)allPositions.size() - 1);
+                    
+                    uint32_t targetTick = allPositions[posIndex];
+                    bool isNote = isNotePosition[posIndex];
+                    int noteIdx = noteIndices[posIndex];
+                    
+                    // Update selection if it changed
+                    if (targetTick != editManager.getBracketTick()) {
+                        editManager.setBracketTick(targetTick);
+                        
+                        if (isNote && noteIdx >= 0) {
+                            // Selecting a note
+                            editManager.setSelectedNoteIdx(noteIdx);
+                            logger.log(CAT_MIDI, LOG_DEBUG, "Pitchbend note navigation: idx=%d tick=%lu note=%d", 
+                                       noteIdx, targetTick, notes[noteIdx].note);
+                        } else {
+                            // Selecting an empty 16th step
+                            editManager.setSelectedNoteIdx(-1);  // No note selected
+                            logger.log(CAT_MIDI, LOG_DEBUG, "Pitchbend step navigation: tick=%lu (empty step)", 
+                                       targetTick);
+                        }
+                    }
+                }
+            }
+        }
+    } else {
+        // In other edit modes: use pitchbend for fine control
+        // Calculate delta from center position for continuous control
+        int16_t deltaFromCenter = pitchValue - PITCHBEND_CENTER;
+        int16_t lastDeltaFromCenter = lastPitchbendValue - PITCHBEND_CENTER;
+        
+        // Only update if the change is significant (reduces jitter)
+        if (abs(deltaFromCenter - lastDeltaFromCenter) > 50) {
+            // Map pitchbend range to encoder-like movement
+            // Use non-linear mapping for better control
+            int encoderDelta = 0;
+            if (abs(deltaFromCenter) > 100) {
+                encoderDelta = (deltaFromCenter > 0) ? 1 : -1;
+                
+                // Add acceleration for larger movements
+                if (abs(deltaFromCenter) > 2000) encoderDelta *= 3;
+                else if (abs(deltaFromCenter) > 1000) encoderDelta *= 2;
+                
+                processEncoderMovement(encoderDelta);
+                logger.log(CAT_MIDI, LOG_DEBUG, "Pitchbend encoder emulation: delta=%d movement=%d", 
+                           deltaFromCenter, encoderDelta);
+            }
+        }
+    }
+    
+    lastPitchbendValue = pitchValue;
 }
 
 void MidiButtonManager::processEncoderMovement(int rawDelta) {
@@ -384,6 +532,9 @@ void MidiButtonManager::cycleEditMode(Track& track) {
         }
     }
     
+    // Send program change to external MIDI devices on channel 16
+    sendEditModeProgram(currentEditMode);
+    
     logger.log(CAT_BUTTON, LOG_DEBUG, "cycleEditMode: new mode = %d, edit state = %s", 
                currentEditMode, editManager.getCurrentState() ? editManager.getCurrentState()->getName() : "NULL");
 }
@@ -442,6 +593,27 @@ void MidiButtonManager::deleteSelectedNote(Track& track) {
     // Return to SELECT mode after deletion
     currentEditMode = EDIT_MODE_SELECT;
     editManager.setState(editManager.getSelectNoteState(), track, editManager.getBracketTick());
+    sendEditModeProgram(currentEditMode);  // Send program 1 for SELECT mode
     
     logger.info("MIDI Encoder: Returned to SELECT mode after note deletion");
+}
+
+void MidiButtonManager::sendEditModeProgram(EditModeState mode) {
+    uint8_t program = static_cast<uint8_t>(mode);  // 0=NONE, 1=SELECT, 2=START, 3=LENGTH, 4=PITCH
+    
+    // Send pitchbend position BEFORE program change when entering SELECT mode
+    if (mode == EDIT_MODE_SELECT) {
+        EditSelectNoteState::sendTargetPitchbend(editManager, trackManager.getSelectedTrack());
+    }
+    
+    // Send program change to both USB device and USB host on channel 16
+    midiHandler.sendProgramChange(PROGRAM_CHANGE_CHANNEL, program);
+    
+    logger.log(CAT_MIDI, LOG_DEBUG, "Sent Program Change: ch=%d program=%d (mode=%s)", 
+               PROGRAM_CHANGE_CHANNEL, program, 
+               (mode == EDIT_MODE_NONE) ? "NONE" :
+               (mode == EDIT_MODE_SELECT) ? "SELECT" :
+               (mode == EDIT_MODE_START) ? "START" :
+               (mode == EDIT_MODE_LENGTH) ? "LENGTH" :
+               (mode == EDIT_MODE_PITCH) ? "PITCH" : "UNKNOWN");
 } 

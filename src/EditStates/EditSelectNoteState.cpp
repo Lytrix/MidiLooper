@@ -8,6 +8,7 @@
 #include "TrackUndo.h"
 #include "NoteUtils.h"
 #include "ClockManager.h"
+#include "MidiHandler.h"
 #include "Globals.h"
 #include <algorithm>
 
@@ -30,6 +31,8 @@ void EditSelectNoteState::onEnter(EditManager& manager, Track& track, uint32_t s
     } else {
         logger.info("EditSelectNoteState: No note selected, bracket at tick %lu", bracketTick);
     }
+    
+    // Note: Pitchbend will be sent by MidiButtonManager after program change
     
     logger.info("MIDI Encoder: Entered SELECT mode (bracket=%lu)", bracketTick);
 }
@@ -138,8 +141,6 @@ void EditSelectNoteState::updateForOverdubbing(EditManager& manager, Track& trac
         lastMidiEventCount = currentEventCount;
     }
 }
-
-
 
 void EditSelectNoteState::createDefaultNote(Track& track, uint32_t tick) const {
     // Create a 32nd note (TICKS_PER_16TH_STEP / 2 = 24 ticks for a 32nd note)
@@ -309,5 +310,95 @@ void EditSelectNoteState::selectPreviousNoteSequential(EditManager& manager, Tra
         uint32_t prevTick = (currentTick + loopLength - Config::TICKS_PER_16TH_STEP) % loopLength;
         manager.setBracketTick(prevTick);
         manager.resetSelection();
+    }
+} 
+
+void EditSelectNoteState::sendTargetPitchbend(EditManager& manager, Track& track) {
+    auto& midiEvents = track.getMidiEvents();
+    uint32_t loopLength = track.getLoopLength();
+    uint32_t bracketTick = manager.getBracketTick();
+    
+    if (loopLength == 0) {
+        logger.log(CAT_MIDI, LOG_DEBUG, "Target pitchbend: No loop length, cannot calculate");
+        return;
+    }
+    
+    // Calculate total number of 16th steps in the loop
+    uint32_t numSteps = loopLength / Config::TICKS_PER_16TH_STEP;
+    logger.log(CAT_MIDI, LOG_DEBUG, "Target pitchbend calculation: loopLength=%lu, numSteps=%lu, bracketTick=%lu", 
+               loopLength, numSteps, bracketTick);
+    
+    if (numSteps > 0) {
+        // Create the same combined list that MidiButtonManager uses
+        auto notes = NoteUtils::reconstructNotes(midiEvents, loopLength);
+        std::vector<uint32_t> allPositions;  // Positions to navigate through
+        
+        // Add all 16th step positions, checking for nearby notes
+        for (uint32_t step = 0; step < numSteps; step++) {
+            uint32_t stepTick = step * Config::TICKS_PER_16TH_STEP;
+            
+            // Check if there's a note within 24 ticks of this step position
+            int nearbyNoteIdx = -1;
+            for (int i = 0; i < (int)notes.size(); i++) {
+                if (abs((int32_t)notes[i].startTick - (int32_t)stepTick) <= 24) {
+                    nearbyNoteIdx = i;
+                    break;
+                }
+            }
+            
+            if (nearbyNoteIdx >= 0) {
+                // There's a note near this step - add the note position
+                allPositions.push_back(notes[nearbyNoteIdx].startTick);
+            } else {
+                // No note near this step - add the empty step position
+                allPositions.push_back(stepTick);
+            }
+        }
+        
+        // Remove duplicate positions
+        for (int i = allPositions.size() - 1; i > 0; i--) {
+            if (allPositions[i] == allPositions[i-1]) {
+                allPositions.erase(allPositions.begin() + i);
+            }
+        }
+        
+        logger.log(CAT_MIDI, LOG_DEBUG, "Target pitchbend: Final navigation positions: %lu", allPositions.size());
+        
+        if (!allPositions.empty()) {
+            // Find which position index corresponds to current bracket tick
+            int currentPosIndex = -1;
+            for (int i = 0; i < (int)allPositions.size(); i++) {
+                if (allPositions[i] == bracketTick) {
+                    currentPosIndex = i;
+                    break;
+                }
+            }
+            
+            if (currentPosIndex >= 0) {
+                // Calculate what pitchbend value corresponds to this position
+                // MIDI Library expects pitchbend range: -8192 to +8191 (center = 0)
+                const int16_t PITCHBEND_MIN = -8192;
+                const int16_t PITCHBEND_MAX = 8191;
+                const int16_t PITCHBEND_CENTER = 0;
+                
+                // Use safer calculation to avoid overflow
+                // Convert to float for precision, then map to MIDI library's expected range
+                float normalizedPos = (float)currentPosIndex / (float)(allPositions.size() - 1);  // 0.0 to 1.0
+                
+                // Map 0.0-1.0 to -8192 to +8191
+                int16_t targetPitchbend = (int16_t)(PITCHBEND_MIN + normalizedPos * (PITCHBEND_MAX - PITCHBEND_MIN));
+                
+                // Ensure we stay within valid range
+                targetPitchbend = constrain(targetPitchbend, PITCHBEND_MIN, PITCHBEND_MAX);
+                
+                logger.log(CAT_MIDI, LOG_DEBUG, "SENDING PITCHBEND: Position %d/%lu at tick %lu = value %d (range: %d to %d)", 
+                           currentPosIndex, allPositions.size(), bracketTick, targetPitchbend, PITCHBEND_MIN, PITCHBEND_MAX);
+                
+                // Send the pitchbend value to external device on channel 16
+                midiHandler.sendPitchBend(16, targetPitchbend);
+            } else {
+                logger.log(CAT_MIDI, LOG_DEBUG, "Target pitchbend: Current bracket tick %lu not found in navigation positions", bracketTick);
+            }
+        }
     }
 } 
