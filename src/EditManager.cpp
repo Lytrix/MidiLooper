@@ -230,3 +230,17 @@ size_t EditManager::getDisplayUndoCount(const Track& track) const {
     return TrackUndo::getUndoCount(track);
 }
 
+void EditManager::setSelectedNoteIdx(int idx) {
+    if (selectedNoteIdx != idx) {
+        logger.log(CAT_MIDI, LOG_DEBUG, "Note selection changed: %d -> %d", selectedNoteIdx, idx);
+    }
+    selectedNoteIdx = idx;
+}
+
+void EditManager::resetSelection() {
+    if (selectedNoteIdx != -1) {
+        logger.log(CAT_MIDI, LOG_DEBUG, "Note selection reset: %d -> -1", selectedNoteIdx);
+    }
+    selectedNoteIdx = -1;
+}
+

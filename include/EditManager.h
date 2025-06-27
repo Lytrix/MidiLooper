@@ -55,8 +55,8 @@ public:
     uint32_t getBracketTick() const { return bracketTick; }
     int getSelectedNoteIdx() const { return selectedNoteIdx; }
     // Reset selection
-    void resetSelection() { selectedNoteIdx = -1; }
-    void setSelectedNoteIdx(int idx) { selectedNoteIdx = idx; }
+    void resetSelection();
+    void setSelectedNoteIdx(int idx);
     // Allow direct setting of the bracket tick (for precise note movement)
     void setBracketTick(uint32_t tick) { bracketTick = tick; }
     void setHasMovedBracket(bool moved) { hasMovedBracket = moved; }
