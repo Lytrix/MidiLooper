@@ -63,6 +63,7 @@ bool notesOverlap(uint32_t start1, uint32_t end1, uint32_t start2, uint32_t end2
 void findOverlaps(const std::vector<NoteUtils::DisplayNote>& currentNotes,
                  uint8_t movingNotePitch,
                  uint32_t currentStart,
+                 uint32_t currentEnd,
                  uint32_t newStart,
                  uint32_t newEnd,
                  int delta,
@@ -75,7 +76,19 @@ void findOverlaps(const std::vector<NoteUtils::DisplayNote>& currentNotes,
     
     for (const auto& note : currentNotes) {
         if (note.note != movingNotePitch) continue;
-        if (note.startTick == currentStart) continue; // Skip the moving note itself
+        
+        // CRITICAL: Never consider the moving note itself for deletion
+        // Check both start position and full note identity to avoid accidental deletion
+        if (note.startTick == currentStart) {
+            // Additional safety check: if there are multiple notes with same pitch at same position,
+            // make sure we don't delete the one that matches our moving note identity
+            uint32_t displayCurrentEnd = (currentEnd >= loopLength) ? (currentEnd % loopLength) : currentEnd;
+            if (note.endTick == displayCurrentEnd) {
+                logger.log(CAT_MIDI, LOG_DEBUG, "Skipping moving note itself in overlap detection: pitch=%d, start=%lu, end=%lu", 
+                          note.note, note.startTick, note.endTick);
+                continue; // This is definitely the moving note
+            }
+        }
         
         bool overlaps = notesOverlap(newStart, displayNewEnd, note.startTick, note.endTick, loopLength);
         if (!overlaps) continue;
@@ -354,7 +367,7 @@ void moveNoteWithOverlapHandling(Track& track, EditManager& manager,
         manager.movingNote.movementDirection = -1; // Moving left (negative delta)
     }
     
-    // Use the moving note identity instead of reconstructing from selected index
+    // Use the moving note identity - we'll check for pitch changes AFTER finding the current events
     uint8_t movingNotePitch = manager.movingNote.note;
     uint32_t currentStart = manager.movingNote.lastStart;
     uint32_t currentEnd = manager.movingNote.lastEnd;
@@ -385,14 +398,15 @@ void moveNoteWithOverlapHandling(Track& track, EditManager& manager,
     
     // STEP 1: Detect and categorize overlaps BEFORE moving the note
     std::vector<std::pair<NoteUtils::DisplayNote, uint32_t>> notesToShorten;
-    findOverlaps(currentNotes, movingNotePitch, currentStart, newStart, newEnd, delta, loopLength,
+    findOverlaps(currentNotes, movingNotePitch, currentStart, currentEnd, newStart, newEnd, delta, loopLength,
                 notesToShorten, notesToDelete);
     
-    // STEP 2: Move the selected note's NoteOn/NoteOff events to new position
+    // STEP 2: Find current MIDI events and check for pitch changes
     auto onIt = std::find_if(midiEvents.begin(), midiEvents.end(), [&](MidiEvent& evt) {
         return evt.type == midi::NoteOn &&
                evt.data.noteData.note == movingNotePitch &&
-               evt.tick == currentStart;
+               evt.tick == currentStart &&
+               evt.data.noteData.velocity > 0;
     });
     auto offIt = std::find_if(midiEvents.begin(), midiEvents.end(), [&](MidiEvent& evt) {
         bool isOff = (evt.type == midi::NoteOff) || (evt.type == midi::NoteOn && evt.data.noteData.velocity == 0);
@@ -400,19 +414,90 @@ void moveNoteWithOverlapHandling(Track& track, EditManager& manager,
                evt.tick == currentEnd;
     });
     
+    // If we can't find the moving note, it might have been accidentally deleted - try to restore it
+    if (onIt == midiEvents.end() || offIt == midiEvents.end()) {
+        logger.log(CAT_MIDI, LOG_DEBUG, "Moving note MIDI events not found - checking if it was accidentally deleted");
+        
+        // Look for the moving note in the deleted notes list
+        for (auto it = manager.movingNote.deletedNotes.begin(); it != manager.movingNote.deletedNotes.end(); ++it) {
+            if (it->note == movingNotePitch && it->startTick == currentStart && 
+                (it->endTick == currentEnd || (!it->wasShortened && it->endTick == currentEnd))) {
+                
+                logger.log(CAT_MIDI, LOG_DEBUG, "Found accidentally deleted moving note - restoring it: pitch=%d, start=%lu, end=%lu", 
+                          it->note, it->startTick, it->endTick);
+                
+                // Restore the moving note
+                MidiEvent onEvt;
+                onEvt.tick = it->startTick;
+                onEvt.type = midi::NoteOn;
+                onEvt.data.noteData.note = it->note;
+                onEvt.data.noteData.velocity = it->velocity;
+                midiEvents.push_back(onEvt);
+                
+                MidiEvent offEvt;
+                offEvt.tick = it->endTick;
+                offEvt.type = midi::NoteOff;
+                offEvt.data.noteData.note = it->note;
+                offEvt.data.noteData.velocity = 0;
+                midiEvents.push_back(offEvt);
+                
+                // Remove from deleted list
+                manager.movingNote.deletedNotes.erase(it);
+                
+                // Re-find the restored events
+                onIt = std::find_if(midiEvents.begin(), midiEvents.end(), [&](MidiEvent& evt) {
+                    return evt.type == midi::NoteOn &&
+                           evt.data.noteData.note == movingNotePitch &&
+                           evt.tick == currentStart &&
+                           evt.data.noteData.velocity > 0;
+                });
+                offIt = std::find_if(midiEvents.begin(), midiEvents.end(), [&](MidiEvent& evt) {
+                    bool isOff = (evt.type == midi::NoteOff) || (evt.type == midi::NoteOn && evt.data.noteData.velocity == 0);
+                    return isOff && evt.data.noteData.note == movingNotePitch &&
+                           evt.tick == currentEnd;
+                });
+                break;
+            }
+        }
+    }
+    
     if (onIt != midiEvents.end() && offIt != midiEvents.end()) {
+        // Check if pitch has changed during move operation by examining the actual current pitch
+        uint8_t actualCurrentPitch = onIt->data.noteData.note;
+        if (actualCurrentPitch != manager.movingNote.note) {
+            logger.log(CAT_MIDI, LOG_DEBUG, "Note pitch changed during move: %d -> %d, updating moving note identity", 
+                      manager.movingNote.note, actualCurrentPitch);
+            
+            // Update the moving note identity with the new pitch
+            uint8_t oldPitch = manager.movingNote.note;
+            manager.movingNote.note = actualCurrentPitch;
+            movingNotePitch = actualCurrentPitch;
+            
+            // Reindex any deleted notes that were for the old pitch to the new pitch
+            for (auto& deletedNote : manager.movingNote.deletedNotes) {
+                if (deletedNote.note == oldPitch) {
+                    logger.log(CAT_MIDI, LOG_DEBUG, "Reindexing deleted note pitch: %d -> %d at start=%lu", 
+                              deletedNote.note, actualCurrentPitch, deletedNote.startTick);
+                    deletedNote.note = actualCurrentPitch;
+                }
+            }
+        }
+        
+        // Move the events to new position
         onIt->tick = newStart;
         offIt->tick = newEnd;
         manager.movingNote.lastStart = newStart;
         manager.movingNote.lastEnd = newEnd;
         logger.log(CAT_MIDI, LOG_DEBUG, "Moved note events: pitch=%u start->%lu end->%lu", movingNotePitch, newStart, newEnd);
     } else {
-        logger.log(CAT_MIDI, LOG_DEBUG, "Warning: could not find MIDI events for moving note pitch=%u", movingNotePitch);
+        logger.log(CAT_MIDI, LOG_DEBUG, "Warning: could not find MIDI events for moving note pitch=%u at start=%lu end=%lu", 
+                  movingNotePitch, currentStart, currentEnd);
     }
     
     // STEP 3: Check if we should restore any previously deleted/shortened notes
     for (const auto& deletedNote : manager.movingNote.deletedNotes) {
-        // Only consider restoring notes of the same pitch as the note being moved
+        // Consider restoring notes of the same pitch as the note being moved
+        // Note: deletedNote.note may have been updated to match the new pitch during reindexing
         if (deletedNote.note == movingNotePitch) {
             // Check if the deleted note overlaps with the new position
             bool hasOverlap = notesOverlap(newStart, newEnd,
