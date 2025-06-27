@@ -5,8 +5,10 @@
 #define MIDIBUTTONMANAGER_H
 
 #include <Arduino.h>
+#include <cstdint>
 #include <vector>
 #include "NoteUtils.h"
+#include "EditManager.h"
 
 enum MidiButtonAction {
     MIDI_BUTTON_NONE,
@@ -220,8 +222,33 @@ private:
     void sendSelectnoteFaderUpdate(Track& track);  // Schedules selectnote pitchbend ch16 update with delay
     void performSelectnoteFaderUpdate(Track& track);  // Actually sends the selectnote fader update
     void enableStartEditing();
-    void moveNoteToPosition(Track& track, const NoteUtils::DisplayNote& currentNote, uint32_t targetTick);
+    void moveNoteToPosition(Track& track, const NoteUtils::DisplayNote& currentNote, std::uint32_t targetTick);
+    void moveNoteToPositionWithOverlapHandling(Track& track, const NoteUtils::DisplayNote& currentNote, std::uint32_t targetTick, bool commitChanges);
+    void moveNoteToPositionSimple(Track& track, const NoteUtils::DisplayNote& currentNote, std::uint32_t targetTick);
     void refreshEditingActivity();  // Mark editing activity to prevent note selection changes
+    
+    // Overlap handling helper functions
+    bool notesOverlap(std::uint32_t start1, std::uint32_t end1, std::uint32_t start2, std::uint32_t end2, std::uint32_t loopLength);
+    std::uint32_t calculateNoteLength(std::uint32_t start, std::uint32_t end, std::uint32_t loopLength);
+    MidiEvent* findCorrespondingNoteOff(std::vector<MidiEvent>& midiEvents, MidiEvent* noteOnEvent, uint8_t pitch, std::uint32_t startTick, std::uint32_t endTick);
+    void findOverlapsForMovement(const std::vector<NoteUtils::DisplayNote>& currentNotes,
+                                uint8_t movingNotePitch, std::uint32_t currentStart, std::uint32_t newStart, std::uint32_t newEnd,
+                                int delta, std::uint32_t loopLength,
+                                std::vector<std::pair<NoteUtils::DisplayNote, std::uint32_t>>& notesToShorten,
+                                std::vector<NoteUtils::DisplayNote>& notesToDelete);
+    void applyTemporaryOverlapChanges(std::vector<MidiEvent>& midiEvents,
+                                     const std::vector<std::pair<NoteUtils::DisplayNote, std::uint32_t>>& notesToShorten,
+                                     const std::vector<NoteUtils::DisplayNote>& notesToDelete,
+                                     EditManager& manager, std::uint32_t loopLength,
+                                     NoteUtils::EventIndexMap& onIndex, NoteUtils::EventIndexMap& offIndex);
+    void restoreTemporaryNotes(std::vector<MidiEvent>& midiEvents,
+                              const std::vector<EditManager::MovingNoteIdentity::DeletedNote>& notesToRestore,
+                              EditManager& manager, std::uint32_t loopLength,
+                              NoteUtils::EventIndexMap& onIndex, NoteUtils::EventIndexMap& offIndex);
+    
+    void extendShortenedNotes(std::vector<MidiEvent>& midiEvents,
+                             const std::vector<std::pair<EditManager::MovingNoteIdentity::DeletedNote, std::uint32_t>>& notesToExtend,
+                             EditManager& manager, std::uint32_t loopLength);
 
     MidiButtonId getNoteButtonId(uint8_t note);
     bool isValidNote(uint8_t note);
