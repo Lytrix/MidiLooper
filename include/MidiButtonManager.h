@@ -23,9 +23,10 @@ enum MidiButtonId {
 
 // Unified Fader State Machine Types
 enum FaderType {
-    FADER_SELECT = 1,  // Fader 1: Note selection (channel 16, pitchbend)
-    FADER_COARSE = 2,  // Fader 2: Coarse positioning (channel 15, pitchbend)  
-    FADER_FINE = 3     // Fader 3: Fine positioning (channel 15, CC2)
+    FADER_SELECT = 1,     // Fader 1: Note selection (channel 16, pitchbend)
+    FADER_COARSE = 2,     // Fader 2: Coarse positioning (channel 15, pitchbend)  
+    FADER_FINE = 3,       // Fader 3: Fine positioning (channel 15, CC2)
+    FADER_NOTE_VALUE = 4  // Fader 4: Note value editing (channel 15, CC3)
 };
 
 struct FaderState {
@@ -72,6 +73,7 @@ public:
     void handleMidiEncoder(uint8_t channel, uint8_t ccNumber, uint8_t value);
     void handleMidiPitchbend(uint8_t channel, int16_t pitchValue);
     void handleMidiCC2Fine(uint8_t channel, uint8_t ccNumber, uint8_t value);
+    void handleMidiCC3NoteValue(uint8_t channel, uint8_t ccNumber, uint8_t value);
     void processEncoderMovement(int delta);
     
     // Public access to fader state for smart feedback detection
@@ -114,6 +116,10 @@ private:
     // MIDI constants for fine control via CC
     static constexpr uint8_t FINE_CC_CHANNEL = 15;    // Channel 15 for fine CC control (same as coarse)
     static constexpr uint8_t FINE_CC_NUMBER = 2;      // CC2 for fine start position (tick level)
+    
+    // MIDI constants for note value control via CC
+    static constexpr uint8_t NOTE_VALUE_CC_CHANNEL = 15;  // Channel 15 for note value CC control
+    static constexpr uint8_t NOTE_VALUE_CC_NUMBER = 3;    // CC3 for note value editing
     static constexpr int16_t PITCHBEND_MIN = 0;      // d1=0 d2=0 (full MIDI range minimum)
     static constexpr int16_t PITCHBEND_MAX = 16383;  // d1=127 d2=127 (full MIDI range maximum)
     static constexpr int16_t PITCHBEND_CENTER = 8192; // Center position
@@ -190,8 +196,10 @@ private:
     void handleSelectFaderInput(int16_t pitchValue, Track& track);
     void handleCoarseFaderInput(int16_t pitchValue, Track& track);
     void handleFineFaderInput(uint8_t ccValue, Track& track);
+    void handleNoteValueFaderInput(uint8_t ccValue, Track& track);
     void sendCoarseFaderPosition(Track& track);
     void sendFineFaderPosition(Track& track);
+    void sendNoteValueFaderPosition(Track& track);
 
     // Edit mode cycling
     enum EditModeState {

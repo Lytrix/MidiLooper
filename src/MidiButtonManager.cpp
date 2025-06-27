@@ -300,9 +300,15 @@ void MidiButtonManager::handleButton(MidiButtonId button, MidiButtonAction actio
 }
 
 void MidiButtonManager::handleMidiEncoder(uint8_t channel, uint8_t ccNumber, uint8_t value) {
-    // Handle fine control CC2 on channel 16
+    // Handle fine control CC2 on channel 15
     if (channel == FINE_CC_CHANNEL && ccNumber == FINE_CC_NUMBER) {
         handleMidiCC2Fine(channel, ccNumber, value);
+        return;
+    }
+    
+    // Handle note value control CC3 on channel 15
+    if (channel == NOTE_VALUE_CC_CHANNEL && ccNumber == NOTE_VALUE_CC_NUMBER) {
+        handleMidiCC3NoteValue(channel, ccNumber, value);
         return;
     }
     
@@ -612,6 +618,14 @@ void MidiButtonManager::handleMidiCC2Fine(uint8_t channel, uint8_t ccNumber, uin
     
     lastFineCCValue = value;
     */
+}
+
+void MidiButtonManager::handleMidiCC3NoteValue(uint8_t channel, uint8_t ccNumber, uint8_t value) {
+    // Route to unified fader system
+    if (channel == NOTE_VALUE_CC_CHANNEL && ccNumber == NOTE_VALUE_CC_NUMBER) {
+        handleFaderInput(FADER_NOTE_VALUE, 0, value);
+        return;
+    }
 }
 
 void MidiButtonManager::moveNoteToPosition(Track& track, const NoteUtils::DisplayNote& currentNote, uint32_t targetTick) {
@@ -1072,7 +1086,7 @@ void MidiButtonManager::refreshEditingActivity() {
 
 void MidiButtonManager::initializeFaderStates() {
     faderStates.clear();
-    faderStates.resize(3);
+    faderStates.resize(4);
     
     // Initialize Fader 1: Note Selection (Channel 16, Pitchbend)
     faderStates[0] = {
@@ -1122,7 +1136,23 @@ void MidiButtonManager::initializeFaderStates() {
         .lastSentCC = 0
     };
     
-    logger.info("Fader state machine initialized with 3 faders");
+    // Initialize Fader 4: Note Value Editing (Channel 15, CC3)
+    faderStates[3] = {
+        .type = FADER_NOTE_VALUE,
+        .channel = NOTE_VALUE_CC_CHANNEL,
+        .isInitialized = false,
+        .lastPitchbendValue = PITCHBEND_CENTER,
+        .lastCCValue = 64,
+        .lastUpdateTime = 0,
+        .lastSentTime = 0,
+        .pendingUpdate = false,
+        .updateScheduledTime = 0,
+        .scheduledByDriver = FADER_SELECT,
+        .lastSentPitchbend = 0,
+        .lastSentCC = 0
+    };
+    
+    logger.info("Fader state machine initialized with 4 faders");
 }
 
 FaderState& MidiButtonManager::getFaderState(FaderType faderType) {
@@ -1181,7 +1211,7 @@ bool MidiButtonManager::shouldIgnoreFaderInput(FaderType faderType, int16_t pitc
             logger.log(CAT_MIDI, LOG_DEBUG, "Ignoring fader %d pitchbend %d (feedback: sent %d, diff=%d)", 
                        faderType, pitchbendValue, state.lastSentPitchbend, diff);
         }
-    } else if (faderType == FADER_FINE) {
+    } else if (faderType == FADER_FINE || faderType == FADER_NOTE_VALUE) {
         // For CC faders, check if incoming value is close to what we last sent
         uint8_t diff = abs((int)ccValue - (int)state.lastSentCC);
         if (diff <= FEEDBACK_TOLERANCE_CC) {
@@ -1228,8 +1258,8 @@ void MidiButtonManager::handleFaderInput(FaderType faderType, int16_t pitchbendV
         if (pitchbendDiff >= PITCHBEND_DEADBAND) {
             significantChange = true;
         }
-    } else if (faderType == FADER_FINE) {
-        // For fine CC fader, use smaller deadband for precise control
+    } else if (faderType == FADER_FINE || faderType == FADER_NOTE_VALUE) {
+        // For CC faders, use smaller deadband for precise control
         uint8_t ccDiff = abs((int)ccValue - (int)state.lastCCValue);
         if (ccDiff >= CC_DEADBAND_FINE) {
             significantChange = true;
@@ -1264,6 +1294,9 @@ void MidiButtonManager::handleFaderInput(FaderType faderType, int16_t pitchbendV
         case FADER_FINE:
             handleFineFaderInput(ccValue, track);
             break;
+        case FADER_NOTE_VALUE:
+            handleNoteValueFaderInput(ccValue, track);
+            break;
     }
     
     // Schedule updates for other faders after delay
@@ -1286,16 +1319,18 @@ void MidiButtonManager::scheduleOtherFaderUpdates(FaderType driverFader) {
     uint32_t updateTime = now + FADER_UPDATE_DELAY;
     
     // Cancel pending updates only for faders that would conflict with the new driver
-    // Faders 2 and 3 share channel 15, so they conflict with each other
+    // Faders 2, 3, and 4 share channel 15, so they conflict with each other
     // Fader 1 is on channel 16, so it never conflicts
     // IMPORTANT: Don't cancel updates for the driver itself - that causes feedback loops
     for (auto& state : faderStates) {
         bool wouldConflict = false;
         
-        if (driverFader == FADER_FINE && state.type == FADER_COARSE) {
-            wouldConflict = true; // Fader 3 driver conflicts with fader 2 updates
-        } else if (driverFader == FADER_COARSE && state.type == FADER_FINE) {
-            wouldConflict = true; // Fader 2 driver conflicts with fader 3 updates
+        // Check if driver and state share channel 15 (faders 2, 3, 4)
+        bool driverOnChannel15 = (driverFader == FADER_COARSE || driverFader == FADER_FINE || driverFader == FADER_NOTE_VALUE);
+        bool stateOnChannel15 = (state.type == FADER_COARSE || state.type == FADER_FINE || state.type == FADER_NOTE_VALUE);
+        
+        if (driverOnChannel15 && stateOnChannel15 && driverFader != state.type) {
+            wouldConflict = true; // Any channel 15 fader conflicts with other channel 15 faders
         }
         // Removed: Don't cancel updates for the driver itself
         
@@ -1334,10 +1369,11 @@ void MidiButtonManager::updateFaderStates() {
                 
                 // Only update if this fader wasn't the driver when the update was scheduled
                 // AND the current driver is still the same as when the update was scheduled
-                // AND we don't have channel conflicts (only fader 2 and 3 share channel 15)
-                bool hasChannelConflict = (currentDriverFader == FADER_FINE && state.type == FADER_COARSE) ||
-                                        (currentDriverFader == FADER_COARSE && state.type == FADER_FINE);
-                // Note: FADER_SELECT (fader 1) is on channel 16, so it never conflicts with faders 2 or 3
+                // AND we don't have channel conflicts (faders 2, 3, and 4 share channel 15)
+                bool currentDriverOnChannel15 = (currentDriverFader == FADER_COARSE || currentDriverFader == FADER_FINE || currentDriverFader == FADER_NOTE_VALUE);
+                bool stateOnChannel15 = (state.type == FADER_COARSE || state.type == FADER_FINE || state.type == FADER_NOTE_VALUE);
+                bool hasChannelConflict = currentDriverOnChannel15 && stateOnChannel15 && currentDriverFader != state.type;
+                // Note: FADER_SELECT (fader 1) is on channel 16, so it never conflicts with faders 2, 3, or 4
                 
                 // Check if the driver fader is still being actively moved
                 bool driverStillActive = false;
@@ -1350,6 +1386,9 @@ void MidiButtonManager::updateFaderStates() {
                 } else if (state.scheduledByDriver == FADER_FINE) {
                     // For fine fader, check recent activity  
                     driverStillActive = (lastDriverFaderTime > 0 && currentDriverFader == FADER_FINE && (now - lastDriverFaderTime) < 500);
+                } else if (state.scheduledByDriver == FADER_NOTE_VALUE) {
+                    // For note value fader, check recent activity  
+                    driverStillActive = (lastDriverFaderTime > 0 && currentDriverFader == FADER_NOTE_VALUE && (now - lastDriverFaderTime) < 500);
                 }
                 
                 // CRITICAL FIX: Never execute scheduled updates when fader 1 (SELECT) was the driver
@@ -1390,32 +1429,31 @@ void MidiButtonManager::updateFaderStates() {
 }
 
 void MidiButtonManager::sendFaderUpdate(FaderType faderType, Track& track) {
-    // IMPORTANT: Don't update fine fader (fader 3) when it was recently the driver
-    // Fader 3 represents user input and should maintain its position for a reasonable time
-    // The MIDI events are the single source of truth - don't send calculated positions back to fader 3
-    if (faderType == FADER_FINE && currentDriverFader == FADER_FINE) {
+    // IMPORTANT: Don't update CC faders (faders 3 and 4) when they were recently the driver
+    // These faders represent user input and should maintain their position for a reasonable time
+    // The MIDI events are the single source of truth - don't send calculated positions back to these faders
+    if ((faderType == FADER_FINE && currentDriverFader == FADER_FINE) ||
+        (faderType == FADER_NOTE_VALUE && currentDriverFader == FADER_NOTE_VALUE)) {
         uint32_t now = millis();
         uint32_t timeSinceDriverSet = now - lastDriverFaderTime;
         if (timeSinceDriverSet < 1000) { // 1 second protection period
-            logger.log(CAT_MIDI, LOG_DEBUG, "Skipping fader 3 update - fader 3 was recently the driver (%lu ms ago)", 
-                       timeSinceDriverSet);
+            logger.log(CAT_MIDI, LOG_DEBUG, "Skipping fader %d update - fader %d was recently the driver (%lu ms ago)", 
+                       faderType, faderType, timeSinceDriverSet);
             return;
         }
     }
     
-    // Fader 3 (fine) never needs program changes - it only uses CC messages
-    bool shouldSendProgramChange = (faderType != FADER_FINE);
+    // Faders 3 and 4 (CC faders) never need program changes - they only use CC messages
+    bool shouldSendProgramChange = (faderType != FADER_FINE && faderType != FADER_NOTE_VALUE);
     
     // Additionally, skip program change if this fader shares a channel with the current driver
-    if (shouldSendProgramChange && currentDriverFader == FADER_COARSE && faderType == FADER_FINE) {
-        // Driver is coarse fader, updating fine fader - both share channel 15
+    bool currentDriverOnChannel15 = (currentDriverFader == FADER_COARSE || currentDriverFader == FADER_FINE || currentDriverFader == FADER_NOTE_VALUE);
+    bool faderOnChannel15 = (faderType == FADER_COARSE || faderType == FADER_FINE || faderType == FADER_NOTE_VALUE);
+    
+    if (shouldSendProgramChange && currentDriverOnChannel15 && faderOnChannel15 && currentDriverFader != faderType) {
+        // Driver and fader both share channel 15 - skip program change
         shouldSendProgramChange = false;
-        logger.log(CAT_MIDI, LOG_DEBUG, "Skipping program change for fader %d (shares channel with driver %d)", 
-                   faderType, currentDriverFader);
-    } else if (shouldSendProgramChange && currentDriverFader == FADER_FINE && faderType == FADER_COARSE) {
-        // Driver is fine fader, updating coarse fader - both share channel 15  
-        shouldSendProgramChange = false;
-        logger.log(CAT_MIDI, LOG_DEBUG, "Skipping program change for fader %d (shares channel with driver %d)", 
+        logger.log(CAT_MIDI, LOG_DEBUG, "Skipping program change for fader %d (shares channel 15 with driver %d)", 
                    faderType, currentDriverFader);
     }
     
@@ -1425,8 +1463,8 @@ void MidiButtonManager::sendFaderUpdate(FaderType faderType, Track& track) {
         
         logger.log(CAT_MIDI, LOG_DEBUG, "Sent Program Change: ch=%d program=%d (fader %d update)", 
                    getFaderState(faderType).channel, program, faderType);
-    } else if (faderType == FADER_FINE) {
-        logger.log(CAT_MIDI, LOG_DEBUG, "Skipped program change for fader 3 (fine) - only uses CC messages");
+    } else if (faderType == FADER_FINE || faderType == FADER_NOTE_VALUE) {
+        logger.log(CAT_MIDI, LOG_DEBUG, "Skipped program change for fader %d (CC fader) - only uses CC messages", faderType);
     }
     
     // Send position update
@@ -1436,12 +1474,13 @@ void MidiButtonManager::sendFaderUpdate(FaderType faderType, Track& track) {
     uint32_t now = millis();
     getFaderState(faderType).lastSentTime = now;
     
-    // IMPORTANT: If updating coarse or fine faders, both share channel 15 and both get updated together.
-    // Set ignore periods for both to prevent feedback from either pitchbend or CC causing unwanted processing.
-    if (faderType == FADER_COARSE || faderType == FADER_FINE) {
+    // IMPORTANT: If updating any channel 15 fader, all channel 15 faders get updated together.
+    // Set ignore periods for all to prevent feedback from any MIDI message causing unwanted processing.
+    if (faderType == FADER_COARSE || faderType == FADER_FINE || faderType == FADER_NOTE_VALUE) {
         getFaderState(FADER_COARSE).lastSentTime = now;
         getFaderState(FADER_FINE).lastSentTime = now;
-        logger.log(CAT_MIDI, LOG_DEBUG, "Set ignore periods for both coarse and fine faders (shared channel)");
+        getFaderState(FADER_NOTE_VALUE).lastSentTime = now;
+        logger.log(CAT_MIDI, LOG_DEBUG, "Set ignore periods for all channel 15 faders (shared channel)");
     }
     
     logger.log(CAT_MIDI, LOG_DEBUG, "Fader %d updated - ignoring incoming for %dms", 
@@ -1458,6 +1497,9 @@ void MidiButtonManager::sendFaderPosition(FaderType faderType, Track& track) {
             break;
         case FADER_FINE:
             sendFineFaderPosition(track);
+            break;
+        case FADER_NOTE_VALUE:
+            sendNoteValueFaderPosition(track);
             break;
     }
 }
@@ -1577,6 +1619,60 @@ void MidiButtonManager::sendFineFaderPosition(Track& track) {
                    fineCCValue, offsetFromReferenceStep, referenceStep);
     } else {
         logger.log(CAT_MIDI, LOG_DEBUG, "Fine position: Invalid selectedIdx=%d, notes.size()=%lu", 
+                   selectedIdx, notes.size());
+    }
+}
+
+void MidiButtonManager::sendNoteValueFaderPosition(Track& track) {
+    // IMPORTANT: Don't send CC values to fader 4 when it was recently the driver
+    // Fader 4 represents user input and should maintain its position - MIDI events are the single source of truth
+    if (currentDriverFader == FADER_NOTE_VALUE) {
+        uint32_t now = millis();
+        uint32_t timeSinceDriverSet = now - lastDriverFaderTime;
+        if (timeSinceDriverSet < 1000) { // 1 second protection period
+            logger.log(CAT_MIDI, LOG_DEBUG, "Skipping note value fader CC update - fader 4 was recently the driver (%lu ms ago)", 
+                       timeSinceDriverSet);
+            return;
+        }
+    }
+    
+    if (editManager.getSelectedNoteIdx() < 0) {
+        logger.log(CAT_MIDI, LOG_DEBUG, "No note selected for note value update");
+        return;
+    }
+    
+    auto& midiEvents = track.getMidiEvents();
+    uint32_t loopLength = track.getLoopLength();
+    if (loopLength == 0) return;
+    
+    auto notes = NoteUtils::reconstructNotes(midiEvents, loopLength);
+    int selectedIdx = editManager.getSelectedNoteIdx();
+    
+    // Double-check that the selected note index is still valid after potential note modifications
+    if (selectedIdx >= 0 && selectedIdx < (int)notes.size()) {
+        uint8_t noteValue = notes[selectedIdx].note;
+        
+        // Map MIDI note value (0-127) to CC value (0-127)
+        // This is a direct 1:1 mapping
+        uint8_t noteValueCCValue = noteValue;
+        
+        // Debug: verify we're using the correct note
+        logger.log(CAT_MIDI, LOG_DEBUG, "Note value: selectedIdx=%d, noteValue=%d", 
+                   selectedIdx, noteValue);
+        
+        midiHandler.sendControlChange(NOTE_VALUE_CC_CHANNEL, NOTE_VALUE_CC_NUMBER, noteValueCCValue);
+        
+        // Send note 2 trigger on channel 15 to help motorized fader 4 update
+        midiHandler.sendNoteOn(NOTE_VALUE_CC_CHANNEL, 2, 127);
+        midiHandler.sendNoteOff(NOTE_VALUE_CC_CHANNEL, 2, 0);
+        
+        // Record the value we sent for smart feedback detection
+        getFaderState(FADER_NOTE_VALUE).lastSentCC = noteValueCCValue;
+        
+        logger.log(CAT_MIDI, LOG_DEBUG, "Sent note value CC=%d + note 2 trigger (note value %d)", 
+                   noteValueCCValue, noteValue);
+    } else {
+        logger.log(CAT_MIDI, LOG_DEBUG, "Note value: Invalid selectedIdx=%d, notes.size()=%lu", 
                    selectedIdx, notes.size());
     }
 }
@@ -1811,5 +1907,103 @@ void MidiButtonManager::handleFineFaderInput(uint8_t ccValue, Track& track) {
         refreshEditingActivity();
         
         moveNoteToPosition(track, notes[selectedIdx], targetTick);
+    }
+}
+
+void MidiButtonManager::handleNoteValueFaderInput(uint8_t ccValue, Track& track) {
+    // Only process if start editing is enabled
+    if (!startEditingEnabled) {
+        logger.log(CAT_MIDI, LOG_DEBUG, "Note value editing disabled (grace period active)");
+        return;
+    }
+    
+    // Only process if we have a selected note
+    if (editManager.getSelectedNoteIdx() < 0) {
+        logger.log(CAT_MIDI, LOG_DEBUG, "No note selected for note value editing");
+        return;
+    }
+    
+    uint32_t loopLength = track.getLoopLength();
+    if (loopLength == 0) return;
+    
+    auto& midiEvents = track.getMidiEvents();
+    auto notes = NoteUtils::reconstructNotes(midiEvents, loopLength);
+    int selectedIdx = editManager.getSelectedNoteIdx();
+    
+    if (selectedIdx >= 0 && selectedIdx < (int)notes.size()) {
+        uint8_t currentNoteValue = notes[selectedIdx].note;
+        uint8_t newNoteValue = ccValue;  // Direct 1:1 mapping from CC to MIDI note value
+        
+        // Constrain to valid MIDI note range (0-127)
+        newNoteValue = constrain(newNoteValue, 0, 127);
+        
+        logger.log(CAT_MIDI, LOG_DEBUG, "Note value fader: currentNote=%d newNote=%d (cc=%d)", 
+                   currentNoteValue, newNoteValue, ccValue);
+        
+        // Find and update both note-on and note-off events
+        bool noteOnUpdated = false;
+        bool noteOffUpdated = false;
+        
+        // Update note-on event
+        for (auto& event : midiEvents) {
+            if (event.type == midi::NoteOn && 
+                event.data.noteData.note == currentNoteValue &&
+                event.tick == notes[selectedIdx].startTick &&
+                event.data.noteData.velocity > 0) {
+                
+                logger.log(CAT_MIDI, LOG_DEBUG, "Updating note-on: pitch %d -> %d at tick %lu", 
+                           currentNoteValue, newNoteValue, event.tick);
+                
+                event.data.noteData.note = newNoteValue;
+                noteOnUpdated = true;
+                break;
+            }
+        }
+        
+        // Update note-off event (or note-on with velocity 0)
+        for (auto& event : midiEvents) {
+            if (((event.type == midi::NoteOff) || (event.type == midi::NoteOn && event.data.noteData.velocity == 0)) &&
+                event.data.noteData.note == currentNoteValue &&
+                event.tick == notes[selectedIdx].endTick) {
+                
+                logger.log(CAT_MIDI, LOG_DEBUG, "Updating note-off: pitch %d -> %d at tick %lu", 
+                           currentNoteValue, newNoteValue, event.tick);
+                
+                event.data.noteData.note = newNoteValue;
+                noteOffUpdated = true;
+                break;
+            }
+        }
+        
+        if (noteOnUpdated && noteOffUpdated) {
+            logger.log(CAT_MIDI, LOG_DEBUG, "Note value changed successfully: %d -> %d", 
+                       currentNoteValue, newNoteValue);
+            
+            // Update the selected note index to point to the updated note
+            auto updatedNotes = NoteUtils::reconstructNotes(midiEvents, loopLength);
+            int newSelectedIdx = -1;
+            
+            // Find the updated note in the new notes list
+            for (int i = 0; i < (int)updatedNotes.size(); i++) {
+                if (updatedNotes[i].note == newNoteValue && 
+                    updatedNotes[i].startTick == notes[selectedIdx].startTick &&
+                    updatedNotes[i].endTick == notes[selectedIdx].endTick) {
+                    newSelectedIdx = i;
+                    break;
+                }
+            }
+            
+            if (newSelectedIdx >= 0) {
+                editManager.setSelectedNoteIdx(newSelectedIdx);
+                logger.log(CAT_MIDI, LOG_DEBUG, "Updated selectedNoteIdx: %d -> %d (note with new value)", 
+                           selectedIdx, newSelectedIdx);
+            }
+            
+            // Mark editing activity to prevent note selection changes
+            refreshEditingActivity();
+        } else {
+            logger.log(CAT_MIDI, LOG_DEBUG, "Failed to update note value: noteOn=%s noteOff=%s", 
+                       noteOnUpdated ? "OK" : "FAILED", noteOffUpdated ? "OK" : "FAILED");
+        }
     }
 }
