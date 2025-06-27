@@ -81,6 +81,9 @@ private:
   // Static instance pointer for callbacks
   static MidiHandler* instance;
 
+  // --- Helper Functions ---
+  bool isControlChannel(byte channel);
+
   // --- Message Handlers ---
   void handleNoteOn(byte channel, byte note, byte velocity, uint32_t tickNow);
   void handleNoteOff(byte channel, byte note, byte velocity, uint32_t tickNow);

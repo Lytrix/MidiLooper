@@ -162,37 +162,51 @@ void MidiHandler::handleMidiMessage(byte type, byte channel, byte data1, byte da
   }
 }
 
+// --- Helper Functions ---
+bool MidiHandler::isControlChannel(byte channel) {
+  // Channels 13-16 are reserved for control (faders, program changes, etc.)
+  return (channel >= 13 && channel <= 16);
+}
+
 // --- Individual Message Handlers ---
 void MidiHandler::handleNoteOn(byte channel, byte note, byte velocity, uint32_t tickNow) {
   // Route button notes to MidiButtonManager
   midiButtonManager.handleMidiNote(channel, note, velocity, true);
   
-  // Route to track recording
+  // Route to track recording (skip control channels 13-16)
+  if (!isControlChannel(channel)) {
   trackManager.getSelectedTrack().noteOn(channel, note, velocity, tickNow);
+  }
 }
 
 void MidiHandler::handleNoteOff(byte channel, byte note, byte velocity, uint32_t tickNow) {
   // Route button notes to MidiButtonManager
   midiButtonManager.handleMidiNote(channel, note, velocity, false);
   
-  // Route to track recording
+  // Route to track recording (skip control channels 13-16)
+  if (!isControlChannel(channel)) {
   trackManager.getSelectedTrack().noteOff(channel, note, velocity, tickNow);
+  }
 }
 
 void MidiHandler::handleControlChange(byte channel, byte control, byte value, uint32_t tickNow) {
   // Route encoder CC to MidiButtonManager
   midiButtonManager.handleMidiEncoder(channel, control, value);
   
-  // Route to track recording
+  // Route to track recording (skip control channels 13-16)
+  if (!isControlChannel(channel)) {
   trackManager.getSelectedTrack().recordMidiEvents(midi::ControlChange, channel, control, value, tickNow);
+  }
 }
 
 void MidiHandler::handlePitchBend(byte channel, int pitchValue, uint32_t tickNow) {
   // Route pitchbend to MidiButtonManager for navigation
   midiButtonManager.handleMidiPitchbend(channel, pitchValue);
   
-  // Route to track recording
-  trackManager.getSelectedTrack().recordMidiEvents(midi::PitchBend, channel, pitchValue & 0x7F, (pitchValue >> 7) & 0x7F, tickNow);
+  // Route to track recording (skip control channels 13-16)
+  if (!isControlChannel(channel)) {
+    trackManager.getSelectedTrack().recordMidiEvents(midi::PitchBend, channel, pitchValue & 0x7F, (pitchValue >> 7) & 0x7F, tickNow);
+  }
 }
 
 void MidiHandler::handleAfterTouch(byte channel, byte pressure, uint32_t tickNow) {
@@ -200,7 +214,10 @@ void MidiHandler::handleAfterTouch(byte channel, byte pressure, uint32_t tickNow
 }
 
 void MidiHandler::handleProgramChange(byte channel, byte program, uint32_t tickNow) {
+  // Route to track recording (skip control channels 13-16)
+  if (!isControlChannel(channel)) {
   trackManager.getSelectedTrack().recordMidiEvents(midi::ProgramChange, channel, program, 0, tickNow);
+  }
 }
 
 void MidiHandler::handleMidiStart() {
