@@ -99,6 +99,8 @@ public:
             uint8_t note, velocity;
             uint32_t startTick, endTick;
             uint32_t originalLength; // Store original note length for consistent restoration
+            bool wasShortened = false; // true if note was shortened, false if completely deleted
+            uint32_t shortenedToTick = 0; // if shortened, what tick it was shortened to
         };
         std::vector<DeletedNote> deletedNotes;
         bool undoSnapshotPushed = false; // snapshot only once after first movement
