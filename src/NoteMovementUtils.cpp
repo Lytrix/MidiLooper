@@ -446,8 +446,9 @@ void moveNoteWithOverlapHandling(Track& track, EditManager& manager,
     uint32_t currentStart = manager.movingNote.lastStart;
     uint32_t currentEnd = manager.movingNote.lastEnd;
     
-    // Store original position for phantom note detection (before any updates)
-    uint32_t originalStart = currentStart;
+    // Store original position for phantom note detection - use the stable original position
+    // from when movement first began, not the current position
+    uint32_t originalStart = manager.movingNote.origStart;
     
     logger.log(CAT_MIDI, LOG_DEBUG, "Moving note: pitch=%d, start=%lu, end=%lu", 
               movingNotePitch, currentStart, currentEnd);

@@ -2042,7 +2042,140 @@ void MidiButtonManager::handleNoteValueFaderInput(uint8_t ccValue, Track& track)
         logger.log(CAT_MIDI, LOG_DEBUG, "Note value fader: currentNote=%d newNote=%d (cc=%d)", 
                    currentNoteValue, newNoteValue, ccValue);
         
-        // Find and update both note-on and note-off events
+        // If the pitch isn't changing, no need to do anything
+        if (currentNoteValue == newNoteValue) {
+            return;
+        }
+        
+        // Before changing pitch, handle overlaps and restoration
+        uint32_t noteStart = notes[selectedIdx].startTick;
+        uint32_t noteEnd = notes[selectedIdx].endTick;
+        
+        // STEP 1: Check if we should restore any previously deleted/shortened notes
+        // When changing pitch, we should restore all notes of the current pitch since they won't overlap anymore
+        std::vector<EditManager::MovingNoteIdentity::DeletedNote> notesToRestore;
+        
+        for (const auto& deletedNote : editManager.movingNote.deletedNotes) {
+            // Restore all deleted notes that match the current pitch (before change)
+            // Since we're changing to a different pitch, these notes of the old pitch no longer have overlap conflicts
+            if (deletedNote.note == currentNoteValue) {
+                notesToRestore.push_back(deletedNote);
+                logger.log(CAT_MIDI, LOG_DEBUG, "Will restore note after pitch change: pitch=%d, start=%lu, end=%lu (no longer conflicts with new pitch %d)", 
+                          deletedNote.note, deletedNote.startTick, deletedNote.endTick, newNoteValue);
+            }
+        }
+        
+        // Apply restoration if needed
+        if (!notesToRestore.empty()) {
+            auto [onIndex, offIndex] = NoteUtils::buildEventIndex(midiEvents);
+            NoteMovementUtils::restoreNotes(midiEvents, notesToRestore, editManager, loopLength, onIndex, offIndex);
+            logger.log(CAT_MIDI, LOG_DEBUG, "Restored %zu notes after pitch change", notesToRestore.size());
+        }
+        
+        // STEP 2: Check for overlaps with notes of the target pitch
+        std::vector<NoteUtils::DisplayNote> otherNotesOfTargetPitch;
+        
+        // Reconstruct notes after potential restoration
+        notes = NoteUtils::reconstructNotes(midiEvents, loopLength);
+        
+        // Create a set of restored note positions to avoid processing them as overlaps
+        std::set<std::pair<uint32_t, uint32_t>> restoredNotePositions;
+        for (const auto& restored : notesToRestore) {
+            restoredNotePositions.insert({restored.startTick, restored.endTick});
+        }
+        
+        for (const auto& note : notes) {
+            // Only include notes of the target pitch that are NOT the current note
+            if (note.note == newNoteValue && 
+                !(note.startTick == noteStart && note.endTick == noteEnd)) {
+                
+                // Skip notes that were just restored to avoid immediately shortening them
+                bool wasJustRestored = restoredNotePositions.count({note.startTick, note.endTick}) > 0;
+                if (wasJustRestored) {
+                    logger.log(CAT_MIDI, LOG_DEBUG, "Skipping recently restored note from overlap processing: pitch=%d, start=%lu, end=%lu", 
+                              note.note, note.startTick, note.endTick);
+                    continue;
+                }
+                
+                otherNotesOfTargetPitch.push_back(note);
+            }
+        }
+        
+        if (!otherNotesOfTargetPitch.empty()) {
+            logger.log(CAT_MIDI, LOG_DEBUG, "Found %zu notes of target pitch %d, checking for overlaps", 
+                      otherNotesOfTargetPitch.size(), newNoteValue);
+            
+            // Use the existing overlap handling logic from NoteMovementUtils
+            std::vector<std::pair<NoteUtils::DisplayNote, uint32_t>> notesToShorten;
+            std::vector<NoteUtils::DisplayNote> notesToDelete;
+            
+            for (const auto& note : otherNotesOfTargetPitch) {
+                bool overlaps = NoteMovementUtils::notesOverlap(noteStart, noteEnd, note.startTick, note.endTick, loopLength);
+                if (!overlaps) continue;
+                
+                // Check if the overlapping note is completely contained within the current note's position
+                bool noteCompletelyContained = false;
+                
+                // Handle both wrapped and unwrapped cases  
+                if (noteEnd >= noteStart) {
+                    // Current note doesn't wrap around
+                    noteCompletelyContained = (note.startTick >= noteStart && note.endTick <= noteEnd);
+                } else {
+                    // Current note wraps around the loop boundary
+                    noteCompletelyContained = (note.startTick >= noteStart || note.endTick <= noteEnd);
+                }
+                
+                if (noteCompletelyContained) {
+                    // Delete the note entirely if it's completely contained within the current note
+                    notesToDelete.push_back(note);
+                    logger.log(CAT_MIDI, LOG_DEBUG, "Will delete completely contained note: pitch=%d, start=%lu, end=%lu (within current note %lu-%lu)", 
+                              note.note, note.startTick, note.endTick, noteStart, noteEnd);
+                } else {
+                    // Try to shorten the overlapping note
+                    uint32_t newNoteEndTick;
+                    
+                    if (note.startTick < noteStart) {
+                        // Note starts before current note - shorten it to end 1 tick before current note starts
+                        if (noteStart == 0) {
+                            // Handle wrap-around case - if current note starts at 0, shortened note ends at loop end - 1
+                            newNoteEndTick = loopLength - 1;
+                        } else {
+                            newNoteEndTick = noteStart - 1;
+                        }
+                    } else {
+                        // Note starts after current note starts - this shouldn't happen in normal overlap cases
+                        // but handle it by deleting the note
+                        notesToDelete.push_back(note);
+                        logger.log(CAT_MIDI, LOG_DEBUG, "Will delete overlapping note that starts after current note: pitch=%d, start=%lu, end=%lu", 
+                                  note.note, note.startTick, note.endTick);
+                        continue;
+                    }
+                    
+                    uint32_t shortenedLength = NoteMovementUtils::calculateNoteLength(note.startTick, newNoteEndTick, loopLength);
+                    
+                    // Check if shortened length would be less than 49 ticks
+                    if (shortenedLength < 49) {
+                        notesToDelete.push_back(note);
+                        logger.log(CAT_MIDI, LOG_DEBUG, "Will delete note (too short after shortening): pitch=%d, start=%lu, end=%lu->%lu, length=%lu < 49", 
+                                  note.note, note.startTick, note.endTick, newNoteEndTick, shortenedLength);
+                    } else {
+                        notesToShorten.push_back({note, newNoteEndTick});
+                        logger.log(CAT_MIDI, LOG_DEBUG, "Will shorten note: pitch=%d, start=%lu, end=%lu->%lu, length=%lu", 
+                                  note.note, note.startTick, note.endTick, newNoteEndTick, shortenedLength);
+                    }
+                }
+            }
+            
+            // Apply the overlap changes using the existing infrastructure
+            if (!notesToShorten.empty() || !notesToDelete.empty()) {
+                auto [onIndex, offIndex] = NoteUtils::buildEventIndex(midiEvents);
+                NoteMovementUtils::applyShortenOrDelete(midiEvents, notesToShorten, notesToDelete, editManager, loopLength, onIndex, offIndex);
+                logger.log(CAT_MIDI, LOG_DEBUG, "Applied pitch change overlaps: %zu shortened, %zu deleted", 
+                          notesToShorten.size(), notesToDelete.size());
+            }
+        }
+        
+        // Now update the pitch of the current note
         bool noteOnUpdated = false;
         bool noteOffUpdated = false;
         
@@ -2080,6 +2213,13 @@ void MidiButtonManager::handleNoteValueFaderInput(uint8_t ccValue, Track& track)
         if (noteOnUpdated && noteOffUpdated) {
             logger.log(CAT_MIDI, LOG_DEBUG, "Note value changed successfully: %d -> %d", 
                        currentNoteValue, newNoteValue);
+            
+            // Update the moving note identity to reflect the new pitch
+            if (editManager.movingNote.note == currentNoteValue) {
+                logger.log(CAT_MIDI, LOG_DEBUG, "Updating moving note identity: pitch %d -> %d", 
+                          editManager.movingNote.note, newNoteValue);
+                editManager.movingNote.note = newNoteValue;
+            }
             
             // Update the selected note index to point to the updated note
             auto updatedNotes = NoteUtils::reconstructNotes(midiEvents, loopLength);
