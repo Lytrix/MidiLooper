@@ -6,7 +6,7 @@
 #include "Track.h"
 #include "Logger.h"
 #include "TrackUndo.h"
-#include "NoteUtils.h"
+#include "Utils/NoteUtils.h"
 #include "Globals.h"
 #include <algorithm>
 

@@ -6,11 +6,12 @@
 #include "Track.h"
 #include "Logger.h"
 #include "TrackUndo.h"
-#include "NoteUtils.h"
 #include "ClockManager.h"
 #include "MidiHandler.h"
 #include "MidiButtonManager.h"
 #include "Globals.h"
+#include "Utils/NoteUtils.h"
+#include "Utils/ValidationUtils.h"
 #include <algorithm>
 
 void EditSelectNoteState::onEnter(EditManager& manager, Track& track, uint32_t startTick) {
@@ -45,8 +46,8 @@ void EditSelectNoteState::onExit(EditManager& manager, Track& track) {
 void EditSelectNoteState::onEncoderTurn(EditManager& manager, Track& track, int delta) {
     logger.debug("EditSelectNoteState::onEncoderTurn called with delta=%d", delta);
     
+    if (!ValidationUtils::validateLoopLength(track.getLoopLength())) return;
     uint32_t loopLength = track.getLoopLength();
-    if (loopLength == 0) return;
     
     // In SELECT mode, we want to navigate sequentially through notes by start position
     // rather than using grid-based movement with snap windows
@@ -102,8 +103,8 @@ void EditSelectNoteState::updateForOverdubbing(EditManager& manager, Track& trac
     // Check if new MIDI events have been added
     if (currentEventCount > lastMidiEventCount) {
         // Find the most recent NoteOn event
+        if (!ValidationUtils::validateLoopLength(track.getLoopLength())) return;
         uint32_t loopLength = track.getLoopLength();
-        if (loopLength == 0) return;
         
         const auto& notes = track.getCachedNotes();
         if (!notes.empty()) {
@@ -179,8 +180,8 @@ void EditSelectNoteState::createDefaultNote(Track& track, uint32_t tick) const {
 }
 
 void EditSelectNoteState::selectNextNoteSequential(EditManager& manager, Track& track) {
+    if (!ValidationUtils::validateLoopLength(track.getLoopLength())) return;
     uint32_t loopLength = track.getLoopLength();
-    if (loopLength == 0) return;
     
     // Get cached notes and make a mutable copy for sorting
     auto notes = track.getCachedNotes();  // Copy for sorting
@@ -260,8 +261,8 @@ int EditSelectNoteState::findNoteIndexInOriginalList(const NoteUtils::DisplayNot
 } 
 
 void EditSelectNoteState::selectPreviousNoteSequential(EditManager& manager, Track& track) {
+    if (!ValidationUtils::validateLoopLength(track.getLoopLength())) return;
     uint32_t loopLength = track.getLoopLength();
-    if (loopLength == 0) return;
     
     // Get cached notes and make a mutable copy for sorting
     auto notes = track.getCachedNotes();  // Copy for sorting
@@ -317,7 +318,7 @@ void EditSelectNoteState::sendTargetPitchbend(EditManager& manager, Track& track
     uint32_t loopLength = track.getLoopLength();
     uint32_t bracketTick = manager.getBracketTick();
     
-    if (loopLength == 0) {
+    if (!ValidationUtils::validateLoopLength(loopLength)) {
         logger.log(CAT_MIDI, LOG_DEBUG, "Target pitchbend: No loop length, cannot calculate");
         return;
     }
@@ -375,11 +376,7 @@ void EditSelectNoteState::sendTargetPitchbend(EditManager& manager, Track& track
         std::sort(allPositions.begin(), allPositions.end());
         
         // Remove duplicate positions
-        for (int i = allPositions.size() - 1; i > 0; i--) {
-            if (allPositions[i] == allPositions[i-1]) {
-                allPositions.erase(allPositions.begin() + i);
-            }
-        }
+        ValidationUtils::removeDuplicates(allPositions);
         
         logger.log(CAT_MIDI, LOG_DEBUG, "Target pitchbend: Final navigation positions: %lu", allPositions.size());
         

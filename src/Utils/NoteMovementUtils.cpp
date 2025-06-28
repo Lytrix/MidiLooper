@@ -1,9 +1,11 @@
 //  Copyright (c)  2025 Lytrix (Eelke Jager)
 //  Licensed under the PolyForm Noncommercial 1.0.0
 
-#include "NoteMovementUtils.h"
+
 #include "Logger.h"
 #include "Globals.h"
+#include "Utils/MidiEventUtils.h"
+#include "Utils/NoteMovementUtils.h"
 #include <algorithm>
 
 namespace NoteMovementUtils {
@@ -169,14 +171,8 @@ void applyShortenOrDelete(std::vector<MidiEvent>& midiEvents,
             existingEntry->shortenedToTick = newEnd;
         } else {
             // Record original for undo - currentOffTick remains as dn.endTick (original position)
-            EditManager::MovingNoteIdentity::DeletedNote original;
-            original.note = dn.note;
-            original.velocity = dn.velocity;
-            original.startTick = dn.startTick;
-            original.endTick = dn.endTick;
-            original.originalLength = calculateNoteLength(dn.startTick, dn.endTick, loopLength);
-            original.wasShortened = true;
-            original.shortenedToTick = newEnd;
+            EditManager::MovingNoteIdentity::DeletedNote original = MidiEventUtils::createDeletedNote(
+                dn, loopLength, true, newEnd);
             
             manager.movingNote.deletedNotes.push_back(original);
             logger.log(CAT_MIDI, LOG_DEBUG, "Stored original note before shortening: pitch=%d, start=%lu, original_end=%lu, shortened_to=%lu, length=%lu",
@@ -270,14 +266,8 @@ void applyShortenOrDelete(std::vector<MidiEvent>& midiEvents,
         
         if (existingDeleted == manager.movingNote.deletedNotes.end()) {
             // Save deleted note for undo (only if not already stored)
-            EditManager::MovingNoteIdentity::DeletedNote deleted;
-            deleted.note = dn.note;
-            deleted.velocity = dn.velocity;
-            deleted.startTick = dn.startTick;
-            deleted.endTick = dn.endTick;
-            deleted.originalLength = calculateNoteLength(dn.startTick, dn.endTick, loopLength);
-            deleted.wasShortened = false;
-            deleted.shortenedToTick = 0;
+            EditManager::MovingNoteIdentity::DeletedNote deleted = MidiEventUtils::createDeletedNote(
+                dn, loopLength, false, 0);
             
             manager.movingNote.deletedNotes.push_back(deleted);
             logger.log(CAT_MIDI, LOG_DEBUG, "Stored deleted note: pitch=%d, start=%lu, end=%lu, length=%lu",

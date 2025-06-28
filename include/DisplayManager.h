@@ -13,7 +13,7 @@
 #include <vector>
 #include <cstdint>
 #include "MidiEvent.h"
-#include "NoteUtils.h"
+#include "Utils/NoteUtils.h"
 
 // Shared struct for UI note representation
 using DisplayNote = NoteUtils::DisplayNote;

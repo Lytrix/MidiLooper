@@ -10,7 +10,7 @@
 #include "Logger.h"
 #include <map>
 #include "TrackUndo.h"
-#include "NoteUtils.h"
+#include "Utils/NoteUtils.h"
 
 using DisplayNote = NoteUtils::DisplayNote;
 

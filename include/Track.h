@@ -12,7 +12,7 @@
 #include <deque>          // For undo
 #include "MidiEvent.h"
 #include "MidiHandler.h"
-#include "NoteUtils.h"    // For CachedNoteList
+#include "Utils/NoteUtils.h"    // For CachedNoteList
 
 class TrackUndo; // Forward declaration
 

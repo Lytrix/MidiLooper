@@ -4,7 +4,7 @@
 #include <cstdint>
 #include <set>
 #include "Globals.h"
-#include "NoteMovementUtils.h"
+
 #include "ClockManager.h"
 #include "TrackManager.h"
 #include "MidiButtonManager.h"
@@ -15,7 +15,10 @@
 #include "EditManager.h"
 #include "EditStates/EditLengthNoteState.h"
 #include "EditStates/EditSelectNoteState.h"
-#include "NoteUtils.h"
+#include "Utils/NoteUtils.h"
+#include "Utils/NoteMovementUtils.h"
+#include "Utils/ValidationUtils.h"
+#include "Utils/MidiEventUtils.h"
 
 MidiButtonManager midiButtonManager;
 
@@ -392,8 +395,8 @@ void MidiButtonManager::handleMidiPitchbend(uint8_t channel, int16_t pitchValue)
         
         Track& track = trackManager.getSelectedTrack();
         auto& midiEvents = track.getMidiEvents();
+        if (!ValidationUtils::validateLoopLength(track.getLoopLength())) return;
         uint32_t loopLength = track.getLoopLength();
-        if (loopLength == 0) return;
         
         // Use the same navigation logic as before
         uint32_t numSteps = loopLength / Config::TICKS_PER_16TH_STEP;
@@ -419,11 +422,7 @@ void MidiButtonManager::handleMidiPitchbend(uint8_t channel, int16_t pitchValue)
         }
         
         // Remove duplicates
-        for (int i = allPositions.size() - 1; i > 0; i--) {
-            if (allPositions[i] == allPositions[i-1]) {
-                allPositions.erase(allPositions.begin() + i);
-            }
-        }
+        ValidationUtils::removeDuplicates(allPositions);
         
         if (!allPositions.empty()) {
             int posIndex = map(pitchValue, PITCHBEND_MIN, PITCHBEND_MAX, 0, allPositions.size() - 1);
@@ -492,8 +491,8 @@ void MidiButtonManager::handleMidiPitchbend(uint8_t channel, int16_t pitchValue)
         }
         
         Track& track = trackManager.getSelectedTrack();
+        if (!ValidationUtils::validateLoopLength(track.getLoopLength())) return;
         uint32_t loopLength = track.getLoopLength();
-        if (loopLength == 0) return;
         
         const auto& notes = track.getCachedNotes();
         int selectedIdx = editManager.getSelectedNoteIdx();
@@ -577,8 +576,8 @@ void MidiButtonManager::handleMidiCC2Fine(uint8_t channel, uint8_t ccNumber, uin
     }
     
     Track& track = trackManager.getSelectedTrack();
+    if (!ValidationUtils::validateLoopLength(track.getLoopLength())) return;
     uint32_t loopLength = track.getLoopLength();
-    if (loopLength == 0) return;
     
             const auto& notes = track.getCachedNotes();
         int selectedIdx = editManager.getSelectedNoteIdx();
@@ -2374,14 +2373,8 @@ void MidiButtonManager::applyTemporaryOverlapChanges(std::vector<MidiEvent>& mid
         
         if (!existingEntry) {
             // First time shortening this note - record the original
-            EditManager::MovingNoteIdentity::DeletedNote original;
-            original.note = dn.note;
-            original.velocity = dn.velocity;
-            original.startTick = dn.startTick;
-            original.endTick = dn.endTick;  // Store original end tick
-            original.originalLength = calculateNoteLength(dn.startTick, dn.endTick, loopLength);
-            original.wasShortened = true;
-            original.shortenedToTick = newEnd;  // Current shortened position
+            EditManager::MovingNoteIdentity::DeletedNote original = MidiEventUtils::createDeletedNote(
+                dn, loopLength, true, newEnd);
             
             manager.movingNote.deletedNotes.push_back(original);
             logger.log(CAT_MIDI, LOG_DEBUG, "Stored original note before shortening: pitch=%d, start=%lu, original_end=%lu, shortened_to=%lu, length=%lu",
@@ -2448,14 +2441,8 @@ void MidiButtonManager::applyTemporaryOverlapChanges(std::vector<MidiEvent>& mid
         }
         
         // Save deleted note for restoration
-        EditManager::MovingNoteIdentity::DeletedNote deleted;
-        deleted.note = dn.note;
-        deleted.velocity = dn.velocity;
-        deleted.startTick = dn.startTick;
-        deleted.endTick = dn.endTick;
-        deleted.originalLength = calculateNoteLength(dn.startTick, dn.endTick, loopLength);
-        deleted.wasShortened = false;  // Mark as completely deleted
-        deleted.shortenedToTick = 0;   // Not applicable for deleted notes
+        EditManager::MovingNoteIdentity::DeletedNote deleted = MidiEventUtils::createDeletedNote(
+            dn, loopLength, false, 0);
         
         // Check for duplicates before adding
         bool alreadyExists = false;

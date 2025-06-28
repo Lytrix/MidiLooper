@@ -3,7 +3,7 @@
 
 #pragma once
 #include "EditState.h"
-#include "NoteUtils.h"
+#include "Utils/NoteUtils.h"
 
 class EditManager;
 class Track;

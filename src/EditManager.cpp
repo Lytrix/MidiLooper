@@ -5,17 +5,17 @@
 #include "EditNoteState.h"
 #include "EditStates/EditSelectNoteState.h"
 #include "Track.h"
-#include <algorithm>
-#include <vector>
-#include <cmath>
 #include "LooperState.h"
 #include "Globals.h"
 #include "TrackManager.h"
 #include "MidiEvent.h"
-#include <map>
 #include "TrackUndo.h"
 #include "Logger.h"
-#include "NoteUtils.h"
+#include "Utils/NoteUtils.h"
+#include <algorithm>
+#include <map>
+#include <vector>
+#include <cmath>
 
 using DisplayNote = NoteUtils::DisplayNote;
 
