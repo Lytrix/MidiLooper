@@ -145,6 +145,29 @@ void EditManager::enterEditMode(EditState* newState, uint32_t startTick) {
 }
 
 void EditManager::exitEditMode(Track& track) {
+    // Check if we need to pop undo due to no net changes before exiting
+    if (currentState == &startNoteState) {
+        auto* s = static_cast<EditStartNoteState*>(currentState);
+        if (TrackUndo::computeMidiHash(track) == s->getInitialHash()) {
+            TrackUndo::popLastUndo(track);
+            logger.debug("No net change in start edit, popped undo snapshot on exit");
+        }
+    }
+    else if (currentState == &lengthNoteState) {
+        auto* l = static_cast<EditLengthNoteState*>(currentState);
+        if (TrackUndo::computeMidiHash(track) == l->getInitialHash()) {
+            TrackUndo::popLastUndo(track);
+            logger.debug("No net change in length edit, popped undo snapshot on exit");
+        }
+    }
+    else if (currentState == &pitchNoteState) {
+        auto* p = static_cast<EditPitchNoteState*>(currentState);
+        if (TrackUndo::computeMidiHash(track) == p->getInitialHash()) {
+            TrackUndo::popLastUndo(track);
+            logger.debug("No net change in pitch edit, popped undo snapshot on exit");
+        }
+    }
+    
     selectedNoteIdx = -1;
     hasMovedBracket = false;
     if (currentState) currentState->onExit(*this, track);
@@ -217,7 +240,22 @@ void EditManager::enterPitchEditMode(Track& track) {
 }
 
 void EditManager::exitPitchEditMode(Track& track) {
-    if (previousState) setState(previousState, track, bracketTick);
+    // If we're going back to a previous state, setState will handle hash checking
+    if (previousState) {
+        setState(previousState, track, bracketTick);
+    } else {
+        // If no previous state, we need to manually check for changes before exiting
+        if (currentState == &pitchNoteState) {
+            auto* p = static_cast<EditPitchNoteState*>(currentState);
+            if (TrackUndo::computeMidiHash(track) == p->getInitialHash()) {
+                TrackUndo::popLastUndo(track);
+                logger.debug("No net change in pitch edit, popped undo snapshot on pitch exit");
+            }
+        }
+        // Exit the current state
+        if (currentState) currentState->onExit(*this, track);
+        currentState = nullptr;
+    }
     previousState = nullptr;
 }
 
