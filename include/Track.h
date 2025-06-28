@@ -12,6 +12,7 @@
 #include <deque>          // For undo
 #include "MidiEvent.h"
 #include "MidiHandler.h"
+#include "NoteUtils.h"    // For CachedNoteList
 
 class TrackUndo; // Forward declaration
 
@@ -138,6 +139,30 @@ public:
   /// Immutable access to midiEvents (for const Track)
   const std::vector<MidiEvent>& getMidiEvents() const { return midiEvents; }
 
+  // ==========================================
+  // OPTIMIZATION: Cached Note Access
+  // ==========================================
+  
+  /// Get cached display notes - avoids expensive reconstructNotes() calls
+  const std::vector<NoteUtils::DisplayNote>& getCachedNotes() const {
+    return noteCache.getNotes(midiEvents, loopLengthTicks);
+  }
+  
+  /// Get cached event index - avoids expensive index rebuilding
+  const NoteUtils::EventIndex& getCachedEventIndex() const {
+    if (!eventIndexValid) {
+      cachedEventIndex = NoteUtils::buildEventIndex(midiEvents);
+      eventIndexValid = true;
+    }
+    return cachedEventIndex;
+  }
+  
+  /// Invalidate caches when MIDI events change
+  void invalidateCaches() {
+    noteCache.invalidate();
+    eventIndexValid = false;
+  }
+
 private:
   friend class TrackUndo;
   friend class StorageManager;  // Allow StorageManager to access private members for loading
@@ -167,6 +192,17 @@ private:
   std::deque<std::vector<MidiEvent>> clearMidiHistory;
   std::deque<TrackState> clearStateHistory;
   std::deque<uint32_t> clearLengthHistory;
+
+  // ==========================================
+  // OPTIMIZATION: Performance Caches
+  // ==========================================
+  
+  /// Cached note list to avoid expensive reconstructNotes() calls
+  mutable NoteUtils::CachedNoteList noteCache;
+  
+  /// Cached event index for fast event lookup  
+  mutable NoteUtils::EventIndex cachedEventIndex;
+  mutable bool eventIndexValid = false;
 
 };
 

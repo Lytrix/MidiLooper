@@ -191,8 +191,8 @@ void DisplayManager::drawGridLines(uint32_t lengthLoop, int pianoRollY0, int pia
 }
 
 // --- Helper: Draw all notes ---
-void DisplayManager::drawAllNotes(const std::vector<MidiEvent>& midiEvents, uint32_t startLoop, uint32_t lengthLoop, int minPitch, int maxPitch) {
-    auto notes = NoteUtils::reconstructNotes(midiEvents, lengthLoop);
+void DisplayManager::drawAllNotes(const Track& track, uint32_t startLoop, uint32_t lengthLoop, int minPitch, int maxPitch) {
+    const auto& notes = track.getCachedNotes();
 
     // Highlight if in note, select-note, start-note, length-note, or pitch-note edit state
     int highlight = (editManager.getCurrentState() == editManager.getNoteState() ||
@@ -274,12 +274,11 @@ void DisplayManager::drawNoteBar(const DisplayNote& e, int y, uint32_t s, uint32
     }
 }
 
-// --- Draw piano roll using midiEvents ---
+// --- Draw piano roll using cached notes ---
 void DisplayManager::drawPianoRoll(uint32_t currentTick, Track& selectedTrack) {
     auto& track = selectedTrack;
     uint32_t startLoop = 0; // Always start at bar 1 visually
     uint32_t lengthLoop = track.getLoopLength();
-    const auto& midiEvents = track.getMidiEvents();
 
     //setLastPlayedNote(nullptr); // Reset at the start
     const int pianoRollY0 = 0;
@@ -292,7 +291,7 @@ void DisplayManager::drawPianoRoll(uint32_t currentTick, Track& selectedTrack) {
         // Compute min/max pitch for scaling
         int minPitch = 127;
         int maxPitch = 0;
-        auto notes = NoteUtils::reconstructNotes(midiEvents, lengthLoop);
+        const auto& notes = track.getCachedNotes();
         for (const auto& n : notes) {
             if (n.note < minPitch) minPitch = n.note;
             if (n.note > maxPitch) maxPitch = n.note;
@@ -300,7 +299,7 @@ void DisplayManager::drawPianoRoll(uint32_t currentTick, Track& selectedTrack) {
         if (minPitch > maxPitch) { minPitch = 60; maxPitch = 72; } // fallback
 
         drawGridLines(lengthLoop, pianoRollY0, pianoRollY1);
-        drawAllNotes(midiEvents, startLoop, lengthLoop, minPitch, maxPitch); // includes selected note
+        drawAllNotes(track, startLoop, lengthLoop, minPitch, maxPitch); // includes selected note
         drawBracket(editManager.getBracketTick(), lengthLoop, pianoRollY1);
       
         int cx = TRACK_MARGIN + map(loopPos, 0, lengthLoop, 0, DISPLAY_WIDTH - 1 - TRACK_MARGIN);
@@ -353,12 +352,11 @@ void DisplayManager::drawInfoArea(uint32_t currentTick, Track& selectedTrack) {
     drawInfoField("U", undoStr, undoX, y, false, 5);
 }
 
-// --- Draw note info using midiEvents ---
+// --- Draw note info using cached notes ---
 void DisplayManager::drawNoteInfo(uint32_t currentTick, Track& selectedTrack) {
     char startStr[24] = {0};
-    const auto& midiEvents = selectedTrack.getMidiEvents();
     uint32_t lengthLoop = selectedTrack.getLoopLength();
-    auto notes = NoteUtils::reconstructNotes(midiEvents, lengthLoop);
+    const auto& notes = selectedTrack.getCachedNotes();
 
     const DisplayNote* noteToShow = nullptr;
     uint32_t displayStartTick = 0;

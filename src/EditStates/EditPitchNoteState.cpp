@@ -23,9 +23,8 @@ void EditPitchNoteState::onEnter(EditManager& manager, Track& track, uint32_t st
     
     // Move bracket to the start of the selected note for pitch editing
     if (manager.getSelectedNoteIdx() >= 0) {
-        auto& midiEvents = track.getMidiEvents();
-        uint32_t loopLength = track.getLoopLength();
-        auto notes = NoteUtils::reconstructNotes(midiEvents, loopLength);
+          uint32_t loopLength = track.getLoopLength();
+  const auto& notes = track.getCachedNotes();
         
         if (manager.getSelectedNoteIdx() < (int)notes.size()) {
             auto& selectedNote = notes[manager.getSelectedNoteIdx()];
@@ -46,8 +45,8 @@ void EditPitchNoteState::onEncoderTurn(EditManager& manager, Track& track, int d
     if (noteIdx < 0) return;
     auto& midiEvents = track.getMidiEvents();
     uint32_t loopLength = track.getLoopLength();
-    // Reconstruct notes using shared utility
-    auto notes = NoteUtils::reconstructNotes(midiEvents, loopLength);
+    // Use cached notes for optimal performance
+    const auto& notes = track.getCachedNotes();
     
     if (noteIdx >= (int)notes.size()) return;
     // Find the corresponding MidiEvent indices for this note

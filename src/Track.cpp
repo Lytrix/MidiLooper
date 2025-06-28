@@ -93,6 +93,10 @@ void Track::startRecording(uint32_t currentTick) {
 
   // Stamp the new start tick quantized to a beat.
   startLoopTick = currentTick;
+  
+  // OPTIMIZATION: Invalidate caches when MIDI events change
+  invalidateCaches();
+  
   logger.logTrackEvent("Recording started", currentTick);
 }
 
@@ -112,6 +116,9 @@ void Track::shiftMidiEvents(int32_t offset) {
     }
     std::sort(midiEvents.begin(), midiEvents.end(),
               [](auto &a, auto &b){ return a.tick < b.tick; });
+    
+    // OPTIMIZATION: Invalidate caches when MIDI events change
+    invalidateCaches();
 }
 
 uint32_t Track::findLastEventTick() const {
@@ -169,6 +176,9 @@ void Track::finalizePendingNotes(uint32_t offAbsTick) {
 
     // Restore the real state
     trackState = prev;
+    
+    // OPTIMIZATION: Invalidate caches when MIDI events change
+    invalidateCaches();
 }
 
 // -------------------------
@@ -196,6 +206,10 @@ void Track::stopRecording(uint32_t currentTick) {
   nextEventIndex = 0;
   lastTickInLoop = 0;
   startLoopTick = 0;
+  
+  // OPTIMIZATION: Invalidate caches when MIDI events or loop length change
+  invalidateCaches();
+  
   logger.logTrackEvent("Recording stopped", currentTick, "start=%lu length=%lu", startLoopTick, loopLengthTicks);
   logger.debug("Final ticks: currentTick=%lu startLoopTick=%lu rawLength=%lu", currentTick, startLoopTick, rawLength);
 
@@ -312,6 +326,9 @@ void Track::clear() {
     // Go back to "never recorded"
     setState(TRACK_EMPTY);
 
+    // OPTIMIZATION: Invalidate caches when MIDI events change
+    invalidateCaches();
+
     // Log the clear action
     logger.logTrackEvent("Track cleared", clockManager.getCurrentTick());
 }
@@ -341,24 +358,31 @@ void Track::recordMidiEvents(midi::MidiType type, byte channel, byte data1, byte
       }
     }
 
+    bool eventAdded = false;
     switch (type) {
         case midi::NoteOn:
             midiEvents.push_back(MidiEvent::NoteOn(tickRelative, channel, data1, data2));
+            eventAdded = true;
             break;
         case midi::NoteOff:
             midiEvents.push_back(MidiEvent::NoteOff(tickRelative, channel, data1, data2));
+            eventAdded = true;
             break;
         case midi::ControlChange:
             midiEvents.push_back(MidiEvent::ControlChange(tickRelative, channel, data1, data2));
+            eventAdded = true;
             break;
         case midi::ProgramChange:
             midiEvents.push_back(MidiEvent::ProgramChange(tickRelative, channel, data1));
+            eventAdded = true;
             break;
         case midi::AfterTouchChannel:
             midiEvents.push_back(MidiEvent::ChannelAftertouch(tickRelative, channel, data1));
+            eventAdded = true;
             break;
         case midi::PitchBend:
             midiEvents.push_back(MidiEvent::PitchBend(tickRelative, channel, (int16_t)((data2 << 7) | data1)));
+            eventAdded = true;
             break;
         // Add other cases as needed
         default:
@@ -366,14 +390,19 @@ void Track::recordMidiEvents(midi::MidiType type, byte channel, byte data1, byte
             break;
     }
 
-    // Log the event
-    if (!midiEvents.empty()) {
-        logger.logMidiEvent(midiEvents.back());
-    }
-    // **Keep events sorted by tick** so playback scanning never misses a wrapped-back note during overdubbing
-    std::sort(midiEvents.begin(), midiEvents.end(),
-            [](auto &a, auto &b){ return a.tick < b.tick; });
+    if (eventAdded) {
+        // Log the event
+        if (!midiEvents.empty()) {
+            logger.logMidiEvent(midiEvents.back());
+        }
+        
+        // **Keep events sorted by tick** so playback scanning never misses a wrapped-back note during overdubbing
+        std::sort(midiEvents.begin(), midiEvents.end(),
+                [](auto &a, auto &b){ return a.tick < b.tick; });
 
+        // OPTIMIZATION: Invalidate caches when MIDI events change
+        invalidateCaches();
+    }
   }
 }
 

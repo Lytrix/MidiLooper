@@ -397,7 +397,7 @@ void MidiButtonManager::handleMidiPitchbend(uint8_t channel, int16_t pitchValue)
         
         // Use the same navigation logic as before
         uint32_t numSteps = loopLength / Config::TICKS_PER_16TH_STEP;
-        auto notes = NoteUtils::reconstructNotes(midiEvents, loopLength);
+        const auto& notes = track.getCachedNotes();
         std::vector<uint32_t> allPositions;
         
         for (uint32_t step = 0; step < numSteps; step++) {
@@ -495,8 +495,7 @@ void MidiButtonManager::handleMidiPitchbend(uint8_t channel, int16_t pitchValue)
         uint32_t loopLength = track.getLoopLength();
         if (loopLength == 0) return;
         
-        auto& midiEvents = track.getMidiEvents();
-        auto notes = NoteUtils::reconstructNotes(midiEvents, loopLength);
+        const auto& notes = track.getCachedNotes();
         int selectedIdx = editManager.getSelectedNoteIdx();
         
         if (selectedIdx >= 0 && selectedIdx < (int)notes.size()) {
@@ -581,9 +580,8 @@ void MidiButtonManager::handleMidiCC2Fine(uint8_t channel, uint8_t ccNumber, uin
     uint32_t loopLength = track.getLoopLength();
     if (loopLength == 0) return;
     
-    auto& midiEvents = track.getMidiEvents();
-    auto notes = NoteUtils::reconstructNotes(midiEvents, loopLength);
-    int selectedIdx = editManager.getSelectedNoteIdx();
+            const auto& notes = track.getCachedNotes();
+        int selectedIdx = editManager.getSelectedNoteIdx();
     
     if (selectedIdx >= 0 && selectedIdx < (int)notes.size()) {
         // Use the reference 16th step set by coarse movement (not current note position)
@@ -864,8 +862,8 @@ void MidiButtonManager::deleteSelectedNote(Track& track) {
     uint32_t loopLength = track.getLoopLength();
     if (loopLength == 0) return;
     
-    // Reconstruct notes to find the selected one
-    auto notes = NoteUtils::reconstructNotes(midiEvents, loopLength);
+    // Use cached notes to find the selected one
+    const auto& notes = track.getCachedNotes();
     if (editManager.getSelectedNoteIdx() >= (int)notes.size()) {
         logger.info("MIDI Encoder: Selected note index out of range");
         return;
@@ -943,7 +941,7 @@ void MidiButtonManager::sendStartNotePitchbend(Track& track) {
     // This ensures both fader 1 and fader 2 use the same reference position
     uint32_t bracketTick = editManager.getBracketTick();
     
-    auto notes = NoteUtils::reconstructNotes(midiEvents, loopLength);
+    const auto& notes = track.getCachedNotes();
     int selectedIdx = editManager.getSelectedNoteIdx();
     
     if (selectedIdx >= 0 && selectedIdx < (int)notes.size()) {
@@ -1594,7 +1592,7 @@ void MidiButtonManager::sendCoarseFaderPosition(Track& track) {
     uint32_t loopLength = track.getLoopLength();
     if (loopLength == 0) return;
     
-    auto notes = NoteUtils::reconstructNotes(midiEvents, loopLength);
+    const auto& notes = track.getCachedNotes();
     int selectedIdx = editManager.getSelectedNoteIdx();
     
     // Double-check that the selected note index is still valid after potential note modifications
@@ -1651,11 +1649,10 @@ void MidiButtonManager::sendFineFaderPosition(Track& track) {
         return;
     }
     
-    auto& midiEvents = track.getMidiEvents();
     uint32_t loopLength = track.getLoopLength();
     if (loopLength == 0) return;
     
-    auto notes = NoteUtils::reconstructNotes(midiEvents, loopLength);
+    const auto& notes = track.getCachedNotes();
     int selectedIdx = editManager.getSelectedNoteIdx();
     
     // Double-check that the selected note index is still valid after potential note modifications
@@ -1708,11 +1705,10 @@ void MidiButtonManager::sendNoteValueFaderPosition(Track& track) {
         return;
     }
     
-    auto& midiEvents = track.getMidiEvents();
     uint32_t loopLength = track.getLoopLength();
     if (loopLength == 0) return;
     
-    auto notes = NoteUtils::reconstructNotes(midiEvents, loopLength);
+    const auto& notes = track.getCachedNotes();
     int selectedIdx = editManager.getSelectedNoteIdx();
     
     // Double-check that the selected note index is still valid after potential note modifications
@@ -1788,13 +1784,12 @@ void MidiButtonManager::handleSelectFaderInput(int16_t pitchValue, Track& track)
         return;
     }
     
-    auto& midiEvents = track.getMidiEvents();
     uint32_t loopLength = track.getLoopLength();
     if (loopLength == 0) return;
     
     // Use the same navigation logic for note selection
     uint32_t numSteps = loopLength / Config::TICKS_PER_16TH_STEP;
-    auto notes = NoteUtils::reconstructNotes(midiEvents, loopLength);
+    const auto& notes = track.getCachedNotes();
     std::vector<uint32_t> allPositions;
     
     for (uint32_t step = 0; step < numSteps; step++) {
@@ -1886,7 +1881,7 @@ void MidiButtonManager::handleCoarseFaderInput(int16_t pitchValue, Track& track)
     if (loopLength == 0) return;
     
     auto& midiEvents = track.getMidiEvents();
-    auto notes = NoteUtils::reconstructNotes(midiEvents, loopLength);
+    const auto& notes = track.getCachedNotes();
     int selectedIdx = editManager.getSelectedNoteIdx();
     
     if (selectedIdx >= 0 && selectedIdx < (int)notes.size()) {
@@ -1958,8 +1953,7 @@ void MidiButtonManager::handleFineFaderInput(uint8_t ccValue, Track& track) {
     uint32_t loopLength = track.getLoopLength();
     if (loopLength == 0) return;
     
-    auto& midiEvents = track.getMidiEvents();
-    auto notes = NoteUtils::reconstructNotes(midiEvents, loopLength);
+    const auto& notes = track.getCachedNotes();
     int selectedIdx = editManager.getSelectedNoteIdx();
     
     if (selectedIdx >= 0 && selectedIdx < (int)notes.size()) {
@@ -2030,7 +2024,7 @@ void MidiButtonManager::handleNoteValueFaderInput(uint8_t ccValue, Track& track)
     if (loopLength == 0) return;
     
     auto& midiEvents = track.getMidiEvents();
-    auto notes = NoteUtils::reconstructNotes(midiEvents, loopLength);
+    const auto& notes = track.getCachedNotes();
     int selectedIdx = editManager.getSelectedNoteIdx();
     
     if (selectedIdx >= 0 && selectedIdx < (int)notes.size()) {
@@ -2076,8 +2070,8 @@ void MidiButtonManager::handleNoteValueFaderInput(uint8_t ccValue, Track& track)
         // STEP 2: Check for overlaps with notes of the target pitch
         std::vector<NoteUtils::DisplayNote> otherNotesOfTargetPitch;
         
-        // Reconstruct notes after potential restoration
-        notes = NoteUtils::reconstructNotes(midiEvents, loopLength);
+        // Get fresh note list after potential restoration
+        notes = track.getCachedNotes();
         
         // Create a set of restored note positions to avoid processing them as overlaps
         std::set<std::pair<uint32_t, uint32_t>> restoredNotePositions;

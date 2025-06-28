@@ -406,7 +406,7 @@ void EditStartNoteState::onEncoderTurn(EditManager& manager, Track& track, int d
         
         // Try to activate based on selected note
         if (manager.getSelectedNoteIdx() >= 0) {
-            auto notes = NoteUtils::reconstructNotes(midiEvents, loopLength);
+            const auto& notes = track.getCachedNotes();
             if (manager.getSelectedNoteIdx() < (int)notes.size()) {
                 auto& note = notes[manager.getSelectedNoteIdx()];
                 manager.movingNote.note = note.note;

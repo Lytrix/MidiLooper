@@ -55,7 +55,7 @@ public:
     // Helper functions for piano roll rendering
     void drawGridLines(uint32_t lengthLoop, int pianoRollY0, int pianoRollY1);
     void drawNoteBar(const DisplayNote& e, int y, uint32_t s, uint32_t eTick, uint32_t lengthLoop, int noteBrightness);
-    void drawAllNotes(const std::vector<MidiEvent>& midiEvents, uint32_t startLoop, uint32_t lengthLoop, int minPitch, int maxPitch);
+    void drawAllNotes(const Track& track, uint32_t startLoop, uint32_t lengthLoop, int minPitch, int maxPitch);
     void drawBracket(uint32_t bracketTick, uint32_t lengthLoop, int pianoRollY1);
 
 private:
