@@ -3,6 +3,34 @@
 
 #include "NoteUtils.h"
 
+// CachedNoteList implementation
+uint32_t NoteUtils::CachedNoteList::computeMidiHash(const std::vector<MidiEvent>& midiEvents) {
+    uint32_t hash = 2166136261u; // FNV-1a initial value
+    for (const auto& evt : midiEvents) {
+        hash ^= static_cast<uint32_t>(evt.type); hash *= 16777619u;
+        hash ^= evt.tick; hash *= 16777619u;
+        hash ^= evt.data.noteData.note; hash *= 16777619u;
+        hash ^= evt.data.noteData.velocity; hash *= 16777619u;
+    }
+    return hash;
+}
+
+const std::vector<NoteUtils::DisplayNote>& NoteUtils::CachedNoteList::getNotes(const std::vector<MidiEvent>& midiEvents, uint32_t loopLength) {
+    uint32_t currentHash = computeMidiHash(midiEvents);
+    
+    if (isValid && currentHash == lastMidiHash && loopLength == lastLoopLength) {
+        return cachedNotes; // Return cached result
+    }
+    
+    // Cache miss - rebuild notes
+    cachedNotes = reconstructNotes(midiEvents, loopLength);
+    lastMidiHash = currentHash;
+    lastLoopLength = loopLength;
+    isValid = true;
+    
+    return cachedNotes;
+}
+
 std::vector<NoteUtils::DisplayNote> NoteUtils::reconstructNotes(const std::vector<MidiEvent>& midiEvents, uint32_t loopLength) {
     using DisplayNote = NoteUtils::DisplayNote;
     std::vector<DisplayNote> notes;

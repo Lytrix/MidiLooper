@@ -76,9 +76,8 @@ void EditManager::onButtonPress(Track& track) {
 }
 
 void EditManager::selectClosestNote(Track& track, uint32_t startTick) {
-    const auto& midiEvents = track.getMidiEvents();
-    // Reconstruct note list using shared helper
-    auto notes = NoteUtils::reconstructNotes(midiEvents, track.getLoopLength());
+    // Use cached note list for optimal performance
+    const auto& notes = track.getCachedNotes();
     
     // If no notes, just place bracket at exact tick
     if (notes.empty()) {
@@ -175,11 +174,10 @@ void EditManager::exitEditMode(Track& track) {
 }
 
 void EditManager::moveBracket(int delta, const Track& track, uint32_t ticksPerStep) {
-    const auto& midiEvents = track.getMidiEvents();
     uint32_t loopLength = track.getLoopLength();
     if (loopLength == 0) return;
-    // Reconstruct note list using shared helper
-    auto notes = NoteUtils::reconstructNotes(midiEvents, loopLength);
+    // Use cached note list for optimal performance
+    const auto& notes = track.getCachedNotes();
     
     const uint32_t SNAP_WINDOW = 24;
     if (delta > 0) {

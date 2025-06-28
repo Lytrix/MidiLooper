@@ -105,7 +105,7 @@ void EditSelectNoteState::updateForOverdubbing(EditManager& manager, Track& trac
         uint32_t loopLength = track.getLoopLength();
         if (loopLength == 0) return;
         
-        auto notes = NoteUtils::reconstructNotes(midiEvents, loopLength);
+        const auto& notes = track.getCachedNotes();
         if (!notes.empty()) {
             // Find the most recently added note by looking for the highest start tick
             // in the current loop position range
@@ -179,12 +179,11 @@ void EditSelectNoteState::createDefaultNote(Track& track, uint32_t tick) const {
 }
 
 void EditSelectNoteState::selectNextNoteSequential(EditManager& manager, Track& track) {
-    const auto& midiEvents = track.getMidiEvents();
     uint32_t loopLength = track.getLoopLength();
     if (loopLength == 0) return;
     
-    // Reconstruct note list using shared helper
-    auto notes = NoteUtils::reconstructNotes(midiEvents, loopLength);
+    // Get cached notes and make a mutable copy for sorting
+    auto notes = track.getCachedNotes();  // Copy for sorting
     
     if (notes.empty()) {
         // No notes - move to next 16th note grid position
@@ -221,7 +220,7 @@ void EditSelectNoteState::selectNextNoteSequential(EditManager& manager, Track& 
         manager.setBracketTick(notes[nextIdx].startTick % loopLength);
         
         // Find the index of this note in the original unsorted notes list for display highlighting
-        auto originalNotes = NoteUtils::reconstructNotes(midiEvents, loopLength);
+        const auto& originalNotes = track.getCachedNotes();
         int originalIdx = findNoteIndexInOriginalList(notes[nextIdx], originalNotes);
         manager.setSelectedNoteIdx(originalIdx);
     } else {
@@ -261,12 +260,11 @@ int EditSelectNoteState::findNoteIndexInOriginalList(const NoteUtils::DisplayNot
 } 
 
 void EditSelectNoteState::selectPreviousNoteSequential(EditManager& manager, Track& track) {
-    const auto& midiEvents = track.getMidiEvents();
     uint32_t loopLength = track.getLoopLength();
     if (loopLength == 0) return;
     
-    // Reconstruct note list using shared helper
-    auto notes = NoteUtils::reconstructNotes(midiEvents, loopLength);
+    // Get cached notes and make a mutable copy for sorting
+    auto notes = track.getCachedNotes();  // Copy for sorting
     
     if (notes.empty()) {
         // No notes - move to previous 16th note grid position
@@ -303,7 +301,7 @@ void EditSelectNoteState::selectPreviousNoteSequential(EditManager& manager, Tra
         manager.setBracketTick(notes[prevIdx].startTick % loopLength);
         
         // Find the index of this note in the original unsorted notes list for display highlighting
-        auto originalNotes = NoteUtils::reconstructNotes(midiEvents, loopLength);
+        const auto& originalNotes = track.getCachedNotes();
         int originalIdx = findNoteIndexInOriginalList(notes[prevIdx], originalNotes);
         manager.setSelectedNoteIdx(originalIdx);
     } else {
@@ -331,7 +329,7 @@ void EditSelectNoteState::sendTargetPitchbend(EditManager& manager, Track& track
     
     if (numSteps > 0) {
         // Create the same combined list that MidiButtonManager uses
-        auto notes = NoteUtils::reconstructNotes(midiEvents, loopLength);
+        const auto& notes = track.getCachedNotes();
         std::vector<uint32_t> allPositions;  // Positions to navigate through
         
         // Add all 16th step positions, checking for nearby notes

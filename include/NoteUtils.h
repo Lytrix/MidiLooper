@@ -24,6 +24,27 @@ namespace NoteUtils {
  };
 
 /**
+ * @class CachedNoteList
+ * @brief Caches reconstructed notes to avoid expensive recalculation
+ */
+class CachedNoteList {
+private:
+    std::vector<DisplayNote> cachedNotes;
+    uint32_t lastMidiHash;
+    uint32_t lastLoopLength;
+    bool isValid;
+
+public:
+    CachedNoteList() : lastMidiHash(0), lastLoopLength(0), isValid(false) {}
+    
+    const std::vector<DisplayNote>& getNotes(const std::vector<MidiEvent>& midiEvents, uint32_t loopLength);
+    void invalidate() { isValid = false; }
+    
+private:
+    uint32_t computeMidiHash(const std::vector<MidiEvent>& midiEvents);
+};
+
+/**
  * @brief Reconstructs a list of DisplayNote from raw MIDI events using LIFO pairing.
  *
  * Matches NoteOn/NoteOff (or NoteOn with zero velocity) events per pitch in LIFO order,

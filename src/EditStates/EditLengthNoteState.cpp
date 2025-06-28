@@ -24,9 +24,8 @@ void EditLengthNoteState::onEnter(EditManager& manager, Track& track, uint32_t s
     
     if (manager.getSelectedNoteIdx() >= 0) {
         // Move bracket to the end of the selected note for length editing
-        auto& midiEvents = track.getMidiEvents();
-        uint32_t loopLength = track.getLoopLength();
-        auto notes = NoteUtils::reconstructNotes(midiEvents, loopLength);
+          uint32_t loopLength = track.getLoopLength();
+  const auto& notes = track.getCachedNotes();
         
         if (manager.getSelectedNoteIdx() < (int)notes.size()) {
             auto& selectedNote = notes[manager.getSelectedNoteIdx()];
@@ -66,8 +65,8 @@ void EditLengthNoteState::onEncoderTurn(EditManager& manager, Track& track, int 
         return;
     }
     
-    // Reconstruct notes to find the selected one
-    auto notes = NoteUtils::reconstructNotes(midiEvents, loopLength);
+    // Use cached notes to find the selected one
+    const auto& notes = track.getCachedNotes();
     if (manager.getSelectedNoteIdx() >= (int)notes.size()) {
         logger.debug("EditLengthNoteState: Selected note index %d out of range (notes size: %zu)", 
                      manager.getSelectedNoteIdx(), notes.size());
@@ -143,7 +142,7 @@ void EditLengthNoteState::onEncoderTurn(EditManager& manager, Track& track, int 
     manager.setBracketTick(newEnd % loopLength);
     
     // Re-select the note by finding it again in the updated note list
-    auto updatedNotes = NoteUtils::reconstructNotes(midiEvents, loopLength);
+    const auto& updatedNotes = track.getCachedNotes();
     for (int i = 0; i < (int)updatedNotes.size(); ++i) {
         if (updatedNotes[i].note == notePitch && updatedNotes[i].startTick == noteStart) {
             manager.setSelectedNoteIdx(i);
