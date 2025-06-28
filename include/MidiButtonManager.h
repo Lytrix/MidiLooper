@@ -158,7 +158,7 @@ private:
     
     // Grace period for note selection (prevent selection changes during editing)
     uint32_t lastEditingActivityTime = 0;
-    static constexpr uint32_t NOTE_SELECTION_GRACE_PERIOD = 1500; // 1.5 seconds
+    static constexpr uint32_t NOTE_SELECTION_GRACE_PERIOD = 0; // Disabled - allow fader1 during edit mode
     
     // Feedback prevention for motorized faders
     uint32_t lastPitchbendSentTime = 0;
