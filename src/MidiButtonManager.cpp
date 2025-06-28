@@ -1087,22 +1087,23 @@ void MidiButtonManager::enableStartEditing() {
                 // Check if there are already scheduled updates pending - if so, let them handle the sync
                 bool hasScheduledUpdates = false;
                 for (const auto& state : faderStates) {
-                    if (state.pendingUpdate && (state.type == FADER_COARSE || state.type == FADER_FINE)) {
+                    if (state.pendingUpdate && (state.type == FADER_COARSE || state.type == FADER_FINE || state.type == FADER_NOTE_VALUE)) {
                         hasScheduledUpdates = true;
                         break;
                     }
                 }
                 
                 if (!hasScheduledUpdates) {
-                    // Use unified fader system to update position faders (2 and 3)
+                    // Use unified fader system to update position faders (2, 3) and note value fader (4)
                     // This ensures proper ignore periods are set to prevent feedback loops
                     Track& track = trackManager.getSelectedTrack();
                     
                     // Send updates through unified system - this will set proper ignore periods
                     sendFaderUpdate(FADER_COARSE, track);
                     sendFaderUpdate(FADER_FINE, track);
+                    sendFaderUpdate(FADER_NOTE_VALUE, track);
                     
-                    logger.log(CAT_MIDI, LOG_DEBUG, "Updated fader 2/3 positions via unified system with proper ignore periods");
+                    logger.log(CAT_MIDI, LOG_DEBUG, "Updated fader 2/3/4 positions via unified system with proper ignore periods");
                 } else {
                     logger.log(CAT_MIDI, LOG_DEBUG, "Skipping grace period updates - scheduled updates are pending");
                 }
