@@ -7,13 +7,13 @@
 #include "ClockManager.h"
 #include "Globals.h"
 #include "SSD1322_Config.h"
-#include <Font5x7Fixed.h>
-#include <Font5x7FixedMono.h>
 #include "TrackUndo.h"
 #include "Logger.h"
+#include "Utils/NoteUtils.h"
 #include <map>
 #include <string>
-#include "NoteUtils.h"
+#include <Font5x7Fixed.h>
+#include <Font5x7FixedMono.h>
 
 DisplayManager displayManager;
 

@@ -3,7 +3,7 @@
 
 #pragma once
 #include "EditState.h"
-#include "NoteUtils.h"
+#include "Utils/NoteUtils.h"
 #include <vector>
 #include <utility>
 #include <cstdint>

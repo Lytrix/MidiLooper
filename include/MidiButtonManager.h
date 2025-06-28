@@ -7,7 +7,7 @@
 #include <Arduino.h>
 #include <cstdint>
 #include <vector>
-#include "NoteUtils.h"
+#include "Utils/NoteUtils.h"
 #include "EditManager.h"
 
 enum MidiButtonAction {

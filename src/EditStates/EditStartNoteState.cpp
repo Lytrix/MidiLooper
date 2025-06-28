@@ -12,7 +12,7 @@
 #include <map>
 #include "Globals.h"
 #include "TrackUndo.h"
-#include "NoteUtils.h"
+#include "Utils/NoteUtils.h"
 #include <unordered_map>
 
 using DisplayNote = NoteUtils::DisplayNote;
