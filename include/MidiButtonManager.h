@@ -14,6 +14,7 @@ enum MidiButtonAction {
     MIDI_BUTTON_NONE,
     MIDI_BUTTON_SHORT_PRESS,
     MIDI_BUTTON_DOUBLE_PRESS,
+    MIDI_BUTTON_TRIPLE_PRESS,
     MIDI_BUTTON_LONG_PRESS
 };
 
@@ -89,6 +90,10 @@ private:
         bool pendingShortPress;
         uint32_t shortPressExpireTime;
         uint8_t noteNumber;
+        // Triple press tracking
+        uint32_t secondTapTime;
+        bool pendingDoublePress;
+        uint32_t doublePressExpireTime;
     };
 
     std::vector<MidiButtonState> buttonStates;

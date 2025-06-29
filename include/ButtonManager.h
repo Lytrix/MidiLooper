@@ -12,6 +12,7 @@ enum ButtonAction {
     BUTTON_NONE,
     BUTTON_SHORT_PRESS,
     BUTTON_DOUBLE_PRESS,
+    BUTTON_TRIPLE_PRESS,
     BUTTON_LONG_PRESS
 };
 
@@ -58,6 +59,10 @@ private:
     std::vector<uint32_t> pressTimes;
     std::vector<bool> pendingShortPress;
     std::vector<uint32_t> shortPressExpireTime;
+    // Helpers for triple tap logic
+    std::vector<uint32_t> secondTapTime;
+    std::vector<bool> pendingDoublePress;
+    std::vector<uint32_t> doublePressExpireTime;
 
     static constexpr uint16_t DOUBLE_TAP_WINDOW = 300;  // ms
     static const uint16_t LONG_PRESS_TIME = 600; // ms

@@ -35,6 +35,10 @@ MidiButtonManager::MidiButtonManager() {
         state.lastTapTime = 0;
         state.pendingShortPress = false;
         state.shortPressExpireTime = 0;
+        // Initialize triple press tracking
+        state.secondTapTime = 0;
+        state.pendingDoublePress = false;
+        state.doublePressExpireTime = 0;
     }
 }
 
@@ -52,6 +56,10 @@ void MidiButtonManager::setup() {
         state.lastTapTime = 0;
         state.pendingShortPress = false;
         state.shortPressExpireTime = 0;
+        // Initialize triple press tracking
+        state.secondTapTime = 0;
+        state.pendingDoublePress = false;
+        state.doublePressExpireTime = 0;
     }
     
     // Initialize unified fader state machine
@@ -103,15 +111,30 @@ void MidiButtonManager::handleMidiNote(uint8_t channel, uint8_t note, uint8_t ve
                        buttonId, note, duration);
             
             if (duration >= LONG_PRESS_TIME) {
-                // Long press
+                // Long press - cancel any pending presses
+                state.lastTapTime = 0;
+                state.pendingShortPress = false;
+                state.secondTapTime = 0;
+                state.pendingDoublePress = false;
                 handleButton(buttonId, MIDI_BUTTON_LONG_PRESS);
             } else {
+                // Check for triple press first
+                if (state.pendingDoublePress && (now - state.secondTapTime <= DOUBLE_TAP_WINDOW)) {
+                    // Third tap within window - triple press
+                    state.lastTapTime = 0;
+                    state.pendingShortPress = false;
+                    state.secondTapTime = 0;
+                    state.pendingDoublePress = false;
+                    handleButton(buttonId, MIDI_BUTTON_TRIPLE_PRESS);
+                }
                 // Check for double press
-                if (now - state.lastTapTime <= DOUBLE_TAP_WINDOW) {
+                else if (now - state.lastTapTime <= DOUBLE_TAP_WINDOW) {
                     // Second tap within window - double press
                     state.lastTapTime = 0;
                     state.pendingShortPress = false;
-                    handleButton(buttonId, MIDI_BUTTON_DOUBLE_PRESS);
+                    state.secondTapTime = now;
+                    state.pendingDoublePress = true;
+                    state.doublePressExpireTime = now + DOUBLE_TAP_WINDOW;
                 } else {
                     // First tap - delay decision for potential double press
                     state.lastTapTime = now;
@@ -133,6 +156,12 @@ void MidiButtonManager::update() {
         if (state.pendingShortPress && now >= state.shortPressExpireTime) {
             state.pendingShortPress = false;
             handleButton(static_cast<MidiButtonId>(i), MIDI_BUTTON_SHORT_PRESS);
+        }
+        
+        // Process pending double presses that have timed out
+        if (state.pendingDoublePress && now >= state.doublePressExpireTime) {
+            state.pendingDoublePress = false;
+            handleButton(static_cast<MidiButtonId>(i), MIDI_BUTTON_DOUBLE_PRESS);
         }
     }
     
@@ -194,6 +223,7 @@ void MidiButtonManager::handleButton(MidiButtonId button, MidiButtonAction actio
     switch (action) {
         case MIDI_BUTTON_SHORT_PRESS: actionName = "SHORT"; break;
         case MIDI_BUTTON_DOUBLE_PRESS: actionName = "DOUBLE"; break;
+        case MIDI_BUTTON_TRIPLE_PRESS: actionName = "TRIPLE"; break;
         case MIDI_BUTTON_LONG_PRESS: actionName = "LONG"; break;
         default: actionName = "NONE"; break;
     }
@@ -210,6 +240,15 @@ void MidiButtonManager::handleButton(MidiButtonId button, MidiButtonAction actio
                         TrackUndo::undoOverdub(track);
                     } else {
                         logger.info("MIDI Button A: No undo snapshots available (count=%d)", TrackUndo::getUndoCount(track));
+                    }
+                    break;
+                case MIDI_BUTTON_TRIPLE_PRESS:
+                    logger.info("MIDI Button A: Triple press detected");
+                    if (TrackUndo::canRedo(track)) {
+                        logger.info("MIDI Button A: Redo Overdub (redo_snapshots=%d)", TrackUndo::getRedoCount(track));
+                        TrackUndo::redoOverdub(track);
+                    } else {
+                        logger.info("MIDI Button A: No redo snapshots available (count=%d)", TrackUndo::getRedoCount(track));
                     }
                     break;
                 case MIDI_BUTTON_SHORT_PRESS:
@@ -256,6 +295,15 @@ void MidiButtonManager::handleButton(MidiButtonId button, MidiButtonAction actio
                         StorageManager::saveState(looperState.getLooperState());
                     } else {
                         logger.info("Nothing to undo for clear/mute.");
+                    }                
+                    break;
+                case MIDI_BUTTON_TRIPLE_PRESS:
+                    if (TrackUndo::canRedoClearTrack(track)) {
+                        logger.info("MIDI Button B: Redo Clear Track");
+                        TrackUndo::redoClearTrack(track);
+                        StorageManager::saveState(looperState.getLooperState());
+                    } else {
+                        logger.info("Nothing to redo for clear/mute.");
                     }                
                     break;
                 case MIDI_BUTTON_SHORT_PRESS: {

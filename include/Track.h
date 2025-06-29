@@ -193,6 +193,13 @@ private:
   std::deque<TrackState> clearStateHistory;
   std::deque<uint32_t> clearLengthHistory;
 
+  // Redo management
+  std::deque<std::vector<MidiEvent>> midiRedoHistory;
+  // Redo clear track control
+  std::deque<std::vector<MidiEvent>> clearMidiRedoHistory;
+  std::deque<TrackState> clearStateRedoHistory;
+  std::deque<uint32_t> clearLengthRedoHistory;
+
   // ==========================================
   // OPTIMIZATION: Performance Caches
   // ==========================================
