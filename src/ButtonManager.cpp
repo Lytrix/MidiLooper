@@ -23,6 +23,10 @@ ButtonManager::ButtonManager() {
     lastTapTime.clear();
     pendingShortPress.clear();
     shortPressExpireTime.clear();
+    // Initialize triple press tracking
+    secondTapTime.clear();
+    pendingDoublePress.clear();
+    doublePressExpireTime.clear();
     encoderPosition = 0;
     lastEncoderPosition = 0;
     if (DEBUG_BUTTONS) {
@@ -37,6 +41,12 @@ void ButtonManager::setup(const std::vector<uint8_t>& pins) {
     lastTapTime.resize(countPins, 0);
     pendingShortPress.resize(countPins, false);
     shortPressExpireTime.resize(countPins, 0);
+    // Initialize triple press tracking
+    secondTapTime.resize(countPins, 0);
+    pendingDoublePress.resize(countPins, false);
+    doublePressExpireTime.resize(countPins, 0);
+    encoderPosition = 0;
+    lastEncoderPosition = 0;
 
     uint32_t t0 = millis();
 
@@ -52,8 +62,6 @@ void ButtonManager::setup(const std::vector<uint8_t>& pins) {
     }
 
     // encoder.write(0);
-    encoderPosition = 0;
-    lastEncoderPosition = 0;
 
     if (DEBUG_BUTTONS) {
         Serial.print("ButtonManager setup complete with ");
@@ -89,14 +97,30 @@ void ButtonManager::update() {
             }
             uint32_t duration = now - pressTimes[i];
             if (duration >= LONG_PRESS_TIME ) {
+                // Long press - cancel any pending presses
+                lastTapTime[i] = 0;
+                pendingShortPress[i] = false;
+                secondTapTime[i] = 0;
+                pendingDoublePress[i] = false;
                 handleButton(static_cast<ButtonId>(i), BUTTON_LONG_PRESS);
             } else {
-                // Delay decision for short press vs. double tap
-                if (now - lastTapTime[i] <= DOUBLE_TAP_WINDOW) {
-                    // Detected second tap in window → double
+                // Check for triple press first
+                if (pendingDoublePress[i] && (now - secondTapTime[i] <= DOUBLE_TAP_WINDOW)) {
+                    // Third tap within window - triple press
                     lastTapTime[i] = 0;
                     pendingShortPress[i] = false;
-                    handleButton(static_cast<ButtonId>(i), BUTTON_DOUBLE_PRESS);
+                    secondTapTime[i] = 0;
+                    pendingDoublePress[i] = false;
+                    handleButton(static_cast<ButtonId>(i), BUTTON_TRIPLE_PRESS);
+                }
+                // Check for double press
+                else if (now - lastTapTime[i] <= DOUBLE_TAP_WINDOW) {
+                    // Second tap within window - double press
+                    lastTapTime[i] = 0;
+                    pendingShortPress[i] = false;
+                    secondTapTime[i] = now;
+                    pendingDoublePress[i] = true;
+                    doublePressExpireTime[i] = now + DOUBLE_TAP_WINDOW;
                 } else {
                     // First tap
                     lastTapTime[i] = now;
@@ -110,6 +134,12 @@ void ButtonManager::update() {
         if (pendingShortPress[i] && now >= shortPressExpireTime[i]) {
             pendingShortPress[i] = false;
             handleButton(static_cast<ButtonId>(i), BUTTON_SHORT_PRESS);
+        }
+        
+        // Fire double press if timeout expired and no third tap arrived
+        if (pendingDoublePress[i] && now >= doublePressExpireTime[i]) {
+            pendingDoublePress[i] = false;
+            handleButton(static_cast<ButtonId>(i), BUTTON_DOUBLE_PRESS);
         }
     }
 
@@ -199,6 +229,12 @@ void ButtonManager::handleButton(ButtonId button, ButtonAction action) {
                         TrackUndo::undoOverdub(track);
                     }
                     break;
+                case BUTTON_TRIPLE_PRESS:
+                    if (TrackUndo::canRedo(track)) {
+                        if (DEBUG_BUTTONS) Serial.println("Button A: Redo Overdub");
+                        TrackUndo::redoOverdub(track);
+                    }
+                    break;
                 case BUTTON_SHORT_PRESS:
                     if (track.isEmpty()) {
                         if (DEBUG_BUTTONS) Serial.println("Button A: Start Recording");
@@ -244,6 +280,15 @@ void ButtonManager::handleButton(ButtonId button, ButtonAction action) {
                         StorageManager::saveState(looperState.getLooperState());
                     } else {
                         if (DEBUG_BUTTONS) Serial.println("Nothing to undo for clear/mute.");
+                    }                
+                    break;
+                case BUTTON_TRIPLE_PRESS:
+                    if (TrackUndo::canRedoClearTrack(track)) {
+                        if (DEBUG_BUTTONS) Serial.println("Button B: Redo Clear Track");
+                        TrackUndo::redoClearTrack(track);
+                        StorageManager::saveState(looperState.getLooperState());
+                    } else {
+                        if (DEBUG_BUTTONS) Serial.println("Nothing to redo for clear/mute.");
                     }                
                     break;
                 case BUTTON_SHORT_PRESS: {

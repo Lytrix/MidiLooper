@@ -44,7 +44,7 @@ Multi-track MIDI looper with full undo/redo, auto-save/load, and clear visual fe
 - Selection bracket and highlight visually track the moving note
 - Host-side unit tests in `test/` to validate wrap logic and edit behavior
 
-## 🔴 Button A – Recording, Overdubbing, Playback, Undo, and Clear ##
+## 🔴 Button A – Recording, Overdubbing, Playback, Undo, Redo, and Clear ##
 
 | Press #     | From State               | To State                 | Symbol Change | Key Action           |
 | ----------- | ------------------------ | ------------------------ | ------------- | -------------------- |
@@ -54,16 +54,18 @@ Multi-track MIDI looper with full undo/redo, auto-save/load, and clear visual fe
 | 1× (single) | `TRACK_PLAYING`          | `TRACK_OVERDUBBING`      | P → O         | `startOverdubbing()` |
 | 1× (single) | `TRACK_OVERDUBBING`      | `TRACK_PLAYING`          | O → P         | `stopOverdubbing()`  |
 | **Double**  | Any (with undo history)  | No change                | No change     | `undoOverdub()`      |
+| **Triple**  | Any (with redo history)  | No change                | No change     | `redoOverdub()`      |
 | Long        | Any (with data)          | `TRACK_EMPTY`            | → –           | `clearTrack()`       |
 
 
-## 🔵 Button B – Track Select, Mute, and Clear Undo ##
+## 🔵 Button B – Track Select, Mute, Undo Clear, and Redo Clear ##
 
 |  Press #    | From State         | To State           | Key Action                 |
 | ----------- | ------------------ | ------------------ | -------------------------- |
 | 1× (single) | Selected Track     | Select next track  | `setSelectedTrack()`       |
 | Long        | Any                | Mute/Unmute        | `toggleMuteTrack()`        |
 | **Double**  | Cleared track      | Restore last clear | `undoClearTrack()`         |
+| **Triple**  | Any (with redo)    | Redo last clear    | `redoClearTrack()`         |
 
 
 - Retroactive bar-quantized recording (record complete bars, but allow earlier recording start)
@@ -78,10 +80,25 @@ New Loop ready for overdub to add the notes in the first bar.
 
 
 ## 🔄 Undo/Redo System ##
-- **Overdub Undo:** Instantly revert the last overdub layer on any track (Button A double press).
-- **Clear Undo:** Restore the last cleared track (Button B double press).
+
+The looper provides comprehensive undo/redo functionality for both overdub and clear operations:
+
 - **Per-track history:** Each track maintains its own undo/redo history for both overdubs and clears.
-- **Auto-save:** All changes (record, overdub, undo, clear) are saved to SD card immediately.
+- **Automatic snapshots:** Undo snapshots are automatically created before overdubs, edits, and clears.
+- **Hash-based optimization:** Edit operations that result in no net changes automatically discard their undo snapshots.
+- **Triple press redo:** Redo functionality is accessed via triple press on buttons A and B.
+
+### Button Controls:
+- **Button A Double Press:** Undo last overdub operation
+- **Button A Triple Press:** Redo last undone overdub operation  
+- **Button B Double Press:** Undo last clear operation
+- **Button B Triple Press:** Redo last undone clear operation
+
+### Technical Details:
+- Undo history is preserved across sessions via SD card storage
+- Redo history is cleared when new operations are performed (standard behavior)
+- Maximum undo history is configurable via `Config::MAX_UNDO_HISTORY`
+- Both physical buttons and MIDI buttons support the same undo/redo controls
 
 ## 🔧 Module Relationships and Data Flow ##
 

@@ -23,6 +23,10 @@
  * For full-track clear operations, separate clear-track snapshots are managed via
  * pushClearTrackSnapshot and undoClearTrack.
  *
+ * Redo functionality is provided for both overdub and clear operations:
+ *   - redoOverdub(track): restore the next redo snapshot for overdub operations.
+ *   - redoClearTrack(track): restore the next redo snapshot for clear operations.
+ *
  * Internally, snapshots are stored in deques of std::vector<MidiEvent> for efficient
  * push/pop operations.
  */
@@ -32,8 +36,11 @@ public:
     // Undo overdub
     static void pushUndoSnapshot(Track& track);
     static void undoOverdub(Track& track);
+    static void redoOverdub(Track& track);
     static size_t getUndoCount(const Track& track);
+    static size_t getRedoCount(const Track& track);
     static bool canUndo(const Track& track);
+    static bool canRedo(const Track& track);
     static void popLastUndo(Track& track);
     static const std::vector<MidiEvent>& peekLastMidiSnapshot(const Track& track);
     static std::deque<std::vector<MidiEvent>>& getMidiHistory(Track& track);
@@ -41,7 +48,9 @@ public:
     // Undo clear
     static void pushClearTrackSnapshot(Track& track);
     static void undoClearTrack(Track& track);
+    static void redoClearTrack(Track& track);
     static bool canUndoClearTrack(const Track& track);
+    static bool canRedoClearTrack(const Track& track);
     /**
      * @brief Compute a simple rolling hash (FNV-1a) over the track's current MIDI events
      * @param track The track to hash
