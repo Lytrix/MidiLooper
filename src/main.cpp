@@ -8,7 +8,8 @@
 #include "MidiHandler.h"
 #include "TrackManager.h"
 #include "ButtonManager.h"
-#include "MidiButtonManager.h"
+#include "MidiButtonManagerV2.h"
+#include "MidiButtonManager.h"  // Keep temporarily for fader functionality
 #include "DisplayManager.h"
 #include "LooperState.h"
 #include "Looper.h"
@@ -24,7 +25,11 @@ void setup() {
   delay(200);
   digitalWrite(LED_BUILTIN, LOW);
   
-  // Setup MIDI Button Manager instead of physical buttons
+  // Setup new V2 MIDI Button Manager for button handling
+  midiButtonManagerV2.setup();
+  midiButtonManagerV2.loadButtonConfiguration("full");  // Load 40-button configuration
+  
+  // Keep old manager temporarily for fader functionality
   midiButtonManager.setup();
   
   Serial.begin(115200);
@@ -73,7 +78,10 @@ void loop() {
   // Update looper state to set button logic
   looperState.update();
 
-  // Update MIDI button manager instead of physical buttons
+  // Update new V2 MIDI button manager for button handling
+  midiButtonManagerV2.update();
+  
+  // Update old manager for fader functionality
   midiButtonManager.update();
   looper.update();
 
