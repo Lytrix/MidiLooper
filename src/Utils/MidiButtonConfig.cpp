@@ -43,8 +43,11 @@ const std::vector<ButtonConfig>& Config::getButtonConfigs() {
 }
 
 const ButtonConfig* Config::findButtonConfig(uint8_t note, uint8_t channel) {
+    // Convert 0-based channel to 1-based for configuration lookup
+    uint8_t configChannel = channel + 1;
+    
     for (const auto& config : buttonConfigs) {
-        if (config.note == note && config.channel == channel) {
+        if (config.note == note && config.channel == configChannel) {
             return &config;
         }
     }

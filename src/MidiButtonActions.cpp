@@ -9,6 +9,7 @@
 #include "MidiHandler.h"
 #include "TrackUndo.h"
 #include "Logger.h"
+#include "MidiButtonManager.h"
 
 // Global instances (matching your current system)
 extern TrackManager trackManager;
@@ -16,6 +17,7 @@ extern EditManager editManager;
 extern ClockManager clockManager;
 extern MidiHandler midiHandler;
 extern Logger logger;
+extern MidiButtonManager midiButtonManager;
 
 // Global instance
 MidiButtonActions midiButtonActions;
@@ -190,10 +192,8 @@ void MidiButtonActions::handleMuteTrack(uint8_t trackNumber) {
 
 void MidiButtonActions::handleCycleEditMode() {
     Track& track = getCurrentTrack();
-    // Match the exact logic from the original Encoder button short press
-    // This would call your existing cycleEditMode function
-    logger.info("MIDI Encoder: Short press - cycle edit mode");
-    // TODO: Implement via your existing edit mode cycling logic
+    // Call the original MidiButtonManager's cycleEditMode method
+    midiButtonManager.cycleEditMode(track);
 }
 
 void MidiButtonActions::handleExitEditMode() {
@@ -205,9 +205,8 @@ void MidiButtonActions::handleExitEditMode() {
 
 void MidiButtonActions::handleDeleteNote() {
     Track& track = getCurrentTrack();
-    // Match the exact logic from the original Encoder button double press
-    logger.info("MIDI Encoder: Double press - delete selected note");
-    // TODO: Implement via your existing deleteSelectedNote function
+    // Call the original MidiButtonManager's deleteSelectedNote method
+    midiButtonManager.deleteSelectedNote(track);
 }
 
 // Stubbed implementations for future expansion

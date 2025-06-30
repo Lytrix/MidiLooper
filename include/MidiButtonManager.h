@@ -7,96 +7,102 @@
 #include <Arduino.h>
 #include <cstdint>
 #include <vector>
-#include "Utils/NoteUtils.h"
 #include "EditManager.h"
-
-enum MidiButtonAction {
-    MIDI_BUTTON_NONE,
-    MIDI_BUTTON_SHORT_PRESS,
-    MIDI_BUTTON_DOUBLE_PRESS,
-    MIDI_BUTTON_TRIPLE_PRESS,
-    MIDI_BUTTON_LONG_PRESS
-};
-
-enum MidiButtonId {
-    MIDI_BUTTON_A = 0,      // C2 (MIDI note 36)
-    MIDI_BUTTON_B = 1,      // D2 (MIDI note 38) 
-    MIDI_BUTTON_ENCODER = 2 // E2 (MIDI note 40)
-};
-
-// Unified Fader State Machine Types
-enum FaderType {
-    FADER_SELECT = 1,     // Fader 1: Note selection (channel 16, pitchbend)
-    FADER_COARSE = 2,     // Fader 2: Coarse positioning (channel 15, pitchbend)  
-    FADER_FINE = 3,       // Fader 3: Fine positioning (channel 15, CC2)
-    FADER_NOTE_VALUE = 4  // Fader 4: Note value editing (channel 15, CC3)
-};
-
-struct FaderState {
-    FaderType type;
-    uint8_t channel;
-    bool isInitialized;
-    int16_t lastPitchbendValue;
-    uint8_t lastCCValue;
-    uint32_t lastUpdateTime;
-    uint32_t lastSentTime;
-    bool pendingUpdate;
-    uint32_t updateScheduledTime;
-    FaderType scheduledByDriver;  // Which fader was driver when this update was scheduled
-    int16_t lastSentPitchbend;    // Last pitchbend value we sent to this fader
-    uint8_t lastSentCC;           // Last CC value we sent to this fader
-};
+#include "Utils/MidiMapping.h"
+#include "MidiButtonManagerV2.h"
+#include "MidiFaderManagerV2.h"
+#include "MidiFaderProcessor.h"
 
 /**
  * @class MidiButtonManager
- * @brief Manages MIDI note-based button logic, replacing physical buttons with MIDI notes.
+ * @brief Manages MIDI note-based button logic and fader control.
  *
- * Monitors MIDI channel 16 for specific notes:
- *   - C2 (MIDI note 36) = Button A (Record/Overdub)
- *   - D2 (MIDI note 38) = Button B (Play/Stop)  
- *   - E2 (MIDI note 40) = Encoder Button
- *
- * MIDI note behavior:
- *   - Short press = brief note on/off (< 600ms)
- *   - Long press = extended note on (>= 600ms)
- *   - Double press = two note on events within 300ms window
- *
- * The update() method must be called regularly to process timing and dispatch events.
+ * This class serves as the main interface for MIDI control, delegating to specialized handlers:
+ * - MidiButtonHandler for button press/release logic
+ * - MidiFaderHandler for fader control
  */
 class MidiButtonManager {
 public:
     MidiButtonManager();
-
-    void setup();
-    void update();
-    void handleMidiNote(uint8_t channel, uint8_t note, uint8_t velocity, bool isNoteOn);
-    void handleButton(MidiButtonId button, MidiButtonAction action);
-
-    // Encoder handling
-    void handleMidiEncoder(uint8_t channel, uint8_t ccNumber, uint8_t value);
-    void handleMidiPitchbend(uint8_t channel, int16_t pitchValue);
-    void handleMidiCC2Fine(uint8_t channel, uint8_t ccNumber, uint8_t value);
-    void handleMidiCC3NoteValue(uint8_t channel, uint8_t ccNumber, uint8_t value);
-    void processEncoderMovement(int delta);
     
-    // Public access to fader state for smart feedback detection
-    FaderState& getFaderState(FaderType faderType);
+        // Specialized handlers
+    MidiButtonManagerV2 buttonHandler;
+    MidiFaderManagerV2 faderHandler;
+    
+    //void setup();
+    void update();
+    
+    // MIDI input handlers
+    void handleMidiNote(uint8_t channel, uint8_t note, uint8_t velocity, bool isNoteOn);
+    void handleMidiPitchbend(uint8_t channel, int16_t pitchValue);
+    void handleMidiCC(uint8_t channel, uint8_t ccNumber, uint8_t value);
+    
+    // Configuration
+    void addButtonMapping(uint8_t note, uint8_t channel, const std::string& description);
+    void addFaderMapping(uint8_t channel, uint8_t ccNumber, bool usePitchBend, const std::string& description);
+    void setEncoderMapping(uint8_t channel, uint8_t ccNumber, uint8_t upValue, uint8_t downValue, const std::string& description);
+    
+    // Fader handler methods (must be public for MidiFaderActions)
+    void handleSelectFaderInput(int16_t pitchValue, Track& track);
+    void handleCoarseFaderInput(int16_t pitchValue, Track& track);
+    void handleFineFaderInput(uint8_t ccValue, Track& track);
+    void handleNoteValueFaderInput(uint8_t ccValue, Track& track);
+
+    // Edit mode methods (must be public for MidiButtonActions)
+    void cycleEditMode(Track& track);
+    void deleteSelectedNote(Track& track);
+    
+    // Legacy methods - to be replaced by unified system
+    void sendStartNotePitchbend(Track& track);  // Sends coarse pitchbend ch15 and fine CC2 ch15
+    void sendSelectnoteFaderUpdate(Track& track);  // Schedules selectnote pitchbend ch16 update with delay
+    void performSelectnoteFaderUpdate(Track& track);  // Actually sends the selectnote fader update
+    void enableStartEditing();
+    void moveNoteToPosition(Track& track, const NoteUtils::DisplayNote& currentNote, std::uint32_t targetTick);
+    void moveNoteToPositionWithOverlapHandling(Track& track, const NoteUtils::DisplayNote& currentNote, std::uint32_t targetTick, bool commitChanges);
+    void moveNoteToPositionSimple(Track& track, const NoteUtils::DisplayNote& currentNote, std::uint32_t targetTick);
+    void refreshEditingActivity();  // Mark editing activity to prevent note selection changes
+    
+    // Overlap handling helper functions
+    bool notesOverlap(std::uint32_t start1, std::uint32_t end1, std::uint32_t start2, std::uint32_t end2, std::uint32_t loopLength);
+    std::uint32_t calculateNoteLength(std::uint32_t start, std::uint32_t end, std::uint32_t loopLength);
+    MidiEvent* findCorrespondingNoteOff(std::vector<MidiEvent>& midiEvents, MidiEvent* noteOnEvent, uint8_t pitch, std::uint32_t startTick, std::uint32_t endTick);
+    void findOverlapsForMovement(const std::vector<NoteUtils::DisplayNote>& currentNotes,
+                                uint8_t movingNotePitch, std::uint32_t currentStart, std::uint32_t newStart, std::uint32_t newEnd,
+                                int delta, std::uint32_t loopLength,
+                                std::vector<std::pair<NoteUtils::DisplayNote, std::uint32_t>>& notesToShorten,
+                                std::vector<NoteUtils::DisplayNote>& notesToDelete);
+    void applyTemporaryOverlapChanges(std::vector<MidiEvent>& midiEvents,
+                                     const std::vector<std::pair<NoteUtils::DisplayNote, std::uint32_t>>& notesToShorten,
+                                     const std::vector<NoteUtils::DisplayNote>& notesToDelete,
+                                     EditManager& manager, std::uint32_t loopLength,
+                                     NoteUtils::EventIndexMap& onIndex, NoteUtils::EventIndexMap& offIndex);
+    void restoreTemporaryNotes(std::vector<MidiEvent>& midiEvents,
+                              const std::vector<EditManager::MovingNoteIdentity::DeletedNote>& notesToRestore,
+                              EditManager& manager, std::uint32_t loopLength,
+                              NoteUtils::EventIndexMap& onIndex, NoteUtils::EventIndexMap& offIndex);
+    
+    void extendShortenedNotes(std::vector<MidiEvent>& midiEvents,
+                             const std::vector<std::pair<EditManager::MovingNoteIdentity::DeletedNote, std::uint32_t>>& notesToExtend,
+                             EditManager& manager, std::uint32_t loopLength);
+
+    // MidiButtonId getNoteButtonId(uint8_t note);
+    bool isValidNote(uint8_t note);
 
 private:
-    struct MidiButtonState {
-        bool isPressed;
-        uint32_t pressStartTime;
-        uint32_t lastTapTime;
-        bool pendingShortPress;
-        uint32_t shortPressExpireTime;
-        uint8_t noteNumber;
-        // Triple press tracking
-        uint32_t secondTapTime;
-        bool pendingDoublePress;
-        uint32_t doublePressExpireTime;
-    };
+    // struct MidiButtonState {
+    //     bool isPressed;
+    //     uint32_t pressStartTime;
+    //     uint32_t lastTapTime;
+    //     bool pendingShortPress;
+    //     uint32_t shortPressExpireTime;
+    //     uint8_t noteNumber;
+    //     // Triple press tracking
+    //     uint32_t secondTapTime;
+    //     bool pendingDoublePress;
+    //     uint32_t doublePressExpireTime;
+    // };
 
-    std::vector<MidiButtonState> buttonStates;
+   // std::vector<MidiButtonState> buttonStates;
     
     static constexpr uint16_t DOUBLE_TAP_WINDOW = 300;  // ms
     static constexpr uint16_t LONG_PRESS_TIME = 600;   // ms
@@ -182,28 +188,24 @@ private:
     uint32_t lastSelectnoteFaderTime = 0;
     static constexpr uint32_t SELECTNOTE_PROTECTION_PERIOD = 2000; // Don't update fader 2 for 2 seconds after fader 1 activity
     
-    std::vector<FaderState> faderStates;
+    std::vector<MidiFaderProcessor::FaderState> faderStates;
     uint32_t lastDriverFaderUpdateTime = 0;
-    FaderType currentDriverFader = FADER_SELECT;
+    MidiMapping::FaderType currentDriverFader = MidiMapping::FaderType::FADER_SELECT;
     uint32_t lastDriverFaderTime = 0;
     static constexpr uint32_t FADER_UPDATE_DELAY = 1500; // 1.5 seconds delay for other faders
     static constexpr uint32_t FEEDBACK_IGNORE_PERIOD = 1500; // 1.5s to ignore feedback
     
     // Unified fader methods
     void initializeFaderStates();
-    void handleFaderInput(FaderType faderType, int16_t pitchbendValue = 0, uint8_t ccValue = 0);
+    void handleFaderInput(MidiMapping::FaderType faderType, int16_t pitchbendValue = 0, uint8_t ccValue = 0);
     void updateFaderStates();
-    void scheduleOtherFaderUpdates(FaderType driverFader);
-    void sendFaderUpdate(FaderType faderType, Track& track);
-    void sendFaderPosition(FaderType faderType, Track& track);
-    bool shouldIgnoreFaderInput(FaderType faderType);
-    bool shouldIgnoreFaderInput(FaderType faderType, int16_t pitchbendValue, uint8_t ccValue);
+    void scheduleOtherFaderUpdates(MidiMapping::FaderType driverFader);
+    void sendFaderUpdate(MidiMapping::FaderType faderType, Track& track);
+    void sendFaderPosition(MidiMapping::FaderType faderType, Track& track);
+    bool shouldIgnoreFaderInput(MidiMapping::FaderType faderType);
+    bool shouldIgnoreFaderInput(MidiMapping::FaderType faderType, int16_t pitchbendValue, uint8_t ccValue);
     
     // Individual fader handler methods
-    void handleSelectFaderInput(int16_t pitchValue, Track& track);
-    void handleCoarseFaderInput(int16_t pitchValue, Track& track);
-    void handleFineFaderInput(uint8_t ccValue, Track& track);
-    void handleNoteValueFaderInput(uint8_t ccValue, Track& track);
     void sendCoarseFaderPosition(Track& track);
     void sendFineFaderPosition(Track& track);
     void sendNoteValueFaderPosition(Track& track);
@@ -217,46 +219,8 @@ private:
         EDIT_MODE_PITCH = 4     // Change note pitch
     };
     EditModeState currentEditMode = EDIT_MODE_NONE;
-    void cycleEditMode(Track& track);
     void enterNextEditMode(Track& track);
-    void deleteSelectedNote(Track& track);
     void sendEditModeProgram(EditModeState mode);
-    
-    // Legacy methods - to be replaced by unified system
-    void sendStartNotePitchbend(Track& track);  // Sends coarse pitchbend ch15 and fine CC2 ch15
-    void sendSelectnoteFaderUpdate(Track& track);  // Schedules selectnote pitchbend ch16 update with delay
-    void performSelectnoteFaderUpdate(Track& track);  // Actually sends the selectnote fader update
-    void enableStartEditing();
-    void moveNoteToPosition(Track& track, const NoteUtils::DisplayNote& currentNote, std::uint32_t targetTick);
-    void moveNoteToPositionWithOverlapHandling(Track& track, const NoteUtils::DisplayNote& currentNote, std::uint32_t targetTick, bool commitChanges);
-    void moveNoteToPositionSimple(Track& track, const NoteUtils::DisplayNote& currentNote, std::uint32_t targetTick);
-    void refreshEditingActivity();  // Mark editing activity to prevent note selection changes
-    
-    // Overlap handling helper functions
-    bool notesOverlap(std::uint32_t start1, std::uint32_t end1, std::uint32_t start2, std::uint32_t end2, std::uint32_t loopLength);
-    std::uint32_t calculateNoteLength(std::uint32_t start, std::uint32_t end, std::uint32_t loopLength);
-    MidiEvent* findCorrespondingNoteOff(std::vector<MidiEvent>& midiEvents, MidiEvent* noteOnEvent, uint8_t pitch, std::uint32_t startTick, std::uint32_t endTick);
-    void findOverlapsForMovement(const std::vector<NoteUtils::DisplayNote>& currentNotes,
-                                uint8_t movingNotePitch, std::uint32_t currentStart, std::uint32_t newStart, std::uint32_t newEnd,
-                                int delta, std::uint32_t loopLength,
-                                std::vector<std::pair<NoteUtils::DisplayNote, std::uint32_t>>& notesToShorten,
-                                std::vector<NoteUtils::DisplayNote>& notesToDelete);
-    void applyTemporaryOverlapChanges(std::vector<MidiEvent>& midiEvents,
-                                     const std::vector<std::pair<NoteUtils::DisplayNote, std::uint32_t>>& notesToShorten,
-                                     const std::vector<NoteUtils::DisplayNote>& notesToDelete,
-                                     EditManager& manager, std::uint32_t loopLength,
-                                     NoteUtils::EventIndexMap& onIndex, NoteUtils::EventIndexMap& offIndex);
-    void restoreTemporaryNotes(std::vector<MidiEvent>& midiEvents,
-                              const std::vector<EditManager::MovingNoteIdentity::DeletedNote>& notesToRestore,
-                              EditManager& manager, std::uint32_t loopLength,
-                              NoteUtils::EventIndexMap& onIndex, NoteUtils::EventIndexMap& offIndex);
-    
-    void extendShortenedNotes(std::vector<MidiEvent>& midiEvents,
-                             const std::vector<std::pair<EditManager::MovingNoteIdentity::DeletedNote, std::uint32_t>>& notesToExtend,
-                             EditManager& manager, std::uint32_t loopLength);
-
-    MidiButtonId getNoteButtonId(uint8_t note);
-    bool isValidNote(uint8_t note);
 };
 
 extern MidiButtonManager midiButtonManager;

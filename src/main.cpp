@@ -9,7 +9,8 @@
 #include "TrackManager.h"
 #include "ButtonManager.h"
 #include "MidiButtonManagerV2.h"
-#include "MidiButtonManager.h"  // Keep temporarily for fader functionality
+#include "MidiFaderManagerV2.h"
+#include "MidiButtonManager.h"  // Keep temporarily for move note logic
 #include "DisplayManager.h"
 #include "LooperState.h"
 #include "Looper.h"
@@ -29,8 +30,12 @@ void setup() {
   midiButtonManagerV2.setup();
   midiButtonManagerV2.loadButtonConfiguration("full");  // Load 40-button configuration
   
-  // Keep old manager temporarily for fader functionality
-  midiButtonManager.setup();
+  // Setup new V2 MIDI Fader Manager for fader handling
+  midiFaderManagerV2.setup();
+  midiFaderManagerV2.loadFaderConfiguration("basic");  // Load 4-fader configuration
+  
+  // Keep old manager temporarily for move note logic
+  //midiButtonManager.setup();
   
   Serial.begin(115200);
   while (!Serial && millis() < 2000) delay(10);  // Teensy-safe wait
@@ -81,7 +86,10 @@ void loop() {
   // Update new V2 MIDI button manager for button handling
   midiButtonManagerV2.update();
   
-  // Update old manager for fader functionality
+  // Update new V2 MIDI fader manager for fader handling
+  midiFaderManagerV2.update();
+  
+  // Update old manager for move note logic
   midiButtonManager.update();
   looper.update();
 

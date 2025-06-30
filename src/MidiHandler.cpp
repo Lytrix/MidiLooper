@@ -9,6 +9,7 @@
 #include "MidiEvent.h"
 #include "MidiButtonManager.h"
 #include "MidiButtonManagerV2.h"
+#include "MidiFaderManagerV2.h"
 
 MIDI_CREATE_INSTANCE(HardwareSerial, Serial8, MIDIserial);  // Teensy Serial8 for 5-pin DIN MIDI
 
@@ -175,7 +176,7 @@ void MidiHandler::handleNoteOn(byte channel, byte note, byte velocity, uint32_t 
   midiButtonManagerV2.handleMidiNote(channel, note, velocity, true);
   
   // Keep routing to old manager for fader functionality (temporary)
-  midiButtonManager.handleMidiNote(channel, note, velocity, true);
+  //midiButtonManager.handleMidiNote(channel, note, velocity, true);
   
   // Route to track recording (skip control channels 13-16)
   if (!isControlChannel(channel)) {
@@ -188,7 +189,7 @@ void MidiHandler::handleNoteOff(byte channel, byte note, byte velocity, uint32_t
   midiButtonManagerV2.handleMidiNote(channel, note, velocity, false);
   
   // Keep routing to old manager for fader functionality (temporary)
-  midiButtonManager.handleMidiNote(channel, note, velocity, false);
+  //midiButtonManager.handleMidiNote(channel, note, velocity, false);
   
   // Route to track recording (skip control channels 13-16)
   if (!isControlChannel(channel)) {
@@ -197,8 +198,8 @@ void MidiHandler::handleNoteOff(byte channel, byte note, byte velocity, uint32_t
 }
 
 void MidiHandler::handleControlChange(byte channel, byte control, byte value, uint32_t tickNow) {
-  // Route encoder CC to MidiButtonManager
-  midiButtonManager.handleMidiEncoder(channel, control, value);
+  // Route CC to new V2 MidiFaderManager for fader handling
+  midiFaderManagerV2.handleMidiCC(channel, control, value);
   
   // Route to track recording (skip control channels 13-16)
   if (!isControlChannel(channel)) {
@@ -207,8 +208,8 @@ void MidiHandler::handleControlChange(byte channel, byte control, byte value, ui
 }
 
 void MidiHandler::handlePitchBend(byte channel, int pitchValue, uint32_t tickNow) {
-  // Route pitchbend to MidiButtonManager for navigation
-  midiButtonManager.handleMidiPitchbend(channel, pitchValue);
+  // Route pitchbend to new V2 MidiFaderManager for fader handling
+  midiFaderManagerV2.handleMidiPitchbend(channel, pitchValue);
   
   // Route to track recording (skip control channels 13-16)
   if (!isControlChannel(channel)) {
@@ -374,7 +375,7 @@ void MidiHandler::usbHostNoteOn(uint8_t channel, uint8_t note, uint8_t velocity)
     midiButtonManagerV2.handleMidiNote(channel, note, velocity, true);
     
     // Keep routing to old manager for fader functionality (temporary)
-    midiButtonManager.handleMidiNote(channel, note, velocity, true);
+    //midiButtonManager.handleMidiNote(channel, note, velocity, true);
     
     // Route to regular MIDI handling
     instance->handleMidiMessage(midi::NoteOn, channel, note, velocity, SOURCE_USB_HOST);
@@ -387,7 +388,7 @@ void MidiHandler::usbHostNoteOff(uint8_t channel, uint8_t note, uint8_t velocity
     midiButtonManagerV2.handleMidiNote(channel, note, velocity, false);
     
     // Keep routing to old manager for fader functionality (temporary)
-    midiButtonManager.handleMidiNote(channel, note, velocity, false);
+    //midiButtonManager.handleMidiNote(channel, note, velocity, false);
     
     // Route to regular MIDI handling
     instance->handleMidiMessage(midi::NoteOff, channel, note, velocity, SOURCE_USB_HOST);
@@ -396,8 +397,8 @@ void MidiHandler::usbHostNoteOff(uint8_t channel, uint8_t note, uint8_t velocity
 
 void MidiHandler::usbHostControlChange(uint8_t channel, uint8_t control, uint8_t value) {
   if (instance) {
-    // Route encoder CC to MidiButtonManager
-    midiButtonManager.handleMidiEncoder(channel, control, value);
+    // Route CC to new V2 MidiFaderManager for fader handling
+    midiFaderManagerV2.handleMidiCC(channel, control, value);
     
     // Route to regular MIDI handling
     instance->handleMidiMessage(midi::ControlChange, channel, control, value, SOURCE_USB_HOST);
@@ -412,8 +413,8 @@ void MidiHandler::usbHostProgramChange(uint8_t channel, uint8_t program) {
 
 void MidiHandler::usbHostPitchChange(uint8_t channel, int pitch) {
   if (instance) {
-    // Route pitchbend to MidiButtonManager for navigation
-    midiButtonManager.handleMidiPitchbend(channel, pitch);
+    // Route pitchbend to new V2 MidiFaderManager for fader handling
+    midiFaderManagerV2.handleMidiPitchbend(channel, pitch);
     
     // Route to regular MIDI handling
     instance->handleMidiMessage(midi::PitchBend, channel, pitch & 0x7F, (pitch >> 7) & 0x7F, SOURCE_USB_HOST);
