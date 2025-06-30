@@ -9,6 +9,8 @@
 #include "ClockManager.h"
 #include "MidiHandler.h"
 #include "MidiButtonManager.h"
+#include "MidiButtonManagerV2.h"
+#include "MidiFaderManagerV2.h"
 #include "Globals.h"
 #include "Utils/NoteUtils.h"
 #include "Utils/ValidationUtils.h"
@@ -47,7 +49,7 @@ void EditSelectNoteState::onEncoderTurn(EditManager& manager, Track& track, int 
     logger.debug("EditSelectNoteState::onEncoderTurn called with delta=%d", delta);
     
     if (!ValidationUtils::validateLoopLength(track.getLoopLength())) return;
-    uint32_t loopLength = track.getLoopLength();
+    //uint32_t loopLength = track.getLoopLength();
     
     // In SELECT mode, we want to navigate sequentially through notes by start position
     // rather than using grid-based movement with snap windows
@@ -314,7 +316,7 @@ void EditSelectNoteState::selectPreviousNoteSequential(EditManager& manager, Tra
 } 
 
 void EditSelectNoteState::sendTargetPitchbend(EditManager& manager, Track& track) {
-    auto& midiEvents = track.getMidiEvents();
+    //auto& midiEvents = track.getMidiEvents();
     uint32_t loopLength = track.getLoopLength();
     uint32_t bracketTick = manager.getBracketTick();
     
@@ -417,7 +419,7 @@ void EditSelectNoteState::sendTargetPitchbend(EditManager& manager, Track& track
                 midiHandler.sendNoteOff(16, 0, 0);
                 
                 // Record the value we sent for smart feedback detection
-                midiButtonManager.getFaderState(FADER_SELECT).lastSentPitchbend = targetPitchbend;
+                midiFaderManagerV2.getFaderStateMutable(MidiMapping::FaderType::FADER_SELECT).lastSentPitchbend = targetPitchbend;
             } else {
                 logger.log(CAT_MIDI, LOG_DEBUG, "Target pitchbend: Current bracket tick %lu not found in navigation positions", bracketTick);
             }

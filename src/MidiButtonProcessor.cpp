@@ -34,16 +34,25 @@ void MidiButtonProcessor::handleMidiNote(uint8_t channel, uint8_t note, uint8_t 
         if (!state.isPressed) {
             state.isPressed = true;
             state.pressStartTime = now;
-            logger.log(CAT_BUTTON, LOG_DEBUG, "Button pressed: Ch%d Note%d", channel, note);
+            logger.log(CAT_BUTTON, LOG_DEBUG, "Button pressed: Ch%d Note%d at time %lu", channel, note, now);
         }
     } else {
         // Note Off - Button Release
         if (state.isPressed) {
             state.isPressed = false;
-            uint32_t duration = now - state.pressStartTime;
+            // Handle millis() overflow properly
+            uint32_t duration;
+            if (now >= state.pressStartTime) {
+                duration = now - state.pressStartTime;
+            } else {
+                // Handle overflow: now wrapped around, so duration is (MAX_UINT32 - pressStartTime + 1) + now
+                duration = (0xFFFFFFFF - state.pressStartTime + 1) + now;
+            }
+            
+            logger.log(CAT_BUTTON, LOG_DEBUG, "Button released: Ch%d Note%d, start=%lu, now=%lu, duration=%lu", 
+                       channel, note, state.pressStartTime, now, duration);
+            
             handleButtonRelease(channel, note, duration);
-            logger.log(CAT_BUTTON, LOG_DEBUG, "Button released: Ch%d Note%d, duration: %dms", 
-                       channel, note, duration);
         }
     }
 }
@@ -52,43 +61,63 @@ void MidiButtonProcessor::handleButtonRelease(uint8_t channel, uint8_t note, uin
     uint32_t now = millis();
     ButtonState& state = getButtonState(channel, note);
     
+    logger.log(CAT_BUTTON, LOG_DEBUG, "handleButtonRelease: Ch%d Note%d, duration=%lu, longPressTime=%lu", 
+               channel, note, pressDuration, longPressTime);
+    
     if (pressDuration >= longPressTime) {
         // Long press - trigger immediately and cancel pending presses
+        logger.log(CAT_BUTTON, LOG_DEBUG, "Long press detected: duration=%lu >= longPressTime=%lu", 
+                   pressDuration, longPressTime);
         state.lastTapTime = 0;
         state.secondTapTime = 0;
         state.pendingShortPress = false;
         state.pendingDoublePress = false;
         state.pendingTriplePress = false;
         
-        triggerButtonPress(note, channel, MidiButtonConfig::PressType::LONG_PRESS);
+        triggerButtonPress(note, channel - 1, MidiButtonConfig::PressType::LONG_PRESS);
     } else {
         // Short press - check for multiple taps
+        logger.log(CAT_BUTTON, LOG_DEBUG, "Short press detected: duration=%lu < longPressTime=%lu", 
+                   pressDuration, longPressTime);
+        
         if (state.pendingDoublePress && (now - state.secondTapTime <= tripleTapWindow)) {
             // Third tap within window - triple press
+            logger.log(CAT_BUTTON, LOG_DEBUG, "Triple press detected");
             state.lastTapTime = 0;
             state.secondTapTime = 0;
             state.pendingShortPress = false;
             state.pendingDoublePress = false;
             state.pendingTriplePress = false;
             
-            triggerButtonPress(note, channel, MidiButtonConfig::PressType::TRIPLE_PRESS);
+            triggerButtonPress(note, channel - 1, MidiButtonConfig::PressType::TRIPLE_PRESS);
         } else if (state.lastTapTime > 0 && (now - state.lastTapTime <= doubleTapWindow)) {
             // Second tap within window - set up for potential triple tap
+            logger.log(CAT_BUTTON, LOG_DEBUG, "Second tap detected, waiting for triple");
             state.secondTapTime = now;
             state.pendingShortPress = false;
             state.pendingDoublePress = true;
             state.doublePressExpireTime = now + tripleTapWindow;
         } else {
             // First tap or outside double tap window - delay decision
+            logger.log(CAT_BUTTON, LOG_DEBUG, "First tap or outside window, scheduling short press");
             state.lastTapTime = now;
             state.pendingShortPress = true;
             state.shortPressExpireTime = now + doubleTapWindow;
+            logger.log(CAT_BUTTON, LOG_DEBUG, "Scheduled short press: expire at %lu (now=%lu + window=%lu)", 
+                       state.shortPressExpireTime, now, doubleTapWindow);
         }
     }
 }
 
 void MidiButtonProcessor::processPendingPresses() {
     uint32_t now = millis();
+    static uint32_t lastDebugTime = 0;
+    
+    // Print debug info every 100ms
+    if (now - lastDebugTime >= 100) {
+        lastDebugTime = now;
+        logger.log(CAT_BUTTON, LOG_DEBUG, "processPendingPresses: current time = %lu", now);
+    }
     
     for (size_t i = 0; i < buttonStates.size(); ++i) {
         ButtonState& state = buttonStates[i];
@@ -99,20 +128,42 @@ void MidiButtonProcessor::processPendingPresses() {
         
         // Process expired short presses
         if (state.pendingShortPress && now >= state.shortPressExpireTime) {
+            logger.log(CAT_BUTTON, LOG_DEBUG, "Short press expired: Ch%d Note%d, now=%lu, expire=%lu", 
+                       channel, note, now, state.shortPressExpireTime);
             state.pendingShortPress = false;
             triggerButtonPress(note, channel, MidiButtonConfig::PressType::SHORT_PRESS);
+        } else if (state.pendingShortPress) {
+            // Debug: show pending short presses that haven't expired yet
+            static uint32_t lastPendingDebugTime = 0;
+            if (now - lastPendingDebugTime >= 500) {  // Every 500ms
+                lastPendingDebugTime = now;
+                logger.log(CAT_BUTTON, LOG_DEBUG, "Pending short press: Ch%d Note%d, now=%lu, expire=%lu, remaining=%ld", 
+                           channel, note, now, state.shortPressExpireTime, 
+                           (int32_t)state.shortPressExpireTime - (int32_t)now);
+            }
+        }
+        
+        // Debug: show when we're checking the specific buttons we care about
+        if ((channel == 16 && (note == 36 || note == 37 || note == 38)) && state.pendingShortPress) {
+            logger.log(CAT_BUTTON, LOG_DEBUG, "Checking button Ch%d Note%d: pending=%d, now=%lu, expire=%lu, should_expire=%d", 
+                       channel, note, state.pendingShortPress, now, state.shortPressExpireTime, 
+                       (now >= state.shortPressExpireTime));
         }
         
         // Process expired double presses
         if (state.pendingDoublePress && now >= state.doublePressExpireTime) {
+            logger.log(CAT_BUTTON, LOG_DEBUG, "Double press expired: Ch%d Note%d, now=%lu, expire=%lu", 
+                       channel, note, now, state.doublePressExpireTime);
             state.pendingDoublePress = false;
             triggerButtonPress(note, channel, MidiButtonConfig::PressType::DOUBLE_PRESS);
         }
         
         // Process expired triple presses
         if (state.pendingTriplePress && now >= state.triplePressExpireTime) {
+            logger.log(CAT_BUTTON, LOG_DEBUG, "Triple press expired: Ch%d Note%d, now=%lu, expire=%lu", 
+                       channel, note, now, state.triplePressExpireTime);
             state.pendingTriplePress = false;
-            triggerButtonPress(note, channel, MidiButtonConfig::PressType::TRIPLE_PRESS);
+            triggerButtonPress(note, channel - 1, MidiButtonConfig::PressType::TRIPLE_PRESS);
         }
     }
 }
@@ -139,7 +190,9 @@ uint32_t MidiButtonProcessor::getButtonPressStartTime(uint8_t note, uint8_t chan
 }
 
 size_t MidiButtonProcessor::getButtonIndex(uint8_t channel, uint8_t note) const {
-    return channel * 128 + note;
+    // Convert 1-based MIDI channel to 0-based indexing
+    uint8_t channelIndex = channel - 1;
+    return channelIndex * 128 + note;
 }
 
 MidiButtonProcessor::ButtonState& MidiButtonProcessor::getButtonState(uint8_t channel, uint8_t note) {

@@ -16,6 +16,7 @@
 #include "MidiButtonManagerV2.h"
 #include "Utils/MidiButtonConfig.h"
 #include "Logger.h"
+#include <string>
 
 // Example of setting up a custom 40-button configuration
 void setupCustom40ButtonConfiguration() {
