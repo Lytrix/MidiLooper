@@ -8,12 +8,12 @@
 #include "TrackUndo.h"
 #include "ClockManager.h"
 #include "MidiHandler.h"
-#include "MidiButtonManager.h"
 #include "MidiButtonManagerV2.h"
 #include "MidiFaderManagerV2.h"
 #include "Globals.h"
 #include "Utils/NoteUtils.h"
 #include "Utils/ValidationUtils.h"
+#include "NoteEditManager.h"
 #include <algorithm>
 
 void EditSelectNoteState::onEnter(EditManager& manager, Track& track, uint32_t startTick) {

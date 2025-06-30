@@ -50,11 +50,11 @@ private:
     void handleMoveNoteFine(uint8_t ccValue);
     void handleChangeNoteValue(uint8_t ccValue);
     
-    // Helper methods for delegating to MidiButtonManager
-    void delegateSelectFaderInput(int16_t pitchbendValue, Track& track);
-    void delegateCoarseFaderInput(int16_t pitchbendValue, Track& track);
-    void delegateFineFaderInput(uint8_t ccValue, Track& track);
-    void delegateNoteValueFaderInput(uint8_t ccValue, Track& track);
+    // Helper methods for delegating to NoteEditManager
+    void handleSelectFaderInput(int16_t pitchbendValue, Track& track);
+    void handleCoarseFaderInput(int16_t pitchbendValue, Track& track);
+    void handleFineFaderInput(uint8_t ccValue, Track& track);
+    void handleNoteValueFaderInput(uint8_t ccValue, Track& track);
 };
 
 #endif // MIDI_FADER_ACTIONS_H 

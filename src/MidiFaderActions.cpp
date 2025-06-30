@@ -4,7 +4,9 @@
 #include "MidiFaderActions.h"
 #include "Logger.h"
 #include "TrackManager.h"
-#include "MidiButtonManager.h"
+#include "NoteEditManager.h"
+
+extern NoteEditManager noteEditManager;
 
 MidiFaderActions::MidiFaderActions() {
 }
@@ -46,44 +48,44 @@ void MidiFaderActions::executeAction(MidiFaderConfig::ActionType action,
 
 void MidiFaderActions::handleSelectNote(int16_t pitchbendValue) {
     Track& track = trackManager.getSelectedTrack();
-    delegateSelectFaderInput(pitchbendValue, track);
+    handleSelectFaderInput(pitchbendValue, track);
 }
 
 void MidiFaderActions::handleMoveNoteCoarse(int16_t pitchbendValue) {
     Track& track = trackManager.getSelectedTrack();
-    delegateCoarseFaderInput(pitchbendValue, track);
+    handleCoarseFaderInput(pitchbendValue, track);
 }
 
 void MidiFaderActions::handleMoveNoteFine(uint8_t ccValue) {
     Track& track = trackManager.getSelectedTrack();
-    delegateFineFaderInput(ccValue, track);
+    handleFineFaderInput(ccValue, track);
 }
 
 void MidiFaderActions::handleChangeNoteValue(uint8_t ccValue) {
     Track& track = trackManager.getSelectedTrack();
-    delegateNoteValueFaderInput(ccValue, track);
+    handleNoteValueFaderInput(ccValue, track);
 }
 
-void MidiFaderActions::delegateSelectFaderInput(int16_t pitchbendValue, Track& track) {
-    // Delegate to the existing MidiButtonManager logic for note selection
-    // This calls the handleSelectFaderInput method from the original implementation
-    midiButtonManager.handleSelectFaderInput(pitchbendValue, track);
+void MidiFaderActions::handleSelectFaderInput(int16_t pitchbendValue, Track& track) {
+    // Delegate to the existing NoteEditManager logic for note selection
+    logger.log(CAT_MIDI, LOG_DEBUG, "Executing fader action: type=1 fader=1 pitchbend=%d cc=0", pitchbendValue);
+    noteEditManager.handleSelectFaderInput(pitchbendValue, track);
 }
 
-void MidiFaderActions::delegateCoarseFaderInput(int16_t pitchbendValue, Track& track) {
-    // Delegate to the existing MidiButtonManager logic for coarse movement
-    // This calls the handleCoarseFaderInput method from the original implementation
-    midiButtonManager.handleCoarseFaderInput(pitchbendValue, track);
+void MidiFaderActions::handleCoarseFaderInput(int16_t pitchbendValue, Track& track) {
+    // Delegate to the existing NoteEditManager logic for coarse movement
+    logger.log(CAT_MIDI, LOG_DEBUG, "Executing fader action: type=2 fader=2 pitchbend=%d cc=0", pitchbendValue);
+    noteEditManager.handleCoarseFaderInput(pitchbendValue, track);
 }
 
-void MidiFaderActions::delegateFineFaderInput(uint8_t ccValue, Track& track) {
-    // Delegate to the existing MidiButtonManager logic for fine movement
-    // This calls the handleFineFaderInput method from the original implementation
-    midiButtonManager.handleFineFaderInput(ccValue, track);
+void MidiFaderActions::handleFineFaderInput(uint8_t ccValue, Track& track) {
+    // Delegate to the existing NoteEditManager logic for fine movement
+    logger.log(CAT_MIDI, LOG_DEBUG, "Executing fader action: type=3 fader=3 pitchbend=0 cc=%d", ccValue);
+    noteEditManager.handleFineFaderInput(ccValue, track);
 }
 
-void MidiFaderActions::delegateNoteValueFaderInput(uint8_t ccValue, Track& track) {
-    // Delegate to the existing MidiButtonManager logic for note value changes
-    // This calls the handleNoteValueFaderInput method from the original implementation
-    midiButtonManager.handleNoteValueFaderInput(ccValue, track);
+void MidiFaderActions::handleNoteValueFaderInput(uint8_t ccValue, Track& track) {
+    // Delegate to the existing NoteEditManager logic for note value changes
+    logger.log(CAT_MIDI, LOG_DEBUG, "Executing fader action: type=4 fader=4 pitchbend=0 cc=%d", ccValue);
+    noteEditManager.handleNoteValueFaderInput(ccValue, track);
 } 

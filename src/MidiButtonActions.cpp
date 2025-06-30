@@ -9,7 +9,7 @@
 #include "MidiHandler.h"
 #include "TrackUndo.h"
 #include "Logger.h"
-#include "MidiButtonManager.h"
+#include "NoteEditManager.h"
 
 // Global instances (matching your current system)
 extern TrackManager trackManager;
@@ -17,7 +17,7 @@ extern EditManager editManager;
 extern ClockManager clockManager;
 extern MidiHandler midiHandler;
 extern Logger logger;
-extern MidiButtonManager midiButtonManager;
+extern NoteEditManager noteEditManager;
 
 // Global instance
 MidiButtonActions midiButtonActions;
@@ -192,8 +192,8 @@ void MidiButtonActions::handleMuteTrack(uint8_t trackNumber) {
 
 void MidiButtonActions::handleCycleEditMode() {
     Track& track = getCurrentTrack();
-    // Call the original MidiButtonManager's cycleEditMode method
-    midiButtonManager.cycleEditMode(track);
+    // Call the original NoteEditManager's cycleEditMode method
+    noteEditManager.cycleEditMode(track);
 }
 
 void MidiButtonActions::handleExitEditMode() {
@@ -205,8 +205,8 @@ void MidiButtonActions::handleExitEditMode() {
 
 void MidiButtonActions::handleDeleteNote() {
     Track& track = getCurrentTrack();
-    // Call the original MidiButtonManager's deleteSelectedNote method
-    midiButtonManager.deleteSelectedNote(track);
+    // Call the original NoteEditManager's deleteSelectedNote method
+    noteEditManager.deleteSelectedNote(track);
 }
 
 // Stubbed implementations for future expansion

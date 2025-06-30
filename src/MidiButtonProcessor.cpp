@@ -114,10 +114,10 @@ void MidiButtonProcessor::processPendingPresses() {
     static uint32_t lastDebugTime = 0;
     
     // Print debug info every 100ms
-    if (now - lastDebugTime >= 100) {
-        lastDebugTime = now;
-        logger.log(CAT_BUTTON, LOG_DEBUG, "processPendingPresses: current time = %lu", now);
-    }
+    // if (now - lastDebugTime >= 100) {
+    //     lastDebugTime = now;
+    //     logger.log(CAT_BUTTON, LOG_DEBUG, "processPendingPresses: current time = %lu", now);
+    // }
     
     for (size_t i = 0; i < buttonStates.size(); ++i) {
         ButtonState& state = buttonStates[i];

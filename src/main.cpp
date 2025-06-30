@@ -10,7 +10,6 @@
 #include "ButtonManager.h"
 #include "MidiButtonManagerV2.h"
 #include "MidiFaderManagerV2.h"
-#include "MidiButtonManager.h"  // Keep temporarily for move note logic
 #include "DisplayManager.h"
 #include "LooperState.h"
 #include "Looper.h"
@@ -18,6 +17,7 @@
 #include "EditManager.h"
 #include "EditStates/EditSelectNoteState.h"
 #include "Globals.h"
+#include "NoteEditManager.h"  // Keep temporarily for move note logic
 
 void setup() {
   // Simple led Check to see if Teensy is responding
@@ -90,7 +90,7 @@ void loop() {
   midiFaderManagerV2.update();
   
   // Update old manager for move note logic
-  midiButtonManager.update();
+  noteEditManager.update();
   looper.update();
 
   // Update SELECT mode for overdubbing if active

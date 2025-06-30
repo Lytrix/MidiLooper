@@ -7,9 +7,9 @@
 #include "MidiHandler.h"
 #include "Logger.h"
 #include "MidiEvent.h"
-#include "MidiButtonManager.h"
 #include "MidiButtonManagerV2.h"
 #include "MidiFaderManagerV2.h"
+#include "NoteEditManager.h"
 
 MIDI_CREATE_INSTANCE(HardwareSerial, Serial8, MIDIserial);  // Teensy Serial8 for 5-pin DIN MIDI
 
