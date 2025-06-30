@@ -198,8 +198,8 @@ void MidiHandler::handleNoteOff(byte channel, byte note, byte velocity, uint32_t
 }
 
 void MidiHandler::handleControlChange(byte channel, byte control, byte value, uint32_t tickNow) {
-  // Route CC to new V2 MidiFaderManager for fader handling
-  midiFaderManagerV2.handleMidiCC(channel, control, value);
+  // Route CC to NoteEditManager for fader handling
+  noteEditManager.handleMidiCC(channel, control, value);
   
   // Route to track recording (skip control channels 13-16)
   if (!isControlChannel(channel)) {
@@ -208,8 +208,11 @@ void MidiHandler::handleControlChange(byte channel, byte control, byte value, ui
 }
 
 void MidiHandler::handlePitchBend(byte channel, int pitchValue, uint32_t tickNow) {
-  // Route pitchbend to new V2 MidiFaderManager for fader handling
-  midiFaderManagerV2.handleMidiPitchbend(channel, pitchValue);
+  // Convert unsigned 14-bit pitchbend (0-16383) to signed format (-8192 to 8191)
+  int16_t signedPitchValue = pitchValue - 8192;
+  
+  // Route pitchbend to NoteEditManager for fader handling
+  noteEditManager.handleMidiPitchbend(channel, signedPitchValue);
   
   // Route to track recording (skip control channels 13-16)
   if (!isControlChannel(channel)) {
@@ -397,8 +400,8 @@ void MidiHandler::usbHostNoteOff(uint8_t channel, uint8_t note, uint8_t velocity
 
 void MidiHandler::usbHostControlChange(uint8_t channel, uint8_t control, uint8_t value) {
   if (instance) {
-    // Route CC to new V2 MidiFaderManager for fader handling
-    midiFaderManagerV2.handleMidiCC(channel, control, value);
+    // Route CC to NoteEditManager for fader handling
+    noteEditManager.handleMidiCC(channel, control, value);
     
     // Route to regular MIDI handling
     instance->handleMidiMessage(midi::ControlChange, channel, control, value, SOURCE_USB_HOST);
@@ -413,8 +416,11 @@ void MidiHandler::usbHostProgramChange(uint8_t channel, uint8_t program) {
 
 void MidiHandler::usbHostPitchChange(uint8_t channel, int pitch) {
   if (instance) {
-    // Route pitchbend to new V2 MidiFaderManager for fader handling
-    midiFaderManagerV2.handleMidiPitchbend(channel, pitch);
+    // Convert unsigned 14-bit pitchbend (0-16383) to signed format (-8192 to 8191)
+    int16_t signedPitch = pitch - 8192;
+    
+    // Route pitchbend to NoteEditManager for fader handling
+    noteEditManager.handleMidiPitchbend(channel, signedPitch);
     
     // Route to regular MIDI handling
     instance->handleMidiMessage(midi::PitchBend, channel, pitch & 0x7F, (pitch >> 7) & 0x7F, SOURCE_USB_HOST);
