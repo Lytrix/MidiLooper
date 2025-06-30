@@ -4,10 +4,10 @@
 #include <cstdint>
 #include <set>
 #include "Globals.h"
+#include "NoteEditManager.h"
 
 #include "ClockManager.h"
 #include "TrackManager.h"
-#include "MidiButtonManager.h"
 #include "StorageManager.h"
 #include "LooperState.h"
 #include "Logger.h"
@@ -23,18 +23,18 @@
 #include "MidiFaderManagerV2.h"
 #include "MidiFaderProcessor.h"
 
-MidiButtonManager midiButtonManager;
+NoteEditManager noteEditManager;
 
-MidiButtonManager::MidiButtonManager() {
+NoteEditManager::NoteEditManager() {
    
 }
 
 // Delegate MIDI note handling to V2 system
-void MidiButtonManager::handleMidiNote(uint8_t channel, uint8_t note, uint8_t velocity, bool isNoteOn) {
+void NoteEditManager::handleMidiNote(uint8_t channel, uint8_t note, uint8_t velocity, bool isNoteOn) {
     buttonHandler.handleMidiNote(channel, note, velocity, isNoteOn);
 }
 
-void MidiButtonManager::update() {
+void NoteEditManager::update() {
     uint32_t now = millis();
     
     // Check if grace period has elapsed to enable start editing
@@ -53,7 +53,7 @@ void MidiButtonManager::update() {
     // }
 }
 
-// void MidiButtonManager::handleButton(MidiButtonId button, MidiButtonAction action) {
+// void NoteEditManager::handleButton(MidiButtonId button, MidiButtonAction action) {
 //     auto& track = trackManager.getSelectedTrack();
 //     uint8_t idx = trackManager.getSelectedTrackIndex();
 //     uint32_t now = clockManager.getCurrentTick();
@@ -192,7 +192,7 @@ void MidiButtonManager::update() {
 //     }
 // }
 
-// void MidiButtonManager::handleMidiEncoder(uint8_t channel, uint8_t ccNumber, uint8_t value) {
+// void NoteEditManager::handleMidiEncoder(uint8_t channel, uint8_t ccNumber, uint8_t value) {
 //     // Handle fine control CC2 on channel 15
 //     if (channel == FINE_CC_CHANNEL && ccNumber == FINE_CC_NUMBER) {
 //         handleMidiCC2Fine(channel, ccNumber, value);
@@ -227,7 +227,7 @@ void MidiButtonManager::update() {
 //     processEncoderMovement(delta);
 // }
 
-void MidiButtonManager::handleMidiPitchbend(uint8_t channel, int16_t pitchValue) {
+void NoteEditManager::handleMidiPitchbend(uint8_t channel, int16_t pitchValue) {
     // Log all pitchbend messages for debugging
     logger.log(CAT_MIDI, LOG_DEBUG, "Received pitchbend: ch=%d value=%d", channel, pitchValue);
     
@@ -422,7 +422,7 @@ void MidiButtonManager::handleMidiPitchbend(uint8_t channel, int16_t pitchValue)
     */
 }
 
-// void MidiButtonManager::handleMidiCC2Fine(uint8_t channel, uint8_t ccNumber, uint8_t value) {
+// void NoteEditManager::handleMidiCC2Fine(uint8_t channel, uint8_t ccNumber, uint8_t value) {
 //     // Route to unified fader system
 //     if (channel == FINE_CC_CHANNEL && ccNumber == FINE_CC_NUMBER) {
 //         handleFaderInput(FADER_FINE, 0, value);
@@ -507,7 +507,7 @@ void MidiButtonManager::handleMidiPitchbend(uint8_t channel, int16_t pitchValue)
 //     */
 // }
 
-// void MidiButtonManager::handleMidiCC3NoteValue(uint8_t channel, uint8_t ccNumber, uint8_t value) {
+// void NoteEditManager::handleMidiCC3NoteValue(uint8_t channel, uint8_t ccNumber, uint8_t value) {
 //     // Route to unified fader system
 //     if (channel == NOTE_VALUE_CC_CHANNEL && ccNumber == NOTE_VALUE_CC_NUMBER) {
 //         handleFaderInput(FADER_NOTE_VALUE, 0, value);
@@ -515,12 +515,12 @@ void MidiButtonManager::handleMidiPitchbend(uint8_t channel, int16_t pitchValue)
 //     }
 // }
 
-void MidiButtonManager::moveNoteToPosition(Track& track, const NoteUtils::DisplayNote& currentNote, std::uint32_t targetTick) {
+void NoteEditManager::moveNoteToPosition(Track& track, const NoteUtils::DisplayNote& currentNote, std::uint32_t targetTick) {
     // Use the enhanced version with overlap handling
     moveNoteToPositionWithOverlapHandling(track, currentNote, targetTick, false);
 }
 
-void MidiButtonManager::moveNoteToPositionWithOverlapHandling(Track& track, const NoteUtils::DisplayNote& currentNote, std::uint32_t targetTick, bool commitChanges) {
+void NoteEditManager::moveNoteToPositionWithOverlapHandling(Track& track, const NoteUtils::DisplayNote& currentNote, std::uint32_t targetTick, bool commitChanges) {
     // Calculate movement delta for the utility function
     int32_t tickDifference = (int32_t)targetTick - (int32_t)currentNote.startTick;
     
@@ -560,7 +560,7 @@ void MidiButtonManager::moveNoteToPositionWithOverlapHandling(Track& track, cons
     NoteMovementUtils::moveNoteWithOverlapHandling(track, editManager, currentNote, targetTick, tickDifference);
 }
 
-void MidiButtonManager::moveNoteToPositionSimple(Track& track, const NoteUtils::DisplayNote& currentNote, std::uint32_t targetTick) {
+void NoteEditManager::moveNoteToPositionSimple(Track& track, const NoteUtils::DisplayNote& currentNote, std::uint32_t targetTick) {
     auto& midiEvents = track.getMidiEvents();
     uint32_t loopLength = track.getLoopLength();
     
@@ -645,7 +645,7 @@ void MidiButtonManager::moveNoteToPositionSimple(Track& track, const NoteUtils::
     }
 }
 
-// void MidiButtonManager::processEncoderMovement(int rawDelta) {
+// void NoteEditManager::processEncoderMovement(int rawDelta) {
 //     if (rawDelta == 0) return;
     
 //     uint32_t now = millis();
@@ -691,7 +691,7 @@ void MidiButtonManager::moveNoteToPositionSimple(Track& track, const NoteUtils::
 //     midiEncoderPosition += rawDelta;
 // }
 
-void MidiButtonManager::cycleEditMode(Track& track) {
+void NoteEditManager::cycleEditMode(Track& track) {
     logger.log(CAT_BUTTON, LOG_DEBUG, "cycleEditMode: current mode = %d", currentEditMode);
     
     switch (currentEditMode) {
@@ -734,11 +734,11 @@ void MidiButtonManager::cycleEditMode(Track& track) {
                currentEditMode, editManager.getCurrentState() ? editManager.getCurrentState()->getName() : "NULL");
 }
 
-void MidiButtonManager::enterNextEditMode(Track& track) {
+void NoteEditManager::enterNextEditMode(Track& track) {
     cycleEditMode(track);
 }
 
-void MidiButtonManager::deleteSelectedNote(Track& track) {
+void NoteEditManager::deleteSelectedNote(Track& track) {
     if (editManager.getSelectedNoteIdx() < 0) {
         logger.info("MIDI Encoder: No note selected for deletion");
         return;
@@ -793,7 +793,7 @@ void MidiButtonManager::deleteSelectedNote(Track& track) {
     logger.info("MIDI Encoder: Returned to SELECT mode after note deletion");
 }
 
-void MidiButtonManager::sendEditModeProgram(EditModeState mode) {
+void NoteEditManager::sendEditModeProgram(EditModeState mode) {
     uint8_t program = static_cast<uint8_t>(mode);  // 0=NONE, 1=SELECT, 2=START, 3=LENGTH, 4=PITCH
     
     // Send pitchbend position BEFORE program change when entering SELECT mode
@@ -813,7 +813,7 @@ void MidiButtonManager::sendEditModeProgram(EditModeState mode) {
                (mode == EDIT_MODE_PITCH) ? "PITCH" : "UNKNOWN");
 }
 
-void MidiButtonManager::sendStartNotePitchbend(Track& track) {
+void NoteEditManager::sendStartNotePitchbend(Track& track) {
     if (editManager.getSelectedNoteIdx() < 0) {
         logger.log(CAT_MIDI, LOG_DEBUG, "No note selected for start pitchbend");
         return;
@@ -898,7 +898,7 @@ void MidiButtonManager::sendStartNotePitchbend(Track& track) {
     }
 }
 
-void MidiButtonManager::sendSelectnoteFaderUpdate(Track& track) {
+void NoteEditManager::sendSelectnoteFaderUpdate(Track& track) {
     // Cancel any previous pending update and schedule a new one
     // This prevents multiple overlapping updates when fader 2 is moved continuously
     uint32_t now = millis();
@@ -913,7 +913,7 @@ void MidiButtonManager::sendSelectnoteFaderUpdate(Track& track) {
     logger.log(CAT_MIDI, LOG_DEBUG, "Scheduled selectnote fader update for %lu ms from now", SELECTNOTE_UPDATE_DELAY);
 }
 
-void MidiButtonManager::performSelectnoteFaderUpdate(Track& track) {
+void NoteEditManager::performSelectnoteFaderUpdate(Track& track) {
     // Send program change first to activate selectnote fader
     midiHandler.sendProgramChange(PITCHBEND_SELECT_CHANNEL, 1);  // Program 1 for SELECT mode
     logger.log(CAT_MIDI, LOG_DEBUG, "Sent Program Change: ch=%d program=1 (SELECT mode for selectnote fader)", 
@@ -953,7 +953,7 @@ void MidiButtonManager::performSelectnoteFaderUpdate(Track& track) {
     logger.log(CAT_MIDI, LOG_DEBUG, "Selectnote fader updated - ignoring incoming for %dms", PITCHBEND_IGNORE_PERIOD);
 }
 
-void MidiButtonManager::enableStartEditing() {
+void NoteEditManager::enableStartEditing() {
     uint32_t now = millis();
     if (now - noteSelectionTime >= START_EDIT_GRACE_PERIOD) {
         if (!startEditingEnabled) {
@@ -1007,14 +1007,14 @@ void MidiButtonManager::enableStartEditing() {
     // The grace period status should only be logged when it changes, not continuously
 }
 
-void MidiButtonManager::refreshEditingActivity() {
+void NoteEditManager::refreshEditingActivity() {
     lastEditingActivityTime = millis();
     logger.log(CAT_MIDI, LOG_DEBUG, "Editing activity refreshed - note selection disabled for %dms", NOTE_SELECTION_GRACE_PERIOD);
 }
 
 // Unified Fader State Machine Implementation
 
-void MidiButtonManager::initializeFaderStates() {
+void NoteEditManager::initializeFaderStates() {
     faderStates.clear();
     faderStates.resize(4);
     
@@ -1085,7 +1085,7 @@ void MidiButtonManager::initializeFaderStates() {
     logger.info("Fader state machine initialized with 4 faders");
 }
 
-// MidiFaderProcessor::FaderState& MidiButtonManager::getFaderState(MidiMapping::FaderType faderType) {
+// MidiFaderProcessor::FaderState& NoteEditManager::getFaderState(MidiMapping::FaderType faderType) {
 //     for (auto& state : faderStates) {
 //         if (state.type == faderType) {
 //             return state;
@@ -1095,11 +1095,11 @@ void MidiButtonManager::initializeFaderStates() {
 //     return faderStates[0];
 // }
 
-bool MidiButtonManager::shouldIgnoreFaderInput(MidiMapping::FaderType faderType) {
+bool NoteEditManager::shouldIgnoreFaderInput(MidiMapping::FaderType faderType) {
     return shouldIgnoreFaderInput(faderType, -1, -1); // Use overloaded version with unknown values
 }
 
-bool MidiButtonManager::shouldIgnoreFaderInput(MidiMapping::FaderType faderType, int16_t pitchbendValue, uint8_t ccValue) {
+bool NoteEditManager::shouldIgnoreFaderInput(MidiMapping::FaderType faderType, int16_t pitchbendValue, uint8_t ccValue) {
     MidiFaderProcessor::FaderState& state = midiFaderManagerV2.getFaderStateMutable(faderType);
     uint32_t now = millis();    
     
@@ -1159,7 +1159,7 @@ bool MidiButtonManager::shouldIgnoreFaderInput(MidiMapping::FaderType faderType,
     return isProbablyFeedback;
 }
 
-// void MidiButtonManager::handleFaderInput(FaderType faderType, int16_t pitchbendValue, uint8_t ccValue) {
+// void NoteEditManager::handleFaderInput(FaderType faderType, int16_t pitchbendValue, uint8_t ccValue) {
 //     if (shouldIgnoreFaderInput(faderType, pitchbendValue, ccValue)) {
 //         return;
 //     }
@@ -1256,7 +1256,7 @@ bool MidiButtonManager::shouldIgnoreFaderInput(MidiMapping::FaderType faderType,
 //     logger.log(CAT_MIDI, LOG_DEBUG, "Fader %d input processed: driver fader set", faderType);
 // }
 
-void MidiButtonManager::scheduleOtherFaderUpdates(MidiMapping::FaderType driverFader) {
+void NoteEditManager::scheduleOtherFaderUpdates(MidiMapping::FaderType driverFader) {
     // CRITICAL FIX: Don't schedule ANY updates when fader 1 (SELECT) is the driver
     // Fader 1 is on channel 16, completely separate from faders 2&3 on channel 15
     // There's no need for feedback prevention between separate channels
@@ -1309,7 +1309,7 @@ void MidiButtonManager::scheduleOtherFaderUpdates(MidiMapping::FaderType driverF
     }
 }
 
-void MidiButtonManager::updateFaderStates() {
+void NoteEditManager::updateFaderStates() {
     uint32_t now = millis();
     
     // Process scheduled fader updates
@@ -1329,8 +1329,9 @@ void MidiButtonManager::updateFaderStates() {
                 // Check if the driver fader is still being actively moved
                 bool driverStillActive = false;
                 if (state.scheduledByDriver == MidiMapping::FaderType::FADER_SELECT) {
-                    // For select fader, check if there was recent activity
-                    driverStillActive = (lastSelectnoteFaderTime > 0 && (now - lastSelectnoteFaderTime) < 500); // 500ms recent activity window
+                    // For select fader, use a shorter timeout to allow more responsive updates
+                    // 200ms allows for quick updates while preventing feedback during rapid movements
+                    driverStillActive = (lastSelectnoteFaderTime > 0 && (now - lastSelectnoteFaderTime) < 200); // 200ms recent activity window
                 } else if (state.scheduledByDriver == MidiMapping::FaderType::FADER_COARSE) {
                     // For coarse fader, check recent activity (you'd need to add lastCoarseFaderTime tracking)
                     driverStillActive = (lastDriverFaderTime > 0 && currentDriverFader == MidiMapping::FaderType::FADER_COARSE && (now - lastDriverFaderTime) < 500);
@@ -1342,17 +1343,15 @@ void MidiButtonManager::updateFaderStates() {
                     driverStillActive = (lastDriverFaderTime > 0 && currentDriverFader == MidiMapping::FaderType::FADER_NOTE_VALUE && (now - lastDriverFaderTime) < 500);
                 }
                 
-                // CRITICAL FIX: Never execute scheduled updates when fader 1 (SELECT) was the driver
-                // Fader 1 is on channel 16, completely separate from faders 2&3 on channel 15
-                // Updating faders 2&3 when fader 1 is the driver causes unwanted motorized fader movement
-                // and feedback that overrides the user's fader 1 input
-                bool skipForSelectDriver = (state.scheduledByDriver == MidiMapping::FaderType::FADER_SELECT);
+                // FIXED: Allow updates when fader 1 (SELECT) was the driver
+                // Fader 1 is on channel 16, completely separate from faders 2, 3, and 4 on channel 15
+                // Since they're on different channels, there's no actual conflict between them
+                // The scheduled updates should proceed to reflect the newly selected note's position
                 
                 if (state.type != state.scheduledByDriver && 
                     currentDriverFader == state.scheduledByDriver && 
                     !hasChannelConflict &&
-                    !driverStillActive &&
-                    !skipForSelectDriver) {
+                    !driverStillActive) {
                     Track& track = trackManager.getSelectedTrack();
                     sendFaderUpdate(state.type, track);
                     
@@ -1370,16 +1369,13 @@ void MidiButtonManager::updateFaderStates() {
                 } else if (driverStillActive) {
                     logger.log(CAT_MIDI, LOG_DEBUG, "Skipped update for fader %d - driver %d still active (%lu ms ago)", 
                                state.type, state.scheduledByDriver, now - (state.scheduledByDriver == MidiMapping::FaderType::FADER_SELECT ? lastSelectnoteFaderTime : lastDriverFaderTime));
-                } else if (skipForSelectDriver) {
-                    logger.log(CAT_MIDI, LOG_DEBUG, "Skipped update for fader %d - fader 1 (SELECT) was the driver (prevents motorized feedback)", 
-                               state.type);
                 }
             }
         }
     }
 }
 
-void MidiButtonManager::sendFaderUpdate(MidiMapping::FaderType faderType, Track& track) {
+void NoteEditManager::sendFaderUpdate(MidiMapping::FaderType faderType, Track& track) {
     // IMPORTANT: Don't update CC faders (faders 3 and 4) when they were recently the driver
     // These faders represent user input and should maintain their position for a reasonable time
     // The MIDI events are the single source of truth - don't send calculated positions back to these faders
@@ -1438,7 +1434,7 @@ void MidiButtonManager::sendFaderUpdate(MidiMapping::FaderType faderType, Track&
                faderType, FEEDBACK_IGNORE_PERIOD);
 }
 
-void MidiButtonManager::sendFaderPosition(MidiMapping::FaderType faderType, Track& track) {
+void NoteEditManager::sendFaderPosition(MidiMapping::FaderType faderType, Track& track) {
     switch (faderType) {
         case MidiMapping::FaderType::FADER_SELECT:
             EditSelectNoteState::sendTargetPitchbend(editManager, track);
@@ -1455,7 +1451,7 @@ void MidiButtonManager::sendFaderPosition(MidiMapping::FaderType faderType, Trac
     }
 }
 
-void MidiButtonManager::sendCoarseFaderPosition(Track& track) {
+void NoteEditManager::sendCoarseFaderPosition(Track& track) {
     // IMPORTANT: Don't send pitchbend to channel 15 when fader 3 was recently the driver
     // Fader 2 and 3 share channel 15, so pitchbend updates to fader 2 will also move fader 3
     // This violates the "MIDI events as single source of truth" principle for fader 3
@@ -1517,7 +1513,7 @@ void MidiButtonManager::sendCoarseFaderPosition(Track& track) {
     }
 }
 
-void MidiButtonManager::sendFineFaderPosition(Track& track) {
+void NoteEditManager::sendFineFaderPosition(Track& track) {
     // IMPORTANT: Don't send CC values to fader 3 when it was recently the driver
     // Fader 3 represents user input and should maintain its position - MIDI events are the single source of truth
     if (currentDriverFader == MidiMapping::FaderType::FADER_FINE) {
@@ -1573,7 +1569,7 @@ void MidiButtonManager::sendFineFaderPosition(Track& track) {
     }
 }
 
-void MidiButtonManager::sendNoteValueFaderPosition(Track& track) {
+void NoteEditManager::sendNoteValueFaderPosition(Track& track) {
     // IMPORTANT: Don't send CC values to fader 4 when it was recently the driver
     // Fader 4 represents user input and should maintain its position - MIDI events are the single source of truth
     if (currentDriverFader == MidiMapping::FaderType::FADER_NOTE_VALUE) {
@@ -1626,7 +1622,7 @@ void MidiButtonManager::sendNoteValueFaderPosition(Track& track) {
     }
 }
 
-void MidiButtonManager::handleSelectFaderInput(int16_t pitchValue, Track& track) {
+void NoteEditManager::handleSelectFaderInput(int16_t pitchValue, Track& track) {
     // Only process if we're in SELECT mode
     if (currentEditMode != EDIT_MODE_SELECT) {
         return;
@@ -1726,6 +1722,13 @@ void MidiButtonManager::handleSelectFaderInput(int16_t pitchValue, Track& track)
                 editManager.setSelectedNoteIdx(noteIdx);
                 logger.log(CAT_MIDI, LOG_DEBUG, "Select fader: selected note %d at tick %lu", noteIdx, targetTick);
                 
+                // CRITICAL: Reset moving note state when selecting a new note
+                // This ensures that when fader 2 is used, it will track the newly selected note
+                // instead of continuing to track a previously moving note
+                editManager.movingNote.active = false;
+                editManager.movingNote.deletedNotes.clear();
+                logger.log(CAT_MIDI, LOG_DEBUG, "Reset moving note state for new selection");
+                
                 // Set initial reference step based on note position
                 referenceStep = targetTick / Config::TICKS_PER_16TH_STEP;
                 
@@ -1750,7 +1753,7 @@ void MidiButtonManager::handleSelectFaderInput(int16_t pitchValue, Track& track)
     }
 }
 
-void MidiButtonManager::handleCoarseFaderInput(int16_t pitchValue, Track& track) {
+void NoteEditManager::handleCoarseFaderInput(int16_t pitchValue, Track& track) {
     // Only process if start editing is enabled
     if (!startEditingEnabled) {
         logger.log(CAT_MIDI, LOG_DEBUG, "Start editing disabled (grace period active)");
@@ -1823,7 +1826,7 @@ void MidiButtonManager::handleCoarseFaderInput(int16_t pitchValue, Track& track)
     }
 }
 
-void MidiButtonManager::handleFineFaderInput(uint8_t ccValue, Track& track) {
+void NoteEditManager::handleFineFaderInput(uint8_t ccValue, Track& track) {
     // Only process if start editing is enabled
     if (!startEditingEnabled) {
         logger.log(CAT_MIDI, LOG_DEBUG, "Fine editing disabled (grace period active)");
@@ -1893,7 +1896,7 @@ void MidiButtonManager::handleFineFaderInput(uint8_t ccValue, Track& track) {
     }
 }
 
-void MidiButtonManager::handleNoteValueFaderInput(uint8_t ccValue, Track& track) {
+void NoteEditManager::handleNoteValueFaderInput(uint8_t ccValue, Track& track) {
     // Only process if start editing is enabled
     if (!startEditingEnabled) {
         logger.log(CAT_MIDI, LOG_DEBUG, "Note value editing disabled (grace period active)");
@@ -2132,7 +2135,7 @@ void MidiButtonManager::handleNoteValueFaderInput(uint8_t ccValue, Track& track)
 }
 
 // Helper function to check if two notes overlap (borrowed from EditStartNoteState)
-bool MidiButtonManager::notesOverlap(std::uint32_t start1, std::uint32_t end1, std::uint32_t start2, std::uint32_t end2, std::uint32_t loopLength) {
+bool NoteEditManager::notesOverlap(std::uint32_t start1, std::uint32_t end1, std::uint32_t start2, std::uint32_t end2, std::uint32_t loopLength) {
     // Handle wrapping cases
     bool note1Wraps = (end1 < start1);
     bool note2Wraps = (end2 < start2);
@@ -2156,13 +2159,13 @@ bool MidiButtonManager::notesOverlap(std::uint32_t start1, std::uint32_t end1, s
 }
 
 // Helper function to calculate note length accounting for wrapping
-std::uint32_t MidiButtonManager::calculateNoteLength(std::uint32_t start, std::uint32_t end, std::uint32_t loopLength) {
+std::uint32_t NoteEditManager::calculateNoteLength(std::uint32_t start, std::uint32_t end, std::uint32_t loopLength) {
     if (end >= start) return end - start;
     return (loopLength - start) + end;
 }
 
 // Find the corresponding note-off event for a given note-on event using LIFO pairing logic
-MidiEvent* MidiButtonManager::findCorrespondingNoteOff(std::vector<MidiEvent>& midiEvents, MidiEvent* noteOnEvent, uint8_t pitch, std::uint32_t startTick, std::uint32_t endTick) {
+MidiEvent* NoteEditManager::findCorrespondingNoteOff(std::vector<MidiEvent>& midiEvents, MidiEvent* noteOnEvent, uint8_t pitch, std::uint32_t startTick, std::uint32_t endTick) {
     // Use LIFO pairing logic similar to NoteUtils::reconstructNotes
     // We need to simulate the pairing process to find which note-off belongs to our note-on
     
@@ -2195,7 +2198,7 @@ MidiEvent* MidiButtonManager::findCorrespondingNoteOff(std::vector<MidiEvent>& m
 }
 
 // Find overlapping notes for movement (similar to EditStartNoteState::findOverlaps)
-void MidiButtonManager::findOverlapsForMovement(const std::vector<NoteUtils::DisplayNote>& currentNotes,
+void NoteEditManager::findOverlapsForMovement(const std::vector<NoteUtils::DisplayNote>& currentNotes,
                                                uint8_t movingNotePitch,
                                                std::uint32_t currentStart,
                                                std::uint32_t newStart,
@@ -2240,7 +2243,7 @@ void MidiButtonManager::findOverlapsForMovement(const std::vector<NoteUtils::Dis
 }
 
 // Apply temporary overlap changes (similar to EditStartNoteState::applyShortenOrDelete)
-void MidiButtonManager::applyTemporaryOverlapChanges(std::vector<MidiEvent>& midiEvents,
+void NoteEditManager::applyTemporaryOverlapChanges(std::vector<MidiEvent>& midiEvents,
                                                     const std::vector<std::pair<NoteUtils::DisplayNote, std::uint32_t>>& notesToShorten,
                                                     const std::vector<NoteUtils::DisplayNote>& notesToDelete,
                                                     EditManager& manager,
@@ -2352,7 +2355,7 @@ void MidiButtonManager::applyTemporaryOverlapChanges(std::vector<MidiEvent>& mid
 }
 
 // Restore temporarily removed notes (similar to restoreNotes in EditStartNoteState)
-void MidiButtonManager::restoreTemporaryNotes(std::vector<MidiEvent>& midiEvents,
+void NoteEditManager::restoreTemporaryNotes(std::vector<MidiEvent>& midiEvents,
                                              const std::vector<EditManager::MovingNoteIdentity::DeletedNote>& notesToRestore,
                                              EditManager& manager,
                                              std::uint32_t loopLength,
@@ -2463,7 +2466,7 @@ void MidiButtonManager::restoreTemporaryNotes(std::vector<MidiEvent>& midiEvents
 }
 
 // Extend shortened notes dynamically
-void MidiButtonManager::extendShortenedNotes(std::vector<MidiEvent>& midiEvents,
+void NoteEditManager::extendShortenedNotes(std::vector<MidiEvent>& midiEvents,
                                            const std::vector<std::pair<EditManager::MovingNoteIdentity::DeletedNote, std::uint32_t>>& notesToExtend,
                                            EditManager& manager,
                                            std::uint32_t loopLength) {

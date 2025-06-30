@@ -1,8 +1,8 @@
 //  Copyright (c)  2025 Lytrix (Eelke Jager)
 //  Licensed under the PolyForm Noncommercial 1.0.0
 
-#ifndef MIDIBUTTONMANAGER_H
-#define MIDIBUTTONMANAGER_H
+#ifndef NOTE_EDIT_MANAGER_H
+#define NOTE_EDIT_MANAGER_H
 
 #include <Arduino.h>
 #include <cstdint>
@@ -12,20 +12,22 @@
 #include "MidiButtonManagerV2.h"
 #include "MidiFaderManagerV2.h"
 #include "MidiFaderProcessor.h"
+#include "Track.h"
+#include "Logger.h"
 
 /**
- * @class MidiButtonManager
+ * @class NoteEditManager
  * @brief Manages MIDI note-based button logic and fader control.
  *
  * This class serves as the main interface for MIDI control, delegating to specialized handlers:
  * - MidiButtonHandler for button press/release logic
  * - MidiFaderHandler for fader control
  */
-class MidiButtonManager {
+class NoteEditManager {
 public:
-    MidiButtonManager();
+    NoteEditManager();
     
-        // Specialized handlers
+    // Specialized handlers
     MidiButtonManagerV2 buttonHandler;
     MidiFaderManagerV2 faderHandler;
     
@@ -221,8 +223,24 @@ private:
     EditModeState currentEditMode = EDIT_MODE_NONE;
     void enterNextEditMode(Track& track);
     void sendEditModeProgram(EditModeState mode);
+
+    // Fader input processing
+    void processSelectFaderInput(int16_t pitchValue, Track& track);
+    void processCoarseFaderInput(int16_t pitchValue, Track& track);
+    void processFineFaderInput(uint8_t ccValue, Track& track);
+    void processNoteValueFaderInput(uint8_t ccValue, Track& track);
+    
+    // Fader update scheduling
+    void scheduleFaderUpdate(uint8_t faderType, uint32_t delayMs);
+    void processScheduledUpdates();
+    
+    // Helper methods
+    uint16_t calculateTargetTick(int16_t pitchValue, uint16_t loopLength);
+    uint8_t calculateTargetStep(int16_t pitchValue, uint8_t numSteps);
+    uint8_t calculateTargetOffset(uint8_t ccValue, uint8_t numSteps);
+    uint8_t calculateTargetNoteValue(uint8_t ccValue);
 };
 
-extern MidiButtonManager midiButtonManager;
+extern NoteEditManager noteEditManager;
 
-#endif // MIDIBUTTONMANAGER_H 
+#endif // NOTE_EDIT_MANAGER_H 
