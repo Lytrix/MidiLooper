@@ -20,62 +20,8 @@ void MidiFaderProcessor::setup() {
 }
 
 void MidiFaderProcessor::update() {
-    uint32_t now = millis();
-    
-    // Process scheduled fader updates
-    for (auto& state : faderStates) {
-        if (state.pendingUpdate) {
-            if (now >= state.updateScheduledTime) {
-                state.pendingUpdate = false;
-                
-                // Only update if this fader wasn't the driver when the update was scheduled
-                bool currentDriverOnChannel15 = (currentDriverFader == MidiMapping::FaderType::FADER_COARSE || 
-                                               currentDriverFader == MidiMapping::FaderType::FADER_FINE || 
-                                               currentDriverFader == MidiMapping::FaderType::FADER_NOTE_VALUE);
-                bool stateOnChannel15 = (state.type == MidiMapping::FaderType::FADER_COARSE || 
-                                        state.type == MidiMapping::FaderType::FADER_FINE || 
-                                        state.type == MidiMapping::FaderType::FADER_NOTE_VALUE);
-                bool hasChannelConflict = currentDriverOnChannel15 && stateOnChannel15 && currentDriverFader != state.type;
-                
-                // Check if the driver fader is still being actively moved
-                bool driverStillActive = false;
-                if (state.scheduledByDriver == MidiMapping::FaderType::FADER_SELECT) {
-                    driverStillActive = (lastSelectnoteFaderTime > 0 && currentDriverFader == MidiMapping::FaderType::FADER_SELECT && (now - lastSelectnoteFaderTime) < 500);
-                } else if (state.scheduledByDriver == MidiMapping::FaderType::FADER_COARSE) {
-                    driverStillActive = (lastDriverFaderTime > 0 && currentDriverFader == MidiMapping::FaderType::FADER_COARSE && (now - lastDriverFaderTime) < 500);
-                } else if (state.scheduledByDriver == MidiMapping::FaderType::FADER_FINE) {
-                    driverStillActive = (lastDriverFaderTime > 0 && currentDriverFader == MidiMapping::FaderType::FADER_FINE && (now - lastDriverFaderTime) < 500);
-                } else if (state.scheduledByDriver == MidiMapping::FaderType::FADER_NOTE_VALUE) {
-                    driverStillActive = (lastDriverFaderTime > 0 && currentDriverFader == MidiMapping::FaderType::FADER_NOTE_VALUE && (now - lastDriverFaderTime) < 500);
-                }
-                
-                // Skip update if there's a channel conflict or driver is still active
-                bool skipForChannelConflict = hasChannelConflict && driverStillActive;
-                bool skipForSelectDriver = (state.scheduledByDriver == MidiMapping::FaderType::FADER_SELECT);
-                
-                if (skipForChannelConflict) {
-                    logger.log(CAT_MIDI, LOG_DEBUG, "Skipping scheduled fader %d update due to channel conflict with active driver %d", 
-                               (int)state.type, (int)currentDriverFader);
-                    continue;
-                }
-                
-                if (skipForSelectDriver && driverStillActive) {
-                    logger.log(CAT_MIDI, LOG_DEBUG, "Skipping scheduled fader %d update - select fader still active", 
-                               (int)state.type);
-                    continue;
-                }
-                
-                logger.log(CAT_MIDI, LOG_DEBUG, "Processing scheduled fader %d update (scheduled by driver %d, %lu ms ago)", 
-                           (int)state.type, (int)state.scheduledByDriver, 
-                           now - (state.scheduledByDriver == MidiMapping::FaderType::FADER_SELECT ? lastSelectnoteFaderTime : lastDriverFaderTime));
-                
-                // Trigger the callback to update the fader
-                if (movementCallback) {
-                    movementCallback(state.type, state.lastPitchbendValue, state.lastCCValue);
-                }
-            }
-        }
-    }
+    // NOTE: Scheduled update processing disabled - all cross-updates now handled by NoteEditManager
+    // This eliminates the dual scheduling system that was causing conflicts
 }
 
 void MidiFaderProcessor::handlePitchbend(uint8_t channel, int16_t pitchValue) {
@@ -145,8 +91,8 @@ void MidiFaderProcessor::processFaderInput(MidiMapping::FaderType faderType, int
         movementCallback(faderType, pitchbendValue, ccValue);
     }
     
-    // Schedule updates for other faders after delay
-    scheduleOtherFaderUpdates(faderType);
+    // NOTE: Removed automatic scheduling - let NoteEditManager handle cross-updates
+    // This prevents dual scheduling system conflicts
     
     logger.log(CAT_MIDI, LOG_DEBUG, "Fader %d input processed: driver fader set", (int)faderType);
 }
@@ -239,38 +185,9 @@ bool MidiFaderProcessor::hasSignificantChange(const FaderState& state, int16_t p
 }
 
 void MidiFaderProcessor::scheduleOtherFaderUpdates(MidiMapping::FaderType driverFader) {
-    uint32_t now = millis();
-    uint32_t delayMs = 500; // 500ms delay before updating other faders
-    
-    // Only schedule updates from select fader - other faders shouldn't update each other
-    if (driverFader == MidiMapping::FaderType::FADER_SELECT) {
-        delayMs = 100; // Faster updates from select fader
-    }
-    
-    for (auto& state : faderStates) {
-        if (state.type != driverFader) {
-            // Calculate update time based on driver fader type
-            bool driverOnChannel15 = (driverFader == MidiMapping::FaderType::FADER_COARSE || 
-                                    driverFader == MidiMapping::FaderType::FADER_FINE || 
-                                    driverFader == MidiMapping::FaderType::FADER_NOTE_VALUE);
-            bool stateOnChannel15 = (state.type == MidiMapping::FaderType::FADER_COARSE || 
-                                   state.type == MidiMapping::FaderType::FADER_FINE || 
-                                   state.type == MidiMapping::FaderType::FADER_NOTE_VALUE);
-            bool hasChannelConflict = driverOnChannel15 && stateOnChannel15;
-            
-            if (hasChannelConflict) {
-                // Don't schedule updates for faders that share channels with the driver
-                continue;
-            }
-            
-            state.pendingUpdate = true;
-            state.updateScheduledTime = now + delayMs;
-            state.scheduledByDriver = MidiMapping::FaderType::FADER_SELECT; // Reset to default
-            
-            logger.log(CAT_MIDI, LOG_DEBUG, "Scheduled fader %d update in %lu ms (triggered by fader %d)", 
-                       (int)state.type, delayMs, (int)driverFader);
-        }
-    }
+    // NOTE: This function is disabled - all cross-updates now handled by NoteEditManager
+    // This eliminates the dual scheduling system that was causing conflicts
+    (void)driverFader; // Suppress unused parameter warning
 }
 
 void MidiFaderProcessor::markFaderSent(MidiMapping::FaderType faderType) {
