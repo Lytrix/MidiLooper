@@ -47,7 +47,7 @@ private:
     
     // Helper methods
     uint32_t getCurrentBar(uint32_t currentTick, uint32_t loopLength);
-    uint32_t getNextBarStartTick(uint32_t currentTick, uint32_t loopLength);
+    uint32_t getCurrentBarStartTick(uint32_t currentTick, uint32_t loopLength);
     bool hasNoteInSixteenthStep(Track& track, uint32_t stepStartTick, uint32_t stepEndTick);
     void sendLedUpdate(uint8_t ledIndex, bool state);
     void analyzeAndUpdateBar(Track& track, uint32_t barStartTick, uint32_t loopLength);
