@@ -8,6 +8,7 @@
 #include "Globals.h"
 #include "Track.h"
 #include "ClockManager.h"
+#include "MidiLedManager.h"
 
 /**
  * @class TrackManager
@@ -30,6 +31,7 @@
 class TrackManager {
 public:
   TrackManager();
+  ~TrackManager();  // Destructor to clean up LED manager
   void setup();  // Initialize track manager state
 
   // --- Track Selection ---
@@ -76,8 +78,14 @@ public:
   TrackState getTrackState(uint8_t trackIndex) const;
   uint32_t getTrackLength(uint8_t trackIndex) const;
 
+  // --- LED Management ---
+  void updateLeds(uint32_t currentTick);
+  void forceLedUpdate(uint32_t currentTick);
+  void clearLeds();
+
 private:
   Track tracks[Config::NUM_TRACKS];
+  MidiLedManager* ledManager;  // LED controller for Droid B32
 
   uint8_t selectedTrack = 0;
   bool autoAlignEnabled = false;

@@ -7,10 +7,14 @@
 #include "StorageManager.h"
 #include "LooperState.h"
 #include "Logger.h"
+#include "MidiHandler.h"
 
 TrackManager trackManager;
 
 TrackManager::TrackManager() {
+  // Initialize MidiLedManager
+  ledManager = new MidiLedManager(midiHandler);
+  
   for (uint8_t i = 0; i < Config::NUM_TRACKS; i++) {
     pendingRecord[i] = false;
     pendingStop[i] = false;
@@ -21,6 +25,9 @@ TrackManager::TrackManager() {
   masterLoopLength = 0;
 }
 
+TrackManager::~TrackManager() {
+  delete ledManager;
+}
 
 // Recording & Overdubbing ------------------------------------
 
@@ -184,7 +191,11 @@ uint32_t TrackManager::getTrackLength(uint8_t trackIndex) const {
 }
 
 void TrackManager::setSelectedTrack(uint8_t index) {
-  if (index < Config::NUM_TRACKS) selectedTrack = index;
+  if (index < Config::NUM_TRACKS) {
+    selectedTrack = index;
+    // Force LED update when track changes
+    forceLedUpdate(clockManager.getCurrentTick());
+  }
 }
 
 uint8_t TrackManager::getSelectedTrackIndex() {
@@ -227,6 +238,34 @@ void TrackManager::updateAllTracks(uint32_t currentTick) {
 
     bool audible = isTrackAudible(i);
     tracks[i].playMidiEvents(currentTick, audible);
+  }
+  
+  // Update LEDs for the selected track
+  updateLeds(currentTick);
+  
+  // Update current tick indicator
+  if (ledManager && masterLoopLength > 0) {
+    ledManager->updateCurrentTick(currentTick, masterLoopLength);
+  }
+}
+
+// --- LED Management ---
+
+void TrackManager::updateLeds(uint32_t currentTick) {
+  if (ledManager) {
+    ledManager->updateLeds(getSelectedTrack(), currentTick);
+  }
+}
+
+void TrackManager::forceLedUpdate(uint32_t currentTick) {
+  if (ledManager) {
+    ledManager->forceUpdate(getSelectedTrack(), currentTick);
+  }
+}
+
+void TrackManager::clearLeds() {
+  if (ledManager) {
+    ledManager->clearAllLeds();  // This now also clears the current tick indicator
   }
 }
 

@@ -88,7 +88,36 @@ void EditLengthNoteState::onEncoderTurn(EditManager& manager, Track& track, int 
     logger.debug("EditLengthNoteState: Length delta calculation - delta=%d, lengthDelta=%d", 
                  delta, lengthDelta);
     
-    // Calculate current note length
+    // Calculate new end position by moving the current end
+    // Handle potential underflow when lengthDelta is negative
+    uint32_t newEnd;
+    
+    if (lengthDelta >= 0) {
+        // Moving forwards - simple addition
+        newEnd = currentEnd + lengthDelta;
+    } else {
+        // Moving backwards - check constraints first
+        uint32_t deltaAbs = (uint32_t)(-lengthDelta);
+        uint32_t minEnd = noteStart + 1;  // Minimum allowed end position
+        
+        if (currentEnd <= minEnd) {
+            // Already at minimum, cannot go backwards
+            newEnd = minEnd;
+        } else if (deltaAbs >= (currentEnd - noteStart)) {
+            // Would go past or to the start position, clamp to minimum
+            newEnd = minEnd;
+        } else {
+            // Safe to move backwards
+            newEnd = currentEnd - deltaAbs;
+            
+            // Double-check the result doesn't go past start
+            if (newEnd <= noteStart) {
+                newEnd = minEnd;
+            }
+        }
+    }
+    
+    // Calculate current note length for validation
     uint32_t currentLength;
     if (currentEnd >= noteStart) {
         currentLength = currentEnd - noteStart;
@@ -97,24 +126,23 @@ void EditLengthNoteState::onEncoderTurn(EditManager& manager, Track& track, int 
         currentLength = (loopLength - noteStart) + currentEnd;
     }
     
-    // Calculate new length
-    int32_t newLengthInt = (int32_t)currentLength + lengthDelta;
-    
-    // Constrain to minimum length (one tick for fine control)
-    if (newLengthInt < 1) {
-        newLengthInt = 1;
+    // Calculate new length for validation
+    uint32_t newLength;
+    if (newEnd >= noteStart) {
+        newLength = newEnd - noteStart;
+    } else {
+        // Wrapped note
+        newLength = (loopLength - noteStart) + newEnd;
     }
     
     // Constrain to maximum length (one loop)
-    if (newLengthInt > (int32_t)loopLength) {
-        newLengthInt = loopLength;
+    if (newLength > loopLength) {
+        newEnd = noteStart + loopLength;
+        newLength = loopLength;
     }
     
-    uint32_t newLength = (uint32_t)newLengthInt;
-    uint32_t newEnd = (noteStart + newLength) % loopLength;
-    
-    logger.debug("EditLengthNoteState: Changing note length from %lu to %lu ticks (delta=%d)", 
-                 currentLength, newLength, lengthDelta);
+    logger.debug("EditLengthNoteState: Changing note end from %lu to %lu (delta=%d)", 
+                 currentEnd, newEnd, lengthDelta);
     
     // Find and update the NoteOff event
     bool foundOff = false;
@@ -139,7 +167,7 @@ void EditLengthNoteState::onEncoderTurn(EditManager& manager, Track& track, int 
               [](const MidiEvent& a, const MidiEvent& b) { return a.tick < b.tick; });
     
     // Update bracket position to the new end position
-    manager.setBracketTick(newEnd % loopLength);
+    manager.setBracketTick(newEnd);
     
     // Re-select the note by finding it again in the updated note list
     const auto& updatedNotes = track.getCachedNotes();
