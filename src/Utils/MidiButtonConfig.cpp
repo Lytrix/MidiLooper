@@ -186,6 +186,10 @@ void Config::loadFullConfiguration() {
               .onDoublePress(ActionType::DELETE_NOTE)      // Delete selected note
               .onLongPress(ActionType::EXIT_EDIT_MODE));   // Exit edit mode
     
+    // Length Editing Mode Toggle - Button (Note 3) - Note 3 Channel 16
+    addButton(ButtonConfig(3, 16, "Length Edit Mode")
+              .onShortPress(ActionType::TOGGLE_LENGTH_EDIT_MODE));
+    
     // === EXTEND WITH 37 MORE BUTTONS FOR 40 TOTAL ===
     
     // Transport Controls (Channel 1, Notes 39-46) - 8 buttons

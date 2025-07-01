@@ -37,6 +37,7 @@ enum class ActionType {
     SOLO_TRACK,
     SET_LOOP_START,
     SET_LOOP_END,
+    TOGGLE_LENGTH_EDIT_MODE,
     CUSTOM_ACTION
 };
 
