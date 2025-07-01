@@ -18,19 +18,18 @@ void MidiLedManager::updateLeds(Track& track, uint32_t currentTick) {
     uint32_t currentBar = getCurrentBar(currentTick, loopLength);
     
     // Only update on the first tick of a new bar, or if not initialized
-    uint32_t barStartTick = currentBar * (16 * Config::TICKS_PER_16TH_STEP);
+    uint32_t barStartTick = getCurrentBarStartTick(currentTick, loopLength);
     bool isFirstTickOfBar = (currentTick == barStartTick) || (currentTick == 0);
     
     if (!hasInitialized || isFirstTickOfBar || currentBar != lastUpdateBar) {
-        // Analyze the upcoming bar (or current bar if we're at the start)
-        uint32_t targetBarStartTick = getNextBarStartTick(currentTick, loopLength);
-        analyzeAndUpdateBar(track, targetBarStartTick, loopLength);
+        // Analyze the current bar that's playing
+        analyzeAndUpdateBar(track, barStartTick, loopLength);
         
         lastUpdateBar = currentBar;
         hasInitialized = true;
         
-        logger.log(CAT_MIDI, LOG_DEBUG, "LED Manager: Updated LEDs for bar starting at tick %lu (current tick %lu)", 
-                   targetBarStartTick, currentTick);
+        logger.log(CAT_MIDI, LOG_DEBUG, "LED Manager: Updated LEDs for current bar starting at tick %lu (current tick %lu)", 
+                   barStartTick, currentTick);
     }
 }
 
@@ -62,25 +61,12 @@ uint32_t MidiLedManager::getCurrentBar(uint32_t currentTick, uint32_t loopLength
     return (currentTick % loopLength) / ticksPerBar;
 }
 
-uint32_t MidiLedManager::getNextBarStartTick(uint32_t currentTick, uint32_t loopLength) {
+uint32_t MidiLedManager::getCurrentBarStartTick(uint32_t currentTick, uint32_t loopLength) {
     uint32_t ticksPerBar = 16 * Config::TICKS_PER_16TH_STEP;
     uint32_t currentBar = getCurrentBar(currentTick, loopLength);
     
-    // If we're at the very start of a bar, show current bar
-    uint32_t barStartTick = currentBar * ticksPerBar;
-    if (currentTick == barStartTick || currentTick == 0) {
-        return barStartTick;
-    }
-    
-    // Otherwise show next bar
-    uint32_t nextBarStartTick = (currentBar + 1) * ticksPerBar;
-    
-    // Handle loop wrapping
-    if (nextBarStartTick >= loopLength) {
-        nextBarStartTick = 0;
-    }
-    
-    return nextBarStartTick;
+    // Return the start tick of the current bar
+    return currentBar * ticksPerBar;
 }
 
 bool MidiLedManager::hasNoteInSixteenthStep(Track& track, uint32_t stepStartTick, uint32_t stepEndTick) {
