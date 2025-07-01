@@ -35,11 +35,25 @@ void MidiButtonProcessor::handleMidiNote(uint8_t channel, uint8_t note, uint8_t 
             state.isPressed = true;
             state.pressStartTime = now;
             logger.log(CAT_BUTTON, LOG_DEBUG, "Button pressed: Ch%d Note%d at time %lu", channel, note, now);
+            
+            // Special case: Note 3 on Channel 16 - momentary length edit mode (ON = enable length mode)
+            if (channel == 16 && note == 3) {
+                logger.log(CAT_BUTTON, LOG_DEBUG, "Momentary length edit ON: Ch%d Note%d", channel, note);
+                triggerButtonPress(note, channel - 1, MidiButtonConfig::PressType::SHORT_PRESS);
+            }
         }
     } else {
         // Note Off - Button Release
         if (state.isPressed) {
             state.isPressed = false;
+            
+            // Special case: Note 3 on Channel 16 - momentary length edit mode (OFF = disable length mode)
+            if (channel == 16 && note == 3) {
+                logger.log(CAT_BUTTON, LOG_DEBUG, "Momentary length edit OFF: Ch%d Note%d", channel, note);
+                triggerButtonPress(note, channel - 1, MidiButtonConfig::PressType::SHORT_PRESS);
+                return; // Skip normal release handling for momentary button
+            }
+            
             // Handle millis() overflow properly
             uint32_t duration;
             if (now >= state.pressStartTime) {

@@ -53,6 +53,7 @@ public:
     // Edit mode methods (must be public for MidiButtonActions)
     void cycleEditMode(Track& track);
     void deleteSelectedNote(Track& track);
+    void toggleLengthEditingMode();
     
     // Legacy methods - to be replaced by unified system
     void sendStartNotePitchbend(Track& track);  // Sends coarse pitchbend ch15 and fine CC2 ch15
@@ -195,6 +196,11 @@ private:
     // Track fader 1 activity to prevent fader 2 updates during selectnote fader use
     uint32_t lastSelectnoteFaderTime = 0;
     static constexpr uint32_t SELECTNOTE_PROTECTION_PERIOD = 2000; // Don't update fader 2 for 2 seconds after fader 1 activity
+    
+    // Length editing mode state
+    bool lengthEditingMode = false;
+    uint32_t lastLengthModeToggleTime = 0;
+    static constexpr uint32_t LENGTH_MODE_DEBOUNCE_TIME = 100; // 100ms debounce protection
     
     std::vector<MidiFaderProcessor::FaderState> faderStates;
     uint32_t lastDriverFaderUpdateTime = 0;

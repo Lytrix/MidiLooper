@@ -63,6 +63,9 @@ void MidiButtonActions::executeAction(MidiButtonConfig::ActionType actionType, u
         case MidiButtonConfig::ActionType::DELETE_NOTE:
             handleDeleteNote();
             break;
+        case MidiButtonConfig::ActionType::TOGGLE_LENGTH_EDIT_MODE:
+            handleToggleLengthEditMode();
+            break;
         case MidiButtonConfig::ActionType::CLEAR_TRACK:
             handleClearTrack();
             break;
@@ -245,6 +248,10 @@ Track& MidiButtonActions::getCurrentTrack() {
 
 uint32_t MidiButtonActions::getCurrentTick() {
     return clockManager.getCurrentTick();
+}
+
+void MidiButtonActions::handleToggleLengthEditMode() {
+    noteEditManager.toggleLengthEditingMode();
 }
 
 bool MidiButtonActions::isValidTrackNumber(uint8_t trackNumber) {

@@ -56,6 +56,7 @@ public:
     void handleCycleEditMode();
     void handleExitEditMode();
     void handleDeleteNote();
+    void handleToggleLengthEditMode();
     
     // Extended actions (stubbed for future)
     void handleTogglePlay();
