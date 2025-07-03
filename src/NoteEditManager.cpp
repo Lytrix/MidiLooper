@@ -3,6 +3,7 @@
 
 #include <cstdint>
 #include <set>
+#include <algorithm>
 #include "Globals.h"
 #include "NoteEditManager.h"
 
@@ -1062,58 +1063,103 @@ void NoteEditManager::handleSelectFaderInput(int16_t pitchValue, Track& track) {
     uint32_t loopLength = track.getLoopLength();
     if (loopLength == 0) return;
     
-    // Use the same navigation logic for note selection
+    // Collect ALL note positions and empty step positions for fader navigation
     uint32_t numSteps = loopLength / Config::TICKS_PER_16TH_STEP;
     const auto& notes = track.getCachedNotes();
     std::vector<uint32_t> allPositions;
     
+    // First, add all note positions
+    for (int i = 0; i < (int)notes.size(); i++) {
+        allPositions.push_back(notes[i].startTick);
+    }
+    
+    // Then, add empty step positions for steps that have no notes
     for (uint32_t step = 0; step < numSteps; step++) {
         uint32_t stepTick = step * Config::TICKS_PER_16TH_STEP;
         
-        int nearbyNoteIdx = -1;
+        // Check if this step position already has a note
+        bool hasNoteAtStep = false;
         for (int i = 0; i < (int)notes.size(); i++) {
-            // A note belongs to this step if it's in the same step (integer division)
-            uint32_t noteStep = notes[i].startTick / Config::TICKS_PER_16TH_STEP;
-            if (noteStep == step) {
-                nearbyNoteIdx = i;
+            if (notes[i].startTick == stepTick) {
+                hasNoteAtStep = true;
                 break;
             }
         }
         
-        if (nearbyNoteIdx >= 0) {
-            // There's a note in this step - use the note position to represent this step
-            allPositions.push_back(notes[nearbyNoteIdx].startTick);
-        } else {
-            // No note in this step - use the empty step position
+        // If no note at this exact step position, add the empty step
+        if (!hasNoteAtStep) {
             allPositions.push_back(stepTick);
         }
     }
     
+    // Sort all positions
+    std::sort(allPositions.begin(), allPositions.end());
+    
     // Remove duplicates
-    for (int i = allPositions.size() - 1; i > 0; i--) {
-        if (allPositions[i] == allPositions[i-1]) {
-            allPositions.erase(allPositions.begin() + i);
-        }
-    }
+    allPositions.erase(std::unique(allPositions.begin(), allPositions.end()), allPositions.end());
     
     if (!allPositions.empty()) {
         int posIndex = map(pitchValue, PITCHBEND_MIN, PITCHBEND_MAX, 0, allPositions.size() - 1);
         uint32_t targetTick = allPositions[posIndex];
         
-        int noteIdx = -1;
+        // Find all notes at the target tick for multi-note cycling
+        std::vector<int> notesAtTick;
         for (int i = 0; i < (int)notes.size(); i++) {
             if (notes[i].startTick == targetTick) {
-                noteIdx = i;
-                break;
+                notesAtTick.push_back(i);
             }
         }
         
-        if (targetTick != editManager.getBracketTick()) {
+        int noteIdx = -1;
+        if (!notesAtTick.empty()) {
+            // Sort notes by pitch for consistent cycling order
+            std::sort(notesAtTick.begin(), notesAtTick.end(), [&notes](int a, int b) {
+                return notes[a].note < notes[b].note;
+            });
+            
+            // Simple cycling logic: if we're at the same tick and have multiple notes, cycle through them
+            if (targetTick == editManager.getBracketTick() && editManager.getSelectedNoteIdx() >= 0 && notesAtTick.size() > 1) {
+                int currentIdx = editManager.getSelectedNoteIdx();
+                auto currentIt = std::find(notesAtTick.begin(), notesAtTick.end(), currentIdx);
+                
+                if (currentIt != notesAtTick.end()) {
+                    // Move to next note in the list
+                    auto nextIt = std::next(currentIt);
+                    if (nextIt != notesAtTick.end()) {
+                        noteIdx = *nextIt;
+                    } else {
+                        // Wrap to first note
+                        noteIdx = notesAtTick[0];
+                    }
+                    logger.log(CAT_MIDI, LOG_INFO, "Cycling through notes at tick %lu (%d notes total)", 
+                               targetTick, (int)notesAtTick.size());
+                } else {
+                    // Current selection not in this tick's notes, select first
+                    noteIdx = notesAtTick[0];
+                }
+            } else {
+                // Different tick, single note, or no current selection - select first note
+                noteIdx = notesAtTick[0];
+                if (targetTick != editManager.getBracketTick()) {
+                    logger.log(CAT_MIDI, LOG_INFO, "Moving to tick position: %lu", targetTick);
+                }
+            }
+        }
+        
+        if (targetTick != editManager.getBracketTick() || noteIdx != editManager.getSelectedNoteIdx()) {
             editManager.setBracketTick(targetTick);
             
             if (noteIdx >= 0) {
                 editManager.setSelectedNoteIdx(noteIdx);
-                logger.log(CAT_MIDI, LOG_DEBUG, "Select fader: selected note %d at tick %lu", noteIdx, targetTick);
+                if (notesAtTick.size() > 1) {
+                    // Find which note we selected in the multi-note list
+                    auto selectedIt = std::find(notesAtTick.begin(), notesAtTick.end(), noteIdx);
+                    int notePosition = std::distance(notesAtTick.begin(), selectedIt) + 1;
+                    logger.log(CAT_MIDI, LOG_INFO, "Select fader: selected note %d at tick %lu (%d/%d notes at this position)", 
+                               noteIdx, targetTick, notePosition, (int)notesAtTick.size());
+                } else {
+                    logger.log(CAT_MIDI, LOG_DEBUG, "Select fader: selected note %d at tick %lu", noteIdx, targetTick);
+                }
                 
                 // CRITICAL: Reset moving note state when selecting a new note
                 // This ensures that when fader 2 is used, it will track the newly selected note
@@ -1128,10 +1174,8 @@ void NoteEditManager::handleSelectFaderInput(int16_t pitchValue, Track& track) {
                 // Schedule updates for faders 2, 3, and 4 after note selection
                 scheduleOtherFaderUpdates(MidiMapping::FaderType::FADER_SELECT);
                 
-                // CRITICAL FIX: Reset movement tracking after successful note selection
-                // This allows the next movement to be considered significant regardless of recent small movements
-                lastSelectFaderTime = 0;
-                lastUserSelectFaderValue = 0;
+                // Keep current movement tracking values to maintain proper filtering
+                // Don't reset to 0 as this would cause incorrect delta calculations
                 
                 // Start grace period for start editing
                 noteSelectionTime = millis();

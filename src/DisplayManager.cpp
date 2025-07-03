@@ -378,6 +378,7 @@ void DisplayManager::drawNoteInfo(uint32_t currentTick, Track& selectedTrack) {
             }
         }
     }
+    
     if (!noteToShow && !notes.empty()) {
         if (editManager.getCurrentState() == nullptr) {
             uint32_t tickInLoop = (lengthLoop > 0) ? (currentTick % lengthLoop) : currentTick;
@@ -407,7 +408,7 @@ void DisplayManager::drawNoteInfo(uint32_t currentTick, Track& selectedTrack) {
     char lenStr[6] = "---";
     char velStr[4] = "---";
     bool validNote = false;
-    if (noteToShow) {
+    if (noteToShow && lengthLoop > 0) {
         ticksToBarsBeats16thTicks2Dec(displayStartTick % lengthLoop, startStr, sizeof(startStr), true);
         uint8_t noteVal = noteToShow->note;
         // Calculate note length, handling wrap-around case
@@ -426,6 +427,7 @@ void DisplayManager::drawNoteInfo(uint32_t currentTick, Track& selectedTrack) {
             snprintf(velStr, sizeof(velStr), "%3u", velVal);
         }
     }
+    
     int x = DisplayManager::TRACK_MARGIN;
     int y = DISPLAY_HEIGHT;
     // Draw the time string (ticksToBarsBeats16thTicks2Dec)

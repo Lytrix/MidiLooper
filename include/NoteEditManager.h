@@ -167,8 +167,8 @@ private:
     // Smart selection stability - prevent motorized fader feedback from changing selection
     int16_t lastUserSelectFaderValue = PITCHBEND_CENTER;
     uint32_t lastSelectFaderTime = 0;
-    static constexpr int16_t SELECT_MOVEMENT_THRESHOLD = 200; // Minimum pitchbend change to be considered intentional
-    static constexpr uint32_t SELECT_STABILITY_TIME = 1500; // ms between movements to be considered stable
+    static constexpr int16_t SELECT_MOVEMENT_THRESHOLD = 100; // Minimum pitchbend change to be considered intentional
+    static constexpr uint32_t SELECT_STABILITY_TIME = 500; // ms between movements to be considered stable
     
     // Coarse fader movement stability - prevent jitter from rescheduling updates
     int16_t lastUserCoarseFaderValue = PITCHBEND_CENTER;
