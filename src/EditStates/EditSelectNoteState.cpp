@@ -197,20 +197,77 @@ void EditSelectNoteState::selectNextNoteSequential(EditManager& manager, Track& 
         return;
     }
     
-    // Sort notes by start tick for sequential navigation
+    // Sort notes by start tick, then by pitch for stable ordering
     std::sort(notes.begin(), notes.end(), 
               [](const NoteUtils::DisplayNote& a, const NoteUtils::DisplayNote& b) {
-                  return a.startTick < b.startTick;
+                  if (a.startTick != b.startTick) return a.startTick < b.startTick;
+                  return a.note < b.note;  // Secondary sort by pitch
               });
     
     uint32_t currentTick = manager.getBracketTick();
+    int currentSelectedIdx = manager.getSelectedNoteIdx();
     
-    // Find next note after current position
+    // Find current note in sorted list (if any)
+    int currentSortedIdx = -1;
+    if (currentSelectedIdx >= 0) {
+        const auto& originalNotes = track.getCachedNotes();
+        if (currentSelectedIdx < (int)originalNotes.size()) {
+            const auto& currentNote = originalNotes[currentSelectedIdx];
+            
+            // Find this note in the sorted list
+            for (int i = 0; i < (int)notes.size(); i++) {
+                if (notes[i].note == currentNote.note && 
+                    notes[i].startTick == currentNote.startTick &&
+                    notes[i].endTick == currentNote.endTick) {
+                    currentSortedIdx = i;
+                    break;
+                }
+            }
+        }
+    }
+    
     int nextIdx = -1;
-    for (int i = 0; i < (int)notes.size(); ++i) {
-        if (notes[i].startTick > currentTick) {
-            nextIdx = i;
-            break;
+    
+    // If we have a current note, try to find the next note
+    if (currentSortedIdx >= 0) {
+        uint32_t currentNoteStartTick = notes[currentSortedIdx].startTick;
+        
+        // Count notes at the same tick position for user feedback
+        int notesAtSameTick = 0;
+        for (int i = 0; i < (int)notes.size(); i++) {
+            if (notes[i].startTick == currentNoteStartTick) {
+                notesAtSameTick++;
+            }
+        }
+        
+        // First, look for another note at the same tick position
+        for (int i = currentSortedIdx + 1; i < (int)notes.size(); i++) {
+            if (notes[i].startTick == currentNoteStartTick) {
+                nextIdx = i;
+                logger.log(CAT_MIDI, LOG_INFO, "Cycling through notes at tick %lu (%d notes total)", 
+                           currentNoteStartTick, notesAtSameTick);
+                break;
+            }
+        }
+        
+        // If no more notes at the same tick, find next tick position
+        if (nextIdx == -1) {
+            for (int i = 0; i < (int)notes.size(); i++) {
+                if (notes[i].startTick > currentNoteStartTick) {
+                    nextIdx = i;
+                    logger.log(CAT_MIDI, LOG_INFO, "Moving to next tick position: %lu -> %lu", 
+                               currentNoteStartTick, notes[i].startTick);
+                    break;
+                }
+            }
+        }
+    } else {
+        // No current selection, find first note at or after current tick
+        for (int i = 0; i < (int)notes.size(); i++) {
+            if (notes[i].startTick >= currentTick) {
+                nextIdx = i;
+                break;
+            }
         }
     }
     
@@ -226,11 +283,15 @@ void EditSelectNoteState::selectNextNoteSequential(EditManager& manager, Track& 
         const auto& originalNotes = track.getCachedNotes();
         int originalIdx = findNoteIndexInOriginalList(notes[nextIdx], originalNotes);
         manager.setSelectedNoteIdx(originalIdx);
+        
+        // Log selection for debugging
+        logger.log(CAT_MIDI, LOG_DEBUG, "Selected note: pitch=%d, tick=%lu, original_idx=%d", 
+                   notes[nextIdx].note, notes[nextIdx].startTick, originalIdx);
     } else {
         // No notes found - move to next 16th note grid position
         uint32_t nextTick = (currentTick + Config::TICKS_PER_16TH_STEP) % loopLength;
         manager.setBracketTick(nextTick);
-                manager.resetSelection();
+        manager.resetSelection();
     }
 }
 
@@ -244,6 +305,8 @@ int EditSelectNoteState::findNoteIndexInOriginalList(const NoteUtils::DisplayNot
             note.startTick == targetNote.startTick && 
             note.endTick == targetNote.endTick &&
             note.velocity == targetNote.velocity) {
+            logger.log(CAT_MIDI, LOG_DEBUG, "Found exact match: note=%d, start=%lu, end=%lu, idx=%d", 
+                       targetNote.note, targetNote.startTick, targetNote.endTick, i);
             return i;
         }
     }
@@ -254,11 +317,15 @@ int EditSelectNoteState::findNoteIndexInOriginalList(const NoteUtils::DisplayNot
         const auto& note = originalNotes[i];
         if (note.note == targetNote.note && 
             note.startTick == targetNote.startTick) {
+            logger.log(CAT_MIDI, LOG_DEBUG, "Found partial match: note=%d, start=%lu, idx=%d", 
+                       targetNote.note, targetNote.startTick, i);
             return i;
         }
     }
     
     // If still no match, return -1 to indicate no selection
+    logger.log(CAT_MIDI, LOG_WARNING, "No match found for note: pitch=%d, start=%lu, end=%lu", 
+               targetNote.note, targetNote.startTick, targetNote.endTick);
     return -1;
 } 
 
@@ -278,20 +345,77 @@ void EditSelectNoteState::selectPreviousNoteSequential(EditManager& manager, Tra
         return;
     }
     
-    // Sort notes by start tick for sequential navigation
+    // Sort notes by start tick, then by pitch for stable ordering
     std::sort(notes.begin(), notes.end(), 
               [](const NoteUtils::DisplayNote& a, const NoteUtils::DisplayNote& b) {
-                  return a.startTick < b.startTick;
+                  if (a.startTick != b.startTick) return a.startTick < b.startTick;
+                  return a.note < b.note;  // Secondary sort by pitch
               });
     
     uint32_t currentTick = manager.getBracketTick();
+    int currentSelectedIdx = manager.getSelectedNoteIdx();
     
-    // Find previous note before current position
+    // Find current note in sorted list (if any)
+    int currentSortedIdx = -1;
+    if (currentSelectedIdx >= 0) {
+        const auto& originalNotes = track.getCachedNotes();
+        if (currentSelectedIdx < (int)originalNotes.size()) {
+            const auto& currentNote = originalNotes[currentSelectedIdx];
+            
+            // Find this note in the sorted list
+            for (int i = 0; i < (int)notes.size(); i++) {
+                if (notes[i].note == currentNote.note && 
+                    notes[i].startTick == currentNote.startTick &&
+                    notes[i].endTick == currentNote.endTick) {
+                    currentSortedIdx = i;
+                    break;
+                }
+            }
+        }
+    }
+    
     int prevIdx = -1;
-    for (int i = (int)notes.size() - 1; i >= 0; --i) {
-        if (notes[i].startTick < currentTick) {
-            prevIdx = i;
-            break;
+    
+    // If we have a current note, try to find the previous note
+    if (currentSortedIdx >= 0) {
+        uint32_t currentNoteStartTick = notes[currentSortedIdx].startTick;
+        
+        // Count notes at the same tick position for user feedback
+        int notesAtSameTick = 0;
+        for (int i = 0; i < (int)notes.size(); i++) {
+            if (notes[i].startTick == currentNoteStartTick) {
+                notesAtSameTick++;
+            }
+        }
+        
+        // First, look for another note at the same tick position (previous in sort order)
+        for (int i = currentSortedIdx - 1; i >= 0; i--) {
+            if (notes[i].startTick == currentNoteStartTick) {
+                prevIdx = i;
+                logger.log(CAT_MIDI, LOG_INFO, "Cycling through notes at tick %lu (%d notes total)", 
+                           currentNoteStartTick, notesAtSameTick);
+                break;
+            }
+        }
+        
+        // If no more notes at the same tick, find previous tick position
+        if (prevIdx == -1) {
+            for (int i = (int)notes.size() - 1; i >= 0; i--) {
+                if (notes[i].startTick < currentNoteStartTick) {
+                    prevIdx = i;
+                    logger.log(CAT_MIDI, LOG_INFO, "Moving to previous tick position: %lu -> %lu", 
+                               currentNoteStartTick, notes[i].startTick);
+                    break;
+                }
+            }
+        }
+    } else {
+        // No current selection, find last note at or before current tick
+        for (int i = (int)notes.size() - 1; i >= 0; i--) {
+            if (notes[i].startTick <= currentTick) {
+                prevIdx = i;
+                break;
+            }
         }
     }
     
@@ -307,6 +431,10 @@ void EditSelectNoteState::selectPreviousNoteSequential(EditManager& manager, Tra
         const auto& originalNotes = track.getCachedNotes();
         int originalIdx = findNoteIndexInOriginalList(notes[prevIdx], originalNotes);
         manager.setSelectedNoteIdx(originalIdx);
+        
+        // Log selection for debugging
+        logger.log(CAT_MIDI, LOG_DEBUG, "Selected note: pitch=%d, tick=%lu, original_idx=%d", 
+                   notes[prevIdx].note, notes[prevIdx].startTick, originalIdx);
     } else {
         // No notes found - move to previous 16th note grid position
         uint32_t prevTick = (currentTick + loopLength - Config::TICKS_PER_16TH_STEP) % loopLength;

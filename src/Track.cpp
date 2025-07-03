@@ -1,17 +1,19 @@
 //  Copyright (c)  2025 Lytrix (Eelke Jager)
 //  Licensed under the PolyForm Noncommercial 1.0.0
 
-#include "Globals.h"
 #include "Track.h"
-#include "ClockManager.h"
-#include "MidiHandler.h"
 #include "Logger.h"
+#include "MidiHandler.h"
+#include "ClockManager.h"
+#include "StorageManager.h"
+#include "stdint.h"
+#include <unordered_map>
+#include <utility>
+#include <algorithm>
+#include "Globals.h"
 #include "TrackStateMachine.h"
 #include "TrackUndo.h"
 #include "LooperState.h"
-#include <algorithm>  // for std::sort
-#include "StorageManager.h"
-#include "stdint.h"
 
 // -------------------------
 // Track class implementation
@@ -181,6 +183,130 @@ void Track::finalizePendingNotes(uint32_t offAbsTick) {
     invalidateCaches();
 }
 
+void Track::validateAndCleanupMidiEvents() {
+    if (midiEvents.empty()) return;
+    
+    // Map to track active notes: key = (note, channel), value = note-on event index
+    std::unordered_map<std::pair<uint8_t, uint8_t>, size_t, PairHash> activeNotes;
+    std::vector<bool> eventsToKeep(midiEvents.size(), true);
+    int orphanedCount = 0;
+    
+    // Sort events by tick to ensure proper order
+    std::sort(midiEvents.begin(), midiEvents.end(),
+              [](const MidiEvent& a, const MidiEvent& b) {
+                  return a.tick < b.tick;
+              });
+    
+    // First pass: match note-on/note-off pairs
+    for (size_t i = 0; i < midiEvents.size(); i++) {
+        const MidiEvent& evt = midiEvents[i];
+        
+        if (evt.isNoteOn()) {
+            std::pair<uint8_t, uint8_t> key = {evt.data.noteData.note, evt.channel};
+            
+            // Check if there's already an active note (orphaned note-on)
+            if (activeNotes.find(key) != activeNotes.end()) {
+                // Mark the previous orphaned note-on for removal
+                size_t prevIndex = activeNotes[key];
+                eventsToKeep[prevIndex] = false;
+                orphanedCount++;
+                logger.log(CAT_MIDI, LOG_WARNING, 
+                          "Removed orphaned note-on: note %d, channel %d, tick %lu",
+                          evt.data.noteData.note, evt.channel, midiEvents[prevIndex].tick);
+            }
+            
+            // Track this note-on
+            activeNotes[key] = i;
+            
+        } else if (evt.isNoteOff()) {
+            std::pair<uint8_t, uint8_t> key = {evt.data.noteData.note, evt.channel};
+            auto it = activeNotes.find(key);
+            
+            if (it != activeNotes.end()) {
+                // Found matching note-on, remove from active notes
+                activeNotes.erase(it);
+            } else {
+                // Orphaned note-off, mark for removal
+                eventsToKeep[i] = false;
+                orphanedCount++;
+                logger.log(CAT_MIDI, LOG_WARNING, 
+                          "Removed orphaned note-off: note %d, channel %d, tick %lu",
+                          evt.data.noteData.note, evt.channel, evt.tick);
+            }
+        }
+    }
+    
+    // Check for remaining active notes (note-on without note-off)
+    for (const auto& pair : activeNotes) {
+        size_t index = pair.second;
+        eventsToKeep[index] = false;
+        orphanedCount++;
+        logger.log(CAT_MIDI, LOG_WARNING, 
+                  "Removed orphaned note-on: note %d, channel %d, tick %lu",
+                  midiEvents[index].data.noteData.note, midiEvents[index].channel, midiEvents[index].tick);
+    }
+    
+    // Second pass: handle loop wrapping for remaining unmatched notes
+    if (loopLengthTicks > 0) {
+        activeNotes.clear();
+        
+        // Look for note-on near end that might have note-off near beginning
+        for (size_t i = 0; i < midiEvents.size(); i++) {
+            if (!eventsToKeep[i]) continue;
+            
+            const MidiEvent& evt = midiEvents[i];
+            
+            if (evt.isNoteOn()) {
+                std::pair<uint8_t, uint8_t> key = {evt.data.noteData.note, evt.channel};
+                activeNotes[key] = i;
+                
+            } else if (evt.isNoteOff()) {
+                std::pair<uint8_t, uint8_t> key = {evt.data.noteData.note, evt.channel};
+                auto it = activeNotes.find(key);
+                
+                if (it != activeNotes.end()) {
+                    // Check if this could be a wrapped note
+                    size_t noteOnIndex = it->second;
+                    uint32_t noteOnTick = midiEvents[noteOnIndex].tick;
+                    uint32_t noteOffTick = evt.tick;
+                    
+                    // If note-off is much earlier than note-on, it might be wrapped
+                    if (noteOffTick < noteOnTick && (noteOnTick - noteOffTick) > (loopLengthTicks / 2)) {
+                        // This looks like a wrapped note - keep both events
+                        activeNotes.erase(it);
+                        logger.log(CAT_MIDI, LOG_INFO, 
+                                  "Found wrapped note: note %d, channel %d, on-tick %lu, off-tick %lu",
+                                  evt.data.noteData.note, evt.channel, noteOnTick, noteOffTick);
+                    }
+                }
+            }
+        }
+    }
+    
+    // Remove orphaned events
+    if (orphanedCount > 0) {
+        std::vector<MidiEvent> cleanedEvents;
+        cleanedEvents.reserve(midiEvents.size() - orphanedCount);
+        
+        for (size_t i = 0; i < midiEvents.size(); i++) {
+            if (eventsToKeep[i]) {
+                cleanedEvents.push_back(midiEvents[i]);
+            }
+        }
+        
+        midiEvents = std::move(cleanedEvents);
+        invalidateCaches();
+        
+        logger.log(CAT_MIDI, LOG_INFO, 
+                  "MIDI validation complete: removed %d orphaned events, %d events remaining",
+                  orphanedCount, (int)midiEvents.size());
+    } else {
+        logger.log(CAT_MIDI, LOG_INFO, 
+                  "MIDI validation complete: no orphaned events found, %d events total",
+                  (int)midiEvents.size());
+    }
+}
+
 // -------------------------
 // Stop recording
 // -------------------------
@@ -190,6 +316,9 @@ void Track::stopRecording(uint32_t currentTick) {
 
   // Close any held notes
   finalizePendingNotes(currentTick);
+
+  // Validate and cleanup orphaned MIDI events
+  validateAndCleanupMidiEvents();
 
   // Use the actual time between start and stop as the loop length
   uint32_t rawLength = currentTick - startLoopTick;
@@ -252,6 +381,10 @@ void Track::startOverdubbing(uint32_t currentTick) {
 
 void Track::stopOverdubbing() {
   setState(TRACK_PLAYING);
+  
+  // Validate and cleanup orphaned MIDI events after overdubbing
+  validateAndCleanupMidiEvents();
+  
   logger.logTrackEvent("Overdubbing stopped", clockManager.getCurrentTick());
   logger.info("Overdub stopped: events=%d, snapshots=%d", midiEvents.size(), midiHistory.size());
 

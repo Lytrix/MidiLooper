@@ -99,6 +99,9 @@ public:
   // Track management
   void clear();
   void toggleMuteTrack();
+  
+  // MIDI event validation
+  void validateAndCleanupMidiEvents();  // Manual validation
 
   // MIDI events
   void recordMidiEvents(midi::MidiType type, byte channel, byte data1, byte data2, uint32_t currentTick);
