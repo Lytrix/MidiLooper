@@ -633,4 +633,85 @@ void moveNoteWithOverlapHandling(Track& track, EditManager& manager,
     finalReconstructAndSelect(midiEvents, manager, movingNotePitch, newStart, newEnd, loopLength);
 }
 
+// Find the corresponding note-off event for a given note-on event using LIFO pairing logic
+MidiEvent* findCorrespondingNoteOff(std::vector<MidiEvent>& midiEvents, MidiEvent* noteOnEvent, uint8_t pitch, std::uint32_t startTick, std::uint32_t endTick) {
+    // Use LIFO pairing logic similar to NoteUtils::reconstructNotes
+    // We need to simulate the pairing process to find which note-off belongs to our note-on
+    
+    std::vector<MidiEvent*> activeNoteOnStack;
+    
+    for (auto& evt : midiEvents) {
+        bool isNoteOn = (evt.type == midi::NoteOn && evt.data.noteData.velocity > 0 && evt.data.noteData.note == pitch);
+        bool isNoteOff = ((evt.type == midi::NoteOff || (evt.type == midi::NoteOn && evt.data.noteData.velocity == 0)) && evt.data.noteData.note == pitch);
+        
+        if (isNoteOn) {
+            activeNoteOnStack.push_back(&evt);
+        } else if (isNoteOff) {
+            if (!activeNoteOnStack.empty()) {
+                MidiEvent* correspondingNoteOn = activeNoteOnStack.back();
+                activeNoteOnStack.pop_back();
+                
+                // Check if this is the note-off for our target note-on
+                if (correspondingNoteOn == noteOnEvent) {
+                    logger.log(CAT_MIDI, LOG_DEBUG, "Found corresponding note-off: pitch=%d, noteOn@%lu -> noteOff@%lu", 
+                              pitch, correspondingNoteOn->tick, evt.tick);
+                    return &evt;
+                }
+            }
+        }
+    }
+    
+    // If we reach here, the note-on didn't have a corresponding note-off (shouldn't happen in well-formed MIDI)
+    logger.log(CAT_MIDI, LOG_DEBUG, "No corresponding note-off found for pitch=%d, start=%lu", pitch, startTick);
+    return nullptr;
+}
+
+// Extend shortened notes dynamically
+void extendShortenedNotes(std::vector<MidiEvent>& midiEvents,
+                         const std::vector<std::pair<EditManager::MovingNoteIdentity::DeletedNote, std::uint32_t>>& notesToExtend,
+                         EditManager& manager,
+                         std::uint32_t loopLength) {
+    logger.log(CAT_MIDI, LOG_DEBUG, "=== EXTENDING SHORTENED NOTES ===");
+    logger.log(CAT_MIDI, LOG_DEBUG, "Total notes to extend: %zu", notesToExtend.size());
+    
+    for (const auto& [noteToExtend, newEndTick] : notesToExtend) {
+        logger.log(CAT_MIDI, LOG_DEBUG, "Extending shortened note: pitch=%d, start=%lu, from %lu to %lu", 
+                  noteToExtend.note, noteToExtend.startTick, noteToExtend.shortenedToTick, newEndTick);
+        
+        // Find the note-off event at its current shortened position
+        MidiEvent* noteOffEvent = nullptr;
+        for (auto& event : midiEvents) {
+            if ((event.type == midi::NoteOff || (event.type == midi::NoteOn && event.data.noteData.velocity == 0)) &&
+                event.data.noteData.note == noteToExtend.note && 
+                event.tick > noteToExtend.startTick) {
+                // Take the first note-off we find for this pitch after the note-on
+                noteOffEvent = &event;
+                break;
+            }
+        }
+        
+        if (noteOffEvent) {
+            uint32_t oldTick = noteOffEvent->tick;
+            noteOffEvent->tick = newEndTick;
+            
+            // Update the tracking in the deleted notes list
+            for (auto& deletedNote : manager.movingNote.deletedNotes) {
+                if (deletedNote.note == noteToExtend.note && 
+                    deletedNote.startTick == noteToExtend.startTick && 
+                    deletedNote.wasShortened) {
+                    deletedNote.shortenedToTick = newEndTick;
+                    logger.log(CAT_MIDI, LOG_DEBUG, "Updated tracking: shortened note now ends at %lu", newEndTick);
+                    break;
+                }
+            }
+            
+            logger.log(CAT_MIDI, LOG_DEBUG, "Extended note-off event: pitch=%d, from tick=%lu to tick=%lu", 
+                      noteToExtend.note, oldTick, newEndTick);
+        } else {
+            logger.log(CAT_MIDI, LOG_DEBUG, "Warning: Could not find note-off event to extend: pitch=%d, start=%lu", 
+                      noteToExtend.note, noteToExtend.startTick);
+        }
+    }
+}
+
 } // namespace NoteMovementUtils 

@@ -64,4 +64,13 @@ namespace NoteMovementUtils {
                                   uint32_t newStart,
                                   uint32_t newEnd,
                                   uint32_t loopLength);
+    
+    // Find the corresponding note-off event for a given note-on event using LIFO pairing logic
+    MidiEvent* findCorrespondingNoteOff(std::vector<MidiEvent>& midiEvents, MidiEvent* noteOnEvent, uint8_t pitch, std::uint32_t startTick, std::uint32_t endTick);
+    
+    // Extend shortened notes dynamically
+    void extendShortenedNotes(std::vector<MidiEvent>& midiEvents,
+                             const std::vector<std::pair<EditManager::MovingNoteIdentity::DeletedNote, std::uint32_t>>& notesToExtend,
+                             EditManager& manager,
+                             std::uint32_t loopLength);
 } 
