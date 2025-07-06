@@ -8,6 +8,7 @@
 #include "LooperState.h"
 #include "Logger.h"
 #include "MidiHandler.h"
+#include "NoteEditManager.h"
 
 TrackManager trackManager;
 
@@ -195,6 +196,8 @@ void TrackManager::setSelectedTrack(uint8_t index) {
     selectedTrack = index;
     // Force LED update when track changes
     forceLedUpdate(clockManager.getCurrentTick());
+    // Notify NoteEditManager of track change for loop length CC feedback
+    noteEditManager.onTrackChanged(tracks[selectedTrack]);
   }
 }
 
