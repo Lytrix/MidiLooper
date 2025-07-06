@@ -259,46 +259,25 @@ void NoteEditManager::moveNoteToPositionSimple(Track& track, const NoteUtils::Di
 // }
 
 void NoteEditManager::cycleEditMode(Track& track) {
-    logger.log(CAT_BUTTON, LOG_DEBUG, "cycleEditMode: current mode = %d", currentEditMode);
-    
-    switch (currentEditMode) {
-        case EDIT_MODE_NONE: {
-            // First click: Enter select mode and stay there
-            currentEditMode = EDIT_MODE_SELECT;
-            uint32_t currentTick = clockManager.getCurrentTick();
-            editManager.setState(editManager.getSelectNoteState(), track, currentTick);
-            logger.info("MIDI Encoder: Entered SELECT mode (tick=%lu)", currentTick);
-            break;
-        }
-            
-        case EDIT_MODE_SELECT: {
-            // Subsequent clicks: Handle note selection but stay in SELECT mode
-            editManager.onButtonPress(track);
-            
-            // Record when a note was selected to start grace period
-            noteSelectionTime = millis();
-            startEditingEnabled = false;
-            
-            logger.info("MIDI Encoder: Note selected, grace period started (start editing disabled for %dms)", 
-                       START_EDIT_GRACE_PERIOD);
-            break;
-        }
-            
-        default: {
-            // Should never reach here with new workflow, but safety fallback
-            currentEditMode = EDIT_MODE_SELECT;
-            uint32_t currentTick = clockManager.getCurrentTick();
-            editManager.setState(editManager.getSelectNoteState(), track, currentTick);
-            logger.info("MIDI Encoder: Fallback to SELECT mode");
-            break;
-        }
+    // Use the main edit mode system instead of the old complex state system
+    cycleMainEditMode(track);
+}
+
+void NoteEditManager::cycleMainEditMode(Track& track) {
+    // Toggle between the two main edit modes
+    if (currentMainEditMode == MAIN_MODE_NOTE_EDIT) {
+        currentMainEditMode = MAIN_MODE_LOOP_EDIT;
+        logger.info("MIDI Mode Switch: Switched to LOOP EDIT mode");
+    } else {
+        currentMainEditMode = MAIN_MODE_NOTE_EDIT;
+        logger.info("MIDI Mode Switch: Switched to NOTE EDIT mode");
     }
     
-    // Always send SELECT mode program change (program 1) to keep fader 1 active
-    sendEditModeProgram(currentEditMode);
+    // Send the MIDI mode change
+    sendMainEditModeChange(currentMainEditMode);
     
-    logger.log(CAT_BUTTON, LOG_DEBUG, "cycleEditMode: new mode = %d, edit state = %s", 
-               currentEditMode, editManager.getCurrentState() ? editManager.getCurrentState()->getName() : "NULL");
+    logger.log(CAT_BUTTON, LOG_DEBUG, "cycleMainEditMode: new mode = %s", 
+               (currentMainEditMode == MAIN_MODE_LOOP_EDIT) ? "LOOP_EDIT" : "NOTE_EDIT");
 }
 
 void NoteEditManager::enterNextEditMode(Track& track) {
@@ -352,32 +331,43 @@ void NoteEditManager::deleteSelectedNote(Track& track) {
     
     logger.info("MIDI Encoder: Deleted %d MIDI events for note", deletedCount);
     
-    // Return to SELECT mode after deletion
-    currentEditMode = EDIT_MODE_SELECT;
-    editManager.setState(editManager.getSelectNoteState(), track, editManager.getBracketTick());
-    sendEditModeProgram(currentEditMode);  // Send program 1 for SELECT mode
+    // Since we're using dedicated faders now, we don't need to manage complex edit modes
+    // Just send the current main edit mode to keep the system synchronized
+    sendMainEditModeChange(currentMainEditMode);
     
-    logger.info("MIDI Encoder: Returned to SELECT mode after note deletion");
+    logger.info("MIDI Encoder: Note deleted, maintaining current edit mode");
 }
 
-void NoteEditManager::sendEditModeProgram(EditModeState mode) {
-    uint8_t program = static_cast<uint8_t>(mode);  // 0=NONE, 1=SELECT, 2=START, 3=LENGTH, 4=PITCH
+void NoteEditManager::sendMainEditModeChange(MainEditMode mode) {
+    uint8_t program;
+    uint8_t triggerNote;
+    const char* modeName;
     
-    // Send pitchbend position BEFORE program change when entering SELECT mode
-    if (mode == EDIT_MODE_SELECT) {
-        EditSelectNoteState::sendTargetPitchbend(editManager, trackManager.getSelectedTrack());
+    switch (mode) {
+        case MAIN_MODE_LOOP_EDIT:
+            program = 0;
+            triggerNote = 100;
+            modeName = "LOOP_EDIT";
+            break;
+        case MAIN_MODE_NOTE_EDIT:
+            program = 1;
+            triggerNote = 0;
+            modeName = "NOTE_EDIT";
+            break;
+        default:
+            logger.log(CAT_MIDI, LOG_ERROR, "Invalid main edit mode: %d", static_cast<int>(mode));
+            return;
     }
     
-    // Send program change to both USB device and USB host on channel 16
+    // Send program change on channel 16
     midiHandler.sendProgramChange(PROGRAM_CHANGE_CHANNEL, program);
     
-    logger.log(CAT_MIDI, LOG_DEBUG, "Sent Program Change: ch=%d program=%d (mode=%s)", 
-               PROGRAM_CHANGE_CHANNEL, program, 
-               (mode == EDIT_MODE_NONE) ? "NONE" :
-               (mode == EDIT_MODE_SELECT) ? "SELECT" :
-               (mode == EDIT_MODE_START) ? "START" :
-               (mode == EDIT_MODE_LENGTH) ? "LENGTH" :
-               (mode == EDIT_MODE_PITCH) ? "PITCH" : "UNKNOWN");
+    // Send trigger note on channel 16 (note on followed by note off)
+    midiHandler.sendNoteOn(PROGRAM_CHANGE_CHANNEL, triggerNote, 127);
+    midiHandler.sendNoteOff(PROGRAM_CHANGE_CHANNEL, triggerNote, 0);
+    
+    logger.log(CAT_MIDI, LOG_DEBUG, "Sent Main Edit Mode Change: ch=%d program=%d trigger_note=%d (mode=%s)", 
+               PROGRAM_CHANGE_CHANNEL, program, triggerNote, modeName);
 }
 
 void NoteEditManager::sendStartNotePitchbend(Track& track) {
@@ -1017,11 +1007,14 @@ void NoteEditManager::sendNoteValueFaderPosition(Track& track) {
 }
 
 void NoteEditManager::handleSelectFaderInput(int16_t pitchValue, Track& track) {
-    // Only process if we're in SELECT mode
-    if (currentEditMode != EDIT_MODE_SELECT) {
+    // Only process fader input when in NOTE_EDIT mode
+    if (currentMainEditMode != MAIN_MODE_NOTE_EDIT) {
+        logger.log(CAT_MIDI, LOG_DEBUG, "Select fader input ignored: not in NOTE_EDIT mode (current mode: %s)", 
+                   (currentMainEditMode == MAIN_MODE_LOOP_EDIT) ? "LOOP_EDIT" : "UNKNOWN");
         return;
     }
     
+    // With dedicated faders, we don't need to check edit mode - the fader is always active
     uint32_t now = millis();
     
     // SMART SELECTION STABILITY: Only process significant movements that indicate user intent
@@ -1196,6 +1189,13 @@ void NoteEditManager::handleSelectFaderInput(int16_t pitchValue, Track& track) {
 }
 
 void NoteEditManager::handleCoarseFaderInput(int16_t pitchValue, Track& track) {
+    // Only process fader input when in NOTE_EDIT mode
+    if (currentMainEditMode != MAIN_MODE_NOTE_EDIT) {
+        logger.log(CAT_MIDI, LOG_DEBUG, "Coarse fader input ignored: not in NOTE_EDIT mode (current mode: %s)", 
+                   (currentMainEditMode == MAIN_MODE_LOOP_EDIT) ? "LOOP_EDIT" : "UNKNOWN");
+        return;
+    }
+    
     // Only process if start editing is enabled
     if (!startEditingEnabled) {
         logger.log(CAT_MIDI, LOG_DEBUG, "Start editing disabled (grace period active)");
@@ -1372,6 +1372,13 @@ void NoteEditManager::handleCoarseFaderInput(int16_t pitchValue, Track& track) {
 }
 
 void NoteEditManager::handleFineFaderInput(uint8_t ccValue, Track& track) {
+    // Only process fader input when in NOTE_EDIT mode
+    if (currentMainEditMode != MAIN_MODE_NOTE_EDIT) {
+        logger.log(CAT_MIDI, LOG_DEBUG, "Fine fader input ignored: not in NOTE_EDIT mode (current mode: %s)", 
+                   (currentMainEditMode == MAIN_MODE_LOOP_EDIT) ? "LOOP_EDIT" : "UNKNOWN");
+        return;
+    }
+    
     // Only process if start editing is enabled
     if (!startEditingEnabled) {
         logger.log(CAT_MIDI, LOG_DEBUG, "Fine editing disabled (grace period active)");
@@ -1527,6 +1534,13 @@ void NoteEditManager::handleFineFaderInput(uint8_t ccValue, Track& track) {
 }
 
 void NoteEditManager::handleNoteValueFaderInput(uint8_t ccValue, Track& track) {
+    // Only process fader input when in NOTE_EDIT mode
+    if (currentMainEditMode != MAIN_MODE_NOTE_EDIT) {
+        logger.log(CAT_MIDI, LOG_DEBUG, "Note value fader input ignored: not in NOTE_EDIT mode (current mode: %s)", 
+                   (currentMainEditMode == MAIN_MODE_LOOP_EDIT) ? "LOOP_EDIT" : "UNKNOWN");
+        return;
+    }
+    
     // Only process if start editing is enabled
     if (!startEditingEnabled) {
         logger.log(CAT_MIDI, LOG_DEBUG, "Note value editing disabled (grace period active)");
