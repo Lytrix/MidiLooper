@@ -10,6 +10,7 @@
 #include "TrackUndo.h"
 #include "Logger.h"
 #include "Utils/NoteUtils.h"
+#include "NoteEditManager.h"
 #include <map>
 #include <string>
 #include <Font5x7Fixed.h>
@@ -194,12 +195,8 @@ void DisplayManager::drawGridLines(uint32_t lengthLoop, int pianoRollY0, int pia
 void DisplayManager::drawAllNotes(const Track& track, uint32_t startLoop, uint32_t lengthLoop, int minPitch, int maxPitch) {
     const auto& notes = track.getCachedNotes();
 
-    // Highlight if in note, select-note, start-note, length-note, or pitch-note edit state
-    int highlight = (editManager.getCurrentState() == editManager.getNoteState() ||
-                     editManager.getCurrentState() == editManager.getSelectNoteState() ||
-                     editManager.getCurrentState() == editManager.getStartNoteState() ||
-                     editManager.getCurrentState() == editManager.getLengthNoteState() ||
-                     editManager.getCurrentState() == editManager.getPitchNoteState());
+    // Highlight when in NOTE_EDIT mode (simplified since we use dedicated faders)
+    bool highlight = (noteEditManager.getCurrentMainEditMode() == NoteEditManager::MAIN_MODE_NOTE_EDIT);
     int selectedNoteIdx = highlight ? editManager.getSelectedNoteIdx() : -1;
 
     for (int noteIdx = 0; noteIdx < (int)notes.size(); ++noteIdx) {
@@ -220,12 +217,8 @@ void DisplayManager::drawAllNotes(const Track& track, uint32_t startLoop, uint32
 
 // --- Helper: Draw bracket ---
 void DisplayManager::drawBracket(unsigned long a, unsigned long b, int c) {
-    // Draw bracket in note, select-note, start-note, length-note, or pitch-note edit states
-    if (editManager.getCurrentState() == editManager.getNoteState() ||
-        editManager.getCurrentState() == editManager.getSelectNoteState() ||
-        editManager.getCurrentState() == editManager.getStartNoteState() ||
-        editManager.getCurrentState() == editManager.getLengthNoteState() ||
-        editManager.getCurrentState() == editManager.getPitchNoteState()) {
+    // Draw bracket when in NOTE_EDIT mode (simplified since we use dedicated faders)
+    if (noteEditManager.getCurrentMainEditMode() == NoteEditManager::MAIN_MODE_NOTE_EDIT) {
         uint32_t bracketTick = editManager.getBracketTick();
         uint32_t lengthLoop = trackManager.getSelectedTrack().getLoopLength();
         const int pianoRollY1 = 31;
@@ -364,19 +357,8 @@ void DisplayManager::drawNoteInfo(uint32_t currentTick, Track& selectedTrack) {
     if (selectedIdx >= 0 && selectedIdx < (int)notes.size()) {
         noteToShow = &notes[selectedIdx];
         displayStartTick = noteToShow->startTick;
-        if (editManager.getCurrentState() == editManager.getStartNoteState()) {
-            const auto& midiEventsNonConst = selectedTrack.getMidiEvents();
-            auto onIt = std::find_if(midiEventsNonConst.begin(), midiEventsNonConst.end(), [&](const MidiEvent& evt) {
-                return evt.type == midi::NoteOn &&
-                       evt.data.noteData.note == noteToShow->note &&
-                       evt.tick == noteToShow->startTick;
-            });
-            if (onIt != midiEventsNonConst.end()) {
-                displayStartTick = onIt->tick;
-            } else {
-                displayStartTick = noteToShow->startTick;
-            }
-        }
+        // Since we use dedicated faders, we don't need complex edit state checks
+        // Just use the note's start tick directly
     }
     
     if (!noteToShow && !notes.empty()) {
@@ -431,8 +413,8 @@ void DisplayManager::drawNoteInfo(uint32_t currentTick, Track& selectedTrack) {
     int x = DisplayManager::TRACK_MARGIN;
     int y = DISPLAY_HEIGHT;
     // Draw the time string (ticksToBarsBeats16thTicks2Dec)
-    bool isStartNote = (editManager.getCurrentState() == editManager.getSelectNoteState() || 
-                        editManager.getCurrentState() == editManager.getStartNoteState());
+    // Highlight the time when in NOTE_EDIT mode (simplified since we use dedicated faders)
+    bool isStartNote = (noteEditManager.getCurrentMainEditMode() == NoteEditManager::MAIN_MODE_NOTE_EDIT);
     _display.gfx.select_font(&Font5x7FixedMono);
     int timeStrLen = strlen(startStr);
     for (int i = 0; i < timeStrLen; ++i) {
@@ -442,7 +424,8 @@ void DisplayManager::drawNoteInfo(uint32_t currentTick, Track& selectedTrack) {
     }
     // Draw NOTE, LEN, VEL fields using drawInfoField
     int infoX = x + timeStrLen * 6 + 6; // after time string
-    bool inPitchEdit = (editManager.getCurrentState() == editManager.getPitchNoteState());
+    // Highlight NOTE field when in NOTE_EDIT mode (simplified since we use dedicated faders)
+    bool inPitchEdit = (noteEditManager.getCurrentMainEditMode() == NoteEditManager::MAIN_MODE_NOTE_EDIT);
     struct InfoField { const char* label; const char* value; bool highlight; };
     InfoField fields[] = {
         {"NOTE", noteStr, inPitchEdit},

@@ -91,22 +91,39 @@ public:
     // MidiButtonId getNoteButtonId(uint8_t note);
     bool isValidNote(uint8_t note);
 
-private:
-    // struct MidiButtonState {
-    //     bool isPressed;
-    //     uint32_t pressStartTime;
-    //     uint32_t lastTapTime;
-    //     bool pendingShortPress;
-    //     uint32_t shortPressExpireTime;
-    //     uint8_t noteNumber;
-    //     // Triple press tracking
-    //     uint32_t secondTapTime;
-    //     bool pendingDoublePress;
-    //     uint32_t doublePressExpireTime;
-    // };
-
-   // std::vector<MidiButtonState> buttonStates;
+    // Main edit mode switching (for mode button functionality)
+    enum MainEditMode {
+        MAIN_MODE_LOOP_EDIT = 0,    // Loop edit mode: Program 0, Note 100 trigger
+        MAIN_MODE_NOTE_EDIT = 1     // Note edit mode: Program 1, Note 0 trigger
+    };
     
+    // Getter for current main edit mode
+    MainEditMode getCurrentMainEditMode() const { return currentMainEditMode; }
+    
+    // Main edit mode methods
+    void sendMainEditModeChange(MainEditMode mode);
+    void cycleMainEditMode(Track& track);
+    
+    // Current main edit mode state
+    MainEditMode currentMainEditMode = MAIN_MODE_NOTE_EDIT;  // Start in note edit mode
+
+    // Fader input processing
+    void processSelectFaderInput(int16_t pitchValue, Track& track);
+    void processCoarseFaderInput(int16_t pitchValue, Track& track);
+    void processFineFaderInput(uint8_t ccValue, Track& track);
+    void processNoteValueFaderInput(uint8_t ccValue, Track& track);
+    
+    // Fader update scheduling
+    void scheduleFaderUpdate(uint8_t faderType, uint32_t delayMs);
+    void processScheduledUpdates();
+    
+    // Helper methods
+    uint16_t calculateTargetTick(int16_t pitchValue, uint16_t loopLength);
+    uint8_t calculateTargetStep(int16_t pitchValue, uint8_t numSteps);
+    uint8_t calculateTargetOffset(uint8_t ccValue, uint8_t numSteps);
+    uint8_t calculateTargetNoteValue(uint8_t ccValue);
+
+private:
     static constexpr uint16_t DOUBLE_TAP_WINDOW = 300;  // ms
     static constexpr uint16_t LONG_PRESS_TIME = 600;   // ms
     static constexpr uint8_t MIDI_CHANNEL = 16;        // Channel to monitor
@@ -224,7 +241,7 @@ private:
     void sendFineFaderPosition(Track& track);
     void sendNoteValueFaderPosition(Track& track);
 
-    // Edit mode cycling
+    // Edit mode cycling - keeping the old system for now but not using it
     enum EditModeState {
         EDIT_MODE_NONE = 0,     // Not in edit mode
         EDIT_MODE_SELECT = 1,   // Select note or grid position
@@ -235,22 +252,6 @@ private:
     EditModeState currentEditMode = EDIT_MODE_NONE;
     void enterNextEditMode(Track& track);
     void sendEditModeProgram(EditModeState mode);
-
-    // Fader input processing
-    void processSelectFaderInput(int16_t pitchValue, Track& track);
-    void processCoarseFaderInput(int16_t pitchValue, Track& track);
-    void processFineFaderInput(uint8_t ccValue, Track& track);
-    void processNoteValueFaderInput(uint8_t ccValue, Track& track);
-    
-    // Fader update scheduling
-    void scheduleFaderUpdate(uint8_t faderType, uint32_t delayMs);
-    void processScheduledUpdates();
-    
-    // Helper methods
-    uint16_t calculateTargetTick(int16_t pitchValue, uint16_t loopLength);
-    uint8_t calculateTargetStep(int16_t pitchValue, uint8_t numSteps);
-    uint8_t calculateTargetOffset(uint8_t ccValue, uint8_t numSteps);
-    uint8_t calculateTargetNoteValue(uint8_t ccValue);
 };
 
 extern NoteEditManager noteEditManager;
