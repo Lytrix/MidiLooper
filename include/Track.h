@@ -123,6 +123,9 @@ public:
   uint32_t getLoopLength() const;
   void setLoopLength(uint32_t ticks);
   
+  // Simple loop length change - no MIDI event modification
+  void setLoopLengthWithWrapping(uint32_t newLoopLength);
+  
   // Tempo accessors
   static uint32_t getTicksPerBar();
 
@@ -213,6 +216,8 @@ private:
   /// Cached event index for fast event lookup  
   mutable NoteUtils::EventIndex cachedEventIndex;
   mutable bool eventIndexValid = false;
+
+  // Dynamic note wrapping - handled in logic layer, not data storage
 
 };
 

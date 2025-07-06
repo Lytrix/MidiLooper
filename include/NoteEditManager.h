@@ -49,6 +49,9 @@ public:
     void handleCoarseFaderInput(int16_t pitchValue, Track& track);
     void handleFineFaderInput(uint8_t ccValue, Track& track);
     void handleNoteValueFaderInput(uint8_t ccValue, Track& track);
+    
+    // Loop length editing (for loop edit mode)
+    void handleLoopLengthInput(uint8_t ccValue, Track& track);
 
     // Edit mode methods (must be public for MidiButtonActions)
     void cycleEditMode(Track& track);
@@ -102,7 +105,9 @@ public:
     
     // Main edit mode methods
     void sendMainEditModeChange(MainEditMode mode);
+    void sendCurrentLoopLengthCC(Track& track);
     void cycleMainEditMode(Track& track);
+    void onTrackChanged(Track& newTrack);
     
     // Current main edit mode state
     MainEditMode currentMainEditMode = MAIN_MODE_NOTE_EDIT;  // Start in note edit mode

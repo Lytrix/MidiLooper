@@ -66,8 +66,13 @@ void NoteEditManager::handleMidiPitchbend(uint8_t channel, int16_t pitchValue) {
 }
 
 void NoteEditManager::handleMidiCC(uint8_t channel, uint8_t ccNumber, uint8_t value) {
-    // Log all CC messages for debugging
     logger.log(CAT_MIDI, LOG_DEBUG, "Received CC: ch=%d cc=%d value=%d", channel, ccNumber, value);
+    
+    // Check for loop length control first (CC 101 on channel 16)
+    if (channel == 16 && ccNumber == 101) {
+        handleLoopLengthInput(value, trackManager.getSelectedTrack());
+        return;
+    }
     
     // Route to unified fader system
     if (channel == FINE_CC_CHANNEL && ccNumber == FINE_CC_NUMBER) {
@@ -78,7 +83,7 @@ void NoteEditManager::handleMidiCC(uint8_t channel, uint8_t ccNumber, uint8_t va
         return;
     }
     
-    logger.log(CAT_MIDI, LOG_DEBUG, "CC ignored: not on monitored channels/CC (%d/%d or %d/%d)", 
+    logger.log(CAT_MIDI, LOG_DEBUG, "CC ignored: not on monitored channels/CC (%d/%d, %d/%d, or 16/101)", 
                FINE_CC_CHANNEL, FINE_CC_NUMBER, NOTE_VALUE_CC_CHANNEL, NOTE_VALUE_CC_NUMBER);
 }
 
@@ -264,20 +269,15 @@ void NoteEditManager::cycleEditMode(Track& track) {
 }
 
 void NoteEditManager::cycleMainEditMode(Track& track) {
-    // Toggle between the two main edit modes
-    if (currentMainEditMode == MAIN_MODE_NOTE_EDIT) {
-        currentMainEditMode = MAIN_MODE_LOOP_EDIT;
-        logger.info("MIDI Mode Switch: Switched to LOOP EDIT mode");
-    } else {
-        currentMainEditMode = MAIN_MODE_NOTE_EDIT;
-        logger.info("MIDI Mode Switch: Switched to NOTE EDIT mode");
-    }
+    // Toggle between the two modes
+    currentMainEditMode = (currentMainEditMode == MAIN_MODE_NOTE_EDIT) ? 
+                          MAIN_MODE_LOOP_EDIT : MAIN_MODE_NOTE_EDIT;
     
-    // Send the MIDI mode change
+    // Send the mode change
     sendMainEditModeChange(currentMainEditMode);
     
-    logger.log(CAT_BUTTON, LOG_DEBUG, "cycleMainEditMode: new mode = %s", 
-               (currentMainEditMode == MAIN_MODE_LOOP_EDIT) ? "LOOP_EDIT" : "NOTE_EDIT");
+    logger.log(CAT_MIDI, LOG_INFO, "Cycled to mode: %s", 
+               (currentMainEditMode == MAIN_MODE_NOTE_EDIT) ? "NOTE_EDIT" : "LOOP_EDIT");
 }
 
 void NoteEditManager::enterNextEditMode(Track& track) {
@@ -345,7 +345,7 @@ void NoteEditManager::sendMainEditModeChange(MainEditMode mode) {
     
     switch (mode) {
         case MAIN_MODE_LOOP_EDIT:
-            program = 0;
+            program = 2;
             triggerNote = 100;
             modeName = "LOOP_EDIT";
             break;
@@ -355,19 +355,25 @@ void NoteEditManager::sendMainEditModeChange(MainEditMode mode) {
             modeName = "NOTE_EDIT";
             break;
         default:
-            logger.log(CAT_MIDI, LOG_ERROR, "Invalid main edit mode: %d", static_cast<int>(mode));
+            logger.log(CAT_MIDI, LOG_ERROR, "Unknown main edit mode: %d", static_cast<int>(mode));
             return;
     }
     
     // Send program change on channel 16
     midiHandler.sendProgramChange(PROGRAM_CHANGE_CHANNEL, program);
     
-    // Send trigger note on channel 16 (note on followed by note off)
-    midiHandler.sendNoteOn(PROGRAM_CHANGE_CHANNEL, triggerNote, 127);
-    midiHandler.sendNoteOff(PROGRAM_CHANGE_CHANNEL, triggerNote, 0);
+    // Send trigger note on channel 16
+    midiHandler.sendNoteOn(15, triggerNote, 64);
+    delay(10);  // Short note duration
+    midiHandler.sendNoteOff(15, triggerNote, 0);
     
-    logger.log(CAT_MIDI, LOG_DEBUG, "Sent Main Edit Mode Change: ch=%d program=%d trigger_note=%d (mode=%s)", 
-               PROGRAM_CHANGE_CHANNEL, program, triggerNote, modeName);
+    logger.log(CAT_MIDI, LOG_INFO, "Main Edit Mode: %s (Program %d, Note %d trigger)", 
+               modeName, program, triggerNote);
+    
+    // If switching to LOOP_EDIT mode, send current loop length as CC feedback
+    if (mode == MAIN_MODE_LOOP_EDIT) {
+        sendCurrentLoopLengthCC(trackManager.getSelectedTrack());
+    }
 }
 
 void NoteEditManager::sendStartNotePitchbend(Track& track) {
@@ -2220,5 +2226,79 @@ void NoteEditManager::toggleLengthEditingMode() {
     if (!notes.empty() && editManager.getSelectedNoteIdx() >= 0 && editManager.getSelectedNoteIdx() < (int)notes.size()) {
         // Schedule fader updates with staggered delays (like enableStartEditing does)
         scheduleOtherFaderUpdates(MidiMapping::FaderType::FADER_SELECT); // This will update faders 1, 2, 3
+    }
+}
+
+void NoteEditManager::handleLoopLengthInput(uint8_t ccValue, Track& track) {
+    // Only process loop length input when in LOOP_EDIT mode
+    if (currentMainEditMode != MAIN_MODE_LOOP_EDIT) {
+        logger.log(CAT_MIDI, LOG_DEBUG, "Loop length input ignored: not in LOOP_EDIT mode (current mode: %s)", 
+                   (currentMainEditMode == MAIN_MODE_NOTE_EDIT) ? "NOTE_EDIT" : "UNKNOWN");
+        return;
+    }
+    
+    // Convert CC value (0-127) to bars (1-128)
+    // CC 0 = 1 bar, CC 127 = 128 bars
+    uint8_t bars = map(ccValue, 0, 127, 1, 128);
+    
+    // Convert bars to ticks
+    uint32_t newLoopLengthTicks = bars * Config::TICKS_PER_BAR;
+    
+    // Get current loop length for comparison
+    uint32_t currentLoopLength = track.getLoopLength();
+    uint32_t currentBars = (currentLoopLength > 0) ? (currentLoopLength / Config::TICKS_PER_BAR) : 0;
+    
+    // Only update if the length actually changes
+    if (newLoopLengthTicks != currentLoopLength) {
+        logger.log(CAT_MIDI, LOG_INFO, "LOOP EDIT: Changing loop length from %lu bars (%lu ticks) to %u bars (%lu ticks)", 
+                   currentBars, currentLoopLength, bars, newLoopLengthTicks);
+        
+        // Set the new loop length with proper note wrapping
+        track.setLoopLengthWithWrapping(newLoopLengthTicks);
+        
+        logger.log(CAT_MIDI, LOG_DEBUG, "Loop length updated successfully: CC=%d -> %u bars (%lu ticks)", 
+                   ccValue, bars, newLoopLengthTicks);
+        
+        // Send MIDI feedback to confirm the change
+        sendMainEditModeChange(currentMainEditMode);  // Re-send current mode to confirm
+    } else {
+        logger.log(CAT_MIDI, LOG_DEBUG, "Loop length unchanged: CC=%d maps to current length (%u bars)", 
+                   ccValue, bars);
+    }
+}
+
+void NoteEditManager::sendCurrentLoopLengthCC(Track& track) {
+    // Convert current loop length back to CC 101 value for fader feedback
+    uint32_t currentLoopLength = track.getLoopLength();
+    
+    if (currentLoopLength == 0) {
+        // No loop set yet, send CC for 1 bar
+        midiHandler.sendControlChange(15, 101, 0);  // CC 0 = 1 bar
+        logger.log(CAT_MIDI, LOG_DEBUG, "Sent loop length CC feedback: length=0 -> CC=0 (1 bar default)");
+        return;
+    }
+    
+    // Convert ticks back to bars
+    uint32_t currentBars = currentLoopLength / Config::TICKS_PER_BAR;
+    
+    // Clamp to valid range (1-128 bars)
+    if (currentBars < 1) currentBars = 1;
+    if (currentBars > 128) currentBars = 128;
+    
+    // Convert bars back to CC value (1-128 bars -> 0-127 CC)
+    uint8_t ccValue = map(currentBars, 1, 128, 0, 127);
+    
+    // Send CC 101 on channel 16 as feedback
+    midiHandler.sendControlChange(15, 101, ccValue);
+    
+    logger.log(CAT_MIDI, LOG_DEBUG, "Sent loop length CC feedback: %lu bars (%lu ticks) -> CC=%d", 
+               currentBars, currentLoopLength, ccValue);
+}
+
+void NoteEditManager::onTrackChanged(Track& newTrack) {
+    // If we're in loop edit mode, send the new track's loop length as CC feedback
+    if (currentMainEditMode == MAIN_MODE_LOOP_EDIT) {
+        sendCurrentLoopLengthCC(newTrack);
+        logger.log(CAT_MIDI, LOG_DEBUG, "Track changed while in loop edit mode, updating loop length CC");
     }
 }

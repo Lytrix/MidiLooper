@@ -637,6 +637,25 @@ void Track::setLoopLength(uint32_t ticks) {
   loopLengthTicks = ticks;
 }
 
+// Simple loop length change - wrapping handled dynamically in logic layer
+void Track::setLoopLengthWithWrapping(uint32_t newLoopLength) {
+  if (newLoopLength == loopLengthTicks) {
+    return; // No change needed
+  }
+  
+  uint32_t oldLoopLength = loopLengthTicks;
+  
+  logger.log(CAT_TRACK, LOG_INFO, "Loop length change: %lu -> %lu ticks", oldLoopLength, newLoopLength);
+  
+  // Simply update the loop length - original MIDI events remain unchanged
+  loopLengthTicks = newLoopLength;
+  
+  // Invalidate caches when loop length changes so display/playback recalculates
+  invalidateCaches();
+  
+  logger.log(CAT_TRACK, LOG_INFO, "Loop length updated to %lu ticks (wrapping handled dynamically)", loopLengthTicks);
+}
+
 // Display functions
 void Track::noteOn(uint8_t channel, uint8_t note, uint8_t velocity, uint32_t tick) {
   if (isPlayingBack) return;  // Ignore playback-triggered MIDI events
