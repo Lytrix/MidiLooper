@@ -51,6 +51,14 @@ public:
     static void redoClearTrack(Track& track);
     static bool canUndoClearTrack(const Track& track);
     static bool canRedoClearTrack(const Track& track);
+    
+    // Loop start point undo/redo
+    static void pushLoopStartSnapshot(Track& track);
+    static void undoLoopStart(Track& track);
+    static void redoLoopStart(Track& track);
+    static bool canUndoLoopStart(const Track& track);
+    static bool canRedoLoopStart(const Track& track);
+    
     /**
      * @brief Compute a simple rolling hash (FNV-1a) over the track's current MIDI events
      * @param track The track to hash

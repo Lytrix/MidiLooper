@@ -90,13 +90,16 @@ void TrackUndo::pushClearTrackSnapshot(Track& track) {
     track.clearMidiHistory.push_back(track.midiEvents);
     track.clearStateHistory.push_back(track.trackState);
     track.clearLengthHistory.push_back(track.loopLengthTicks);
+    track.clearStartHistory.push_back(track.loopStartTick);  // Save loop start point
     if (track.clearMidiHistory.size() > Config::MAX_UNDO_HISTORY) track.clearMidiHistory.pop_front();
     if (track.clearStateHistory.size() > Config::MAX_UNDO_HISTORY) track.clearStateHistory.pop_front();
     if (track.clearLengthHistory.size() > Config::MAX_UNDO_HISTORY) track.clearLengthHistory.pop_front();
+    if (track.clearStartHistory.size() > Config::MAX_UNDO_HISTORY) track.clearStartHistory.pop_front();
     // Clear redo history when new clear undo is pushed
     track.clearMidiRedoHistory.clear();
     track.clearStateRedoHistory.clear();
     track.clearLengthRedoHistory.clear();
+    track.clearStartRedoHistory.clear();
 }
 
 void TrackUndo::undoClearTrack(Track& track) {
@@ -105,6 +108,7 @@ void TrackUndo::undoClearTrack(Track& track) {
         track.clearMidiRedoHistory.push_back(track.midiEvents);
         track.clearStateRedoHistory.push_back(track.trackState);
         track.clearLengthRedoHistory.push_back(track.loopLengthTicks);
+        track.clearStartRedoHistory.push_back(track.loopStartTick);
         
         track.midiEvents = track.clearMidiHistory.back();
         track.clearMidiHistory.pop_back();
@@ -116,6 +120,10 @@ void TrackUndo::undoClearTrack(Track& track) {
     if (!track.clearLengthHistory.empty()) {
         track.loopLengthTicks = track.clearLengthHistory.back();
         track.clearLengthHistory.pop_back();
+    }
+    if (!track.clearStartHistory.empty()) {
+        track.loopStartTick = track.clearStartHistory.back();
+        track.clearStartHistory.pop_back();
     }
     if (!track.midiEvents.empty() && (track.trackState == TRACK_EMPTY)) {
         track.setState(TRACK_STOPPED);
@@ -132,6 +140,7 @@ void TrackUndo::redoClearTrack(Track& track) {
     track.clearMidiHistory.push_back(track.midiEvents);
     track.clearStateHistory.push_back(track.trackState);
     track.clearLengthHistory.push_back(track.loopLengthTicks);
+    track.clearStartHistory.push_back(track.loopStartTick);
     
     // Restore from redo history
     if (!track.clearMidiRedoHistory.empty()) {
@@ -146,9 +155,86 @@ void TrackUndo::redoClearTrack(Track& track) {
         track.loopLengthTicks = track.clearLengthRedoHistory.back();
         track.clearLengthRedoHistory.pop_back();
     }
+    if (!track.clearStartRedoHistory.empty()) {
+        track.loopStartTick = track.clearStartRedoHistory.back();
+        track.clearStartRedoHistory.pop_back();
+    }
     
     logger.logTrackEvent("Clear track redone", clockManager.getCurrentTick());
     StorageManager::saveState(looperState.getLooperState());
+}
+
+// -------------------------
+// Loop start point undo/redo
+// -------------------------
+
+void TrackUndo::pushLoopStartSnapshot(Track& track) {
+    track.loopStartHistory.push_back(track.loopStartTick);
+    if (track.loopStartHistory.size() > Config::MAX_UNDO_HISTORY) {
+        track.loopStartHistory.pop_front();
+    }
+    // Clear redo history when new undo is pushed
+    track.loopStartRedoHistory.clear();
+    
+    logger.log(CAT_TRACK, LOG_DEBUG, "Loop start snapshot pushed: %lu ticks", track.loopStartTick);
+}
+
+void TrackUndo::undoLoopStart(Track& track) {
+    if (!canUndoLoopStart(track)) {
+        logger.log(CAT_TRACK, LOG_WARNING, "Cannot undo loop start change right now");
+        return;
+    }
+    
+    // Save current state to redo history before undoing
+    track.loopStartRedoHistory.push_back(track.loopStartTick);
+    
+    // Restore from undo history
+    uint32_t previousStartTick = track.loopStartHistory.back();
+    track.loopStartHistory.pop_back();
+    
+    logger.log(CAT_TRACK, LOG_INFO, "Loop start undo: %lu -> %lu ticks", 
+               track.loopStartTick, previousStartTick);
+    
+    track.loopStartTick = previousStartTick;
+    
+    // Invalidate caches when loop start changes
+    track.invalidateCaches();
+    
+    logger.logTrackEvent("Loop start undone", clockManager.getCurrentTick());
+    StorageManager::saveState(looperState.getLooperState());
+}
+
+void TrackUndo::redoLoopStart(Track& track) {
+    if (!canRedoLoopStart(track)) {
+        logger.log(CAT_TRACK, LOG_WARNING, "Cannot redo loop start change right now");
+        return;
+    }
+    
+    // Save current state back to undo history
+    track.loopStartHistory.push_back(track.loopStartTick);
+    
+    // Restore from redo history
+    uint32_t nextStartTick = track.loopStartRedoHistory.back();
+    track.loopStartRedoHistory.pop_back();
+    
+    logger.log(CAT_TRACK, LOG_INFO, "Loop start redo: %lu -> %lu ticks", 
+               track.loopStartTick, nextStartTick);
+    
+    track.loopStartTick = nextStartTick;
+    
+    // Invalidate caches when loop start changes
+    track.invalidateCaches();
+    
+    logger.logTrackEvent("Loop start redone", clockManager.getCurrentTick());
+    StorageManager::saveState(looperState.getLooperState());
+}
+
+bool TrackUndo::canUndoLoopStart(const Track& track) {
+    return !track.loopStartHistory.empty();
+}
+
+bool TrackUndo::canRedoLoopStart(const Track& track) {
+    return !track.loopStartRedoHistory.empty();
 }
 
 bool TrackUndo::canUndoClearTrack(const Track& track) {

@@ -18,16 +18,17 @@
 // -------------------------
 // Track class implementation
 // -------------------------
-Track::Track()
-  : isPlayingBack(false),
-    muted(false),
-    trackState(TRACK_EMPTY),
-    startLoopTick(0),
-    loopLengthTicks(0),
-    lastTickInLoop(0),
-    pendingNotes(),
-    midiEvents()
- {}
+Track::Track() :
+  muted(false),
+  trackState(TRACK_EMPTY),
+  startLoopTick(0),
+  loopLengthTicks(0),
+  loopStartTick(0),  // Initialize loop start point
+  lastTickInLoop(0),
+  nextEventIndex(0),
+  isPlayingBack(false),
+  eventIndexValid(false) {
+}
 
 // -------------------------
 // Getters
@@ -452,6 +453,7 @@ void Track::clear() {
     // Reset timing
     startLoopTick = 0;
     loopLengthTicks = 0;
+    loopStartTick = 0;  // Reset loop start point
 
     // Clear undo history
     midiHistory.clear();
@@ -654,6 +656,55 @@ void Track::setLoopLengthWithWrapping(uint32_t newLoopLength) {
   invalidateCaches();
   
   logger.log(CAT_TRACK, LOG_INFO, "Loop length updated to %lu ticks (wrapping handled dynamically)", loopLengthTicks);
+}
+
+// -------------------------
+// Loop start point control
+// -------------------------
+
+uint32_t Track::getLoopStartTick() const {
+  return loopStartTick;
+}
+
+void Track::setLoopStartTick(uint32_t startTick) {
+  if (startTick == loopStartTick) {
+    return; // No change needed
+  }
+  
+  uint32_t oldStartTick = loopStartTick;
+  
+  // Constrain to valid range within the loop
+  if (startTick >= loopLengthTicks && loopLengthTicks > 0) {
+    startTick = startTick % loopLengthTicks;
+  }
+  
+  loopStartTick = startTick;
+  
+  logger.log(CAT_TRACK, LOG_INFO, "Loop start point changed: %lu -> %lu ticks", oldStartTick, loopStartTick);
+  
+  // Invalidate caches when loop start changes so display recalculates
+  invalidateCaches();
+}
+
+void Track::setLoopStartAndEnd(uint32_t startTick, uint32_t endTick) {
+  if (endTick <= startTick) {
+    logger.log(CAT_TRACK, LOG_ERROR, "Invalid loop range: start=%lu >= end=%lu", startTick, endTick);
+    return;
+  }
+  
+  uint32_t newLength = endTick - startTick;
+  
+  logger.log(CAT_TRACK, LOG_INFO, "Setting loop start=%lu, end=%lu, length=%lu", startTick, endTick, newLength);
+  
+  loopStartTick = startTick;
+  loopLengthTicks = newLength;
+  
+  // Invalidate caches when loop boundaries change
+  invalidateCaches();
+}
+
+uint32_t Track::getLoopEndTick() const {
+  return loopStartTick + loopLengthTicks;
 }
 
 // Display functions

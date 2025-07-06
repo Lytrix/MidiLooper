@@ -39,24 +39,47 @@ void NoteEditManager::handleMidiNote(uint8_t channel, uint8_t note, uint8_t velo
 void NoteEditManager::update() {
     uint32_t now = millis();
     
-    // Check if grace period has elapsed to enable start editing
-    if (noteSelectionTime > 0 && !startEditingEnabled) {
+    // Handle pending selectnote fader updates
+    if (pendingSelectnoteUpdate && now >= selectnoteUpdateTime) {
+        pendingSelectnoteUpdate = false;
+        Track& track = trackManager.getSelectedTrack();
+        sendSelectnoteFaderUpdate(track);
+    }
+    
+    // Handle start editing grace period - re-enable note editing faders after grace period
+    if (!startEditingEnabled && noteSelectionTime > 0) {
         enableStartEditing();
     }
     
-    // Process unified fader state updates
-    updateFaderStates();
+    // Handle loop start editing grace period and endpoint updating
+    if (loopStartEditingEnabled && currentMainEditMode == MAIN_MODE_LOOP_EDIT) {
+        Track& track = trackManager.getSelectedTrack();
+        updateLoopEndpointAfterGracePeriod(track);
+    }
+    
+    // Delegate to V2 managers for their update cycles
+    faderHandler.update();
+    buttonHandler.update();
 }
 
 void NoteEditManager::handleMidiPitchbend(uint8_t channel, int16_t pitchValue) {
     // Log all pitchbend messages for debugging
     logger.log(CAT_MIDI, LOG_DEBUG, "Received pitchbend: ch=%d value=%d", channel, pitchValue);
     
-    // Route to unified fader system
-    if (channel == PITCHBEND_SELECT_CHANNEL) {
-        handleFaderInput(MidiMapping::FaderType::FADER_SELECT, pitchValue, 0);
-        return;
-    } else if (channel == PITCHBEND_START_CHANNEL) {
+    // Route channel 16 based on current edit mode
+    if (channel == PITCHBEND_SELECT_CHANNEL) {  // Channel 16
+        if (currentMainEditMode == MAIN_MODE_LOOP_EDIT) {
+            // In loop edit mode: Route to loop start fader
+            handleLoopStartFaderInput(pitchValue, trackManager.getSelectedTrack());
+            logger.log(CAT_MIDI, LOG_DEBUG, "Pitchbend ch=%d routed to loop start fader (LOOP_EDIT mode)", channel);
+            return;
+        } else {
+            // In note edit mode: Route to select fader
+            handleFaderInput(MidiMapping::FaderType::FADER_SELECT, pitchValue, 0);
+            logger.log(CAT_MIDI, LOG_DEBUG, "Pitchbend ch=%d routed to select fader (NOTE_EDIT mode)", channel);
+            return;
+        }
+    } else if (channel == PITCHBEND_START_CHANNEL) {  // Channel 15
         handleFaderInput(MidiMapping::FaderType::FADER_COARSE, pitchValue, 0);
         return;
     }
@@ -382,33 +405,43 @@ void NoteEditManager::sendStartNotePitchbend(Track& track) {
         return;
     }
     
-    auto& midiEvents = track.getMidiEvents();
     uint32_t loopLength = track.getLoopLength();
     if (loopLength == 0) return;
     
     // Use the SAME tick value as EditSelectNoteState::sendTargetPitchbend for consistency
     // This ensures both fader 1 and fader 2 use the same reference position
     uint32_t bracketTick = editManager.getBracketTick();
+    uint32_t loopStartTick = track.getLoopStartTick();
     
     const auto& notes = track.getCachedNotes();
     int selectedIdx = editManager.getSelectedNoteIdx();
     
     if (selectedIdx >= 0 && selectedIdx < (int)notes.size()) {
+        // Convert absolute note position to relative position (same as selection system)
         uint32_t noteStartTick = notes[selectedIdx].startTick;
+        uint32_t relativeNoteStartTick = (noteStartTick >= loopStartTick) ? 
+            (noteStartTick - loopStartTick) : (noteStartTick + loopLength - loopStartTick);
+        relativeNoteStartTick = relativeNoteStartTick % loopLength;
         
-        logger.log(CAT_MIDI, LOG_DEBUG, "Fader 2 position sync: bracketTick=%lu, noteStartTick=%lu, diff=%ld", 
-                   bracketTick, noteStartTick, (int32_t)bracketTick - (int32_t)noteStartTick);
+        // Also convert bracket tick to relative position
+        uint32_t relativeBracketTick = (bracketTick >= loopStartTick) ? 
+            (bracketTick - loopStartTick) : (bracketTick + loopLength - loopStartTick);
+        relativeBracketTick = relativeBracketTick % loopLength;
+        
+        logger.log(CAT_MIDI, LOG_DEBUG, "Fader 2 position sync: bracketTick=%lu (rel=%lu), noteStartTick=%lu (rel=%lu), diff=%ld", 
+                   bracketTick, relativeBracketTick, noteStartTick, relativeNoteStartTick, 
+                   (int32_t)relativeBracketTick - (int32_t)relativeNoteStartTick);
         
         // For fader 2, use a simpler 16th-step based calculation that matches the hardware expectations
         uint32_t numSteps = loopLength / Config::TICKS_PER_16TH_STEP;
         
-        // Find which 16th step the bracket tick is closest to
-        float stepPosition = (float)bracketTick / (float)Config::TICKS_PER_16TH_STEP;
+        // Find which 16th step the relative bracket tick is closest to
+        float stepPosition = (float)relativeBracketTick / (float)Config::TICKS_PER_16TH_STEP;
         uint32_t nearestStep = (uint32_t)(stepPosition + 0.5f);  // Round to nearest step
         if (nearestStep >= numSteps) nearestStep = numSteps - 1;
         
-        logger.log(CAT_MIDI, LOG_DEBUG, "Fader 2 calculation: bracketTick=%lu, stepPos=%.2f, nearestStep=%lu/%lu", 
-                   bracketTick, stepPosition, nearestStep, numSteps);
+        logger.log(CAT_MIDI, LOG_DEBUG, "Fader 2 calculation: relativeBracketTick=%lu, stepPos=%.2f, nearestStep=%lu/%lu", 
+                   relativeBracketTick, stepPosition, nearestStep, numSteps);
         
         if (numSteps > 1) {
             // COARSE FADER (Channel 15): Map 16th step position to pitchbend range  
@@ -518,7 +551,7 @@ void NoteEditManager::performSelectnoteFaderUpdate(Track& track) {
 
 void NoteEditManager::enableStartEditing() {
     uint32_t now = millis();
-    if (now - noteSelectionTime >= START_EDIT_GRACE_PERIOD) {
+    if (now - noteSelectionTime >= NOTE_SELECTION_GRACE_PERIOD) {
         if (!startEditingEnabled) {
             startEditingEnabled = true;
             logger.info("Start editing enabled - grace period elapsed (%lu ms since selection)", now - noteSelectionTime);
@@ -825,44 +858,38 @@ void NoteEditManager::sendFaderPosition(MidiMapping::FaderType faderType, Track&
 }
 
 void NoteEditManager::sendCoarseFaderPosition(Track& track) {
-    // IMPORTANT: Don't send pitchbend to channel 15 when fader 3 was recently the driver
-    // Fader 2 and 3 share channel 15, so pitchbend updates to fader 2 will also move fader 3
-    // This violates the "MIDI events as single source of truth" principle for fader 3
-    if (currentDriverFader == MidiMapping::FaderType::FADER_FINE) {
-        uint32_t now = millis();
-        uint32_t timeSinceDriverSet = now - lastDriverFaderTime;
-        if (timeSinceDriverSet < 1000) { // 1 second protection period
-            logger.log(CAT_MIDI, LOG_DEBUG, "Skipping coarse fader pitchbend update - fader 3 was recently the driver (%lu ms ago)", 
-                       timeSinceDriverSet);
-            return;
-        }
-    }
-    
     if (editManager.getSelectedNoteIdx() < 0) {
-        logger.log(CAT_MIDI, LOG_DEBUG, "No note selected for coarse position update");
+        logger.log(CAT_MIDI, LOG_DEBUG, "No note selected for coarse position");
         return;
     }
     
-    auto& midiEvents = track.getMidiEvents();
     uint32_t loopLength = track.getLoopLength();
     if (loopLength == 0) return;
     
     const auto& notes = track.getCachedNotes();
     int selectedIdx = editManager.getSelectedNoteIdx();
+    uint32_t loopStartTick = track.getLoopStartTick();
     
-    // Double-check that the selected note index is still valid after potential note modifications
     if (selectedIdx >= 0 && selectedIdx < (int)notes.size()) {
         uint32_t targetTick, currentSixteenthStep;
         
         if (lengthEditingMode) {
             // LENGTH EDIT mode: Use note END position
-            targetTick = notes[selectedIdx].endTick;
+            uint32_t noteEndTick = notes[selectedIdx].endTick;
+            // Convert to relative position
+            targetTick = (noteEndTick >= loopStartTick) ? 
+                (noteEndTick - loopStartTick) : (noteEndTick + loopLength - loopStartTick);
+            targetTick = targetTick % loopLength;
             currentSixteenthStep = targetTick / Config::TICKS_PER_16TH_STEP;
             logger.log(CAT_MIDI, LOG_DEBUG, "Coarse fader position (LENGTH EDIT): step %lu/80 -> pitchbend %d + note 1 trigger", 
                        currentSixteenthStep, targetTick);
         } else {
             // POSITION EDIT mode: Use note START position  
-            targetTick = notes[selectedIdx].startTick;
+            uint32_t noteStartTick = notes[selectedIdx].startTick;
+            // Convert to relative position
+            targetTick = (noteStartTick >= loopStartTick) ? 
+                (noteStartTick - loopStartTick) : (noteStartTick + loopLength - loopStartTick);
+            targetTick = targetTick % loopLength;
             currentSixteenthStep = targetTick / Config::TICKS_PER_16TH_STEP;
             logger.log(CAT_MIDI, LOG_DEBUG, "Coarse fader position (POSITION EDIT): step %lu/80 -> pitchbend %d + note 1 trigger", 
                        currentSixteenthStep, targetTick);
@@ -897,20 +924,8 @@ void NoteEditManager::sendCoarseFaderPosition(Track& track) {
 }
 
 void NoteEditManager::sendFineFaderPosition(Track& track) {
-    // IMPORTANT: Don't send CC values to fader 3 when it was recently the driver
-    // Fader 3 represents user input and should maintain its position - MIDI events are the single source of truth
-    if (currentDriverFader == MidiMapping::FaderType::FADER_FINE) {
-        uint32_t now = millis();
-        uint32_t timeSinceDriverSet = now - lastDriverFaderTime;
-        if (timeSinceDriverSet < 1000) { // 1 second protection period
-            logger.log(CAT_MIDI, LOG_DEBUG, "Skipping fine fader CC update - fader 3 was recently the driver (%lu ms ago)", 
-                       timeSinceDriverSet);
-            return;
-        }
-    }
-    
     if (editManager.getSelectedNoteIdx() < 0) {
-        logger.log(CAT_MIDI, LOG_DEBUG, "No note selected for fine position update");
+        logger.log(CAT_MIDI, LOG_DEBUG, "No note selected for fine position");
         return;
     }
     
@@ -919,17 +934,25 @@ void NoteEditManager::sendFineFaderPosition(Track& track) {
     
     const auto& notes = track.getCachedNotes();
     int selectedIdx = editManager.getSelectedNoteIdx();
+    uint32_t loopStartTick = track.getLoopStartTick();
     
-    // Double-check that the selected note index is still valid after potential note modifications
     if (selectedIdx >= 0 && selectedIdx < (int)notes.size()) {
         uint32_t targetTick;
         
         if (lengthEditingMode) {
             // LENGTH EDIT mode: Use note END position
-            targetTick = notes[selectedIdx].endTick;
+            uint32_t noteEndTick = notes[selectedIdx].endTick;
+            // Convert to relative position
+            targetTick = (noteEndTick >= loopStartTick) ? 
+                (noteEndTick - loopStartTick) : (noteEndTick + loopLength - loopStartTick);
+            targetTick = targetTick % loopLength;
         } else {
             // POSITION EDIT mode: Use note START position
-            targetTick = notes[selectedIdx].startTick;
+            uint32_t noteStartTick = notes[selectedIdx].startTick;
+            // Convert to relative position
+            targetTick = (noteStartTick >= loopStartTick) ? 
+                (noteStartTick - loopStartTick) : (noteStartTick + loopLength - loopStartTick);
+            targetTick = targetTick % loopLength;
         }
         
         // Use the reference step (established by coarse/select faders) as the base for CC calculation
@@ -960,20 +983,8 @@ void NoteEditManager::sendFineFaderPosition(Track& track) {
 }
 
 void NoteEditManager::sendNoteValueFaderPosition(Track& track) {
-    // IMPORTANT: Don't send CC values to fader 4 when it was recently the driver
-    // Fader 4 represents user input and should maintain its position - MIDI events are the single source of truth
-    if (currentDriverFader == MidiMapping::FaderType::FADER_NOTE_VALUE) {
-        uint32_t now = millis();
-        uint32_t timeSinceDriverSet = now - lastDriverFaderTime;
-        if (timeSinceDriverSet < 1000) { // 1 second protection period
-            logger.log(CAT_MIDI, LOG_DEBUG, "Skipping note value fader CC update - fader 4 was recently the driver (%lu ms ago)", 
-                       timeSinceDriverSet);
-            return;
-        }
-    }
-    
     if (editManager.getSelectedNoteIdx() < 0) {
-        logger.log(CAT_MIDI, LOG_DEBUG, "No note selected for note value update");
+        logger.log(CAT_MIDI, LOG_DEBUG, "No note selected for note value position");
         return;
     }
     
@@ -983,29 +994,24 @@ void NoteEditManager::sendNoteValueFaderPosition(Track& track) {
     const auto& notes = track.getCachedNotes();
     int selectedIdx = editManager.getSelectedNoteIdx();
     
-    // Double-check that the selected note index is still valid after potential note modifications
     if (selectedIdx >= 0 && selectedIdx < (int)notes.size()) {
+        // Note value doesn't need relative positioning - it's just the MIDI note number
         uint8_t noteValue = notes[selectedIdx].note;
         
-        // Map MIDI note value (0-127) to CC value (0-127)
-        // This is a direct 1:1 mapping
-        uint8_t noteValueCCValue = noteValue;
+        logger.log(CAT_MIDI, LOG_DEBUG, "Note value fader position: note %d -> CC=%d + note 3 trigger", 
+                   noteValue, noteValue);
         
-        // Debug: verify we're using the correct note
-        logger.log(CAT_MIDI, LOG_DEBUG, "Note value: selectedIdx=%d, noteValue=%d", 
-                   selectedIdx, noteValue);
+        midiHandler.sendControlChange(NOTE_VALUE_CC_CHANNEL, NOTE_VALUE_CC_NUMBER, noteValue);
         
-        midiHandler.sendControlChange(NOTE_VALUE_CC_CHANNEL, NOTE_VALUE_CC_NUMBER, noteValueCCValue);
-        
-        // Send note 2 trigger on channel 15 to help motorized fader 4 update
-        midiHandler.sendNoteOn(NOTE_VALUE_CC_CHANNEL, 2, 127);
-        midiHandler.sendNoteOff(NOTE_VALUE_CC_CHANNEL, 2, 0);
+        // Send note 3 trigger on channel 15 to help motorized fader 4 update
+        midiHandler.sendNoteOn(NOTE_VALUE_CC_CHANNEL, 3, 127);
+        midiHandler.sendNoteOff(NOTE_VALUE_CC_CHANNEL, 3, 0);
         
         // Record the value we sent for smart feedback detection
-        midiFaderManagerV2.getFaderStateMutable(MidiMapping::FaderType::FADER_NOTE_VALUE).lastSentCC = noteValueCCValue;
+        midiFaderManagerV2.getFaderStateMutable(MidiMapping::FaderType::FADER_NOTE_VALUE).lastSentCC = noteValue;
         
-        logger.log(CAT_MIDI, LOG_DEBUG, "Sent note value CC=%d + note 2 trigger (note value %d)", 
-                   noteValueCCValue, noteValue);
+        logger.log(CAT_MIDI, LOG_DEBUG, "Sent note value CC=%d + note 3 trigger (note value %d)", 
+                   noteValue, noteValue);
     } else {
         logger.log(CAT_MIDI, LOG_DEBUG, "Note value: Invalid selectedIdx=%d, notes.size()=%lu", 
                    selectedIdx, notes.size());
@@ -1062,24 +1068,35 @@ void NoteEditManager::handleSelectFaderInput(int16_t pitchValue, Track& track) {
     uint32_t loopLength = track.getLoopLength();
     if (loopLength == 0) return;
     
+    // Get loop start offset for relative positioning
+    uint32_t loopStartTick = track.getLoopStartTick();
+    
     // Collect ALL note positions and empty step positions for fader navigation
     uint32_t numSteps = loopLength / Config::TICKS_PER_16TH_STEP;
     const auto& notes = track.getCachedNotes();
     std::vector<uint32_t> allPositions;
     
-    // First, add all note positions
+    // First, add all note positions - adjust to be relative to loop start point
     for (int i = 0; i < (int)notes.size(); i++) {
-        allPositions.push_back(notes[i].startTick);
+        uint32_t absolutePos = notes[i].startTick;
+        uint32_t relativePos = (absolutePos >= loopStartTick) ? 
+            (absolutePos - loopStartTick) : (absolutePos + loopLength - loopStartTick);
+        relativePos = relativePos % loopLength;
+        allPositions.push_back(relativePos);
     }
     
     // Then, add empty step positions for steps that have no notes
     for (uint32_t step = 0; step < numSteps; step++) {
         uint32_t stepTick = step * Config::TICKS_PER_16TH_STEP;
         
-        // Check if this step position already has a note
+        // Check if this step position already has a note (using relative positions)
         bool hasNoteAtStep = false;
         for (int i = 0; i < (int)notes.size(); i++) {
-            if (notes[i].startTick == stepTick) {
+            uint32_t absolutePos = notes[i].startTick;
+            uint32_t relativePos = (absolutePos >= loopStartTick) ? 
+                (absolutePos - loopStartTick) : (absolutePos + loopLength - loopStartTick);
+            relativePos = relativePos % loopLength;
+            if (relativePos == stepTick) {
                 hasNoteAtStep = true;
                 break;
             }
@@ -1099,12 +1116,15 @@ void NoteEditManager::handleSelectFaderInput(int16_t pitchValue, Track& track) {
     
     if (!allPositions.empty()) {
         int posIndex = map(pitchValue, PITCHBEND_MIN, PITCHBEND_MAX, 0, allPositions.size() - 1);
-        uint32_t targetTick = allPositions[posIndex];
+        uint32_t relativeTargetTick = allPositions[posIndex];
         
-        // Find all notes at the target tick for multi-note cycling
+        // Convert relative position back to absolute position for internal logic
+        uint32_t absoluteTargetTick = (relativeTargetTick + loopStartTick) % loopLength;
+        
+        // Find all notes at the absolute target tick for multi-note cycling
         std::vector<int> notesAtTick;
         for (int i = 0; i < (int)notes.size(); i++) {
-            if (notes[i].startTick == targetTick) {
+            if (notes[i].startTick == absoluteTargetTick) {
                 notesAtTick.push_back(i);
             }
         }
@@ -1117,7 +1137,7 @@ void NoteEditManager::handleSelectFaderInput(int16_t pitchValue, Track& track) {
             });
             
             // Simple cycling logic: if we're at the same tick and have multiple notes, cycle through them
-            if (targetTick == editManager.getBracketTick() && editManager.getSelectedNoteIdx() >= 0 && notesAtTick.size() > 1) {
+            if (absoluteTargetTick == editManager.getBracketTick() && editManager.getSelectedNoteIdx() >= 0 && notesAtTick.size() > 1) {
                 int currentIdx = editManager.getSelectedNoteIdx();
                 auto currentIt = std::find(notesAtTick.begin(), notesAtTick.end(), currentIdx);
                 
@@ -1131,7 +1151,7 @@ void NoteEditManager::handleSelectFaderInput(int16_t pitchValue, Track& track) {
                         noteIdx = notesAtTick[0];
                     }
                     logger.log(CAT_MIDI, LOG_INFO, "Cycling through notes at tick %lu (%d notes total)", 
-                               targetTick, (int)notesAtTick.size());
+                               absoluteTargetTick, (int)notesAtTick.size());
                 } else {
                     // Current selection not in this tick's notes, select first
                     noteIdx = notesAtTick[0];
@@ -1139,14 +1159,14 @@ void NoteEditManager::handleSelectFaderInput(int16_t pitchValue, Track& track) {
             } else {
                 // Different tick, single note, or no current selection - select first note
                 noteIdx = notesAtTick[0];
-                if (targetTick != editManager.getBracketTick()) {
-                    logger.log(CAT_MIDI, LOG_INFO, "Moving to tick position: %lu", targetTick);
+                if (absoluteTargetTick != editManager.getBracketTick()) {
+                    logger.log(CAT_MIDI, LOG_INFO, "Moving to tick position: %lu", absoluteTargetTick);
                 }
             }
         }
         
-        if (targetTick != editManager.getBracketTick() || noteIdx != editManager.getSelectedNoteIdx()) {
-            editManager.setBracketTick(targetTick);
+        if (absoluteTargetTick != editManager.getBracketTick() || noteIdx != editManager.getSelectedNoteIdx()) {
+            editManager.setBracketTick(absoluteTargetTick);
             
             if (noteIdx >= 0) {
                 editManager.setSelectedNoteIdx(noteIdx);
@@ -1155,9 +1175,9 @@ void NoteEditManager::handleSelectFaderInput(int16_t pitchValue, Track& track) {
                     auto selectedIt = std::find(notesAtTick.begin(), notesAtTick.end(), noteIdx);
                     int notePosition = std::distance(notesAtTick.begin(), selectedIt) + 1;
                     logger.log(CAT_MIDI, LOG_INFO, "Select fader: selected note %d at tick %lu (%d/%d notes at this position)", 
-                               noteIdx, targetTick, notePosition, (int)notesAtTick.size());
+                               noteIdx, absoluteTargetTick, notePosition, (int)notesAtTick.size());
                 } else {
-                    logger.log(CAT_MIDI, LOG_DEBUG, "Select fader: selected note %d at tick %lu", noteIdx, targetTick);
+                    logger.log(CAT_MIDI, LOG_DEBUG, "Select fader: selected note %d at tick %lu", noteIdx, absoluteTargetTick);
                 }
                 
                 // CRITICAL: Reset moving note state when selecting a new note
@@ -1168,7 +1188,7 @@ void NoteEditManager::handleSelectFaderInput(int16_t pitchValue, Track& track) {
                 logger.log(CAT_MIDI, LOG_DEBUG, "Reset moving note state for new selection");
                 
                 // Set initial reference step based on note position
-                referenceStep = targetTick / Config::TICKS_PER_16TH_STEP;
+                referenceStep = absoluteTargetTick / Config::TICKS_PER_16TH_STEP;
                 
                 // Schedule updates for faders 2, 3, and 4 after note selection
                 scheduleOtherFaderUpdates(MidiMapping::FaderType::FADER_SELECT);
@@ -1184,10 +1204,10 @@ void NoteEditManager::handleSelectFaderInput(int16_t pitchValue, Track& track) {
                 // This prevents rapid fader movements from accidentally resetting a valid selection
                 if (editManager.getSelectedNoteIdx() < 0) {
                     editManager.resetSelection();
-                    logger.log(CAT_MIDI, LOG_DEBUG, "Select fader: selected empty step at tick %lu (no note found)", targetTick);
+                    logger.log(CAT_MIDI, LOG_DEBUG, "Select fader: selected empty step at tick %lu (no note found)", absoluteTargetTick);
                 } else {
                     logger.log(CAT_MIDI, LOG_DEBUG, "Select fader: ignoring empty step at tick %lu (preserving current selection %d)", 
-                               targetTick, editManager.getSelectedNoteIdx());
+                               absoluteTargetTick, editManager.getSelectedNoteIdx());
                 }
             }
         }
@@ -1236,7 +1256,6 @@ void NoteEditManager::handleCoarseFaderInput(int16_t pitchValue, Track& track) {
     uint32_t loopLength = track.getLoopLength();
     if (loopLength == 0) return;
     
-    auto& midiEvents = track.getMidiEvents();
     const auto& notes = track.getCachedNotes();
     int selectedIdx = editManager.getSelectedNoteIdx();
     
@@ -1244,10 +1263,10 @@ void NoteEditManager::handleCoarseFaderInput(int16_t pitchValue, Track& track) {
         // CRITICAL: Use stable note identity if we're already moving a note
         NoteUtils::DisplayNote currentNote;
         uint32_t currentNoteStartTick;
+        uint32_t loopStartTick = track.getLoopStartTick();
         
         if (editManager.movingNote.active) {
             // Use the moving note's current position, not the selected index
-            // (which might point to a different note after reconstruction)
             currentNote.note = editManager.movingNote.note;
             currentNote.startTick = editManager.movingNote.lastStart;
             currentNote.endTick = editManager.movingNote.lastEnd;
@@ -1265,25 +1284,32 @@ void NoteEditManager::handleCoarseFaderInput(int16_t pitchValue, Track& track) {
         if (lengthEditingMode) {
             // LENGTH EDIT MODE: Move the note END position in 16th step increments
             uint32_t currentNoteEndTick = currentNote.endTick;
-            uint32_t noteDuration = calculateNoteLength(currentNote.startTick, currentNote.endTick, loopLength);
+            
+            // Convert current end tick to relative position
+            uint32_t relativeEndTick = (currentNoteEndTick >= loopStartTick) ? 
+                (currentNoteEndTick - loopStartTick) : (currentNoteEndTick + loopLength - loopStartTick);
+            relativeEndTick = relativeEndTick % loopLength;
             
             // Calculate how many 16th steps are in the loop
             uint32_t totalSixteenthSteps = loopLength / Config::TICKS_PER_16TH_STEP;
             
-            // Calculate current end step and offset
-            uint32_t currentSixteenthStep = currentNoteEndTick / Config::TICKS_PER_16TH_STEP;
-            uint32_t offsetWithinSixteenth = currentNoteEndTick % Config::TICKS_PER_16TH_STEP;
+            // Calculate current end step and offset (using relative position)
+            uint32_t currentSixteenthStep = relativeEndTick / Config::TICKS_PER_16TH_STEP;
+            uint32_t offsetWithinSixteenth = relativeEndTick % Config::TICKS_PER_16TH_STEP;
             
             // Map pitchbend to 16th step across entire loop
             uint32_t targetSixteenthStep = map(pitchValue, PITCHBEND_MIN, PITCHBEND_MAX, 0, totalSixteenthSteps - 1);
             
-            // Calculate target end tick: new 16th step + preserved offset
-            uint32_t targetEndTick = (targetSixteenthStep * Config::TICKS_PER_16TH_STEP) + offsetWithinSixteenth;
+            // Calculate target end tick: new 16th step + preserved offset (relative)
+            uint32_t relativeTargetEndTick = (targetSixteenthStep * Config::TICKS_PER_16TH_STEP) + offsetWithinSixteenth;
             
             // Constrain to valid range within the loop
-            if (targetEndTick >= loopLength) {
-                targetEndTick = loopLength - 1;
+            if (relativeTargetEndTick >= loopLength) {
+                relativeTargetEndTick = loopLength - 1;
             }
+            
+            // Convert back to absolute position
+            uint32_t targetEndTick = (relativeTargetEndTick + loopStartTick) % loopLength;
             
             // Calculate new note length and enforce minimum
             uint32_t newNoteDuration = calculateNoteLength(currentNote.startTick, targetEndTick, loopLength);
@@ -1296,8 +1322,8 @@ void NoteEditManager::handleCoarseFaderInput(int16_t pitchValue, Track& track) {
                 logger.log(CAT_MIDI, LOG_DEBUG, "Enforced minimum note length: %lu -> %lu ticks", newNoteDuration, minNoteDuration);
             }
             
-            logger.log(CAT_MIDI, LOG_DEBUG, "LENGTH EDIT: Note end moved from step %lu to %lu (tick %lu -> %lu)", 
-                       currentSixteenthStep, targetSixteenthStep, currentNoteEndTick, targetEndTick);
+            logger.log(CAT_MIDI, LOG_DEBUG, "LENGTH EDIT: Note end moved from step %lu to %lu (tick %lu -> %lu, relative %lu -> %lu)", 
+                       currentSixteenthStep, targetSixteenthStep, currentNoteEndTick, targetEndTick, relativeEndTick, relativeTargetEndTick);
             
             // Store the target step as reference for fine adjustments
             referenceStep = targetSixteenthStep;
@@ -1334,26 +1360,34 @@ void NoteEditManager::handleCoarseFaderInput(int16_t pitchValue, Track& track) {
             }
         } else {
             // POSITION EDIT MODE: Move the note START position in 16th step increments
+            // Convert current start tick to relative position
+            uint32_t relativeStartTick = (currentNoteStartTick >= loopStartTick) ? 
+                (currentNoteStartTick - loopStartTick) : (currentNoteStartTick + loopLength - loopStartTick);
+            relativeStartTick = relativeStartTick % loopLength;
+            
             // Calculate how many 16th steps are in the loop
             uint32_t totalSixteenthSteps = loopLength / Config::TICKS_PER_16TH_STEP;
             
-            // Calculate the offset within the current 16th step
-            uint32_t currentSixteenthStep = currentNoteStartTick / Config::TICKS_PER_16TH_STEP;
-            uint32_t offsetWithinSixteenth = currentNoteStartTick % Config::TICKS_PER_16TH_STEP;
+            // Calculate the offset within the current 16th step (using relative position)
+            uint32_t currentSixteenthStep = relativeStartTick / Config::TICKS_PER_16TH_STEP;
+            uint32_t offsetWithinSixteenth = relativeStartTick % Config::TICKS_PER_16TH_STEP;
             
             // Map pitchbend to 16th step across entire loop
             uint32_t targetSixteenthStep = map(pitchValue, PITCHBEND_MIN, PITCHBEND_MAX, 0, totalSixteenthSteps - 1);
             
-            // Calculate target tick: new 16th step + preserved offset
-            uint32_t targetTick = (targetSixteenthStep * Config::TICKS_PER_16TH_STEP) + offsetWithinSixteenth;
+            // Calculate target tick: new 16th step + preserved offset (relative)
+            uint32_t relativeTargetTick = (targetSixteenthStep * Config::TICKS_PER_16TH_STEP) + offsetWithinSixteenth;
             
             // Constrain to valid range within the loop
-            if (targetTick >= loopLength) {
-                targetTick = loopLength - 1;
+            if (relativeTargetTick >= loopLength) {
+                relativeTargetTick = loopLength - 1;
             }
             
-            logger.log(CAT_MIDI, LOG_DEBUG, "POSITION EDIT: Note moved from step %lu to %lu (tick %lu -> %lu)", 
-                       currentSixteenthStep, targetSixteenthStep, currentNoteStartTick, targetTick);
+            // Convert back to absolute position
+            uint32_t targetTick = (relativeTargetTick + loopStartTick) % loopLength;
+            
+            logger.log(CAT_MIDI, LOG_DEBUG, "POSITION EDIT: Note moved from step %lu to %lu (tick %lu -> %lu, relative %lu -> %lu)", 
+                       currentSixteenthStep, targetSixteenthStep, currentNoteStartTick, targetTick, relativeStartTick, relativeTargetTick);
             
             // Store the target step as reference for fine adjustments
             referenceStep = targetSixteenthStep;
@@ -1406,6 +1440,7 @@ void NoteEditManager::handleFineFaderInput(uint8_t ccValue, Track& track) {
     if (selectedIdx >= 0 && selectedIdx < (int)notes.size()) {
         // CRITICAL: Use stable note identity if we're already moving a note
         NoteUtils::DisplayNote currentNote;
+        uint32_t loopStartTick = track.getLoopStartTick();
         
         if (editManager.movingNote.active) {
             // Use the moving note's current position, not the selected index
@@ -1425,27 +1460,35 @@ void NoteEditManager::handleFineFaderInput(uint8_t ccValue, Track& track) {
             // LENGTH EDIT MODE: Adjust note END position with fine control
             uint32_t currentNoteEndTick = currentNote.endTick;
             
+            // Convert to relative position for calculation
+            uint32_t relativeEndTick = (currentNoteEndTick >= loopStartTick) ? 
+                (currentNoteEndTick - loopStartTick) : (currentNoteEndTick + loopLength - loopStartTick);
+            relativeEndTick = relativeEndTick % loopLength;
+            
             // Use the reference step established by coarse fader as the base
             uint32_t sixteenthStepStartTick = referenceStep * Config::TICKS_PER_16TH_STEP;
             
             // CC2 gives us 127 steps for precise control: CC=64 is center (no offset)
             int32_t offset = (int32_t)ccValue - 64;  // -64 to +63
             
-            // Calculate target end tick: 16th step boundary + CC offset
-            int32_t targetEndTickSigned = (int32_t)sixteenthStepStartTick + offset;
+            // Calculate target end tick: 16th step boundary + CC offset (relative)
+            int32_t relativeTargetEndTickSigned = (int32_t)sixteenthStepStartTick + offset;
             
             // Handle negative values by wrapping to end of loop
-            uint32_t targetEndTick;
-            if (targetEndTickSigned < 0) {
-                targetEndTick = loopLength + targetEndTickSigned;
+            uint32_t relativeTargetEndTick;
+            if (relativeTargetEndTickSigned < 0) {
+                relativeTargetEndTick = loopLength + relativeTargetEndTickSigned;
             } else {
-                targetEndTick = (uint32_t)targetEndTickSigned;
+                relativeTargetEndTick = (uint32_t)relativeTargetEndTickSigned;
             }
             
             // Constrain to valid range within the loop
-            if (targetEndTick >= loopLength) {
-                targetEndTick = targetEndTick % loopLength;
+            if (relativeTargetEndTick >= loopLength) {
+                relativeTargetEndTick = relativeTargetEndTick % loopLength;
             }
+            
+            // Convert back to absolute position
+            uint32_t targetEndTick = (relativeTargetEndTick + loopStartTick) % loopLength;
             
             // Calculate new note length and enforce minimum
             uint32_t newNoteDuration = calculateNoteLength(currentNote.startTick, targetEndTick, loopLength);
@@ -1490,39 +1533,47 @@ void NoteEditManager::handleFineFaderInput(uint8_t ccValue, Track& track) {
             }
         } else {
             // POSITION EDIT MODE: Adjust note START position with fine control
+            uint32_t currentNoteStartTick = currentNote.startTick;
+            
+            // Convert to relative position for calculation
+            uint32_t relativeStartTick = (currentNoteStartTick >= loopStartTick) ? 
+                (currentNoteStartTick - loopStartTick) : (currentNoteStartTick + loopLength - loopStartTick);
+            relativeStartTick = relativeStartTick % loopLength;
+            
             // Use the reference step established by coarse fader as the base
-            // CC2 gives us ±64 ticks of fine control around the 16th step boundary
             uint32_t sixteenthStepStartTick = referenceStep * Config::TICKS_PER_16TH_STEP;
             
             // CC2 gives us 127 steps for precise control: CC=64 is center (no offset)
             int32_t offset = (int32_t)ccValue - 64;  // -64 to +63
             
-            // Calculate target tick: 16th step boundary + CC offset
-            int32_t targetTickSigned = (int32_t)sixteenthStepStartTick + offset;
+            // Calculate target start tick: 16th step boundary + CC offset (relative)
+            int32_t relativeTargetStartTickSigned = (int32_t)sixteenthStepStartTick + offset;
             
             // Handle negative values by wrapping to end of loop
-            uint32_t targetTick;
-            if (targetTickSigned < 0) {
-                targetTick = loopLength + targetTickSigned;
+            uint32_t relativeTargetStartTick;
+            if (relativeTargetStartTickSigned < 0) {
+                relativeTargetStartTick = loopLength + relativeTargetStartTickSigned;
             } else {
-                targetTick = (uint32_t)targetTickSigned;
+                relativeTargetStartTick = (uint32_t)relativeTargetStartTickSigned;
             }
             
             // Constrain to valid range within the loop
-            if (targetTick >= loopLength) {
-                targetTick = targetTick % loopLength;
+            if (relativeTargetStartTick >= loopLength) {
+                relativeTargetStartTick = relativeTargetStartTick % loopLength;
             }
             
-            logger.log(CAT_MIDI, LOG_DEBUG, "POSITION EDIT (fine): referenceStep=%lu offset=%ld targetTick=%lu (cc=%d)", 
-                       referenceStep, offset, targetTick, ccValue);
+            // Convert back to absolute position
+            uint32_t targetStartTick = (relativeTargetStartTick + loopStartTick) % loopLength;
+            
+            logger.log(CAT_MIDI, LOG_DEBUG, "POSITION EDIT: Fine adjustment from relative tick %lu to %lu (absolute %lu -> %lu)", 
+                       relativeStartTick, relativeTargetStartTick, currentNoteStartTick, targetStartTick);
             
             // Mark editing activity to prevent note selection changes
             refreshEditingActivity();
             // Set up driver tracking for fine fader
             this->currentDriverFader = MidiMapping::FaderType::FADER_FINE;
             this->lastDriverFaderTime = millis();
-            
-            moveNoteToPosition(track, currentNote, targetTick);
+            moveNoteToPosition(track, currentNote, targetStartTick);
         }
         
         logger.log(CAT_MIDI, LOG_DEBUG, "Fine fader: CC=%d - %s mode", 
@@ -2300,5 +2351,127 @@ void NoteEditManager::onTrackChanged(Track& newTrack) {
     if (currentMainEditMode == MAIN_MODE_LOOP_EDIT) {
         sendCurrentLoopLengthCC(newTrack);
         logger.log(CAT_MIDI, LOG_DEBUG, "Track changed while in loop edit mode, updating loop length CC");
+    }
+}
+
+// -------------------------
+// Loop start point editing (for loop edit mode)
+// -------------------------
+
+void NoteEditManager::handleLoopStartFaderInput(int16_t pitchValue, Track& track) {
+    // Only process fader input when in LOOP_EDIT mode
+    if (currentMainEditMode != MAIN_MODE_LOOP_EDIT) {
+        logger.log(CAT_MIDI, LOG_DEBUG, "Loop start fader input ignored: not in LOOP_EDIT mode (current mode: %s)", 
+                   (currentMainEditMode == MAIN_MODE_NOTE_EDIT) ? "NOTE_EDIT" : "UNKNOWN");
+        return;
+    }
+    
+    uint32_t loopLength = track.getLoopLength();
+    if (loopLength == 0) {
+        logger.log(CAT_MIDI, LOG_DEBUG, "Loop start fader input ignored: no loop length set");
+        return;
+    }
+    
+    // Use the same logic as select note fader for 16th step navigation
+    const int16_t PITCHBEND_MIN = -8192;
+    const int16_t PITCHBEND_MAX = 8191;
+    
+    // Calculate total 16th steps in the loop
+    uint32_t numSteps = loopLength / Config::TICKS_PER_16TH_STEP;
+    if (numSteps == 0) numSteps = 1;
+    
+    // Collect ALL possible positions (16th steps AND note positions)
+    const auto& notes = track.getCachedNotes();
+    std::vector<uint32_t> allPositions;
+    
+    // First, add all note start positions (these are already absolute positions within the loop)
+    for (const auto& note : notes) {
+        allPositions.push_back(note.startTick);
+    }
+    
+    // Then, add all 16th step positions
+    for (uint32_t step = 0; step < numSteps; step++) {
+        uint32_t stepTick = step * Config::TICKS_PER_16TH_STEP;
+        allPositions.push_back(stepTick);
+    }
+    
+    // Sort and remove duplicates
+    std::sort(allPositions.begin(), allPositions.end());
+    allPositions.erase(std::unique(allPositions.begin(), allPositions.end()), allPositions.end());
+    
+    // Map pitchbend value to position index
+    if (allPositions.empty()) {
+        allPositions.push_back(0); // Fallback to start of loop
+    }
+    
+    uint32_t targetIndex = map(pitchValue, PITCHBEND_MIN, PITCHBEND_MAX, 0, allPositions.size() - 1);
+    uint32_t newLoopStartTick = allPositions[targetIndex];
+    
+    // Movement filtering to reduce jitter - only process significant changes
+    uint32_t currentStart = track.getLoopStartTick();
+    uint32_t movementDelta = (newLoopStartTick > currentStart) ? 
+        (newLoopStartTick - currentStart) : (currentStart - newLoopStartTick);
+    
+    // Only process if this is a significant change (different position)
+    if (newLoopStartTick != currentStart && movementDelta >= Config::TICKS_PER_16TH_STEP / 4) {
+        logger.log(CAT_MIDI, LOG_DEBUG, "Loop start fader: pitchbend=%d -> index=%lu/%lu -> tick=%lu (significant change)", 
+                   pitchValue, targetIndex, allPositions.size(), newLoopStartTick);
+        
+        // Push undo snapshot before making the change
+        TrackUndo::pushLoopStartSnapshot(track);
+        
+        // Set the new loop start point
+        track.setLoopStartTick(newLoopStartTick);
+        
+        logger.log(CAT_MIDI, LOG_INFO, "LOOP START EDIT: Loop start moved from tick %lu to %lu", 
+                   currentStart, newLoopStartTick);
+        
+        // Mark editing activity to enable grace period and endpoint updating
+        refreshLoopStartEditingActivity();
+        
+        // Enable loop start editing mode with grace period
+        loopStartEditingTime = millis();
+        loopStartEditingEnabled = true;
+    } else {
+        logger.log(CAT_MIDI, LOG_DEBUG, "Loop start fader: pitchbend=%d -> tick=%lu (filtered - small change)", 
+                   pitchValue, newLoopStartTick);
+    }
+}
+
+void NoteEditManager::refreshLoopStartEditingActivity() {
+    lastLoopStartEditingActivityTime = millis();
+    logger.log(CAT_MIDI, LOG_DEBUG, "Loop start editing activity refreshed");
+}
+
+void NoteEditManager::updateLoopEndpointAfterGracePeriod(Track& track) {
+    uint32_t now = millis();
+    
+    // Check if grace period has passed
+    if (loopStartEditingTime > 0 && (now - loopStartEditingTime) >= LOOP_START_GRACE_PERIOD) {
+        // Grace period has passed, update the loop endpoint based on bars relative to start point
+        uint32_t loopLength = track.getLoopLength();
+        uint32_t loopStartTick = track.getLoopStartTick();
+        
+        // Calculate loop length in bars (round to nearest bar)
+        uint32_t loopLengthBars = (loopLength + (Config::TICKS_PER_BAR / 2)) / Config::TICKS_PER_BAR;
+        if (loopLengthBars == 0) loopLengthBars = 1;
+        
+        // Calculate new loop end based on start + bars
+        uint32_t newLoopEndTick = loopStartTick + (loopLengthBars * Config::TICKS_PER_BAR);
+        uint32_t newLoopLength = loopLengthBars * Config::TICKS_PER_BAR;
+        
+        // Update the loop length to maintain the bar-based length relative to new start
+        if (newLoopLength != loopLength) {
+            track.setLoopLength(newLoopLength);
+            logger.log(CAT_MIDI, LOG_INFO, "LOOP ENDPOINT UPDATE: Loop length adjusted from %lu to %lu ticks (%lu bars)", 
+                       loopLength, newLoopLength, loopLengthBars);
+        }
+        
+        logger.log(CAT_MIDI, LOG_INFO, "LOOP ENDPOINT UPDATE: Grace period ended, loop end=%lu (start=%lu + %lu bars)", 
+                   newLoopEndTick, loopStartTick, loopLengthBars);
+        
+        // Reset grace period state
+        loopStartEditingTime = 0;
+        loopStartEditingEnabled = false;
     }
 }

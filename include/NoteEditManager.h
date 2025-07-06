@@ -50,6 +50,13 @@ public:
     void handleFineFaderInput(uint8_t ccValue, Track& track);
     void handleNoteValueFaderInput(uint8_t ccValue, Track& track);
     
+    // Loop start point editing (for loop edit mode)
+    void handleLoopStartFaderInput(int16_t pitchValue, Track& track);
+    
+    // Loop start editing grace period and endpoint updating
+    void refreshLoopStartEditingActivity();
+    void updateLoopEndpointAfterGracePeriod(Track& track);
+    
     // Loop length editing (for loop edit mode)
     void handleLoopLengthInput(uint8_t ccValue, Track& track);
 
@@ -181,12 +188,19 @@ private:
     bool fineCCInitialized = false;
     uint32_t referenceStep = 0;       // 16th step position set by coarse movement
     
-    // Grace period for start note editing (prevent fader overwhelm)
+    // Grace period for start editing to prevent conflicts
+    static constexpr uint32_t NOTE_SELECTION_GRACE_PERIOD = 750; // ms
     uint32_t noteSelectionTime = 0;
-    static constexpr uint32_t START_EDIT_GRACE_PERIOD = 1500; // 1 second
-    bool startEditingEnabled = false;
+    bool startEditingEnabled = true;
+    uint32_t lastEditingActivityTime = 0;
     
-    // Smart selection stability - prevent motorized fader feedback from changing selection
+    // Loop start editing grace period and state
+    static constexpr uint32_t LOOP_START_GRACE_PERIOD = 1000; // ms
+    uint32_t loopStartEditingTime = 0;
+    bool loopStartEditingEnabled = true;
+    uint32_t lastLoopStartEditingActivityTime = 0;
+    
+    // Smart selection and coarse fader stability - prevent feedback and jitter
     int16_t lastUserSelectFaderValue = PITCHBEND_CENTER;
     uint32_t lastSelectFaderTime = 0;
     static constexpr int16_t SELECT_MOVEMENT_THRESHOLD = 100; // Minimum pitchbend change to be considered intentional
@@ -197,10 +211,6 @@ private:
     uint32_t lastCoarseFaderTime = 0;
     static constexpr int16_t COARSE_MOVEMENT_THRESHOLD = 150; // Minimum pitchbend change to be considered intentional
     static constexpr uint32_t COARSE_STABILITY_TIME = 1000; // ms between movements to be considered stable
-    
-    // Grace period for note selection (prevent selection changes during editing)
-    uint32_t lastEditingActivityTime = 0;
-    static constexpr uint32_t NOTE_SELECTION_GRACE_PERIOD = 0; // Disabled - allow fader1 during edit mode
     
     // Feedback prevention for motorized faders
     uint32_t lastPitchbendSentTime = 0;
