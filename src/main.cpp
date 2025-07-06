@@ -18,6 +18,7 @@
 #include "EditStates/EditSelectNoteState.h"
 #include "Globals.h"
 #include "NoteEditManager.h"  // Keep temporarily for move note logic
+#include "Utils/PerformanceMonitor.h"  // Performance monitoring
 
 void setup() {
   // Simple led Check to see if Teensy is responding
@@ -71,10 +72,15 @@ void setup() {
   Serial.println("Main: Dispaly Setup done");
   looper.setup();
 
+  // Log performance monitoring setup
+  logger.info("Performance monitoring initialized");
   
 }
 
 void loop() {
+  // Start performance monitoring for this loop iteration
+  PerformanceMonitor::globalPerformanceMonitor.beginLoop();
+  
   //Serial.println("Main: Loop");
   uint32_t now = millis();
   // Poll MIDI input
@@ -103,6 +109,22 @@ void loop() {
   if (now - lastDisplayUpdate >= LCD::DISPLAY_UPDATE_INTERVAL) {
     lastDisplayUpdate = now;
     displayManager.update();
+  }
+  
+  // End performance monitoring for this loop iteration
+  PerformanceMonitor::globalPerformanceMonitor.endLoop();
+  
+  // Log performance warnings if system is under stress
+  if (PerformanceMonitor::globalPerformanceMonitor.isSystemStressed()) {
+    const auto& metrics = PerformanceMonitor::globalPerformanceMonitor.getCurrentMetrics();
+    logger.warning("Performance stress detected: CPU=%d%%, Loop=%luμs, RAM=%luKB", 
+                   metrics.cpuUsagePercent, metrics.loopTimeMicros, metrics.freeRAMBytes / 1024);
+    
+    // Get optimization suggestions
+    auto suggestions = PerformanceMonitor::globalPerformanceMonitor.getOptimizationSuggestions();
+    for (const auto& suggestion : suggestions) {
+      logger.info("Performance suggestion: %s", suggestion.c_str());
+    }
   }
 }
 
