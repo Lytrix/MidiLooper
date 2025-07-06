@@ -32,13 +32,7 @@ public:
     void handleFineFaderInput(uint8_t ccValue, Track& track);
     void handleNoteValueFaderInput(uint8_t ccValue, Track& track);
     
-    // Loop editing faders
-    void handleLoopStartFaderInput(int16_t pitchValue, Track& track);
-    void handleLoopLengthInput(uint8_t ccValue, Track& track);
-    
-    // Loop start editing grace period and endpoint updating
-    void refreshLoopStartEditingActivity();
-    void updateLoopEndpointAfterGracePeriod(Track& track);
+
     
     // Fader update scheduling and processing
     void scheduleFaderUpdate(uint8_t faderType, uint32_t delayMs);
@@ -83,9 +77,7 @@ private:
     static constexpr uint8_t NOTE_VALUE_CC_CHANNEL = 15;  // Channel 15 for note value CC control
     static constexpr uint8_t NOTE_VALUE_CC_NUMBER = 3;    // CC3 for note value editing
     
-    // MIDI constants for loop length control
-    static constexpr uint8_t LOOP_LENGTH_CC_CHANNEL = 16;  // Channel 16 for loop length control
-    static constexpr uint8_t LOOP_LENGTH_CC_NUMBER = 101;  // CC101 for loop length editing
+
     
     // Pitchbend constants
     static constexpr int16_t PITCHBEND_MIN = -8192;  // Standard MIDI pitchbend minimum
@@ -94,7 +86,6 @@ private:
     
     // Grace periods
     static constexpr uint32_t NOTE_SELECTION_GRACE_PERIOD = 750; // ms
-    static constexpr uint32_t LOOP_START_GRACE_PERIOD = 1000; // ms
     
     // Fader state tracking
     int16_t lastPitchbendSelectValue = PITCHBEND_CENTER;   // Fader 1 (channel 16)
@@ -112,9 +103,7 @@ private:
     bool startEditingEnabled = true;
     uint32_t lastEditingActivityTime = 0;
     
-    // Loop start editing state
-    uint32_t loopStartEditingTime = 0;
-    bool loopStartEditingEnabled = true;
+
     
     // Fader update scheduling
     struct ScheduledUpdate {

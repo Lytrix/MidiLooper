@@ -26,9 +26,13 @@
 
 NoteEditManager noteEditManager;
 
-NoteEditManager::NoteEditManager() {
+NoteEditManager::NoteEditManager() 
+    : loopEditManager(midiHandler) {
     // Initialize the fader states array with all 4 faders
     initializeFaderStates();
+    
+    // Set initial loop edit mode state
+    loopEditManager.setMainEditMode(currentMainEditMode == MAIN_MODE_LOOP_EDIT);
 }
 
 // Delegate MIDI note handling to V2 system
@@ -52,9 +56,8 @@ void NoteEditManager::update() {
     }
     
     // Handle loop start editing grace period and endpoint updating
-    if (loopStartEditingEnabled && currentMainEditMode == MAIN_MODE_LOOP_EDIT) {
-        Track& track = trackManager.getSelectedTrack();
-        updateLoopEndpointAfterGracePeriod(track);
+    if (currentMainEditMode == MAIN_MODE_LOOP_EDIT) {
+        loopEditManager.update();
     }
     
     // Delegate to V2 managers for their update cycles
@@ -70,7 +73,7 @@ void NoteEditManager::handleMidiPitchbend(uint8_t channel, int16_t pitchValue) {
     if (channel == PITCHBEND_SELECT_CHANNEL) {  // Channel 16
         if (currentMainEditMode == MAIN_MODE_LOOP_EDIT) {
             // In loop edit mode: Route to loop start fader
-            handleLoopStartFaderInput(pitchValue, trackManager.getSelectedTrack());
+            loopEditManager.handleLoopStartFaderInput(pitchValue, trackManager.getSelectedTrack());
             logger.log(CAT_MIDI, LOG_DEBUG, "Pitchbend ch=%d routed to loop start fader (LOOP_EDIT mode)", channel);
             return;
         } else {
@@ -93,7 +96,7 @@ void NoteEditManager::handleMidiCC(uint8_t channel, uint8_t ccNumber, uint8_t va
     
     // Check for loop length control first (CC 101 on channel 16)
     if (channel == 16 && ccNumber == 101) {
-        handleLoopLengthInput(value, trackManager.getSelectedTrack());
+        loopEditManager.handleLoopLengthInput(value, trackManager.getSelectedTrack());
         return;
     }
     
@@ -393,9 +396,10 @@ void NoteEditManager::sendMainEditModeChange(MainEditMode mode) {
     logger.log(CAT_MIDI, LOG_INFO, "Main Edit Mode: %s (Program %d, Note %d trigger)", 
                modeName, program, triggerNote);
     
-    // If switching to LOOP_EDIT mode, send current loop length as CC feedback
+    // Update LoopEditManager mode and send feedback if switching to LOOP_EDIT mode
+    loopEditManager.setMainEditMode(mode == MAIN_MODE_LOOP_EDIT);
     if (mode == MAIN_MODE_LOOP_EDIT) {
-        sendCurrentLoopLengthCC(trackManager.getSelectedTrack());
+        loopEditManager.sendCurrentLoopLengthCC(trackManager.getSelectedTrack());
     }
 }
 
@@ -2280,210 +2284,9 @@ void NoteEditManager::toggleLengthEditingMode() {
     }
 }
 
-void NoteEditManager::handleLoopLengthInput(uint8_t ccValue, Track& track) {
-    // Only process loop length input when in LOOP_EDIT mode
-    if (currentMainEditMode != MAIN_MODE_LOOP_EDIT) {
-        logger.log(CAT_MIDI, LOG_DEBUG, "Loop length input ignored: not in LOOP_EDIT mode (current mode: %s)", 
-                   (currentMainEditMode == MAIN_MODE_NOTE_EDIT) ? "NOTE_EDIT" : "UNKNOWN");
-        return;
-    }
-    
-    // Convert CC value (0-127) to bars (1-128)
-    // CC 0 = 1 bar, CC 127 = 128 bars
-    uint8_t bars = map(ccValue, 0, 127, 1, 128);
-    
-    // Convert bars to ticks
-    uint32_t newLoopLengthTicks = bars * Config::TICKS_PER_BAR;
-    
-    // Get current loop length for comparison
-    uint32_t currentLoopLength = track.getLoopLength();
-    uint32_t currentBars = (currentLoopLength > 0) ? (currentLoopLength / Config::TICKS_PER_BAR) : 0;
-    
-    // Only update if the length actually changes
-    if (newLoopLengthTicks != currentLoopLength) {
-        logger.log(CAT_MIDI, LOG_INFO, "LOOP EDIT: Changing loop length from %lu bars (%lu ticks) to %u bars (%lu ticks)", 
-                   currentBars, currentLoopLength, bars, newLoopLengthTicks);
-        
-        // Set the new loop length with proper note wrapping
-        track.setLoopLengthWithWrapping(newLoopLengthTicks);
-        
-        logger.log(CAT_MIDI, LOG_DEBUG, "Loop length updated successfully: CC=%d -> %u bars (%lu ticks)", 
-                   ccValue, bars, newLoopLengthTicks);
-        
-        // Save state to SD card after loop length change
-        StorageManager::saveState(looperState.getLooperState());
-        logger.log(CAT_MIDI, LOG_DEBUG, "State saved to SD card after loop length change");
-        
-        // Send MIDI feedback to confirm the change
-        sendMainEditModeChange(currentMainEditMode);  // Re-send current mode to confirm
-    } else {
-        logger.log(CAT_MIDI, LOG_DEBUG, "Loop length unchanged: CC=%d maps to current length (%u bars)", 
-                   ccValue, bars);
-    }
-}
-
-void NoteEditManager::sendCurrentLoopLengthCC(Track& track) {
-    // Convert current loop length back to CC 101 value for fader feedback
-    uint32_t currentLoopLength = track.getLoopLength();
-    
-    if (currentLoopLength == 0) {
-        // No loop set yet, send CC for 1 bar
-        midiHandler.sendControlChange(15, 101, 0);  // CC 0 = 1 bar
-        logger.log(CAT_MIDI, LOG_DEBUG, "Sent loop length CC feedback: length=0 -> CC=0 (1 bar default)");
-        return;
-    }
-    
-    // Convert ticks back to bars
-    uint32_t currentBars = currentLoopLength / Config::TICKS_PER_BAR;
-    
-    // Clamp to valid range (1-128 bars)
-    if (currentBars < 1) currentBars = 1;
-    if (currentBars > 128) currentBars = 128;
-    
-    // Convert bars back to CC value (1-128 bars -> 0-127 CC)
-    uint8_t ccValue = map(currentBars, 1, 128, 0, 127);
-    
-    // Send CC 101 on channel 16 as feedback
-    midiHandler.sendControlChange(15, 101, ccValue);
-    
-    logger.log(CAT_MIDI, LOG_DEBUG, "Sent loop length CC feedback: %lu bars (%lu ticks) -> CC=%d", 
-               currentBars, currentLoopLength, ccValue);
-}
-
 void NoteEditManager::onTrackChanged(Track& newTrack) {
     // If we're in loop edit mode, send the new track's loop length as CC feedback
     if (currentMainEditMode == MAIN_MODE_LOOP_EDIT) {
-        sendCurrentLoopLengthCC(newTrack);
-        logger.log(CAT_MIDI, LOG_DEBUG, "Track changed while in loop edit mode, updating loop length CC");
-    }
-}
-
-// -------------------------
-// Loop start point editing (for loop edit mode)
-// -------------------------
-
-void NoteEditManager::handleLoopStartFaderInput(int16_t pitchValue, Track& track) {
-    // Only process fader input when in LOOP_EDIT mode
-    if (currentMainEditMode != MAIN_MODE_LOOP_EDIT) {
-        logger.log(CAT_MIDI, LOG_DEBUG, "Loop start fader input ignored: not in LOOP_EDIT mode (current mode: %s)", 
-                   (currentMainEditMode == MAIN_MODE_NOTE_EDIT) ? "NOTE_EDIT" : "UNKNOWN");
-        return;
-    }
-    
-    uint32_t loopLength = track.getLoopLength();
-    if (loopLength == 0) {
-        logger.log(CAT_MIDI, LOG_DEBUG, "Loop start fader input ignored: no loop length set");
-        return;
-    }
-    
-    // Use the same logic as select note fader for 16th step navigation
-    const int16_t PITCHBEND_MIN = -8192;
-    const int16_t PITCHBEND_MAX = 8191;
-    
-    // Calculate total 16th steps in the loop
-    uint32_t numSteps = loopLength / Config::TICKS_PER_16TH_STEP;
-    if (numSteps == 0) numSteps = 1;
-    
-    // Collect ALL possible positions (16th steps AND note positions)
-    const auto& notes = track.getCachedNotes();
-    std::vector<uint32_t> allPositions;
-    
-    // First, add all note start positions (these are already absolute positions within the loop)
-    for (const auto& note : notes) {
-        allPositions.push_back(note.startTick);
-    }
-    
-    // Then, add all 16th step positions
-    for (uint32_t step = 0; step < numSteps; step++) {
-        uint32_t stepTick = step * Config::TICKS_PER_16TH_STEP;
-        allPositions.push_back(stepTick);
-    }
-    
-    // Sort and remove duplicates
-    std::sort(allPositions.begin(), allPositions.end());
-    allPositions.erase(std::unique(allPositions.begin(), allPositions.end()), allPositions.end());
-    
-    // Map pitchbend value to position index
-    if (allPositions.empty()) {
-        allPositions.push_back(0); // Fallback to start of loop
-    }
-    
-    uint32_t targetIndex = map(pitchValue, PITCHBEND_MIN, PITCHBEND_MAX, 0, allPositions.size() - 1);
-    uint32_t newLoopStartTick = allPositions[targetIndex];
-    
-    // Movement filtering to reduce jitter - only process significant changes
-    uint32_t currentStart = track.getLoopStartTick();
-    uint32_t movementDelta = (newLoopStartTick > currentStart) ? 
-        (newLoopStartTick - currentStart) : (currentStart - newLoopStartTick);
-    
-    // Only process if this is a significant change (different position)
-    if (newLoopStartTick != currentStart && movementDelta >= Config::TICKS_PER_16TH_STEP / 4) {
-        logger.log(CAT_MIDI, LOG_DEBUG, "Loop start fader: pitchbend=%d -> index=%lu/%lu -> tick=%lu (significant change)", 
-                   pitchValue, targetIndex, allPositions.size(), newLoopStartTick);
-        
-        // Push undo snapshot before making the change
-        TrackUndo::pushLoopStartSnapshot(track);
-        
-        // Set the new loop start point
-        track.setLoopStartTick(newLoopStartTick);
-        
-        logger.log(CAT_MIDI, LOG_INFO, "LOOP START EDIT: Loop start moved from tick %lu to %lu", 
-                   currentStart, newLoopStartTick);
-        
-        // Save state to SD card after loop start change
-        StorageManager::saveState(looperState.getLooperState());
-        logger.log(CAT_MIDI, LOG_DEBUG, "State saved to SD card after loop start change");
-        
-        // Mark editing activity to enable grace period and endpoint updating
-        refreshLoopStartEditingActivity();
-        
-        // Enable loop start editing mode with grace period
-        loopStartEditingTime = millis();
-        loopStartEditingEnabled = true;
-    } else {
-        logger.log(CAT_MIDI, LOG_DEBUG, "Loop start fader: pitchbend=%d -> tick=%lu (filtered - small change)", 
-                   pitchValue, newLoopStartTick);
-    }
-}
-
-void NoteEditManager::refreshLoopStartEditingActivity() {
-    lastLoopStartEditingActivityTime = millis();
-    logger.log(CAT_MIDI, LOG_DEBUG, "Loop start editing activity refreshed");
-}
-
-void NoteEditManager::updateLoopEndpointAfterGracePeriod(Track& track) {
-    uint32_t now = millis();
-    
-    // Check if grace period has passed
-    if (loopStartEditingTime > 0 && (now - loopStartEditingTime) >= LOOP_START_GRACE_PERIOD) {
-        // Grace period has passed, update the loop endpoint based on bars relative to start point
-        uint32_t loopLength = track.getLoopLength();
-        uint32_t loopStartTick = track.getLoopStartTick();
-        
-        // Calculate loop length in bars (round to nearest bar)
-        uint32_t loopLengthBars = (loopLength + (Config::TICKS_PER_BAR / 2)) / Config::TICKS_PER_BAR;
-        if (loopLengthBars == 0) loopLengthBars = 1;
-        
-        // Calculate new loop end based on start + bars
-        uint32_t newLoopEndTick = loopStartTick + (loopLengthBars * Config::TICKS_PER_BAR);
-        uint32_t newLoopLength = loopLengthBars * Config::TICKS_PER_BAR;
-        
-        // Update the loop length to maintain the bar-based length relative to new start
-        if (newLoopLength != loopLength) {
-            track.setLoopLength(newLoopLength);
-            logger.log(CAT_MIDI, LOG_INFO, "LOOP ENDPOINT UPDATE: Loop length adjusted from %lu to %lu ticks (%lu bars)", 
-                       loopLength, newLoopLength, loopLengthBars);
-            
-            // Save state to SD card after loop endpoint update
-            StorageManager::saveState(looperState.getLooperState());
-            logger.log(CAT_MIDI, LOG_DEBUG, "State saved to SD card after loop endpoint update");
-        }
-        
-        logger.log(CAT_MIDI, LOG_INFO, "LOOP ENDPOINT UPDATE: Grace period ended, loop end=%lu (start=%lu + %lu bars)", 
-                   newLoopEndTick, loopStartTick, loopLengthBars);
-        
-        // Reset grace period state
-        loopStartEditingTime = 0;
-        loopStartEditingEnabled = false;
+        loopEditManager.onTrackChanged(newTrack);
     }
 }

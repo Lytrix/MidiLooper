@@ -14,6 +14,7 @@
 #include "MidiFaderProcessor.h"
 #include "Track.h"
 #include "Logger.h"
+#include "LoopEditManager.h"
 
 /**
  * @class NoteEditManager
@@ -50,15 +51,8 @@ public:
     void handleFineFaderInput(uint8_t ccValue, Track& track);
     void handleNoteValueFaderInput(uint8_t ccValue, Track& track);
 
-    // Loop start point editing (for loop edit mode)
-    void handleLoopStartFaderInput(int16_t pitchValue, Track& track);
-    
-    // Loop start editing grace period and endpoint updating
-    void refreshLoopStartEditingActivity();
-    void updateLoopEndpointAfterGracePeriod(Track& track);
-    
-    // Loop length editing (for loop edit mode)
-    void handleLoopLengthInput(uint8_t ccValue, Track& track);
+    // Loop editing is now handled by LoopEditManager
+    LoopEditManager loopEditManager;
 
     // Edit mode methods (must be public for MidiButtonActions)
     void cycleEditMode(Track& track);
@@ -112,7 +106,6 @@ public:
     
     // Main edit mode methods
     void sendMainEditModeChange(MainEditMode mode);
-    void sendCurrentLoopLengthCC(Track& track);
     void cycleMainEditMode(Track& track);
     void onTrackChanged(Track& newTrack);
     
@@ -194,10 +187,7 @@ private:
     bool startEditingEnabled = true;
     uint32_t lastEditingActivityTime = 0;
     
-    // Loop start editing grace period and state
-    static constexpr uint32_t LOOP_START_GRACE_PERIOD = 1000; // ms
-    uint32_t loopStartEditingTime = 0;
-    bool loopStartEditingEnabled = true;
+
     uint32_t lastLoopStartEditingActivityTime = 0;
     
     // Smart selection and coarse fader stability - prevent feedback and jitter

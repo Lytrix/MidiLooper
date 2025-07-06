@@ -156,58 +156,7 @@ void FaderManager::handleNoteValueFaderInput(uint8_t ccValue, Track& track) {
     logger.log(CAT_MIDI, LOG_DEBUG, "Note value fader: cc=%d -> note=%d", ccValue, targetNote);
 }
 
-void FaderManager::handleLoopStartFaderInput(int16_t pitchValue, Track& track) {
-    // Filter out small movements
-    if (abs(pitchValue - lastPitchbendSelectValue) < 100) {
-        return;
-    }
-    
-    // Initialize on first movement
-    if (!pitchbendSelectInitialized) {
-        pitchbendSelectInitialized = true;
-        lastPitchbendSelectValue = pitchValue;
-        return;
-    }
-    
-    // Calculate target tick for loop start
-    uint32_t targetTick = calculateTargetTick(pitchValue, track.getLoopLength());
-    
-    // Update loop start point
-    track.setLoopStartTick(targetTick);
-    
-    // Mark loop start editing activity
-    refreshLoopStartEditingActivity();
-    
-    lastPitchbendSelectValue = pitchValue;
-    
-    logger.log(CAT_MIDI, LOG_DEBUG, "Loop start fader: pitch=%d -> start=%lu", pitchValue, targetTick);
-}
 
-void FaderManager::handleLoopLengthInput(uint8_t ccValue, Track& track) {
-    // Calculate target loop length in bars (1-8 bars)
-    uint8_t targetBars = 1 + (ccValue * 7 / 127); // Map 0-127 to 1-8 bars
-    uint32_t targetLength = targetBars * Config::TICKS_PER_BAR;
-    
-    // Update loop length
-    track.setLoopLengthWithWrapping(targetLength);
-    
-    logger.log(CAT_MIDI, LOG_DEBUG, "Loop length: cc=%d -> bars=%d length=%lu", ccValue, targetBars, targetLength);
-}
-
-void FaderManager::refreshLoopStartEditingActivity() {
-    loopStartEditingTime = millis();
-    loopStartEditingEnabled = false;
-}
-
-void FaderManager::updateLoopEndpointAfterGracePeriod(Track& track) {
-    uint32_t now = millis();
-    
-    // Re-enable loop start editing after grace period
-    if (!loopStartEditingEnabled && (now - loopStartEditingTime) >= LOOP_START_GRACE_PERIOD) {
-        loopStartEditingEnabled = true;
-        logger.log(CAT_MIDI, LOG_DEBUG, "Loop start editing grace period ended");
-    }
-}
 
 void FaderManager::scheduleFaderUpdate(uint8_t faderType, uint32_t delayMs) {
     ScheduledUpdate update;
