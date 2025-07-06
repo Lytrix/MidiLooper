@@ -25,6 +25,9 @@ class Track;
  * and changing note pitches. Tracks the bracket position over the piano roll, manages
  * commit-on-enter/commit-on-exit undo snapshots via TrackUndo, and delegates display
  * updates to DisplayManager for visual feedback.
+ * 
+ * Also includes EditModeManager and LoopManager functionality for managing edit modes
+ * and loop editing operations.
  */
 class EditManager {
 public:
@@ -69,8 +72,44 @@ public:
     EditPitchNoteState* getPitchNoteState() { return &pitchNoteState; }
     // Add more state getters as needed
 
+    // State instances (public for access from other managers)
+    EditNoteState noteState;
+    EditSelectNoteState selectNoteState;
+    EditStartNoteState startNoteState;
+    EditLengthNoteState lengthNoteState;
+    EditPitchNoteState pitchNoteState;
+
     void enterPitchEditMode(Track& track);
     void exitPitchEditMode(Track& track);
+
+    // EditModeManager functionality
+    enum EditModeState {
+        EDIT_MODE_NONE = 0,     // Not in edit mode
+        EDIT_MODE_SELECT = 1,   // Select note or grid position
+        EDIT_MODE_START = 2,    // Move start note position
+        EDIT_MODE_LENGTH = 3,   // Change note length
+        EDIT_MODE_PITCH = 4     // Change note pitch
+    };
+    
+    EditModeState getCurrentEditMode() const { return currentEditMode; }
+    void cycleEditMode(Track& track);
+    void enterNextEditMode(Track& track);
+    void sendEditModeProgram(EditModeState mode);
+    
+    // LoopManager functionality
+    void cycleMainEditMode(Track& track);
+    void sendMainEditModeChange(uint8_t mode);
+    void sendCurrentLoopLengthCC(Track& track);
+    void onTrackChanged(Track& newTrack);
+    
+    // Main edit mode management
+    enum MainEditMode {
+        MAIN_MODE_LOOP_EDIT = 0,    // Loop edit mode: Program 0, Note 100 trigger
+        MAIN_MODE_NOTE_EDIT = 1     // Note edit mode: Program 1, Note 0 trigger
+    };
+    
+    MainEditMode getCurrentMainEditMode() const { return currentMainEditMode; }
+    void setMainEditMode(MainEditMode mode);
 
     struct RemovedNote {
         uint8_t note;
@@ -124,13 +163,19 @@ private:
     std::vector<int> notesAtBracketTick;
 
     EditState* currentState = nullptr;
-    EditNoteState noteState;
-    EditSelectNoteState selectNoteState;
-    EditStartNoteState startNoteState;
-    EditLengthNoteState lengthNoteState;
-    EditPitchNoteState pitchNoteState;
     EditState* previousState = nullptr;
     // Add more states as needed
+    
+    // EditModeManager state
+    EditModeState currentEditMode = EDIT_MODE_NONE;
+    
+    // LoopManager state
+    MainEditMode currentMainEditMode = MAIN_MODE_NOTE_EDIT;  // Start in note edit mode
+    
+    // MIDI constants for program changes
+    static constexpr uint8_t PROGRAM_CHANGE_CHANNEL = 16;
+    static constexpr uint8_t LOOP_LENGTH_CC_CHANNEL = 16;
+    static constexpr uint8_t LOOP_LENGTH_CC_NUMBER = 101;
 };
 
 extern EditManager editManager; 
