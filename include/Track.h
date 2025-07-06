@@ -126,6 +126,16 @@ public:
   // Simple loop length change - no MIDI event modification
   void setLoopLengthWithWrapping(uint32_t newLoopLength);
   
+  // Loop start point control - for loop editing
+  uint32_t getLoopStartTick() const;
+  void setLoopStartTick(uint32_t startTick);
+  
+  // Combined loop start/end editing with validation
+  void setLoopStartAndEnd(uint32_t startTick, uint32_t endTick);
+  
+  // Get effective loop end based on start + length
+  uint32_t getLoopEndTick() const;
+  
   // Tempo accessors
   static uint32_t getTicksPerBar();
 
@@ -180,6 +190,7 @@ private:
   TrackState trackState;
   uint32_t startLoopTick;
   uint32_t loopLengthTicks;
+  uint32_t loopStartTick;  // Loop start point offset for loop editing
   uint32_t lastTickInLoop;
   uint16_t nextEventIndex;
   static const uint32_t TICKS_PER_BAR;
@@ -198,6 +209,7 @@ private:
   std::deque<std::vector<MidiEvent>> clearMidiHistory;
   std::deque<TrackState> clearStateHistory;
   std::deque<uint32_t> clearLengthHistory;
+  std::deque<uint32_t> clearStartHistory;  // Loop start point history for clear undo
 
   // Redo management
   std::deque<std::vector<MidiEvent>> midiRedoHistory;
@@ -205,6 +217,11 @@ private:
   std::deque<std::vector<MidiEvent>> clearMidiRedoHistory;
   std::deque<TrackState> clearStateRedoHistory;
   std::deque<uint32_t> clearLengthRedoHistory;
+  std::deque<uint32_t> clearStartRedoHistory;  // Loop start point redo for clear
+  
+  // Loop start point undo/redo (separate from clear)
+  std::deque<uint32_t> loopStartHistory;
+  std::deque<uint32_t> loopStartRedoHistory;
 
   // ==========================================
   // OPTIMIZATION: Performance Caches

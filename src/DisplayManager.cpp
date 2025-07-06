@@ -143,8 +143,15 @@ void DisplayManager::setup() {
 
 
 int DisplayManager::tickToScreenX(uint32_t tick) {
-    uint32_t loopLength = trackManager.getSelectedTrack().getLoopLength();
-    return TRACK_MARGIN + map(tick, 0, loopLength, 0, DISPLAY_WIDTH - 1 - TRACK_MARGIN);
+    Track& track = trackManager.getSelectedTrack();
+    uint32_t loopLength = track.getLoopLength();
+    uint32_t loopStartTick = track.getLoopStartTick();
+    
+    // Adjust tick to be relative to loop start point
+    uint32_t relativeTick = (tick >= loopStartTick) ? (tick - loopStartTick) : (tick + loopLength - loopStartTick);
+    relativeTick = relativeTick % loopLength; // Ensure wrapping
+    
+    return TRACK_MARGIN + map(relativeTick, 0, loopLength, 0, DISPLAY_WIDTH - 1 - TRACK_MARGIN);
 }
 
 int DisplayManager::noteToScreenY(uint8_t note) {
@@ -194,33 +201,34 @@ void DisplayManager::drawGridLines(uint32_t lengthLoop, int pianoRollY0, int pia
 // --- Helper: Draw all notes ---
 void DisplayManager::drawAllNotes(const Track& track, uint32_t startLoop, uint32_t lengthLoop, int minPitch, int maxPitch) {
     const auto& notes = track.getCachedNotes();
-
-    // Highlight when in NOTE_EDIT mode (simplified since we use dedicated faders)
-    bool highlight = (noteEditManager.getCurrentMainEditMode() == NoteEditManager::MAIN_MODE_NOTE_EDIT);
-    int selectedNoteIdx = highlight ? editManager.getSelectedNoteIdx() : -1;
-
-    for (int noteIdx = 0; noteIdx < (int)notes.size(); ++noteIdx) {
-        const auto& e = notes[noteIdx];
+    uint32_t loopStartTick = track.getLoopStartTick();
+    int selectedIdx = editManager.getSelectedNoteIdx();
+    
+    for (int i = 0; i < (int)notes.size(); i++) {
+        const auto& n = notes[i];
+        int noteBrightness = (i == selectedIdx) ? HIGHLIGHT_COLOR : 7;
         
-        uint32_t s = e.startTick;
-        uint32_t eTick = e.endTick;
+        // Adjust note positions to be relative to loop start point
+        uint32_t adjustedStartTick = (n.startTick >= loopStartTick) ? 
+            (n.startTick - loopStartTick) : (n.startTick + lengthLoop - loopStartTick);
+        adjustedStartTick = adjustedStartTick % lengthLoop;
         
-        // Don't apply any modulo operations - preserve the original tick values
-        // The drawNoteBar function will handle wrapped notes correctly
+        uint32_t adjustedEndTick = (n.endTick >= loopStartTick) ? 
+            (n.endTick - loopStartTick) : (n.endTick + lengthLoop - loopStartTick);
+        adjustedEndTick = adjustedEndTick % lengthLoop;
         
-        int y = map(e.note, minPitch, maxPitch == minPitch ? minPitch + 1 : maxPitch, 31, 0);
-        // Use a different brightness for the selected note
-        int noteBrightness = (highlight && noteIdx == selectedNoteIdx) ? 15 : 8; // 15=max, 8=normal
-        drawNoteBar(e, y, s, eTick, lengthLoop, noteBrightness);
+        int y = map(n.note, minPitch, maxPitch, 31, 0);
+        y = constrain(y, 0, 31);
+        
+        drawNoteBar(n, y, adjustedStartTick, adjustedEndTick, lengthLoop, noteBrightness);
     }
 }
 
 // --- Helper: Draw bracket ---
-void DisplayManager::drawBracket(unsigned long a, unsigned long b, int c) {
+void DisplayManager::drawBracket(uint32_t bracketTick, uint32_t lengthLoop, int pianoRollY1) {
     // Draw bracket when in NOTE_EDIT mode (simplified since we use dedicated faders)
     if (noteEditManager.getCurrentMainEditMode() == NoteEditManager::MAIN_MODE_NOTE_EDIT) {
-        uint32_t bracketTick = editManager.getBracketTick();
-        uint32_t lengthLoop = trackManager.getSelectedTrack().getLoopLength();
+        // Use the bracketTick parameter passed to this function (already adjusted for loop start)
         const int pianoRollY1 = 31;
 
         // Convert bracketTick to screen X position
@@ -272,14 +280,21 @@ void DisplayManager::drawPianoRoll(uint32_t currentTick, Track& selectedTrack) {
     auto& track = selectedTrack;
     uint32_t startLoop = 0; // Always start at bar 1 visually
     uint32_t lengthLoop = track.getLoopLength();
+    uint32_t loopStartTick = track.getLoopStartTick();
 
     //setLastPlayedNote(nullptr); // Reset at the start
     const int pianoRollY0 = 0;
     const int pianoRollY1 = 31;
     if (lengthLoop > 0) {
-        uint32_t loopPos = (currentTick >= startLoop)
-            ? ((currentTick - startLoop) % lengthLoop)
-            : 0;
+        // Calculate loop position relative to the loop start point
+        uint32_t loopPos;
+        if (currentTick >= loopStartTick) {
+            loopPos = (currentTick - loopStartTick) % lengthLoop;
+        } else {
+            // Handle the case where currentTick is before the loop start
+            uint32_t offset = loopStartTick - currentTick;
+            loopPos = (lengthLoop - (offset % lengthLoop)) % lengthLoop;
+        }
 
         // Compute min/max pitch for scaling
         int minPitch = 127;
@@ -293,8 +308,16 @@ void DisplayManager::drawPianoRoll(uint32_t currentTick, Track& selectedTrack) {
 
         drawGridLines(lengthLoop, pianoRollY0, pianoRollY1);
         drawAllNotes(track, startLoop, lengthLoop, minPitch, maxPitch); // includes selected note
-        drawBracket(editManager.getBracketTick(), lengthLoop, pianoRollY1);
+        
+        // Adjust bracket tick to be relative to loop start point
+        uint32_t bracketTick = editManager.getBracketTick();
+        uint32_t relativeBracketTick = (bracketTick >= loopStartTick) ? 
+            (bracketTick - loopStartTick) : (bracketTick + lengthLoop - loopStartTick);
+        relativeBracketTick = relativeBracketTick % lengthLoop;
+        
+        drawBracket(relativeBracketTick, lengthLoop, pianoRollY1);
       
+        // Draw playhead cursor at relative position
         int cx = TRACK_MARGIN + map(loopPos, 0, lengthLoop, 0, DISPLAY_WIDTH - 1 - TRACK_MARGIN);
         _display.gfx.draw_vline(_display.api.getFrameBuffer(), cx, 0, 32, 3);
     }
@@ -349,6 +372,7 @@ void DisplayManager::drawInfoArea(uint32_t currentTick, Track& selectedTrack) {
 void DisplayManager::drawNoteInfo(uint32_t currentTick, Track& selectedTrack) {
     char startStr[24] = {0};
     uint32_t lengthLoop = selectedTrack.getLoopLength();
+    uint32_t loopStartTick = selectedTrack.getLoopStartTick();
     const auto& notes = selectedTrack.getCachedNotes();
 
     const DisplayNote* noteToShow = nullptr;
@@ -356,33 +380,55 @@ void DisplayManager::drawNoteInfo(uint32_t currentTick, Track& selectedTrack) {
     int selectedIdx = editManager.getSelectedNoteIdx();
     if (selectedIdx >= 0 && selectedIdx < (int)notes.size()) {
         noteToShow = &notes[selectedIdx];
-        displayStartTick = noteToShow->startTick;
+        // Adjust display start tick to be relative to loop start point
+        displayStartTick = (noteToShow->startTick >= loopStartTick) ? 
+            (noteToShow->startTick - loopStartTick) : (noteToShow->startTick + lengthLoop - loopStartTick);
+        displayStartTick = displayStartTick % lengthLoop;
         // Since we use dedicated faders, we don't need complex edit state checks
-        // Just use the note's start tick directly
+        // Just use the adjusted note's start tick
     }
     
     if (!noteToShow && !notes.empty()) {
         if (editManager.getCurrentState() == nullptr) {
-            uint32_t tickInLoop = (lengthLoop > 0) ? (currentTick % lengthLoop) : currentTick;
+            // Adjust current tick to be relative to loop start point for playback detection
+            uint32_t relativeCurrentTick;
+            if (currentTick >= loopStartTick) {
+                relativeCurrentTick = (currentTick - loopStartTick) % lengthLoop;
+            } else {
+                uint32_t offset = loopStartTick - currentTick;
+                relativeCurrentTick = (lengthLoop - (offset % lengthLoop)) % lengthLoop;
+            }
+            
             for (const auto& n : notes) {
-                uint32_t s = n.startTick % lengthLoop;
-                uint32_t e = n.endTick % lengthLoop;
+                // Adjust note positions to be relative to loop start point
+                uint32_t s = (n.startTick >= loopStartTick) ? 
+                    (n.startTick - loopStartTick) : (n.startTick + lengthLoop - loopStartTick);
+                s = s % lengthLoop;
+                
+                uint32_t e = (n.endTick >= loopStartTick) ? 
+                    (n.endTick - loopStartTick) : (n.endTick + lengthLoop - loopStartTick);
+                e = e % lengthLoop;
+                
                 bool isPlaying = (s <= e)
-                    ? (tickInLoop >= s && tickInLoop < e)
-                    : (tickInLoop >= s || tickInLoop < e);
+                    ? (relativeCurrentTick >= s && relativeCurrentTick < e)
+                    : (relativeCurrentTick >= s || relativeCurrentTick < e);
                 if (isPlaying) {
                     noteToShow = &n;
-                    displayStartTick = n.startTick;
+                    displayStartTick = s;
                     break;
                 }
             }
             if (!noteToShow) {
                 noteToShow = &notes.back();
-                displayStartTick = noteToShow->startTick;
+                displayStartTick = (noteToShow->startTick >= loopStartTick) ? 
+                    (noteToShow->startTick - loopStartTick) : (noteToShow->startTick + lengthLoop - loopStartTick);
+                displayStartTick = displayStartTick % lengthLoop;
             }
         } else {
             noteToShow = &notes.back();
-            displayStartTick = noteToShow->startTick;
+            displayStartTick = (noteToShow->startTick >= loopStartTick) ? 
+                (noteToShow->startTick - loopStartTick) : (noteToShow->startTick + lengthLoop - loopStartTick);
+            displayStartTick = displayStartTick % lengthLoop;
         }
     }
 

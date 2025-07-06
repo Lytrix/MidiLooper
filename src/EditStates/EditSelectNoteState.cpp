@@ -453,6 +453,9 @@ void EditSelectNoteState::sendTargetPitchbend(EditManager& manager, Track& track
         return;
     }
     
+    // Get loop start offset for relative positioning
+    uint32_t loopStartTick = track.getLoopStartTick();
+    
     // Calculate total number of 16th steps in the loop
     uint32_t numSteps = loopLength / Config::TICKS_PER_16TH_STEP;
     logger.log(CAT_MIDI, LOG_DEBUG, "Target pitchbend calculation: loopLength=%lu, numSteps=%lu, bracketTick=%lu", 
@@ -461,7 +464,7 @@ void EditSelectNoteState::sendTargetPitchbend(EditManager& manager, Track& track
     if (numSteps > 0) {
         // Create the same combined list that MidiButtonManager uses
         const auto& notes = track.getCachedNotes();
-        std::vector<uint32_t> allPositions;  // Positions to navigate through
+        std::vector<uint32_t> allPositions;  // Positions to navigate through (relative to loop start)
         
         // Add all 16th step positions, checking for nearby notes
         for (uint32_t step = 0; step < numSteps; step++) {
@@ -470,8 +473,14 @@ void EditSelectNoteState::sendTargetPitchbend(EditManager& manager, Track& track
             // Check if there's a note that belongs to this step (within half a step = 24 ticks)
             int nearbyNoteIdx = -1;
             for (int i = 0; i < (int)notes.size(); i++) {
+                // Convert absolute note position to relative position
+                uint32_t absolutePos = notes[i].startTick;
+                uint32_t relativePos = (absolutePos >= loopStartTick) ? 
+                    (absolutePos - loopStartTick) : (absolutePos + loopLength - loopStartTick);
+                relativePos = relativePos % loopLength;
+                
                 // A note belongs to this step if it's closer to this step than to any other step
-                uint32_t noteStep = notes[i].startTick / Config::TICKS_PER_16TH_STEP;
+                uint32_t noteStep = relativePos / Config::TICKS_PER_16TH_STEP;
                 if (noteStep == step) {
                     nearbyNoteIdx = i;
                     break;
@@ -479,8 +488,12 @@ void EditSelectNoteState::sendTargetPitchbend(EditManager& manager, Track& track
             }
             
             if (nearbyNoteIdx >= 0) {
-                // There's a note in this step - use the note position to represent this step
-                allPositions.push_back(notes[nearbyNoteIdx].startTick);
+                // There's a note in this step - use the relative note position to represent this step
+                uint32_t absolutePos = notes[nearbyNoteIdx].startTick;
+                uint32_t relativePos = (absolutePos >= loopStartTick) ? 
+                    (absolutePos - loopStartTick) : (absolutePos + loopLength - loopStartTick);
+                relativePos = relativePos % loopLength;
+                allPositions.push_back(relativePos);
             } else {
                 // No note in this step - use the empty step position
                 allPositions.push_back(stepTick);
@@ -488,18 +501,23 @@ void EditSelectNoteState::sendTargetPitchbend(EditManager& manager, Track& track
         }
         
         // IMPORTANT: Ensure the current bracket tick is always included
+        // Convert bracket tick to relative position for comparison
+        uint32_t relativeBracketTick = (bracketTick >= loopStartTick) ? 
+            (bracketTick - loopStartTick) : (bracketTick + loopLength - loopStartTick);
+        relativeBracketTick = relativeBracketTick % loopLength;
+        
         // This handles cases where notes have been moved to positions that don't align with the grid
         bool bracketTickFound = false;
         for (uint32_t pos : allPositions) {
-            if (pos == bracketTick) {
+            if (pos == relativeBracketTick) {
                 bracketTickFound = true;
                 break;
             }
         }
         
         if (!bracketTickFound) {
-            allPositions.push_back(bracketTick);
-            logger.log(CAT_MIDI, LOG_DEBUG, "Target pitchbend: Added missing bracket tick %lu to navigation positions", bracketTick);
+            allPositions.push_back(relativeBracketTick);
+            logger.log(CAT_MIDI, LOG_DEBUG, "Target pitchbend: Added missing bracket tick %lu (relative) to navigation positions", relativeBracketTick);
         }
         
         // Sort positions to maintain order
@@ -511,10 +529,10 @@ void EditSelectNoteState::sendTargetPitchbend(EditManager& manager, Track& track
         logger.log(CAT_MIDI, LOG_DEBUG, "Target pitchbend: Final navigation positions: %lu", allPositions.size());
         
         if (!allPositions.empty()) {
-            // Find which position index corresponds to current bracket tick
+            // Find which position index corresponds to current bracket tick (relative)
             int currentPosIndex = -1;
             for (int i = 0; i < (int)allPositions.size(); i++) {
-                if (allPositions[i] == bracketTick) {
+                if (allPositions[i] == relativeBracketTick) {
                     currentPosIndex = i;
                     break;
                 }
@@ -536,8 +554,8 @@ void EditSelectNoteState::sendTargetPitchbend(EditManager& manager, Track& track
                 // Ensure we stay within valid range
                 targetPitchbend = constrain(targetPitchbend, PITCHBEND_MIN, PITCHBEND_MAX);
                 
-                logger.log(CAT_MIDI, LOG_DEBUG, "SENDING PITCHBEND: Position %d/%lu at tick %lu = value %d (range: %d to %d)", 
-                           currentPosIndex, allPositions.size(), bracketTick, targetPitchbend, PITCHBEND_MIN, PITCHBEND_MAX);
+                logger.log(CAT_MIDI, LOG_DEBUG, "SENDING PITCHBEND: Position %d/%lu at tick %lu (relative %lu) = value %d (range: %d to %d)", 
+                           currentPosIndex, allPositions.size(), bracketTick, relativeBracketTick, targetPitchbend, PITCHBEND_MIN, PITCHBEND_MAX);
                 
                 // Send the pitchbend value to external device on channel 16
                 midiHandler.sendPitchBend(16, targetPitchbend);
@@ -549,7 +567,7 @@ void EditSelectNoteState::sendTargetPitchbend(EditManager& manager, Track& track
                 // Record the value we sent for smart feedback detection
                 midiFaderManagerV2.getFaderStateMutable(MidiMapping::FaderType::FADER_SELECT).lastSentPitchbend = targetPitchbend;
             } else {
-                logger.log(CAT_MIDI, LOG_DEBUG, "Target pitchbend: Current bracket tick %lu not found in navigation positions", bracketTick);
+                logger.log(CAT_MIDI, LOG_DEBUG, "Target pitchbend: Current bracket tick %lu (relative %lu) not found in navigation positions", bracketTick, relativeBracketTick);
             }
         }
     }
