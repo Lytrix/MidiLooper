@@ -38,7 +38,7 @@ std::vector<NoteUtils::DisplayNote> NoteUtils::reconstructNotes(const std::vecto
     using DisplayNote = NoteUtils::DisplayNote;
     std::vector<DisplayNote> notes;
     std::map<uint8_t, std::vector<DisplayNote>> activeNoteStacks;
-    
+
     logger.log(CAT_TRACK, LOG_DEBUG, "Reconstructing notes with loop length: %lu ticks", loopLength);
 
     // Process ALL MIDI events to handle notes that extend beyond current loop
@@ -97,7 +97,7 @@ std::vector<NoteUtils::DisplayNote> NoteUtils::reconstructNotes(const std::vecto
             activeNoteStacks[pitch].pop_back();
         }
     }
-    
+
     // Handle any remaining active notes (notes without explicit note-offs)
     for (auto& [pitch, noteStack] : activeNoteStacks) {
         for (const auto& note : noteStack) {
@@ -126,7 +126,7 @@ std::vector<NoteUtils::DisplayNote> NoteUtils::reconstructNotes(const std::vecto
                        note.note, note.startTick, note.endTick);
         }
     }
-    
+
     logger.log(CAT_TRACK, LOG_DEBUG, "Reconstruction complete: %zu notes total (%zu duplicates removed)", 
                finalNotes.size(), originalCount - finalNotes.size());
     

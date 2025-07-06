@@ -49,7 +49,7 @@ public:
     void handleCoarseFaderInput(int16_t pitchValue, Track& track);
     void handleFineFaderInput(uint8_t ccValue, Track& track);
     void handleNoteValueFaderInput(uint8_t ccValue, Track& track);
-    
+
     // Loop start point editing (for loop edit mode)
     void handleLoopStartFaderInput(int16_t pitchValue, Track& track);
     

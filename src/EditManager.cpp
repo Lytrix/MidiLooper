@@ -12,6 +12,8 @@
 #include "TrackUndo.h"
 #include "Logger.h"
 #include "Utils/NoteUtils.h"
+#include "MidiHandler.h"
+#include "NoteEditManager.h"
 #include <algorithm>
 #include <map>
 #include <vector>
@@ -233,28 +235,103 @@ void EditManager::selectPrevNote(const Track& track) {
 }
 
 void EditManager::enterPitchEditMode(Track& track) {
-    previousState = currentState;
     setState(&pitchNoteState, track, bracketTick);
 }
 
 void EditManager::exitPitchEditMode(Track& track) {
-    // If we're going back to a previous state, setState will handle hash checking
-    if (previousState) {
-        setState(previousState, track, bracketTick);
-    } else {
-        // If no previous state, we need to manually check for changes before exiting
-        if (currentState == &pitchNoteState) {
-            auto* p = static_cast<EditPitchNoteState*>(currentState);
-            if (TrackUndo::computeMidiHash(track) == p->getInitialHash()) {
-                TrackUndo::popLastUndo(track);
-                logger.debug("No net change in pitch edit, popped undo snapshot on pitch exit");
-            }
-        }
-        // Exit the current state
-        if (currentState) currentState->onExit(*this, track);
-        currentState = nullptr;
+    exitEditMode(track);
+}
+
+// EditModeManager functionality
+void EditManager::cycleEditMode(Track& track) {
+    switch (currentEditMode) {
+        case EDIT_MODE_NONE:
+        case EDIT_MODE_SELECT:
+            currentEditMode = EDIT_MODE_START;
+            setState(&startNoteState, track, bracketTick);
+            break;
+        case EDIT_MODE_START:
+            currentEditMode = EDIT_MODE_LENGTH;
+            setState(&lengthNoteState, track, bracketTick);
+            break;
+        case EDIT_MODE_LENGTH:
+            currentEditMode = EDIT_MODE_PITCH;
+            setState(&pitchNoteState, track, bracketTick);
+            break;
+        case EDIT_MODE_PITCH:
+            currentEditMode = EDIT_MODE_SELECT;
+            setState(&selectNoteState, track, bracketTick);
+            break;
     }
-    previousState = nullptr;
+    
+    sendEditModeProgram(currentEditMode);
+    logger.log(CAT_TRACK, LOG_DEBUG, "Edit mode cycled to: %d", currentEditMode);
+}
+
+void EditManager::enterNextEditMode(Track& track) {
+    cycleEditMode(track);
+}
+
+void EditManager::sendEditModeProgram(EditModeState mode) {
+    // Send program change to indicate current edit mode
+    midiHandler.sendProgramChange(PROGRAM_CHANGE_CHANNEL, mode);
+    logger.log(CAT_MIDI, LOG_DEBUG, "Sent edit mode program: %d", mode);
+}
+
+// LoopManager functionality
+void EditManager::cycleMainEditMode(Track& track) {
+    switch (currentMainEditMode) {
+        case MAIN_MODE_NOTE_EDIT:
+            currentMainEditMode = MAIN_MODE_LOOP_EDIT;
+            break;
+        case MAIN_MODE_LOOP_EDIT:
+            currentMainEditMode = MAIN_MODE_NOTE_EDIT;
+            break;
+    }
+    
+    sendMainEditModeChange(currentMainEditMode);
+    logger.log(CAT_TRACK, LOG_DEBUG, "Main edit mode cycled to: %d", currentMainEditMode);
+}
+
+void EditManager::sendMainEditModeChange(uint8_t mode) {
+    // Send program change to indicate main edit mode
+    midiHandler.sendProgramChange(PROGRAM_CHANGE_CHANNEL, mode);
+    logger.log(CAT_MIDI, LOG_DEBUG, "Sent main edit mode program: %d", mode);
+}
+
+void EditManager::sendCurrentLoopLengthCC(Track& track) {
+    uint32_t loopLength = track.getLoopLength();
+    if (loopLength == 0) return;
+    
+    // Convert loop length to bars (1-8 bars)
+    uint8_t bars = loopLength / Config::TICKS_PER_BAR;
+    if (bars == 0) bars = 1;
+    if (bars > 8) bars = 8;
+    
+    // Convert to CC value (0-127)
+    uint8_t ccValue = ((bars - 1) * 127) / 7; // Map 1-8 bars to 0-127
+    
+    midiHandler.sendControlChange(LOOP_LENGTH_CC_CHANNEL, LOOP_LENGTH_CC_NUMBER, ccValue);
+    logger.log(CAT_MIDI, LOG_DEBUG, "Sent loop length CC: bars=%d cc=%d", bars, ccValue);
+}
+
+void EditManager::onTrackChanged(Track& newTrack) {
+    // Reset edit state when track changes
+    currentEditMode = EDIT_MODE_NONE;
+    currentState = nullptr;
+    selectedNoteIdx = -1;
+    hasMovedBracket = false;
+    
+    // Send current loop length for new track
+    sendCurrentLoopLengthCC(newTrack);
+    
+    logger.log(CAT_TRACK, LOG_DEBUG, "Edit state reset for new track");
+}
+
+void EditManager::setMainEditMode(MainEditMode mode) {
+    currentMainEditMode = mode;
+    sendMainEditModeChange(mode);
+    logger.log(CAT_TRACK, LOG_DEBUG, "Main edit mode set to: %d", mode);
 }
 
 size_t EditManager::getDisplayUndoCount(const Track& track) const {
