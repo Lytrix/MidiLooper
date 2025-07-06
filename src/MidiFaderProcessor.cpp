@@ -290,8 +290,7 @@ void MidiFaderProcessor::commitMovingNote() {
     
     // Find the currently moving note and commit the movement
     Track& track = trackManager.getSelectedTrack();
-    auto& midiEvents = track.getMidiEvents();
-    auto currentNotes = NoteUtils::reconstructNotes(midiEvents, track.getLoopLength());
+    const auto& currentNotes = track.getCachedNotes();
     
     for (const auto& note : currentNotes) {
         if (note.note == editManager.movingNote.note && 

@@ -213,7 +213,7 @@ void NoteEditManager::moveNoteToPositionSimple(Track& track, const NoteUtils::Di
                    targetTick, newEndTick, noteDuration);
         
         // CRITICAL: Update the selectedNoteIdx to point to the moved note in the new reconstructed list
-        auto updatedNotes = NoteUtils::reconstructNotes(midiEvents, loopLength);
+        const auto& updatedNotes = track.getCachedNotes();
         int newSelectedIdx = -1;
         
         // Find the moved note in the updated notes list
@@ -1807,7 +1807,7 @@ void NoteEditManager::handleNoteValueFaderInput(uint8_t ccValue, Track& track) {
             }
             
             // Update the selected note index to point to the updated note
-            auto updatedNotes = NoteUtils::reconstructNotes(midiEvents, loopLength);
+            const auto& updatedNotes = track.getCachedNotes();
             int newSelectedIdx = -1;
             
             // Find the updated note in the new notes list
@@ -2273,7 +2273,7 @@ void NoteEditManager::toggleLengthEditingMode() {
     Track& track = trackManager.getSelectedTrack();
     
     // Only update if we have notes to edit
-    auto notes = NoteUtils::reconstructNotes(track.getMidiEvents(), track.getLoopLength());
+    const auto& notes = track.getCachedNotes();
     if (!notes.empty() && editManager.getSelectedNoteIdx() >= 0 && editManager.getSelectedNoteIdx() < (int)notes.size()) {
         // Schedule fader updates with staggered delays (like enableStartEditing does)
         scheduleOtherFaderUpdates(MidiMapping::FaderType::FADER_SELECT); // This will update faders 1, 2, 3
