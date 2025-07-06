@@ -40,11 +40,6 @@ public:
     void handleMidiPitchbend(uint8_t channel, int16_t pitchValue);
     void handleMidiCC(uint8_t channel, uint8_t ccNumber, uint8_t value);
     
-    // Configuration
-    void addButtonMapping(uint8_t note, uint8_t channel, const std::string& description);
-    void addFaderMapping(uint8_t channel, uint8_t ccNumber, bool usePitchBend, const std::string& description);
-    void setEncoderMapping(uint8_t channel, uint8_t ccNumber, uint8_t upValue, uint8_t downValue, const std::string& description);
-    
     // Fader handler methods (must be public for MidiFaderActions)
     void handleSelectFaderInput(int16_t pitchValue, Track& track);
     void handleCoarseFaderInput(int16_t pitchValue, Track& track);
@@ -70,30 +65,22 @@ public:
     void refreshEditingActivity();  // Mark editing activity to prevent note selection changes
     
     // Overlap handling helper functions
-    bool notesOverlap(std::uint32_t start1, std::uint32_t end1, std::uint32_t start2, std::uint32_t end2, std::uint32_t loopLength);
-    std::uint32_t calculateNoteLength(std::uint32_t start, std::uint32_t end, std::uint32_t loopLength);
-    MidiEvent* findCorrespondingNoteOff(std::vector<MidiEvent>& midiEvents, MidiEvent* noteOnEvent, uint8_t pitch, std::uint32_t startTick, std::uint32_t endTick);
-    void findOverlapsForMovement(const std::vector<NoteUtils::DisplayNote>& currentNotes,
-                                uint8_t movingNotePitch, std::uint32_t currentStart, std::uint32_t newStart, std::uint32_t newEnd,
-                                int delta, std::uint32_t loopLength,
-                                std::vector<std::pair<NoteUtils::DisplayNote, std::uint32_t>>& notesToShorten,
-                                std::vector<NoteUtils::DisplayNote>& notesToDelete);
-    void applyTemporaryOverlapChanges(std::vector<MidiEvent>& midiEvents,
-                                     const std::vector<std::pair<NoteUtils::DisplayNote, std::uint32_t>>& notesToShorten,
-                                     const std::vector<NoteUtils::DisplayNote>& notesToDelete,
-                                     EditManager& manager, std::uint32_t loopLength,
-                                     NoteUtils::EventIndexMap& onIndex, NoteUtils::EventIndexMap& offIndex);
-    void restoreTemporaryNotes(std::vector<MidiEvent>& midiEvents,
-                              const std::vector<EditManager::MovingNoteIdentity::DeletedNote>& notesToRestore,
-                              EditManager& manager, std::uint32_t loopLength,
-                              NoteUtils::EventIndexMap& onIndex, NoteUtils::EventIndexMap& offIndex);
     
-    void extendShortenedNotes(std::vector<MidiEvent>& midiEvents,
-                             const std::vector<std::pair<EditManager::MovingNoteIdentity::DeletedNote, std::uint32_t>>& notesToExtend,
-                             EditManager& manager, std::uint32_t loopLength);
+    // void applyTemporaryOverlapChanges(std::vector<MidiEvent>& midiEvents,
+    //                                  const std::vector<std::pair<NoteUtils::DisplayNote, std::uint32_t>>& notesToShorten,
+    //                                  const std::vector<NoteUtils::DisplayNote>& notesToDelete,
+    //                                  EditManager& manager, std::uint32_t loopLength,
+    //                                  NoteUtils::EventIndexMap& onIndex, NoteUtils::EventIndexMap& offIndex);
+    // void restoreTemporaryNotes(std::vector<MidiEvent>& midiEvents,
+    //                           const std::vector<EditManager::MovingNoteIdentity::DeletedNote>& notesToRestore,
+    //                           EditManager& manager, std::uint32_t loopLength,
+    //                           NoteUtils::EventIndexMap& onIndex, NoteUtils::EventIndexMap& offIndex);
+    
+    // void extendShortenedNotes(std::vector<MidiEvent>& midiEvents,
+    //                          const std::vector<std::pair<EditManager::MovingNoteIdentity::DeletedNote, std::uint32_t>>& notesToExtend,
+    //                          EditManager& manager, std::uint32_t loopLength);
 
-    // MidiButtonId getNoteButtonId(uint8_t note);
-    bool isValidNote(uint8_t note);
+
 
     // Main edit mode switching (for mode button functionality)
     enum MainEditMode {
@@ -112,44 +99,19 @@ public:
     // Current main edit mode state
     MainEditMode currentMainEditMode = MAIN_MODE_NOTE_EDIT;  // Start in note edit mode
 
-    // Fader input processing
-    void processSelectFaderInput(int16_t pitchValue, Track& track);
-    void processCoarseFaderInput(int16_t pitchValue, Track& track);
-    void processFineFaderInput(uint8_t ccValue, Track& track);
-    void processNoteValueFaderInput(uint8_t ccValue, Track& track);
-    
-    // Fader update scheduling
-    void scheduleFaderUpdate(uint8_t faderType, uint32_t delayMs);
-    void processScheduledUpdates();
-    
-    // Helper methods
-    uint16_t calculateTargetTick(int16_t pitchValue, uint16_t loopLength);
-    uint8_t calculateTargetStep(int16_t pitchValue, uint8_t numSteps);
-    uint8_t calculateTargetOffset(uint8_t ccValue, uint8_t numSteps);
-    uint8_t calculateTargetNoteValue(uint8_t ccValue);
+
 
 private:
-    static constexpr uint16_t DOUBLE_TAP_WINDOW = 300;  // ms
-    static constexpr uint16_t LONG_PRESS_TIME = 600;   // ms
-    static constexpr uint8_t MIDI_CHANNEL = 16;        // Channel to monitor
+
     
-    // MIDI note assignments
-    static constexpr uint8_t NOTE_C2 = 36;  // Button A
-    static constexpr uint8_t NOTE_C2_SHARP = 37;  // Button B  
-    static constexpr uint8_t NOTE_D2 = 38;  // Encoder Button
-    
-    // MIDI constants for encoder CC
-    static constexpr uint8_t ENCODER_CC_CHANNEL = 16;
-    static constexpr uint8_t ENCODER_CC_NUMBER = 16;
-    static constexpr uint8_t ENCODER_UP_VALUE = 1;    // CC value for encoder up (was down)
-    static constexpr uint8_t ENCODER_DOWN_VALUE = 65;  // CC value for encoder down (was up)
-    
-    // MIDI constants for program changes
-    static constexpr uint8_t PROGRAM_CHANGE_CHANNEL = 16;
+
     
     // MIDI constants for pitchbend navigation
     static constexpr uint8_t PITCHBEND_SELECT_CHANNEL = 16;  // Fader 1: Note selection
     static constexpr uint8_t PITCHBEND_START_CHANNEL = 15;   // Fader 2: Coarse start position (16th steps)
+    
+    // MIDI constants for program changes
+    static constexpr uint8_t PROGRAM_CHANGE_CHANNEL = 16;
     
     // MIDI constants for fine control via CC
     static constexpr uint8_t FINE_CC_CHANNEL = 15;    // Channel 15 for fine CC control (same as coarse)
@@ -162,33 +124,13 @@ private:
     static constexpr int16_t PITCHBEND_MAX = 8191;   // Standard MIDI pitchbend maximum
     static constexpr int16_t PITCHBEND_CENTER = 0;   // Center position
 
-    // Encoder state
-    int midiEncoderPosition = 0;
-    uint32_t lastEncoderTime = 0;
-    bool pitchEditActive = false;
-    bool wasEncoderButtonHeld = false;
-    uint32_t encoderButtonHoldStart = 0;
-    static constexpr uint32_t ENCODER_HOLD_DELAY = 250; // ms
-    
-    // Pitchbend navigation state
-    int16_t lastPitchbendSelectValue = PITCHBEND_CENTER;   // Fader 1 (channel 16)
-    int16_t lastPitchbendStartValue = PITCHBEND_CENTER;    // Fader 2 (channel 15)
-    bool pitchbendSelectInitialized = false;
-    bool pitchbendStartInitialized = false;
-    
-    // Fine CC control state
-    uint8_t lastFineCCValue = 64;     // CC2 on channel 16 (center value)
-    bool fineCCInitialized = false;
-    uint32_t referenceStep = 0;       // 16th step position set by coarse movement
+
     
     // Grace period for start editing to prevent conflicts
     static constexpr uint32_t NOTE_SELECTION_GRACE_PERIOD = 750; // ms
     uint32_t noteSelectionTime = 0;
     bool startEditingEnabled = true;
     uint32_t lastEditingActivityTime = 0;
-    
-
-    uint32_t lastLoopStartEditingActivityTime = 0;
     
     // Smart selection and coarse fader stability - prevent feedback and jitter
     int16_t lastUserSelectFaderValue = PITCHBEND_CENTER;
@@ -201,6 +143,17 @@ private:
     uint32_t lastCoarseFaderTime = 0;
     static constexpr int16_t COARSE_MOVEMENT_THRESHOLD = 150; // Minimum pitchbend change to be considered intentional
     static constexpr uint32_t COARSE_STABILITY_TIME = 1000; // ms between movements to be considered stable
+    
+    // Fine CC control state
+    uint8_t lastFineCCValue = 64;     // CC2 on channel 16 (center value)
+    bool fineCCInitialized = false;
+    uint32_t referenceStep = 0;       // 16th step position set by coarse movement
+    
+
+
+    
+
+
     
     // Feedback prevention for motorized faders
     uint32_t lastPitchbendSentTime = 0;
@@ -215,15 +168,9 @@ private:
     // Additional protection against fader 2 updates during active use
     static constexpr uint32_t FADER2_PROTECTION_PERIOD = 2000; // Don't update fader 2 for 2 seconds after any fader 2 activity
     
-    // Track fader 1 activity to prevent fader 2 updates during selectnote fader use
-    uint32_t lastSelectnoteFaderTime = 0;
-    static constexpr uint32_t SELECTNOTE_PROTECTION_PERIOD = 2000; // Don't update fader 2 for 2 seconds after fader 1 activity
+
     
-    // Length editing mode state
-    bool lengthEditingMode = false;
-    uint32_t lastLengthModeToggleTime = 0;
-    static constexpr uint32_t LENGTH_MODE_DEBOUNCE_TIME = 100; // 100ms debounce protection
-    
+    // Fader state management
     std::vector<MidiFaderProcessor::FaderState> faderStates;
     uint32_t lastDriverFaderUpdateTime = 0;
     MidiMapping::FaderType currentDriverFader = MidiMapping::FaderType::FADER_SELECT;
@@ -231,10 +178,18 @@ private:
     static constexpr uint32_t FADER_UPDATE_DELAY = 1500; // 1.5 seconds delay for other faders
     static constexpr uint32_t FEEDBACK_IGNORE_PERIOD = 1500; // 1.5s to ignore feedback
     
+
+    
+    // Length editing mode state
+    bool lengthEditingMode = false;
+    uint32_t lastLengthModeToggleTime = 0;
+    static constexpr uint32_t LENGTH_MODE_DEBOUNCE_TIME = 100; // 100ms debounce protection
+    
+
+    
     // Unified fader methods
     void initializeFaderStates();
     void handleFaderInput(MidiMapping::FaderType faderType, int16_t pitchbendValue = 0, uint8_t ccValue = 0);
-    void updateFaderStates();
     void scheduleOtherFaderUpdates(MidiMapping::FaderType driverFader);
     void sendFaderUpdate(MidiMapping::FaderType faderType, Track& track);
     void sendFaderPosition(MidiMapping::FaderType faderType, Track& track);
@@ -246,6 +201,7 @@ private:
     void sendFineFaderPosition(Track& track);
     void sendNoteValueFaderPosition(Track& track);
 
+
     // Edit mode cycling - keeping the old system for now but not using it
     enum EditModeState {
         EDIT_MODE_NONE = 0,     // Not in edit mode
@@ -255,8 +211,9 @@ private:
         EDIT_MODE_PITCH = 4     // Change note pitch
     };
     EditModeState currentEditMode = EDIT_MODE_NONE;
+    
     void enterNextEditMode(Track& track);
-    void sendEditModeProgram(EditModeState mode);
+
 };
 
 extern NoteEditManager noteEditManager;
