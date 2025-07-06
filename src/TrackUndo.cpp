@@ -7,10 +7,16 @@
 #include "Logger.h"
 #include "ClockManager.h"
 #include "Globals.h"
+#include "Utils/MemoryPool.h"
 
 // Undo overdub
 void TrackUndo::pushUndoSnapshot(Track& track) {
-    track.midiHistory.push_back(track.midiEvents);
+    // Create a pooled vector and copy current events to it
+    MemoryPool::PooledMidiEventVector pooledEvents(MemoryPool::globalMidiEventPool);
+    for (const auto& event : track.midiEvents) {
+        pooledEvents.push_back(event);
+    }
+    track.midiHistory.push_back(std::move(pooledEvents));
     track.midiEventCountAtLastSnapshot = track.midiEvents.size();
     // Clear redo history when new undo is pushed
     track.midiRedoHistory.clear();
@@ -22,8 +28,18 @@ void TrackUndo::undoOverdub(Track& track) {
         return;
     }
     // Save current state to redo history before undoing
-    track.midiRedoHistory.push_back(track.midiEvents);
-    track.midiEvents = peekLastMidiSnapshot(track);
+    MemoryPool::PooledMidiEventVector redoEvents(MemoryPool::globalMidiEventPool);
+    for (const auto& event : track.midiEvents) {
+        redoEvents.push_back(event);
+    }
+    track.midiRedoHistory.push_back(std::move(redoEvents));
+    
+    // Restore from undo history
+    const auto& lastSnapshot = track.midiHistory.back();
+    track.midiEvents.clear();
+    for (const auto& event : lastSnapshot) {
+        track.midiEvents.push_back(*event);
+    }
     track.midiEventCountAtLastSnapshot = track.midiEvents.size();
     popLastUndo(track);
     logger.debug("Undo restored snapshot: midiEvents=%d snapshotSize=%d",
@@ -38,9 +54,18 @@ void TrackUndo::redoOverdub(Track& track) {
         return;
     }
     // Save current state back to undo history
-    track.midiHistory.push_back(track.midiEvents);
+    MemoryPool::PooledMidiEventVector undoEvents(MemoryPool::globalMidiEventPool);
+    for (const auto& event : track.midiEvents) {
+        undoEvents.push_back(event);
+    }
+    track.midiHistory.push_back(std::move(undoEvents));
+    
     // Restore from redo history
-    track.midiEvents = track.midiRedoHistory.back();
+    const auto& redoSnapshot = track.midiRedoHistory.back();
+    track.midiEvents.clear();
+    for (const auto& event : redoSnapshot) {
+        track.midiEvents.push_back(*event);
+    }
     track.midiRedoHistory.pop_back();
     track.midiEventCountAtLastSnapshot = track.midiEvents.size();
     logger.debug("Redo restored snapshot: midiEvents=%d redoSize=%d",
@@ -74,10 +99,19 @@ void TrackUndo::popLastUndo(Track& track) {
 }
 
 const std::vector<MidiEvent>& TrackUndo::peekLastMidiSnapshot(const Track& track) {
-    return track.midiHistory.back();
+    // Convert pooled vector to regular vector for compatibility
+    static std::vector<MidiEvent> tempSnapshot;
+    tempSnapshot.clear();
+    if (!track.midiHistory.empty()) {
+        const auto& pooledSnapshot = track.midiHistory.back();
+        for (const auto& event : pooledSnapshot) {
+            tempSnapshot.push_back(*event);
+        }
+    }
+    return tempSnapshot;
 }
 
-std::deque<std::vector<MidiEvent>>& TrackUndo::getMidiHistory(Track& track) {
+std::deque<MemoryPool::PooledMidiEventVector>& TrackUndo::getMidiHistory(Track& track) {
     return track.midiHistory;
 }
 
@@ -87,7 +121,12 @@ const std::vector<MidiEvent>& TrackUndo::getCurrentMidiSnapshot(const Track& tra
 
 // Undo clear
 void TrackUndo::pushClearTrackSnapshot(Track& track) {
-    track.clearMidiHistory.push_back(track.midiEvents);
+    // Create a pooled vector and copy current events to it
+    MemoryPool::PooledMidiEventVector pooledEvents(MemoryPool::globalMidiEventPool);
+    for (const auto& event : track.midiEvents) {
+        pooledEvents.push_back(event);
+    }
+    track.clearMidiHistory.push_back(std::move(pooledEvents));
     track.clearStateHistory.push_back(track.trackState);
     track.clearLengthHistory.push_back(track.loopLengthTicks);
     track.clearStartHistory.push_back(track.loopStartTick);  // Save loop start point
@@ -105,12 +144,21 @@ void TrackUndo::pushClearTrackSnapshot(Track& track) {
 void TrackUndo::undoClearTrack(Track& track) {
     if (!track.clearMidiHistory.empty()) {
         // Save current state to redo history before undoing
-        track.clearMidiRedoHistory.push_back(track.midiEvents);
+        MemoryPool::PooledMidiEventVector redoEvents(MemoryPool::globalMidiEventPool);
+        for (const auto& event : track.midiEvents) {
+            redoEvents.push_back(event);
+        }
+        track.clearMidiRedoHistory.push_back(std::move(redoEvents));
         track.clearStateRedoHistory.push_back(track.trackState);
         track.clearLengthRedoHistory.push_back(track.loopLengthTicks);
         track.clearStartRedoHistory.push_back(track.loopStartTick);
         
-        track.midiEvents = track.clearMidiHistory.back();
+        // Restore from undo history
+        const auto& lastSnapshot = track.clearMidiHistory.back();
+        track.midiEvents.clear();
+        for (const auto& event : lastSnapshot) {
+            track.midiEvents.push_back(*event);
+        }
         track.clearMidiHistory.pop_back();
     }
     if (!track.clearStateHistory.empty()) {
@@ -137,14 +185,22 @@ void TrackUndo::redoClearTrack(Track& track) {
     }
     
     // Save current state back to undo history
-    track.clearMidiHistory.push_back(track.midiEvents);
+    MemoryPool::PooledMidiEventVector undoEvents(MemoryPool::globalMidiEventPool);
+    for (const auto& event : track.midiEvents) {
+        undoEvents.push_back(event);
+    }
+    track.clearMidiHistory.push_back(std::move(undoEvents));
     track.clearStateHistory.push_back(track.trackState);
     track.clearLengthHistory.push_back(track.loopLengthTicks);
     track.clearStartHistory.push_back(track.loopStartTick);
     
     // Restore from redo history
     if (!track.clearMidiRedoHistory.empty()) {
-        track.midiEvents = track.clearMidiRedoHistory.back();
+        const auto& redoSnapshot = track.clearMidiRedoHistory.back();
+        track.midiEvents.clear();
+        for (const auto& event : redoSnapshot) {
+            track.midiEvents.push_back(*event);
+        }
         track.clearMidiRedoHistory.pop_back();
     }
     if (!track.clearStateRedoHistory.empty()) {
@@ -237,12 +293,12 @@ bool TrackUndo::canRedoLoopStart(const Track& track) {
     return !track.loopStartRedoHistory.empty();
 }
 
-bool TrackUndo::canUndoClearTrack(const Track& track) {
-    return (!track.clearMidiHistory.empty());
+bool TrackUndo::canRedoClearTrack(const Track& track) {
+    return !track.clearMidiRedoHistory.empty();
 }
 
-bool TrackUndo::canRedoClearTrack(const Track& track) {
-    return (!track.clearMidiRedoHistory.empty());
+bool TrackUndo::canUndoClearTrack(const Track& track) {
+    return !track.clearMidiHistory.empty();
 }
 
 // Compute a rolling FNV-1a hash of the track's current midiEvents

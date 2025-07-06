@@ -455,8 +455,19 @@ void Track::clear() {
     loopLengthTicks = 0;
     loopStartTick = 0;  // Reset loop start point
 
-    // Clear undo history
+    // Clear undo history (pooled vectors will be automatically cleaned up)
     midiHistory.clear();
+    midiRedoHistory.clear();
+    clearMidiHistory.clear();
+    clearMidiRedoHistory.clear();
+    clearStateHistory.clear();
+    clearStateRedoHistory.clear();
+    clearLengthHistory.clear();
+    clearLengthRedoHistory.clear();
+    clearStartHistory.clear();
+    clearStartRedoHistory.clear();
+    loopStartHistory.clear();
+    loopStartRedoHistory.clear();
 
     // Go back to "never recorded"
     setState(TRACK_EMPTY);

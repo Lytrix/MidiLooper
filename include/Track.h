@@ -13,6 +13,7 @@
 #include "MidiEvent.h"
 #include "MidiHandler.h"
 #include "Utils/NoteUtils.h"    // For CachedNoteList
+#include "Utils/MemoryPool.h"   // For pooled MIDI event vectors
 
 class TrackUndo; // Forward declaration
 
@@ -203,18 +204,18 @@ private:
   bool transitionState(TrackState newState);  // Internal state transition method
   
   // Undo management
-  std::deque<std::vector<MidiEvent>> midiHistory;
+  std::deque<MemoryPool::PooledMidiEventVector> midiHistory;
   size_t midiEventCountAtLastSnapshot = 0;
   // Undo clear track control
-  std::deque<std::vector<MidiEvent>> clearMidiHistory;
+  std::deque<MemoryPool::PooledMidiEventVector> clearMidiHistory;
   std::deque<TrackState> clearStateHistory;
   std::deque<uint32_t> clearLengthHistory;
   std::deque<uint32_t> clearStartHistory;  // Loop start point history for clear undo
 
   // Redo management
-  std::deque<std::vector<MidiEvent>> midiRedoHistory;
+  std::deque<MemoryPool::PooledMidiEventVector> midiRedoHistory;
   // Redo clear track control
-  std::deque<std::vector<MidiEvent>> clearMidiRedoHistory;
+  std::deque<MemoryPool::PooledMidiEventVector> clearMidiRedoHistory;
   std::deque<TrackState> clearStateRedoHistory;
   std::deque<uint32_t> clearLengthRedoHistory;
   std::deque<uint32_t> clearStartRedoHistory;  // Loop start point redo for clear
