@@ -2310,6 +2310,10 @@ void NoteEditManager::handleLoopLengthInput(uint8_t ccValue, Track& track) {
         logger.log(CAT_MIDI, LOG_DEBUG, "Loop length updated successfully: CC=%d -> %u bars (%lu ticks)", 
                    ccValue, bars, newLoopLengthTicks);
         
+        // Save state to SD card after loop length change
+        StorageManager::saveState(looperState.getLooperState());
+        logger.log(CAT_MIDI, LOG_DEBUG, "State saved to SD card after loop length change");
+        
         // Send MIDI feedback to confirm the change
         sendMainEditModeChange(currentMainEditMode);  // Re-send current mode to confirm
     } else {
@@ -2426,6 +2430,10 @@ void NoteEditManager::handleLoopStartFaderInput(int16_t pitchValue, Track& track
         logger.log(CAT_MIDI, LOG_INFO, "LOOP START EDIT: Loop start moved from tick %lu to %lu", 
                    currentStart, newLoopStartTick);
         
+        // Save state to SD card after loop start change
+        StorageManager::saveState(looperState.getLooperState());
+        logger.log(CAT_MIDI, LOG_DEBUG, "State saved to SD card after loop start change");
+        
         // Mark editing activity to enable grace period and endpoint updating
         refreshLoopStartEditingActivity();
         
@@ -2465,6 +2473,10 @@ void NoteEditManager::updateLoopEndpointAfterGracePeriod(Track& track) {
             track.setLoopLength(newLoopLength);
             logger.log(CAT_MIDI, LOG_INFO, "LOOP ENDPOINT UPDATE: Loop length adjusted from %lu to %lu ticks (%lu bars)", 
                        loopLength, newLoopLength, loopLengthBars);
+            
+            // Save state to SD card after loop endpoint update
+            StorageManager::saveState(looperState.getLooperState());
+            logger.log(CAT_MIDI, LOG_DEBUG, "State saved to SD card after loop endpoint update");
         }
         
         logger.log(CAT_MIDI, LOG_INFO, "LOOP ENDPOINT UPDATE: Grace period ended, loop end=%lu (start=%lu + %lu bars)", 
