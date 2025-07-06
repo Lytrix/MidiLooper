@@ -7,6 +7,7 @@
 #include "Track.h"
 #include "TrackStateMachine.h"
 #include "MidiEvent.h"
+#include "Utils/MemoryPool.h"
 
 /**
  * @class TrackUndo
@@ -27,8 +28,8 @@
  *   - redoOverdub(track): restore the next redo snapshot for overdub operations.
  *   - redoClearTrack(track): restore the next redo snapshot for clear operations.
  *
- * Internally, snapshots are stored in deques of std::vector<MidiEvent> for efficient
- * push/pop operations.
+ * Internally, snapshots are stored in deques of PooledMidiEventVector for efficient
+ * push/pop operations and reduced memory fragmentation.
  */
 class TrackUndo {
 public:
@@ -43,7 +44,7 @@ public:
     static bool canRedo(const Track& track);
     static void popLastUndo(Track& track);
     static const std::vector<MidiEvent>& peekLastMidiSnapshot(const Track& track);
-    static std::deque<std::vector<MidiEvent>>& getMidiHistory(Track& track);
+    static std::deque<MemoryPool::PooledMidiEventVector>& getMidiHistory(Track& track);
     static const std::vector<MidiEvent>& getCurrentMidiSnapshot(const Track& track);
     // Undo clear
     static void pushClearTrackSnapshot(Track& track);

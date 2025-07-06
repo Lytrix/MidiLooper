@@ -7,6 +7,7 @@
 #include <SD.h>
 #include <Arduino.h>
 #include "TrackUndo.h"
+#include "Utils/MemoryPool.h"
 
 #define STORAGE_FILENAME "/midilooper_state.raw"
 #define STORAGE_VERSION 1
@@ -88,7 +89,13 @@ bool StorageManager::saveState(const LooperState& state) {
         Serial.print(": events="); Serial.print(midiEvents.size());
         Serial.print(", undo_snapshots="); Serial.println(undoCount);
         if (!writeRaw(file, &undoCount, sizeof(undoCount))) { Serial.print("[StorageManager] ERROR: Failed to write undoCount for track "); Serial.println(t); file.close(); return false; }
-        for (const auto &snapshot : midiHistory) {
+        for (const auto &pooledSnapshot : midiHistory) {
+            // Convert pooled vector to regular vector for saving
+            std::vector<MidiEvent> snapshot;
+            snapshot.reserve(pooledSnapshot.size());
+            for (const auto& eventPtr : pooledSnapshot) {
+                snapshot.push_back(*eventPtr);
+            }
             uint32_t snapCount = snapshot.size();
             if (!writeRaw(file, &snapCount, sizeof(snapCount))) { Serial.print("[StorageManager] ERROR: Failed to write midiHistory snapCount for track "); Serial.println(t); file.close(); return false; }
             if (snapCount > 0 && !writeRaw(file, snapshot.data(), snapCount * sizeof(MidiEvent))) { Serial.print("[StorageManager] ERROR: Failed to write midiHistory snapshot for track "); Serial.println(t); file.close(); return false; }
@@ -290,7 +297,12 @@ bool StorageManager::loadState(LooperState& state) {
         auto &midiHistory = TrackUndo::getMidiHistory(track);
         midiHistory.clear();
         for (const auto& snapshot : tracksData[t].midiHistory) {
-            midiHistory.push_back(snapshot);
+            // Convert regular vector to pooled vector
+            MemoryPool::PooledMidiEventVector pooledSnapshot(MemoryPool::globalMidiEventPool);
+            for (const auto& event : snapshot) {
+                pooledSnapshot.push_back(event);
+            }
+            midiHistory.push_back(std::move(pooledSnapshot));
         }
         Serial.print("[StorageManager] Track "); Serial.print(t); 
         Serial.print(" loaded: events="); Serial.print(tracksData[t].midiEvents.size());
