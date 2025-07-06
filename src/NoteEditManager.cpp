@@ -78,9 +78,9 @@ void NoteEditManager::handleMidiPitchbend(uint8_t channel, int16_t pitchValue) {
             return;
         } else {
             // In note edit mode: Route to select fader
-            handleFaderInput(MidiMapping::FaderType::FADER_SELECT, pitchValue, 0);
+        handleFaderInput(MidiMapping::FaderType::FADER_SELECT, pitchValue, 0);
             logger.log(CAT_MIDI, LOG_DEBUG, "Pitchbend ch=%d routed to select fader (NOTE_EDIT mode)", channel);
-            return;
+        return;
         }
     } else if (channel == PITCHBEND_START_CHANNEL) {  // Channel 15
         handleFaderInput(MidiMapping::FaderType::FADER_COARSE, pitchValue, 0);
