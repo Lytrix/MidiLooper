@@ -12,10 +12,16 @@ https://iestyn-lewis.github.io/4by8/
 - 1x Teensy 4.1
 - 2x momentary buttons
 - 1x encoder with push button
-- 1x 256x64 4bit monochrome display (there is also code for using a liquid lcd display 16x2)
+- 1x 256x64 4bit monochrome display type [NHD-3.12-25664UCY2](https://nl.mouser.com/ProductDetail/Newhaven-Display/NHD-3.12-25664UCY2?qs=EQmeiuRlVUSdkL9ZYPHyoA%3D%3D) (there is also code for using a liquid lcd display 16x2)
 - 1x 6N137
 
 The midi circuit is based on https://www.pjrc.com/teensy/td_libs_MIDI.html
+
+## Installation ##
+The project uses a modified [SSD1322 library](https://github.com/Lytrix/SSD1322_OLED_Arduino_library/tree/develop/) adding TsyDMASPI to be able to reduce CPU usage running via DMA. To add it use this command when cloning the repo:
+
+`git clone https://github.com/Lytrix/MidiLooper.git --recurse-submodules`
+
 
 ## Features ##
 Multi-track MIDI looper with full undo/redo, auto-save/load, and clear visual feedback—ready for live performance or creative studio work!
