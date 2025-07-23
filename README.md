@@ -19,7 +19,8 @@ The midi circuit is based on https://www.pjrc.com/teensy/td_libs_MIDI.html
 
 ## Installation ##
 The project uses a modified [SSD1322 library](https://github.com/Lytrix/SSD1322_OLED_Arduino_library/tree/develop/) adding TsyDMASPI to be able to reduce CPU usage running via DMA. To add it use this command when cloning the repo:
-run  `git clone https://github.com/Lytrix/MidiLooper.git --recurse-submodules`
+
+`git clone https://github.com/Lytrix/MidiLooper.git --recurse-submodules`
 
 
 ## Features ##
