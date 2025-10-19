@@ -58,6 +58,7 @@ Multi-track MIDI looper with full undo/redo, auto-save/load, and clear visual fe
 - Selection bracket and highlight visually track the moving note
 - Host-side unit tests in `test/` to validate wrap logic and edit behavior
 
+
 ## 🔄 Loop Start Point Editing ##
 - **Dynamic loop start control** via Fader 1 (Pitchbend Channel 16) in LOOP_EDIT mode
 - **Same positioning logic as note select fader** - uses note start positions OR 16th-note step positions for precise control
@@ -116,6 +117,12 @@ For detailed technical documentation, see: [`docs/LOOP_START_EDITING.md`](docs/L
 | Long        | Any                | Mute/Unmute        | `toggleMuteTrack()`        |
 | **Double**  | Cleared track      | Restore last clear | `undoClearTrack()`         |
 | **Triple**  | Any (with redo)    | Redo last clear    | `redoClearTrack()`         |
+
+## 🔵 Button C –Edit Loop Start/Length, Edit Notes ##
+
+|  Press #    | From State         | To State           | Key Action                 |
+| ----------- | ------------------ | ------------------ | -------------------------- |
+| 1× (single) | Select Loop Edit   | Select Note Edit  | `setSelectedTrack()`       |
 
 
 - Retroactive bar-quantized recording (record complete bars, but allow earlier recording start)
