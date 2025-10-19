@@ -29,7 +29,6 @@ void setup() {
   
   // Setup new V2 MIDI Button Manager for button handling
   midiButtonManagerV2.setup();
-  midiButtonManagerV2.loadButtonConfiguration("full");  // Load 40-button configuration
   
   // Setup new V2 MIDI Fader Manager for fader handling
   midiFaderManagerV2.setup();

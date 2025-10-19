@@ -11,11 +11,15 @@ MidiButtonProcessor::MidiButtonProcessor() {
 }
 
 void MidiButtonProcessor::setup() {
+    // Load timing configuration from MidiButtonConfig
+    MidiButtonConfig::Config::getTimingConfig(doubleTapWindow, tripleTapWindow, longPressTime);
+    
     // Clear all button states
     for (auto& state : buttonStates) {
         state = ButtonState();
     }
-    logger.info("MidiButtonProcessor setup complete");
+    logger.info("MidiButtonProcessor setup complete - timing: double=%lu, triple=%lu, long=%lu", 
+                doubleTapWindow, tripleTapWindow, longPressTime);
 }
 
 void MidiButtonProcessor::update() {
@@ -36,9 +40,10 @@ void MidiButtonProcessor::handleMidiNote(uint8_t channel, uint8_t note, uint8_t 
             state.pressStartTime = now;
             logger.log(CAT_BUTTON, LOG_DEBUG, "Button pressed: Ch%d Note%d at time %lu", channel, note, now);
             
-            // Special case: Note 3 on Channel 16 - momentary length edit mode (ON = enable length mode)
-            if (channel == 16 && note == 3) {
-                logger.log(CAT_BUTTON, LOG_DEBUG, "Momentary length edit ON: Ch%d Note%d", channel, note);
+            // Check if this is a momentary button (trigger on both press and release)
+            const auto* config = MidiButtonConfig::Config::findButtonConfig(note, channel);
+            if (config && config->isMomentary) {
+                logger.log(CAT_BUTTON, LOG_DEBUG, "Momentary button press: Ch%d Note%d", channel, note);
                 triggerButtonPress(note, channel - 1, MidiButtonConfig::PressType::SHORT_PRESS);
             }
         }
@@ -47,9 +52,10 @@ void MidiButtonProcessor::handleMidiNote(uint8_t channel, uint8_t note, uint8_t 
         if (state.isPressed) {
             state.isPressed = false;
             
-            // Special case: Note 3 on Channel 16 - momentary length edit mode (OFF = disable length mode)
-            if (channel == 16 && note == 3) {
-                logger.log(CAT_BUTTON, LOG_DEBUG, "Momentary length edit OFF: Ch%d Note%d", channel, note);
+            // Check if this is a momentary button (trigger on both press and release)
+            const auto* config = MidiButtonConfig::Config::findButtonConfig(note, channel);
+            if (config && config->isMomentary) {
+                logger.log(CAT_BUTTON, LOG_DEBUG, "Momentary button release: Ch%d Note%d", channel, note);
                 triggerButtonPress(note, channel - 1, MidiButtonConfig::PressType::SHORT_PRESS);
                 return; // Skip normal release handling for momentary button
             }
@@ -125,13 +131,6 @@ void MidiButtonProcessor::handleButtonRelease(uint8_t channel, uint8_t note, uin
 
 void MidiButtonProcessor::processPendingPresses() {
     uint32_t now = millis();
-    static uint32_t lastDebugTime = 0;
-    
-    // Print debug info every 100ms
-    // if (now - lastDebugTime >= 100) {
-    //     lastDebugTime = now;
-    //     logger.log(CAT_BUTTON, LOG_DEBUG, "processPendingPresses: current time = %lu", now);
-    // }
     
     for (size_t i = 0; i < buttonStates.size(); ++i) {
         ButtonState& state = buttonStates[i];

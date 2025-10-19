@@ -58,6 +58,21 @@ void Config::clearConfigs() {
     buttonConfigs.clear();
 }
 
+void Config::getTimingConfig(uint32_t& doubleTapWindow, uint32_t& tripleTapWindow, uint32_t& longPressTime) {
+    if (buttonConfigs.empty()) {
+        // Default values if no configs loaded
+        doubleTapWindow = 300;
+        tripleTapWindow = 400;
+        longPressTime = 600;
+    } else {
+        // Use timing from first button config as default
+        const auto& firstConfig = buttonConfigs[0];
+        doubleTapWindow = firstConfig.doubleTapWindow;
+        tripleTapWindow = firstConfig.tripleTapWindow;
+        longPressTime = firstConfig.longPressTime;
+    }
+}
+
 // Convenience methods for common configurations
 void Config::addRecordButton(uint8_t note, uint8_t channel) {
     ButtonConfig config(note, channel, "Record Toggle");
@@ -155,6 +170,12 @@ void Config::loadExtendedConfiguration() {
     addButton(ButtonConfig(Notes::G2, Channels::EDIT_FUNCTIONS, "Copy/Paste")
               .onShortPress(ActionType::COPY_NOTE)
               .onLongPress(ActionType::PASTE_NOTE));
+    
+    // Add momentary length edit button (special case from processor)
+    addButton(ButtonConfig(Notes::NOTE_3, Channels::EDIT_FUNCTIONS, "Length Edit Mode")
+              .onShortPress(ActionType::TOGGLE_LENGTH_EDIT_MODE)
+              .asMomentary(true)
+              .withTiming(300, 400, 600));
     
     logger.info("Loaded extended button configuration (16 buttons)");
 }

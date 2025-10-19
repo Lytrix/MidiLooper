@@ -19,11 +19,11 @@ void MidiButtonManagerV2::setup() {
     // Initialize the configuration system
     MidiButtonConfig::Config::initialize();
     
-    // Setup the processor (actions don't need setup in simplified version)
-    processor.setup();
+    // Load default configuration first
+    loadButtonConfiguration("full");
     
-    // Load default configuration
-    loadButtonConfiguration("basic");
+    // Setup the processor after config is loaded
+    processor.setup();
     
     logger.info("MidiButtonManagerV2 setup complete with %d configured buttons", 
                 getConfiguredButtonCount());
