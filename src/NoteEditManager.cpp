@@ -28,9 +28,7 @@ NoteEditManager noteEditManager;
 
 NoteEditManager::NoteEditManager() 
     : loopEditManager(midiHandler) {
-    // Initialize the fader states array with all 4 faders
-    initializeFaderStates();
-    
+    // Fader states are now managed by MidiFaderProcessor
     // Set initial loop edit mode state
     loopEditManager.setMainEditMode(currentMainEditMode == MAIN_MODE_LOOP_EDIT);
 }
@@ -572,78 +570,7 @@ void NoteEditManager::refreshEditingActivity() {
     logger.log(CAT_MIDI, LOG_DEBUG, "Editing activity refreshed - note selection disabled for %dms", NOTE_SELECTION_GRACE_PERIOD);
 }
 
-// Unified Fader State Machine Implementation
-
-void NoteEditManager::initializeFaderStates() {
-    faderStates.clear();
-    faderStates.resize(4);
-    
-    // Initialize Fader 1: Note Selection (Channel 16, Pitchbend)
-    faderStates[0] = {
-        .type = MidiMapping::FaderType::FADER_SELECT,
-        .channel = PITCHBEND_SELECT_CHANNEL,
-        .isInitialized = false,
-        .lastPitchbendValue = PITCHBEND_CENTER,
-        .lastCCValue = 64,
-        .lastUpdateTime = 0,
-        .lastSentTime = 0,
-        .pendingUpdate = false,
-        .updateScheduledTime = 0,
-        .scheduledByDriver = MidiMapping::FaderType::FADER_SELECT,
-        .lastSentPitchbend = 0,
-        .lastSentCC = 0
-    };
-    
-    // Initialize Fader 2: Coarse Positioning (Channel 15, Pitchbend)
-    faderStates[1] = {
-        .type = MidiMapping::FaderType::FADER_COARSE,
-        .channel = PITCHBEND_START_CHANNEL,
-        .isInitialized = false,
-        .lastPitchbendValue = PITCHBEND_CENTER,
-        .lastCCValue = 64,
-        .lastUpdateTime = 0,
-        .lastSentTime = 0,
-        .pendingUpdate = false,
-        .updateScheduledTime = 0,
-        .scheduledByDriver = MidiMapping::FaderType::FADER_SELECT,
-        .lastSentPitchbend = 0,
-        .lastSentCC = 0
-    };
-    
-    // Initialize Fader 3: Fine Positioning (Channel 15, CC2)
-    faderStates[2] = {
-        .type = MidiMapping::FaderType::FADER_FINE,
-        .channel = FINE_CC_CHANNEL,
-        .isInitialized = false,
-        .lastPitchbendValue = PITCHBEND_CENTER,
-        .lastCCValue = 64,
-        .lastUpdateTime = 0,
-        .lastSentTime = 0,
-        .pendingUpdate = false,
-        .updateScheduledTime = 0,
-        .scheduledByDriver = MidiMapping::FaderType::FADER_SELECT,
-        .lastSentPitchbend = 0,
-        .lastSentCC = 0
-    };
-    
-    // Initialize Fader 4: Note Value Editing (Channel 15, CC3)
-    faderStates[3] = {
-        .type = MidiMapping::FaderType::FADER_NOTE_VALUE,
-        .channel = NOTE_VALUE_CC_CHANNEL,
-        .isInitialized = false,
-        .lastPitchbendValue = PITCHBEND_CENTER,
-        .lastCCValue = 64,
-        .lastUpdateTime = 0,
-        .lastSentTime = 0,
-        .pendingUpdate = false,
-        .updateScheduledTime = 0,
-        .scheduledByDriver = MidiMapping::FaderType::FADER_SELECT,
-        .lastSentPitchbend = 0,
-        .lastSentCC = 0
-    };
-    
-    logger.info("Fader state machine initialized with 4 faders");
-}
+// Unified Fader State Machine Implementation - now delegated to MidiFaderProcessor
 
 // MidiFaderProcessor::FaderState& NoteEditManager::getFaderState(MidiMapping::FaderType faderType) {
 //     for (auto& state : faderStates) {
@@ -720,34 +647,13 @@ bool NoteEditManager::shouldIgnoreFaderInput(MidiMapping::FaderType faderType, i
 }
 
 void NoteEditManager::scheduleOtherFaderUpdates(MidiMapping::FaderType driverFader) {
-    uint32_t now = millis();
-    uint32_t updateTime = now + FADER_UPDATE_DELAY;
-    std::vector<MidiMapping::FaderType> fadersToUpdate;
-
-    if (driverFader == MidiMapping::FaderType::FADER_SELECT) {
-        // Fader 1 (SELECT) schedules updates for faders 2, 3, 4
-        fadersToUpdate = {
-            MidiMapping::FaderType::FADER_COARSE,
-            MidiMapping::FaderType::FADER_FINE,
-            MidiMapping::FaderType::FADER_NOTE_VALUE
-        };
-    } else if (driverFader == MidiMapping::FaderType::FADER_COARSE) {
-        // Fader 2 (COARSE) schedules update for fader 1
-        fadersToUpdate = { MidiMapping::FaderType::FADER_SELECT };
-    } else {
+    if (!faderProcessor) {
+        logger.warning("NoteEditManager: faderProcessor not set, cannot schedule updates");
         return;
     }
-
-    for (auto targetFader : fadersToUpdate) {
-        for (auto& state : faderStates) {
-            if (state.type == targetFader) {
-                state.pendingUpdate = true;
-                state.updateScheduledTime = updateTime;
-                state.scheduledByDriver = driverFader;
-                break;
-            }
-        }
-    }
+    
+    // Delegate to MidiFaderProcessor for scheduling
+    faderProcessor->scheduleOtherFaderUpdates(driverFader);
 }
 
 
@@ -780,11 +686,9 @@ void NoteEditManager::sendFaderUpdate(MidiMapping::FaderType faderType, Track& t
     if (shouldSendProgramChange && currentDriverOnChannel15 && faderOnChannel15 && currentDriverFader != faderType) {
         // Check if this update was scheduled by fader 1 (SELECT)
         bool scheduledBySelect = false;
-        for (auto& state : faderStates) {
-            if (state.type == faderType && state.scheduledByDriver == MidiMapping::FaderType::FADER_SELECT) {
-                scheduledBySelect = true;
-                break;
-            }
+        if (faderProcessor) {
+            const auto& state = faderProcessor->getFaderState(faderType);
+            scheduledBySelect = (state.scheduledByDriver == MidiMapping::FaderType::FADER_SELECT);
         }
         
         // If scheduled by fader 1, allow the update regardless of channel conflicts
@@ -1825,20 +1729,6 @@ void NoteEditManager::handleNoteValueFaderInput(uint8_t ccValue, Track& track) {
         }
     }
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 void NoteEditManager::handleFaderInput(MidiMapping::FaderType faderType, int16_t pitchbendValue, uint8_t ccValue) {
     // Check if we should ignore this input (feedback prevention)

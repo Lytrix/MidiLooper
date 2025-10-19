@@ -89,11 +89,7 @@ private:
     
     FaderMovementCallback movementCallback;
     
-    // Constants
-    static constexpr uint32_t FEEDBACK_IGNORE_PERIOD = 100; // ms
-    static constexpr int16_t PITCHBEND_DEADBAND = 23;
-    static constexpr uint8_t CC_DEADBAND_FINE = 1;
-    static constexpr int16_t PITCHBEND_CENTER = 0;
+    // Config-driven parameters now provided by Utils/MidiFaderConfig
     
     // Helper methods
     bool hasSignificantChange(const FaderState& state, int16_t pitchbendValue, uint8_t ccValue) const;

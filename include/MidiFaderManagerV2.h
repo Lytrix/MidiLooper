@@ -40,6 +40,9 @@ public:
     const MidiFaderProcessor::FaderState& getFaderState(MidiMapping::FaderType faderType) const;
     MidiFaderProcessor::FaderState& getFaderStateMutable(MidiMapping::FaderType faderType);
     
+    // Access to processor for external coordination
+    MidiFaderProcessor& getProcessor() { return processor; }
+    
     // Fader update control
     void scheduleOtherFaderUpdates(MidiMapping::FaderType driverFader);
     void markFaderSent(MidiMapping::FaderType faderType);
