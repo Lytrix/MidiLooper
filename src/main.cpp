@@ -33,7 +33,9 @@ void setup() {
   
   // Setup new V2 MIDI Fader Manager for fader handling
   midiFaderManagerV2.setup();
-  midiFaderManagerV2.loadFaderConfiguration("basic");  // Load 4-fader configuration
+  
+  // Connect NoteEditManager to MidiFaderProcessor
+  noteEditManager.setFaderProcessor(&midiFaderManagerV2.getProcessor());
   
   // Keep old manager temporarily for move note logic
   //midiButtonManager.setup();

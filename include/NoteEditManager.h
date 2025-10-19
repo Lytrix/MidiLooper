@@ -170,8 +170,8 @@ private:
     
 
     
-    // Fader state management
-    std::vector<MidiFaderProcessor::FaderState> faderStates;
+    // Fader state management - now delegated to MidiFaderProcessor
+    MidiFaderProcessor* faderProcessor = nullptr;
     uint32_t lastDriverFaderUpdateTime = 0;
     MidiMapping::FaderType currentDriverFader = MidiMapping::FaderType::FADER_SELECT;
     uint32_t lastDriverFaderTime = 0;
@@ -187,8 +187,9 @@ private:
     
 
     
+public:
     // Unified fader methods
-    void initializeFaderStates();
+    void setFaderProcessor(MidiFaderProcessor* processor) { faderProcessor = processor; }
     void handleFaderInput(MidiMapping::FaderType faderType, int16_t pitchbendValue = 0, uint8_t ccValue = 0);
     void scheduleOtherFaderUpdates(MidiMapping::FaderType driverFader);
     void sendFaderUpdate(MidiMapping::FaderType faderType, Track& track);

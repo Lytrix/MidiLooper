@@ -133,10 +133,15 @@ bool MidiFaderProcessor::shouldIgnoreFaderInput(MidiMapping::FaderType faderType
     uint32_t now = millis();
     
     // Ignore input within the feedback ignore period
+    const MidiFaderConfig::FaderConfig* cfg = MidiFaderConfig::Config::findFaderConfig(faderType);
+    uint32_t feedbackIgnoreMs = cfg ? cfg->feedbackIgnoreMs : 100;
+    int16_t pitchbendDeadband = cfg ? cfg->pitchbendDeadband : 23;
+    uint8_t ccDeadband = cfg ? cfg->ccDeadband : 1;
+
     if (state.lastSentTime > 0) {
         uint32_t timeSinceLastSent = now - state.lastSentTime;
-        uint32_t remaining = (timeSinceLastSent < FEEDBACK_IGNORE_PERIOD) ? 
-                            (FEEDBACK_IGNORE_PERIOD - timeSinceLastSent) : 0;
+        uint32_t remaining = (timeSinceLastSent < feedbackIgnoreMs) ? 
+                            (feedbackIgnoreMs - timeSinceLastSent) : 0;
         
         if (remaining > 0) {
             logger.log(CAT_MIDI, LOG_DEBUG, "Ignoring fader %d input (feedback protection, %lu ms remaining)", 
@@ -149,7 +154,7 @@ bool MidiFaderProcessor::shouldIgnoreFaderInput(MidiMapping::FaderType faderType
     if (faderType == MidiMapping::FaderType::FADER_SELECT || faderType == MidiMapping::FaderType::FADER_COARSE) {
         if (pitchbendValue != -1) {
             int16_t diff = abs(pitchbendValue - state.lastSentPitchbend);
-            if (diff < PITCHBEND_DEADBAND) {
+            if (diff < pitchbendDeadband) {
                 logger.log(CAT_MIDI, LOG_DEBUG, "Ignoring fader %d pitchbend input %d (too close to sent %d, diff=%d)", 
                            (int)faderType, pitchbendValue, state.lastSentPitchbend, diff);
                 return true;
@@ -158,7 +163,7 @@ bool MidiFaderProcessor::shouldIgnoreFaderInput(MidiMapping::FaderType faderType
     } else if (faderType == MidiMapping::FaderType::FADER_FINE || faderType == MidiMapping::FaderType::FADER_NOTE_VALUE) {
         if (ccValue != 255) {
             uint8_t diff = abs((int)ccValue - (int)state.lastSentCC);
-            if (diff < CC_DEADBAND_FINE) {
+            if (diff < ccDeadband) {
                 logger.log(CAT_MIDI, LOG_DEBUG, "Ignoring fader %d CC input %d (too close to sent %d, diff=%d)", 
                            (int)faderType, ccValue, state.lastSentCC, diff);
                 return true;
@@ -171,14 +176,17 @@ bool MidiFaderProcessor::shouldIgnoreFaderInput(MidiMapping::FaderType faderType
 }
 
 bool MidiFaderProcessor::hasSignificantChange(const FaderState& state, int16_t pitchbendValue, uint8_t ccValue) const {
+    const MidiFaderConfig::FaderConfig* cfg = MidiFaderConfig::Config::findFaderConfig(state.type);
+    int16_t pitchbendDeadband = cfg ? cfg->pitchbendDeadband : 23;
+    uint8_t ccDeadband = cfg ? cfg->ccDeadband : 1;
     if (state.type == MidiMapping::FaderType::FADER_SELECT || state.type == MidiMapping::FaderType::FADER_COARSE) {
         // For pitchbend faders, check if change is significant
         int16_t pitchbendDiff = abs(pitchbendValue - state.lastPitchbendValue);
-        return pitchbendDiff >= PITCHBEND_DEADBAND;
+        return pitchbendDiff >= pitchbendDeadband;
     } else if (state.type == MidiMapping::FaderType::FADER_FINE || state.type == MidiMapping::FaderType::FADER_NOTE_VALUE) {
         // For CC faders, use smaller deadband for precise control
         uint8_t ccDiff = abs((int)ccValue - (int)state.lastCCValue);
-        return ccDiff >= CC_DEADBAND_FINE;
+        return ccDiff >= ccDeadband;
     }
     
     return false;
@@ -195,92 +203,49 @@ void MidiFaderProcessor::markFaderSent(MidiMapping::FaderType faderType) {
     uint32_t now = millis();
     state.lastSentTime = now;
     
-    // IMPORTANT: If updating any channel 15 fader, all channel 15 faders get updated together.
-    // Set ignore periods for all to prevent feedback from any MIDI message causing unwanted processing.
-    if (faderType == MidiMapping::FaderType::FADER_COARSE || 
-        faderType == MidiMapping::FaderType::FADER_FINE || 
-        faderType == MidiMapping::FaderType::FADER_NOTE_VALUE) {
-        
-        getFaderStateMutable(MidiMapping::FaderType::FADER_COARSE).lastSentTime = now;
-        getFaderStateMutable(MidiMapping::FaderType::FADER_FINE).lastSentTime = now;
-        getFaderStateMutable(MidiMapping::FaderType::FADER_NOTE_VALUE).lastSentTime = now;
-        
-        logger.log(CAT_MIDI, LOG_DEBUG, "Set ignore periods for all channel 15 faders (shared channel)");
+    // Grouping: set ignore periods for all faders sharing the same group key (or channel if groupKey==0)
+    const MidiFaderConfig::FaderConfig* driverCfg = MidiFaderConfig::Config::findFaderConfig(faderType);
+    uint8_t groupKey = 0;
+    if (driverCfg) {
+        groupKey = (driverCfg->groupKey != 0) ? driverCfg->groupKey : driverCfg->channel;
+    }
+    for (auto& s : faderStates) {
+        const MidiFaderConfig::FaderConfig* cfg = MidiFaderConfig::Config::findFaderConfig(s.type);
+        uint8_t sKey = 0;
+        if (cfg) {
+            sKey = (cfg->groupKey != 0) ? cfg->groupKey : cfg->channel;
+        }
+        if (groupKey != 0 && sKey == groupKey) {
+            s.lastSentTime = now;
+        }
     }
     
+    uint32_t ignoreMs = driverCfg ? driverCfg->feedbackIgnoreMs : 100;
     logger.log(CAT_MIDI, LOG_DEBUG, "Fader %d marked as sent - ignoring incoming for %dms", 
-               (int)faderType, FEEDBACK_IGNORE_PERIOD);
+               (int)faderType, ignoreMs);
 }
 
 void MidiFaderProcessor::initializeFaderStates() {
     faderStates.clear();
-    faderStates.resize(4);
-    
-    // Initialize Fader 1: Note Selection (Channel 16, Pitchbend)
-    faderStates[0] = {
-        .type = MidiMapping::FaderType::FADER_SELECT,
-        .channel = 16,
-        .isInitialized = false,
-        .lastPitchbendValue = PITCHBEND_CENTER,
-        .lastCCValue = 64,
-        .lastUpdateTime = 0,
-        .lastSentTime = 0,
-        .pendingUpdate = false,
-        .updateScheduledTime = 0,
-        .scheduledByDriver = MidiMapping::FaderType::FADER_SELECT,
-        .lastSentPitchbend = 0,
-        .lastSentCC = 0
-    };
-    
-    // Initialize Fader 2: Coarse Positioning (Channel 15, Pitchbend)
-    faderStates[1] = {
-        .type = MidiMapping::FaderType::FADER_COARSE,
-        .channel = 15,
-        .isInitialized = false,
-        .lastPitchbendValue = PITCHBEND_CENTER,
-        .lastCCValue = 64,
-        .lastUpdateTime = 0,
-        .lastSentTime = 0,
-        .pendingUpdate = false,
-        .updateScheduledTime = 0,
-        .scheduledByDriver = MidiMapping::FaderType::FADER_SELECT,
-        .lastSentPitchbend = 0,
-        .lastSentCC = 0
-    };
-    
-    // Initialize Fader 3: Fine Positioning (Channel 15, CC2)
-    faderStates[2] = {
-        .type = MidiMapping::FaderType::FADER_FINE,
-        .channel = 15,
-        .isInitialized = false,
-        .lastPitchbendValue = PITCHBEND_CENTER,
-        .lastCCValue = 64,
-        .lastUpdateTime = 0,
-        .lastSentTime = 0,
-        .pendingUpdate = false,
-        .updateScheduledTime = 0,
-        .scheduledByDriver = MidiMapping::FaderType::FADER_SELECT,
-        .lastSentPitchbend = 0,
-        .lastSentCC = 0
-    };
-    
-    // Initialize Fader 4: Note Value Editing (Channel 15, CC3)
-    faderStates[3] = {
-        .type = MidiMapping::FaderType::FADER_NOTE_VALUE,
-        .channel = 15,
-        .isInitialized = false,
-        .lastPitchbendValue = PITCHBEND_CENTER,
-        .lastCCValue = 64,
-        .lastUpdateTime = 0,
-        .lastSentTime = 0,
-        .pendingUpdate = false,
-        .updateScheduledTime = 0,
-        .scheduledByDriver = MidiMapping::FaderType::FADER_SELECT,
-        .lastSentPitchbend = 0,
-        .lastSentCC = 0
-    };
-    
-    logger.info("Fader state machine initialized with 4 faders");
+    const auto& configs = MidiFaderConfig::Config::getFaderConfigs();
+    faderStates.reserve(configs.size());
+    for (const auto& cfg : configs) {
+        FaderState s;
+        s.type = cfg.type;
+        s.channel = cfg.channel;
+        s.isInitialized = false;
+        s.lastPitchbendValue = cfg.pitchbendCenter;
+        s.lastCCValue = cfg.initialCC;
+        s.lastUpdateTime = 0;
+        s.lastSentTime = 0;
+        s.pendingUpdate = false;
+        s.updateScheduledTime = 0;
+        s.scheduledByDriver = MidiMapping::FaderType::FADER_SELECT;
+        s.lastSentPitchbend = 0;
+        s.lastSentCC = 0;
+        faderStates.push_back(s);
+    }
+    logger.info("Fader state machine initialized with %d faders", faderStates.size());
 }
 
 void MidiFaderProcessor::commitMovingNote() {

@@ -19,11 +19,11 @@ void MidiFaderManagerV2::setup() {
     // Initialize the configuration system
     MidiFaderConfig::Config::initialize();
     
-    // Setup the processor
-    processor.setup();
-    
-    // Load default configuration
+    // Load default configuration BEFORE setting up the processor
     loadFaderConfiguration("basic");
+    
+    // Setup the processor (now that config is loaded)
+    processor.setup();
     
     logger.info("MidiFaderManagerV2 setup complete with %d configured faders", 
                 getConfiguredFaderCount());
