@@ -55,10 +55,10 @@ private:
     // Button state storage - indexed by (channel * 128 + note)
     std::vector<ButtonState> buttonStates;
     
-    // Timing configuration
-    uint32_t doubleTapWindow = 300;  // ms
-    uint32_t tripleTapWindow = 400;  // ms 
-    uint32_t longPressTime = 600;    // ms
+    // Timing configuration (loaded from config)
+    uint32_t doubleTapWindow;  // ms
+    uint32_t tripleTapWindow;  // ms 
+    uint32_t longPressTime;    // ms
     
     // Callback for button press events
     ButtonPressCallback buttonPressCallback;

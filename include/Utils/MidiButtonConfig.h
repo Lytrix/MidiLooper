@@ -64,6 +64,12 @@ struct ButtonConfig {
     const char* description;         // Human readable description
     int32_t parameter;               // Optional parameter (e.g., track number, tick offset)
     
+    // Timing configuration (externalized from processor)
+    uint32_t doubleTapWindow;        // Window for double tap detection (ms)
+    uint32_t tripleTapWindow;        // Window for triple tap detection (ms)
+    uint32_t longPressTime;          // Time threshold for long press (ms)
+    bool isMomentary;                // True for momentary buttons (trigger on both press and release)
+    
     ButtonConfig(uint8_t n, uint8_t ch, const char* desc) 
         : note(n), channel(ch), 
           shortPressAction(ActionType::NONE),
@@ -72,7 +78,11 @@ struct ButtonConfig {
           triplePressAction(ActionType::NONE),
           customAction(nullptr),
           description(desc),
-          parameter(0) {}
+          parameter(0),
+          doubleTapWindow(300),
+          tripleTapWindow(400),
+          longPressTime(600),
+          isMomentary(false) {}
     
     // Builder pattern methods for easy configuration
     ButtonConfig& onShortPress(ActionType action) { shortPressAction = action; return *this; }
@@ -81,6 +91,10 @@ struct ButtonConfig {
     ButtonConfig& onTriplePress(ActionType action) { triplePressAction = action; return *this; }
     ButtonConfig& withParameter(int32_t param) { parameter = param; return *this; }
     ButtonConfig& withCustomAction(CustomActionFunc func) { customAction = func; return *this; }
+    ButtonConfig& withTiming(uint32_t doubleTap, uint32_t tripleTap, uint32_t longPress) {
+        doubleTapWindow = doubleTap; tripleTapWindow = tripleTap; longPressTime = longPress; return *this;
+    }
+    ButtonConfig& asMomentary(bool momentary = true) { isMomentary = momentary; return *this; }
 };
 
 // Configuration class
@@ -91,6 +105,9 @@ public:
     static const std::vector<ButtonConfig>& getButtonConfigs();
     static const ButtonConfig* findButtonConfig(uint8_t note, uint8_t channel);
     static void clearConfigs();
+    
+    // Get timing configuration (returns first button's timing as default)
+    static void getTimingConfig(uint32_t& doubleTapWindow, uint32_t& tripleTapWindow, uint32_t& longPressTime);
     
     // Convenience methods for common configurations
     static void addRecordButton(uint8_t note, uint8_t channel = 1);
@@ -112,6 +129,7 @@ private:
 
 // MIDI Note Constants (Chromatic from C2)
 namespace Notes {
+    constexpr uint8_t NOTE_3 = 3;    // Special momentary button for length edit
     constexpr uint8_t C2 = 36;
     constexpr uint8_t C2_SHARP = 37;
     constexpr uint8_t D2 = 38;
