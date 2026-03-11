@@ -38,6 +38,7 @@ enum class ActionType {
     SET_LOOP_START,
     SET_LOOP_END,
     TOGGLE_LENGTH_EDIT_MODE,
+    TOGGLE_TRANSPORT,
     CUSTOM_ACTION
 };
 
@@ -68,6 +69,7 @@ struct ButtonConfig {
     uint32_t doubleTapWindow;        // Window for double tap detection (ms)
     uint32_t tripleTapWindow;        // Window for triple tap detection (ms)
     uint32_t longPressTime;          // Time threshold for long press (ms)
+    uint32_t debounceMs;             // Ignore NoteOn within this many ms after last release (0 = disabled)
     bool isMomentary;                // True for momentary buttons (trigger on both press and release)
     
     ButtonConfig(uint8_t n, uint8_t ch, const char* desc) 
@@ -82,6 +84,7 @@ struct ButtonConfig {
           doubleTapWindow(300),
           tripleTapWindow(400),
           longPressTime(600),
+          debounceMs(0),
           isMomentary(false) {}
     
     // Builder pattern methods for easy configuration
@@ -94,6 +97,7 @@ struct ButtonConfig {
     ButtonConfig& withTiming(uint32_t doubleTap, uint32_t tripleTap, uint32_t longPress) {
         doubleTapWindow = doubleTap; tripleTapWindow = tripleTap; longPressTime = longPress; return *this;
     }
+    ButtonConfig& withDebounce(uint32_t ms) { debounceMs = ms; return *this; }
     ButtonConfig& asMomentary(bool momentary = true) { isMomentary = momentary; return *this; }
 };
 

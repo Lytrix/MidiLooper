@@ -210,6 +210,12 @@ void Config::loadFullConfiguration() {
     // Length Editing Mode Toggle - Button (Note 3) - Note 3 Channel 16
     addButton(ButtonConfig(3, 16, "Length Edit Mode")
               .onShortPress(ActionType::TOGGLE_LENGTH_EDIT_MODE));
+
+    // Global Transport Start/Stop (D#2/39 on Channel 16)
+    addButton(ButtonConfig(Notes::D2_SHARP, 16, "Global Transport")
+              .onShortPress(ActionType::TOGGLE_TRANSPORT)
+              .withDebounce(150)
+              .withTiming(300, 400, 3000));
     
     // === EXTEND WITH 37 MORE BUTTONS FOR 40 TOTAL ===
     

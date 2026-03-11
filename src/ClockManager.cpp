@@ -13,7 +13,7 @@
 ClockManager clockManager;  // Global instance initiated
 IntervalTimer clockTimer;
 
-bool sequencerRunning = true;
+bool sequencerRunning = false;
 
 ClockManager::ClockManager()
   : pendingStart(false),
@@ -178,5 +178,34 @@ void ClockManager::handleMidiClock() {
 }
 
 bool ClockManager::isClockRunning() const {
-  return sequencerRunning || (clockSource == CLOCK_EXTERNAL);
+  return sequencerRunning;
+}
+
+bool ClockManager::isTransportRunning() const {
+  return sequencerRunning;
+}
+
+void ClockManager::toggleTransport() {
+  if (sequencerRunning) {
+    sequencerRunning = false;
+    // Stop all active tracks (stopPlaying already sends All Notes Off per track)
+    for (uint8_t i = 0; i < Config::NUM_TRACKS; i++) {
+      Track& t = trackManager.getTrack(i);
+      if (t.isPlaying() || t.isOverdubbing()) {
+        t.stopPlaying();
+      }
+    }
+    StorageManager::saveState(looperState.getLooperState());
+    logger.info("Transport stopped");
+  } else {
+    sequencerRunning = true;
+    // Resume playback for all tracks that have data
+    for (uint8_t i = 0; i < Config::NUM_TRACKS; i++) {
+      Track& t = trackManager.getTrack(i);
+      if (t.isStopped()) {
+        t.startPlaying(currentTick);
+      }
+    }
+    logger.info("Transport started");
+  }
 }
