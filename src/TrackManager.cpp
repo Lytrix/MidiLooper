@@ -218,8 +218,10 @@ uint8_t TrackManager::getTrackCount() const {
 }
 
 void TrackManager::setup() {
-  // Tracks are already initialized in their constructor
-  // No additional setup needed
+  // Set default MIDI output channel per track (track 1 = ch 1, track 2 = ch 2, etc.)
+  for (uint8_t i = 0; i < Config::NUM_TRACKS; i++) {
+    tracks[i].setMidiChannel(i + 1);
+  }
 }
 
 void TrackManager::updateAllTracks(uint32_t currentTick) {
