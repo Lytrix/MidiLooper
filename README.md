@@ -10,21 +10,21 @@ https://iestyn-lewis.github.io/4by8/
 
 ## Hardware ##
 - 1x Teensy 4.1
-- 2x momentary buttons
-- 1x encoder with push button
-- 1x 256x64 4bit monochrome display (there is also code for using a liquid lcd display 16x2)
-- 1x 6N137
+- 1x 256x64 4bit monochrome display (SSD1322 OLED) — code also supports 16x2 LCD
+- 1x 6N137 (optocoupler for MIDI)
+- **Optional:** DROID controller (M4 + 2× B32) for full hardware control — see [DROID Controller](#-droid-controller) below
 
-The midi circuit is based on https://www.pjrc.com/teensy/td_libs_MIDI.html
+The MIDI circuit is based on https://www.pjrc.com/teensy/td_libs_MIDI.html
+
+**Note:** The project is configured for DROID controller input. Legacy 2-button + encoder operation can be restored via `MidiButtonManagerV2::loadButtonConfiguration("basic")`.
 
 ## Features ##
 Multi-track MIDI looper with full undo/redo, auto-save/load, and clear visual feedback—ready for live performance or creative studio work!
 
-- 4 Midi Tracks
+- 4 MIDI Tracks
 - 192 PPQN internal clock for live recording
-- 24 PPQN midi Sync
+- 24 PPQN MIDI Sync
 - 256x64 display and 16x2 display driver
-- 2 button operation   
 - 99 Undos per track (overdub and clear)
 - Track clear Undo (restore last cleared track)
 - Overdub Undo (revert last overdub layer)
@@ -95,7 +95,40 @@ Multi-track MIDI looper with full undo/redo, auto-save/load, and clear visual fe
 
 For detailed technical documentation, see: [`docs/LOOP_START_EDITING.md`](docs/LOOP_START_EDITING.md)
 
-## 🔴 Button A – Recording, Overdubbing, Playback, Undo, Redo, and Clear ##
+## 🎛️ DROID Controller ##
+
+The looper is configured for a DROID controller (M4 + 2× B32). Configuration: [`droid/midilooper_v1.ini`](droid/midilooper_v1.ini).
+
+### 8×8 Button Grid + 4 Sliders Overview
+
+| | Col 1 | Col 2 | Col 3 | Col 4 | Col 5 | Col 6 | Col 7 | Col 8 |
+|--|-------|-------|-------|-------|-------|-------|-------|-------|
+| **Scene** | Scene 0 | Scene 1 | Scene 2 | Scene 3 | Scene 4 | Scene 5 | Scene 6 | Scene 7 |
+| **Track** | — | — | — | — | — | — | — | — |
+| **REMIX** | — | — | — | — | — | — | — | — |
+| **8BARS** | — | — | — | — | — | — | — | — |
+| **1BAR** | Bar 0 | Bar 1 | Bar 2 | Bar 3 | Bar 4 | Bar 5 | Bar 6 | Bar 7 |
+| **16th** | Playhead LEDs (receives position from Teensy) | | | | | | | |
+| **Row 7** | **REC/PLAY** | **MUTE/DE** | **Edit Mode** | **NOTELEN** | — | — | **&lt;** | **&gt;** |
+
+| Slider | **NOTE_EDIT** (Program 1) | **LOOP_EDIT** (Program 0) |
+|--------|---------------------------|---------------------------|
+| **F1** | Note selector (pitchbend ch16) | Loop start point |
+| **F2** | 16th coarse position (pitchbend ch15) | Loop end / length (CC 101) |
+| **F3** | 16th fine offset (CC2 ch15) | — |
+| **F4** | Note pitch 0–127 (CC3 ch15) | — |
+
+**Row 7 buttons (Channel 16):**
+- **REC/PLAY** (note 36): Record/Overdub/Stop — single/double/triple/long for undo/redo/clear
+- **MUTE/DE** (note 37): Track select / Mute — single=next track, long=mute, double/triple=undo/redo clear
+- **Edit Mode** (note 38): Cycle NOTE_EDIT ↔ LOOP_EDIT — double=delete note, long=exit edit
+- **NOTELEN** (note 3): Toggle position vs length editing
+
+**Notes:** REC/PLAY, MUTE/DE, Edit Mode, and NOTELEN are fully implemented. Scene (notes 10–17) and 1BAR (notes 0–7) send on ch16 but need firmware mapping for direct scene/bar selection. Track row is unmapped in the default ini; MUTE/DE single-press cycles through 4 tracks.
+
+---
+
+## 🔴 REC/PLAY Button (Note 36) ##
 
 | Press #     | From State               | To State                 | Symbol Change | Key Action           |
 | ----------- | ------------------------ | ------------------------ | ------------- | -------------------- |
@@ -108,8 +141,7 @@ For detailed technical documentation, see: [`docs/LOOP_START_EDITING.md`](docs/L
 | **Triple**  | Any (with redo history)  | No change                | No change     | `redoOverdub()`      |
 | Long        | Any (with data)          | `TRACK_EMPTY`            | → –           | `clearTrack()`       |
 
-
-## 🔵 Button B – Track Select, Mute, Undo Clear, and Redo Clear ##
+## 🔵 MUTE/DE Button (Note 37) ##
 
 |  Press #    | From State         | To State           | Key Action                 |
 | ----------- | ------------------ | ------------------ | -------------------------- |
@@ -118,14 +150,16 @@ For detailed technical documentation, see: [`docs/LOOP_START_EDITING.md`](docs/L
 | **Double**  | Cleared track      | Restore last clear | `undoClearTrack()`         |
 | **Triple**  | Any (with redo)    | Redo last clear    | `redoClearTrack()`         |
 
-## 🔵 Button C –Edit Loop Start/Length, Edit Notes ##
+## 🔵 Edit Mode Button (Note 38) ##
 
-|  Press #    | From State         | To State           | Key Action                 |
-| ----------- | ------------------ | ------------------ | -------------------------- |
-| 1× (single) | Select Loop Edit   | Select Note Edit  | `setSelectedTrack()`       |
+|  Press #    | Action                                           |
+| ----------- | ------------------------------------------------ |
+| 1× (single) | Cycle mode: NOTE_EDIT ↔ LOOP_EDIT                |
+| **Double**  | Delete selected note                             |
+| Long        | Exit edit mode                                   |
 
-
-- Retroactive bar-quantized recording (record complete bars, but allow earlier recording start)
+### Retroactive bar-quantized recording
+Record complete bars while allowing an earlier start:
 ```
 | 1   2   3   4 | 1   2   3   4 |  
           ^ You press record here (beat 3)
@@ -146,10 +180,10 @@ The looper provides comprehensive undo/redo functionality for both overdub and c
 - **Triple press redo:** Redo functionality is accessed via triple press on buttons A and B.
 
 ### Button Controls:
-- **Button A Double Press:** Undo last overdub operation
-- **Button A Triple Press:** Redo last undone overdub operation  
-- **Button B Double Press:** Undo last clear operation
-- **Button B Triple Press:** Redo last undone clear operation
+- **REC/PLAY double press:** Undo last overdub operation
+- **REC/PLAY triple press:** Redo last undone overdub operation  
+- **MUTE/DE double press:** Undo last clear operation
+- **MUTE/DE triple press:** Redo last undone clear operation
 
 ### Technical Details:
 - Undo history is preserved across sessions via SD card storage
@@ -203,13 +237,10 @@ For any commercial use or distribution please contact me for a separate license.
 ## Examples ##
 The `/examples` directory contains working examples and demonstrations:
 
-- **[Button Configuration Example](examples/ButtonConfiguration40Example.cpp)** - Complete MIDI button mapping configuration
-  - Includes loop editing controls (loop length via CC 101, note length mode via Note 3)
-  - Demonstrates all edit modes and their MIDI mappings
-  - Shows channel routing and parameter mapping
-  - 40-button configuration with transport controls and extended features
+- **[Button Configuration Example](examples/ButtonConfiguration40Example.cpp)** - MIDI button mapping (40-button / full config)
+- **[DROID Configuration](droid/midilooper_v1.ini)** - Complete DROID M4 + 2× B32 mapping for the looper
 
-**Loop Editing Examples:**
-- **Loop Length Control**: Send CC 101 on Channel 16 with values 0-127 to set loop length from 1-128 bars
-- **Note Length Mode**: Press Note 3 on Channel 16 to toggle between position and length editing modes
-- **Loop Start Editing**: Use Fader 1 (Pitchbend Channel 16) in LOOP_EDIT mode to adjust loop start point
+**Loop Editing (DROID / MIDI):**
+- **Loop length**: Fader 2 in LOOP_EDIT mode, or CC 101 on Channel 16 (0-127 = 1-128 bars)
+- **Loop start**: Fader 1 (Pitchbend Ch 16) in LOOP_EDIT mode
+- **Note length mode**: NOTELEN button (Note 3, Ch 16) toggles position vs length editing
