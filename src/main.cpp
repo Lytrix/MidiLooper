@@ -87,6 +87,9 @@ void loop() {
   // Poll MIDI input
   midiHandler.handleMidiInput();
 
+  // Detect clock source changes (external timeout -> internal fallback)
+  clockManager.checkClockSource();
+
   // Update looper state to set button logic
   looperState.update();
 

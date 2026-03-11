@@ -10,7 +10,7 @@
 #include "Utils/MemoryPool.h"
 
 #define STORAGE_FILENAME "/midilooper_state.raw"
-#define STORAGE_VERSION 1
+#define STORAGE_VERSION 2
 
 // Helper to write raw data
 static bool writeRaw(File &file, const void *data, size_t size) {
@@ -49,6 +49,9 @@ bool StorageManager::saveState(const LooperState& state) {
 
     uint32_t version = STORAGE_VERSION;
     if (!writeRaw(file, &version, sizeof(version))) { Serial.println("[StorageManager] ERROR: Failed to write version"); file.close(); return false; }
+
+    float savedBpm = bpm;
+    if (!writeRaw(file, &savedBpm, sizeof(savedBpm))) { Serial.println("[StorageManager] ERROR: Failed to write BPM"); file.close(); return false; }
 
     // Save looper state
     uint32_t looperStateVal = (uint32_t)state;
@@ -129,11 +132,25 @@ bool StorageManager::loadState(LooperState& state) {
         return false;
     }
     Serial.println("[StorageManager] Version read OK");
-    if (version != STORAGE_VERSION) {
+    if (version != 1 && version != 2) {
         Serial.print("[StorageManager] ERROR: Version mismatch. Found: ");
         Serial.println(version);
         file.close();
         return false;
+    }
+
+    if (version >= 2) {
+        float savedBpm = 0;
+        if (!readRaw(file, &savedBpm, sizeof(savedBpm))) {
+            Serial.println("[StorageManager] ERROR: Failed to read BPM");
+            file.close();
+            return false;
+        }
+        if (savedBpm >= 20.0f && savedBpm <= 300.0f) {
+            bpm = savedBpm;
+            Serial.print("[StorageManager] Restored BPM: ");
+            Serial.println(savedBpm);
+        }
     }
 
     // Looper state
