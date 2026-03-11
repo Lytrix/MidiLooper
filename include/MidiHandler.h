@@ -83,6 +83,7 @@ private:
 
   // --- Helper Functions ---
   bool isControlChannel(byte channel);
+  void sendMidiThru(byte type, byte channel, byte data1, byte data2);
 
   // --- Message Handlers ---
   void handleNoteOn(byte channel, byte note, byte velocity, uint32_t tickNow);
