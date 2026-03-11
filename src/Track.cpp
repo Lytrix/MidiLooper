@@ -560,41 +560,48 @@ void Track::recordMidiEvents(midi::MidiType type, byte channel, byte data1, byte
   }
 }
 
+void Track::rebuildPlaybackOrder() {
+  playbackOrder.resize(midiEvents.size());
+  for (size_t i = 0; i < midiEvents.size(); i++) {
+    playbackOrder[i] = i;
+  }
+  uint32_t ll = loopLengthTicks;
+  std::sort(playbackOrder.begin(), playbackOrder.end(),
+    [&](size_t a, size_t b) {
+      return (midiEvents[a].tick % ll) < (midiEvents[b].tick % ll);
+    });
+  playbackOrderDirty = false;
+}
+
 void Track::playMidiEvents(uint32_t currentTick, bool isAudible) {
   if (!isAudible || muted || midiEvents.empty() || loopLengthTicks == 0)
     return;
 
-  // Compute position in the loop
+  if (playbackOrderDirty) {
+    rebuildPlaybackOrder();
+  }
+
   uint32_t tickInLoop = (currentTick - startLoopTick) % loopLengthTicks;
 
-  // Reset at loop boundary
   if (tickInLoop < lastTickInLoop) {
     nextEventIndex = 0;
     logger.debug("Loop wrapped, resetting index");
   }
 
-  // Remember where we were
   uint32_t prevTickInLoop = lastTickInLoop;
   lastTickInLoop = tickInLoop;
 
-  // Now send anything whose tick falls in (prevTickInLoop, tickInLoop]
-  while (nextEventIndex < midiEvents.size()) {
-    const MidiEvent &evt = midiEvents[nextEventIndex];
+  while (nextEventIndex < playbackOrder.size()) {
+    const MidiEvent &evt = midiEvents[playbackOrder[nextEventIndex]];
     uint32_t evTick = evt.tick % loopLengthTicks;
 
-    //logger.debug("Checking evt[%d] → evTick=%lu  prev=%lu…%lu",
-    //             nextEventIndex, evTick, prevTickInLoop, tickInLoop);
-
-    // If this event just *now* should fire:
     if ( prevTickInLoop < evTick && evTick <= tickInLoop ) {
       sendMidiEvent(evt);
       nextEventIndex++;
     }
-    // If it's still coming later in this pass, bail out:
     else if (evTick > tickInLoop) {
       break;
     }
-    // Otherwise we missed it entirely—skip it so we don't hang:
     else {
       nextEventIndex++;
     }
@@ -607,6 +614,16 @@ void Track::sendMidiEvent(const MidiEvent& evt) {
   MidiEvent evtCopy = evt;
   if (evt.channel >= 1 && evt.channel <= 16) {
     evtCopy.channel = midiChannel;
+  }
+  // Log loop playback notes for debugging
+  if (evt.isNoteOn() || evt.isNoteOff()) {
+    const char* noteNames[] = {"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"};
+    int octave = (evtCopy.data.noteData.note / 12) - 1;
+    const char* noteName = noteNames[evtCopy.data.noteData.note % 12];
+    logger.log(CAT_MIDI, LOG_DEBUG, "Loop SEND: %s ch=%d %s%d (note %d) vel=%d tick=%lu",
+               evt.isNoteOn() ? "NoteOn" : "NoteOff",
+               evtCopy.channel, noteName, octave,
+               evtCopy.data.noteData.note, evtCopy.data.noteData.velocity, evt.tick);
   }
   midiHandler.sendMidiEvent(evtCopy);
   isPlayingBack = false;  // Reset playback state

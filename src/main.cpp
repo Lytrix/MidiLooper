@@ -80,7 +80,7 @@ void setup() {
 
 void loop() {
   // Start performance monitoring for this loop iteration
-  PerformanceMonitor::globalPerformanceMonitor.beginLoop();
+  // PerformanceMonitor::globalPerformanceMonitor.beginLoop();
   
   //Serial.println("Main: Loop");
   uint32_t now = millis();
@@ -116,21 +116,21 @@ void loop() {
   }
 
   logger.setCategoryEnabled(CAT_MIDI, true);
-  
+
   // End performance monitoring for this loop iteration
-  PerformanceMonitor::globalPerformanceMonitor.endLoop();
+  // PerformanceMonitor::globalPerformanceMonitor.endLoop();
   
   // Log performance warnings if system is under stress
-  if (PerformanceMonitor::globalPerformanceMonitor.isSystemStressed()) {
-    const auto& metrics = PerformanceMonitor::globalPerformanceMonitor.getCurrentMetrics();
-    logger.warning("Performance stress detected: CPU=%d%%, Loop=%luμs, RAM=%luKB", 
-                   metrics.cpuUsagePercent, metrics.loopTimeMicros, metrics.freeRAMBytes / 1024);
+  // if (PerformanceMonitor::globalPerformanceMonitor.isSystemStressed()) {
+  //   const auto& metrics = PerformanceMonitor::globalPerformanceMonitor.getCurrentMetrics();
+  //   logger.warning("Performance stress detected: CPU=%d%%, Loop=%luμs, RAM=%luKB", 
+  //                  metrics.cpuUsagePercent, metrics.loopTimeMicros, metrics.freeRAMBytes / 1024);
     
-    // Get optimization suggestions
-    auto suggestions = PerformanceMonitor::globalPerformanceMonitor.getOptimizationSuggestions();
-    for (const auto& suggestion : suggestions) {
-      logger.info("Performance suggestion: %s", suggestion.c_str());
-    }
-  }
+  //   // Get optimization suggestions
+  //   auto suggestions = PerformanceMonitor::globalPerformanceMonitor.getOptimizationSuggestions();
+  //   for (const auto& suggestion : suggestions) {
+  //     logger.info("Performance suggestion: %s", suggestion.c_str());
+  //   }
+  // }
 }
 

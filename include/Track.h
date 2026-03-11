@@ -182,6 +182,7 @@ public:
   void invalidateCaches() {
     noteCache.invalidate();
     eventIndexValid = false;
+    playbackOrderDirty = true;
   }
 
 private:
@@ -240,7 +241,10 @@ private:
   mutable NoteUtils::EventIndex cachedEventIndex;
   mutable bool eventIndexValid = false;
 
-  // Dynamic note wrapping - handled in logic layer, not data storage
+  /// Playback order: indices into midiEvents sorted by wrapped tick
+  std::vector<size_t> playbackOrder;
+  bool playbackOrderDirty = true;
+  void rebuildPlaybackOrder();
 
 };
 
