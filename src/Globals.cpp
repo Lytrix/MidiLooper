@@ -3,9 +3,6 @@
 
 #include "Globals.h"
 #include "ClockManager.h"
-
-//uint8_t debugLevel = DEBUG_INFO;
-
 // Runtime settings
 float bpm = 120.0f;
 uint32_t lastDisplayUpdate = 0;

@@ -613,8 +613,8 @@ void Track::sendMidiEvent(const MidiEvent& evt) {
 }
 
 void Track::sendAllNotesOff() {
-  // Control Change 123 = All Notes Off
-  for (uint8_t ch = 0; ch < 16; ++ch) {
+  // Control Change 123 = All Notes Off (MIDI channels are 1-16)
+  for (uint8_t ch = 1; ch <= 16; ++ch) {
     midiHandler.sendControlChange(ch, 123, 0);
   }
   // also clear any half-open pending notes so they don't get forced later

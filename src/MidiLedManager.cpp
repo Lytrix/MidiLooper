@@ -28,7 +28,7 @@ void MidiLedManager::updateLeds(Track& track, uint32_t currentTick) {
         lastUpdateBar = currentBar;
         hasInitialized = true;
         
-        logger.log(CAT_MIDI, LOG_DEBUG, "LED Manager: Updated LEDs for current bar starting at tick %lu (current tick %lu)", 
+        logger.log(CAT_MIDI_LED, LOG_DEBUG, "LED Manager: Updated LEDs for current bar starting at tick %lu (current tick %lu)", 
                    barStartTick, currentTick);
     }
 }
@@ -53,7 +53,7 @@ void MidiLedManager::clearAllLeds() {
     }
     currentTickStep = -1;
     
-    logger.log(CAT_MIDI, LOG_INFO, "LED Manager: All LEDs and tick indicator cleared");
+    logger.log(CAT_MIDI_LED, LOG_INFO, "LED Manager: All LEDs and tick indicator cleared");
 }
 
 uint32_t MidiLedManager::getCurrentBar(uint32_t currentTick, uint32_t loopLength) {
@@ -101,11 +101,11 @@ void MidiLedManager::sendLedUpdate(uint8_t ledIndex, bool state) {
     if (state) {
         // Turn LED on
         midiHandler.sendNoteOn(LED_CHANNEL, ledIndex, LED_VELOCITY);
-        logger.log(CAT_MIDI, LOG_DEBUG, "LED Manager: LED %d ON", ledIndex);
+        logger.log(CAT_MIDI_LED, LOG_DEBUG, "LED Manager: LED %d ON", ledIndex);
     } else {
         // Turn LED off
         midiHandler.sendNoteOff(LED_CHANNEL, ledIndex, 0);
-        logger.log(CAT_MIDI, LOG_DEBUG, "LED Manager: LED %d OFF", ledIndex);
+        logger.log(CAT_MIDI_LED, LOG_DEBUG, "LED Manager: LED %d OFF", ledIndex);
     }
     
     // Small delay to ensure MIDI controller processes the message
@@ -114,7 +114,7 @@ void MidiLedManager::sendLedUpdate(uint8_t ledIndex, bool state) {
 
 void MidiLedManager::setUpdateDelay(uint16_t delayMicros) {
     updateDelayMicros = delayMicros;
-    logger.log(CAT_MIDI, LOG_INFO, "LED Manager: Update delay set to %d microseconds", delayMicros);
+    logger.log(CAT_MIDI_LED, LOG_INFO, "LED Manager: Update delay set to %d microseconds", delayMicros);
 }
 
 void MidiLedManager::updateCurrentTick(uint32_t currentTick, uint32_t loopLength) {
@@ -145,7 +145,7 @@ void MidiLedManager::updateCurrentTick(uint32_t currentTick, uint32_t loopLength
         
         currentTickStep = newTickStep;
         
-        logger.log(CAT_MIDI, LOG_DEBUG, "LED Manager: Current tick step %d (tick %lu)", 
+        logger.log(CAT_MIDI_LED, LOG_DEBUG, "LED Manager: Current tick step %d (tick %lu)", 
                    newTickStep, currentTick);
     }
 }
@@ -173,6 +173,6 @@ void MidiLedManager::analyzeAndUpdateBar(Track& track, uint32_t barStartTick, ui
     for (int i = 0; i < NUM_LEDS; i++) {
         ledPattern += newLedState[i] ? "1" : "0";
     }
-    logger.log(CAT_MIDI, LOG_DEBUG, "LED Manager: Bar pattern (tick %lu): %s", 
+    logger.log(CAT_MIDI_LED, LOG_DEBUG, "LED Manager: Bar pattern (tick %lu): %s", 
                barStartTick, ledPattern.c_str());
 } 

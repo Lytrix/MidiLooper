@@ -6,7 +6,6 @@
  * @brief Global configuration, hardware pin definitions, timing constants, and runtime state for the MIDI looper.
  *
  * Defines:
- *  - Debug levels (DEBUG_* flags) and global debugLevel variable.
  *  - LCD, button, and encoder hardware pin assignments in LCD and Buttons namespaces.
  *  - Default MIDI channel and PPQN in MidiConfig namespace.
  *  - Track count, internal PPQN, time signature, and loop timing constants in Config namespace.
@@ -18,24 +17,6 @@
 
 #pragma once
 #include <Arduino.h>
-
-// --------------------
-// Debug Configuration
-// --------------------
-// Debug levels (can be combined using bitwise OR)
-#define DEBUG_NONE     0x00
-#define DEBUG_ERROR    0x01
-#define DEBUG_WARNING  0x02
-#define DEBUG_INFO     0x04
-#define DEBUG_MIDI     0x08
-#define DEBUG_NOTES    0x10
-#define DEBUG_BUTTONS  0x20
-#define DEBUG_DISPLAY  0x40
-#define DEBUG_STATE    0x80
-#define DEBUG_MOVE_NOTES 0x100
-#define DEBUG_ALL      0xFF
-
-extern uint8_t debugLevel;  // Set in Globals.cpp
 
 // --------------------
 // Hardware Configuration
@@ -65,6 +46,8 @@ namespace MidiConfig {
   const int CHANNEL = 1;      // Default MIDI channel
   const int PPQN = 24;        // MIDI clock pulses per quarter note
   const int CHANNEL_OMNI = 0; // Channel for listening to all MIDI channels
+  const int RECORD_EXCLUDE_CHANNEL_MIN = 13; // Channels excluded from recording (e.g. Droid LED control 15-16, faders 13-14)
+  const int RECORD_EXCLUDE_CHANNEL_MAX = 16;
 }
 
 // --------------------

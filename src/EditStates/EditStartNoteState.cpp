@@ -200,17 +200,6 @@ static void restoreNotes(std::vector<MidiEvent>& midiEvents,
                          NoteUtils::EventIndexMap& offIndex) {
     // Debug existing notes before restoration
     logger.log(CAT_MOVE_NOTES, LOG_DEBUG, "=== EXISTING NOTES BEFORE RESTORATION ===");
-    #ifdef DEBUG_MOVE_NOTES
-    {
-        auto existingNotes = NoteUtils::reconstructNotes(midiEvents, loopLength);
-        for (const auto& dn : existingNotes) {
-            uint32_t length = calculateNoteLength(dn.startTick, dn.endTick, loopLength);
-            logger.log(CAT_MOVE_NOTES, LOG_DEBUG,
-                       "Existing note: pitch=%d, start=%lu, end=%lu, length=%lu",
-                       dn.note, dn.startTick, dn.endTick, length);
-        }
-    }
-    #endif
     // Restoration analysis
     logger.debug("=== RESTORATION ANALYSIS ===");
     logger.debug("Total deleted notes: %zu", manager.movingNote.deletedNotes.size());
