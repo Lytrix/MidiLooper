@@ -115,6 +115,14 @@ void MidiHandler::handleMidiMessage(byte type, byte channel, byte data1, byte da
                noteName, octave, data1, data2);
   }
 
+  // MIDI Thru: always pass through channel-voice (except control ch 13-16) to USB/Serial on selected track channel
+  uint8_t outCh = trackManager.getSelectedTrack().getMidiChannel();
+  bool isChannelVoice = (type == midi::NoteOn || type == midi::NoteOff || type == midi::ControlChange ||
+                        type == midi::PitchBend || type == midi::AfterTouchChannel || type == midi::ProgramChange);
+  if (isChannelVoice && !isControlChannel(channel)) {
+    sendMidiThru(type, outCh, data1, data2);
+  }
+
   switch (type) {
     case midi::NoteOn:
       if (data2 > 0)
@@ -167,6 +175,45 @@ void MidiHandler::handleMidiMessage(byte type, byte channel, byte data1, byte da
 // --- Helper Functions ---
 bool MidiHandler::isControlChannel(byte channel) {
   return (channel >= MidiConfig::RECORD_EXCLUDE_CHANNEL_MIN && channel <= MidiConfig::RECORD_EXCLUDE_CHANNEL_MAX);
+}
+
+void MidiHandler::sendMidiThru(byte type, byte channel, byte data1, byte data2) {
+  switch (type) {
+    case midi::NoteOn:
+      if (outputUSB) usbMIDI.sendNoteOn(data1, data2, channel);
+      if (outputSerial) MIDIserial.sendNoteOn(data1, data2, channel);
+      if (usbHostMIDI) usbHostMIDI.sendNoteOn(data1, data2, channel);
+      break;
+    case midi::NoteOff:
+      if (outputUSB) usbMIDI.sendNoteOff(data1, data2, channel);
+      if (outputSerial) MIDIserial.sendNoteOff(data1, data2, channel);
+      if (usbHostMIDI) usbHostMIDI.sendNoteOff(data1, data2, channel);
+      break;
+    case midi::ControlChange:
+      if (outputUSB) usbMIDI.sendControlChange(data1, data2, channel);
+      if (outputSerial) MIDIserial.sendControlChange(data1, data2, channel);
+      if (usbHostMIDI) usbHostMIDI.sendControlChange(data1, data2, channel);
+      break;
+    case midi::PitchBend: {
+      int16_t pitchValue = ((data2 << 7) | data1) - 8192;
+      if (outputUSB) usbMIDI.sendPitchBend(pitchValue, channel);
+      if (outputSerial) MIDIserial.sendPitchBend(pitchValue, channel);
+      if (usbHostMIDI) usbHostMIDI.sendPitchBend(pitchValue, channel);
+      break;
+    }
+    case midi::AfterTouchChannel:
+      if (outputUSB) usbMIDI.sendAfterTouch(data1, channel);
+      if (outputSerial) MIDIserial.sendAfterTouch(data1, channel);
+      if (usbHostMIDI) usbHostMIDI.sendAfterTouch(data1, channel);
+      break;
+    case midi::ProgramChange:
+      if (outputUSB) usbMIDI.sendProgramChange(data1, channel);
+      if (outputSerial) MIDIserial.sendProgramChange(data1, channel);
+      if (usbHostMIDI) usbHostMIDI.sendProgramChange(data1, channel);
+      break;
+    default:
+      break;
+  }
 }
 
 // --- Individual Message Handlers ---
