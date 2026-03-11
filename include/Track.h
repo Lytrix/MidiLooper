@@ -140,6 +140,10 @@ public:
   // Tempo accessors
   static uint32_t getTicksPerBar();
 
+  // MIDI output channel (1-16, default per track index)
+  uint8_t getMidiChannel() const;
+  void setMidiChannel(uint8_t ch);
+
   // Track state checks
   bool isEmpty() const;
   bool isArmed() const;
@@ -188,6 +192,7 @@ private:
 
   // Track data
   bool muted;
+  uint8_t midiChannel;
   TrackState trackState;
   uint32_t startLoopTick;
   uint32_t loopLengthTicks;

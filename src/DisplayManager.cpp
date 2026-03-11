@@ -328,16 +328,18 @@ void DisplayManager::drawInfoArea(uint32_t currentTick, Track& selectedTrack) {
     // 1. Current position (playhead) as musical time, with leading zeros and 2 decimals for ticks
     char posStr[24];
     char loopLine[8];
+    char chnStr[4];
     // Get length of loop
     uint32_t lengthLoop = selectedTrack.getLoopLength();
     
     ticksToBarsBeats16thTicks2Dec(currentTick, posStr, sizeof(posStr), true); // true = leading zeros
     if (lengthLoop > 0 && Config::TICKS_PER_BAR > 0) {
         uint32_t bars = lengthLoop / Config::TICKS_PER_BAR;
-        snprintf(loopLine, sizeof(loopLine), "%lu", bars);
+        snprintf(loopLine, sizeof(loopLine), "%02lu", bars > 99 ? 99UL : bars);
     } else {
-        snprintf(loopLine, sizeof(loopLine), "-");
+        snprintf(loopLine, sizeof(loopLine), "--");
     }
+    snprintf(chnStr, sizeof(chnStr), "%02u", selectedTrack.getMidiChannel());
     // Draw position string
     int x = DisplayManager::TRACK_MARGIN;
     int y = DISPLAY_HEIGHT - 12;
@@ -350,11 +352,11 @@ void DisplayManager::drawInfoArea(uint32_t currentTick, Track& selectedTrack) {
         _display.gfx.draw_text(_display.api.getFrameBuffer(), c, x + i * 6, y, charBrightness);
     }
 
-
-    // Draw LOOP field
-    
+    // Draw LOOP and CHN fields with fixed 2-digit width (labels never move)
     int loopX = x + 12 * 6; // after posStr (11 chars + 1 space)
     drawInfoField("LOOP", loopLine, loopX, y, false, 5);
+    int chnX = loopX + 6 + (4 + 1 + 2) * 6; // LOOP:XX = 7 chars + 1 space
+    drawInfoField("CHN", chnStr, chnX, y, false, 5);
     // Draw undo count right-aligned, max 99
     uint8_t undoCount = static_cast<uint8_t>(editManager.getDisplayUndoCount(selectedTrack));
     char undoStr[4];

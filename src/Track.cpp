@@ -20,6 +20,7 @@
 // -------------------------
 Track::Track() :
   muted(false),
+  midiChannel(1),
   trackState(TRACK_EMPTY),
   startLoopTick(0),
   loopLengthTicks(0),
@@ -38,6 +39,13 @@ uint32_t Track::getStartLoopTick() const {
   return startLoopTick;
 }
 
+uint8_t Track::getMidiChannel() const {
+  return midiChannel;
+}
+
+void Track::setMidiChannel(uint8_t ch) {
+  midiChannel = (ch >= 1 && ch <= 16) ? ch : 1;
+}
 
 // -------------------------
 // State management
@@ -596,7 +604,11 @@ void Track::playMidiEvents(uint32_t currentTick, bool isAudible) {
 void Track::sendMidiEvent(const MidiEvent& evt) {
   if (trackState != TRACK_PLAYING && trackState != TRACK_OVERDUBBING) return;
   isPlayingBack = true;  // Mark playback so noteOn/noteOff ignores it
-  midiHandler.sendMidiEvent(evt);
+  MidiEvent evtCopy = evt;
+  if (evt.channel >= 1 && evt.channel <= 16) {
+    evtCopy.channel = midiChannel;
+  }
+  midiHandler.sendMidiEvent(evtCopy);
   isPlayingBack = false;  // Reset playback state
 }
 
