@@ -99,20 +99,22 @@ void MidiHandler::handleMidiInput() {
 void MidiHandler::handleMidiMessage(byte type, byte channel, byte data1, byte data2, InputSource source) {
   uint32_t tickNow = clockManager.getCurrentTick();
 
-  // Log incoming MIDI messages
-  const char* sourceStr = (source == SOURCE_USB) ? "USB" : 
-                          (source == SOURCE_SERIAL) ? "Serial" : 
-                          (source == SOURCE_USB_HOST) ? "USB Host" : "Unknown";
-  logger.log(CAT_MIDI, LOG_DEBUG, "%s MIDI: type=%s ch=%d d1=%d d2=%d", 
-             sourceStr, getMidiTypeName(type), channel, data1, data2);
+  // Log incoming MIDI messages (skip Clock to avoid log spam at 24 PPQN)
+  if (type != midi::Clock) {
+    const char* sourceStr = (source == SOURCE_USB) ? "USB" :
+                            (source == SOURCE_SERIAL) ? "Serial" :
+                            (source == SOURCE_USB_HOST) ? "USB Host" : "Unknown";
+    logger.log(CAT_MIDI, LOG_DEBUG, "%s MIDI: type=%s ch=%d d1=%d d2=%d",
+               sourceStr, getMidiTypeName(type), channel, data1, data2);
 
-  // Additional detailed logging for note messages
-  if (type == midi::NoteOn || type == midi::NoteOff) {
-    const char* noteNames[] = {"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"};
-    int octave = (data1 / 12) - 1;
-    const char* noteName = noteNames[data1 % 12];
-    logger.log(CAT_MIDI, LOG_DEBUG, "  -> Note: %s%d (MIDI note %d), Velocity: %d", 
-               noteName, octave, data1, data2);
+    // Additional detailed logging for note messages
+    if (type == midi::NoteOn || type == midi::NoteOff) {
+      const char* noteNames[] = {"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"};
+      int octave = (data1 / 12) - 1;
+      const char* noteName = noteNames[data1 % 12];
+      logger.log(CAT_MIDI, LOG_DEBUG, "  -> Note: %s%d (MIDI note %d), Velocity: %d",
+                 noteName, octave, data1, data2);
+    }
   }
 
   // MIDI Thru: always pass through channel-voice (except control ch 13-16) to USB/Serial on selected track channel
