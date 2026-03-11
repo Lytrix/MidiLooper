@@ -36,12 +36,21 @@ void MidiButtonProcessor::handleMidiNote(uint8_t channel, uint8_t note, uint8_t 
     if (isNoteOn && velocity > 0) {
         // Note On - Button Press
         if (!state.isPressed) {
+            // Debounce check: ignore NoteOn that arrives too soon after the last release
+            // findButtonConfig expects 0-based channel (channel param here is 1-based MIDI)
+            const auto* config = MidiButtonConfig::Config::findButtonConfig(note, channel - 1);
+            if (config && config->debounceMs > 0 && state.lastReleaseTime > 0 &&
+                (now - state.lastReleaseTime) < config->debounceMs) {
+                logger.log(CAT_BUTTON, LOG_DEBUG, "Debounce: ignoring Ch%d Note%d (%lums since last release)",
+                           channel, note, now - state.lastReleaseTime);
+                return;
+            }
+
             state.isPressed = true;
             state.pressStartTime = now;
             logger.log(CAT_BUTTON, LOG_DEBUG, "Button pressed: Ch%d Note%d at time %lu", channel, note, now);
             
             // Check if this is a momentary button (trigger on both press and release)
-            const auto* config = MidiButtonConfig::Config::findButtonConfig(note, channel);
             if (config && config->isMomentary) {
                 logger.log(CAT_BUTTON, LOG_DEBUG, "Momentary button press: Ch%d Note%d", channel, note);
                 triggerButtonPress(note, channel - 1, MidiButtonConfig::PressType::SHORT_PRESS);
@@ -53,7 +62,7 @@ void MidiButtonProcessor::handleMidiNote(uint8_t channel, uint8_t note, uint8_t 
             state.isPressed = false;
             
             // Check if this is a momentary button (trigger on both press and release)
-            const auto* config = MidiButtonConfig::Config::findButtonConfig(note, channel);
+            const auto* config = MidiButtonConfig::Config::findButtonConfig(note, channel - 1);
             if (config && config->isMomentary) {
                 logger.log(CAT_BUTTON, LOG_DEBUG, "Momentary button release: Ch%d Note%d", channel, note);
                 triggerButtonPress(note, channel - 1, MidiButtonConfig::PressType::SHORT_PRESS);
@@ -80,14 +89,21 @@ void MidiButtonProcessor::handleMidiNote(uint8_t channel, uint8_t note, uint8_t 
 void MidiButtonProcessor::handleButtonRelease(uint8_t channel, uint8_t note, uint32_t pressDuration) {
     uint32_t now = millis();
     ButtonState& state = getButtonState(channel, note);
+    state.lastReleaseTime = now;
+
+    // findButtonConfig expects 0-based channel (channel param here is 1-based MIDI)
+    const auto* cfg = MidiButtonConfig::Config::findButtonConfig(note, channel - 1);
+    uint32_t effectiveLongPress = (cfg && cfg->longPressTime > 0)   ? cfg->longPressTime  : longPressTime;
+    uint32_t effectiveDoubleTap = (cfg && cfg->doubleTapWindow > 0) ? cfg->doubleTapWindow : doubleTapWindow;
+    uint32_t effectiveTripleTap = (cfg && cfg->tripleTapWindow > 0) ? cfg->tripleTapWindow : tripleTapWindow;
+
+    logger.log(CAT_BUTTON, LOG_DEBUG, "handleButtonRelease: Ch%d Note%d, duration=%lu, effectiveLongPress=%lu", 
+               channel, note, pressDuration, effectiveLongPress);
     
-    logger.log(CAT_BUTTON, LOG_DEBUG, "handleButtonRelease: Ch%d Note%d, duration=%lu, longPressTime=%lu", 
-               channel, note, pressDuration, longPressTime);
-    
-    if (pressDuration >= longPressTime) {
+    if (pressDuration >= effectiveLongPress) {
         // Long press - trigger immediately and cancel pending presses
-        logger.log(CAT_BUTTON, LOG_DEBUG, "Long press detected: duration=%lu >= longPressTime=%lu", 
-                   pressDuration, longPressTime);
+        logger.log(CAT_BUTTON, LOG_DEBUG, "Long press detected: duration=%lu >= effectiveLongPress=%lu", 
+                   pressDuration, effectiveLongPress);
         state.lastTapTime = 0;
         state.secondTapTime = 0;
         state.pendingShortPress = false;
@@ -97,10 +113,10 @@ void MidiButtonProcessor::handleButtonRelease(uint8_t channel, uint8_t note, uin
         triggerButtonPress(note, channel - 1, MidiButtonConfig::PressType::LONG_PRESS);
     } else {
         // Short press - check for multiple taps
-        logger.log(CAT_BUTTON, LOG_DEBUG, "Short press detected: duration=%lu < longPressTime=%lu", 
-                   pressDuration, longPressTime);
+        logger.log(CAT_BUTTON, LOG_DEBUG, "Short press detected: duration=%lu < effectiveLongPress=%lu", 
+                   pressDuration, effectiveLongPress);
         
-        if (state.pendingDoublePress && (now - state.secondTapTime <= tripleTapWindow)) {
+        if (state.pendingDoublePress && (now - state.secondTapTime <= effectiveTripleTap)) {
             // Third tap within window - triple press
             logger.log(CAT_BUTTON, LOG_DEBUG, "Triple press detected");
             state.lastTapTime = 0;
@@ -110,21 +126,21 @@ void MidiButtonProcessor::handleButtonRelease(uint8_t channel, uint8_t note, uin
             state.pendingTriplePress = false;
             
             triggerButtonPress(note, channel - 1, MidiButtonConfig::PressType::TRIPLE_PRESS);
-        } else if (state.lastTapTime > 0 && (now - state.lastTapTime <= doubleTapWindow)) {
+        } else if (state.lastTapTime > 0 && (now - state.lastTapTime <= effectiveDoubleTap)) {
             // Second tap within window - set up for potential triple tap
             logger.log(CAT_BUTTON, LOG_DEBUG, "Second tap detected, waiting for triple");
             state.secondTapTime = now;
             state.pendingShortPress = false;
             state.pendingDoublePress = true;
-            state.doublePressExpireTime = now + tripleTapWindow;
+            state.doublePressExpireTime = now + effectiveTripleTap;
         } else {
             // First tap or outside double tap window - delay decision
             logger.log(CAT_BUTTON, LOG_DEBUG, "First tap or outside window, scheduling short press");
             state.lastTapTime = now;
             state.pendingShortPress = true;
-            state.shortPressExpireTime = now + doubleTapWindow;
+            state.shortPressExpireTime = now + effectiveDoubleTap;
             logger.log(CAT_BUTTON, LOG_DEBUG, "Scheduled short press: expire at %lu (now=%lu + window=%lu)", 
-                       state.shortPressExpireTime, now, doubleTapWindow);
+                       state.shortPressExpireTime, now, effectiveDoubleTap);
         }
     }
 }

@@ -58,6 +58,9 @@ public:
     void handleDeleteNote();
     void handleToggleLengthEditMode();
     
+    // Transport control
+    void handleToggleTransport();
+
     // Extended actions (stubbed for future)
     void handleTogglePlay();
     void handleMoveCurrentTick(int32_t tickOffset);

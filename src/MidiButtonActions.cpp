@@ -72,6 +72,9 @@ void MidiButtonActions::executeAction(MidiButtonConfig::ActionType actionType, u
         case MidiButtonConfig::ActionType::MUTE_TRACK:
             handleMuteTrack(static_cast<uint8_t>(parameter));
             break;
+        case MidiButtonConfig::ActionType::TOGGLE_TRANSPORT:
+            handleToggleTransport();
+            break;
         default:
             // For unimplemented actions, just log them
             logger.info("Action type %d not yet implemented", static_cast<int>(actionType));
@@ -210,6 +213,21 @@ void MidiButtonActions::handleDeleteNote() {
     Track& track = getCurrentTrack();
     // Call the original NoteEditManager's deleteSelectedNote method
     noteEditManager.deleteSelectedNote(track);
+}
+
+void MidiButtonActions::handleToggleTransport() {
+    bool wasRunning = clockManager.isTransportRunning();
+    if (wasRunning) {
+        midiHandler.sendNoteOff(MidiButtonConfig::Channels::TRANSPORT, MidiButtonConfig::Notes::D2_SHARP, 0);
+    }
+    clockManager.toggleTransport();
+    if (!wasRunning) {
+        midiHandler.sendNoteOn(MidiButtonConfig::Channels::TRANSPORT, MidiButtonConfig::Notes::D2_SHARP, 127);
+    }
+    logger.info("Transport LED: sent %s on ch%d note%d",
+                !wasRunning ? "NoteOn" : "NoteOff",
+                MidiButtonConfig::Channels::TRANSPORT,
+                MidiButtonConfig::Notes::D2_SHARP);
 }
 
 // Stubbed implementations for future expansion

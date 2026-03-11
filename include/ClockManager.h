@@ -45,6 +45,8 @@ public:
   bool isExternalClockPresent() const;
   ClockSource getClockSource() const;
   bool isClockRunning() const;
+  bool isTransportRunning() const;
+  void toggleTransport();
   uint32_t setLastMidiClockTime(uint32_t lastMidiClockTime);
 
 private:

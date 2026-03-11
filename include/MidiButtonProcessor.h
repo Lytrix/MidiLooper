@@ -45,11 +45,13 @@ private:
         uint32_t doublePressExpireTime;
         bool pendingTriplePress;
         uint32_t triplePressExpireTime;
+        uint32_t lastReleaseTime;
         
         ButtonState() : isPressed(false), pressStartTime(0), lastTapTime(0), secondTapTime(0),
                        pendingShortPress(false), shortPressExpireTime(0),
                        pendingDoublePress(false), doublePressExpireTime(0),
-                       pendingTriplePress(false), triplePressExpireTime(0) {}
+                       pendingTriplePress(false), triplePressExpireTime(0),
+                       lastReleaseTime(0) {}
     };
     
     // Button state storage - indexed by (channel * 128 + note)
