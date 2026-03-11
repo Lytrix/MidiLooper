@@ -29,9 +29,6 @@ ButtonManager::ButtonManager() {
     doublePressExpireTime.clear();
     encoderPosition = 0;
     lastEncoderPosition = 0;
-    if (DEBUG_BUTTONS) {
-        Serial.println("ButtonManager constructor called.");
-    }
 }
 
 void ButtonManager::setup(const std::vector<uint8_t>& pins) {
@@ -62,12 +59,6 @@ void ButtonManager::setup(const std::vector<uint8_t>& pins) {
     }
 
     // encoder.write(0);
-
-    if (DEBUG_BUTTONS) {
-        Serial.print("ButtonManager setup complete with ");
-        Serial.print(countPins);
-        Serial.println(" buttons.");
-    }
 }
 
 void ButtonManager::update() {
@@ -198,18 +189,6 @@ void ButtonManager::update() {
         if (editManager.getCurrentState() != nullptr) {
             // In edit mode: encoder changes value
             editManager.onEncoderTurn(trackManager.getSelectedTrack(), finalDelta);
-            if (DEBUG_BUTTONS) {
-                Serial.print("[EDIT] Encoder value change: ");
-                Serial.println(finalDelta);
-            }
-        } else {
-            // Not in edit mode, print encoder position and delta for debug
-            if (DEBUG_BUTTONS) {
-                Serial.print("Encoder position: ");
-                Serial.println(newEncoderPos);
-                Serial.print("Encoder delta: ");
-                Serial.println(rawDelta);
-            }
         }
         encoderPosition = newEncoderPos; // Only update after using the delta
     }
@@ -225,33 +204,26 @@ void ButtonManager::handleButton(ButtonId button, ButtonAction action) {
             switch (action) {
                 case BUTTON_DOUBLE_PRESS:
                     if (TrackUndo::canUndo(track)) {
-                        if (DEBUG_BUTTONS) Serial.println("Button A: Undo Overdub");
                         TrackUndo::undoOverdub(track);
                     }
                     break;
                 case BUTTON_TRIPLE_PRESS:
                     if (TrackUndo::canRedo(track)) {
-                        if (DEBUG_BUTTONS) Serial.println("Button A: Redo Overdub");
                         TrackUndo::redoOverdub(track);
                     }
                     break;
                 case BUTTON_SHORT_PRESS:
                     if (track.isEmpty()) {
-                        if (DEBUG_BUTTONS) Serial.println("Button A: Start Recording");
                         looperState.requestStateTransition(LOOPER_RECORDING);
                         trackManager.startRecordingTrack(idx, now);
                     } else if (track.isRecording()) {
-                        if (DEBUG_BUTTONS) Serial.println("Button A: Stop Recording");
                         trackManager.stopRecordingTrack(idx);
                         track.startPlaying(now);
                     } else if (track.isOverdubbing()) {
-                        if (DEBUG_BUTTONS) Serial.println("Button A: Stop Overdub");
                         track.startPlaying(now);
                     } else if (track.isPlaying()) {
-                        if (DEBUG_BUTTONS) Serial.println("Button A: Live Overdub");
                         trackManager.startOverdubbingTrack(idx);
                     } else {
-                        if (DEBUG_BUTTONS) Serial.println("Button A: Toggle Play/Stop");
                         track.togglePlayStop();
                     }
                     break;
@@ -263,7 +235,6 @@ void ButtonManager::handleButton(ButtonId button, ButtonAction action) {
                         TrackUndo::pushClearTrackSnapshot(track);
                         track.clear();
                         StorageManager::saveState(looperState.getLooperState());
-                        if (DEBUG_BUTTONS) Serial.println("Button A: Clear Track");
                     }
                     break;
 
@@ -275,41 +246,27 @@ void ButtonManager::handleButton(ButtonId button, ButtonAction action) {
             switch (action) {
                 case BUTTON_DOUBLE_PRESS:
                     if (TrackUndo::canUndoClearTrack(track)) {
-                        if (DEBUG_BUTTONS) Serial.println("Button A: Undo Clear Track");
                         TrackUndo::undoClearTrack(track);
                         StorageManager::saveState(looperState.getLooperState());
-                    } else {
-                        if (DEBUG_BUTTONS) Serial.println("Nothing to undo for clear/mute.");
-                    }                
+                    }
                     break;
                 case BUTTON_TRIPLE_PRESS:
                     if (TrackUndo::canRedoClearTrack(track)) {
-                        if (DEBUG_BUTTONS) Serial.println("Button B: Redo Clear Track");
                         TrackUndo::redoClearTrack(track);
                         StorageManager::saveState(looperState.getLooperState());
-                    } else {
-                        if (DEBUG_BUTTONS) Serial.println("Nothing to redo for clear/mute.");
-                    }                
+                    }
                     break;
                 case BUTTON_SHORT_PRESS: {
                     uint8_t newIndex = (trackManager.getSelectedTrackIndex() + 1)
                                        % trackManager.getTrackCount();
                     trackManager.setSelectedTrack(newIndex);
-                    if (DEBUG_BUTTONS) {
-                        Serial.print("Button B: Switched to track ");
-                        Serial.println(newIndex);
-                    }
                     break;
                 }
                 case BUTTON_LONG_PRESS:
                     if (!track.hasData()) {
                         logger.debug("Mute ignored — track is empty");
                     } else {
-                        track.toggleMuteTrack();            
-                        if (DEBUG_BUTTONS) {
-                            Serial.print("Button B: Toggled mute on track ");
-                            Serial.println(trackManager.getSelectedTrackIndex());
-                        }
+                        track.toggleMuteTrack();
                     }
                     break;
                 default:
@@ -322,14 +279,9 @@ void ButtonManager::handleButton(ButtonId button, ButtonAction action) {
                     if (editManager.getCurrentState() == nullptr) {
                         // Enter note edit mode
                         editManager.enterEditMode(editManager.getNoteState(), clockManager.getCurrentTick());
-                        if (DEBUG_BUTTONS) Serial.println("Encoder Button: Enter Edit Mode (Note)");
                     } else {
                         // Switch to next state (for now, just stay in note state)
                         editManager.switchToNextState(trackManager.getSelectedTrack());
-                        if (DEBUG_BUTTONS) {
-                            Serial.print("Encoder Button: Switched to state: ");
-                            Serial.println(editManager.getCurrentState()->getName());
-                        }
                     }
                     break;
                 case BUTTON_LONG_PRESS:

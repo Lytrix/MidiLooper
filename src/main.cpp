@@ -114,6 +114,8 @@ void loop() {
     lastDisplayUpdate = now;
     displayManager.update();
   }
+
+  logger.setCategoryEnabled(CAT_MIDI, true);
   
   // End performance monitoring for this loop iteration
   PerformanceMonitor::globalPerformanceMonitor.endLoop();

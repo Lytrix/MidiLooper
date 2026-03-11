@@ -166,8 +166,7 @@ void MidiHandler::handleMidiMessage(byte type, byte channel, byte data1, byte da
 
 // --- Helper Functions ---
 bool MidiHandler::isControlChannel(byte channel) {
-  // Channels 13-16 are reserved for control (faders, program changes, etc.)
-  return (channel >= 13 && channel <= 16);
+  return (channel >= MidiConfig::RECORD_EXCLUDE_CHANNEL_MIN && channel <= MidiConfig::RECORD_EXCLUDE_CHANNEL_MAX);
 }
 
 // --- Individual Message Handlers ---

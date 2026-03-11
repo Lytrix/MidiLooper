@@ -24,7 +24,8 @@ enum LogCategory {
   CAT_TRACK = 4,
   CAT_BUTTON = 5,
   CAT_DISPLAY = 6,
-  CAT_MOVE_NOTES = 7
+  CAT_MOVE_NOTES = 7,
+  CAT_MIDI_LED = 8
 };
 
 /**
