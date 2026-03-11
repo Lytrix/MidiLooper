@@ -33,27 +33,42 @@ public:
   void onMidiClockPulse();
   void onMidiStart();
   void onMidiStop();
-  void checkClockSource();  // TODO: Implement clock source detection and switching
+  void checkClockSource();
   void setBpm(uint16_t newBpm);
+  void setBpmFloat(float newBpm);
   void setTicksPerQuarterNote(uint16_t newTicks);
   void handleMidiClock();  // Handle incoming MIDI clock messages
+  void requestTransitionTo(ClockSource target);
 
   // --- Accessors ---
   uint32_t getCurrentTick() const;
   bool isExternalClockPresent() const;
-  void setExternalClockPresent(bool present);
-  bool isClockRunning() const; // Returns true if either the internal or external clock is running
+  ClockSource getClockSource() const;
+  bool isClockRunning() const;
   uint32_t setLastMidiClockTime(uint32_t lastMidiClockTime);
 
 private:
+  void actuallyTransition(ClockSource from, ClockSource to);
+
   // --- Timing data ---
   uint32_t microsPerTick;
   volatile uint32_t currentTick;
   volatile uint32_t lastMidiClockTime;
   volatile uint32_t lastInternalTickTime;
 
+  // --- Clock source state machine ---
+  ClockSource clockSource;
+  ClockSource pendingClockSource;
+  bool transitionPending;
+
+  // --- BPM from MIDI clock (sliding window over 96 intervals = 1 bar) ---
+  static const uint8_t PULSE_BUF_SIZE = 97; // 96 intervals + 1
+  uint32_t pulseTimestamps[PULSE_BUF_SIZE];
+  uint8_t pulseHead;
+  uint8_t pulseFillCount;
+  float bpmSmoothed;
+
   // --- Clock detection ---
-  bool externalClockPresent;
   const uint32_t midiClockTimeout = 500000; // 500ms: timeout for external clock
 };
 

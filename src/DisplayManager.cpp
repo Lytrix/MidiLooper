@@ -357,6 +357,16 @@ void DisplayManager::drawInfoArea(uint32_t currentTick, Track& selectedTrack) {
     drawInfoField("LOOP", loopLine, loopX, y, false, 5);
     int chnX = loopX + 6 + (4 + 1 + 2) * 6; // LOOP:XX = 7 chars + 1 space
     drawInfoField("CHN", chnStr, chnX, y, false, 5);
+
+    static float displayedBpm = 0.0f;
+    if (displayedBpm == 0.0f || fabsf(bpm - displayedBpm) >= 0.f) {
+      displayedBpm = bpm;
+    }
+    char bpmStr[8];
+    snprintf(bpmStr, sizeof(bpmStr), "%.1f", (double)displayedBpm);
+    int bpmX = chnX + (3 + 1 + 2) * 6 + 6; // CHN:XX + space
+    drawInfoField("BPM", bpmStr, bpmX, y, false, 5);
+
     // Draw undo count right-aligned, max 99
     uint8_t undoCount = static_cast<uint8_t>(editManager.getDisplayUndoCount(selectedTrack));
     char undoStr[4];

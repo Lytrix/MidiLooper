@@ -2,7 +2,10 @@
 //  Licensed under the PolyForm Noncommercial 1.0.0
 
 #include "ClockManager.h"
+#include "ClockSourceStateMachine.h"
 #include "Globals.h"
+#include "LooperState.h"
+#include "StorageManager.h"
 #include <IntervalTimer.h>
 #include "TrackManager.h"
 #include "Logger.h"
@@ -18,9 +21,15 @@ ClockManager::ClockManager()
     currentTick(0),
     lastMidiClockTime(0),
     lastInternalTickTime(0),
-    externalClockPresent(false)
-    
-{}
+    clockSource(CLOCK_INTERNAL),
+    pendingClockSource(CLOCK_INTERNAL),
+    transitionPending(false),
+    pulseHead(0),
+    pulseFillCount(0),
+    bpmSmoothed(0.0f)
+{
+  memset(pulseTimestamps, 0, sizeof(pulseTimestamps));
+}
 
 
 uint32_t ClockManager::getCurrentTick() const {
@@ -31,28 +40,59 @@ uint32_t ClockManager::getCurrentTick() const {
 }
 
 bool ClockManager::isExternalClockPresent() const {
-  return externalClockPresent;
+  return clockSource == CLOCK_EXTERNAL;
 }
 
-void ClockManager::setExternalClockPresent(bool present) {
-  externalClockPresent = present;
+ClockSource ClockManager::getClockSource() const {
+  return clockSource;
 }
 
 void ClockManager::setup() {
-  microsPerTick = 60000000UL / (bpm * MidiConfig::PPQN);
+  microsPerTick = 60000000UL / (bpm * Config::INTERNAL_PPQN);
   clockTimer.begin([] { clockManager.updateInternalClock(); }, microsPerTick);
 }
 
 void ClockManager::setBpm(uint16_t newBpm) {
+  bpm = (float)newBpm;
+  microsPerTick = 60000000UL / (bpm * Config::INTERNAL_PPQN);
+  clockTimer.update(microsPerTick);
+}
+
+void ClockManager::setBpmFloat(float newBpm) {
+  if (newBpm < 20.0f) newBpm = 20.0f;
+  if (newBpm > 300.0f) newBpm = 300.0f;
   bpm = newBpm;
-  microsPerTick = 60000000UL / (bpm * MidiConfig::PPQN);
+  microsPerTick = 60000000UL / (bpm * Config::INTERNAL_PPQN);
   clockTimer.update(microsPerTick);
 }
 
 void ClockManager::setTicksPerQuarterNote(uint16_t newTicks) {
   ticksPerQuarterNote = newTicks;
-  microsPerTick = 60000000UL / (bpm * MidiConfig::PPQN);
+  microsPerTick = 60000000UL / (bpm * Config::INTERNAL_PPQN);
   clockTimer.update(microsPerTick);
+}
+
+void ClockManager::requestTransitionTo(ClockSource target) {
+  if (target != clockSource) {
+    pendingClockSource = target;
+    transitionPending = true;
+  }
+}
+
+void ClockManager::actuallyTransition(ClockSource from, ClockSource to) {
+  clockSource = to;
+  pendingClockSource = to;
+  transitionPending = false;
+
+  if (from == CLOCK_EXTERNAL && to == CLOCK_INTERNAL) {
+    pulseFillCount = 0;
+    pulseHead = 0;
+    bpmSmoothed = 0.0f;
+    StorageManager::saveState(looperState.getLooperState());
+    logger.info("MIDI clock lost, switching to internal at %.1f BPM", (double)bpm);
+  } else if (from == CLOCK_INTERNAL && to == CLOCK_EXTERNAL) {
+    logger.info("External MIDI clock detected");
+  }
 }
 
 
@@ -65,25 +105,38 @@ void ClockManager::updateInternalClock() {
 
 void ClockManager::onMidiClockPulse() {
   if (!sequencerRunning) return;
-  externalClockPresent = true;
-  //Avoid snapping if currentTick is 0.
+
+  requestTransitionTo(CLOCK_EXTERNAL);
+
+  // Sliding window BPM: ring buffer of 25 timestamps = 24 intervals (one quarter note)
+  pulseTimestamps[pulseHead] = micros();
+  if (pulseFillCount < PULSE_BUF_SIZE) pulseFillCount++;
+
+  if (pulseFillCount >= PULSE_BUF_SIZE) {
+    uint8_t tailIdx = (pulseHead + 1) % PULSE_BUF_SIZE;
+    uint32_t elapsed = pulseTimestamps[pulseHead] - pulseTimestamps[tailIdx];
+    if (elapsed > 0) {
+      float computedBpm = 240000000.0f / (float)elapsed;
+      if (computedBpm >= 20.0f && computedBpm <= 300.0f) {
+        if (bpmSmoothed > 0.0f && fabsf(computedBpm - bpmSmoothed) < 3.0f) {
+          computedBpm = 0.02f * computedBpm + 0.98f * bpmSmoothed;
+        }
+        bpmSmoothed = computedBpm;
+        setBpmFloat(computedBpm);
+      }
+    }
+  }
+  pulseHead = (pulseHead + 1) % PULSE_BUF_SIZE;
+
   if (currentTick != 0) {
     uint32_t expectedTick = ((currentTick / 8) + 1) * 8;
     if (currentTick != expectedTick) {
-        currentTick = expectedTick; // Resync to MIDI clock
+      currentTick = expectedTick;
     }
   }
-  
-  // if (pendingStart) {
-  //   // const uint32_t ticksPerBar = MidiConfig::PPQN * 4;
-  //   // if (currentTick % ticksPerBar == 0) {
-  //     currentTick = 0;
-  //     pendingStart = false;
-  //   // }
-  // }
 
   trackManager.updateAllTracks(currentTick);
-  lastMidiClockTime = setLastMidiClockTime(micros());
+  lastMidiClockTime = micros();
 }
 
 uint32_t ClockManager::setLastMidiClockTime(uint32_t lastMidiClockTime){
@@ -91,13 +144,25 @@ uint32_t ClockManager::setLastMidiClockTime(uint32_t lastMidiClockTime){
 }
 
 void ClockManager::checkClockSource() {
-  // Future enhancement: detect clock loss
+  if (clockSource == CLOCK_EXTERNAL && (micros() - lastMidiClockTime) > midiClockTimeout) {
+    requestTransitionTo(CLOCK_INTERNAL);
+  }
+
+  if (transitionPending) {
+    if (ClockSourceStateMachine::isValidTransition(clockSource, pendingClockSource)) {
+      actuallyTransition(clockSource, pendingClockSource);
+    } else {
+      transitionPending = false;
+    }
+  }
 }
 
 void ClockManager::onMidiStart() {
   sequencerRunning = true;
   pendingStart = false;
-  externalClockPresent = true;
+  requestTransitionTo(CLOCK_EXTERNAL);
+  pulseFillCount = 0;
+  pulseHead = 0;
   lastMidiClockTime = micros();
   currentTick = 0;
   trackManager.updateAllTracks(currentTick);
@@ -108,16 +173,10 @@ void ClockManager::onMidiStop() {
 }
 
 void ClockManager::handleMidiClock() {
-  if (!externalClockPresent) {
-    externalClockPresent = true;
-    logger.info("External MIDI clock detected");
-  }
-  
-  // Update internal clock based on MIDI clock
+  requestTransitionTo(CLOCK_EXTERNAL);
   currentTick += Config::TICKS_PER_CLOCK;
 }
 
-// Returns true if either the internal or external clock is running
 bool ClockManager::isClockRunning() const {
-    return sequencerRunning || externalClockPresent;
+  return sequencerRunning || (clockSource == CLOCK_EXTERNAL);
 }
