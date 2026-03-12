@@ -48,7 +48,7 @@ namespace Buttons {
 // Track and Timing Configuration
 // --------------------
 namespace Config {
-  constexpr uint8_t  NUM_TRACKS = 4;                                   // Number of looper tracks
+  constexpr uint8_t  NUM_TRACKS = 8;                                   // Number of looper tracks
   constexpr uint8_t  INTERNAL_PPQN = 192;                              // Internal resolution for timing
   constexpr uint8_t  QUARTERS_PER_BAR = 4;                             // Time signature numerator (4/4 time) 
   constexpr uint8_t  TICKS_PER_QUARTER_NOTE = INTERNAL_PPQN;           // For Musical Time naming consistency

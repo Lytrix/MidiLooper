@@ -386,6 +386,7 @@ void DisplayManager::drawNoteInfo(uint32_t currentTick, Track& selectedTrack) {
     uint32_t lengthLoop = selectedTrack.getLoopLength();
     uint32_t loopStartTick = selectedTrack.getLoopStartTick();
     const auto& notes = selectedTrack.getCachedNotes();
+    uint8_t currentTrackIdx = trackManager.getSelectedTrackIndex();
 
     const DisplayNote* noteToShow = nullptr;
     uint32_t displayStartTick = 0;
@@ -427,18 +428,25 @@ void DisplayManager::drawNoteInfo(uint32_t currentTick, Track& selectedTrack) {
                 if (isPlaying) {
                     noteToShow = &n;
                     displayStartTick = s;
+                    lastPlayedDisplayNote = n;
+                    lastPlayedTrackIndex = currentTrackIdx;
                     break;
                 }
             }
             if (!noteToShow) {
-                noteToShow = &notes.back();
+                // No note playing: prefer last-played note (stickiness) over jumping to notes.back()
+                if (lastPlayedTrackIndex == currentTrackIdx && lastPlayedDisplayNote.note != 0) {
+                    noteToShow = &lastPlayedDisplayNote;
+                } else {
+                    noteToShow = &notes.back();
+                }
                 displayStartTick = (noteToShow->startTick >= loopStartTick) ? 
                     (noteToShow->startTick - loopStartTick) : (noteToShow->startTick + lengthLoop - loopStartTick);
                 displayStartTick = displayStartTick % lengthLoop;
             }
         } else {
             noteToShow = &notes.back();
-            displayStartTick = (noteToShow->startTick >= loopStartTick) ? 
+            displayStartTick = (noteToShow->startTick >= loopStartTick) ?
                 (noteToShow->startTick - loopStartTick) : (noteToShow->startTick + lengthLoop - loopStartTick);
             displayStartTick = displayStartTick % lengthLoop;
         }
