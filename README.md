@@ -12,7 +12,7 @@ https://iestyn-lewis.github.io/4by8/
 - 1x Teensy 4.1
 - 1x 256x64 4bit monochrome display (SSD1322 OLED) — code also supports 16x2 LCD
 - 1x 6N137 (optocoupler for MIDI)
-- **Optional:** DROID controller (M4 + 2× B32) for full hardware control — see [DROID Controller](#-droid-controller) below
+- **Optional:** DROID controller (M4 + 2× B32) for full hardware control and LED feedback — see [DROID Controller](#-droid-controller) below
 
 The MIDI circuit is based on https://www.pjrc.com/teensy/td_libs_MIDI.html
 
@@ -46,6 +46,7 @@ Multi-track MIDI looper with full undo/redo, auto-save/load, and clear visual fe
 - Motorized fader support with feedback prevention
 - Dedicated edit modes for different operations
 - Full wrap-around support for notes crossing loop boundaries
+- **DROID LED feedback** — 16th step content, current tick indicator, 8 bar LEDs; updates on loop start/length change
 
 ## ✏️ Note Editor ##
 - Piano-roll note editor integrated into the looper UI
@@ -126,6 +127,24 @@ The looper is configured for a DROID controller (M4 + 2× B32). Configuration: [
 
 **Notes:** REC/PLAY, MUTE/DE, Edit Mode, and NOTELEN are fully implemented. Scene (notes 10–17) and 1BAR (notes 0–7) send on ch16 but need firmware mapping for direct scene/bar selection. Track row is unmapped in the default ini; MUTE/DE single-press cycles through 4 tracks.
 
+### LED Feedback (Channel 3)
+
+The Teensy sends LED feedback to the DROID on **Channel 3** (notes 0–15, 16–31, 40–47). Route this output to the DROID via MIDI thru (e.g. Teensy → Ableton → DROID).
+
+| LED Type | Notes | Description |
+|----------|-------|-------------|
+| **16th step content** | 0–15 | Shows which 16th steps have notes in the current bar |
+| **Current tick** | 16–31 | Highlights the playing 16th step (which step is currently playing) |
+| **8 bar LEDs** | 40–47 | Bar 0–7 status: used (vel 32), has notes (vel 64), current bar (vel 127) |
+
+**Behavior:**
+- **Initial update on startup** — 16th and bar LEDs refresh once after setup (no need to switch tracks)
+- **Loop start aware** — 16th content and tick indicator respect the loop start point (fader in LOOP_EDIT mode)
+- **Loop start change** — LEDs update immediately when you move the loop start, both during play and when stopped
+- **Loop length change** — LEDs update when resizing; bars beyond the new loop length receive NoteOff
+- **Bar LED logic** — Uses NoteOn velocity updates only during playback; NoteOff only when required (track switch, loop resize, clear)
+- **LED logging** — Disabled by default; set `logger.setCategoryEnabled(CAT_MIDI_LED, true)` in `main.cpp` for debug
+
 ---
 
 ## 🔴 REC/PLAY Button (Note 36) ##
@@ -200,6 +219,7 @@ The looper provides comprehensive undo/redo functionality for both overdub and c
 | `Track`        | `MidiEvent`, `NoteEvent`, `startLoopTick`, `loopLengthTicks`, `loopStartTick` | N/A                           | Stores MIDI events, track state, loop parameters, and cached note data |
 | `ClockManager` | `masterLoopLength`, `currentTick`   | `TrackManager`, `MidiHandler` | Distributes timing across all tracks, manages master loop synchronization |
 | `MidiHandler`  | MIDI events, channel routing        | `ClockManager`, `NoteEditManager` | Handles MIDI I/O, event filtering, and channel management              |
+| `MidiLedManager` | `lastBarVelocity`, `lastLoopStartTick` | `Track`, `MidiHandler` | DROID LED feedback: 16th content, current tick, 8 bar LEDs; respects loop start/length |
 | `NoteEditManager`| `selectedNoteIdx`, `bracketTick`, `editMode`, `loopStartTick`, `lengthEditingMode` | `Track`, `MidiHandler`, `DisplayManager` | Manages note selection, editing, loop start/length control, and fader integration |
 | `DisplayManager`| Visual state, display buffer       | `NoteEditManager`, `Track`    | Renders piano roll, track info, and real-time visual feedback          |
 
