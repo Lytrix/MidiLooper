@@ -1,21 +1,21 @@
 //  Copyright (c)  2025 Lytrix (Eelke Jager)
 //  Licensed under the PolyForm Noncommercial 1.0.0
 
-#include "MidiButtonManagerV2.h"
+#include "MidiButtonManager.h"
 #include "Logger.h"
 #include <functional>
 
-MidiButtonManagerV2 midiButtonManagerV2;
+MidiButtonManager midiButtonManager;
 
-MidiButtonManagerV2::MidiButtonManagerV2() {
+MidiButtonManager::MidiButtonManager() {
     // Set up the callback from processor to this manager
     processor.setButtonPressCallback(
-        std::bind(&MidiButtonManagerV2::onButtonPress, this, 
+        std::bind(&MidiButtonManager::onButtonPress, this, 
                   std::placeholders::_1, std::placeholders::_2, std::placeholders::_3)
     );
 }
 
-void MidiButtonManagerV2::setup() {
+void MidiButtonManager::setup() {
     // Initialize the configuration system
     MidiButtonConfig::Config::initialize();
     
@@ -25,16 +25,16 @@ void MidiButtonManagerV2::setup() {
     // Setup the processor after config is loaded
     processor.setup();
     
-    logger.info("MidiButtonManagerV2 setup complete with %d configured buttons", 
+    logger.info("MidiButtonManager setup complete with %d configured buttons", 
                 getConfiguredButtonCount());
 }
 
-void MidiButtonManagerV2::update() {
+void MidiButtonManager::update() {
     // Update the processor to handle pending button presses
     processor.update();
 }
 
-void MidiButtonManagerV2::handleMidiNote(uint8_t channel, uint8_t note, uint8_t velocity, bool isNoteOn) {
+void MidiButtonManager::handleMidiNote(uint8_t channel, uint8_t note, uint8_t velocity, bool isNoteOn) {
     // Validate input
     if (!isValidChannel(channel) || !isValidNote(note)) {
         return;
@@ -44,7 +44,7 @@ void MidiButtonManagerV2::handleMidiNote(uint8_t channel, uint8_t note, uint8_t 
     processor.handleMidiNote(channel, note, velocity, isNoteOn);
 }
 
-void MidiButtonManagerV2::onButtonPress(uint8_t note, uint8_t channel, MidiButtonConfig::PressType pressType) {
+void MidiButtonManager::onButtonPress(uint8_t note, uint8_t channel, MidiButtonConfig::PressType pressType) {
     // Find the button configuration
     const MidiButtonConfig::ButtonConfig* config = 
         MidiButtonConfig::Config::findButtonConfig(note, channel);
@@ -82,7 +82,7 @@ void MidiButtonManagerV2::onButtonPress(uint8_t note, uint8_t channel, MidiButto
     actions.executeAction(action, config->parameter);
 }
 
-void MidiButtonManagerV2::loadButtonConfiguration(const char* configName) {
+void MidiButtonManager::loadButtonConfiguration(const char* configName) {
     if (strcmp(configName, "basic") == 0) {
         MidiButtonConfig::Config::loadBasicConfiguration();
     } else if (strcmp(configName, "extended") == 0) {
@@ -98,7 +98,7 @@ void MidiButtonManagerV2::loadButtonConfiguration(const char* configName) {
                 configName, getConfiguredButtonCount());
 }
 
-void MidiButtonManagerV2::addCustomButton(uint8_t note, uint8_t channel, const char* description,
+void MidiButtonManager::addCustomButton(uint8_t note, uint8_t channel, const char* description,
                                          MidiButtonConfig::ActionType shortAction,
                                          MidiButtonConfig::ActionType longAction) {
     MidiButtonConfig::ButtonConfig config(note, channel, description);
@@ -109,15 +109,15 @@ void MidiButtonManagerV2::addCustomButton(uint8_t note, uint8_t channel, const c
     logger.info("Added custom button: %s (note %d, channel %d)", description, note, channel);
 }
 
-bool MidiButtonManagerV2::isButtonPressed(uint8_t note, uint8_t channel) const {
+bool MidiButtonManager::isButtonPressed(uint8_t note, uint8_t channel) const {
     return processor.isButtonPressed(note, channel);
 }
 
-uint32_t MidiButtonManagerV2::getButtonPressStartTime(uint8_t note, uint8_t channel) const {
+uint32_t MidiButtonManager::getButtonPressStartTime(uint8_t note, uint8_t channel) const {
     return processor.getButtonPressStartTime(note, channel);
 }
 
-void MidiButtonManagerV2::printButtonConfiguration() const {
+void MidiButtonManager::printButtonConfiguration() const {
     const auto& configs = MidiButtonConfig::Config::getButtonConfigs();
     
     logger.info("Button Configuration (%d buttons):", configs.size());
@@ -161,14 +161,14 @@ void MidiButtonManagerV2::printButtonConfiguration() const {
     }
 }
 
-uint32_t MidiButtonManagerV2::getConfiguredButtonCount() const {
+uint32_t MidiButtonManager::getConfiguredButtonCount() const {
     return MidiButtonConfig::Config::getButtonConfigs().size();
 }
 
-bool MidiButtonManagerV2::isValidChannel(uint8_t channel) const {
+bool MidiButtonManager::isValidChannel(uint8_t channel) const {
     return channel >= 1 && channel <= 16;
 }
 
-bool MidiButtonManagerV2::isValidNote(uint8_t note) const {
+bool MidiButtonManager::isValidNote(uint8_t note) const {
     return note <= 127;
-} 
+}

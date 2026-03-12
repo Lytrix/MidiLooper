@@ -22,7 +22,7 @@
 #include "Utils/ValidationUtils.h"
 #include "Utils/MidiEventUtils.h"
 #include "Utils/MidiMapping.h"
-#include "MidiFaderManagerV2.h"
+#include "MidiFaderManager.h"
 #include "MidiFaderProcessor.h"
 
 NoteEditManager noteEditManager;
@@ -588,7 +588,7 @@ bool NoteEditManager::shouldIgnoreFaderInput(MidiMapping::FaderType faderType) {
 }
 
 bool NoteEditManager::shouldIgnoreFaderInput(MidiMapping::FaderType faderType, int16_t pitchbendValue, uint8_t ccValue) {
-    MidiFaderProcessor::FaderState& state = midiFaderManagerV2.getFaderStateMutable(faderType);
+    MidiFaderProcessor::FaderState& state = midiFaderManager.getFaderStateMutable(faderType);
     uint32_t now = millis();    
     
     // No feedback prevention if we haven't sent anything recently
@@ -703,10 +703,10 @@ void NoteEditManager::sendFaderUpdate(MidiMapping::FaderType faderType, Track& t
 
     if (shouldSendProgramChange) {
         uint8_t program = (faderType == MidiMapping::FaderType::FADER_SELECT) ? 1 : 2;
-        midiHandler.sendProgramChange(midiFaderManagerV2.getFaderStateMutable(faderType).channel, program);
+        midiHandler.sendProgramChange(midiFaderManager.getFaderStateMutable(faderType).channel, program);
         
         logger.log(CAT_MIDI, LOG_DEBUG, "Sent Program Change: ch=%d program=%d (fader %d update)", 
-                   midiFaderManagerV2.getFaderStateMutable(faderType).channel, program, faderType);
+                   midiFaderManager.getFaderStateMutable(faderType).channel, program, faderType);
     } else if (faderType == MidiMapping::FaderType::FADER_FINE || faderType == MidiMapping::FaderType::FADER_NOTE_VALUE) {
         logger.log(CAT_MIDI, LOG_DEBUG, "Skipped program change for fader %d (CC fader) - only uses CC messages", faderType);
     }
@@ -716,14 +716,14 @@ void NoteEditManager::sendFaderUpdate(MidiMapping::FaderType faderType, Track& t
     
     // Record when we sent this update and set ignore periods
     uint32_t now = millis();
-    midiFaderManagerV2.getFaderStateMutable(faderType).lastSentTime = now;
+    midiFaderManager.getFaderStateMutable(faderType).lastSentTime = now;
     
     // IMPORTANT: If updating any channel 15 fader, all channel 15 faders get updated together.
     // Set ignore periods for all to prevent feedback from any MIDI message causing unwanted processing.
     if (faderType == MidiMapping::FaderType::FADER_COARSE || faderType == MidiMapping::FaderType::FADER_FINE || faderType == MidiMapping::FaderType::FADER_NOTE_VALUE) {
-        midiFaderManagerV2.getFaderStateMutable(MidiMapping::FaderType::FADER_COARSE).lastSentTime = now;
-        midiFaderManagerV2.getFaderStateMutable(MidiMapping::FaderType::FADER_FINE).lastSentTime = now;
-        midiFaderManagerV2.getFaderStateMutable(MidiMapping::FaderType::FADER_NOTE_VALUE).lastSentTime = now;
+        midiFaderManager.getFaderStateMutable(MidiMapping::FaderType::FADER_COARSE).lastSentTime = now;
+        midiFaderManager.getFaderStateMutable(MidiMapping::FaderType::FADER_FINE).lastSentTime = now;
+        midiFaderManager.getFaderStateMutable(MidiMapping::FaderType::FADER_NOTE_VALUE).lastSentTime = now;
         logger.log(CAT_MIDI, LOG_DEBUG, "Set ignore periods for all channel 15 faders (shared channel)");
     }
     
@@ -803,7 +803,7 @@ void NoteEditManager::sendCoarseFaderPosition(Track& track) {
             midiHandler.sendNoteOff(PITCHBEND_START_CHANNEL, 1, 0);
             
             // Record the value we sent for smart feedback detection
-            midiFaderManagerV2.getFaderStateMutable(MidiMapping::FaderType::FADER_COARSE).lastSentPitchbend = coarseMidiPitchbend;
+            midiFaderManager.getFaderStateMutable(MidiMapping::FaderType::FADER_COARSE).lastSentPitchbend = coarseMidiPitchbend;
             
             logger.log(CAT_MIDI, LOG_DEBUG, "Sent coarse pitchbend=%d + note 1 trigger (note at step %lu)", 
                        coarseMidiPitchbend, currentSixteenthStep);
@@ -863,7 +863,7 @@ void NoteEditManager::sendFineFaderPosition(Track& track) {
         midiHandler.sendNoteOff(FINE_CC_CHANNEL, 0, 0);
         
         // Record the value we sent for smart feedback detection
-        midiFaderManagerV2.getFaderStateMutable(MidiMapping::FaderType::FADER_FINE).lastSentCC = fineCCValue;
+        midiFaderManager.getFaderStateMutable(MidiMapping::FaderType::FADER_FINE).lastSentCC = fineCCValue;
         
         logger.log(CAT_MIDI, LOG_DEBUG, "Sent fine CC=%d + note trigger (note offset %ld from reference step %lu)", 
                    fineCCValue, offsetFromReferenceStep, referenceStep);
@@ -899,7 +899,7 @@ void NoteEditManager::sendNoteValueFaderPosition(Track& track) {
         midiHandler.sendNoteOff(NOTE_VALUE_CC_CHANNEL, 3, 0);
         
         // Record the value we sent for smart feedback detection
-        midiFaderManagerV2.getFaderStateMutable(MidiMapping::FaderType::FADER_NOTE_VALUE).lastSentCC = noteValue;
+        midiFaderManager.getFaderStateMutable(MidiMapping::FaderType::FADER_NOTE_VALUE).lastSentCC = noteValue;
         
         logger.log(CAT_MIDI, LOG_DEBUG, "Sent note value CC=%d + note 3 trigger (note value %d)", 
                    noteValue, noteValue);

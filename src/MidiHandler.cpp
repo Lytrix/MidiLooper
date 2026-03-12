@@ -8,8 +8,8 @@
 #include "MidiButtonActions.h"
 #include "Logger.h"
 #include "MidiEvent.h"
-#include "MidiButtonManagerV2.h"
-#include "MidiFaderManagerV2.h"
+#include "MidiButtonManager.h"
+#include "MidiFaderManager.h"
 #include "NoteEditManager.h"
 
 MIDI_CREATE_INSTANCE(HardwareSerial, Serial8, MIDIserial);  // Teensy Serial8 for 5-pin DIN MIDI
@@ -232,7 +232,7 @@ void MidiHandler::sendMidiThru(byte type, byte channel, byte data1, byte data2) 
 // --- Individual Message Handlers ---
 void MidiHandler::handleNoteOn(byte channel, byte note, byte velocity, uint32_t tickNow) {
   // Route button notes to new V2 MidiButtonManager for button handling
-  midiButtonManagerV2.handleMidiNote(channel, note, velocity, true);
+  midiButtonManager.handleMidiNote(channel, note, velocity, true);
   
   // Keep routing to old manager for fader functionality (temporary)
   //midiButtonManager.handleMidiNote(channel, note, velocity, true);
@@ -245,7 +245,7 @@ void MidiHandler::handleNoteOn(byte channel, byte note, byte velocity, uint32_t 
 
 void MidiHandler::handleNoteOff(byte channel, byte note, byte velocity, uint32_t tickNow) {
   // Route button notes to new V2 MidiButtonManager for button handling
-  midiButtonManagerV2.handleMidiNote(channel, note, velocity, false);
+  midiButtonManager.handleMidiNote(channel, note, velocity, false);
   
   // Keep routing to old manager for fader functionality (temporary)
   //midiButtonManager.handleMidiNote(channel, note, velocity, false);
@@ -447,7 +447,7 @@ void MidiHandler::setOutputSerial(bool enable) {
 void MidiHandler::usbHostNoteOn(uint8_t channel, uint8_t note, uint8_t velocity) {
   if (instance) {
     // Route button notes to new V2 MidiButtonManager for button handling
-    midiButtonManagerV2.handleMidiNote(channel, note, velocity, true);
+    midiButtonManager.handleMidiNote(channel, note, velocity, true);
     
     // Keep routing to old manager for fader functionality (temporary)
     //midiButtonManager.handleMidiNote(channel, note, velocity, true);
@@ -460,7 +460,7 @@ void MidiHandler::usbHostNoteOn(uint8_t channel, uint8_t note, uint8_t velocity)
 void MidiHandler::usbHostNoteOff(uint8_t channel, uint8_t note, uint8_t velocity) {
   if (instance) {
     // Route button notes to new V2 MidiButtonManager for button handling
-    midiButtonManagerV2.handleMidiNote(channel, note, velocity, false);
+    midiButtonManager.handleMidiNote(channel, note, velocity, false);
     
     // Keep routing to old manager for fader functionality (temporary)
     //midiButtonManager.handleMidiNote(channel, note, velocity, false);

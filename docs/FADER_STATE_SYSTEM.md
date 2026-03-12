@@ -5,7 +5,7 @@
 The Fader State System is a modular, configuration-driven architecture that manages all hardware fader interactions in the MIDI looper. The V2 system separates concerns into specialized components while maintaining smooth, predictable behavior through intelligent state management and feedback prevention.
 
 **Current Architecture (2025 - V2 System):**
-- **MidiFaderManagerV2**: Coordination and configuration management
+- **MidiFaderManager**: Coordination and configuration management
 - **MidiFaderProcessor**: State tracking and input processing
 - **MidiFaderActions**: Action execution and business logic
 - **MidiFaderConfig**: Configuration-based fader mapping
@@ -14,8 +14,8 @@ The Fader State System is a modular, configuration-driven architecture that mana
 
 ### Core Components
 
-#### 1. MidiFaderManagerV2 (Coordinator)
-**Location**: `src/MidiFaderManagerV2.cpp`
+#### 1. MidiFaderManager (Coordinator)
+**Location**: `src/MidiFaderManager.cpp`
 **Responsibilities**:
 - Coordinates between processor and actions
 - Manages fader configurations (basic/extended)
@@ -108,7 +108,7 @@ static constexpr uint8_t CC_DEADBAND_FINE = 1;           // Fine control precisi
 
 ## V2 System Flow
 
-### 1. Configuration Loading (`MidiFaderManagerV2::setup`)
+### 1. Configuration Loading (`MidiFaderManager::setup`)
 ```cpp
 void setup() {
     MidiFaderConfig::Config::initialize();

@@ -8,8 +8,8 @@
 #include "TrackUndo.h"
 #include "ClockManager.h"
 #include "MidiHandler.h"
-#include "MidiButtonManagerV2.h"
-#include "MidiFaderManagerV2.h"
+#include "MidiButtonManager.h"
+#include "MidiFaderManager.h"
 #include "Globals.h"
 #include "MidiConfig.h"
 #include "Utils/NoteUtils.h"
@@ -566,7 +566,7 @@ void EditSelectNoteState::sendTargetPitchbend(EditManager& manager, Track& track
                 midiHandler.sendNoteOff(MidiConfig::Fader::SELECT_CHANNEL, 0, 0);
                 
                 // Record the value we sent for smart feedback detection
-                midiFaderManagerV2.getFaderStateMutable(MidiMapping::FaderType::FADER_SELECT).lastSentPitchbend = targetPitchbend;
+                midiFaderManager.getFaderStateMutable(MidiMapping::FaderType::FADER_SELECT).lastSentPitchbend = targetPitchbend;
             } else {
                 logger.log(CAT_MIDI, LOG_DEBUG, "Target pitchbend: Current bracket tick %lu (relative %lu) not found in navigation positions", bracketTick, relativeBracketTick);
             }

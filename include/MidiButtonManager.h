@@ -1,8 +1,8 @@
 //  Copyright (c)  2025 Lytrix (Eelke Jager)
 //  Licensed under the PolyForm Noncommercial 1.0.0
 
-#ifndef MIDI_BUTTON_MANAGER_V2_H
-#define MIDI_BUTTON_MANAGER_V2_H
+#ifndef MIDI_BUTTON_MANAGER_H
+#define MIDI_BUTTON_MANAGER_H
 
 #include <Arduino.h>
 #include <cstdint>
@@ -11,18 +11,18 @@
 #include "Utils/MidiButtonConfig.h"
 
 /**
- * @class MidiButtonManagerV2
+ * @class MidiButtonManager
  * @brief Simplified MIDI button manager that coordinates between button processing and actions.
  * 
- * This is a refactored version that separates concerns:
+ * This class separates concerns:
  * - MidiButtonProcessor handles button state and press detection
  * - MidiButtonActions handles action execution
  * - MidiButtonConfig manages button configurations
  * - This class just coordinates between them
  */
-class MidiButtonManagerV2 {
+class MidiButtonManager {
 public:
-    MidiButtonManagerV2();
+    MidiButtonManager();
     
     void setup();
     void update();
@@ -54,6 +54,6 @@ private:
     bool isValidNote(uint8_t note) const;
 };
 
-extern MidiButtonManagerV2 midiButtonManagerV2;
+extern MidiButtonManager midiButtonManager;
 
-#endif // MIDI_BUTTON_MANAGER_V2_H 
+#endif // MIDI_BUTTON_MANAGER_H

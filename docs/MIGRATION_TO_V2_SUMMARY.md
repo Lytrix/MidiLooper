@@ -1,4 +1,4 @@
-# Migration to MidiButtonManagerV2 Summary
+# Migration to MidiButtonManager Summary
 
 ## 🎯 **SUCCESS: Your button system has been successfully migrated to the new modular V2 architecture!**
 
@@ -42,7 +42,7 @@ MidiButtonManager (monolithic)
 
 ### **New V2 System (modular)**
 ```
-MidiButtonManagerV2 (150 lines)
+MidiButtonManager (150 lines)
 ├── MidiButtonConfig (central configuration)
 ├── MidiButtonProcessor (core logic)
 ├── MidiButtonActions (individual actions)
@@ -74,8 +74,8 @@ MidiButtonManagerV2 (150 lines)
 ### **2. Test New Button Configuration**
 ```cpp
 // In your main loop, you can check configuration:
-midiButtonManagerV2.printButtonConfiguration();
-logger.info("Total buttons configured: %d", midiButtonManagerV2.getConfiguredButtonCount());
+midiButtonManager.printButtonConfiguration();
+logger.info("Total buttons configured: %d", midiButtonManager.getConfiguredButtonCount());
 ```
 
 ### **3. Try New Buttons**
@@ -89,17 +89,17 @@ logger.info("Total buttons configured: %d", midiButtonManagerV2.getConfiguredBut
 ### **Simple Configuration Loading**
 ```cpp
 // Current setup (matches your existing buttons + 37 new ones)
-midiButtonManagerV2.loadButtonConfiguration("full");
+midiButtonManager.loadButtonConfiguration("full");
 
 // Alternative configurations available:
-// midiButtonManagerV2.loadButtonConfiguration("basic");    // 4 buttons
-// midiButtonManagerV2.loadButtonConfiguration("extended"); // 16 buttons
+// midiButtonManager.loadButtonConfiguration("basic");    // 4 buttons
+// midiButtonManager.loadButtonConfiguration("extended"); // 16 buttons
 ```
 
 ### **Runtime Button Addition**
 ```cpp
 // Add custom buttons at runtime:
-midiButtonManagerV2.addCustomButton(
+midiButtonManager.addCustomButton(
     80, 1, "Custom Function",
     [](Track& track, uint32_t tick) {
         logger.info("Custom button pressed!");
@@ -149,8 +149,8 @@ New V2 System Files:
 ├── src/MidiButtonProcessor.cpp          # Press detection & routing
 ├── include/MidiButtonActions.h          # Individual action handlers
 ├── src/MidiButtonActions.cpp            # Action implementations
-├── include/MidiButtonManagerV2.h        # Lightweight coordinator
-├── src/MidiButtonManagerV2.cpp          # Main V2 interface
+├── include/MidiButtonManager.h        # Lightweight coordinator
+├── src/MidiButtonManager.cpp          # Main interface
 └── examples/ButtonConfiguration40Example.cpp  # Usage examples
 ```
 

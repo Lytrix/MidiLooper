@@ -33,7 +33,7 @@ I've successfully refactored your MidiButtonManager into a modular, scalable sys
   - Navigation with different step sizes
   - Custom action support
 
-### 4. **MidiButtonManagerV2** (`include/MidiButtonManagerV2.h/cpp`)
+### 4. **MidiButtonManager** (`include/MidiButtonManager.h/cpp`)
 - **Purpose**: Lightweight coordinator
 - **Features**:
   - Only ~150 lines (vs 2600+ in original!)
@@ -76,27 +76,27 @@ I've successfully refactored your MidiButtonManager into a modular, scalable sys
 ### 1. Basic Usage
 
 ```cpp
-#include "MidiButtonManagerV2.h"
+#include "MidiButtonManager.h"
 
 void setup() {
     // Initialize the system
-    midiButtonManagerV2.setup();
+    midiButtonManager.setup();
     
     // Load a preset configuration
-    midiButtonManagerV2.loadButtonConfiguration("full");  // 40 buttons
+    midiButtonManager.loadButtonConfiguration("full");  // 40 buttons
     
     // Or load other presets:
-    // midiButtonManagerV2.loadButtonConfiguration("basic");    // 4 buttons
-    // midiButtonManagerV2.loadButtonConfiguration("extended"); // 16 buttons
+    // midiButtonManager.loadButtonConfiguration("basic");    // 4 buttons
+    // midiButtonManager.loadButtonConfiguration("extended"); // 16 buttons
 }
 
 void loop() {
-    midiButtonManagerV2.update();
+    midiButtonManager.update();
 }
 
 // In your MIDI handler:
 void handleMidiNote(uint8_t channel, uint8_t note, uint8_t velocity, bool isNoteOn) {
-    midiButtonManagerV2.handleMidiNote(channel, note, velocity, isNoteOn);
+    midiButtonManager.handleMidiNote(channel, note, velocity, isNoteOn);
 }
 ```
 
@@ -202,9 +202,8 @@ Total: **40 buttons** with **multiple functions each** = **100+ actions**
 - Modular architecture
 
 ### Integration Steps
-1. Replace `#include "MidiButtonManager.h"` with `#include "MidiButtonManagerV2.h"`
-2. Replace `midiButtonManager` with `midiButtonManagerV2`
-3. Call `midiButtonManagerV2.loadButtonConfiguration("full")` for 40 buttons
+1. Include `MidiButtonManager.h` and use `midiButtonManager`
+2. Call `midiButtonManager.loadButtonConfiguration("full")` for 40 buttons
 4. Customize configuration in `MidiButtonConfig` as needed
 
 ## Available Actions
