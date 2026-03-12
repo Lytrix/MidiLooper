@@ -46,11 +46,9 @@ public:
     
     uint32_t lastPlayedTick = 0;
 
-    // If you want to track the last played note for display, use this:
+    // Sticky last-played note: keep showing it after note-off instead of jumping to notes.back()
     DisplayNote lastPlayedDisplayNote = {0, 0, 0, 0};
-    // Or remove if not needed
-    // const DisplayNote* getLastPlayedNote() const { return &lastPlayedDisplayNote; }
-    // void setLastPlayedNote(const DisplayNote* note) { if (note) lastPlayedDisplayNote = *note; }
+    uint8_t lastPlayedTrackIndex = 255;  // Invalid so we don't use stale data on first run
 
     // Helper functions for piano roll rendering
     void drawGridLines(uint32_t lengthLoop, int pianoRollY0, int pianoRollY1);

@@ -93,6 +93,9 @@ void Track::forceSetState(TrackState newState) { trackState = newState; }
 // -------------------------
 
 void Track::startRecording(uint32_t currentTick) {
+  if (isEmpty()) {
+    TrackUndo::pushUndoSnapshot(*this);
+  }
   if (!setState(TRACK_RECORDING)) {
     return;
   }
@@ -377,6 +380,7 @@ void Track::stopRecordingToStopped(uint32_t currentTick) {
 
   logger.logTrackEvent("Recording stopped (to STOPPED)", currentTick, "length=%lu", loopLengthTicks);
 
+  TrackUndo::pushUndoSnapshot(*this);
   setState(TRACK_STOPPED);
 }
 
