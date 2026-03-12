@@ -21,6 +21,7 @@ ClockManager::ClockManager()
     currentTick(0),
     lastMidiClockTime(0),
     lastInternalTickTime(0),
+    firstPulseAfterStart(false),
     clockSource(CLOCK_INTERNAL),
     pendingClockSource(CLOCK_INTERNAL),
     transitionPending(false),
@@ -131,8 +132,15 @@ void ClockManager::onMidiClockPulse() {
   }
   pulseHead = (pulseHead + 1) % PULSE_BUF_SIZE;
 
-  // Drive tick from MIDI clock (8 ticks per pulse at 24 PPQN) - no snap, avoids double-advance
-  currentTick += Config::TICKS_PER_CLOCK;
+  // Midish pattern: advance at the START of each pulse, but skip on the
+  // first pulse after Start (currentTick is already 0 from onMidiStart).
+  // This keeps currentTick at the correct musical position between pulses,
+  // so notes arriving after a clock read the right value from getCurrentTick().
+  if (firstPulseAfterStart) {
+    firstPulseAfterStart = false;
+  } else {
+    currentTick += Config::TICKS_PER_CLOCK;
+  }
 
   trackManager.updateAllTracks(currentTick);
   lastMidiClockTime = micros();
@@ -164,6 +172,7 @@ void ClockManager::onMidiStart() {
   pulseHead = 0;
   lastMidiClockTime = micros();
   currentTick = 0;
+  firstPulseAfterStart = true;
 
   // Start all stopped tracks (same as toggleTransport when starting)
   for (uint8_t i = 0; i < Config::NUM_TRACKS; i++) {
@@ -178,6 +187,7 @@ void ClockManager::onMidiStart() {
 
 void ClockManager::onMidiStop() {
   sequencerRunning = false;
+  firstPulseAfterStart = false;
 }
 
 void ClockManager::handleMidiClock() {
