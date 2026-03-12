@@ -48,6 +48,8 @@ namespace MidiConfig {
   const int CHANNEL_OMNI = 0; // Channel for listening to all MIDI channels
   const int RECORD_EXCLUDE_CHANNEL_MIN = 13; // Channels excluded from recording (e.g. Droid LED control 15-16, faders 13-14)
   const int RECORD_EXCLUDE_CHANNEL_MAX = 16;
+  const int LED_CHANNEL_MIN = 1;  // DROID LED feedback channels on USB (excluded from All Notes Off)
+  const int LED_CHANNEL_MAX = 4;
 }
 
 // --------------------

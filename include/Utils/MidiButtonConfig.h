@@ -39,6 +39,7 @@ enum class ActionType {
     SET_LOOP_END,
     TOGGLE_LENGTH_EDIT_MODE,
     TOGGLE_TRANSPORT,
+    RESET_TO_LOOP_START,
     CUSTOM_ACTION
 };
 

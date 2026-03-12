@@ -179,6 +179,10 @@ bool MidiHandler::isControlChannel(byte channel) {
   return (channel >= MidiConfig::RECORD_EXCLUDE_CHANNEL_MIN && channel <= MidiConfig::RECORD_EXCLUDE_CHANNEL_MAX);
 }
 
+bool MidiHandler::isLedChannel(byte channel) {
+  return (channel >= MidiConfig::LED_CHANNEL_MIN && channel <= MidiConfig::LED_CHANNEL_MAX);
+}
+
 void MidiHandler::sendMidiThru(byte type, byte channel, byte data1, byte data2) {
   switch (type) {
     case midi::NoteOn:
@@ -310,10 +314,13 @@ void MidiHandler::sendMidiEvent(const MidiEvent& event) {
             if (outputUSB) usbMIDI.sendNoteOff(event.data.noteData.note, event.data.noteData.velocity, event.channel);
             if (outputSerial) MIDIserial.sendNoteOff(event.data.noteData.note, event.data.noteData.velocity, event.channel);
             break;
-        case midi::ControlChange:
-            if (outputUSB) usbMIDI.sendControlChange(event.data.ccData.cc, event.data.ccData.value, event.channel);
+        case midi::ControlChange: {
+            // Skip CC 123 (All Notes Off) on LED channels - preserves DROID button LEDs on USB
+            bool skipUsb = (event.data.ccData.cc == 123 && isLedChannel(event.channel));
+            if (outputUSB && !skipUsb) usbMIDI.sendControlChange(event.data.ccData.cc, event.data.ccData.value, event.channel);
             if (outputSerial) MIDIserial.sendControlChange(event.data.ccData.cc, event.data.ccData.value, event.channel);
             break;
+        }
         case midi::PitchBend:
             if (outputUSB) usbMIDI.sendPitchBend(event.data.pitchBend, event.channel);
             if (outputSerial) MIDIserial.sendPitchBend(event.data.pitchBend, event.channel);

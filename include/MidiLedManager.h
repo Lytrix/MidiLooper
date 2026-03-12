@@ -27,9 +27,10 @@ public:
     void setUpdateDelay(uint16_t delayMicros);
     
 private:
-    static constexpr uint8_t LED_CHANNEL = 2;           // Channel 2 for LED control
-    static constexpr uint8_t LED_VELOCITY = 127;         // Velocity 64 for normal LEDs
-    static constexpr uint8_t TICK_CHANNEL = 3;          // Channel 3 for current tick indicator
+    static constexpr uint8_t LED_CHANNEL = 3;           // Channel 3 - working channel on DROID 1.7 (ch2/ch4 don't receive)
+    static constexpr uint8_t LED_VELOCITY = 64;         // Velocity 64 for normal LEDs
+    static constexpr uint8_t TICK_CHANNEL = 3;          // Same channel, uses notes 16-31 (TICK_NOTE_OFFSET)
+    static constexpr uint8_t TICK_NOTE_OFFSET = 16;     // Tick uses notes 16-31 to avoid conflict with bar content (0-15)
     static constexpr uint8_t TICK_VELOCITY = 127;       // Velocity for current tick indicator
     static constexpr uint8_t NUM_LEDS = 16;             // 16 LEDs for 16th notes
     static constexpr uint16_t DEFAULT_UPDATE_DELAY = 500; // Default 0.5ms delay
