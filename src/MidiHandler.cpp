@@ -5,6 +5,7 @@
 #include "ClockManager.h"
 #include "TrackManager.h"
 #include "MidiHandler.h"
+#include "MidiButtonActions.h"
 #include "Logger.h"
 #include "MidiEvent.h"
 #include "MidiButtonManagerV2.h"
@@ -285,16 +286,13 @@ void MidiHandler::handleProgramChange(byte channel, byte program, uint32_t tickN
 
 void MidiHandler::handleMidiStart() {
   clockManager.onMidiStart();
+  midiButtonActions.syncTransportLed();
 }
 
 void MidiHandler::handleMidiStop() {
-  // broadcast All-Notes-Off on every track
-  for (size_t i = 0; i < trackManager.getTrackCount(); ++i) {
-    Track &t = trackManager.getTrack(i);
-    t.sendAllNotesOff();
-    t.stopPlaying();  // update LCD state to STOPPED if desired
-  }
+  trackManager.handleTransportStop();  // Handles RECORDING->stopped, OVERDUBBING->stopped, PLAYING->stopped, ARMED->empty
   clockManager.onMidiStop();
+  midiButtonActions.syncTransportLed();
 }
 
 void MidiHandler::handleMidiContinue() {

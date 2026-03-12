@@ -87,6 +87,7 @@ public:
   // Recording control
   void startRecording(uint32_t startLoopTick);
   void stopRecording(uint32_t currentTick);
+  void stopRecordingToStopped(uint32_t currentTick);  // Stop recording, end in STOPPED (for MIDI Stop)
 
   // Playback control
   void startPlaying(uint32_t currentTick);
@@ -96,6 +97,7 @@ public:
   // Overdubbing control
   void startOverdubbing(uint32_t currentTick);
   void stopOverdubbing();
+  void stopOverdubbingToStopped();  // Stop overdub, end in STOPPED (for MIDI Stop)
 
   // Track management
   void clear();

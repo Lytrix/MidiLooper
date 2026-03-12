@@ -238,6 +238,15 @@ void MidiButtonActions::handleToggleTransport() {
                 transportNote);
 }
 
+void MidiButtonActions::syncTransportLed() {
+    const uint8_t transportNote = 39;  // D#2 - same as handleToggleTransport
+    if (clockManager.isTransportRunning()) {
+        midiHandler.sendNoteOn(MidiButtonConfig::Channels::TRANSPORT, transportNote, 127);
+    } else {
+        midiHandler.sendNoteOff(MidiButtonConfig::Channels::TRANSPORT, transportNote, 0);
+    }
+}
+
 // Stubbed implementations for future expansion
 void MidiButtonActions::handleTogglePlay() {
     Track& track = getCurrentTrack();

@@ -57,6 +57,7 @@ public:
   void startPlayingTrack(uint8_t trackIndex);
   void stopPlayingTrack(uint8_t trackIndex);
   void startOverdubbingTrack(uint8_t trackIndex);
+  void handleTransportStop();  // Stop all tracks (MIDI Stop) - recording->stopped, overdub->stopped, etc.
   void clearTrack(uint8_t trackIndex);
 
   // --- Mute / Solo ---

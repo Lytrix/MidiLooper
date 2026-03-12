@@ -354,6 +354,32 @@ void Track::stopRecording(uint32_t currentTick) {
   startOverdubbing(currentTick);
 }
 
+void Track::stopRecordingToStopped(uint32_t currentTick) {
+  if (!setState(TRACK_STOPPED_RECORDING)) return;
+
+  finalizePendingNotes(currentTick);
+  validateAndCleanupMidiEvents();
+
+  uint32_t rawLength = currentTick - startLoopTick;
+  uint32_t rem       = rawLength % TICKS_PER_BAR;
+  uint32_t grace     = TICKS_PER_BAR / 2;
+
+  if (rem <= grace) {
+      loopLengthTicks = (rawLength / TICKS_PER_BAR) * TICKS_PER_BAR;
+  } else {
+      loopLengthTicks = ((rawLength / TICKS_PER_BAR) + 1) * TICKS_PER_BAR;
+  }
+
+  nextEventIndex = 0;
+  lastTickInLoop = 0;
+  startLoopTick = 0;
+  invalidateCaches();
+
+  logger.logTrackEvent("Recording stopped (to STOPPED)", currentTick, "length=%lu", loopLengthTicks);
+
+  setState(TRACK_STOPPED);
+}
+
 // -------------------------
 // Start playing
 // -------------------------
@@ -402,6 +428,17 @@ void Track::stopOverdubbing() {
   startLoopTick = 0;
   resetPlaybackState(0);
   StorageManager::saveState(looperState.getLooperState()); // Save after overdubbing
+}
+
+void Track::stopOverdubbingToStopped() {
+  if (isEmpty()) return;
+  sendAllNotesOff();
+  validateAndCleanupMidiEvents();
+  setState(TRACK_STOPPED);
+  startLoopTick = 0;
+  resetPlaybackState(0);
+  logger.logTrackEvent("Overdubbing stopped (to STOPPED)", clockManager.getCurrentTick());
+  StorageManager::saveState(looperState.getLooperState());
 }
 
 // -------------------------

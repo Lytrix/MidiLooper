@@ -113,6 +113,32 @@ void TrackManager::stopPlayingTrack(uint8_t trackIndex) {
   if (trackIndex < Config::NUM_TRACKS) tracks[trackIndex].stopPlaying();
 }
 
+void TrackManager::handleTransportStop() {
+  uint32_t currentTick = clockManager.getCurrentTick();
+  for (uint8_t i = 0; i < Config::NUM_TRACKS; ++i) {
+    Track& t = tracks[i];
+    t.sendAllNotesOff();
+    if (t.isRecording()) {
+      t.stopRecordingToStopped(currentTick);
+      uint32_t recordedLength = t.getLoopLength();
+      if (recordedLength > 0 && masterLoopLength == 0) {
+        setMasterLoopLength(recordedLength);
+      }
+      if (autoAlignEnabled) {
+        t.setLoopLength(masterLoopLength);
+      }
+    } else if (t.isOverdubbing()) {
+      t.stopOverdubbingToStopped();
+    } else if (t.isPlaying()) {
+      t.stopPlaying();
+    } else if (t.isArmed()) {
+      t.setState(TRACK_EMPTY);
+      pendingRecord[i] = false;
+    }
+  }
+  StorageManager::saveState(looperState.getLooperState());
+}
+
 void TrackManager::clearTrack(uint8_t trackIndex) {
   if (trackIndex < Config::NUM_TRACKS) tracks[trackIndex].clear();
 
