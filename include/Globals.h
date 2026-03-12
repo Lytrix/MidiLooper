@@ -7,7 +7,7 @@
  *
  * Defines:
  *  - LCD, button, and encoder hardware pin assignments in LCD and Buttons namespaces.
- *  - Default MIDI channel and PPQN in MidiConfig namespace.
+ *  - MIDI channels and CCs in MidiConfig.h.
  *  - Track count, internal PPQN, time signature, and loop timing constants in Config namespace.
  *  - Runtime settings: bpm, ticksPerQuarterNote, quartersPerBar, ticksPerBar, and display timing.
  *  - System helper functions: setupGlobals(), isBarBoundary(), loadConfig(), saveConfig().
@@ -41,16 +41,8 @@ namespace Buttons {
   const int ENCODER_BUTTON_PIN = 31;
 }
 
-// MIDI Configuration
-namespace MidiConfig {
-  const int CHANNEL = 1;      // Default MIDI channel
-  const int PPQN = 24;        // MIDI clock pulses per quarter note
-  const int CHANNEL_OMNI = 0; // Channel for listening to all MIDI channels
-  const int RECORD_EXCLUDE_CHANNEL_MIN = 13; // Channels excluded from recording (e.g. Droid LED control 15-16, faders 13-14)
-  const int RECORD_EXCLUDE_CHANNEL_MAX = 16;
-  const int LED_CHANNEL_MIN = 1;  // DROID LED feedback channels on USB (excluded from All Notes Off)
-  const int LED_CHANNEL_MAX = 4;
-}
+// MIDI Configuration (channels, CCs, record exclusion, LED feedback)
+#include "MidiConfig.h"
 
 // --------------------
 // Track and Timing Configuration

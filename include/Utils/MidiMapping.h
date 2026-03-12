@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <vector>
 #include <string>
+#include "MidiConfig.h"
 
 namespace MidiMapping {
 
@@ -61,13 +62,13 @@ struct EncoderConfig {
         : channel(ch), ccNumber(cc), upValue(up), downValue(down), description(desc) {}
 };
 
-// Default MIDI configuration
+// Default MIDI configuration (alias MidiConfig where applicable)
 namespace Defaults {
     // MIDI channels
-    constexpr uint8_t BUTTON_CHANNEL = 1;
-    constexpr uint8_t FADER_CHANNEL = 15;
-    constexpr uint8_t SELECT_CHANNEL = 16;
-    constexpr uint8_t ENCODER_CHANNEL = 1;  // Same as button channel
+    constexpr uint8_t BUTTON_CHANNEL = MidiConfig::Channels::DEFAULT;
+    constexpr uint8_t FADER_CHANNEL = MidiConfig::Fader::COARSE_CHANNEL;
+    constexpr uint8_t SELECT_CHANNEL = MidiConfig::Fader::SELECT_CHANNEL;
+    constexpr uint8_t ENCODER_CHANNEL = MidiConfig::Channels::DEFAULT;
     
     // MIDI notes for buttons
     constexpr uint8_t NOTE_C2 = 36;  // Button A
@@ -76,8 +77,8 @@ namespace Defaults {
     constexpr uint8_t NOTE_D2_SHARP = 39;  // Button D
     
     // MIDI CC numbers
-    constexpr uint8_t CC_FINE = 2;
-    constexpr uint8_t CC_NOTE_VALUE = 3;
+    constexpr uint8_t CC_FINE = MidiConfig::Fader::FINE_CC;
+    constexpr uint8_t CC_NOTE_VALUE = MidiConfig::Fader::NOTE_VALUE_CC;
     constexpr uint8_t ENCODER_CC = 4;
     
     // Encoder values

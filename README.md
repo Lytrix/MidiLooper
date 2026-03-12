@@ -98,7 +98,7 @@ For detailed technical documentation, see: [`docs/LOOP_START_EDITING.md`](docs/L
 
 ## 🎛️ DROID Controller ##
 
-The looper is configured for a DROID controller (M4 + 2× B32). Configuration: [`droid/midilooper_v1.ini`](droid/midilooper_v1.ini).
+The looper is configured for a DROID controller (M4 + 2× B32). MIDI channels and CCs are centralized in [`include/MidiConfig.h`](include/MidiConfig.h); the DROID ini must match. Configuration: [`droid/midilooper_v1.ini`](droid/midilooper_v1.ini).
 
 ### 8×8 Button Grid + 4 Sliders Overview
 

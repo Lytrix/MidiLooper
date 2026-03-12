@@ -176,7 +176,7 @@ void MidiHandler::handleMidiMessage(byte type, byte channel, byte data1, byte da
 
 // --- Helper Functions ---
 bool MidiHandler::isControlChannel(byte channel) {
-  return (channel >= MidiConfig::RECORD_EXCLUDE_CHANNEL_MIN && channel <= MidiConfig::RECORD_EXCLUDE_CHANNEL_MAX);
+  return (channel >= MidiConfig::RECORD_EXCLUDE_MIN && channel <= MidiConfig::RECORD_EXCLUDE_MAX);
 }
 
 bool MidiHandler::isLedChannel(byte channel) {

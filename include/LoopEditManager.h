@@ -13,6 +13,7 @@
 #include "TrackUndo.h"
 #include "Logger.h"
 #include "Globals.h"
+#include "MidiConfig.h"
 #include "Utils/NoteUtils.h"
 
 /**
@@ -60,10 +61,6 @@ private:
     uint32_t loopStartEditingTime = 0;
     bool loopStartEditingEnabled = true;
     uint32_t lastLoopStartEditingActivityTime = 0;
-    
-    // MIDI constants for loop length feedback
-    static constexpr uint8_t LOOP_LENGTH_CC_CHANNEL = 16;
-    static constexpr uint8_t LOOP_LENGTH_CC_NUMBER = 101;
     
     // Helper methods
     uint32_t calculateLoopStartTick(int16_t pitchValue, Track& track);

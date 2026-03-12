@@ -202,7 +202,7 @@ void LoopEditManager::sendCurrentLoopLengthCC(Track& track) {
     
     if (currentLoopLength == 0) {
         // No loop set yet, send CC for 1 bar
-        midiHandler.sendControlChange(LOOP_LENGTH_CC_CHANNEL, LOOP_LENGTH_CC_NUMBER, 0);  // CC 0 = 1 bar
+        midiHandler.sendControlChange(MidiConfig::LoopEdit::LENGTH_CC_CHANNEL, MidiConfig::LoopEdit::LENGTH_CC_NUMBER, 0);  // CC 0 = 1 bar
         logger.log(CAT_MIDI, LOG_DEBUG, "Sent loop length CC feedback: length=0 -> CC=0 (1 bar default)");
         return;
     }
@@ -210,7 +210,7 @@ void LoopEditManager::sendCurrentLoopLengthCC(Track& track) {
     uint8_t ccValue = calculateCCFromLoopLength(currentLoopLength);
     
     // Send CC feedback
-    midiHandler.sendControlChange(LOOP_LENGTH_CC_CHANNEL, LOOP_LENGTH_CC_NUMBER, ccValue);
+    midiHandler.sendControlChange(MidiConfig::LoopEdit::LENGTH_CC_CHANNEL, MidiConfig::LoopEdit::LENGTH_CC_NUMBER, ccValue);
     
     uint32_t currentBars = currentLoopLength / Config::TICKS_PER_BAR;
     logger.log(CAT_MIDI, LOG_DEBUG, "Sent loop length CC feedback: %lu bars (%lu ticks) -> CC=%d", 

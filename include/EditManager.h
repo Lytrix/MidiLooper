@@ -10,6 +10,7 @@
 #include "EditLengthNoteState.h"
 #include "EditPitchNoteState.h"
 #include "MidiEvent.h"
+#include "MidiConfig.h"
 #include <vector>
 #include <map>
 
@@ -172,10 +173,6 @@ private:
     // LoopManager state
     MainEditMode currentMainEditMode = MAIN_MODE_NOTE_EDIT;  // Start in note edit mode
     
-    // MIDI constants for program changes
-    static constexpr uint8_t PROGRAM_CHANGE_CHANNEL = 16;
-    static constexpr uint8_t LOOP_LENGTH_CC_CHANNEL = 16;
-    static constexpr uint8_t LOOP_LENGTH_CC_NUMBER = 101;
 };
 
 extern EditManager editManager; 

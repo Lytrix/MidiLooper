@@ -11,6 +11,7 @@
 #include "MidiButtonManagerV2.h"
 #include "MidiFaderManagerV2.h"
 #include "Globals.h"
+#include "MidiConfig.h"
 #include "Utils/NoteUtils.h"
 #include "Utils/ValidationUtils.h"
 #include "NoteEditManager.h"
@@ -557,12 +558,12 @@ void EditSelectNoteState::sendTargetPitchbend(EditManager& manager, Track& track
                 logger.log(CAT_MIDI, LOG_DEBUG, "SENDING PITCHBEND: Position %d/%lu at tick %lu (relative %lu) = value %d (range: %d to %d)", 
                            currentPosIndex, allPositions.size(), bracketTick, relativeBracketTick, targetPitchbend, PITCHBEND_MIN, PITCHBEND_MAX);
                 
-                // Send the pitchbend value to external device on channel 16
-                midiHandler.sendPitchBend(16, targetPitchbend);
+                // Send the pitchbend value to external device (select fader channel)
+                midiHandler.sendPitchBend(MidiConfig::Fader::SELECT_CHANNEL, targetPitchbend);
                 
                 // Send note trigger to help motorized fader update (similar to fader 3)
-                midiHandler.sendNoteOn(16, 0, 127);
-                midiHandler.sendNoteOff(16, 0, 0);
+                midiHandler.sendNoteOn(MidiConfig::Fader::SELECT_CHANNEL, 0, 127);
+                midiHandler.sendNoteOff(MidiConfig::Fader::SELECT_CHANNEL, 0, 0);
                 
                 // Record the value we sent for smart feedback detection
                 midiFaderManagerV2.getFaderStateMutable(MidiMapping::FaderType::FADER_SELECT).lastSentPitchbend = targetPitchbend;

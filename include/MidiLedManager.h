@@ -6,6 +6,7 @@
 #include "MidiHandler.h"
 #include "Logger.h"
 #include "Globals.h"
+#include "MidiConfig.h"
 
 class MidiLedManager {
 public:
@@ -27,14 +28,14 @@ public:
     void setUpdateDelay(uint16_t delayMicros);
     
 private:
-    static constexpr uint8_t LED_CHANNEL = 3;           // Channel 3 - working channel on DROID 1.7 (ch2/ch4 don't receive)
+    static constexpr uint8_t LED_CHANNEL = MidiConfig::Led::CHANNEL;
     static constexpr uint8_t LED_VELOCITY = 64;         // Velocity 64 for normal LEDs
-    static constexpr uint8_t TICK_CHANNEL = 3;          // Same channel, uses notes 16-31 (TICK_NOTE_OFFSET)
-    static constexpr uint8_t TICK_NOTE_OFFSET = 16;     // Tick uses notes 16-31 to avoid conflict with bar content (0-15)
+    static constexpr uint8_t TICK_CHANNEL = MidiConfig::Led::CHANNEL;
+    static constexpr uint8_t TICK_NOTE_OFFSET = MidiConfig::Led::TICK_OFFSET;
     static constexpr uint8_t TICK_VELOCITY = 127;       // Velocity for current tick indicator
     static constexpr uint8_t NUM_LEDS = 16;             // 16 LEDs for 16th notes
     // 8 bar LED feedback (same channel 3, notes 40-47 like 16th step note logic)
-    static constexpr uint8_t BAR_LED_BASE_NOTE = 40;    // Bar 0 = note 40, Bar 1 = 41, ... Bar 7 = 47
+    static constexpr uint8_t BAR_LED_BASE_NOTE = MidiConfig::Led::BAR_BASE;
     static constexpr uint8_t NUM_BAR_LEDS = 8;
     static constexpr uint8_t VEL_BAR_USED = 32;         // Bar in loop, no notes
     static constexpr uint8_t VEL_BAR_HAS_NOTES = 64;   // Bar contains notes

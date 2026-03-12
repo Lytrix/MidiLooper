@@ -15,6 +15,7 @@
 #include "Track.h"
 #include "Logger.h"
 #include "LoopEditManager.h"
+#include "MidiConfig.h"
 
 /**
  * @class NoteEditManager
@@ -106,20 +107,14 @@ private:
     
 
     
-    // MIDI constants for pitchbend navigation
-    static constexpr uint8_t PITCHBEND_SELECT_CHANNEL = 16;  // Fader 1: Note selection
-    static constexpr uint8_t PITCHBEND_START_CHANNEL = 15;   // Fader 2: Coarse start position (16th steps)
-    
-    // MIDI constants for program changes
-    static constexpr uint8_t PROGRAM_CHANGE_CHANNEL = 16;
-    
-    // MIDI constants for fine control via CC
-    static constexpr uint8_t FINE_CC_CHANNEL = 15;    // Channel 15 for fine CC control (same as coarse)
-    static constexpr uint8_t FINE_CC_NUMBER = 2;      // CC2 for fine start position (tick level)
-    
-    // MIDI constants for note value control via CC
-    static constexpr uint8_t NOTE_VALUE_CC_CHANNEL = 15;  // Channel 15 for note value CC control
-    static constexpr uint8_t NOTE_VALUE_CC_NUMBER = 3;    // CC3 for note value editing
+    // MIDI constants (from MidiConfig)
+    static constexpr uint8_t PITCHBEND_SELECT_CHANNEL = MidiConfig::Fader::SELECT_CHANNEL;
+    static constexpr uint8_t PITCHBEND_START_CHANNEL = MidiConfig::Fader::COARSE_CHANNEL;
+    static constexpr uint8_t PROGRAM_CHANGE_CHANNEL = MidiConfig::PROGRAM_CHANGE_CHANNEL;
+    static constexpr uint8_t FINE_CC_CHANNEL = MidiConfig::Fader::FINE_CHANNEL;
+    static constexpr uint8_t FINE_CC_NUMBER = MidiConfig::Fader::FINE_CC;
+    static constexpr uint8_t NOTE_VALUE_CC_CHANNEL = MidiConfig::Fader::NOTE_VALUE_CHANNEL;
+    static constexpr uint8_t NOTE_VALUE_CC_NUMBER = MidiConfig::Fader::NOTE_VALUE_CC;
     static constexpr int16_t PITCHBEND_MIN = -8192;  // Standard MIDI pitchbend minimum
     static constexpr int16_t PITCHBEND_MAX = 8191;   // Standard MIDI pitchbend maximum
     static constexpr int16_t PITCHBEND_CENTER = 0;   // Center position

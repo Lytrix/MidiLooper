@@ -2,6 +2,7 @@
 //  Licensed under the PolyForm Noncommercial 1.0.0
 
 #include "Utils/MidiFaderConfig.h"
+#include "MidiConfig.h"
 #include "Logger.h"
 
 namespace MidiFaderConfig {
@@ -24,39 +25,39 @@ void Config::loadBasicConfiguration() {
     faderConfigs.clear();
     
     // Fader 1: Note Selection (Channel 16, Pitchbend)
-    FaderConfig fader1(MidiMapping::FaderType::FADER_SELECT, 16, "Note Selection");
+    FaderConfig fader1(MidiMapping::FaderType::FADER_SELECT, MidiConfig::Fader::SELECT_CHANNEL, "Note Selection");
     fader1.withAction(ActionType::SELECT_NOTE)
           .withFeedbackIgnore(100)
           .withDeadbands(23, 1)
           .withCenters(0, 64)
-          .withGroup(16);
+          .withGroup(MidiConfig::Fader::SELECT_CHANNEL);
     faderConfigs.push_back(fader1);
     
     // Fader 2: Coarse Note Movement (Channel 15, Pitchbend)
-    FaderConfig fader2(MidiMapping::FaderType::FADER_COARSE, 15, "Coarse Movement");
+    FaderConfig fader2(MidiMapping::FaderType::FADER_COARSE, MidiConfig::Fader::COARSE_CHANNEL, "Coarse Movement");
     fader2.withAction(ActionType::MOVE_NOTE_COARSE)
           .withFeedbackIgnore(100)
           .withDeadbands(23, 1)
           .withCenters(0, 64)
-          .withGroup(15);
+          .withGroup(MidiConfig::Fader::COARSE_CHANNEL);
     faderConfigs.push_back(fader2);
     
     // Fader 3: Fine Note Movement (Channel 15, CC2)
-    FaderConfig fader3(MidiMapping::FaderType::FADER_FINE, 15, 2, "Fine Movement");
+    FaderConfig fader3(MidiMapping::FaderType::FADER_FINE, MidiConfig::Fader::FINE_CHANNEL, MidiConfig::Fader::FINE_CC, "Fine Movement");
     fader3.withAction(ActionType::MOVE_NOTE_FINE)
           .withFeedbackIgnore(100)
           .withDeadbands(23, 1)
           .withCenters(0, 64)
-          .withGroup(15);
+          .withGroup(MidiConfig::Fader::FINE_CHANNEL);
     faderConfigs.push_back(fader3);
     
     // Fader 4: Note Value Change (Channel 15, CC3)
-    FaderConfig fader4(MidiMapping::FaderType::FADER_NOTE_VALUE, 15, 3, "Note Value");
+    FaderConfig fader4(MidiMapping::FaderType::FADER_NOTE_VALUE, MidiConfig::Fader::NOTE_VALUE_CHANNEL, MidiConfig::Fader::NOTE_VALUE_CC, "Note Value");
     fader4.withAction(ActionType::CHANGE_NOTE_VALUE)
           .withFeedbackIgnore(100)
           .withDeadbands(23, 1)
           .withCenters(0, 64)
-          .withGroup(15);
+          .withGroup(MidiConfig::Fader::NOTE_VALUE_CHANNEL);
     faderConfigs.push_back(fader4);
     
     logger.info("Loaded basic fader configuration: %d faders", faderConfigs.size());
@@ -66,19 +67,19 @@ void Config::loadExtendedConfiguration() {
     loadBasicConfiguration();
     
     // Add fallback CC mappings for fader 4 (as in original system)
-    FaderConfig fader4_cc4(MidiMapping::FaderType::FADER_NOTE_VALUE, 15, 4, "Note Value (CC4)");
+    FaderConfig fader4_cc4(MidiMapping::FaderType::FADER_NOTE_VALUE, MidiConfig::Fader::NOTE_VALUE_CHANNEL, 4, "Note Value (CC4)");
     fader4_cc4.withAction(ActionType::CHANGE_NOTE_VALUE)
-              .withGroup(15);
+              .withGroup(MidiConfig::Fader::NOTE_VALUE_CHANNEL);
     faderConfigs.push_back(fader4_cc4);
     
-    FaderConfig fader4_cc5(MidiMapping::FaderType::FADER_NOTE_VALUE, 15, 5, "Note Value (CC5)");
+    FaderConfig fader4_cc5(MidiMapping::FaderType::FADER_NOTE_VALUE, MidiConfig::Fader::NOTE_VALUE_CHANNEL, 5, "Note Value (CC5)");
     fader4_cc5.withAction(ActionType::CHANGE_NOTE_VALUE)
-              .withGroup(15);
+              .withGroup(MidiConfig::Fader::NOTE_VALUE_CHANNEL);
     faderConfigs.push_back(fader4_cc5);
     
-    FaderConfig fader4_cc6(MidiMapping::FaderType::FADER_NOTE_VALUE, 15, 6, "Note Value (CC6)");
+    FaderConfig fader4_cc6(MidiMapping::FaderType::FADER_NOTE_VALUE, MidiConfig::Fader::NOTE_VALUE_CHANNEL, 6, "Note Value (CC6)");
     fader4_cc6.withAction(ActionType::CHANGE_NOTE_VALUE)
-              .withGroup(15);
+              .withGroup(MidiConfig::Fader::NOTE_VALUE_CHANNEL);
     faderConfigs.push_back(fader4_cc6);
     
     logger.info("Loaded extended fader configuration: %d faders", faderConfigs.size());
