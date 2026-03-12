@@ -98,6 +98,8 @@ void ClockManager::actuallyTransition(ClockSource from, ClockSource to) {
 
 void ClockManager::updateInternalClock() {
   if (!sequencerRunning) return;
+  // When slaved to external MIDI clock, tick is driven only by onMidiClockPulse
+  if (clockSource == CLOCK_EXTERNAL) return;
   currentTick++;
   trackManager.updateAllTracks(currentTick);  // Let TrackManager handle it
   lastInternalTickTime = micros();
@@ -129,12 +131,8 @@ void ClockManager::onMidiClockPulse() {
   }
   pulseHead = (pulseHead + 1) % PULSE_BUF_SIZE;
 
-  if (currentTick != 0) {
-    uint32_t expectedTick = ((currentTick / 8) + 1) * 8;
-    if (currentTick != expectedTick) {
-      currentTick = expectedTick;
-    }
-  }
+  // Drive tick from MIDI clock (8 ticks per pulse at 24 PPQN) - no snap, avoids double-advance
+  currentTick += Config::TICKS_PER_CLOCK;
 
   trackManager.updateAllTracks(currentTick);
   lastMidiClockTime = micros();
@@ -166,6 +164,15 @@ void ClockManager::onMidiStart() {
   pulseHead = 0;
   lastMidiClockTime = micros();
   currentTick = 0;
+
+  // Start all stopped tracks (same as toggleTransport when starting)
+  for (uint8_t i = 0; i < Config::NUM_TRACKS; i++) {
+    Track& t = trackManager.getTrack(i);
+    if (t.isStopped()) {
+      t.startPlaying(currentTick);
+    }
+  }
+
   trackManager.updateAllTracks(currentTick);
 }
 

@@ -61,6 +61,7 @@ public:
     // Transport control
     void handleToggleTransport();
     void handleResetToLoopStart();
+    void syncTransportLed();  // Update play/stop button LED to match transport state (for MIDI Start/Stop)
 
     // Extended actions (stubbed for future)
     void handleTogglePlay();
