@@ -60,6 +60,7 @@ public:
     
     // Transport control
     void handleToggleTransport();
+    void handleResetToLoopStart();
 
     // Extended actions (stubbed for future)
     void handleTogglePlay();

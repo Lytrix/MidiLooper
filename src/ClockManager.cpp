@@ -185,6 +185,14 @@ bool ClockManager::isTransportRunning() const {
   return sequencerRunning;
 }
 
+void ClockManager::resetToLoopStart() {
+  noInterrupts();
+  currentTick = 0;
+  interrupts();
+  trackManager.updateAllTracks(0);
+  logger.info("Reset to loop start (tick 0)");
+}
+
 void ClockManager::toggleTransport() {
   if (sequencerRunning) {
     sequencerRunning = false;

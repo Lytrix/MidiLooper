@@ -75,6 +75,9 @@ void MidiButtonActions::executeAction(MidiButtonConfig::ActionType actionType, u
         case MidiButtonConfig::ActionType::TOGGLE_TRANSPORT:
             handleToggleTransport();
             break;
+        case MidiButtonConfig::ActionType::RESET_TO_LOOP_START:
+            handleResetToLoopStart();
+            break;
         default:
             // For unimplemented actions, just log them
             logger.info("Action type %d not yet implemented", static_cast<int>(actionType));
@@ -213,6 +216,10 @@ void MidiButtonActions::handleDeleteNote() {
     Track& track = getCurrentTrack();
     // Call the original NoteEditManager's deleteSelectedNote method
     noteEditManager.deleteSelectedNote(track);
+}
+
+void MidiButtonActions::handleResetToLoopStart() {
+    clockManager.resetToLoopStart();
 }
 
 void MidiButtonActions::handleToggleTransport() {

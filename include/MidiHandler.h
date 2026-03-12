@@ -83,6 +83,7 @@ private:
 
   // --- Helper Functions ---
   bool isControlChannel(byte channel);
+  bool isLedChannel(byte channel);
   void sendMidiThru(byte type, byte channel, byte data1, byte data2);
 
   // --- Message Handlers ---

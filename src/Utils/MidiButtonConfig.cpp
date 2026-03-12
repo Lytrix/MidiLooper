@@ -214,6 +214,7 @@ void Config::loadFullConfiguration() {
     // Global Transport Start/Stop (D#2/39 on Channel 16)
     addButton(ButtonConfig(Notes::D2_SHARP, 16, "Global Transport")
               .onShortPress(ActionType::TOGGLE_TRANSPORT)
+              .onDoublePress(ActionType::RESET_TO_LOOP_START)
               .withDebounce(150)
               .withTiming(300, 400, 3000));
     

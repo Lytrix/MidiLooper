@@ -46,9 +46,9 @@ void MidiLedManager::clearAllLeds() {
         lastLedState[i] = false;
     }
     
-    // Turn off current tick indicator
+    // Turn off current tick indicator (uses notes 16-31)
     if (currentTickStep >= 0 && currentTickStep < NUM_LEDS) {
-        midiHandler.sendNoteOff(TICK_CHANNEL, currentTickStep, 0);
+        midiHandler.sendNoteOff(TICK_CHANNEL, TICK_NOTE_OFFSET + currentTickStep, 0);
         delayMicroseconds(updateDelayMicros);
     }
     currentTickStep = -1;
@@ -133,14 +133,14 @@ void MidiLedManager::updateCurrentTick(uint32_t currentTick, uint32_t loopLength
     
     // Only update if the step changed
     if (newTickStep != currentTickStep) {
-        // Turn off previous tick indicator
+        // Turn off previous tick indicator (uses notes 16-31)
         if (currentTickStep >= 0 && currentTickStep < NUM_LEDS) {
-            midiHandler.sendNoteOff(TICK_CHANNEL, currentTickStep, 0);
+            midiHandler.sendNoteOff(TICK_CHANNEL, TICK_NOTE_OFFSET + currentTickStep, 0);
             delayMicroseconds(updateDelayMicros);
         }
         
-        // Turn on new tick indicator
-        midiHandler.sendNoteOn(TICK_CHANNEL, newTickStep, TICK_VELOCITY);
+        // Turn on new tick indicator (notes 16-31)
+        midiHandler.sendNoteOn(TICK_CHANNEL, TICK_NOTE_OFFSET + newTickStep, TICK_VELOCITY);
         delayMicroseconds(updateDelayMicros);
         
         currentTickStep = newTickStep;
