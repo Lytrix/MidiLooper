@@ -4,6 +4,7 @@
 #pragma once
 
 #include <Arduino.h>
+#include <vector>
 #include "MidiEvent.h"
 
 // Log levels
@@ -61,6 +62,7 @@ public:
   
   // MIDI event logging
   static void logMidiEvent(const MidiEvent& evt);
+  static void dumpMidiEvents(const std::vector<MidiEvent>& events, int trackIndex = -1);
   
   // Track event logging
   static void logTrackEvent(const char* event, uint32_t tick, const char* format = nullptr, ...);

@@ -64,8 +64,8 @@ private:
   ClockSource pendingClockSource;
   bool transitionPending;
 
-  // --- BPM from MIDI clock (sliding window over 96 intervals = 1 bar) ---
-  static const uint8_t PULSE_BUF_SIZE = 97; // 96 intervals + 1
+  // --- BPM from MIDI clock (sliding window: 25 timestamps = 24 intervals = 1 quarter note) ---
+  static const uint8_t PULSE_BUF_SIZE = 25;  // 24 intervals + 1
   uint32_t pulseTimestamps[PULSE_BUF_SIZE];
   uint8_t pulseHead;
   uint8_t pulseFillCount;
