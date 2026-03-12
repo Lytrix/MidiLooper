@@ -2,11 +2,13 @@
 #include "Utils/NoteUtils.h"
 
 MidiLedManager::MidiLedManager(MidiHandler& midiHandler) 
-    : midiHandler(midiHandler), lastUpdateBar(UINT32_MAX), hasInitialized(false),
-      updateDelayMicros(DEFAULT_UPDATE_DELAY), currentTickStep(-1) {
-    // Initialize LED state tracking
+    : midiHandler(midiHandler), updateDelayMicros(DEFAULT_UPDATE_DELAY),
+      lastUpdateBar(UINT32_MAX), lastLoopLength(0), hasInitialized(false), currentTickStep(-1) {
     for (int i = 0; i < NUM_LEDS; i++) {
         lastLedState[i] = false;
+    }
+    for (int i = 0; i < NUM_BAR_LEDS; i++) {
+        lastBarVelocity[i] = BAR_VEL_NEVER_SENT;
     }
 }
 
@@ -14,16 +16,26 @@ void MidiLedManager::updateLeds(Track& track, uint32_t currentTick) {
     uint32_t loopLength = track.getLoopLength();
     if (loopLength == 0) return;
     
+    // Force full refresh when loop length changes (avoids gaps when length edited mid-playback)
+    if (loopLength != lastLoopLength) {
+        lastLoopLength = loopLength;
+        lastUpdateBar = UINT32_MAX;
+        hasInitialized = false;
+        // Don't reset lastBarVelocity - bars that move beyond loop need NoteOff
+    }
+    
     // Calculate current bar
     uint32_t currentBar = getCurrentBar(currentTick, loopLength);
     
     // Only update on the first tick of a new bar, or if not initialized
     uint32_t barStartTick = getCurrentBarStartTick(currentTick, loopLength);
-    bool isFirstTickOfBar = (currentTick == barStartTick) || (currentTick == 0);
+    uint32_t tickInLoop = currentTick % loopLength;
+    bool isFirstTickOfBar = (tickInLoop == barStartTick) || (currentTick == 0);
     
     if (!hasInitialized || isFirstTickOfBar || currentBar != lastUpdateBar) {
         // Analyze the current bar that's playing
         analyzeAndUpdateBar(track, barStartTick, loopLength);
+        updateBarLeds(track, loopLength, currentBar);
         
         lastUpdateBar = currentBar;
         hasInitialized = true;
@@ -34,8 +46,10 @@ void MidiLedManager::updateLeds(Track& track, uint32_t currentTick) {
 }
 
 void MidiLedManager::forceUpdate(Track& track, uint32_t currentTick) {
-    lastUpdateBar = UINT32_MAX; // Force update
+    lastUpdateBar = UINT32_MAX;
+    lastLoopLength = 0;
     hasInitialized = false;
+    // Don't reset lastBarVelocity - bars beyond new loop need NoteOff (lastBarVelocity stays set)
     updateLeds(track, currentTick);
 }
 
@@ -52,6 +66,13 @@ void MidiLedManager::clearAllLeds() {
         delayMicroseconds(updateDelayMicros);
     }
     currentTickStep = -1;
+    
+    // Turn off 8 bar LEDs (notes 40-47) - NoteOff required when clearing
+    for (uint8_t i = 0; i < NUM_BAR_LEDS; i++) {
+        midiHandler.sendNoteOff(LED_CHANNEL, BAR_LED_BASE_NOTE + i, 0);
+        lastBarVelocity[i] = BAR_VEL_NEVER_SENT;
+        delayMicroseconds(updateDelayMicros);
+    }
     
     logger.log(CAT_MIDI_LED, LOG_INFO, "LED Manager: All LEDs and tick indicator cleared");
 }
@@ -93,6 +114,51 @@ bool MidiLedManager::hasNoteInSixteenthStep(Track& track, uint32_t stepStartTick
     }
     
     return false;
+}
+
+bool MidiLedManager::hasNoteInBar(Track& track, uint32_t barStartTick, uint32_t barEndTick, uint32_t loopLength) {
+    auto& midiEvents = track.getMidiEvents();
+    
+    for (const auto& event : midiEvents) {
+        if (event.type != midi::NoteOn || event.data.noteData.velocity == 0) continue;
+        uint32_t noteTick = event.tick;
+        
+        if (barEndTick <= loopLength) {
+            if (noteTick >= barStartTick && noteTick < barEndTick) return true;
+        } else {
+            if (noteTick >= barStartTick || noteTick < (barEndTick - loopLength)) return true;
+        }
+    }
+    return false;
+}
+
+void MidiLedManager::updateBarLeds(Track& track, uint32_t loopLength, uint32_t currentBar) {
+    const uint32_t ticksPerBar = Config::TICKS_PER_BAR;
+    
+    for (uint8_t i = 0; i < NUM_BAR_LEDS; i++) {
+        uint32_t barStartTick = i * ticksPerBar;
+        uint32_t barEndTick = (i + 1) * ticksPerBar;
+        uint8_t note = BAR_LED_BASE_NOTE + i;
+        
+        if (loopLength <= barStartTick) {
+            // NoteOff only when required: bar beyond loop (track switch, length edit)
+            if (lastBarVelocity[i] != BAR_VEL_NEVER_SENT) {
+                midiHandler.sendNoteOff(LED_CHANNEL, note, 0);
+                lastBarVelocity[i] = BAR_VEL_NEVER_SENT;
+                delayMicroseconds(updateDelayMicros);
+            }
+        } else {
+            bool isCurrentBar = (i == currentBar && currentBar < NUM_BAR_LEDS);
+            bool hasNotes = hasNoteInBar(track, barStartTick, barEndTick, loopLength);
+            uint8_t velocity = isCurrentBar ? VEL_BAR_CURRENT : (hasNotes ? VEL_BAR_HAS_NOTES : VEL_BAR_USED);
+            // Only send NoteOn when velocity changes - no NoteOff during normal playback
+            if (lastBarVelocity[i] != velocity) {
+                midiHandler.sendNoteOn(LED_CHANNEL, note, velocity);
+                lastBarVelocity[i] = velocity;
+                delayMicroseconds(updateDelayMicros);
+            }
+        }
+    }
 }
 
 void MidiLedManager::sendLedUpdate(uint8_t ledIndex, bool state) {
