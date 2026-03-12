@@ -132,58 +132,6 @@ private:
     static bool initialized;
 };
 
-// MIDI Note Constants (Chromatic from C2)
-namespace Notes {
-    constexpr uint8_t NOTE_3 = 3;    // Special momentary button for length edit
-    constexpr uint8_t C2 = 36;
-    constexpr uint8_t C2_SHARP = 37;
-    constexpr uint8_t D2 = 38;
-    constexpr uint8_t D2_SHARP = 39;
-    constexpr uint8_t E2 = 40;
-    constexpr uint8_t F2 = 41;
-    constexpr uint8_t F2_SHARP = 42;
-    constexpr uint8_t G2 = 43;
-    constexpr uint8_t G2_SHARP = 44;
-    constexpr uint8_t A2 = 45;
-    constexpr uint8_t A2_SHARP = 46;
-    constexpr uint8_t B2 = 47;
-    
-    constexpr uint8_t C3 = 48;
-    constexpr uint8_t C3_SHARP = 49;
-    constexpr uint8_t D3 = 50;
-    constexpr uint8_t D3_SHARP = 51;
-    constexpr uint8_t E3 = 52;
-    constexpr uint8_t F3 = 53;
-    constexpr uint8_t F3_SHARP = 54;
-    constexpr uint8_t G3 = 55;
-    constexpr uint8_t G3_SHARP = 56;
-    constexpr uint8_t A3 = 57;
-    constexpr uint8_t A3_SHARP = 58;
-    constexpr uint8_t B3 = 59;
-    
-    constexpr uint8_t C4 = 60;
-    constexpr uint8_t C4_SHARP = 61;
-    constexpr uint8_t D4 = 62;
-    constexpr uint8_t D4_SHARP = 63;
-    constexpr uint8_t E4 = 64;
-    constexpr uint8_t F4 = 65;
-    constexpr uint8_t F4_SHARP = 66;
-    constexpr uint8_t G4 = 67;
-    constexpr uint8_t G4_SHARP = 68;
-    constexpr uint8_t A4 = 69;
-    constexpr uint8_t A4_SHARP = 70;
-    constexpr uint8_t B4 = 71;
-    
-    constexpr uint8_t C5 = 72;
-    constexpr uint8_t C5_SHARP = 73;
-    constexpr uint8_t D5 = 74;
-    constexpr uint8_t D5_SHARP = 75;
-    constexpr uint8_t E5 = 76;
-    constexpr uint8_t F5 = 77;
-    constexpr uint8_t F5_SHARP = 78;
-    constexpr uint8_t G5 = 79;
-}
-
 // Default Channels
 namespace Channels {
     constexpr uint8_t MAIN_BUTTONS = 1;      // Main control buttons

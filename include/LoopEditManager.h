@@ -62,7 +62,7 @@ private:
     uint32_t lastLoopStartEditingActivityTime = 0;
     
     // MIDI constants for loop length feedback
-    static constexpr uint8_t LOOP_LENGTH_CC_CHANNEL = 15;
+    static constexpr uint8_t LOOP_LENGTH_CC_CHANNEL = 16;
     static constexpr uint8_t LOOP_LENGTH_CC_NUMBER = 101;
     
     // Helper methods
