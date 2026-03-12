@@ -98,8 +98,6 @@ void MidiHandler::handleMidiInput() {
 }
 
 void MidiHandler::handleMidiMessage(byte type, byte channel, byte data1, byte data2, InputSource source) {
-  uint32_t tickNow = clockManager.getCurrentTick();
-
   // Log incoming MIDI messages (skip Clock to avoid log spam at 24 PPQN)
   if (type != midi::Clock) {
     const char* sourceStr = (source == SOURCE_USB) ? "USB" :
@@ -108,7 +106,6 @@ void MidiHandler::handleMidiMessage(byte type, byte channel, byte data1, byte da
     logger.log(CAT_MIDI, LOG_DEBUG, "%s MIDI: type=%s ch=%d d1=%d d2=%d",
                sourceStr, getMidiTypeName(type), channel, data1, data2);
 
-    // Additional detailed logging for note messages
     if (type == midi::NoteOn || type == midi::NoteOff) {
       const char* noteNames[] = {"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"};
       int octave = (data1 / 12) - 1;
@@ -126,12 +123,37 @@ void MidiHandler::handleMidiMessage(byte type, byte channel, byte data1, byte da
     sendMidiThru(type, outCh, data1, data2);
   }
 
+  // Dispatch transport/clock messages first so tick is up-to-date
+  // before channel-voice messages read it
+  switch (type) {
+    case midi::Clock:
+      clockManager.onMidiClockPulse();
+      return;
+
+    case midi::Start:
+      handleMidiStart();
+      return;
+
+    case midi::Stop:
+      handleMidiStop();
+      return;
+
+    case midi::Continue:
+      handleMidiContinue();
+      return;
+
+    default:
+      break;
+  }
+
+  uint32_t tickNow = clockManager.getCurrentTick();
+
   switch (type) {
     case midi::NoteOn:
       if (data2 > 0)
         handleNoteOn(channel, data1, data2, tickNow);
       else
-        handleNoteOff(channel, data1, data2, tickNow);  // velocity 0 = NoteOff
+        handleNoteOff(channel, data1, data2, tickNow);
       break;
 
     case midi::NoteOff:
@@ -143,7 +165,7 @@ void MidiHandler::handleMidiMessage(byte type, byte channel, byte data1, byte da
       break;
 
     case midi::PitchBend:
-      handlePitchBend(channel, (data2 << 7) | data1, tickNow);  // 14-bit value
+      handlePitchBend(channel, (data2 << 7) | data1, tickNow);
       break;
 
     case midi::AfterTouchChannel:
@@ -154,24 +176,8 @@ void MidiHandler::handleMidiMessage(byte type, byte channel, byte data1, byte da
       handleProgramChange(channel, data1, tickNow);
       break;
 
-    case midi::Clock:
-      clockManager.onMidiClockPulse();
-      break;
-
-    case midi::Start:
-      handleMidiStart();
-      break;
-
-    case midi::Stop:
-      handleMidiStop();
-      break;
-
-    case midi::Continue:
-      handleMidiContinue();
-      break;
-
     default:
-      break;  // Ignore unsupported messages
+      break;
   }
 }
 
