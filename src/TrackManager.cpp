@@ -248,9 +248,11 @@ void TrackManager::updateAllTracks(uint32_t currentTick) {
   // Update LEDs for the selected track
   updateLeds(currentTick);
   
-  // Update current tick indicator
-  if (ledManager && masterLoopLength > 0) {
-    ledManager->updateCurrentTick(currentTick, masterLoopLength);
+  // Update current tick indicator (use selected track's loop length for consistency with bar LEDs)
+  uint32_t tickLoopLength = getSelectedTrack().getLoopLength();
+  if (tickLoopLength == 0) tickLoopLength = masterLoopLength;
+  if (ledManager && tickLoopLength > 0) {
+    ledManager->updateCurrentTick(currentTick, tickLoopLength);
   }
 }
 

@@ -306,14 +306,27 @@ void MidiHandler::handleMidiContinue() {
 void MidiHandler::sendMidiEvent(const MidiEvent& event) {
     // Route and send the event to both USB and Serial as appropriate
     switch (event.type) {
-        case midi::NoteOn:
+        case midi::NoteOn: {
             if (outputUSB) usbMIDI.sendNoteOn(event.data.noteData.note, event.data.noteData.velocity, event.channel);
             if (outputSerial) MIDIserial.sendNoteOn(event.data.noteData.note, event.data.noteData.velocity, event.channel);
+            if (usbHostMIDI) usbHostMIDI.sendNoteOn(event.data.noteData.note, event.data.noteData.velocity, event.channel);
+            // Log only actual LED updates (ch3, notes 0-31 bar/tick or 40-47 8-bar)
+            if (event.channel == 3 && (event.data.noteData.note <= 31 || (event.data.noteData.note >= 40 && event.data.noteData.note <= 47))) {
+                logger.log(CAT_MIDI_LED, LOG_DEBUG, "LED NoteOn ch=3 note=%d vel=%d -> usb(computer)=%d serial=%d usbHost(DROID)=%d",
+                    event.data.noteData.note, event.data.noteData.velocity, outputUSB ? 1 : 0, outputSerial ? 1 : 0, usbHostMIDI ? 1 : 0);
+            }
             break;
-        case midi::NoteOff:
+        }
+        case midi::NoteOff: {
             if (outputUSB) usbMIDI.sendNoteOff(event.data.noteData.note, event.data.noteData.velocity, event.channel);
             if (outputSerial) MIDIserial.sendNoteOff(event.data.noteData.note, event.data.noteData.velocity, event.channel);
+            if (usbHostMIDI) usbHostMIDI.sendNoteOff(event.data.noteData.note, event.data.noteData.velocity, event.channel);
+            if (event.channel == 3 && (event.data.noteData.note <= 31 || (event.data.noteData.note >= 40 && event.data.noteData.note <= 47))) {
+                logger.log(CAT_MIDI_LED, LOG_DEBUG, "LED NoteOff ch=3 note=%d -> usb(computer)=%d serial=%d usbHost(DROID)=%d",
+                    event.data.noteData.note, outputUSB ? 1 : 0, outputSerial ? 1 : 0, usbHostMIDI ? 1 : 0);
+            }
             break;
+        }
         case midi::ControlChange: {
             // Skip CC 123 (All Notes Off) on LED channels - preserves DROID button LEDs on USB
             bool skipUsb = (event.data.ccData.cc == 123 && isLedChannel(event.channel));
