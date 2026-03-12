@@ -5,6 +5,7 @@
 #include <set>
 #include <algorithm>
 #include "Globals.h"
+#include "MidiConfig.h"
 #include "NoteEditManager.h"
 
 #include "ClockManager.h"
@@ -92,8 +93,8 @@ void NoteEditManager::handleMidiPitchbend(uint8_t channel, int16_t pitchValue) {
 void NoteEditManager::handleMidiCC(uint8_t channel, uint8_t ccNumber, uint8_t value) {
     logger.log(CAT_MIDI, LOG_DEBUG, "Received CC: ch=%d cc=%d value=%d", channel, ccNumber, value);
     
-    // Check for loop length control first (CC 101 on channel 16)
-    if (channel == 16 && ccNumber == 101) {
+    // Check for loop length control first
+    if (channel == MidiConfig::LoopEdit::LENGTH_CC_CHANNEL && ccNumber == MidiConfig::LoopEdit::LENGTH_CC_NUMBER) {
         loopEditManager.handleLoopLengthInput(value, trackManager.getSelectedTrack());
         return;
     }
@@ -107,7 +108,7 @@ void NoteEditManager::handleMidiCC(uint8_t channel, uint8_t ccNumber, uint8_t va
         return;
     }
     
-    logger.log(CAT_MIDI, LOG_DEBUG, "CC ignored: not on monitored channels/CC (%d/%d, %d/%d, or 16/101)", 
+    logger.log(CAT_MIDI, LOG_DEBUG, "CC ignored: not on monitored channels/CC (%d/%d, %d/%d, or loop length)", 
                FINE_CC_CHANNEL, FINE_CC_NUMBER, NOTE_VALUE_CC_CHANNEL, NOTE_VALUE_CC_NUMBER);
 }
 

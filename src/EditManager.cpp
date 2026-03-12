@@ -274,7 +274,7 @@ void EditManager::enterNextEditMode(Track& track) {
 
 void EditManager::sendEditModeProgram(EditModeState mode) {
     // Send program change to indicate current edit mode
-    midiHandler.sendProgramChange(PROGRAM_CHANGE_CHANNEL, mode);
+    midiHandler.sendProgramChange(MidiConfig::PROGRAM_CHANGE_CHANNEL, mode);
     logger.log(CAT_MIDI, LOG_DEBUG, "Sent edit mode program: %d", mode);
 }
 
@@ -295,7 +295,7 @@ void EditManager::cycleMainEditMode(Track& track) {
 
 void EditManager::sendMainEditModeChange(uint8_t mode) {
     // Send program change to indicate main edit mode
-    midiHandler.sendProgramChange(PROGRAM_CHANGE_CHANNEL, mode);
+    midiHandler.sendProgramChange(MidiConfig::PROGRAM_CHANGE_CHANNEL, mode);
     logger.log(CAT_MIDI, LOG_DEBUG, "Sent main edit mode program: %d", mode);
 }
 
@@ -311,7 +311,7 @@ void EditManager::sendCurrentLoopLengthCC(Track& track) {
     // Convert to CC value (0-127)
     uint8_t ccValue = ((bars - 1) * 127) / 7; // Map 1-8 bars to 0-127
     
-    midiHandler.sendControlChange(LOOP_LENGTH_CC_CHANNEL, LOOP_LENGTH_CC_NUMBER, ccValue);
+    midiHandler.sendControlChange(MidiConfig::LoopEdit::LENGTH_CC_CHANNEL, MidiConfig::LoopEdit::LENGTH_CC_NUMBER, ccValue);
     logger.log(CAT_MIDI, LOG_DEBUG, "Sent loop length CC: bars=%d cc=%d", bars, ccValue);
 }
 

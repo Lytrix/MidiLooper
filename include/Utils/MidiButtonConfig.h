@@ -6,6 +6,7 @@
 
 #include <Arduino.h>
 #include <cstdint>
+#include "MidiConfig.h"
 #include <vector>
 #include <functional>
 
@@ -132,12 +133,12 @@ private:
     static bool initialized;
 };
 
-// Default Channels
+// Default Channels (alias MidiConfig)
 namespace Channels {
-    constexpr uint8_t MAIN_BUTTONS = 1;      // Main control buttons
-    constexpr uint8_t TRACK_SELECT = 2;      // Track selection buttons
-    constexpr uint8_t EDIT_FUNCTIONS = 3;    // Edit mode functions
-    constexpr uint8_t TRANSPORT = 4;         // Transport controls
+    constexpr uint8_t MAIN_BUTTONS = MidiConfig::Channels::DEFAULT;
+    constexpr uint8_t TRACK_SELECT = MidiConfig::Channels::TRACK_SELECT;
+    constexpr uint8_t EDIT_FUNCTIONS = MidiConfig::Channels::LED_FEEDBACK;
+    constexpr uint8_t TRANSPORT = MidiConfig::Channels::TRANSPORT;
 }
 
 } // namespace MidiButtonConfig
