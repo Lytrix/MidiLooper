@@ -21,7 +21,7 @@ public:
     void clearAllLeds();
     
     // Update current tick indicator (which 16th step is playing)
-    void updateCurrentTick(uint32_t currentTick, uint32_t loopLength);
+    void updateCurrentTick(Track& track, uint32_t currentTick);
     
     // Configure update delays (in microseconds)
     void setUpdateDelay(uint16_t delayMicros);
@@ -47,7 +47,8 @@ private:
     // Track the last LED state to avoid redundant updates
     bool lastLedState[NUM_LEDS];
     uint32_t lastUpdateBar;
-    uint32_t lastLoopLength;  // Detect loop length changes for immediate refresh
+    uint32_t lastLoopLength;   // Detect loop length changes for immediate refresh
+    uint32_t lastLoopStartTick; // Detect loop start changes for immediate refresh
     bool hasInitialized;
     
     // Current tick indicator tracking
@@ -57,12 +58,12 @@ private:
     static constexpr uint8_t BAR_VEL_NEVER_SENT = 0xFF;
     uint8_t lastBarVelocity[NUM_BAR_LEDS];
     
-    // Helper methods
-    uint32_t getCurrentBar(uint32_t currentTick, uint32_t loopLength);
-    uint32_t getCurrentBarStartTick(uint32_t currentTick, uint32_t loopLength);
-    bool hasNoteInSixteenthStep(Track& track, uint32_t stepStartTick, uint32_t stepEndTick);
-    bool hasNoteInBar(Track& track, uint32_t barStartTick, uint32_t barEndTick, uint32_t loopLength);
+    // Helper methods (all use loopStartTick so 16th/bar LEDs reflect user's loop window)
+    uint32_t getCurrentBar(uint32_t currentTick, uint32_t loopLength, uint32_t startLoopTick, uint32_t loopStartTick);
+    uint32_t getCurrentBarStartTick(uint32_t currentTick, uint32_t loopLength, uint32_t startLoopTick, uint32_t loopStartTick);
+    bool hasNoteInSixteenthStep(Track& track, uint32_t stepStartStorage, uint32_t stepEndStorage);
+    bool hasNoteInBar(Track& track, uint32_t barStartStorage, uint32_t barEndStorage, uint32_t loopLength);
     void sendLedUpdate(uint8_t ledIndex, bool state);
-    void analyzeAndUpdateBar(Track& track, uint32_t barStartTick, uint32_t loopLength);
-    void updateBarLeds(Track& track, uint32_t loopLength, uint32_t currentBar);
+    void analyzeAndUpdateBar(Track& track, uint32_t barStartTickDisplay, uint32_t loopLength, uint32_t loopStartTick);
+    void updateBarLeds(Track& track, uint32_t loopLength, uint32_t currentBar, uint32_t loopStartTick);
 }; 
