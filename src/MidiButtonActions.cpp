@@ -223,18 +223,19 @@ void MidiButtonActions::handleResetToLoopStart() {
 }
 
 void MidiButtonActions::handleToggleTransport() {
+    const uint8_t transportNote = 39;  // D#2
     bool wasRunning = clockManager.isTransportRunning();
     if (wasRunning) {
-        midiHandler.sendNoteOff(MidiButtonConfig::Channels::TRANSPORT, MidiButtonConfig::Notes::D2_SHARP, 0);
+        midiHandler.sendNoteOff(MidiButtonConfig::Channels::TRANSPORT, transportNote, 0);
     }
     clockManager.toggleTransport();
     if (!wasRunning) {
-        midiHandler.sendNoteOn(MidiButtonConfig::Channels::TRANSPORT, MidiButtonConfig::Notes::D2_SHARP, 127);
+        midiHandler.sendNoteOn(MidiButtonConfig::Channels::TRANSPORT, transportNote, 127);
     }
     logger.info("Transport LED: sent %s on ch%d note%d",
                 !wasRunning ? "NoteOn" : "NoteOff",
                 MidiButtonConfig::Channels::TRANSPORT,
-                MidiButtonConfig::Notes::D2_SHARP);
+                transportNote);
 }
 
 // Stubbed implementations for future expansion

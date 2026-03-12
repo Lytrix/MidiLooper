@@ -109,16 +109,16 @@ void setupMyButtons() {
     Config::clearConfigs();
     
     // Transport controls (Channel 1)
-    Config::addButton(ButtonConfig(Notes::C2, 1, "Record")
+    Config::addButton(ButtonConfig(36, 1, "Record")   // C2
         .onShortPress(ActionType::TOGGLE_RECORD)
         .onLongPress(ActionType::CLEAR_TRACK));
     
-    Config::addButton(ButtonConfig(Notes::C2_SHARP, 1, "Play")
+    Config::addButton(ButtonConfig(37, 1, "Play")     // C#2
         .onShortPress(ActionType::TOGGLE_PLAY));
     
-    // Track selection (Channel 2) - 16 tracks
+    // Track selection (Channel 2, C3-B4) - 16 tracks
     for (int i = 0; i < 16; i++) {
-        Config::addButton(ButtonConfig(Notes::C3 + i, 2, ("Track " + std::to_string(i + 1)).c_str())
+        Config::addButton(ButtonConfig(48 + i, 2, ("Track " + std::to_string(i + 1)).c_str())
             .onShortPress(ActionType::SELECT_TRACK)
             .onLongPress(ActionType::MUTE_TRACK)
             .onDoublePress(ActionType::SOLO_TRACK)
@@ -126,16 +126,16 @@ void setupMyButtons() {
     }
     
     // Navigation with different step sizes
-    Config::addButton(ButtonConfig(Notes::E2, 1, "Move Back Beat")
+    Config::addButton(ButtonConfig(40, 1, "Move Back Beat")      // E2
         .onShortPress(ActionType::MOVE_CURRENT_TICK)
         .withParameter(-96));
     
-    Config::addButton(ButtonConfig(Notes::F2, 1, "Move Forward Beat")
+    Config::addButton(ButtonConfig(41, 1, "Move Forward Beat")   // F2
         .onShortPress(ActionType::MOVE_CURRENT_TICK)
         .withParameter(96));
     
     // Custom actions
-    Config::addButton(ButtonConfig(Notes::G2, 1, "Jump to Start")
+    Config::addButton(ButtonConfig(43, 1, "Jump to Start")       // G2
         .withCustomAction([](Track& track, uint32_t currentTick) {
             clockManager.setCurrentTick(0);
             logger.info("Jumped to start");
