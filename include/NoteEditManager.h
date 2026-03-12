@@ -9,8 +9,8 @@
 #include <vector>
 #include "EditManager.h"
 #include "Utils/MidiMapping.h"
-#include "MidiButtonManagerV2.h"
-#include "MidiFaderManagerV2.h"
+#include "MidiButtonManager.h"
+#include "MidiFaderManager.h"
 #include "MidiFaderProcessor.h"
 #include "Track.h"
 #include "Logger.h"
@@ -30,8 +30,8 @@ public:
     NoteEditManager();
     
     // Specialized handlers
-    MidiButtonManagerV2 buttonHandler;
-    MidiFaderManagerV2 faderHandler;
+    MidiButtonManager buttonHandler;
+    MidiFaderManager faderHandler;
     
     //void setup();
     void update();

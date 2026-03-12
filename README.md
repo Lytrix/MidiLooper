@@ -16,7 +16,24 @@ https://iestyn-lewis.github.io/4by8/
 
 The MIDI circuit is based on https://www.pjrc.com/teensy/td_libs_MIDI.html
 
-**Note:** The project is configured for DROID controller input. Legacy 2-button + encoder operation can be restored via `MidiButtonManagerV2::loadButtonConfiguration("basic")`.
+**Note:** The project is configured for DROID controller input. Legacy 2-button + encoder operation can be restored via `MidiButtonManager::loadButtonConfiguration("basic")`.
+
+## Code Conventions ##
+
+Class and module naming follows consistent semantics. When reading the codebase, use these meanings:
+
+| Suffix | Role | Examples |
+|--------|------|----------|
+| **Handler** | Receives events and routes or processes them | `MidiHandler` receives all MIDI and dispatches to appropriate modules |
+| **Manager** | Owns a domain or coordinates components | `TrackManager`, `ClockManager`, `LoopEditManager` |
+| **Processor** | Transforms input (raw → detected events) | `MidiButtonProcessor` detects short/long/double/triple from Note On/Off |
+| **Actions** | Executes domain operations | `MidiButtonActions`, `MidiFaderActions` perform record, undo, fader moves |
+
+**Input pipelines** (buttons, faders) use the pattern **Manager** → **Processor** + **Actions**:
+- `MidiButtonManager` coordinates `MidiButtonProcessor` (detection) and `MidiButtonActions` (execution)
+- `MidiFaderManager` coordinates `MidiFaderProcessor` and `MidiFaderActions`
+
+Standalone **Handler** classes (e.g. `BarStepButtonHandler`) receive and process events in a single class when the full Manager/Processor/Actions split is not needed.
 
 ## Features ##
 Multi-track MIDI looper with full undo/redo, auto-save/load, and clear visual feedback—ready for live performance or creative studio work!

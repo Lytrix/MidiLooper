@@ -1,8 +1,8 @@
 //  Copyright (c)  2025 Lytrix (Eelke Jager)
 //  Licensed under the PolyForm Noncommercial 1.0.0
 
-#ifndef MIDI_FADER_MANAGER_V2_H
-#define MIDI_FADER_MANAGER_V2_H
+#ifndef MIDI_FADER_MANAGER_H
+#define MIDI_FADER_MANAGER_H
 
 #include <Arduino.h>
 #include <cstdint>
@@ -12,18 +12,18 @@
 #include "Utils/MidiMapping.h"
 
 /**
- * @class MidiFaderManagerV2
+ * @class MidiFaderManager
  * @brief Simplified MIDI fader manager that coordinates between fader processing and actions.
  * 
- * This is a refactored version that separates concerns:
+ * This class separates concerns:
  * - MidiFaderProcessor handles fader state and movement detection
  * - MidiFaderActions handles action execution
  * - MidiFaderConfig manages fader configurations
  * - This class just coordinates between them
  */
-class MidiFaderManagerV2 {
+class MidiFaderManager {
 public:
-    MidiFaderManagerV2();
+    MidiFaderManager();
     
     void setup();
     void update();
@@ -64,6 +64,6 @@ private:
     bool isValidCC(uint8_t ccValue) const;
 };
 
-extern MidiFaderManagerV2 midiFaderManagerV2;
+extern MidiFaderManager midiFaderManager;
 
-#endif // MIDI_FADER_MANAGER_V2_H 
+#endif // MIDI_FADER_MANAGER_H

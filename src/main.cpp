@@ -8,8 +8,8 @@
 #include "MidiHandler.h"
 #include "TrackManager.h"
 #include "ButtonManager.h"
-#include "MidiButtonManagerV2.h"
-#include "MidiFaderManagerV2.h"
+#include "MidiButtonManager.h"
+#include "MidiFaderManager.h"
 #include "DisplayManager.h"
 #include "LooperState.h"
 #include "Looper.h"
@@ -28,13 +28,13 @@ void setup() {
   digitalWrite(LED_BUILTIN, LOW);
   
   // Setup new V2 MIDI Button Manager for button handling
-  midiButtonManagerV2.setup();
+  midiButtonManager.setup();
   
   // Setup new V2 MIDI Fader Manager for fader handling
-  midiFaderManagerV2.setup();
+  midiFaderManager.setup();
   
   // Connect NoteEditManager to MidiFaderProcessor
-  noteEditManager.setFaderProcessor(&midiFaderManagerV2.getProcessor());
+  noteEditManager.setFaderProcessor(&midiFaderManager.getProcessor());
   
   // Keep old manager temporarily for move note logic
   //midiButtonManager.setup();
@@ -97,10 +97,10 @@ void loop() {
   looperState.update();
 
   // Update new V2 MIDI button manager for button handling
-  midiButtonManagerV2.update();
+  midiButtonManager.update();
   
   // Update new V2 MIDI fader manager for fader handling
-  midiFaderManagerV2.update();
+  midiFaderManager.update();
   
   // Update old manager for move note logic
   noteEditManager.update();

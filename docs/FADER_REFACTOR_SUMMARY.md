@@ -22,7 +22,7 @@ The V2 fader system represents a complete architectural evolution from the unifi
 ### Component Separation
 ```
 ┌─────────────────────┐    ┌─────────────────────┐    ┌─────────────────────┐
-│   MidiFaderManagerV2│    │  MidiFaderProcessor │    │   MidiFaderActions  │
+│   MidiFaderManager│    │  MidiFaderProcessor │    │   MidiFaderActions  │
 │   (Coordinator)     │────│   (State Engine)    │────│   (Business Logic)  │
 │                     │    │                     │    │                     │
 │ • Configuration     │    │ • State Tracking    │    │ • Action Execution  │
@@ -46,14 +46,14 @@ The V2 fader system represents a complete architectural evolution from the unifi
 1. **MIDI Input** → `MidiFaderProcessor::handlePitchbend/handleCC`
 2. **Configuration Lookup** → `MidiFaderConfig::findFaderConfig`
 3. **State Processing** → Deadband filtering, feedback prevention, driver management
-4. **Movement Callback** → `MidiFaderManagerV2::onFaderMovement`
+4. **Movement Callback** → `MidiFaderManager::onFaderMovement`
 5. **Action Execution** → `MidiFaderActions::executeAction`
 6. **Business Logic** → Delegation to `NoteEditManager` methods
 
 ## V2 Component Details
 
-### 1. MidiFaderManagerV2 (Coordinator)
-**File**: `src/MidiFaderManagerV2.cpp`
+### 1. MidiFaderManager (Coordinator)
+**File**: `src/MidiFaderManager.cpp`
 **Responsibilities**:
 - Coordinates between processor and actions via callbacks
 - Manages configuration loading (basic/extended profiles)
@@ -127,11 +127,11 @@ struct FaderConfig {
 ### Runtime Configuration
 ```cpp
 // Load predefined configurations
-midiFaderManagerV2.loadFaderConfiguration("basic");
-midiFaderManagerV2.loadFaderConfiguration("extended");
+midiFaderManager.loadFaderConfiguration("basic");
+midiFaderManager.loadFaderConfiguration("extended");
 
 // Add custom faders at runtime
-midiFaderManagerV2.addCustomFader(
+midiFaderManager.addCustomFader(
     MidiMapping::FaderType::FADER_CUSTOM,
     17,  // Channel 17
     "Custom Fader",
@@ -246,7 +246,7 @@ bool shouldIgnoreFaderInput(MidiMapping::FaderType faderType,
 ## Current Implementation Status
 
 ### ✅ Completed Components
-- **MidiFaderManagerV2**: Full implementation with configuration management
+- **MidiFaderManager**: Full implementation with configuration management
 - **MidiFaderProcessor**: Enhanced state engine with optimized timing
 - **MidiFaderActions**: Complete action execution system
 - **MidiFaderConfig**: Flexible configuration system with profiles
