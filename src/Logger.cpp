@@ -122,6 +122,32 @@ void Logger::logStateTransition(const char* component, const char* fromState, co
   Serial.println();
 }
 
+void Logger::dumpMidiEvents(const std::vector<MidiEvent>& events, int trackIndex) {
+  if (currentLevel < LOG_DEBUG) return;
+  printPrefix(LOG_DEBUG, CAT_TRACK);
+  Serial.printf("--- MIDI events dump (track=%d, count=%zu) ---\n", trackIndex, events.size());
+  for (size_t i = 0; i < events.size(); ++i) {
+    const MidiEvent& evt = events[i];
+    printPrefix(LOG_DEBUG, CAT_TRACK);
+    switch (evt.type) {
+      case midi::NoteOn:
+        Serial.printf("  [%zu] tick=%lu NoteOn  ch=%d note=%d vel=%d\n", i, evt.tick, evt.channel, evt.data.noteData.note, evt.data.noteData.velocity);
+        break;
+      case midi::NoteOff:
+        Serial.printf("  [%zu] tick=%lu NoteOff ch=%d note=%d vel=%d\n", i, evt.tick, evt.channel, evt.data.noteData.note, evt.data.noteData.velocity);
+        break;
+      case midi::ControlChange:
+        Serial.printf("  [%zu] tick=%lu CC      ch=%d cc=%d val=%d\n", i, evt.tick, evt.channel, evt.data.ccData.cc, evt.data.ccData.value);
+        break;
+      default:
+        Serial.printf("  [%zu] tick=%lu type=%d ch=%d\n", i, evt.tick, evt.type, evt.channel);
+        break;
+    }
+  }
+  printPrefix(LOG_DEBUG, CAT_TRACK);
+  Serial.println("--- end dump ---");
+}
+
 void Logger::logMidiEvent(const MidiEvent& evt) {
   if (currentLevel < LOG_DEBUG) return;
   printPrefix(LOG_DEBUG, CAT_MIDI);

@@ -396,6 +396,7 @@ void Track::stopOverdubbing() {
   
   logger.logTrackEvent("Overdubbing stopped", clockManager.getCurrentTick());
   logger.info("Overdub stopped: events=%d, snapshots=%d", midiEvents.size(), midiHistory.size());
+  logger.dumpMidiEvents(midiEvents, -1);
 
   // Reset playback state
   startLoopTick = 0;
@@ -505,58 +506,68 @@ void Track::recordMidiEvents(midi::MidiType type, byte channel, byte data1, byte
       return;
     }
 
-    // Prevent duplicate midiEvents at the same tick with same parameters
-    for (const auto& e : midiEvents) {
-      if (e.tick == tickRelative && e.type == type && e.channel == channel && e.data.noteData.note == data1 && e.data.noteData.velocity == data2) {
-        return;  // Skip duplicate event
-      }
-    }
-
+    // Build the new event first (needed for duplicate check)
+    MidiEvent newEvt;
     bool eventAdded = false;
     switch (type) {
         case midi::NoteOn:
-            midiEvents.push_back(MidiEvent::NoteOn(tickRelative, channel, data1, data2));
+            newEvt = MidiEvent::NoteOn(tickRelative, channel, data1, data2);
             eventAdded = true;
             break;
         case midi::NoteOff:
-            midiEvents.push_back(MidiEvent::NoteOff(tickRelative, channel, data1, data2));
+            newEvt = MidiEvent::NoteOff(tickRelative, channel, data1, data2);
             eventAdded = true;
             break;
         case midi::ControlChange:
-            midiEvents.push_back(MidiEvent::ControlChange(tickRelative, channel, data1, data2));
+            newEvt = MidiEvent::ControlChange(tickRelative, channel, data1, data2);
             eventAdded = true;
             break;
         case midi::ProgramChange:
-            midiEvents.push_back(MidiEvent::ProgramChange(tickRelative, channel, data1));
+            newEvt = MidiEvent::ProgramChange(tickRelative, channel, data1);
             eventAdded = true;
             break;
         case midi::AfterTouchChannel:
-            midiEvents.push_back(MidiEvent::ChannelAftertouch(tickRelative, channel, data1));
+            newEvt = MidiEvent::ChannelAftertouch(tickRelative, channel, data1);
             eventAdded = true;
             break;
         case midi::PitchBend:
-            midiEvents.push_back(MidiEvent::PitchBend(tickRelative, channel, (int16_t)((data2 << 7) | data1)));
+            newEvt = MidiEvent::PitchBend(tickRelative, channel, (int16_t)((data2 << 7) | data1));
             eventAdded = true;
             break;
-        // Add other cases as needed
         default:
-            // Optionally handle or ignore other types
-            break;
+            return;
     }
 
-    if (eventAdded) {
-        // Log the event
-        if (!midiEvents.empty()) {
-            logger.logMidiEvent(midiEvents.back());
+    if (!eventAdded) return;
+
+    // Find insertion point (events are sorted by tick)
+    auto it = std::lower_bound(midiEvents.begin(), midiEvents.end(), tickRelative,
+        [](const MidiEvent& e, uint32_t t) { return e.tick < t; });
+
+    // Duplicate check: scan events within ±DUPLICATE_TICK_TOLERANCE (handles jitter on loop restart)
+    // Musically, notes within 1/64th are typically unintended duplicates
+    const uint32_t lo = (tickRelative > Config::DUPLICATE_TICK_TOLERANCE)
+        ? (tickRelative - Config::DUPLICATE_TICK_TOLERANCE) : 0;
+    const uint32_t hi = tickRelative + Config::DUPLICATE_TICK_TOLERANCE;
+    auto scan = std::lower_bound(midiEvents.begin(), midiEvents.end(), lo,
+        [](const MidiEvent& e, uint32_t t) { return e.tick < t; });
+    while (scan != midiEvents.end() && scan->tick <= hi) {
+        const auto& e = *scan;
+        if (e.type == type && e.channel == channel &&
+            e.data.noteData.note == data1 && e.data.noteData.velocity == data2) {
+            return;  // Skip duplicate event
         }
-        
-        // **Keep events sorted by tick** so playback scanning never misses a wrapped-back note during overdubbing
-        std::sort(midiEvents.begin(), midiEvents.end(),
-                [](auto &a, auto &b){ return a.tick < b.tick; });
-
-        // OPTIMIZATION: Invalidate caches when MIDI events change
-        invalidateCaches();
+        ++scan;
     }
+
+    // Insert in sorted position (no full sort needed)
+    midiEvents.insert(it, newEvt);
+
+    // Log the event
+    logger.logMidiEvent(newEvt);
+
+    // OPTIMIZATION: Invalidate caches when MIDI events change
+    invalidateCaches();
   }
 }
 

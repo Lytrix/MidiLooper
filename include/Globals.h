@@ -55,6 +55,7 @@ namespace Config {
   constexpr uint8_t  TICKS_PER_CLOCK = (INTERNAL_PPQN / 24);           // 8 ticks per MIDI clock pulse (24 PPQN)
   constexpr uint32_t TICKS_PER_BAR = INTERNAL_PPQN * QUARTERS_PER_BAR; // 768 or your default value (ticksPerQuarterNote * quartersPerBar)
   constexpr uint32_t TICKS_PER_16TH_STEP = INTERNAL_PPQN / 4;          // 192 / 4 = 48 Ticks
+  constexpr uint32_t DUPLICATE_TICK_TOLERANCE = TICKS_PER_16TH_STEP / 4;  // 12 ticks = 1/64th note; events within this are treated as duplicates
   constexpr uint8_t  MAX_UNDO_HISTORY = 99;
 }
  

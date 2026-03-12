@@ -109,6 +109,7 @@ void ClockManager::onMidiClockPulse() {
   requestTransitionTo(CLOCK_EXTERNAL);
 
   // Sliding window BPM: ring buffer of 25 timestamps = 24 intervals (one quarter note)
+  // Formula: 60e6 / elapsed_us = BPM (elapsed = micros for 24 MIDI clock pulses)
   pulseTimestamps[pulseHead] = micros();
   if (pulseFillCount < PULSE_BUF_SIZE) pulseFillCount++;
 
@@ -116,7 +117,7 @@ void ClockManager::onMidiClockPulse() {
     uint8_t tailIdx = (pulseHead + 1) % PULSE_BUF_SIZE;
     uint32_t elapsed = pulseTimestamps[pulseHead] - pulseTimestamps[tailIdx];
     if (elapsed > 0) {
-      float computedBpm = 240000000.0f / (float)elapsed;
+      float computedBpm = 60000000.0f / (float)elapsed;
       if (computedBpm >= 20.0f && computedBpm <= 300.0f) {
         if (bpmSmoothed > 0.0f && fabsf(computedBpm - bpmSmoothed) < 3.0f) {
           computedBpm = 0.02f * computedBpm + 0.98f * bpmSmoothed;
