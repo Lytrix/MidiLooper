@@ -3,7 +3,7 @@
 
 MidiLedManager::MidiLedManager(MidiHandler& midiHandler) 
     : midiHandler(midiHandler), updateDelayMicros(DEFAULT_UPDATE_DELAY),
-      lastUpdateBar(UINT32_MAX), lastLoopLength(0), hasInitialized(false), currentTickStep(-1) {
+      lastUpdateBar(UINT32_MAX), lastLoopLength(0), lastLoopStartTick(UINT32_MAX), hasInitialized(false), currentTickStep(-1) {
     for (int i = 0; i < NUM_LEDS; i++) {
         lastLedState[i] = false;
     }
@@ -15,41 +15,48 @@ MidiLedManager::MidiLedManager(MidiHandler& midiHandler)
 void MidiLedManager::updateLeds(Track& track, uint32_t currentTick) {
     uint32_t loopLength = track.getLoopLength();
     if (loopLength == 0) return;
+
+    uint32_t startLoopTick = track.getStartLoopTick();
+    uint32_t loopStartTick = track.getLoopStartTick();
     
-    // Force full refresh when loop length changes (avoids gaps when length edited mid-playback)
+    // Force full refresh when loop length or loop start changes
     if (loopLength != lastLoopLength) {
         lastLoopLength = loopLength;
         lastUpdateBar = UINT32_MAX;
         hasInitialized = false;
-        // Don't reset lastBarVelocity - bars that move beyond loop need NoteOff
+    }
+    if (loopStartTick != lastLoopStartTick) {
+        lastLoopStartTick = loopStartTick;
+        lastUpdateBar = UINT32_MAX;
+        hasInitialized = false;
     }
     
-    // Calculate current bar
-    uint32_t currentBar = getCurrentBar(currentTick, loopLength);
+    // Calculate current bar (relative to loop start for correct 16th display)
+    uint32_t currentBar = getCurrentBar(currentTick, loopLength, startLoopTick, loopStartTick);
     
     // Only update on the first tick of a new bar, or if not initialized
-    uint32_t barStartTick = getCurrentBarStartTick(currentTick, loopLength);
-    uint32_t tickInLoop = currentTick % loopLength;
-    bool isFirstTickOfBar = (tickInLoop == barStartTick) || (currentTick == 0);
+    uint32_t barStartTickDisplay = getCurrentBarStartTick(currentTick, loopLength, startLoopTick, loopStartTick);
+    uint32_t tickInLoopStorage = (currentTick - startLoopTick) % loopLength;
+    uint32_t tickInLoopDisplay = (tickInLoopStorage - loopStartTick + loopLength) % loopLength;
+    bool isFirstTickOfBar = (tickInLoopDisplay == barStartTickDisplay) || (currentTick == 0);
     
     if (!hasInitialized || isFirstTickOfBar || currentBar != lastUpdateBar) {
-        // Analyze the current bar that's playing
-        analyzeAndUpdateBar(track, barStartTick, loopLength);
-        updateBarLeds(track, loopLength, currentBar);
+        analyzeAndUpdateBar(track, barStartTickDisplay, loopLength, loopStartTick);
+        updateBarLeds(track, loopLength, currentBar, loopStartTick);
         
         lastUpdateBar = currentBar;
         hasInitialized = true;
         
         logger.log(CAT_MIDI_LED, LOG_DEBUG, "LED Manager: Updated LEDs for current bar starting at tick %lu (current tick %lu)", 
-                   barStartTick, currentTick);
+                   barStartTickDisplay, currentTick);
     }
 }
 
 void MidiLedManager::forceUpdate(Track& track, uint32_t currentTick) {
     lastUpdateBar = UINT32_MAX;
     lastLoopLength = 0;
+    lastLoopStartTick = UINT32_MAX;
     hasInitialized = false;
-    // Don't reset lastBarVelocity - bars beyond new loop need NoteOff (lastBarVelocity stays set)
     updateLeds(track, currentTick);
 }
 
@@ -77,20 +84,20 @@ void MidiLedManager::clearAllLeds() {
     logger.log(CAT_MIDI_LED, LOG_INFO, "LED Manager: All LEDs and tick indicator cleared");
 }
 
-uint32_t MidiLedManager::getCurrentBar(uint32_t currentTick, uint32_t loopLength) {
+uint32_t MidiLedManager::getCurrentBar(uint32_t currentTick, uint32_t loopLength, uint32_t startLoopTick, uint32_t loopStartTick) {
     uint32_t ticksPerBar = 16 * Config::TICKS_PER_16TH_STEP;
-    return (currentTick % loopLength) / ticksPerBar;
+    uint32_t tickInLoopStorage = (currentTick - startLoopTick) % loopLength;
+    uint32_t tickInLoopDisplay = (tickInLoopStorage - loopStartTick + loopLength) % loopLength;
+    return tickInLoopDisplay / ticksPerBar;
 }
 
-uint32_t MidiLedManager::getCurrentBarStartTick(uint32_t currentTick, uint32_t loopLength) {
+uint32_t MidiLedManager::getCurrentBarStartTick(uint32_t currentTick, uint32_t loopLength, uint32_t startLoopTick, uint32_t loopStartTick) {
     uint32_t ticksPerBar = 16 * Config::TICKS_PER_16TH_STEP;
-    uint32_t currentBar = getCurrentBar(currentTick, loopLength);
-    
-    // Return the start tick of the current bar
+    uint32_t currentBar = getCurrentBar(currentTick, loopLength, startLoopTick, loopStartTick);
     return currentBar * ticksPerBar;
 }
 
-bool MidiLedManager::hasNoteInSixteenthStep(Track& track, uint32_t stepStartTick, uint32_t stepEndTick) {
+bool MidiLedManager::hasNoteInSixteenthStep(Track& track, uint32_t stepStartStorage, uint32_t stepEndStorage) {
     auto& midiEvents = track.getMidiEvents();
     
     // Check if any note-on events fall within this 16th step
@@ -99,14 +106,14 @@ bool MidiLedManager::hasNoteInSixteenthStep(Track& track, uint32_t stepStartTick
             uint32_t noteTick = event.tick;
             
             // Handle normal case (step doesn't wrap around loop)
-            if (stepStartTick < stepEndTick) {
-                if (noteTick >= stepStartTick && noteTick < stepEndTick) {
+            if (stepStartStorage < stepEndStorage) {
+                if (noteTick >= stepStartStorage && noteTick < stepEndStorage) {
                     return true;
                 }
             }
             // Handle wrap-around case (step crosses loop boundary)
             else {
-                if (noteTick >= stepStartTick || noteTick < stepEndTick) {
+                if (noteTick >= stepStartStorage || noteTick < stepEndStorage) {
                     return true;
                 }
             }
@@ -116,40 +123,41 @@ bool MidiLedManager::hasNoteInSixteenthStep(Track& track, uint32_t stepStartTick
     return false;
 }
 
-bool MidiLedManager::hasNoteInBar(Track& track, uint32_t barStartTick, uint32_t barEndTick, uint32_t loopLength) {
+bool MidiLedManager::hasNoteInBar(Track& track, uint32_t barStartStorage, uint32_t barEndStorage, uint32_t loopLength) {
     auto& midiEvents = track.getMidiEvents();
     
     for (const auto& event : midiEvents) {
         if (event.type != midi::NoteOn || event.data.noteData.velocity == 0) continue;
         uint32_t noteTick = event.tick;
         
-        if (barEndTick <= loopLength) {
-            if (noteTick >= barStartTick && noteTick < barEndTick) return true;
+        if (barStartStorage < barEndStorage) {
+            if (noteTick >= barStartStorage && noteTick < barEndStorage) return true;
         } else {
-            if (noteTick >= barStartTick || noteTick < (barEndTick - loopLength)) return true;
+            if (noteTick >= barStartStorage || noteTick < barEndStorage) return true;
         }
     }
     return false;
 }
 
-void MidiLedManager::updateBarLeds(Track& track, uint32_t loopLength, uint32_t currentBar) {
+void MidiLedManager::updateBarLeds(Track& track, uint32_t loopLength, uint32_t currentBar, uint32_t loopStartTick) {
     const uint32_t ticksPerBar = Config::TICKS_PER_BAR;
     
     for (uint8_t i = 0; i < NUM_BAR_LEDS; i++) {
-        uint32_t barStartTick = i * ticksPerBar;
-        uint32_t barEndTick = (i + 1) * ticksPerBar;
+        uint32_t barStartDisplay = i * ticksPerBar;
+        uint32_t barEndDisplay = (i + 1) * ticksPerBar;
         uint8_t note = BAR_LED_BASE_NOTE + i;
         
-        if (loopLength <= barStartTick) {
-            // NoteOff only when required: bar beyond loop (track switch, length edit)
-            if (lastBarVelocity[i] != BAR_VEL_NEVER_SENT) {
-                midiHandler.sendNoteOff(LED_CHANNEL, note, 0);
-                lastBarVelocity[i] = BAR_VEL_NEVER_SENT;
-                delayMicroseconds(updateDelayMicros);
-            }
+        if (loopLength <= barStartDisplay) {
+            // NoteOff when bar is beyond loop (resize smaller, track switch, length edit)
+            midiHandler.sendNoteOff(LED_CHANNEL, note, 0);
+            lastBarVelocity[i] = BAR_VEL_NEVER_SENT;
+            delayMicroseconds(updateDelayMicros);
         } else {
+            // Convert display-space bar to storage-space for note lookup
+            uint32_t barStartStorage = (loopStartTick + barStartDisplay) % loopLength;
+            uint32_t barEndStorage = (loopStartTick + barEndDisplay) % loopLength;
             bool isCurrentBar = (i == currentBar && currentBar < NUM_BAR_LEDS);
-            bool hasNotes = hasNoteInBar(track, barStartTick, barEndTick, loopLength);
+            bool hasNotes = hasNoteInBar(track, barStartStorage, barEndStorage, loopLength);
             uint8_t velocity = isCurrentBar ? VEL_BAR_CURRENT : (hasNotes ? VEL_BAR_HAS_NOTES : VEL_BAR_USED);
             // Only send NoteOn when velocity changes - no NoteOff during normal playback
             if (lastBarVelocity[i] != velocity) {
@@ -183,13 +191,19 @@ void MidiLedManager::setUpdateDelay(uint16_t delayMicros) {
     logger.log(CAT_MIDI_LED, LOG_INFO, "LED Manager: Update delay set to %d microseconds", delayMicros);
 }
 
-void MidiLedManager::updateCurrentTick(uint32_t currentTick, uint32_t loopLength) {
+void MidiLedManager::updateCurrentTick(Track& track, uint32_t currentTick) {
+    uint32_t loopLength = track.getLoopLength();
+    if (loopLength == 0) return;
+
+    uint32_t startLoopTick = track.getStartLoopTick();
+    uint32_t loopStartTick = track.getLoopStartTick();
     uint32_t ticksPerSixteenth = Config::TICKS_PER_16TH_STEP;
     uint32_t ticksPerBar = ticksPerSixteenth * NUM_LEDS;
     
-    // Calculate current position within the current bar
-    uint32_t tickInLoop = currentTick % loopLength;
-    uint32_t tickInBar = tickInLoop % ticksPerBar;
+    // Position in loop relative to loop start (matches 16th/bar LED display)
+    uint32_t tickInLoopStorage = (currentTick - startLoopTick) % loopLength;
+    uint32_t tickInLoopDisplay = (tickInLoopStorage - loopStartTick + loopLength) % loopLength;
+    uint32_t tickInBar = tickInLoopDisplay % ticksPerBar;
     int8_t newTickStep = tickInBar / ticksPerSixteenth;
     
     // Ensure we're within valid range
@@ -216,16 +230,18 @@ void MidiLedManager::updateCurrentTick(uint32_t currentTick, uint32_t loopLength
     }
 }
 
-void MidiLedManager::analyzeAndUpdateBar(Track& track, uint32_t barStartTick, uint32_t loopLength) {
+void MidiLedManager::analyzeAndUpdateBar(Track& track, uint32_t barStartTickDisplay, uint32_t loopLength, uint32_t loopStartTick) {
     uint32_t ticksPerSixteenth = Config::TICKS_PER_16TH_STEP;
     bool newLedState[NUM_LEDS];
     
-    // Analyze each 16th note position in the bar
+    // Analyze each 16th note position (convert display-space bar to storage-space for note lookup)
     for (int i = 0; i < NUM_LEDS; i++) {
-        uint32_t stepStartTick = (barStartTick + (i * ticksPerSixteenth)) % loopLength;
-        uint32_t stepEndTick = (barStartTick + ((i + 1) * ticksPerSixteenth)) % loopLength;
+        uint32_t stepStartDisplay = barStartTickDisplay + (i * ticksPerSixteenth);
+        uint32_t stepEndDisplay = barStartTickDisplay + ((i + 1) * ticksPerSixteenth);
+        uint32_t stepStartStorage = (loopStartTick + stepStartDisplay) % loopLength;
+        uint32_t stepEndStorage = (loopStartTick + stepEndDisplay) % loopLength;
         
-        newLedState[i] = hasNoteInSixteenthStep(track, stepStartTick, stepEndTick);
+        newLedState[i] = hasNoteInSixteenthStep(track, stepStartStorage, stepEndStorage);
     }
     
     // Always send all LED states to ensure sync
@@ -240,5 +256,5 @@ void MidiLedManager::analyzeAndUpdateBar(Track& track, uint32_t barStartTick, ui
         ledPattern += newLedState[i] ? "1" : "0";
     }
     logger.log(CAT_MIDI_LED, LOG_DEBUG, "LED Manager: Bar pattern (tick %lu): %s", 
-               barStartTick, ledPattern.c_str());
+               barStartTickDisplay, ledPattern.c_str());
 } 

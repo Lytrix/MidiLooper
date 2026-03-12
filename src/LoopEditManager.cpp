@@ -3,6 +3,7 @@
 
 #include "LoopEditManager.h"
 #include "Globals.h"
+#include "ClockManager.h"
 #include "TrackManager.h"
 
 LoopEditManager::LoopEditManager(MidiHandler& midiHandler) 
@@ -36,7 +37,10 @@ void LoopEditManager::handleLoopStartFaderInput(int16_t pitchValue, Track& track
         
         // Set the new loop start point
         track.setLoopStartTick(newLoopStartTick);
-        
+
+        // Update 16th LEDs immediately (works during play and stop - updateAllTracks may not run when stopped)
+        trackManager.forceLedUpdate(clockManager.getCurrentTick());
+
         logger.log(CAT_MIDI, LOG_INFO, "LOOP START EDIT: Loop start moved from tick %lu to %lu", 
                    currentStart, newLoopStartTick);
         
@@ -127,6 +131,7 @@ void LoopEditManager::updateLoopEndpointAfterGracePeriod(Track& track) {
         // Update the loop length to maintain the bar-based length relative to new start
         if (newLoopLength != loopLength) {
             track.setLoopLength(newLoopLength);
+            trackManager.forceLedUpdate(clockManager.getCurrentTick());
             logger.log(CAT_MIDI, LOG_INFO, "LOOP ENDPOINT UPDATE: Loop length adjusted from %lu to %lu ticks (%lu bars)", 
                        loopLength, newLoopLength, loopLengthBars);
             
@@ -166,7 +171,10 @@ void LoopEditManager::handleLoopLengthInput(uint8_t ccValue, Track& track) {
         
         // Set the new loop length with proper note wrapping
         track.setLoopLengthWithWrapping(newLoopLengthTicks);
-        
+
+        // Update LEDs immediately (works when stopped - updateAllTracks may not run)
+        trackManager.forceLedUpdate(clockManager.getCurrentTick());
+
         logger.log(CAT_MIDI, LOG_DEBUG, "Loop length updated successfully: CC=%d -> %lu bars (%lu ticks)", 
                    ccValue, newBars, newLoopLengthTicks);
         
