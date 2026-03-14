@@ -206,6 +206,24 @@ void BarStepButtonHandler::handleNoteOn(uint8_t note, uint8_t velocity) {
         exitBarSelect();
       }
     }
+
+    bool isLoopEdit = noteEditManager.getCurrentMainEditMode() == NoteEditManager::MAIN_MODE_LOOP_EDIT;
+    if (isLoopEdit && !trackRef.isJamPlaybackActive() && !potentialHoldTwo) {
+      uint32_t loopLength = trackRef.getLoopLength();
+      uint32_t loopStartTick = trackRef.getLoopStartTick();
+      uint32_t startLoopTick = trackRef.getStartLoopTick();
+      if (loopLength > 0) {
+        uint32_t displayPos = (info.type == BarStepButtonType::SIXTEENTH)
+          ? (info.stepIndex * Config::TICKS_PER_16TH_STEP)
+          : (info.stepIndex * Config::TICKS_PER_BAR);
+        uint32_t tickInLoop = (loopStartTick + displayPos) % loopLength;
+        uint32_t seekTick = startLoopTick + tickInLoop;
+        seekTick = (seekTick / Config::TICKS_PER_16TH_STEP) * Config::TICKS_PER_16TH_STEP;
+        clockManager.setCurrentTick(seekTick);
+        trackManager.forceLedUpdate(seekTick);
+        testLog("BarStepButton: immediate seek to tick %lu (quantized 16th) [TEST POINT: immediate seek]", seekTick);
+      }
+    }
   }
 }
 
@@ -436,12 +454,6 @@ void BarStepButtonHandler::executeLoopEditAction(const BarStepButtonInfo& info, 
           }
         }
         trackManager.forceLedUpdate(track.getEffectivePlaybackTick(clockManager.getCurrentTick()));
-      } else {
-        uint32_t seekTick = startLoopTick + tickInLoopStorage;
-        seekTick = (seekTick / Config::TICKS_PER_16TH_STEP) * Config::TICKS_PER_16TH_STEP;
-        clockManager.setCurrentTick(seekTick);
-        trackManager.forceLedUpdate(seekTick);
-        testLog("BarStepButton LoopEdit SHORT: seek to tick=%lu [TEST POINT: seek done]", seekTick);
       }
       break;
     }
