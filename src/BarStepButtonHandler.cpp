@@ -30,7 +30,8 @@ BarStepButtonHandler::BarStepButtonHandler()
     pressedBarBits(0),
     lastBarNoteOnTime(0),
     last16thNoteOnTime(0),
-    selectedBarIndex(0) {
+    selectedBarIndex(0),
+    isHoldTwoJam(false) {
   for (size_t i = 0; i < MAX_BUTTONS; i++) {
     buttonStates[i] = ButtonState{};
   }
@@ -196,11 +197,15 @@ void BarStepButtonHandler::handleNoteOn(uint8_t note, uint8_t velocity) {
             note, info.type == BarStepButtonType::SIXTEENTH ? "16th" : "bar", info.stepIndex,
             pressed16thCount(), pressedBarCount());
 
-    // Exit bar select immediately if same bar is pressed again
     Track& trackRef = trackManager.getSelectedTrack();
-    if (trackRef.isJamming() && info.type == BarStepButtonType::BAR && info.stepIndex == selectedBarIndex) {
-      testLog("BarStepButton: same bar %d pressed, exiting bar select [TEST POINT: bar select exit on press]", info.stepIndex);
-      exitBarSelect();
+    if (trackRef.isJamming()) {
+      if (isHoldTwoJam) {
+        testLog("BarStepButton: button pressed during HOLD_TWO jam, exiting [TEST POINT: hold two exit on press]");
+        exitBarSelect();
+      } else if (info.type == BarStepButtonType::BAR && info.stepIndex == selectedBarIndex) {
+        testLog("BarStepButton: same bar %d pressed, exiting bar select [TEST POINT: bar select exit on press]", info.stepIndex);
+        exitBarSelect();
+      }
     }
 
     // Immediate seek on NoteOn, quantized to 16th step boundary
@@ -390,6 +395,7 @@ void BarStepButtonHandler::onPressDetected(const BarStepButtonInfo& info, BarSte
 void BarStepButtonHandler::enterBarSelect(uint8_t barIndex) {
   Track& track = trackManager.getSelectedTrack();
   selectedBarIndex = barIndex;
+  isHoldTwoJam = false;
 
   uint32_t regionStartDisplay = barIndex * Config::TICKS_PER_BAR;
   uint32_t regionStartStorage = (track.getLoopStartTick() + regionStartDisplay) % track.getLoopLength();
@@ -402,6 +408,7 @@ void BarStepButtonHandler::exitBarSelect() {
   Track& track = trackManager.getSelectedTrack();
   if (!track.isJamming()) return;
   track.clearJam();
+  isHoldTwoJam = false;
   testLog("BarStepButton: exitBarSelect, jam cleared [TEST POINT: bar select exit]");
   trackManager.forceLedUpdate(clockManager.getCurrentTick());
 }
@@ -468,10 +475,9 @@ void BarStepButtonHandler::executeLoopEditAction(const BarStepButtonInfo& info, 
         : ((rangeEnd + 1) * Config::TICKS_PER_BAR);
       uint32_t rLen = rEndDisplay - rStartDisplay;
       uint32_t rStartStorage = (loopStartTick + rStartDisplay) % loopLength;
-      TrackUndo::pushLoopStartSnapshot(track);
-      track.setLoopStartTick(rStartStorage);
-      track.setLoopLength(rLen);
-      testLog("BarStepButton LoopEdit HOLD_TWO: loop start=%lu len=%lu [TEST POINT: loop range]", rStartStorage, rLen);
+      track.setJam(rStartStorage, rLen);
+      isHoldTwoJam = true;
+      testLog("BarStepButton LoopEdit HOLD_TWO: jam start=%lu len=%lu [TEST POINT: loop range]", rStartStorage, rLen);
       break;
     }
     case BarStepPressType::DOUBLE_PRESS:
