@@ -201,25 +201,24 @@ void DisplayManager::drawGridLines(uint32_t lengthLoop, int pianoRollY0, int pia
 // --- Helper: Draw all notes ---
 void DisplayManager::drawAllNotes(const Track& track, uint32_t startLoop, uint32_t lengthLoop, int minPitch, int maxPitch) {
     const auto& notes = track.getCachedNotes();
-    uint32_t loopStartTick = track.getLoopStartTick();
+    uint32_t loopLength = track.getLoopLength();
+    uint32_t jamStartTick = track.getJamStartTick();
     int selectedIdx = editManager.getSelectedNoteIdx();
-    
+
     for (int i = 0; i < (int)notes.size(); i++) {
         const auto& n = notes[i];
         int noteBrightness = (i == selectedIdx) ? HIGHLIGHT_COLOR : 7;
-        
-        // Adjust note positions to be relative to loop start point
-        uint32_t adjustedStartTick = (n.startTick >= loopStartTick) ? 
-            (n.startTick - loopStartTick) : (n.startTick + lengthLoop - loopStartTick);
-        adjustedStartTick = adjustedStartTick % lengthLoop;
-        
-        uint32_t adjustedEndTick = (n.endTick >= loopStartTick) ? 
-            (n.endTick - loopStartTick) : (n.endTick + lengthLoop - loopStartTick);
-        adjustedEndTick = adjustedEndTick % lengthLoop;
-        
+
+        // Adjust note positions relative to jam start, using loopLength for wrapping
+        uint32_t adjustedStartTick = (n.startTick - jamStartTick + loopLength) % loopLength;
+        uint32_t adjustedEndTick = (n.endTick - jamStartTick + loopLength) % loopLength;
+
+        // Skip notes entirely outside the jam window
+        if (adjustedStartTick >= lengthLoop && adjustedEndTick >= lengthLoop) continue;
+
         int y = map(n.note, minPitch, maxPitch, 31, 0);
         y = constrain(y, 0, 31);
-        
+
         drawNoteBar(n, y, adjustedStartTick, adjustedEndTick, lengthLoop, noteBrightness);
     }
 }
@@ -278,23 +277,16 @@ void DisplayManager::drawNoteBar(const DisplayNote& e, int y, uint32_t s, uint32
 // --- Draw piano roll using cached notes ---
 void DisplayManager::drawPianoRoll(uint32_t currentTick, Track& selectedTrack) {
     auto& track = selectedTrack;
-    uint32_t startLoop = 0; // Always start at bar 1 visually
-    uint32_t lengthLoop = track.getLoopLength();
-    uint32_t loopStartTick = track.getLoopStartTick();
+    uint32_t loopLength = track.getLoopLength();
+    uint32_t jamLength = track.getJamLength();
+    uint32_t jamStartTick = track.getJamStartTick();
 
-    //setLastPlayedNote(nullptr); // Reset at the start
     const int pianoRollY0 = 0;
     const int pianoRollY1 = 31;
-    if (lengthLoop > 0) {
-        // Calculate loop position relative to the loop start point
-        uint32_t loopPos;
-        if (currentTick >= loopStartTick) {
-            loopPos = (currentTick - loopStartTick) % lengthLoop;
-        } else {
-            // Handle the case where currentTick is before the loop start
-            uint32_t offset = loopStartTick - currentTick;
-            loopPos = (lengthLoop - (offset % lengthLoop)) % lengthLoop;
-        }
+    if (loopLength > 0) {
+        // Calculate playhead position relative to jam start
+        uint32_t tickInLoop = currentTick % loopLength;
+        uint32_t jamPos = (tickInLoop - jamStartTick + loopLength) % loopLength;
 
         // Compute min/max pitch for scaling
         int minPitch = 127;
@@ -306,20 +298,21 @@ void DisplayManager::drawPianoRoll(uint32_t currentTick, Track& selectedTrack) {
         }
         if (minPitch > maxPitch) { minPitch = 60; maxPitch = 72; } // fallback
 
-        drawGridLines(lengthLoop, pianoRollY0, pianoRollY1);
-        drawAllNotes(track, startLoop, lengthLoop, minPitch, maxPitch); // includes selected note
-        
-        // Adjust bracket tick to be relative to loop start point
+        drawGridLines(jamLength, pianoRollY0, pianoRollY1);
+        drawAllNotes(track, 0, jamLength, minPitch, maxPitch);
+
+        // Adjust bracket tick to be relative to jam start
         uint32_t bracketTick = editManager.getBracketTick();
-        uint32_t relativeBracketTick = (bracketTick >= loopStartTick) ? 
-            (bracketTick - loopStartTick) : (bracketTick + lengthLoop - loopStartTick);
-        relativeBracketTick = relativeBracketTick % lengthLoop;
-        
-        drawBracket(relativeBracketTick, lengthLoop, pianoRollY1);
-      
-        // Draw playhead cursor at relative position
-        int cx = TRACK_MARGIN + map(loopPos, 0, lengthLoop, 0, DISPLAY_WIDTH - 1 - TRACK_MARGIN);
-        _display.gfx.draw_vline(_display.api.getFrameBuffer(), cx, 0, 32, 3);
+        uint32_t relativeBracketTick = (bracketTick - jamStartTick + loopLength) % loopLength;
+        if (relativeBracketTick < jamLength) {
+            drawBracket(relativeBracketTick, jamLength, pianoRollY1);
+        }
+
+        // Draw playhead cursor if within jam window
+        if (jamPos < jamLength) {
+            int cx = TRACK_MARGIN + map(jamPos, 0, jamLength, 0, DISPLAY_WIDTH - 1 - TRACK_MARGIN);
+            _display.gfx.draw_vline(_display.api.getFrameBuffer(), cx, 0, 32, 3);
+        }
     }
 }
 
