@@ -24,7 +24,9 @@ Track::Track() :
   trackState(TRACK_EMPTY),
   startLoopTick(0),
   loopLengthTicks(0),
-  loopStartTick(0),  // Initialize loop start point
+  loopStartTick(0),
+  jamStartTick(UINT32_MAX),
+  jamLength(0),
   lastTickInLoop(0),
   nextEventIndex(0),
   isPlayingBack(false),
@@ -797,6 +799,18 @@ void Track::setLoopStartAndEnd(uint32_t startTick, uint32_t endTick) {
 
 uint32_t Track::getLoopEndTick() const {
   return loopStartTick + loopLengthTicks;
+}
+
+void Track::setJam(uint32_t startTick, uint32_t length) {
+  jamStartTick = startTick;
+  jamLength = length;
+  logger.log(CAT_TRACK, LOG_INFO, "Jam set: start=%lu, length=%lu", jamStartTick, jamLength);
+}
+
+void Track::clearJam() {
+  jamStartTick = UINT32_MAX;
+  jamLength = 0;
+  logger.log(CAT_TRACK, LOG_INFO, "Jam cleared");
 }
 
 // Display functions

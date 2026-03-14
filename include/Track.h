@@ -138,7 +138,18 @@ public:
   
   // Get effective loop end based on start + length
   uint32_t getLoopEndTick() const;
-  
+
+  // Jam state — display focus region, decoupled from loop params
+  bool isJamming() const { return jamLength > 0; }
+  uint32_t getJamLength() const {
+    return jamLength > 0 ? jamLength : loopLengthTicks;
+  }
+  uint32_t getJamStartTick() const {
+    return jamStartTick != UINT32_MAX ? jamStartTick : loopStartTick;
+  }
+  void setJam(uint32_t startTick, uint32_t length);
+  void clearJam();
+
   // Tempo accessors
   static uint32_t getTicksPerBar();
 
@@ -200,6 +211,8 @@ private:
   uint32_t startLoopTick;
   uint32_t loopLengthTicks;
   uint32_t loopStartTick;  // Loop start point offset for loop editing
+  uint32_t jamStartTick;   // Jam display region start (UINT32_MAX = inactive)
+  uint32_t jamLength;      // Jam display region length (0 = inactive)
   uint32_t lastTickInLoop;
   uint16_t nextEventIndex;
   static const uint32_t TICKS_PER_BAR;

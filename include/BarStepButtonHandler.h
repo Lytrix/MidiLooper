@@ -50,11 +50,6 @@ public:
   // Used by MidiHandler for routing - returns true if note is bar/step button
   bool isBarStepButtonNote(uint8_t channel, uint8_t note) const;
 
-  // Bar select state (used by LoopEditManager to block faders)
-  bool isBarSelectActive() const { return barSelectActive; }
-  uint32_t getSavedLoopLength() const { return savedLoopLength; }
-  uint32_t getSavedLoopStartTick() const { return savedLoopStartTick; }
-
 private:
   bool testLoggingEnabled;
   uint32_t doubleTapWindow;
@@ -69,11 +64,8 @@ private:
   uint32_t lastBarNoteOnTime;
   uint32_t last16thNoteOnTime;
 
-  // Bar select state: temporary zoom into a single bar
-  bool barSelectActive;
+  // Bar select: uses Track jam state for display zoom
   uint8_t selectedBarIndex;
-  uint32_t savedLoopStartTick;
-  uint32_t savedLoopLength;
   void enterBarSelect(uint8_t barIndex);
   void exitBarSelect();
   void switchBarSelect(uint8_t barIndex);
