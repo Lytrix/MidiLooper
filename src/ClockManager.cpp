@@ -102,7 +102,8 @@ void ClockManager::updateInternalClock() {
   // When slaved to external MIDI clock, tick is driven only by onMidiClockPulse
   if (clockSource == CLOCK_EXTERNAL) return;
   currentTick++;
-  trackManager.updateAllTracks(currentTick);  // Let TrackManager handle it
+  trackManager.advanceJamTicks(1);
+  trackManager.updateAllTracks(currentTick);
   lastInternalTickTime = micros();
 }
 
@@ -140,6 +141,7 @@ void ClockManager::onMidiClockPulse() {
     firstPulseAfterStart = false;
   } else {
     currentTick += Config::TICKS_PER_CLOCK;
+    trackManager.advanceJamTicks(Config::TICKS_PER_CLOCK);
   }
 
   trackManager.updateAllTracks(currentTick);

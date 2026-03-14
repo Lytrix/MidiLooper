@@ -150,6 +150,14 @@ public:
   void setJam(uint32_t startTick, uint32_t length);
   void clearJam();
 
+  // Jam playback — independent tick for per-track looping within jam region
+  void advanceJamTick(uint32_t delta = 1);
+  uint32_t getJamTick() const;
+  void setJamTick(uint32_t tick);
+  bool isJamPlaybackActive() const { return jamPlaybackActive; }
+  void setJamPlayback(bool enabled);
+  uint32_t getEffectivePlaybackTick(uint32_t currentTick) const;
+
   // Tempo accessors
   static uint32_t getTicksPerBar();
 
@@ -213,6 +221,8 @@ private:
   uint32_t loopStartTick;  // Loop start point offset for loop editing
   uint32_t jamStartTick;   // Jam display region start (UINT32_MAX = inactive)
   uint32_t jamLength;      // Jam display region length (0 = inactive)
+  volatile uint32_t jamTick;  // Position within jam region (0 to jamLength-1)
+  bool jamPlaybackActive;     // True = track uses jamTick for playback
   uint32_t lastTickInLoop;
   uint16_t nextEventIndex;
   static const uint32_t TICKS_PER_BAR;

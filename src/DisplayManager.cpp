@@ -498,25 +498,17 @@ void DisplayManager::drawNoteInfo(uint32_t currentTick, Track& selectedTrack) {
 }
 
 void DisplayManager::update() {
-    // Get current global tick count for display timing
     uint32_t currentTick = clockManager.getCurrentTick();
+    Track& selTrack = trackManager.getSelectedTrack();
+    uint32_t displayTick = selTrack.getEffectivePlaybackTick(currentTick);
     uint32_t now = millis();
 
-    // Clear frame buffer
     _display.gfx.fill_buffer(_display.api.getFrameBuffer(), 0);
 
-    // Draw vertical track status on the left
     drawTrackStatus(trackManager.getSelectedTrackIndex(), now);
-    
-    // Draw piano roll
-    drawPianoRoll(currentTick, trackManager.getSelectedTrack());
+    drawPianoRoll(displayTick, selTrack);
+    drawInfoArea(displayTick, selTrack);
+    drawNoteInfo(displayTick, selTrack);
 
-    // Draw info area
-    drawInfoArea(currentTick, trackManager.getSelectedTrack());
-
-    // Draw note info
-    drawNoteInfo(currentTick, trackManager.getSelectedTrack());
-
-    // Send buffer to display
    _display.api.display();
 }

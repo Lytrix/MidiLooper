@@ -250,12 +250,15 @@ void TrackManager::setup() {
   }
 }
 
+void TrackManager::advanceJamTicks(uint32_t delta) {
+  for (uint8_t i = 0; i < Config::NUM_TRACKS; i++) {
+    tracks[i].advanceJamTick(delta);
+  }
+}
+
 void TrackManager::updateAllTracks(uint32_t currentTick) {
-  // Called from ClockManager.internalUpdateClockTick and updateMidiClockTick
   for (uint8_t i = 0; i < Config::NUM_TRACKS; i++) {
     if (pendingRecord[i]) {
-      // Wait for the next bar boundary
-      //if (currentTick == 0 || (currentTick % Track::getTicksPerBar()) == 0) {
       if (currentTick == 0 || (currentTick % Track::getTicksPerBar()) == 0) {
         startRecordingTrack(i, currentTick);
         pendingRecord[i] = false;
@@ -268,16 +271,16 @@ void TrackManager::updateAllTracks(uint32_t currentTick) {
     }
 
     bool audible = isTrackAudible(i);
-    tracks[i].playMidiEvents(currentTick, audible);
+    uint32_t playTick = tracks[i].getEffectivePlaybackTick(currentTick);
+    tracks[i].playMidiEvents(playTick, audible);
   }
   
-  // Update LEDs for the selected track
-  updateLeds(currentTick);
-  
-  // Update current tick indicator (use selected track for loop params)
   Track& selTrack = getSelectedTrack();
+  uint32_t selTick = selTrack.getEffectivePlaybackTick(currentTick);
+  updateLeds(selTick);
+  
   if (ledManager && selTrack.getLoopLength() > 0) {
-    ledManager->updateCurrentTick(selTrack, currentTick);
+    ledManager->updateCurrentTick(selTrack, selTick);
   }
 }
 

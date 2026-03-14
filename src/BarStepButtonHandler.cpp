@@ -198,33 +198,12 @@ void BarStepButtonHandler::handleNoteOn(uint8_t note, uint8_t velocity) {
             pressed16thCount(), pressedBarCount());
 
     Track& trackRef = trackManager.getSelectedTrack();
-    if (trackRef.isJamming()) {
-      if (isHoldTwoJam) {
-        testLog("BarStepButton: button pressed during HOLD_TWO jam, exiting [TEST POINT: hold two exit on press]");
-        exitBarSelect();
-      } else if (info.type == BarStepButtonType::BAR && info.stepIndex == selectedBarIndex) {
+    bool potentialHoldTwo = (info.type == BarStepButtonType::BAR && pressedBarCount() >= 2) ||
+                            (info.type == BarStepButtonType::SIXTEENTH && pressed16thCount() >= 2);
+    if (trackRef.isJamming() && !potentialHoldTwo) {
+      if (info.type == BarStepButtonType::BAR && !isHoldTwoJam && info.stepIndex == selectedBarIndex) {
         testLog("BarStepButton: same bar %d pressed, exiting bar select [TEST POINT: bar select exit on press]", info.stepIndex);
         exitBarSelect();
-      }
-    }
-
-    // Immediate seek on NoteOn, quantized to 16th step boundary
-    bool isLoopEdit = noteEditManager.getCurrentMainEditMode() == NoteEditManager::MAIN_MODE_LOOP_EDIT;
-    if (isLoopEdit) {
-      Track& track = trackManager.getSelectedTrack();
-      uint32_t loopLength = track.getLoopLength();
-      uint32_t loopStartTick = track.getLoopStartTick();
-      uint32_t startLoopTick = track.getStartLoopTick();
-      if (loopLength > 0) {
-        uint32_t displayPos = (info.type == BarStepButtonType::SIXTEENTH)
-          ? (info.stepIndex * Config::TICKS_PER_16TH_STEP)
-          : (info.stepIndex * Config::TICKS_PER_BAR);
-        uint32_t tickInLoop = (loopStartTick + displayPos) % loopLength;
-        uint32_t seekTick = startLoopTick + tickInLoop;
-        seekTick = (seekTick / Config::TICKS_PER_16TH_STEP) * Config::TICKS_PER_16TH_STEP;
-        clockManager.setCurrentTick(seekTick);
-        trackManager.forceLedUpdate(seekTick);
-        testLog("BarStepButton: immediate seek to tick %lu (quantized 16th) [TEST POINT: immediate seek]", seekTick);
       }
     }
   }
@@ -400,6 +379,7 @@ void BarStepButtonHandler::enterBarSelect(uint8_t barIndex) {
   uint32_t regionStartDisplay = barIndex * Config::TICKS_PER_BAR;
   uint32_t regionStartStorage = (track.getLoopStartTick() + regionStartDisplay) % track.getLoopLength();
   track.setJam(regionStartStorage, Config::TICKS_PER_BAR);
+  track.setJamPlayback(true);
   testLog("BarStepButton: enterBarSelect bar=%d jamStart=%lu jamLen=%lu [TEST POINT: bar select enter]",
           barIndex, regionStartStorage, Config::TICKS_PER_BAR);
 }
@@ -438,10 +418,31 @@ void BarStepButtonHandler::executeLoopEditAction(const BarStepButtonInfo& info, 
 
   switch (pressType) {
     case BarStepPressType::SHORT_PRESS: {
-      uint32_t seekTick = startLoopTick + tickInLoopStorage;
-      seekTick = (seekTick / Config::TICKS_PER_16TH_STEP) * Config::TICKS_PER_16TH_STEP;
-      clockManager.setCurrentTick(seekTick);
-      testLog("BarStepButton LoopEdit SHORT: seek to tick=%lu [TEST POINT: seek done]", seekTick);
+      if (track.isJamPlaybackActive()) {
+        if (info.type == BarStepButtonType::BAR) {
+          if (isHoldTwoJam) {
+            uint32_t newStart = (loopStartTick + info.stepIndex * Config::TICKS_PER_BAR) % loopLength;
+            track.setJam(newStart, track.getJamLength());
+            track.setJamTick(0);
+            testLog("BarStepButton: jam navigate to bar %d [TEST POINT: jam navigate bar]", info.stepIndex);
+          } else {
+            switchBarSelect(info.stepIndex);
+          }
+        } else {
+          uint32_t seekPos = info.stepIndex * Config::TICKS_PER_16TH_STEP;
+          if (seekPos < track.getJamLength()) {
+            track.setJamTick(seekPos);
+            testLog("BarStepButton: jam seek to 16th %d [TEST POINT: jam navigate 16th]", info.stepIndex);
+          }
+        }
+        trackManager.forceLedUpdate(track.getEffectivePlaybackTick(clockManager.getCurrentTick()));
+      } else {
+        uint32_t seekTick = startLoopTick + tickInLoopStorage;
+        seekTick = (seekTick / Config::TICKS_PER_16TH_STEP) * Config::TICKS_PER_16TH_STEP;
+        clockManager.setCurrentTick(seekTick);
+        trackManager.forceLedUpdate(seekTick);
+        testLog("BarStepButton LoopEdit SHORT: seek to tick=%lu [TEST POINT: seek done]", seekTick);
+      }
       break;
     }
     case BarStepPressType::HOLD_ONE_BUTTON: {
@@ -476,6 +477,7 @@ void BarStepButtonHandler::executeLoopEditAction(const BarStepButtonInfo& info, 
       uint32_t rLen = rEndDisplay - rStartDisplay;
       uint32_t rStartStorage = (loopStartTick + rStartDisplay) % loopLength;
       track.setJam(rStartStorage, rLen);
+      track.setJamPlayback(true);
       isHoldTwoJam = true;
       testLog("BarStepButton LoopEdit HOLD_TWO: jam start=%lu len=%lu [TEST POINT: loop range]", rStartStorage, rLen);
       break;
