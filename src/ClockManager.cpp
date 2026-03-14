@@ -211,6 +211,14 @@ void ClockManager::resetToLoopStart() {
   logger.info("Reset to loop start (tick 0)");
 }
 
+void ClockManager::setCurrentTick(uint32_t tick) {
+  noInterrupts();
+  currentTick = tick;
+  interrupts();
+  trackManager.updateAllTracks(tick);
+  logger.log(CAT_CLOCK, LOG_DEBUG, "Seek: currentTick set to %lu", tick);
+}
+
 void ClockManager::toggleTransport() {
   if (sequencerRunning) {
     sequencerRunning = false;

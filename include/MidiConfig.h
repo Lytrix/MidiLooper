@@ -65,6 +65,15 @@ namespace LoopEdit {
 // --- Program change (mode switching) ---
 constexpr uint8_t PROGRAM_CHANGE_CHANNEL = 16;
 
+// --- Bar/Step button input (16th notes + bars, any controller) ---
+namespace BarStepButton {
+  constexpr uint8_t CHANNEL = 16;
+  constexpr uint8_t SIXTEENTH_BASE = 0;
+  constexpr uint8_t SIXTEENTH_COUNT = 16;   // notes 0-15
+  constexpr uint8_t BAR_BASE = 17;
+  constexpr uint8_t BAR_COUNT = 8;          // notes 17-24
+}
+
 } // namespace MidiConfig
 
 #endif // MIDI_CONFIG_H

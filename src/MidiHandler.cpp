@@ -10,6 +10,8 @@
 #include "MidiEvent.h"
 #include "MidiButtonManager.h"
 #include "MidiFaderManager.h"
+#include "BarStepButtonHandler.h"
+#include "MidiConfig.h"
 #include "NoteEditManager.h"
 
 MIDI_CREATE_INSTANCE(HardwareSerial, Serial8, MIDIserial);  // Teensy Serial8 for 5-pin DIN MIDI
@@ -231,26 +233,23 @@ void MidiHandler::sendMidiThru(byte type, byte channel, byte data1, byte data2) 
 
 // --- Individual Message Handlers ---
 void MidiHandler::handleNoteOn(byte channel, byte note, byte velocity, uint32_t tickNow) {
-  // Route button notes to new V2 MidiButtonManager for button handling
+  // Bar/step buttons (notes 0-15, 17-24 on ch16) go to BarStepButtonHandler, not MidiButtonManager
+  if (barStepButtonHandler.isBarStepButtonNote(channel, note)) {
+    barStepButtonHandler.handleMidiNote(channel, note, velocity, true);
+    return;
+  }
   midiButtonManager.handleMidiNote(channel, note, velocity, true);
-  
-  // Keep routing to old manager for fader functionality (temporary)
-  //midiButtonManager.handleMidiNote(channel, note, velocity, true);
-  
-  // Route to track recording (skip control channels 13-16)
   if (!isControlChannel(channel)) {
   trackManager.getSelectedTrack().noteOn(channel, note, velocity, tickNow);
   }
 }
 
 void MidiHandler::handleNoteOff(byte channel, byte note, byte velocity, uint32_t tickNow) {
-  // Route button notes to new V2 MidiButtonManager for button handling
+  if (barStepButtonHandler.isBarStepButtonNote(channel, note)) {
+    barStepButtonHandler.handleMidiNote(channel, note, velocity, false);
+    return;
+  }
   midiButtonManager.handleMidiNote(channel, note, velocity, false);
-  
-  // Keep routing to old manager for fader functionality (temporary)
-  //midiButtonManager.handleMidiNote(channel, note, velocity, false);
-  
-  // Route to track recording (skip control channels 13-16)
   if (!isControlChannel(channel)) {
   trackManager.getSelectedTrack().noteOff(channel, note, velocity, tickNow);
   }
@@ -446,26 +445,19 @@ void MidiHandler::setOutputSerial(bool enable) {
 // --- Static USB Host MIDI Callbacks ---
 void MidiHandler::usbHostNoteOn(uint8_t channel, uint8_t note, uint8_t velocity) {
   if (instance) {
-    // Route button notes to new V2 MidiButtonManager for button handling
-    midiButtonManager.handleMidiNote(channel, note, velocity, true);
-    
-    // Keep routing to old manager for fader functionality (temporary)
-    //midiButtonManager.handleMidiNote(channel, note, velocity, true);
-    
-    // Route to regular MIDI handling
+    // Bar/step buttons: only handleMidiMessage (which routes to BarStepButtonHandler)
+    if (!barStepButtonHandler.isBarStepButtonNote(channel, note)) {
+      midiButtonManager.handleMidiNote(channel, note, velocity, true);
+    }
     instance->handleMidiMessage(midi::NoteOn, channel, note, velocity, SOURCE_USB_HOST);
   }
 }
 
 void MidiHandler::usbHostNoteOff(uint8_t channel, uint8_t note, uint8_t velocity) {
   if (instance) {
-    // Route button notes to new V2 MidiButtonManager for button handling
-    midiButtonManager.handleMidiNote(channel, note, velocity, false);
-    
-    // Keep routing to old manager for fader functionality (temporary)
-    //midiButtonManager.handleMidiNote(channel, note, velocity, false);
-    
-    // Route to regular MIDI handling
+    if (!barStepButtonHandler.isBarStepButtonNote(channel, note)) {
+      midiButtonManager.handleMidiNote(channel, note, velocity, false);
+    }
     instance->handleMidiMessage(midi::NoteOff, channel, note, velocity, SOURCE_USB_HOST);
   }
 }
