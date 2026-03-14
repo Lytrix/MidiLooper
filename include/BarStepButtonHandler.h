@@ -64,8 +64,9 @@ private:
   uint32_t lastBarNoteOnTime;
   uint32_t last16thNoteOnTime;
 
-  // Bar select: uses Track jam state for display zoom
+  // Bar select / HOLD_TWO: uses Track jam state for display zoom
   uint8_t selectedBarIndex;
+  bool isHoldTwoJam;
   void enterBarSelect(uint8_t barIndex);
   void exitBarSelect();
   void switchBarSelect(uint8_t barIndex);
