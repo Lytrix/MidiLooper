@@ -5,6 +5,7 @@
 #include "Globals.h"
 #include "ClockManager.h"
 #include "TrackManager.h"
+#include "BarStepButtonHandler.h"
 
 LoopEditManager::LoopEditManager(MidiHandler& midiHandler) 
     : midiHandler(midiHandler) {
@@ -14,6 +15,11 @@ void LoopEditManager::handleLoopStartFaderInput(int16_t pitchValue, Track& track
     // Only process fader input when in LOOP_EDIT mode
     if (!currentMainEditMode) {
         logger.log(CAT_MIDI, LOG_DEBUG, "Loop start fader input ignored: not in LOOP_EDIT mode");
+        return;
+    }
+    
+    if (barStepButtonHandler.isBarSelectActive()) {
+        logger.log(CAT_MIDI, LOG_DEBUG, "Loop start fader input ignored: bar select active");
         return;
     }
     
@@ -153,6 +159,11 @@ void LoopEditManager::handleLoopLengthInput(uint8_t ccValue, Track& track) {
     // Only process loop length input when in LOOP_EDIT mode
     if (!currentMainEditMode) {
         logger.log(CAT_MIDI, LOG_DEBUG, "Loop length input ignored: not in LOOP_EDIT mode");
+        return;
+    }
+    
+    if (barStepButtonHandler.isBarSelectActive()) {
+        logger.log(CAT_MIDI, LOG_DEBUG, "Loop length input ignored: bar select active");
         return;
     }
     

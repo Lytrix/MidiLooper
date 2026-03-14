@@ -26,7 +26,8 @@ enum LogCategory {
   CAT_BUTTON = 5,
   CAT_DISPLAY = 6,
   CAT_MOVE_NOTES = 7,
-  CAT_MIDI_LED = 8
+  CAT_MIDI_LED = 8,
+  CAT_BAR_STEP_BUTTON = 9   // Bar/16th button handler - enable for manual testing
 };
 
 /**

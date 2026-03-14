@@ -48,6 +48,7 @@ public:
   bool isTransportRunning() const;
   void toggleTransport();
   void resetToLoopStart();
+  void setCurrentTick(uint32_t tick);
   uint32_t setLastMidiClockTime(uint32_t lastMidiClockTime);
 
 private:

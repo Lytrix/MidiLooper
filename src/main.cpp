@@ -10,6 +10,7 @@
 #include "ButtonManager.h"
 #include "MidiButtonManager.h"
 #include "MidiFaderManager.h"
+#include "BarStepButtonHandler.h"
 #include "DisplayManager.h"
 #include "LooperState.h"
 #include "Looper.h"
@@ -32,6 +33,11 @@ void setup() {
   
   // Setup new V2 MIDI Fader Manager for fader handling
   midiFaderManager.setup();
+  
+  barStepButtonHandler.setup();
+  // Manual test: enable for BarStepButton debug output over Serial
+  barStepButtonHandler.setTestLoggingEnabled(true);
+  logger.setCategoryEnabled(CAT_BAR_STEP_BUTTON, true);
   
   // Connect NoteEditManager to MidiFaderProcessor
   noteEditManager.setFaderProcessor(&midiFaderManager.getProcessor());
@@ -102,7 +108,8 @@ void loop() {
   // Update new V2 MIDI fader manager for fader handling
   midiFaderManager.update();
   
-  // Update old manager for move note logic
+  barStepButtonHandler.update();
+  
   noteEditManager.update();
   looper.update();
 
