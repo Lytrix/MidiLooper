@@ -27,6 +27,8 @@ Track::Track() :
   loopStartTick(0),
   jamStartTick(UINT32_MAX),
   jamLength(0),
+  jamTick(0),
+  jamPlaybackActive(false),
   lastTickInLoop(0),
   nextEventIndex(0),
   isPlayingBack(false),
@@ -802,15 +804,62 @@ uint32_t Track::getLoopEndTick() const {
 }
 
 void Track::setJam(uint32_t startTick, uint32_t length) {
+  noInterrupts();
   jamStartTick = startTick;
   jamLength = length;
+  jamTick = 0;
+  nextEventIndex = 0;
+  lastTickInLoop = UINT32_MAX;
+  interrupts();
   logger.log(CAT_TRACK, LOG_INFO, "Jam set: start=%lu, length=%lu", jamStartTick, jamLength);
 }
 
 void Track::clearJam() {
+  noInterrupts();
   jamStartTick = UINT32_MAX;
   jamLength = 0;
+  jamPlaybackActive = false;
+  jamTick = 0;
+  nextEventIndex = 0;
+  lastTickInLoop = UINT32_MAX;
+  interrupts();
   logger.log(CAT_TRACK, LOG_INFO, "Jam cleared");
+}
+
+void Track::advanceJamTick(uint32_t delta) {
+  if (!jamPlaybackActive || jamLength == 0) return;
+  jamTick = (jamTick + delta) % jamLength;
+}
+
+uint32_t Track::getJamTick() const {
+  noInterrupts();
+  uint32_t t = jamTick;
+  interrupts();
+  return t;
+}
+
+void Track::setJamTick(uint32_t tick) {
+  noInterrupts();
+  jamTick = (jamLength > 0) ? (tick % jamLength) : 0;
+  nextEventIndex = 0;
+  lastTickInLoop = UINT32_MAX;
+  interrupts();
+}
+
+void Track::setJamPlayback(bool enabled) {
+  noInterrupts();
+  jamPlaybackActive = enabled;
+  if (enabled) {
+    nextEventIndex = 0;
+    lastTickInLoop = UINT32_MAX;
+  }
+  interrupts();
+}
+
+uint32_t Track::getEffectivePlaybackTick(uint32_t currentTick) const {
+  if (!jamPlaybackActive || jamLength == 0) return currentTick;
+  uint32_t storagePos = (jamStartTick + jamTick) % loopLengthTicks;
+  return startLoopTick + storagePos;
 }
 
 // Display functions

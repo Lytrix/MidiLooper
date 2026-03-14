@@ -43,7 +43,7 @@ public:
 
   // --- Track Updates ---
   void updateAllTracks(uint32_t currentTick);  // Update all tracks and handle pending operations
-  // updateAllTracks is deprecated - use update instead
+  void advanceJamTicks(uint32_t delta);         // Advance jamTick for all jam-active tracks
 
   // --- Recording ---
   void startRecordingTrack(uint8_t trackIndex, uint32_t currentTick);
