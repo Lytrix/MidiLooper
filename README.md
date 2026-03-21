@@ -8,6 +8,9 @@ This Midilooper has been created with help of chatgpt and later Cursor. It has p
 The main inspiration was taken from this minimalistic 4 track looper using only 2 buttons and 4 digits:
 https://iestyn-lewis.github.io/4by8/
 
+## Development Status ##
+This branch is working, but in the meantime I am working on another branch [MidiLooper](https://github.com/Lytrix/MidiLooper/tree/midi-faders) which has more mature code and bugfixes including more edit options, Midi Led controls and Looping options. It uses the [Droid controllers](https://shop.dermannmitdermaschine.de/pages/droid-universal-cv-processor) instead of the buttons and encoder which do not work ATM in this branch, my aim is to put those back later so you can build a minimal Midilooper version with the same possibilities. 
+
 ## Hardware ##
 - 1x Teensy 4.1
 - 1x 256x64 4bit monochrome display (SSD1322 OLED) — code also supports 16x2 LCD
