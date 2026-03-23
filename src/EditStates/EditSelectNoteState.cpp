@@ -541,22 +541,12 @@ void EditSelectNoteState::sendTargetPitchbend(EditManager& manager, Track& track
             
             if (currentPosIndex >= 0) {
                 // Calculate what pitchbend value corresponds to this position
-                // MIDI Library expects pitchbend range: -8192 to +8191 (center = 0)
-                const int16_t PITCHBEND_MIN = -8192;
-                const int16_t PITCHBEND_MAX = 8191;
-                
-                // Use safer calculation to avoid overflow
-                // Convert to float for precision, then map to MIDI library's expected range
                 float normalizedPos = (float)currentPosIndex / (float)(allPositions.size() - 1);  // 0.0 to 1.0
-                
-                // Map 0.0-1.0 to -8192 to +8191
-                int16_t targetPitchbend = (int16_t)(PITCHBEND_MIN + normalizedPos * (PITCHBEND_MAX - PITCHBEND_MIN));
-                
-                // Ensure we stay within valid range
-                targetPitchbend = constrain(targetPitchbend, PITCHBEND_MIN, PITCHBEND_MAX);
+                int16_t targetPitchbend = (int16_t)(MidiConfig::Pitchbend::MIN + normalizedPos * (MidiConfig::Pitchbend::MAX - MidiConfig::Pitchbend::MIN));
+                targetPitchbend = constrain(targetPitchbend, MidiConfig::Pitchbend::MIN, MidiConfig::Pitchbend::MAX);
                 
                 logger.log(CAT_MIDI, LOG_DEBUG, "SENDING PITCHBEND: Position %d/%lu at tick %lu (relative %lu) = value %d (range: %d to %d)", 
-                           currentPosIndex, allPositions.size(), bracketTick, relativeBracketTick, targetPitchbend, PITCHBEND_MIN, PITCHBEND_MAX);
+                           currentPosIndex, allPositions.size(), bracketTick, relativeBracketTick, targetPitchbend, MidiConfig::Pitchbend::MIN, MidiConfig::Pitchbend::MAX);
                 
                 // Send the pitchbend value to external device (select fader channel)
                 midiHandler.sendPitchBend(MidiConfig::Fader::SELECT_CHANNEL, targetPitchbend);

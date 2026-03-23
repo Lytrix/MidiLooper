@@ -115,9 +115,6 @@ private:
     static constexpr uint8_t FINE_CC_NUMBER = MidiConfig::Fader::FINE_CC;
     static constexpr uint8_t NOTE_VALUE_CC_CHANNEL = MidiConfig::Fader::NOTE_VALUE_CHANNEL;
     static constexpr uint8_t NOTE_VALUE_CC_NUMBER = MidiConfig::Fader::NOTE_VALUE_CC;
-    static constexpr int16_t PITCHBEND_MIN = -8192;  // Standard MIDI pitchbend minimum
-    static constexpr int16_t PITCHBEND_MAX = 8191;   // Standard MIDI pitchbend maximum
-    static constexpr int16_t PITCHBEND_CENTER = 0;   // Center position
 
 
     
@@ -128,13 +125,13 @@ private:
     uint32_t lastEditingActivityTime = 0;
     
     // Smart selection and coarse fader stability - prevent feedback and jitter
-    int16_t lastUserSelectFaderValue = PITCHBEND_CENTER;
+    int16_t lastUserSelectFaderValue = MidiConfig::Pitchbend::CENTER;
     uint32_t lastSelectFaderTime = 0;
     static constexpr int16_t SELECT_MOVEMENT_THRESHOLD = 100; // Minimum pitchbend change to be considered intentional
     static constexpr uint32_t SELECT_STABILITY_TIME = 500; // ms between movements to be considered stable
     
     // Coarse fader movement stability - prevent jitter from rescheduling updates
-    int16_t lastUserCoarseFaderValue = PITCHBEND_CENTER;
+    int16_t lastUserCoarseFaderValue = MidiConfig::Pitchbend::CENTER;
     uint32_t lastCoarseFaderTime = 0;
     static constexpr int16_t COARSE_MOVEMENT_THRESHOLD = 150; // Minimum pitchbend change to be considered intentional
     static constexpr uint32_t COARSE_STABILITY_TIME = 1000; // ms between movements to be considered stable

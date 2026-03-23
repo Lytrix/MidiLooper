@@ -447,14 +447,10 @@ void NoteEditManager::sendStartNotePitchbend(Track& track) {
                    relativeBracketTick, stepPosition, nearestStep, numSteps);
         
         if (numSteps > 1) {
-            // COARSE FADER (Channel 15): Map 16th step position to pitchbend range  
-            const int16_t PITCHBEND_MIN = -8192;
-            const int16_t PITCHBEND_MAX = 8191;
-            
-            // Map step position to pitchbend range
+            // COARSE FADER (Channel 15): Map 16th step position to pitchbend range
             float normalizedPos = (float)nearestStep / (float)(numSteps - 1);  // 0.0 to 1.0
-            int16_t coarseMidiPitchbend = (int16_t)(PITCHBEND_MIN + normalizedPos * (PITCHBEND_MAX - PITCHBEND_MIN));
-            coarseMidiPitchbend = constrain(coarseMidiPitchbend, PITCHBEND_MIN, PITCHBEND_MAX);
+            int16_t coarseMidiPitchbend = (int16_t)(MidiConfig::Pitchbend::MIN + normalizedPos * (MidiConfig::Pitchbend::MAX - MidiConfig::Pitchbend::MIN));
+            coarseMidiPitchbend = constrain(coarseMidiPitchbend, MidiConfig::Pitchbend::MIN, MidiConfig::Pitchbend::MAX);
             
             logger.log(CAT_MIDI, LOG_DEBUG, "SENDING COARSE PITCHBEND: ch=%d bracketTick=%lu step=%lu/%lu pitchbend=%d", 
                        PITCHBEND_START_CHANNEL, bracketTick, nearestStep, numSteps, coarseMidiPitchbend);
@@ -789,12 +785,9 @@ void NoteEditManager::sendCoarseFaderPosition(Track& track) {
         uint32_t numSteps = loopLength / Config::TICKS_PER_16TH_STEP;
         
         if (numSteps > 1) {
-            const int16_t PITCHBEND_MIN = -8192;
-            const int16_t PITCHBEND_MAX = 8191;
-            
             float normalizedPos = (float)currentSixteenthStep / (float)(numSteps - 1);
-            int16_t coarseMidiPitchbend = (int16_t)(PITCHBEND_MIN + normalizedPos * (PITCHBEND_MAX - PITCHBEND_MIN));
-            coarseMidiPitchbend = constrain(coarseMidiPitchbend, PITCHBEND_MIN, PITCHBEND_MAX);
+            int16_t coarseMidiPitchbend = (int16_t)(MidiConfig::Pitchbend::MIN + normalizedPos * (MidiConfig::Pitchbend::MAX - MidiConfig::Pitchbend::MIN));
+            coarseMidiPitchbend = constrain(coarseMidiPitchbend, MidiConfig::Pitchbend::MIN, MidiConfig::Pitchbend::MAX);
             
             midiHandler.sendPitchBend(PITCHBEND_START_CHANNEL, coarseMidiPitchbend);
             
@@ -1006,7 +999,7 @@ void NoteEditManager::handleSelectFaderInput(int16_t pitchValue, Track& track) {
     allPositions.erase(std::unique(allPositions.begin(), allPositions.end()), allPositions.end());
     
     if (!allPositions.empty()) {
-        int posIndex = map(pitchValue, PITCHBEND_MIN, PITCHBEND_MAX, 0, allPositions.size() - 1);
+        int posIndex = map(pitchValue, MidiConfig::Pitchbend::MIN, MidiConfig::Pitchbend::MAX, 0, allPositions.size() - 1);
         uint32_t relativeTargetTick = allPositions[posIndex];
         
         // Convert relative position back to absolute position for internal logic
@@ -1189,7 +1182,7 @@ void NoteEditManager::handleCoarseFaderInput(int16_t pitchValue, Track& track) {
             uint32_t offsetWithinSixteenth = relativeEndTick % Config::TICKS_PER_16TH_STEP;
             
             // Map pitchbend to 16th step across entire loop
-            uint32_t targetSixteenthStep = map(pitchValue, PITCHBEND_MIN, PITCHBEND_MAX, 0, totalSixteenthSteps - 1);
+            uint32_t targetSixteenthStep = map(pitchValue, MidiConfig::Pitchbend::MIN, MidiConfig::Pitchbend::MAX, 0, totalSixteenthSteps - 1);
             
             // Calculate target end tick: new 16th step + preserved offset (relative)
             uint32_t relativeTargetEndTick = (targetSixteenthStep * Config::TICKS_PER_16TH_STEP) + offsetWithinSixteenth;
@@ -1264,7 +1257,7 @@ void NoteEditManager::handleCoarseFaderInput(int16_t pitchValue, Track& track) {
             uint32_t offsetWithinSixteenth = relativeStartTick % Config::TICKS_PER_16TH_STEP;
             
             // Map pitchbend to 16th step across entire loop
-            uint32_t targetSixteenthStep = map(pitchValue, PITCHBEND_MIN, PITCHBEND_MAX, 0, totalSixteenthSteps - 1);
+            uint32_t targetSixteenthStep = map(pitchValue, MidiConfig::Pitchbend::MIN, MidiConfig::Pitchbend::MAX, 0, totalSixteenthSteps - 1);
             
             // Calculate target tick: new 16th step + preserved offset (relative)
             uint32_t relativeTargetTick = (targetSixteenthStep * Config::TICKS_PER_16TH_STEP) + offsetWithinSixteenth;

@@ -61,10 +61,6 @@ void LoopEditManager::handleLoopStartFaderInput(int16_t pitchValue, Track& track
 }
 
 uint32_t LoopEditManager::calculateLoopStartTick(int16_t pitchValue, Track& track) {
-    // Use the same logic as select note fader for 16th step navigation
-    const int16_t PITCHBEND_MIN = -8192;
-    const int16_t PITCHBEND_MAX = 8191;
-    
     uint32_t loopLength = track.getLoopLength();
     
     // Calculate total 16th steps in the loop
@@ -95,7 +91,7 @@ uint32_t LoopEditManager::calculateLoopStartTick(int16_t pitchValue, Track& trac
         allPositions.push_back(0); // Fallback to start of loop
     }
     
-    uint32_t targetIndex = map(pitchValue, PITCHBEND_MIN, PITCHBEND_MAX, 0, allPositions.size() - 1);
+    uint32_t targetIndex = map(pitchValue, MidiConfig::Pitchbend::MIN, MidiConfig::Pitchbend::MAX, 0, allPositions.size() - 1);
     return allPositions[targetIndex];
 }
 

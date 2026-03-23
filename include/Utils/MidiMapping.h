@@ -62,35 +62,6 @@ struct EncoderConfig {
         : channel(ch), ccNumber(cc), upValue(up), downValue(down), description(desc) {}
 };
 
-// Default MIDI configuration (alias MidiConfig where applicable)
-namespace Defaults {
-    // MIDI channels
-    constexpr uint8_t BUTTON_CHANNEL = MidiConfig::Channels::DEFAULT;
-    constexpr uint8_t FADER_CHANNEL = MidiConfig::Fader::COARSE_CHANNEL;
-    constexpr uint8_t SELECT_CHANNEL = MidiConfig::Fader::SELECT_CHANNEL;
-    constexpr uint8_t ENCODER_CHANNEL = MidiConfig::Channels::DEFAULT;
-    
-    // MIDI notes for buttons
-    constexpr uint8_t NOTE_C2 = 36;  // Button A
-    constexpr uint8_t NOTE_C2_SHARP = 37;  // Button B
-    constexpr uint8_t NOTE_D2 = 38;  // Button C
-    constexpr uint8_t NOTE_D2_SHARP = 39;  // Button D
-    
-    // MIDI CC numbers
-    constexpr uint8_t CC_FINE = MidiConfig::Fader::FINE_CC;
-    constexpr uint8_t CC_NOTE_VALUE = MidiConfig::Fader::NOTE_VALUE_CC;
-    constexpr uint8_t ENCODER_CC = 4;
-    
-    // Encoder values
-    constexpr uint8_t ENCODER_UP = 127;
-    constexpr uint8_t ENCODER_DOWN = 0;
-    
-    // Pitchbend values
-    constexpr int16_t PITCHBEND_MIN = -8192;
-    constexpr int16_t PITCHBEND_CENTER = 0;
-    constexpr int16_t PITCHBEND_MAX = 8191;
-}
-
 // Configuration class
 class Config {
 public:
