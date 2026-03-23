@@ -83,6 +83,8 @@ void setup() {
   // Log performance monitoring setup
   logger.info("Performance monitoring initialized");
 
+  // Clear all bar/16th LEDs for a clean start (DROID may retain state from before disconnect)
+  trackManager.clearLeds();
   // Send initial 16th-note LEDs on startup (otherwise only sent when switching tracks or clock runs)
   trackManager.forceLedUpdate(clockManager.getCurrentTick());
 }

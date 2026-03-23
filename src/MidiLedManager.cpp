@@ -14,7 +14,15 @@ MidiLedManager::MidiLedManager(MidiHandler& midiHandler)
 
 void MidiLedManager::updateLeds(Track& track, uint32_t currentTick) {
     uint32_t loopLength = track.getLoopLength();
-    if (loopLength == 0) return;
+    if (loopLength == 0) {
+        // Clear LEDs when track has no loop (startup, or switched to empty track)
+        if (lastLoopLength != 0 || !hasInitialized) {
+            clearAllLeds();
+            lastLoopLength = 0;
+            hasInitialized = true;
+        }
+        return;
+    }
 
     uint32_t startLoopTick = track.getStartLoopTick();
     uint32_t loopStartTick = track.getLoopStartTick();
