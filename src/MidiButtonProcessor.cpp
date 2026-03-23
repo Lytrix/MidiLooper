@@ -86,6 +86,39 @@ void MidiButtonProcessor::handleMidiNote(uint8_t channel, uint8_t note, uint8_t 
     }
 }
 
+void MidiButtonProcessor::transitionToIdle(ButtonState& state) {
+    state.lastTapTime = 0;
+    state.secondTapTime = 0;
+    state.tapState = TapState::Idle;
+    state.tapStateExpireTime = 0;
+}
+
+void MidiButtonProcessor::onShortRelease(ButtonState& state, uint8_t channel, uint8_t note, uint32_t now,
+                                         uint32_t effectiveDoubleTap, uint32_t effectiveTripleTap) {
+    const uint8_t channel0 = channel - 1;  // 0-based for callback
+
+    if (state.tapState == TapState::PendingDouble && (now - state.secondTapTime <= effectiveTripleTap)) {
+        // Third tap within window - triple press
+        logger.log(CAT_BUTTON, LOG_DEBUG, "Triple press detected");
+        transitionToIdle(state);
+        triggerButtonPress(note, channel0, MidiButtonConfig::PressType::TRIPLE_PRESS);
+    } else if (state.lastTapTime > 0 && (now - state.lastTapTime <= effectiveDoubleTap)) {
+        // Second tap within window - set up for potential triple tap
+        logger.log(CAT_BUTTON, LOG_DEBUG, "Second tap detected, waiting for triple");
+        state.secondTapTime = now;
+        state.tapState = TapState::PendingDouble;
+        state.tapStateExpireTime = now + effectiveTripleTap;
+    } else {
+        // First tap or outside double tap window - delay decision
+        logger.log(CAT_BUTTON, LOG_DEBUG, "First tap or outside window, scheduling short press");
+        state.lastTapTime = now;
+        state.tapState = TapState::PendingShort;
+        state.tapStateExpireTime = now + effectiveDoubleTap;
+        logger.log(CAT_BUTTON, LOG_DEBUG, "Scheduled short press: expire at %lu (now=%lu + window=%lu)",
+                   state.tapStateExpireTime, now, effectiveDoubleTap);
+    }
+}
+
 void MidiButtonProcessor::handleButtonRelease(uint8_t channel, uint8_t note, uint32_t pressDuration) {
     uint32_t now = millis();
     ButtonState& state = getButtonState(channel, note);
@@ -97,102 +130,73 @@ void MidiButtonProcessor::handleButtonRelease(uint8_t channel, uint8_t note, uin
     uint32_t effectiveDoubleTap = (cfg && cfg->doubleTapWindow > 0) ? cfg->doubleTapWindow : doubleTapWindow;
     uint32_t effectiveTripleTap = (cfg && cfg->tripleTapWindow > 0) ? cfg->tripleTapWindow : tripleTapWindow;
 
-    logger.log(CAT_BUTTON, LOG_DEBUG, "handleButtonRelease: Ch%d Note%d, duration=%lu, effectiveLongPress=%lu", 
+    logger.log(CAT_BUTTON, LOG_DEBUG, "handleButtonRelease: Ch%d Note%d, duration=%lu, effectiveLongPress=%lu",
                channel, note, pressDuration, effectiveLongPress);
-    
+
     if (pressDuration >= effectiveLongPress) {
         // Long press - trigger immediately and cancel pending presses
-        logger.log(CAT_BUTTON, LOG_DEBUG, "Long press detected: duration=%lu >= effectiveLongPress=%lu", 
+        logger.log(CAT_BUTTON, LOG_DEBUG, "Long press detected: duration=%lu >= effectiveLongPress=%lu",
                    pressDuration, effectiveLongPress);
-        state.lastTapTime = 0;
-        state.secondTapTime = 0;
-        state.pendingShortPress = false;
-        state.pendingDoublePress = false;
-        state.pendingTriplePress = false;
-        
+        transitionToIdle(state);
         triggerButtonPress(note, channel - 1, MidiButtonConfig::PressType::LONG_PRESS);
     } else {
         // Short press - check for multiple taps
-        logger.log(CAT_BUTTON, LOG_DEBUG, "Short press detected: duration=%lu < effectiveLongPress=%lu", 
+        logger.log(CAT_BUTTON, LOG_DEBUG, "Short press detected: duration=%lu < effectiveLongPress=%lu",
                    pressDuration, effectiveLongPress);
-        
-        if (state.pendingDoublePress && (now - state.secondTapTime <= effectiveTripleTap)) {
-            // Third tap within window - triple press
-            logger.log(CAT_BUTTON, LOG_DEBUG, "Triple press detected");
-            state.lastTapTime = 0;
-            state.secondTapTime = 0;
-            state.pendingShortPress = false;
-            state.pendingDoublePress = false;
-            state.pendingTriplePress = false;
-            
-            triggerButtonPress(note, channel - 1, MidiButtonConfig::PressType::TRIPLE_PRESS);
-        } else if (state.lastTapTime > 0 && (now - state.lastTapTime <= effectiveDoubleTap)) {
-            // Second tap within window - set up for potential triple tap
-            logger.log(CAT_BUTTON, LOG_DEBUG, "Second tap detected, waiting for triple");
-            state.secondTapTime = now;
-            state.pendingShortPress = false;
-            state.pendingDoublePress = true;
-            state.doublePressExpireTime = now + effectiveTripleTap;
-        } else {
-            // First tap or outside double tap window - delay decision
-            logger.log(CAT_BUTTON, LOG_DEBUG, "First tap or outside window, scheduling short press");
-            state.lastTapTime = now;
-            state.pendingShortPress = true;
-            state.shortPressExpireTime = now + effectiveDoubleTap;
-            logger.log(CAT_BUTTON, LOG_DEBUG, "Scheduled short press: expire at %lu (now=%lu + window=%lu)", 
-                       state.shortPressExpireTime, now, effectiveDoubleTap);
-        }
+        onShortRelease(state, channel, note, now, effectiveDoubleTap, effectiveTripleTap);
     }
 }
 
 void MidiButtonProcessor::processPendingPresses() {
     uint32_t now = millis();
-    
+
     for (size_t i = 0; i < buttonStates.size(); ++i) {
         ButtonState& state = buttonStates[i];
-        
-        // Calculate channel and note from index
-        uint8_t channel = i / 128;
-        uint8_t note = i % 128;
-        
-        // Process expired short presses
-        if (state.pendingShortPress && now >= state.shortPressExpireTime) {
-            logger.log(CAT_BUTTON, LOG_DEBUG, "Short press expired: Ch%d Note%d, now=%lu, expire=%lu", 
-                       channel, note, now, state.shortPressExpireTime);
-            state.pendingShortPress = false;
-            triggerButtonPress(note, channel, MidiButtonConfig::PressType::SHORT_PRESS);
-        } else if (state.pendingShortPress) {
-            // Debug: show pending short presses that haven't expired yet
-            static uint32_t lastPendingDebugTime = 0;
-            if (now - lastPendingDebugTime >= 500) {  // Every 500ms
-                lastPendingDebugTime = now;
-                logger.log(CAT_BUTTON, LOG_DEBUG, "Pending short press: Ch%d Note%d, now=%lu, expire=%lu, remaining=%ld", 
-                           channel, note, now, state.shortPressExpireTime, 
-                           (int32_t)state.shortPressExpireTime - (int32_t)now);
+
+        // Channel from index is 0-based (MIDI ch 16 → 15); triggerButtonPress expects 0-based
+        const uint8_t channel0 = i / 128;
+        const uint8_t note = i % 128;
+
+        if (state.tapState == TapState::Idle) continue;
+        if (now < state.tapStateExpireTime) {
+            // Debug: show pending states that haven't expired yet
+            if (state.tapState == TapState::PendingShort) {
+                static uint32_t lastPendingDebugTime = 0;
+                if (now - lastPendingDebugTime >= 500) {
+                    lastPendingDebugTime = now;
+                    logger.log(CAT_BUTTON, LOG_DEBUG, "Pending short press: Ch%d Note%d, now=%lu, expire=%lu, remaining=%ld",
+                               channel0 + 1, note, now, state.tapStateExpireTime,
+                               (int32_t)state.tapStateExpireTime - (int32_t)now);
+                }
             }
+            if ((channel0 == 15 && (note == 36 || note == 37 || note == 38)) && state.tapState == TapState::PendingShort) {
+                logger.log(CAT_BUTTON, LOG_DEBUG, "Checking button Ch%d Note%d: state=PendingShort, now=%lu, expire=%lu, should_expire=%d",
+                           channel0 + 1, note, now, state.tapStateExpireTime, (now >= state.tapStateExpireTime));
+            }
+            continue;
         }
-        
-        // Debug: show when we're checking the specific buttons we care about
-        if ((channel == 16 && (note == 36 || note == 37 || note == 38)) && state.pendingShortPress) {
-            logger.log(CAT_BUTTON, LOG_DEBUG, "Checking button Ch%d Note%d: pending=%d, now=%lu, expire=%lu, should_expire=%d", 
-                       channel, note, state.pendingShortPress, now, state.shortPressExpireTime, 
-                       (now >= state.shortPressExpireTime));
-        }
-        
-        // Process expired double presses
-        if (state.pendingDoublePress && now >= state.doublePressExpireTime) {
-            logger.log(CAT_BUTTON, LOG_DEBUG, "Double press expired: Ch%d Note%d, now=%lu, expire=%lu", 
-                       channel, note, now, state.doublePressExpireTime);
-            state.pendingDoublePress = false;
-            triggerButtonPress(note, channel, MidiButtonConfig::PressType::DOUBLE_PRESS);
-        }
-        
-        // Process expired triple presses
-        if (state.pendingTriplePress && now >= state.triplePressExpireTime) {
-            logger.log(CAT_BUTTON, LOG_DEBUG, "Triple press expired: Ch%d Note%d, now=%lu, expire=%lu", 
-                       channel, note, now, state.triplePressExpireTime);
-            state.pendingTriplePress = false;
-            triggerButtonPress(note, channel - 1, MidiButtonConfig::PressType::TRIPLE_PRESS);
+
+        switch (state.tapState) {
+            case TapState::PendingShort:
+                logger.log(CAT_BUTTON, LOG_DEBUG, "Short press expired: Ch%d Note%d, now=%lu, expire=%lu",
+                           channel0 + 1, note, now, state.tapStateExpireTime);
+                transitionToIdle(state);
+                triggerButtonPress(note, channel0, MidiButtonConfig::PressType::SHORT_PRESS);
+                break;
+            case TapState::PendingDouble:
+                logger.log(CAT_BUTTON, LOG_DEBUG, "Double press expired: Ch%d Note%d, now=%lu, expire=%lu",
+                           channel0 + 1, note, now, state.tapStateExpireTime);
+                transitionToIdle(state);
+                triggerButtonPress(note, channel0, MidiButtonConfig::PressType::DOUBLE_PRESS);
+                break;
+            case TapState::PendingTriple:
+                logger.log(CAT_BUTTON, LOG_DEBUG, "Triple press expired: Ch%d Note%d, now=%lu, expire=%lu",
+                           channel0 + 1, note, now, state.tapStateExpireTime);
+                transitionToIdle(state);
+                triggerButtonPress(note, channel0, MidiButtonConfig::PressType::TRIPLE_PRESS);
+                break;
+            default:
+                break;
         }
     }
 }

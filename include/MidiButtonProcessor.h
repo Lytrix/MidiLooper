@@ -10,6 +10,13 @@
 #include <functional>
 #include "Utils/MidiButtonConfig.h"
 
+enum class TapState {
+    Idle,
+    PendingShort,
+    PendingDouble,
+    PendingTriple
+};
+
 class MidiButtonProcessor {
 public:
     // Button press callback function type
@@ -39,19 +46,12 @@ private:
         uint32_t pressStartTime;
         uint32_t lastTapTime;
         uint32_t secondTapTime;
-        bool pendingShortPress;
-        uint32_t shortPressExpireTime;
-        bool pendingDoublePress;
-        uint32_t doublePressExpireTime;
-        bool pendingTriplePress;
-        uint32_t triplePressExpireTime;
+        TapState tapState;
+        uint32_t tapStateExpireTime;
         uint32_t lastReleaseTime;
-        
+
         ButtonState() : isPressed(false), pressStartTime(0), lastTapTime(0), secondTapTime(0),
-                       pendingShortPress(false), shortPressExpireTime(0),
-                       pendingDoublePress(false), doublePressExpireTime(0),
-                       pendingTriplePress(false), triplePressExpireTime(0),
-                       lastReleaseTime(0) {}
+                       tapState(TapState::Idle), tapStateExpireTime(0), lastReleaseTime(0) {}
     };
     
     // Button state storage - indexed by (channel * 128 + note)
@@ -72,6 +72,9 @@ private:
     
     void processPendingPresses();
     void handleButtonRelease(uint8_t channel, uint8_t note, uint32_t pressDuration);
+    void onShortRelease(ButtonState& state, uint8_t channel, uint8_t note, uint32_t now,
+                        uint32_t effectiveDoubleTap, uint32_t effectiveTripleTap);
+    void transitionToIdle(ButtonState& state);
     void triggerButtonPress(uint8_t note, uint8_t channel, MidiButtonConfig::PressType pressType);
 };
 
