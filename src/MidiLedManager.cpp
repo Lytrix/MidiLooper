@@ -2,7 +2,7 @@
 #include "Utils/NoteUtils.h"
 
 MidiLedManager::MidiLedManager(MidiHandler& midiHandler) 
-    : midiHandler(midiHandler), updateDelayMicros(DEFAULT_UPDATE_DELAY),
+    : midiHandler(midiHandler),
       lastUpdateBar(UINT32_MAX), lastLoopLength(0), lastLoopStartTick(UINT32_MAX), hasInitialized(false), currentTickStep(-1) {
     for (int i = 0; i < NUM_LEDS; i++) {
         lastLedState[i] = false;
@@ -70,7 +70,6 @@ void MidiLedManager::clearAllLeds() {
     // Turn off current tick indicator (uses notes 16-31)
     if (currentTickStep >= 0 && currentTickStep < NUM_LEDS) {
         midiHandler.sendNoteOff(TICK_CHANNEL, TICK_NOTE_OFFSET + currentTickStep, 0);
-        delayMicroseconds(updateDelayMicros);
     }
     currentTickStep = -1;
     
@@ -78,7 +77,6 @@ void MidiLedManager::clearAllLeds() {
     for (uint8_t i = 0; i < NUM_BAR_LEDS; i++) {
         midiHandler.sendNoteOff(LED_CHANNEL, BAR_LED_BASE_NOTE + i, 0);
         lastBarVelocity[i] = BAR_VEL_NEVER_SENT;
-        delayMicroseconds(updateDelayMicros);
     }
     
     logger.log(CAT_MIDI_LED, LOG_INFO, "LED Manager: All LEDs and tick indicator cleared");
@@ -151,7 +149,6 @@ void MidiLedManager::updateBarLeds(Track& track, uint32_t loopLength, uint32_t c
             // NoteOff when bar is beyond loop (resize smaller, track switch, length edit)
             midiHandler.sendNoteOff(LED_CHANNEL, note, 0);
             lastBarVelocity[i] = BAR_VEL_NEVER_SENT;
-            delayMicroseconds(updateDelayMicros);
         } else {
             // Convert display-space bar to storage-space for note lookup
             uint32_t barStartStorage = (loopStartTick + barStartDisplay) % loopLength;
@@ -163,7 +160,6 @@ void MidiLedManager::updateBarLeds(Track& track, uint32_t loopLength, uint32_t c
             if (lastBarVelocity[i] != velocity) {
                 midiHandler.sendNoteOn(LED_CHANNEL, note, velocity);
                 lastBarVelocity[i] = velocity;
-                delayMicroseconds(updateDelayMicros);
             }
         }
     }
@@ -181,14 +177,6 @@ void MidiLedManager::sendLedUpdate(uint8_t ledIndex, bool state) {
         midiHandler.sendNoteOff(LED_CHANNEL, ledIndex, 0);
         logger.log(CAT_MIDI_LED, LOG_DEBUG, "LED Manager: LED %d OFF", ledIndex);
     }
-    
-    // Small delay to ensure MIDI controller processes the message
-    delayMicroseconds(updateDelayMicros);
-}
-
-void MidiLedManager::setUpdateDelay(uint16_t delayMicros) {
-    updateDelayMicros = delayMicros;
-    logger.log(CAT_MIDI_LED, LOG_INFO, "LED Manager: Update delay set to %d microseconds", delayMicros);
 }
 
 void MidiLedManager::updateCurrentTick(Track& track, uint32_t currentTick) {
@@ -216,12 +204,10 @@ void MidiLedManager::updateCurrentTick(Track& track, uint32_t currentTick) {
         // Turn off previous tick indicator (uses notes 16-31)
         if (currentTickStep >= 0 && currentTickStep < NUM_LEDS) {
             midiHandler.sendNoteOff(TICK_CHANNEL, TICK_NOTE_OFFSET + currentTickStep, 0);
-            delayMicroseconds(updateDelayMicros);
         }
         
         // Turn on new tick indicator (notes 16-31)
         midiHandler.sendNoteOn(TICK_CHANNEL, TICK_NOTE_OFFSET + newTickStep, TICK_VELOCITY);
-        delayMicroseconds(updateDelayMicros);
         
         currentTickStep = newTickStep;
         
@@ -244,10 +230,12 @@ void MidiLedManager::analyzeAndUpdateBar(Track& track, uint32_t barStartTickDisp
         newLedState[i] = hasNoteInSixteenthStep(track, stepStartStorage, stepEndStorage);
     }
     
-    // Always send all LED states to ensure sync
+    // Only send when LED state changed (state-driven, no redundant updates)
     for (int i = 0; i < NUM_LEDS; i++) {
-        sendLedUpdate(i, newLedState[i]);
-        lastLedState[i] = newLedState[i];
+        if (newLedState[i] != lastLedState[i]) {
+            sendLedUpdate(i, newLedState[i]);
+            lastLedState[i] = newLedState[i];
+        }
     }
     
     // Debug logging

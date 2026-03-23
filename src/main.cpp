@@ -96,6 +96,14 @@ void loop() {
   // Poll MIDI input
   midiHandler.handleMidiInput();
 
+  // LED updates (decoupled from clock path - runs in main loop)
+  static uint32_t lastLedUpdate = 0;
+  constexpr uint32_t LED_UPDATE_INTERVAL_MS = 8;
+  if (now - lastLedUpdate >= LED_UPDATE_INTERVAL_MS) {
+    lastLedUpdate = now;
+    trackManager.updateLedsDeferred();
+  }
+
   // Detect clock source changes (external timeout -> internal fallback)
   clockManager.checkClockSource();
 
