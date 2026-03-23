@@ -15,7 +15,9 @@ These files are **copies of plans from** `~/.cursor/plans/` so they are **versio
 
 | File | Topic |
 |------|--------|
-| **[dual-tick_view_override_architecture_856310b1.plan.md](dual-tick_view_override_architecture_856310b1.plan.md)** | **Main architecture:** jam state, Phase 2 jam tick, **Phase 3 multi-loop slots + jam recording + scenes** |
+| **[phase-3-multi-loop.md](phase-3-multi-loop.md)** | **Phase 3 requirements** (8 slots, recording, scenes) — not implemented; canonical spec |
+| **[multi-loop_leds_and_droid_lfo_3a62f325.plan.md](multi-loop_leds_and_droid_lfo_3a62f325.plan.md)** | **Implementation plan:** Merges phase-3 + Droid. §0 = D1–D15 deliverables (ordered) + R1–R8 to refine; slices 1 (D1–D9), 2 (D10–D12), 3 (D13–D15) |
+| **[dual-tick_view_override_architecture_856310b1.plan.md](dual-tick_view_override_architecture_856310b1.plan.md)** | Phases 1–2 **done** in repo; Phase 3 summary + pointer to `phase-3-multi-loop.md` |
 | [phase_2_jam_tick_3a63b6de.plan.md](phase_2_jam_tick_3a63b6de.plan.md) | Jam tick implementation |
 | [jam_plan_snapshot_b7443ff8.plan.md](jam_plan_snapshot_b7443ff8.plan.md) | Jam plan snapshot |
 | [bar_select_state_refactor_e11de8aa.plan.md](bar_select_state_refactor_e11de8aa.plan.md) | Bar select refactor |

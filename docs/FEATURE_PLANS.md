@@ -2,7 +2,7 @@
 
 This file indexes **design, phase, and implementation summaries** in `docs/` next to the **reference guides** (how systems work today), e.g. [LOOP_START_EDITING.md](LOOP_START_EDITING.md), [FADER_STATE_SYSTEM.md](FADER_STATE_SYSTEM.md), [MOVE_NOTE_LOGIC.md](MOVE_NOTE_LOGIC.md).
 
-**Cursor-generated `.plan.md` files** (including dual-tick / multi-loop architecture) are archived under **[`plans/`](../plans/README.md)** in the repo root — copy from `~/.cursor/plans/` when you add new ones.
+**Cursor-generated `.plan.md` files** are archived under **[`plans/`](../plans/README.md)** in the repo root. **Phase 3 (multi-loop) requirements:** [plans/phase-3-multi-loop.md](../plans/phase-3-multi-loop.md) — **Scope 1:** 8 loops per track; save/data design still anticipates **more slots** and **large per-loop storage**. Copy from `~/.cursor/plans/` when you add new exports.
 
 ## Conventions
 
