@@ -85,6 +85,7 @@ private:
   struct ButtonState {
     bool isPressed;
     bool consumedByHoldTwo;
+    bool didImmediateSeek;  // Jam seek already done on NoteOn; skip redundant setJamTick in SHORT_PRESS
     uint32_t pressStartTime;
     uint32_t lastTapTime;
     uint32_t secondTapTime;
@@ -103,9 +104,9 @@ private:
   void handleNoteOff(uint8_t note, uint8_t velocity);
   void processPendingPresses();
   void onPressDetected(const BarStepButtonInfo& info, BarStepPressType pressType,
-                       uint8_t rangeStart = 0, uint8_t rangeEnd = 0);
+                       uint8_t rangeStart = 0, uint8_t rangeEnd = 0, bool didImmediateSeek = false);
   void executeLoopEditAction(const BarStepButtonInfo& info, BarStepPressType pressType,
-                             uint8_t rangeStart, uint8_t rangeEnd);
+                             uint8_t rangeStart, uint8_t rangeEnd, bool didImmediateSeek = false);
   void executeNoteEditAction(const BarStepButtonInfo& info, BarStepPressType pressType,
                              uint8_t rangeStart, uint8_t rangeEnd);
   void testLog(const char* format, ...) const;
