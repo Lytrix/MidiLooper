@@ -303,12 +303,13 @@ Developing the SSD1322 circular DMA logic was a lot of fun using Cursor. It was 
 ## Technical Documentation ##
 Detailed technical documentation is available in the `docs/` directory:
 
+- **[Feature plans index](docs/FEATURE_PLANS.md)** — phased / summary docs in `docs/` (jam/bar-step, loop start, buttons, faders, optimization analysis, etc.)
+- **[Cursor design plans](plans/README.md)** — archived `*.plan.md` from `.cursor/plans/` (dual-tick / multi-loop jam architecture, bar-step, BPM, MIDI, …)
 - **[Loop Start Editing](docs/LOOP_START_EDITING.md)** - Comprehensive guide to the loop start point editing system
-- **[Loop Start Implementation Summary](docs/LOOP_START_IMPLEMENTATION_SUMMARY.md)** - Implementation phases and issues resolved
 - **[Loop Length and Note Length Editing](README.md#🎛️-loop-length-editing)** - Complete guide to loop length control and note length editing modes
 - **[Fader State System](docs/FADER_STATE_SYSTEM.md)** - Hardware fader management and state machine
 - **[Move Note Logic](docs/MOVE_NOTE_LOGIC.md)** - Note movement and overlap resolution system
-- Additional implementation and refactoring documentation
+- Additional reference docs in `docs/` (e.g. note wrapping, manual test notes, optimization code example)
 
 © 2025 Lytrix (Eelke Jager)
 Licensed under the PolyForm Noncommercial 1.0.0.  
