@@ -281,4 +281,6 @@ notes.reserve(estimatedSize); // Prevent reallocations
 
 The identified optimizations can provide substantial performance improvements with relatively modest development effort. The note caching system alone should eliminate the majority of performance bottlenecks in the current system.
 
-Implementing the high-priority optimizations (1-3) would likely provide 70-80% of the total possible performance gains, making this an excellent return on investment for optimization efforts. 
+Implementing the high-priority optimizations (1-3) would likely provide 70-80% of the total possible performance gains, making this an excellent return on investment for optimization efforts.
+
+**See also:** [OPTIMIZATION_EXAMPLE.md](OPTIMIZATION_EXAMPLE.md) (code samples in this folder).
