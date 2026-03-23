@@ -5,6 +5,22 @@
  * @file MidiConfig.h
  * @brief Centralized MIDI channels, note numbers, and CC numbers.
  * DROID ini and routing must match these values.
+ *
+ * CONFIG SUMMARY (custom controller remap)
+ * ---------------------------------------
+ * | Role              | Channel | Notes/CC         | File reference      |
+ * |-------------------|---------|------------------|---------------------|
+ * | Main buttons      | 16      | 36-39, 3, etc.   | MidiButtonConfig    |
+ * | Track select      | 2 or 16 | 48-63 (ch2)      | MidiButtonConfig    |
+ * | Bar/16th buttons  | 16      | 0-15, 17-24      | BarStepButton       |
+ * | Fader select      | 16      | pitchbend        | Fader SELECT_CHANNEL|
+ * | Fader 2,3,4       | 15      | pitchbend, CC 2,3| Fader COARSE/FINE   |
+ * | Loop length       | 16      | CC 101           | LoopEdit            |
+ * | Loop start/end    | 16      | pitchbend, CC100,101 | droid ini       |
+ * | LED feedback out  | 3       | notes 0-31, 40-47| Led namespace       |
+ * | Transport LED in  | 4       | note 39          | droid ini           |
+ * | Record exclusion  | 13-16   | (not recorded)   | RECORD_EXCLUDE_*    |
+ * See docs/MIDI_CONFIG_GUIDE.md for remap instructions.
  */
 #ifndef MIDI_CONFIG_H
 #define MIDI_CONFIG_H
@@ -72,6 +88,29 @@ namespace BarStepButton {
   constexpr uint8_t SIXTEENTH_COUNT = 16;   // notes 0-15
   constexpr uint8_t BAR_BASE = 17;
   constexpr uint8_t BAR_COUNT = 8;          // notes 17-24
+}
+
+// --- Pitchbend (standard MIDI range) ---
+namespace Pitchbend {
+  constexpr int16_t MIN = -8192;
+  constexpr int16_t CENTER = 0;
+  constexpr int16_t MAX = 8191;
+}
+
+// --- Transport / main buttons (4-button layout: C2-D#2) ---
+namespace Transport {
+  constexpr uint8_t NOTE_RECORD = 36;   // C2, Button A
+  constexpr uint8_t NOTE_PLAY = 37;     // C#2, Button B
+  constexpr uint8_t NOTE_UNDO = 38;     // D2, Button C
+  constexpr uint8_t NOTE_REDO = 39;     // D#2, Button D
+}
+
+// --- Encoder defaults ---
+namespace Encoder {
+  constexpr uint8_t DEFAULT_CHANNEL = Channels::DEFAULT;
+  constexpr uint8_t DEFAULT_CC = 4;
+  constexpr uint8_t UP_VALUE = 127;
+  constexpr uint8_t DOWN_VALUE = 0;
 }
 
 } // namespace MidiConfig

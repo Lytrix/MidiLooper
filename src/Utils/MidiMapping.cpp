@@ -10,10 +10,10 @@ namespace MidiMapping {
 std::vector<ButtonConfig> Config::buttonConfigs;
 std::vector<FaderConfig> Config::faderConfigs;
 EncoderConfig Config::encoderConfig(
-    Defaults::ENCODER_CHANNEL,
-    Defaults::ENCODER_CC,
-    Defaults::ENCODER_UP,
-    Defaults::ENCODER_DOWN,
+    MidiConfig::Encoder::DEFAULT_CHANNEL,
+    MidiConfig::Encoder::DEFAULT_CC,
+    MidiConfig::Encoder::UP_VALUE,
+    MidiConfig::Encoder::DOWN_VALUE,
     "Default Encoder"
 );
 
@@ -28,24 +28,24 @@ void Config::initialize() {
     
     // Initialize default button mappings
     buttonConfigs = {
-        ButtonConfig(Defaults::NOTE_C2, Defaults::BUTTON_CHANNEL, "Record/Stop"),
-        ButtonConfig(Defaults::NOTE_C2_SHARP, Defaults::BUTTON_CHANNEL, "Play/Stop"),
-        ButtonConfig(Defaults::NOTE_D2, Defaults::BUTTON_CHANNEL, "Undo"),
-        ButtonConfig(Defaults::NOTE_D2_SHARP, Defaults::BUTTON_CHANNEL, "Redo")
+        ButtonConfig(MidiConfig::Transport::NOTE_RECORD, MidiConfig::Channels::DEFAULT, "Record/Stop"),
+        ButtonConfig(MidiConfig::Transport::NOTE_PLAY, MidiConfig::Channels::DEFAULT, "Play/Stop"),
+        ButtonConfig(MidiConfig::Transport::NOTE_UNDO, MidiConfig::Channels::DEFAULT, "Undo"),
+        ButtonConfig(MidiConfig::Transport::NOTE_REDO, MidiConfig::Channels::DEFAULT, "Redo")
     };
     
     // Initialize default fader mappings
     faderConfigs = {
-        FaderConfig(FaderType::FADER_SELECT, Defaults::SELECT_CHANNEL, 0, true, "Note Selection"),
-        FaderConfig(FaderType::FADER_COARSE, Defaults::FADER_CHANNEL, 0, true, "Coarse Position"),
-        FaderConfig(FaderType::FADER_FINE, Defaults::FADER_CHANNEL, Defaults::CC_FINE, false, "Fine Position"),
-        FaderConfig(FaderType::FADER_NOTE_VALUE, Defaults::FADER_CHANNEL, Defaults::CC_NOTE_VALUE, false, "Note Value")
+        FaderConfig(FaderType::FADER_SELECT, MidiConfig::Fader::SELECT_CHANNEL, 0, true, "Note Selection"),
+        FaderConfig(FaderType::FADER_COARSE, MidiConfig::Fader::COARSE_CHANNEL, 0, true, "Coarse Position"),
+        FaderConfig(FaderType::FADER_FINE, MidiConfig::Fader::FINE_CHANNEL, MidiConfig::Fader::FINE_CC, false, "Fine Position"),
+        FaderConfig(FaderType::FADER_NOTE_VALUE, MidiConfig::Fader::NOTE_VALUE_CHANNEL, MidiConfig::Fader::NOTE_VALUE_CC, false, "Note Value")
     };
     
     // Add fallback mappings for fader 4 in case it's sending different CC numbers
-    faderConfigs.emplace_back(FaderType::FADER_NOTE_VALUE, Defaults::FADER_CHANNEL, 4, false, "Note Value (CC4)");
-    faderConfigs.emplace_back(FaderType::FADER_NOTE_VALUE, Defaults::FADER_CHANNEL, 5, false, "Note Value (CC5)");
-    faderConfigs.emplace_back(FaderType::FADER_NOTE_VALUE, Defaults::FADER_CHANNEL, 6, false, "Note Value (CC6)");
+    faderConfigs.emplace_back(FaderType::FADER_NOTE_VALUE, MidiConfig::Fader::COARSE_CHANNEL, 4, false, "Note Value (CC4)");
+    faderConfigs.emplace_back(FaderType::FADER_NOTE_VALUE, MidiConfig::Fader::COARSE_CHANNEL, 5, false, "Note Value (CC5)");
+    faderConfigs.emplace_back(FaderType::FADER_NOTE_VALUE, MidiConfig::Fader::COARSE_CHANNEL, 6, false, "Note Value (CC6)");
     
     isInitialized = true;
     logger.info("MidiMapping configuration initialized with default values");
@@ -76,11 +76,11 @@ void Config::addFaderMapping(uint8_t channel, uint8_t ccNumber, bool usePitchBen
     }
     
     FaderType type;
-    if (channel == Defaults::SELECT_CHANNEL) {
+    if (channel == MidiConfig::Fader::SELECT_CHANNEL) {
         type = FaderType::FADER_SELECT;
     } else if (usePitchBend) {
         type = FaderType::FADER_COARSE;
-    } else if (ccNumber == Defaults::CC_FINE) {
+    } else if (ccNumber == MidiConfig::Fader::FINE_CC) {
         type = FaderType::FADER_FINE;
     } else {
         type = FaderType::FADER_NOTE_VALUE;
