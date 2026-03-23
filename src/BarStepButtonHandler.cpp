@@ -185,6 +185,7 @@ void BarStepButtonHandler::handleNoteOn(uint8_t note, uint8_t velocity) {
   if (!state.isPressed) {
     state.isPressed = true;
     state.consumedByHoldTwo = false;
+    state.didImmediateSeek = false;
     state.pressStartTime = millis();
     if (info.type == BarStepButtonType::SIXTEENTH) {
       pressed16thBits |= (1u << info.stepIndex);
@@ -216,6 +217,7 @@ void BarStepButtonHandler::handleNoteOn(uint8_t note, uint8_t velocity) {
         uint32_t offsetInJam = (tickInLoop - jamStartTick + loopLength) % loopLength;
         if (offsetInJam < jamLength) {
           trackRef.setJamTick(offsetInJam);
+          state.didImmediateSeek = true;
           trackManager.forceLedUpdate(trackRef.getEffectivePlaybackTick(clockManager.getCurrentTick()));
           testLog("BarStepButton: jam seek to tick %lu (quantized 16th) [TEST POINT: jam immediate seek]", offsetInJam);
         }
@@ -384,23 +386,25 @@ void BarStepButtonHandler::processPendingPresses() {
       onPressDetected(info, BarStepPressType::DOUBLE_PRESS);
     } else if (state.pendingShortPress && now >= state.shortPressExpireTime) {
       state.pendingShortPress = false;
+      bool didSeek = state.didImmediateSeek;
+      state.didImmediateSeek = false;
       uint8_t note = (i < 16) ? (uint8_t)i : (uint8_t)(17 + (i - 16));
       BarStepButtonInfo info = parseNote(note);
       testLog("BarStepButton: SHORT_PRESS [TEST POINT: short]");
-      onPressDetected(info, BarStepPressType::SHORT_PRESS);
+      onPressDetected(info, BarStepPressType::SHORT_PRESS, 0, 0, didSeek);
     }
   }
 }
 
 void BarStepButtonHandler::onPressDetected(const BarStepButtonInfo& info, BarStepPressType pressType,
-                                           uint8_t rangeStart, uint8_t rangeEnd) {
+                                           uint8_t rangeStart, uint8_t rangeEnd, bool didImmediateSeek) {
   bool isLoopEdit = noteEditManager.getCurrentMainEditMode() == NoteEditManager::MAIN_MODE_LOOP_EDIT;
   testLog("BarStepButton: onPressDetected type=%s step=%d pressType=%d mode=%s [TEST POINT: action dispatch]",
           info.type == BarStepButtonType::SIXTEENTH ? "16th" : "bar", info.stepIndex, (int)pressType,
           isLoopEdit ? "LOOP_EDIT" : "NOTE_EDIT");
 
   if (isLoopEdit) {
-    executeLoopEditAction(info, pressType, rangeStart, rangeEnd);
+    executeLoopEditAction(info, pressType, rangeStart, rangeEnd, didImmediateSeek);
   } else {
     executeNoteEditAction(info, pressType, rangeStart, rangeEnd);
   }
@@ -439,7 +443,7 @@ void BarStepButtonHandler::switchBarSelect(uint8_t barIndex) {
 }
 
 void BarStepButtonHandler::executeLoopEditAction(const BarStepButtonInfo& info, BarStepPressType pressType,
-                                                 uint8_t rangeStart, uint8_t rangeEnd) {
+                                                 uint8_t rangeStart, uint8_t rangeEnd, bool didImmediateSeek) {
   Track& track = trackManager.getSelectedTrack();
   uint32_t loopLength = track.getLoopLength();
   uint32_t loopStartTick = track.getLoopStartTick();
@@ -460,14 +464,16 @@ void BarStepButtonHandler::executeLoopEditAction(const BarStepButtonInfo& info, 
           uint32_t barStartTick = (loopStartTick + info.stepIndex * Config::TICKS_PER_BAR) % loopLength;
           uint32_t offsetInJam = (barStartTick - jamStartTick + loopLength) % loopLength;
           if (offsetInJam < jamLength) {
-            track.setJamTick(offsetInJam);
-            testLog("BarStepButton: jam seek to bar %d offset=%lu [TEST POINT: jam seek bar]", info.stepIndex, offsetInJam);
+            if (!didImmediateSeek) {
+              track.setJamTick(offsetInJam);
+              testLog("BarStepButton: jam seek to bar %d offset=%lu [TEST POINT: jam seek bar]", info.stepIndex, offsetInJam);
+            }
           } else {
             switchBarSelect(info.stepIndex);
           }
         } else {
           uint32_t seekPos = info.stepIndex * Config::TICKS_PER_16TH_STEP;
-          if (seekPos < track.getJamLength()) {
+          if (seekPos < track.getJamLength() && !didImmediateSeek) {
             track.setJamTick(seekPos);
             testLog("BarStepButton: jam seek to 16th %d [TEST POINT: jam navigate 16th]", info.stepIndex);
           }
