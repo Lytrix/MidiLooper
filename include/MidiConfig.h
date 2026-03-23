@@ -6,20 +6,26 @@
  * @brief Centralized MIDI channels, note numbers, and CC numbers.
  * DROID ini and routing must match these values.
  *
- * CONFIG SUMMARY (custom controller remap)
- * ---------------------------------------
- * | Role              | Channel | Notes/CC         | File reference      |
- * |-------------------|---------|------------------|---------------------|
- * | Main buttons      | 16      | 36-39, 3, etc.   | MidiButtonConfig    |
- * | Track select      | 2 or 16 | 48-63 (ch2)      | MidiButtonConfig    |
- * | Bar/16th buttons  | 16      | 0-15, 17-24      | BarStepButton       |
- * | Fader select      | 16      | pitchbend        | Fader SELECT_CHANNEL|
- * | Fader 2,3,4       | 15      | pitchbend, CC 2,3| Fader COARSE/FINE   |
- * | Loop length       | 16      | CC 101           | LoopEdit            |
- * | Loop start/end    | 16      | pitchbend, CC100,101 | droid ini       |
- * | LED feedback out  | 3       | notes 0-31, 40-47| Led namespace       |
- * | Transport LED in  | 4       | note 39          | droid ini           |
- * | Record exclusion  | 13-16   | (not recorded)   | RECORD_EXCLUDE_*    |
+ * CONFIG SUMMARY
+ * ---------------
+ * Buttons and LEDs (notes):
+ * | Role              | Button press note (ch 16) | LED feedback note (ch 15) |
+ * |-------------------|---------------------------|---------------------------|
+ * | Main controls     | 35-39                     | 39                        |
+ * | Extended transport| 40-48                     | —                         |
+ * | Track select      | 60-67                     | —                         |
+ * | Bar select        | 17-24                     | 40-47                     |
+ * | 16th select       | 0-15                      | 0-15                      |
+ * | Current position  | —                         | 16-31                     |
+ * | Loop edit         | CC 100,101, pitchbend     | —                         |
+ *
+ * Faders (pitchbend/CC, two channels for high-resolution position/move):
+ * | Role          | Fader input (ch)                 | Fader output (ch)                 |
+ * |---------------|----------------------------------|-----------------------------------|
+ * | Fader input   | ch16: pitchbend; ch15: pb, CC 2,3| —                                 |
+ * | Fader output  | —                                 | ch16: pitchbend; ch15: pb, CC 2,3 |
+ *
+ * Record exclusion: channel 16 not recorded. See RECORD_EXCLUDE_*.
  * See docs/MIDI_CONFIG_GUIDE.md for remap instructions.
  */
 #ifndef MIDI_CONFIG_H
@@ -37,28 +43,33 @@ constexpr int CHANNEL_OMNI = 0;
 
 // --- Channels ---
 namespace Channels {
-  constexpr uint8_t DEFAULT = 1;           // Legacy default
-  constexpr uint8_t TRACK_SELECT = 2;
-  constexpr uint8_t LED_FEEDBACK = 3;      // DROID LED (ch3 works on DROID 1.7)
-  constexpr uint8_t TRANSPORT = 4;
-  constexpr uint8_t FADER = 15;            // Faders 2,3,4 (coarse, fine, note value)
-  constexpr uint8_t SELECT = 16;           // Fader 1 (select), buttons, loop length
+  constexpr uint8_t DEFAULT = 1;             // Legacy default
+  constexpr uint8_t TRACK_SELECT = 16;       // DROID track row (notes 60-67)
+  constexpr uint8_t LED_FEEDBACK = 15;       // All LEDs (16th, tick, bar, main controls)
+  constexpr uint8_t MAIN_CONTROLS_LED = 15;  // Play/stop LED same channel as other LEDs
+  constexpr uint8_t TRANSPORT = 15;          // Alias for MAIN_CONTROLS_LED (play/stop LED)
+  constexpr uint8_t FADER = 15;              // Faders 2,3,4 (coarse, fine, note value)
+  constexpr uint8_t SELECT = 16;             // Fader 1 (select), buttons, loop length
 }
 
-// --- Record exclusion (channels not recorded) ---
-constexpr uint8_t RECORD_EXCLUDE_MIN = 13;
+// --- Record exclusion (channel 16 = buttons, not recorded) ---
+constexpr uint8_t RECORD_EXCLUDE_MIN = 16;
 constexpr uint8_t RECORD_EXCLUDE_MAX = 16;
 
 // --- LED feedback (excluded from All Notes Off) ---
-constexpr uint8_t LED_CHANNEL_MIN = 1;
-constexpr uint8_t LED_CHANNEL_MAX = 4;
+constexpr uint8_t LED_CHANNEL_MIN = 15;
+constexpr uint8_t LED_CHANNEL_MAX = 15;
 
-// --- LED notes (channel 3) ---
+// --- LED notes (channel 15) ---
 namespace Led {
-  constexpr uint8_t CHANNEL = 3;
-  constexpr uint8_t CONTENT_BASE = 0;      // 16th step content: notes 0-15
-  constexpr uint8_t TICK_OFFSET = 16;      // Tick indicator: notes 16-31
-  constexpr uint8_t BAR_BASE = 40;         // 8 bar LEDs: notes 40-47
+  constexpr uint8_t CHANNEL = 15;
+  constexpr uint8_t CONTENT_BASE = 0;       // 16th step content: notes 0-15
+  constexpr uint8_t CONTENT_COUNT = 16;
+  constexpr uint8_t TICK_OFFSET = 16;       // Current position: notes 16-31
+  constexpr uint8_t TICK_COUNT = 16;
+  constexpr uint8_t BAR_BASE = 40;          // 8 bar LEDs: notes 40-47
+  constexpr uint8_t BAR_COUNT = 8;
+  constexpr uint8_t MAIN_CONTROLS_NOTE = 39;  // Play/stop LED
 }
 
 // --- Fader / CC ---
@@ -103,6 +114,30 @@ namespace Transport {
   constexpr uint8_t NOTE_PLAY = 37;     // C#2, Button B
   constexpr uint8_t NOTE_UNDO = 38;     // D2, Button C
   constexpr uint8_t NOTE_REDO = 39;     // D#2, Button D
+}
+
+// --- Length edit (DROID B2.32 NOTELEN) ---
+namespace LengthEdit {
+  constexpr uint8_t NOTE = 35;  // Matches DROID ini, groups with main controls 36-39
+}
+
+// --- Track select row (DROID notes 60+) ---
+namespace TrackSelect {
+  constexpr uint8_t NOTE_BASE = 60;
+  constexpr uint8_t NOTE_COUNT = 8;
+}
+
+// --- Extended transport (ch16, notes 40-48; Play/Stop uses 40 to avoid conflict with 39) ---
+namespace ExtendedTransport {
+  constexpr uint8_t NOTE_PLAY_STOP = 40;      // Play/Stop (39 = Global Transport)
+  constexpr uint8_t NOTE_SET_LOOP_START = 41;
+  constexpr uint8_t NOTE_SET_LOOP_END = 42;
+  constexpr uint8_t NOTE_QUANTIZE = 43;
+  constexpr uint8_t NOTE_COPY_PASTE = 44;
+  constexpr uint8_t NOTE_MOVE_BACK_BEAT = 45;
+  constexpr uint8_t NOTE_MOVE_FORWARD_BEAT = 46;
+  constexpr uint8_t NOTE_MOVE_BACK_16TH = 47;
+  constexpr uint8_t NOTE_DELETE = 48;         // Delete Note (loadExtended)
 }
 
 // --- Encoder defaults ---
