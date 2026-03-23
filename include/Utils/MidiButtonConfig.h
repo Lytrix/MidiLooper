@@ -123,10 +123,8 @@ public:
     static void addEditModeButton(uint8_t note, uint8_t channel = 1);
     static void addUndoRedoButton(uint8_t note, uint8_t channel = 1);
     
-    // Preset configurations for common setups
-    static void loadBasicConfiguration();     // 4 button setup
-    static void loadExtendedConfiguration();  // 16 button setup  
-    static void loadFullConfiguration();      // 40 button setup
+    // Load DROID button configuration (single preset, matches droid/midilooper_v1.ini)
+    static void loadConfiguration();
     
 private:
     static std::vector<ButtonConfig> buttonConfigs;

@@ -28,8 +28,7 @@ public:
     void update();
     void handleMidiNote(uint8_t channel, uint8_t note, uint8_t velocity, bool isNoteOn);
     
-    // Configuration management
-    void loadButtonConfiguration(const char* configName = "basic");
+    // Configuration management (Config::initialize loads DROID config; addCustomButton for extras)
     void addCustomButton(uint8_t note, uint8_t channel, const char* description,
                         MidiButtonConfig::ActionType shortAction = MidiButtonConfig::ActionType::NONE,
                         MidiButtonConfig::ActionType longAction = MidiButtonConfig::ActionType::NONE);

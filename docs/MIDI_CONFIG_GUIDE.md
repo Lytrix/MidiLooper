@@ -9,7 +9,7 @@ How to remap channels, notes, and CCs for your own controller. The looper is **c
 | What | File | Role |
 |------|------|------|
 | Channels, LED notes, CC numbers | `include/MidiConfig.h` | Central constants used by handlers |
-| Button mappings (note + channel → action) | `src/Utils/MidiButtonConfig.cpp` | `loadFullConfiguration()`, `loadExtendedConfiguration()`, etc. |
+| Button mappings (note + channel → action) | `src/Utils/MidiButtonConfig.cpp` | `loadConfiguration()` |
 | Bar/16th button range | `include/MidiConfig.h` → `BarStepButton` | Notes 0–15, 17–24 on channel 16 (or override) |
 | DROID patch (if using DROID) | `droid/midilooper_v1.ini` | Must send/receive on same channels and notes as Teensy |
 
@@ -25,7 +25,7 @@ How to remap channels, notes, and CCs for your own controller. The looper is **c
 
 2. **Update `MidiConfig.h`** — Change `Channels::*`, `Led::*`, `Fader::*`, `BarStepButton::*`, `LoopEdit::*` to match your controller’s output.
 
-3. **Update `MidiButtonConfig.cpp`** — In `loadFullConfiguration()` (or the config you use), change each `ButtonConfig(note, channel, ...)` to your controller’s note and channel. Notes are 0–127; channels are 1–16 in config.
+3. **Update `MidiButtonConfig.cpp`** — In `loadConfiguration()`, change each `ButtonConfig(note, channel, ...)` to your controller’s note and channel. Notes are 0–127; channels are 1–16 in config.
 
 4. **Update DROID ini** (if applicable) — All `[midiout]` and `[midiin]` blocks must use the same channels and note numbers. See the ini header and section comments.
 

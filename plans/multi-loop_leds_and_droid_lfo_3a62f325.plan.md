@@ -29,7 +29,7 @@ This plan merges [phase-3-multi-loop.md](phase-3-multi-loop.md) with Droid LED/L
 | **D1** | **Constants** — `MAX_LOOPS_PER_TRACK`, MidiConfig Led 50–57/60–67, LFO note 70 (+ CC) | — | Config/header only. |
 | **D2** | **activeLoopIndex** — Add to Track/TrackManager; slot 0 = current data; slots 1–7 unused. | D1 | No `Loop` struct yet; phase-3 3a subset. |
 | **D3** | **Storage v3** — Bump version; persist `activeLoopIndex[NUM_TRACKS]`; migrate v2 → 0. | D2 | §1b. |
-| **D4** | **Track select ch16** — Register notes 60–67 → SELECT_TRACK; immediate. | — | §4.1. |
+| **D4** | **Track buttons ch16** — Register 60–67: short=MUTE, long=SELECT, double=SOLO. | — | §4.1; [DESIGN_PRINCIPLES](../docs/DESIGN_PRINCIPLES.md). |
 | **D5** | **Loop select ch16 (switch-only)** — Register 50–57; short = `pendingActiveLoopIndex`; 16th commit in updateAllTracks. | D2 | Switch between filled slots only; no record/overdub yet. §4.2 subset. |
 | **D6** | **Droid ini: ch3 track/loop LEDs** — midiin + copy for notes 50–67 → L2.5–L3.12. | — | §3; requires D7 to send. |
 | **D7** | **MidiLedManager: track/loop velocities** — `updateTrackAndLoopSelectLeds`, clearAllLeds 50–67, MidiHandler logging. | D2 | §5. |
@@ -67,10 +67,10 @@ From [phase-3-multi-loop.md](phase-3-multi-loop.md) §9 and gaps:
 
 - **[droid/midilooper_v1.ini](../droid/midilooper_v1.ini)** already exposes **track** buttons as **ch16 notes 60–67** and **loop** buttons as **ch16 notes 50–57** via `[midiout]` + `[buttongroup]` (lines ~644–734). **LED wiring for those rows is not yet driven from Teensy**; the buttongroup still owns `led1`–`led8` directly without the bar-style `[midiin]` + `[copy]` path.
 - **Bar LED feedback pattern** (same file, ~500–559): `[midiin]` on **ch3** with `notegate` + `notegatevelocity`, then `[copy]` `input = _BARLEDn * _BAR_GATEn` → `L2.17`–`L3.20`. This is the template for track/loop LEDs.
-- **Teensy** sends bar/step LEDs from [src/MidiLedManager.cpp](../src/MidiLedManager.cpp) and constants in [include/MidiConfig.h](../include/MidiConfig.h) (`Led::BAR_BASE = 40`, etc.). **Ch16 notes 50–67 are not registered** in [src/Utils/MidiButtonConfig.cpp](../src/Utils/MidiButtonConfig.cpp) `loadFullConfiguration()` — only **ch2** `48+i` for track select. Incoming Droid presses on **ch16 60–67** therefore do not run `SELECT_TRACK` today.
+- **Teensy** sends bar/step LEDs from [src/MidiLedManager.cpp](../src/MidiLedManager.cpp) and constants in [include/MidiConfig.h](../include/MidiConfig.h) (`Led::BAR_BASE = 40`, etc.). **Ch16 notes 50–67 are not registered** in [src/Utils/MidiButtonConfig.cpp](../src/Utils/MidiButtonConfig.cpp) `loadConfiguration()` — only **ch2** `48+i` for track select. Incoming Droid presses on **ch16 60–67** therefore do not run `SELECT_TRACK` today.
 - **Default track index** is already **0** ([include/TrackManager.h](../include/TrackManager.h) `selectedTrack = 0`).
 - **16th quantization** already appears for seek in [src/BarStepButtonHandler.cpp](../src/BarStepButtonHandler.cpp) (`seekTick` aligned with `Config::TICKS_PER_16TH_STEP`).
-- **Note 70 on ch1** is used for “Back Bar” in `loadFullConfiguration()`; **ch16 note 70 is unused** in the current button table — suitable for an **LFO arm** gate if you standardize on **ch16** for Droid control-plane messages (avoids collision with ch1 navigation).
+- **Note 70 on ch1** is used for “Back Bar” in `loadConfiguration()`; **ch16 note 70 is unused** in the current button table — suitable for an **LFO arm** gate if you standardize on **ch16** for Droid control-plane messages (avoids collision with ch1 navigation).
 
 ## Product rules (from your spec)
 
@@ -81,7 +81,7 @@ From [phase-3-multi-loop.md](phase-3-multi-loop.md) §9 and gaps:
 | Velocity **127**   | Selected track / selected loop                                                               |
 | Velocity **32**    | Not selected, slot has content                                                               |
 | Velocity **0**     | Empty slot                                                                                   |
-| **ch16 60–67**     | Select track (**immediate**; no 16th quantize on this row)                                 |
+| **ch16 60–67**     | **Track row:** short=mute, long=select, double=solo. Per [docs/DESIGN_PRINCIPLES.md](../docs/DESIGN_PRINCIPLES.md). |
 | **ch16 50–57**     | **Per-slot copy of Button A** (see §4); **switch-only** changes commit on **next 16th boundary** |
 | **ch16 note 70**   | **NoteOn** starts Droid LFO pulse; **NoteOff** stops it when leaving armed/recording/overdub |
 
@@ -145,15 +145,25 @@ Document new buses in the ini header comment block (same style as existing contr
 
 ### 4.1 Track row (ch16 notes 60–67)
 
-In [src/Utils/MidiButtonConfig.cpp](../src/Utils/MidiButtonConfig.cpp) **`loadFullConfiguration()`**:
+Per [docs/DESIGN_PRINCIPLES.md](../docs/DESIGN_PRINCIPLES.md): **mute-primary** mapping — short = most frequent action.
 
-- For `i = 0..7`, add **ch16** `60 + i` → `SELECT_TRACK` with `withParameter(i)` (mirrors extended config’s ch2 mapping but matches the physical Droid map).
+| Gesture | Action |
+|---------|--------|
+| **Short** | Mute / unmute track |
+| **Long** | Select track |
+| **Double** | Solo / unsolo track |
 
-**Track select** uses existing [TrackManager::setSelectedTrack](../src/TrackManager.cpp) (already forces LED update).
+In [src/Utils/MidiButtonConfig.cpp](../src/Utils/MidiButtonConfig.cpp) **`loadConfiguration()`**, for `i = 0..7` add **ch16** `60 + i` with:
+
+- `onShortPress(MUTE_TRACK)` + `withParameter(i)`
+- `onLongPress(SELECT_TRACK)` + `withParameter(i)`
+- `onDoublePress(SOLO_TRACK)` + `withParameter(i)`
+
+**Note:** Current extended config uses short=SELECT, long=MUTE. D4 updates this to the above. `setSelectedTrack` and LED update already exist; mute/solo handlers exist in [MidiButtonActions](../src/MidiButtonActions.cpp).
 
 ### 4.2 Loop row (ch16 notes 50–57) — same behaviour as Button A, per slot
 
-**Reference implementation today:** note **36** on ch16 is configured as “Record/Overdub” with the same gesture map you want on each loop button ([`loadFullConfiguration()`](../src/Utils/MidiButtonConfig.cpp) ~189–194):
+**Reference implementation today:** note **36** on ch16 is configured as “Record/Overdub” with the same gesture map you want on each loop button ([`loadConfiguration()`](../src/Utils/MidiButtonConfig.cpp) ~189–194):
 
 - **Short** → `TOGGLE_RECORD`
 - **Double** → `UNDO`

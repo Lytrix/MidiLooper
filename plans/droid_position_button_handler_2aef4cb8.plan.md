@@ -62,7 +62,7 @@ namespace BarStepButton {
 }
 ```
 
-Add a validation function (or startup check) that verifies these note ranges do not overlap with existing `MidiButtonConfig` entries on channel 16. Current channel 16 buttons: notes 36, 37, 38, 3, 39 (from `loadFullConfiguration`). No conflict with 0-15 and 17-24.
+Add a validation function (or startup check) that verifies these note ranges do not overlap with existing `MidiButtonConfig` entries on channel 16. Current channel 16 buttons: notes 36, 37, 38, 3, 39 (from `loadConfiguration`). No conflict with 0-15 and 17-24.
 
 ## 2. Controller INI Configuration
 

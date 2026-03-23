@@ -79,15 +79,8 @@ I've successfully refactored your MidiButtonManager into a modular, scalable sys
 #include "MidiButtonManager.h"
 
 void setup() {
-    // Initialize the system
+    // Initialize the system (loads DROID button configuration automatically)
     midiButtonManager.setup();
-    
-    // Load a preset configuration
-    midiButtonManager.loadButtonConfiguration("full");  // 40 buttons
-    
-    // Or load other presets:
-    // midiButtonManager.loadButtonConfiguration("basic");    // 4 buttons
-    // midiButtonManager.loadButtonConfiguration("extended"); // 16 buttons
 }
 
 void loop() {
@@ -203,8 +196,8 @@ Total: **40 buttons** with **multiple functions each** = **100+ actions**
 
 ### Integration Steps
 1. Include `MidiButtonManager.h` and use `midiButtonManager`
-2. Call `midiButtonManager.loadButtonConfiguration("full")` for 40 buttons
-4. Customize configuration in `MidiButtonConfig` as needed
+2. Call `midiButtonManager.setup()` — DROID configuration is loaded in `Config::initialize()`
+3. Customize configuration in `MidiButtonConfig::loadConfiguration()` as needed
 
 ## Available Actions
 
