@@ -128,8 +128,8 @@ The looper is configured for a DROID controller (M4 + 2× B32). MIDI channels an
 | **Track** | — | — | — | — | — | — | — | — |
 | **REMIX** | — | — | — | — | — | — | — | — |
 | **8BARS** | — | — | — | — | — | — | — | — |
-| **1BAR** | Bar 0 | Bar 1 | Bar 2 | Bar 3 | Bar 4 | Bar 5 | Bar 6 | Bar 7 |
-| **16th** | Playhead LEDs (receives position from Teensy) | | | | | | | |
+| **1BAR** | Bar 1 | Bar 2 | Bar 3 | Bar 4 | Bar 5 | Bar 6 | Bar 7 | Bar 8 |
+| **16th** | 16th 0–15 (jam/seek) + Playhead LEDs (receives from Teensy) | | | | | | | |
 | **Row 7** | **REC/PLAY** | **MUTE/DE** | **Edit Mode** | **NOTELEN** | — | — | **&lt;** | **&gt;** |
 
 | Slider | **NOTE_EDIT** (Program 1) | **LOOP_EDIT** (Program 0) |
@@ -145,7 +145,7 @@ The looper is configured for a DROID controller (M4 + 2× B32). MIDI channels an
 - **Edit Mode** (note 38): Cycle NOTE_EDIT ↔ LOOP_EDIT — double=delete note, long=exit edit
 - **NOTELEN** (note 3): Toggle position vs length editing
 
-**Notes:** REC/PLAY, MUTE/DE, Edit Mode, and NOTELEN are fully implemented. Scene (notes 10–17) and 1BAR (notes 0–7) send on ch16 but need firmware mapping for direct scene/bar selection. Track row is unmapped in the default ini; MUTE/DE single-press cycles through 4 tracks.
+**Notes:** REC/PLAY, MUTE/DE, Edit Mode, and NOTELEN are fully implemented. Track row is unmapped in the default ini; MUTE/DE single-press cycles through 4 tracks. For jam loop selection with 1BAR and 16th buttons, see [Jam Loops (Bar/16th Buttons)](#-jam-loops-bar16th-buttons) below.
 
 ### LED Feedback (Channel 3)
 
@@ -155,7 +155,7 @@ The Teensy sends LED feedback to the DROID on **Channel 3** (notes 0–15, 16–
 |----------|-------|-------------|
 | **16th step content** | 0–15 | Shows which 16th steps have notes in the current bar |
 | **Current tick** | 16–31 | Highlights the playing 16th step (which step is currently playing) |
-| **8 bar LEDs** | 40–47 | Bar 0–7 status: used (vel 32), has notes (vel 64), current bar (vel 127) |
+| **8 bar LEDs** | 40–47 | Bar 1–8 status: used (vel 32), has notes (vel 64), current bar (vel 127) |
 
 **Behavior:**
 - **Initial update on startup** — 16th and bar LEDs refresh once after setup (no need to switch tracks)
@@ -164,6 +164,47 @@ The Teensy sends LED feedback to the DROID on **Channel 3** (notes 0–15, 16–
 - **Loop length change** — LEDs update when resizing; bars beyond the new loop length receive NoteOff
 - **Bar LED logic** — Uses NoteOn velocity updates only during playback; NoteOff only when required (track switch, loop resize, clear)
 - **LED logging** — Disabled by default; set `logger.setCategoryEnabled(CAT_MIDI_LED, true)` in `main.cpp` for debug
+
+---
+
+## 🔄 Jam Loops (Bar/16th Buttons) ##
+
+The **1BAR** row (notes 17–24) and **16th** row (notes 0–15) on Channel 16 select and trigger jam loops when in **LOOP_EDIT** mode. A jam loop is a sub-region of the full loop that repeats for focused playback or practice.
+
+**Prerequisites:** LOOP_EDIT mode (Edit Mode button), selected track with loop data.
+
+### Entering jam mode
+
+| Action | Result |
+|--------|--------|
+| **HOLD_ONE bar** (hold ~600ms) | Enter single-bar jam. Playback loops that one bar (Bar 1–8). |
+| **HOLD_TWO bars** | Enter multibar jam. Hold bar A, then press bar B (see timing below). Playback loops bars A through B inclusive. |
+| **HOLD_TWO 16ths** | Enter multi-16th jam. Hold 16th A, then press 16th B. Playback loops the 16th range. |
+
+**HOLD_TWO timing:** Hold the first bar/16th, then press the second. Either:
+- **Gap method:** At least 800ms between first press and second press, then release; or
+- **Overlap method:** Hold first for ≥600ms, press second, overlap ≥200ms, then release.
+
+### While jamming
+
+| Action | Result |
+|--------|--------|
+| **SHORT_PRESS bar** (in jam region) | Seek playback to that bar. |
+| **SHORT_PRESS bar** (outside jam region) | Switch to single-bar jam on that bar. |
+| **SHORT_PRESS 16th** (in jam region) | Seek playback to that 16th step. |
+| **HOLD_ONE same bar** | Seek to start of current bar. |
+| **HOLD_ONE different bar** | Switch to single-bar jam on that bar. |
+| **DOUBLE_PRESS** | Exit jam mode, return to full loop playback. |
+| **TRIPLE_PRESS** | Undo loop start edit (no exit). |
+
+**Immediate seek:** Pressing a bar or 16th button triggers an immediate seek on NoteOn (before release) when the position is within the current jam region or when not jamming. No need to wait for release.
+
+### Summary
+
+- **Enter:** HOLD_ONE bar = 1 bar, HOLD_TWO = range
+- **Seek:** SHORT_PRESS bar/16th (in jam)
+- **Switch bar:** SHORT_PRESS bar outside jam, or HOLD_ONE different bar
+- **Exit:** DOUBLE_PRESS only (short press does not exit)
 
 ---
 
@@ -284,3 +325,4 @@ The `/examples` directory contains working examples and demonstrations:
 - **Loop length**: Fader 2 in LOOP_EDIT mode, or CC 101 on Channel 16 (0-127 = 1-128 bars)
 - **Loop start**: Fader 1 (Pitchbend Ch 16) in LOOP_EDIT mode
 - **Note length mode**: NOTELEN button (Note 3, Ch 16) toggles position vs length editing
+- **Jam loops**: 1BAR (notes 17–24) and 16th (notes 0–15) — see [Jam Loops](#-jam-loops-bar16th-buttons)
