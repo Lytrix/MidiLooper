@@ -200,15 +200,27 @@ void BarStepButtonHandler::handleNoteOn(uint8_t note, uint8_t velocity) {
     Track& trackRef = trackManager.getSelectedTrack();
     bool potentialHoldTwo = (info.type == BarStepButtonType::BAR && pressedBarCount() >= 2) ||
                             (info.type == BarStepButtonType::SIXTEENTH && pressed16thCount() >= 2);
-    if (trackRef.isJamming() && !potentialHoldTwo) {
-      if (info.type == BarStepButtonType::BAR && !isHoldTwoJam && info.stepIndex == selectedBarIndex) {
-        testLog("BarStepButton: same bar %d pressed, exiting bar select [TEST POINT: bar select exit on press]", info.stepIndex);
-        exitBarSelect();
-      }
-    }
 
     bool isLoopEdit = noteEditManager.getCurrentMainEditMode() == NoteEditManager::MAIN_MODE_LOOP_EDIT;
-    if (isLoopEdit && !trackRef.isJamPlaybackActive() && !potentialHoldTwo) {
+    if (isLoopEdit && trackRef.isJamPlaybackActive() && !potentialHoldTwo) {
+      uint32_t loopLength = trackRef.getLoopLength();
+      uint32_t loopStartTick = trackRef.getLoopStartTick();
+      uint32_t jamStartTick = trackRef.getJamStartTick();
+      uint32_t jamLength = trackRef.getJamLength();
+      if (loopLength > 0 && jamLength > 0) {
+        uint32_t displayPos = (info.type == BarStepButtonType::SIXTEENTH)
+          ? (info.stepIndex * Config::TICKS_PER_16TH_STEP)
+          : (info.stepIndex * Config::TICKS_PER_BAR);
+        uint32_t tickInLoop = (loopStartTick + displayPos) % loopLength;
+        tickInLoop = (tickInLoop / Config::TICKS_PER_16TH_STEP) * Config::TICKS_PER_16TH_STEP;
+        uint32_t offsetInJam = (tickInLoop - jamStartTick + loopLength) % loopLength;
+        if (offsetInJam < jamLength) {
+          trackRef.setJamTick(offsetInJam);
+          trackManager.forceLedUpdate(trackRef.getEffectivePlaybackTick(clockManager.getCurrentTick()));
+          testLog("BarStepButton: jam seek to tick %lu (quantized 16th) [TEST POINT: jam immediate seek]", offsetInJam);
+        }
+      }
+    } else if (isLoopEdit && !trackRef.isJamPlaybackActive() && !potentialHoldTwo) {
       uint32_t loopLength = trackRef.getLoopLength();
       uint32_t loopStartTick = trackRef.getLoopStartTick();
       uint32_t startLoopTick = trackRef.getStartLoopTick();
@@ -443,11 +455,13 @@ void BarStepButtonHandler::executeLoopEditAction(const BarStepButtonInfo& info, 
     case BarStepPressType::SHORT_PRESS: {
       if (track.isJamPlaybackActive()) {
         if (info.type == BarStepButtonType::BAR) {
-          if (isHoldTwoJam) {
-            uint32_t newStart = (loopStartTick + info.stepIndex * Config::TICKS_PER_BAR) % loopLength;
-            track.setJam(newStart, track.getJamLength());
-            track.setJamTick(0);
-            testLog("BarStepButton: jam navigate to bar %d [TEST POINT: jam navigate bar]", info.stepIndex);
+          uint32_t jamStartTick = track.getJamStartTick();
+          uint32_t jamLength = track.getJamLength();
+          uint32_t barStartTick = (loopStartTick + info.stepIndex * Config::TICKS_PER_BAR) % loopLength;
+          uint32_t offsetInJam = (barStartTick - jamStartTick + loopLength) % loopLength;
+          if (offsetInJam < jamLength) {
+            track.setJamTick(offsetInJam);
+            testLog("BarStepButton: jam seek to bar %d offset=%lu [TEST POINT: jam seek bar]", info.stepIndex, offsetInJam);
           } else {
             switchBarSelect(info.stepIndex);
           }
@@ -465,7 +479,8 @@ void BarStepButtonHandler::executeLoopEditAction(const BarStepButtonInfo& info, 
     case BarStepPressType::HOLD_ONE_BUTTON: {
       if (info.type == BarStepButtonType::BAR) {
         if (track.isJamming() && info.stepIndex == selectedBarIndex) {
-          exitBarSelect();
+          track.setJamTick(0);
+          testLog("BarStepButton: HOLD_ONE same bar, seek to start [TEST POINT: hold one seek]");
         } else if (track.isJamming()) {
           switchBarSelect(info.stepIndex);
         } else {
@@ -500,10 +515,12 @@ void BarStepButtonHandler::executeLoopEditAction(const BarStepButtonInfo& info, 
       break;
     }
     case BarStepPressType::DOUBLE_PRESS:
-      testLog("BarStepButton LoopEdit DOUBLE: continuous loop toggle [TODO]");
+      if (track.isJamming()) {
+        exitBarSelect();
+        testLog("BarStepButton LoopEdit DOUBLE: exit jam [TEST POINT: double press exit]");
+      }
       break;
     case BarStepPressType::TRIPLE_PRESS:
-      if (track.isJamming()) exitBarSelect();
       TrackUndo::undoLoopStart(track);
       testLog("BarStepButton LoopEdit TRIPLE: undo/redo [TEST POINT: undo]");
       break;
