@@ -403,6 +403,8 @@ void Track::startPlaying(uint32_t currentTick) {
     startLoopTick = 0;
     // for support to pickup in the middle or quintized start live looping to master clock:
     //startLoopTick = currentTick - ((currentTick - startLoopTick) % loopLengthTicks);
+    nextEventIndex = 0;
+    lastTickInLoop = UINT32_MAX;  // First update will send events from 0 (toggleTransport does not call updateAllTracks)
     logger.logTrackEvent("Playback started", currentTick);
   }
 }
@@ -647,11 +649,16 @@ void Track::playMidiEvents(uint32_t currentTick, bool isAudible) {
   uint32_t prevTickInLoop = lastTickInLoop;
   lastTickInLoop = tickInLoop;
 
+  // When we just seeked, loop wrapped, or are on the first frame (tick 0, never advanced),
+  // send all events from 0 to tickInLoop. prevTickInLoop < evTick fails for evTick==0.
+  bool atLoopStart = (prevTickInLoop == UINT32_MAX) || (tickInLoop <= prevTickInLoop);
+
   while (nextEventIndex < playbackOrder.size()) {
     const MidiEvent &evt = midiEvents[playbackOrder[nextEventIndex]];
     uint32_t evTick = evt.tick % loopLengthTicks;
 
-    if ( prevTickInLoop < evTick && evTick <= tickInLoop ) {
+    bool crossed = atLoopStart ? (evTick <= tickInLoop) : (prevTickInLoop < evTick && evTick <= tickInLoop);
+    if (crossed) {
       sendMidiEvent(evt);
       nextEventIndex++;
     }
@@ -840,9 +847,12 @@ uint32_t Track::getJamTick() const {
 
 void Track::setJamTick(uint32_t tick) {
   noInterrupts();
-  jamTick = (jamLength > 0) ? (tick % jamLength) : 0;
-  nextEventIndex = 0;
-  lastTickInLoop = UINT32_MAX;
+  uint32_t newTick = (jamLength > 0) ? (tick % jamLength) : 0;
+  if (newTick != jamTick) {
+    jamTick = newTick;
+    nextEventIndex = 0;
+    lastTickInLoop = UINT32_MAX;
+  }
   interrupts();
 }
 
