@@ -653,12 +653,23 @@ void Track::playMidiEvents(uint32_t currentTick, bool isAudible) {
   // send all events from 0 to tickInLoop. prevTickInLoop < evTick fails for evTick==0.
   bool atLoopStart = (prevTickInLoop == UINT32_MAX) || (tickInLoop <= prevTickInLoop);
 
+  // In jam (bar/multibar) mode, only play events within the jam region [jamStartTick, jamStartTick+jamLength)
+  auto eventInJamRegion = [this](uint32_t evTick) -> bool {
+    if (!jamPlaybackActive || jamLength == 0) return true;
+    if (jamStartTick == UINT32_MAX) return true;
+    uint32_t jamEnd = jamStartTick + jamLength;
+    if (jamEnd <= loopLengthTicks) {
+      return evTick >= jamStartTick && evTick < jamEnd;
+    }
+    return (evTick >= jamStartTick) || (evTick < jamEnd - loopLengthTicks);
+  };
+
   while (nextEventIndex < playbackOrder.size()) {
     const MidiEvent &evt = midiEvents[playbackOrder[nextEventIndex]];
     uint32_t evTick = evt.tick % loopLengthTicks;
 
     bool crossed = atLoopStart ? (evTick <= tickInLoop) : (prevTickInLoop < evTick && evTick <= tickInLoop);
-    if (crossed) {
+    if (crossed && eventInJamRegion(evTick)) {
       sendMidiEvent(evt);
       nextEventIndex++;
     }
