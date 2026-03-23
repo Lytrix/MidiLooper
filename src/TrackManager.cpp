@@ -217,13 +217,11 @@ uint32_t TrackManager::getTrackLength(uint8_t trackIndex) const {
   return (trackIndex < Config::NUM_TRACKS) ? tracks[trackIndex].getLoopLength() : 0;
 }
 
-void TrackManager::setSelectedTrack(uint8_t index, bool skipLedUpdate) {
+void TrackManager::setSelectedTrack(uint8_t index) {
   if (index < Config::NUM_TRACKS) {
     selectedTrack = index;
-    // Force LED update when track changes (skip during loadState - midiHandler not ready yet)
-    if (!skipLedUpdate) {
-      forceLedUpdate(clockManager.getCurrentTick());
-    }
+    // Force LED update when track changes
+    forceLedUpdate(clockManager.getCurrentTick());
     // Notify NoteEditManager of track change for loop length CC feedback
     noteEditManager.onTrackChanged(tracks[selectedTrack]);
   }
