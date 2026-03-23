@@ -215,7 +215,7 @@ void Config::loadFullConfiguration() {
     addButton(ButtonConfig(39, 16, "Global Transport")  // D#2
               .onShortPress(ActionType::TOGGLE_TRANSPORT)
               .onDoublePress(ActionType::RESET_TO_LOOP_START)
-              .withDebounce(150)
+              .withDebounce(50)   // Lower than double-tap window so second tap can register
               .withTiming(300, 400, 3000));
     
     // === EXTEND WITH 37 MORE BUTTONS FOR 40 TOTAL ===
