@@ -52,35 +52,27 @@ void setup() {
   logger.setup(LOG_DEBUG);  // Set to LOG_INFO for production
   logger.setCategoryEnabled(CAT_MIDI, true);  // Ensure MIDI logging is enabled
   logger.setCategoryEnabled(CAT_MIDI_LED, false);  // LED update logging (channel/destinations)
-  // Initialize looper and load last project and states
-  looper.setup();
-  //loadConfig();
 
+  // Logical init order: logger -> midi -> track -> looper (load state) -> clock -> display
+  midiHandler.setup();
   trackManager.setup();
+  looper.setup();  // SD + loadState; setSelectedTrack triggers forceLedUpdate (midi now ready)
 
-  // // Log initial track states
   for (uint8_t i = 0; i < trackManager.getTrackCount(); ++i) {
     TrackState state = trackManager.getTrack(i).getState();
     logger.debug("Track %d state: %s", i, trackManager.getTrack(i).getStateName(state));
   }
 
-
   for (uint8_t t = 0; t < Config::NUM_TRACKS; ++t) {
     Track &track = trackManager.getTrack(t);
-    // ... after setState ...
     Serial.print("Track "); Serial.print(t); Serial.print(" loaded state: ");
     Serial.println(track.getStateName(track.getState()));
-}
+  }
 
-  // Initialize other components
   clockManager.setup();
-  midiHandler.setup();
- 
   displayManager.setup();
-  Serial.println("Main: Dispaly Setup done");
-  looper.setup();
+  Serial.println("Main: Display Setup done");
 
-  // Log performance monitoring setup
   logger.info("Performance monitoring initialized");
 
   // Clear all bar/16th LEDs for a clean start (DROID may retain state from before disconnect)

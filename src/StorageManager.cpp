@@ -292,10 +292,10 @@ bool StorageManager::loadState(LooperState& state) {
             file.close();
             return false;
         }
-        trackManager.setSelectedTrack(selectedTrackIdx, true);  // Skip LED update - midiHandler not ready during load
+        trackManager.setSelectedTrack(selectedTrackIdx);
     } else {
         // Backward compatibility: default to track 0
-        trackManager.setSelectedTrack(0, true);
+        trackManager.setSelectedTrack(0);
     }
     file.close();
     Serial.println("[StorageManager] State loaded successfully.");
