@@ -664,13 +664,32 @@ void Track::playMidiEvents(uint32_t currentTick, bool isAudible) {
     return (evTick >= jamStartTick) || (evTick < jamEnd - loopLengthTicks);
   };
 
+  // Skip duplicate events at same loop position (e.g. tick 0 and tick 1536 when loop length is 1536)
+  uint32_t lastSentEvTick = UINT32_MAX;
+  uint8_t lastSentChannel = 0;
+  uint8_t lastSentNote = 0;
+  uint8_t lastSentType = 0xFF;
+
   while (nextEventIndex < playbackOrder.size()) {
     const MidiEvent &evt = midiEvents[playbackOrder[nextEventIndex]];
     uint32_t evTick = evt.tick % loopLengthTicks;
 
     bool crossed = atLoopStart ? (evTick <= tickInLoop) : (prevTickInLoop < evTick && evTick <= tickInLoop);
     if (crossed && eventInJamRegion(evTick)) {
-      sendMidiEvent(evt);
+      uint8_t effectiveCh = (evt.channel >= 1 && evt.channel <= 16) ? midiChannel : evt.channel;
+      uint8_t note = evt.isNoteOn() || evt.isNoteOff() ? evt.data.noteData.note : 0;
+      bool isDuplicate = (evt.isNoteOn() || evt.isNoteOff()) &&
+                         (evTick == lastSentEvTick && effectiveCh == lastSentChannel &&
+                          note == lastSentNote && evt.type == lastSentType);
+      if (!isDuplicate) {
+        sendMidiEvent(evt);
+        if (evt.isNoteOn() || evt.isNoteOff()) {
+          lastSentEvTick = evTick;
+          lastSentChannel = effectiveCh;
+          lastSentNote = note;
+          lastSentType = evt.type;
+        }
+      }
       nextEventIndex++;
     }
     else if (evTick > tickInLoop) {
