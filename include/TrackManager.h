@@ -35,7 +35,7 @@ public:
   void setup();  // Initialize track manager state
 
   // --- Track Selection ---
-  void setSelectedTrack(uint8_t index);
+  void setSelectedTrack(uint8_t index, bool skipLedUpdate = false);
   uint8_t getSelectedTrackIndex();
   Track& getSelectedTrack();
   Track& getTrack(uint8_t index);
