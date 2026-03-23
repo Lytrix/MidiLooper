@@ -16,11 +16,8 @@ MidiButtonManager::MidiButtonManager() {
 }
 
 void MidiButtonManager::setup() {
-    // Initialize the configuration system
+    // Initialize config (loads DROID button configuration)
     MidiButtonConfig::Config::initialize();
-    
-    // Load default configuration first
-    loadButtonConfiguration("full");
     
     // Setup the processor after config is loaded
     processor.setup();
@@ -80,22 +77,6 @@ void MidiButtonManager::onButtonPress(uint8_t note, uint8_t channel, MidiButtonC
     
     // Execute the action with the configured parameter
     actions.executeAction(action, config->parameter);
-}
-
-void MidiButtonManager::loadButtonConfiguration(const char* configName) {
-    if (strcmp(configName, "basic") == 0) {
-        MidiButtonConfig::Config::loadBasicConfiguration();
-    } else if (strcmp(configName, "extended") == 0) {
-        MidiButtonConfig::Config::loadExtendedConfiguration();
-    } else if (strcmp(configName, "full") == 0) {
-        MidiButtonConfig::Config::loadFullConfiguration();
-    } else {
-        logger.warning("Unknown configuration: %s, loading basic", configName);
-        MidiButtonConfig::Config::loadBasicConfiguration();
-    }
-    
-    logger.info("Loaded button configuration: %s (%d buttons)", 
-                configName, getConfiguredButtonCount());
 }
 
 void MidiButtonManager::addCustomButton(uint8_t note, uint8_t channel, const char* description,

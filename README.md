@@ -19,7 +19,7 @@ This is my current working branch which has more mature code and bugfixes includ
 
 The MIDI circuit is based on https://www.pjrc.com/teensy/td_libs_MIDI.html
 
-**Note:** The project is configured for DROID controller input. Legacy 2-button + encoder operation can be restored via `MidiButtonManager::loadButtonConfiguration("basic")`.
+**Note:** The project is configured for DROID controller input. Button mappings are loaded at startup in `MidiButtonConfig::Config::initialize()`; see `src/Utils/MidiButtonConfig.cpp` and `droid/midilooper_v1.ini` for the layout.
 
 ## Code Conventions ##
 

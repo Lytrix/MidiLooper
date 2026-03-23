@@ -86,14 +86,10 @@ logger.info("Total buttons configured: %d", midiButtonManager.getConfiguredButto
 
 ## Configuration Made Easy
 
-### **Simple Configuration Loading**
+### **Configuration Loading**
 ```cpp
-// Current setup (matches your existing buttons + 37 new ones)
-midiButtonManager.loadButtonConfiguration("full");
-
-// Alternative configurations available:
-// midiButtonManager.loadButtonConfiguration("basic");    // 4 buttons
-// midiButtonManager.loadButtonConfiguration("extended"); // 16 buttons
+// DROID button configuration is loaded automatically in setup()
+midiButtonManager.setup();
 ```
 
 ### **Runtime Button Addition**

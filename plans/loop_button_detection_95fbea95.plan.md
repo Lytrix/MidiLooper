@@ -12,7 +12,7 @@ todos:
     content: Add SELECT_LOOP to ActionType enum and addLoopButton convenience method to MidiButtonConfig
     status: pending
   - id: register-buttons
-    content: Register 8 loop buttons in loadFullConfiguration() using addLoopButton
+    content: Register 8 loop buttons in loadConfiguration() using addLoopButton
     status: pending
   - id: actions-handler
     content: Add handleSelectLoop declaration and stub implementation in MidiButtonActions
@@ -108,7 +108,7 @@ void Config::addLoopButton(uint8_t note, uint8_t loopIndex, uint8_t channel) {
 }
 ```
 
-Register the 8 loop buttons in `loadFullConfiguration()` (after the global transport button, before the extended buttons section):
+Register the 8 loop buttons in `loadConfiguration()` (after the global transport button, before the extended buttons section):
 
 ```cpp
 for (int i = 0; i < 8; i++) {

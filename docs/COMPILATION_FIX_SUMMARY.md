@@ -64,7 +64,7 @@ pio run
 - ✅ **Button events**: Routed to V2 system
 - ✅ **Fader events**: Still using old system (stable)
 - ✅ **Main loop**: Both systems running in parallel
-- ✅ **Configuration**: 40 buttons ready via `loadButtonConfiguration("full")`
+- ✅ **Configuration**: DROID button config loaded automatically in `Config::initialize()`
 
 ## 🎯 **Next Steps**
 

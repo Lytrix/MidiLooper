@@ -15,7 +15,7 @@ todos:
     content: Add TOGGLE_TRANSPORT ActionType, handleToggleTransport(), and wire in executeAction
     status: completed
   - id: button-config
-    content: Add note 39 ch 16 button with TOGGLE_TRANSPORT to loadFullConfiguration
+    content: Add note 39 ch 16 button with TOGGLE_TRANSPORT to loadConfiguration
     status: completed
 isProject: false
 ---
@@ -85,7 +85,7 @@ In `toggleTransport()`, when transitioning to stopped:
 
 **File:** [src/Utils/MidiButtonConfig.cpp](src/Utils/MidiButtonConfig.cpp)
 
-In `loadFullConfiguration()`, add after the NOTELEN button (around line 212):
+In `loadConfiguration()`, add after the NOTELEN button (around line 212):
 
 ```cpp
 addButton(ButtonConfig(Notes::D2_SHARP, 16, "Global Transport")
