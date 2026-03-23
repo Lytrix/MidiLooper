@@ -80,6 +80,7 @@ public:
   uint32_t getTrackLength(uint8_t trackIndex) const;
 
   // --- LED Management ---
+  void updateLedsDeferred();   // Call from main loop - decoupled from clock path
   void updateLeds(uint32_t currentTick);
   void forceLedUpdate(uint32_t currentTick);
   void clearLeds();

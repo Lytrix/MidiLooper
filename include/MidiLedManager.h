@@ -24,9 +24,6 @@ public:
     // Update current tick indicator (which 16th step is playing)
     void updateCurrentTick(Track& track, uint32_t currentTick);
     
-    // Configure update delays (in microseconds)
-    void setUpdateDelay(uint16_t delayMicros);
-    
 private:
     static constexpr uint8_t LED_CHANNEL = MidiConfig::Led::CHANNEL;
     static constexpr uint8_t LED_VELOCITY = 64;         // Velocity 64 for normal LEDs
@@ -40,10 +37,8 @@ private:
     static constexpr uint8_t VEL_BAR_USED = 32;         // Bar in loop, no notes
     static constexpr uint8_t VEL_BAR_HAS_NOTES = 64;   // Bar contains notes
     static constexpr uint8_t VEL_BAR_CURRENT = 127;    // Current bar highlight overlay
-    static constexpr uint16_t DEFAULT_UPDATE_DELAY = 500; // Default 0.5ms delay
     
     MidiHandler& midiHandler;
-    uint16_t updateDelayMicros;                         // Configurable delay between updates
     
     // Track the last LED state to avoid redundant updates
     bool lastLedState[NUM_LEDS];

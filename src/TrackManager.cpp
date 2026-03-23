@@ -275,11 +275,16 @@ void TrackManager::updateAllTracks(uint32_t currentTick) {
     tracks[i].playMidiEvents(playTick, audible);
   }
   
+}
+
+// Called from main loop (not clock path) - decouples LED updates from playback timing
+void TrackManager::updateLedsDeferred() {
+  if (!ledManager) return;
   Track& selTrack = getSelectedTrack();
+  uint32_t currentTick = clockManager.getCurrentTick();
   uint32_t selTick = selTrack.getEffectivePlaybackTick(currentTick);
-  updateLeds(selTick);
-  
-  if (ledManager && selTrack.getLoopLength() > 0) {
+  ledManager->updateLeds(selTrack, selTick);
+  if (selTrack.getLoopLength() > 0) {
     ledManager->updateCurrentTick(selTrack, selTick);
   }
 }
