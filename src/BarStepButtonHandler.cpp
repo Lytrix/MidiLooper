@@ -270,7 +270,12 @@ void BarStepButtonHandler::handleNoteOff(uint8_t note, uint8_t velocity) {
     uint32_t gap = (maxStart >= minStart) ? (maxStart - minStart) : 0;
     uint32_t overlapDuration = (now >= maxStart) ? (now - maxStart) : 0;
     bool isSwap = (maxStart != state.pressStartTime) && (overlapDuration < SWAP_THRESHOLD_MS);
-    firstHeldBeforeSecond = !isSwap && (gap >= holdTwoMinGap);
+    bool firstHeldLongEnough = (now - minStart) >= longPressTime;
+    bool overlapSufficient = (overlapDuration >= 200u);
+    firstHeldBeforeSecond = !isSwap && (
+        (gap >= holdTwoMinGap) ||
+        (firstHeldLongEnough && overlapSufficient)
+    );
     testLog("BarStepButton: hadTwo duration=%lums gap=%lums overlap=%lums isSwap=%d firstHeldBeforeSecond=%d [TEST POINT: gap check]",
             duration, gap, overlapDuration, isSwap ? 1 : 0, firstHeldBeforeSecond ? 1 : 0);
     if (firstHeldBeforeSecond) {
