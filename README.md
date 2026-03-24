@@ -19,7 +19,23 @@ This is my current working branch which has more mature code and bugfixes includ
 
 The MIDI circuit is based on https://www.pjrc.com/teensy/td_libs_MIDI.html
 
-**Note:** The project is configured for DROID controller input. Button mappings are loaded at startup in `MidiButtonConfig::Config::initialize()`; see `src/Utils/MidiButtonConfig.cpp` and `droid/midilooper_v1.ini` for the layout.
+**Note:** The project is configured for DROID controller input. Button mappings are loaded at startup in `MidiButtonConfig::Config::initialize()`; see `src/Utils/MidiButtonConfig.cpp` and `droid/midilooper_v1.ini` for the layout. Central note/channel numbers live in [`include/MidiConfig.h`](include/MidiConfig.h); for remapping controllers see [`docs/MIDI_CONFIG_GUIDE.md`](docs/MIDI_CONFIG_GUIDE.md).
+
+### Channel 16 (control) quick map
+
+Incoming **buttons** on **Channel 16** (record/arm/edit transport excluded from loop recording on this channel):
+
+| Notes | Role |
+|------|------|
+| 0–15 | 16th steps (jam / seek in LOOP_EDIT; see [Jam Loops](#-jam-loops-bar16th-buttons)) |
+| 17–24 | Bar 1–8 (jam / seek) |
+| 35 | NOTELEN — toggle note position vs length edit mode |
+| 36–39 | Main row: REC/PLAY, MUTE/DE (track switch), Edit Mode, global transport (see Row 7 below) |
+| 40–48 | Extended transport (play/stop, loop edit helpers, nudge, etc. — see `MidiButtonConfig`) |
+| 50–57 | **Loop slots 1–8** for the **selected** track — record/overdub, clear, undo/redo, hold-layer ([detail](#track-row-and-loop-slot-buttons-channel-16)) |
+| 60–67 | **Tracks 1–8** — select, mute, solo |
+
+LED **feedback** for the loop and track rows uses the **same note numbers on Channel 15** (see [LED Feedback](#led-feedback-channel-15)).
 
 ## Code Conventions ##
 
@@ -41,7 +57,7 @@ Standalone **Handler** classes (e.g. `BarStepButtonHandler`) receive and process
 ## Features ##
 Multi-track MIDI looper with full undo/redo, auto-save/load, and clear visual feedback—ready for live performance or creative studio work!
 
-- 4 MIDI Tracks
+- 8 MIDI tracks (`Config::NUM_TRACKS`), each with **8 loop slots** (`Config::MAX_LOOPS_PER_TRACK`)
 - 192 PPQN internal clock for live recording
 - 24 PPQN MIDI Sync
 - 256x64 display and 16x2 display driver
@@ -66,7 +82,9 @@ Multi-track MIDI looper with full undo/redo, auto-save/load, and clear visual fe
 - Motorized fader support with feedback prevention
 - Dedicated edit modes for different operations
 - Full wrap-around support for notes crossing loop boundaries
-- **DROID LED feedback** — 16th step content, current tick indicator, 8 bar LEDs; updates on loop start/length change
+- **DROID LED feedback** — 16th step content, current tick indicator, 8 bar LEDs, loop row (50–57), track row (60–67); updates on loop start/length change
+- **Track row & loop slot row (Ch. 16)** — per-track select / double-mute / long-solo; per-slot quantized record, overdub, clear, slot undo/redo, layered hold ([detail](#track-row-and-loop-slot-buttons-channel-16))
+- **OLED track column** — letters per track (`-`, `P`, `O`, `R`, `A`, …); **`M`** if muted or solo-hidden; **selected** row still shows real state under solo ([`DisplayManager::drawTrackStatus`](src/DisplayManager.cpp), [`docs/DESIGN_PRINCIPLES.md`](docs/DESIGN_PRINCIPLES.md))
 
 ## ✏️ Note Editor ##
 - Piano-roll note editor integrated into the looper UI
@@ -101,7 +119,7 @@ Multi-track MIDI looper with full undo/redo, auto-save/load, and clear visual fe
 - **Track-specific lengths** - each track can have its own loop length independent of others
 
 ## 📏 Note Length Editing Mode ##
-- **Toggle between position and length editing** via Note 3 on Channel 16 (momentary button)
+- **Toggle between position and length editing** via NOTELEN (**note 35**, Channel 16 — `MidiConfig::LengthEdit::NOTE`)
 - **Two distinct editing modes**:
   - **Position Edit Mode** (default): Faders 1, 2, 3 control note START positions
   - **Length Edit Mode**: Faders 1, 2, 3 control note END positions (length editing)
@@ -125,12 +143,14 @@ The looper is configured for a DROID controller (M4 + 2× B32). MIDI channels an
 | | Col 1 | Col 2 | Col 3 | Col 4 | Col 5 | Col 6 | Col 7 | Col 8 |
 |--|-------|-------|-------|-------|-------|-------|-------|-------|
 | **Scene** | Scene 0 | Scene 1 | Scene 2 | Scene 3 | Scene 4 | Scene 5 | Scene 6 | Scene 7 |
-| **Track** | — | — | — | — | — | — | — | — |
+| **Track** | **60** | **61** | **62** | **63** | **64** | **65** | **66** | **67** |
 | **REMIX** | — | — | — | — | — | — | — | — |
 | **8BARS** | — | — | — | — | — | — | — | — |
 | **1BAR** | Bar 1 | Bar 2 | Bar 3 | Bar 4 | Bar 5 | Bar 6 | Bar 7 | Bar 8 |
 | **16th** | 16th 0–15 (jam/seek) + Playhead LEDs (receives from Teensy) | | | | | | | |
 | **Row 7** | **REC/PLAY** | **MUTE/DE** | **Edit Mode** | **NOTELEN** | — | — | **&lt;** | **&gt;** |
+
+Map a B32 **Track** row to MIDI **Channel 16 notes 60–67** (track 1…8): **short** = select that track, **double** = mute, **long** = exclusive solo — see [Track row and loop slot buttons](#track-row-and-loop-slot-buttons-channel-16) and [`droid/midilooper_v1.ini`](droid/midilooper_v1.ini). A **Loop / slot** row should use notes **50–57** on the same channel (same section).
 
 | Slider | **NOTE_EDIT** (Program 1) | **LOOP_EDIT** (Program 0) |
 |--------|---------------------------|---------------------------|
@@ -143,9 +163,13 @@ The looper is configured for a DROID controller (M4 + 2× B32). MIDI channels an
 - **REC/PLAY** (note 36): Record/Overdub/Stop — single/double/triple/long for undo/redo/clear
 - **MUTE/DE** (note 37): Track select / Mute — single=next track, long=mute, double/triple=undo/redo clear
 - **Edit Mode** (note 38): Cycle NOTE_EDIT ↔ LOOP_EDIT — double=delete note, long=exit edit
-- **NOTELEN** (note 3): Toggle position vs length editing
+- **NOTELEN** (note **35**): Toggle position vs length editing
 
 ### Track row and loop slot buttons (Channel 16)
+
+This is the **primary multi-loop** control surface: **eight tracks**, each with **eight loop slots** (`Config::NUM_TRACKS`, `Config::MAX_LOOPS_PER_TRACK` in [`include/Globals.h`](include/Globals.h)).
+
+**vs. REC/PLAY (note 36):** The main **REC/PLAY** button drives the **selected** track’s global record / overdub / play state ([state table](#-recplay-button-note-36) below). The **loop slot row (50–57)** chooses **which slot** on that track is active and handles **slot-specific** record, overdub, clear, and undo. Use both together: pick a **track** (60–67), then a **slot** (50–57).
 
 Button **input** uses **Channel 16**; **LED feedback** for the same layout uses **Channel 15** (notes 50–57 and 60–67). Numbers match [`include/MidiConfig.h`](include/MidiConfig.h). Gestures are defined in [`src/Utils/MidiButtonConfig.cpp`](src/Utils/MidiButtonConfig.cpp) (`loadConfiguration`) and executed in [`src/MidiButtonActions.cpp`](src/MidiButtonActions.cpp). UX rationale is summarized in [`docs/DESIGN_PRINCIPLES.md`](docs/DESIGN_PRINCIPLES.md).
 
@@ -167,7 +191,9 @@ Button **input** uses **Channel 16**; **LED feedback** for the same layout uses 
 | **Triple** | Redo for that slot (`REDO_FOR_SLOT`). |
 | **Hold** | Past **long-press time + 50 ms**, layering arms: optional queued record on an **empty** held slot while playing, using phase from the **base** slot; release clears layering and pending queue (`MidiButtonManager::updateLoopHoldLayering`). |
 
-**Notes:** REC/PLAY, MUTE/DE, Edit Mode, and NOTELEN are fully implemented. The **track row** and **loop row** behavior above is defined in firmware config; your DROID ini must send the same Channel 16 notes for those rows. MUTE/DE single-press still cycles tracks when you use that control. For jam loop selection with 1BAR and 16th buttons, see [Jam Loops (Bar/16th Buttons)](#-jam-loops-bar16th-buttons) below.
+**SSD1322 OLED (track column):** The left column shows one letter per track. **User mute** or **solo-hide** (another track is soloed and this row is not the selected row) shows **`M`**. The **selected** track always shows its **real** machine state (`P`, `O`, `R`, `A`, `-`, …) unless that track is **muted**, so you can keep editing a part that is silent under solo.
+
+**Notes:** REC/PLAY, MUTE/DE, Edit Mode, and NOTELEN are fully implemented. The **track row** and **loop row** behavior above is defined in firmware config; your DROID ini must send the same Channel 16 notes for those rows. **MUTE/DE (37)** and **track row (60–67)** are both valid ways to change track — MUTE/DE **short** cycles **next** track only; the **track row** jumps to a specific track. For jam loop selection with 1BAR and 16th buttons, see [Jam Loops (Bar/16th Buttons)](#-jam-loops-bar16th-buttons) below.
 
 ### LED Feedback (Channel 15)
 
@@ -234,6 +260,8 @@ The **1BAR** row (notes 17–24) and **16th** row (notes 0–15) on Channel 16 s
 
 ## 🔴 REC/PLAY Button (Note 36) ##
 
+Applies to the **currently selected** track only. Per-loop-slot recording and overdub on the **active slot** use the **loop row (50–57)** — [Track row and loop slot buttons](#track-row-and-loop-slot-buttons-channel-16).
+
 | Press #     | From State               | To State                 | Symbol Change | Key Action           |
 | ----------- | ------------------------ | ------------------------ | ------------- | -------------------- |
 | 1× (single) | `TRACK_EMPTY`            | `TRACK_RECORDING`        | – → R         | `startRecording()`   |
@@ -246,6 +274,8 @@ The **1BAR** row (notes 17–24) and **16th** row (notes 0–15) on Channel 16 s
 | Long        | Any (with data)          | `TRACK_EMPTY`            | → –           | `clearTrack()`       |
 
 ## 🔵 MUTE/DE Button (Note 37) ##
+
+**Track row (60–67)** is the usual place for **direct track select**, **mute**, and **solo**. This button is the **legacy** transport strip control: **short** = **next** track only, **long** = mute **current** track.
 
 |  Press #    | From State         | To State           | Key Action                 |
 | ----------- | ------------------ | ------------------ | -------------------------- |
@@ -306,7 +336,8 @@ The looper provides comprehensive undo/redo functionality for both overdub and c
 | `MidiHandler`  | MIDI events, channel routing        | `ClockManager`, `NoteEditManager` | Handles MIDI I/O, event filtering, and channel management              |
 | `MidiLedManager` | `lastBarVelocity`, `lastLoopStartTick` | `Track`, `MidiHandler` | DROID LED feedback: 16th content, current tick, 8 bar LEDs; respects loop start/length |
 | `NoteEditManager`| `selectedNoteIdx`, `bracketTick`, `editMode`, `loopStartTick`, `lengthEditingMode` | `Track`, `MidiHandler`, `DisplayManager` | Manages note selection, editing, loop start/length control, and fader integration |
-| `DisplayManager`| Visual state, display buffer       | `NoteEditManager`, `Track`    | Renders piano roll, track info, and real-time visual feedback          |
+| `DisplayManager`| Visual state, display buffer       | `NoteEditManager`, `Track`, `TrackManager` | Renders piano roll, track strip (incl. solo/mute), and real-time feedback |
+| `MidiButtonManager` | Raw Note On/Off, timing windows  | `MidiButtonProcessor`, `MidiButtonActions` | Gesture detection and dispatch for Ch. 16 (incl. loop hold layering) |
 
 
 
@@ -328,6 +359,7 @@ Developing the SSD1322 circular DMA logic was a lot of fun using Cursor. It was 
 Detailed technical documentation is available in the `docs/` directory:
 
 - **[Design principles](docs/DESIGN_PRINCIPLES.md)** — gesture-first UX, track row vs loop row behavior, minimal-button goals
+- **[MIDI config guide](docs/MIDI_CONFIG_GUIDE.md)** — remapping channels, notes, and CCs for your controller
 - **[Feature plans index](docs/FEATURE_PLANS.md)** — phased / summary docs in `docs/` (jam/bar-step, loop start, buttons, faders, optimization analysis, etc.)
 - **[Cursor design plans](plans/README.md)** — archived `*.plan.md` from `.cursor/plans/` (dual-tick / multi-loop jam architecture, bar-step, BPM, MIDI, …)
 - **[Loop Start Editing](docs/LOOP_START_EDITING.md)** - Comprehensive guide to the loop start point editing system
@@ -350,5 +382,6 @@ The `/examples` directory contains working examples and demonstrations:
 **Loop Editing (DROID / MIDI):**
 - **Loop length**: Fader 2 in LOOP_EDIT mode, or CC 101 on Channel 16 (0-127 = 1-128 bars)
 - **Loop start**: Fader 1 (Pitchbend Ch 16) in LOOP_EDIT mode
-- **Note length mode**: NOTELEN button (Note 3, Ch 16) toggles position vs length editing
+- **Note length mode**: NOTELEN (note **35**, Ch 16) toggles position vs length editing
+- **Tracks / loop slots**: Ch 16 notes **60–67** (track) and **50–57** (slots) — see [Track row and loop slot buttons](#track-row-and-loop-slot-buttons-channel-16)
 - **Jam loops**: 1BAR (notes 17–24) and 16th (notes 0–15) — see [Jam Loops](#-jam-loops-bar16th-buttons)
