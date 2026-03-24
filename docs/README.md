@@ -1,8 +1,8 @@
 # Documentation index
 
-**Guides** (current behavior) live in **[`Guides/`](Guides/)**. **Refinements** (implementation logs) live in **[`Refinements/`](Refinements/)**. They may not match the code line-for-line today.
+The **story and layout** of the looper start at the **[root `README.md`](../README.md)** (elevator pitch → how to play → reference grid → technical links). **Guides** (current behavior) live in **[`Guides/`](Guides/)**. **Refinements** (implementation logs) live in **[`Refinements/`](Refinements/)** and may not match the code line-for-line today.
 
-**Cursor plan exports** and phased design archives: **[`docs/plans/`](plans/README.md)**.
+**Cursor plan exports** and phased design archives: **[`plans/`](plans/README.md)**.
 
 ---
 
@@ -10,14 +10,29 @@
 
 | Document | Summary |
 |----------|---------|
-| [DESIGN_PRINCIPLES.md](Guides/DESIGN_PRINCIPLES.md) | Gesture-first UX; track row vs loop slot buttons; minimal-button goals; MIDI-controllable design |
-| [MIDI_CONFIG_GUIDE.md](Guides/MIDI_CONFIG_GUIDE.md) | Remapping channels, notes, and CCs; where config lives; quick reference |
+| [CODE_STRUCTURE.md](Guides/CODE_STRUCTURE.md) | Handler / Manager / Processor / Actions naming and module overview |
+| [MIDI_CONFIG_GUIDE.md](Guides/MIDI_CONFIG_GUIDE.md) | Remapping channels, notes, and CCs; quick reference tables |
+| [**control-surface/**](Guides/control-surface/) | Per-row notes: Scenes, Tracks, Jams, Loops, Bars/16ths, Main controls, Faders, Display |
 | [LOOP_START_EDITING.md](Guides/LOOP_START_EDITING.md) | Loop start point editing (live / fader) |
 | [FADER_STATE_SYSTEM.md](Guides/FADER_STATE_SYSTEM.md) | Fader state machine and hardware feedback |
 | [MOVE_NOTE_LOGIC.md](Guides/MOVE_NOTE_LOGIC.md) | Note movement and overlap resolution |
 | [NOTE_WRAPPING_LOGIC.md](Guides/NOTE_WRAPPING_LOGIC.md) | Note and loop wrap-around behavior |
 | [jam-bar-step-phases.md](Guides/jam-bar-step-phases.md) | Jam loops: bar/16th buttons, `jamTick`, HOLD_TWO, playback regions |
-| [MANUAL_TEST_BAR_STEP_BUTTONS.md](Guides/MANUAL_TEST_BAR_STEP_BUTTONS.md) | Manual test notes for bar/step controls |
+
+Add new topical guides under `Guides/` and extend this table.
+
+### control-surface (row guides)
+
+| Document | Summary |
+|----------|---------|
+| [Scenes.md](Guides/control-surface/Scenes.md) | Scenes row — roadmap / Phase 3 |
+| [Tracks.md](Guides/control-surface/Tracks.md) | Track row gestures (select / mute / solo) |
+| [Jams.md](Guides/control-surface/Jams.md) | Jam behavior + Jams row placeholder / capture roadmap |
+| [Loops.md](Guides/control-surface/Loops.md) | Loop slot row — record, overdub, hold layer |
+| [Bars-and-16ths.md](Guides/control-surface/Bars-and-16ths.md) | Bar / 16th jam and seek |
+| [Main-controls.md](Guides/control-surface/Main-controls.md) | REC/PLAY, MUTE/DE, edit mode, NOTELEN, transport |
+| [Faders.md](Guides/control-surface/Faders.md) | Slider roles NOTE_EDIT vs LOOP_EDIT |
+| [Display.md](Guides/control-surface/Display.md) | OLED / LCD / track column |
 
 ---
 
@@ -41,7 +56,8 @@
 
 | Document | Role |
 |----------|------|
+| [FEATURES.md](FEATURES.md) | Full technical feature checklist (also linked from root `README`) |
 | [FEATURE_PLANS.md](FEATURE_PLANS.md) | Conventions, **Phase 3 / multi-loop** pointer |
-| [plans/README.md](plans/README.md) | Design exports and phase specs (**`docs/plans/`** — same level as this file) |
+| [plans/README.md](plans/README.md) | Design exports and phase specs (`docs/plans/`) |
 
-When you add files, place them in `Guides/` or `Refinements/` and add a row to the matching table above.
+When you add new guides, place them in `Guides/` or `Refinements/` and add a row to the matching table above.
