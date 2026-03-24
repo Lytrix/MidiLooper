@@ -287,6 +287,12 @@ void TrackManager::updateLedsDeferred() {
   if (selTrack.getLoopLength() > 0) {
     ledManager->updateCurrentTick(selTrack, selTick);
   }
+  // Track row LEDs (60-67) - Loop row (50-57) added when D2 activeLoopIndex is done
+  bool trackHasData[Config::NUM_TRACKS];
+  for (uint8_t i = 0; i < Config::NUM_TRACKS; i++) {
+    trackHasData[i] = tracks[i].hasData();
+  }
+  ledManager->updateTrackSelectLeds(selectedTrack, trackHasData);
 }
 
 // --- LED Management ---

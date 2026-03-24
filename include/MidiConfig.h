@@ -13,7 +13,8 @@
  * |-------------------|---------------------------|---------------------------|
  * | Main controls     | 35-39                     | 39                        |
  * | Extended transport| 40-48                     | —                         |
- * | Track select      | 60-67                     | —                         |
+ * | Track select      | 60-67                     | 60-67                     |
+ * | Loop select       | 50-57                     | 50-57                     |
  * | Bar select        | 17-24                     | 40-47                     |
  * | 16th select       | 0-15                      | 0-15                      |
  * | Current position  | —                         | 16-31                     |
@@ -69,6 +70,10 @@ namespace Led {
   constexpr uint8_t TICK_COUNT = 16;
   constexpr uint8_t BAR_BASE = 40;          // 8 bar LEDs: notes 40-47
   constexpr uint8_t BAR_COUNT = 8;
+  constexpr uint8_t TRACK_SELECT_LED_BASE = 60;   // Track row LEDs: notes 60-67 (ch15)
+  constexpr uint8_t TRACK_SELECT_LED_COUNT = 8;
+  constexpr uint8_t LOOP_SELECT_LED_BASE = 50;    // Loop row LEDs: notes 50-57 (ch15)
+  constexpr uint8_t LOOP_SELECT_LED_COUNT = 8;
   constexpr uint8_t MAIN_CONTROLS_NOTE = 39;  // Play/stop LED
 }
 
@@ -119,6 +124,13 @@ namespace Transport {
 // --- Length edit (DROID B2.32 NOTELEN) ---
 namespace LengthEdit {
   constexpr uint8_t NOTE = 35;  // Matches DROID ini, groups with main controls 36-39
+}
+
+// --- LFO pulse (armed/recording/overdub feedback on Droid) ---
+namespace LfoPulse {
+  constexpr uint8_t ARM_CHANNEL = 16;
+  constexpr uint8_t ARM_NOTE = 70;
+  constexpr uint8_t SLOT_CC = 80;   // 0-7 = which loop LED receives pulse, 127 = none
 }
 
 // --- Track select row (DROID notes 60+) ---

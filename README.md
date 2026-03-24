@@ -147,15 +147,17 @@ The looper is configured for a DROID controller (M4 + 2× B32). MIDI channels an
 
 **Notes:** REC/PLAY, MUTE/DE, Edit Mode, and NOTELEN are fully implemented. Track row is unmapped in the default ini; MUTE/DE single-press cycles through 4 tracks. For jam loop selection with 1BAR and 16th buttons, see [Jam Loops (Bar/16th Buttons)](#-jam-loops-bar16th-buttons) below.
 
-### LED Feedback (Channel 3)
+### LED Feedback (Channel 15)
 
-The Teensy sends LED feedback to the DROID on **Channel 3** (notes 0–15, 16–31, 40–47). Route this output to the DROID via MIDI thru (e.g. Teensy → Ableton → DROID).
+The Teensy sends LED feedback to the DROID on **Channel 15** (notes 0–15, 16–31, 40–47, 50–67). Route this output to the DROID via MIDI thru (e.g. Teensy → Ableton → DROID).
 
 | LED Type | Notes | Description |
 |----------|-------|-------------|
 | **16th step content** | 0–15 | Shows which 16th steps have notes in the current bar |
 | **Current tick** | 16–31 | Highlights the playing 16th step (which step is currently playing) |
 | **8 bar LEDs** | 40–47 | Bar 1–8 status: used (vel 32), has notes (vel 64), current bar (vel 127) |
+| **Track row** | 60–67 | Track 1–8: selected (vel 127), has data (vel 32), empty (vel 0) |
+| **Loop row** | 50–57 | Loop slot 1–8: selected (vel 127), has data (vel 32), empty (vel 0) |
 
 **Behavior:**
 - **Initial update on startup** — 16th and bar LEDs refresh once after setup (no need to switch tracks)

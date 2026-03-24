@@ -191,11 +191,12 @@ void Config::loadConfiguration() {
               .withParameter(-tick16 / 2));
     
     // Track Selection (Channel 16, notes 60+) - matches DROID, count from Config::NUM_TRACKS
+    // short=select, double=mute, long=solo (select-primary; mute as short felt irrational)
     for (uint8_t i = 0; i < ::Config::NUM_TRACKS; i++) {
         addButton(ButtonConfig(MidiConfig::TrackSelect::NOTE_BASE + i, Channels::TRACK_SELECT, ("Track " + std::to_string(i + 1)).c_str())
                   .onShortPress(ActionType::SELECT_TRACK)
-                  .onLongPress(ActionType::MUTE_TRACK)
-                  .onDoublePress(ActionType::SOLO_TRACK)
+                  .onDoublePress(ActionType::MUTE_TRACK)
+                  .onLongPress(ActionType::SOLO_TRACK)
                   .withParameter(i));
     }
     
