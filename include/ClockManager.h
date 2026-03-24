@@ -46,6 +46,8 @@ public:
   ClockSource getClockSource() const;
   bool isClockRunning() const;
   bool isTransportRunning() const;
+  /// True when the global tick advances on bar boundaries (quantize record start / arm next bar).
+  bool shouldQuantizeRecordStart() const;
   void toggleTransport();
   void resetToLoopStart();
   void setCurrentTick(uint32_t tick);

@@ -15,6 +15,8 @@
 #include "TrackStateMachine.h"
 #include "TrackUndo.h"
 #include "LooperState.h"
+#include <cstdint>
+#include <limits>
 
 // -------------------------
 // Track class implementation
@@ -29,6 +31,7 @@ Track::Track() :
   jamLength(0),
   jamTick(0),
   jamPlaybackActive(false),
+  alignLoopOriginOnNextStop(false),
   loops(nullptr) {
 }
 
@@ -82,6 +85,19 @@ void Track::setActiveLoopIndex(uint8_t index) {
   if (index < Config::MAX_LOOPS_PER_TRACK) {
     activeLoopIndex = index;
   }
+}
+
+SlotOpState Track::getSlotOpState(uint8_t slotIndex) const {
+  if (slotIndex >= Config::MAX_LOOPS_PER_TRACK) return SlotOpState::SLOT_OP_IDLE;
+  if (slotIndex != activeLoopIndex) return SlotOpState::SLOT_OP_IDLE;
+  if (isRecording()) return SlotOpState::SLOT_OP_RECORDING;
+  if (isOverdubbing()) return SlotOpState::SLOT_OP_OVERDUBBING;
+  return SlotOpState::SLOT_OP_IDLE;
+}
+
+uint8_t Track::getRecordingFocusSlot() const {
+  if (isRecording() || isOverdubbing()) return activeLoopIndex;
+  return 0xFF;
 }
 
 // -------------------------
@@ -388,6 +404,33 @@ void Track::stopRecording(uint32_t currentTick) {
       loop.loopLengthTicks = ((rawLength / TICKS_PER_BAR) + 1) * TICKS_PER_BAR;
   }
 
+  if (alignLoopOriginOnNextStop) {
+    alignLoopOriginOnNextStop = false;
+    uint32_t absRecStart = loop.startLoopTick;
+    uint32_t remBar = absRecStart % TICKS_PER_BAR;
+    uint32_t graceBar = TICKS_PER_BAR / 2;
+    uint32_t snapBar;
+    if (remBar <= graceBar) {
+      snapBar = absRecStart - remBar;
+    } else {
+      snapBar = absRecStart - remBar + TICKS_PER_BAR;
+    }
+    int64_t delta = (int64_t)snapBar - (int64_t)absRecStart;
+    if (delta != 0 && !loop.midiEvents.empty()) {
+      int64_t minT = std::numeric_limits<int64_t>::max();
+      for (const auto& evt : loop.midiEvents) {
+        int64_t t = (int64_t)evt.tick + delta;
+        if (t < minT) minT = t;
+      }
+      int64_t bump = (minT < 0) ? -minT : 0;
+      for (auto& evt : loop.midiEvents) {
+        int64_t t = (int64_t)evt.tick + delta + bump;
+        evt.tick = (uint32_t)t;
+      }
+      invalidateCaches();
+    }
+  }
+
   loop.nextEventIndex = 0;
   loop.lastTickInLoop = 0;
   uint32_t recordStartTick = loop.startLoopTick;
@@ -407,6 +450,7 @@ void Track::stopRecording(uint32_t currentTick) {
 void Track::stopRecordingToStopped(uint32_t currentTick) {
   if (!setState(TRACK_STOPPED_RECORDING)) return;
 
+  alignLoopOriginOnNextStop = false;
   Loop& loop = getActiveLoop();
   finalizePendingNotes(currentTick);
   validateAndCleanupMidiEvents();
@@ -547,6 +591,7 @@ void Track::clear() {
     loop.clearOverdubAndLoopEditUndoStacks();
 
     setState(TRACK_EMPTY);
+    alignLoopOriginOnNextStop = false;
     invalidateCaches();
     logger.logTrackEvent("Track cleared", clockManager.getCurrentTick());
 }

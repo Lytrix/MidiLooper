@@ -27,7 +27,8 @@ bool isValidTransition(TrackState current, TrackState next) {
             return next == TRACK_PLAYING || next == TRACK_STOPPED || next == TRACK_OVERDUBBING || next == TRACK_EMPTY;
 
         case TRACK_STOPPED:
-            return next == TRACK_PLAYING || next == TRACK_OVERDUBBING || next == TRACK_ARMED || next == TRACK_EMPTY;
+            return next == TRACK_PLAYING || next == TRACK_OVERDUBBING || next == TRACK_ARMED ||
+                   next == TRACK_EMPTY || next == TRACK_RECORDING;
 
         default:
             return false;

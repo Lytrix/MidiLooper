@@ -210,6 +210,10 @@ bool ClockManager::isTransportRunning() const {
   return sequencerRunning;
 }
 
+bool ClockManager::shouldQuantizeRecordStart() const {
+  return isClockRunning();
+}
+
 void ClockManager::resetToLoopStart() {
   noInterrupts();
   currentTick = 0;

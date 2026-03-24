@@ -16,6 +16,13 @@
 #include "Utils/MemoryPool.h"   // For pooled MIDI event vectors
 #include "TrackState.h"
 #include "Loop.h"
+
+/// Derived capture role for a loop slot (from TrackState + activeLoopIndex).
+enum class SlotOpState : uint8_t {
+  SLOT_OP_IDLE = 0,
+  SLOT_OP_RECORDING = 1,
+  SLOT_OP_OVERDUBBING = 2,
+};
 #include "Globals.h"
 
 class TrackUndo; // Forward declaration
@@ -80,6 +87,8 @@ public:
   void startRecording(uint32_t startLoopTick);
   void stopRecording(uint32_t currentTick);
   void stopRecordingToStopped(uint32_t currentTick);  // Stop recording, end in STOPPED (for MIDI Stop)
+  /// When set, next stopRecording() bar-aligns event ticks (immediate punch-in pickup).
+  void setAlignLoopOriginOnNextStop(bool v) { alignLoopOriginOnNextStop = v; }
 
   // Playback control
   void startPlaying(uint32_t currentTick);
@@ -163,6 +172,11 @@ public:
   uint8_t getActiveLoopIndex() const;
   void setActiveLoopIndex(uint8_t index);
 
+  /// Per-slot capture state (only activeLoopIndex can be RECORDING/OVERDUBBING).
+  SlotOpState getSlotOpState(uint8_t slotIndex) const;
+  /// Active slot receiving MIDI capture, or 0xFF if not recording/overdubbing.
+  uint8_t getRecordingFocusSlot() const;
+
   // Track state checks
   bool isEmpty() const;
   bool isArmed() const;
@@ -231,6 +245,7 @@ private:
   uint32_t jamLength;      // Jam display region length (0 = inactive)
   volatile uint32_t jamTick;  // Position within jam region (0 to jamLength-1)
   bool jamPlaybackActive;     // True = track uses jamTick for playback
+  bool alignLoopOriginOnNextStop;
   static const uint32_t TICKS_PER_BAR;
 
   // Per-slot loop storage (heap-allocated to avoid BSS overflow with 8 tracks × 8 loops)
