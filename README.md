@@ -358,7 +358,7 @@ Developing the SSD1322 circular DMA logic was a lot of fun using Cursor. It was 
 ## Technical Documentation ##
 - **[Documentation index](docs/README.md)** — **Guides** (current behavior) and **Refinements** (implementation logs); start here for everything under `docs/`
 - **[Feature plans / conventions](docs/FEATURE_PLANS.md)** — Phase 3 multi-loop pointer, doc conventions, link to archived Cursor plans
-- **[Cursor design plans](plans/README.md)** — exported `*.plan.md` (architecture drafts, bar-step, BPM, MIDI, …)
+- **[Cursor design plans](docs/plans/README.md)** — exported `*.plan.md` (architecture drafts, bar-step, BPM, MIDI, …)
 - In-repo **usage** for loop length, note length, DROID, and jam loops: see **Loop Length Editing**, **Note Length Editing Mode**, **DROID Controller**, and **Jam Loops (Bar/16th Buttons)** sections above in this README
 
 © 2025 Lytrix (Eelke Jager)

@@ -2,7 +2,7 @@
 
 **Guides** (current behavior) live in **[`Guides/`](Guides/)**. **Refinements** (implementation logs) live in **[`Refinements/`](Refinements/)**. They may not match the code line-for-line today.
 
-**Cursor plan exports** and phased design archives: **[`plans/`](../plans/README.md)** in the repo root.
+**Cursor plan exports** and phased design archives: **[`docs/plans/`](plans/README.md)**.
 
 ---
 
@@ -41,6 +41,7 @@
 
 | Document | Role |
 |----------|------|
-| [FEATURE_PLANS.md](FEATURE_PLANS.md) | Conventions, **Phase 3 / multi-loop** pointer, link to [`plans/`](../plans/README.md) |
+| [FEATURE_PLANS.md](FEATURE_PLANS.md) | Conventions, **Phase 3 / multi-loop** pointer |
+| [plans/README.md](plans/README.md) | Design exports and phase specs (**`docs/plans/`** — same level as this file) |
 
 When you add files, place them in `Guides/` or `Refinements/` and add a row to the matching table above.

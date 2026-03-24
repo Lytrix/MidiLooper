@@ -7,7 +7,7 @@ These files are **copies of plans from** `~/.cursor/plans/` so they are **versio
 - In-repo links inside plans are as Cursor generated them.
 
 **To refresh from your machine:**  
-`cp ~/.cursor/plans/*.plan.md plans/`
+`cp ~/.cursor/plans/*.plan.md docs/plans/`
 
 ---
 
@@ -68,4 +68,4 @@ These files are **copies of plans from** `~/.cursor/plans/` so they are **versio
 
 ---
 
-Human-written docs are indexed in [docs/README.md](../docs/README.md) (**Guides** and **Refinements**). Conventions and the Phase 3 pointer: [docs/FEATURE_PLANS.md](../docs/FEATURE_PLANS.md).
+Human-written docs are indexed in [Documentation index](../README.md) (**Guides** and **Refinements**). Conventions and the Phase 3 pointer: [FEATURE_PLANS.md](../FEATURE_PLANS.md).

@@ -68,7 +68,7 @@ Hold everything that today lives on `Track` for one sequence:
 ### 2.6 Future UX (not Scope 1): fader over MIDI **kind**
 
 - **Goal:** Step or scrub **MIDI category** the way you already select **notes / loop start** — e.g. cycle **note vs CC value vs pitch bend** (and similar) inside an edit or jam context. Orthogonal to **loop slot count**; depends on editor mode and display.
-- **Requirement when implemented:** Document which mode owns the fader map and how it interacts with [`FADER_STATE_SYSTEM.md`](../docs/Guides/FADER_STATE_SYSTEM.md) patterns.
+- **Requirement when implemented:** Document which mode owns the fader map and how it interacts with [`FADER_STATE_SYSTEM.md`](../Guides/FADER_STATE_SYSTEM.md) patterns.
 
 ---
 
