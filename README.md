@@ -22,23 +22,33 @@ This branch is aimed at a **full MIDI grid plus faders** (the reference layout b
 
 ## Reference control layout (cheat sheet)
 
-Defaults line up with [`droid/midilooper_v1.ini`](droid/midilooper_v1.ini). To **remap**, edit [`include/MidiConfig.h`](include/MidiConfig.h), [`src/Utils/MidiButtonConfig.cpp`](src/Utils/MidiButtonConfig.cpp), and the [**MIDI config guide**](docs/Guides/MIDI_CONFIG_GUIDE.md). This table is **roles and gestures only** (no note numbers); the guide and header file carry the exact bytes.
+Defaults line up with [`droid/midilooper_v1.ini`](droid/midilooper_v1.ini). To **remap**, edit [`include/MidiConfig.h`](include/MidiConfig.h), [`src/Utils/MidiButtonConfig.cpp`](src/Utils/MidiButtonConfig.cpp), and the [**MIDI config guide**](docs/Guides/MIDI_CONFIG_GUIDE.md). This table is **roles and gestures only**; exact notes and CCs are in the guide, `MidiConfig.h`, and the [**config summary**](docs/Guides/MIDI_CONFIG_GUIDE.md#config-summary-default-droid-mapping) for Channel 16.
 
-Think of it as the **one-screen** version of how the grid is meant to feel. Full behavior (edge cases, timing windows, **HOLD_TWO**) is in the linked guides, especially [**jam-bar-step-phases**](docs/Guides/jam-bar-step-phases.md).
+Think of it as the **one-screen** feel of the grid. Edge cases, **HOLD_TWO** timing, and seek rules are in the linked guides—start with [**jam-bar-step-phases**](docs/Guides/jam-bar-step-phases.md).
 
 | Row | Short | Long | Double | Triple | Hold / two-step |
 |-----|-------|------|--------|--------|-----------------|
-| [**Scenes**](docs/Guides/control-surface/Scenes.md) | — | — | — | — | Roadmap / Phase 3 snapshots (not fully wired yet). |
-| [**Tracks**](docs/Guides/control-surface/Tracks.md) | Select that track | Exclusive solo (repeat on same track clears solo) | Mute / unmute | — | — |
-| [**Jams**](docs/Guides/control-surface/Jams.md) | — | — | — | — | Target row for jam-era capture; live jams today use **Bars** / **16ths** + this doc’s roadmap. |
-| [**Loops**](docs/Guides/control-surface/Loops.md) | Slot-aware record, play, overdub, finalize (playing vs stopped—see guide) | Clear this slot’s loop | Slot undo | Slot redo | Past long-press threshold: **layer hold** (queue from base slot while playing); **short while queued** can punch in immediately. |
-| [**Bars**](docs/Guides/control-surface/Bars-and-16ths.md) | Seek bar; outside jam region, move single-bar jam | Hold: enter **one-bar** jam or start **two-bar** range (see jam guide) | Exit jam → full loop | Undo loop start edit | **Hold bar A → press bar B** (timing in jam guide) for multi-bar jam. |
-| [**16ths**](docs/Guides/control-surface/Bars-and-16ths.md) | Seek 16th in jam; set / jump region | Hold patterns for 16th jam / seek | Exit jam | Undo loop start (with jam guide) | **Hold 16th A → press 16th B** for 16th-range jam. |
-| [**Main controls**](docs/Guides/control-surface/Main-controls.md) | **REC:** play / record / overdub · **MUTE/DE:** next track · **Edit:** NOTE ↔ LOOP · **NOTELEN:** pos ↔ length | **REC:** clear track · **MUTE/DE:** mute · **Edit:** exit | **REC:** undo overdub · **MUTE/DE:** undo clear · **Edit:** delete note | **REC:** redo overdub · **MUTE/DE:** redo clear | More transport buttons in the guide. |
-| [**Faders**](docs/Guides/control-surface/Faders.md) | — (continuous) | — | — | — | **Move:** note select, loop start/length, 16th coarse/fine, pitch—roles switch with NOTE_EDIT vs LOOP_EDIT (see guide). |
-| [**Display**](docs/Guides/control-surface/Display.md) | — | — | — | — | OLED piano roll + track column (letters / solo / mute); 16×2 summary when used. |
+| [**Scenes**](docs/Guides/control-surface/Scenes.md) | — | — | — | — | Roadmap |
+| [**Tracks**](docs/Guides/control-surface/Tracks.md) | Select track | Solo¹ | Mute | — | — |
+| [**Jams**](docs/Guides/control-surface/Jams.md) | — | — | — | — | See note² |
+| [**Loops**](docs/Guides/control-surface/Loops.md) | Slot gestures³ | Clear slot | Slot undo | Slot redo | Layer⁴ |
+| [**Bars**](docs/Guides/control-surface/Bars-and-16ths.md) | Seek bar⁵ | Jam entry⁵ | Exit jam | Undo⁵ | Range⁵ |
+| [**16ths**](docs/Guides/control-surface/Bars-and-16ths.md) | Seek⁵ | Jam⁵ | Exit jam | Undo⁵ | Range⁵ |
+| [**Main controls**](docs/Guides/control-surface/Main-controls.md) | Strip short⁶ | Strip long⁶ | Strip dbl⁶ | Strip tpl⁶ | More in guide⁶ |
+| [**Faders**](docs/Guides/control-surface/Faders.md) | — | — | — | — | Move⁷ |
+| [**Display**](docs/Guides/control-surface/Display.md) | — | — | — | — | See note⁸ |
 
-**Hardware** is Teensy 4.1, SSD1322 256×64 OLED (or 16×2 LCD), 6N137 MIDI in, and optionally a **DROID** M4 + 2× B32 ([DROID](https://shop.dermannmitdermaschine.de/pages/droid-universal-cv-processor)). The MIDI input path follows the [PJRC MIDI library](https://www.pjrc.com/teensy/td_libs_MIDI.html) pattern.
+**Notes**  
+¹ **Tracks:** long = exclusive solo; long again on the **same** track clears solo.  
+² **Jams:** live jam today is [**Bars / 16ths**](docs/Guides/control-surface/Bars-and-16ths.md); future **Jams** row in [**Jams**](docs/Guides/control-surface/Jams.md).  
+³ **Loops:** short is slot-aware record / play / overdub—depends on transport and slot data; [**Loops**](docs/Guides/control-surface/Loops.md).  
+⁴ **Loops:** hold arms layer / queue; second short can punch in—[**Loops**](docs/Guides/control-surface/Loops.md).  
+⁵ **Bars / 16ths:** requires **LOOP_EDIT**; double exits jam; triple undoes loop start edit; full timing in [**jam-bar-step-phases**](docs/Guides/jam-bar-step-phases.md).  
+⁶ **Main controls:** REC/PLAY, MUTE/DE, Edit, NOTELEN, transport—[**Main-controls**](docs/Guides/control-surface/Main-controls.md). “dbl” = double, “tpl” = triple.  
+⁷ **Faders:** continuous; NOTE_EDIT vs LOOP_EDIT roles in [**Faders**](docs/Guides/control-surface/Faders.md).  
+⁸ **Display:** OLED piano roll and track column; [**Display**](docs/Guides/control-surface/Display.md).
+
+**Hardware** is Teensy 4.1, SSD1322 256×64 OLED or 16×2 LCD, 6N137 MIDI in, and optionally a **DROID** M4 + 2× B32—[product page](https://shop.dermannmitdermaschine.de/pages/droid-universal-cv-processor). MIDI wiring follows the [PJRC MIDI library](https://www.pjrc.com/teensy/td_libs_MIDI.html) pattern.
 
 For more depth: [loop start / length](docs/Guides/LOOP_START_EDITING.md), [jam phases](docs/Guides/jam-bar-step-phases.md), [note moves](docs/Guides/MOVE_NOTE_LOGIC.md), [fader state](docs/Guides/FADER_STATE_SYSTEM.md). A compact **Channel 16** listing lives under [**Config summary**](docs/Guides/MIDI_CONFIG_GUIDE.md#config-summary-default-droid-mapping) in the MIDI guide.
 
@@ -46,11 +56,11 @@ For more depth: [loop start / length](docs/Guides/LOOP_START_EDITING.md), [jam p
 
 ## Technical features
 
-If you are here to **read numbers** or **repoint a controller**, start with [`include/MidiConfig.h`](include/MidiConfig.h), then [`docs/Guides/MIDI_CONFIG_GUIDE.md`](docs/Guides/MIDI_CONFIG_GUIDE.md) (checklist, tables, `MidiButtonConfig.cpp`, and keeping [`droid/midilooper_v1.ini`](droid/midilooper_v1.ini) aligned if you use the reference patch).
+If you are here to **read numbers** or **repoint a controller**, open [`include/MidiConfig.h`](include/MidiConfig.h) first, then [`docs/Guides/MIDI_CONFIG_GUIDE.md`](docs/Guides/MIDI_CONFIG_GUIDE.md) for the remap checklist, tables, and `MidiButtonConfig.cpp`. Keep [`droid/midilooper_v1.ini`](droid/midilooper_v1.ini) aligned if you rely on that reference patch.
 
-The full capability checklist is in [`docs/FEATURES.md`](docs/FEATURES.md). For **Handler / Manager / Processor / Actions** naming and a small module map, see [`docs/Guides/CODE_STRUCTURE.md`](docs/Guides/CODE_STRUCTURE.md).
+The full capability checklist is in [`docs/FEATURES.md`](docs/FEATURES.md). **Handler / Manager / Processor / Actions** naming and a small module map are in [`docs/Guides/CODE_STRUCTURE.md`](docs/Guides/CODE_STRUCTURE.md).
 
-Build with [PlatformIO](https://platformio.org/) (`platformio.ini`, board **Teensy 4.1**). The rest of the docs tree starts at [`docs/README.md`](docs/README.md); phase and export conventions are in [`docs/FEATURE_PLANS.md`](docs/FEATURE_PLANS.md) and [`docs/plans/README.md`](docs/plans/README.md).
+Build with [PlatformIO](https://platformio.org/) using `platformio.ini` and board **Teensy 4.1**. The rest of the docs tree starts at [`docs/README.md`](docs/README.md). Phase and export conventions live in [`docs/FEATURE_PLANS.md`](docs/FEATURE_PLANS.md) and [`docs/plans/README.md`](docs/plans/README.md).
 
 ---
 
