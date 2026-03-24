@@ -2,6 +2,7 @@
 //  Licensed under the PolyForm Noncommercial 1.0.0
 
 #include "Globals.h"
+#include <cstdint>
 #include "ClockManager.h"
 #include "TrackManager.h"
 #include "StorageManager.h"
@@ -18,6 +19,11 @@ TrackManager::TrackManager() {
   
   for (uint8_t i = 0; i < Config::NUM_TRACKS; i++) {
     pendingRecord[i] = false;
+    pendingRecordQueuedAtTick[i] = UINT32_MAX;
+    for (uint8_t s = 0; s < Config::MAX_LOOPS_PER_TRACK; ++s) {
+      pendingRecordSlot[i][s] = false;
+      heldLayerSlot[i][s] = false;
+    }
     pendingStop[i] = false;
     muted[i] = false;
     soloed[i] = false;
@@ -45,6 +51,12 @@ void TrackManager::startRecordingTrack(uint8_t trackIndex, uint32_t currentTick)
     // Arm the track and set pendingRecord so it will start when the clock starts
     tracks[trackIndex].setState(TRACK_ARMED);
     pendingRecord[trackIndex] = true;
+    pendingRecordQueuedAtTick[trackIndex] = UINT32_MAX;
+    uint8_t slot = tracks[trackIndex].getActiveLoopIndex();
+    for (uint8_t s = 0; s < Config::MAX_LOOPS_PER_TRACK; ++s) {
+      pendingRecordSlot[trackIndex][s] = false;
+    }
+    pendingRecordSlot[trackIndex][slot] = true;
     logger.log(CAT_TRACK, LOG_INFO, "Track %d armed, waiting for clock to start recording", trackIndex);
     return;
   }
@@ -71,8 +83,39 @@ void TrackManager::stopRecordingTrack(uint8_t trackIndex) {
   StorageManager::saveState(looperState.getLooperState()); // Save after recording
 }
 
-void TrackManager::queueRecordingTrack(uint8_t trackIndex) {
-  if (trackIndex < Config::NUM_TRACKS) pendingRecord[trackIndex] = true;
+void TrackManager::queueRecordingTrack(uint8_t trackIndex, uint8_t slotIndex) {
+  if (trackIndex >= Config::NUM_TRACKS || slotIndex >= Config::MAX_LOOPS_PER_TRACK) return;
+  pendingRecord[trackIndex] = true;
+  pendingRecordQueuedAtTick[trackIndex] = clockManager.getCurrentTick();
+  for (uint8_t s = 0; s < Config::MAX_LOOPS_PER_TRACK; ++s) {
+    pendingRecordSlot[trackIndex][s] = false;
+  }
+  pendingRecordSlot[trackIndex][slotIndex] = true;
+}
+
+void TrackManager::clearQueuedRecordingTrack(uint8_t trackIndex, uint8_t slotIndex) {
+  if (trackIndex >= Config::NUM_TRACKS || slotIndex >= Config::MAX_LOOPS_PER_TRACK) return;
+  pendingRecordSlot[trackIndex][slotIndex] = false;
+  bool anyPending = false;
+  for (uint8_t s = 0; s < Config::MAX_LOOPS_PER_TRACK; ++s) {
+    if (pendingRecordSlot[trackIndex][s]) {
+      anyPending = true;
+      break;
+    }
+  }
+  pendingRecord[trackIndex] = anyPending;
+  if (!anyPending) {
+    pendingRecordQueuedAtTick[trackIndex] = UINT32_MAX;
+  }
+}
+
+bool TrackManager::isRecordingQueued(uint8_t trackIndex, uint8_t slotIndex) const {
+  if (trackIndex >= Config::NUM_TRACKS || slotIndex >= Config::MAX_LOOPS_PER_TRACK) return false;
+  return pendingRecordSlot[trackIndex][slotIndex];
+}
+
+bool TrackManager::hasQueuedRecordingTrack(uint8_t trackIndex) const {
+  return (trackIndex < Config::NUM_TRACKS) ? pendingRecord[trackIndex] : false;
 }
 
 void TrackManager::queueStopRecordingTrack(uint8_t trackIndex) {
@@ -92,8 +135,20 @@ void TrackManager::handleQuantizedStart(uint32_t currentTick) {
 
   for (uint8_t i = 0; i < Config::NUM_TRACKS; i++) {
     if (pendingRecord[i]) {
-      startRecordingTrack(i, currentTick);
-      pendingRecord[i] = false;
+      if (pendingRecordQueuedAtTick[i] != UINT32_MAX &&
+          currentTick == pendingRecordQueuedAtTick[i]) {
+        continue;
+      }
+      for (uint8_t s = 0; s < Config::MAX_LOOPS_PER_TRACK; ++s) {
+        if (pendingRecordSlot[i][s]) {
+          tracks[i].setActiveLoopIndex(s);
+          startRecordingTrack(i, currentTick);
+          pendingRecordSlot[i][s] = false;
+          pendingRecord[i] = false;
+          pendingRecordQueuedAtTick[i] = UINT32_MAX;
+          break;
+        }
+      }
     }
   }
 }
@@ -123,6 +178,14 @@ void TrackManager::handleTransportStop() {
   uint32_t currentTick = clockManager.getCurrentTick();
   for (uint8_t i = 0; i < Config::NUM_TRACKS; ++i) {
     Track& t = tracks[i];
+    // Always clear queued quantized actions when transport stops.
+    pendingRecord[i] = false;
+    pendingRecordQueuedAtTick[i] = UINT32_MAX;
+    for (uint8_t s = 0; s < Config::MAX_LOOPS_PER_TRACK; ++s) {
+      pendingRecordSlot[i][s] = false;
+      heldLayerSlot[i][s] = false;
+    }
+    pendingStop[i] = false;
     t.sendAllNotesOff();
     if (t.isRecording()) {
       t.stopRecordingToStopped(currentTick);
@@ -138,8 +201,7 @@ void TrackManager::handleTransportStop() {
     } else if (t.isPlaying()) {
       t.stopPlaying();
     } else if (t.isArmed()) {
-      t.setState(TRACK_EMPTY);
-      pendingRecord[i] = false;
+      t.setState(t.hasData() ? TRACK_STOPPED : TRACK_EMPTY);
     }
   }
   StorageManager::saveState(looperState.getLooperState());
@@ -234,6 +296,11 @@ void TrackManager::setActiveLoopIndex(uint8_t trackIndex, uint8_t index) {
   }
 }
 
+void TrackManager::setLayeredSlotHeld(uint8_t trackIndex, uint8_t slotIndex, bool held) {
+  if (trackIndex >= Config::NUM_TRACKS || slotIndex >= Config::MAX_LOOPS_PER_TRACK) return;
+  heldLayerSlot[trackIndex][slotIndex] = held;
+}
+
 void TrackManager::setSelectedTrack(uint8_t index) {
   if (index < Config::NUM_TRACKS) {
     selectedTrack = index;
@@ -279,8 +346,21 @@ void TrackManager::updateAllTracks(uint32_t currentTick) {
   for (uint8_t i = 0; i < Config::NUM_TRACKS; i++) {
     if (pendingRecord[i]) {
       if (currentTick == 0 || (currentTick % Track::getTicksPerBar()) == 0) {
-        startRecordingTrack(i, currentTick);
-        pendingRecord[i] = false;
+        if (pendingRecordQueuedAtTick[i] != UINT32_MAX &&
+            currentTick == pendingRecordQueuedAtTick[i]) {
+          // Skip first bar boundary if recording was queued on this same clock tick.
+        } else {
+          for (uint8_t s = 0; s < Config::MAX_LOOPS_PER_TRACK; ++s) {
+            if (pendingRecordSlot[i][s]) {
+              tracks[i].setActiveLoopIndex(s);
+              startRecordingTrack(i, currentTick);
+              pendingRecordSlot[i][s] = false;
+              pendingRecord[i] = false;
+              pendingRecordQueuedAtTick[i] = UINT32_MAX;
+              break;
+            }
+          }
+        }
       }
     }
 
@@ -292,6 +372,12 @@ void TrackManager::updateAllTracks(uint32_t currentTick) {
     bool audible = isTrackAudible(i);
     uint32_t playTick = tracks[i].getEffectivePlaybackTick(currentTick);
     tracks[i].playMidiEvents(playTick, audible);
+    uint8_t activeSlot = tracks[i].getActiveLoopIndex();
+    for (uint8_t s = 0; s < Config::MAX_LOOPS_PER_TRACK; ++s) {
+      if (heldLayerSlot[i][s] && s != activeSlot) {
+        tracks[i].playMidiEventsForSlot(s, playTick, audible);
+      }
+    }
   }
   
 }

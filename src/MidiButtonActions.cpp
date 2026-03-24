@@ -76,7 +76,11 @@ void MidiButtonActions::executeAction(MidiButtonConfig::ActionType actionType, u
             break;
         case MidiButtonConfig::ActionType::CLEAR_TRACK_FOR_SLOT:
             if (parameter < ::Config::MAX_LOOPS_PER_TRACK) {
-                trackManager.setActiveLoopIndex(trackManager.getSelectedTrackIndex(), static_cast<uint8_t>(parameter));
+                uint8_t tidx = trackManager.getSelectedTrackIndex();
+                uint8_t slot = static_cast<uint8_t>(parameter);
+                trackManager.clearQueuedRecordingTrack(tidx, slot);
+                trackManager.setLayeredSlotHeld(tidx, slot, false);
+                trackManager.setActiveLoopIndex(tidx, slot);
                 handleClearTrack();
             }
             break;
@@ -114,6 +118,7 @@ void MidiButtonActions::handleToggleRecordForSlot(uint8_t slotIndex) {
     Track& track = getCurrentTrack();
     uint8_t trackIdx = trackManager.getSelectedTrackIndex();
     uint32_t now = getCurrentTick();
+    uint8_t previousSlot = track.getActiveLoopIndex();
 
     // Don't switch active loop mid-recording or mid-overdub (would corrupt the current operation)
     if ((track.isRecording() || track.isOverdubbing()) && track.getActiveLoopIndex() != slotIndex) {
@@ -125,25 +130,66 @@ void MidiButtonActions::handleToggleRecordForSlot(uint8_t slotIndex) {
     trackManager.setActiveLoopIndex(trackIdx, slotIndex);
 
     // Slot-aware state machine:
-    // Track state is global per-track, but record/overdub intent is per active slot.
-    // For an empty slot, always start recording (or arm when clock is stopped).
-    if (!track.hasData()) {
-        logger.info("Loop %d: Start Recording", slotIndex + 1);
-        trackManager.startRecordingTrack(trackIdx, now);
-    } else if (track.isRecording()) {
+    // Note: TrackState is global per track, so we cannot enter TRACK_ARMED while
+    // keeping TRACK_PLAYING audio alive. Use queued recording as "armed intent".
+    if (track.isRecording()) {
         logger.info("Loop %d: Stop Recording", slotIndex + 1);
         trackManager.stopRecordingTrack(trackIdx);
         track.startPlaying(now);
     } else if (track.isOverdubbing()) {
         logger.info("Loop %d: Stop Overdub", slotIndex + 1);
         track.stopOverdubbing();
+    } else if (track.isPlaying() && !track.hasData()) {
+        if (trackManager.isRecordingQueued(trackIdx, slotIndex)) {
+            // Second press: immediate punch-in on the empty selected slot.
+            trackManager.clearQueuedRecordingTrack(trackIdx, slotIndex);
+            logger.info("Loop %d: Immediate punch-in", slotIndex + 1);
+            trackManager.startRecordingTrack(trackIdx, now);
+        } else {
+            // First press: schedule recording to start on next quantized wrap.
+            trackManager.queueRecordingTrack(trackIdx, slotIndex);
+            logger.info("Loop %d: Queued recording at next wrap", slotIndex + 1);
+        }
+    } else if (!track.hasData()) {
+        logger.info("Loop %d: Start Recording", slotIndex + 1);
+        trackManager.startRecordingTrack(trackIdx, now);
     } else if (track.isPlaying()) {
+        // Selecting another populated slot while playing should stay in playback
+        // and not immediately force overdub.
+        if (previousSlot != slotIndex && track.hasData()) {
+            logger.info("Loop %d: Selected for playback", slotIndex + 1);
+            return;
+        }
         logger.info("Loop %d: Live Overdub", slotIndex + 1);
         trackManager.startOverdubbingTrack(trackIdx);
     } else {
         logger.info("Loop %d: Toggle Play/Stop", slotIndex + 1);
         track.togglePlayStop();
     }
+}
+
+void MidiButtonActions::beginSlotLayerHold(uint8_t slotIndex) {
+    if (slotIndex >= ::Config::MAX_LOOPS_PER_TRACK) return;
+    uint8_t trackIdx = trackManager.getSelectedTrackIndex();
+    Track& track = getCurrentTrack();
+    uint8_t baseSlot = track.getActiveLoopIndex();
+
+    if (slotIndex == baseSlot) return;
+    trackManager.setLayeredSlotHeld(trackIdx, slotIndex, true);
+    if (track.isPlaying() && !track.hasDataInSlot(slotIndex)) {
+      trackManager.queueRecordingTrack(trackIdx, slotIndex);
+      logger.info("Loop %d hold: layering active, queued record on wrap", slotIndex + 1);
+    } else {
+      logger.info("Loop %d hold: layering active", slotIndex + 1);
+    }
+}
+
+void MidiButtonActions::endSlotLayerHold(uint8_t slotIndex) {
+    if (slotIndex >= ::Config::MAX_LOOPS_PER_TRACK) return;
+    uint8_t trackIdx = trackManager.getSelectedTrackIndex();
+    trackManager.clearQueuedRecordingTrack(trackIdx, slotIndex);
+    trackManager.setLayeredSlotHeld(trackIdx, slotIndex, false);
+    logger.info("Loop %d hold released: back to single-slot playback", slotIndex + 1);
 }
 
 // Core actions that match your current 3-button system
@@ -188,29 +234,36 @@ void MidiButtonActions::handleSelectTrack(uint8_t trackNumber) {
 
 void MidiButtonActions::handleUndo() {
     Track& track = getCurrentTrack();
-    // Match the exact logic from the original Button A double press
+    if (TrackUndo::canUndoClearTrack(track)) {
+        logger.info("MIDI: Undo clear slot");
+        TrackUndo::undoClearTrack(track);
+        return;
+    }
     if (TrackUndo::canUndo(track)) {
-        logger.info("MIDI Button A: Undo Overdub (snapshots=%d)", TrackUndo::getUndoCount(track));
+        logger.info("MIDI: Undo overdub (snapshots=%d)", TrackUndo::getUndoCount(track));
         TrackUndo::undoOverdub(track);
     } else {
-        logger.info("MIDI Button A: No undo snapshots available (count=%d)", TrackUndo::getUndoCount(track));
+        logger.info("MIDI: No undo available (overdub=%d)", TrackUndo::getUndoCount(track));
     }
 }
 
 void MidiButtonActions::handleRedo() {
     Track& track = getCurrentTrack();
-    // Match the exact logic from the original Button A triple press
+    if (TrackUndo::canRedoClearTrack(track)) {
+        logger.info("MIDI: Redo clear slot");
+        TrackUndo::redoClearTrack(track);
+        return;
+    }
     if (TrackUndo::canRedo(track)) {
-        logger.info("MIDI Button A: Redo Overdub (redo_snapshots=%d)", TrackUndo::getRedoCount(track));
+        logger.info("MIDI: Redo overdub (redo_snapshots=%d)", TrackUndo::getRedoCount(track));
         TrackUndo::redoOverdub(track);
     } else {
-        logger.info("MIDI Button A: No redo snapshots available (count=%d)", TrackUndo::getRedoCount(track));
+        logger.info("MIDI: No redo available (overdub redo=%d)", TrackUndo::getRedoCount(track));
     }
 }
 
 void MidiButtonActions::handleUndoClearTrack() {
     Track& track = getCurrentTrack();
-    // Match the exact logic from the original Button B double press
     if (TrackUndo::canUndoClearTrack(track)) {
         logger.info("MIDI Button B: Undo Clear Track");
         TrackUndo::undoClearTrack(track);
@@ -221,7 +274,6 @@ void MidiButtonActions::handleUndoClearTrack() {
 
 void MidiButtonActions::handleRedoClearTrack() {
     Track& track = getCurrentTrack();
-    // Match the exact logic from the original Button B triple press
     if (TrackUndo::canRedoClearTrack(track)) {
         logger.info("MIDI Button B: Redo Clear Track");
         TrackUndo::redoClearTrack(track);

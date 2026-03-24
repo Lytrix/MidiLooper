@@ -49,7 +49,10 @@ public:
   // --- Recording ---
   void startRecordingTrack(uint8_t trackIndex, uint32_t currentTick);
   void stopRecordingTrack(uint8_t trackIndex);
-  void queueRecordingTrack(uint8_t trackIndex);
+  void queueRecordingTrack(uint8_t trackIndex, uint8_t slotIndex);
+  void clearQueuedRecordingTrack(uint8_t trackIndex, uint8_t slotIndex);
+  bool isRecordingQueued(uint8_t trackIndex, uint8_t slotIndex) const;
+  bool hasQueuedRecordingTrack(uint8_t trackIndex) const;
   void queueStopRecordingTrack(uint8_t trackIndex);
   void handleQuantizedStart(uint32_t currentTick);
   void handleQuantizedStop(uint32_t currentTick);
@@ -83,6 +86,7 @@ public:
   // --- Active loop slot (per track, 0-7) ---
   uint8_t getActiveLoopIndex(uint8_t trackIndex) const;
   void setActiveLoopIndex(uint8_t trackIndex, uint8_t index);
+  void setLayeredSlotHeld(uint8_t trackIndex, uint8_t slotIndex, bool held);
 
   // --- LED Management ---
   void updateLedsDeferred();   // Call from main loop - decoupled from clock path
@@ -101,7 +105,11 @@ private:
   bool muted[Config::NUM_TRACKS] = {false};
   bool soloed[Config::NUM_TRACKS] = {false};
   bool pendingRecord[Config::NUM_TRACKS] = {false};
+  bool pendingRecordSlot[Config::NUM_TRACKS][Config::MAX_LOOPS_PER_TRACK] = {{false}};
+  /// Clock tick when queueRecordingTrack was last called for this track (skip same-tick quantized start).
+  uint32_t pendingRecordQueuedAtTick[Config::NUM_TRACKS];
   bool pendingStop[Config::NUM_TRACKS] = {false};
+  bool heldLayerSlot[Config::NUM_TRACKS][Config::MAX_LOOPS_PER_TRACK] = {{false}};
 
   //friend class UI; // Optional: if you have a UI or debug class needing internal access
 };

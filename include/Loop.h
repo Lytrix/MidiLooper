@@ -31,6 +31,14 @@ using PooledMidiDeque = std::deque<MemoryPool::PooledMidiEventVector>;
 using TrackStateDeque = std::deque<TrackState>;
 using Uint32Deque = std::deque<uint32_t>;
 
+/// Loop length/start geometry stored alongside each overdub undo snapshot (per slot).
+struct OverdubGeomSnapshot {
+  uint32_t loopLengthTicks = 0;
+  uint32_t startLoopTick = 0;
+  uint32_t loopStartTick = 0;
+};
+using OverdubGeomDeque = std::deque<OverdubGeomSnapshot>;
+
 struct Loop {
   // Sequence data
   std::vector<MidiEvent> midiEvents;
@@ -72,6 +80,28 @@ struct Loop {
   }
   bool midiRedoHistoryEmpty() const { return !midiRedoHistory_ || midiRedoHistory_->empty(); }
   size_t midiRedoHistorySize() const { return midiRedoHistory_ ? midiRedoHistory_->size() : 0; }
+
+  OverdubGeomDeque& getOverdubGeomHistory() {
+    if (!overdubGeomHistory_) overdubGeomHistory_ = std::make_unique<OverdubGeomDeque>();
+    return *overdubGeomHistory_;
+  }
+  const OverdubGeomDeque& getOverdubGeomHistory() const {
+    return const_cast<Loop*>(this)->getOverdubGeomHistory();
+  }
+  bool overdubGeomHistoryEmpty() const { return !overdubGeomHistory_ || overdubGeomHistory_->empty(); }
+  size_t overdubGeomHistorySize() const { return overdubGeomHistory_ ? overdubGeomHistory_->size() : 0; }
+
+  OverdubGeomDeque& getOverdubGeomRedoHistory() {
+    if (!overdubGeomRedoHistory_) overdubGeomRedoHistory_ = std::make_unique<OverdubGeomDeque>();
+    return *overdubGeomRedoHistory_;
+  }
+  const OverdubGeomDeque& getOverdubGeomRedoHistory() const {
+    return const_cast<Loop*>(this)->getOverdubGeomRedoHistory();
+  }
+  bool overdubGeomRedoHistoryEmpty() const {
+    return !overdubGeomRedoHistory_ || overdubGeomRedoHistory_->empty();
+  }
+  size_t overdubGeomRedoHistorySize() const { return overdubGeomRedoHistory_ ? overdubGeomRedoHistory_->size() : 0; }
 
   PooledMidiDeque& getClearMidiHistory() {
     if (!clearMidiHistory_) clearMidiHistory_ = std::make_unique<PooledMidiDeque>();
@@ -196,6 +226,8 @@ struct Loop {
   void clearAllUndoStacks() {
     if (midiHistory_) midiHistory_->clear();
     if (midiRedoHistory_) midiRedoHistory_->clear();
+    if (overdubGeomHistory_) overdubGeomHistory_->clear();
+    if (overdubGeomRedoHistory_) overdubGeomRedoHistory_->clear();
     if (clearMidiHistory_) clearMidiHistory_->clear();
     if (clearMidiRedoHistory_) clearMidiRedoHistory_->clear();
     if (clearStateHistory_) clearStateHistory_->clear();
@@ -208,9 +240,22 @@ struct Loop {
     if (loopStartRedoHistory_) loopStartRedoHistory_->clear();
   }
 
+  /// Clears overdub / loop-start-edit stacks only. Used when wiping slot content so
+  /// "undo clear" snapshots (clear* deques) pushed immediately before are kept.
+  void clearOverdubAndLoopEditUndoStacks() {
+    if (midiHistory_) midiHistory_->clear();
+    if (midiRedoHistory_) midiRedoHistory_->clear();
+    if (overdubGeomHistory_) overdubGeomHistory_->clear();
+    if (overdubGeomRedoHistory_) overdubGeomRedoHistory_->clear();
+    if (loopStartHistory_) loopStartHistory_->clear();
+    if (loopStartRedoHistory_) loopStartRedoHistory_->clear();
+  }
+
 private:
   std::unique_ptr<PooledMidiDeque> midiHistory_;
   std::unique_ptr<PooledMidiDeque> midiRedoHistory_;
+  std::unique_ptr<OverdubGeomDeque> overdubGeomHistory_;
+  std::unique_ptr<OverdubGeomDeque> overdubGeomRedoHistory_;
   std::unique_ptr<PooledMidiDeque> clearMidiHistory_;
   std::unique_ptr<PooledMidiDeque> clearMidiRedoHistory_;
   std::unique_ptr<TrackStateDeque> clearStateHistory_;

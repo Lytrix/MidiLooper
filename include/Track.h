@@ -101,6 +101,7 @@ public:
   // MIDI events
   void recordMidiEvents(midi::MidiType type, byte channel, byte data1, byte data2, uint32_t currentTick);
   void playMidiEvents(uint32_t currentTick, bool isAudible);
+  void playMidiEventsForSlot(uint8_t slotIndex, uint32_t currentTick, bool isAudible);
   void printNoteEvents() const;
   /// Send an "All Notes Off" (CC 123) on every channel and clear any pending notes.
   void sendAllNotesOff();

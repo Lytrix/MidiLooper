@@ -190,7 +190,11 @@ void Config::loadConfiguration() {
               .onShortPress(ActionType::MOVE_CURRENT_TICK)
               .withParameter(-tick16 / 2));
     
-    // Loop Selection (Channel 16, notes 50-57) - per-slot record/overdub/play/stop/clear/undo/redo
+    // Loop Selection (Channel 16, notes 50-57)
+    // short: slot-aware toggle record flow
+    //   - empty+playing: queue next-wrap record, second press = immediate punch-in
+    //   - non-empty+playing: overdub toggle
+    // long: clear slot, double/triple: undo/redo slot
     #define ENABLE_LOOP_BUTTONS 1
     #if ENABLE_LOOP_BUTTONS
     static char loopDescBuf[::Config::MAX_LOOPS_PER_TRACK][10];

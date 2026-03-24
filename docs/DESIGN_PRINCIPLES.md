@@ -33,6 +33,23 @@ Per principle 1, the **track row** (ch16 notes 60–67) uses a **select-primary*
 
 ---
 
+## 2b. Loop slot buttons: staged record flow while playing
+
+Per-slot loop buttons (ch16 notes 50-57) use a slot-aware record flow.
+
+| Gesture | Empty slot while track is playing | Non-empty slot while track is playing |
+|---------|-----------------------------------|----------------------------------------|
+| **Short (first press)** | Queue record start on next wrap | Enter live overdub |
+| **Short (second press)** | Immediate punch-in (start recording now) | Stop overdub |
+| **Long** | Clear selected slot | Clear selected slot |
+| **Double / Triple** | Undo / Redo for selected slot | Undo / Redo for selected slot |
+
+Notes:
+- Playback remains single-active-slot by default.
+- "Armed" intent for empty slots during playback is represented by queued record start (because track state is currently global per track).
+
+---
+
 ## 3. Minimal-button operation
 
 The looper must function with a **minimal hardware set** when full controllers (e.g. DROID B32) are not available.
