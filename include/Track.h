@@ -14,20 +14,11 @@
 #include "MidiHandler.h"
 #include "Utils/NoteUtils.h"    // For CachedNoteList
 #include "Utils/MemoryPool.h"   // For pooled MIDI event vectors
+#include "TrackState.h"
+#include "Loop.h"
+#include "Globals.h"
 
 class TrackUndo; // Forward declaration
-
-// Track states with clear transitions
-enum TrackState {
-  TRACK_EMPTY,              // Initial state Empty track
-  TRACK_STOPPED,            // No recording or playback
-  TRACK_ARMED,              // Ready to start recording
-  TRACK_RECORDING,          // Recording first layer
-  TRACK_STOPPED_RECORDING,  // First layer recorded, ready for playback or overdub
-  TRACK_PLAYING,            // Playing back recorded content
-  TRACK_OVERDUBBING,        // Recording additional layers while playing
-  NUM_TRACK_STATES          // Always helpful to validate range
-};
 
 // Pending note structure
 struct PendingNote {
@@ -64,6 +55,7 @@ struct PairHash {
 class Track {
 public:
   Track();
+  ~Track();
 
   // State management
   TrackState getState() const;
@@ -116,36 +108,37 @@ public:
   // Note events
   void noteOn(uint8_t channel, uint8_t note, uint8_t velocity, uint32_t tick);
   void noteOff(uint8_t channel, uint8_t note, uint8_t velocity, uint32_t tick);
-  bool hasData() const;
+  bool hasData() const { return getActiveLoop().hasData(); }
+  bool hasDataInSlot(uint8_t slotIndex) const;
 
   // Event counters
-  size_t getMidiEventCount() const;
+  size_t getMidiEventCount() const { return getActiveLoop().midiEvents.size(); }
 
-  // Track length control
-  uint32_t getStartLoopTick() const;
-  uint32_t getLoopLength() const;
+  // Track length control (delegate to active loop)
+  uint32_t getStartLoopTick() const { return getActiveLoop().startLoopTick; }
+  uint32_t getLoopLength() const { return getActiveLoop().loopLengthTicks; }
   void setLoopLength(uint32_t ticks);
   
   // Simple loop length change - no MIDI event modification
   void setLoopLengthWithWrapping(uint32_t newLoopLength);
   
-  // Loop start point control - for loop editing
-  uint32_t getLoopStartTick() const;
+  // Loop start point control - for loop editing (delegate to active loop)
+  uint32_t getLoopStartTick() const { return getActiveLoop().loopStartTick; }
   void setLoopStartTick(uint32_t startTick);
   
   // Combined loop start/end editing with validation
   void setLoopStartAndEnd(uint32_t startTick, uint32_t endTick);
   
   // Get effective loop end based on start + length
-  uint32_t getLoopEndTick() const;
+  uint32_t getLoopEndTick() const { return getActiveLoop().loopStartTick + getActiveLoop().loopLengthTicks; }
 
   // Jam state — display focus region, decoupled from loop params
   bool isJamming() const { return jamLength > 0; }
   uint32_t getJamLength() const {
-    return jamLength > 0 ? jamLength : loopLengthTicks;
+    return jamLength > 0 ? jamLength : getActiveLoop().loopLengthTicks;
   }
   uint32_t getJamStartTick() const {
-    return jamStartTick != UINT32_MAX ? jamStartTick : loopStartTick;
+    return jamStartTick != UINT32_MAX ? jamStartTick : getActiveLoop().loopStartTick;
   }
   void setJam(uint32_t startTick, uint32_t length);
   void clearJam();
@@ -165,6 +158,10 @@ public:
   uint8_t getMidiChannel() const;
   void setMidiChannel(uint8_t ch);
 
+  // Active loop slot (0-7); slot 0 = current data until D10 multi-slot storage
+  uint8_t getActiveLoopIndex() const;
+  void setActiveLoopIndex(uint8_t index);
+
   // Track state checks
   bool isEmpty() const;
   bool isArmed() const;
@@ -176,10 +173,21 @@ public:
   bool isMuted() const;
 
   // Add to public section of Track to be able to save the events
-  std::vector<MidiEvent>& getMidiEvents() { return midiEvents; }
+  std::vector<MidiEvent>& getMidiEvents() { return getActiveLoop().midiEvents; }
 
   /// Immutable access to midiEvents (for const Track)
-  const std::vector<MidiEvent>& getMidiEvents() const { return midiEvents; }
+  const std::vector<MidiEvent>& getMidiEvents() const { return getActiveLoop().midiEvents; }
+
+  /// Access loop by index (0 to MAX_LOOPS_PER_TRACK-1)
+  Loop& getLoop(uint8_t index);
+  const Loop& getLoop(uint8_t index) const;
+
+  /// Allocate Loop array if not yet done (deferred from ctor to avoid static-init crash)
+  void ensureLoopsAllocated();
+
+  /// Active loop (used for playback, recording, display)
+  Loop& getActiveLoop() { return getLoop(activeLoopIndex); }
+  const Loop& getActiveLoop() const { return getLoop(activeLoopIndex); }
 
   // ==========================================
   // OPTIMIZATION: Cached Note Access
@@ -187,23 +195,24 @@ public:
   
   /// Get cached display notes - avoids expensive reconstructNotes() calls
   const std::vector<NoteUtils::DisplayNote>& getCachedNotes() const {
-    return noteCache.getNotes(midiEvents, loopLengthTicks);
+    return getActiveLoop().getNoteCache().getNotes(getActiveLoop().midiEvents, getActiveLoop().loopLengthTicks);
   }
   
   /// Get cached event index - avoids expensive index rebuilding
   const NoteUtils::EventIndex& getCachedEventIndex() const {
-    if (!eventIndexValid) {
-      cachedEventIndex = NoteUtils::buildEventIndex(midiEvents);
-      eventIndexValid = true;
+    Loop& loop = const_cast<Loop&>(getActiveLoop());
+    if (!loop.eventIndexValid) {
+      loop.getCachedEventIndex() = NoteUtils::buildEventIndex(loop.midiEvents);
+      loop.eventIndexValid = true;
     }
-    return cachedEventIndex;
+    return loop.getCachedEventIndex();
   }
   
   /// Invalidate caches when MIDI events change
   void invalidateCaches() {
-    noteCache.invalidate();
-    eventIndexValid = false;
-    playbackOrderDirty = true;
+    Loop& loop = getActiveLoop();
+    loop.invalidateCaches();
+    loop.playbackOrderDirty = true;
   }
 
 private:
@@ -215,60 +224,23 @@ private:
   // Track data
   bool muted;
   uint8_t midiChannel;
+  uint8_t activeLoopIndex;  // Which loop slot (0-7) is active
   TrackState trackState;
-  uint32_t startLoopTick;
-  uint32_t loopLengthTicks;
-  uint32_t loopStartTick;  // Loop start point offset for loop editing
   uint32_t jamStartTick;   // Jam display region start (UINT32_MAX = inactive)
   uint32_t jamLength;      // Jam display region length (0 = inactive)
   volatile uint32_t jamTick;  // Position within jam region (0 to jamLength-1)
   bool jamPlaybackActive;     // True = track uses jamTick for playback
-  uint32_t lastTickInLoop;
-  uint16_t nextEventIndex;
   static const uint32_t TICKS_PER_BAR;
 
-  // Event storage
+  // Per-slot loop storage (heap-allocated to avoid BSS overflow with 8 tracks × 8 loops)
+  Loop* loops;
+
+  // Event storage (pending notes during recording - target is active loop)
   std::unordered_map<std::pair<uint8_t, uint8_t>, PendingNote, PairHash> pendingNotes;
-  std::vector<MidiEvent> midiEvents;
   
   // State management
   bool transitionState(TrackState newState);  // Internal state transition method
-  
-  // Undo management
-  std::deque<MemoryPool::PooledMidiEventVector> midiHistory;
-  size_t midiEventCountAtLastSnapshot = 0;
-  // Undo clear track control
-  std::deque<MemoryPool::PooledMidiEventVector> clearMidiHistory;
-  std::deque<TrackState> clearStateHistory;
-  std::deque<uint32_t> clearLengthHistory;
-  std::deque<uint32_t> clearStartHistory;  // Loop start point history for clear undo
 
-  // Redo management
-  std::deque<MemoryPool::PooledMidiEventVector> midiRedoHistory;
-  // Redo clear track control
-  std::deque<MemoryPool::PooledMidiEventVector> clearMidiRedoHistory;
-  std::deque<TrackState> clearStateRedoHistory;
-  std::deque<uint32_t> clearLengthRedoHistory;
-  std::deque<uint32_t> clearStartRedoHistory;  // Loop start point redo for clear
-  
-  // Loop start point undo/redo (separate from clear)
-  std::deque<uint32_t> loopStartHistory;
-  std::deque<uint32_t> loopStartRedoHistory;
-
-  // ==========================================
-  // OPTIMIZATION: Performance Caches
-  // ==========================================
-  
-  /// Cached note list to avoid expensive reconstructNotes() calls
-  mutable NoteUtils::CachedNoteList noteCache;
-  
-  /// Cached event index for fast event lookup  
-  mutable NoteUtils::EventIndex cachedEventIndex;
-  mutable bool eventIndexValid = false;
-
-  /// Playback order: indices into midiEvents sorted by wrapped tick
-  std::vector<size_t> playbackOrder;
-  bool playbackOrderDirty = true;
   void rebuildPlaybackOrder();
 
 };

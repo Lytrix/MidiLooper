@@ -3,6 +3,7 @@
 
 #include "StorageManager.h"
 #include "TrackManager.h"
+#include "Loop.h"
 #include "Globals.h"
 #include <SD.h>
 #include <Arduino.h>
@@ -305,12 +306,13 @@ bool StorageManager::loadState(LooperState& state) {
     trackManager.setMasterLoopLength(masterLoopLength);
     for (uint8_t t = 0; t < numTracks; ++t) {
         Track &track = trackManager.getTrack(t);
+        track.setActiveLoopIndex(0);  // v2/v3: single slot, load into slot 0
         track.forceSetState(tracksData[t].state);
         if (tracksData[t].muted != track.isMuted()) track.toggleMuteTrack();
         track.setLoopLength(tracksData[t].loopLengthTicks);
-        // Set startLoopTick directly since there's no public setter
-        track.startLoopTick = tracksData[t].startLoopTick;
-        track.getMidiEvents() = tracksData[t].midiEvents;
+        Loop& loop = track.getLoop(0);
+        loop.startLoopTick = tracksData[t].startLoopTick;
+        loop.midiEvents = tracksData[t].midiEvents;
         auto &midiHistory = TrackUndo::getMidiHistory(track);
         midiHistory.clear();
         for (const auto& snapshot : tracksData[t].midiHistory) {

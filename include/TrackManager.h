@@ -32,7 +32,8 @@ class TrackManager {
 public:
   TrackManager();
   ~TrackManager();  // Destructor to clean up LED manager
-  void setup();  // Initialize track manager state
+  void setup();
+  void allocateLoopsEarly();  // Call at start of setup() before other subsystems consume heap  // Initialize track manager state
 
   // --- Track Selection ---
   void setSelectedTrack(uint8_t index);
@@ -78,6 +79,10 @@ public:
   // --- State Accessors ---
   TrackState getTrackState(uint8_t trackIndex) const;
   uint32_t getTrackLength(uint8_t trackIndex) const;
+
+  // --- Active loop slot (per track, 0-7) ---
+  uint8_t getActiveLoopIndex(uint8_t trackIndex) const;
+  void setActiveLoopIndex(uint8_t trackIndex, uint8_t index);
 
   // --- LED Management ---
   void updateLedsDeferred();   // Call from main loop - decoupled from clock path

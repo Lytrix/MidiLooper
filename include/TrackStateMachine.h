@@ -4,7 +4,7 @@
 // TrackStateMachine.h
 #pragma once
 
-#include "Track.h"
+#include "TrackState.h"
 
 /**
  * @namespace TrackStateMachine

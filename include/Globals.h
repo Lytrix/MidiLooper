@@ -49,7 +49,7 @@ namespace Buttons {
 // --------------------
 namespace Config {
   constexpr uint8_t  NUM_TRACKS = 8;                                   // Number of looper tracks
-  constexpr uint8_t  MAX_LOOPS_PER_TRACK = 8;                          // Loop slots per track (Droid loop row)
+  constexpr uint8_t  MAX_LOOPS_PER_TRACK = 8;
   constexpr uint8_t  INTERNAL_PPQN = 192;                              // Internal resolution for timing
   constexpr uint8_t  QUARTERS_PER_BAR = 4;                             // Time signature numerator (4/4 time) 
   constexpr uint8_t  TICKS_PER_QUARTER_NOTE = INTERNAL_PPQN;           // For Musical Time naming consistency
@@ -57,7 +57,7 @@ namespace Config {
   constexpr uint32_t TICKS_PER_BAR = INTERNAL_PPQN * QUARTERS_PER_BAR; // 768 or your default value (ticksPerQuarterNote * quartersPerBar)
   constexpr uint32_t TICKS_PER_16TH_STEP = INTERNAL_PPQN / 4;          // 192 / 4 = 48 Ticks
   constexpr uint32_t DUPLICATE_TICK_TOLERANCE = TICKS_PER_16TH_STEP / 4;  // 12 ticks = 1/64th note; events within this are treated as duplicates
-  constexpr uint8_t  MAX_UNDO_HISTORY = 99;
+  constexpr uint8_t  MAX_UNDO_HISTORY = 25;
 }
  
 // --------------------
