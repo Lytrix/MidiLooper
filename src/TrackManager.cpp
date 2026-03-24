@@ -282,6 +282,19 @@ void TrackManager::unsoloTrack(uint8_t trackIndex) {
   if (trackIndex < Config::NUM_TRACKS) soloed[trackIndex] = false;
 }
 
+void TrackManager::toggleSoloTrack(uint8_t trackIndex) {
+  if (trackIndex >= Config::NUM_TRACKS) return;
+  if (soloed[trackIndex]) {
+    for (uint8_t i = 0; i < Config::NUM_TRACKS; i++) {
+      soloed[i] = false;
+    }
+  } else {
+    for (uint8_t i = 0; i < Config::NUM_TRACKS; i++) {
+      soloed[i] = (i == trackIndex);
+    }
+  }
+}
+
 bool TrackManager::anyTrackSoloed() const {
   for (uint8_t i = 0; i < Config::NUM_TRACKS; i++) {
     if (soloed[i]) return true;
@@ -289,9 +302,15 @@ bool TrackManager::anyTrackSoloed() const {
   return false;
 }
 
+bool TrackManager::isTrackSoloed(uint8_t trackIndex) const {
+  return trackIndex < Config::NUM_TRACKS && soloed[trackIndex];
+}
+
 bool TrackManager::isTrackAudible(uint8_t trackIndex) const {
   if (trackIndex >= Config::NUM_TRACKS) return false;
-  return !tracks[trackIndex].isMuted();
+  if (tracks[trackIndex].isMuted()) return false;
+  if (anyTrackSoloed() && !soloed[trackIndex]) return false;
+  return true;
 }
 
 // Master Loop Length -----------------------------------------

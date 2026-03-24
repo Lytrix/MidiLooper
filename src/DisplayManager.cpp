@@ -82,10 +82,11 @@ static void ticksToBarsBeats16thTicks2Dec(uint32_t ticks, char* out, size_t outS
 
 void DisplayManager::drawTrackStatus(uint8_t selectedTrack, uint32_t currentMillis) {
     // Update pulse phase for state of the selected track
-    float dt = (now - _lastPulseUpdate) / 1000.0f;
+    float dt = (static_cast<long>(currentMillis) - static_cast<long>(_lastPulseUpdate)) / 1000.0f;
+    if (dt < 0.0f) dt = 0.0f;
     _pulsePhase += dt * PULSE_SPEED;
     if (_pulsePhase > 1.0f) _pulsePhase -= 1.0f;
-    _lastPulseUpdate = now;
+    _lastPulseUpdate = currentMillis;
     
     // Font and layout
     _display.gfx.select_font(&Font5x7FixedMono);
@@ -97,7 +98,12 @@ void DisplayManager::drawTrackStatus(uint8_t selectedTrack, uint32_t currentMill
 
     for (uint8_t i = 0; i < trackCount; ++i) {
         char label[2] = {0};
-        label[0] = trackStateToLetter(trackManager.getTrackState(i), !trackManager.isTrackAudible(i));
+        Track& rowTrack = trackManager.getTrack(i);
+        const bool userMuted = rowTrack.isMuted();
+        const bool soloHidden =
+            trackManager.anyTrackSoloed() && !trackManager.isTrackSoloed(i) && (i != selectedTrack);
+        const bool showMuteOverlay = userMuted || soloHidden;
+        label[0] = trackStateToLetter(trackManager.getTrackState(i), showMuteOverlay);
         int y = i * step + char_height;
         uint8_t brightness = 15;
         if (i == selectedTrack) {
