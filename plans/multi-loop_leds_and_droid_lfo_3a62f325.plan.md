@@ -1,6 +1,6 @@
 ---
 name: Multi-loop LEDs and Droid LFO
-overview: Droid ch3 LEDs for track/loop selection (50–57 / 60–67); ch16 input (60–67 track, 50–57 loop with Button A semantics in Normal mode + 16th-quantized switch-only); ch16 note 70 (+ CC) for armed-slot LFO on Droid; storage v3 for per-track activeLoopIndex. Arrangement / live-switch record is specified in §4.3 as a **later phase** after Normal multi-loop works.
+overview: Droid ch15 LEDs for track/loop selection (50–57 / 60–67); ch16 input (60–67 track, 50–57 loop with Button A semantics in Normal mode + 16th-quantized switch-only); ch16 note 70 (+ CC) for armed-slot LFO on Droid; storage v3 for per-track activeLoopIndex. Arrangement / live-switch record is specified in §4.3 as a **later phase** after Normal multi-loop works.
 todos:
   - id: slice-1-d1-d9
     content: "D1–D9: Constants, activeLoopIndex, storage v3, track/loop ch16 input (switch-only), Droid LEDs + LFO. First shippable slice."
@@ -31,7 +31,7 @@ This plan merges [phase-3-multi-loop.md](phase-3-multi-loop.md) with Droid LED/L
 | **D3** | **Storage v3** — Bump version; persist `activeLoopIndex[NUM_TRACKS]`; migrate v2 → 0. | D2 | §1b. |
 | **D4** | **Track buttons ch16** — Register 60–67: short=MUTE, long=SELECT, double=SOLO. | — | §4.1; [DESIGN_PRINCIPLES](../docs/DESIGN_PRINCIPLES.md). |
 | **D5** | **Loop select ch16 (switch-only)** — Register 50–57; short = `pendingActiveLoopIndex`; 16th commit in updateAllTracks. | D2 | Switch between filled slots only; no record/overdub yet. §4.2 subset. |
-| **D6** | **Droid ini: ch3 track/loop LEDs** — midiin + copy for notes 50–67 → L2.5–L3.12. | — | §3; requires D7 to send. |
+| **D6** | **Droid ini: ch15 track/loop LEDs** — midiin + copy for notes 50–67 → L2.5–L3.12. | — | §3; requires D7 to send. |
 | **D7** | **MidiLedManager: track/loop velocities** — `updateTrackAndLoopSelectLeds`, clearAllLeds 50–67, MidiHandler logging. | D2 | §5. |
 | **D8** | **Droid ini: LFO patch** — ch16 note 70 notegate; lfo square; routing to loop LED. | — | §3; requires D9. Verify BPM/8th sync per Droid manual. |
 | **D9** | **Teensy: LFO arm** — NoteOn/Off 70 + slot CC on ARMED/RECORDING/OVERDUBBING transitions. | D2 | §6. |
@@ -66,7 +66,7 @@ From [phase-3-multi-loop.md](phase-3-multi-loop.md) §9 and gaps:
 ## Context (verified in repo)
 
 - **[droid/midilooper_v1.ini](../droid/midilooper_v1.ini)** already exposes **track** buttons as **ch16 notes 60–67** and **loop** buttons as **ch16 notes 50–57** via `[midiout]` + `[buttongroup]` (lines ~644–734). **LED wiring for those rows is not yet driven from Teensy**; the buttongroup still owns `led1`–`led8` directly without the bar-style `[midiin]` + `[copy]` path.
-- **Bar LED feedback pattern** (same file, ~500–559): `[midiin]` on **ch3** with `notegate` + `notegatevelocity`, then `[copy]` `input = _BARLEDn * _BAR_GATEn` → `L2.17`–`L3.20`. This is the template for track/loop LEDs.
+- **Bar LED feedback pattern** (same file, ~500–559): `[midiin]` on **ch15** with `notegate` + `notegatevelocity`, then `[copy]` `input = _BARLEDn * _BAR_GATEn` → `L2.17`–`L3.20`. This is the template for track/loop LEDs.
 - **Teensy** sends bar/step LEDs from [src/MidiLedManager.cpp](../src/MidiLedManager.cpp) and constants in [include/MidiConfig.h](../include/MidiConfig.h) (`Led::BAR_BASE = 40`, etc.). **Ch16 notes 50–67 are not registered** in [src/Utils/MidiButtonConfig.cpp](../src/Utils/MidiButtonConfig.cpp) `loadConfiguration()` — only **ch2** `48+i` for track select. Incoming Droid presses on **ch16 60–67** therefore do not run `SELECT_TRACK` today.
 - **Default track index** is already **0** ([include/TrackManager.h](../include/TrackManager.h) `selectedTrack = 0`).
 - **16th quantization** already appears for seek in [src/BarStepButtonHandler.cpp](../src/BarStepButtonHandler.cpp) (`seekTick` aligned with `Config::TICKS_PER_16TH_STEP`).
@@ -76,12 +76,12 @@ From [phase-3-multi-loop.md](phase-3-multi-loop.md) §9 and gaps:
 
 | Signal             | Meaning                                                                                      |
 | ------------------ | -------------------------------------------------------------------------------------------- |
-| **ch3 note 60–67** | **Track** LED feedback (8 tracks)                                                          |
-| **ch3 note 50–57** | **Loop** LED feedback for **currently selected track** (8 slots)                             |
+| **ch15 note 60–67** | **Track** LED feedback (8 tracks)                                                          |
+| **ch15 note 50–57** | **Loop** LED feedback for **currently selected track** (8 slots)                             |
 | Velocity **127**   | Selected track / selected loop                                                               |
 | Velocity **32**    | Not selected, slot has content                                                               |
 | Velocity **0**     | Empty slot                                                                                   |
-| **ch16 60–67**     | **Track row:** short=mute, long=select, double=solo. Per [docs/DESIGN_PRINCIPLES.md](../docs/DESIGN_PRINCIPLES.md). |
+| **ch16 60–67**     | **Track row:** short=select, double=mute, long=solo. Per [docs/DESIGN_PRINCIPLES.md](../docs/DESIGN_PRINCIPLES.md). |
 | **ch16 50–57**     | **Per-slot copy of Button A** (see §4); **switch-only** changes commit on **next 16th boundary** |
 | **ch16 note 70**   | **NoteOn** starts Droid LFO pulse; **NoteOff** stops it when leaving armed/recording/overdub |
 
@@ -114,23 +114,34 @@ If you implement **LEDs before** the full `Loop` split, the only honest mapping 
 
 ## 2. [include/MidiConfig.h](../include/MidiConfig.h)
 
-Add documented constants next to existing `Led` namespace:
+**D1 actions (in order):**
 
-- `TRACK_SELECT_LED_BASE = 60`, `LOOP_SELECT_LED_BASE = 50`, count **8** (matches Droid + [Globals.h](../include/Globals.h) `NUM_TRACKS == 8`).
-- `LFO_PULSE_ARM_CHANNEL = 16`, `LFO_PULSE_ARM_NOTE = 70`.
-- Optional but **strongly recommended** for Droid routing: `LFO_PULSE_SLOT_CC` (pick an unused CC on ch16, e.g. **80**) = **0–7** = which loop LED receives the LFO, **127** = none. Reason: **note 70 alone does not tell Droid which of L2.9–L3.12 to pulse**; without a slot index, the ini cannot route the square wave to the correct LED.
+1. Add `MAX_LOOPS_PER_TRACK = 8` — place in `Config` namespace ([Globals.h](../include/Globals.h)) or a new `Loop` namespace in MidiConfig.
+2. Add to `Led` namespace (next to existing constants):
+   - `TRACK_SELECT_LED_BASE = 60`, `TRACK_SELECT_LED_COUNT = 8`
+   - `LOOP_SELECT_LED_BASE = 50`, `LOOP_SELECT_LED_COUNT = 8`
+   (Matches Droid + [Globals.h](../include/Globals.h) `NUM_TRACKS == 8`.)
+3. Add LFO constants (new namespace `LfoPulse` or under `Transport`):
+   - `LFO_PULSE_ARM_CHANNEL = 16`
+   - `LFO_PULSE_ARM_NOTE = 70`
+   - `LFO_PULSE_SLOT_CC = 80` — **strongly recommended** for Droid routing: **0–7** = which loop LED receives the LFO, **127** = none. Without a slot index, the ini cannot route the square wave to the correct LED.
+4. Update the CONFIG SUMMARY table in the header block (lines 11–19) with:
+   - **Track select** — LED feedback notes 60–67 (ch15)
+   - **Loop select** — Button notes 50–57 (ch16), LED feedback notes 50–57 (ch15)
 
 ## 3. Droid: [droid/midilooper_v1.ini](../droid/midilooper_v1.ini)
 
+**D6:** Use **channel 15** `[midiin]` to set LED state via **note number + velocity**, same pattern as bar (40–47) and 16th (0–15) content: Teensy sends NoteOn with velocity (127=selected, 32=has content, 0=empty); Droid `notegate` + `notegatevelocity` → `[copy]` to physical LEDs.
+
 **Track row (L2.5–L3.8)**
 
-- Remove or override default LED driving for that row if the manual requires it when using MIDI LED feedback (match how 16th/bar buttons use `states = 1` and MIDI-driven `[copy]`).
-- Add **`[midiin]` ch3** for **notes 60–67** with `notegate1..8` + `notegatevelocity1..8` (same structure as bar block ~502–527).
+- Remove or override default LED driving for that row if the manual requires it (match how 16th/bar use `states = 1` and MIDI-driven `[copy]`).
+- Add **`[midiin]` ch15** for **notes 60–67** with `notegate1..8` + `notegatevelocity1..8` (same structure as bar block ~529–555).
 - Add **eight `[copy]`** blocks: `input = _TRKVELn * _TRKGATEn` → `L2.5` … `L3.8` (names illustrative).
 
 **Loop row (L2.9–L3.12)**
 
-- Same for **notes 50–57** → `L2.9` … `L3.12`.
+- Same pattern: **`[midiin]` ch15** for **notes 50–57**, `notegate1..8` + `notegatevelocity1..8` → `[copy]` to `L2.9` … `L3.12`.
 
 **LFO pulse (Droid-side)**
 
@@ -145,32 +156,48 @@ Document new buses in the ini header comment block (same style as existing contr
 
 ### 4.1 Track row (ch16 notes 60–67)
 
-Per [docs/DESIGN_PRINCIPLES.md](../docs/DESIGN_PRINCIPLES.md): **mute-primary** mapping — short = most frequent action.
+**Select-primary** mapping (mute as short felt irrational in practice):
 
 | Gesture | Action |
 |---------|--------|
-| **Short** | Mute / unmute track |
-| **Long** | Select track |
-| **Double** | Solo / unsolo track |
+| **Short** | Select track |
+| **Double** | Mute / unmute track |
+| **Long** | Solo / unsolo track |
 
-In [src/Utils/MidiButtonConfig.cpp](../src/Utils/MidiButtonConfig.cpp) **`loadConfiguration()`**, for `i = 0..7` add **ch16** `60 + i` with:
+**D4 (done):** [src/Utils/MidiButtonConfig.cpp](../src/Utils/MidiButtonConfig.cpp) track row: `onShortPress(SELECT_TRACK)`, `onDoublePress(MUTE_TRACK)`, `onLongPress(SOLO_TRACK)`. Droid ini: track and loop rows use individual `[button] states=1` (not buttongroup) so loop LEDs do not switch with track select.
 
-- `onShortPress(MUTE_TRACK)` + `withParameter(i)`
-- `onLongPress(SELECT_TRACK)` + `withParameter(i)`
-- `onDoublePress(SOLO_TRACK)` + `withParameter(i)`
+### 4.2 Loop row (ch16 notes 50–57) — same addButton pattern, different gesture map
 
-**Note:** Current extended config uses short=SELECT, long=MUTE. D4 updates this to the above. `setSelectedTrack` and LED update already exist; mute/solo handlers exist in [MidiButtonActions](../src/MidiButtonActions.cpp).
+**Structural pattern:** Use the same `addButton` pattern as the track row — `for` loop, ch16, `withParameter(i)`. Gesture mapping differs by slice.
 
-### 4.2 Loop row (ch16 notes 50–57) — same behaviour as Button A, per slot
+| Gesture | D5 (slice 1) | D11 (slice 2) |
+|---------|--------------|---------------|
+| Short   | `SET_PENDING_LOOP` (switch only) | `TOGGLE_RECORD` (or switch when only changing loop) |
+| Long    | — | `CLEAR_TRACK` |
+| Double  | — | `UNDO` |
+| Triple  | — | `REDO` |
 
-**Reference implementation today:** note **36** on ch16 is configured as “Record/Overdub” with the same gesture map you want on each loop button ([`loadConfiguration()`](../src/Utils/MidiButtonConfig.cpp) ~189–194):
+**D5 action:** In [src/Utils/MidiButtonConfig.cpp](../src/Utils/MidiButtonConfig.cpp) `loadConfiguration()`, add loop buttons (ch16 notes 50–57) after the track row. New `ActionType::SET_PENDING_LOOP` (or `SELECT_LOOP`) with parameter `i`. Wire in [MidiButtonActions](../src/MidiButtonActions.cpp) and [MidiButtonManager](../src/MidiButtonManager.cpp).
+
+```cpp
+// Loop select (ch16 notes 50-57) - D5 switch-only
+for (uint8_t i = 0; i < MAX_LOOPS_PER_TRACK; i++) {
+    addButton(ButtonConfig(MidiConfig::Led::LOOP_SELECT_LED_BASE + i, ch16, ("Loop " + std::to_string(i + 1)).c_str())
+              .onShortPress(ActionType::SET_PENDING_LOOP)
+              .withParameter(i));
+}
+```
+
+**D11 action:** Add `.onDoublePress(UNDO).onTriplePress(REDO).onLongPress(CLEAR_TRACK)` (slot-scoped variants) so the loop row matches Button A with parameter `i`. Use `TOGGLE_RECORD_FOR_SLOT` or equivalent with switch-only precedence (see “Interaction with switch loop” below).
+
+**Reference implementation today:** note **36** on ch16 is configured as “Record/Overdub” with the gesture map that D11 will replicate per slot ([`loadConfiguration()`](../src/Utils/MidiButtonConfig.cpp) ~128–133):
 
 - **Short** → `TOGGLE_RECORD`
 - **Double** → `UNDO`
 - **Triple** → `REDO`
 - **Long** → `CLEAR_TRACK`
 
-**Requirement:** For each **loop index** `i` (0–7), register **ch16 note `50 + i`** with the **identical** short / double / triple / long mapping, and implement handlers so the **target slot is `i`** on the **currently selected track** (not the whole-track single buffer once multi-slot data exists).
+**Requirement (D11):** For each **loop index** `i` (0–7), the **target slot is `i`** on the **currently selected track** (not the whole-track single buffer once multi-slot data exists).
 
 **Logic source of truth:** Factor or parallel these functions in [src/MidiButtonActions.cpp](../src/MidiButtonActions.cpp) so slot-scoped versions follow the same branches as today:
 
@@ -222,7 +249,7 @@ Extend [include/MidiLedManager.h](../include/MidiLedManager.h) / [src/MidiLedMan
   - **Tracks**: for each `t` in `0..NUM_TRACKS-1`, velocity = **127** if `t == selectedTrack`, else **32** if track `t` has data (existing [Track::hasData()](../include/Track.h)), else **0** (use **NoteOn vel 0** or **NoteOff** — match whatever Droid `[midiin]` expects for “empty”; bar logic uses **NoteOff** for “inactive” segments).
   - **Loops**: for each slot `s`, velocity = **127** if `s == activeLoopIndex` **for the selected track**, else **32** if slot `s` non-empty, else **0**.
 - Update [MidiLedManager::clearAllLeds](../src/MidiLedManager.cpp) to **NoteOff** notes **50–57** and **60–67** and reset cached velocities.
-- Extend [MidiHandler::sendMidiEvent](../src/MidiHandler.cpp) debug logging guard for ch3 to include **50–67** (same pattern as notes ≤31 and 40–47 today).
+- Extend [MidiHandler::sendMidiEvent](../src/MidiHandler.cpp) debug logging guard for ch15 to include **50–67** (same pattern as notes ≤31 and 40–47 today).
 
 ## 6. Teensy: LFO arm (note 70 + optional CC)
 
@@ -236,7 +263,7 @@ Avoid spamming: track **last sent** arm state / slot and only send on change (sa
 
 ## 7. Testing checklist
 
-- Cold boot: **track 1 + loop 1** show **127** on ch3 **60** and **50**; others **0** or **32** per data.
+- Cold boot: **track 1 + loop 1** show **127** on ch15 **60** and **50**; others **0** or **32** per data.
 - Droid **ch16** presses: track change immediate; **loop switch-only** visible at **16th** boundary; loop **short/long/double/triple** match Button A (36) for that slot once multi-slot recording exists.
 - Start **arm/record/overdub**: note **70** On + CC slot; LED pulses at **8th** rate on Droid; stop → note **70** Off, static velocities resume.
 - No regression: bar (40–47), 16th content (0–15), tick cursor (16–31), [MidiHandler](../src/MidiHandler.cpp) record-exclude / `isControlChannel` behavior unchanged.
@@ -248,11 +275,11 @@ flowchart LR
   subgraph teensy [Teensy]
     MB[MidiButtonConfig ch16 50-67]
     TM[TrackManager quantize 16th]
-    ML[MidiLedManager ch3 50-67 vel]
+    ML[MidiLedManager ch15 50-67 vel]
     ARM[LFO arm ch16 note70 + CC]
   end
   subgraph droid [Droid midilooper_v1.ini]
-    IN[midiin ch3 LED levels]
+    IN[midiin ch15 LED levels]
     CP[copy to L2.5-L3.12]
     LFO[lfo + slot router]
   end

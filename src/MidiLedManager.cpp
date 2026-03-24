@@ -10,6 +10,9 @@ MidiLedManager::MidiLedManager(MidiHandler& midiHandler)
     for (int i = 0; i < NUM_BAR_LEDS; i++) {
         lastBarVelocity[i] = BAR_VEL_NEVER_SENT;
     }
+    for (int i = 0; i < NUM_TRACK_LEDS; i++) {
+        lastTrackSelectVelocity[i] = BAR_VEL_NEVER_SENT;
+    }
 }
 
 void MidiLedManager::updateLeds(Track& track, uint32_t currentTick) {
@@ -87,7 +90,36 @@ void MidiLedManager::clearAllLeds() {
         lastBarVelocity[i] = BAR_VEL_NEVER_SENT;
     }
     
+    // Turn off track (60-67) and loop (50-57) select LEDs
+    for (uint8_t i = 0; i < NUM_TRACK_LEDS; i++) {
+        midiHandler.sendNoteOff(LED_CHANNEL, MidiConfig::Led::TRACK_SELECT_LED_BASE + i, 0);
+        lastTrackSelectVelocity[i] = BAR_VEL_NEVER_SENT;
+    }
+    for (uint8_t i = 0; i < MidiConfig::Led::LOOP_SELECT_LED_COUNT; i++) {
+        midiHandler.sendNoteOff(LED_CHANNEL, MidiConfig::Led::LOOP_SELECT_LED_BASE + i, 0);
+    }
+    
     logger.log(CAT_MIDI_LED, LOG_INFO, "LED Manager: All LEDs and tick indicator cleared");
+}
+
+void MidiLedManager::updateTrackSelectLeds(uint8_t selectedTrackIndex, const bool trackHasData[Config::NUM_TRACKS]) {
+    static constexpr uint8_t VEL_SELECTED = 127;
+    static constexpr uint8_t VEL_HAS_DATA = 32;
+    
+    for (uint8_t i = 0; i < NUM_TRACK_LEDS && i < Config::NUM_TRACKS; i++) {
+        uint8_t velocity = (i == selectedTrackIndex) ? VEL_SELECTED
+                         : (trackHasData[i] ? VEL_HAS_DATA : 0);
+        uint8_t note = MidiConfig::Led::TRACK_SELECT_LED_BASE + i;
+        
+        if (lastTrackSelectVelocity[i] != velocity) {
+            if (velocity > 0) {
+                midiHandler.sendNoteOn(LED_CHANNEL, note, velocity);
+            } else {
+                midiHandler.sendNoteOff(LED_CHANNEL, note, 0);
+            }
+            lastTrackSelectVelocity[i] = velocity;
+        }
+    }
 }
 
 uint32_t MidiLedManager::getCurrentBar(uint32_t currentTick, uint32_t loopLength, uint32_t startLoopTick, uint32_t loopStartTick) {

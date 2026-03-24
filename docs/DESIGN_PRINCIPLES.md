@@ -19,19 +19,17 @@ Prefer inferring intent from **press type** (short / long / double) on context-r
 
 ---
 
-## 2. Track buttons: short=mute, long=select, double=solo
+## 2. Track buttons: short=select, double=mute, long=solo
 
-Per principle 1, the **track row** (ch16 notes 60–67) uses a **mute-primary** mapping:
+Per principle 1, the **track row** (ch16 notes 60–67) uses a **select-primary** mapping:
 
 | Gesture | Action |
 |---------|--------|
-| **Short** | Mute / unmute track |
-| **Long** | Select track |
-| **Double** | Solo / unsolo track |
+| **Short** | Select track |
+| **Double** | Mute / unmute track |
+| **Long** | Solo / unsolo track |
 
-**Rationale:** During performance, muting and unmuting tracks is the most frequent action on the track row. Making it the **short** (default) press reduces friction. Selecting a track for recording or editing is less frequent and fits **long** press. Solo remains **double** as a distinct, deliberate action.
-
-**Implementation:** See [multi-loop_leds_and_droid_lfo_3a62f325.plan.md](../plans/multi-loop_leds_and_droid_lfo_3a62f325.plan.md) §4.1. Current codebase may use the inverse (short=select, long=mute); D4 deliverable updates `MidiButtonConfig` to match this mapping.
+**Rationale:** Selecting a track is the primary action for switching context. Mute as short press was tried but felt irrational; double=mute and long=solo keep those as distinct, deliberate actions.
 
 ---
 
