@@ -145,7 +145,29 @@ The looper is configured for a DROID controller (M4 + 2× B32). MIDI channels an
 - **Edit Mode** (note 38): Cycle NOTE_EDIT ↔ LOOP_EDIT — double=delete note, long=exit edit
 - **NOTELEN** (note 3): Toggle position vs length editing
 
-**Notes:** REC/PLAY, MUTE/DE, Edit Mode, and NOTELEN are fully implemented. Track row is unmapped in the default ini; MUTE/DE single-press cycles through 4 tracks. For jam loop selection with 1BAR and 16th buttons, see [Jam Loops (Bar/16th Buttons)](#-jam-loops-bar16th-buttons) below.
+### Track row and loop slot buttons (Channel 16)
+
+Button **input** uses **Channel 16**; **LED feedback** for the same layout uses **Channel 15** (notes 50–57 and 60–67). Numbers match [`include/MidiConfig.h`](include/MidiConfig.h). Gestures are defined in [`src/Utils/MidiButtonConfig.cpp`](src/Utils/MidiButtonConfig.cpp) (`loadConfiguration`) and executed in [`src/MidiButtonActions.cpp`](src/MidiButtonActions.cpp). UX rationale is summarized in [`docs/DESIGN_PRINCIPLES.md`](docs/DESIGN_PRINCIPLES.md).
+
+**Track row (notes 60–67, one button per track):**
+
+| Gesture | Action |
+|--------|--------|
+| **Short** | Select that track (`SELECT_TRACK` with track index). |
+| **Double** | Toggle mute on that track (`MUTE_TRACK`). |
+| **Long** | Exclusive solo for that track (`SOLO_TRACK` → `handleSoloTrack` → `TrackManager::toggleSoloTrack`). Long-press the same track again to clear all solo. `isTrackAudible` combines per-track mute and solo mask. |
+
+**Loop slot row (notes 50–57, one button per loop slot on the selected track):**
+
+| Gesture | Action |
+|--------|--------|
+| **Short** | Slot-aware record / play / overdub / finalize — see [`handleToggleRecordForSlot`](src/MidiButtonActions.cpp): e.g. while **playing**, empty slot queues quantized record (loop phase from the previously active slot when its loop length is valid, else bar); second short while queued punches in immediately and requests loop-origin alignment on stop; non-empty slot starts or stops **overdub**. While **recording/overdubbing**, short on **another** slot finalizes capture and switches slot. While **stopped**, short on empty slot starts recording (immediate when quantization does not apply); short on non-empty toggles play/stop. |
+| **Long** | Select that slot, then clear **that** slot’s loop (`CLEAR_TRACK_FOR_SLOT` → active loop clear). |
+| **Double** | Undo for that slot (`UNDO_FOR_SLOT`). |
+| **Triple** | Redo for that slot (`REDO_FOR_SLOT`). |
+| **Hold** | Past **long-press time + 50 ms**, layering arms: optional queued record on an **empty** held slot while playing, using phase from the **base** slot; release clears layering and pending queue (`MidiButtonManager::updateLoopHoldLayering`). |
+
+**Notes:** REC/PLAY, MUTE/DE, Edit Mode, and NOTELEN are fully implemented. The **track row** and **loop row** behavior above is defined in firmware config; your DROID ini must send the same Channel 16 notes for those rows. MUTE/DE single-press still cycles tracks when you use that control. For jam loop selection with 1BAR and 16th buttons, see [Jam Loops (Bar/16th Buttons)](#-jam-loops-bar16th-buttons) below.
 
 ### LED Feedback (Channel 15)
 
@@ -305,6 +327,7 @@ Developing the SSD1322 circular DMA logic was a lot of fun using Cursor. It was 
 ## Technical Documentation ##
 Detailed technical documentation is available in the `docs/` directory:
 
+- **[Design principles](docs/DESIGN_PRINCIPLES.md)** — gesture-first UX, track row vs loop row behavior, minimal-button goals
 - **[Feature plans index](docs/FEATURE_PLANS.md)** — phased / summary docs in `docs/` (jam/bar-step, loop start, buttons, faders, optimization analysis, etc.)
 - **[Cursor design plans](plans/README.md)** — archived `*.plan.md` from `.cursor/plans/` (dual-tick / multi-loop jam architecture, bar-step, BPM, MIDI, …)
 - **[Loop Start Editing](docs/LOOP_START_EDITING.md)** - Comprehensive guide to the loop start point editing system

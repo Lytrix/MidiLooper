@@ -21,32 +21,43 @@ Prefer inferring intent from **press type** (short / long / double) on context-r
 
 ## 2. Track buttons: short=select, double=mute, long=solo
 
-Per principle 1, the **track row** (ch16 notes 60–67) uses a **select-primary** mapping:
+Per principle 1, the **track row** (Channel 16, notes 60–67 — see `MidiConfig::Led::TRACK_SELECT_LED_BASE` and `MidiButtonConfig::loadConfiguration`) uses a **select-primary** mapping:
 
 | Gesture | Action |
 |---------|--------|
-| **Short** | Select track |
-| **Double** | Mute / unmute track |
-| **Long** | Solo / unsolo track |
+| **Short** | Select that track |
+| **Double** | Mute / unmute that track |
+| **Long** | Solo / unsolo (exclusive solo on that track; long again on the same track clears solo) |
 
 **Rationale:** Selecting a track is the primary action for switching context. Mute as short press was tried but felt irrational; double=mute and long=solo keep those as distinct, deliberate actions.
+
+**Implementation:** `SOLO_TRACK` is handled in `MidiButtonActions::handleSoloTrack` → `TrackManager::toggleSoloTrack`. Playback audibility uses `TrackManager::isTrackAudible` (mute on the `Track` plus solo mask on `TrackManager`).
+
+**Not the same row:** The legacy **MUTE/DE** control (e.g. note 37 on Channel 16) still uses **short = next track**, **long = mute current track**, **double/triple = undo/redo clear** — see README and `MidiButtonConfig` for “Track Switch”.
 
 ---
 
 ## 2b. Loop slot buttons: staged record flow while playing
 
-Per-slot loop buttons (ch16 notes 50-57) use a slot-aware record flow.
+Per-slot loop buttons (Channel 16, notes 50–57 — `MidiConfig::Led::LOOP_SELECT_LED_BASE`) use the slot-aware flow in `MidiButtonActions::handleToggleRecordForSlot` and hold layering in `MidiButtonManager::updateLoopHoldLayering`.
 
-| Gesture | Empty slot while track is playing | Non-empty slot while track is playing |
-|---------|-----------------------------------|----------------------------------------|
-| **Short (first press)** | Queue record start on next wrap | Enter live overdub |
-| **Short (second press)** | Immediate punch-in (start recording now) | Stop overdub |
-| **Long** | Clear selected slot | Clear selected slot |
-| **Double / Triple** | Undo / Redo for selected slot | Undo / Redo for selected slot |
+| Gesture | Empty slot while track is **playing** | Non-empty slot while track is **playing** |
+|---------|----------------------------------------|-------------------------------------------|
+| **Short (first press)** | If the **internal clock is running** (`ClockManager::shouldQuantizeRecordStart()`): queue record start aligned to the **reference slot’s loop phase** when that slot has a valid loop length, otherwise on the **next bar**; if the clock is not running, start recording immediately | Start live overdub on this slot |
+| **Short (second press)** | If a record was **queued** for this slot: cancel the queue, **immediate punch-in** (start recording now), and set **pickup / loop-origin alignment on next stop** (`Track::setAlignLoopOriginOnNextStop`); does not apply when not queued | Stop overdub |
+| **Long** | Select this slot, then **clear this slot’s loop** (active loop only — same path as slot targeted clear) | Same |
+| **Double / Triple** | Undo / redo for this slot (active slot set to the button’s slot first) | Same |
+
+**While recording or overdubbing:** A **short press on a different slot** finalizes capture on the current slot, selects the pressed slot, and resumes playback if that slot has data (`TrackManager::finalizeCaptureAndSelectSlot`).
+
+**While not playing:** **Short** on an **empty** slot starts recording (immediate if not using the quantize path). **Short** on a **non-empty** slot toggles play/stop for the track.
+
+**Hold (layering):** If a loop button is held past the configured **long-press time + 50 ms**, layering arms (`beginSlotLayerHold` from `MidiButtonManager::updateLoopHoldLayering`). While **playing** and the **held slot is empty**, a record can be **queued** using loop phase from the **base slot** (the slot that was active when the hold began). **Release** clears layering and any queue for that slot (`endSlotLayerHold`). Long-press **clear** for the same button is a separate gesture handled by the button processor on top of this timing.
 
 Notes:
-- Playback remains single-active-slot by default.
-- "Armed" intent for empty slots during playback is represented by queued record start (because track state is currently global per track).
+- One **active** loop slot drives primary playback; held layering can **additionally** play another slot’s events while the hold is active (`heldLayerSlot` in `TrackManager`).
+- Queued record while playing + overdub is reflected as **armed** in UI state (`getTrackState` / `TRACK_ARMED` when pending and playing or overdubbing).
+- Reference slot for phase is the **previously active** loop index before the press (or the base slot during a layer hold), and only applies when that slot’s `loopLengthTicks > 0` (`refSlotPhaseForQueue` in `MidiButtonActions.cpp`).
 
 ---
 

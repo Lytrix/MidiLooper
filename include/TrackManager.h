@@ -73,8 +73,11 @@ public:
   void toggleMuteTrack(uint8_t trackIndex);
   void soloTrack(uint8_t trackIndex);
   void unsoloTrack(uint8_t trackIndex);
+  /// Exclusive solo: if `trackIndex` is already soloed, clears all solo; otherwise clears all and solos only this track.
+  void toggleSoloTrack(uint8_t trackIndex);
   bool isTrackAudible(uint8_t trackIndex) const;
   bool anyTrackSoloed() const;
+  bool isTrackSoloed(uint8_t trackIndex) const;
 
   // --- Loop Length / Sync ---
   void enableAutoAlign(bool enabled);

@@ -108,6 +108,9 @@ void MidiButtonActions::executeAction(MidiButtonConfig::ActionType actionType, u
         case MidiButtonConfig::ActionType::MUTE_TRACK:
             handleMuteTrack(static_cast<uint8_t>(parameter));
             break;
+        case MidiButtonConfig::ActionType::SOLO_TRACK:
+            handleSoloTrack(static_cast<uint8_t>(parameter));
+            break;
         case MidiButtonConfig::ActionType::TOGGLE_TRANSPORT:
             handleToggleTransport();
             break;
@@ -324,6 +327,16 @@ void MidiButtonActions::handleClearTrack() {
         StorageManager::saveState(looperState.getLooperState());
         logger.info("MIDI: Clear Track");
     }
+}
+
+void MidiButtonActions::handleSoloTrack(uint8_t trackNumber) {
+    if (!isValidTrackNumber(trackNumber)) {
+        logger.warning("Solo: invalid track %u", static_cast<unsigned>(trackNumber));
+        return;
+    }
+    trackManager.toggleSoloTrack(trackNumber);
+    logger.info("Track %u: solo toggled (exclusive)", static_cast<unsigned>(trackNumber) + 1u);
+    trackManager.forceLedUpdate(getCurrentTick());
 }
 
 void MidiButtonActions::handleMuteTrack(uint8_t trackNumber) {
