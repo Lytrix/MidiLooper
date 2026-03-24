@@ -307,12 +307,27 @@ bool StorageManager::loadState(LooperState& state) {
     for (uint8_t t = 0; t < numTracks; ++t) {
         Track &track = trackManager.getTrack(t);
         track.setActiveLoopIndex(0);  // v2/v3: single slot, load into slot 0
-        track.forceSetState(tracksData[t].state);
+        TrackState loadedState = tracksData[t].state;
+        // Never resume volatile capture states after reboot.
+        if (loadedState == TRACK_RECORDING || loadedState == TRACK_ARMED || loadedState == TRACK_STOPPED_RECORDING) {
+            loadedState = tracksData[t].midiEvents.empty() ? TRACK_EMPTY : TRACK_STOPPED;
+        }
+        track.forceSetState(loadedState);
         if (tracksData[t].muted != track.isMuted()) track.toggleMuteTrack();
-        track.setLoopLength(tracksData[t].loopLengthTicks);
+        uint32_t loopLength = tracksData[t].loopLengthTicks;
+        // Recover invalid wrapped lengths caused by previous underflowed recording stop.
+        if (loopLength >= 0x80000000u) {
+            loopLength = 0;
+        }
+        track.setLoopLength(loopLength);
         Loop& loop = track.getLoop(0);
-        loop.startLoopTick = tracksData[t].startLoopTick;
+        // Always restart loop timeline from zero after load to avoid negative-wrap playback math.
+        loop.startLoopTick = 0;
         loop.midiEvents = tracksData[t].midiEvents;
+        if (loop.loopLengthTicks == 0 && !loop.midiEvents.empty()) {
+            uint32_t lastTick = track.findLastEventTick();
+            loop.loopLengthTicks = track.computeLoopLengthTicks(lastTick);
+        }
         auto &midiHistory = TrackUndo::getMidiHistory(track);
         midiHistory.clear();
         for (const auto& snapshot : tracksData[t].midiHistory) {

@@ -3,6 +3,8 @@
 
 #include "MidiButtonManager.h"
 #include "Logger.h"
+#include "Utils/PressTiming.h"
+#include "MidiConfig.h"
 #include <functional>
 
 MidiButtonManager midiButtonManager;
@@ -29,6 +31,7 @@ void MidiButtonManager::setup() {
 void MidiButtonManager::update() {
     // Update the processor to handle pending button presses
     processor.update();
+    updateLoopHoldLayering();
 }
 
 void MidiButtonManager::handleMidiNote(uint8_t channel, uint8_t note, uint8_t velocity, bool isNoteOn) {
@@ -55,7 +58,7 @@ void MidiButtonManager::onButtonPress(uint8_t note, uint8_t channel, MidiButtonC
                 pressType == MidiButtonConfig::PressType::SHORT_PRESS ? "short" :
                 pressType == MidiButtonConfig::PressType::LONG_PRESS ? "long" :
                 pressType == MidiButtonConfig::PressType::DOUBLE_PRESS ? "double" : "triple");
-    
+
     // Execute the action
     // Determine which action to execute based on press type
     MidiButtonConfig::ActionType action = MidiButtonConfig::ActionType::NONE;
@@ -152,4 +155,42 @@ bool MidiButtonManager::isValidChannel(uint8_t channel) const {
 
 bool MidiButtonManager::isValidNote(uint8_t note) const {
     return note <= 127;
+}
+
+void MidiButtonManager::updateLoopHoldLayering() {
+    constexpr uint8_t ch = MidiButtonConfig::Channels::TRACK_SELECT;
+    constexpr uint8_t baseNote = MidiConfig::Led::LOOP_SELECT_LED_BASE;
+    uint32_t defaultLongPressMs = PressTiming::LONG_PRESS_TIME;
+    uint32_t doubleTap = 0, tripleTap = 0;
+    MidiButtonConfig::Config::getTimingConfig(doubleTap, tripleTap, defaultLongPressMs);
+
+    const uint32_t now = millis();
+    for (uint8_t slot = 0; slot < Config::MAX_LOOPS_PER_TRACK; ++slot) {
+        const uint8_t note = baseNote + slot;
+        const auto* cfg = MidiButtonConfig::Config::findButtonConfig(note, ch - 1);
+        uint32_t longPressMs = defaultLongPressMs;
+        if (cfg && cfg->longPressTime > 0) {
+            longPressMs = cfg->longPressTime;
+        }
+        // Arm multi-slot layering only after long-press threshold so the same hold can still be a long-press clear on release.
+        const uint32_t layerArmAfterMs = longPressMs + 50;
+
+        bool pressed = processor.isButtonPressed(note, ch);
+        if (pressed) {
+            uint32_t start = processor.getButtonPressStartTime(note, ch);
+            uint32_t heldMs;
+            if (now >= start) {
+                heldMs = now - start;
+            } else {
+                heldMs = (0xFFFFFFFFu - start + 1u) + now;
+            }
+            if (heldMs >= layerArmAfterMs && !loopButtonHeld[slot]) {
+                loopButtonHeld[slot] = true;
+                actions.beginSlotLayerHold(slot);
+            }
+        } else if (loopButtonHeld[slot]) {
+            loopButtonHeld[slot] = false;
+            actions.endSlotLayerHold(slot);
+        }
+    }
 }

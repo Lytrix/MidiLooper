@@ -6,6 +6,7 @@
 
 #include <Arduino.h>
 #include <cstdint>
+#include "Globals.h"
 #include "MidiButtonProcessor.h"
 #include "MidiButtonActions.h"
 #include "Utils/MidiButtonConfig.h"
@@ -44,6 +45,7 @@ public:
 private:
     MidiButtonProcessor processor;
     MidiButtonActions actions;
+    bool loopButtonHeld[Config::MAX_LOOPS_PER_TRACK] = {false};
     
     // Button press callback - called by processor when a button press is detected
     void onButtonPress(uint8_t note, uint8_t channel, MidiButtonConfig::PressType pressType);
@@ -51,6 +53,7 @@ private:
     // Validation
     bool isValidChannel(uint8_t channel) const;
     bool isValidNote(uint8_t note) const;
+    void updateLoopHoldLayering();
 };
 
 extern MidiButtonManager midiButtonManager;

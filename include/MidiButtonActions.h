@@ -58,6 +58,8 @@ public:
     void handleExitEditMode();
     void handleDeleteNote();
     void handleToggleLengthEditMode();
+    void beginSlotLayerHold(uint8_t slotIndex);
+    void endSlotLayerHold(uint8_t slotIndex);
     
     // Transport control
     void handleToggleTransport();

@@ -14,7 +14,7 @@ This file indexes **design, phase, and implementation summaries** in `docs/` nex
 
 | Document | Summary |
 |----------|---------|
-| [DESIGN_PRINCIPLES.md](DESIGN_PRINCIPLES.md) | Gesture-first; track buttons; minimal-button mode; MIDI-controllable; loop editing first-class (live edit any time, record any time) |
+| [DESIGN_PRINCIPLES.md](DESIGN_PRINCIPLES.md) | Gesture-first; track buttons; loop slot staged-record behavior (next-wrap queue + second-press punch-in); minimal-button mode; MIDI-controllable; loop editing first-class |
 | [MIDI_CONFIG_GUIDE.md](MIDI_CONFIG_GUIDE.md) | How to remap channels, notes, CCs for custom controllers; config locations; quick reference |
 | [jam-bar-step-phases.md](jam-bar-step-phases.md) | Jam state, bar select, HOLD_TWO, `jamTick` — phases and post-fixes |
 | [LOOP_START_IMPLEMENTATION_SUMMARY.md](LOOP_START_IMPLEMENTATION_SUMMARY.md) | Loop start editing — implementation phases and issues resolved |

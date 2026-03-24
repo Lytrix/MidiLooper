@@ -368,23 +368,38 @@ void Track::stopRecording(uint32_t currentTick) {
   finalizePendingNotes(currentTick);
   validateAndCleanupMidiEvents();
 
-  uint32_t rawLength = currentTick - loop.startLoopTick;
+  uint32_t rawLength = 0;
+  if (currentTick >= loop.startLoopTick) {
+    rawLength = currentTick - loop.startLoopTick;
+  } else {
+    logger.warning("stopRecording guard: currentTick(%lu) < startLoopTick(%lu), clamping length", currentTick, loop.startLoopTick);
+  }
   uint32_t rem       = rawLength % TICKS_PER_BAR;
   uint32_t grace     = TICKS_PER_BAR / 2;
 
-  if (rem <= grace) {
+  if (rawLength == 0) {
+      loop.loopLengthTicks = TICKS_PER_BAR;
+  } else if (rem <= grace) {
       loop.loopLengthTicks = (rawLength / TICKS_PER_BAR) * TICKS_PER_BAR;
+      if (loop.loopLengthTicks == 0) {
+        loop.loopLengthTicks = TICKS_PER_BAR;
+      }
   } else {
       loop.loopLengthTicks = ((rawLength / TICKS_PER_BAR) + 1) * TICKS_PER_BAR;
   }
 
   loop.nextEventIndex = 0;
   loop.lastTickInLoop = 0;
+  uint32_t recordStartTick = loop.startLoopTick;
+  uint32_t finalLength = loop.loopLengthTicks;
   loop.startLoopTick = 0;
 
   invalidateCaches();
-  logger.logTrackEvent("Recording stopped", currentTick, "start=%lu length=%lu", loop.startLoopTick, loop.loopLengthTicks);
-  logger.debug("Final ticks: currentTick=%lu startLoopTick=%lu rawLength=%lu", currentTick, loop.startLoopTick, rawLength);
+  logger.logTrackEvent("Recording stopped", currentTick, "recStart=%lu length=%lu",
+                       static_cast<unsigned long>(recordStartTick), static_cast<unsigned long>(finalLength));
+  logger.debug("Final ticks: currentTick=%lu recStart=%lu rawLength=%lu length=%lu", currentTick,
+               static_cast<unsigned long>(recordStartTick), static_cast<unsigned long>(rawLength),
+               static_cast<unsigned long>(finalLength));
 
   startOverdubbing(currentTick);
 }
@@ -396,12 +411,22 @@ void Track::stopRecordingToStopped(uint32_t currentTick) {
   finalizePendingNotes(currentTick);
   validateAndCleanupMidiEvents();
 
-  uint32_t rawLength = currentTick - loop.startLoopTick;
+  uint32_t rawLength = 0;
+  if (currentTick >= loop.startLoopTick) {
+    rawLength = currentTick - loop.startLoopTick;
+  } else {
+    logger.warning("stopRecordingToStopped guard: currentTick(%lu) < startLoopTick(%lu), clamping length", currentTick, loop.startLoopTick);
+  }
   uint32_t rem       = rawLength % TICKS_PER_BAR;
   uint32_t grace     = TICKS_PER_BAR / 2;
 
-  if (rem <= grace) {
+  if (rawLength == 0) {
+      loop.loopLengthTicks = TICKS_PER_BAR;
+  } else if (rem <= grace) {
       loop.loopLengthTicks = (rawLength / TICKS_PER_BAR) * TICKS_PER_BAR;
+      if (loop.loopLengthTicks == 0) {
+        loop.loopLengthTicks = TICKS_PER_BAR;
+      }
   } else {
       loop.loopLengthTicks = ((rawLength / TICKS_PER_BAR) + 1) * TICKS_PER_BAR;
   }
@@ -411,7 +436,8 @@ void Track::stopRecordingToStopped(uint32_t currentTick) {
   loop.startLoopTick = 0;
   invalidateCaches();
 
-  logger.logTrackEvent("Recording stopped (to STOPPED)", currentTick, "length=%lu", loop.loopLengthTicks);
+  logger.logTrackEvent("Recording stopped (to STOPPED)", currentTick, "length=%lu",
+                       static_cast<unsigned long>(loop.loopLengthTicks));
 
   TrackUndo::pushUndoSnapshot(*this);
   setState(TRACK_STOPPED);
@@ -518,7 +544,7 @@ void Track::clear() {
     loop.loopLengthTicks = 0;
     loop.loopStartTick = 0;
 
-    loop.clearAllUndoStacks();
+    loop.clearOverdubAndLoopEditUndoStacks();
 
     setState(TRACK_EMPTY);
     invalidateCaches();
@@ -680,6 +706,52 @@ void Track::playMidiEvents(uint32_t currentTick, bool isAudible) {
       break;
     }
     else {
+      loop.nextEventIndex++;
+    }
+  }
+}
+
+void Track::playMidiEventsForSlot(uint8_t slotIndex, uint32_t currentTick, bool isAudible) {
+  if (slotIndex >= Config::MAX_LOOPS_PER_TRACK) return;
+  if (!isAudible || muted) return;
+
+  Loop& loop = getLoop(slotIndex);
+  if (loop.midiEvents.empty() || loop.loopLengthTicks == 0) return;
+
+  if (loop.playbackOrderDirty) {
+    std::vector<size_t>& playbackOrder = loop.getPlaybackOrder();
+    playbackOrder.resize(loop.midiEvents.size());
+    for (size_t i = 0; i < loop.midiEvents.size(); i++) {
+      playbackOrder[i] = i;
+    }
+    uint32_t ll = loop.loopLengthTicks;
+    std::sort(playbackOrder.begin(), playbackOrder.end(),
+      [&](size_t a, size_t b) {
+        return (loop.midiEvents[a].tick % ll) < (loop.midiEvents[b].tick % ll);
+      });
+    loop.playbackOrderDirty = false;
+  }
+
+  uint32_t tickInLoop = (currentTick - loop.startLoopTick) % loop.loopLengthTicks;
+  if (tickInLoop < loop.lastTickInLoop) {
+    loop.nextEventIndex = 0;
+  }
+
+  uint32_t prevTickInLoop = loop.lastTickInLoop;
+  loop.lastTickInLoop = tickInLoop;
+  bool atLoopStart = (prevTickInLoop == UINT32_MAX) || (tickInLoop <= prevTickInLoop);
+  const std::vector<size_t>& playbackOrder = loop.getPlaybackOrder();
+
+  while (loop.nextEventIndex < playbackOrder.size()) {
+    const MidiEvent &evt = loop.midiEvents[playbackOrder[loop.nextEventIndex]];
+    uint32_t evTick = evt.tick % loop.loopLengthTicks;
+    bool crossed = atLoopStart ? (evTick <= tickInLoop) : (prevTickInLoop < evTick && evTick <= tickInLoop);
+    if (crossed) {
+      sendMidiEvent(evt);
+      loop.nextEventIndex++;
+    } else if (evTick > tickInLoop) {
+      break;
+    } else {
       loop.nextEventIndex++;
     }
   }

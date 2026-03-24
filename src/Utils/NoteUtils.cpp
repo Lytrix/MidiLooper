@@ -39,6 +39,10 @@ std::vector<NoteUtils::DisplayNote> NoteUtils::reconstructNotes(const std::vecto
     std::vector<DisplayNote> notes;
     std::map<uint8_t, std::vector<DisplayNote>> activeNoteStacks;
 
+    if (loopLength == 0) {
+        return notes;
+    }
+
     logger.log(CAT_TRACK, LOG_DEBUG, "Reconstructing notes with loop length: %lu ticks", loopLength);
 
     // Process ALL MIDI events to handle notes that extend beyond current loop

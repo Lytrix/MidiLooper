@@ -238,7 +238,9 @@ void MidiHandler::handleNoteOn(byte channel, byte note, byte velocity, uint32_t 
     barStepButtonHandler.handleMidiNote(channel, note, velocity, true);
     return;
   }
-  midiButtonManager.handleMidiNote(channel, note, velocity, true);
+  if (channel == MidiConfig::Channels::TRACK_SELECT) {
+    midiButtonManager.handleMidiNote(channel, note, velocity, true);
+  }
   if (!isControlChannel(channel)) {
   trackManager.getSelectedTrack().noteOn(channel, note, velocity, tickNow);
   }
@@ -249,7 +251,9 @@ void MidiHandler::handleNoteOff(byte channel, byte note, byte velocity, uint32_t
     barStepButtonHandler.handleMidiNote(channel, note, velocity, false);
     return;
   }
-  midiButtonManager.handleMidiNote(channel, note, velocity, false);
+  if (channel == MidiConfig::Channels::TRACK_SELECT) {
+    midiButtonManager.handleMidiNote(channel, note, velocity, false);
+  }
   if (!isControlChannel(channel)) {
   trackManager.getSelectedTrack().noteOff(channel, note, velocity, tickNow);
   }
@@ -445,19 +449,12 @@ void MidiHandler::setOutputSerial(bool enable) {
 // --- Static USB Host MIDI Callbacks ---
 void MidiHandler::usbHostNoteOn(uint8_t channel, uint8_t note, uint8_t velocity) {
   if (instance) {
-    // Bar/step buttons: only handleMidiMessage (which routes to BarStepButtonHandler)
-    if (!barStepButtonHandler.isBarStepButtonNote(channel, note)) {
-      midiButtonManager.handleMidiNote(channel, note, velocity, true);
-    }
     instance->handleMidiMessage(midi::NoteOn, channel, note, velocity, SOURCE_USB_HOST);
   }
 }
 
 void MidiHandler::usbHostNoteOff(uint8_t channel, uint8_t note, uint8_t velocity) {
   if (instance) {
-    if (!barStepButtonHandler.isBarStepButtonNote(channel, note)) {
-      midiButtonManager.handleMidiNote(channel, note, velocity, false);
-    }
     instance->handleMidiMessage(midi::NoteOff, channel, note, velocity, SOURCE_USB_HOST);
   }
 }
