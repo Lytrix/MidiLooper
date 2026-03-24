@@ -172,7 +172,7 @@ On first double-press in Loop Edit: save current loop start/length, set loop to 
 
 - **Log category**: `CAT_BAR_STEP_BUTTON` (default off). Enable in `main.cpp`: `logger.setCategoryEnabled(CAT_BAR_STEP_BUTTON, true)`.
 - **Test logging**: `barStepButtonHandler.setTestLoggingEnabled(true)` – logs `[TEST POINT: ...]` at key events.
-- **Test guide**: [docs/MANUAL_TEST_BAR_STEP_BUTTONS.md](docs/MANUAL_TEST_BAR_STEP_BUTTONS.md) – step-by-step procedures for routing, short press, hold, two-button hold, triple press.
+- **Test guide**: [docs/Guides/MANUAL_TEST_BAR_STEP_BUTTONS.md](docs/Guides/MANUAL_TEST_BAR_STEP_BUTTONS.md) – step-by-step procedures for routing, short press, hold, two-button hold, triple press.
 
 ## 10. Implementation Order
 

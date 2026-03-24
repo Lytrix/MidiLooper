@@ -29,7 +29,7 @@ This plan merges [phase-3-multi-loop.md](phase-3-multi-loop.md) with Droid LED/L
 | **D1** | **Constants** — `MAX_LOOPS_PER_TRACK`, MidiConfig Led 50–57/60–67, LFO note 70 (+ CC) | — | Config/header only. |
 | **D2** | **activeLoopIndex** — Add to Track/TrackManager; slot 0 = current data; slots 1–7 unused. | D1 | No `Loop` struct yet; phase-3 3a subset. |
 | **D3** | **Storage v3** — Bump version; persist `activeLoopIndex[NUM_TRACKS]`; migrate v2 → 0. | D2 | §1b. |
-| **D4** | **Track buttons ch16** — Register 60–67: short=MUTE, long=SELECT, double=SOLO. | — | §4.1; [DESIGN_PRINCIPLES](../docs/DESIGN_PRINCIPLES.md). |
+| **D4** | **Track buttons ch16** — Register 60–67: short=MUTE, long=SELECT, double=SOLO. | — | §4.1; [DESIGN_PRINCIPLES](../docs/Guides/DESIGN_PRINCIPLES.md). |
 | **D5** | **Loop select ch16 (switch-only)** — Register 50–57; short = `pendingActiveLoopIndex`; 16th commit in updateAllTracks. | D2 | Switch between filled slots only; no record/overdub yet. §4.2 subset. |
 | **D6** | **Droid ini: ch15 track/loop LEDs** — midiin + copy for notes 50–67 → L2.5–L3.12. | — | §3; requires D7 to send. |
 | **D7** | **MidiLedManager: track/loop velocities** — `updateTrackAndLoopSelectLeds`, clearAllLeds 50–67, MidiHandler logging. | D2 | §5. |
@@ -81,7 +81,7 @@ From [phase-3-multi-loop.md](phase-3-multi-loop.md) §9 and gaps:
 | Velocity **127**   | Selected track / selected loop                                                               |
 | Velocity **32**    | Not selected, slot has content                                                               |
 | Velocity **0**     | Empty slot                                                                                   |
-| **ch16 60–67**     | **Track row:** short=select, double=mute, long=solo. Per [docs/DESIGN_PRINCIPLES.md](../docs/DESIGN_PRINCIPLES.md). |
+| **ch16 60–67**     | **Track row:** short=select, double=mute, long=solo. Per [docs/Guides/DESIGN_PRINCIPLES.md](../docs/Guides/DESIGN_PRINCIPLES.md). |
 | **ch16 50–57**     | **Per-slot copy of Button A** (see §4); **switch-only** changes commit on **next 16th boundary** |
 | **ch16 note 70**   | **NoteOn** starts Droid LFO pulse; **NoteOff** stops it when leaving armed/recording/overdub |
 

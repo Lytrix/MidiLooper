@@ -129,7 +129,7 @@ For two buttons, we need both to be held long enough. Use: apply when `(now - mi
 
 ### 6. Update manual test doc
 
-Update [docs/MANUAL_TEST_BAR_STEP_BUTTONS.md](docs/MANUAL_TEST_BAR_STEP_BUTTONS.md):
+Update [docs/Guides/MANUAL_TEST_BAR_STEP_BUTTONS.md](docs/Guides/MANUAL_TEST_BAR_STEP_BUTTONS.md):
 
 - Test 3: Expect loop to **revert** on release, not stay.
 - Test 4: Same for two-button hold.
@@ -150,5 +150,5 @@ Update [docs/MANUAL_TEST_BAR_STEP_BUTTONS.md](docs/MANUAL_TEST_BAR_STEP_BUTTONS.
 
 - [include/BarStepButtonHandler.h](include/BarStepButtonHandler.h): Add hold-preview state fields.
 - [src/BarStepButtonHandler.cpp](src/BarStepButtonHandler.cpp): Apply preview in `update()`, revert in `handleNoteOff()`, skip HOLD dispatch in Loop Edit when using preview.
-- [docs/MANUAL_TEST_BAR_STEP_BUTTONS.md](docs/MANUAL_TEST_BAR_STEP_BUTTONS.md): Update expected behavior for hold tests.
+- [docs/Guides/MANUAL_TEST_BAR_STEP_BUTTONS.md](docs/Guides/MANUAL_TEST_BAR_STEP_BUTTONS.md): Update expected behavior for hold tests.
 
