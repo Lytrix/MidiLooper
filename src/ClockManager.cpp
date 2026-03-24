@@ -9,6 +9,7 @@
 #include <IntervalTimer.h>
 #include "TrackManager.h"
 #include "Logger.h"
+#include "MidiHandler.h"
 
 ClockManager clockManager;  // Global instance initiated
 IntervalTimer clockTimer;
@@ -102,6 +103,10 @@ void ClockManager::updateInternalClock() {
   // When slaved to external MIDI clock, tick is driven only by onMidiClockPulse
   if (clockSource == CLOCK_EXTERNAL) return;
   currentTick++;
+  // Output MIDI clock when we are master (every 8 internal ticks = 24 PPQN)
+  if (currentTick % Config::TICKS_PER_CLOCK == 0) {
+    midiHandler.sendClock();
+  }
   trackManager.advanceJamTicks(1);
   trackManager.updateAllTracks(currentTick);
   lastInternalTickTime = micros();
@@ -224,6 +229,9 @@ void ClockManager::setCurrentTick(uint32_t tick) {
 void ClockManager::toggleTransport() {
   if (sequencerRunning) {
     sequencerRunning = false;
+    if (clockSource == CLOCK_INTERNAL) {
+      midiHandler.sendStop();
+    }
     // Stop all active tracks (stopPlaying already sends All Notes Off per track)
     for (uint8_t i = 0; i < Config::NUM_TRACKS; i++) {
       Track& t = trackManager.getTrack(i);
@@ -235,6 +243,11 @@ void ClockManager::toggleTransport() {
     logger.info("Transport stopped");
   } else {
     sequencerRunning = true;
+    if (clockSource == CLOCK_INTERNAL) {
+      currentTick = 0;  // Align with Start - slave will begin at downbeat
+      midiHandler.sendStart();
+      midiHandler.sendClock();  // First clock after Start is the downbeat (per MIDI spec)
+    }
     // Resume playback for all tracks that have data
     for (uint8_t i = 0; i < Config::NUM_TRACKS; i++) {
       Track& t = trackManager.getTrack(i);

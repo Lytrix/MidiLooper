@@ -2,6 +2,7 @@
 //  Licensed under the PolyForm Noncommercial 1.0.0
 
 #include "Track.h"
+#include <new>
 #include "Logger.h"
 #include "MidiHandler.h"
 #include "ClockManager.h"
@@ -19,29 +20,51 @@
 // Track class implementation
 // -------------------------
 Track::Track() :
+  isPlayingBack(false),
   muted(false),
   midiChannel(1),
+  activeLoopIndex(0),
   trackState(TRACK_EMPTY),
-  startLoopTick(0),
-  loopLengthTicks(0),
-  loopStartTick(0),
   jamStartTick(UINT32_MAX),
   jamLength(0),
   jamTick(0),
   jamPlaybackActive(false),
-  lastTickInLoop(0),
-  nextEventIndex(0),
-  isPlayingBack(false),
-  eventIndexValid(false) {
+  loops(nullptr) {
+}
+
+Track::~Track() {
+  delete[] loops;
+  loops = nullptr;
+}
+
+void Track::ensureLoopsAllocated() {
+  if (loops) return;
+  loops = new (std::nothrow) Loop[Config::MAX_LOOPS_PER_TRACK];
+  if (!loops) {
+    while (1) { delay(1); }  // Out of heap - should not happen
+  }
+}
+
+Loop& Track::getLoop(uint8_t index) {
+  const_cast<Track*>(this)->ensureLoopsAllocated();
+  return loops[index < Config::MAX_LOOPS_PER_TRACK ? index : 0];
+}
+
+const Loop& Track::getLoop(uint8_t index) const {
+  const_cast<Track*>(this)->ensureLoopsAllocated();
+  return loops[index < Config::MAX_LOOPS_PER_TRACK ? index : 0];
+}
+
+bool Track::hasDataInSlot(uint8_t slotIndex) const {
+  if (slotIndex >= Config::MAX_LOOPS_PER_TRACK) return false;
+  const_cast<Track*>(this)->ensureLoopsAllocated();
+  return loops[slotIndex].hasData();
 }
 
 // -------------------------
 // Getters
 // -------------------------
 
-uint32_t Track::getStartLoopTick() const {
-  return startLoopTick;
-}
 
 uint8_t Track::getMidiChannel() const {
   return midiChannel;
@@ -49,6 +72,16 @@ uint8_t Track::getMidiChannel() const {
 
 void Track::setMidiChannel(uint8_t ch) {
   midiChannel = (ch >= 1 && ch <= 16) ? ch : 1;
+}
+
+uint8_t Track::getActiveLoopIndex() const {
+  return activeLoopIndex;
+}
+
+void Track::setActiveLoopIndex(uint8_t index) {
+  if (index < Config::MAX_LOOPS_PER_TRACK) {
+    activeLoopIndex = index;
+  }
 }
 
 // -------------------------
@@ -97,24 +130,23 @@ void Track::forceSetState(TrackState newState) { trackState = newState; }
 // -------------------------
 
 void Track::startRecording(uint32_t currentTick) {
+  Loop& loop = getActiveLoop();
   if (isEmpty()) {
     TrackUndo::pushUndoSnapshot(*this);
   }
   if (!setState(TRACK_RECORDING)) {
     return;
   }
-  // Clear out any old data
-  midiEvents.clear();
+  // Clear out any old data in active slot
+  loop.midiEvents.clear();
   pendingNotes.clear();       // any hanging NoteOns
-  nextEventIndex = 0;         // so playback will start from the top
-  lastTickInLoop = 0;
+  loop.nextEventIndex = 0;    // so playback will start from the top
+  loop.lastTickInLoop = 0;
 
   // Stamp the new start tick quantized to a beat.
-  startLoopTick = currentTick;
+  loop.startLoopTick = currentTick;
   
-  // OPTIMIZATION: Invalidate caches when MIDI events change
   invalidateCaches();
-  
   logger.logTrackEvent("Recording started", currentTick);
 }
 
@@ -129,19 +161,19 @@ uint32_t Track::quantizeStart(uint32_t original) const {
 }
 
 void Track::shiftMidiEvents(int32_t offset) {
-    for (auto &evt : midiEvents) {
+    Loop& loop = getActiveLoop();
+    for (auto &evt : loop.midiEvents) {
         evt.tick += offset;
     }
-    std::sort(midiEvents.begin(), midiEvents.end(),
+    std::sort(loop.midiEvents.begin(), loop.midiEvents.end(),
               [](auto &a, auto &b){ return a.tick < b.tick; });
-    
-    // OPTIMIZATION: Invalidate caches when MIDI events change
     invalidateCaches();
 }
 
 uint32_t Track::findLastEventTick() const {
+    const Loop& loop = getActiveLoop();
     uint32_t last = 0;
-    for (auto &evt : midiEvents) {
+    for (auto &evt : loop.midiEvents) {
         last = std::max(last, evt.tick);
     }
     return last;
@@ -165,8 +197,9 @@ uint32_t Track::computeLoopLengthTicks(uint32_t lastTick) const {
 }
 
 void Track::resetPlaybackState(uint32_t currentTick) {
-    nextEventIndex = 0;
-    lastTickInLoop = (currentTick - startLoopTick) % loopLengthTicks;
+    Loop& loop = getActiveLoop();
+    loop.nextEventIndex = 0;
+    loop.lastTickInLoop = (currentTick - loop.startLoopTick) % loop.loopLengthTicks;
 }
 
 void Track::finalizePendingNotes(uint32_t offAbsTick) {
@@ -200,22 +233,23 @@ void Track::finalizePendingNotes(uint32_t offAbsTick) {
 }
 
 void Track::validateAndCleanupMidiEvents() {
-    if (midiEvents.empty()) return;
+    Loop& loop = getActiveLoop();
+    if (loop.midiEvents.empty()) return;
     
     // Map to track active notes: key = (note, channel), value = note-on event index
     std::unordered_map<std::pair<uint8_t, uint8_t>, size_t, PairHash> activeNotes;
-    std::vector<bool> eventsToKeep(midiEvents.size(), true);
+    std::vector<bool> eventsToKeep(loop.midiEvents.size(), true);
     int orphanedCount = 0;
     
     // Sort events by tick to ensure proper order
-    std::sort(midiEvents.begin(), midiEvents.end(),
+    std::sort(loop.midiEvents.begin(), loop.midiEvents.end(),
               [](const MidiEvent& a, const MidiEvent& b) {
                   return a.tick < b.tick;
               });
     
     // First pass: match note-on/note-off pairs
-    for (size_t i = 0; i < midiEvents.size(); i++) {
-        const MidiEvent& evt = midiEvents[i];
+    for (size_t i = 0; i < loop.midiEvents.size(); i++) {
+        const MidiEvent& evt = loop.midiEvents[i];
         
         if (evt.isNoteOn()) {
             std::pair<uint8_t, uint8_t> key = {evt.data.noteData.note, evt.channel};
@@ -228,7 +262,7 @@ void Track::validateAndCleanupMidiEvents() {
                 orphanedCount++;
                 logger.log(CAT_MIDI, LOG_WARNING, 
                           "Removed orphaned note-on: note %d, channel %d, tick %lu",
-                          evt.data.noteData.note, evt.channel, midiEvents[prevIndex].tick);
+                          evt.data.noteData.note, evt.channel, loop.midiEvents[prevIndex].tick);
             }
             
             // Track this note-on
@@ -259,18 +293,18 @@ void Track::validateAndCleanupMidiEvents() {
         orphanedCount++;
         logger.log(CAT_MIDI, LOG_WARNING, 
                   "Removed orphaned note-on: note %d, channel %d, tick %lu",
-                  midiEvents[index].data.noteData.note, midiEvents[index].channel, midiEvents[index].tick);
+                  loop.midiEvents[index].data.noteData.note, loop.midiEvents[index].channel, loop.midiEvents[index].tick);
     }
     
     // Second pass: handle loop wrapping for remaining unmatched notes
-    if (loopLengthTicks > 0) {
+    if (loop.loopLengthTicks > 0) {
         activeNotes.clear();
         
         // Look for note-on near end that might have note-off near beginning
-        for (size_t i = 0; i < midiEvents.size(); i++) {
+        for (size_t i = 0; i < loop.midiEvents.size(); i++) {
             if (!eventsToKeep[i]) continue;
             
-            const MidiEvent& evt = midiEvents[i];
+            const MidiEvent& evt = loop.midiEvents[i];
             
             if (evt.isNoteOn()) {
                 std::pair<uint8_t, uint8_t> key = {evt.data.noteData.note, evt.channel};
@@ -283,11 +317,11 @@ void Track::validateAndCleanupMidiEvents() {
                 if (it != activeNotes.end()) {
                     // Check if this could be a wrapped note
                     size_t noteOnIndex = it->second;
-                    uint32_t noteOnTick = midiEvents[noteOnIndex].tick;
+                    uint32_t noteOnTick = loop.midiEvents[noteOnIndex].tick;
                     uint32_t noteOffTick = evt.tick;
                     
                     // If note-off is much earlier than note-on, it might be wrapped
-                    if (noteOffTick < noteOnTick && (noteOnTick - noteOffTick) > (loopLengthTicks / 2)) {
+                    if (noteOffTick < noteOnTick && (noteOnTick - noteOffTick) > (loop.loopLengthTicks / 2)) {
                         // This looks like a wrapped note - keep both events
                         activeNotes.erase(it);
                         logger.log(CAT_MIDI, LOG_INFO, 
@@ -302,24 +336,24 @@ void Track::validateAndCleanupMidiEvents() {
     // Remove orphaned events
     if (orphanedCount > 0) {
         std::vector<MidiEvent> cleanedEvents;
-        cleanedEvents.reserve(midiEvents.size() - orphanedCount);
+        cleanedEvents.reserve(loop.midiEvents.size() - orphanedCount);
         
-        for (size_t i = 0; i < midiEvents.size(); i++) {
+        for (size_t i = 0; i < loop.midiEvents.size(); i++) {
             if (eventsToKeep[i]) {
-                cleanedEvents.push_back(midiEvents[i]);
+                cleanedEvents.push_back(loop.midiEvents[i]);
             }
         }
         
-        midiEvents = std::move(cleanedEvents);
+        loop.midiEvents = std::move(cleanedEvents);
         invalidateCaches();
         
         logger.log(CAT_MIDI, LOG_INFO, 
                   "MIDI validation complete: removed %d orphaned events, %d events remaining",
-                  orphanedCount, (int)midiEvents.size());
+                  orphanedCount, (int)loop.midiEvents.size());
     } else {
         logger.log(CAT_MIDI, LOG_INFO, 
                   "MIDI validation complete: no orphaned events found, %d events total",
-                  (int)midiEvents.size());
+                  (int)loop.midiEvents.size());
     }
 }
 
@@ -330,33 +364,27 @@ void Track::validateAndCleanupMidiEvents() {
 void Track::stopRecording(uint32_t currentTick) {
   if (!setState(TRACK_STOPPED_RECORDING)) return;
 
-  // Close any held notes
+  Loop& loop = getActiveLoop();
   finalizePendingNotes(currentTick);
-
-  // Validate and cleanup orphaned MIDI events
   validateAndCleanupMidiEvents();
 
-  // Use the actual time between start and stop as the loop length
-  uint32_t rawLength = currentTick - startLoopTick;
+  uint32_t rawLength = currentTick - loop.startLoopTick;
   uint32_t rem       = rawLength % TICKS_PER_BAR;
-  uint32_t grace     = TICKS_PER_BAR / 2;  // Allow 1/8 bar grace window
+  uint32_t grace     = TICKS_PER_BAR / 2;
 
   if (rem <= grace) {
-      loopLengthTicks = (rawLength / TICKS_PER_BAR) * TICKS_PER_BAR;
+      loop.loopLengthTicks = (rawLength / TICKS_PER_BAR) * TICKS_PER_BAR;
   } else {
-      loopLengthTicks = ((rawLength / TICKS_PER_BAR) + 1) * TICKS_PER_BAR;
+      loop.loopLengthTicks = ((rawLength / TICKS_PER_BAR) + 1) * TICKS_PER_BAR;
   }
 
-  // Reset playback state for next pass
-  nextEventIndex = 0;
-  lastTickInLoop = 0;
-  startLoopTick = 0;
-  
-  // OPTIMIZATION: Invalidate caches when MIDI events or loop length change
+  loop.nextEventIndex = 0;
+  loop.lastTickInLoop = 0;
+  loop.startLoopTick = 0;
+
   invalidateCaches();
-  
-  logger.logTrackEvent("Recording stopped", currentTick, "start=%lu length=%lu", startLoopTick, loopLengthTicks);
-  logger.debug("Final ticks: currentTick=%lu startLoopTick=%lu rawLength=%lu", currentTick, startLoopTick, rawLength);
+  logger.logTrackEvent("Recording stopped", currentTick, "start=%lu length=%lu", loop.startLoopTick, loop.loopLengthTicks);
+  logger.debug("Final ticks: currentTick=%lu startLoopTick=%lu rawLength=%lu", currentTick, loop.startLoopTick, rawLength);
 
   startOverdubbing(currentTick);
 }
@@ -364,25 +392,26 @@ void Track::stopRecording(uint32_t currentTick) {
 void Track::stopRecordingToStopped(uint32_t currentTick) {
   if (!setState(TRACK_STOPPED_RECORDING)) return;
 
+  Loop& loop = getActiveLoop();
   finalizePendingNotes(currentTick);
   validateAndCleanupMidiEvents();
 
-  uint32_t rawLength = currentTick - startLoopTick;
+  uint32_t rawLength = currentTick - loop.startLoopTick;
   uint32_t rem       = rawLength % TICKS_PER_BAR;
   uint32_t grace     = TICKS_PER_BAR / 2;
 
   if (rem <= grace) {
-      loopLengthTicks = (rawLength / TICKS_PER_BAR) * TICKS_PER_BAR;
+      loop.loopLengthTicks = (rawLength / TICKS_PER_BAR) * TICKS_PER_BAR;
   } else {
-      loopLengthTicks = ((rawLength / TICKS_PER_BAR) + 1) * TICKS_PER_BAR;
+      loop.loopLengthTicks = ((rawLength / TICKS_PER_BAR) + 1) * TICKS_PER_BAR;
   }
 
-  nextEventIndex = 0;
-  lastTickInLoop = 0;
-  startLoopTick = 0;
+  loop.nextEventIndex = 0;
+  loop.lastTickInLoop = 0;
+  loop.startLoopTick = 0;
   invalidateCaches();
 
-  logger.logTrackEvent("Recording stopped (to STOPPED)", currentTick, "length=%lu", loopLengthTicks);
+  logger.logTrackEvent("Recording stopped (to STOPPED)", currentTick, "length=%lu", loop.loopLengthTicks);
 
   TrackUndo::pushUndoSnapshot(*this);
   setState(TRACK_STOPPED);
@@ -393,18 +422,12 @@ void Track::stopRecordingToStopped(uint32_t currentTick) {
 // -------------------------
 
 void Track::startPlaying(uint32_t currentTick) {
-  if (loopLengthTicks > 0) {
-    if (!setState(TRACK_PLAYING)) {
-      return;
-    }
-   // startLoopTick = 0;
-    // This is the old way to start playing. playing from the absolute tick when it was origionally recorded
-    //startLoopTick = currentTick - startLoopTick;
-    startLoopTick = 0;
-    // for support to pickup in the middle or quintized start live looping to master clock:
-    //startLoopTick = currentTick - ((currentTick - startLoopTick) % loopLengthTicks);
-    nextEventIndex = 0;
-    lastTickInLoop = UINT32_MAX;  // First update will send events from 0 (toggleTransport does not call updateAllTracks)
+  Loop& loop = getActiveLoop();
+  if (loop.loopLengthTicks > 0) {
+    if (!setState(TRACK_PLAYING)) return;
+    loop.startLoopTick = 0;
+    loop.nextEventIndex = 0;
+    loop.lastTickInLoop = UINT32_MAX;
     logger.logTrackEvent("Playback started", currentTick);
   }
 }
@@ -415,29 +438,23 @@ void Track::startPlaying(uint32_t currentTick) {
 
 void Track::startOverdubbing(uint32_t currentTick) {
   if (!setState(TRACK_OVERDUBBING)) return;
-  
-  // Create undo snapshot before starting overdub
   TrackUndo::pushUndoSnapshot(*this);
-  logger.info("Overdub snapshot created: events=%d, snapshots=%d", midiEvents.size(), midiHistory.size());
-  
+  logger.info("Overdub snapshot created: events=%d, snapshots=%d", getActiveLoop().midiEvents.size(), getActiveLoop().midiHistorySize());
   logger.logTrackEvent("Overdubbing started", currentTick);
 }
 
 
 void Track::stopOverdubbing() {
   setState(TRACK_PLAYING);
-  
-  // Validate and cleanup orphaned MIDI events after overdubbing
   validateAndCleanupMidiEvents();
-  
   logger.logTrackEvent("Overdubbing stopped", clockManager.getCurrentTick());
-  logger.info("Overdub stopped: events=%d, snapshots=%d", midiEvents.size(), midiHistory.size());
-  logger.dumpMidiEvents(midiEvents, -1);
+  logger.info("Overdub stopped: events=%d, snapshots=%d", getActiveLoop().midiEvents.size(), getActiveLoop().midiHistorySize());
+  logger.dumpMidiEvents(getActiveLoop().midiEvents, -1);
 
-  // Reset playback state
-  startLoopTick = 0;
+  Loop& loop = getActiveLoop();
+  loop.startLoopTick = 0;
   resetPlaybackState(0);
-  StorageManager::saveState(looperState.getLooperState()); // Save after overdubbing
+  StorageManager::saveState(looperState.getLooperState());
 }
 
 void Track::stopOverdubbingToStopped() {
@@ -445,7 +462,7 @@ void Track::stopOverdubbingToStopped() {
   sendAllNotesOff();
   validateAndCleanupMidiEvents();
   setState(TRACK_STOPPED);
-  startLoopTick = 0;
+  getActiveLoop().startLoopTick = 0;
   resetPlaybackState(0);
   logger.logTrackEvent("Overdubbing stopped (to STOPPED)", clockManager.getCurrentTick());
   StorageManager::saveState(looperState.getLooperState());
@@ -484,70 +501,41 @@ bool Track::isMuted() const {
   return muted;
 }
 
-bool Track::hasData() const {
-  return !midiEvents.empty();
-}
-
-size_t Track::getMidiEventCount() const {
-  return midiEvents.size();
-}
 
 // -------------------------
 // Track Clear
 // -------------------------
 
-// Clears the current track data and returns to the EMPTY state
 void Track::clear() {
     if (trackState == TRACK_EMPTY) {
         logger.debug("Track already empty; ignoring clear");
         return;
     }
 
-    // Remove all recorded events
-    midiEvents.clear();
+    Loop& loop = getActiveLoop();
+    loop.midiEvents.clear();
+    loop.startLoopTick = 0;
+    loop.loopLengthTicks = 0;
+    loop.loopStartTick = 0;
 
-    // Reset timing
-    startLoopTick = 0;
-    loopLengthTicks = 0;
-    loopStartTick = 0;  // Reset loop start point
+    loop.clearAllUndoStacks();
 
-    // Clear undo history (pooled vectors will be automatically cleaned up)
-    midiHistory.clear();
-    midiRedoHistory.clear();
-    clearMidiHistory.clear();
-    clearMidiRedoHistory.clear();
-    clearStateHistory.clear();
-    clearStateRedoHistory.clear();
-    clearLengthHistory.clear();
-    clearLengthRedoHistory.clear();
-    clearStartHistory.clear();
-    clearStartRedoHistory.clear();
-    loopStartHistory.clear();
-    loopStartRedoHistory.clear();
-
-    // Go back to "never recorded"
     setState(TRACK_EMPTY);
-
-    // OPTIMIZATION: Invalidate caches when MIDI events change
     invalidateCaches();
-
-    // Log the clear action
     logger.logTrackEvent("Track cleared", clockManager.getCurrentTick());
 }
 
 void Track::recordMidiEvents(midi::MidiType type, byte channel, byte data1, byte data2, uint32_t currentTick) {
   if ((isRecording() && !isPlaying()) || isOverdubbing()) {
+    Loop& loop = getActiveLoop();
     uint32_t tickRelative;
 
-    // First pass: build the loop
     if (isRecording() && !isPlaying()) {
-      tickRelative = currentTick - startLoopTick;
+      tickRelative = currentTick - loop.startLoopTick;
 
-    // Overdub passes: wrap every hit back into the loop
     } else if (isOverdubbing()) {
-      // defensive: loopLengthTicks was set when you stopped recording
-      if (loopLengthTicks == 0) return;
-      tickRelative = (currentTick - startLoopTick) % loopLengthTicks;
+      if (loop.loopLengthTicks == 0) return;
+      tickRelative = (currentTick - loop.startLoopTick) % loop.loopLengthTicks;
       
     } else {
       return;
@@ -587,18 +575,15 @@ void Track::recordMidiEvents(midi::MidiType type, byte channel, byte data1, byte
 
     if (!eventAdded) return;
 
-    // Find insertion point (events are sorted by tick)
-    auto it = std::lower_bound(midiEvents.begin(), midiEvents.end(), tickRelative,
+    auto it = std::lower_bound(loop.midiEvents.begin(), loop.midiEvents.end(), tickRelative,
         [](const MidiEvent& e, uint32_t t) { return e.tick < t; });
 
-    // Duplicate check: scan events within ±DUPLICATE_TICK_TOLERANCE (handles jitter on loop restart)
-    // Musically, notes within 1/64th are typically unintended duplicates
     const uint32_t lo = (tickRelative > Config::DUPLICATE_TICK_TOLERANCE)
         ? (tickRelative - Config::DUPLICATE_TICK_TOLERANCE) : 0;
     const uint32_t hi = tickRelative + Config::DUPLICATE_TICK_TOLERANCE;
-    auto scan = std::lower_bound(midiEvents.begin(), midiEvents.end(), lo,
+    auto scan = std::lower_bound(loop.midiEvents.begin(), loop.midiEvents.end(), lo,
         [](const MidiEvent& e, uint32_t t) { return e.tick < t; });
-    while (scan != midiEvents.end() && scan->tick <= hi) {
+    while (scan != loop.midiEvents.end() && scan->tick <= hi) {
         const auto& e = *scan;
         if (e.type == type && e.channel == channel &&
             e.data.noteData.note == data1 && e.data.noteData.velocity == data2) {
@@ -607,8 +592,7 @@ void Track::recordMidiEvents(midi::MidiType type, byte channel, byte data1, byte
         ++scan;
     }
 
-    // Insert in sorted position (no full sort needed)
-    midiEvents.insert(it, newEvt);
+    loop.midiEvents.insert(it, newEvt);
 
     // Log the event
     logger.logMidiEvent(newEvt);
@@ -619,60 +603,60 @@ void Track::recordMidiEvents(midi::MidiType type, byte channel, byte data1, byte
 }
 
 void Track::rebuildPlaybackOrder() {
-  playbackOrder.resize(midiEvents.size());
-  for (size_t i = 0; i < midiEvents.size(); i++) {
+  Loop& loop = getActiveLoop();
+  std::vector<size_t>& playbackOrder = loop.getPlaybackOrder();
+  playbackOrder.resize(loop.midiEvents.size());
+  for (size_t i = 0; i < loop.midiEvents.size(); i++) {
     playbackOrder[i] = i;
   }
-  uint32_t ll = loopLengthTicks;
+  uint32_t ll = loop.loopLengthTicks;
   std::sort(playbackOrder.begin(), playbackOrder.end(),
     [&](size_t a, size_t b) {
-      return (midiEvents[a].tick % ll) < (midiEvents[b].tick % ll);
+      return (loop.midiEvents[a].tick % ll) < (loop.midiEvents[b].tick % ll);
     });
-  playbackOrderDirty = false;
+  loop.playbackOrderDirty = false;
 }
 
 void Track::playMidiEvents(uint32_t currentTick, bool isAudible) {
-  if (!isAudible || muted || midiEvents.empty() || loopLengthTicks == 0)
+  Loop& loop = getActiveLoop();
+  if (!isAudible || muted || loop.midiEvents.empty() || loop.loopLengthTicks == 0)
     return;
 
-  if (playbackOrderDirty) {
+  if (loop.playbackOrderDirty) {
     rebuildPlaybackOrder();
   }
 
-  uint32_t tickInLoop = (currentTick - startLoopTick) % loopLengthTicks;
+  uint32_t tickInLoop = (currentTick - loop.startLoopTick) % loop.loopLengthTicks;
 
-  if (tickInLoop < lastTickInLoop) {
-    nextEventIndex = 0;
+  if (tickInLoop < loop.lastTickInLoop) {
+    loop.nextEventIndex = 0;
     logger.debug("Loop wrapped, resetting index");
   }
 
-  uint32_t prevTickInLoop = lastTickInLoop;
-  lastTickInLoop = tickInLoop;
+  uint32_t prevTickInLoop = loop.lastTickInLoop;
+  loop.lastTickInLoop = tickInLoop;
 
-  // When we just seeked, loop wrapped, or are on the first frame (tick 0, never advanced),
-  // send all events from 0 to tickInLoop. prevTickInLoop < evTick fails for evTick==0.
   bool atLoopStart = (prevTickInLoop == UINT32_MAX) || (tickInLoop <= prevTickInLoop);
 
-  // In jam (bar/multibar) mode, only play events within the jam region [jamStartTick, jamStartTick+jamLength)
-  auto eventInJamRegion = [this](uint32_t evTick) -> bool {
+  auto eventInJamRegion = [this, &loop](uint32_t evTick) -> bool {
     if (!jamPlaybackActive || jamLength == 0) return true;
     if (jamStartTick == UINT32_MAX) return true;
     uint32_t jamEnd = jamStartTick + jamLength;
-    if (jamEnd <= loopLengthTicks) {
+    if (jamEnd <= loop.loopLengthTicks) {
       return evTick >= jamStartTick && evTick < jamEnd;
     }
-    return (evTick >= jamStartTick) || (evTick < jamEnd - loopLengthTicks);
+    return (evTick >= jamStartTick) || (evTick < jamEnd - loop.loopLengthTicks);
   };
 
-  // Skip duplicate events at same loop position (e.g. tick 0 and tick 1536 when loop length is 1536)
   uint32_t lastSentEvTick = UINT32_MAX;
   uint8_t lastSentChannel = 0;
   uint8_t lastSentNote = 0;
   uint8_t lastSentType = 0xFF;
 
-  while (nextEventIndex < playbackOrder.size()) {
-    const MidiEvent &evt = midiEvents[playbackOrder[nextEventIndex]];
-    uint32_t evTick = evt.tick % loopLengthTicks;
+  const std::vector<size_t>& playbackOrder = loop.getPlaybackOrder();
+  while (loop.nextEventIndex < playbackOrder.size()) {
+    const MidiEvent &evt = loop.midiEvents[playbackOrder[loop.nextEventIndex]];
+    uint32_t evTick = evt.tick % loop.loopLengthTicks;
 
     bool crossed = atLoopStart ? (evTick <= tickInLoop) : (prevTickInLoop < evTick && evTick <= tickInLoop);
     if (crossed && eventInJamRegion(evTick)) {
@@ -690,13 +674,13 @@ void Track::playMidiEvents(uint32_t currentTick, bool isAudible) {
           lastSentType = evt.type;
         }
       }
-      nextEventIndex++;
+      loop.nextEventIndex++;
     }
     else if (evTick > tickInLoop) {
       break;
     }
     else {
-      nextEventIndex++;
+      loop.nextEventIndex++;
     }
   }
 }
@@ -764,58 +748,31 @@ bool Track::isPlaying() const {
   return trackState == TRACK_PLAYING;
 }
 
-uint32_t Track::getLoopLength() const {
-  return loopLengthTicks;
-}
-
 void Track::setLoopLength(uint32_t ticks) {
-  loopLengthTicks = ticks;
+  getActiveLoop().loopLengthTicks = ticks;
 }
 
-// Simple loop length change - wrapping handled dynamically in logic layer
 void Track::setLoopLengthWithWrapping(uint32_t newLoopLength) {
-  if (newLoopLength == loopLengthTicks) {
-    return; // No change needed
-  }
-  
-  uint32_t oldLoopLength = loopLengthTicks;
-  
+  Loop& loop = getActiveLoop();
+  if (newLoopLength == loop.loopLengthTicks) return;
+
+  uint32_t oldLoopLength = loop.loopLengthTicks;
   logger.log(CAT_TRACK, LOG_INFO, "Loop length change: %lu -> %lu ticks", oldLoopLength, newLoopLength);
-  
-  // Simply update the loop length - original MIDI events remain unchanged
-  loopLengthTicks = newLoopLength;
-  
-  // Invalidate caches when loop length changes so display/playback recalculates
+  loop.loopLengthTicks = newLoopLength;
   invalidateCaches();
-  
-  logger.log(CAT_TRACK, LOG_INFO, "Loop length updated to %lu ticks (wrapping handled dynamically)", loopLengthTicks);
-}
-
-// -------------------------
-// Loop start point control
-// -------------------------
-
-uint32_t Track::getLoopStartTick() const {
-  return loopStartTick;
+  logger.log(CAT_TRACK, LOG_INFO, "Loop length updated to %lu ticks (wrapping handled dynamically)", loop.loopLengthTicks);
 }
 
 void Track::setLoopStartTick(uint32_t startTick) {
-  if (startTick == loopStartTick) {
-    return; // No change needed
+  Loop& loop = getActiveLoop();
+  if (startTick == loop.loopStartTick) return;
+
+  uint32_t oldStartTick = loop.loopStartTick;
+  if (startTick >= loop.loopLengthTicks && loop.loopLengthTicks > 0) {
+    startTick = startTick % loop.loopLengthTicks;
   }
-  
-  uint32_t oldStartTick = loopStartTick;
-  
-  // Constrain to valid range within the loop
-  if (startTick >= loopLengthTicks && loopLengthTicks > 0) {
-    startTick = startTick % loopLengthTicks;
-  }
-  
-  loopStartTick = startTick;
-  
-  logger.log(CAT_TRACK, LOG_INFO, "Loop start point changed: %lu -> %lu ticks", oldStartTick, loopStartTick);
-  
-  // Invalidate caches when loop start changes so display recalculates
+  loop.loopStartTick = startTick;
+  logger.log(CAT_TRACK, LOG_INFO, "Loop start point changed: %lu -> %lu ticks", oldStartTick, loop.loopStartTick);
   invalidateCaches();
 }
 
@@ -824,20 +781,12 @@ void Track::setLoopStartAndEnd(uint32_t startTick, uint32_t endTick) {
     logger.log(CAT_TRACK, LOG_ERROR, "Invalid loop range: start=%lu >= end=%lu", startTick, endTick);
     return;
   }
-  
+  Loop& loop = getActiveLoop();
   uint32_t newLength = endTick - startTick;
-  
   logger.log(CAT_TRACK, LOG_INFO, "Setting loop start=%lu, end=%lu, length=%lu", startTick, endTick, newLength);
-  
-  loopStartTick = startTick;
-  loopLengthTicks = newLength;
-  
-  // Invalidate caches when loop boundaries change
+  loop.loopStartTick = startTick;
+  loop.loopLengthTicks = newLength;
   invalidateCaches();
-}
-
-uint32_t Track::getLoopEndTick() const {
-  return loopStartTick + loopLengthTicks;
 }
 
 void Track::setJam(uint32_t startTick, uint32_t length) {
@@ -845,8 +794,8 @@ void Track::setJam(uint32_t startTick, uint32_t length) {
   jamStartTick = startTick;
   jamLength = length;
   jamTick = 0;
-  nextEventIndex = 0;
-  lastTickInLoop = UINT32_MAX;
+  getActiveLoop().nextEventIndex = 0;
+  getActiveLoop().lastTickInLoop = UINT32_MAX;
   interrupts();
   logger.log(CAT_TRACK, LOG_INFO, "Jam set: start=%lu, length=%lu", jamStartTick, jamLength);
 }
@@ -857,8 +806,8 @@ void Track::clearJam() {
   jamLength = 0;
   jamPlaybackActive = false;
   jamTick = 0;
-  nextEventIndex = 0;
-  lastTickInLoop = UINT32_MAX;
+  getActiveLoop().nextEventIndex = 0;
+  getActiveLoop().lastTickInLoop = UINT32_MAX;
   interrupts();
   logger.log(CAT_TRACK, LOG_INFO, "Jam cleared");
 }
@@ -880,8 +829,8 @@ void Track::setJamTick(uint32_t tick) {
   uint32_t newTick = (jamLength > 0) ? (tick % jamLength) : 0;
   if (newTick != jamTick) {
     jamTick = newTick;
-    nextEventIndex = 0;
-    lastTickInLoop = UINT32_MAX;
+    getActiveLoop().nextEventIndex = 0;
+    getActiveLoop().lastTickInLoop = UINT32_MAX;
   }
   interrupts();
 }
@@ -890,16 +839,17 @@ void Track::setJamPlayback(bool enabled) {
   noInterrupts();
   jamPlaybackActive = enabled;
   if (enabled) {
-    nextEventIndex = 0;
-    lastTickInLoop = UINT32_MAX;
+    getActiveLoop().nextEventIndex = 0;
+    getActiveLoop().lastTickInLoop = UINT32_MAX;
   }
   interrupts();
 }
 
 uint32_t Track::getEffectivePlaybackTick(uint32_t currentTick) const {
   if (!jamPlaybackActive || jamLength == 0) return currentTick;
-  uint32_t storagePos = (jamStartTick + jamTick) % loopLengthTicks;
-  return startLoopTick + storagePos;
+  const Loop& loop = getActiveLoop();
+  uint32_t storagePos = (jamStartTick + jamTick) % loop.loopLengthTicks;
+  return loop.startLoopTick + storagePos;
 }
 
 // Display functions

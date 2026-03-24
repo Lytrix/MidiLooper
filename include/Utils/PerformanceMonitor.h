@@ -9,6 +9,7 @@
 #include <string>
 #include <algorithm>
 #include <Arduino.h>
+#include "Utils/MemoryMonitor.h"
 
 namespace PerformanceMonitor {
 
@@ -214,11 +215,8 @@ private:
     }
     
     void updateMemoryMetrics() {
-        // Teensy 4.1: Use a static value for demonstration (from compile output)
-        uint32_t freeMemory = 192416;  // From compilation output - approximate
-        uint32_t totalRAM = 1024 * 512; // 512KB RAM
-        currentMetrics.freeRAMBytes = freeMemory;
-        currentMetrics.usedRAMBytes = totalRAM - freeMemory;
+        currentMetrics.freeRAMBytes = MemoryMonitor::getFreeHeap();
+        currentMetrics.usedRAMBytes = MemoryMonitor::getUsedHeap();
         currentMetrics.heapFragmentationPercent = 0;  // Would need heap analysis
     }
     

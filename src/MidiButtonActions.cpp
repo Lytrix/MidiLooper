@@ -8,6 +8,8 @@
 #include "ClockManager.h"
 #include "MidiHandler.h"
 #include "TrackUndo.h"
+#include "StorageManager.h"
+#include "LooperState.h"
 #include "Logger.h"
 #include "NoteEditManager.h"
 
@@ -69,6 +71,27 @@ void MidiButtonActions::executeAction(MidiButtonConfig::ActionType actionType, u
         case MidiButtonConfig::ActionType::CLEAR_TRACK:
             handleClearTrack();
             break;
+        case MidiButtonConfig::ActionType::TOGGLE_RECORD_FOR_SLOT:
+            handleToggleRecordForSlot(static_cast<uint8_t>(parameter));
+            break;
+        case MidiButtonConfig::ActionType::CLEAR_TRACK_FOR_SLOT:
+            if (parameter < ::Config::MAX_LOOPS_PER_TRACK) {
+                trackManager.setActiveLoopIndex(trackManager.getSelectedTrackIndex(), static_cast<uint8_t>(parameter));
+                handleClearTrack();
+            }
+            break;
+        case MidiButtonConfig::ActionType::UNDO_FOR_SLOT:
+            if (parameter < ::Config::MAX_LOOPS_PER_TRACK) {
+                trackManager.setActiveLoopIndex(trackManager.getSelectedTrackIndex(), static_cast<uint8_t>(parameter));
+                handleUndo();
+            }
+            break;
+        case MidiButtonConfig::ActionType::REDO_FOR_SLOT:
+            if (parameter < ::Config::MAX_LOOPS_PER_TRACK) {
+                trackManager.setActiveLoopIndex(trackManager.getSelectedTrackIndex(), static_cast<uint8_t>(parameter));
+                handleRedo();
+            }
+            break;
         case MidiButtonConfig::ActionType::MUTE_TRACK:
             handleMuteTrack(static_cast<uint8_t>(parameter));
             break;
@@ -82,6 +105,44 @@ void MidiButtonActions::executeAction(MidiButtonConfig::ActionType actionType, u
             // For unimplemented actions, just log them
             logger.info("Action type %d not yet implemented", static_cast<int>(actionType));
             break;
+    }
+}
+
+void MidiButtonActions::handleToggleRecordForSlot(uint8_t slotIndex) {
+    if (slotIndex >= ::Config::MAX_LOOPS_PER_TRACK) return;
+
+    Track& track = getCurrentTrack();
+    uint8_t trackIdx = trackManager.getSelectedTrackIndex();
+    uint32_t now = getCurrentTick();
+
+    // Don't switch active loop mid-recording or mid-overdub (would corrupt the current operation)
+    if ((track.isRecording() || track.isOverdubbing()) && track.getActiveLoopIndex() != slotIndex) {
+        logger.info("Loop %d: Ignoring press (recording/overdubbing on slot %d)", slotIndex + 1, track.getActiveLoopIndex() + 1);
+        return;
+    }
+
+    // Switch to target slot before running state machine
+    trackManager.setActiveLoopIndex(trackIdx, slotIndex);
+
+    // Slot-aware state machine:
+    // Track state is global per-track, but record/overdub intent is per active slot.
+    // For an empty slot, always start recording (or arm when clock is stopped).
+    if (!track.hasData()) {
+        logger.info("Loop %d: Start Recording", slotIndex + 1);
+        trackManager.startRecordingTrack(trackIdx, now);
+    } else if (track.isRecording()) {
+        logger.info("Loop %d: Stop Recording", slotIndex + 1);
+        trackManager.stopRecordingTrack(trackIdx);
+        track.startPlaying(now);
+    } else if (track.isOverdubbing()) {
+        logger.info("Loop %d: Stop Overdub", slotIndex + 1);
+        track.stopOverdubbing();
+    } else if (track.isPlaying()) {
+        logger.info("Loop %d: Live Overdub", slotIndex + 1);
+        trackManager.startOverdubbingTrack(trackIdx);
+    } else {
+        logger.info("Loop %d: Toggle Play/Stop", slotIndex + 1);
+        track.togglePlayStop();
     }
 }
 
@@ -171,13 +232,14 @@ void MidiButtonActions::handleRedoClearTrack() {
 
 void MidiButtonActions::handleClearTrack() {
     Track& track = getCurrentTrack();
-    
-    // Match the exact logic from the original Button A long press
+
     if (!track.hasData()) {
         logger.debug("Clear ignored — track is empty");
     } else {
+        TrackUndo::pushClearTrackSnapshot(track);
         track.clear();
-        logger.info("MIDI Button A: Clear Track");
+        StorageManager::saveState(looperState.getLooperState());
+        logger.info("MIDI: Clear Track");
     }
 }
 

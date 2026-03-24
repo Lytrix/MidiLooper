@@ -2,6 +2,7 @@
 //  Licensed under the PolyForm Noncommercial 1.0.0
 
 #include <Arduino.h>
+#include <SD.h>
 #include "Globals.h"
 #include "Logger.h"
 #include "ClockManager.h"
@@ -20,15 +21,35 @@
 #include "Globals.h"
 #include "NoteEditManager.h"  // Keep temporarily for move note logic
 #include "Utils/PerformanceMonitor.h"  // Performance monitoring
+#include "Utils/MemoryMonitor.h"
 
 void setup() {
-  // Simple led Check to see if Teensy is responding
+  delay(500);  // USB re-enumeration after reset
+  Serial.begin(115200);
+  while (!Serial && millis() < 3000) delay(10);
+  if (CrashReport) {
+    Serial.print(CrashReport);
+    Serial.println("--- CrashReport above ---");
+    // Also log to SD (Teensy 4.1 built-in) in case Serial output is missed
+    if (SD.begin(BUILTIN_SDCARD)) {
+      File f = SD.open("crashlog.txt", FILE_WRITE);
+      if (f) {
+        f.print(CrashReport);
+        f.close();
+      }
+    }
+    delay(5000);
+  }
+
+  // Allocate Loop arrays immediately - before USB Host, faders, etc. consume heap
+  trackManager.allocateLoopsEarly();
+  MemoryMonitor::logStatus();  // Log heap after loops allocated
+
   pinMode(LED_BUILTIN, OUTPUT);
   digitalWrite(LED_BUILTIN, HIGH);  // Turn on LED for 200ms
   delay(200);
   digitalWrite(LED_BUILTIN, LOW);
   
-  // Setup new V2 MIDI Button Manager for button handling
   midiButtonManager.setup();
   
   // Setup new V2 MIDI Fader Manager for fader handling
@@ -44,16 +65,12 @@ void setup() {
   
   // Keep old manager temporarily for move note logic
   //midiButtonManager.setup();
-  
-  Serial.begin(115200);
-  while (!Serial && millis() < 2000) delay(10);  // Teensy-safe wait
 
-  // Initialize logger first with Serial.begin
+  // Initialize logger (Serial already begun above)
   logger.setup(LOG_DEBUG);  // Set to LOG_INFO for production
   logger.setCategoryEnabled(CAT_MIDI, true);  // Ensure MIDI logging is enabled
   logger.setCategoryEnabled(CAT_MIDI_LED, false);  // LED update logging (channel/destinations)
 
-  // Logical init order: logger -> midi -> track -> looper (load state) -> clock -> display
   midiHandler.setup();
   trackManager.setup();
   looper.setup();  // SD + loadState; setSelectedTrack triggers forceLedUpdate (midi now ready)
@@ -74,6 +91,7 @@ void setup() {
   Serial.println("Main: Display Setup done");
 
   logger.info("Performance monitoring initialized");
+  MemoryMonitor::logStatus();  // Log heap after full setup
 
   // Clear all bar/16th LEDs for a clean start (DROID may retain state from before disconnect)
   trackManager.clearLeds();
@@ -125,6 +143,17 @@ void loop() {
   if (now - lastDisplayUpdate >= LCD::DISPLAY_UPDATE_INTERVAL) {
     lastDisplayUpdate = now;
     displayManager.update();
+  }
+
+  // Log memory every 60 seconds to console (non-blocking, after display)
+  static uint32_t lastMemoryLog = 0;
+  constexpr uint32_t MEMORY_LOG_INTERVAL_MS = 60000;
+  if (now - lastMemoryLog >= MEMORY_LOG_INTERVAL_MS) {
+    lastMemoryLog = now;
+    MemoryMonitor::logStatus();
+    if (MemoryMonitor::isLowMemory(20 * 1024)) {
+      logger.warning("[Memory] Low heap (<20 KB free) - consider reducing undo or freeing slots");
+    }
   }
 
   logger.setCategoryEnabled(CAT_MIDI, true);

@@ -13,6 +13,9 @@ MidiLedManager::MidiLedManager(MidiHandler& midiHandler)
     for (int i = 0; i < NUM_TRACK_LEDS; i++) {
         lastTrackSelectVelocity[i] = BAR_VEL_NEVER_SENT;
     }
+    for (uint8_t i = 0; i < MidiConfig::Led::LOOP_SELECT_LED_COUNT; i++) {
+        lastLoopSelectVelocity[i] = BAR_VEL_NEVER_SENT;
+    }
 }
 
 void MidiLedManager::updateLeds(Track& track, uint32_t currentTick) {
@@ -97,15 +100,18 @@ void MidiLedManager::clearAllLeds() {
     }
     for (uint8_t i = 0; i < MidiConfig::Led::LOOP_SELECT_LED_COUNT; i++) {
         midiHandler.sendNoteOff(LED_CHANNEL, MidiConfig::Led::LOOP_SELECT_LED_BASE + i, 0);
+        lastLoopSelectVelocity[i] = BAR_VEL_NEVER_SENT;
     }
     
     logger.log(CAT_MIDI_LED, LOG_INFO, "LED Manager: All LEDs and tick indicator cleared");
 }
 
-void MidiLedManager::updateTrackSelectLeds(uint8_t selectedTrackIndex, const bool trackHasData[Config::NUM_TRACKS]) {
+void MidiLedManager::updateTrackSelectLeds(uint8_t selectedTrackIndex, const bool trackHasData[Config::NUM_TRACKS],
+                                          uint8_t activeLoopIndex, const bool slotHasData[Config::MAX_LOOPS_PER_TRACK]) {
     static constexpr uint8_t VEL_SELECTED = 127;
     static constexpr uint8_t VEL_HAS_DATA = 32;
     
+    // Track row (notes 60-67)
     for (uint8_t i = 0; i < NUM_TRACK_LEDS && i < Config::NUM_TRACKS; i++) {
         uint8_t velocity = (i == selectedTrackIndex) ? VEL_SELECTED
                          : (trackHasData[i] ? VEL_HAS_DATA : 0);
@@ -118,6 +124,22 @@ void MidiLedManager::updateTrackSelectLeds(uint8_t selectedTrackIndex, const boo
                 midiHandler.sendNoteOff(LED_CHANNEL, note, 0);
             }
             lastTrackSelectVelocity[i] = velocity;
+        }
+    }
+    
+    // Loop row (notes 50-57) for selected track: 127=selected slot, 32=has data, 0=empty
+    for (uint8_t i = 0; i < MidiConfig::Led::LOOP_SELECT_LED_COUNT && i < Config::MAX_LOOPS_PER_TRACK; i++) {
+        uint8_t velocity = (i == activeLoopIndex) ? VEL_SELECTED
+                         : (slotHasData[i] ? VEL_HAS_DATA : 0);
+        uint8_t note = MidiConfig::Led::LOOP_SELECT_LED_BASE + i;
+        
+        if (lastLoopSelectVelocity[i] != velocity) {
+            if (velocity > 0) {
+                midiHandler.sendNoteOn(LED_CHANNEL, note, velocity);
+            } else {
+                midiHandler.sendNoteOff(LED_CHANNEL, note, 0);
+            }
+            lastLoopSelectVelocity[i] = velocity;
         }
     }
 }

@@ -30,6 +30,12 @@ TrackManager::~TrackManager() {
   delete ledManager;
 }
 
+void TrackManager::allocateLoopsEarly() {
+  for (uint8_t i = 0; i < Config::NUM_TRACKS; i++) {
+    tracks[i].ensureLoopsAllocated();
+  }
+}
+
 // Recording & Overdubbing ------------------------------------
 
 void TrackManager::startRecordingTrack(uint8_t trackIndex, uint32_t currentTick) {
@@ -217,6 +223,17 @@ uint32_t TrackManager::getTrackLength(uint8_t trackIndex) const {
   return (trackIndex < Config::NUM_TRACKS) ? tracks[trackIndex].getLoopLength() : 0;
 }
 
+uint8_t TrackManager::getActiveLoopIndex(uint8_t trackIndex) const {
+  return (trackIndex < Config::NUM_TRACKS) ? tracks[trackIndex].getActiveLoopIndex() : 0;
+}
+
+void TrackManager::setActiveLoopIndex(uint8_t trackIndex, uint8_t index) {
+  if (trackIndex < Config::NUM_TRACKS) {
+    tracks[trackIndex].setActiveLoopIndex(index);
+    forceLedUpdate(clockManager.getCurrentTick());
+  }
+}
+
 void TrackManager::setSelectedTrack(uint8_t index) {
   if (index < Config::NUM_TRACKS) {
     selectedTrack = index;
@@ -244,6 +261,8 @@ uint8_t TrackManager::getTrackCount() const {
 }
 
 void TrackManager::setup() {
+  // Allocate Loop arrays (deferred from Track ctor to avoid static-init crash)
+  // Loops allocated in allocateLoopsEarly() at start of setup
   // Set default MIDI output channel per track (track 1 = ch 1, track 2 = ch 2, etc.)
   for (uint8_t i = 0; i < Config::NUM_TRACKS; i++) {
     tracks[i].setMidiChannel(i + 1);
@@ -287,12 +306,17 @@ void TrackManager::updateLedsDeferred() {
   if (selTrack.getLoopLength() > 0) {
     ledManager->updateCurrentTick(selTrack, selTick);
   }
-  // Track row LEDs (60-67) - Loop row (50-57) added when D2 activeLoopIndex is done
+  // Track row LEDs (60-67) and loop row LEDs (50-57) for selected track
   bool trackHasData[Config::NUM_TRACKS];
   for (uint8_t i = 0; i < Config::NUM_TRACKS; i++) {
     trackHasData[i] = tracks[i].hasData();
   }
-  ledManager->updateTrackSelectLeds(selectedTrack, trackHasData);
+  uint8_t activeIdx = getActiveLoopIndex(selectedTrack);
+  bool slotHasData[Config::MAX_LOOPS_PER_TRACK];
+  for (uint8_t i = 0; i < Config::MAX_LOOPS_PER_TRACK; i++) {
+    slotHasData[i] = tracks[selectedTrack].hasDataInSlot(i);
+  }
+  ledManager->updateTrackSelectLeds(selectedTrack, trackHasData, activeIdx, slotHasData);
 }
 
 // --- LED Management ---

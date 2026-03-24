@@ -22,8 +22,9 @@ public:
     void clearAllLeds();
     
     // Track row LEDs (ch15 notes 60-67): 127=selected, 32=has data, 0=empty
-    // Loop row (50-57) added when D2 activeLoopIndex is done
-    void updateTrackSelectLeds(uint8_t selectedTrackIndex, const bool trackHasData[Config::NUM_TRACKS]);
+    // Loop row (50-57): 127=selected slot, 32=slot has data, 0=empty (for selected track)
+    void updateTrackSelectLeds(uint8_t selectedTrackIndex, const bool trackHasData[Config::NUM_TRACKS],
+                               uint8_t activeLoopIndex, const bool slotHasData[Config::MAX_LOOPS_PER_TRACK]);
     
     // Update current tick indicator (which 16th step is playing)
     void updateCurrentTick(Track& track, uint32_t currentTick);
@@ -61,6 +62,8 @@ private:
     // Track select LED velocity tracking (notes 60-67)
     static constexpr uint8_t NUM_TRACK_LEDS = 8;
     uint8_t lastTrackSelectVelocity[NUM_TRACK_LEDS];
+    // Loop select LED velocity tracking (notes 50-57) for selected track
+    uint8_t lastLoopSelectVelocity[MidiConfig::Led::LOOP_SELECT_LED_COUNT];
     
     // Helper methods (all use loopStartTick so 16th/bar LEDs reflect user's loop window)
     uint32_t getCurrentBar(uint32_t currentTick, uint32_t loopLength, uint32_t startLoopTick, uint32_t loopStartTick);

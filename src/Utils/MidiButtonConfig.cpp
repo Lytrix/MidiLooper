@@ -190,10 +190,27 @@ void Config::loadConfiguration() {
               .onShortPress(ActionType::MOVE_CURRENT_TICK)
               .withParameter(-tick16 / 2));
     
+    // Loop Selection (Channel 16, notes 50-57) - per-slot record/overdub/play/stop/clear/undo/redo
+    #define ENABLE_LOOP_BUTTONS 1
+    #if ENABLE_LOOP_BUTTONS
+    static char loopDescBuf[::Config::MAX_LOOPS_PER_TRACK][10];
+    for (uint8_t i = 0; i < ::Config::MAX_LOOPS_PER_TRACK; i++) {
+        snprintf(loopDescBuf[i], sizeof(loopDescBuf[0]), "Loop %d", i + 1);
+        addButton(ButtonConfig(MidiConfig::Led::LOOP_SELECT_LED_BASE + i, Channels::TRACK_SELECT, loopDescBuf[i])
+                  .onShortPress(ActionType::TOGGLE_RECORD_FOR_SLOT)
+                  .onLongPress(ActionType::CLEAR_TRACK_FOR_SLOT)
+                  .onDoublePress(ActionType::UNDO_FOR_SLOT)
+                  .onTriplePress(ActionType::REDO_FOR_SLOT)
+                  .withParameter(i));
+    }
+    #endif
+
     // Track Selection (Channel 16, notes 60+) - matches DROID, count from Config::NUM_TRACKS
     // short=select, double=mute, long=solo (select-primary; mute as short felt irrational)
+    static char trackDescBuf[::Config::NUM_TRACKS][10];
     for (uint8_t i = 0; i < ::Config::NUM_TRACKS; i++) {
-        addButton(ButtonConfig(MidiConfig::TrackSelect::NOTE_BASE + i, Channels::TRACK_SELECT, ("Track " + std::to_string(i + 1)).c_str())
+        snprintf(trackDescBuf[i], sizeof(trackDescBuf[0]), "Track %d", i + 1);
+        addButton(ButtonConfig(MidiConfig::TrackSelect::NOTE_BASE + i, Channels::TRACK_SELECT, trackDescBuf[i])
                   .onShortPress(ActionType::SELECT_TRACK)
                   .onDoublePress(ActionType::MUTE_TRACK)
                   .onLongPress(ActionType::SOLO_TRACK)
