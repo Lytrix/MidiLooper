@@ -68,4 +68,4 @@ These files are **copies of plans from** `~/.cursor/plans/` so they are **versio
 
 ---
 
-Human-written summaries for some topics also live under [docs/FEATURE_PLANS.md](../docs/FEATURE_PLANS.md).
+Human-written docs are indexed in [docs/README.md](../docs/README.md) (**Guides** and **Refinements**). Conventions and the Phase 3 pointer: [docs/FEATURE_PLANS.md](../docs/FEATURE_PLANS.md).

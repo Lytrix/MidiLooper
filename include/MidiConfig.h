@@ -27,7 +27,7 @@
  * | Fader output  | —                                 | ch16: pitchbend; ch15: pb, CC 2,3 |
  *
  * Record exclusion: channel 16 not recorded. See RECORD_EXCLUDE_*.
- * See docs/MIDI_CONFIG_GUIDE.md for remap instructions.
+ * See docs/Guides/MIDI_CONFIG_GUIDE.md for remap instructions.
  */
 #ifndef MIDI_CONFIG_H
 #define MIDI_CONFIG_H

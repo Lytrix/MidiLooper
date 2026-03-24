@@ -19,7 +19,7 @@ This is my current working branch which has more mature code and bugfixes includ
 
 The MIDI circuit is based on https://www.pjrc.com/teensy/td_libs_MIDI.html
 
-**Note:** The project is configured for DROID controller input. Button mappings are loaded at startup in `MidiButtonConfig::Config::initialize()`; see `src/Utils/MidiButtonConfig.cpp` and `droid/midilooper_v1.ini` for the layout. Central note/channel numbers live in [`include/MidiConfig.h`](include/MidiConfig.h); for remapping controllers see [`docs/MIDI_CONFIG_GUIDE.md`](docs/MIDI_CONFIG_GUIDE.md).
+**Note:** The project is configured for DROID controller input. Button mappings are loaded at startup in `MidiButtonConfig::Config::initialize()`; see `src/Utils/MidiButtonConfig.cpp` and `droid/midilooper_v1.ini` for the layout. Central note/channel numbers live in [`include/MidiConfig.h`](include/MidiConfig.h); for remapping controllers see [`docs/Guides/MIDI_CONFIG_GUIDE.md`](docs/Guides/MIDI_CONFIG_GUIDE.md).
 
 ### Channel 16 (control) quick map
 
@@ -84,7 +84,7 @@ Multi-track MIDI looper with full undo/redo, auto-save/load, and clear visual fe
 - Full wrap-around support for notes crossing loop boundaries
 - **DROID LED feedback** — 16th step content, current tick indicator, 8 bar LEDs, loop row (50–57), track row (60–67); updates on loop start/length change
 - **Track row & loop slot row (Ch. 16)** — per-track select / double-mute / long-solo; per-slot quantized record, overdub, clear, slot undo/redo, layered hold ([detail](#track-row-and-loop-slot-buttons-channel-16))
-- **OLED track column** — letters per track (`-`, `P`, `O`, `R`, `A`, …); **`M`** if muted or solo-hidden; **selected** row still shows real state under solo ([`DisplayManager::drawTrackStatus`](src/DisplayManager.cpp), [`docs/DESIGN_PRINCIPLES.md`](docs/DESIGN_PRINCIPLES.md))
+- **OLED track column** — letters per track (`-`, `P`, `O`, `R`, `A`, …); **`M`** if muted or solo-hidden; **selected** row still shows real state under solo ([`DisplayManager::drawTrackStatus`](src/DisplayManager.cpp), [`docs/Guides/DESIGN_PRINCIPLES.md`](docs/Guides/DESIGN_PRINCIPLES.md))
 
 ## ✏️ Note Editor ##
 - Piano-roll note editor integrated into the looper UI
@@ -132,7 +132,7 @@ Multi-track MIDI looper with full undo/redo, auto-save/load, and clear visual fe
 - **Minimum length enforcement** - prevents notes from becoming shorter than 1/16th note
 - **Wrap-around support** - note lengths can extend across loop boundaries
 
-For detailed technical documentation, see: [`docs/LOOP_START_EDITING.md`](docs/LOOP_START_EDITING.md)
+For detailed technical documentation, see: [`docs/Guides/LOOP_START_EDITING.md`](docs/Guides/LOOP_START_EDITING.md)
 
 ## 🎛️ DROID Controller ##
 
@@ -171,7 +171,7 @@ This is the **primary multi-loop** control surface: **eight tracks**, each with 
 
 **vs. REC/PLAY (note 36):** The main **REC/PLAY** button drives the **selected** track’s global record / overdub / play state ([state table](#-recplay-button-note-36) below). The **loop slot row (50–57)** chooses **which slot** on that track is active and handles **slot-specific** record, overdub, clear, and undo. Use both together: pick a **track** (60–67), then a **slot** (50–57).
 
-Button **input** uses **Channel 16**; **LED feedback** for the same layout uses **Channel 15** (notes 50–57 and 60–67). Numbers match [`include/MidiConfig.h`](include/MidiConfig.h). Gestures are defined in [`src/Utils/MidiButtonConfig.cpp`](src/Utils/MidiButtonConfig.cpp) (`loadConfiguration`) and executed in [`src/MidiButtonActions.cpp`](src/MidiButtonActions.cpp). UX rationale is summarized in [`docs/DESIGN_PRINCIPLES.md`](docs/DESIGN_PRINCIPLES.md).
+Button **input** uses **Channel 16**; **LED feedback** for the same layout uses **Channel 15** (notes 50–57 and 60–67). Numbers match [`include/MidiConfig.h`](include/MidiConfig.h). Gestures are defined in [`src/Utils/MidiButtonConfig.cpp`](src/Utils/MidiButtonConfig.cpp) (`loadConfiguration`) and executed in [`src/MidiButtonActions.cpp`](src/MidiButtonActions.cpp). UX rationale is summarized in [`docs/Guides/DESIGN_PRINCIPLES.md`](docs/Guides/DESIGN_PRINCIPLES.md).
 
 **Track row (notes 60–67, one button per track):**
 
@@ -356,17 +356,10 @@ https://chatgpt.com/share/680e98f9-2a64-800b-abb2-4e1bd359c90f
 Developing the SSD1322 circular DMA logic was a lot of fun using Cursor. It was really helpfull to have an LLM model explain someone elses 2000+ lines of code in how the logic worked I wanted to port to this display. 
 
 ## Technical Documentation ##
-Detailed technical documentation is available in the `docs/` directory:
-
-- **[Design principles](docs/DESIGN_PRINCIPLES.md)** — gesture-first UX, track row vs loop row behavior, minimal-button goals
-- **[MIDI config guide](docs/MIDI_CONFIG_GUIDE.md)** — remapping channels, notes, and CCs for your controller
-- **[Feature plans index](docs/FEATURE_PLANS.md)** — phased / summary docs in `docs/` (jam/bar-step, loop start, buttons, faders, optimization analysis, etc.)
-- **[Cursor design plans](plans/README.md)** — archived `*.plan.md` from `.cursor/plans/` (dual-tick / multi-loop jam architecture, bar-step, BPM, MIDI, …)
-- **[Loop Start Editing](docs/LOOP_START_EDITING.md)** - Comprehensive guide to the loop start point editing system
-- **[Loop Length and Note Length Editing](README.md#🎛️-loop-length-editing)** - Complete guide to loop length control and note length editing modes
-- **[Fader State System](docs/FADER_STATE_SYSTEM.md)** - Hardware fader management and state machine
-- **[Move Note Logic](docs/MOVE_NOTE_LOGIC.md)** - Note movement and overlap resolution system
-- Additional reference docs in `docs/` (e.g. note wrapping, manual test notes, optimization code example)
+- **[Documentation index](docs/README.md)** — **Guides** (current behavior) and **Refinements** (implementation logs); start here for everything under `docs/`
+- **[Feature plans / conventions](docs/FEATURE_PLANS.md)** — Phase 3 multi-loop pointer, doc conventions, link to archived Cursor plans
+- **[Cursor design plans](plans/README.md)** — exported `*.plan.md` (architecture drafts, bar-step, BPM, MIDI, …)
+- In-repo **usage** for loop length, note length, DROID, and jam loops: see **Loop Length Editing**, **Note Length Editing Mode**, **DROID Controller**, and **Jam Loops (Bar/16th Buttons)** sections above in this README
 
 © 2025 Lytrix (Eelke Jager)
 Licensed under the PolyForm Noncommercial 1.0.0.  

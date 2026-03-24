@@ -116,7 +116,7 @@ if (channel == 16) {
 
 ## Documentation Created
 
-- **[LOOP_START_EDITING.md](LOOP_START_EDITING.md)** - Comprehensive technical documentation
+- **[LOOP_START_EDITING.md](../Guides/LOOP_START_EDITING.md)** - Comprehensive technical documentation
 - **README.md updates** - Added Loop Start Editing section and feature description
 - **Module relationship updates** - Updated documentation tables
 
