@@ -6,9 +6,10 @@
 
 ## Midi Looper
 
-A **multi-track MIDI looper** for **Teensy 4.1** with piano-roll editing, tight timing, and controller-first workflows. It is built for **live performance**: you layer loops, nail subdivisions, and bend arrangement **while the music runs**—not only in a stopped “setup” mode.
+This is the codebase to run a **multi-track MIDI looper** on a **Teensy 4.1** with live loop jaming manipulations, piano-roll note/cc editing, tight hardware timing on 8 midi outs and usb on a 192 PPQN clock with hands on control workflow. It is built for **live performance**: record and layer multiple loops per track, remix them by live switching them into new jams **while the music never needs to stop running** to keep into the vibe of the music with undo/redo capabilities.
 
-This branch is aimed at a **full MIDI grid plus faders** (the reference layout below). A smaller **encoder-and-a-few-buttons** rig is a direction for later; underneath, everything stays **MIDI-addressable**, so another controller can follow the same map by matching [`include/MidiConfig.h`](include/MidiConfig.h).
+This branch is aimed at a **8x8 button grid with 4 motorized faders** 
+A smaller **encoder-and-4-buttons** rig is a direction for later but was the MVP; underneath this codebase, everything stays **MIDI-addressable**, so another controller can be made into a dedicated controller for this midi looper by updating [`include/MidiConfig.h`](include/MidiConfig.h) to your controller setup.
 
 ---
 
@@ -16,25 +17,34 @@ This branch is aimed at a **full MIDI grid plus faders** (the reference layout b
 
 ### Gesture-first
 
-The looper assumes **intent from how you press**, not from hunting through modes: **short**, **long**, **double**, **triple**, and **hold** (including **hold → second press** for two-step gestures). The **primary** action on a row is usually a **short** press; stronger or rarer actions use **long** / **double** so you are not forced through “arm this mode first” for every move.
+The looper assumes **intent from how you press**, not from hunting through menus. Every button has the same 5 gestures to get to any function FAST!
+**short**
+**long**
+**double**
+**triple**
+**hold + second press**
 
-### Jam loops into a song
+The **primary** action is always a **short** press; extremer edits like delete or undo actions use **long** / **double**.
 
-**Loops** are **immediate**—punch in, overdub, slice, retrigger. **Notes** are **detailed**—timing, length, velocity—on the **piano roll** and faders. **Jam regions** (bars and 16ths in **LOOP_EDIT**) let you **zoom** playback into a phrase, practice it, or perform inside a subset of the full loop. The aim is **flow**: building a song feels like **playing**, not like operating a spreadsheet.
+### Remix loops into a song by jamming
 
-### Jams vs Loops (why two ideas)
+**Loops** are **immediate**—punch in, overdub, slice, retrigger. 
+**Notes** are **detailed**—timing, length, velocity—on the **piano roll** and faders. 
+**Jam regions** (bars and 16ths in **LOOP_EDIT**) let you **zoom** playback into a new Loop, practice it, or perform inside a subset of the full loop and recording this jam into a new loop. The aim is **flow**: building a song feels like **playing**, not like operating a spreadsheet.
 
-**Loops** means **per-track loop slots**: eight buffers per track for record, overdub, clear, and undo—see [**Loops**](docs/Guides/control-surface/Loops.md). Folding **everything** you do in a **jam** (regions, switches, transposition, tick logic) into that **same** state machine would get **heavy** fast.
+### Jams vs Loops
 
-A dedicated **Jams** concept (including a **Jams** row on the **target** hardware map) is where **jam-era performance** and capture can live **next to** slot **Loops**, not inside every slot’s FSM. Today, **live** jam behavior is already in the **Bars** and **16ths** rows; the **Jams** row itself is **roadmap**—see [**Jams**](docs/Guides/control-surface/Jams.md).
+**Loops** means **per-track loop slots**: eight buffers per track for record, overdub, clear, and undo—see [**Loops**](docs/Guides/control-surface/Loops.md). Folding **everything** you do in a **jam**. Trigger regions, switch loops on the fly, transposition notes live. You go!
+
+**Remixes** of earlier recorded loops is where **jam performance** comes alive. In **Loop edit** the **Bars** and **16ths** buttons can be triggered/looped and recorded into new loops.
 
 ---
 
-## Reference control layout
+## Buttons
 
-Defaults line up with [`droid/midilooper_v1.ini`](droid/midilooper_v1.ini). To **remap**, edit [`include/MidiConfig.h`](include/MidiConfig.h), [`src/Utils/MidiButtonConfig.cpp`](src/Utils/MidiButtonConfig.cpp), and the [**MIDI config guide**](docs/Guides/MIDI_CONFIG_GUIDE.md). This table is **roles and gestures only**; exact notes and CCs are in the guide, `MidiConfig.h`, and the [**config summary**](docs/Guides/MIDI_CONFIG_GUIDE.md#config-summary-default-droid-mapping) for Channel 16.
+The current setup is based on Droid using this config file: [`droid/midilooper_v1.ini`](droid/midilooper_v1.ini). To **remap**, edit [`include/MidiConfig.h`](include/MidiConfig.h) and [`src/Utils/MidiButtonConfig.cpp`](src/Utils/MidiButtonConfig.cpp). More info can be found in the [**MIDI config guide**](docs/Guides/MIDI_CONFIG_GUIDE.md) and the [**config summary**](docs/Guides/MIDI_CONFIG_GUIDE.md#config-summary-default-droid-mapping) for Channel 16.
 
-Grid is **8 columns** × rows (plural labels). **No note numbers here**—only roles. Exact notes/CCs: **MIDI guide** + header.
+Below is the **cheet sheet** of all available the button gestures.
 
 | Row | Short | Long | Double | Triple | Hold / two-step |
 |-----|-------|------|--------|--------|-----------------|
@@ -45,20 +55,38 @@ Grid is **8 columns** × rows (plural labels). **No note numbers here**—only r
 | [**Bars**](docs/Guides/control-surface/Bars-and-16ths.md) | Seek bar; move single-bar jam | Enter one-bar or two-bar jam | Exit jam | Undo loop start edit | Hold bar A → press bar B for range |
 | [**16ths**](docs/Guides/control-surface/Bars-and-16ths.md) | Seek 16th in jam; set / jump region | 16th jam / seek | Exit jam | Undo loop start | Hold 16th A → press 16th B for range |
 | [**Main controls**](docs/Guides/control-surface/Main-controls.md) | REC/PLAY, MUTE/DE, Edit, NOTELEN | Clear / mute / exit | Undo overdub / undo clear / delete note | Redo overdub / redo clear | More transport buttons in guide |
-| [**Faders**](docs/Guides/control-surface/Faders.md) | — | — | — | — | Move for note select, loop start/length, coarse/fine, pitch |
-| [**Display**](docs/Guides/control-surface/Display.md) | — | — | — | — | OLED piano roll + track column; 16×2 summary when used |
 
-**Hardware** is Teensy 4.1, SSD1322 256×64 OLED or 16×2 LCD, 6N137 MIDI in, and optionally a **DROID** M4 + 2× B32—[product page](https://shop.dermannmitdermaschine.de/pages/droid-universal-cv-processor). MIDI wiring follows the [PJRC MIDI library](https://www.pjrc.com/teensy/td_libs_MIDI.html) pattern.
+## Faders
 
-For more depth: [loop start / length](docs/Guides/LOOP_START_EDITING.md), [jam phases](docs/Guides/jam-bar-step-phases.md), [note moves](docs/Guides/MOVE_NOTE_LOGIC.md), [fader state](docs/Guides/FADER_STATE_SYSTEM.md). A compact **Channel 16** listing lives under [**Config summary**](docs/Guides/MIDI_CONFIG_GUIDE.md#config-summary-default-droid-mapping) in the MIDI guide.
+The four faders sit beside the button grid. Their role changes depending on whether you are in **NOTE_EDIT** or **LOOP_EDIT**.
+
+| Fader | NOTE_EDIT | LOOP_EDIT |
+|-------|-----------|-----------|
+| **Fader 1** | Note selector | Loop start point |
+| **Fader 2** | 16th coarse position | Loop length / loop end |
+| **Fader 3** | 16th fine offset | — |
+| **Fader 4** | Note pitch | — |
+
+Midi channels, CCs, and pitchbend mappings can be found in [`include/MidiConfig.h`](include/MidiConfig.h) and the [**MIDI config guide**](docs/Guides/MIDI_CONFIG_GUIDE.md). More detail: [**Faders**](docs/Guides/control-surface/Faders.md), [loop start editing](docs/Guides/LOOP_START_EDITING.md), and [fader state](docs/Guides/FADER_STATE_SYSTEM.md).
+
+## Display
+
+The display is built around the **piano roll** with loop and current note played information and **track status strip**. After recording a first loop you often want to edit small parts in detail or shift notes. It also shows what part of the loop is active, and what you are editing right now. That means the display is not just “status”; it is part of how you shape your groove, ofsett start end boundaries, all while the loop is running.
+
+The **track column** gives a quick status for each track using letters such as `-` Empty, `P(lay)`, `O(verdub)`, `R(ecord)`, `M(uted)`, `S(topped)` and `A(rmed)`.
+
+For more detail: [**Display**](docs/Guides/control-surface/Display.md).
 
 ---
 
 ## Technical features
 
+**Hardware** is Teensy 4.1, SSD1322 256×64 OLED or 16×2 LCD, 6N137 MIDI in, and in this case a **DROID** M4 + 2× B32—[product page](https://shop.dermannmitdermaschine.de/pages/droid-universal-cv-processor). MIDI wiring follows the [PJRC MIDI library](https://www.pjrc.com/teensy/td_libs_MIDI.html) pattern.
+
+For more details on the logic: [loop start / length](docs/Guides/LOOP_START_EDITING.md), [jam phases](docs/Guides/jam-bar-step-phases.md), [note moves](docs/Guides/MOVE_NOTE_LOGIC.md), [fader state](docs/Guides/FADER_STATE_SYSTEM.md). A compact **Channel 16** listing lives under [**Config summary**](docs/Guides/MIDI_CONFIG_GUIDE.md#config-summary-default-droid-mapping) in the MIDI guide.
 **Read the numbers first:** [`include/MidiConfig.h`](include/MidiConfig.h) — channels, notes, CCs, LED bases.
 
-**Remap any controller:** [`docs/Guides/MIDI_CONFIG_GUIDE.md`](docs/Guides/MIDI_CONFIG_GUIDE.md) — checklist, tables, `MidiButtonConfig.cpp`, and matching `droid/midilooper_v1.ini` if you use it.
+**Remap any controller:** [`docs/Guides/MIDI_CONFIG_GUIDE.md`](docs/Guides/MIDI_CONFIG_GUIDE.md) — checklist, tables, `MidiButtonConfig.cpp`, and matching `droid/midilooper_v1.ini` if you want to make your own Droid setup.
 
 **Full capability list:** [`docs/FEATURES.md`](docs/FEATURES.md).
 
