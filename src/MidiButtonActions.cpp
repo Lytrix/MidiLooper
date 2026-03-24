@@ -12,6 +12,15 @@
 #include "LooperState.h"
 #include "Logger.h"
 #include "NoteEditManager.h"
+#include "Loop.h"
+
+namespace {
+uint8_t refSlotPhaseForQueue(const Track& track, uint8_t previousSlot) {
+  if (previousSlot >= ::Config::MAX_LOOPS_PER_TRACK) return 0xFF;
+  const Loop& rl = track.getLoop(previousSlot);
+  return (rl.loopLengthTicks > 0) ? previousSlot : 0xFF;
+}
+}  // namespace
 
 // Global instances (matching your current system)
 extern TrackManager trackManager;
@@ -119,19 +128,18 @@ void MidiButtonActions::handleToggleRecordForSlot(uint8_t slotIndex) {
     uint8_t trackIdx = trackManager.getSelectedTrackIndex();
     uint32_t now = getCurrentTick();
     uint8_t previousSlot = track.getActiveLoopIndex();
+    const bool slotHasData = track.hasDataInSlot(slotIndex);
 
-    // Don't switch active loop mid-recording or mid-overdub (would corrupt the current operation)
-    if ((track.isRecording() || track.isOverdubbing()) && track.getActiveLoopIndex() != slotIndex) {
-        logger.info("Loop %d: Ignoring press (recording/overdubbing on slot %d)", slotIndex + 1, track.getActiveLoopIndex() + 1);
+    // Commit capture on the current slot, then select the pressed slot and resume playback if it has a loop.
+    if ((track.isRecording() || track.isOverdubbing()) && previousSlot != slotIndex) {
+        trackManager.finalizeCaptureAndSelectSlot(trackIdx, slotIndex, now);
+        logger.info("Loop %d: Switched from slot %d (capture finalized)", slotIndex + 1, previousSlot + 1);
         return;
     }
 
-    // Switch to target slot before running state machine
     trackManager.setActiveLoopIndex(trackIdx, slotIndex);
 
-    // Slot-aware state machine:
-    // Note: TrackState is global per track, so we cannot enter TRACK_ARMED while
-    // keeping TRACK_PLAYING audio alive. Use queued recording as "armed intent".
+    // Slot-aware state machine (use hasDataInSlot(slot), not active-loop hasData after switch).
     if (track.isRecording()) {
         logger.info("Loop %d: Stop Recording", slotIndex + 1);
         trackManager.stopRecordingTrack(trackIdx);
@@ -139,29 +147,51 @@ void MidiButtonActions::handleToggleRecordForSlot(uint8_t slotIndex) {
     } else if (track.isOverdubbing()) {
         logger.info("Loop %d: Stop Overdub", slotIndex + 1);
         track.stopOverdubbing();
-    } else if (track.isPlaying() && !track.hasData()) {
-        if (trackManager.isRecordingQueued(trackIdx, slotIndex)) {
-            // Second press: immediate punch-in on the empty selected slot.
-            trackManager.clearQueuedRecordingTrack(trackIdx, slotIndex);
-            logger.info("Loop %d: Immediate punch-in", slotIndex + 1);
-            trackManager.startRecordingTrack(trackIdx, now);
-        } else {
-            // First press: schedule recording to start on next quantized wrap.
-            trackManager.queueRecordingTrack(trackIdx, slotIndex);
-            logger.info("Loop %d: Queued recording at next wrap", slotIndex + 1);
-        }
-    } else if (!track.hasData()) {
-        logger.info("Loop %d: Start Recording", slotIndex + 1);
-        trackManager.startRecordingTrack(trackIdx, now);
     } else if (track.isPlaying()) {
-        // Selecting another populated slot while playing should stay in playback
-        // and not immediately force overdub.
-        if (previousSlot != slotIndex && track.hasData()) {
+        if (previousSlot != slotIndex && slotHasData) {
             logger.info("Loop %d: Selected for playback", slotIndex + 1);
+            track.resetPlaybackState(now);
+            trackManager.forceLedUpdate(now);
+            return;
+        }
+        if (!slotHasData) {
+            if (clockManager.shouldQuantizeRecordStart() && track.isPlaying()) {
+                if (trackManager.isRecordingQueued(trackIdx, slotIndex)) {
+                    trackManager.clearQueuedRecordingTrack(trackIdx, slotIndex);
+                    logger.info("Loop %d: Immediate punch-in", slotIndex + 1);
+                    track.setAlignLoopOriginOnNextStop(true);
+                    trackManager.startRecordingTrack(trackIdx, now);
+                } else {
+                    trackManager.queueRecordingTrack(trackIdx, slotIndex,
+                                                    refSlotPhaseForQueue(track, previousSlot));
+                    logger.info("Loop %d: Queued recording (loop phase or bar)", slotIndex + 1);
+                }
+            } else {
+                logger.info("Loop %d: Start Recording", slotIndex + 1);
+                trackManager.startRecordingTrack(trackIdx, now);
+            }
+            trackManager.forceLedUpdate(now);
             return;
         }
         logger.info("Loop %d: Live Overdub", slotIndex + 1);
         trackManager.startOverdubbingTrack(trackIdx);
+    } else if (!slotHasData) {
+        if (clockManager.shouldQuantizeRecordStart() && track.isPlaying()) {
+            if (trackManager.isRecordingQueued(trackIdx, slotIndex)) {
+                trackManager.clearQueuedRecordingTrack(trackIdx, slotIndex);
+                logger.info("Loop %d: Immediate punch-in", slotIndex + 1);
+                track.setAlignLoopOriginOnNextStop(true);
+                trackManager.startRecordingTrack(trackIdx, now);
+            } else {
+                trackManager.queueRecordingTrack(trackIdx, slotIndex,
+                                                refSlotPhaseForQueue(track, previousSlot));
+                logger.info("Loop %d: Queued recording (loop phase or bar)", slotIndex + 1);
+            }
+        } else {
+            logger.info("Loop %d: Start Recording", slotIndex + 1);
+            trackManager.startRecordingTrack(trackIdx, now);
+        }
+        trackManager.forceLedUpdate(now);
     } else {
         logger.info("Loop %d: Toggle Play/Stop", slotIndex + 1);
         track.togglePlayStop();
@@ -177,7 +207,8 @@ void MidiButtonActions::beginSlotLayerHold(uint8_t slotIndex) {
     if (slotIndex == baseSlot) return;
     trackManager.setLayeredSlotHeld(trackIdx, slotIndex, true);
     if (track.isPlaying() && !track.hasDataInSlot(slotIndex)) {
-      trackManager.queueRecordingTrack(trackIdx, slotIndex);
+      trackManager.queueRecordingTrack(trackIdx, slotIndex,
+                                       refSlotPhaseForQueue(track, baseSlot));
       logger.info("Loop %d hold: layering active, queued record on wrap", slotIndex + 1);
     } else {
       logger.info("Loop %d hold: layering active", slotIndex + 1);

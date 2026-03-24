@@ -49,13 +49,16 @@ public:
   // --- Recording ---
   void startRecordingTrack(uint8_t trackIndex, uint32_t currentTick);
   void stopRecordingTrack(uint8_t trackIndex);
-  void queueRecordingTrack(uint8_t trackIndex, uint8_t slotIndex);
+  /// Queue recording into slotIndex. refSlotForPhase = 0..n-1 uses that slot's loop wrap for start time; 0xFF = next bar line.
+  void queueRecordingTrack(uint8_t trackIndex, uint8_t slotIndex, uint8_t refSlotForPhase = 0xFF);
   void clearQueuedRecordingTrack(uint8_t trackIndex, uint8_t slotIndex);
   bool isRecordingQueued(uint8_t trackIndex, uint8_t slotIndex) const;
   bool hasQueuedRecordingTrack(uint8_t trackIndex) const;
   void queueStopRecordingTrack(uint8_t trackIndex);
-  void handleQuantizedStart(uint32_t currentTick);
+  void handlePendingRecordStart(uint32_t currentTick);
   void handleQuantizedStop(uint32_t currentTick);
+  /// Stop recording/overdub on current slot, select newSlot, then play if that slot has a loop.
+  void finalizeCaptureAndSelectSlot(uint8_t trackIndex, uint8_t newSlot, uint32_t currentTick);
 
   // --- Playback / Overdub ---
   void startPlayingTrack(uint8_t trackIndex);
@@ -108,6 +111,8 @@ private:
   bool pendingRecordSlot[Config::NUM_TRACKS][Config::MAX_LOOPS_PER_TRACK] = {{false}};
   /// Clock tick when queueRecordingTrack was last called for this track (skip same-tick quantized start).
   uint32_t pendingRecordQueuedAtTick[Config::NUM_TRACKS];
+  /// Slot index whose loop phase defines punch-in instant; 0xFF means use global bar boundary only.
+  uint8_t pendingRecordRefSlot[Config::NUM_TRACKS];
   bool pendingStop[Config::NUM_TRACKS] = {false};
   bool heldLayerSlot[Config::NUM_TRACKS][Config::MAX_LOOPS_PER_TRACK] = {{false}};
 
