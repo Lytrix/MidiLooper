@@ -7,8 +7,8 @@
 
 LogLevel Logger::currentLevel = LOG_INFO;
 bool Logger::isInitialized = false;
-// By default, all categories enabled except MOVE_NOTES, MIDI_LED, BAR_STEP (verbose)
-bool Logger::categoryEnabled[] = { true, true, true, true, true, true, true, false, false, false };
+// By default, all categories enabled except MOVE_NOTES, MIDI_LED, BAR_STEP, STORAGE (verbose)
+bool Logger::categoryEnabled[] = { true, true, true, true, true, true, true, false, false, false, false };
 Logger logger;
 
 static char logBuffer[128];  // Shared buffer for formatted log output
@@ -23,7 +23,7 @@ void Logger::setup(LogLevel level) {
 
 // Enable or disable logging for a given category
 void Logger::setCategoryEnabled(LogCategory category, bool enabled) {
-  if (category >= CAT_GENERAL && category <= CAT_BAR_STEP_BUTTON) {
+  if (category >= CAT_GENERAL && category <= CAT_STORAGE) {
     categoryEnabled[category] = enabled;
   }
 }
@@ -39,7 +39,7 @@ void Logger::printLevel(LogLevel level) {
 }
 
 void Logger::printCategory(LogCategory category) {
-  const char* categories[] = {"GEN", "STATE", "MIDI", "CLOCK", "TRACK", "BTN", "DISP", "MOVE", "LED", "BARSTEP"};
+  const char* categories[] = {"GEN", "STATE", "MIDI", "CLOCK", "TRACK", "BTN", "DISP", "MOVE", "LED", "BARSTEP", "STOR"};
   if (category < (int)(sizeof(categories)/sizeof(categories[0]))) {
     Serial.printf("[%s] ", categories[category]);
   }

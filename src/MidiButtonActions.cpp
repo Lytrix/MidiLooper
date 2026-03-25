@@ -16,9 +16,9 @@
 
 namespace {
 uint8_t refSlotPhaseForQueue(const Track& track, uint8_t previousSlot) {
-  if (previousSlot >= ::Config::MAX_LOOPS_PER_TRACK) return 0xFF;
+  if (previousSlot >= ::Config::MAX_LOOPS_PER_TRACK) return ::Config::INVALID_LOOP_SLOT;
   const Loop& rl = track.getLoop(previousSlot);
-  return (rl.loopLengthTicks > 0) ? previousSlot : 0xFF;
+  return (rl.loopLengthTicks > 0) ? previousSlot : ::Config::INVALID_LOOP_SLOT;
 }
 }  // namespace
 
@@ -87,22 +87,142 @@ void MidiButtonActions::executeAction(MidiButtonConfig::ActionType actionType, u
             if (parameter < ::Config::MAX_LOOPS_PER_TRACK) {
                 uint8_t tidx = trackManager.getSelectedTrackIndex();
                 uint8_t slot = static_cast<uint8_t>(parameter);
+                uint32_t now = getCurrentTick();
+                Track& track = getCurrentTrack();
+
+                const bool slotHasData = track.hasDataInSlot(slot);
+                const uint8_t selectedSlot = trackManager.getSelectedSlotIndex(tidx);
+
+                // Long-press semantics:
+                // - If the slot is selected: clear it immediately.
+                // - If the slot is not selected (and filled): queue playback to start at loop-end.
+                if (slot != selectedSlot) {
+                    if (slotHasData) {
+                        trackManager.setSelectedSlotIndex(tidx, slot);
+                        trackManager.clearPendingSlotSwitch(tidx);
+                        if (track.isPlaying()) {
+                            // Selecting a single slot: replace enabled set when the switch commits.
+                            trackManager.setPendingEnabledSetReplacement(tidx, true);
+                            trackManager.requestSlotSwitch(
+                                tidx, slot, SlotQuantization::LoopEnd, now);
+                            logger.info("Loop %d: long-press queued at loop-end", slot + 1);
+                        } else {
+                            // No active playback loop: start immediately (and avoid a pending
+                            // transition that would never commit while STOPPED/EMPTY).
+                            for (uint8_t s = 0; s < ::Config::MAX_LOOPS_PER_TRACK; ++s) {
+                                trackManager.setSlotEnabled(tidx, s, (s == slot));
+                                trackManager.setSlotMuted(tidx, s, false);
+                            }
+                            trackManager.setActiveLoopIndex(tidx, slot);
+                            track.startPlaying(now);
+                            trackManager.forceLedUpdate(now);
+                            logger.info("Loop %d: long-press start (not playing)", slot + 1);
+                        }
+                    }
+                    return;
+                }
+
+                // slot == selectedSlot => clear (only when it is actually filled)
+                if (!slotHasData) return;
+
+                // Cancels any pending quantized slot switching.
+                trackManager.clearPendingSlotSwitch(tidx);
+                trackManager.setPendingEnabledSetReplacement(tidx, false);
+
+                // If capturing, finalize before clearing to avoid corrupting state.
+                if (track.isRecording() || track.isOverdubbing()) {
+                    trackManager.finalizeCaptureAndSelectSlot(tidx, slot, now);
+                } else {
+                    trackManager.setActiveLoopIndex(tidx, slot);
+                }
+
+                // Revert to codebase "clear" semantics (delete content using Track::clear()).
+                // Update slot-level flags first so multi-slot state matches deletion.
+                trackManager.setSlotEnabled(tidx, slot, false);
+                trackManager.setSlotMuted(tidx, slot, false);
                 trackManager.clearQueuedRecordingTrack(tidx, slot);
                 trackManager.setLayeredSlotHeld(tidx, slot, false);
-                trackManager.setActiveLoopIndex(tidx, slot);
+
+                // Active loop is the cleared slot; reuse existing clear/undo/storage logic.
                 handleClearTrack();
+
+                // Track::clear() sets TrackState to TRACK_EMPTY, which would silence all
+                // other enabled slots. Restore playback if any other enabled+unmuted slot
+                // still has data.
+                bool foundAudible = false;
+                uint8_t newActiveSlot = 0;
+                for (uint8_t s = 0; s < ::Config::MAX_LOOPS_PER_TRACK; ++s) {
+                    if (trackManager.isSlotEnabled(tidx, s) &&
+                        !trackManager.isSlotMuted(tidx, s) &&
+                        track.hasDataInSlot(s)) {
+                        foundAudible = true;
+                        newActiveSlot = s;
+                        break;
+                    }
+                }
+
+                if (foundAudible) {
+                    trackManager.setActiveLoopIndex(tidx, newActiveSlot);
+                    // Reset playback indices for all enabled+unmuted slots.
+                    for (uint8_t s = 0; s < ::Config::MAX_LOOPS_PER_TRACK; ++s) {
+                        if (trackManager.isSlotEnabled(tidx, s) &&
+                            !trackManager.isSlotMuted(tidx, s) &&
+                            track.hasDataInSlot(s)) {
+                            track.resetPlaybackStateForSlot(s, now);
+                        }
+                    }
+                    track.startPlaying(now);
+                } else {
+                    // No enabled audible slots remain: ensure silence.
+                    track.sendAllNotesOff();
+                }
             }
             break;
         case MidiButtonConfig::ActionType::UNDO_FOR_SLOT:
             if (parameter < ::Config::MAX_LOOPS_PER_TRACK) {
-                trackManager.setActiveLoopIndex(trackManager.getSelectedTrackIndex(), static_cast<uint8_t>(parameter));
+                uint8_t tidx = trackManager.getSelectedTrackIndex();
+                uint8_t slot = static_cast<uint8_t>(parameter);
+                trackManager.setSelectedSlotIndex(tidx, slot);
+                trackManager.setActiveLoopIndex(tidx, slot);
                 handleUndo();
             }
             break;
         case MidiButtonConfig::ActionType::REDO_FOR_SLOT:
             if (parameter < ::Config::MAX_LOOPS_PER_TRACK) {
-                trackManager.setActiveLoopIndex(trackManager.getSelectedTrackIndex(), static_cast<uint8_t>(parameter));
+                uint8_t tidx = trackManager.getSelectedTrackIndex();
+                uint8_t slot = static_cast<uint8_t>(parameter);
+                trackManager.setSelectedSlotIndex(tidx, slot);
+                trackManager.setActiveLoopIndex(tidx, slot);
                 handleRedo();
+            }
+            break;
+
+        case MidiButtonConfig::ActionType::OVERDUB_FOR_SLOT:
+            if (parameter < ::Config::MAX_LOOPS_PER_TRACK) {
+                uint8_t tidx = trackManager.getSelectedTrackIndex();
+                uint8_t slot = static_cast<uint8_t>(parameter);
+                uint32_t now = getCurrentTick();
+                Track& track = getCurrentTrack();
+
+                const bool slotHasData = track.hasDataInSlot(slot);
+                if (!slotHasData) {
+                    // Keep behavior consistent with short-press for empty slots.
+                    handleToggleRecordForSlot(slot);
+                    return;
+                }
+
+                trackManager.clearPendingSlotSwitch(tidx);
+                trackManager.setSelectedSlotIndex(tidx, slot);
+                trackManager.setActiveLoopIndex(tidx, slot);
+
+                // Ensure we are not in TRACK_EMPTY before starting overdub.
+                if (track.isEmpty()) {
+                    track.startPlaying(now);
+                } else if (!track.isPlaying() && !track.isOverdubbing()) {
+                    track.startPlaying(now);
+                }
+
+                trackManager.startOverdubbingTrack(tidx);
             }
             break;
         case MidiButtonConfig::ActionType::MUTE_TRACK:
@@ -130,19 +250,80 @@ void MidiButtonActions::handleToggleRecordForSlot(uint8_t slotIndex) {
     Track& track = getCurrentTrack();
     uint8_t trackIdx = trackManager.getSelectedTrackIndex();
     uint32_t now = getCurrentTick();
-    uint8_t previousSlot = track.getActiveLoopIndex();
+    uint8_t previousSlot = track.getActiveLoopIndex();  // currently playing slot (defines phase)
+    uint8_t selectedSlot = trackManager.getSelectedSlotIndex(trackIdx);
     const bool slotHasData = track.hasDataInSlot(slotIndex);
 
-    // Commit capture on the current slot, then select the pressed slot and resume playback if it has a loop.
+    // If capturing and the user selects another filled slot: commit capture first.
     if ((track.isRecording() || track.isOverdubbing()) && previousSlot != slotIndex) {
+        trackManager.setSelectedSlotIndex(trackIdx, slotIndex);
         trackManager.finalizeCaptureAndSelectSlot(trackIdx, slotIndex, now);
         logger.info("Loop %d: Switched from slot %d (capture finalized)", slotIndex + 1, previousSlot + 1);
         return;
     }
 
+    // Leaving the slot that had a pending arm/queue (e.g. empty slot 4 armed, then select slot 1):
+    // clear pending so LEDs and transport state stay aligned with the newly focused slot.
+    const uint8_t queuedRecSlot = trackManager.getQueuedRecordingSlot(trackIdx);
+    if (queuedRecSlot != ::Config::INVALID_LOOP_SLOT && slotIndex != queuedRecSlot) {
+        trackManager.cancelPendingRecordArm(trackIdx);
+    }
+
+    // Filled + currently playing: schedule quantized switch when not selected.
+    if (track.isPlaying() && slotHasData) {
+        const uint8_t enabledCount = trackManager.countEnabledSlots(trackIdx);
+        const bool slotEnabled = trackManager.isSlotEnabled(trackIdx, slotIndex);
+
+        if (slotIndex == selectedSlot) {
+            // Toggle mute only for this slot. Track keeps running.
+            if (!slotEnabled) {
+                // Safety: keep focus slot enabled.
+                trackManager.setSlotEnabled(trackIdx, slotIndex, true);
+                trackManager.setSlotMuted(trackIdx, slotIndex, false);
+                track.resetPlaybackStateForSlot(slotIndex, now);
+            } else {
+                trackManager.toggleSlotMuted(trackIdx, slotIndex);
+                const bool nowMuted = trackManager.isSlotMuted(trackIdx, slotIndex);
+                if (!nowMuted) {
+                    // Align playback indices when unmuting.
+                    track.resetPlaybackStateForSlot(slotIndex, now);
+                }
+            }
+            trackManager.forceLedUpdate(now);
+            return;
+        }
+
+        // Short press on a non-selected filled slot:
+        // - Always move focus/capture target.
+        trackManager.setSelectedSlotIndex(trackIdx, slotIndex);
+
+        // Multi-slot mode: keep the enabled set as-is, only mute/unmute if the slot is enabled.
+        if (enabledCount > 1) {
+            if (slotEnabled) {
+                trackManager.toggleSlotMuted(trackIdx, slotIndex);
+                const bool nowMuted = trackManager.isSlotMuted(trackIdx, slotIndex);
+                if (!nowMuted) track.resetPlaybackStateForSlot(slotIndex, now);
+                trackManager.forceLedUpdate(now);
+            }
+            // Schedule active-loop focus switch for capture/overdub on next 16th boundary.
+            trackManager.requestSlotSwitch(trackIdx, slotIndex, SlotQuantization::NextGrid, now);
+            return;
+        }
+
+        // Single-slot mode: switch enabled set to the pressed slot at next 16th.
+        if (!slotEnabled) {
+            trackManager.setPendingEnabledSetReplacement(trackIdx, true);
+        }
+        trackManager.requestSlotSwitch(trackIdx, slotIndex, SlotQuantization::NextGrid, now);
+        return;
+    }
+
+    // Otherwise: fall back to the existing immediate record/start toggle behavior
+    // for empty slots, and immediate play/stop toggle for filled slots when not playing.
+    trackManager.clearPendingSlotSwitch(trackIdx);
+    trackManager.setSelectedSlotIndex(trackIdx, slotIndex);
     trackManager.setActiveLoopIndex(trackIdx, slotIndex);
 
-    // Slot-aware state machine (use hasDataInSlot(slot), not active-loop hasData after switch).
     if (track.isRecording()) {
         logger.info("Loop %d: Stop Recording", slotIndex + 1);
         trackManager.stopRecordingTrack(trackIdx);
@@ -151,12 +332,7 @@ void MidiButtonActions::handleToggleRecordForSlot(uint8_t slotIndex) {
         logger.info("Loop %d: Stop Overdub", slotIndex + 1);
         track.stopOverdubbing();
     } else if (track.isPlaying()) {
-        if (previousSlot != slotIndex && slotHasData) {
-            logger.info("Loop %d: Selected for playback", slotIndex + 1);
-            track.resetPlaybackState(now);
-            trackManager.forceLedUpdate(now);
-            return;
-        }
+        // Empty slot while playing => existing short-press record/queue flow.
         if (!slotHasData) {
             if (clockManager.shouldQuantizeRecordStart() && track.isPlaying()) {
                 if (trackManager.isRecordingQueued(trackIdx, slotIndex)) {
@@ -165,8 +341,8 @@ void MidiButtonActions::handleToggleRecordForSlot(uint8_t slotIndex) {
                     track.setAlignLoopOriginOnNextStop(true);
                     trackManager.startRecordingTrack(trackIdx, now);
                 } else {
-                    trackManager.queueRecordingTrack(trackIdx, slotIndex,
-                                                    refSlotPhaseForQueue(track, previousSlot));
+                    trackManager.queueRecordingTrack(
+                        trackIdx, slotIndex, refSlotPhaseForQueue(track, previousSlot));
                     logger.info("Loop %d: Queued recording (loop phase or bar)", slotIndex + 1);
                 }
             } else {
@@ -176,7 +352,10 @@ void MidiButtonActions::handleToggleRecordForSlot(uint8_t slotIndex) {
             trackManager.forceLedUpdate(now);
             return;
         }
-        logger.info("Loop %d: Live Overdub", slotIndex + 1);
+
+        // This branch is reached for "filled + playing + slotHasData == true" only when
+        // `slotIndex == selectedSlot` is handled above, so keep it as a safety fallback.
+        logger.info("Loop %d: Live Overdub (safety fallback)", slotIndex + 1);
         trackManager.startOverdubbingTrack(trackIdx);
     } else if (!slotHasData) {
         if (clockManager.shouldQuantizeRecordStart() && track.isPlaying()) {
@@ -186,8 +365,8 @@ void MidiButtonActions::handleToggleRecordForSlot(uint8_t slotIndex) {
                 track.setAlignLoopOriginOnNextStop(true);
                 trackManager.startRecordingTrack(trackIdx, now);
             } else {
-                trackManager.queueRecordingTrack(trackIdx, slotIndex,
-                                                refSlotPhaseForQueue(track, previousSlot));
+                trackManager.queueRecordingTrack(
+                    trackIdx, slotIndex, refSlotPhaseForQueue(track, previousSlot));
                 logger.info("Loop %d: Queued recording (loop phase or bar)", slotIndex + 1);
             }
         } else {
@@ -198,32 +377,24 @@ void MidiButtonActions::handleToggleRecordForSlot(uint8_t slotIndex) {
     } else {
         logger.info("Loop %d: Toggle Play/Stop", slotIndex + 1);
         track.togglePlayStop();
+        trackManager.forceLedUpdate(now);
     }
 }
 
 void MidiButtonActions::beginSlotLayerHold(uint8_t slotIndex) {
     if (slotIndex >= ::Config::MAX_LOOPS_PER_TRACK) return;
     uint8_t trackIdx = trackManager.getSelectedTrackIndex();
-    Track& track = getCurrentTrack();
-    uint8_t baseSlot = track.getActiveLoopIndex();
-
-    if (slotIndex == baseSlot) return;
-    trackManager.setLayeredSlotHeld(trackIdx, slotIndex, true);
-    if (track.isPlaying() && !track.hasDataInSlot(slotIndex)) {
-      trackManager.queueRecordingTrack(trackIdx, slotIndex,
-                                       refSlotPhaseForQueue(track, baseSlot));
-      logger.info("Loop %d hold: layering active, queued record on wrap", slotIndex + 1);
-    } else {
-      logger.info("Loop %d hold: layering active", slotIndex + 1);
-    }
+    // Multi-hold selection builds a pending enabled set; it is committed on release.
+    trackManager.beginSlotSelectionHold(trackIdx, slotIndex);
+    logger.info("Loop %d hold: selected for next multi-slot playback", slotIndex + 1);
 }
 
 void MidiButtonActions::endSlotLayerHold(uint8_t slotIndex) {
     if (slotIndex >= ::Config::MAX_LOOPS_PER_TRACK) return;
     uint8_t trackIdx = trackManager.getSelectedTrackIndex();
-    trackManager.clearQueuedRecordingTrack(trackIdx, slotIndex);
-    trackManager.setLayeredSlotHeld(trackIdx, slotIndex, false);
-    logger.info("Loop %d hold released: back to single-slot playback", slotIndex + 1);
+    const uint32_t now = getCurrentTick();
+    trackManager.endSlotSelectionHold(trackIdx, slotIndex, now);
+    logger.info("Loop %d hold released", slotIndex + 1);
 }
 
 // Core actions that match your current 3-button system

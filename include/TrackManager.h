@@ -9,6 +9,7 @@
 #include "Track.h"
 #include "ClockManager.h"
 #include "MidiLedManager.h"
+#include "SlotStateMachine.h"
 
 /**
  * @class TrackManager
@@ -49,11 +50,17 @@ public:
   // --- Recording ---
   void startRecordingTrack(uint8_t trackIndex, uint32_t currentTick);
   void stopRecordingTrack(uint8_t trackIndex);
-  /// Queue recording into slotIndex. refSlotForPhase = 0..n-1 uses that slot's loop wrap for start time; 0xFF = next bar line.
-  void queueRecordingTrack(uint8_t trackIndex, uint8_t slotIndex, uint8_t refSlotForPhase = 0xFF);
+  /// Queue recording into slotIndex. refSlotForPhase is a valid slot index for loop-phase punch-in, or
+  /// Config::INVALID_LOOP_SLOT for next bar line only.
+  void queueRecordingTrack(uint8_t trackIndex, uint8_t slotIndex,
+                           uint8_t refSlotForPhase = Config::INVALID_LOOP_SLOT);
   void clearQueuedRecordingTrack(uint8_t trackIndex, uint8_t slotIndex);
   bool isRecordingQueued(uint8_t trackIndex, uint8_t slotIndex) const;
   bool hasQueuedRecordingTrack(uint8_t trackIndex) const;
+  /// First slot index with a pending record arm/queue, or Config::INVALID_LOOP_SLOT if none.
+  uint8_t getQueuedRecordingSlot(uint8_t trackIndex) const;
+  /// Clears pending record flags; if track is TRACK_ARMED, returns to STOPPED or EMPTY.
+  void cancelPendingRecordArm(uint8_t trackIndex);
   void queueStopRecordingTrack(uint8_t trackIndex);
   void handlePendingRecordStart(uint32_t currentTick);
   void handleQuantizedStop(uint32_t currentTick);
@@ -94,6 +101,30 @@ public:
   void setActiveLoopIndex(uint8_t trackIndex, uint8_t index);
   void setLayeredSlotHeld(uint8_t trackIndex, uint8_t slotIndex, bool held);
 
+  // --- Per-slot playback state (Phase: slot toggles) ---
+  bool isSlotEnabled(uint8_t trackIndex, uint8_t slotIndex) const;
+  bool isSlotMuted(uint8_t trackIndex, uint8_t slotIndex) const;
+  void setSlotEnabled(uint8_t trackIndex, uint8_t slotIndex, bool enabled);
+  void setSlotMuted(uint8_t trackIndex, uint8_t slotIndex, bool muted);
+  void toggleSlotMuted(uint8_t trackIndex, uint8_t slotIndex);
+  uint8_t countEnabledSlots(uint8_t trackIndex) const;
+
+  /// Multi-slot selection: during a multi-hold gesture we build a pending enabled set.
+  void beginSlotSelectionHold(uint8_t trackIndex, uint8_t slotIndex);
+  void endSlotSelectionHold(uint8_t trackIndex, uint8_t slotIndex, uint32_t nowTick);
+
+  /// When true, the next committed `pendingSlotIndex` switch replaces the enabled slot set with only that slot.
+  void setPendingEnabledSetReplacement(uint8_t trackIndex, bool enabled);
+
+  // --- Slot state machine (selected UI focus + pending quantized switch) ---
+  uint8_t getSelectedSlotIndex(uint8_t trackIndex) const;
+  void setSelectedSlotIndex(uint8_t trackIndex, uint8_t slotIndex);
+  void requestSlotSwitch(uint8_t trackIndex,
+                          uint8_t slotIndex,
+                          SlotQuantization quantization,
+                          uint32_t queuedAtTick);
+  void clearPendingSlotSwitch(uint8_t trackIndex);
+
   // --- LED Management ---
   void updateLedsDeferred();   // Call from main loop - decoupled from clock path
   void updateLeds(uint32_t currentTick);
@@ -101,8 +132,12 @@ public:
   void clearLeds();
 
 private:
+  /// Track row + loop row (notes 60–67, 50–57). Used from updateLedsDeferred and forceLedUpdate
+  /// because MidiLedManager::updateLeds / clearAllLeds can turn off loop LEDs without this pass.
+  void refreshTrackAndLoopSelectLeds();
   Track tracks[Config::NUM_TRACKS];
   MidiLedManager* ledManager;  // LED controller for Droid B32
+  SlotStateMachine slotStateMachine;
 
   uint8_t selectedTrack = 0;
   bool autoAlignEnabled = false;
@@ -114,10 +149,24 @@ private:
   bool pendingRecordSlot[Config::NUM_TRACKS][Config::MAX_LOOPS_PER_TRACK] = {{false}};
   /// Clock tick when queueRecordingTrack was last called for this track (skip same-tick quantized start).
   uint32_t pendingRecordQueuedAtTick[Config::NUM_TRACKS];
-  /// Slot index whose loop phase defines punch-in instant; 0xFF means use global bar boundary only.
+  /// Slot whose loop phase defines punch-in instant, or Config::INVALID_LOOP_SLOT for bar boundary only.
   uint8_t pendingRecordRefSlot[Config::NUM_TRACKS];
   bool pendingStop[Config::NUM_TRACKS] = {false};
   bool heldLayerSlot[Config::NUM_TRACKS][Config::MAX_LOOPS_PER_TRACK] = {{false}};
+
+  // Slot-level playback (multi-slot enable + per-slot mute)
+  bool slotEnabled[Config::NUM_TRACKS][Config::MAX_LOOPS_PER_TRACK] = {{false}};
+  bool slotMuted[Config::NUM_TRACKS][Config::MAX_LOOPS_PER_TRACK] = {{false}};
+
+  // Multi-hold selection building a pending enabled set (committed on release quantized)
+  bool pendingSlotEnabled[Config::NUM_TRACKS][Config::MAX_LOOPS_PER_TRACK] = {{false}};
+  bool pendingHoldActive[Config::NUM_TRACKS][Config::MAX_LOOPS_PER_TRACK] = {{false}};
+  uint8_t pendingHoldCount[Config::NUM_TRACKS] = {0};
+  bool pendingMultiSlotCommit[Config::NUM_TRACKS] = {false};
+  uint32_t pendingMultiSlotQueuedAtTick[Config::NUM_TRACKS] = {UINT32_MAX};
+
+  // If set, the next pending slot switch commit replaces enabled set with the target slot only.
+  bool pendingEnabledSetReplacement[Config::NUM_TRACKS] = {false};
 
   //friend class UI; // Optional: if you have a UI or debug class needing internal access
 };

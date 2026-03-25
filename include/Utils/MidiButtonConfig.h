@@ -36,6 +36,7 @@ enum class ActionType {
     CLEAR_TRACK,
     TOGGLE_RECORD_FOR_SLOT,   // Parameter = slot index 0-7
     CLEAR_TRACK_FOR_SLOT,     // Parameter = slot index
+    OVERDUB_FOR_SLOT,         // Parameter = slot index
     UNDO_FOR_SLOT,            // Parameter = slot index
     REDO_FOR_SLOT,            // Parameter = slot index
     MUTE_TRACK,

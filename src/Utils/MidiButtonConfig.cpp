@@ -203,7 +203,7 @@ void Config::loadConfiguration() {
         addButton(ButtonConfig(MidiConfig::Led::LOOP_SELECT_LED_BASE + i, Channels::TRACK_SELECT, loopDescBuf[i])
                   .onShortPress(ActionType::TOGGLE_RECORD_FOR_SLOT)
                   .onLongPress(ActionType::CLEAR_TRACK_FOR_SLOT)
-                  .onDoublePress(ActionType::UNDO_FOR_SLOT)
+                  .onDoublePress(ActionType::OVERDUB_FOR_SLOT)
                   .onTriplePress(ActionType::REDO_FOR_SLOT)
                   .withParameter(i));
     }

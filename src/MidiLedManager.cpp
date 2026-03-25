@@ -48,13 +48,9 @@ void MidiLedManager::updateLeds(Track& track, uint32_t currentTick) {
     // Calculate current bar (relative to loop start for correct 16th display)
     uint32_t currentBar = getCurrentBar(currentTick, loopLength, startLoopTick, loopStartTick);
     
-    // Only update on the first tick of a new bar, or if not initialized
+    // Only update when bar index changes, or on first initialization.
     uint32_t barStartTickDisplay = getCurrentBarStartTick(currentTick, loopLength, startLoopTick, loopStartTick);
-    uint32_t tickInLoopStorage = (currentTick - startLoopTick) % loopLength;
-    uint32_t tickInLoopDisplay = (tickInLoopStorage - loopStartTick + loopLength) % loopLength;
-    bool isFirstTickOfBar = (tickInLoopDisplay == barStartTickDisplay) || (currentTick == 0);
-    
-    if (!hasInitialized || isFirstTickOfBar || currentBar != lastUpdateBar) {
+    if (!hasInitialized || currentBar != lastUpdateBar) {
         analyzeAndUpdateBar(track, barStartTickDisplay, loopLength, loopStartTick);
         updateBarLeds(track, loopLength, currentBar, loopStartTick);
         
@@ -107,9 +103,10 @@ void MidiLedManager::clearAllLeds() {
 }
 
 void MidiLedManager::updateTrackSelectLeds(uint8_t selectedTrackIndex, const bool trackHasData[Config::NUM_TRACKS],
-                                          uint8_t activeLoopIndex, const bool slotHasData[Config::MAX_LOOPS_PER_TRACK]) {
+                                          uint8_t focusSlotIndex, const uint8_t slotVelocities[Config::MAX_LOOPS_PER_TRACK]) {
     static constexpr uint8_t VEL_SELECTED = 127;
     static constexpr uint8_t VEL_HAS_DATA = 32;
+    (void)focusSlotIndex;  // Loop row is driven by slotVelocities
     
     // Track row (notes 60-67)
     for (uint8_t i = 0; i < NUM_TRACK_LEDS && i < Config::NUM_TRACKS; i++) {
@@ -127,10 +124,13 @@ void MidiLedManager::updateTrackSelectLeds(uint8_t selectedTrackIndex, const boo
         }
     }
     
-    // Loop row (notes 50-57) for selected track: 127=selected slot, 32=has data, 0=empty
+    // Loop row (notes 50-57) for selected track: slotVelocities drive the LED directly.
     for (uint8_t i = 0; i < MidiConfig::Led::LOOP_SELECT_LED_COUNT && i < Config::MAX_LOOPS_PER_TRACK; i++) {
-        uint8_t velocity = (i == activeLoopIndex) ? VEL_SELECTED
-                         : (slotHasData[i] ? VEL_HAS_DATA : 0);
+        uint8_t velocity = slotVelocities[i];
+        // Safety: if the caller doesn't fill velocities, keep previous semantics.
+        if (velocity == 0 && slotVelocities[i] == 0 && i < Config::MAX_LOOPS_PER_TRACK) {
+            // no-op
+        }
         uint8_t note = MidiConfig::Led::LOOP_SELECT_LED_BASE + i;
         
         if (lastLoopSelectVelocity[i] != velocity) {

@@ -24,7 +24,7 @@ public:
     // Track row LEDs (ch15 notes 60-67): 127=selected, 32=has data, 0=empty
     // Loop row (50-57): 127=selected slot, 32=slot has data, 0=empty (for selected track)
     void updateTrackSelectLeds(uint8_t selectedTrackIndex, const bool trackHasData[Config::NUM_TRACKS],
-                               uint8_t activeLoopIndex, const bool slotHasData[Config::MAX_LOOPS_PER_TRACK]);
+                               uint8_t focusSlotIndex, const uint8_t slotVelocities[Config::MAX_LOOPS_PER_TRACK]);
     
     // Update current tick indicator (which 16th step is playing)
     void updateCurrentTick(Track& track, uint32_t currentTick);

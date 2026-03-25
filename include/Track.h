@@ -82,6 +82,8 @@ public:
   // For any notes still in pendingNotes, emit a NoteOff at offAbsTick
   void finalizePendingNotes(uint32_t offAbsTick);
   void resetPlaybackState(uint32_t currentTick);
+  /// Reset per-slot playback indices so enabling/unmuting starts at the right phase.
+  void resetPlaybackStateForSlot(uint8_t slotIndex, uint32_t currentTick);
   
   // Recording control
   void startRecording(uint32_t startLoopTick);
@@ -174,7 +176,7 @@ public:
 
   /// Per-slot capture state (only activeLoopIndex can be RECORDING/OVERDUBBING).
   SlotOpState getSlotOpState(uint8_t slotIndex) const;
-  /// Active slot receiving MIDI capture, or 0xFF if not recording/overdubbing.
+  /// Active slot receiving MIDI capture, or Config::INVALID_LOOP_SLOT if not recording/overdubbing.
   uint8_t getRecordingFocusSlot() const;
 
   // Track state checks
@@ -211,6 +213,14 @@ public:
   /// Get cached display notes - avoids expensive reconstructNotes() calls
   const std::vector<NoteUtils::DisplayNote>& getCachedNotes() const {
     return getActiveLoop().getNoteCache().getNotes(getActiveLoop().midiEvents, getActiveLoop().loopLengthTicks);
+  }
+
+  /// Per-slot cached notes for display (e.g. follow selected slot while activeLoopIndex is capture phase).
+  uint32_t getLoopLengthForSlot(uint8_t slotIndex) const { return getLoop(slotIndex).loopLengthTicks; }
+  uint32_t getLoopStartTickForSlot(uint8_t slotIndex) const { return getLoop(slotIndex).loopStartTick; }
+  const std::vector<NoteUtils::DisplayNote>& getCachedNotesForSlot(uint8_t slotIndex) const {
+    const Loop& loop = getLoop(slotIndex);
+    return loop.getNoteCache().getNotes(loop.midiEvents, loop.loopLengthTicks);
   }
   
   /// Get cached event index - avoids expensive index rebuilding

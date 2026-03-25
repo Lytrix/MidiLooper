@@ -12,7 +12,7 @@ bool isValidTransition(TrackState current, TrackState next) {
             return next == TRACK_ARMED || next == TRACK_RECORDING;
 
         case TRACK_ARMED:
-            return next == TRACK_RECORDING || next == TRACK_EMPTY;
+            return next == TRACK_RECORDING || next == TRACK_EMPTY || next == TRACK_STOPPED;
 
         case TRACK_RECORDING:
             return next == TRACK_STOPPED_RECORDING || next == TRACK_EMPTY;
