@@ -42,6 +42,11 @@ public:
 
   void sendNoteOn(uint8_t channel, uint8_t note, uint8_t velocity);
   void sendNoteOff(uint8_t channel, uint8_t note, uint8_t velocity);
+
+  /// Channel 15 only: LED feedback for DROID over USB host — per-packet Task() + padding;
+  /// host path uses Note-On velocity 0 instead of Note-Off (many controllers swallow Off).
+  void sendLedFeedbackNoteOn(uint8_t note, uint8_t velocity);
+  void sendLedFeedbackNoteOff(uint8_t note);
   void sendControlChange(uint8_t channel, uint8_t control, uint8_t value);
   void sendPitchBend(uint8_t channel, int16_t value);
   void sendAfterTouch(uint8_t channel, uint8_t pressure);
@@ -87,6 +92,7 @@ private:
   bool isControlChannel(byte channel);
   bool isLedChannel(byte channel);
   void sendMidiThru(byte type, byte channel, byte data1, byte data2);
+  void serviceUsbHostAfterLedPacket();
 
   // --- Message Handlers ---
   void handleNoteOn(byte channel, byte note, byte velocity, uint32_t tickNow);
