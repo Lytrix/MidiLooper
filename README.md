@@ -6,7 +6,7 @@
 
 ## Midi Looper
 
-This is the codebase to run a **multi-track MIDI looper** on a **Teensy 4.1** with live loop jaming manipulations, piano-roll note/cc editing, tight hardware timing on 8 midi outs and usb on a 192 PPQN clock with hands on control workflow. It is built for **live performance**: record and layer multiple loops per track, remix them by live switching them into new jams **while the music never needs to stop running** to keep into the vibe of the music with undo/redo capabilities.
+This is the codebase to run a **multi-track MIDI looper** on a **Teensy 4.1** with live loop jaming manipulations, piano-roll note/cc editing, tight hardware timing on 8 midi outs and usb on a 192 PPQN clock with hands on control workflow. It is built for **live performance**: record and layer multiple loop slots per track, remix them by quantized slot switching into new jams **while the music never needs to stop running** to keep into the vibe of the music with undo/redo capabilities.
 
 This branch is aimed at a **8x8 button grid with 4 motorized faders** 
 A smaller **encoder-and-4-buttons** rig is a direction for later but was the MVP; underneath this codebase, everything stays **MIDI-addressable**, so another controller can be made into a dedicated controller for this midi looper by updating [`include/MidiConfig.h`](include/MidiConfig.h) to your controller setup.
@@ -34,7 +34,7 @@ The **primary** action is always a **short** press; extremer edits like delete o
 
 ### Jams vs Loops
 
-**Loops** means **per-track loop slots**: eight buffers per track for record, overdub, clear, and undo—see [**Loops**](docs/Guides/control-surface/Loops.md). Folding **everything** you do in a **jam**. Trigger regions, switch loops on the fly, transposition notes live. You go!
+**Loops** means **per-track loop slots**: eight buffers per track for record, overdub, clear, and undo—see [**Loops**](docs/Guides/control-surface/Loops.md). Slot switching is quantized and each track can run a multi-slot enabled set with per-slot mute/enable states.
 
 **Remixes** of earlier recorded loops is where **jam performance** comes alive. In **Loop edit** the **Bars** and **16ths** buttons can be triggered/looped and recorded into new loops.
 
@@ -51,7 +51,7 @@ Below is the **cheet sheet** of all available the button gestures.
 | [**Scenes**](docs/Guides/control-surface/Scenes.md) | — | — | — | — | Roadmap / Phase 3 snapshots |
 | [**Tracks**](docs/Guides/control-surface/Tracks.md) | Select that track | Exclusive solo | Mute / unmute | — | — |
 | [**Jams**](docs/Guides/control-surface/Jams.md) | — | — | — | — | Target row for jam-era capture |
-| [**Loops**](docs/Guides/control-surface/Loops.md) | Slot-aware record, play, overdub, finalize | Clear this slot’s loop | Slot undo | Slot redo | Layer hold |
+| [**Loops**](docs/Guides/control-surface/Loops.md) | Select/record slot; when playing, switch slot quantized to next 16th; selected slot toggles mute | If pressed slot is selected and filled: clear slot. If not selected and filled: queue single-slot switch at loop end | Slot undo | Slot redo | Hold one or more slots, release to commit multi-slot enabled set on next 16th |
 | [**Bars**](docs/Guides/control-surface/Bars-and-16ths.md) | Seek bar; move single-bar jam | Enter one-bar or two-bar jam | Exit jam | Undo loop start edit | Hold bar A → press bar B for range |
 | [**16ths**](docs/Guides/control-surface/Bars-and-16ths.md) | Seek 16th in jam; set / jump region | 16th jam / seek | Exit jam | Undo loop start | Hold 16th A → press 16th B for range |
 | [**Main controls**](docs/Guides/control-surface/Main-controls.md) | REC/PLAY, MUTE/DE, Edit, NOTELEN | Clear / mute / exit | Undo overdub / undo clear / delete note | Redo overdub / redo clear | More transport buttons in guide |
@@ -71,7 +71,7 @@ Midi channels, CCs, and pitchbend mappings can be found in [`include/MidiConfig.
 
 ## Display
 
-The display is built around the **piano roll** with loop and current note played information and **track status strip**. After recording a first loop you often want to edit small parts in detail or shift notes. It also shows what part of the loop is active, and what you are editing right now. That means the display is not just “status”; it is part of how you shape your groove, ofsett start end boundaries, all while the loop is running.
+The display is built around the **piano roll** with loop and current note played information and **track status strip**. After recording a first loop you often want to edit small parts in detail or shift notes. It also shows what part of the loop is active, selected slot focus, and what you are editing right now. That means the display is not just “status”; it is part of how you shape your groove, ofsett start end boundaries, all while the loop is running.
 
 The **track column** gives a quick status for each track using letters such as `-` Empty, `P(lay)`, `O(verdub)`, `R(ecord)`, `M(uted)`, `S(topped)` and `A(rmed)`.
 
@@ -84,6 +84,8 @@ For more detail: [**Display**](docs/Guides/control-surface/Display.md).
 **Hardware** is Teensy 4.1, SSD1322 256×64 OLED or 16×2 LCD, 6N137 MIDI in, and in this case a **DROID** M4 + 2× B32—[product page](https://shop.dermannmitdermaschine.de/pages/droid-universal-cv-processor). MIDI wiring follows the [PJRC MIDI library](https://www.pjrc.com/teensy/td_libs_MIDI.html) pattern.
 
 For more details on the logic: [loop start / length](docs/Guides/LOOP_START_EDITING.md), [jam phases](docs/Guides/jam-bar-step-phases.md), [note moves](docs/Guides/MOVE_NOTE_LOGIC.md), [fader state](docs/Guides/FADER_STATE_SYSTEM.md). A compact **Channel 16** listing lives under [**Config summary**](docs/Guides/MIDI_CONFIG_GUIDE.md#config-summary-default-droid-mapping) in the MIDI guide.
+
+State persistence uses storage **version 3** and saves all track/slot loop data, per-slot enabled/muted flags, selected track, active slot per track, and slot-level undo/redo histories.
 **Read the numbers first:** [`include/MidiConfig.h`](include/MidiConfig.h) — channels, notes, CCs, LED bases.
 
 **Remap any controller:** [`docs/Guides/MIDI_CONFIG_GUIDE.md`](docs/Guides/MIDI_CONFIG_GUIDE.md) — checklist, tables, `MidiButtonConfig.cpp`, and matching `droid/midilooper_v1.ini` if you want to make your own Droid setup.

@@ -1,30 +1,53 @@
 # Loops (control surface)
 
-**Loops** row: **eight loop slots** for the **selected** track (typical mapping: Channel 16 notes 50–57). Constants: [`include/MidiConfig.h`](../../../include/MidiConfig.h) (`LOOP_SELECT_LED_BASE`, etc.). Wiring: [`MidiButtonConfig.cpp`](../../../src/Utils/MidiButtonConfig.cpp) (`loadConfiguration`), actions: [`MidiButtonActions.cpp`](../../../src/MidiButtonActions.cpp) (`handleToggleRecordForSlot`), hold layering: `MidiButtonManager::updateLoopHoldLayering`.
+**Loops row**: eight loop slots for the selected track (default mapping: Channel 16 notes 50-57).
 
-## Gestures while playing
+Primary implementation paths:
+- Mapping: [`src/Utils/MidiButtonConfig.cpp`](../../../src/Utils/MidiButtonConfig.cpp)
+- Gesture actions: [`src/MidiButtonActions.cpp`](../../../src/MidiButtonActions.cpp) (`handleToggleRecordForSlot`, `beginSlotLayerHold`, `endSlotLayerHold`)
+- Slot switching + playback commit: [`src/TrackManager.cpp`](../../../src/TrackManager.cpp)
+- Pending switch logic: [`src/SlotStateMachine.cpp`](../../../src/SlotStateMachine.cpp)
 
-| Gesture | Empty slot | Non-empty slot |
-|---------|------------|----------------|
-| **Short (first)** | If clock quantize applies: queue record (reference slot phase if valid, else next bar); else record now | Start overdub |
-| **Short (second)** | If queued: punch in now, align loop origin on stop when applicable | Stop overdub |
-| **Long** | Select slot, then clear that slot’s loop | Same |
-| **Double / Triple** | Slot undo / redo | Same |
+## Short press
 
-**While recording or overdubbing:** short on **another** slot finalizes capture on the current slot, selects the new slot, resumes playback if it has data (`TrackManager::finalizeCaptureAndSelectSlot`).
+### While playing
 
-**While not playing:** short on **empty** → record (immediate when quantize does not apply). Short on **non-empty** → toggle play/stop.
+- **Pressed slot has data, slot is selected**: toggle mute for that slot (track keeps running).
+- **Pressed slot has data, slot is not selected**:
+  - In multi-slot mode (more than one enabled slot): keep enabled set, optionally toggle mute if slot is enabled, and queue active-slot focus switch at next 16th.
+  - In single-slot mode: queue switch to that slot at next 16th; when committed, enabled set can be replaced with that single slot.
+- **Pressed slot is empty**: use queued/immediate record flow (bar/phase quantized when configured).
 
-## Hold (layering)
+### While not playing
 
-Held past **long-press + 50 ms**: layering arms. While **playing** and held slot **empty**, record can queue from **base** slot phase. **Release** clears layering and queue. See `beginSlotLayerHold` / `endSlotLayerHold`.
+- **Pressed slot is empty**: start recording.
+- **Pressed slot has data**: toggle play/stop on that slot.
 
-## Notes
+## Long press
 
-- Active slot drives primary playback; `heldLayerSlot` can add another slot’s audio while hold is active.
-- Queued record while playing can show **armed** in UI (`TRACK_ARMED` when pending and playing/overdubbing).
-- Reference slot for queue phase: previously active loop index (or base slot during layer hold), when `loopLengthTicks > 0`.
+- **Pressed slot is selected and has data**: clear that slot.
+- **Pressed slot is not selected and has data**:
+  - If track is playing: queue single-slot switch at **loop end**.
+  - If track is not playing: select that slot and start it immediately.
+
+## Double / Triple
+
+- **Double**: slot undo.
+- **Triple**: slot redo.
+
+## Hold (multi-slot selection)
+
+Use hold to build a pending enabled-slot set:
+
+- Hold one or more slot buttons to mark target slots.
+- Release the last held slot to queue commit.
+- Commit occurs on next 16th boundary.
+- At commit, enabled set is replaced by held selection, playback indices are realigned for enabled audible slots, and LEDs are refreshed.
+
+## Capture safety
+
+If recording/overdubbing and you select another slot, capture is finalized first (`TrackManager::finalizeCaptureAndSelectSlot`) before switching target slot.
 
 ## vs Jams
 
-Slot **Loops** hold **MIDI loop data**. **Jams** (regions / future **Jams** row capture) stay a separate concern — see **[`Jams.md`](Jams.md)**.
+Loop slots store per-track MIDI loop data and slot state (enabled/muted/active/selected). Jam-region behavior remains separate; see [`Jams.md`](Jams.md).
