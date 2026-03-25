@@ -305,6 +305,7 @@ void TrackManager::handleTransportStop() {
       t.setState(t.hasData() ? TRACK_STOPPED : TRACK_EMPTY);
     }
   }
+  forceLedUpdate(currentTick);
   StorageManager::saveState(looperState.getLooperState());
 }
 
@@ -570,6 +571,19 @@ void TrackManager::endSlotSelectionHold(uint8_t trackIndex, uint8_t slotIndex, u
   }
 }
 
+void TrackManager::cancelSlotSelectionHold(uint8_t trackIndex) {
+  if (trackIndex >= Config::NUM_TRACKS) return;
+
+  pendingHoldCount[trackIndex] = 0;
+  pendingMultiSlotCommit[trackIndex] = false;
+  pendingMultiSlotQueuedAtTick[trackIndex] = UINT32_MAX;
+
+  for (uint8_t s = 0; s < Config::MAX_LOOPS_PER_TRACK; ++s) {
+    pendingHoldActive[trackIndex][s] = false;
+    pendingSlotEnabled[trackIndex][s] = false;
+  }
+}
+
 void TrackManager::setPendingEnabledSetReplacement(uint8_t trackIndex, bool enabled) {
   if (trackIndex >= Config::NUM_TRACKS) return;
   pendingEnabledSetReplacement[trackIndex] = enabled;
@@ -581,6 +595,9 @@ uint8_t TrackManager::getSelectedSlotIndex(uint8_t trackIndex) const {
 
 void TrackManager::setSelectedSlotIndex(uint8_t trackIndex, uint8_t slotIndex) {
   slotStateMachine.setSelectedSlotIndex(trackIndex, slotIndex);
+  if (trackIndex == selectedTrack) {
+    forceLedUpdate(clockManager.getCurrentTick());
+  }
 }
 
 void TrackManager::requestSlotSwitch(uint8_t trackIndex,
@@ -805,11 +822,12 @@ void TrackManager::refreshTrackAndLoopSelectLeds() {
 void TrackManager::updateLedsDeferred() {
   if (!ledManager) return;
   Track& selTrack = getSelectedTrack();
+  const uint8_t displaySlot = getSelectedSlotIndex(selectedTrack);
   uint32_t currentTick = clockManager.getCurrentTick();
   uint32_t selTick = selTrack.getEffectivePlaybackTick(currentTick);
-  ledManager->updateLeds(selTrack, selTick);
-  if (selTrack.getLoopLength() > 0) {
-    ledManager->updateCurrentTick(selTrack, selTick);
+  ledManager->updateLeds(selTrack, selTick, displaySlot);
+  if (selTrack.getLoopLengthForSlot(displaySlot) > 0) {
+    ledManager->updateCurrentTick(selTrack, selTick, displaySlot);
   }
   refreshTrackAndLoopSelectLeds();
 }
@@ -818,13 +836,13 @@ void TrackManager::updateLedsDeferred() {
 
 void TrackManager::updateLeds(uint32_t currentTick) {
   if (ledManager) {
-    ledManager->updateLeds(getSelectedTrack(), currentTick);
+    ledManager->updateLeds(getSelectedTrack(), currentTick, getSelectedSlotIndex(selectedTrack));
   }
 }
 
 void TrackManager::forceLedUpdate(uint32_t currentTick) {
   if (ledManager) {
-    ledManager->forceUpdate(getSelectedTrack(), currentTick);
+    ledManager->forceUpdate(getSelectedTrack(), currentTick, getSelectedSlotIndex(selectedTrack));
     refreshTrackAndLoopSelectLeds();
   }
 }

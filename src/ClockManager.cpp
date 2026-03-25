@@ -236,14 +236,7 @@ void ClockManager::toggleTransport() {
     if (clockSource == CLOCK_INTERNAL) {
       midiHandler.sendStop();
     }
-    // Stop all active tracks (stopPlaying already sends All Notes Off per track)
-    for (uint8_t i = 0; i < Config::NUM_TRACKS; i++) {
-      Track& t = trackManager.getTrack(i);
-      if (t.isPlaying() || t.isOverdubbing()) {
-        t.stopPlaying();
-      }
-    }
-    StorageManager::saveState(looperState.getLooperState());
+    trackManager.handleTransportStop();
     logger.info("Transport stopped");
   } else {
     sequencerRunning = true;

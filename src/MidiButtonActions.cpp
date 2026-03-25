@@ -128,6 +128,7 @@ void MidiButtonActions::executeAction(MidiButtonConfig::ActionType actionType, u
                 // Cancels any pending quantized slot switching.
                 trackManager.clearPendingSlotSwitch(tidx);
                 trackManager.setPendingEnabledSetReplacement(tidx, false);
+                trackManager.cancelSlotSelectionHold(tidx);
 
                 // If capturing, finalize before clearing to avoid corrupting state.
                 if (track.isRecording() || track.isOverdubbing()) {
@@ -297,14 +298,9 @@ void MidiButtonActions::handleToggleRecordForSlot(uint8_t slotIndex) {
         // - Always move focus/capture target.
         trackManager.setSelectedSlotIndex(trackIdx, slotIndex);
 
-        // Multi-slot mode: keep the enabled set as-is, only mute/unmute if the slot is enabled.
+        // Multi-slot mode: keep the enabled set and mute state as-is.
+        // A non-selected short press should only move focus/capture target.
         if (enabledCount > 1) {
-            if (slotEnabled) {
-                trackManager.toggleSlotMuted(trackIdx, slotIndex);
-                const bool nowMuted = trackManager.isSlotMuted(trackIdx, slotIndex);
-                if (!nowMuted) track.resetPlaybackStateForSlot(slotIndex, now);
-                trackManager.forceLedUpdate(now);
-            }
             // Schedule active-loop focus switch for capture/overdub on next 16th boundary.
             trackManager.requestSlotSwitch(trackIdx, slotIndex, SlotQuantization::NextGrid, now);
             return;
