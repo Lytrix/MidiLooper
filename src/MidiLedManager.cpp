@@ -1,5 +1,6 @@
 #include "MidiLedManager.h"
 #include "Utils/NoteUtils.h"
+#include "TickPhase.h"
 
 MidiLedManager::MidiLedManager(MidiHandler& midiHandler) 
     : midiHandler(midiHandler),
@@ -188,7 +189,7 @@ void MidiLedManager::updateTrackSelectLeds(uint8_t selectedTrackIndex, const boo
 
 uint32_t MidiLedManager::getCurrentBar(uint32_t currentTick, const Loop& loop) {
     uint32_t ticksPerBar = 16 * Config::TICKS_PER_16TH_STEP;
-    uint32_t tickInLoopStorage = (currentTick - loop.startLoopTick) % loop.loopLengthTicks;
+    uint32_t tickInLoopStorage = tickPhaseInLoop(currentTick, loop.startLoopTick, loop.loopLengthTicks);
     uint32_t tickInLoopDisplay = (tickInLoopStorage - loop.loopStartTick + loop.loopLengthTicks) % loop.loopLengthTicks;
     return tickInLoopDisplay / ticksPerBar;
 }
@@ -289,7 +290,7 @@ void MidiLedManager::updateCurrentTick(Track& track, uint32_t currentTick, uint8
     uint32_t ticksPerBar = ticksPerSixteenth * NUM_LEDS;
     
     // Position in loop relative to loop start (matches 16th/bar LED display)
-    uint32_t tickInLoopStorage = (currentTick - displayLoop.startLoopTick) % loopLength;
+    uint32_t tickInLoopStorage = tickPhaseInLoop(currentTick, displayLoop.startLoopTick, loopLength);
     uint32_t tickInLoopDisplay = (tickInLoopStorage - displayLoop.loopStartTick + loopLength) % loopLength;
     uint32_t tickInBar = tickInLoopDisplay % ticksPerBar;
     int8_t newTickStep = tickInBar / ticksPerSixteenth;

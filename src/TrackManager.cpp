@@ -824,10 +824,16 @@ void TrackManager::updateLedsDeferred() {
   Track& selTrack = getSelectedTrack();
   const uint8_t displaySlot = getSelectedSlotIndex(selectedTrack);
   uint32_t currentTick = clockManager.getCurrentTick();
-  uint32_t selTick = selTrack.getEffectivePlaybackTick(currentTick);
-  ledManager->updateLeds(selTrack, selTick, displaySlot);
+  // LEDs for a slot use global transport phase in that slot's loop, except when jam playback
+  // is driving the active loop — then use the effective tick so the grid matches what you hear.
+  uint32_t ledPhaseTick = currentTick;
+  if (selTrack.isJamPlaybackActive() && selTrack.isJamming() &&
+      displaySlot == selTrack.getActiveLoopIndex()) {
+    ledPhaseTick = selTrack.getEffectivePlaybackTick(currentTick);
+  }
+  ledManager->updateLeds(selTrack, ledPhaseTick, displaySlot);
   if (selTrack.getLoopLengthForSlot(displaySlot) > 0) {
-    ledManager->updateCurrentTick(selTrack, selTick, displaySlot);
+    ledManager->updateCurrentTick(selTrack, ledPhaseTick, displaySlot);
   }
   refreshTrackAndLoopSelectLeds();
 }
