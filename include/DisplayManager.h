@@ -57,6 +57,22 @@ public:
     void drawBracket(uint32_t bracketTick, uint32_t lengthLoop, int pianoRollY1);
 
 private:
+    enum class SidebarMode : uint8_t {
+        LOOP_EDIT,
+        NOTE_EDIT,
+        REC,
+        OVERD,
+        PLAY,
+        STOP,
+        EMPTY_STATE
+    };
+
+    // Midi output selection shown in the info line. Expanded later to USB1..USB8 / MID1..MID8.
+    enum class MidiOutput : uint8_t {
+        USB1,
+        MID1
+    };
+
     // Pulse and brightness for selected track
     static constexpr int minPulse = 4;       // 25% of 16 steps
     static constexpr int maxPulse = 10;      // 75% of  16 steps
@@ -90,6 +106,11 @@ private:
     void drawPianoRoll(uint32_t currentTick, Track& selectedTrack, uint8_t displaySlot);
     // Info area rendering
     void drawInfoArea(uint32_t currentTick, Track& selectedTrack, uint8_t displaySlot);
+    void drawSidebar(Track& selectedTrack, uint8_t displaySlot);
+    SidebarMode resolveSidebarMode(const Track& selectedTrack, uint8_t displaySlot) const;
+    const char* sidebarModeLabel(SidebarMode mode) const;
+    MidiOutput resolveMidiOutput() const;
+    const char* midiOutputLabel(MidiOutput out) const;
     // Note info rendering
     void drawNoteInfo(uint32_t currentTick, Track& selectedTrack, uint8_t displaySlot);
     void drawInfoField(const char* label, const char* value, int x, int y, bool highlight, uint8_t defaultBrightness);

@@ -446,6 +446,14 @@ void MidiHandler::setOutputSerial(bool enable) {
   outputSerial = enable;
 }
 
+bool MidiHandler::isOutputUSBEnabled() const {
+  return outputUSB;
+}
+
+bool MidiHandler::isOutputSerialEnabled() const {
+  return outputSerial;
+}
+
 // --- Static USB Host MIDI Callbacks ---
 void MidiHandler::usbHostNoteOn(uint8_t channel, uint8_t note, uint8_t velocity) {
   if (instance) {
