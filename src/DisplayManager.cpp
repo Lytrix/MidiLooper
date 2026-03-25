@@ -676,7 +676,12 @@ void DisplayManager::drawNoteInfo(uint32_t currentTick, Track& selectedTrack, ui
             snprintf(velStr, sizeof(velStr), "%3u", velVal);
         }
     }
-    
+
+    // Same width as leading-zero musical time (e.g. 01:01:01:00); keeps NOTE row layout when no note/slot data.
+    if (!(noteToShow && lengthLoop > 0)) {
+        snprintf(startStr, sizeof(startStr), "--:--:--:--");
+    }
+
     int x = DisplayManager::TRACK_MARGIN;
     int y = DISPLAY_HEIGHT;
     // Draw the time string (ticksToBarsBeats16thTicks2Dec)

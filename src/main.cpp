@@ -68,8 +68,8 @@ void setup() {
 
   // Initialize logger (Serial already begun above)
   logger.setup(LOG_DEBUG);  // Set to LOG_INFO for production
-  logger.setCategoryEnabled(CAT_MIDI, true);  // Ensure MIDI logging is enabled
-  logger.setCategoryEnabled(CAT_MIDI_LED, true);  // LED update logging (channel/destinations)
+  logger.setCategoryEnabled(CAT_MIDI, false);  // Ensure MIDI logging is enabled
+  logger.setCategoryEnabled(CAT_MIDI_LED, false);  // LED update logging (channel/destinations)
   logger.setCategoryEnabled(CAT_STORAGE, false);  // StorageManager v3 per-slot save progress (verbose)
 
   midiHandler.setup();

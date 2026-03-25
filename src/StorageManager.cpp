@@ -603,6 +603,10 @@ bool StorageManager::loadState(LooperState& state) {
                 loadedTrackState = anySlotHasEvents ? TRACK_STOPPED : TRACK_EMPTY;
             }
             if (loadedTrackState == TRACK_OVERDUBBING) loadedTrackState = TRACK_PLAYING;
+            // SD / bug history can leave EMPTY while slots still contain notes — unusable until reconciled.
+            if (loadedTrackState == TRACK_EMPTY && anySlotHasEvents) {
+                loadedTrackState = TRACK_STOPPED;
+            }
 
             track.forceSetState(loadedTrackState);
             if (muted != track.isMuted()) track.toggleMuteTrack();
@@ -762,6 +766,9 @@ bool StorageManager::loadState(LooperState& state) {
         // Never resume volatile capture states after reboot.
         if (loadedState == TRACK_RECORDING || loadedState == TRACK_ARMED || loadedState == TRACK_STOPPED_RECORDING) {
             loadedState = tracksData[t].midiEvents.empty() ? TRACK_EMPTY : TRACK_STOPPED;
+        }
+        if (loadedState == TRACK_EMPTY && !tracksData[t].midiEvents.empty()) {
+            loadedState = TRACK_STOPPED;
         }
         track.forceSetState(loadedState);
         if (tracksData[t].muted != track.isMuted()) track.toggleMuteTrack();

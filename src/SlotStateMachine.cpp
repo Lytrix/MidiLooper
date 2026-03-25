@@ -1,4 +1,5 @@
 #include "SlotStateMachine.h"
+#include "TickPhase.h"
 
 #include "Track.h"
 #include "Globals.h"
@@ -72,9 +73,7 @@ bool SlotStateMachine::shouldCommitPendingSlotSwitch(uint8_t trackIndex,
       const uint32_t loopLen = track.getLoopLength();
       if (loopLen == 0) return false;
       const uint32_t startLoopTick = track.getStartLoopTick();
-      if (currentTick < startLoopTick) return false;
-      const uint32_t tickInLoopStorage = (currentTick - startLoopTick) % loopLen;
-      return tickInLoopStorage == 0;
+      return tickPhaseInLoop(currentTick, startLoopTick, loopLen) == 0;
     }
   }
 

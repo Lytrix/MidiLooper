@@ -12,6 +12,7 @@
 #include <utility>
 #include <algorithm>
 #include "Globals.h"
+#include "TickPhase.h"
 #include "TrackStateMachine.h"
 #include "TrackUndo.h"
 #include "LooperState.h"
@@ -213,9 +214,13 @@ uint32_t Track::computeLoopLengthTicks(uint32_t lastTick) const {
 }
 
 void Track::resetPlaybackState(uint32_t currentTick) {
-    Loop& loop = getActiveLoop();
-    loop.nextEventIndex = 0;
-    loop.lastTickInLoop = (currentTick - loop.startLoopTick) % loop.loopLengthTicks;
+  Loop& loop = getActiveLoop();
+  loop.nextEventIndex = 0;
+  if (loop.loopLengthTicks == 0) {
+    loop.lastTickInLoop = 0;
+    return;
+  }
+  loop.lastTickInLoop = tickPhaseInLoop(currentTick, loop.startLoopTick, loop.loopLengthTicks);
 }
 
 void Track::resetPlaybackStateForSlot(uint8_t slotIndex, uint32_t currentTick) {
@@ -223,7 +228,7 @@ void Track::resetPlaybackStateForSlot(uint8_t slotIndex, uint32_t currentTick) {
   Loop& loop = getLoop(slotIndex);
   if (loop.loopLengthTicks == 0) return;
   loop.nextEventIndex = 0;
-  loop.lastTickInLoop = (currentTick - loop.startLoopTick) % loop.loopLengthTicks;
+  loop.lastTickInLoop = tickPhaseInLoop(currentTick, loop.startLoopTick, loop.loopLengthTicks);
 }
 
 void Track::finalizePendingNotes(uint32_t offAbsTick) {
@@ -502,6 +507,9 @@ void Track::stopRecordingToStopped(uint32_t currentTick) {
 void Track::startPlaying(uint32_t currentTick) {
   Loop& loop = getActiveLoop();
   if (loop.loopLengthTicks > 0) {
+    if (trackState == TRACK_EMPTY) {
+      forceSetState(TRACK_STOPPED);
+    }
     if (!setState(TRACK_PLAYING)) return;
     loop.startLoopTick = 0;
     loop.nextEventIndex = 0;
@@ -515,6 +523,10 @@ void Track::startPlaying(uint32_t currentTick) {
 // -------------------------
 
 void Track::startOverdubbing(uint32_t currentTick) {
+  const Loop& active = getActiveLoop();
+  if (trackState == TRACK_EMPTY && active.loopLengthTicks > 0) {
+    forceSetState(TRACK_STOPPED);
+  }
   if (!setState(TRACK_OVERDUBBING)) return;
   TrackUndo::pushUndoSnapshot(*this);
   logger.info("Overdub snapshot created: events=%d, snapshots=%d", getActiveLoop().midiEvents.size(), getActiveLoop().midiHistorySize());
@@ -614,7 +626,7 @@ void Track::recordMidiEvents(midi::MidiType type, byte channel, byte data1, byte
 
     } else if (isOverdubbing()) {
       if (loop.loopLengthTicks == 0) return;
-      tickRelative = (currentTick - loop.startLoopTick) % loop.loopLengthTicks;
+      tickRelative = tickPhaseInLoop(currentTick, loop.startLoopTick, loop.loopLengthTicks);
       
     } else {
       return;
@@ -705,7 +717,7 @@ void Track::playMidiEvents(uint32_t currentTick, bool isAudible) {
     rebuildPlaybackOrder();
   }
 
-  uint32_t tickInLoop = (currentTick - loop.startLoopTick) % loop.loopLengthTicks;
+  uint32_t tickInLoop = tickPhaseInLoop(currentTick, loop.startLoopTick, loop.loopLengthTicks);
 
   if (tickInLoop < loop.lastTickInLoop) {
     loop.nextEventIndex = 0;
@@ -785,7 +797,7 @@ void Track::playMidiEventsForSlot(uint8_t slotIndex, uint32_t currentTick, bool 
     loop.playbackOrderDirty = false;
   }
 
-  uint32_t tickInLoop = (currentTick - loop.startLoopTick) % loop.loopLengthTicks;
+  uint32_t tickInLoop = tickPhaseInLoop(currentTick, loop.startLoopTick, loop.loopLengthTicks);
   if (tickInLoop < loop.lastTickInLoop) {
     loop.nextEventIndex = 0;
   }
@@ -978,6 +990,7 @@ void Track::setJamPlayback(bool enabled) {
 uint32_t Track::getEffectivePlaybackTick(uint32_t currentTick) const {
   if (!jamPlaybackActive || jamLength == 0) return currentTick;
   const Loop& loop = getActiveLoop();
+  if (loop.loopLengthTicks == 0) return currentTick;
   uint32_t storagePos = (jamStartTick + jamTick) % loop.loopLengthTicks;
   return loop.startLoopTick + storagePos;
 }
