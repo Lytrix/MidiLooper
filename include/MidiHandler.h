@@ -56,6 +56,8 @@ public:
   // --- Output Routing ---
   void setOutputUSB(bool enable);
   void setOutputSerial(bool enable);
+  bool isOutputUSBEnabled() const;
+  bool isOutputSerialEnabled() const;
 
   // --- Static USB Host MIDI Callbacks ---
   static void usbHostNoteOn(uint8_t channel, uint8_t note, uint8_t velocity);

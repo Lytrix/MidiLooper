@@ -11,12 +11,24 @@
 #include "Logger.h"
 #include "Utils/NoteUtils.h"
 #include "NoteEditManager.h"
+#include "MidiHandler.h"
 #include <map>
 #include <string>
 #include <Font5x7Fixed.h>
 #include <Font5x7FixedMono.h>
 
 DisplayManager displayManager;
+namespace {
+// Minimal gutter for longest line ("OVERD" = 30px) + 1px separator; content is right-aligned to display edge.
+constexpr int SIDEBAR_WIDTH = 30;
+constexpr int SIDEBAR_RIGHT_MARGIN = 1;
+constexpr int SIDEBAR_SEPARATOR_BRIGHTNESS = 2;
+constexpr int MODE_VALUE_BRIGHTNESS = 3; // match brightness of bottom-strip labels
+constexpr int SIDEBAR_TEXT_BRIGHTNESS = 5;
+constexpr int SIDEBAR_VALUE_BRIGHTNESS = 5; // match LEN / numeric field values in drawInfoField
+constexpr int pianoRollRightX() { return DISPLAY_WIDTH - SIDEBAR_WIDTH - 1; }
+constexpr int pianoRollWidth() { return pianoRollRightX() - DisplayManager::TRACK_MARGIN; }
+}
 
 // Generic helper to draw a label:value field at (x, y) with optional highlight brightness
 void DisplayManager::drawInfoField(const char* label, const char* value, int x, int y, bool highlight, uint8_t defaultBrightness = 5) {
@@ -213,7 +225,7 @@ int DisplayManager::tickToScreenX(uint32_t tick) {
     uint32_t relativeTick = (tick >= loopStartTick) ? (tick - loopStartTick) : (tick + loopLength - loopStartTick);
     relativeTick = relativeTick % loopLength; // Ensure wrapping
     
-    return TRACK_MARGIN + map(relativeTick, 0, loopLength, 0, DISPLAY_WIDTH - 1 - TRACK_MARGIN);
+    return TRACK_MARGIN + map(relativeTick, 0, loopLength, 0, pianoRollWidth());
 }
 
 int DisplayManager::noteToScreenY(uint8_t note) {
@@ -233,7 +245,7 @@ void DisplayManager::drawGridLines(uint32_t lengthLoop, int pianoRollY0, int pia
     const uint32_t ticksPerSixteenth = Config::TICKS_PER_QUARTER_NOTE / 4;
     // Bar lines
     for (uint32_t t = 0; t < lengthLoop; t += ticksPerBar) {
-        int x = TRACK_MARGIN + map(t, 0, lengthLoop, 0, DISPLAY_WIDTH - 1 - TRACK_MARGIN);
+        int x = TRACK_MARGIN + map(t, 0, lengthLoop, 0, pianoRollWidth());
         _display.gfx.draw_vline(_display.api.getFrameBuffer(), x, pianoRollY0, pianoRollY1, barBrightness);
     }
     // Beat lines
@@ -241,7 +253,7 @@ void DisplayManager::drawGridLines(uint32_t lengthLoop, int pianoRollY0, int pia
     if (showBeat) {
         for (uint32_t t = ticksPerBeat; t < lengthLoop; t += ticksPerBeat) {
             if (t % ticksPerBar == 0) continue;
-            int x = TRACK_MARGIN + map(t, 0, lengthLoop, 0, DISPLAY_WIDTH - 1 - TRACK_MARGIN);
+            int x = TRACK_MARGIN + map(t, 0, lengthLoop, 0, pianoRollWidth());
             for (int y = pianoRollY0; y <= pianoRollY1; y += 2) {
                 _display.gfx.draw_pixel(_display.api.getFrameBuffer(), x, y, beatBrightness);
             }
@@ -252,7 +264,7 @@ void DisplayManager::drawGridLines(uint32_t lengthLoop, int pianoRollY0, int pia
     if (showSixteenth) {
         for (uint32_t t = ticksPerSixteenth; t < lengthLoop; t += ticksPerSixteenth) {
             if (t % ticksPerBar == 0 || t % ticksPerBeat == 0) continue;
-            int x = TRACK_MARGIN + map(t, 0, lengthLoop, 0, DISPLAY_WIDTH - 1 - TRACK_MARGIN);
+            int x = TRACK_MARGIN + map(t, 0, lengthLoop, 0, pianoRollWidth());
             for (int y = pianoRollY0; y <= pianoRollY1; y += 4) {
                 _display.gfx.draw_pixel(_display.api.getFrameBuffer(), x, y, sixteenthBrightness);
             }
@@ -294,7 +306,7 @@ void DisplayManager::drawBracket(uint32_t bracketTick, uint32_t lengthLoop, int 
         const int pianoRollY1 = 31;
 
         // Convert bracketTick to screen X position
-        int bracketX = TRACK_MARGIN + map(bracketTick, 0, lengthLoop, 0, DISPLAY_WIDTH - 1 - TRACK_MARGIN);
+        int bracketX = TRACK_MARGIN + map(bracketTick, 0, lengthLoop, 0, pianoRollWidth());
         // Draw bracket (e.g., vertical line or rectangle)
         _display.gfx.draw_vline(_display.api.getFrameBuffer(), bracketX, 0, pianoRollY1, BRACKET_COLOR);
     }
@@ -311,8 +323,8 @@ void DisplayManager::drawNoteBar(const DisplayNote& e, int y, uint32_t s, uint32
     
     if (!isWrapped && eTick >= s) {
         // Normal note within loop boundary
-        int x0 = TRACK_MARGIN + map(s, 0, lengthLoop, 0, DISPLAY_WIDTH - 1 - TRACK_MARGIN);
-        int x1 = TRACK_MARGIN + map(eTick, 0, lengthLoop, 0, DISPLAY_WIDTH - 1 - TRACK_MARGIN);
+        int x0 = TRACK_MARGIN + map(s, 0, lengthLoop, 0, pianoRollWidth());
+        int x1 = TRACK_MARGIN + map(eTick, 0, lengthLoop, 0, pianoRollWidth());
         if (x1 < x0) x1 = x0;
         _display.gfx.draw_rect_filled(_display.api.getFrameBuffer(), x0, y, x1, y, noteBrightness);
     } else {
@@ -320,10 +332,10 @@ void DisplayManager::drawNoteBar(const DisplayNote& e, int y, uint32_t s, uint32
         uint32_t wrappedEndTick = eTick % lengthLoop;
         
         // Calculate screen positions
-        int x0 = TRACK_MARGIN + map(s % lengthLoop, 0, lengthLoop, 0, DISPLAY_WIDTH - 1 - TRACK_MARGIN);
-        int xEnd = TRACK_MARGIN + map(lengthLoop, 0, lengthLoop, 0, DISPLAY_WIDTH - 1 - TRACK_MARGIN);
-        int x1 = TRACK_MARGIN + map(0, 0, lengthLoop, 0, DISPLAY_WIDTH - 1 - TRACK_MARGIN);
-        int x2 = TRACK_MARGIN + map(wrappedEndTick, 0, lengthLoop, 0, DISPLAY_WIDTH - 1 - TRACK_MARGIN);
+        int x0 = TRACK_MARGIN + map(s % lengthLoop, 0, lengthLoop, 0, pianoRollWidth());
+        int xEnd = TRACK_MARGIN + map(lengthLoop, 0, lengthLoop, 0, pianoRollWidth());
+        int x1 = TRACK_MARGIN + map(0, 0, lengthLoop, 0, pianoRollWidth());
+        int x2 = TRACK_MARGIN + map(wrappedEndTick, 0, lengthLoop, 0, pianoRollWidth());
          
         // Draw from start to end of loop (segment 1)
         if (s % lengthLoop < lengthLoop) {
@@ -376,18 +388,151 @@ void DisplayManager::drawPianoRoll(uint32_t currentTick, Track& selectedTrack, u
 
         // Draw playhead cursor if within jam window
         if (jamPos < jamLength) {
-            int cx = TRACK_MARGIN + map(jamPos, 0, jamLength, 0, DISPLAY_WIDTH - 1 - TRACK_MARGIN);
+            int cx = TRACK_MARGIN + map(jamPos, 0, jamLength, 0, pianoRollWidth());
             _display.gfx.draw_vline(_display.api.getFrameBuffer(), cx, 0, 32, 3);
         }
     }
+}
+
+DisplayManager::SidebarMode DisplayManager::resolveSidebarMode(const Track& selectedTrack, uint8_t displaySlot) const {
+    const SlotOpState slotState = selectedTrack.getSlotOpState(displaySlot);
+    if (slotState == SlotOpState::SLOT_OP_RECORDING || selectedTrack.getState() == TRACK_RECORDING) {
+        return SidebarMode::REC;
+    }
+    if (slotState == SlotOpState::SLOT_OP_OVERDUBBING || selectedTrack.getState() == TRACK_OVERDUBBING) {
+        return SidebarMode::OVERD;
+    }
+    if (noteEditManager.getCurrentMainEditMode() == NoteEditManager::MAIN_MODE_LOOP_EDIT) {
+        return SidebarMode::LOOP_EDIT;
+    }
+    if (noteEditManager.getCurrentMainEditMode() == NoteEditManager::MAIN_MODE_NOTE_EDIT) {
+        return SidebarMode::NOTE_EDIT;
+    }
+    if (selectedTrack.getState() == TRACK_PLAYING) {
+        return SidebarMode::PLAY;
+    }
+    if (selectedTrack.getState() == TRACK_STOPPED || selectedTrack.getState() == TRACK_STOPPED_RECORDING || selectedTrack.getState() == TRACK_ARMED) {
+        return SidebarMode::STOP;
+    }
+    return SidebarMode::EMPTY_STATE;
+}
+
+const char* DisplayManager::sidebarModeLabel(SidebarMode mode) const {
+    switch (mode) {
+        case SidebarMode::LOOP_EDIT:  return "LOOP EDIT";
+        case SidebarMode::NOTE_EDIT:  return "NOTE EDIT";
+        case SidebarMode::REC:        return "REC";
+        case SidebarMode::OVERD:      return "OVERD";
+        case SidebarMode::PLAY:       return "PLAY";
+        case SidebarMode::STOP:       return "STOP";
+        case SidebarMode::EMPTY_STATE:return "-";
+        default:                      return "-";
+    }
+}
+
+DisplayManager::MidiOutput DisplayManager::resolveMidiOutput() const {
+    // Deterministic precedence: if DIN/Serial is enabled, display MID1; otherwise display USB1.
+    if (midiHandler.isOutputSerialEnabled()) return MidiOutput::MID1;
+    return MidiOutput::USB1;
+}
+
+const char* DisplayManager::midiOutputLabel(MidiOutput out) const {
+    switch (out) {
+        case MidiOutput::USB1: return "USB1";
+        case MidiOutput::MID1: return "MID1";
+        default:               return "USB1";
+    }
+}
+
+void DisplayManager::drawSidebar(Track& selectedTrack, uint8_t displaySlot) {
+    _display.gfx.select_font(&Font5x7FixedMono);
+    const int sidebarX = DISPLAY_WIDTH - SIDEBAR_WIDTH;
+
+    // Keep the separator tall enough to stay visually tied to the piano roll region.
+    _display.gfx.draw_vline(_display.api.getFrameBuffer(), sidebarX - 1, 0, 39, SIDEBAR_SEPARATOR_BRIGHTNESS);
+
+    static float displayedBpm = 0.0f;
+    if (displayedBpm == 0.0f || fabsf(bpm - displayedBpm) >= 0.f) {
+        displayedBpm = bpm;
+    }
+
+    const SidebarMode mode = resolveSidebarMode(selectedTrack, displaySlot);
+    char modeTop[6] = "-";   // max 5 chars
+    char modeBottom[6] = "-";// max 5 chars
+    switch (mode) {
+        case SidebarMode::LOOP_EDIT:  strcpy(modeTop, "EDIT"); strcpy(modeBottom, "LOOP"); break;
+        case SidebarMode::NOTE_EDIT:  strcpy(modeTop, "EDIT"); strcpy(modeBottom, "NOTE"); break;
+        case SidebarMode::REC:        strcpy(modeTop, "REC");  strcpy(modeBottom, "-");    break;
+        case SidebarMode::OVERD:      strcpy(modeTop, "OVERD");strcpy(modeBottom, "-");    break;
+        case SidebarMode::PLAY:       strcpy(modeTop, "PLAY"); strcpy(modeBottom, "-");    break;
+        case SidebarMode::STOP:       strcpy(modeTop, "STOP"); strcpy(modeBottom, "-");    break;
+        case SidebarMode::EMPTY_STATE:strcpy(modeTop, "-");    strcpy(modeBottom, "-");     break;
+        default:                      strcpy(modeTop, "-");    strcpy(modeBottom, "-");     break;
+    }
+
+    uint8_t undoCount = static_cast<uint8_t>(editManager.getDisplayUndoCount(selectedTrack));
+    if (undoCount > 99) undoCount = 99;
+    char undoValStr[4];
+    if (undoCount == 0) {
+        strcpy(undoValStr, "--");
+    } else {
+        snprintf(undoValStr, sizeof(undoValStr), "%02u", undoCount);
+    }
+
+    const int textRight = static_cast<int>(DISPLAY_WIDTH) - SIDEBAR_RIGHT_MARGIN;
+    auto drawRight = [&](const char* txt, int y, uint8_t brightness) {
+        const int w = static_cast<int>(strlen(txt)) * 6;
+        const int x = textRight - w;
+        _display.gfx.draw_text(_display.api.getFrameBuffer(), txt, x, y, brightness);
+    };
+
+    // BPM: one decimal place, but draw the '.' as a single pixel so width ~= 4 chars (vs 5 for full ".").
+    const int bpmY = 7;
+    const uint8_t bpmBright = SIDEBAR_TEXT_BRIGHTNESS;
+    char wholeBuf[12];
+    const int roundedTenths = static_cast<int>(displayedBpm * 10.0f + 0.5f);
+    int whole = roundedTenths / 10;
+    int tenth = roundedTenths % 10;
+    if (tenth < 0) {
+        tenth = 0;
+        whole = 0;
+    }
+    snprintf(wholeBuf, sizeof(wholeBuf), "%d", whole);
+    char fracStr[2] = { static_cast<char>('0' + tenth), '\0' };
+    const int wWhole = static_cast<int>(strlen(wholeBuf)) * 6;
+    constexpr int kThinDotAdvance = 1;
+    const int wBpm = wWhole + kThinDotAdvance + 6;
+    const int bpmStartX = textRight - wBpm;
+    _display.gfx.draw_text(_display.api.getFrameBuffer(), wholeBuf, bpmStartX, bpmY, bpmBright);
+    const int dotX = bpmStartX + wWhole;
+    // One-pixel decimal: align with the descender row of digits (Font5x7 mono top-left at bpmY); +4 avoids gap below line.
+    _display.gfx.draw_pixel(_display.api.getFrameBuffer(), dotX-1, bpmY -1, bpmBright);
+    _display.gfx.draw_text(_display.api.getFrameBuffer(), fracStr, dotX + kThinDotAdvance, bpmY, bpmBright);
+
+    drawRight(modeTop, 17, MODE_VALUE_BRIGHTNESS);
+    drawRight(modeBottom, 27, MODE_VALUE_BRIGHTNESS);
+
+    // "U:" label dim like other sidebar labels; digits same brightness as LEN values.
+    const int undoY = 37;
+    const int wUndoVal = static_cast<int>(strlen(undoValStr)) * 6;
+    const int wUcolon = 2 * 6; // "U" + ":"
+    const int undoValX = textRight - wUndoVal;
+    const int undoPrefixX = undoValX - wUcolon;
+    char uGlyph[2] = "U";
+    char colonGlyph[2] = ":";
+    _display.gfx.draw_text(_display.api.getFrameBuffer(), uGlyph, undoPrefixX, undoY, MODE_VALUE_BRIGHTNESS);
+    _display.gfx.draw_text(_display.api.getFrameBuffer(), colonGlyph, undoPrefixX + 6, undoY, MODE_VALUE_BRIGHTNESS);
+    _display.gfx.draw_text(_display.api.getFrameBuffer(), undoValStr, undoValX, undoY, SIDEBAR_VALUE_BRIGHTNESS);
 }
 
 // Draw info area
 void DisplayManager::drawInfoArea(uint32_t currentTick, Track& selectedTrack, uint8_t displaySlot) {
     // 1. Current position (playhead) as musical time, with leading zeros and 2 decimals for ticks
     char posStr[24];
-    char loopLine[8];
+    char lenStr[8];
+    char loopStr[12];
     char chnStr[4];
+    char midiOutLabel[8];
     // Get length of loop (selected slot when not in jam overlay)
     const uint32_t lengthLoop = selectedTrack.isJamming() ? selectedTrack.getLoopLength()
                                                           : selectedTrack.getLoopLengthForSlot(displaySlot);
@@ -395,11 +540,18 @@ void DisplayManager::drawInfoArea(uint32_t currentTick, Track& selectedTrack, ui
     ticksToBarsBeats16thTicks2Dec(currentTick, posStr, sizeof(posStr), true); // true = leading zeros
     if (lengthLoop > 0 && Config::TICKS_PER_BAR > 0) {
         uint32_t bars = lengthLoop / Config::TICKS_PER_BAR;
-        snprintf(loopLine, sizeof(loopLine), "%02lu", bars > 99 ? 99UL : bars);
+        snprintf(lenStr, sizeof(lenStr), " %02lu", bars > 99 ? 99UL : bars); // leading space for nicer LEN spacing
     } else {
-        snprintf(loopLine, sizeof(loopLine), "--");
+        snprintf(lenStr, sizeof(lenStr), " --");
     }
+    const uint8_t trackNumber = trackManager.getSelectedTrackIndex() + 1;
+    const uint8_t loopNumber = displaySlot + 1;
+    // LOOP: t.l = track index + loop slot (no trailing padding so MID1/LEN stay aligned with row below)
+    snprintf(loopStr, sizeof(loopStr), "%u.%u", trackNumber, loopNumber);
     snprintf(chnStr, sizeof(chnStr), "%02u", selectedTrack.getMidiChannel());
+
+    const MidiOutput midiOut = resolveMidiOutput();
+    snprintf(midiOutLabel, sizeof(midiOutLabel), "%s", midiOutputLabel(midiOut));
     // Draw position string
     int x = DisplayManager::TRACK_MARGIN;
     int y = DISPLAY_HEIGHT - 12;
@@ -412,32 +564,19 @@ void DisplayManager::drawInfoArea(uint32_t currentTick, Track& selectedTrack, ui
         _display.gfx.draw_text(_display.api.getFrameBuffer(), c, x + i * 6, y, charBrightness);
     }
 
-    // Draw LOOP and CHN fields with fixed 2-digit width (labels never move)
-    int loopX = x + 12 * 6; // after posStr (11 chars + 1 space)
-    drawInfoField("LOOP", loopLine, loopX, y, false, 5);
-    int chnX = loopX + 6 + (4 + 1 + 2) * 6; // LOOP:XX = 7 chars + 1 space
-    drawInfoField("CHN", chnStr, chnX, y, false, 5);
+    // Draw LOOP / MIDx / LEN fields (bottom info strip)
+    int infoX = x + timeStrLen * 6 + 6; // after time string
+    struct InfoField { const char* label; const char* value; bool highlight; };
+    InfoField fields[] = {
+        {"LOOP", loopStr, false},
+        {midiOutLabel, chnStr, false},
+        {"LEN", lenStr, false}
+    };
 
-    static float displayedBpm = 0.0f;
-    if (displayedBpm == 0.0f || fabsf(bpm - displayedBpm) >= 0.f) {
-      displayedBpm = bpm;
+    for (int i = 0; i < 3; ++i) {
+        drawInfoField(fields[i].label, fields[i].value, infoX, y, fields[i].highlight, 5);
+        infoX += strlen(fields[i].label) * 6 + 6 + strlen(fields[i].value) * 6 + 6;
     }
-    char bpmStr[8];
-    snprintf(bpmStr, sizeof(bpmStr), "%.1f", (double)displayedBpm);
-    int bpmX = chnX + (3 + 1 + 2) * 6 + 6; // CHN:XX + space
-    drawInfoField("BPM", bpmStr, bpmX, y, false, 5);
-
-    // Draw undo count right-aligned, max 99
-    uint8_t undoCount = static_cast<uint8_t>(editManager.getDisplayUndoCount(selectedTrack));
-    char undoStr[4];
-    if (undoCount == 0) {
-        snprintf(undoStr, sizeof(undoStr), "--");
-    } else {
-        if (undoCount > 99) undoCount = 99;
-        snprintf(undoStr, sizeof(undoStr), "%02u", undoCount);
-    }
-    int undoX = DISPLAY_WIDTH - 4 * 6; // right-aligned, enough space for "U:99"
-    drawInfoField("U", undoStr, undoX, y, false, 5);
 }
 
 // --- Draw note info using cached notes ---
@@ -550,15 +689,14 @@ void DisplayManager::drawNoteInfo(uint32_t currentTick, Track& selectedTrack, ui
         uint8_t charBrightness = (c[0] == ':') ? 8/3 : (isStartNote ? 15 : 5);
         _display.gfx.draw_text(_display.api.getFrameBuffer(), c, x + i * 6, y, charBrightness);
     }
-    // Draw NOTE, LEN, VEL fields using drawInfoField
+    // Draw NOTE, VEL, LEN fields using drawInfoField (requested order)
     int infoX = x + timeStrLen * 6 + 6; // after time string
-    // Highlight NOTE field when in NOTE_EDIT mode (simplified since we use dedicated faders)
-    bool inPitchEdit = (noteEditManager.getCurrentMainEditMode() == NoteEditManager::MAIN_MODE_NOTE_EDIT);
     struct InfoField { const char* label; const char* value; bool highlight; };
     InfoField fields[] = {
-        {"NOTE", noteStr, inPitchEdit},
-        {"LEN", lenStr, false},
-        {"VEL", velStr, false}
+        // Keep NOTE brightness consistent even while editing (edit visuals are provided by the bracket/cursor)
+        {"NOTE", noteStr, false},
+        {"VEL", velStr, false},
+        {"LEN", lenStr, false}
     };
     for (int i = 0; i < 3; ++i) {
         drawInfoField(fields[i].label, fields[i].value, infoX, y, fields[i].highlight, 5);
@@ -577,6 +715,7 @@ void DisplayManager::update() {
 
     drawTrackStatus(trackManager.getSelectedTrackIndex(), now);
     drawPianoRoll(displayTick, selTrack, displaySlot);
+    drawSidebar(selTrack, displaySlot);
     drawInfoArea(displayTick, selTrack, displaySlot);
     drawNoteInfo(displayTick, selTrack, displaySlot);
 
