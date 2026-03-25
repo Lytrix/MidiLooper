@@ -1,12 +1,12 @@
 [![License: PolyForm Noncommercial 1.0.0](https://img.shields.io/badge/License-PolyForm--Noncommercial%201.0.0-lightgrey.svg)](https://polyformproject.org/licenses/noncommercial/1.0.0/)
 
-# Midi Looper
+# Midi Looper Droid
 
-![midilooper.jpg](Images/midilooper.jpg)
+![midilooper_droid.jpg](Images/midilooper_droid.jpg)
 
-## Midi Looper
+## Midi Looper with Droid MotoFader and B24
 
-This is the codebase to run a **multi-track MIDI looper** on a **Teensy 4.1** with live loop jaming manipulations, piano-roll note/cc editing, tight hardware timing on 8 midi outs and usb on a 192 PPQN clock with hands on control workflow. It is built for **live performance**: record and layer multiple loop slots per track, remix them by quantized slot switching into new jams **while the music never needs to stop running** to keep into the vibe of the music with undo/redo capabilities.
+This is the codebase to run a **multi-track MIDI looper** on a **Teensy 4.1** with live loop jaming manipulations, piano-roll note/cc editing, tight hardware serial timing via minijack midi outs and usb on a 192 PPQN clock with hands on control workflow. It is built for **live performance**: record and layer multiple loop slots per track, remix them by quantized slot switching into new jams **while the music never needs to stop running** to keep into the vibe of the music with undo/redo capabilities.
 
 This branch is aimed at a **8x8 button grid with 4 motorized faders** 
 A smaller **encoder-and-4-buttons** rig is a direction for later but was the MVP; underneath this codebase, everything stays **MIDI-addressable**, so another controller can be made into a dedicated controller for this midi looper by updating [`include/MidiConfig.h`](include/MidiConfig.h) to your controller setup.
