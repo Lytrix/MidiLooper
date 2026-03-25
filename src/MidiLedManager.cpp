@@ -95,23 +95,23 @@ void MidiLedManager::clearAllLeds() {
     
     // Turn off current tick indicator (uses notes 16-31)
     if (currentTickStep >= 0 && currentTickStep < NUM_LEDS) {
-        midiHandler.sendNoteOff(TICK_CHANNEL, TICK_NOTE_OFFSET + currentTickStep, 0);
+        midiHandler.sendLedFeedbackNoteOff(TICK_NOTE_OFFSET + currentTickStep);
     }
     currentTickStep = -1;
     
     // Turn off 8 bar LEDs (notes 40-47) - NoteOff required when clearing
     for (uint8_t i = 0; i < NUM_BAR_LEDS; i++) {
-        midiHandler.sendNoteOff(LED_CHANNEL, BAR_LED_BASE_NOTE + i, 0);
+        midiHandler.sendLedFeedbackNoteOff(BAR_LED_BASE_NOTE + i);
         lastBarVelocity[i] = BAR_VEL_NEVER_SENT;
     }
     
     // Turn off track (60-67) and loop (50-57) select LEDs
     for (uint8_t i = 0; i < NUM_TRACK_LEDS; i++) {
-        midiHandler.sendNoteOff(LED_CHANNEL, MidiConfig::Led::TRACK_SELECT_LED_BASE + i, 0);
+        midiHandler.sendLedFeedbackNoteOff(MidiConfig::Led::TRACK_SELECT_LED_BASE + i);
         lastTrackSelectVelocity[i] = BAR_VEL_NEVER_SENT;
     }
     for (uint8_t i = 0; i < MidiConfig::Led::LOOP_SELECT_LED_COUNT; i++) {
-        midiHandler.sendNoteOff(LED_CHANNEL, MidiConfig::Led::LOOP_SELECT_LED_BASE + i, 0);
+        midiHandler.sendLedFeedbackNoteOff(MidiConfig::Led::LOOP_SELECT_LED_BASE + i);
         lastLoopSelectVelocity[i] = BAR_VEL_NEVER_SENT;
     }
     lastFocusSlotIndex = Config::INVALID_LOOP_SLOT;
@@ -129,13 +129,13 @@ void MidiLedManager::clearPlaybackLedsOnly() {
 
     // Tick indicator (notes 16-31)
     if (currentTickStep >= 0 && currentTickStep < NUM_LEDS) {
-        midiHandler.sendNoteOff(TICK_CHANNEL, TICK_NOTE_OFFSET + currentTickStep, 0);
+        midiHandler.sendLedFeedbackNoteOff(TICK_NOTE_OFFSET + currentTickStep);
     }
     currentTickStep = -1;
 
     // Bar LEDs (notes 40-47)
     for (uint8_t i = 0; i < NUM_BAR_LEDS; i++) {
-        midiHandler.sendNoteOff(LED_CHANNEL, BAR_LED_BASE_NOTE + i, 0);
+        midiHandler.sendLedFeedbackNoteOff(BAR_LED_BASE_NOTE + i);
         lastBarVelocity[i] = BAR_VEL_NEVER_SENT;
     }
 }
@@ -157,9 +157,9 @@ void MidiLedManager::updateTrackSelectLeds(uint8_t selectedTrackIndex, const boo
         
         if (lastTrackSelectVelocity[i] != velocity) {
             if (velocity > 0) {
-                midiHandler.sendNoteOn(LED_CHANNEL, note, velocity);
+                midiHandler.sendLedFeedbackNoteOn(note, velocity);
             } else {
-                midiHandler.sendNoteOff(LED_CHANNEL, note, 0);
+                midiHandler.sendLedFeedbackNoteOff(note);
             }
             lastTrackSelectVelocity[i] = velocity;
         }
@@ -178,9 +178,9 @@ void MidiLedManager::updateTrackSelectLeds(uint8_t selectedTrackIndex, const boo
 
         if (lastLoopSelectVelocity[i] != velocity) {
             if (velocity > 0) {
-                midiHandler.sendNoteOn(LED_CHANNEL, note, velocity);
+                midiHandler.sendLedFeedbackNoteOn(note, velocity);
             } else {
-                midiHandler.sendNoteOff(LED_CHANNEL, note, 0);
+                midiHandler.sendLedFeedbackNoteOff(note);
             }
             lastLoopSelectVelocity[i] = velocity;
         }
@@ -249,7 +249,7 @@ void MidiLedManager::updateBarLeds(const Loop& loop, uint32_t currentBar) {
         
         if (loopLength <= barStartDisplay) {
             // NoteOff when bar is beyond loop (resize smaller, track switch, length edit)
-            midiHandler.sendNoteOff(LED_CHANNEL, note, 0);
+            midiHandler.sendLedFeedbackNoteOff(note);
             lastBarVelocity[i] = BAR_VEL_NEVER_SENT;
         } else {
             // Convert display-space bar to storage-space for note lookup
@@ -260,7 +260,7 @@ void MidiLedManager::updateBarLeds(const Loop& loop, uint32_t currentBar) {
             uint8_t velocity = isCurrentBar ? VEL_BAR_CURRENT : (hasNotes ? VEL_BAR_HAS_NOTES : VEL_BAR_USED);
             // Only send NoteOn when velocity changes - no NoteOff during normal playback
             if (lastBarVelocity[i] != velocity) {
-                midiHandler.sendNoteOn(LED_CHANNEL, note, velocity);
+                midiHandler.sendLedFeedbackNoteOn(note, velocity);
                 lastBarVelocity[i] = velocity;
             }
         }
@@ -272,11 +272,11 @@ void MidiLedManager::sendLedUpdate(uint8_t ledIndex, bool state) {
     
     if (state) {
         // Turn LED on
-        midiHandler.sendNoteOn(LED_CHANNEL, ledIndex, LED_VELOCITY);
+        midiHandler.sendLedFeedbackNoteOn(ledIndex, LED_VELOCITY);
         logger.log(CAT_MIDI_LED, LOG_DEBUG, "LED Manager: LED %d ON", ledIndex);
     } else {
         // Turn LED off
-        midiHandler.sendNoteOff(LED_CHANNEL, ledIndex, 0);
+        midiHandler.sendLedFeedbackNoteOff(ledIndex);
         logger.log(CAT_MIDI_LED, LOG_DEBUG, "LED Manager: LED %d OFF", ledIndex);
     }
 }
@@ -304,11 +304,11 @@ void MidiLedManager::updateCurrentTick(Track& track, uint32_t currentTick, uint8
     if (newTickStep != currentTickStep) {
         // Turn off previous tick indicator (uses notes 16-31)
         if (currentTickStep >= 0 && currentTickStep < NUM_LEDS) {
-            midiHandler.sendNoteOff(TICK_CHANNEL, TICK_NOTE_OFFSET + currentTickStep, 0);
+            midiHandler.sendLedFeedbackNoteOff(TICK_NOTE_OFFSET + currentTickStep);
         }
         
         // Turn on new tick indicator (notes 16-31)
-        midiHandler.sendNoteOn(TICK_CHANNEL, TICK_NOTE_OFFSET + newTickStep, TICK_VELOCITY);
+        midiHandler.sendLedFeedbackNoteOn(TICK_NOTE_OFFSET + newTickStep, TICK_VELOCITY);
         
         currentTickStep = newTickStep;
         

@@ -5,10 +5,16 @@
 #include "Globals.h"
 #include "ClockManager.h"
 #include "TrackManager.h"
+#include "LooperState.h"
 
 LoopEditManager::LoopEditManager(MidiHandler& midiHandler) 
     : midiHandler(midiHandler) {
 }
+
+void LoopEditManager::scheduleDebouncedLoopEditSave() {
+    pendingLoopEditSaveAtMs = millis() + LOOP_EDIT_SAVE_DEBOUNCE_MS;
+}
+
 
 void LoopEditManager::handleLoopStartFaderInput(int16_t pitchValue, Track& track) {
     // Only process fader input when in LOOP_EDIT mode
@@ -38,15 +44,13 @@ void LoopEditManager::handleLoopStartFaderInput(int16_t pitchValue, Track& track
         // Set the new loop start point
         track.setLoopStartTick(newLoopStartTick);
 
-        // Update 16th LEDs immediately (works during play and stop - updateAllTracks may not run when stopped)
-        trackManager.forceLedUpdate(clockManager.getCurrentTick());
+        // LEDs: rely on TrackManager::updateLedsDeferred (~8 ms) — it detects loopStartTick
+        // changes and refreshes without forceUpdate, avoiding DROID USB MIDI floods.
 
         logger.log(CAT_MIDI, LOG_INFO, "LOOP START EDIT: Loop start moved from tick %lu to %lu", 
                    currentStart, newLoopStartTick);
         
-        // Save state to SD card after loop start change
-        StorageManager::saveState(looperState.getLooperState());
-        logger.log(CAT_MIDI, LOG_DEBUG, "State saved to SD card after loop start change");
+        scheduleDebouncedLoopEditSave();
         
         // Mark editing activity to enable grace period and endpoint updating
         refreshLoopStartEditingActivity();
@@ -127,13 +131,10 @@ void LoopEditManager::updateLoopEndpointAfterGracePeriod(Track& track) {
         // Update the loop length to maintain the bar-based length relative to new start
         if (newLoopLength != loopLength) {
             track.setLoopLength(newLoopLength);
-            trackManager.forceLedUpdate(clockManager.getCurrentTick());
             logger.log(CAT_MIDI, LOG_INFO, "LOOP ENDPOINT UPDATE: Loop length adjusted from %lu to %lu ticks (%lu bars)", 
                        loopLength, newLoopLength, loopLengthBars);
             
-            // Save state to SD card after loop endpoint update
-            StorageManager::saveState(looperState.getLooperState());
-            logger.log(CAT_MIDI, LOG_DEBUG, "State saved to SD card after loop endpoint update");
+            scheduleDebouncedLoopEditSave();
         }
         
         logger.log(CAT_MIDI, LOG_INFO, "LOOP ENDPOINT UPDATE: Grace period ended, loop end=%lu (start=%lu + %lu bars)", 
@@ -168,15 +169,10 @@ void LoopEditManager::handleLoopLengthInput(uint8_t ccValue, Track& track) {
         // Set the new loop length with proper note wrapping
         track.setLoopLengthWithWrapping(newLoopLengthTicks);
 
-        // Update LEDs immediately (works when stopped - updateAllTracks may not run)
-        trackManager.forceLedUpdate(clockManager.getCurrentTick());
-
         logger.log(CAT_MIDI, LOG_DEBUG, "Loop length updated successfully: CC=%d -> %lu bars (%lu ticks)", 
                    ccValue, newBars, newLoopLengthTicks);
         
-        // Save state to SD card after loop length change
-        StorageManager::saveState(looperState.getLooperState());
-        logger.log(CAT_MIDI, LOG_DEBUG, "State saved to SD card after loop length change");
+        scheduleDebouncedLoopEditSave();
     } else {
         logger.log(CAT_MIDI, LOG_DEBUG, "Loop length unchanged: CC=%d maps to current length (%lu bars)", 
                    ccValue, newBars);
@@ -234,6 +230,14 @@ void LoopEditManager::onTrackChanged(Track& newTrack) {
 }
 
 void LoopEditManager::update() {
+    if (pendingLoopEditSaveAtMs != 0) {
+        uint32_t now = millis();
+        if ((int32_t)(now - pendingLoopEditSaveAtMs) >= 0) {
+            pendingLoopEditSaveAtMs = 0;
+            StorageManager::saveState(looperState.getLooperState());
+            logger.log(CAT_MIDI, LOG_DEBUG, "State saved to SD (debounced after loop edit)");
+        }
+    }
     // Check for grace period updates
     if (loopStartEditingTime > 0) {
         Track& track = trackManager.getSelectedTrack();

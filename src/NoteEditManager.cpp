@@ -54,10 +54,9 @@ void NoteEditManager::update() {
         enableStartEditing();
     }
     
-    // Handle loop start editing grace period and endpoint updating
-    if (currentMainEditMode == MAIN_MODE_LOOP_EDIT) {
-        loopEditManager.update();
-    }
+    // Loop edit: grace-period endpoint updates + debounced SD writes (must run every frame
+    // so a pending save still flushes after leaving LOOP_EDIT).
+    loopEditManager.update();
     
     // Delegate to V2 managers for their update cycles
     faderHandler.update();
@@ -388,9 +387,9 @@ void NoteEditManager::sendMainEditModeChange(MainEditMode mode) {
     midiHandler.sendProgramChange(PROGRAM_CHANGE_CHANNEL, program);
     
     // Send trigger note on channel 16
-    midiHandler.sendNoteOn(15, triggerNote, 64);
+    midiHandler.sendLedFeedbackNoteOn(triggerNote, 64);
     delay(10);  // Short note duration
-    midiHandler.sendNoteOff(15, triggerNote, 0);
+    midiHandler.sendLedFeedbackNoteOff(triggerNote);
     
     logger.log(CAT_MIDI, LOG_INFO, "Main Edit Mode: %s (Program %d, Note %d trigger)", 
                modeName, program, triggerNote);

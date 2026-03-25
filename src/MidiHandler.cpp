@@ -400,6 +400,37 @@ void MidiHandler::sendNoteOff(uint8_t channel, uint8_t note, uint8_t velocity) {
     sendMidiEvent(MidiEvent::NoteOff(0, channel, note, velocity));
 }
 
+namespace {
+constexpr uint16_t kLedUsbHostPadMicros = 50;
+}
+
+void MidiHandler::serviceUsbHostAfterLedPacket() {
+  usbHost.Task();
+  if (kLedUsbHostPadMicros > 0) {
+    delayMicroseconds(kLedUsbHostPadMicros);
+  }
+}
+
+void MidiHandler::sendLedFeedbackNoteOn(uint8_t note, uint8_t velocity) {
+  constexpr uint8_t ch = MidiConfig::Led::CHANNEL;
+  if (outputUSB) usbMIDI.sendNoteOn(note, velocity, ch);
+  if (outputSerial) MIDIserial.sendNoteOn(note, velocity, ch);
+  if (usbHostMIDI) {
+    usbHostMIDI.sendNoteOn(note, velocity, ch);
+    serviceUsbHostAfterLedPacket();
+  }
+}
+
+void MidiHandler::sendLedFeedbackNoteOff(uint8_t note) {
+  constexpr uint8_t ch = MidiConfig::Led::CHANNEL;
+  if (outputUSB) usbMIDI.sendNoteOff(note, 0, ch);
+  if (outputSerial) MIDIserial.sendNoteOff(note, 0, ch);
+  if (usbHostMIDI) {
+    usbHostMIDI.sendNoteOn(note, 0, ch);
+    serviceUsbHostAfterLedPacket();
+  }
+}
+
 void MidiHandler::sendControlChange(uint8_t channel, uint8_t control, uint8_t value) {
     sendMidiEvent(MidiEvent::ControlChange(0, channel, control, value));
 }

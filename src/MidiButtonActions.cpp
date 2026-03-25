@@ -551,11 +551,11 @@ void MidiButtonActions::handleToggleTransport() {
     const uint8_t transportNote = 39;  // D#2
     bool wasRunning = clockManager.isTransportRunning();
     if (wasRunning) {
-        midiHandler.sendNoteOff(MidiButtonConfig::Channels::TRANSPORT, transportNote, 0);
+        midiHandler.sendLedFeedbackNoteOff(transportNote);
     }
     clockManager.toggleTransport();
     if (!wasRunning) {
-        midiHandler.sendNoteOn(MidiButtonConfig::Channels::TRANSPORT, transportNote, 127);
+        midiHandler.sendLedFeedbackNoteOn(transportNote, 127);
     }
     logger.info("Transport LED: sent %s on ch%d note%d",
                 !wasRunning ? "NoteOn" : "NoteOff",
@@ -566,9 +566,9 @@ void MidiButtonActions::handleToggleTransport() {
 void MidiButtonActions::syncTransportLed() {
     const uint8_t transportNote = 39;  // D#2 - same as handleToggleTransport
     if (clockManager.isTransportRunning()) {
-        midiHandler.sendNoteOn(MidiButtonConfig::Channels::TRANSPORT, transportNote, 127);
+        midiHandler.sendLedFeedbackNoteOn(transportNote, 127);
     } else {
-        midiHandler.sendNoteOff(MidiButtonConfig::Channels::TRANSPORT, transportNote, 0);
+        midiHandler.sendLedFeedbackNoteOff(transportNote);
     }
 }
 

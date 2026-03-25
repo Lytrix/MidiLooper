@@ -43,7 +43,7 @@ public:
     // Track change handling
     void onTrackChanged(Track& newTrack);
     
-    // Update method for grace period checking
+    // Update method for grace period checking and debounced SD flush (call every frame).
     void update();
     
     // Configuration
@@ -69,6 +69,13 @@ private:
     
     // Movement filtering
     bool isSignificantMovement(uint32_t currentStart, uint32_t newStart);
+
+    /// Coalesce SD writes during rapid loop start/length tweaks so the main loop
+    /// (and USB host pumping) is not blocked on every fader step.
+    void scheduleDebouncedLoopEditSave();
+
+    static constexpr uint32_t LOOP_EDIT_SAVE_DEBOUNCE_MS = 400;
+    uint32_t pendingLoopEditSaveAtMs = 0;
 };
 
 #endif // LOOP_EDIT_MANAGER_H 
