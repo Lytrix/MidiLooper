@@ -78,12 +78,19 @@ From [phase-3-multi-loop.md](phase-3-multi-loop.md) §9 and gaps:
 | ------------------ | -------------------------------------------------------------------------------------------- |
 | **ch15 note 60–67** | **Track** LED feedback (8 tracks)                                                          |
 | **ch15 note 50–57** | **Loop** LED feedback for **currently selected track** (8 slots)                             |
-| Velocity **127**   | Selected track / selected loop                                                               |
-| Velocity **32**    | Not selected, slot has content                                                               |
+| Velocity **127**   | Recording/overdubbing slot (active capture target) + selected track (60–67)            |
+| Velocity **64**    | Enabled slot playing (`enabled && !muted`)                                                  |
+| Velocity **32**    | Slot has content but not currently audible                                                  |
+| Velocity **16**    | Muted slot (static placeholder; LFO flashing 0–32 will be wired later)                      |
 | Velocity **0**     | Empty slot                                                                                   |
 | **ch16 60–67**     | **Track row:** short=select, double=mute, long=solo. Per [Tracks.md](../Guides/control-surface/Tracks.md). |
 | **ch16 50–57**     | **Per-slot copy of Button A** (see §4); **switch-only** changes commit on **next 16th boundary** |
 | **ch16 note 70**   | **NoteOn** starts Droid LFO pulse; **NoteOff** stops it when leaving armed/recording/overdub |
+
+## Multi-slot playback semantics (slot toggles)
+- **Multi-hold selection:** holding one or more slot buttons beyond the long-press+50ms threshold builds a **pending enabled set**; when all held buttons are released, that set is **committed on the next 16th boundary** and all enabled+unmuted slots start playback together.
+- **Short press (filled + playing):** focuses the pressed slot and **toggles mute/unmute for that slot** (only if the slot is part of the enabled set). If only one slot is currently enabled, a short press on a different filled slot **replaces** the enabled set on the next 16th boundary.
+- **Long press (filled + playing):** selects a **single** slot at **loop-end** (replacing the enabled set). Long-press on the currently selected slot clears that slot.
 
 ## 1. Data dependency (Phase 3 core)
 

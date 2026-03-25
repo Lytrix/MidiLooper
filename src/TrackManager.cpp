@@ -20,14 +20,25 @@ TrackManager::TrackManager() {
   for (uint8_t i = 0; i < Config::NUM_TRACKS; i++) {
     pendingRecord[i] = false;
     pendingRecordQueuedAtTick[i] = UINT32_MAX;
-    pendingRecordRefSlot[i] = 0xFF;
+    pendingRecordRefSlot[i] = Config::INVALID_LOOP_SLOT;
     for (uint8_t s = 0; s < Config::MAX_LOOPS_PER_TRACK; ++s) {
       pendingRecordSlot[i][s] = false;
       heldLayerSlot[i][s] = false;
+      // Default: single-slot mode plays slot 0.
+      slotEnabled[i][s] = false;
+      slotMuted[i][s] = false;
+      pendingSlotEnabled[i][s] = false;
+      pendingHoldActive[i][s] = false;
     }
     pendingStop[i] = false;
     muted[i] = false;
     soloed[i] = false;
+    // Default slot enabled: 0 (keeps behavior predictable on empty project load).
+    slotEnabled[i][0] = true;
+    pendingHoldCount[i] = 0;
+    pendingMultiSlotCommit[i] = false;
+    pendingMultiSlotQueuedAtTick[i] = UINT32_MAX;
+    pendingEnabledSetReplacement[i] = false;
   }
   autoAlignEnabled = false;
   masterLoopLength = 0;
@@ -47,18 +58,39 @@ void TrackManager::allocateLoopsEarly() {
 
 void TrackManager::startRecordingTrack(uint8_t trackIndex, uint32_t currentTick) {
   if (trackIndex >= Config::NUM_TRACKS) return;
+
+  // Captures write into the active slot; ensure the target slot is enabled/unmuted.
+  {
+    const uint8_t slot = tracks[trackIndex].getActiveLoopIndex();
+    slotEnabled[trackIndex][slot] = true;
+    slotMuted[trackIndex][slot] = false;
+  }
+
   // Only allow recording if the clock is running (internal or external)
   if (!clockManager.shouldQuantizeRecordStart()) {
-    // Arm the track and set pendingRecord so it will start when the clock starts
-    tracks[trackIndex].setState(TRACK_ARMED);
+    Track& tr = tracks[trackIndex];
     pendingRecord[trackIndex] = true;
     pendingRecordQueuedAtTick[trackIndex] = UINT32_MAX;
-    pendingRecordRefSlot[trackIndex] = 0xFF;
-    uint8_t slot = tracks[trackIndex].getActiveLoopIndex();
+    pendingRecordRefSlot[trackIndex] = Config::INVALID_LOOP_SLOT;
+    uint8_t slot = tr.getActiveLoopIndex();
     for (uint8_t s = 0; s < Config::MAX_LOOPS_PER_TRACK; ++s) {
       pendingRecordSlot[trackIndex][s] = false;
     }
     pendingRecordSlot[trackIndex][slot] = true;
+    // PLAYING/OVERDUBBING cannot transition to TRACK_ARMED; keep state and use pendingRecord only
+    // (getTrackState maps pending + PLAYING/OVERDUBBING -> ARMED for UI).
+    const bool keepStateForUiArm = tr.isPlaying() || tr.isOverdubbing();
+    if (!keepStateForUiArm && !tr.setState(TRACK_ARMED)) {
+      pendingRecord[trackIndex] = false;
+      pendingRecordQueuedAtTick[trackIndex] = UINT32_MAX;
+      pendingRecordRefSlot[trackIndex] = Config::INVALID_LOOP_SLOT;
+      for (uint8_t s = 0; s < Config::MAX_LOOPS_PER_TRACK; ++s) {
+        pendingRecordSlot[trackIndex][s] = false;
+      }
+      logger.log(CAT_TRACK, LOG_WARNING, "Track %d: could not arm for record (state=%s)",
+                 trackIndex, tr.getStateName(tr.getState()));
+      return;
+    }
     logger.log(CAT_TRACK, LOG_INFO, "Track %d armed, waiting for clock to start recording", trackIndex);
     return;
   }
@@ -87,12 +119,17 @@ void TrackManager::stopRecordingTrack(uint8_t trackIndex) {
 void TrackManager::queueRecordingTrack(uint8_t trackIndex, uint8_t slotIndex,
                                        uint8_t refSlotForPhase) {
   if (trackIndex >= Config::NUM_TRACKS || slotIndex >= Config::MAX_LOOPS_PER_TRACK) return;
+
+  // Target slot should be part of playback set while recording.
+  slotEnabled[trackIndex][slotIndex] = true;
+  slotMuted[trackIndex][slotIndex] = false;
+
   pendingRecord[trackIndex] = true;
   pendingRecordQueuedAtTick[trackIndex] = clockManager.getCurrentTick();
   uint8_t ref = refSlotForPhase;
   if (ref < Config::MAX_LOOPS_PER_TRACK) {
     const Loop& r = tracks[trackIndex].getLoop(ref);
-    if (r.loopLengthTicks == 0) ref = 0xFF;
+    if (r.loopLengthTicks == 0) ref = Config::INVALID_LOOP_SLOT;
   }
   pendingRecordRefSlot[trackIndex] = ref;
   for (uint8_t s = 0; s < Config::MAX_LOOPS_PER_TRACK; ++s) {
@@ -114,7 +151,7 @@ void TrackManager::clearQueuedRecordingTrack(uint8_t trackIndex, uint8_t slotInd
   pendingRecord[trackIndex] = anyPending;
   if (!anyPending) {
     pendingRecordQueuedAtTick[trackIndex] = UINT32_MAX;
-    pendingRecordRefSlot[trackIndex] = 0xFF;
+    pendingRecordRefSlot[trackIndex] = Config::INVALID_LOOP_SLOT;
   }
 }
 
@@ -127,12 +164,39 @@ bool TrackManager::hasQueuedRecordingTrack(uint8_t trackIndex) const {
   return (trackIndex < Config::NUM_TRACKS) ? pendingRecord[trackIndex] : false;
 }
 
+uint8_t TrackManager::getQueuedRecordingSlot(uint8_t trackIndex) const {
+  if (trackIndex >= Config::NUM_TRACKS || !pendingRecord[trackIndex]) {
+    return Config::INVALID_LOOP_SLOT;
+  }
+  for (uint8_t s = 0; s < Config::MAX_LOOPS_PER_TRACK; ++s) {
+    if (pendingRecordSlot[trackIndex][s]) return s;
+  }
+  return Config::INVALID_LOOP_SLOT;
+}
+
+void TrackManager::cancelPendingRecordArm(uint8_t trackIndex) {
+  if (trackIndex >= Config::NUM_TRACKS) return;
+  pendingRecord[trackIndex] = false;
+  pendingRecordQueuedAtTick[trackIndex] = UINT32_MAX;
+  pendingRecordRefSlot[trackIndex] = Config::INVALID_LOOP_SLOT;
+  for (uint8_t s = 0; s < Config::MAX_LOOPS_PER_TRACK; ++s) {
+    pendingRecordSlot[trackIndex][s] = false;
+  }
+  Track& t = tracks[trackIndex];
+  if (t.isArmed()) {
+    t.setState(t.hasData() ? TRACK_STOPPED : TRACK_EMPTY);
+  }
+}
+
 void TrackManager::queueStopRecordingTrack(uint8_t trackIndex) {
   if (trackIndex < Config::NUM_TRACKS) pendingStop[trackIndex] = true;
 }
 
 void TrackManager::startOverdubbingTrack(uint8_t trackIndex) {
   if (trackIndex < Config::NUM_TRACKS) {
+    const uint8_t slot = tracks[trackIndex].getActiveLoopIndex();
+    slotEnabled[trackIndex][slot] = true;
+    slotMuted[trackIndex][slot] = false;
     tracks[trackIndex].startOverdubbing(clockManager.getCurrentTick());
   }
 }
@@ -148,7 +212,7 @@ void TrackManager::handlePendingRecordStart(uint32_t currentTick) {
         currentTick == pendingRecordQueuedAtTick[i]) {
       continue;
     }
-    uint8_t targetSlot = 0xFF;
+    uint8_t targetSlot = Config::INVALID_LOOP_SLOT;
     for (uint8_t s = 0; s < Config::MAX_LOOPS_PER_TRACK; ++s) {
       if (pendingRecordSlot[i][s]) {
         targetSlot = s;
@@ -159,7 +223,7 @@ void TrackManager::handlePendingRecordStart(uint32_t currentTick) {
 
     bool shouldStart = false;
     uint8_t refIdx = pendingRecordRefSlot[i];
-    if (refIdx >= Config::MAX_LOOPS_PER_TRACK || refIdx == 0xFF) {
+    if (refIdx >= Config::MAX_LOOPS_PER_TRACK || refIdx == Config::INVALID_LOOP_SLOT) {
       if (barTicks == 0) continue;
       if (currentTick != 0 && (currentTick % barTicks) != 0) continue;
       shouldStart = true;
@@ -184,7 +248,7 @@ void TrackManager::handlePendingRecordStart(uint32_t currentTick) {
     pendingRecordSlot[i][targetSlot] = false;
     pendingRecord[i] = false;
     pendingRecordQueuedAtTick[i] = UINT32_MAX;
-    pendingRecordRefSlot[i] = 0xFF;
+    pendingRecordRefSlot[i] = Config::INVALID_LOOP_SLOT;
   }
 }
 
@@ -217,7 +281,7 @@ void TrackManager::handleTransportStop() {
     // Always clear queued quantized actions when transport stops.
     pendingRecord[i] = false;
     pendingRecordQueuedAtTick[i] = UINT32_MAX;
-    pendingRecordRefSlot[i] = 0xFF;
+    pendingRecordRefSlot[i] = Config::INVALID_LOOP_SLOT;
     for (uint8_t s = 0; s < Config::MAX_LOOPS_PER_TRACK; ++s) {
       pendingRecordSlot[i][s] = false;
       heldLayerSlot[i][s] = false;
@@ -356,12 +420,15 @@ void TrackManager::finalizeCaptureAndSelectSlot(uint8_t trackIndex, uint8_t newS
 
   pendingRecord[trackIndex] = false;
   pendingRecordQueuedAtTick[trackIndex] = UINT32_MAX;
-  pendingRecordRefSlot[trackIndex] = 0xFF;
+  pendingRecordRefSlot[trackIndex] = Config::INVALID_LOOP_SLOT;
   for (uint8_t s = 0; s < Config::MAX_LOOPS_PER_TRACK; ++s) {
     pendingRecordSlot[trackIndex][s] = false;
   }
 
   Track& t = tracks[trackIndex];
+  // Slot that holds the in-progress capture (before stop moves state / active index).
+  const uint8_t captureSlot = t.getActiveLoopIndex();
+
   if (t.isRecording()) {
     t.stopRecordingToStopped(currentTick);
     uint32_t recordedLength = t.getLoopLength();
@@ -377,15 +444,30 @@ void TrackManager::finalizeCaptureAndSelectSlot(uint8_t trackIndex, uint8_t newS
   }
 
   t.setActiveLoopIndex(newSlot);
-  t.resetPlaybackState(currentTick);
+  // A captured slot becomes part of the enabled playback set.
+  slotEnabled[trackIndex][newSlot] = true;
+  slotMuted[trackIndex][newSlot] = false;
+
+  t.resetPlaybackStateForSlot(newSlot, currentTick);
   const Loop& newLoop = t.getLoop(newSlot);
-  if (t.hasDataInSlot(newSlot) && newLoop.loopLengthTicks > 0) {
-    if (!t.isPlaying()) {
-      t.startPlaying(currentTick);
+
+  bool otherAudibleHasData = false;
+  for (uint8_t s = 0; s < Config::MAX_LOOPS_PER_TRACK; ++s) {
+    if (s == newSlot) continue;
+    if (slotEnabled[trackIndex][s] && !slotMuted[trackIndex][s] && t.hasDataInSlot(s)) {
+      otherAudibleHasData = true;
+      break;
     }
-  } else if (t.isPlaying()) {
+  }
+
+  if (t.hasDataInSlot(newSlot) && newLoop.loopLengthTicks > 0) {
+    if (!t.isPlaying()) t.startPlaying(currentTick);
+  } else if (t.isPlaying() && !otherAudibleHasData) {
+    // Only stop the track if no other enabled slot is audible.
     t.stopPlaying();
   }
+  // Keep UI focus on the slot that received the capture so piano roll / LEDs match the new audio.
+  setSelectedSlotIndex(trackIndex, captureSlot);
   forceLedUpdate(currentTick);
 }
 
@@ -405,6 +487,111 @@ void TrackManager::setActiveLoopIndex(uint8_t trackIndex, uint8_t index) {
 void TrackManager::setLayeredSlotHeld(uint8_t trackIndex, uint8_t slotIndex, bool held) {
   if (trackIndex >= Config::NUM_TRACKS || slotIndex >= Config::MAX_LOOPS_PER_TRACK) return;
   heldLayerSlot[trackIndex][slotIndex] = held;
+}
+
+bool TrackManager::isSlotEnabled(uint8_t trackIndex, uint8_t slotIndex) const {
+  if (trackIndex >= Config::NUM_TRACKS || slotIndex >= Config::MAX_LOOPS_PER_TRACK) return false;
+  return slotEnabled[trackIndex][slotIndex];
+}
+
+bool TrackManager::isSlotMuted(uint8_t trackIndex, uint8_t slotIndex) const {
+  if (trackIndex >= Config::NUM_TRACKS || slotIndex >= Config::MAX_LOOPS_PER_TRACK) return false;
+  return slotMuted[trackIndex][slotIndex];
+}
+
+void TrackManager::setSlotEnabled(uint8_t trackIndex, uint8_t slotIndex, bool enabled) {
+  if (trackIndex >= Config::NUM_TRACKS || slotIndex >= Config::MAX_LOOPS_PER_TRACK) return;
+  slotEnabled[trackIndex][slotIndex] = enabled;
+}
+
+void TrackManager::setSlotMuted(uint8_t trackIndex, uint8_t slotIndex, bool mutedValue) {
+  if (trackIndex >= Config::NUM_TRACKS || slotIndex >= Config::MAX_LOOPS_PER_TRACK) return;
+  slotMuted[trackIndex][slotIndex] = mutedValue;
+}
+
+void TrackManager::toggleSlotMuted(uint8_t trackIndex, uint8_t slotIndex) {
+  if (trackIndex >= Config::NUM_TRACKS || slotIndex >= Config::MAX_LOOPS_PER_TRACK) return;
+  slotMuted[trackIndex][slotIndex] = !slotMuted[trackIndex][slotIndex];
+}
+
+uint8_t TrackManager::countEnabledSlots(uint8_t trackIndex) const {
+  if (trackIndex >= Config::NUM_TRACKS) return 0;
+  uint8_t c = 0;
+  for (uint8_t s = 0; s < Config::MAX_LOOPS_PER_TRACK; ++s) {
+    if (slotEnabled[trackIndex][s]) c++;
+  }
+  return c;
+}
+
+void TrackManager::beginSlotSelectionHold(uint8_t trackIndex, uint8_t slotIndex) {
+  if (trackIndex >= Config::NUM_TRACKS || slotIndex >= Config::MAX_LOOPS_PER_TRACK) return;
+  if (pendingHoldActive[trackIndex][slotIndex]) return;
+
+  // First hold armed: start a fresh pending enabled set.
+  if (pendingHoldCount[trackIndex] == 0) {
+    for (uint8_t s = 0; s < Config::MAX_LOOPS_PER_TRACK; ++s) {
+      pendingSlotEnabled[trackIndex][s] = false;
+      pendingHoldActive[trackIndex][s] = false;
+    }
+    pendingMultiSlotCommit[trackIndex] = false;
+    pendingMultiSlotQueuedAtTick[trackIndex] = UINT32_MAX;
+    pendingEnabledSetReplacement[trackIndex] = false;
+  }
+
+  pendingHoldActive[trackIndex][slotIndex] = true;
+  pendingHoldCount[trackIndex]++;
+
+  // Include this slot in the pending enabled set.
+  pendingSlotEnabled[trackIndex][slotIndex] = true;
+  // Default: newly enabled slots start unmuted.
+  pendingMultiSlotCommit[trackIndex] = false;  // cancel any in-progress commit build
+}
+
+void TrackManager::endSlotSelectionHold(uint8_t trackIndex, uint8_t slotIndex, uint32_t nowTick) {
+  if (trackIndex >= Config::NUM_TRACKS || slotIndex >= Config::MAX_LOOPS_PER_TRACK) return;
+  if (!pendingHoldActive[trackIndex][slotIndex]) return;
+
+  pendingHoldActive[trackIndex][slotIndex] = false;
+  if (pendingHoldCount[trackIndex] > 0) pendingHoldCount[trackIndex]--;
+
+  // Commit when the last held slot is released.
+  if (pendingHoldCount[trackIndex] == 0) {
+    bool anyPending = false;
+    for (uint8_t s = 0; s < Config::MAX_LOOPS_PER_TRACK; ++s) {
+      if (pendingSlotEnabled[trackIndex][s]) { anyPending = true; break; }
+    }
+    if (anyPending) {
+      pendingMultiSlotCommit[trackIndex] = true;
+      pendingMultiSlotQueuedAtTick[trackIndex] = nowTick;
+    } else {
+      // Nothing selected: keep existing enabled set.
+      for (uint8_t s = 0; s < Config::MAX_LOOPS_PER_TRACK; ++s) pendingSlotEnabled[trackIndex][s] = false;
+    }
+  }
+}
+
+void TrackManager::setPendingEnabledSetReplacement(uint8_t trackIndex, bool enabled) {
+  if (trackIndex >= Config::NUM_TRACKS) return;
+  pendingEnabledSetReplacement[trackIndex] = enabled;
+}
+
+uint8_t TrackManager::getSelectedSlotIndex(uint8_t trackIndex) const {
+  return slotStateMachine.getSelectedSlotIndex(trackIndex);
+}
+
+void TrackManager::setSelectedSlotIndex(uint8_t trackIndex, uint8_t slotIndex) {
+  slotStateMachine.setSelectedSlotIndex(trackIndex, slotIndex);
+}
+
+void TrackManager::requestSlotSwitch(uint8_t trackIndex,
+                                      uint8_t slotIndex,
+                                      SlotQuantization quantization,
+                                      uint32_t queuedAtTick) {
+  slotStateMachine.requestPendingSlotSwitch(trackIndex, slotIndex, quantization, queuedAtTick);
+}
+
+void TrackManager::clearPendingSlotSwitch(uint8_t trackIndex) {
+  slotStateMachine.clearPendingSlotSwitch(trackIndex);
 }
 
 void TrackManager::setSelectedTrack(uint8_t index) {
@@ -452,6 +639,77 @@ void TrackManager::updateAllTracks(uint32_t currentTick) {
   handlePendingRecordStart(currentTick);
 
   for (uint8_t i = 0; i < Config::NUM_TRACKS; i++) {
+    // Commit multi-hold selection (enabled set + start at next 16th).
+    if (pendingMultiSlotCommit[i] &&
+        currentTick != pendingMultiSlotQueuedAtTick[i] &&
+        (currentTick % Config::TICKS_PER_16TH_STEP) == 0) {
+
+      // Apply pendingSlotEnabled -> slotEnabled and default unmute.
+      bool anyEnabledUnmutedWithData = false;
+      for (uint8_t s = 0; s < Config::MAX_LOOPS_PER_TRACK; ++s) {
+        slotEnabled[i][s] = pendingSlotEnabled[i][s];
+        // Keep mute if the slot stays enabled, but default to unmuted for new selection.
+        slotMuted[i][s] = false;
+        if (slotEnabled[i][s] && !slotMuted[i][s] && tracks[i].hasDataInSlot(s)) {
+          anyEnabledUnmutedWithData = true;
+        }
+      }
+      pendingMultiSlotCommit[i] = false;
+      pendingMultiSlotQueuedAtTick[i] = UINT32_MAX;
+      for (uint8_t s = 0; s < Config::MAX_LOOPS_PER_TRACK; ++s) pendingSlotEnabled[i][s] = false;
+
+      // Choose active slot: prefer selected slot if it is enabled and has data.
+      uint8_t selectedSlot = slotStateMachine.getSelectedSlotIndex(i);
+      if (!slotEnabled[i][selectedSlot] || !tracks[i].hasDataInSlot(selectedSlot)) {
+        selectedSlot = 0;
+        for (uint8_t s = 0; s < Config::MAX_LOOPS_PER_TRACK; ++s) {
+          if (slotEnabled[i][s] && tracks[i].hasDataInSlot(s)) { selectedSlot = s; break; }
+        }
+      }
+      slotStateMachine.setSelectedSlotIndex(i, selectedSlot);
+      setActiveLoopIndex(i, selectedSlot);
+      // Reset playback indices so all newly enabled slots start at the commit phase.
+      tracks[i].resetPlaybackStateForSlot(selectedSlot, currentTick);
+      for (uint8_t s = 0; s < Config::MAX_LOOPS_PER_TRACK; ++s) {
+        if (slotEnabled[i][s] && !slotMuted[i][s] && tracks[i].hasDataInSlot(s)) {
+          tracks[i].resetPlaybackStateForSlot(s, currentTick);
+        }
+      }
+
+      // Ensure playback is running if we have any audible slot data.
+      if (anyEnabledUnmutedWithData && !tracks[i].isPlaying() && !tracks[i].isOverdubbing()) {
+        // Track state machine may block EMPTY->PLAYING; we keep this guard minimal.
+        startPlayingTrack(i);
+      }
+
+      forceLedUpdate(currentTick);
+    }
+
+    // Commit a pending quantized slot switch (Phase 1: playback switching only).
+    if (tracks[i].isPlaying() && slotStateMachine.hasPendingSlotSwitch(i) &&
+        slotStateMachine.shouldCommitPendingSlotSwitch(i, tracks[i], currentTick)) {
+      const uint8_t targetSlot = slotStateMachine.getPendingSlotIndex(i);
+      if (targetSlot < Config::MAX_LOOPS_PER_TRACK && tracks[i].hasDataInSlot(targetSlot)) {
+        slotStateMachine.clearPendingSlotSwitch(i);
+        setActiveLoopIndex(i, targetSlot);
+        tracks[i].resetPlaybackState(currentTick);
+
+        // If this slot switch came from a "select single slot" gesture, replace enabled set.
+        if (pendingEnabledSetReplacement[i]) {
+          for (uint8_t s = 0; s < Config::MAX_LOOPS_PER_TRACK; ++s) {
+            slotEnabled[i][s] = (s == targetSlot);
+            slotMuted[i][s] = false;
+          }
+          pendingEnabledSetReplacement[i] = false;
+          forceLedUpdate(currentTick);
+        }
+      } else {
+        // Safety: pending target no longer has loop data, cancel it.
+        slotStateMachine.clearPendingSlotSwitch(i);
+        pendingEnabledSetReplacement[i] = false;
+      }
+    }
+
     if (pendingStop[i]) {
       stopRecordingTrack(i);
       pendingStop[i] = false;
@@ -459,15 +717,88 @@ void TrackManager::updateAllTracks(uint32_t currentTick) {
 
     bool audible = isTrackAudible(i);
     uint32_t playTick = tracks[i].getEffectivePlaybackTick(currentTick);
-    tracks[i].playMidiEvents(playTick, audible);
     uint8_t activeSlot = tracks[i].getActiveLoopIndex();
+
+    // Primary (active) slot playback.
+    if (slotEnabled[i][activeSlot] && !slotMuted[i][activeSlot]) {
+      tracks[i].playMidiEvents(playTick, audible);
+    }
+
+    // Additional enabled slots.
     for (uint8_t s = 0; s < Config::MAX_LOOPS_PER_TRACK; ++s) {
-      if (heldLayerSlot[i][s] && s != activeSlot) {
+      if (s == activeSlot) continue;
+      if (slotEnabled[i][s] && !slotMuted[i][s]) {
         tracks[i].playMidiEventsForSlot(s, playTick, audible);
       }
     }
   }
   
+}
+
+void TrackManager::refreshTrackAndLoopSelectLeds() {
+  if (!ledManager) return;
+  static constexpr uint8_t VEL_SELECTED_SLOT = 127;
+
+  bool trackHasData[Config::NUM_TRACKS];
+  for (uint8_t i = 0; i < Config::NUM_TRACKS; i++) {
+    trackHasData[i] = false;
+    for (uint8_t s = 0; s < Config::MAX_LOOPS_PER_TRACK; ++s) {
+      if (tracks[i].hasDataInSlot(s)) {
+        trackHasData[i] = true;
+        break;
+      }
+    }
+  }
+
+  const uint8_t focusSlot = getSelectedSlotIndex(selectedTrack);
+  uint8_t slotVelocities[Config::MAX_LOOPS_PER_TRACK] = {0};
+  Track& st = tracks[selectedTrack];
+
+  for (uint8_t s = 0; s < Config::MAX_LOOPS_PER_TRACK; ++s) {
+    const bool focus = (s == focusSlot);
+    const bool hasData = st.hasDataInSlot(s);
+
+    SlotOpState opState = st.getSlotOpState(s);
+    if (opState == SlotOpState::SLOT_OP_RECORDING || opState == SlotOpState::SLOT_OP_OVERDUBBING) {
+      slotVelocities[s] = 96;
+      continue;
+    }
+    if (isRecordingQueued(selectedTrack, s)) {
+      slotVelocities[s] = 96;
+      continue;
+    }
+
+    if (!hasData) {
+      const bool armedHere = (st.getActiveLoopIndex() == s && st.isArmed());
+      if (armedHere) {
+        slotVelocities[s] = 80;
+      } else if (focus) {
+        slotVelocities[s] = 40;
+      } else {
+        slotVelocities[s] = 0;
+      }
+      continue;
+    }
+
+    const bool enabled = slotEnabled[selectedTrack][s];
+    const bool mutedSlot = slotMuted[selectedTrack][s];
+    if (!enabled) {
+      slotVelocities[s] = 32;
+    } else if (mutedSlot) {
+      slotVelocities[s] = 16;
+    } else if (st.isPlaying() || st.isOverdubbing()) {
+      slotVelocities[s] = 48;
+    } else {
+      slotVelocities[s] = 32;
+    }
+  }
+
+  // UI rule: exactly one selected slot highlight.
+  if (focusSlot < Config::MAX_LOOPS_PER_TRACK) {
+    slotVelocities[focusSlot] = VEL_SELECTED_SLOT;
+  }
+
+  ledManager->updateTrackSelectLeds(selectedTrack, trackHasData, focusSlot, slotVelocities);
 }
 
 // Called from main loop (not clock path) - decouples LED updates from playback timing
@@ -480,17 +811,7 @@ void TrackManager::updateLedsDeferred() {
   if (selTrack.getLoopLength() > 0) {
     ledManager->updateCurrentTick(selTrack, selTick);
   }
-  // Track row LEDs (60-67) and loop row LEDs (50-57) for selected track
-  bool trackHasData[Config::NUM_TRACKS];
-  for (uint8_t i = 0; i < Config::NUM_TRACKS; i++) {
-    trackHasData[i] = tracks[i].hasData();
-  }
-  uint8_t activeIdx = getActiveLoopIndex(selectedTrack);
-  bool slotHasData[Config::MAX_LOOPS_PER_TRACK];
-  for (uint8_t i = 0; i < Config::MAX_LOOPS_PER_TRACK; i++) {
-    slotHasData[i] = tracks[selectedTrack].hasDataInSlot(i);
-  }
-  ledManager->updateTrackSelectLeds(selectedTrack, trackHasData, activeIdx, slotHasData);
+  refreshTrackAndLoopSelectLeds();
 }
 
 // --- LED Management ---
@@ -504,6 +825,7 @@ void TrackManager::updateLeds(uint32_t currentTick) {
 void TrackManager::forceLedUpdate(uint32_t currentTick) {
   if (ledManager) {
     ledManager->forceUpdate(getSelectedTrack(), currentTick);
+    refreshTrackAndLoopSelectLeds();
   }
 }
 

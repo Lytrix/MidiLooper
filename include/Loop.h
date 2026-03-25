@@ -57,7 +57,9 @@ struct Loop {
   // Caches
   mutable bool eventIndexValid = false;
 
-  bool hasData() const { return !midiEvents.empty(); }
+  /// True if the slot holds a committed loop (length and/or events). Silent takes
+  /// leave midiEvents empty but loopLengthTicks > 0 after stopRecording.
+  bool hasData() const { return !midiEvents.empty() || loopLengthTicks > 0; }
 
   // --- Lazy-allocated members (access via getters) ---
 
@@ -70,6 +72,7 @@ struct Loop {
   }
   bool midiHistoryEmpty() const { return !midiHistory_ || midiHistory_->empty(); }
   size_t midiHistorySize() const { return midiHistory_ ? midiHistory_->size() : 0; }
+  const PooledMidiDeque* tryGetMidiHistory() const { return midiHistory_ ? midiHistory_.get() : nullptr; }
 
   PooledMidiDeque& getMidiRedoHistory() {
     if (!midiRedoHistory_) midiRedoHistory_ = std::make_unique<PooledMidiDeque>();
@@ -80,6 +83,7 @@ struct Loop {
   }
   bool midiRedoHistoryEmpty() const { return !midiRedoHistory_ || midiRedoHistory_->empty(); }
   size_t midiRedoHistorySize() const { return midiRedoHistory_ ? midiRedoHistory_->size() : 0; }
+  const PooledMidiDeque* tryGetMidiRedoHistory() const { return midiRedoHistory_ ? midiRedoHistory_.get() : nullptr; }
 
   OverdubGeomDeque& getOverdubGeomHistory() {
     if (!overdubGeomHistory_) overdubGeomHistory_ = std::make_unique<OverdubGeomDeque>();
@@ -90,6 +94,7 @@ struct Loop {
   }
   bool overdubGeomHistoryEmpty() const { return !overdubGeomHistory_ || overdubGeomHistory_->empty(); }
   size_t overdubGeomHistorySize() const { return overdubGeomHistory_ ? overdubGeomHistory_->size() : 0; }
+  const OverdubGeomDeque* tryGetOverdubGeomHistory() const { return overdubGeomHistory_ ? overdubGeomHistory_.get() : nullptr; }
 
   OverdubGeomDeque& getOverdubGeomRedoHistory() {
     if (!overdubGeomRedoHistory_) overdubGeomRedoHistory_ = std::make_unique<OverdubGeomDeque>();
@@ -102,6 +107,7 @@ struct Loop {
     return !overdubGeomRedoHistory_ || overdubGeomRedoHistory_->empty();
   }
   size_t overdubGeomRedoHistorySize() const { return overdubGeomRedoHistory_ ? overdubGeomRedoHistory_->size() : 0; }
+  const OverdubGeomDeque* tryGetOverdubGeomRedoHistory() const { return overdubGeomRedoHistory_ ? overdubGeomRedoHistory_.get() : nullptr; }
 
   PooledMidiDeque& getClearMidiHistory() {
     if (!clearMidiHistory_) clearMidiHistory_ = std::make_unique<PooledMidiDeque>();
@@ -111,6 +117,7 @@ struct Loop {
     return const_cast<Loop*>(this)->getClearMidiHistory();
   }
   bool clearMidiHistoryEmpty() const { return !clearMidiHistory_ || clearMidiHistory_->empty(); }
+  const PooledMidiDeque* tryGetClearMidiHistory() const { return clearMidiHistory_ ? clearMidiHistory_.get() : nullptr; }
 
   PooledMidiDeque& getClearMidiRedoHistory() {
     if (!clearMidiRedoHistory_) clearMidiRedoHistory_ = std::make_unique<PooledMidiDeque>();
@@ -122,6 +129,7 @@ struct Loop {
   bool clearMidiRedoHistoryEmpty() const {
     return !clearMidiRedoHistory_ || clearMidiRedoHistory_->empty();
   }
+  const PooledMidiDeque* tryGetClearMidiRedoHistory() const { return clearMidiRedoHistory_ ? clearMidiRedoHistory_.get() : nullptr; }
 
   TrackStateDeque& getClearStateHistory() {
     if (!clearStateHistory_) clearStateHistory_ = std::make_unique<TrackStateDeque>();
@@ -130,6 +138,7 @@ struct Loop {
   const TrackStateDeque& getClearStateHistory() const {
     return const_cast<Loop*>(this)->getClearStateHistory();
   }
+  const TrackStateDeque* tryGetClearStateHistory() const { return clearStateHistory_ ? clearStateHistory_.get() : nullptr; }
 
   TrackStateDeque& getClearStateRedoHistory() {
     if (!clearStateRedoHistory_) clearStateRedoHistory_ = std::make_unique<TrackStateDeque>();
@@ -138,6 +147,7 @@ struct Loop {
   const TrackStateDeque& getClearStateRedoHistory() const {
     return const_cast<Loop*>(this)->getClearStateRedoHistory();
   }
+  const TrackStateDeque* tryGetClearStateRedoHistory() const { return clearStateRedoHistory_ ? clearStateRedoHistory_.get() : nullptr; }
 
   Uint32Deque& getClearLengthHistory() {
     if (!clearLengthHistory_) clearLengthHistory_ = std::make_unique<Uint32Deque>();
@@ -146,6 +156,7 @@ struct Loop {
   const Uint32Deque& getClearLengthHistory() const {
     return const_cast<Loop*>(this)->getClearLengthHistory();
   }
+  const Uint32Deque* tryGetClearLengthHistory() const { return clearLengthHistory_ ? clearLengthHistory_.get() : nullptr; }
 
   Uint32Deque& getClearLengthRedoHistory() {
     if (!clearLengthRedoHistory_) clearLengthRedoHistory_ = std::make_unique<Uint32Deque>();
@@ -154,6 +165,7 @@ struct Loop {
   const Uint32Deque& getClearLengthRedoHistory() const {
     return const_cast<Loop*>(this)->getClearLengthRedoHistory();
   }
+  const Uint32Deque* tryGetClearLengthRedoHistory() const { return clearLengthRedoHistory_ ? clearLengthRedoHistory_.get() : nullptr; }
 
   Uint32Deque& getClearStartHistory() {
     if (!clearStartHistory_) clearStartHistory_ = std::make_unique<Uint32Deque>();
@@ -162,6 +174,7 @@ struct Loop {
   const Uint32Deque& getClearStartHistory() const {
     return const_cast<Loop*>(this)->getClearStartHistory();
   }
+  const Uint32Deque* tryGetClearStartHistory() const { return clearStartHistory_ ? clearStartHistory_.get() : nullptr; }
 
   Uint32Deque& getClearStartRedoHistory() {
     if (!clearStartRedoHistory_) clearStartRedoHistory_ = std::make_unique<Uint32Deque>();
@@ -170,6 +183,7 @@ struct Loop {
   const Uint32Deque& getClearStartRedoHistory() const {
     return const_cast<Loop*>(this)->getClearStartRedoHistory();
   }
+  const Uint32Deque* tryGetClearStartRedoHistory() const { return clearStartRedoHistory_ ? clearStartRedoHistory_.get() : nullptr; }
 
   Uint32Deque& getLoopStartHistory() {
     if (!loopStartHistory_) loopStartHistory_ = std::make_unique<Uint32Deque>();
@@ -179,6 +193,7 @@ struct Loop {
     return const_cast<Loop*>(this)->getLoopStartHistory();
   }
   bool loopStartHistoryEmpty() const { return !loopStartHistory_ || loopStartHistory_->empty(); }
+  const Uint32Deque* tryGetLoopStartHistory() const { return loopStartHistory_ ? loopStartHistory_.get() : nullptr; }
 
   Uint32Deque& getLoopStartRedoHistory() {
     if (!loopStartRedoHistory_) loopStartRedoHistory_ = std::make_unique<Uint32Deque>();
@@ -190,6 +205,7 @@ struct Loop {
   bool loopStartRedoHistoryEmpty() const {
     return !loopStartRedoHistory_ || loopStartRedoHistory_->empty();
   }
+  const Uint32Deque* tryGetLoopStartRedoHistory() const { return loopStartRedoHistory_ ? loopStartRedoHistory_.get() : nullptr; }
 
   std::vector<size_t>& getPlaybackOrder() {
     if (!playbackOrder_) playbackOrder_ = std::make_unique<std::vector<size_t>>();

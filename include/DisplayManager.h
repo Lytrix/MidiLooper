@@ -53,7 +53,7 @@ public:
     // Helper functions for piano roll rendering
     void drawGridLines(uint32_t lengthLoop, int pianoRollY0, int pianoRollY1);
     void drawNoteBar(const DisplayNote& e, int y, uint32_t s, uint32_t eTick, uint32_t lengthLoop, int noteBrightness);
-    void drawAllNotes(const Track& track, uint32_t startLoop, uint32_t lengthLoop, int minPitch, int maxPitch);
+    void drawAllNotes(const Track& track, uint8_t displaySlot, uint32_t startLoop, uint32_t lengthLoop, int minPitch, int maxPitch);
     void drawBracket(uint32_t bracketTick, uint32_t lengthLoop, int pianoRollY1);
 
 private:
@@ -82,10 +82,10 @@ private:
     // Track status rendering
     void drawTrackStatus(uint8_t selectedTrack, uint32_t currentMillis);
     // Piano roll rendering
-    void drawPianoRoll(uint32_t currentTick, Track& selectedTrack);
+    void drawPianoRoll(uint32_t currentTick, Track& selectedTrack, uint8_t displaySlot);
     // Info area rendering
-    void drawInfoArea(uint32_t currentTick, Track& selectedTrack);
+    void drawInfoArea(uint32_t currentTick, Track& selectedTrack, uint8_t displaySlot);
     // Note info rendering
-    void drawNoteInfo(uint32_t currentTick, Track& selectedTrack);
+    void drawNoteInfo(uint32_t currentTick, Track& selectedTrack, uint8_t displaySlot);
     void drawInfoField(const char* label, const char* value, int x, int y, bool highlight, uint8_t defaultBrightness);
 }; extern DisplayManager displayManager;

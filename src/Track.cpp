@@ -97,7 +97,7 @@ SlotOpState Track::getSlotOpState(uint8_t slotIndex) const {
 
 uint8_t Track::getRecordingFocusSlot() const {
   if (isRecording() || isOverdubbing()) return activeLoopIndex;
-  return 0xFF;
+  return Config::INVALID_LOOP_SLOT;
 }
 
 // -------------------------
@@ -216,6 +216,14 @@ void Track::resetPlaybackState(uint32_t currentTick) {
     Loop& loop = getActiveLoop();
     loop.nextEventIndex = 0;
     loop.lastTickInLoop = (currentTick - loop.startLoopTick) % loop.loopLengthTicks;
+}
+
+void Track::resetPlaybackStateForSlot(uint8_t slotIndex, uint32_t currentTick) {
+  if (slotIndex >= Config::MAX_LOOPS_PER_TRACK) return;
+  Loop& loop = getLoop(slotIndex);
+  if (loop.loopLengthTicks == 0) return;
+  loop.nextEventIndex = 0;
+  loop.lastTickInLoop = (currentTick - loop.startLoopTick) % loop.loopLengthTicks;
 }
 
 void Track::finalizePendingNotes(uint32_t offAbsTick) {
