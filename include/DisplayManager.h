@@ -53,7 +53,7 @@ public:
     // Helper functions for piano roll rendering
     void drawGridLines(uint32_t lengthLoop, int pianoRollY0, int pianoRollY1);
     void drawNoteBar(const DisplayNote& e, int y, uint32_t s, uint32_t eTick, uint32_t lengthLoop, int noteBrightness);
-    void drawAllNotes(const Track& track, uint8_t displaySlot, uint32_t startLoop, uint32_t lengthLoop, int minPitch, int maxPitch);
+    void drawAllNotes(const Track& track, uint8_t displaySlot, uint32_t currentTick, uint32_t startLoop, uint32_t lengthLoop, int minPitch, int maxPitch);
     void drawBracket(uint32_t bracketTick, uint32_t lengthLoop, int pianoRollY1);
 
 private:
@@ -77,6 +77,11 @@ private:
     // Edit Note bracket and highlight
     int tickToScreenX(uint32_t tick);
     int noteToScreenY(uint8_t note);
+    bool isLiveRecordingDisplay(const Track& track, uint8_t displaySlot) const;
+    uint32_t resolveDisplayLoopLength(const Track& track, uint8_t displaySlot, uint32_t currentTick) const;
+    uint32_t resolveDisplayTick(const Track& track, uint8_t displaySlot, uint32_t currentTick) const;
+    const std::vector<DisplayNote>& resolveDisplayNotes(const Track& track, uint8_t displaySlot,
+                                                        uint32_t currentTick);
 
     static constexpr float PULSE_SPEED = 1.0f; // Pulses per second (slowed by 40%)
     // Track status rendering
@@ -88,4 +93,5 @@ private:
     // Note info rendering
     void drawNoteInfo(uint32_t currentTick, Track& selectedTrack, uint8_t displaySlot);
     void drawInfoField(const char* label, const char* value, int x, int y, bool highlight, uint8_t defaultBrightness);
+    std::vector<DisplayNote> displayNotesScratch;
 }; extern DisplayManager displayManager;

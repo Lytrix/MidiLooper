@@ -832,8 +832,13 @@ void Track::sendMidiEvent(const MidiEvent& evt) {
 }
 
 void Track::sendAllNotesOff() {
-  // Control Change 123 = All Notes Off (MIDI channels are 1-16)
+  // Control Change 123 = All Notes Off. Skip controller-only channels so we do
+  // not clear DROID LEDs/buttons/faders when transport stops.
   for (uint8_t ch = 1; ch <= 16; ++ch) {
+    if ((ch >= MidiConfig::LED_CHANNEL_MIN && ch <= MidiConfig::LED_CHANNEL_MAX) ||
+        (ch >= MidiConfig::RECORD_EXCLUDE_MIN && ch <= MidiConfig::RECORD_EXCLUDE_MAX)) {
+      continue;
+    }
     midiHandler.sendControlChange(ch, 123, 0);
   }
   // also clear any half-open pending notes so they don't get forced later

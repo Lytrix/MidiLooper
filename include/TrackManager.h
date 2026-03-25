@@ -112,6 +112,8 @@ public:
   /// Multi-slot selection: during a multi-hold gesture we build a pending enabled set.
   void beginSlotSelectionHold(uint8_t trackIndex, uint8_t slotIndex);
   void endSlotSelectionHold(uint8_t trackIndex, uint8_t slotIndex, uint32_t nowTick);
+  /// Clear any in-progress multi-slot hold/commit state for this track.
+  void cancelSlotSelectionHold(uint8_t trackIndex);
 
   /// When true, the next committed `pendingSlotIndex` switch replaces the enabled slot set with only that slot.
   void setPendingEnabledSetReplacement(uint8_t trackIndex, bool enabled);

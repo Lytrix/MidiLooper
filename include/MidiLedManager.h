@@ -13,10 +13,10 @@ public:
     MidiLedManager(MidiHandler& midiHandler);
     
     // Update LEDs based on current track and playback position
-    void updateLeds(Track& track, uint32_t currentTick);
+    void updateLeds(Track& track, uint32_t currentTick, uint8_t displaySlotIndex);
     
     // Force update all LEDs (useful for track changes)
-    void forceUpdate(Track& track, uint32_t currentTick);
+    void forceUpdate(Track& track, uint32_t currentTick, uint8_t displaySlotIndex);
     
     // Clear all LEDs
     void clearAllLeds();
@@ -27,7 +27,7 @@ public:
                                uint8_t focusSlotIndex, const uint8_t slotVelocities[Config::MAX_LOOPS_PER_TRACK]);
     
     // Update current tick indicator (which 16th step is playing)
-    void updateCurrentTick(Track& track, uint32_t currentTick);
+    void updateCurrentTick(Track& track, uint32_t currentTick, uint8_t displaySlotIndex);
     
 private:
     static constexpr uint8_t LED_CHANNEL = MidiConfig::Led::CHANNEL;
@@ -54,6 +54,7 @@ private:
     
     // Current tick indicator tracking
     int8_t currentTickStep;                             // Currently active 16th step (-1 = none)
+    uint8_t lastDisplaySlotIndex = Config::INVALID_LOOP_SLOT;
 
     // Bar LED velocity tracking: only send NoteOn when velocity changes; NoteOff only when required
     static constexpr uint8_t BAR_VEL_NEVER_SENT = 0xFF;
@@ -64,13 +65,16 @@ private:
     uint8_t lastTrackSelectVelocity[NUM_TRACK_LEDS];
     // Loop select LED velocity tracking (notes 50-57) for selected track
     uint8_t lastLoopSelectVelocity[MidiConfig::Led::LOOP_SELECT_LED_COUNT];
+    uint8_t lastFocusSlotIndex = Config::INVALID_LOOP_SLOT;
+    uint8_t lastSelectedTrackIndex = Config::INVALID_TRACK_INDEX;
     
     // Helper methods (all use loopStartTick so 16th/bar LEDs reflect user's loop window)
-    uint32_t getCurrentBar(uint32_t currentTick, uint32_t loopLength, uint32_t startLoopTick, uint32_t loopStartTick);
-    uint32_t getCurrentBarStartTick(uint32_t currentTick, uint32_t loopLength, uint32_t startLoopTick, uint32_t loopStartTick);
-    bool hasNoteInSixteenthStep(Track& track, uint32_t stepStartStorage, uint32_t stepEndStorage);
-    bool hasNoteInBar(Track& track, uint32_t barStartStorage, uint32_t barEndStorage, uint32_t loopLength);
+    uint32_t getCurrentBar(uint32_t currentTick, const Loop& loop);
+    uint32_t getCurrentBarStartTick(uint32_t currentTick, const Loop& loop);
+    bool hasNoteInSixteenthStep(const Loop& loop, uint32_t stepStartStorage, uint32_t stepEndStorage);
+    bool hasNoteInBar(const Loop& loop, uint32_t barStartStorage, uint32_t barEndStorage);
     void sendLedUpdate(uint8_t ledIndex, bool state);
-    void analyzeAndUpdateBar(Track& track, uint32_t barStartTickDisplay, uint32_t loopLength, uint32_t loopStartTick);
-    void updateBarLeds(Track& track, uint32_t loopLength, uint32_t currentBar, uint32_t loopStartTick);
+    void analyzeAndUpdateBar(const Loop& loop, uint32_t barStartTickDisplay);
+    void updateBarLeds(const Loop& loop, uint32_t currentBar);
+    void clearPlaybackLedsOnly();
 }; 

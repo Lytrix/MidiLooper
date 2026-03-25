@@ -7,7 +7,7 @@ class Track; // Forward declaration
 
 // Central sentinel for "no slot".
 namespace SlotIndex {
-  constexpr uint8_t None = UINT8_MAX;
+  constexpr uint8_t None = Config::INVALID_LOOP_SLOT;
 }
 
 // When a slot transition should occur.

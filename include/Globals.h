@@ -50,6 +50,8 @@ namespace Buttons {
 namespace Config {
   constexpr uint8_t  NUM_TRACKS = 8;                                   // Number of looper tracks
   constexpr uint8_t  MAX_LOOPS_PER_TRACK = 8;
+  /// Not a valid track index (255). Use for: no selected track cache / invalid track sentinel.
+  constexpr uint8_t  INVALID_TRACK_INDEX = 0xFF;
   /// Not a valid loop slot index (255). Use for: no slot / no pending queue / no recording focus /
   /// queued-record phase reference "use global bar boundary only" (not a loop wrap).
   constexpr uint8_t  INVALID_LOOP_SLOT = 0xFF;
