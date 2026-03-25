@@ -203,12 +203,12 @@ void DisplayManager::setup() {
     _display.gfx.select_font(&Font5x7Fixed);
     Serial.println("Font selected.");
     Serial.println("Drawing text...");
-    _display.gfx.draw_text(_display.api.getFrameBuffer(), "MidiLooper", 50, 20, 15);
-    _display.gfx.draw_text(_display.api.getFrameBuffer(), "v0.2", 80, 40, 8);
+    _display.gfx.draw_text(_display.api.getFrameBuffer(), "Midi Looper v0.4", 92, 32, 15);
+    //_display.gfx.draw_text(_display.api.getFrameBuffer(), "v0.4", 92, 40, 8);
     Serial.println("Text drawn.");
     _display.api.display();
     Serial.println("DisplayManager: Text sent to display");
-    delay(1000);
+    delay(1500);
     clearDisplayBuffer();
 }
 
