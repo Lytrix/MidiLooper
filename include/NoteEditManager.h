@@ -85,8 +85,9 @@ public:
 
     // Main edit mode switching (for mode button functionality)
     enum MainEditMode {
-        MAIN_MODE_LOOP_EDIT = 0,    // Loop edit mode: Program 0, Note 100 trigger
-        MAIN_MODE_NOTE_EDIT = 1     // Note edit mode: Program 1, Note 0 trigger
+        // Logical mode IDs (MIDI program mapping is handled in sendMainEditModeChange()).
+        MAIN_MODE_LOOP_EDIT = 0,
+        MAIN_MODE_NOTE_EDIT = 1
     };
     
     // Getter for current main edit mode
@@ -97,8 +98,8 @@ public:
     void cycleMainEditMode(Track& track);
     void onTrackChanged(Track& newTrack);
     
-    // Current main edit mode state
-    MainEditMode currentMainEditMode = MAIN_MODE_NOTE_EDIT;  // Start in note edit mode
+    // Current main edit mode state. Startup policy is set by orchestration (main/looper setup).
+    MainEditMode currentMainEditMode = MAIN_MODE_NOTE_EDIT;
 
 
 

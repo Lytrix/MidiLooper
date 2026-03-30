@@ -105,8 +105,9 @@ public:
     
     // Main edit mode management
     enum MainEditMode {
-        MAIN_MODE_LOOP_EDIT = 0,    // Loop edit mode: Program 0, Note 100 trigger
-        MAIN_MODE_NOTE_EDIT = 1     // Note edit mode: Program 1, Note 0 trigger
+        // Logical mode IDs (MIDI program mapping is handled by implementation).
+        MAIN_MODE_LOOP_EDIT = 0,
+        MAIN_MODE_NOTE_EDIT = 1
     };
     
     MainEditMode getCurrentMainEditMode() const { return currentMainEditMode; }
@@ -171,7 +172,7 @@ private:
     EditModeState currentEditMode = EDIT_MODE_NONE;
     
     // LoopManager state
-    MainEditMode currentMainEditMode = MAIN_MODE_NOTE_EDIT;  // Start in note edit mode
+    MainEditMode currentMainEditMode = MAIN_MODE_NOTE_EDIT;
     
 };
 

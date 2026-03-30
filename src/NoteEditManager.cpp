@@ -363,13 +363,16 @@ void NoteEditManager::deleteSelectedNote(Track& track) {
 }
 
 void NoteEditManager::sendMainEditModeChange(MainEditMode mode) {
+    // Keep local mode state aligned even when mode is set from startup orchestration.
+    currentMainEditMode = mode;
+
     uint8_t program;
     uint8_t triggerNote;
     const char* modeName;
     
     switch (mode) {
         case MAIN_MODE_LOOP_EDIT:
-            program = 2;
+            program = 0;
             triggerNote = 100;
             modeName = "LOOP_EDIT";
             break;

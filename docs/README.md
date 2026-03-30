@@ -59,5 +59,6 @@ Add new topical guides under `Guides/` and extend this table.
 | [FEATURES.md](FEATURES.md) | Full technical feature checklist (also linked from root `README`) |
 | [FEATURE_PLANS.md](FEATURE_PLANS.md) | Conventions, **Phase 3 / multi-loop** pointer |
 | [plans/README.md](plans/README.md) | Design exports and phase specs (`docs/plans/`) |
+| [DELIVERABLE_TRACKING.md](DELIVERABLE_TRACKING.md) | Single overview for main (plans) vs refinements |
 
 When you add new guides, place them in `Guides/` or `Refinements/` and add a row to the matching table above.
