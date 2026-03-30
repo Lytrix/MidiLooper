@@ -544,18 +544,8 @@ void moveNoteWithOverlapHandling(Track& track, EditManager& manager,
                       manager.movingNote.note, actualCurrentPitch);
             
             // Update the moving note identity with the new pitch
-            uint8_t oldPitch = manager.movingNote.note;
             manager.movingNote.note = actualCurrentPitch;
             movingNotePitch = actualCurrentPitch;
-            
-            // Reindex any deleted notes that were for the old pitch to the new pitch
-            for (auto& deletedNote : manager.movingNote.deletedNotes) {
-                if (deletedNote.note == oldPitch) {
-                    logger.log(CAT_MIDI, LOG_DEBUG, "Reindexing deleted note pitch: %d -> %d at start=%lu", 
-                              deletedNote.note, actualCurrentPitch, deletedNote.startTick);
-                    deletedNote.note = actualCurrentPitch;
-                }
-            }
         }
         
         // Move the events to new position
