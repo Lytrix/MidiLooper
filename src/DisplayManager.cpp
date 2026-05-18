@@ -10,6 +10,7 @@
 #include "TrackUndo.h"
 #include "Logger.h"
 #include "Utils/NoteUtils.h"
+#include "TickPhase.h"
 #include "NoteEditManager.h"
 #include "MidiHandler.h"
 #include <map>
@@ -363,8 +364,9 @@ void DisplayManager::drawPianoRoll(uint32_t currentTick, Track& selectedTrack, u
     const int pianoRollY0 = 0;
     const int pianoRollY1 = 31;
     if (loopLength > 0) {
-        // Calculate playhead position relative to jam start
-        uint32_t tickInLoop = displayTick % loopLength;
+        // Same phase as playback: tickPhaseInLoop(transport, loop anchor, length) — not raw % length.
+        const Loop& dispLoop = track.getLoop(displaySlot);
+        uint32_t tickInLoop = tickPhaseInLoop(displayTick, dispLoop.startLoopTick, loopLength);
         uint32_t jamPos = (tickInLoop - jamStartTick + loopLength) % loopLength;
 
         // Compute min/max pitch for scaling
@@ -603,14 +605,11 @@ void DisplayManager::drawNoteInfo(uint32_t currentTick, Track& selectedTrack, ui
     
     if (!noteToShow && !notes.empty()) {
         if (editManager.getCurrentState() == nullptr) {
-            // Adjust current tick to be relative to loop start point for playback detection
-            uint32_t relativeCurrentTick;
-            if (displayTick >= loopStartTick) {
-                relativeCurrentTick = (displayTick - loopStartTick) % lengthLoop;
-            } else {
-                uint32_t offset = loopStartTick - displayTick;
-                relativeCurrentTick = (lengthLoop - (offset % lengthLoop)) % lengthLoop;
-            }
+            // Phase within loop storage (matches playMidiEvents / tickPhaseInLoop), then offset by loop
+            // bracket (loopStartTick) for the same coordinates as note s/e below.
+            const Loop& dispLoop = selectedTrack.getLoop(displaySlot);
+            uint32_t tickInLoopStorage = tickPhaseInLoop(displayTick, dispLoop.startLoopTick, lengthLoop);
+            uint32_t relativeCurrentTick = (tickInLoopStorage - loopStartTick + lengthLoop) % lengthLoop;
             
             for (const auto& n : notes) {
                 // Adjust note positions to be relative to loop start point
