@@ -25,8 +25,8 @@ EditManager::MovingNoteIdentity::DeletedNote createDeletedNote(
     return deleted;
 }
 
-std::vector<MidiEvent>::iterator findNoteOnEvent(
-    std::vector<MidiEvent>& midiEvents,
+MidiEventVec::iterator findNoteOnEvent(
+    MidiEventVec& midiEvents,
     uint8_t pitch,
     uint32_t tick) {
     
@@ -39,8 +39,8 @@ std::vector<MidiEvent>::iterator findNoteOnEvent(
         });
 }
 
-std::vector<MidiEvent>::iterator findNoteOffEvent(
-    std::vector<MidiEvent>& midiEvents,
+MidiEventVec::iterator findNoteOffEvent(
+    MidiEventVec& midiEvents,
     uint8_t pitch,
     uint32_t tick) {
     
@@ -54,9 +54,9 @@ std::vector<MidiEvent>::iterator findNoteOffEvent(
         });
 }
 
-std::pair<std::vector<MidiEvent>::iterator, std::vector<MidiEvent>::iterator> 
+std::pair<MidiEventVec::iterator, MidiEventVec::iterator> 
 findNoteEventPair(
-    std::vector<MidiEvent>& midiEvents,
+    MidiEventVec& midiEvents,
     uint8_t pitch,
     uint32_t startTick,
     uint32_t endTick) {

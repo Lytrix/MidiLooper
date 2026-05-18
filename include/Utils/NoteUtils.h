@@ -37,11 +37,11 @@ private:
 public:
     CachedNoteList() : lastMidiHash(0), lastLoopLength(0), isValid(false) {}
     
-    const std::vector<DisplayNote>& getNotes(const std::vector<MidiEvent>& midiEvents, uint32_t loopLength);
+    const std::vector<DisplayNote>& getNotes(const MidiEventVec& midiEvents, uint32_t loopLength);
     void invalidate() { isValid = false; }
     
 private:
-    uint32_t computeMidiHash(const std::vector<MidiEvent>& midiEvents);
+    uint32_t computeMidiHash(const MidiEventVec& midiEvents);
 };
 
 /**
@@ -54,7 +54,7 @@ private:
  * @param loopLength  The loop length in ticks.
  * @return Vector of paired DisplayNote entries.
  */
-std::vector<DisplayNote> reconstructNotes(const std::vector<MidiEvent>& midiEvents, uint32_t loopLength);
+std::vector<DisplayNote> reconstructNotes(const MidiEventVec& midiEvents, uint32_t loopLength);
 
 /**
  * @brief Fast lookup index for NoteOn/NoteOff events by (pitch<<32)|tick.
@@ -64,6 +64,6 @@ std::vector<DisplayNote> reconstructNotes(const std::vector<MidiEvent>& midiEven
 using Key = uint64_t;
 using EventIndexMap = std::unordered_map<Key, size_t>;
 using EventIndex = std::pair<EventIndexMap, EventIndexMap>;
-EventIndex buildEventIndex(const std::vector<MidiEvent>& midiEvents);
+EventIndex buildEventIndex(const MidiEventVec& midiEvents);
 
 } // namespace NoteUtils 

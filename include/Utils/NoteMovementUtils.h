@@ -5,6 +5,7 @@
 
 #include <vector>
 #include <cstdint>
+#include "Utils/NoteMovementWrap.h"
 #include "MidiEvent.h"
 #include "NoteUtils.h"
 #include "EditManager.h"
@@ -29,8 +30,6 @@ namespace NoteMovementUtils {
     /**
      * Helper functions extracted from EditStartNoteState
      */
-    uint32_t wrapPosition(int32_t position, uint32_t loopLength);
-    uint32_t calculateNoteLength(uint32_t start, uint32_t end, uint32_t loopLength);
     bool notesOverlap(uint32_t start1, uint32_t end1, uint32_t start2, uint32_t end2, uint32_t loopLength);
     
     void findOverlaps(const std::vector<NoteUtils::DisplayNote>& currentNotes,
@@ -43,7 +42,7 @@ namespace NoteMovementUtils {
                      std::vector<std::pair<NoteUtils::DisplayNote, uint32_t>>& notesToShorten,
                      std::vector<NoteUtils::DisplayNote>& notesToDelete);
     
-    void applyShortenOrDelete(std::vector<MidiEvent>& midiEvents,
+    void applyShortenOrDelete(MidiEventVec& midiEvents,
                              const std::vector<std::pair<NoteUtils::DisplayNote, uint32_t>>& notesToShorten,
                              const std::vector<NoteUtils::DisplayNote>& notesToDelete,
                              EditManager& manager,
@@ -51,14 +50,14 @@ namespace NoteMovementUtils {
                              NoteUtils::EventIndexMap& onIndex,
                              NoteUtils::EventIndexMap& offIndex);
     
-    void restoreNotes(std::vector<MidiEvent>& midiEvents,
+    void restoreNotes(MidiEventVec& midiEvents,
                      const std::vector<EditManager::MovingNoteIdentity::DeletedNote>& notesToRestore,
                      EditManager& manager,
                      uint32_t loopLength,
                      NoteUtils::EventIndexMap& onIndex,
                      NoteUtils::EventIndexMap& offIndex);
     
-    void finalReconstructAndSelect(std::vector<MidiEvent>& midiEvents,
+    void finalReconstructAndSelect(MidiEventVec& midiEvents,
                                   EditManager& manager,
                                   uint8_t movingNotePitch,
                                   uint32_t newStart,
@@ -66,10 +65,10 @@ namespace NoteMovementUtils {
                                   uint32_t loopLength);
     
     // Find the corresponding note-off event for a given note-on event using LIFO pairing logic
-    MidiEvent* findCorrespondingNoteOff(std::vector<MidiEvent>& midiEvents, MidiEvent* noteOnEvent, uint8_t pitch, std::uint32_t startTick, std::uint32_t endTick);
+    MidiEvent* findCorrespondingNoteOff(MidiEventVec& midiEvents, MidiEvent* noteOnEvent, uint8_t pitch, std::uint32_t startTick, std::uint32_t endTick);
     
     // Extend shortened notes dynamically
-    void extendShortenedNotes(std::vector<MidiEvent>& midiEvents,
+    void extendShortenedNotes(MidiEventVec& midiEvents,
                              const std::vector<std::pair<EditManager::MovingNoteIdentity::DeletedNote, std::uint32_t>>& notesToExtend,
                              EditManager& manager,
                              std::uint32_t loopLength);

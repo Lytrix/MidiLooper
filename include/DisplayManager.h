@@ -53,7 +53,8 @@ public:
     // Helper functions for piano roll rendering
     void drawGridLines(uint32_t lengthLoop, int pianoRollY0, int pianoRollY1);
     void drawNoteBar(const DisplayNote& e, int y, uint32_t s, uint32_t eTick, uint32_t lengthLoop, int noteBrightness);
-    void drawAllNotes(const Track& track, uint8_t displaySlot, uint32_t currentTick, uint32_t startLoop, uint32_t lengthLoop, int minPitch, int maxPitch);
+    void drawAllNotes(const Track& track, uint8_t displaySlot, uint32_t currentTick, uint32_t startLoop, uint32_t lengthLoop, int minPitch, int maxPitch,
+                      const std::vector<DisplayNote>& notes);
     void drawBracket(uint32_t bracketTick, uint32_t lengthLoop, int pianoRollY1);
 
 private:
@@ -103,7 +104,7 @@ private:
     // Track status rendering
     void drawTrackStatus(uint8_t selectedTrack, uint32_t currentMillis);
     // Piano roll rendering
-    void drawPianoRoll(uint32_t currentTick, Track& selectedTrack, uint8_t displaySlot);
+    void drawPianoRoll(uint32_t currentTick, Track& selectedTrack, uint8_t displaySlot, const std::vector<DisplayNote>& notes);
     // Info area rendering
     void drawInfoArea(uint32_t currentTick, Track& selectedTrack, uint8_t displaySlot);
     void drawSidebar(Track& selectedTrack, uint8_t displaySlot);
@@ -112,7 +113,6 @@ private:
     MidiOutput resolveMidiOutput() const;
     const char* midiOutputLabel(MidiOutput out) const;
     // Note info rendering
-    void drawNoteInfo(uint32_t currentTick, Track& selectedTrack, uint8_t displaySlot);
+    void drawNoteInfo(uint32_t currentTick, Track& selectedTrack, uint8_t displaySlot, const std::vector<DisplayNote>& notes);
     void drawInfoField(const char* label, const char* value, int x, int y, bool highlight, uint8_t defaultBrightness);
-    std::vector<DisplayNote> displayNotesScratch;
 }; extern DisplayManager displayManager;

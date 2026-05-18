@@ -9,6 +9,7 @@
 #include "ClockManager.h"
 #include "Globals.h"
 #include "Utils/MemoryPool.h"
+#include "Utils/MidiEventVecFnvHash.h"
 
 // Undo overdub (operates on active loop)
 void TrackUndo::pushUndoSnapshot(Track& track) {
@@ -122,8 +123,8 @@ void TrackUndo::popLastUndo(Track& track) {
     }
 }
 
-const std::vector<MidiEvent, ExtMemAllocator<MidiEvent>>& TrackUndo::peekLastMidiSnapshot(const Track& track) {
-    static std::vector<MidiEvent, ExtMemAllocator<MidiEvent>> tempSnapshot;
+const MidiEventVec& TrackUndo::peekLastMidiSnapshot(const Track& track) {
+    static MidiEventVec tempSnapshot;
     tempSnapshot.clear();
     const Loop& loop = track.getActiveLoop();
     if (!loop.midiHistoryEmpty()) {
@@ -135,11 +136,11 @@ const std::vector<MidiEvent, ExtMemAllocator<MidiEvent>>& TrackUndo::peekLastMid
     return tempSnapshot;
 }
 
-std::deque<MemoryPool::PooledMidiEventVector, ExtMemAllocator<MemoryPool::PooledMidiEventVector>>& TrackUndo::getMidiHistory(Track& track) {
+PooledMidiDeque& TrackUndo::getMidiHistory(Track& track) {
     return track.getActiveLoop().getMidiHistory();
 }
 
-const std::vector<MidiEvent, ExtMemAllocator<MidiEvent>>& TrackUndo::getCurrentMidiSnapshot(const Track& track) {
+const MidiEventVec& TrackUndo::getCurrentMidiSnapshot(const Track& track) {
     return track.getMidiEvents();
 }
 
@@ -313,12 +314,5 @@ bool TrackUndo::canUndoClearTrack(const Track& track) {
 
 // Compute a rolling FNV-1a hash of the track's current midiEvents
 uint32_t TrackUndo::computeMidiHash(const Track& track) {
-    uint32_t hash = 2166136261u;
-    for (auto const& evt : track.getMidiEvents()) {
-        hash ^= static_cast<uint32_t>(evt.type); hash *= 16777619u;
-        hash ^= evt.tick;                    hash *= 16777619u;
-        hash ^= evt.data.noteData.note;      hash *= 16777619u;
-        hash ^= evt.data.noteData.velocity;  hash *= 16777619u;
-    }
-    return hash;
+    return midiEventVecFnv1aHash(track.getMidiEvents());
 } 

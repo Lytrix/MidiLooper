@@ -16,6 +16,8 @@ Running tests
     g++ -std=c++11 -o test/<name> test/<name>.cpp && ./test/<name>
 * All native tests via PlatformIO:
     pio test -e native
+  (Suites under test_ignore in platformio.ini for [env:native], e.g. test_redo_functionality
+  and teensy41_psram_memtest, need Teensy / Arduino — use pio test -e teensy41 for those.)
 * On-device tests (MCU via PlatformIO):
     pio test -e teensy41
 

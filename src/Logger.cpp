@@ -5,6 +5,35 @@
 #include <stdarg.h>
 #include "MidiEvent.h"
 
+#if defined(PIO_UNIT_TEST_NATIVE)
+
+LogLevel Logger::currentLevel = LOG_INFO;
+bool Logger::isInitialized = false;
+bool Logger::categoryEnabled[] = { true, true, true, true, true, true, true, false, false, false, false };
+Logger logger;
+
+void Logger::setup(LogLevel) { isInitialized = false; }
+void Logger::setCategoryEnabled(LogCategory, bool) {}
+
+void Logger::printTimestamp() {}
+void Logger::printLevel(LogLevel) {}
+void Logger::printCategory(LogCategory) {}
+void Logger::printPrefix(LogLevel, LogCategory) {}
+
+void Logger::error(const char*, ...) {}
+void Logger::warning(const char*, ...) {}
+void Logger::info(const char*, ...) {}
+void Logger::debug(const char*, ...) {}
+void Logger::trace(const char*, ...) {}
+
+void Logger::log(LogCategory, LogLevel, const char*, ...) {}
+void Logger::logStateTransition(const char*, const char*, const char*) {}
+void Logger::dumpMidiEvents(const MidiEventVec&, int) {}
+void Logger::logMidiEvent(const MidiEvent&) {}
+void Logger::logTrackEvent(const char*, uint32_t, const char*, ...) {}
+
+#else
+
 LogLevel Logger::currentLevel = LOG_INFO;
 bool Logger::isInitialized = false;
 // By default, all categories enabled except MOVE_NOTES, MIDI_LED, BAR_STEP, STORAGE (verbose)
@@ -122,7 +151,7 @@ void Logger::logStateTransition(const char* component, const char* fromState, co
   Serial.println();
 }
 
-void Logger::dumpMidiEvents(const std::vector<MidiEvent>& events, int trackIndex) {
+void Logger::dumpMidiEvents(const MidiEventVec& events, int trackIndex) {
   if (currentLevel < LOG_DEBUG) return;
   printPrefix(LOG_DEBUG, CAT_TRACK);
   Serial.printf("--- MIDI events dump (track=%d, count=%zu) ---\n", trackIndex, events.size());
@@ -192,3 +221,5 @@ void Logger::logTrackEvent(const char* event, uint32_t tick, const char* format,
   }
   Serial.println();
 }
+
+#endif // !PIO_UNIT_TEST_NATIVE

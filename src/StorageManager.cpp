@@ -10,6 +10,7 @@
 #include <Arduino.h>
 #include "TrackUndo.h"
 #include "Utils/MemoryPool.h"
+#include "Utils/ExtMemAllocator.h"
 #include <array>
 
 #define STORAGE_FILENAME "/midilooper_state.raw"
@@ -119,7 +120,7 @@ bool StorageManager::saveState(const LooperState& state) {
 
             for (uint32_t u = 0; u < overdubUndoCount; ++u) {
                 const auto &pooledSnapshot = (*midiHistoryPtr)[u];
-                std::vector<MidiEvent, ExtMemAllocator<MidiEvent>> snapshot;
+                MidiEventVec snapshot;
                 snapshot.reserve(pooledSnapshot.size());
                 for (const auto& eventPtr : pooledSnapshot) {
                     if (!eventPtr) continue; // Avoid null deref from partially-valid snapshots.
@@ -152,7 +153,7 @@ bool StorageManager::saveState(const LooperState& state) {
 
             for (uint32_t u = 0; u < overdubRedoCount; ++u) {
                 const auto &pooledSnapshot = (*midiRedoHistoryPtr)[u];
-                std::vector<MidiEvent, ExtMemAllocator<MidiEvent>> snapshot;
+                MidiEventVec snapshot;
                 snapshot.reserve(pooledSnapshot.size());
                 for (const auto& eventPtr : pooledSnapshot) {
                     if (!eventPtr) continue;
@@ -193,7 +194,7 @@ bool StorageManager::saveState(const LooperState& state) {
 
             for (uint32_t u = 0; u < clearUndoCount32; ++u) {
                 const auto &pooledSnapshot = (*clearMidiHistoryPtr)[u];
-                std::vector<MidiEvent, ExtMemAllocator<MidiEvent>> snapshot;
+                MidiEventVec snapshot;
                 snapshot.reserve(pooledSnapshot.size());
                 for (const auto& eventPtr : pooledSnapshot) {
                     if (!eventPtr) continue;
@@ -237,7 +238,7 @@ bool StorageManager::saveState(const LooperState& state) {
 
             for (uint32_t u = 0; u < clearRedoCount32; ++u) {
                 const auto &pooledSnapshot = (*clearMidiRedoHistoryPtr)[u];
-                std::vector<MidiEvent, ExtMemAllocator<MidiEvent>> snapshot;
+                MidiEventVec snapshot;
                 snapshot.reserve(pooledSnapshot.size());
                 for (const auto& eventPtr : pooledSnapshot) {
                     if (!eventPtr) continue;
@@ -377,8 +378,8 @@ bool StorageManager::loadState(LooperState& state) {
         bool muted;
         uint32_t startLoopTick;
         uint32_t loopLengthTicks;
-        std::vector<MidiEvent, ExtMemAllocator<MidiEvent>> midiEvents;
-        std::vector<std::vector<MidiEvent, ExtMemAllocator<MidiEvent>>, ExtMemAllocator<std::vector<MidiEvent, ExtMemAllocator<MidiEvent>>>> midiHistory;
+        MidiEventVec midiEvents;
+        std::vector<MidiEventVec, ExtMemAllocator<MidiEventVec>> midiHistory;
     };
     if (version == 3) {
         // v3: load all loop slots per track + per-slot enable/mute + undo/redo stacks.
@@ -452,7 +453,7 @@ bool StorageManager::loadState(LooperState& state) {
                     file.close();
                     return false;
                 }
-                std::vector<MidiEvent, ExtMemAllocator<MidiEvent>> midiEvents(midiCount);
+                MidiEventVec midiEvents(midiCount);
                 if (midiCount > 0 && !readRaw(file, midiEvents.data(), midiCount * sizeof(MidiEvent))) { Serial.print("[StorageManager] ERROR: Failed to read midiEvents for track "); Serial.print(t); Serial.print(" slot "); Serial.println(s); file.close(); return false; }
                 loop.midiEvents = std::move(midiEvents);
                 if (loop.loopLengthTicks == 0 && !loop.midiEvents.empty()) {
@@ -475,7 +476,7 @@ bool StorageManager::loadState(LooperState& state) {
                         file.close();
                         return false;
                     }
-                    std::vector<MidiEvent, ExtMemAllocator<MidiEvent>> snapshot(snapCount);
+                    MidiEventVec snapshot(snapCount);
                     if (snapCount > 0 && !readRaw(file, snapshot.data(), snapCount * sizeof(MidiEvent))) { Serial.print("[StorageManager] ERROR: Failed to read overdubUndo snapshot for track "); Serial.print(t); Serial.print(" slot "); Serial.println(s); file.close(); return false; }
                     OverdubGeomSnapshot geom;
                     uint32_t geomLoopLengthTicks = 0;
@@ -506,7 +507,7 @@ bool StorageManager::loadState(LooperState& state) {
                         file.close();
                         return false;
                     }
-                    std::vector<MidiEvent, ExtMemAllocator<MidiEvent>> snapshot(snapCount);
+                    MidiEventVec snapshot(snapCount);
                     if (snapCount > 0 && !readRaw(file, snapshot.data(), snapCount * sizeof(MidiEvent))) { Serial.print("[StorageManager] ERROR: Failed to read overdubRedo snapshot for track "); Serial.print(t); Serial.print(" slot "); Serial.println(s); file.close(); return false; }
                     OverdubGeomSnapshot geom;
                     uint32_t geomLoopLengthTicks = 0;
@@ -537,7 +538,7 @@ bool StorageManager::loadState(LooperState& state) {
                         file.close();
                         return false;
                     }
-                    std::vector<MidiEvent, ExtMemAllocator<MidiEvent>> snapshot(snapCount);
+                    MidiEventVec snapshot(snapCount);
                     if (snapCount > 0 && !readRaw(file, snapshot.data(), snapCount * sizeof(MidiEvent))) { Serial.print("[StorageManager] ERROR: Failed to read clearUndo snapshot for track "); Serial.print(t); Serial.print(" slot "); Serial.println(s); file.close(); return false; }
                     uint32_t snapStateRaw = 0;
                     uint32_t snapLoopLengthTicks = 0;
@@ -565,7 +566,7 @@ bool StorageManager::loadState(LooperState& state) {
                         file.close();
                         return false;
                     }
-                    std::vector<MidiEvent, ExtMemAllocator<MidiEvent>> snapshot(snapCount);
+                    MidiEventVec snapshot(snapCount);
                     if (snapCount > 0 && !readRaw(file, snapshot.data(), snapCount * sizeof(MidiEvent))) { Serial.print("[StorageManager] ERROR: Failed to read clearRedo snapshot for track "); Serial.print(t); Serial.print(" slot "); Serial.println(s); file.close(); return false; }
                     uint32_t snapStateRaw = 0;
                     uint32_t snapLoopLengthTicks = 0;
@@ -696,7 +697,7 @@ bool StorageManager::loadState(LooperState& state) {
             file.close();
             return false;
         }
-        std::vector<MidiEvent, ExtMemAllocator<MidiEvent>> midiEvents(midiCount);
+        MidiEventVec midiEvents(midiCount);
         if (midiCount > 0 && !readRaw(file, midiEvents.data(), midiCount * sizeof(MidiEvent))) {
             Serial.print("[StorageManager] ERROR: Failed to read midiEvents for track "); Serial.println(t);
             file.close();
@@ -709,7 +710,7 @@ bool StorageManager::loadState(LooperState& state) {
             file.close();
             return false;
         }
-        std::vector<std::vector<MidiEvent>> midiHistory;
+        std::vector<MidiEventVec, ExtMemAllocator<MidiEventVec>> midiHistory;
         for (uint32_t u = 0; u < undoCount; ++u) {
             uint32_t snapCount = 0;
             if (!readRaw(file, &snapCount, sizeof(snapCount))) {
@@ -728,13 +729,13 @@ bool StorageManager::loadState(LooperState& state) {
                 file.close();
                 return false;
             }
-            std::vector<MidiEvent, ExtMemAllocator<MidiEvent>> snapshot(snapCount);
+            MidiEventVec snapshot(snapCount);
             if (snapCount > 0 && !readRaw(file, snapshot.data(), snapCount * sizeof(MidiEvent))) {
                 Serial.print("[StorageManager] ERROR: Failed to read midiHistory snapshot for track "); Serial.println(t);
                 file.close();
                 return false;
             }
-            midiHistory.push_back(snapshot);
+            midiHistory.push_back(std::move(snapshot));
         }
         // Store loaded data for this track
         tracksData[t] = {loadedTrackState, muted, startLoopTick, loopLengthTicks, midiEvents, midiHistory};
