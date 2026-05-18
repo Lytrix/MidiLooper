@@ -196,6 +196,7 @@ static void restoreNotes(MidiEventVec& midiEvents,
                          const std::vector<EditManager::MovingNoteIdentity::DeletedNote>& notesToRestore,
                          EditManager& manager,
                          uint32_t loopLength,
+                         uint8_t channel,
                          NoteUtils::EventIndexMap& onIndex,
                          NoteUtils::EventIndexMap& offIndex) {
     // Debug existing notes before restoration
@@ -227,12 +228,14 @@ static void restoreNotes(MidiEventVec& midiEvents,
             MidiEvent onEvt;
             onEvt.tick = nr.startTick;
             onEvt.type = midi::NoteOn;
+            onEvt.channel = channel;
             onEvt.data.noteData.note = nr.note;
             onEvt.data.noteData.velocity = nr.velocity;
             midiEvents.push_back(onEvt);
             MidiEvent offEvt;
             offEvt.tick = targetEnd;
             offEvt.type = midi::NoteOff;
+            offEvt.channel = channel;
             offEvt.data.noteData.note = nr.note;
             offEvt.data.noteData.velocity = 0;
             midiEvents.push_back(offEvt);
@@ -546,6 +549,7 @@ void EditStartNoteState::onEncoderTurn(EditManager& manager, Track& track, int d
                  notesToRestore,
                  manager,
                  loopLength,
+                 track.getMidiChannel(),
                  onIndex,
                  offIndex);
     

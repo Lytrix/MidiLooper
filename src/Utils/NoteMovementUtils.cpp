@@ -262,6 +262,7 @@ void restoreNotes(MidiEventVec& midiEvents,
                  const std::vector<EditManager::MovingNoteIdentity::DeletedNote>& notesToRestore,
                  EditManager& manager,
                  uint32_t loopLength,
+                 uint8_t channel,
                  NoteUtils::EventIndexMap& onIndex,
                  NoteUtils::EventIndexMap& offIndex) {
     
@@ -312,6 +313,7 @@ void restoreNotes(MidiEventVec& midiEvents,
             MidiEvent onEvt;
             onEvt.tick = nr.startTick;
             onEvt.type = midi::NoteOn;
+            onEvt.channel = channel;
             onEvt.data.noteData.note = nr.note;
             onEvt.data.noteData.velocity = nr.velocity;
             midiEvents.push_back(onEvt);
@@ -319,6 +321,7 @@ void restoreNotes(MidiEventVec& midiEvents,
             MidiEvent offEvt;
             offEvt.tick = nr.endTick;
             offEvt.type = midi::NoteOff;
+            offEvt.channel = channel;
             offEvt.data.noteData.note = nr.note;
             offEvt.data.noteData.velocity = 0;
             midiEvents.push_back(offEvt);
@@ -606,7 +609,7 @@ void moveNoteWithOverlapHandling(Track& track, EditManager& manager,
     applyShortenOrDelete(midiEvents, notesToShorten, notesToDelete, manager, loopLength, onIndex, offIndex);
     
     // Restore notes that should be restored based on movement, reusing index
-    restoreNotes(midiEvents, notesToRestore, manager, loopLength, onIndex, offIndex);
+    restoreNotes(midiEvents, notesToRestore, manager, loopLength, track.getMidiChannel(), onIndex, offIndex);
     
     // Helper to finalize reconstruction and selection after movement
     finalReconstructAndSelect(midiEvents, manager, movingNotePitch, newStart, newEnd, loopLength);
