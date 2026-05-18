@@ -538,8 +538,13 @@ void MidiHandler::usbHostProgramChange(uint8_t channel, uint8_t program) {
 
 void MidiHandler::usbHostPitchChange(uint8_t channel, int pitch) {
   if (instance) {
-    // Single path: handlePitchBend converts to signed and routes to NoteEditManager + recording.
-    instance->handleMidiMessage(midi::PitchBend, channel, pitch & 0x7F, (pitch >> 7) & 0x7F, SOURCE_USB_HOST);
+    // USBHost_t36 already delivers signed pitch (-8192..8191). Re-splitting that int as
+    // MIDI bytes and subtracting 8192 again in handlePitchBend corrupts the value (two
+    // halves of the range). Encode back to unsigned 14-bit before the shared path.
+    const uint16_t unsignedPitch = static_cast<uint16_t>(pitch + 8192);
+    instance->handleMidiMessage(midi::PitchBend, channel,
+                                unsignedPitch & 0x7F, (unsignedPitch >> 7) & 0x7F,
+                                SOURCE_USB_HOST);
   }
 }
 
