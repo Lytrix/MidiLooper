@@ -254,7 +254,7 @@ struct MidiEvent {
         return type == midi::NoteOff || 
                (type == midi::NoteOn && data.noteData.velocity == 0); 
     }
-    bool isChannelVoice() const { 
+    bool isChannelMessage() const {
         return type >= midi::NoteOff && type <= midi::PitchBend;
     }
     bool isSystemCommon() const {

@@ -54,6 +54,7 @@ namespace NoteMovementUtils {
                      const std::vector<EditManager::MovingNoteIdentity::DeletedNote>& notesToRestore,
                      EditManager& manager,
                      uint32_t loopLength,
+                     uint8_t channel,
                      NoteUtils::EventIndexMap& onIndex,
                      NoteUtils::EventIndexMap& offIndex);
     

@@ -117,17 +117,17 @@ void MidiHandler::handleMidiMessage(byte type, byte channel, byte data1, byte da
     }
   }
 
-  // MIDI Thru: pass channel-voice to USB/Serial/USB-host on the selected track channel — except
+  // MIDI Thru: pass channel messages to USB/Serial/USB-host on the selected track channel — except
   // record-control plane (ch16) and DROID fader+LED plane (ch15), which must never be remapped.
   uint8_t outCh = trackManager.getSelectedTrack().getMidiChannel();
-  bool isChannelVoice = (type == midi::NoteOn || type == midi::NoteOff || type == midi::ControlChange ||
-                        type == midi::PitchBend || type == midi::AfterTouchChannel || type == midi::ProgramChange);
-  if (isChannelVoice && !isControlChannel(channel) && channel != MidiConfig::Channels::FADER) {
+  bool isChannelMessage = (type == midi::NoteOn || type == midi::NoteOff || type == midi::ControlChange ||
+                           type == midi::PitchBend || type == midi::AfterTouchChannel || type == midi::ProgramChange);
+  if (isChannelMessage && !isControlChannel(channel) && channel != MidiConfig::Channels::FADER) {
     sendMidiThru(type, outCh, data1, data2);
   }
 
   // Dispatch transport/clock messages first so tick is up-to-date
-  // before channel-voice messages read it
+  // before channel messages read it
   switch (type) {
     case midi::Clock:
       clockManager.onMidiClockPulse();
@@ -318,6 +318,13 @@ void MidiHandler::sendMidiEvent(const MidiEvent& event) {
             if (outputUSB) usbMIDI.sendNoteOn(event.data.noteData.note, event.data.noteData.velocity, event.channel);
             if (outputSerial) MIDIserial.sendNoteOn(event.data.noteData.note, event.data.noteData.velocity, event.channel);
             if (usbHostMIDI) usbHostMIDI.sendNoteOn(event.data.noteData.note, event.data.noteData.velocity, event.channel);
+            if (!isLedChannel(event.channel)) {
+                logger.log(CAT_MIDI, LOG_DEBUG,
+                    "OUT NoteOn  usb=%d ser=%d host=%d ch=%u note=%u vel=%u",
+                    outputUSB ? 1 : 0, outputSerial ? 1 : 0, usbHostMIDI ? 1 : 0,
+                    (unsigned)event.channel, (unsigned)event.data.noteData.note,
+                    (unsigned)event.data.noteData.velocity);
+            }
             // Log LED updates (ch15: 0-31 tick/16th, 40-47 bar, 50-67 track/loop)
             if (event.channel == MidiConfig::Led::CHANNEL && (event.data.noteData.note <= 31 || (event.data.noteData.note >= 40 && event.data.noteData.note <= 47) || (event.data.noteData.note >= 50 && event.data.noteData.note <= 67))) {
                 logger.log(CAT_MIDI_LED, LOG_DEBUG, "LED NoteOn ch=%d note=%d vel=%d -> usb=%d serial=%d usbHost=%d",
@@ -329,6 +336,13 @@ void MidiHandler::sendMidiEvent(const MidiEvent& event) {
             if (outputUSB) usbMIDI.sendNoteOff(event.data.noteData.note, event.data.noteData.velocity, event.channel);
             if (outputSerial) MIDIserial.sendNoteOff(event.data.noteData.note, event.data.noteData.velocity, event.channel);
             if (usbHostMIDI) usbHostMIDI.sendNoteOff(event.data.noteData.note, event.data.noteData.velocity, event.channel);
+            if (!isLedChannel(event.channel)) {
+                logger.log(CAT_MIDI, LOG_DEBUG,
+                    "OUT NoteOff usb=%d ser=%d host=%d ch=%u note=%u vel=%u",
+                    outputUSB ? 1 : 0, outputSerial ? 1 : 0, usbHostMIDI ? 1 : 0,
+                    (unsigned)event.channel, (unsigned)event.data.noteData.note,
+                    (unsigned)event.data.noteData.velocity);
+            }
             if (event.channel == MidiConfig::Led::CHANNEL && (event.data.noteData.note <= 31 || (event.data.noteData.note >= 40 && event.data.noteData.note <= 47) || (event.data.noteData.note >= 50 && event.data.noteData.note <= 67))) {
                 logger.log(CAT_MIDI_LED, LOG_DEBUG, "LED NoteOff ch=%d note=%d -> usb=%d serial=%d usbHost=%d",
                     event.channel, event.data.noteData.note, outputUSB ? 1 : 0, outputSerial ? 1 : 0, usbHostMIDI ? 1 : 0);

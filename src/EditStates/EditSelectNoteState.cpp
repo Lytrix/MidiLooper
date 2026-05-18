@@ -158,10 +158,12 @@ void EditSelectNoteState::createDefaultNote(Track& track, uint32_t tick) const {
     
     auto& midiEvents = track.getMidiEvents();
     
+    const uint8_t outCh = track.getMidiChannel();
     // Create Note On event
     MidiEvent noteOn;
     noteOn.type = midi::NoteOn;
     noteOn.tick = tick;
+    noteOn.channel = outCh;
     noteOn.data.noteData.note = defaultNote;
     noteOn.data.noteData.velocity = defaultVelocity;
     midiEvents.push_back(noteOn);
@@ -170,6 +172,7 @@ void EditSelectNoteState::createDefaultNote(Track& track, uint32_t tick) const {
     MidiEvent noteOff;
     noteOff.type = midi::NoteOff;
     noteOff.tick = endTick;
+    noteOff.channel = outCh;
     noteOff.data.noteData.note = defaultNote;
     noteOff.data.noteData.velocity = 0;
     midiEvents.push_back(noteOff);

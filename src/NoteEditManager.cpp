@@ -1541,7 +1541,7 @@ void NoteEditManager::handleNoteValueFaderInput(uint8_t ccValue, Track& track) {
         // Apply restoration if needed
         if (!notesToRestore.empty()) {
             auto [onIndex, offIndex] = NoteUtils::buildEventIndex(midiEvents);
-            NoteMovementUtils::restoreNotes(midiEvents, notesToRestore, editManager, loopLength, onIndex, offIndex);
+            NoteMovementUtils::restoreNotes(midiEvents, notesToRestore, editManager, loopLength, track.getMidiChannel(), onIndex, offIndex);
             logger.log(CAT_MIDI, LOG_DEBUG, "Restored %zu notes after pitch change", notesToRestore.size());
         }
         

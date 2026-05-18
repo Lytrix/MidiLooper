@@ -714,6 +714,10 @@ void Track::playMidiEvents(uint32_t currentTick, bool isAudible) {
     return;
 
   if (loop.playbackOrderDirty) {
+    // After edits or load, sort order changes but nextEventIndex still referred to the old order.
+    // Resync like a jam geometry change so no events are skipped until the next loop wrap.
+    loop.nextEventIndex = 0;
+    loop.lastTickInLoop = UINT32_MAX;
     rebuildPlaybackOrder();
   }
 
@@ -784,6 +788,8 @@ void Track::playMidiEventsForSlot(uint8_t slotIndex, uint32_t currentTick, bool 
   if (loop.midiEvents.empty() || loop.loopLengthTicks == 0) return;
 
   if (loop.playbackOrderDirty) {
+    loop.nextEventIndex = 0;
+    loop.lastTickInLoop = UINT32_MAX;
     PlaybackOrderVec& playbackOrder = loop.getPlaybackOrder();
     playbackOrder.resize(loop.midiEvents.size());
     for (size_t i = 0; i < loop.midiEvents.size(); i++) {
@@ -826,7 +832,12 @@ void Track::sendMidiEvent(const MidiEvent& evt) {
   if (trackState != TRACK_PLAYING && trackState != TRACK_OVERDUBBING) return;
   isPlayingBack = true;  // Mark playback so noteOn/noteOff ignores it
   MidiEvent evtCopy = evt;
-  if (evt.channel >= 1 && evt.channel <= 16) {
+  // Per-event channel 1-16 is remapped to the track's output channel. Channel 0 is treated as
+  // unset (edit paths that default-construct MidiEvent and never set channel).
+  const bool isChannelMessage = evt.type == midi::NoteOn || evt.type == midi::NoteOff ||
+                                evt.type == midi::ControlChange || evt.type == midi::PitchBend ||
+                                evt.type == midi::AfterTouchChannel || evt.type == midi::ProgramChange;
+  if (isChannelMessage && (evt.channel == 0 || (evt.channel >= 1 && evt.channel <= 16))) {
     evtCopy.channel = midiChannel;
   }
   // Hot path: logging every loop note at DEBUG blocks USB Serial for milliseconds and freezes the UI.
