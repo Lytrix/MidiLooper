@@ -190,10 +190,10 @@ public:
   bool isMuted() const;
 
   // Add to public section of Track to be able to save the events
-  std::vector<MidiEvent>& getMidiEvents() { return getActiveLoop().midiEvents; }
+  std::vector<MidiEvent, ExtMemAllocator<MidiEvent>>& getMidiEvents() { return getActiveLoop().midiEvents; }
 
   /// Immutable access to midiEvents (for const Track)
-  const std::vector<MidiEvent>& getMidiEvents() const { return getActiveLoop().midiEvents; }
+  const std::vector<MidiEvent, ExtMemAllocator<MidiEvent>>& getMidiEvents() const { return getActiveLoop().midiEvents; }
 
   /// Access loop by index (0 to MAX_LOOPS_PER_TRACK-1)
   Loop& getLoop(uint8_t index);
