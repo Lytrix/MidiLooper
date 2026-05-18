@@ -28,9 +28,11 @@
 // Forward
 class Track;
 
-using PooledMidiDeque = std::deque<MemoryPool::PooledMidiEventVector, ExtMemAllocator<MemoryPool::PooledMidiEventVector>>;
-using TrackStateDeque = std::deque<TrackState, ExtMemAllocator<TrackState>>;
-using Uint32Deque = std::deque<uint32_t, ExtMemAllocator<uint32_t>>;
+using PooledMidiDeque    = std::deque<MemoryPool::PooledMidiEventVector, ExtMemAllocator<MemoryPool::PooledMidiEventVector>>;
+using TrackStateDeque    = std::deque<TrackState,    ExtMemAllocator<TrackState>>;
+using Uint32Deque        = std::deque<uint32_t,      ExtMemAllocator<uint32_t>>;
+/// Playback order indices (same allocator as midiEvents for PSRAM spillover).
+using PlaybackOrderVec = std::vector<size_t, ExtMemAllocator<size_t>>;
 
 /// Loop length/start geometry stored alongside each overdub undo snapshot (per slot).
 struct OverdubGeomSnapshot {
@@ -41,8 +43,8 @@ struct OverdubGeomSnapshot {
 using OverdubGeomDeque = std::deque<OverdubGeomSnapshot, ExtMemAllocator<OverdubGeomSnapshot>>;
 
 struct Loop {
-  // Sequence data
-  std::vector<MidiEvent, ExtMemAllocator<MidiEvent>> midiEvents;
+  // Sequence data — backed by ExtMemAllocator via MidiEventVec: fast internal RAM first, spills to PSRAM.
+  MidiEventVec midiEvents;
   uint32_t startLoopTick = 0;
   uint32_t loopLengthTicks = 0;
   uint32_t loopStartTick = 0;
@@ -208,11 +210,11 @@ struct Loop {
   }
   const Uint32Deque* tryGetLoopStartRedoHistory() const { return loopStartRedoHistory_ ? loopStartRedoHistory_.get() : nullptr; }
 
-  std::vector<size_t, ExtMemAllocator<size_t>>& getPlaybackOrder() {
-    if (!playbackOrder_) playbackOrder_ = std::make_unique<std::vector<size_t, ExtMemAllocator<size_t>>>();
+  PlaybackOrderVec& getPlaybackOrder() {
+    if (!playbackOrder_) playbackOrder_ = std::make_unique<PlaybackOrderVec>();
     return *playbackOrder_;
   }
-  const std::vector<size_t, ExtMemAllocator<size_t>>& getPlaybackOrder() const {
+  const PlaybackOrderVec& getPlaybackOrder() const {
     return const_cast<Loop*>(this)->getPlaybackOrder();
   }
   bool playbackOrderEmpty() const { return !playbackOrder_ || playbackOrder_->empty(); }
@@ -283,7 +285,7 @@ private:
   std::unique_ptr<Uint32Deque> clearStartRedoHistory_;
   std::unique_ptr<Uint32Deque> loopStartHistory_;
   std::unique_ptr<Uint32Deque> loopStartRedoHistory_;
-  std::unique_ptr<std::vector<size_t, ExtMemAllocator<size_t>>> playbackOrder_;
+  std::unique_ptr<PlaybackOrderVec> playbackOrder_;
   std::unique_ptr<NoteUtils::CachedNoteList> noteCache_;
   std::unique_ptr<NoteUtils::EventIndex> cachedEventIndex_;
 };

@@ -6,7 +6,7 @@
 #include <cstdint>
 #include <cstddef>
 #include "MidiEvent.h"
-#include "ExtMemAllocator.h"
+#include "Utils/ExtMemAllocator.h"
 
 // Forward declarations
 class Logger;
@@ -16,36 +16,39 @@ namespace MemoryPool {
 
 /**
  * @class MidiEventPool
- * @brief Memory pool for MidiEvent objects to reduce allocation overhead
- * 
+ * @brief Memory pool for MidiEvent objects to reduce allocation overhead.
+ *
  * Pre-allocates a pool of MidiEvent objects and provides fast allocation/deallocation.
  * Reduces memory fragmentation and improves performance for frequent MIDI event creation.
- * Uses ExtMemAllocator to spill over to PSRAM if internal RAM is exhausted.
+ *
+ * Memory strategy (ExtMemAllocator):
+ *   - The pool vectors are backed by ExtMemAllocator, which first tries internal RAM
+ *     (fast, zero wait-states) and spills over to PSRAM when internal RAM is full.
+ *   - Initial allocation is deferred: the constructor does NOT allocate any memory so
+ *     that no extmem_malloc call occurs before the Teensy 4.1 PSRAM hardware is ready.
+ *   - Call init() once inside Arduino setup() to trigger the first pool reservation.
  */
 class MidiEventPool {
 private:
     static constexpr size_t INITIAL_POOL_SIZE = 1024;  // Start with 1K events
     static constexpr size_t GROWTH_FACTOR = 2;         // Double size when growing
-    
-    std::vector<MidiEvent, ExtMemAllocator<MidiEvent>> pool;
+
+    MidiEventVec pool;
     std::vector<bool, ExtMemAllocator<bool>> used;
     size_t nextFreeIndex;
-    bool initialized;
-    
+
 public:
-    MidiEventPool() : nextFreeIndex(0), initialized(false) {
-        // Defer allocation until init() is called to ensure PSRAM hardware is ready
-    }
-    
+    // Constructor does NOT allocate — deferred until init() is called in setup().
+    MidiEventPool() : nextFreeIndex(0) {}
+
     /**
-     * @brief Initialize the pool allocations. Must be called during setup()
-     * after PSRAM hardware (if any) has been initialized by the core.
+     * @brief Perform initial pool reservation.
+     * Must be called once from Arduino setup() AFTER the Teensy core has
+     * initialised PSRAM (i.e. after the implicit hardware init in main()).
      */
     void init() {
-        if (initialized) return;
         pool.reserve(INITIAL_POOL_SIZE);
         used.resize(INITIAL_POOL_SIZE, false);
-        initialized = true;
     }
     
     /**
@@ -53,8 +56,6 @@ public:
      * @return Pointer to an unused MidiEvent, or nullptr if pool is full
      */
     MidiEvent* allocate() {
-        if (!initialized) init(); // Safety fallback, though init() should be called explicitly
-
         // Find next free slot
         while (nextFreeIndex < used.size() && used[nextFreeIndex]) {
             nextFreeIndex++;
@@ -133,7 +134,6 @@ private:
  * 
  * Provides std::vector-like interface but uses the memory pool for better performance.
  * Automatically manages pool allocations and deallocations.
- * Uses ExtMemAllocator for its internal pointer array to spill over to PSRAM if needed.
  */
 class PooledMidiEventVector {
 private:
@@ -204,10 +204,10 @@ public:
     auto end() const { return events.end(); }
     
     /**
-     * @brief Convert to std::vector<MidiEvent, ExtMemAllocator<MidiEvent>> (for compatibility)
+     * @brief Convert to MidiEventVec (for compatibility)
      */
-    std::vector<MidiEvent, ExtMemAllocator<MidiEvent>> toVector() const {
-        std::vector<MidiEvent, ExtMemAllocator<MidiEvent>> result;
+    MidiEventVec toVector() const {
+        MidiEventVec result;
         result.reserve(events.size());
         for (const MidiEvent* event : events) {
             result.push_back(*event);

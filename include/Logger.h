@@ -3,7 +3,9 @@
 
 #pragma once
 
+#if !defined(PIO_UNIT_TEST_NATIVE)
 #include <Arduino.h>
+#endif
 #include <vector>
 #include "MidiEvent.h"
 
@@ -64,7 +66,7 @@ public:
   
   // MIDI event logging
   static void logMidiEvent(const MidiEvent& evt);
-  static void dumpMidiEvents(const std::vector<MidiEvent>& events, int trackIndex = -1);
+  static void dumpMidiEvents(const MidiEventVec& events, int trackIndex = -1);
   
   // Track event logging
   static void logTrackEvent(const char* event, uint32_t tick, const char* format = nullptr, ...);

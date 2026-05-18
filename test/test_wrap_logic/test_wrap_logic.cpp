@@ -1,62 +1,27 @@
 //  Copyright (c)  2025 Lytrix (Eelke Jager)
 //  Licensed under the PolyForm Noncommercial 1.0.0
 
-#include <iostream>
+#include <unity.h>
 #include <cstdint>
 
-// Replicated helper functions from EditStartNoteState.cpp
-static uint32_t wrapPosition(int32_t position, uint32_t loopLength) {
-    if (position < 0) {
-        position = (int32_t)loopLength + position;
-        while (position < 0) {
-            position += (int32_t)loopLength;
-        }
-    } else if (position >= (int32_t)loopLength) {
-        position = position % (int32_t)loopLength;
-    }
-    return (uint32_t)position;
-}
+#include "Utils/NoteMovementWrap.h"
 
-static uint32_t calculateNoteLength(uint32_t start, uint32_t end, uint32_t loopLength) {
-    if (end >= start) {
-        return end - start;
-    } else {
-        return (loopLength - start) + end;
-    }
-}
-
-int main() {
+void test_wrap_position_negative_and_boundary() {
     const uint32_t loop = 3840;
-    bool ok = true;
+    TEST_ASSERT_EQUAL_UINT32(loop - 1u, NoteMovementUtils::wrapPosition(-1, loop));
+    TEST_ASSERT_EQUAL_UINT32(0u, NoteMovementUtils::wrapPosition(static_cast<int32_t>(loop), loop));
+    TEST_ASSERT_EQUAL_UINT32(1u, NoteMovementUtils::wrapPosition(static_cast<int32_t>(loop) + 1, loop));
+}
 
-    // Test wrapPosition around negative
-    if (wrapPosition(-1, loop) != loop - 1) {
-        std::cerr << "FAIL: wrapPosition(-1) = " << wrapPosition(-1, loop) << " (expected " << loop - 1 << ")\n";
-        ok = false;
-    }
-    // Test wrapPosition at boundary
-    if (wrapPosition((int32_t)loop, loop) != 0) {
-        std::cerr << "FAIL: wrapPosition(loop) = " << wrapPosition(loop, loop) << " (expected 0)\n";
-        ok = false;
-    }
-    // Test wrapPosition beyond boundary
-    if (wrapPosition((int32_t)loop + 1, loop) != 1) {
-        std::cerr << "FAIL: wrapPosition(loop+1) = " << wrapPosition(loop + 1, loop) << " (expected 1)\n";
-        ok = false;
-    }
-    // Test calculateNoteLength without wrap
-    if (calculateNoteLength(100, 200, loop) != 100) {
-        std::cerr << "FAIL: calculateNoteLength(100,200) = " << calculateNoteLength(100, 200, loop) << " (expected 100)\n";
-        ok = false;
-    }
-    // Test calculateNoteLength with wrap
-    if (calculateNoteLength(3838, 5, loop) != 7) {
-        std::cerr << "FAIL: calculateNoteLength(3838,5) = " << calculateNoteLength(3838, 5, loop) << " (expected 7)\n";
-        ok = false;
-    }
+void test_calculate_note_length_plain_and_wrapped() {
+    const uint32_t loop = 3840;
+    TEST_ASSERT_EQUAL_UINT32(100u, NoteMovementUtils::calculateNoteLength(100, 200, loop));
+    TEST_ASSERT_EQUAL_UINT32(7u, NoteMovementUtils::calculateNoteLength(3838, 5, loop));
+}
 
-    if (ok) {
-        std::cout << "✅ Wrap logic functions passed all tests" << std::endl;
-    }
-    return ok ? 0 : 1;
-} 
+int main(int /*argc*/, char** /*argv*/) {
+    UNITY_BEGIN();
+    RUN_TEST(test_wrap_position_negative_and_boundary);
+    RUN_TEST(test_calculate_note_length_plain_and_wrapped);
+    return UNITY_END();
+}

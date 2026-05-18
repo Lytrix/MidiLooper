@@ -4,9 +4,9 @@
 #include <iostream>
 #include <vector>
 #include <cassert>
-#include "../include/Track.h"
-#include "../include/TrackUndo.h"
-#include "../include/MidiEvent.h"
+#include "../../include/Track.h"
+#include "../../include/TrackUndo.h"
+#include "../../include/MidiEvent.h"
 
 // Simple test to verify redo functionality
 void testRedoFunctionality() {
@@ -116,4 +116,4 @@ void testRedoFunctionality() {
 int main() {
     testRedoFunctionality();
     return 0;
-} 
+}

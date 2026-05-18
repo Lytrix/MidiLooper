@@ -98,8 +98,9 @@ const std::vector<DisplayNote>& DisplayManager::resolveDisplayNotes(const Track&
 
     const Loop& loop = track.getLoop(displaySlot);
     const uint32_t liveLoopLength = resolveDisplayLoopLength(track, displaySlot, currentTick);
-    displayNotesScratch = NoteUtils::reconstructNotes(loop.midiEvents, liveLoopLength);
-    return displayNotesScratch;
+    // Same cache as non-live paths: avoids duplicate full reconstructNotes in one frame
+    // (drawPianoRoll + drawNoteInfo). During first record, liveLoopLength changes often → natural misses.
+    return loop.getNoteCache().getNotes(loop.midiEvents, liveLoopLength);
 }
 
 // Helper function to clear the display buffer
@@ -273,8 +274,8 @@ void DisplayManager::drawGridLines(uint32_t lengthLoop, int pianoRollY0, int pia
 }
 
 // --- Helper: Draw all notes ---
-void DisplayManager::drawAllNotes(const Track& track, uint8_t displaySlot, uint32_t currentTick, uint32_t startLoop, uint32_t lengthLoop, int minPitch, int maxPitch) {
-    const auto& notes = resolveDisplayNotes(track, displaySlot, currentTick);
+void DisplayManager::drawAllNotes(const Track& track, uint8_t displaySlot, uint32_t currentTick, uint32_t /*startLoop*/, uint32_t lengthLoop, int minPitch, int maxPitch,
+                                  const std::vector<DisplayNote>& notes) {
     const uint32_t loopLength = track.isJamming() ? track.getLoopLength()
                                                   : resolveDisplayLoopLength(track, displaySlot, currentTick);
     const uint32_t jamStartTick = track.isJamming() ? track.getJamStartTick() : track.getLoopStartTickForSlot(displaySlot);
@@ -350,7 +351,7 @@ void DisplayManager::drawNoteBar(const DisplayNote& e, int y, uint32_t s, uint32
 }
 
 // --- Draw piano roll using cached notes ---
-void DisplayManager::drawPianoRoll(uint32_t currentTick, Track& selectedTrack, uint8_t displaySlot) {
+void DisplayManager::drawPianoRoll(uint32_t currentTick, Track& selectedTrack, uint8_t displaySlot, const std::vector<DisplayNote>& notes) {
     auto& track = selectedTrack;
     const uint32_t loopLength = resolveDisplayLoopLength(track, displaySlot, currentTick);
     const uint32_t jamLength = track.isJamming() ? track.getJamLength()
@@ -369,7 +370,6 @@ void DisplayManager::drawPianoRoll(uint32_t currentTick, Track& selectedTrack, u
         // Compute min/max pitch for scaling
         int minPitch = 127;
         int maxPitch = 0;
-        const auto& notes = resolveDisplayNotes(track, displaySlot, currentTick);
         for (const auto& n : notes) {
             if (n.note < minPitch) minPitch = n.note;
             if (n.note > maxPitch) maxPitch = n.note;
@@ -377,7 +377,7 @@ void DisplayManager::drawPianoRoll(uint32_t currentTick, Track& selectedTrack, u
         if (minPitch > maxPitch) { minPitch = 60; maxPitch = 72; } // fallback
 
         drawGridLines(jamLength, pianoRollY0, pianoRollY1);
-        drawAllNotes(track, displaySlot, currentTick, 0, jamLength, minPitch, maxPitch);
+        drawAllNotes(track, displaySlot, currentTick, 0, jamLength, minPitch, maxPitch, notes);
 
         // Adjust bracket tick to be relative to jam start
         uint32_t bracketTick = editManager.getBracketTick();
@@ -486,7 +486,7 @@ void DisplayManager::drawSidebar(Track& selectedTrack, uint8_t displaySlot) {
         _display.gfx.draw_text(_display.api.getFrameBuffer(), txt, x, y, brightness);
     };
 
-    // BPM: one decimal place, but draw the '.' as a single pixel so width ~= 4 chars (vs 5 for full ".").
+    // BPM: one decimal place. Use a real '.' + full glyph advance so "100.0" cannot read as "1000".
     const int bpmY = 7;
     const uint8_t bpmBright = SIDEBAR_TEXT_BRIGHTNESS;
     char wholeBuf[12];
@@ -500,14 +500,14 @@ void DisplayManager::drawSidebar(Track& selectedTrack, uint8_t displaySlot) {
     snprintf(wholeBuf, sizeof(wholeBuf), "%d", whole);
     char fracStr[2] = { static_cast<char>('0' + tenth), '\0' };
     const int wWhole = static_cast<int>(strlen(wholeBuf)) * 6;
-    constexpr int kThinDotAdvance = 1;
-    const int wBpm = wWhole + kThinDotAdvance + 6;
+    constexpr int kGlyph = 6;
+    const int wBpm = wWhole + kGlyph + kGlyph;
     const int bpmStartX = textRight - wBpm;
     _display.gfx.draw_text(_display.api.getFrameBuffer(), wholeBuf, bpmStartX, bpmY, bpmBright);
     const int dotX = bpmStartX + wWhole;
-    // One-pixel decimal: align with the descender row of digits (Font5x7 mono top-left at bpmY); +4 avoids gap below line.
-    _display.gfx.draw_pixel(_display.api.getFrameBuffer(), dotX-1, bpmY -1, bpmBright);
-    _display.gfx.draw_text(_display.api.getFrameBuffer(), fracStr, dotX + kThinDotAdvance, bpmY, bpmBright);
+    const uint8_t dotBright = (bpmBright * 2) / 3;
+    _display.gfx.draw_text(_display.api.getFrameBuffer(), ".", dotX, bpmY, dotBright);
+    _display.gfx.draw_text(_display.api.getFrameBuffer(), fracStr, dotX + kGlyph, bpmY, bpmBright);
 
     drawRight(modeTop, 17, MODE_VALUE_BRIGHTNESS);
     drawRight(modeBottom, 27, MODE_VALUE_BRIGHTNESS);
@@ -580,13 +580,12 @@ void DisplayManager::drawInfoArea(uint32_t currentTick, Track& selectedTrack, ui
 }
 
 // --- Draw note info using cached notes ---
-void DisplayManager::drawNoteInfo(uint32_t currentTick, Track& selectedTrack, uint8_t displaySlot) {
+void DisplayManager::drawNoteInfo(uint32_t currentTick, Track& selectedTrack, uint8_t displaySlot, const std::vector<DisplayNote>& notes) {
     char startStr[24] = {0};
     const uint32_t lengthLoop = resolveDisplayLoopLength(selectedTrack, displaySlot, currentTick);
     const uint32_t loopStartTick = selectedTrack.isJamming() ? selectedTrack.getLoopStartTick()
                                                              : selectedTrack.getLoopStartTickForSlot(displaySlot);
     const uint32_t displayTick = resolveDisplayTick(selectedTrack, displaySlot, currentTick);
-    const auto& notes = resolveDisplayNotes(selectedTrack, displaySlot, currentTick);
     uint8_t currentTrackIdx = trackManager.getSelectedTrackIndex();
 
     const DisplayNote* noteToShow = nullptr;
@@ -719,10 +718,11 @@ void DisplayManager::update() {
     _display.gfx.fill_buffer(_display.api.getFrameBuffer(), 0);
 
     drawTrackStatus(trackManager.getSelectedTrackIndex(), now);
-    drawPianoRoll(displayTick, selTrack, displaySlot);
+    const std::vector<DisplayNote>& frameNotes = resolveDisplayNotes(selTrack, displaySlot, displayTick);
+    drawPianoRoll(displayTick, selTrack, displaySlot, frameNotes);
     drawSidebar(selTrack, displaySlot);
     drawInfoArea(displayTick, selTrack, displaySlot);
-    drawNoteInfo(displayTick, selTrack, displaySlot);
+    drawNoteInfo(displayTick, selTrack, displaySlot, frameNotes);
 
    _display.api.display();
 }

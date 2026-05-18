@@ -2,9 +2,17 @@
 //  Licensed under the PolyForm Noncommercial 1.0.0
 
 #pragma once
+
+#if defined(PIO_UNIT_TEST_NATIVE)
+#include "MidiTypesNative.h"
+#else
 #include <MIDI.h>
+#endif
+
 #include <cstdint>
 #include <algorithm> // For std::clamp
+#include <vector>
+#include "Utils/ExtMemAllocator.h"
 
 /**
  * @struct MidiEvent
@@ -15,9 +23,9 @@
  * aftertouch, program change, SysEx, clock/transport messages, etc.).
  * Provides static factory methods (NoteOn, NoteOff, ControlChange, etc.) and
  * clamping utility functions to enforce valid MIDI ranges.
- * @note This struct is tightly coupled to the external MIDI library (<MIDI.h>) and
- *       uses the midi::MidiType enumeration defined there; changes to that enum
- *       may require corresponding updates here.
+ * @note Uses `midi::MidiType` from the Teensyduino MIDI library, or from
+ *       MidiTypesNative.h when `PIO_UNIT_TEST_NATIVE` is defined. Numeric values must
+ *       stay in sync with `libraries/MIDI/src/midi_Defs.h`.
  */
 struct MidiEvent {
     uint32_t tick;           // When this event occurs
@@ -56,14 +64,17 @@ struct MidiEvent {
 
     // Helper for clamping values to MIDI range with runtime error reporting
     static uint8_t clampChannel(uint8_t channel) {
+#if !defined(PIO_UNIT_TEST_NATIVE)
         if (channel < 1 || channel > 16) {
             Serial.print("[MidiEvent] WARNING: Channel out of range: ");
             Serial.print(channel);
             Serial.println(" (clamped to 1-16)");
         }
+#endif
         return std::clamp(channel, (uint8_t)1, (uint8_t)16);
     }
     static uint8_t clamp7bit(uint8_t v, const char* label = nullptr) {
+#if !defined(PIO_UNIT_TEST_NATIVE)
         if (v > 127) {
             if (label) {
                 Serial.print("[MidiEvent] WARNING: ");
@@ -77,22 +88,29 @@ struct MidiEvent {
                 Serial.println(" (clamped to 0-127)");
             }
         }
+#else
+        (void)label;
+#endif
         return std::clamp(v, (uint8_t)0, (uint8_t)127);
     }
     static int16_t clampPitchBend(int16_t v) {
+#if !defined(PIO_UNIT_TEST_NATIVE)
         if (v < -8192 || v > 8191) {
             Serial.print("[MidiEvent] WARNING: Pitch bend out of range: ");
             Serial.print(v);
             Serial.println(" (clamped to -8192 to 8191)");
         }
+#endif
         return std::clamp(v, (int16_t)-8192, (int16_t)8191);
     }
     static uint16_t clamp14bit(uint16_t v) {
+#if !defined(PIO_UNIT_TEST_NATIVE)
         if (v > 0x3FFF) {
             Serial.print("[MidiEvent] WARNING: 14-bit value out of range: ");
             Serial.print(v);
             Serial.println(" (clamped to 0-16383)");
         }
+#endif
         return std::clamp(v, (uint16_t)0, (uint16_t)0x3FFF);
     }
 
@@ -246,4 +264,13 @@ struct MidiEvent {
         return type >= midi::Clock && type <= midi::SystemReset;
     }
 };
+
+/**
+ * @brief Canonical vector type for MIDI event storage.
+ *
+ * Uses ExtMemAllocator so allocations prefer fast internal RAM and
+ * automatically spill to PSRAM when internal RAM is exhausted.
+ * Use MidiEventVec everywhere instead of std::vector<MidiEvent>.
+ */
+using MidiEventVec = std::vector<MidiEvent, ExtMemAllocator<MidiEvent>>;
 

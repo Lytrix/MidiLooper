@@ -43,9 +43,9 @@ public:
     static bool canUndo(const Track& track);
     static bool canRedo(const Track& track);
     static void popLastUndo(Track& track);
-    static const std::vector<MidiEvent, ExtMemAllocator<MidiEvent>>& peekLastMidiSnapshot(const Track& track);
-    static std::deque<MemoryPool::PooledMidiEventVector, ExtMemAllocator<MemoryPool::PooledMidiEventVector>>& getMidiHistory(Track& track);
-    static const std::vector<MidiEvent, ExtMemAllocator<MidiEvent>>& getCurrentMidiSnapshot(const Track& track);
+    static const MidiEventVec& peekLastMidiSnapshot(const Track& track);
+    static PooledMidiDeque& getMidiHistory(Track& track);
+    static const MidiEventVec& getCurrentMidiSnapshot(const Track& track);
     // Undo clear
     static void pushClearTrackSnapshot(Track& track);
     static void undoClearTrack(Track& track);

@@ -2,71 +2,114 @@
 //  Licensed under the PolyForm Noncommercial 1.0.0
 
 #pragma once
-
 #include <cstddef>
-#include <new>
-#include <limits>
-#include <Arduino.h>
+#include <cstdlib>  // abort()
 
 /**
- * @brief Custom C++ Allocator that prioritizes internal RAM and spills over to PSRAM.
- * 
- * The system utilizes an ultra-fast internal RAM buffer capable of holding approximately 
- * 25,000 active MIDI events across all tracks. If a recording session exceeds this capacity, 
- * the system automatically and seamlessly spills over into the 8MB PSRAM, extending the 
- * capacity to over 600,000 additional events without interrupting playback.
- * 
- * - allocate: Attempts standard malloc (internal RAM) first. If it returns nullptr, 
- *             it falls back to extmem_malloc (PSRAM).
- * - deallocate: Checks the memory address. If >= 0x70000000 (Teensy 4.1 PSRAM start), 
- *               it uses extmem_free. Otherwise, it uses standard free.
+ * @file ExtMemAllocator.h
+ * @brief Spillover C++ allocator for Teensy 4.1 PSRAM (EXTMEM).
+ *
+ * Allocation strategy:
+ *   1. Try standard malloc() (internal OCRAM, ~300 KB free heap).
+ *      Handles roughly 25,000 MidiEvent objects (12 bytes each) before
+ *      internal RAM is exhausted.
+ *   2. If malloc returns nullptr (heap full), fall back to extmem_malloc()
+ *      (8 MB PSRAM chip), extending capacity by ~600,000 additional events.
+ *   3. If extmem_malloc also fails (PSRAM full or not installed), print a
+ *      diagnostic to Serial and call abort() — no silent hard fault.
+ *
+ * Deallocation strategy:
+ *   The Teensy 4.1 always maps PSRAM starting at address 0x70000000.
+ *   deallocate() checks the pointer: addresses in [0x70000000, 0x78000000)
+ *   are freed via extmem_free(); all others via free().
+ *
+ * Fallback (no PSRAM installed):
+ *   extmem_malloc() returns nullptr when no PSRAM chip is soldered. The
+ *   allocator will call abort() (with a Serial diagnostic) on large
+ *   allocations that exhaust internal RAM, rather than crashing silently.
+ *
+ * Usage:
+ *   std::vector<MidiEvent, ExtMemAllocator<MidiEvent> > v;
+ *   std::deque<Foo,        ExtMemAllocator<Foo> >        d;
  */
-template <class T>
-struct ExtMemAllocator {
-    typedef T value_type;
 
-    ExtMemAllocator() = default;
-    
-    template <class U> constexpr ExtMemAllocator(const ExtMemAllocator<U>&) noexcept {}
+// extmem_malloc / extmem_free are provided by the Teensy core headers.
+// Guard against non-Teensy builds (e.g. native unit-test toolchain).
+#if defined(ARDUINO) && defined(__IMXRT1062__)
+  #include <Arduino.h>
+  extern "C" void* extmem_malloc(size_t size);
+  extern "C" void  extmem_free(void* ptr);
+  #define EXTMEM_PSRAM_START 0x70000000UL
+  #define EXTMEM_PSRAM_END   0x78000000UL  // 8 MB ceiling
+  #define EXTMEM_AVAILABLE 1
+#else
+  // Native / test builds: PSRAM is not available. All allocations go to
+  // standard malloc so tests can still compile and run on the host.
+  #include <cstdlib>
+  static inline void* extmem_malloc(size_t size) { return nullptr; }
+  static inline void  extmem_free(void* /*ptr*/) {}
+  #define EXTMEM_PSRAM_START 0UL
+  #define EXTMEM_PSRAM_END   0UL
+  #define EXTMEM_AVAILABLE 0
+#endif
 
-    [[nodiscard]] T* allocate(std::size_t n) {
-        if (n > std::numeric_limits<std::size_t>::max() / sizeof(T)) {
-            throw std::bad_alloc();
-        }
+template <typename T>
+class ExtMemAllocator {
+public:
+    using value_type = T;
 
-        std::size_t bytes = n * sizeof(T);
-        
-        // 1. Try internal RAM first (fastest)
-        void* p = std::malloc(bytes);
-        
-        // 2. If internal RAM is full, spill over to PSRAM
-        if (!p) {
-            p = extmem_malloc(bytes);
-        }
+    // Required for std::allocator_traits compatibility
+    using pointer            = T*;
+    using const_pointer      = const T*;
+    using reference          = T&;
+    using const_reference    = const T&;
+    using size_type          = std::size_t;
+    using difference_type    = std::ptrdiff_t;
 
-        // 3. If both are full (or PSRAM not installed), fail gracefully
-        if (!p) {
-            throw std::bad_alloc();
-        }
+    template <typename U>
+    struct rebind { using other = ExtMemAllocator<U>; };
 
-        return static_cast<T*>(p);
+    ExtMemAllocator() noexcept = default;
+
+    template <typename U>
+    ExtMemAllocator(const ExtMemAllocator<U>&) noexcept {}
+
+    T* allocate(std::size_t n) {
+        const std::size_t bytes = n * sizeof(T);
+
+        // 1. Try fast internal RAM first.
+        void* ptr = malloc(bytes);
+        if (ptr) return static_cast<T*>(ptr);
+
+        // 2. Internal RAM exhausted: spill over to PSRAM.
+        ptr = extmem_malloc(bytes);
+        if (ptr) return static_cast<T*>(ptr);
+
+        // 3. Both exhausted (or no PSRAM installed).
+        // Exceptions are disabled in the Teensy/Arduino build. Halt with a
+        // diagnostic message so the failure is visible over Serial and in
+        // crash-log rather than silently producing undefined behaviour.
+#if defined(ARDUINO)
+        Serial.println("[ExtMemAllocator] FATAL: both internal RAM and PSRAM are exhausted!");
+        Serial.flush();
+#endif
+        abort();
     }
 
-    void deallocate(T* p, std::size_t n) noexcept {
-        if (!p) return;
-
-        // Teensy 4.1 PSRAM is mapped starting at 0x70000000
-        uintptr_t address = reinterpret_cast<uintptr_t>(p);
-        if (address >= 0x70000000) {
-            extmem_free(p);
+    void deallocate(T* ptr, std::size_t /*n*/) noexcept {
+        if (!ptr) return;
+        const auto addr = reinterpret_cast<unsigned long>(ptr);
+        if (addr >= EXTMEM_PSRAM_START && addr < EXTMEM_PSRAM_END) {
+            extmem_free(ptr);
         } else {
-            std::free(p);
+            free(ptr);
         }
     }
+
+    // Equality: all instances of the same type share the same allocation source.
+    template <typename U>
+    bool operator==(const ExtMemAllocator<U>&) const noexcept { return true; }
+
+    template <typename U>
+    bool operator!=(const ExtMemAllocator<U>&) const noexcept { return false; }
 };
-
-template <class T, class U>
-bool operator==(const ExtMemAllocator<T>&, const ExtMemAllocator<U>&) { return true; }
-
-template <class T, class U>
-bool operator!=(const ExtMemAllocator<T>&, const ExtMemAllocator<U>&) { return false; }

@@ -22,11 +22,9 @@
 #include "NoteEditManager.h"  // Keep temporarily for move note logic
 #include "Utils/PerformanceMonitor.h"  // Performance monitoring
 #include "Utils/MemoryMonitor.h"
+#include "Utils/MemoryPool.h"
 
 void setup() {
-  // Initialize PSRAM allocations first, before any other heavy lifting
-  MemoryPool::globalMidiEventPool.init();
-
   delay(500);  // USB re-enumeration after reset
   Serial.begin(115200);
   while (!Serial && millis() < 3000) delay(10);
@@ -44,6 +42,10 @@ void setup() {
     delay(5000);
   }
 
+  // Initialise the global MIDI event pool now that the Teensy core has completed
+  // PSRAM hardware initialisation. This must happen before any Track/Loop allocations.
+  MemoryPool::globalMidiEventPool.init();
+
   // Allocate Loop arrays immediately - before USB Host, faders, etc. consume heap
   trackManager.allocateLoopsEarly();
   MemoryMonitor::logStatus();  // Log heap after loops allocated
@@ -59,9 +61,9 @@ void setup() {
   midiFaderManager.setup();
   
   barStepButtonHandler.setup();
-  // Manual test: enable for BarStepButton debug output over Serial
-  barStepButtonHandler.setTestLoggingEnabled(true);
-  logger.setCategoryEnabled(CAT_BAR_STEP_BUTTON, true);
+  // Manual test only: enable BarStepButton debug output (see docs/Guides/MANUAL_TEST_BAR_STEP_BUTTONS.md)
+  barStepButtonHandler.setTestLoggingEnabled(false);
+  logger.setCategoryEnabled(CAT_BAR_STEP_BUTTON, false);
   
   // Connect NoteEditManager to MidiFaderProcessor
   noteEditManager.setFaderProcessor(&midiFaderManager.getProcessor());
@@ -70,8 +72,8 @@ void setup() {
   //midiButtonManager.setup();
 
   // Initialize logger (Serial already begun above)
-  logger.setup(LOG_DEBUG);  // Set to LOG_INFO for production
-  logger.setCategoryEnabled(CAT_MIDI, true);  // Ensure MIDI logging is enabled
+  logger.setup(LOG_INFO);  // Set to LOG_INFO/LOG_DEBUG for production/debug
+  logger.setCategoryEnabled(CAT_MIDI, false);  // Ensure MIDI logging is enabled
   logger.setCategoryEnabled(CAT_MIDI_LED, false);  // LED update logging (channel/destinations)
   logger.setCategoryEnabled(CAT_STORAGE, false);  // StorageManager v3 per-slot save progress (verbose)
 

@@ -34,8 +34,8 @@ EditManager::MovingNoteIdentity::DeletedNote createDeletedNote(
  * @param tick The tick position to match
  * @return Iterator to the found event, or midiEvents.end() if not found
  */
-std::vector<MidiEvent>::iterator findNoteOnEvent(
-    std::vector<MidiEvent>& midiEvents,
+MidiEventVec::iterator findNoteOnEvent(
+    MidiEventVec& midiEvents,
     uint8_t pitch,
     uint32_t tick);
 
@@ -46,8 +46,8 @@ std::vector<MidiEvent>::iterator findNoteOnEvent(
  * @param tick The tick position to match
  * @return Iterator to the found event, or midiEvents.end() if not found
  */
-std::vector<MidiEvent>::iterator findNoteOffEvent(
-    std::vector<MidiEvent>& midiEvents,
+MidiEventVec::iterator findNoteOffEvent(
+    MidiEventVec& midiEvents,
     uint8_t pitch,
     uint32_t tick);
 
@@ -59,9 +59,9 @@ std::vector<MidiEvent>::iterator findNoteOffEvent(
  * @param endTick The end tick position  
  * @return Pair of iterators (NoteOn, NoteOff), either may be end() if not found
  */
-std::pair<std::vector<MidiEvent>::iterator, std::vector<MidiEvent>::iterator> 
+std::pair<MidiEventVec::iterator, MidiEventVec::iterator> 
 findNoteEventPair(
-    std::vector<MidiEvent>& midiEvents,
+    MidiEventVec& midiEvents,
     uint8_t pitch,
     uint32_t startTick,
     uint32_t endTick);

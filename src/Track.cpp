@@ -364,7 +364,7 @@ void Track::validateAndCleanupMidiEvents() {
     
     // Remove orphaned events
     if (orphanedCount > 0) {
-        std::vector<MidiEvent> cleanedEvents;
+        MidiEventVec cleanedEvents;
         cleanedEvents.reserve(loop.midiEvents.size() - orphanedCount);
         
         for (size_t i = 0; i < loop.midiEvents.size(); i++) {
@@ -695,7 +695,7 @@ void Track::recordMidiEvents(midi::MidiType type, byte channel, byte data1, byte
 
 void Track::rebuildPlaybackOrder() {
   Loop& loop = getActiveLoop();
-  std::vector<size_t>& playbackOrder = loop.getPlaybackOrder();
+  PlaybackOrderVec& playbackOrder = loop.getPlaybackOrder();
   playbackOrder.resize(loop.midiEvents.size());
   for (size_t i = 0; i < loop.midiEvents.size(); i++) {
     playbackOrder[i] = i;
@@ -721,7 +721,7 @@ void Track::playMidiEvents(uint32_t currentTick, bool isAudible) {
 
   if (tickInLoop < loop.lastTickInLoop) {
     loop.nextEventIndex = 0;
-    logger.debug("Loop wrapped, resetting index");
+    logger.trace("Loop wrapped, resetting index");
   }
 
   uint32_t prevTickInLoop = loop.lastTickInLoop;
@@ -744,7 +744,7 @@ void Track::playMidiEvents(uint32_t currentTick, bool isAudible) {
   uint8_t lastSentNote = 0;
   uint8_t lastSentType = 0xFF;
 
-  const std::vector<size_t>& playbackOrder = loop.getPlaybackOrder();
+  const PlaybackOrderVec& playbackOrder = loop.getPlaybackOrder();
   while (loop.nextEventIndex < playbackOrder.size()) {
     const MidiEvent &evt = loop.midiEvents[playbackOrder[loop.nextEventIndex]];
     uint32_t evTick = evt.tick % loop.loopLengthTicks;
@@ -784,7 +784,7 @@ void Track::playMidiEventsForSlot(uint8_t slotIndex, uint32_t currentTick, bool 
   if (loop.midiEvents.empty() || loop.loopLengthTicks == 0) return;
 
   if (loop.playbackOrderDirty) {
-    std::vector<size_t>& playbackOrder = loop.getPlaybackOrder();
+    PlaybackOrderVec& playbackOrder = loop.getPlaybackOrder();
     playbackOrder.resize(loop.midiEvents.size());
     for (size_t i = 0; i < loop.midiEvents.size(); i++) {
       playbackOrder[i] = i;
@@ -805,7 +805,7 @@ void Track::playMidiEventsForSlot(uint8_t slotIndex, uint32_t currentTick, bool 
   uint32_t prevTickInLoop = loop.lastTickInLoop;
   loop.lastTickInLoop = tickInLoop;
   bool atLoopStart = (prevTickInLoop == UINT32_MAX) || (tickInLoop <= prevTickInLoop);
-  const std::vector<size_t>& playbackOrder = loop.getPlaybackOrder();
+  const PlaybackOrderVec& playbackOrder = loop.getPlaybackOrder();
 
   while (loop.nextEventIndex < playbackOrder.size()) {
     const MidiEvent &evt = loop.midiEvents[playbackOrder[loop.nextEventIndex]];
@@ -829,12 +829,13 @@ void Track::sendMidiEvent(const MidiEvent& evt) {
   if (evt.channel >= 1 && evt.channel <= 16) {
     evtCopy.channel = midiChannel;
   }
-  // Log loop playback notes for debugging
+  // Hot path: logging every loop note at DEBUG blocks USB Serial for milliseconds and freezes the UI.
+  // Use LOG_TRACE so deep MIDI tracing is opt-in (Logger at TRACE + CAT_MIDI on).
   if (evt.isNoteOn() || evt.isNoteOff()) {
     const char* noteNames[] = {"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"};
     int octave = (evtCopy.data.noteData.note / 12) - 1;
     const char* noteName = noteNames[evtCopy.data.noteData.note % 12];
-    logger.log(CAT_MIDI, LOG_DEBUG, "Loop SEND: %s ch=%d %s%d (note %d) vel=%d tick=%lu",
+    logger.log(CAT_MIDI, LOG_TRACE, "Loop SEND: %s ch=%d %s%d (note %d) vel=%d tick=%lu",
                evt.isNoteOn() ? "NoteOn" : "NoteOff",
                evtCopy.channel, noteName, octave,
                evtCopy.data.noteData.note, evtCopy.data.noteData.velocity, evt.tick);
@@ -891,7 +892,10 @@ bool Track::isPlaying() const {
 }
 
 void Track::setLoopLength(uint32_t ticks) {
-  getActiveLoop().loopLengthTicks = ticks;
+  Loop& loop = getActiveLoop();
+  if (loop.loopLengthTicks == ticks) return;
+  loop.loopLengthTicks = ticks;
+  invalidateCaches();
 }
 
 void Track::setLoopLengthWithWrapping(uint32_t newLoopLength) {

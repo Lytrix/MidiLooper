@@ -2,23 +2,17 @@
 //  Licensed under the PolyForm Noncommercial 1.0.0
 
 #include "Utils/NoteUtils.h"
+#include "Utils/MidiEventVecFnvHash.h"
 #include "Logger.h"
 #include <set>
 #include <tuple>
 
 // CachedNoteList implementation
-uint32_t NoteUtils::CachedNoteList::computeMidiHash(const std::vector<MidiEvent>& midiEvents) {
-    uint32_t hash = 2166136261u; // FNV-1a initial value
-    for (const auto& evt : midiEvents) {
-        hash ^= static_cast<uint32_t>(evt.type); hash *= 16777619u;
-        hash ^= evt.tick; hash *= 16777619u;
-        hash ^= evt.data.noteData.note; hash *= 16777619u;
-        hash ^= evt.data.noteData.velocity; hash *= 16777619u;
-    }
-    return hash;
+uint32_t NoteUtils::CachedNoteList::computeMidiHash(const MidiEventVec& midiEvents) {
+    return midiEventVecFnv1aHash(midiEvents);
 }
 
-const std::vector<NoteUtils::DisplayNote>& NoteUtils::CachedNoteList::getNotes(const std::vector<MidiEvent>& midiEvents, uint32_t loopLength) {
+const std::vector<NoteUtils::DisplayNote>& NoteUtils::CachedNoteList::getNotes(const MidiEventVec& midiEvents, uint32_t loopLength) {
     uint32_t currentHash = computeMidiHash(midiEvents);
     
     if (isValid && currentHash == lastMidiHash && loopLength == lastLoopLength) {
@@ -34,7 +28,7 @@ const std::vector<NoteUtils::DisplayNote>& NoteUtils::CachedNoteList::getNotes(c
     return cachedNotes;
 }
 
-std::vector<NoteUtils::DisplayNote> NoteUtils::reconstructNotes(const std::vector<MidiEvent>& midiEvents, uint32_t loopLength) {
+std::vector<NoteUtils::DisplayNote> NoteUtils::reconstructNotes(const MidiEventVec& midiEvents, uint32_t loopLength) {
     using DisplayNote = NoteUtils::DisplayNote;
     std::vector<DisplayNote> notes;
     std::map<uint8_t, std::vector<DisplayNote>> activeNoteStacks;
@@ -138,7 +132,7 @@ std::vector<NoteUtils::DisplayNote> NoteUtils::reconstructNotes(const std::vecto
 }
 
 // Build a fast lookup index for NoteOn/NoteOff events
-NoteUtils::EventIndex NoteUtils::buildEventIndex(const std::vector<MidiEvent>& midiEvents) {
+NoteUtils::EventIndex NoteUtils::buildEventIndex(const MidiEventVec& midiEvents) {
     using Key = NoteUtils::Key;
     EventIndexMap onIndex;
     EventIndexMap offIndex;

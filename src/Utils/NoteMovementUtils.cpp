@@ -10,26 +10,6 @@
 
 namespace NoteMovementUtils {
 
-uint32_t wrapPosition(int32_t position, uint32_t loopLength) {
-    if (position < 0) {
-        position = (int32_t)loopLength + position;
-        while (position < 0) {
-            position += (int32_t)loopLength;
-        }
-    } else if (position >= (int32_t)loopLength) {
-        position = position % (int32_t)loopLength;
-    }
-    return (uint32_t)position;
-}
-
-uint32_t calculateNoteLength(uint32_t start, uint32_t end, uint32_t loopLength) {
-    if (end >= start) {
-        return end - start;
-    } else {
-        return (loopLength - start) + end;
-    }
-}
-
 bool notesOverlap(uint32_t start1, uint32_t end1, uint32_t start2, uint32_t end2, uint32_t loopLength) {
     // Convert to unwrapped positions for comparison
     uint32_t unwrappedEnd1 = end1;
@@ -65,7 +45,6 @@ bool notesOverlap(uint32_t start1, uint32_t end1, uint32_t start2, uint32_t end2
 void findOverlaps(const std::vector<NoteUtils::DisplayNote>& currentNotes,
                  uint8_t movingNotePitch,
                  uint32_t currentStart,
-                 uint32_t currentEnd,
                  uint32_t newStart,
                  uint32_t newEnd,
                  int delta,
@@ -140,7 +119,7 @@ void findOverlaps(const std::vector<NoteUtils::DisplayNote>& currentNotes,
               notesToShorten.size(), notesToDelete.size());
 }
 
-void applyShortenOrDelete(std::vector<MidiEvent>& midiEvents,
+void applyShortenOrDelete(MidiEventVec& midiEvents,
                          const std::vector<std::pair<NoteUtils::DisplayNote, uint32_t>>& notesToShorten,
                          const std::vector<NoteUtils::DisplayNote>& notesToDelete,
                          EditManager& manager,
@@ -279,7 +258,7 @@ void applyShortenOrDelete(std::vector<MidiEvent>& midiEvents,
     }
 }
 
-void restoreNotes(std::vector<MidiEvent>& midiEvents,
+void restoreNotes(MidiEventVec& midiEvents,
                  const std::vector<EditManager::MovingNoteIdentity::DeletedNote>& notesToRestore,
                  EditManager& manager,
                  uint32_t loopLength,
@@ -364,7 +343,7 @@ void restoreNotes(std::vector<MidiEvent>& midiEvents,
               restored.size(), manager.movingNote.deletedNotes.size());
 }
 
-void finalReconstructAndSelect(std::vector<MidiEvent>& midiEvents,
+void finalReconstructAndSelect(MidiEventVec& midiEvents,
                               EditManager& manager,
                               uint8_t movingNotePitch,
                               uint32_t newStart,
@@ -473,7 +452,7 @@ void moveNoteWithOverlapHandling(Track& track, EditManager& manager,
     
     // STEP 2: Detect and categorize overlaps using the filtered list
     std::vector<std::pair<NoteUtils::DisplayNote, uint32_t>> notesToShorten;
-    findOverlaps(otherNotesOfSamePitch, movingNotePitch, currentStart, currentEnd, newStart, newEnd, delta, loopLength,
+    findOverlaps(otherNotesOfSamePitch, movingNotePitch, currentStart, newStart, newEnd, delta, loopLength,
                 notesToShorten, notesToDelete);
     
     // STEP 3: Find current MIDI events and check for pitch changes
@@ -634,7 +613,7 @@ void moveNoteWithOverlapHandling(Track& track, EditManager& manager,
 }
 
 // Find the corresponding note-off event for a given note-on event using LIFO pairing logic
-MidiEvent* findCorrespondingNoteOff(std::vector<MidiEvent>& midiEvents, MidiEvent* noteOnEvent, uint8_t pitch, std::uint32_t startTick, std::uint32_t endTick) {
+MidiEvent* findCorrespondingNoteOff(MidiEventVec& midiEvents, MidiEvent* noteOnEvent, uint8_t pitch, std::uint32_t startTick, std::uint32_t endTick) {
     // Use LIFO pairing logic similar to NoteUtils::reconstructNotes
     // We need to simulate the pairing process to find which note-off belongs to our note-on
     
@@ -667,7 +646,7 @@ MidiEvent* findCorrespondingNoteOff(std::vector<MidiEvent>& midiEvents, MidiEven
 }
 
 // Extend shortened notes dynamically
-void extendShortenedNotes(std::vector<MidiEvent>& midiEvents,
+void extendShortenedNotes(MidiEventVec& midiEvents,
                          const std::vector<std::pair<EditManager::MovingNoteIdentity::DeletedNote, std::uint32_t>>& notesToExtend,
                          EditManager& manager,
                          std::uint32_t loopLength) {

@@ -59,7 +59,7 @@ private:
      * @param onIndex Event index map for on events
      * @param offIndex Event index map for off events
      */
-    static void applyShortenOrDelete(std::vector<MidiEvent>& midiEvents,
+    static void applyShortenOrDelete(MidiEventVec& midiEvents,
                                      const std::vector<std::pair<DisplayNote, uint32_t>>& notesToShorten,
                                      const std::vector<DisplayNote>& notesToDelete,
                                      EditManager& manager,

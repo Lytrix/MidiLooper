@@ -354,6 +354,8 @@ void NoteEditManager::deleteSelectedNote(Track& track) {
     }
     
     logger.info("MIDI Encoder: Deleted %d MIDI events for note", deletedCount);
+
+    track.invalidateCaches();
     
     // Since we're using dedicated faders now, we don't need to manage complex edit modes
     // Just send the current main edit mode to keep the system synchronized
