@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <cstddef>
 #include "MidiEvent.h"
+#include "ExtMemAllocator.h"
 
 // Forward declarations
 class Logger;
@@ -19,20 +20,32 @@ namespace MemoryPool {
  * 
  * Pre-allocates a pool of MidiEvent objects and provides fast allocation/deallocation.
  * Reduces memory fragmentation and improves performance for frequent MIDI event creation.
+ * Uses ExtMemAllocator to spill over to PSRAM if internal RAM is exhausted.
  */
 class MidiEventPool {
 private:
     static constexpr size_t INITIAL_POOL_SIZE = 1024;  // Start with 1K events
     static constexpr size_t GROWTH_FACTOR = 2;         // Double size when growing
     
-    std::vector<MidiEvent> pool;
-    std::vector<bool> used;
+    std::vector<MidiEvent, ExtMemAllocator<MidiEvent>> pool;
+    std::vector<bool, ExtMemAllocator<bool>> used;
     size_t nextFreeIndex;
+    bool initialized;
     
 public:
-    MidiEventPool() : nextFreeIndex(0) {
+    MidiEventPool() : nextFreeIndex(0), initialized(false) {
+        // Defer allocation until init() is called to ensure PSRAM hardware is ready
+    }
+    
+    /**
+     * @brief Initialize the pool allocations. Must be called during setup()
+     * after PSRAM hardware (if any) has been initialized by the core.
+     */
+    void init() {
+        if (initialized) return;
         pool.reserve(INITIAL_POOL_SIZE);
         used.resize(INITIAL_POOL_SIZE, false);
+        initialized = true;
     }
     
     /**
@@ -40,6 +53,8 @@ public:
      * @return Pointer to an unused MidiEvent, or nullptr if pool is full
      */
     MidiEvent* allocate() {
+        if (!initialized) init(); // Safety fallback, though init() should be called explicitly
+
         // Find next free slot
         while (nextFreeIndex < used.size() && used[nextFreeIndex]) {
             nextFreeIndex++;
@@ -118,10 +133,11 @@ private:
  * 
  * Provides std::vector-like interface but uses the memory pool for better performance.
  * Automatically manages pool allocations and deallocations.
+ * Uses ExtMemAllocator for its internal pointer array to spill over to PSRAM if needed.
  */
 class PooledMidiEventVector {
 private:
-    std::vector<MidiEvent*> events;
+    std::vector<MidiEvent*, ExtMemAllocator<MidiEvent*>> events;
     MidiEventPool& pool;
     
 public:
@@ -188,10 +204,10 @@ public:
     auto end() const { return events.end(); }
     
     /**
-     * @brief Convert to std::vector<MidiEvent> (for compatibility)
+     * @brief Convert to std::vector<MidiEvent, ExtMemAllocator<MidiEvent>> (for compatibility)
      */
-    std::vector<MidiEvent> toVector() const {
-        std::vector<MidiEvent> result;
+    std::vector<MidiEvent, ExtMemAllocator<MidiEvent>> toVector() const {
+        std::vector<MidiEvent, ExtMemAllocator<MidiEvent>> result;
         result.reserve(events.size());
         for (const MidiEvent* event : events) {
             result.push_back(*event);

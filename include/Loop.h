@@ -22,14 +22,15 @@
 #include "TrackState.h"
 #include "Utils/MemoryPool.h"
 #include "Utils/NoteUtils.h"
+#include "Utils/ExtMemAllocator.h"
 #include "Globals.h"
 
 // Forward
 class Track;
 
-using PooledMidiDeque = std::deque<MemoryPool::PooledMidiEventVector>;
-using TrackStateDeque = std::deque<TrackState>;
-using Uint32Deque = std::deque<uint32_t>;
+using PooledMidiDeque = std::deque<MemoryPool::PooledMidiEventVector, ExtMemAllocator<MemoryPool::PooledMidiEventVector>>;
+using TrackStateDeque = std::deque<TrackState, ExtMemAllocator<TrackState>>;
+using Uint32Deque = std::deque<uint32_t, ExtMemAllocator<uint32_t>>;
 
 /// Loop length/start geometry stored alongside each overdub undo snapshot (per slot).
 struct OverdubGeomSnapshot {
@@ -37,11 +38,11 @@ struct OverdubGeomSnapshot {
   uint32_t startLoopTick = 0;
   uint32_t loopStartTick = 0;
 };
-using OverdubGeomDeque = std::deque<OverdubGeomSnapshot>;
+using OverdubGeomDeque = std::deque<OverdubGeomSnapshot, ExtMemAllocator<OverdubGeomSnapshot>>;
 
 struct Loop {
   // Sequence data
-  std::vector<MidiEvent> midiEvents;
+  std::vector<MidiEvent, ExtMemAllocator<MidiEvent>> midiEvents;
   uint32_t startLoopTick = 0;
   uint32_t loopLengthTicks = 0;
   uint32_t loopStartTick = 0;
@@ -207,11 +208,11 @@ struct Loop {
   }
   const Uint32Deque* tryGetLoopStartRedoHistory() const { return loopStartRedoHistory_ ? loopStartRedoHistory_.get() : nullptr; }
 
-  std::vector<size_t>& getPlaybackOrder() {
-    if (!playbackOrder_) playbackOrder_ = std::make_unique<std::vector<size_t>>();
+  std::vector<size_t, ExtMemAllocator<size_t>>& getPlaybackOrder() {
+    if (!playbackOrder_) playbackOrder_ = std::make_unique<std::vector<size_t, ExtMemAllocator<size_t>>>();
     return *playbackOrder_;
   }
-  const std::vector<size_t>& getPlaybackOrder() const {
+  const std::vector<size_t, ExtMemAllocator<size_t>>& getPlaybackOrder() const {
     return const_cast<Loop*>(this)->getPlaybackOrder();
   }
   bool playbackOrderEmpty() const { return !playbackOrder_ || playbackOrder_->empty(); }
@@ -282,7 +283,7 @@ private:
   std::unique_ptr<Uint32Deque> clearStartRedoHistory_;
   std::unique_ptr<Uint32Deque> loopStartHistory_;
   std::unique_ptr<Uint32Deque> loopStartRedoHistory_;
-  std::unique_ptr<std::vector<size_t>> playbackOrder_;
+  std::unique_ptr<std::vector<size_t, ExtMemAllocator<size_t>>> playbackOrder_;
   std::unique_ptr<NoteUtils::CachedNoteList> noteCache_;
   std::unique_ptr<NoteUtils::EventIndex> cachedEventIndex_;
 };

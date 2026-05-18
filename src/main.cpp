@@ -24,6 +24,9 @@
 #include "Utils/MemoryMonitor.h"
 
 void setup() {
+  // Initialize PSRAM allocations first, before any other heavy lifting
+  MemoryPool::globalMidiEventPool.init();
+
   delay(500);  // USB re-enumeration after reset
   Serial.begin(115200);
   while (!Serial && millis() < 3000) delay(10);

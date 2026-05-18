@@ -122,8 +122,8 @@ void TrackUndo::popLastUndo(Track& track) {
     }
 }
 
-const std::vector<MidiEvent>& TrackUndo::peekLastMidiSnapshot(const Track& track) {
-    static std::vector<MidiEvent> tempSnapshot;
+const std::vector<MidiEvent, ExtMemAllocator<MidiEvent>>& TrackUndo::peekLastMidiSnapshot(const Track& track) {
+    static std::vector<MidiEvent, ExtMemAllocator<MidiEvent>> tempSnapshot;
     tempSnapshot.clear();
     const Loop& loop = track.getActiveLoop();
     if (!loop.midiHistoryEmpty()) {
@@ -135,11 +135,11 @@ const std::vector<MidiEvent>& TrackUndo::peekLastMidiSnapshot(const Track& track
     return tempSnapshot;
 }
 
-std::deque<MemoryPool::PooledMidiEventVector>& TrackUndo::getMidiHistory(Track& track) {
+std::deque<MemoryPool::PooledMidiEventVector, ExtMemAllocator<MemoryPool::PooledMidiEventVector>>& TrackUndo::getMidiHistory(Track& track) {
     return track.getActiveLoop().getMidiHistory();
 }
 
-const std::vector<MidiEvent>& TrackUndo::getCurrentMidiSnapshot(const Track& track) {
+const std::vector<MidiEvent, ExtMemAllocator<MidiEvent>>& TrackUndo::getCurrentMidiSnapshot(const Track& track) {
     return track.getMidiEvents();
 }
 
