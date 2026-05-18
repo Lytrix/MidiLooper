@@ -460,10 +460,10 @@ void DisplayManager::drawSidebar(Track& selectedTrack, uint8_t displaySlot) {
     char modeTop[6] = "-";   // max 5 chars
     char modeBottom[6] = "-";// max 5 chars
     switch (mode) {
-        case SidebarMode::LOOP_EDIT:  strcpy(modeTop, "EDIT"); strcpy(modeBottom, "LOOP"); break;
-        case SidebarMode::NOTE_EDIT:  strcpy(modeTop, "EDIT"); strcpy(modeBottom, "NOTE"); break;
+        case SidebarMode::LOOP_EDIT:  strcpy(modeTop, "LOOP"); strcpy(modeBottom, "EDIT"); break;
+        case SidebarMode::NOTE_EDIT:  strcpy(modeTop, "NOTE"); strcpy(modeBottom, "EDIT"); break;
         case SidebarMode::REC:        strcpy(modeTop, "REC");  strcpy(modeBottom, "-");    break;
-        case SidebarMode::OVERD:      strcpy(modeTop, "OVERD");strcpy(modeBottom, "-");    break;
+        case SidebarMode::OVERD:      strcpy(modeTop, "OVER");strcpy(modeBottom, "DUB");    break;
         case SidebarMode::PLAY:       strcpy(modeTop, "PLAY"); strcpy(modeBottom, "-");    break;
         case SidebarMode::STOP:       strcpy(modeTop, "STOP"); strcpy(modeBottom, "-");    break;
         case SidebarMode::EMPTY_STATE:strcpy(modeTop, "-");    strcpy(modeBottom, "-");     break;
