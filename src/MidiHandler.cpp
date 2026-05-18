@@ -117,11 +117,12 @@ void MidiHandler::handleMidiMessage(byte type, byte channel, byte data1, byte da
     }
   }
 
-  // MIDI Thru: always pass through channel-voice (except control ch 13-16) to USB/Serial on selected track channel
+  // MIDI Thru: pass channel-voice to USB/Serial/USB-host on the selected track channel — except
+  // record-control plane (ch16) and DROID fader+LED plane (ch15), which must never be remapped.
   uint8_t outCh = trackManager.getSelectedTrack().getMidiChannel();
   bool isChannelVoice = (type == midi::NoteOn || type == midi::NoteOff || type == midi::ControlChange ||
                         type == midi::PitchBend || type == midi::AfterTouchChannel || type == midi::ProgramChange);
-  if (isChannelVoice && !isControlChannel(channel)) {
+  if (isChannelVoice && !isControlChannel(channel) && channel != MidiConfig::Channels::FADER) {
     sendMidiThru(type, outCh, data1, data2);
   }
 
@@ -336,22 +337,32 @@ void MidiHandler::sendMidiEvent(const MidiEvent& event) {
         }
         case midi::ControlChange: {
             // Skip CC 123 (All Notes Off) on LED channels - preserves DROID button LEDs on USB
-            bool skipUsb = (event.data.ccData.cc == 123 && isLedChannel(event.channel));
-            if (outputUSB && !skipUsb) usbMIDI.sendControlChange(event.data.ccData.cc, event.data.ccData.value, event.channel);
-            if (outputSerial) MIDIserial.sendControlChange(event.data.ccData.cc, event.data.ccData.value, event.channel);
+            const bool skipCc123OnLedCh = (event.data.ccData.cc == 123 && isLedChannel(event.channel));
+            if (outputUSB && !skipCc123OnLedCh) {
+                usbMIDI.sendControlChange(event.data.ccData.cc, event.data.ccData.value, event.channel);
+            }
+            if (outputSerial) {
+                MIDIserial.sendControlChange(event.data.ccData.cc, event.data.ccData.value, event.channel);
+            }
+            if (usbHostMIDI && !skipCc123OnLedCh) {
+                usbHostMIDI.sendControlChange(event.data.ccData.cc, event.data.ccData.value, event.channel);
+            }
             break;
         }
         case midi::PitchBend:
             if (outputUSB) usbMIDI.sendPitchBend(event.data.pitchBend, event.channel);
             if (outputSerial) MIDIserial.sendPitchBend(event.data.pitchBend, event.channel);
+            if (usbHostMIDI) usbHostMIDI.sendPitchBend(event.data.pitchBend, event.channel);
             break;
         case midi::AfterTouchChannel:
             if (outputUSB) usbMIDI.sendAfterTouch(event.data.channelPressure, event.channel);
             if (outputSerial) MIDIserial.sendAfterTouch(event.data.channelPressure, event.channel);
+            if (usbHostMIDI) usbHostMIDI.sendAfterTouch(event.data.channelPressure, event.channel);
             break;
         case midi::ProgramChange:
             if (outputUSB) usbMIDI.sendProgramChange(event.data.program, event.channel);
             if (outputSerial) MIDIserial.sendProgramChange(event.data.program, event.channel);
+            if (usbHostMIDI) usbHostMIDI.sendProgramChange(event.data.program, event.channel);
             break;
         case midi::SystemExclusive:
             if (outputUSB) usbMIDI.sendSysEx(event.data.sysexData.length, event.data.sysexData.data, true);
@@ -500,10 +511,7 @@ void MidiHandler::usbHostNoteOff(uint8_t channel, uint8_t note, uint8_t velocity
 
 void MidiHandler::usbHostControlChange(uint8_t channel, uint8_t control, uint8_t value) {
   if (instance) {
-    // Route CC to NoteEditManager for fader handling
-    noteEditManager.handleMidiCC(channel, control, value);
-    
-    // Route to regular MIDI handling
+    // Single path: handleControlChange routes to NoteEditManager + track recording (no duplicate CC).
     instance->handleMidiMessage(midi::ControlChange, channel, control, value, SOURCE_USB_HOST);
   }
 }
@@ -516,13 +524,7 @@ void MidiHandler::usbHostProgramChange(uint8_t channel, uint8_t program) {
 
 void MidiHandler::usbHostPitchChange(uint8_t channel, int pitch) {
   if (instance) {
-    // Convert unsigned 14-bit pitchbend (0-16383) to signed format (-8192 to 8191)
-    int16_t signedPitch = pitch - 8192;
-    
-    // Route pitchbend to NoteEditManager for fader handling
-    noteEditManager.handleMidiPitchbend(channel, signedPitch);
-    
-    // Route to regular MIDI handling
+    // Single path: handlePitchBend converts to signed and routes to NoteEditManager + recording.
     instance->handleMidiMessage(midi::PitchBend, channel, pitch & 0x7F, (pitch >> 7) & 0x7F, SOURCE_USB_HOST);
   }
 }
