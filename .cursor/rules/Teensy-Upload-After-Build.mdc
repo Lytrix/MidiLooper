@@ -1,0 +1,43 @@
+---
+description: After a successful teensy41 firmware build, ask before uploading to the board
+alwaysApply: true
+---
+
+# Teensy upload after firmware build
+
+## When this applies
+
+After you run a **successful** Teensy firmware build (`pio run -e teensy41`) because firmware code changed, **ask the user** whether to flash the board.
+
+Do **not** upload automatically. Do **not** skip the question silently.
+
+## What to ask
+
+Use a short, direct prompt, for example:
+
+> Build succeeded. Upload `firmware.hex` to the Teensy now?
+
+## If the user agrees
+
+From the project root:
+
+```bash
+pio run -e teensy41 -t upload
+```
+
+PlatformIO reuses the existing build output; you do **not** need a separate rebuild step before upload.
+
+## If the user declines
+
+Stop after the build. Do not run upload or monitor unless they ask.
+
+## When **not** to offer upload
+
+- `pio test -e native` or other host-only work
+- Build failed — fix first, then rebuild, then ask
+- User already asked only to build, compile-check, or run tests
+- User explicitly said not to upload in this session
+
+## Upload problems
+
+If upload fails on port detection, run `pio device list` and report what you find. Default env is `teensy41` per `platformio.ini`.
