@@ -1,6 +1,0 @@
----
-description: 
-alwaysApply: true
----
-
-When creating/modifying a docs/plans/*.plan.md or docs/Refinements/*.md, also update docs/DELIVERABLE_TRACKING.md to reflect the new/changed status.

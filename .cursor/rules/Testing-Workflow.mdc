@@ -1,0 +1,33 @@
+---
+description: Run PlatformIO host tests before git push, merge, or PR completion
+alwaysApply: true
+---
+
+# Testing before push or merge
+
+## Expectation
+
+Before **push**, **merge**, or **finishing a PR**, run the **host (native) unit test suite** so logic changes are validated without a Teensy connected.
+
+## Command
+
+From the project root:
+
+```bash
+pio test -e native
+```
+
+The `[env:native]` block in `platformio.ini` runs **host-only** suites (Unity, no Arduino). Suites that include `Track.h` / full firmware (`test_redo_functionality`) or the PSRAM `.ino` sketch are listed under `test_ignore` for `native` — run those with `pio test -e teensy41` or on hardware.
+
+If the native env is misconfigured, fix `platformio.ini` first.
+
+## When the user asks you to push / merge / open a PR
+
+1. Run `pio test -e native` (or confirm it was run and passed).
+2. If tests fail, fix or report before suggesting push/merge.
+3. **On-device** tests (`pio test -e teensy41` or PSRAM memtest sketch) are separate: not required for every push unless the change depends on hardware.
+
+## Scope reminder
+
+- **CI** should ideally run the same `pio test -e native` on every PR.
+- Routine `pio run -e teensy41` for local firmware does **not** replace the host test run before sharing code.
