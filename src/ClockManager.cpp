@@ -10,6 +10,7 @@
 #include "TrackManager.h"
 #include "Logger.h"
 #include "MidiHandler.h"
+#include "Utils/SessionCapture.h"
 
 ClockManager clockManager;  // Global instance initiated
 IntervalTimer clockTimer;
@@ -82,6 +83,8 @@ void ClockManager::requestTransitionTo(ClockSource target) {
 }
 
 void ClockManager::actuallyTransition(ClockSource from, ClockSource to) {
+  SC_CLOCK_SOURCE(from == CLOCK_EXTERNAL ? "EXT" : "INT",
+                  to == CLOCK_EXTERNAL ? "EXT" : "INT");
   clockSource = to;
   pendingClockSource = to;
   transitionPending = false;
@@ -116,6 +119,10 @@ void ClockManager::onMidiClockPulse() {
   if (!sequencerRunning) return;
 
   requestTransitionTo(CLOCK_EXTERNAL);
+  if (transitionPending &&
+      ClockSourceStateMachine::isValidTransition(clockSource, CLOCK_EXTERNAL)) {
+    actuallyTransition(clockSource, CLOCK_EXTERNAL);
+  }
 
   // Sliding window BPM: ring buffer of 25 timestamps = 24 intervals (one quarter note)
   // Formula: 60e6 / elapsed_us = BPM (elapsed = micros for 24 MIDI clock pulses)
@@ -128,27 +135,26 @@ void ClockManager::onMidiClockPulse() {
     if (elapsed > 0) {
       float computedBpm = 60000000.0f / (float)elapsed;
       if (computedBpm >= 20.0f && computedBpm <= 300.0f) {
+        [[maybe_unused]] const float windowBpm = computedBpm;
         if (bpmSmoothed > 0.0f && fabsf(computedBpm - bpmSmoothed) < 3.0f) {
           computedBpm = 0.02f * computedBpm + 0.98f * bpmSmoothed;
         }
         bpmSmoothed = computedBpm;
         setBpmFloat(computedBpm);
+        SC_BPM(windowBpm, bpmSmoothed);
       }
     }
   }
   pulseHead = (pulseHead + 1) % PULSE_BUF_SIZE;
 
-  // Midish pattern: advance at the START of each pulse, but skip on the
-  // first pulse after Start (currentTick is already 0 from onMidiStart).
-  // This keeps currentTick at the correct musical position between pulses,
-  // so notes arriving after a clock read the right value from getCurrentTick().
+  // Advance before updateAllTracks. Skip the first advance after MIDI Start so
+  // channel messages that follow the downbeat Clock still read tick 0 (not +8).
   if (firstPulseAfterStart) {
     firstPulseAfterStart = false;
   } else {
     currentTick += Config::TICKS_PER_CLOCK;
     trackManager.advanceJamTicks(Config::TICKS_PER_CLOCK);
   }
-
   trackManager.updateAllTracks(currentTick);
   lastMidiClockTime = micros();
 }
@@ -175,17 +181,28 @@ void ClockManager::onMidiStart() {
   sequencerRunning = true;
   pendingStart = false;
   requestTransitionTo(CLOCK_EXTERNAL);
+  // Slave immediately: while clockSource stays INTERNAL, updateInternalClock()
+  // keeps advancing currentTick at 192 PPQN until checkClockSource() runs.
+  // That drifted ~96 ticks (half a beat) ahead of the external sequencer
+  // before the first Clock pulse, clipping the downbeat and shifting notes.
+  if (transitionPending &&
+      ClockSourceStateMachine::isValidTransition(clockSource, CLOCK_EXTERNAL)) {
+    actuallyTransition(clockSource, CLOCK_EXTERNAL);
+  }
   pulseFillCount = 0;
   pulseHead = 0;
   lastMidiClockTime = micros();
   currentTick = 0;
   firstPulseAfterStart = true;
 
-  // Start all stopped tracks (same as toggleTransport when starting)
-  for (uint8_t i = 0; i < Config::NUM_TRACKS; i++) {
-    Track& t = trackManager.getTrack(i);
-    if (t.isStopped()) {
-      t.startPlaying(currentTick);
+  // Do not auto-play other loops while a capture is active or armed — playback
+  // bleeds back through MIDI thru and gets recorded as a spurious downbeat note.
+  if (!trackManager.hasActiveOrPendingCapture()) {
+    for (uint8_t i = 0; i < Config::NUM_TRACKS; i++) {
+      Track& t = trackManager.getTrack(i);
+      if (t.isStopped()) {
+        t.startPlaying(currentTick);
+      }
     }
   }
 
@@ -245,11 +262,12 @@ void ClockManager::toggleTransport() {
       midiHandler.sendStart();
       midiHandler.sendClock();  // First clock after Start is the downbeat (per MIDI spec)
     }
-    // Resume playback for all tracks that have data
-    for (uint8_t i = 0; i < Config::NUM_TRACKS; i++) {
-      Track& t = trackManager.getTrack(i);
-      if (t.isStopped()) {
-        t.startPlaying(currentTick);
+    if (!trackManager.hasActiveOrPendingCapture()) {
+      for (uint8_t i = 0; i < Config::NUM_TRACKS; i++) {
+        Track& t = trackManager.getTrack(i);
+        if (t.isStopped()) {
+          t.startPlaying(currentTick);
+        }
       }
     }
     logger.info("Transport started");

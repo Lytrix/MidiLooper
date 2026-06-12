@@ -8,8 +8,8 @@
 
 This is the codebase to run a **multi-track MIDI looper** on a **Teensy 4.1** with live loop jaming manipulations, piano-roll note/cc editing, tight hardware serial timing via minijack midi outs and usb on a 192 PPQN clock with hands on control workflow. It is built for **live performance**: record and layer multiple loop slots per track, remix them by quantized slot switching into new jams **while the music never needs to stop running** to keep into the vibe of the music with undo/redo capabilities.
 
-This branch is aimed at a **8x8 button grid with 4 motorized faders** 
-A smaller **encoder-and-4-buttons** rig is a direction for later but was the MVP; underneath this codebase, everything stays **MIDI-addressable**, so another controller can be made into a dedicated controller for this midi looper by updating [`include/MidiConfig.h`](include/MidiConfig.h) to your controller setup.
+The **base configuration** of this device is a minimal **encoder-and-4-buttons** module that must carry the full core workflow on its own (it exists physically but is currently dormant in the firmware — see [`docs/PROJECT_INTENT.md`](docs/PROJECT_INTENT.md) for the project goal and decision log).
+This branch drives the first **extension surface**: an **8x8 button grid with 4 motorized faders** (DROID). Underneath, everything stays **MIDI-addressable**, so another controller can be made into a dedicated controller for this midi looper by updating [`include/MidiConfig.h`](include/MidiConfig.h) to your controller setup.
 
 ---
 
@@ -48,9 +48,9 @@ Below is the **cheet sheet** of all available the button gestures.
 
 | Row | Short | Long | Double | Triple | Hold / two-step |
 |-----|-------|------|--------|--------|-----------------|
-| [**Scenes**](docs/Guides/control-surface/Scenes.md) | — | — | — | — | Roadmap / Phase 3 snapshots |
+| [**Scenes**](docs/Guides/control-surface/Scenes.md) | — | — | — | — | Not in firmware yet — roadmap / Phase 3 snapshots |
 | [**Tracks**](docs/Guides/control-surface/Tracks.md) | Select that track | Exclusive solo | Mute / unmute | — | — |
-| [**Jams**](docs/Guides/control-surface/Jams.md) | — | — | — | — | Target row for jam-era capture |
+| [**Jams**](docs/Guides/control-surface/Jams.md) | — | — | — | — | Not in firmware yet — target row for jam capture (jam today via Bars/16ths) |
 | [**Loops**](docs/Guides/control-surface/Loops.md) | Select/record slot; when playing, switch slot quantized to next 16th; selected slot toggles mute | If pressed slot is selected and filled: clear slot. If not selected and filled: queue single-slot switch at loop end | Slot undo | Slot redo | Hold one or more slots, release to commit multi-slot enabled set on next 16th |
 | [**Bars**](docs/Guides/control-surface/Bars-and-16ths.md) | Seek bar; move single-bar jam | Enter one-bar or two-bar jam | Exit jam | Undo loop start edit | Hold bar A → press bar B for range |
 | [**16ths**](docs/Guides/control-surface/Bars-and-16ths.md) | Seek 16th in jam; set / jump region | 16th jam / seek | Exit jam | Undo loop start | Hold 16th A → press 16th B for range |

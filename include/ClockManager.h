@@ -61,7 +61,7 @@ private:
   volatile uint32_t currentTick;
   volatile uint32_t lastMidiClockTime;
   volatile uint32_t lastInternalTickTime;
-  volatile bool firstPulseAfterStart;    // Skip advance on first clock pulse (midish pattern)
+  volatile bool firstPulseAfterStart;  // Hold tick at 0 through first Clock after Start
 
   // --- Clock source state machine ---
   ClockSource clockSource;

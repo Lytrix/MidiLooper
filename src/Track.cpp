@@ -18,6 +18,7 @@
 #include "LooperState.h"
 #include <cstdint>
 #include <limits>
+#include "Utils/SessionCapture.h"
 
 // -------------------------
 // Track class implementation
@@ -159,12 +160,17 @@ void Track::startRecording(uint32_t currentTick) {
   pendingNotes.clear();       // any hanging NoteOns
   loop.nextEventIndex = 0;    // so playback will start from the top
   loop.lastTickInLoop = 0;
+  // Fresh take: a stale loop-start window (prior loop-start edit or SD restore) must not
+  // shift the new notes on the piano roll — playback and grid use raw storage ticks.
+  loop.loopStartTick = 0;
 
   // Stamp the new start tick quantized to a beat.
   loop.startLoopTick = currentTick;
   
   invalidateCaches();
-  logger.logTrackEvent("Recording started", currentTick);
+  SC_REC_START(activeLoopIndex, currentTick);
+  logger.logTrackEvent("Recording started", currentTick, "startLoopTick=%lu loopStart=0",
+                       static_cast<unsigned long>(loop.startLoopTick));
 }
 
 // -------------------------
@@ -393,6 +399,7 @@ void Track::validateAndCleanupMidiEvents() {
 void Track::stopRecording(uint32_t currentTick) {
   if (!setState(TRACK_STOPPED_RECORDING)) return;
 
+  [[maybe_unused]] const bool captureAlignFlag = alignLoopOriginOnNextStop;
   Loop& loop = getActiveLoop();
   finalizePendingNotes(currentTick);
   validateAndCleanupMidiEvents();
@@ -451,6 +458,7 @@ void Track::stopRecording(uint32_t currentTick) {
   loop.startLoopTick = 0;
 
   invalidateCaches();
+  SC_REC_STOP("stop", activeLoopIndex, currentTick, recordStartTick, rawLength, finalLength, captureAlignFlag);
   logger.logTrackEvent("Recording stopped", currentTick, "recStart=%lu length=%lu",
                        static_cast<unsigned long>(recordStartTick), static_cast<unsigned long>(finalLength));
   logger.debug("Final ticks: currentTick=%lu recStart=%lu rawLength=%lu length=%lu", currentTick,
@@ -488,11 +496,14 @@ void Track::stopRecordingToStopped(uint32_t currentTick) {
       loop.loopLengthTicks = ((rawLength / TICKS_PER_BAR) + 1) * TICKS_PER_BAR;
   }
 
+  [[maybe_unused]] const uint32_t recordStartTickStopped = loop.startLoopTick;
   loop.nextEventIndex = 0;
   loop.lastTickInLoop = 0;
   loop.startLoopTick = 0;
   invalidateCaches();
 
+  SC_REC_STOP("stopToStopped", activeLoopIndex, currentTick, recordStartTickStopped,
+              rawLength, loop.loopLengthTicks, false);
   logger.logTrackEvent("Recording stopped (to STOPPED)", currentTick, "length=%lu",
                        static_cast<unsigned long>(loop.loopLengthTicks));
 

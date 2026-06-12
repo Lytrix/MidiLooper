@@ -13,6 +13,7 @@
 #include "BarStepButtonHandler.h"
 #include "MidiConfig.h"
 #include "NoteEditManager.h"
+#include "Utils/SessionCapture.h"
 
 MIDI_CREATE_INSTANCE(HardwareSerial, Serial8, MIDIserial);  // Teensy Serial8 for 5-pin DIN MIDI
 
@@ -100,6 +101,9 @@ void MidiHandler::handleMidiInput() {
 }
 
 void MidiHandler::handleMidiMessage(byte type, byte channel, byte data1, byte data2, InputSource source) {
+  SC_MIDI_IN(source == SOURCE_USB ? 'U' : source == SOURCE_SERIAL ? 'S' : 'H',
+             type, channel, data1, data2);
+
   // Log incoming MIDI messages (skip Clock to avoid log spam at 24 PPQN)
   if (type != midi::Clock) {
     const char* sourceStr = (source == SOURCE_USB) ? "USB" :
@@ -312,6 +316,9 @@ void MidiHandler::handleMidiContinue() {
 
 // --- MIDI Output ---
 void MidiHandler::sendMidiEvent(const MidiEvent& event) {
+    if (event.type != midi::Clock) {
+        SC_MIDI_OUT_EVENT(event);
+    }
     // Route and send the event to both USB and Serial as appropriate
     switch (event.type) {
         case midi::NoteOn: {
@@ -437,6 +444,7 @@ void MidiHandler::serviceUsbHostAfterLedPacket() {
 }
 
 void MidiHandler::sendLedFeedbackNoteOn(uint8_t note, uint8_t velocity) {
+  SC_LED_OUT(true, note, velocity);
   constexpr uint8_t ch = MidiConfig::Led::CHANNEL;
   if (outputUSB) usbMIDI.sendNoteOn(note, velocity, ch);
   if (outputSerial) MIDIserial.sendNoteOn(note, velocity, ch);
@@ -447,6 +455,7 @@ void MidiHandler::sendLedFeedbackNoteOn(uint8_t note, uint8_t velocity) {
 }
 
 void MidiHandler::sendLedFeedbackNoteOff(uint8_t note) {
+  SC_LED_OUT(false, note, 0);
   constexpr uint8_t ch = MidiConfig::Led::CHANNEL;
   if (outputUSB) usbMIDI.sendNoteOff(note, 0, ch);
   if (outputSerial) MIDIserial.sendNoteOff(note, 0, ch);

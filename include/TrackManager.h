@@ -57,6 +57,8 @@ public:
   void clearQueuedRecordingTrack(uint8_t trackIndex, uint8_t slotIndex);
   bool isRecordingQueued(uint8_t trackIndex, uint8_t slotIndex) const;
   bool hasQueuedRecordingTrack(uint8_t trackIndex) const;
+  /// True when any track is recording, armed, or has a pending record queue.
+  bool hasActiveOrPendingCapture() const;
   /// First slot index with a pending record arm/queue, or Config::INVALID_LOOP_SLOT if none.
   uint8_t getQueuedRecordingSlot(uint8_t trackIndex) const;
   /// Clears pending record flags; if track is TRACK_ARMED, returns to STOPPED or EMPTY.

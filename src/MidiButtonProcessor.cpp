@@ -3,6 +3,7 @@
 
 #include "MidiButtonProcessor.h"
 #include "Logger.h"
+#include "Utils/SessionCapture.h"
 
 MidiButtonProcessor::MidiButtonProcessor() {
     // Initialize button states for all possible MIDI notes on all channels
@@ -202,7 +203,8 @@ void MidiButtonProcessor::processPendingPresses() {
 }
 
 void MidiButtonProcessor::triggerButtonPress(uint8_t note, uint8_t channel, MidiButtonConfig::PressType pressType) {
-    logger.log(CAT_BUTTON, LOG_DEBUG, "Button press triggered: Ch%d Note%d Type%d", 
+    SC_GESTURE(channel, note, static_cast<int>(pressType));
+    logger.log(CAT_BUTTON, LOG_DEBUG, "Button press triggered: Ch%d Note%d Type%d",
                channel, note, static_cast<int>(pressType));
     
     if (buttonPressCallback) {
