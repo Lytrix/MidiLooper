@@ -1,5 +1,7 @@
 # Migration to MidiButtonManager Summary
 
+> **Historical document.** Some details no longer match the code: the firmware has **8 tracks** (`Config::NUM_TRACKS`), not 16, and the navigation buttons (notes 64–75) were later removed from the config. See [../DELIVERABLE_TRACKING.md](../DELIVERABLE_TRACKING.md) for current status.
+
 ## 🎯 **SUCCESS: Your button system has been successfully migrated to the new modular V2 architecture!**
 
 ## What's Changed

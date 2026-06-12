@@ -18,6 +18,7 @@ The **story and layout** of the looper start at the **[root `README.md`](../READ
 | [MOVE_NOTE_LOGIC.md](Guides/MOVE_NOTE_LOGIC.md) | Note movement and overlap resolution |
 | [NOTE_WRAPPING_LOGIC.md](Guides/NOTE_WRAPPING_LOGIC.md) | Note and loop wrap-around behavior |
 | [jam-bar-step-phases.md](Guides/jam-bar-step-phases.md) | Jam loops: bar/16th buttons, `jamTick`, HOLD_TWO, playback regions |
+| [MANUAL_TEST_CAPTURE_SESSION.md](Guides/MANUAL_TEST_CAPTURE_SESSION.md) | Capture session script for known bugs (instrumented `teensy41-capture` build) |
 
 Add new topical guides under `Guides/` and extend this table.
 
@@ -56,6 +57,7 @@ Add new topical guides under `Guides/` and extend this table.
 
 | Document | Role |
 |----------|------|
+| [PROJECT_INTENT.md](PROJECT_INTENT.md) | **Canonical project goal and decision log** — read this first; conflicts resolve in its favor |
 | [FEATURES.md](FEATURES.md) | Full technical feature checklist (also linked from root `README`) |
 | [FEATURE_PLANS.md](FEATURE_PLANS.md) | Conventions, **Phase 3 / multi-loop** pointer |
 | [plans/README.md](plans/README.md) | Design exports and phase specs (`docs/plans/`) |

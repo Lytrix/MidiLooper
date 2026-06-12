@@ -4,6 +4,7 @@
 #include "Logger.h"
 #include <stdarg.h>
 #include "MidiEvent.h"
+#include "Utils/SessionCapture.h"
 
 #if defined(PIO_UNIT_TEST_NATIVE)
 
@@ -145,6 +146,7 @@ void Logger::log(LogCategory category, LogLevel level, const char* format, ...) 
 }
 
 void Logger::logStateTransition(const char* component, const char* fromState, const char* toState) {
+  SC_STATE(component, fromState, toState);
   if (currentLevel < LOG_DEBUG) return;
   printPrefix(LOG_DEBUG, CAT_STATE);
   Serial.printf("%s state transition: %s -> %s", component, fromState, toState);

@@ -97,6 +97,9 @@ private:
     bool isLiveRecordingDisplay(const Track& track, uint8_t displaySlot) const;
     uint32_t resolveDisplayLoopLength(const Track& track, uint8_t displaySlot, uint32_t currentTick) const;
     uint32_t resolveDisplayTick(const Track& track, uint8_t displaySlot, uint32_t currentTick) const;
+    /// loopStartTick bracket offset — only in LOOP_EDIT; NOTE_EDIT uses storage ticks (0 origin).
+    uint32_t resolveLoopOriginTick(const Track& track, uint8_t displaySlot) const;
+    uint32_t resolvePlayheadInLoop(const Track& track, uint8_t displaySlot, uint32_t currentTick) const;
     const std::vector<DisplayNote>& resolveDisplayNotes(const Track& track, uint8_t displaySlot,
                                                         uint32_t currentTick);
 

@@ -1,5 +1,30 @@
 # Deliverable Tracking (Main vs Refinement)
 
+> Project goal and decision log: [PROJECT_INTENT.md](PROJECT_INTENT.md). This page is the single shipped-vs-next overview.
+
+## Shipped vs Next (updated Jun 2026)
+
+**Shipped** (in firmware on `feature/track-multi-looping`):
+
+- 8 tracks × 8 loop slots: per-slot record, overdub, clear, mute, quantized switching, multi-slot hold layering (`Track`, `TrackManager`, `SlotStateMachine`)
+- Undo/redo per slot (overdub, clear, loop start) — depth `MAX_UNDO_HISTORY = 25` (`TrackUndo`)
+- 192 PPQN internal clock, 24 PPQN MIDI sync with internal fallback (`ClockManager`, `ClockSourceStateMachine`)
+- Jam regions via Bars/16ths buttons (`BarStepButtonHandler`, jam state on `Track`)
+- Piano-roll note editing: select, start, length, pitch, move, wrap (`EditManager`, `EditStates/`, `NoteEditManager`)
+- Loop start/length fader editing (`LoopEditManager`)
+- SSD1322 OLED piano roll + track strip (`DisplayManager`); controller LED feedback (`MidiLedManager`)
+- SD persistence v3 with auto-save (`StorageManager`); PSRAM memory pool (`MemoryPool`, `ExtMemAllocator`)
+- DROID USB host MIDI buttons/faders (`MidiHandler`, `MidiButtonManager`, `MidiFaderManager`)
+
+**Not in firmware** (docs may suggest otherwise):
+
+- Phase 3 jam/arrangement **capture** (recording jam performance into a new slot), Scenes row, Jams row capture — spec exists ([plans/phase-3-multi-loop.md](plans/phase-3-multi-loop.md)), slots infrastructure shipped, capture itself not built
+- Encoder + 4-button GPIO base module — `ButtonManager` exists but is never called from `main.cpp` (see intent decision 1)
+- DROID LFO pulse feedback, CC value editing, Fader3 quantization %, Fader4 pitch transpose, EEPROM config
+- 16×2 LCD — driver present, pins disabled in `Globals.h`
+
+---
+
 This repo uses two different “deliverable” styles in Markdown:
 
 1. **Main deliverables (plan slices)** are exported by Cursor into `plans/*.plan.md`. These files usually include a `todos:` block with slice IDs and `status:` values.
@@ -53,9 +78,9 @@ This table is your “main vs sub deliverables” view. For most MVP items we on
 | Deliverable | Canonical code areas (from this repo) | Spec / plan docs | State |
 |---|---|---|---|
 | MVP: Display + Button workflow to load/save sessions | `DisplayManager`, `MidiButtonActions` (session triggers), `StorageManager` + `LooperStateManager` | Needs a plan doc export for the actual UX flow | Needs spec (not found as an existing slice doc) |
-| MVP: Memory expansion (PSRAM/OSRAM) to increase undo + loop capacity (>= 11000 notes) | `TrackUndo`, `Utils/MemoryPool` / `PooledMidiEventVector`, `Track`/`Loop` MIDI event storage | `docs/plans/mvp_psram_memory_expansion.plan.md` — `ExtMemAllocator` spillover strategy: internal RAM first, PSRAM fallback, no-PSRAM graceful degradation | Implemented: `include/Utils/ExtMemAllocator.h`, `MemoryPool.h`, `Loop.h`, `StorageManager.cpp`, `main.cpp`; unit tests in `test/test_extmem_allocator/` |
+| MVP: Memory expansion (PSRAM/OSRAM) to increase undo + loop capacity (>= 11000 notes) | `TrackUndo`, `Utils/MemoryPool` / `PooledMidiEventVector`, `Track`/`Loop` MIDI event storage | No plan export exists (referenced `mvp_psram_memory_expansion.plan.md` was never exported) — `ExtMemAllocator` spillover strategy: internal RAM first, PSRAM fallback, no-PSRAM graceful degradation | Implemented: `include/Utils/ExtMemAllocator.h`, `MemoryPool.h`, `Loop.h`, `StorageManager.cpp`, `main.cpp`; unit tests in `test/test_extmem_allocator/` |
 | MVP: Display CC values + edit them using the faders | `DisplayManager` (info rendering), `NoteEditManager::handleMidiCC`, `MidiFaderManager` / `MidiFaderActions` | (Related concept) `plans/phase-3-multi-loop.md` “cycle MIDI category note vs CC value” goal; no dedicated CC-editor slice doc found | Needs spec (UI + fader mapping still to be defined) |
-| Main: Phase 3 jam recording (record loop start / loop selection into other Loops as a live jam) | `Track` jam state (`jamStartTick`, `jamLength`, `jamTick`, `jamPlaybackActive`), `ClockManager`, `TrackManager` (multi-loop capture plumbing), `DisplayManager`, `TrackUndo` | `plans/phase-3-multi-loop.md` (Status: Not implemented) + `plans/multi-loop_leds_and_droid_lfo_3a62f325.plan.md` (D13/D14/D15) | Phase 3 not implemented yet; detailed slice mapping below |
+| Main: Phase 3 jam recording (record loop start / loop selection into other Loops as a live jam) | `Track` jam state (`jamStartTick`, `jamLength`, `jamTick`, `jamPlaybackActive`), `ClockManager`, `TrackManager` (multi-loop capture plumbing), `DisplayManager`, `TrackUndo` | `plans/phase-3-multi-loop.md` + `plans/multi-loop_leds_and_droid_lfo_3a62f325.plan.md` (D13/D14/D15) | Slot infrastructure shipped; jam **capture** (D13–D15) and Scenes not implemented; detailed slice mapping below |
 | Phase 3 support: slot play/record feedback via Droid LFO pulse (BPM-synced) | `MidiLedManager`, `MidiButtonConfig`/`MidiButtonActions` (slot armed/record transitions), `MidiConfig::LfoPulse` constants (note 70 + slot CC) | `plans/multi-loop_leds_and_droid_lfo_3a62f325.plan.md` | Pending: repo has `MidiConfig::LfoPulse` definitions, but no wiring found for note 70 + CC slot gating into any active LFO/LED lane in `src/` |
 | Future: Pitch transpose on `Fader4` in Loop mode (and record it into the loop) | `MidiFaderManager` / `MidiFaderActions` (fader routing), `NoteEditManager` edit plumbing, `Track`/`Loop` recording path | Roadmap/placeholder: `Guides/control-surface/Jams.md` “Pitch transposing” | Future (no slice doc found) |
 | Future: `Fader3` controls quantization percentage of notes to 16ths | `MidiFaderProcessor` (fader input), `NoteEditManager` + edit states, quantization helpers (`Track::quantizeStart`, tick/16th logic) | No plan doc export found for “quantization percentage” | Future (needs spec) |

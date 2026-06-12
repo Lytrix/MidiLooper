@@ -23,6 +23,7 @@
 #include "Utils/PerformanceMonitor.h"  // Performance monitoring
 #include "Utils/MemoryMonitor.h"
 #include "Utils/MemoryPool.h"
+#include "Utils/SessionCapture.h"
 
 void setup() {
   delay(500);  // USB re-enumeration after reset
@@ -107,6 +108,8 @@ void setup() {
   trackManager.clearLeds();
   // Send initial 16th-note LEDs on startup (otherwise only sent when switching tracks or clock runs)
   trackManager.forceLedUpdate(clockManager.getCurrentTick());
+
+  SC_SESSION_HEADER();
 }
 
 void loop() {
@@ -128,6 +131,9 @@ void loop() {
 
   // Detect clock source changes (external timeout -> internal fallback)
   clockManager.checkClockSource();
+
+  // Session capture: bar boundary marker for tick<->micros alignment (no-op without SESSION_CAPTURE)
+  SC_UPDATE(clockManager.getCurrentTick(), Config::TICKS_PER_BAR);
 
   // Update looper state to set button logic
   looperState.update();

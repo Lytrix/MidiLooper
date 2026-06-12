@@ -164,6 +164,16 @@ bool TrackManager::hasQueuedRecordingTrack(uint8_t trackIndex) const {
   return (trackIndex < Config::NUM_TRACKS) ? pendingRecord[trackIndex] : false;
 }
 
+bool TrackManager::hasActiveOrPendingCapture() const {
+  for (uint8_t i = 0; i < Config::NUM_TRACKS; ++i) {
+    const Track& t = tracks[i];
+    if (t.isRecording() || t.isArmed() || pendingRecord[i]) {
+      return true;
+    }
+  }
+  return false;
+}
+
 uint8_t TrackManager::getQueuedRecordingSlot(uint8_t trackIndex) const {
   if (trackIndex >= Config::NUM_TRACKS || !pendingRecord[trackIndex]) {
     return Config::INVALID_LOOP_SLOT;
@@ -287,9 +297,12 @@ void TrackManager::handleTransportStop() {
       heldLayerSlot[i][s] = false;
     }
     pendingStop[i] = false;
-    t.sendAllNotesOff();
     if (t.isRecording()) {
+      // Stop recording BEFORE sendAllNotesOff(): finalizePendingNotes() must record
+      // note-offs for still-held notes, but sendAllNotesOff() clears pendingNotes,
+      // which left the last note-on orphaned so validation removed it.
       t.stopRecordingToStopped(currentTick);
+      t.sendAllNotesOff();
       uint32_t recordedLength = t.getLoopLength();
       if (recordedLength > 0 && masterLoopLength == 0) {
         setMasterLoopLength(recordedLength);
@@ -298,11 +311,15 @@ void TrackManager::handleTransportStop() {
         t.setLoopLength(masterLoopLength);
       }
     } else if (t.isOverdubbing()) {
+      t.sendAllNotesOff();
       t.stopOverdubbingToStopped();
     } else if (t.isPlaying()) {
-      t.stopPlaying();
+      t.stopPlaying();  // sends All Notes Off internally
     } else if (t.isArmed()) {
+      t.sendAllNotesOff();
       t.setState(t.hasData() ? TRACK_STOPPED : TRACK_EMPTY);
+    } else {
+      t.sendAllNotesOff();
     }
   }
   forceLedUpdate(currentTick);

@@ -87,6 +87,34 @@ uint32_t DisplayManager::resolveDisplayTick(const Track& track, uint8_t displayS
     return currentTick - loop.startLoopTick;
 }
 
+uint32_t DisplayManager::resolveLoopOriginTick(const Track& track, uint8_t displaySlot) const {
+    if (track.isJamming()) {
+        return track.getLoopStartTick();
+    }
+    if (noteEditManager.getCurrentMainEditMode() != NoteEditManager::MAIN_MODE_LOOP_EDIT) {
+        return 0;
+    }
+    return track.getLoopStartTickForSlot(displaySlot);
+}
+
+uint32_t DisplayManager::resolvePlayheadInLoop(const Track& track, uint8_t displaySlot,
+                                               uint32_t currentTick) const {
+    const uint32_t loopLength = resolveDisplayLoopLength(track, displaySlot, currentTick);
+    if (loopLength == 0) {
+        return 0;
+    }
+
+    const uint32_t displayTick = resolveDisplayTick(track, displaySlot, currentTick);
+    if (isLiveRecordingDisplay(track, displaySlot)) {
+        return displayTick % loopLength;
+    }
+
+    const Loop& dispLoop = track.getLoop(displaySlot);
+    const uint32_t tickInLoop = tickPhaseInLoop(displayTick, dispLoop.startLoopTick, loopLength);
+    const uint32_t loopOrigin = resolveLoopOriginTick(track, displaySlot);
+    return (tickInLoop - loopOrigin + loopLength) % loopLength;
+}
+
 const std::vector<DisplayNote>& DisplayManager::resolveDisplayNotes(const Track& track, uint8_t displaySlot,
                                                                     uint32_t currentTick) {
     if (track.isJamming()) {
@@ -220,9 +248,8 @@ int DisplayManager::tickToScreenX(uint32_t tick) {
     const uint8_t displaySlot = trackManager.getSelectedSlotIndex(trackManager.getSelectedTrackIndex());
     const uint32_t loopLength = track.isJamming() ? track.getLoopLength()
                                                    : track.getLoopLengthForSlot(displaySlot);
-    const uint32_t loopStartTick = track.isJamming() ? track.getLoopStartTick()
-                                                     : track.getLoopStartTickForSlot(displaySlot);
-    
+    const uint32_t loopStartTick = resolveLoopOriginTick(track, displaySlot);
+
     // Adjust tick to be relative to loop start point
     uint32_t relativeTick = (tick >= loopStartTick) ? (tick - loopStartTick) : (tick + loopLength - loopStartTick);
     relativeTick = relativeTick % loopLength; // Ensure wrapping
@@ -279,7 +306,8 @@ void DisplayManager::drawAllNotes(const Track& track, uint8_t displaySlot, uint3
                                   const std::vector<DisplayNote>& notes) {
     const uint32_t loopLength = track.isJamming() ? track.getLoopLength()
                                                   : resolveDisplayLoopLength(track, displaySlot, currentTick);
-    const uint32_t jamStartTick = track.isJamming() ? track.getJamStartTick() : track.getLoopStartTickForSlot(displaySlot);
+    const uint32_t jamStartTick = track.isJamming() ? track.getJamStartTick()
+                                                    : resolveLoopOriginTick(track, displaySlot);
     int selectedIdx = editManager.getSelectedNoteIdx();
 
     for (int i = 0; i < (int)notes.size(); i++) {
@@ -358,16 +386,11 @@ void DisplayManager::drawPianoRoll(uint32_t currentTick, Track& selectedTrack, u
     const uint32_t jamLength = track.isJamming() ? track.getJamLength()
                                                  : loopLength;
     const uint32_t jamStartTick = track.isJamming() ? track.getJamStartTick()
-                                                    : track.getLoopStartTickForSlot(displaySlot);
-    const uint32_t displayTick = resolveDisplayTick(track, displaySlot, currentTick);
-
+                                                    : resolveLoopOriginTick(track, displaySlot);
     const int pianoRollY0 = 0;
     const int pianoRollY1 = 31;
     if (loopLength > 0) {
-        // Same phase as playback: tickPhaseInLoop(transport, loop anchor, length) — not raw % length.
-        const Loop& dispLoop = track.getLoop(displaySlot);
-        uint32_t tickInLoop = tickPhaseInLoop(displayTick, dispLoop.startLoopTick, loopLength);
-        uint32_t jamPos = (tickInLoop - jamStartTick + loopLength) % loopLength;
+        const uint32_t jamPos = resolvePlayheadInLoop(track, displaySlot, currentTick);
 
         // Compute min/max pitch for scaling
         int minPitch = 127;
@@ -539,7 +562,12 @@ void DisplayManager::drawInfoArea(uint32_t currentTick, Track& selectedTrack, ui
     const uint32_t lengthLoop = selectedTrack.isJamming() ? selectedTrack.getLoopLength()
                                                           : selectedTrack.getLoopLengthForSlot(displaySlot);
     
-    ticksToBarsBeats16thTicks2Dec(currentTick, posStr, sizeof(posStr), true); // true = leading zeros
+    const uint32_t playheadInLoop = resolvePlayheadInLoop(selectedTrack, displaySlot, currentTick);
+    if (lengthLoop > 0) {
+        ticksToBarsBeats16thTicks2Dec(playheadInLoop, posStr, sizeof(posStr), true);
+    } else {
+        ticksToBarsBeats16thTicks2Dec(currentTick, posStr, sizeof(posStr), true);
+    }
     if (lengthLoop > 0 && Config::TICKS_PER_BAR > 0) {
         uint32_t bars = lengthLoop / Config::TICKS_PER_BAR;
         snprintf(lenStr, sizeof(lenStr), " %02lu", bars > 99 ? 99UL : bars); // leading space for nicer LEN spacing
@@ -586,8 +614,7 @@ void DisplayManager::drawNoteInfo(uint32_t currentTick, Track& selectedTrack, ui
     char startStr[24] = {0};
     const uint32_t lengthLoop = resolveDisplayLoopLength(selectedTrack, displaySlot, currentTick);
     const uint32_t loopStartTick = selectedTrack.isJamming() ? selectedTrack.getLoopStartTick()
-                                                             : selectedTrack.getLoopStartTickForSlot(displaySlot);
-    const uint32_t displayTick = resolveDisplayTick(selectedTrack, displaySlot, currentTick);
+                                                             : resolveLoopOriginTick(selectedTrack, displaySlot);
     uint8_t currentTrackIdx = trackManager.getSelectedTrackIndex();
 
     const DisplayNote* noteToShow = nullptr;
@@ -605,11 +632,8 @@ void DisplayManager::drawNoteInfo(uint32_t currentTick, Track& selectedTrack, ui
     
     if (!noteToShow && !notes.empty()) {
         if (editManager.getCurrentState() == nullptr) {
-            // Phase within loop storage (matches playMidiEvents / tickPhaseInLoop), then offset by loop
-            // bracket (loopStartTick) for the same coordinates as note s/e below.
-            const Loop& dispLoop = selectedTrack.getLoop(displaySlot);
-            uint32_t tickInLoopStorage = tickPhaseInLoop(displayTick, dispLoop.startLoopTick, lengthLoop);
-            uint32_t relativeCurrentTick = (tickInLoopStorage - loopStartTick + lengthLoop) % lengthLoop;
+            const uint32_t relativeCurrentTick =
+                resolvePlayheadInLoop(selectedTrack, displaySlot, currentTick);
             
             for (const auto& n : notes) {
                 // Adjust note positions to be relative to loop start point
