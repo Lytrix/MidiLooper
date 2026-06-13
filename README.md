@@ -83,6 +83,11 @@ For more detail: [**Display**](docs/Guides/control-surface/Display.md).
 
 **Hardware** is Teensy 4.1, SSD1322 256×64 OLED or 16×2 LCD, 6N137 MIDI in, and in this case a **DROID** M4 + 2× B32—[product page](https://shop.dermannmitdermaschine.de/pages/droid-universal-cv-processor). MIDI wiring follows the [PJRC MIDI library](https://www.pjrc.com/teensy/td_libs_MIDI.html) pattern.
 
+**External-clock sync (DAW master → Teensy slave → MIDI recorded back):** steady-state notes can sit late on the grid until you compensate. That offset comes from the DAW + driver round-trip (and whether notes return over **DIN** or **Teensy USB**), not from the looper firmware. Re-measure if your audio buffer, interface, MIDI route, or clock source changes.
+
+- **Ableton:** on the MIDI **Out** port that sends clock to the Teensy, set **MIDI Clock Sync Delay** (Preferences → Link/Tempo/MIDI → Output → Sync). In the tested setup, steady-state recorded notes landed on-grid at **-11 ms** when notes return over **DIN**, and **-9 ms** when they return over **Teensy USB**.
+- **Bitwig:** there is no per-port MIDI clock sync delay. Send clock via **Settings → Controllers → Generic → MIDI Clock Transmitter** (or **HW Instrument → Send MIDI Clock**). Compensate on **each track** that sends clock or notes to the Teensy: set **Track Delay** (note offset) to about **-11 ms** (DIN return) or **-9 ms** (USB return) and fine-tune by recording a known pattern. Apply the same offset on every outbound track in the chain.
+
 For more details on the logic: [loop start / length](docs/Guides/LOOP_START_EDITING.md), [jam phases](docs/Guides/jam-bar-step-phases.md), [note moves](docs/Guides/MOVE_NOTE_LOGIC.md), [fader state](docs/Guides/FADER_STATE_SYSTEM.md). A compact **Channel 16** listing lives under [**Config summary**](docs/Guides/MIDI_CONFIG_GUIDE.md#config-summary-default-droid-mapping) in the MIDI guide.
 
 State persistence uses storage **version 3** and saves all track/slot loop data, per-slot enabled/muted flags, selected track, active slot per track, and slot-level undo/redo histories.

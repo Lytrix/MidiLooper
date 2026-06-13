@@ -1,6 +1,6 @@
 # Bucket 1 — Stabilization: known bugs + verification regime
 
-**Status:** Proposed (awaiting user approval).
+**Status:** Approved (Jun 12, 2026).
 **Intent anchor:** [../PROJECT_INTENT.md](../PROJECT_INTENT.md) — decision 3 (reliability first). Litmus tests 2 and 3 apply to every fix: the music keeps running, and fixes must not add distraction.
 **Scope:** the four known bugs below, plus the start of the automated verification regime. No new features. No refactors beyond what a fix strictly requires (the fader/LED coupling observation is Bucket 2 scope).
 
@@ -45,7 +45,7 @@ What stays with the user at the hardware: groove/latency feel, motorized fader p
 
 ## Slices (one at a time, in this order)
 
-1. **S1 — Capture session:** structured hardware session reproducing B1–B4, extending [../Guides/MANUAL_TEST_BAR_STEP_BUTTONS.md](../Guides/MANUAL_TEST_BAR_STEP_BUTTONS.md), on an **instrumented build that records fixtures** (MIDI in, clock pulses, gestures, state transitions) — not just written repro steps. Output: repro steps + capture files per bug + any new bugs found. Requires the user at the hardware once; agent prepares the test script and instrumented build.
+1. **S1 — Capture session:** structured hardware session reproducing B1–B4, extending [../Guides/MANUAL_TEST_BAR_STEP_BUTTONS.md](../Guides/MANUAL_TEST_BAR_STEP_BUTTONS.md), on an **instrumented build that records fixtures** (MIDI in, clock pulses, gestures, state transitions) — not just written repro steps. Output: repro steps + capture files per bug + any new bugs found. Requires the user at the hardware once; agent prepares the test script and instrumented build. **Done (Jun 12, 2026):** `captures/session_20260612_164054.log` — partial coverage (one record cycle, external clock + NOTE_EDIT fader pass); supplement if B1 edge cases or B3 stall need stronger evidence.
 2. **S2 — Host-side MIDI automation script:** Mac-side script that impersonates the DROID over USB MIDI against the connected Teensy (send gestures/CCs, assert on LED/fader-feedback MIDI). First target: drive fader updates in a loop until B3's feedback stall reproduces unattended.
 3. **S3 — B2 fix** (mechanism already confirmed; smallest risk). Extract BPM computation host-side + native test with synthetic pulse timestamps, then verify against a real external clock.
 4. **S4 — B1 fix** (core workflow: capture; highest musical impact). Extract length-finalization math host-side + native tests for round-to-nearest-bar, replay S1 captures as test input.
