@@ -20,6 +20,7 @@ uint8_t refSlotPhaseForQueue(const Track& track, uint8_t previousSlot) {
   const Loop& rl = track.getLoop(previousSlot);
   return (rl.loopLengthTicks > 0) ? previousSlot : ::Config::INVALID_LOOP_SLOT;
 }
+
 }  // namespace
 
 // Global instances (matching your current system)
@@ -32,6 +33,26 @@ extern NoteEditManager noteEditManager;
 
 // Global instance
 MidiButtonActions midiButtonActions;
+
+namespace {
+
+/// Armed + transport stopped: record press starts transport (DIN Start). Armed + transport running: cancel arm.
+bool handleArmedRecordPress(uint8_t trackIdx) {
+  Track& track = trackManager.getTrack(trackIdx);
+  if (!track.isArmed() && !trackManager.hasQueuedRecordingTrack(trackIdx)) {
+    return false;
+  }
+  if (!clockManager.isTransportRunning()) {
+    logger.info("Armed for record — starting transport (MIDI Start on DIN/USB)");
+    midiButtonActions.handleToggleTransport();
+  } else {
+    logger.info("Cancel record arm");
+    trackManager.cancelPendingRecordArm(trackIdx);
+  }
+  return true;
+}
+
+}  // namespace
 
 // Constructor
 MidiButtonActions::MidiButtonActions() {
@@ -354,6 +375,10 @@ void MidiButtonActions::handleToggleRecordForSlot(uint8_t slotIndex) {
         logger.info("Loop %d: Live Overdub (safety fallback)", slotIndex + 1);
         trackManager.startOverdubbingTrack(trackIdx);
     } else if (!slotHasData) {
+        if (handleArmedRecordPress(trackIdx)) {
+            trackManager.forceLedUpdate(now);
+            return;
+        }
         if (clockManager.shouldQuantizeRecordStart() && track.isPlaying()) {
             if (trackManager.isRecordingQueued(trackIdx, slotIndex)) {
                 trackManager.clearQueuedRecordingTrack(trackIdx, slotIndex);
@@ -399,6 +424,10 @@ void MidiButtonActions::handleToggleRecord() {
     uint8_t idx = trackManager.getSelectedTrackIndex();
     uint32_t now = getCurrentTick();
     
+    if (handleArmedRecordPress(idx)) {
+        return;
+    }
+
     // Match the exact logic from the original Button A short press
     if (track.isEmpty()) {
         logger.info("MIDI Button A: Start Recording");

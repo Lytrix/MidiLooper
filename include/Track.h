@@ -263,6 +263,8 @@ private:
 
   // Event storage (pending notes during recording - target is active loop)
   std::unordered_map<std::pair<uint8_t, uint8_t>, PendingNote, PairHash> pendingNotes;
+  // Notes received while ARMED before external MIDI Start (downbeat pre-roll)
+  std::unordered_map<std::pair<uint8_t, uint8_t>, PendingNote, PairHash> armedPreRollNotes;
   
   // State management
   bool transitionState(TrackState newState);  // Internal state transition method

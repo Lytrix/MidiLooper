@@ -40,7 +40,45 @@ const char* getMidiTypeName(byte type) {
 MidiHandler::MidiHandler()
   : outputUSB(true), outputSerial(true), hub1(usbHost), usbHostMIDI(usbHost) {}
 
+namespace {
+
+constexpr size_t kMidiInputBatchMax = 64;
+
+struct MidiInputMsg {
+  byte type;
+  byte channel;
+  byte data1;
+  byte data2;
+  InputSource source;
+};
+
+bool isMidiTransport(byte type) {
+  return type == midi::Clock || type == midi::Start || type == midi::Stop ||
+         type == midi::Continue;
+}
+
+// External sequencers (e.g. BeatStep Pro) may send NoteOn before MIDI Start on the
+// same downbeat. Process transport first within each poll batch so armed recording
+// starts before channel messages in that batch are recorded.
+void dispatchMidiBatch(MidiInputMsg* batch, size_t count) {
+  for (size_t i = 0; i < count; ++i) {
+    if (isMidiTransport(batch[i].type)) {
+      midiHandler.handleMidiMessage(batch[i].type, batch[i].channel, batch[i].data1,
+                                    batch[i].data2, batch[i].source);
+    }
+  }
+  for (size_t i = 0; i < count; ++i) {
+    if (!isMidiTransport(batch[i].type)) {
+      midiHandler.handleMidiMessage(batch[i].type, batch[i].channel, batch[i].data1,
+                                    batch[i].data2, batch[i].source);
+    }
+  }
+}
+
+}  // namespace
+
 void MidiHandler::setup() {
+  Serial8.begin(31250);  // DIN MIDI out/in (explicit before MIDI library wraps Serial8)
   MIDIserial.begin(MidiConfig::CHANNEL_OMNI);  // Listen to all channels
   
   // Setup USB Host MIDI
@@ -62,25 +100,23 @@ void MidiHandler::setup() {
 }
 
 void MidiHandler::handleMidiInput() {
-  // --- USB MIDI Input ---
-  while (usbMIDI.read()) {
-    handleMidiMessage(
-      usbMIDI.getType(),
-      usbMIDI.getChannel(),
-      usbMIDI.getData1(),
-      usbMIDI.getData2(),
-      SOURCE_USB);
+  MidiInputMsg batch[kMidiInputBatchMax];
+  size_t count = 0;
+
+  // --- USB MIDI Input (transport before notes within each poll) ---
+  while (count < kMidiInputBatchMax && usbMIDI.read()) {
+    batch[count++] = {usbMIDI.getType(), usbMIDI.getChannel(), usbMIDI.getData1(),
+                      usbMIDI.getData2(), SOURCE_USB};
   }
+  dispatchMidiBatch(batch, count);
 
   // --- Serial MIDI Input (DIN) ---
-  while (MIDIserial.read()) {
-    handleMidiMessage(
-      MIDIserial.getType(),
-      MIDIserial.getChannel(),
-      MIDIserial.getData1(),
-      MIDIserial.getData2(),
-      SOURCE_SERIAL);
+  count = 0;
+  while (count < kMidiInputBatchMax && MIDIserial.read()) {
+    batch[count++] = {MIDIserial.getType(), MIDIserial.getChannel(), MIDIserial.getData1(),
+                      MIDIserial.getData2(), SOURCE_SERIAL};
   }
+  dispatchMidiBatch(batch, count);
   
   // --- USB Host MIDI Input ---
   usbHost.Task();  // Update USB host state
@@ -490,11 +526,13 @@ void MidiHandler::sendClock() {
 void MidiHandler::sendStart() {
   if (outputUSB) usbMIDI.sendRealTime(usbMIDI.Start);
   if (outputSerial) MIDIserial.sendRealTime(midi::Start);
+  logger.log(CAT_MIDI, LOG_INFO, "OUT MIDI Start (DIN=%d USB=%d)", outputSerial ? 1 : 0, outputUSB ? 1 : 0);
 }
 
 void MidiHandler::sendStop() {
   if (outputUSB) usbMIDI.sendRealTime(usbMIDI.Stop);
   if (outputSerial) MIDIserial.sendRealTime(midi::Stop);
+  logger.log(CAT_MIDI, LOG_INFO, "OUT MIDI Stop (DIN=%d USB=%d)", outputSerial ? 1 : 0, outputUSB ? 1 : 0);
 }
 
 void MidiHandler::sendContinueMIDI() {

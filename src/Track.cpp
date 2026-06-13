@@ -136,6 +136,10 @@ bool Track::transitionState(TrackState newState) {
   TrackState oldState = trackState;
   trackState = newState;
 
+  if (oldState == TRACK_ARMED && newState != TRACK_RECORDING) {
+    armedPreRollNotes.clear();
+  }
+
   logger.logStateTransition("Track", TrackStateMachine::toString(oldState), TrackStateMachine::toString(newState));
   return true;
 }
@@ -152,12 +156,20 @@ void Track::startRecording(uint32_t currentTick) {
   if (isEmpty()) {
     TrackUndo::pushUndoSnapshot(*this);
   }
+  auto preRoll = std::move(armedPreRollNotes);
   if (!setState(TRACK_RECORDING)) {
+    armedPreRollNotes = std::move(preRoll);
     return;
   }
   // Clear out any old data in active slot
   loop.midiEvents.clear();
   pendingNotes.clear();       // any hanging NoteOns
+  for (const auto& entry : preRoll) {
+    const PendingNote& pn = entry.second;
+    pendingNotes[entry.first] =
+        PendingNote{pn.note, pn.channel, currentTick, pn.velocity};
+    recordMidiEvents(midi::NoteOn, pn.channel, pn.note, pn.velocity, currentTick);
+  }
   loop.nextEventIndex = 0;    // so playback will start from the top
   loop.lastTickInLoop = 0;
   // Fresh take: a stale loop-start window (prior loop-start edit or SD restore) must not
@@ -1025,6 +1037,12 @@ uint32_t Track::getEffectivePlaybackTick(uint32_t currentTick) const {
 void Track::noteOn(uint8_t channel, uint8_t note, uint8_t velocity, uint32_t tick) {
   if (isPlayingBack) return;  // Ignore playback-triggered MIDI events
 
+  if (trackState == TRACK_ARMED) {
+    armedPreRollNotes[{note, channel}] =
+        PendingNote{note, channel, tick, velocity};
+    return;
+  }
+
   if (trackState == TRACK_RECORDING || trackState == TRACK_OVERDUBBING) {
     // Store pending note for later duration fix
     pendingNotes[{note, channel}] = PendingNote{
@@ -1040,6 +1058,11 @@ void Track::noteOn(uint8_t channel, uint8_t note, uint8_t velocity, uint32_t tic
 
 void Track::noteOff(uint8_t channel, uint8_t note, uint8_t velocity, uint32_t tick) {
   if (isPlayingBack) return;
+
+  if (trackState == TRACK_ARMED) {
+    armedPreRollNotes.erase({note, channel});
+    return;
+  }
 
   if (trackState == TRACK_RECORDING || trackState == TRACK_OVERDUBBING) {
     auto key = std::make_pair(note, channel);

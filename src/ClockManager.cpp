@@ -11,6 +11,7 @@
 #include "Logger.h"
 #include "MidiHandler.h"
 #include "Utils/SessionCapture.h"
+#include "Utils/ClockTransportUtils.h"
 
 ClockManager clockManager;  // Global instance initiated
 IntervalTimer clockTimer;
@@ -248,19 +249,31 @@ void ClockManager::setCurrentTick(uint32_t tick) {
 }
 
 void ClockManager::toggleTransport() {
+  const uint32_t now = micros();
+  const bool emitTransport =
+      ClockTransportUtils::shouldEmitMidiTransportAsMaster(
+          static_cast<int>(clockSource), lastMidiClockTime, now, midiClockTimeout);
+
   if (sequencerRunning) {
     sequencerRunning = false;
-    if (clockSource == CLOCK_INTERNAL) {
+    if (emitTransport) {
+      if (clockSource == CLOCK_EXTERNAL) {
+        actuallyTransition(CLOCK_EXTERNAL, CLOCK_INTERNAL);
+      }
       midiHandler.sendStop();
     }
     trackManager.handleTransportStop();
     logger.info("Transport stopped");
   } else {
     sequencerRunning = true;
-    if (clockSource == CLOCK_INTERNAL) {
-      currentTick = 0;  // Align with Start - slave will begin at downbeat
+    if (emitTransport) {
+      if (clockSource == CLOCK_EXTERNAL) {
+        actuallyTransition(CLOCK_EXTERNAL, CLOCK_INTERNAL);
+      }
+      currentTick = 0;  // Align with Start — downbeat at tick 0
       midiHandler.sendStart();
       midiHandler.sendClock();  // First clock after Start is the downbeat (per MIDI spec)
+      trackManager.updateAllTracks(0);  // Armed record + pending actions at downbeat
     }
     if (!trackManager.hasActiveOrPendingCapture()) {
       for (uint8_t i = 0; i < Config::NUM_TRACKS; i++) {
