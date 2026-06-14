@@ -102,6 +102,13 @@ private:
     uint32_t resolvePlayheadInLoop(const Track& track, uint8_t displaySlot, uint32_t currentTick) const;
     const std::vector<DisplayNote>& resolveDisplayNotes(const Track& track, uint8_t displaySlot,
                                                         uint32_t currentTick);
+    void invalidateLiveDisplayCache();
+    std::vector<DisplayNote> liveDisplayNotes;
+    std::vector<NoteUtils::OpenNoteOn> liveDisplayCacheOpenNotes;
+    size_t liveDisplayCacheEventCount = static_cast<size_t>(-1);
+    uint32_t liveDisplayCacheLoopLength = 0;
+    uint8_t liveDisplayCacheSlot = 255;
+    TrackState liveDisplayCacheTrackState = NUM_TRACK_STATES;
 
     static constexpr float PULSE_SPEED = 1.0f; // Pulses per second (slowed by 40%)
     // Track status rendering

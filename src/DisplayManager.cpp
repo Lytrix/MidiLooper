@@ -29,6 +29,30 @@ constexpr int SIDEBAR_TEXT_BRIGHTNESS = 5;
 constexpr int SIDEBAR_VALUE_BRIGHTNESS = 5; // match LEN / numeric field values in drawInfoField
 constexpr int pianoRollRightX() { return DISPLAY_WIDTH - SIDEBAR_WIDTH - 1; }
 constexpr int pianoRollWidth() { return pianoRollRightX() - DisplayManager::TRACK_MARGIN; }
+
+uint32_t clampOpenNoteCloseTick(uint32_t closeTick, uint32_t loopLength) {
+    if (loopLength == 0) {
+        return 0;
+    }
+    if (closeTick >= loopLength) {
+        return loopLength - 1;
+    }
+    return closeTick;
+}
+
+void applyLiveOpenTails(const std::vector<NoteUtils::OpenNoteOn>& openNotes, uint32_t loopLength,
+                        uint32_t closeTick, std::vector<DisplayNote>& notes) {
+    const uint32_t clampedCloseTick = clampOpenNoteCloseTick(closeTick, loopLength);
+    for (const auto& open : openNotes) {
+        const uint32_t endTick = std::max(open.tick, clampedCloseTick);
+        for (auto& note : notes) {
+            if (note.note == open.note && note.startTick == open.tick) {
+                note.endTick = endTick;
+                break;
+            }
+        }
+    }
+}
 }
 
 // Generic helper to draw a label:value field at (x, y) with optional highlight brightness
@@ -51,7 +75,8 @@ DisplayManager::DisplayManager() : _display() {
 }
 
 bool DisplayManager::isLiveRecordingDisplay(const Track& track, uint8_t displaySlot) const {
-    return !track.isJamming() && track.isRecording() && track.getRecordingFocusSlot() == displaySlot;
+    return !track.isJamming() && (track.isRecording() || track.isOverdubbing()) &&
+           track.getRecordingFocusSlot() == displaySlot;
 }
 
 uint32_t DisplayManager::resolveDisplayLoopLength(const Track& track, uint8_t displaySlot, uint32_t currentTick) const {
@@ -118,18 +143,55 @@ uint32_t DisplayManager::resolvePlayheadInLoop(const Track& track, uint8_t displ
 const std::vector<DisplayNote>& DisplayManager::resolveDisplayNotes(const Track& track, uint8_t displaySlot,
                                                                     uint32_t currentTick) {
     if (track.isJamming()) {
+        invalidateLiveDisplayCache();
         return track.getCachedNotes();
     }
 
     if (!isLiveRecordingDisplay(track, displaySlot)) {
+        invalidateLiveDisplayCache();
         return track.getCachedNotesForSlot(displaySlot);
     }
 
     const Loop& loop = track.getLoop(displaySlot);
     const uint32_t liveLoopLength = resolveDisplayLoopLength(track, displaySlot, currentTick);
-    // Same cache as non-live paths: avoids duplicate full reconstructNotes in one frame
-    // (drawPianoRoll + drawNoteInfo). During first record, liveLoopLength changes often → natural misses.
-    return loop.getNoteCache().getNotes(loop.midiEvents, liveLoopLength);
+    if (liveLoopLength == 0) {
+        invalidateLiveDisplayCache();
+        liveDisplayNotes.clear();
+        return liveDisplayNotes;
+    }
+
+    // Reconstruct when event count or loop geometry/state changes. Between note-ons, only refresh
+    // open-tail end ticks to the playhead so held notes are not drawn to loop end.
+    const TrackState liveTrackState = track.isRecording() ? TRACK_RECORDING : TRACK_OVERDUBBING;
+    const size_t eventCount = loop.midiEvents.size();
+    const bool geometryChanged = displaySlot != liveDisplayCacheSlot ||
+                                 liveTrackState != liveDisplayCacheTrackState ||
+                                 liveLoopLength != liveDisplayCacheLoopLength ||
+                                 eventCount != liveDisplayCacheEventCount;
+
+    if (geometryChanged) {
+        liveDisplayNotes = NoteUtils::reconstructNotes(loop.midiEvents, liveLoopLength);
+        liveDisplayCacheOpenNotes = NoteUtils::findOpenNoteOns(loop.midiEvents, liveLoopLength);
+        liveDisplayCacheSlot = displaySlot;
+        liveDisplayCacheTrackState = liveTrackState;
+        liveDisplayCacheLoopLength = liveLoopLength;
+        liveDisplayCacheEventCount = eventCount;
+    }
+
+    if (!liveDisplayCacheOpenNotes.empty()) {
+        const uint32_t playheadCloseTick = resolvePlayheadInLoop(track, displaySlot, currentTick);
+        applyLiveOpenTails(liveDisplayCacheOpenNotes, liveLoopLength, playheadCloseTick, liveDisplayNotes);
+    }
+
+    return liveDisplayNotes;
+}
+
+void DisplayManager::invalidateLiveDisplayCache() {
+    liveDisplayCacheEventCount = static_cast<size_t>(-1);
+    liveDisplayCacheLoopLength = 0;
+    liveDisplayCacheSlot = 255;
+    liveDisplayCacheTrackState = NUM_TRACK_STATES;
+    liveDisplayCacheOpenNotes.clear();
 }
 
 // Helper function to clear the display buffer
@@ -235,7 +297,7 @@ void DisplayManager::setup() {
     Serial.println("Drawing text...");
     _display.gfx.draw_text(_display.api.getFrameBuffer(), "Midi Looper v0.4", 92, 32, 15);
     //_display.gfx.draw_text(_display.api.getFrameBuffer(), "v0.4", 92, 40, 8);
-    Serial.println("Text drawn.");
+    //Serial.println("Text drawn.");
     _display.api.display();
     Serial.println("DisplayManager: Text sent to display");
     delay(1500);
