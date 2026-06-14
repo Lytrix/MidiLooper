@@ -131,6 +131,43 @@ std::vector<NoteUtils::DisplayNote> NoteUtils::reconstructNotes(const MidiEventV
     return finalNotes;
 }
 
+std::vector<NoteUtils::OpenNoteOn> NoteUtils::findOpenNoteOns(const MidiEventVec& midiEvents,
+                                                               uint32_t loopLength) {
+    std::vector<OpenNoteOn> openNotes;
+    if (loopLength == 0) {
+        return openNotes;
+    }
+
+    std::map<uint8_t, std::vector<OpenNoteOn>> activeStacks;
+    for (const auto& evt : midiEvents) {
+        if (evt.tick >= loopLength) {
+            continue;
+        }
+
+        const bool isNoteOn = (evt.type == midi::NoteOn && evt.data.noteData.velocity > 0);
+        const bool isNoteOff =
+            (evt.type == midi::NoteOff || (evt.type == midi::NoteOn && evt.data.noteData.velocity == 0));
+        if (!isNoteOn && !isNoteOff) {
+            continue;
+        }
+
+        const uint8_t pitch = evt.data.noteData.note;
+        if (isNoteOn) {
+            activeStacks[pitch].push_back({pitch, evt.data.noteData.velocity, evt.tick});
+        } else if (!activeStacks[pitch].empty()) {
+            activeStacks[pitch].pop_back();
+        }
+    }
+
+    for (auto& [pitch, stack] : activeStacks) {
+        (void)pitch;
+        for (const auto& open : stack) {
+            openNotes.push_back(open);
+        }
+    }
+    return openNotes;
+}
+
 // Build a fast lookup index for NoteOn/NoteOff events
 NoteUtils::EventIndex NoteUtils::buildEventIndex(const MidiEventVec& midiEvents) {
     using Key = NoteUtils::Key;

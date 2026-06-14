@@ -56,6 +56,17 @@ private:
  */
 std::vector<DisplayNote> reconstructNotes(const MidiEventVec& midiEvents, uint32_t loopLength);
 
+struct OpenNoteOn {
+    uint8_t note;
+    uint8_t velocity;
+    uint32_t tick;
+};
+
+/**
+ * @brief Returns note-ons within loopLength that have no matching note-off yet (LIFO per pitch).
+ */
+std::vector<OpenNoteOn> findOpenNoteOns(const MidiEventVec& midiEvents, uint32_t loopLength);
+
 /**
  * @brief Fast lookup index for NoteOn/NoteOff events by (pitch<<32)|tick.
  * @param midiEvents The full list of MIDI events.

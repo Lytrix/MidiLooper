@@ -93,7 +93,7 @@ public:
   void setAlignLoopOriginOnNextStop(bool v) { alignLoopOriginOnNextStop = v; }
 
   // Playback control
-  void startPlaying(uint32_t currentTick);
+  void startPlaying(uint32_t currentTick, bool preserveLoopPhaseOrigin = false);
   void stopPlaying();
   void togglePlayStop();
 
@@ -107,7 +107,7 @@ public:
   void toggleMuteTrack();
   
   // MIDI event validation
-  void validateAndCleanupMidiEvents();  // Manual validation
+  void validateAndCleanupMidiEvents(uint32_t openTailCloseTick = UINT32_MAX);  // Manual validation
 
   // MIDI events
   void recordMidiEvents(midi::MidiType type, byte channel, byte data1, byte data2, uint32_t currentTick);
