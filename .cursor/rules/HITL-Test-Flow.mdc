@@ -1,0 +1,64 @@
+---
+description: Standard HITL record-overdub verification flow for repeatable runs
+alwaysApply: true
+---
+
+# HITL test flow (record/overdub)
+
+Use this exact flow whenever running or validating the local hardware-in-the-loop MIDI automation baseline.
+Transition verification is always required for baseline validation in this repository.
+
+## Canonical test command
+
+Run from project root:
+
+```bash
+.venv/bin/python scripts/host_midi_automation_baseline.py \
+ --midi-out "Teensy" --midi-in "Teensy" \
+ --track-number 5 --midi-channel 5 \
+ --record-bars 2 --overdub-bars 2 \
+ --no-fixed-grid-notes --start-transport \
+ --overdub-start-delay-bars 0 --overdub-start-delay-beats 1 \
+ --phase-wait-ms 500 --final-wait-ms 3000 --press-ms 120
+```
+
+## Required pass criteria
+
+The run is considered valid only when all are true:
+
+- `record_notes_sent = 32`
+- `overdub_notes_sent = 16`
+- `record_clock_pulses_seen = 192`
+- `overdub_clock_pulses_seen = 192`
+- serial verification reports first-note timing within thresholds:
+ - `record_first_note_offset.offset_clocks <= record_first_note_max_clocks` (default `12`)
+ - `overdub_first_note_offset.offset_clocks <= overdub_first_note_max_clocks` (default `12`)
+- transitions include:
+ - `ARMED -> RECORDING` (or `EMPTY -> RECORDING` after clear)
+ - `RECORDING -> STOPPED_RECORDING`
+ - `STOPPED_RECORDING -> PLAYING`
+ - `PLAYING -> OVERDUBBING`
+ - `OVERDUBBING -> PLAYING`
+
+## Serial verification policy (mandatory)
+
+Serial capture must run at the same time as the test for every validated baseline run.
+
+Preferred approach for stability:
+
+1. Start external capture in one terminal:
+
+```bash
+.venv/bin/python scripts/capture_session.py --port /dev/cu.usbmodem154944801
+```
+
+2. Run the canonical test command in another terminal.
+3. Stop capture with Ctrl+C.
+4. Pass the captured session log to the baseline script using `--verify-serial-log` and ensure transition + first-note timing checks pass.
+
+Do not treat a run as verified if serial capture failed (`Device not configured`), transition lines are missing, or first-note timing checks fail.
+
+## Upload/build behavior for this flow
+
+- Do not upload automatically after build unless the user confirms.
+- If USB/MIDI disappears, check `pio device list` and retry only after ports are visible again.

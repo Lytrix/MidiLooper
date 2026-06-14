@@ -279,19 +279,24 @@ void Track::finalizePendingNotes(uint32_t offAbsTick) {
     invalidateCaches();
 }
 
-void Track::validateAndCleanupMidiEvents() {
+void Track::validateAndCleanupMidiEvents(uint32_t openTailCloseTick) {
     Loop& loop = getActiveLoop();
     if (loop.midiEvents.empty()) return;
     
     // Map to track active notes: key = (note, channel), value = note-on event index
     std::unordered_map<std::pair<uint8_t, uint8_t>, size_t, PairHash> activeNotes;
     std::vector<bool> eventsToKeep(loop.midiEvents.size(), true);
+    std::vector<MidiEvent> syntheticNoteOffs;
     int orphanedCount = 0;
     
     // Sort events by tick to ensure proper order
     std::sort(loop.midiEvents.begin(), loop.midiEvents.end(),
               [](const MidiEvent& a, const MidiEvent& b) {
-                  return a.tick < b.tick;
+                  if (a.tick != b.tick) return a.tick < b.tick;
+                  // On equal tick, process note-offs before note-ons to avoid false overlap.
+                  const int aOrder = a.isNoteOff() ? 0 : (a.isNoteOn() ? 1 : 2);
+                  const int bOrder = b.isNoteOff() ? 0 : (b.isNoteOn() ? 1 : 2);
+                  return aOrder < bOrder;
               });
     
     // First pass: match note-on/note-off pairs
@@ -303,13 +308,18 @@ void Track::validateAndCleanupMidiEvents() {
             
             // Check if there's already an active note (orphaned note-on)
             if (activeNotes.find(key) != activeNotes.end()) {
-                // Mark the previous orphaned note-on for removal
+                // Keep the previous note by closing it right before this new note-on.
                 size_t prevIndex = activeNotes[key];
-                eventsToKeep[prevIndex] = false;
-                orphanedCount++;
-                logger.log(CAT_MIDI, LOG_WARNING, 
-                          "Removed orphaned note-on: note %d, channel %d, tick %lu",
-                          evt.data.noteData.note, evt.channel, loop.midiEvents[prevIndex].tick);
+                const uint32_t prevTick = loop.midiEvents[prevIndex].tick;
+                uint32_t closeTick = (evt.tick > 0) ? (evt.tick - 1) : evt.tick;
+                if (closeTick < prevTick) {
+                    closeTick = prevTick;
+                }
+                syntheticNoteOffs.push_back(
+                    MidiEvent::NoteOff(closeTick, evt.channel, evt.data.noteData.note, 0));
+                logger.log(CAT_MIDI, LOG_INFO,
+                          "Inserted synthetic note-off for overlap: note %d, channel %d, tick %lu",
+                          evt.data.noteData.note, evt.channel, closeTick);
             }
             
             // Track this note-on
@@ -335,12 +345,58 @@ void Track::validateAndCleanupMidiEvents() {
     
     // Check for remaining active notes (note-on without note-off)
     for (const auto& pair : activeNotes) {
+        const auto key = pair.first;
         size_t index = pair.second;
-        eventsToKeep[index] = false;
-        orphanedCount++;
-        logger.log(CAT_MIDI, LOG_WARNING, 
-                  "Removed orphaned note-on: note %d, channel %d, tick %lu",
-                  loop.midiEvents[index].data.noteData.note, loop.midiEvents[index].channel, loop.midiEvents[index].tick);
+        const MidiEvent& noteOn = loop.midiEvents[index];
+        if (loop.loopLengthTicks > 0) {
+            // Default: close at loop end, unless caller provides a specific
+            // stop tick (used for overdub stop -> playing transition).
+            uint32_t closeTick = loop.loopLengthTicks - 1;
+            if (openTailCloseTick != UINT32_MAX) {
+                closeTick = std::min(openTailCloseTick, loop.loopLengthTicks - 1);
+            }
+
+            // Prefer splitting right before the first same-note note-on in the loop.
+            // This preserves both notes instead of merging tail->head across wrap.
+            bool foundHeadNoteOn = false;
+            uint32_t firstHeadTick = loop.loopLengthTicks;
+            for (size_t i = 0; i < loop.midiEvents.size(); ++i) {
+                if (i == index || !eventsToKeep[i]) continue;
+                const MidiEvent& e = loop.midiEvents[i];
+                if (!e.isNoteOn()) continue;
+                if (e.channel != key.second || e.data.noteData.note != key.first) continue;
+                if (e.tick < firstHeadTick) {
+                    firstHeadTick = e.tick;
+                    foundHeadNoteOn = true;
+                }
+            }
+
+            if (foundHeadNoteOn) {
+                if (firstHeadTick == 0) {
+                    closeTick = loop.loopLengthTicks - 1;
+                } else {
+                    closeTick = firstHeadTick - 1;
+                }
+            }
+
+            syntheticNoteOffs.push_back(
+                MidiEvent::NoteOff(closeTick, noteOn.channel, noteOn.data.noteData.note, 0));
+            if (foundHeadNoteOn) {
+                logger.log(CAT_MIDI, LOG_INFO,
+                          "Inserted synthetic split note-off: note %d, channel %d, tick %lu (before head tick %lu)",
+                          noteOn.data.noteData.note, noteOn.channel, closeTick, firstHeadTick);
+            } else {
+                logger.log(CAT_MIDI, LOG_INFO,
+                          "Inserted synthetic note-off for open tail note: note %d, channel %d, tick %lu",
+                          noteOn.data.noteData.note, noteOn.channel, closeTick);
+            }
+        } else {
+            // Loop length is not finalized yet (first record-stop path). Keep this tail
+            // note now; a later validation pass with known loop length will close it.
+            logger.log(CAT_MIDI, LOG_INFO,
+                      "Deferred open tail note cleanup (loop length unknown): note %d, channel %d, tick %lu",
+                      noteOn.data.noteData.note, noteOn.channel, noteOn.tick);
+        }
     }
     
     // Second pass: handle loop wrapping for remaining unmatched notes
@@ -380,23 +436,33 @@ void Track::validateAndCleanupMidiEvents() {
         }
     }
     
-    // Remove orphaned events
-    if (orphanedCount > 0) {
+    // Remove orphaned events and append synthetic overlap-fix note-offs.
+    if (orphanedCount > 0 || !syntheticNoteOffs.empty()) {
         MidiEventVec cleanedEvents;
-        cleanedEvents.reserve(loop.midiEvents.size() - orphanedCount);
+        cleanedEvents.reserve(loop.midiEvents.size() - orphanedCount + syntheticNoteOffs.size());
         
         for (size_t i = 0; i < loop.midiEvents.size(); i++) {
             if (eventsToKeep[i]) {
                 cleanedEvents.push_back(loop.midiEvents[i]);
             }
         }
+        for (const auto& evt : syntheticNoteOffs) {
+            cleanedEvents.push_back(evt);
+        }
+        std::sort(cleanedEvents.begin(), cleanedEvents.end(),
+                  [](const MidiEvent& a, const MidiEvent& b) {
+                      if (a.tick != b.tick) return a.tick < b.tick;
+                      const int aOrder = a.isNoteOff() ? 0 : (a.isNoteOn() ? 1 : 2);
+                      const int bOrder = b.isNoteOff() ? 0 : (b.isNoteOn() ? 1 : 2);
+                      return aOrder < bOrder;
+                  });
         
         loop.midiEvents = std::move(cleanedEvents);
         invalidateCaches();
         
         logger.log(CAT_MIDI, LOG_INFO, 
-                  "MIDI validation complete: removed %d orphaned events, %d events remaining",
-                  orphanedCount, (int)loop.midiEvents.size());
+                  "MIDI validation complete: removed %d orphaned events, inserted %d synthetic note-offs, %d events remaining",
+                  orphanedCount, (int)syntheticNoteOffs.size(), (int)loop.midiEvents.size());
     } else {
         logger.log(CAT_MIDI, LOG_INFO, 
                   "MIDI validation complete: no orphaned events found, %d events total",
@@ -477,7 +543,9 @@ void Track::stopRecording(uint32_t currentTick) {
                static_cast<unsigned long>(recordStartTick), static_cast<unsigned long>(rawLength),
                static_cast<unsigned long>(finalLength));
 
-  startOverdubbing(currentTick);
+  // Return to playback after record-stop. Overdub starts on the next explicit
+  // record press from PLAYING (record -> play -> overdub -> play flow).
+  startPlaying(currentTick);
 }
 
 void Track::stopRecordingToStopped(uint32_t currentTick) {
@@ -558,13 +626,18 @@ void Track::startOverdubbing(uint32_t currentTick) {
 
 
 void Track::stopOverdubbing() {
+  const uint32_t currentTick = clockManager.getCurrentTick();
+  Loop& loop = getActiveLoop();
+  uint32_t closeTick = UINT32_MAX;
+  if (loop.loopLengthTicks > 0) {
+    closeTick = tickPhaseInLoop(currentTick, loop.startLoopTick, loop.loopLengthTicks);
+  }
   setState(TRACK_PLAYING);
-  validateAndCleanupMidiEvents();
-  logger.logTrackEvent("Overdubbing stopped", clockManager.getCurrentTick());
+  validateAndCleanupMidiEvents(closeTick);
+  logger.logTrackEvent("Overdubbing stopped", currentTick);
   logger.info("Overdub stopped: events=%d, snapshots=%d", getActiveLoop().midiEvents.size(), getActiveLoop().midiHistorySize());
   logger.dumpMidiEvents(getActiveLoop().midiEvents, -1);
 
-  Loop& loop = getActiveLoop();
   loop.startLoopTick = 0;
   resetPlaybackState(0);
   StorageManager::saveState(looperState.getLooperState());
@@ -572,12 +645,18 @@ void Track::stopOverdubbing() {
 
 void Track::stopOverdubbingToStopped() {
   if (isEmpty()) return;
+  const uint32_t currentTick = clockManager.getCurrentTick();
+  Loop& loop = getActiveLoop();
+  uint32_t closeTick = UINT32_MAX;
+  if (loop.loopLengthTicks > 0) {
+    closeTick = tickPhaseInLoop(currentTick, loop.startLoopTick, loop.loopLengthTicks);
+  }
   sendAllNotesOff();
-  validateAndCleanupMidiEvents();
+  validateAndCleanupMidiEvents(closeTick);
   setState(TRACK_STOPPED);
-  getActiveLoop().startLoopTick = 0;
+  loop.startLoopTick = 0;
   resetPlaybackState(0);
-  logger.logTrackEvent("Overdubbing stopped (to STOPPED)", clockManager.getCurrentTick());
+  logger.logTrackEvent("Overdubbing stopped (to STOPPED)", currentTick);
   StorageManager::saveState(looperState.getLooperState());
 }
 
