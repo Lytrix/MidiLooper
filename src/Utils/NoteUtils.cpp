@@ -7,6 +7,16 @@
 #include <set>
 #include <tuple>
 
+namespace {
+
+constexpr size_t kReconstructVerboseMaxEvents = 32;
+
+bool shouldLogReconstructDetails(bool verboseLog, size_t eventCount) {
+    return verboseLog && eventCount <= kReconstructVerboseMaxEvents;
+}
+
+}  // namespace
+
 // CachedNoteList implementation
 uint32_t NoteUtils::CachedNoteList::computeMidiHash(const MidiEventVec& midiEvents) {
     return midiEventVecFnv1aHash(midiEvents);
@@ -28,7 +38,8 @@ const std::vector<NoteUtils::DisplayNote>& NoteUtils::CachedNoteList::getNotes(c
     return cachedNotes;
 }
 
-std::vector<NoteUtils::DisplayNote> NoteUtils::reconstructNotes(const MidiEventVec& midiEvents, uint32_t loopLength) {
+std::vector<NoteUtils::DisplayNote> NoteUtils::reconstructNotes(const MidiEventVec& midiEvents, uint32_t loopLength,
+                                                                bool verboseLog) {
     using DisplayNote = NoteUtils::DisplayNote;
     std::vector<DisplayNote> notes;
     std::map<uint8_t, std::vector<DisplayNote>> activeNoteStacks;
@@ -37,7 +48,11 @@ std::vector<NoteUtils::DisplayNote> NoteUtils::reconstructNotes(const MidiEventV
         return notes;
     }
 
-    logger.log(CAT_TRACK, LOG_DEBUG, "Reconstructing notes with loop length: %lu ticks", loopLength);
+    const bool logDetails = shouldLogReconstructDetails(verboseLog, midiEvents.size());
+
+    if (logDetails) {
+        logger.log(CAT_TRACK, LOG_DEBUG, "Reconstructing notes with loop length: %lu ticks", loopLength);
+    }
 
     // Process ALL MIDI events to handle notes that extend beyond current loop
     for (const auto& evt : midiEvents) {
@@ -51,18 +66,23 @@ std::vector<NoteUtils::DisplayNote> NoteUtils::reconstructNotes(const MidiEventV
             // If note-on is beyond current loop boundary, only wrap it if it's from original loop extension
             // For loop shortening: discard notes that start beyond the new boundary
             if (noteOnTick >= loopLength) {
-                logger.log(CAT_TRACK, LOG_DEBUG, "Discarding note-on beyond loop boundary: pitch=%d, tick=%lu, loop=%lu", 
-                           pitch, noteOnTick, loopLength);
+                if (logDetails) {
+                    logger.log(CAT_TRACK, LOG_DEBUG,
+                               "Discarding note-on beyond loop boundary: pitch=%d, tick=%lu, loop=%lu",
+                               pitch, noteOnTick, loopLength);
+                }
                 continue;
             }
             
-            logger.log(CAT_TRACK, LOG_DEBUG, "Note-on: pitch=%d, tick=%lu", pitch, noteOnTick);
+            if (logDetails) {
+                logger.log(CAT_TRACK, LOG_DEBUG, "Note-on: pitch=%d, tick=%lu", pitch, noteOnTick);
+            }
             
-                         DisplayNote note;
-             note.note = pitch;
-             note.startTick = noteOnTick;
-             note.endTick = noteOnTick; // Will be updated when note-off is found
-             note.velocity = evt.data.noteData.velocity;
+            DisplayNote note;
+            note.note = pitch;
+            note.startTick = noteOnTick;
+            note.endTick = noteOnTick; // Will be updated when note-off is found
+            note.velocity = evt.data.noteData.velocity;
             
             activeNoteStacks[pitch].push_back(note);
             
@@ -73,14 +93,21 @@ std::vector<NoteUtils::DisplayNote> NoteUtils::reconstructNotes(const MidiEventV
             if (noteOffTick >= loopLength) {
                 // Wrap the note-off position for notes that extend beyond loop
                 noteOffTick = noteOffTick % loopLength;
-                logger.log(CAT_TRACK, LOG_DEBUG, "Wrapped note-off: pitch=%d, original_tick=%lu -> wrapped_tick=%lu", 
-                           pitch, evt.tick, noteOffTick);
+                if (logDetails) {
+                    logger.log(CAT_TRACK, LOG_DEBUG,
+                               "Wrapped note-off: pitch=%d, original_tick=%lu -> wrapped_tick=%lu",
+                               pitch, evt.tick, noteOffTick);
+                }
             }
             
-            logger.log(CAT_TRACK, LOG_DEBUG, "Note-off: pitch=%d, tick=%lu", pitch, noteOffTick);
+            if (logDetails) {
+                logger.log(CAT_TRACK, LOG_DEBUG, "Note-off: pitch=%d, tick=%lu", pitch, noteOffTick);
+            }
             
             if (activeNoteStacks[pitch].empty()) {
-                logger.log(CAT_TRACK, LOG_DEBUG, "Note-off without matching note-on: pitch=%d", pitch);
+                if (logDetails) {
+                    logger.log(CAT_TRACK, LOG_DEBUG, "Note-off without matching note-on: pitch=%d", pitch);
+                }
                 continue;
             }
             
@@ -88,8 +115,10 @@ std::vector<NoteUtils::DisplayNote> NoteUtils::reconstructNotes(const MidiEventV
             DisplayNote& note = activeNoteStacks[pitch].back();
             note.endTick = noteOffTick;
             
-                         logger.log(CAT_TRACK, LOG_DEBUG, "Final note: pitch=%d, start=%lu, end=%lu", 
-                       note.note, note.startTick, note.endTick);
+            if (logDetails) {
+                logger.log(CAT_TRACK, LOG_DEBUG, "Final note: pitch=%d, start=%lu, end=%lu",
+                           note.note, note.startTick, note.endTick);
+            }
             
             notes.push_back(note);
             activeNoteStacks[pitch].pop_back();
@@ -102,11 +131,14 @@ std::vector<NoteUtils::DisplayNote> NoteUtils::reconstructNotes(const MidiEventV
             DisplayNote completedNote = note;
             completedNote.endTick = loopLength - 1; // End at loop boundary
             
-                         logger.log(CAT_TRACK, LOG_DEBUG, "Active note at loop end: pitch=%d, start=%lu, end=%lu", 
-                       completedNote.note, completedNote.startTick, completedNote.endTick);
+            if (logDetails) {
+                logger.log(CAT_TRACK, LOG_DEBUG, "Active note at loop end: pitch=%d, start=%lu, end=%lu",
+                           completedNote.note, completedNote.startTick, completedNote.endTick);
+            }
             
             notes.push_back(completedNote);
         }
+        (void)pitch;
     }
     
     // Deduplicate notes with same pitch, start, and end
@@ -119,14 +151,16 @@ std::vector<NoteUtils::DisplayNote> NoteUtils::reconstructNotes(const MidiEventV
         if (seenNotes.find(key) == seenNotes.end()) {
             seenNotes.insert(key);
             finalNotes.push_back(note);
-        } else {
-            logger.log(CAT_TRACK, LOG_DEBUG, "Deduplicated note: pitch=%d, start=%lu, end=%lu", 
+        } else if (logDetails) {
+            logger.log(CAT_TRACK, LOG_DEBUG, "Deduplicated note: pitch=%d, start=%lu, end=%lu",
                        note.note, note.startTick, note.endTick);
         }
     }
 
-    logger.log(CAT_TRACK, LOG_DEBUG, "Reconstruction complete: %zu notes total (%zu duplicates removed)", 
-               finalNotes.size(), originalCount - finalNotes.size());
+    if (logDetails) {
+        logger.log(CAT_TRACK, LOG_DEBUG, "Reconstruction complete: %zu notes total (%zu duplicates removed)",
+                   finalNotes.size(), originalCount - finalNotes.size());
+    }
     
     return finalNotes;
 }
@@ -165,6 +199,7 @@ std::vector<NoteUtils::OpenNoteOn> NoteUtils::findOpenNoteOns(const MidiEventVec
             openNotes.push_back(open);
         }
     }
+
     return openNotes;
 }
 
@@ -186,4 +221,4 @@ NoteUtils::EventIndex NoteUtils::buildEventIndex(const MidiEventVec& midiEvents)
         }
     }
     return {std::move(onIndex), std::move(offIndex)};
-} 
+}

@@ -200,42 +200,43 @@ uint32_t MidiLedManager::getCurrentBarStartTick(uint32_t currentTick, const Loop
     return currentBar * ticksPerBar;
 }
 
-bool MidiLedManager::hasNoteInSixteenthStep(const Loop& loop, uint32_t stepStartStorage, uint32_t stepEndStorage) {
-    // Check if any note-on events fall within this 16th step
+namespace {
+
+bool noteOnInRange(const MidiEvent& event, uint32_t rangeStart, uint32_t rangeEnd) {
+    if (event.type != midi::NoteOn || event.data.noteData.velocity == 0) {
+        return false;
+    }
+    const uint32_t noteTick = event.tick;
+    if (rangeStart < rangeEnd) {
+        return noteTick >= rangeStart && noteTick < rangeEnd;
+    }
+    return noteTick >= rangeStart || noteTick < rangeEnd;
+}
+
+bool hasNoteOnInRange(const Loop& loop, uint32_t rangeStart, uint32_t rangeEnd) {
     for (const auto& event : loop.midiEvents) {
-        if (event.type == midi::NoteOn && event.data.noteData.velocity > 0) {
-            uint32_t noteTick = event.tick;
-            
-            // Handle normal case (step doesn't wrap around loop)
-            if (stepStartStorage < stepEndStorage) {
-                if (noteTick >= stepStartStorage && noteTick < stepEndStorage) {
-                    return true;
-                }
-            }
-            // Handle wrap-around case (step crosses loop boundary)
-            else {
-                if (noteTick >= stepStartStorage || noteTick < stepEndStorage) {
-                    return true;
-                }
+        if (noteOnInRange(event, rangeStart, rangeEnd)) {
+            return true;
+        }
+    }
+    if (loop.captureActive()) {
+        for (const auto& event : loop.captureEvents) {
+            if (noteOnInRange(event, rangeStart, rangeEnd)) {
+                return true;
             }
         }
     }
-    
     return false;
 }
 
+}  // namespace
+
+bool MidiLedManager::hasNoteInSixteenthStep(const Loop& loop, uint32_t stepStartStorage, uint32_t stepEndStorage) {
+    return hasNoteOnInRange(loop, stepStartStorage, stepEndStorage);
+}
+
 bool MidiLedManager::hasNoteInBar(const Loop& loop, uint32_t barStartStorage, uint32_t barEndStorage) {
-    for (const auto& event : loop.midiEvents) {
-        if (event.type != midi::NoteOn || event.data.noteData.velocity == 0) continue;
-        uint32_t noteTick = event.tick;
-        
-        if (barStartStorage < barEndStorage) {
-            if (noteTick >= barStartStorage && noteTick < barEndStorage) return true;
-        } else {
-            if (noteTick >= barStartStorage || noteTick < barEndStorage) return true;
-        }
-    }
-    return false;
+    return hasNoteOnInRange(loop, barStartStorage, barEndStorage);
 }
 
 void MidiLedManager::updateBarLeds(const Loop& loop, uint32_t currentBar) {

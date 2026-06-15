@@ -16,4 +16,6 @@ class StorageManager {
 public:
     static bool saveState(const LooperState& state);
     static bool loadState(LooperState& state);
+    static void requestDeferredSaveState(const LooperState& state);
+    static void processDeferredSaveState(const LooperState& state);
 }; 

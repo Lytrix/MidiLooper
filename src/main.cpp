@@ -15,7 +15,7 @@
 #include "DisplayManager.h"
 #include "LooperState.h"
 #include "Looper.h"
-#include "Track.h"
+#include "StorageManager.h"
 #include "EditManager.h"
 #include "EditStates/EditSelectNoteState.h"
 #include "Globals.h"
@@ -23,9 +23,11 @@
 #include "Utils/PerformanceMonitor.h"  // Performance monitoring
 #include "Utils/MemoryMonitor.h"
 #include "Utils/MemoryPool.h"
+#include "Utils/HotPathTelemetry.h"
 #include "Utils/SessionCapture.h"
 
 void setup() {
+  HotPathTelemetry::reset();
   delay(500);  // USB re-enumeration after reset
   Serial.begin(115200);
   while (!Serial && millis() < 3000) delay(10);
@@ -108,6 +110,7 @@ void setup() {
   trackManager.clearLeds();
   // Send initial 16th-note LEDs on startup (otherwise only sent when switching tracks or clock runs)
   trackManager.forceLedUpdate(clockManager.getCurrentTick());
+  HotPathTelemetry::emitSummary("startup");
 
   SC_SESSION_HEADER();
 }
@@ -149,6 +152,9 @@ void loop() {
   noteEditManager.update();
   looper.update();
 
+  StorageManager::processDeferredSaveState(looperState.getLooperState());
+  HotPathTelemetry::processDeferredSummary();
+
   // Update SELECT mode for overdubbing if active
   if (editManager.getCurrentState() == editManager.getSelectNoteState()) {
     auto* selectState = static_cast<EditSelectNoteState*>(editManager.getSelectNoteState());
@@ -161,10 +167,20 @@ void loop() {
     displayManager.update();
   }
 
-  // Log memory every 60 seconds to console (non-blocking, after display)
+  // Log memory every 60 seconds only when transport/capture is idle.
+  // Runtime PSRAM stats walk (sm_malloc_stats_pool) can take hundreds of ms
+  // on large pools and must never run during PLAYING/RECORDING/OVERDUBBING.
   static uint32_t lastMemoryLog = 0;
   constexpr uint32_t MEMORY_LOG_INTERVAL_MS = 60000;
-  if (now - lastMemoryLog >= MEMORY_LOG_INTERVAL_MS) {
+  bool timingCriticalTrackActive = false;
+  for (uint8_t i = 0; i < trackManager.getTrackCount(); ++i) {
+    const Track& t = trackManager.getTrack(i);
+    if (t.isPlaying() || t.isRecording() || t.isOverdubbing()) {
+      timingCriticalTrackActive = true;
+      break;
+    }
+  }
+  if (!timingCriticalTrackActive && now - lastMemoryLog >= MEMORY_LOG_INTERVAL_MS) {
     lastMemoryLog = now;
     MemoryMonitor::logStatus();
     if (MemoryMonitor::isLowMemory(20 * 1024)) {

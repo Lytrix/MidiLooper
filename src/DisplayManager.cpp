@@ -13,6 +13,7 @@
 #include "TickPhase.h"
 #include "NoteEditManager.h"
 #include "MidiHandler.h"
+#include "Utils/HotPathTelemetry.h"
 #include <map>
 #include <string>
 #include <Font5x7Fixed.h>
@@ -20,6 +21,8 @@
 
 DisplayManager displayManager;
 namespace {
+MidiEventVec liveDisplayEventBuffer;
+
 // Minimal gutter for longest line ("OVERD" = 30px) + 1px separator; content is right-aligned to display edge.
 constexpr int SIDEBAR_WIDTH = 30;
 constexpr int SIDEBAR_RIGHT_MARGIN = 1;
@@ -44,10 +47,12 @@ void applyLiveOpenTails(const std::vector<NoteUtils::OpenNoteOn>& openNotes, uin
                         uint32_t closeTick, std::vector<DisplayNote>& notes) {
     const uint32_t clampedCloseTick = clampOpenNoteCloseTick(closeTick, loopLength);
     for (const auto& open : openNotes) {
-        const uint32_t endTick = std::max(open.tick, clampedCloseTick);
+        const uint32_t playheadEndTick = std::max(open.tick, clampedCloseTick);
         for (auto& note : notes) {
             if (note.note == open.note && note.startTick == open.tick) {
-                note.endTick = endTick;
+                // Open note-ons only: reconstructNotes placeholders end at loopLength-1;
+                // live overdub/record display must follow the playhead instead.
+                note.endTick = playheadEndTick;
                 break;
             }
         }
@@ -131,6 +136,13 @@ uint32_t DisplayManager::resolvePlayheadInLoop(const Track& track, uint8_t displ
 
     const uint32_t displayTick = resolveDisplayTick(track, displaySlot, currentTick);
     if (isLiveRecordingDisplay(track, displaySlot)) {
+        if (track.isRecording() && !track.isPlaying()) {
+            // Growing capture length equals displayTick; modulo would always yield 0.
+            if (loopLength == 0 || displayTick == 0) {
+                return 0;
+            }
+            return std::min(displayTick, loopLength) - 1;
+        }
         return displayTick % loopLength;
     }
 
@@ -160,22 +172,32 @@ const std::vector<DisplayNote>& DisplayManager::resolveDisplayNotes(const Track&
         return liveDisplayNotes;
     }
 
-    // Reconstruct when event count or loop geometry/state changes. Between note-ons, only refresh
-    // open-tail end ticks to the playhead so held notes are not drawn to loop end.
+    // Full reconstruct only when slot/state changes, cache is cold, or events were removed.
+    // Growing loop length during record is handled by open-tail refresh only (not a full rebuild).
+    // New events trigger one quiet reconstruct; playhead-only frames reuse cached closed notes.
     const TrackState liveTrackState = track.isRecording() ? TRACK_RECORDING : TRACK_OVERDUBBING;
-    const size_t eventCount = loop.midiEvents.size();
-    const bool geometryChanged = displaySlot != liveDisplayCacheSlot ||
-                                 liveTrackState != liveDisplayCacheTrackState ||
-                                 liveLoopLength != liveDisplayCacheLoopLength ||
-                                 eventCount != liveDisplayCacheEventCount;
+    const size_t eventCount = loop.liveEventCount();
+    const bool cacheCold = liveDisplayCacheEventCount == static_cast<size_t>(-1);
+    const bool contextChanged = displaySlot != liveDisplayCacheSlot ||
+                                liveTrackState != liveDisplayCacheTrackState;
+    const bool eventsShrunk = !cacheCold && eventCount < liveDisplayCacheEventCount;
+    const bool eventsAdded = !cacheCold && eventCount > liveDisplayCacheEventCount;
+    const bool loopLengthChanged = !cacheCold && liveLoopLength != liveDisplayCacheLoopLength;
+    const bool captureRevisionChanged =
+        !cacheCold && loop.captureDisplayRevision != liveDisplayCacheCaptureRevision;
 
-    if (geometryChanged) {
-        liveDisplayNotes = NoteUtils::reconstructNotes(loop.midiEvents, liveLoopLength);
-        liveDisplayCacheOpenNotes = NoteUtils::findOpenNoteOns(loop.midiEvents, liveLoopLength);
+    if (cacheCold || contextChanged || eventsShrunk || eventsAdded || loopLengthChanged ||
+        captureRevisionChanged) {
+        loop.buildLiveEventView(liveDisplayEventBuffer);
+        liveDisplayNotes = NoteUtils::reconstructNotes(liveDisplayEventBuffer, liveLoopLength, false);
+        liveDisplayCacheOpenNotes = NoteUtils::findOpenNoteOns(liveDisplayEventBuffer, liveLoopLength);
         liveDisplayCacheSlot = displaySlot;
         liveDisplayCacheTrackState = liveTrackState;
         liveDisplayCacheLoopLength = liveLoopLength;
         liveDisplayCacheEventCount = eventCount;
+        liveDisplayCacheCaptureRevision = loop.captureDisplayRevision;
+    } else {
+        liveDisplayCacheLoopLength = liveLoopLength;
     }
 
     if (!liveDisplayCacheOpenNotes.empty()) {
@@ -188,6 +210,7 @@ const std::vector<DisplayNote>& DisplayManager::resolveDisplayNotes(const Track&
 
 void DisplayManager::invalidateLiveDisplayCache() {
     liveDisplayCacheEventCount = static_cast<size_t>(-1);
+    liveDisplayCacheCaptureRevision = 0;
     liveDisplayCacheLoopLength = 0;
     liveDisplayCacheSlot = 255;
     liveDisplayCacheTrackState = NUM_TRACK_STATES;
@@ -794,6 +817,7 @@ void DisplayManager::drawNoteInfo(uint32_t currentTick, Track& selectedTrack, ui
 }
 
 void DisplayManager::update() {
+    const uint32_t telemetryStartUs = micros();
     uint32_t currentTick = clockManager.getCurrentTick();
     Track& selTrack = trackManager.getSelectedTrack();
     const uint8_t displaySlot = trackManager.getSelectedSlotIndex(trackManager.getSelectedTrackIndex());
@@ -810,4 +834,5 @@ void DisplayManager::update() {
     drawNoteInfo(displayTick, selTrack, displaySlot, frameNotes);
 
    _display.api.display();
+    HotPathTelemetry::recordDisplayUpdate(micros() - telemetryStartUs);
 }

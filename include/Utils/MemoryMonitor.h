@@ -5,7 +5,7 @@
  * @file MemoryMonitor.h
  * @brief Runtime memory monitoring for embedded systems (Teensy 4.1).
  *
- * Reports free heap so you can detect when approaching memory limits.
+ * Reports internal malloc heap and (on Teensy 4.1) PSRAM pool usage.
  * Integrates with PerformanceMonitor and can be logged periodically.
  */
 #pragma once
@@ -34,6 +34,18 @@ uint32_t getTotalHeap();
  */
 uint32_t getUsedHeap();
 
+/** @brief True when Teensy PSRAM extmem pool is configured (chip detected). */
+bool isPsramAvailable();
+
+/** @brief Total PSRAM pool size in bytes (0 when unavailable). */
+uint32_t getPsramTotalBytes();
+
+/** @brief Free bytes in the PSRAM extmem pool (0 when unavailable). */
+uint32_t getPsramFreeBytes();
+
+/** @brief Used bytes in the PSRAM extmem pool (0 when unavailable). */
+uint32_t getPsramUsedBytes();
+
 /**
  * @brief Check if free heap is below a threshold (e.g. 10 KB).
  */
@@ -43,5 +55,14 @@ bool isLowMemory(uint32_t thresholdBytes = 10 * 1024);
  * @brief Log current memory stats to Serial (uses Logger if available).
  */
 void logStatus();
+
+/**
+ * @brief Log heap, PSRAM, pool, and active-loop storage stats at a record/overdub milestone.
+ * @param addedNoteOns Total note-ons stored this record/overdub pass.
+ * @param loopEventCount Events in the active loop vector (all types).
+ * @param loopEventsData Pointer to loop.midiEvents storage, or nullptr when empty.
+ */
+void logStatusAtAddedNotes(uint32_t addedNoteOns, size_t loopEventCount = 0,
+                          const void* loopEventsData = nullptr);
 
 }  // namespace MemoryMonitor

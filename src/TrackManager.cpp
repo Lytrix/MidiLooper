@@ -113,7 +113,7 @@ void TrackManager::stopRecordingTrack(uint8_t trackIndex) {
     tracks[trackIndex].setLoopLength(masterLoopLength);
   }
   Serial.println("Saving state after recording");
-  StorageManager::saveState(looperState.getLooperState()); // Save after recording
+  StorageManager::requestDeferredSaveState(looperState.getLooperState());
 }
 
 void TrackManager::queueRecordingTrack(uint8_t trackIndex, uint8_t slotIndex,

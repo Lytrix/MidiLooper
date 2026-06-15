@@ -42,9 +42,19 @@ struct OverdubGeomSnapshot {
 };
 using OverdubGeomDeque = std::deque<OverdubGeomSnapshot, ExtMemAllocator<OverdubGeomSnapshot>>;
 
+/// Active capture phase for the unified record/overdub append buffer.
+enum class CapturePhase : uint8_t { None, Record, Overdub };
+
 struct Loop {
-  // Sequence data — backed by ExtMemAllocator via MidiEventVec: fast internal RAM first, spills to PSRAM.
+  // Committed loop events (baseline during overdub capture).
   MidiEventVec midiEvents;
+  /// Append buffer during record/overdub; merged at phase stop.
+  MidiEventVec captureEvents;
+  CapturePhase capturePhase = CapturePhase::None;
+  uint16_t captureNextEventIndex = 0;
+  bool captureEventsSortDirty = false;
+  /// Bumped when capture geometry changes outside liveEventCount (e.g. loop-wrap note-offs).
+  uint16_t captureDisplayRevision = 0;
   uint32_t startLoopTick = 0;
   uint32_t loopLengthTicks = 0;
   uint32_t loopStartTick = 0;
@@ -56,13 +66,29 @@ struct Loop {
 
   // Undo overdub
   size_t midiEventCountAtLastSnapshot = 0;
+  bool overdubSessionOpen = false;
+  size_t overdubSessionBaselineEventCount = 0;
+  uint32_t overdubSessionBaselineHash = 0;
 
   // Caches
   mutable bool eventIndexValid = false;
 
   /// True if the slot holds a committed loop (length and/or events). Silent takes
   /// leave midiEvents empty but loopLengthTicks > 0 after stopRecording.
-  bool hasData() const { return !midiEvents.empty() || loopLengthTicks > 0; }
+  bool hasData() const {
+    return !midiEvents.empty() || loopLengthTicks > 0 || !captureEvents.empty();
+  }
+
+  void beginCapture(CapturePhase phase);
+  void discardCapture();
+  bool appendCaptureEvent(const MidiEvent& evt);
+  void commitCapture();
+  bool captureActive() const;
+  size_t liveEventCount() const;
+  /// Sort capture buffer by tick when append order diverges (display/playback/commit).
+  bool ensureCaptureEventsSorted();
+  /// Committed events plus in-flight capture buffer (sorted by tick) for display/LED reads.
+  void buildLiveEventView(MidiEventVec& out) const;
 
   // --- Lazy-allocated members (access via getters) ---
 
@@ -243,6 +269,10 @@ struct Loop {
   }
 
   void clearAllUndoStacks() {
+    discardCapture();
+    overdubSessionOpen = false;
+    overdubSessionBaselineEventCount = 0;
+    overdubSessionBaselineHash = 0;
     if (midiHistory_) midiHistory_->clear();
     if (midiRedoHistory_) midiRedoHistory_->clear();
     if (overdubGeomHistory_) overdubGeomHistory_->clear();

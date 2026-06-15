@@ -11,7 +11,9 @@ It automates:
 while streaming dense chromatic notes plus CC data on a recordable channel.
 
 It can optionally read USB serial capture output from the Teensy capture build
-to assert expected Track state transitions.
+to assert expected Track state transitions. When serial capture is enabled, the
+run aborts if no serial lines arrive for 20 seconds (crash/hang detection) and
+writes the capture log plus JSON report before exiting.
 """
 from __future__ import annotations
 
@@ -42,6 +44,14 @@ RECORD_BUTTON_NOTE = 36
 GLOBAL_TRANSPORT_NOTE = 39
 CONTROL_CHANNEL_1BASED = 16
 
+# Must match Config::TICKS_PER_BAR / Config::TICKS_PER_16TH_STEP in include/Globals.h.
+TICKS_PER_BAR = 768
+TICKS_PER_16TH_STEP = 48
+MIDI_CLOCKS_PER_BAR = 96
+RECORD_GRID_STEP_CLOCKS = 6  # 16th notes at 24 PPQN
+OVERDUB_GRID_STEP_CLOCKS = 12  # 8th notes at 24 PPQN
+DEFAULT_RECORD_NOTE_SPAN_MIN_RATIO = 0.9
+
 
 @dataclass(frozen=True)
 class TransitionExpectation:
@@ -59,6 +69,23 @@ EXPECTED_TRANSITIONS = (
 )
 
 
+@dataclass
+class RunAbort:
+    """Optional hard deadline plus serial heartbeat watchdog."""
+
+    run_deadline: Optional[float] = None
+    serial_collector: Optional["SerialCaptureCollector"] = None
+    heartbeat_timeout_s: float = 20.0
+
+    def check(self) -> Optional[str]:
+        now = time.monotonic()
+        if self.run_deadline is not None and now >= self.run_deadline:
+            return "run deadline exceeded"
+        if self.serial_collector is not None and self.heartbeat_timeout_s > 0:
+            return self.serial_collector.heartbeat_abort_reason(self.heartbeat_timeout_s)
+        return None
+
+
 class SerialCaptureCollector:
     """Collects Teensy serial lines in a background thread."""
 
@@ -68,6 +95,7 @@ class SerialCaptureCollector:
         self._lock = threading.Lock()
         self._stop = threading.Event()
         self._error: str = ""
+        self._last_line_at: Optional[float] = None
         self._thread = threading.Thread(target=self._run, daemon=True)
 
     def start(self) -> None:
@@ -89,6 +117,7 @@ class SerialCaptureCollector:
                     continue
                 with self._lock:
                     self._lines.append(line)
+                    self._last_line_at = time.monotonic()
         except SerialException as exc:
             self._error = str(exc)
             self._stop.set()
@@ -99,6 +128,26 @@ class SerialCaptureCollector:
 
     def error(self) -> str:
         return self._error
+
+    def seconds_since_last_line(self) -> Optional[float]:
+        with self._lock:
+            if self._last_line_at is None:
+                return None
+            return time.monotonic() - self._last_line_at
+
+    def heartbeat_abort_reason(self, timeout_s: float) -> Optional[str]:
+        if self._error:
+            return f"serial read error: {self._error}"
+        with self._lock:
+            if self._last_line_at is None:
+                return None
+            elapsed = time.monotonic() - self._last_line_at
+        if elapsed > timeout_s:
+            return (
+                f"serial heartbeat lost ({elapsed:.1f}s since last line, "
+                f"limit {timeout_s:.1f}s)"
+            )
+        return None
 
 
 def _find_midi_port(name_substring: str, is_input: bool, timeout_s: float = 5.0) -> str:
@@ -156,16 +205,17 @@ def _wait_for_clock_pulses(
     pulses: int,
     *,
     timeout_s: float,
-    run_deadline: Optional[float],
+    abort: Optional[RunAbort] = None,
 ) -> int:
     if pulses <= 0:
         return 0
     deadline = time.monotonic() + max(timeout_s, 0.0)
     seen = 0
     while seen < pulses:
+        if abort is not None:
+            if abort.check() is not None:
+                break
         now = time.monotonic()
-        if run_deadline is not None and now >= run_deadline:
-            break
         if now >= deadline:
             break
         msg = in_port.poll()
@@ -189,7 +239,7 @@ def _stream_dense_chromatic(
     gate_ms: int,
     cc_number: int,
     cc_step: int,
-    run_deadline: Optional[float] = None,
+    abort: Optional[RunAbort] = None,
 ) -> tuple[int, int]:
     ch = midi_channel_1based - 1
     start = time.monotonic()
@@ -199,7 +249,7 @@ def _stream_dense_chromatic(
     cc_val = 0
 
     while time.monotonic() - start < duration_s:
-        if run_deadline is not None and time.monotonic() >= run_deadline:
+        if abort is not None and abort.check() is not None:
             break
         note = root_note + (i % semitone_span)
         out_port.send(mido.Message("note_on", channel=ch, note=note, velocity=98))
@@ -216,6 +266,48 @@ def _stream_dense_chromatic(
         _drain_input_messages(in_port)
 
     return note_on_count, cc_count
+
+
+def _ensure_midi_clock(
+    in_port: mido.ports.BaseInput,
+    out_port: mido.ports.BaseOutput,
+    *,
+    min_clocks: int,
+    timeout_s: float,
+    abort: Optional[RunAbort] = None,
+) -> bool:
+    """Wait for incoming MIDI clock; toggle transport once if clock is missing."""
+    if min_clocks <= 0:
+        return True
+
+    def count_clocks(deadline: float) -> int:
+        seen = 0
+        while time.monotonic() < deadline:
+            if abort is not None and abort.check() is not None:
+                break
+            msg = in_port.poll()
+            if msg is None:
+                time.sleep(0.0005)
+                continue
+            if msg.type == "clock":
+                seen += 1
+                if seen >= min_clocks:
+                    break
+        return seen
+
+    deadline = time.monotonic() + max(timeout_s, 0.0)
+    if count_clocks(deadline) >= min_clocks:
+        return True
+
+    _send_short_press(
+        out_port,
+        note=GLOBAL_TRANSPORT_NOTE,
+        channel_1based=CONTROL_CHANNEL_1BASED,
+        press_ms=120,
+    )
+    time.sleep(0.3)
+    deadline = time.monotonic() + max(timeout_s, 0.0)
+    return count_clocks(deadline) >= min_clocks
 
 
 def _stream_pattern_for_bars(
@@ -239,8 +331,9 @@ def _stream_pattern_for_bars(
     stop_press_channel_1based: int = CONTROL_CHANNEL_1BASED,
     stop_press_press_ms: int = 85,
     clock_start_timeout_seconds: float = 0.75,
-    run_deadline: Optional[float] = None,
+    abort: Optional[RunAbort] = None,
     emit_immediate_first_step: bool = False,
+    gate_clocks: Optional[int] = None,
 ) -> tuple[int, int, int, dict[str, float]]:
     """Send note pattern until target bar count from MIDI clock.
 
@@ -251,6 +344,9 @@ def _stream_pattern_for_bars(
         raise ValueError("high_note must be >= low_note")
     if step_clocks <= 0:
         raise ValueError("step_clocks must be > 0")
+    note_gate_clocks = step_clocks if gate_clocks is None else gate_clocks
+    if note_gate_clocks <= 0:
+        raise ValueError("gate_clocks must be > 0")
     if pitch_cycle_bars <= 0:
         raise ValueError("pitch_cycle_bars must be > 0")
     if phase_start_delay_bars < 0:
@@ -259,12 +355,6 @@ def _stream_pattern_for_bars(
         raise ValueError("phase_start_delay_beats must be >= 0")
 
     ch = midi_channel_1based - 1
-    # Drop queued MIDI from previous phases so bar counting starts at this phase boundary.
-    while True:
-        msg = in_port.poll()
-        if msg is None:
-            break
-
     note_range = list(range(low_note, high_note + 1))
     note_index = 0
     note_on_count = 0
@@ -275,6 +365,14 @@ def _stream_pattern_for_bars(
     target_clocks = target_bars * 96
     phase_delay_clocks = (phase_start_delay_bars * 96) + (phase_start_delay_beats * 24)
     pitch_cycle_clocks = pitch_cycle_bars * 96
+    # Drop queued note/CC from previous phases. Discard stale clocks too — transport
+    # may already be running; counting them here would shorten the phase vs device ticks.
+    while True:
+        msg = in_port.poll()
+        if msg is None:
+            break
+        if msg.type in ("start", "stop", "continue", "clock"):
+            continue
     stop_press_trigger_clock: Optional[int] = None
     if stop_press_note is not None and stop_press_advance_clocks > 0:
         stop_press_trigger_clock = max(1, target_clocks - stop_press_advance_clocks)
@@ -287,7 +385,7 @@ def _stream_pattern_for_bars(
     jitter_samples: list[int] = []
 
     while phase_clock_count < target_clocks:
-        if run_deadline is not None and time.monotonic() >= run_deadline:
+        if abort is not None and abort.check() is not None:
             break
         if stop_press_noteoff_due_at is not None and time.monotonic() >= stop_press_noteoff_due_at:
             out_port.send(
@@ -338,7 +436,7 @@ def _stream_pattern_for_bars(
             note_on_count += 1
             out_port.send(mido.Message("control_change", channel=ch, control=cc_number, value=cc_val))
             cc_count += 1
-            gate_clocks = max(1, step_clocks // 2)
+            gate_clocks = note_gate_clocks
             held_notes.append((note, phase_clock_count + gate_clocks))
             note_index += 1
             cc_val = (cc_val + cc_step) % 128
@@ -355,7 +453,7 @@ def _stream_pattern_for_bars(
             out_port.send(mido.Message("control_change", channel=ch, control=cc_number, value=cc_val))
             cc_count += 1
 
-            gate_clocks = max(1, step_clocks // 2)
+            gate_clocks = note_gate_clocks
             held_notes.append((note, phase_clock_count + gate_clocks))
             note_index += 1
             cc_val = (cc_val + cc_step) % 128
@@ -418,7 +516,7 @@ def _stream_pattern_for_seconds(
     duration_s: float,
     cc_number: int,
     cc_step: int,
-    run_deadline: Optional[float] = None,
+    abort: Optional[RunAbort] = None,
 ) -> tuple[int, int]:
     """Send a note pattern paced by wall-clock duration."""
     if high_note < low_note:
@@ -437,7 +535,7 @@ def _stream_pattern_for_seconds(
     start = time.monotonic()
 
     while True:
-        if run_deadline is not None and time.monotonic() >= run_deadline:
+        if abort is not None and abort.check() is not None:
             break
         elapsed = time.monotonic() - start
         if elapsed >= duration_s:
@@ -501,6 +599,10 @@ def _count_capture_state_entries(lines: list[str]) -> dict[str, int]:
         to_state = parts[1].strip()
         counts[to_state] = counts.get(to_state, 0) + 1
     return counts
+
+
+def _serial_has_clear_ignored_empty(lines: list[str]) -> bool:
+    return any("Clear ignored — track is empty" in line for line in lines)
 
 
 def _extract_phase_boundaries(lines: list[str]) -> dict[str, Optional[int]]:
@@ -605,6 +707,88 @@ def _verify_phase_note_pairs(
     }
 
 
+def _last_recs_row(recs_lengths: list[dict[str, int]]) -> Optional[dict[str, int]]:
+    if not recs_lengths:
+        return None
+    return recs_lengths[-1]
+
+
+def _verify_record_loop_length(
+    recs_lengths: list[dict[str, int]],
+    *,
+    record_bars: int,
+    ticks_per_bar: int = TICKS_PER_BAR,
+) -> dict[str, object]:
+    if record_bars <= 0:
+        return {"phase_disabled": True}
+    last = _last_recs_row(recs_lengths)
+    if last is None:
+        return {
+            "phase_disabled": False,
+            "recs_missing": True,
+            "expected_final_length": record_bars * ticks_per_bar,
+            "actual_final_length": None,
+            "final_length_ok": False,
+        }
+    expected = record_bars * ticks_per_bar
+    actual = int(last["final_length"])
+    return {
+        "phase_disabled": False,
+        "recs_missing": False,
+        "expected_final_length": expected,
+        "actual_final_length": actual,
+        "final_length_ok": actual == expected,
+        "raw_length": int(last["raw_length"]),
+    }
+
+
+def _verify_record_note_span(
+    recs_lengths: list[dict[str, int]],
+    *,
+    record_bars: int,
+    note_on_count: int,
+    ticks_per_bar: int = TICKS_PER_BAR,
+    ticks_per_step: int = TICKS_PER_16TH_STEP,
+    span_min_ratio: float = DEFAULT_RECORD_NOTE_SPAN_MIN_RATIO,
+) -> dict[str, object]:
+    if record_bars <= 0:
+        return {"phase_disabled": True}
+    last = _last_recs_row(recs_lengths)
+    if last is None:
+        return {
+            "phase_disabled": False,
+            "recs_missing": True,
+            "expected_min_raw_length": None,
+            "actual_raw_length": None,
+            "raw_span_ok": False,
+        }
+    if note_on_count <= 1:
+        return {
+            "phase_disabled": False,
+            "recs_missing": False,
+            "expected_min_raw_length": 0,
+            "actual_raw_length": int(last["raw_length"]),
+            "raw_span_ok": False,
+            "note_on_count": note_on_count,
+        }
+
+    expected_span = max(
+        (record_bars * 16 - 1) * ticks_per_step,
+        (note_on_count - 1) * ticks_per_step,
+    )
+    expected_min = int(expected_span * span_min_ratio)
+    actual = int(last["raw_length"])
+    return {
+        "phase_disabled": False,
+        "recs_missing": False,
+        "note_on_count": note_on_count,
+        "expected_span_ticks": expected_span,
+        "expected_min_raw_length": expected_min,
+        "actual_raw_length": actual,
+        "raw_span_ok": actual >= expected_min,
+    }
+
+
 def _extract_recs_lengths(lines: list[str]) -> list[dict[str, int]]:
     rows: list[dict[str, int]] = []
     for line in lines:
@@ -689,6 +873,84 @@ def _extract_first_note_offset(
     }
 
 
+def _extract_revt_note_on_ticks(lines: list[str]) -> list[int]:
+    """Stored note-on ticks logged just before the first record RECS,stop line."""
+    recs_stop_ts: Optional[int] = None
+    record_start_ts: Optional[int] = None
+    for line in lines:
+        if ",RECA," in line and record_start_ts is None:
+            try:
+                record_start_ts = int(line.split(",")[1])
+            except ValueError:
+                pass
+        if ",RECS,stop," in line and recs_stop_ts is None:
+            try:
+                recs_stop_ts = int(line.split(",")[1])
+            except ValueError:
+                pass
+            break
+    if recs_stop_ts is None:
+        return []
+
+    ticks: list[int] = []
+    for line in lines:
+        if ",REVT," not in line:
+            continue
+        parts = line.split(",")
+        if len(parts) < 6:
+            continue
+        try:
+            ts = int(parts[1])
+            tick = int(parts[3])
+        except ValueError:
+            continue
+        if record_start_ts is not None and ts < record_start_ts:
+            continue
+        if ts > recs_stop_ts:
+            continue
+        ticks.append(tick)
+    return ticks
+
+
+def _verify_stored_record_note_grid(
+    lines: list[str],
+    *,
+    ticks_per_step: int = TICKS_PER_16TH_STEP,
+) -> dict[str, object]:
+    ticks = _extract_revt_note_on_ticks(lines)
+    if len(ticks) < 2:
+        return {
+            "phase_disabled": False,
+            "revt_missing": len(ticks) == 0,
+            "note_on_count": len(ticks),
+            "grid_ok": False,
+        }
+    deltas = [ticks[i] - ticks[i - 1] for i in range(1, len(ticks))]
+    # Stored spacing follows raw capture ticks (no record quantize); allow one 16th tolerance
+    # and a 2x step at pitch-cycle wrap.
+    tol = max(8, ticks_per_step // 4)
+    bad = [
+        d
+        for d in deltas
+        if d <= 0
+        or (
+            abs(d - ticks_per_step) > tol
+            and abs(d - 2 * ticks_per_step) > tol
+        )
+    ]
+    return {
+        "phase_disabled": False,
+        "revt_missing": False,
+        "note_on_count": len(ticks),
+        "first_tick": ticks[0],
+        "last_tick": ticks[-1],
+        "min_delta": min(deltas),
+        "max_delta": max(deltas),
+        "bad_delta_count": len(bad),
+        "grid_ok": len(bad) == 0,
+    }
+
+
 def _build_serial_verification(lines: list[str], args: argparse.Namespace) -> dict[str, object]:
     boundaries = _extract_phase_boundaries(lines)
     record = _verify_phase_note_pairs(
@@ -708,6 +970,20 @@ def _build_serial_verification(lines: list[str], args: argparse.Namespace) -> di
         high_note=args.overdub_high_note,
     )
     recs_lengths = _extract_recs_lengths(lines)
+    record_loop_length: Optional[dict[str, object]] = None
+    record_note_span: Optional[dict[str, object]] = None
+    stored_record_grid: Optional[dict[str, object]] = None
+    if args.record_bars and args.bar_sync_from_midi_clock:
+        record_loop_length = _verify_record_loop_length(
+            recs_lengths,
+            record_bars=args.record_bars,
+        )
+        record_note_span = _verify_record_note_span(
+            recs_lengths,
+            record_bars=args.record_bars,
+            note_on_count=int(record["note_on_count"]),
+        )
+        stored_record_grid = _verify_stored_record_note_grid(lines)
     record_first_note_offset = _extract_first_note_offset(
         lines,
         midi_channel_1based=args.midi_channel,
@@ -741,10 +1017,30 @@ def _build_serial_verification(lines: list[str], args: argparse.Namespace) -> di
         issues.append("overdub_first_note_missing")
     elif overdub_offset_clocks > args.overdub_first_note_max_clocks:
         issues.append("overdub_first_note_too_late")
+    if record_loop_length is not None:
+        if record_loop_length.get("recs_missing"):
+            if "record_recs_missing" not in issues:
+                issues.append("record_recs_missing")
+        elif not record_loop_length.get("final_length_ok", False):
+            issues.append("record_loop_length_mismatch")
+    if record_note_span is not None:
+        if record_note_span.get("recs_missing"):
+            if "record_recs_missing" not in issues:
+                issues.append("record_recs_missing")
+        elif not record_note_span.get("raw_span_ok", False):
+            issues.append("record_note_span_too_short")
+    if stored_record_grid is not None:
+        if stored_record_grid.get("revt_missing"):
+            issues.append("record_stored_revt_missing")
+        elif not stored_record_grid.get("grid_ok", False):
+            issues.append("record_stored_note_grid_bad")
     return {
         "boundaries": boundaries,
         "record_phase": record,
         "overdub_phase": overdub,
+        "record_loop_length": record_loop_length,
+        "record_note_span": record_note_span,
+        "stored_record_grid": stored_record_grid,
         "record_first_note_offset": record_first_note_offset,
         "overdub_first_note_offset": overdub_first_note_offset,
         "recs_lengths": recs_lengths,
@@ -758,9 +1054,12 @@ def _wait_for_state_entry_count(
     to_state: str,
     target_count: int,
     timeout_s: float,
+    abort: Optional[RunAbort] = None,
 ) -> bool:
     deadline = time.monotonic() + max(timeout_s, 0.0)
     while time.monotonic() < deadline:
+        if abort is not None and abort.check() is not None:
+            return False
         counts = _count_capture_state_entries(collector.snapshot())
         if counts.get(to_state, 0) >= target_count:
             return True
@@ -775,10 +1074,13 @@ def _wait_for_transition_count(
     to_state: str,
     target_count: int,
     timeout_s: float,
+    abort: Optional[RunAbort] = None,
 ) -> bool:
     deadline = time.monotonic() + max(timeout_s, 0.0)
     key = (from_state, to_state)
     while time.monotonic() < deadline:
+        if abort is not None and abort.check() is not None:
+            return False
         counts = _count_capture_transitions(collector.snapshot())
         if counts.get(key, 0) >= target_count:
             return True
@@ -912,8 +1214,14 @@ def run() -> int:
     parser.add_argument(
         "--max-run-seconds",
         type=float,
-        default=180.0,
-        help="Hard timeout for the full script run; writes report and exits if exceeded",
+        default=0.0,
+        help="Optional hard timeout for the full script run (0 disables; prefer serial heartbeat)",
+    )
+    parser.add_argument(
+        "--serial-heartbeat-timeout-seconds",
+        type=float,
+        default=20.0,
+        help="Abort when serial capture has no lines for this long (0 disables; requires --serial-port)",
     )
     parser.add_argument(
         "--state-sync-timeout-ms",
@@ -976,8 +1284,10 @@ def run() -> int:
         raise SystemExit("--midi-channel 16 is excluded from recording; choose 1-15")
     if args.tempo_bpm <= 0:
         raise SystemExit("--tempo-bpm must be > 0")
-    if args.max_run_seconds <= 0:
-        raise SystemExit("--max-run-seconds must be > 0")
+    if args.max_run_seconds < 0:
+        raise SystemExit("--max-run-seconds must be >= 0 (0 disables)")
+    if args.serial_heartbeat_timeout_seconds < 0:
+        raise SystemExit("--serial-heartbeat-timeout-seconds must be >= 0 (0 disables)")
     if args.record_first_note_max_clocks < 0:
         raise SystemExit("--record-first-note-max-clocks must be >= 0")
     if args.overdub_first_note_max_clocks < 0:
@@ -1016,11 +1326,24 @@ def run() -> int:
         print("Serial capture disabled (no #CAP assertions).")
 
     run_started = datetime.now()
-    run_deadline = time.monotonic() + args.max_run_seconds
+    run_deadline = (
+        time.monotonic() + args.max_run_seconds if args.max_run_seconds > 0 else None
+    )
+    abort = RunAbort(
+        run_deadline=run_deadline,
+        serial_collector=serial_collector,
+        heartbeat_timeout_s=args.serial_heartbeat_timeout_seconds if args.serial_port else 0.0,
+    )
+    if args.serial_port and args.serial_heartbeat_timeout_seconds > 0:
+        print(
+            "Serial heartbeat enabled: "
+            f"abort after {args.serial_heartbeat_timeout_seconds:.0f}s without serial lines"
+        )
     per_track_stats: list[dict[str, int]] = []
     midi_in_messages = 0
-    timed_out = False
+    abort_reason: Optional[str] = None
     precondition_failures: list[dict[str, object]] = []
+    clear_precondition_results: list[dict[str, object]] = []
 
     try:
         with mido.open_output(midi_out_name) as out_port, mido.open_input(midi_in_name) as in_port:
@@ -1044,8 +1367,8 @@ def run() -> int:
                         print("[warn] MIDI clock still missing after transport retries.")
 
             for idx in range(args.first_track_index, args.first_track_index + args.track_count):
-                if time.monotonic() >= run_deadline:
-                    timed_out = True
+                if (reason := abort.check()) is not None:
+                    abort_reason = reason
                     break
                 print(f"[track {idx}] select")
                 _send_short_press(
@@ -1056,9 +1379,45 @@ def run() -> int:
                 )
                 time.sleep(args.phase_wait_ms / 1000.0)
 
+                # Recover from a prior aborted run: stop then restart transport so
+                # USB MIDI clock reaches the host again (stuck RECORDING can mute it).
+                if args.start_transport:
+                    _send_short_press(
+                        out_port,
+                        note=GLOBAL_TRANSPORT_NOTE,
+                        channel_1based=CONTROL_CHANNEL_1BASED,
+                        press_ms=args.press_ms,
+                    )
+                    time.sleep(args.phase_wait_ms / 1000.0)
+                    if not _ensure_midi_clock(
+                        in_port,
+                        out_port,
+                        min_clocks=24,
+                        timeout_s=2.0,
+                        abort=abort,
+                    ):
+                        print("[warn] MIDI clock missing after transport stop; retrying transport start.")
+                    _send_short_press(
+                        out_port,
+                        note=GLOBAL_TRANSPORT_NOTE,
+                        channel_1based=CONTROL_CHANNEL_1BASED,
+                        press_ms=args.press_ms,
+                    )
+                    time.sleep(args.phase_wait_ms / 1000.0)
+                    if not _ensure_midi_clock(
+                        in_port,
+                        out_port,
+                        min_clocks=24,
+                        timeout_s=2.0,
+                        abort=abort,
+                    ):
+                        print("[error] MIDI clock unavailable after transport reset; aborting track run.")
+                        abort_reason = "midi clock unavailable after transport reset"
+                        break
+
                 if args.clear_before_record:
-                    if time.monotonic() >= run_deadline:
-                        timed_out = True
+                    if (reason := abort.check()) is not None:
+                        abort_reason = reason
                         break
                     print(f"[track {idx}] clear selected loop (long press)")
                     expected_empty_count = None
@@ -1077,7 +1436,16 @@ def run() -> int:
                             to_state="EMPTY",
                             target_count=expected_empty_count,
                             timeout_s=args.state_sync_timeout_ms / 1000.0,
+                            abort=abort,
                         )
+                        clear_result = "empty_transition" if reached_empty else ""
+                        if not reached_empty and _serial_has_clear_ignored_empty(serial_collector.snapshot()):
+                            print(
+                                "[info] Clear ignored on already-empty track; "
+                                "treating clear precondition as satisfied."
+                            )
+                            reached_empty = True
+                            clear_result = "already_empty_ignored"
                         if not reached_empty:
                             print("[warn] Timed out waiting for clear->EMPTY transition; retrying clear long press.")
                             _send_short_press(
@@ -1091,21 +1459,38 @@ def run() -> int:
                                 to_state="EMPTY",
                                 target_count=expected_empty_count,
                                 timeout_s=args.state_sync_timeout_ms / 1000.0,
+                                abort=abort,
                             )
-                            if not reached_empty:
-                                print("[warn] Retry did not reach EMPTY after clear long press.")
-                                precondition_failures.append(
-                                    {
-                                        "track_index": idx,
-                                        "step": "clear_to_empty",
-                                        "reason": "clear_not_confirmed",
-                                    }
-                                )
-                                print(
-                                    f"[error] Preconditions failed on track {idx}: "
-                                    "clear step did not confirm EMPTY state. Aborting run."
-                                )
-                                break
+                            if reached_empty:
+                                clear_result = "empty_transition"
+                        if not reached_empty and _serial_has_clear_ignored_empty(serial_collector.snapshot()):
+                            print(
+                                "[info] Clear ignored on already-empty track; "
+                                "treating clear precondition as satisfied."
+                            )
+                            reached_empty = True
+                            clear_result = "already_empty_ignored"
+                        if reached_empty and clear_result:
+                            clear_precondition_results.append(
+                                {
+                                    "track_index": idx,
+                                    "result": clear_result,
+                                }
+                            )
+                        if not reached_empty:
+                            print("[warn] Retry did not reach EMPTY after clear long press.")
+                            precondition_failures.append(
+                                {
+                                    "track_index": idx,
+                                    "step": "clear_to_empty",
+                                    "reason": "clear_not_confirmed",
+                                }
+                            )
+                            print(
+                                f"[error] Preconditions failed on track {idx}: "
+                                "clear step did not confirm EMPTY state. Aborting run."
+                            )
+                            break
                     time.sleep(args.phase_wait_ms / 1000.0)
                     if precondition_failures:
                         break
@@ -1128,6 +1513,7 @@ def run() -> int:
                         to_state="RECORDING",
                         target_count=expected_recording_count,
                         timeout_s=args.state_sync_timeout_ms / 1000.0,
+                        abort=abort,
                     )
                     if not reached_recording:
                         print("[warn] Timed out waiting for ->RECORDING transition; retrying record start press.")
@@ -1142,6 +1528,7 @@ def run() -> int:
                             to_state="RECORDING",
                             target_count=expected_recording_count,
                             timeout_s=args.state_sync_timeout_ms / 1000.0,
+                            abort=abort,
                         )
                         if not reached_recording:
                             print("[warn] Retry did not reach RECORDING.")
@@ -1159,6 +1546,16 @@ def run() -> int:
                     "mean_abs_grid_jitter_clocks": 0.0,
                 }
                 if args.record_bars and args.bar_sync_from_midi_clock:
+                    if not _ensure_midi_clock(
+                        in_port,
+                        out_port,
+                        min_clocks=24,
+                        timeout_s=2.0,
+                        abort=abort,
+                    ):
+                        print("[error] MIDI clock missing before record phase; aborting track run.")
+                        abort_reason = "midi clock missing before record phase"
+                        break
                     guard = max(10.0, args.record_bars * seconds_per_bar * 3.0)
                     rec_notes, rec_cc, rec_clock_count, rec_timing = _stream_pattern_for_bars(
                         out_port,
@@ -1166,7 +1563,8 @@ def run() -> int:
                         midi_channel_1based=args.midi_channel,
                         low_note=args.record_low_note,
                         high_note=args.record_high_note,
-                        step_clocks=6,  # 16th notes at 24 PPQN clock
+                        step_clocks=RECORD_GRID_STEP_CLOCKS,
+                        gate_clocks=RECORD_GRID_STEP_CLOCKS,
                         target_bars=args.record_bars,
                         cc_number=args.cc_number,
                         cc_step=args.cc_step,
@@ -1176,7 +1574,7 @@ def run() -> int:
                         max_seconds_guard=guard,
                         fixed_note=args.record_fixed_note if args.fixed_grid_notes else None,
                         stop_press_advance_clocks=args.stop_press_advance_clocks,
-                        run_deadline=run_deadline,
+                        abort=abort,
                         emit_immediate_first_step=True,
                     )
                 else:
@@ -1191,11 +1589,16 @@ def run() -> int:
                         gate_ms=args.gate_ms,
                         cc_number=args.cc_number,
                         cc_step=args.cc_step,
-                        run_deadline=run_deadline,
+                        abort=abort,
                     )
 
-                if time.monotonic() >= run_deadline:
-                    timed_out = True
+                if (reason := abort.check()) is not None:
+                    abort_reason = reason
+                    break
+
+                if args.record_bars and args.bar_sync_from_midi_clock and rec_clock_count <= 0:
+                    print("[error] Record phase saw 0 MIDI clock pulses; aborting track run.")
+                    abort_reason = "record phase saw 0 midi clock pulses"
                     break
 
                 time.sleep(max(args.post_stream_settle_ms, 0) / 1000.0)
@@ -1217,6 +1620,7 @@ def run() -> int:
                         to_state="PLAYING",
                         target_count=expected_play_count,
                         timeout_s=args.state_sync_timeout_ms / 1000.0,
+                        abort=abort,
                     )
                     if not reached:
                         print("[warn] Timed out waiting for STOPPED_RECORDING->PLAYING transition; retrying record stop press.")
@@ -1232,6 +1636,7 @@ def run() -> int:
                             to_state="PLAYING",
                             target_count=expected_play_count,
                             timeout_s=args.state_sync_timeout_ms / 1000.0,
+                            abort=abort,
                         )
                         if not reached:
                             print("[warn] Retry did not reach STOPPED_RECORDING->PLAYING transition.")
@@ -1256,6 +1661,7 @@ def run() -> int:
                         to_state="OVERDUBBING",
                         target_count=expected_overdub_count,
                         timeout_s=args.state_sync_timeout_ms / 1000.0,
+                        abort=abort,
                     )
                     if not reached_overdub:
                         print("[warn] Timed out waiting for PLAYING->OVERDUBBING transition; retrying overdub start press.")
@@ -1271,6 +1677,7 @@ def run() -> int:
                             to_state="OVERDUBBING",
                             target_count=expected_overdub_count,
                             timeout_s=args.state_sync_timeout_ms / 1000.0,
+                            abort=abort,
                         )
                         if not reached_overdub:
                             print("[warn] Retry did not reach PLAYING->OVERDUBBING transition.")
@@ -1289,6 +1696,16 @@ def run() -> int:
                     "stop_press_sent_during_stream": 0.0,
                 }
                 if args.overdub_bars and args.bar_sync_from_midi_clock:
+                    if not _ensure_midi_clock(
+                        in_port,
+                        out_port,
+                        min_clocks=24,
+                        timeout_s=2.0,
+                        abort=abort,
+                    ):
+                        print("[error] MIDI clock missing before overdub phase; aborting track run.")
+                        abort_reason = "midi clock missing before overdub phase"
+                        break
                     guard = max(10.0, args.overdub_bars * seconds_per_bar * 3.0)
                     overdub_stop_advance_clocks = args.stop_press_advance_clocks
                     if overdub_stop_advance_clocks <= 0:
@@ -1301,7 +1718,8 @@ def run() -> int:
                         midi_channel_1based=args.midi_channel,
                         low_note=args.overdub_low_note,
                         high_note=args.overdub_high_note,
-                        step_clocks=12,  # 8th notes at 24 PPQN clock
+                        step_clocks=OVERDUB_GRID_STEP_CLOCKS,
+                        gate_clocks=OVERDUB_GRID_STEP_CLOCKS,
                         target_bars=args.overdub_bars,
                         cc_number=args.cc_number,
                         cc_step=args.cc_step,
@@ -1314,7 +1732,7 @@ def run() -> int:
                         stop_press_note=RECORD_BUTTON_NOTE,
                         stop_press_channel_1based=CONTROL_CHANNEL_1BASED,
                         stop_press_press_ms=args.press_ms,
-                        run_deadline=run_deadline,
+                        abort=abort,
                         emit_immediate_first_step=True,
                     )
                 else:
@@ -1329,11 +1747,11 @@ def run() -> int:
                         gate_ms=args.gate_ms,
                         cc_number=args.cc_number,
                         cc_step=args.cc_step,
-                        run_deadline=run_deadline,
+                        abort=abort,
                     )
 
-                if time.monotonic() >= run_deadline:
-                    timed_out = True
+                if (reason := abort.check()) is not None:
+                    abort_reason = reason
                     break
 
                 time.sleep(max(args.post_stream_settle_ms, 0) / 1000.0)
@@ -1377,8 +1795,8 @@ def run() -> int:
                     }
                 )
 
-            if timed_out:
-                print("Run timeout reached before finishing all phases/tracks.")
+            if abort_reason:
+                print(f"Run aborted: {abort_reason}")
             if precondition_failures:
                 print("Run aborted due to failed preconditions.")
 
@@ -1404,12 +1822,16 @@ def run() -> int:
     expected_min = args.track_count
     expected_record_notes_min = 0
     expected_overdub_notes_min = 0
+    expected_record_clocks = 0
+    expected_overdub_clocks = 0
     if args.record_bars and args.bar_sync_from_midi_clock:
         # 16th-note grid; allow one-step edge variance at boundaries.
         expected_record_notes_min = max(1, args.record_bars * 16 - 1)
+        expected_record_clocks = args.record_bars * MIDI_CLOCKS_PER_BAR
     if args.overdub_bars and args.bar_sync_from_midi_clock:
         # 8th-note grid; allow one-step edge variance at boundaries.
         expected_overdub_notes_min = max(1, args.overdub_bars * 8 - 1)
+        expected_overdub_clocks = args.overdub_bars * MIDI_CLOCKS_PER_BAR
 
     phase_note_failures: list[dict[str, int]] = []
     phase_activation_failures: list[dict[str, int | str]] = []
@@ -1429,15 +1851,26 @@ def run() -> int:
                     "reason": "phase_not_activated_or_no_clock",
                 }
             )
-        elif expected_record_notes_min > 0 and rec_notes < expected_record_notes_min:
-            phase_note_failures.append(
-                {
-                    "track_index": idx,
-                    "phase": "record",
-                    "actual_notes": rec_notes,
-                    "expected_notes_min": expected_record_notes_min,
-                }
-            )
+        else:
+            if expected_record_notes_min > 0 and rec_notes < expected_record_notes_min:
+                phase_note_failures.append(
+                    {
+                        "track_index": idx,
+                        "phase": "record",
+                        "actual_notes": rec_notes,
+                        "expected_notes_min": expected_record_notes_min,
+                    }
+                )
+            if expected_record_clocks > 0 and rec_clocks != expected_record_clocks:
+                phase_activation_failures.append(
+                    {
+                        "track_index": idx,
+                        "phase": "record",
+                        "actual_clocks": rec_clocks,
+                        "expected_clocks": expected_record_clocks,
+                        "reason": "clock_count_mismatch",
+                    }
+                )
         if expected_overdub_notes_min > 0 and od_clocks <= 0:
             phase_activation_failures.append(
                 {
@@ -1447,15 +1880,26 @@ def run() -> int:
                     "reason": "phase_not_activated_or_no_clock",
                 }
             )
-        elif expected_overdub_notes_min > 0 and od_notes < expected_overdub_notes_min:
-            phase_note_failures.append(
-                {
-                    "track_index": idx,
-                    "phase": "overdub",
-                    "actual_notes": od_notes,
-                    "expected_notes_min": expected_overdub_notes_min,
-                }
-            )
+        else:
+            if expected_overdub_notes_min > 0 and od_notes < expected_overdub_notes_min:
+                phase_note_failures.append(
+                    {
+                        "track_index": idx,
+                        "phase": "overdub",
+                        "actual_notes": od_notes,
+                        "expected_notes_min": expected_overdub_notes_min,
+                    }
+                )
+            if expected_overdub_clocks > 0 and od_clocks != expected_overdub_clocks:
+                phase_activation_failures.append(
+                    {
+                        "track_index": idx,
+                        "phase": "overdub",
+                        "actual_clocks": od_clocks,
+                        "expected_clocks": expected_overdub_clocks,
+                        "reason": "clock_count_mismatch",
+                    }
+                )
 
     transition_checks = []
     for expectation in EXPECTED_TRANSITIONS:
@@ -1488,15 +1932,18 @@ def run() -> int:
         "expected_recs_min": expected_min if verification_lines else None,
         "transition_checks": transition_checks,
         "midi_in_message_count": midi_in_messages,
-        "timed_out": timed_out,
+        "abort_reason": abort_reason or "",
+        "timed_out": abort_reason == "run deadline exceeded",
+        "heartbeat_lost": bool(abort_reason and "heartbeat" in abort_reason),
         "precondition_failures": precondition_failures,
+        "clear_precondition_results": clear_precondition_results,
         "phase_note_failures": phase_note_failures,
         "phase_activation_failures": phase_activation_failures,
         "serial_verification": serial_verification,
     }
 
     overall_ok = True
-    if timed_out:
+    if abort_reason:
         overall_ok = False
     if precondition_failures:
         overall_ok = False
@@ -1576,6 +2023,31 @@ def run() -> int:
                 f"{rf['offset_clocks']}/{of['offset_clocks']} "
                 f"(max {args.record_first_note_max_clocks}/{args.overdub_first_note_max_clocks})"
             )
+            record_loop_length = serial_verification.get("record_loop_length")
+            if record_loop_length and not record_loop_length.get("phase_disabled"):
+                print(
+                    "  VERIFY record loop length (final ticks): "
+                    f"{record_loop_length.get('actual_final_length')}/"
+                    f"{record_loop_length.get('expected_final_length')} "
+                    f"(raw {record_loop_length.get('raw_length')})"
+                )
+            record_note_span = serial_verification.get("record_note_span")
+            if record_note_span and not record_note_span.get("phase_disabled"):
+                print(
+                    "  VERIFY record note span (raw ticks): "
+                    f"{record_note_span.get('actual_raw_length')}/"
+                    f"{record_note_span.get('expected_min_raw_length')} "
+                    f"(expected span {record_note_span.get('expected_span_ticks')})"
+                )
+            stored_record_grid = serial_verification.get("stored_record_grid")
+            if stored_record_grid and not stored_record_grid.get("phase_disabled"):
+                print(
+                    "  VERIFY stored record grid (REVT ticks): "
+                    f"count={stored_record_grid.get('note_on_count')} "
+                    f"delta={stored_record_grid.get('min_delta')}-"
+                    f"{stored_record_grid.get('max_delta')} "
+                    f"bad={stored_record_grid.get('bad_delta_count')}"
+                )
             if serial_verification["issues"]:
                 print(f"  VERIFY issues: {', '.join(serial_verification['issues'])}")
     if phase_note_failures:
@@ -1599,6 +2071,8 @@ def run() -> int:
             print("  Serial assertions skipped (no --serial-port).")
     if args.serial_port and serial_error:
         print(f"  Serial error: {serial_error}")
+    if abort_reason:
+        print(f"  Abort reason: {abort_reason}")
     print(f"  Report: {report_path}")
 
     if not overall_ok:
