@@ -108,6 +108,8 @@ public:
   
   // MIDI event validation
   void validateAndCleanupMidiEvents(uint32_t openTailCloseTick = UINT32_MAX);  // Manual validation
+  /// During overdub loop wrap: store synthetic note-off at loop end for still-open tails.
+  void closeOpenNotesAtLoopWrap();
 
   // MIDI events
   void recordMidiEvents(midi::MidiType type, byte channel, byte data1, byte data2, uint32_t currentTick);
@@ -256,6 +258,7 @@ private:
   volatile uint32_t jamTick;  // Position within jam region (0 to jamLength-1)
   bool jamPlaybackActive;     // True = track uses jamTick for playback
   bool alignLoopOriginOnNextStop;
+  uint16_t recordAddedNoteOnCount;  // note-ons this overdub pass (memory log at overdub stop)
   static const uint32_t TICKS_PER_BAR;
 
   // Per-slot loop storage (heap-allocated to avoid BSS overflow with 8 tracks × 8 loops)

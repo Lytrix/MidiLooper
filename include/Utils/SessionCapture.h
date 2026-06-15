@@ -22,6 +22,7 @@
  *   CS   ,<from>,<to>                          clock source transition (INT/EXT)
  *   RECA ,<slot>,<tick>                        recording armed/started: startLoopTick stamp (B1)
  *   RECS ,<kind>,<slot>,<tick>,<start>,<raw>,<final>,<align>  recording stopped: length finalization (B1)
+ *   REVT ,<tick>,<ch>,<note>                   stored note-on tick after record commit (B1)
  *   BAR  ,<tick>,<bar>                         bar boundary marker (tick<->micros alignment)
  */
 #pragma once
@@ -106,6 +107,11 @@ inline void recStop(const char* kind, uint8_t slot, uint32_t tick, uint32_t star
                 (unsigned long)finalLength, align ? 1 : 0);
 }
 
+inline void recStoredNoteOn(uint32_t tick, uint8_t ch, uint8_t note) {
+  Serial.printf("#CAP,%lu,REVT,%lu,%u,%u\r\n",
+                (unsigned long)micros(), (unsigned long)tick, ch, note);
+}
+
 /// Call from the main loop; emits a BAR line whenever the bar number changes.
 inline void update(uint32_t currentTick, uint32_t ticksPerBar) {
   static uint32_t lastBar = 0xFFFFFFFF;
@@ -130,6 +136,7 @@ inline void update(uint32_t currentTick, uint32_t ticksPerBar) {
 #define SC_REC_START(slot, tick)           SessionCapture::recStart(slot, tick)
 #define SC_REC_STOP(kind, slot, tick, start, raw, final, align) \
                                            SessionCapture::recStop(kind, slot, tick, start, raw, final, align)
+#define SC_REC_STORED_NOTE_ON(tick, ch, note) SessionCapture::recStoredNoteOn(tick, ch, note)
 #define SC_UPDATE(tick, ticksPerBar)       SessionCapture::update(tick, ticksPerBar)
 
 #else // !SESSION_CAPTURE — all capture macros compile to nothing
@@ -144,6 +151,7 @@ inline void update(uint32_t currentTick, uint32_t ticksPerBar) {
 #define SC_CLOCK_SOURCE(from, to)          ((void)0)
 #define SC_REC_START(slot, tick)           ((void)0)
 #define SC_REC_STOP(kind, slot, tick, start, raw, final, align) ((void)0)
+#define SC_REC_STORED_NOTE_ON(tick, ch, note) ((void)0)
 #define SC_UPDATE(tick, ticksPerBar)       ((void)0)
 
 #endif // SESSION_CAPTURE

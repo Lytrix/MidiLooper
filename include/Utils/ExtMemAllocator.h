@@ -42,6 +42,13 @@
   #define EXTMEM_PSRAM_START 0x70000000UL
   #define EXTMEM_PSRAM_END   0x78000000UL  // 8 MB ceiling
   #define EXTMEM_AVAILABLE 1
+
+  /** True when @p ptr lies in the PSRAM address range (ExtMemAllocator spillover). */
+  inline bool isInPsram(const void* ptr) {
+    if (!ptr) return false;
+    const auto addr = reinterpret_cast<uintptr_t>(ptr);
+    return addr >= EXTMEM_PSRAM_START && addr < EXTMEM_PSRAM_END;
+  }
 #else
   // Native / test builds: PSRAM is not available. All allocations go to
   // standard malloc so tests can still compile and run on the host.
@@ -51,6 +58,8 @@
   #define EXTMEM_PSRAM_START 0UL
   #define EXTMEM_PSRAM_END   0UL
   #define EXTMEM_AVAILABLE 0
+
+  inline bool isInPsram(const void*) { return false; }
 #endif
 
 template <typename T>

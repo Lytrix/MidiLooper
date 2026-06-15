@@ -11,6 +11,7 @@
 #include "TrackUndo.h"
 #include "Utils/MemoryPool.h"
 #include "Utils/ExtMemAllocator.h"
+#include "Utils/HotPathTelemetry.h"
 #include <array>
 
 #define STORAGE_FILENAME "/midilooper_state.raw"
@@ -42,6 +43,12 @@ static bool readRaw(File &file, void *data, size_t size) {
 }
 
 bool StorageManager::saveState(const LooperState& state) {
+#if BYPASS_STOP_UNDO_SAVE
+    (void)state;
+    Serial.println("[StorageManager] BYPASS_STOP_UNDO_SAVE: skip saveState");
+    return true;
+#endif
+    HotPathTelemetry::ScopedSaveState telemetryScope;
     Serial.println("[StorageManager] Saving state to SD card...");
     File file = SD.open(STORAGE_FILENAME, FILE_WRITE);
     if (!file) {
@@ -301,7 +308,32 @@ bool StorageManager::saveState(const LooperState& state) {
     }
     file.close();
     Serial.println("[StorageManager] State saved successfully.");
+    telemetryScope.setOk(true);
     return true;
+}
+
+namespace {
+bool deferredSavePending = false;
+}  // namespace
+
+void StorageManager::requestDeferredSaveState(const LooperState& /*state*/) {
+#if BYPASS_STOP_UNDO_SAVE
+    return;
+#endif
+    deferredSavePending = true;
+}
+
+void StorageManager::processDeferredSaveState(const LooperState& state) {
+#if BYPASS_STOP_UNDO_SAVE
+    (void)state;
+    deferredSavePending = false;
+    return;
+#endif
+    if (!deferredSavePending) {
+        return;
+    }
+    deferredSavePending = false;
+    saveState(state);
 }
 
 bool StorageManager::loadState(LooperState& state) {

@@ -52,9 +52,11 @@ private:
  *
  * @param midiEvents  The full list of MIDI events from a Track.
  * @param loopLength  The loop length in ticks.
+ * @param verboseLog  When false, or when midiEvents is large, per-event DEBUG lines are omitted.
  * @return Vector of paired DisplayNote entries.
  */
-std::vector<DisplayNote> reconstructNotes(const MidiEventVec& midiEvents, uint32_t loopLength);
+std::vector<DisplayNote> reconstructNotes(const MidiEventVec& midiEvents, uint32_t loopLength,
+                                          bool verboseLog = true);
 
 struct OpenNoteOn {
     uint8_t note;
