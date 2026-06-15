@@ -41,7 +41,7 @@ bool isDuplicateCaptureEvent(const Loop& loop, const MidiEvent& candidate) {
     return false;
   }
 
-  for (const MidiEvent& baseline : loop.midiEvents) {
+  for (const MidiEvent& baseline : loop.midiEvents()) {
     if (baseline.tick < lo) {
       continue;
     }
@@ -90,9 +90,9 @@ bool Loop::appendCaptureEvent(const MidiEvent& evt) {
 
 size_t Loop::liveEventCount() const {
   if (capturePhase == CapturePhase::None) {
-    return midiEvents.size();
+    return committedEvents.size();
   }
-  return midiEvents.size() + captureEvents.size();
+  return committedEvents.size() + captureEvents.size();
 }
 
 bool Loop::captureActive() const {
@@ -109,18 +109,19 @@ bool Loop::ensureCaptureEventsSorted() {
 }
 
 void Loop::buildLiveEventView(MidiEventVec& out) const {
+  const MidiEventVec& committed = committedEvents.read();
   if (!captureActive() || captureEvents.empty()) {
-    out = midiEvents;
+    out = committed;
     return;
   }
   const_cast<Loop*>(this)->ensureCaptureEventsSorted();
-  if (midiEvents.empty()) {
+  if (committed.empty()) {
     out = captureEvents;
     return;
   }
   out.clear();
-  out.reserve(midiEvents.size() + captureEvents.size());
-  std::merge(midiEvents.begin(), midiEvents.end(),
+  out.reserve(committed.size() + captureEvents.size());
+  std::merge(committed.begin(), committed.end(),
              captureEvents.begin(), captureEvents.end(),
              std::back_inserter(out),
              [](const MidiEvent& a, const MidiEvent& b) { return a.tick < b.tick; });
@@ -136,16 +137,17 @@ void Loop::commitCapture() {
 
   ensureCaptureEventsSorted();
 
-  if (midiEvents.empty()) {
-    midiEvents = std::move(captureEvents);
+  MidiEventVec& committed = committedEvents.mut();
+  if (committed.empty()) {
+    committed = std::move(captureEvents);
   } else {
     MidiEventVec merged;
-    merged.reserve(midiEvents.size() + captureEvents.size());
-    std::merge(midiEvents.begin(), midiEvents.end(),
+    merged.reserve(committed.size() + captureEvents.size());
+    std::merge(committed.begin(), committed.end(),
                captureEvents.begin(), captureEvents.end(),
                std::back_inserter(merged),
                [](const MidiEvent& a, const MidiEvent& b) { return a.tick < b.tick; });
-    midiEvents.swap(merged);
+    committed.swap(merged);
     captureEvents.clear();
   }
 

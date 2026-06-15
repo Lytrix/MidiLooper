@@ -126,7 +126,7 @@ public:
   bool hasDataInSlot(uint8_t slotIndex) const;
 
   // Event counters
-  size_t getMidiEventCount() const { return getActiveLoop().midiEvents.size(); }
+  size_t getMidiEventCount() const { return getActiveLoop().committedEvents.size(); }
 
   // Track length control (delegate to active loop)
   uint32_t getStartLoopTick() const { return getActiveLoop().startLoopTick; }
@@ -192,10 +192,10 @@ public:
   bool isMuted() const;
 
   // Add to public section of Track to be able to save the events
-  MidiEventVec& getMidiEvents() { return getActiveLoop().midiEvents; }
+  MidiEventVec& getMidiEvents() { return getActiveLoop().midiEvents(); }
 
   /// Immutable access to midiEvents (for const Track)
-  const MidiEventVec& getMidiEvents() const { return getActiveLoop().midiEvents; }
+  const MidiEventVec& getMidiEvents() const { return getActiveLoop().midiEvents(); }
 
   /// Access loop by index (0 to MAX_LOOPS_PER_TRACK-1)
   Loop& getLoop(uint8_t index);
@@ -214,7 +214,7 @@ public:
   
   /// Get cached display notes - avoids expensive reconstructNotes() calls
   const std::vector<NoteUtils::DisplayNote>& getCachedNotes() const {
-    return getActiveLoop().getNoteCache().getNotes(getActiveLoop().midiEvents, getActiveLoop().loopLengthTicks);
+    return getActiveLoop().getNoteCache().getNotes(getActiveLoop().midiEvents(), getActiveLoop().loopLengthTicks);
   }
 
   /// Per-slot cached notes for display (e.g. follow selected slot while activeLoopIndex is capture phase).
@@ -222,14 +222,14 @@ public:
   uint32_t getLoopStartTickForSlot(uint8_t slotIndex) const { return getLoop(slotIndex).loopStartTick; }
   const std::vector<NoteUtils::DisplayNote>& getCachedNotesForSlot(uint8_t slotIndex) const {
     const Loop& loop = getLoop(slotIndex);
-    return loop.getNoteCache().getNotes(loop.midiEvents, loop.loopLengthTicks);
+    return loop.getNoteCache().getNotes(loop.midiEvents(), loop.loopLengthTicks);
   }
   
   /// Get cached event index - avoids expensive index rebuilding
   const NoteUtils::EventIndex& getCachedEventIndex() const {
     Loop& loop = const_cast<Loop&>(getActiveLoop());
     if (!loop.eventIndexValid) {
-      loop.getCachedEventIndex() = NoteUtils::buildEventIndex(loop.midiEvents);
+      loop.getCachedEventIndex() = NoteUtils::buildEventIndex(loop.midiEvents());
       loop.eventIndexValid = true;
     }
     return loop.getCachedEventIndex();

@@ -19,6 +19,7 @@
 #include <deque>
 #include <memory>
 #include "MidiEvent.h"
+#include "LoopEventBuffer.h"
 #include "TrackState.h"
 #include "Utils/MemoryPool.h"
 #include "Utils/NoteUtils.h"
@@ -29,6 +30,7 @@
 class Track;
 
 using PooledMidiDeque    = std::deque<MemoryPool::PooledMidiEventVector, ExtMemAllocator<MemoryPool::PooledMidiEventVector>>;
+using MidiSnapshotDeque  = std::deque<MidiSnapshotRef, ExtMemAllocator<MidiSnapshotRef>>;
 using TrackStateDeque    = std::deque<TrackState,    ExtMemAllocator<TrackState>>;
 using Uint32Deque        = std::deque<uint32_t,      ExtMemAllocator<uint32_t>>;
 /// Playback order indices (same allocator as midiEvents for PSRAM spillover).
@@ -46,8 +48,8 @@ using OverdubGeomDeque = std::deque<OverdubGeomSnapshot, ExtMemAllocator<Overdub
 enum class CapturePhase : uint8_t { None, Record, Overdub };
 
 struct Loop {
-  // Committed loop events (baseline during overdub capture).
-  MidiEventVec midiEvents;
+  // Committed loop events (baseline during overdub capture); COW for O(1) undo refs.
+  CowMidiEvents committedEvents;
   /// Append buffer during record/overdub; merged at phase stop.
   MidiEventVec captureEvents;
   CapturePhase capturePhase = CapturePhase::None;
@@ -76,8 +78,11 @@ struct Loop {
   /// True if the slot holds a committed loop (length and/or events). Silent takes
   /// leave midiEvents empty but loopLengthTicks > 0 after stopRecording.
   bool hasData() const {
-    return !midiEvents.empty() || loopLengthTicks > 0 || !captureEvents.empty();
+    return !committedEvents.empty() || loopLengthTicks > 0 || !captureEvents.empty();
   }
+
+  MidiEventVec& midiEvents() { return committedEvents.mut(); }
+  const MidiEventVec& midiEvents() const { return committedEvents.read(); }
 
   void beginCapture(CapturePhase phase);
   void discardCapture();
@@ -92,27 +97,27 @@ struct Loop {
 
   // --- Lazy-allocated members (access via getters) ---
 
-  PooledMidiDeque& getMidiHistory() {
-    if (!midiHistory_) midiHistory_ = std::make_unique<PooledMidiDeque>();
+  MidiSnapshotDeque& getMidiHistory() {
+    if (!midiHistory_) midiHistory_ = std::make_unique<MidiSnapshotDeque>();
     return *midiHistory_;
   }
-  const PooledMidiDeque& getMidiHistory() const {
+  const MidiSnapshotDeque& getMidiHistory() const {
     return const_cast<Loop*>(this)->getMidiHistory();
   }
   bool midiHistoryEmpty() const { return !midiHistory_ || midiHistory_->empty(); }
   size_t midiHistorySize() const { return midiHistory_ ? midiHistory_->size() : 0; }
-  const PooledMidiDeque* tryGetMidiHistory() const { return midiHistory_ ? midiHistory_.get() : nullptr; }
+  const MidiSnapshotDeque* tryGetMidiHistory() const { return midiHistory_ ? midiHistory_.get() : nullptr; }
 
-  PooledMidiDeque& getMidiRedoHistory() {
-    if (!midiRedoHistory_) midiRedoHistory_ = std::make_unique<PooledMidiDeque>();
+  MidiSnapshotDeque& getMidiRedoHistory() {
+    if (!midiRedoHistory_) midiRedoHistory_ = std::make_unique<MidiSnapshotDeque>();
     return *midiRedoHistory_;
   }
-  const PooledMidiDeque& getMidiRedoHistory() const {
+  const MidiSnapshotDeque& getMidiRedoHistory() const {
     return const_cast<Loop*>(this)->getMidiRedoHistory();
   }
   bool midiRedoHistoryEmpty() const { return !midiRedoHistory_ || midiRedoHistory_->empty(); }
   size_t midiRedoHistorySize() const { return midiRedoHistory_ ? midiRedoHistory_->size() : 0; }
-  const PooledMidiDeque* tryGetMidiRedoHistory() const { return midiRedoHistory_ ? midiRedoHistory_.get() : nullptr; }
+  const MidiSnapshotDeque* tryGetMidiRedoHistory() const { return midiRedoHistory_ ? midiRedoHistory_.get() : nullptr; }
 
   OverdubGeomDeque& getOverdubGeomHistory() {
     if (!overdubGeomHistory_) overdubGeomHistory_ = std::make_unique<OverdubGeomDeque>();
@@ -301,8 +306,8 @@ struct Loop {
   }
 
 private:
-  std::unique_ptr<PooledMidiDeque> midiHistory_;
-  std::unique_ptr<PooledMidiDeque> midiRedoHistory_;
+  std::unique_ptr<MidiSnapshotDeque> midiHistory_;
+  std::unique_ptr<MidiSnapshotDeque> midiRedoHistory_;
   std::unique_ptr<OverdubGeomDeque> overdubGeomHistory_;
   std::unique_ptr<OverdubGeomDeque> overdubGeomRedoHistory_;
   std::unique_ptr<PooledMidiDeque> clearMidiHistory_;
