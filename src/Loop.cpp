@@ -27,12 +27,16 @@ bool isDuplicateCaptureEvent(const Loop& loop, const MidiEvent& candidate) {
                           : 0;
   const uint32_t hi = candidate.tick + Config::DUPLICATE_TICK_TOLERANCE;
 
-  for (auto it = loop.captureEvents.rbegin();
-       it != loop.captureEvents.rend() && it->tick >= lo; ++it) {
-    if (it->tick > hi) {
+  const size_t captureCount = loop.captureStore.size();
+  for (size_t i = captureCount; i > 0; --i) {
+    const MidiEvent& evt = loop.captureStore.at(i - 1);
+    if (evt.tick < lo) {
+      break;
+    }
+    if (evt.tick > hi) {
       continue;
     }
-    if (eventsEquivalent(*it, candidate)) {
+    if (eventsEquivalent(evt, candidate)) {
       return true;
     }
   }
@@ -41,7 +45,9 @@ bool isDuplicateCaptureEvent(const Loop& loop, const MidiEvent& candidate) {
     return false;
   }
 
-  for (const MidiEvent& baseline : loop.midiEvents()) {
+  const size_t committedCount = loop.committedEvents.size();
+  for (size_t i = 0; i < committedCount; ++i) {
+    const MidiEvent& baseline = loop.committedEvents.at(i);
     if (baseline.tick < lo) {
       continue;
     }
@@ -55,22 +61,26 @@ bool isDuplicateCaptureEvent(const Loop& loop, const MidiEvent& candidate) {
   return false;
 }
 
-void sortCaptureEventsByTick(MidiEventVec& events) {
-  std::stable_sort(events.begin(), events.end(),
+void sortCaptureStoreByTick(LoopEventStore& store) {
+  MidiEventVec sorted;
+  store.flatten(sorted);
+  std::stable_sort(sorted.begin(), sorted.end(),
                    [](const MidiEvent& a, const MidiEvent& b) { return a.tick < b.tick; });
+  store.clear();
+  store.loadFromFlat(sorted);
 }
 
 }  // namespace
 
 void Loop::beginCapture(CapturePhase phase) {
   capturePhase = phase;
-  captureEvents.clear();
+  captureStore.clear();
   captureNextEventIndex = 0;
   captureEventsSortDirty = false;
 }
 
 void Loop::discardCapture() {
-  captureEvents.clear();
+  captureStore.clear();
   capturePhase = CapturePhase::None;
   captureNextEventIndex = 0;
   captureEventsSortDirty = false;
@@ -83,7 +93,9 @@ bool Loop::appendCaptureEvent(const MidiEvent& evt) {
   if (isDuplicateCaptureEvent(*this, evt)) {
     return false;
   }
-  captureEvents.push_back(evt);
+  if (!captureStore.append(evt)) {
+    return false;
+  }
   captureEventsSortDirty = true;
   return true;
 }
@@ -92,7 +104,7 @@ size_t Loop::liveEventCount() const {
   if (capturePhase == CapturePhase::None) {
     return committedEvents.size();
   }
-  return committedEvents.size() + captureEvents.size();
+  return committedEvents.size() + captureStore.size();
 }
 
 bool Loop::captureActive() const {
@@ -103,32 +115,36 @@ bool Loop::ensureCaptureEventsSorted() {
   if (!captureEventsSortDirty) {
     return false;
   }
-  sortCaptureEventsByTick(captureEvents);
+  sortCaptureStoreByTick(captureStore);
   captureEventsSortDirty = false;
   return true;
 }
 
 void Loop::buildLiveEventView(MidiEventVec& out) const {
-  const MidiEventVec& committed = committedEvents.read();
-  if (!captureActive() || captureEvents.empty()) {
-    out = committed;
+  if (!captureActive() || captureStore.empty()) {
+    committedEvents.readStore().flatten(out);
     return;
   }
   const_cast<Loop*>(this)->ensureCaptureEventsSorted();
-  if (committed.empty()) {
-    out = captureEvents;
+
+  MidiEventVec committedFlat;
+  committedEvents.readStore().flatten(committedFlat);
+  if (committedFlat.empty()) {
+    captureStore.flatten(out);
     return;
   }
+
+  MidiEventVec captureFlat;
+  captureStore.flatten(captureFlat);
   out.clear();
-  out.reserve(committed.size() + captureEvents.size());
-  std::merge(committed.begin(), committed.end(),
-             captureEvents.begin(), captureEvents.end(),
+  out.reserve(committedFlat.size() + captureFlat.size());
+  std::merge(committedFlat.begin(), committedFlat.end(), captureFlat.begin(), captureFlat.end(),
              std::back_inserter(out),
              [](const MidiEvent& a, const MidiEvent& b) { return a.tick < b.tick; });
 }
 
 void Loop::commitCapture() {
-  if (captureEvents.empty()) {
+  if (captureStore.empty()) {
     capturePhase = CapturePhase::None;
     captureNextEventIndex = 0;
     captureEventsSortDirty = false;
@@ -137,18 +153,11 @@ void Loop::commitCapture() {
 
   ensureCaptureEventsSorted();
 
-  MidiEventVec& committed = committedEvents.mut();
+  LoopEventStore& committed = committedEvents.mutStore();
   if (committed.empty()) {
-    committed = std::move(captureEvents);
+    committed.adoptAll(captureStore);
   } else {
-    MidiEventVec merged;
-    merged.reserve(committed.size() + captureEvents.size());
-    std::merge(committed.begin(), committed.end(),
-               captureEvents.begin(), captureEvents.end(),
-               std::back_inserter(merged),
-               [](const MidiEvent& a, const MidiEvent& b) { return a.tick < b.tick; });
-    committed.swap(merged);
-    captureEvents.clear();
+    committed.mergeFrom(captureStore);
   }
 
   capturePhase = CapturePhase::None;

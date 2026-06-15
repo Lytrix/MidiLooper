@@ -23,6 +23,7 @@
 #include "Utils/PerformanceMonitor.h"  // Performance monitoring
 #include "Utils/MemoryMonitor.h"
 #include "Utils/MemoryPool.h"
+#include "LoopEventStore.h"
 #include "Utils/HotPathTelemetry.h"
 #include "Utils/SessionCapture.h"
 
@@ -48,6 +49,7 @@ void setup() {
   // Initialise the global MIDI event pool now that the Teensy core has completed
   // PSRAM hardware initialisation. This must happen before any Track/Loop allocations.
   MemoryPool::globalMidiEventPool.init();
+  LoopEventStore::initPool();
 
   // Allocate Loop arrays immediately - before USB Host, faders, etc. consume heap
   trackManager.allocateLoopsEarly();
@@ -75,9 +77,13 @@ void setup() {
   //midiButtonManager.setup();
 
   // Initialize logger (Serial already begun above)
-  logger.setup(LOG_DEBUG);  // Set to LOG_INFO/LOG_DEBUG for production/debug
-  
-  logger.setCategoryEnabled(CAT_MIDI, true);  // Ensure MIDI logging is enabled
+#if defined(SESSION_CAPTURE)
+  logger.setup(LOG_DEBUG);
+  logger.setCategoryEnabled(CAT_MIDI, true);
+#else
+  logger.setup(LOG_WARNING);
+  logger.setCategoryEnabled(CAT_MIDI, false);
+#endif
   logger.setCategoryEnabled(CAT_MIDI_LED, false);  // LED update logging (channel/destinations)
   logger.setCategoryEnabled(CAT_STORAGE, false);  // StorageManager v3 per-slot save progress (verbose)
 
@@ -152,8 +158,25 @@ void loop() {
   noteEditManager.update();
   looper.update();
 
+  bool timingCriticalTrackActive = false;
+  for (uint8_t i = 0; i < trackManager.getTrackCount(); ++i) {
+    const Track& t = trackManager.getTrack(i);
+    if (t.isPlaying() || t.isRecording() || t.isOverdubbing()) {
+      timingCriticalTrackActive = true;
+      break;
+    }
+  }
+
   StorageManager::processDeferredSaveState(looperState.getLooperState());
   HotPathTelemetry::processDeferredSummary();
+
+  SC_REC_FLUSH_PENDING_REVTS(64);
+
+  if (!timingCriticalTrackActive) {
+    for (uint8_t i = 0; i < trackManager.getTrackCount(); ++i) {
+      trackManager.getTrack(i).processDeferredIdleMaintenance();
+    }
+  }
 
   // Update SELECT mode for overdubbing if active
   if (editManager.getCurrentState() == editManager.getSelectNoteState()) {
@@ -172,14 +195,6 @@ void loop() {
   // on large pools and must never run during PLAYING/RECORDING/OVERDUBBING.
   static uint32_t lastMemoryLog = 0;
   constexpr uint32_t MEMORY_LOG_INTERVAL_MS = 60000;
-  bool timingCriticalTrackActive = false;
-  for (uint8_t i = 0; i < trackManager.getTrackCount(); ++i) {
-    const Track& t = trackManager.getTrack(i);
-    if (t.isPlaying() || t.isRecording() || t.isOverdubbing()) {
-      timingCriticalTrackActive = true;
-      break;
-    }
-  }
   if (!timingCriticalTrackActive && now - lastMemoryLog >= MEMORY_LOG_INTERVAL_MS) {
     lastMemoryLog = now;
     MemoryMonitor::logStatus();

@@ -48,10 +48,10 @@ using OverdubGeomDeque = std::deque<OverdubGeomSnapshot, ExtMemAllocator<Overdub
 enum class CapturePhase : uint8_t { None, Record, Overdub };
 
 struct Loop {
-  // Committed loop events (baseline during overdub capture); COW for O(1) undo refs.
-  CowMidiEvents committedEvents;
-  /// Append buffer during record/overdub; merged at phase stop.
-  MidiEventVec captureEvents;
+  // Committed loop events (baseline during overdub capture); COW chunk refs for O(1) undo.
+  CowLoopEventStore committedEvents;
+  /// Append buffer during record/overdub; spliced into committed at phase stop.
+  LoopEventStore captureStore;
   CapturePhase capturePhase = CapturePhase::None;
   uint16_t captureNextEventIndex = 0;
   bool captureEventsSortDirty = false;
@@ -78,11 +78,14 @@ struct Loop {
   /// True if the slot holds a committed loop (length and/or events). Silent takes
   /// leave midiEvents empty but loopLengthTicks > 0 after stopRecording.
   bool hasData() const {
-    return !committedEvents.empty() || loopLengthTicks > 0 || !captureEvents.empty();
+    return !committedEvents.empty() || loopLengthTicks > 0 || !captureStore.empty();
   }
 
-  MidiEventVec& midiEvents() { return committedEvents.mut(); }
-  const MidiEventVec& midiEvents() const { return committedEvents.read(); }
+  const MidiEvent& eventAt(size_t index) const { return committedEvents.at(index); }
+  size_t eventCount() const { return committedEvents.size(); }
+
+  MidiEventVec& midiEvents() { return committedEvents.mutFlat(); }
+  const MidiEventVec& midiEvents() const { return committedEvents.readFlat(); }
 
   void beginCapture(CapturePhase phase);
   void discardCapture();
@@ -269,6 +272,7 @@ struct Loop {
   }
 
   void invalidateCaches() {
+    committedEvents.syncFlatToStore();
     if (noteCache_) noteCache_->invalidate();
     eventIndexValid = false;
   }
@@ -303,6 +307,18 @@ struct Loop {
     if (overdubGeomRedoHistory_) overdubGeomRedoHistory_->clear();
     if (loopStartHistory_) loopStartHistory_->clear();
     if (loopStartRedoHistory_) loopStartRedoHistory_->clear();
+  }
+
+  /// Clears "undo clear slot" stacks. A new recording supersedes clear undo.
+  void clearClearUndoStacks() {
+    if (clearMidiHistory_) clearMidiHistory_->clear();
+    if (clearMidiRedoHistory_) clearMidiRedoHistory_->clear();
+    if (clearStateHistory_) clearStateHistory_->clear();
+    if (clearStateRedoHistory_) clearStateRedoHistory_->clear();
+    if (clearLengthHistory_) clearLengthHistory_->clear();
+    if (clearLengthRedoHistory_) clearLengthRedoHistory_->clear();
+    if (clearStartHistory_) clearStartHistory_->clear();
+    if (clearStartRedoHistory_) clearStartRedoHistory_->clear();
   }
 
 private:

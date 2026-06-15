@@ -220,7 +220,9 @@ bool hasNoteOnInRange(const Loop& loop, uint32_t rangeStart, uint32_t rangeEnd) 
         }
     }
     if (loop.captureActive()) {
-        for (const auto& event : loop.captureEvents) {
+        const size_t captureCount = loop.captureStore.size();
+        for (size_t i = 0; i < captureCount; ++i) {
+            const MidiEvent& event = loop.captureStore.at(i);
             if (noteOnInRange(event, rangeStart, rangeEnd)) {
                 return true;
             }
