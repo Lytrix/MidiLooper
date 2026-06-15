@@ -47,7 +47,7 @@ public:
     static bool canRedo(const Track& track);
     static void popLastUndo(Track& track);
     static const MidiEventVec& peekLastMidiSnapshot(const Track& track);
-    static PooledMidiDeque& getMidiHistory(Track& track);
+    static MidiSnapshotDeque& getMidiHistory(Track& track);
     static const MidiEventVec& getCurrentMidiSnapshot(const Track& track);
     // Undo clear
     static void pushClearTrackSnapshot(Track& track);

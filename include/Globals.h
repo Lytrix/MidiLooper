@@ -18,6 +18,10 @@
 #pragma once
 #include <Arduino.h>
 
+#ifndef BYPASS_STOP_UNDO_SAVE
+#define BYPASS_STOP_UNDO_SAVE 0
+#endif
+
 // --------------------
 // Hardware Configuration
 // --------------------
@@ -63,6 +67,8 @@ namespace Config {
   constexpr uint32_t TICKS_PER_16TH_STEP = INTERNAL_PPQN / 4;          // 192 / 4 = 48 Ticks
   constexpr uint32_t DUPLICATE_TICK_TOLERANCE = TICKS_PER_16TH_STEP / 4;  // 12 ticks = 1/64th note; events within this are treated as duplicates
   constexpr uint8_t  MAX_UNDO_HISTORY = 25;
+  /// Above this event count, overdub undo still stores O(1) refs but logs a degraded-undo warning.
+  constexpr size_t SNAPSHOT_DEGRADED_UNDO_EVENT_THRESHOLD = 4000;
 }
  
 // --------------------

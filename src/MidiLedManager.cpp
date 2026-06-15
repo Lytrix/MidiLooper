@@ -214,7 +214,7 @@ bool noteOnInRange(const MidiEvent& event, uint32_t rangeStart, uint32_t rangeEn
 }
 
 bool hasNoteOnInRange(const Loop& loop, uint32_t rangeStart, uint32_t rangeEnd) {
-    for (const auto& event : loop.midiEvents) {
+    for (const auto& event : loop.midiEvents()) {
         if (noteOnInRange(event, rangeStart, rangeEnd)) {
             return true;
         }
