@@ -1,0 +1,32 @@
+---
+description: Loop MIDI chunk storage, validation tiers, undo stacks — read before Loop/Track/undo/stop changes
+alwaysApply: true
+---
+
+# Loop MIDI storage, validation, and undo
+
+Before changing loop event storage, capture/commit, stop-path validation, undo, or SD loop I/O, read:
+
+**[`docs/Guides/LOOP_MIDI_STORAGE_AND_VALIDATION.md`](docs/Guides/LOOP_MIDI_STORAGE_AND_VALIDATION.md)**
+
+Related guides: [`NOTE_WRAPPING_LOGIC.md`](docs/Guides/NOTE_WRAPPING_LOGIC.md) (display only), plans [`overdub_undo_baseline_phase1_refinement.md`](docs/plans/overdub_undo_baseline_phase1_refinement.md) and [`memory_scalability_refactor_enhancement.md`](docs/plans/memory_scalability_refactor_enhancement.md).
+
+## Non-negotiable constraints
+
+- **Playback / hot paths:** `loop.eventAt()` / `committedEvents.readStore()` — not full flatten.
+- **Stop path:** `finalizeLoopAtStop` + `LoopStopFinalize` (wrap window only). Do **not** call full `validateAndCleanupMidiEvents` on record/overdub stop.
+- **Full validate:** deferred via `processDeferredIdleMaintenance` when transport idle, or on SD load — not on stop.
+- **Undo snapshots:** always `cloneShared()` / `restoreFromSnapshot` — never shallow-copy chunk IDs.
+- **Undo routing:** overdub undo before clear-slot undo in `handleUndo`; `clearClearUndoStacks()` on `startRecording`.
+- **Overdub entry:** `beginOverdubSession` only — no extra `pushUndoSnapshot` at overdub start (Phase 1).
+- **After flat edits:** `invalidateCaches()` so chunks and note cache stay in sync.
+- **SD:** flatten on save/load; chunk IDs are in-RAM only until a format version bump.
+- **Hot path:** no `MemoryMonitor` walks or full-loop sort on record/overdub stop.
+
+## Primary files
+
+`LoopEventStore.*`, `LoopEventBuffer.h`, `Loop.h`, `Loop.cpp`, `Track.cpp`, `TrackUndo.cpp`, `Utils/LoopStopFinalize.h`, `StorageManager.cpp`, `main.cpp` (idle maintenance).
+
+## Tests
+
+After logic changes: `pio test -e native` (`test_loop_event_store`, `test_loop_stop_finalize`, `test_noteutils_reconstruct`).
