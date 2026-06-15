@@ -127,9 +127,13 @@ bool StorageManager::saveState(const LooperState& state) {
 
             for (uint32_t u = 0; u < overdubUndoCount; ++u) {
                 const MidiSnapshotRef& snapRef = (*midiHistoryPtr)[u];
-                uint32_t snapCount = snapRef ? static_cast<uint32_t>(snapRef->size()) : 0;
+                MidiEventVec snapFlat;
+                if (snapRef) {
+                    snapRef->flatten(snapFlat);
+                }
+                uint32_t snapCount = static_cast<uint32_t>(snapFlat.size());
                 if (!writeRaw(file, &snapCount, sizeof(snapCount))) { Serial.print("[StorageManager] ERROR: Failed to write overdubUndo snapCount for track "); Serial.print(t); Serial.print(" slot "); Serial.println(s); file.close(); return false; }
-                if (snapCount > 0 && snapRef && !writeRaw(file, snapRef->data(), snapCount * sizeof(MidiEvent))) { Serial.print("[StorageManager] ERROR: Failed to write overdubUndo snapshot for track "); Serial.print(t); Serial.print(" slot "); Serial.println(s); file.close(); return false; }
+                if (snapCount > 0 && !writeRaw(file, snapFlat.data(), snapCount * sizeof(MidiEvent))) { Serial.print("[StorageManager] ERROR: Failed to write overdubUndo snapshot for track "); Serial.print(t); Serial.print(" slot "); Serial.println(s); file.close(); return false; }
                 const OverdubGeomSnapshot &geom = (*geomHistoryPtr)[u];
                 if (!writeRaw(file, &geom.loopLengthTicks, sizeof(geom.loopLengthTicks))) { Serial.print("[StorageManager] ERROR: Failed to write overdubUndo geom.loopLengthTicks for track "); Serial.print(t); Serial.print(" slot "); Serial.println(s); file.close(); return false; }
                 if (!writeRaw(file, &geom.startLoopTick, sizeof(geom.startLoopTick))) { Serial.print("[StorageManager] ERROR: Failed to write overdubUndo geom.startLoopTick for track "); Serial.print(t); Serial.print(" slot "); Serial.println(s); file.close(); return false; }
@@ -154,9 +158,13 @@ bool StorageManager::saveState(const LooperState& state) {
 
             for (uint32_t u = 0; u < overdubRedoCount; ++u) {
                 const MidiSnapshotRef& snapRef = (*midiRedoHistoryPtr)[u];
-                uint32_t snapCount = snapRef ? static_cast<uint32_t>(snapRef->size()) : 0;
+                MidiEventVec snapFlat;
+                if (snapRef) {
+                    snapRef->flatten(snapFlat);
+                }
+                uint32_t snapCount = static_cast<uint32_t>(snapFlat.size());
                 if (!writeRaw(file, &snapCount, sizeof(snapCount))) { Serial.print("[StorageManager] ERROR: Failed to write overdubRedo snapCount for track "); Serial.print(t); Serial.print(" slot "); Serial.println(s); file.close(); return false; }
-                if (snapCount > 0 && snapRef && !writeRaw(file, snapRef->data(), snapCount * sizeof(MidiEvent))) { Serial.print("[StorageManager] ERROR: Failed to write overdubRedo snapshot for track "); Serial.print(t); Serial.print(" slot "); Serial.println(s); file.close(); return false; }
+                if (snapCount > 0 && !writeRaw(file, snapFlat.data(), snapCount * sizeof(MidiEvent))) { Serial.print("[StorageManager] ERROR: Failed to write overdubRedo snapshot for track "); Serial.print(t); Serial.print(" slot "); Serial.println(s); file.close(); return false; }
                 const OverdubGeomSnapshot &geom = (*geomRedoHistoryPtr)[u];
                 if (!writeRaw(file, &geom.loopLengthTicks, sizeof(geom.loopLengthTicks))) { Serial.print("[StorageManager] ERROR: Failed to write overdubRedo geom.loopLengthTicks for track "); Serial.print(t); Serial.print(" slot "); Serial.println(s); file.close(); return false; }
                 if (!writeRaw(file, &geom.startLoopTick, sizeof(geom.startLoopTick))) { Serial.print("[StorageManager] ERROR: Failed to write overdubRedo geom.startLoopTick for track "); Serial.print(t); Serial.print(" slot "); Serial.println(s); file.close(); return false; }
@@ -439,7 +447,7 @@ bool StorageManager::loadState(LooperState& state) {
                 Loop& loop = track.getLoop(s);
 
                 // Reset loop
-                loop.midiEvents().clear();
+                loop.committedEvents.mutStore().clear();
                 loop.startLoopTick = 0;     // playback normalization
                 loop.loopLengthTicks = 0;
                 loop.loopStartTick = 0;
@@ -475,13 +483,15 @@ bool StorageManager::loadState(LooperState& state) {
                 }
                 MidiEventVec midiEvents(midiCount);
                 if (midiCount > 0 && !readRaw(file, midiEvents.data(), midiCount * sizeof(MidiEvent))) { Serial.print("[StorageManager] ERROR: Failed to read midiEvents for track "); Serial.print(t); Serial.print(" slot "); Serial.println(s); file.close(); return false; }
-                loop.midiEvents() = std::move(midiEvents);
-                if (loop.loopLengthTicks == 0 && !loop.midiEvents().empty()) {
+                loop.committedEvents.mutStore().loadFromFlat(midiEvents);
+                if (loop.loopLengthTicks == 0 && !loop.committedEvents.empty()) {
                     uint32_t lastTick = 0;
-                    for (const auto &evt : loop.midiEvents()) lastTick = (evt.tick > lastTick) ? evt.tick : lastTick;
+                    MidiEventVec flat;
+                    loop.committedEvents.readStore().flatten(flat);
+                    for (const auto &evt : flat) lastTick = (evt.tick > lastTick) ? evt.tick : lastTick;
                     loop.loopLengthTicks = track.computeLoopLengthTicks(lastTick);
                 }
-                if (!loop.midiEvents().empty()) anySlotHasEvents = true;
+                if (!loop.committedEvents.empty()) anySlotHasEvents = true;
                 loop.invalidateCaches();
 
                 // Overdub undo history (midi + geom)
@@ -509,7 +519,9 @@ bool StorageManager::loadState(LooperState& state) {
                     geom.startLoopTick = 0; // playback normalization
                     geom.loopStartTick = geomLoopStartTick;
 
-                    loop.getMidiHistory().push_back(std::make_shared<MidiEventVec>(std::move(snapshot)));
+                    auto snapStore = std::make_shared<LoopEventStore>();
+                    snapStore->loadFromFlat(snapshot);
+                    loop.getMidiHistory().push_back(snapStore);
                     loop.getOverdubGeomHistory().push_back(geom);
                 }
 
@@ -538,7 +550,9 @@ bool StorageManager::loadState(LooperState& state) {
                     geom.startLoopTick = 0; // playback normalization
                     geom.loopStartTick = geomLoopStartTick;
 
-                    loop.getMidiRedoHistory().push_back(std::make_shared<MidiEventVec>(std::move(snapshot)));
+                    auto snapStore = std::make_shared<LoopEventStore>();
+                    snapStore->loadFromFlat(snapshot);
+                    loop.getMidiRedoHistory().push_back(snapStore);
                     loop.getOverdubGeomRedoHistory().push_back(geom);
                 }
 
@@ -798,16 +812,19 @@ bool StorageManager::loadState(LooperState& state) {
         Loop& loop = track.getLoop(0);
         // Always restart loop timeline from zero after load to avoid negative-wrap playback math.
         loop.startLoopTick = 0;
-        loop.midiEvents() = tracksData[t].midiEvents;
-        if (loop.loopLengthTicks == 0 && !loop.midiEvents().empty()) {
+        loop.committedEvents.mutStore().loadFromFlat(tracksData[t].midiEvents);
+        if (loop.loopLengthTicks == 0 && !loop.committedEvents.empty()) {
             // findLastEventTick uses the active loop; for v1/v2 we always load into slot 0
             uint32_t lastTick = track.findLastEventTick();
             loop.loopLengthTicks = track.computeLoopLengthTicks(lastTick);
         }
+        track.validateAndCleanupMidiEvents();
         auto &midiHistory = TrackUndo::getMidiHistory(track);
         midiHistory.clear();
         for (const auto& snapshot : tracksData[t].midiHistory) {
-            midiHistory.push_back(std::make_shared<MidiEventVec>(snapshot));
+            auto snapStore = std::make_shared<LoopEventStore>();
+            snapStore->loadFromFlat(snapshot);
+            midiHistory.push_back(snapStore);
         }
         Serial.print("[StorageManager] Track "); Serial.print(t);
         Serial.print(" loaded: events="); Serial.print(tracksData[t].midiEvents.size());

@@ -30,6 +30,8 @@
 #ifdef SESSION_CAPTURE
 
 #include <Arduino.h>
+#include <vector>
+#include <algorithm>
 #include "MidiEvent.h"
 
 namespace SessionCapture {
@@ -107,9 +109,44 @@ inline void recStop(const char* kind, uint8_t slot, uint32_t tick, uint32_t star
                 (unsigned long)finalLength, align ? 1 : 0);
 }
 
+struct PendingRevt {
+  uint32_t tick;
+  uint8_t ch;
+  uint8_t note;
+};
+
+inline std::vector<PendingRevt>& pendingRevts() {
+  static std::vector<PendingRevt> queue;
+  return queue;
+}
+
+inline void queueStoredNoteOn(uint32_t tick, uint8_t ch, uint8_t note) {
+  pendingRevts().push_back({tick, ch, note});
+}
+
 inline void recStoredNoteOn(uint32_t tick, uint8_t ch, uint8_t note) {
   Serial.printf("#CAP,%lu,REVT,%lu,%u,%u\r\n",
                 (unsigned long)micros(), (unsigned long)tick, ch, note);
+}
+
+/// Emit queued REVT lines in batches (idle path; keeps stop hot path short).
+inline size_t flushPendingRevts(size_t maxLines = 64) {
+  auto& queue = pendingRevts();
+  const size_t n = std::min(queue.size(), maxLines);
+  for (size_t i = 0; i < n; ++i) {
+    const PendingRevt& r = queue[i];
+    recStoredNoteOn(r.tick, r.ch, r.note);
+  }
+  if (n > 0) {
+    queue.erase(queue.begin(), queue.begin() + static_cast<std::ptrdiff_t>(n));
+  }
+  return n;
+}
+
+inline void flushAllPendingRevts() {
+  while (!pendingRevts().empty()) {
+    flushPendingRevts(64);
+  }
 }
 
 /// Call from the main loop; emits a BAR line whenever the bar number changes.
@@ -137,6 +174,9 @@ inline void update(uint32_t currentTick, uint32_t ticksPerBar) {
 #define SC_REC_STOP(kind, slot, tick, start, raw, final, align) \
                                            SessionCapture::recStop(kind, slot, tick, start, raw, final, align)
 #define SC_REC_STORED_NOTE_ON(tick, ch, note) SessionCapture::recStoredNoteOn(tick, ch, note)
+#define SC_REC_QUEUE_STORED_NOTE_ON(tick, ch, note) SessionCapture::queueStoredNoteOn(tick, ch, note)
+#define SC_REC_FLUSH_PENDING_REVTS(maxLines) SessionCapture::flushPendingRevts(maxLines)
+#define SC_REC_FLUSH_ALL_PENDING_REVTS()   SessionCapture::flushAllPendingRevts()
 #define SC_UPDATE(tick, ticksPerBar)       SessionCapture::update(tick, ticksPerBar)
 
 #else // !SESSION_CAPTURE — all capture macros compile to nothing
@@ -152,6 +192,9 @@ inline void update(uint32_t currentTick, uint32_t ticksPerBar) {
 #define SC_REC_START(slot, tick)           ((void)0)
 #define SC_REC_STOP(kind, slot, tick, start, raw, final, align) ((void)0)
 #define SC_REC_STORED_NOTE_ON(tick, ch, note) ((void)0)
+#define SC_REC_QUEUE_STORED_NOTE_ON(tick, ch, note) ((void)0)
+#define SC_REC_FLUSH_PENDING_REVTS(maxLines) ((void)0)
+#define SC_REC_FLUSH_ALL_PENDING_REVTS()   ((void)0)
 #define SC_UPDATE(tick, ticksPerBar)       ((void)0)
 
 #endif // SESSION_CAPTURE

@@ -107,7 +107,11 @@ public:
   void toggleMuteTrack();
   
   // MIDI event validation
-  void validateAndCleanupMidiEvents(uint32_t openTailCloseTick = UINT32_MAX);  // Manual validation
+  void validateAndCleanupMidiEvents(uint32_t openTailCloseTick = UINT32_MAX);  // Full loop (cold path)
+  /// Wrap-window only: record/overdub stop hot path. Schedules deferred full validate.
+  void finalizeLoopAtStop(uint32_t openTailCloseTick = UINT32_MAX);
+  /// Idle maintenance: deferred full validate + session REVT flush (non-blocking stop path).
+  void processDeferredIdleMaintenance();
   /// During overdub loop wrap: store synthetic note-off at loop end for still-open tails.
   void closeOpenNotesAtLoopWrap();
 
@@ -259,7 +263,10 @@ private:
   bool jamPlaybackActive;     // True = track uses jamTick for playback
   bool alignLoopOriginOnNextStop;
   uint16_t recordAddedNoteOnCount;  // note-ons this overdub pass (memory log at overdub stop)
+  bool deferredFullMidiValidate = false;
   static const uint32_t TICKS_PER_BAR;
+
+  void queueDeferredRecordRevts() const;
 
   // Per-slot loop storage (heap-allocated to avoid BSS overflow with 8 tracks × 8 loops)
   Loop* loops;

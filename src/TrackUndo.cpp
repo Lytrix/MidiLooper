@@ -44,7 +44,8 @@ void TrackUndo::pushUndoSnapshot(Track& track) {
     Loop& loop = track.getActiveLoop();
     const size_t eventCount = loop.committedEvents.size();
     logLargeSnapshotIfNeeded(eventCount);
-    loop.getMidiHistory().push_back(loop.committedEvents.shareForSnapshot());
+    loop.getMidiHistory().push_back(
+        loop.committedEvents.shareForSnapshot()->cloneShared());
     trimOverdubUndoHistory(loop);
     loop.getOverdubGeomHistory().push_back(
         {loop.loopLengthTicks, loop.startLoopTick, loop.loopStartTick});
@@ -64,7 +65,11 @@ void TrackUndo::establishRecordStopBaseline(Track& track) {
     logger.log(CAT_TRACK, LOG_INFO, "BYPASS_STOP_UNDO_SAVE: skip establishRecordStopBaseline snapshot");
 #else
     if (!loop.midiHistoryEmpty()) {
-        popLastUndo(track);
+        const auto& top = loop.getMidiHistory().back();
+        // Keep empty preroll snapshot from record start so a second undo can revert to empty.
+        if (!top || !top->empty()) {
+            popLastUndo(track);
+        }
     }
     pushUndoSnapshot(track);
     loop.overdubSessionBaselineEventCount = loop.committedEvents.size();
@@ -118,7 +123,8 @@ void TrackUndo::undoOverdub(Track& track) {
         logger.log(CAT_TRACK, LOG_WARNING, "Cannot undo overdub right now");
         return;
     }
-    loop.getMidiRedoHistory().push_back(loop.committedEvents.shareForSnapshot());
+    loop.getMidiRedoHistory().push_back(
+        loop.committedEvents.shareForSnapshot()->cloneShared());
     loop.getOverdubGeomRedoHistory().push_back(
         {loop.loopLengthTicks, loop.startLoopTick, loop.loopStartTick});
 
@@ -129,6 +135,18 @@ void TrackUndo::undoOverdub(Track& track) {
         loop.loopLengthTicks = lastGeom.loopLengthTicks;
         loop.startLoopTick = lastGeom.startLoopTick;
         loop.loopStartTick = lastGeom.loopStartTick;
+    }
+    if (loop.committedEvents.empty()) {
+        loop.loopLengthTicks = 0;
+        loop.loopStartTick = 0;
+        loop.nextEventIndex = 0;
+        loop.lastTickInLoop = 0;
+        if (track.getState() != TRACK_RECORDING && track.getState() != TRACK_OVERDUBBING &&
+            track.getState() != TRACK_ARMED) {
+            track.forceSetState(TRACK_EMPTY);
+        }
+    } else if (track.getState() == TRACK_EMPTY) {
+        track.forceSetState(TRACK_STOPPED);
     }
     loop.midiEventCountAtLastSnapshot = loop.committedEvents.size();
     popLastUndo(track);
@@ -145,7 +163,8 @@ void TrackUndo::redoOverdub(Track& track) {
         return;
     }
     Loop& loop = track.getActiveLoop();
-    loop.getMidiHistory().push_back(loop.committedEvents.shareForSnapshot());
+    loop.getMidiHistory().push_back(
+        loop.committedEvents.shareForSnapshot()->cloneShared());
     trimOverdubUndoHistory(loop);
     loop.getOverdubGeomHistory().push_back(
         {loop.loopLengthTicks, loop.startLoopTick, loop.loopStartTick});
@@ -179,7 +198,7 @@ size_t TrackUndo::getRedoCount(const Track& track) {
 bool TrackUndo::canUndo(const Track& track) {
     const Loop& loop = track.getActiveLoop();
     if (loop.overdubSessionOpen && loop.capturePhase == CapturePhase::Overdub &&
-        !loop.captureEvents.empty()) {
+        !loop.captureStore.empty()) {
         return true;
     }
     return !loop.midiHistoryEmpty();
@@ -206,7 +225,7 @@ const MidiEventVec& TrackUndo::peekLastMidiSnapshot(const Track& track) {
     tempSnapshot.clear();
     const Loop& loop = track.getActiveLoop();
     if (!loop.midiHistoryEmpty()) {
-        tempSnapshot = *loop.getMidiHistory().back();
+        loop.getMidiHistory().back()->flatten(tempSnapshot);
     }
     return tempSnapshot;
 }
@@ -252,10 +271,11 @@ void TrackUndo::undoClearTrack(Track& track) {
         loop.getClearStartRedoHistory().push_back(loop.loopStartTick);
 
         const auto& lastSnapshot = loop.getClearMidiHistory().back();
-        loop.midiEvents().clear();
+        auto snapStore = std::make_shared<LoopEventStore>();
         for (const auto& event : lastSnapshot) {
-            loop.midiEvents().push_back(*event);
+            snapStore->append(*event);
         }
+        loop.committedEvents.restoreFromSnapshot(snapStore);
         loop.getClearMidiHistory().pop_back();
     }
     if (!loop.getClearStateHistory().empty()) {
@@ -295,10 +315,11 @@ void TrackUndo::redoClearTrack(Track& track) {
 
     if (!loop.clearMidiRedoHistoryEmpty()) {
         const auto& redoSnapshot = loop.getClearMidiRedoHistory().back();
-        loop.midiEvents().clear();
+        auto snapStore = std::make_shared<LoopEventStore>();
         for (const auto& event : redoSnapshot) {
-            loop.midiEvents().push_back(*event);
+            snapStore->append(*event);
         }
+        loop.committedEvents.restoreFromSnapshot(snapStore);
         loop.getClearMidiRedoHistory().pop_back();
     }
     if (!loop.getClearStateRedoHistory().empty()) {
