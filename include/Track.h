@@ -18,6 +18,8 @@
 #include "Loop.h"
 #include "GlobalUndoStack.h"
 #include "TrackPlaybackRuntime.h"
+#include "Slot.h"
+#include "LoopPool.h"
 
 /// Derived capture role for a loop slot (from TrackState + activeLoopIndex).
 enum class SlotOpState : uint8_t {
@@ -211,11 +213,18 @@ public:
   /// Immutable access to midiEvents (for const Track)
   const MidiEventVec& getMidiEvents() const { return getActiveLoop().midiEvents(); }
 
-  /// Access loop by index (0 to MAX_LOOPS_PER_TRACK-1)
+  /// Access loop by slot index (adapter — resolves Slot → LoopId → LoopPool).
   Loop& getLoop(uint8_t index);
   const Loop& getLoop(uint8_t index) const;
 
-  /// Allocate Loop array if not yet done (deferred from ctor to avoid static-init crash)
+  /// Resolve slot ref to pooled loop storage.
+  Loop& loopForSlot(uint8_t slotIndex);
+  const Loop& loopForSlot(uint8_t slotIndex) const;
+
+  LoopId loopIdForSlot(uint8_t slotIndex) const;
+  const Slot& slotRef(uint8_t slotIndex) const;
+
+  /// Allocate LoopPool if not yet done (deferred from ctor to avoid static-init crash)
   void ensureLoopsAllocated();
 
   /// Active loop (used for playback, recording, display)
@@ -291,8 +300,11 @@ private:
 
   void queueDeferredRecordRevts() const;
 
-  // Per-slot loop storage (heap-allocated to avoid BSS overflow with 8 tracks × 8 loops)
-  Loop* loops;
+  void syncSlotRefsFromPool();
+
+  // Per-slot loop refs + pooled loop storage (heap-allocated to avoid BSS overflow)
+  Slot slots_[Config::MAX_LOOPS_PER_TRACK]{};
+  LoopPool loopPool_;
 
   // Event storage (pending notes during recording - target is active loop)
   std::unordered_map<std::pair<uint8_t, uint8_t>, PendingNote, PairHash> pendingNotes;

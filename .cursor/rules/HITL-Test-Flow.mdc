@@ -26,6 +26,8 @@ Run from project root:
 
 Undo/redo after overdub stop is **on by default** (500 ms wait, double-press undo, 500 ms wait, triple-press redo). Use `--no-undo-redo-after-overdub-stop` to skip.
 
+**Other tracks:** keep timing/note args unchanged; swap track and channel only, e.g. `--track 4` (sets `--midi-channel 4` automatically) or `--track 4 --midi-channel 4`. `--track-number` is an alias for `--track`.
+
 Long runs (e.g. 32+32 bars) rely on serial heartbeat abort (default 20s silence)
 instead of a hard wall-clock timeout. Use `--max-run-seconds N` only if you want
 an optional hard cap.

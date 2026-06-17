@@ -5,8 +5,9 @@
  * @file Loop.h
  * @brief Per-slot loop data: MIDI events, loop geometry, playback state, undo.
  *
- * Each Track holds Loop loops[MAX_LOOPS_PER_TRACK]. The active loop (selected by
- * activeLoopIndex) is used for playback and recording.
+ * Each Track holds a LoopPool and Slot refs (1:1 in v1). The active loop slot
+ * (selected by activeLoopIndex) resolves to a LoopId and pooled Loop used for
+ * playback and recording.
  *
  * Undo and cache containers are lazy-allocated to reduce memory at startup.
  */

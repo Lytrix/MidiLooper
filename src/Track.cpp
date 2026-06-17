@@ -99,37 +99,70 @@ Track::Track() :
   jamTick(0),
   jamPlaybackActive(false),
   alignLoopOriginOnNextStop(false),
-  recordAddedNoteOnCount(0),
-  loops(nullptr) {
+  recordAddedNoteOnCount(0) {
 }
 
-Track::~Track() {
-  delete[] loops;
-  loops = nullptr;
-}
+Track::~Track() = default;
 
-void Track::ensureLoopsAllocated() {
-  if (loops) return;
-  loops = new (std::nothrow) Loop[Config::MAX_LOOPS_PER_TRACK];
-  if (!loops) {
-    while (1) { delay(1); }  // Out of heap - should not happen
+void Track::syncSlotRefsFromPool() {
+  for (uint8_t i = 0; i < Config::MAX_LOOPS_PER_TRACK; ++i) {
+    slots_[i].loopId = loopPool_.loopIdAt(i);
   }
 }
 
+void Track::ensureLoopsAllocated() {
+  if (loopPool_.initialized()) {
+    return;
+  }
+  loopPool_.ensureInitialized();
+  if (!loopPool_.initialized()) {
+    while (1) {
+      delay(1);
+    }  // Out of heap - should not happen
+  }
+  syncSlotRefsFromPool();
+}
+
+Loop& Track::loopForSlot(uint8_t slotIndex) {
+  ensureLoopsAllocated();
+  const uint8_t idx = slotIndex < Config::MAX_LOOPS_PER_TRACK ? slotIndex : 0;
+  const LoopId id = slots_[idx].loopId;
+  if (id != kInvalidLoopId) {
+    return loopPool_.findById(id);
+  }
+  return loopPool_.at(idx);
+}
+
+const Loop& Track::loopForSlot(uint8_t slotIndex) const {
+  return const_cast<Track*>(this)->loopForSlot(slotIndex);
+}
+
+LoopId Track::loopIdForSlot(uint8_t slotIndex) const {
+  if (slotIndex >= Config::MAX_LOOPS_PER_TRACK) {
+    return kInvalidLoopId;
+  }
+  return slots_[slotIndex].loopId;
+}
+
+const Slot& Track::slotRef(uint8_t slotIndex) const {
+  static const Slot kEmpty{};
+  if (slotIndex >= Config::MAX_LOOPS_PER_TRACK) {
+    return kEmpty;
+  }
+  return slots_[slotIndex];
+}
+
 Loop& Track::getLoop(uint8_t index) {
-  const_cast<Track*>(this)->ensureLoopsAllocated();
-  return loops[index < Config::MAX_LOOPS_PER_TRACK ? index : 0];
+  return loopForSlot(index);
 }
 
 const Loop& Track::getLoop(uint8_t index) const {
-  const_cast<Track*>(this)->ensureLoopsAllocated();
-  return loops[index < Config::MAX_LOOPS_PER_TRACK ? index : 0];
+  return loopForSlot(index);
 }
 
 bool Track::hasDataInSlot(uint8_t slotIndex) const {
   if (slotIndex >= Config::MAX_LOOPS_PER_TRACK) return false;
-  const_cast<Track*>(this)->ensureLoopsAllocated();
-  return loops[slotIndex].hasData();
+  return loopForSlot(slotIndex).hasData();
 }
 
 // -------------------------
