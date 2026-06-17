@@ -58,9 +58,13 @@ class CowLoopEventStore {
       flatCache_ = std::make_shared<MidiEventVec>();
       data_->flatten(*flatCache_);
     }
-    flatDirty_ = true;
     return *flatCache_;
   }
+
+  /// True when mutFlat() was written and must be synced before epoch commit.
+  bool isFlatDirty() const { return flatDirty_; }
+
+  void markFlatDirty() { flatDirty_ = true; }
 
   void syncFlatToStore() {
     if (!flatDirty_ || !flatCache_) {

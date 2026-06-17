@@ -16,7 +16,11 @@
 #define GLOBALS_H
 
 #pragma once
+#if defined(PIO_UNIT_TEST_NATIVE)
+#include <cstdint>
+#else
 #include <Arduino.h>
+#endif
 
 #ifndef BYPASS_STOP_UNDO_SAVE
 #define BYPASS_STOP_UNDO_SAVE 0

@@ -1085,6 +1085,126 @@ def _verify_stored_record_note_grid(
     }
 
 
+def _extract_disp_snapshots(lines: list[str], *, after_ts: Optional[int] = None,
+                            before_ts: Optional[int] = None) -> list[dict[str, object]]:
+    rows: list[dict[str, object]] = []
+    for line in lines:
+        if ",DISP," not in line:
+            continue
+        parts = line.split(",")
+        if len(parts) < 11:
+            continue
+        try:
+            ts = int(parts[1])
+            slot = int(parts[3])
+            state = parts[4]
+            loop_len = int(parts[5])
+            epoch_events = int(parts[6])
+            visual_notes = int(parts[7])
+            frame_notes = int(parts[8])
+            buffer_events = int(parts[9])
+            published = int(parts[10])
+        except ValueError:
+            continue
+        if after_ts is not None and ts < after_ts:
+            continue
+        if before_ts is not None and ts > before_ts:
+            continue
+        rows.append(
+            {
+                "timestamp": ts,
+                "slot": slot,
+                "state": state,
+                "loop_len": loop_len,
+                "epoch_events": epoch_events,
+                "visual_notes": visual_notes,
+                "frame_notes": frame_notes,
+                "buffer_events": buffer_events,
+                "published": published,
+            }
+        )
+    return rows
+
+
+def _verify_display_snapshots(
+    lines: list[str],
+    *,
+    boundaries: dict[str, Optional[int]],
+    loop_length_ticks: int,
+    window_us: int = 8_000_000,
+) -> dict[str, object]:
+    issues: list[str] = []
+    overdub_stop_ts = boundaries.get("overdub_stop_ts")
+    snapshots_after_overdub: list[dict[str, object]] = []
+    snapshots_after_transport_stop: list[dict[str, object]] = []
+    transport_stop_ts: Optional[int] = None
+
+    if overdub_stop_ts is not None:
+        snapshots_after_overdub = _extract_disp_snapshots(
+            lines,
+            after_ts=overdub_stop_ts,
+            before_ts=overdub_stop_ts + window_us,
+        )
+
+    for line in lines:
+        if ",ST,Track,PLAYING,STOPPED" not in line:
+            continue
+        parts = line.split(",")
+        if len(parts) < 5:
+            continue
+        try:
+            ts = int(parts[1])
+        except ValueError:
+            continue
+        if overdub_stop_ts is not None and ts < overdub_stop_ts:
+            continue
+        transport_stop_ts = ts
+
+    if transport_stop_ts is not None:
+        snapshots_after_transport_stop = _extract_disp_snapshots(
+            lines,
+            after_ts=transport_stop_ts,
+            before_ts=transport_stop_ts + window_us,
+        )
+
+    def _phase_ok(snaps: list[dict[str, object]]) -> bool:
+        if loop_length_ticks <= 0:
+            return True
+        for row in snaps:
+            if int(row["loop_len"]) <= 0:
+                continue
+            if int(row["published"]) != 1:
+                continue
+            if int(row["frame_notes"]) > 0:
+                return True
+        return False
+
+    overdub_ok = _phase_ok(snapshots_after_overdub)
+    transport_ok = _phase_ok(snapshots_after_transport_stop)
+
+    for row in snapshots_after_overdub + snapshots_after_transport_stop:
+        if int(row["loop_len"]) <= 0 or int(row["published"]) != 1:
+            continue
+        if int(row["epoch_events"]) > 0 and int(row["frame_notes"]) == 0:
+            if "display_epoch_frame_mismatch" not in issues:
+                issues.append("display_epoch_frame_mismatch")
+
+    if overdub_stop_ts is not None and not overdub_ok:
+        issues.append("display_empty_after_overdub_stop")
+    if transport_stop_ts is not None and not transport_ok:
+        issues.append("display_empty_after_transport_stop")
+
+    return {
+        "overdub_stop_ts": overdub_stop_ts,
+        "transport_stop_ts": transport_stop_ts,
+        "snapshots_after_overdub": snapshots_after_overdub[-5:],
+        "snapshots_after_transport_stop": snapshots_after_transport_stop[-5:],
+        "overdub_ok": overdub_ok,
+        "transport_ok": transport_ok,
+        "issues": issues,
+    }
+
+
 def _extract_wrap_pairs(lines: list[str], *, after_ts: Optional[int] = None) -> list[dict[str, int]]:
     rows: list[dict[str, int]] = []
     for line in lines:
@@ -1159,6 +1279,18 @@ def _verify_overdub_wrap_storage(
 
     wrap_pairs = _extract_wrap_pairs(lines, after_ts=overdub_stop_ts)
     sevts = _extract_sevt_events(lines, after_ts=overdub_stop_ts)
+    if not wrap_test_ran:
+        return {
+            "phase_disabled": False,
+            "wrap_test_ran": False,
+            "loop_length_ticks": loop_length_ticks,
+            "wrap_pair_count": len(wrap_pairs),
+            "sevt_count": len(sevts),
+            "pairs_ok": True,
+            "wrap_pairs": [],
+            "issues": [],
+        }
+
     head_end = min(wrap_window_ticks, loop_length_ticks)
     tail_start = (
         loop_length_ticks - min(wrap_window_ticks, loop_length_ticks)
@@ -1333,6 +1465,16 @@ def _build_serial_verification(lines: list[str], args: argparse.Namespace) -> di
             for issue in overdub_wrap_storage.get("issues", []):
                 if issue not in issues:
                     issues.append(str(issue))
+    display_verification: Optional[dict[str, object]] = None
+    if loop_length_ticks > 0:
+        display_verification = _verify_display_snapshots(
+            lines,
+            boundaries=boundaries,
+            loop_length_ticks=loop_length_ticks,
+        )
+        for issue in display_verification.get("issues", []):
+            if issue not in issues:
+                issues.append(str(issue))
     return {
         "boundaries": boundaries,
         "record_phase": record,
@@ -1341,6 +1483,7 @@ def _build_serial_verification(lines: list[str], args: argparse.Namespace) -> di
         "record_note_span": record_note_span,
         "stored_record_grid": stored_record_grid,
         "overdub_wrap_storage": overdub_wrap_storage,
+        "display_verification": display_verification,
         "record_first_note_offset": record_first_note_offset,
         "overdub_first_note_offset": overdub_first_note_offset,
         "recs_lengths": recs_lengths,
@@ -2477,6 +2620,31 @@ def run() -> int:
                         f"on={pair.get('on_tick')} off={pair.get('off_tick')} "
                         f"note={pair.get('note')} ch={pair.get('ch')} "
                         f"ok={pair.get('ok')}"
+                    )
+            display_verification = serial_verification.get("display_verification")
+            if display_verification:
+                print(
+                    "  VERIFY display (DISP frame notes after overdub/transport stop): "
+                    f"overdub_ok={display_verification.get('overdub_ok')} "
+                    f"transport_ok={display_verification.get('transport_ok')}"
+                )
+                last_od = display_verification.get("snapshots_after_overdub") or []
+                if last_od:
+                    row = last_od[-1]
+                    print(
+                        "    DISP after overdub: "
+                        f"state={row.get('state')} frame={row.get('frame_notes')} "
+                        f"epoch={row.get('epoch_events')} visual={row.get('visual_notes')} "
+                        f"buffer={row.get('buffer_events')}"
+                    )
+                last_ts = display_verification.get("snapshots_after_transport_stop") or []
+                if last_ts:
+                    row = last_ts[-1]
+                    print(
+                        "    DISP after transport stop: "
+                        f"state={row.get('state')} frame={row.get('frame_notes')} "
+                        f"epoch={row.get('epoch_events')} visual={row.get('visual_notes')} "
+                        f"buffer={row.get('buffer_events')}"
                     )
             if serial_verification["issues"]:
                 print(f"  VERIFY issues: {', '.join(serial_verification['issues'])}")

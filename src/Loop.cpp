@@ -51,6 +51,32 @@ void mergeEpochStores(const std::vector<const Epoch*>& active, LoopEventStore& m
   }
 }
 
+/// Merge Active epoch chunk data into a flat vector without allocating new pool chunks.
+void flattenActiveEpochChunksToVec(const std::vector<const Epoch*>& active, MidiEventVec& out) {
+  out.clear();
+  if (active.empty()) {
+    return;
+  }
+
+  for (const Epoch* epoch : active) {
+    MidiEventVec epochFlat;
+    LoopEventStore::appendFlattenedChunkIds(epoch->chunkRefs, epochFlat);
+    if (epochFlat.empty()) {
+      continue;
+    }
+    if (out.empty()) {
+      out = std::move(epochFlat);
+      continue;
+    }
+    MidiEventVec merged;
+    merged.reserve(out.size() + epochFlat.size());
+    std::merge(out.begin(), out.end(), epochFlat.begin(), epochFlat.end(),
+               std::back_inserter(merged),
+               [](const MidiEvent& a, const MidiEvent& b) { return a.tick < b.tick; });
+    out = std::move(merged);
+  }
+}
+
 bool isDuplicateCaptureEvent(const Loop& loop, const MidiEvent& candidate) {
   const uint32_t lo = (candidate.tick > Config::DUPLICATE_TICK_TOLERANCE)
                           ? (candidate.tick - Config::DUPLICATE_TICK_TOLERANCE)
@@ -177,20 +203,16 @@ bool Loop::hasPublishedEvents() const {
 void Loop::flattenActiveEpochs(MidiEventVec& out) const {
   std::vector<const Epoch*> active;
   collectActiveEpochsSorted(*this, active);
-  out.clear();
-  if (active.empty()) {
-    return;
-  }
-  LoopEventStore merged;
-  mergeEpochStores(active, merged);
-  merged.flatten(out);
+  flattenActiveEpochChunksToVec(active, out);
 }
 
 void Loop::materializeEditFlatFromEpochs() const {
-  if (!editFlatStale_) {
+  Loop* self = const_cast<Loop*>(this);
+  const bool storeEmptyPublished =
+      self->hasPublishedEvents() && self->editFlat_.readStore().empty();
+  if (!editFlatStale_ && !storeEmptyPublished) {
     return;
   }
-  Loop* self = const_cast<Loop*>(this);
   MidiEventVec flat;
   self->flattenActiveEpochs(flat);
   self->editFlat_.mutStore().clear();
@@ -213,28 +235,38 @@ void Loop::freeActiveEpochChunks() {
   }
 }
 
-void Loop::syncEditFlatToEpochs() {
-  editFlat_.syncFlatToStore();
-  freeActiveEpochChunks();
-  epochs.erase(std::remove_if(epochs.begin(), epochs.end(),
-                              [](const Epoch& e) { return e.state == EpochState::Active; }),
-               epochs.end());
+void Loop::syncEditFlatToEpochs(bool allowEmptyClear) {
+  if (editFlat_.isFlatDirty()) {
+    editFlat_.syncFlatToStore();
+  }
 
   LoopEventStore& store = editFlat_.mutStore();
   if (store.empty()) {
+    if (!allowEmptyClear && hasPublishedEvents()) {
+      discardEditFlatMaterialization();
+      return;
+    }
+    freeActiveEpochChunks();
+    epochs.erase(std::remove_if(epochs.begin(), epochs.end(),
+                                [](const Epoch& e) { return e.state == EpochState::Active; }),
+                 epochs.end());
     lastPublishedEpochId_ = kInvalidEpochId;
     ++playbackRevision;
     discardEditFlatMaterialization();
+    rebuildVisualCacheFromEpochs();
     return;
   }
 
   ChunkIdList refs;
   store.detachChunksTo(refs);
   if (refs.empty()) {
-    ++playbackRevision;
-    discardEditFlatMaterialization();
     return;
   }
+
+  freeActiveEpochChunks();
+  epochs.erase(std::remove_if(epochs.begin(), epochs.end(),
+                              [](const Epoch& e) { return e.state == EpochState::Active; }),
+               epochs.end());
 
   Epoch rebuilt{};
   rebuilt.id = nextEpochId_++;
@@ -246,7 +278,7 @@ void Loop::syncEditFlatToEpochs() {
   lastPublishedEpochId_ = rebuilt.id;
   ++playbackRevision;
   materializeEditFlatFromEpochs();
-  editFlatDirty_ = false;
+  rebuildVisualCacheFromEpochs();
 }
 
 void Loop::markEpochDerivedStale() {
@@ -258,7 +290,6 @@ void Loop::markEpochDerivedStale() {
 
 MidiEventVec& Loop::midiEvents() {
   materializeEditFlatFromEpochs();
-  editFlatDirty_ = true;
   return editFlat_.mutFlat();
 }
 
@@ -284,23 +315,52 @@ std::shared_ptr<const LoopEventStore> Loop::shareEditSnapshot() const {
 
 void Loop::restoreEditSnapshot(const MidiSnapshotRef& snapshot) {
   editFlat_.restoreFromSnapshot(snapshot);
-  syncEditFlatToEpochs();
+  syncEditFlatToEpochs(true);
 }
 
 void Loop::discardEditFlatMaterialization() {
   editFlat_.mutStore().clear();
   editFlat_.discardFlatCache();
   editFlatStale_ = true;
-  editFlatDirty_ = false;
 }
 
 void Loop::commitStopFinalizeFromStore(LoopEventStore& merged) {
-  editFlat_.mutStore().clear();
-  editFlat_.mutStore().adoptAll(merged);
-  editFlatStale_ = false;
-  editFlatDirty_ = false;
-  syncEditFlatToEpochs();
+  const EpochId preserveId = lastPublishedEpochId_;
+  EpochKind preserveKind = EpochKind::Overdub;
+  uint32_t preserveMergeSeq = 0;
+  for (const Epoch& epoch : epochs) {
+    if (epoch.state == EpochState::Active && epoch.id == preserveId) {
+      preserveKind = epoch.kind;
+      preserveMergeSeq = epoch.mergeSequence;
+      break;
+    }
+  }
+
+  ChunkIdList refs;
+  merged.detachChunksTo(refs);
+  if (refs.empty()) {
+    return;
+  }
+
+  freeActiveEpochChunks();
+  epochs.erase(std::remove_if(epochs.begin(), epochs.end(),
+                              [](const Epoch& e) { return e.state == EpochState::Active; }),
+               epochs.end());
+
+  Epoch rebuilt{};
+  rebuilt.id = (preserveId != kInvalidEpochId) ? preserveId : nextEpochId_++;
+  if (rebuilt.id >= nextEpochId_) {
+    nextEpochId_ = rebuilt.id + 1;
+  }
+  rebuilt.mergeSequence = preserveMergeSeq;
+  rebuilt.kind = preserveKind;
+  rebuilt.state = EpochState::Active;
+  rebuilt.chunkRefs = std::move(refs);
+  epochs.push_back(rebuilt);
+  lastPublishedEpochId_ = rebuilt.id;
+  ++playbackRevision;
   discardEditFlatMaterialization();
+  rebuildVisualCacheFromEpochs();
 }
 
 void Loop::importPublishedStore(LoopEventStore& store) {
@@ -310,14 +370,16 @@ void Loop::importPublishedStore(LoopEventStore& store) {
   }
   editFlat_.mutStore().adoptAll(store);
   editFlatStale_ = false;
-  syncEditFlatToEpochs();
+  syncEditFlatToEpochs(true);
   rebuildVisualCacheFromEpochs();
 }
 
 void Loop::flushEditStoreToEpochs() {
-  if (!editFlatStale_) {
-    syncEditFlatToEpochs();
+  if (editFlatStale_ || !editFlat_.isFlatDirty()) {
+    return;
   }
+  editFlat_.syncFlatToStore();
+  syncEditFlatToEpochs(true);
 }
 
 void Loop::shiftActiveEpochTicks(int64_t delta) {
@@ -326,7 +388,7 @@ void Loop::shiftActiveEpochTicks(int64_t delta) {
   }
   materializeEditFlatFromEpochs();
   editFlat_.mutStore().shiftAllTicks(delta);
-  syncEditFlatToEpochs();
+  syncEditFlatToEpochs(true);
 }
 
 void Loop::beginCapture(CapturePhase phase) {
@@ -467,7 +529,6 @@ void Loop::resetEpochTimeline() {
   editFlat_.mutStore().clear();
   editFlat_.discardFlatCache();
   editFlatStale_ = true;
-  editFlatDirty_ = false;
 }
 
 bool Loop::setEpochState(EpochId id, EpochState state) {
@@ -624,10 +685,6 @@ bool Loop::publishPendingEpoch() {
 }
 
 void Loop::invalidateCaches() {
-  if (editFlatDirty_ && !editFlatStale_) {
-    editFlat_.syncFlatToStore();
-    syncEditFlatToEpochs();
-  }
   if (noteCache_) {
     noteCache_->invalidate();
   }

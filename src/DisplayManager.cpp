@@ -14,6 +14,8 @@
 #include "NoteEditManager.h"
 #include "MidiHandler.h"
 #include "Utils/HotPathTelemetry.h"
+#include "Utils/SessionCapture.h"
+#include "TrackStateMachine.h"
 #include <map>
 #include <string>
 #include <Font5x7Fixed.h>
@@ -224,11 +226,34 @@ const std::vector<DisplayNote>& DisplayManager::resolveDisplayNotes(const Track&
 
     if (!isLiveRecordingDisplay(track, displaySlot)) {
         invalidateLiveDisplayCache();
-        const auto& visual = track.getVisualNotesForSlot(displaySlot);
-        if (!visual.empty()) {
-            return visual;
+        const Loop& loop = track.getLoop(displaySlot);
+        const uint32_t loopLength = resolveDisplayLoopLength(track, displaySlot, currentTick);
+        if (loopLength == 0 || (!loop.hasPublishedEvents() && loop.liveEventCount() == 0)) {
+            liveDisplayNotes.clear();
+            return liveDisplayNotes;
         }
-        return track.getCachedNotesForSlot(displaySlot);
+
+        Loop& mutLoop = const_cast<Loop&>(loop);
+        mutLoop.ensureVisualCacheBuilt();
+        mutLoop.buildLiveEventView(liveDisplayEventBuffer);
+
+        if (!liveDisplayEventBuffer.empty()) {
+            liveDisplayNotes =
+                NoteUtils::reconstructNotes(liveDisplayEventBuffer, loopLength, false);
+            const std::vector<NoteUtils::OpenNoteOn> openNotes =
+                NoteUtils::findOpenNoteOns(liveDisplayEventBuffer, loopLength);
+            if (!openNotes.empty()) {
+                const uint32_t playheadCloseTick =
+                    resolvePlayheadInLoop(track, displaySlot, currentTick);
+                applyLiveOpenTails(openNotes, liveDisplayEventBuffer, loopLength, playheadCloseTick,
+                                   liveDisplayNotes);
+            }
+        } else if (!loop.visualCache.notes.empty()) {
+            liveDisplayNotes = loop.visualCache.notes;
+        } else {
+            liveDisplayNotes.clear();
+        }
+        return liveDisplayNotes;
     }
 
     const Loop& loop = track.getLoop(displaySlot);
@@ -296,6 +321,51 @@ const std::vector<DisplayNote>& DisplayManager::resolveDisplayNotes(const Track&
     }
 
     return liveDisplayNotes;
+}
+
+void DisplayManager::emitDisplayCaptureSnapshot(const Track& track, uint8_t displaySlot,
+                                                uint32_t currentTick) {
+    const Loop& loop = track.getLoop(displaySlot);
+    const uint32_t loopLen = resolveDisplayLoopLength(track, displaySlot, currentTick);
+    const std::vector<DisplayNote>& frameNotes = resolveDisplayNotes(track, displaySlot, currentTick);
+
+    MidiEventVec buffer;
+    loop.buildLiveEventView(buffer);
+
+    SC_DISP(displaySlot, TrackStateMachine::toString(track.getState()), loopLen,
+            loop.liveEventCount(), loop.visualCache.notes.size(), frameNotes.size(),
+            buffer.size(), loop.hasPublishedEvents() ? 1 : 0);
+}
+
+void DisplayManager::maybeEmitDisplayCaptureOnChange(const Track& track, uint8_t displaySlot,
+                                                     uint32_t currentTick, size_t frameNoteCount) {
+    static size_t lastFrameNotes = static_cast<size_t>(-1);
+    static uint8_t lastSlot = 255;
+    static TrackState lastState = NUM_TRACK_STATES;
+    static uint32_t lastLoopLen = 0;
+    static size_t lastEpochEvents = static_cast<size_t>(-1);
+
+    const Loop& loop = track.getLoop(displaySlot);
+    const TrackState state = track.getState();
+    const uint32_t loopLen = resolveDisplayLoopLength(track, displaySlot, currentTick);
+    const size_t epochEvents = loop.liveEventCount();
+
+    const bool changed = frameNoteCount != lastFrameNotes || displaySlot != lastSlot ||
+                         state != lastState || loopLen != lastLoopLen ||
+                         epochEvents != lastEpochEvents;
+    const bool regression =
+        loopLen > 0 && loop.hasPublishedEvents() && frameNoteCount == 0 && epochEvents > 0;
+
+    if (!changed && !regression) {
+        return;
+    }
+
+    lastFrameNotes = frameNoteCount;
+    lastSlot = displaySlot;
+    lastState = state;
+    lastLoopLen = loopLen;
+    lastEpochEvents = epochEvents;
+    emitDisplayCaptureSnapshot(track, displaySlot, currentTick);
 }
 
 void DisplayManager::invalidateLiveDisplayCache() {
@@ -923,6 +993,9 @@ void DisplayManager::update() {
 
     drawTrackStatus(trackManager.getSelectedTrackIndex(), now);
     const std::vector<DisplayNote>& frameNotes = resolveDisplayNotes(selTrack, displaySlot, displayTick);
+#if defined(SESSION_CAPTURE)
+    maybeEmitDisplayCaptureOnChange(selTrack, displaySlot, displayTick, frameNotes.size());
+#endif
     drawPianoRoll(displayTick, selTrack, displaySlot, frameNotes);
     drawSidebar(selTrack, displaySlot);
     drawInfoArea(displayTick, selTrack, displaySlot);
