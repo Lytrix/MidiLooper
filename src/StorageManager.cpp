@@ -4,6 +4,8 @@
 #include "StorageManager.h"
 #include "TrackManager.h"
 #include "Loop.h"
+#include "Slot.h"
+#include "StorageLoopIo.h"
 #include "Globals.h"
 #include "Logger.h"
 #include <SD.h>
@@ -15,7 +17,7 @@
 #include <array>
 
 #define STORAGE_FILENAME "/midilooper_state.raw"
-#define STORAGE_VERSION 3
+#define STORAGE_VERSION 4
 static constexpr uint32_t GLOBAL_UNDO_MAGIC = 0x33535547UL;  // "GUS3"
 
 // Helper to write raw data
@@ -41,6 +43,29 @@ static bool readRaw(File &file, void *data, size_t size) {
         return false;
     }
     return true;
+}
+
+static StorageIo storageIoFromFileWrite(File& file) {
+    return StorageIo{
+        [&file](const void* data, size_t size) { return writeRaw(file, data, size); },
+        nullptr,
+    };
+}
+
+static StorageIo storageIoFromFileRead(File& file) {
+    return StorageIo{
+        nullptr,
+        [&file](void* data, size_t size) { return readRaw(file, data, size); },
+    };
+}
+
+static void migrateLoadedLoopsToEpochTimeline(Track& track) {
+    track.ensureLoopsAllocated();
+    for (uint8_t s = 0; s < Config::MAX_LOOPS_PER_TRACK; ++s) {
+        Loop& loop = track.loopForSlot(s);
+        loop.ensureCommittedMigratedToEpoch();
+        loop.syncCommittedEventsFromEpochs();
+    }
 }
 
 static bool writeMidiSnapshot(File& file, const MidiSnapshotRef& snapshot) {
@@ -249,198 +274,32 @@ bool StorageManager::saveState(const LooperState& state) {
         for (uint8_t s = 0; s < Config::MAX_LOOPS_PER_TRACK; ++s) {
             const bool slotEnabled = trackManager.isSlotEnabled(t, s);
             const bool slotMuted = trackManager.isSlotMuted(t, s);
+            const LoopId slotLoopId = track.slotRef(s).loopId;
 
-            logger.log(CAT_STORAGE, LOG_DEBUG, "[StorageManager] v3 saving track=%u slot=%u", t, s);
+            logger.log(CAT_STORAGE, LOG_DEBUG, "[StorageManager] v4 saving track=%u slot=%u loopId=%lu",
+                       t, s, static_cast<unsigned long>(slotLoopId));
 
             if (!writeRaw(file, &slotEnabled, sizeof(slotEnabled))) { Serial.print("[StorageManager] ERROR: Failed to write slotEnabled for track "); Serial.print(t); Serial.print(" slot "); Serial.println(s); file.close(); return false; }
             if (!writeRaw(file, &slotMuted, sizeof(slotMuted))) { Serial.print("[StorageManager] ERROR: Failed to write slotMuted for track "); Serial.print(t); Serial.print(" slot "); Serial.println(s); file.close(); return false; }
+            if (!writeRaw(file, &slotLoopId, sizeof(slotLoopId))) { Serial.print("[StorageManager] ERROR: Failed to write slotLoopId for track "); Serial.print(t); Serial.print(" slot "); Serial.println(s); file.close(); return false; }
+        }
 
-            Loop& loop = track.getLoop(s);
-
-            // Loop core: startLoopTick is saved for completeness, but loading will normalize startLoopTick to 0.
-            uint32_t startLoopTick = loop.startLoopTick;
-            uint32_t loopLengthTicks = loop.loopLengthTicks;
-            uint32_t loopStartTick = loop.loopStartTick;
-            if (!writeRaw(file, &startLoopTick, sizeof(startLoopTick))) { Serial.print("[StorageManager] ERROR: Failed to write startLoopTick for track "); Serial.print(t); Serial.print(" slot "); Serial.println(s); file.close(); return false; }
-            if (!writeRaw(file, &loopLengthTicks, sizeof(loopLengthTicks))) { Serial.print("[StorageManager] ERROR: Failed to write loopLengthTicks for track "); Serial.print(t); Serial.print(" slot "); Serial.println(s); file.close(); return false; }
-            if (!writeRaw(file, &loopStartTick, sizeof(loopStartTick))) { Serial.print("[StorageManager] ERROR: Failed to write loopStartTick for track "); Serial.print(t); Serial.print(" slot "); Serial.println(s); file.close(); return false; }
-
-            // MidiEvents
-            const auto &midiEvents = loop.midiEvents();
-            uint32_t midiCount = midiEvents.size();
-            if (!writeRaw(file, &midiCount, sizeof(midiCount))) { Serial.print("[StorageManager] ERROR: Failed to write midiCount for track "); Serial.print(t); Serial.print(" slot "); Serial.println(s); file.close(); return false; }
-            if (midiCount > 0 && !writeRaw(file, midiEvents.data(), midiCount * sizeof(MidiEvent))) { Serial.print("[StorageManager] ERROR: Failed to write midiEvents for track "); Serial.print(t); Serial.print(" slot "); Serial.println(s); file.close(); return false; }
-
-            // Overdub undo history (midi + geom) - non-allocating access.
-            const auto* midiHistoryPtr = loop.tryGetMidiHistory();
-            const auto* geomHistoryPtr = loop.tryGetOverdubGeomHistory();
-
-            // Clamp to avoid out-of-bounds if MIDI history and geom history diverge.
-            const size_t midiHistCnt = midiHistoryPtr ? midiHistoryPtr->size() : 0;
-            const size_t geomHistCnt = geomHistoryPtr ? geomHistoryPtr->size() : 0;
-            uint32_t overdubUndoCount = static_cast<uint32_t>((midiHistCnt < geomHistCnt) ? midiHistCnt : geomHistCnt);
-
-            logger.log(CAT_STORAGE, LOG_DEBUG, "[StorageManager] v3 overdubUndo track=%u slot=%u count=%lu",
-                       t, s, static_cast<unsigned long>(overdubUndoCount));
-            if (!writeRaw(file, &overdubUndoCount, sizeof(overdubUndoCount))) { Serial.print("[StorageManager] ERROR: Failed to write overdubUndoCount for track "); Serial.print(t); Serial.print(" slot "); Serial.println(s); file.close(); return false; }
-
-            for (uint32_t u = 0; u < overdubUndoCount; ++u) {
-                const MidiSnapshotRef& snapRef = (*midiHistoryPtr)[u];
-                MidiEventVec snapFlat;
-                if (snapRef) {
-                    snapRef->flatten(snapFlat);
-                }
-                uint32_t snapCount = static_cast<uint32_t>(snapFlat.size());
-                if (!writeRaw(file, &snapCount, sizeof(snapCount))) { Serial.print("[StorageManager] ERROR: Failed to write overdubUndo snapCount for track "); Serial.print(t); Serial.print(" slot "); Serial.println(s); file.close(); return false; }
-                if (snapCount > 0 && !writeRaw(file, snapFlat.data(), snapCount * sizeof(MidiEvent))) { Serial.print("[StorageManager] ERROR: Failed to write overdubUndo snapshot for track "); Serial.print(t); Serial.print(" slot "); Serial.println(s); file.close(); return false; }
-                const OverdubGeomSnapshot &geom = (*geomHistoryPtr)[u];
-                if (!writeRaw(file, &geom.loopLengthTicks, sizeof(geom.loopLengthTicks))) { Serial.print("[StorageManager] ERROR: Failed to write overdubUndo geom.loopLengthTicks for track "); Serial.print(t); Serial.print(" slot "); Serial.println(s); file.close(); return false; }
-                if (!writeRaw(file, &geom.startLoopTick, sizeof(geom.startLoopTick))) { Serial.print("[StorageManager] ERROR: Failed to write overdubUndo geom.startLoopTick for track "); Serial.print(t); Serial.print(" slot "); Serial.println(s); file.close(); return false; }
-                if (!writeRaw(file, &geom.loopStartTick, sizeof(geom.loopStartTick))) { Serial.print("[StorageManager] ERROR: Failed to write overdubUndo geom.loopStartTick for track "); Serial.print(t); Serial.print(" slot "); Serial.println(s); file.close(); return false; }
-
-                // Keep the system responsive while serializing long stacks.
-                if ((u & 0x7u) == 0u) yield();
+        track.ensureLoopsAllocated();
+        const StorageIo loopIo = storageIoFromFileWrite(file);
+        for (uint8_t p = 0; p < Config::MAX_LOOPS_PER_TRACK; ++p) {
+            Loop& loop = track.loopPool_.at(p);
+            loop.ensureCommittedMigratedToEpoch();
+            logger.log(CAT_STORAGE, LOG_DEBUG, "[StorageManager] v4 saving track=%u pool=%u loopId=%lu epochs=%u",
+                       t, p, static_cast<unsigned long>(loop.loopId),
+                       static_cast<unsigned>(loop.epochs.size()));
+            if (!writeLoopPersisted(loopIo, loop)) {
+                Serial.print("[StorageManager] ERROR: Failed to write loop pool entry track ");
+                Serial.print(t);
+                Serial.print(" pool ");
+                Serial.println(p);
+                file.close();
+                return false;
             }
-
-            // Overdub redo history (midi + geom) - non-allocating access.
-            const auto* midiRedoHistoryPtr = loop.tryGetMidiRedoHistory();
-            const auto* geomRedoHistoryPtr = loop.tryGetOverdubGeomRedoHistory();
-
-            // Clamp to avoid out-of-bounds if redo MIDI and geom histories diverge.
-            const size_t midiRedoCnt = midiRedoHistoryPtr ? midiRedoHistoryPtr->size() : 0;
-            const size_t geomRedoCnt = geomRedoHistoryPtr ? geomRedoHistoryPtr->size() : 0;
-            uint32_t overdubRedoCount = static_cast<uint32_t>((midiRedoCnt < geomRedoCnt) ? midiRedoCnt : geomRedoCnt);
-
-            logger.log(CAT_STORAGE, LOG_DEBUG, "[StorageManager] v3 overdubRedo track=%u slot=%u count=%lu",
-                       t, s, static_cast<unsigned long>(overdubRedoCount));
-            if (!writeRaw(file, &overdubRedoCount, sizeof(overdubRedoCount))) { Serial.print("[StorageManager] ERROR: Failed to write overdubRedoCount for track "); Serial.print(t); Serial.print(" slot "); Serial.println(s); file.close(); return false; }
-
-            for (uint32_t u = 0; u < overdubRedoCount; ++u) {
-                const MidiSnapshotRef& snapRef = (*midiRedoHistoryPtr)[u];
-                MidiEventVec snapFlat;
-                if (snapRef) {
-                    snapRef->flatten(snapFlat);
-                }
-                uint32_t snapCount = static_cast<uint32_t>(snapFlat.size());
-                if (!writeRaw(file, &snapCount, sizeof(snapCount))) { Serial.print("[StorageManager] ERROR: Failed to write overdubRedo snapCount for track "); Serial.print(t); Serial.print(" slot "); Serial.println(s); file.close(); return false; }
-                if (snapCount > 0 && !writeRaw(file, snapFlat.data(), snapCount * sizeof(MidiEvent))) { Serial.print("[StorageManager] ERROR: Failed to write overdubRedo snapshot for track "); Serial.print(t); Serial.print(" slot "); Serial.println(s); file.close(); return false; }
-                const OverdubGeomSnapshot &geom = (*geomRedoHistoryPtr)[u];
-                if (!writeRaw(file, &geom.loopLengthTicks, sizeof(geom.loopLengthTicks))) { Serial.print("[StorageManager] ERROR: Failed to write overdubRedo geom.loopLengthTicks for track "); Serial.print(t); Serial.print(" slot "); Serial.println(s); file.close(); return false; }
-                if (!writeRaw(file, &geom.startLoopTick, sizeof(geom.startLoopTick))) { Serial.print("[StorageManager] ERROR: Failed to write overdubRedo geom.startLoopTick for track "); Serial.print(t); Serial.print(" slot "); Serial.println(s); file.close(); return false; }
-                if (!writeRaw(file, &geom.loopStartTick, sizeof(geom.loopStartTick))) { Serial.print("[StorageManager] ERROR: Failed to write overdubRedo geom.loopStartTick for track "); Serial.print(t); Serial.print(" slot "); Serial.println(s); file.close(); return false; }
-
-                if ((u & 0x7u) == 0u) yield();
-            }
-
-            // Clear undo history (midi + state + loop geometry) - non-allocating access.
-            const auto* clearMidiHistoryPtr = loop.tryGetClearMidiHistory();
-            const auto* clearStateHistoryPtr = loop.tryGetClearStateHistory();
-            const auto* clearLengthHistoryPtr = loop.tryGetClearLengthHistory();
-            const auto* clearStartHistoryPtr = loop.tryGetClearStartHistory();
-
-            // Clamp to avoid out-of-bounds if clear stacks diverge.
-            const size_t clearMidiCnt = clearMidiHistoryPtr ? clearMidiHistoryPtr->size() : 0;
-            const size_t clearStateCnt = clearStateHistoryPtr ? clearStateHistoryPtr->size() : 0;
-            const size_t clearLengthCnt = clearLengthHistoryPtr ? clearLengthHistoryPtr->size() : 0;
-            const size_t clearStartCnt = clearStartHistoryPtr ? clearStartHistoryPtr->size() : 0;
-            const size_t clearUndoCount = clearMidiCnt;
-            size_t clearUndoCountClamped = clearUndoCount;
-            if (clearStateCnt < clearUndoCountClamped) clearUndoCountClamped = clearStateCnt;
-            if (clearLengthCnt < clearUndoCountClamped) clearUndoCountClamped = clearLengthCnt;
-            if (clearStartCnt < clearUndoCountClamped) clearUndoCountClamped = clearStartCnt;
-            uint32_t clearUndoCount32 = static_cast<uint32_t>(clearUndoCountClamped);
-
-            logger.log(CAT_STORAGE, LOG_DEBUG, "[StorageManager] v3 clearUndo track=%u slot=%u count=%lu",
-                       t, s, static_cast<unsigned long>(clearUndoCount32));
-            if (!writeRaw(file, &clearUndoCount32, sizeof(clearUndoCount32))) { Serial.print("[StorageManager] ERROR: Failed to write clearUndoCount for track "); Serial.print(t); Serial.print(" slot "); Serial.println(s); file.close(); return false; }
-
-            for (uint32_t u = 0; u < clearUndoCount32; ++u) {
-                const auto &pooledSnapshot = (*clearMidiHistoryPtr)[u];
-                MidiEventVec snapshot;
-                snapshot.reserve(pooledSnapshot.size());
-                for (const auto& eventPtr : pooledSnapshot) {
-                    if (!eventPtr) continue;
-                    snapshot.push_back(*eventPtr);
-                }
-                uint32_t snapCount = snapshot.size();
-                if (!writeRaw(file, &snapCount, sizeof(snapCount))) { Serial.print("[StorageManager] ERROR: Failed to write clearUndo snapCount for track "); Serial.print(t); Serial.print(" slot "); Serial.println(s); file.close(); return false; }
-                if (snapCount > 0 && !writeRaw(file, snapshot.data(), snapCount * sizeof(MidiEvent))) { Serial.print("[StorageManager] ERROR: Failed to write clearUndo snapshot for track "); Serial.print(t); Serial.print(" slot "); Serial.println(s); file.close(); return false; }
-                const TrackState snapState = (*clearStateHistoryPtr)[u];
-                uint32_t snapStateRaw = static_cast<uint32_t>(snapState);
-                if (!writeRaw(file, &snapStateRaw, sizeof(snapStateRaw))) { Serial.print("[StorageManager] ERROR: Failed to write clearUndo snapState for track "); Serial.print(t); Serial.print(" slot "); Serial.println(s); file.close(); return false; }
-                const uint32_t snapLoopLengthTicks = (*clearLengthHistoryPtr)[u];
-                const uint32_t snapLoopStartTick = (*clearStartHistoryPtr)[u];
-                if (!writeRaw(file, &snapLoopLengthTicks, sizeof(snapLoopLengthTicks))) { Serial.print("[StorageManager] ERROR: Failed to write clearUndo snapLoopLengthTicks for track "); Serial.print(t); Serial.print(" slot "); Serial.println(s); file.close(); return false; }
-                if (!writeRaw(file, &snapLoopStartTick, sizeof(snapLoopStartTick))) { Serial.print("[StorageManager] ERROR: Failed to write clearUndo snapLoopStartTick for track "); Serial.print(t); Serial.print(" slot "); Serial.println(s); file.close(); return false; }
-
-                if ((u & 0x7u) == 0u) yield();
-            }
-
-            // Clear redo history - non-allocating access.
-            const auto* clearMidiRedoHistoryPtr = loop.tryGetClearMidiRedoHistory();
-            const auto* clearStateRedoHistoryPtr = loop.tryGetClearStateRedoHistory();
-            const auto* clearLengthRedoHistoryPtr = loop.tryGetClearLengthRedoHistory();
-            const auto* clearStartRedoHistoryPtr = loop.tryGetClearStartRedoHistory();
-
-            // Clamp to avoid out-of-bounds if clear redo stacks diverge.
-            const size_t clearMidiRedoCnt = clearMidiRedoHistoryPtr ? clearMidiRedoHistoryPtr->size() : 0;
-            const size_t clearStateRedoCnt = clearStateRedoHistoryPtr ? clearStateRedoHistoryPtr->size() : 0;
-            const size_t clearLengthRedoCnt = clearLengthRedoHistoryPtr ? clearLengthRedoHistoryPtr->size() : 0;
-            const size_t clearStartRedoCnt = clearStartRedoHistoryPtr ? clearStartRedoHistoryPtr->size() : 0;
-            const size_t clearRedoCount = clearMidiRedoCnt;
-            size_t clearRedoCountClamped = clearRedoCount;
-            if (clearStateRedoCnt < clearRedoCountClamped) clearRedoCountClamped = clearStateRedoCnt;
-            if (clearLengthRedoCnt < clearRedoCountClamped) clearRedoCountClamped = clearLengthRedoCnt;
-            if (clearStartRedoCnt < clearRedoCountClamped) clearRedoCountClamped = clearStartRedoCnt;
-            uint32_t clearRedoCount32 = static_cast<uint32_t>(clearRedoCountClamped);
-
-            logger.log(CAT_STORAGE, LOG_DEBUG, "[StorageManager] v3 clearRedo track=%u slot=%u count=%lu",
-                       t, s, static_cast<unsigned long>(clearRedoCount32));
-            if (!writeRaw(file, &clearRedoCount32, sizeof(clearRedoCount32))) { Serial.print("[StorageManager] ERROR: Failed to write clearRedoCount for track "); Serial.print(t); Serial.print(" slot "); Serial.println(s); file.close(); return false; }
-
-            for (uint32_t u = 0; u < clearRedoCount32; ++u) {
-                const auto &pooledSnapshot = (*clearMidiRedoHistoryPtr)[u];
-                MidiEventVec snapshot;
-                snapshot.reserve(pooledSnapshot.size());
-                for (const auto& eventPtr : pooledSnapshot) {
-                    if (!eventPtr) continue;
-                    snapshot.push_back(*eventPtr);
-                }
-                uint32_t snapCount = snapshot.size();
-                if (!writeRaw(file, &snapCount, sizeof(snapCount))) { Serial.print("[StorageManager] ERROR: Failed to write clearRedo snapCount for track "); Serial.print(t); Serial.print(" slot "); Serial.println(s); file.close(); return false; }
-                if (snapCount > 0 && !writeRaw(file, snapshot.data(), snapCount * sizeof(MidiEvent))) { Serial.print("[StorageManager] ERROR: Failed to write clearRedo snapshot for track "); Serial.print(t); Serial.print(" slot "); Serial.println(s); file.close(); return false; }
-                const TrackState snapState = (*clearStateRedoHistoryPtr)[u];
-                uint32_t snapStateRaw = static_cast<uint32_t>(snapState);
-                if (!writeRaw(file, &snapStateRaw, sizeof(snapStateRaw))) { Serial.print("[StorageManager] ERROR: Failed to write clearRedo snapState for track "); Serial.print(t); Serial.print(" slot "); Serial.println(s); file.close(); return false; }
-                const uint32_t snapLoopLengthTicks = (*clearLengthRedoHistoryPtr)[u];
-                const uint32_t snapLoopStartTick = (*clearStartRedoHistoryPtr)[u];
-                if (!writeRaw(file, &snapLoopLengthTicks, sizeof(snapLoopLengthTicks))) { Serial.print("[StorageManager] ERROR: Failed to write clearRedo snapLoopLengthTicks for track "); Serial.print(t); Serial.print(" slot "); Serial.println(s); file.close(); return false; }
-                if (!writeRaw(file, &snapLoopStartTick, sizeof(snapLoopStartTick))) { Serial.print("[StorageManager] ERROR: Failed to write clearRedo snapLoopStartTick for track "); Serial.print(t); Serial.print(" slot "); Serial.println(s); file.close(); return false; }
-
-                if ((u & 0x7u) == 0u) yield();
-            }
-
-            // Loop-start edit undo/redo (loopStartTick only) - non-allocating access.
-            const auto* loopStartHistoryPtr = loop.tryGetLoopStartHistory();
-            const auto* loopStartRedoHistoryPtr = loop.tryGetLoopStartRedoHistory();
-
-            const size_t loopStartUndoCount = loopStartHistoryPtr ? loopStartHistoryPtr->size() : 0;
-            uint32_t loopStartUndoCount32 = static_cast<uint32_t>(loopStartUndoCount);
-            if (!writeRaw(file, &loopStartUndoCount32, sizeof(loopStartUndoCount32))) { Serial.print("[StorageManager] ERROR: Failed to write loopStartUndoCount for track "); Serial.print(t); Serial.print(" slot "); Serial.println(s); file.close(); return false; }
-            for (uint32_t u = 0; u < loopStartUndoCount32; ++u) {
-                uint32_t tick = (*loopStartHistoryPtr)[u];
-                if (!writeRaw(file, &tick, sizeof(tick))) { Serial.print("[StorageManager] ERROR: Failed to write loopStartUndo tick for track "); Serial.print(t); Serial.print(" slot "); Serial.println(s); file.close(); return false; }
-            }
-
-            const size_t loopStartRedoCount = loopStartRedoHistoryPtr ? loopStartRedoHistoryPtr->size() : 0;
-            uint32_t loopStartRedoCount32 = static_cast<uint32_t>(loopStartRedoCount);
-            if (!writeRaw(file, &loopStartRedoCount32, sizeof(loopStartRedoCount32))) { Serial.print("[StorageManager] ERROR: Failed to write loopStartRedoCount for track "); Serial.print(t); Serial.print(" slot "); Serial.println(s); file.close(); return false; }
-            for (uint32_t u = 0; u < loopStartRedoCount32; ++u) {
-                uint32_t tick = (*loopStartRedoHistoryPtr)[u];
-                if (!writeRaw(file, &tick, sizeof(tick))) { Serial.print("[StorageManager] ERROR: Failed to write loopStartRedo tick for track "); Serial.print(t); Serial.print(" slot "); Serial.println(s); file.close(); return false; }
-            }
-
-            // Yield once per slot to avoid watchdog issues during save.
             yield();
         }
     }
@@ -478,7 +337,7 @@ bool StorageManager::saveState(const LooperState& state) {
         }
     }
     file.close();
-    Serial.println("[StorageManager] State saved successfully.");
+    Serial.println("[StorageManager] State saved successfully (v4).");
     telemetryScope.setOk(true);
     return true;
 }
@@ -523,7 +382,7 @@ bool StorageManager::loadState(LooperState& state) {
         return false;
     }
     Serial.println("[StorageManager] Version read OK");
-    if (version != 1 && version != 2 && version != 3) {
+    if (version != 1 && version != 2 && version != 3 && version != 4) {
         Serial.print("[StorageManager] ERROR: Version mismatch. Found: ");
         Serial.println(version);
         file.close();
@@ -584,6 +443,125 @@ bool StorageManager::loadState(LooperState& state) {
         MidiEventVec midiEvents;
         std::vector<MidiEventVec, ExtMemAllocator<MidiEventVec>> midiHistory;
     };
+    if (version == 4) {
+        std::vector<uint8_t> activeLoopIndex(numTracks, 0);
+        uint8_t selectedTrackIdx = 0;
+
+        for (uint8_t t = 0; t < numTracks; ++t) {
+            Track& track = trackManager.getTrack(t);
+            track.ensureLoopsAllocated();
+
+            uint32_t trackStateRaw = 0;
+            if (!readRaw(file, &trackStateRaw, sizeof(trackStateRaw))) {
+                Serial.print("[StorageManager] ERROR: Failed to read trackState for track "); Serial.println(t);
+                file.close();
+                return false;
+            }
+            TrackState loadedTrackState = static_cast<TrackState>(trackStateRaw);
+
+            bool muted = false;
+            if (!readRaw(file, &muted, sizeof(muted))) {
+                Serial.print("[StorageManager] ERROR: Failed to read muted for track "); Serial.println(t);
+                file.close();
+                return false;
+            }
+
+            bool anySlotHasEvents = false;
+
+            for (uint8_t s = 0; s < Config::MAX_LOOPS_PER_TRACK; ++s) {
+                bool slotEnabled = false;
+                bool slotMuted = false;
+                LoopId slotLoopId = kInvalidLoopId;
+                if (!readRaw(file, &slotEnabled, sizeof(slotEnabled))) { Serial.print("[StorageManager] ERROR: Failed to read slotEnabled for track "); Serial.print(t); Serial.print(" slot "); Serial.println(s); file.close(); return false; }
+                if (!readRaw(file, &slotMuted, sizeof(slotMuted))) { Serial.print("[StorageManager] ERROR: Failed to read slotMuted for track "); Serial.print(t); Serial.print(" slot "); Serial.println(s); file.close(); return false; }
+                if (!readRaw(file, &slotLoopId, sizeof(slotLoopId))) { Serial.print("[StorageManager] ERROR: Failed to read slotLoopId for track "); Serial.print(t); Serial.print(" slot "); Serial.println(s); file.close(); return false; }
+
+                trackManager.setSlotEnabled(t, s, slotEnabled);
+                trackManager.setSlotMuted(t, s, slotMuted);
+                track.slots_[s].loopId = slotLoopId;
+            }
+
+            const StorageIo loopIo = storageIoFromFileRead(file);
+            for (uint8_t p = 0; p < Config::MAX_LOOPS_PER_TRACK; ++p) {
+                Loop& loop = track.loopPool_.at(p);
+                loop.clearAllUndoStacks();
+                if (!readLoopPersisted(loopIo, loop)) {
+                    Serial.print("[StorageManager] ERROR: Failed to read loop pool entry track ");
+                    Serial.print(t);
+                    Serial.print(" pool ");
+                    Serial.println(p);
+                    file.close();
+                    return false;
+                }
+                if (!loop.committedEvents.empty()) {
+                    anySlotHasEvents = true;
+                }
+            }
+
+            if (loadedTrackState == TRACK_RECORDING || loadedTrackState == TRACK_ARMED || loadedTrackState == TRACK_STOPPED_RECORDING) {
+                loadedTrackState = anySlotHasEvents ? TRACK_STOPPED : TRACK_EMPTY;
+            }
+            if (loadedTrackState == TRACK_OVERDUBBING) loadedTrackState = TRACK_PLAYING;
+            if (loadedTrackState == TRACK_EMPTY && anySlotHasEvents) {
+                loadedTrackState = TRACK_STOPPED;
+            }
+
+            track.forceSetState(loadedTrackState);
+            if (muted != track.isMuted()) track.toggleMuteTrack();
+        }
+
+        if (!readRaw(file, &selectedTrackIdx, sizeof(selectedTrackIdx))) {
+            Serial.println("[StorageManager] ERROR: Failed to read selectedTrackIdx for v4");
+            file.close();
+            return false;
+        }
+
+        for (uint8_t t = 0; t < numTracks; ++t) {
+            if (!readRaw(file, &activeLoopIndex[t], sizeof(activeLoopIndex[t]))) {
+                Serial.println("[StorageManager] ERROR: Failed to read activeLoopIndex for v4");
+                file.close();
+                return false;
+            }
+        }
+
+        uint32_t undoMagic = 0;
+        if (!readRaw(file, &undoMagic, sizeof(undoMagic))) {
+            Serial.println("[StorageManager] ERROR: Failed to read global undo magic for v4");
+            file.close();
+            return false;
+        }
+        if (undoMagic != GLOBAL_UNDO_MAGIC) {
+            Serial.println("[StorageManager] ERROR: Global undo magic mismatch for v4");
+            file.close();
+            return false;
+        }
+        for (uint8_t t = 0; t < numTracks; ++t) {
+            Track& track = trackManager.getTrack(t);
+            if (!readGlobalUndoStack(file, track.getGlobalUndoStack())) {
+                Serial.print("[StorageManager] ERROR: Failed to read global undo stack for track ");
+                Serial.println(t);
+                file.close();
+                return false;
+            }
+        }
+
+        file.close();
+        Serial.println("[StorageManager] State loaded successfully (v4).");
+
+        state = loadedLooperState;
+        trackManager.setMasterLoopLength(masterLoopLength);
+        for (uint8_t t = 0; t < numTracks; ++t) {
+            trackManager.getTrack(t).setActiveLoopIndex(activeLoopIndex[t]);
+            trackManager.setSelectedSlotIndex(t, activeLoopIndex[t]);
+        }
+        if (selectedTrackIdx < Config::NUM_TRACKS) {
+            trackManager.setSelectedTrack(selectedTrackIdx);
+        } else {
+            trackManager.setSelectedTrack(0);
+        }
+        return true;
+    }
+
     if (version == 3) {
         // v3: load all loop slots per track + per-slot enable/mute + undo/redo stacks.
         std::vector<uint8_t> activeLoopIndex(numTracks, 0);
@@ -850,6 +828,10 @@ bool StorageManager::loadState(LooperState& state) {
 
         file.close();
         Serial.println("[StorageManager] State loaded successfully (v3).");
+
+        for (uint8_t t = 0; t < numTracks; ++t) {
+            migrateLoadedLoopsToEpochTimeline(trackManager.getTrack(t));
+        }
 
         // Apply header state
         state = loadedLooperState;
