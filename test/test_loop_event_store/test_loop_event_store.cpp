@@ -155,6 +155,32 @@ void test_drop_events_at_or_beyond_tick_removes_overflow() {
   TEST_ASSERT_EQUAL(1520u, store.at(1).tick);
 }
 
+void test_first_index_for_bar_uses_bar_index() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  LoopEventStore store;
+
+  TEST_ASSERT_TRUE(store.append(MidiEvent::NoteOn(0, 1, 60, 100)));      // bar 0
+  TEST_ASSERT_TRUE(store.append(MidiEvent::NoteOn(770, 1, 61, 100)));    // bar 1
+  TEST_ASSERT_TRUE(store.append(MidiEvent::NoteOn(1536, 1, 62, 100)));   // bar 2
+
+  TEST_ASSERT_EQUAL(0u, store.firstIndexForBar(0));
+  TEST_ASSERT_EQUAL(1u, store.firstIndexForBar(1));
+  TEST_ASSERT_EQUAL(2u, store.firstIndexForBar(2));
+  TEST_ASSERT_EQUAL(3u, store.firstIndexForBar(9));
+}
+
+void test_first_index_for_bar_skips_empty_bar() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  LoopEventStore store;
+
+  TEST_ASSERT_TRUE(store.append(MidiEvent::NoteOn(0, 1, 60, 100)));      // bar 0
+  TEST_ASSERT_TRUE(store.append(MidiEvent::NoteOn(1536, 1, 62, 100)));   // bar 2
+
+  TEST_ASSERT_EQUAL(1u, store.firstIndexForBar(1));  // bar 1 empty -> next event is bar 2
+}
+
 int main(int /*argc*/, char** /*argv*/) {
   UNITY_BEGIN();
   RUN_TEST(test_append_fills_chunks_without_realloc_pattern);
@@ -167,5 +193,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_lower_bound_index_skips_prefix);
   RUN_TEST(test_undo_snapshot_ref_isolated_by_cow);
   RUN_TEST(test_drop_events_at_or_beyond_tick_removes_overflow);
+  RUN_TEST(test_first_index_for_bar_uses_bar_index);
+  RUN_TEST(test_first_index_for_bar_skips_empty_bar);
   return UNITY_END();
 }

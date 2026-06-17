@@ -64,6 +64,7 @@ struct Loop {
   VisualCache visualCache;
   CapturePreview capturePreview;
   VisualCacheDelta pendingVisualDelta;
+  bool visualCacheDirty = true;
   EpochId nextEpochId_ = 1;
   uint32_t nextMergeSequence_ = 0;
   EpochId lastPublishedEpochId_ = kInvalidEpochId;
@@ -123,6 +124,12 @@ struct Loop {
   bool ensureCaptureEventsSorted();
   /// Committed events plus in-flight capture buffer (sorted by tick) for display/LED reads.
   void buildLiveEventView(MidiEventVec& out) const;
+  /// Rebuild committed visual cache from committed store (published/active data only).
+  void rebuildVisualCacheFromCommitted();
+  /// Lazy rebuild — safe on display/read paths; not on every invalidateCaches().
+  void ensureVisualCacheBuilt();
+  /// SD load / hot-path chunk edits: no flat sync, no visual rebuild.
+  void markDisplayCachesStale();
   /// Remove a capture note-off (e.g. loop-wrap synthetic) before recording the real head off.
   void removeCaptureNoteOffAt(uint8_t channel, uint8_t note, uint32_t tick);
 
@@ -309,6 +316,7 @@ struct Loop {
     committedEvents.syncFlatToStore();
     if (noteCache_) noteCache_->invalidate();
     eventIndexValid = false;
+    visualCacheDirty = true;
   }
 
   /// Playback/display caches only — no flat materialization or chunk rebuild.

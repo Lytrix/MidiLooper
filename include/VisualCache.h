@@ -4,24 +4,80 @@
 #pragma once
 
 #include <cstdint>
+#include <vector>
 
-/// Committed display cache for a loop (published epochs only). M1 placeholder — filled in M4.
+#include "Utils/NoteUtils.h"
+
+using VisualBarVec = std::vector<uint8_t>;
+
+inline uint32_t visualBarForTick(uint32_t tick, uint32_t ticksPerBar) {
+  if (ticksPerBar == 0) {
+    return 0;
+  }
+  return tick / ticksPerBar;
+}
+
 struct VisualCache {
   uint32_t revision = 0;
+  std::vector<NoteUtils::DisplayNote> notes;
+  VisualBarVec dirtyBars;
 
-  void clear() { revision = 0; }
+  void clear() {
+    revision = 0;
+    notes.clear();
+    dirtyBars.clear();
+  }
+
+  void setNotes(const std::vector<NoteUtils::DisplayNote>& inNotes) { notes = inNotes; }
+
+  void markBarDirty(uint32_t bar) {
+    if (dirtyBars.size() <= bar) {
+      dirtyBars.resize(bar + 1, 0);
+    }
+    dirtyBars[bar] = 1;
+  }
 };
 
-/// Transient overlay for live capture strokes. Never saved or undo'd. M1 placeholder — filled in M4.
 struct CapturePreview {
   uint32_t revision = 0;
+  std::vector<NoteUtils::DisplayNote> notes;
+  VisualBarVec dirtyBars;
 
-  void clear() { revision = 0; }
+  void clear() {
+    revision = 0;
+    notes.clear();
+    dirtyBars.clear();
+  }
+
+  void markBarDirty(uint32_t bar) {
+    if (dirtyBars.size() <= bar) {
+      dirtyBars.resize(bar + 1, 0);
+    }
+    dirtyBars[bar] = 1;
+  }
 };
 
-/// Staged display delta produced during Seal; applied on Publish. M1 placeholder — filled in M4.
 struct VisualCacheDelta {
-  void clear() {}
+  bool replaceAll = false;
+  std::vector<NoteUtils::DisplayNote> notes;
+  VisualBarVec dirtyBars;
 
-  void applyTo(VisualCache& cache) const { ++cache.revision; }
+  void clear() {
+    replaceAll = false;
+    notes.clear();
+    dirtyBars.clear();
+  }
+
+  void applyTo(VisualCache& cache) const {
+    if (replaceAll) {
+      cache.setNotes(notes);
+    }
+    for (size_t i = 0; i < dirtyBars.size(); ++i) {
+      if (dirtyBars[i] == 0) {
+        continue;
+      }
+      cache.markBarDirty(static_cast<uint32_t>(i));
+    }
+    ++cache.revision;
+  }
 };

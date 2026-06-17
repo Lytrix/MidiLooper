@@ -70,6 +70,63 @@ void sortCaptureStoreByTick(LoopEventStore& store) {
   store.loadFromFlat(sorted);
 }
 
+void markPreviewSpan(CapturePreview& preview, uint32_t startTick, uint32_t endTick, uint32_t ticksPerBar) {
+  if (ticksPerBar == 0) {
+    return;
+  }
+  const uint32_t startBar = startTick / ticksPerBar;
+  const uint32_t endBar = endTick / ticksPerBar;
+  for (uint32_t bar = startBar; bar <= endBar; ++bar) {
+    preview.markBarDirty(bar);
+  }
+}
+
+void applyCaptureEventToPreview(CapturePreview& preview, const MidiEvent& evt, uint32_t ticksPerBar) {
+  if (evt.isNoteOn()) {
+    NoteUtils::DisplayNote note{};
+    note.note = evt.data.noteData.note;
+    note.velocity = evt.data.noteData.velocity;
+    note.startTick = evt.tick;
+    note.endTick = evt.tick;
+    preview.notes.push_back(note);
+    markPreviewSpan(preview, evt.tick, evt.tick, ticksPerBar);
+    ++preview.revision;
+    return;
+  }
+
+  if (!evt.isNoteOff()) {
+    return;
+  }
+
+  for (auto it = preview.notes.rbegin(); it != preview.notes.rend(); ++it) {
+    if (it->note != evt.data.noteData.note) {
+      continue;
+    }
+    if (it->endTick != it->startTick) {
+      continue;
+    }
+    const uint32_t start = it->startTick;
+    it->endTick = evt.tick;
+    markPreviewSpan(preview, start, evt.tick, ticksPerBar);
+    ++preview.revision;
+    return;
+  }
+}
+
+void rebuildCapturePreviewFromStore(Loop& loop) {
+  MidiEventVec flat;
+  loop.capture.store.flatten(flat);
+  loop.capturePreview.notes = NoteUtils::reconstructNotes(flat, loop.loopLengthTicks, false);
+  loop.capturePreview.dirtyBars.clear();
+  if (loop.loopLengthTicks > 0) {
+    for (const auto& note : loop.capturePreview.notes) {
+      const uint32_t endTick = note.endTick >= note.startTick ? note.endTick : note.startTick;
+      markPreviewSpan(loop.capturePreview, note.startTick, endTick, Config::TICKS_PER_BAR);
+    }
+  }
+  ++loop.capturePreview.revision;
+}
+
 }  // namespace
 
 void Loop::beginCapture(CapturePhase phase) {
@@ -102,6 +159,7 @@ bool Loop::appendCaptureEvent(const MidiEvent& evt) {
     return false;
   }
   captureEventsSortDirty = true;
+  applyCaptureEventToPreview(capturePreview, evt, Config::TICKS_PER_BAR);
   return true;
 }
 
@@ -176,6 +234,7 @@ void Loop::removeCaptureNoteOffAt(uint8_t channel, uint8_t note, uint32_t tick) 
   }
   captureEventsSortDirty = false;
   ++captureDisplayRevision;
+  rebuildCapturePreviewFromStore(*this);
 }
 
 void Loop::commitCapture() {
@@ -214,6 +273,10 @@ void Loop::resetEpochTimeline() {
   nextMergeSequence_ = 0;
   lastPublishedEpochId_ = kInvalidEpochId;
   playbackRevision = 0;
+  visualCache.clear();
+  capturePreview.clear();
+  pendingVisualDelta.clear();
+  visualCacheDirty = true;
 }
 
 void Loop::ensureCommittedMigratedToEpoch() {
@@ -256,6 +319,8 @@ void Loop::syncCommittedEventsFromEpochs() {
     committed.clear();
     playbackOrderDirty = true;
     invalidatePlaybackCaches();
+    visualCache.clear();
+    visualCacheDirty = true;
     return;
   }
 
@@ -285,6 +350,7 @@ void Loop::syncCommittedEventsFromEpochs() {
   }
   playbackOrderDirty = true;
   invalidatePlaybackCaches();
+  rebuildVisualCacheFromCommitted();
 }
 
 void Loop::rebuildEpochTimelineFromCommitted() {
@@ -336,6 +402,7 @@ bool Loop::setEpochState(EpochId id, EpochState state) {
     }
     epoch.state = state;
     ++playbackRevision;
+    syncCommittedEventsFromEpochs();
     return true;
   }
   return false;
@@ -383,6 +450,35 @@ void Loop::discardPendingEpoch() {
   pendingEpoch_ = Epoch{};
   hasPendingEpoch_ = false;
   pendingVisualDelta.clear();
+}
+
+void Loop::rebuildVisualCacheFromCommitted() {
+  MidiEventVec flat;
+  committedEvents.readStore().flatten(flat);
+  visualCache.notes = NoteUtils::reconstructNotes(flat, loopLengthTicks, false);
+  visualCache.dirtyBars.clear();
+  for (const auto& n : visualCache.notes) {
+    const uint32_t endTick = n.endTick >= n.startTick ? n.endTick : n.startTick;
+    const uint32_t startBar = visualBarForTick(n.startTick, Config::TICKS_PER_BAR);
+    const uint32_t endBar = visualBarForTick(endTick, Config::TICKS_PER_BAR);
+    for (uint32_t bar = startBar; bar <= endBar; ++bar) {
+      visualCache.markBarDirty(bar);
+    }
+  }
+  ++visualCache.revision;
+  visualCacheDirty = false;
+}
+
+void Loop::ensureVisualCacheBuilt() {
+  if (!visualCacheDirty) {
+    return;
+  }
+  rebuildVisualCacheFromCommitted();
+}
+
+void Loop::markDisplayCachesStale() {
+  invalidatePlaybackCaches();
+  visualCacheDirty = true;
 }
 
 SealOutcome Loop::sealCaptureLayer(uint32_t sealedAtTick) {
@@ -441,7 +537,6 @@ bool Loop::publishPendingEpoch() {
   hasPendingEpoch_ = false;
 
   ++playbackRevision;
-  pendingVisualDelta.applyTo(visualCache);
   pendingVisualDelta.clear();
 
   capture.store.clear();
