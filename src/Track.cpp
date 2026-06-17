@@ -754,8 +754,14 @@ void Track::processDeferredIdleMaintenance() {
 }
 
 void Track::queueDeferredRecordRevts() const {
+  const Loop& loop = getActiveLoop();
+  if (!loop.hasPublishedEvents()) {
+    return;
+  }
+  MidiEventVec flat;
+  loop.flattenActiveEpochs(flat);
   size_t queued = 0;
-  for (const MidiEvent& evt : getActiveLoop().midiEvents()) {
+  for (const MidiEvent& evt : flat) {
     if (evt.isNoteOn()) {
       SC_REC_QUEUE_STORED_NOTE_ON(evt.tick, evt.channel, evt.data.noteData.note);
       ++queued;
