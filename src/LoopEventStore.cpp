@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <cstring>
+#include <limits>
 #include <new>
 
 namespace {
@@ -158,11 +159,47 @@ const MidiEvent& LoopEventStore::at(size_t globalIndex) const {
   return kEmpty;
 }
 
+size_t LoopEventStore::lowerBoundIndex(uint32_t tick) const {
+  size_t globalIndex = 0;
+  for (uint16_t id : chunkIds_) {
+    const EventChunk& c = chunk(id);
+    if (c.used == 0) {
+      continue;
+    }
+    if (c.lastTick < tick) {
+      globalIndex += c.used;
+      continue;
+    }
+    for (uint16_t i = 0; i < c.used; ++i) {
+      if (c.events[i].tick >= tick) {
+        return globalIndex + i;
+      }
+    }
+    globalIndex += c.used;
+  }
+  return size();
+}
+
 void LoopEventStore::clear() {
   for (uint16_t id : chunkIds_) {
     freeChunk(id);
   }
   chunkIds_.clear();
+}
+
+void LoopEventStore::detachChunksTo(ChunkIdList& dest) {
+  for (uint16_t id : dest) {
+    freeChunk(id);
+  }
+  dest.clear();
+  dest.swap(chunkIds_);
+  chunkIds_.clear();
+}
+
+void LoopEventStore::adoptChunkIds(ChunkIdList& ids) {
+  clear();
+  chunkIds_.swap(ids);
+  ids.clear();
 }
 
 void LoopEventStore::adoptAll(LoopEventStore& other) {
@@ -180,19 +217,32 @@ void LoopEventStore::mergeFrom(LoopEventStore& other) {
     return;
   }
 
-  MidiEventVec left;
-  MidiEventVec right;
-  flatten(left);
-  other.flatten(right);
+  const size_t leftCount = size();
+  const size_t rightCount = other.size();
+  size_t leftIndex = 0;
+  size_t rightIndex = 0;
+
+  LoopEventStore merged;
+
+  while (leftIndex < leftCount || rightIndex < rightCount) {
+    const bool takeLeft = rightIndex >= rightCount ||
+                          (leftIndex < leftCount &&
+                           at(leftIndex).tick <= other.at(rightIndex).tick);
+    if (takeLeft) {
+      if (!merged.append(at(leftIndex))) {
+        break;
+      }
+      ++leftIndex;
+    } else {
+      if (!merged.append(other.at(rightIndex))) {
+        break;
+      }
+      ++rightIndex;
+    }
+  }
+
   other.clear();
-
-  MidiEventVec merged;
-  merged.reserve(left.size() + right.size());
-  std::merge(left.begin(), left.end(), right.begin(), right.end(), std::back_inserter(merged),
-             [](const MidiEvent& a, const MidiEvent& b) { return a.tick < b.tick; });
-
-  clear();
-  loadFromFlat(merged);
+  adoptAll(merged);
 }
 
 void LoopEventStore::flatten(MidiEventVec& out) const {
@@ -209,6 +259,40 @@ void LoopEventStore::loadFromFlat(const MidiEventVec& events) {
   for (const MidiEvent& evt : events) {
     if (!append(evt)) {
       break;
+    }
+  }
+}
+
+void LoopEventStore::shiftAllTicks(int64_t delta) {
+  if (delta == 0 || empty()) {
+    return;
+  }
+
+  int64_t minT = std::numeric_limits<int64_t>::max();
+  for (uint16_t id : chunkIds_) {
+    const EventChunk& c = chunk(id);
+    for (uint16_t i = 0; i < c.used; ++i) {
+      const int64_t shifted = static_cast<int64_t>(c.events[i].tick) + delta;
+      if (shifted < minT) {
+        minT = shifted;
+      }
+    }
+  }
+
+  const int64_t bump = (minT < 0) ? -minT : 0;
+  const int64_t total = delta + bump;
+  if (total == 0) {
+    return;
+  }
+
+  for (uint16_t id : chunkIds_) {
+    EventChunk& c = chunk(id);
+    for (uint16_t i = 0; i < c.used; ++i) {
+      c.events[i].tick = static_cast<uint32_t>(static_cast<int64_t>(c.events[i].tick) + total);
+    }
+    if (c.used > 0) {
+      c.firstTick = c.events[0].tick;
+      c.lastTick = c.events[c.used - 1].tick;
     }
   }
 }

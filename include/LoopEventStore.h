@@ -40,20 +40,32 @@ class LoopEventStore {
   bool empty() const { return size() == 0; }
   const MidiEvent& at(size_t globalIndex) const;
 
+  /// First global index whose event tick is >= tick, or size() if none.
+  size_t lowerBoundIndex(uint32_t tick) const;
+
   void clear();
 
   /// Move chunk ownership from other into this (other cleared). O(chunks).
   void adoptAll(LoopEventStore& other);
 
-  /// Merge sorted events from other into this via new chunk list. O(events).
+  /// Merge tick-sorted events from other into this via chunk append (no flatten). O(events).
   void mergeFrom(LoopEventStore& other);
 
   void flatten(MidiEventVec& out) const;
   void loadFromFlat(const MidiEventVec& events);
 
+  /// Shift every event tick by delta; bumps up if any tick would go negative.
+  void shiftAllTicks(int64_t delta);
+
   std::shared_ptr<LoopEventStore> cloneShared() const;
 
   const ChunkIdList& chunkIds() const { return chunkIds_; }
+
+  /// Move chunk ownership out of this store into dest (this store cleared). Used by epoch Seal.
+  void detachChunksTo(ChunkIdList& dest);
+
+  /// Take ownership of chunk refs from ids (ids cleared). Used to release pending epochs.
+  void adoptChunkIds(ChunkIdList& ids);
 
  private:
   ChunkIdList chunkIds_;

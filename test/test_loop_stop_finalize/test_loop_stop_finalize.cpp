@@ -4,7 +4,9 @@
 #include <unity.h>
 #include <algorithm>
 
+#include "../../src/LoopEventStore.cpp"
 #include "Utils/LoopStopFinalize.h"
+#include "LoopEventStore.h"
 #include "MidiEvent.h"
 
 static bool hasNoteOffAt(const MidiEventVec& events, uint32_t tick, uint8_t ch, uint8_t note) {
@@ -15,6 +17,55 @@ static bool hasNoteOffAt(const MidiEventVec& events, uint32_t tick, uint8_t ch, 
     }
   }
   return false;
+}
+
+static bool storeHasNoteOffAt(const LoopEventStore& store, uint32_t tick, uint8_t ch, uint8_t note) {
+  for (size_t i = 0; i < store.size(); ++i) {
+    const MidiEvent& evt = store.at(i);
+    if (evt.isNoteOff() && evt.tick == tick && evt.channel == ch &&
+        evt.data.noteData.note == note) {
+      return true;
+    }
+  }
+  return false;
+}
+
+void test_store_finalize_inserts_off_for_open_tail_note_on() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  LoopEventStore store;
+
+  const uint32_t loopLen = 768 * 32;
+  const uint32_t wrapWindow = 768;
+  const uint32_t tailOnTick = loopLen - 100;
+
+  TEST_ASSERT_TRUE(store.append(MidiEvent::NoteOn(tailOnTick, 5, 60, 100)));
+
+  const LoopStopFinalize::Result result =
+      LoopStopFinalize::finalizeWrapWindowOnStore(store, loopLen, UINT32_MAX, wrapWindow);
+
+  TEST_ASSERT_EQUAL(1u, result.syntheticOffsInserted);
+  TEST_ASSERT_EQUAL(2u, store.size());
+  TEST_ASSERT_TRUE(storeHasNoteOffAt(store, loopLen - 1, 5, 60));
+}
+
+void test_store_finalize_skips_wrapped_tail_on_head_off_pair() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  LoopEventStore store;
+
+  const uint32_t loopLen = 768 * 32;
+  const uint32_t wrapWindow = 768;
+  const uint32_t tailOnTick = loopLen - 50;
+
+  TEST_ASSERT_TRUE(store.append(MidiEvent::NoteOff(40, 5, 60, 0)));
+  TEST_ASSERT_TRUE(store.append(MidiEvent::NoteOn(tailOnTick, 5, 60, 100)));
+
+  const LoopStopFinalize::Result result =
+      LoopStopFinalize::finalizeWrapWindowOnStore(store, loopLen, UINT32_MAX, wrapWindow);
+
+  TEST_ASSERT_EQUAL(0u, result.syntheticOffsInserted);
+  TEST_ASSERT_EQUAL(2u, store.size());
 }
 
 void test_finalize_inserts_off_for_open_tail_note_on() {
@@ -71,11 +122,48 @@ void test_finalize_noop_when_loop_empty() {
   TEST_ASSERT_EQUAL(0u, result.syntheticOffsInserted);
 }
 
+void test_store_finalize_skips_off_past_loop_length() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  LoopEventStore store;
+
+  const uint32_t loopLen = 768;
+
+  TEST_ASSERT_TRUE(store.append(MidiEvent::NoteOn(764, 5, 64, 100)));
+  TEST_ASSERT_TRUE(store.append(MidiEvent::NoteOff(812, 5, 64, 0)));
+
+  const LoopStopFinalize::Result result =
+      LoopStopFinalize::finalizeWrapWindowOnStore(store, loopLen, UINT32_MAX, loopLen);
+
+  TEST_ASSERT_EQUAL(0u, result.syntheticOffsInserted);
+  TEST_ASSERT_EQUAL(2u, store.size());
+  TEST_ASSERT_TRUE(storeHasNoteOffAt(store, 812, 5, 64));
+}
+
+void test_finalize_skips_off_past_loop_length() {
+  const uint32_t loopLen = 768;
+
+  MidiEventVec events;
+  events.push_back(MidiEvent::NoteOn(764, 5, 64, 100));
+  events.push_back(MidiEvent::NoteOff(812, 5, 64, 0));
+
+  const LoopStopFinalize::Result result =
+      LoopStopFinalize::finalizeWrapWindow(events, loopLen, UINT32_MAX, loopLen);
+
+  TEST_ASSERT_EQUAL(0u, result.syntheticOffsInserted);
+  TEST_ASSERT_EQUAL(2u, events.size());
+  TEST_ASSERT_TRUE(hasNoteOffAt(events, 812, 5, 64));
+}
+
 int main(int /*argc*/, char** /*argv*/) {
   UNITY_BEGIN();
+  RUN_TEST(test_store_finalize_inserts_off_for_open_tail_note_on);
+  RUN_TEST(test_store_finalize_skips_wrapped_tail_on_head_off_pair);
   RUN_TEST(test_finalize_inserts_off_for_open_tail_note_on);
   RUN_TEST(test_finalize_skips_wrapped_tail_on_head_off_pair);
   RUN_TEST(test_finalize_uses_playhead_close_tick_on_overdub_stop);
   RUN_TEST(test_finalize_noop_when_loop_empty);
+  RUN_TEST(test_store_finalize_skips_off_past_loop_length);
+  RUN_TEST(test_finalize_skips_off_past_loop_length);
   return UNITY_END();
 }

@@ -2,6 +2,7 @@
 //  Licensed under the PolyForm Noncommercial 1.0.0
 
 #include "Loop.h"
+#include "Utils/LoopStopFinalize.h"
 #include <algorithm>
 
 namespace {
@@ -27,9 +28,9 @@ bool isDuplicateCaptureEvent(const Loop& loop, const MidiEvent& candidate) {
                           : 0;
   const uint32_t hi = candidate.tick + Config::DUPLICATE_TICK_TOLERANCE;
 
-  const size_t captureCount = loop.captureStore.size();
+  const size_t captureCount = loop.capture.store.size();
   for (size_t i = captureCount; i > 0; --i) {
-    const MidiEvent& evt = loop.captureStore.at(i - 1);
+    const MidiEvent& evt = loop.capture.store.at(i - 1);
     if (evt.tick < lo) {
       break;
     }
@@ -41,16 +42,15 @@ bool isDuplicateCaptureEvent(const Loop& loop, const MidiEvent& candidate) {
     }
   }
 
-  if (loop.capturePhase != CapturePhase::Overdub) {
+  if (loop.capture.phase != CapturePhase::Overdub) {
     return false;
   }
 
-  const size_t committedCount = loop.committedEvents.size();
-  for (size_t i = 0; i < committedCount; ++i) {
-    const MidiEvent& baseline = loop.committedEvents.at(i);
-    if (baseline.tick < lo) {
-      continue;
-    }
+  const LoopEventStore& committed = loop.committedEvents.readStore();
+  const size_t startIdx = committed.lowerBoundIndex(lo);
+  const size_t committedCount = committed.size();
+  for (size_t i = startIdx; i < committedCount; ++i) {
+    const MidiEvent& baseline = committed.at(i);
     if (baseline.tick > hi) {
       break;
     }
@@ -73,27 +73,32 @@ void sortCaptureStoreByTick(LoopEventStore& store) {
 }  // namespace
 
 void Loop::beginCapture(CapturePhase phase) {
-  capturePhase = phase;
-  captureStore.clear();
+  discardPendingEpoch();
+  capture.phase = phase;
+  capture.store.clear();
   captureNextEventIndex = 0;
   captureEventsSortDirty = false;
 }
 
 void Loop::discardCapture() {
-  captureStore.clear();
-  capturePhase = CapturePhase::None;
+  capture.store.clear();
+  capture.phase = CapturePhase::None;
   captureNextEventIndex = 0;
   captureEventsSortDirty = false;
+  capturePreview.clear();
 }
 
 bool Loop::appendCaptureEvent(const MidiEvent& evt) {
-  if (capturePhase == CapturePhase::None) {
+  if (capture.phase == CapturePhase::None) {
+    return false;
+  }
+  if (hasPendingEpoch_) {
     return false;
   }
   if (isDuplicateCaptureEvent(*this, evt)) {
     return false;
   }
-  if (!captureStore.append(evt)) {
+  if (!capture.store.append(evt)) {
     return false;
   }
   captureEventsSortDirty = true;
@@ -101,27 +106,27 @@ bool Loop::appendCaptureEvent(const MidiEvent& evt) {
 }
 
 size_t Loop::liveEventCount() const {
-  if (capturePhase == CapturePhase::None) {
+  if (capture.phase == CapturePhase::None) {
     return committedEvents.size();
   }
-  return committedEvents.size() + captureStore.size();
+  return committedEvents.size() + capture.store.size();
 }
 
 bool Loop::captureActive() const {
-  return capturePhase != CapturePhase::None;
+  return capture.phase != CapturePhase::None;
 }
 
 bool Loop::ensureCaptureEventsSorted() {
   if (!captureEventsSortDirty) {
     return false;
   }
-  sortCaptureStoreByTick(captureStore);
+  sortCaptureStoreByTick(capture.store);
   captureEventsSortDirty = false;
   return true;
 }
 
 void Loop::buildLiveEventView(MidiEventVec& out) const {
-  if (!captureActive() || captureStore.empty()) {
+  if (!captureActive() || capture.store.empty()) {
     committedEvents.readStore().flatten(out);
     return;
   }
@@ -130,12 +135,12 @@ void Loop::buildLiveEventView(MidiEventVec& out) const {
   MidiEventVec committedFlat;
   committedEvents.readStore().flatten(committedFlat);
   if (committedFlat.empty()) {
-    captureStore.flatten(out);
+    capture.store.flatten(out);
     return;
   }
 
   MidiEventVec captureFlat;
-  captureStore.flatten(captureFlat);
+  capture.store.flatten(captureFlat);
   out.clear();
   out.reserve(committedFlat.size() + captureFlat.size());
   std::merge(committedFlat.begin(), committedFlat.end(), captureFlat.begin(), captureFlat.end(),
@@ -144,8 +149,8 @@ void Loop::buildLiveEventView(MidiEventVec& out) const {
 }
 
 void Loop::commitCapture() {
-  if (captureStore.empty()) {
-    capturePhase = CapturePhase::None;
+  if (capture.store.empty()) {
+    capture.phase = CapturePhase::None;
     captureNextEventIndex = 0;
     captureEventsSortDirty = false;
     return;
@@ -155,14 +160,101 @@ void Loop::commitCapture() {
 
   LoopEventStore& committed = committedEvents.mutStore();
   if (committed.empty()) {
-    committed.adoptAll(captureStore);
+    committed.adoptAll(capture.store);
   } else {
-    committed.mergeFrom(captureStore);
+    committed.mergeFrom(capture.store);
   }
 
-  capturePhase = CapturePhase::None;
+  capture.phase = CapturePhase::None;
   captureNextEventIndex = 0;
   captureEventsSortDirty = false;
   playbackOrderDirty = true;
-  invalidateCaches();
+  invalidatePlaybackCaches();
+}
+
+size_t Loop::activeEpochCount() const {
+  size_t count = 0;
+  for (const Epoch& epoch : epochs) {
+    if (epoch.state == EpochState::Active) {
+      ++count;
+    }
+  }
+  return count;
+}
+
+void Loop::discardPendingEpoch() {
+  if (!hasPendingEpoch_) {
+    return;
+  }
+  LoopEventStore staging;
+  staging.adoptChunkIds(pendingEpoch_.chunkRefs);
+  staging.clear();
+  pendingEpoch_ = Epoch{};
+  hasPendingEpoch_ = false;
+  pendingVisualDelta.clear();
+}
+
+SealOutcome Loop::sealCaptureLayer(uint32_t sealedAtTick) {
+  if (hasPendingEpoch_) {
+    return SealOutcome::AlreadyPending;
+  }
+  if (capture.store.empty()) {
+    return SealOutcome::SkippedEmpty;
+  }
+  if (epochs.size() >= EpochConfig::MAX_EPOCHS_PER_LOOP) {
+    return SealOutcome::AtEpochCap;
+  }
+
+  ensureCaptureEventsSorted();
+
+  if (loopLengthTicks > 0) {
+    const LoopStopFinalize::Result fin =
+        LoopStopFinalize::finalizeWrapWindowOnStore(capture.store, loopLengthTicks);
+    (void)fin;
+    if (capture.store.empty()) {
+      return SealOutcome::FailedValidation;
+    }
+  }
+
+  pendingEpoch_ = Epoch{};
+  pendingEpoch_.id = nextEpochId_++;
+  pendingEpoch_.mergeSequence = nextMergeSequence_++;
+  pendingEpoch_.kind = epochKindForCapturePhase(capture.phase);
+  pendingEpoch_.state = EpochState::Pending;
+  pendingEpoch_.sealedAtTick = sealedAtTick;
+  capture.store.detachChunksTo(pendingEpoch_.chunkRefs);
+
+  if (pendingEpoch_.chunkRefs.empty()) {
+    pendingEpoch_ = Epoch{};
+    return SealOutcome::FailedValidation;
+  }
+
+  pendingVisualDelta.clear();
+  hasPendingEpoch_ = true;
+  return SealOutcome::Ok;
+}
+
+bool Loop::publishPendingEpoch() {
+  if (!hasPendingEpoch_) {
+    return false;
+  }
+
+  Epoch published = pendingEpoch_;
+  published.state = EpochState::Active;
+  epochs.push_back(published);
+
+  pendingEpoch_ = Epoch{};
+  hasPendingEpoch_ = false;
+
+  ++playbackRevision;
+  pendingVisualDelta.applyTo(visualCache);
+  pendingVisualDelta.clear();
+
+  capture.store.clear();
+  capture.phase = CapturePhase::None;
+  captureNextEventIndex = 0;
+  captureEventsSortDirty = false;
+  capturePreview.clear();
+
+  return true;
 }

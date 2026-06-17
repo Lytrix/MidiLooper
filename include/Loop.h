@@ -20,6 +20,8 @@
 #include <memory>
 #include "MidiEvent.h"
 #include "LoopEventBuffer.h"
+#include "Epoch.h"
+#include "VisualCache.h"
 #include "TrackState.h"
 #include "Utils/MemoryPool.h"
 #include "Utils/NoteUtils.h"
@@ -44,19 +46,27 @@ struct OverdubGeomSnapshot {
 };
 using OverdubGeomDeque = std::deque<OverdubGeomSnapshot, ExtMemAllocator<OverdubGeomSnapshot>>;
 
-/// Active capture phase for the unified record/overdub append buffer.
-enum class CapturePhase : uint8_t { None, Record, Overdub };
-
 struct Loop {
   // Committed loop events (baseline during overdub capture); COW chunk refs for O(1) undo.
   CowLoopEventStore committedEvents;
-  /// Append buffer during record/overdub; spliced into committed at phase stop.
-  LoopEventStore captureStore;
-  CapturePhase capturePhase = CapturePhase::None;
+  /// Mutable record/overdub capture (pre-Seal writer).
+  CaptureLayer capture;
   uint16_t captureNextEventIndex = 0;
   bool captureEventsSortDirty = false;
   /// Bumped when capture geometry changes outside liveEventCount (e.g. loop-wrap note-offs).
   uint16_t captureDisplayRevision = 0;
+
+  LoopId loopId = kInvalidLoopId;
+  uint32_t playbackRevision = 0;
+  EpochVec epochs;
+  bool hasPendingEpoch_ = false;
+  Epoch pendingEpoch_;
+  VisualCache visualCache;
+  CapturePreview capturePreview;
+  VisualCacheDelta pendingVisualDelta;
+  EpochId nextEpochId_ = 1;
+  uint32_t nextMergeSequence_ = 0;
+
   uint32_t startLoopTick = 0;
   uint32_t loopLengthTicks = 0;
   uint32_t loopStartTick = 0;
@@ -78,8 +88,12 @@ struct Loop {
   /// True if the slot holds a committed loop (length and/or events). Silent takes
   /// leave midiEvents empty but loopLengthTicks > 0 after stopRecording.
   bool hasData() const {
-    return !committedEvents.empty() || loopLengthTicks > 0 || !captureStore.empty();
+    return !committedEvents.empty() || loopLengthTicks > 0 || !capture.store.empty();
   }
+
+  bool hasPendingEpoch() const { return hasPendingEpoch_; }
+  const Epoch& pendingEpoch() const { return pendingEpoch_; }
+  size_t activeEpochCount() const;
 
   const MidiEvent& eventAt(size_t index) const { return committedEvents.at(index); }
   size_t eventCount() const { return committedEvents.size(); }
@@ -97,6 +111,12 @@ struct Loop {
   bool ensureCaptureEventsSorted();
   /// Committed events plus in-flight capture buffer (sorted by tick) for display/LED reads.
   void buildLiveEventView(MidiEventVec& out) const;
+
+  /// Seal capture into pendingEpoch (prepare only — not visible until publish). M2 wires stop path.
+  SealOutcome sealCaptureLayer(uint32_t sealedAtTick);
+  /// Publish pendingEpoch as Active (no-alloc visibility step). M2 wires stop path.
+  bool publishPendingEpoch();
+  void discardPendingEpoch();
 
   // --- Lazy-allocated members (access via getters) ---
 
@@ -273,6 +293,14 @@ struct Loop {
 
   void invalidateCaches() {
     committedEvents.syncFlatToStore();
+    if (noteCache_) noteCache_->invalidate();
+    eventIndexValid = false;
+  }
+
+  /// Playback/display caches only — no flat materialization or chunk rebuild.
+  void invalidatePlaybackCaches() {
+    playbackOrderDirty = true;
+    committedEvents.discardFlatCache();
     if (noteCache_) noteCache_->invalidate();
     eventIndexValid = false;
   }

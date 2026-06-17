@@ -49,14 +49,14 @@ flowchart LR
 |-----|------|------|
 | `append` | O(1) amortized | Live capture, record path |
 | `adoptAll(other)` | O(chunks) | Record stop: empty committed → move capture chunks in |
-| `mergeFrom(other)` | O(events) | Overdub stop: sorted merge into new chunk list |
-| `cloneShared()` | O(events) | Undo snapshots and restore (deep copy) |
+| `mergeFrom(other)` | O(events) | Overdub stop: two-index merge into new chunk list (no flatten) |
+| `cloneShared()` | O(events) | Undo restore (deep copy on apply) |
 | `flatten` / `loadFromFlat` | O(events) | SD save/load, legacy edit paths |
 
 **Copy-on-write wrapper (`CowLoopEventStore`):**
 
 - `mutStore()` / `mutFlat()` clone the backing store when `shared_ptr` use count &gt; 1.
-- `shareForSnapshot()` returns the live store ref (used only to feed `cloneShared()` into history).
+- `shareForSnapshot()` returns the live store ref for undo/redo history (O(1) push; COW on live `mutStore()`).
 - `restoreFromSnapshot(snap)` always **`snap->cloneShared()`** — never a shallow struct copy. `LoopEventStore` copy ctor is deleted to enforce this.
 
 ---
@@ -69,10 +69,11 @@ flowchart LR
 2. **`appendCaptureEvent`** — writes to `captureStore`; dedupes near-duplicates and (on overdub) against committed baseline in a tick window.
 3. **`commitCapture`** at record/overdub stop:
    - Empty committed → `adoptAll(captureStore)` (moves chunks, no full copy).
-   - Non-empty → `mergeFrom(captureStore)` (new merged chunk list).
+   - Non-empty → `mergeFrom(captureStore)` (tick-sorted chunk merge, no flat vectors).
+   - Calls `invalidatePlaybackCaches()` only (no `syncFlatToStore`).
 4. **`discardCapture`** — used when undoing an **open** overdub capture (session still open).
 
-After commit, **`finalizeLoopAtStop`** runs (see below). Loop length is already set on record stop before commit/validate.
+After commit, **`finalizeLoopAtStop`** runs (see below). Loop length is already set on record stop before commit/validate; overdub stop uses playhead close tick.
 
 ---
 
@@ -86,12 +87,14 @@ There are **three separate** “note correctness” mechanisms; do not conflate 
 
 Runs on **every** record stop and overdub stop (after `loopLengthTicks` is known):
 
-- Flushes `pendingNotes` into synthetic note-offs at the stop playhead (or loop end).
-- Calls `LoopStopFinalize::finalizeWrapWindow` on the **head + tail 1-bar window** (default `wrapWindow = TICKS_PER_BAR`):
-  - Pairs tail note-ons with head note-offs for **wrapped** notes.
-  - Inserts synthetic note-offs for **open tail** note-ons still sounding at stop.
+- Operates on **`committedEvents.mutStore()`** (chunk store) — does **not** call `loop.midiEvents()` or `syncFlatToStore()` on the stop hot path.
+- Flushes `pendingNotes` via `store.append(NoteOff(...))`.
+- Calls `LoopStopFinalize::finalizeWrapWindowOnStore` on the **head + tail 1-bar window** (default `wrapWindow = TICKS_PER_BAR`):
+  - Pairs tail note-ons with head note-offs for **wrapped** notes (head-window scan only).
+  - Appends synthetic note-offs for **open tail** note-ons still sounding at stop.
+- Uses `loop.invalidatePlaybackCaches()` when events change (playback order + note cache only).
 - Sets `deferredFullMidiValidate = true` for later idle pass.
-- Does **not** scan or sort the full loop — safe for 32+ bar loops on stop.
+- Does **not** flatten, sort, or rebuild the full chunk list on stop.
 
 ### 2. Cold full pass — orphaned pair cleanup
 
@@ -126,7 +129,7 @@ Full-loop pass over `loop.midiEvents()` (flat):
 
 ### Overdub / record undo (`midiHistory` + `overdubGeomHistory`)
 
-Snapshots are **`shared_ptr<const LoopEventStore>`** (chunk refs, deep-copied on push) plus geometry `{loopLengthTicks, startLoopTick, loopStartTick}`.
+Snapshots are **`shared_ptr<const LoopEventStore>`** (shared ref on push; deep copy on restore) plus geometry `{loopLengthTicks, startLoopTick, loopStartTick}`.
 
 **Fresh take from empty (clear → record → overdub):**
 
@@ -141,7 +144,7 @@ Snapshots are **`shared_ptr<const LoopEventStore>`** (chunk refs, deep-copied on
 
 Loaded loop with no preroll: record stop pushes one baseline; overdub undo removes overdub only.
 
-**Important:** `pushUndoSnapshot` / restore always use **`cloneShared()`** so live edits and overdub merge never alias snapshot memory.
+**Important:** undo history pushes **`shareForSnapshot()`** (O(1)); **`restoreFromSnapshot`** always **`cloneShared()`** so live edits never alias restored state.
 
 ### Clear-slot undo (`clearMidiHistory` + length/state deques)
 
@@ -182,7 +185,7 @@ SD schema has not been bumped for chunking; chunking is an in-memory representat
 | `teensy41-capture` | Silent production-style capture build (no session serial) |
 | `teensy41-capture-bypass` | Adds `BYPASS_STOP_UNDO_SAVE=1` — skips undo snapshot push and `saveState` on stop (diagnostic only) |
 
-**Do not** add `MemoryMonitor` or full-loop validation on record/overdub stop hot paths. Idle maintenance and `HotPathTelemetry` deferred summary are wired in `main()`.
+**Do not** add `MemoryMonitor` or full-loop validation on record/overdub stop hot paths. Idle maintenance, deferred SD save (`processDeferredSaveState`), and `HotPathTelemetry` deferred summary are wired in `main()` — save and full validate run only when **no** track is playing/recording/overdubbing.
 
 Record stop no longer calls `queueDeferredRecordRevts()` (removed from the hot path). `SC_REC_FLUSH_PENDING_REVTS` in `main()` only emits previously queued REVTs. HITL often reports `record_stored_revt_missing` while otherwise passing. Non-`SESSION_CAPTURE` builds stub all `#CAP` / REVT macros.
 

@@ -17,7 +17,14 @@ class CowLoopEventStore {
       data_ = data_->cloneShared();
     }
     flatCache_.reset();
+    flatDirty_ = false;
     return *data_;
+  }
+
+  /// Drop stale flat cache without syncing back to the chunk store.
+  void discardFlatCache() {
+    flatCache_.reset();
+    flatDirty_ = false;
   }
 
   const LoopEventStore& readStore() const { return *data_; }

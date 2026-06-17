@@ -16,7 +16,7 @@ Related guides: [`NOTE_WRAPPING_LOGIC.md`](docs/Guides/NOTE_WRAPPING_LOGIC.md) (
 - **Playback / hot paths:** `loop.eventAt()` / `committedEvents.readStore()` — not full flatten.
 - **Stop path:** `finalizeLoopAtStop` + `LoopStopFinalize` (wrap window only). Do **not** call full `validateAndCleanupMidiEvents` on record/overdub stop.
 - **Full validate:** deferred via `processDeferredIdleMaintenance` when transport idle, or on SD load — not on stop.
-- **Undo snapshots:** always `cloneShared()` / `restoreFromSnapshot` — never shallow-copy chunk IDs.
+- **Undo snapshots:** push `shareForSnapshot()` ref (O(1)); **`restoreFromSnapshot` always `cloneShared()`** — never shallow-copy chunk IDs into live state.
 - **Undo routing:** overdub undo before clear-slot undo in `handleUndo`; `clearClearUndoStacks()` on `startRecording`.
 - **Overdub entry:** `beginOverdubSession` only — no extra `pushUndoSnapshot` at overdub start (Phase 1).
 - **After flat edits:** `invalidateCaches()` so chunks and note cache stay in sync.
