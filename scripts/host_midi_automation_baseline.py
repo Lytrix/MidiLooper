@@ -1417,7 +1417,17 @@ def run() -> int:
     )
     parser.add_argument("--track-count", type=int, default=8, help="How many tracks to run (1-8)")
     parser.add_argument("--first-track-index", type=int, default=0, help="Start track index (0-based)")
-    parser.add_argument("--track-number", type=int, default=0, help="Single track to run (1-8); overrides track-count/index")
+    parser.add_argument(
+        "--track",
+        "--track-number",
+        dest="track_number",
+        type=int,
+        default=0,
+        metavar="N",
+        help="Run baseline on a single track (1-8, user-facing track number). "
+        "Overrides --track-count/--first-track-index. "
+        "Defaults --midi-channel to N when channel is omitted.",
+    )
     parser.add_argument("--record-seconds", type=float, default=3.0, help="Dense stream duration for record phase")
     parser.add_argument("--overdub-seconds", type=float, default=2.0, help="Dense stream duration for overdub phase")
     parser.add_argument(
@@ -1496,7 +1506,12 @@ def run() -> int:
         default=500,
         help="Wait after overdub stop before undo, and between undo and redo (default: 500)",
     )
-    parser.add_argument("--midi-channel", type=int, default=1, help="Dense input MIDI channel (1-16)")
+    parser.add_argument(
+        "--midi-channel",
+        type=int,
+        default=None,
+        help="Dense input MIDI channel (1-15). Defaults to --track when set, else 1",
+    )
     parser.add_argument("--root-note", type=int, default=60, help="Chromatic root note")
     parser.add_argument("--semitone-span", type=int, default=12, help="Chromatic span size")
     parser.add_argument("--note-gap-ms", type=int, default=20, help="Gap between note-offs and next note-ons")
@@ -1590,7 +1605,7 @@ def run() -> int:
 
     if args.track_number:
         if not (1 <= args.track_number <= 8):
-            raise SystemExit("--track-number must be in [1, 8]")
+            raise SystemExit("--track must be in [1, 8]")
         args.first_track_index = args.track_number - 1
         args.track_count = 1
     else:
@@ -1600,6 +1615,9 @@ def run() -> int:
             raise SystemExit("--first-track-index must be in [0, 7]")
         if args.first_track_index + args.track_count > 8:
             raise SystemExit("first-track-index + track-count exceeds 8 tracks")
+
+    if args.midi_channel is None:
+        args.midi_channel = args.track_number if args.track_number else 1
 
     if not (1 <= args.midi_channel <= 16):
         raise SystemExit("--midi-channel must be in [1, 16]")
