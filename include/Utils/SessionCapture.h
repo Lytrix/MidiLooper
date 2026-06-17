@@ -23,6 +23,8 @@
  *   RECA ,<slot>,<tick>                        recording armed/started: startLoopTick stamp (B1)
  *   RECS ,<kind>,<slot>,<tick>,<start>,<raw>,<final>,<align>  recording stopped: length finalization (B1)
  *   REVT ,<tick>,<ch>,<note>                   stored note-on tick after record commit (B1)
+ *   SEVT ,<N|F>,<tick>,<ch>,<note>             stored note-on/off after overdub commit (verify)
+ *   WRAP ,<onTick>,<offTick>,<ch>,<note>       wrapped tail-on / head-off pair in committed store
  *   BAR  ,<tick>,<bar>                         bar boundary marker (tick<->micros alignment)
  */
 #pragma once
@@ -129,6 +131,16 @@ inline void recStoredNoteOn(uint32_t tick, uint8_t ch, uint8_t note) {
                 (unsigned long)micros(), (unsigned long)tick, ch, note);
 }
 
+inline void storedNoteEvent(char kind, uint32_t tick, uint8_t ch, uint8_t note) {
+  Serial.printf("#CAP,%lu,SEVT,%c,%lu,%u,%u\r\n",
+                (unsigned long)micros(), kind, (unsigned long)tick, ch, note);
+}
+
+inline void storedWrapPair(uint32_t onTick, uint32_t offTick, uint8_t ch, uint8_t note) {
+  Serial.printf("#CAP,%lu,WRAP,%lu,%lu,%u,%u\r\n",
+                (unsigned long)micros(), (unsigned long)onTick, (unsigned long)offTick, ch, note);
+}
+
 /// Emit queued REVT lines in batches (idle path; keeps stop hot path short).
 inline size_t flushPendingRevts(size_t maxLines = 64) {
   auto& queue = pendingRevts();
@@ -174,6 +186,8 @@ inline void update(uint32_t currentTick, uint32_t ticksPerBar) {
 #define SC_REC_STOP(kind, slot, tick, start, raw, final, align) \
                                            SessionCapture::recStop(kind, slot, tick, start, raw, final, align)
 #define SC_REC_STORED_NOTE_ON(tick, ch, note) SessionCapture::recStoredNoteOn(tick, ch, note)
+#define SC_STORED_NOTE_EVENT(kind, tick, ch, note) SessionCapture::storedNoteEvent(kind, tick, ch, note)
+#define SC_STORED_WRAP_PAIR(onTick, offTick, ch, note) SessionCapture::storedWrapPair(onTick, offTick, ch, note)
 #define SC_REC_QUEUE_STORED_NOTE_ON(tick, ch, note) SessionCapture::queueStoredNoteOn(tick, ch, note)
 #define SC_REC_FLUSH_PENDING_REVTS(maxLines) SessionCapture::flushPendingRevts(maxLines)
 #define SC_REC_FLUSH_ALL_PENDING_REVTS()   SessionCapture::flushAllPendingRevts()
@@ -192,6 +206,8 @@ inline void update(uint32_t currentTick, uint32_t ticksPerBar) {
 #define SC_REC_START(slot, tick)           ((void)0)
 #define SC_REC_STOP(kind, slot, tick, start, raw, final, align) ((void)0)
 #define SC_REC_STORED_NOTE_ON(tick, ch, note) ((void)0)
+#define SC_STORED_NOTE_EVENT(kind, tick, ch, note) ((void)0)
+#define SC_STORED_WRAP_PAIR(onTick, offTick, ch, note) ((void)0)
 #define SC_REC_QUEUE_STORED_NOTE_ON(tick, ch, note) ((void)0)
 #define SC_REC_FLUSH_PENDING_REVTS(maxLines) ((void)0)
 #define SC_REC_FLUSH_ALL_PENDING_REVTS()   ((void)0)

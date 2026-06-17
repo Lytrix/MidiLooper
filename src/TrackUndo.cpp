@@ -148,6 +148,7 @@ void TrackUndo::undoOverdub(Track& track) {
     }
     loop.midiEventCountAtLastSnapshot = loop.committedEvents.size();
     popLastUndo(track);
+    loop.rebuildEpochTimelineFromCommitted();
     track.invalidateCaches();
     logger.debug("Undo restored snapshot: midiEvents=%d snapshotSize=%d",
                  static_cast<int>(loop.committedEvents.size()), getUndoCount(track));
@@ -177,6 +178,7 @@ void TrackUndo::redoOverdub(Track& track) {
     loop.getMidiRedoHistory().pop_back();
     loop.getOverdubGeomRedoHistory().pop_back();
     loop.midiEventCountAtLastSnapshot = loop.committedEvents.size();
+    loop.rebuildEpochTimelineFromCommitted();
     track.invalidateCaches();
     logger.debug("Redo restored snapshot: midiEvents=%d redoSize=%d",
                  static_cast<int>(loop.committedEvents.size()), getRedoCount(track));

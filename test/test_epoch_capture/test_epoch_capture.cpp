@@ -50,10 +50,29 @@ void test_epoch_kind_maps_capture_phase() {
                     static_cast<uint8_t>(epochKindForCapturePhase(CapturePhase::Overdub)));
 }
 
+void test_append_flattened_chunk_ids_preserves_epoch_refs() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  LoopEventStore capture;
+  ChunkIdList refs;
+
+  TEST_ASSERT_TRUE(capture.append(MidiEvent::NoteOn(10, 1, 60, 100)));
+  TEST_ASSERT_TRUE(capture.append(MidiEvent::NoteOn(20, 1, 64, 100)));
+  capture.detachChunksTo(refs);
+
+  MidiEventVec flat;
+  LoopEventStore::appendFlattenedChunkIds(refs, flat);
+  TEST_ASSERT_EQUAL(2u, flat.size());
+  TEST_ASSERT_EQUAL(10u, flat[0].tick);
+  TEST_ASSERT_EQUAL(20u, flat[1].tick);
+  TEST_ASSERT_EQUAL(1u, refs.size());
+}
+
 int main(int /*argc*/, char** /*argv*/) {
   UNITY_BEGIN();
   RUN_TEST(test_detach_chunks_moves_ownership);
   RUN_TEST(test_adopt_chunk_ids_releases_pending_refs);
   RUN_TEST(test_epoch_kind_maps_capture_phase);
+  RUN_TEST(test_append_flattened_chunk_ids_preserves_epoch_refs);
   return UNITY_END();
 }

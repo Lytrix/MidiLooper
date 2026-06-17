@@ -30,6 +30,15 @@ enum class SealOutcome : uint8_t {
   AtEpochCap,
 };
 
+enum class CommitResult : uint8_t { Skipped, Published, SealFailed };
+
+enum class CommitReason : uint8_t {
+  RecordStop,
+  RecordStopToStopped,
+  OverdubStop,
+  OverdubStopToStopped,
+};
+
 namespace EpochConfig {
 /// Matches Config::MAX_UNDO_HISTORY — cap on sealed epochs retained per loop.
 constexpr uint8_t MAX_EPOCHS_PER_LOOP = 25;

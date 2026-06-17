@@ -43,10 +43,50 @@ uint32_t clampOpenNoteCloseTick(uint32_t closeTick, uint32_t loopLength) {
     return closeTick;
 }
 
-void applyLiveOpenTails(const std::vector<NoteUtils::OpenNoteOn>& openNotes, uint32_t loopLength,
-                        uint32_t closeTick, std::vector<DisplayNote>& notes) {
+void applyLiveOpenTails(const std::vector<NoteUtils::OpenNoteOn>& openNotes,
+                        const MidiEventVec& midiEvents, uint32_t loopLength, uint32_t closeTick,
+                        std::vector<DisplayNote>& notes) {
     const uint32_t clampedCloseTick = clampOpenNoteCloseTick(closeTick, loopLength);
+    const uint32_t wrapWindow =
+        loopLength > Config::TICKS_PER_BAR ? Config::TICKS_PER_BAR : loopLength;
+    const uint32_t headEnd = wrapWindow;
+
     for (const auto& open : openNotes) {
+        if (NoteUtils::isWrapHeldOpenNote(midiEvents, open, loopLength)) {
+            // Held across loop wrap: tail segment at end of loop + head continuation from tick 0.
+            uint32_t tailEnd = loopLength - 1;
+            if (clampedCloseTick >= open.tick) {
+                tailEnd = std::min(clampedCloseTick, loopLength - 1);
+            }
+
+            bool foundTail = false;
+            for (auto& note : notes) {
+                if (note.note == open.note && note.startTick == open.tick) {
+                    note.endTick = tailEnd;
+                    foundTail = true;
+                    break;
+                }
+            }
+            if (!foundTail) {
+                DisplayNote tailSeg;
+                tailSeg.note = open.note;
+                tailSeg.velocity = open.velocity;
+                tailSeg.startTick = open.tick;
+                tailSeg.endTick = tailEnd;
+                notes.push_back(tailSeg);
+            }
+
+            if (clampedCloseTick < headEnd) {
+                DisplayNote headSeg;
+                headSeg.note = open.note;
+                headSeg.velocity = open.velocity;
+                headSeg.startTick = 0;
+                headSeg.endTick = clampedCloseTick;
+                notes.push_back(headSeg);
+            }
+            continue;
+        }
+
         const uint32_t playheadEndTick = std::max(open.tick, clampedCloseTick);
         for (auto& note : notes) {
             if (note.note == open.note && note.startTick == open.tick) {
@@ -202,7 +242,8 @@ const std::vector<DisplayNote>& DisplayManager::resolveDisplayNotes(const Track&
 
     if (!liveDisplayCacheOpenNotes.empty()) {
         const uint32_t playheadCloseTick = resolvePlayheadInLoop(track, displaySlot, currentTick);
-        applyLiveOpenTails(liveDisplayCacheOpenNotes, liveLoopLength, playheadCloseTick, liveDisplayNotes);
+        applyLiveOpenTails(liveDisplayCacheOpenNotes, liveDisplayEventBuffer, liveLoopLength,
+                           playheadCloseTick, liveDisplayNotes);
     }
 
     return liveDisplayNotes;
@@ -484,7 +525,12 @@ void DisplayManager::drawPianoRoll(uint32_t currentTick, Track& selectedTrack, u
             if (n.note < minPitch) minPitch = n.note;
             if (n.note > maxPitch) maxPitch = n.note;
         }
-        if (minPitch > maxPitch) { minPitch = 60; maxPitch = 72; } // fallback
+        if (minPitch > maxPitch) {
+            minPitch = 60;
+            maxPitch = 72;
+        } else if (minPitch == maxPitch) {
+            maxPitch = minPitch + 1;
+        }
 
         drawGridLines(jamLength, pianoRollY0, pianoRollY1);
         drawAllNotes(track, displaySlot, currentTick, 0, jamLength, minPitch, maxPitch, notes);
