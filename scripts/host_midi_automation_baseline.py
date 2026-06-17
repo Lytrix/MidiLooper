@@ -506,6 +506,85 @@ def _stream_pattern_for_bars(
     return note_on_count, cc_count, phase_clock_count, timing
 
 
+def _stream_overdub_wrap_note_off_test(
+    out_port: mido.ports.BaseOutput,
+    in_port: mido.ports.BaseInput,
+    *,
+    midi_channel_1based: int,
+    wrap_note: int,
+    loop_bars: int,
+    target_bars: int,
+    phase_start_delay_bars: int,
+    phase_start_delay_beats: int,
+    max_seconds_guard: float,
+    abort: Optional[RunAbort] = None,
+) -> tuple[int, int, int, dict[str, float]]:
+    """Hold one note across a loop wrap, then release in the head window."""
+    if loop_bars <= 0:
+        raise ValueError("loop_bars must be > 0")
+    if phase_start_delay_bars < 0:
+        raise ValueError("phase_start_delay_bars must be >= 0")
+    if phase_start_delay_beats < 0:
+        raise ValueError("phase_start_delay_beats must be >= 0")
+
+    loop_clocks = loop_bars * MIDI_CLOCKS_PER_BAR
+    # Run one extra loop cycle so tail-on and post-wrap head-off both fit.
+    target_clocks = max(target_bars, loop_bars + 1) * MIDI_CLOCKS_PER_BAR
+    phase_delay_clocks = (phase_start_delay_bars * MIDI_CLOCKS_PER_BAR) + (
+        phase_start_delay_beats * 24
+    )
+    ch = midi_channel_1based - 1
+    note_on_sent = False
+    note_off_sent = False
+    note_on_pos: Optional[int] = None
+    phase_clock_count = 0
+    clock_count_total = 0
+    start = time.monotonic()
+
+    while phase_clock_count < target_clocks:
+        if abort is not None and abort.check() is not None:
+            break
+        if time.monotonic() - start > max_seconds_guard:
+            break
+        msg = in_port.poll()
+        if msg is None:
+            time.sleep(0.0005)
+            continue
+        if msg.type != "clock":
+            continue
+        clock_count_total += 1
+        phase_clock_count += 1
+        if phase_clock_count <= phase_delay_clocks:
+            continue
+        pos_in_loop = (phase_clock_count - phase_delay_clocks - 1) % loop_clocks
+        if not note_on_sent and pos_in_loop >= loop_clocks - 24:
+            out_port.send(mido.Message("note_on", channel=ch, note=wrap_note, velocity=100))
+            note_on_sent = True
+            note_on_pos = pos_in_loop
+        elif (
+            note_on_sent
+            and not note_off_sent
+            and note_on_pos is not None
+            and pos_in_loop < note_on_pos
+        ):
+            out_port.send(mido.Message("note_off", channel=ch, note=wrap_note, velocity=0))
+            note_off_sent = True
+
+    if note_on_sent and not note_off_sent:
+        out_port.send(mido.Message("note_off", channel=ch, note=wrap_note, velocity=0))
+        note_off_sent = True
+
+    timing = {
+        "grid_steps_emitted": 1.0 if note_on_sent else 0.0,
+        "max_abs_grid_jitter_clocks": 0.0,
+        "mean_abs_grid_jitter_clocks": 0.0,
+        "stop_press_sent_during_stream": 0.0,
+        "wrap_note_on_sent": 1.0 if note_on_sent else 0.0,
+        "wrap_note_off_sent": 1.0 if note_off_sent else 0.0,
+    }
+    return int(note_on_sent), int(note_off_sent), clock_count_total, timing
+
+
 def _stream_pattern_for_seconds(
     out_port: mido.ports.BaseOutput,
     *,
@@ -951,6 +1030,156 @@ def _verify_stored_record_note_grid(
     }
 
 
+def _extract_wrap_pairs(lines: list[str], *, after_ts: Optional[int] = None) -> list[dict[str, int]]:
+    rows: list[dict[str, int]] = []
+    for line in lines:
+        if ",WRAP," not in line:
+            continue
+        parts = line.split(",")
+        if len(parts) < 7:
+            continue
+        try:
+            ts = int(parts[1])
+            on_tick = int(parts[3])
+            off_tick = int(parts[4])
+            ch = int(parts[5])
+            note = int(parts[6])
+        except ValueError:
+            continue
+        if after_ts is not None and ts < after_ts:
+            continue
+        rows.append(
+            {
+                "timestamp": ts,
+                "on_tick": on_tick,
+                "off_tick": off_tick,
+                "ch": ch,
+                "note": note,
+            }
+        )
+    return rows
+
+
+def _extract_sevt_events(lines: list[str], *, after_ts: Optional[int] = None) -> list[dict[str, object]]:
+    rows: list[dict[str, object]] = []
+    for line in lines:
+        if ",SEVT," not in line:
+            continue
+        parts = line.split(",")
+        if len(parts) < 7:
+            continue
+        try:
+            ts = int(parts[1])
+            kind = parts[3]
+            tick = int(parts[4])
+            ch = int(parts[5])
+            note = int(parts[6])
+        except ValueError:
+            continue
+        if after_ts is not None and ts < after_ts:
+            continue
+        rows.append(
+            {
+                "timestamp": ts,
+                "is_on": kind == "N",
+                "tick": tick,
+                "ch": ch,
+                "note": note,
+            }
+        )
+    return rows
+
+
+def _verify_overdub_wrap_storage(
+    lines: list[str],
+    *,
+    boundaries: dict[str, Optional[int]],
+    loop_length_ticks: int,
+    wrap_test_ran: bool,
+    wrap_window_ticks: int = TICKS_PER_BAR,
+) -> dict[str, object]:
+    overdub_stop_ts = boundaries.get("overdub_stop_ts")
+    if overdub_stop_ts is None or loop_length_ticks <= 0:
+        return {"phase_disabled": True}
+
+    wrap_pairs = _extract_wrap_pairs(lines, after_ts=overdub_stop_ts)
+    sevts = _extract_sevt_events(lines, after_ts=overdub_stop_ts)
+    head_end = min(wrap_window_ticks, loop_length_ticks)
+    tail_start = (
+        loop_length_ticks - min(wrap_window_ticks, loop_length_ticks)
+        if loop_length_ticks > wrap_window_ticks
+        else 0
+    )
+    close_tick = loop_length_ticks - 1
+
+    issues: list[str] = []
+    checked_pairs: list[dict[str, object]] = []
+    pairs_ok = True
+
+    for pair in wrap_pairs:
+        row: dict[str, object] = dict(pair)
+        geometry_ok = (
+            pair["off_tick"] < head_end
+            and pair["on_tick"] >= tail_start
+            and pair["on_tick"] < loop_length_ticks
+            and pair["off_tick"] < loop_length_ticks
+        )
+        has_on = any(
+            s["is_on"]
+            and s["ch"] == pair["ch"]
+            and s["note"] == pair["note"]
+            and s["tick"] == pair["on_tick"]
+            for s in sevts
+        )
+        has_off = any(
+            (not s["is_on"])
+            and s["ch"] == pair["ch"]
+            and s["note"] == pair["note"]
+            and s["tick"] == pair["off_tick"]
+            for s in sevts
+        )
+        synthetic_close = any(
+            (not s["is_on"])
+            and s["ch"] == pair["ch"]
+            and s["note"] == pair["note"]
+            and s["tick"] == close_tick
+            for s in sevts
+        )
+        row["geometry_ok"] = geometry_ok
+        row["sevt_on_ok"] = has_on
+        row["sevt_off_ok"] = has_off
+        row["synthetic_loop_end_off"] = synthetic_close
+        row_ok = geometry_ok and has_on and has_off and not synthetic_close
+        row["ok"] = row_ok
+        if not geometry_ok:
+            if "overdub_wrap_pair_geometry_bad" not in issues:
+                issues.append("overdub_wrap_pair_geometry_bad")
+            if pair["on_tick"] >= loop_length_ticks or pair["off_tick"] >= loop_length_ticks:
+                issues.append("overdub_wrap_tick_out_of_range")
+        if not has_on or not has_off:
+            issues.append("overdub_wrap_pair_sevt_missing")
+        if synthetic_close:
+            issues.append("overdub_wrap_synthetic_loop_end_off")
+        if not row_ok:
+            pairs_ok = False
+        checked_pairs.append(row)
+
+    if wrap_test_ran and not wrap_pairs:
+        issues.append("overdub_wrap_test_no_wrap_pair")
+        pairs_ok = False
+
+    return {
+        "phase_disabled": False,
+        "wrap_test_ran": wrap_test_ran,
+        "loop_length_ticks": loop_length_ticks,
+        "wrap_pair_count": len(wrap_pairs),
+        "sevt_count": len(sevts),
+        "pairs_ok": pairs_ok and not issues,
+        "wrap_pairs": checked_pairs,
+        "issues": issues,
+    }
+
+
 def _build_serial_verification(lines: list[str], args: argparse.Namespace) -> dict[str, object]:
     boundaries = _extract_phase_boundaries(lines)
     record = _verify_phase_note_pairs(
@@ -1034,6 +1263,21 @@ def _build_serial_verification(lines: list[str], args: argparse.Namespace) -> di
             issues.append("record_stored_revt_missing")
         elif not stored_record_grid.get("grid_ok", False):
             issues.append("record_stored_note_grid_bad")
+    overdub_wrap_storage: Optional[dict[str, object]] = None
+    loop_length_ticks = 0
+    if record_loop_length and record_loop_length.get("actual_final_length") is not None:
+        loop_length_ticks = int(record_loop_length["actual_final_length"])
+    if loop_length_ticks > 0:
+        overdub_wrap_storage = _verify_overdub_wrap_storage(
+            lines,
+            boundaries=boundaries,
+            loop_length_ticks=loop_length_ticks,
+            wrap_test_ran=bool(getattr(args, "overdub_wrap_note_off_test", False)),
+        )
+        if not overdub_wrap_storage.get("phase_disabled"):
+            for issue in overdub_wrap_storage.get("issues", []):
+                if issue not in issues:
+                    issues.append(str(issue))
     return {
         "boundaries": boundaries,
         "record_phase": record,
@@ -1041,6 +1285,7 @@ def _build_serial_verification(lines: list[str], args: argparse.Namespace) -> di
         "record_loop_length": record_loop_length,
         "record_note_span": record_note_span,
         "stored_record_grid": stored_record_grid,
+        "overdub_wrap_storage": overdub_wrap_storage,
         "record_first_note_offset": record_first_note_offset,
         "overdub_first_note_offset": overdub_first_note_offset,
         "recs_lengths": recs_lengths,
@@ -1262,6 +1507,11 @@ def run() -> int:
         type=int,
         default=2,
         help="Reset chromatic pitch progression every N bars (default: 2)",
+    )
+    parser.add_argument(
+        "--overdub-wrap-note-off-test",
+        action="store_true",
+        help="Overdub: hold one note across loop wrap and release in head window; require WRAP/SEVT serial verify",
     )
     args = parser.parse_args()
 
@@ -1712,29 +1962,47 @@ def run() -> int:
                         # Conservative default: keep full note count (16 for 2 bars at 8ths)
                         # and avoid early state cutover that can drop the final overdub note.
                         overdub_stop_advance_clocks = 0
-                    od_notes, od_cc, od_clock_count, od_timing = _stream_pattern_for_bars(
-                        out_port,
-                        in_port,
-                        midi_channel_1based=args.midi_channel,
-                        low_note=args.overdub_low_note,
-                        high_note=args.overdub_high_note,
-                        step_clocks=OVERDUB_GRID_STEP_CLOCKS,
-                        gate_clocks=OVERDUB_GRID_STEP_CLOCKS,
-                        target_bars=args.overdub_bars,
-                        cc_number=args.cc_number,
-                        cc_step=args.cc_step,
-                        pitch_cycle_bars=args.pitch_cycle_bars,
-                        phase_start_delay_bars=args.overdub_start_delay_bars,
-                        phase_start_delay_beats=args.overdub_start_delay_beats,
-                        max_seconds_guard=guard,
-                        fixed_note=args.overdub_fixed_note if args.fixed_grid_notes else None,
-                        stop_press_advance_clocks=overdub_stop_advance_clocks,
-                        stop_press_note=RECORD_BUTTON_NOTE,
-                        stop_press_channel_1based=CONTROL_CHANNEL_1BASED,
-                        stop_press_press_ms=args.press_ms,
-                        abort=abort,
-                        emit_immediate_first_step=True,
-                    )
+                    if args.overdub_wrap_note_off_test:
+                        if not args.record_bars:
+                            print("[error] --overdub-wrap-note-off-test requires --record-bars")
+                            abort_reason = "wrap test requires record-bars"
+                            break
+                        od_notes, od_cc, od_clock_count, od_timing = _stream_overdub_wrap_note_off_test(
+                            out_port,
+                            in_port,
+                            midi_channel_1based=args.midi_channel,
+                            wrap_note=args.overdub_fixed_note,
+                            loop_bars=args.record_bars,
+                            target_bars=args.overdub_bars,
+                            phase_start_delay_bars=0,
+                            phase_start_delay_beats=0,
+                            max_seconds_guard=guard,
+                            abort=abort,
+                        )
+                    else:
+                        od_notes, od_cc, od_clock_count, od_timing = _stream_pattern_for_bars(
+                            out_port,
+                            in_port,
+                            midi_channel_1based=args.midi_channel,
+                            low_note=args.overdub_low_note,
+                            high_note=args.overdub_high_note,
+                            step_clocks=OVERDUB_GRID_STEP_CLOCKS,
+                            gate_clocks=OVERDUB_GRID_STEP_CLOCKS,
+                            target_bars=args.overdub_bars,
+                            cc_number=args.cc_number,
+                            cc_step=args.cc_step,
+                            pitch_cycle_bars=args.pitch_cycle_bars,
+                            phase_start_delay_bars=args.overdub_start_delay_bars,
+                            phase_start_delay_beats=args.overdub_start_delay_beats,
+                            max_seconds_guard=guard,
+                            fixed_note=args.overdub_fixed_note if args.fixed_grid_notes else None,
+                            stop_press_advance_clocks=overdub_stop_advance_clocks,
+                            stop_press_note=RECORD_BUTTON_NOTE,
+                            stop_press_channel_1based=CONTROL_CHANNEL_1BASED,
+                            stop_press_press_ms=args.press_ms,
+                            abort=abort,
+                            emit_immediate_first_step=True,
+                        )
                 else:
                     od_notes, od_cc = _stream_dense_chromatic(
                         out_port,
@@ -1832,6 +2100,10 @@ def run() -> int:
         # 8th-note grid; allow one-step edge variance at boundaries.
         expected_overdub_notes_min = max(1, args.overdub_bars * 8 - 1)
         expected_overdub_clocks = args.overdub_bars * MIDI_CLOCKS_PER_BAR
+    if args.overdub_wrap_note_off_test:
+        expected_overdub_notes_min = 1
+        if args.record_bars:
+            expected_overdub_clocks = max(args.overdub_bars, args.record_bars + 1) * MIDI_CLOCKS_PER_BAR
 
     phase_note_failures: list[dict[str, int]] = []
     phase_activation_failures: list[dict[str, int | str]] = []
@@ -2048,6 +2320,21 @@ def run() -> int:
                     f"{stored_record_grid.get('max_delta')} "
                     f"bad={stored_record_grid.get('bad_delta_count')}"
                 )
+            overdub_wrap_storage = serial_verification.get("overdub_wrap_storage")
+            if overdub_wrap_storage and not overdub_wrap_storage.get("phase_disabled"):
+                print(
+                    "  VERIFY overdub wrap storage: "
+                    f"pairs={overdub_wrap_storage.get('wrap_pair_count')} "
+                    f"sevt={overdub_wrap_storage.get('sevt_count')} "
+                    f"ok={overdub_wrap_storage.get('pairs_ok')}"
+                )
+                for pair in overdub_wrap_storage.get("wrap_pairs", []):
+                    print(
+                        "    WRAP "
+                        f"on={pair.get('on_tick')} off={pair.get('off_tick')} "
+                        f"note={pair.get('note')} ch={pair.get('ch')} "
+                        f"ok={pair.get('ok')}"
+                    )
             if serial_verification["issues"]:
                 print(f"  VERIFY issues: {', '.join(serial_verification['issues'])}")
     if phase_note_failures:

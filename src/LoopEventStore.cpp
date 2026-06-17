@@ -254,6 +254,25 @@ void LoopEventStore::flatten(MidiEventVec& out) const {
   }
 }
 
+void LoopEventStore::appendFlattenedChunkIds(const ChunkIdList& ids, MidiEventVec& out) {
+  const size_t prevSize = out.size();
+  size_t extra = 0;
+  for (uint16_t id : ids) {
+    if (id >= LoopEventStoreConfig::POOL_CHUNK_COUNT || !pool_ || !poolUsed_[id]) {
+      continue;
+    }
+    extra += pool_[id].used;
+  }
+  out.reserve(prevSize + extra);
+  for (uint16_t id : ids) {
+    if (id >= LoopEventStoreConfig::POOL_CHUNK_COUNT || !pool_ || !poolUsed_[id]) {
+      continue;
+    }
+    const EventChunk& c = pool_[id];
+    out.insert(out.end(), c.events, c.events + c.used);
+  }
+}
+
 void LoopEventStore::loadFromFlat(const MidiEventVec& events) {
   clear();
   for (const MidiEvent& evt : events) {

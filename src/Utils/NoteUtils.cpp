@@ -15,7 +15,212 @@ bool shouldLogReconstructDetails(bool verboseLog, size_t eventCount) {
     return verboseLog && eventCount <= kReconstructVerboseMaxEvents;
 }
 
+bool allLaterOnsInTailOrNone(const MidiEventVec& midiEvents, uint32_t headOffTick, uint8_t pitch,
+                             uint8_t channel, uint32_t loopLength) {
+    const uint32_t tailStart = NoteUtils::wrapTailStartTick(loopLength);
+    for (const MidiEvent& evt : midiEvents) {
+        if (!evt.isNoteOn() || evt.channel != channel || evt.data.noteData.note != pitch) {
+            continue;
+        }
+        if (evt.tick >= loopLength) {
+            continue;
+        }
+        if (evt.tick > headOffTick && evt.tick < tailStart) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool tryPairWrappedTailOn(const MidiEventVec& midiEvents, uint32_t noteOffTick, uint8_t pitch,
+                          uint8_t channel, uint32_t loopLength, uint32_t& outOnTick,
+                          uint8_t& outVelocity) {
+    if (!allLaterOnsInTailOrNone(midiEvents, noteOffTick, pitch, channel, loopLength)) {
+        return false;
+    }
+    uint32_t bestOnTick = 0;
+    uint8_t bestVelocity = 0;
+    for (const auto& later : midiEvents) {
+        const bool laterOn = (later.type == midi::NoteOn && later.data.noteData.velocity > 0);
+        if (!laterOn || later.data.noteData.note != pitch || later.channel != channel) {
+            continue;
+        }
+        const uint32_t onTick = later.tick;
+        if (onTick >= loopLength) {
+            continue;
+        }
+        if (!NoteUtils::isPreferredWrapTailForHeadOff(onTick, noteOffTick, midiEvents, pitch,
+                                                      channel, loopLength)) {
+            continue;
+        }
+        if (onTick > bestOnTick) {
+            bestOnTick = onTick;
+            bestVelocity = later.data.noteData.velocity;
+        }
+    }
+    if (bestOnTick == 0) {
+        return false;
+    }
+    outOnTick = bestOnTick;
+    outVelocity = bestVelocity;
+    return true;
+}
+
+bool hasDeferredLoopEndHeadOff(const MidiEventVec& midiEvents, size_t fromIndex, uint8_t pitch,
+                               uint8_t channel, uint32_t tailOnTick, uint32_t loopLength) {
+    for (size_t j = fromIndex + 1; j < midiEvents.size(); ++j) {
+        const MidiEvent& later = midiEvents[j];
+        if (!later.isNoteOff() || later.channel != channel ||
+            later.data.noteData.note != pitch) {
+            continue;
+        }
+        uint32_t headOffTick = later.tick;
+        if (headOffTick >= loopLength) {
+            headOffTick %= loopLength;
+        }
+        if (NoteUtils::isPreferredWrapTailForHeadOff(tailOnTick, headOffTick, midiEvents, pitch,
+                                                     channel, loopLength)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool isLatestTailNoteOn(const MidiEventVec& midiEvents, uint32_t tailOnTick, uint8_t pitch,
+                        uint8_t channel, uint32_t loopLength) {
+    const uint32_t tailStart = NoteUtils::wrapTailStartTick(loopLength);
+    for (const MidiEvent& evt : midiEvents) {
+        if (!evt.isNoteOn() || evt.channel != channel || evt.data.noteData.note != pitch) {
+            continue;
+        }
+        if (evt.tick >= loopLength) {
+            continue;
+        }
+        if (evt.tick >= tailStart && evt.tick > tailOnTick) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool shouldDeferLoopEndOff(const MidiEventVec& midiEvents, size_t fromIndex, uint8_t pitch,
+                           uint8_t channel, uint32_t tailOnTick, uint32_t loopLength) {
+    if (hasDeferredLoopEndHeadOff(midiEvents, fromIndex, pitch, channel, tailOnTick, loopLength)) {
+        return true;
+    }
+    if (!isLatestTailNoteOn(midiEvents, tailOnTick, pitch, channel, loopLength)) {
+        return false;
+    }
+    for (size_t j = fromIndex; j < midiEvents.size(); ++j) {
+        const MidiEvent& evt = midiEvents[j];
+        if (evt.isNoteOff() && evt.channel == channel && evt.data.noteData.note == pitch &&
+            evt.tick == loopLength - 1) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool isWrapHeldOpenNoteImpl(const MidiEventVec& midiEvents, const NoteUtils::OpenNoteOn& open,
+                            uint32_t loopLength) {
+    if (loopLength == 0) {
+        return false;
+    }
+    const uint32_t tailStart = NoteUtils::wrapTailStartTick(loopLength);
+    if (open.tick < tailStart) {
+        return false;
+    }
+
+    uint8_t channel = 0;
+    bool channelKnown = false;
+    for (const MidiEvent& evt : midiEvents) {
+        if (evt.isNoteOn() && evt.data.noteData.note == open.note && evt.tick == open.tick) {
+            channel = evt.channel;
+            channelKnown = true;
+            break;
+        }
+    }
+
+    bool hasLoopEndOff = false;
+    for (const MidiEvent& evt : midiEvents) {
+        if (!evt.isNoteOff() || evt.data.noteData.note != open.note) {
+            continue;
+        }
+        if (!channelKnown || evt.channel == channel) {
+            if (evt.tick == loopLength - 1) {
+                hasLoopEndOff = true;
+                break;
+            }
+        }
+    }
+    if (!hasLoopEndOff) {
+        return false;
+    }
+
+    if (!channelKnown) {
+        return isLatestTailNoteOn(midiEvents, open.tick, open.note, 0, loopLength);
+    }
+
+    for (const MidiEvent& evt : midiEvents) {
+        if (!evt.isNoteOff() || evt.channel != channel || evt.data.noteData.note != open.note) {
+            continue;
+        }
+        uint32_t headOffTick = evt.tick;
+        if (headOffTick >= loopLength) {
+            headOffTick %= loopLength;
+        }
+        if (headOffTick >= loopLength - 1) {
+            continue;
+        }
+        if (NoteUtils::isPreferredWrapTailForHeadOff(open.tick, headOffTick, midiEvents, open.note,
+                                                     channel, loopLength)) {
+            return true;
+        }
+    }
+
+    return isLatestTailNoteOn(midiEvents, open.tick, open.note, channel, loopLength);
+}
+
 }  // namespace
+
+bool NoteUtils::isWrapHeldOpenNote(const MidiEventVec& midiEvents, const OpenNoteOn& open,
+                                   uint32_t loopLength) {
+    return isWrapHeldOpenNoteImpl(midiEvents, open, loopLength);
+}
+
+bool NoteUtils::isPreferredWrapTailForHeadOff(uint32_t tailOnTick, uint32_t headOffTick,
+                                              const MidiEventVec& midiEvents, uint8_t pitch,
+                                              uint8_t channel, uint32_t loopLength) {
+    if (!isHeadTailWrappedPair(tailOnTick, headOffTick, loopLength)) {
+        return false;
+    }
+    for (const auto& evt : midiEvents) {
+        if (!evt.isNoteOn() || evt.channel != channel || evt.data.noteData.note != pitch) {
+            continue;
+        }
+        if (evt.tick >= loopLength) {
+            continue;
+        }
+        if (evt.tick > tailOnTick &&
+            isHeadTailWrappedPair(evt.tick, headOffTick, loopLength)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool NoteUtils::wrapPairIsUnblocked(const MidiEventVec& midiEvents, uint32_t offTick, uint32_t onTick,
+                                    uint8_t pitch, uint8_t channel) {
+    for (const auto& evt : midiEvents) {
+        if (!evt.isNoteOn() || evt.channel != channel || evt.data.noteData.note != pitch) {
+            continue;
+        }
+        if (evt.tick > offTick && evt.tick < onTick) {
+            return false;
+        }
+    }
+    return true;
+}
 
 // CachedNoteList implementation
 uint32_t NoteUtils::CachedNoteList::computeMidiHash(const MidiEventVec& midiEvents) {
@@ -54,14 +259,23 @@ std::vector<NoteUtils::DisplayNote> NoteUtils::reconstructNotes(const MidiEventV
         logger.log(CAT_TRACK, LOG_DEBUG, "Reconstructing notes with loop length: %lu ticks", loopLength);
     }
 
+    std::set<std::pair<uint8_t, uint32_t>> wrappedTailOnTicks;
+
+    const uint32_t tailStart = NoteUtils::wrapTailStartTick(loopLength);
+
     // Process ALL MIDI events to handle notes that extend beyond current loop
-    for (const auto& evt : midiEvents) {
+    for (size_t eventIndex = 0; eventIndex < midiEvents.size(); ++eventIndex) {
+        const MidiEvent& evt = midiEvents[eventIndex];
         bool isNoteOn = (evt.type == midi::NoteOn && evt.data.noteData.velocity > 0);
         bool isNoteOff = (evt.type == midi::NoteOff || (evt.type == midi::NoteOn && evt.data.noteData.velocity == 0));
         uint8_t pitch = evt.data.noteData.note;
         
         if (isNoteOn) {
             uint32_t noteOnTick = evt.tick;
+
+            if (wrappedTailOnTicks.count({pitch, noteOnTick}) != 0) {
+                continue;
+            }
             
             // If note-on is beyond current loop boundary, only wrap it if it's from original loop extension
             // For loop shortening: discard notes that start beyond the new boundary
@@ -88,9 +302,10 @@ std::vector<NoteUtils::DisplayNote> NoteUtils::reconstructNotes(const MidiEventV
             
         } else if (isNoteOff) {
             uint32_t noteOffTick = evt.tick;
+            const bool offWasBeyondLoop = noteOffTick >= loopLength;
             
             // Handle note-off that might be beyond current loop boundary
-            if (noteOffTick >= loopLength) {
+            if (offWasBeyondLoop) {
                 // Wrap the note-off position for notes that extend beyond loop
                 noteOffTick = noteOffTick % loopLength;
                 if (logDetails) {
@@ -105,6 +320,34 @@ std::vector<NoteUtils::DisplayNote> NoteUtils::reconstructNotes(const MidiEventV
             }
             
             if (activeNoteStacks[pitch].empty()) {
+                uint32_t wrappedOnTick = 0;
+                uint8_t wrappedVelocity = 0;
+                if (tryPairWrappedTailOn(midiEvents, noteOffTick, pitch, evt.channel, loopLength,
+                                         wrappedOnTick, wrappedVelocity)) {
+                    DisplayNote tailSeg;
+                    tailSeg.note = pitch;
+                    tailSeg.startTick = wrappedOnTick;
+                    tailSeg.endTick = loopLength - 1;
+                    tailSeg.velocity = wrappedVelocity;
+                    notes.push_back(tailSeg);
+
+                    if (noteOffTick > 0) {
+                        DisplayNote headSeg;
+                        headSeg.note = pitch;
+                        headSeg.startTick = 0;
+                        headSeg.endTick = noteOffTick;
+                        headSeg.velocity = wrappedVelocity;
+                        notes.push_back(headSeg);
+                    }
+
+                    wrappedTailOnTicks.insert({pitch, wrappedOnTick});
+                    if (logDetails) {
+                        logger.log(CAT_TRACK, LOG_DEBUG,
+                                   "Wrapped pair split: pitch=%d, tail=%lu-%lu, head=0-%lu",
+                                   pitch, wrappedOnTick, loopLength - 1, noteOffTick);
+                    }
+                    continue;
+                }
                 if (logDetails) {
                     logger.log(CAT_TRACK, LOG_DEBUG, "Note-off without matching note-on: pitch=%d", pitch);
                 }
@@ -113,6 +356,43 @@ std::vector<NoteUtils::DisplayNote> NoteUtils::reconstructNotes(const MidiEventV
             
             // Complete the most recent note-on for this pitch
             DisplayNote& note = activeNoteStacks[pitch].back();
+            if (!offWasBeyondLoop && noteOffTick == loopLength - 1 &&
+                note.startTick >= tailStart &&
+                shouldDeferLoopEndOff(midiEvents, eventIndex, pitch, evt.channel, note.startTick,
+                                      loopLength)) {
+                if (logDetails) {
+                    logger.log(CAT_TRACK, LOG_DEBUG,
+                               "Defer loop-end off for wrap hold: pitch=%d, tail=%lu",
+                               pitch, note.startTick);
+                }
+                continue;
+            }
+
+            if (!offWasBeyondLoop && noteOffTick < note.startTick &&
+                NoteUtils::isPreferredWrapTailForHeadOff(note.startTick, noteOffTick, midiEvents, pitch,
+                                                         evt.channel, loopLength) &&
+                note.startTick >= tailStart) {
+                DisplayNote tailSeg = note;
+                tailSeg.endTick = loopLength - 1;
+                notes.push_back(tailSeg);
+
+                if (noteOffTick > 0) {
+                    DisplayNote headSeg = note;
+                    headSeg.startTick = 0;
+                    headSeg.endTick = noteOffTick;
+                    notes.push_back(headSeg);
+                }
+
+                if (logDetails) {
+                    logger.log(CAT_TRACK, LOG_DEBUG,
+                               "Wrapped stack split: pitch=%d, tail=%lu-%lu, head=0-%lu",
+                               pitch, note.startTick, loopLength - 1, noteOffTick);
+                }
+
+                activeNoteStacks[pitch].pop_back();
+                continue;
+            }
+
             note.endTick = noteOffTick;
             
             if (logDetails) {
@@ -173,7 +453,9 @@ std::vector<NoteUtils::OpenNoteOn> NoteUtils::findOpenNoteOns(const MidiEventVec
     }
 
     std::map<uint8_t, std::vector<OpenNoteOn>> activeStacks;
-    for (const auto& evt : midiEvents) {
+    std::set<std::pair<uint8_t, uint32_t>> wrappedTailOnTicks;
+    for (size_t eventIndex = 0; eventIndex < midiEvents.size(); ++eventIndex) {
+        const MidiEvent& evt = midiEvents[eventIndex];
         if (evt.tick >= loopLength) {
             continue;
         }
@@ -187,9 +469,26 @@ std::vector<NoteUtils::OpenNoteOn> NoteUtils::findOpenNoteOns(const MidiEventVec
 
         const uint8_t pitch = evt.data.noteData.note;
         if (isNoteOn) {
+            if (wrappedTailOnTicks.count({pitch, evt.tick}) != 0) {
+                continue;
+            }
             activeStacks[pitch].push_back({pitch, evt.data.noteData.velocity, evt.tick});
         } else if (!activeStacks[pitch].empty()) {
+            const OpenNoteOn& open = activeStacks[pitch].back();
+            const uint32_t tailStart = NoteUtils::wrapTailStartTick(loopLength);
+            if (evt.tick == loopLength - 1 && open.tick >= tailStart &&
+                shouldDeferLoopEndOff(midiEvents, eventIndex, pitch, evt.channel, open.tick,
+                                      loopLength)) {
+                continue;
+            }
             activeStacks[pitch].pop_back();
+        } else {
+            uint32_t wrappedOnTick = 0;
+            uint8_t wrappedVelocity = 0;
+            if (tryPairWrappedTailOn(midiEvents, evt.tick, pitch, evt.channel, loopLength,
+                                     wrappedOnTick, wrappedVelocity)) {
+                wrappedTailOnTicks.insert({pitch, wrappedOnTick});
+            }
         }
     }
 

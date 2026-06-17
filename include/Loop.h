@@ -105,12 +105,23 @@ struct Loop {
   void discardCapture();
   bool appendCaptureEvent(const MidiEvent& evt);
   void commitCapture();
+  /// Seal → Publish when capture is non-empty; dual-writes Active epochs into committedEvents.
+  CommitResult commitCaptureData(CommitReason reason, uint32_t sealedAtTick);
+  /// Rebuild committedEvents from all Active epochs (mergeSequence order). No-op when none Active.
+  void syncCommittedEventsFromEpochs();
+  /// Legacy committed-only loops (e.g. SD load) → single Record epoch before first publish.
+  void ensureCommittedMigratedToEpoch();
+  /// After legacy undo restore: one Active epoch mirroring committedEvents.
+  void rebuildEpochTimelineFromCommitted();
+  void resetEpochTimeline();
   bool captureActive() const;
   size_t liveEventCount() const;
   /// Sort capture buffer by tick when append order diverges (display/playback/commit).
   bool ensureCaptureEventsSorted();
   /// Committed events plus in-flight capture buffer (sorted by tick) for display/LED reads.
   void buildLiveEventView(MidiEventVec& out) const;
+  /// Remove a capture note-off (e.g. loop-wrap synthetic) before recording the real head off.
+  void removeCaptureNoteOffAt(uint8_t channel, uint8_t note, uint32_t tick);
 
   /// Seal capture into pendingEpoch (prepare only — not visible until publish). M2 wires stop path.
   SealOutcome sealCaptureLayer(uint32_t sealedAtTick);

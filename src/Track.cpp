@@ -22,6 +22,8 @@
 #include "Utils/MemoryMonitor.h"
 #include "Utils/HotPathTelemetry.h"
 #include "Utils/LoopStopFinalize.h"
+#include "Utils/SessionCapture.h"
+#include "Utils/NoteUtils.h"
 
 namespace {
 
@@ -232,6 +234,7 @@ void Track::startRecording(uint32_t currentTick) {
   }
   recordAddedNoteOnCount = 0;
   loop.committedEvents.mutStore().clear();
+  loop.resetEpochTimeline();
   loop.beginCapture(CapturePhase::Record);
   pendingNotes.clear();
   for (const auto& entry : preRoll) {
@@ -397,12 +400,38 @@ void Track::validateAndCleanupMidiEvents(uint32_t openTailCloseTick) {
                 // Found matching note-on, remove from active notes
                 activeNotes.erase(it);
             } else {
-                // Orphaned note-off, mark for removal
-                eventsToKeep[i] = false;
-                orphanedCount++;
-                logger.log(CAT_MIDI, LOG_WARNING, 
-                          "Removed orphaned note-off: note %d, channel %d, tick %lu",
-                          evt.data.noteData.note, evt.channel, evt.tick);
+                bool wrappedTailAhead = false;
+                if (loop.loopLengthTicks > 0) {
+                    const uint32_t noteOffTick = evt.tick;
+                    for (size_t j = i + 1; j < loop.midiEvents().size(); ++j) {
+                        if (!eventsToKeep[j]) {
+                            continue;
+                        }
+                        const MidiEvent& later = loop.midiEvents()[j];
+                        if (!later.isNoteOn() || later.channel != evt.channel ||
+                            later.data.noteData.note != evt.data.noteData.note) {
+                            continue;
+                        }
+                        if (!NoteUtils::isHeadTailWrappedPair(later.tick, noteOffTick,
+                                                             loop.loopLengthTicks)) {
+                            continue;
+                        }
+                        if (!NoteUtils::wrapPairIsUnblocked(loop.midiEvents(), noteOffTick,
+                                                            later.tick, evt.data.noteData.note,
+                                                            evt.channel)) {
+                            continue;
+                        }
+                        wrappedTailAhead = true;
+                        break;
+                    }
+                }
+                if (!wrappedTailAhead) {
+                    eventsToKeep[i] = false;
+                    orphanedCount++;
+                    logger.log(CAT_MIDI, LOG_WARNING,
+                              "Removed orphaned note-off: note %d, channel %d, tick %lu",
+                              evt.data.noteData.note, evt.channel, evt.tick);
+                }
             }
         }
     }
@@ -543,6 +572,95 @@ void Track::finalizeLoopAtStop(uint32_t openTailCloseTick) {
   deferredFullMidiValidate = true;
 }
 
+void Track::finalizeCommitSideEffects(CommitResult result, CommitReason reason, uint32_t closeTick) {
+  Loop& loop = getActiveLoop();
+
+  switch (result) {
+    case CommitResult::Skipped: {
+      loop.discardCapture();
+      const bool recordStop = reason == CommitReason::RecordStop ||
+                              reason == CommitReason::RecordStopToStopped;
+      if (recordStop && loop.activeEpochCount() == 0) {
+        loop.committedEvents.mutStore().clear();
+        loop.resetEpochTimeline();
+        loop.loopLengthTicks = 0;
+        loop.loopStartTick = 0;
+        loop.startLoopTick = 0;
+        loop.nextEventIndex = 0;
+        loop.lastTickInLoop = 0;
+        loop.invalidatePlaybackCaches();
+      }
+      if (reason == CommitReason::OverdubStop || reason == CommitReason::OverdubStopToStopped) {
+        finalizeLoopAtStop(closeTick);
+        TrackUndo::endOverdubSession(*this);
+        StorageManager::requestDeferredSaveState(looperState.getLooperState());
+      }
+      break;
+    }
+    case CommitResult::Published:
+      finalizeLoopAtStop(closeTick);
+      switch (reason) {
+        case CommitReason::RecordStop:
+        case CommitReason::RecordStopToStopped:
+          TrackUndo::establishRecordStopBaseline(*this);
+          break;
+        case CommitReason::OverdubStop:
+        case CommitReason::OverdubStopToStopped:
+          TrackUndo::endOverdubSession(*this);
+          StorageManager::requestDeferredSaveState(looperState.getLooperState());
+          break;
+      }
+      break;
+    case CommitResult::SealFailed:
+      loop.discardPendingEpoch();
+      if (reason == CommitReason::OverdubStop || reason == CommitReason::OverdubStopToStopped) {
+        TrackUndo::endOverdubSession(*this);
+      }
+      break;
+  }
+
+  if (result == CommitResult::Published) {
+    invalidateCaches();
+    if (reason == CommitReason::OverdubStop || reason == CommitReason::OverdubStopToStopped) {
+      emitStoredMidiVerification();
+    }
+  }
+}
+
+void Track::emitStoredMidiVerification() const {
+  const Loop& loop = getActiveLoop();
+  if (loop.loopLengthTicks == 0 || loop.committedEvents.empty()) {
+    return;
+  }
+
+  MidiEventVec flat;
+  loop.committedEvents.readStore().flatten(flat);
+  for (const MidiEvent& evt : flat) {
+    if (evt.isNoteOn()) {
+      SC_STORED_NOTE_EVENT('N', evt.tick, evt.channel, evt.data.noteData.note);
+    } else if (evt.isNoteOff()) {
+      SC_STORED_NOTE_EVENT('F', evt.tick, evt.channel, evt.data.noteData.note);
+    }
+  }
+
+  for (size_t i = 0; i < flat.size(); ++i) {
+    const MidiEvent& on = flat[i];
+    if (!on.isNoteOn()) {
+      continue;
+    }
+    for (const MidiEvent& off : flat) {
+      if (!off.isNoteOff() || off.channel != on.channel ||
+          off.data.noteData.note != on.data.noteData.note) {
+        continue;
+      }
+      if (NoteUtils::isWrappedLoopNotePair(on.tick, off.tick, loop.loopLengthTicks)) {
+        SC_STORED_WRAP_PAIR(on.tick, off.tick, on.channel, on.data.noteData.note);
+        break;
+      }
+    }
+  }
+}
+
 void Track::processDeferredIdleMaintenance() {
   if (!deferredFullMidiValidate) {
     return;
@@ -625,7 +743,6 @@ void Track::closeOpenNotesAtLoopWrap() {
   }
 
   ++loop.captureDisplayRevision;
-  invalidateCaches();
 }
 
 // -------------------------
@@ -659,7 +776,8 @@ void Track::stopRecording(uint32_t currentTick) {
       loop.loopLengthTicks = ((rawLength / TICKS_PER_BAR) + 1) * TICKS_PER_BAR;
   }
 
-  loop.commitCapture();
+  const CommitResult commitResult =
+      loop.commitCaptureData(CommitReason::RecordStop, currentTick);
 
   // Validate AFTER loopLengthTicks is known so wrap-matching and open-tail closing
   // (the second pass and synthetic note-offs) are active for this record-stop.
@@ -667,7 +785,7 @@ void Track::stopRecording(uint32_t currentTick) {
   if (loop.loopLengthTicks > 0) {
     closeTick = tickPhaseInLoop(currentTick, loop.startLoopTick, loop.loopLengthTicks);
   }
-  finalizeLoopAtStop(closeTick);
+  finalizeCommitSideEffects(commitResult, CommitReason::RecordStop, closeTick);
 
   if (alignLoopOriginOnNextStop) {
     alignLoopOriginOnNextStop = false;
@@ -714,8 +832,6 @@ void Track::stopRecording(uint32_t currentTick) {
                static_cast<unsigned long>(recordStartTick), static_cast<unsigned long>(rawLength),
                static_cast<unsigned long>(finalLength));
 
-  TrackUndo::establishRecordStopBaseline(*this);
-
   // Return to playback after record-stop. Overdub starts on the next explicit
   // record press from PLAYING (record -> play -> overdub -> play flow).
   startPlaying(playbackTick, true);
@@ -748,14 +864,15 @@ void Track::stopRecordingToStopped(uint32_t currentTick) {
       loop.loopLengthTicks = ((rawLength / TICKS_PER_BAR) + 1) * TICKS_PER_BAR;
   }
 
-  loop.commitCapture();
+  const CommitResult commitResult =
+      loop.commitCaptureData(CommitReason::RecordStopToStopped, currentTick);
 
   // Validate AFTER loopLengthTicks is known (see stopRecording for rationale).
   uint32_t closeTick = UINT32_MAX;
   if (loop.loopLengthTicks > 0) {
     closeTick = tickPhaseInLoop(currentTick, loop.startLoopTick, loop.loopLengthTicks);
   }
-  finalizeLoopAtStop(closeTick);
+  finalizeCommitSideEffects(commitResult, CommitReason::RecordStopToStopped, closeTick);
 
   [[maybe_unused]] const uint32_t recordStartTickStopped = loop.startLoopTick;
   loop.nextEventIndex = 0;
@@ -776,7 +893,6 @@ void Track::stopRecordingToStopped(uint32_t currentTick) {
   logger.logTrackEvent("Recording stopped (to STOPPED)", playbackTick, "length=%lu",
                        static_cast<unsigned long>(loop.loopLengthTicks));
 
-  TrackUndo::establishRecordStopBaseline(*this);
   setState(TRACK_STOPPED);
 }
 
@@ -832,17 +948,16 @@ void Track::stopOverdubbing() {
   if (loop.loopLengthTicks > 0) {
     closeTick = tickPhaseInLoop(currentTick, loop.startLoopTick, loop.loopLengthTicks);
   }
-  loop.commitCapture();
+  const CommitResult commitResult =
+      loop.commitCaptureData(CommitReason::OverdubStop, currentTick);
   setState(TRACK_PLAYING);
-  finalizeLoopAtStop(closeTick);
-  TrackUndo::endOverdubSession(*this);
+  finalizeCommitSideEffects(commitResult, CommitReason::OverdubStop, closeTick);
   logMemoryAfterOverdubStop(recordAddedNoteOnCount, loop);
   logger.logTrackEvent("Overdubbing stopped", currentTick);
   logger.info("Overdub stopped: events=%d, snapshots=%d", getActiveLoop().midiEvents().size(), getActiveLoop().midiHistorySize());
 
   // Preserve phase origin from record-stop rewind so playback cursor and event phase stay aligned.
   resetPlaybackState(currentTick);
-  StorageManager::requestDeferredSaveState(looperState.getLooperState());
   HotPathTelemetry::requestDeferredSummary("overdub_stop");
 }
 
@@ -855,14 +970,13 @@ void Track::stopOverdubbingToStopped() {
     closeTick = tickPhaseInLoop(currentTick, loop.startLoopTick, loop.loopLengthTicks);
   }
   sendAllNotesOff();
-  loop.commitCapture();
-  finalizeLoopAtStop(closeTick);
-  TrackUndo::endOverdubSession(*this);
+  const CommitResult commitResult =
+      loop.commitCaptureData(CommitReason::OverdubStopToStopped, currentTick);
+  finalizeCommitSideEffects(commitResult, CommitReason::OverdubStopToStopped, closeTick);
   logMemoryAfterOverdubStop(recordAddedNoteOnCount, loop);
   setState(TRACK_STOPPED);
   resetPlaybackState(currentTick);
   logger.logTrackEvent("Overdubbing stopped (to STOPPED)", currentTick);
-  StorageManager::requestDeferredSaveState(looperState.getLooperState());
   HotPathTelemetry::requestDeferredSummary("overdub_stop_to_stopped");
 }
 
@@ -913,6 +1027,7 @@ void Track::clear() {
 
     Loop& loop = getActiveLoop();
     loop.committedEvents.mutStore().clear();
+    loop.resetEpochTimeline();
     loop.discardCapture();
     loop.startLoopTick = 0;
     loop.loopLengthTicks = 0;
@@ -990,10 +1105,26 @@ void Track::recordMidiEvents(midi::MidiType type, byte channel, byte data1, byte
         }
         break;
       }
+
+      if (isOverdubbing() && loop.loopLengthTicks > 0) {
+        const uint32_t wrapWindow = std::min(Config::TICKS_PER_BAR, loop.loopLengthTicks);
+        if (tickRelative < wrapWindow) {
+          loop.removeCaptureNoteOffAt(channel, data1, loop.loopLengthTicks - 1);
+        }
+      }
+    }
+
+    if (loop.loopLengthTicks > 0 && tickRelative >= loop.loopLengthTicks) {
+      tickRelative = loop.loopLengthTicks - 1;
+      newEvt.tick = tickRelative;
     }
 
     if (!loop.appendCaptureEvent(newEvt)) {
       return;
+    }
+
+    if (isOverdubbing()) {
+      ++loop.captureDisplayRevision;
     }
 
     if (type == midi::NoteOn) {

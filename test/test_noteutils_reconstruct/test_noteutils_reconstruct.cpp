@@ -80,6 +80,72 @@ void test_reconstruct_dedupes_identical_segments() {
     TEST_ASSERT_EQUAL(1u, notes.size());
 }
 
+void test_reconstruct_wrapped_tail_on_head_off() {
+    constexpr uint32_t loopLength = 1536;
+    MidiEventVec ev;
+    ev.push_back(MidiEvent::NoteOff(50, 1, 60, 0));
+    ev.push_back(MidiEvent::NoteOn(1400, 1, 60, 100));
+    auto notes = NoteUtils::reconstructNotes(ev, loopLength, false);
+    TEST_ASSERT_EQUAL(2u, notes.size());
+    assert_has_note(notes, 60, 1400, loopLength - 1, 100);
+    assert_has_note(notes, 60, 0, 50, 100);
+}
+
+void test_reconstruct_wrapped_tail_on_head_off_chronological() {
+    constexpr uint32_t loopLength = 1536;
+    MidiEventVec ev;
+    ev.push_back(MidiEvent::NoteOn(1535, 5, 48, 100));
+    ev.push_back(MidiEvent::NoteOff(55, 5, 48, 0));
+    auto notes = NoteUtils::reconstructNotes(ev, loopLength, false);
+    TEST_ASSERT_EQUAL(2u, notes.size());
+    assert_has_note(notes, 48, 1535, loopLength - 1, 100);
+    assert_has_note(notes, 48, 0, 55, 100);
+}
+
+void test_reconstruct_wrap_with_synthetic_loop_end_before_head_off() {
+    constexpr uint32_t loopLength = 1536;
+    MidiEventVec ev;
+    ev.push_back(MidiEvent::NoteOn(1487, 5, 48, 100));
+    ev.push_back(MidiEvent::NoteOn(1535, 5, 48, 90));
+    ev.push_back(MidiEvent::NoteOff(1535, 5, 48, 0));
+    ev.push_back(MidiEvent::NoteOff(55, 5, 48, 0));
+    auto notes = NoteUtils::reconstructNotes(ev, loopLength, false);
+    TEST_ASSERT_EQUAL(3u, notes.size());
+    assert_has_note(notes, 48, 1487, 1535, 100);
+    assert_has_note(notes, 48, 1535, loopLength - 1, 90);
+    assert_has_note(notes, 48, 0, 55, 90);
+}
+
+void test_reconstruct_wrap_pair_blocked_by_intervening_note_on() {
+    constexpr uint32_t loopLength = 1536;
+    MidiEventVec ev;
+    ev.push_back(MidiEvent::NoteOff(144, 1, 60, 0));
+    ev.push_back(MidiEvent::NoteOn(500, 1, 60, 100));
+    ev.push_back(MidiEvent::NoteOn(1400, 1, 60, 90));
+    auto notes = NoteUtils::reconstructNotes(ev, loopLength, false);
+    TEST_ASSERT_EQUAL(2u, notes.size());
+    for (const auto& n : notes) {
+        TEST_ASSERT_FALSE(n.startTick == 1400u && n.endTick == 144u);
+    }
+    assert_has_note(notes, 60, 500, loopLength - 1, 100);
+    assert_has_note(notes, 60, 1400, loopLength - 1, 90);
+}
+
+void test_reconstruct_record_and_overdub_pitch_ranges() {
+    constexpr uint32_t loopLength = 1536;
+    MidiEventVec ev;
+    ev.push_back(MidiEvent::NoteOn(7, 5, 48, 100));
+    ev.push_back(MidiEvent::NoteOff(55, 5, 48, 0));
+    ev.push_back(MidiEvent::NoteOn(95, 5, 34, 100));
+    ev.push_back(MidiEvent::NoteOff(191, 5, 34, 0));
+    ev.push_back(MidiEvent::NoteOn(1535, 5, 48, 100));
+    auto notes = NoteUtils::reconstructNotes(ev, loopLength, false);
+    TEST_ASSERT_EQUAL(3u, notes.size());
+    assert_has_note(notes, 48, 7, 55, 100);
+    assert_has_note(notes, 34, 95, 191, 100);
+    assert_has_note(notes, 48, 1535, 1535, 100);
+}
+
 int main(int /*argc*/, char** /*argv*/) {
     UNITY_BEGIN();
     RUN_TEST(test_reconstruct_empty_loop_yields_empty);
@@ -88,5 +154,10 @@ int main(int /*argc*/, char** /*argv*/) {
     RUN_TEST(test_reconstruct_lifo_same_pitch);
     RUN_TEST(test_reconstruct_open_note_to_loop_end);
     RUN_TEST(test_reconstruct_dedupes_identical_segments);
+    RUN_TEST(test_reconstruct_wrapped_tail_on_head_off);
+    RUN_TEST(test_reconstruct_wrapped_tail_on_head_off_chronological);
+    RUN_TEST(test_reconstruct_wrap_with_synthetic_loop_end_before_head_off);
+    RUN_TEST(test_reconstruct_wrap_pair_blocked_by_intervening_note_on);
+    RUN_TEST(test_reconstruct_record_and_overdub_pitch_ranges);
     return UNITY_END();
 }

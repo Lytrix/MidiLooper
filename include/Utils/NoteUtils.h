@@ -10,6 +10,41 @@
 #include <utility> // for std::pair
 
 namespace NoteUtils {
+
+/// Tail note-on paired with a head note-off after loop wrap (off tick < on tick).
+inline bool isWrappedLoopNotePair(uint32_t noteOnTick, uint32_t noteOffTick, uint32_t loopLength) {
+  if (loopLength == 0) {
+    return false;
+  }
+  return noteOnTick < loopLength && noteOffTick < loopLength && noteOffTick < noteOnTick &&
+         (noteOnTick - noteOffTick) > (loopLength / 2);
+}
+
+/// Head/tail window check aligned with LoopStopFinalize wrap window.
+inline bool isHeadTailWrappedPair(uint32_t noteOnTick, uint32_t noteOffTick, uint32_t loopLength,
+                                  uint32_t wrapWindowTicks = 768) {
+  if (!isWrappedLoopNotePair(noteOnTick, noteOffTick, loopLength)) {
+    return false;
+  }
+  const uint32_t window = wrapWindowTicks > loopLength ? loopLength : wrapWindowTicks;
+  const uint32_t tailStart = loopLength > window ? loopLength - window : 0;
+  return noteOnTick >= tailStart && noteOffTick < window;
+}
+
+inline uint32_t wrapTailStartTick(uint32_t loopLength, uint32_t wrapWindowTicks = 768) {
+  const uint32_t window = wrapWindowTicks > loopLength ? loopLength : wrapWindowTicks;
+  return loopLength > window ? loopLength - window : 0;
+}
+
+/// True when no same-pitch note-on exists strictly between offTick and onTick.
+bool wrapPairIsUnblocked(const MidiEventVec& midiEvents, uint32_t offTick, uint32_t onTick,
+                         uint8_t pitch, uint8_t channel);
+
+/// Head-off pairs with tailOn; no later same-pitch tail is a better match for that head-off.
+bool isPreferredWrapTailForHeadOff(uint32_t tailOnTick, uint32_t headOffTick,
+                                   const MidiEventVec& midiEvents, uint8_t pitch, uint8_t channel,
+                                   uint32_t loopLength);
+
 /****
  * @struct DisplayNote
  * @brief Simplified note representation for UI and overlap logic.
@@ -48,7 +83,8 @@ private:
  * @brief Reconstructs a list of DisplayNote from raw MIDI events using LIFO pairing.
  *
  * Matches NoteOn/NoteOff (or NoteOn with zero velocity) events per pitch in LIFO order,
- * wrapping any notes still active at loop end. Does not split wrapped notes into two segments.
+ * wrapping any notes still active at loop end. Loop-wrap pairs split into tail (on→loop end)
+ * and head (tick 0→off) display segments; playback still uses raw MIDI events only.
  *
  * @param midiEvents  The full list of MIDI events from a Track.
  * @param loopLength  The loop length in ticks.
@@ -68,6 +104,8 @@ struct OpenNoteOn {
  * @brief Returns note-ons within loopLength that have no matching note-off yet (LIFO per pitch).
  */
 std::vector<OpenNoteOn> findOpenNoteOns(const MidiEventVec& midiEvents, uint32_t loopLength);
+
+bool isWrapHeldOpenNote(const MidiEventVec& midiEvents, const OpenNoteOn& open, uint32_t loopLength);
 
 /**
  * @brief Fast lookup index for NoteOn/NoteOff events by (pitch<<32)|tick.
