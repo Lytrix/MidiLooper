@@ -50,23 +50,43 @@ uint32_t playbackSortPhase(const MidiEvent& evt, uint32_t loopLengthTicks) {
   return loopLengthTicks + evt.tick;
 }
 
-/// After a mid-pass playback-order rebuild (e.g. overdub appended an event and dirtied the order),
-/// point nextEventIndex at the current playhead so events already played this pass are not re-sent.
-/// Without this, resetting to loop start replays every event from 0..playhead on each edit, which
-/// stalls the UI proportionally to playhead position and audibly retriggers notes until the wrap.
-void reanchorPlaybackIndex(Loop& loop) {
+/// After a mid-pass playback-order rebuild, point nextEventIndex at the current playhead.
+void reanchorPlaybackIndex(Loop& loop, const MidiEventVec& mergedEvents, const PlaybackOrderVec& order) {
   if (loop.lastTickInLoop == UINT32_MAX) {
     loop.nextEventIndex = 0;
     return;
   }
-  const PlaybackOrderVec& order = loop.getPlaybackOrder();
   size_t idx = 0;
   while (idx < order.size()) {
-    const MidiEvent& e = loop.eventAt(order[idx]);
+    const MidiEvent& e = mergedEvents[order[idx]];
     if (e.tick >= loop.loopLengthTicks || e.tick > loop.lastTickInLoop) break;
     ++idx;
   }
   loop.nextEventIndex = static_cast<uint16_t>(idx);
+}
+
+void ensurePlaybackWindowBuilt(Loop& loop, LoopPlaybackRuntime& runtime) {
+  if (runtime.primaryWindow.builtFromRevision == loop.playbackRevision) {
+    return;
+  }
+  loop.flattenActiveEpochs(runtime.primaryWindow.mergedEvents);
+  runtime.primaryWindow.builtFromRevision = loop.playbackRevision;
+  runtime.primaryWindow.effectiveWindowBars = Config::PLAYBACK_WINDOW_MAX_BARS;
+  loop.playbackOrderDirty = true;
+}
+
+void rebuildPlaybackOrder(Loop& loop, const MidiEventVec& mergedEvents) {
+  PlaybackOrderVec& playbackOrder = loop.getPlaybackOrder();
+  playbackOrder.resize(mergedEvents.size());
+  for (size_t i = 0; i < mergedEvents.size(); i++) {
+    playbackOrder[i] = i;
+  }
+  uint32_t ll = loop.loopLengthTicks;
+  std::sort(playbackOrder.begin(), playbackOrder.end(),
+    [&](size_t a, size_t b) {
+      return playbackSortPhase(mergedEvents[a], ll) < playbackSortPhase(mergedEvents[b], ll);
+    });
+  loop.playbackOrderDirty = false;
 }
 
 void reanchorCaptureIndex(Loop& loop) {
@@ -252,8 +272,6 @@ void Track::forceSetState(TrackState newState) { trackState = newState; }
 
 void Track::startRecording(uint32_t currentTick) {
   Loop& loop = getActiveLoop();
-  // New take supersedes "undo clear slot"; overdub undo handles record/overdub revert.
-  loop.clearClearUndoStacks();
   if (isEmpty()) {
     // Preroll target is truly empty.
     loop.loopLengthTicks = 0;
@@ -265,7 +283,6 @@ void Track::startRecording(uint32_t currentTick) {
     return;
   }
   recordAddedNoteOnCount = 0;
-  loop.committedEvents.mutStore().clear();
   loop.resetEpochTimeline();
   loop.beginCapture(CapturePhase::Record);
   pendingNotes.clear();
@@ -582,12 +599,20 @@ void Track::validateAndCleanupMidiEvents(uint32_t openTailCloseTick) {
 
 void Track::finalizeLoopAtStop(uint32_t openTailCloseTick) {
   Loop& loop = getActiveLoop();
-  if (loop.committedEvents.empty() || loop.loopLengthTicks == 0) {
+  if (!loop.hasPublishedEvents() || loop.loopLengthTicks == 0) {
     deferredFullMidiValidate = false;
     return;
   }
 
-  LoopEventStore& store = loop.committedEvents.mutStore();
+  MidiEventVec flat;
+  loop.flattenActiveEpochs(flat);
+  if (flat.empty()) {
+    deferredFullMidiValidate = false;
+    return;
+  }
+
+  LoopEventStore merged;
+  merged.loadFromFlat(flat);
   bool mutated = false;
 
   if (!pendingNotes.empty()) {
@@ -596,16 +621,17 @@ void Track::finalizeLoopAtStop(uint32_t openTailCloseTick) {
       closeTick = std::min(openTailCloseTick, loop.loopLengthTicks - 1);
     }
     for (const auto& kv : pendingNotes) {
-      store.append(MidiEvent::NoteOff(closeTick, kv.first.second, kv.first.first, 0));
+      merged.append(MidiEvent::NoteOff(closeTick, kv.first.second, kv.first.first, 0));
     }
     pendingNotes.clear();
     mutated = true;
   }
 
   const LoopStopFinalize::Result result =
-      LoopStopFinalize::finalizeWrapWindowOnStore(store, loop.loopLengthTicks,
+      LoopStopFinalize::finalizeWrapWindowOnStore(merged, loop.loopLengthTicks,
                                                   openTailCloseTick, Config::TICKS_PER_BAR);
   if (mutated || result.syntheticOffsInserted > 0) {
+    loop.commitStopFinalizeFromStore(merged);
     loop.invalidatePlaybackCaches();
   }
   deferredFullMidiValidate = true;
@@ -620,7 +646,6 @@ void Track::finalizeCommitSideEffects(CommitResult result, CommitReason reason, 
       const bool recordStop = reason == CommitReason::RecordStop ||
                               reason == CommitReason::RecordStopToStopped;
       if (recordStop && loop.activeEpochCount() == 0) {
-        loop.committedEvents.mutStore().clear();
         loop.resetEpochTimeline();
         loop.loopLengthTicks = 0;
         loop.loopStartTick = 0;
@@ -660,12 +685,12 @@ void Track::finalizeCommitSideEffects(CommitResult result, CommitReason reason, 
 
 void Track::emitStoredMidiVerification() const {
   const Loop& loop = getActiveLoop();
-  if (loop.loopLengthTicks == 0 || loop.committedEvents.empty()) {
+  if (loop.loopLengthTicks == 0 || !loop.hasPublishedEvents()) {
     return;
   }
 
   MidiEventVec flat;
-  loop.committedEvents.readStore().flatten(flat);
+  loop.flattenActiveEpochs(flat);
   for (const MidiEvent& evt : flat) {
     if (evt.isNoteOn()) {
       SC_STORED_NOTE_EVENT('N', evt.tick, evt.channel, evt.data.noteData.note);
@@ -830,8 +855,8 @@ void Track::stopRecording(uint32_t currentTick) {
       snapBar = absRecStart - remBar + TICKS_PER_BAR;
     }
     int64_t delta = (int64_t)snapBar - (int64_t)absRecStart;
-    if (delta != 0 && !loop.committedEvents.empty()) {
-      loop.committedEvents.mutStore().shiftAllTicks(delta);
+    if (delta != 0 && loop.hasPublishedEvents()) {
+      loop.shiftActiveEpochTicks(delta);
       loop.invalidatePlaybackCaches();
     }
   }
@@ -854,7 +879,11 @@ void Track::stopRecording(uint32_t currentTick) {
   loop.lastTickInLoop = (finalLength > 0)
                             ? tickPhaseInLoop(playbackTick, recordStartTick, finalLength)
                             : 0;
-  reanchorPlaybackIndex(loop);
+  {
+    LoopPlaybackRuntime& runtime = playbackRuntime.slot(activeLoopIndex);
+    ensurePlaybackWindowBuilt(loop, runtime);
+    reanchorPlaybackIndex(loop, runtime.primaryWindow.mergedEvents, loop.getPlaybackOrder());
+  }
 
   invalidatePlaybackCaches();
   SC_REC_STOP("stop", activeLoopIndex, playbackTick, recordStartTick, rawLength, finalLength, captureAlignFlag);
@@ -920,7 +949,11 @@ void Track::stopRecordingToStopped(uint32_t currentTick) {
   loop.lastTickInLoop = (loop.loopLengthTicks > 0)
                             ? tickPhaseInLoop(playbackTick, recordStartTickStopped, loop.loopLengthTicks)
                             : 0;
-  reanchorPlaybackIndex(loop);
+  {
+    LoopPlaybackRuntime& runtime = playbackRuntime.slot(activeLoopIndex);
+    ensurePlaybackWindowBuilt(loop, runtime);
+    reanchorPlaybackIndex(loop, runtime.primaryWindow.mergedEvents, loop.getPlaybackOrder());
+  }
   invalidatePlaybackCaches();
 
   SC_REC_STOP("stopToStopped", activeLoopIndex, playbackTick, recordStartTickStopped,
@@ -1062,15 +1095,12 @@ void Track::clear() {
 
     Loop& loop = getActiveLoop();
     const uint8_t clearedSlot = activeLoopIndex;
-    loop.committedEvents.mutStore().clear();
     loop.resetEpochTimeline();
     loop.discardCapture();
     loop.startLoopTick = 0;
     loop.loopLengthTicks = 0;
     loop.loopStartTick = 0;
 
-    loop.clearOverdubAndLoopEditUndoStacks();
-    loop.clearClearUndoStacks();
     const size_t prunedUndo = TrackUndo::clearUndoHistoryForSlot(*this, clearedSlot);
 
     setState(TRACK_EMPTY);
@@ -1177,22 +1207,14 @@ void Track::recordMidiEvents(midi::MidiType type, byte channel, byte data1, byte
 
 void Track::rebuildPlaybackOrder() {
   Loop& loop = getActiveLoop();
-  PlaybackOrderVec& playbackOrder = loop.getPlaybackOrder();
-  playbackOrder.resize(loop.eventCount());
-  for (size_t i = 0; i < loop.eventCount(); i++) {
-    playbackOrder[i] = i;
-  }
-  uint32_t ll = loop.loopLengthTicks;
-  std::sort(playbackOrder.begin(), playbackOrder.end(),
-    [&](size_t a, size_t b) {
-      return playbackSortPhase(loop.eventAt(a), ll) < playbackSortPhase(loop.eventAt(b), ll);
-    });
-  loop.playbackOrderDirty = false;
+  LoopPlaybackRuntime& runtime = playbackRuntime.slot(activeLoopIndex);
+  ensurePlaybackWindowBuilt(loop, runtime);
+  ::rebuildPlaybackOrder(loop, runtime.primaryWindow.mergedEvents);
 }
 
 void Track::playMidiEvents(uint32_t currentTick, bool isAudible) {
   Loop& loop = getActiveLoop();
-  if (!isAudible || muted || loop.committedEvents.empty() || loop.loopLengthTicks == 0)
+  if (!isAudible || muted || !loop.hasPublishedEvents() || loop.loopLengthTicks == 0)
     return;
   LoopPlaybackRuntime& runtime = playbackRuntime.slot(activeLoopIndex);
   if (runtime.cursor.isStale(loop.playbackRevision, playbackGeneration)) {
@@ -1202,13 +1224,15 @@ void Track::playMidiEvents(uint32_t currentTick, bool isAudible) {
     runtime.cursor.syncRevision(loop.playbackRevision, playbackGeneration);
   }
 
+  ensurePlaybackWindowBuilt(loop, runtime);
+  const MidiEventVec& mergedEvents = runtime.primaryWindow.mergedEvents;
+  if (mergedEvents.empty()) {
+    return;
+  }
+
   if (loop.playbackOrderDirty) {
-    // Rebuild the sort order (event indices changed), but keep the current pass position: re-anchor
-    // nextEventIndex to the playhead instead of resetting to loop start. Resetting made atLoopStart
-    // re-send every event from 0..playhead on each overdub edit, growing the UI stall with playhead
-    // position and clearing only at the next wrap.
-    rebuildPlaybackOrder();
-    reanchorPlaybackIndex(loop);
+    ::rebuildPlaybackOrder(loop, mergedEvents);
+    reanchorPlaybackIndex(loop, mergedEvents, loop.getPlaybackOrder());
   }
 
   uint32_t tickInLoop = tickPhaseInLoop(currentTick, loop.startLoopTick, loop.loopLengthTicks);
@@ -1246,7 +1270,7 @@ void Track::playMidiEvents(uint32_t currentTick, bool isAudible) {
 
   const PlaybackOrderVec& playbackOrder = loop.getPlaybackOrder();
   while (loop.nextEventIndex < playbackOrder.size()) {
-    const MidiEvent &evt = loop.eventAt(playbackOrder[loop.nextEventIndex]);
+    const MidiEvent &evt = mergedEvents[playbackOrder[loop.nextEventIndex]];
     if (evt.tick >= loop.loopLengthTicks) {
       loop.nextEventIndex++;
       continue;
@@ -1311,7 +1335,7 @@ void Track::playMidiEventsForSlot(uint8_t slotIndex, uint32_t currentTick, bool 
   if (!isAudible || muted) return;
 
   Loop& loop = getLoop(slotIndex);
-  if (loop.committedEvents.empty() || loop.loopLengthTicks == 0) return;
+  if (!loop.hasPublishedEvents() || loop.loopLengthTicks == 0) return;
   LoopPlaybackRuntime& runtime = playbackRuntime.slot(slotIndex);
   if (runtime.cursor.isStale(loop.playbackRevision, playbackGeneration)) {
     runtime.reset(true);
@@ -1319,20 +1343,15 @@ void Track::playMidiEventsForSlot(uint8_t slotIndex, uint32_t currentTick, bool 
     runtime.cursor.syncRevision(loop.playbackRevision, playbackGeneration);
   }
 
+  ensurePlaybackWindowBuilt(loop, runtime);
+  const MidiEventVec& mergedEvents = runtime.primaryWindow.mergedEvents;
+  if (mergedEvents.empty()) {
+    return;
+  }
+
   if (loop.playbackOrderDirty) {
-    PlaybackOrderVec& playbackOrder = loop.getPlaybackOrder();
-    playbackOrder.resize(loop.eventCount());
-    for (size_t i = 0; i < loop.eventCount(); i++) {
-      playbackOrder[i] = i;
-    }
-    uint32_t ll = loop.loopLengthTicks;
-    std::sort(playbackOrder.begin(), playbackOrder.end(),
-      [&](size_t a, size_t b) {
-        return playbackSortPhase(loop.eventAt(a), ll) < playbackSortPhase(loop.eventAt(b), ll);
-      });
-    loop.playbackOrderDirty = false;
-    // Keep pass position after reorder so already-played events are not re-sent (see playMidiEvents).
-    reanchorPlaybackIndex(loop);
+    ::rebuildPlaybackOrder(loop, mergedEvents);
+    reanchorPlaybackIndex(loop, mergedEvents, loop.getPlaybackOrder());
   }
 
   uint32_t tickInLoop = tickPhaseInLoop(currentTick, loop.startLoopTick, loop.loopLengthTicks);
@@ -1348,7 +1367,7 @@ void Track::playMidiEventsForSlot(uint8_t slotIndex, uint32_t currentTick, bool 
   const PlaybackOrderVec& playbackOrder = loop.getPlaybackOrder();
 
   while (loop.nextEventIndex < playbackOrder.size()) {
-    const MidiEvent &evt = loop.eventAt(playbackOrder[loop.nextEventIndex]);
+    const MidiEvent &evt = mergedEvents[playbackOrder[loop.nextEventIndex]];
     if (evt.tick >= loop.loopLengthTicks) {
       loop.nextEventIndex++;
       continue;

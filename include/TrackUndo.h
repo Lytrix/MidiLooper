@@ -48,7 +48,6 @@ public:
     static void popLastUndo(Track& track);
     static size_t clearUndoHistoryForSlot(Track& track, uint8_t slotIndex);
     static const MidiEventVec& peekLastMidiSnapshot(const Track& track);
-    static MidiSnapshotDeque& getMidiHistory(Track& track);
     static const MidiEventVec& getCurrentMidiSnapshot(const Track& track);
     // Undo clear
     static void pushClearTrackSnapshot(Track& track);
