@@ -36,7 +36,7 @@ public:
     friend class Track;
     // Undo overdub
     static void pushUndoSnapshot(Track& track);
-    static void establishRecordStopBaseline(Track& track);
+    static void pushPublishedEpoch(Track& track, uint8_t slotIndex, EpochId epochId);
     static void beginOverdubSession(Track& track);
     static void endOverdubSession(Track& track);
     static void undoOverdub(Track& track);
@@ -46,6 +46,7 @@ public:
     static bool canUndo(const Track& track);
     static bool canRedo(const Track& track);
     static void popLastUndo(Track& track);
+    static size_t clearUndoHistoryForSlot(Track& track, uint8_t slotIndex);
     static const MidiEventVec& peekLastMidiSnapshot(const Track& track);
     static MidiSnapshotDeque& getMidiHistory(Track& track);
     static const MidiEventVec& getCurrentMidiSnapshot(const Track& track);

@@ -465,7 +465,7 @@ void MidiButtonActions::handleSelectTrack(uint8_t trackNumber) {
 void MidiButtonActions::handleUndo() {
     Track& track = getCurrentTrack();
     if (TrackUndo::canUndo(track)) {
-        logger.info("MIDI: Undo overdub (snapshots=%d)", TrackUndo::getUndoCount(track));
+        logger.info("MIDI: Undo (entries=%d)", TrackUndo::getUndoCount(track));
         TrackUndo::undoOverdub(track);
         return;
     }
@@ -474,13 +474,13 @@ void MidiButtonActions::handleUndo() {
         TrackUndo::undoClearTrack(track);
         return;
     }
-    logger.info("MIDI: No undo available (overdub=%d)", TrackUndo::getUndoCount(track));
+    logger.info("MIDI: No undo available (entries=%d)", TrackUndo::getUndoCount(track));
 }
 
 void MidiButtonActions::handleRedo() {
     Track& track = getCurrentTrack();
     if (TrackUndo::canRedo(track)) {
-        logger.info("MIDI: Redo overdub (redo_snapshots=%d)", TrackUndo::getRedoCount(track));
+        logger.info("MIDI: Redo (entries=%d)", TrackUndo::getRedoCount(track));
         TrackUndo::redoOverdub(track);
         return;
     }
@@ -489,7 +489,7 @@ void MidiButtonActions::handleRedo() {
         TrackUndo::redoClearTrack(track);
         return;
     }
-    logger.info("MIDI: No redo available (overdub redo=%d)", TrackUndo::getRedoCount(track));
+    logger.info("MIDI: No redo available (entries=%d)", TrackUndo::getRedoCount(track));
 }
 
 void MidiButtonActions::handleUndoClearTrack() {

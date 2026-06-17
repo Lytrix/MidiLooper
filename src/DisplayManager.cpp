@@ -43,6 +43,29 @@ uint32_t clampOpenNoteCloseTick(uint32_t closeTick, uint32_t loopLength) {
     return closeTick;
 }
 
+std::vector<NoteUtils::OpenNoteOn> filterLiveOpenNotesForOverdub(
+    const Loop& loop, const std::vector<NoteUtils::OpenNoteOn>& openNotes) {
+    std::vector<NoteUtils::OpenNoteOn> filtered;
+    filtered.reserve(openNotes.size());
+    for (const auto& open : openNotes) {
+        // Only overdub capture note-ons should follow the playhead. Committed record notes can
+        // remain "open" in findOpenNoteOns when loop-end offs are deferred for wrap display.
+        const LoopEventStore& capture = loop.capture.store;
+        bool inCapture = false;
+        for (size_t i = 0; i < capture.size(); ++i) {
+            const MidiEvent& evt = capture.at(i);
+            if (evt.isNoteOn() && evt.data.noteData.note == open.note && evt.tick == open.tick) {
+                inCapture = true;
+                break;
+            }
+        }
+        if (inCapture) {
+            filtered.push_back(open);
+        }
+    }
+    return filtered;
+}
+
 void applyLiveOpenTails(const std::vector<NoteUtils::OpenNoteOn>& openNotes,
                         const MidiEventVec& midiEvents, uint32_t loopLength, uint32_t closeTick,
                         std::vector<DisplayNote>& notes) {
@@ -76,7 +99,7 @@ void applyLiveOpenTails(const std::vector<NoteUtils::OpenNoteOn>& openNotes,
                 notes.push_back(tailSeg);
             }
 
-            if (clampedCloseTick < headEnd) {
+            if (clampedCloseTick > 0 && clampedCloseTick < headEnd) {
                 DisplayNote headSeg;
                 headSeg.note = open.note;
                 headSeg.velocity = open.velocity;
@@ -242,8 +265,16 @@ const std::vector<DisplayNote>& DisplayManager::resolveDisplayNotes(const Track&
 
     if (!liveDisplayCacheOpenNotes.empty()) {
         const uint32_t playheadCloseTick = resolvePlayheadInLoop(track, displaySlot, currentTick);
-        applyLiveOpenTails(liveDisplayCacheOpenNotes, liveDisplayEventBuffer, liveLoopLength,
-                           playheadCloseTick, liveDisplayNotes);
+        // During overdub, only still-held capture notes follow the playhead. Committed record
+        // notes can remain "open" in findOpenNoteOns when loop-end offs are deferred for wrap UI.
+        const std::vector<NoteUtils::OpenNoteOn>& liveOpenNotes =
+            track.isOverdubbing()
+                ? filterLiveOpenNotesForOverdub(loop, liveDisplayCacheOpenNotes)
+                : liveDisplayCacheOpenNotes;
+        if (!liveOpenNotes.empty()) {
+            applyLiveOpenTails(liveOpenNotes, liveDisplayEventBuffer, liveLoopLength,
+                               playheadCloseTick, liveDisplayNotes);
+        }
     }
 
     return liveDisplayNotes;

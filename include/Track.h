@@ -16,6 +16,7 @@
 #include "Utils/MemoryPool.h"   // For pooled MIDI event vectors
 #include "TrackState.h"
 #include "Loop.h"
+#include "GlobalUndoStack.h"
 
 /// Derived capture role for a loop slot (from TrackState + activeLoopIndex).
 enum class SlotOpState : uint8_t {
@@ -182,6 +183,9 @@ public:
   uint8_t getActiveLoopIndex() const;
   void setActiveLoopIndex(uint8_t index);
 
+  GlobalUndoStack& getGlobalUndoStack() { return undoStack; }
+  const GlobalUndoStack& getGlobalUndoStack() const { return undoStack; }
+
   /// Per-slot capture state (only activeLoopIndex can be RECORDING/OVERDUBBING).
   SlotOpState getSlotOpState(uint8_t slotIndex) const;
   /// Active slot receiving MIDI capture, or Config::INVALID_LOOP_SLOT if not recording/overdubbing.
@@ -271,6 +275,7 @@ private:
   bool alignLoopOriginOnNextStop;
   uint16_t recordAddedNoteOnCount;  // note-ons this overdub pass (memory log at overdub stop)
   bool deferredFullMidiValidate = false;
+  GlobalUndoStack undoStack;
   static const uint32_t TICKS_PER_BAR;
 
   void queueDeferredRecordRevts() const;

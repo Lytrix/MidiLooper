@@ -139,6 +139,22 @@ void test_undo_snapshot_ref_isolated_by_cow() {
   TEST_ASSERT_EQUAL(1u, snap->size());
 }
 
+void test_drop_events_at_or_beyond_tick_removes_overflow() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  LoopEventStore store;
+
+  TEST_ASSERT_TRUE(store.append(MidiEvent::NoteOn(1500, 1, 60, 100)));
+  TEST_ASSERT_TRUE(store.append(MidiEvent::NoteOff(1520, 1, 60, 0)));
+  TEST_ASSERT_TRUE(store.append(MidiEvent::NoteOn(1548, 1, 61, 100)));  // overflow
+  TEST_ASSERT_TRUE(store.append(MidiEvent::NoteOff(1590, 1, 61, 0)));   // overflow
+
+  store.dropEventsAtOrBeyondTick(1536);
+  TEST_ASSERT_EQUAL(2u, store.size());
+  TEST_ASSERT_EQUAL(1500u, store.at(0).tick);
+  TEST_ASSERT_EQUAL(1520u, store.at(1).tick);
+}
+
 int main(int /*argc*/, char** /*argv*/) {
   UNITY_BEGIN();
   RUN_TEST(test_append_fills_chunks_without_realloc_pattern);
@@ -150,5 +166,6 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_shift_all_ticks_bumps_negative);
   RUN_TEST(test_lower_bound_index_skips_prefix);
   RUN_TEST(test_undo_snapshot_ref_isolated_by_cow);
+  RUN_TEST(test_drop_events_at_or_beyond_tick_removes_overflow);
   return UNITY_END();
 }

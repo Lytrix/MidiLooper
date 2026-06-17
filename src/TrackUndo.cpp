@@ -10,26 +10,168 @@
 #include "Globals.h"
 #include "Utils/MemoryPool.h"
 #include "Utils/MidiEventVecFnvHash.h"
-#include "Utils/HotPathTelemetry.h"
 
 namespace {
 
-void trimOverdubUndoHistory(Loop& loop) {
-    if (loop.getMidiHistory().size() <= Config::MAX_UNDO_HISTORY) {
-        return;
-    }
-    loop.getMidiHistory().pop_front();
-    if (!loop.overdubGeomHistoryEmpty()) {
-        loop.getOverdubGeomHistory().pop_front();
+UndoLoopGeometry captureGeometry(const Loop& loop) {
+    return {loop.loopLengthTicks, loop.startLoopTick, loop.loopStartTick};
+}
+
+void applyGeometry(Loop& loop, const UndoLoopGeometry& geometry) {
+    loop.loopLengthTicks = geometry.loopLengthTicks;
+    loop.startLoopTick = geometry.startLoopTick;
+    loop.loopStartTick = geometry.loopStartTick;
+}
+
+void trimGlobalUndoHistory(GlobalUndoStack& stack) {
+    while (stack.entries.size() > Config::MAX_UNDO_HISTORY) {
+        stack.entries.erase(stack.entries.begin());
+        if (stack.cursor > 0) {
+            --stack.cursor;
+        }
     }
 }
 
-void logLargeSnapshotIfNeeded(size_t eventCount) {
-    if (eventCount > Config::SNAPSHOT_DEGRADED_UNDO_EVENT_THRESHOLD) {
-        logger.log(CAT_TRACK, LOG_WARNING,
-                   "Large loop snapshot ref (%zu events); undo restore remains O(N)",
-                   eventCount);
+void dropRedoBranch(GlobalUndoStack& stack) {
+    if (stack.cursor >= stack.entries.size()) {
+        return;
     }
+    stack.entries.erase(stack.entries.begin() + static_cast<std::ptrdiff_t>(stack.cursor), stack.entries.end());
+}
+
+void pushUndoEntry(Track& track, UndoEntry&& entry) {
+    GlobalUndoStack& stack = track.getGlobalUndoStack();
+    dropRedoBranch(stack);
+    entry.id = stack.nextEntryId++;
+    stack.entries.push_back(std::move(entry));
+    stack.cursor = stack.entries.size();
+    trimGlobalUndoHistory(stack);
+}
+
+size_t eraseUndoEntriesForSlot(GlobalUndoStack& stack, uint8_t slotIndex) {
+    const size_t oldSize = stack.entries.size();
+    if (oldSize == 0) {
+        return 0;
+    }
+
+    UndoEntryVec kept;
+    kept.reserve(oldSize);
+    size_t removedBeforeCursor = 0;
+    size_t removedTotal = 0;
+
+    for (size_t i = 0; i < oldSize; ++i) {
+        const bool remove = stack.entries[i].slotIndex == slotIndex;
+        if (remove) {
+            ++removedTotal;
+            if (i < stack.cursor) {
+                ++removedBeforeCursor;
+            }
+            continue;
+        }
+        kept.push_back(std::move(stack.entries[i]));
+    }
+
+    stack.entries = std::move(kept);
+    if (removedBeforeCursor > stack.cursor) {
+        stack.cursor = 0;
+    } else {
+        stack.cursor -= removedBeforeCursor;
+    }
+    if (stack.cursor > stack.entries.size()) {
+        stack.cursor = stack.entries.size();
+    }
+    if (stack.entries.empty()) {
+        stack.nextEntryId = 1;
+    }
+    return removedTotal;
+}
+
+void restoreLoopSnapshot(Loop& loop, const MidiSnapshotRef& snapshot, const UndoLoopGeometry& geometry) {
+    loop.committedEvents.restoreFromSnapshot(snapshot);
+    applyGeometry(loop, geometry);
+    if (loop.committedEvents.empty()) {
+        loop.nextEventIndex = 0;
+        loop.lastTickInLoop = 0;
+    }
+    loop.rebuildEpochTimelineFromCommitted();
+    loop.invalidateCaches();
+}
+
+bool applyUndoEntry(Track& track, UndoEntry& entry) {
+    Loop& loop = track.getLoop(entry.slotIndex);
+    switch (entry.kind) {
+        case UndoEntryKind::NoteEditCommit:
+        case UndoEntryKind::ClearSlot:
+            entry.afterSnapshot = loop.committedEvents.shareForSnapshot();
+            entry.afterGeometry = captureGeometry(loop);
+            if (entry.hasTrackState) {
+                entry.afterTrackState = track.getState();
+            }
+            restoreLoopSnapshot(loop, entry.beforeSnapshot, entry.beforeGeometry);
+            if (entry.hasTrackState) {
+                track.forceSetState(entry.beforeTrackState);
+            }
+            entry.hasRedoPayload = true;
+            return true;
+        case UndoEntryKind::LoopBoundaryChange:
+            entry.afterLoopStartTick = loop.loopStartTick;
+            entry.afterLoopLengthTicks = loop.loopLengthTicks;
+            loop.loopStartTick = entry.beforeLoopStartTick;
+            loop.loopLengthTicks = entry.beforeLoopLengthTicks;
+            loop.invalidateCaches();
+            entry.hasRedoPayload = true;
+            return true;
+        case UndoEntryKind::EpochPublished:
+            if (!loop.setEpochState(entry.epochId, EpochState::Disabled)) {
+                logger.log(CAT_TRACK, LOG_WARNING, "Undo failed: missing epoch %lu in slot %u",
+                           static_cast<unsigned long>(entry.epochId),
+                           static_cast<unsigned>(entry.slotIndex));
+                return false;
+            }
+            loop.syncCommittedEventsFromEpochs();
+            loop.invalidateCaches();
+            return true;
+    }
+    return false;
+}
+
+bool applyRedoEntry(Track& track, UndoEntry& entry) {
+    Loop& loop = track.getLoop(entry.slotIndex);
+    switch (entry.kind) {
+        case UndoEntryKind::NoteEditCommit:
+        case UndoEntryKind::ClearSlot:
+            if (!entry.hasRedoPayload) {
+                logger.log(CAT_TRACK, LOG_WARNING, "Redo payload missing for entry %lu",
+                           static_cast<unsigned long>(entry.id));
+                return false;
+            }
+            restoreLoopSnapshot(loop, entry.afterSnapshot, entry.afterGeometry);
+            if (entry.hasTrackState) {
+                track.forceSetState(entry.afterTrackState);
+            }
+            return true;
+        case UndoEntryKind::LoopBoundaryChange:
+            if (!entry.hasRedoPayload) {
+                logger.log(CAT_TRACK, LOG_WARNING, "Redo boundary payload missing for entry %lu",
+                           static_cast<unsigned long>(entry.id));
+                return false;
+            }
+            loop.loopStartTick = entry.afterLoopStartTick;
+            loop.loopLengthTicks = entry.afterLoopLengthTicks;
+            loop.invalidateCaches();
+            return true;
+        case UndoEntryKind::EpochPublished:
+            if (!loop.setEpochState(entry.epochId, EpochState::Active)) {
+                logger.log(CAT_TRACK, LOG_WARNING, "Redo failed: missing epoch %lu in slot %u",
+                           static_cast<unsigned long>(entry.epochId),
+                           static_cast<unsigned>(entry.slotIndex));
+                return false;
+            }
+            loop.syncCommittedEventsFromEpochs();
+            loop.invalidateCaches();
+            return true;
+    }
+    return false;
 }
 
 }  // namespace
@@ -40,191 +182,139 @@ void TrackUndo::pushUndoSnapshot(Track& track) {
     logger.log(CAT_TRACK, LOG_INFO, "BYPASS_STOP_UNDO_SAVE: skip pushUndoSnapshot");
     return;
 #endif
-    const uint32_t telemetryStartUs = micros();
     Loop& loop = track.getActiveLoop();
-    const size_t eventCount = loop.committedEvents.size();
-    logLargeSnapshotIfNeeded(eventCount);
-    loop.getMidiHistory().push_back(loop.committedEvents.shareForSnapshot());
-    trimOverdubUndoHistory(loop);
-    loop.getOverdubGeomHistory().push_back(
-        {loop.loopLengthTicks, loop.startLoopTick, loop.loopStartTick});
-    loop.midiEventCountAtLastSnapshot = eventCount;
-    loop.getMidiRedoHistory().clear();
-    loop.getOverdubGeomRedoHistory().clear();
-    HotPathTelemetry::recordUndoSnapshot(micros() - telemetryStartUs,
-                                         static_cast<uint32_t>(eventCount), 0);
+    UndoEntry entry;
+    entry.kind = UndoEntryKind::NoteEditCommit;
+    entry.slotIndex = track.getActiveLoopIndex();
+    entry.loopId = loop.loopId;
+    entry.beforeSnapshot = loop.committedEvents.shareForSnapshot();
+    entry.beforeGeometry = captureGeometry(loop);
+    pushUndoEntry(track, std::move(entry));
 }
 
-void TrackUndo::establishRecordStopBaseline(Track& track) {
-    Loop& loop = track.getActiveLoop();
-#if BYPASS_STOP_UNDO_SAVE
-    loop.overdubSessionBaselineEventCount = loop.committedEvents.size();
-    loop.overdubSessionBaselineHash = 0;
-    loop.midiEventCountAtLastSnapshot = loop.committedEvents.size();
-    logger.log(CAT_TRACK, LOG_INFO, "BYPASS_STOP_UNDO_SAVE: skip establishRecordStopBaseline snapshot");
-#else
-    if (!loop.midiHistoryEmpty()) {
-        const auto& top = loop.getMidiHistory().back();
-        // Keep empty preroll snapshot from record start so a second undo can revert to empty.
-        if (!top || !top->empty()) {
-            popLastUndo(track);
-        }
+void TrackUndo::pushPublishedEpoch(Track& track, uint8_t slotIndex, EpochId epochId) {
+    if (slotIndex >= Config::MAX_LOOPS_PER_TRACK || epochId == kInvalidEpochId) {
+        return;
     }
-    pushUndoSnapshot(track);
-    loop.overdubSessionBaselineEventCount = loop.committedEvents.size();
-    loop.overdubSessionBaselineHash = 0;
-    loop.midiEventCountAtLastSnapshot = loop.committedEvents.size();
-#endif
+    const Loop& loop = track.getLoop(slotIndex);
+    UndoEntry entry;
+    entry.kind = UndoEntryKind::EpochPublished;
+    entry.slotIndex = slotIndex;
+    entry.loopId = loop.loopId;
+    entry.epochId = epochId;
+    pushUndoEntry(track, std::move(entry));
 }
 
 void TrackUndo::beginOverdubSession(Track& track) {
-    const uint32_t telemetryStartUs = micros();
-    Loop& loop = track.getActiveLoop();
-    loop.overdubSessionOpen = true;
-    loop.overdubSessionBaselineEventCount = loop.committedEvents.size();
-    loop.overdubSessionBaselineHash = 0;
-    loop.midiEventCountAtLastSnapshot = loop.committedEvents.size();
-    loop.getMidiRedoHistory().clear();
-    loop.getOverdubGeomRedoHistory().clear();
-    const uint32_t sourceEvents = static_cast<uint32_t>(loop.committedEvents.size());
-    HotPathTelemetry::recordOverdubSessionOpen(micros() - telemetryStartUs, sourceEvents);
-    logger.debug("Overdub session opened: events=%d, snapshots=%d",
-                 static_cast<int>(loop.committedEvents.size()),
-                 static_cast<int>(loop.midiHistorySize()));
+    (void)track;
 }
 
 void TrackUndo::endOverdubSession(Track& track) {
-    Loop& loop = track.getActiveLoop();
-    if (!loop.overdubSessionOpen) {
-        return;
-    }
-    loop.overdubSessionOpen = false;
-    const bool unchanged =
-        loop.committedEvents.size() == loop.overdubSessionBaselineEventCount;
-    if (!unchanged) {
-        loop.overdubSessionBaselineHash = computeMidiHash(track);
-    }
-    logger.debug("Overdub session closed: events=%d, snapshots=%d, unchanged=%d",
-                 static_cast<int>(loop.committedEvents.size()),
-                 static_cast<int>(loop.midiHistorySize()),
-                 unchanged ? 1 : 0);
+    (void)track;
 }
 
 void TrackUndo::undoOverdub(Track& track) {
     Loop& loop = track.getActiveLoop();
-    if (loop.overdubSessionOpen && loop.capture.phase == CapturePhase::Overdub) {
+    if (loop.capture.phase == CapturePhase::Overdub && !loop.capture.store.empty()) {
         loop.discardCapture();
-        track.invalidateCaches();
+        loop.invalidateCaches();
         logger.logTrackEvent("Overdub capture undone", clockManager.getCurrentTick());
         return;
     }
-    if (!canUndo(track)) {
+    GlobalUndoStack& stack = track.getGlobalUndoStack();
+    if (!stack.canUndo()) {
         logger.log(CAT_TRACK, LOG_WARNING, "Cannot undo overdub right now");
         return;
     }
-    loop.getMidiRedoHistory().push_back(loop.committedEvents.shareForSnapshot());
-    loop.getOverdubGeomRedoHistory().push_back(
-        {loop.loopLengthTicks, loop.startLoopTick, loop.loopStartTick});
-
-    const auto& lastSnapshot = loop.getMidiHistory().back();
-    loop.committedEvents.restoreFromSnapshot(lastSnapshot);
-    if (!loop.overdubGeomHistoryEmpty()) {
-        const auto& lastGeom = loop.getOverdubGeomHistory().back();
-        loop.loopLengthTicks = lastGeom.loopLengthTicks;
-        loop.startLoopTick = lastGeom.startLoopTick;
-        loop.loopStartTick = lastGeom.loopStartTick;
+    UndoEntry& entry = stack.entries[stack.cursor - 1];
+    if (!applyUndoEntry(track, entry)) {
+        return;
     }
-    if (loop.committedEvents.empty()) {
-        loop.loopLengthTicks = 0;
-        loop.loopStartTick = 0;
-        loop.nextEventIndex = 0;
-        loop.lastTickInLoop = 0;
-        if (track.getState() != TRACK_RECORDING && track.getState() != TRACK_OVERDUBBING &&
-            track.getState() != TRACK_ARMED) {
-            track.forceSetState(TRACK_EMPTY);
-        }
-    } else if (track.getState() == TRACK_EMPTY) {
-        track.forceSetState(TRACK_STOPPED);
-    }
-    loop.midiEventCountAtLastSnapshot = loop.committedEvents.size();
-    popLastUndo(track);
-    loop.rebuildEpochTimelineFromCommitted();
-    track.invalidateCaches();
-    logger.debug("Undo restored snapshot: midiEvents=%d snapshotSize=%d",
-                 static_cast<int>(loop.committedEvents.size()), getUndoCount(track));
+    --stack.cursor;
+    logger.debug("Undo applied: kind=%d undo_count=%d",
+                 static_cast<int>(entry.kind),
+                 static_cast<int>(getUndoCount(track)));
     logger.logTrackEvent("Overdub undone", clockManager.getCurrentTick());
     StorageManager::requestDeferredSaveState(looperState.getLooperState());
 }
 
 void TrackUndo::redoOverdub(Track& track) {
-    if (!canRedo(track)) {
+    GlobalUndoStack& stack = track.getGlobalUndoStack();
+    if (!stack.canRedo()) {
         logger.log(CAT_TRACK, LOG_WARNING, "Cannot redo overdub right now");
         return;
     }
-    Loop& loop = track.getActiveLoop();
-    loop.getMidiHistory().push_back(loop.committedEvents.shareForSnapshot());
-    trimOverdubUndoHistory(loop);
-    loop.getOverdubGeomHistory().push_back(
-        {loop.loopLengthTicks, loop.startLoopTick, loop.loopStartTick});
-
-    const auto& redoSnapshot = loop.getMidiRedoHistory().back();
-    loop.committedEvents.restoreFromSnapshot(redoSnapshot);
-    if (!loop.overdubGeomRedoHistoryEmpty()) {
-        const auto& redoGeom = loop.getOverdubGeomRedoHistory().back();
-        loop.loopLengthTicks = redoGeom.loopLengthTicks;
-        loop.startLoopTick = redoGeom.startLoopTick;
-        loop.loopStartTick = redoGeom.loopStartTick;
+    UndoEntry& entry = stack.entries[stack.cursor];
+    if (!applyRedoEntry(track, entry)) {
+        return;
     }
-    loop.getMidiRedoHistory().pop_back();
-    loop.getOverdubGeomRedoHistory().pop_back();
-    loop.midiEventCountAtLastSnapshot = loop.committedEvents.size();
-    loop.rebuildEpochTimelineFromCommitted();
-    track.invalidateCaches();
-    logger.debug("Redo restored snapshot: midiEvents=%d redoSize=%d",
-                 static_cast<int>(loop.committedEvents.size()), getRedoCount(track));
+    ++stack.cursor;
+    logger.debug("Redo applied: kind=%d redo_count=%d",
+                 static_cast<int>(entry.kind),
+                 static_cast<int>(getRedoCount(track)));
     logger.logTrackEvent("Overdub redone", clockManager.getCurrentTick());
     StorageManager::requestDeferredSaveState(looperState.getLooperState());
 }
 
 size_t TrackUndo::getUndoCount(const Track& track) {
-    return track.getActiveLoop().midiHistorySize();
+    return track.getGlobalUndoStack().undoCount();
 }
 
 size_t TrackUndo::getRedoCount(const Track& track) {
-    return track.getActiveLoop().midiRedoHistorySize();
+    return track.getGlobalUndoStack().redoCount();
 }
 
 bool TrackUndo::canUndo(const Track& track) {
     const Loop& loop = track.getActiveLoop();
-    if (loop.overdubSessionOpen && loop.capture.phase == CapturePhase::Overdub &&
-        !loop.capture.store.empty()) {
+    if (loop.capture.phase == CapturePhase::Overdub && !loop.capture.store.empty()) {
         return true;
     }
-    return !loop.midiHistoryEmpty();
+    return track.getGlobalUndoStack().canUndo();
 }
 
 bool TrackUndo::canRedo(const Track& track) {
-    return !track.getActiveLoop().midiRedoHistoryEmpty();
+    return track.getGlobalUndoStack().canRedo();
 }
 
 void TrackUndo::popLastUndo(Track& track) {
-    Loop& loop = track.getActiveLoop();
-    if (loop.midiHistoryEmpty()) {
+    GlobalUndoStack& stack = track.getGlobalUndoStack();
+    if (!stack.canUndo()) {
         logger.log(CAT_TRACK, LOG_WARNING, "Attempted to pop undo snapshot, but none exist");
         return;
     }
-    loop.getMidiHistory().pop_back();
-    if (!loop.overdubGeomHistoryEmpty()) {
-        loop.getOverdubGeomHistory().pop_back();
+    if (stack.cursor < stack.entries.size()) {
+        stack.entries.erase(stack.entries.begin() + static_cast<std::ptrdiff_t>(stack.cursor), stack.entries.end());
     }
+    stack.entries.erase(stack.entries.begin() + static_cast<std::ptrdiff_t>(stack.cursor - 1));
+    --stack.cursor;
+}
+
+size_t TrackUndo::clearUndoHistoryForSlot(Track& track, uint8_t slotIndex) {
+    if (slotIndex >= Config::MAX_LOOPS_PER_TRACK) {
+        return 0;
+    }
+    GlobalUndoStack& stack = track.getGlobalUndoStack();
+    const size_t removed = eraseUndoEntriesForSlot(stack, slotIndex);
+    if (removed > 0) {
+        logger.log(CAT_TRACK, LOG_INFO,
+                   "Global undo pruned for slot %u: removed=%u remaining=%u cursor=%u",
+                   static_cast<unsigned>(slotIndex),
+                   static_cast<unsigned>(removed),
+                   static_cast<unsigned>(stack.entries.size()),
+                   static_cast<unsigned>(stack.cursor));
+    }
+    return removed;
 }
 
 const MidiEventVec& TrackUndo::peekLastMidiSnapshot(const Track& track) {
     static MidiEventVec tempSnapshot;
     tempSnapshot.clear();
-    const Loop& loop = track.getActiveLoop();
-    if (!loop.midiHistoryEmpty()) {
-        loop.getMidiHistory().back()->flatten(tempSnapshot);
+    const GlobalUndoStack& stack = track.getGlobalUndoStack();
+    if (stack.canUndo()) {
+        const UndoEntry& entry = stack.entries[stack.cursor - 1];
+        if (entry.beforeSnapshot) {
+            entry.beforeSnapshot->flatten(tempSnapshot);
+        }
     }
     return tempSnapshot;
 }
@@ -239,167 +329,66 @@ const MidiEventVec& TrackUndo::getCurrentMidiSnapshot(const Track& track) {
 
 void TrackUndo::pushClearTrackSnapshot(Track& track) {
     Loop& loop = track.getActiveLoop();
-    MemoryPool::PooledMidiEventVector pooledEvents(MemoryPool::globalMidiEventPool);
-    for (const auto& event : loop.midiEvents()) {
-        pooledEvents.push_back(event);
-    }
-    loop.getClearMidiHistory().push_back(std::move(pooledEvents));
-    loop.getClearStateHistory().push_back(track.getState());
-    loop.getClearLengthHistory().push_back(loop.loopLengthTicks);
-    loop.getClearStartHistory().push_back(loop.loopStartTick);
-    if (loop.getClearMidiHistory().size() > Config::MAX_UNDO_HISTORY) loop.getClearMidiHistory().pop_front();
-    if (loop.getClearStateHistory().size() > Config::MAX_UNDO_HISTORY) loop.getClearStateHistory().pop_front();
-    if (loop.getClearLengthHistory().size() > Config::MAX_UNDO_HISTORY) loop.getClearLengthHistory().pop_front();
-    if (loop.getClearStartHistory().size() > Config::MAX_UNDO_HISTORY) loop.getClearStartHistory().pop_front();
-    loop.getClearMidiRedoHistory().clear();
-    loop.getClearStateRedoHistory().clear();
-    loop.getClearLengthRedoHistory().clear();
-    loop.getClearStartRedoHistory().clear();
+    UndoEntry entry;
+    entry.kind = UndoEntryKind::ClearSlot;
+    entry.slotIndex = track.getActiveLoopIndex();
+    entry.loopId = loop.loopId;
+    entry.beforeSnapshot = loop.committedEvents.shareForSnapshot();
+    entry.beforeGeometry = captureGeometry(loop);
+    entry.beforeTrackState = track.getState();
+    entry.hasTrackState = true;
+    pushUndoEntry(track, std::move(entry));
 }
 
 void TrackUndo::undoClearTrack(Track& track) {
-    Loop& loop = track.getActiveLoop();
-    if (!loop.clearMidiHistoryEmpty()) {
-        MemoryPool::PooledMidiEventVector redoEvents(MemoryPool::globalMidiEventPool);
-        for (const auto& event : loop.midiEvents()) {
-            redoEvents.push_back(event);
-        }
-        loop.getClearMidiRedoHistory().push_back(std::move(redoEvents));
-        loop.getClearStateRedoHistory().push_back(track.getState());
-        loop.getClearLengthRedoHistory().push_back(loop.loopLengthTicks);
-        loop.getClearStartRedoHistory().push_back(loop.loopStartTick);
-
-        const auto& lastSnapshot = loop.getClearMidiHistory().back();
-        auto snapStore = std::make_shared<LoopEventStore>();
-        for (const auto& event : lastSnapshot) {
-            snapStore->append(*event);
-        }
-        loop.committedEvents.restoreFromSnapshot(snapStore);
-        loop.getClearMidiHistory().pop_back();
-    }
-    if (!loop.getClearStateHistory().empty()) {
-        track.forceSetState(loop.getClearStateHistory().back());
-        loop.getClearStateHistory().pop_back();
-    }
-    if (!loop.getClearLengthHistory().empty()) {
-        loop.loopLengthTicks = loop.getClearLengthHistory().back();
-        loop.getClearLengthHistory().pop_back();
-    }
-    if (!loop.getClearStartHistory().empty()) {
-        loop.loopStartTick = loop.getClearStartHistory().back();
-        loop.getClearStartHistory().pop_back();
-    }
-    if (!loop.midiEvents().empty() && (track.getState() == TRACK_EMPTY)) {
-        track.setState(TRACK_STOPPED);
-    }
-    track.invalidateCaches();
-    StorageManager::requestDeferredSaveState(looperState.getLooperState());
+    undoOverdub(track);
 }
 
 void TrackUndo::redoClearTrack(Track& track) {
-    if (!canRedoClearTrack(track)) {
-        logger.log(CAT_TRACK, LOG_WARNING, "Cannot redo clear track right now");
-        return;
-    }
-    Loop& loop = track.getActiveLoop();
-
-    MemoryPool::PooledMidiEventVector undoEvents(MemoryPool::globalMidiEventPool);
-    for (const auto& event : loop.midiEvents()) {
-        undoEvents.push_back(event);
-    }
-    loop.getClearMidiHistory().push_back(std::move(undoEvents));
-    loop.getClearStateHistory().push_back(track.getState());
-    loop.getClearLengthHistory().push_back(loop.loopLengthTicks);
-    loop.getClearStartHistory().push_back(loop.loopStartTick);
-
-    if (!loop.clearMidiRedoHistoryEmpty()) {
-        const auto& redoSnapshot = loop.getClearMidiRedoHistory().back();
-        auto snapStore = std::make_shared<LoopEventStore>();
-        for (const auto& event : redoSnapshot) {
-            snapStore->append(*event);
-        }
-        loop.committedEvents.restoreFromSnapshot(snapStore);
-        loop.getClearMidiRedoHistory().pop_back();
-    }
-    if (!loop.getClearStateRedoHistory().empty()) {
-        track.forceSetState(loop.getClearStateRedoHistory().back());
-        loop.getClearStateRedoHistory().pop_back();
-    }
-    if (!loop.getClearLengthRedoHistory().empty()) {
-        loop.loopLengthTicks = loop.getClearLengthRedoHistory().back();
-        loop.getClearLengthRedoHistory().pop_back();
-    }
-    if (!loop.getClearStartRedoHistory().empty()) {
-        loop.loopStartTick = loop.getClearStartRedoHistory().back();
-        loop.getClearStartRedoHistory().pop_back();
-    }
-
-    logger.logTrackEvent("Clear track redone", clockManager.getCurrentTick());
-    StorageManager::requestDeferredSaveState(looperState.getLooperState());
+    redoOverdub(track);
 }
 
 void TrackUndo::pushLoopStartSnapshot(Track& track) {
     Loop& loop = track.getActiveLoop();
-    loop.getLoopStartHistory().push_back(loop.loopStartTick);
-    if (loop.getLoopStartHistory().size() > Config::MAX_UNDO_HISTORY) {
-        loop.getLoopStartHistory().pop_front();
-    }
-    loop.getLoopStartRedoHistory().clear();
-    logger.log(CAT_TRACK, LOG_DEBUG, "Loop start snapshot pushed: %lu ticks", loop.loopStartTick);
+    UndoEntry entry;
+    entry.kind = UndoEntryKind::LoopBoundaryChange;
+    entry.slotIndex = track.getActiveLoopIndex();
+    entry.loopId = loop.loopId;
+    entry.beforeLoopStartTick = loop.loopStartTick;
+    entry.beforeLoopLengthTicks = loop.loopLengthTicks;
+    pushUndoEntry(track, std::move(entry));
 }
 
 void TrackUndo::undoLoopStart(Track& track) {
-    if (!canUndoLoopStart(track)) {
-        logger.log(CAT_TRACK, LOG_WARNING, "Cannot undo loop start change right now");
-        return;
-    }
-    Loop& loop = track.getActiveLoop();
-    loop.getLoopStartRedoHistory().push_back(loop.loopStartTick);
-
-    uint32_t previousStartTick = loop.getLoopStartHistory().back();
-    loop.getLoopStartHistory().pop_back();
-
-    logger.log(CAT_TRACK, LOG_INFO, "Loop start undo: %lu -> %lu ticks", loop.loopStartTick, previousStartTick);
-    loop.loopStartTick = previousStartTick;
-    track.invalidateCaches();
-
-    logger.logTrackEvent("Loop start undone", clockManager.getCurrentTick());
-    StorageManager::requestDeferredSaveState(looperState.getLooperState());
+    undoOverdub(track);
 }
 
 void TrackUndo::redoLoopStart(Track& track) {
-    if (!canRedoLoopStart(track)) {
-        logger.log(CAT_TRACK, LOG_WARNING, "Cannot redo loop start change right now");
-        return;
-    }
-    Loop& loop = track.getActiveLoop();
-    loop.getLoopStartHistory().push_back(loop.loopStartTick);
-
-    uint32_t nextStartTick = loop.getLoopStartRedoHistory().back();
-    loop.getLoopStartRedoHistory().pop_back();
-
-    logger.log(CAT_TRACK, LOG_INFO, "Loop start redo: %lu -> %lu ticks", loop.loopStartTick, nextStartTick);
-    loop.loopStartTick = nextStartTick;
-    track.invalidateCaches();
-
-    logger.logTrackEvent("Loop start redone", clockManager.getCurrentTick());
-    StorageManager::requestDeferredSaveState(looperState.getLooperState());
+    redoOverdub(track);
 }
 
 bool TrackUndo::canUndoLoopStart(const Track& track) {
-    return !track.getActiveLoop().loopStartHistoryEmpty();
+    const GlobalUndoStack& stack = track.getGlobalUndoStack();
+    return stack.canUndo() &&
+           stack.entries[stack.cursor - 1].kind == UndoEntryKind::LoopBoundaryChange;
 }
 
 bool TrackUndo::canRedoLoopStart(const Track& track) {
-    return !track.getActiveLoop().loopStartRedoHistoryEmpty();
+    const GlobalUndoStack& stack = track.getGlobalUndoStack();
+    return stack.canRedo() &&
+           stack.entries[stack.cursor].kind == UndoEntryKind::LoopBoundaryChange;
 }
 
 bool TrackUndo::canRedoClearTrack(const Track& track) {
-    return !track.getActiveLoop().clearMidiRedoHistoryEmpty();
+    const GlobalUndoStack& stack = track.getGlobalUndoStack();
+    return stack.canRedo() &&
+           stack.entries[stack.cursor].kind == UndoEntryKind::ClearSlot;
 }
 
 bool TrackUndo::canUndoClearTrack(const Track& track) {
-    return !track.getActiveLoop().clearMidiHistoryEmpty();
+    const GlobalUndoStack& stack = track.getGlobalUndoStack();
+    return stack.canUndo() &&
+           stack.entries[stack.cursor - 1].kind == UndoEntryKind::ClearSlot;
 }
 
 uint32_t TrackUndo::computeMidiHash(const Track& track) {

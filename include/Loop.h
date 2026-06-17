@@ -66,6 +66,7 @@ struct Loop {
   VisualCacheDelta pendingVisualDelta;
   EpochId nextEpochId_ = 1;
   uint32_t nextMergeSequence_ = 0;
+  EpochId lastPublishedEpochId_ = kInvalidEpochId;
 
   uint32_t startLoopTick = 0;
   uint32_t loopLengthTicks = 0;
@@ -113,7 +114,9 @@ struct Loop {
   void ensureCommittedMigratedToEpoch();
   /// After legacy undo restore: one Active epoch mirroring committedEvents.
   void rebuildEpochTimelineFromCommitted();
+  bool setEpochState(EpochId id, EpochState state);
   void resetEpochTimeline();
+  EpochId lastPublishedEpochId() const { return lastPublishedEpochId_; }
   bool captureActive() const;
   size_t liveEventCount() const;
   /// Sort capture buffer by tick when append order diverges (display/playback/commit).
