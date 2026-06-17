@@ -222,10 +222,9 @@ void Track::startRecording(uint32_t currentTick) {
   // New take supersedes "undo clear slot"; overdub undo handles record/overdub revert.
   loop.clearClearUndoStacks();
   if (isEmpty()) {
-    // Preroll undo target is truly empty: zero geometry before snapshot.
+    // Preroll target is truly empty.
     loop.loopLengthTicks = 0;
     loop.loopStartTick = 0;
-    TrackUndo::pushUndoSnapshot(*this);
   }
   auto preRoll = std::move(armedPreRollNotes);
   if (!setState(TRACK_RECORDING)) {
@@ -592,35 +591,27 @@ void Track::finalizeCommitSideEffects(CommitResult result, CommitReason reason, 
       }
       if (reason == CommitReason::OverdubStop || reason == CommitReason::OverdubStopToStopped) {
         finalizeLoopAtStop(closeTick);
-        TrackUndo::endOverdubSession(*this);
         StorageManager::requestDeferredSaveState(looperState.getLooperState());
       }
       break;
     }
     case CommitResult::Published:
       finalizeLoopAtStop(closeTick);
-      switch (reason) {
-        case CommitReason::RecordStop:
-        case CommitReason::RecordStopToStopped:
-          TrackUndo::establishRecordStopBaseline(*this);
-          break;
-        case CommitReason::OverdubStop:
-        case CommitReason::OverdubStopToStopped:
-          TrackUndo::endOverdubSession(*this);
-          StorageManager::requestDeferredSaveState(looperState.getLooperState());
-          break;
+      TrackUndo::pushPublishedEpoch(*this, getActiveLoopIndex(), loop.lastPublishedEpochId());
+      if (reason == CommitReason::OverdubStop || reason == CommitReason::OverdubStopToStopped) {
+        StorageManager::requestDeferredSaveState(looperState.getLooperState());
       }
       break;
     case CommitResult::SealFailed:
       loop.discardPendingEpoch();
-      if (reason == CommitReason::OverdubStop || reason == CommitReason::OverdubStopToStopped) {
-        TrackUndo::endOverdubSession(*this);
-      }
       break;
   }
 
   if (result == CommitResult::Published) {
     invalidateCaches();
+    if (reason == CommitReason::RecordStop || reason == CommitReason::RecordStopToStopped) {
+      queueDeferredRecordRevts();
+    }
     if (reason == CommitReason::OverdubStop || reason == CommitReason::OverdubStopToStopped) {
       emitStoredMidiVerification();
     }
@@ -670,11 +661,14 @@ void Track::processDeferredIdleMaintenance() {
 }
 
 void Track::queueDeferredRecordRevts() const {
+  size_t queued = 0;
   for (const MidiEvent& evt : getActiveLoop().midiEvents()) {
     if (evt.isNoteOn()) {
       SC_REC_QUEUE_STORED_NOTE_ON(evt.tick, evt.channel, evt.data.noteData.note);
+      ++queued;
     }
   }
+  logger.log(CAT_TRACK, LOG_DEBUG, "Queued REVT note-ons: %d", static_cast<int>(queued));
 }
 
 void Track::closeOpenNotesAtLoopWrap() {
@@ -735,13 +729,6 @@ void Track::closeOpenNotesAtLoopWrap() {
     loop.appendCaptureEvent(off);
   }
 
-  for (const MidiEvent& off : syntheticNoteOffs) {
-    pendingNotes.erase({off.data.noteData.note, off.channel});
-    logger.log(CAT_MIDI, LOG_DEBUG,
-               "Loop-wrap cleared pendingNote: note %d, channel %d",
-               off.data.noteData.note, off.channel);
-  }
-
   ++loop.captureDisplayRevision;
 }
 
@@ -754,7 +741,6 @@ void Track::stopRecording(uint32_t currentTick) {
 
   [[maybe_unused]] const bool captureAlignFlag = alignLoopOriginOnNextStop;
   Loop& loop = getActiveLoop();
-  finalizePendingNotes(currentTick);
 
   uint32_t rawLength = 0;
   if (currentTick >= loop.startLoopTick) {
@@ -776,15 +762,20 @@ void Track::stopRecording(uint32_t currentTick) {
       loop.loopLengthTicks = ((rawLength / TICKS_PER_BAR) + 1) * TICKS_PER_BAR;
   }
 
+  if (loop.loopLengthTicks > 0) {
+    // Record-stop truncation: events captured past final loop length must not
+    // survive into committed playback state.
+    loop.capture.store.dropEventsAtOrBeyondTick(loop.loopLengthTicks);
+  }
+
   const CommitResult commitResult =
       loop.commitCaptureData(CommitReason::RecordStop, currentTick);
+  pendingNotes.clear();
 
   // Validate AFTER loopLengthTicks is known so wrap-matching and open-tail closing
   // (the second pass and synthetic note-offs) are active for this record-stop.
-  uint32_t closeTick = UINT32_MAX;
-  if (loop.loopLengthTicks > 0) {
-    closeTick = tickPhaseInLoop(currentTick, loop.startLoopTick, loop.loopLengthTicks);
-  }
+  // Record-stop must close open tails at loop end, not at the stop playhead tick.
+  const uint32_t closeTick = UINT32_MAX;
   finalizeCommitSideEffects(commitResult, CommitReason::RecordStop, closeTick);
 
   if (alignLoopOriginOnNextStop) {
@@ -823,6 +814,7 @@ void Track::stopRecording(uint32_t currentTick) {
   loop.lastTickInLoop = (finalLength > 0)
                             ? tickPhaseInLoop(playbackTick, recordStartTick, finalLength)
                             : 0;
+  reanchorPlaybackIndex(loop);
 
   invalidatePlaybackCaches();
   SC_REC_STOP("stop", activeLoopIndex, playbackTick, recordStartTick, rawLength, finalLength, captureAlignFlag);
@@ -842,7 +834,6 @@ void Track::stopRecordingToStopped(uint32_t currentTick) {
 
   alignLoopOriginOnNextStop = false;
   Loop& loop = getActiveLoop();
-  finalizePendingNotes(currentTick);
 
   uint32_t rawLength = 0;
   if (currentTick >= loop.startLoopTick) {
@@ -864,14 +855,17 @@ void Track::stopRecordingToStopped(uint32_t currentTick) {
       loop.loopLengthTicks = ((rawLength / TICKS_PER_BAR) + 1) * TICKS_PER_BAR;
   }
 
+  if (loop.loopLengthTicks > 0) {
+    // Record-stop truncation: drop overflow capture events before seal/publish.
+    loop.capture.store.dropEventsAtOrBeyondTick(loop.loopLengthTicks);
+  }
+
   const CommitResult commitResult =
       loop.commitCaptureData(CommitReason::RecordStopToStopped, currentTick);
+  pendingNotes.clear();
 
   // Validate AFTER loopLengthTicks is known (see stopRecording for rationale).
-  uint32_t closeTick = UINT32_MAX;
-  if (loop.loopLengthTicks > 0) {
-    closeTick = tickPhaseInLoop(currentTick, loop.startLoopTick, loop.loopLengthTicks);
-  }
+  const uint32_t closeTick = UINT32_MAX;
   finalizeCommitSideEffects(commitResult, CommitReason::RecordStopToStopped, closeTick);
 
   [[maybe_unused]] const uint32_t recordStartTickStopped = loop.startLoopTick;
@@ -886,6 +880,7 @@ void Track::stopRecordingToStopped(uint32_t currentTick) {
   loop.lastTickInLoop = (loop.loopLengthTicks > 0)
                             ? tickPhaseInLoop(playbackTick, recordStartTickStopped, loop.loopLengthTicks)
                             : 0;
+  reanchorPlaybackIndex(loop);
   invalidatePlaybackCaches();
 
   SC_REC_STOP("stopToStopped", activeLoopIndex, playbackTick, recordStartTickStopped,
@@ -931,12 +926,12 @@ void Track::startOverdubbing(uint32_t currentTick) {
   Loop& loop = getActiveLoop();
   loop.beginCapture(CapturePhase::Overdub);
   TrackUndo::beginOverdubSession(*this);
-  logger.info("Overdub session opened: events=%d, snapshots=%d",
+  logger.info("Overdub session opened: events=%d, undo_entries=%d",
               static_cast<int>(loop.midiEvents().size()),
-              static_cast<int>(loop.midiHistorySize()));
+              static_cast<int>(TrackUndo::getUndoCount(*this)));
   HotPathTelemetry::recordOverdubStart(micros() - telemetryStartUs,
                                        static_cast<uint32_t>(getActiveLoop().midiEvents().size()),
-                                       static_cast<uint32_t>(getActiveLoop().midiHistorySize()));
+                                       static_cast<uint32_t>(TrackUndo::getUndoCount(*this)));
   logger.logTrackEvent("Overdubbing started", currentTick);
 }
 
@@ -954,7 +949,7 @@ void Track::stopOverdubbing() {
   finalizeCommitSideEffects(commitResult, CommitReason::OverdubStop, closeTick);
   logMemoryAfterOverdubStop(recordAddedNoteOnCount, loop);
   logger.logTrackEvent("Overdubbing stopped", currentTick);
-  logger.info("Overdub stopped: events=%d, snapshots=%d", getActiveLoop().midiEvents().size(), getActiveLoop().midiHistorySize());
+  logger.info("Overdub stopped: events=%d, undo_entries=%d", getActiveLoop().midiEvents().size(), TrackUndo::getUndoCount(*this));
 
   // Preserve phase origin from record-stop rewind so playback cursor and event phase stay aligned.
   resetPlaybackState(currentTick);
@@ -1026,6 +1021,7 @@ void Track::clear() {
     }
 
     Loop& loop = getActiveLoop();
+    const uint8_t clearedSlot = activeLoopIndex;
     loop.committedEvents.mutStore().clear();
     loop.resetEpochTimeline();
     loop.discardCapture();
@@ -1034,10 +1030,13 @@ void Track::clear() {
     loop.loopStartTick = 0;
 
     loop.clearOverdubAndLoopEditUndoStacks();
+    loop.clearClearUndoStacks();
+    const size_t prunedUndo = TrackUndo::clearUndoHistoryForSlot(*this, clearedSlot);
 
     setState(TRACK_EMPTY);
     alignLoopOriginOnNextStop = false;
     invalidateCaches();
+    logger.log(CAT_TRACK, LOG_INFO, "Clear pruned undo entries=%u", static_cast<unsigned>(prunedUndo));
     logger.logTrackEvent("Track cleared", clockManager.getCurrentTick());
 }
 
@@ -1099,7 +1098,10 @@ void Track::recordMidiEvents(midi::MidiType type, byte channel, byte data1, byte
             prior.data.noteData.note != data1) {
           continue;
         }
-        if (tickRelative <= prior.tick) {
+        const bool wrappedHeadOff =
+            isOverdubbing() && loop.loopLengthTicks > 0 && tickRelative < prior.tick &&
+            pendingNotes.find({data1, channel}) != pendingNotes.end();
+        if (tickRelative <= prior.tick && !wrappedHeadOff) {
           tickRelative = prior.tick + 1;
           newEvt.tick = tickRelative;
         }

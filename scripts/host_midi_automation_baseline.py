@@ -178,6 +178,26 @@ def _send_short_press(
     out_port.send(mido.Message("note_off", channel=ch, note=note, velocity=0))
 
 
+def _send_multi_short_press(
+    out_port: mido.ports.BaseOutput,
+    *,
+    note: int,
+    channel_1based: int,
+    press_ms: int,
+    count: int,
+    gap_ms: int = 80,
+) -> None:
+    for i in range(max(count, 0)):
+        _send_short_press(
+            out_port,
+            note=note,
+            channel_1based=channel_1based,
+            press_ms=press_ms,
+        )
+        if i + 1 < count:
+            time.sleep(max(gap_ms, 1) / 1000.0)
+
+
 def _drain_input_messages(in_port: mido.ports.BaseInput) -> int:
     count = 0
     while True:
@@ -365,6 +385,14 @@ def _stream_pattern_for_bars(
     target_clocks = target_bars * 96
     phase_delay_clocks = (phase_start_delay_bars * 96) + (phase_start_delay_beats * 24)
     pitch_cycle_clocks = pitch_cycle_bars * 96
+
+    def select_grid_note() -> Optional[int]:
+        if fixed_note is not None:
+            return fixed_note
+        # One chromatic pass per phase: do not wrap-repeat the first pitch at loop boundary.
+        if note_index > 0 and (note_index % len(note_range)) == 0:
+            return None
+        return note_range[note_index % len(note_range)]
     # Drop queued note/CC from previous phases. Discard stale clocks too — transport
     # may already be running; counting them here would shorten the phase vs device ticks.
     while True:
@@ -428,35 +456,31 @@ def _stream_pattern_for_bars(
         held_notes = still_held
 
         if emit_immediate_first_step and not immediate_step_emitted:
-            if fixed_note is not None:
-                note = fixed_note
-            else:
-                note = note_range[note_index % len(note_range)]
-            out_port.send(mido.Message("note_on", channel=ch, note=note, velocity=98))
-            note_on_count += 1
-            out_port.send(mido.Message("control_change", channel=ch, control=cc_number, value=cc_val))
-            cc_count += 1
-            gate_clocks = note_gate_clocks
-            held_notes.append((note, phase_clock_count + gate_clocks))
-            note_index += 1
-            cc_val = (cc_val + cc_step) % 128
+            note = select_grid_note()
+            if note is not None:
+                out_port.send(mido.Message("note_on", channel=ch, note=note, velocity=98))
+                note_on_count += 1
+                out_port.send(mido.Message("control_change", channel=ch, control=cc_number, value=cc_val))
+                cc_count += 1
+                gate_clocks = note_gate_clocks
+                held_notes.append((note, phase_clock_count + gate_clocks))
+                note_index += 1
+                cc_val = (cc_val + cc_step) % 128
             immediate_step_emitted = True
 
         if phase_clock_count >= next_step_clock:
-            if fixed_note is not None:
-                note = fixed_note
-            else:
-                note = note_range[note_index % len(note_range)]
-            jitter_samples.append(phase_clock_count - next_step_clock)
-            out_port.send(mido.Message("note_on", channel=ch, note=note, velocity=98))
-            note_on_count += 1
-            out_port.send(mido.Message("control_change", channel=ch, control=cc_number, value=cc_val))
-            cc_count += 1
+            note = select_grid_note()
+            if note is not None:
+                jitter_samples.append(phase_clock_count - next_step_clock)
+                out_port.send(mido.Message("note_on", channel=ch, note=note, velocity=98))
+                note_on_count += 1
+                out_port.send(mido.Message("control_change", channel=ch, control=cc_number, value=cc_val))
+                cc_count += 1
 
-            gate_clocks = note_gate_clocks
-            held_notes.append((note, phase_clock_count + gate_clocks))
-            note_index += 1
-            cc_val = (cc_val + cc_step) % 128
+                gate_clocks = note_gate_clocks
+                held_notes.append((note, phase_clock_count + gate_clocks))
+                note_index += 1
+                cc_val = (cc_val + cc_step) % 128
             next_step_clock += step_clocks
             if fixed_note is None and (phase_clock_count % pitch_cycle_clocks) == 0:
                 note_index = 0
@@ -678,6 +702,36 @@ def _count_capture_state_entries(lines: list[str]) -> dict[str, int]:
         to_state = parts[1].strip()
         counts[to_state] = counts.get(to_state, 0) + 1
     return counts
+
+
+def _extract_clear_undo_prune(lines: list[str]) -> dict[str, object]:
+    pattern = re.compile(
+        r"Global undo pruned for slot\s+(?P<slot>\d+):\s+removed=(?P<removed>\d+)\s+remaining=(?P<remaining>\d+)\s+cursor=(?P<cursor>\d+)"
+    )
+    last_match: Optional[dict[str, int]] = None
+    for line in lines:
+        m = pattern.search(line)
+        if not m:
+            continue
+        last_match = {
+            "slot": int(m.group("slot")),
+            "removed": int(m.group("removed")),
+            "remaining": int(m.group("remaining")),
+            "cursor": int(m.group("cursor")),
+        }
+    if last_match is None:
+        return {
+            "found": False,
+            "remaining_zero": False,
+        }
+    return {
+        "found": True,
+        "remaining_zero": last_match["remaining"] == 0,
+        "slot": last_match["slot"],
+        "removed": last_match["removed"],
+        "remaining": last_match["remaining"],
+        "cursor": last_match["cursor"],
+    }
 
 
 def _serial_has_clear_ignored_empty(lines: list[str]) -> bool:
@@ -953,7 +1007,10 @@ def _extract_first_note_offset(
 
 
 def _extract_revt_note_on_ticks(lines: list[str]) -> list[int]:
-    """Stored note-on ticks logged just before the first record RECS,stop line."""
+    """Stored note-on ticks logged for the first record phase.
+
+    REVT emission is deferred (idle flush), so lines can appear after RECS,stop.
+    """
     recs_stop_ts: Optional[int] = None
     record_start_ts: Optional[int] = None
     for line in lines:
@@ -984,8 +1041,6 @@ def _extract_revt_note_on_ticks(lines: list[str]) -> list[int]:
         except ValueError:
             continue
         if record_start_ts is not None and ts < record_start_ts:
-            continue
-        if ts > recs_stop_ts:
             continue
         ticks.append(tick)
     return ticks
@@ -1423,6 +1478,24 @@ def run() -> int:
         help="Final wait before exit so delayed short-press actions are captured",
     )
     parser.add_argument("--press-ms", type=int, default=85, help="Button press duration (short press)")
+    parser.add_argument(
+        "--undo-redo-after-overdub-stop",
+        action="store_true",
+        default=True,
+        help="After overdub stop, wait then Undo (double-press), wait, then Redo (triple-press)",
+    )
+    parser.add_argument(
+        "--no-undo-redo-after-overdub-stop",
+        action="store_false",
+        dest="undo_redo_after_overdub_stop",
+        help="Skip undo/redo presses after overdub stop",
+    )
+    parser.add_argument(
+        "--undo-redo-delay-ms",
+        type=int,
+        default=500,
+        help="Wait after overdub stop before undo, and between undo and redo (default: 500)",
+    )
     parser.add_argument("--midi-channel", type=int, default=1, help="Dense input MIDI channel (1-16)")
     parser.add_argument("--root-note", type=int, default=60, help="Chromatic root note")
     parser.add_argument("--semitone-span", type=int, default=12, help="Chromatic span size")
@@ -1544,6 +1617,8 @@ def run() -> int:
         raise SystemExit("--overdub-first-note-max-clocks must be >= 0")
     if args.overdub_start_delay_beats < 0:
         raise SystemExit("--overdub-start-delay-beats must be >= 0")
+    if args.undo_redo_after_overdub_stop and not (args.serial_port or args.verify_serial_log):
+        raise SystemExit("--undo-redo-after-overdub-stop requires --serial-port or --verify-serial-log")
 
     seconds_per_bar = (60.0 / args.tempo_bpm) * 4.0
     if args.record_bars and not args.bar_sync_from_midi_clock:
@@ -2032,6 +2107,27 @@ def run() -> int:
                         press_ms=args.press_ms,
                     )
                 time.sleep(args.phase_wait_ms / 1000.0)
+                if args.undo_redo_after_overdub_stop:
+                    undo_redo_gap_s = max(args.undo_redo_delay_ms, 0) / 1000.0
+                    time.sleep(undo_redo_gap_s)
+                    print(f"[track {idx}] undo after overdub stop (double press)")
+                    _send_multi_short_press(
+                        out_port,
+                        note=RECORD_BUTTON_NOTE,
+                        channel_1based=CONTROL_CHANNEL_1BASED,
+                        press_ms=args.press_ms,
+                        count=2,
+                    )
+                    time.sleep(undo_redo_gap_s)
+                    print(f"[track {idx}] redo after overdub stop (triple press)")
+                    _send_multi_short_press(
+                        out_port,
+                        note=RECORD_BUTTON_NOTE,
+                        channel_1based=CONTROL_CHANNEL_1BASED,
+                        press_ms=args.press_ms,
+                        count=3,
+                    )
+                    time.sleep(args.phase_wait_ms / 1000.0)
                 if args.stop_after_overdub:
                     print(f"[track {idx}] transport stop")
                     _send_short_press(
@@ -2086,6 +2182,9 @@ def run() -> int:
     transition_counts = _count_capture_transitions(verification_lines)
     reca_count, recs_count = _count_capture_record_markers(verification_lines)
     cap_lines_count = sum(1 for l in verification_lines if "#CAP," in l)
+    undo_log_count = sum(1 for l in verification_lines if "Overdub undone" in l)
+    redo_log_count = sum(1 for l in verification_lines if "Overdub redone" in l)
+    clear_undo_prune = _extract_clear_undo_prune(verification_lines)
 
     expected_min = args.track_count
     expected_record_notes_min = 0
@@ -2212,6 +2311,14 @@ def run() -> int:
         "phase_note_failures": phase_note_failures,
         "phase_activation_failures": phase_activation_failures,
         "serial_verification": serial_verification,
+        "undo_redo_after_overdub_stop": {
+            "enabled": bool(args.undo_redo_after_overdub_stop),
+            "delay_ms": args.undo_redo_delay_ms if args.undo_redo_after_overdub_stop else None,
+            "undo_log_count": undo_log_count if verification_lines else None,
+            "redo_log_count": redo_log_count if verification_lines else None,
+            "expected_min": expected_min if (verification_lines and args.undo_redo_after_overdub_stop) else None,
+        },
+        "clear_undo_prune": clear_undo_prune if (verification_lines and args.clear_before_record) else None,
     }
 
     overall_ok = True
@@ -2232,6 +2339,12 @@ def run() -> int:
         for row in transition_checks:
             if row["ok"] is False:
                 overall_ok = False
+        if args.undo_redo_after_overdub_stop and (undo_log_count < expected_min or redo_log_count < expected_min):
+            overall_ok = False
+        if args.clear_before_record and (
+            not bool(clear_undo_prune.get("found")) or not bool(clear_undo_prune.get("remaining_zero"))
+        ):
+            overall_ok = False
     if phase_note_failures:
         overall_ok = False
     if phase_activation_failures:
@@ -2273,6 +2386,18 @@ def run() -> int:
     if verification_lines:
         print(f"  #CAP lines observed: {cap_lines_count}")
         print(f"  RECA count: {reca_count}, RECS count: {recs_count}")
+        if args.undo_redo_after_overdub_stop:
+            print(
+                "  Undo/Redo after overdub-stop logs: "
+                f"undo={undo_log_count} redo={redo_log_count} (min {expected_min})"
+            )
+        if args.clear_before_record:
+            print(
+                "  Clear undo prune check: "
+                f"found={clear_undo_prune.get('found')} "
+                f"remaining_zero={clear_undo_prune.get('remaining_zero')} "
+                f"remaining={clear_undo_prune.get('remaining')}"
+            )
         for row in transition_checks:
             print(f"  ST {row['from']}->{row['to']}: {row['actual']} (min {row['expected_min']})")
         if serial_verification is not None:

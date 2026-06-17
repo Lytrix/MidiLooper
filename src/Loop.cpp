@@ -212,6 +212,7 @@ void Loop::resetEpochTimeline() {
   epochs.clear();
   nextEpochId_ = 1;
   nextMergeSequence_ = 0;
+  lastPublishedEpochId_ = kInvalidEpochId;
   playbackRevision = 0;
 }
 
@@ -238,6 +239,7 @@ void Loop::ensureCommittedMigratedToEpoch() {
   migrated.kind = EpochKind::Record;
   migrated.chunkRefs = std::move(refs);
   epochs.push_back(migrated);
+  lastPublishedEpochId_ = migrated.id;
   ++playbackRevision;
 }
 
@@ -250,6 +252,10 @@ void Loop::syncCommittedEventsFromEpochs() {
     }
   }
   if (active.empty()) {
+    LoopEventStore& committed = committedEvents.mutStore();
+    committed.clear();
+    playbackOrderDirty = true;
+    invalidatePlaybackCaches();
     return;
   }
 
@@ -293,6 +299,7 @@ void Loop::rebuildEpochTimelineFromCommitted() {
 
   if (committedEvents.empty()) {
     nextEpochId_ = 1;
+    lastPublishedEpochId_ = kInvalidEpochId;
     playbackRevision = 0;
     return;
   }
@@ -315,7 +322,23 @@ void Loop::rebuildEpochTimelineFromCommitted() {
   rebuilt.kind = EpochKind::Record;
   rebuilt.chunkRefs = std::move(refs);
   epochs.push_back(rebuilt);
+  lastPublishedEpochId_ = rebuilt.id;
   ++playbackRevision;
+}
+
+bool Loop::setEpochState(EpochId id, EpochState state) {
+  for (Epoch& epoch : epochs) {
+    if (epoch.id != id) {
+      continue;
+    }
+    if (epoch.state == state) {
+      return true;
+    }
+    epoch.state = state;
+    ++playbackRevision;
+    return true;
+  }
+  return false;
 }
 
 CommitResult Loop::commitCaptureData(CommitReason reason, uint32_t sealedAtTick) {
@@ -412,6 +435,7 @@ bool Loop::publishPendingEpoch() {
   Epoch published = pendingEpoch_;
   published.state = EpochState::Active;
   epochs.push_back(published);
+  lastPublishedEpochId_ = published.id;
 
   pendingEpoch_ = Epoch{};
   hasPendingEpoch_ = false;

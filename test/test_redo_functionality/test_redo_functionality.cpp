@@ -2,7 +2,6 @@
 //  Licensed under the PolyForm Noncommercial 1.0.0
 
 #include <iostream>
-#include <vector>
 #include <cassert>
 #include "../../include/Track.h"
 #include "../../include/TrackUndo.h"
@@ -16,16 +15,16 @@ void testRedoFunctionality() {
     Track track;
     
     // Create some test MIDI events
-    std::vector<MidiEvent> events1 = {
-        {midi::NoteOn, 0, 0, {60, 100}},  // Note C4, velocity 100
-        {midi::NoteOff, 480, 0, {60, 0}}  // Note off after 1 beat
+    MidiEventVec events1 = {
+        MidiEvent::NoteOn(0, 1, 60, 100),    // Note C4, velocity 100
+        MidiEvent::NoteOff(480, 1, 60, 0),   // Note off after 1 beat
     };
     
-    std::vector<MidiEvent> events2 = {
-        {midi::NoteOn, 0, 0, {60, 100}},   // Note C4, velocity 100
-        {midi::NoteOff, 480, 0, {60, 0}},  // Note off after 1 beat
-        {midi::NoteOn, 240, 0, {64, 80}},  // Note E4, velocity 80
-        {midi::NoteOff, 720, 0, {64, 0}}   // Note off after 1.5 beats
+    MidiEventVec events2 = {
+        MidiEvent::NoteOn(0, 1, 60, 100),    // Note C4, velocity 100
+        MidiEvent::NoteOff(480, 1, 60, 0),   // Note off after 1 beat
+        MidiEvent::NoteOn(240, 1, 64, 80),   // Note E4, velocity 80
+        MidiEvent::NoteOff(720, 1, 64, 0),   // Note off after 1.5 beats
     };
     
     // Test 1: Basic redo functionality
@@ -73,24 +72,17 @@ void testRedoFunctionality() {
     
     std::cout << "✓ Test 2 passed" << std::endl;
     
-    // Test 3: Clear redo functionality
-    std::cout << "Test 3: Clear redo functionality" << std::endl;
+    // Test 3: Clearing a loop must clear undo history
+    std::cout << "Test 3: Clear removes undo history" << std::endl;
     
     // Set up clear undo
     track.getMidiEvents() = events1;
-    TrackUndo::pushClearTrackSnapshot(track);
+    TrackUndo::pushUndoSnapshot(track);
+    assert(TrackUndo::getUndoCount(track) == 1);
     track.clear();
     assert(track.getMidiEvents().size() == 0);
-    
-    // Undo clear
-    TrackUndo::undoClearTrack(track);
-    assert(track.getMidiEvents().size() == 2);
-    assert(TrackUndo::canRedoClearTrack(track) == true);
-    
-    // Redo clear
-    TrackUndo::redoClearTrack(track);
-    assert(track.getMidiEvents().size() == 0);
-    assert(TrackUndo::canRedoClearTrack(track) == false);
+    assert(TrackUndo::getUndoCount(track) == 0);
+    assert(TrackUndo::getRedoCount(track) == 0);
     
     std::cout << "✓ Test 3 passed" << std::endl;
     
@@ -109,6 +101,30 @@ void testRedoFunctionality() {
     assert(TrackUndo::getRedoCount(track) == 0);
     
     std::cout << "✓ Test 4 passed" << std::endl;
+
+    // Test 5: Record stop -> undo -> redo (hardware test flow)
+    std::cout << "Test 5: Undo/redo after record stop" << std::endl;
+
+    track.clear();
+    assert(TrackUndo::getUndoCount(track) == 0);
+    assert(TrackUndo::getRedoCount(track) == 0);
+
+    track.startRecording(0);
+    track.noteOn(5, 60, 100, 0);
+    track.noteOff(5, 60, 0, 120);
+    track.stopRecording(800);
+
+    const size_t eventCountAfterRecord = track.getMidiEvents().size();
+    assert(eventCountAfterRecord > 0);
+    assert(TrackUndo::getUndoCount(track) >= 1);
+
+    TrackUndo::undoOverdub(track);
+    assert(TrackUndo::getRedoCount(track) >= 1);
+
+    TrackUndo::redoOverdub(track);
+    assert(track.getMidiEvents().size() > 0);
+    assert(TrackUndo::getUndoCount(track) >= 1);
+    std::cout << "✓ Test 5 passed" << std::endl;
     
     std::cout << "All redo functionality tests passed!" << std::endl;
 }

@@ -20,8 +20,11 @@ Run from project root:
  --record-bars 2 --overdub-bars 2 \
  --no-fixed-grid-notes --start-transport \
  --overdub-start-delay-bars 0 --overdub-start-delay-beats 1 \
- --phase-wait-ms 500 --final-wait-ms 3000 --press-ms 120
+ --phase-wait-ms 500 --final-wait-ms 3000 --press-ms 120 \
+ --undo-redo-delay-ms 500
 ```
+
+Undo/redo after overdub stop is **on by default** (500 ms wait, double-press undo, 500 ms wait, triple-press redo). Use `--no-undo-redo-after-overdub-stop` to skip.
 
 Long runs (e.g. 32+32 bars) rely on serial heartbeat abort (default 20s silence)
 instead of a hard wall-clock timeout. Use `--max-run-seconds N` only if you want
@@ -44,6 +47,7 @@ The run is considered valid only when all are true:
  - `STOPPED_RECORDING -> PLAYING`
  - `PLAYING -> OVERDUBBING`
  - `OVERDUBBING -> PLAYING`
+- undo/redo after overdub stop (default on): serial logs include `Overdub undone` and `Overdub redone` (≥ 1 each)
 
 ## Serial verification policy (mandatory)
 

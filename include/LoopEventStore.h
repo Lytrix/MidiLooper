@@ -58,6 +58,8 @@ class LoopEventStore {
 
   /// Shift every event tick by delta; bumps up if any tick would go negative.
   void shiftAllTicks(int64_t delta);
+  /// Drop events whose tick is >= tickLimit. Preserves event order.
+  void dropEventsAtOrBeyondTick(uint32_t tickLimit);
 
   std::shared_ptr<LoopEventStore> cloneShared() const;
 

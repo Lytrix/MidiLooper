@@ -316,6 +316,41 @@ void LoopEventStore::shiftAllTicks(int64_t delta) {
   }
 }
 
+void LoopEventStore::dropEventsAtOrBeyondTick(uint32_t tickLimit) {
+  if (empty()) {
+    return;
+  }
+
+  ChunkIdList kept;
+  kept.reserve(chunkIds_.size());
+  for (uint16_t id : chunkIds_) {
+    EventChunk& c = chunk(id);
+    uint16_t write = 0;
+    for (uint16_t read = 0; read < c.used; ++read) {
+      const MidiEvent& evt = c.events[read];
+      if (evt.tick >= tickLimit) {
+        continue;
+      }
+      if (write != read) {
+        c.events[write] = evt;
+      }
+      ++write;
+    }
+
+    if (write == 0) {
+      freeChunk(id);
+      continue;
+    }
+
+    c.used = write;
+    c.firstTick = c.events[0].tick;
+    c.lastTick = c.events[write - 1].tick;
+    kept.push_back(id);
+  }
+
+  chunkIds_.swap(kept);
+}
+
 std::shared_ptr<LoopEventStore> LoopEventStore::cloneShared() const {
   auto copy = std::make_shared<LoopEventStore>();
   for (uint16_t id : chunkIds_) {
