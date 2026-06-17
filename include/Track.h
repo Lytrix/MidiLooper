@@ -113,7 +113,8 @@ public:
   // MIDI event validation
   void validateAndCleanupMidiEvents(uint32_t openTailCloseTick = UINT32_MAX);  // Full loop (cold path)
   /// Wrap-window only: record/overdub stop hot path. Schedules deferred full validate.
-  void finalizeLoopAtStop(uint32_t openTailCloseTick = UINT32_MAX);
+  void finalizeLoopAtStop(uint32_t openTailCloseTick = UINT32_MAX,
+                          bool scheduleDeferredFullValidate = true);
   void finalizeCommitSideEffects(CommitResult result, CommitReason reason, uint32_t closeTick);
   void emitStoredMidiVerification() const;
   /// Idle maintenance: deferred full validate + session REVT flush (non-blocking stop path).

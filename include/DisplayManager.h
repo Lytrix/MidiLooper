@@ -38,6 +38,8 @@ public:
     void setup();
     void update();
     void clearDisplayBuffer();
+    /// Emit #CAP DISP snapshot for HITL display verification (capture builds).
+    void emitDisplayCaptureSnapshot(const Track& track, uint8_t displaySlot, uint32_t currentTick);
 
     // Margin for piano roll, info area and note info
     static constexpr int TRACK_MARGIN = 22; 
@@ -58,6 +60,9 @@ public:
     void drawBracket(uint32_t bracketTick, uint32_t lengthLoop, int pianoRollY1);
 
 private:
+    void maybeEmitDisplayCaptureOnChange(const Track& track, uint8_t displaySlot, uint32_t currentTick,
+                                         size_t frameNoteCount);
+
     enum class SidebarMode : uint8_t {
         LOOP_EDIT,
         NOTE_EDIT,

@@ -119,6 +119,12 @@ struct Loop {
   void shiftActiveEpochTicks(int64_t delta);
   /// Write materialized editFlat_ back into Active epochs (stop-path / validation).
   void flushEditStoreToEpochs();
+  /// Call after mutating midiEvents() flat buffer so flushEditStoreToEpochs can commit.
+  void markEditFlatDirty() { editFlat_.markFlatDirty(); }
+#if defined(PIO_UNIT_TEST_NATIVE)
+  void nativeTestSyncEditFlatToEpochs(bool allowEmptyClear) { syncEditFlatToEpochs(allowEmptyClear); }
+  size_t nativeTestLiveEventCount() const { return liveEventCount(); }
+#endif
   /// SD v3/v1/v2 migration: adopt flat store as single Active epoch.
   void importPublishedStore(LoopEventStore& store);
   /// Drop read-path editFlat materialization without writing back to epochs.
@@ -168,10 +174,9 @@ struct Loop {
 
   CowLoopEventStore editFlat_;
   bool editFlatStale_ = true;
-  bool editFlatDirty_ = false;
 
   void materializeEditFlatFromEpochs() const;
-  void syncEditFlatToEpochs();
+  void syncEditFlatToEpochs(bool allowEmptyClear = false);
   void freeActiveEpochChunks();
   void markEpochDerivedStale();
 

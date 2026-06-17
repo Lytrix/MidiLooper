@@ -355,6 +355,9 @@ void NoteEditManager::deleteSelectedNote(Track& track) {
     
     logger.info("MIDI Encoder: Deleted %d MIDI events for note", deletedCount);
 
+    Loop& loop = track.getActiveLoop();
+    loop.markEditFlatDirty();
+    loop.flushEditStoreToEpochs();
     track.invalidateCaches();
     
     // Since we're using dedicated faders now, we don't need to manage complex edit modes
