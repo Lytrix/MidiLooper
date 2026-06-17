@@ -68,11 +68,29 @@ void test_append_flattened_chunk_ids_preserves_epoch_refs() {
   TEST_ASSERT_EQUAL(1u, refs.size());
 }
 
+void test_capture_store_spans_multiple_chunks() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  LoopEventStore capture;
+
+  for (uint16_t i = 0; i < 300; ++i) {
+    const uint32_t tick = static_cast<uint32_t>(i) * 48u;
+    const bool ok = capture.append(
+        MidiEvent::NoteOn(tick, 5, static_cast<uint8_t>(24 + (i % 16)), 98));
+    if (!ok) {
+      TEST_FAIL_MESSAGE("capture append failed before 300 events");
+    }
+  }
+  TEST_ASSERT_EQUAL(300u, capture.size());
+  TEST_ASSERT_EQUAL(48u * 299u, capture.at(299).tick);
+}
+
 int main(int /*argc*/, char** /*argv*/) {
   UNITY_BEGIN();
   RUN_TEST(test_detach_chunks_moves_ownership);
   RUN_TEST(test_adopt_chunk_ids_releases_pending_refs);
   RUN_TEST(test_epoch_kind_maps_capture_phase);
   RUN_TEST(test_append_flattened_chunk_ids_preserves_epoch_refs);
+  RUN_TEST(test_capture_store_spans_multiple_chunks);
   return UNITY_END();
 }

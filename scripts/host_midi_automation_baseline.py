@@ -390,9 +390,6 @@ def _stream_pattern_for_bars(
     def select_grid_note() -> Optional[int]:
         if fixed_note is not None:
             return fixed_note
-        # One chromatic pass per phase: do not wrap-repeat the first pitch at loop boundary.
-        if note_index > 0 and (note_index % len(note_range)) == 0:
-            return None
         return note_range[note_index % len(note_range)]
     # Drop queued note/CC from previous phases. Discard stale clocks too — transport
     # may already be running; counting them here would shorten the phase vs device ticks.
@@ -1086,7 +1083,14 @@ def _verify_stored_record_note_grid(
     }
 
 
-def _extract_sevt_note_on_ticks(lines: list[str], *, after_ts: Optional[int] = None) -> list[int]:
+def _extract_sevt_note_on_ticks(
+    lines: list[str],
+    *,
+    low_note: int,
+    high_note: int,
+    midi_channel_1based: int,
+    after_ts: Optional[int] = None,
+) -> list[int]:
     ticks: list[int] = []
     for line in lines:
         if ",SEVT,N," not in line:
@@ -1097,13 +1101,38 @@ def _extract_sevt_note_on_ticks(lines: list[str], *, after_ts: Optional[int] = N
         try:
             ts = int(parts[1])
             tick = int(parts[4])
+            channel = int(parts[5])
+            note = int(parts[6])
         except ValueError:
             continue
         if after_ts is not None and ts < after_ts:
             continue
+        if channel != midi_channel_1based or note < low_note or note > high_note:
+            continue
         ticks.append(tick)
     ticks.sort()
     return ticks
+
+
+def _extract_overdub_memory_note_count(
+    lines: list[str], *, overdub_stop_ts: Optional[int]
+) -> Optional[int]:
+    if overdub_stop_ts is None:
+        return None
+    stop_idx: Optional[int] = None
+    marker = f"#CAP,{overdub_stop_ts},ST,Track,OVERDUBBING,PLAYING"
+    for i, line in enumerate(lines):
+        if marker in line:
+            stop_idx = i
+            break
+    if stop_idx is None:
+        return None
+    last_count: Optional[int] = None
+    for line in lines[:stop_idx]:
+        m = re.search(r"\[Memory\] notes=(\d+)", line)
+        if m:
+            last_count = int(m.group(1))
+    return last_count
 
 
 def _verify_stored_overdub_note_span(
@@ -1112,18 +1141,32 @@ def _verify_stored_overdub_note_span(
     loop_length_ticks: int,
     overdub_bars: int,
     record_bars: int,
+    low_note: int,
+    high_note: int,
+    midi_channel_1based: int,
     note_on_count: int,
+    memory_note_count: Optional[int] = None,
     span_min_ratio: float = DEFAULT_RECORD_NOTE_SPAN_MIN_RATIO,
 ) -> dict[str, object]:
     if overdub_bars <= 0 or loop_length_ticks <= 0:
         return {"phase_disabled": True}
 
-    ticks = _extract_sevt_note_on_ticks(lines)
+    ticks = _extract_sevt_note_on_ticks(
+        lines,
+        low_note=low_note,
+        high_note=high_note,
+        midi_channel_1based=midi_channel_1based,
+    )
+    notes_per_bar = MIDI_CLOCKS_PER_BAR // OVERDUB_GRID_STEP_CLOCKS
+    expected_note_on_count = max(1, overdub_bars * notes_per_bar - 1)
     if len(ticks) < 2:
         return {
             "phase_disabled": False,
             "sevt_missing": len(ticks) == 0,
             "note_on_count": len(ticks),
+            "expected_note_on_count": expected_note_on_count,
+            "memory_note_count": memory_note_count,
+            "count_ok": memory_note_count is not None and memory_note_count >= expected_note_on_count,
             "span_ok": False,
             "bars_match_ok": False,
         }
@@ -1134,6 +1177,7 @@ def _verify_stored_overdub_note_span(
     expected_span = max(
         (overdub_bars * 8 - 1) * TICKS_PER_8TH_STEP,
         (note_on_count - 1) * TICKS_PER_8TH_STEP,
+        (expected_note_on_count - 1) * TICKS_PER_8TH_STEP,
     )
     expected_min_span = int(expected_span * span_min_ratio)
     span_ok = span >= expected_min_span and last_tick < loop_length_ticks
@@ -1149,10 +1193,17 @@ def _verify_stored_overdub_note_span(
             revt_bars_reached = (revt_ticks[-1] // TICKS_PER_BAR) + 1
             bars_match_ok = bars_match_ok and overdub_bars_reached >= max(1, revt_bars_reached - 1)
 
+    count_ok = len(ticks) >= max(1, int(expected_note_on_count * span_min_ratio))
+    if memory_note_count is not None:
+        count_ok = count_ok and memory_note_count >= max(1, int(expected_note_on_count * span_min_ratio))
+
     return {
         "phase_disabled": False,
         "sevt_missing": False,
         "note_on_count": len(ticks),
+        "expected_note_on_count": expected_note_on_count,
+        "memory_note_count": memory_note_count,
+        "count_ok": count_ok,
         "first_tick": first_tick,
         "last_tick": last_tick,
         "span_ticks": span,
@@ -1537,12 +1588,19 @@ def _build_serial_verification(lines: list[str], args: argparse.Namespace) -> di
     if record_loop_length and record_loop_length.get("actual_final_length") is not None:
         loop_length_ticks = int(record_loop_length["actual_final_length"])
     if loop_length_ticks > 0 and args.overdub_bars and args.bar_sync_from_midi_clock:
+        memory_note_count = _extract_overdub_memory_note_count(
+            lines, overdub_stop_ts=boundaries.get("overdub_stop_ts")
+        )
         stored_overdub_span = _verify_stored_overdub_note_span(
             lines,
             loop_length_ticks=loop_length_ticks,
             overdub_bars=args.overdub_bars,
             record_bars=args.record_bars or 0,
+            low_note=args.overdub_low_note,
+            high_note=args.overdub_high_note,
+            midi_channel_1based=args.midi_channel,
             note_on_count=int(overdub["note_on_count"]),
+            memory_note_count=memory_note_count,
         )
     if loop_length_ticks > 0:
         overdub_wrap_storage = _verify_overdub_wrap_storage(
@@ -1558,6 +1616,8 @@ def _build_serial_verification(lines: list[str], args: argparse.Namespace) -> di
     if stored_overdub_span is not None and not stored_overdub_span.get("phase_disabled"):
         if stored_overdub_span.get("sevt_missing"):
             issues.append("overdub_stored_sevt_missing")
+        elif not stored_overdub_span.get("count_ok", False):
+            issues.append("overdub_stored_count_short")
         elif not stored_overdub_span.get("span_ok", False):
             issues.append("overdub_stored_span_too_short")
         elif not stored_overdub_span.get("bars_match_ok", False):
@@ -1674,14 +1734,14 @@ def run() -> int:
     parser.add_argument(
         "--record-bars",
         type=int,
-        choices=[1, 2, 4, 5, 8, 16, 32, 64, 128],
+        choices=[1, 2, 4, 5, 8, 16, 24, 32, 64, 128],
         default=0,
         help="Record duration in bars (overrides --record-seconds)",
     )
     parser.add_argument(
         "--overdub-bars",
         type=int,
-        choices=[1, 2, 4, 5, 8, 16, 32, 64, 128],
+        choices=[1, 2, 4, 5, 8, 16, 24, 32, 64, 128],
         default=0,
         help="Overdub duration in bars (overrides --overdub-seconds)",
     )
@@ -2725,10 +2785,13 @@ def run() -> int:
             if stored_overdub_span and not stored_overdub_span.get("phase_disabled"):
                 print(
                     "  VERIFY stored overdub span (SEVT ticks): "
-                    f"count={stored_overdub_span.get('note_on_count')} "
+                    f"count={stored_overdub_span.get('note_on_count')}/"
+                    f"{stored_overdub_span.get('expected_note_on_count')} "
+                    f"mem={stored_overdub_span.get('memory_note_count')} "
                     f"last={stored_overdub_span.get('last_tick')} "
                     f"min_span={stored_overdub_span.get('expected_min_span_ticks')} "
                     f"bars={stored_overdub_span.get('bars_reached')}/{stored_overdub_span.get('expected_bars')} "
+                    f"count_ok={stored_overdub_span.get('count_ok')} "
                     f"span_ok={stored_overdub_span.get('span_ok')} "
                     f"bars_ok={stored_overdub_span.get('bars_match_ok')}"
                 )

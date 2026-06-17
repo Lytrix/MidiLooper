@@ -8,6 +8,10 @@
 #include <limits>
 #include <new>
 
+#if defined(ARDUINO)
+#include "Logger.h"
+#endif
+
 namespace {
 
 void* poolAlloc(size_t bytes) {
@@ -118,6 +122,11 @@ bool LoopEventStore::appendToTailChunk(const MidiEvent& evt) {
   if (tailId == UINT16_MAX || chunk(tailId).used >= LoopEventStoreConfig::CHUNK_CAPACITY) {
     tailId = allocChunk();
     if (tailId == UINT16_MAX) {
+#if defined(ARDUINO)
+      logger.log(CAT_TRACK, LOG_WARNING,
+                 "LoopEventStore chunk pool exhausted (events=%zu chunks=%zu)",
+                 static_cast<size_t>(eventCount_), static_cast<size_t>(chunkIds_.size()));
+#endif
       return false;
     }
     chunkIds_.push_back(tailId);

@@ -34,23 +34,6 @@ void collectActiveEpochsSorted(const Loop& loop, std::vector<const Epoch*>& out)
             [](const Epoch* a, const Epoch* b) { return a->mergeSequence < b->mergeSequence; });
 }
 
-void mergeEpochStores(const std::vector<const Epoch*>& active, LoopEventStore& merged) {
-  for (const Epoch* epoch : active) {
-    LoopEventStore epochStore;
-    MidiEventVec flat;
-    LoopEventStore::appendFlattenedChunkIds(epoch->chunkRefs, flat);
-    if (flat.empty()) {
-      continue;
-    }
-    epochStore.loadFromFlat(flat);
-    if (merged.empty()) {
-      merged.adoptAll(epochStore);
-    } else {
-      merged.mergeFrom(epochStore);
-    }
-  }
-}
-
 /// Merge Active epoch chunk data into a flat vector without allocating new pool chunks.
 void flattenActiveEpochChunksToVec(const std::vector<const Epoch*>& active, MidiEventVec& out) {
   out.clear();
@@ -97,29 +80,9 @@ bool isDuplicateCaptureEvent(const Loop& loop, const MidiEvent& candidate) {
     }
   }
 
-  if (loop.capture.phase != CapturePhase::Overdub) {
-    return false;
-  }
-
-  LoopEventStore merged;
-  std::vector<const Epoch*> active;
-  collectActiveEpochsSorted(loop, active);
-  mergeEpochStores(active, merged);
-  if (merged.empty()) {
-    return false;
-  }
-
-  const size_t startIdx = merged.lowerBoundIndex(lo);
-  const size_t committedCount = merged.size();
-  for (size_t i = startIdx; i < committedCount; ++i) {
-    const MidiEvent& baseline = merged.at(i);
-    if (baseline.tick > hi) {
-      break;
-    }
-    if (eventsEquivalent(baseline, candidate)) {
-      return true;
-    }
-  }
+  // Overdub layers new material on published epochs. Only dedupe within the active
+  // capture buffer so a second loop pass (or automation re-hits) is not blocked
+  // unless the same capture session already stored an identical event.
   return false;
 }
 
