@@ -44,8 +44,7 @@ void TrackUndo::pushUndoSnapshot(Track& track) {
     Loop& loop = track.getActiveLoop();
     const size_t eventCount = loop.committedEvents.size();
     logLargeSnapshotIfNeeded(eventCount);
-    loop.getMidiHistory().push_back(
-        loop.committedEvents.shareForSnapshot()->cloneShared());
+    loop.getMidiHistory().push_back(loop.committedEvents.shareForSnapshot());
     trimOverdubUndoHistory(loop);
     loop.getOverdubGeomHistory().push_back(
         {loop.loopLengthTicks, loop.startLoopTick, loop.loopStartTick});
@@ -113,7 +112,7 @@ void TrackUndo::endOverdubSession(Track& track) {
 
 void TrackUndo::undoOverdub(Track& track) {
     Loop& loop = track.getActiveLoop();
-    if (loop.overdubSessionOpen && loop.capturePhase == CapturePhase::Overdub) {
+    if (loop.overdubSessionOpen && loop.capture.phase == CapturePhase::Overdub) {
         loop.discardCapture();
         track.invalidateCaches();
         logger.logTrackEvent("Overdub capture undone", clockManager.getCurrentTick());
@@ -123,8 +122,7 @@ void TrackUndo::undoOverdub(Track& track) {
         logger.log(CAT_TRACK, LOG_WARNING, "Cannot undo overdub right now");
         return;
     }
-    loop.getMidiRedoHistory().push_back(
-        loop.committedEvents.shareForSnapshot()->cloneShared());
+    loop.getMidiRedoHistory().push_back(loop.committedEvents.shareForSnapshot());
     loop.getOverdubGeomRedoHistory().push_back(
         {loop.loopLengthTicks, loop.startLoopTick, loop.loopStartTick});
 
@@ -163,8 +161,7 @@ void TrackUndo::redoOverdub(Track& track) {
         return;
     }
     Loop& loop = track.getActiveLoop();
-    loop.getMidiHistory().push_back(
-        loop.committedEvents.shareForSnapshot()->cloneShared());
+    loop.getMidiHistory().push_back(loop.committedEvents.shareForSnapshot());
     trimOverdubUndoHistory(loop);
     loop.getOverdubGeomHistory().push_back(
         {loop.loopLengthTicks, loop.startLoopTick, loop.loopStartTick});
@@ -197,8 +194,8 @@ size_t TrackUndo::getRedoCount(const Track& track) {
 
 bool TrackUndo::canUndo(const Track& track) {
     const Loop& loop = track.getActiveLoop();
-    if (loop.overdubSessionOpen && loop.capturePhase == CapturePhase::Overdub &&
-        !loop.captureStore.empty()) {
+    if (loop.overdubSessionOpen && loop.capture.phase == CapturePhase::Overdub &&
+        !loop.capture.store.empty()) {
         return true;
     }
     return !loop.midiHistoryEmpty();

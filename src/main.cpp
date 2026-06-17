@@ -167,12 +167,12 @@ void loop() {
     }
   }
 
-  StorageManager::processDeferredSaveState(looperState.getLooperState());
   HotPathTelemetry::processDeferredSummary();
 
   SC_REC_FLUSH_PENDING_REVTS(64);
 
   if (!timingCriticalTrackActive) {
+    StorageManager::processDeferredSaveState(looperState.getLooperState());
     for (uint8_t i = 0; i < trackManager.getTrackCount(); ++i) {
       trackManager.getTrack(i).processDeferredIdleMaintenance();
     }

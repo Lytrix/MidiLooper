@@ -73,8 +73,8 @@ void reanchorCaptureIndex(Loop& loop) {
     return;
   }
   size_t idx = 0;
-  while (idx < loop.captureStore.size()) {
-    const MidiEvent& e = loop.captureStore.at(idx);
+  while (idx < loop.capture.store.size()) {
+    const MidiEvent& e = loop.capture.store.at(idx);
     if (e.tick >= loop.loopLengthTicks || e.tick > loop.lastTickInLoop) break;
     ++idx;
   }
@@ -514,31 +514,31 @@ void Track::validateAndCleanupMidiEvents(uint32_t openTailCloseTick) {
 
 void Track::finalizeLoopAtStop(uint32_t openTailCloseTick) {
   Loop& loop = getActiveLoop();
-  if (loop.midiEvents().empty() || loop.loopLengthTicks == 0) {
+  if (loop.committedEvents.empty() || loop.loopLengthTicks == 0) {
     deferredFullMidiValidate = false;
     return;
   }
+
+  LoopEventStore& store = loop.committedEvents.mutStore();
+  bool mutated = false;
 
   if (!pendingNotes.empty()) {
     uint32_t closeTick = loop.loopLengthTicks - 1;
     if (openTailCloseTick != UINT32_MAX) {
       closeTick = std::min(openTailCloseTick, loop.loopLengthTicks - 1);
     }
-    MidiEventVec& events = loop.midiEvents();
     for (const auto& kv : pendingNotes) {
-      events.push_back(
-          MidiEvent::NoteOff(closeTick, kv.first.second, kv.first.first, 0));
+      store.append(MidiEvent::NoteOff(closeTick, kv.first.second, kv.first.first, 0));
     }
     pendingNotes.clear();
-    std::sort(events.begin(), events.end(), LoopStopFinalize::noteEventLess);
-    invalidateCaches();
+    mutated = true;
   }
 
   const LoopStopFinalize::Result result =
-      LoopStopFinalize::finalizeWrapWindow(loop.midiEvents(), loop.loopLengthTicks,
-                                           openTailCloseTick, Config::TICKS_PER_BAR);
-  if (result.syntheticOffsInserted > 0) {
-    invalidateCaches();
+      LoopStopFinalize::finalizeWrapWindowOnStore(store, loop.loopLengthTicks,
+                                                  openTailCloseTick, Config::TICKS_PER_BAR);
+  if (mutated || result.syntheticOffsInserted > 0) {
+    loop.invalidatePlaybackCaches();
   }
   deferredFullMidiValidate = true;
 }
@@ -565,7 +565,7 @@ void Track::closeOpenNotesAtLoopWrap() {
   }
 
   Loop& loop = getActiveLoop();
-  if (loop.loopLengthTicks == 0 || loop.capturePhase != CapturePhase::Overdub) {
+  if (loop.loopLengthTicks == 0 || loop.capture.phase != CapturePhase::Overdub) {
     return;
   }
   if (pendingNotes.empty()) {
@@ -663,7 +663,11 @@ void Track::stopRecording(uint32_t currentTick) {
 
   // Validate AFTER loopLengthTicks is known so wrap-matching and open-tail closing
   // (the second pass and synthetic note-offs) are active for this record-stop.
-  finalizeLoopAtStop();
+  uint32_t closeTick = UINT32_MAX;
+  if (loop.loopLengthTicks > 0) {
+    closeTick = tickPhaseInLoop(currentTick, loop.startLoopTick, loop.loopLengthTicks);
+  }
+  finalizeLoopAtStop(closeTick);
 
   if (alignLoopOriginOnNextStop) {
     alignLoopOriginOnNextStop = false;
@@ -677,18 +681,9 @@ void Track::stopRecording(uint32_t currentTick) {
       snapBar = absRecStart - remBar + TICKS_PER_BAR;
     }
     int64_t delta = (int64_t)snapBar - (int64_t)absRecStart;
-    if (delta != 0 && !loop.midiEvents().empty()) {
-      int64_t minT = std::numeric_limits<int64_t>::max();
-      for (const auto& evt : loop.midiEvents()) {
-        int64_t t = (int64_t)evt.tick + delta;
-        if (t < minT) minT = t;
-      }
-      int64_t bump = (minT < 0) ? -minT : 0;
-      for (auto& evt : loop.midiEvents()) {
-        int64_t t = (int64_t)evt.tick + delta + bump;
-        evt.tick = (uint32_t)t;
-      }
-      invalidateCaches();
+    if (delta != 0 && !loop.committedEvents.empty()) {
+      loop.committedEvents.mutStore().shiftAllTicks(delta);
+      loop.invalidatePlaybackCaches();
     }
   }
 
@@ -711,7 +706,7 @@ void Track::stopRecording(uint32_t currentTick) {
                             ? tickPhaseInLoop(playbackTick, recordStartTick, finalLength)
                             : 0;
 
-  invalidateCaches();
+  invalidatePlaybackCaches();
   SC_REC_STOP("stop", activeLoopIndex, playbackTick, recordStartTick, rawLength, finalLength, captureAlignFlag);
   logger.logTrackEvent("Recording stopped", playbackTick, "recStart=%lu length=%lu",
                        static_cast<unsigned long>(recordStartTick), static_cast<unsigned long>(finalLength));
@@ -756,7 +751,11 @@ void Track::stopRecordingToStopped(uint32_t currentTick) {
   loop.commitCapture();
 
   // Validate AFTER loopLengthTicks is known (see stopRecording for rationale).
-  finalizeLoopAtStop();
+  uint32_t closeTick = UINT32_MAX;
+  if (loop.loopLengthTicks > 0) {
+    closeTick = tickPhaseInLoop(currentTick, loop.startLoopTick, loop.loopLengthTicks);
+  }
+  finalizeLoopAtStop(closeTick);
 
   [[maybe_unused]] const uint32_t recordStartTickStopped = loop.startLoopTick;
   loop.nextEventIndex = 0;
@@ -770,7 +769,7 @@ void Track::stopRecordingToStopped(uint32_t currentTick) {
   loop.lastTickInLoop = (loop.loopLengthTicks > 0)
                             ? tickPhaseInLoop(playbackTick, recordStartTickStopped, loop.loopLengthTicks)
                             : 0;
-  invalidateCaches();
+  invalidatePlaybackCaches();
 
   SC_REC_STOP("stopToStopped", activeLoopIndex, playbackTick, recordStartTickStopped,
               rawLength, loop.loopLengthTicks, false);
@@ -977,6 +976,22 @@ void Track::recordMidiEvents(midi::MidiType type, byte channel, byte data1, byte
 
     if (!eventAdded) return;
 
+    if (type == midi::NoteOff) {
+      const LoopEventStore& capture = loop.capture.store;
+      for (size_t i = capture.size(); i > 0; --i) {
+        const MidiEvent& prior = capture.at(i - 1);
+        if (!prior.isNoteOn() || prior.channel != channel ||
+            prior.data.noteData.note != data1) {
+          continue;
+        }
+        if (tickRelative <= prior.tick) {
+          tickRelative = prior.tick + 1;
+          newEvt.tick = tickRelative;
+        }
+        break;
+      }
+    }
+
     if (!loop.appendCaptureEvent(newEvt)) {
       return;
     }
@@ -1082,12 +1097,12 @@ void Track::playMidiEvents(uint32_t currentTick, bool isAudible) {
     }
   }
 
-  if (loop.capturePhase == CapturePhase::Overdub && !loop.captureStore.empty()) {
+  if (loop.capture.phase == CapturePhase::Overdub && !loop.capture.store.empty()) {
     if (loop.ensureCaptureEventsSorted()) {
       reanchorCaptureIndex(loop);
     }
-    while (loop.captureNextEventIndex < loop.captureStore.size()) {
-      const MidiEvent& evt = loop.captureStore.at(loop.captureNextEventIndex);
+    while (loop.captureNextEventIndex < loop.capture.store.size()) {
+      const MidiEvent& evt = loop.capture.store.at(loop.captureNextEventIndex);
       if (evt.tick >= loop.loopLengthTicks) {
         loop.captureNextEventIndex++;
         continue;

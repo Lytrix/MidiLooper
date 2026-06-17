@@ -1123,14 +1123,14 @@ def run() -> int:
     parser.add_argument(
         "--record-bars",
         type=int,
-        choices=[2, 4, 5, 8, 16, 32, 64, 128],
+        choices=[1, 2, 4, 5, 8, 16, 32, 64, 128],
         default=0,
         help="Record duration in bars (overrides --record-seconds)",
     )
     parser.add_argument(
         "--overdub-bars",
         type=int,
-        choices=[2, 4, 5, 8, 16, 32, 64, 128],
+        choices=[1, 2, 4, 5, 8, 16, 32, 64, 128],
         default=0,
         help="Overdub duration in bars (overrides --overdub-seconds)",
     )
