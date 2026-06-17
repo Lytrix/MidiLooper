@@ -87,13 +87,12 @@ size_t eraseUndoEntriesForSlot(GlobalUndoStack& stack, uint8_t slotIndex) {
 }
 
 void restoreLoopSnapshot(Loop& loop, const MidiSnapshotRef& snapshot, const UndoLoopGeometry& geometry) {
-    loop.committedEvents.restoreFromSnapshot(snapshot);
+    loop.restoreEditSnapshot(snapshot);
     applyGeometry(loop, geometry);
-    if (loop.committedEvents.empty()) {
+    if (!loop.hasPublishedEvents()) {
         loop.nextEventIndex = 0;
         loop.lastTickInLoop = 0;
     }
-    loop.rebuildEpochTimelineFromCommitted();
     loop.invalidateCaches();
 }
 
@@ -102,7 +101,7 @@ bool applyUndoEntry(Track& track, UndoEntry& entry) {
     switch (entry.kind) {
         case UndoEntryKind::NoteEditCommit:
         case UndoEntryKind::ClearSlot:
-            entry.afterSnapshot = loop.committedEvents.shareForSnapshot();
+            entry.afterSnapshot = loop.shareEditSnapshot();
             entry.afterGeometry = captureGeometry(loop);
             if (entry.hasTrackState) {
                 entry.afterTrackState = track.getState();
@@ -128,7 +127,7 @@ bool applyUndoEntry(Track& track, UndoEntry& entry) {
                            static_cast<unsigned>(entry.slotIndex));
                 return false;
             }
-            loop.syncCommittedEventsFromEpochs();
+            loop.rebuildVisualCacheFromEpochs();
             loop.invalidateCaches();
             return true;
     }
@@ -167,7 +166,7 @@ bool applyRedoEntry(Track& track, UndoEntry& entry) {
                            static_cast<unsigned>(entry.slotIndex));
                 return false;
             }
-            loop.syncCommittedEventsFromEpochs();
+            loop.rebuildVisualCacheFromEpochs();
             loop.invalidateCaches();
             return true;
     }
@@ -187,7 +186,7 @@ void TrackUndo::pushUndoSnapshot(Track& track) {
     entry.kind = UndoEntryKind::NoteEditCommit;
     entry.slotIndex = track.getActiveLoopIndex();
     entry.loopId = loop.loopId;
-    entry.beforeSnapshot = loop.committedEvents.shareForSnapshot();
+    entry.beforeSnapshot = loop.shareEditSnapshot();
     entry.beforeGeometry = captureGeometry(loop);
     pushUndoEntry(track, std::move(entry));
 }
@@ -319,10 +318,6 @@ const MidiEventVec& TrackUndo::peekLastMidiSnapshot(const Track& track) {
     return tempSnapshot;
 }
 
-MidiSnapshotDeque& TrackUndo::getMidiHistory(Track& track) {
-    return track.getActiveLoop().getMidiHistory();
-}
-
 const MidiEventVec& TrackUndo::getCurrentMidiSnapshot(const Track& track) {
     return track.getMidiEvents();
 }
@@ -333,7 +328,7 @@ void TrackUndo::pushClearTrackSnapshot(Track& track) {
     entry.kind = UndoEntryKind::ClearSlot;
     entry.slotIndex = track.getActiveLoopIndex();
     entry.loopId = loop.loopId;
-    entry.beforeSnapshot = loop.committedEvents.shareForSnapshot();
+    entry.beforeSnapshot = loop.shareEditSnapshot();
     entry.beforeGeometry = captureGeometry(loop);
     entry.beforeTrackState = track.getState();
     entry.hasTrackState = true;

@@ -63,8 +63,9 @@ static void migrateLoadedLoopsToEpochTimeline(Track& track) {
     track.ensureLoopsAllocated();
     for (uint8_t s = 0; s < Config::MAX_LOOPS_PER_TRACK; ++s) {
         Loop& loop = track.loopForSlot(s);
-        loop.ensureCommittedMigratedToEpoch();
-        loop.syncCommittedEventsFromEpochs();
+        if (loop.hasPublishedEvents()) {
+            loop.rebuildVisualCacheFromEpochs();
+        }
     }
 }
 
@@ -288,7 +289,6 @@ bool StorageManager::saveState(const LooperState& state) {
         const StorageIo loopIo = storageIoFromFileWrite(file);
         for (uint8_t p = 0; p < Config::MAX_LOOPS_PER_TRACK; ++p) {
             Loop& loop = track.loopPool_.at(p);
-            loop.ensureCommittedMigratedToEpoch();
             logger.log(CAT_STORAGE, LOG_DEBUG, "[StorageManager] v4 saving track=%u pool=%u loopId=%lu epochs=%u",
                        t, p, static_cast<unsigned long>(loop.loopId),
                        static_cast<unsigned>(loop.epochs.size()));
@@ -484,7 +484,6 @@ bool StorageManager::loadState(LooperState& state) {
             const StorageIo loopIo = storageIoFromFileRead(file);
             for (uint8_t p = 0; p < Config::MAX_LOOPS_PER_TRACK; ++p) {
                 Loop& loop = track.loopPool_.at(p);
-                loop.clearAllUndoStacks();
                 if (!readLoopPersisted(loopIo, loop)) {
                     Serial.print("[StorageManager] ERROR: Failed to read loop pool entry track ");
                     Serial.print(t);
@@ -493,7 +492,7 @@ bool StorageManager::loadState(LooperState& state) {
                     file.close();
                     return false;
                 }
-                if (!loop.committedEvents.empty()) {
+                if (loop.hasPublishedEvents()) {
                     anySlotHasEvents = true;
                 }
             }
@@ -599,16 +598,14 @@ bool StorageManager::loadState(LooperState& state) {
 
                 Loop& loop = track.getLoop(s);
 
-                // Reset loop
-                loop.committedEvents.mutStore().clear();
-                loop.startLoopTick = 0;     // playback normalization
+                loop.startLoopTick = 0;
                 loop.loopLengthTicks = 0;
                 loop.loopStartTick = 0;
                 loop.lastTickInLoop = 0;
                 loop.nextEventIndex = 0;
                 loop.playbackOrderDirty = true;
+                loop.resetEpochTimeline();
                 loop.markDisplayCachesStale();
-                loop.clearAllUndoStacks();
 
                 // Loop core
                 uint32_t storedStartLoopTick = 0;
@@ -634,17 +631,19 @@ bool StorageManager::loadState(LooperState& state) {
                     file.close();
                     return false;
                 }
-                if (!loadCommittedEventsFromFile(file, loop.committedEvents.mutStore(), midiCount)) {
+                LoopEventStore loadedStore;
+                if (!loadCommittedEventsFromFile(file, loadedStore, midiCount)) {
                     Serial.print("[StorageManager] ERROR: Failed to load committed events for track "); Serial.print(t); Serial.print(" slot "); Serial.println(s);
                     file.close();
                     return false;
                 }
-                if (loop.loopLengthTicks == 0 && !loop.committedEvents.empty()) {
+                loop.importPublishedStore(loadedStore);
+                if (loop.loopLengthTicks == 0 && loop.hasPublishedEvents()) {
                     const uint32_t lastTick =
-                        lastEventTickInStore(loop.committedEvents.readStore());
+                        lastEventTickInStore(loop.readEditStore());
                     loop.loopLengthTicks = track.computeLoopLengthTicks(lastTick);
                 }
-                if (!loop.committedEvents.empty()) anySlotHasEvents = true;
+                if (loop.hasPublishedEvents()) anySlotHasEvents = true;
                 loop.markDisplayCachesStale();
 
                 // Legacy per-slot undo snapshots are skipped on load — GlobalUndoStack tail
@@ -663,14 +662,12 @@ bool StorageManager::loadState(LooperState& state) {
                         return false;
                     }
                     if (!skipRawBytes(file, snapBytesNeeded)) { Serial.print("[StorageManager] ERROR: Failed to skip overdubUndo snapshot for track "); Serial.print(t); Serial.print(" slot "); Serial.println(s); file.close(); return false; }
-                    OverdubGeomSnapshot geom;
                     uint32_t geomLoopLengthTicks = 0;
                     uint32_t geomStartLoopTick = 0;
                     uint32_t geomLoopStartTick = 0;
                     if (!readRaw(file, &geomLoopLengthTicks, sizeof(geomLoopLengthTicks))) { Serial.println("[StorageManager] ERROR: Failed to read overdubUndo geom.loopLengthTicks"); file.close(); return false; }
                     if (!readRaw(file, &geomStartLoopTick, sizeof(geomStartLoopTick))) { Serial.println("[StorageManager] ERROR: Failed to read overdubUndo geom.startLoopTick"); file.close(); return false; }
                     if (!readRaw(file, &geomLoopStartTick, sizeof(geomLoopStartTick))) { Serial.println("[StorageManager] ERROR: Failed to read overdubUndo geom.loopStartTick"); file.close(); return false; }
-                    (void)geom;
                     (void)geomLoopLengthTicks;
                     (void)geomStartLoopTick;
                     (void)geomLoopStartTick;
@@ -748,20 +745,20 @@ bool StorageManager::loadState(LooperState& state) {
                     (void)snapLoopStartTick;
                 }
 
-                // Loop-start edit undo/redo
+                // Loop-start edit undo/redo (legacy — skipped; GlobalUndoStack is authoritative)
                 uint32_t loopStartUndoCount = 0;
                 if (!readRaw(file, &loopStartUndoCount, sizeof(loopStartUndoCount))) { Serial.print("[StorageManager] ERROR: Failed to read loopStartUndoCount for track "); Serial.print(t); Serial.print(" slot "); Serial.println(s); file.close(); return false; }
                 for (uint32_t u = 0; u < loopStartUndoCount; ++u) {
                     uint32_t tick = 0;
                     if (!readRaw(file, &tick, sizeof(tick))) { Serial.println("[StorageManager] ERROR: Failed to read loopStartUndo tick"); file.close(); return false; }
-                    loop.getLoopStartHistory().push_back(tick);
+                    (void)tick;
                 }
                 uint32_t loopStartRedoCount = 0;
                 if (!readRaw(file, &loopStartRedoCount, sizeof(loopStartRedoCount))) { Serial.print("[StorageManager] ERROR: Failed to read loopStartRedoCount for track "); Serial.print(t); Serial.print(" slot "); Serial.println(s); file.close(); return false; }
                 for (uint32_t u = 0; u < loopStartRedoCount; ++u) {
                     uint32_t tick = 0;
                     if (!readRaw(file, &tick, sizeof(tick))) { Serial.println("[StorageManager] ERROR: Failed to read loopStartRedo tick"); file.close(); return false; }
-                    loop.getLoopStartRedoHistory().push_back(tick);
+                    (void)tick;
                 }
             }
 
@@ -983,25 +980,18 @@ bool StorageManager::loadState(LooperState& state) {
         }
         track.setLoopLength(loopLength);
         Loop& loop = track.getLoop(0);
-        // Always restart loop timeline from zero after load to avoid negative-wrap playback math.
         loop.startLoopTick = 0;
-        loop.committedEvents.mutStore().loadFromFlat(tracksData[t].midiEvents);
-        if (loop.loopLengthTicks == 0 && !loop.committedEvents.empty()) {
-            // findLastEventTick uses the active loop; for v1/v2 we always load into slot 0
+        LoopEventStore loadedStore;
+        loadedStore.loadFromFlat(tracksData[t].midiEvents);
+        loop.importPublishedStore(loadedStore);
+        if (loop.loopLengthTicks == 0 && loop.hasPublishedEvents()) {
             uint32_t lastTick = track.findLastEventTick();
             loop.loopLengthTicks = track.computeLoopLengthTicks(lastTick);
         }
         track.validateAndCleanupMidiEvents();
-        auto &midiHistory = TrackUndo::getMidiHistory(track);
-        midiHistory.clear();
-        for (const auto& snapshot : tracksData[t].midiHistory) {
-            auto snapStore = std::make_shared<LoopEventStore>();
-            snapStore->loadFromFlat(snapshot);
-            midiHistory.push_back(snapStore);
-        }
         Serial.print("[StorageManager] Track "); Serial.print(t);
         Serial.print(" loaded: events="); Serial.print(tracksData[t].midiEvents.size());
-        Serial.print(", undo_snapshots="); Serial.println(tracksData[t].midiHistory.size());
+        Serial.println(", legacy undo snapshots skipped");
     }
     return true;
 } 

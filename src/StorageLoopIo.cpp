@@ -151,7 +151,6 @@ void applySnapshotToLoop(Loop& loop, const PersistedLoopSnapshot& snapshot) {
   loop.discardPendingEpoch();
   loop.discardCapture();
   loop.resetEpochTimeline();
-  loop.committedEvents.mutStore().clear();
   loop.loopId = snapshot.loopId;
   loop.startLoopTick = 0;
   loop.loopLengthTicks = snapshot.loopLengthTicks;
@@ -164,7 +163,7 @@ void applySnapshotToLoop(Loop& loop, const PersistedLoopSnapshot& snapshot) {
   loop.playbackOrderDirty = true;
   loop.epochs = snapshot.epochs;
   loop.markDisplayCachesStale();
-  loop.syncCommittedEventsFromEpochs();
+  loop.rebuildVisualCacheFromEpochs();
 }
 
 bool writeLoopPersisted(const StorageIo& io, const Loop& loop) {

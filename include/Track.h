@@ -136,7 +136,7 @@ public:
   bool hasDataInSlot(uint8_t slotIndex) const;
 
   // Event counters
-  size_t getMidiEventCount() const { return getActiveLoop().committedEvents.size(); }
+  size_t getMidiEventCount() const { return getActiveLoop().liveEventCount(); }
 
   // Track length control (delegate to active loop)
   uint32_t getStartLoopTick() const { return getActiveLoop().startLoopTick; }
