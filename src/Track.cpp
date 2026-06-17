@@ -306,6 +306,7 @@ uint32_t Track::computeLoopLengthTicks(uint32_t lastTick) const {
 void Track::resetPlaybackState(uint32_t currentTick) {
   Loop& loop = getActiveLoop();
   loop.nextEventIndex = 0;
+  invalidatePlaybackWindow(true);
   if (loop.loopLengthTicks == 0) {
     loop.lastTickInLoop = 0;
     return;
@@ -319,6 +320,12 @@ void Track::resetPlaybackStateForSlot(uint8_t slotIndex, uint32_t currentTick) {
   if (loop.loopLengthTicks == 0) return;
   loop.nextEventIndex = 0;
   loop.lastTickInLoop = tickPhaseInLoop(currentTick, loop.startLoopTick, loop.loopLengthTicks);
+  invalidatePlaybackWindow(true);
+}
+
+void Track::invalidatePlaybackWindow(bool preserveLedger) {
+  bumpPlaybackGeneration();
+  playbackRuntime.resetAll(preserveLedger);
 }
 
 void Track::finalizePendingNotes(uint32_t offAbsTick) {
@@ -1154,6 +1161,13 @@ void Track::playMidiEvents(uint32_t currentTick, bool isAudible) {
   Loop& loop = getActiveLoop();
   if (!isAudible || muted || loop.committedEvents.empty() || loop.loopLengthTicks == 0)
     return;
+  LoopPlaybackRuntime& runtime = playbackRuntime.slot(activeLoopIndex);
+  if (runtime.cursor.isStale(loop.playbackRevision, playbackGeneration)) {
+    runtime.reset(true);
+    loop.nextEventIndex = 0;
+    loop.captureNextEventIndex = 0;
+    runtime.cursor.syncRevision(loop.playbackRevision, playbackGeneration);
+  }
 
   if (loop.playbackOrderDirty) {
     // Rebuild the sort order (event indices changed), but keep the current pass position: re-anchor
@@ -1169,6 +1183,7 @@ void Track::playMidiEvents(uint32_t currentTick, bool isAudible) {
   if (tickInLoop < loop.lastTickInLoop && loop.lastTickInLoop != UINT32_MAX) {
     loop.nextEventIndex = 0;
     loop.captureNextEventIndex = 0;
+    runtime.cursor.mergeCursorIndex = 0;
     if (isOverdubbing()) {
       closeOpenNotesAtLoopWrap();
     }
@@ -1177,6 +1192,7 @@ void Track::playMidiEvents(uint32_t currentTick, bool isAudible) {
 
   uint32_t prevTickInLoop = loop.lastTickInLoop;
   loop.lastTickInLoop = tickInLoop;
+  runtime.cursor.lastTickInLoop = tickInLoop;
 
   bool atLoopStart = (prevTickInLoop == UINT32_MAX) || (tickInLoop <= prevTickInLoop);
 
@@ -1253,6 +1269,8 @@ void Track::playMidiEvents(uint32_t currentTick, bool isAudible) {
       }
     }
   }
+  runtime.cursor.mergeCursorIndex = loop.nextEventIndex;
+  runtime.cursor.syncRevision(loop.playbackRevision, playbackGeneration);
 }
 
 void Track::playMidiEventsForSlot(uint8_t slotIndex, uint32_t currentTick, bool isAudible) {
@@ -1261,6 +1279,12 @@ void Track::playMidiEventsForSlot(uint8_t slotIndex, uint32_t currentTick, bool 
 
   Loop& loop = getLoop(slotIndex);
   if (loop.committedEvents.empty() || loop.loopLengthTicks == 0) return;
+  LoopPlaybackRuntime& runtime = playbackRuntime.slot(slotIndex);
+  if (runtime.cursor.isStale(loop.playbackRevision, playbackGeneration)) {
+    runtime.reset(true);
+    loop.nextEventIndex = 0;
+    runtime.cursor.syncRevision(loop.playbackRevision, playbackGeneration);
+  }
 
   if (loop.playbackOrderDirty) {
     PlaybackOrderVec& playbackOrder = loop.getPlaybackOrder();
@@ -1281,10 +1305,12 @@ void Track::playMidiEventsForSlot(uint8_t slotIndex, uint32_t currentTick, bool 
   uint32_t tickInLoop = tickPhaseInLoop(currentTick, loop.startLoopTick, loop.loopLengthTicks);
   if (tickInLoop < loop.lastTickInLoop) {
     loop.nextEventIndex = 0;
+    runtime.cursor.mergeCursorIndex = 0;
   }
 
   uint32_t prevTickInLoop = loop.lastTickInLoop;
   loop.lastTickInLoop = tickInLoop;
+  runtime.cursor.lastTickInLoop = tickInLoop;
   bool atLoopStart = (prevTickInLoop == UINT32_MAX) || (tickInLoop <= prevTickInLoop);
   const PlaybackOrderVec& playbackOrder = loop.getPlaybackOrder();
 
@@ -1305,6 +1331,8 @@ void Track::playMidiEventsForSlot(uint8_t slotIndex, uint32_t currentTick, bool 
       loop.nextEventIndex++;
     }
   }
+  runtime.cursor.mergeCursorIndex = loop.nextEventIndex;
+  runtime.cursor.syncRevision(loop.playbackRevision, playbackGeneration);
 }
 
 void Track::sendMidiEvent(const MidiEvent& evt) {

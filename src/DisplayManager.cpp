@@ -224,6 +224,10 @@ const std::vector<DisplayNote>& DisplayManager::resolveDisplayNotes(const Track&
 
     if (!isLiveRecordingDisplay(track, displaySlot)) {
         invalidateLiveDisplayCache();
+        const auto& visual = track.getVisualNotesForSlot(displaySlot);
+        if (!visual.empty()) {
+            return visual;
+        }
         return track.getCachedNotesForSlot(displaySlot);
     }
 
@@ -235,9 +239,6 @@ const std::vector<DisplayNote>& DisplayManager::resolveDisplayNotes(const Track&
         return liveDisplayNotes;
     }
 
-    // Full reconstruct only when slot/state changes, cache is cold, or events were removed.
-    // Growing loop length during record is handled by open-tail refresh only (not a full rebuild).
-    // New events trigger one quiet reconstruct; playhead-only frames reuse cached closed notes.
     const TrackState liveTrackState = track.isRecording() ? TRACK_RECORDING : TRACK_OVERDUBBING;
     const size_t eventCount = loop.liveEventCount();
     const bool cacheCold = liveDisplayCacheEventCount == static_cast<size_t>(-1);
@@ -248,18 +249,35 @@ const std::vector<DisplayNote>& DisplayManager::resolveDisplayNotes(const Track&
     const bool loopLengthChanged = !cacheCold && liveLoopLength != liveDisplayCacheLoopLength;
     const bool captureRevisionChanged =
         !cacheCold && loop.captureDisplayRevision != liveDisplayCacheCaptureRevision;
+    const bool useM4Sources =
+        !loop.visualCache.notes.empty() || !loop.capturePreview.notes.empty();
+
+    auto rebuildLiveDisplayNotes = [&]() {
+        if (useM4Sources) {
+            liveDisplayNotes = loop.visualCache.notes;
+            liveDisplayNotes.insert(liveDisplayNotes.end(), loop.capturePreview.notes.begin(),
+                                    loop.capturePreview.notes.end());
+        } else {
+            liveDisplayNotes =
+                NoteUtils::reconstructNotes(liveDisplayEventBuffer, liveLoopLength, false);
+        }
+    };
 
     if (cacheCold || contextChanged || eventsShrunk || eventsAdded || loopLengthChanged ||
         captureRevisionChanged) {
         loop.buildLiveEventView(liveDisplayEventBuffer);
-        liveDisplayNotes = NoteUtils::reconstructNotes(liveDisplayEventBuffer, liveLoopLength, false);
-        liveDisplayCacheOpenNotes = NoteUtils::findOpenNoteOns(liveDisplayEventBuffer, liveLoopLength);
+        rebuildLiveDisplayNotes();
+        liveDisplayCacheOpenNotes =
+            NoteUtils::findOpenNoteOns(liveDisplayEventBuffer, liveLoopLength);
         liveDisplayCacheSlot = displaySlot;
         liveDisplayCacheTrackState = liveTrackState;
         liveDisplayCacheLoopLength = liveLoopLength;
         liveDisplayCacheEventCount = eventCount;
         liveDisplayCacheCaptureRevision = loop.captureDisplayRevision;
     } else {
+        if (useM4Sources) {
+            rebuildLiveDisplayNotes();
+        }
         liveDisplayCacheLoopLength = liveLoopLength;
     }
 

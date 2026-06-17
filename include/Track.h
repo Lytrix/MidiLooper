@@ -17,6 +17,7 @@
 #include "TrackState.h"
 #include "Loop.h"
 #include "GlobalUndoStack.h"
+#include "TrackPlaybackRuntime.h"
 
 /// Derived capture role for a loop slot (from TrackState + activeLoopIndex).
 enum class SlotOpState : uint8_t {
@@ -171,6 +172,9 @@ public:
   bool isJamPlaybackActive() const { return jamPlaybackActive; }
   void setJamPlayback(bool enabled);
   uint32_t getEffectivePlaybackTick(uint32_t currentTick) const;
+  uint32_t getPlaybackGeneration() const { return playbackGeneration; }
+  void bumpPlaybackGeneration() { ++playbackGeneration; }
+  void invalidatePlaybackWindow(bool preserveLedger = false);
 
   // Tempo accessors
   static uint32_t getTicksPerBar();
@@ -234,6 +238,11 @@ public:
     const Loop& loop = getLoop(slotIndex);
     return loop.getNoteCache().getNotes(loop.midiEvents(), loop.loopLengthTicks);
   }
+  const std::vector<NoteUtils::DisplayNote>& getVisualNotesForSlot(uint8_t slotIndex) const {
+    Loop& loop = const_cast<Loop&>(getLoop(slotIndex));
+    loop.ensureVisualCacheBuilt();
+    return loop.visualCache.notes;
+  }
   
   /// Get cached event index - avoids expensive index rebuilding
   const NoteUtils::EventIndex& getCachedEventIndex() const {
@@ -275,6 +284,8 @@ private:
   bool alignLoopOriginOnNextStop;
   uint16_t recordAddedNoteOnCount;  // note-ons this overdub pass (memory log at overdub stop)
   bool deferredFullMidiValidate = false;
+  uint32_t playbackGeneration = 0;
+  TrackPlaybackRuntime playbackRuntime;
   GlobalUndoStack undoStack;
   static const uint32_t TICKS_PER_BAR;
 

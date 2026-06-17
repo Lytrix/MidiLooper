@@ -14,6 +14,7 @@
 namespace LoopEventStoreConfig {
 constexpr uint16_t CHUNK_CAPACITY = 256;
 constexpr uint16_t POOL_CHUNK_COUNT = 512;
+constexpr uint32_t BAR_TICKS = 768;
 }  // namespace LoopEventStoreConfig
 
 struct EventChunk {
@@ -24,10 +25,13 @@ struct EventChunk {
 };
 
 using ChunkIdList = std::vector<uint16_t, ExtMemAllocator<uint16_t>>;
+using BarIndexVec = std::vector<size_t, ExtMemAllocator<size_t>>;
 
 /// Append-only fixed-size event chunks backed by a global PSRAM pool.
 class LoopEventStore {
  public:
+  static constexpr size_t NO_EVENT_INDEX = static_cast<size_t>(-1);
+
   static void initPool();
   static void resetPoolForTests();
 
@@ -36,12 +40,16 @@ class LoopEventStore {
   LoopEventStore& operator=(const LoopEventStore&) = delete;
 
   bool append(const MidiEvent& evt);
-  size_t size() const;
+  size_t size() const { return eventCount_; }
   bool empty() const { return size() == 0; }
   const MidiEvent& at(size_t globalIndex) const;
 
   /// First global index whose event tick is >= tick, or size() if none.
   size_t lowerBoundIndex(uint32_t tick) const;
+  /// First global index in a bar; returns size() when no events at/after that bar.
+  size_t firstIndexForBar(uint32_t bar) const;
+  /// Debug/inspection access to bar start index table.
+  const BarIndexVec& barFirstIndices() const;
 
   void clear();
 
@@ -73,6 +81,10 @@ class LoopEventStore {
 
  private:
   ChunkIdList chunkIds_;
+  size_t eventCount_ = 0;
+  mutable BarIndexVec barFirstIndices_;
+  mutable bool barIndexDirty_ = true;
+  uint32_t lastAppendedTick_ = 0;
 
   static EventChunk* pool_;
   static bool poolUsed_[LoopEventStoreConfig::POOL_CHUNK_COUNT];
@@ -83,4 +95,6 @@ class LoopEventStore {
   EventChunk& chunk(uint16_t id);
   const EventChunk& chunk(uint16_t id) const;
   bool appendToTailChunk(const MidiEvent& evt);
+  void rebuildBarIndex() const;
+  void markBarIndexDirty();
 };

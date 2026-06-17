@@ -56,6 +56,43 @@ static bool writeMidiSnapshot(File& file, const MidiSnapshotRef& snapshot) {
     return true;
 }
 
+static bool skipRawBytes(File& file, size_t size) {
+    if (size == 0) {
+        return true;
+    }
+    if ((file.size() - file.position()) < size) {
+        return false;
+    }
+    return file.seek(file.position() + size);
+}
+
+static bool loadCommittedEventsFromFile(File& file, LoopEventStore& store, uint32_t midiCount) {
+    store.clear();
+    for (uint32_t i = 0; i < midiCount; ++i) {
+        MidiEvent evt;
+        if (!readRaw(file, &evt, sizeof(evt))) {
+            return false;
+        }
+        if (!store.append(evt)) {
+            Serial.println("[StorageManager] ERROR: chunk pool full while loading committed events");
+            return false;
+        }
+    }
+    return true;
+}
+
+static uint32_t lastEventTickInStore(const LoopEventStore& store) {
+    uint32_t lastTick = 0;
+    const size_t count = store.size();
+    for (size_t i = 0; i < count; ++i) {
+        const uint32_t tick = store.at(i).tick;
+        if (tick > lastTick) {
+            lastTick = tick;
+        }
+    }
+    return lastTick;
+}
+
 static bool readMidiSnapshot(File& file, MidiSnapshotRef& snapshot) {
     bool hasSnapshot = false;
     if (!readRaw(file, &hasSnapshot, sizeof(hasSnapshot))) return false;
@@ -69,10 +106,10 @@ static bool readMidiSnapshot(File& file, MidiSnapshotRef& snapshot) {
     const size_t bytesNeeded = static_cast<size_t>(count) * sizeof(MidiEvent);
     if ((file.size() - file.position()) < bytesNeeded) return false;
 
-    MidiEventVec flat(count);
-    if (count > 0 && !readRaw(file, flat.data(), bytesNeeded)) return false;
     auto store = std::make_shared<LoopEventStore>();
-    store->loadFromFlat(flat);
+    if (!loadCommittedEventsFromFile(file, *store, count)) {
+        return false;
+    }
     snapshot = store;
     return true;
 }
@@ -592,7 +629,7 @@ bool StorageManager::loadState(LooperState& state) {
                 loop.lastTickInLoop = 0;
                 loop.nextEventIndex = 0;
                 loop.playbackOrderDirty = true;
-                loop.invalidateCaches();
+                loop.markDisplayCachesStale();
                 loop.clearAllUndoStacks();
 
                 // Loop core
@@ -619,18 +656,21 @@ bool StorageManager::loadState(LooperState& state) {
                     file.close();
                     return false;
                 }
-                MidiEventVec midiEvents(midiCount);
-                if (midiCount > 0 && !readRaw(file, midiEvents.data(), midiCount * sizeof(MidiEvent))) { Serial.print("[StorageManager] ERROR: Failed to read midiEvents for track "); Serial.print(t); Serial.print(" slot "); Serial.println(s); file.close(); return false; }
-                loop.committedEvents.mutStore().loadFromFlat(midiEvents);
+                if (!loadCommittedEventsFromFile(file, loop.committedEvents.mutStore(), midiCount)) {
+                    Serial.print("[StorageManager] ERROR: Failed to load committed events for track "); Serial.print(t); Serial.print(" slot "); Serial.println(s);
+                    file.close();
+                    return false;
+                }
                 if (loop.loopLengthTicks == 0 && !loop.committedEvents.empty()) {
-                    uint32_t lastTick = 0;
-                    MidiEventVec flat;
-                    loop.committedEvents.readStore().flatten(flat);
-                    for (const auto &evt : flat) lastTick = (evt.tick > lastTick) ? evt.tick : lastTick;
+                    const uint32_t lastTick =
+                        lastEventTickInStore(loop.committedEvents.readStore());
                     loop.loopLengthTicks = track.computeLoopLengthTicks(lastTick);
                 }
                 if (!loop.committedEvents.empty()) anySlotHasEvents = true;
-                loop.invalidateCaches();
+                loop.markDisplayCachesStale();
+
+                // Legacy per-slot undo snapshots are skipped on load — GlobalUndoStack tail
+                // (GUS3) holds authoritative undo after M3. Skipping avoids 2×–3× RAM peak.
 
                 // Overdub undo history (midi + geom)
                 uint32_t overdubUndoCount = 0;
@@ -644,8 +684,7 @@ bool StorageManager::loadState(LooperState& state) {
                         file.close();
                         return false;
                     }
-                    MidiEventVec snapshot(snapCount);
-                    if (snapCount > 0 && !readRaw(file, snapshot.data(), snapCount * sizeof(MidiEvent))) { Serial.print("[StorageManager] ERROR: Failed to read overdubUndo snapshot for track "); Serial.print(t); Serial.print(" slot "); Serial.println(s); file.close(); return false; }
+                    if (!skipRawBytes(file, snapBytesNeeded)) { Serial.print("[StorageManager] ERROR: Failed to skip overdubUndo snapshot for track "); Serial.print(t); Serial.print(" slot "); Serial.println(s); file.close(); return false; }
                     OverdubGeomSnapshot geom;
                     uint32_t geomLoopLengthTicks = 0;
                     uint32_t geomStartLoopTick = 0;
@@ -653,14 +692,10 @@ bool StorageManager::loadState(LooperState& state) {
                     if (!readRaw(file, &geomLoopLengthTicks, sizeof(geomLoopLengthTicks))) { Serial.println("[StorageManager] ERROR: Failed to read overdubUndo geom.loopLengthTicks"); file.close(); return false; }
                     if (!readRaw(file, &geomStartLoopTick, sizeof(geomStartLoopTick))) { Serial.println("[StorageManager] ERROR: Failed to read overdubUndo geom.startLoopTick"); file.close(); return false; }
                     if (!readRaw(file, &geomLoopStartTick, sizeof(geomLoopStartTick))) { Serial.println("[StorageManager] ERROR: Failed to read overdubUndo geom.loopStartTick"); file.close(); return false; }
-                    geom.loopLengthTicks = geomLoopLengthTicks;
-                    geom.startLoopTick = 0; // playback normalization
-                    geom.loopStartTick = geomLoopStartTick;
-
-                    auto snapStore = std::make_shared<LoopEventStore>();
-                    snapStore->loadFromFlat(snapshot);
-                    loop.getMidiHistory().push_back(snapStore);
-                    loop.getOverdubGeomHistory().push_back(geom);
+                    (void)geom;
+                    (void)geomLoopLengthTicks;
+                    (void)geomStartLoopTick;
+                    (void)geomLoopStartTick;
                 }
 
                 // Overdub redo history (midi + geom)
@@ -675,23 +710,16 @@ bool StorageManager::loadState(LooperState& state) {
                         file.close();
                         return false;
                     }
-                    MidiEventVec snapshot(snapCount);
-                    if (snapCount > 0 && !readRaw(file, snapshot.data(), snapCount * sizeof(MidiEvent))) { Serial.print("[StorageManager] ERROR: Failed to read overdubRedo snapshot for track "); Serial.print(t); Serial.print(" slot "); Serial.println(s); file.close(); return false; }
-                    OverdubGeomSnapshot geom;
+                    if (!skipRawBytes(file, snapBytesNeeded)) { Serial.print("[StorageManager] ERROR: Failed to skip overdubRedo snapshot for track "); Serial.print(t); Serial.print(" slot "); Serial.println(s); file.close(); return false; }
                     uint32_t geomLoopLengthTicks = 0;
                     uint32_t geomStartLoopTick = 0;
                     uint32_t geomLoopStartTick = 0;
                     if (!readRaw(file, &geomLoopLengthTicks, sizeof(geomLoopLengthTicks))) { Serial.println("[StorageManager] ERROR: Failed to read overdubRedo geom.loopLengthTicks"); file.close(); return false; }
                     if (!readRaw(file, &geomStartLoopTick, sizeof(geomStartLoopTick))) { Serial.println("[StorageManager] ERROR: Failed to read overdubRedo geom.startLoopTick"); file.close(); return false; }
                     if (!readRaw(file, &geomLoopStartTick, sizeof(geomLoopStartTick))) { Serial.println("[StorageManager] ERROR: Failed to read overdubRedo geom.loopStartTick"); file.close(); return false; }
-                    geom.loopLengthTicks = geomLoopLengthTicks;
-                    geom.startLoopTick = 0; // playback normalization
-                    geom.loopStartTick = geomLoopStartTick;
-
-                    auto snapStore = std::make_shared<LoopEventStore>();
-                    snapStore->loadFromFlat(snapshot);
-                    loop.getMidiRedoHistory().push_back(snapStore);
-                    loop.getOverdubGeomRedoHistory().push_back(geom);
+                    (void)geomLoopLengthTicks;
+                    (void)geomStartLoopTick;
+                    (void)geomLoopStartTick;
                 }
 
                 // Clear undo history
@@ -706,20 +734,16 @@ bool StorageManager::loadState(LooperState& state) {
                         file.close();
                         return false;
                     }
-                    MidiEventVec snapshot(snapCount);
-                    if (snapCount > 0 && !readRaw(file, snapshot.data(), snapCount * sizeof(MidiEvent))) { Serial.print("[StorageManager] ERROR: Failed to read clearUndo snapshot for track "); Serial.print(t); Serial.print(" slot "); Serial.println(s); file.close(); return false; }
+                    if (!skipRawBytes(file, snapBytesNeeded)) { Serial.print("[StorageManager] ERROR: Failed to skip clearUndo snapshot for track "); Serial.print(t); Serial.print(" slot "); Serial.println(s); file.close(); return false; }
                     uint32_t snapStateRaw = 0;
                     uint32_t snapLoopLengthTicks = 0;
                     uint32_t snapLoopStartTick = 0;
                     if (!readRaw(file, &snapStateRaw, sizeof(snapStateRaw))) { Serial.println("[StorageManager] ERROR: Failed to read clearUndo snapState"); file.close(); return false; }
                     if (!readRaw(file, &snapLoopLengthTicks, sizeof(snapLoopLengthTicks))) { Serial.println("[StorageManager] ERROR: Failed to read clearUndo snapLoopLengthTicks"); file.close(); return false; }
                     if (!readRaw(file, &snapLoopStartTick, sizeof(snapLoopStartTick))) { Serial.println("[StorageManager] ERROR: Failed to read clearUndo snapLoopStartTick"); file.close(); return false; }
-                    MemoryPool::PooledMidiEventVector pooledSnapshot(MemoryPool::globalMidiEventPool);
-                    for (const auto &event : snapshot) pooledSnapshot.push_back(event);
-                    loop.getClearMidiHistory().push_back(std::move(pooledSnapshot));
-                    loop.getClearStateHistory().push_back((TrackState)snapStateRaw);
-                    loop.getClearLengthHistory().push_back(snapLoopLengthTicks);
-                    loop.getClearStartHistory().push_back(snapLoopStartTick);
+                    (void)snapStateRaw;
+                    (void)snapLoopLengthTicks;
+                    (void)snapLoopStartTick;
                 }
 
                 // Clear redo history
@@ -734,20 +758,16 @@ bool StorageManager::loadState(LooperState& state) {
                         file.close();
                         return false;
                     }
-                    MidiEventVec snapshot(snapCount);
-                    if (snapCount > 0 && !readRaw(file, snapshot.data(), snapCount * sizeof(MidiEvent))) { Serial.print("[StorageManager] ERROR: Failed to read clearRedo snapshot for track "); Serial.print(t); Serial.print(" slot "); Serial.println(s); file.close(); return false; }
+                    if (!skipRawBytes(file, snapBytesNeeded)) { Serial.print("[StorageManager] ERROR: Failed to skip clearRedo snapshot for track "); Serial.print(t); Serial.print(" slot "); Serial.println(s); file.close(); return false; }
                     uint32_t snapStateRaw = 0;
                     uint32_t snapLoopLengthTicks = 0;
                     uint32_t snapLoopStartTick = 0;
                     if (!readRaw(file, &snapStateRaw, sizeof(snapStateRaw))) { Serial.println("[StorageManager] ERROR: Failed to read clearRedo snapState"); file.close(); return false; }
                     if (!readRaw(file, &snapLoopLengthTicks, sizeof(snapLoopLengthTicks))) { Serial.println("[StorageManager] ERROR: Failed to read clearRedo snapLoopLengthTicks"); file.close(); return false; }
                     if (!readRaw(file, &snapLoopStartTick, sizeof(snapLoopStartTick))) { Serial.println("[StorageManager] ERROR: Failed to read clearRedo snapLoopStartTick"); file.close(); return false; }
-                    MemoryPool::PooledMidiEventVector pooledSnapshot(MemoryPool::globalMidiEventPool);
-                    for (const auto &event : snapshot) pooledSnapshot.push_back(event);
-                    loop.getClearMidiRedoHistory().push_back(std::move(pooledSnapshot));
-                    loop.getClearStateRedoHistory().push_back((TrackState)snapStateRaw);
-                    loop.getClearLengthRedoHistory().push_back(snapLoopLengthTicks);
-                    loop.getClearStartRedoHistory().push_back(snapLoopStartTick);
+                    (void)snapStateRaw;
+                    (void)snapLoopLengthTicks;
+                    (void)snapLoopStartTick;
                 }
 
                 // Loop-start edit undo/redo
@@ -820,10 +840,12 @@ bool StorageManager::loadState(LooperState& state) {
                     return false;
                 }
             }
+            Serial.println("[StorageManager] GlobalUndoStack tail loaded (legacy per-slot undo snapshots skipped).");
         } else {
             for (uint8_t t = 0; t < numTracks; ++t) {
                 trackManager.getTrack(t).getGlobalUndoStack().clear();
             }
+            Serial.println("[StorageManager] WARN: No GlobalUndoStack tail; legacy per-slot undo snapshots were skipped on load.");
         }
 
         file.close();

@@ -124,24 +124,33 @@ bool LoopEventStore::appendToTailChunk(const MidiEvent& evt) {
   }
 
   EventChunk& tail = chunk(tailId);
+  const size_t globalIndex = eventCount_;
   tail.events[tail.used] = evt;
   if (tail.used == 0) {
     tail.firstTick = evt.tick;
   }
   tail.lastTick = evt.tick;
   ++tail.used;
+  ++eventCount_;
+
+  if (!barIndexDirty_) {
+    if (globalIndex > 0 && evt.tick < lastAppendedTick_) {
+      barIndexDirty_ = true;
+    } else {
+      const uint32_t bar = evt.tick / LoopEventStoreConfig::BAR_TICKS;
+      if (barFirstIndices_.size() <= bar) {
+        barFirstIndices_.resize(bar + 1, NO_EVENT_INDEX);
+      }
+      if (barFirstIndices_[bar] == NO_EVENT_INDEX) {
+        barFirstIndices_[bar] = globalIndex;
+      }
+    }
+  }
+  lastAppendedTick_ = evt.tick;
   return true;
 }
 
 bool LoopEventStore::append(const MidiEvent& evt) { return appendToTailChunk(evt); }
-
-size_t LoopEventStore::size() const {
-  size_t total = 0;
-  for (uint16_t id : chunkIds_) {
-    total += chunk(id).used;
-  }
-  return total;
-}
 
 const MidiEvent& LoopEventStore::at(size_t globalIndex) const {
   static const MidiEvent kEmpty{};
@@ -180,11 +189,37 @@ size_t LoopEventStore::lowerBoundIndex(uint32_t tick) const {
   return size();
 }
 
+const BarIndexVec& LoopEventStore::barFirstIndices() const {
+  if (barIndexDirty_) {
+    rebuildBarIndex();
+  }
+  return barFirstIndices_;
+}
+
+size_t LoopEventStore::firstIndexForBar(uint32_t bar) const {
+  if (barIndexDirty_) {
+    rebuildBarIndex();
+  }
+  if (bar >= barFirstIndices_.size()) {
+    return size();
+  }
+  for (size_t b = bar; b < barFirstIndices_.size(); ++b) {
+    if (barFirstIndices_[b] != NO_EVENT_INDEX) {
+      return barFirstIndices_[b];
+    }
+  }
+  return size();
+}
+
 void LoopEventStore::clear() {
   for (uint16_t id : chunkIds_) {
     freeChunk(id);
   }
   chunkIds_.clear();
+  eventCount_ = 0;
+  barFirstIndices_.clear();
+  barIndexDirty_ = false;
+  lastAppendedTick_ = 0;
 }
 
 void LoopEventStore::detachChunksTo(ChunkIdList& dest) {
@@ -194,18 +229,37 @@ void LoopEventStore::detachChunksTo(ChunkIdList& dest) {
   dest.clear();
   dest.swap(chunkIds_);
   chunkIds_.clear();
+  eventCount_ = 0;
+  markBarIndexDirty();
+  lastAppendedTick_ = 0;
 }
 
 void LoopEventStore::adoptChunkIds(ChunkIdList& ids) {
   clear();
   chunkIds_.swap(ids);
   ids.clear();
+  eventCount_ = 0;
+  for (uint16_t id : chunkIds_) {
+    eventCount_ += chunk(id).used;
+  }
+  if (!chunkIds_.empty()) {
+    lastAppendedTick_ = chunk(chunkIds_.back()).lastTick;
+  }
+  markBarIndexDirty();
 }
 
 void LoopEventStore::adoptAll(LoopEventStore& other) {
   clear();
   chunkIds_.swap(other.chunkIds_);
+  eventCount_ = other.eventCount_;
+  barFirstIndices_.swap(other.barFirstIndices_);
+  barIndexDirty_ = other.barIndexDirty_;
+  lastAppendedTick_ = other.lastAppendedTick_;
   other.chunkIds_.clear();
+  other.eventCount_ = 0;
+  other.barFirstIndices_.clear();
+  other.barIndexDirty_ = false;
+  other.lastAppendedTick_ = 0;
 }
 
 void LoopEventStore::mergeFrom(LoopEventStore& other) {
@@ -280,6 +334,9 @@ void LoopEventStore::loadFromFlat(const MidiEventVec& events) {
       break;
     }
   }
+  if (!events.empty()) {
+    lastAppendedTick_ = events.back().tick;
+  }
 }
 
 void LoopEventStore::shiftAllTicks(int64_t delta) {
@@ -314,6 +371,7 @@ void LoopEventStore::shiftAllTicks(int64_t delta) {
       c.lastTick = c.events[c.used - 1].tick;
     }
   }
+  markBarIndexDirty();
 }
 
 void LoopEventStore::dropEventsAtOrBeyondTick(uint32_t tickLimit) {
@@ -349,6 +407,11 @@ void LoopEventStore::dropEventsAtOrBeyondTick(uint32_t tickLimit) {
   }
 
   chunkIds_.swap(kept);
+  eventCount_ = 0;
+  for (uint16_t id : chunkIds_) {
+    eventCount_ += chunk(id).used;
+  }
+  markBarIndexDirty();
 }
 
 std::shared_ptr<LoopEventStore> LoopEventStore::cloneShared() const {
@@ -360,4 +423,32 @@ std::shared_ptr<LoopEventStore> LoopEventStore::cloneShared() const {
     }
   }
   return copy;
+}
+
+void LoopEventStore::markBarIndexDirty() {
+  barIndexDirty_ = true;
+}
+
+void LoopEventStore::rebuildBarIndex() const {
+  barFirstIndices_.clear();
+  if (eventCount_ == 0) {
+    barIndexDirty_ = false;
+    return;
+  }
+
+  size_t globalIndex = 0;
+  for (uint16_t id : chunkIds_) {
+    const EventChunk& c = chunk(id);
+    for (uint16_t i = 0; i < c.used; ++i) {
+      const uint32_t bar = c.events[i].tick / LoopEventStoreConfig::BAR_TICKS;
+      if (barFirstIndices_.size() <= bar) {
+        barFirstIndices_.resize(bar + 1, NO_EVENT_INDEX);
+      }
+      if (barFirstIndices_[bar] == NO_EVENT_INDEX) {
+        barFirstIndices_[bar] = globalIndex;
+      }
+      ++globalIndex;
+    }
+  }
+  barIndexDirty_ = false;
 }
