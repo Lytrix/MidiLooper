@@ -47,6 +47,7 @@ CONTROL_CHANNEL_1BASED = 16
 # Must match Config::TICKS_PER_BAR / Config::TICKS_PER_16TH_STEP in include/Globals.h.
 TICKS_PER_BAR = 768
 TICKS_PER_16TH_STEP = 48
+TICKS_PER_8TH_STEP = TICKS_PER_16TH_STEP * 2
 MIDI_CLOCKS_PER_BAR = 96
 RECORD_GRID_STEP_CLOCKS = 6  # 16th notes at 24 PPQN
 OVERDUB_GRID_STEP_CLOCKS = 12  # 8th notes at 24 PPQN
@@ -1085,6 +1086,86 @@ def _verify_stored_record_note_grid(
     }
 
 
+def _extract_sevt_note_on_ticks(lines: list[str], *, after_ts: Optional[int] = None) -> list[int]:
+    ticks: list[int] = []
+    for line in lines:
+        if ",SEVT,N," not in line:
+            continue
+        parts = line.split(",")
+        if len(parts) < 7:
+            continue
+        try:
+            ts = int(parts[1])
+            tick = int(parts[4])
+        except ValueError:
+            continue
+        if after_ts is not None and ts < after_ts:
+            continue
+        ticks.append(tick)
+    ticks.sort()
+    return ticks
+
+
+def _verify_stored_overdub_note_span(
+    lines: list[str],
+    *,
+    loop_length_ticks: int,
+    overdub_bars: int,
+    record_bars: int,
+    note_on_count: int,
+    span_min_ratio: float = DEFAULT_RECORD_NOTE_SPAN_MIN_RATIO,
+) -> dict[str, object]:
+    if overdub_bars <= 0 or loop_length_ticks <= 0:
+        return {"phase_disabled": True}
+
+    ticks = _extract_sevt_note_on_ticks(lines)
+    if len(ticks) < 2:
+        return {
+            "phase_disabled": False,
+            "sevt_missing": len(ticks) == 0,
+            "note_on_count": len(ticks),
+            "span_ok": False,
+            "bars_match_ok": False,
+        }
+
+    first_tick = ticks[0]
+    last_tick = ticks[-1]
+    span = last_tick - first_tick
+    expected_span = max(
+        (overdub_bars * 8 - 1) * TICKS_PER_8TH_STEP,
+        (note_on_count - 1) * TICKS_PER_8TH_STEP,
+    )
+    expected_min_span = int(expected_span * span_min_ratio)
+    span_ok = span >= expected_min_span and last_tick < loop_length_ticks
+
+    bars_in_loop = loop_length_ticks // TICKS_PER_BAR
+    overdub_bars_reached = (last_tick // TICKS_PER_BAR) + 1
+    expected_bars = min(overdub_bars, bars_in_loop)
+    bars_match_ok = overdub_bars_reached >= max(1, expected_bars - 1)
+
+    if record_bars == overdub_bars:
+        revt_ticks = _extract_revt_note_on_ticks(lines)
+        if revt_ticks:
+            revt_bars_reached = (revt_ticks[-1] // TICKS_PER_BAR) + 1
+            bars_match_ok = bars_match_ok and overdub_bars_reached >= max(1, revt_bars_reached - 1)
+
+    return {
+        "phase_disabled": False,
+        "sevt_missing": False,
+        "note_on_count": len(ticks),
+        "first_tick": first_tick,
+        "last_tick": last_tick,
+        "span_ticks": span,
+        "expected_min_span_ticks": expected_min_span,
+        "span_ok": span_ok,
+        "bars_reached": overdub_bars_reached,
+        "expected_bars": expected_bars,
+        "bars_match_ok": bars_match_ok,
+        "record_bars": record_bars,
+        "overdub_bars": overdub_bars,
+    }
+
+
 def _extract_disp_snapshots(lines: list[str], *, after_ts: Optional[int] = None,
                             before_ts: Optional[int] = None) -> list[dict[str, object]]:
     rows: list[dict[str, object]] = []
@@ -1451,9 +1532,18 @@ def _build_serial_verification(lines: list[str], args: argparse.Namespace) -> di
         elif not stored_record_grid.get("grid_ok", False):
             issues.append("record_stored_note_grid_bad")
     overdub_wrap_storage: Optional[dict[str, object]] = None
+    stored_overdub_span: Optional[dict[str, object]] = None
     loop_length_ticks = 0
     if record_loop_length and record_loop_length.get("actual_final_length") is not None:
         loop_length_ticks = int(record_loop_length["actual_final_length"])
+    if loop_length_ticks > 0 and args.overdub_bars and args.bar_sync_from_midi_clock:
+        stored_overdub_span = _verify_stored_overdub_note_span(
+            lines,
+            loop_length_ticks=loop_length_ticks,
+            overdub_bars=args.overdub_bars,
+            record_bars=args.record_bars or 0,
+            note_on_count=int(overdub["note_on_count"]),
+        )
     if loop_length_ticks > 0:
         overdub_wrap_storage = _verify_overdub_wrap_storage(
             lines,
@@ -1465,6 +1555,13 @@ def _build_serial_verification(lines: list[str], args: argparse.Namespace) -> di
             for issue in overdub_wrap_storage.get("issues", []):
                 if issue not in issues:
                     issues.append(str(issue))
+    if stored_overdub_span is not None and not stored_overdub_span.get("phase_disabled"):
+        if stored_overdub_span.get("sevt_missing"):
+            issues.append("overdub_stored_sevt_missing")
+        elif not stored_overdub_span.get("span_ok", False):
+            issues.append("overdub_stored_span_too_short")
+        elif not stored_overdub_span.get("bars_match_ok", False):
+            issues.append("overdub_stored_bars_short")
     display_verification: Optional[dict[str, object]] = None
     if loop_length_ticks > 0:
         display_verification = _verify_display_snapshots(
@@ -1483,6 +1580,7 @@ def _build_serial_verification(lines: list[str], args: argparse.Namespace) -> di
         "record_note_span": record_note_span,
         "stored_record_grid": stored_record_grid,
         "overdub_wrap_storage": overdub_wrap_storage,
+        "stored_overdub_span": stored_overdub_span,
         "display_verification": display_verification,
         "record_first_note_offset": record_first_note_offset,
         "overdub_first_note_offset": overdub_first_note_offset,
@@ -2502,7 +2600,9 @@ def run() -> int:
                 overall_ok = False
         if args.undo_redo_after_overdub_stop and (undo_log_count < expected_min or redo_log_count < expected_min):
             overall_ok = False
-        if args.clear_before_record and (
+        if args.clear_before_record and not any(
+            r.get("result") == "already_empty_ignored" for r in clear_precondition_results
+        ) and (
             not bool(clear_undo_prune.get("found")) or not bool(clear_undo_prune.get("remaining_zero"))
         ):
             overall_ok = False
@@ -2621,6 +2721,17 @@ def run() -> int:
                         f"note={pair.get('note')} ch={pair.get('ch')} "
                         f"ok={pair.get('ok')}"
                     )
+            stored_overdub_span = serial_verification.get("stored_overdub_span")
+            if stored_overdub_span and not stored_overdub_span.get("phase_disabled"):
+                print(
+                    "  VERIFY stored overdub span (SEVT ticks): "
+                    f"count={stored_overdub_span.get('note_on_count')} "
+                    f"last={stored_overdub_span.get('last_tick')} "
+                    f"min_span={stored_overdub_span.get('expected_min_span_ticks')} "
+                    f"bars={stored_overdub_span.get('bars_reached')}/{stored_overdub_span.get('expected_bars')} "
+                    f"span_ok={stored_overdub_span.get('span_ok')} "
+                    f"bars_ok={stored_overdub_span.get('bars_match_ok')}"
+                )
             display_verification = serial_verification.get("display_verification")
             if display_verification:
                 print(
