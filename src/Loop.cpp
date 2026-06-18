@@ -22,38 +22,38 @@ bool eventsEquivalent(const MidiEvent& a, const MidiEvent& b) {
   return true;
 }
 
-void collectActiveEpochsSorted(const Loop& loop, std::vector<const Epoch*>& out) {
+void collectActiveTakesSorted(const Loop& loop, std::vector<const Take*>& out) {
   out.clear();
-  out.reserve(loop.epochs.size());
-  for (const Epoch& epoch : loop.epochs) {
-    if (epoch.state == EpochState::Active && !epoch.chunkRefs.empty()) {
-      out.push_back(&epoch);
+  out.reserve(loop.takes.size());
+  for (const Take& take : loop.takes) {
+    if (take.state == TakeState::Active && !take.chunkRefs.empty()) {
+      out.push_back(&take);
     }
   }
   std::sort(out.begin(), out.end(),
-            [](const Epoch* a, const Epoch* b) { return a->mergeSequence < b->mergeSequence; });
+            [](const Take* a, const Take* b) { return a->mergeSequence < b->mergeSequence; });
 }
 
-/// Merge Active epoch chunk data into a flat vector without allocating new pool chunks.
-void flattenActiveEpochChunksToVec(const std::vector<const Epoch*>& active, MidiEventVec& out) {
+/// Merge Active take chunk data into a flat vector without allocating new pool chunks.
+void flattenActiveTakeChunksToVec(const std::vector<const Take*>& active, MidiEventVec& out) {
   out.clear();
   if (active.empty()) {
     return;
   }
 
-  for (const Epoch* epoch : active) {
-    MidiEventVec epochFlat;
-    LoopEventStore::appendFlattenedChunkIds(epoch->chunkRefs, epochFlat);
-    if (epochFlat.empty()) {
+  for (const Take* take : active) {
+    MidiEventVec takeFlat;
+    LoopEventStore::appendFlattenedChunkIds(take->chunkRefs, takeFlat);
+    if (takeFlat.empty()) {
       continue;
     }
     if (out.empty()) {
-      out = std::move(epochFlat);
+      out = std::move(takeFlat);
       continue;
     }
     MidiEventVec merged;
-    merged.reserve(out.size() + epochFlat.size());
-    std::merge(out.begin(), out.end(), epochFlat.begin(), epochFlat.end(),
+    merged.reserve(out.size() + takeFlat.size());
+    std::merge(out.begin(), out.end(), takeFlat.begin(), takeFlat.end(),
                std::back_inserter(merged),
                [](const MidiEvent& a, const MidiEvent& b) { return a.tick < b.tick; });
     out = std::move(merged);
@@ -80,7 +80,7 @@ bool isDuplicateCaptureEvent(const Loop& loop, const MidiEvent& candidate) {
     }
   }
 
-  // Overdub layers new material on published epochs. Only dedupe within the active
+  // Overdub layers new material on published takes. Only dedupe within the active
   // capture buffer so a second loop pass (or automation re-hits) is not blocked
   // unless the same capture session already stored an identical event.
   return false;
@@ -155,21 +155,21 @@ void rebuildCapturePreviewFromStore(Loop& loop) {
 }  // namespace
 
 bool Loop::hasPublishedEvents() const {
-  for (const Epoch& epoch : epochs) {
-    if (epoch.state == EpochState::Active && !epoch.chunkRefs.empty()) {
+  for (const Take& take : takes) {
+    if (take.state == TakeState::Active && !take.chunkRefs.empty()) {
       return true;
     }
   }
   return false;
 }
 
-void Loop::flattenActiveEpochs(MidiEventVec& out) const {
-  std::vector<const Epoch*> active;
-  collectActiveEpochsSorted(*this, active);
-  flattenActiveEpochChunksToVec(active, out);
+void Loop::flattenActiveTakes(MidiEventVec& out) const {
+  std::vector<const Take*> active;
+  collectActiveTakesSorted(*this, active);
+  flattenActiveTakeChunksToVec(active, out);
 }
 
-void Loop::materializeEditFlatFromEpochs() const {
+void Loop::materializeEditFlatFromTakes() const {
   Loop* self = const_cast<Loop*>(this);
   const bool storeEmptyPublished =
       self->hasPublishedEvents() && self->editFlat_.readStore().empty();
@@ -177,7 +177,7 @@ void Loop::materializeEditFlatFromEpochs() const {
     return;
   }
   MidiEventVec flat;
-  self->flattenActiveEpochs(flat);
+  self->flattenActiveTakes(flat);
   self->editFlat_.mutStore().clear();
   if (!flat.empty()) {
     self->editFlat_.mutStore().loadFromFlat(flat);
@@ -186,19 +186,19 @@ void Loop::materializeEditFlatFromEpochs() const {
   self->editFlatStale_ = false;
 }
 
-void Loop::freeActiveEpochChunks() {
-  for (Epoch& epoch : epochs) {
-    if (epoch.state != EpochState::Active) {
+void Loop::freeActiveTakeChunks() {
+  for (Take& take : takes) {
+    if (take.state != TakeState::Active) {
       continue;
     }
     LoopEventStore staging;
-    staging.adoptChunkIds(epoch.chunkRefs);
+    staging.adoptChunkIds(take.chunkRefs);
     staging.clear();
-    epoch.chunkRefs.clear();
+    take.chunkRefs.clear();
   }
 }
 
-void Loop::syncEditFlatToEpochs(bool allowEmptyClear) {
+void Loop::syncEditFlatToTakes(bool allowEmptyClear) {
   if (editFlat_.isFlatDirty()) {
     editFlat_.syncFlatToStore();
   }
@@ -209,14 +209,14 @@ void Loop::syncEditFlatToEpochs(bool allowEmptyClear) {
       discardEditFlatMaterialization();
       return;
     }
-    freeActiveEpochChunks();
-    epochs.erase(std::remove_if(epochs.begin(), epochs.end(),
-                                [](const Epoch& e) { return e.state == EpochState::Active; }),
-                 epochs.end());
-    lastPublishedEpochId_ = kInvalidEpochId;
+    freeActiveTakeChunks();
+    takes.erase(std::remove_if(takes.begin(), takes.end(),
+                                [](const Take& e) { return e.state == TakeState::Active; }),
+                 takes.end());
+    lastPublishedTakeId_ = kInvalidTakeId;
     ++playbackRevision;
     discardEditFlatMaterialization();
-    rebuildVisualCacheFromEpochs();
+    rebuildVisualCacheFromTakes();
     return;
   }
 
@@ -226,25 +226,25 @@ void Loop::syncEditFlatToEpochs(bool allowEmptyClear) {
     return;
   }
 
-  freeActiveEpochChunks();
-  epochs.erase(std::remove_if(epochs.begin(), epochs.end(),
-                              [](const Epoch& e) { return e.state == EpochState::Active; }),
-               epochs.end());
+  freeActiveTakeChunks();
+  takes.erase(std::remove_if(takes.begin(), takes.end(),
+                              [](const Take& e) { return e.state == TakeState::Active; }),
+               takes.end());
 
-  Epoch rebuilt{};
-  rebuilt.id = nextEpochId_++;
+  Take rebuilt{};
+  rebuilt.id = nextTakeId_++;
   rebuilt.mergeSequence = nextMergeSequence_++;
-  rebuilt.state = EpochState::Active;
-  rebuilt.kind = EpochKind::Record;
+  rebuilt.state = TakeState::Active;
+  rebuilt.type = TakeType::Record;
   rebuilt.chunkRefs = std::move(refs);
-  epochs.push_back(rebuilt);
-  lastPublishedEpochId_ = rebuilt.id;
+  takes.push_back(rebuilt);
+  lastPublishedTakeId_ = rebuilt.id;
   ++playbackRevision;
-  materializeEditFlatFromEpochs();
-  rebuildVisualCacheFromEpochs();
+  materializeEditFlatFromTakes();
+  rebuildVisualCacheFromTakes();
 }
 
-void Loop::markEpochDerivedStale() {
+void Loop::markTakeDerivedStale() {
   editFlatStale_ = true;
   playbackOrderDirty = true;
   visualCacheDirty = true;
@@ -252,33 +252,33 @@ void Loop::markEpochDerivedStale() {
 }
 
 MidiEventVec& Loop::midiEvents() {
-  materializeEditFlatFromEpochs();
+  materializeEditFlatFromTakes();
   return editFlat_.mutFlat();
 }
 
 const MidiEventVec& Loop::midiEvents() const {
-  materializeEditFlatFromEpochs();
+  materializeEditFlatFromTakes();
   return editFlat_.readFlat();
 }
 
 LoopEventStore& Loop::mutEditStore() {
-  materializeEditFlatFromEpochs();
+  materializeEditFlatFromTakes();
   return editFlat_.mutStore();
 }
 
 const LoopEventStore& Loop::readEditStore() const {
-  materializeEditFlatFromEpochs();
+  materializeEditFlatFromTakes();
   return editFlat_.readStore();
 }
 
 std::shared_ptr<const LoopEventStore> Loop::shareEditSnapshot() const {
-  materializeEditFlatFromEpochs();
+  materializeEditFlatFromTakes();
   return editFlat_.shareForSnapshot();
 }
 
 void Loop::restoreEditSnapshot(const MidiSnapshotRef& snapshot) {
   editFlat_.restoreFromSnapshot(snapshot);
-  syncEditFlatToEpochs(true);
+  syncEditFlatToTakes(true);
 }
 
 void Loop::discardEditFlatMaterialization() {
@@ -288,13 +288,13 @@ void Loop::discardEditFlatMaterialization() {
 }
 
 void Loop::commitStopFinalizeFromStore(LoopEventStore& merged) {
-  const EpochId preserveId = lastPublishedEpochId_;
-  EpochKind preserveKind = EpochKind::Overdub;
+  const TakeId preserveId = lastPublishedTakeId_;
+  TakeType preserveType = TakeType::Overdub;
   uint32_t preserveMergeSeq = 0;
-  for (const Epoch& epoch : epochs) {
-    if (epoch.state == EpochState::Active && epoch.id == preserveId) {
-      preserveKind = epoch.kind;
-      preserveMergeSeq = epoch.mergeSequence;
+  for (const Take& take : takes) {
+    if (take.state == TakeState::Active && take.id == preserveId) {
+      preserveType = take.type;
+      preserveMergeSeq = take.mergeSequence;
       break;
     }
   }
@@ -305,57 +305,57 @@ void Loop::commitStopFinalizeFromStore(LoopEventStore& merged) {
     return;
   }
 
-  freeActiveEpochChunks();
-  epochs.erase(std::remove_if(epochs.begin(), epochs.end(),
-                              [](const Epoch& e) { return e.state == EpochState::Active; }),
-               epochs.end());
+  freeActiveTakeChunks();
+  takes.erase(std::remove_if(takes.begin(), takes.end(),
+                              [](const Take& e) { return e.state == TakeState::Active; }),
+               takes.end());
 
-  Epoch rebuilt{};
-  rebuilt.id = (preserveId != kInvalidEpochId) ? preserveId : nextEpochId_++;
-  if (rebuilt.id >= nextEpochId_) {
-    nextEpochId_ = rebuilt.id + 1;
+  Take rebuilt{};
+  rebuilt.id = (preserveId != kInvalidTakeId) ? preserveId : nextTakeId_++;
+  if (rebuilt.id >= nextTakeId_) {
+    nextTakeId_ = rebuilt.id + 1;
   }
   rebuilt.mergeSequence = preserveMergeSeq;
-  rebuilt.kind = preserveKind;
-  rebuilt.state = EpochState::Active;
+  rebuilt.type = preserveType;
+  rebuilt.state = TakeState::Active;
   rebuilt.chunkRefs = std::move(refs);
-  epochs.push_back(rebuilt);
-  lastPublishedEpochId_ = rebuilt.id;
+  takes.push_back(rebuilt);
+  lastPublishedTakeId_ = rebuilt.id;
   ++playbackRevision;
   discardEditFlatMaterialization();
-  rebuildVisualCacheFromEpochs();
+  rebuildVisualCacheFromTakes();
 }
 
 void Loop::importPublishedStore(LoopEventStore& store) {
-  resetEpochTimeline();
+  resetTakeTimeline();
   if (store.empty()) {
     return;
   }
   editFlat_.mutStore().adoptAll(store);
   editFlatStale_ = false;
-  syncEditFlatToEpochs(true);
-  rebuildVisualCacheFromEpochs();
+  syncEditFlatToTakes(true);
+  rebuildVisualCacheFromTakes();
 }
 
-void Loop::flushEditStoreToEpochs() {
+void Loop::flushEditStoreToTakes() {
   if (editFlatStale_ || !editFlat_.isFlatDirty()) {
     return;
   }
   editFlat_.syncFlatToStore();
-  syncEditFlatToEpochs(true);
+  syncEditFlatToTakes(true);
 }
 
-void Loop::shiftActiveEpochTicks(int64_t delta) {
+void Loop::shiftActiveTakeTicks(int64_t delta) {
   if (delta == 0 || !hasPublishedEvents()) {
     return;
   }
-  materializeEditFlatFromEpochs();
+  materializeEditFlatFromTakes();
   editFlat_.mutStore().shiftAllTicks(delta);
-  syncEditFlatToEpochs(true);
+  syncEditFlatToTakes(true);
 }
 
 void Loop::beginCapture(CapturePhase phase) {
-  discardPendingEpoch();
+  discardPendingTake();
   capture.phase = phase;
   capture.store.clear();
   captureNextEventIndex = 0;
@@ -374,7 +374,7 @@ bool Loop::appendCaptureEvent(const MidiEvent& evt) {
   if (capture.phase == CapturePhase::None) {
     return false;
   }
-  if (hasPendingEpoch_) {
+  if (hasPendingTake_) {
     return false;
   }
   if (isDuplicateCaptureEvent(*this, evt)) {
@@ -390,11 +390,11 @@ bool Loop::appendCaptureEvent(const MidiEvent& evt) {
 
 size_t Loop::liveEventCount() const {
   size_t count = 0;
-  for (const Epoch& epoch : epochs) {
-    if (epoch.state == EpochState::Active) {
+  for (const Take& take : takes) {
+    if (take.state == TakeState::Active) {
       LoopEventStore staging;
       MidiEventVec flat;
-      LoopEventStore::appendFlattenedChunkIds(epoch.chunkRefs, flat);
+      LoopEventStore::appendFlattenedChunkIds(take.chunkRefs, flat);
       count += flat.size();
     }
   }
@@ -418,7 +418,7 @@ bool Loop::ensureCaptureEventsSorted() {
 }
 
 void Loop::buildLiveEventView(MidiEventVec& out) const {
-  flattenActiveEpochs(out);
+  flattenActiveTakes(out);
   if (!captureActive() || capture.store.empty()) {
     return;
   }
@@ -473,17 +473,17 @@ void Loop::removeCaptureNoteOffAt(uint8_t channel, uint8_t note, uint32_t tick) 
   rebuildCapturePreviewFromStore(*this);
 }
 
-void Loop::resetEpochTimeline() {
-  discardPendingEpoch();
-  for (Epoch& epoch : epochs) {
+void Loop::resetTakeTimeline() {
+  discardPendingTake();
+  for (Take& take : takes) {
     LoopEventStore staging;
-    staging.adoptChunkIds(epoch.chunkRefs);
+    staging.adoptChunkIds(take.chunkRefs);
     staging.clear();
   }
-  epochs.clear();
-  nextEpochId_ = 1;
+  takes.clear();
+  nextTakeId_ = 1;
   nextMergeSequence_ = 0;
-  lastPublishedEpochId_ = kInvalidEpochId;
+  lastPublishedTakeId_ = kInvalidTakeId;
   playbackRevision = 0;
   visualCache.clear();
   capturePreview.clear();
@@ -494,68 +494,68 @@ void Loop::resetEpochTimeline() {
   editFlatStale_ = true;
 }
 
-bool Loop::setEpochState(EpochId id, EpochState state) {
-  for (Epoch& epoch : epochs) {
-    if (epoch.id != id) {
+bool Loop::setTakeState(TakeId id, TakeState state) {
+  for (Take& take : takes) {
+    if (take.id != id) {
       continue;
     }
-    if (epoch.state == state) {
+    if (take.state == state) {
       return true;
     }
-    epoch.state = state;
+    take.state = state;
     ++playbackRevision;
-    markEpochDerivedStale();
+    markTakeDerivedStale();
     return true;
   }
   return false;
 }
 
-CommitResult Loop::commitCaptureData(CommitReason reason, uint32_t sealedAtTick) {
+CommitResult Loop::commitTake(CommitReason reason, uint32_t sealedAtTick) {
   (void)reason;
   if (capture.store.empty()) {
     discardCapture();
     return CommitResult::Skipped;
   }
 
-  const SealOutcome seal = sealCaptureLayer(sealedAtTick);
+  const SealOutcome seal = sealCapture(sealedAtTick);
   if (seal != SealOutcome::Ok) {
     return CommitResult::SealFailed;
   }
 
-  if (!publishPendingEpoch()) {
+  if (!publishPendingTake()) {
     return CommitResult::SealFailed;
   }
 
-  markEpochDerivedStale();
-  rebuildVisualCacheFromEpochs();
+  markTakeDerivedStale();
+  rebuildVisualCacheFromTakes();
   return CommitResult::Published;
 }
 
-size_t Loop::activeEpochCount() const {
+size_t Loop::activeTakeCount() const {
   size_t count = 0;
-  for (const Epoch& epoch : epochs) {
-    if (epoch.state == EpochState::Active) {
+  for (const Take& take : takes) {
+    if (take.state == TakeState::Active) {
       ++count;
     }
   }
   return count;
 }
 
-void Loop::discardPendingEpoch() {
-  if (!hasPendingEpoch_) {
+void Loop::discardPendingTake() {
+  if (!hasPendingTake_) {
     return;
   }
   LoopEventStore staging;
-  staging.adoptChunkIds(pendingEpoch_.chunkRefs);
+  staging.adoptChunkIds(pendingTake_.chunkRefs);
   staging.clear();
-  pendingEpoch_ = Epoch{};
-  hasPendingEpoch_ = false;
+  pendingTake_ = Take{};
+  hasPendingTake_ = false;
   pendingVisualDelta.clear();
 }
 
-void Loop::rebuildVisualCacheFromEpochs() {
+void Loop::rebuildVisualCacheFromTakes() {
   MidiEventVec flat;
-  flattenActiveEpochs(flat);
+  flattenActiveTakes(flat);
   visualCache.notes = NoteUtils::reconstructNotes(flat, loopLengthTicks, false);
   visualCache.dirtyBars.clear();
   for (const auto& n : visualCache.notes) {
@@ -574,7 +574,7 @@ void Loop::ensureVisualCacheBuilt() {
   if (!visualCacheDirty) {
     return;
   }
-  rebuildVisualCacheFromEpochs();
+  rebuildVisualCacheFromTakes();
 }
 
 void Loop::markDisplayCachesStale() {
@@ -582,15 +582,15 @@ void Loop::markDisplayCachesStale() {
   visualCacheDirty = true;
 }
 
-SealOutcome Loop::sealCaptureLayer(uint32_t sealedAtTick) {
-  if (hasPendingEpoch_) {
+SealOutcome Loop::sealCapture(uint32_t sealedAtTick) {
+  if (hasPendingTake_) {
     return SealOutcome::AlreadyPending;
   }
   if (capture.store.empty()) {
     return SealOutcome::SkippedEmpty;
   }
-  if (epochs.size() >= EpochConfig::MAX_EPOCHS_PER_LOOP) {
-    return SealOutcome::AtEpochCap;
+  if (takes.size() >= TakeConfig::MAX_TAKES_PER_LOOP) {
+    return SealOutcome::AtTakeCap;
   }
 
   ensureCaptureEventsSorted();
@@ -604,36 +604,36 @@ SealOutcome Loop::sealCaptureLayer(uint32_t sealedAtTick) {
     }
   }
 
-  pendingEpoch_ = Epoch{};
-  pendingEpoch_.id = nextEpochId_++;
-  pendingEpoch_.mergeSequence = nextMergeSequence_++;
-  pendingEpoch_.kind = epochKindForCapturePhase(capture.phase);
-  pendingEpoch_.state = EpochState::Pending;
-  pendingEpoch_.sealedAtTick = sealedAtTick;
-  capture.store.detachChunksTo(pendingEpoch_.chunkRefs);
+  pendingTake_ = Take{};
+  pendingTake_.id = nextTakeId_++;
+  pendingTake_.mergeSequence = nextMergeSequence_++;
+  pendingTake_.type = takeTypeForCapturePhase(capture.phase);
+  pendingTake_.state = TakeState::Pending;
+  pendingTake_.sealedAtTick = sealedAtTick;
+  capture.store.detachChunksTo(pendingTake_.chunkRefs);
 
-  if (pendingEpoch_.chunkRefs.empty()) {
-    pendingEpoch_ = Epoch{};
+  if (pendingTake_.chunkRefs.empty()) {
+    pendingTake_ = Take{};
     return SealOutcome::FailedValidation;
   }
 
   pendingVisualDelta.clear();
-  hasPendingEpoch_ = true;
+  hasPendingTake_ = true;
   return SealOutcome::Ok;
 }
 
-bool Loop::publishPendingEpoch() {
-  if (!hasPendingEpoch_) {
+bool Loop::publishPendingTake() {
+  if (!hasPendingTake_) {
     return false;
   }
 
-  Epoch published = pendingEpoch_;
-  published.state = EpochState::Active;
-  epochs.push_back(published);
-  lastPublishedEpochId_ = published.id;
+  Take published = pendingTake_;
+  published.state = TakeState::Active;
+  takes.push_back(published);
+  lastPublishedTakeId_ = published.id;
 
-  pendingEpoch_ = Epoch{};
-  hasPendingEpoch_ = false;
+  pendingTake_ = Take{};
+  hasPendingTake_ = false;
 
   ++playbackRevision;
   pendingVisualDelta.clear();

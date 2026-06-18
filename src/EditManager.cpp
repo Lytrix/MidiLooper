@@ -27,7 +27,7 @@ EditManager::EditManager() {
     currentState = nullptr; // Start with no state
 }
 
-void EditManager::setState(EditState* newState, Track& track, uint32_t startTick) {
+void EditManager::setState(EditNoteState* newState, Track& track, uint32_t startTick) {
     // If we're switching away from an edit state, commit or discard its undo snapshot
     if (currentState) {
         // Handle hash-based commit-on-exit for start-note edits
@@ -133,14 +133,14 @@ void EditManager::moveBracket(Track& track, int delta) {
 
 void EditManager::switchToNextState(Track& track) {
     // Example: cycle between noteState and startNoteState
-    if (currentState == &noteState) {
+    if (currentState == &noteHomeState) {
         setState(&startNoteState, track, bracketTick);
     } else {
-        setState(&noteState, track, bracketTick);
+        setState(&noteHomeState, track, bracketTick);
     }
 }
 
-void EditManager::enterEditMode(EditState* newState, uint32_t startTick) {
+void EditManager::enterEditMode(EditNoteState* newState, uint32_t startTick) {
     auto& track = trackManager.getSelectedTrack();
     setState(newState, track, startTick);
 }

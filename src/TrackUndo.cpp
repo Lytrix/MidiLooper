@@ -120,14 +120,14 @@ bool applyUndoEntry(Track& track, UndoEntry& entry) {
             loop.invalidateCaches();
             entry.hasRedoPayload = true;
             return true;
-        case UndoEntryKind::EpochPublished:
-            if (!loop.setEpochState(entry.epochId, EpochState::Disabled)) {
-                logger.log(CAT_TRACK, LOG_WARNING, "Undo failed: missing epoch %lu in slot %u",
-                           static_cast<unsigned long>(entry.epochId),
+        case UndoEntryKind::TakeCommitted:
+            if (!loop.setTakeState(entry.takeId, TakeState::Disabled)) {
+                logger.log(CAT_TRACK, LOG_WARNING, "Undo failed: missing take %lu in slot %u",
+                           static_cast<unsigned long>(entry.takeId),
                            static_cast<unsigned>(entry.slotIndex));
                 return false;
             }
-            loop.rebuildVisualCacheFromEpochs();
+            loop.rebuildVisualCacheFromTakes();
             loop.invalidateCaches();
             return true;
     }
@@ -159,14 +159,14 @@ bool applyRedoEntry(Track& track, UndoEntry& entry) {
             loop.loopLengthTicks = entry.afterLoopLengthTicks;
             loop.invalidateCaches();
             return true;
-        case UndoEntryKind::EpochPublished:
-            if (!loop.setEpochState(entry.epochId, EpochState::Active)) {
-                logger.log(CAT_TRACK, LOG_WARNING, "Redo failed: missing epoch %lu in slot %u",
-                           static_cast<unsigned long>(entry.epochId),
+        case UndoEntryKind::TakeCommitted:
+            if (!loop.setTakeState(entry.takeId, TakeState::Active)) {
+                logger.log(CAT_TRACK, LOG_WARNING, "Redo failed: missing take %lu in slot %u",
+                           static_cast<unsigned long>(entry.takeId),
                            static_cast<unsigned>(entry.slotIndex));
                 return false;
             }
-            loop.rebuildVisualCacheFromEpochs();
+            loop.rebuildVisualCacheFromTakes();
             loop.invalidateCaches();
             return true;
     }
@@ -191,16 +191,16 @@ void TrackUndo::pushUndoSnapshot(Track& track) {
     pushUndoEntry(track, std::move(entry));
 }
 
-void TrackUndo::pushPublishedEpoch(Track& track, uint8_t slotIndex, EpochId epochId) {
-    if (slotIndex >= Config::MAX_LOOPS_PER_TRACK || epochId == kInvalidEpochId) {
+void TrackUndo::pushCommittedTake(Track& track, uint8_t slotIndex, TakeId takeId) {
+    if (slotIndex >= Config::MAX_LOOPS_PER_TRACK || takeId == kInvalidTakeId) {
         return;
     }
     const Loop& loop = track.getLoop(slotIndex);
     UndoEntry entry;
-    entry.kind = UndoEntryKind::EpochPublished;
+    entry.kind = UndoEntryKind::TakeCommitted;
     entry.slotIndex = slotIndex;
     entry.loopId = loop.loopId;
-    entry.epochId = epochId;
+    entry.takeId = takeId;
     pushUndoEntry(track, std::move(entry));
 }
 

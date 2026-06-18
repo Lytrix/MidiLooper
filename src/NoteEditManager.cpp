@@ -357,7 +357,7 @@ void NoteEditManager::deleteSelectedNote(Track& track) {
 
     Loop& loop = track.getActiveLoop();
     loop.markEditFlatDirty();
-    loop.flushEditStoreToEpochs();
+    loop.flushEditStoreToTakes();
     track.invalidateCaches();
     
     // Since we're using dedicated faders now, we don't need to manage complex edit modes

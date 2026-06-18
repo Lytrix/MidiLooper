@@ -3,9 +3,9 @@
 
 #pragma once
 #include <cstdint>
-#include "EditState.h"
+#include "EditNoteState.h"
 
-class EditNoteState : public EditState {
+class EditNoteHomeState : public EditNoteState {
 public:
     void onEnter(EditManager& manager, Track& track, uint32_t startTick) override;
     void onExit(EditManager& manager, Track& track) override;

@@ -4,7 +4,7 @@
 #include "Logger.h"
 #include <stdarg.h>
 #include "MidiEvent.h"
-#include "Utils/SessionCapture.h"
+#include "Utils/DebugSessionCapture.h"
 
 #if defined(PIO_UNIT_TEST_NATIVE)
 

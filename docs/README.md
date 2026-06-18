@@ -11,7 +11,7 @@ The **story and layout** of the looper start at the **[root `README.md`](../READ
 | Document | Summary |
 |----------|---------|
 | [CODE_STRUCTURE.md](Guides/CODE_STRUCTURE.md) | Handler / Manager / Processor / Actions naming and module overview |
-| [**LOOP_MIDI_STORAGE_AND_VALIDATION.md**](Guides/LOOP_MIDI_STORAGE_AND_VALIDATION.md) | **Chunk event store, capture/commit, validation tiers, undo stacks, SD flatten** — read before touching Loop/Track undo or stop paths |
+| [**LOOP_MIDI_STORAGE_AND_VALIDATION.md**](Guides/LOOP_MIDI_STORAGE_AND_VALIDATION.md) | **Take / Capture / chunk store, commitTake, validation tiers, undo stacks, SD v4** — read before touching Loop/Track undo or stop paths |
 | [MIDI_CONFIG_GUIDE.md](Guides/MIDI_CONFIG_GUIDE.md) | Remapping channels, notes, and CCs; quick reference tables |
 | [**control-surface/**](Guides/control-surface/) | Per-row notes: Scenes, Tracks, Jams, Loops, Bars/16ths, Main controls, Faders, Display |
 | [LOOP_START_EDITING.md](Guides/LOOP_START_EDITING.md) | Loop start point editing (live / fader) |
@@ -19,7 +19,7 @@ The **story and layout** of the looper start at the **[root `README.md`](../READ
 | [MOVE_NOTE_LOGIC.md](Guides/MOVE_NOTE_LOGIC.md) | Note movement and overlap resolution |
 | [NOTE_WRAPPING_LOGIC.md](Guides/NOTE_WRAPPING_LOGIC.md) | Note and loop wrap-around behavior |
 | [jam-bar-step-phases.md](Guides/jam-bar-step-phases.md) | Jam loops: bar/16th buttons, `jamTick`, HOLD_TWO, playback regions |
-| [MANUAL_TEST_CAPTURE_SESSION.md](Guides/MANUAL_TEST_CAPTURE_SESSION.md) | Capture session script for known bugs (instrumented `teensy41-capture` build) |
+| [MANUAL_TEST_CAPTURE_SESSION.md](Guides/MANUAL_TEST_CAPTURE_SESSION.md) | Capture session script for known bugs (instrumented `teensy41-capture-serial` build, **DebugSessionCapture** `#CAP` lines) |
 
 Add new topical guides under `Guides/` and extend this table.
 

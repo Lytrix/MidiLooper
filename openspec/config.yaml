@@ -1,0 +1,46 @@
+schema: spec-driven
+
+context: |
+  MidiLooper — Teensy 4.1 firmware (PlatformIO, env `teensy41` / `native` tests).
+  Language: C++17; hot paths must stay allocation-free where possible.
+
+  Architecture:
+  - `Track` / `Loop` / `LoopPool` — per-track multi-slot loops (`MAX_LOOPS_PER_TRACK = 8`)
+  - `Loop` stores published MIDI in **takes** (chunk refs); capture uses **Capture**
+  - `ClockManager` — 192 PPQN internal, 24 PPQN MIDI clock
+  - `TrackUndo`, `StorageManager` (SD v4 epoch flatten), `DisplayManager`, DROID USB MIDI
+
+  Timeline refactor milestones (branch `refactor/timeline-data-model`):
+  - M1–M7 shipped: take-equivalent storage (code still says Epoch until m8-rename)
+  - M8 rename (OpenSpec `m8-rename`): Epoch→Take, CaptureLayer→Capture — apply first
+  - M8 edit (OpenSpec `m8-edit`): Edit op-lists + NoteEditSession — after rename merges
+  - Post-M8: pool/playback hardening → JamRecorder (JamAction) → M10 → D13 capture
+
+  Jam D13 arrangement capture is PARKED — see
+  openspec/changes/archive/20260617-parked-jam-recording-d13/PARKED.md
+
+  Existing docs (brownfield — cite, do not duplicate wholesale):
+  - `docs/DELIVERABLE_TRACKING.md` — shipped vs next overview
+  - `docs/plans/phase-3-multi-loop.md` — jam recording requirements
+  - `docs/Guides/LOOP_MIDI_STORAGE_AND_VALIDATION.md` — capture/stop/undo constraints
+  - `docs/Guides/jam-bar-step-phases.md` — jam tick / bar-step behavior
+
+  Conventions:
+  - Reuse repo nouns: capture, take, slot, overdub, SEVT/REVT (session capture), HITL baseline
+  - Plans in `docs/plans/` remain historical; **OpenSpec** `openspec/specs/` is source of truth going forward
+  - Before push: `pio test -e native`; HITL when firmware timing/storage changes
+  - Do not upload Teensy firmware without user confirmation
+
+  OpenSpec CLI requires Node.js >= 20 (`nvm use 20`).
+
+rules:
+  proposal:
+    - Link to existing `docs/plans/` and `docs/DELIVERABLE_TRACKING.md` when brownfield
+    - List open product decisions (TBD) explicitly; do not invent UX without flagging
+    - Non-goals section when scope is easy to over-expand (jam vs scenes vs LFO)
+  design:
+    - Path B Edit overlay and EditSessionUndoStack are locked for M8
+    - Name primary files (`Loop.cpp`, `EditManager.cpp`, etc.) and hot-path constraints
+  tasks:
+    - Chunk tasks for reviewable PRs; reference deliverable IDs (M8) where applicable
+    - Apply m8-rename before m8-edit; m8-edit gate: full test_edit_session matrix before archive

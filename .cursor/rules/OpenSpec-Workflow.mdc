@@ -1,0 +1,72 @@
+---
+description: OpenSpec workflow — m8-rename first, then m8-edit; jam deferred
+alwaysApply: true
+---
+
+# OpenSpec workflow (MidiLooper)
+
+This repo uses [OpenSpec](https://github.com/Fission-AI/OpenSpec) for spec-driven
+development on the **timeline data model** track (`refactor/timeline-data-model`).
+
+## Setup
+
+- OpenSpec CLI: Node.js **>= 20** (`nvm use 20`), then `openspec --version`
+- Project config: `openspec/config.yaml`
+- Source of truth: `openspec/specs/` (archived behavior after `/opsx:archive`)
+- Active work: `openspec/changes/<name>/` (proposal, specs deltas, design, tasks)
+- Navigation: `docs/plans/openspec_integration_overview.md`
+
+Restart Cursor after `openspec init` / `openspec update` so slash commands appear.
+
+## Cursor commands
+
+| Command | Use |
+|---------|-----|
+| `/opsx:propose <idea>` | New change — creates proposal, specs, design, tasks |
+| `/opsx:explore` | Spike / investigate before proposing |
+| `/opsx:apply` | Implement `tasks.md` for the active change |
+| `/opsx:sync` | Reconcile specs with implementation drift |
+| `/opsx:archive` | Merge delta specs into `openspec/specs/`, archive change folder |
+
+## Deliverable sequence (timeline plan — locked)
+
+M1–M7 are **shipped**. Post-M7 order:
+
+1. **M8 rename** — `m8-rename` (**active** — implement first)
+2. **M8 edit** — `m8-edit` (after rename merges)
+3. **Hardening** — pool-budget, playback-window polish (propose when M8 done)
+4. **JamRecorder** — `jam-recorder` change (JamAction / D3, **not** D13 MIDI capture)
+5. **M10** — full Jam entity + Scenes + SD
+6. **D13 arrangement capture** — only after R1–R5 locked in phase-3 docs
+
+Do **not** start D13-style `jam-recording` before M8. Parked reference:
+`openspec/changes/archive/20260617-parked-jam-recording-d13/`.
+
+## Active changes
+
+| Change | Scope | When |
+|--------|--------|------|
+| **`m8-rename`** | Epoch→Take, CaptureLayer→Capture, undo/debug renames | **Now** — `/opsx:apply` |
+| **`m8-edit`** | Edit op-lists, NoteEditSession, retire `editFlat_` | After **m8-rename** merges |
+
+Run `/opsx:apply` on `openspec/changes/m8-rename/tasks.md` first.
+
+## Brownfield docs
+
+Cite in OpenSpec artifacts; do not duplicate wholesale:
+
+- `~/.cursor/plans/timeline_data_model_refactor_9cbaeb60.plan.md` — M1–M7 + post-M7 order
+- `docs/DELIVERABLE_TRACKING.md` — shipped vs next
+- `docs/Guides/LOOP_MIDI_STORAGE_AND_VALIDATION.md` — capture/stop/undo constraints
+- `docs/plans/phase-3-multi-loop.md` — jam requirements (D13 deferred)
+
+## Naming
+
+See `.cursor/rules/Naming-Vocabulary-Teensy-Looper.mdc` and global **action + scope** rule.
+Reuse **Take**, **Capture**, **Edit**, slot, overdub, jam, JamAction, HITL baseline.
+
+## Verification
+
+- **m8-rename:** `pio test -e native`; optional HITL smoke
+- **m8-edit:** full native matrix + HITL per `.cursor/rules/HITL-Test-Flow.mdc`
+- Teensy upload only when user confirms after firmware build

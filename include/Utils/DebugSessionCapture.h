@@ -2,7 +2,7 @@
 //  Licensed under the PolyForm Noncommercial 1.0.0
 
 /**
- * @file SessionCapture.h
+ * @file DebugSessionCapture.h
  * @brief Session fixture recording for the instrumented capture build (Bucket 1 S1).
  *
  * Emits machine-parseable `#CAP,...` lines on USB serial so a hardware session can be
@@ -24,7 +24,7 @@
  *   RECS ,<kind>,<slot>,<tick>,<start>,<raw>,<final>,<align>  recording stopped: length finalization (B1)
  *   REVT ,<tick>,<ch>,<note>                   stored note-on tick after record commit (B1)
  *   SEVT ,<N|F>,<tick>,<ch>,<note>             stored note-on/off after overdub commit (verify)
- *   DISP ,<slot>,<state>,<loopLen>,<epoch>,<visual>,<frame>,<buffer>,<published>
+ *   DISP ,<slot>,<state>,<loopLen>,<take>,<visual>,<frame>,<buffer>,<published>
  *                                               OLED piano-roll snapshot (display vs storage)
  *   WRAP ,<onTick>,<offTick>,<ch>,<note>       wrapped tail-on / head-off pair in committed store
  *   BAR  ,<tick>,<bar>                         bar boundary marker (tick<->micros alignment)
@@ -38,7 +38,7 @@
 #include <algorithm>
 #include "MidiEvent.h"
 
-namespace SessionCapture {
+namespace DebugSessionCapture {
 
 inline void sessionHeader() {
   Serial.printf("#CAP,%lu,HDR,v1\r\n", (unsigned long)micros());
@@ -139,11 +139,11 @@ inline void storedNoteEvent(char kind, uint32_t tick, uint8_t ch, uint8_t note) 
 }
 
 inline void displaySnapshot(uint8_t slot, const char* trackState, uint32_t loopLen,
-                            size_t epochEvents, size_t visualNotes, size_t frameNotes,
+                            size_t takeEvents, size_t visualNotes, size_t frameNotes,
                             size_t bufferEvents, int published) {
   Serial.printf("#CAP,%lu,DISP,%u,%s,%lu,%zu,%zu,%zu,%zu,%d\r\n",
                 (unsigned long)micros(), slot, trackState, (unsigned long)loopLen,
-                epochEvents, visualNotes, frameNotes, bufferEvents, published);
+                takeEvents, visualNotes, frameNotes, bufferEvents, published);
 }
 
 inline void storedWrapPair(uint32_t onTick, uint32_t offTick, uint8_t ch, uint8_t note) {
@@ -182,28 +182,28 @@ inline void update(uint32_t currentTick, uint32_t ticksPerBar) {
   }
 }
 
-} // namespace SessionCapture
+} // namespace DebugSessionCapture
 
-#define SC_SESSION_HEADER()                SessionCapture::sessionHeader()
-#define SC_MIDI_IN(src, type, ch, d1, d2)  SessionCapture::midiIn(src, type, ch, d1, d2)
-#define SC_MIDI_OUT_EVENT(e)               SessionCapture::midiOutEvent(e)
-#define SC_LED_OUT(on, note, vel)          SessionCapture::ledOut(on, note, vel)
-#define SC_GESTURE(ch0, note, pressType)   SessionCapture::gesture(ch0, note, pressType)
-#define SC_STATE(component, from, to)      SessionCapture::stateTransition(component, from, to)
-#define SC_BPM(raw, smoothed)              SessionCapture::bpm(raw, smoothed)
-#define SC_CLOCK_SOURCE(from, to)          SessionCapture::clockSource(from, to)
-#define SC_REC_START(slot, tick)           SessionCapture::recStart(slot, tick)
+#define SC_SESSION_HEADER()                DebugSessionCapture::sessionHeader()
+#define SC_MIDI_IN(src, type, ch, d1, d2)  DebugSessionCapture::midiIn(src, type, ch, d1, d2)
+#define SC_MIDI_OUT_EVENT(e)               DebugSessionCapture::midiOutEvent(e)
+#define SC_LED_OUT(on, note, vel)          DebugSessionCapture::ledOut(on, note, vel)
+#define SC_GESTURE(ch0, note, pressType)   DebugSessionCapture::gesture(ch0, note, pressType)
+#define SC_STATE(component, from, to)      DebugSessionCapture::stateTransition(component, from, to)
+#define SC_BPM(raw, smoothed)              DebugSessionCapture::bpm(raw, smoothed)
+#define SC_CLOCK_SOURCE(from, to)          DebugSessionCapture::clockSource(from, to)
+#define SC_REC_START(slot, tick)           DebugSessionCapture::recStart(slot, tick)
 #define SC_REC_STOP(kind, slot, tick, start, raw, final, align) \
-                                           SessionCapture::recStop(kind, slot, tick, start, raw, final, align)
-#define SC_REC_STORED_NOTE_ON(tick, ch, note) SessionCapture::recStoredNoteOn(tick, ch, note)
-#define SC_STORED_NOTE_EVENT(kind, tick, ch, note) SessionCapture::storedNoteEvent(kind, tick, ch, note)
-#define SC_DISP(slot, state, loopLen, epoch, visual, frame, buffer, published) \
-  SessionCapture::displaySnapshot(slot, state, loopLen, epoch, visual, frame, buffer, published)
-#define SC_STORED_WRAP_PAIR(onTick, offTick, ch, note) SessionCapture::storedWrapPair(onTick, offTick, ch, note)
-#define SC_REC_QUEUE_STORED_NOTE_ON(tick, ch, note) SessionCapture::queueStoredNoteOn(tick, ch, note)
-#define SC_REC_FLUSH_PENDING_REVTS(maxLines) SessionCapture::flushPendingRevts(maxLines)
-#define SC_REC_FLUSH_ALL_PENDING_REVTS()   SessionCapture::flushAllPendingRevts()
-#define SC_UPDATE(tick, ticksPerBar)       SessionCapture::update(tick, ticksPerBar)
+                                           DebugSessionCapture::recStop(kind, slot, tick, start, raw, final, align)
+#define SC_REC_STORED_NOTE_ON(tick, ch, note) DebugSessionCapture::recStoredNoteOn(tick, ch, note)
+#define SC_STORED_NOTE_EVENT(kind, tick, ch, note) DebugSessionCapture::storedNoteEvent(kind, tick, ch, note)
+#define SC_DISP(slot, state, loopLen, take, visual, frame, buffer, published) \
+  DebugSessionCapture::displaySnapshot(slot, state, loopLen, take, visual, frame, buffer, published)
+#define SC_STORED_WRAP_PAIR(onTick, offTick, ch, note) DebugSessionCapture::storedWrapPair(onTick, offTick, ch, note)
+#define SC_REC_QUEUE_STORED_NOTE_ON(tick, ch, note) DebugSessionCapture::queueStoredNoteOn(tick, ch, note)
+#define SC_REC_FLUSH_PENDING_REVTS(maxLines) DebugSessionCapture::flushPendingRevts(maxLines)
+#define SC_REC_FLUSH_ALL_PENDING_REVTS()   DebugSessionCapture::flushAllPendingRevts()
+#define SC_UPDATE(tick, ticksPerBar)       DebugSessionCapture::update(tick, ticksPerBar)
 
 #else // !SESSION_CAPTURE — all capture macros compile to nothing
 
@@ -219,7 +219,7 @@ inline void update(uint32_t currentTick, uint32_t ticksPerBar) {
 #define SC_REC_STOP(kind, slot, tick, start, raw, final, align) ((void)0)
 #define SC_REC_STORED_NOTE_ON(tick, ch, note) ((void)0)
 #define SC_STORED_NOTE_EVENT(kind, tick, ch, note) ((void)0)
-#define SC_DISP(slot, state, loopLen, epoch, visual, frame, buffer, published) ((void)0)
+#define SC_DISP(slot, state, loopLen, take, visual, frame, buffer, published) ((void)0)
 #define SC_STORED_WRAP_PAIR(onTick, offTick, ch, note) ((void)0)
 #define SC_REC_QUEUE_STORED_NOTE_ON(tick, ch, note) ((void)0)
 #define SC_REC_FLUSH_PENDING_REVTS(maxLines) ((void)0)

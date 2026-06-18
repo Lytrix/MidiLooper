@@ -61,7 +61,7 @@ class CowLoopEventStore {
     return *flatCache_;
   }
 
-  /// True when mutFlat() was written and must be synced before epoch commit.
+  /// True when mutFlat() was written and must be synced before take commit.
   bool isFlatDirty() const { return flatDirty_; }
 
   void markFlatDirty() { flatDirty_ = true; }

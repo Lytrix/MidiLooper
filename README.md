@@ -90,7 +90,23 @@ For more detail: [**Display**](docs/Guides/control-surface/Display.md).
 
 For more details on the logic: [loop start / length](docs/Guides/LOOP_START_EDITING.md), [jam phases](docs/Guides/jam-bar-step-phases.md), [note moves](docs/Guides/MOVE_NOTE_LOGIC.md), [fader state](docs/Guides/FADER_STATE_SYSTEM.md). A compact **Channel 16** listing lives under [**Config summary**](docs/Guides/MIDI_CONFIG_GUIDE.md#config-summary-default-droid-mapping) in the MIDI guide.
 
-State persistence uses storage **version 3** and saves all track/slot loop data, per-slot enabled/muted flags, selected track, active slot per track, and slot-level undo/redo histories.
+State persistence uses storage **version 4** and saves all track/slot loop data (**Take** timeline per slot), per-slot enabled/muted flags, selected track, active slot per track, and slot-level undo/redo histories.
+
+### Loop storage vocabulary (code)
+
+Each **loop slot** (`Loop`) separates live capture from committed performance layers:
+
+| Term | Role |
+|------|------|
+| **Capture** | Live record/overdub buffer until stop |
+| **Take** | Committed capture (Record or Overdub); stored in `takes[]` with chunk refs |
+| **commitTake()** | Seal **Capture** into a new **Take** on record/overdub stop |
+| **TakeCommitted** | Global undo entry when a **Take** is committed |
+| **EditNoteState** | Base class for note-edit UI states (`EditSelectNoteState`, …); **`EditState`** is reserved for persisted edit metadata (M8) |
+| **DebugSessionCapture** | Instrumented `#CAP` serial fixtures (`teensy41-capture-serial` build) |
+
+Note edit still uses a flat materialized bridge (`editFlat_`) until **M8 edit** ships (**Edit**, **NoteEditSession**, `saveEdit()`). Full storage rules: [`docs/Guides/LOOP_MIDI_STORAGE_AND_VALIDATION.md`](docs/Guides/LOOP_MIDI_STORAGE_AND_VALIDATION.md) (guide refresh in progress with **m8-edit**).
+
 **Read the numbers first:** [`include/MidiConfig.h`](include/MidiConfig.h) — channels, notes, CCs, LED bases.
 
 **Remap any controller:** [`docs/Guides/MIDI_CONFIG_GUIDE.md`](docs/Guides/MIDI_CONFIG_GUIDE.md) — checklist, tables, `MidiButtonConfig.cpp`, and matching `droid/midilooper_v1.ini` if you want to make your own Droid setup.

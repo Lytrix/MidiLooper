@@ -10,7 +10,7 @@
 #include "TrackManager.h"
 #include "Logger.h"
 #include "MidiHandler.h"
-#include "Utils/SessionCapture.h"
+#include "Utils/DebugSessionCapture.h"
 #include "Utils/ClockTransportUtils.h"
 
 ClockManager clockManager;  // Global instance initiated

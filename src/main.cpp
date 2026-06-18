@@ -25,7 +25,7 @@
 #include "Utils/MemoryPool.h"
 #include "LoopEventStore.h"
 #include "Utils/HotPathTelemetry.h"
-#include "Utils/SessionCapture.h"
+#include "Utils/DebugSessionCapture.h"
 
 void setup() {
   HotPathTelemetry::reset();

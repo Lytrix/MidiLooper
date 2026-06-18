@@ -1,0 +1,61 @@
+---
+description: Teensy looper domain words — action+scope naming with Take/Capture/Edit vocabulary
+alwaysApply: true
+---
+
+# Naming vocabulary (Teensy looper)
+
+Use with global **`naming-and-terminology`**: clear **action + scope** (ideal two words; longer when needed for completeness), no abbreviations, reuse terms below.
+
+Read before M8+ edit storage, OpenSpec **`m8-rename`** then **`m8-edit`**, or timeline refactors.
+
+## Scope words (Loop slot)
+
+| Scope | Meaning |
+|------|---------|
+| **Loop** | Slot container |
+| **Capture** | Live record/overdub buffer (was `CaptureLayer`) |
+| **Take** | Committed capture — Record or Overdub (was `Epoch`) |
+| **Edit** | One committed `saveEdit` unit in `edits[]` |
+| **EditChange** | One atomic change inside an **Edit** |
+| **span** | Sub-period inside **NoteEditSession** (overdub boundary) |
+
+## Types and ids
+
+| Name | Role |
+|------|------|
+| **EditChangeType** | Enum of change types |
+| **TakeType** | Record \| Overdub (was `EpochKind`) |
+| **EditId** | Stable id per **Edit** |
+| **NoteRef** | Stable note target in an **EditChange** |
+
+## Edit sessions (RAM scope)
+
+| Scope | UI domain |
+|------|--------|
+| **NoteEditSession** | Note edit (`EditManager`) — M8 |
+| **LoopEditSession** | Loop length edit — future |
+| **ControlChangeEditSession** | CC edit UI — future |
+| **JamSession** / **PerformanceSession** | Playback/jam UI — **TBD** |
+
+## Action + scope examples
+
+| Name | Action | Scope |
+|------|--------|-------|
+| `commitTake()` | commit | Take |
+| `saveEdit()` | save | Edit |
+| `closeNoteEditSpan()` | close | NoteEditSpan |
+| `applyEdits()` | apply | Edits |
+| **TakeCommitted** | committed | Take (undo entry) |
+| **NoteEditSessionCommitted** | committed | NoteEditSession (undo entry) |
+
+## UI rename
+
+- `class EditState` → **`EditNoteState`** (note-edit FSM base)
+- **`EditState`** on struct **Edit** = Active \| Disabled (parallel **TakeState**)
+
+## Words to avoid for new names
+
+**segment**, **gesture**, **working**, **EditOp**, **published** (use **committed**), storing edits as Takes, new abbreviations. Prefer **Type** over **Kind** for new enums when the repo uses **Type** elsewhere.
+
+Ask before introducing a **new domain noun** or session type name not listed above.

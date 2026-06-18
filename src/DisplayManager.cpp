@@ -14,7 +14,7 @@
 #include "NoteEditManager.h"
 #include "MidiHandler.h"
 #include "Utils/HotPathTelemetry.h"
-#include "Utils/SessionCapture.h"
+#include "Utils/DebugSessionCapture.h"
 #include "TrackStateMachine.h"
 #include <map>
 #include <string>
@@ -343,18 +343,18 @@ void DisplayManager::maybeEmitDisplayCaptureOnChange(const Track& track, uint8_t
     static uint8_t lastSlot = 255;
     static TrackState lastState = NUM_TRACK_STATES;
     static uint32_t lastLoopLen = 0;
-    static size_t lastEpochEvents = static_cast<size_t>(-1);
+    static size_t lastTakeEvents = static_cast<size_t>(-1);
 
     const Loop& loop = track.getLoop(displaySlot);
     const TrackState state = track.getState();
     const uint32_t loopLen = resolveDisplayLoopLength(track, displaySlot, currentTick);
-    const size_t epochEvents = loop.liveEventCount();
+    const size_t takeEvents = loop.liveEventCount();
 
     const bool changed = frameNoteCount != lastFrameNotes || displaySlot != lastSlot ||
                          state != lastState || loopLen != lastLoopLen ||
-                         epochEvents != lastEpochEvents;
+                         takeEvents != lastTakeEvents;
     const bool regression =
-        loopLen > 0 && loop.hasPublishedEvents() && frameNoteCount == 0 && epochEvents > 0;
+        loopLen > 0 && loop.hasPublishedEvents() && frameNoteCount == 0 && takeEvents > 0;
 
     if (!changed && !regression) {
         return;
@@ -364,7 +364,7 @@ void DisplayManager::maybeEmitDisplayCaptureOnChange(const Track& track, uint8_t
     lastSlot = displaySlot;
     lastState = state;
     lastLoopLen = loopLen;
-    lastEpochEvents = epochEvents;
+    lastTakeEvents = takeEvents;
     emitDisplayCaptureSnapshot(track, displaySlot, currentTick);
 }
 

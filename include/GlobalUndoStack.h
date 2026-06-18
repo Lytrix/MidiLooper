@@ -4,7 +4,7 @@
 #include <cstdint>
 #include <vector>
 
-#include "Epoch.h"
+#include "Take.h"
 #include "LoopEventBuffer.h"
 #include "TrackState.h"
 #include "Utils/ExtMemAllocator.h"
@@ -13,7 +13,7 @@ using UndoEntryId = uint32_t;
 
 enum class UndoEntryKind : uint8_t {
   NoteEditCommit = 0,
-  EpochPublished = 1,
+  TakeCommitted = 1,
   ClearSlot = 2,
   LoopBoundaryChange = 3,
 };
@@ -29,7 +29,7 @@ struct UndoEntry {
   UndoEntryKind kind = UndoEntryKind::NoteEditCommit;
   uint8_t slotIndex = 0;
   LoopId loopId = kInvalidLoopId;
-  EpochId epochId = kInvalidEpochId;
+  TakeId takeId = kInvalidTakeId;
 
   MidiSnapshotRef beforeSnapshot;
   MidiSnapshotRef afterSnapshot;

@@ -73,10 +73,10 @@ class LoopEventStore {
 
   const ChunkIdList& chunkIds() const { return chunkIds_; }
 
-  /// Move chunk ownership out of this store into dest (this store cleared). Used by epoch Seal.
+  /// Move chunk ownership out of this store into dest (this store cleared). Used by take Seal.
   void detachChunksTo(ChunkIdList& dest);
 
-  /// Take ownership of chunk refs from ids (ids cleared). Used to release pending epochs.
+  /// Take ownership of chunk refs from ids (ids cleared). Used to release pending takes.
   void adoptChunkIds(ChunkIdList& ids);
 
  private:
