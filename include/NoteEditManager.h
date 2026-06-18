@@ -16,6 +16,7 @@
 #include "Logger.h"
 #include "LoopEditManager.h"
 #include "MidiConfig.h"
+#include "Utils/SelectNavigation.h"
 
 /**
  * @class NoteEditManager
@@ -46,6 +47,10 @@ public:
     void handleCoarseFaderInput(int16_t pitchValue, Track& track);
     void handleFineFaderInput(uint8_t ccValue, Track& track);
     void handleNoteValueFaderInput(uint8_t ccValue, Track& track);
+
+    /** One nav slot per note (multiple per 16th when notes share a step) or empty grid step. */
+    static std::vector<SelectNavigation::SelectNavSlot> buildSelectNavigationSlots(
+        const Track& track, uint32_t bracketTick, bool includeBracketIfMissing = true);
 
     // Loop editing is now handled by LoopEditManager
     LoopEditManager loopEditManager;

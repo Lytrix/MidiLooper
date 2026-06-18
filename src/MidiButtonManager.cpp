@@ -127,6 +127,8 @@ void MidiButtonManager::printButtonConfiguration() const {
                 case MidiButtonConfig::ActionType::EXIT_EDIT_MODE: return "Exit Edit";
                 case MidiButtonConfig::ActionType::CYCLE_EDIT_MODE: return "Cycle Edit";
                 case MidiButtonConfig::ActionType::DELETE_NOTE: return "Delete Note";
+                case MidiButtonConfig::ActionType::CREATE_NOTE_AT_BRACKET: return "Create Note At Bracket";
+                case MidiButtonConfig::ActionType::DELETE_OR_CREATE_NOTE: return "Delete Or Create Note";
                 case MidiButtonConfig::ActionType::COPY_NOTE: return "Copy Note";
                 case MidiButtonConfig::ActionType::PASTE_NOTE: return "Paste Note";
                 case MidiButtonConfig::ActionType::CUSTOM_ACTION: return "Custom";

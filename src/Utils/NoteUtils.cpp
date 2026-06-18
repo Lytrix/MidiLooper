@@ -4,6 +4,7 @@
 #include "Utils/NoteUtils.h"
 #include "Utils/MidiEventVecFnvHash.h"
 #include "Logger.h"
+#include <algorithm>
 #include <set>
 #include <tuple>
 
@@ -520,4 +521,100 @@ NoteUtils::EventIndex NoteUtils::buildEventIndex(const MidiEventVec& midiEvents)
         }
     }
     return {std::move(onIndex), std::move(offIndex)};
+}
+
+void NoteUtils::ensureNoteOffsBeforeNoteOnsAtTick(MidiEventVec& midiEvents, uint8_t pitch,
+                                                    uint32_t tick) {
+    std::vector<size_t> indices;
+    indices.reserve(4);
+    for (size_t i = 0; i < midiEvents.size(); ++i) {
+        const MidiEvent& evt = midiEvents[i];
+        if (evt.tick != tick || evt.data.noteData.note != pitch) {
+            continue;
+        }
+        if (evt.isNoteOn() || evt.isNoteOff()) {
+            indices.push_back(i);
+        }
+    }
+    if (indices.size() < 2) {
+        return;
+    }
+
+    size_t firstOn = midiEvents.size();
+    size_t firstOff = midiEvents.size();
+    for (size_t idx : indices) {
+        if (midiEvents[idx].isNoteOn() && idx < firstOn) {
+            firstOn = idx;
+        }
+        if (midiEvents[idx].isNoteOff() && idx < firstOff) {
+            firstOff = idx;
+        }
+    }
+    if (firstOn >= firstOff) {
+        return;
+    }
+
+    std::vector<MidiEvent> offs;
+    std::vector<MidiEvent> ons;
+    offs.reserve(indices.size());
+    ons.reserve(indices.size());
+    for (auto it = indices.rbegin(); it != indices.rend(); ++it) {
+        const MidiEvent evt = midiEvents[*it];
+        if (evt.isNoteOff()) {
+            offs.push_back(evt);
+        } else if (evt.isNoteOn()) {
+            ons.push_back(evt);
+        }
+        midiEvents.erase(midiEvents.begin() + static_cast<std::ptrdiff_t>(*it));
+    }
+    std::reverse(offs.begin(), offs.end());
+
+    const size_t insertPos = *std::min_element(indices.begin(), indices.end());
+    size_t pos = insertPos;
+    for (const auto& evt : offs) {
+        midiEvents.insert(midiEvents.begin() + static_cast<std::ptrdiff_t>(pos), evt);
+        ++pos;
+    }
+    for (const auto& evt : ons) {
+        midiEvents.insert(midiEvents.begin() + static_cast<std::ptrdiff_t>(pos), evt);
+        ++pos;
+    }
+}
+
+void NoteUtils::removeDuplicateNotePairsAtSpan(MidiEventVec& midiEvents, uint8_t pitch,
+                                               uint32_t startTick, uint32_t endTick) {
+    std::vector<size_t> onIndices;
+    std::vector<size_t> offIndices;
+    onIndices.reserve(4);
+    offIndices.reserve(4);
+
+    for (size_t i = 0; i < midiEvents.size(); ++i) {
+        const auto& evt = midiEvents[i];
+        if (evt.data.noteData.note != pitch) {
+            continue;
+        }
+        const bool isOn = (evt.type == midi::NoteOn && evt.data.noteData.velocity > 0);
+        const bool isOff =
+            (evt.type == midi::NoteOff ||
+             (evt.type == midi::NoteOn && evt.data.noteData.velocity == 0));
+        if (isOn && evt.tick == startTick) {
+            onIndices.push_back(i);
+        } else if (isOff && evt.tick == endTick) {
+            offIndices.push_back(i);
+        }
+    }
+
+    while (onIndices.size() > 1 && offIndices.size() > 1) {
+        const size_t onIdx = onIndices.back();
+        onIndices.pop_back();
+        const size_t offIdx = offIndices.back();
+        offIndices.pop_back();
+        const size_t hi = std::max(onIdx, offIdx);
+        const size_t lo = std::min(onIdx, offIdx);
+        midiEvents.erase(midiEvents.begin() + static_cast<std::ptrdiff_t>(hi));
+        midiEvents.erase(midiEvents.begin() + static_cast<std::ptrdiff_t>(lo));
+        logger.log(CAT_MIDI, LOG_DEBUG,
+                   "Removed duplicate note pair: pitch=%d start=%lu end=%lu", pitch, startTick,
+                   endTick);
+    }
 }

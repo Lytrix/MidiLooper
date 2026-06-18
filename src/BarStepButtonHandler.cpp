@@ -15,6 +15,7 @@
 #include <cstdarg>
 
 extern NoteEditManager noteEditManager;
+extern EditManager editManager;
 extern ClockManager clockManager;
 extern TrackManager trackManager;
 
@@ -527,10 +528,67 @@ void BarStepButtonHandler::executeLoopEditAction(const BarStepButtonInfo& info, 
 
 void BarStepButtonHandler::executeNoteEditAction(const BarStepButtonInfo& info, BarStepPressType pressType,
                                                  uint8_t rangeStart, uint8_t rangeEnd) {
-  testLog("BarStepButton NoteEdit: pressType=%d [TODO: selector/bulk/add-remove]", (int)pressType);
-  (void)info;
   (void)rangeStart;
   (void)rangeEnd;
+  if (info.type != BarStepButtonType::SIXTEENTH) {
+    testLog("BarStepButton NoteEdit: bar buttons not used in note edit");
+    return;
+  }
+  if (editManager.getCurrentState() == nullptr) {
+    testLog("BarStepButton NoteEdit: ignored — not in edit overlay");
+    return;
+  }
+
+  Track& track = trackManager.getSelectedTrack();
+  uint32_t loopLength = track.getLoopLength();
+  if (loopLength == 0) return;
+
+  uint32_t loopStartTick = track.getLoopStartTick();
+  uint32_t stepTick =
+      (loopStartTick + info.stepIndex * Config::TICKS_PER_16TH_STEP) % loopLength;
+
+  editManager.setBracketTick(stepTick);
+  editManager.selectClosestNote(track, stepTick);
+
+  auto noteAtStep = [&]() -> bool {
+    int idx = editManager.getSelectedNoteIdx();
+    if (idx < 0) return false;
+    const auto& notes = track.getCachedNotes();
+    if (idx >= (int)notes.size()) return false;
+    uint32_t noteTick = notes[idx].startTick % loopLength;
+    uint32_t dist = std::min((noteTick + loopLength - stepTick) % loopLength,
+                             (stepTick + loopLength - noteTick) % loopLength);
+    constexpr uint32_t SNAP_WINDOW = 24;
+    return dist <= SNAP_WINDOW;
+  };
+
+  switch (pressType) {
+    case BarStepPressType::SHORT_PRESS:
+      if (!noteAtStep()) {
+        editManager.setSelectedNoteIdx(-1);
+      }
+      testLog("BarStepButton NoteEdit: seek 16th %d tick=%lu idx=%d",
+              info.stepIndex, stepTick, editManager.getSelectedNoteIdx());
+      noteEditManager.performSelectnoteFaderUpdate(track);
+      break;
+
+    case BarStepPressType::DOUBLE_PRESS:
+      if (noteAtStep()) {
+        testLog("BarStepButton NoteEdit: delete at 16th %d", info.stepIndex);
+        noteEditManager.deleteSelectedNote(track);
+      } else {
+        testLog("BarStepButton NoteEdit: create at 16th %d tick=%lu", info.stepIndex, stepTick);
+        editManager.setSelectedNoteIdx(-1);
+        editManager.setState(editManager.getSelectNoteState(), track, stepTick);
+        editManager.onButtonPress(track);
+        editManager.setState(editManager.getNoteHomeState(), track, stepTick);
+      }
+      break;
+
+    default:
+      testLog("BarStepButton NoteEdit: unsupported pressType=%d", (int)pressType);
+      break;
+  }
 }
 
 void BarStepButtonHandler::testLog(const char* format, ...) const {

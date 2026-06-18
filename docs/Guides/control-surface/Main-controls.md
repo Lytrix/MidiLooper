@@ -26,11 +26,16 @@ Legacy strip: **short** = next track, **long** = mute current, **double/triple**
 
 ## Edit mode (note 38)
 
-**Short:** NOTE_EDIT ↔ LOOP_EDIT. **Double:** delete selected note. **Long:** exit edit.
+**Short:** enter edit / cycle NOTE_EDIT ↔ LOOP_EDIT. **Long:** exit edit.
+
+Add and delete notes use **NOTELEN** (note 35) double-press — see below.
 
 ## NOTELEN (note 35)
 
-Toggle note **position** vs **length** editing.
+| Press | Role |
+|-------|------|
+| Short | Toggle note **start** vs **end** (length) editing |
+| Double | Delete selected note, or create at bracket when empty |
 
 ## More
 

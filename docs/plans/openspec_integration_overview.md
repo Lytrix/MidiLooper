@@ -9,12 +9,13 @@ OpenSpec drives **timeline post-M7** work in this repo. Commands and rules:
 openspec/
 ├── config.yaml              # Project context for AI artifacts
 ├── specs/                   # Source of truth (archived requirements)
-│   ├── timeline-epochs/     # M1–M7 shipped epoch model (→ timeline-takes after M8)
+│   ├── timeline-epochs/     # M1–M7 + m8-rename Take vocabulary (→ timeline-takes after m8-edit)
 │   └── multi-loop-slots/    # 8 slots per track (shipped)
 └── changes/
-    ├── m8-rename/           # ACTIVE — vocabulary rename (apply first)
-    ├── m8-edit/             # Edit op-lists + NoteEditSession (after rename)
+    ├── m8-edit/             # ACTIVE — Edit op-lists + NoteEditSession
+    ├── note-move-pitch-overlap-flaky/   # OPEN BUG — root-cause phase (see BUG.md)
     └── archive/
+        ├── 2026-06-18-m8-rename/   # Take/Capture vocabulary (archived)
         └── 20260617-parked-jam-recording-d13/   # D13 deferred (see PARKED.md)
 ```
 
@@ -25,8 +26,8 @@ From `timeline_data_model_refactor_9cbaeb60.plan.md` §1:
 | Order | Item | OpenSpec |
 |-------|------|----------|
 | Done | M1–M7 epoch cutover | Baseline in `openspec/specs/timeline-epochs/` |
-| **Next** | **M8 rename** — Take / Capture / TakeCommitted | **`m8-rename`** → `/opsx:apply` |
-| Then | **M8 edit** — Edit op-lists, NoteEditSession | **`m8-edit`** (blocked on rename) |
+| **Next** | **M8 edit** — Edit op-lists, NoteEditSession | **`m8-edit`** → `/opsx:apply` |
+| Done | **M8 rename** — Take / Capture / TakeCommitted | archived `2026-06-18-m8-rename` |
 | Then | Pool / playback hardening | Propose `pool-budget` when M8 ships |
 | Then | JamRecorder prototype (JamAction) | Propose `jam-recorder` (not parked D13 folder) |
 | Later | M10 Jam entity + Scenes | New change after jam-recorder |
@@ -39,10 +40,9 @@ early; timeline plan uses JamRecorder + actions first.
 
 1. `nvm use 20`
 2. Restart Cursor (slash commands in `.cursor/commands/opsx-*.md`)
-3. Read `openspec/changes/m8-rename/` (proposal → design → tasks)
-4. `/opsx:apply` to implement **rename first**
-5. After rename merges: `openspec/changes/m8-edit/` → `/opsx:apply`
-6. `/opsx:archive` when native + smoke gates pass
+3. Read `openspec/changes/m8-edit/` (proposal → design → tasks)
+4. `/opsx:apply` to implement **m8-edit**
+5. `/opsx:archive` when native + smoke gates pass
 
 ## Relationship to `docs/plans/`
 
@@ -52,8 +52,9 @@ early; timeline plan uses JamRecorder + actions first.
 | `docs/plans/phase-3-multi-loop.md` | Brownfield jam requirements (D13–D15) |
 | `docs/DELIVERABLE_TRACKING.md` | Shipped vs next overview |
 | `openspec/specs/` | Normative SHALL/MUST specs |
-| `openspec/changes/m8-rename/` | Active rename tasks (first) |
-| `openspec/changes/m8-edit/` | Edit model tasks (second) |
+| `openspec/changes/m8-edit/` | Active M8 edit tasks |
+| `openspec/changes/note-move-pitch-overlap-flaky/BUG.md` | **Open bug** — root-cause closed; [design.md](./design.md) agreed |
+| `openspec/changes/archive/2026-06-18-m8-rename/` | Archived Take/Capture rename |
 
 ## CLI maintenance
 

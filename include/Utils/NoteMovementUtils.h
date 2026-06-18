@@ -26,11 +26,32 @@ namespace NoteMovementUtils {
     void moveNoteWithOverlapHandling(Track& track, EditManager& manager, 
                                    const NoteUtils::DisplayNote& currentNote, 
                                    uint32_t targetTick, int delta);
+
+    /**
+     * Apply a pitch change using the same overlap/delete/restore ledger as movement.
+     *
+     * @param currentNoteValue Existing pitch of the moving note
+     * @param newNoteValue Target pitch for the moving note
+     * @param noteStart In/out moving note start tick (may expand through adjacent merge)
+     * @param noteEnd In/out moving note end tick (may expand through adjacent merge)
+     * @return true when both note-on and note-off were updated to the new pitch
+     */
+    bool applyPitchChange(Track& track, EditManager& manager,
+                          uint8_t currentNoteValue, uint8_t newNoteValue,
+                          uint32_t& noteStart, uint32_t& noteEnd);
     
     /**
      * Helper functions extracted from EditStartNoteState
      */
     bool notesOverlap(uint32_t start1, uint32_t end1, uint32_t start2, uint32_t end2, uint32_t loopLength);
+    /** True when notes overlap or share a boundary tick (same-pitch lane merge). */
+    bool notesTouchOrOverlap(uint32_t start1, uint32_t end1, uint32_t start2, uint32_t end2,
+                             uint32_t loopLength);
+
+    /** True when [noteStart, noteEnd] lies within the moving note's original span. */
+    bool isNoteWithinMovingSpan(uint32_t noteStart, uint32_t noteEnd,
+                                uint32_t spanStart, uint32_t spanEnd,
+                                uint32_t loopLength);
     
     void findOverlaps(const std::vector<NoteUtils::DisplayNote>& currentNotes,
                      uint8_t movingNotePitch,
@@ -39,6 +60,7 @@ namespace NoteMovementUtils {
                      uint32_t newEnd,
                      int delta,
                      uint32_t loopLength,
+                     const EditManager& manager,
                      std::vector<std::pair<NoteUtils::DisplayNote, uint32_t>>& notesToShorten,
                      std::vector<NoteUtils::DisplayNote>& notesToDelete);
     

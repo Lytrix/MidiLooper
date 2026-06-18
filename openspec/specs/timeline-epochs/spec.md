@@ -1,26 +1,26 @@
 ## Purpose
 
-Published loop MIDI is stored in **epochs** on each `Loop`. Record and overdub use a
-mutable **capture** layer that seals into a new epoch on stop. This spec documents
-behavior shipped through milestone M7 on `refactor/timeline-data-model`.
-
+Published loop MIDI is stored in **Takes** on each `Loop`. Record and overdub use
+**Capture** on the loop until **commitTake** appends a new **Take**. This spec documents
+behavior shipped through milestone M7 on `refactor/timeline-data-model`, with **m8-rename**
+vocabulary aligned to the codebase.
 ## Requirements
+### Requirement: Published events live in active takes
 
-### Requirement: Published events live in active epochs
+The system SHALL store committed loop MIDI as one or more **Active** **Takes** with
+chunk-backed `LoopEventStore` references, ordered by `mergeSequence`. Live capture SHALL
+use **Capture** on the loop until **commitTake** appends a **Take**.
 
-The system SHALL store committed loop MIDI as one or more **Active** epochs with
-chunk-backed `LoopEventStore` references, ordered by `mergeSequence`.
+#### Scenario: Playback reads takes without full flatten
 
-#### Scenario: Playback reads epochs without full flatten
-
-- **WHEN** the transport plays a loop with published epochs
-- **THEN** playback uses epoch/chunk indexed access (`eventAt`, `readStore`)
+- **WHEN** the transport plays a loop with committed takes
+- **THEN** playback uses take/chunk indexed access (`eventAt`, `readStore`)
 - **AND** does not flatten the full loop on each tick
 
-#### Scenario: Record stop seals capture into an epoch
+#### Scenario: Record stop commits capture into a take
 
 - **WHEN** recording stops with non-empty capture
-- **THEN** capture data is sealed and published as a new Active epoch
+- **THEN** capture is committed as a new Active take
 - **AND** capture buffer is cleared for the next session
 
 ### Requirement: Overdub capture dedupes within active capture only
@@ -55,13 +55,25 @@ Undo SHALL push O(1) shared store references and MUST `cloneShared()` on restore
 - **THEN** overdub undo is attempted before clear-slot undo
 - **AND** restored state does not share live chunk IDs with the snapshot stack
 
+### Requirement: Global undo records take commit
+
+When a record or overdub stop commits a **Take**, the system SHALL push a
+**TakeCommitted** entry on `GlobalUndoStack` (replacing epoch-published wording).
+
+#### Scenario: Overdub stop pushes TakeCommitted
+
+- **WHEN** overdub stops and capture commits to a new take
+- **THEN** **TakeCommitted** is pushed for that take
+- **AND** undo restores the prior take stack state
+
 ### Requirement: Note edit uses materialized flat bridge until M8
 
-Until M8 ships, note-edit paths MUST be allowed to materialize epochs into `editFlat_`
+Until M8 edit ships, note-edit paths MUST be allowed to materialize **Takes** into `editFlat_`
 via `Loop::midiEvents()` / `mutEditStore()`. After M8, this bridge MUST be removed or
 limited to explicit migration tooling.
 
 #### Scenario: Flat edit invalidates caches
 
 - **WHEN** note edits mutate the flat edit store
-- **THEN** epoch/visual caches are invalidated so playback and display stay consistent
+- **THEN** take/visual caches are invalidated so playback and display stay consistent
+

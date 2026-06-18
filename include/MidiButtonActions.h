@@ -58,6 +58,8 @@ public:
     void handleCycleEditMode();
     void handleExitEditMode();
     void handleDeleteNote();
+    void handleCreateNoteAtBracket();
+    void handleDeleteOrCreateNote();
     void handleToggleLengthEditMode();
     void beginSlotLayerHold(uint8_t slotIndex);
     void endSlotLayerHold(uint8_t slotIndex);

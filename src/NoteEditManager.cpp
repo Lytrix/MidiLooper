@@ -2,10 +2,9 @@
 //  Licensed under the PolyForm Noncommercial 1.0.0
 
 #include <cstdint>
-#include <set>
 #include <algorithm>
 #include "Globals.h"
-#include "MidiConfig.h"
+#include "Utils/SelectNavigation.h"
 #include "NoteEditManager.h"
 
 #include "ClockManager.h"
@@ -46,7 +45,7 @@ void NoteEditManager::update() {
     if (pendingSelectnoteUpdate && now >= selectnoteUpdateTime) {
         pendingSelectnoteUpdate = false;
         Track& track = trackManager.getSelectedTrack();
-        sendSelectnoteFaderUpdate(track);
+        performSelectnoteFaderUpdate(track);
     }
     
     // Handle start editing grace period - re-enable note editing faders after grace period
@@ -76,6 +75,13 @@ void NoteEditManager::handleMidiPitchbend(uint8_t channel, int16_t pitchValue) {
             return;
         } else {
             // In note edit mode: Route to select fader
+            if (currentDriverFader == MidiMapping::FaderType::FADER_NOTE_VALUE &&
+                lastDriverFaderTime > 0 &&
+                (millis() - lastDriverFaderTime) < SELECTNOTE_UPDATE_DELAY) {
+                logger.log(CAT_MIDI, LOG_DEBUG,
+                           "Pitchbend ch=%d ignored (ch16 echo after note-value edit)", channel);
+                return;
+            }
         handleFaderInput(MidiMapping::FaderType::FADER_SELECT, pitchValue, 0);
             logger.log(CAT_MIDI, LOG_DEBUG, "Pitchbend ch=%d routed to select fader (NOTE_EDIT mode)", channel);
         return;
@@ -131,6 +137,8 @@ void NoteEditManager::moveNoteToPositionWithOverlapHandling(Track& track, const 
         
         // Clear the deleted notes list (they're now permanently deleted)
         editManager.movingNote.deletedNotes.clear();
+        editManager.sessionShortenedVictims.clear();
+        editManager.sessionDeletedNotes.clear();
         editManager.movingNote.active = false;
         
         // Just move the note to final position
@@ -141,6 +149,7 @@ void NoteEditManager::moveNoteToPositionWithOverlapHandling(Track& track, const 
     // Ensure the moving note is properly initialized (but don't switch to different notes!)
     if (!editManager.movingNote.active) {
         editManager.movingNote.note = currentNote.note;
+        editManager.movingNote.origPitch = currentNote.note;
         editManager.movingNote.origStart = currentNote.startTick;
         editManager.movingNote.origEnd = currentNote.endTick;
         editManager.movingNote.lastStart = currentNote.startTick;
@@ -212,6 +221,10 @@ void NoteEditManager::moveNoteToPositionSimple(Track& track, const NoteUtils::Di
         uint32_t noteDuration = currentNote.endTick - currentNote.startTick;
         logger.log(CAT_MIDI, LOG_DEBUG, "Note moved successfully: start=%lu end=%lu duration=%lu ticks", 
                    targetTick, newEndTick, noteDuration);
+
+        Loop& loop = track.getActiveLoop();
+        loop.markEditFlatDirty();
+        track.invalidateCaches();
         
         // CRITICAL: Update the selectedNoteIdx to point to the moved note in the new reconstructed list
         const auto& updatedNotes = track.getCachedNotes();
@@ -551,7 +564,12 @@ void NoteEditManager::performSelectnoteFaderUpdate(Track& track) {
     }
     
     // Record when we sent this update to ignore incoming feedback
-    lastSelectnoteSentTime = millis();
+    uint32_t sentAt = millis();
+    lastSelectnoteSentTime = sentAt;
+    auto& selectState = midiFaderManager.getFaderStateMutable(MidiMapping::FaderType::FADER_SELECT);
+    selectState.lastSentTime = sentAt;
+    lastUserSelectFaderValue = selectState.lastSentPitchbend;
+    lastSelectFaderTime = sentAt;
     logger.log(CAT_MIDI, LOG_DEBUG, "Selectnote fader updated - ignoring incoming for %dms", PITCHBEND_IGNORE_PERIOD);
 }
 
@@ -651,13 +669,21 @@ bool NoteEditManager::shouldIgnoreFaderInput(MidiMapping::FaderType faderType, i
 }
 
 void NoteEditManager::scheduleOtherFaderUpdates(MidiMapping::FaderType driverFader) {
-    if (!faderProcessor) {
-        logger.warning("NoteEditManager: faderProcessor not set, cannot schedule updates");
-        return;
+    Track& track = trackManager.getSelectedTrack();
+
+    switch (driverFader) {
+        case MidiMapping::FaderType::FADER_COARSE:
+        case MidiMapping::FaderType::FADER_FINE:
+        case MidiMapping::FaderType::FADER_NOTE_VALUE:
+            // After position/pitch edits, sync fader 1 (select) to the moved note once the motor settles.
+            sendSelectnoteFaderUpdate(track);
+            break;
+        case MidiMapping::FaderType::FADER_SELECT:
+            // Faders 2–4 are refreshed by enableStartEditing() after NOTE_SELECTION_GRACE_PERIOD.
+            break;
+        default:
+            break;
     }
-    
-    // Delegate to MidiFaderProcessor for scheduling
-    faderProcessor->scheduleOtherFaderUpdates(driverFader);
 }
 
 
@@ -909,6 +935,17 @@ void NoteEditManager::sendNoteValueFaderPosition(Track& track) {
     }
 }
 
+std::vector<SelectNavigation::SelectNavSlot> NoteEditManager::buildSelectNavigationSlots(
+    const Track& track, uint32_t bracketTick, bool includeBracketIfMissing) {
+    // NOTE_EDIT uses loop storage ticks (0 origin); loopStartTick is display/loop-edit only.
+    return SelectNavigation::buildSelectNavigationSlots(
+        track.getLoopLength(),
+        0,
+        track.getCachedNotes(),
+        bracketTick,
+        includeBracketIfMissing);
+}
+
 void NoteEditManager::handleSelectFaderInput(int16_t pitchValue, Track& track) {
     // Only process fader input when in NOTE_EDIT mode
     if (currentMainEditMode != MAIN_MODE_NOTE_EDIT) {
@@ -955,151 +992,80 @@ void NoteEditManager::handleSelectFaderInput(int16_t pitchValue, Track& track) {
         logger.log(CAT_MIDI, LOG_DEBUG, "Note selection disabled - editing grace period: %lu ms remaining", remaining);
         return;
     }
-    
+
     uint32_t loopLength = track.getLoopLength();
     if (loopLength == 0) return;
-    
-    // Get loop start offset for relative positioning
-    uint32_t loopStartTick = track.getLoopStartTick();
-    
-    // Collect ALL note positions and empty step positions for fader navigation
-    uint32_t numSteps = loopLength / Config::TICKS_PER_16TH_STEP;
-    const auto& notes = track.getCachedNotes();
-    std::vector<uint32_t> allPositions;
-    
-    // First, add all note positions - adjust to be relative to loop start point
-    for (int i = 0; i < (int)notes.size(); i++) {
-        uint32_t absolutePos = notes[i].startTick;
-        uint32_t relativePos = (absolutePos >= loopStartTick) ? 
-            (absolutePos - loopStartTick) : (absolutePos + loopLength - loopStartTick);
-        relativePos = relativePos % loopLength;
-        allPositions.push_back(relativePos);
-    }
-    
-    // Then, add empty step positions for steps that have no notes
-    for (uint32_t step = 0; step < numSteps; step++) {
-        uint32_t stepTick = step * Config::TICKS_PER_16TH_STEP;
-        
-        // Check if this step position already has a note (using relative positions)
-        bool hasNoteAtStep = false;
-        for (int i = 0; i < (int)notes.size(); i++) {
-            uint32_t absolutePos = notes[i].startTick;
-            uint32_t relativePos = (absolutePos >= loopStartTick) ? 
-                (absolutePos - loopStartTick) : (absolutePos + loopLength - loopStartTick);
-            relativePos = relativePos % loopLength;
-            if (relativePos == stepTick) {
-                hasNoteAtStep = true;
-                break;
+
+    const std::vector<SelectNavigation::SelectNavSlot> slots =
+        buildSelectNavigationSlots(track, editManager.getBracketTick(), true);
+
+    if (!slots.empty()) {
+        int posIndex = map(pitchValue, MidiConfig::Pitchbend::MIN, MidiConfig::Pitchbend::MAX, 0,
+                           (int)slots.size() - 1);
+        const SelectNavigation::SelectNavSlot& slot = slots[posIndex];
+        const uint32_t absoluteTargetTick = slot.relativeTick % loopLength;
+        const int noteIdx = slot.noteIdx;
+
+        // Failsafe: reject stale fader 1 echo (motor still at old slot) after position/pitch edit.
+        const bool positionEditLockout =
+            currentDriverFader != MidiMapping::FaderType::FADER_SELECT &&
+            lastDriverFaderTime > 0 &&
+            (now - lastDriverFaderTime) < (SELECTNOTE_UPDATE_DELAY + 200);
+        if (positionEditLockout && absoluteTargetTick != editManager.getBracketTick()) {
+            const int16_t deltaFromLastUser = abs(pitchValue - lastUserSelectFaderValue);
+            if (deltaFromLastUser < SELECT_MOVEMENT_THRESHOLD) {
+                logger.log(CAT_MIDI, LOG_DEBUG,
+                           "Select fader: ignoring stale echo during edit sync (fader1 tick %lu, bracket %lu, delta=%d)",
+                           absoluteTargetTick, editManager.getBracketTick(), deltaFromLastUser);
+                return;
             }
         }
-        
-        // If no note at this exact step position, add the empty step
-        if (!hasNoteAtStep) {
-            allPositions.push_back(stepTick);
-        }
-    }
-    
-    // Sort all positions
-    std::sort(allPositions.begin(), allPositions.end());
-    
-    // Remove duplicates
-    allPositions.erase(std::unique(allPositions.begin(), allPositions.end()), allPositions.end());
-    
-    if (!allPositions.empty()) {
-        int posIndex = map(pitchValue, MidiConfig::Pitchbend::MIN, MidiConfig::Pitchbend::MAX, 0, allPositions.size() - 1);
-        uint32_t relativeTargetTick = allPositions[posIndex];
-        
-        // Convert relative position back to absolute position for internal logic
-        uint32_t absoluteTargetTick = (relativeTargetTick + loopStartTick) % loopLength;
-        
-        // Find all notes at the absolute target tick for multi-note cycling
-        std::vector<int> notesAtTick;
-        for (int i = 0; i < (int)notes.size(); i++) {
-            if (notes[i].startTick == absoluteTargetTick) {
-                notesAtTick.push_back(i);
-            }
-        }
-        
-        int noteIdx = -1;
-        if (!notesAtTick.empty()) {
-            // Sort notes by pitch for consistent cycling order
-            std::sort(notesAtTick.begin(), notesAtTick.end(), [&notes](int a, int b) {
-                return notes[a].note < notes[b].note;
-            });
-            
-            // Simple cycling logic: if we're at the same tick and have multiple notes, cycle through them
-            if (absoluteTargetTick == editManager.getBracketTick() && editManager.getSelectedNoteIdx() >= 0 && notesAtTick.size() > 1) {
-                int currentIdx = editManager.getSelectedNoteIdx();
-                auto currentIt = std::find(notesAtTick.begin(), notesAtTick.end(), currentIdx);
-                
-                if (currentIt != notesAtTick.end()) {
-                    // Move to next note in the list
-                    auto nextIt = std::next(currentIt);
-                    if (nextIt != notesAtTick.end()) {
-                        noteIdx = *nextIt;
-                    } else {
-                        // Wrap to first note
-                        noteIdx = notesAtTick[0];
-                    }
-                    logger.log(CAT_MIDI, LOG_INFO, "Cycling through notes at tick %lu (%d notes total)", 
-                               absoluteTargetTick, (int)notesAtTick.size());
-                } else {
-                    // Current selection not in this tick's notes, select first
-                    noteIdx = notesAtTick[0];
-                }
-            } else {
-                // Different tick, single note, or no current selection - select first note
-                noteIdx = notesAtTick[0];
-                if (absoluteTargetTick != editManager.getBracketTick()) {
-                    logger.log(CAT_MIDI, LOG_INFO, "Moving to tick position: %lu", absoluteTargetTick);
-                }
-            }
-        }
-        
+
         if (absoluteTargetTick != editManager.getBracketTick() || noteIdx != editManager.getSelectedNoteIdx()) {
+            if (pendingSelectnoteUpdate) {
+                pendingSelectnoteUpdate = false;
+                logger.log(CAT_MIDI, LOG_DEBUG,
+                           "Select fader: canceled pending fader 1 sync (user moved select fader)");
+            }
             editManager.setBracketTick(absoluteTargetTick);
-            
+
             if (noteIdx >= 0) {
                 editManager.setSelectedNoteIdx(noteIdx);
-                if (notesAtTick.size() > 1) {
-                    // Find which note we selected in the multi-note list
-                    auto selectedIt = std::find(notesAtTick.begin(), notesAtTick.end(), noteIdx);
-                    int notePosition = std::distance(notesAtTick.begin(), selectedIt) + 1;
-                    logger.log(CAT_MIDI, LOG_INFO, "Select fader: selected note %d at tick %lu (%d/%d notes at this position)", 
-                               noteIdx, absoluteTargetTick, notePosition, (int)notesAtTick.size());
-                } else {
-                    logger.log(CAT_MIDI, LOG_DEBUG, "Select fader: selected note %d at tick %lu", noteIdx, absoluteTargetTick);
+
+                int notesAtPosition = 0;
+                int notePosition = 0;
+                for (const SelectNavigation::SelectNavSlot& s : slots) {
+                    if (s.relativeTick == slot.relativeTick && s.noteIdx >= 0) {
+                        notesAtPosition++;
+                        if (s.noteIdx == noteIdx) {
+                            notePosition = notesAtPosition;
+                        }
+                    }
                 }
-                
-                // CRITICAL: Reset moving note state when selecting a new note
-                // This ensures that when fader 2 is used, it will track the newly selected note
-                // instead of continuing to track a previously moving note
+
+                if (notesAtPosition > 1) {
+                    logger.log(CAT_MIDI, LOG_INFO,
+                               "Select fader: selected note %d at tick %lu (%d/%d notes at this position)",
+                               noteIdx, absoluteTargetTick, notePosition, notesAtPosition);
+                } else {
+                    logger.log(CAT_MIDI, LOG_DEBUG, "Select fader: selected note %d at tick %lu", noteIdx,
+                               absoluteTargetTick);
+                }
+
                 editManager.movingNote.active = false;
                 editManager.movingNote.deletedNotes.clear();
                 logger.log(CAT_MIDI, LOG_DEBUG, "Reset moving note state for new selection");
-                
-                // Set initial reference step based on note position
+
                 referenceStep = absoluteTargetTick / Config::TICKS_PER_16TH_STEP;
-                
-                // Schedule updates for faders 2, 3, and 4 after note selection
                 scheduleOtherFaderUpdates(MidiMapping::FaderType::FADER_SELECT);
-                
-                // Keep current movement tracking values to maintain proper filtering
-                // Don't reset to 0 as this would cause incorrect delta calculations
-                
-                // Start grace period for start editing
                 noteSelectionTime = millis();
                 startEditingEnabled = false;
             } else {
-                // STABILITY FIX: Only reset selection if we don't currently have a note selected
-                // This prevents rapid fader movements from accidentally resetting a valid selection
-                if (editManager.getSelectedNoteIdx() < 0) {
-                    editManager.resetSelection();
-                    logger.log(CAT_MIDI, LOG_DEBUG, "Select fader: selected empty step at tick %lu (no note found)", absoluteTargetTick);
-                } else {
-                    logger.log(CAT_MIDI, LOG_DEBUG, "Select fader: ignoring empty step at tick %lu (preserving current selection %d)", 
-                               absoluteTargetTick, editManager.getSelectedNoteIdx());
-                }
+                editManager.setSelectedNoteIdx(-1);
+                editManager.movingNote.active = false;
+                editManager.movingNote.deletedNotes.clear();
+                logger.log(CAT_MIDI, LOG_DEBUG,
+                           "Select fader: selected empty step at tick %lu (no note)", absoluteTargetTick);
             }
         }
     }
@@ -1175,11 +1141,9 @@ void NoteEditManager::handleCoarseFaderInput(int16_t pitchValue, Track& track) {
         if (lengthEditingMode) {
             // LENGTH EDIT MODE: Move the note END position in 16th step increments
             uint32_t currentNoteEndTick = currentNote.endTick;
-            
-            // Convert current end tick to relative position
-            uint32_t relativeEndTick = (currentNoteEndTick >= loopStartTick) ? 
-                (currentNoteEndTick - loopStartTick) : (currentNoteEndTick + loopLength - loopStartTick);
-            relativeEndTick = relativeEndTick % loopLength;
+
+            // NOTE_EDIT storage ticks are loop-relative (0 origin); ignore loopStartTick offset.
+            uint32_t relativeEndTick = currentNoteEndTick % loopLength;
             
             // Calculate how many 16th steps are in the loop
             uint32_t totalSixteenthSteps = loopLength / Config::TICKS_PER_16TH_STEP;
@@ -1199,8 +1163,7 @@ void NoteEditManager::handleCoarseFaderInput(int16_t pitchValue, Track& track) {
                 relativeTargetEndTick = loopLength - 1;
             }
             
-            // Convert back to absolute position
-            uint32_t targetEndTick = (relativeTargetEndTick + loopStartTick) % loopLength;
+            uint32_t targetEndTick = relativeTargetEndTick;
             
             // Calculate new note length and enforce minimum
             uint32_t newNoteDuration = NoteMovementUtils::calculateNoteLength(currentNote.startTick, targetEndTick, loopLength);
@@ -1235,19 +1198,43 @@ void NoteEditManager::handleCoarseFaderInput(int16_t pitchValue, Track& track) {
             }
             
             if (noteOnEvent) {
-                // Find corresponding note-off event
-                MidiEvent* noteOffEvent = NoteMovementUtils::findCorrespondingNoteOff(midiEvents, noteOnEvent, currentNote.note, currentNote.startTick, currentNote.endTick);
+                MidiEvent* noteOffEvent = NoteMovementUtils::findCorrespondingNoteOff(
+                    midiEvents, noteOnEvent, currentNote.note, currentNote.startTick, currentNote.endTick);
                 if (noteOffEvent) {
-                    // Update the note-off event tick
                     noteOffEvent->tick = targetEndTick;
-                    logger.log(CAT_MIDI, LOG_DEBUG, "Updated note-off event: pitch=%d, start=%lu, new end=%lu", 
+                    logger.log(CAT_MIDI, LOG_DEBUG,
+                               "Updated note-off event: pitch=%d, start=%lu, new end=%lu",
                                currentNote.note, currentNote.startTick, targetEndTick);
-                    
-                    // Update moving note tracking if active
-                    if (editManager.movingNote.active) {
-                        editManager.movingNote.lastEnd = targetEndTick;
+                } else {
+                    MidiEvent offEvt;
+                    offEvt.type = midi::NoteOff;
+                    offEvt.channel = noteOnEvent->channel;
+                    offEvt.tick = targetEndTick;
+                    offEvt.data.noteData.note = currentNote.note;
+                    offEvt.data.noteData.velocity = 0;
+                    midiEvents.push_back(offEvt);
+                    std::sort(midiEvents.begin(), midiEvents.end(),
+                              [](const MidiEvent& a, const MidiEvent& b) { return a.tick < b.tick; });
+                    logger.log(CAT_MIDI, LOG_DEBUG,
+                               "Created note-off for length edit: pitch=%d, start=%lu, end=%lu",
+                               currentNote.note, currentNote.startTick, targetEndTick);
+                }
+                if (editManager.movingNote.active) {
+                    editManager.movingNote.lastEnd = targetEndTick;
+                    const uint32_t currentSessionLength = NoteMovementUtils::calculateNoteLength(
+                        editManager.movingNote.origStart,
+                        editManager.movingNote.origEnd,
+                        loopLength);
+                    const uint32_t candidateSessionLength = NoteMovementUtils::calculateNoteLength(
+                        editManager.movingNote.origStart,
+                        targetEndTick,
+                        loopLength);
+                    if (candidateSessionLength > currentSessionLength) {
+                        editManager.movingNote.origEnd = targetEndTick;
                     }
                 }
+                track.getActiveLoop().markEditFlatDirty();
+                track.invalidateCaches();
             }
         } else {
             // POSITION EDIT MODE: Move the note START position in 16th step increments
@@ -1351,11 +1338,6 @@ void NoteEditManager::handleFineFaderInput(uint8_t ccValue, Track& track) {
             // LENGTH EDIT MODE: Adjust note END position with fine control
             uint32_t currentNoteEndTick = currentNote.endTick;
             
-            // Convert to relative position for calculation
-            uint32_t relativeEndTick = (currentNoteEndTick >= loopStartTick) ? 
-                (currentNoteEndTick - loopStartTick) : (currentNoteEndTick + loopLength - loopStartTick);
-            relativeEndTick = relativeEndTick % loopLength;
-            
             // Use the reference step established by coarse fader as the base
             uint32_t sixteenthStepStartTick = referenceStep * Config::TICKS_PER_16TH_STEP;
             
@@ -1378,8 +1360,7 @@ void NoteEditManager::handleFineFaderInput(uint8_t ccValue, Track& track) {
                 relativeTargetEndTick = relativeTargetEndTick % loopLength;
             }
             
-            // Convert back to absolute position
-            uint32_t targetEndTick = (relativeTargetEndTick + loopStartTick) % loopLength;
+            uint32_t targetEndTick = relativeTargetEndTick;
             
             // Calculate new note length and enforce minimum
             uint32_t newNoteDuration = NoteMovementUtils::calculateNoteLength(currentNote.startTick, targetEndTick, loopLength);
@@ -1410,17 +1391,37 @@ void NoteEditManager::handleFineFaderInput(uint8_t ccValue, Track& track) {
             }
             
             if (noteOnEvent) {
-                // Find corresponding note-off event
-                MidiEvent* noteOffEvent = NoteMovementUtils::findCorrespondingNoteOff(midiEvents, noteOnEvent, currentNote.note, currentNote.startTick, currentNote.endTick);
+                MidiEvent* noteOffEvent = NoteMovementUtils::findCorrespondingNoteOff(
+                    midiEvents, noteOnEvent, currentNote.note, currentNote.startTick, currentNote.endTick);
                 if (noteOffEvent) {
-                    // Update the note-off event tick
                     noteOffEvent->tick = targetEndTick;
-                    
-                    // Update moving note tracking if active
-                    if (editManager.movingNote.active) {
-                        editManager.movingNote.lastEnd = targetEndTick;
+                } else {
+                    MidiEvent offEvt;
+                    offEvt.type = midi::NoteOff;
+                    offEvt.channel = noteOnEvent->channel;
+                    offEvt.tick = targetEndTick;
+                    offEvt.data.noteData.note = currentNote.note;
+                    offEvt.data.noteData.velocity = 0;
+                    midiEvents.push_back(offEvt);
+                    std::sort(midiEvents.begin(), midiEvents.end(),
+                              [](const MidiEvent& a, const MidiEvent& b) { return a.tick < b.tick; });
+                }
+                if (editManager.movingNote.active) {
+                    editManager.movingNote.lastEnd = targetEndTick;
+                    const uint32_t currentSessionLength = NoteMovementUtils::calculateNoteLength(
+                        editManager.movingNote.origStart,
+                        editManager.movingNote.origEnd,
+                        loopLength);
+                    const uint32_t candidateSessionLength = NoteMovementUtils::calculateNoteLength(
+                        editManager.movingNote.origStart,
+                        targetEndTick,
+                        loopLength);
+                    if (candidateSessionLength > currentSessionLength) {
+                        editManager.movingNote.origEnd = targetEndTick;
                     }
                 }
+                track.getActiveLoop().markEditFlatDirty();
+                track.invalidateCaches();
             }
         } else {
             // POSITION EDIT MODE: Adjust note START position with fine control
@@ -1476,8 +1477,7 @@ void NoteEditManager::handleFineFaderInput(uint8_t ccValue, Track& track) {
         this->currentDriverFader = MidiMapping::FaderType::FADER_FINE;
         this->lastDriverFaderTime = millis();
         
-        // NOTE: Fader 3 (FINE) does not update other faders to prevent erratic UX
-        // Only fader 1 (SELECT) and fader 2 (COARSE) perform cross-updates
+        scheduleOtherFaderUpdates(MidiMapping::FaderType::FADER_FINE);
     }
 }
 
@@ -1504,12 +1504,26 @@ void NoteEditManager::handleNoteValueFaderInput(uint8_t ccValue, Track& track) {
     uint32_t loopLength = track.getLoopLength();
     if (loopLength == 0) return;
     
-    auto& midiEvents = track.getMidiEvents();
     auto notes = track.getCachedNotes();
     int selectedIdx = editManager.getSelectedNoteIdx();
     
     if (selectedIdx >= 0 && selectedIdx < (int)notes.size()) {
-        uint8_t currentNoteValue = notes[selectedIdx].note;
+        uint8_t currentNoteValue;
+        uint32_t noteStart;
+        uint32_t noteEnd;
+        if (editManager.movingNote.active) {
+            // Continuous edit session: cache index can drift after overlap deletes.
+            currentNoteValue = editManager.movingNote.note;
+            noteStart = editManager.movingNote.lastStart;
+            noteEnd = editManager.movingNote.lastEnd;
+            logger.log(CAT_MIDI, LOG_DEBUG,
+                       "Pitch edit using movingNote identity: pitch=%d, start=%lu, end=%lu",
+                       currentNoteValue, noteStart, noteEnd);
+        } else {
+            currentNoteValue = notes[selectedIdx].note;
+            noteStart = notes[selectedIdx].startTick;
+            noteEnd = notes[selectedIdx].endTick;
+        }
         uint8_t newNoteValue = ccValue;  // Direct 1:1 mapping from CC to MIDI note value
         
         // Constrain to valid MIDI note range (0-127)
@@ -1522,212 +1536,46 @@ void NoteEditManager::handleNoteValueFaderInput(uint8_t ccValue, Track& track) {
         if (currentNoteValue == newNoteValue) {
             return;
         }
-        
-        // Before changing pitch, handle overlaps and restoration
-        uint32_t noteStart = notes[selectedIdx].startTick;
-        uint32_t noteEnd = notes[selectedIdx].endTick;
-        
-        // STEP 1: Check if we should restore any previously deleted/shortened notes
-        // When changing pitch, we should restore all notes of the current pitch since they won't overlap anymore
-        std::vector<EditManager::MovingNoteIdentity::DeletedNote> notesToRestore;
-        
-        for (const auto& deletedNote : editManager.movingNote.deletedNotes) {
-            // Restore all deleted notes that match the current pitch (before change)
-            // Since we're changing to a different pitch, these notes of the old pitch no longer have overlap conflicts
-            if (deletedNote.note == currentNoteValue) {
-                notesToRestore.push_back(deletedNote);
-                logger.log(CAT_MIDI, LOG_DEBUG, "Will restore note after pitch change: pitch=%d, start=%lu, end=%lu (no longer conflicts with new pitch %d)", 
-                          deletedNote.note, deletedNote.startTick, deletedNote.endTick, newNoteValue);
-            }
+
+        const bool pitchUpdated = NoteMovementUtils::applyPitchChange(
+            track, editManager, currentNoteValue, newNoteValue, noteStart, noteEnd);
+        if (!pitchUpdated) {
+            return;
         }
-        
-        // Apply restoration if needed
-        if (!notesToRestore.empty()) {
-            auto [onIndex, offIndex] = NoteUtils::buildEventIndex(midiEvents);
-            NoteMovementUtils::restoreNotes(midiEvents, notesToRestore, editManager, loopLength, track.getMidiChannel(), onIndex, offIndex);
-            logger.log(CAT_MIDI, LOG_DEBUG, "Restored %zu notes after pitch change", notesToRestore.size());
-        }
-        
-        // STEP 2: Check for overlaps with notes of the target pitch
-        std::vector<NoteUtils::DisplayNote> otherNotesOfTargetPitch;
-        
-        // Get fresh note list after potential restoration
-        notes = track.getCachedNotes();
-        
-        // Create a set of restored note positions to avoid processing them as overlaps
-        std::set<std::pair<uint32_t, uint32_t>> restoredNotePositions;
-        for (const auto& restored : notesToRestore) {
-            restoredNotePositions.insert({restored.startTick, restored.endTick});
-        }
-        
-        for (const auto& note : notes) {
-            // Only include notes of the target pitch that are NOT the current note
-            if (note.note == newNoteValue && 
-                !(note.startTick == noteStart && note.endTick == noteEnd)) {
-                
-                // Skip notes that were just restored to avoid immediately shortening them
-                bool wasJustRestored = restoredNotePositions.count({note.startTick, note.endTick}) > 0;
-                if (wasJustRestored) {
-                    logger.log(CAT_MIDI, LOG_DEBUG, "Skipping recently restored note from overlap processing: pitch=%d, start=%lu, end=%lu", 
-                              note.note, note.startTick, note.endTick);
-                    continue;
-                }
-                
-                otherNotesOfTargetPitch.push_back(note);
-            }
-        }
-        
-        if (!otherNotesOfTargetPitch.empty()) {
-            logger.log(CAT_MIDI, LOG_DEBUG, "Found %zu notes of target pitch %d, checking for overlaps", 
-                      otherNotesOfTargetPitch.size(), newNoteValue);
-            
-            // Use the existing overlap handling logic from NoteMovementUtils
-            std::vector<std::pair<NoteUtils::DisplayNote, uint32_t>> notesToShorten;
-            std::vector<NoteUtils::DisplayNote> notesToDelete;
-            
-            for (const auto& note : otherNotesOfTargetPitch) {
-                bool overlaps = NoteMovementUtils::notesOverlap(noteStart, noteEnd, note.startTick, note.endTick, loopLength);
-                if (!overlaps) continue;
-                
-                // Check if the overlapping note is completely contained within the current note's position
-                bool noteCompletelyContained = false;
-                
-                // Handle both wrapped and unwrapped cases  
-                if (noteEnd >= noteStart) {
-                    // Current note doesn't wrap around
-                    noteCompletelyContained = (note.startTick >= noteStart && note.endTick <= noteEnd);
-                } else {
-                    // Current note wraps around the loop boundary
-                    noteCompletelyContained = (note.startTick >= noteStart || note.endTick <= noteEnd);
-                }
-                
-                if (noteCompletelyContained) {
-                    // Delete the note entirely if it's completely contained within the current note
-                    notesToDelete.push_back(note);
-                    logger.log(CAT_MIDI, LOG_DEBUG, "Will delete completely contained note: pitch=%d, start=%lu, end=%lu (within current note %lu-%lu)", 
-                              note.note, note.startTick, note.endTick, noteStart, noteEnd);
-                } else {
-                    // Try to shorten the overlapping note
-                    uint32_t newNoteEndTick;
-                    
-                    if (note.startTick < noteStart) {
-                        // Note starts before current note - shorten it to end 1 tick before current note starts
-                        if (noteStart == 0) {
-                            // Handle wrap-around case - if current note starts at 0, shortened note ends at loop end - 1
-                            newNoteEndTick = loopLength - 1;
-                        } else {
-                            newNoteEndTick = noteStart - 1;
-                        }
-                    } else {
-                        // Note starts after current note starts - this shouldn't happen in normal overlap cases
-                        // but handle it by deleting the note
-                        notesToDelete.push_back(note);
-                        logger.log(CAT_MIDI, LOG_DEBUG, "Will delete overlapping note that starts after current note: pitch=%d, start=%lu, end=%lu", 
-                                  note.note, note.startTick, note.endTick);
-                        continue;
-                    }
-                    
-                    uint32_t shortenedLength = NoteMovementUtils::calculateNoteLength(note.startTick, newNoteEndTick, loopLength);
-                    
-                    // Check if shortened length would be less than 49 ticks
-                    if (shortenedLength < 49) {
-                        notesToDelete.push_back(note);
-                        logger.log(CAT_MIDI, LOG_DEBUG, "Will delete note (too short after shortening): pitch=%d, start=%lu, end=%lu->%lu, length=%lu < 49", 
-                                  note.note, note.startTick, note.endTick, newNoteEndTick, shortenedLength);
-                    } else {
-                        notesToShorten.push_back({note, newNoteEndTick});
-                        logger.log(CAT_MIDI, LOG_DEBUG, "Will shorten note: pitch=%d, start=%lu, end=%lu->%lu, length=%lu", 
-                                  note.note, note.startTick, note.endTick, newNoteEndTick, shortenedLength);
-                    }
-                }
-            }
-            
-            // Apply the overlap changes using the existing infrastructure
-            if (!notesToShorten.empty() || !notesToDelete.empty()) {
-                auto [onIndex, offIndex] = NoteUtils::buildEventIndex(midiEvents);
-                NoteMovementUtils::applyShortenOrDelete(midiEvents, notesToShorten, notesToDelete, editManager, loopLength, onIndex, offIndex);
-                logger.log(CAT_MIDI, LOG_DEBUG, "Applied pitch change overlaps: %zu shortened, %zu deleted", 
-                          notesToShorten.size(), notesToDelete.size());
-            }
-        }
-        
-        // Now update the pitch of the current note
-        bool noteOnUpdated = false;
-        bool noteOffUpdated = false;
-        
-        // Update note-on event
-        for (auto& event : midiEvents) {
-            if (event.type == midi::NoteOn && 
-                event.data.noteData.note == currentNoteValue &&
-                event.tick == notes[selectedIdx].startTick &&
-                event.data.noteData.velocity > 0) {
-                
-                logger.log(CAT_MIDI, LOG_DEBUG, "Updating note-on: pitch %d -> %d at tick %lu", 
-                           currentNoteValue, newNoteValue, event.tick);
-                
-                event.data.noteData.note = newNoteValue;
-                noteOnUpdated = true;
+
+        const uint32_t displayEnd =
+            (noteEnd >= loopLength) ? (noteEnd % loopLength) : noteEnd;
+        const auto& updatedNotes = track.getCachedNotes();
+        int newSelectedIdx = -1;
+
+        // Find the updated note in the new notes list
+        for (int i = 0; i < (int)updatedNotes.size(); i++) {
+            if (updatedNotes[i].note == newNoteValue &&
+                updatedNotes[i].startTick == noteStart &&
+                updatedNotes[i].endTick == displayEnd) {
+                newSelectedIdx = i;
                 break;
             }
         }
-        
-        // Update note-off event (or note-on with velocity 0)
-        for (auto& event : midiEvents) {
-            if (((event.type == midi::NoteOff) || (event.type == midi::NoteOn && event.data.noteData.velocity == 0)) &&
-                event.data.noteData.note == currentNoteValue &&
-                event.tick == notes[selectedIdx].endTick) {
-                
-                logger.log(CAT_MIDI, LOG_DEBUG, "Updating note-off: pitch %d -> %d at tick %lu", 
-                           currentNoteValue, newNoteValue, event.tick);
-                
-                event.data.noteData.note = newNoteValue;
-                noteOffUpdated = true;
-                break;
-            }
-        }
-        
-        if (noteOnUpdated && noteOffUpdated) {
-            logger.log(CAT_MIDI, LOG_DEBUG, "Note value changed successfully: %d -> %d", 
-                       currentNoteValue, newNoteValue);
-            
-            // Update the moving note identity to reflect the new pitch
-            if (editManager.movingNote.note == currentNoteValue) {
-                logger.log(CAT_MIDI, LOG_DEBUG, "Updating moving note identity: pitch %d -> %d", 
-                          editManager.movingNote.note, newNoteValue);
-                editManager.movingNote.note = newNoteValue;
-            }
-            
-            // Update the selected note index to point to the updated note
-            const auto& updatedNotes = track.getCachedNotes();
-            int newSelectedIdx = -1;
-            
-            // Find the updated note in the new notes list
-            for (int i = 0; i < (int)updatedNotes.size(); i++) {
-                if (updatedNotes[i].note == newNoteValue && 
-                    updatedNotes[i].startTick == notes[selectedIdx].startTick &&
-                    updatedNotes[i].endTick == notes[selectedIdx].endTick) {
-                    newSelectedIdx = i;
-                    break;
-                }
-            }
-            
-            if (newSelectedIdx >= 0) {
-                editManager.setSelectedNoteIdx(newSelectedIdx);
-                logger.log(CAT_MIDI, LOG_DEBUG, "Updated selectedNoteIdx: %d -> %d (note with new value)", 
-                           selectedIdx, newSelectedIdx);
-            }
-            
-            // Mark editing activity to prevent note selection changes
-            refreshEditingActivity();
-            // Set up driver tracking for note value fader
-            this->currentDriverFader = MidiMapping::FaderType::FADER_NOTE_VALUE;
-            this->lastDriverFaderTime = millis();
-            // NOTE: Fader 4 (NOTE_VALUE) does not update other faders to prevent erratic UX
-            // Only fader 1 (SELECT) and fader 2 (COARSE) perform cross-updates
+
+        if (newSelectedIdx >= 0) {
+            editManager.setSelectedNoteIdx(newSelectedIdx);
+            editManager.setBracketTick(noteStart);
+            logger.log(CAT_MIDI, LOG_DEBUG,
+                       "Updated selectedNoteIdx: %d -> %d (note with new value)",
+                       selectedIdx, newSelectedIdx);
         } else {
-            logger.log(CAT_MIDI, LOG_DEBUG, "Failed to update note value: noteOn=%s noteOff=%s", 
-                       noteOnUpdated ? "OK" : "FAILED", noteOffUpdated ? "OK" : "FAILED");
+            editManager.selectClosestNote(track, editManager.getBracketTick());
+            logger.log(CAT_MIDI, LOG_DEBUG,
+                       "Resynced selection after pitch (merged note idx not found)");
         }
+
+        // Mark editing activity to prevent note selection changes
+        refreshEditingActivity();
+        // Set up driver tracking for note value fader
+        this->currentDriverFader = MidiMapping::FaderType::FADER_NOTE_VALUE;
+        this->lastDriverFaderTime = millis();
+        scheduleOtherFaderUpdates(MidiMapping::FaderType::FADER_NOTE_VALUE);
     }
 }
 

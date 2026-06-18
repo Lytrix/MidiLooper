@@ -861,6 +861,10 @@ void Track::stopRecording(uint32_t currentTick) {
   }
 
   if (loop.loopLengthTicks > 0) {
+    if (!pendingNotes.empty()) {
+      const uint32_t closeRel = loop.loopLengthTicks - 1;
+      finalizePendingNotes(loop.startLoopTick + closeRel);
+    }
     // Record-stop truncation: events captured past final loop length must not
     // survive into committed playback state.
     loop.capture.store.dropEventsAtOrBeyondTick(loop.loopLengthTicks);
@@ -926,6 +930,12 @@ void Track::stopRecording(uint32_t currentTick) {
                static_cast<unsigned long>(recordStartTick), static_cast<unsigned long>(rawLength),
                static_cast<unsigned long>(finalLength));
 
+  // Empty record-stop (commit skipped) clears loopLengthTicks; leave a valid state.
+  if (loop.loopLengthTicks == 0 || loop.activeTakeCount() == 0) {
+    setState(TRACK_EMPTY);
+    return;
+  }
+
   // Return to playback after record-stop. Overdub starts on the next explicit
   // record press from PLAYING (record -> play -> overdub -> play flow).
   startPlaying(playbackTick, true);
@@ -958,6 +968,10 @@ void Track::stopRecordingToStopped(uint32_t currentTick) {
   }
 
   if (loop.loopLengthTicks > 0) {
+    if (!pendingNotes.empty()) {
+      const uint32_t closeRel = loop.loopLengthTicks - 1;
+      finalizePendingNotes(loop.startLoopTick + closeRel);
+    }
     // Record-stop truncation: drop overflow capture events before seal/publish.
     loop.capture.store.dropEventsAtOrBeyondTick(loop.loopLengthTicks);
   }
@@ -1232,7 +1246,7 @@ void Track::recordMidiEvents(midi::MidiType type, byte channel, byte data1, byte
       return;
     }
 
-    if (isOverdubbing()) {
+    if ((isRecording() && !isPlaying()) || isOverdubbing()) {
       ++loop.captureDisplayRevision;
     }
 

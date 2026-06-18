@@ -1,5 +1,5 @@
 ---
-description: OpenSpec workflow — m8-rename first, then m8-edit; jam deferred
+description: OpenSpec workflow — m8-edit active; m8-rename archived; jam deferred
 alwaysApply: true
 ---
 
@@ -32,24 +32,22 @@ Restart Cursor after `openspec init` / `openspec update` so slash commands appea
 
 M1–M7 are **shipped**. Post-M7 order:
 
-1. **M8 rename** — `m8-rename` (**active** — implement first)
-2. **M8 edit** — `m8-edit` (after rename merges)
-3. **Hardening** — pool-budget, playback-window polish (propose when M8 done)
-4. **JamRecorder** — `jam-recorder` change (JamAction / D3, **not** D13 MIDI capture)
-5. **M10** — full Jam entity + Scenes + SD
-6. **D13 arrangement capture** — only after R1–R5 locked in phase-3 docs
+1. **M8 edit** — `m8-edit` (**active** — `/opsx:apply`)
+2. **Hardening** — pool-budget, playback-window polish (propose when M8 done)
+3. **JamRecorder** — `jam-recorder` change (JamAction / D3, **not** D13 MIDI capture)
+4. **M10** — full Jam entity + Scenes + SD
+5. **D13 arrangement capture** — only after R1–R5 locked in phase-3 docs
 
 Do **not** start D13-style `jam-recording` before M8. Parked reference:
 `openspec/changes/archive/20260617-parked-jam-recording-d13/`.
 
-## Active changes
+## Active change
 
-| Change | Scope | When |
-|--------|--------|------|
-| **`m8-rename`** | Epoch→Take, CaptureLayer→Capture, undo/debug renames | **Now** — `/opsx:apply` |
-| **`m8-edit`** | Edit op-lists, NoteEditSession, retire `editFlat_` | After **m8-rename** merges |
+**`m8-edit`** — Edit op-lists, NoteEditSession, retire `editFlat_`.
 
-Run `/opsx:apply` on `openspec/changes/m8-rename/tasks.md` first.
+Run `/opsx:apply` on `openspec/changes/m8-edit/tasks.md`.
+
+**Archived:** `openspec/changes/archive/2026-06-18-m8-rename/` (Take/Capture vocabulary).
 
 ## Brownfield docs
 
@@ -67,6 +65,5 @@ Reuse **Take**, **Capture**, **Edit**, slot, overdub, jam, JamAction, HITL basel
 
 ## Verification
 
-- **m8-rename:** `pio test -e native`; optional HITL smoke
 - **m8-edit:** full native matrix + HITL per `.cursor/rules/HITL-Test-Flow.mdc`
 - Teensy upload only when user confirms after firmware build

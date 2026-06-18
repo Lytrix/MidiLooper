@@ -125,6 +125,7 @@ public:
 
     struct MovingNoteIdentity {
         uint8_t note = 0;
+        uint8_t origPitch = 0;
         uint32_t origStart = 0;
         uint32_t origEnd = 0;
         uint32_t lastStart = 0;  // Track previous position for direction detection
@@ -147,6 +148,12 @@ public:
         bool undoSnapshotPushed = false; // snapshot only once after first movement
     };
     MovingNoteIdentity movingNote;
+
+    /** Shortened overlap victims for the active note-edit session (survives fader-1 reselect). */
+    std::vector<MovingNoteIdentity::DeletedNote> sessionShortenedVictims;
+
+    /** Fully removed overlap victims (incl. short inserted notes); survives fader-1 reselect. */
+    std::vector<MovingNoteIdentity::DeletedNote> sessionDeletedNotes;
 
     /**
      * @brief Returns the undo count to display: frozen during edit states, real count otherwise

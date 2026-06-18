@@ -117,4 +117,16 @@ using EventIndexMap = std::unordered_map<Key, size_t>;
 using EventIndex = std::pair<EventIndexMap, EventIndexMap>;
 EventIndex buildEventIndex(const MidiEventVec& midiEvents);
 
+/** Remove extra note-on/note-off pairs with identical pitch, start, and end (after pitch merge). */
+void removeDuplicateNotePairsAtSpan(MidiEventVec& midiEvents, uint8_t pitch, uint32_t startTick,
+                                    uint32_t endTick);
+
+/**
+ * @brief At one tick, ensure note-offs for pitch are ordered before note-ons (LIFO pairing).
+ *
+ * Adjacent same-pitch notes that touch at a boundary (inner off == mover on) corrupt
+ * reconstruction when the note-on appears before the note-off in the event vector.
+ */
+void ensureNoteOffsBeforeNoteOnsAtTick(MidiEventVec& midiEvents, uint8_t pitch, uint32_t tick);
+
 } // namespace NoteUtils 

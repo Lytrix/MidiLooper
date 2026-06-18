@@ -26,6 +26,8 @@
  *   SEVT ,<N|F>,<tick>,<ch>,<note>             stored note-on/off after overdub commit (verify)
  *   DISP ,<slot>,<state>,<loopLen>,<take>,<visual>,<frame>,<buffer>,<published>
  *                                               OLED piano-roll snapshot (display vs storage)
+ *   DNTE ,<pitch>,<storageStart>,<displayStart>,<length>,<selectedIdx>
+ *                                               OLED note-info row (edit selection; display ticks)
  *   WRAP ,<onTick>,<offTick>,<ch>,<note>       wrapped tail-on / head-off pair in committed store
  *   BAR  ,<tick>,<bar>                         bar boundary marker (tick<->micros alignment)
  */
@@ -146,6 +148,13 @@ inline void displaySnapshot(uint8_t slot, const char* trackState, uint32_t loopL
                 takeEvents, visualNotes, frameNotes, bufferEvents, published);
 }
 
+inline void displayNoteInfo(uint8_t pitch, uint32_t storageStart, uint32_t displayStart,
+                            uint32_t length, int selectedIdx) {
+  Serial.printf("#CAP,%lu,DNTE,%u,%lu,%lu,%lu,%d\r\n",
+                (unsigned long)micros(), pitch, (unsigned long)storageStart,
+                (unsigned long)displayStart, (unsigned long)length, selectedIdx);
+}
+
 inline void storedWrapPair(uint32_t onTick, uint32_t offTick, uint8_t ch, uint8_t note) {
   Serial.printf("#CAP,%lu,WRAP,%lu,%lu,%u,%u\r\n",
                 (unsigned long)micros(), (unsigned long)onTick, (unsigned long)offTick, ch, note);
@@ -199,6 +208,8 @@ inline void update(uint32_t currentTick, uint32_t ticksPerBar) {
 #define SC_STORED_NOTE_EVENT(kind, tick, ch, note) DebugSessionCapture::storedNoteEvent(kind, tick, ch, note)
 #define SC_DISP(slot, state, loopLen, take, visual, frame, buffer, published) \
   DebugSessionCapture::displaySnapshot(slot, state, loopLen, take, visual, frame, buffer, published)
+#define SC_DNTE(pitch, storageStart, displayStart, length, selectedIdx) \
+  DebugSessionCapture::displayNoteInfo(pitch, storageStart, displayStart, length, selectedIdx)
 #define SC_STORED_WRAP_PAIR(onTick, offTick, ch, note) DebugSessionCapture::storedWrapPair(onTick, offTick, ch, note)
 #define SC_REC_QUEUE_STORED_NOTE_ON(tick, ch, note) DebugSessionCapture::queueStoredNoteOn(tick, ch, note)
 #define SC_REC_FLUSH_PENDING_REVTS(maxLines) DebugSessionCapture::flushPendingRevts(maxLines)
@@ -220,6 +231,7 @@ inline void update(uint32_t currentTick, uint32_t ticksPerBar) {
 #define SC_REC_STORED_NOTE_ON(tick, ch, note) ((void)0)
 #define SC_STORED_NOTE_EVENT(kind, tick, ch, note) ((void)0)
 #define SC_DISP(slot, state, loopLen, take, visual, frame, buffer, published) ((void)0)
+#define SC_DNTE(pitch, storageStart, displayStart, length, selectedIdx) ((void)0)
 #define SC_STORED_WRAP_PAIR(onTick, offTick, ch, note) ((void)0)
 #define SC_REC_QUEUE_STORED_NOTE_ON(tick, ch, note) ((void)0)
 #define SC_REC_FLUSH_PENDING_REVTS(maxLines) ((void)0)

@@ -131,6 +131,25 @@ void test_reconstruct_wrap_pair_blocked_by_intervening_note_on() {
     assert_has_note(notes, 60, 1400, loopLength - 1, 90);
 }
 
+void test_reconstruct_adjacent_same_pitch_boundary_order() {
+    constexpr uint32_t loopLength = 1536;
+    MidiEventVec badOrder;
+    badOrder.push_back(MidiEvent::NoteOn(392, 5, 67, 100));
+    badOrder.push_back(MidiEvent::NoteOn(488, 5, 67, 100));
+    badOrder.push_back(MidiEvent::NoteOff(488, 5, 67, 0));
+    badOrder.push_back(MidiEvent::NoteOff(1160, 5, 67, 0));
+    auto corrupted = NoteUtils::reconstructNotes(badOrder, loopLength, false);
+    TEST_ASSERT_EQUAL(2u, corrupted.size());
+    assert_has_note(corrupted, 67, 488, 488, 100);
+    assert_has_note(corrupted, 67, 392, 1160, 100);
+
+    NoteUtils::ensureNoteOffsBeforeNoteOnsAtTick(badOrder, 67, 488);
+    auto fixed = NoteUtils::reconstructNotes(badOrder, loopLength, false);
+    TEST_ASSERT_EQUAL(2u, fixed.size());
+    assert_has_note(fixed, 67, 392, 488, 100);
+    assert_has_note(fixed, 67, 488, 1160, 100);
+}
+
 void test_reconstruct_record_and_overdub_pitch_ranges() {
     constexpr uint32_t loopLength = 1536;
     MidiEventVec ev;
@@ -158,6 +177,7 @@ int main(int /*argc*/, char** /*argv*/) {
     RUN_TEST(test_reconstruct_wrapped_tail_on_head_off_chronological);
     RUN_TEST(test_reconstruct_wrap_with_synthetic_loop_end_before_head_off);
     RUN_TEST(test_reconstruct_wrap_pair_blocked_by_intervening_note_on);
+    RUN_TEST(test_reconstruct_adjacent_same_pitch_boundary_order);
     RUN_TEST(test_reconstruct_record_and_overdub_pitch_ranges);
     return UNITY_END();
 }

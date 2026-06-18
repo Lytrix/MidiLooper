@@ -6,8 +6,10 @@ collapse (`editFlat_`) with **Edit** + **NoteEditSession**.
 
 ## Prerequisite
 
-**`m8-rename`** MUST complete first (`/opsx:apply` → validate → merge). Do not start this change
-while product code still uses **Epoch** / **CaptureLayer**.
+**`m8-rename`** is **complete** (archived [`2026-06-18-m8-rename`](../archive/2026-06-18-m8-rename/)).
+Product code uses **Take** / **Capture** / **TakeCommitted**. Safe to `/opsx:apply` **m8-edit**.
+
+See [`tasks.md`](tasks.md) §0 (done) vs §1–§5 (open).
 
 ## What Changes
 
