@@ -36,7 +36,7 @@ public:
     friend class Track;
     // Undo overdub
     static void pushUndoSnapshot(Track& track);
-    static void pushPublishedEpoch(Track& track, uint8_t slotIndex, EpochId epochId);
+    static void pushCommittedTake(Track& track, uint8_t slotIndex, TakeId takeId);
     static void beginOverdubSession(Track& track);
     static void endOverdubSession(Track& track);
     static void undoOverdub(Track& track);

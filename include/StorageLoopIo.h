@@ -7,7 +7,7 @@
 #include <cstdint>
 #include <functional>
 
-#include "Epoch.h"
+#include "Take.h"
 
 /// Byte-oriented I/O adapter for SD File (firmware) or in-memory buffers (native tests).
 struct StorageIo {
@@ -15,20 +15,20 @@ struct StorageIo {
   std::function<bool(void*, size_t)> read;
 };
 
-/// v4 on-wire loop block (Active + Disabled epochs only; flattened MIDI per epoch).
+/// v4 on-wire loop block (Active + Disabled takes only; flattened MIDI per take).
 struct PersistedLoopSnapshot {
   LoopId loopId = kInvalidLoopId;
   uint32_t startLoopTick = 0;
   uint32_t loopLengthTicks = 0;
   uint32_t loopStartTick = 0;
-  EpochId nextEpochId = 1;
+  TakeId nextTakeId = 1;
   uint32_t nextMergeSequence = 0;
-  EpochId lastPublishedEpochId = kInvalidEpochId;
-  EpochVec epochs;
+  TakeId lastPublishedTakeId = kInvalidTakeId;
+  TakeVec takes;
 };
 
-bool writePersistedEpoch(const StorageIo& io, const Epoch& epoch);
-bool readPersistedEpoch(const StorageIo& io, Epoch& epoch);
+bool writePersistedTake(const StorageIo& io, const Take& take);
+bool readPersistedTake(const StorageIo& io, Take& take);
 
 bool writePersistedLoopSnapshot(const StorageIo& io, const PersistedLoopSnapshot& snapshot);
 bool readPersistedLoopSnapshot(const StorageIo& io, PersistedLoopSnapshot& snapshot);

@@ -2,7 +2,7 @@
 //  Licensed under the PolyForm Noncommercial 1.0.0
 
 #pragma once
-#include "EditState.h"
+#include "EditNoteState.h"
 #include "Utils/NoteUtils.h"
 
 class EditManager;
@@ -17,7 +17,7 @@ class Track;
  * - Snaps to the nearest 16th step or existing note
  * - On second click: creates a 32nd note if empty, or enters start note editing if note exists
  */
-class EditSelectNoteState : public EditState {
+class EditSelectNoteState : public EditNoteState {
 public:
     void onEnter(EditManager& manager, Track& track, uint32_t startTick) override;
     void onExit(EditManager& manager, Track& track) override;

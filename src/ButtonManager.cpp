@@ -148,7 +148,7 @@ void ButtonManager::update() {
         encoderButtonHoldStart = now;
     }
     if (encoderButtonHeld && (now - encoderButtonHoldStart >= ENCODER_HOLD_DELAY) &&
-        (editManager.getCurrentState() == editManager.getNoteState() ||
+        (editManager.getCurrentState() == editManager.getNoteHomeState() ||
          editManager.getCurrentState() == editManager.getStartNoteState())) {
         if (!pitchEditActive) {
             editManager.enterPitchEditMode(trackManager.getSelectedTrack());
@@ -278,7 +278,7 @@ void ButtonManager::handleButton(ButtonId button, ButtonAction action) {
                 case BUTTON_SHORT_PRESS:
                     if (editManager.getCurrentState() == nullptr) {
                         // Enter note edit mode
-                        editManager.enterEditMode(editManager.getNoteState(), clockManager.getCurrentTick());
+                        editManager.enterEditMode(editManager.getNoteHomeState(), clockManager.getCurrentTick());
                     } else {
                         // Switch to next state (for now, just stay in note state)
                         editManager.switchToNextState(trackManager.getSelectedTrack());

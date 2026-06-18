@@ -3,7 +3,7 @@
 
 #include "MidiButtonProcessor.h"
 #include "Logger.h"
-#include "Utils/SessionCapture.h"
+#include "Utils/DebugSessionCapture.h"
 
 MidiButtonProcessor::MidiButtonProcessor() {
     // Initialize button states for all possible MIDI notes on all channels

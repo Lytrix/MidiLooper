@@ -3,8 +3,8 @@
 
 #pragma once
 #include <cstdint>
-#include "EditState.h"
 #include "EditNoteState.h"
+#include "EditNoteHomeState.h"
 #include "EditStates/EditSelectNoteState.h"
 #include "EditStartNoteState.h"
 #include "EditLengthNoteState.h"
@@ -21,7 +21,7 @@ class Track;
  * @class EditManager
  * @brief Implements the state machine for note- and parameter-edit overlays.
  *
- * Coordinates EditState instances (NoteState, StartNoteState, PitchNoteState) to handle
+ * Coordinates EditNoteState instances (NoteState, StartNoteState, PitchNoteState) to handle
  * encoder movements and button presses for selecting notes, moving note start positions,
  * and changing note pitches. Tracks the bracket position over the piano roll, manages
  * commit-on-enter/commit-on-exit undo snapshots via TrackUndo, and delegates display
@@ -35,7 +35,7 @@ public:
     EditManager();
 
     // State pattern core methods
-    void setState(EditState* newState, Track& track, uint32_t startTick = 0);
+    void setState(EditNoteState* newState, Track& track, uint32_t startTick = 0);
     void onEncoderTurn(Track& track, int delta);
     void onButtonPress(Track& track);
 
@@ -45,7 +45,7 @@ public:
     void switchToNextState(Track& track);
 
     // Enter/exit edit mode
-    void enterEditMode(EditState* newState, uint32_t startTick);
+    void enterEditMode(EditNoteState* newState, uint32_t startTick);
     void exitEditMode(Track& track);
 
     // Move bracket by delta steps (e.g., encoder movement)
@@ -55,7 +55,7 @@ public:
     void selectPrevNote(const Track& track);
 
     // Getters
-    EditState* getCurrentState() const { return currentState; }
+    EditNoteState* getCurrentState() const { return currentState; }
     uint32_t getBracketTick() const { return bracketTick; }
     int getSelectedNoteIdx() const { return selectedNoteIdx; }
     // Reset selection
@@ -66,7 +66,7 @@ public:
     void setHasMovedBracket(bool moved) { hasMovedBracket = moved; }
 
     // Get state instances
-    EditNoteState* getNoteState() { return &noteState; }
+    EditNoteHomeState* getNoteHomeState() { return &noteHomeState; }
     EditSelectNoteState* getSelectNoteState() { return &selectNoteState; }
     EditStartNoteState* getStartNoteState() { return &startNoteState; }
     EditLengthNoteState* getLengthNoteState() { return &lengthNoteState; }
@@ -74,7 +74,7 @@ public:
     // Add more state getters as needed
 
     // State instances (public for access from other managers)
-    EditNoteState noteState;
+    EditNoteHomeState noteHomeState;
     EditSelectNoteState selectNoteState;
     EditStartNoteState startNoteState;
     EditLengthNoteState lengthNoteState;
@@ -164,8 +164,8 @@ private:
     int notesAtBracketIdx = 0;
     std::vector<int> notesAtBracketTick;
 
-    EditState* currentState = nullptr;
-    EditState* previousState = nullptr;
+    EditNoteState* currentState = nullptr;
+    EditNoteState* previousState = nullptr;
     // Add more states as needed
     
     // EditModeManager state

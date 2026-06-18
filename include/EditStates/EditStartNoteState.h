@@ -2,7 +2,7 @@
 //  Licensed under the PolyForm Noncommercial 1.0.0
 
 #pragma once
-#include "EditState.h"
+#include "EditNoteState.h"
 #include "Utils/NoteUtils.h"
 #include <vector>
 #include <utility>
@@ -12,7 +12,7 @@
 class EditManager;
 class Track;
 
-class EditStartNoteState : public EditState {
+class EditStartNoteState : public EditNoteState {
 public:
     void onEnter(EditManager& manager, Track& track, uint32_t startTick) override;
     void onExit(EditManager& manager, Track& track) override;

@@ -2,10 +2,10 @@
 //  Licensed under the PolyForm Noncommercial 1.0.0
 
 #pragma once
-#include "EditState.h"
+#include "EditNoteState.h"
 
 // New state for editing the length of a note
-class EditLengthNoteState : public EditState {
+class EditLengthNoteState : public EditNoteState {
 public:
     void onEnter(EditManager& manager, Track& track, uint32_t startTick) override;
     void onExit(EditManager& manager, Track& track) override;

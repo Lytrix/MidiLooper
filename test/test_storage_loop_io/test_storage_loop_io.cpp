@@ -7,7 +7,7 @@
 
 #include "../../src/LoopEventStore.cpp"
 #include "../../src/StorageLoopIo.cpp"
-#include "Epoch.h"
+#include "Take.h"
 #include "StorageLoopIo.h"
 
 namespace {
@@ -45,20 +45,20 @@ class MemoryStorageIo {
   size_t readPos_ = 0;
 };
 
-Epoch makeEpochWithNote(EpochId id, uint32_t mergeSequence, EpochState state, EpochKind kind,
+Take makeTakeWithNote(TakeId id, uint32_t mergeSequence, TakeState state, TakeType kind,
                         uint32_t tick) {
   LoopEventStore capture;
   TEST_ASSERT_TRUE(capture.append(MidiEvent::NoteOn(tick, 1, 60, 100)));
   ChunkIdList refs;
   capture.detachChunksTo(refs);
 
-  Epoch epoch{};
-  epoch.id = id;
-  epoch.mergeSequence = mergeSequence;
-  epoch.state = state;
-  epoch.kind = kind;
-  epoch.chunkRefs = std::move(refs);
-  return epoch;
+  Take take{};
+  take.id = id;
+  take.mergeSequence = mergeSequence;
+  take.state = state;
+  take.type = kind;
+  take.chunkRefs = std::move(refs);
+  return take;
 }
 
 }  // namespace
@@ -71,10 +71,10 @@ void test_write_read_loop_snapshot_roundtrip() {
   original.loopId = 3;
   original.loopLengthTicks = 768;
   original.loopStartTick = 12;
-  original.nextEpochId = 8;
+  original.nextTakeId = 8;
   original.nextMergeSequence = 1;
-  original.lastPublishedEpochId = 7;
-  original.epochs.push_back(makeEpochWithNote(7, 0, EpochState::Active, EpochKind::Record, 10));
+  original.lastPublishedTakeId = 7;
+  original.takes.push_back(makeTakeWithNote(7, 0, TakeState::Active, TakeType::Record, 10));
 
   std::vector<uint8_t> buffer;
   MemoryStorageIo mem(&buffer);
@@ -87,33 +87,33 @@ void test_write_read_loop_snapshot_roundtrip() {
   TEST_ASSERT_EQUAL(original.loopId, restored.loopId);
   TEST_ASSERT_EQUAL(original.loopLengthTicks, restored.loopLengthTicks);
   TEST_ASSERT_EQUAL(original.loopStartTick, restored.loopStartTick);
-  TEST_ASSERT_EQUAL(original.nextEpochId, restored.nextEpochId);
+  TEST_ASSERT_EQUAL(original.nextTakeId, restored.nextTakeId);
   TEST_ASSERT_EQUAL(original.nextMergeSequence, restored.nextMergeSequence);
-  TEST_ASSERT_EQUAL(original.lastPublishedEpochId, restored.lastPublishedEpochId);
-  TEST_ASSERT_EQUAL(1u, restored.epochs.size());
-  TEST_ASSERT_EQUAL(7u, restored.epochs[0].id);
-  TEST_ASSERT_EQUAL(static_cast<uint8_t>(EpochState::Active),
-                    static_cast<uint8_t>(restored.epochs[0].state));
+  TEST_ASSERT_EQUAL(original.lastPublishedTakeId, restored.lastPublishedTakeId);
+  TEST_ASSERT_EQUAL(1u, restored.takes.size());
+  TEST_ASSERT_EQUAL(7u, restored.takes[0].id);
+  TEST_ASSERT_EQUAL(static_cast<uint8_t>(TakeState::Active),
+                    static_cast<uint8_t>(restored.takes[0].state));
 
   MidiEventVec flat;
-  LoopEventStore::appendFlattenedChunkIds(restored.epochs[0].chunkRefs, flat);
+  LoopEventStore::appendFlattenedChunkIds(restored.takes[0].chunkRefs, flat);
   TEST_ASSERT_EQUAL(1u, flat.size());
   TEST_ASSERT_EQUAL(10u, flat[0].tick);
 }
 
-void test_write_read_disabled_epoch_preserved() {
+void test_write_read_disabled_take_preserved() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
 
   PersistedLoopSnapshot original{};
   original.loopId = 1;
   original.loopLengthTicks = 1536;
-  original.nextEpochId = 3;
+  original.nextTakeId = 3;
   original.nextMergeSequence = 2;
-  original.lastPublishedEpochId = 1;
-  original.epochs.push_back(makeEpochWithNote(1, 0, EpochState::Active, EpochKind::Record, 5));
-  original.epochs.push_back(
-      makeEpochWithNote(2, 1, EpochState::Disabled, EpochKind::Overdub, 20));
+  original.lastPublishedTakeId = 1;
+  original.takes.push_back(makeTakeWithNote(1, 0, TakeState::Active, TakeType::Record, 5));
+  original.takes.push_back(
+      makeTakeWithNote(2, 1, TakeState::Disabled, TakeType::Overdub, 20));
 
   std::vector<uint8_t> buffer;
   MemoryStorageIo mem(&buffer);
@@ -123,19 +123,19 @@ void test_write_read_disabled_epoch_preserved() {
   mem.resetRead();
   TEST_ASSERT_TRUE(readPersistedLoopSnapshot(mem.io(), restored));
 
-  TEST_ASSERT_EQUAL(2u, restored.epochs.size());
-  TEST_ASSERT_EQUAL(static_cast<uint8_t>(EpochState::Disabled),
-                    static_cast<uint8_t>(restored.epochs[1].state));
+  TEST_ASSERT_EQUAL(2u, restored.takes.size());
+  TEST_ASSERT_EQUAL(static_cast<uint8_t>(TakeState::Disabled),
+                    static_cast<uint8_t>(restored.takes[1].state));
 }
 
-void test_pending_epoch_not_persisted() {
+void test_pending_take_not_persisted() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
 
   PersistedLoopSnapshot original{};
   original.loopId = 0;
-  original.epochs.push_back(makeEpochWithNote(1, 0, EpochState::Active, EpochKind::Record, 10));
-  original.epochs.push_back(makeEpochWithNote(2, 1, EpochState::Pending, EpochKind::Overdub, 99));
+  original.takes.push_back(makeTakeWithNote(1, 0, TakeState::Active, TakeType::Record, 10));
+  original.takes.push_back(makeTakeWithNote(2, 1, TakeState::Pending, TakeType::Overdub, 99));
 
   std::vector<uint8_t> buffer;
   MemoryStorageIo mem(&buffer);
@@ -145,14 +145,14 @@ void test_pending_epoch_not_persisted() {
   mem.resetRead();
   TEST_ASSERT_TRUE(readPersistedLoopSnapshot(mem.io(), restored));
 
-  TEST_ASSERT_EQUAL(1u, restored.epochs.size());
-  TEST_ASSERT_EQUAL(1u, restored.epochs[0].id);
+  TEST_ASSERT_EQUAL(1u, restored.takes.size());
+  TEST_ASSERT_EQUAL(1u, restored.takes[0].id);
 }
 
 int main(int /*argc*/, char** /*argv*/) {
   UNITY_BEGIN();
   RUN_TEST(test_write_read_loop_snapshot_roundtrip);
-  RUN_TEST(test_write_read_disabled_epoch_preserved);
-  RUN_TEST(test_pending_epoch_not_persisted);
+  RUN_TEST(test_write_read_disabled_take_preserved);
+  RUN_TEST(test_pending_take_not_persisted);
   return UNITY_END();
 }

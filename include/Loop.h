@@ -9,8 +9,8 @@
  * (selected by activeLoopIndex) resolves to a LoopId and pooled Loop used for
  * playback and recording.
  *
- * Published MIDI lives in Active epochs. Note-edit paths use a materialized
- * editFlat_ buffer until M8 epoch edit cutover.
+ * Published MIDI lives in Active takes. Note-edit paths use a materialized
+ * editFlat_ buffer until M8 take edit cutover.
  */
 #ifndef LOOP_H
 #define LOOP_H
@@ -21,7 +21,7 @@
 #include <memory>
 #include "MidiEvent.h"
 #include "LoopEventBuffer.h"
-#include "Epoch.h"
+#include "Take.h"
 #include "VisualCache.h"
 #include "TrackState.h"
 #include "Utils/NoteUtils.h"
@@ -36,7 +36,7 @@ using PlaybackOrderVec = std::vector<size_t, ExtMemAllocator<size_t>>;
 
 struct Loop {
   /// Mutable record/overdub capture (pre-Seal writer).
-  CaptureLayer capture;
+  Capture capture;
   uint16_t captureNextEventIndex = 0;
   bool captureEventsSortDirty = false;
   /// Bumped when capture geometry changes outside liveEventCount (e.g. loop-wrap note-offs).
@@ -44,16 +44,16 @@ struct Loop {
 
   LoopId loopId = kInvalidLoopId;
   uint32_t playbackRevision = 0;
-  EpochVec epochs;
-  bool hasPendingEpoch_ = false;
-  Epoch pendingEpoch_;
+  TakeVec takes;
+  bool hasPendingTake_ = false;
+  Take pendingTake_;
   VisualCache visualCache;
   CapturePreview capturePreview;
   VisualCacheDelta pendingVisualDelta;
   bool visualCacheDirty = true;
-  EpochId nextEpochId_ = 1;
+  TakeId nextTakeId_ = 1;
   uint32_t nextMergeSequence_ = 0;
-  EpochId lastPublishedEpochId_ = kInvalidEpochId;
+  TakeId lastPublishedTakeId_ = kInvalidTakeId;
 
   uint32_t startLoopTick = 0;
   uint32_t loopLengthTicks = 0;
@@ -68,22 +68,22 @@ struct Loop {
   mutable bool eventIndexValid = false;
 
   /// True if the slot holds a committed loop (length and/or events). Silent takes
-  /// leave epochs empty but loopLengthTicks > 0 after stopRecording.
+  /// leave takes empty but loopLengthTicks > 0 after stopRecording.
   bool hasData() const {
     return hasPublishedEvents() || loopLengthTicks > 0 || !capture.store.empty();
   }
 
-  bool hasPendingEpoch() const { return hasPendingEpoch_; }
-  const Epoch& pendingEpoch() const { return pendingEpoch_; }
-  size_t activeEpochCount() const;
+  bool hasPendingTake() const { return hasPendingTake_; }
+  const Take& pendingTake() const { return pendingTake_; }
+  size_t activeTakeCount() const;
 
-  /// True when at least one Active epoch holds chunk refs.
+  /// True when at least one Active take holds chunk refs.
   bool hasPublishedEvents() const;
 
-  /// Flatten all Active epochs (mergeSequence order) into out.
-  void flattenActiveEpochs(MidiEventVec& out) const;
+  /// Flatten all Active takes (mergeSequence order) into out.
+  void flattenActiveTakes(MidiEventVec& out) const;
 
-  /// Note-edit flat access (M8 bridge): materializes from epochs on first use.
+  /// Note-edit flat access (M8 bridge): materializes from takes on first use.
   MidiEventVec& midiEvents();
   const MidiEventVec& midiEvents() const;
 
@@ -97,46 +97,46 @@ struct Loop {
   void discardCapture();
   bool appendCaptureEvent(const MidiEvent& evt);
   /// Seal → Publish when capture is non-empty.
-  CommitResult commitCaptureData(CommitReason reason, uint32_t sealedAtTick);
-  bool setEpochState(EpochId id, EpochState state);
-  void resetEpochTimeline();
-  EpochId lastPublishedEpochId() const { return lastPublishedEpochId_; }
+  CommitResult commitTake(CommitReason reason, uint32_t sealedAtTick);
+  bool setTakeState(TakeId id, TakeState state);
+  void resetTakeTimeline();
+  TakeId lastPublishedTakeId() const { return lastPublishedTakeId_; }
   bool captureActive() const;
   size_t liveEventCount() const;
   /// Sort capture buffer by tick when append order diverges (display/playback/commit).
   bool ensureCaptureEventsSorted();
   /// Committed events plus in-flight capture buffer (sorted by tick) for display/LED reads.
   void buildLiveEventView(MidiEventVec& out) const;
-  /// Rebuild committed visual cache from Active epochs.
-  void rebuildVisualCacheFromEpochs();
+  /// Rebuild committed visual cache from Active takes.
+  void rebuildVisualCacheFromTakes();
   /// Lazy rebuild — safe on display/read paths; not on every invalidateCaches().
   void ensureVisualCacheBuilt();
   /// SD load / hot-path chunk edits: no flat sync, no visual rebuild.
   void markDisplayCachesStale();
   /// Remove a capture note-off (e.g. loop-wrap synthetic) before recording the real head off.
   void removeCaptureNoteOffAt(uint8_t channel, uint8_t note, uint32_t tick);
-  /// Shift all Active-epoch MIDI by delta (record-stop origin alignment).
-  void shiftActiveEpochTicks(int64_t delta);
-  /// Write materialized editFlat_ back into Active epochs (stop-path / validation).
-  void flushEditStoreToEpochs();
-  /// Call after mutating midiEvents() flat buffer so flushEditStoreToEpochs can commit.
+  /// Shift all Active-take MIDI by delta (record-stop origin alignment).
+  void shiftActiveTakeTicks(int64_t delta);
+  /// Write materialized editFlat_ back into Active takes (stop-path / validation).
+  void flushEditStoreToTakes();
+  /// Call after mutating midiEvents() flat buffer so flushEditStoreToTakes can commit.
   void markEditFlatDirty() { editFlat_.markFlatDirty(); }
 #if defined(PIO_UNIT_TEST_NATIVE)
-  void nativeTestSyncEditFlatToEpochs(bool allowEmptyClear) { syncEditFlatToEpochs(allowEmptyClear); }
+  void nativeTestSyncEditFlatToTakes(bool allowEmptyClear) { syncEditFlatToTakes(allowEmptyClear); }
   size_t nativeTestLiveEventCount() const { return liveEventCount(); }
 #endif
-  /// SD v3/v1/v2 migration: adopt flat store as single Active epoch.
+  /// SD v3/v1/v2 migration: adopt flat store as single Active take.
   void importPublishedStore(LoopEventStore& store);
-  /// Drop read-path editFlat materialization without writing back to epochs.
+  /// Drop read-path editFlat materialization without writing back to takes.
   void discardEditFlatMaterialization();
-  /// Apply wrap-window stop finalize result back into Active epochs.
+  /// Apply wrap-window stop finalize result back into Active takes.
   void commitStopFinalizeFromStore(LoopEventStore& merged);
 
-  /// Seal capture into pendingEpoch (prepare only — not visible until publish).
-  SealOutcome sealCaptureLayer(uint32_t sealedAtTick);
-  /// Publish pendingEpoch as Active (no-alloc visibility step).
-  bool publishPendingEpoch();
-  void discardPendingEpoch();
+  /// Seal capture into pendingTake (prepare only — not visible until publish).
+  SealOutcome sealCapture(uint32_t sealedAtTick);
+  /// Publish pendingTake as Active (no-alloc visibility step).
+  bool publishPendingTake();
+  void discardPendingTake();
 
   PlaybackOrderVec& getPlaybackOrder() {
     if (!playbackOrder_) playbackOrder_ = std::make_unique<PlaybackOrderVec>();
@@ -175,10 +175,10 @@ struct Loop {
   CowLoopEventStore editFlat_;
   bool editFlatStale_ = true;
 
-  void materializeEditFlatFromEpochs() const;
-  void syncEditFlatToEpochs(bool allowEmptyClear = false);
-  void freeActiveEpochChunks();
-  void markEpochDerivedStale();
+  void materializeEditFlatFromTakes() const;
+  void syncEditFlatToTakes(bool allowEmptyClear = false);
+  void freeActiveTakeChunks();
+  void markTakeDerivedStale();
 
   std::unique_ptr<PlaybackOrderVec> playbackOrder_;
   std::unique_ptr<NoteUtils::CachedNoteList> noteCache_;

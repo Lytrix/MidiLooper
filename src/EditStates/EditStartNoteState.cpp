@@ -560,5 +560,5 @@ void EditStartNoteState::onEncoderTurn(EditManager& manager, Track& track, int d
 // 4. onButtonPress(): exit move mode and return to NoteState.
 void EditStartNoteState::onButtonPress(EditManager& manager, Track& track) {
     // Switch back to note state
-    manager.setState(manager.getNoteState(), track, manager.getBracketTick());
+    manager.setState(manager.getNoteHomeState(), track, manager.getBracketTick());
 } 

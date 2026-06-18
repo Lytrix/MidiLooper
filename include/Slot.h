@@ -3,7 +3,7 @@
 
 #pragma once
 
-#include "Epoch.h"
+#include "Take.h"
 
 /// Playable trigger address — holds a stable LoopId ref, not MIDI storage.
 struct Slot {

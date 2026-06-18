@@ -59,12 +59,12 @@ static StorageIo storageIoFromFileRead(File& file) {
     };
 }
 
-static void migrateLoadedLoopsToEpochTimeline(Track& track) {
+static void migrateLoadedLoopsToTakeTimeline(Track& track) {
     track.ensureLoopsAllocated();
     for (uint8_t s = 0; s < Config::MAX_LOOPS_PER_TRACK; ++s) {
         Loop& loop = track.loopForSlot(s);
         if (loop.hasPublishedEvents()) {
-            loop.rebuildVisualCacheFromEpochs();
+            loop.rebuildVisualCacheFromTakes();
         }
     }
 }
@@ -154,7 +154,7 @@ static bool writeGlobalUndoStack(File& file, const GlobalUndoStack& stack) {
         if (!writeRaw(file, &kind, sizeof(kind))) return false;
         if (!writeRaw(file, &entry.slotIndex, sizeof(entry.slotIndex))) return false;
         if (!writeRaw(file, &entry.loopId, sizeof(entry.loopId))) return false;
-        if (!writeRaw(file, &entry.epochId, sizeof(entry.epochId))) return false;
+        if (!writeRaw(file, &entry.takeId, sizeof(entry.takeId))) return false;
 
         if (!writeMidiSnapshot(file, entry.beforeSnapshot)) return false;
         if (!writeMidiSnapshot(file, entry.afterSnapshot)) return false;
@@ -199,7 +199,7 @@ static bool readGlobalUndoStack(File& file, GlobalUndoStack& stack) {
         entry.kind = static_cast<UndoEntryKind>(kindRaw);
         if (!readRaw(file, &entry.slotIndex, sizeof(entry.slotIndex))) return false;
         if (!readRaw(file, &entry.loopId, sizeof(entry.loopId))) return false;
-        if (!readRaw(file, &entry.epochId, sizeof(entry.epochId))) return false;
+        if (!readRaw(file, &entry.takeId, sizeof(entry.takeId))) return false;
 
         if (!readMidiSnapshot(file, entry.beforeSnapshot)) return false;
         if (!readMidiSnapshot(file, entry.afterSnapshot)) return false;
@@ -289,9 +289,9 @@ bool StorageManager::saveState(const LooperState& state) {
         const StorageIo loopIo = storageIoFromFileWrite(file);
         for (uint8_t p = 0; p < Config::MAX_LOOPS_PER_TRACK; ++p) {
             Loop& loop = track.loopPool_.at(p);
-            logger.log(CAT_STORAGE, LOG_DEBUG, "[StorageManager] v4 saving track=%u pool=%u loopId=%lu epochs=%u",
+            logger.log(CAT_STORAGE, LOG_DEBUG, "[StorageManager] v4 saving track=%u pool=%u loopId=%lu takes=%u",
                        t, p, static_cast<unsigned long>(loop.loopId),
-                       static_cast<unsigned>(loop.epochs.size()));
+                       static_cast<unsigned>(loop.takes.size()));
             if (!writeLoopPersisted(loopIo, loop)) {
                 Serial.print("[StorageManager] ERROR: Failed to write loop pool entry track ");
                 Serial.print(t);
@@ -604,7 +604,7 @@ bool StorageManager::loadState(LooperState& state) {
                 loop.lastTickInLoop = 0;
                 loop.nextEventIndex = 0;
                 loop.playbackOrderDirty = true;
-                loop.resetEpochTimeline();
+                loop.resetTakeTimeline();
                 loop.markDisplayCachesStale();
 
                 // Loop core
@@ -827,7 +827,7 @@ bool StorageManager::loadState(LooperState& state) {
         Serial.println("[StorageManager] State loaded successfully (v3).");
 
         for (uint8_t t = 0; t < numTracks; ++t) {
-            migrateLoadedLoopsToEpochTimeline(trackManager.getTrack(t));
+            migrateLoadedLoopsToTakeTimeline(trackManager.getTrack(t));
         }
 
         // Apply header state

@@ -10,24 +10,24 @@
 #include "Utils/ExtMemAllocator.h"
 
 using LoopId = uint32_t;
-using EpochId = uint32_t;
+using TakeId = uint32_t;
 
 constexpr LoopId kInvalidLoopId = UINT32_MAX;
-constexpr EpochId kInvalidEpochId = 0;
+constexpr TakeId kInvalidTakeId = 0;
 
 /// Active capture phase for the unified record/overdub append buffer.
 enum class CapturePhase : uint8_t { None, Record, Overdub };
 
-enum class EpochState : uint8_t { Pending, Active, Disabled };
+enum class TakeState : uint8_t { Pending, Active, Disabled };
 
-enum class EpochKind : uint8_t { Record, Overdub, Edit };
+enum class TakeType : uint8_t { Record, Overdub };
 
 enum class SealOutcome : uint8_t {
   Ok,
   SkippedEmpty,
   FailedValidation,
   AlreadyPending,
-  AtEpochCap,
+  AtTakeCap,
 };
 
 enum class CommitResult : uint8_t { Skipped, Published, SealFailed };
@@ -39,36 +39,36 @@ enum class CommitReason : uint8_t {
   OverdubStopToStopped,
 };
 
-namespace EpochConfig {
-/// Matches Config::MAX_UNDO_HISTORY — cap on sealed epochs retained per loop.
-constexpr uint8_t MAX_EPOCHS_PER_LOOP = 25;
-}  // namespace EpochConfig
+namespace TakeConfig {
+/// Matches Config::MAX_UNDO_HISTORY — cap on sealed takes retained per loop.
+constexpr uint8_t MAX_TAKES_PER_LOOP = 25;
+}  // namespace TakeConfig
 
-struct Epoch {
-  EpochId id = kInvalidEpochId;
+struct Take {
+  TakeId id = kInvalidTakeId;
   uint32_t mergeSequence = 0;
   ChunkIdList chunkRefs;
-  EpochState state = EpochState::Pending;
-  EpochKind kind = EpochKind::Record;
+  TakeState state = TakeState::Pending;
+  TakeType type = TakeType::Record;
   uint32_t sealedAtTick = 0;
 };
 
-/// Mutable pre-Seal MIDI writer (sole capture buffer for record/overdub).
-struct CaptureLayer {
+/// Mutable pre-commit MIDI writer (sole capture buffer for record/overdub).
+struct Capture {
   LoopEventStore store;
   CapturePhase phase = CapturePhase::None;
 };
 
-using EpochVec = std::vector<Epoch, ExtMemAllocator<Epoch>>;
+using TakeVec = std::vector<Take, ExtMemAllocator<Take>>;
 
-inline EpochKind epochKindForCapturePhase(CapturePhase phase) {
+inline TakeType takeTypeForCapturePhase(CapturePhase phase) {
   switch (phase) {
     case CapturePhase::Overdub:
-      return EpochKind::Overdub;
+      return TakeType::Overdub;
     case CapturePhase::Record:
-      return EpochKind::Record;
+      return TakeType::Record;
     case CapturePhase::None:
     default:
-      return EpochKind::Record;
+      return TakeType::Record;
   }
 }

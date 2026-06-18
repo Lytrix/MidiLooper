@@ -13,7 +13,7 @@
 #include "BarStepButtonHandler.h"
 #include "MidiConfig.h"
 #include "NoteEditManager.h"
-#include "Utils/SessionCapture.h"
+#include "Utils/DebugSessionCapture.h"
 
 MIDI_CREATE_INSTANCE(HardwareSerial, Serial8, MIDIserial);  // Teensy Serial8 for 5-pin DIN MIDI
 

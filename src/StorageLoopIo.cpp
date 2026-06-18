@@ -17,17 +17,17 @@ bool ioRead(const StorageIo& io, void* data, size_t size) {
 
 }  // namespace
 
-bool writePersistedEpoch(const StorageIo& io, const Epoch& epoch) {
-  uint8_t stateRaw = static_cast<uint8_t>(epoch.state);
-  uint8_t kindRaw = static_cast<uint8_t>(epoch.kind);
-  if (!ioWrite(io, &epoch.id, sizeof(epoch.id))) return false;
-  if (!ioWrite(io, &epoch.mergeSequence, sizeof(epoch.mergeSequence))) return false;
+bool writePersistedTake(const StorageIo& io, const Take& take) {
+  uint8_t stateRaw = static_cast<uint8_t>(take.state);
+  uint8_t typeRaw = static_cast<uint8_t>(take.type);
+  if (!ioWrite(io, &take.id, sizeof(take.id))) return false;
+  if (!ioWrite(io, &take.mergeSequence, sizeof(take.mergeSequence))) return false;
   if (!ioWrite(io, &stateRaw, sizeof(stateRaw))) return false;
-  if (!ioWrite(io, &kindRaw, sizeof(kindRaw))) return false;
-  if (!ioWrite(io, &epoch.sealedAtTick, sizeof(epoch.sealedAtTick))) return false;
+  if (!ioWrite(io, &typeRaw, sizeof(typeRaw))) return false;
+  if (!ioWrite(io, &take.sealedAtTick, sizeof(take.sealedAtTick))) return false;
 
   MidiEventVec flat;
-  LoopEventStore::appendFlattenedChunkIds(epoch.chunkRefs, flat);
+  LoopEventStore::appendFlattenedChunkIds(take.chunkRefs, flat);
   const uint32_t midiCount = static_cast<uint32_t>(flat.size());
   if (!ioWrite(io, &midiCount, sizeof(midiCount))) return false;
   if (midiCount > 0 && !ioWrite(io, flat.data(), midiCount * sizeof(MidiEvent))) {
@@ -36,20 +36,20 @@ bool writePersistedEpoch(const StorageIo& io, const Epoch& epoch) {
   return true;
 }
 
-bool readPersistedEpoch(const StorageIo& io, Epoch& epoch) {
+bool readPersistedTake(const StorageIo& io, Take& take) {
   uint8_t stateRaw = 0;
-  uint8_t kindRaw = 0;
+  uint8_t typeRaw = 0;
   uint32_t midiCount = 0;
-  if (!ioRead(io, &epoch.id, sizeof(epoch.id))) return false;
-  if (!ioRead(io, &epoch.mergeSequence, sizeof(epoch.mergeSequence))) return false;
+  if (!ioRead(io, &take.id, sizeof(take.id))) return false;
+  if (!ioRead(io, &take.mergeSequence, sizeof(take.mergeSequence))) return false;
   if (!ioRead(io, &stateRaw, sizeof(stateRaw))) return false;
-  if (!ioRead(io, &kindRaw, sizeof(kindRaw))) return false;
-  if (!ioRead(io, &epoch.sealedAtTick, sizeof(epoch.sealedAtTick))) return false;
+  if (!ioRead(io, &typeRaw, sizeof(typeRaw))) return false;
+  if (!ioRead(io, &take.sealedAtTick, sizeof(take.sealedAtTick))) return false;
   if (!ioRead(io, &midiCount, sizeof(midiCount))) return false;
 
-  epoch.state = static_cast<EpochState>(stateRaw);
-  epoch.kind = static_cast<EpochKind>(kindRaw);
-  epoch.chunkRefs.clear();
+  take.state = static_cast<TakeState>(stateRaw);
+  take.type = static_cast<TakeType>(typeRaw);
+  take.chunkRefs.clear();
 
   if (midiCount == 0) {
     return true;
@@ -61,7 +61,7 @@ bool readPersistedEpoch(const StorageIo& io, Epoch& epoch) {
     if (!ioRead(io, &evt, sizeof(evt))) return false;
     if (!staging.append(evt)) return false;
   }
-  staging.detachChunksTo(epoch.chunkRefs);
+  staging.detachChunksTo(take.chunkRefs);
   return true;
 }
 
@@ -70,26 +70,26 @@ bool writePersistedLoopSnapshot(const StorageIo& io, const PersistedLoopSnapshot
   if (!ioWrite(io, &snapshot.startLoopTick, sizeof(snapshot.startLoopTick))) return false;
   if (!ioWrite(io, &snapshot.loopLengthTicks, sizeof(snapshot.loopLengthTicks))) return false;
   if (!ioWrite(io, &snapshot.loopStartTick, sizeof(snapshot.loopStartTick))) return false;
-  if (!ioWrite(io, &snapshot.nextEpochId, sizeof(snapshot.nextEpochId))) return false;
+  if (!ioWrite(io, &snapshot.nextTakeId, sizeof(snapshot.nextTakeId))) return false;
   if (!ioWrite(io, &snapshot.nextMergeSequence, sizeof(snapshot.nextMergeSequence))) return false;
-  if (!ioWrite(io, &snapshot.lastPublishedEpochId, sizeof(snapshot.lastPublishedEpochId))) {
+  if (!ioWrite(io, &snapshot.lastPublishedTakeId, sizeof(snapshot.lastPublishedTakeId))) {
     return false;
   }
 
   uint32_t persistedCount = 0;
-  for (const Epoch& epoch : snapshot.epochs) {
-    if (epoch.state == EpochState::Pending) {
+  for (const Take& take : snapshot.takes) {
+    if (take.state == TakeState::Pending) {
       continue;
     }
     ++persistedCount;
   }
   if (!ioWrite(io, &persistedCount, sizeof(persistedCount))) return false;
 
-  for (const Epoch& epoch : snapshot.epochs) {
-    if (epoch.state == EpochState::Pending) {
+  for (const Take& take : snapshot.takes) {
+    if (take.state == TakeState::Pending) {
       continue;
     }
-    if (!writePersistedEpoch(io, epoch)) return false;
+    if (!writePersistedTake(io, take)) return false;
   }
   return true;
 }
@@ -100,9 +100,9 @@ bool readPersistedLoopSnapshot(const StorageIo& io, PersistedLoopSnapshot& snaps
   if (!ioRead(io, &snapshot.startLoopTick, sizeof(snapshot.startLoopTick))) return false;
   if (!ioRead(io, &snapshot.loopLengthTicks, sizeof(snapshot.loopLengthTicks))) return false;
   if (!ioRead(io, &snapshot.loopStartTick, sizeof(snapshot.loopStartTick))) return false;
-  if (!ioRead(io, &snapshot.nextEpochId, sizeof(snapshot.nextEpochId))) return false;
+  if (!ioRead(io, &snapshot.nextTakeId, sizeof(snapshot.nextTakeId))) return false;
   if (!ioRead(io, &snapshot.nextMergeSequence, sizeof(snapshot.nextMergeSequence))) return false;
-  if (!ioRead(io, &snapshot.lastPublishedEpochId, sizeof(snapshot.lastPublishedEpochId))) {
+  if (!ioRead(io, &snapshot.lastPublishedTakeId, sizeof(snapshot.lastPublishedTakeId))) {
     return false;
   }
 
@@ -110,22 +110,22 @@ bool readPersistedLoopSnapshot(const StorageIo& io, PersistedLoopSnapshot& snaps
     snapshot.loopLengthTicks = 0;
   }
 
-  uint32_t epochCount = 0;
-  if (!ioRead(io, &epochCount, sizeof(epochCount))) return false;
+  uint32_t takeCount = 0;
+  if (!ioRead(io, &takeCount, sizeof(takeCount))) return false;
 
-  snapshot.epochs.clear();
-  snapshot.epochs.reserve(epochCount);
-  for (uint32_t i = 0; i < epochCount; ++i) {
-    Epoch epoch{};
-    if (!readPersistedEpoch(io, epoch)) return false;
-    if (epoch.state == EpochState::Pending) {
+  snapshot.takes.clear();
+  snapshot.takes.reserve(takeCount);
+  for (uint32_t i = 0; i < takeCount; ++i) {
+    Take take{};
+    if (!readPersistedTake(io, take)) return false;
+    if (take.state == TakeState::Pending) {
       return false;
     }
-    snapshot.epochs.push_back(std::move(epoch));
+    snapshot.takes.push_back(std::move(take));
   }
 
-  if (snapshot.nextEpochId == 0) {
-    snapshot.nextEpochId = 1;
+  if (snapshot.nextTakeId == 0) {
+    snapshot.nextTakeId = 1;
   }
   return true;
 }
@@ -140,30 +140,30 @@ PersistedLoopSnapshot snapshotFromLoop(const Loop& loop) {
   snapshot.startLoopTick = loop.startLoopTick;
   snapshot.loopLengthTicks = loop.loopLengthTicks;
   snapshot.loopStartTick = loop.loopStartTick;
-  snapshot.nextEpochId = loop.nextEpochId_;
+  snapshot.nextTakeId = loop.nextTakeId_;
   snapshot.nextMergeSequence = loop.nextMergeSequence_;
-  snapshot.lastPublishedEpochId = loop.lastPublishedEpochId_;
-  snapshot.epochs = loop.epochs;
+  snapshot.lastPublishedTakeId = loop.lastPublishedTakeId_;
+  snapshot.takes = loop.takes;
   return snapshot;
 }
 
 void applySnapshotToLoop(Loop& loop, const PersistedLoopSnapshot& snapshot) {
-  loop.discardPendingEpoch();
+  loop.discardPendingTake();
   loop.discardCapture();
-  loop.resetEpochTimeline();
+  loop.resetTakeTimeline();
   loop.loopId = snapshot.loopId;
   loop.startLoopTick = 0;
   loop.loopLengthTicks = snapshot.loopLengthTicks;
   loop.loopStartTick = snapshot.loopStartTick;
-  loop.nextEpochId_ = snapshot.nextEpochId;
+  loop.nextTakeId_ = snapshot.nextTakeId;
   loop.nextMergeSequence_ = snapshot.nextMergeSequence;
-  loop.lastPublishedEpochId_ = snapshot.lastPublishedEpochId;
+  loop.lastPublishedTakeId_ = snapshot.lastPublishedTakeId;
   loop.lastTickInLoop = 0;
   loop.nextEventIndex = 0;
   loop.playbackOrderDirty = true;
-  loop.epochs = snapshot.epochs;
+  loop.takes = snapshot.takes;
   loop.markDisplayCachesStale();
-  loop.rebuildVisualCacheFromEpochs();
+  loop.rebuildVisualCacheFromTakes();
 }
 
 bool writeLoopPersisted(const StorageIo& io, const Loop& loop) {
