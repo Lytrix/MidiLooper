@@ -30,6 +30,8 @@ enum class ActionType {
     EXIT_EDIT_MODE,
     CYCLE_EDIT_MODE,
     DELETE_NOTE,
+    CREATE_NOTE_AT_BRACKET,
+    DELETE_OR_CREATE_NOTE,  // NOTELEN double: delete selection or create at empty bracket
     COPY_NOTE,
     PASTE_NOTE,
     QUANTIZE,

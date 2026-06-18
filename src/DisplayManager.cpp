@@ -70,7 +70,7 @@ std::vector<NoteUtils::OpenNoteOn> filterLiveOpenNotesForOverdub(
 
 void applyLiveOpenTails(const std::vector<NoteUtils::OpenNoteOn>& openNotes,
                         const MidiEventVec& midiEvents, uint32_t loopLength, uint32_t closeTick,
-                        std::vector<DisplayNote>& notes) {
+                        std::vector<DisplayNote>& notes, bool extendHeldNotesToPlayhead) {
     const uint32_t clampedCloseTick = clampOpenNoteCloseTick(closeTick, loopLength);
     const uint32_t wrapWindow =
         loopLength > Config::TICKS_PER_BAR ? Config::TICKS_PER_BAR : loopLength;
@@ -112,14 +112,27 @@ void applyLiveOpenTails(const std::vector<NoteUtils::OpenNoteOn>& openNotes,
             continue;
         }
 
+        if (!extendHeldNotesToPlayhead) {
+            continue;
+        }
+
+        // Record/overdub only: note-on without note-off yet grows to the live playhead.
         const uint32_t playheadEndTick = std::max(open.tick, clampedCloseTick);
+        bool found = false;
         for (auto& note : notes) {
             if (note.note == open.note && note.startTick == open.tick) {
-                // Open note-ons only: reconstructNotes placeholders end at loopLength-1;
-                // live overdub/record display must follow the playhead instead.
                 note.endTick = playheadEndTick;
+                found = true;
                 break;
             }
+        }
+        if (!found) {
+            DisplayNote liveNote;
+            liveNote.note = open.note;
+            liveNote.velocity = open.velocity;
+            liveNote.startTick = open.tick;
+            liveNote.endTick = playheadEndTick;
+            notes.push_back(liveNote);
         }
     }
 }
@@ -224,6 +237,12 @@ const std::vector<DisplayNote>& DisplayManager::resolveDisplayNotes(const Track&
         return track.getCachedNotes();
     }
 
+    // NOTE_EDIT mutates editFlat (midiEvents), not published takes / visualCache.
+    if (noteEditManager.getCurrentMainEditMode() == NoteEditManager::MAIN_MODE_NOTE_EDIT) {
+        invalidateLiveDisplayCache();
+        return track.getCachedNotesForSlot(displaySlot);
+    }
+
     if (!isLiveRecordingDisplay(track, displaySlot)) {
         invalidateLiveDisplayCache();
         const Loop& loop = track.getLoop(displaySlot);
@@ -245,8 +264,9 @@ const std::vector<DisplayNote>& DisplayManager::resolveDisplayNotes(const Track&
             if (!openNotes.empty()) {
                 const uint32_t playheadCloseTick =
                     resolvePlayheadInLoop(track, displaySlot, currentTick);
+                // Playback / edit display: wrap-held tails only — not live note-on lengthening.
                 applyLiveOpenTails(openNotes, liveDisplayEventBuffer, loopLength, playheadCloseTick,
-                                   liveDisplayNotes);
+                                   liveDisplayNotes, false);
             }
         } else if (!loop.visualCache.notes.empty()) {
             liveDisplayNotes = loop.visualCache.notes;
@@ -306,17 +326,22 @@ const std::vector<DisplayNote>& DisplayManager::resolveDisplayNotes(const Track&
         liveDisplayCacheLoopLength = liveLoopLength;
     }
 
-    if (!liveDisplayCacheOpenNotes.empty()) {
+    if (track.isRecording() || !liveDisplayCacheOpenNotes.empty()) {
+        loop.buildLiveEventView(liveDisplayEventBuffer);
+        if (track.isRecording()) {
+            rebuildLiveDisplayNotes();
+        }
+        liveDisplayCacheOpenNotes =
+            NoteUtils::findOpenNoteOns(liveDisplayEventBuffer, liveLoopLength);
         const uint32_t playheadCloseTick = resolvePlayheadInLoop(track, displaySlot, currentTick);
-        // During overdub, only still-held capture notes follow the playhead. Committed record
-        // notes can remain "open" in findOpenNoteOns when loop-end offs are deferred for wrap UI.
+        // Record: held note-ons (no note-off yet) lengthen to playhead. Overdub: capture only.
         const std::vector<NoteUtils::OpenNoteOn>& liveOpenNotes =
             track.isOverdubbing()
                 ? filterLiveOpenNotesForOverdub(loop, liveDisplayCacheOpenNotes)
                 : liveDisplayCacheOpenNotes;
         if (!liveOpenNotes.empty()) {
             applyLiveOpenTails(liveOpenNotes, liveDisplayEventBuffer, liveLoopLength,
-                               playheadCloseTick, liveDisplayNotes);
+                               playheadCloseTick, liveDisplayNotes, true);
         }
     }
 
@@ -947,6 +972,23 @@ void DisplayManager::drawNoteInfo(uint32_t currentTick, Track& selectedTrack, ui
             snprintf(lenStr, sizeof(lenStr), "%3lu", lenVal);
             snprintf(velStr, sizeof(velStr), "%3u", velVal);
         }
+#if defined(SESSION_CAPTURE)
+        if (validNote &&
+            noteEditManager.getCurrentMainEditMode() == NoteEditManager::MAIN_MODE_NOTE_EDIT &&
+            selectedIdx >= 0) {
+            static uint8_t capLastPitch = 255;
+            static uint32_t capLastStorage = UINT32_MAX;
+            static uint32_t capLastDisplay = UINT32_MAX;
+            const uint32_t storageStart = noteToShow->startTick;
+            if (noteVal != capLastPitch || storageStart != capLastStorage ||
+                displayStartTick != capLastDisplay) {
+                capLastPitch = noteVal;
+                capLastStorage = storageStart;
+                capLastDisplay = displayStartTick;
+                SC_DNTE(noteVal, storageStart, displayStartTick, lenVal, selectedIdx);
+            }
+        }
+#endif
     }
 
     // Same width as leading-zero musical time (e.g. 01:01:01:00); keeps NOTE row layout when no note/slot data.

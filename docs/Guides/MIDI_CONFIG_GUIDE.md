@@ -37,10 +37,10 @@ How to remap channels, notes, and CCs for your own controller. The looper is **c
 
 | Note | Action |
 |------|--------|
-| 35 | Length edit toggle |
+| 35 | Length edit toggle (short), delete or create note at bracket (double) |
 | 36 | Record/Overdub (short), Undo (double), Redo (triple), Clear (long) |
 | 37 | Track switch (short), Undo clear (double), Redo clear (triple), Mute (long) |
-| 38 | Edit mode (short), Delete note (double), Exit edit (long) |
+| 38 | Edit mode cycle (short), Exit edit (long) |
 | 39 | Global transport (short), Reset to loop start (double) |
 
 ### Bar and 16th buttons (channel 16)

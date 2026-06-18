@@ -31,6 +31,7 @@ public:
     
 public:
     static void sendTargetPitchbend(EditManager& manager, Track& track);
+    static void createNoteAtTick(Track& track, uint32_t tick);
 
 private:
     void selectNextNoteSequential(EditManager& manager, Track& track);

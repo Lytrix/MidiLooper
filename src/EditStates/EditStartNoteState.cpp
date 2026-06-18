@@ -335,6 +335,7 @@ void EditStartNoteState::onEnter(EditManager& manager, Track& track, uint32_t st
         if (idx < (int)notes.size()) {
             // Record persistent identity for the currently selected note
             manager.movingNote.note = notes[idx].note;
+            manager.movingNote.origPitch = notes[idx].note;
             manager.movingNote.origStart = notes[idx].startTick;
             manager.movingNote.origEnd = notes[idx].endTick;
             manager.movingNote.lastStart = notes[idx].startTick;
@@ -371,6 +372,8 @@ void EditStartNoteState::onExit(EditManager& manager, Track& track) {
     manager.movingNote.active = false;
     // IDEA: if you want to restore the original length of the note when starting a new move, then remove this line
     manager.movingNote.deletedNotes.clear();
+    manager.sessionShortenedVictims.clear();
+    manager.sessionDeletedNotes.clear();
 }
 
 // 2. onEncoderTurn(): move a note's start/end based on encoder spinning.
@@ -402,6 +405,7 @@ void EditStartNoteState::onEncoderTurn(EditManager& manager, Track& track, int d
             if (manager.getSelectedNoteIdx() < (int)notes.size()) {
                 auto& note = notes[manager.getSelectedNoteIdx()];
                 manager.movingNote.note = note.note;
+                manager.movingNote.origPitch = note.note;
                 manager.movingNote.origStart = note.startTick;
                 manager.movingNote.origEnd = note.endTick;
                 manager.movingNote.lastStart = note.startTick;

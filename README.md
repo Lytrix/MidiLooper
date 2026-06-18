@@ -44,7 +44,7 @@ The **primary** action is always a **short** press; extremer edits like delete o
 
 The current setup is based on Droid using this config file: [`droid/midilooper_v1.ini`](droid/midilooper_v1.ini). To **remap**, edit [`include/MidiConfig.h`](include/MidiConfig.h) and [`src/Utils/MidiButtonConfig.cpp`](src/Utils/MidiButtonConfig.cpp). More info can be found in the [**MIDI config guide**](docs/Guides/MIDI_CONFIG_GUIDE.md) and the [**config summary**](docs/Guides/MIDI_CONFIG_GUIDE.md#config-summary-default-droid-mapping) for Channel 16.
 
-Below is the **cheet sheet** of all available the button gestures.
+Below is the **cheat sheet** of all available button gestures.
 
 | Row | Short | Long | Double | Triple | Hold / two-step |
 |-----|-------|------|--------|--------|-----------------|
@@ -54,7 +54,17 @@ Below is the **cheet sheet** of all available the button gestures.
 | [**Loops**](docs/Guides/control-surface/Loops.md) | Select/record slot; when playing, switch slot quantized to next 16th; selected slot toggles mute | If pressed slot is selected and filled: clear slot. If not selected and filled: queue single-slot switch at loop end | Slot undo | Slot redo | Hold one or more slots, release to commit multi-slot enabled set on next 16th |
 | [**Bars**](docs/Guides/control-surface/Bars-and-16ths.md) | Seek bar; move single-bar jam | Enter one-bar or two-bar jam | Exit jam | Undo loop start edit | Hold bar A → press bar B for range |
 | [**16ths**](docs/Guides/control-surface/Bars-and-16ths.md) | Seek 16th in jam; set / jump region | 16th jam / seek | Exit jam | Undo loop start | Hold 16th A → press 16th B for range |
-| [**Main controls**](docs/Guides/control-surface/Main-controls.md) | REC/PLAY, MUTE/DE, Edit, NOTELEN | Clear / mute / exit | Undo overdub / undo clear / delete note | Redo overdub / redo clear | More transport buttons in guide |
+| [**Main controls**](docs/Guides/control-surface/Main-controls.md) | **35** NOTELEN: start vs end · **36** record/play · **37** next track · **38** enter / cycle edit · **39** transport | **36** clear · **37** mute · **38** exit edit | **35** delete selected note or create at empty bracket · **36** undo overdub · **37** undo clear | **36** redo overdub · **37** redo clear | Notes 40–48: extended transport in guide |
+
+**Main controls detail (channel 16):**
+
+| Note | Short | Long | Double | Triple |
+|------|-------|------|--------|--------|
+| **35** NOTELEN | Toggle note start vs end editing | — | Delete selected note, or create at bracket when empty | — |
+| **36** REC/PLAY | Record / play / overdub | Clear track (with data) | Undo overdub | Redo overdub |
+| **37** MUTE/DE | Next track | Mute current track | Undo clear | Redo clear |
+| **38** Edit | Enter edit / cycle NOTE_EDIT ↔ LOOP_EDIT | Exit edit | — | — |
+| **39** Transport | Global start/stop | — | Reset to loop start | — |
 
 ## Faders
 

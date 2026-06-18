@@ -183,6 +183,24 @@ void test_multi_take_flatten_matches_live_event_count() {
   TEST_ASSERT_EQUAL(4u, flat.size());
 }
 
+void test_share_edit_snapshot_includes_dirty_flat() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  seedPublishedPair(loop);
+
+  loop.midiEvents().push_back(MidiEvent::NoteOn(48, 1, 60, 80));
+  loop.midiEvents().push_back(MidiEvent::NoteOff(72, 1, 60, 0));
+  loop.markEditFlatDirty();
+
+  const auto snap = loop.shareEditSnapshot();
+  TEST_ASSERT_NOT_NULL(snap.get());
+  MidiEventVec snapFlat;
+  snap->flatten(snapFlat);
+  TEST_ASSERT_EQUAL(4u, snapFlat.size());
+  TEST_ASSERT_EQUAL(48u, snapFlat[2].tick);
+}
+
 int main(int /*argc*/, char** /*argv*/) {
   UNITY_BEGIN();
   RUN_TEST(test_imported_takes_survive_invalidateCaches);
@@ -193,5 +211,6 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_commit_stop_finalize_empty_merged_preserves_takes);
   RUN_TEST(test_flush_without_dirty_does_not_wipe_takes);
   RUN_TEST(test_multi_take_flatten_matches_live_event_count);
+  RUN_TEST(test_share_edit_snapshot_includes_dirty_flat);
   return UNITY_END();
 }

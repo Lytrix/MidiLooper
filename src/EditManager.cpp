@@ -168,6 +168,10 @@ void EditManager::exitEditMode(Track& track) {
             logger.debug("No net change in pitch edit, popped undo snapshot on exit");
         }
     }
+
+    Loop& loop = track.getActiveLoop();
+    loop.flushEditStoreToTakes();
+    track.invalidateCaches();
     
     selectedNoteIdx = -1;
     hasMovedBracket = false;

@@ -140,15 +140,15 @@ void Config::loadConfiguration() {
               .onLongPress(ActionType::MUTE_TRACK)
               .withParameter(255));
     
-    // Encoder Button - Edit Mode
+    // Encoder Button - Edit Mode (mode cycle + exit only; add/delete on NOTELEN double)
     addButton(ButtonConfig(MidiConfig::Transport::NOTE_UNDO, ch16, "Edit Mode")
               .onShortPress(ActionType::CYCLE_EDIT_MODE)
-              .onDoublePress(ActionType::DELETE_NOTE)
               .onLongPress(ActionType::EXIT_EDIT_MODE));
     
-    // Length Editing Mode Toggle (DROID special)
+    // NOTELEN (B2.32): position vs length toggle; double = delete selected or create at bracket
     addButton(ButtonConfig(MidiConfig::LengthEdit::NOTE, ch16, "Length Edit Mode")
-              .onShortPress(ActionType::TOGGLE_LENGTH_EDIT_MODE));
+              .onShortPress(ActionType::TOGGLE_LENGTH_EDIT_MODE)
+              .onDoublePress(ActionType::DELETE_OR_CREATE_NOTE));
 
     // Global Transport Start/Stop
     addButton(ButtonConfig(MidiConfig::Transport::NOTE_REDO, ch16, "Global Transport")

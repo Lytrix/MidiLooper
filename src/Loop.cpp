@@ -272,7 +272,11 @@ const LoopEventStore& Loop::readEditStore() const {
 }
 
 std::shared_ptr<const LoopEventStore> Loop::shareEditSnapshot() const {
-  materializeEditFlatFromTakes();
+  Loop* self = const_cast<Loop*>(this);
+  self->materializeEditFlatFromTakes();
+  if (self->editFlat_.isFlatDirty()) {
+    self->editFlat_.syncFlatToStore();
+  }
   return editFlat_.shareForSnapshot();
 }
 
