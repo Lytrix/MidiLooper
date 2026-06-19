@@ -53,13 +53,14 @@ struct OverlapNote {
   NoteBaseline baseline{};
   OverlapNoteStoreState state = OverlapNoteStoreState::Visible;
   uint32_t shortenedEndTick = 0;
-  bool innerUnderFootprint = false;
+  bool innerUnderMovingNote = false;
 };
 
 using OverlapNoteMap =
     std::unordered_map<NoteRef, OverlapNote, NoteRefHash, NoteRefEqual>;
 
-struct OverlapFootprint {
+/// Tick range of the moving note on focus (start/end); used for inner overlap-note tests.
+struct MovingNoteRange {
   uint32_t start = 0;
   uint32_t end = 0;
 };
@@ -68,7 +69,7 @@ struct NoteEditFocus {
   bool active = false;
   NoteRef moving{};
   NoteBaseline commitBaseline{};
-  OverlapFootprint overlapFootprint{};
+  MovingNoteRange movingNoteRange{};
   NoteBaseline last{};
   BaselineMap baselineMap;
   OverlapNoteMap overlapNotes;
@@ -77,7 +78,7 @@ struct NoteEditFocus {
     active = false;
     moving = {};
     commitBaseline = {};
-    overlapFootprint = {};
+    movingNoteRange = {};
     last = {};
     baselineMap.clear();
     overlapNotes.clear();
@@ -87,11 +88,11 @@ struct NoteEditFocus {
 NoteRef noteRefFromDisplay(uint8_t channel, const NoteUtils::DisplayNote& dn);
 NoteRef noteRefFromBaseline(uint8_t channel, const NoteBaseline& bl);
 
-uint32_t overlapFootprintDisplayEnd(const NoteEditFocus& focus, uint32_t loopLength);
+uint32_t movingNoteRangeDisplayEnd(const NoteEditFocus& focus, uint32_t loopLength);
 
-bool isInnerUnderOverlapFootprint(const NoteEditFocus& focus, uint8_t pitch,
-                                  uint32_t noteStart, uint32_t noteEnd,
-                                  uint32_t loopLength);
+bool isInnerOverlapNoteInMovingNoteRange(const NoteEditFocus& focus, uint8_t pitch,
+                                         uint32_t noteStart, uint32_t noteEnd,
+                                         uint32_t loopLength);
 
 OverlapNote* findOverlapNoteEntry(NoteEditFocus& focus, const NoteRef& ref);
 const OverlapNote* findOverlapNoteEntry(const NoteEditFocus& focus, const NoteRef& ref);
@@ -102,12 +103,12 @@ NoteRef findBaselineRefForNote(const NoteEditFocus& focus, uint8_t channel,
 NoteBaseline baselineForDisplayNote(const NoteEditFocus& focus, uint8_t channel,
                                     const NoteUtils::DisplayNote& dn);
 
-/// Read-only scan of materialized store → full-loop baseline inventory.
-void rebuildNoteEditFocusFromStore(NoteEditFocus& focus, const MidiEventVec& flat,
+/// Read-only scan of loop MIDI events → full-loop baseline inventory.
+void rebuildNoteEditFocusFromStore(NoteEditFocus& focus, const MidiEventVec& loopMidiEvents,
                                    uint8_t channel, uint32_t loopLength,
                                    int selectedNoteIdx);
 
-/// A1: length edit updates live end + overlap footprint only (not commitBaseline).
+/// A1: length edit updates live end + moving note range only (not commitBaseline).
 void noteEditFocusApplyLengthEnd(NoteEditFocus& focus, uint32_t newEndTick);
 
 void noteEditFocusApplyMoveEnd(NoteEditFocus& focus, uint32_t newStart, uint32_t newEnd);
@@ -118,3 +119,26 @@ void noteEditFocusApplyPitch(NoteEditFocus& focus, uint8_t newPitch, uint32_t st
 bool noteEditFocusHasPendingLengthChange(const NoteEditFocus& focus);
 
 uint32_t overlapNoteEffectiveEnd(const OverlapNote& entry);
+
+/// B1: materialize Hidden/Shortened overlap notes in session store before commit (impacted refs only).
+void resolveOverlapNotesForPreCommit(MidiEventVec& sessionStoreEvents, NoteEditFocus& focus,
+                                     uint8_t channel, uint32_t loopLength);
+
+/// B1: overlap-only EditChangeList (Hidden → DeleteNote, Shortened → ChangeLength).
+EditChangeList buildPreCommitOverlapEditChanges(const NoteEditFocus& focus);
+
+/// B1: ordered EditChangeList per design § Pre-commit emission (skip no-ops).
+EditChangeList buildPreCommitEditChanges(const NoteEditFocus& focus, uint8_t channel);
+
+/// NOTE_EDIT select/display inventory: session reconstruction minus Hidden and innerUnderMovingNote.
+std::vector<NoteUtils::DisplayNote> filterSelectableDisplayNotes(
+    const MidiEventVec& sessionEvents, const NoteEditFocus& focus, uint8_t channel,
+    uint32_t loopLength);
+
+NoteRef noteRefFromFilteredDisplayNote(uint8_t channel, const NoteEditFocus& focus,
+                                       const std::vector<NoteUtils::DisplayNote>& filtered,
+                                       int filteredIndex);
+
+int filteredDisplayNoteIndexForNoteRef(uint8_t channel, const NoteEditFocus& focus,
+                                       const std::vector<NoteUtils::DisplayNote>& filtered,
+                                       const NoteRef& ref);
