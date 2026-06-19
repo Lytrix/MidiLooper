@@ -1,13 +1,17 @@
 ---
-description: After a successful teensy41 firmware build, ask before uploading to the board
+description: After a successful Teensy firmware build, ask before uploading to the board
 alwaysApply: true
 ---
 
 # Teensy upload after firmware build
 
+## Default build env
+
+Use **`teensy41-capture-serial`** for firmware build/upload unless the user opts out — see [Teensy-Capture-Serial-Default-Build.mdc](Teensy-Capture-Serial-Default-Build.mdc).
+
 ## When this applies
 
-After you run a **successful** Teensy firmware build (`pio run -e teensy41`) because firmware code changed, **ask the user** whether to flash the board.
+After you run a **successful** Teensy firmware build because firmware code changed, **ask the user** whether to flash the board.
 
 Do **not** upload automatically. Do **not** skip the question silently.
 
@@ -19,10 +23,10 @@ Use a short, direct prompt, for example:
 
 ## If the user agrees
 
-From the project root:
+From the project root (same env as the build):
 
 ```bash
-pio run -e teensy41 -t upload
+pio run -e teensy41-capture-serial -t upload
 ```
 
 PlatformIO reuses the existing build output; you do **not** need a separate rebuild step before upload.
@@ -40,4 +44,4 @@ Stop after the build. Do not run upload or monitor unless they ask.
 
 ## Upload problems
 
-If upload fails on port detection, run `pio device list` and report what you find. Default env is `teensy41` per `platformio.ini`.
+If upload fails on port detection, run `pio device list` and report what you find.

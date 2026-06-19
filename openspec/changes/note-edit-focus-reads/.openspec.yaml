@@ -1,0 +1,6 @@
+schema: spec-driven
+created: 2026-06-19
+kind: refinement
+status: proposed
+parent: note-edit-modification-session
+supersedes_phase: overlap-hidden-note-select/2a

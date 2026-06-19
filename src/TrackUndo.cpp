@@ -271,6 +271,7 @@ void TrackUndo::pushNoteEditSessionCommitted(Track& track, uint8_t spanIndex, Ed
 
 void TrackUndo::beginOverdubSession(Track& track) {
     if (editManager.isNoteEditActive()) {
+        editManager.commitAllPendingNoteEditActions(track);
         editManager.closeNoteEditSpan(track);
     }
     (void)track;

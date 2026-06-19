@@ -2,28 +2,9 @@
 //  Licensed under the PolyForm Noncommercial 1.0.0
 
 #include "Utils/MidiEventUtils.h"
-#include "Utils/NoteMovementUtils.h"
 #include <algorithm>
 
 namespace MidiEventUtils {
-
-EditManager::MovingNoteIdentity::DeletedNote createDeletedNote(
-    const NoteUtils::DisplayNote& note, 
-    uint32_t loopLength,
-    bool wasShortened, 
-    uint32_t shortenedToTick) {
-    
-    EditManager::MovingNoteIdentity::DeletedNote deleted;
-    deleted.note = note.note;
-    deleted.velocity = note.velocity;
-    deleted.startTick = note.startTick;
-    deleted.endTick = note.endTick;
-    deleted.originalLength = NoteMovementUtils::calculateNoteLength(note.startTick, note.endTick, loopLength);
-    deleted.wasShortened = wasShortened;
-    deleted.shortenedToTick = shortenedToTick;
-    
-    return deleted;
-}
 
 MidiEventVec::iterator findNoteOnEvent(
     MidiEventVec& midiEvents,
@@ -77,4 +58,4 @@ MidiEvent createNoteEvent(bool isNoteOn, uint8_t pitch, uint8_t velocity, uint32
     return event;
 }
 
-} // namespace MidiEventUtils 
+} // namespace MidiEventUtils

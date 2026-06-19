@@ -41,13 +41,23 @@ M1–M7 are **shipped**. Post-M7 order:
 Do **not** start D13-style `jam-recording` before M8. Parked reference:
 `openspec/changes/archive/20260617-parked-jam-recording-d13/`.
 
-## Active change
+## Active changes
 
-**`m8-edit`** — Edit op-lists, NoteEditSession, retire `editFlat_`.
-
+**`m8-edit`** — Edit op-lists, NoteEditSession, retire `editFlat_`.  
 Run `/opsx:apply` on `openspec/changes/m8-edit/tasks.md`.
 
-**Archived:** `openspec/changes/archive/2026-06-18-m8-rename/` (Take/Capture vocabulary).
+**`m8-pass-vocabulary`** — **edit pass** replaces **span** (record / overdub / edit pass).  
+**`note-edit-modification-session`** — unified note overlap owner (A1 + B1).  
+**`change-length-commit-rematerialize`** — **bug** — ChangeLength commit / rematerialize HITL (Track A+B); parent PR4 gate.  
+**`note-edit-focus-reads`** — Phase 2a: **focus.last** replaces **movingNote** UI reads (`/opsx:apply`).
+
+**`edit-focus-selection-drift`** — **bug (recheck done)** — consolidated into archived **`note-edit-hitl-focus-restore`**.  
+Run `/opsx:apply` on respective `tasks.md`.  
+Bug evidence: `note-move-pitch-overlap-flaky/`, `lengthen-overlap-neighbor-restore/`, `change-length-commit-rematerialize/BUG.md`, `edit-focus-selection-drift/BUG.md`.
+
+**Archived:** `openspec/changes/archive/2026-06-18-m8-rename/` (Take/Capture vocabulary).  
+**Archived:** `openspec/changes/archive/2026-06-19-overlap-hidden-note-select/` (Phase 1 consumer contract — `filterSelectableDisplayNotes`; spec in `openspec/specs/overlap-hidden-note-select/`).  
+**Archived:** `openspec/changes/archive/2026-06-20-note-edit-hitl-focus-restore/` (B1 delete/select + B2 hidden restore on pitch; sign-off `013630`/`013835`/`014601`).
 
 ## Brownfield docs
 
@@ -66,4 +76,5 @@ Reuse **Take**, **Capture**, **Edit**, slot, overdub, jam, JamAction, HITL basel
 ## Verification
 
 - **m8-edit:** full native matrix + HITL per `.cursor/rules/HITL-Test-Flow.mdc`
+- **note-edit-modification-session:** native `test_edit_apply` + HITL edit baseline per child BUG specs
 - Teensy upload only when user confirms after firmware build

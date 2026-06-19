@@ -33,17 +33,17 @@ from the selected note's baseline entry.
 
 ---
 
-### Requirement: Commit baseline vs overlap footprint (A1)
+### Requirement: Commit baseline vs moving note range (A1)
 
-The system SHALL maintain separate **commitBaseline** and **overlapFootprint** on the note edit
-focus. Length edit SHALL update **overlapFootprint.end** to match live end tick and SHALL NOT update
+The system SHALL maintain separate **commitBaseline** and **movingNoteRange** on the note edit
+focus. Length edit SHALL update **movingNoteRange.end** to match live end tick and SHALL NOT update
 **commitBaseline.end** until commit.
 
 #### Scenario: Pending length commit after lengthen
 
 - **WHEN** the user lengthens the moving note without committing
-- **THEN** `commitPendingLengthAction` SHALL detect a pending **ChangeLength** against **commitBaseline**
-- **AND** inner overlap note tests SHALL use **overlapFootprint.end** equal to the lengthened end
+- **THEN** `commitAllPendingNoteEditActions` SHALL detect a pending **ChangeLength** against **commitBaseline**
+- **AND** inner overlap note tests SHALL use **movingNoteRange.end** equal to the lengthened end
 
 ---
 

@@ -29,22 +29,22 @@ inline uint32_t calculateNoteLength(uint32_t start, uint32_t end, uint32_t loopL
     return (loopLength - start) + end;
 }
 
-/// True when [noteStart, noteEnd] lies within spanStart..spanEnd (display-unwrapped end).
-inline bool isNoteWithinMovingSpan(uint32_t noteStart, uint32_t noteEnd,
-                                   uint32_t spanStart, uint32_t spanEnd,
-                                   uint32_t loopLength) {
+/// True when [noteStart, noteEnd] lies within movingNoteStart..movingNoteEnd (display-unwrapped end).
+inline bool isNoteWithinMovingNoteRange(uint32_t noteStart, uint32_t noteEnd,
+                                        uint32_t movingNoteStart, uint32_t movingNoteEnd,
+                                        uint32_t loopLength) {
     if (loopLength == 0) {
         return false;
     }
-    const uint32_t displaySpanEnd =
-        (spanEnd >= loopLength) ? (spanEnd % loopLength) : spanEnd;
+    const uint32_t displayMovingNoteEnd =
+        (movingNoteEnd >= loopLength) ? (movingNoteEnd % loopLength) : movingNoteEnd;
     if (noteEnd < noteStart) {
         return false;
     }
-    if (displaySpanEnd >= spanStart) {
-        return noteStart >= spanStart && noteEnd <= displaySpanEnd;
+    if (displayMovingNoteEnd >= movingNoteStart) {
+        return noteStart >= movingNoteStart && noteEnd <= displayMovingNoteEnd;
     }
-    return noteStart >= spanStart || noteEnd <= displaySpanEnd;
+    return noteStart >= movingNoteStart || noteEnd <= displayMovingNoteEnd;
 }
 
 } // namespace NoteMovementUtils

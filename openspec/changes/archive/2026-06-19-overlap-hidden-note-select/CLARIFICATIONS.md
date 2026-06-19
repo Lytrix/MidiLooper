@@ -196,3 +196,46 @@ Bracket tick (200) disagrees with **selectedNoteIdx** into unfiltered `getCached
 | C13 | 2026-06-19 | Accepted default — length-mode FSM after Phase 1 |
 | C14 | 2026-06-19 | Accepted default — `rebuildNoteEditFocusForDisplayNote` |
 | C15 | 2026-06-19 | Accepted default — filtered `SelectNavSlot.noteIdx` |
+| C16 | 2026-06-19 | Accepted — Phase 1 sign-off = **BUG.md AC1–AC5** only; parent `serial_verification.edit.ok` sub-verifiers (insert/reorder, overlap round-trip, `m0_home`) **non-gating** unless AC1–AC5 fail |
+| C17 | 2026-06-19 | Accepted — fader-1 select at **new tick** (no prior **focus.last** at step): **first filtered note at step**, not **focus.last** carry-over |
+| C18 | 2026-06-19 | Accepted — **Demoted APIs** registry + grep gate in [PRE-EXECUTION.md](./PRE-EXECUTION.md) §11; positive-index **rebuildNoteEditFocusAtSelect** forbidden in firmware |
+
+---
+
+## C16 — Phase 1 sign-off scope
+
+**Default:** Phase 1 complete when **AC1–AC5** pass on a fresh edit-baseline capture with `--verify-serial-log`. Do **not** block Phase 1 on parent edit baseline sub-verifiers already tracked elsewhere (insert/reorder, split-overlap round-trip, native m0 count).
+
+**Resolution:** **Accepted** (2026-06-19)
+
+---
+
+## C17 — Select at new tick
+
+**Default:** When fader-1 lands on a tick with no prior **focus.last** at that step, **resolveNoteIdxAtSlot** picks the **first** filtered **DisplayNote** at that step — not **movingNote** identity and not stale **focus.last** from a different tick.
+
+**Resolution:** **Accepted** (2026-06-19)
+
+---
+
+## C18 — Demoted consumer paths (conflict retirement)
+
+These paths caused **212149**-class bugs (wrong index, stale focus, delete on mover). Phase 1 **must not** reintroduce them in NOTE_EDIT fader/display/delete code.
+
+| Demoted | Replacement | Firmware rule (Phase 1) |
+|---------|-------------|-------------------------|
+| `rebuildNoteEditFocusAtSelect(track, idx≥0)` | `rebuildNoteEditFocusForDisplayNote` | **Forbidden** — grep must show only `rebuildNoteEditFocusAtSelect(track, -1)` |
+| Filtered/unfiltered index into `rebuildNoteEditFocusFromStore` from UI | `rebuildNoteEditFocusForDisplayNote` | UI must not call with fader-1 index |
+| `getCachedNotes()[selectedNoteIdx]` in NOTE_EDIT fader paths | `selectableDisplayNotesForEditUi` | **NoteEditManager** fader/select/delete/pitchbend — no bare cache when session active |
+| Unfiltered list in `buildSelectNavigationSlots` | `selectableDisplayNotesForEditUi` | Done |
+| Unfiltered display in NOTE_EDIT | `filterSelectableDisplayNotes` → `liveDisplayNotes` | Done when session active |
+| Delete: `commitAllPending` → `rebuildNoteEditFocusAtSelect(idx)` → overlap commit | C6 order in `deleteSelectedNote` | Done |
+| `resolveNoteIdxAtSlot` prefers **movingNote** at same tick | **focus.last** at same tick; **C17** at new tick | Select path updated; **movingNote** fallback removed in Phase 2a |
+
+**Allowed exceptions (not violations):**
+
+- `selectableDisplayNotesForEditUi` / `DisplayManager::resolveDisplayNotes` when `!isNoteEditActive()` — falls back to `getCachedNotes()`.
+- `rebuildNoteEditFocusFromStore` in native tests and inside `rebuildNoteEditFocusAtSelect(-1)` clear path.
+- **Phase 2 deferrals** (encoder FSM, `EditManager::selectNextNote`, `MidiFaderProcessor`) — listed in PRE-EXEC §11; do not extend demoted patterns there.
+
+**Resolution:** **Accepted** (2026-06-19)

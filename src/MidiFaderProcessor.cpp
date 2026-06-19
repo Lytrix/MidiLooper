@@ -4,6 +4,7 @@
 #include "MidiFaderProcessor.h"
 #include "Logger.h"
 #include "EditManager.h"
+#include "NoteEditFocus.h"
 #include "TrackManager.h"
 #include "Utils/NoteUtils.h"
 
@@ -76,8 +77,8 @@ void MidiFaderProcessor::processFaderInput(MidiMapping::FaderType faderType, int
     state.lastCCValue = ccValue;
     state.lastUpdateTime = now;
     
-    // Check if we need to commit any active note movement before switching faders
-    if (editManager.movingNote.active && currentDriverFader != faderType) {
+    const NoteEditFocus& focus = editManager.getNoteEditSession().focus;
+    if (editManager.isNoteEditActive() && focus.active && currentDriverFader != faderType) {
         logger.log(CAT_MIDI, LOG_DEBUG, "Committing note movement - switching from fader %d to fader %d", 
                    (int)currentDriverFader, (int)faderType);
         commitMovingNote();
@@ -249,22 +250,10 @@ void MidiFaderProcessor::initializeFaderStates() {
 }
 
 void MidiFaderProcessor::commitMovingNote() {
-    if (!editManager.movingNote.active) {
+    const NoteEditFocus& focus = editManager.getNoteEditSession().focus;
+    if (!editManager.isNoteEditActive() || !focus.active) {
         return;
     }
-    
-    // Find the currently moving note and commit the movement
-    Track& track = trackManager.getSelectedTrack();
-    const auto& currentNotes = track.getCachedNotes();
-    
-    for (const auto& note : currentNotes) {
-        if (note.note == editManager.movingNote.note && 
-            note.startTick == editManager.movingNote.lastStart) {
-            // We need to delegate this to MidiButtonManager for the actual implementation
-            // This will be handled in the actions class
-            logger.log(CAT_MIDI, LOG_DEBUG, "Committing note movement for note %d at tick %lu", 
-                       note.note, note.startTick);
-            break;
-        }
-    }
+    logger.log(CAT_MIDI, LOG_DEBUG, "Committing note movement for note %d at tick %lu",
+               focus.last.pitch, static_cast<unsigned long>(focus.last.startTick));
 } 

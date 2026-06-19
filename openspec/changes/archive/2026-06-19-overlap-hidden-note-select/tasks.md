@@ -1,10 +1,10 @@
 # Tasks — Note edit session consumer contract
 
 **Change:** `overlap-hidden-note-select`  
-**Status:** Proposed (2026-06-19)  
+**Status:** Phase 1 complete — Slice E signed off (2026-06-19)  
 **Apply:** `/opsx:apply` after clarifications resolved  
 **Review:** [architecture-review.md](./architecture-review.md) §10  
-**Clarifications:** [CLARIFICATIONS.md](./CLARIFICATIONS.md) — **C1–C13 locked** (2026-06-19)  
+**Clarifications:** [CLARIFICATIONS.md](./CLARIFICATIONS.md) — **C1–C18 locked** (2026-06-19)  
 **New chat:** [HANDOFF-BRIEF.md](./HANDOFF-BRIEF.md)
 
 ---
@@ -15,7 +15,7 @@
 - [x] 0.2 Proposal + design expanded to architecture milestone
 - [x] 0.3 Naming: `filterSelectableDisplayNotes`; no invented module nouns
 - [x] 0.4 [CLARIFICATIONS.md](./CLARIFICATIONS.md) — open decisions with task blockers
-- [ ] 0.5 Complete consumer audit — confirm rows in architecture-review §5 + grep list in **C9**
+- [x] 0.5 Complete consumer audit — [PRE-EXECUTION.md](./PRE-EXECUTION.md) §11 + **C18** grep gate
 - [ ] 0.6 Mark interim spot fixes as debt in parent [tasks.md](../note-edit-modification-session/tasks.md) §9.3
 - [x] 0.7 **C1–C13** resolved — user accepted all defaults (2026-06-19)
 - [x] 0.8 [PRE-EXECUTION.md](./PRE-EXECUTION.md) checklist + investigations 1.1–1.3
@@ -43,30 +43,30 @@
 
 ### 3. Select navigation + bracket (**C2**, **C11**)
 
-- [ ] 3.1 `NoteEditManager::buildSelectNavigationSlots` → filtered **DisplayNote** list when `NoteEditSession.active`
-- [ ] 3.2 `handleSelectFaderInput` / `resolveNoteIdxAtSlot`: use filtered list; moving-note disambiguation via **focus.last** not **movingNote** (prep for Phase 2a)
-- [ ] 3.3 On fader-1 select: **`rebuildNoteEditFocusForDisplayNote`** (PRE-EXEC §1) — not filtered index into `rebuildNoteEditFocusFromStore`
-- [ ] 3.4 After overlap hide: invalidate selection if **NoteRef** / index no longer in filtered list
-- [ ] 3.5 `NoteMovementUtils::finalReconstructAndSelect`: resolve index via **focus.last** + filter (**C11**)
-- [ ] 3.6 HITL AC1–AC2 (no **Hidden** slot; no bracket hop)
+- [x] 3.1 `NoteEditManager::buildSelectNavigationSlots` → filtered **DisplayNote** list when `NoteEditSession.active`
+- [x] 3.2 `handleSelectFaderInput` / `resolveNoteIdxAtSlot`: use filtered list; moving-note disambiguation via **focus.last** not **movingNote** (prep for Phase 2a)
+- [x] 3.3 On fader-1 select: **`rebuildNoteEditFocusForDisplayNote`** (PRE-EXEC §1) — not filtered index into `rebuildNoteEditFocusFromStore`
+- [x] 3.4 After overlap hide: invalidate selection if **NoteRef** / index no longer in filtered list
+- [x] 3.5 `NoteMovementUtils::finalReconstructAndSelect`: resolve index via **focus.last** + filter (**C11**)
+- [x] 3.6 HITL AC1–AC2 — **`233328`**
 
 ### 4. Display (**C4**)
 
 - [x] 4.1 `DisplayManager::resolveDisplayNotes` NOTE_EDIT → filter into **`liveDisplayNotes`** (PRE-EXEC §3)
-- [ ] 4.2 Manual / serial AC4 parity
+- [x] 4.2 AC4 parity — **`233328`** DISP frames
 
 ### 5. Delete boundary (**C6**)
 
-- [ ] 5.1 Capture delete **NoteRef** from selection **before** any commit (per **C2**)
-- [ ] 5.2 **Rewrite** `deleteSelectedNote` per **C6** / PRE-EXEC §2 (no patch on spot-fix chain)
-- [ ] 5.3 HITL AC3, AC5 (`212149` scenario: delete B not M67)
+- [x] 5.1 Capture delete **NoteRef** from selection **before** any commit (per **C2**)
+- [x] 5.2 **Rewrite** `deleteSelectedNote` per **C6** / PRE-EXEC §2 (no patch on spot-fix chain)
+- [x] 5.3 HITL AC3 + AC5 — **`233328`**
 
 ### 6. Phase 1 sign-off
 
-- [ ] 6.1 `pio test -e native` — all green
-- [ ] 6.2 HITL edit baseline AC1–AC5; no regression change-length store / overlap round-trip
-- [ ] 6.3 Grep gate per **C9**: no bare `getCachedNotes()` in NOTE_EDIT / session-active paths without filter
-- [ ] 6.4 Update [BUG.md](./BUG.md) AC rows with capture id
+- [x] 6.1 `pio test -e native` — 110/110 green (2026-06-19)
+- [x] 6.2 HITL edit baseline AC1–AC5 — **`233328`** (**C16** — parent sub-verifiers non-gating)
+- [x] 6.3 Grep gate per **C18** / PRE-EXEC §11 — `NoteEditManager` + no positive `rebuildNoteEditFocusAtSelect`
+- [x] 6.4 Update [BUG.md](./BUG.md) AC rows — **`233328`**
 
 ---
 

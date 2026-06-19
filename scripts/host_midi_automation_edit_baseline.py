@@ -1287,6 +1287,7 @@ def _extract_reconstruction_snapshots(
         (re.compile(r"Created 32nd note"), "insert"),
         (re.compile(r"Applied pitch change overlaps:"), "pitch_overlap"),
         (re.compile(r"LENGTH EDIT:"), "length_edit"),
+        (re.compile(r"Edit committed ChangeLength"), "change_length_commit"),
     ]
 
     for idx, line in enumerate(lines):
@@ -1328,7 +1329,7 @@ def _extract_reconstruction_snapshots(
 
 
 def _verify_note_length_integrity(lines: list[str]) -> dict[str, object]:
-    """Track shortened-victim spans and flag failed/partial restore or unexplained loss."""
+    """Track shortened overlap-note spans and flag failed/partial restore or unexplained loss."""
     loop_length = _parse_loop_length(lines)
     snapshots = _extract_reconstruction_snapshots(lines, loop_length)
     issues: list[str] = []
@@ -1349,13 +1350,13 @@ def _verify_note_length_integrity(lines: list[str]) -> dict[str, object]:
         r"Stored original note before shortening: pitch=(\d+), start=(\d+), "
         r"original_end=(\d+), shortened_to=(\d+)"
     )
-    shorten_victims: dict[tuple[int, int], dict[str, int]] = {}
+    shortened_overlap_notes: dict[tuple[int, int], dict[str, int]] = {}
     for line in edit_lines:
         match = shorten_store_re.search(line)
         if match:
             pitch, start, original_end, shortened_to = (int(x) for x in match.groups())
             key = _note_key(pitch, start)
-            shorten_victims[key] = {
+            shortened_overlap_notes[key] = {
                 "pitch": pitch,
                 "start": start,
                 "original_end": original_end,
@@ -1374,11 +1375,13 @@ def _verify_note_length_integrity(lines: list[str]) -> dict[str, object]:
         if not match:
             continue
         key = _note_key(int(match.group(1)), int(match.group(2)))
-        if key in shorten_victims:
-            issues.append(f"too_short_delete_on_shortened_victim:p{key[0]}@{key[1]}")
+        if key in shortened_overlap_notes:
+            _append_edit_verifier_issue(
+                issues, f"too_short_delete_on_shortened_overlap_note:p{key[0]}@{key[1]}"
+            )
             deterioration_events.append(
                 {
-                    "kind": "too_short_delete_on_victim",
+                    "kind": "too_short_delete_on_overlap_note",
                     "pitch": key[0],
                     "start": key[1],
                 }
@@ -1389,7 +1392,7 @@ def _verify_note_length_integrity(lines: list[str]) -> dict[str, object]:
         r"was shortened to (\d+), restoring to (\d+)"
     )
     recreate_short_re = re.compile(
-        r"Recreating shortened victim \(note-on missing\): pitch=(\d+), start=(\d+), end=(\d+)"
+        r"Recreating shortened (?:overlap note|victim) \(note-on missing\): pitch=(\d+), start=(\d+), end=(\d+)"
     )
     will_restore_re = re.compile(
         r"Will restore note: pitch=(\d+), start=(\d+), end=(\d+)"
@@ -1424,8 +1427,8 @@ def _verify_note_length_integrity(lines: list[str]) -> dict[str, object]:
             start = int(recreate_match.group(2))
             target_end = int(recreate_match.group(3))
         key = _note_key(pitch, start)
-        victim = shorten_victims.get(key)
-        if victim is None:
+        overlap_entry = shortened_overlap_notes.get(key)
+        if overlap_entry is None:
             continue
         post = _snapshot_after(global_line)
         if post is None:
@@ -1433,13 +1436,15 @@ def _verify_note_length_integrity(lines: list[str]) -> dict[str, object]:
         post_inv = post["inventory"]
         assert isinstance(post_inv, dict)
         if key not in post_inv:
-            issues.append(f"shortened_victim_gone_after_restore:p{pitch}@{start}")
+            _append_edit_verifier_issue(
+                issues, f"shortened_overlap_note_gone_after_restore:p{pitch}@{start}"
+            )
             continue
         restored_end = int(post_inv[key]["end"])
-        if restored_end < victim["original_end"] - 2:
+        if restored_end < overlap_entry["original_end"] - 2:
             issues.append(
                 f"shortened_not_fully_restored:p{pitch}@{start}:"
-                f"end={restored_end}<original={victim['original_end']}"
+                f"end={restored_end}<original={overlap_entry['original_end']}"
             )
             deterioration_events.append(
                 {
@@ -1448,7 +1453,7 @@ def _verify_note_length_integrity(lines: list[str]) -> dict[str, object]:
                     "pitch": pitch,
                     "start": start,
                     "restored_end": restored_end,
-                    "original_end": victim["original_end"],
+                    "original_end": overlap_entry["original_end"],
                     "target_end": target_end,
                 }
             )
@@ -1456,11 +1461,13 @@ def _verify_note_length_integrity(lines: list[str]) -> dict[str, object]:
     below_peak: list[dict[str, object]] = []
     final_inventory = edit_snapshots[-1]["inventory"] if edit_snapshots else {}
     assert isinstance(final_inventory, dict)
-    for key, victim in shorten_victims.items():
-        original_end = victim["original_end"]
+    for key, overlap_entry in shortened_overlap_notes.items():
+        original_end = overlap_entry["original_end"]
         if key not in final_inventory:
             if key in restore_attempted:
-                issues.append(f"shortened_victim_missing_after_restore:p{key[0]}@{key[1]}")
+                _append_edit_verifier_issue(
+                    issues, f"shortened_overlap_note_missing_after_restore:p{key[0]}@{key[1]}"
+                )
                 below_peak.append(
                     {
                         "pitch": key[0],
@@ -1492,7 +1499,7 @@ def _verify_note_length_integrity(lines: list[str]) -> dict[str, object]:
         "snapshot_count": len(edit_snapshots),
         "deterioration_events": deterioration_events[:40],
         "below_peak_at_end": below_peak[:30],
-        "shortened_victim_count": len(shorten_victims),
+        "shortened_overlap_note_count": len(shortened_overlap_notes),
         "loop_length": loop_length,
     }
 
@@ -1545,6 +1552,64 @@ def _verify_m0_survives_warmup(
         "m0_tick": m0_tick,
         "early_m0_deletes": early_deletes,
         "m0_seen_before_length_edit": m0_seen_before_length,
+    }
+
+
+def _verify_beat_move_routing(lines: list[str]) -> dict[str, object]:
+    """Ensure M0 ±1 beat moves use POSITION EDIT, not stale length-edit routing."""
+    issues: list[str] = []
+    beat_shuttle_steps = {M0_STEP, M0_STEP + BEAT_MOVE_STEPS}
+
+    if not _serial_contains(lines, "MIDI Encoder: Short press - entered note edit mode"):
+        issues.append("missing_edit_session_enter_log")
+
+    for line in lines:
+        if "Button released: Ch16 Note38" not in line:
+            continue
+        dur_match = re.search(r"duration=(\d+)", line)
+        if dur_match is None:
+            continue
+        duration_ms = int(dur_match.group(1))
+        if duration_ms <= 5000:
+            continue
+        line_idx = lines.index(line)
+        window = lines[line_idx : line_idx + 6]
+        if any("exited edit mode" in w for w in window):
+            if not _serial_contains(lines[:line_idx], "Short press - entered note edit mode"):
+                issues.append(f"edit_button_stuck_long_press:duration={duration_ms}")
+        break
+
+    shuttle: list[tuple[str, int, int]] = []
+    for line in lines:
+        pos_match = re.search(
+            r"POSITION EDIT: Note moved from step (\d+) to (\d+)", line
+        )
+        if pos_match:
+            from_step = int(pos_match.group(1))
+            to_step = int(pos_match.group(2))
+            if from_step in beat_shuttle_steps and to_step in beat_shuttle_steps:
+                shuttle.append(("position", from_step, to_step))
+            continue
+        len_match = re.search(
+            r"LENGTH EDIT: Note end moved from step (\d+) to (\d+)", line
+        )
+        if len_match:
+            from_step = int(len_match.group(1))
+            to_step = int(len_match.group(2))
+            if from_step in beat_shuttle_steps and to_step in beat_shuttle_steps:
+                shuttle.append(("length", from_step, to_step))
+        if len(shuttle) >= 2:
+            break
+
+    if len(shuttle) >= 1 and shuttle[0][0] == "length":
+        issues.append("beat_forward_routed_as_length_edit")
+    if len(shuttle) >= 2 and shuttle[1][0] == "length":
+        issues.append("beat_backward_routed_as_length_edit")
+
+    return {
+        "ok": len(issues) == 0,
+        "issues": issues,
+        "shuttle_edits": [{"kind": k, "from": a, "to": b} for k, a, b in shuttle],
     }
 
 
@@ -1634,6 +1699,419 @@ def _verify_edit_move_display(
 
 def _fixture_step_tick(layout: RecordLayout, fixture_step: int) -> int:
     return layout.step_to_tick.get(fixture_step, fixture_step * TICKS_PER_16TH_STEP)
+
+
+def _append_edit_verifier_issue(issues: list[str], issue: str) -> None:
+    """OpenSpec issue key; append legacy *_victim_* alias for one release (task 7.3)."""
+    issues.append(issue)
+    if "_overlap_note_" in issue:
+        legacy = issue.replace("_overlap_note_", "_victim_", 1)
+        if legacy != issue:
+            issues.append(legacy)
+
+
+
+_LOOP_END_ACTIVE_RE = re.compile(
+    r"Active note at loop end: pitch=(\d+), start=(\d+), end=(\d+)"
+)
+
+
+def _inventory_notes_at_start(
+    inventory: dict[tuple[int, int], dict[str, int]],
+    *,
+    pitch: int,
+    start: int,
+    tick_tolerance: int,
+) -> list[dict[str, int]]:
+    return [
+        note
+        for note in inventory.values()
+        if note["pitch"] == pitch and abs(note["start"] - start) <= tick_tolerance
+    ]
+
+
+def _assert_native_lengthen_rematerialize_parity(
+    inventory: dict[tuple[int, int], dict[str, int]],
+    *,
+    layout: RecordLayout,
+    loop_length: int,
+    m0_pitch: int = M0_PITCH,
+    tick_tolerance: int = 24,
+    context: str,
+) -> list[str]:
+    """Mirror native test_edit_apply lengthen + rematerialize assertions on a note inventory.
+
+    - test_lengthen_after_move_keeps_p0_fixture_gate
+    - test_change_length_rematerialize_keeps_p0_off_not_loop_end
+    """
+    issues: list[str] = []
+    prefix = f"{context}:" if context else ""
+    m0_tick = _fixture_step_tick(layout, M0_STEP)
+    p0_tick = _fixture_step_tick(layout, P0_STEP)
+    long_end_tick = _fixture_step_tick(layout, LONG_M0_END_FIXTURE_STEP)
+    min_gate = RECORD_GATE_TICKS - tick_tolerance
+    max_gate = RECORD_GATE_TICKS + tick_tolerance
+    min_m0_extended = RECORD_GATE_TICKS + TICKS_PER_16TH_STEP
+
+    m0_notes = _inventory_notes_at_start(
+        inventory, pitch=m0_pitch, start=m0_tick, tick_tolerance=tick_tolerance
+    )
+    p0_notes = _inventory_notes_at_start(
+        inventory, pitch=M0_PITCH, start=p0_tick, tick_tolerance=tick_tolerance
+    )
+
+    # Native: exactly one M0 note-on pairing at fixture start.
+    if len(m0_notes) != 1:
+        issues.append(f"{prefix}native_m0_count:{len(m0_notes)}!=1")
+    # Native: exactly one P0 note-on at step 12.
+    if len(p0_notes) != 1:
+        issues.append(f"{prefix}native_p0_count:{len(p0_notes)}!=1")
+
+    if len(m0_notes) == 1:
+        m0 = m0_notes[0]
+        if m0["length"] < min_m0_extended:
+            issues.append(f"{prefix}native_m0_not_lengthened")
+        if abs(m0["end"] - long_end_tick) > tick_tolerance:
+            issues.append(f"{prefix}native_m0_end_not_at_long_fixture_step")
+
+    if len(p0_notes) == 1:
+        p0 = p0_notes[0]
+        if not (min_gate <= p0["length"] <= max_gate):
+            issues.append(f"{prefix}native_p0_gate_length")
+        if p0["end"] >= loop_length - tick_tolerance:
+            issues.append(f"{prefix}native_p0_stretched_loop_end")
+        # Native: shared release tick with lengthened M0 (two offs @672).
+        if len(m0_notes) == 1 and abs(p0["end"] - m0_notes[0]["end"]) > tick_tolerance:
+            issues.append(f"{prefix}native_p0_m0_end_tick_mismatch")
+        if abs(p0["end"] - long_end_tick) > tick_tolerance:
+            issues.append(f"{prefix}native_p0_end_not_at_shared_release")
+
+    return issues
+
+
+def _assert_native_lengthen_then_pitch_parity(
+    inventory: dict[tuple[int, int], dict[str, int]],
+    *,
+    layout: RecordLayout,
+    loop_length: int,
+    tick_tolerance: int = 24,
+    context: str,
+) -> list[str]:
+    """Mirror test_change_pitch_on_lengthened_note_keeps_same_pitch_neighbor."""
+    issues: list[str] = []
+    prefix = f"{context}:" if context else ""
+    m0_tick = _fixture_step_tick(layout, M0_STEP)
+    p0_tick = _fixture_step_tick(layout, P0_STEP)
+    long_end_tick = _fixture_step_tick(layout, LONG_M0_END_FIXTURE_STEP)
+
+    m0_repitch = _inventory_notes_at_start(
+        inventory, pitch=A_PITCH, start=m0_tick, tick_tolerance=tick_tolerance
+    )
+    p0_notes = _inventory_notes_at_start(
+        inventory, pitch=M0_PITCH, start=p0_tick, tick_tolerance=tick_tolerance
+    )
+    stray_m0_lane = _inventory_notes_at_start(
+        inventory, pitch=M0_PITCH, start=m0_tick, tick_tolerance=tick_tolerance
+    )
+    p0_relabeled = _inventory_notes_at_start(
+        inventory, pitch=A_PITCH, start=p0_tick, tick_tolerance=tick_tolerance
+    )
+
+    if len(m0_repitch) != 1:
+        issues.append(f"{prefix}native_m0_pitch_67_count:{len(m0_repitch)}!=1")
+    elif abs(m0_repitch[0]["end"] - long_end_tick) > tick_tolerance:
+        issues.append(f"{prefix}native_m0_pitch_67_end_mismatch")
+
+    if len(p0_notes) != 1:
+        issues.append(f"{prefix}native_p0_pitch_60_count:{len(p0_notes)}!=1")
+    elif p0_notes[0]["end"] >= loop_length - tick_tolerance:
+        issues.append(f"{prefix}native_p0_loop_end_after_pitch")
+
+    if stray_m0_lane:
+        issues.append(f"{prefix}native_stray_pitch_60_at_m0_start")
+
+    if p0_relabeled:
+        issues.append(f"{prefix}native_p0_off_relabeled_to_67")
+
+    return issues
+
+
+def _assert_overlap_pitch_change_mid_move_parity(
+    inventory: dict[tuple[int, int], dict[str, int]],
+    *,
+    layout: RecordLayout,
+    loop_length: int,
+    tick_tolerance: int = 24,
+    context: str,
+) -> list[str]:
+    """Overlap round-trip pitches M0 while at LONG_OVER_P0_START_STEP (before return home).
+
+    Native test_change_pitch_on_lengthened_note uses home coords; HITL repitches at display
+    start — check mover at over-step, not m0_tick.
+    """
+    issues: list[str] = []
+    prefix = f"{context}:" if context else ""
+    m0_tick = _fixture_step_tick(layout, M0_STEP)
+    over_tick = _fixture_step_tick(layout, LONG_OVER_P0_START_STEP)
+    p0_tick = _fixture_step_tick(layout, P0_STEP)
+    min_m0_extended = RECORD_GATE_TICKS + TICKS_PER_16TH_STEP
+
+    mover = _inventory_notes_at_start(
+        inventory, pitch=A_PITCH, start=over_tick, tick_tolerance=tick_tolerance
+    )
+    if len(mover) != 1:
+        issues.append(f"{prefix}native_m0_pitch_67_at_over_step:{len(mover)}!=1")
+    elif mover[0]["length"] < min_m0_extended:
+        issues.append(f"{prefix}native_m0_not_lengthened_at_over_step")
+
+    if _inventory_notes_at_start(
+        inventory, pitch=M0_PITCH, start=m0_tick, tick_tolerance=tick_tolerance
+    ):
+        issues.append(f"{prefix}native_stray_pitch_60_at_m0_start")
+
+    p0_notes = _inventory_notes_at_start(
+        inventory, pitch=M0_PITCH, start=p0_tick, tick_tolerance=tick_tolerance
+    )
+    if _inventory_notes_at_start(
+        inventory, pitch=A_PITCH, start=p0_tick, tick_tolerance=tick_tolerance
+    ):
+        issues.append(f"{prefix}native_p0_off_relabeled_to_67")
+    if p0_notes and p0_notes[0]["end"] >= loop_length - tick_tolerance:
+        issues.append(f"{prefix}native_p0_stretched_loop_end")
+
+    return issues
+
+
+def _first_line_index_after(lines: list[str], start_idx: int, needle: str) -> int:
+    for i in range(max(start_idx, 0), len(lines)):
+        if needle in lines[i]:
+            return i
+    return -1
+
+
+def _snapshot_position_edit_to_home(
+    snapshots: list[dict[str, object]],
+    m0_tick: int,
+    *,
+    tick_tolerance: int = 24,
+) -> Optional[dict[str, object]]:
+    """Last reconstruction after a position edit landing on fixture home (not pre-move scratch)."""
+    for snap in reversed(snapshots):
+        label = str(snap.get("edit_label", ""))
+        if not label.startswith("position_edit:"):
+            continue
+        if label.endswith(f"->{m0_tick}"):
+            return snap
+        match = re.search(r"->(\d+)$", label)
+        if match and abs(int(match.group(1)) - m0_tick) <= tick_tolerance:
+            return snap
+    return None
+
+
+def _verify_change_length_store_rebuild(
+    lines: list[str],
+    *,
+    layout: RecordLayout,
+    tick_tolerance: int = 24,
+) -> dict[str, object]:
+    """ChangeLength must commit and rematerialize the edit session store for display.
+
+    Serial parity with native test_edit_apply:
+    - test_lengthen_after_move_keeps_p0_fixture_gate
+    - test_change_length_rematerialize_keeps_p0_off_not_loop_end
+    - test_change_pitch_on_lengthened_note_keeps_same_pitch_neighbor
+
+    Regression target: live lengthen left origEnd==lastEnd so commit was skipped; fader-1
+    reselect rebuilt from stale committed replay while the flat cache was discarded — M0 vanished
+    from display and P0 (pitch 60 @ step 12) stretched to loop end.
+    """
+    issues: list[str] = []
+    loop_length = _parse_loop_length(lines)
+    snapshots = _extract_reconstruction_snapshots(lines, loop_length)
+    m0_tick = _fixture_step_tick(layout, M0_STEP)
+    p0_tick = _fixture_step_tick(layout, P0_STEP)
+    b_tick = _fixture_step_tick(layout, B_STEP)
+
+    change_length_commits = [
+        i for i, line in enumerate(lines) if "Edit committed ChangeLength" in line
+    ]
+    length_disabled_idx = next(
+        (i for i, line in enumerate(lines) if "Length editing mode DISABLED" in line),
+        -1,
+    )
+    length_enabled_idx = next(
+        (i for i, line in enumerate(lines) if "Length editing mode ENABLED" in line),
+        -1,
+    )
+
+    if length_enabled_idx < 0:
+        issues.append("missing_length_mode_enabled_log")
+    if length_disabled_idx < 0:
+        issues.append("missing_length_mode_disabled_log")
+    if not change_length_commits:
+        issues.append("missing_change_length_commit")
+    elif length_disabled_idx >= 0:
+        first_commit = change_length_commits[0]
+        if not (length_disabled_idx - 15 <= first_commit <= length_disabled_idx + 2):
+            issues.append("change_length_commit_not_near_length_mode_off")
+
+    def _snapshot_after(line_idx: int) -> Optional[dict[str, object]]:
+        for snap in snapshots:
+            if int(snap["line"]) > line_idx:
+                return snap
+        return None
+
+    def _p0_loop_end_orphan(line_idx: int, *, window: int = 80) -> bool:
+        for line in lines[line_idx : line_idx + window]:
+            match = _LOOP_END_ACTIVE_RE.search(line)
+            if not match:
+                continue
+            pitch, start, _end = (int(x) for x in match.groups())
+            if pitch == M0_PITCH and abs(start - p0_tick) <= tick_tolerance:
+                return True
+        return False
+
+    def _apply_native_checks(
+        snap: Optional[dict[str, object]],
+        *,
+        context: str,
+        m0_pitch: int = M0_PITCH,
+        include_pitch_parity: bool = False,
+        missing_snap_issue: str,
+    ) -> None:
+        if snap is None:
+            issues.append(missing_snap_issue)
+            return
+        inv = snap.get("inventory", {})
+        assert isinstance(inv, dict)
+        issues.extend(
+            _assert_native_lengthen_rematerialize_parity(
+                inv,
+                layout=layout,
+                loop_length=loop_length,
+                m0_pitch=m0_pitch,
+                tick_tolerance=tick_tolerance,
+                context=context,
+            )
+        )
+        if include_pitch_parity:
+            issues.extend(
+                _assert_native_lengthen_then_pitch_parity(
+                    inv,
+                    layout=layout,
+                    loop_length=loop_length,
+                    tick_tolerance=tick_tolerance,
+                    context=context,
+                )
+            )
+
+    post_commit_snap: Optional[dict[str, object]] = None
+    post_pitch_snap: Optional[dict[str, object]] = None
+    post_home_snap: Optional[dict[str, object]] = None
+    pitch_change_idx = -1
+    home_line = _position_edit_line(lines, PAST_HIGHER_NOTE_STEP, M0_STEP)
+    if home_line < 0:
+        home_line = _position_edit_line(lines, A_STEP, M0_STEP)
+
+    if change_length_commits:
+        commit_idx = change_length_commits[0]
+        post_commit_snap = _snapshot_after(commit_idx)
+        _apply_native_checks(
+            post_commit_snap,
+            context="after_change_length_commit",
+            m0_pitch=M0_PITCH,
+            missing_snap_issue="missing_reconstruction_after_change_length_commit",
+        )
+        if _p0_loop_end_orphan(commit_idx):
+            issues.append("p0_active_at_loop_end_after_change_length_commit")
+
+        pitch_change_idx = _first_line_index_after(
+            lines, commit_idx, "Note value changed successfully"
+        )
+        if pitch_change_idx >= 0:
+            post_pitch_snap = _snapshot_after(pitch_change_idx)
+            if post_pitch_snap is None:
+                issues.append("missing_reconstruction_after_overlap_pitch_change")
+            else:
+                inv = post_pitch_snap.get("inventory", {})
+                assert isinstance(inv, dict)
+                issues.extend(
+                    _assert_overlap_pitch_change_mid_move_parity(
+                        inv,
+                        layout=layout,
+                        loop_length=loop_length,
+                        tick_tolerance=tick_tolerance,
+                        context="after_overlap_pitch_change",
+                    )
+                )
+            if _p0_loop_end_orphan(pitch_change_idx):
+                issues.append("p0_active_at_loop_end_after_overlap_pitch_change")
+        else:
+            issues.append("missing_overlap_pitch_change_log")
+
+        if home_line >= 0:
+            post_home_snap = _snapshot_position_edit_to_home(
+                snapshots, m0_tick, tick_tolerance=tick_tolerance
+            )
+            _apply_native_checks(
+                post_home_snap,
+                context="after_overlap_round_trip_home",
+                m0_pitch=A_PITCH,
+                include_pitch_parity=True,
+                missing_snap_issue="missing_reconstruction_after_overlap_round_trip_home",
+            )
+            if _p0_loop_end_orphan(home_line):
+                issues.append("p0_active_at_loop_end_after_overlap_round_trip_home")
+
+    # Reselect B after overlap round-trip home: rematerialize on commit must keep display notes.
+    b_select_idx = -1
+    if home_line >= 0:
+        for i in range(home_line, len(lines)):
+            line = lines[i]
+            if "Select fader: selected note" not in line:
+                continue
+            match = re.search(r"selected note \d+ at tick (\d+)", line)
+            if match and abs(int(match.group(1)) - b_tick) <= tick_tolerance:
+                b_select_idx = i
+                break
+
+    post_reselect_b_snap: Optional[dict[str, object]] = None
+    if b_select_idx >= 0:
+        post_reselect_b_snap = _snapshot_after(b_select_idx)
+        _apply_native_checks(
+            post_reselect_b_snap,
+            context="after_reselect_b",
+            m0_pitch=A_PITCH,
+            include_pitch_parity=True,
+            missing_snap_issue="missing_reconstruction_after_reselect_b",
+        )
+        if _p0_loop_end_orphan(b_select_idx):
+            issues.append("p0_active_at_loop_end_after_reselect_b")
+
+    return {
+        "ok": len(issues) == 0,
+        "issues": issues,
+        "change_length_commit_count": len(change_length_commits),
+        "length_mode_disabled_line": length_disabled_idx,
+        "post_commit_snapshot_line": (
+            int(post_commit_snap["line"]) if post_commit_snap is not None else None
+        ),
+        "overlap_pitch_change_line": pitch_change_idx,
+        "post_pitch_snapshot_line": (
+            int(post_pitch_snap["line"]) if post_pitch_snap is not None else None
+        ),
+        "overlap_round_trip_home_line": home_line,
+        "post_home_snapshot_line": (
+            int(post_home_snap["line"]) if post_home_snap is not None else None
+        ),
+        "reselect_b_line": b_select_idx,
+        "post_reselect_b_snapshot_line": (
+            int(post_reselect_b_snap["line"]) if post_reselect_b_snap is not None else None
+        ),
+        "m0_tick": m0_tick,
+        "p0_tick": p0_tick,
+        "b_tick": b_tick,
+    }
 
 
 def _verify_delay_move_insert_reorder(
@@ -1970,7 +2448,12 @@ def _verify_long_over_short_pitch_restore(
     if pitch_idx >= 0:
         pitch_window = lines[pitch_window_start:pitch_window_end]
         inner_a_pitch_merge_log = any(
-            "Merged" in line and "adjacent same-pitch notes into span" in line
+            "Merged" in line
+            and             (
+                "adjacent same-pitch notes into moving note range" in line
+                or "adjacent same-pitch notes into footprint" in line
+                or "adjacent same-pitch notes into span" in line
+            )
             for line in pitch_window
         )
         post_pitch_window = lines[pitch_idx : pitch_idx + 80]
@@ -2138,14 +2621,14 @@ def _verify_long_over_short_pitch_restore(
     }
 
 
-def _verify_split_victim_round_trip(
+def _verify_split_overlap_note_round_trip(
     lines: list[str],
     *,
     layout: RecordLayout,
     tick_tolerance: int = 24,
 ) -> dict[str, object]:
     """Distinct AC: M0 session pitch+position without reselect — inner A survives and returns home."""
-    issues: list[str] = []
+    primary_issues: list[str] = []
     loop_length = _parse_loop_length(lines)
     snapshots = _extract_reconstruction_snapshots(lines, loop_length)
     m0_tick = _fixture_step_tick(layout, M0_STEP)
@@ -2177,7 +2660,12 @@ def _verify_split_victim_round_trip(
         pitch_window_start = move_over_line if move_over_line >= 0 else max(pitch_idx - 40, 0)
         pitch_window = lines[pitch_window_start : pitch_idx + 80]
         inner_a_pitch_merge_log = any(
-            "Merged" in line and "adjacent same-pitch notes into span" in line
+            "Merged" in line
+            and             (
+                "adjacent same-pitch notes into moving note range" in line
+                or "adjacent same-pitch notes into footprint" in line
+                or "adjacent same-pitch notes into span" in line
+            )
             for line in pitch_window
         )
         for line in lines[pitch_idx : pitch_idx + 80]:
@@ -2241,21 +2729,26 @@ def _verify_split_victim_round_trip(
         )
 
     if not inner_a_after_pitch:
-        issues.append("split_victim_inner_a_lost_at_pitch")
+        primary_issues.append("split_overlap_note_inner_a_lost_at_pitch")
     if inner_a_pitch_merge_log:
-        issues.append("split_victim_inner_a_merged_at_pitch")
+        primary_issues.append("split_overlap_note_inner_a_merged_at_pitch")
     if not inner_a_visible_after_move_past:
-        issues.append("split_victim_inner_a_missing_after_move_past")
+        primary_issues.append("split_overlap_note_inner_a_missing_after_move_past")
     if not inner_a_recaptured_at_home:
-        issues.append("split_victim_inner_a_missing_at_home")
+        primary_issues.append("split_overlap_note_inner_a_missing_at_home")
     if not mover_at_home:
-        issues.append("split_victim_mover_not_home")
+        primary_issues.append("split_overlap_note_mover_not_home")
     if not cross_pitch_no_shorten:
-        issues.append("split_victim_cross_pitch_shortened_long_m0")
+        primary_issues.append("split_overlap_note_cross_pitch_shortened_long_m0")
+
+    issues: list[str] = []
+    for issue in primary_issues:
+        _append_edit_verifier_issue(issues, issue)
 
     return {
-        "ok": len(issues) == 0,
+        "ok": len(primary_issues) == 0,
         "issues": issues,
+        "primary_issues": primary_issues,
         "inner_a_after_pitch": inner_a_after_pitch,
         "inner_a_visible_after_move_past": inner_a_visible_after_move_past,
         "inner_a_recaptured_at_home": inner_a_recaptured_at_home,
@@ -2264,6 +2757,18 @@ def _verify_split_victim_round_trip(
         "a_tick": a_tick,
         "m0_tick": m0_tick,
     }
+
+
+def _verify_split_victim_round_trip(
+    lines: list[str],
+    *,
+    layout: RecordLayout,
+    tick_tolerance: int = 24,
+) -> dict[str, object]:
+    """Legacy alias — prefer _verify_split_overlap_note_round_trip."""
+    return _verify_split_overlap_note_round_trip(
+        lines, layout=layout, tick_tolerance=tick_tolerance
+    )
 
 
 def _verify_edit_serial(
@@ -2286,16 +2791,27 @@ def _verify_edit_serial(
             issues.append(f"missing_marker:{m}")
     if len(revt_ticks) < min_revt_count:
         issues.append(f"revt_count_low:{len(revt_ticks)}<{min_revt_count}")
-    undo_log_count = _count_serial_substrings(lines, "Overdub undone")
-    redo_log_count = _count_serial_substrings(lines, "Overdub redone")
+    undo_log_count = (
+        _count_serial_substrings(lines, "NoteEditSession undo")
+        + _count_serial_substrings(lines, "Note edit span undone")
+        + _count_serial_substrings(lines, "Overdub undone")
+    )
+    redo_log_count = (
+        _count_serial_substrings(lines, "NoteEditSession redo")
+        + _count_serial_substrings(lines, "Overdub redone")
+    )
     if undo_log_count < min_undo_logs:
         issues.append(f"undo_log_low:{undo_log_count}<{min_undo_logs}")
     if redo_log_count < min_redo_logs:
         issues.append(f"redo_log_low:{redo_log_count}<{min_redo_logs}")
 
     move_display: Optional[dict[str, object]] = None
+    beat_move_routing: Optional[dict[str, object]] = None
     m0_warmup: Optional[dict[str, object]] = None
     if verify_move_display:
+        beat_move_routing = _verify_beat_move_routing(lines)
+        if not beat_move_routing.get("ok"):
+            issues.extend(beat_move_routing.get("issues", []))
         move_display = _verify_edit_move_display(lines)
         if not move_display.get("ok"):
             issues.extend(move_display.get("issues", []))
@@ -2316,13 +2832,21 @@ def _verify_edit_serial(
         if not long_over_short_pitch.get("ok"):
             issues.extend(long_over_short_pitch.get("issues", []))
 
-    split_victim_round_trip: Optional[dict[str, object]] = None
+    change_length_store: Optional[dict[str, object]] = None
     if verify_long_over_short_pitch and record_layout is not None:
-        split_victim_round_trip = _verify_split_victim_round_trip(
+        change_length_store = _verify_change_length_store_rebuild(
             lines, layout=record_layout
         )
-        if not split_victim_round_trip.get("ok"):
-            issues.extend(split_victim_round_trip.get("issues", []))
+        if not change_length_store.get("ok"):
+            issues.extend(change_length_store.get("issues", []))
+
+    split_overlap_note_round_trip: Optional[dict[str, object]] = None
+    if verify_long_over_short_pitch and record_layout is not None:
+        split_overlap_note_round_trip = _verify_split_overlap_note_round_trip(
+            lines, layout=record_layout
+        )
+        if not split_overlap_note_round_trip.get("ok"):
+            issues.extend(split_overlap_note_round_trip.get("issues", []))
 
     note_lengths: Optional[dict[str, object]] = None
     if verify_note_lengths:
@@ -2339,10 +2863,13 @@ def _verify_edit_serial(
         "undo_log_count": undo_log_count,
         "redo_log_count": redo_log_count,
         "move_display": move_display,
+        "beat_move_routing": beat_move_routing,
         "m0_warmup": m0_warmup,
         "insert_reorder": insert_reorder,
         "long_over_short_pitch": long_over_short_pitch,
-        "split_victim_round_trip": split_victim_round_trip,
+        "change_length_store": change_length_store,
+        "split_overlap_note_round_trip": split_overlap_note_round_trip,
+        "split_victim_round_trip": split_overlap_note_round_trip,
         "note_lengths": note_lengths,
     }
 
@@ -3177,13 +3704,27 @@ def main() -> int:
                     f"{long_over_short.get('inner_a_visible_after_move_past')}/"
                     f"{long_over_short.get('inner_p0_ok')}"
                 )
-            split_victim = serial_verification.get("edit", {}).get("split_victim_round_trip")
-            if split_victim:
+            change_length_store = serial_verification.get("edit", {}).get(
+                "change_length_store"
+            )
+            if change_length_store:
                 print(
-                    f"  split-victim AC: pitch_ok={split_victim.get('inner_a_after_pitch')} "
-                    f"past_ok={split_victim.get('inner_a_visible_after_move_past')} "
-                    f"home_ok={split_victim.get('inner_a_recaptured_at_home')} "
-                    f"no_cross_shorten={split_victim.get('cross_pitch_no_shorten_on_long_m0')}"
+                    f"  change-length store: commits={change_length_store.get('change_length_commit_count')} "
+                    f"post_commit_snap={change_length_store.get('post_commit_snapshot_line')} "
+                    f"pitch_change={change_length_store.get('overlap_pitch_change_line')} "
+                    f"post_pitch_snap={change_length_store.get('post_pitch_snapshot_line')} "
+                    f"reselect_b={change_length_store.get('reselect_b_line')} "
+                    f"post_reselect_snap={change_length_store.get('post_reselect_b_snapshot_line')}"
+                )
+            split_round_trip = serial_verification.get("edit", {}).get(
+                "split_overlap_note_round_trip"
+            ) or serial_verification.get("edit", {}).get("split_victim_round_trip")
+            if split_round_trip:
+                print(
+                    f"  split-overlap-note AC: pitch_ok={split_round_trip.get('inner_a_after_pitch')} "
+                    f"past_ok={split_round_trip.get('inner_a_visible_after_move_past')} "
+                    f"home_ok={split_round_trip.get('inner_a_recaptured_at_home')} "
+                    f"no_cross_shorten={split_round_trip.get('cross_pitch_no_shorten_on_long_m0')}"
                 )
             note_lengths = serial_verification.get("edit", {}).get("note_lengths")
             if note_lengths:

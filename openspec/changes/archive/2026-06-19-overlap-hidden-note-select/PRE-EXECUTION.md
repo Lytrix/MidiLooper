@@ -165,3 +165,47 @@ No user sign-off required if defaults OK; otherwise say before `/opsx:apply`.
 - [x] §6 investigations done from `212149` capture — see CLARIFICATIONS **Investigation outcomes**
 - [x] §7 HITL only at slice boundaries
 - [x] C14/C15 locked (2026-06-19)
+- [x] §11 demoted APIs + grep gate (C18, 2026-06-19)
+- [x] C16 Phase 1 sign-off scope; C17 new-tick select rule
+
+---
+
+## 11. Demoted APIs — grep gate (C18)
+
+**Purpose:** Prevent reintroducing **212149** conflict paths. See [CLARIFICATIONS.md](./CLARIFICATIONS.md) **C18** for full table.
+
+### Must pass (Phase 1 firmware — task 6.3)
+
+```bash
+# No positive-index focus rebuild from UI
+rg 'rebuildNoteEditFocusAtSelect\([^,]+,\s*[^-]' src include --glob '*.{cpp,h}'
+# Expect: no matches (only -1 clear calls allowed)
+
+# NoteEditManager: no bare getCachedNotes except selectableDisplayNotesForEditUi fallback
+rg 'getCachedNotes' src/NoteEditManager.cpp
+# Expect: single hit — return track.getCachedNotes() inside selectableDisplayNotesForEditUi when !session active
+```
+
+**Verified 2026-06-19:** `rebuildNoteEditFocusAtSelect` only at `NoteEditManager.cpp:466,1244` with `-1`. `getCachedNotes` only at `NoteEditManager.cpp:1104` (fallback).
+
+### Phase 1 migrated (use these)
+
+| Concern | API |
+|---------|-----|
+| Select/display inventory | `NoteEditManager::selectableDisplayNotesForEditUi` → `filterSelectableDisplayNotes` |
+| Fader-1 focus rebuild | `EditManager::rebuildNoteEditFocusForDisplayNote` |
+| Clear focus | `rebuildNoteEditFocusAtSelect(track, -1)` only |
+| Delete boundary | `deleteSelectedNote` C6 sequence |
+| Display NOTE_EDIT | `DisplayManager::resolveDisplayNotes` → `liveDisplayNotes` when session active |
+
+### Deferred — do not extend demoted patterns (Phase 2+)
+
+| File | Still uses `getCachedNotes` / legacy | Phase |
+|------|--------------------------------------|-------|
+| `EditStartNoteState.cpp`, `EditLengthNoteState.cpp`, `EditPitchNoteState.cpp`, `EditSelectNoteState.cpp` | Encoder FSM | 2b (**C7**) |
+| `EditManager.cpp` (`selectNextNote`, `selectPrevNote`, `selectClosestNote`) | Bracket chord nav | 2a or post-1 |
+| `MidiFaderProcessor.cpp` | Fader routing | 2a |
+| `NoteMovementUtils.cpp` | Post-move cache refresh | 2a/2c |
+| `DisplayManager.cpp:251` | NOTE_EDIT before session active | OK — no filter yet |
+
+When touching deferred files, **port to filtered inventory** — do not copy old index-into-cache patterns from pre-Phase-1 code.

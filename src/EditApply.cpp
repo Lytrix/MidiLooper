@@ -44,7 +44,7 @@ bool isNoteOffFor(const MidiEvent& evt, uint8_t channel, uint8_t note) {
 
 /// A NoteRef identifies a single note by (channel, note, startTick, endTick): its note-on
 /// sits at startTick and its note-off at endTick. We resolve exactly one note-on and one
-/// note-off so an edit never bleeds onto a same-pitch neighbor that shares a tick.
+/// note-off so an edit never bleeds onto a same-pitch overlap note that shares a tick.
 int findNoteOnIndex(const MidiEventVec& events, const NoteRef& ref) {
   for (size_t i = 0; i < events.size(); ++i) {
     if (isNoteOnFor(events[i], ref.channel, ref.note) && events[i].tick == ref.startTick) {
@@ -60,6 +60,28 @@ int findNoteOffIndex(const MidiEventVec& events, const NoteRef& ref, int skipInd
       continue;
     }
     if (isNoteOffFor(events[i], ref.channel, ref.note) && events[i].tick == ref.endTick) {
+      return static_cast<int>(i);
+    }
+  }
+  return -1;
+}
+
+/// Resolve note-off for a NoteRef; exact end tick first, then LIFO pair from note-on.
+int findNoteOffForRef(const MidiEventVec& events, const NoteRef& ref) {
+  const int onIndex = findNoteOnIndex(events, ref);
+  if (onIndex < 0) {
+    return -1;
+  }
+  const int exact = findNoteOffIndex(events, ref, onIndex);
+  if (exact >= 0) {
+    return exact;
+  }
+  for (size_t i = static_cast<size_t>(onIndex) + 1; i < events.size(); ++i) {
+    const MidiEvent& evt = events[i];
+    if (isNoteOnFor(evt, ref.channel, ref.note) && evt.tick > ref.startTick) {
+      break;
+    }
+    if (isNoteOffFor(evt, ref.channel, ref.note) && evt.tick >= ref.startTick) {
       return static_cast<int>(i);
     }
   }
@@ -119,12 +141,17 @@ void applyChangeLength(MidiEventVec& events, const NoteRef& ref, uint32_t newEnd
     return;
   }
 
+  if (newEnd < ref.endTick) {
+    shortenNoteEnd(events, ref, newEnd);
+    return;
+  }
+
   loopLength = inferLoopLength(events, loopLength);
   const uint32_t newStart = ref.startTick;
   const uint32_t displayNewEnd = newEnd % loopLength;
 
   const std::vector<NoteUtils::DisplayNote> allNotes =
-      NoteUtils::reconstructNotes(events, loopLength);
+      NoteUtils::reconstructNotes(events, loopLength, false);
   std::vector<NoteUtils::DisplayNote> notesToDelete;
   std::vector<std::pair<NoteUtils::DisplayNote, uint32_t>> notesToShorten;
 
@@ -176,19 +203,21 @@ void applyChangeLength(MidiEventVec& events, const NoteRef& ref, uint32_t newEnd
   }
 
   for (const auto& [note, shortenedEnd] : notesToShorten) {
-    NoteRef victim{ref.channel, note.note, note.startTick, note.endTick};
-    shortenNoteEnd(events, victim, shortenedEnd);
+    NoteRef overlapNoteRef{ref.channel, note.note, note.startTick, note.endTick};
+    shortenNoteEnd(events, overlapNoteRef, shortenedEnd);
   }
   for (const NoteUtils::DisplayNote& note : notesToDelete) {
-    NoteRef victim{ref.channel, note.note, note.startTick, note.endTick};
-    applyDeleteNote(events, victim);
+    NoteRef overlapNoteRef{ref.channel, note.note, note.startTick, note.endTick};
+    applyDeleteNote(events, overlapNoteRef);
   }
 
   NoteRef currentRef = ref;
   const int onIndex = findNoteOnIndex(events, currentRef);
-  const int offIndex = findNoteOffIndex(events, currentRef, onIndex);
+  const int offIndex = findNoteOffForRef(events, currentRef);
   if (offIndex >= 0) {
     events[offIndex].tick = newEnd;
+  } else if (onIndex >= 0) {
+    events.push_back(MidiEvent::NoteOff(newEnd, ref.channel, ref.note, 0));
   }
 
   NoteUtils::orderSamePitchNoteOffsForLifo(events, ref.channel, ref.note);
@@ -202,6 +231,41 @@ void applyAddNote(MidiEventVec& events, const EditChange& change) {
   }
   std::sort(events.begin(), events.end(),
             [](const MidiEvent& a, const MidiEvent& b) { return a.tick < b.tick; });
+}
+
+bool noteRefSameIdentity(const NoteRef& a, const NoteRef& b) {
+  return a.channel == b.channel && a.note == b.note && a.startTick == b.startTick &&
+         a.endTick == b.endTick;
+}
+
+void applyEditChangeList(MidiEventVec& events, const EditChangeList& changes,
+                         uint32_t loopLengthTicks) {
+  NoteRef trackedBaseline{};
+  uint32_t trackedStart = 0;
+  uint32_t trackedEnd = 0;
+  bool tracked = false;
+
+  for (const EditChange& change : changes) {
+    EditChange resolved = change;
+    if (tracked) {
+      if (noteRefSameIdentity(resolved.target, trackedBaseline)) {
+        resolved.target.startTick = trackedStart;
+        resolved.target.endTick = trackedEnd;
+      }
+    }
+    applyEditChange(events, resolved, loopLengthTicks);
+    if (resolved.type == EditChangeType::MoveNote) {
+      trackedBaseline = change.target;
+      trackedStart = change.newStartTick;
+      trackedEnd = change.newEndTick;
+      tracked = true;
+    } else if (resolved.type == EditChangeType::ChangeLength) {
+      trackedBaseline = change.target;
+      trackedStart = change.target.startTick;
+      trackedEnd = change.newEndTick;
+      tracked = true;
+    }
+  }
 }
 
 }  // namespace
@@ -239,9 +303,7 @@ void applyEditsToFlat(const TakeVec& takes, const EditVec& edits, MidiEventVec& 
     if (edit.state != EditState::Active) {
       continue;
     }
-    for (const EditChange& change : edit.changes) {
-      applyEditChange(out, change, loopLengthTicks);
-    }
+    applyEditChangeList(out, edit.changes, loopLengthTicks);
   }
 }
 
