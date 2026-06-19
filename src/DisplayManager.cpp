@@ -12,6 +12,7 @@
 #include "Utils/NoteUtils.h"
 #include "TickPhase.h"
 #include "NoteEditManager.h"
+#include "NoteEditFocus.h"
 #include "MidiHandler.h"
 #include "Utils/HotPathTelemetry.h"
 #include "Utils/DebugSessionCapture.h"
@@ -237,9 +238,16 @@ const std::vector<DisplayNote>& DisplayManager::resolveDisplayNotes(const Track&
         return track.getCachedNotes();
     }
 
-    // NOTE_EDIT: session store (editAware) is the live edit buffer; use it for display.
+    // NOTE_EDIT: session store (editAware) is the live edit buffer; filter for Hidden / inner overlap.
     if (noteEditManager.getCurrentMainEditMode() == NoteEditManager::MAIN_MODE_NOTE_EDIT) {
         invalidateLiveDisplayCache();
+        const uint32_t loopLength = resolveDisplayLoopLength(track, displaySlot, currentTick);
+        if (editManager.isNoteEditActive() && loopLength > 0) {
+            const NoteEditFocus& focus = editManager.getNoteEditSession().focus;
+            liveDisplayNotes = filterSelectableDisplayNotes(track.editAwareMidiEvents(), focus,
+                                                            track.getMidiChannel(), loopLength);
+            return liveDisplayNotes;
+        }
         return track.getCachedNotes();
     }
 
