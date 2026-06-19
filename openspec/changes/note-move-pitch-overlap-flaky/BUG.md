@@ -305,6 +305,7 @@ Rules when unlocked:
 | 2026-06-18 | `origSpanEnd = max(origEnd, lastEnd)` | Uploaded; full rerun interrupted — **inconclusive** |
 | 2026-06-18 | Verifier: tick tolerance, select-sync filter | Same 231858 log → overlap verifier **passes**; firmware merge still present |
 | 2026-06-18 | **Root-cause closed** | H1+H2 confirmed; design session required |
+| 2026-06-19 | **AC4** (M0 home, overlap round-trip) | Pass on HITL `203729`: `m0_home_ok`, `mover_at_home`, split overlap `inner_a_recaptured_at_home`; firmware via [note-edit-modification-session](../note-edit-modification-session/tasks.md) + [change-length-commit-rematerialize](../change-length-commit-rematerialize/BUG.md) Track A/B. **AC5–AC6** short-over-long: verifier flags still false (`short_over_long_forward`/`restore`); **AC7** insert/reorder still fail (Track C). |
 
 ---
 

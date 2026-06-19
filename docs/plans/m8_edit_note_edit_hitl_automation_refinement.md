@@ -80,7 +80,7 @@ Re-select with **fader 1** before each **fader 2** move. Allow ~650 ms after fad
 | 11–12 | Move over deleted slot | Fader 1 re-select, fader 2 → 17 / 19 | no ghost events |
 | 13 | Pitch through **P0** | Fader 1 → **M0**, fader 4 CC3 up | pitch overlap |
 | 14 | Exit edit | Long **38** (~700 ms) | `exited edit mode` |
-| 15 | Global undo | Double **36** | `Overdub undone` or post-M8 **`NoteEditSessionCommitted`** |
+| 15 | Global undo | Double **36** | `Note edit span undone` (+ `Overdub undone` track event) |
 
 Between move scenarios, re-select the note under edit with **fader 1**, then move with **fader 2**.
 
@@ -89,7 +89,7 @@ Between move scenarios, re-select the note under edit with **fader 1**, then mov
 - [x] Short **38** enters edit overlay + forces **NOTE_EDIT** main mode.
 - [x] Double **35** (NOTELEN) → **`DELETE_OR_CREATE_NOTE`** (delete when selected, create at empty bracket).
 - [x] Double **38** → delete selected note.
-- [ ] Post-M8: exit edit → **`closeNoteEditSpan()`** → single **`NoteEditSessionCommitted`**.
+- [x] Post-M8: exit edit → **`closeNoteEditSpan()`** → single **`NoteEditSessionCommitted`** (verified by `host_midi_automation_edit_baseline.py --require-m8-span-verify`).
 
 `BarStepButtonHandler::executeNoteEditAction` remains for on-device UI when not playing; **HITL does not drive ch16 step buttons for selection.**
 
@@ -97,7 +97,7 @@ Between move scenarios, re-select the note under edit with **fader 1**, then mov
 
 Same as record/overdub baseline: external serial capture mandatory; fail if transitions missing, heartbeat abort, or fixture `REVT` count/ticks mismatch after record.
 
-Edit-specific: parse serial for delete/create/move log lines; optional `#CAP,REVT` snapshot after exit (may require flush wait). After M8, assert **`NoteEditSessionCommitted`** once on exit.
+Edit-specific: parse serial for delete/create/move log lines; optional `#CAP,REVT` snapshot after exit (may require flush wait). **`host_midi_automation_edit_baseline.py`** asserts **`NoteEditSessionCommitted`** exactly once on exit (default **`--require-m8-span-verify`**). See [`.cursor/rules/HITL-Edit-Test-Flow.mdc`](../../.cursor/rules/HITL-Edit-Test-Flow.mdc).
 
 ## Native tests (m8-edit §4)
 

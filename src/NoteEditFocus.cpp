@@ -270,7 +270,7 @@ EditChangeList buildPreCommitOverlapEditChanges(const NoteEditFocus& focus) {
 
   for (const auto& [ref, entry] : focus.overlapNotes) {
     (void)ref;
-    if (entry.state == OverlapNoteStoreState::Hidden) {
+    if (entry.state == OverlapNoteStoreState::Hidden && !entry.preCommitEmitted) {
       EditChange del;
       del.type = EditChangeType::DeleteNote;
       del.target = entry.ref;

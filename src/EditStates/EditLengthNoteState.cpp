@@ -6,36 +6,25 @@
 #include "Track.h"
 #include "Logger.h"
 #include "Utils/MidiEventVecFnvHash.h"
-#include "Utils/NoteUtils.h"
 #include "Utils/NoteMovementUtils.h"
-#include "Globals.h"
-#include <algorithm>
+#include "NoteEditFocus.h"
 
 void EditLengthNoteState::onEnter(EditManager& manager, Track& track, uint32_t startTick) {
     logger.debug("EditLengthNoteState::onEnter");
-    
-    // Store initial hash for commit-on-exit
+
     initialHash = midiEventVecFnv1aHash(track.editAwareMidiEvents());
     manager.pushSessionUndoBeforeMutation(track);
-    
+
     manager.selectClosestNote(track, startTick);
-    
+
     if (manager.getSelectedNoteIdx() >= 0) {
-          uint32_t loopLength = track.getLoopLength();
-  const auto& notes = track.getCachedNotes();
-        
-        if (manager.getSelectedNoteIdx() < (int)notes.size()) {
-            auto& selectedNote = notes[manager.getSelectedNoteIdx()];
-            targetRef_ = {track.getMidiChannel(), selectedNote.note, selectedNote.startTick,
-                          selectedNote.endTick};
-            uint32_t noteEnd = selectedNote.endTick;
-            manager.setBracketTick(noteEnd % loopLength);
-            
-            logger.info("EditLengthNoteState: Selected note %d for length editing, moved bracket to end position %lu", 
-                       manager.getSelectedNoteIdx(), noteEnd % loopLength);
-        } else {
-            logger.info("EditLengthNoteState: Selected note %d for length editing", manager.getSelectedNoteIdx());
-        }
+        const NoteUtils::DisplayNote selected = manager.liveEditDisplayNoteAtSelect(track);
+        targetRef_ = {track.getMidiChannel(), selected.note, selected.startTick,
+                      selected.endTick};
+        const uint32_t loopLength = track.getLoopLength();
+        manager.setBracketTick(selected.endTick % loopLength);
+        logger.info("EditLengthNoteState: selected note for length edit, bracket at end %lu",
+                    static_cast<unsigned long>(selected.endTick % loopLength));
     } else {
         logger.info("EditLengthNoteState: No note selected, will create new note");
     }
@@ -43,113 +32,76 @@ void EditLengthNoteState::onEnter(EditManager& manager, Track& track, uint32_t s
 
 void EditLengthNoteState::onExit(EditManager& manager, Track& track) {
     logger.debug("EditLengthNoteState::onExit");
-    // Note: commit-on-exit hash checking is handled in EditManager::setState
 }
 
 void EditLengthNoteState::onEncoderTurn(EditManager& manager, Track& track, int delta) {
     logger.debug("EditLengthNoteState::onEncoderTurn called with delta=%d", delta);
-    
-    if (manager.getSelectedNoteIdx() < 0) {
-        logger.debug("EditLengthNoteState: No note selected, selectedNoteIdx=%d", manager.getSelectedNoteIdx());
+
+    if (manager.getSelectedNoteIdx() < 0 || delta == 0) {
         return;
     }
-    
-    auto& midiEvents = track.editAwareMidiEvents();
-    uint32_t loopLength = track.getLoopLength();
-    
-    logger.debug("EditLengthNoteState: Loop length=%lu, MIDI events count=%zu", loopLength, midiEvents.size());
-    
+
+    const uint32_t loopLength = track.getLoopLength();
     if (loopLength == 0) {
-        logger.debug("EditLengthNoteState: Loop length is 0, cannot edit");
         return;
     }
-    
-    // Use cached notes to find the selected one
-    const auto& notes = track.getCachedNotes();
-    if (manager.getSelectedNoteIdx() >= (int)notes.size()) {
-        logger.debug("EditLengthNoteState: Selected note index %d out of range (notes size: %zu)", 
-                     manager.getSelectedNoteIdx(), notes.size());
-        return;
+
+    const NoteUtils::DisplayNote liveNote = manager.liveEditDisplayNoteAtSelect(track);
+    manager.ensureNoteEditFocusForLiveEdit(track, liveNote);
+
+    const uint8_t notePitch = liveNote.note;
+    const uint32_t noteStart = liveNote.startTick;
+    uint32_t currentEnd = liveNote.endTick;
+    const NoteEditFocus& focus = manager.getNoteEditSession().focus;
+    if (focus.active && focus.last.pitch == liveNote.note &&
+        focus.last.startTick == liveNote.startTick) {
+        currentEnd = focus.last.endTick;
     }
-    
-    auto& selectedNote = notes[manager.getSelectedNoteIdx()];
-    uint8_t notePitch = selectedNote.note;
-    uint32_t noteStart = selectedNote.startTick;
-    uint32_t currentEnd = selectedNote.endTick;
-    
-    logger.debug("EditLengthNoteState: Selected note - pitch=%d, start=%lu, end=%lu", 
-                 notePitch, noteStart, currentEnd);
-    
-    // Calculate length change using single tick increments (same as EditStartNoteState)
-    // Each delta step represents one tick for fine-grained control
-    int lengthDelta = delta;
-    
-    logger.debug("EditLengthNoteState: Length delta calculation - delta=%d, lengthDelta=%d", 
-                 delta, lengthDelta);
-    
-    // Calculate new end position by moving the current end
-    // Handle potential underflow when lengthDelta is negative
+
+    const int lengthDelta = delta;
     uint32_t newEnd;
-    
     if (lengthDelta >= 0) {
-        // Moving forwards - simple addition
-        newEnd = currentEnd + lengthDelta;
+        newEnd = currentEnd + static_cast<uint32_t>(lengthDelta);
     } else {
-        // Moving backwards - check constraints first
-        uint32_t deltaAbs = (uint32_t)(-lengthDelta);
-        uint32_t minEnd = noteStart + 1;  // Minimum allowed end position
-        
+        const uint32_t deltaAbs = static_cast<uint32_t>(-lengthDelta);
+        const uint32_t minEnd = noteStart + 1;
         if (currentEnd <= minEnd) {
-            // Already at minimum, cannot go backwards
             newEnd = minEnd;
         } else if (deltaAbs >= (currentEnd - noteStart)) {
-            // Would go past or to the start position, clamp to minimum
             newEnd = minEnd;
         } else {
-            // Safe to move backwards
             newEnd = currentEnd - deltaAbs;
-            
-            // Double-check the result doesn't go past start
             if (newEnd <= noteStart) {
                 newEnd = minEnd;
             }
         }
     }
-    
-    // Calculate current note length for validation
-    uint32_t currentLength;
-    if (currentEnd >= noteStart) {
-        currentLength = currentEnd - noteStart;
-    } else {
-        // Wrapped note
-        currentLength = (loopLength - noteStart) + currentEnd;
-    }
-    
-    // Calculate new length for validation
+
     uint32_t newLength;
     if (newEnd >= noteStart) {
         newLength = newEnd - noteStart;
     } else {
-        // Wrapped note
         newLength = (loopLength - noteStart) + newEnd;
     }
-    
-    // Constrain to maximum length (one loop)
     if (newLength > loopLength) {
         newEnd = noteStart + loopLength;
-        newLength = loopLength;
     }
-    
-    logger.debug("EditLengthNoteState: Changing note end from %lu to %lu (delta=%d)", 
-                 currentEnd, newEnd, lengthDelta);
-    
-    NoteUtils::DisplayNote selected = selectedNote;
+
+    logger.debug("EditLengthNoteState: changing note end from %lu to %lu",
+                 static_cast<unsigned long>(currentEnd),
+                 static_cast<unsigned long>(newEnd));
+
+    NoteUtils::DisplayNote selected = liveNote;
+    if (focus.active) {
+        selected = {focus.last.pitch, focus.last.velocity, focus.last.startTick, focus.last.endTick};
+    }
     NoteMovementUtils::changeLengthWithOverlapHandling(track, manager, selected, newEnd);
-    
-    // Re-select the note by finding it again in the updated note list
-    const auto& updatedNotes = track.getCachedNotes();
-    for (int i = 0; i < (int)updatedNotes.size(); ++i) {
-        if (updatedNotes[i].note == notePitch && updatedNotes[i].startTick == noteStart) {
+
+    const std::vector<NoteUtils::DisplayNote> updatedNotes =
+        manager.selectableDisplayNotesAtEditSelect(track);
+    for (int i = 0; i < static_cast<int>(updatedNotes.size()); ++i) {
+        if (updatedNotes[static_cast<size_t>(i)].note == notePitch &&
+            updatedNotes[static_cast<size_t>(i)].startTick == noteStart) {
             manager.setSelectedNoteIdx(i);
             break;
         }
@@ -158,5 +110,4 @@ void EditLengthNoteState::onEncoderTurn(EditManager& manager, Track& track, int 
 
 void EditLengthNoteState::onButtonPress(EditManager& manager, Track& track) {
     logger.debug("EditLengthNoteState::onButtonPress - exiting length edit mode");
-    // This will be handled by the MidiButtonManager cycling logic
-} 
+}

@@ -31,7 +31,21 @@ flowchart LR
   committedEvents --> sdSave[StorageManager flatten on save]
 ```
 
-**Rule:** Hot playback paths use `loop.eventAt(i)` / `committedEvents.readStore()` (chunk index). Edit, validation, and SD I/O still go through `loop.midiEvents()` (lazy flatten → optional sync back to chunks via `invalidateCaches()` → `syncFlatToStore()`).
+**Rule:** Hot playback paths use take/chunk indexed access plus **`applyEdits(takes, edits)`** for display/live view. During **NoteEditSession**, mutations go to **`EditManager::noteEditSession.store`**; **`saveEdit()`** appends to `Loop::edits[]` without collapsing takes.
+
+### M8 — Take / Capture / Edit / NoteEditSession
+
+| Layer | Storage | Undo |
+|-------|---------|------|
+| **Take** | `Loop::takes[]` (record/overdub) | `TakeCommitted` |
+| **Edit** | `Loop::edits[]` (`Edit` + `EditChange` + `NoteRef`) | `NoteEditSessionCommitted` (per span) |
+| **NoteEditSession** | RAM `noteEditSession.store` while editing | `NoteEditSessionUndoStack` (before `saveEdit`) |
+
+- **`applyEdits(takes, edits)`** — playback/display materialization; takes unchanged by note edit.
+- **`closeNoteEditSpan()`** — overdub start + note-edit exit; pushes **`NoteEditSessionCommitted`** for all **Edit** ids in the span.
+- **SD v4 tail** — `edits[]` persisted after takes (`StorageLoopIo`); `autosaveIntervalMs` (5 min) + urgent flush on note-edit exit when dirty.
+
+**Future session names (not implemented):** **LoopEditSession**, **ControlChangeEditSession**; playback/jam session **TBD**.
 
 ---
 

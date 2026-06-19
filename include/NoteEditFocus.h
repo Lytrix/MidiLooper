@@ -54,6 +54,19 @@ struct OverlapNote {
   OverlapNoteStoreState state = OverlapNoteStoreState::Visible;
   uint32_t shortenedEndTick = 0;
   bool innerUnderMovingNote = false;
+  /// Hidden overlap **DeleteNote** already saved in **Edits[]** — skip re-emit; keep for pitch lane restore.
+  bool preCommitEmitted = false;
+};
+
+/// Scratch payload for re-inserting a hidden/shortened overlap note into session store events.
+struct OverlapNoteRestore {
+  uint8_t pitch = 0;
+  uint8_t velocity = 64;
+  uint32_t startTick = 0;
+  uint32_t endTick = 0;
+  uint32_t originalLength = 0;
+  bool wasShortened = false;
+  uint32_t shortenedToTick = 0;
 };
 
 using OverlapNoteMap =
@@ -104,6 +117,8 @@ NoteBaseline baselineForDisplayNote(const NoteEditFocus& focus, uint8_t channel,
                                     const NoteUtils::DisplayNote& dn);
 
 /// Read-only scan of loop MIDI events → full-loop baseline inventory.
+/// **Internal / legacy encoder only** until Phase 2b — do not pass fader-1 **filtered** `selectedNoteIdx`
+/// from NOTE_EDIT UI; use **rebuildNoteEditFocusForDisplayNote** instead (C14).
 void rebuildNoteEditFocusFromStore(NoteEditFocus& focus, const MidiEventVec& loopMidiEvents,
                                    uint8_t channel, uint32_t loopLength,
                                    int selectedNoteIdx);

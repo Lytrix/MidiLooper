@@ -13,7 +13,10 @@ openspec/
 │   └── multi-loop-slots/    # 8 slots per track (shipped)
 └── changes/
     ├── m8-edit/             # ACTIVE — Edit op-lists + NoteEditSession
-    ├── note-move-pitch-overlap-flaky/   # OPEN BUG — root-cause phase (see BUG.md)
+    ├── m8-pass-vocabulary/  # ACTIVE — pass replaces span (record/overdub/edit pass)
+    ├── note-edit-modification-session/  # ACTIVE — one owner, A1+B1 overlap (parent)
+    ├── note-move-pitch-overlap-flaky/   # BUG evidence — superseded by modification-session
+    ├── lengthen-overlap-neighbor-restore/  # BUG evidence — superseded by modification-session
     └── archive/
         ├── 2026-06-18-m8-rename/   # Take/Capture vocabulary (archived)
         └── 20260617-parked-jam-recording-d13/   # D13 deferred (see PARKED.md)
@@ -53,7 +56,11 @@ early; timeline plan uses JamRecorder + actions first.
 | `docs/DELIVERABLE_TRACKING.md` | Shipped vs next overview |
 | `openspec/specs/` | Normative SHALL/MUST specs |
 | `openspec/changes/m8-edit/` | Active M8 edit tasks |
-| `openspec/changes/note-move-pitch-overlap-flaky/BUG.md` | **Open bug** — root-cause closed; [design.md](./design.md) agreed |
+| `openspec/changes/m8-pass-vocabulary/` | **Active** — **edit pass** vocabulary (replaces span) |
+| `openspec/changes/note-edit-modification-session/` | **Active** — note overlap focus owner (A1 + B1) |
+| `openspec/changes/change-length-commit-rematerialize/` | **Active bug** — ChangeLength rematerialize HITL (Track A/B) |
+| `openspec/changes/note-move-pitch-overlap-flaky/BUG.md` | Bug evidence — implementation in modification-session |
+| `openspec/changes/lengthen-overlap-neighbor-restore/BUG.md` | Bug evidence — overlap note restore HITL AC (legacy folder name) |
 | `openspec/changes/archive/2026-06-18-m8-rename/` | Archived Take/Capture rename |
 
 ## CLI maintenance

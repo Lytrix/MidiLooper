@@ -3,7 +3,6 @@
 
 #pragma once
 #include "MidiEvent.h"
-#include "EditManager.h"
 #include <vector>
 #include <cstdint>
 
@@ -12,20 +11,6 @@
  * @brief Common MIDI event operations to reduce code duplication
  */
 namespace MidiEventUtils {
-
-/**
- * @brief Creates a DeletedNote structure from a DisplayNote
- * @param note The display note to convert
- * @param loopLength The current loop length
- * @param wasShortened Whether this note was shortened (vs completely deleted)
- * @param shortenedToTick If shortened, the tick it was shortened to (0 if deleted)
- * @return Populated DeletedNote structure
- */
-EditManager::MovingNoteIdentity::DeletedNote createDeletedNote(
-    const NoteUtils::DisplayNote& note, 
-    uint32_t loopLength,
-    bool wasShortened = false, 
-    uint32_t shortenedToTick = 0);
 
 /**
  * @brief Finds a NoteOn event matching the specified criteria
@@ -76,4 +61,4 @@ findNoteEventPair(
  */
 MidiEvent createNoteEvent(bool isNoteOn, uint8_t pitch, uint8_t velocity, uint32_t tick);
 
-} // namespace MidiEventUtils 
+} // namespace MidiEventUtils

@@ -51,6 +51,8 @@ public:
     /** One nav slot per note (multiple per 16th when notes share a step) or empty grid step. */
     static std::vector<SelectNavigation::SelectNavSlot> buildSelectNavigationSlots(
         const Track& track, uint32_t bracketTick, bool includeBracketIfMissing = true);
+    /// NOTE_EDIT UI list: filtered when **NoteEditSession** active, else **getCachedNotes()** copy.
+    static std::vector<NoteUtils::DisplayNote> selectableDisplayNotesForEditUi(const Track& track);
 
     // Loop editing is now handled by LoopEditManager
     LoopEditManager loopEditManager;
@@ -61,6 +63,8 @@ public:
     void toggleLengthEditingMode();
     /** Force position-edit routing when opening or closing a note-edit session. */
     void resetLengthEditingModeOnSessionBoundary();
+    /** Return fader 2/3 to position edit after fader-1 note select (leaves length mode). */
+    void resetLengthEditingModeOnNoteSelect();
     
     // Legacy methods - to be replaced by unified system
     void sendStartNotePitchbend(Track& track);  // Sends coarse pitchbend ch15 and fine CC2 ch15
@@ -81,14 +85,7 @@ public:
     //                                  const std::vector<NoteUtils::DisplayNote>& notesToDelete,
     //                                  EditManager& manager, std::uint32_t loopLength,
     //                                  NoteUtils::EventIndexMap& onIndex, NoteUtils::EventIndexMap& offIndex);
-    // void restoreTemporaryNotes(std::vector<MidiEvent>& midiEvents,
-    //                           const std::vector<EditManager::MovingNoteIdentity::DeletedNote>& notesToRestore,
-    //                           EditManager& manager, std::uint32_t loopLength,
-    //                           NoteUtils::EventIndexMap& onIndex, NoteUtils::EventIndexMap& offIndex);
-    
-    // void extendShortenedNotes(std::vector<MidiEvent>& midiEvents,
-    //                          const std::vector<std::pair<EditManager::MovingNoteIdentity::DeletedNote, std::uint32_t>>& notesToExtend,
-    //                          EditManager& manager, std::uint32_t loopLength);
+    // void restoreTemporaryNotes(...); — removed with MovingNoteIdentity (Phase 2d)
 
 
 

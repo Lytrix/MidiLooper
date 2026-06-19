@@ -3,7 +3,7 @@
 **Change:** `note-edit-modification-session`  
 **Status:** Design locked (2026-06-19)  
 **Aligns with:** [m8-edit/design.md](../m8-edit/design.md) (**NoteEditSession**, **EditChange**)  
-**Vocabulary:** [m8-pass-vocabulary](../m8-pass-vocabulary/design.md) — **edit pass**, **focus**, **overlap footprint**; **moving note**, **overlap note**
+**Vocabulary:** [m8-pass-vocabulary](../m8-pass-vocabulary/design.md) — **edit pass**, **focus**, **moving note range**; **moving note**, **overlap note**
 
 **Child bug evidence:**
 
@@ -17,7 +17,7 @@
 1. **One owner** for note geometry overlap during note edit.
 2. **One source of truth** for live MIDI: `NoteEditSession.store` via `editAwareMidiEvents()`.
 3. **Baseline at note select** — full note inventory from materialized store (includes overlap notes from Take).
-4. **A1** — separate **overlap footprint** from **commitBaseline**.
+4. **A1** — separate **moving note range** from **commitBaseline**.
 5. **B1** — rematerialize via `applyEdits`; pre-commit resolve makes store commit-ready.
 6. **Incremental updates** — mutate only the moving note and overlap notes touched by overlap/restore.
 
@@ -38,7 +38,7 @@ NoteEditSession (EditManager)          ← note edit mode
 ├── focus                              ← single moving note (replaces movingNote scratch)
 │   ├── moving                         ← NoteRef + live start/end/pitch
 │   ├── commitBaseline                 ← frozen at fader-1 select (A1)
-│   ├── overlapFootprint               ← start/end for inner/overlap tests (A1)
+│   ├── movingNoteRange                ← start/end for inner/overlap tests (A1)
 │   └── overlapNotes                   ← impacted OverlapNote entries only
 ├── undoStack                          ← in-pass undo (before saveEdit)
 └── passEditIds / pendingChanges       ← M8 (legacy: spanEditIds)
@@ -54,20 +54,20 @@ during edit; committed state is `edits[]` replayed by `applyEdits`.
 
 ---
 
-## Decision A1 — commit baseline vs overlap footprint
+## Decision A1 — commit baseline vs moving note range
 
 Two fields; **do not** overload `origEnd`.
 
 | Field | Purpose | Updated when |
 |-------|---------|--------------|
-| **commitBaseline** `{start,end,pitch}` | Compare vs live for `commitPending*`; **NoteRef** target for **EditChange** | **Fader-1 select**; after successful commit (advance baseline to live) |
-| **overlapFootprint** `{start,end}` | Inner, contained delete, lane-merge classification | Length edit (`end = lastEnd`); move (`end = lastEnd`); pitch lane merge only when external overlap note merged |
+| **commitBaseline** `{start,end,pitch}` | Compare vs live for `commitAllPendingNoteEditActions`; **NoteRef** target for **EditChange** | **Fader-1 select**; after successful commit (advance baseline to live) |
+| **movingNoteRange** `{start,end}` | Inner, contained delete, lane-merge classification | Length edit (`end = lastEnd`); move (`end = lastEnd`); pitch lane merge only when external overlap note merged |
 | **last** `{start,end,pitch}` | Current mover geometry | Every move / length / pitch apply |
 
-**Length edit:** MUST update `overlapFootprint.end = lastEnd`. MUST NOT update `commitBaseline.end`
-until commit — so `commitPendingLengthAction` still detects pending **ChangeLength**.
+**Length edit:** MUST update `movingNoteRange.end = lastEnd`. MUST NOT update `commitBaseline.end`
+until commit — so `commitAllPendingNoteEditActions` still detects pending **ChangeLength**.
 
-**Pitch lane merge (external):** may extend `overlapFootprint.end`. **Inner preserve:** must not extend footprint.
+**Pitch lane merge (external):** may extend `movingNoteRange.end`. **Inner preserve:** must not extend moving note range.
 
 ---
 
@@ -85,7 +85,7 @@ until commit — so `commitPendingLengthAction` still detects pending **ChangeLe
 
 ```text
 focus.commitBaseline     = baselineMap[selected NoteRef]
-focus.overlapFootprint   = { start: commitBaseline.start, end: commitBaseline.end }
+focus.movingNoteRange    = { start: commitBaseline.start, end: commitBaseline.end }
 focus.last            = commitBaseline
 focus.overlapNotes.clear()
 focus.moving          = selected NoteRef + live geometry
@@ -104,8 +104,11 @@ moving baseline). **OverlapNote** entries **copy** from baselineMap when first i
 | **baselineMap** | Restore geometry for overlap notes | Filled once at select; read-only |
 | **overlapNotes** | hidden / shortened / visible per **OverlapNote** | Overlap engine only |
 
-**Removed / merged:** `movingNote.deletedNotes`, `sessionDeletedNotes`, `sessionShortenedVictims`
-→ **`focus.overlapNotes`** (`OverlapNote` replaces `DeletedNote`).
+**Removed / merged (fader path):** overlap hide/shorten scratch → **`focus.overlapNotes`**
+(`OverlapNote` replaces `DeletedNote`).
+
+**Still present (encoder path — task 8.1):** `movingNote.deletedNotes` in `EditStartNoteState`;
+`sessionHiddenOverlapNotes` / `sessionShortenedOverlapNotes` cleared but unused.
 
 Hidden overlap note = absent from **store**; full geometry in **baselineMap** + **OverlapNote** state.
 
@@ -118,7 +121,7 @@ Hidden overlap note = absent from **store**; full geometry in **baselineMap** + 
 After **saveEdit**, canonical state is **takes + edits[]**. `loop.rematerializeEditView(store)`
 rebuilds from `applyEdits` (already in `commitEditAction`).
 
-### Pre-commit resolve (before `commitPendingMove/Length/Pitch`)
+### Pre-commit resolve (before `commitAllPendingNoteEditActions`)
 
 When fader-1 reselect, state exit, or explicit commit boundary:
 
@@ -141,7 +144,7 @@ When fader-1 reselect, state exit, or explicit commit boundary:
 | Live fader edit | Moving note events + overlap note **NoteRef**s entering/leaving overlap |
 | Pre-commit resolve | **Only** `overlapNotes` entries + moving note |
 | `applyEditChange` replay | **Only** **NoteRef** targets in each **EditChange** |
-| Rematerialize full store | Rebuild flat from takes+edits (unchanged M8); edits list stays sparse |
+| Rematerialize full store | Rebuild loop MIDI events from Takes + Edits (unchanged M8); edits list stays sparse |
 
 Do **not** re-run overlap simulation on rematerialize (rejects B2). Do **not** flatten and rewrite
 all notes on each fader CC.
@@ -159,11 +162,11 @@ replay matches live session without **overlapNotes** scratch.
 ```text
 applyNoteEditChange(kind):
   1. restoreOverlapNotesNoLongerOverlapping()   // overlapNotes + store; impacted refs only
-  2. classify overlaps vs overlapFootprint
+  2. classify overlaps vs movingNoteRange
   3. apply shorten / contained delete → overlapNotes + store patch
   4. mutate moving note in store
-  5. update focus.last; update overlapFootprint per A1 rules
-  6. invalidateCaches / syncFlat if needed
+  5. update focus.last; update movingNoteRange per A1 rules
+  6. invalidateCaches / sync session store if needed
 ```
 
 **Pitch** and **move** share steps 1–3. **Length** skips overlap classify unless extending
@@ -192,7 +195,7 @@ No overlap tracking for CC/velocity.
 
 | Layer | Criterion |
 |-------|-----------|
-| Native | A1 split: length updates overlapFootprint not commitBaseline until commit |
+| Native | A1 split: length updates movingNoteRange not commitBaseline until commit |
 | Native | Pre-commit: only overlapNotes + mover in store diff |
 | Native | `applyEdits` parity after lengthen → move → pitch → move back |
 | Native | Shared-release boundary (A@496 case) |
@@ -243,7 +246,7 @@ struct OverlapNote {
   NoteBaseline baseline;          // copy from baselineMap at first impact
   OverlapNoteStoreState state;
   uint32_t shortenedEndTick = 0;  // valid when state == Shortened (live note-off tick)
-  bool innerUnderFootprint = false; // set when visible after pitch but still inside footprint
+  bool innerUnderMovingNote = false; // set when visible after pitch but still inside moving note range
 };
 ```
 
@@ -254,7 +257,7 @@ struct NoteEditFocus {
   bool active = false;
   NoteRef moving;                 // selected note identity
   NoteBaseline commitBaseline;    // A1 — frozen at select until commit
-  struct { uint32_t start, end; } overlapFootprint;
+  MovingNoteRange movingNoteRange;
   NoteBaseline last;              // live moving note geometry
   BaselineMap baselineMap;
   /* OverlapNote collection */ overlapNotes;  // NoteRef → OverlapNote, impacted only
@@ -268,22 +271,22 @@ struct NoteEditFocus {
 The **moving note is never shortened by overlap** — only user move / length / pitch edits
 change the mover. Overlap logic applies to **other** notes (**overlap notes**).
 
-Classification uses mover span `[last.start, last.end]` (display-unwrapped) vs each candidate
+Classification uses moving note range `[last.start, last.end]` (display-unwrapped) vs each candidate
 same-pitch overlap note (cross-pitch uses separate short-over-long rules in engine).
 
 | Overlap shape | Action on overlap note | `OverlapNote.state` | Store |
 |---------------|------------------------|---------------------|-------|
-| Fully **contained** in mover span | Remove note pair | **Hidden** | absent |
+| Fully **contained** in moving note range | Remove note pair | **Hidden** | absent |
 | Starts **before** mover, tail crosses mover start | Note-off → `moverStart - 1` (wrap-aware) | **Shortened** | truncated pair |
 | Shortened gate **&lt; 49 ticks** | Remove pair (too short to keep) | **Hidden** | absent |
 | Starts **after** mover start (unusual partial) | Remove pair | **Hidden** | absent |
-| **Inner** under `overlapFootprint` | Skip — preserve | not added / unchanged | unchanged |
-| Already **Shortened** victim tracked | Update `shortenedEndTick` only | **Shortened** | update off tick |
+| **Inner** under `movingNoteRange` | Skip — preserve | not added / unchanged | unchanged |
+| Already **Shortened** overlap note tracked | Update `shortenedEndTick` only | **Shortened** | update off tick |
 | **Cross-pitch** short-over-long | Tail shorten or hide per existing rules | **Shortened** or **Hidden** | per engine |
 
 **Lengthen** on the moving note uses the same classifier (`changeLengthWithOverlapHandling` →
 `findOverlaps`): extending end into another same-pitch note can **shorten** or **hide** that
-overlap note; `overlapFootprint.end` updates (A1).
+overlap note; `movingNoteRange.end` updates (A1).
 
 **Restore:** when mover moves away, `restoreOverlapNotesNoLongerOverlapping()`:
 
@@ -310,14 +313,14 @@ DeleteNote { target: NoteRef@baseline }
 | From | Event | To | Notes |
 |------|-------|-----|-------|
 | — | First overlap impact | **Hidden** or **Shortened** | Copy `baseline` from `baselineMap` |
-| **Hidden** | Pitch restore (lane clear) + still inner | **Visible** + `innerUnderFootprint=true` | Reinsert in store; stay in `overlapNotes` |
+| **Hidden** | Pitch restore (lane clear) + still inner | **Visible** + `innerUnderMovingNote=true` | Reinsert in store; stay in `overlapNotes` |
 | **Visible** (inner) | Move covers again | **Hidden** | Re-hide from baseline |
 | **Visible** | Move uncovers | remove entry | Store matches baseline |
 | **Shortened** | Move uncovers | **Visible** or remove | Restore full gate from baseline |
 | **Shortened** | Further overlap | **Shortened** | Update `shortenedEndTick` |
 | any | Pre-commit resolve | **Visible** in store | Then emit EditChanges; clear entry |
 
-Pitch restore MUST NOT drop `innerUnderFootprint` until mover leaves footprint or commit clears focus.
+Pitch restore MUST NOT drop `innerUnderMovingNote` until mover leaves moving note range or commit clears focus.
 
 ---
 
@@ -381,7 +384,7 @@ Until removal: keep green in CI; mark deprecated in suite README.
 
 | Verifier | Action |
 |----------|--------|
-| `_verify_split_victim_round_trip` | **Review dedup** with `_verify_long_over_short_pitch_restore` after PR 4; merge if redundant |
+| `_verify_split_overlap_note_round_trip` | **Review dedup** with `_verify_long_over_short_pitch_restore` after PR 4; merge if redundant |
 | `_verify_delay_move_insert_reorder` | **Keep separate** — D-delay insert scenario; out of scope unless same root cause proven |
 | P0 `original_end=1535` in `_verify_note_length_integrity` | **Investigate** (task 0.1) before gating PR 4 on it |
 

@@ -1,7 +1,7 @@
 # BUG — Hidden overlap notes selectable; display/delete drift from session store
 
 **Change:** `overlap-hidden-note-select`  
-**Status:** OpenSpec proposed (2026-06-19) — expanded to **architecture milestone** ([architecture-review.md](./architecture-review.md))  
+**Status:** Phase 1 signed off (**AC1–AC5** pass on capture **`233328`**, 2026-06-19)  
 **Evidence:** `captures/host_midi_automation_edit_baseline_20260619_212149_serial.log` + JSON report
 
 **Related:**
@@ -123,23 +123,44 @@ Segment: after `_run_delay_move_insert_reorder` setup — **delete B @ step 4**;
 - After contained hide during move, fader-1 slot at inner note tick MUST NOT list **Hidden** overlap note index.
 - Serial: no `Select fader: selected note N` where N is **Hidden** **overlapNotes** baseline (new log or verifier).
 
+| Status | Capture | Notes |
+|--------|---------|-------|
+| **Pass** | `233328` | No select on unrestored Hidden; 2 hide events, restores before re-select at same ticks |
+
 ### AC2 — No bracket hop on third-note select
 
 - Single fader-1 select after overlap chain: bracket tick == selected note start; no second corrective select within 500 ms unless user moves fader.
+
+| Status | Capture | Notes |
+|--------|---------|-------|
+| **Fail** | `212149` @ 89.332s | Index/tick mismatch pre-fix |
+| **Pass** | `233328` | 6 DNTE-backed selects aligned; no index≠tick class |
 
 ### AC3 — Delete targets selected note
 
 - `Deleting note pitch=%d, start=%lu` MUST match fader-selected note (fixture B: pitch **64**, start **200** ±16th tolerance).
 - Post-delete reconstruction: B absent; lengthened M0 (or committed mover) **present** at edited length/position.
 
+| Status | Capture | Notes |
+|--------|---------|-------|
+| **Fail** | `212149` @ 111.702s | Deleted M67@8; ChangeLength on mover before delete |
+| **Pass** | `223829`, **`233328`** | `Deleting note pitch=64, start=208`; no pre-delete ChangeLength on mover |
+
 ### AC4 — Display matches session store
 
 - In NOTE_EDIT, display note list equals `reconstructNotes(session store)` minus **Hidden** overlap notes (same filter as AC1).
-- Optional HITL: compare REVT / DNTE sample to display verifier (extend edit baseline when AC1–AC3 green).
+
+| Status | Capture | Notes |
+|--------|---------|-------|
+| **Pass** | `233328` | 11 `#CAP DISP` frames; frameNotes≤flatEvents (filtered path) |
 
 ### AC5 — Moved notes survive delete
 
 - Notes committed or live-moved before delete remain at edited ticks in post-delete `applyEdits` replay (D@872 move, etc. — fixture-specific).
+
+| Status | Capture | Notes |
+|--------|---------|-------|
+| **Pass** | `233328` | M67@16–688 + D@880 survive; session_store 14→12 (B only); no 212149-class reset |
 
 ---
 
@@ -148,4 +169,6 @@ Segment: after `_run_delay_move_insert_reorder` setup — **delete B @ step 4**;
 | Date | Result |
 |------|--------|
 | 2026-06-19 | OpenSpec `overlap-hidden-note-select` opened from user report + `212149` capture |
-| 2026-06-19 | Prior partial fixes: delete pre-commit chain, length-mode reset on select, hot-path materialize removed (stability) — **delete/select/display still broken** |
+| 2026-06-19 | Prior partial fixes: delete pre-commit chain, length-mode reset on select, hot-path materialize removed — **delete/select/display still broken** |
+| 2026-06-19 | Phase 1 A–D: filter, display, select (`rebuildNoteEditFocusForDisplayNote`), C6 delete rewrite; **C18** demoted API grep gate |
+| 2026-06-19 | HITL **`233328`**: **Phase 1 sign-off** — AC1–AC5 pass (`verify_overlap_hidden_ac.py`); parent `edit.ok=false` non-gating (**C16**) |

@@ -62,13 +62,26 @@ public:
     void pushSessionUndoBeforeMutation(Track& track);
     bool sessionUndo(Track& track);
     bool sessionRedo(Track& track);
-    /// Commit completed fader edits (NoteEditManager path) before reselect / exit.
-    void commitPendingMoveAction(Track& track);
-    void commitPendingLengthAction(Track& track);
-    void commitPendingPitchAction(Track& track);
+    /// Pre-commit resolve + single saveEdit at fader-1 reselect / exit / overdub start.
     void commitAllPendingNoteEditActions(Track& track);
-    /// Rebuild focus baseline map from session store after fader-1 note select.
+    /// Persist overlap note Hidden/Shortened scratch into Edits[] before restore-on-move-away.
+    void commitPendingOverlapNoteEdits(Track& track);
+    /// Live edit hot path: materialize overlap scratch into session store only (no rematerialize).
+    void materializeOverlapScratchToSessionStore(Track& track);
+    /// Ensure **focus** is active before overlap utils (rebuild from live **DisplayNote** when needed).
+    void ensureNoteEditFocusForLiveEdit(Track& track,
+                                        const NoteUtils::DisplayNote& fallbackWhenNoFocus);
+    /// Clear focus only (`selectedNoteIdx == -1`). Do **not** pass a filtered or unfiltered list index —
+    /// use **rebuildNoteEditFocusForDisplayNote** for fader-1 select (C14).
     void rebuildNoteEditFocusAtSelect(Track& track, int selectedNoteIdx);
+    /// Fader-1 select: baseline from Takes+Edits; **focus.last** from live **DisplayNote** (filtered index safe).
+    void rebuildNoteEditFocusForDisplayNote(Track& track, const NoteUtils::DisplayNote& liveSelected);
+    /// Remap or clear **selectedNoteIdx** when filtered inventory no longer matches **focus.last**.
+    void syncSelectedNoteIdxToFilteredInventory(Track& track);
+    /// Filtered select inventory during note edit; else cached notes (encoder + fader).
+    std::vector<NoteUtils::DisplayNote> selectableDisplayNotesAtEditSelect(const Track& track) const;
+    /// Live mover geometry: **focus.last** when active, else inventory at **selectedNoteIdx**.
+    NoteUtils::DisplayNote liveEditDisplayNoteAtSelect(const Track& track) const;
     MidiEventVec& sessionMidiEvents();
     const MidiEventVec& sessionMidiEvents() const;
 
@@ -86,6 +99,11 @@ public:
     EditNoteState* getCurrentState() const { return currentState; }
     uint32_t getBracketTick() const { return bracketTick; }
     int getSelectedNoteIdx() const { return selectedNoteIdx; }
+    /// Last successful fader-1 select **NoteRef** (delete target when set).
+    bool hasLastFader1SelectRef() const { return lastFader1SelectRef.channel != 0; }
+    const NoteRef& getLastFader1SelectRef() const { return lastFader1SelectRef; }
+    void setLastFader1SelectRef(const NoteRef& ref);
+    void clearLastFader1SelectRef();
     // Reset selection
     void resetSelection();
     void setSelectedNoteIdx(int idx);
@@ -151,38 +169,6 @@ public:
     // Map: Track* -> note -> list of removed notes
     std::map<const Track*, std::map<uint8_t, std::vector<RemovedNote>>> temporarilyRemovedNotes;
 
-    struct MovingNoteIdentity {
-        uint8_t note = 0;
-        uint8_t origPitch = 0;
-        uint32_t origStart = 0;
-        uint32_t origEnd = 0;
-        uint32_t lastStart = 0;  // Track previous position for direction detection
-        uint32_t lastEnd = 0;    // Track previous end position
-        int wrapCount = 0; // how many times the note has wrapped
-        bool active = false;
-        int movementDirection = 0; // -1 = left, 0 = none, 1 = right
-        MidiEventVec deletedEvents; // Events that were deleted due to overlap
-        std::vector<uint32_t> deletedEventIndices; // Original indices for restoration
-        
-        // Simple note storage for restoration
-        struct DeletedNote {
-            uint8_t note, velocity;
-            uint32_t startTick, endTick;
-            uint32_t originalLength; // Store original note length for consistent restoration
-            bool wasShortened = false; // true if note was shortened, false if completely deleted
-            uint32_t shortenedToTick = 0; // if shortened, what tick it was shortened to
-        };
-        std::vector<DeletedNote> deletedNotes;
-        bool undoSnapshotPushed = false; // snapshot only once after first movement
-    };
-    MovingNoteIdentity movingNote;
-
-    /** Shortened overlap victims for the active note-edit session (survives fader-1 reselect). */
-    std::vector<MovingNoteIdentity::DeletedNote> sessionShortenedVictims;
-
-    /** Fully removed overlap victims (incl. short inserted notes); survives fader-1 reselect. */
-    std::vector<MovingNoteIdentity::DeletedNote> sessionDeletedNotes;
-
     /**
      * @brief Returns the undo count to display: frozen during edit states, real count otherwise
      */
@@ -191,6 +177,7 @@ public:
 private:
     uint32_t bracketTick = 0;
     int selectedNoteIdx = -1; // -1 means no note selected
+    NoteRef lastFader1SelectRef{};
     bool hasMovedBracket = false; // true if the bracket has been moved since entering edit mode
     // Temporarily store undo count when entering an edit state to freeze display until exit
     size_t undoCountOnStateEnter = 0;

@@ -4,36 +4,25 @@
 #include "EditPitchNoteState.h"
 #include "EditManager.h"
 #include "Track.h"
-#include <vector>
-#include <algorithm>
-#include <cstdint>
 #include "Logger.h"
-#include <map>
 #include "Utils/MidiEventVecFnvHash.h"
-#include "Utils/NoteUtils.h"
-
-using DisplayNote = NoteUtils::DisplayNote;
+#include "Utils/NoteMovementUtils.h"
+#include "NoteEditFocus.h"
 
 void EditPitchNoteState::onEnter(EditManager& manager, Track& track, uint32_t startTick) {
     logger.debug("Entered EditPitchNoteState");
-    // Commit-on-enter: snapshot and hash initial MIDI events
     initialHash = midiEventVecFnv1aHash(track.editAwareMidiEvents());
     manager.pushSessionUndoBeforeMutation(track);
     logger.debug("Snapshot on enter (pitch), initial hash: %u", initialHash);
-    
+
     if (manager.getSelectedNoteIdx() >= 0) {
-          uint32_t loopLength = track.getLoopLength();
-  const auto& notes = track.getCachedNotes();
-        
-        if (manager.getSelectedNoteIdx() < (int)notes.size()) {
-            auto& selectedNote = notes[manager.getSelectedNoteIdx()];
-            targetRef_ = {track.getMidiChannel(), selectedNote.note, selectedNote.startTick,
-                          selectedNote.endTick};
-            uint32_t noteStart = selectedNote.startTick;
-            manager.setBracketTick(noteStart % loopLength);
-            
-            logger.debug("EditPitchNoteState: Moved bracket to note start position %lu", noteStart % loopLength);
-        }
+        const NoteUtils::DisplayNote selected = manager.liveEditDisplayNoteAtSelect(track);
+        targetRef_ = {track.getMidiChannel(), selected.note, selected.startTick,
+                      selected.endTick};
+        const uint32_t loopLength = track.getLoopLength();
+        manager.setBracketTick(selected.startTick % loopLength);
+        logger.debug("EditPitchNoteState: bracket at note start %lu",
+                     static_cast<unsigned long>(selected.startTick % loopLength));
     }
 }
 
@@ -42,32 +31,27 @@ void EditPitchNoteState::onExit(EditManager& manager, Track& track) {
 }
 
 void EditPitchNoteState::onEncoderTurn(EditManager& manager, Track& track, int delta) {
-    int noteIdx = manager.getSelectedNoteIdx();
-    if (noteIdx < 0) return;
-    auto& midiEvents = track.editAwareMidiEvents();
-    uint32_t loopLength = track.getLoopLength();
-    // Use cached notes for optimal performance
-    const auto& notes = track.getCachedNotes();
-    
-    if (noteIdx >= (int)notes.size()) return;
-    // Find the corresponding MidiEvent indices for this note
-    const auto& dn = notes[noteIdx];
-    // Find the NoteOn and NoteOff events in midiEvents using non-const iterators
-    auto onIt = std::find_if(midiEvents.begin(), midiEvents.end(), [&](MidiEvent& evt) {
-        return evt.type == midi::NoteOn && evt.data.noteData.note == dn.note && evt.tick == dn.startTick;
-    });
-    auto offIt = std::find_if(midiEvents.begin(), midiEvents.end(), [&](MidiEvent& evt) {
-        return (evt.type == midi::NoteOff || (evt.type == midi::NoteOn && evt.data.noteData.velocity == 0)) && evt.data.noteData.note == dn.note && evt.tick == dn.endTick;
-    });
-    if (onIt == midiEvents.end() || offIt == midiEvents.end()) return;
-    // Change pitch, wrap 0-127
-    int newPitch = ((int)dn.note + delta + 128) % 128;
-    onIt->data.noteData.note = newPitch;
-    offIt->data.noteData.note = newPitch;
-    // Update selection in manager
-    manager.selectClosestNote(track, onIt->tick);
+    if (manager.getSelectedNoteIdx() < 0 || delta == 0) {
+        return;
+    }
+
+    const NoteUtils::DisplayNote liveNote = manager.liveEditDisplayNoteAtSelect(track);
+    manager.ensureNoteEditFocusForLiveEdit(track, liveNote);
+
+    const int newPitch = (static_cast<int>(liveNote.note) + delta + 128) % 128;
+    if (newPitch == static_cast<int>(liveNote.note)) {
+        return;
+    }
+
+    uint32_t noteStart = liveNote.startTick;
+    uint32_t noteEnd = liveNote.endTick;
+    const NoteUtils::DisplayNote pitchTarget{liveNote.note, liveNote.velocity, noteStart, noteEnd};
+    NoteMovementUtils::applyNoteEditChange(
+        track, manager, NoteMovementUtils::NoteEditChangeKind::Pitch, pitchTarget, 0, 0, 0,
+        liveNote.note, static_cast<uint8_t>(newPitch), noteStart, noteEnd);
 }
 
 void EditPitchNoteState::onButtonPress(EditManager& manager, Track& track) {
-    // No-op for pitch edit
-} 
+    (void)manager;
+    (void)track;
+}

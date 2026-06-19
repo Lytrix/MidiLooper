@@ -16,6 +16,7 @@
 #include "Utils/NoteUtils.h"
 #include "MidiHandler.h"
 #include "NoteEditManager.h"
+#include "NoteEditFocus.h"
 #include <algorithm>
 #include <map>
 #include <vector>
@@ -23,132 +24,161 @@
 
 using DisplayNote = NoteUtils::DisplayNote;
 
-#include "Utils/MidiEventVecFnvHash.h"
+namespace {
+
+void markOverlapDeleteChangesEmitted(NoteEditFocus& focus, const EditChangeList& changes) {
+    for (const EditChange& ch : changes) {
+        if (ch.type != EditChangeType::DeleteNote) {
+            continue;
+        }
+        if (OverlapNote* entry = findOverlapNoteEntry(focus, ch.target)) {
+            entry->preCommitEmitted = true;
+        }
+    }
+}
+
+void clearCommittedOverlapScratchExceptHidden(NoteEditFocus& focus) {
+    for (auto it = focus.overlapNotes.begin(); it != focus.overlapNotes.end();) {
+        if (it->second.state == OverlapNoteStoreState::Hidden) {
+            ++it;
+        } else {
+            it = focus.overlapNotes.erase(it);
+        }
+    }
+}
+
+}  // namespace
+
 #include "NoteEditFocus.h"
+#include "Edit.h"
+#include "Take.h"
 
 namespace {
 
-uint32_t computeEditAwareHash(const Track& track) {
-    return midiEventVecFnv1aHash(track.editAwareMidiEvents());
-}
-
-EditChangeList buildMoveCommitChanges(const EditManager& manager, const Track& track) {
-    EditChangeList changes;
-    if (!manager.movingNote.active) {
-        return changes;
-    }
-    const uint8_t channel = track.getMidiChannel();
-    EditChange move;
-    move.type = EditChangeType::MoveNote;
-    move.target = {channel, manager.movingNote.origPitch, manager.movingNote.origStart,
-                   manager.movingNote.origEnd};
-    move.newStartTick = manager.movingNote.lastStart;
-    move.newEndTick = manager.movingNote.lastEnd;
-    changes.push_back(move);
-    for (const auto& [ref, entry] : manager.getNoteEditSession().focus.overlapNotes) {
-        (void)ref;
-        if (entry.state != OverlapNoteStoreState::Hidden) {
-            continue;
-        }
-        EditChange del;
-        del.type = EditChangeType::DeleteNote;
-        del.target = entry.ref;
-        changes.push_back(del);
-    }
-    return changes;
-}
-
-void EditManager::commitPendingMoveAction(Track& track) {
-    if (!noteEditSession.active || !movingNote.active) {
-        return;
-    }
-    const bool positionChanged = movingNote.lastStart != movingNote.origStart;
-    bool hasOverlapDeletes = false;
-    for (const auto& [ref, entry] : noteEditSession.focus.overlapNotes) {
-        (void)ref;
-        if (entry.state == OverlapNoteStoreState::Hidden) {
-            hasOverlapDeletes = true;
-            break;
+void logChangeLengthCommitTrace(const char* stage,
+                                const MidiEventVec& flat,
+                                uint32_t loopLength,
+                                uint8_t homePitch,
+                                uint32_t homeStart) {
+    const std::vector<DisplayNote> notes =
+        NoteUtils::reconstructNotes(flat, loopLength, false);
+    for (const DisplayNote& n : notes) {
+        if (n.note == homePitch && n.startTick == homeStart) {
+            logger.log(CAT_TRACK, LOG_INFO,
+                       "commitEditAction %s: M%d start=%lu end=%lu flatEvents=%u",
+                       stage, static_cast<unsigned>(homePitch),
+                       static_cast<unsigned long>(n.startTick),
+                       static_cast<unsigned long>(n.endTick),
+                       static_cast<unsigned>(flat.size()));
+            return;
         }
     }
-    if (!positionChanged && !hasOverlapDeletes) {
-        return;
-    }
-    const EditId id = commitEditAction(track, buildMoveCommitChanges(*this, track));
-    if (id == kInvalidEditId) {
-        return;
-    }
-    movingNote.origStart = movingNote.lastStart;
-    movingNote.origEnd = movingNote.lastEnd;
-    movingNote.origPitch = movingNote.note;
-    for (auto it = noteEditSession.focus.overlapNotes.begin();
-         it != noteEditSession.focus.overlapNotes.end();) {
-        if (it->second.state == OverlapNoteStoreState::Hidden) {
-            it = noteEditSession.focus.overlapNotes.erase(it);
-        } else {
-            ++it;
-        }
-    }
-    sessionDeletedNotes.clear();
-    sessionShortenedVictims.clear();
+    logger.log(CAT_TRACK, LOG_INFO,
+               "commitEditAction %s: M%d@%lu missing in recon flatEvents=%u",
+               stage, static_cast<unsigned>(homePitch),
+               static_cast<unsigned long>(homeStart),
+               static_cast<unsigned>(flat.size()));
 }
 
-void EditManager::commitPendingLengthAction(Track& track) {
-    if (!noteEditSession.active || !movingNote.active) {
-        return;
-    }
-    const uint32_t baselineEnd = noteEditSession.focus.active
-                                     ? noteEditSession.focus.commitBaseline.endTick
-                                     : movingNote.origEnd;
-    const uint32_t baselineStart = noteEditSession.focus.active
-                                       ? noteEditSession.focus.commitBaseline.startTick
-                                       : movingNote.origStart;
-    const uint8_t baselinePitch = noteEditSession.focus.active
-                                      ? noteEditSession.focus.commitBaseline.pitch
-                                      : movingNote.origPitch;
-    if (movingNote.lastEnd == baselineEnd) {
-        return;
-    }
-    EditChange ch;
-    ch.type = EditChangeType::ChangeLength;
-    ch.target = {track.getMidiChannel(), baselinePitch, baselineStart, baselineEnd};
-    ch.newEndTick = movingNote.lastEnd;
-    const EditId id = commitEditAction(track, EditChangeList{ch});
-    if (id == kInvalidEditId) {
-        return;
-    }
-    if (noteEditSession.focus.active) {
-        noteEditSession.focus.commitBaseline.endTick = movingNote.lastEnd;
-        noteEditSession.focus.last.endTick = movingNote.lastEnd;
-    }
-    movingNote.origEnd = movingNote.lastEnd;
-    logger.log(CAT_TRACK, LOG_INFO, "Edit committed ChangeLength end=%lu",
-               static_cast<unsigned long>(movingNote.lastEnd));
-}
+}  // namespace
 
-void EditManager::commitPendingPitchAction(Track& track) {
-    if (!noteEditSession.active || !movingNote.active) {
+void EditManager::ensureNoteEditFocusForLiveEdit(Track& track,
+                                                  const DisplayNote& fallbackWhenNoFocus) {
+    if (!noteEditSession.active || noteEditSession.focus.active) {
         return;
     }
-    if (movingNote.note == movingNote.origPitch) {
+    if (getSelectedNoteIdx() < 0) {
         return;
     }
-    EditChange ch;
-    ch.type = EditChangeType::ChangePitch;
-    ch.target = {track.getMidiChannel(), movingNote.origPitch, movingNote.origStart,
-                 movingNote.origEnd};
-    ch.newPitch = movingNote.note;
-    const EditId id = commitEditAction(track, EditChangeList{ch});
-    if (id == kInvalidEditId) {
-        return;
-    }
-    movingNote.origPitch = movingNote.note;
+    rebuildNoteEditFocusForDisplayNote(track, fallbackWhenNoFocus);
 }
 
 void EditManager::commitAllPendingNoteEditActions(Track& track) {
-    commitPendingMoveAction(track);
-    commitPendingLengthAction(track);
-    commitPendingPitchAction(track);
+    if (!noteEditSession.active || !noteEditSession.focus.active) {
+        return;
+    }
+
+    const uint8_t channel = track.getMidiChannel();
+    const uint32_t loopLength = track.getLoopLength();
+    if (loopLength == 0) {
+        return;
+    }
+
+    MidiEventVec& sessionStoreEvents = sessionMidiEvents();
+    resolveOverlapNotesForPreCommit(sessionStoreEvents, noteEditSession.focus, channel, loopLength);
+
+    EditChangeList changes = buildPreCommitEditChanges(noteEditSession.focus, channel);
+    if (changes.empty()) {
+        return;
+    }
+
+    for (const EditChange& ch : changes) {
+        if (ch.type == EditChangeType::ChangeLength) {
+            logger.log(CAT_TRACK, LOG_INFO,
+                       "Edit committed ChangeLength start=%lu baselineEnd=%lu newEnd=%lu",
+                       static_cast<unsigned long>(ch.target.startTick),
+                       static_cast<unsigned long>(ch.target.endTick),
+                       static_cast<unsigned long>(ch.newEndTick));
+        }
+    }
+
+    markOverlapDeleteChangesEmitted(noteEditSession.focus, changes);
+    const EditId id = commitEditAction(track, std::move(changes));
+    if (id == kInvalidEditId) {
+        return;
+    }
+
+    track.invalidateCaches();
+
+    noteEditSession.focus.commitBaseline = noteEditSession.focus.last;
+    noteEditSession.focus.movingNoteRange.start = noteEditSession.focus.last.startTick;
+    noteEditSession.focus.movingNoteRange.end = noteEditSession.focus.last.endTick;
+    clearCommittedOverlapScratchExceptHidden(noteEditSession.focus);
+}
+
+void EditManager::materializeOverlapScratchToSessionStore(Track& track) {
+    if (!noteEditSession.active || !noteEditSession.focus.active ||
+        noteEditSession.focus.overlapNotes.empty()) {
+        return;
+    }
+    const uint8_t channel = track.getMidiChannel();
+    const uint32_t loopLength = track.getLoopLength();
+    if (loopLength == 0) {
+        return;
+    }
+    MidiEventVec& sessionStoreEvents = sessionMidiEvents();
+    resolveOverlapNotesForPreCommit(sessionStoreEvents, noteEditSession.focus, channel,
+                                    loopLength);
+    track.getActiveLoop().markEditFlatDirty();
+}
+
+void EditManager::commitPendingOverlapNoteEdits(Track& track) {
+    if (!noteEditSession.active || !noteEditSession.focus.active) {
+        return;
+    }
+    const uint8_t channel = track.getMidiChannel();
+    const uint32_t loopLength = track.getLoopLength();
+    if (loopLength == 0) {
+        return;
+    }
+
+    EditChangeList changes = buildPreCommitOverlapEditChanges(noteEditSession.focus);
+    if (changes.empty()) {
+        return;
+    }
+
+    MidiEventVec& sessionStoreEvents = sessionMidiEvents();
+    resolveOverlapNotesForPreCommit(sessionStoreEvents, noteEditSession.focus, channel,
+                                    loopLength);
+
+    markOverlapDeleteChangesEmitted(noteEditSession.focus, changes);
+    const EditId id = commitEditAction(track, std::move(changes));
+    if (id == kInvalidEditId) {
+        return;
+    }
+
+    track.invalidateCaches();
+    clearCommittedOverlapScratchExceptHidden(noteEditSession.focus);
 }
 
 void EditManager::rebuildNoteEditFocusAtSelect(Track& track, int selectedNoteIdx) {
@@ -156,12 +186,125 @@ void EditManager::rebuildNoteEditFocusAtSelect(Track& track, int selectedNoteIdx
         noteEditSession.focus.clear();
         return;
     }
-    rebuildNoteEditFocusFromStore(noteEditSession.focus, sessionMidiEvents(),
-                                track.getMidiChannel(), track.getLoopLength(),
-                                selectedNoteIdx);
+    Loop& loop = track.getActiveLoop();
+    const uint8_t channel = track.getMidiChannel();
+    const uint32_t loopLength = track.getLoopLength();
+
+    // commitBaseline / baselineMap come from committed Takes + Edits replay, not the live
+    // session preview — otherwise a pending length preview (e.g. end 680) becomes baseline
+    // on fader-1 reselect and the next ChangeLength commit is a no-op on rematerialize.
+    MidiEventVec loopMidiEventsFromTakesAndEdits;
+    applyEditsToFlat(loop.takes, loop.edits, loopMidiEventsFromTakesAndEdits, loopLength);
+    rebuildNoteEditFocusFromStore(noteEditSession.focus, loopMidiEventsFromTakesAndEdits, channel,
+                                  loopLength, selectedNoteIdx);
+
+    const std::vector<DisplayNote> liveNotes =
+        NoteUtils::reconstructNotes(sessionMidiEvents(), loopLength, false);
+    if (selectedNoteIdx >= 0 &&
+        selectedNoteIdx < static_cast<int>(liveNotes.size())) {
+        const DisplayNote& live = liveNotes[static_cast<size_t>(selectedNoteIdx)];
+        noteEditSession.focus.last = {live.note, live.velocity, live.startTick, live.endTick};
+        if (noteEditSession.focus.last.endTick > noteEditSession.focus.commitBaseline.endTick) {
+            noteEditSession.focus.movingNoteRange.end = noteEditSession.focus.last.endTick;
+        }
+    }
 }
 
-}  // namespace
+void EditManager::rebuildNoteEditFocusForDisplayNote(Track& track,
+                                                     const DisplayNote& liveSelected) {
+    if (!noteEditSession.active) {
+        noteEditSession.focus.clear();
+        return;
+    }
+    Loop& loop = track.getActiveLoop();
+    const uint8_t channel = track.getMidiChannel();
+    const uint32_t loopLength = track.getLoopLength();
+    if (loopLength == 0) {
+        return;
+    }
+
+    MidiEventVec loopMidiEventsFromTakesAndEdits;
+    applyEditsToFlat(loop.takes, loop.edits, loopMidiEventsFromTakesAndEdits, loopLength);
+    rebuildNoteEditFocusFromStore(noteEditSession.focus, loopMidiEventsFromTakesAndEdits, channel,
+                                  loopLength, -1);
+
+    const NoteRef baselineRef =
+        findBaselineRefForNote(noteEditSession.focus, channel, liveSelected.note,
+                               liveSelected.startTick, liveSelected.endTick);
+    noteEditSession.focus.moving = baselineRef;
+    const auto baselineIt = noteEditSession.focus.baselineMap.find(baselineRef);
+    if (baselineIt != noteEditSession.focus.baselineMap.end()) {
+        noteEditSession.focus.commitBaseline = baselineIt->second;
+    } else {
+        noteEditSession.focus.commitBaseline = {liveSelected.note, liveSelected.velocity,
+                                                liveSelected.startTick, liveSelected.endTick};
+    }
+    noteEditSession.focus.last = {liveSelected.note, liveSelected.velocity, liveSelected.startTick,
+                                  liveSelected.endTick};
+    noteEditSession.focus.movingNoteRange.start = liveSelected.startTick;
+    noteEditSession.focus.movingNoteRange.end = liveSelected.endTick;
+    if (noteEditSession.focus.last.endTick > noteEditSession.focus.commitBaseline.endTick) {
+        noteEditSession.focus.movingNoteRange.end = noteEditSession.focus.last.endTick;
+    }
+    noteEditSession.focus.active = true;
+}
+
+void EditManager::syncSelectedNoteIdxToFilteredInventory(Track& track) {
+    if (!noteEditSession.active || selectedNoteIdx < 0) {
+        return;
+    }
+    const uint32_t loopLength = track.getLoopLength();
+    if (loopLength == 0) {
+        return;
+    }
+
+    const std::vector<DisplayNote> filtered = filterSelectableDisplayNotes(
+        sessionMidiEvents(), noteEditSession.focus, track.getMidiChannel(), loopLength);
+
+    if (!noteEditSession.focus.active) {
+        if (selectedNoteIdx >= static_cast<int>(filtered.size())) {
+            setSelectedNoteIdx(-1);
+        }
+        return;
+    }
+
+    const NoteBaseline& last = noteEditSession.focus.last;
+    int matchIdx = -1;
+    for (int i = 0; i < static_cast<int>(filtered.size()); ++i) {
+        const DisplayNote& dn = filtered[static_cast<size_t>(i)];
+        if (dn.note == last.pitch && dn.startTick == last.startTick) {
+            matchIdx = i;
+            break;
+        }
+    }
+    if (matchIdx < 0) {
+        setSelectedNoteIdx(-1);
+    } else if (matchIdx != selectedNoteIdx) {
+        setSelectedNoteIdx(matchIdx);
+    }
+}
+
+std::vector<DisplayNote> EditManager::selectableDisplayNotesAtEditSelect(const Track& track) const {
+    const uint32_t loopLength = track.getLoopLength();
+    if (isNoteEditActive()) {
+        return filterSelectableDisplayNotes(track.editAwareMidiEvents(), noteEditSession.focus,
+                                            track.getMidiChannel(), loopLength);
+    }
+    return track.getCachedNotes();
+}
+
+DisplayNote EditManager::liveEditDisplayNoteAtSelect(const Track& track) const {
+    const int idx = getSelectedNoteIdx();
+    const std::vector<DisplayNote> notes = selectableDisplayNotesAtEditSelect(track);
+    if (idx < 0 || idx >= static_cast<int>(notes.size())) {
+        return {};
+    }
+    if (isNoteEditActive() && noteEditSession.focus.active) {
+        const NoteBaseline& last = noteEditSession.focus.last;
+        return {last.pitch, last.velocity, last.startTick, last.endTick};
+    }
+    return notes[static_cast<size_t>(idx)];
+}
 
 EditManager editManager;
 
@@ -206,6 +349,7 @@ void EditManager::closeNoteEditSession(Track& track) {
     noteEditSession.active = false;
     noteEditSession.spanIndex = 0;
     noteEditSession.pendingChanges.clear();
+    clearLastFader1SelectRef();
 }
 
 EditId EditManager::commitEditAction(Track& track, EditChangeList changes) {
@@ -213,18 +357,80 @@ EditId EditManager::commitEditAction(Track& track, EditChangeList changes) {
         return kInvalidEditId;
     }
     Loop& loop = track.getActiveLoop();
+    const uint8_t homePitch = noteEditSession.focus.commitBaseline.pitch;
+    const uint32_t homeStart = noteEditSession.focus.commitBaseline.startTick;
+    const uint32_t loopLength = loop.loopLengthTicks;
+
+    for (const EditChange& ch : changes) {
+        if (ch.type == EditChangeType::ChangeLength) {
+            logger.log(CAT_TRACK, LOG_INFO,
+                       "commitEditAction incoming ChangeLength refCh=%u note=%u "
+                       "start=%lu baselineEnd=%lu newEnd=%lu",
+                       ch.target.channel, ch.target.note,
+                       static_cast<unsigned long>(ch.target.startTick),
+                       static_cast<unsigned long>(ch.target.endTick),
+                       static_cast<unsigned long>(ch.newEndTick));
+        }
+    }
+
     const EditId id = loop.saveEdit(noteEditSession.spanIndex, std::move(changes));
     if (id != kInvalidEditId) {
         noteEditSession.spanEditIds.push_back(id);
-        // NoteEditSession.store is the single ledger view (m8-edit Decision 7): rebuild it
-        // from applyEdits(takes, edits) so the committed working buffer equals the immutable
-        // takes + Edit ledger. Live fader edits only mutate the flat preview cache; without
-        // this rebuild the store froze at session-open state and the preview cache drifted
-        // from the ledger (stale-note-off / loop-end stretch on reselect).
-        loop.rematerializeEditView(noteEditSession.store.mutStore());
+
+        unsigned activeEdits = 0;
+        unsigned activeTakes = 0;
+        for (const Edit& e : loop.edits) {
+            if (e.state == EditState::Active) {
+                ++activeEdits;
+            }
+        }
+        for (const Take& t : loop.takes) {
+            if (t.state == TakeState::Active) {
+                ++activeTakes;
+            }
+        }
+        logger.log(CAT_TRACK, LOG_INFO,
+                   "commitEditAction trace: editId=%u activeEdits=%u activeTakes=%u span=%u",
+                   static_cast<unsigned>(id), activeEdits, activeTakes,
+                   static_cast<unsigned>(noteEditSession.spanIndex));
+
+        for (const Edit& e : loop.edits) {
+            if (e.id != id) {
+                continue;
+            }
+            for (const EditChange& ch : e.changes) {
+                if (ch.type == EditChangeType::ChangeLength) {
+                    logger.log(CAT_TRACK, LOG_INFO,
+                               "commitEditAction saved ChangeLength refCh=%u note=%u "
+                               "start=%lu baselineEnd=%lu newEnd=%lu",
+                               ch.target.channel, ch.target.note,
+                               static_cast<unsigned long>(ch.target.startTick),
+                               static_cast<unsigned long>(ch.target.endTick),
+                               static_cast<unsigned long>(ch.newEndTick));
+                }
+            }
+        }
+
+        // Drop live session flat before replay — takes + edits[] is canonical after saveEdit.
         noteEditSession.store.discardFlatCache();
-        // Keep loop.editFlat_ aligned with the same ledger (display / getCachedNotesForSlot).
-        (void)loop.midiEvents();
+        MidiEventVec loopMidiEventsFromTakesAndEdits;
+        applyEditsToFlat(loop.takes, loop.edits, loopMidiEventsFromTakesAndEdits,
+                         loopLength);
+        logChangeLengthCommitTrace("replay_flat", loopMidiEventsFromTakesAndEdits,
+                                   loopLength, homePitch, homeStart);
+
+        MidiEventVec takeOnlyFlat;
+        loop.flattenActiveTakes(takeOnlyFlat);
+        logChangeLengthCommitTrace("take_only", takeOnlyFlat, loopLength, homePitch,
+                                   homeStart);
+
+        noteEditSession.store.mutStore().loadFromFlat(loopMidiEventsFromTakesAndEdits);
+        noteEditSession.store.discardFlatCache();
+        logChangeLengthCommitTrace("session_store", noteEditSession.store.readFlat(),
+                                   loopLength, homePitch, homeStart);
+
+        logChangeLengthCommitTrace("loop_editFlat", loop.midiEvents(), loopLength,
+                                   homePitch, homeStart);
     }
     track.invalidateCaches();
     return id;
@@ -295,43 +501,9 @@ EditManager::EditManager() {
 
 void EditManager::setState(EditNoteState* newState, Track& track, uint32_t startTick) {
     if (currentState) {
-        if (currentState == &startNoteState) {
-            auto* s = static_cast<EditStartNoteState*>(currentState);
-            if (computeEditAwareHash(track) != s->getInitialHash()) {
-                commitEditAction(track, buildMoveCommitChanges(*this, track));
-            }
-        } else if (currentState == &lengthNoteState) {
-            auto* l = static_cast<EditLengthNoteState*>(currentState);
-            if (computeEditAwareHash(track) != l->getInitialHash()) {
-                const NoteRef target = l->getTargetRef();
-                const auto& notes = track.getCachedNotes();
-                EditChange ch;
-                ch.type = EditChangeType::ChangeLength;
-                ch.target = target;
-                if (getSelectedNoteIdx() >= 0 &&
-                    getSelectedNoteIdx() < static_cast<int>(notes.size())) {
-                    ch.newEndTick = notes[getSelectedNoteIdx()].endTick;
-                } else {
-                    ch.newEndTick = target.endTick;
-                }
-                commitEditAction(track, EditChangeList{ch});
-            }
-        } else if (currentState == &pitchNoteState) {
-            auto* p = static_cast<EditPitchNoteState*>(currentState);
-            if (computeEditAwareHash(track) != p->getInitialHash()) {
-                const NoteRef target = p->getTargetRef();
-                const auto& notes = track.getCachedNotes();
-                EditChange ch;
-                ch.type = EditChangeType::ChangePitch;
-                ch.target = target;
-                if (getSelectedNoteIdx() >= 0 &&
-                    getSelectedNoteIdx() < static_cast<int>(notes.size())) {
-                    ch.newPitch = notes[getSelectedNoteIdx()].note;
-                } else {
-                    ch.newPitch = target.note;
-                }
-                commitEditAction(track, EditChangeList{ch});
-            }
+        if (currentState == &startNoteState || currentState == &lengthNoteState ||
+            currentState == &pitchNoteState) {
+            commitAllPendingNoteEditActions(track);
         }
         currentState->onExit(*this, track);
     }
@@ -450,44 +622,6 @@ void EditManager::enterEditMode(EditNoteState* newState, uint32_t startTick) {
 void EditManager::exitEditMode(Track& track) {
     noteEditManager.resetLengthEditingModeOnSessionBoundary();
     commitAllPendingNoteEditActions(track);
-    if (currentState == &startNoteState) {
-        auto* s = static_cast<EditStartNoteState*>(currentState);
-        if (computeEditAwareHash(track) != s->getInitialHash()) {
-            commitEditAction(track, buildMoveCommitChanges(*this, track));
-        }
-    } else if (currentState == &lengthNoteState) {
-        auto* l = static_cast<EditLengthNoteState*>(currentState);
-        if (computeEditAwareHash(track) != l->getInitialHash()) {
-            const NoteRef target = l->getTargetRef();
-            const auto& notes = track.getCachedNotes();
-            EditChange ch;
-            ch.type = EditChangeType::ChangeLength;
-            ch.target = target;
-            if (getSelectedNoteIdx() >= 0 &&
-                getSelectedNoteIdx() < static_cast<int>(notes.size())) {
-                ch.newEndTick = notes[getSelectedNoteIdx()].endTick;
-            } else {
-                ch.newEndTick = target.endTick;
-            }
-            commitEditAction(track, EditChangeList{ch});
-        }
-    } else if (currentState == &pitchNoteState) {
-        auto* p = static_cast<EditPitchNoteState*>(currentState);
-        if (computeEditAwareHash(track) != p->getInitialHash()) {
-            const NoteRef target = p->getTargetRef();
-            const auto& notes = track.getCachedNotes();
-            EditChange ch;
-            ch.type = EditChangeType::ChangePitch;
-            ch.target = target;
-            if (getSelectedNoteIdx() >= 0 &&
-                getSelectedNoteIdx() < static_cast<int>(notes.size())) {
-                ch.newPitch = notes[getSelectedNoteIdx()].note;
-            } else {
-                ch.newPitch = target.note;
-            }
-            commitEditAction(track, EditChangeList{ch});
-        }
-    }
 
     closeNoteEditSpan(track);
     if (track.getActiveLoop().isEditStateDirty()) {
@@ -677,10 +811,19 @@ void EditManager::setSelectedNoteIdx(int idx) {
     selectedNoteIdx = idx;
 }
 
+void EditManager::setLastFader1SelectRef(const NoteRef& ref) {
+    lastFader1SelectRef = ref;
+}
+
+void EditManager::clearLastFader1SelectRef() {
+    lastFader1SelectRef = {};
+}
+
 void EditManager::resetSelection() {
     if (selectedNoteIdx != -1) {
         logger.log(CAT_MIDI, LOG_DEBUG, "Note selection reset: %d -> -1", selectedNoteIdx);
     }
     selectedNoteIdx = -1;
+    clearLastFader1SelectRef();
 }
 

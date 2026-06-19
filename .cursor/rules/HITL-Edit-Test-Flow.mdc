@@ -1,0 +1,62 @@
+# HITL edit test flow (note-edit baseline)
+
+Use this flow when validating **M8 note edit** on hardware. Serial capture is mandatory for a verified run.
+
+## Build
+
+Flash **`teensy41-capture-serial`** (not plain `teensy41`) so `#CAP` / `REVT` / `ST` and edit log lines appear on USB serial:
+
+```bash
+pio run -e teensy41-capture-serial -t upload
+```
+
+## Canonical test command
+
+1. Start external capture in one terminal:
+
+```bash
+.venv/bin/python scripts/capture_session.py --port /dev/cu.usbmodem154944801
+```
+
+2. Run the edit baseline in another terminal (from project root):
+
+```bash
+.venv/bin/python scripts/host_midi_automation_edit_baseline.py \
+  --midi-out "Teensy" --midi-in "Teensy" \
+  --serial-port /dev/cu.usbmodem154944801 \
+  --track 5 --midi-channel 5 \
+  --record-bars 2 \
+  --start-transport \
+  --phase-wait-ms 500 --final-wait-ms 3000 --press-ms 120 \
+  --undo-redo-delay-ms 500
+```
+
+3. Stop capture with Ctrl+C.
+
+4. Re-verify from the saved log if needed:
+
+```bash
+.venv/bin/python scripts/host_midi_automation_edit_baseline.py \
+  ...same args... \
+  --verify-serial-log captures/<session>.log
+```
+
+(`--serial-port` can be omitted when using `--verify-serial-log` only.)
+
+## Required pass criteria (M8)
+
+With default **`--require-m8-span-verify`** (on):
+
+- Record prelude completes (fixture `REVT` count matches fixture notes).
+- Edit session markers present (`entered note edit mode`, `Created 32nd note`, `Deleting note`, `POSITION EDIT`, `exited edit mode`, …).
+- **Exactly one** `NoteEditSessionCommitted` between enter and exit edit.
+- In-edit undo/redo (default on): `NoteEditSession undo` and `NoteEditSession redo` in serial.
+- Post-exit undo/redo (default on): `Note edit span undone` after exit; redo via `Overdub redone`.
+- Move/display / overlap checks pass for the standard fixture (see script report `issues`).
+
+Use `--no-m8-span-verify` only for pre-M8 capture replay.
+
+## Reference
+
+- Fixture and fader policy: [`docs/plans/m8_edit_note_edit_hitl_automation_refinement.md`](docs/plans/m8_edit_note_edit_hitl_automation_refinement.md)
+- Record/overdub baseline (separate): [HITL-Test-Flow.mdc](HITL-Test-Flow.mdc)

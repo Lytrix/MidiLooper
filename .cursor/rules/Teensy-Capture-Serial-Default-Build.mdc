@@ -1,0 +1,43 @@
+---
+description: Default Teensy firmware build/upload to teensy41-capture-serial unless user opts out
+alwaysApply: true
+---
+
+# Teensy default build — capture-serial
+
+## Default environment
+
+For **firmware** build and upload, use **`teensy41-capture-serial`** (not plain `teensy41`) unless the user explicitly requests another env in this session.
+
+```bash
+pio run -e teensy41-capture-serial
+pio run -e teensy41-capture-serial -t upload
+```
+
+This env enables `SESSION_CAPTURE` and `PERF_TELEMETRY` so USB serial emits `#CAP`, `REVT`, `ST`, and edit/transition lines needed for HITL verification and capture sessions.
+
+## When the user opts out
+
+Use a different env only when they clearly ask, for example:
+
+- "plain teensy41" / "production build" / "no serial capture"
+- `teensy41-capture` (CAP lines without full serial telemetry)
+- `teensy41-capture-bypass` (diagnostic bypass)
+- compile-check only with a named env
+
+If unclear, default to **`teensy41-capture-serial`**.
+
+## When this rule does **not** apply
+
+- **Host tests:** `pio test -e native` (unchanged)
+- **On-device PlatformIO tests:** use the env the user names (`teensy41`, etc.)
+- User says **not to build or upload** in this session
+
+## After build
+
+Follow [Teensy-Upload-After-Build.mdc](Teensy-Upload-After-Build.mdc): ask before upload; reuse the same env for upload.
+
+## Reference
+
+- Env definitions: `platformio.ini` (`[env:teensy41-capture-serial]`)
+- HITL flows: [HITL-Test-Flow.mdc](HITL-Test-Flow.mdc), [HITL-Edit-Test-Flow.mdc](HITL-Edit-Test-Flow.mdc)

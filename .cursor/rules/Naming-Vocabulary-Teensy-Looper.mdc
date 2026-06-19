@@ -18,7 +18,23 @@ Read before M8+ edit storage, OpenSpec **`m8-rename`** then **`m8-edit`**, or ti
 | **Take** | Committed capture — Record or Overdub (was `Epoch`) |
 | **Edit** | One committed `saveEdit` unit in `edits[]` |
 | **EditChange** | One atomic change inside an **Edit** |
-| **span** | Sub-period inside **NoteEditSession** (overdub boundary) |
+| **pass** | One bounded capture or edit stretch ending in commit (see **Pass types** below) |
+
+## Pass types (audio/MIDI time)
+
+Umbrella term for a single committed stretch on the loop timeline:
+
+| Pass | Ends with | Global undo (when applicable) |
+|------|-----------|-------------------------------|
+| **record pass** | `commitTake()` → Record **Take** | **TakeCommitted** |
+| **overdub pass** | `commitTake()` → Overdub **Take** | **TakeCommitted** |
+| **edit pass** | `closeNoteEditPass()` (boundary flush) | **NoteEditSessionCommitted** |
+
+An **edit pass** is a sub-period inside **NoteEditSession** between overdub-while-editing or
+note-edit exit boundaries. Each **Edit** stores `editPassIndex` (legacy field name: `spanIndex`).
+
+**Do not** use **pass** for: moving note tick range (**moving note range** on focus), or single-note **focus**
+lifecycle.
 
 ## Types and ids
 
@@ -44,7 +60,7 @@ Read before M8+ edit storage, OpenSpec **`m8-rename`** then **`m8-edit`**, or ti
 |------|--------|-------|
 | `commitTake()` | commit | Take |
 | `saveEdit()` | save | Edit |
-| `closeNoteEditSpan()` | close | NoteEditSpan |
+| `closeNoteEditPass()` | close | edit pass (legacy: `closeNoteEditSpan()`) |
 | `applyEdits()` | apply | Edits |
 | **TakeCommitted** | committed | Take (undo entry) |
 | **NoteEditSessionCommitted** | committed | NoteEditSession (undo entry) |
@@ -54,8 +70,65 @@ Read before M8+ edit storage, OpenSpec **`m8-rename`** then **`m8-edit`**, or ti
 - `class EditState` → **`EditNoteState`** (note-edit FSM base)
 - **`EditState`** on struct **Edit** = Active \| Disabled (parallel **TakeState**)
 
+## Note edit overlap (moving note + overlap notes)
+
+Pair used during live note edit (move / length / pitch). **Overlap note** is the umbrella;
+qualifiers below are sub-definitions — not separate top-level nouns.
+
+| Term | Role |
+|------|------|
+| **moving note** | Note being edited (`MovingNoteIdentity`; fader-1 selection) |
+| **overlap note** | Any other note the moving note edit affects (hide, shorten, restore) |
+| **OverlapNote** | One tracked overlap note on **focus** (target: replaces `DeletedNote`) |
+| **overlapNotes** | Collection on **focus** — **impacted overlap notes only** (not `baselineMap`) |
+| **OverlapNoteStoreState** | **Visible** \| **Hidden** \| **Shortened** on each **OverlapNote** |
+
+**Relationship** (what kind of overlap note):
+
+| Qualifier | Meaning |
+|-----------|---------|
+| **overlapping** | Ranges intersect the moving note’s start/end/pitch gate |
+| **inner** | Wholly inside the moving note **range** (focus `movingNoteRange`) |
+| **adjacent** | Shares a boundary tick (lane merge) |
+| **contained** | Fully inside moving note range (matches “completely contained note” logs) |
+
+**Store state** (on each **OverlapNote** entry):
+
+| State | Meaning |
+|-------|---------|
+| **hidden** | Note pair removed from session store |
+| **shortened** | Head or tail cut; still in store |
+| **visible** | Present in store (normal or after restore) |
+
+Do **not** use **victim**, **covered** (use **hidden**), **neighbor** / **neighbor note** (use
+**overlap note**), **ledger** (overlap tracking — use **overlapNotes**; playback uses
+**ActiveNoteLedger**), **flat** in new names (use **loop MIDI events**, **session store events**,
+or **Takes + Edits replay**), **footprint** (use **moving note range** on focus), **span** (use
+**edit pass**), **layer** for edit batches (use **edit pass**; **layer** = Take/overdub performance), new abbreviations.
+
 ## Words to avoid for new names
 
-**segment**, **gesture**, **working**, **EditOp**, **published** (use **committed**), storing edits as Takes, new abbreviations. Prefer **Type** over **Kind** for new enums when the repo uses **Type** elsewhere.
+**segment**, **gesture**, **working**, **EditOp**, **published** (use **committed**), storing edits as Takes, **victim**, **covered** (use **hidden**), **neighbor** / **neighbor note** (use **overlap note**), **ledger** for overlap scratch (use **overlapNotes**), **flat** in new identifiers (use scope: **loop MIDI events**, **session store events**, **Takes + Edits replay**), **footprint** (use **moving note range** on **NoteEditFocus**), **span** (use **edit pass**), **layer** for edit batches (use **edit pass**; **layer** = Take/overdub performance), new abbreviations. Prefer **Type** over **Kind** for new enums when the repo uses **Type** elsewhere.
 
 Ask before introducing a **new domain noun** or session type name not listed above.
+
+## Identifier rules (functions, types, OpenSpec)
+
+Follow global **`naming-and-terminology`**. In this repo specifically:
+
+1. **Action + scope** — name what the code *does* and *what it applies to* (e.g. `commitTake`, `filterSelectableDisplayNotes`, `rebuildNoteEditFocusFromStore`). Two words minimum when possible; longer when needed for clarity.
+2. **Reuse domain nouns** from this file — **Take**, **Edit**, **NoteEditSession**, **DisplayNote**, **NoteRef**, **overlap note**, **select navigation** (`SelectNavigation`, `SelectNavSlot`), **focus**, **moving note**.
+3. **No new top-level nouns** (types, modules, capability names) without **explicit user approval** — propose term, why existing words fail, one-sentence rationale; do not implement until agreed.
+4. **No abbreviations** in new identifiers. **No metaphor imports** — avoid **audible**, **view**, **inventory**, **projection**, **ledger**, **wire**, **golden** unless already listed above.
+5. **Describe, don’t invent** — if the object already has a name, use it in prose (e.g. “reconstruct **DisplayNote** list from **NoteEditSession.store**”) instead of coining a synonym type (`audibleNotes`, `sessionView`).
+
+### Note edit — read path (no new module noun)
+
+| Need | Use | Avoid |
+|------|-----|-------|
+| MIDI pairs during edit | **NoteEditSession.store** / `editAwareMidiEvents()` | “audible”, “live layer” |
+| Reconstructed notes | **`NoteUtils::reconstructNotes`** → **`DisplayNote`** | `audibleNotes`, `sessionNotes` |
+| Fader-1 + display list excluding **Hidden** overlap | **`filterSelectableDisplayNotes`** (action + object) | `NoteEditSessionView`, `selectableNotes()` as a type |
+| Bracket / delete target | **`NoteRef`** + select navigation index | cache index without **NoteRef** |
+
+When a helper is needed, prefer adding it on **`NoteEditFocus`** or **`SelectNavigation`** — not a new `*View` / `*Inventory` type unless the user approves the name.

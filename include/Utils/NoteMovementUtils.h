@@ -35,16 +35,16 @@ void moveNoteWithOverlapHandling(Track& track, EditManager& manager,
                                    uint32_t targetTick, int delta);
 
     /**
-     * Lengthen or shorten a note end with the same overlap ledger as movement.
-     * Resolves same-pitch victims before moving the note-off so LIFO pairing cannot
-     * retarget a neighbor's release (e.g. P0 when M0 shares pitch 60).
+     * Lengthen or shorten a note end with the same overlap-note handling as movement.
+     * Resolves same-pitch overlap notes before moving the note-off so LIFO pairing cannot
+     * retarget another note's release (e.g. P0 when M0 shares pitch 60).
      */
     void changeLengthWithOverlapHandling(Track& track, EditManager& manager,
                                          const NoteUtils::DisplayNote& currentNote,
                                          uint32_t targetEndTick);
 
     /**
-     * Apply a pitch change using the same overlap/delete/restore ledger as movement.
+     * Apply a pitch change using the same overlap-note hide/restore path as movement.
      *
      * @param currentNoteValue Existing pitch of the moving note
      * @param newNoteValue Target pitch for the moving note
@@ -64,10 +64,10 @@ void moveNoteWithOverlapHandling(Track& track, EditManager& manager,
     bool notesTouchOrOverlap(uint32_t start1, uint32_t end1, uint32_t start2, uint32_t end2,
                              uint32_t loopLength);
 
-    /** True when [noteStart, noteEnd] lies within the moving note's original span. */
-    bool isNoteWithinMovingSpan(uint32_t noteStart, uint32_t noteEnd,
-                                uint32_t spanStart, uint32_t spanEnd,
-                                uint32_t loopLength);
+    /** True when [noteStart, noteEnd] lies within the moving note tick range on focus. */
+    bool isNoteWithinMovingNoteRange(uint32_t noteStart, uint32_t noteEnd,
+                                     uint32_t movingNoteStart, uint32_t movingNoteEnd,
+                                     uint32_t loopLength);
     
     void findOverlaps(const std::vector<NoteUtils::DisplayNote>& currentNotes,
                      uint8_t movingNotePitch,
@@ -85,35 +85,15 @@ void moveNoteWithOverlapHandling(Track& track, EditManager& manager,
                              const std::vector<std::pair<NoteUtils::DisplayNote, uint32_t>>& notesToShorten,
                              const std::vector<NoteUtils::DisplayNote>& notesToDelete,
                              EditManager& manager,
+                             uint8_t channel,
                              uint32_t loopLength,
                              NoteUtils::EventIndexMap& onIndex,
                              NoteUtils::EventIndexMap& offIndex);
     
-    void restoreNotes(MidiEventVec& midiEvents,
-                     const std::vector<EditManager::MovingNoteIdentity::DeletedNote>& notesToRestore,
-                     EditManager& manager,
-                     uint32_t loopLength,
-                     uint8_t channel,
-                     NoteUtils::EventIndexMap& onIndex,
-                     NoteUtils::EventIndexMap& offIndex);
-    
-    void finalReconstructAndSelect(MidiEventVec& midiEvents,
-                                  EditManager& manager,
-                                  uint8_t movingNotePitch,
-                                  uint32_t newStart,
-                                  uint32_t newEnd,
-                                  uint32_t loopLength);
-    
     // Find the corresponding note-off event for a given note-on event using LIFO pairing logic
     MidiEvent* findCorrespondingNoteOff(MidiEventVec& midiEvents, MidiEvent* noteOnEvent, uint8_t pitch, std::uint32_t startTick, std::uint32_t endTick);
 
-    /** Pair-identified note-off at endTick for (pitch, startTick); safe when same-pitch neighbors exist. */
+    /** Pair-identified note-off at endTick for (pitch, startTick); safe when same-pitch overlap notes share ticks. */
     MidiEvent* findNoteOffPairedAt(MidiEventVec& midiEvents, uint8_t pitch, uint32_t startTick,
                                    uint32_t endTick);
-    
-    // Extend shortened notes dynamically
-    void extendShortenedNotes(MidiEventVec& midiEvents,
-                             const std::vector<std::pair<EditManager::MovingNoteIdentity::DeletedNote, std::uint32_t>>& notesToExtend,
-                             EditManager& manager,
-                             std::uint32_t loopLength);
 } 
