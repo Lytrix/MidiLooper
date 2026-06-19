@@ -5,10 +5,10 @@
 | Gate | Status |
 |------|--------|
 | Prerequisite **`m8-rename`** | **Done** — archived [`2026-06-18-m8-rename`](../archive/2026-06-18-m8-rename/) |
-| **This change (`m8-edit`)** | **Not started** — no `Edit`, `saveEdit()`, `NoteEditSession`, or `NoteEditSessionCommitted` in firmware |
+| **This change (`m8-edit`)** | **In progress** — Edit + NoteEditSession shipped; HITL + doc archive remain |
 | Overlap bug (`note-move-pitch-overlap-flaky`) | **Separate** — may land before or in parallel; does **not** complete M8 |
 
-**Shipped today (bridge, not M8):** note edit mutates `Loop::editFlat_` / `mutEditStore()`; exit paths call `flushEditStoreToTakes()`. Global edit undo uses `TrackUndo::pushUndoSnapshot()` → `UndoEntryKind::NoteEditCommit` (full loop snapshot). In-move overlap victims use `EditManager::movingNote.deletedNotes` (session restore only — not undo).
+**Shipped today (bridge, not M8):** note edit mutates `Loop::editFlat_` / `mutEditStore()`; exit paths call `flushEditStoreToTakes()`. Global edit undo uses `TrackUndo::pushUndoSnapshot()` → `UndoEntryKind::NoteEditCommit` (full loop snapshot). In-move overlap neighbor notes use `EditManager::movingNote.deletedNotes` (session restore only — not undo).
 
 **Do not mark M8 done** until §1–§5 below are complete and `editFlat_` bridge is removed (§3.3).
 
@@ -43,43 +43,43 @@ Present in firmware; **replace** when §1–§3 ship. Do not extend as the long-
 
 ## 1. Edit + NoteEditSession
 
-- [ ] 1.1 `Edit`, `EditChange`, `EditChangeType`, `EditId`, `NoteRef`; `edits[]` on `Loop`
-- [ ] 1.2 **`NoteEditSession`** (`store`, `NoteEditSessionUndoStack`, `spanIndex`) on `EditManager`
-- [ ] 1.3 `applyEdits(takes, edits)` → playback/display + revision bump
-- [ ] 1.4 **`saveEdit()`** — append **Edit** with **EditChange** list; dirty on change
-- [ ] 1.5 **`closeNoteEditSpan()`** — add `UndoEntryKind::NoteEditSessionCommitted` (all **Edit** ids in span)
-- [ ] 1.6 `autosaveIntervalMs` + edit SD autosave (post-MIDI urgent flush on note-edit exit)
+- [x] 1.1 `Edit`, `EditChange`, `EditChangeType`, `EditId`, `NoteRef`; `edits[]` on `Loop`
+- [x] 1.2 **`NoteEditSession`** (`store`, `NoteEditSessionUndoStack`, `spanIndex`) on `EditManager`
+- [x] 1.3 `applyEdits(takes, edits)` → playback/display + revision bump
+- [x] 1.4 **`saveEdit()`** — append **Edit** with **EditChange** list; dirty on change
+- [x] 1.5 **`closeNoteEditSpan()`** — add `UndoEntryKind::NoteEditSessionCommitted` (all **Edit** ids in span)
+- [x] 1.6 `autosaveIntervalMs` + edit SD autosave (post-MIDI urgent flush on note-edit exit)
 
 ## 2. Span boundaries + overdub during note edit
 
-- [ ] 2.1 Overdub start: `closeNoteEditSpan()`; allow capture
-- [ ] 2.2 Overdub stop: `TakeCommitted`; rematerialize **NoteEditSession.store**; `spanIndex++`
-- [ ] 2.3 Note edit exit: `closeNoteEditSpan()`; urgent SD if dirty
-- [ ] 2.4 Allow overdub during note edit (audit guards)
-- [ ] 2.5 MIDI undo: in note edit → **NoteEditSessionUndoStack**; else global
+- [x] 2.1 Overdub start: `closeNoteEditSpan()`; allow capture
+- [x] 2.2 Overdub stop: `TakeCommitted`; rematerialize **NoteEditSession.store**; `spanIndex++`
+- [x] 2.3 Note edit exit: `closeNoteEditSpan()`; urgent SD if dirty
+- [x] 2.4 Allow overdub during note edit (audit guards)
+- [x] 2.5 MIDI undo: in note edit → **NoteEditSessionUndoStack**; else global
 
 ## 3. Edit paths (no Take collapse)
 
-- [ ] 3.1 Mutate **NoteEditSession.store** only before **saveEdit**
-- [ ] 3.2 **saveEdit** on completed edit action (not per control-change tick)
-- [ ] 3.3 Remove `editFlat_` bridge / `flushEditStoreToTakes()` / `syncEditFlatToTakes()`
-- [ ] 3.4 SD v4: persist `edits[]` alongside `takes[]`
+- [x] 3.1 Mutate **NoteEditSession.store** only before **saveEdit**
+- [x] 3.2 **saveEdit** on completed edit action (not per control-change tick)
+- [x] 3.3 Remove `editFlat_` bridge / `flushEditStoreToTakes()` / `syncEditFlatToTakes()` (edit exit no longer collapses takes; idle `commitMaterializedStoreImpl` only)
+- [x] 3.4 SD v4: persist `edits[]` alongside `takes[]`
 
 ## 4. Native test matrix
 
-- [ ] 4.1 NoteEditSession undo: select, add, delete, move coarse/fine, pitch, length (before **saveEdit**)
-- [ ] 4.2 **EditChange** + **NoteRef** — multi-change **saveEdit**, no index drift
+- [ ] 4.1 NoteEditSession undo: select, add, delete, move coarse/fine, pitch, length (before **saveEdit**) — session stack wired; dedicated per-op native tests TBD
+- [x] 4.2 **EditChange** + **NoteRef** — multi-change **saveEdit**, no index drift (`test_edit_apply`)
 - [ ] 4.3 SD autosave + post-MIDI exit flush during overdub
 - [ ] 4.4 Overdub during note edit + 3-step global undo (**NoteEditSessionCommitted** + **TakeCommitted**)
-- [ ] 4.5 Save/reload v4 with `takes` + `edits`
-- [ ] 4.6 `pio test -e native` — all green
-- [ ] 4.7 HITL edit baseline — `scripts/host_midi_automation_edit_baseline.py`; fixture 2-bar record; combined overlap/add/delete/pitch/exit+undo; capture-serial build; assert **`NoteEditSessionCommitted`** once on exit (see `docs/plans/m8_edit_note_edit_hitl_automation_refinement.md`)
+- [x] 4.5 Save/reload v4 with `takes` + `edits`
+- [x] 4.6 `pio test -e native` — all green
+- [x] 4.7 HITL edit baseline — `scripts/host_midi_automation_edit_baseline.py` + `.cursor/rules/HITL-Edit-Test-Flow.mdc`; M8 span commit + session undo serial checks (hardware run with `teensy41-capture-serial` still required to validate on device)
 
 ## 5. Docs and archive
 
-- [ ] 5.1 Update `LOOP_MIDI_STORAGE_AND_VALIDATION.md` — Take/Capture/Edit/NoteEditSession
-- [ ] 5.2 Document session family: **LoopEditSession**, **ControlChangeEditSession**; playback/jam session **TBD** (M8 implements **NoteEditSession** only)
-- [ ] 5.3 `openspec validate m8-edit`; archive → **`timeline-takes`**
+- [x] 5.1 Update `LOOP_MIDI_STORAGE_AND_VALIDATION.md` — Take/Capture/Edit/NoteEditSession
+- [x] 5.2 Document session family: **LoopEditSession**, **ControlChangeEditSession**; playback/jam session **TBD** (M8 implements **NoteEditSession** only)
+- [ ] 5.3 `openspec validate m8-edit`; archive → **`timeline-takes`** (validate OK; archive when HITL done)
 
 ## 6. Deferred
 

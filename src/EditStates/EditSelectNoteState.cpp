@@ -3,6 +3,7 @@
 
 #include "EditStates/EditSelectNoteState.h"
 #include "EditManager.h"
+#include "Edit.h"
 #include "Track.h"
 #include "Logger.h"
 #include "TrackUndo.h"
@@ -21,7 +22,7 @@ void EditSelectNoteState::onEnter(EditManager& manager, Track& track, uint32_t s
     logger.debug("EditSelectNoteState::onEnter at tick %lu", startTick);
     
     // Initialize MIDI event count for overdub tracking
-    lastMidiEventCount = track.getMidiEvents().size();
+    lastMidiEventCount = track.editAwareMidiEvents().size();
     
     // Use the existing selectClosestNote logic which properly finds nearest notes
     // or snaps to the current position if no notes exist
@@ -85,13 +86,17 @@ void EditSelectNoteState::onButtonPress(EditManager& manager, Track& track) {
         logger.info("EditSelectNoteState: No note found, creating 32nd note at tick %lu", bracketTick);
         
         // Push undo snapshot before creating note
-        TrackUndo::pushUndoSnapshot(track);
-        createDefaultNote(track, bracketTick);
-        track.getActiveLoop().markEditFlatDirty();
+        manager.pushSessionUndoBeforeMutation(track);
+        const std::array<MidiEvent, 2> created = createDefaultNote(track, bracketTick);
+        EditChange add;
+        add.type = EditChangeType::AddNote;
+        add.addedEvents.push_back(created[0]);
+        add.addedEvents.push_back(created[1]);
+        manager.commitEditAction(track, EditChangeList{add});
         track.invalidateCaches();
 
         // Select the newly created note and enter start note editing
-        manager.selectClosestNote(track, bracketTick);
+        manager.selectNoteAtBracket(track, bracketTick);
         manager.setState(manager.getStartNoteState(), track, bracketTick);
     }
 }
@@ -102,7 +107,7 @@ void EditSelectNoteState::updateForOverdubbing(EditManager& manager, Track& trac
         return;
     }
     
-    const auto& midiEvents = track.getMidiEvents();
+    const auto& midiEvents = track.editAwareMidiEvents();
     size_t currentEventCount = midiEvents.size();
     
     // Check if new MIDI events have been added
@@ -149,7 +154,7 @@ void EditSelectNoteState::updateForOverdubbing(EditManager& manager, Track& trac
     }
 }
 
-void EditSelectNoteState::createDefaultNote(Track& track, uint32_t tick) const {
+std::array<MidiEvent, 2> EditSelectNoteState::createDefaultNote(Track& track, uint32_t tick) const {
     // Create a 32nd note (TICKS_PER_16TH_STEP / 2 = 24 ticks for a 32nd note)
     uint32_t noteLength = Config::TICKS_PER_16TH_STEP / 2; // 32nd note
     uint32_t endTick = (tick + noteLength) % track.getLoopLength();
@@ -158,7 +163,7 @@ void EditSelectNoteState::createDefaultNote(Track& track, uint32_t tick) const {
     uint8_t defaultNote = 60; // C3
     uint8_t defaultVelocity = 80;
     
-    auto& midiEvents = track.getMidiEvents();
+    auto& midiEvents = track.editAwareMidiEvents();
     
     const uint8_t outCh = track.getMidiChannel();
     // Create Note On event
@@ -185,11 +190,14 @@ void EditSelectNoteState::createDefaultNote(Track& track, uint32_t tick) const {
     
     logger.info("EditSelectNoteState: Created 32nd note (pitch=%d, tick=%lu-%lu, length=%lu)", 
                defaultNote, tick, endTick, noteLength);
+    // Return the exact created events: after the sort above they are not necessarily the
+    // last two entries, so callers must use these to record an AddNote edit.
+    return {noteOn, noteOff};
 }
 
-void EditSelectNoteState::createNoteAtTick(Track& track, uint32_t tick) {
+std::array<MidiEvent, 2> EditSelectNoteState::createNoteAtTick(Track& track, uint32_t tick) {
     EditSelectNoteState helper;
-    helper.createDefaultNote(track, tick);
+    return helper.createDefaultNote(track, tick);
 }
 
 void EditSelectNoteState::selectNextNoteSequential(EditManager& manager, Track& track) {
@@ -455,7 +463,7 @@ void EditSelectNoteState::selectPreviousNoteSequential(EditManager& manager, Tra
 } 
 
 void EditSelectNoteState::sendTargetPitchbend(EditManager& manager, Track& track) {
-    //auto& midiEvents = track.getMidiEvents();
+    //auto& midiEvents = track.editAwareMidiEvents();
     uint32_t loopLength = track.getLoopLength();
     uint32_t bracketTick = manager.getBracketTick();
     

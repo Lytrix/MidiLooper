@@ -8,6 +8,7 @@
 #include <functional>
 
 #include "Take.h"
+#include "Edit.h"
 
 /// Byte-oriented I/O adapter for SD File (firmware) or in-memory buffers (native tests).
 struct StorageIo {
@@ -25,6 +26,8 @@ struct PersistedLoopSnapshot {
   uint32_t nextMergeSequence = 0;
   TakeId lastPublishedTakeId = kInvalidTakeId;
   TakeVec takes;
+  EditId nextEditId = 1;
+  EditVec edits;
 };
 
 bool writePersistedTake(const StorageIo& io, const Take& take);

@@ -3,6 +3,7 @@
 
 #pragma once
 #include "EditNoteState.h"
+#include "Edit.h"
 
 // New state for editing the pitch of a note
 class EditPitchNoteState : public EditNoteState {
@@ -12,10 +13,9 @@ public:
     void onEncoderTurn(EditManager& manager, Track& track, int delta) override;
     void onButtonPress(EditManager& manager, Track& track) override;
     const char* getName() const override { return "EditPitchNote"; }
-    /**
-     * @brief Get the initial MIDI-event hash before editing started
-     */
     uint32_t getInitialHash() const { return initialHash; }
+    NoteRef getTargetRef() const { return targetRef_; }
 private:
-    uint32_t initialHash = 0;         // hash of midiEvents at onEnter for undo commit-on-exit
+    uint32_t initialHash = 0;
+    NoteRef targetRef_{};
 };

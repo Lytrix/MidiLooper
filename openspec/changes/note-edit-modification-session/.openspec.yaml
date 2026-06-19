@@ -1,0 +1,7 @@
+schema: spec-driven
+created: 2026-06-19
+kind: enhancement
+status: design-locked
+supersedes-coordination:
+  - note-move-pitch-overlap-flaky
+  - lengthen-overlap-neighbor-restore

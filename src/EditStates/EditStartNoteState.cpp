@@ -11,7 +11,7 @@
 #include "Logger.h"
 #include <map>
 #include "Globals.h"
-#include "TrackUndo.h"
+#include "Utils/MidiEventVecFnvHash.h"
 #include "Utils/NoteUtils.h"
 #include <unordered_map>
 
@@ -318,8 +318,8 @@ void EditStartNoteState::onEnter(EditManager& manager, Track& track, uint32_t st
     logger.debug("Entered EditStartNoteState");
     
     // Commit-on-enter: snapshot and hash initial MIDIEVENTS
-    initialHash = TrackUndo::computeMidiHash(track);
-    TrackUndo::pushUndoSnapshot(track);
+    initialHash = midiEventVecFnv1aHash(track.editAwareMidiEvents());
+    manager.pushSessionUndoBeforeMutation(track);
     logger.debug("Snapshot on enter, initial hash: %u", initialHash);
     
     int idx = manager.getSelectedNoteIdx();
@@ -329,7 +329,7 @@ void EditStartNoteState::onEnter(EditManager& manager, Track& track, uint32_t st
         uint32_t loopLength = track.getLoopLength();
         
         // Reconstruct notes using shared utility
-        auto& midiEvents = track.getMidiEvents();
+        auto& midiEvents = track.editAwareMidiEvents();
         std::vector<DisplayNote> notes = NoteUtils::reconstructNotes(midiEvents, loopLength);
         
         if (idx < (int)notes.size()) {
@@ -380,7 +380,7 @@ void EditStartNoteState::onExit(EditManager& manager, Track& track) {
 void EditStartNoteState::onEncoderTurn(EditManager& manager, Track& track, int delta) {
     logger.debug("EditStartNoteState::onEncoderTurn called with delta=%d", delta);
     
-    auto& midiEvents = track.getMidiEvents();
+    auto& midiEvents = track.editAwareMidiEvents();
     uint32_t loopLength = track.getLoopLength();
     
     logger.debug("=== LOOP INFO ===");

@@ -36,26 +36,33 @@ void MidiButtonProcessor::handleMidiNote(uint8_t channel, uint8_t note, uint8_t 
     
     if (isNoteOn && velocity > 0) {
         // Note On - Button Press
-        if (!state.isPressed) {
-            // Debounce check: ignore NoteOn that arrives too soon after the last release
-            // findButtonConfig expects 0-based channel (channel param here is 1-based MIDI)
-            const auto* config = MidiButtonConfig::Config::findButtonConfig(note, channel - 1);
-            if (config && config->debounceMs > 0 && state.lastReleaseTime > 0 &&
-                (now - state.lastReleaseTime) < config->debounceMs) {
-                logger.log(CAT_BUTTON, LOG_DEBUG, "Debounce: ignoring Ch%d Note%d (%lums since last release)",
-                           channel, note, now - state.lastReleaseTime);
-                return;
-            }
-
-            state.isPressed = true;
+        if (state.isPressed) {
+            // Host re-sent note-on or note-off was lost — re-arm so release duration stays sane.
+            logger.log(CAT_BUTTON, LOG_DEBUG,
+                       "Button already pressed: Ch%d Note%d, re-arming start (was %lu, now %lu)",
+                       channel, note, state.pressStartTime, now);
             state.pressStartTime = now;
-            logger.log(CAT_BUTTON, LOG_DEBUG, "Button pressed: Ch%d Note%d at time %lu", channel, note, now);
-            
-            // Check if this is a momentary button (trigger on both press and release)
-            if (config && config->isMomentary) {
-                logger.log(CAT_BUTTON, LOG_DEBUG, "Momentary button press: Ch%d Note%d", channel, note);
-                triggerButtonPress(note, channel - 1, MidiButtonConfig::PressType::SHORT_PRESS);
-            }
+            return;
+        }
+
+        // Debounce check: ignore NoteOn that arrives too soon after the last release
+        // findButtonConfig expects 0-based channel (channel param here is 1-based MIDI)
+        const auto* config = MidiButtonConfig::Config::findButtonConfig(note, channel - 1);
+        if (config && config->debounceMs > 0 && state.lastReleaseTime > 0 &&
+            (now - state.lastReleaseTime) < config->debounceMs) {
+            logger.log(CAT_BUTTON, LOG_DEBUG, "Debounce: ignoring Ch%d Note%d (%lums since last release)",
+                       channel, note, now - state.lastReleaseTime);
+            return;
+        }
+
+        state.isPressed = true;
+        state.pressStartTime = now;
+        logger.log(CAT_BUTTON, LOG_DEBUG, "Button pressed: Ch%d Note%d at time %lu", channel, note, now);
+
+        // Check if this is a momentary button (trigger on both press and release)
+        if (config && config->isMomentary) {
+            logger.log(CAT_BUTTON, LOG_DEBUG, "Momentary button press: Ch%d Note%d", channel, note);
+            triggerButtonPress(note, channel - 1, MidiButtonConfig::PressType::SHORT_PRESS);
         }
     } else {
         // Note Off - Button Release

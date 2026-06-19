@@ -4,6 +4,7 @@
 #pragma once
 #include <cstdint>
 #include "EditNoteState.h"
+#include "NoteEditSession.h"
 #include "EditNoteHomeState.h"
 #include "EditStates/EditSelectNoteState.h"
 #include "EditStartNoteState.h"
@@ -41,12 +42,39 @@ public:
 
     // State pattern helpers
     void selectClosestNote(Track& track, uint32_t startTick);
+    /// Select the note whose start equals bracketTick (falls back to closest).
+    void selectNoteAtBracket(Track& track, uint32_t bracketTick);
     void moveBracket(Track& track, int delta);
     void switchToNextState(Track& track);
 
     // Enter/exit edit mode
     void enterEditMode(EditNoteState* newState, uint32_t startTick);
     void exitEditMode(Track& track);
+
+    /// NoteEditSession lifecycle (M8).
+    bool isNoteEditActive() const { return noteEditSession.active; }
+    NoteEditSession& getNoteEditSession() { return noteEditSession; }
+    const NoteEditSession& getNoteEditSession() const { return noteEditSession; }
+    void openNoteEditSession(Track& track);
+    void closeNoteEditSession(Track& track);
+    void closeNoteEditSpan(Track& track);
+    EditId commitEditAction(Track& track, EditChangeList changes);
+    void pushSessionUndoBeforeMutation(Track& track);
+    bool sessionUndo(Track& track);
+    bool sessionRedo(Track& track);
+    /// Commit completed fader edits (NoteEditManager path) before reselect / exit.
+    void commitPendingMoveAction(Track& track);
+    void commitPendingLengthAction(Track& track);
+    void commitPendingPitchAction(Track& track);
+    void commitAllPendingNoteEditActions(Track& track);
+    /// Rebuild focus baseline map from session store after fader-1 note select.
+    void rebuildNoteEditFocusAtSelect(Track& track, int selectedNoteIdx);
+    MidiEventVec& sessionMidiEvents();
+    const MidiEventVec& sessionMidiEvents() const;
+
+    /// Returns session store during note edit, else loop materialized events.
+    MidiEventVec& editMidiEvents(Track& track);
+    const MidiEventVec& editMidiEvents(const Track& track) const;
 
     // Move bracket by delta steps (e.g., encoder movement)
     void moveBracket(int delta, const Track& track, uint32_t ticksPerStep);
@@ -173,6 +201,7 @@ private:
 
     EditNoteState* currentState = nullptr;
     EditNoteState* previousState = nullptr;
+    NoteEditSession noteEditSession;
     // Add more states as needed
     
     // EditModeManager state

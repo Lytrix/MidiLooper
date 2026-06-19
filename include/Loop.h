@@ -9,8 +9,8 @@
  * (selected by activeLoopIndex) resolves to a LoopId and pooled Loop used for
  * playback and recording.
  *
- * Published MIDI lives in Active takes. Note-edit paths use a materialized
- * editFlat_ buffer until M8 take edit cutover.
+ * Published MIDI lives in Active takes. Note edits are stored in edits[] and
+ * materialized via applyEdits for playback/display.
  */
 #ifndef LOOP_H
 #define LOOP_H
@@ -21,6 +21,7 @@
 #include <memory>
 #include "MidiEvent.h"
 #include "LoopEventBuffer.h"
+#include "Edit.h"
 #include "Take.h"
 #include "VisualCache.h"
 #include "TrackState.h"
@@ -45,6 +46,9 @@ struct Loop {
   LoopId loopId = kInvalidLoopId;
   uint32_t playbackRevision = 0;
   TakeVec takes;
+  EditVec edits;
+  EditId nextEditId_ = 1;
+  bool editStateDirty_ = false;
   bool hasPendingTake_ = false;
   Take pendingTake_;
   VisualCache visualCache;
@@ -83,12 +87,25 @@ struct Loop {
   /// Flatten all Active takes (mergeSequence order) into out.
   void flattenActiveTakes(MidiEventVec& out) const;
 
-  /// Note-edit flat access (M8 bridge): materializes from takes on first use.
+  /// Materialized takes + active edits (lazy rebuild).
   MidiEventVec& midiEvents();
   const MidiEventVec& midiEvents() const;
 
   LoopEventStore& mutEditStore();
   const LoopEventStore& readEditStore() const;
+
+  /// Rematerialize store from takes + active edits (session open / post-overdub).
+  void rematerializeEditView(LoopEventStore& store) const;
+
+  /// Append one Edit from completed edit action; marks SD dirty on change.
+  EditId saveEdit(uint8_t spanIndex, EditChangeList changes);
+
+  /// Disable all edits whose id is in ids (span undo).
+  void disableEdits(const EditIdList& ids);
+
+  void markEditStateDirty() { editStateDirty_ = true; }
+  bool isEditStateDirty() const { return editStateDirty_; }
+  void clearEditStateDirty() { editStateDirty_ = false; }
 
   std::shared_ptr<const LoopEventStore> shareEditSnapshot() const;
   void restoreEditSnapshot(const MidiSnapshotRef& snapshot);
@@ -117,17 +134,25 @@ struct Loop {
   void removeCaptureNoteOffAt(uint8_t channel, uint8_t note, uint32_t tick);
   /// Shift all Active-take MIDI by delta (record-stop origin alignment).
   void shiftActiveTakeTicks(int64_t delta);
-  /// Write materialized editFlat_ back into Active takes (stop-path / validation).
-  void flushEditStoreToTakes();
-  /// Call after mutating midiEvents() flat buffer so flushEditStoreToTakes can commit.
+  /// Idle maintenance: write materialized view back into Active takes (not edit exit).
+  void commitMaterializedStoreToTakes() {
+    if (editFlatStale_ || !editFlat_.isFlatDirty()) {
+      return;
+    }
+    editFlat_.syncFlatToStore();
+    commitMaterializedStoreImpl(true);
+  }
+  /// Call after mutating midiEvents() flat buffer before commitMaterializedStoreToTakes.
   void markEditFlatDirty() { editFlat_.markFlatDirty(); }
 #if defined(PIO_UNIT_TEST_NATIVE)
-  void nativeTestSyncEditFlatToTakes(bool allowEmptyClear) { syncEditFlatToTakes(allowEmptyClear); }
+  void nativeTestCommitMaterializedStoreToTakes(bool allowEmptyClear) {
+    commitMaterializedStoreImpl(allowEmptyClear);
+  }
   size_t nativeTestLiveEventCount() const { return liveEventCount(); }
 #endif
   /// SD v3/v1/v2 migration: adopt flat store as single Active take.
   void importPublishedStore(LoopEventStore& store);
-  /// Drop read-path editFlat materialization without writing back to takes.
+  /// Drop read-path materialized view without writing back to takes.
   void discardEditFlatMaterialization();
   /// Apply wrap-window stop finalize result back into Active takes.
   void commitStopFinalizeFromStore(LoopEventStore& merged);
@@ -175,8 +200,8 @@ struct Loop {
   CowLoopEventStore editFlat_;
   bool editFlatStale_ = true;
 
-  void materializeEditFlatFromTakes() const;
-  void syncEditFlatToTakes(bool allowEmptyClear = false);
+  void materializeEditViewFromTakesAndEdits() const;
+  void commitMaterializedStoreImpl(bool allowEmptyClear = false);
   void freeActiveTakeChunks();
   void markTakeDerivedStale();
 

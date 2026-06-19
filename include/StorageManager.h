@@ -18,4 +18,6 @@ public:
     static bool loadState(LooperState& state);
     static void requestDeferredSaveState(const LooperState& state);
     static void processDeferredSaveState(const LooperState& state);
+    static void requestUrgentEditSave();
+    static void processEditAutosave(const LooperState& state);
 }; 

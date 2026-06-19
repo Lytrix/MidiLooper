@@ -173,6 +173,7 @@ void loop() {
 
   if (!timingCriticalTrackActive) {
     StorageManager::processDeferredSaveState(looperState.getLooperState());
+    StorageManager::processEditAutosave(looperState.getLooperState());
     for (uint8_t i = 0; i < trackManager.getTrackCount(); ++i) {
       trackManager.getTrack(i).processDeferredIdleMaintenance();
     }

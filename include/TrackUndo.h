@@ -37,6 +37,7 @@ public:
     // Undo overdub
     static void pushUndoSnapshot(Track& track);
     static void pushCommittedTake(Track& track, uint8_t slotIndex, TakeId takeId);
+    static void pushNoteEditSessionCommitted(Track& track, uint8_t spanIndex, EditIdList editIds);
     static void beginOverdubSession(Track& track);
     static void endOverdubSession(Track& track);
     static void undoOverdub(Track& track);
