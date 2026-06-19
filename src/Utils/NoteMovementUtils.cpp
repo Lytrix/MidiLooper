@@ -4,109 +4,103 @@
 
 #include "Logger.h"
 #include "Globals.h"
+#include "NoteEditFocus.h"
 #include "Utils/MidiEventUtils.h"
 #include "Utils/NoteMovementUtils.h"
 #include "Utils/DebugSessionCapture.h"
 #include <algorithm>
+#include <map>
 #include <set>
 
 namespace NoteMovementUtils {
 
 namespace {
 
-bool isAlreadyShortenedVictim(const EditManager& manager,
-                              const NoteUtils::DisplayNote& note) {
-    auto matchesShortened = [&](const EditManager::MovingNoteIdentity::DeletedNote& deletedNote) {
-        return deletedNote.wasShortened &&
-               deletedNote.note == note.note &&
-               deletedNote.startTick == note.startTick &&
-               deletedNote.shortenedToTick == note.endTick;
-    };
-    for (const auto& deletedNote : manager.movingNote.deletedNotes) {
-        if (matchesShortened(deletedNote)) {
-            return true;
-        }
-    }
-    for (const auto& deletedNote : manager.sessionShortenedVictims) {
-        if (matchesShortened(deletedNote)) {
+using DeletedNote = EditManager::MovingNoteIdentity::DeletedNote;
+
+NoteEditFocus& editFocus(EditManager& manager) {
+    return manager.getNoteEditSession().focus;
+}
+
+const NoteEditFocus& editFocus(const EditManager& manager) {
+    return manager.getNoteEditSession().focus;
+}
+
+bool isAlreadyShortenedOverlap(const EditManager& manager,
+                               const NoteUtils::DisplayNote& note) {
+    const NoteEditFocus& focus = editFocus(manager);
+    for (const auto& [ref, entry] : focus.overlapNotes) {
+        (void)ref;
+        if (entry.state == OverlapNoteStoreState::Shortened &&
+            entry.baseline.pitch == note.note &&
+            entry.baseline.startTick == note.startTick &&
+            entry.shortenedEndTick == note.endTick) {
             return true;
         }
     }
     return false;
 }
 
-bool hasShortenedVictimEntry(const EditManager& manager,
-                             uint8_t pitch,
+bool hasShortenedOverlapEntry(const EditManager& manager, uint8_t pitch,
                              uint32_t startTick) {
-    for (const auto& deletedNote : manager.movingNote.deletedNotes) {
-        if (deletedNote.wasShortened &&
-            deletedNote.note == pitch &&
-            deletedNote.startTick == startTick) {
-            return true;
-        }
-    }
-    for (const auto& victim : manager.sessionShortenedVictims) {
-        if (victim.note == pitch && victim.startTick == startTick) {
+    const NoteEditFocus& focus = editFocus(manager);
+    for (const auto& [ref, entry] : focus.overlapNotes) {
+        (void)ref;
+        if (entry.state == OverlapNoteStoreState::Shortened &&
+            entry.baseline.pitch == pitch && entry.baseline.startTick == startTick) {
             return true;
         }
     }
     return false;
 }
 
-void upsertSessionShortenedVictim(
-    EditManager& manager,
-    const EditManager::MovingNoteIdentity::DeletedNote& victim) {
-    if (!victim.wasShortened) {
-        return;
-    }
-    for (auto& entry : manager.sessionShortenedVictims) {
-        if (entry.note == victim.note && entry.startTick == victim.startTick) {
-            entry = victim;
-            return;
-        }
-    }
-    manager.sessionShortenedVictims.push_back(victim);
+OverlapNote& upsertOverlapNote(EditManager& manager, uint8_t channel,
+                               const NoteUtils::DisplayNote& dn) {
+    NoteEditFocus& focus = editFocus(manager);
+    const NoteRef ref =
+        findBaselineRefForNote(focus, channel, dn.note, dn.startTick, dn.endTick);
+    OverlapNote& entry = focus.overlapNotes[ref];
+    entry.ref = ref;
+    entry.baseline = baselineForDisplayNote(focus, channel, dn);
+    return entry;
 }
 
-void removeSessionShortenedVictim(EditManager& manager, uint8_t pitch, uint32_t startTick) {
-    manager.sessionShortenedVictims.erase(
-        std::remove_if(manager.sessionShortenedVictims.begin(),
-                       manager.sessionShortenedVictims.end(),
-                       [&](const auto& entry) {
-                           return entry.note == pitch && entry.startTick == startTick;
-                       }),
-        manager.sessionShortenedVictims.end());
+void markOverlapHidden(EditManager& manager, uint8_t channel,
+                       const NoteUtils::DisplayNote& dn) {
+    OverlapNote& entry = upsertOverlapNote(manager, channel, dn);
+    entry.state = OverlapNoteStoreState::Hidden;
+    entry.shortenedEndTick = 0;
+    entry.innerUnderFootprint = false;
 }
 
-void upsertSessionDeletedNote(
-    EditManager& manager,
-    const EditManager::MovingNoteIdentity::DeletedNote& victim) {
-    if (victim.wasShortened) {
-        return;
-    }
-    for (auto& entry : manager.sessionDeletedNotes) {
-        if (entry.note == victim.note && entry.startTick == victim.startTick &&
-            entry.endTick == victim.endTick) {
-            entry = victim;
-            return;
-        }
-    }
-    manager.sessionDeletedNotes.push_back(victim);
+void markOverlapShortened(EditManager& manager, uint8_t channel,
+                          const NoteUtils::DisplayNote& dn, uint32_t shortenedEnd) {
+    OverlapNote& entry = upsertOverlapNote(manager, channel, dn);
+    entry.state = OverlapNoteStoreState::Shortened;
+    entry.shortenedEndTick = shortenedEnd;
+    entry.innerUnderFootprint = false;
 }
 
-void removeSessionDeletedNote(EditManager& manager, uint8_t pitch, uint32_t startTick) {
-    manager.sessionDeletedNotes.erase(
-        std::remove_if(manager.sessionDeletedNotes.begin(),
-                       manager.sessionDeletedNotes.end(),
-                       [&](const auto& entry) {
-                           return entry.note == pitch && entry.startTick == startTick;
-                       }),
-        manager.sessionDeletedNotes.end());
+void removeOverlapEntry(EditManager& manager, const NoteRef& ref) {
+    editFocus(manager).overlapNotes.erase(ref);
 }
 
-void appendUniqueRestoreCandidate(
-    std::vector<EditManager::MovingNoteIdentity::DeletedNote>& notesToRestore,
-    const EditManager::MovingNoteIdentity::DeletedNote& candidate) {
+DeletedNote overlapNoteToDeletedNote(const OverlapNote& entry) {
+    DeletedNote dn;
+    dn.note = entry.baseline.pitch;
+    dn.velocity = entry.baseline.velocity;
+    dn.startTick = entry.baseline.startTick;
+    dn.endTick = entry.baseline.endTick;
+    dn.originalLength = entry.baseline.endTick >= entry.baseline.startTick
+                            ? entry.baseline.endTick - entry.baseline.startTick
+                            : 0;
+    dn.wasShortened = entry.state == OverlapNoteStoreState::Shortened;
+    dn.shortenedToTick = entry.shortenedEndTick;
+    return dn;
+}
+
+void appendUniqueRestoreCandidate(std::vector<DeletedNote>& notesToRestore,
+                                  const DeletedNote& candidate) {
     for (const auto& queued : notesToRestore) {
         if (queued.note == candidate.note && queued.startTick == candidate.startTick) {
             return;
@@ -115,38 +109,96 @@ void appendUniqueRestoreCandidate(
     notesToRestore.push_back(candidate);
 }
 
-uint32_t deletedNoteEffectiveEnd(
-    const EditManager::MovingNoteIdentity::DeletedNote& deletedNote) {
+uint32_t deletedNoteEffectiveEnd(const DeletedNote& deletedNote) {
     return deletedNote.wasShortened ? deletedNote.shortenedToTick : deletedNote.endTick;
 }
 
-uint32_t movingNoteSessionSpanEnd(const EditManager& manager, uint32_t loopLength) {
-    uint32_t sessionSpanEnd = manager.movingNote.origEnd;
-    if (!manager.movingNote.active || loopLength == 0) {
-        return sessionSpanEnd;
-    }
-    const uint32_t displayLastEnd =
-        (manager.movingNote.lastEnd >= loopLength)
-            ? (manager.movingNote.lastEnd % loopLength)
-            : manager.movingNote.lastEnd;
-    if (displayLastEnd > sessionSpanEnd) {
-        sessionSpanEnd = displayLastEnd;
-    }
-    return sessionSpanEnd;
+bool isInnerNoteUnderFootprint(const EditManager& manager, uint8_t notePitch,
+                               uint32_t noteStart, uint32_t noteEnd,
+                               uint32_t loopLength) {
+    return isInnerUnderOverlapFootprint(editFocus(manager), notePitch, noteStart, noteEnd,
+                                        loopLength);
 }
 
-bool isInnerNoteUnderSessionSpan(const EditManager& manager, uint8_t notePitch,
-                                 uint32_t noteStart, uint32_t noteEnd,
-                                 uint32_t loopLength) {
-    if (!manager.movingNote.active || loopLength == 0) {
-        return false;
+void restoreOverlapNotesNoLongerOverlapping(MidiEventVec& midiEvents, EditManager& manager,
+                                            uint8_t channel, uint32_t moverStart,
+                                            uint32_t moverDisplayEnd, uint8_t movingPitch,
+                                            uint32_t originalStart, uint32_t loopLength) {
+    std::vector<DeletedNote> notesToRestore;
+    NoteEditFocus& focus = editFocus(manager);
+
+    for (auto& [ref, entry] : focus.overlapNotes) {
+        if (entry.state == OverlapNoteStoreState::Visible) {
+            continue;
+        }
+        const DeletedNote dn = overlapNoteToDeletedNote(entry);
+
+        if (dn.note != movingPitch && dn.wasShortened) {
+            const uint32_t truncatedStart = dn.shortenedToTick + 1;
+            const bool overlapsTruncatedZone = notesOverlap(
+                moverStart, moverDisplayEnd, truncatedStart, dn.endTick, loopLength);
+            if (!overlapsTruncatedZone) {
+                appendUniqueRestoreCandidate(notesToRestore, dn);
+            }
+            continue;
+        }
+
+        if (dn.note != movingPitch) {
+            continue;
+        }
+
+        if (dn.startTick == originalStart) {
+            continue;
+        }
+
+        const uint32_t deletedNoteLength =
+            calculateNoteLength(dn.startTick, dn.endTick, loopLength);
+        if (deletedNoteLength == 0 || deletedNoteLength >= loopLength) {
+            continue;
+        }
+
+        const uint32_t victimEnd = deletedNoteEffectiveEnd(dn);
+        const bool hasOverlap =
+            notesOverlap(moverStart, moverDisplayEnd, dn.startTick, victimEnd, loopLength);
+        if (!hasOverlap) {
+            appendUniqueRestoreCandidate(notesToRestore, dn);
+        } else if (isInnerNoteUnderFootprint(manager, dn.note, dn.startTick, victimEnd,
+                                             loopLength)) {
+            appendUniqueRestoreCandidate(notesToRestore, dn);
+            entry.state = OverlapNoteStoreState::Visible;
+            entry.innerUnderFootprint = true;
+        }
     }
-    if (notePitch == manager.movingNote.origPitch) {
-        return false;
+
+    if (notesToRestore.empty()) {
+        return;
     }
-    return isNoteWithinMovingSpan(
-        noteStart, noteEnd, manager.movingNote.origStart,
-        movingNoteSessionSpanEnd(manager, loopLength), loopLength);
+
+    auto [onIndex, offIndex] = NoteUtils::buildEventIndex(midiEvents);
+    restoreNotes(midiEvents, notesToRestore, manager, loopLength, channel, onIndex, offIndex);
+    logger.log(CAT_MIDI, LOG_DEBUG, "Restored %zu overlap notes no longer overlapping mover",
+              notesToRestore.size());
+}
+
+void restoreOverlapNotesForPitchLaneClear(MidiEventVec& midiEvents, EditManager& manager,
+                                          uint8_t channel, uint8_t clearedPitch,
+                                          uint32_t loopLength) {
+    std::vector<DeletedNote> notesToRestore;
+    for (const auto& [ref, entry] : editFocus(manager).overlapNotes) {
+        (void)ref;
+        if (entry.state == OverlapNoteStoreState::Visible) {
+            continue;
+        }
+        if (entry.baseline.pitch != clearedPitch) {
+            continue;
+        }
+        appendUniqueRestoreCandidate(notesToRestore, overlapNoteToDeletedNote(entry));
+    }
+    if (notesToRestore.empty()) {
+        return;
+    }
+    auto [onIndex, offIndex] = NoteUtils::buildEventIndex(midiEvents);
+    restoreNotes(midiEvents, notesToRestore, manager, loopLength, channel, onIndex, offIndex);
 }
 
 } // namespace
@@ -183,23 +235,6 @@ bool notesOverlap(uint32_t start1, uint32_t end1, uint32_t start2, uint32_t end2
     return overlap;
 }
 
-bool isNoteWithinMovingSpan(uint32_t noteStart, uint32_t noteEnd,
-                            uint32_t spanStart, uint32_t spanEnd,
-                            uint32_t loopLength) {
-    if (loopLength == 0) {
-        return false;
-    }
-    const uint32_t displaySpanEnd =
-        (spanEnd >= loopLength) ? (spanEnd % loopLength) : spanEnd;
-    if (noteEnd < noteStart) {
-        return false;
-    }
-    if (displaySpanEnd >= spanStart) {
-        return noteStart >= spanStart && noteEnd <= displaySpanEnd;
-    }
-    return noteStart >= spanStart || noteEnd <= displaySpanEnd;
-}
-
 bool notesTouchOrOverlap(uint32_t start1, uint32_t end1, uint32_t start2, uint32_t end2,
                         uint32_t loopLength) {
     if (notesOverlap(start1, end1, start2, end2, loopLength)) {
@@ -228,7 +263,8 @@ void findOverlaps(const std::vector<NoteUtils::DisplayNote>& currentNotes,
                  uint32_t loopLength,
                  const EditManager& manager,
                  std::vector<std::pair<NoteUtils::DisplayNote, uint32_t>>& notesToShorten,
-                 std::vector<NoteUtils::DisplayNote>& notesToDelete) {
+                 std::vector<NoteUtils::DisplayNote>& notesToDelete,
+                 bool allowSharedEndCoexistence) {
     
     // Calculate display end position for the moving note (handle wrapping)
     uint32_t displayNewEnd = newEnd % loopLength;
@@ -239,8 +275,8 @@ void findOverlaps(const std::vector<NoteUtils::DisplayNote>& currentNotes,
 
         // A note we already shortened in this edit session should not be deleted again when
         // the moving note slides back over it (fully-contained check would remove it).
-        if (isAlreadyShortenedVictim(manager, note) ||
-            hasShortenedVictimEntry(manager, note.note, note.startTick)) {
+        if (isAlreadyShortenedOverlap(manager, note) ||
+            hasShortenedOverlapEntry(manager, note.note, note.startTick)) {
             logger.log(CAT_MIDI, LOG_DEBUG,
                       "Skipping overlap on tracked shortened victim: pitch=%d, start=%lu, end=%lu",
                       note.note, note.startTick, note.endTick);
@@ -250,7 +286,7 @@ void findOverlaps(const std::vector<NoteUtils::DisplayNote>& currentNotes,
         bool overlaps = notesOverlap(newStart, displayNewEnd, note.startTick, note.endTick, loopLength);
         if (!overlaps) continue;
 
-        if (isInnerNoteUnderSessionSpan(manager, note.note, note.startTick, note.endTick,
+        if (isInnerNoteUnderFootprint(manager, note.note, note.startTick, note.endTick,
                                         loopLength)) {
             logger.log(CAT_MIDI, LOG_DEBUG,
                       "Skipping overlap on inner note under session span: pitch=%d, start=%lu, "
@@ -272,6 +308,14 @@ void findOverlaps(const std::vector<NoteUtils::DisplayNote>& currentNotes,
         }
         
         if (noteCompletelyContained) {
+            if (allowSharedEndCoexistence && note.startTick > newStart &&
+                note.endTick == displayNewEnd) {
+                logger.log(CAT_MIDI, LOG_DEBUG,
+                          "Skipping delete for same-pitch shared release: pitch=%d, start=%lu, "
+                          "end=%lu (mover %lu-%lu)",
+                          note.note, note.startTick, note.endTick, newStart, displayNewEnd);
+                continue;
+            }
             // Delete the note entirely if it's completely contained within the moving note
             notesToDelete.push_back(note);
             logger.log(CAT_MIDI, LOG_DEBUG, "Will delete completely contained note: pitch=%d, start=%lu, end=%lu (within moving note %lu-%lu)", 
@@ -302,7 +346,7 @@ void findOverlaps(const std::vector<NoteUtils::DisplayNote>& currentNotes,
             
             // Check if shortened length would be less than 49 ticks
             if (shortenedLength < 49) {
-                if (hasShortenedVictimEntry(manager, note.note, note.startTick)) {
+                if (hasShortenedOverlapEntry(manager, note.note, note.startTick)) {
                     logger.log(CAT_MIDI, LOG_DEBUG,
                               "Keeping shortened victim head (too-short trim skipped): pitch=%d, start=%lu, end=%lu",
                               note.note, note.startTick, note.endTick);
@@ -322,6 +366,74 @@ void findOverlaps(const std::vector<NoteUtils::DisplayNote>& currentNotes,
               notesToShorten.size(), notesToDelete.size());
 }
 
+MidiEvent* findCorrespondingNoteOff(MidiEventVec& midiEvents, MidiEvent* noteOnEvent,
+                                    uint8_t pitch, std::uint32_t startTick,
+                                    std::uint32_t endTick) {
+    std::vector<MidiEvent*> activeNoteOnStack;
+
+    for (auto& evt : midiEvents) {
+        bool isNoteOn = (evt.type == midi::NoteOn && evt.data.noteData.velocity > 0 &&
+                         evt.data.noteData.note == pitch);
+        bool isNoteOff = ((evt.type == midi::NoteOff ||
+                           (evt.type == midi::NoteOn && evt.data.noteData.velocity == 0)) &&
+                          evt.data.noteData.note == pitch);
+
+        if (isNoteOn) {
+            activeNoteOnStack.push_back(&evt);
+        } else if (isNoteOff) {
+            if (!activeNoteOnStack.empty()) {
+                MidiEvent* correspondingNoteOn = activeNoteOnStack.back();
+                activeNoteOnStack.pop_back();
+
+                if (correspondingNoteOn == noteOnEvent) {
+                    logger.log(CAT_MIDI, LOG_DEBUG,
+                              "Found corresponding note-off: pitch=%d, noteOn@%lu -> noteOff@%lu",
+                              pitch, correspondingNoteOn->tick, evt.tick);
+                    return &evt;
+                }
+            }
+        }
+    }
+
+    logger.log(CAT_MIDI, LOG_DEBUG, "No corresponding note-off found for pitch=%d, start=%lu",
+              pitch, startTick);
+    return nullptr;
+}
+
+MidiEvent* findNoteOffPairedAt(MidiEventVec& midiEvents, uint8_t pitch, uint32_t startTick,
+                               uint32_t endTick) {
+    std::vector<MidiEvent*> activeNoteOnStack;
+    for (auto& evt : midiEvents) {
+        const bool isNoteOn = (evt.type == midi::NoteOn && evt.data.noteData.velocity > 0 &&
+                             evt.data.noteData.note == pitch);
+        const bool isNoteOff =
+            ((evt.type == midi::NoteOff ||
+              (evt.type == midi::NoteOn && evt.data.noteData.velocity == 0)) &&
+             evt.data.noteData.note == pitch);
+
+        if (isNoteOn) {
+            activeNoteOnStack.push_back(&evt);
+        } else if (isNoteOff) {
+            if (activeNoteOnStack.empty()) {
+                continue;
+            }
+            MidiEvent* correspondingNoteOn = activeNoteOnStack.back();
+            activeNoteOnStack.pop_back();
+            if (correspondingNoteOn->tick == startTick && evt.tick == endTick) {
+                logger.log(CAT_MIDI, LOG_DEBUG,
+                          "Found paired note-off: pitch=%d, start=%lu, end=%lu",
+                          pitch, startTick, endTick);
+                return &evt;
+            }
+        }
+    }
+
+    logger.log(CAT_MIDI, LOG_DEBUG,
+              "No paired note-off for pitch=%d, start=%lu, end=%lu",
+              pitch, startTick, endTick);
+    return nullptr;
+}
+
 void applyShortenOrDelete(MidiEventVec& midiEvents,
                          const std::vector<std::pair<NoteUtils::DisplayNote, uint32_t>>& notesToShorten,
                          const std::vector<NoteUtils::DisplayNote>& notesToDelete,
@@ -329,105 +441,71 @@ void applyShortenOrDelete(MidiEventVec& midiEvents,
                          uint32_t loopLength,
                          NoteUtils::EventIndexMap& onIndex,
                          NoteUtils::EventIndexMap& offIndex) {
-    // Shorten overlapping notes using index
+    const uint8_t channel = editFocus(manager).moving.channel;
+
     for (const auto& [dn, newEnd] : notesToShorten) {
-        // Find the current note-off event tick (might have been shortened before)
         uint32_t currentOffTick = dn.endTick;
-        
-        // Check if we already have a deleted note entry for this note
-        auto existingEntry = std::find_if(manager.movingNote.deletedNotes.begin(), 
-                                         manager.movingNote.deletedNotes.end(),
-                                         [&](const auto& deletedNote) {
-                                             return deletedNote.note == dn.note && 
-                                                    deletedNote.startTick == dn.startTick &&
-                                                    deletedNote.wasShortened;
-                                         });
-        auto sessionEntry = std::find_if(
-            manager.sessionShortenedVictims.begin(), manager.sessionShortenedVictims.end(),
-            [&](const auto& victim) {
-                return victim.note == dn.note && victim.startTick == dn.startTick;
-            });
-        
-        if (existingEntry != manager.movingNote.deletedNotes.end()) {
-            // Update the existing entry with the new shortened position
-            currentOffTick = existingEntry->shortenedToTick;  // Use current position before updating
-            logger.log(CAT_MIDI, LOG_DEBUG, "Updating existing shortened note entry: pitch=%d, start=%lu, old_shortened_to=%lu, new_shortened_to=%lu",
-                      dn.note, dn.startTick, existingEntry->shortenedToTick, newEnd);
-            logger.log(CAT_MIDI, LOG_DEBUG, "Note was already shortened, looking for note-off at current position: %lu instead of original %lu", 
-                      currentOffTick, dn.endTick);
-            existingEntry->shortenedToTick = newEnd;
-            upsertSessionShortenedVictim(manager, *existingEntry);
-        } else if (sessionEntry != manager.sessionShortenedVictims.end()) {
-            currentOffTick = sessionEntry->shortenedToTick;
+        const NoteRef ref =
+            findBaselineRefForNote(editFocus(manager), channel, dn.note, dn.startTick, dn.endTick);
+        OverlapNote* existing = findOverlapNoteEntry(editFocus(manager), ref);
+        if (existing != nullptr && existing->state == OverlapNoteStoreState::Shortened) {
+            currentOffTick = existing->shortenedEndTick;
+            existing->shortenedEndTick = newEnd;
             logger.log(CAT_MIDI, LOG_DEBUG,
-                      "Updating session shortened victim: pitch=%d, start=%lu, old_shortened_to=%lu, "
-                      "new_shortened_to=%lu",
-                      dn.note, dn.startTick, sessionEntry->shortenedToTick, newEnd);
-            sessionEntry->shortenedToTick = newEnd;
-            manager.movingNote.deletedNotes.push_back(*sessionEntry);
-            upsertSessionShortenedVictim(manager, *sessionEntry);
+                      "Updating shortened overlap note: pitch=%d, start=%lu, old_end=%lu, new_end=%lu",
+                      dn.note, dn.startTick, currentOffTick, newEnd);
         } else {
-            // Record original for undo - currentOffTick remains as dn.endTick (original position)
-            EditManager::MovingNoteIdentity::DeletedNote original = MidiEventUtils::createDeletedNote(
-                dn, loopLength, true, newEnd);
-            
-            manager.movingNote.deletedNotes.push_back(original);
-            upsertSessionShortenedVictim(manager, original);
-            logger.log(CAT_MIDI, LOG_DEBUG, "Stored original note before shortening: pitch=%d, start=%lu, original_end=%lu, shortened_to=%lu, length=%lu",
-                      original.note, original.startTick, original.endTick, original.shortenedToTick, original.originalLength);
+            markOverlapShortened(manager, channel, dn, newEnd);
+            logger.log(CAT_MIDI, LOG_DEBUG,
+                      "Stored shortened overlap note: pitch=%d, start=%lu, original_end=%lu, "
+                      "shortened_to=%lu",
+                      dn.note, dn.startTick, dn.endTick, newEnd);
         }
-        
-        // Adjust its NoteOff event via index
+
         auto offKey = (NoteUtils::Key(dn.note) << 32) | currentOffTick;
         auto itOff = offIndex.find(offKey);
         if (itOff != offIndex.end()) {
             size_t idx = itOff->second;
-            logger.log(CAT_MIDI, LOG_DEBUG, "Updated note-off event: pitch=%d, from tick=%lu to tick=%lu", 
-                      dn.note, midiEvents[idx].tick, newEnd);
             midiEvents[idx].tick = newEnd;
-            // Update index for new tick
             offIndex.erase(itOff);
             auto newKey = (NoteUtils::Key(dn.note) << 32) | newEnd;
             offIndex[newKey] = idx;
         } else {
-            logger.log(CAT_MIDI, LOG_DEBUG, "Warning: Could not find note-off event for shortening: pitch=%d, expected at tick=%lu", 
+            logger.log(CAT_MIDI, LOG_DEBUG,
+                      "Warning: Could not find note-off event for shortening: pitch=%d, tick=%lu",
                       dn.note, currentOffTick);
         }
     }
-    
-    // Delete overlapping notes entirely  
+
     for (const auto& dn : notesToDelete) {
-        // Use a two-phase approach: first find the specific NoteOn/NoteOff pair,
-        // then delete them to avoid deleting the wrong events when multiple notes
-        // share the same start position
-        
         MidiEvent* noteOnToDelete = nullptr;
-        MidiEvent* noteOffToDelete = nullptr;
-        
-        // First pass: find the specific NoteOn at the start position
         for (auto& evt : midiEvents) {
-            if (evt.type == midi::NoteOn && evt.data.noteData.velocity > 0 && 
+            if (evt.type == midi::NoteOn && evt.data.noteData.velocity > 0 &&
                 evt.data.noteData.note == dn.note && evt.tick == dn.startTick) {
-                
-                // Look ahead to find the corresponding NoteOff for this specific NoteOn
-                for (auto& offEvt : midiEvents) {
-                    bool isOff = (offEvt.type == midi::NoteOff) || (offEvt.type == midi::NoteOn && offEvt.data.noteData.velocity == 0);
-                    if (isOff && offEvt.data.noteData.note == dn.note && offEvt.tick == dn.endTick) {
-                        // Check that this pair forms the note we want to delete
-                        uint32_t noteLength = calculateNoteLength(evt.tick, offEvt.tick, loopLength);
-                        uint32_t expectedLength = calculateNoteLength(dn.startTick, dn.endTick, loopLength);
-                        
-                        if (noteLength == expectedLength) {
-                            noteOnToDelete = &evt;
-                            noteOffToDelete = &offEvt;
-                            goto found_pair; // Break out of both loops
-                        }
-                    }
+                noteOnToDelete = &evt;
+                break;
+            }
+        }
+
+        MidiEvent* noteOffToDelete = nullptr;
+        if (noteOnToDelete) {
+            noteOffToDelete = findCorrespondingNoteOff(
+                midiEvents, noteOnToDelete, dn.note, dn.startTick, dn.endTick);
+            if (noteOffToDelete) {
+                const uint32_t pairedLength = calculateNoteLength(
+                    noteOnToDelete->tick, noteOffToDelete->tick, loopLength);
+                const uint32_t expectedLength = calculateNoteLength(
+                    dn.startTick, dn.endTick, loopLength);
+                if (pairedLength != expectedLength) {
+                    logger.log(CAT_MIDI, LOG_DEBUG,
+                              "LIFO pair length mismatch for delete: pitch=%d, start=%lu, "
+                              "paired_end=%lu, expected_end=%lu",
+                              dn.note, dn.startTick, noteOffToDelete->tick, dn.endTick);
+                    noteOffToDelete = nullptr;
                 }
             }
         }
-        
-        found_pair:
+
         if (noteOnToDelete && noteOffToDelete) {
             logger.log(CAT_MIDI, LOG_DEBUG, "Temporarily deleting MIDI event pair: NoteOn pitch=%d tick=%lu, NoteOff pitch=%d tick=%lu",
                       noteOnToDelete->data.noteData.note, noteOnToDelete->tick,
@@ -448,39 +526,9 @@ void applyShortenOrDelete(MidiEventVec& midiEvents,
                 }
             }
 
-            // Check if we already have a deleted note entry for this note
-            auto existingDeleted = std::find_if(manager.movingNote.deletedNotes.begin(),
-                                               manager.movingNote.deletedNotes.end(),
-                                               [&](const auto& deletedNote) {
-                                                   return deletedNote.note == dn.note &&
-                                                          deletedNote.startTick == dn.startTick &&
-                                                          deletedNote.endTick == dn.endTick &&
-                                                          !deletedNote.wasShortened;
-                                               });
-
-            if (existingDeleted == manager.movingNote.deletedNotes.end()) {
-                // Drop stale full-delete shadow when a shortened-victim entry still tracks this note.
-                manager.movingNote.deletedNotes.erase(
-                    std::remove_if(manager.movingNote.deletedNotes.begin(),
-                                   manager.movingNote.deletedNotes.end(),
-                                   [&](const auto& entry) {
-                                       return !entry.wasShortened &&
-                                              entry.note == dn.note &&
-                                              entry.startTick == dn.startTick;
-                                   }),
-                    manager.movingNote.deletedNotes.end());
-
-                EditManager::MovingNoteIdentity::DeletedNote deleted = MidiEventUtils::createDeletedNote(
-                    dn, loopLength, false, 0);
-
-                manager.movingNote.deletedNotes.push_back(deleted);
-                upsertSessionDeletedNote(manager, deleted);
-                logger.log(CAT_MIDI, LOG_DEBUG, "Stored deleted note: pitch=%d, start=%lu, end=%lu, length=%lu",
-                          deleted.note, deleted.startTick, deleted.endTick, deleted.originalLength);
-            } else {
-                logger.log(CAT_MIDI, LOG_DEBUG, "Skipping duplicate deleted note entry: pitch=%d, start=%lu, end=%lu",
-                          dn.note, dn.startTick, dn.endTick);
-            }
+            markOverlapHidden(manager, channel, dn);
+            logger.log(CAT_MIDI, LOG_DEBUG, "Stored hidden overlap note: pitch=%d, start=%lu, end=%lu",
+                      dn.note, dn.startTick, dn.endTick);
         } else {
             logger.log(CAT_MIDI, LOG_DEBUG, "Warning: could not find specific MIDI event pair for note pitch=%d, start=%lu, end=%lu", 
                       dn.note, dn.startTick, dn.endTick);
@@ -503,10 +551,14 @@ void restoreNotes(MidiEventVec& midiEvents,
     
     for (const auto& nr : notesToRestore) {
         bool didRestore = false;
-        
+        const uint8_t channel = editFocus(manager).moving.channel;
+        const NoteRef ref =
+            findBaselineRefForNote(editFocus(manager), channel, nr.note, nr.startTick, nr.endTick);
+
         if (nr.wasShortened) {
-            // Restore a shortened note by extending it back to original length
-            logger.log(CAT_MIDI, LOG_DEBUG, "Restoring shortened note: pitch=%d, start=%lu, was shortened to %lu, restoring to %lu", 
+            logger.log(CAT_MIDI, LOG_DEBUG,
+                      "Restoring shortened overlap note: pitch=%d, start=%lu, was shortened to %lu, "
+                      "restoring to %lu",
                       nr.note, nr.startTick, nr.shortenedToTick, nr.endTick);
             
             // Find the note-on event
@@ -581,21 +633,15 @@ void restoreNotes(MidiEventVec& midiEvents,
         }
     }
     
-    // Remove restored notes from deleted list
     for (const auto& r : restored) {
-        manager.movingNote.deletedNotes.erase(
-            std::remove_if(manager.movingNote.deletedNotes.begin(), manager.movingNote.deletedNotes.end(),
-                [&](const auto& dn){ return dn.note==r.note && dn.startTick==r.startTick && dn.endTick==r.endTick; }),
-            manager.movingNote.deletedNotes.end());
-        if (r.wasShortened) {
-            removeSessionShortenedVictim(manager, r.note, r.startTick);
-        } else {
-            removeSessionDeletedNote(manager, r.note, r.startTick);
-        }
+        const uint8_t channel = editFocus(manager).moving.channel;
+        const NoteRef ref = findBaselineRefForNote(editFocus(manager), channel, r.note,
+                                                   r.startTick, r.endTick);
+        removeOverlapEntry(manager, ref);
     }
-    
-    logger.log(CAT_MIDI, LOG_DEBUG, "Restored %zu notes, %zu notes still in deleted list", 
-              restored.size(), manager.movingNote.deletedNotes.size());
+
+    logger.log(CAT_MIDI, LOG_DEBUG, "Restored %zu overlap notes, %zu still tracked",
+              restored.size(), editFocus(manager).overlapNotes.size());
 }
 
 void finalReconstructAndSelect(MidiEventVec& midiEvents,
@@ -645,7 +691,10 @@ bool applyPitchChange(Track& track, EditManager& manager,
         return true;
     }
 
-    auto& midiEvents = track.getMidiEvents();
+    // Use the note-edit session store (when active) so live pitch edits share the same
+    // source-of-truth buffer as move/length edits; getMidiEvents() re-materializes from
+    // takes+edits and would diverge from the live session flat.
+    auto& midiEvents = track.editAwareMidiEvents();
     const uint32_t loopLength = track.getLoopLength();
     if (loopLength == 0) {
         return false;
@@ -653,40 +702,15 @@ bool applyPitchChange(Track& track, EditManager& manager,
 
     const uint32_t pitchNoteOnTick = noteStart;
 
-    // STEP 1: restore temporarily deleted notes of the current pitch.
-    std::vector<EditManager::MovingNoteIdentity::DeletedNote> notesToRestore;
-    for (const auto& deletedNote : manager.movingNote.deletedNotes) {
-        if (deletedNote.note == currentNoteValue) {
-            notesToRestore.push_back(deletedNote);
-            logger.log(CAT_MIDI, LOG_DEBUG,
-                      "Will restore note after pitch change: pitch=%d, start=%lu, end=%lu "
-                      "(no longer conflicts with new pitch %d)",
-                      deletedNote.note, deletedNote.startTick, deletedNote.endTick,
-                      newNoteValue);
-        }
-    }
-
-    if (!notesToRestore.empty()) {
-        auto [onIndex, offIndex] = NoteUtils::buildEventIndex(midiEvents);
-        restoreNotes(midiEvents, notesToRestore, manager, loopLength,
-                     track.getMidiChannel(), onIndex, offIndex);
-        logger.log(CAT_MIDI, LOG_DEBUG, "Restored %zu notes after pitch change",
-                  notesToRestore.size());
-    }
+    restoreOverlapNotesForPitchLaneClear(midiEvents, manager, track.getMidiChannel(),
+                                         currentNoteValue, loopLength);
+    track.invalidateCaches();
 
     auto notes = track.getCachedNotes();
-    const bool preserveInnerNotes = manager.movingNote.active;
-    const uint32_t sessionSpanStart = manager.movingNote.origStart;
-    uint32_t sessionSpanEnd = manager.movingNote.origEnd;
-    if (preserveInnerNotes) {
-        const uint32_t displayLastEnd =
-            (manager.movingNote.lastEnd >= loopLength)
-                ? (manager.movingNote.lastEnd % loopLength)
-                : manager.movingNote.lastEnd;
-        if (displayLastEnd > sessionSpanEnd) {
-            sessionSpanEnd = displayLastEnd;
-        }
-    }
+    const NoteEditFocus& focus = editFocus(manager);
+    const bool preserveInnerNotes = manager.movingNote.active && focus.active;
+    const uint32_t footprintStart = focus.overlapFootprint.start;
+    const uint32_t footprintEnd = overlapFootprintDisplayEnd(focus, loopLength);
 
     // Merge adjacent same-target-pitch neighbors into the edited span before overlap
     // resolution. Skip inner notes under the session span so they can reappear later.
@@ -703,9 +727,8 @@ bool applyPitchChange(Track& track, EditManager& manager,
                 continue;
             }
             if (preserveInnerNotes &&
-                isNoteWithinMovingSpan(
-                    note.startTick, note.endTick, sessionSpanStart, sessionSpanEnd,
-                    loopLength)) {
+                isNoteWithinMovingSpan(note.startTick, note.endTick, footprintStart,
+                                       footprintEnd, loopLength)) {
                 logger.log(CAT_MIDI, LOG_DEBUG,
                            "Skipping adjacent merge for inner note under original span: "
                            "pitch=%d, start=%lu, end=%lu",
@@ -746,9 +769,6 @@ bool applyPitchChange(Track& track, EditManager& manager,
     }
 
     std::set<std::pair<uint32_t, uint32_t>> restoredNotePositions;
-    for (const auto& restored : notesToRestore) {
-        restoredNotePositions.insert({restored.startTick, restored.endTick});
-    }
 
     std::vector<NoteUtils::DisplayNote> otherNotesOfTargetPitch;
     for (const auto& note : notes) {
@@ -766,9 +786,8 @@ bool applyPitchChange(Track& track, EditManager& manager,
             continue;
         }
         if (preserveInnerNotes &&
-            isNoteWithinMovingSpan(
-                note.startTick, note.endTick, sessionSpanStart, sessionSpanEnd,
-                loopLength)) {
+            isNoteWithinMovingSpan(note.startTick, note.endTick, footprintStart,
+                                   footprintEnd, loopLength)) {
             logger.log(CAT_MIDI, LOG_DEBUG,
                        "Skipping pitch overlap on inner note under original span: "
                        "pitch=%d, start=%lu, end=%lu",
@@ -785,60 +804,8 @@ bool applyPitchChange(Track& track, EditManager& manager,
 
         std::vector<std::pair<NoteUtils::DisplayNote, uint32_t>> notesToShorten;
         std::vector<NoteUtils::DisplayNote> notesToDelete;
-        for (const auto& note : otherNotesOfTargetPitch) {
-            const bool overlaps = notesTouchOrOverlap(
-                noteStart, noteEnd, note.startTick, note.endTick, loopLength);
-            if (!overlaps) {
-                continue;
-            }
-
-            bool noteCompletelyContained = false;
-            if (noteEnd >= noteStart) {
-                noteCompletelyContained =
-                    (note.startTick >= noteStart && note.endTick <= noteEnd);
-            } else {
-                noteCompletelyContained =
-                    (note.startTick >= noteStart || note.endTick <= noteEnd);
-            }
-
-            if (noteCompletelyContained) {
-                notesToDelete.push_back(note);
-                logger.log(CAT_MIDI, LOG_DEBUG,
-                          "Will delete completely contained note: pitch=%d, start=%lu, end=%lu "
-                          "(within current note %lu-%lu)",
-                          note.note, note.startTick, note.endTick, noteStart, noteEnd);
-                continue;
-            }
-
-            uint32_t newNoteEndTick;
-            if (note.startTick < noteStart) {
-                newNoteEndTick = (noteStart == 0) ? (loopLength - 1) : (noteStart - 1);
-            } else {
-                notesToDelete.push_back(note);
-                logger.log(CAT_MIDI, LOG_DEBUG,
-                          "Will delete overlapping note that starts after current note: "
-                          "pitch=%d, start=%lu, end=%lu",
-                          note.note, note.startTick, note.endTick);
-                continue;
-            }
-
-            const uint32_t shortenedLength =
-                calculateNoteLength(note.startTick, newNoteEndTick, loopLength);
-            if (shortenedLength < 49) {
-                notesToDelete.push_back(note);
-                logger.log(CAT_MIDI, LOG_DEBUG,
-                          "Will delete note (too short after shortening): pitch=%d, start=%lu, "
-                          "end=%lu->%lu, length=%lu < 49",
-                          note.note, note.startTick, note.endTick, newNoteEndTick,
-                          shortenedLength);
-            } else {
-                notesToShorten.push_back({note, newNoteEndTick});
-                logger.log(CAT_MIDI, LOG_DEBUG,
-                          "Will shorten note: pitch=%d, start=%lu, end=%lu->%lu, length=%lu",
-                          note.note, note.startTick, note.endTick, newNoteEndTick,
-                          shortenedLength);
-            }
-        }
+        findOverlaps(otherNotesOfTargetPitch, newNoteValue, noteStart, noteStart, noteEnd, 1,
+                     loopLength, manager, notesToShorten, notesToDelete);
 
         if (!notesToShorten.empty() || !notesToDelete.empty()) {
             auto [onIndex, offIndex] = NoteUtils::buildEventIndex(midiEvents);
@@ -850,32 +817,35 @@ bool applyPitchChange(Track& track, EditManager& manager,
         }
     }
 
+    // Resolve the note-on, then its STRUCTURALLY PAIRED note-off (not an independent
+    // tick scan): two same-pitch notes can share a start or end tick when overlapping,
+    // and an independent scan would repitch one event of a neighbor and orphan a note.
     bool noteOnUpdated = false;
     bool noteOffUpdated = false;
+    MidiEvent* noteOnEvent = nullptr;
     for (auto& event : midiEvents) {
         if (event.type == midi::NoteOn &&
             event.data.noteData.note == currentNoteValue &&
             event.tick == noteStart &&
             event.data.noteData.velocity > 0) {
-            logger.log(CAT_MIDI, LOG_DEBUG,
-                      "Updating note-on: pitch %d -> %d at tick %lu",
-                      currentNoteValue, newNoteValue, event.tick);
-            event.data.noteData.note = newNoteValue;
-            noteOnUpdated = true;
+            noteOnEvent = &event;
             break;
         }
     }
-    for (auto& event : midiEvents) {
-        if (((event.type == midi::NoteOff) ||
-             (event.type == midi::NoteOn && event.data.noteData.velocity == 0)) &&
-            event.data.noteData.note == currentNoteValue &&
-            event.tick == noteEnd) {
+    if (noteOnEvent) {
+        MidiEvent* noteOffEvent = findCorrespondingNoteOff(
+            midiEvents, noteOnEvent, currentNoteValue, noteStart, noteEnd);
+        if (noteOffEvent) {
+            logger.log(CAT_MIDI, LOG_DEBUG,
+                      "Updating note-on: pitch %d -> %d at tick %lu",
+                      currentNoteValue, newNoteValue, noteOnEvent->tick);
+            noteOnEvent->data.noteData.note = newNoteValue;
+            noteOnUpdated = true;
             logger.log(CAT_MIDI, LOG_DEBUG,
                       "Updating note-off: pitch %d -> %d at tick %lu",
-                      currentNoteValue, newNoteValue, event.tick);
-            event.data.noteData.note = newNoteValue;
+                      currentNoteValue, newNoteValue, noteOffEvent->tick);
+            noteOffEvent->data.noteData.note = newNoteValue;
             noteOffUpdated = true;
-            break;
         }
     }
 
@@ -896,16 +866,8 @@ bool applyPitchChange(Track& track, EditManager& manager,
     manager.movingNote.lastStart = noteStart;
     manager.movingNote.lastEnd = noteEnd;
     manager.movingNote.active = true;
-    if (preserveInnerNotes) {
-        const uint32_t currentSessionLength = calculateNoteLength(
-            manager.movingNote.origStart, manager.movingNote.origEnd, loopLength);
-        const uint32_t candidateSessionLength = calculateNoteLength(
-            manager.movingNote.origStart, noteEnd, loopLength);
-        if (candidateSessionLength > currentSessionLength) {
-            manager.movingNote.origEnd =
-                (noteEnd >= loopLength) ? (noteEnd % loopLength) : noteEnd;
-        }
-    }
+    noteEditFocusApplyPitch(manager.getNoteEditSession().focus, newNoteValue, noteStart, noteEnd,
+                            loopLength);
     track.getActiveLoop().markEditFlatDirty();
     track.invalidateCaches();
     return true;
@@ -914,9 +876,10 @@ bool applyPitchChange(Track& track, EditManager& manager,
 void moveNoteWithOverlapHandling(Track& track, EditManager& manager, 
                                 const NoteUtils::DisplayNote& currentNote, 
                                 uint32_t targetTick, int delta) {
-    auto& midiEvents = track.getMidiEvents();
+    // Session store when a note-edit session is active (matches move/length live paths).
+    auto& midiEvents = track.editAwareMidiEvents();
     uint32_t loopLength = track.getLoopLength();
-    
+
     logger.log(CAT_MIDI, LOG_DEBUG, "NoteMovementUtils::moveNoteWithOverlapHandling called: targetTick=%lu, delta=%d", targetTick, delta);
     
     if (loopLength == 0) {
@@ -974,90 +937,99 @@ void moveNoteWithOverlapHandling(Track& track, EditManager& manager,
     
     logger.log(CAT_MIDI, LOG_DEBUG, "Found %zu other notes of same pitch (excluding moving note)", otherNotesOfSamePitch.size());
     
-    // Store notes to delete and restore
-    std::vector<NoteUtils::DisplayNote> notesToDelete;
-    std::vector<EditManager::MovingNoteIdentity::DeletedNote> notesToRestore;
-    
-    // STEP 2: Detect and categorize overlaps using the filtered list
-    std::vector<std::pair<NoteUtils::DisplayNote, uint32_t>> notesToShorten;
-    findOverlaps(otherNotesOfSamePitch, movingNotePitch, currentStart, newStart, newEnd, delta, loopLength,
-                manager, notesToShorten, notesToDelete);
+    // STEP 2: Restore overlap notes no longer covered by the target mover span.
+    restoreOverlapNotesNoLongerOverlapping(midiEvents, manager, track.getMidiChannel(), newStart,
+                                          displayNewEnd, movingNotePitch, originalStart,
+                                          loopLength);
+    track.invalidateCaches();
+    allNotes = NoteUtils::reconstructNotes(midiEvents, loopLength);
+    otherNotesOfSamePitch.clear();
+    for (const auto& note : allNotes) {
+        if (note.note == movingNotePitch &&
+            !(note.startTick == currentStart && note.endTick == displayCurrentEnd)) {
+            otherNotesOfSamePitch.push_back(note);
+        }
+    }
 
-    // Cross-pitch overlap does not shorten/delete — only same-pitch rules above apply.
-    
-    // STEP 3: Find current MIDI events and check for pitch changes
-    auto onIt = std::find_if(midiEvents.begin(), midiEvents.end(), [&](MidiEvent& evt) {
-        return evt.type == midi::NoteOn &&
-               evt.data.noteData.note == movingNotePitch &&
-               evt.tick == currentStart &&
-               evt.data.noteData.velocity > 0;
-    });
-    auto offIt = std::find_if(midiEvents.begin(), midiEvents.end(), [&](MidiEvent& evt) {
-        bool isOff = (evt.type == midi::NoteOff) || (evt.type == midi::NoteOn && evt.data.noteData.velocity == 0);
-        return isOff && evt.data.noteData.note == movingNotePitch &&
-               evt.tick == currentEnd;
-    });
-    
-    // If we can't find the moving note, it might have been accidentally deleted - try to restore it
-    if (onIt == midiEvents.end() || offIt == midiEvents.end()) {
+    // STEP 3: Detect and categorize overlaps using the filtered list.
+    std::vector<NoteUtils::DisplayNote> notesToDelete;
+    std::vector<std::pair<NoteUtils::DisplayNote, uint32_t>> notesToShorten;
+    findOverlaps(otherNotesOfSamePitch, movingNotePitch, currentStart, newStart, newEnd, delta,
+                loopLength, manager, notesToShorten, notesToDelete);
+
+    auto [onIndex, offIndex] = NoteUtils::buildEventIndex(midiEvents);
+
+    // STEP 4: Apply new shorten/delete impacts while mover is still at current position.
+    applyShortenOrDelete(midiEvents, notesToShorten, notesToDelete, manager, loopLength, onIndex,
+                         offIndex);
+
+    // STEP 5: Move the mover using LIFO pairing (not first note-off at currentEnd tick).
+    MidiEvent* noteOnEvent = nullptr;
+    for (auto& evt : midiEvents) {
+        if (evt.type == midi::NoteOn && evt.data.noteData.velocity > 0 &&
+            evt.data.noteData.note == movingNotePitch && evt.tick == currentStart) {
+            noteOnEvent = &evt;
+            break;
+        }
+    }
+    MidiEvent* noteOffEvent = nullptr;
+    if (noteOnEvent) {
+        noteOffEvent = findCorrespondingNoteOff(
+            midiEvents, noteOnEvent, movingNotePitch, currentStart, displayCurrentEnd);
+    }
+
+    if (!noteOnEvent || !noteOffEvent) {
         logger.log(CAT_MIDI, LOG_DEBUG, "Moving note MIDI events not found - checking if it was accidentally deleted");
-        
-        // Look for the moving note in the deleted notes list
+
         for (auto it = manager.movingNote.deletedNotes.begin(); it != manager.movingNote.deletedNotes.end(); ++it) {
-            if (it->note == movingNotePitch && it->startTick == currentStart && 
+            if (it->note == movingNotePitch && it->startTick == currentStart &&
                 (it->endTick == currentEnd || (!it->wasShortened && it->endTick == currentEnd))) {
-                
+
                 logger.log(CAT_MIDI, LOG_DEBUG, "Found accidentally deleted moving note - restoring it: pitch=%d, start=%lu, end=%lu", 
                           it->note, it->startTick, it->endTick);
-                
-                // Restore the moving note
+
                 MidiEvent onEvt;
                 onEvt.tick = it->startTick;
                 onEvt.type = midi::NoteOn;
                 onEvt.data.noteData.note = it->note;
                 onEvt.data.noteData.velocity = it->velocity;
                 midiEvents.push_back(onEvt);
-                
+
                 MidiEvent offEvt;
                 offEvt.tick = it->endTick;
                 offEvt.type = midi::NoteOff;
                 offEvt.data.noteData.note = it->note;
                 offEvt.data.noteData.velocity = 0;
                 midiEvents.push_back(offEvt);
-                
-                // Remove from deleted list
+
                 manager.movingNote.deletedNotes.erase(it);
-                
-                // Re-find the restored events
-                onIt = std::find_if(midiEvents.begin(), midiEvents.end(), [&](MidiEvent& evt) {
-                    return evt.type == midi::NoteOn &&
-                           evt.data.noteData.note == movingNotePitch &&
-                           evt.tick == currentStart &&
-                           evt.data.noteData.velocity > 0;
-                });
-                offIt = std::find_if(midiEvents.begin(), midiEvents.end(), [&](MidiEvent& evt) {
-                    bool isOff = (evt.type == midi::NoteOff) || (evt.type == midi::NoteOn && evt.data.noteData.velocity == 0);
-                    return isOff && evt.data.noteData.note == movingNotePitch &&
-                           evt.tick == currentEnd;
-                });
+
+                for (auto& evt : midiEvents) {
+                    if (evt.type == midi::NoteOn && evt.data.noteData.velocity > 0 &&
+                        evt.data.noteData.note == movingNotePitch && evt.tick == currentStart) {
+                        noteOnEvent = &evt;
+                        break;
+                    }
+                }
+                if (noteOnEvent) {
+                    noteOffEvent = findCorrespondingNoteOff(
+                        midiEvents, noteOnEvent, movingNotePitch, currentStart, displayCurrentEnd);
+                }
                 break;
             }
         }
     }
-    
-    if (onIt != midiEvents.end() && offIt != midiEvents.end()) {
-        // Check if pitch has changed during move operation by examining the actual current pitch
-        uint8_t actualCurrentPitch = onIt->data.noteData.note;
+
+    if (noteOnEvent && noteOffEvent) {
+        uint8_t actualCurrentPitch = noteOnEvent->data.noteData.note;
         if (actualCurrentPitch != manager.movingNote.note) {
             logger.log(CAT_MIDI, LOG_DEBUG, "Note pitch changed during move: %d -> %d, updating moving note identity", 
                       manager.movingNote.note, actualCurrentPitch);
-            
-            // Update the moving note identity with the new pitch
+
             uint8_t oldPitch = manager.movingNote.note;
             manager.movingNote.note = actualCurrentPitch;
             movingNotePitch = actualCurrentPitch;
-            
-            // Reindex any deleted notes that were for the old pitch to the new pitch
+
             for (auto& deletedNote : manager.movingNote.deletedNotes) {
                 if (deletedNote.note == oldPitch) {
                     logger.log(CAT_MIDI, LOG_DEBUG, "Reindexing deleted note pitch: %d -> %d at start=%lu", 
@@ -1066,12 +1038,12 @@ void moveNoteWithOverlapHandling(Track& track, EditManager& manager,
                 }
             }
         }
-        
-        // Move the events to new position
-        onIt->tick = newStart;
-        offIt->tick = newEnd;
+
+        noteOnEvent->tick = newStart;
+        noteOffEvent->tick = newEnd;
         manager.movingNote.lastStart = newStart;
         manager.movingNote.lastEnd = newEnd;
+        noteEditFocusApplyMoveEnd(manager.getNoteEditSession().focus, newStart, newEnd);
         logger.log(CAT_MIDI, LOG_DEBUG, "Moved note events: pitch=%u start->%lu end->%lu", movingNotePitch, newStart, newEnd);
         SC_DNTE(movingNotePitch, newStart, newStart,
                 newEnd >= newStart ? newEnd - newStart : 0u,
@@ -1080,101 +1052,7 @@ void moveNoteWithOverlapHandling(Track& track, EditManager& manager,
         logger.log(CAT_MIDI, LOG_DEBUG, "Warning: could not find MIDI events for moving note pitch=%u at start=%lu end=%lu", 
                   movingNotePitch, currentStart, currentEnd);
     }
-    
-    // CRITICAL: Rebuild event index AFTER moving the note but BEFORE applying shortening
-    // This ensures the index reflects the current state and doesn't accidentally modify the wrong events
-    auto [onIndex, offIndex] = NoteUtils::buildEventIndex(midiEvents);
-    
-    // STEP 4: Check if we should restore any previously deleted/shortened notes
-    std::vector<EditManager::MovingNoteIdentity::DeletedNote> overlapVictims;
-    overlapVictims.reserve(manager.movingNote.deletedNotes.size() +
-                           manager.sessionDeletedNotes.size());
-    for (const auto& deletedNote : manager.movingNote.deletedNotes) {
-        appendUniqueRestoreCandidate(overlapVictims, deletedNote);
-    }
-    for (const auto& deletedNote : manager.sessionDeletedNotes) {
-        appendUniqueRestoreCandidate(overlapVictims, deletedNote);
-    }
 
-    for (const auto& deletedNote : overlapVictims) {
-        if (deletedNote.note != movingNotePitch && deletedNote.wasShortened) {
-            const uint32_t truncatedStart = deletedNote.shortenedToTick + 1;
-            const bool overlapsTruncatedZone = notesOverlap(
-                newStart, displayNewEnd, truncatedStart, deletedNote.endTick, loopLength);
-            if (!overlapsTruncatedZone) {
-                appendUniqueRestoreCandidate(notesToRestore, deletedNote);
-                logger.log(CAT_MIDI, LOG_DEBUG,
-                          "Will restore cross-pitch shortened note: pitch=%d, start=%lu, end=%lu "
-                          "(mover %lu-%lu clear of truncated %lu-%lu)",
-                          deletedNote.note, deletedNote.startTick, deletedNote.endTick,
-                          newStart, displayNewEnd, truncatedStart, deletedNote.endTick);
-            } else {
-                logger.log(CAT_MIDI, LOG_DEBUG,
-                          "Cannot restore cross-pitch shortened note: pitch=%d, start=%lu "
-                          "(mover still in truncated zone %lu-%lu)",
-                          deletedNote.note, deletedNote.startTick, truncatedStart,
-                          deletedNote.endTick);
-            }
-            continue;
-        }
-
-        // Consider restoring notes of the same pitch as the note being moved
-        // Note: deletedNote.note may have been updated to match the new pitch during reindexing
-        if (deletedNote.note == movingNotePitch) {
-            // CRITICAL: Never restore phantom notes that match the moving note's ORIGINAL identity
-            // These are artifacts from tracking issues and should not be restored
-            if (deletedNote.startTick == originalStart) {
-                logger.log(CAT_MIDI, LOG_DEBUG, "Skipping phantom note restore: pitch=%d, start=%lu, end=%lu (matches original moving note start)", 
-                          deletedNote.note, deletedNote.startTick, deletedNote.endTick);
-                continue;
-            }
-            
-            // Additional validation: ensure the note has valid length (> 0 and < loop length)
-            uint32_t deletedNoteLength = calculateNoteLength(deletedNote.startTick, deletedNote.endTick, loopLength);
-            if (deletedNoteLength == 0 || deletedNoteLength >= loopLength) {
-                logger.log(CAT_MIDI, LOG_DEBUG, "Skipping invalid note restore: pitch=%d, start=%lu, end=%lu (invalid length=%lu)", 
-                          deletedNote.note, deletedNote.startTick, deletedNote.endTick, deletedNoteLength);
-                continue;
-            }
-            
-            // Check if the deleted note overlaps with the new position (use current shortened span)
-            const uint32_t victimEnd = deletedNoteEffectiveEnd(deletedNote);
-            const bool hasOverlap = notesOverlap(newStart, displayNewEnd,
-                                                  deletedNote.startTick, victimEnd, loopLength);
-            
-            if (!hasOverlap) {
-                appendUniqueRestoreCandidate(notesToRestore, deletedNote);
-                logger.log(CAT_MIDI, LOG_DEBUG, "Will restore note: pitch=%d, start=%lu, end=%lu (victimEnd=%lu, no overlap with %lu-%lu)", 
-                          deletedNote.note, deletedNote.startTick, deletedNote.endTick, victimEnd, newStart, displayNewEnd);
-            } else if (isInnerNoteUnderSessionSpan(
-                           manager, deletedNote.note, deletedNote.startTick, victimEnd,
-                           loopLength)) {
-                appendUniqueRestoreCandidate(notesToRestore, deletedNote);
-                logger.log(CAT_MIDI, LOG_DEBUG,
-                          "Will restore inner note under session span: pitch=%d, start=%lu, end=%lu "
-                          "(coexists inside mover %lu-%lu)",
-                          deletedNote.note, deletedNote.startTick, deletedNote.endTick,
-                          newStart, displayNewEnd);
-            } else {
-                logger.log(CAT_MIDI, LOG_DEBUG, "Cannot restore note: pitch=%d, start=%lu, end=%lu (victimEnd=%lu still overlaps %lu-%lu)", 
-                          deletedNote.note, deletedNote.startTick, deletedNote.endTick, victimEnd, newStart, displayNewEnd);
-            }
-        }
-    }
-    
-    logger.log(CAT_MIDI, LOG_DEBUG,
-              "Found %zu notes to restore, %zu active deleted notes, %zu session deleted, "
-              "%zu session shortened",
-              notesToRestore.size(), manager.movingNote.deletedNotes.size(),
-              manager.sessionDeletedNotes.size(), manager.sessionShortenedVictims.size());
-    
-    // Apply shorten/delete using shared index
-    applyShortenOrDelete(midiEvents, notesToShorten, notesToDelete, manager, loopLength, onIndex, offIndex);
-    
-    // Restore notes that should be restored based on movement, reusing index
-    restoreNotes(midiEvents, notesToRestore, manager, loopLength, track.getMidiChannel(), onIndex, offIndex);
-    
-    // Helper to finalize reconstruction and selection after movement
     finalReconstructAndSelect(midiEvents, manager, movingNotePitch, newStart, newEnd, loopLength);
 
     Loop& loop = track.getActiveLoop();
@@ -1182,37 +1060,165 @@ void moveNoteWithOverlapHandling(Track& track, EditManager& manager,
     track.invalidateCaches();
 }
 
-// Find the corresponding note-off event for a given note-on event using LIFO pairing logic
-MidiEvent* findCorrespondingNoteOff(MidiEventVec& midiEvents, MidiEvent* noteOnEvent, uint8_t pitch, std::uint32_t startTick, std::uint32_t endTick) {
-    // Use LIFO pairing logic similar to NoteUtils::reconstructNotes
-    // We need to simulate the pairing process to find which note-off belongs to our note-on
-    
-    std::vector<MidiEvent*> activeNoteOnStack;
-    
-    for (auto& evt : midiEvents) {
-        bool isNoteOn = (evt.type == midi::NoteOn && evt.data.noteData.velocity > 0 && evt.data.noteData.note == pitch);
-        bool isNoteOff = ((evt.type == midi::NoteOff || (evt.type == midi::NoteOn && evt.data.noteData.velocity == 0)) && evt.data.noteData.note == pitch);
-        
-        if (isNoteOn) {
-            activeNoteOnStack.push_back(&evt);
-        } else if (isNoteOff) {
-            if (!activeNoteOnStack.empty()) {
-                MidiEvent* correspondingNoteOn = activeNoteOnStack.back();
-                activeNoteOnStack.pop_back();
-                
-                // Check if this is the note-off for our target note-on
-                if (correspondingNoteOn == noteOnEvent) {
-                    logger.log(CAT_MIDI, LOG_DEBUG, "Found corresponding note-off: pitch=%d, noteOn@%lu -> noteOff@%lu", 
-                              pitch, correspondingNoteOn->tick, evt.tick);
-                    return &evt;
-                }
+void changeLengthWithOverlapHandling(Track& track, EditManager& manager,
+                                     const NoteUtils::DisplayNote& currentNote,
+                                     uint32_t targetEndTick) {
+    auto& midiEvents = track.editAwareMidiEvents();
+    uint32_t loopLength = track.getLoopLength();
+
+    if (loopLength == 0) {
+        logger.log(CAT_MIDI, LOG_DEBUG, "Loop length is 0, cannot change note length");
+        return;
+    }
+
+    uint8_t notePitch = currentNote.note;
+    uint32_t noteStart = currentNote.startTick;
+    uint32_t currentEnd = currentNote.endTick;
+    uint32_t displayCurrentEnd =
+        (currentEnd >= loopLength) ? (currentEnd % loopLength) : currentEnd;
+
+    if (targetEndTick == currentEnd) {
+        manager.setBracketTick(targetEndTick % loopLength);
+        return;
+    }
+
+    const int delta = (targetEndTick > currentEnd) ? 1 : -1;
+
+    if (!manager.movingNote.active) {
+        const NoteEditFocus& focus = manager.getNoteEditSession().focus;
+        if (focus.active) {
+            manager.movingNote.note = focus.commitBaseline.pitch;
+            manager.movingNote.origPitch = focus.commitBaseline.pitch;
+            manager.movingNote.origStart = focus.commitBaseline.startTick;
+            manager.movingNote.origEnd = focus.commitBaseline.endTick;
+            manager.movingNote.lastStart = focus.last.startTick;
+            manager.movingNote.lastEnd = focus.last.endTick;
+        } else {
+            manager.movingNote.note = currentNote.note;
+            manager.movingNote.origPitch = currentNote.note;
+            manager.movingNote.origStart = currentNote.startTick;
+            manager.movingNote.origEnd = currentNote.endTick;
+            manager.movingNote.lastStart = currentNote.startTick;
+            manager.movingNote.lastEnd = currentNote.endTick;
+        }
+        manager.movingNote.active = true;
+        manager.movingNote.movementDirection = 0;
+        manager.movingNote.deletedNotes.clear();
+        logger.log(CAT_MIDI, LOG_DEBUG,
+                  "Initialized moving note for length edit: pitch=%d, start=%lu, end=%lu",
+                  manager.movingNote.note, manager.movingNote.lastStart,
+                  manager.movingNote.lastEnd);
+    } else {
+        notePitch = manager.movingNote.note;
+        noteStart = manager.movingNote.lastStart;
+        currentEnd = manager.movingNote.lastEnd;
+        displayCurrentEnd =
+            (currentEnd >= loopLength) ? (currentEnd % loopLength) : currentEnd;
+    }
+
+    const uint32_t newStart = noteStart;
+    const uint32_t newEnd = targetEndTick;
+    const uint32_t displayNewEnd = newEnd % loopLength;
+
+    logger.log(CAT_MIDI, LOG_DEBUG,
+              "Length change with overlap: pitch=%d, start=%lu, end %lu->%lu",
+              notePitch, noteStart, currentEnd, targetEndTick);
+
+    std::vector<NoteUtils::DisplayNote> allNotes =
+        NoteUtils::reconstructNotes(midiEvents, loopLength);
+    std::vector<NoteUtils::DisplayNote> otherNotesOfSamePitch;
+    for (const auto& note : allNotes) {
+        if (note.note == notePitch &&
+            !(note.startTick == noteStart && note.endTick == displayCurrentEnd)) {
+            otherNotesOfSamePitch.push_back(note);
+        }
+    }
+
+    std::vector<std::pair<NoteUtils::DisplayNote, uint32_t>> notesToShorten;
+    std::vector<NoteUtils::DisplayNote> notesToDelete;
+    restoreOverlapNotesNoLongerOverlapping(midiEvents, manager, track.getMidiChannel(), newStart,
+                                          displayNewEnd, notePitch, manager.movingNote.origStart,
+                                          loopLength);
+    track.invalidateCaches();
+    allNotes = NoteUtils::reconstructNotes(midiEvents, loopLength);
+    otherNotesOfSamePitch.clear();
+    for (const auto& note : allNotes) {
+        if (note.note == notePitch &&
+            !(note.startTick == noteStart && note.endTick == displayCurrentEnd)) {
+            otherNotesOfSamePitch.push_back(note);
+        }
+    }
+
+    notesToShorten.clear();
+    notesToDelete.clear();
+    findOverlaps(otherNotesOfSamePitch, notePitch, noteStart, newStart, newEnd, delta,
+                 loopLength, manager, notesToShorten, notesToDelete,
+                 /*allowSharedEndCoexistence=*/true);
+
+  // When lengthening would place the release on a neighbor's attack (before swallowing its
+  // tail), temporarily delete that neighbor using the same ledger as move overlap.
+    for (const auto& note : otherNotesOfSamePitch) {
+        if (note.startTick != displayNewEnd || note.startTick <= newStart ||
+            note.endTick <= displayNewEnd) {
+            continue;
+        }
+        if (isAlreadyShortenedOverlap(manager, note) ||
+            hasShortenedOverlapEntry(manager, note.note, note.startTick)) {
+            continue;
+        }
+        const bool alreadyDeleted = std::any_of(
+            notesToDelete.begin(), notesToDelete.end(), [&](const auto& victim) {
+                return victim.startTick == note.startTick && victim.note == note.note;
+            });
+        if (alreadyDeleted) {
+            continue;
+        }
+        notesToDelete.push_back(note);
+        logger.log(CAT_MIDI, LOG_DEBUG,
+                  "Will delete note (release on attack before swallow): pitch=%d, start=%lu",
+                  note.note, note.startTick);
+    }
+
+    auto [onIndex, offIndex] = NoteUtils::buildEventIndex(midiEvents);
+    applyShortenOrDelete(midiEvents, notesToShorten, notesToDelete, manager, loopLength,
+                         onIndex, offIndex);
+
+    MidiEvent* noteOffEvent =
+        findNoteOffPairedAt(midiEvents, notePitch, noteStart, displayCurrentEnd);
+    if (!noteOffEvent) {
+        for (auto& evt : midiEvents) {
+            if (evt.type == midi::NoteOn && evt.data.noteData.velocity > 0 &&
+                evt.data.noteData.note == notePitch && evt.tick == noteStart) {
+                noteOffEvent = findCorrespondingNoteOff(midiEvents, &evt, notePitch, noteStart,
+                                                        displayCurrentEnd);
+                break;
             }
         }
     }
-    
-    // If we reach here, the note-on didn't have a corresponding note-off (shouldn't happen in well-formed MIDI)
-    logger.log(CAT_MIDI, LOG_DEBUG, "No corresponding note-off found for pitch=%d, start=%lu", pitch, startTick);
-    return nullptr;
+
+    if (noteOffEvent) {
+        noteOffEvent->tick = newEnd;
+        manager.movingNote.lastEnd = newEnd;
+        noteEditFocusApplyLengthEnd(manager.getNoteEditSession().focus, newEnd);
+        // origEnd / commitBaseline.end stay at length-session baseline so
+        // commitPendingLengthAction can detect pending ChangeLength on reselect.
+        manager.setBracketTick(newEnd % loopLength);
+        logger.log(CAT_MIDI, LOG_DEBUG,
+                  "Updated note-off after length overlap: pitch=%d, start=%lu, end=%lu",
+                  notePitch, noteStart, newEnd);
+    } else {
+        logger.log(CAT_MIDI, LOG_DEBUG,
+                  "Warning: could not find note-off for length edit pitch=%d start=%lu end=%lu",
+                  notePitch, noteStart, displayCurrentEnd);
+    }
+
+    finalReconstructAndSelect(midiEvents, manager, notePitch, newStart, newEnd, loopLength);
+
+    NoteUtils::orderSamePitchNoteOffsForLifo(midiEvents, track.getMidiChannel(), notePitch);
+
+    Loop& loop = track.getActiveLoop();
+    loop.markEditFlatDirty();
+    track.invalidateCaches();
 }
 
 // Extend shortened notes dynamically
@@ -1244,14 +1250,16 @@ void extendShortenedNotes(MidiEventVec& midiEvents,
             noteOffEvent->tick = newEndTick;
             
             // Update the tracking in the deleted notes list
-            for (auto& deletedNote : manager.movingNote.deletedNotes) {
-                if (deletedNote.note == noteToExtend.note && 
-                    deletedNote.startTick == noteToExtend.startTick && 
-                    deletedNote.wasShortened) {
-                    deletedNote.shortenedToTick = newEndTick;
-                    logger.log(CAT_MIDI, LOG_DEBUG, "Updated tracking: shortened note now ends at %lu", newEndTick);
+            for (auto& [ref, entry] : manager.getNoteEditSession().focus.overlapNotes) {
+                if (entry.baseline.pitch == noteToExtend.note &&
+                    entry.baseline.startTick == noteToExtend.startTick &&
+                    entry.state == OverlapNoteStoreState::Shortened) {
+                    entry.shortenedEndTick = newEndTick;
+                    logger.log(CAT_MIDI, LOG_DEBUG, "Updated overlap note shortened end to %lu",
+                              newEndTick);
                     break;
                 }
+                (void)ref;
             }
             
             logger.log(CAT_MIDI, LOG_DEBUG, "Extended note-off event: pitch=%d, from tick=%lu to tick=%lu", 
@@ -1261,6 +1269,26 @@ void extendShortenedNotes(MidiEventVec& midiEvents,
                       noteToExtend.note, noteToExtend.startTick);
         }
     }
+}
+
+bool applyNoteEditChange(Track& track, EditManager& manager, NoteEditChangeKind kind,
+                         const NoteUtils::DisplayNote& currentNote, uint32_t targetTick,
+                         int delta, uint32_t targetEndTick, uint8_t currentPitch,
+                         uint8_t newPitch, uint32_t& inOutStart, uint32_t& inOutEnd) {
+    switch (kind) {
+        case NoteEditChangeKind::Move:
+            moveNoteWithOverlapHandling(track, manager, currentNote, targetTick, delta);
+            return true;
+        case NoteEditChangeKind::Length:
+            changeLengthWithOverlapHandling(track, manager, currentNote, targetEndTick);
+            return true;
+        case NoteEditChangeKind::Pitch:
+            inOutStart = currentNote.startTick;
+            inOutEnd = currentNote.endTick;
+            return applyPitchChange(track, manager, currentPitch, newPitch, inOutStart,
+                                    inOutEnd);
+    }
+    return false;
 }
 
 } // namespace NoteMovementUtils 
