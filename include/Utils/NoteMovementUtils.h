@@ -23,9 +23,25 @@ namespace NoteMovementUtils {
      * @param targetTick The new start position for the note
      * @param delta The movement delta (positive = right, negative = left)
      */
-    void moveNoteWithOverlapHandling(Track& track, EditManager& manager, 
+    enum class NoteEditChangeKind : uint8_t { Move, Length, Pitch };
+
+bool applyNoteEditChange(Track& track, EditManager& manager, NoteEditChangeKind kind,
+                         const NoteUtils::DisplayNote& currentNote, uint32_t targetTick,
+                         int delta, uint32_t targetEndTick, uint8_t currentPitch,
+                         uint8_t newPitch, uint32_t& inOutStart, uint32_t& inOutEnd);
+
+void moveNoteWithOverlapHandling(Track& track, EditManager& manager, 
                                    const NoteUtils::DisplayNote& currentNote, 
                                    uint32_t targetTick, int delta);
+
+    /**
+     * Lengthen or shorten a note end with the same overlap ledger as movement.
+     * Resolves same-pitch victims before moving the note-off so LIFO pairing cannot
+     * retarget a neighbor's release (e.g. P0 when M0 shares pitch 60).
+     */
+    void changeLengthWithOverlapHandling(Track& track, EditManager& manager,
+                                         const NoteUtils::DisplayNote& currentNote,
+                                         uint32_t targetEndTick);
 
     /**
      * Apply a pitch change using the same overlap/delete/restore ledger as movement.
@@ -62,7 +78,8 @@ namespace NoteMovementUtils {
                      uint32_t loopLength,
                      const EditManager& manager,
                      std::vector<std::pair<NoteUtils::DisplayNote, uint32_t>>& notesToShorten,
-                     std::vector<NoteUtils::DisplayNote>& notesToDelete);
+                     std::vector<NoteUtils::DisplayNote>& notesToDelete,
+                     bool allowSharedEndCoexistence = false);
     
     void applyShortenOrDelete(MidiEventVec& midiEvents,
                              const std::vector<std::pair<NoteUtils::DisplayNote, uint32_t>>& notesToShorten,
@@ -89,6 +106,10 @@ namespace NoteMovementUtils {
     
     // Find the corresponding note-off event for a given note-on event using LIFO pairing logic
     MidiEvent* findCorrespondingNoteOff(MidiEventVec& midiEvents, MidiEvent* noteOnEvent, uint8_t pitch, std::uint32_t startTick, std::uint32_t endTick);
+
+    /** Pair-identified note-off at endTick for (pitch, startTick); safe when same-pitch neighbors exist. */
+    MidiEvent* findNoteOffPairedAt(MidiEventVec& midiEvents, uint8_t pitch, uint32_t startTick,
+                                   uint32_t endTick);
     
     // Extend shortened notes dynamically
     void extendShortenedNotes(MidiEventVec& midiEvents,
