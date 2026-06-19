@@ -2,7 +2,9 @@
 //  Licensed under the PolyForm Noncommercial 1.0.0
 
 #pragma once
+#include <array>
 #include "EditNoteState.h"
+#include "MidiEvent.h"
 #include "Utils/NoteUtils.h"
 
 class EditManager;
@@ -31,14 +33,17 @@ public:
     
 public:
     static void sendTargetPitchbend(EditManager& manager, Track& track);
-    static void createNoteAtTick(Track& track, uint32_t tick);
+    /// Creates a default 32nd note at tick and returns its {noteOn, noteOff} events so
+    /// callers can record an exact AddNote edit (the buffer is sorted, so the created
+    /// events are not necessarily the last two entries).
+    static std::array<MidiEvent, 2> createNoteAtTick(Track& track, uint32_t tick);
 
 private:
     void selectNextNoteSequential(EditManager& manager, Track& track);
     void selectPreviousNoteSequential(EditManager& manager, Track& track);
     int findNoteIndexInOriginalList(const NoteUtils::DisplayNote& targetNote, 
                                    const std::vector<NoteUtils::DisplayNote>& originalNotes) const;
-    void createDefaultNote(Track& track, uint32_t tick) const;
+    std::array<MidiEvent, 2> createDefaultNote(Track& track, uint32_t tick) const;
     
     // Track MIDI events count to detect new notes during overdubbing
     size_t lastMidiEventCount = 0;

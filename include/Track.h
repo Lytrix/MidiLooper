@@ -214,6 +214,10 @@ public:
   /// Immutable access to midiEvents (for const Track)
   const MidiEventVec& getMidiEvents() const { return getActiveLoop().midiEvents(); }
 
+  /// Note-edit session store when active, else loop materialized events.
+  MidiEventVec& editAwareMidiEvents();
+  const MidiEventVec& editAwareMidiEvents() const;
+
   /// Access loop by slot index (adapter — resolves Slot → LoopId → LoopPool).
   Loop& getLoop(uint8_t index);
   const Loop& getLoop(uint8_t index) const;
@@ -238,7 +242,7 @@ public:
   
   /// Get cached display notes - avoids expensive reconstructNotes() calls
   const std::vector<NoteUtils::DisplayNote>& getCachedNotes() const {
-    return getActiveLoop().getNoteCache().getNotes(getActiveLoop().midiEvents(), getActiveLoop().loopLengthTicks);
+    return getActiveLoop().getNoteCache().getNotes(editAwareMidiEvents(), getActiveLoop().loopLengthTicks);
   }
 
   /// Per-slot cached notes for display (e.g. follow selected slot while activeLoopIndex is capture phase).

@@ -148,26 +148,30 @@ struct NoteEditSession {
 - **saveEdit** writes **Edit** to `edits[]` and updates materialized state
 - Do not use “working” or “gesture” in code or docs
 
-### 4. Span boundaries — not “segment” (locked)
+### 4. Edit pass boundaries — not “segment” (locked)
 
-There is **no user-selected segment** on the timeline. **Span** = contiguous period of
+> **Vocabulary update (2026-06-19):** **edit pass** replaces **span** in prose. See
+> [m8-pass-vocabulary/design.md](../m8-pass-vocabulary/design.md). Shipped code still uses
+> `spanIndex` / `closeNoteEditSpan()` until rename PR.
+
+There is **no user-selected segment** on the timeline. An **edit pass** = contiguous period of
 **NoteEditSession** between **boundary events**:
 
 | Boundary | Action |
 |----------|--------|
-| Overdub start (while in note edit) | **`closeNoteEditSpan()`** → **NoteEditSessionCommitted** → capture |
-| Overdub stop (still in note edit) | **TakeCommitted** → rematerialize **NoteEditSession.store** → `spanIndex++` |
-| Note edit exit | **`closeNoteEditSpan()`** → urgent SD if dirty |
+| Overdub start (while in note edit) | **`closeNoteEditPass()`** (legacy: `closeNoteEditSpan()`) → **NoteEditSessionCommitted** → capture |
+| Overdub stop (still in note edit) | **TakeCommitted** → rematerialize **NoteEditSession.store** → `editPassIndex++` |
+| Note edit exit | **`closeNoteEditPass()`** → urgent SD if dirty |
 
-Global undo after exit (example with overdub): **NoteEditSessionCommitted** (span 1) →
-**TakeCommitted** → **NoteEditSessionCommitted** (span 0).
+Global undo after exit (example with overdub): **NoteEditSessionCommitted** (edit pass 1) →
+**TakeCommitted** → **NoteEditSessionCommitted** (edit pass 0).
 
 ### 5. Two-layer undo (locked)
 
 | Layer | When | Holds |
 |-------|------|-------|
 | **NoteEditSessionUndoStack** | In note edit, before **saveEdit** | RAM store snapshots |
-| **GlobalUndoStack** | After **saveEdit** / span close | **TakeCommitted**, **NoteEditSessionCommitted** |
+| **GlobalUndoStack** | After **saveEdit** / edit pass close | **TakeCommitted**, **NoteEditSessionCommitted** |
 
 MIDI undo in note edit → **NoteEditSessionUndoStack** only.
 

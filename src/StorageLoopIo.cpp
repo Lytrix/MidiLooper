@@ -65,6 +65,107 @@ bool readPersistedTake(const StorageIo& io, Take& take) {
   return true;
 }
 
+bool writePersistedEditChange(const StorageIo& io, const EditChange& change) {
+  const uint8_t typeRaw = static_cast<uint8_t>(change.type);
+  if (!ioWrite(io, &typeRaw, sizeof(typeRaw))) return false;
+  if (!ioWrite(io, &change.target, sizeof(change.target))) return false;
+  if (!ioWrite(io, &change.newPitch, sizeof(change.newPitch))) return false;
+  if (!ioWrite(io, &change.newStartTick, sizeof(change.newStartTick))) return false;
+  if (!ioWrite(io, &change.newEndTick, sizeof(change.newEndTick))) return false;
+  const uint32_t addedCount = static_cast<uint32_t>(change.addedEvents.size());
+  if (!ioWrite(io, &addedCount, sizeof(addedCount))) return false;
+  if (addedCount > 0 &&
+      !ioWrite(io, change.addedEvents.data(), addedCount * sizeof(MidiEvent))) {
+    return false;
+  }
+  return true;
+}
+
+bool readPersistedEditChange(const StorageIo& io, EditChange& change) {
+  uint8_t typeRaw = 0;
+  uint32_t addedCount = 0;
+  if (!ioRead(io, &typeRaw, sizeof(typeRaw))) return false;
+  if (!ioRead(io, &change.target, sizeof(change.target))) return false;
+  if (!ioRead(io, &change.newPitch, sizeof(change.newPitch))) return false;
+  if (!ioRead(io, &change.newStartTick, sizeof(change.newStartTick))) return false;
+  if (!ioRead(io, &change.newEndTick, sizeof(change.newEndTick))) return false;
+  if (!ioRead(io, &addedCount, sizeof(addedCount))) return false;
+  change.type = static_cast<EditChangeType>(typeRaw);
+  change.addedEvents.clear();
+  change.addedEvents.reserve(addedCount);
+  for (uint32_t i = 0; i < addedCount; ++i) {
+    MidiEvent evt{};
+    if (!ioRead(io, &evt, sizeof(evt))) return false;
+    change.addedEvents.push_back(evt);
+  }
+  return true;
+}
+
+bool writePersistedEdit(const StorageIo& io, const Edit& edit) {
+  const uint8_t stateRaw = static_cast<uint8_t>(edit.state);
+  if (!ioWrite(io, &edit.id, sizeof(edit.id))) return false;
+  if (!ioWrite(io, &edit.spanIndex, sizeof(edit.spanIndex))) return false;
+  if (!ioWrite(io, &stateRaw, sizeof(stateRaw))) return false;
+  const uint32_t changeCount = static_cast<uint32_t>(edit.changes.size());
+  if (!ioWrite(io, &changeCount, sizeof(changeCount))) return false;
+  for (const EditChange& change : edit.changes) {
+    if (!writePersistedEditChange(io, change)) return false;
+  }
+  return true;
+}
+
+bool readPersistedEdit(const StorageIo& io, Edit& edit) {
+  uint8_t stateRaw = 0;
+  uint32_t changeCount = 0;
+  if (!ioRead(io, &edit.id, sizeof(edit.id))) return false;
+  if (!ioRead(io, &edit.spanIndex, sizeof(edit.spanIndex))) return false;
+  if (!ioRead(io, &stateRaw, sizeof(stateRaw))) return false;
+  if (!ioRead(io, &changeCount, sizeof(changeCount))) return false;
+  edit.state = static_cast<EditState>(stateRaw);
+  edit.changes.clear();
+  edit.changes.reserve(changeCount);
+  for (uint32_t i = 0; i < changeCount; ++i) {
+    EditChange change{};
+    if (!readPersistedEditChange(io, change)) return false;
+    edit.changes.push_back(std::move(change));
+  }
+  return true;
+}
+
+bool writePersistedEditsTail(const StorageIo& io, const PersistedLoopSnapshot& snapshot) {
+  if (!ioWrite(io, &snapshot.nextEditId, sizeof(snapshot.nextEditId))) return false;
+  const uint32_t editCount = static_cast<uint32_t>(snapshot.edits.size());
+  if (!ioWrite(io, &editCount, sizeof(editCount))) return false;
+  for (const Edit& edit : snapshot.edits) {
+    if (!writePersistedEdit(io, edit)) return false;
+  }
+  return true;
+}
+
+bool readPersistedEditsTail(const StorageIo& io, PersistedLoopSnapshot& snapshot) {
+  if (!ioRead(io, &snapshot.nextEditId, sizeof(snapshot.nextEditId))) {
+    snapshot.nextEditId = 1;
+    snapshot.edits.clear();
+    return true;
+  }
+  uint32_t editCount = 0;
+  if (!ioRead(io, &editCount, sizeof(editCount))) {
+    snapshot.edits.clear();
+    return true;
+  }
+  snapshot.edits.clear();
+  snapshot.edits.reserve(editCount);
+  for (uint32_t i = 0; i < editCount; ++i) {
+    Edit edit{};
+    if (!readPersistedEdit(io, edit)) return false;
+    snapshot.edits.push_back(std::move(edit));
+  }
+  if (snapshot.nextEditId == 0) {
+    snapshot.nextEditId = 1;
+  }
+  return true;
+}
+
 bool writePersistedLoopSnapshot(const StorageIo& io, const PersistedLoopSnapshot& snapshot) {
   if (!ioWrite(io, &snapshot.loopId, sizeof(snapshot.loopId))) return false;
   if (!ioWrite(io, &snapshot.startLoopTick, sizeof(snapshot.startLoopTick))) return false;
@@ -91,7 +192,7 @@ bool writePersistedLoopSnapshot(const StorageIo& io, const PersistedLoopSnapshot
     }
     if (!writePersistedTake(io, take)) return false;
   }
-  return true;
+  return writePersistedEditsTail(io, snapshot);
 }
 
 bool readPersistedLoopSnapshot(const StorageIo& io, PersistedLoopSnapshot& snapshot) {
@@ -127,7 +228,7 @@ bool readPersistedLoopSnapshot(const StorageIo& io, PersistedLoopSnapshot& snaps
   if (snapshot.nextTakeId == 0) {
     snapshot.nextTakeId = 1;
   }
-  return true;
+  return readPersistedEditsTail(io, snapshot);
 }
 
 #if !defined(PIO_UNIT_TEST_NATIVE)
@@ -144,6 +245,8 @@ PersistedLoopSnapshot snapshotFromLoop(const Loop& loop) {
   snapshot.nextMergeSequence = loop.nextMergeSequence_;
   snapshot.lastPublishedTakeId = loop.lastPublishedTakeId_;
   snapshot.takes = loop.takes;
+  snapshot.nextEditId = loop.nextEditId_;
+  snapshot.edits = loop.edits;
   return snapshot;
 }
 
@@ -162,6 +265,8 @@ void applySnapshotToLoop(Loop& loop, const PersistedLoopSnapshot& snapshot) {
   loop.nextEventIndex = 0;
   loop.playbackOrderDirty = true;
   loop.takes = snapshot.takes;
+  loop.nextEditId_ = snapshot.nextEditId;
+  loop.edits = snapshot.edits;
   loop.markDisplayCachesStale();
   loop.rebuildVisualCacheFromTakes();
 }

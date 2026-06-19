@@ -3,6 +3,7 @@
 
 #include "TrackUndo.h"
 #include "Track.h"
+#include "EditManager.h"
 #include "StorageManager.h"
 #include "LooperState.h"
 #include "Logger.h"
@@ -129,6 +130,28 @@ bool applyUndoEntry(Track& track, UndoEntry& entry) {
             }
             loop.rebuildVisualCacheFromTakes();
             loop.invalidateCaches();
+            if (editManager.isNoteEditActive()) {
+                loop.rematerializeEditView(editManager.getNoteEditSession().store.mutStore());
+                editManager.getNoteEditSession().store.discardFlatCache();
+                editManager.getNoteEditSession().undoStack.clear();
+            }
+            return true;
+        case UndoEntryKind::NoteEditSessionCommitted:
+            if (entry.spanEditIds.empty()) {
+                return false;
+            }
+            loop.disableEdits(entry.spanEditIds);
+            loop.rebuildVisualCacheFromTakes();
+            loop.invalidateCaches();
+            if (editManager.isNoteEditActive()) {
+                loop.rematerializeEditView(editManager.getNoteEditSession().store.mutStore());
+                editManager.getNoteEditSession().store.discardFlatCache();
+                editManager.getNoteEditSession().undoStack.clear();
+            }
+            entry.hasRedoPayload = true;
+            logger.log(CAT_TRACK, LOG_INFO, "Note edit span undone span=%u edits=%u",
+                       static_cast<unsigned>(entry.noteEditSpanIndex),
+                       static_cast<unsigned>(entry.spanEditIds.size()));
             return true;
     }
     return false;
@@ -168,6 +191,34 @@ bool applyRedoEntry(Track& track, UndoEntry& entry) {
             }
             loop.rebuildVisualCacheFromTakes();
             loop.invalidateCaches();
+            if (editManager.isNoteEditActive()) {
+                loop.rematerializeEditView(editManager.getNoteEditSession().store.mutStore());
+                editManager.getNoteEditSession().store.discardFlatCache();
+                editManager.getNoteEditSession().undoStack.clear();
+            }
+            return true;
+        case UndoEntryKind::NoteEditSessionCommitted:
+            if (!entry.hasRedoPayload || entry.spanEditIds.empty()) {
+                return false;
+            }
+            for (const EditId id : entry.spanEditIds) {
+                for (Edit& edit : loop.edits) {
+                    if (edit.id == id) {
+                        edit.state = EditState::Active;
+                    }
+                }
+            }
+            ++loop.playbackRevision;
+            loop.discardEditFlatMaterialization();
+            loop.invalidateCaches();
+            if (editManager.isNoteEditActive()) {
+                loop.rematerializeEditView(editManager.getNoteEditSession().store.mutStore());
+                editManager.getNoteEditSession().store.discardFlatCache();
+                editManager.getNoteEditSession().undoStack.clear();
+            }
+            logger.log(CAT_TRACK, LOG_INFO, "Note edit span redone span=%u edits=%u",
+                       static_cast<unsigned>(entry.noteEditSpanIndex),
+                       static_cast<unsigned>(entry.spanEditIds.size()));
             return true;
     }
     return false;
@@ -204,12 +255,35 @@ void TrackUndo::pushCommittedTake(Track& track, uint8_t slotIndex, TakeId takeId
     pushUndoEntry(track, std::move(entry));
 }
 
+void TrackUndo::pushNoteEditSessionCommitted(Track& track, uint8_t spanIndex, EditIdList editIds) {
+    if (editIds.empty()) {
+        return;
+    }
+    const Loop& loop = track.getActiveLoop();
+    UndoEntry entry;
+    entry.kind = UndoEntryKind::NoteEditSessionCommitted;
+    entry.slotIndex = track.getActiveLoopIndex();
+    entry.loopId = loop.loopId;
+    entry.noteEditSpanIndex = spanIndex;
+    entry.spanEditIds = std::move(editIds);
+    pushUndoEntry(track, std::move(entry));
+}
+
 void TrackUndo::beginOverdubSession(Track& track) {
+    if (editManager.isNoteEditActive()) {
+        editManager.closeNoteEditSpan(track);
+    }
     (void)track;
 }
 
 void TrackUndo::endOverdubSession(Track& track) {
-    (void)track;
+    if (!editManager.isNoteEditActive()) {
+        return;
+    }
+    Loop& loop = track.getActiveLoop();
+    loop.rematerializeEditView(editManager.getNoteEditSession().store.mutStore());
+    editManager.getNoteEditSession().store.discardFlatCache();
+    editManager.getNoteEditSession().undoStack.clear();
 }
 
 void TrackUndo::undoOverdub(Track& track) {

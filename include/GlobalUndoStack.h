@@ -5,6 +5,7 @@
 #include <vector>
 
 #include "Take.h"
+#include "Edit.h"
 #include "LoopEventBuffer.h"
 #include "TrackState.h"
 #include "Utils/ExtMemAllocator.h"
@@ -16,6 +17,7 @@ enum class UndoEntryKind : uint8_t {
   TakeCommitted = 1,
   ClearSlot = 2,
   LoopBoundaryChange = 3,
+  NoteEditSessionCommitted = 4,
 };
 
 struct UndoLoopGeometry {
@@ -45,6 +47,10 @@ struct UndoEntry {
   TrackState afterTrackState = TRACK_EMPTY;
   bool hasTrackState = false;
   bool hasRedoPayload = false;
+
+  /// NoteEditSessionCommitted: all Edit ids in the closed span.
+  EditIdList spanEditIds;
+  uint8_t noteEditSpanIndex = 0;
 };
 
 using UndoEntryVec = std::vector<UndoEntry, ExtMemAllocator<UndoEntry>>;

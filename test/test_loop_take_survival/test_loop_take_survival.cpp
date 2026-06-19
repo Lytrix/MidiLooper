@@ -6,6 +6,7 @@
 #include "../../src/Logger.cpp"
 #include "../../src/Utils/NoteUtils.cpp"
 #include "../../src/LoopEventStore.cpp"
+#include "../../src/EditApply.cpp"
 #include "../../src/Loop.cpp"
 
 #include "Loop.h"
@@ -79,7 +80,7 @@ void test_accidental_empty_sync_preserves_takes() {
   seedPublishedPair(loop);
   loop.discardEditFlatMaterialization();
 
-  loop.nativeTestSyncEditFlatToTakes(false);
+  loop.nativeTestCommitMaterializedStoreToTakes(false);
 
   TEST_ASSERT_TRUE(loop.hasPublishedEvents());
   TEST_ASSERT_EQUAL(2u, loop.nativeTestLiveEventCount());
@@ -110,7 +111,7 @@ void test_readonly_flat_access_preserves_takes() {
   loop.discardEditFlatMaterialization();
   TEST_ASSERT_EQUAL(4u, loop.midiEvents().size());
   loop.invalidateCaches();
-  loop.flushEditStoreToTakes();
+  loop.nativeTestCommitMaterializedStoreToTakes(false);
 
   TEST_ASSERT_EQUAL(4u, loop.nativeTestLiveEventCount());
   TEST_ASSERT_TRUE(loop.hasPublishedEvents());
@@ -152,8 +153,8 @@ void test_flush_without_dirty_does_not_wipe_takes() {
   seedPublishedPair(loop);
   loop.discardEditFlatMaterialization();
 
-  loop.flushEditStoreToTakes();
-  loop.nativeTestSyncEditFlatToTakes(false);
+  loop.commitMaterializedStoreToTakes();
+  loop.nativeTestCommitMaterializedStoreToTakes(false);
 
   TEST_ASSERT_EQUAL(2u, loop.nativeTestLiveEventCount());
 }

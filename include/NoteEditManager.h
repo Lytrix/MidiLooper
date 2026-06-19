@@ -59,6 +59,8 @@ public:
     void cycleEditMode(Track& track);
     void deleteSelectedNote(Track& track);
     void toggleLengthEditingMode();
+    /** Force position-edit routing when opening or closing a note-edit session. */
+    void resetLengthEditingModeOnSessionBoundary();
     
     // Legacy methods - to be replaced by unified system
     void sendStartNotePitchbend(Track& track);  // Sends coarse pitchbend ch15 and fine CC2 ch15
@@ -68,6 +70,8 @@ public:
     void moveNoteToPosition(Track& track, const NoteUtils::DisplayNote& currentNote, std::uint32_t targetTick);
     void moveNoteToPositionWithOverlapHandling(Track& track, const NoteUtils::DisplayNote& currentNote, std::uint32_t targetTick, bool commitChanges);
     void moveNoteToPositionSimple(Track& track, const NoteUtils::DisplayNote& currentNote, std::uint32_t targetTick);
+    void changeNoteEndWithOverlapHandling(Track& track, const NoteUtils::DisplayNote& currentNote,
+                                          std::uint32_t targetEndTick);
     void refreshEditingActivity();  // Mark editing activity to prevent note selection changes
     
     // Overlap handling helper functions

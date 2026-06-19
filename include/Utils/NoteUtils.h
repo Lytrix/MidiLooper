@@ -129,4 +129,14 @@ void removeDuplicateNotePairsAtSpan(MidiEventVec& midiEvents, uint8_t pitch, uin
  */
 void ensureNoteOffsBeforeNoteOnsAtTick(MidiEventVec& midiEvents, uint8_t pitch, uint32_t tick);
 
+/** True when two note spans overlap within loopLength (non-wrapped comparison). */
+bool notesOverlap(uint32_t start1, uint32_t end1, uint32_t start2, uint32_t end2,
+                  uint32_t loopLength);
+
+/**
+ * Same-tick same-pitch note-offs: order so LIFO pairing matches note-on order
+ * (later note-on's off appears before earlier note-on's off at that tick).
+ */
+void orderSamePitchNoteOffsForLifo(MidiEventVec& midiEvents, uint8_t channel, uint8_t pitch);
+
 } // namespace NoteUtils 

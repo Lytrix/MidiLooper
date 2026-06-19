@@ -38,7 +38,7 @@ Find the **root cause** of flakiness and regression churn in note-edit overlap b
 
 Abort patch → open design session when:
 
-- Fix requires **changing ownership** (who stores/restores overlap victims, who owns pitch vs move overlap).
+- Fix requires **changing ownership** (who stores/restores overlap neighbor notes, who owns pitch vs move overlap).
 - Fix requires **changing state transitions** (`movingNote.active`, commit on fader switch, pitch-change session reset).
 - A patch touches **both** `NoteEditManager` pitch path **and** `NoteMovementUtils` move path without a unified contract.
 - HITL pass/fail swings with **verifier-only** changes (signals test/spec drift, not firmware truth).

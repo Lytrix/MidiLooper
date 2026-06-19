@@ -237,10 +237,10 @@ const std::vector<DisplayNote>& DisplayManager::resolveDisplayNotes(const Track&
         return track.getCachedNotes();
     }
 
-    // NOTE_EDIT mutates editFlat (midiEvents), not published takes / visualCache.
+    // NOTE_EDIT: session store (editAware) is the live edit buffer; use it for display.
     if (noteEditManager.getCurrentMainEditMode() == NoteEditManager::MAIN_MODE_NOTE_EDIT) {
         invalidateLiveDisplayCache();
-        return track.getCachedNotesForSlot(displaySlot);
+        return track.getCachedNotes();
     }
 
     if (!isLiveRecordingDisplay(track, displaySlot)) {

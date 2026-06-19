@@ -472,6 +472,12 @@ void MidiButtonActions::handleSelectTrack(uint8_t trackNumber) {
 
 void MidiButtonActions::handleUndo() {
     Track& track = getCurrentTrack();
+    if (editManager.isNoteEditActive() && editManager.getNoteEditSession().undoStack.canUndo()) {
+        if (editManager.sessionUndo(track)) {
+            logger.info("MIDI: NoteEditSession undo");
+            return;
+        }
+    }
     if (TrackUndo::canUndo(track)) {
         logger.info("MIDI: Undo (entries=%d)", TrackUndo::getUndoCount(track));
         TrackUndo::undoOverdub(track);
@@ -487,6 +493,12 @@ void MidiButtonActions::handleUndo() {
 
 void MidiButtonActions::handleRedo() {
     Track& track = getCurrentTrack();
+    if (editManager.isNoteEditActive() && editManager.getNoteEditSession().undoStack.canRedo()) {
+        if (editManager.sessionRedo(track)) {
+            logger.info("MIDI: NoteEditSession redo");
+            return;
+        }
+    }
     if (TrackUndo::canRedo(track)) {
         logger.info("MIDI: Redo (entries=%d)", TrackUndo::getRedoCount(track));
         TrackUndo::redoOverdub(track);
@@ -619,6 +631,9 @@ void MidiButtonActions::handleCreateNoteAtBracket() {
         logger.info("Create note ignored (not in edit mode)");
         return;
     }
+    if (!editManager.isNoteEditActive()) {
+        editManager.openNoteEditSession(track);
+    }
     uint32_t loopLength = track.getLoopLength();
     if (loopLength == 0) return;
 
@@ -629,12 +644,21 @@ void MidiButtonActions::handleCreateNoteAtBracket() {
     }
 
     editManager.setSelectedNoteIdx(-1);
-    TrackUndo::pushUndoSnapshot(track);
-    EditSelectNoteState::createNoteAtTick(track, bracketTick);
+    editManager.pushSessionUndoBeforeMutation(track);
+    const std::array<MidiEvent, 2> created =
+        EditSelectNoteState::createNoteAtTick(track, bracketTick);
+    EditChange add;
+    add.type = EditChangeType::AddNote;
+    add.addedEvents.push_back(created[0]);
+    add.addedEvents.push_back(created[1]);
+    const EditId id = editManager.commitEditAction(track, EditChangeList{add});
+    if (id == kInvalidEditId) {
+        logger.info("Create note failed (edit session commit rejected)");
+        return;
+    }
     editManager.setBracketTick(bracketTick);
-    track.getActiveLoop().markEditFlatDirty();
     track.invalidateCaches();
-    editManager.selectClosestNote(track, bracketTick);
+    editManager.selectNoteAtBracket(track, bracketTick);
 }
 
 void MidiButtonActions::handleDeleteOrCreateNote() {

@@ -344,7 +344,65 @@ bool StorageManager::saveState(const LooperState& state) {
 
 namespace {
 bool deferredSavePending = false;
+bool urgentEditSavePending = false;
+uint32_t lastEditAutosaveMs = 0;
 }  // namespace
+
+void StorageManager::requestUrgentEditSave() {
+#if BYPASS_STOP_UNDO_SAVE
+    return;
+#endif
+    urgentEditSavePending = true;
+}
+
+void StorageManager::processEditAutosave(const LooperState& state) {
+#if BYPASS_STOP_UNDO_SAVE
+    (void)state;
+    urgentEditSavePending = false;
+    return;
+#endif
+    const uint32_t nowMs = millis();
+    if (urgentEditSavePending) {
+        urgentEditSavePending = false;
+        for (uint8_t t = 0; t < trackManager.getTrackCount(); ++t) {
+            Track& track = trackManager.getTrack(t);
+            for (uint8_t s = 0; s < Config::MAX_LOOPS_PER_TRACK; ++s) {
+                track.getLoop(s).clearEditStateDirty();
+            }
+        }
+        saveState(state);
+        lastEditAutosaveMs = nowMs;
+        return;
+    }
+
+    bool anyDirty = false;
+    bool captureActive = false;
+    for (uint8_t t = 0; t < trackManager.getTrackCount(); ++t) {
+        Track& track = trackManager.getTrack(t);
+        if (track.isRecording() || track.isOverdubbing()) {
+            captureActive = true;
+        }
+        for (uint8_t s = 0; s < Config::MAX_LOOPS_PER_TRACK; ++s) {
+            if (track.getLoop(s).isEditStateDirty()) {
+                anyDirty = true;
+            }
+        }
+    }
+    if (!anyDirty || captureActive) {
+        return;
+    }
+    if (nowMs - lastEditAutosaveMs < Config::autosaveIntervalMs) {
+        return;
+    }
+    for (uint8_t t = 0; t < trackManager.getTrackCount(); ++t) {
+        Track& track = trackManager.getTrack(t);
+        for (uint8_t s = 0; s < Config::MAX_LOOPS_PER_TRACK; ++s) {
+            track.getLoop(s).clearEditStateDirty();
+        }
+    }
+    saveState(state);
+    lastEditAutosaveMs = nowMs;
+}
 
 void StorageManager::requestDeferredSaveState(const LooperState& /*state*/) {
 #if BYPASS_STOP_UNDO_SAVE

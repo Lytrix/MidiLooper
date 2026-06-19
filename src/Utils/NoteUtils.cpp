@@ -5,6 +5,7 @@
 #include "Utils/MidiEventVecFnvHash.h"
 #include "Logger.h"
 #include <algorithm>
+#include <map>
 #include <set>
 #include <tuple>
 
@@ -521,6 +522,89 @@ NoteUtils::EventIndex NoteUtils::buildEventIndex(const MidiEventVec& midiEvents)
         }
     }
     return {std::move(onIndex), std::move(offIndex)};
+}
+
+namespace {
+
+uint32_t pairedNoteOnTickForOffAtIndex(const MidiEventVec& midiEvents, uint8_t channel,
+                                       uint8_t pitch, size_t offIndex) {
+    std::vector<uint32_t> onTicks;
+    for (size_t i = 0; i < midiEvents.size(); ++i) {
+        const MidiEvent& evt = midiEvents[i];
+        const bool isOn =
+            evt.isNoteOn() && evt.data.noteData.velocity > 0 && evt.channel == channel &&
+            evt.data.noteData.note == pitch;
+        const bool isOff =
+            evt.isNoteOff() && evt.channel == channel && evt.data.noteData.note == pitch;
+        if (isOn) {
+            onTicks.push_back(evt.tick);
+        } else if (isOff) {
+            if (i == offIndex) {
+                return onTicks.empty() ? 0u : onTicks.back();
+            }
+            if (!onTicks.empty()) {
+                onTicks.pop_back();
+            }
+        }
+    }
+    return 0u;
+}
+
+}  // namespace
+
+bool NoteUtils::notesOverlap(uint32_t start1, uint32_t end1, uint32_t start2, uint32_t end2,
+                             uint32_t loopLength) {
+    uint32_t unwrappedEnd1 = end1;
+    uint32_t unwrappedEnd2 = end2;
+    const bool wrapped1 = (end1 < start1);
+    const bool wrapped2 = (end2 < start2);
+    if (wrapped1) {
+        unwrappedEnd1 = end1 + loopLength;
+    }
+    if (wrapped2) {
+        unwrappedEnd2 = end2 + loopLength;
+    }
+    if (!wrapped1 && !wrapped2) {
+        return (start1 < end2) && (start2 < end1);
+    }
+    if (wrapped1 && !wrapped2) {
+        return (start1 < end2) || (start2 < unwrappedEnd1);
+    }
+    if (!wrapped1 && wrapped2) {
+        return (start1 < unwrappedEnd2) || (start2 < end1);
+    }
+    return (start1 < unwrappedEnd2) || (start2 < unwrappedEnd1);
+}
+
+void NoteUtils::orderSamePitchNoteOffsForLifo(MidiEventVec& midiEvents, uint8_t channel,
+                                              uint8_t pitch) {
+    std::map<uint32_t, std::vector<size_t>> offsByTick;
+    for (size_t i = 0; i < midiEvents.size(); ++i) {
+        const MidiEvent& evt = midiEvents[i];
+        if (evt.isNoteOff() && evt.channel == channel && evt.data.noteData.note == pitch) {
+            offsByTick[evt.tick].push_back(i);
+        }
+    }
+
+    for (auto& [tick, indices] : offsByTick) {
+        (void)tick;
+        if (indices.size() < 2) {
+            continue;
+        }
+        std::sort(indices.begin(), indices.end(), [&](size_t a, size_t b) {
+            const uint32_t onA = pairedNoteOnTickForOffAtIndex(midiEvents, channel, pitch, a);
+            const uint32_t onB = pairedNoteOnTickForOffAtIndex(midiEvents, channel, pitch, b);
+            return onA > onB;
+        });
+        std::vector<MidiEvent> sortedOffs;
+        sortedOffs.reserve(indices.size());
+        for (size_t idx : indices) {
+            sortedOffs.push_back(midiEvents[idx]);
+        }
+        for (size_t j = 0; j < indices.size(); ++j) {
+            midiEvents[indices[j]] = sortedOffs[j];
+        }
+    }
 }
 
 void NoteUtils::ensureNoteOffsBeforeNoteOnsAtTick(MidiEventVec& midiEvents, uint8_t pitch,

@@ -1,7 +1,7 @@
 # Design — unified note edit overlap (move + pitch)
 
 **Change:** `note-move-pitch-overlap-flaky`  
-**Status:** Design agreed (2026-06-18) — patch phase may start after tasks below are scoped.  
+**Status:** Superseded for implementation by [note-edit-modification-session](../note-edit-modification-session/design.md) (2026-06-19).  
 **Parent bug spec:** [BUG.md](./BUG.md)  
 **Aligns with:** m8-edit **NoteEditSession** (RAM edit layer only; **Takes** untouched)
 
@@ -68,11 +68,11 @@ NoteMovementUtils
 
 ```text
 1. Read session + mover geometry from EditManager::movingNote
-2. Restore pitch-conflict victims from deletedNotes (pitch step only)
+2. Restore pitch-conflict neighbor notes from deletedNotes (pitch step only)
 3. Classify overlaps vs other notes (same pitch + cross-pitch)
 4. Apply shorten / contained delete via applyShortenOrDelete
 5. Apply mover mutation (move events OR change pitch on span)
-6. Restore victims no longer overlapping (restoreNotes)
+6. Restore neighbor notes no longer overlapping (restoreNotes)
 7. Update movingNote.last* + session snapshot fields (rules below)
 8. invalidateCaches / markEditFlatDirty
 ```
@@ -92,28 +92,20 @@ NoteMovementUtils
 
 ## Decision 2 — Session snapshot (Takes untouched)
 
-### Problem
+**Locked in parent:** [note-edit-modification-session/design.md](../note-edit-modification-session/design.md) — **A1** split:
 
-`origStart` / `origEnd` are set once on first move init and never updated on **length edit**. Inner-note detection used stale end (120) while real span was 696→1176.
+| Field | Role |
+|-------|------|
+| **commitBaseline** | Frozen at fader-1 select; used for pending commit + **EditChange** **NoteRef** |
+| **sessionSpan** | Overlap / inner tests; `end` updates on length edit and position move |
+| **last** | Live mover geometry |
+| **overlapNotes** | hidden / shortened / visible (replaces `deletedNotes` vectors) |
 
-### Decision
+**Length edit:** updates **sessionSpan.end** only until commit — not **commitBaseline.end**.
 
-Introduce explicit **session snapshot** fields on `MovingNoteIdentity` (names may alias existing `orig*` after migration):
+**Baseline:** full note map from **NoteEditSession.store** at select (not first overlap).
 
-| Field | Meaning | Updated when |
-|-------|---------|--------------|
-| `sessionStart` | Mover start tick when session began or after reselect | First activate; **not** changed by pitch lane merge |
-| `sessionEnd` | Mover end tick — **full footprint** for inner-note tests | Length edit; position move (lastEnd); pitch **only** if lane merge (D-delay) extends into external neighbor |
-| `lastStart`, `lastEnd` | Current mover geometry | Every position / length / pitch apply |
-| `note` | Current pitch | Pitch change |
-| `deletedNotes` | Temporarily removed / shortened victims | Shared overlap engine only |
-| `active` | Session in progress | Until fader-1 reselect, commit exit, or edit mode exit |
-
-**Length edit (fader 2/3 in LENGTH mode):** MUST update `sessionEnd = lastEnd` after end tick moves (today only `lastEnd` updates — bug).
-
-**Pitch lane merge:** may extend `sessionEnd` when merging an **external** adjacent note; MUST NOT extend `sessionEnd` when skipping inner preserve.
-
-**Take boundary:** All mutations go through `track.getMidiEvents()` / edit flat / `LoopEventStore` materialization — the same path as today’s note edit. **No writes** to `Take` chunks, `commitTake()`, or record/overdub capture buffers.
+**Take boundary:** unchanged — edit RAM only until **saveEdit**.
 
 ### Event → snapshot table (normative)
 
@@ -184,22 +176,24 @@ Patch phase is **unlocked** for scoped implementation below.
 
 ## Clarification — multi-step pitch + position without commit (2026-06-18)
 
-**User scenario:** Mover at **higher pitch** passes over a **shorter** note → pitch change **truncates the victim’s head** (first segment before mover start). Later, **same-pitch** overlap **cuts the tail** correctly. **Move back** (no fader-1 reselect, no exit edit) → **victim gone** — suggests chained pitch + position steps are not one coherent session.
+**User scenario:** Moving note at **higher pitch** passes over a **shorter neighbor note** → pitch change **truncates the neighbor’s head** (first segment before mover start). Later, **same-pitch** overlap **cuts the tail** correctly. **Move back** (no fader-1 reselect, no exit edit) → **neighbor gone** — suggests chained pitch + position steps are not one coherent session.
 
 **What the code does today (shipped):**
 
-| Step | Path | Victim effect | Tracked in `movingNote.deletedNotes`? | Restored on move-back? |
-|------|------|---------------|--------------------------------------|-------------------------|
-| Pitch overlap | `NoteEditManager` | If victim **starts before** mover: **shorten head** to `moverStart - 1`. If victim **starts after** mover start: **delete** | Yes, via `applyShortenOrDelete` | **No** — restore loop runs only in `moveNoteWithOverlapHandling`, not after pitch |
+| Step | Path | Neighbor effect | Tracked in `movingNote.deletedNotes`? | Restored on move-back? |
+|------|------|-----------------|--------------------------------------|-------------------------|
+| Pitch overlap | `NoteEditManager` | If neighbor **starts before** mover: **shorten head** to `moverStart - 1`. If neighbor **starts after** mover start: **delete** (hidden) | Yes, via `applyShortenOrDelete` | **No** — restore loop runs only in `moveNoteWithOverlapHandling`, not after pitch |
 | Same-pitch position overlap | `NoteMovementUtils` | Contained delete or shorten | Yes | Yes, if overlap tests pass |
 | Pitch adjacent merge | `NoteEditManager` | Neighbor **deleted**, mover span extended | Sometimes (merge deletes neighbor) | Unreliable across later moves |
 
 **Why “second half OK, move back gone” fits this:**
 
-1. **Two different engines** — pitch step records one `DeletedNote` (often head shorten); a later position step may **delete the tail** without a restorable entry, or merge victim into mover.
-2. **Restore only on position move** — pitch changes do not run the “move away → restore victims” pass; moving back is a position move but **mover pitch/span changed** since the pitch step, so overlap/restore tests fail (same failure mode as A@409 in root-cause capture).
+1. **Two different engines** — pitch step records one `DeletedNote` (often head shorten); a later position step may **delete the tail** without a restorable entry, or merge neighbor into mover.
+2. **Restore only on position move** — pitch changes do not run the “move away → restore neighbors” pass; moving back is a position move but **mover pitch/span changed** since the pitch step, so overlap/restore tests fail (same failure mode as A@409 in root-cause capture).
 3. **Not undo** — `movingNote.deletedNotes` is **overlap scratch state**, not `TrackUndo::pushUndoSnapshot`. Disappearing on move-back is **lost overlap restore**, not missing global undo.
 
-**Design intent (unified engine):** One `deletedNotes` ledger and one restore pass after **every** geometry change (position **and** pitch), using **session span** + truncated-zone rules for both. Optional: split-victim (head shortened + tail deleted) must keep **one restorable record** or **two linked victims** until mover clears the zone.
+**Design intent (unified engine):** One `deletedNotes` ledger and one restore pass after **every** geometry change (position **and** pitch), using **session span** + truncated-zone rules for both. Optional: split neighbor (head shortened + tail hidden) must keep **one restorable record** or **two linked entries** until mover clears the zone.
 
-**Not the same as “commit”:** Commit = fader-1 reselect or exit edit (clears / finalizes `movingNote`). User means **no commit** — session should still restore victims when the mover leaves; that is **`movingNote` session continuity**, not `NoteEditSessionCommitted`.
+**Not the same as “commit”:** Commit = fader-1 reselect or exit edit (clears / finalizes `movingNote`). User means **no commit** — session should still restore neighbors when the mover leaves; that is **`movingNote` session continuity**, not `NoteEditSessionCommitted`.
+
+**Vocabulary:** **moving note** + **overlap note**; store states **hidden** | **shortened** | **visible** — see `.cursor/rules/Naming-Vocabulary-Teensy-Looper.mdc`.

@@ -5,8 +5,9 @@
 #include "EditManager.h"
 #include "Track.h"
 #include "Logger.h"
-#include "TrackUndo.h"
+#include "Utils/MidiEventVecFnvHash.h"
 #include "Utils/NoteUtils.h"
+#include "Utils/NoteMovementUtils.h"
 #include "Globals.h"
 #include <algorithm>
 
@@ -14,21 +15,19 @@ void EditLengthNoteState::onEnter(EditManager& manager, Track& track, uint32_t s
     logger.debug("EditLengthNoteState::onEnter");
     
     // Store initial hash for commit-on-exit
-    initialHash = TrackUndo::computeMidiHash(track);
+    initialHash = midiEventVecFnv1aHash(track.editAwareMidiEvents());
+    manager.pushSessionUndoBeforeMutation(track);
     
-    // Push undo snapshot for length editing
-    TrackUndo::pushUndoSnapshot(track);
-    
-    // Select the closest note to edit
     manager.selectClosestNote(track, startTick);
     
     if (manager.getSelectedNoteIdx() >= 0) {
-        // Move bracket to the end of the selected note for length editing
           uint32_t loopLength = track.getLoopLength();
   const auto& notes = track.getCachedNotes();
         
         if (manager.getSelectedNoteIdx() < (int)notes.size()) {
             auto& selectedNote = notes[manager.getSelectedNoteIdx()];
+            targetRef_ = {track.getMidiChannel(), selectedNote.note, selectedNote.startTick,
+                          selectedNote.endTick};
             uint32_t noteEnd = selectedNote.endTick;
             manager.setBracketTick(noteEnd % loopLength);
             
@@ -55,7 +54,7 @@ void EditLengthNoteState::onEncoderTurn(EditManager& manager, Track& track, int 
         return;
     }
     
-    auto& midiEvents = track.getMidiEvents();
+    auto& midiEvents = track.editAwareMidiEvents();
     uint32_t loopLength = track.getLoopLength();
     
     logger.debug("EditLengthNoteState: Loop length=%lu, MIDI events count=%zu", loopLength, midiEvents.size());
@@ -144,30 +143,8 @@ void EditLengthNoteState::onEncoderTurn(EditManager& manager, Track& track, int 
     logger.debug("EditLengthNoteState: Changing note end from %lu to %lu (delta=%d)", 
                  currentEnd, newEnd, lengthDelta);
     
-    // Find and update the NoteOff event
-    bool foundOff = false;
-    for (auto& event : midiEvents) {
-        if ((event.type == midi::NoteOff || (event.type == midi::NoteOn && event.data.noteData.velocity == 0)) &&
-            event.data.noteData.note == notePitch && 
-            event.tick == currentEnd) {
-            
-            event.tick = newEnd;
-            foundOff = true;
-            logger.debug("EditLengthNoteState: Updated NoteOff event to tick %lu", newEnd);
-            break;
-        }
-    }
-    
-    if (!foundOff) {
-        logger.debug("EditLengthNoteState: Warning - could not find NoteOff event to update");
-    }
-    
-    // Sort events to maintain order
-    std::sort(midiEvents.begin(), midiEvents.end(),
-              [](const MidiEvent& a, const MidiEvent& b) { return a.tick < b.tick; });
-    
-    // Update bracket position to the new end position
-    manager.setBracketTick(newEnd);
+    NoteUtils::DisplayNote selected = selectedNote;
+    NoteMovementUtils::changeLengthWithOverlapHandling(track, manager, selected, newEnd);
     
     // Re-select the note by finding it again in the updated note list
     const auto& updatedNotes = track.getCachedNotes();

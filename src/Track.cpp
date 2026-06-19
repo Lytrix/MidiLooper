@@ -24,6 +24,15 @@
 #include "Utils/LoopStopFinalize.h"
 #include "Utils/NoteUtils.h"
 #include "DisplayManager.h"
+#include "EditManager.h"
+
+MidiEventVec& Track::editAwareMidiEvents() {
+  return editManager.editMidiEvents(*this);
+}
+
+const MidiEventVec& Track::editAwareMidiEvents() const {
+  return editManager.editMidiEvents(*this);
+}
 
 namespace {
 
@@ -333,7 +342,7 @@ void Track::shiftMidiEvents(int32_t offset) {
     std::sort(loop.midiEvents().begin(), loop.midiEvents().end(),
               [](auto &a, auto &b){ return a.tick < b.tick; });
     loop.markEditFlatDirty();
-    loop.flushEditStoreToTakes();
+    loop.commitMaterializedStoreToTakes();
     invalidateCaches();
 }
 
@@ -606,7 +615,7 @@ void Track::validateAndCleanupMidiEvents(uint32_t openTailCloseTick) {
             return;
         }
         loop.markEditFlatDirty();
-        loop.flushEditStoreToTakes();
+        loop.commitMaterializedStoreToTakes();
         invalidateCaches();
         
         logger.log(CAT_MIDI, LOG_INFO, 
@@ -1067,6 +1076,7 @@ void Track::stopOverdubbing() {
       loop.commitTake(CommitReason::OverdubStop, currentTick);
   setState(TRACK_PLAYING);
   finalizeCommitSideEffects(commitResult, CommitReason::OverdubStop, closeTick);
+  TrackUndo::endOverdubSession(*this);
   logMemoryAfterOverdubStop(recordAddedNoteOnCount, loop);
   logger.logTrackEvent("Overdubbing stopped", currentTick);
   logger.info("Overdub stopped: events=%d, undo_entries=%d", static_cast<int>(loop.liveEventCount()),
@@ -1090,6 +1100,7 @@ void Track::stopOverdubbingToStopped() {
   const CommitResult commitResult =
       loop.commitTake(CommitReason::OverdubStopToStopped, currentTick);
   finalizeCommitSideEffects(commitResult, CommitReason::OverdubStopToStopped, closeTick);
+  TrackUndo::endOverdubSession(*this);
   logMemoryAfterOverdubStop(recordAddedNoteOnCount, loop);
   setState(TRACK_STOPPED);
   resetPlaybackState(currentTick);

@@ -2,6 +2,7 @@
 //  Licensed under the PolyForm Noncommercial 1.0.0
 
 #include "Loop.h"
+#include "EditApply.h"
 #include "Utils/LoopStopFinalize.h"
 #include <algorithm>
 
@@ -169,21 +170,48 @@ void Loop::flattenActiveTakes(MidiEventVec& out) const {
   flattenActiveTakeChunksToVec(active, out);
 }
 
-void Loop::materializeEditFlatFromTakes() const {
+void Loop::materializeEditViewFromTakesAndEdits() const {
   Loop* self = const_cast<Loop*>(this);
   const bool storeEmptyPublished =
-      self->hasPublishedEvents() && self->editFlat_.readStore().empty();
+      self->hasPublishedEvents() && self->editFlat_.readStore().empty() && self->edits.empty();
   if (!editFlatStale_ && !storeEmptyPublished) {
     return;
   }
-  MidiEventVec flat;
-  self->flattenActiveTakes(flat);
-  self->editFlat_.mutStore().clear();
-  if (!flat.empty()) {
-    self->editFlat_.mutStore().loadFromFlat(flat);
-  }
+  applyEdits(self->takes, self->edits, self->editFlat_.mutStore(), self->loopLengthTicks);
   self->editFlat_.discardFlatCache();
   self->editFlatStale_ = false;
+}
+
+void Loop::rematerializeEditView(LoopEventStore& store) const {
+  applyEdits(takes, edits, store, loopLengthTicks);
+}
+
+EditId Loop::saveEdit(uint8_t spanIndex, EditChangeList changes) {
+  if (changes.empty()) {
+    return kInvalidEditId;
+  }
+  Edit edit;
+  edit.id = nextEditId_++;
+  edit.spanIndex = spanIndex;
+  edit.state = EditState::Active;
+  edit.changes = std::move(changes);
+  edits.push_back(std::move(edit));
+  ++playbackRevision;
+  editStateDirty_ = true;
+  markTakeDerivedStale();
+  return edits.back().id;
+}
+
+void Loop::disableEdits(const EditIdList& ids) {
+  for (const EditId id : ids) {
+    for (Edit& edit : edits) {
+      if (edit.id == id) {
+        edit.state = EditState::Disabled;
+      }
+    }
+  }
+  ++playbackRevision;
+  markTakeDerivedStale();
 }
 
 void Loop::freeActiveTakeChunks() {
@@ -198,7 +226,7 @@ void Loop::freeActiveTakeChunks() {
   }
 }
 
-void Loop::syncEditFlatToTakes(bool allowEmptyClear) {
+void Loop::commitMaterializedStoreImpl(bool allowEmptyClear) {
   if (editFlat_.isFlatDirty()) {
     editFlat_.syncFlatToStore();
   }
@@ -240,7 +268,7 @@ void Loop::syncEditFlatToTakes(bool allowEmptyClear) {
   takes.push_back(rebuilt);
   lastPublishedTakeId_ = rebuilt.id;
   ++playbackRevision;
-  materializeEditFlatFromTakes();
+  materializeEditViewFromTakesAndEdits();
   rebuildVisualCacheFromTakes();
 }
 
@@ -252,28 +280,28 @@ void Loop::markTakeDerivedStale() {
 }
 
 MidiEventVec& Loop::midiEvents() {
-  materializeEditFlatFromTakes();
+  materializeEditViewFromTakesAndEdits();
   return editFlat_.mutFlat();
 }
 
 const MidiEventVec& Loop::midiEvents() const {
-  materializeEditFlatFromTakes();
+  materializeEditViewFromTakesAndEdits();
   return editFlat_.readFlat();
 }
 
 LoopEventStore& Loop::mutEditStore() {
-  materializeEditFlatFromTakes();
+  materializeEditViewFromTakesAndEdits();
   return editFlat_.mutStore();
 }
 
 const LoopEventStore& Loop::readEditStore() const {
-  materializeEditFlatFromTakes();
+  materializeEditViewFromTakesAndEdits();
   return editFlat_.readStore();
 }
 
 std::shared_ptr<const LoopEventStore> Loop::shareEditSnapshot() const {
   Loop* self = const_cast<Loop*>(this);
-  self->materializeEditFlatFromTakes();
+  self->materializeEditViewFromTakesAndEdits();
   if (self->editFlat_.isFlatDirty()) {
     self->editFlat_.syncFlatToStore();
   }
@@ -282,7 +310,8 @@ std::shared_ptr<const LoopEventStore> Loop::shareEditSnapshot() const {
 
 void Loop::restoreEditSnapshot(const MidiSnapshotRef& snapshot) {
   editFlat_.restoreFromSnapshot(snapshot);
-  syncEditFlatToTakes(true);
+  edits.clear();
+  commitMaterializedStoreImpl(true);
 }
 
 void Loop::discardEditFlatMaterialization() {
@@ -332,30 +361,53 @@ void Loop::commitStopFinalizeFromStore(LoopEventStore& merged) {
 
 void Loop::importPublishedStore(LoopEventStore& store) {
   resetTakeTimeline();
+  edits.clear();
   if (store.empty()) {
     return;
   }
   editFlat_.mutStore().adoptAll(store);
   editFlatStale_ = false;
-  syncEditFlatToTakes(true);
+  commitMaterializedStoreImpl(true);
   rebuildVisualCacheFromTakes();
-}
-
-void Loop::flushEditStoreToTakes() {
-  if (editFlatStale_ || !editFlat_.isFlatDirty()) {
-    return;
-  }
-  editFlat_.syncFlatToStore();
-  syncEditFlatToTakes(true);
 }
 
 void Loop::shiftActiveTakeTicks(int64_t delta) {
   if (delta == 0 || !hasPublishedEvents()) {
     return;
   }
-  materializeEditFlatFromTakes();
-  editFlat_.mutStore().shiftAllTicks(delta);
-  syncEditFlatToTakes(true);
+  for (Take& take : takes) {
+    if (take.state != TakeState::Active || take.chunkRefs.empty()) {
+      continue;
+    }
+    MidiEventVec flat;
+    LoopEventStore::appendFlattenedChunkIds(take.chunkRefs, flat);
+    if (flat.empty()) {
+      continue;
+    }
+    LoopEventStore staging;
+    staging.loadFromFlat(flat);
+    staging.shiftAllTicks(delta);
+    LoopEventStore temp;
+    temp.adoptAll(staging);
+    take.chunkRefs.clear();
+    temp.detachChunksTo(take.chunkRefs);
+  }
+  for (Edit& edit : edits) {
+    if (edit.state != EditState::Active) {
+      continue;
+    }
+    for (EditChange& change : edit.changes) {
+      change.target.startTick = static_cast<uint32_t>(static_cast<int64_t>(change.target.startTick) + delta);
+      change.target.endTick = static_cast<uint32_t>(static_cast<int64_t>(change.target.endTick) + delta);
+      change.newStartTick = static_cast<uint32_t>(static_cast<int64_t>(change.newStartTick) + delta);
+      change.newEndTick = static_cast<uint32_t>(static_cast<int64_t>(change.newEndTick) + delta);
+      for (MidiEvent& evt : change.addedEvents) {
+        evt.tick = static_cast<uint32_t>(static_cast<int64_t>(evt.tick) + delta);
+      }
+    }
+  }
+  ++playbackRevision;
+  markTakeDerivedStale();
 }
 
 void Loop::beginCapture(CapturePhase phase) {
@@ -393,15 +445,9 @@ bool Loop::appendCaptureEvent(const MidiEvent& evt) {
 }
 
 size_t Loop::liveEventCount() const {
-  size_t count = 0;
-  for (const Take& take : takes) {
-    if (take.state == TakeState::Active) {
-      LoopEventStore staging;
-      MidiEventVec flat;
-      LoopEventStore::appendFlattenedChunkIds(take.chunkRefs, flat);
-      count += flat.size();
-    }
-  }
+  MidiEventVec flat;
+  applyEditsToFlat(takes, edits, flat);
+  size_t count = flat.size();
   if (captureActive()) {
     count += capture.store.size();
   }
@@ -422,7 +468,7 @@ bool Loop::ensureCaptureEventsSorted() {
 }
 
 void Loop::buildLiveEventView(MidiEventVec& out) const {
-  flattenActiveTakes(out);
+  applyEditsToFlat(takes, edits, out);
   if (!captureActive() || capture.store.empty()) {
     return;
   }
@@ -485,10 +531,13 @@ void Loop::resetTakeTimeline() {
     staging.clear();
   }
   takes.clear();
+  edits.clear();
   nextTakeId_ = 1;
+  nextEditId_ = 1;
   nextMergeSequence_ = 0;
   lastPublishedTakeId_ = kInvalidTakeId;
   playbackRevision = 0;
+  editStateDirty_ = false;
   visualCache.clear();
   capturePreview.clear();
   pendingVisualDelta.clear();
