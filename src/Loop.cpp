@@ -462,8 +462,10 @@ void Loop::beginCapture(CapturePhase phase) {
   discardPendingCapturePass();
   capture.phase = phase;
   capture.store.clear();
+  capturePreview.clear();
   captureNextEventIndex = 0;
   captureEventsSortDirty = false;
+  ++captureDisplayRevision;
 }
 
 void Loop::discardCapture() {
