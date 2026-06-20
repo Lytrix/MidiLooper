@@ -334,15 +334,13 @@ const std::vector<DisplayNote>& DisplayManager::resolveDisplayNotes(const Track&
         liveDisplayCacheLoopLength = liveLoopLength;
     }
 
-    if (track.isRecording() || !liveDisplayCacheOpenNotes.empty()) {
+    if (track.isRecording() || track.isOverdubbing()) {
         loop.buildLiveEventView(liveDisplayEventBuffer);
-        if (track.isRecording()) {
-            rebuildLiveDisplayNotes();
-        }
+        rebuildLiveDisplayNotes();
         liveDisplayCacheOpenNotes =
             NoteUtils::findOpenNoteOns(liveDisplayEventBuffer, liveLoopLength);
         const uint32_t playheadCloseTick = resolvePlayheadInLoop(track, displaySlot, currentTick);
-        // Record: held note-ons (no note-off yet) lengthen to playhead. Overdub: capture only.
+        // Record: all held note-ons lengthen to playhead. Overdub: capture-store note-ons only.
         const std::vector<NoteUtils::OpenNoteOn>& liveOpenNotes =
             track.isOverdubbing()
                 ? filterLiveOpenNotesForOverdub(loop, liveDisplayCacheOpenNotes)

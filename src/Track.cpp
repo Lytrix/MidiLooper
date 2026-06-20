@@ -1055,6 +1055,7 @@ void Track::startOverdubbing(uint32_t currentTick) {
   if (!setState(TRACK_OVERDUBBING)) return;
   recordAddedNoteOnCount = 0;
   Loop& loop = getActiveLoop();
+  loop.ensureVisualCacheBuilt();
   loop.beginCapture(CapturePhase::Overdub);
   TrackUndo::beginOverdubSession(*this);
   logger.info("Overdub session opened: events=%d, undo_entries=%d",
