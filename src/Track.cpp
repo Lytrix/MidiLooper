@@ -41,7 +41,7 @@ void logMemoryAfterOverdubStop(uint32_t overdubNoteOns, const Loop& loop) {
   const void* eventsData = nullptr;
   if (takeEvents > 0) {
     MidiEventVec flat;
-    loop.flattenActiveTakes(flat);
+    loop.flattenActiveCapturePasses(flat);
     if (!flat.empty()) {
       eventsData = flat.data();
     }
@@ -86,7 +86,7 @@ void ensurePlaybackWindowBuilt(Loop& loop, LoopPlaybackRuntime& runtime) {
   if (runtime.primaryWindow.builtFromRevision == loop.playbackRevision) {
     return;
   }
-  loop.flattenActiveTakes(runtime.primaryWindow.mergedEvents);
+  loop.flattenActiveCapturePasses(runtime.primaryWindow.mergedEvents);
   runtime.primaryWindow.builtFromRevision = loop.playbackRevision;
   runtime.primaryWindow.effectiveWindowBars = Config::PLAYBACK_WINDOW_MAX_BARS;
   loop.playbackOrderDirty = true;
@@ -300,7 +300,7 @@ void Track::startRecording(uint32_t currentTick) {
     return;
   }
   recordAddedNoteOnCount = 0;
-  loop.resetTakeTimeline();
+  loop.resetPassTimeline();
   loop.beginCapture(CapturePhase::Record);
   pendingNotes.clear();
   for (const auto& entry : preRoll) {
@@ -342,7 +342,7 @@ void Track::shiftMidiEvents(int32_t offset) {
     std::sort(loop.midiEvents().begin(), loop.midiEvents().end(),
               [](auto &a, auto &b){ return a.tick < b.tick; });
     loop.markEditFlatDirty();
-    loop.commitMaterializedStoreToTakes();
+    loop.commitMaterializedStoreToPasses();
     invalidateCaches();
 }
 
@@ -615,7 +615,7 @@ void Track::validateAndCleanupMidiEvents(uint32_t openTailCloseTick) {
             return;
         }
         loop.markEditFlatDirty();
-        loop.commitMaterializedStoreToTakes();
+        loop.commitMaterializedStoreToPasses();
         invalidateCaches();
         
         logger.log(CAT_MIDI, LOG_INFO, 
@@ -636,7 +636,7 @@ void Track::finalizeLoopAtStop(uint32_t openTailCloseTick, bool scheduleDeferred
   }
 
   MidiEventVec flat;
-  loop.flattenActiveTakes(flat);
+  loop.flattenActiveCapturePasses(flat);
   if (flat.empty()) {
     deferredFullMidiValidate = false;
     return;
@@ -678,8 +678,8 @@ void Track::finalizeCommitSideEffects(CommitResult result, CommitReason reason, 
       loop.discardCapture();
       const bool recordStop = reason == CommitReason::RecordStop ||
                               reason == CommitReason::RecordStopToStopped;
-      if (recordStop && loop.activeTakeCount() == 0) {
-        loop.resetTakeTimeline();
+      if (recordStop && loop.activeCapturePassCount() == 0) {
+        loop.resetPassTimeline();
         loop.loopLengthTicks = 0;
         loop.loopStartTick = 0;
         loop.startLoopTick = 0;
@@ -694,17 +694,23 @@ void Track::finalizeCommitSideEffects(CommitResult result, CommitReason reason, 
       break;
     }
     case CommitResult::Published: {
-      const TakeId undoTakeId = loop.lastPublishedTakeId();
+      const PassId undoPassId = loop.lastPublishedPassId();
       finalizeLoopAtStop(closeTick, deferFullValidate);
-      loop.rebuildVisualCacheFromTakes();
-      TrackUndo::pushCommittedTake(*this, getActiveLoopIndex(), undoTakeId);
+      loop.rebuildVisualCacheFromPasses();
+      const bool isRecordPass =
+          loop.passes.hasRecordPass() && loop.passes.recordPass.id == undoPassId;
+      if (isRecordPass) {
+        TrackUndo::pushRecordPassAdded(*this, getActiveLoopIndex(), undoPassId);
+      } else {
+        TrackUndo::pushOverdubPassAdded(*this, getActiveLoopIndex(), undoPassId);
+      }
       if (reason == CommitReason::OverdubStop || reason == CommitReason::OverdubStopToStopped) {
         StorageManager::requestDeferredSaveState(looperState.getLooperState());
       }
       break;
     }
     case CommitResult::SealFailed:
-      loop.discardPendingTake();
+      loop.discardPendingCapturePass();
       break;
   }
 
@@ -726,7 +732,7 @@ void Track::emitStoredMidiVerification() const {
   }
 
   MidiEventVec flat;
-  loop.flattenActiveTakes(flat);
+  loop.flattenActiveCapturePasses(flat);
   for (const MidiEvent& evt : flat) {
     if (evt.isNoteOn()) {
       SC_STORED_NOTE_EVENT('N', evt.tick, evt.channel, evt.data.noteData.note);
@@ -767,7 +773,7 @@ void Track::queueDeferredRecordRevts() const {
     return;
   }
   MidiEventVec flat;
-  loop.flattenActiveTakes(flat);
+  loop.flattenActiveCapturePasses(flat);
   size_t queued = 0;
   for (const MidiEvent& evt : flat) {
     if (evt.isNoteOn()) {
@@ -880,7 +886,7 @@ void Track::stopRecording(uint32_t currentTick) {
   }
 
   const CommitResult commitResult =
-      loop.commitTake(CommitReason::RecordStop, currentTick);
+      loop.commitCapturePass(CommitReason::RecordStop, currentTick);
   pendingNotes.clear();
 
   // Validate AFTER loopLengthTicks is known so wrap-matching and open-tail closing
@@ -902,7 +908,7 @@ void Track::stopRecording(uint32_t currentTick) {
     }
     int64_t delta = (int64_t)snapBar - (int64_t)absRecStart;
     if (delta != 0 && loop.hasPublishedEvents()) {
-      loop.shiftActiveTakeTicks(delta);
+      loop.shiftActiveCapturePassTicks(delta);
       loop.invalidatePlaybackCaches();
     }
   }
@@ -940,7 +946,7 @@ void Track::stopRecording(uint32_t currentTick) {
                static_cast<unsigned long>(finalLength));
 
   // Empty record-stop (commit skipped) clears loopLengthTicks; leave a valid state.
-  if (loop.loopLengthTicks == 0 || loop.activeTakeCount() == 0) {
+  if (loop.loopLengthTicks == 0 || loop.activeCapturePassCount() == 0) {
     setState(TRACK_EMPTY);
     return;
   }
@@ -986,7 +992,7 @@ void Track::stopRecordingToStopped(uint32_t currentTick) {
   }
 
   const CommitResult commitResult =
-      loop.commitTake(CommitReason::RecordStopToStopped, currentTick);
+      loop.commitCapturePass(CommitReason::RecordStopToStopped, currentTick);
   pendingNotes.clear();
 
   // Validate AFTER loopLengthTicks is known (see stopRecording for rationale).
@@ -1073,7 +1079,7 @@ void Track::stopOverdubbing() {
     closeTick = tickPhaseInLoop(currentTick, loop.startLoopTick, loop.loopLengthTicks);
   }
   const CommitResult commitResult =
-      loop.commitTake(CommitReason::OverdubStop, currentTick);
+      loop.commitCapturePass(CommitReason::OverdubStop, currentTick);
   setState(TRACK_PLAYING);
   finalizeCommitSideEffects(commitResult, CommitReason::OverdubStop, closeTick);
   TrackUndo::endOverdubSession(*this);
@@ -1098,7 +1104,7 @@ void Track::stopOverdubbingToStopped() {
   }
   sendAllNotesOff();
   const CommitResult commitResult =
-      loop.commitTake(CommitReason::OverdubStopToStopped, currentTick);
+      loop.commitCapturePass(CommitReason::OverdubStopToStopped, currentTick);
   finalizeCommitSideEffects(commitResult, CommitReason::OverdubStopToStopped, closeTick);
   TrackUndo::endOverdubSession(*this);
   logMemoryAfterOverdubStop(recordAddedNoteOnCount, loop);
@@ -1157,7 +1163,7 @@ void Track::clear() {
 
     Loop& loop = getActiveLoop();
     const uint8_t clearedSlot = activeLoopIndex;
-    loop.resetTakeTimeline();
+    loop.resetPassTimeline();
     loop.discardCapture();
     loop.startLoopTick = 0;
     loop.loopLengthTicks = 0;

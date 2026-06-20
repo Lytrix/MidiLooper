@@ -4,8 +4,8 @@
 #include <cstdint>
 #include <vector>
 
-#include "Take.h"
-#include "Edit.h"
+#include "LoopPasses.h"
+#include "EditPass.h"
 #include "LoopEventBuffer.h"
 #include "TrackState.h"
 #include "Utils/ExtMemAllocator.h"
@@ -14,10 +14,12 @@ using UndoEntryId = uint32_t;
 
 enum class UndoEntryKind : uint8_t {
   NoteEditCommit = 0,
-  TakeCommitted = 1,
-  ClearSlot = 2,
-  LoopBoundaryChange = 3,
-  NoteEditSessionCommitted = 4,
+  RecordPassAdded = 1,
+  OverdubPassAdded = 2,
+  ClearSlot = 3,
+  LoopBoundaryChange = 4,
+  NoteEditPassClosed = 5,
+  ControlChangeEditPassClosed = 6,
 };
 
 struct UndoLoopGeometry {
@@ -31,7 +33,7 @@ struct UndoEntry {
   UndoEntryKind kind = UndoEntryKind::NoteEditCommit;
   uint8_t slotIndex = 0;
   LoopId loopId = kInvalidLoopId;
-  TakeId takeId = kInvalidTakeId;
+  PassId passId = kInvalidPassId;
 
   MidiSnapshotRef beforeSnapshot;
   MidiSnapshotRef afterSnapshot;
@@ -48,9 +50,8 @@ struct UndoEntry {
   bool hasTrackState = false;
   bool hasRedoPayload = false;
 
-  /// NoteEditSessionCommitted: all Edit ids in the closed span.
-  EditIdList spanEditIds;
-  uint8_t noteEditSpanIndex = 0;
+  EditPassIdList noteEditPassIds;
+  uint8_t noteEditPassIndex = 0;
 };
 
 using UndoEntryVec = std::vector<UndoEntry, ExtMemAllocator<UndoEntry>>;

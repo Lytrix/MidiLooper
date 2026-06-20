@@ -97,6 +97,14 @@ void restoreLoopSnapshot(Loop& loop, const MidiSnapshotRef& snapshot, const Undo
     loop.invalidateCaches();
 }
 
+bool disableCapturePass(Loop& loop, PassId passId) {
+    return loop.setCapturePassState(passId, CapturePassState::Disabled);
+}
+
+bool enableCapturePass(Loop& loop, PassId passId) {
+    return loop.setCapturePassState(passId, CapturePassState::Active);
+}
+
 bool applyUndoEntry(Track& track, UndoEntry& entry) {
     Loop& loop = track.getLoop(entry.slotIndex);
     switch (entry.kind) {
@@ -121,14 +129,15 @@ bool applyUndoEntry(Track& track, UndoEntry& entry) {
             loop.invalidateCaches();
             entry.hasRedoPayload = true;
             return true;
-        case UndoEntryKind::TakeCommitted:
-            if (!loop.setTakeState(entry.takeId, TakeState::Disabled)) {
-                logger.log(CAT_TRACK, LOG_WARNING, "Undo failed: missing take %lu in slot %u",
-                           static_cast<unsigned long>(entry.takeId),
+        case UndoEntryKind::RecordPassAdded:
+        case UndoEntryKind::OverdubPassAdded:
+            if (!disableCapturePass(loop, entry.passId)) {
+                logger.log(CAT_TRACK, LOG_WARNING, "Undo failed: missing pass %lu in slot %u",
+                           static_cast<unsigned long>(entry.passId),
                            static_cast<unsigned>(entry.slotIndex));
                 return false;
             }
-            loop.rebuildVisualCacheFromTakes();
+            loop.rebuildVisualCacheFromPasses();
             loop.invalidateCaches();
             if (editManager.isNoteEditActive()) {
                 loop.rematerializeEditView(editManager.getNoteEditSession().store.mutStore());
@@ -136,12 +145,12 @@ bool applyUndoEntry(Track& track, UndoEntry& entry) {
                 editManager.getNoteEditSession().undoStack.clear();
             }
             return true;
-        case UndoEntryKind::NoteEditSessionCommitted:
-            if (entry.spanEditIds.empty()) {
+        case UndoEntryKind::NoteEditPassClosed:
+            if (entry.noteEditPassIds.empty()) {
                 return false;
             }
-            loop.disableEdits(entry.spanEditIds);
-            loop.rebuildVisualCacheFromTakes();
+            loop.disableEditPasses(entry.noteEditPassIds);
+            loop.rebuildVisualCacheFromPasses();
             loop.invalidateCaches();
             if (editManager.isNoteEditActive()) {
                 loop.rematerializeEditView(editManager.getNoteEditSession().store.mutStore());
@@ -149,10 +158,12 @@ bool applyUndoEntry(Track& track, UndoEntry& entry) {
                 editManager.getNoteEditSession().undoStack.clear();
             }
             entry.hasRedoPayload = true;
-            logger.log(CAT_TRACK, LOG_INFO, "Note edit span undone span=%u edits=%u",
-                       static_cast<unsigned>(entry.noteEditSpanIndex),
-                       static_cast<unsigned>(entry.spanEditIds.size()));
+            logger.log(CAT_TRACK, LOG_INFO, "Note edit pass undone editPass=%u edits=%u",
+                       static_cast<unsigned>(entry.noteEditPassIndex),
+                       static_cast<unsigned>(entry.noteEditPassIds.size()));
             return true;
+        case UndoEntryKind::ControlChangeEditPassClosed:
+            return false;
     }
     return false;
 }
@@ -182,14 +193,15 @@ bool applyRedoEntry(Track& track, UndoEntry& entry) {
             loop.loopLengthTicks = entry.afterLoopLengthTicks;
             loop.invalidateCaches();
             return true;
-        case UndoEntryKind::TakeCommitted:
-            if (!loop.setTakeState(entry.takeId, TakeState::Active)) {
-                logger.log(CAT_TRACK, LOG_WARNING, "Redo failed: missing take %lu in slot %u",
-                           static_cast<unsigned long>(entry.takeId),
+        case UndoEntryKind::RecordPassAdded:
+        case UndoEntryKind::OverdubPassAdded:
+            if (!enableCapturePass(loop, entry.passId)) {
+                logger.log(CAT_TRACK, LOG_WARNING, "Redo failed: missing pass %lu in slot %u",
+                           static_cast<unsigned long>(entry.passId),
                            static_cast<unsigned>(entry.slotIndex));
                 return false;
             }
-            loop.rebuildVisualCacheFromTakes();
+            loop.rebuildVisualCacheFromPasses();
             loop.invalidateCaches();
             if (editManager.isNoteEditActive()) {
                 loop.rematerializeEditView(editManager.getNoteEditSession().store.mutStore());
@@ -197,14 +209,14 @@ bool applyRedoEntry(Track& track, UndoEntry& entry) {
                 editManager.getNoteEditSession().undoStack.clear();
             }
             return true;
-        case UndoEntryKind::NoteEditSessionCommitted:
-            if (!entry.hasRedoPayload || entry.spanEditIds.empty()) {
+        case UndoEntryKind::NoteEditPassClosed:
+            if (!entry.hasRedoPayload || entry.noteEditPassIds.empty()) {
                 return false;
             }
-            for (const EditId id : entry.spanEditIds) {
-                for (Edit& edit : loop.edits) {
-                    if (edit.id == id) {
-                        edit.state = EditState::Active;
+            for (const EditPassId id : entry.noteEditPassIds) {
+                for (EditPass& editPass : loop.passes.editPasses) {
+                    if (editPass.id == id) {
+                        editPass.state = EditPassState::Active;
                     }
                 }
             }
@@ -216,10 +228,12 @@ bool applyRedoEntry(Track& track, UndoEntry& entry) {
                 editManager.getNoteEditSession().store.discardFlatCache();
                 editManager.getNoteEditSession().undoStack.clear();
             }
-            logger.log(CAT_TRACK, LOG_INFO, "Note edit span redone span=%u edits=%u",
-                       static_cast<unsigned>(entry.noteEditSpanIndex),
-                       static_cast<unsigned>(entry.spanEditIds.size()));
+            logger.log(CAT_TRACK, LOG_INFO, "Note edit pass redone editPass=%u edits=%u",
+                       static_cast<unsigned>(entry.noteEditPassIndex),
+                       static_cast<unsigned>(entry.noteEditPassIds.size()));
             return true;
+        case UndoEntryKind::ControlChangeEditPassClosed:
+            return false;
     }
     return false;
 }
@@ -242,37 +256,51 @@ void TrackUndo::pushUndoSnapshot(Track& track) {
     pushUndoEntry(track, std::move(entry));
 }
 
-void TrackUndo::pushCommittedTake(Track& track, uint8_t slotIndex, TakeId takeId) {
-    if (slotIndex >= Config::MAX_LOOPS_PER_TRACK || takeId == kInvalidTakeId) {
+void TrackUndo::pushRecordPassAdded(Track& track, uint8_t slotIndex, PassId passId) {
+    if (slotIndex >= Config::MAX_LOOPS_PER_TRACK || passId == kInvalidPassId) {
         return;
     }
     const Loop& loop = track.getLoop(slotIndex);
     UndoEntry entry;
-    entry.kind = UndoEntryKind::TakeCommitted;
+    entry.kind = UndoEntryKind::RecordPassAdded;
     entry.slotIndex = slotIndex;
     entry.loopId = loop.loopId;
-    entry.takeId = takeId;
+    entry.passId = passId;
     pushUndoEntry(track, std::move(entry));
 }
 
-void TrackUndo::pushNoteEditSessionCommitted(Track& track, uint8_t spanIndex, EditIdList editIds) {
-    if (editIds.empty()) {
+void TrackUndo::pushOverdubPassAdded(Track& track, uint8_t slotIndex, PassId passId) {
+    if (slotIndex >= Config::MAX_LOOPS_PER_TRACK || passId == kInvalidPassId) {
+        return;
+    }
+    const Loop& loop = track.getLoop(slotIndex);
+    UndoEntry entry;
+    entry.kind = UndoEntryKind::OverdubPassAdded;
+    entry.slotIndex = slotIndex;
+    entry.loopId = loop.loopId;
+    entry.passId = passId;
+    pushUndoEntry(track, std::move(entry));
+}
+
+void TrackUndo::pushNoteEditPassClosed(Track& track, uint8_t noteEditPassIndex,
+                                       EditPassIdList editPassIds) {
+    if (editPassIds.empty()) {
         return;
     }
     const Loop& loop = track.getActiveLoop();
     UndoEntry entry;
-    entry.kind = UndoEntryKind::NoteEditSessionCommitted;
+    entry.kind = UndoEntryKind::NoteEditPassClosed;
     entry.slotIndex = track.getActiveLoopIndex();
     entry.loopId = loop.loopId;
-    entry.noteEditSpanIndex = spanIndex;
-    entry.spanEditIds = std::move(editIds);
+    entry.noteEditPassIndex = noteEditPassIndex;
+    entry.noteEditPassIds = std::move(editPassIds);
     pushUndoEntry(track, std::move(entry));
 }
 
 void TrackUndo::beginOverdubSession(Track& track) {
     if (editManager.isNoteEditActive()) {
         editManager.commitAllPendingNoteEditActions(track);
-        editManager.closeNoteEditSpan(track);
+        editManager.closeNoteEditPass(track);
     }
     (void)track;
 }

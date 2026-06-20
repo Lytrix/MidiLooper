@@ -9,10 +9,15 @@
 #include "MidiEvent.h"
 #include "Utils/ExtMemAllocator.h"
 
-using EditId = uint32_t;
-constexpr EditId kInvalidEditId = 0;
+using PassId = uint32_t;
+constexpr PassId kInvalidPassId = 0;
 
-enum class EditState : uint8_t { Active, Disabled };
+using EditPassId = PassId;
+constexpr EditPassId kInvalidEditPassId = kInvalidPassId;
+
+enum class EditPassState : uint8_t { Active, Disabled };
+
+enum class EditPassKind : uint8_t { NoteEdit, ControlChange };
 
 enum class EditChangeType : uint8_t {
   DeleteNote,
@@ -40,13 +45,14 @@ struct EditChange {
 };
 
 using EditChangeList = std::vector<EditChange, ExtMemAllocator<EditChange>>;
-using EditIdList = std::vector<EditId, ExtMemAllocator<EditId>>;
+using EditPassIdList = std::vector<EditPassId, ExtMemAllocator<EditPassId>>;
 
-struct Edit {
-  EditId id = kInvalidEditId;
-  uint8_t spanIndex = 0;
-  EditState state = EditState::Active;
+struct EditPass {
+  EditPassId id = kInvalidEditPassId;
+  EditPassKind kind = EditPassKind::NoteEdit;
+  uint8_t noteEditPassIndex = 0;
+  EditPassState state = EditPassState::Active;
   EditChangeList changes;
 };
 
-using EditVec = std::vector<Edit, ExtMemAllocator<Edit>>;
+using EditPassVec = std::vector<EditPass, ExtMemAllocator<EditPass>>;

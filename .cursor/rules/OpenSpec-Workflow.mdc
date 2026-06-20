@@ -46,18 +46,22 @@ Do **not** start D13-style `jam-recording` before M8. Parked reference:
 **`m8-edit`** — Edit op-lists, NoteEditSession, retire `editFlat_`.  
 Run `/opsx:apply` on `openspec/changes/m8-edit/tasks.md`.
 
-**`m8-pass-vocabulary`** — **edit pass** replaces **span** (record / overdub / edit pass).  
-**`note-edit-modification-session`** — unified note overlap owner (A1 + B1).  
-**`change-length-commit-rematerialize`** — **bug** — ChangeLength commit / rematerialize HITL (Track A+B); parent PR4 gate.  
-**`note-edit-focus-reads`** — Phase 2a: **focus.last** replaces **movingNote** UI reads (`/opsx:apply`).
+**Parked:** `archive/2026-06-20-parked-edit-record-display-length-mode/` — display + length-mode UX (D1–D3 not started).
 
-**`edit-focus-selection-drift`** — **bug (recheck done)** — consolidated into archived **`note-edit-hitl-focus-restore`**.  
-Run `/opsx:apply` on respective `tasks.md`.  
-Bug evidence: `note-move-pitch-overlap-flaky/`, `lengthen-overlap-neighbor-restore/`, `change-length-commit-rematerialize/BUG.md`, `edit-focus-selection-drift/BUG.md`.
+**Archived (bug evidence):** `note-move-pitch-overlap-flaky`, `lengthen-overlap-neighbor-restore`, `change-length-commit-rematerialize` (Track C insert/reorder deferred).
 
 **Archived:** `openspec/changes/archive/2026-06-18-m8-rename/` (Take/Capture vocabulary).  
-**Archived:** `openspec/changes/archive/2026-06-19-overlap-hidden-note-select/` (Phase 1 consumer contract — `filterSelectableDisplayNotes`; spec in `openspec/specs/overlap-hidden-note-select/`).  
-**Archived:** `openspec/changes/archive/2026-06-20-note-edit-hitl-focus-restore/` (B1 delete/select + B2 hidden restore on pitch; sign-off `013630`/`013835`/`014601`).
+**Archived:** `openspec/changes/archive/2026-06-19-overlap-hidden-note-select/` (**Closed** 2026-06-20).  
+**Archived:** `openspec/changes/archive/2026-06-20-note-edit-hitl-focus-restore/` (B1/B2 focus restore).  
+**Archived:** `openspec/changes/archive/2026-06-20-edit-focus-selection-drift/` (recheck done; superseded by hitl-focus-restore).  
+**Archived:** `openspec/changes/archive/2026-06-20-timeline-pass-model/` (**passes[]**).  
+**Archived:** `openspec/changes/archive/2026-06-20-m8-pass-vocabulary/` (**edit pass** vocabulary).  
+**Archived:** `openspec/changes/archive/2026-06-20-note-edit-modification-session/` (overlap A1 + B1).  
+**Archived:** `openspec/changes/archive/2026-06-20-note-edit-focus-reads/` (Phase 2a–2d **focus.last**).  
+**Archived:** `openspec/changes/archive/2026-06-20-note-move-pitch-overlap-flaky/` (overlap root-cause evidence).  
+**Archived:** `openspec/changes/archive/2026-06-20-lengthen-overlap-neighbor-restore/` (overlap HITL evidence).  
+**Archived:** `openspec/changes/archive/2026-06-20-change-length-commit-rematerialize/` (Track A+B; spec `openspec/specs/change-length-commit-rematerialize/`).  
+**Parked:** `openspec/changes/archive/2026-06-20-parked-edit-record-display-length-mode/` (display + length-mode UX).
 
 ## Brownfield docs
 
@@ -71,7 +75,7 @@ Cite in OpenSpec artifacts; do not duplicate wholesale:
 ## Naming
 
 See `.cursor/rules/Naming-Vocabulary-Teensy-Looper.mdc` and global **action + scope** rule.
-Reuse **Take**, **Capture**, **Edit**, slot, overdub, jam, JamAction, HITL baseline.
+Reuse **passes**, **Capture**, **editPass**, **NoteEditSession**, slot, overdub, jam, JamAction, HITL baseline.
 
 ## Verification
 

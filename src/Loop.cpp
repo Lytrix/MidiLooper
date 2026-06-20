@@ -2,7 +2,6 @@
 //  Licensed under the PolyForm Noncommercial 1.0.0
 
 #include "Loop.h"
-#include "EditApply.h"
 #include "Utils/LoopStopFinalize.h"
 #include <algorithm>
 
@@ -21,44 +20,6 @@ bool eventsEquivalent(const MidiEvent& a, const MidiEvent& b) {
            a.data.ccData.value == b.data.ccData.value;
   }
   return true;
-}
-
-void collectActiveTakesSorted(const Loop& loop, std::vector<const Take*>& out) {
-  out.clear();
-  out.reserve(loop.takes.size());
-  for (const Take& take : loop.takes) {
-    if (take.state == TakeState::Active && !take.chunkRefs.empty()) {
-      out.push_back(&take);
-    }
-  }
-  std::sort(out.begin(), out.end(),
-            [](const Take* a, const Take* b) { return a->mergeSequence < b->mergeSequence; });
-}
-
-/// Merge Active take chunk data into a flat vector without allocating new pool chunks.
-void flattenActiveTakeChunksToVec(const std::vector<const Take*>& active, MidiEventVec& out) {
-  out.clear();
-  if (active.empty()) {
-    return;
-  }
-
-  for (const Take* take : active) {
-    MidiEventVec takeFlat;
-    LoopEventStore::appendFlattenedChunkIds(take->chunkRefs, takeFlat);
-    if (takeFlat.empty()) {
-      continue;
-    }
-    if (out.empty()) {
-      out = std::move(takeFlat);
-      continue;
-    }
-    MidiEventVec merged;
-    merged.reserve(out.size() + takeFlat.size());
-    std::merge(out.begin(), out.end(), takeFlat.begin(), takeFlat.end(),
-               std::back_inserter(merged),
-               [](const MidiEvent& a, const MidiEvent& b) { return a.tick < b.tick; });
-    out = std::move(merged);
-  }
 }
 
 bool isDuplicateCaptureEvent(const Loop& loop, const MidiEvent& candidate) {
@@ -80,10 +41,6 @@ bool isDuplicateCaptureEvent(const Loop& loop, const MidiEvent& candidate) {
       return true;
     }
   }
-
-  // Overdub layers new material on published takes. Only dedupe within the active
-  // capture buffer so a second loop pass (or automation re-hits) is not blocked
-  // unless the same capture session already stored an identical event.
   return false;
 }
 
@@ -156,74 +113,122 @@ void rebuildCapturePreviewFromStore(Loop& loop) {
 }  // namespace
 
 bool Loop::hasPublishedEvents() const {
-  for (const Take& take : takes) {
-    if (take.state == TakeState::Active && !take.chunkRefs.empty()) {
+  if (passes.hasRecordPass() && passes.recordPass.state == CapturePassState::Active &&
+      !passes.recordPass.chunkRefs.empty()) {
+    return true;
+  }
+  for (const OverdubPass& pass : passes.overdubPasses) {
+    if (pass.state == CapturePassState::Active && !pass.chunkRefs.empty()) {
       return true;
     }
   }
   return false;
 }
 
-void Loop::flattenActiveTakes(MidiEventVec& out) const {
-  std::vector<const Take*> active;
-  collectActiveTakesSorted(*this, active);
-  flattenActiveTakeChunksToVec(active, out);
+void Loop::flattenActiveCapturePasses(MidiEventVec& out) const {
+  out.clear();
+  if (passes.hasRecordPass() && passes.recordPass.state == CapturePassState::Active &&
+      !passes.recordPass.chunkRefs.empty()) {
+    LoopEventStore::appendFlattenedChunkIds(passes.recordPass.chunkRefs, out);
+  }
+  std::vector<const OverdubPass*> activeOverdubs;
+  for (const OverdubPass& pass : passes.overdubPasses) {
+    if (pass.state == CapturePassState::Active && !pass.chunkRefs.empty()) {
+      activeOverdubs.push_back(&pass);
+    }
+  }
+  std::sort(activeOverdubs.begin(), activeOverdubs.end(),
+            [](const OverdubPass* a, const OverdubPass* b) {
+              return a->mergeSequence < b->mergeSequence;
+            });
+  for (const OverdubPass* pass : activeOverdubs) {
+    MidiEventVec layer;
+    LoopEventStore::appendFlattenedChunkIds(pass->chunkRefs, layer);
+    if (out.empty()) {
+      out = std::move(layer);
+      continue;
+    }
+    if (layer.empty()) {
+      continue;
+    }
+    MidiEventVec merged;
+    merged.reserve(out.size() + layer.size());
+    std::merge(out.begin(), out.end(), layer.begin(), layer.end(),
+               std::back_inserter(merged),
+               [](const MidiEvent& a, const MidiEvent& b) { return a.tick < b.tick; });
+    out = std::move(merged);
+  }
 }
 
-void Loop::materializeEditViewFromTakesAndEdits() const {
+void Loop::materializeEditViewFromPasses() const {
   Loop* self = const_cast<Loop*>(this);
   const bool storeEmptyPublished =
-      self->hasPublishedEvents() && self->editFlat_.readStore().empty() && self->edits.empty();
+      self->hasPublishedEvents() && self->editFlat_.readStore().empty() &&
+      self->passes.editPasses.empty();
   if (!editFlatStale_ && !storeEmptyPublished) {
     return;
   }
-  applyEdits(self->takes, self->edits, self->editFlat_.mutStore(), self->loopLengthTicks);
+  passes.materialize(self->editFlat_.mutStore(), self->loopLengthTicks);
   self->editFlat_.discardFlatCache();
   self->editFlatStale_ = false;
 }
 
 void Loop::rematerializeEditView(LoopEventStore& store) const {
-  applyEdits(takes, edits, store, loopLengthTicks);
+  passes.materialize(store, loopLengthTicks);
 }
 
-EditId Loop::saveEdit(uint8_t spanIndex, EditChangeList changes) {
+EditPassId Loop::saveNoteEditPass(uint8_t noteEditPassIndex, EditChangeList changes) {
   if (changes.empty()) {
-    return kInvalidEditId;
+    return kInvalidEditPassId;
   }
-  Edit edit;
-  edit.id = nextEditId_++;
-  edit.spanIndex = spanIndex;
-  edit.state = EditState::Active;
-  edit.changes = std::move(changes);
-  edits.push_back(std::move(edit));
+  EditPass editPass;
+  editPass.id = nextPassId_++;
+  editPass.kind = EditPassKind::NoteEdit;
+  editPass.noteEditPassIndex = noteEditPassIndex;
+  editPass.state = EditPassState::Active;
+  editPass.changes = std::move(changes);
+  passes.editPasses.push_back(std::move(editPass));
   ++playbackRevision;
   editStateDirty_ = true;
-  markTakeDerivedStale();
-  return edits.back().id;
+  markPassDerivedStale();
+  return passes.editPasses.back().id;
 }
 
-void Loop::disableEdits(const EditIdList& ids) {
-  for (const EditId id : ids) {
-    for (Edit& edit : edits) {
-      if (edit.id == id) {
-        edit.state = EditState::Disabled;
+void Loop::disableEditPasses(const EditPassIdList& ids) {
+  for (const EditPassId id : ids) {
+    for (EditPass& editPass : passes.editPasses) {
+      if (editPass.id == id) {
+        editPass.state = EditPassState::Disabled;
       }
     }
   }
   ++playbackRevision;
-  markTakeDerivedStale();
+  markPassDerivedStale();
 }
 
-void Loop::freeActiveTakeChunks() {
-  for (Take& take : takes) {
-    if (take.state != TakeState::Active) {
+void Loop::freeActiveCapturePassChunks() {
+  if (passes.hasRecordPass() && passes.recordPass.state == CapturePassState::Active) {
+    LoopEventStore staging;
+    staging.adoptChunkIds(passes.recordPass.chunkRefs);
+    staging.clear();
+    passes.recordPass.chunkRefs.clear();
+    passes.recordPass.id = kInvalidPassId;
+  }
+  for (OverdubPass& pass : passes.overdubPasses) {
+    if (pass.state != CapturePassState::Active) {
       continue;
     }
     LoopEventStore staging;
-    staging.adoptChunkIds(take.chunkRefs);
+    staging.adoptChunkIds(pass.chunkRefs);
     staging.clear();
-    take.chunkRefs.clear();
+    pass.chunkRefs.clear();
   }
+  passes.overdubPasses.erase(
+      std::remove_if(passes.overdubPasses.begin(), passes.overdubPasses.end(),
+                     [](const OverdubPass& pass) {
+                       return pass.state == CapturePassState::Active;
+                     }),
+      passes.overdubPasses.end());
 }
 
 void Loop::commitMaterializedStoreImpl(bool allowEmptyClear) {
@@ -237,14 +242,11 @@ void Loop::commitMaterializedStoreImpl(bool allowEmptyClear) {
       discardEditFlatMaterialization();
       return;
     }
-    freeActiveTakeChunks();
-    takes.erase(std::remove_if(takes.begin(), takes.end(),
-                                [](const Take& e) { return e.state == TakeState::Active; }),
-                 takes.end());
-    lastPublishedTakeId_ = kInvalidTakeId;
+    freeActiveCapturePassChunks();
+    lastPublishedPassId_ = kInvalidPassId;
     ++playbackRevision;
     discardEditFlatMaterialization();
-    rebuildVisualCacheFromTakes();
+    rebuildVisualCacheFromPasses();
     return;
   }
 
@@ -254,25 +256,20 @@ void Loop::commitMaterializedStoreImpl(bool allowEmptyClear) {
     return;
   }
 
-  freeActiveTakeChunks();
-  takes.erase(std::remove_if(takes.begin(), takes.end(),
-                              [](const Take& e) { return e.state == TakeState::Active; }),
-               takes.end());
+  freeActiveCapturePassChunks();
 
-  Take rebuilt{};
-  rebuilt.id = nextTakeId_++;
-  rebuilt.mergeSequence = nextMergeSequence_++;
-  rebuilt.state = TakeState::Active;
-  rebuilt.type = TakeType::Record;
+  RecordPass rebuilt{};
+  rebuilt.id = nextPassId_++;
+  rebuilt.state = CapturePassState::Active;
   rebuilt.chunkRefs = std::move(refs);
-  takes.push_back(rebuilt);
-  lastPublishedTakeId_ = rebuilt.id;
+  passes.recordPass = rebuilt;
+  lastPublishedPassId_ = rebuilt.id;
   ++playbackRevision;
-  materializeEditViewFromTakesAndEdits();
-  rebuildVisualCacheFromTakes();
+  materializeEditViewFromPasses();
+  rebuildVisualCacheFromPasses();
 }
 
-void Loop::markTakeDerivedStale() {
+void Loop::markPassDerivedStale() {
   editFlatStale_ = true;
   playbackOrderDirty = true;
   visualCacheDirty = true;
@@ -280,28 +277,28 @@ void Loop::markTakeDerivedStale() {
 }
 
 MidiEventVec& Loop::midiEvents() {
-  materializeEditViewFromTakesAndEdits();
+  materializeEditViewFromPasses();
   return editFlat_.mutFlat();
 }
 
 const MidiEventVec& Loop::midiEvents() const {
-  materializeEditViewFromTakesAndEdits();
+  materializeEditViewFromPasses();
   return editFlat_.readFlat();
 }
 
 LoopEventStore& Loop::mutEditStore() {
-  materializeEditViewFromTakesAndEdits();
+  materializeEditViewFromPasses();
   return editFlat_.mutStore();
 }
 
 const LoopEventStore& Loop::readEditStore() const {
-  materializeEditViewFromTakesAndEdits();
+  materializeEditViewFromPasses();
   return editFlat_.readStore();
 }
 
 std::shared_ptr<const LoopEventStore> Loop::shareEditSnapshot() const {
   Loop* self = const_cast<Loop*>(this);
-  self->materializeEditViewFromTakesAndEdits();
+  self->materializeEditViewFromPasses();
   if (self->editFlat_.isFlatDirty()) {
     self->editFlat_.syncFlatToStore();
   }
@@ -310,7 +307,7 @@ std::shared_ptr<const LoopEventStore> Loop::shareEditSnapshot() const {
 
 void Loop::restoreEditSnapshot(const MidiSnapshotRef& snapshot) {
   editFlat_.restoreFromSnapshot(snapshot);
-  edits.clear();
+  passes.editPasses.clear();
   commitMaterializedStoreImpl(true);
 }
 
@@ -321,14 +318,17 @@ void Loop::discardEditFlatMaterialization() {
 }
 
 void Loop::commitStopFinalizeFromStore(LoopEventStore& merged) {
-  const TakeId preserveId = lastPublishedTakeId_;
-  TakeType preserveType = TakeType::Overdub;
+  const PassId preserveId = lastPublishedPassId_;
+  CapturePassPhase preservePhase = CapturePassPhase::Overdub;
   uint32_t preserveMergeSeq = 0;
-  for (const Take& take : takes) {
-    if (take.state == TakeState::Active && take.id == preserveId) {
-      preserveType = take.type;
-      preserveMergeSeq = take.mergeSequence;
-      break;
+  if (passes.hasRecordPass() && passes.recordPass.id == preserveId) {
+    preservePhase = CapturePassPhase::Record;
+  } else {
+    for (const OverdubPass& pass : passes.overdubPasses) {
+      if (pass.state == CapturePassState::Active && pass.id == preserveId) {
+        preserveMergeSeq = pass.mergeSequence;
+        break;
+      }
     }
   }
 
@@ -338,49 +338,71 @@ void Loop::commitStopFinalizeFromStore(LoopEventStore& merged) {
     return;
   }
 
-  freeActiveTakeChunks();
-  takes.erase(std::remove_if(takes.begin(), takes.end(),
-                              [](const Take& e) { return e.state == TakeState::Active; }),
-               takes.end());
+  freeActiveCapturePassChunks();
 
-  Take rebuilt{};
-  rebuilt.id = (preserveId != kInvalidTakeId) ? preserveId : nextTakeId_++;
-  if (rebuilt.id >= nextTakeId_) {
-    nextTakeId_ = rebuilt.id + 1;
+  if (preservePhase == CapturePassPhase::Record) {
+    RecordPass rebuilt{};
+    rebuilt.id = (preserveId != kInvalidPassId) ? preserveId : nextPassId_++;
+    if (rebuilt.id >= nextPassId_) {
+      nextPassId_ = rebuilt.id + 1;
+    }
+    rebuilt.state = CapturePassState::Active;
+    rebuilt.chunkRefs = std::move(refs);
+    passes.recordPass = rebuilt;
+    lastPublishedPassId_ = rebuilt.id;
+  } else {
+    OverdubPass rebuilt{};
+    rebuilt.id = (preserveId != kInvalidPassId) ? preserveId : nextPassId_++;
+    if (rebuilt.id >= nextPassId_) {
+      nextPassId_ = rebuilt.id + 1;
+    }
+    rebuilt.mergeSequence = preserveMergeSeq;
+    rebuilt.state = CapturePassState::Active;
+    rebuilt.chunkRefs = std::move(refs);
+    passes.overdubPasses.push_back(rebuilt);
+    lastPublishedPassId_ = rebuilt.id;
   }
-  rebuilt.mergeSequence = preserveMergeSeq;
-  rebuilt.type = preserveType;
-  rebuilt.state = TakeState::Active;
-  rebuilt.chunkRefs = std::move(refs);
-  takes.push_back(rebuilt);
-  lastPublishedTakeId_ = rebuilt.id;
+
   ++playbackRevision;
   discardEditFlatMaterialization();
-  rebuildVisualCacheFromTakes();
+  rebuildVisualCacheFromPasses();
 }
 
 void Loop::importPublishedStore(LoopEventStore& store) {
-  resetTakeTimeline();
-  edits.clear();
+  resetPassTimeline();
   if (store.empty()) {
     return;
   }
   editFlat_.mutStore().adoptAll(store);
   editFlatStale_ = false;
   commitMaterializedStoreImpl(true);
-  rebuildVisualCacheFromTakes();
+  rebuildVisualCacheFromPasses();
 }
 
-void Loop::shiftActiveTakeTicks(int64_t delta) {
+void Loop::shiftActiveCapturePassTicks(int64_t delta) {
   if (delta == 0 || !hasPublishedEvents()) {
     return;
   }
-  for (Take& take : takes) {
-    if (take.state != TakeState::Active || take.chunkRefs.empty()) {
+  if (passes.hasRecordPass() && passes.recordPass.state == CapturePassState::Active &&
+      !passes.recordPass.chunkRefs.empty()) {
+    MidiEventVec flat;
+    LoopEventStore::appendFlattenedChunkIds(passes.recordPass.chunkRefs, flat);
+    if (!flat.empty()) {
+      LoopEventStore staging;
+      staging.loadFromFlat(flat);
+      staging.shiftAllTicks(delta);
+      LoopEventStore temp;
+      temp.adoptAll(staging);
+      passes.recordPass.chunkRefs.clear();
+      temp.detachChunksTo(passes.recordPass.chunkRefs);
+    }
+  }
+  for (OverdubPass& pass : passes.overdubPasses) {
+    if (pass.state != CapturePassState::Active || pass.chunkRefs.empty()) {
       continue;
     }
     MidiEventVec flat;
-    LoopEventStore::appendFlattenedChunkIds(take.chunkRefs, flat);
+    LoopEventStore::appendFlattenedChunkIds(pass.chunkRefs, flat);
     if (flat.empty()) {
       continue;
     }
@@ -389,29 +411,33 @@ void Loop::shiftActiveTakeTicks(int64_t delta) {
     staging.shiftAllTicks(delta);
     LoopEventStore temp;
     temp.adoptAll(staging);
-    take.chunkRefs.clear();
-    temp.detachChunksTo(take.chunkRefs);
+    pass.chunkRefs.clear();
+    temp.detachChunksTo(pass.chunkRefs);
   }
-  for (Edit& edit : edits) {
-    if (edit.state != EditState::Active) {
+  for (EditPass& editPass : passes.editPasses) {
+    if (editPass.state != EditPassState::Active) {
       continue;
     }
-    for (EditChange& change : edit.changes) {
-      change.target.startTick = static_cast<uint32_t>(static_cast<int64_t>(change.target.startTick) + delta);
-      change.target.endTick = static_cast<uint32_t>(static_cast<int64_t>(change.target.endTick) + delta);
-      change.newStartTick = static_cast<uint32_t>(static_cast<int64_t>(change.newStartTick) + delta);
-      change.newEndTick = static_cast<uint32_t>(static_cast<int64_t>(change.newEndTick) + delta);
+    for (EditChange& change : editPass.changes) {
+      change.target.startTick =
+          static_cast<uint32_t>(static_cast<int64_t>(change.target.startTick) + delta);
+      change.target.endTick =
+          static_cast<uint32_t>(static_cast<int64_t>(change.target.endTick) + delta);
+      change.newStartTick =
+          static_cast<uint32_t>(static_cast<int64_t>(change.newStartTick) + delta);
+      change.newEndTick =
+          static_cast<uint32_t>(static_cast<int64_t>(change.newEndTick) + delta);
       for (MidiEvent& evt : change.addedEvents) {
         evt.tick = static_cast<uint32_t>(static_cast<int64_t>(evt.tick) + delta);
       }
     }
   }
   ++playbackRevision;
-  markTakeDerivedStale();
+  markPassDerivedStale();
 }
 
 void Loop::beginCapture(CapturePhase phase) {
-  discardPendingTake();
+  discardPendingCapturePass();
   capture.phase = phase;
   capture.store.clear();
   captureNextEventIndex = 0;
@@ -430,7 +456,7 @@ bool Loop::appendCaptureEvent(const MidiEvent& evt) {
   if (capture.phase == CapturePhase::None) {
     return false;
   }
-  if (hasPendingTake_) {
+  if (hasPendingCapturePass_) {
     return false;
   }
   if (isDuplicateCaptureEvent(*this, evt)) {
@@ -446,7 +472,7 @@ bool Loop::appendCaptureEvent(const MidiEvent& evt) {
 
 size_t Loop::liveEventCount() const {
   MidiEventVec flat;
-  applyEditsToFlat(takes, edits, flat);
+  passes.materializeToFlat(flat, loopLengthTicks);
   size_t count = flat.size();
   if (captureActive()) {
     count += capture.store.size();
@@ -468,7 +494,7 @@ bool Loop::ensureCaptureEventsSorted() {
 }
 
 void Loop::buildLiveEventView(MidiEventVec& out) const {
-  applyEditsToFlat(takes, edits, out);
+  passes.materializeToFlat(out, loopLengthTicks);
   if (!captureActive() || capture.store.empty()) {
     return;
   }
@@ -523,19 +549,24 @@ void Loop::removeCaptureNoteOffAt(uint8_t channel, uint8_t note, uint32_t tick) 
   rebuildCapturePreviewFromStore(*this);
 }
 
-void Loop::resetTakeTimeline() {
-  discardPendingTake();
-  for (Take& take : takes) {
+void Loop::resetPassTimeline() {
+  discardPendingCapturePass();
+  if (passes.hasRecordPass()) {
     LoopEventStore staging;
-    staging.adoptChunkIds(take.chunkRefs);
+    staging.adoptChunkIds(passes.recordPass.chunkRefs);
+    staging.clear();
+    passes.recordPass = RecordPass{};
+  }
+  for (OverdubPass& pass : passes.overdubPasses) {
+    LoopEventStore staging;
+    staging.adoptChunkIds(pass.chunkRefs);
     staging.clear();
   }
-  takes.clear();
-  edits.clear();
-  nextTakeId_ = 1;
-  nextEditId_ = 1;
+  passes.overdubPasses.clear();
+  passes.editPasses.clear();
+  nextPassId_ = 1;
   nextMergeSequence_ = 0;
-  lastPublishedTakeId_ = kInvalidTakeId;
+  lastPublishedPassId_ = kInvalidPassId;
   playbackRevision = 0;
   editStateDirty_ = false;
   visualCache.clear();
@@ -547,23 +578,32 @@ void Loop::resetTakeTimeline() {
   editFlatStale_ = true;
 }
 
-bool Loop::setTakeState(TakeId id, TakeState state) {
-  for (Take& take : takes) {
-    if (take.id != id) {
-      continue;
-    }
-    if (take.state == state) {
+bool Loop::setCapturePassState(PassId id, CapturePassState state) {
+  if (passes.hasRecordPass() && passes.recordPass.id == id) {
+    if (passes.recordPass.state == state) {
       return true;
     }
-    take.state = state;
+    passes.recordPass.state = state;
     ++playbackRevision;
-    markTakeDerivedStale();
+    markPassDerivedStale();
+    return true;
+  }
+  for (OverdubPass& pass : passes.overdubPasses) {
+    if (pass.id != id) {
+      continue;
+    }
+    if (pass.state == state) {
+      return true;
+    }
+    pass.state = state;
+    ++playbackRevision;
+    markPassDerivedStale();
     return true;
   }
   return false;
 }
 
-CommitResult Loop::commitTake(CommitReason reason, uint32_t sealedAtTick) {
+CommitResult Loop::commitCapturePass(CommitReason reason, uint32_t sealedAtTick) {
   (void)reason;
   if (capture.store.empty()) {
     discardCapture();
@@ -575,40 +615,43 @@ CommitResult Loop::commitTake(CommitReason reason, uint32_t sealedAtTick) {
     return CommitResult::SealFailed;
   }
 
-  if (!publishPendingTake()) {
+  if (!publishPendingCapturePass()) {
     return CommitResult::SealFailed;
   }
 
-  markTakeDerivedStale();
-  rebuildVisualCacheFromTakes();
+  markPassDerivedStale();
+  rebuildVisualCacheFromPasses();
   return CommitResult::Published;
 }
 
-size_t Loop::activeTakeCount() const {
+size_t Loop::activeCapturePassCount() const {
   size_t count = 0;
-  for (const Take& take : takes) {
-    if (take.state == TakeState::Active) {
+  if (passes.hasRecordPass() && passes.recordPass.state == CapturePassState::Active) {
+    ++count;
+  }
+  for (const OverdubPass& pass : passes.overdubPasses) {
+    if (pass.state == CapturePassState::Active) {
       ++count;
     }
   }
   return count;
 }
 
-void Loop::discardPendingTake() {
-  if (!hasPendingTake_) {
+void Loop::discardPendingCapturePass() {
+  if (!hasPendingCapturePass_) {
     return;
   }
   LoopEventStore staging;
-  staging.adoptChunkIds(pendingTake_.chunkRefs);
+  staging.adoptChunkIds(pendingCapturePass_.chunkRefs);
   staging.clear();
-  pendingTake_ = Take{};
-  hasPendingTake_ = false;
+  pendingCapturePass_ = PendingCapturePass{};
+  hasPendingCapturePass_ = false;
   pendingVisualDelta.clear();
 }
 
-void Loop::rebuildVisualCacheFromTakes() {
+void Loop::rebuildVisualCacheFromPasses() {
   MidiEventVec flat;
-  flattenActiveTakes(flat);
+  flattenActiveCapturePasses(flat);
   visualCache.notes = NoteUtils::reconstructNotes(flat, loopLengthTicks, false);
   visualCache.dirtyBars.clear();
   for (const auto& n : visualCache.notes) {
@@ -627,7 +670,7 @@ void Loop::ensureVisualCacheBuilt() {
   if (!visualCacheDirty) {
     return;
   }
-  rebuildVisualCacheFromTakes();
+  rebuildVisualCacheFromPasses();
 }
 
 void Loop::markDisplayCachesStale() {
@@ -636,14 +679,14 @@ void Loop::markDisplayCachesStale() {
 }
 
 SealOutcome Loop::sealCapture(uint32_t sealedAtTick) {
-  if (hasPendingTake_) {
+  if (hasPendingCapturePass_) {
     return SealOutcome::AlreadyPending;
   }
   if (capture.store.empty()) {
     return SealOutcome::SkippedEmpty;
   }
-  if (takes.size() >= TakeConfig::MAX_TAKES_PER_LOOP) {
-    return SealOutcome::AtTakeCap;
+  if (passes.capturePassCount() >= PassConfig::MAX_CAPTURE_PASSES_PER_LOOP) {
+    return SealOutcome::AtPassCap;
   }
 
   ensureCaptureEventsSorted();
@@ -657,36 +700,52 @@ SealOutcome Loop::sealCapture(uint32_t sealedAtTick) {
     }
   }
 
-  pendingTake_ = Take{};
-  pendingTake_.id = nextTakeId_++;
-  pendingTake_.mergeSequence = nextMergeSequence_++;
-  pendingTake_.type = takeTypeForCapturePhase(capture.phase);
-  pendingTake_.state = TakeState::Pending;
-  pendingTake_.sealedAtTick = sealedAtTick;
-  capture.store.detachChunksTo(pendingTake_.chunkRefs);
+  const CapturePassPhase phase =
+      effectiveCapturePassPhase(capture.phase, passes.hasRecordPass());
 
-  if (pendingTake_.chunkRefs.empty()) {
-    pendingTake_ = Take{};
+  pendingCapturePass_ = PendingCapturePass{};
+  pendingCapturePass_.id = nextPassId_++;
+  pendingCapturePass_.mergeSequence = nextMergeSequence_++;
+  pendingCapturePass_.phase = phase;
+  pendingCapturePass_.sealedAtTick = sealedAtTick;
+  capture.store.detachChunksTo(pendingCapturePass_.chunkRefs);
+
+  if (pendingCapturePass_.chunkRefs.empty()) {
+    pendingCapturePass_ = PendingCapturePass{};
     return SealOutcome::FailedValidation;
   }
 
   pendingVisualDelta.clear();
-  hasPendingTake_ = true;
+  hasPendingCapturePass_ = true;
   return SealOutcome::Ok;
 }
 
-bool Loop::publishPendingTake() {
-  if (!hasPendingTake_) {
+bool Loop::publishPendingCapturePass() {
+  if (!hasPendingCapturePass_) {
     return false;
   }
 
-  Take published = pendingTake_;
-  published.state = TakeState::Active;
-  takes.push_back(published);
-  lastPublishedTakeId_ = published.id;
+  PendingCapturePass published = std::move(pendingCapturePass_);
+  if (published.phase == CapturePassPhase::Record) {
+    RecordPass record{};
+    record.id = published.id;
+    record.state = CapturePassState::Active;
+    record.sealedAtTick = published.sealedAtTick;
+    record.chunkRefs = std::move(published.chunkRefs);
+    passes.recordPass = std::move(record);
+  } else {
+    OverdubPass overdub{};
+    overdub.id = published.id;
+    overdub.mergeSequence = published.mergeSequence;
+    overdub.state = CapturePassState::Active;
+    overdub.sealedAtTick = published.sealedAtTick;
+    overdub.chunkRefs = std::move(published.chunkRefs);
+    passes.overdubPasses.push_back(std::move(overdub));
+  }
+  lastPublishedPassId_ = published.id;
 
-  pendingTake_ = Take{};
-  hasPendingTake_ = false;
+  pendingCapturePass_ = PendingCapturePass{};
+  hasPendingCapturePass_ = false;
 
   ++playbackRevision;
   pendingVisualDelta.clear();
@@ -718,6 +777,6 @@ void Loop::invalidatePlaybackCaches() {
   eventIndexValid = false;
 }
 
-void Loop::clearCaptureOnNewTake() {
+void Loop::clearCaptureOnNewPass() {
   discardCapture();
 }

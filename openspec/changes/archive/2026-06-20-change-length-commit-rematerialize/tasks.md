@@ -1,10 +1,10 @@
 # Tasks — change-length-commit-rematerialize
 
 **Change:** `change-length-commit-rematerialize`  
+**Status:** **Closed** — Track A+B signed off (`203729`); Track C deferred (2026-06-20)  
+**Archived:** `openspec/changes/archive/2026-06-20-change-length-commit-rematerialize/`  
 **Design:** [design.md](./design.md) · **Evidence:** [BUG.md](./BUG.md)  
-**Parent:** [note-edit-modification-session/tasks.md](../note-edit-modification-session/tasks.md) (PR4 **7.x**, **0.x**)
-
-Run `/opsx:apply` on this file after parent overlap engine tasks **1.x–6.x** are complete.
+**Parent:** archived [note-edit-modification-session/tasks.md](../archive/2026-06-20-note-edit-modification-session/tasks.md)
 
 ---
 
@@ -47,14 +47,14 @@ Run `/opsx:apply` on this file after parent overlap engine tasks **1.x–6.x** a
 ## 4. Parent / child bug closure
 
 - [x] 4.1 Update parent task **7.1** status when Track A+B verifiers pass (note full baseline may still fail Track C).
-- [x] 4.2 Close [lengthen-overlap-neighbor-restore/tasks.md](../lengthen-overlap-neighbor-restore/tasks.md) HITL gate rows tied to rematerialize + M0 home.
-- [x] 4.3 Map [note-move-pitch-overlap-flaky/BUG.md](../note-move-pitch-overlap-flaky/BUG.md) AC4 in BUG patch history (AC5–AC7 remain open if still red).
+- [x] 4.2 Close archived [lengthen-overlap-neighbor-restore/tasks.md](../archive/2026-06-20-lengthen-overlap-neighbor-restore/tasks.md) HITL gate rows tied to rematerialize + M0 home.
+- [x] 4.3 Map archived [note-move-pitch-overlap-flaky/BUG.md](../archive/2026-06-20-note-move-pitch-overlap-flaky/BUG.md) AC4 in BUG patch history (AC5–AC7 remain open if still red).
 
 ---
 
 ## 5. Deferred (explicit — not this change)
 
-- [ ] 5.1 **Track C** — parent **7.4** insert/reorder; new change if root cause ≠ Track A.
+- [ ] 5.1 **Track C** — insert/reorder (`_verify_delay_move_insert_reorder`); propose new change if still failing on latest baseline.
 - [ ] 5.2 **Track D** — parent **0.1** P0 `1535` peak investigation.
 - [ ] 5.3 Parent **7.2** verifier dedup; **7.5** `MOVE_NOTE_LOGIC.md` — after archive or in parallel.
 
@@ -62,8 +62,8 @@ Run `/opsx:apply` on this file after parent overlap engine tasks **1.x–6.x** a
 
 ## 6. Archive
 
-- [ ] 6.1 Sign-off matrix in design.md satisfied (Track A + B **Yes** rows).
-- [ ] 6.2 `/opsx:archive` this change; link archived spec in parent design if needed.
+- [x] 6.1 Sign-off matrix in design.md satisfied (Track A + B **Yes** rows).
+- [x] 6.2 Archived 2026-06-20; spec `openspec/specs/change-length-commit-rematerialize/`
 
 ---
 

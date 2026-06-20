@@ -4,7 +4,7 @@
 #include <unity.h>
 
 #include "../../src/LoopEventStore.cpp"
-#include "Take.h"
+#include "LoopPasses.h"
 #include "LoopEventStore.h"
 #include "MidiEvent.h"
 
@@ -43,14 +43,14 @@ void test_adopt_chunk_ids_releases_pending_refs() {
   TEST_ASSERT_TRUE(refs.empty());
 }
 
-void test_take_kind_maps_capture_phase() {
-  TEST_ASSERT_EQUAL(static_cast<uint8_t>(TakeType::Record),
-                    static_cast<uint8_t>(takeTypeForCapturePhase(CapturePhase::Record)));
-  TEST_ASSERT_EQUAL(static_cast<uint8_t>(TakeType::Overdub),
-                    static_cast<uint8_t>(takeTypeForCapturePhase(CapturePhase::Overdub)));
+void test_capture_phase_maps_capture_pass_phase() {
+  TEST_ASSERT_EQUAL(static_cast<uint8_t>(CapturePassPhase::Record),
+                    static_cast<uint8_t>(capturePassPhaseForCapturePhase(CapturePhase::Record)));
+  TEST_ASSERT_EQUAL(static_cast<uint8_t>(CapturePassPhase::Overdub),
+                    static_cast<uint8_t>(capturePassPhaseForCapturePhase(CapturePhase::Overdub)));
 }
 
-void test_append_flattened_chunk_ids_preserves_take_refs() {
+void test_append_flattened_chunk_ids_preserves_pass_refs() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
   LoopEventStore capture;
@@ -89,8 +89,8 @@ int main(int /*argc*/, char** /*argv*/) {
   UNITY_BEGIN();
   RUN_TEST(test_detach_chunks_moves_ownership);
   RUN_TEST(test_adopt_chunk_ids_releases_pending_refs);
-  RUN_TEST(test_take_kind_maps_capture_phase);
-  RUN_TEST(test_append_flattened_chunk_ids_preserves_take_refs);
+  RUN_TEST(test_capture_phase_maps_capture_pass_phase);
+  RUN_TEST(test_append_flattened_chunk_ids_preserves_pass_refs);
   RUN_TEST(test_capture_store_spans_multiple_chunks);
   return UNITY_END();
 }

@@ -1,5 +1,5 @@
 ---
-description: Teensy looper domain words — action+scope naming with Take/Capture/Edit vocabulary
+description: Teensy looper domain words — action+scope naming with pass/Capture/EditPass vocabulary
 alwaysApply: true
 ---
 
@@ -14,24 +14,22 @@ Read before M8+ edit storage, OpenSpec **`m8-rename`** then **`m8-edit`**, or ti
 | Scope | Meaning |
 |------|---------|
 | **Loop** | Slot container |
-| **Capture** | Live record/overdub buffer (was `CaptureLayer`) |
-| **Take** | Committed capture — Record or Overdub (was `Epoch`) |
-| **Edit** | One committed `saveEdit` unit in `edits[]` |
-| **EditChange** | One atomic change inside an **Edit** |
+| **Capture** | Live record/overdub append buffer |
+| **passes** | **LoopPasses** — **recordPass**, **overdubPasses[]**, **editPasses[]** |
+| **editPass** | One **saveNoteEditPass** row in **passes.editPasses[]** |
+| **EditChange** | One atomic change inside an **editPass** |
 | **pass** | One bounded capture or edit stretch ending in commit (see **Pass types** below) |
 
 ## Pass types (audio/MIDI time)
 
-Umbrella term for a single committed stretch on the loop timeline:
-
 | Pass | Ends with | Global undo (when applicable) |
 |------|-----------|-------------------------------|
-| **record pass** | `commitTake()` → Record **Take** | **TakeCommitted** |
-| **overdub pass** | `commitTake()` → Overdub **Take** | **TakeCommitted** |
-| **edit pass** | `closeNoteEditPass()` (boundary flush) | **NoteEditSessionCommitted** |
+| **recordPass** | `commitCapturePass()` → **recordPass** in **passes** | **RecordPassAdded** |
+| **overdubPass** | `commitCapturePass()` → **overdubPass** in **passes** | **OverdubPassAdded** |
+| **noteEditPass** | `closeNoteEditPass()` (boundary flush) | **NoteEditPassClosed** |
+| **controlChangeEditPass** | (future) | **ControlChangeEditPassClosed** (stub) |
 
-An **edit pass** is a sub-period inside **NoteEditSession** between overdub-while-editing or
-note-edit exit boundaries. Each **Edit** stores `editPassIndex` (legacy field name: `spanIndex`).
+An **noteEditPass** batch may contain multiple **editPass** rows sharing **noteEditPassIndex**.
 
 **Do not** use **pass** for: moving note tick range (**moving note range** on focus), or single-note **focus**
 lifecycle.
@@ -41,8 +39,8 @@ lifecycle.
 | Name | Role |
 |------|------|
 | **EditChangeType** | Enum of change types |
-| **TakeType** | Record \| Overdub (was `EpochKind`) |
-| **EditId** | Stable id per **Edit** |
+| **EditPassKind** | NoteEdit \| ControlChange on **editPass** |
+| **EditPassId** / **PassId** | Stable id per pass row (unified **nextPassId_**) |
 | **NoteRef** | Stable note target in an **EditChange** |
 
 ## Edit sessions (RAM scope)
@@ -58,17 +56,18 @@ lifecycle.
 
 | Name | Action | Scope |
 |------|--------|-------|
-| `commitTake()` | commit | Take |
-| `saveEdit()` | save | Edit |
-| `closeNoteEditPass()` | close | edit pass (legacy: `closeNoteEditSpan()`) |
-| `applyEdits()` | apply | Edits |
-| **TakeCommitted** | committed | Take (undo entry) |
-| **NoteEditSessionCommitted** | committed | NoteEditSession (undo entry) |
+| `commitCapturePass()` | commit | pending capture pass → **passes** |
+| `saveNoteEditPass()` | save | **editPass** row |
+| `closeNoteEditPass()` | close | note edit pass batch |
+| `LoopPasses::materialize()` | materialize | **passes** |
+| **RecordPassAdded** | undo | **recordPass** |
+| **OverdubPassAdded** | undo | **overdubPass** |
+| **NoteEditPassClosed** | undo | closed **noteEditPass** batch |
 
 ## UI rename
 
 - `class EditState` → **`EditNoteState`** (note-edit FSM base)
-- **`EditState`** on struct **Edit** = Active \| Disabled (parallel **TakeState**)
+- **`EditState`** on **EditPass** = Active \| Disabled (parallel **CapturePassState**)
 
 ## Note edit overlap (moving note + overlap notes)
 

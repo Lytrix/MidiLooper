@@ -1,6 +1,9 @@
 # Tasks — edit-record-display-length-mode
 
-**Gate:** Spike D1 serial before large DisplayManager refactor. Fix D3 before D2 (user-visible corruption). Run `pio test -e native` before push; HITL edit baseline after D3.
+**Status:** **Parked** (2026-06-20) — see [PARKED.md](./PARKED.md)  
+**Archived:** `openspec/changes/archive/2026-06-20-parked-edit-record-display-length-mode/`
+
+**Gate (when revived):** Spike D1 serial before large DisplayManager refactor. Fix D3 before D2 (user-visible corruption). Run `pio test -e native` before push; HITL edit baseline after D3.
 
 ---
 

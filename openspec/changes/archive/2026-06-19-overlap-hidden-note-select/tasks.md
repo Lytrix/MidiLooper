@@ -1,11 +1,9 @@
 # Tasks — Note edit session consumer contract
 
 **Change:** `overlap-hidden-note-select`  
-**Status:** Phase 1 complete — Slice E signed off (2026-06-19)  
-**Apply:** `/opsx:apply` after clarifications resolved  
-**Review:** [architecture-review.md](./architecture-review.md) §10  
-**Clarifications:** [CLARIFICATIONS.md](./CLARIFICATIONS.md) — **C1–C18 locked** (2026-06-19)  
-**New chat:** [HANDOFF-BRIEF.md](./HANDOFF-BRIEF.md)
+**Status:** **Closed** — Phase 1 + HITL focus restore shipped; native 110/110 (2026-06-20)  
+**Archived:** `openspec/changes/archive/2026-06-19-overlap-hidden-note-select/`  
+**Phase 2a+:** continues in **`note-edit-focus-reads`** (not this change)
 
 ---
 
@@ -66,7 +64,7 @@
 - [x] 6.1 `pio test -e native` — 110/110 green (2026-06-19)
 - [x] 6.2 HITL edit baseline AC1–AC5 — **`233328`** (**C16** — parent sub-verifiers non-gating)
 - [x] 6.3 Grep gate per **C18** / PRE-EXEC §11 — `NoteEditManager` + no positive `rebuildNoteEditFocusAtSelect`
-- [x] 6.4 Update [BUG.md](./BUG.md) AC rows — **`233328`**
+- [x] 6.5 **Closed** — `pio test -e native` 110/110 (2026-06-20); overlap restore via **note-edit-hitl-focus-restore**; passes vocabulary in main spec
 
 ---
 

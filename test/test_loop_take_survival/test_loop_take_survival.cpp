@@ -7,6 +7,7 @@
 #include "../../src/Utils/NoteUtils.cpp"
 #include "../../src/LoopEventStore.cpp"
 #include "../../src/EditApply.cpp"
+#include "../../src/LoopPasses.cpp"
 #include "../../src/Loop.cpp"
 
 #include "Loop.h"
@@ -25,7 +26,7 @@ void seedPublishedPair(Loop& loop) {
   loop.loopLengthTicks = kLoopLen;
 }
 
-void appendOverdubTake(Loop& loop) {
+void appendOverdubPass(Loop& loop) {
   LoopEventStore odStore;
   TEST_ASSERT_TRUE(odStore.append(MidiEvent::NoteOn(200, 1, 64, 90)));
   TEST_ASSERT_TRUE(odStore.append(MidiEvent::NoteOff(248, 1, 64, 0)));
@@ -33,13 +34,12 @@ void appendOverdubTake(Loop& loop) {
   odStore.detachChunksTo(refs);
   TEST_ASSERT_FALSE(refs.empty());
 
-  Take od{};
-  od.id = 2;
-  od.mergeSequence = 1;
-  od.state = TakeState::Active;
-  od.type = TakeType::Overdub;
-  od.chunkRefs = std::move(refs);
-  loop.takes.push_back(od);
+  OverdubPass overdub{};
+  overdub.id = 2;
+  overdub.mergeSequence = 1;
+  overdub.state = CapturePassState::Active;
+  overdub.chunkRefs = std::move(refs);
+  loop.passes.overdubPasses.push_back(std::move(overdub));
 }
 
 void simulatePostOverdubStopPath(Loop& loop) {
@@ -48,11 +48,11 @@ void simulatePostOverdubStopPath(Loop& loop) {
   loop.invalidateCaches();
 
   MidiEventVec flat;
-  loop.flattenActiveTakes(flat);
+  loop.flattenActiveCapturePasses(flat);
   LoopEventStore merged;
   merged.loadFromFlat(flat);
   loop.commitStopFinalizeFromStore(merged);
-  loop.rebuildVisualCacheFromTakes();
+  loop.rebuildVisualCacheFromPasses();
   loop.invalidateCaches();
 }
 
@@ -80,7 +80,7 @@ void test_accidental_empty_sync_preserves_takes() {
   seedPublishedPair(loop);
   loop.discardEditFlatMaterialization();
 
-  loop.nativeTestCommitMaterializedStoreToTakes(false);
+  loop.nativeTestCommitMaterializedStoreToPasses(false);
 
   TEST_ASSERT_TRUE(loop.hasPublishedEvents());
   TEST_ASSERT_EQUAL(2u, loop.nativeTestLiveEventCount());
@@ -105,13 +105,13 @@ void test_readonly_flat_access_preserves_takes() {
   LoopEventStore::initPool();
   Loop loop;
   seedPublishedPair(loop);
-  appendOverdubTake(loop);
+  appendOverdubPass(loop);
   TEST_ASSERT_EQUAL(4u, loop.nativeTestLiveEventCount());
 
   loop.discardEditFlatMaterialization();
   TEST_ASSERT_EQUAL(4u, loop.midiEvents().size());
   loop.invalidateCaches();
-  loop.nativeTestCommitMaterializedStoreToTakes(false);
+  loop.nativeTestCommitMaterializedStoreToPasses(false);
 
   TEST_ASSERT_EQUAL(4u, loop.nativeTestLiveEventCount());
   TEST_ASSERT_TRUE(loop.hasPublishedEvents());
@@ -122,7 +122,7 @@ void test_post_overdub_stop_path_preserves_takes() {
   LoopEventStore::initPool();
   Loop loop;
   seedPublishedPair(loop);
-  appendOverdubTake(loop);
+  appendOverdubPass(loop);
   TEST_ASSERT_EQUAL(4u, loop.nativeTestLiveEventCount());
 
   simulatePostOverdubStopPath(loop);
@@ -153,8 +153,8 @@ void test_flush_without_dirty_does_not_wipe_takes() {
   seedPublishedPair(loop);
   loop.discardEditFlatMaterialization();
 
-  loop.commitMaterializedStoreToTakes();
-  loop.nativeTestCommitMaterializedStoreToTakes(false);
+  loop.commitMaterializedStoreToPasses();
+  loop.nativeTestCommitMaterializedStoreToPasses(false);
 
   TEST_ASSERT_EQUAL(2u, loop.nativeTestLiveEventCount());
 }
@@ -170,17 +170,16 @@ void test_multi_take_flatten_matches_live_event_count() {
   TEST_ASSERT_TRUE(odStore.append(MidiEvent::NoteOff(248, 1, 64, 0)));
   ChunkIdList refs;
   odStore.detachChunksTo(refs);
-  Take od{};
-  od.id = 2;
-  od.mergeSequence = 1;
-  od.state = TakeState::Active;
-  od.type = TakeType::Overdub;
-  od.chunkRefs = std::move(refs);
-  loop.takes.push_back(od);
+  OverdubPass overdub{};
+  overdub.id = 2;
+  overdub.mergeSequence = 1;
+  overdub.state = CapturePassState::Active;
+  overdub.chunkRefs = std::move(refs);
+  loop.passes.overdubPasses.push_back(std::move(overdub));
 
   TEST_ASSERT_EQUAL(4u, loop.nativeTestLiveEventCount());
   MidiEventVec flat;
-  loop.flattenActiveTakes(flat);
+  loop.flattenActiveCapturePasses(flat);
   TEST_ASSERT_EQUAL(4u, flat.size());
 }
 

@@ -8,7 +8,7 @@
 #include <unordered_map>
 #include <vector>
 
-#include "Edit.h"
+#include "EditPass.h"
 #include "MidiEvent.h"
 
 namespace NoteUtils {

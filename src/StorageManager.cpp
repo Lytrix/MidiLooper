@@ -64,7 +64,7 @@ static void migrateLoadedLoopsToTakeTimeline(Track& track) {
     for (uint8_t s = 0; s < Config::MAX_LOOPS_PER_TRACK; ++s) {
         Loop& loop = track.loopForSlot(s);
         if (loop.hasPublishedEvents()) {
-            loop.rebuildVisualCacheFromTakes();
+            loop.rebuildVisualCacheFromPasses();
         }
     }
 }
@@ -154,7 +154,7 @@ static bool writeGlobalUndoStack(File& file, const GlobalUndoStack& stack) {
         if (!writeRaw(file, &kind, sizeof(kind))) return false;
         if (!writeRaw(file, &entry.slotIndex, sizeof(entry.slotIndex))) return false;
         if (!writeRaw(file, &entry.loopId, sizeof(entry.loopId))) return false;
-        if (!writeRaw(file, &entry.takeId, sizeof(entry.takeId))) return false;
+        if (!writeRaw(file, &entry.passId, sizeof(entry.passId))) return false;
 
         if (!writeMidiSnapshot(file, entry.beforeSnapshot)) return false;
         if (!writeMidiSnapshot(file, entry.afterSnapshot)) return false;
@@ -199,7 +199,7 @@ static bool readGlobalUndoStack(File& file, GlobalUndoStack& stack) {
         entry.kind = static_cast<UndoEntryKind>(kindRaw);
         if (!readRaw(file, &entry.slotIndex, sizeof(entry.slotIndex))) return false;
         if (!readRaw(file, &entry.loopId, sizeof(entry.loopId))) return false;
-        if (!readRaw(file, &entry.takeId, sizeof(entry.takeId))) return false;
+        if (!readRaw(file, &entry.passId, sizeof(entry.passId))) return false;
 
         if (!readMidiSnapshot(file, entry.beforeSnapshot)) return false;
         if (!readMidiSnapshot(file, entry.afterSnapshot)) return false;
@@ -291,7 +291,7 @@ bool StorageManager::saveState(const LooperState& state) {
             Loop& loop = track.loopPool_.at(p);
             logger.log(CAT_STORAGE, LOG_DEBUG, "[StorageManager] v4 saving track=%u pool=%u loopId=%lu takes=%u",
                        t, p, static_cast<unsigned long>(loop.loopId),
-                       static_cast<unsigned>(loop.takes.size()));
+                       static_cast<unsigned>(loop.passes.capturePassCount()));
             if (!writeLoopPersisted(loopIo, loop)) {
                 Serial.print("[StorageManager] ERROR: Failed to write loop pool entry track ");
                 Serial.print(t);
@@ -662,7 +662,7 @@ bool StorageManager::loadState(LooperState& state) {
                 loop.lastTickInLoop = 0;
                 loop.nextEventIndex = 0;
                 loop.playbackOrderDirty = true;
-                loop.resetTakeTimeline();
+                loop.resetPassTimeline();
                 loop.markDisplayCachesStale();
 
                 // Loop core

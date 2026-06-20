@@ -1,26 +1,30 @@
 ## Purpose
 
-Published loop MIDI is stored in **Takes** on each `Loop`. Record and overdub use
-**Capture** on the loop until **commitTake** appends a new **Take**. This spec documents
-behavior shipped through milestone M7 on `refactor/timeline-data-model`, with **m8-rename**
-vocabulary aligned to the codebase.
+Published loop MIDI is stored as **passes** on each `Loop` (**recordPass**, **overdubPasses**,
+**editPasses**). Record and overdub use **Capture** until **commitRecordPass** or
+**commitOverdubPass** promotes the **pendingCapturePass** into **`passes[]`**. This spec
+documents behavior shipped through milestone M7 and the **timeline-pass-model** migration
+(supersedes **m8-rename** Take vocabulary).
+
 ## Requirements
-### Requirement: Published events live in active takes
 
-The system SHALL store committed loop MIDI as one or more **Active** **Takes** with
-chunk-backed `LoopEventStore` references, ordered by `mergeSequence`. Live capture SHALL
-use **Capture** on the loop until **commitTake** appends a **Take**.
+### Requirement: Published events live in active passes
 
-#### Scenario: Playback reads takes without full flatten
+The system SHALL store loop MIDI from record and overdub as **recordPass** and **overdubPass**
+entries in **`passes[]`**, with chunk-backed storage. **recordPass** SHALL appear at most once
+per loop. **overdubPass** entries SHALL be ordered by `mergeSequence`. Live capture SHALL use
+**Capture** until **commitRecordPass** or **commitOverdubPass** adds the pass to **`passes[]`**.
 
-- **WHEN** the transport plays a loop with committed takes
-- **THEN** playback uses take/chunk indexed access (`eventAt`, `readStore`)
+#### Scenario: Playback reads passes without full flatten
+
+- **WHEN** the transport plays a loop with **recordPass** or **overdubPass** entries
+- **THEN** playback uses chunk indexed access via materialized view
 - **AND** does not flatten the full loop on each tick
 
-#### Scenario: Record stop commits capture into a take
+#### Scenario: Record stop adds recordPass to passes
 
 - **WHEN** recording stops with non-empty capture
-- **THEN** capture is committed as a new Active take
+- **THEN** **commitRecordPass** adds **recordPass** to **`passes[]`**
 - **AND** capture buffer is cleared for the next session
 
 ### Requirement: Overdub capture dedupes within active capture only
@@ -55,25 +59,20 @@ Undo SHALL push O(1) shared store references and MUST `cloneShared()` on restore
 - **THEN** overdub undo is attempted before clear-slot undo
 - **AND** restored state does not share live chunk IDs with the snapshot stack
 
-### Requirement: Global undo records take commit
+### Requirement: Global undo records capture pass add
 
-When a record or overdub stop commits a **Take**, the system SHALL push a
-**TakeCommitted** entry on `GlobalUndoStack` (replacing epoch-published wording).
+The system SHALL push **RecordPassAdded** when a record stop adds **recordPass** to **`passes[]`**
+and SHALL push **OverdubPassAdded** when an overdub stop adds **overdubPass** to **`passes[]`**, each
+on **GlobalUndoStack**. The system SHALL NOT push **TakeCommitted**.
 
-#### Scenario: Overdub stop pushes TakeCommitted
+#### Scenario: Overdub stop pushes OverdubPassAdded
 
-- **WHEN** overdub stops and capture commits to a new take
-- **THEN** **TakeCommitted** is pushed for that take
-- **AND** undo restores the prior take stack state
+- **WHEN** overdub stops and **commitOverdubPass** adds an **overdubPass** to **`passes[]`**
+- **THEN** **OverdubPassAdded** is pushed for that pass
+- **AND** undo disables that **overdubPass**
 
-### Requirement: Note edit uses materialized flat bridge until M8
+#### Scenario: Record stop pushes RecordPassAdded
 
-Until M8 edit ships, note-edit paths MUST be allowed to materialize **Takes** into `editFlat_`
-via `Loop::midiEvents()` / `mutEditStore()`. After M8, this bridge MUST be removed or
-limited to explicit migration tooling.
-
-#### Scenario: Flat edit invalidates caches
-
-- **WHEN** note edits mutate the flat edit store
-- **THEN** take/visual caches are invalidated so playback and display stay consistent
-
+- **WHEN** record stops and **commitRecordPass** adds **recordPass** to **`passes[]`**
+- **THEN** **RecordPassAdded** is pushed for that pass
+- **AND** undo disables that **recordPass**

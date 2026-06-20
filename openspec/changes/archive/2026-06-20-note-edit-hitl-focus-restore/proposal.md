@@ -4,7 +4,7 @@
 **Kind:** bug  
 **Status:** **Signed off — ready to archive**  
 **Parent:** [note-edit-modification-session](../note-edit-modification-session/)  
-**Supersedes:** [edit-focus-selection-drift](../edit-focus-selection-drift/)
+**Supersedes:** [edit-focus-selection-drift](../archive/2026-06-20-edit-focus-selection-drift/)
 
 ## Why
 

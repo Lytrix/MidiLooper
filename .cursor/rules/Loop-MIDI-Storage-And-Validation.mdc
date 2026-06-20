@@ -13,14 +13,14 @@ Related guides: [`NOTE_WRAPPING_LOGIC.md`](docs/Guides/NOTE_WRAPPING_LOGIC.md) (
 
 ## Non-negotiable constraints
 
-- **Playback / hot paths:** `loop.eventAt()` / `committedEvents.readStore()` — not full flatten.
+- **Playback / hot paths:** `flattenActiveCapturePasses` / `LoopPasses::materialize` — not full flatten on stop.
 - **Stop path:** `finalizeLoopAtStop` + `LoopStopFinalize` (wrap window only). Do **not** call full `validateAndCleanupMidiEvents` on record/overdub stop.
 - **Full validate:** deferred via `processDeferredIdleMaintenance` when transport idle, or on SD load — not on stop.
 - **Undo snapshots:** push `shareForSnapshot()` ref (O(1)); **`restoreFromSnapshot` always `cloneShared()`** — never shallow-copy chunk IDs into live state.
-- **Undo routing:** overdub undo before clear-slot undo in `handleUndo`; `clearClearUndoStacks()` on `startRecording`.
-- **Overdub entry:** `beginOverdubSession` only — no extra `pushUndoSnapshot` at overdub start (Phase 1).
-- **After flat edits:** `invalidateCaches()` so chunks and note cache stay in sync.
-- **SD:** flatten on save/load; chunk IDs are in-RAM only until a format version bump.
+- **Undo routing:** NoteEditSession undo before global stack in `handleUndo`; capture-pass undo via **RecordPassAdded** / **OverdubPassAdded**; **NoteEditPassClosed** before clear-slot undo when applicable.
+- **Overdub entry:** `beginOverdubSession` only — closes open **noteEditPass** when editing; no extra capture-pass undo at overdub start.
+- **After flat edits:** `invalidateCaches()` so materialized view and note cache stay in sync.
+- **SD:** v4 **passes** via `StorageLoopIo`; chunk IDs in-RAM only until format version bump.
 - **Hot path:** no `MemoryMonitor` walks or full-loop sort on record/overdub stop.
 
 ## Primary files

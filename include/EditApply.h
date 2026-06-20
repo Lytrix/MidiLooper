@@ -3,19 +3,13 @@
 
 #pragma once
 
-#include "Edit.h"
+#include "EditPass.h"
 #include "LoopEventStore.h"
-#include "Take.h"
+#include "LoopPasses.h"
 
-struct Loop;
-
-/// Materialize Active takes plus Active edits into out (chunk-backed store).
-void applyEdits(const TakeVec& takes, const EditVec& edits, LoopEventStore& out,
-                uint32_t loopLengthTicks = 0);
-
-/// Flatten materialized view for display / hash / legacy callers.
-void applyEditsToFlat(const TakeVec& takes, const EditVec& edits, MidiEventVec& out,
-                      uint32_t loopLengthTicks = 0);
-
-/// Apply one EditChange to a flat MIDI list (used by applyEdits and tests).
+/// Apply one EditChange to a flat MIDI list (used by materialize and tests).
 void applyEditChange(MidiEventVec& events, const EditChange& change, uint32_t loopLengthTicks);
+
+/// Apply an ordered EditChange list with move/length identity tracking.
+void applyEditChangeList(MidiEventVec& events, const EditChangeList& changes,
+                         uint32_t loopLengthTicks);

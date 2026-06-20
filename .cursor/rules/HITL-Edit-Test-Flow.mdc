@@ -45,16 +45,16 @@ pio run -e teensy41-capture-serial -t upload
 
 ## Required pass criteria (M8)
 
-With default **`--require-m8-span-verify`** (on):
+With default **`--require-m8-pass-verify`** (on):
 
 - Record prelude completes (fixture `REVT` count matches fixture notes).
 - Edit session markers present (`entered note edit mode`, `Created 32nd note`, `Deleting note`, `POSITION EDIT`, `exited edit mode`, …).
 - **Exactly one** `NoteEditSessionCommitted` between enter and exit edit.
 - In-edit undo/redo (default on): `NoteEditSession undo` and `NoteEditSession redo` in serial.
-- Post-exit undo/redo (default on): `Note edit span undone` after exit; redo via `Overdub redone`.
+- Post-exit undo/redo (default on): `Note edit pass undone` after exit; redo via `Overdub redone`.
 - Move/display / overlap checks pass for the standard fixture (see script report `issues`).
 
-Use `--no-m8-span-verify` only for pre-M8 capture replay.
+Use `--no-m8-pass-verify` only for pre-M8 capture replay. **`--require-m8-span-verify`** is a deprecated alias for **`--require-m8-pass-verify`**.
 
 ## Reference
 
