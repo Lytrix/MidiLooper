@@ -14,7 +14,7 @@ Each **loop slot** (`Loop` in `include/Loop.h`) holds live capture, committed **
 |-------|------|------|
 | `capture` | `Capture` | Live record/overdub append buffer (`capture.store`, `capture.phase`) |
 | `passes` | `LoopPasses` | Canonical timeline: **recordPass**, **overdubPasses[]**, **editPasses[]** |
-| `editFlat_` | `CowLoopEventStore` | Materialized loop MIDI events for playback, validation, and display (`mutEditStore()` / `midiEvents()`) |
+| `editFlat_` | `CowLoopEventStore` | Derived materialized MIDI cache behind `midiEvents()` (non-canonical) |
 
 ```mermaid
 flowchart LR
@@ -158,7 +158,6 @@ Full-loop pass over `loop.midiEvents()` (materialized flat):
 | **RecordPassAdded** / **OverdubPassAdded** | `commitCapturePass` publish | `setCapturePassState(Disabled)` |
 | **NoteEditPassClosed** | `closeNoteEditPass` | `disableEditPasses(ids)` |
 | **ClearSlot** | long-press clear (`pushClearTrackSnapshot`) | restore `beforeSnapshot` + geometry + track state |
-| **NoteEditCommit** | `pushUndoSnapshot` (legacy full-loop snapshot path) | restore `beforeSnapshot` + geometry |
 | **LoopBoundaryChange** | loop-start edit | restore prior loop start/length |
 
 **Open overdub capture:** if `capture.phase == Overdub` and capture non-empty, undo discards live capture (`discardCapture`) without popping the stack.
@@ -174,7 +173,7 @@ Full-loop pass over `loop.midiEvents()` (materialized flat):
 
 `beginOverdubSession` closes an open **noteEditPass** when entering overdub while editing; it does **not** push an extra capture-pass undo entry.
 
-**Important:** snapshot entries push **`shareForSnapshot()`** (O(1)); **`restoreFromSnapshot`** always **`cloneShared()`** so live edits never alias restored state.
+**Important:** clear-slot snapshot entries capture a deep-cloned pass snapshot (`PersistedLoopSnapshot`) so undo/redo never aliases live chunk refs.
 
 ### In-edit session undo (`NoteEditSessionUndoStack`)
 
@@ -257,10 +256,10 @@ Run: `pio test -e native` from project root.
 
 ## Common mistakes (for agents)
 
-1. **Using shallow copy for undo restore** — always `cloneShared()` / `restoreFromSnapshot`; never `LoopEventStore(*snap)`.
+1. **Using shallow copy for undo restore** — pass snapshots must deep-clone chunk refs when captured/restored.
 2. **Full `validateAndCleanupMidiEvents` on stop** — replaced by `finalizeLoopAtStop` + idle deferral for long loops.
 3. **Treating `midiEvents()` as canonical storage** — **passes** + **NoteEditSession.store** are source of truth; `editFlat_` is derived.
-4. **Editing only flat cache** — after `midiEvents()` mutation, call `invalidateCaches()` so chunks and note cache stay consistent.
+4. **Treating `midiEvents()` writes as canonical** — they are derived-cache-only; canonical loop ownership remains in passes.
 5. **Assuming SD stores chunk IDs** — v4 persists pass-shaped snapshots; do not read/write chunk IDs to disk without a format version bump.
 6. **Confusing `reconstructNotes` with storage validation** — UI wrapping ≠ committed event cleanup.
 7. **Reintroducing Take / `takes[]` / `commitTake()` names** — use **passes**, `commitCapturePass()`, **RecordPassAdded** / **OverdubPassAdded**.

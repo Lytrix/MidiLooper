@@ -13,6 +13,7 @@
 #include "Loop.h"
 #include "LoopEventStore.h"
 #include "MidiEvent.h"
+#include "StorageLoopIo.h"
 
 namespace {
 
@@ -22,7 +23,7 @@ void seedPublishedPair(Loop& loop) {
   LoopEventStore store;
   TEST_ASSERT_TRUE(store.append(MidiEvent::NoteOn(10, 1, 60, 100)));
   TEST_ASSERT_TRUE(store.append(MidiEvent::NoteOff(58, 1, 60, 0)));
-  loop.importPublishedStore(store);
+  loop.seedRecordPassFromStore(store);
   loop.loopLengthTicks = kLoopLen;
 }
 
@@ -56,6 +57,13 @@ void simulatePostOverdubStopPath(Loop& loop) {
   loop.invalidateCaches();
 }
 
+size_t snapshotEventCount(const LoopSnapshotRef& snapshot) {
+  TEST_ASSERT_NOT_NULL(snapshot.get());
+  MidiEventVec flat;
+  snapshot->passes.materializeToFlat(flat, snapshot->loopLengthTicks);
+  return flat.size();
+}
+
 }  // namespace
 
 void test_imported_takes_survive_invalidateCaches() {
@@ -73,28 +81,29 @@ void test_imported_takes_survive_invalidateCaches() {
   TEST_ASSERT_EQUAL(kLoopLen, loop.loopLengthTicks);
 }
 
-void test_accidental_empty_sync_preserves_takes() {
+void test_discard_materialization_preserves_takes() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
   Loop loop;
   seedPublishedPair(loop);
   loop.discardEditFlatMaterialization();
-
-  loop.nativeTestCommitMaterializedStoreToPasses(false);
+  const size_t before = loop.nativeTestLiveEventCount();
+  (void)loop.midiEvents();
+  loop.discardEditFlatMaterialization();
 
   TEST_ASSERT_TRUE(loop.hasPublishedEvents());
-  TEST_ASSERT_EQUAL(2u, loop.nativeTestLiveEventCount());
+  TEST_ASSERT_EQUAL(before, loop.nativeTestLiveEventCount());
   TEST_ASSERT_EQUAL(kLoopLen, loop.loopLengthTicks);
 }
 
-void test_intentional_empty_restore_clears_takes() {
+void test_restore_empty_pass_snapshot_clears_takes() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
   Loop loop;
   seedPublishedPair(loop);
 
-  const MidiSnapshotRef empty = std::make_shared<LoopEventStore>();
-  loop.restoreEditSnapshot(empty);
+  PersistedLoopSnapshot empty{};
+  loop.restorePassesSnapshot(empty);
 
   TEST_ASSERT_FALSE(loop.hasPublishedEvents());
   TEST_ASSERT_EQUAL(0u, loop.nativeTestLiveEventCount());
@@ -111,7 +120,6 @@ void test_readonly_flat_access_preserves_takes() {
   loop.discardEditFlatMaterialization();
   TEST_ASSERT_EQUAL(4u, loop.midiEvents().size());
   loop.invalidateCaches();
-  loop.nativeTestCommitMaterializedStoreToPasses(false);
 
   TEST_ASSERT_EQUAL(4u, loop.nativeTestLiveEventCount());
   TEST_ASSERT_TRUE(loop.hasPublishedEvents());
@@ -146,19 +154,6 @@ void test_commit_stop_finalize_empty_merged_preserves_takes() {
   TEST_ASSERT_EQUAL(2u, loop.nativeTestLiveEventCount());
 }
 
-void test_flush_without_dirty_does_not_wipe_takes() {
-  LoopEventStore::resetPoolForTests();
-  LoopEventStore::initPool();
-  Loop loop;
-  seedPublishedPair(loop);
-  loop.discardEditFlatMaterialization();
-
-  loop.commitMaterializedStoreToPasses();
-  loop.nativeTestCommitMaterializedStoreToPasses(false);
-
-  TEST_ASSERT_EQUAL(2u, loop.nativeTestLiveEventCount());
-}
-
 void test_multi_take_flatten_matches_live_event_count() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
@@ -183,34 +178,31 @@ void test_multi_take_flatten_matches_live_event_count() {
   TEST_ASSERT_EQUAL(4u, flat.size());
 }
 
-void test_share_edit_snapshot_includes_dirty_flat() {
+void test_pass_snapshot_ignores_derived_flat_mutation() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
   Loop loop;
   seedPublishedPair(loop);
+  const auto before = loop.sharePassesSnapshot();
+  TEST_ASSERT_EQUAL(2u, snapshotEventCount(before));
 
   loop.midiEvents().push_back(MidiEvent::NoteOn(48, 1, 60, 80));
   loop.midiEvents().push_back(MidiEvent::NoteOff(72, 1, 60, 0));
-  loop.markEditFlatDirty();
 
-  const auto snap = loop.shareEditSnapshot();
-  TEST_ASSERT_NOT_NULL(snap.get());
-  MidiEventVec snapFlat;
-  snap->flatten(snapFlat);
-  TEST_ASSERT_EQUAL(4u, snapFlat.size());
-  TEST_ASSERT_EQUAL(48u, snapFlat[2].tick);
+  const auto after = loop.sharePassesSnapshot();
+  TEST_ASSERT_EQUAL(2u, snapshotEventCount(after));
+  TEST_ASSERT_EQUAL(2u, loop.nativeTestLiveEventCount());
 }
 
 int main(int /*argc*/, char** /*argv*/) {
   UNITY_BEGIN();
   RUN_TEST(test_imported_takes_survive_invalidateCaches);
-  RUN_TEST(test_accidental_empty_sync_preserves_takes);
-  RUN_TEST(test_intentional_empty_restore_clears_takes);
+  RUN_TEST(test_discard_materialization_preserves_takes);
+  RUN_TEST(test_restore_empty_pass_snapshot_clears_takes);
   RUN_TEST(test_readonly_flat_access_preserves_takes);
   RUN_TEST(test_post_overdub_stop_path_preserves_takes);
   RUN_TEST(test_commit_stop_finalize_empty_merged_preserves_takes);
-  RUN_TEST(test_flush_without_dirty_does_not_wipe_takes);
   RUN_TEST(test_multi_take_flatten_matches_live_event_count);
-  RUN_TEST(test_share_edit_snapshot_includes_dirty_flat);
+  RUN_TEST(test_pass_snapshot_ignores_derived_flat_mutation);
   return UNITY_END();
 }

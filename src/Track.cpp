@@ -336,20 +336,16 @@ uint32_t Track::quantizeStart(uint32_t original) const {
 
 void Track::shiftMidiEvents(int32_t offset) {
     Loop& loop = getActiveLoop();
-    for (auto &evt : loop.midiEvents()) {
-        evt.tick += offset;
-    }
-    std::sort(loop.midiEvents().begin(), loop.midiEvents().end(),
-              [](auto &a, auto &b){ return a.tick < b.tick; });
-    loop.markEditFlatDirty();
-    loop.commitMaterializedStoreToPasses();
+    loop.shiftActiveCapturePassTicks(offset);
     invalidateCaches();
 }
 
 uint32_t Track::findLastEventTick() const {
     const Loop& loop = getActiveLoop();
+    MidiEventVec flat;
+    loop.flattenActiveCapturePasses(flat);
     uint32_t last = 0;
-    for (auto &evt : loop.midiEvents()) {
+    for (const auto &evt : flat) {
         last = std::max(last, evt.tick);
     }
     return last;
@@ -429,17 +425,19 @@ void Track::finalizePendingNotes(uint32_t offAbsTick) {
 
 void Track::validateAndCleanupMidiEvents(uint32_t openTailCloseTick) {
     Loop& loop = getActiveLoop();
-    const size_t publishedBefore = loop.liveEventCount();
-    if (loop.midiEvents().empty()) return;
+    MidiEventVec materializedEvents;
+    loop.flattenActiveCapturePasses(materializedEvents);
+    const size_t publishedBefore = materializedEvents.size();
+    if (materializedEvents.empty()) return;
     
     // Map to track active notes: key = (note, channel), value = note-on event index
     std::unordered_map<std::pair<uint8_t, uint8_t>, size_t, PairHash> activeNotes;
-    std::vector<bool> eventsToKeep(loop.midiEvents().size(), true);
+    std::vector<bool> eventsToKeep(materializedEvents.size(), true);
     std::vector<MidiEvent> syntheticNoteOffs;
     int orphanedCount = 0;
     
     // Sort events by tick to ensure proper order
-    std::sort(loop.midiEvents().begin(), loop.midiEvents().end(),
+    std::sort(materializedEvents.begin(), materializedEvents.end(),
               [](const MidiEvent& a, const MidiEvent& b) {
                   if (a.tick != b.tick) return a.tick < b.tick;
                   // On equal tick, process note-offs before note-ons to avoid false overlap.
@@ -449,8 +447,8 @@ void Track::validateAndCleanupMidiEvents(uint32_t openTailCloseTick) {
               });
     
     // First pass: match note-on/note-off pairs
-    for (size_t i = 0; i < loop.midiEvents().size(); i++) {
-        const MidiEvent& evt = loop.midiEvents()[i];
+    for (size_t i = 0; i < materializedEvents.size(); i++) {
+        const MidiEvent& evt = materializedEvents[i];
         
         if (evt.isNoteOn()) {
             std::pair<uint8_t, uint8_t> key = {evt.data.noteData.note, evt.channel};
@@ -462,7 +460,7 @@ void Track::validateAndCleanupMidiEvents(uint32_t openTailCloseTick) {
                 orphanedCount++;
                 logger.log(CAT_MIDI, LOG_WARNING,
                           "Removed orphaned note-on: note %d, channel %d, tick %lu",
-                          evt.data.noteData.note, evt.channel, loop.midiEvents()[prevIndex].tick);
+                          evt.data.noteData.note, evt.channel, materializedEvents[prevIndex].tick);
             }
             
             // Track this note-on
@@ -479,11 +477,11 @@ void Track::validateAndCleanupMidiEvents(uint32_t openTailCloseTick) {
                 bool wrappedTailAhead = false;
                 if (loop.loopLengthTicks > 0) {
                     const uint32_t noteOffTick = evt.tick;
-                    for (size_t j = i + 1; j < loop.midiEvents().size(); ++j) {
+                    for (size_t j = i + 1; j < materializedEvents.size(); ++j) {
                         if (!eventsToKeep[j]) {
                             continue;
                         }
-                        const MidiEvent& later = loop.midiEvents()[j];
+                        const MidiEvent& later = materializedEvents[j];
                         if (!later.isNoteOn() || later.channel != evt.channel ||
                             later.data.noteData.note != evt.data.noteData.note) {
                             continue;
@@ -492,7 +490,7 @@ void Track::validateAndCleanupMidiEvents(uint32_t openTailCloseTick) {
                                                              loop.loopLengthTicks)) {
                             continue;
                         }
-                        if (!NoteUtils::wrapPairIsUnblocked(loop.midiEvents(), noteOffTick,
+                        if (!NoteUtils::wrapPairIsUnblocked(materializedEvents, noteOffTick,
                                                             later.tick, evt.data.noteData.note,
                                                             evt.channel)) {
                             continue;
@@ -514,9 +512,8 @@ void Track::validateAndCleanupMidiEvents(uint32_t openTailCloseTick) {
     
     // Check for remaining active notes (note-on without note-off)
     for (const auto& pair : activeNotes) {
-        const auto key = pair.first;
         size_t index = pair.second;
-        const MidiEvent& noteOn = loop.midiEvents()[index];
+        const MidiEvent& noteOn = materializedEvents[index];
         if (loop.loopLengthTicks > 0) {
             uint32_t closeTick = loop.loopLengthTicks - 1;
             if (openTailCloseTick != UINT32_MAX) {
@@ -551,10 +548,10 @@ void Track::validateAndCleanupMidiEvents(uint32_t openTailCloseTick) {
         activeNotes.clear();
         
         // Look for note-on near end that might have note-off near beginning
-        for (size_t i = 0; i < loop.midiEvents().size(); i++) {
+        for (size_t i = 0; i < materializedEvents.size(); i++) {
             if (!eventsToKeep[i]) continue;
             
-            const MidiEvent& evt = loop.midiEvents()[i];
+            const MidiEvent& evt = materializedEvents[i];
             
             if (evt.isNoteOn()) {
                 std::pair<uint8_t, uint8_t> key = {evt.data.noteData.note, evt.channel};
@@ -567,7 +564,7 @@ void Track::validateAndCleanupMidiEvents(uint32_t openTailCloseTick) {
                 if (it != activeNotes.end()) {
                     // Check if this could be a wrapped note
                     size_t noteOnIndex = it->second;
-                    uint32_t noteOnTick = loop.midiEvents()[noteOnIndex].tick;
+                    uint32_t noteOnTick = materializedEvents[noteOnIndex].tick;
                     uint32_t noteOffTick = evt.tick;
                     
                     // If note-off is much earlier than note-on, it might be wrapped
@@ -586,11 +583,11 @@ void Track::validateAndCleanupMidiEvents(uint32_t openTailCloseTick) {
     // Remove orphaned events and append synthetic open-tail note-offs.
     if (orphanedCount > 0 || !syntheticNoteOffs.empty()) {
         MidiEventVec cleanedEvents;
-        cleanedEvents.reserve(loop.midiEvents().size() - orphanedCount + syntheticNoteOffs.size());
+        cleanedEvents.reserve(materializedEvents.size() - orphanedCount + syntheticNoteOffs.size());
         
-        for (size_t i = 0; i < loop.midiEvents().size(); i++) {
+        for (size_t i = 0; i < materializedEvents.size(); i++) {
             if (eventsToKeep[i]) {
-                cleanedEvents.push_back(loop.midiEvents()[i]);
+                cleanedEvents.push_back(materializedEvents[i]);
             }
         }
         for (const auto& evt : syntheticNoteOffs) {
@@ -605,26 +602,25 @@ void Track::validateAndCleanupMidiEvents(uint32_t openTailCloseTick) {
                   });
 
         const bool cleanedEmpty = cleanedEvents.empty();
-        loop.midiEvents() = std::move(cleanedEvents);
         if (cleanedEmpty && publishedBefore > 0 && loop.hasPublishedEvents() &&
             loop.loopLengthTicks > 0) {
-            loop.discardEditFlatMaterialization();
             invalidateCaches();
             logger.log(CAT_MIDI, LOG_WARNING,
-                      "MIDI validation aborted flush: cleaned flat empty but published takes remain");
+                      "MIDI validation aborted flush: cleaned materialized view empty but published passes remain");
             return;
         }
-        loop.markEditFlatDirty();
-        loop.commitMaterializedStoreToPasses();
+        LoopEventStore cleanedStore;
+        cleanedStore.loadFromFlat(cleanedEvents);
+        loop.commitStopFinalizeFromStore(cleanedStore);
         invalidateCaches();
         
         logger.log(CAT_MIDI, LOG_INFO, 
                   "MIDI validation complete: removed %d orphaned events, inserted %d synthetic note-offs, %d events remaining",
-                  orphanedCount, (int)syntheticNoteOffs.size(), (int)loop.midiEvents().size());
+                  orphanedCount, (int)syntheticNoteOffs.size(), (int)cleanedEvents.size());
     } else {
         logger.log(CAT_MIDI, LOG_INFO, 
                   "MIDI validation complete: no orphaned events found, %d events total",
-                  (int)loop.midiEvents().size());
+                  (int)materializedEvents.size());
     }
 }
 

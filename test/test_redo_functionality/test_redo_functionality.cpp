@@ -36,8 +36,8 @@ void testRedoFunctionality() {
     assert(TrackUndo::getUndoCount(track) == 0);
     assert(TrackUndo::getRedoCount(track) == 0);
     
-    // Push undo snapshot
-    TrackUndo::pushUndoSnapshot(track);
+    // Push clear-slot undo snapshot (snapshot restore path)
+    TrackUndo::pushClearTrackSnapshot(track);
     assert(TrackUndo::getUndoCount(track) == 1);
     assert(TrackUndo::getRedoCount(track) == 0);
     
@@ -77,7 +77,7 @@ void testRedoFunctionality() {
     
     // Set up clear undo
     track.getMidiEvents() = events1;
-    TrackUndo::pushUndoSnapshot(track);
+    TrackUndo::pushClearTrackSnapshot(track);
     assert(TrackUndo::getUndoCount(track) == 1);
     track.clear();
     assert(track.getMidiEvents().size() == 0);
@@ -91,13 +91,13 @@ void testRedoFunctionality() {
     
     // Set up undo/redo state
     track.getMidiEvents() = events1;
-    TrackUndo::pushUndoSnapshot(track);
+    TrackUndo::pushClearTrackSnapshot(track);
     track.getMidiEvents() = events2;
     TrackUndo::undoOverdub(track);
     assert(TrackUndo::getRedoCount(track) == 1);
     
     // Push new undo (should clear redo history)
-    TrackUndo::pushUndoSnapshot(track);
+    TrackUndo::pushClearTrackSnapshot(track);
     assert(TrackUndo::getRedoCount(track) == 0);
     
     std::cout << "✓ Test 4 passed" << std::endl;

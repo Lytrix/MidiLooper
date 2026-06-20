@@ -69,17 +69,12 @@ static void migrateLoadedLoopsToTakeTimeline(Track& track) {
     }
 }
 
-static bool writeMidiSnapshot(File& file, const MidiSnapshotRef& snapshot) {
+static bool writeLoopSnapshot(File& file, const LoopSnapshotRef& snapshot) {
     bool hasSnapshot = snapshot != nullptr;
     if (!writeRaw(file, &hasSnapshot, sizeof(hasSnapshot))) return false;
     if (!hasSnapshot) return true;
-
-    MidiEventVec flat;
-    snapshot->flatten(flat);
-    uint32_t count = static_cast<uint32_t>(flat.size());
-    if (!writeRaw(file, &count, sizeof(count))) return false;
-    if (count > 0 && !writeRaw(file, flat.data(), count * sizeof(MidiEvent))) return false;
-    return true;
+    const StorageIo io = storageIoFromFileWrite(file);
+    return writePersistedLoopSnapshot(io, *snapshot);
 }
 
 static bool skipRawBytes(File& file, size_t size) {
@@ -119,24 +114,19 @@ static uint32_t lastEventTickInStore(const LoopEventStore& store) {
     return lastTick;
 }
 
-static bool readMidiSnapshot(File& file, MidiSnapshotRef& snapshot) {
+static bool readLoopSnapshot(File& file, LoopSnapshotRef& snapshot) {
     bool hasSnapshot = false;
     if (!readRaw(file, &hasSnapshot, sizeof(hasSnapshot))) return false;
     if (!hasSnapshot) {
         snapshot.reset();
         return true;
     }
-
-    uint32_t count = 0;
-    if (!readRaw(file, &count, sizeof(count))) return false;
-    const size_t bytesNeeded = static_cast<size_t>(count) * sizeof(MidiEvent);
-    if ((file.size() - file.position()) < bytesNeeded) return false;
-
-    auto store = std::make_shared<LoopEventStore>();
-    if (!loadCommittedEventsFromFile(file, *store, count)) {
+    auto loaded = std::make_shared<PersistedLoopSnapshot>();
+    const StorageIo io = storageIoFromFileRead(file);
+    if (!readPersistedLoopSnapshot(io, *loaded)) {
         return false;
     }
-    snapshot = store;
+    snapshot = std::move(loaded);
     return true;
 }
 
@@ -156,8 +146,8 @@ static bool writeGlobalUndoStack(File& file, const GlobalUndoStack& stack) {
         if (!writeRaw(file, &entry.loopId, sizeof(entry.loopId))) return false;
         if (!writeRaw(file, &entry.passId, sizeof(entry.passId))) return false;
 
-        if (!writeMidiSnapshot(file, entry.beforeSnapshot)) return false;
-        if (!writeMidiSnapshot(file, entry.afterSnapshot)) return false;
+        if (!writeLoopSnapshot(file, entry.beforeSnapshot)) return false;
+        if (!writeLoopSnapshot(file, entry.afterSnapshot)) return false;
 
         if (!writeRaw(file, &entry.beforeGeometry, sizeof(entry.beforeGeometry))) return false;
         if (!writeRaw(file, &entry.afterGeometry, sizeof(entry.afterGeometry))) return false;
@@ -201,8 +191,8 @@ static bool readGlobalUndoStack(File& file, GlobalUndoStack& stack) {
         if (!readRaw(file, &entry.loopId, sizeof(entry.loopId))) return false;
         if (!readRaw(file, &entry.passId, sizeof(entry.passId))) return false;
 
-        if (!readMidiSnapshot(file, entry.beforeSnapshot)) return false;
-        if (!readMidiSnapshot(file, entry.afterSnapshot)) return false;
+        if (!readLoopSnapshot(file, entry.beforeSnapshot)) return false;
+        if (!readLoopSnapshot(file, entry.afterSnapshot)) return false;
 
         if (!readRaw(file, &entry.beforeGeometry, sizeof(entry.beforeGeometry))) return false;
         if (!readRaw(file, &entry.afterGeometry, sizeof(entry.afterGeometry))) return false;
@@ -440,8 +430,8 @@ bool StorageManager::loadState(LooperState& state) {
         return false;
     }
     Serial.println("[StorageManager] Version read OK");
-    if (version != 1 && version != 2 && version != 3 && version != 4) {
-        Serial.print("[StorageManager] ERROR: Version mismatch. Found: ");
+    if (version != 4) {
+        Serial.print("[StorageManager] ERROR: Unsupported legacy storage version. Found: ");
         Serial.println(version);
         file.close();
         return false;
@@ -695,11 +685,10 @@ bool StorageManager::loadState(LooperState& state) {
                     file.close();
                     return false;
                 }
-                loop.importPublishedStore(loadedStore);
+                const uint32_t loadedLastTick = lastEventTickInStore(loadedStore);
+                loop.seedRecordPassFromStore(loadedStore);
                 if (loop.loopLengthTicks == 0 && loop.hasPublishedEvents()) {
-                    const uint32_t lastTick =
-                        lastEventTickInStore(loop.readEditStore());
-                    loop.loopLengthTicks = track.computeLoopLengthTicks(lastTick);
+                    loop.loopLengthTicks = track.computeLoopLengthTicks(loadedLastTick);
                 }
                 if (loop.hasPublishedEvents()) anySlotHasEvents = true;
                 loop.markDisplayCachesStale();
@@ -1041,7 +1030,7 @@ bool StorageManager::loadState(LooperState& state) {
         loop.startLoopTick = 0;
         LoopEventStore loadedStore;
         loadedStore.loadFromFlat(tracksData[t].midiEvents);
-        loop.importPublishedStore(loadedStore);
+        loop.seedRecordPassFromStore(loadedStore);
         if (loop.loopLengthTicks == 0 && loop.hasPublishedEvents()) {
             uint32_t lastTick = track.findLastEventTick();
             loop.loopLengthTicks = track.computeLoopLengthTicks(lastTick);

@@ -6,20 +6,19 @@
 
 #include "LoopPasses.h"
 #include "EditPass.h"
-#include "LoopEventBuffer.h"
+#include "StorageLoopIo.h"
 #include "TrackState.h"
 #include "Utils/ExtMemAllocator.h"
 
 using UndoEntryId = uint32_t;
 
 enum class UndoEntryKind : uint8_t {
-  NoteEditCommit = 0,
-  RecordPassAdded = 1,
-  OverdubPassAdded = 2,
-  ClearSlot = 3,
-  LoopBoundaryChange = 4,
-  NoteEditPassClosed = 5,
-  ControlChangeEditPassClosed = 6,
+  RecordPassAdded = 0,
+  OverdubPassAdded = 1,
+  ClearSlot = 2,
+  LoopBoundaryChange = 3,
+  NoteEditPassClosed = 4,
+  ControlChangeEditPassClosed = 5,
 };
 
 struct UndoLoopGeometry {
@@ -30,13 +29,13 @@ struct UndoLoopGeometry {
 
 struct UndoEntry {
   UndoEntryId id = 0;
-  UndoEntryKind kind = UndoEntryKind::NoteEditCommit;
+  UndoEntryKind kind = UndoEntryKind::RecordPassAdded;
   uint8_t slotIndex = 0;
   LoopId loopId = kInvalidLoopId;
   PassId passId = kInvalidPassId;
 
-  MidiSnapshotRef beforeSnapshot;
-  MidiSnapshotRef afterSnapshot;
+  LoopSnapshotRef beforeSnapshot;
+  LoopSnapshotRef afterSnapshot;
   UndoLoopGeometry beforeGeometry;
   UndoLoopGeometry afterGeometry;
 

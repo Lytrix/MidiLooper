@@ -131,6 +131,7 @@ void NoteEditManager::moveNoteToPosition(Track& track, const NoteUtils::DisplayN
 }
 
 void NoteEditManager::moveNoteToPositionWithOverlapHandling(Track& track, const NoteUtils::DisplayNote& currentNote, std::uint32_t targetTick, bool commitChanges) {
+    editManager.pushSessionUndoBeforeMutation(track);
     // Calculate movement delta from live focus span when preview differs from display cache.
     uint32_t fromStart = currentNote.startTick;
     const NoteEditFocus& focus = editManager.getNoteEditSession().focus;
@@ -172,6 +173,7 @@ void NoteEditManager::moveNoteToPositionWithOverlapHandling(Track& track, const 
 void NoteEditManager::changeNoteEndWithOverlapHandling(Track& track,
                                                        const NoteUtils::DisplayNote& currentNote,
                                                        std::uint32_t targetEndTick) {
+    editManager.pushSessionUndoBeforeMutation(track);
     logger.log(CAT_MIDI, LOG_DEBUG,
                "Note length change with overlap handling: pitch=%d, start=%lu, end %lu->%lu",
                currentNote.note, currentNote.startTick, currentNote.endTick, targetEndTick);
@@ -240,8 +242,6 @@ void NoteEditManager::moveNoteToPositionSimple(Track& track, const NoteUtils::Di
         logger.log(CAT_MIDI, LOG_DEBUG, "Note moved successfully: start=%lu end=%lu duration=%lu ticks", 
                    targetTick, newEndTick, noteDuration);
 
-        Loop& loop = track.getActiveLoop();
-        loop.markEditFlatDirty();
         track.invalidateCaches();
         
         // CRITICAL: Update the selectedNoteIdx to point to the moved note in the new reconstructed list
@@ -1581,6 +1581,8 @@ void NoteEditManager::handleNoteValueFaderInput(uint8_t ccValue, Track& track) {
         if (currentNoteValue == newNoteValue) {
             return;
         }
+
+        editManager.pushSessionUndoBeforeMutation(track);
 
         NoteUtils::DisplayNote pitchTarget{currentNoteValue, notes[static_cast<size_t>(selectedIdx)].velocity,
                                            noteStart, noteEnd};

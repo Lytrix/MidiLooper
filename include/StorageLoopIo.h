@@ -6,6 +6,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <memory>
 
 #include "LoopPasses.h"
 #include "EditPass.h"
@@ -26,6 +27,8 @@ struct PersistedLoopSnapshot {
   PassId lastPublishedPassId = kInvalidPassId;
   LoopPasses passes;
 };
+
+using LoopSnapshotRef = std::shared_ptr<PersistedLoopSnapshot>;
 
 /// Legacy v4 take wire entry (recordPass / overdubPass on disk).
 struct PersistedCapturePassWire {

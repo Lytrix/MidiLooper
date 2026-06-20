@@ -58,6 +58,8 @@ class CowLoopEventStore {
       flatCache_ = std::make_shared<MidiEventVec>();
       data_->flatten(*flatCache_);
     }
+    // mutFlat() grants write access to callers, so mark dirty eagerly.
+    flatDirty_ = true;
     return *flatCache_;
   }
 
