@@ -17,6 +17,7 @@
 #include <memory>
 #include "MidiEvent.h"
 #include "LoopEventBuffer.h"
+#include "StorageLoopIo.h"
 #include "EditPass.h"
 #include "LoopPasses.h"
 #include "VisualCache.h"
@@ -74,9 +75,6 @@ struct Loop {
   MidiEventVec& midiEvents();
   const MidiEventVec& midiEvents() const;
 
-  LoopEventStore& mutEditStore();
-  const LoopEventStore& readEditStore() const;
-
   void rematerializeEditView(LoopEventStore& store) const;
 
   EditPassId saveNoteEditPass(uint8_t noteEditPassIndex, EditChangeList changes);
@@ -87,8 +85,8 @@ struct Loop {
   bool isEditStateDirty() const { return editStateDirty_; }
   void clearEditStateDirty() { editStateDirty_ = false; }
 
-  std::shared_ptr<const LoopEventStore> shareEditSnapshot() const;
-  void restoreEditSnapshot(const MidiSnapshotRef& snapshot);
+  LoopSnapshotRef sharePassesSnapshot() const;
+  void restorePassesSnapshot(const PersistedLoopSnapshot& snapshot);
 
   void beginCapture(CapturePhase phase);
   void discardCapture();
@@ -106,21 +104,8 @@ struct Loop {
   void markDisplayCachesStale();
   void removeCaptureNoteOffAt(uint8_t channel, uint8_t note, uint32_t tick);
   void shiftActiveCapturePassTicks(int64_t delta);
-  void commitMaterializedStoreToPasses() {
-    if (editFlatStale_ || !editFlat_.isFlatDirty()) {
-      return;
-    }
-    editFlat_.syncFlatToStore();
-    commitMaterializedStoreImpl(true);
-  }
-  void markEditFlatDirty() { editFlat_.markFlatDirty(); }
-#if defined(PIO_UNIT_TEST_NATIVE)
-  void nativeTestCommitMaterializedStoreToPasses(bool allowEmptyClear) {
-    commitMaterializedStoreImpl(allowEmptyClear);
-  }
   size_t nativeTestLiveEventCount() const { return liveEventCount(); }
-#endif
-  void importPublishedStore(LoopEventStore& store);
+  void seedRecordPassFromStore(LoopEventStore& store);
   void discardEditFlatMaterialization();
   void commitStopFinalizeFromStore(LoopEventStore& merged);
 
@@ -166,7 +151,6 @@ struct Loop {
   bool editFlatStale_ = true;
 
   void materializeEditViewFromPasses() const;
-  void commitMaterializedStoreImpl(bool allowEmptyClear = false);
   void freeActiveCapturePassChunks();
   void markPassDerivedStale();
 

@@ -1894,18 +1894,163 @@ def _snapshot_position_edit_to_home(
     m0_tick: int,
     *,
     tick_tolerance: int = 24,
+    min_edit_line: int = -1,
+    mover_pitch: int = A_PITCH,
 ) -> Optional[dict[str, object]]:
     """Last reconstruction after a position edit landing on fixture home (not pre-move scratch)."""
     for snap in reversed(snapshots):
+        if min_edit_line >= 0 and int(snap.get("edit_line", -1)) < min_edit_line:
+            continue
         label = str(snap.get("edit_label", ""))
         if not label.startswith("position_edit:"):
             continue
-        if label.endswith(f"->{m0_tick}"):
-            return snap
-        match = re.search(r"->(\d+)$", label)
-        if match and abs(int(match.group(1)) - m0_tick) <= tick_tolerance:
+        lands_home = label.endswith(f"->{m0_tick}")
+        if not lands_home:
+            match = re.search(r"->(\d+)$", label)
+            lands_home = bool(
+                match and abs(int(match.group(1)) - m0_tick) <= tick_tolerance
+            )
+        if not lands_home:
+            continue
+        inv = snap.get("inventory", {})
+        if isinstance(inv, dict) and _inventory_notes_at_start(
+            inv, pitch=mover_pitch, start=m0_tick, tick_tolerance=tick_tolerance
+        ):
             return snap
     return None
+
+
+def _snapshot_overlap_round_trip_home(
+    lines: list[str],
+    snapshots: list[dict[str, object]],
+    loop_length: int,
+    *,
+    home_line: int,
+    m0_tick: int,
+    mover_pitch: int = A_PITCH,
+    tick_tolerance: int = 24,
+) -> Optional[dict[str, object]]:
+    """Inventory at overlap round-trip home — after Moved note events, not pre-move scratch recon."""
+    if home_line < 0:
+        return _snapshot_position_edit_to_home(
+            snapshots,
+            m0_tick,
+            tick_tolerance=tick_tolerance,
+            mover_pitch=mover_pitch,
+        )
+
+    move_done = -1
+    moved_pitch = mover_pitch
+    moved_end: Optional[int] = None
+    for i in range(home_line, min(home_line + 120, len(lines))):
+        moved_match = re.search(
+            r"Moved note events: pitch=(\d+) start->(\d+)",
+            lines[i],
+        )
+        if not moved_match:
+            continue
+        new_start = int(moved_match.group(2))
+        if abs(new_start - m0_tick) > tick_tolerance:
+            continue
+        move_done = i
+        moved_pitch = int(moved_match.group(1))
+        for j in range(max(home_line, i - 12), i + 1):
+            move_line = re.search(
+                r"Movement: start \d+->(\d+), end actual (\d+)",
+                lines[j],
+            )
+            if move_line and abs(int(move_line.group(1)) - m0_tick) <= tick_tolerance:
+                moved_end = int(move_line.group(2))
+                break
+        break
+
+    if move_done < 0:
+        return _snapshot_position_edit_to_home(
+            snapshots,
+            m0_tick,
+            tick_tolerance=tick_tolerance,
+            min_edit_line=home_line,
+            mover_pitch=mover_pitch,
+        )
+
+    base_snap: Optional[dict[str, object]] = None
+    for snap in reversed(snapshots):
+        if int(snap["line"]) < home_line:
+            base_snap = snap
+            break
+
+    notes: list[dict[str, int]] = []
+    if base_snap is not None:
+        raw_notes = base_snap.get("notes", [])
+        assert isinstance(raw_notes, list)
+        notes = [dict(n) for n in raw_notes if isinstance(n, dict)]
+        min_extended = RECORD_GATE_TICKS + TICKS_PER_16TH_STEP
+        notes = [
+            n
+            for n in notes
+            if not (
+                n["pitch"] == moved_pitch
+                and abs(n["start"] - m0_tick) > tick_tolerance
+                and _note_span_length(n["start"], n["end"], loop_length)
+                >= min_extended - tick_tolerance
+            )
+        ]
+
+    applied = False
+    for line in lines[move_done : move_done + 12]:
+        if ",DNTE," not in line:
+            continue
+        parts = line.split(",")
+        if len(parts) < 8:
+            continue
+        try:
+            pitch = int(parts[3])
+            storage = int(parts[4])
+            length = int(parts[6])
+        except ValueError:
+            continue
+        if pitch == moved_pitch and abs(storage - m0_tick) <= tick_tolerance:
+            end = moved_end if moved_end is not None else storage + length
+            notes = [
+                n
+                for n in notes
+                if not (
+                    n["pitch"] == pitch
+                    and abs(n["start"] - storage) <= tick_tolerance
+                )
+            ]
+            notes.append({"pitch": pitch, "start": storage, "end": end})
+            applied = True
+            break
+
+    if not applied and moved_end is not None:
+        notes = [
+            n
+            for n in notes
+            if not (
+                n["pitch"] == moved_pitch
+                and abs(n["start"] - m0_tick) <= tick_tolerance
+            )
+        ]
+        notes.append({"pitch": moved_pitch, "start": m0_tick, "end": moved_end})
+
+    if not _inventory_notes_at_start(
+        _inventory_from_notes(notes, loop_length),
+        pitch=moved_pitch,
+        start=m0_tick,
+        tick_tolerance=tick_tolerance,
+    ):
+        return None
+
+    inv = _inventory_from_notes(notes, loop_length)
+    return {
+        "line": move_done,
+        "edit_label": f"position_edit_home:{m0_tick}",
+        "edit_line": home_line,
+        "declared_count": len(notes),
+        "notes": notes,
+        "inventory": inv,
+    }
 
 
 def _verify_change_length_store_rebuild(
@@ -2050,8 +2195,14 @@ def _verify_change_length_store_rebuild(
             issues.append("missing_overlap_pitch_change_log")
 
         if home_line >= 0:
-            post_home_snap = _snapshot_position_edit_to_home(
-                snapshots, m0_tick, tick_tolerance=tick_tolerance
+            post_home_snap = _snapshot_overlap_round_trip_home(
+                lines,
+                snapshots,
+                loop_length,
+                home_line=home_line,
+                m0_tick=m0_tick,
+                mover_pitch=A_PITCH,
+                tick_tolerance=tick_tolerance,
             )
             _apply_native_checks(
                 post_home_snap,
@@ -2175,7 +2326,24 @@ def _verify_delay_move_insert_reorder(
             and f"pitch={M0_PITCH}" in line
             and _line_has_start_near(line, insert_tick, tick_tolerance)
             for line in back_window
+        ) or any(
+            "Restoring hidden overlap note" in line
+            and f"pitch={M0_PITCH}" in line
+            and _line_has_start_near(line, insert_tick, tick_tolerance)
+            for line in back_window
         )
+        if not insert_restored_after_move_back:
+            for line in back_window:
+                match = re.search(
+                    rf"Final note: pitch={M0_PITCH}, start=(\d+), end=(\d+)", line
+                )
+                if not match:
+                    continue
+                if abs(int(match.group(1)) - insert_tick) <= tick_tolerance:
+                    span = int(match.group(2)) - int(match.group(1))
+                    if 12 <= span <= 36:
+                        insert_restored_after_move_back = True
+                        break
 
     insert_present_after_in_edit_redo = False
     create_lines = [
@@ -2187,7 +2355,7 @@ def _verify_delay_move_insert_reorder(
             (
                 i
                 for i, line in enumerate(lines[last_create:], start=last_create)
-                if "Overdub undone" in line
+                if "NoteEditSession undo" in line or "Overdub undone" in line
             ),
             -1,
         )
@@ -2195,35 +2363,19 @@ def _verify_delay_move_insert_reorder(
             (
                 i
                 for i, line in enumerate(lines[last_create:], start=last_create)
-                if "Overdub redone" in line
+                if "NoteEditSession redo" in line or "Overdub redone" in line
             ),
             -1,
         )
         if undo_line >= 0 and redo_line > undo_line:
-            undo_count = None
-            redo_count = None
-            for line in lines[undo_line : undo_line + 30]:
-                m = re.search(r"Reconstruction complete: (\d+) notes total", line)
-                if m:
-                    undo_count = int(m.group(1))
-                    break
-            for line in lines[redo_line : redo_line + 30]:
-                m = re.search(r"Reconstruction complete: (\d+) notes total", line)
-                if m:
-                    redo_count = int(m.group(1))
-                    break
-            redo_window = lines[redo_line : redo_line + 40]
-            short_insert_redo = any(
+            redo_window = lines[redo_line : redo_line + 80]
+            insert_present_after_in_edit_redo = any(
                 (m := re.search(
                     rf"Final note: pitch={M0_PITCH}, start=(\d+), end=(\d+)", line
                 ))
+                and abs(int(m.group(1)) - insert_tick) <= tick_tolerance
                 and 12 <= int(m.group(2)) - int(m.group(1)) <= 36
                 for line in redo_window
-            )
-            insert_present_after_in_edit_redo = short_insert_redo and (
-                redo_count is not None
-                and undo_count is not None
-                and redo_count > undo_count
             )
 
     if not d_delay_to_a:
@@ -2516,18 +2668,15 @@ def _verify_long_over_short_pitch_restore(
                 visible_after_past_a = True
                 break
 
-    home_snap: Optional[dict[str, object]] = None
-    for snap in reversed(snapshots):
-        label = str(snap.get("edit_label", ""))
-        if not label.startswith("position_edit:"):
-            continue
-        if label.endswith(f"->{m0_tick}"):
-            home_snap = snap
-            break
-        m = re.search(r"->(\d+)$", label)
-        if m and abs(int(m.group(1)) - m0_tick) <= tick_tolerance:
-            home_snap = snap
-            break
+    home_snap = _snapshot_overlap_round_trip_home(
+        lines,
+        snapshots,
+        loop_length,
+        home_line=home_line,
+        m0_tick=m0_tick,
+        mover_pitch=A_PITCH,
+        tick_tolerance=tick_tolerance,
+    )
     inner_b_ok = False
     inner_a_ok = False
     inner_p0_ok = False
@@ -2687,19 +2836,16 @@ def _verify_split_overlap_note_round_trip(
                 break
 
     inner_a_recaptured_at_home = False
+    home_snap = _snapshot_overlap_round_trip_home(
+        lines,
+        snapshots,
+        loop_length,
+        home_line=home_line,
+        m0_tick=m0_tick,
+        mover_pitch=A_PITCH,
+        tick_tolerance=tick_tolerance,
+    )
     mover_at_home = False
-    home_snap: Optional[dict[str, object]] = None
-    for snap in reversed(snapshots):
-        label = str(snap.get("edit_label", ""))
-        if not label.startswith("position_edit:"):
-            continue
-        if label.endswith(f"->{m0_tick}"):
-            home_snap = snap
-            break
-        m = re.search(r"->(\d+)$", label)
-        if m and abs(int(m.group(1)) - m0_tick) <= tick_tolerance:
-            home_snap = snap
-            break
     if home_snap is not None:
         inv = home_snap.get("inventory", {})
         assert isinstance(inv, dict)

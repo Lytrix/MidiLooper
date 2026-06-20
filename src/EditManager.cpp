@@ -149,7 +149,6 @@ void EditManager::materializeOverlapScratchToSessionStore(Track& track) {
     MidiEventVec& sessionStoreEvents = sessionMidiEvents();
     resolveOverlapNotesForPreCommit(sessionStoreEvents, noteEditSession.focus, channel,
                                     loopLength);
-    track.getActiveLoop().markEditFlatDirty();
 }
 
 void EditManager::commitPendingOverlapNoteEdits(Track& track) {

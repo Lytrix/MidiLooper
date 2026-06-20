@@ -87,8 +87,12 @@ size_t eraseUndoEntriesForSlot(GlobalUndoStack& stack, uint8_t slotIndex) {
     return removedTotal;
 }
 
-void restoreLoopSnapshot(Loop& loop, const MidiSnapshotRef& snapshot, const UndoLoopGeometry& geometry) {
-    loop.restoreEditSnapshot(snapshot);
+void restoreLoopSnapshot(Loop& loop, const LoopSnapshotRef& snapshot, const UndoLoopGeometry& geometry) {
+    if (snapshot) {
+        loop.restorePassesSnapshot(*snapshot);
+    } else {
+        loop.resetPassTimeline();
+    }
     applyGeometry(loop, geometry);
     if (!loop.hasPublishedEvents()) {
         loop.nextEventIndex = 0;
@@ -108,9 +112,8 @@ bool enableCapturePass(Loop& loop, PassId passId) {
 bool applyUndoEntry(Track& track, UndoEntry& entry) {
     Loop& loop = track.getLoop(entry.slotIndex);
     switch (entry.kind) {
-        case UndoEntryKind::NoteEditCommit:
         case UndoEntryKind::ClearSlot:
-            entry.afterSnapshot = loop.shareEditSnapshot();
+            entry.afterSnapshot = loop.sharePassesSnapshot();
             entry.afterGeometry = captureGeometry(loop);
             if (entry.hasTrackState) {
                 entry.afterTrackState = track.getState();
@@ -171,7 +174,6 @@ bool applyUndoEntry(Track& track, UndoEntry& entry) {
 bool applyRedoEntry(Track& track, UndoEntry& entry) {
     Loop& loop = track.getLoop(entry.slotIndex);
     switch (entry.kind) {
-        case UndoEntryKind::NoteEditCommit:
         case UndoEntryKind::ClearSlot:
             if (!entry.hasRedoPayload) {
                 logger.log(CAT_TRACK, LOG_WARNING, "Redo payload missing for entry %lu",
@@ -239,22 +241,6 @@ bool applyRedoEntry(Track& track, UndoEntry& entry) {
 }
 
 }  // namespace
-
-void TrackUndo::pushUndoSnapshot(Track& track) {
-#if BYPASS_STOP_UNDO_SAVE
-    (void)track;
-    logger.log(CAT_TRACK, LOG_INFO, "BYPASS_STOP_UNDO_SAVE: skip pushUndoSnapshot");
-    return;
-#endif
-    Loop& loop = track.getActiveLoop();
-    UndoEntry entry;
-    entry.kind = UndoEntryKind::NoteEditCommit;
-    entry.slotIndex = track.getActiveLoopIndex();
-    entry.loopId = loop.loopId;
-    entry.beforeSnapshot = loop.shareEditSnapshot();
-    entry.beforeGeometry = captureGeometry(loop);
-    pushUndoEntry(track, std::move(entry));
-}
 
 void TrackUndo::pushRecordPassAdded(Track& track, uint8_t slotIndex, PassId passId) {
     if (slotIndex >= Config::MAX_LOOPS_PER_TRACK || passId == kInvalidPassId) {
@@ -415,7 +401,8 @@ const MidiEventVec& TrackUndo::peekLastMidiSnapshot(const Track& track) {
     if (stack.canUndo()) {
         const UndoEntry& entry = stack.entries[stack.cursor - 1];
         if (entry.beforeSnapshot) {
-            entry.beforeSnapshot->flatten(tempSnapshot);
+            entry.beforeSnapshot->passes.materializeToFlat(
+                tempSnapshot, entry.beforeSnapshot->loopLengthTicks);
         }
     }
     return tempSnapshot;
@@ -431,7 +418,7 @@ void TrackUndo::pushClearTrackSnapshot(Track& track) {
     entry.kind = UndoEntryKind::ClearSlot;
     entry.slotIndex = track.getActiveLoopIndex();
     entry.loopId = loop.loopId;
-    entry.beforeSnapshot = loop.shareEditSnapshot();
+    entry.beforeSnapshot = loop.sharePassesSnapshot();
     entry.beforeGeometry = captureGeometry(loop);
     entry.beforeTrackState = track.getState();
     entry.hasTrackState = true;

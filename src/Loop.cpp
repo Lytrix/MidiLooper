@@ -110,6 +110,44 @@ void rebuildCapturePreviewFromStore(Loop& loop) {
   ++loop.capturePreview.revision;
 }
 
+ChunkIdList deepCloneChunkRefs(const ChunkIdList& refs) {
+  if (refs.empty()) {
+    return {};
+  }
+  MidiEventVec flat;
+  LoopEventStore::appendFlattenedChunkIds(refs, flat);
+  LoopEventStore store;
+  store.loadFromFlat(flat);
+  ChunkIdList cloned;
+  store.detachChunksTo(cloned);
+  return cloned;
+}
+
+RecordPass deepCloneRecordPass(const RecordPass& pass) {
+  RecordPass cloned = pass;
+  cloned.chunkRefs = deepCloneChunkRefs(pass.chunkRefs);
+  return cloned;
+}
+
+OverdubPass deepCloneOverdubPass(const OverdubPass& pass) {
+  OverdubPass cloned = pass;
+  cloned.chunkRefs = deepCloneChunkRefs(pass.chunkRefs);
+  return cloned;
+}
+
+LoopPasses deepClonePasses(const LoopPasses& passes) {
+  LoopPasses cloned;
+  if (passes.hasRecordPass()) {
+    cloned.recordPass = deepCloneRecordPass(passes.recordPass);
+  }
+  cloned.overdubPasses.reserve(passes.overdubPasses.size());
+  for (const OverdubPass& pass : passes.overdubPasses) {
+    cloned.overdubPasses.push_back(deepCloneOverdubPass(pass));
+  }
+  cloned.editPasses = passes.editPasses;
+  return cloned;
+}
+
 }  // namespace
 
 bool Loop::hasPublishedEvents() const {
@@ -231,44 +269,6 @@ void Loop::freeActiveCapturePassChunks() {
       passes.overdubPasses.end());
 }
 
-void Loop::commitMaterializedStoreImpl(bool allowEmptyClear) {
-  if (editFlat_.isFlatDirty()) {
-    editFlat_.syncFlatToStore();
-  }
-
-  LoopEventStore& store = editFlat_.mutStore();
-  if (store.empty()) {
-    if (!allowEmptyClear && hasPublishedEvents()) {
-      discardEditFlatMaterialization();
-      return;
-    }
-    freeActiveCapturePassChunks();
-    lastPublishedPassId_ = kInvalidPassId;
-    ++playbackRevision;
-    discardEditFlatMaterialization();
-    rebuildVisualCacheFromPasses();
-    return;
-  }
-
-  ChunkIdList refs;
-  store.detachChunksTo(refs);
-  if (refs.empty()) {
-    return;
-  }
-
-  freeActiveCapturePassChunks();
-
-  RecordPass rebuilt{};
-  rebuilt.id = nextPassId_++;
-  rebuilt.state = CapturePassState::Active;
-  rebuilt.chunkRefs = std::move(refs);
-  passes.recordPass = rebuilt;
-  lastPublishedPassId_ = rebuilt.id;
-  ++playbackRevision;
-  materializeEditViewFromPasses();
-  rebuildVisualCacheFromPasses();
-}
-
 void Loop::markPassDerivedStale() {
   editFlatStale_ = true;
   playbackOrderDirty = true;
@@ -286,29 +286,38 @@ const MidiEventVec& Loop::midiEvents() const {
   return editFlat_.readFlat();
 }
 
-LoopEventStore& Loop::mutEditStore() {
-  materializeEditViewFromPasses();
-  return editFlat_.mutStore();
+LoopSnapshotRef Loop::sharePassesSnapshot() const {
+  auto snapshot = std::make_shared<PersistedLoopSnapshot>();
+  snapshot->loopId = loopId;
+  snapshot->startLoopTick = startLoopTick;
+  snapshot->loopLengthTicks = loopLengthTicks;
+  snapshot->loopStartTick = loopStartTick;
+  snapshot->nextPassId = nextPassId_;
+  snapshot->nextMergeSequence = nextMergeSequence_;
+  snapshot->lastPublishedPassId = lastPublishedPassId_;
+  snapshot->passes = deepClonePasses(passes);
+  return snapshot;
 }
 
-const LoopEventStore& Loop::readEditStore() const {
-  materializeEditViewFromPasses();
-  return editFlat_.readStore();
-}
-
-std::shared_ptr<const LoopEventStore> Loop::shareEditSnapshot() const {
-  Loop* self = const_cast<Loop*>(this);
-  self->materializeEditViewFromPasses();
-  if (self->editFlat_.isFlatDirty()) {
-    self->editFlat_.syncFlatToStore();
-  }
-  return editFlat_.shareForSnapshot();
-}
-
-void Loop::restoreEditSnapshot(const MidiSnapshotRef& snapshot) {
-  editFlat_.restoreFromSnapshot(snapshot);
-  passes.editPasses.clear();
-  commitMaterializedStoreImpl(true);
+void Loop::restorePassesSnapshot(const PersistedLoopSnapshot& snapshot) {
+  discardPendingCapturePass();
+  discardCapture();
+  resetPassTimeline();
+  loopId = snapshot.loopId;
+  startLoopTick = snapshot.startLoopTick;
+  loopLengthTicks = snapshot.loopLengthTicks;
+  loopStartTick = snapshot.loopStartTick;
+  nextPassId_ = snapshot.nextPassId == 0 ? 1 : snapshot.nextPassId;
+  nextMergeSequence_ = snapshot.nextMergeSequence;
+  lastPublishedPassId_ = snapshot.lastPublishedPassId;
+  lastTickInLoop = 0;
+  nextEventIndex = 0;
+  playbackOrderDirty = true;
+  passes = deepClonePasses(snapshot.passes);
+  ++playbackRevision;
+  discardEditFlatMaterialization();
+  markDisplayCachesStale();
+  rebuildVisualCacheFromPasses();
 }
 
 void Loop::discardEditFlatMaterialization() {
@@ -368,14 +377,27 @@ void Loop::commitStopFinalizeFromStore(LoopEventStore& merged) {
   rebuildVisualCacheFromPasses();
 }
 
-void Loop::importPublishedStore(LoopEventStore& store) {
+void Loop::seedRecordPassFromStore(LoopEventStore& store) {
   resetPassTimeline();
   if (store.empty()) {
+    discardEditFlatMaterialization();
     return;
   }
-  editFlat_.mutStore().adoptAll(store);
-  editFlatStale_ = false;
-  commitMaterializedStoreImpl(true);
+  ChunkIdList refs;
+  store.detachChunksTo(refs);
+  if (refs.empty()) {
+    discardEditFlatMaterialization();
+    return;
+  }
+  RecordPass record{};
+  record.id = nextPassId_++;
+  record.state = CapturePassState::Active;
+  record.chunkRefs = std::move(refs);
+  passes.recordPass = std::move(record);
+  lastPublishedPassId_ = passes.recordPass.id;
+  ++playbackRevision;
+  markPassDerivedStale();
+  discardEditFlatMaterialization();
   rebuildVisualCacheFromPasses();
 }
 

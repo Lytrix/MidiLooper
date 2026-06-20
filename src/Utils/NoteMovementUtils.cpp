@@ -795,7 +795,6 @@ bool applyPitchChange(Track& track, EditManager& manager,
                 break;
             }
         }
-        track.getActiveLoop().markEditFlatDirty();
         track.invalidateCaches();
         notes = track.getCachedNotes();
         logger.log(CAT_MIDI, LOG_DEBUG,
@@ -899,7 +898,6 @@ bool applyPitchChange(Track& track, EditManager& manager,
 
     noteEditFocusApplyPitch(manager.getNoteEditSession().focus, newNoteValue, noteStart, noteEnd,
                             loopLength);
-    track.getActiveLoop().markEditFlatDirty();
     track.invalidateCaches();
     return true;
 }
@@ -1046,8 +1044,6 @@ void moveNoteWithOverlapHandling(Track& track, EditManager& manager,
 
     finalReconstructAndSelect(track, midiEvents, manager, movingNotePitch, newStart, newEnd, loopLength);
 
-    Loop& loop = track.getActiveLoop();
-    loop.markEditFlatDirty();
     track.invalidateCaches();
 }
 
@@ -1184,8 +1180,6 @@ void changeLengthWithOverlapHandling(Track& track, EditManager& manager,
 
     NoteUtils::orderSamePitchNoteOffsForLifo(midiEvents, track.getMidiChannel(), notePitch);
 
-    Loop& loop = track.getActiveLoop();
-    loop.markEditFlatDirty();
     track.invalidateCaches();
 }
 
