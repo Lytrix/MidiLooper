@@ -24,10 +24,7 @@ public:
     static size_t getRedoCount(const Track& track);
     static bool canUndo(const Track& track);
     static bool canRedo(const Track& track);
-    static void popLastUndo(Track& track);
     static size_t clearUndoHistoryForSlot(Track& track, uint8_t slotIndex);
-    static const MidiEventVec& peekLastMidiSnapshot(const Track& track);
-    static const MidiEventVec& getCurrentMidiSnapshot(const Track& track);
     static void pushClearTrackSnapshot(Track& track);
     static void undoClearTrack(Track& track);
     static void redoClearTrack(Track& track);
@@ -35,8 +32,4 @@ public:
     static bool canRedoClearTrack(const Track& track);
     static void pushLoopStartSnapshot(Track& track);
     static void undoLoopStart(Track& track);
-    static void redoLoopStart(Track& track);
-    static bool canUndoLoopStart(const Track& track);
-    static bool canRedoLoopStart(const Track& track);
-    static uint32_t computeMidiHash(const Track& track);
 };

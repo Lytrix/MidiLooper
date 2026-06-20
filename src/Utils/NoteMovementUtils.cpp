@@ -350,25 +350,6 @@ bool notesOverlap(uint32_t start1, uint32_t end1, uint32_t start2, uint32_t end2
     return overlap;
 }
 
-bool notesTouchOrOverlap(uint32_t start1, uint32_t end1, uint32_t start2, uint32_t end2,
-                        uint32_t loopLength) {
-    if (notesOverlap(start1, end1, start2, end2, loopLength)) {
-        return true;
-    }
-    const bool wrapped1 = (end1 < start1);
-    const bool wrapped2 = (end2 < start2);
-    if (!wrapped1 && !wrapped2) {
-        return end1 == start2 || end2 == start1;
-    }
-    if (wrapped1 && !wrapped2) {
-        return end1 == start2 || end2 == start1 || start2 < end1;
-    }
-    if (!wrapped1 && wrapped2) {
-        return end1 == start2 || end2 == start1 || start1 < end2;
-    }
-    return end1 == start2 || end2 == start1;
-}
-
 void findOverlaps(const std::vector<NoteUtils::DisplayNote>& currentNotes,
                  uint8_t movingNotePitch,
                  uint32_t currentStart,

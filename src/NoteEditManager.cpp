@@ -126,34 +126,21 @@ void NoteEditManager::handleMidiCC(uint8_t channel, uint8_t ccNumber, uint8_t va
 }
 
 void NoteEditManager::moveNoteToPosition(Track& track, const NoteUtils::DisplayNote& currentNote, std::uint32_t targetTick) {
-    // Use the enhanced version with overlap handling
-    moveNoteToPositionWithOverlapHandling(track, currentNote, targetTick, false);
-}
-
-void NoteEditManager::moveNoteToPositionWithOverlapHandling(Track& track, const NoteUtils::DisplayNote& currentNote, std::uint32_t targetTick, bool commitChanges) {
     editManager.pushSessionUndoBeforeMutation(track);
-    // Calculate movement delta from live focus span when preview differs from display cache.
     uint32_t fromStart = currentNote.startTick;
     const NoteEditFocus& focus = editManager.getNoteEditSession().focus;
     if (focus.active && focus.last.pitch == currentNote.note &&
         focus.last.startTick == currentNote.startTick) {
         fromStart = focus.last.startTick;
     }
-    int32_t tickDifference = static_cast<int32_t>(targetTick) - static_cast<int32_t>(fromStart);
-    
-    logger.log(CAT_MIDI, LOG_DEBUG, "Note movement with overlap handling: from=%lu to=%lu difference=%ld commit=%s overlapNotes=%zu", 
-               fromStart, targetTick, tickDifference, commitChanges ? "true" : "false", 
+    const int32_t tickDifference =
+        static_cast<int32_t>(targetTick) - static_cast<int32_t>(fromStart);
+
+    logger.log(CAT_MIDI, LOG_DEBUG,
+               "Note movement with overlap handling: from=%lu to=%lu difference=%ld overlapNotes=%zu",
+               fromStart, targetTick, tickDifference,
                editManager.getNoteEditSession().focus.overlapNotes.size());
-    
-    // If committing changes, permanently delete overlapping notes
-    if (commitChanges) {
-        logger.log(CAT_MIDI, LOG_DEBUG, "Committing note movement - overlapNotes tracked=%zu", 
-                   editManager.getNoteEditSession().focus.overlapNotes.size());
-        
-        moveNoteToPositionSimple(track, currentNote, targetTick);
-        return;
-    }
-    
+
     editManager.ensureNoteEditFocusForLiveEdit(track, currentNote);
     if (focus.active) {
         logger.log(CAT_MIDI, LOG_DEBUG, "Overlap move bridge: pitch=%d, start=%lu, end=%lu",
@@ -161,8 +148,7 @@ void NoteEditManager::moveNoteToPositionWithOverlapHandling(Track& track, const 
                    static_cast<unsigned long>(focus.last.startTick),
                    static_cast<unsigned long>(focus.last.endTick));
     }
-    
-    // Unified overlap engine entry.
+
     uint32_t dummyStart = currentNote.startTick;
     uint32_t dummyEnd = currentNote.endTick;
     NoteMovementUtils::applyNoteEditChange(track, editManager, NoteMovementUtils::NoteEditChangeKind::Move,
@@ -183,93 +169,6 @@ void NoteEditManager::changeNoteEndWithOverlapHandling(Track& track,
                                            NoteMovementUtils::NoteEditChangeKind::Length,
                                            currentNote, 0, 0, targetEndTick, 0, 0, dummyStart,
                                            dummyEnd);
-}
-
-void NoteEditManager::moveNoteToPositionSimple(Track& track, const NoteUtils::DisplayNote& currentNote, std::uint32_t targetTick) {
-    auto& midiEvents = track.editAwareMidiEvents();
-    uint32_t loopLength = track.getLoopLength();
-    
-    // Find and update both note start and end positions to maintain duration
-    bool noteStartUpdated = false;
-    bool noteEndUpdated = false;
-    uint32_t newEndTick = targetTick + (currentNote.endTick - currentNote.startTick);
-    
-    // Constrain the new end tick to stay within the loop
-    if (newEndTick >= loopLength) {
-        newEndTick = newEndTick % loopLength;
-    }
-    
-    // Find the specific note-on event for this note
-    MidiEvent* noteOnEvent = nullptr;
-    for (auto& event : midiEvents) {
-        if (event.type == midi::NoteOn && 
-            event.data.noteData.note == currentNote.note &&
-            event.tick == currentNote.startTick &&
-            event.data.noteData.velocity > 0) {
-            noteOnEvent = &event;
-            break;
-        }
-    }
-    
-    if (!noteOnEvent) {
-        logger.log(CAT_MIDI, LOG_DEBUG, "Failed to find note-on event for pitch=%d, start=%lu", 
-                   currentNote.note, currentNote.startTick);
-        return;
-    }
-    
-    // Find the corresponding note-off event using LIFO pairing logic
-    MidiEvent* noteOffEvent = NoteMovementUtils::findCorrespondingNoteOff(midiEvents, noteOnEvent, currentNote.note, currentNote.startTick, currentNote.endTick);
-    
-    if (!noteOffEvent) {
-        logger.log(CAT_MIDI, LOG_DEBUG, "Failed to find corresponding note-off event for pitch=%d, start=%lu, end=%lu", 
-                   currentNote.note, currentNote.startTick, currentNote.endTick);
-        return;
-    }
-    
-    // Update both events atomically
-    logger.log(CAT_MIDI, LOG_DEBUG, "Moving note: pitch=%d from start=%lu,end=%lu to start=%lu,end=%lu", 
-               currentNote.note, currentNote.startTick, currentNote.endTick, targetTick, newEndTick);
-    
-    noteOnEvent->tick = targetTick;
-    noteOffEvent->tick = newEndTick;
-    noteStartUpdated = true;
-    noteEndUpdated = true;
-    
-    if (noteStartUpdated && noteEndUpdated) {
-        // Update the bracket to follow the note
-        editManager.setBracketTick(targetTick);
-        uint32_t noteDuration = currentNote.endTick - currentNote.startTick;
-        logger.log(CAT_MIDI, LOG_DEBUG, "Note moved successfully: start=%lu end=%lu duration=%lu ticks", 
-                   targetTick, newEndTick, noteDuration);
-
-        track.invalidateCaches();
-        
-        // CRITICAL: Update the selectedNoteIdx to point to the moved note in the new reconstructed list
-        const std::vector<NoteUtils::DisplayNote> updatedNotes = selectableDisplayNotesForEditUi(track);
-        int newSelectedIdx = -1;
-        
-        // Find the moved note in the updated notes list
-        for (int i = 0; i < (int)updatedNotes.size(); i++) {
-            if (updatedNotes[i].note == currentNote.note && 
-                updatedNotes[i].startTick == targetTick &&
-                updatedNotes[i].endTick == newEndTick) {
-                newSelectedIdx = i;
-                break;
-            }
-        }
-        
-        if (newSelectedIdx >= 0) {
-            int oldSelectedIdx = editManager.getSelectedNoteIdx();
-            editManager.setSelectedNoteIdx(newSelectedIdx);
-            logger.log(CAT_MIDI, LOG_DEBUG, "Updated selectedNoteIdx: %d -> %d (note at new position)", 
-                       oldSelectedIdx, newSelectedIdx);
-        } else {
-            logger.log(CAT_MIDI, LOG_DEBUG, "Warning: Could not find moved note in reconstructed list");
-        }
-    } else {
-        logger.log(CAT_MIDI, LOG_DEBUG, "Failed to update note: start=%s end=%s", 
-                   noteStartUpdated ? "OK" : "FAILED", noteEndUpdated ? "OK" : "FAILED");
-    }
 }
 
 // void NoteEditManager::processEncoderMovement(int rawDelta) {
@@ -333,10 +232,6 @@ void NoteEditManager::cycleMainEditMode(Track& track) {
     
     logger.log(CAT_MIDI, LOG_INFO, "Cycled to mode: %s", 
                (currentMainEditMode == MAIN_MODE_NOTE_EDIT) ? "NOTE_EDIT" : "LOOP_EDIT");
-}
-
-void NoteEditManager::enterNextEditMode(Track& track) {
-    cycleEditMode(track);
 }
 
 void NoteEditManager::deleteSelectedNote(Track& track) {

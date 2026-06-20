@@ -2,7 +2,6 @@
 //  Licensed under the PolyForm Noncommercial 1.0.0
 
 #include "EditManager.h"
-#include "EditApply.h"
 #include "EditNoteState.h"
 #include "EditStates/EditSelectNoteState.h"
 #include "Track.h"
@@ -134,21 +133,6 @@ void EditManager::commitAllPendingNoteEditActions(Track& track) {
     noteEditSession.focus.movingNoteRange.start = noteEditSession.focus.last.startTick;
     noteEditSession.focus.movingNoteRange.end = noteEditSession.focus.last.endTick;
     clearCommittedOverlapScratchExceptHidden(noteEditSession.focus);
-}
-
-void EditManager::materializeOverlapScratchToSessionStore(Track& track) {
-    if (!noteEditSession.active || !noteEditSession.focus.active ||
-        noteEditSession.focus.overlapNotes.empty()) {
-        return;
-    }
-    const uint8_t channel = track.getMidiChannel();
-    const uint32_t loopLength = track.getLoopLength();
-    if (loopLength == 0) {
-        return;
-    }
-    MidiEventVec& sessionStoreEvents = sessionMidiEvents();
-    resolveOverlapNotesForPreCommit(sessionStoreEvents, noteEditSession.focus, channel,
-                                    loopLength);
 }
 
 void EditManager::commitPendingOverlapNoteEdits(Track& track) {
@@ -724,10 +708,6 @@ void EditManager::cycleEditMode(Track& track) {
     
     sendEditModeProgram(currentEditMode);
     logger.log(CAT_TRACK, LOG_DEBUG, "Edit mode cycled to: %d", currentEditMode);
-}
-
-void EditManager::enterNextEditMode(Track& track) {
-    cycleEditMode(track);
 }
 
 void EditManager::sendEditModeProgram(EditModeState mode) {
