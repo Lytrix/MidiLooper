@@ -364,19 +364,6 @@ bool TrackUndo::canRedo(const Track& track) {
     return track.getGlobalUndoStack().canRedo();
 }
 
-void TrackUndo::popLastUndo(Track& track) {
-    GlobalUndoStack& stack = track.getGlobalUndoStack();
-    if (!stack.canUndo()) {
-        logger.log(CAT_TRACK, LOG_WARNING, "Attempted to pop undo snapshot, but none exist");
-        return;
-    }
-    if (stack.cursor < stack.entries.size()) {
-        stack.entries.erase(stack.entries.begin() + static_cast<std::ptrdiff_t>(stack.cursor), stack.entries.end());
-    }
-    stack.entries.erase(stack.entries.begin() + static_cast<std::ptrdiff_t>(stack.cursor - 1));
-    --stack.cursor;
-}
-
 size_t TrackUndo::clearUndoHistoryForSlot(Track& track, uint8_t slotIndex) {
     if (slotIndex >= Config::MAX_LOOPS_PER_TRACK) {
         return 0;
@@ -392,24 +379,6 @@ size_t TrackUndo::clearUndoHistoryForSlot(Track& track, uint8_t slotIndex) {
                    static_cast<unsigned>(stack.cursor));
     }
     return removed;
-}
-
-const MidiEventVec& TrackUndo::peekLastMidiSnapshot(const Track& track) {
-    static MidiEventVec tempSnapshot;
-    tempSnapshot.clear();
-    const GlobalUndoStack& stack = track.getGlobalUndoStack();
-    if (stack.canUndo()) {
-        const UndoEntry& entry = stack.entries[stack.cursor - 1];
-        if (entry.beforeSnapshot) {
-            entry.beforeSnapshot->passes.materializeToFlat(
-                tempSnapshot, entry.beforeSnapshot->loopLengthTicks);
-        }
-    }
-    return tempSnapshot;
-}
-
-const MidiEventVec& TrackUndo::getCurrentMidiSnapshot(const Track& track) {
-    return track.getMidiEvents();
 }
 
 void TrackUndo::pushClearTrackSnapshot(Track& track) {
@@ -448,22 +417,6 @@ void TrackUndo::undoLoopStart(Track& track) {
     undoOverdub(track);
 }
 
-void TrackUndo::redoLoopStart(Track& track) {
-    redoOverdub(track);
-}
-
-bool TrackUndo::canUndoLoopStart(const Track& track) {
-    const GlobalUndoStack& stack = track.getGlobalUndoStack();
-    return stack.canUndo() &&
-           stack.entries[stack.cursor - 1].kind == UndoEntryKind::LoopBoundaryChange;
-}
-
-bool TrackUndo::canRedoLoopStart(const Track& track) {
-    const GlobalUndoStack& stack = track.getGlobalUndoStack();
-    return stack.canRedo() &&
-           stack.entries[stack.cursor].kind == UndoEntryKind::LoopBoundaryChange;
-}
-
 bool TrackUndo::canRedoClearTrack(const Track& track) {
     const GlobalUndoStack& stack = track.getGlobalUndoStack();
     return stack.canRedo() &&
@@ -474,8 +427,4 @@ bool TrackUndo::canUndoClearTrack(const Track& track) {
     const GlobalUndoStack& stack = track.getGlobalUndoStack();
     return stack.canUndo() &&
            stack.entries[stack.cursor - 1].kind == UndoEntryKind::ClearSlot;
-}
-
-uint32_t TrackUndo::computeMidiHash(const Track& track) {
-    return midiEventVecFnv1aHash(track.getMidiEvents());
 }

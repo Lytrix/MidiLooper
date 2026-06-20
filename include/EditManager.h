@@ -66,8 +66,6 @@ public:
     void commitAllPendingNoteEditActions(Track& track);
     /// Persist overlap note Hidden/Shortened scratch into Edits[] before restore-on-move-away.
     void commitPendingOverlapNoteEdits(Track& track);
-    /// Live edit hot path: materialize overlap scratch into session store only (no rematerialize).
-    void materializeOverlapScratchToSessionStore(Track& track);
     /// Ensure **focus** is active before overlap utils (rebuild from live **DisplayNote** when needed).
     void ensureNoteEditFocusForLiveEdit(Track& track,
                                         const NoteUtils::DisplayNote& fallbackWhenNoFocus);
@@ -138,9 +136,7 @@ public:
         EDIT_MODE_PITCH = 4     // Change note pitch
     };
     
-    EditModeState getCurrentEditMode() const { return currentEditMode; }
     void cycleEditMode(Track& track);
-    void enterNextEditMode(Track& track);
     void sendEditModeProgram(EditModeState mode);
     
     // LoopManager functionality

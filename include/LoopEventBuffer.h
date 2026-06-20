@@ -66,8 +66,6 @@ class CowLoopEventStore {
   /// True when mutFlat() was written and must be synced before take commit.
   bool isFlatDirty() const { return flatDirty_; }
 
-  void markFlatDirty() { flatDirty_ = true; }
-
   void syncFlatToStore() {
     if (!flatDirty_ || !flatCache_) {
       return;

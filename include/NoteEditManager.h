@@ -72,8 +72,6 @@ public:
     void performSelectnoteFaderUpdate(Track& track);  // Actually sends the selectnote fader update
     void enableStartEditing();
     void moveNoteToPosition(Track& track, const NoteUtils::DisplayNote& currentNote, std::uint32_t targetTick);
-    void moveNoteToPositionWithOverlapHandling(Track& track, const NoteUtils::DisplayNote& currentNote, std::uint32_t targetTick, bool commitChanges);
-    void moveNoteToPositionSimple(Track& track, const NoteUtils::DisplayNote& currentNote, std::uint32_t targetTick);
     void changeNoteEndWithOverlapHandling(Track& track, const NoteUtils::DisplayNote& currentNote,
                                           std::uint32_t targetEndTick);
     void refreshEditingActivity();  // Mark editing activity to prevent note selection changes
@@ -211,8 +209,6 @@ public:
         EDIT_MODE_PITCH = 4     // Change note pitch
     };
     EditModeState currentEditMode = EDIT_MODE_NONE;
-    
-    void enterNextEditMode(Track& track);
 
 };
 

@@ -60,9 +60,6 @@ void moveNoteWithOverlapHandling(Track& track, EditManager& manager,
      * Helper functions extracted from EditStartNoteState
      */
     bool notesOverlap(uint32_t start1, uint32_t end1, uint32_t start2, uint32_t end2, uint32_t loopLength);
-    /** True when notes overlap or share a boundary tick (same-pitch lane merge). */
-    bool notesTouchOrOverlap(uint32_t start1, uint32_t end1, uint32_t start2, uint32_t end2,
-                             uint32_t loopLength);
 
     /** True when [noteStart, noteEnd] lies within the moving note tick range on focus. */
     bool isNoteWithinMovingNoteRange(uint32_t noteStart, uint32_t noteEnd,
