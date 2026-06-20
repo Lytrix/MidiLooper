@@ -1,21 +1,19 @@
 ## Purpose
 
-During **NoteEditSession**, NOTE_EDIT UI consumers (display, fader-1 select, delete) SHALL
-use one filtered inventory derived from **NoteEditSession.store** and **overlapNotes**
-(**Hidden** excluded). Delete and select SHALL share that inventory; delete SHALL target the
-user-selected **NoteRef**, not stale focus on a prior mover.
+During **NoteEditSession**, NOTE_EDIT UI consumers (display, fader-1 select, delete) use one
+filtered inventory derived from **NoteEditSession.store** and **overlapNotes** (**Hidden**
+excluded). Delete and select share that inventory; delete targets the user-selected **NoteRef**,
+not stale focus on a prior mover.
 
-Shipped Phase 1 (2026-06-19) on `refactor/timeline-data-model`. Phase 2+ retirement
-(**movingNote**, encoder port) remains in archived change tasks.
+Phase 1 shipped 2026-06-19 (`filterSelectableDisplayNotes`). Follow-up overlap restore
+(B1 delete/select, B2 hidden restore on pitch) shipped in **note-edit-hitl-focus-restore**
+(2026-06-20). Phase 2a+ (**focus.last** reads, encoder port) continues in **note-edit-focus-reads**.
 
 ## Requirements
 
 ### Requirement: NOTE_EDIT consumers use filterSelectableDisplayNotes
 
-During an active **NoteEditSession** in **MAIN_MODE_NOTE_EDIT**, UI consumers that enumerate
-notes for selection, display, or delete SHALL use **`filterSelectableDisplayNotes`** (reconstructed
-**DisplayNote** list from **NoteEditSession.store** minus **overlapNotes** **Hidden**), and SHALL
-NOT call `Track::getCachedNotes()` directly without that filter.
+During an active **NoteEditSession** in **MAIN_MODE_NOTE_EDIT**, UI consumers that enumerate notes for selection, display, or delete SHALL use **`filterSelectableDisplayNotes`** (reconstructed **DisplayNote** list from **NoteEditSession.store** minus **overlapNotes** **Hidden**), and SHALL NOT call `Track::getCachedNotes()` directly without that filter.
 
 #### Scenario: One filter for select and display
 
@@ -23,13 +21,9 @@ NOT call `Track::getCachedNotes()` directly without that filter.
 - **THEN** **`filterSelectableDisplayNotes`** SHALL exclude that note
 - **AND** display and fader-1 select navigation SHALL use the same filtered result
 
----
-
 ### Requirement: Committed baselineMap vs live focus geometry
 
-At fader-1 note select, the system SHALL build **baselineMap** from committed **Take** + **Edit**
-materialization (`applyEdits`) and SHALL set **focus.last** from live **NoteEditSession.store**
-geometry for the selected note.
+At fader-1 note select, the system SHALL build **baselineMap** from committed **passes** materialization (`LoopPasses::materialize`) and SHALL set **focus.last** from live **NoteEditSession.store** geometry for the selected note.
 
 #### Scenario: Pending length preview does not poison commit baseline
 
@@ -37,21 +31,15 @@ geometry for the selected note.
 - **THEN** **commitBaseline.end** SHALL remain the committed end tick
 - **AND** **focus.last.end** SHALL reflect the live lengthened end in **session.store**
 
----
-
 ### Requirement: PREVIEW phase forbids rematerialize on fader tick
 
-During live fader move, length, or pitch edit (PREVIEW), the system SHALL mutate
-**NoteEditSession.store** and **overlapNotes** only via `applyNoteEditChange` and SHALL NOT invoke
-full loop rematerialize (`commitEditAction` / `applyEdits` → session store replacement).
+During live fader move, length, or pitch edit (PREVIEW), the system SHALL mutate **NoteEditSession.store** and **overlapNotes** only via `applyNoteEditChange` and SHALL NOT invoke full loop rematerialize (`commitEditAction` / `LoopPasses::materialize` → session store replacement).
 
 #### Scenario: Overlap fader move without store wipe
 
 - **WHEN** the user moves a note over overlapping notes via fader input
 - **THEN** overlap hide/shorten SHALL apply incrementally
 - **AND** the device SHALL NOT reboot or lose unrelated notes in **session.store**
-
----
 
 ### Requirement: Hidden overlap notes are not selectable during NoteEditSession
 
@@ -69,8 +57,6 @@ During an active **NoteEditSession**, any **overlap note** with store state **Hi
 - **THEN** bracket tick and selected note SHALL match the user's slot on the first stable select
 - **AND** the UI SHALL NOT briefly select a **Hidden** **overlap note** at the same or overlapping tick before correcting
 
----
-
 ### Requirement: Delete targets the user-selected note
 
 When delete is invoked on a selected note during **NoteEditSession**, the firmware SHALL commit pending edits attributable to that selection, then SHALL apply **DeleteNote** to that note's live **NoteRef** in **NoteEditSession.store**.
@@ -87,20 +73,15 @@ When delete is invoked on a selected note during **NoteEditSession**, the firmwa
 - **WHEN** delete pre-commit runs
 - **THEN** the firmware SHALL NOT apply **ChangeLength** or **MoveNote** for a different note than the delete target unless **focus.moving** matches that delete target's **NoteRef**
 
----
-
 ### Requirement: Delete captures NoteRef before commit boundary
 
-When delete is invoked, the system SHALL resolve the delete target **NoteRef** from
-**filterSelectableDisplayNotes** before any pre-commit or **saveEdit** operation.
+When delete is invoked, the system SHALL resolve the delete target **NoteRef** from **filterSelectableDisplayNotes** before any pre-commit or **saveNoteEditPass** operation.
 
 #### Scenario: Delete note B with stale focus on M0
 
 - **WHEN** **focus** still describes lengthened M0 but fader-1 selected note B
 - **THEN** delete pre-commit SHALL NOT emit **ChangeLength** for M0
 - **AND** delete SHALL target B's **NoteRef** after scoped focus rebuild on B
-
----
 
 ### Requirement: NOTE_EDIT display matches selectable session inventory
 
@@ -111,3 +92,13 @@ In **MAIN_MODE_NOTE_EDIT** with active **NoteEditSession**, the piano roll displ
 - **WHEN** an **overlap note** is **Hidden** in **overlapNotes** and absent from session store pairs
 - **THEN** the display SHALL NOT draw that note
 - **AND** serial reconstruction from session store for verification SHALL agree with the displayed set modulo timing telemetry
+
+### Requirement: Hidden overlap note restores on pitch change
+
+When a moving note pitch change restores a previously **Hidden** **overlap note**, the firmware SHALL return that note to **visible** in **overlapNotes** and SHALL include it in **NoteEditSession.store** pairs so **filterSelectableDisplayNotes** and display agree.
+
+#### Scenario: Inner overlap note visible after pitch restore
+
+- **WHEN** the user changes moving note pitch back over a previously hidden inner **overlap note**
+- **THEN** serial logs SHALL include overlap restore for that note
+- **AND** fader-1 navigation SHALL offer that note again at its tick

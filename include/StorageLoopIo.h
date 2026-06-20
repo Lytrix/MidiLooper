@@ -7,31 +7,39 @@
 #include <cstdint>
 #include <functional>
 
-#include "Take.h"
-#include "Edit.h"
+#include "LoopPasses.h"
+#include "EditPass.h"
 
-/// Byte-oriented I/O adapter for SD File (firmware) or in-memory buffers (native tests).
 struct StorageIo {
   std::function<bool(const void*, size_t)> write;
   std::function<bool(void*, size_t)> read;
 };
 
-/// v4 on-wire loop block (Active + Disabled takes only; flattened MIDI per take).
+/// v4 on-wire loop block (capture passes + editPasses tail).
 struct PersistedLoopSnapshot {
   LoopId loopId = kInvalidLoopId;
   uint32_t startLoopTick = 0;
   uint32_t loopLengthTicks = 0;
   uint32_t loopStartTick = 0;
-  TakeId nextTakeId = 1;
+  PassId nextPassId = 1;
   uint32_t nextMergeSequence = 0;
-  TakeId lastPublishedTakeId = kInvalidTakeId;
-  TakeVec takes;
-  EditId nextEditId = 1;
-  EditVec edits;
+  PassId lastPublishedPassId = kInvalidPassId;
+  LoopPasses passes;
 };
 
-bool writePersistedTake(const StorageIo& io, const Take& take);
-bool readPersistedTake(const StorageIo& io, Take& take);
+/// Legacy v4 take wire entry (recordPass / overdubPass on disk).
+struct PersistedCapturePassWire {
+  PassId id = kInvalidPassId;
+  uint32_t mergeSequence = 0;
+  uint8_t stateRaw = 0;
+  uint8_t typeRaw = 0;
+  uint32_t sealedAtTick = 0;
+};
+
+bool writePersistedCapturePassWire(const StorageIo& io, const PersistedCapturePassWire& wire,
+                                   const ChunkIdList& chunkRefs);
+bool readPersistedCapturePassWire(const StorageIo& io, PersistedCapturePassWire& wire,
+                                    ChunkIdList& chunkRefs);
 
 bool writePersistedLoopSnapshot(const StorageIo& io, const PersistedLoopSnapshot& snapshot);
 bool readPersistedLoopSnapshot(const StorageIo& io, PersistedLoopSnapshot& snapshot);

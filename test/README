@@ -22,17 +22,17 @@ Running tests
     pio test -e teensy41
 
 Current test suite contents (native, `pio test -e native`):
-- test_take_capture              : Take/Capture chunk ownership and takeType mapping
-- test_loop_take_survival        : Take timeline survives edit-flat sync and stop paths
+- test_take_capture              : Capture pass chunk ownership and record/overdub phase mapping
+- test_loop_take_survival        : Pass timeline survives edit rematerialize and stop paths
 - test_loop_event_store          : chunk pool, merge, snapshots
 - test_loop_stop_finalize        : wrap-window finalize on record/overdub stop
-- test_storage_loop_io           : SD v4 Take round-trip
+- test_storage_loop_io           : SD v4 pass round-trip (wire-compatible capture pass encoding)
 - test_wrap_logic                : wrapPosition() and calculateNoteLength()
 - test_delete_restore            : left-to-right deletion and restoration logic
 - test_shorten_delete_restore    : right-to-right shorten, delete, and restore logic
 - test_serial_midi_input_read    : MidiEvent NoteOn/NoteOff constructors and parsing logic
 
-Older names (`test_epoch_*`, `test_loop_epoch_*`) were renamed in the **m8-rename** pass.
+Older names (`test_epoch_*`, `test_loop_epoch_*`, **Take** / `takes[]`) were renamed in the **m8-rename** and **timeline-pass-model** passes.
 
 Adding new tests:
 * Create a new C++ file under test/, named with the "test_" prefix.

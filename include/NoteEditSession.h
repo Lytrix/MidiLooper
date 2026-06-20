@@ -8,7 +8,7 @@
 #include <memory>
 #include <vector>
 
-#include "Edit.h"
+#include "EditPass.h"
 #include "LoopEventBuffer.h"
 #include "LoopEventStore.h"
 #include "NoteEditFocus.h"
@@ -78,8 +78,8 @@ struct NoteEditSession {
   CowLoopEventStore store;
   NoteEditSessionUndoStack undoStack;
   NoteEditFocus focus;
-  uint8_t spanIndex = 0;
+  uint8_t editPassIndex = 0;
   bool active = false;
-  EditIdList spanEditIds;
+  EditPassIdList noteEditPassIds;
   EditChangeList pendingChanges;
 };

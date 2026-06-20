@@ -1,6 +1,8 @@
-# Tasks — note edit focus reads (Phase 2a)
+# Tasks — note edit focus reads (Phase 2a–2d)
 
 **Change:** `note-edit-focus-reads`  
+**Status:** **Closed** — Phase 2a–2d shipped; native 110/110 (2026-06-20)  
+**Archived:** `openspec/changes/archive/2026-06-20-note-edit-focus-reads/`  
 **Handoff:** [HANDOFF-BRIEF.md](./HANDOFF-BRIEF.md)  
 **Locks:** [PRE-EXECUTION.md](./PRE-EXECUTION.md)
 
@@ -50,7 +52,7 @@
 
 ## Explicitly deferred
 
-- HITL focus/restore bugs → [note-edit-hitl-focus-restore](../note-edit-hitl-focus-restore/BUG.md) (post 2d upload)
+- HITL focus/restore bugs → archived **note-edit-hitl-focus-restore** (shipped 2026-06-20)
 
 ---
 
@@ -61,13 +63,13 @@
 - [x] 2b.3 `EditPitchNoteState::onEncoderTurn` → `applyNoteEditChange(Pitch)` + **focus.last**
 - [x] 2b.4 `EditLengthNoteState`: **DisplayNote** from **focus.last** via `liveEditDisplayNoteAtSelect`
 - [x] 2b.5 Shared read helpers on `EditManager`: `selectableDisplayNotesAtEditSelect`, `liveEditDisplayNoteAtSelect`
-- [ ] 2b.6 HITL overlap round-trip (recheck [edit-focus-selection-drift](../edit-focus-selection-drift/BUG.md) after upload)
+- [x] 2b.6 HITL overlap round-trip — deferred; selection drift tracked in archived **note-edit-hitl-focus-restore**
 
 ## 2b sign-off
 
 - [x] `pio test -e native` — 110/110
 - [x] Grep: no **deletedNotes** writes in `EditStartNoteState.cpp` (Phase 2c retires writer in utils)
-- [ ] Optional HITL smoke after upload
+- [ ] Optional HITL smoke after upload — deferred (parent HITL non-gating per overlap C16)
 
 ---
 
@@ -77,7 +79,7 @@
 - [x] 2c.2 Remove **deletedNotes** pitch reindex in same function
 - [x] 2c.3 `changeLengthWithOverlapHandling`: read geometry from **focus.last**; no **movingNote** seed block
 - [x] 2c.4 `moveNoteWithOverlapHandling`: read geometry from **focus.last** (bridge fallback only)
-- [ ] 2c.5 HITL + [edit-focus-selection-drift](../edit-focus-selection-drift/BUG.md) recheck after upload — **`000429`**: same AC3/AC5 fail as `235109`; `edit.ok=false`
+- [x] 2c.5 HITL recheck — **`000429`**: AC3/AC5 fail; consolidated into archived **note-edit-hitl-focus-restore**
 
 ## 2c sign-off
 
@@ -94,10 +96,10 @@
 - [x] 2d.3 Remove **`movingNote`** / `MovingNoteIdentity`; **`ensureNoteEditFocusForLiveEdit`** replaces bridge
 - [x] 2d.4 Remove **`createDeletedNote`** from `MidiEventUtils.*`
 - [x] 2d.5 Delete `test_delete_restore`, `test_shorten_delete_restore`
-- [x] 2d.6 HITL recheck — **`001421`**, **`001758`**: AC3/AC5 fail; see [note-edit-hitl-focus-restore](../note-edit-hitl-focus-restore/BUG.md)
+- [x] 2d.6 HITL recheck — **`001421`**, **`001758`**: B1/B2 fixes in archived **note-edit-hitl-focus-restore**
 
 ## 2d sign-off
 
 - [x] `pio test -e native` — 110/110
 - [x] Grep: no `movingNote` / `MovingNoteIdentity` / `deletedNotes` in NOTE_EDIT firmware paths (except **focus.movingNoteRange**)
-- [ ] Optional HITL smoke after upload
+- [ ] Optional HITL smoke after upload — deferred (parent HITL non-gating per overlap C16)

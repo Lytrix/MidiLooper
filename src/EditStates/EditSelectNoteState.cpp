@@ -3,7 +3,7 @@
 
 #include "EditStates/EditSelectNoteState.h"
 #include "EditManager.h"
-#include "Edit.h"
+#include "EditPass.h"
 #include "Track.h"
 #include "Logger.h"
 #include "TrackUndo.h"

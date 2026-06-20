@@ -9,16 +9,17 @@
 
 - [x] 1.1 Lock **pass** in `.cursor/rules/Naming-Vocabulary-Teensy-Looper.mdc`
 - [x] 1.2 OpenSpec change + update `note-edit-modification-session` docs (**moving note range**, **overlapNotes**)
-- [ ] 1.3 Update `openspec/changes/m8-edit/design.md` §4 — **edit pass** replaces span (keep legacy code names footnoted until PR 2)
-- [ ] 1.4 Update `docs/Guides/LOOP_MIDI_STORAGE_AND_VALIDATION.md` + HITL rule prose
+- [x] 1.3 Update `openspec/changes/m8-edit/design.md` §4 — **edit pass** replaces span (legacy code names footnoted)
+- [x] 1.4 Update `docs/Guides/LOOP_MIDI_STORAGE_AND_VALIDATION.md` + HITL rule prose
 
 ## 2. Code rename (phased)
 
-- [ ] 2.1 `NoteEditSession.spanIndex` → `editPassIndex`; `closeNoteEditSpan` → `closeNoteEditPass`
-- [ ] 2.2 `Edit.spanIndex` → `editPassIndex`; `UndoEntry.noteEditSpanIndex` → `noteEditPassIndex`; `spanEditIds` → `passEditIds`
-- [ ] 2.3 SD loop I/O: document field rename in v4 header comment or bump format if required
-- [ ] 2.4 Scripts: `--require-m8-span-verify` → `--require-m8-pass-verify` (keep alias one release)
-- [ ] 2.5 `pio test -e native`; HITL edit baseline with pass wording in serial grep
+- [x] 2.1 `NoteEditSession.spanIndex` → `editPassIndex`; `closeNoteEditSpan` → `closeNoteEditPass`
+- [x] 2.2 `Edit.spanIndex` → `editPassIndex`; `UndoEntry.noteEditSpanIndex` → `noteEditPassIndex`; `spanEditIds` → `passEditIds`
+- [x] 2.3 SD loop I/O: document field rename in v4 header comment (no format bump)
+- [x] 2.4 Scripts: `--require-m8-pass-verify` + `--no-m8-pass-verify`; `--require-m8-span-verify` deprecated alias
+- [x] 2.5 `pio test -e native` — 110/110 (2026-06-20)
+- [x] 2.6 HITL edit baseline with pass wording in serial grep (Teensy `20260620_150954`; overlap checks pre-existing)
 
 ## 3. Overlap docs (shipped with note-edit-modification-session)
 

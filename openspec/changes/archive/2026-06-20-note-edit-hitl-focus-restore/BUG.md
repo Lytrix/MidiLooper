@@ -3,7 +3,7 @@
 **Change:** `note-edit-hitl-focus-restore`  
 **Status:** **Signed off — ready to archive**  
 **Parent:** [note-edit-modification-session](../note-edit-modification-session/)  
-**Supersedes:** [edit-focus-selection-drift](../edit-focus-selection-drift/) recheck (2b–2d complete)  
+**Supersedes:** [edit-focus-selection-drift](../archive/2026-06-20-edit-focus-selection-drift/) recheck (2b–2d complete)  
 **Firmware:** `teensy41-capture-serial` after B1 + B2 patches  
 **Sign-off captures:** `20260620_013630`, `20260620_013835`, `20260620_014601` (+ `_serial.log` / `.json` siblings)  
 **Pre-fix captures (evidence):** `20260620_001421`, `20260620_001758`
@@ -176,7 +176,7 @@ pio run -e teensy41-capture-serial -t upload
 
 ## Related
 
-- [edit-focus-selection-drift/BUG.md](../edit-focus-selection-drift/BUG.md) — pre-2d delete drift (superseded by this sign-off)
+- [edit-focus-selection-drift/BUG.md](../archive/2026-06-20-edit-focus-selection-drift/BUG.md) — pre-2d delete drift (superseded by this sign-off)
 - [note-edit-focus-reads](../note-edit-focus-reads/) — Phase 2d shipped
 - [change-length-commit-rematerialize/BUG.md](../change-length-commit-rematerialize/BUG.md) — Track C insert/reorder overlap
 - [archive/2026-06-19-overlap-hidden-note-select/BUG.md](../archive/2026-06-19-overlap-hidden-note-select/BUG.md) — Phase 1 AC1–AC5 contract + C16 non-gating

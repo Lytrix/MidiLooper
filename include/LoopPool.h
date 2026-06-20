@@ -6,7 +6,7 @@
 #include <cstddef>
 #include <cstdint>
 
-#include "Take.h"
+#include "LoopPasses.h"
 
 #if defined(PIO_UNIT_TEST_NATIVE)
 namespace LoopPoolConfig {

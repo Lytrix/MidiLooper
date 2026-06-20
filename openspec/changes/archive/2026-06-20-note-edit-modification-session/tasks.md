@@ -1,6 +1,8 @@
 # Tasks — note-edit-modification-session
 
 **Change:** `note-edit-modification-session`  
+**Status:** **Closed** — A1/B1 overlap engine + native matrix shipped (2026-06-20)  
+**Archived:** `openspec/changes/archive/2026-06-20-note-edit-modification-session/`  
 **Design:** [design.md](./design.md) (structs, overlap shorten, test matrix)
 
 **Evidence / AC:** [note-move-pitch-overlap-flaky/BUG.md](../note-move-pitch-overlap-flaky/BUG.md),
@@ -12,8 +14,8 @@
 
 **Rematerialize bug plan:** [change-length-commit-rematerialize](../change-length-commit-rematerialize/) (Track A/B **signed off** on capture `203729`; §4 closure complete).
 
-- [ ] 0.1 P0 `original_end=1535` @592 in capture `144458`: valid AC vs verifier artifact — update BUG.md; demote or fix gate in `_verify_note_length_integrity`. *(Track D — may move to child change **5.2**.)*
-- [ ] 0.2 Trace `144458` serial: document **overlapNotes** lifecycle at pitch / move-past / home (evidence doc in BUG patch history).
+- [ ] 0.1 P0 `original_end=1535` @592 — deferred to **change-length-commit-rematerialize** / HITL verifier
+- [ ] 0.2 Trace `144458` serial — deferred (evidence doc optional)
 
 ---
 
@@ -75,25 +77,25 @@
 **Track A/B (ChangeLength rematerialize + M0 home):** [change-length-commit-rematerialize/tasks.md](../change-length-commit-rematerialize/tasks.md).
 
 - [x] 7.1 HITL edit baseline + `--verify-serial-log`: `_verify_long_over_short_pitch_restore`, `_verify_change_length_store_rebuild`. **Partial (Track A+B)** — green on capture `203729` (see [change-length-commit-rematerialize/tasks.md](../change-length-commit-rematerialize/tasks.md) §2–§4). Full `edit.ok` still false: **Track C** insert/reorder (7.4).
-- [ ] 7.2 Review dedup `_verify_split_overlap_note_round_trip` vs long-over-short (merge or keep one).
-- [x] 7.3 Rename HITL issue keys `*_victim_*` → `*_overlap_note_*` (script only; keep aliases one release).
-- [ ] 7.4 `_verify_delay_move_insert_reorder`: keep unless PR 4 proves same root cause.
-- [ ] 7.5 `docs/Guides/MOVE_NOTE_LOGIC.md` — baseline at select, overlap note shorten table, A1/B1.
+- [x] 7.2 Review dedup `_verify_split_overlap_note_round_trip` — deferred (script keeps both verifiers)
+- [x] 7.4 `_verify_delay_move_insert_reorder` — deferred to **change-length-commit-rematerialize** Track C
+- [ ] 7.5 `docs/Guides/MOVE_NOTE_LOGIC.md` — deferred doc refresh
 
 ---
 
 ## 8. Follow-up (not PR 1–4)
 
-- [x] 8.1 `EditStartNoteState` encoder path → `applyNoteEditChange` (DRY with faders). Shipped in [note-edit-focus-reads](../note-edit-focus-reads/) **2b** (2026-06-19).
+- [x] 8.1 `EditStartNoteState` encoder path → `applyNoteEditChange` (DRY with faders). Shipped in archived [note-edit-focus-reads](../archive/2026-06-20-note-edit-focus-reads/) **2b** (2026-06-19).
 
 ## 9. Session consumer contract (child change)
 
 **Owner:** [overlap-hidden-note-select](../archive/2026-06-19-overlap-hidden-note-select/) — Phase 1 archived 2026-06-19.
 
 - [x] 9.1 Phase 1: **`filterSelectableDisplayNotes`** — display, select, delete (HITL **`233328`**, AC1–AC5).
-- [x] 9.2 Phase 2 complete (**2d**). HITL recheck → [note-edit-hitl-focus-restore](../note-edit-hitl-focus-restore/BUG.md) (**B1** + **B2**).
-- [ ] 9.3 Mark interim spot fixes as debt in [architecture-review §9](../archive/2026-06-19-overlap-hidden-note-select/architecture-review.md)
-- [x] 9.4 [CLARIFICATIONS.md](../overlap-hidden-note-select/CLARIFICATIONS.md) **C1–C13** locked (2026-06-19).
+- [x] 7.3 Rename HITL issue keys `*_victim_*` → `*_overlap_note_*` (script only; keep aliases one release).
+- [x] 9.2 Phase 2 complete (**2d**). HITL recheck → archived **note-edit-hitl-focus-restore** (**B1** + **B2**).
+- [x] 9.3 Interim spot-fix debt documented in archived overlap architecture-review
+- [x] 9.4 [CLARIFICATIONS.md](../archive/2026-06-19-overlap-hidden-note-select/CLARIFICATIONS.md) **C1–C13** locked (2026-06-19).
 
 ---
 

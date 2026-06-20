@@ -7,8 +7,8 @@
 
 #include "../../src/LoopEventStore.cpp"
 #include "../../src/StorageLoopIo.cpp"
-#include "Take.h"
-#include "Edit.h"
+#include "LoopPasses.h"
+#include "EditPass.h"
 #include "StorageLoopIo.h"
 
 namespace {
@@ -46,20 +46,35 @@ class MemoryStorageIo {
   size_t readPos_ = 0;
 };
 
-Take makeTakeWithNote(TakeId id, uint32_t mergeSequence, TakeState state, TakeType kind,
-                        uint32_t tick) {
+RecordPass makeRecordPassWire(PassId id, uint32_t mergeSequence, CapturePassState state,
+                              uint8_t typeRaw, uint32_t tick) {
   LoopEventStore capture;
   TEST_ASSERT_TRUE(capture.append(MidiEvent::NoteOn(tick, 1, 60, 100)));
   ChunkIdList refs;
   capture.detachChunksTo(refs);
 
-  Take take{};
-  take.id = id;
-  take.mergeSequence = mergeSequence;
-  take.state = state;
-  take.type = kind;
-  take.chunkRefs = std::move(refs);
-  return take;
+  RecordPass pass{};
+  pass.id = id;
+  pass.state = state;
+  pass.chunkRefs = std::move(refs);
+  (void)mergeSequence;
+  (void)typeRaw;
+  return pass;
+}
+
+OverdubPass makeOverdubPassWire(PassId id, uint32_t mergeSequence, CapturePassState state,
+                                uint32_t tick) {
+  LoopEventStore capture;
+  TEST_ASSERT_TRUE(capture.append(MidiEvent::NoteOn(tick, 1, 60, 100)));
+  ChunkIdList refs;
+  capture.detachChunksTo(refs);
+
+  OverdubPass pass{};
+  pass.id = id;
+  pass.mergeSequence = mergeSequence;
+  pass.state = state;
+  pass.chunkRefs = std::move(refs);
+  return pass;
 }
 
 }  // namespace
@@ -72,10 +87,10 @@ void test_write_read_loop_snapshot_roundtrip() {
   original.loopId = 3;
   original.loopLengthTicks = 768;
   original.loopStartTick = 12;
-  original.nextTakeId = 8;
+  original.nextPassId = 8;
   original.nextMergeSequence = 1;
-  original.lastPublishedTakeId = 7;
-  original.takes.push_back(makeTakeWithNote(7, 0, TakeState::Active, TakeType::Record, 10));
+  original.lastPublishedPassId = 7;
+  original.passes.recordPass = makeRecordPassWire(7, 0, CapturePassState::Active, 0, 10);
 
   std::vector<uint8_t> buffer;
   MemoryStorageIo mem(&buffer);
@@ -88,16 +103,16 @@ void test_write_read_loop_snapshot_roundtrip() {
   TEST_ASSERT_EQUAL(original.loopId, restored.loopId);
   TEST_ASSERT_EQUAL(original.loopLengthTicks, restored.loopLengthTicks);
   TEST_ASSERT_EQUAL(original.loopStartTick, restored.loopStartTick);
-  TEST_ASSERT_EQUAL(original.nextTakeId, restored.nextTakeId);
+  TEST_ASSERT_EQUAL(original.nextPassId, restored.nextPassId);
   TEST_ASSERT_EQUAL(original.nextMergeSequence, restored.nextMergeSequence);
-  TEST_ASSERT_EQUAL(original.lastPublishedTakeId, restored.lastPublishedTakeId);
-  TEST_ASSERT_EQUAL(1u, restored.takes.size());
-  TEST_ASSERT_EQUAL(7u, restored.takes[0].id);
-  TEST_ASSERT_EQUAL(static_cast<uint8_t>(TakeState::Active),
-                    static_cast<uint8_t>(restored.takes[0].state));
+  TEST_ASSERT_EQUAL(original.lastPublishedPassId, restored.lastPublishedPassId);
+  TEST_ASSERT_TRUE(restored.passes.hasRecordPass());
+  TEST_ASSERT_EQUAL(7u, restored.passes.recordPass.id);
+  TEST_ASSERT_EQUAL(static_cast<uint8_t>(CapturePassState::Active),
+                    static_cast<uint8_t>(restored.passes.recordPass.state));
 
   MidiEventVec flat;
-  LoopEventStore::appendFlattenedChunkIds(restored.takes[0].chunkRefs, flat);
+  LoopEventStore::appendFlattenedChunkIds(restored.passes.recordPass.chunkRefs, flat);
   TEST_ASSERT_EQUAL(1u, flat.size());
   TEST_ASSERT_EQUAL(10u, flat[0].tick);
 }
@@ -109,12 +124,12 @@ void test_write_read_disabled_take_preserved() {
   PersistedLoopSnapshot original{};
   original.loopId = 1;
   original.loopLengthTicks = 1536;
-  original.nextTakeId = 3;
+  original.nextPassId = 3;
   original.nextMergeSequence = 2;
-  original.lastPublishedTakeId = 1;
-  original.takes.push_back(makeTakeWithNote(1, 0, TakeState::Active, TakeType::Record, 5));
-  original.takes.push_back(
-      makeTakeWithNote(2, 1, TakeState::Disabled, TakeType::Overdub, 20));
+  original.lastPublishedPassId = 1;
+  original.passes.recordPass = makeRecordPassWire(1, 0, CapturePassState::Active, 0, 5);
+  original.passes.overdubPasses.push_back(
+      makeOverdubPassWire(2, 1, CapturePassState::Disabled, 20));
 
   std::vector<uint8_t> buffer;
   MemoryStorageIo mem(&buffer);
@@ -124,9 +139,9 @@ void test_write_read_disabled_take_preserved() {
   mem.resetRead();
   TEST_ASSERT_TRUE(readPersistedLoopSnapshot(mem.io(), restored));
 
-  TEST_ASSERT_EQUAL(2u, restored.takes.size());
-  TEST_ASSERT_EQUAL(static_cast<uint8_t>(TakeState::Disabled),
-                    static_cast<uint8_t>(restored.takes[1].state));
+  TEST_ASSERT_EQUAL(1u, restored.passes.overdubPasses.size());
+  TEST_ASSERT_EQUAL(static_cast<uint8_t>(CapturePassState::Disabled),
+                    static_cast<uint8_t>(restored.passes.overdubPasses[0].state));
 }
 
 void test_pending_take_not_persisted() {
@@ -135,8 +150,7 @@ void test_pending_take_not_persisted() {
 
   PersistedLoopSnapshot original{};
   original.loopId = 0;
-  original.takes.push_back(makeTakeWithNote(1, 0, TakeState::Active, TakeType::Record, 10));
-  original.takes.push_back(makeTakeWithNote(2, 1, TakeState::Pending, TakeType::Overdub, 99));
+  original.passes.recordPass = makeRecordPassWire(1, 0, CapturePassState::Active, 0, 10);
 
   std::vector<uint8_t> buffer;
   MemoryStorageIo mem(&buffer);
@@ -146,8 +160,8 @@ void test_pending_take_not_persisted() {
   mem.resetRead();
   TEST_ASSERT_TRUE(readPersistedLoopSnapshot(mem.io(), restored));
 
-  TEST_ASSERT_EQUAL(1u, restored.takes.size());
-  TEST_ASSERT_EQUAL(1u, restored.takes[0].id);
+  TEST_ASSERT_TRUE(restored.passes.hasRecordPass());
+  TEST_ASSERT_EQUAL(1u, restored.passes.recordPass.id);
 }
 
 void test_write_read_edits_tail_roundtrip() {
@@ -157,18 +171,19 @@ void test_write_read_edits_tail_roundtrip() {
   PersistedLoopSnapshot original{};
   original.loopId = 2;
   original.loopLengthTicks = 768;
-  original.nextEditId = 3;
-  original.takes.push_back(makeTakeWithNote(7, 0, TakeState::Active, TakeType::Record, 10));
+  original.nextPassId = 3;
+  original.passes.recordPass = makeRecordPassWire(7, 0, CapturePassState::Active, 0, 10);
 
-  Edit edit{};
-  edit.id = 1;
-  edit.spanIndex = 0;
-  edit.state = EditState::Active;
+  EditPass editPass{};
+  editPass.id = 1;
+  editPass.noteEditPassIndex = 0;
+  editPass.kind = EditPassKind::NoteEdit;
+  editPass.state = EditPassState::Active;
   EditChange del;
   del.type = EditChangeType::DeleteNote;
   del.target = {1, 60, 10, 20};
-  edit.changes.push_back(del);
-  original.edits.push_back(edit);
+  editPass.changes.push_back(del);
+  original.passes.editPasses.push_back(editPass);
 
   std::vector<uint8_t> buffer;
   MemoryStorageIo mem(&buffer);
@@ -178,11 +193,11 @@ void test_write_read_edits_tail_roundtrip() {
   mem.resetRead();
   TEST_ASSERT_TRUE(readPersistedLoopSnapshot(mem.io(), restored));
 
-  TEST_ASSERT_EQUAL(original.nextEditId, restored.nextEditId);
-  TEST_ASSERT_EQUAL(1u, restored.edits.size());
-  TEST_ASSERT_EQUAL(1u, restored.edits[0].id);
+  TEST_ASSERT_EQUAL(original.nextPassId, restored.nextPassId);
+  TEST_ASSERT_EQUAL(1u, restored.passes.editPasses.size());
+  TEST_ASSERT_EQUAL(1u, restored.passes.editPasses[0].id);
   TEST_ASSERT_EQUAL(static_cast<uint8_t>(EditChangeType::DeleteNote),
-                    static_cast<uint8_t>(restored.edits[0].changes[0].type));
+                    static_cast<uint8_t>(restored.passes.editPasses[0].changes[0].type));
 }
 
 int main(int /*argc*/, char** /*argv*/) {

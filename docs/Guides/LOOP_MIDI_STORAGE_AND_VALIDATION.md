@@ -1,6 +1,6 @@
 # Loop MIDI storage, validation, and undo
 
-Agent-oriented map of how loop MIDI events are stored, cleaned up, snapshotted, and persisted. Read this before changing `Loop`, `Track`, `TrackUndo`, `StorageManager`, or stop-path code.
+Agent-oriented map of how loop MIDI events are stored, cleaned up, snapshotted, and persisted. Read this before changing `Loop`, `Track`, `TrackUndo`, `StorageManager`, `StorageLoopIo`, or stop-path code.
 
 For display-only note pairing (piano roll, loop shorten), see [`NOTE_WRAPPING_LOGIC.md`](NOTE_WRAPPING_LOGIC.md). For overdub undo history design rationale, see [`../plans/overdub_undo_baseline_phase1_refinement.md`](../plans/overdub_undo_baseline_phase1_refinement.md). For the scalability roadmap (chunk pool, deferred validate), see [`../plans/memory_scalability_refactor_enhancement.md`](../plans/memory_scalability_refactor_enhancement.md).
 
@@ -8,42 +8,50 @@ For display-only note pairing (piano roll, loop shorten), see [`NOTE_WRAPPING_LO
 
 ## Mental model
 
-Each **loop slot** (`Loop` in `include/Loop.h`) holds two event stores:
+Each **loop slot** (`Loop` in `include/Loop.h`) holds live capture, committed **passes**, and a materialized event view:
 
 | Store | Type | Role |
 |-------|------|------|
-| `committedEvents` | `CowLoopEventStore` | Baseline loop; what playback and undo restore target |
-| `captureStore` | `LoopEventStore` | Append buffer during **record** or **overdub**; merged at phase stop |
+| `capture` | `Capture` | Live record/overdub append buffer (`capture.store`, `capture.phase`) |
+| `passes` | `LoopPasses` | Canonical timeline: **recordPass**, **overdubPasses[]**, **editPasses[]** |
+| `editFlat_` | `CowLoopEventStore` | Materialized loop MIDI events for playback, validation, and display (`mutEditStore()` / `midiEvents()`) |
 
 ```mermaid
 flowchart LR
   subgraph capture [Capture phase]
-    IN[MIDI in] --> captureStore
+    IN[MIDI in] --> captureStore[capture.store]
   end
-  subgraph committed [Committed loop]
-    captureStore -->|commitCapture| committedEvents
-    undoRestore[undo restore] --> committedEvents
+  subgraph passes [Committed passes]
+    captureStore -->|sealCapture + publishPendingCapturePass| recordPass[recordPass / overdubPasses]
+    saveEdit[saveNoteEditPass] --> editPasses[editPasses]
   end
-  committedEvents --> playback[Track playback eventAt]
-  committedEvents --> flat[midiEvents lazy flat cache]
-  flat --> validate[validateAndCleanupMidiEvents]
-  flat --> display[NoteUtils reconstructNotes]
-  committedEvents --> sdSave[StorageManager flatten on save]
+  subgraph materialized [Materialized view]
+    recordPass --> materialize[LoopPasses::materialize]
+    editPasses --> materialize
+    materialize --> editFlat[editFlat_ / midiEvents]
+    undoRestore[undo restore] --> editFlat
+  end
+  editFlat --> playback[Track playback order]
+  editFlat --> validate[validateAndCleanupMidiEvents]
+  editFlat --> display[NoteUtils reconstructNotes]
+  passes --> sdSave[StorageLoopIo v4 on save]
 ```
 
-**Rule:** Hot playback paths use take/chunk indexed access plus **`applyEdits(takes, edits)`** for display/live view. During **NoteEditSession**, mutations go to **`EditManager::noteEditSession.store`**; **`saveEdit()`** appends to `Loop::edits[]` without collapsing takes.
+**Rule:** Hot playback paths use **`flattenActiveCapturePasses`** / chunk refs plus **`LoopPasses::materialize`** — not a full-loop flatten on every stop. During **NoteEditSession**, live mutations go to **`EditManager::noteEditSession.store`**; **`saveNoteEditPass()`** appends **EditPass** rows to **`passes.editPasses[]`** without rewriting capture passes.
 
-### M8 — Take / Capture / Edit / NoteEditSession
+### Passes — Capture / recordPass / overdubPass / editPass / NoteEditSession
 
-| Layer | Storage | Undo |
-|-------|---------|------|
-| **Take** | `Loop::takes[]` (record/overdub) | `TakeCommitted` |
-| **Edit** | `Loop::edits[]` (`Edit` + `EditChange` + `NoteRef`) | `NoteEditSessionCommitted` (per span) |
-| **NoteEditSession** | RAM `noteEditSession.store` while editing | `NoteEditSessionUndoStack` (before `saveEdit`) |
+| Layer | Storage | Global undo (when applicable) |
+|-------|---------|------------------------------|
+| **recordPass** / **overdubPass** | `Loop::passes` capture passes (chunk refs) | **RecordPassAdded** / **OverdubPassAdded** (disable pass on undo) |
+| **editPass** | `Loop::passes.editPasses[]` (`EditPass` + `EditChange` + `NoteRef`) | **NoteEditPassClosed** (per closed **noteEditPass** batch) |
+| **NoteEditSession** | RAM `noteEditSession.store` while editing | `NoteEditSessionUndoStack` (before `saveNoteEditPass`) |
 
-- **`applyEdits(takes, edits)`** — playback/display materialization; takes unchanged by note edit.
-- **`closeNoteEditSpan()`** — overdub start + note-edit exit; pushes **`NoteEditSessionCommitted`** for all **Edit** ids in the span.
-- **SD v4 tail** — `edits[]` persisted after takes (`StorageLoopIo`); `autosaveIntervalMs` (5 min) + urgent flush on note-edit exit when dirty.
+- **`LoopPasses::materialize()`** — merge active capture passes, then overlay active **editPasses** (`EditApply`).
+- **`saveNoteEditPass()`** — one committed **editPass** row; may share a **noteEditPassIndex** batch.
+- **`closeNoteEditPass()`** — note-edit exit / overdub-while-editing boundary; pushes **NoteEditPassClosed** for all **editPass** ids in the closed batch.
+- **§0.6.1 record routing** — at most one **recordPass** per slot; a second record stop routes to **overdubPass** (`effectiveCapturePassPhase` in `sealCapture`).
+- **SD v4** — `StorageLoopIo` persists **passes** per pool slot (wire-compatible capture-pass encoding + **editPasses** tail); `autosaveIntervalMs` (5 min) + urgent flush on note-edit exit when dirty.
 
 **Future session names (not implemented):** **LoopEditSession**, **ControlChangeEditSession**; playback/jam session **TBD**.
 
@@ -62,10 +70,10 @@ flowchart LR
 | API | Cost | When |
 |-----|------|------|
 | `append` | O(1) amortized | Live capture, record path |
-| `adoptAll(other)` | O(chunks) | Record stop: empty committed → move capture chunks in |
-| `mergeFrom(other)` | O(events) | Overdub stop: two-index merge into new chunk list (no flatten) |
+| `detachChunksTo` | O(chunks) | `sealCapture` — move capture chunks into `pendingCapturePass_` |
+| `adoptChunkIds` / `adoptAll` | O(chunks) | Stop finalize, load, undo restore paths |
 | `cloneShared()` | O(events) | Undo restore (deep copy on apply) |
-| `flatten` / `loadFromFlat` | O(events) | SD save/load, legacy edit paths |
+| `flatten` / `loadFromFlat` | O(events) | SD save/load, materialize, cold validate |
 
 **Copy-on-write wrapper (`CowLoopEventStore`):**
 
@@ -79,15 +87,16 @@ flowchart LR
 
 **Files:** `include/Loop.h`, `src/Loop.cpp`, `src/Track.cpp`
 
-1. **`beginCapture(Record | Overdub)`** — clears `captureStore`, sets `capturePhase`.
-2. **`appendCaptureEvent`** — writes to `captureStore`; dedupes near-duplicates and (on overdub) against committed baseline in a tick window.
-3. **`commitCapture`** at record/overdub stop:
-   - Empty committed → `adoptAll(captureStore)` (moves chunks, no full copy).
-   - Non-empty → `mergeFrom(captureStore)` (tick-sorted chunk merge, no flat vectors).
-   - Calls `invalidatePlaybackCaches()` only (no `syncFlatToStore`).
-4. **`discardCapture`** — used when undoing an **open** overdub capture (session still open).
+1. **`beginCapture(Record | Overdub)`** — clears `capture.store`, sets `capture.phase`.
+2. **`appendCaptureEvent`** — writes to `capture.store`; dedupes near-duplicates and (on overdub) against merged capture passes in a tick window.
+3. **`commitCapturePass`** at record/overdub stop:
+   - **`sealCapture`** — wrap-window finalize on record capture; detach chunks into **`pendingCapturePass_`** (routes record vs overdub via `effectiveCapturePassPhase`).
+   - **`publishPendingCapturePass`** — append to **recordPass** or **overdubPasses[]**; clear live capture.
+   - On publish: **`finalizeLoopAtStop`** + **`pushRecordPassAdded`** / **`pushOverdubPassAdded`** on global undo stack.
+4. **`discardCapture`** — undo open overdub capture (session still open).
+5. **`discardPendingCapturePass`** — rollback failed seal/publish.
 
-After commit, **`finalizeLoopAtStop`** runs (see below). Loop length is already set on record stop before commit/validate; overdub stop uses playhead close tick.
+After commit, **`finalizeLoopAtStop`** runs (see below). Loop length is set on record stop before commit/validate; overdub stop uses playhead close tick.
 
 ---
 
@@ -101,20 +110,21 @@ There are **three separate** “note correctness” mechanisms; do not conflate 
 
 Runs on **every** record stop and overdub stop (after `loopLengthTicks` is known):
 
-- Operates on **`committedEvents.mutStore()`** (chunk store) — does **not** call `loop.midiEvents()` or `syncFlatToStore()` on the stop hot path.
+- **`flattenActiveCapturePasses`** into a temp store (active **recordPass** + **overdubPasses** only — no edit overlay).
 - Flushes `pendingNotes` via `store.append(NoteOff(...))`.
 - Calls `LoopStopFinalize::finalizeWrapWindowOnStore` on the **head + tail 1-bar window** (default `wrapWindow = TICKS_PER_BAR`):
   - Pairs tail note-ons with head note-offs for **wrapped** notes (head-window scan only).
   - Appends synthetic note-offs for **open tail** note-ons still sounding at stop.
-- Uses `loop.invalidatePlaybackCaches()` when events change (playback order + note cache only).
+- Writes back via **`commitStopFinalizeFromStore`** (rebuilds the just-published capture pass chunk list).
+- Uses `loop.invalidatePlaybackCaches()` when events change.
 - Sets `deferredFullMidiValidate = true` for later idle pass.
-- Does **not** flatten, sort, or rebuild the full chunk list on stop.
+- Does **not** run full-loop sort/validate on stop.
 
 ### 2. Cold full pass — orphaned pair cleanup
 
 **Files:** `Track::validateAndCleanupMidiEvents`, `Track::processDeferredIdleMaintenance`
 
-Full-loop pass over `loop.midiEvents()` (flat):
+Full-loop pass over `loop.midiEvents()` (materialized flat):
 
 - Sorts by tick; note-offs before note-ons at equal tick.
 - Removes orphaned note-ons/offs (LIFO for duplicate note-ons).
@@ -133,60 +143,64 @@ Full-loop pass over `loop.midiEvents()` (flat):
 
 **Files:** `src/Utils/NoteUtils.cpp`, tests in `test/test_noteutils_reconstruct/`
 
-`NoteUtils::reconstructNotes(events, loopLength)` builds **DisplayNote** segments for piano roll / LEDs. It discards note-ons at or beyond `loopLength` and wraps note-offs for UI — see [`NOTE_WRAPPING_LOGIC.md`](NOTE_WRAPPING_LOGIC.md). It does **not** write back to `committedEvents`.
+`NoteUtils::reconstructNotes(events, loopLength)` builds **DisplayNote** segments for piano roll / LEDs. It discards note-ons at or beyond `loopLength` and wraps note-offs for UI — see [`NOTE_WRAPPING_LOGIC.md`](NOTE_WRAPPING_LOGIC.md). It does **not** write back to committed passes or `editFlat_`.
 
 ---
 
-## Undo: two stacks, one button
+## Undo: global stack + in-edit session
 
-**Files:** `src/TrackUndo.cpp`, `src/MidiButtonActions.cpp`, `src/ButtonManager.cpp`, `src/Track.cpp`
+**Files:** `src/TrackUndo.cpp`, `src/MidiButtonActions.cpp`, `src/ButtonManager.cpp`, `src/Track.cpp`, `include/GlobalUndoStack.h`
 
-### Overdub / record undo (`midiHistory` + `overdubGeomHistory`)
+### Global undo (`Track::undoStack` / `GlobalUndoStack`)
 
-Snapshots are **`shared_ptr<const LoopEventStore>`** (shared ref on push; deep copy on restore) plus geometry `{loopLengthTicks, startLoopTick, loopStartTick}`.
+| `UndoEntryKind` | Push | Undo action |
+|-----------------|------|-------------|
+| **RecordPassAdded** / **OverdubPassAdded** | `commitCapturePass` publish | `setCapturePassState(Disabled)` |
+| **NoteEditPassClosed** | `closeNoteEditPass` | `disableEditPasses(ids)` |
+| **ClearSlot** | long-press clear (`pushClearTrackSnapshot`) | restore `beforeSnapshot` + geometry + track state |
+| **NoteEditCommit** | `pushUndoSnapshot` (legacy full-loop snapshot path) | restore `beforeSnapshot` + geometry |
+| **LoopBoundaryChange** | loop-start edit | restore prior loop start/length |
 
-**Fresh take from empty (clear → record → overdub):**
+**Open overdub capture:** if `capture.phase == Overdub` and capture non-empty, undo discards live capture (`discardCapture`) without popping the stack.
+
+**Fresh record → overdub example:**
 
 | Step | Action | Stack after |
 |------|--------|-------------|
-| Record start (empty) | Zero geometry; `pushUndoSnapshot` (empty preroll) | 1 snapshot |
-| Record stop | `establishRecordStopBaseline` — keep empty preroll, push record baseline | 2 snapshots |
-| Overdub start | `beginOverdubSession` only (**no** extra snapshot) | 2 snapshots |
-| Overdub stop | `endOverdubSession` | 2 snapshots |
-| Undo 1 | Restore record baseline (drops overdub) | 1 snapshot |
-| Undo 2 | Restore empty preroll → `TRACK_EMPTY`, length 0 | 0 snapshots |
+| Record stop (publish) | `pushRecordPassAdded` | 1 entry |
+| Overdub stop (publish) | `pushOverdubPassAdded` | 2 entries |
+| Undo 1 | Disable last overdub pass | 1 entry (cursor) |
+| Undo 2 | Disable record pass → empty slot | 0 entries (cursor) |
 
-Loaded loop with no preroll: record stop pushes one baseline; overdub undo removes overdub only.
+`beginOverdubSession` closes an open **noteEditPass** when entering overdub while editing; it does **not** push an extra capture-pass undo entry.
 
-**Important:** undo history pushes **`shareForSnapshot()`** (O(1)); **`restoreFromSnapshot`** always **`cloneShared()`** so live edits never alias restored state.
+**Important:** snapshot entries push **`shareForSnapshot()`** (O(1)); **`restoreFromSnapshot`** always **`cloneShared()`** so live edits never alias restored state.
 
-### Clear-slot undo (`clearMidiHistory` + length/state deques)
+### In-edit session undo (`NoteEditSessionUndoStack`)
 
-Pushed on **long-press clear** before `Track::clear()`. Restores pre-clear slot content via chunk restore (not flat-only).
+While **NoteEditSession** is active, `handleUndo` / `handleRedo` prefer session undo (`NoteEditSession undo` / `redo` logs) before the global stack.
 
-**Routing (MIDI record double-tap → `handleUndo`):**
+### Routing (`handleUndo`)
 
-1. **Overdub undo** if `canUndo(track)` (midi history non-empty) — **wins over clear undo**
-2. Else **clear undo** if `clearMidiHistory` non-empty
+1. **NoteEditSession** undo if active and session stack non-empty
+2. **Global undo** (`undoOverdub` — any `UndoEntryKind` at cursor)
+3. **Clear-slot undo** (`canUndoClearTrack` — top entry is **ClearSlot**)
 
-**Clear undo is discarded** when a **new recording starts** (`startRecording` → `loop.clearClearUndoStacks()`). A clear→record→overdub session must not restore the pre-clear loop on undo.
+Hardware **Button A double-press** calls `undoOverdub` directly. MIDI record double-tap uses `handleUndo()`.
 
-Hardware **Button A double-press** calls `undoOverdub` directly (no clear precedence). MIDI and slot-scoped undo use `handleUndo()`.
-
-Phase 1 session markers (`overdubSessionOpen`, baseline event count) avoid a second full snapshot at overdub entry; see plan doc above.
+**Slot clear** prunes global undo entries for that slot (`clearUndoHistoryForSlot` in `Track::clear()`).
 
 ---
 
 ## SD persistence
 
-**File:** `src/StorageManager.cpp` (format v3)
+**Files:** `src/StorageManager.cpp`, `include/StorageLoopIo.h`, `src/StorageLoopIo.cpp` (format **v4**)
 
-- On disk, loop events and undo snapshots are still **flat `MidiEvent` arrays** (count + bytes).
-- In RAM, committed loop and undo history use **chunk stores**; save path **flattens**; load path **`loadFromFlat`** into new stores.
+- Per-slot loop pool entries persist **`LoopPasses`** (capture passes + **editPasses** tail) via `writeLoopPersisted` / `readLoopPersisted`.
+- On-wire capture rows use legacy **take-shaped** fields (`PersistedCapturePassWire`) for backward compatibility; RAM uses **recordPass** / **overdubPass**.
+- Global undo stack is persisted in v4 (magic + entries).
 - After load, **`validateAndCleanupMidiEvents()`** runs once per slot with events.
-- Undo snapshot save/load: flatten each `MidiSnapshotRef`, rebuild `LoopEventStore` on load.
-
-SD schema has not been bumped for chunking; chunking is an in-memory representation only.
+- Chunk IDs are **in-RAM only** until a format version bump; save/load flattens chunk contents through the persisted snapshot path.
 
 ---
 
@@ -201,7 +215,7 @@ SD schema has not been bumped for chunking; chunking is an in-memory representat
 
 **Do not** add `MemoryMonitor` or full-loop validation on record/overdub stop hot paths. Idle maintenance, deferred SD save (`processDeferredSaveState`), and `HotPathTelemetry` deferred summary are wired in `main()` — save and full validate run only when **no** track is playing/recording/overdubbing.
 
-Record stop no longer calls `queueDeferredRecordRevts()` (removed from the hot path). `SC_REC_FLUSH_PENDING_REVTS` in `main()` only emits previously queued REVTs. HITL often reports `record_stored_revt_missing` while otherwise passing. Non-`SESSION_CAPTURE` builds stub all `#CAP` / REVT macros.
+Record stop calls `queueDeferredRecordRevts()` after a published commit. Non-`SESSION_CAPTURE` builds stub all `#CAP` / REVT macros.
 
 ---
 
@@ -212,6 +226,10 @@ Record stop no longer calls `queueDeferredRecordRevts()` (removed from the hot p
 | `test/test_loop_event_store` | Chunk append, adopt, merge, **restore deep copy** |
 | `test/test_loop_stop_finalize` | Wrap-window synthetic offs, playhead close tick |
 | `test/test_noteutils_reconstruct` | Display note pairing vs loop length |
+| `test/test_take_capture` | Capture pass seal/publish, record vs overdub routing |
+| `test/test_loop_take_survival` | Pass timeline survives rematerialize and stop finalize |
+| `test/test_storage_loop_io` | SD v4 pass round-trip |
+| `test/test_edit_apply` | **editPasses** overlay via `applyEditChangeList` |
 | `test/test_redo_functionality` | Undo/redo stacks (host `Track`; listed in `test_ignore` for native — run on Teensy env if needed) |
 
 Run: `pio test -e native` from project root.
@@ -224,12 +242,14 @@ Run: `pio test -e native` from project root.
 |---------|----------------|
 | Chunk pool + store | `LoopEventStore.h/.cpp` |
 | COW + flat cache | `LoopEventBuffer.h` |
+| Passes + materialize | `LoopPasses.h/.cpp`, `EditApply.cpp` |
 | Loop capture/commit | `Loop.h`, `Loop.cpp` |
+| Note edit session | `EditManager.cpp`, `NoteEditSession.h` |
 | Stop + deferred validate | `Track.cpp` (`finalizeLoopAtStop`, `validateAndCleanupMidiEvents`, `processDeferredIdleMaintenance`) |
 | Wrap-window finalize | `Utils/LoopStopFinalize.h` |
-| Undo | `TrackUndo.cpp`, `TrackUndo.h` |
-| Undo routing | `MidiButtonActions.cpp` (`handleUndo`), `ButtonManager.cpp` (Button A double → `undoOverdub`) |
-| SD | `StorageManager.cpp` |
+| Undo | `TrackUndo.cpp`, `GlobalUndoStack.h` |
+| Undo routing | `MidiButtonActions.cpp` (`handleUndo`), `ButtonManager.cpp` |
+| SD v4 passes I/O | `StorageLoopIo.h/.cpp`, `StorageManager.cpp` |
 | Main idle hooks | `main.cpp` |
 | Display notes | `Utils/NoteUtils.cpp` |
 
@@ -239,7 +259,8 @@ Run: `pio test -e native` from project root.
 
 1. **Using shallow copy for undo restore** — always `cloneShared()` / `restoreFromSnapshot`; never `LoopEventStore(*snap)`.
 2. **Full `validateAndCleanupMidiEvents` on stop** — replaced by `finalizeLoopAtStop` + idle deferral for long loops.
-3. **Clear undo shadowing overdub undo** — check `handleUndo` order and `clearClearUndoStacks()` on record start.
+3. **Treating `midiEvents()` as canonical storage** — **passes** + **NoteEditSession.store** are source of truth; `editFlat_` is derived.
 4. **Editing only flat cache** — after `midiEvents()` mutation, call `invalidateCaches()` so chunks and note cache stay consistent.
-5. **Assuming SD stores chunks** — flatten on save; do not read/write chunk IDs to disk without a format version bump.
+5. **Assuming SD stores chunk IDs** — v4 persists pass-shaped snapshots; do not read/write chunk IDs to disk without a format version bump.
 6. **Confusing `reconstructNotes` with storage validation** — UI wrapping ≠ committed event cleanup.
+7. **Reintroducing Take / `takes[]` / `commitTake()` names** — use **passes**, `commitCapturePass()`, **RecordPassAdded** / **OverdubPassAdded**.

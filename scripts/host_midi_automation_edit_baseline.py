@@ -2771,6 +2771,42 @@ def _verify_split_victim_round_trip(
     )
 
 
+def _count_note_edit_pass_undo_logs(lines: list[str]) -> int:
+    return (
+        _count_serial_substrings(lines, "NoteEditSession undo")
+        + _count_serial_substrings(lines, "Note edit pass undone")
+        + _count_serial_substrings(lines, "Note edit span undone")
+        + _count_serial_substrings(lines, "Overdub undone")
+    )
+
+
+def _verify_m8_edit_pass_commit(lines: list[str]) -> dict[str, object]:
+    """Exactly one note-edit pass close between enter and exit note edit."""
+    enter_idx: Optional[int] = None
+    exit_idx: Optional[int] = None
+    for i, line in enumerate(lines):
+        if enter_idx is None and "entered note edit mode" in line:
+            enter_idx = i
+        if enter_idx is not None and "exited edit mode" in line:
+            exit_idx = i
+            break
+    issues: list[str] = []
+    if enter_idx is None or exit_idx is None:
+        issues.append("m8_pass:enter_or_exit_missing")
+        return {"ok": False, "committed_count": 0, "issues": issues}
+    # Pass close is logged on exit (after "exited edit mode" line) — include a short tail.
+    window_end = min(len(lines), exit_idx + 9)
+    window = lines[enter_idx:window_end]
+    committed_count = sum(
+        1
+        for w in window
+        if "NoteEditPassClosed" in w or "NoteEditSessionCommitted" in w
+    )
+    if committed_count != 1:
+        issues.append(f"m8_pass:committed_count:{committed_count}!=1")
+    return {"ok": not issues, "committed_count": committed_count, "issues": issues}
+
+
 def _verify_edit_serial(
     lines: list[str],
     *,
@@ -2781,6 +2817,7 @@ def _verify_edit_serial(
     verify_move_display: bool = True,
     verify_long_over_short_pitch: bool = True,
     verify_note_lengths: bool = True,
+    verify_m8_edit_pass: bool = True,
     record_layout: Optional[RecordLayout] = None,
 ) -> dict[str, object]:
     revt_ticks = _extract_revt_note_on_ticks(lines)
@@ -2791,13 +2828,10 @@ def _verify_edit_serial(
             issues.append(f"missing_marker:{m}")
     if len(revt_ticks) < min_revt_count:
         issues.append(f"revt_count_low:{len(revt_ticks)}<{min_revt_count}")
-    undo_log_count = (
-        _count_serial_substrings(lines, "NoteEditSession undo")
-        + _count_serial_substrings(lines, "Note edit span undone")
-        + _count_serial_substrings(lines, "Overdub undone")
-    )
+    undo_log_count = _count_note_edit_pass_undo_logs(lines)
     redo_log_count = (
         _count_serial_substrings(lines, "NoteEditSession redo")
+        + _count_serial_substrings(lines, "Note edit pass redone")
         + _count_serial_substrings(lines, "Overdub redone")
     )
     if undo_log_count < min_undo_logs:
@@ -2854,6 +2888,12 @@ def _verify_edit_serial(
         if not note_lengths.get("ok"):
             issues.extend(note_lengths.get("issues", []))
 
+    m8_edit_pass: Optional[dict[str, object]] = None
+    if verify_m8_edit_pass:
+        m8_edit_pass = _verify_m8_edit_pass_commit(lines)
+        if not m8_edit_pass.get("ok"):
+            issues.extend(m8_edit_pass.get("issues", []))
+
     return {
         "ok": len(issues) == 0,
         "issues": issues,
@@ -2871,6 +2911,7 @@ def _verify_edit_serial(
         "split_overlap_note_round_trip": split_overlap_note_round_trip,
         "split_victim_round_trip": split_overlap_note_round_trip,
         "note_lengths": note_lengths,
+        "m8_edit_pass": m8_edit_pass,
     }
 
 
@@ -3349,6 +3390,24 @@ def main() -> int:
         dest="long_over_short_pitch_case",
         help="Skip long-over-short pitch restore scenario",
     )
+    parser.add_argument(
+        "--require-m8-pass-verify",
+        action="store_true",
+        default=True,
+        help="Require exactly one NoteEditSessionCommitted between enter/exit edit (default on)",
+    )
+    parser.add_argument(
+        "--no-m8-pass-verify",
+        action="store_false",
+        dest="require_m8_pass_verify",
+        help="Skip M8 edit-pass commit count check (pre-M8 capture replay)",
+    )
+    parser.add_argument(
+        "--require-m8-span-verify",
+        action="store_true",
+        dest="require_m8_pass_verify",
+        help=argparse.SUPPRESS,
+    )
     args = parser.parse_args()
 
     record_fixture = (
@@ -3626,6 +3685,7 @@ def main() -> int:
                 verify_long_over_short_pitch=(
                     standard_edit_fixture and args.long_over_short_pitch_case
                 ),
+                verify_m8_edit_pass=args.require_m8_pass_verify,
                 record_layout=record_layout if standard_edit_fixture else None,
             )
             serial_verification = {
@@ -3648,6 +3708,7 @@ def main() -> int:
             "post_exit_undo_redo": args.post_exit_undo_redo,
             "undo_redo_delay_ms": args.undo_redo_delay_ms,
             "long_over_short_pitch_case": args.long_over_short_pitch_case,
+            "require_m8_pass_verify": args.require_m8_pass_verify,
             "fixture_note_count": len(record_fixture),
             "fixture_notes_sent": note_count,
             "record_layout": {

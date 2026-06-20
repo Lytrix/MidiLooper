@@ -10,19 +10,6 @@
 
 namespace {
 
-void collectActiveTakesSorted(const TakeVec& takes, std::vector<const Take*>& out) {
-  out.clear();
-  out.reserve(takes.size());
-  for (const Take& take : takes) {
-    if (take.state == TakeState::Active && !take.chunkRefs.empty()) {
-      out.push_back(&take);
-    }
-  }
-  std::sort(out.begin(), out.end(), [](const Take* a, const Take* b) {
-    return a->mergeSequence < b->mergeSequence;
-  });
-}
-
 uint32_t inferLoopLength(const MidiEventVec& events, uint32_t hint) {
   if (hint > 0) {
     return hint;
@@ -42,9 +29,6 @@ bool isNoteOffFor(const MidiEvent& evt, uint8_t channel, uint8_t note) {
   return evt.isNoteOff() && evt.channel == channel && evt.data.noteData.note == note;
 }
 
-/// A NoteRef identifies a single note by (channel, note, startTick, endTick): its note-on
-/// sits at startTick and its note-off at endTick. We resolve exactly one note-on and one
-/// note-off so an edit never bleeds onto a same-pitch overlap note that shares a tick.
 int findNoteOnIndex(const MidiEventVec& events, const NoteRef& ref) {
   for (size_t i = 0; i < events.size(); ++i) {
     if (isNoteOnFor(events[i], ref.channel, ref.note) && events[i].tick == ref.startTick) {
@@ -66,7 +50,6 @@ int findNoteOffIndex(const MidiEventVec& events, const NoteRef& ref, int skipInd
   return -1;
 }
 
-/// Resolve note-off for a NoteRef; exact end tick first, then LIFO pair from note-on.
 int findNoteOffForRef(const MidiEventVec& events, const NoteRef& ref) {
   const int onIndex = findNoteOnIndex(events, ref);
   if (onIndex < 0) {
@@ -98,7 +81,6 @@ void applyDeleteNote(MidiEventVec& events, const NoteRef& ref) {
   if (offIndex >= 0) {
     remove.push_back(offIndex);
   }
-  // Erase higher indices first so earlier ones stay valid.
   std::sort(remove.begin(), remove.end(), std::greater<int>());
   for (int idx : remove) {
     events.erase(events.begin() + idx);
@@ -238,6 +220,28 @@ bool noteRefSameIdentity(const NoteRef& a, const NoteRef& b) {
          a.endTick == b.endTick;
 }
 
+}  // namespace
+
+void applyEditChange(MidiEventVec& events, const EditChange& change, uint32_t loopLengthTicks) {
+  switch (change.type) {
+    case EditChangeType::DeleteNote:
+      applyDeleteNote(events, change.target);
+      break;
+    case EditChangeType::MoveNote:
+      applyMoveNote(events, change.target, change.newStartTick, change.newEndTick);
+      break;
+    case EditChangeType::ChangePitch:
+      applyChangePitch(events, change.target, change.newPitch);
+      break;
+    case EditChangeType::ChangeLength:
+      applyChangeLength(events, change.target, change.newEndTick, loopLengthTicks);
+      break;
+    case EditChangeType::AddNote:
+      applyAddNote(events, change);
+      break;
+  }
+}
+
 void applyEditChangeList(MidiEventVec& events, const EditChangeList& changes,
                          uint32_t loopLengthTicks) {
   NoteRef trackedBaseline{};
@@ -265,54 +269,5 @@ void applyEditChangeList(MidiEventVec& events, const EditChangeList& changes,
       trackedEnd = change.newEndTick;
       tracked = true;
     }
-  }
-}
-
-}  // namespace
-
-void applyEditChange(MidiEventVec& events, const EditChange& change, uint32_t loopLengthTicks) {
-  switch (change.type) {
-    case EditChangeType::DeleteNote:
-      applyDeleteNote(events, change.target);
-      break;
-    case EditChangeType::MoveNote:
-      applyMoveNote(events, change.target, change.newStartTick, change.newEndTick);
-      break;
-    case EditChangeType::ChangePitch:
-      applyChangePitch(events, change.target, change.newPitch);
-      break;
-    case EditChangeType::ChangeLength:
-      applyChangeLength(events, change.target, change.newEndTick, loopLengthTicks);
-      break;
-    case EditChangeType::AddNote:
-      applyAddNote(events, change);
-      break;
-  }
-}
-
-void applyEditsToFlat(const TakeVec& takes, const EditVec& edits, MidiEventVec& out,
-                      uint32_t loopLengthTicks) {
-  out.clear();
-  std::vector<const Take*> active;
-  collectActiveTakesSorted(takes, active);
-  for (const Take* take : active) {
-    LoopEventStore::appendFlattenedChunkIds(take->chunkRefs, out);
-  }
-
-  for (const Edit& edit : edits) {
-    if (edit.state != EditState::Active) {
-      continue;
-    }
-    applyEditChangeList(out, edit.changes, loopLengthTicks);
-  }
-}
-
-void applyEdits(const TakeVec& takes, const EditVec& edits, LoopEventStore& out,
-                uint32_t loopLengthTicks) {
-  MidiEventVec flat;
-  applyEditsToFlat(takes, edits, flat, loopLengthTicks);
-  out.clear();
-  if (!flat.empty()) {
-    out.loadFromFlat(flat);
   }
 }

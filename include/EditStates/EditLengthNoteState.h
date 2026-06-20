@@ -3,7 +3,7 @@
 
 #pragma once
 #include "EditNoteState.h"
-#include "Edit.h"
+#include "EditPass.h"
 
 // New state for editing the length of a note
 class EditLengthNoteState : public EditNoteState {

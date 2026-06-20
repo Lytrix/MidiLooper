@@ -57,8 +57,8 @@ public:
     const NoteEditSession& getNoteEditSession() const { return noteEditSession; }
     void openNoteEditSession(Track& track);
     void closeNoteEditSession(Track& track);
-    void closeNoteEditSpan(Track& track);
-    EditId commitEditAction(Track& track, EditChangeList changes);
+    void closeNoteEditPass(Track& track);
+    EditPassId commitEditAction(Track& track, EditChangeList changes);
     void pushSessionUndoBeforeMutation(Track& track);
     bool sessionUndo(Track& track);
     bool sessionRedo(Track& track);

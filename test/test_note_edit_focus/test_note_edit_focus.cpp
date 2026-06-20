@@ -7,12 +7,14 @@
 #include "../../src/Utils/NoteUtils.cpp"
 #include "../../src/NoteEditFocus.cpp"
 #include "../../src/EditApply.cpp"
+#include "../../src/LoopPasses.cpp"
 #include "../../src/LoopEventStore.cpp"
 #include "../../src/Loop.cpp"
 
 #include "NoteEditFocus.h"
 #include "EditApply.h"
-#include "Edit.h"
+#include "EditPass.h"
+#include "LoopPasses.h"
 #include "Loop.h"
 #include "LoopEventBuffer.h"
 #include "MidiEvent.h"
@@ -254,33 +256,32 @@ void test_build_pre_commit_changes_replay_lengthen_delete_pitch() {
   store.append(MidiEvent::NoteOff(680, 1, 60, 0));
   ChunkIdList refs;
   store.detachChunksTo(refs);
-  Take take{};
-  take.id = 1;
-  take.mergeSequence = 0;
-  take.state = TakeState::Active;
-  take.type = TakeType::Record;
-  take.chunkRefs = std::move(refs);
-  TakeVec takes;
-  takes.push_back(take);
+  RecordPass record{};
+  record.id = 1;
+  record.state = CapturePassState::Active;
+  record.chunkRefs = std::move(refs);
+  LoopPasses passes;
+  passes.recordPass = std::move(record);
 
-  EditVec edits;
   EditChange lengthen;
   lengthen.type = EditChangeType::ChangeLength;
   lengthen.target = {1, 60, 8, 104};
   lengthen.newEndTick = 680;
-  Edit pre{};
+  EditPass pre{};
   pre.id = 1;
-  pre.state = EditState::Active;
+  pre.kind = EditPassKind::NoteEdit;
+  pre.state = EditPassState::Active;
   pre.changes.push_back(lengthen);
-  edits.push_back(pre);
-  Edit post{};
+  passes.editPasses.push_back(pre);
+  EditPass post{};
   post.id = 2;
-  post.state = EditState::Active;
+  post.kind = EditPassKind::NoteEdit;
+  post.state = EditPassState::Active;
   post.changes = changes;
-  edits.push_back(post);
+  passes.editPasses.push_back(post);
 
   MidiEventVec flat;
-  applyEditsToFlat(takes, edits, flat, kLoopLength);
+  passes.materializeToFlat(flat, kLoopLength);
 
   int m0HomeOn = 0;
   int m0HomeOff = 0;
@@ -298,7 +299,7 @@ void test_build_pre_commit_changes_replay_lengthen_delete_pitch() {
 
 void test_reselect_keeps_commit_baseline_with_pending_length() {
   constexpr uint32_t kLoopLength = 1536;
-  TakeVec takes;
+  LoopPasses passes;
   LoopEventStore store;
   TEST_ASSERT_TRUE(store.append(MidiEvent::NoteOn(8, 5, 60, 100)));
   TEST_ASSERT_TRUE(store.append(MidiEvent::NoteOff(104, 5, 60, 0)));
@@ -306,15 +307,14 @@ void test_reselect_keeps_commit_baseline_with_pending_length() {
   TEST_ASSERT_TRUE(store.append(MidiEvent::NoteOff(680, 5, 60, 0)));
   ChunkIdList refs;
   store.detachChunksTo(refs);
-  Take take{};
-  take.id = 1;
-  take.state = TakeState::Active;
-  take.type = TakeType::Record;
-  take.chunkRefs = std::move(refs);
-  takes.push_back(take);
+  RecordPass record{};
+  record.id = 1;
+  record.state = CapturePassState::Active;
+  record.chunkRefs = std::move(refs);
+  passes.recordPass = std::move(record);
 
   MidiEventVec committed;
-  applyEditsToFlat(takes, EditVec{}, committed, kLoopLength);
+  passes.materializeToFlat(committed, kLoopLength);
 
   NoteEditFocus focus;
   rebuildNoteEditFocusFromStore(focus, committed, 5, kLoopLength, 0);

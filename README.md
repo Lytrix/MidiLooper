@@ -100,22 +100,28 @@ For more detail: [**Display**](docs/Guides/control-surface/Display.md).
 
 For more details on the logic: [loop start / length](docs/Guides/LOOP_START_EDITING.md), [jam phases](docs/Guides/jam-bar-step-phases.md), [note moves](docs/Guides/MOVE_NOTE_LOGIC.md), [fader state](docs/Guides/FADER_STATE_SYSTEM.md). A compact **Channel 16** listing lives under [**Config summary**](docs/Guides/MIDI_CONFIG_GUIDE.md#config-summary-default-droid-mapping) in the MIDI guide.
 
-State persistence uses storage **version 4** and saves all track/slot loop data (**Take** timeline per slot), per-slot enabled/muted flags, selected track, active slot per track, and slot-level undo/redo histories.
+State persistence uses storage **version 4** and saves all track/slot loop data (**passes** timeline per slot: record, overdub, and edit passes), per-slot enabled/muted flags, selected track, active slot per track, and slot-level undo/redo histories.
 
 ### Loop storage vocabulary (code)
 
-Each **loop slot** (`Loop`) separates live capture from committed performance layers:
+Each **loop slot** (`Loop`) separates live capture from committed timeline **passes**:
 
 | Term | Role |
 |------|------|
 | **Capture** | Live record/overdub buffer until stop |
-| **Take** | Committed capture (Record or Overdub); stored in `takes[]` with chunk refs |
-| **commitTake()** | Seal **Capture** into a new **Take** on record/overdub stop |
-| **TakeCommitted** | Global undo entry when a **Take** is committed |
-| **EditNoteState** | Base class for note-edit UI states (`EditSelectNoteState`, …); **`EditState`** is reserved for persisted edit metadata (M8) |
+| **passes** (`LoopPasses`) | Canonical timeline: **recordPass**, **overdubPasses[]**, **editPasses[]** |
+| **recordPass** / **overdubPass** | Committed capture from record or overdub stop |
+| **editPass** | One `saveNoteEditPass()` row in **passes.editPasses[]** |
+| **commitCapturePass()** | Seal **Capture** into **recordPass** or append **overdubPass** |
+| **RecordPassAdded** / **OverdubPassAdded** | Global undo when a capture pass commits |
+| **NoteEditPassClosed** | Global undo when a note-edit pass batch closes on exit |
+| **NoteEditSession** | Live note-edit RAM scope (`EditManager`; **EditChange** batches per **noteEditPassIndex**) |
+| **saveNoteEditPass()** | Persist an **EditChange** list into **passes.editPasses[]** |
+| **closeNoteEditPass()** | Flush a **noteEditPass** batch and push **NoteEditPassClosed** undo |
+| **EditNoteState** | Base class for note-edit UI states (`EditSelectNoteState`, …) |
 | **DebugSessionCapture** | Instrumented `#CAP` serial fixtures (`teensy41-capture-serial` build) |
 
-Note edit still uses a flat materialized bridge (`editFlat_`) until **M8 edit** ships (**Edit**, **NoteEditSession**, `saveEdit()`). Full storage rules: [`docs/Guides/LOOP_MIDI_STORAGE_AND_VALIDATION.md`](docs/Guides/LOOP_MIDI_STORAGE_AND_VALIDATION.md) (guide refresh in progress with **m8-edit**).
+Committed **passes** materialize via `LoopPasses::materialize()` for playback and display; live note edit reads/writes **NoteEditSession.store**. Full storage rules: [`docs/Guides/LOOP_MIDI_STORAGE_AND_VALIDATION.md`](docs/Guides/LOOP_MIDI_STORAGE_AND_VALIDATION.md).
 
 **Read the numbers first:** [`include/MidiConfig.h`](include/MidiConfig.h) — channels, notes, CCs, LED bases.
 

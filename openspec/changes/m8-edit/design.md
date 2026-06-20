@@ -49,16 +49,16 @@ via `syncEditFlatToEpochs`. M8 aligns vocabulary and splits **Capture / Take** (
 |------|---------|
 | **`commitTake()`** | Seal **Capture** → append **Take** (was publish epoch) |
 | **`saveEdit()`** | Append one **Edit** (with **EditChange** list) to `edits[]` |
-| **`closeNoteEditSpan()`** | Boundary flush before overdub or on note-edit exit |
+| **`closeNoteEditPass()`** | Boundary flush before overdub or on note-edit exit (was `closeNoteEditSpan()`) |
 
 ### Global undo kinds
 
 | Kind | Reverts |
 |------|---------|
 | **`TakeCommitted`** | One overdub/record **Take** (was `EpochPublished`) |
-| **`NoteEditSessionCommitted`** | All **Edit** ids in the closed **NoteEditSession** span |
+| **`NoteEditSessionCommitted`** | All **Edit** ids in the closed **edit pass** |
 
-Bulk undo after note-edit exit is **per span** (all **Edits** saved during that span), not per
+Bulk undo after note-edit exit is **per edit pass** (all **Edits** saved during that pass), not per
 individual **Edit** on the global stack. In-session undo before **saveEdit** uses
 **NoteEditSessionUndoStack** only.
 
@@ -69,12 +69,12 @@ individual **Edit** on the global stack. In-session undo before **saveEdit** use
 Loop
 ├── capture           Capture { store, phase }
 ├── takes[]           Take { id, kind, state, chunks }
-└── edits[]           Edit { id, spanIndex, state, changes[] }
+└── edits[]           Edit { id, editPassIndex, state, changes[] }
 
 NoteEditSession (EditManager, while in note edit)
 ├── store             LoopEventStore — materialized view (takes + active edits)
 ├── undoStack         NoteEditSessionUndoStack
-└── spanIndex         increments at span boundary (overdub while editing)
+└── editPassIndex     increments at edit-pass boundary (overdub while editing)
 ```
 
 **Lifecycle:**
@@ -82,7 +82,7 @@ NoteEditSession (EditManager, while in note edit)
 ```
 Capture  ──commitTake──►  Take
 NoteEditSession  ──saveEdit──►  Edit { EditChange[] }
-NoteEditSession  ──closeNoteEditSpan──►  NoteEditSessionCommitted (global undo)
+NoteEditSession  ──closeNoteEditPass──►  NoteEditSessionCommitted (global undo)
 ```
 
 ## Goals / Non-Goals
@@ -92,7 +92,7 @@ NoteEditSession  ──closeNoteEditSpan──►  NoteEditSessionCommitted (glo
 - **`saveEdit()`** → **Edit** with **EditChange** list; **`EditId`** for persistence/undo
 - **NoteEditSession** with **`store`** (not “working”); **NoteEditSessionUndoStack**
 - **`applyEdits(takes, edits)`** for playback/display
-- **Span boundaries** at overdub start and note-edit exit; **`closeNoteEditSpan()`**
+- **Edit pass boundaries** at overdub start and note-edit exit; **`closeNoteEditPass()`**
 - **`TakeCommitted`** / **`NoteEditSessionCommitted`** global undo
 - SD **v4** extended with `edits[]`; autosave rules (§5)
 - Rename **`SessionCapture`** → **`DebugSessionCapture`** if not done in **m8-rename**
@@ -122,7 +122,7 @@ Implemented in **`m8-rename`**, not this change:
 ```cpp
 struct Edit {
   EditId id;
-  uint8_t spanIndex;       // which NoteEditSession span (overdub boundary)
+  uint8_t editPassIndex;   // which NoteEditSession edit pass (overdub boundary)
   EditState state;         // Active | Disabled — parallel TakeState
   EditChangeList changes;  // ordered; multi-change saves (move+overlap deletes)
 };
@@ -139,7 +139,7 @@ struct Edit {
 struct NoteEditSession {
   LoopEventStore store;
   NoteEditSessionUndoStack undoStack;
-  uint8_t spanIndex;
+  uint8_t editPassIndex;
 };
 ```
 
@@ -150,16 +150,16 @@ struct NoteEditSession {
 
 ### 4. Edit pass boundaries — not “segment” (locked)
 
-> **Vocabulary update (2026-06-19):** **edit pass** replaces **span** in prose. See
-> [m8-pass-vocabulary/design.md](../m8-pass-vocabulary/design.md). Shipped code still uses
-> `spanIndex` / `closeNoteEditSpan()` until rename PR.
+> **Vocabulary (shipped):** **edit pass** replaces **span** in prose and identifiers. See
+> [m8-pass-vocabulary/design.md](../m8-pass-vocabulary/design.md). Code uses
+> `editPassIndex` / `closeNoteEditPass()`.
 
 There is **no user-selected segment** on the timeline. An **edit pass** = contiguous period of
 **NoteEditSession** between **boundary events**:
 
 | Boundary | Action |
 |----------|--------|
-| Overdub start (while in note edit) | **`closeNoteEditPass()`** (legacy: `closeNoteEditSpan()`) → **NoteEditSessionCommitted** → capture |
+| Overdub start (while in note edit) | **`closeNoteEditPass()`** → **NoteEditSessionCommitted** → capture |
 | Overdub stop (still in note edit) | **TakeCommitted** → rematerialize **NoteEditSession.store** → `editPassIndex++` |
 | Note edit exit | **`closeNoteEditPass()`** → urgent SD if dirty |
 
@@ -183,7 +183,7 @@ MIDI undo in note edit → **NoteEditSessionUndoStack** only.
 | Periodic | `autosaveIntervalMs` (default 5 min); defer while capture active |
 | Note edit exit + dirty | Urgent flush in post-MIDI main-loop slice (overdub OK) |
 
-**Compaction:** prefer affected tick/bar span + span close/autosave — not raw change count.
+**Compaction:** prefer affected tick/bar **compaction window** + edit-pass close/autosave — not raw change count.
 
 ### 7. Retire editFlat bridge
 
@@ -195,14 +195,14 @@ Remove collapse flush; **NoteEditSession.store** replaces **editFlat_** paths.
 |------|------------|
 | EditNoteState rename churn | Done in **m8-rename** before Edit storage |
 | NoteRef drift | Ref at **saveEdit**; apply changes in order |
-| Global stack depth | One **NoteEditSessionCommitted** per span, not per **Edit** |
+| Global stack depth | One **NoteEditSessionCommitted** per edit pass, not per **Edit** |
 | SessionCapture confusion | **DebugSessionCapture** rename |
 
 ## Migration Plan
 
 1. **`m8-rename`** — vocabulary only (`/opsx:apply m8-rename`, native green, merge)
 2. **Edit**, **EditChange**, **NoteRef**, **NoteEditSession**, **saveEdit**, apply engine
-3. Span boundaries + **NoteEditSessionCommitted**
+3. Edit pass boundaries + **NoteEditSessionCommitted**
 4. Native tests + docs
 5. Archive → **timeline-takes**
 

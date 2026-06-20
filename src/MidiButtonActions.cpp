@@ -651,8 +651,8 @@ void MidiButtonActions::handleCreateNoteAtBracket() {
     add.type = EditChangeType::AddNote;
     add.addedEvents.push_back(created[0]);
     add.addedEvents.push_back(created[1]);
-    const EditId id = editManager.commitEditAction(track, EditChangeList{add});
-    if (id == kInvalidEditId) {
+    const EditPassId id = editManager.commitEditAction(track, EditChangeList{add});
+    if (id == kInvalidEditPassId) {
         logger.info("Create note failed (edit session commit rejected)");
         return;
     }

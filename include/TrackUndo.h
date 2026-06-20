@@ -9,35 +9,14 @@
 #include "MidiEvent.h"
 #include "Utils/MemoryPool.h"
 
-/**
- * @class TrackUndo
- * @brief Manages undo history for track MIDI events.
- *
- * This class maintains snapshots of a Track's MIDI event list to support
- * undoable operations. Typical usage:
- *   - pushUndoSnapshot(track): record current MIDI state before an overdub or edit.
- *   - undoOverdub(track): restore the last snapshot and remove it from history.
- *   - popLastUndo(track): discard the last snapshot without restoring (e.g., if an edit
- *     yields no net changes using a hash).
- *   - getUndoCount / canUndo: query available undo snapshots.
- *
- * For full-track clear operations, separate clear-track snapshots are managed via
- * pushClearTrackSnapshot and undoClearTrack.
- *
- * Redo functionality is provided for both overdub and clear operations:
- *   - redoOverdub(track): restore the next redo snapshot for overdub operations.
- *   - redoClearTrack(track): restore the next redo snapshot for clear operations.
- *
- * Internally, snapshots are stored in deques of PooledMidiEventVector for efficient
- * push/pop operations and reduced memory fragmentation.
- */
 class TrackUndo {
 public:
     friend class Track;
-    // Undo overdub
     static void pushUndoSnapshot(Track& track);
-    static void pushCommittedTake(Track& track, uint8_t slotIndex, TakeId takeId);
-    static void pushNoteEditSessionCommitted(Track& track, uint8_t spanIndex, EditIdList editIds);
+    static void pushRecordPassAdded(Track& track, uint8_t slotIndex, PassId passId);
+    static void pushOverdubPassAdded(Track& track, uint8_t slotIndex, PassId passId);
+    static void pushNoteEditPassClosed(Track& track, uint8_t noteEditPassIndex,
+                                       EditPassIdList editPassIds);
     static void beginOverdubSession(Track& track);
     static void endOverdubSession(Track& track);
     static void undoOverdub(Track& track);
@@ -50,24 +29,15 @@ public:
     static size_t clearUndoHistoryForSlot(Track& track, uint8_t slotIndex);
     static const MidiEventVec& peekLastMidiSnapshot(const Track& track);
     static const MidiEventVec& getCurrentMidiSnapshot(const Track& track);
-    // Undo clear
     static void pushClearTrackSnapshot(Track& track);
     static void undoClearTrack(Track& track);
     static void redoClearTrack(Track& track);
     static bool canUndoClearTrack(const Track& track);
     static bool canRedoClearTrack(const Track& track);
-    
-    // Loop start point undo/redo
     static void pushLoopStartSnapshot(Track& track);
     static void undoLoopStart(Track& track);
     static void redoLoopStart(Track& track);
     static bool canUndoLoopStart(const Track& track);
     static bool canRedoLoopStart(const Track& track);
-    
-    /**
-     * @brief Compute a simple rolling hash (FNV-1a) over the track's current MIDI events
-     * @param track The track to hash
-     * @return 32-bit hash of current midiEvents
-     */
     static uint32_t computeMidiHash(const Track& track);
-}; 
+};
