@@ -74,6 +74,16 @@ flowchart LR
 | `adoptChunkIds` / `adoptAll` | O(chunks) | Stop finalize, load, undo restore paths |
 | `cloneShared()` | O(events) | Undo restore (deep copy on apply) |
 | `flatten` / `loadFromFlat` | O(events) | SD save/load, materialize, cold validate |
+| `usedChunkCount` / `freeChunkCount` | O(1) | Pool-budget admission and undo pressure |
+| `canAllocChunkWithReserve()` | O(1) | `sealCapture` — true when `freeChunkCount() > CHUNK_RESERVE` |
+
+**Pool admission (pool-budget):**
+
+- **`PassConfig::CHUNK_RESERVE`** (default 16) — chunks held back for playback headroom.
+- **`sealCapture`** returns **`SealOutcome::PoolExhausted`** when `canAllocChunkWithReserve()` is false; there is **no** fixed `capturePassCount` cap.
+- **`saveNoteEditPass`** checks **`Config::HEAP_RESERVE_BYTES`** (32 KiB) plus estimated **EditChange** list size before appending an **editPass** row.
+- **`reclaimUnreferencedDisabledPasses`** frees **Disabled** capture/edit pass rows whose ids are not pinned by any **`GlobalUndoStack`** entry (`include/PassReclaim.h`, `TrackManager::reclaimUnreferencedDisabledPasses`). Runs on idle (`main.cpp`), after undo trim / redo-branch drop, and once on seal/edit admission retry.
+
 
 **Copy-on-write wrapper (`CowLoopEventStore`):**
 
@@ -188,6 +198,13 @@ While **NoteEditSession** is active, `handleUndo` / `handleRedo` prefer session 
 Hardware **Button A double-press** calls `undoOverdub` directly. MIDI record double-tap uses `handleUndo()`.
 
 **Slot clear** prunes global undo entries for that slot (`clearUndoHistoryForSlot` in `Track::clear()`).
+
+**Global undo depth (pool-budget):**
+
+- Target depth **`Config::PREFERRED_UNDO_DEPTH`** (99) when chunk reserve and heap reserve are satisfied.
+- **`trimUndoStackForMemory`** drops oldest entries under pressure (`freeChunkCount() <= CHUNK_RESERVE`, heap below **`HEAP_RESERVE_BYTES`**, or depth above preferred with pressure) while keeping at least **`MIN_UNDO_DEPTH`** (8).
+- **`ABSOLUTE_MAX_UNDO_ENTRIES`** (512) is a hard overflow rail.
+- After each trim, redo-branch drop, or slot prune: **`reclaimUnreferencedDisabledPasses`** so disabled pass chunks and **ClearSlot** snapshot clones can be freed.
 
 ---
 

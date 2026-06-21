@@ -2,12 +2,11 @@
 //  Licensed under the PolyForm Noncommercial 1.0.0
 
 #include "Utils/MemoryMonitor.h"
+#if defined(__IMXRT1062__)
 #include "Utils/ExtMemAllocator.h"
 #include "Utils/MemoryPool.h"
 #include "Logger.h"
 #include <Arduino.h>
-
-#if defined(__IMXRT1062__)  // Teensy 4.x
 
 #include <smalloc.h>
 
@@ -152,6 +151,38 @@ void logStatusAtAddedNotes(uint32_t addedNoteOns, size_t loopEventCount,
     logger.log(CAT_GENERAL, LOG_WARNING, "[Memory] Low heap - consider reducing undo/loops");
   }
 }
+
+}  // namespace MemoryMonitor
+
+#elif defined(PIO_UNIT_TEST_NATIVE)
+
+namespace MemoryMonitor {
+
+uint32_t g_nativeTestFreeHeap = UINT32_MAX;
+bool g_nativeTestHeapOverride = false;
+
+void setNativeTestFreeHeap(uint32_t bytes) {
+  g_nativeTestFreeHeap = bytes;
+  g_nativeTestHeapOverride = true;
+}
+
+void resetNativeTestFreeHeap() {
+  g_nativeTestHeapOverride = false;
+  g_nativeTestFreeHeap = UINT32_MAX;
+}
+
+uint32_t getFreeHeap() {
+  return g_nativeTestHeapOverride ? g_nativeTestFreeHeap : UINT32_MAX;
+}
+uint32_t getTotalHeap() { return UINT32_MAX; }
+uint32_t getUsedHeap() { return 0; }
+bool isPsramAvailable() { return false; }
+uint32_t getPsramTotalBytes() { return 0; }
+uint32_t getPsramFreeBytes() { return 0; }
+uint32_t getPsramUsedBytes() { return 0; }
+bool isLowMemory(uint32_t) { return false; }
+void logStatus() {}
+void logStatusAtAddedNotes(uint32_t, size_t, const void*) {}
 
 }  // namespace MemoryMonitor
 

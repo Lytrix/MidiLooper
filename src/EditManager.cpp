@@ -356,7 +356,14 @@ EditPassId EditManager::commitEditAction(Track& track, EditChangeList changes) {
         }
     }
 
-    const EditPassId id = loop.saveNoteEditPass(noteEditSession.editPassIndex, std::move(changes));
+    EditPassId id = loop.saveNoteEditPass(noteEditSession.editPassIndex, EditChangeList(changes));
+    if (id == kInvalidEditPassId) {
+        trackManager.reclaimUnreferencedDisabledPasses();
+        id = loop.saveNoteEditPass(noteEditSession.editPassIndex, std::move(changes));
+        if (id == kInvalidEditPassId) {
+            return kInvalidEditPassId;
+        }
+    }
     if (id != kInvalidEditPassId) {
         noteEditSession.noteEditPassIds.push_back(id);
 

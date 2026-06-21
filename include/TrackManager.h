@@ -122,6 +122,8 @@ public:
   /// When true, the next committed `pendingSlotIndex` switch replaces the enabled slot set with only that slot.
   void setPendingEnabledSetReplacement(uint8_t trackIndex, bool enabled);
 
+  void reclaimUnreferencedDisabledPasses();
+
   // --- Slot state machine (selected UI focus + pending quantized switch) ---
   uint8_t getSelectedSlotIndex(uint8_t trackIndex) const;
   void setSelectedSlotIndex(uint8_t trackIndex, uint8_t slotIndex);

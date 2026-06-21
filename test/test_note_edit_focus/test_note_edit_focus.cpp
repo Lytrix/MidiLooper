@@ -9,6 +9,7 @@
 #include "../../src/EditApply.cpp"
 #include "../../src/LoopPasses.cpp"
 #include "../../src/LoopEventStore.cpp"
+#include "../../src/Utils/MemoryMonitor.cpp"
 #include "../../src/Loop.cpp"
 
 #include "NoteEditFocus.h"

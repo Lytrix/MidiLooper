@@ -179,6 +179,7 @@ void loop() {
   if (!timingCriticalTrackActive) {
     StorageManager::processDeferredSaveState(looperState.getLooperState());
     StorageManager::processEditAutosave(looperState.getLooperState());
+    trackManager.reclaimUnreferencedDisabledPasses();
   }
 
   // Update SELECT mode for overdubbing if active

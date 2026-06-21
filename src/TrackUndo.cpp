@@ -9,8 +9,12 @@
 #include "Logger.h"
 #include "ClockManager.h"
 #include "Globals.h"
+#include "PassReclaim.h"
+#include "TrackManager.h"
 #include "Utils/MemoryPool.h"
 #include "Utils/MidiEventVecFnvHash.h"
+
+extern TrackManager trackManager;
 
 namespace {
 
@@ -24,20 +28,33 @@ void applyGeometry(Loop& loop, const UndoLoopGeometry& geometry) {
     loop.loopStartTick = geometry.loopStartTick;
 }
 
-void trimGlobalUndoHistory(GlobalUndoStack& stack) {
-    while (stack.entries.size() > Config::MAX_UNDO_HISTORY) {
-        stack.entries.erase(stack.entries.begin());
-        if (stack.cursor > 0) {
-            --stack.cursor;
-        }
-    }
-}
-
 void dropRedoBranch(GlobalUndoStack& stack) {
     if (stack.cursor >= stack.entries.size()) {
         return;
     }
     stack.entries.erase(stack.entries.begin() + static_cast<std::ptrdiff_t>(stack.cursor), stack.entries.end());
+    trackManager.reclaimUnreferencedDisabledPasses();
+}
+
+void trimUndoStackForMemory(Track& track) {
+    GlobalUndoStack& stack = track.getGlobalUndoStack();
+    auto shouldTrim = [&]() {
+        if (stack.entries.size() > Config::ABSOLUTE_MAX_UNDO_ENTRIES) {
+            return true;
+        }
+        if (stack.entries.size() <= Config::MIN_UNDO_DEPTH) {
+            return false;
+        }
+        return overUndoMemoryPressure(stack);
+    };
+
+    while (shouldTrim()) {
+        stack.entries.erase(stack.entries.begin());
+        if (stack.cursor > 0) {
+            --stack.cursor;
+        }
+        trackManager.reclaimUnreferencedDisabledPasses();
+    }
 }
 
 void pushUndoEntry(Track& track, UndoEntry&& entry) {
@@ -46,7 +63,7 @@ void pushUndoEntry(Track& track, UndoEntry&& entry) {
     entry.id = stack.nextEntryId++;
     stack.entries.push_back(std::move(entry));
     stack.cursor = stack.entries.size();
-    trimGlobalUndoHistory(stack);
+    trimUndoStackForMemory(track);
 }
 
 size_t eraseUndoEntriesForSlot(GlobalUndoStack& stack, uint8_t slotIndex) {
@@ -84,6 +101,7 @@ size_t eraseUndoEntriesForSlot(GlobalUndoStack& stack, uint8_t slotIndex) {
     if (stack.entries.empty()) {
         stack.nextEntryId = 1;
     }
+    trackManager.reclaimUnreferencedDisabledPasses();
     return removedTotal;
 }
 

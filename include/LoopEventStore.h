@@ -35,6 +35,10 @@ class LoopEventStore {
   static void initPool();
   static void resetPoolForTests();
 
+  static uint16_t usedChunkCount();
+  static uint16_t freeChunkCount();
+  static bool canAllocChunkWithReserve();
+
   LoopEventStore() = default;
   LoopEventStore(const LoopEventStore&) = delete;
   LoopEventStore& operator=(const LoopEventStore&) = delete;
