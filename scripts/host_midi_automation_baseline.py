@@ -49,8 +49,10 @@ TICKS_PER_BAR = 768
 TICKS_PER_16TH_STEP = 48
 TICKS_PER_8TH_STEP = TICKS_PER_16TH_STEP * 2
 MIDI_CLOCKS_PER_BAR = 96
+MIDI_CLOCKS_PER_BEAT = 24
 RECORD_GRID_STEP_CLOCKS = 6  # 16th notes at 24 PPQN
 OVERDUB_GRID_STEP_CLOCKS = 12  # 8th notes at 24 PPQN
+TICKS_PER_BEAT = TICKS_PER_BAR // 4
 DEFAULT_RECORD_NOTE_SPAN_MIN_RATIO = 0.9
 
 
@@ -68,6 +70,17 @@ EXPECTED_TRANSITIONS = (
     TransitionExpectation("PLAYING", "OVERDUBBING", 1),
     TransitionExpectation("OVERDUBBING", "PLAYING", 1),
 )
+
+
+def _expected_transition_expectations(args: argparse.Namespace) -> tuple[TransitionExpectation, ...]:
+    overdub_pass_count = 2 if getattr(args, "second_overdub_bars", 0) else 1
+    return (
+        TransitionExpectation("ARMED", "RECORDING", 1),
+        TransitionExpectation("RECORDING", "STOPPED_RECORDING", 1),
+        TransitionExpectation("STOPPED_RECORDING", "PLAYING", 1),
+        TransitionExpectation("PLAYING", "OVERDUBBING", overdub_pass_count),
+        TransitionExpectation("OVERDUBBING", "PLAYING", overdub_pass_count),
+    )
 
 
 @dataclass
@@ -742,7 +755,11 @@ def _extract_phase_boundaries(lines: list[str]) -> dict[str, Optional[int]]:
         "record_stop_ts": None,
         "overdub_start_ts": None,
         "overdub_stop_ts": None,
+        "second_overdub_start_ts": None,
+        "second_overdub_stop_ts": None,
     }
+    overdub_sessions: list[tuple[int, int]] = []
+    open_overdub_start: Optional[int] = None
     for line in lines:
         if ",ST,Track," not in line:
             continue
@@ -759,10 +776,21 @@ def _extract_phase_boundaries(lines: list[str]) -> dict[str, Optional[int]]:
             boundaries["record_start_ts"] = ts
         elif from_state == "RECORDING" and to_state == "STOPPED_RECORDING" and boundaries["record_stop_ts"] is None:
             boundaries["record_stop_ts"] = ts
-        elif from_state == "PLAYING" and to_state == "OVERDUBBING" and boundaries["overdub_start_ts"] is None:
-            boundaries["overdub_start_ts"] = ts
-        elif from_state == "OVERDUBBING" and to_state in ("PLAYING", "STOPPED") and boundaries["overdub_stop_ts"] is None:
-            boundaries["overdub_stop_ts"] = ts
+        elif from_state == "PLAYING" and to_state == "OVERDUBBING":
+            open_overdub_start = ts
+        elif (
+            from_state == "OVERDUBBING"
+            and to_state in ("PLAYING", "STOPPED")
+            and open_overdub_start is not None
+        ):
+            overdub_sessions.append((open_overdub_start, ts))
+            open_overdub_start = None
+    if overdub_sessions:
+        boundaries["overdub_start_ts"] = overdub_sessions[0][0]
+        boundaries["overdub_stop_ts"] = overdub_sessions[0][1]
+    if len(overdub_sessions) > 1:
+        boundaries["second_overdub_start_ts"] = overdub_sessions[1][0]
+        boundaries["second_overdub_stop_ts"] = overdub_sessions[1][1]
     return boundaries
 
 
@@ -1090,6 +1118,7 @@ def _extract_sevt_note_on_ticks(
     high_note: int,
     midi_channel_1based: int,
     after_ts: Optional[int] = None,
+    before_ts: Optional[int] = None,
 ) -> list[int]:
     ticks: list[int] = []
     for line in lines:
@@ -1106,6 +1135,8 @@ def _extract_sevt_note_on_ticks(
         except ValueError:
             continue
         if after_ts is not None and ts < after_ts:
+            continue
+        if before_ts is not None and ts >= before_ts:
             continue
         if channel != midi_channel_1based or note < low_note or note > high_note:
             continue
@@ -1147,6 +1178,9 @@ def _verify_stored_overdub_note_span(
     note_on_count: int,
     memory_note_count: Optional[int] = None,
     span_min_ratio: float = DEFAULT_RECORD_NOTE_SPAN_MIN_RATIO,
+    grid_step_clocks: int = OVERDUB_GRID_STEP_CLOCKS,
+    after_ts: Optional[int] = None,
+    before_ts: Optional[int] = None,
 ) -> dict[str, object]:
     if overdub_bars <= 0 or loop_length_ticks <= 0:
         return {"phase_disabled": True}
@@ -1156,9 +1190,14 @@ def _verify_stored_overdub_note_span(
         low_note=low_note,
         high_note=high_note,
         midi_channel_1based=midi_channel_1based,
+        after_ts=after_ts,
+        before_ts=before_ts,
     )
-    notes_per_bar = MIDI_CLOCKS_PER_BAR // OVERDUB_GRID_STEP_CLOCKS
+    if grid_step_clocks <= 0:
+        grid_step_clocks = OVERDUB_GRID_STEP_CLOCKS
+    notes_per_bar = MIDI_CLOCKS_PER_BAR // grid_step_clocks
     expected_note_on_count = max(1, overdub_bars * notes_per_bar - 1)
+    step_ticks = grid_step_clocks * TICKS_PER_BAR // MIDI_CLOCKS_PER_BAR
     if len(ticks) < 2:
         return {
             "phase_disabled": False,
@@ -1175,9 +1214,9 @@ def _verify_stored_overdub_note_span(
     last_tick = ticks[-1]
     span = last_tick - first_tick
     expected_span = max(
-        (overdub_bars * 8 - 1) * TICKS_PER_8TH_STEP,
-        (note_on_count - 1) * TICKS_PER_8TH_STEP,
-        (expected_note_on_count - 1) * TICKS_PER_8TH_STEP,
+        (overdub_bars * notes_per_bar - 1) * step_ticks,
+        (note_on_count - 1) * step_ticks,
+        (expected_note_on_count - 1) * step_ticks,
     )
     expected_min_span = int(expected_span * span_min_ratio)
     span_ok = span >= expected_min_span and last_tick < loop_length_ticks
@@ -1601,6 +1640,7 @@ def _build_serial_verification(lines: list[str], args: argparse.Namespace) -> di
             midi_channel_1based=args.midi_channel,
             note_on_count=int(overdub["note_on_count"]),
             memory_note_count=memory_note_count,
+            before_ts=boundaries.get("second_overdub_start_ts"),
         )
     if loop_length_ticks > 0:
         overdub_wrap_storage = _verify_overdub_wrap_storage(
@@ -1622,6 +1662,62 @@ def _build_serial_verification(lines: list[str], args: argparse.Namespace) -> di
             issues.append("overdub_stored_span_too_short")
         elif not stored_overdub_span.get("bars_match_ok", False):
             issues.append("overdub_stored_bars_short")
+
+    second_overdub: Optional[dict[str, object]] = None
+    second_overdub_first_note_offset: Optional[dict[str, object]] = None
+    stored_second_overdub_span: Optional[dict[str, object]] = None
+    if getattr(args, "second_overdub_bars", 0) and args.bar_sync_from_midi_clock:
+        second_overdub = _verify_phase_note_pairs(
+            lines,
+            midi_channel_1based=args.midi_channel,
+            phase_start_ts=boundaries.get("second_overdub_start_ts"),
+            phase_stop_ts=boundaries.get("second_overdub_stop_ts"),
+            low_note=args.second_overdub_low_note,
+            high_note=args.second_overdub_high_note,
+        )
+        second_overdub_first_note_offset = _extract_first_note_offset(
+            lines,
+            midi_channel_1based=args.midi_channel,
+            phase_start_ts=boundaries.get("second_overdub_start_ts"),
+            phase_stop_ts=boundaries.get("second_overdub_stop_ts"),
+        )
+        if second_overdub.get("phase_missing"):
+            issues.append("second_overdub_missing_phase_boundaries")
+        if int(second_overdub.get("unmatched_open_notes", 0)) > 0:
+            issues.append("second_overdub_unmatched_open_notes")
+        if int(second_overdub.get("out_of_range_count", 0)) > 0:
+            issues.append("second_overdub_out_of_range_notes")
+        second_offset_clocks = second_overdub_first_note_offset.get("offset_clocks")
+        if second_offset_clocks is None:
+            issues.append("second_overdub_first_note_missing")
+        elif second_offset_clocks > args.overdub_first_note_max_clocks:
+            issues.append("second_overdub_first_note_too_late")
+        if loop_length_ticks > 0:
+            memory_note_count = _extract_overdub_memory_note_count(
+                lines, overdub_stop_ts=boundaries.get("second_overdub_stop_ts")
+            )
+            stored_second_overdub_span = _verify_stored_overdub_note_span(
+                lines,
+                loop_length_ticks=loop_length_ticks,
+                overdub_bars=args.second_overdub_bars,
+                record_bars=args.record_bars or 0,
+                low_note=args.second_overdub_low_note,
+                high_note=args.second_overdub_high_note,
+                midi_channel_1based=args.midi_channel,
+                note_on_count=int(second_overdub.get("note_on_count", 0)),
+                memory_note_count=memory_note_count,
+                grid_step_clocks=args.second_overdub_step_clocks,
+                after_ts=boundaries.get("second_overdub_start_ts"),
+            )
+            if stored_second_overdub_span is not None and not stored_second_overdub_span.get("phase_disabled"):
+                if stored_second_overdub_span.get("sevt_missing"):
+                    issues.append("second_overdub_stored_sevt_missing")
+                elif not stored_second_overdub_span.get("count_ok", False):
+                    issues.append("second_overdub_stored_count_short")
+                elif not stored_second_overdub_span.get("span_ok", False):
+                    issues.append("second_overdub_stored_span_too_short")
+                elif not stored_second_overdub_span.get("bars_match_ok", False):
+                    issues.append("second_overdub_stored_bars_short")
     display_verification: Optional[dict[str, object]] = None
     if loop_length_ticks > 0:
         display_verification = _verify_display_snapshots(
@@ -1644,9 +1740,180 @@ def _build_serial_verification(lines: list[str], args: argparse.Namespace) -> di
         "display_verification": display_verification,
         "record_first_note_offset": record_first_note_offset,
         "overdub_first_note_offset": overdub_first_note_offset,
+        "second_overdub_phase": second_overdub,
+        "second_overdub_first_note_offset": second_overdub_first_note_offset,
+        "stored_second_overdub_span": stored_second_overdub_span,
         "recs_lengths": recs_lengths,
         "issues": issues,
     }
+
+
+def _expected_overdub_notes_min(overdub_bars: int, step_clocks: int) -> int:
+    if overdub_bars <= 0 or step_clocks <= 0:
+        return 0
+    notes_per_bar = MIDI_CLOCKS_PER_BAR // step_clocks
+    return max(1, overdub_bars * notes_per_bar - 1)
+
+
+def _run_overdub_pass(
+    idx: int,
+    out_port: mido.ports.BaseOutput,
+    in_port: mido.ports.BaseInput,
+    serial_collector: Optional["SerialCaptureCollector"],
+    abort: Optional[RunAbort],
+    args: argparse.Namespace,
+    *,
+    overdub_bars: int,
+    low_note: int,
+    high_note: int,
+    step_clocks: int,
+    gate_clocks: int,
+    phase_start_delay_bars: int,
+    phase_start_delay_beats: int,
+    pass_label: str,
+    seconds_per_bar: float,
+) -> tuple[Optional[str], int, int, int, dict[str, float], bool]:
+    """Start overdub, stream pattern, stop overdub."""
+
+    print(f"[track {idx}] {pass_label} start")
+    reached_overdub = False
+    expected_overdub_count = None
+    if serial_collector is not None:
+        counts = _count_capture_transitions(serial_collector.snapshot())
+        expected_overdub_count = counts.get(("PLAYING", "OVERDUBBING"), 0) + 1
+    _send_short_press(
+        out_port,
+        note=RECORD_BUTTON_NOTE,
+        channel_1based=CONTROL_CHANNEL_1BASED,
+        press_ms=args.press_ms,
+    )
+    if serial_collector is not None and expected_overdub_count is not None:
+        reached_overdub = _wait_for_transition_count(
+            serial_collector,
+            from_state="PLAYING",
+            to_state="OVERDUBBING",
+            target_count=expected_overdub_count,
+            timeout_s=args.state_sync_timeout_ms / 1000.0,
+            abort=abort,
+        )
+        if not reached_overdub:
+            print(f"[warn] Timed out waiting for PLAYING->OVERDUBBING ({pass_label}); retrying overdub start press.")
+            _send_short_press(
+                out_port,
+                note=RECORD_BUTTON_NOTE,
+                channel_1based=CONTROL_CHANNEL_1BASED,
+                press_ms=args.press_ms,
+            )
+            reached_overdub = _wait_for_transition_count(
+                serial_collector,
+                from_state="PLAYING",
+                to_state="OVERDUBBING",
+                target_count=expected_overdub_count,
+                timeout_s=args.state_sync_timeout_ms / 1000.0,
+                abort=abort,
+            )
+            if not reached_overdub:
+                print(f"[warn] Retry did not reach PLAYING->OVERDUBBING ({pass_label}).")
+    if serial_collector is not None and reached_overdub:
+        time.sleep(0.0)
+    else:
+        time.sleep(min(args.phase_wait_ms, 120) / 1000.0)
+
+    od_clock_count = 0
+    od_fallback_seconds = False
+    od_timing: dict[str, float] = {
+        "grid_steps_emitted": 0.0,
+        "max_abs_grid_jitter_clocks": 0.0,
+        "mean_abs_grid_jitter_clocks": 0.0,
+        "stop_press_sent_during_stream": 0.0,
+    }
+    od_notes = 0
+    od_cc = 0
+
+    if overdub_bars and args.bar_sync_from_midi_clock:
+        if not _ensure_midi_clock(
+            in_port,
+            out_port,
+            min_clocks=24,
+            timeout_s=2.0,
+            abort=abort,
+        ):
+            return "midi clock missing before overdub phase", od_notes, od_cc, od_clock_count, od_timing, od_fallback_seconds
+        guard = max(10.0, overdub_bars * seconds_per_bar * 3.0)
+        overdub_stop_advance_clocks = args.stop_press_advance_clocks
+        if overdub_stop_advance_clocks <= 0:
+            overdub_stop_advance_clocks = 0
+        if args.overdub_wrap_note_off_test and pass_label != "overdub":
+            return "wrap test incompatible with multi-pass overdub", od_notes, od_cc, od_clock_count, od_timing, od_fallback_seconds
+        if args.overdub_wrap_note_off_test:
+            if not args.record_bars:
+                return "wrap test requires record-bars", od_notes, od_cc, od_clock_count, od_timing, od_fallback_seconds
+            od_notes, od_cc, od_clock_count, od_timing = _stream_overdub_wrap_note_off_test(
+                out_port,
+                in_port,
+                midi_channel_1based=args.midi_channel,
+                wrap_note=args.overdub_fixed_note,
+                loop_bars=args.record_bars,
+                target_bars=overdub_bars,
+                phase_start_delay_bars=0,
+                phase_start_delay_beats=0,
+                max_seconds_guard=guard,
+                abort=abort,
+            )
+        else:
+            od_notes, od_cc, od_clock_count, od_timing = _stream_pattern_for_bars(
+                out_port,
+                in_port,
+                midi_channel_1based=args.midi_channel,
+                low_note=low_note,
+                high_note=high_note,
+                step_clocks=step_clocks,
+                gate_clocks=gate_clocks,
+                target_bars=overdub_bars,
+                cc_number=args.cc_number,
+                cc_step=args.cc_step,
+                pitch_cycle_bars=args.pitch_cycle_bars,
+                phase_start_delay_bars=phase_start_delay_bars,
+                phase_start_delay_beats=phase_start_delay_beats,
+                max_seconds_guard=guard,
+                fixed_note=args.overdub_fixed_note if args.fixed_grid_notes else None,
+                stop_press_advance_clocks=overdub_stop_advance_clocks,
+                stop_press_note=RECORD_BUTTON_NOTE,
+                stop_press_channel_1based=CONTROL_CHANNEL_1BASED,
+                stop_press_press_ms=args.press_ms,
+                abort=abort,
+                emit_immediate_first_step=True,
+            )
+    else:
+        od_notes, od_cc = _stream_dense_chromatic(
+            out_port,
+            in_port,
+            midi_channel_1based=args.midi_channel,
+            root_note=args.root_note + ((idx + 5) % 12),
+            semitone_span=args.semitone_span,
+            duration_s=args.overdub_seconds,
+            note_gap_ms=args.note_gap_ms,
+            gate_ms=args.gate_ms,
+            cc_number=args.cc_number,
+            cc_step=args.cc_step,
+            abort=abort,
+        )
+        od_fallback_seconds = True
+
+    if abort is not None and abort.check() is not None:
+        return abort.check(), od_notes, od_cc, od_clock_count, od_timing, od_fallback_seconds
+
+    time.sleep(max(args.post_stream_settle_ms, 0) / 1000.0)
+    print(f"[track {idx}] {pass_label} stop")
+    if od_timing.get("stop_press_sent_during_stream", 0.0) <= 0.0:
+        _send_short_press(
+            out_port,
+            note=RECORD_BUTTON_NOTE,
+            channel_1based=CONTROL_CHANNEL_1BASED,
+            press_ms=args.press_ms,
+        )
+    time.sleep(args.phase_wait_ms / 1000.0)
+    return None, od_notes, od_cc, od_clock_count, od_timing, od_fallback_seconds
 
 
 def _wait_for_state_entry_count(
@@ -1891,6 +2158,49 @@ def run() -> int:
     parser.add_argument("--record-high-note", type=int, default=79, help="Record phase highest note (default G5)")
     parser.add_argument("--overdub-low-note", type=int, default=24, help="Overdub phase lowest note (default C1)")
     parser.add_argument("--overdub-high-note", type=int, default=39, help="Overdub phase highest note (default D#2)")
+    parser.add_argument(
+        "--second-overdub-bars",
+        type=int,
+        choices=[0, 1, 2, 4, 5, 8, 16, 24, 32, 64, 128],
+        default=0,
+        help="Optional second overdub pass length in bars (0 disables)",
+    )
+    parser.add_argument(
+        "--second-overdub-low-note",
+        type=int,
+        default=12,
+        help="Second overdub lowest note (default C0 / MIDI 12)",
+    )
+    parser.add_argument(
+        "--second-overdub-high-note",
+        type=int,
+        default=35,
+        help="Second overdub highest note (default B1 / MIDI 35)",
+    )
+    parser.add_argument(
+        "--second-overdub-step-clocks",
+        type=int,
+        default=MIDI_CLOCKS_PER_BEAT,
+        help="Second overdub grid step in MIDI clocks (default 24 = 1 beat)",
+    )
+    parser.add_argument(
+        "--second-overdub-gate-clocks",
+        type=int,
+        default=MIDI_CLOCKS_PER_BEAT,
+        help="Second overdub note gate in MIDI clocks (default 24 = 1 beat)",
+    )
+    parser.add_argument(
+        "--second-overdub-start-delay-bars",
+        type=int,
+        default=0,
+        help="Delay second overdub note stream by this many bars after entering overdub",
+    )
+    parser.add_argument(
+        "--second-overdub-start-delay-beats",
+        type=int,
+        default=1,
+        help="Delay second overdub note stream by this many beats after entering overdub",
+    )
     parser.add_argument(
         "--pitch-cycle-bars",
         type=int,
@@ -2286,146 +2596,69 @@ def run() -> int:
                             print("[warn] Retry did not reach STOPPED_RECORDING->PLAYING transition.")
                 time.sleep(args.phase_wait_ms / 1000.0)
 
-                print(f"[track {idx}] overdub start")
-                reached_overdub = False
-                expected_overdub_count = None
-                if serial_collector is not None:
-                    counts = _count_capture_transitions(serial_collector.snapshot())
-                    expected_overdub_count = counts.get(("PLAYING", "OVERDUBBING"), 0) + 1
-                _send_short_press(
+                od_pass_reason, od_notes, od_cc, od_clock_count, od_timing, od_fallback_seconds = _run_overdub_pass(
+                    idx,
                     out_port,
-                    note=RECORD_BUTTON_NOTE,
-                    channel_1based=CONTROL_CHANNEL_1BASED,
-                    press_ms=args.press_ms,
+                    in_port,
+                    serial_collector,
+                    abort,
+                    args,
+                    overdub_bars=args.overdub_bars or 0,
+                    low_note=args.overdub_low_note,
+                    high_note=args.overdub_high_note,
+                    step_clocks=OVERDUB_GRID_STEP_CLOCKS,
+                    gate_clocks=OVERDUB_GRID_STEP_CLOCKS,
+                    phase_start_delay_bars=args.overdub_start_delay_bars,
+                    phase_start_delay_beats=args.overdub_start_delay_beats,
+                    pass_label="overdub",
+                    seconds_per_bar=seconds_per_bar,
                 )
-                if serial_collector is not None and expected_overdub_count is not None:
-                    reached_overdub = _wait_for_transition_count(
-                        serial_collector,
-                        from_state="PLAYING",
-                        to_state="OVERDUBBING",
-                        target_count=expected_overdub_count,
-                        timeout_s=args.state_sync_timeout_ms / 1000.0,
-                        abort=abort,
-                    )
-                    if not reached_overdub:
-                        print("[warn] Timed out waiting for PLAYING->OVERDUBBING transition; retrying overdub start press.")
-                        _send_short_press(
-                            out_port,
-                            note=RECORD_BUTTON_NOTE,
-                            channel_1based=CONTROL_CHANNEL_1BASED,
-                            press_ms=args.press_ms,
-                        )
-                        reached_overdub = _wait_for_transition_count(
-                            serial_collector,
-                            from_state="PLAYING",
-                            to_state="OVERDUBBING",
-                            target_count=expected_overdub_count,
-                            timeout_s=args.state_sync_timeout_ms / 1000.0,
-                            abort=abort,
-                        )
-                        if not reached_overdub:
-                            print("[warn] Retry did not reach PLAYING->OVERDUBBING transition.")
-                if serial_collector is not None and reached_overdub:
-                    # Overdub phase is live; avoid an extra fixed delay before first note.
-                    time.sleep(0.0)
-                else:
-                    time.sleep(min(args.phase_wait_ms, 120) / 1000.0)
+                if od_pass_reason:
+                    if od_pass_reason.startswith("midi clock"):
+                        print(f"[error] {od_pass_reason}; aborting track run.")
+                    abort_reason = od_pass_reason
+                    break
 
-                od_clock_count = 0
-                od_fallback_seconds = False
-                od_timing = {
+                od2_notes = 0
+                od2_cc = 0
+                od2_clock_count = 0
+                od2_timing: dict[str, float] = {
                     "grid_steps_emitted": 0.0,
                     "max_abs_grid_jitter_clocks": 0.0,
                     "mean_abs_grid_jitter_clocks": 0.0,
                     "stop_press_sent_during_stream": 0.0,
                 }
-                if args.overdub_bars and args.bar_sync_from_midi_clock:
-                    if not _ensure_midi_clock(
-                        in_port,
-                        out_port,
-                        min_clocks=24,
-                        timeout_s=2.0,
-                        abort=abort,
-                    ):
-                        print("[error] MIDI clock missing before overdub phase; aborting track run.")
-                        abort_reason = "midi clock missing before overdub phase"
-                        break
-                    guard = max(10.0, args.overdub_bars * seconds_per_bar * 3.0)
-                    overdub_stop_advance_clocks = args.stop_press_advance_clocks
-                    if overdub_stop_advance_clocks <= 0:
-                        # Conservative default: keep full note count (16 for 2 bars at 8ths)
-                        # and avoid early state cutover that can drop the final overdub note.
-                        overdub_stop_advance_clocks = 0
-                    if args.overdub_wrap_note_off_test:
-                        if not args.record_bars:
-                            print("[error] --overdub-wrap-note-off-test requires --record-bars")
-                            abort_reason = "wrap test requires record-bars"
-                            break
-                        od_notes, od_cc, od_clock_count, od_timing = _stream_overdub_wrap_note_off_test(
+                od2_fallback_seconds = False
+                if args.second_overdub_bars:
+                    od2_pass_reason, od2_notes, od2_cc, od2_clock_count, od2_timing, od2_fallback_seconds = (
+                        _run_overdub_pass(
+                            idx,
                             out_port,
                             in_port,
-                            midi_channel_1based=args.midi_channel,
-                            wrap_note=args.overdub_fixed_note,
-                            loop_bars=args.record_bars,
-                            target_bars=args.overdub_bars,
-                            phase_start_delay_bars=0,
-                            phase_start_delay_beats=0,
-                            max_seconds_guard=guard,
-                            abort=abort,
+                            serial_collector,
+                            abort,
+                            args,
+                            overdub_bars=args.second_overdub_bars,
+                            low_note=args.second_overdub_low_note,
+                            high_note=args.second_overdub_high_note,
+                            step_clocks=args.second_overdub_step_clocks,
+                            gate_clocks=args.second_overdub_gate_clocks,
+                            phase_start_delay_bars=args.second_overdub_start_delay_bars,
+                            phase_start_delay_beats=args.second_overdub_start_delay_beats,
+                            pass_label="second overdub",
+                            seconds_per_bar=seconds_per_bar,
                         )
-                    else:
-                        od_notes, od_cc, od_clock_count, od_timing = _stream_pattern_for_bars(
-                            out_port,
-                            in_port,
-                            midi_channel_1based=args.midi_channel,
-                            low_note=args.overdub_low_note,
-                            high_note=args.overdub_high_note,
-                            step_clocks=OVERDUB_GRID_STEP_CLOCKS,
-                            gate_clocks=OVERDUB_GRID_STEP_CLOCKS,
-                            target_bars=args.overdub_bars,
-                            cc_number=args.cc_number,
-                            cc_step=args.cc_step,
-                            pitch_cycle_bars=args.pitch_cycle_bars,
-                            phase_start_delay_bars=args.overdub_start_delay_bars,
-                            phase_start_delay_beats=args.overdub_start_delay_beats,
-                            max_seconds_guard=guard,
-                            fixed_note=args.overdub_fixed_note if args.fixed_grid_notes else None,
-                            stop_press_advance_clocks=overdub_stop_advance_clocks,
-                            stop_press_note=RECORD_BUTTON_NOTE,
-                            stop_press_channel_1based=CONTROL_CHANNEL_1BASED,
-                            stop_press_press_ms=args.press_ms,
-                            abort=abort,
-                            emit_immediate_first_step=True,
-                        )
-                else:
-                    od_notes, od_cc = _stream_dense_chromatic(
-                        out_port,
-                        in_port,
-                        midi_channel_1based=args.midi_channel,
-                        root_note=args.root_note + ((idx + 5) % 12),
-                        semitone_span=args.semitone_span,
-                        duration_s=args.overdub_seconds,
-                        note_gap_ms=args.note_gap_ms,
-                        gate_ms=args.gate_ms,
-                        cc_number=args.cc_number,
-                        cc_step=args.cc_step,
-                        abort=abort,
                     )
+                    if od2_pass_reason:
+                        if od2_pass_reason.startswith("midi clock"):
+                            print(f"[error] {od2_pass_reason}; aborting track run.")
+                        abort_reason = od2_pass_reason
+                        break
 
                 if (reason := abort.check()) is not None:
                     abort_reason = reason
                     break
 
-                time.sleep(max(args.post_stream_settle_ms, 0) / 1000.0)
-                print(f"[track {idx}] overdub stop")
-                if od_timing.get("stop_press_sent_during_stream", 0.0) <= 0.0:
-                    _send_short_press(
-                        out_port,
-                        note=RECORD_BUTTON_NOTE,
-                        channel_1based=CONTROL_CHANNEL_1BASED,
-                        press_ms=args.press_ms,
-                    )
-                time.sleep(args.phase_wait_ms / 1000.0)
                 if args.undo_redo_after_overdub_stop:
                     undo_redo_gap_s = max(args.undo_redo_delay_ms, 0) / 1000.0
                     time.sleep(undo_redo_gap_s)
@@ -2475,6 +2708,13 @@ def run() -> int:
                         "overdub_grid_steps_emitted": int(od_timing["grid_steps_emitted"]),
                         "overdub_max_abs_grid_jitter_clocks": od_timing["max_abs_grid_jitter_clocks"],
                         "overdub_mean_abs_grid_jitter_clocks": od_timing["mean_abs_grid_jitter_clocks"],
+                        "second_overdub_notes_sent": od2_notes,
+                        "second_overdub_cc_sent": od2_cc,
+                        "second_overdub_clock_pulses_seen": od2_clock_count,
+                        "second_overdub_used_seconds_fallback": od2_fallback_seconds,
+                        "second_overdub_grid_steps_emitted": int(od2_timing["grid_steps_emitted"]),
+                        "second_overdub_max_abs_grid_jitter_clocks": od2_timing["max_abs_grid_jitter_clocks"],
+                        "second_overdub_mean_abs_grid_jitter_clocks": od2_timing["mean_abs_grid_jitter_clocks"],
                     }
                 )
 
@@ -2510,14 +2750,20 @@ def run() -> int:
     expected_overdub_notes_min = 0
     expected_record_clocks = 0
     expected_overdub_clocks = 0
+    expected_second_overdub_notes_min = 0
+    expected_second_overdub_clocks = 0
     if args.record_bars and args.bar_sync_from_midi_clock:
         # 16th-note grid; allow one-step edge variance at boundaries.
         expected_record_notes_min = max(1, args.record_bars * 16 - 1)
         expected_record_clocks = args.record_bars * MIDI_CLOCKS_PER_BAR
     if args.overdub_bars and args.bar_sync_from_midi_clock:
-        # 8th-note grid; allow one-step edge variance at boundaries.
-        expected_overdub_notes_min = max(1, args.overdub_bars * 8 - 1)
+        expected_overdub_notes_min = _expected_overdub_notes_min(args.overdub_bars, OVERDUB_GRID_STEP_CLOCKS)
         expected_overdub_clocks = args.overdub_bars * MIDI_CLOCKS_PER_BAR
+    if args.second_overdub_bars and args.bar_sync_from_midi_clock:
+        expected_second_overdub_notes_min = _expected_overdub_notes_min(
+            args.second_overdub_bars, args.second_overdub_step_clocks
+        )
+        expected_second_overdub_clocks = args.second_overdub_bars * MIDI_CLOCKS_PER_BAR
     if args.overdub_wrap_note_off_test:
         expected_overdub_notes_min = 1
         if args.record_bars:
@@ -2531,6 +2777,8 @@ def run() -> int:
         od_notes = int(row["overdub_notes_sent"])
         rec_clocks = int(row["record_clock_pulses_seen"])
         od_clocks = int(row["overdub_clock_pulses_seen"])
+        od2_notes = int(row.get("second_overdub_notes_sent", 0))
+        od2_clocks = int(row.get("second_overdub_clock_pulses_seen", 0))
 
         if expected_record_notes_min > 0 and rec_clocks <= 0:
             phase_activation_failures.append(
@@ -2590,9 +2838,38 @@ def run() -> int:
                         "reason": "clock_count_mismatch",
                     }
                 )
+        if expected_second_overdub_notes_min > 0 and od2_clocks <= 0:
+            phase_activation_failures.append(
+                {
+                    "track_index": idx,
+                    "phase": "second_overdub",
+                    "actual_clocks": od2_clocks,
+                    "reason": "phase_not_activated_or_no_clock",
+                }
+            )
+        else:
+            if expected_second_overdub_notes_min > 0 and od2_notes < expected_second_overdub_notes_min:
+                phase_note_failures.append(
+                    {
+                        "track_index": idx,
+                        "phase": "second_overdub",
+                        "actual_notes": od2_notes,
+                        "expected_notes_min": expected_second_overdub_notes_min,
+                    }
+                )
+            if expected_second_overdub_clocks > 0 and od2_clocks != expected_second_overdub_clocks:
+                phase_activation_failures.append(
+                    {
+                        "track_index": idx,
+                        "phase": "second_overdub",
+                        "actual_clocks": od2_clocks,
+                        "expected_clocks": expected_second_overdub_clocks,
+                        "reason": "clock_count_mismatch",
+                    }
+                )
 
     transition_checks = []
-    for expectation in EXPECTED_TRANSITIONS:
+    for expectation in _expected_transition_expectations(args):
         key = (expectation.from_state, expectation.to_state)
         actual = transition_counts.get(key, 0)
         # After clear, first record can start from EMPTY instead of ARMED.
@@ -2736,6 +3013,14 @@ def run() -> int:
                 f"{ov['note_on_count']}/{ov['note_off_count']}/{ov['unmatched_open_notes']}/"
                 f"{ov['out_of_range_count']}/{ov['sequence_mismatch_count']}"
             )
+            second_ov = serial_verification.get("second_overdub_phase")
+            if second_ov is not None:
+                print(
+                    "  VERIFY second overdub on/off/open/out/seq: "
+                    f"{second_ov['note_on_count']}/{second_ov['note_off_count']}/"
+                    f"{second_ov['unmatched_open_notes']}/{second_ov['out_of_range_count']}/"
+                    f"{second_ov['sequence_mismatch_count']}"
+                )
             print(
                 "  VERIFY first-note clocks (record/overdub): "
                 f"{rf['offset_clocks']}/{of['offset_clocks']} "
@@ -2794,6 +3079,21 @@ def run() -> int:
                     f"count_ok={stored_overdub_span.get('count_ok')} "
                     f"span_ok={stored_overdub_span.get('span_ok')} "
                     f"bars_ok={stored_overdub_span.get('bars_match_ok')}"
+                )
+            stored_second_overdub_span = serial_verification.get("stored_second_overdub_span")
+            if stored_second_overdub_span and not stored_second_overdub_span.get("phase_disabled"):
+                print(
+                    "  VERIFY stored second overdub span (SEVT ticks): "
+                    f"count={stored_second_overdub_span.get('note_on_count')}/"
+                    f"{stored_second_overdub_span.get('expected_note_on_count')} "
+                    f"mem={stored_second_overdub_span.get('memory_note_count')} "
+                    f"last={stored_second_overdub_span.get('last_tick')} "
+                    f"min_span={stored_second_overdub_span.get('expected_min_span_ticks')} "
+                    f"bars={stored_second_overdub_span.get('bars_reached')}/"
+                    f"{stored_second_overdub_span.get('expected_bars')} "
+                    f"count_ok={stored_second_overdub_span.get('count_ok')} "
+                    f"span_ok={stored_second_overdub_span.get('span_ok')} "
+                    f"bars_ok={stored_second_overdub_span.get('bars_match_ok')}"
                 )
             display_verification = serial_verification.get("display_verification")
             if display_verification:

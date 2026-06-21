@@ -76,6 +76,8 @@ namespace Config {
   /// Above this event count, overdub undo still stores O(1) refs but logs a degraded-undo warning.
   constexpr size_t SNAPSHOT_DEGRADED_UNDO_EVENT_THRESHOLD = 4000;
   constexpr uint32_t autosaveIntervalMs = 300000;
+  /// Wall-clock max wait before deferred full validate runs while track is PLAYING-only.
+  constexpr uint32_t deferredValidateMaxDelayMs = 60000;
 }
  
 // --------------------

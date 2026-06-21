@@ -69,18 +69,18 @@ size_t LoopPool::indexForId(LoopId id) const {
   return NO_POOL_INDEX;
 }
 
-Loop& LoopPool::findById(LoopId id) {
+Loop* LoopPool::findById(LoopId id) {
   const size_t idx = indexForId(id);
   if (idx == NO_POOL_INDEX) {
-    return at(0);
+    return nullptr;
   }
-  return loops_[idx];
+  return &loops_[idx];
 }
 
-const Loop& LoopPool::findById(LoopId id) const {
+const Loop* LoopPool::findById(LoopId id) const {
   const size_t idx = indexForId(id);
   if (idx == NO_POOL_INDEX) {
-    return at(0);
+    return nullptr;
   }
-  return loops_[idx];
+  return &loops_[idx];
 }

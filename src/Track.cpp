@@ -165,7 +165,10 @@ Loop& Track::loopForSlot(uint8_t slotIndex) {
   const uint8_t idx = slotIndex < Config::MAX_LOOPS_PER_TRACK ? slotIndex : 0;
   const LoopId id = slots_[idx].loopId;
   if (id != kInvalidLoopId) {
-    return loopPool_.findById(id);
+    Loop* found = loopPool_.findById(id);
+    if (found != nullptr) {
+      return *found;
+    }
   }
   return loopPool_.at(idx);
 }
@@ -628,6 +631,7 @@ void Track::finalizeLoopAtStop(uint32_t openTailCloseTick, bool scheduleDeferred
   Loop& loop = getActiveLoop();
   if (!loop.hasPublishedEvents() || loop.loopLengthTicks == 0) {
     deferredFullMidiValidate = false;
+    deferredValidateQueuedAtMs = 0;
     return;
   }
 
@@ -635,6 +639,7 @@ void Track::finalizeLoopAtStop(uint32_t openTailCloseTick, bool scheduleDeferred
   loop.flattenActiveCapturePasses(flat);
   if (flat.empty()) {
     deferredFullMidiValidate = false;
+    deferredValidateQueuedAtMs = 0;
     return;
   }
 
@@ -662,6 +667,7 @@ void Track::finalizeLoopAtStop(uint32_t openTailCloseTick, bool scheduleDeferred
     loop.invalidatePlaybackCaches();
   }
   deferredFullMidiValidate = scheduleDeferredFullValidate;
+  deferredValidateQueuedAtMs = scheduleDeferredFullValidate ? millis() : 0;
 }
 
 void Track::finalizeCommitSideEffects(CommitResult result, CommitReason reason, uint32_t closeTick) {
@@ -755,12 +761,25 @@ void Track::emitStoredMidiVerification() const {
   }
 }
 
-void Track::processDeferredIdleMaintenance() {
-  if (!deferredFullMidiValidate) {
+void Track::processDeferredIdleMaintenance(uint32_t nowMs) {
+  if (!DeferredValidatePolicy::shouldRunDeferredFullValidate(
+          deferredFullMidiValidate, isRecording(), isOverdubbing(), deferredValidateQueuedAtMs,
+          nowMs)) {
+    if (deferredFullMidiValidate && deferredValidateQueuedAtMs == 0) {
+      deferredValidateQueuedAtMs = nowMs;
+    }
     return;
   }
   deferredFullMidiValidate = false;
+  deferredValidateQueuedAtMs = 0;
   validateAndCleanupMidiEvents();
+}
+
+void Track::prewarmPlaybackForSlot(uint8_t slotIndex) {
+  ensureLoopsAllocated();
+  Loop& loop = loopForSlot(slotIndex);
+  (void)playbackRuntime.slot(slotIndex);
+  (void)loop.getPlaybackOrder();
 }
 
 void Track::queueDeferredRecordRevts() const {
@@ -1047,8 +1066,12 @@ void Track::startPlaying(uint32_t currentTick, bool preserveLoopPhaseOrigin) {
 // -------------------------
 
 void Track::startOverdubbing(uint32_t currentTick) {
+  Loop& loopRef = getActiveLoop();
+  if (trackState == TRACK_OVERDUBBING && loopRef.capture.phase == CapturePhase::Overdub) {
+    return;
+  }
   const uint32_t telemetryStartUs = micros();
-  const Loop& active = getActiveLoop();
+  const Loop& active = loopRef;
   if (trackState == TRACK_EMPTY && active.loopLengthTicks > 0) {
     forceSetState(TRACK_STOPPED);
   }

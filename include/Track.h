@@ -12,6 +12,7 @@
 #include <deque>          // For undo
 #include "MidiEvent.h"
 #include "MidiHandler.h"
+#include "Utils/DeferredValidatePolicy.h"
 #include "Utils/NoteUtils.h"    // For CachedNoteList
 #include "Utils/MemoryPool.h"   // For pooled MIDI event vectors
 #include "TrackState.h"
@@ -118,7 +119,9 @@ public:
   void finalizeCommitSideEffects(CommitResult result, CommitReason reason, uint32_t closeTick);
   void emitStoredMidiVerification() const;
   /// Idle maintenance: deferred full validate + session REVT flush (non-blocking stop path).
-  void processDeferredIdleMaintenance();
+  void processDeferredIdleMaintenance(uint32_t nowMs);
+  /// Touch playback runtime and loop playback order for one slot (boot/load prewarm).
+  void prewarmPlaybackForSlot(uint8_t slotIndex);
   /// During overdub loop wrap: store synthetic note-off at loop end for still-open tails.
   void closeOpenNotesAtLoopWrap();
 
@@ -298,6 +301,7 @@ private:
   bool alignLoopOriginOnNextStop;
   uint16_t recordAddedNoteOnCount;  // note-ons this overdub pass (memory log at overdub stop)
   bool deferredFullMidiValidate = false;
+  uint32_t deferredValidateQueuedAtMs = 0;
   uint32_t playbackGeneration = 0;
   TrackPlaybackRuntime playbackRuntime;
   GlobalUndoStack undoStack;

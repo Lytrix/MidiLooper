@@ -41,8 +41,9 @@ class LoopPool {
 
   LoopId loopIdAt(size_t poolIndex) const;
 
-  Loop& findById(LoopId id);
-  const Loop& findById(LoopId id) const;
+  /// Returns nullptr when id is unknown — callers must fall back to pool index.
+  Loop* findById(LoopId id);
+  const Loop* findById(LoopId id) const;
 
   /// Resolve pool index for a stable LoopId, or NO_POOL_INDEX when unknown.
   static constexpr size_t NO_POOL_INDEX = static_cast<size_t>(-1);

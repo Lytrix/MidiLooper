@@ -17,7 +17,6 @@
 #include "Utils/HotPathTelemetry.h"
 #include "Utils/DebugSessionCapture.h"
 #include "TrackStateMachine.h"
-#include <map>
 #include <string>
 #include <Font5x7Fixed.h>
 #include <Font5x7FixedMono.h>
@@ -46,27 +45,119 @@ uint32_t clampOpenNoteCloseTick(uint32_t closeTick, uint32_t loopLength) {
     return closeTick;
 }
 
-std::vector<NoteUtils::OpenNoteOn> filterLiveOpenNotesForOverdub(
-    const Loop& loop, const std::vector<NoteUtils::OpenNoteOn>& openNotes) {
-    std::vector<NoteUtils::OpenNoteOn> filtered;
-    filtered.reserve(openNotes.size());
-    for (const auto& open : openNotes) {
-        // Only overdub capture note-ons should follow the playhead. Committed record notes can
-        // remain "open" in findOpenNoteOns when loop-end offs are deferred for wrap display.
-        const LoopEventStore& capture = loop.capture.store;
-        bool inCapture = false;
-        for (size_t i = 0; i < capture.size(); ++i) {
-            const MidiEvent& evt = capture.at(i);
-            if (evt.isNoteOn() && evt.data.noteData.note == open.note && evt.tick == open.tick) {
-                inCapture = true;
-                break;
-            }
-        }
-        if (inCapture) {
-            filtered.push_back(open);
+std::vector<NoteUtils::OpenNoteOn> findCaptureOpenNoteOns(const Loop& loop) {
+    if (loop.loopLengthTicks == 0 || loop.capture.store.empty()) {
+        return {};
+    }
+    Loop& mutLoop = const_cast<Loop&>(loop);
+    mutLoop.ensureCaptureEventsSorted();
+    MidiEventVec captureFlat;
+    loop.capture.store.flatten(captureFlat);
+    return NoteUtils::findOpenNoteOns(captureFlat, loop.loopLengthTicks);
+}
+
+bool findPreferredWrapHeadOffTick(const MidiEventVec& midiEvents, const NoteUtils::OpenNoteOn& open,
+                                  uint32_t loopLength, uint32_t& headOffTickOut) {
+    uint8_t channel = 0;
+    bool channelKnown = false;
+    for (const MidiEvent& evt : midiEvents) {
+        if (evt.isNoteOn() && evt.data.noteData.note == open.note && evt.tick == open.tick) {
+            channel = evt.channel;
+            channelKnown = true;
+            break;
         }
     }
-    return filtered;
+    for (const MidiEvent& evt : midiEvents) {
+        if (!evt.isNoteOff() || evt.data.noteData.note != open.note) {
+            continue;
+        }
+        if (channelKnown && evt.channel != channel) {
+            continue;
+        }
+        uint32_t headOffTick = evt.tick;
+        if (headOffTick >= loopLength) {
+            headOffTick %= loopLength;
+        }
+        if (headOffTick >= loopLength - 1) {
+            continue;
+        }
+        if (NoteUtils::isPreferredWrapTailForHeadOff(open.tick, headOffTick, midiEvents, open.note,
+                                                     channelKnown ? channel : evt.channel,
+                                                     loopLength)) {
+            headOffTickOut = headOffTick;
+            return true;
+        }
+    }
+    return false;
+}
+
+bool updateDisplayNoteEndFrom(std::vector<DisplayNote>& notes, size_t regionStart, uint8_t pitch,
+                              uint32_t startTick, uint32_t endTick) {
+    for (size_t i = regionStart; i < notes.size(); ++i) {
+        if (notes[i].note == pitch && notes[i].startTick == startTick) {
+            notes[i].endTick = endTick;
+            return true;
+        }
+    }
+    return false;
+}
+
+void applyCapturePlayheadTails(const std::vector<NoteUtils::OpenNoteOn>& captureOpens,
+                               const MidiEventVec& captureEvents, uint32_t loopLength,
+                               uint32_t closeTick, size_t captureRegionStart,
+                               std::vector<DisplayNote>& notes) {
+    const uint32_t clampedCloseTick = clampOpenNoteCloseTick(closeTick, loopLength);
+    const uint32_t wrapWindow =
+        loopLength > Config::TICKS_PER_BAR ? Config::TICKS_PER_BAR : loopLength;
+    const uint32_t headEnd = wrapWindow;
+
+    for (const auto& open : captureOpens) {
+        if (NoteUtils::isWrapHeldOpenNote(captureEvents, open, loopLength)) {
+            uint32_t tailEnd = loopLength - 1;
+            if (clampedCloseTick >= open.tick) {
+                tailEnd = std::min(clampedCloseTick, loopLength - 1);
+            }
+
+            if (!updateDisplayNoteEndFrom(notes, captureRegionStart, open.note, open.tick, tailEnd)) {
+                DisplayNote tailSeg;
+                tailSeg.note = open.note;
+                tailSeg.velocity = open.velocity;
+                tailSeg.startTick = open.tick;
+                tailSeg.endTick = tailEnd;
+                notes.push_back(tailSeg);
+            }
+
+            uint32_t headEndTick = 0;
+            if (findPreferredWrapHeadOffTick(captureEvents, open, loopLength, headEndTick) &&
+                headEndTick > 0) {
+                DisplayNote headSeg;
+                headSeg.note = open.note;
+                headSeg.velocity = open.velocity;
+                headSeg.startTick = 0;
+                headSeg.endTick = headEndTick;
+                notes.push_back(headSeg);
+            } else if (clampedCloseTick > 0 && clampedCloseTick < headEnd) {
+                DisplayNote headSeg;
+                headSeg.note = open.note;
+                headSeg.velocity = open.velocity;
+                headSeg.startTick = 0;
+                headSeg.endTick = clampedCloseTick;
+                notes.push_back(headSeg);
+            }
+            continue;
+        }
+
+        const uint32_t playheadEndTick = std::max(open.tick, clampedCloseTick);
+        if (!updateDisplayNoteEndFrom(notes, captureRegionStart, open.note, open.tick,
+                                      playheadEndTick)) {
+            DisplayNote liveNote;
+            liveNote.note = open.note;
+            liveNote.velocity = open.velocity;
+            liveNote.startTick = open.tick;
+            liveNote.endTick = playheadEndTick;
+            notes.push_back(liveNote);
+        }
+    }
 }
 
 void applyLiveOpenTails(const std::vector<NoteUtils::OpenNoteOn>& openNotes,
@@ -81,7 +172,7 @@ void applyLiveOpenTails(const std::vector<NoteUtils::OpenNoteOn>& openNotes,
         if (NoteUtils::isWrapHeldOpenNote(midiEvents, open, loopLength)) {
             // Held across loop wrap: tail segment at end of loop + head continuation from tick 0.
             uint32_t tailEnd = loopLength - 1;
-            if (clampedCloseTick >= open.tick) {
+            if (extendHeldNotesToPlayhead && clampedCloseTick >= open.tick) {
                 tailEnd = std::min(clampedCloseTick, loopLength - 1);
             }
 
@@ -102,13 +193,26 @@ void applyLiveOpenTails(const std::vector<NoteUtils::OpenNoteOn>& openNotes,
                 notes.push_back(tailSeg);
             }
 
-            if (clampedCloseTick > 0 && clampedCloseTick < headEnd) {
-                DisplayNote headSeg;
-                headSeg.note = open.note;
-                headSeg.velocity = open.velocity;
-                headSeg.startTick = 0;
-                headSeg.endTick = clampedCloseTick;
-                notes.push_back(headSeg);
+            if (extendHeldNotesToPlayhead) {
+                if (clampedCloseTick > 0 && clampedCloseTick < headEnd) {
+                    DisplayNote headSeg;
+                    headSeg.note = open.note;
+                    headSeg.velocity = open.velocity;
+                    headSeg.startTick = 0;
+                    headSeg.endTick = clampedCloseTick;
+                    notes.push_back(headSeg);
+                }
+            } else {
+                uint32_t headOffTick = 0;
+                if (findPreferredWrapHeadOffTick(midiEvents, open, loopLength, headOffTick) &&
+                    headOffTick > 0) {
+                    DisplayNote headSeg;
+                    headSeg.note = open.note;
+                    headSeg.velocity = open.velocity;
+                    headSeg.startTick = 0;
+                    headSeg.endTick = headOffTick;
+                    notes.push_back(headSeg);
+                }
             }
             continue;
         }
@@ -304,15 +408,36 @@ const std::vector<DisplayNote>& DisplayManager::resolveDisplayNotes(const Track&
         !cacheCold && loop.captureDisplayRevision != liveDisplayCacheCaptureRevision;
     const bool useM4Sources =
         !loop.visualCache.notes.empty() || !loop.capturePreview.notes.empty();
+    size_t committedDisplayEnd = 0;
 
     auto rebuildLiveDisplayNotes = [&]() {
+        if (track.isOverdubbing()) {
+            const_cast<Loop&>(loop).ensureVisualCacheBuilt();
+            liveDisplayNotes = loop.visualCache.notes;
+            committedDisplayEnd = liveDisplayNotes.size();
+            MidiEventVec captureFlat;
+            Loop& mutLoop = const_cast<Loop&>(loop);
+            mutLoop.ensureCaptureEventsSorted();
+            loop.capture.store.flatten(captureFlat);
+            if (!captureFlat.empty()) {
+                std::vector<DisplayNote> captureDisplayNotes =
+                    NoteUtils::reconstructNotes(captureFlat, liveLoopLength, false);
+                liveDisplayNotes.insert(liveDisplayNotes.end(), captureDisplayNotes.begin(),
+                                        captureDisplayNotes.end());
+            }
+            return;
+        }
+
+        const_cast<Loop&>(loop).ensureVisualCacheBuilt();
         if (useM4Sources) {
             liveDisplayNotes = loop.visualCache.notes;
+            committedDisplayEnd = liveDisplayNotes.size();
             liveDisplayNotes.insert(liveDisplayNotes.end(), loop.capturePreview.notes.begin(),
                                     loop.capturePreview.notes.end());
         } else {
             liveDisplayNotes =
                 NoteUtils::reconstructNotes(liveDisplayEventBuffer, liveLoopLength, false);
+            committedDisplayEnd = liveDisplayNotes.size();
         }
     };
 
@@ -340,13 +465,18 @@ const std::vector<DisplayNote>& DisplayManager::resolveDisplayNotes(const Track&
         liveDisplayCacheOpenNotes =
             NoteUtils::findOpenNoteOns(liveDisplayEventBuffer, liveLoopLength);
         const uint32_t playheadCloseTick = resolvePlayheadInLoop(track, displaySlot, currentTick);
-        // Record: all held note-ons lengthen to playhead. Overdub: capture-store note-ons only.
-        const std::vector<NoteUtils::OpenNoteOn>& liveOpenNotes =
-            track.isOverdubbing()
-                ? filterLiveOpenNotesForOverdub(loop, liveDisplayCacheOpenNotes)
-                : liveDisplayCacheOpenNotes;
-        if (!liveOpenNotes.empty()) {
-            applyLiveOpenTails(liveOpenNotes, liveDisplayEventBuffer, liveLoopLength,
+        if (track.isOverdubbing()) {
+            MidiEventVec captureEvents;
+            const std::vector<NoteUtils::OpenNoteOn> captureOpens = findCaptureOpenNoteOns(loop);
+            if (!captureOpens.empty()) {
+                Loop& mutLoop = const_cast<Loop&>(loop);
+                mutLoop.ensureCaptureEventsSorted();
+                loop.capture.store.flatten(captureEvents);
+                applyCapturePlayheadTails(captureOpens, captureEvents, liveLoopLength,
+                                          playheadCloseTick, committedDisplayEnd, liveDisplayNotes);
+            }
+        } else {
+            applyLiveOpenTails(liveDisplayCacheOpenNotes, liveDisplayEventBuffer, liveLoopLength,
                                playheadCloseTick, liveDisplayNotes, true);
         }
     }

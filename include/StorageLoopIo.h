@@ -48,5 +48,9 @@ bool writePersistedLoopSnapshot(const StorageIo& io, const PersistedLoopSnapshot
 bool readPersistedLoopSnapshot(const StorageIo& io, PersistedLoopSnapshot& snapshot);
 
 struct Loop;
+void applySnapshotToLoop(Loop& loop, const PersistedLoopSnapshot& snapshot);
+
+#if !defined(PIO_UNIT_TEST_NATIVE)
 bool writeLoopPersisted(const StorageIo& io, const Loop& loop);
 bool readLoopPersisted(const StorageIo& io, Loop& loop);
+#endif

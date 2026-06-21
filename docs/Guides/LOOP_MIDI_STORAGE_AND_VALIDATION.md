@@ -135,7 +135,7 @@ Full-loop pass over `loop.midiEvents()` (materialized flat):
 
 | Trigger | Path |
 |---------|------|
-| After stop | **Deferred** — `main()` loop calls `processDeferredIdleMaintenance()` only when **no** track is playing/recording/overdubbing |
+| After stop | **Deferred** — `main()` calls `processDeferredIdleMaintenance(now)` per track; runs after **`Config::deferredValidateMaxDelayMs`** (default 60s) even while **PLAYING**; blocked while that track is **RECORDING** or **OVERDUBBING** |
 | SD load | **Immediate** — `StorageManager` after loading slot events |
 | Manual / legacy | Direct call (avoid on hot paths) |
 
@@ -196,6 +196,9 @@ Hardware **Button A double-press** calls `undoOverdub` directly. MIDI record dou
 **Files:** `src/StorageManager.cpp`, `include/StorageLoopIo.h`, `src/StorageLoopIo.cpp` (format **v4**)
 
 - Per-slot loop pool entries persist **`LoopPasses`** (capture passes + **editPasses** tail) via `writeLoopPersisted` / `readLoopPersisted`.
+- **`startLoopTick`** is stored in each loop snapshot and restored by **`applySnapshotToLoop`** on load (phase origin for `tickPhaseInLoop`).
+- Truncated or corrupt **editPasses** tails fail **`readPersistedEditsTail`** (load aborts — no silent empty edits).
+- Invalid persisted **`slotLoopId`** values outside `0..MAX_LOOPS_PER_TRACK-1` are repaired to the slot pool index on load (warning logged).
 - On-wire capture rows use legacy **take-shaped** fields (`PersistedCapturePassWire`) for backward compatibility; RAM uses **recordPass** / **overdubPass**.
 - Global undo stack is persisted in v4 (magic + entries).
 - After load, **`validateAndCleanupMidiEvents()`** runs once per slot with events.
@@ -212,7 +215,7 @@ Hardware **Button A double-press** calls `undoOverdub` directly. MIDI record dou
 | `teensy41-capture` | Silent production-style capture build (no session serial) |
 | `teensy41-capture-bypass` | Adds `BYPASS_STOP_UNDO_SAVE=1` — skips undo snapshot push and `saveState` on stop (diagnostic only) |
 
-**Do not** add `MemoryMonitor` or full-loop validation on record/overdub stop hot paths. Idle maintenance, deferred SD save (`processDeferredSaveState`), and `HotPathTelemetry` deferred summary are wired in `main()` — save and full validate run only when **no** track is playing/recording/overdubbing.
+**Do not** add `MemoryMonitor` or full-loop validation on record/overdub stop hot paths. Idle maintenance, deferred SD save (`processDeferredSaveState`), and `HotPathTelemetry` deferred summary are wired in `main()` — SD save runs only when **no** track is playing/recording/overdubbing; deferred full validate runs per track after **`Config::deferredValidateMaxDelayMs`** even during **PLAYING** (blocked while that track is capturing). **`TrackManager::prewarmPlaybackRuntime()`** runs after early loop allocation and successful **`loadState`** so first playback tick does not allocate runtime.
 
 Record stop calls `queueDeferredRecordRevts()` after a published commit. Non-`SESSION_CAPTURE` builds stub all `#CAP` / REVT macros.
 
@@ -227,7 +230,11 @@ Record stop calls `queueDeferredRecordRevts()` after a published commit. Non-`SE
 | `test/test_noteutils_reconstruct` | Display note pairing vs loop length |
 | `test/test_take_capture` | Capture pass seal/publish, record vs overdub routing |
 | `test/test_loop_take_survival` | Pass timeline survives rematerialize and stop finalize |
-| `test/test_storage_loop_io` | SD v4 pass round-trip |
+| `test/test_storage_loop_io` | SD v4 pass round-trip, **startLoopTick** apply, truncated edit tail |
+| `test/test_capture_state_guards` | Overdub **beginCapture** idempotency |
+| `test/test_loop_pool` | **findById** null + slot-index fallback |
+| `test/test_playback_prewarm` | Playback runtime / order prealloc stability |
+| `test/test_deferred_validate_policy` | PLAYING-only deferred validate delay |
 | `test/test_edit_apply` | **editPasses** overlay via `applyEditChangeList` |
 | `test/test_redo_functionality` | Undo/redo stacks (host `Track`; listed in `test_ignore` for native — run on Teensy env if needed) |
 
