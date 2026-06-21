@@ -464,6 +464,18 @@ bool StorageManager::loadState(LooperState& state) {
                 if (!readRaw(file, &slotMuted, sizeof(slotMuted))) { Serial.print("[StorageManager] ERROR: Failed to read slotMuted for track "); Serial.print(t); Serial.print(" slot "); Serial.println(s); file.close(); return false; }
                 if (!readRaw(file, &slotLoopId, sizeof(slotLoopId))) { Serial.print("[StorageManager] ERROR: Failed to read slotLoopId for track "); Serial.print(t); Serial.print(" slot "); Serial.println(s); file.close(); return false; }
 
+                if (slotLoopId == kInvalidLoopId || slotLoopId >= Config::MAX_LOOPS_PER_TRACK) {
+                    Serial.print("[StorageManager] WARNING: Invalid slotLoopId ");
+                    Serial.print(static_cast<unsigned long>(slotLoopId));
+                    Serial.print(" for track ");
+                    Serial.print(t);
+                    Serial.print(" slot ");
+                    Serial.print(s);
+                    Serial.print(" — repairing to ");
+                    Serial.println(s);
+                    slotLoopId = static_cast<LoopId>(s);
+                }
+
                 trackManager.setSlotEnabled(t, s, slotEnabled);
                 trackManager.setSlotMuted(t, s, slotMuted);
                 track.slots_[s].loopId = slotLoopId;
@@ -546,5 +558,6 @@ bool StorageManager::loadState(LooperState& state) {
         } else {
             trackManager.setSelectedTrack(0);
         }
+        trackManager.prewarmPlaybackRuntime();
     return true;
 }

@@ -140,14 +140,11 @@ bool writePersistedEditsTail(const StorageIo& io, const PersistedLoopSnapshot& s
 
 bool readPersistedEditsTail(const StorageIo& io, PersistedLoopSnapshot& snapshot) {
   if (!ioRead(io, &snapshot.nextPassId, sizeof(snapshot.nextPassId))) {
-    snapshot.nextPassId = 1;
-    snapshot.passes.editPasses.clear();
-    return true;
+    return false;
   }
   uint32_t editCount = 0;
   if (!ioRead(io, &editCount, sizeof(editCount))) {
-    snapshot.passes.editPasses.clear();
-    return true;
+    return false;
   }
   snapshot.passes.editPasses.clear();
   snapshot.passes.editPasses.reserve(editCount);
@@ -270,25 +267,6 @@ PersistedLoopSnapshot snapshotFromLoop(const Loop& loop) {
   return snapshot;
 }
 
-void applySnapshotToLoop(Loop& loop, const PersistedLoopSnapshot& snapshot) {
-  loop.discardPendingCapturePass();
-  loop.discardCapture();
-  loop.resetPassTimeline();
-  loop.loopId = snapshot.loopId;
-  loop.startLoopTick = 0;
-  loop.loopLengthTicks = snapshot.loopLengthTicks;
-  loop.loopStartTick = snapshot.loopStartTick;
-  loop.nextPassId_ = snapshot.nextPassId;
-  loop.nextMergeSequence_ = snapshot.nextMergeSequence;
-  loop.lastPublishedPassId_ = snapshot.lastPublishedPassId;
-  loop.lastTickInLoop = 0;
-  loop.nextEventIndex = 0;
-  loop.playbackOrderDirty = true;
-  loop.passes = snapshot.passes;
-  loop.markDisplayCachesStale();
-  loop.rebuildVisualCacheFromPasses();
-}
-
 bool writeLoopPersisted(const StorageIo& io, const Loop& loop) {
   return writePersistedLoopSnapshot(io, snapshotFromLoop(loop));
 }
@@ -303,3 +281,24 @@ bool readLoopPersisted(const StorageIo& io, Loop& loop) {
 }
 
 #endif  // !PIO_UNIT_TEST_NATIVE
+
+#include "Loop.h"
+
+void applySnapshotToLoop(Loop& loop, const PersistedLoopSnapshot& snapshot) {
+  loop.discardPendingCapturePass();
+  loop.discardCapture();
+  loop.resetPassTimeline();
+  loop.loopId = snapshot.loopId;
+  loop.startLoopTick = snapshot.startLoopTick;
+  loop.loopLengthTicks = snapshot.loopLengthTicks;
+  loop.loopStartTick = snapshot.loopStartTick;
+  loop.nextPassId_ = snapshot.nextPassId;
+  loop.nextMergeSequence_ = snapshot.nextMergeSequence;
+  loop.lastPublishedPassId_ = snapshot.lastPublishedPassId;
+  loop.lastTickInLoop = 0;
+  loop.nextEventIndex = 0;
+  loop.playbackOrderDirty = true;
+  loop.passes = snapshot.passes;
+  loop.markDisplayCachesStale();
+  loop.rebuildVisualCacheFromPasses();
+}

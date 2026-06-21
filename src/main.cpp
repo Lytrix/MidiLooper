@@ -53,6 +53,7 @@ void setup() {
 
   // Allocate Loop arrays immediately - before USB Host, faders, etc. consume heap
   trackManager.allocateLoopsEarly();
+  trackManager.prewarmPlaybackRuntime();
   MemoryMonitor::logStatus();  // Log heap after loops allocated
 
   pinMode(LED_BUILTIN, OUTPUT);
@@ -171,12 +172,13 @@ void loop() {
 
   SC_REC_FLUSH_PENDING_REVTS(64);
 
+  for (uint8_t i = 0; i < trackManager.getTrackCount(); ++i) {
+    trackManager.getTrack(i).processDeferredIdleMaintenance(now);
+  }
+
   if (!timingCriticalTrackActive) {
     StorageManager::processDeferredSaveState(looperState.getLooperState());
     StorageManager::processEditAutosave(looperState.getLooperState());
-    for (uint8_t i = 0; i < trackManager.getTrackCount(); ++i) {
-      trackManager.getTrack(i).processDeferredIdleMaintenance();
-    }
   }
 
   // Update SELECT mode for overdubbing if active

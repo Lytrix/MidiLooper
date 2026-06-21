@@ -54,6 +54,19 @@ void TrackManager::allocateLoopsEarly() {
   }
 }
 
+void TrackManager::prewarmPlaybackRuntime() {
+  for (uint8_t t = 0; t < Config::NUM_TRACKS; ++t) {
+    Track& track = tracks[t];
+    track.ensureLoopsAllocated();
+    for (uint8_t s = 0; s < Config::MAX_LOOPS_PER_TRACK; ++s) {
+      if (!isSlotEnabled(t, s) && !track.loopForSlot(s).hasPublishedEvents()) {
+        continue;
+      }
+      track.prewarmPlaybackForSlot(s);
+    }
+  }
+}
+
 // Recording & Overdubbing ------------------------------------
 
 void TrackManager::startRecordingTrack(uint8_t trackIndex, uint32_t currentTick) {
@@ -203,12 +216,18 @@ void TrackManager::queueStopRecordingTrack(uint8_t trackIndex) {
 }
 
 void TrackManager::startOverdubbingTrack(uint8_t trackIndex) {
-  if (trackIndex < Config::NUM_TRACKS) {
-    const uint8_t slot = tracks[trackIndex].getActiveLoopIndex();
-    slotEnabled[trackIndex][slot] = true;
-    slotMuted[trackIndex][slot] = false;
-    tracks[trackIndex].startOverdubbing(clockManager.getCurrentTick());
+  if (trackIndex >= Config::NUM_TRACKS) {
+    return;
   }
+  Track& track = tracks[trackIndex];
+  const Loop& loop = track.getActiveLoop();
+  if (track.isOverdubbing() && loop.capture.phase == CapturePhase::Overdub) {
+    return;
+  }
+  const uint8_t slot = track.getActiveLoopIndex();
+  slotEnabled[trackIndex][slot] = true;
+  slotMuted[trackIndex][slot] = false;
+  track.startOverdubbing(clockManager.getCurrentTick());
 }
 
 // Quantized Actions ------------------------------------------

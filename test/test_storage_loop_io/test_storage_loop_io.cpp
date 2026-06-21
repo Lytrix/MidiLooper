@@ -5,8 +5,13 @@
 #include <unity.h>
 #include <vector>
 
+#include "../../src/Logger.cpp"
+#include "../../src/Utils/NoteUtils.cpp"
 #include "../../src/LoopEventStore.cpp"
+#include "../../src/EditApply.cpp"
+#include "../../src/LoopPasses.cpp"
 #include "../../src/StorageLoopIo.cpp"
+#include "../../src/Loop.cpp"
 #include "LoopPasses.h"
 #include "EditPass.h"
 #include "StorageLoopIo.h"
@@ -85,6 +90,7 @@ void test_write_read_loop_snapshot_roundtrip() {
 
   PersistedLoopSnapshot original{};
   original.loopId = 3;
+  original.startLoopTick = 480;
   original.loopLengthTicks = 768;
   original.loopStartTick = 12;
   original.nextPassId = 8;
@@ -101,6 +107,7 @@ void test_write_read_loop_snapshot_roundtrip() {
   TEST_ASSERT_TRUE(readPersistedLoopSnapshot(mem.io(), restored));
 
   TEST_ASSERT_EQUAL(original.loopId, restored.loopId);
+  TEST_ASSERT_EQUAL(original.startLoopTick, restored.startLoopTick);
   TEST_ASSERT_EQUAL(original.loopLengthTicks, restored.loopLengthTicks);
   TEST_ASSERT_EQUAL(original.loopStartTick, restored.loopStartTick);
   TEST_ASSERT_EQUAL(original.nextPassId, restored.nextPassId);
@@ -200,11 +207,62 @@ void test_write_read_edits_tail_roundtrip() {
                     static_cast<uint8_t>(restored.passes.editPasses[0].changes[0].type));
 }
 
+void test_apply_snapshot_preserves_start_loop_tick() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+
+  PersistedLoopSnapshot snapshot{};
+  snapshot.loopId = 2;
+  snapshot.startLoopTick = 1536;
+  snapshot.loopLengthTicks = 768;
+  snapshot.loopStartTick = 0;
+  snapshot.nextPassId = 2;
+  snapshot.passes.recordPass = makeRecordPassWire(1, 0, CapturePassState::Active, 0, 10);
+
+  Loop loop;
+  applySnapshotToLoop(loop, snapshot);
+  TEST_ASSERT_EQUAL(1536u, loop.startLoopTick);
+  TEST_ASSERT_EQUAL(768u, loop.loopLengthTicks);
+}
+
+void test_truncated_edit_tail_fails_read() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+
+  PersistedLoopSnapshot original{};
+  original.loopId = 1;
+  original.loopLengthTicks = 768;
+  original.nextPassId = 3;
+  original.passes.recordPass = makeRecordPassWire(1, 0, CapturePassState::Active, 0, 10);
+
+  EditPass editPass{};
+  editPass.id = 1;
+  editPass.kind = EditPassKind::NoteEdit;
+  editPass.state = EditPassState::Active;
+  EditChange del;
+  del.type = EditChangeType::DeleteNote;
+  del.target = {1, 60, 10, 20};
+  editPass.changes.push_back(del);
+  original.passes.editPasses.push_back(editPass);
+
+  std::vector<uint8_t> buffer;
+  MemoryStorageIo mem(&buffer);
+  TEST_ASSERT_TRUE(writePersistedLoopSnapshot(mem.io(), original));
+
+  buffer.resize(buffer.size() - 4u);
+
+  PersistedLoopSnapshot restored{};
+  mem.resetRead();
+  TEST_ASSERT_FALSE(readPersistedLoopSnapshot(mem.io(), restored));
+}
+
 int main(int /*argc*/, char** /*argv*/) {
   UNITY_BEGIN();
   RUN_TEST(test_write_read_loop_snapshot_roundtrip);
   RUN_TEST(test_write_read_disabled_take_preserved);
   RUN_TEST(test_pending_take_not_persisted);
   RUN_TEST(test_write_read_edits_tail_roundtrip);
+  RUN_TEST(test_apply_snapshot_preserves_start_loop_tick);
+  RUN_TEST(test_truncated_edit_tail_fails_read);
   return UNITY_END();
 }

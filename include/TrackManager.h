@@ -35,6 +35,8 @@ public:
   ~TrackManager();  // Destructor to clean up LED manager
   void setup();
   void allocateLoopsEarly();  // Call at start of setup() before other subsystems consume heap  // Initialize track manager state
+  /// Preallocate per-slot playback runtime and playback order for enabled/data slots.
+  void prewarmPlaybackRuntime();
 
   // --- Track Selection ---
   void setSelectedTrack(uint8_t index);

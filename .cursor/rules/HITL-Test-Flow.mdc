@@ -32,6 +32,25 @@ Long runs (e.g. 32+32 bars) rely on serial heartbeat abort (default 20s silence)
 instead of a hard wall-clock timeout. Use `--max-run-seconds N` only if you want
 an optional hard cap.
 
+## Optional second overdub pass
+
+Append to the canonical command to exercise a **second** overdub pass (C0–B1, 1-beat notes):
+
+```bash
+ --second-overdub-bars 2 \
+ --second-overdub-low-note 12 --second-overdub-high-note 35 \
+ --second-overdub-step-clocks 24 --second-overdub-gate-clocks 24 \
+ --second-overdub-start-delay-bars 0 --second-overdub-start-delay-beats 1
+```
+
+Extra pass criteria when enabled:
+
+- `ST PLAYING->OVERDUBBING` and `ST OVERDUBBING->PLAYING` each **≥ 2**
+- serial `VERIFY second overdub on/off/open/out/seq` — matched pairs, notes in range
+- `VERIFY stored second overdub span (SEVT ticks)` — `count_ok` and `span_ok`
+
+Undo/redo still runs after the **last** overdub stop (tests most recent pass).
+
 ## Required pass criteria
 
 The run is considered valid only when all are true:
