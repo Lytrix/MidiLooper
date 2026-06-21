@@ -70,7 +70,14 @@ namespace Config {
   constexpr uint32_t TICKS_PER_BAR = INTERNAL_PPQN * QUARTERS_PER_BAR; // 768 or your default value (ticksPerQuarterNote * quartersPerBar)
   constexpr uint32_t TICKS_PER_16TH_STEP = INTERNAL_PPQN / 4;          // 192 / 4 = 48 Ticks
   constexpr uint32_t DUPLICATE_TICK_TOLERANCE = TICKS_PER_16TH_STEP / 4;  // 12 ticks = 1/64th note; events within this are treated as duplicates
-  constexpr uint8_t  MAX_UNDO_HISTORY = 25;
+  /// Target undo depth per track when memory is not under pressure.
+  constexpr uint16_t PREFERRED_UNDO_DEPTH = 99;
+  /// Try to keep at least this many undo entries when trimming under pressure.
+  constexpr uint16_t MIN_UNDO_DEPTH = 8;
+  /// Hard safety rail — trim oldest entries when exceeded regardless of pressure.
+  constexpr uint16_t ABSOLUTE_MAX_UNDO_ENTRIES = 512;
+  /// Minimum free heap (bytes) held back for edit vectors and undo metadata.
+  constexpr uint32_t HEAP_RESERVE_BYTES = 32 * 1024;
   constexpr uint8_t  PLAYBACK_WINDOW_MIN_BARS = 2;
   constexpr uint8_t  PLAYBACK_WINDOW_MAX_BARS = 8;
   /// Above this event count, overdub undo still stores O(1) refs but logs a degraded-undo warning.

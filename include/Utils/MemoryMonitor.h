@@ -65,4 +65,9 @@ void logStatus();
 void logStatusAtAddedNotes(uint32_t addedNoteOns, size_t loopEventCount = 0,
                           const void* loopEventsData = nullptr);
 
+#if defined(PIO_UNIT_TEST_NATIVE)
+void setNativeTestFreeHeap(uint32_t bytes);
+void resetNativeTestFreeHeap();
+#endif
+
 }  // namespace MemoryMonitor

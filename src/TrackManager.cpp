@@ -10,6 +10,7 @@
 #include "Logger.h"
 #include "MidiHandler.h"
 #include "NoteEditManager.h"
+#include "PassReclaim.h"
 
 TrackManager trackManager;
 
@@ -892,6 +893,17 @@ void TrackManager::forceLedUpdate(uint32_t currentTick) {
 void TrackManager::clearLeds() {
   if (ledManager) {
     ledManager->clearAllLeds();  // This now also clears the current tick indicator
+  }
+}
+
+void TrackManager::reclaimUnreferencedDisabledPasses() {
+  for (uint8_t trackIndex = 0; trackIndex < Config::NUM_TRACKS; ++trackIndex) {
+    Track& track = tracks[trackIndex];
+    PassReferenceSet refs{};
+    collectReferencedPasses(track.getGlobalUndoStack(), refs);
+    for (uint8_t slotIndex = 0; slotIndex < Config::MAX_LOOPS_PER_TRACK; ++slotIndex) {
+      track.getLoop(slotIndex).reclaimUnreferencedDisabledPasses(refs.slots[slotIndex]);
+    }
   }
 }
 

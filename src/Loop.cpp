@@ -3,6 +3,8 @@
 
 #include "Loop.h"
 #include "Utils/LoopStopFinalize.h"
+#include "Utils/MemoryMonitor.h"
+#include "Logger.h"
 #include <algorithm>
 
 namespace {
@@ -148,6 +150,20 @@ LoopPasses deepClonePasses(const LoopPasses& passes) {
   return cloned;
 }
 
+size_t estimatedEditPassBytes(const EditChangeList& changes) {
+  size_t bytes = sizeof(EditPass);
+  bytes += changes.size() * sizeof(EditChange);
+  for (const EditChange& change : changes) {
+    bytes += change.addedEvents.size() * sizeof(MidiEvent);
+  }
+  return bytes;
+}
+
+bool canHeapAdmitEditPass(const EditChangeList& changes) {
+  const size_t needed = Config::HEAP_RESERVE_BYTES + estimatedEditPassBytes(changes);
+  return MemoryMonitor::getFreeHeap() >= needed;
+}
+
 }  // namespace
 
 bool Loop::hasPublishedEvents() const {
@@ -219,6 +235,13 @@ EditPassId Loop::saveNoteEditPass(uint8_t noteEditPassIndex, EditChangeList chan
   if (changes.empty()) {
     return kInvalidEditPassId;
   }
+  if (!canHeapAdmitEditPass(changes)) {
+    logger.log(CAT_TRACK, LOG_WARNING,
+               "saveNoteEditPass rejected: heap below reserve (need=%u free=%u)",
+               static_cast<unsigned>(Config::HEAP_RESERVE_BYTES + estimatedEditPassBytes(changes)),
+               static_cast<unsigned>(MemoryMonitor::getFreeHeap()));
+    return kInvalidEditPassId;
+  }
   EditPass editPass;
   editPass.id = nextPassId_++;
   editPass.kind = EditPassKind::NoteEdit;
@@ -267,6 +290,64 @@ void Loop::freeActiveCapturePassChunks() {
                        return pass.state == CapturePassState::Active;
                      }),
       passes.overdubPasses.end());
+}
+
+bool Loop::reclaimDisabledCapturePass(PassId id) {
+  if (id == kInvalidPassId) {
+    return false;
+  }
+  if (passes.hasRecordPass() && passes.recordPass.id == id &&
+      passes.recordPass.state == CapturePassState::Disabled) {
+    LoopEventStore staging;
+    staging.adoptChunkIds(passes.recordPass.chunkRefs);
+    staging.clear();
+    passes.recordPass.chunkRefs.clear();
+    passes.recordPass.id = kInvalidPassId;
+    ++playbackRevision;
+    markPassDerivedStale();
+    return true;
+  }
+  for (auto it = passes.overdubPasses.begin(); it != passes.overdubPasses.end(); ++it) {
+    if (it->id != id || it->state != CapturePassState::Disabled) {
+      continue;
+    }
+    LoopEventStore staging;
+    staging.adoptChunkIds(it->chunkRefs);
+    staging.clear();
+    passes.overdubPasses.erase(it);
+    ++playbackRevision;
+    markPassDerivedStale();
+    return true;
+  }
+  return false;
+}
+
+void Loop::reclaimUnreferencedDisabledCapturePasses(const SlotPassReferences& refs) {
+  if (passes.hasRecordPass() && passes.recordPass.state == CapturePassState::Disabled &&
+      !refs.referencesCapturePass(passes.recordPass.id)) {
+    reclaimDisabledCapturePass(passes.recordPass.id);
+  }
+  for (size_t i = passes.overdubPasses.size(); i > 0; --i) {
+    const OverdubPass& pass = passes.overdubPasses[i - 1];
+    if (pass.state == CapturePassState::Disabled && !refs.referencesCapturePass(pass.id)) {
+      reclaimDisabledCapturePass(pass.id);
+    }
+  }
+}
+
+void Loop::reclaimUnreferencedDisabledEditPasses(const SlotPassReferences& refs) {
+  passes.editPasses.erase(
+      std::remove_if(passes.editPasses.begin(), passes.editPasses.end(),
+                     [&](const EditPass& editPass) {
+                       return editPass.state == EditPassState::Disabled &&
+                              !refs.referencesEditPass(editPass.id);
+                     }),
+      passes.editPasses.end());
+}
+
+void Loop::reclaimUnreferencedDisabledPasses(const SlotPassReferences& refs) {
+  reclaimUnreferencedDisabledCapturePasses(refs);
+  reclaimUnreferencedDisabledEditPasses(refs);
 }
 
 void Loop::markPassDerivedStale() {
@@ -709,8 +790,8 @@ SealOutcome Loop::sealCapture(uint32_t sealedAtTick) {
   if (capture.store.empty()) {
     return SealOutcome::SkippedEmpty;
   }
-  if (passes.capturePassCount() >= PassConfig::MAX_CAPTURE_PASSES_PER_LOOP) {
-    return SealOutcome::AtPassCap;
+  if (!LoopEventStore::canAllocChunkWithReserve()) {
+    return SealOutcome::PoolExhausted;
   }
 
   ensureCaptureEventsSorted();

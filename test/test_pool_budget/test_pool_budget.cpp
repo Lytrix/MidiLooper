@@ -1,0 +1,231 @@
+//  Copyright (c)  2025 Lytrix (Eelke Jager)
+//  Licensed under the PolyForm Noncommercial 1.0.0
+
+#include <unity.h>
+
+#include "../../src/Logger.cpp"
+#include "../../src/Utils/NoteUtils.cpp"
+#include "../../src/EditApply.cpp"
+#include "../../src/Utils/MemoryMonitor.cpp"
+#include "../../src/LoopEventStore.cpp"
+#include "../../src/LoopPasses.cpp"
+#include "../../src/Loop.cpp"
+#include "../../src/PassReclaim.cpp"
+
+#include "EditPass.h"
+#include "Loop.h"
+#include "LoopEventStore.h"
+#include "PassReclaim.h"
+#include "Utils/MemoryMonitor.h"
+
+namespace {
+
+OverdubPass makeOverdubPass(PassId id, CapturePassState state) {
+  LoopEventStore store;
+  TEST_ASSERT_TRUE(store.append(MidiEvent::NoteOn(10, 1, 60, 100)));
+  ChunkIdList refs;
+  store.detachChunksTo(refs);
+  OverdubPass pass{};
+  pass.id = id;
+  pass.state = state;
+  pass.chunkRefs = std::move(refs);
+  pass.mergeSequence = id;
+  return pass;
+}
+
+RecordPass makeRecordPass(PassId id) {
+  LoopEventStore store;
+  TEST_ASSERT_TRUE(store.append(MidiEvent::NoteOn(0, 1, 60, 100)));
+  ChunkIdList refs;
+  store.detachChunksTo(refs);
+  RecordPass pass{};
+  pass.id = id;
+  pass.state = CapturePassState::Active;
+  pass.chunkRefs = std::move(refs);
+  return pass;
+}
+
+void consumeChunksUntilReserve() {
+  LoopEventStore sink;
+  while (LoopEventStore::canAllocChunkWithReserve()) {
+    for (uint16_t i = 0; i < LoopEventStoreConfig::CHUNK_CAPACITY; ++i) {
+      if (!sink.append(MidiEvent::NoteOn(i, 1, 60, 100))) {
+        return;
+      }
+    }
+  }
+}
+
+}  // namespace
+
+void test_chunk_stats_match_pool_bitmap() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  TEST_ASSERT_EQUAL(LoopEventStoreConfig::POOL_CHUNK_COUNT, LoopEventStore::freeChunkCount());
+  TEST_ASSERT_EQUAL(0u, LoopEventStore::usedChunkCount());
+
+  LoopEventStore store;
+  for (uint16_t i = 0; i < LoopEventStoreConfig::CHUNK_CAPACITY; ++i) {
+    TEST_ASSERT_TRUE(store.append(MidiEvent::NoteOn(i, 1, 60, 100)));
+  }
+  TEST_ASSERT_EQUAL(1u, LoopEventStore::usedChunkCount());
+  TEST_ASSERT_EQUAL(LoopEventStoreConfig::POOL_CHUNK_COUNT - 1u, LoopEventStore::freeChunkCount());
+}
+
+void test_seal_succeeds_when_capture_pass_count_exceeds_25() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  MemoryMonitor::resetNativeTestFreeHeap();
+
+  Loop loop;
+  loop.loopLengthTicks = 768;
+  loop.passes.recordPass = makeRecordPass(1);
+  loop.passes.overdubPasses.reserve(26);
+  for (PassId id = 2; id <= 27; ++id) {
+    loop.passes.overdubPasses.push_back(makeOverdubPass(id, CapturePassState::Disabled));
+  }
+  TEST_ASSERT_TRUE(loop.passes.capturePassCount() > 25u);
+
+  loop.beginCapture(CapturePhase::Overdub);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(20, 1, 62, 90)));
+  const SealOutcome seal = loop.sealCapture(100);
+  TEST_ASSERT_EQUAL(static_cast<int>(SealOutcome::Ok), static_cast<int>(seal));
+}
+
+void test_seal_returns_pool_exhausted_when_reserve_violated() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  consumeChunksUntilReserve();
+  TEST_ASSERT_FALSE(LoopEventStore::canAllocChunkWithReserve());
+
+  Loop loop;
+  loop.loopLengthTicks = 768;
+  loop.beginCapture(CapturePhase::Record);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(5, 1, 60, 100)));
+  const SealOutcome seal = loop.sealCapture(50);
+  TEST_ASSERT_EQUAL(static_cast<int>(SealOutcome::PoolExhausted),
+                    static_cast<int>(seal));
+}
+
+void test_reclaim_disabled_overdub_when_unreferenced() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+
+  Loop loop;
+  loop.passes.overdubPasses.push_back(makeOverdubPass(42, CapturePassState::Disabled));
+  const uint16_t usedBefore = LoopEventStore::usedChunkCount();
+
+  SlotPassReferences refs;
+  loop.reclaimUnreferencedDisabledPasses(refs);
+
+  TEST_ASSERT_EQUAL(0u, loop.passes.overdubPasses.size());
+  TEST_ASSERT_TRUE(LoopEventStore::usedChunkCount() < usedBefore);
+}
+
+void test_reclaim_retains_disabled_pass_referenced_by_undo() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+
+  Loop loop;
+  loop.passes.overdubPasses.push_back(makeOverdubPass(7, CapturePassState::Disabled));
+
+  SlotPassReferences refs;
+  refs.pinCapturePass(7);
+  loop.reclaimUnreferencedDisabledPasses(refs);
+
+  TEST_ASSERT_EQUAL(1u, loop.passes.overdubPasses.size());
+  TEST_ASSERT_EQUAL(7u, loop.passes.overdubPasses[0].id);
+}
+
+void test_collect_referenced_passes_pins_clear_slot_snapshots() {
+  PassReferenceSet refs{};
+  GlobalUndoStack stack;
+  UndoEntry entry;
+  entry.kind = UndoEntryKind::ClearSlot;
+  entry.slotIndex = 2;
+  auto snapshot = std::make_shared<PersistedLoopSnapshot>();
+  snapshot->passes.overdubPasses.push_back(makeOverdubPass(99, CapturePassState::Disabled));
+  entry.beforeSnapshot = snapshot;
+  stack.entries.push_back(entry);
+
+  collectReferencedPasses(stack, refs);
+  TEST_ASSERT_TRUE(refs.slots[2].referencesCapturePass(99));
+}
+
+void test_ninety_undo_entries_not_under_pressure_by_default() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  MemoryMonitor::resetNativeTestFreeHeap();
+
+  GlobalUndoStack stack;
+  for (uint16_t i = 0; i < 90; ++i) {
+    UndoEntry entry;
+    entry.kind = UndoEntryKind::OverdubPassAdded;
+    entry.passId = i + 1;
+    stack.entries.push_back(entry);
+  }
+  TEST_ASSERT_EQUAL(90u, stack.entries.size());
+  TEST_ASSERT_FALSE(overUndoMemoryPressure(stack));
+}
+
+void test_save_note_edit_pass_rejected_when_heap_below_reserve() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  MemoryMonitor::setNativeTestFreeHeap(1024);
+
+  Loop loop;
+  EditChange del{};
+  del.type = EditChangeType::DeleteNote;
+  del.target = {1, 60, 0, 48};
+  const size_t before = loop.passes.editPasses.size();
+  const EditPassId id = loop.saveNoteEditPass(0, EditChangeList{del});
+  TEST_ASSERT_EQUAL(kInvalidEditPassId, id);
+  TEST_ASSERT_EQUAL(before, loop.passes.editPasses.size());
+
+  MemoryMonitor::resetNativeTestFreeHeap();
+}
+
+void test_save_note_edit_pass_succeeds_when_heap_headroom() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  MemoryMonitor::resetNativeTestFreeHeap();
+
+  Loop loop;
+  EditChange del{};
+  del.type = EditChangeType::DeleteNote;
+  del.target = {1, 60, 0, 48};
+  const EditPassId id = loop.saveNoteEditPass(0, EditChangeList{del});
+  TEST_ASSERT_NOT_EQUAL(kInvalidEditPassId, id);
+  TEST_ASSERT_EQUAL(1u, loop.passes.editPasses.size());
+}
+
+void test_trim_pressure_when_chunk_reserve_violated() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  consumeChunksUntilReserve();
+
+  GlobalUndoStack stack;
+  for (uint8_t i = 0; i < Config::MIN_UNDO_DEPTH + 4; ++i) {
+    UndoEntry entry;
+    entry.kind = UndoEntryKind::RecordPassAdded;
+    entry.passId = i + 1;
+    stack.entries.push_back(entry);
+  }
+  stack.cursor = stack.entries.size();
+  TEST_ASSERT_TRUE(overUndoMemoryPressure(stack));
+}
+
+int main(int /*argc*/, char** /*argv*/) {
+  UNITY_BEGIN();
+  RUN_TEST(test_chunk_stats_match_pool_bitmap);
+  RUN_TEST(test_seal_succeeds_when_capture_pass_count_exceeds_25);
+  RUN_TEST(test_seal_returns_pool_exhausted_when_reserve_violated);
+  RUN_TEST(test_reclaim_disabled_overdub_when_unreferenced);
+  RUN_TEST(test_reclaim_retains_disabled_pass_referenced_by_undo);
+  RUN_TEST(test_collect_referenced_passes_pins_clear_slot_snapshots);
+  RUN_TEST(test_ninety_undo_entries_not_under_pressure_by_default);
+  RUN_TEST(test_save_note_edit_pass_rejected_when_heap_below_reserve);
+  RUN_TEST(test_save_note_edit_pass_succeeds_when_heap_headroom);
+  RUN_TEST(test_trim_pressure_when_chunk_reserve_violated);
+  return UNITY_END();
+}

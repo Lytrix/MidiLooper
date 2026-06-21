@@ -25,6 +25,7 @@
 #include "Utils/NoteUtils.h"
 #include "Utils/ExtMemAllocator.h"
 #include "Globals.h"
+#include "PassReclaim.h"
 
 class Track;
 
@@ -112,6 +113,11 @@ struct Loop {
   SealOutcome sealCapture(uint32_t sealedAtTick);
   bool publishPendingCapturePass();
   void discardPendingCapturePass();
+
+  bool reclaimDisabledCapturePass(PassId id);
+  void reclaimUnreferencedDisabledCapturePasses(const SlotPassReferences& refs);
+  void reclaimUnreferencedDisabledEditPasses(const SlotPassReferences& refs);
+  void reclaimUnreferencedDisabledPasses(const SlotPassReferences& refs);
 
   PlaybackOrderVec& getPlaybackOrder() {
     if (!playbackOrder_) playbackOrder_ = std::make_unique<PlaybackOrderVec>();

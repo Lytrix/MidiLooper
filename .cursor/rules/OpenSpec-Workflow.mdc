@@ -33,7 +33,7 @@ Restart Cursor after `openspec init` / `openspec update` so slash commands appea
 M1–M7 are **shipped**. Post-M7 order:
 
 1. **M8 edit** — `m8-edit` (**active** — `/opsx:apply`)
-2. **Hardening** — pool-budget, playback-window polish (propose when M8 done)
+2. **Hardening** — playback-window polish (propose when M8 done); **pool-budget** groups 1–6 **shipped**
 3. **JamRecorder** — `jam-recorder` change (JamAction / D3, **not** D13 MIDI capture)
 4. **M10** — full Jam entity + Scenes + SD
 5. **D13 arrangement capture** — only after R1–R5 locked in phase-3 docs
@@ -43,18 +43,12 @@ Do **not** start D13-style `jam-recording` before M8. Parked reference:
 
 ## Active changes
 
-**Recommended apply order:** **`note-edit-session-undo-gpio`** → **`pool-budget`**.
-
-**`pool-budget`** — Memory-driven capture/edit admission, **`reclaimUnreferencedDisabledPasses`**,
-undo trim with **`PREFERRED_UNDO_DEPTH` (99)**. Supersedes fixed-25 pass/undo caps; task group 9
-replaces **`E:`** **cloneShared** stacks with **EditChange + focus** entries (design D10). Run
-`/opsx:apply` on `openspec/changes/pool-budget/tasks.md`. Recommended after
-**`note-edit-session-undo-gpio`**.
+**Recommended apply order:** **`note-edit-session-undo-gpio`** → pool-budget **§9** (session **EditChange** undo entries).
 
 **`note-edit-session-undo-gpio`** — Geometry-kind session undo (**`E:`**), **`NoteEditSessionState`**,
 GPIO **`GpioButtonManager`** via **`MidiButtonActions`**. Run `/opsx:apply` on
-`openspec/changes/note-edit-session-undo-gpio/tasks.md`. Recommended before **`pool-budget`**
-(stabilizes **`EditManager`**; kind-boundary **`E:`** reduces session clones).
+`openspec/changes/note-edit-session-undo-gpio/tasks.md`. Required before pool-budget **task group 9**
+(**`SessionUndoEntry`** / **EditChange + focus** replaces **`cloneShared`** **E:** stack).
 
 **`m8-edit`** — Edit op-lists, NoteEditSession, retire `editFlat_`.  
 Run `/opsx:apply` on `openspec/changes/m8-edit/tasks.md`.
@@ -63,6 +57,7 @@ Run `/opsx:apply` on `openspec/changes/m8-edit/tasks.md`.
 
 **Archived (bug evidence):** `note-move-pitch-overlap-flaky`, `lengthen-overlap-neighbor-restore`, `change-length-commit-rematerialize` (Track C insert/reorder deferred).
 
+**Archived:** `openspec/changes/archive/2026-06-22-pool-budget/` (chunk/heap admission, **`reclaimUnreferencedDisabledPasses`**, **`PREFERRED_UNDO_DEPTH`** undo trim; HITL PASS; **§9** session **EditChange** undo deferred).  
 **Archived:** `openspec/changes/archive/2026-06-22-loop-ownership-hardening/` (overdub guard, slot resolution, `startLoopTick`, SD tail fail-hard, prewarm, deferred validate; edit cap deferred to **`pool-budget`**).  
 **Archived:** `openspec/changes/archive/2026-06-18-m8-rename/` (Take/Capture vocabulary).  
 **Archived:** `openspec/changes/archive/2026-06-19-overlap-hidden-note-select/` (**Closed** 2026-06-20).  

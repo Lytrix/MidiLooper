@@ -25,7 +25,7 @@ enum class SealOutcome : uint8_t {
   SkippedEmpty,
   FailedValidation,
   AlreadyPending,
-  AtPassCap,
+  PoolExhausted,
 };
 
 enum class CommitResult : uint8_t { Skipped, Published, SealFailed };
@@ -38,8 +38,8 @@ enum class CommitReason : uint8_t {
 };
 
 namespace PassConfig {
-/// Matches Config::MAX_UNDO_HISTORY — cap on capture passes retained per loop.
-constexpr uint8_t MAX_CAPTURE_PASSES_PER_LOOP = 25;
+/// Chunks held back so playback and admission retain headroom.
+constexpr uint16_t CHUNK_RESERVE = 16;
 }  // namespace PassConfig
 
 struct RecordPass {

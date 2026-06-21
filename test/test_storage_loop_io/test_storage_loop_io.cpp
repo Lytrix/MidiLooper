@@ -11,6 +11,7 @@
 #include "../../src/EditApply.cpp"
 #include "../../src/LoopPasses.cpp"
 #include "../../src/StorageLoopIo.cpp"
+#include "../../src/Utils/MemoryMonitor.cpp"
 #include "../../src/Loop.cpp"
 #include "LoopPasses.h"
 #include "EditPass.h"

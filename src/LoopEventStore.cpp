@@ -8,6 +8,8 @@
 #include <limits>
 #include <new>
 
+#include "LoopPasses.h"
+
 #if defined(ARDUINO)
 #include "Logger.h"
 #endif
@@ -73,6 +75,27 @@ void LoopEventStore::resetPoolForTests() {
   pool_ = nullptr;
   poolReady_ = false;
   std::memset(poolUsed_, 0, sizeof(poolUsed_));
+}
+
+uint16_t LoopEventStore::usedChunkCount() {
+  if (!poolReady_) {
+    return 0;
+  }
+  uint16_t count = 0;
+  for (uint16_t i = 0; i < LoopEventStoreConfig::POOL_CHUNK_COUNT; ++i) {
+    if (poolUsed_[i]) {
+      ++count;
+    }
+  }
+  return count;
+}
+
+uint16_t LoopEventStore::freeChunkCount() {
+  return LoopEventStoreConfig::POOL_CHUNK_COUNT - usedChunkCount();
+}
+
+bool LoopEventStore::canAllocChunkWithReserve() {
+  return freeChunkCount() > PassConfig::CHUNK_RESERVE;
 }
 
 uint16_t LoopEventStore::allocChunk() {

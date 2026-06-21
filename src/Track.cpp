@@ -25,6 +25,9 @@
 #include "Utils/NoteUtils.h"
 #include "DisplayManager.h"
 #include "EditManager.h"
+#include "TrackManager.h"
+
+extern TrackManager trackManager;
 
 MidiEventVec& Track::editAwareMidiEvents() {
   return editManager.editMidiEvents(*this);
@@ -711,9 +714,16 @@ void Track::finalizeCommitSideEffects(CommitResult result, CommitReason reason, 
       }
       break;
     }
-    case CommitResult::SealFailed:
+    case CommitResult::SealFailed: {
       loop.discardPendingCapturePass();
+      trackManager.reclaimUnreferencedDisabledPasses();
+      const CommitResult retry = loop.commitCapturePass(reason, closeTick);
+      if (retry != CommitResult::SealFailed) {
+        finalizeCommitSideEffects(retry, reason, closeTick);
+        return;
+      }
       break;
+    }
   }
 
   if (result == CommitResult::Published) {
