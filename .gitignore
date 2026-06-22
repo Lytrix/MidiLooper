@@ -4,3 +4,13 @@
 .vscode/c_cpp_properties.json
 .vscode/launch.json
 .vscode/ipch
+
+# HITL capture/session logs and host automation artifacts (disposable)
+captures/
+
+# Python bytecode caches
+__pycache__/
+*.pyc
+
+# Editor backup files
+*.save
