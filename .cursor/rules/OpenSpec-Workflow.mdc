@@ -53,7 +53,9 @@ GPIO **`GpioButtonManager`** via **`MidiButtonActions`**. Run `/opsx:apply` on
 **`m8-edit`** — Edit op-lists, NoteEditSession, retire `editFlat_`.  
 Run `/opsx:apply` on `openspec/changes/m8-edit/tasks.md`.
 
-**Parked:** `archive/2026-06-20-parked-edit-record-display-length-mode/` — display + length-mode UX (D1–D3 not started).
+**`edit-record-display-length-mode`** — D1 live record display, D2 edit refresh, D3 length-mode leak. Reopened 2026-06-22; spike RC1–RC4 in `BUG.md`. HITL `_verify_live_record_display` (warn by default). Run `/opsx:apply` on `openspec/changes/edit-record-display-length-mode/tasks.md`.
+
+**Parked archive copy:** `archive/2026-06-20-parked-edit-record-display-length-mode/` (superseded by active change above).
 
 **Archived (bug evidence):** `note-move-pitch-overlap-flaky`, `lengthen-overlap-neighbor-restore`, `change-length-commit-rematerialize` (Track C insert/reorder deferred).
 
@@ -69,8 +71,7 @@ Run `/opsx:apply` on `openspec/changes/m8-edit/tasks.md`.
 **Archived:** `openspec/changes/archive/2026-06-20-note-edit-focus-reads/` (Phase 2a–2d **focus.last**).  
 **Archived:** `openspec/changes/archive/2026-06-20-note-move-pitch-overlap-flaky/` (overlap root-cause evidence).  
 **Archived:** `openspec/changes/archive/2026-06-20-lengthen-overlap-neighbor-restore/` (overlap HITL evidence).  
-**Archived:** `openspec/changes/archive/2026-06-20-change-length-commit-rematerialize/` (Track A+B; spec `openspec/specs/change-length-commit-rematerialize/`).  
-**Parked:** `openspec/changes/archive/2026-06-20-parked-edit-record-display-length-mode/` (display + length-mode UX).
+**Archived:** `openspec/changes/archive/2026-06-20-change-length-commit-rematerialize/` (Track A+B; spec `openspec/specs/change-length-commit-rematerialize/`).
 
 ## Brownfield docs
 

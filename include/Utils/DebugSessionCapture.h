@@ -115,6 +115,25 @@ inline void recStop(const char* kind, uint8_t slot, uint32_t tick, uint32_t star
                 (unsigned long)finalLength, align ? 1 : 0);
 }
 
+inline void recStopStage(const char* stage, uint32_t elapsedUs, uint32_t durationUs,
+                         uint32_t heapBefore, uint32_t heapAfter,
+                         size_t eventCount, size_t chunkRefCount,
+                         const char* outcome) {
+  Serial.printf("#CAP,%lu,RECS,stage,%s,%lu,%lu,%lu,%lu,%lu,%lu,%s\r\n",
+                (unsigned long)micros(), stage,
+                (unsigned long)elapsedUs, (unsigned long)durationUs,
+                (unsigned long)heapBefore, (unsigned long)heapAfter,
+                (unsigned long)eventCount, (unsigned long)chunkRefCount, outcome);
+}
+
+inline void persistence(const char* stage, uint32_t durationUs,
+                        uint32_t heapBefore, uint32_t heapAfter,
+                        const char* outcome) {
+  Serial.printf("#CAP,%lu,PERS,%s,%lu,%lu,%lu,%s\r\n",
+                (unsigned long)micros(), stage, (unsigned long)durationUs,
+                (unsigned long)heapBefore, (unsigned long)heapAfter, outcome);
+}
+
 struct PendingRevt {
   uint32_t tick;
   uint8_t ch;
@@ -204,6 +223,10 @@ inline void update(uint32_t currentTick, uint32_t ticksPerBar) {
 #define SC_REC_START(slot, tick)           DebugSessionCapture::recStart(slot, tick)
 #define SC_REC_STOP(kind, slot, tick, start, raw, final, align) \
                                            DebugSessionCapture::recStop(kind, slot, tick, start, raw, final, align)
+#define SC_REC_STOP_STAGE(stage, elapsedUs, durationUs, heapBefore, heapAfter, eventCount, chunkRefCount, outcome) \
+                                           DebugSessionCapture::recStopStage(stage, elapsedUs, durationUs, heapBefore, heapAfter, eventCount, chunkRefCount, outcome)
+#define SC_PERSIST(stage, durationUs, heapBefore, heapAfter, outcome) \
+                                           DebugSessionCapture::persistence(stage, durationUs, heapBefore, heapAfter, outcome)
 #define SC_REC_STORED_NOTE_ON(tick, ch, note) DebugSessionCapture::recStoredNoteOn(tick, ch, note)
 #define SC_STORED_NOTE_EVENT(kind, tick, ch, note) DebugSessionCapture::storedNoteEvent(kind, tick, ch, note)
 #define SC_DISP(slot, state, loopLen, take, visual, frame, buffer, published) \
@@ -228,6 +251,8 @@ inline void update(uint32_t currentTick, uint32_t ticksPerBar) {
 #define SC_CLOCK_SOURCE(from, to)          ((void)0)
 #define SC_REC_START(slot, tick)           ((void)0)
 #define SC_REC_STOP(kind, slot, tick, start, raw, final, align) ((void)0)
+#define SC_REC_STOP_STAGE(stage, elapsedUs, durationUs, heapBefore, heapAfter, eventCount, chunkRefCount, outcome) ((void)0)
+#define SC_PERSIST(stage, durationUs, heapBefore, heapAfter, outcome) ((void)0)
 #define SC_REC_STORED_NOTE_ON(tick, ch, note) ((void)0)
 #define SC_STORED_NOTE_EVENT(kind, tick, ch, note) ((void)0)
 #define SC_DISP(slot, state, loopLen, take, visual, frame, buffer, published) ((void)0)

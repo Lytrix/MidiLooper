@@ -141,7 +141,7 @@ void Config::loadConfiguration() {
               .withParameter(255));
     
     // Encoder Button - Edit Mode (mode cycle + exit only; add/delete on NOTELEN double)
-    addButton(ButtonConfig(MidiConfig::Transport::NOTE_UNDO, ch16, "Edit Mode")
+    addButton(ButtonConfig(MidiConfig::Transport::NOTE_EDIT_MODE, ch16, "Edit Mode")
               .onShortPress(ActionType::CYCLE_EDIT_MODE)
               .onLongPress(ActionType::EXIT_EDIT_MODE));
     

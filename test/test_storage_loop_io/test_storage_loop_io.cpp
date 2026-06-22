@@ -83,6 +83,48 @@ OverdubPass makeOverdubPassWire(PassId id, uint32_t mergeSequence, CapturePassSt
   return pass;
 }
 
+RecordPass makeRecordPassWithEventCount(PassId id, CapturePassState state, size_t eventCount) {
+  LoopEventStore capture;
+  for (size_t i = 0; i < eventCount; ++i) {
+    const uint32_t tick = static_cast<uint32_t>(i);
+    const uint8_t note = static_cast<uint8_t>(48u + (i % 12u));
+    TEST_ASSERT_TRUE(capture.append(MidiEvent::NoteOn(tick, 1, note, 100)));
+  }
+  ChunkIdList refs;
+  capture.detachChunksTo(refs);
+
+  RecordPass pass{};
+  pass.id = id;
+  pass.state = state;
+  pass.chunkRefs = std::move(refs);
+  return pass;
+}
+
+RecordPass makeRecordPassForBars(PassId id, CapturePassState state, uint32_t bars) {
+  LoopEventStore capture;
+  const uint32_t ticksPerBeat = Config::TICKS_PER_BAR / 4u;
+  const uint32_t noteDurationTicks = Config::TICKS_PER_BAR / 8u;
+  const uint32_t notesPerBar = 4u;
+  for (uint32_t bar = 0; bar < bars; ++bar) {
+    for (uint32_t beat = 0; beat < notesPerBar; ++beat) {
+      const uint32_t onTick = bar * Config::TICKS_PER_BAR + beat * ticksPerBeat;
+      const uint32_t offTick = onTick + noteDurationTicks;
+      const uint8_t note = static_cast<uint8_t>(48u + ((bar + beat) % 12u));
+      TEST_ASSERT_TRUE(capture.append(MidiEvent::NoteOn(onTick, 1, note, 100)));
+      TEST_ASSERT_TRUE(capture.append(MidiEvent::NoteOff(offTick, 1, note, 0)));
+    }
+  }
+
+  ChunkIdList refs;
+  capture.detachChunksTo(refs);
+
+  RecordPass pass{};
+  pass.id = id;
+  pass.state = state;
+  pass.chunkRefs = std::move(refs);
+  return pass;
+}
+
 }  // namespace
 
 void test_write_read_loop_snapshot_roundtrip() {
@@ -257,6 +299,99 @@ void test_truncated_edit_tail_fails_read() {
   TEST_ASSERT_FALSE(readPersistedLoopSnapshot(mem.io(), restored));
 }
 
+void test_capture_pass_write_uses_chunk_stream_batch_bound() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  resetPersistedCapturePassWriteStatsForTest();
+
+  PersistedLoopSnapshot original{};
+  original.loopId = 9;
+  original.loopLengthTicks = 4096;
+  original.nextPassId = 2;
+  const size_t expectedEventCount =
+      static_cast<size_t>(LoopEventStoreConfig::CHUNK_CAPACITY) * 3u + 17u;
+  original.passes.recordPass =
+      makeRecordPassWithEventCount(1, CapturePassState::Active, expectedEventCount);
+
+  std::vector<uint8_t> buffer;
+  MemoryStorageIo mem(&buffer);
+  TEST_ASSERT_TRUE(writePersistedLoopSnapshot(mem.io(), original));
+
+  const size_t maxBatchEvents = getLastPersistedCapturePassWriteMaxBatchEvents();
+  TEST_ASSERT_GREATER_THAN(0u, maxBatchEvents);
+  TEST_ASSERT_LESS_OR_EQUAL_UINT32(LoopEventStoreConfig::CHUNK_CAPACITY,
+                                   static_cast<uint32_t>(maxBatchEvents));
+
+  PersistedLoopSnapshot restored{};
+  mem.resetRead();
+  TEST_ASSERT_TRUE(readPersistedLoopSnapshot(mem.io(), restored));
+  TEST_ASSERT_TRUE(restored.passes.hasRecordPass());
+
+  MidiEventVec flat;
+  LoopEventStore::appendFlattenedChunkIds(restored.passes.recordPass.chunkRefs, flat);
+  TEST_ASSERT_EQUAL(expectedEventCount, flat.size());
+  TEST_ASSERT_EQUAL(0u, flat.front().tick);
+  TEST_ASSERT_EQUAL(static_cast<uint32_t>(expectedEventCount - 1u), flat.back().tick);
+}
+
+void test_64_bar_record_snapshot_reloads_after_reboot_simulation() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+
+  constexpr uint32_t kRecordBars = 64u;
+  constexpr uint32_t kNotesPerBar = 4u;
+  const uint32_t expectedLoopLengthTicks = kRecordBars * Config::TICKS_PER_BAR;
+  const size_t expectedEventCount =
+      static_cast<size_t>(kRecordBars) * static_cast<size_t>(kNotesPerBar) * 2u;
+  const uint32_t expectedLastTick =
+      (kRecordBars - 1u) * Config::TICKS_PER_BAR + 3u * (Config::TICKS_PER_BAR / 4u) +
+      (Config::TICKS_PER_BAR / 8u);
+
+  PersistedLoopSnapshot original{};
+  original.loopId = 12;
+  original.startLoopTick = 0;
+  original.loopLengthTicks = expectedLoopLengthTicks;
+  original.loopStartTick = 0;
+  original.nextPassId = 2;
+  original.nextMergeSequence = 1;
+  original.lastPublishedPassId = 1;
+  original.passes.recordPass = makeRecordPassForBars(1, CapturePassState::Active, kRecordBars);
+
+  std::vector<uint8_t> buffer;
+  MemoryStorageIo mem(&buffer);
+  TEST_ASSERT_TRUE(writePersistedLoopSnapshot(mem.io(), original));
+
+  // Simulate reboot: clear the shared chunk pool before reading persisted bytes.
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+
+  PersistedLoopSnapshot restored{};
+  mem.resetRead();
+  TEST_ASSERT_TRUE(readPersistedLoopSnapshot(mem.io(), restored));
+  TEST_ASSERT_EQUAL(12u, restored.loopId);
+  TEST_ASSERT_EQUAL(expectedLoopLengthTicks, restored.loopLengthTicks);
+  TEST_ASSERT_TRUE(restored.passes.hasRecordPass());
+  TEST_ASSERT_EQUAL(1u, restored.passes.recordPass.id);
+
+  MidiEventVec restoredFlat;
+  LoopEventStore::appendFlattenedChunkIds(restored.passes.recordPass.chunkRefs, restoredFlat);
+  TEST_ASSERT_EQUAL(expectedEventCount, restoredFlat.size());
+  TEST_ASSERT_EQUAL(0u, restoredFlat.front().tick);
+  TEST_ASSERT_EQUAL(expectedLastTick, restoredFlat.back().tick);
+
+  Loop reloadedLoop;
+  applySnapshotToLoop(reloadedLoop, restored);
+  TEST_ASSERT_EQUAL(expectedLoopLengthTicks, reloadedLoop.loopLengthTicks);
+  TEST_ASSERT_TRUE(reloadedLoop.hasPublishedEvents());
+  TEST_ASSERT_TRUE(!reloadedLoop.visualCache.notes.empty());
+
+  MidiEventVec playbackFlat;
+  reloadedLoop.flattenActiveCapturePasses(playbackFlat);
+  TEST_ASSERT_EQUAL(expectedEventCount, playbackFlat.size());
+  TEST_ASSERT_EQUAL(0u, playbackFlat.front().tick);
+  TEST_ASSERT_EQUAL(expectedLastTick, playbackFlat.back().tick);
+}
+
 int main(int /*argc*/, char** /*argv*/) {
   UNITY_BEGIN();
   RUN_TEST(test_write_read_loop_snapshot_roundtrip);
@@ -265,5 +400,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_write_read_edits_tail_roundtrip);
   RUN_TEST(test_apply_snapshot_preserves_start_loop_tick);
   RUN_TEST(test_truncated_edit_tail_fails_read);
+  RUN_TEST(test_capture_pass_write_uses_chunk_stream_batch_bound);
+  RUN_TEST(test_64_bar_record_snapshot_reloads_after_reboot_simulation);
   return UNITY_END();
 }

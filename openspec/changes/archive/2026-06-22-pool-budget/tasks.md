@@ -56,16 +56,16 @@
 Replace **`NoteEditSessionUndoStack`** **`cloneShared`** payloads with **EditChange + focus** entries
 (design D10). Depends on kind-boundary **`pushSessionUndoOnKindChange`** from **gpio** change.
 
-- [ ] 9.1 Add `SessionUndoEntry` (`EditChangeList`, `NoteEditFocus`, selection/bracket fields) in
-      `NoteEditSession.h`; remove `shared_ptr<const LoopEventStore>` entry type
-- [ ] 9.2 Implement `buildSessionUndoEntry` using `resolveOverlapNotesForPreCommit` +
+- [x] 9.1 Add `SessionUndoEntry` (`EditChangeList`, `NoteEditFocus`, selection/bracket fields) in
+      `NoteEditSessionUndo.h`; remove `shared_ptr<const LoopEventStore>` entry type
+- [x] 9.2 Implement `buildSessionUndoEntry` using `resolveOverlapNotesForPreCommit` +
       `buildPreCommitEditChanges` (or equivalent) at kind boundary
-- [ ] 9.3 `pushSessionUndoOnKindChange` → append `SessionUndoEntry`; remove `pushSessionUndoBeforeMutation`
+- [x] 9.3 `pushSessionUndoOnKindChange` → append `SessionUndoEntry`; remove `pushSessionUndoBeforeMutation`
       **`cloneShared`** path
-- [ ] 9.4 `sessionUndo` / `sessionRedo`: `rematerializeEditView` + apply entry chain + restore focus +
+- [x] 9.4 `sessionUndo` / `sessionRedo`: `rematerializeEditView` + apply entry chain + restore focus +
       `applyUndoRedoLanding` / `syncNoteEditSessionStateToUi`
-- [ ] 9.5 Add `PREFERRED_SESSION_UNDO_DEPTH` + heap admission before push; pressure trim of oldest entries
-- [ ] 9.6 Native parity: clone-based vs EditChange-based undo — overlap round-trip, move → pitch → move back
-- [ ] 9.7 Native: 128-bar fixture — four kind-boundary **E:** steps without N× full-loop clone memory
-- [ ] 9.8 Document in `LOOP_MIDI_STORAGE_AND_VALIDATION.md`: committed **editPass** = **EditChange**;
+- [x] 9.5 Add `PREFERRED_SESSION_UNDO_DEPTH` + heap admission before push; pressure trim of oldest entries
+- [x] 9.6 Native parity: clone-based vs EditChange-based undo — overlap round-trip, move → pitch → move back
+- [x] 9.7 Native: 128-bar fixture — four kind-boundary **E:** steps without N× full-loop clone memory
+- [x] 9.8 Document in `LOOP_MIDI_STORAGE_AND_VALIDATION.md`: committed **editPass** = **EditChange**;
       live store = **materialize**; **E:** = **EditChange** + **focus** entries (not **cloneShared** stack)

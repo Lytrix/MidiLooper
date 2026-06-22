@@ -13,7 +13,6 @@ void EditLengthNoteState::onEnter(EditManager& manager, Track& track, uint32_t s
     logger.debug("EditLengthNoteState::onEnter");
 
     initialHash = midiEventVecFnv1aHash(track.editAwareMidiEvents());
-    manager.pushSessionUndoBeforeMutation(track);
 
     manager.selectClosestNote(track, startTick);
 

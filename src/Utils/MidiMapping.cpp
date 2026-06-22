@@ -30,7 +30,7 @@ void Config::initialize() {
     buttonConfigs = {
         ButtonConfig(MidiConfig::Transport::NOTE_RECORD, MidiConfig::Channels::DEFAULT, "Record/Stop"),
         ButtonConfig(MidiConfig::Transport::NOTE_PLAY, MidiConfig::Channels::DEFAULT, "Play/Stop"),
-        ButtonConfig(MidiConfig::Transport::NOTE_UNDO, MidiConfig::Channels::DEFAULT, "Undo"),
+        ButtonConfig(MidiConfig::Transport::NOTE_EDIT_MODE, MidiConfig::Channels::DEFAULT, "Edit Mode"),
         ButtonConfig(MidiConfig::Transport::NOTE_REDO, MidiConfig::Channels::DEFAULT, "Redo")
     };
     

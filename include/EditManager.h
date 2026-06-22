@@ -4,12 +4,14 @@
 #pragma once
 #include <cstdint>
 #include "EditNoteState.h"
+#include "NoteEditSessionUndo.h"
 #include "NoteEditSession.h"
 #include "EditNoteHomeState.h"
 #include "EditStates/EditSelectNoteState.h"
 #include "EditStartNoteState.h"
 #include "EditLengthNoteState.h"
 #include "EditPitchNoteState.h"
+#include "NoteEditSessionState.h"
 #include "MidiEvent.h"
 #include "MidiConfig.h"
 #include <vector>
@@ -59,9 +61,22 @@ public:
     void closeNoteEditSession(Track& track);
     void closeNoteEditPass(Track& track);
     EditPassId commitEditAction(Track& track, EditChangeList changes);
-    void pushSessionUndoBeforeMutation(Track& track);
+    void pushSessionUndoOnKindChange(Track& track, NoteEditKind kind);
+    void restoreSessionUndoEntry(Track& track, const SessionUndoEntry& entry);
+    void beginGeometryMutation(Track& track, NoteEditKind kind, bool fromFaderControl);
     bool sessionUndo(Track& track);
     bool sessionRedo(Track& track);
+
+    NoteEditSessionState& getNoteEditSessionState() { return sessionState; }
+    const NoteEditSessionState& getNoteEditSessionState() const { return sessionState; }
+    void applySelectNav(Track& track, int displayIdx, uint32_t bracketTick, const NoteRef& ref,
+                        bool hasNote);
+    void applyCycleEditKind(Track& track);
+    void applyGeometryKindFromControl(Track& track, NoteEditKind kind, bool fromFaderControl);
+    void applyUndoRedoLanding(Track& track);
+    void resetNoteEditSessionState();
+    void syncNoteEditSessionStateToUi(Track& track);
+    void enterDefaultNoteEditSessionState(Track& track, uint32_t startTick);
     /// Pre-commit resolve + single saveEdit at fader-1 reselect / exit / overdub start.
     void commitAllPendingNoteEditActions(Track& track);
     /// Persist overlap note Hidden/Shortened scratch into Edits[] before restore-on-move-away.
@@ -136,7 +151,7 @@ public:
         EDIT_MODE_PITCH = 4     // Change note pitch
     };
     
-    void cycleEditMode(Track& track);
+    void cycleNoteEditType(Track& track);
     void sendEditModeProgram(EditModeState mode);
     
     // LoopManager functionality
@@ -166,9 +181,10 @@ public:
     std::map<const Track*, std::map<uint8_t, std::vector<RemovedNote>>> temporarilyRemovedNotes;
 
     /**
-     * @brief Returns the undo count to display: frozen during edit states, real count otherwise
+     * @brief Session undo (E:) during note edit overlay; global pass undo (U:) otherwise.
      */
     size_t getDisplayUndoCount(const Track& track) const;
+    bool isSessionUndoDisplayActive() const;
 
 private:
     uint32_t bracketTick = 0;
@@ -185,6 +201,9 @@ private:
     EditNoteState* currentState = nullptr;
     EditNoteState* previousState = nullptr;
     NoteEditSession noteEditSession;
+    NoteEditSessionState sessionState;
+    NoteEditKind lastPushedGeometryKind_ = NoteEditKind::Select;
+    bool encoderCycleNeedsAnchor_ = false;
     // Add more states as needed
     
     // EditModeManager state

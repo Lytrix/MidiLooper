@@ -8,6 +8,8 @@ It automates:
   - record stop (which returns to playback in firmware)
   - overdub start
   - overdub stop
+  - a second overdub pass (2 bars, C0–B1 one-beat notes — default; disable with
+    --second-overdub-bars 0)
 while streaming dense chromatic notes plus CC data on a recordable channel.
 
 It can optionally read USB serial capture output from the Teensy capture build
@@ -69,6 +71,23 @@ EXPECTED_TRANSITIONS = (
     TransitionExpectation("STOPPED_RECORDING", "PLAYING", 1),
     TransitionExpectation("PLAYING", "OVERDUBBING", 1),
     TransitionExpectation("OVERDUBBING", "PLAYING", 1),
+)
+
+STOP_STAGE_SEQUENCE: tuple[str, ...] = (
+    "record_stop",
+    "seal",
+    "publish",
+    "finalize",
+    "visual_cache_request",
+    "revt_queue",
+    "state_advance",
+    "save_request",
+)
+
+PERSISTENCE_STAGE_SEQUENCE: tuple[str, ...] = (
+    "request",
+    "dispatch",
+    "result",
 )
 
 
@@ -956,6 +975,8 @@ def _extract_recs_lengths(lines: list[str]) -> list[dict[str, int]]:
         parts = line.split(",")
         if len(parts) < 6:
             continue
+        if parts[3] not in ("stop", "stopToStopped"):
+            continue
         try:
             ts = int(parts[1])
         except ValueError:
@@ -975,6 +996,145 @@ def _extract_recs_lengths(lines: list[str]) -> list[dict[str, int]]:
             }
         )
     return rows
+
+
+def _extract_record_stop_stage_rows(lines: list[str]) -> list[dict[str, object]]:
+    rows: list[dict[str, object]] = []
+    for line in lines:
+        if ",RECS,stage," not in line:
+            continue
+        parts = line.split(",")
+        if len(parts) < 12:
+            continue
+        try:
+            ts = int(parts[1])
+            elapsed_us = int(parts[5])
+            duration_us = int(parts[6])
+            heap_before = int(parts[7])
+            heap_after = int(parts[8])
+            event_count = int(parts[9])
+            chunk_ref_count = int(parts[10])
+        except ValueError:
+            continue
+        rows.append(
+            {
+                "timestamp": ts,
+                "stage": parts[4].strip(),
+                "elapsed_us": elapsed_us,
+                "duration_us": duration_us,
+                "heap_before": heap_before,
+                "heap_after": heap_after,
+                "event_count": event_count,
+                "chunk_ref_count": chunk_ref_count,
+                "outcome": parts[11].strip(),
+            }
+        )
+    return rows
+
+
+def _summarize_record_stop_stages(
+    stage_rows: list[dict[str, object]],
+) -> dict[str, object]:
+    completed_outcomes = {
+        "entered",
+        "ok",
+        "published",
+        "deferred",
+        "requested",
+        "skipped",
+        "skipped_empty",
+    }
+    by_stage_all: dict[str, list[dict[str, object]]] = {}
+    for row in stage_rows:
+        stage = str(row.get("stage", ""))
+        by_stage_all.setdefault(stage, []).append(row)
+
+    by_stage_completed: dict[str, dict[str, object]] = {}
+    for stage, rows in by_stage_all.items():
+        for row in rows:
+            if str(row.get("outcome", "")) in completed_outcomes:
+                by_stage_completed[stage] = row
+                break
+
+    first_missing_stage: Optional[str] = None
+    for stage in STOP_STAGE_SEQUENCE:
+        if stage not in by_stage_completed:
+            first_missing_stage = stage
+            break
+
+    slowest_completed_stage: Optional[dict[str, object]] = None
+    completed_rows = [by_stage_completed[s] for s in STOP_STAGE_SEQUENCE if s in by_stage_completed]
+    if completed_rows:
+        slowest_completed_stage = max(completed_rows, key=lambda row: int(row.get("duration_us", 0)))
+
+    return {
+        "rows": stage_rows,
+        "first_missing_stage": first_missing_stage,
+        "slowest_completed_stage": slowest_completed_stage,
+    }
+
+
+def _extract_persistence_rows(lines: list[str]) -> list[dict[str, object]]:
+    rows: list[dict[str, object]] = []
+    for line in lines:
+        if ",PERS," not in line:
+            continue
+        parts = line.split(",")
+        if len(parts) < 8:
+            continue
+        try:
+            ts = int(parts[1])
+            duration_us = int(parts[4])
+            heap_before = int(parts[5])
+            heap_after = int(parts[6])
+        except ValueError:
+            continue
+        rows.append(
+            {
+                "timestamp": ts,
+                "stage": parts[3].strip(),
+                "duration_us": duration_us,
+                "heap_before": heap_before,
+                "heap_after": heap_after,
+                "outcome": parts[7].strip(),
+            }
+        )
+    return rows
+
+
+def _summarize_persistence_handoff(
+    persistence_rows: list[dict[str, object]],
+    *,
+    record_stop_ts: Optional[int],
+) -> dict[str, object]:
+    if record_stop_ts is None:
+        return {"phase_disabled": True}
+
+    rows_after_stop = [row for row in persistence_rows if int(row["timestamp"]) >= record_stop_ts]
+    by_stage: dict[str, dict[str, object]] = {}
+    for stage in PERSISTENCE_STAGE_SEQUENCE:
+        for row in rows_after_stop:
+            if str(row.get("stage", "")) == stage:
+                by_stage[stage] = row
+                break
+
+    first_missing_stage: Optional[str] = None
+    for stage in PERSISTENCE_STAGE_SEQUENCE:
+        if stage not in by_stage:
+            first_missing_stage = stage
+            break
+
+    result_row = by_stage.get("result")
+    result_ok = result_row is not None and str(result_row.get("outcome", "")) == "ok"
+    return {
+        "phase_disabled": False,
+        "rows": rows_after_stop,
+        "first_missing_stage": first_missing_stage,
+        "request": by_stage.get("request"),
+        "dispatch": by_stage.get("dispatch"),
+        "result": result_row,
+        "result_ok": result_ok,
+    }
 
 
 def _extract_first_note_offset(
@@ -1540,6 +1700,13 @@ def _verify_overdub_wrap_storage(
 
 def _build_serial_verification(lines: list[str], args: argparse.Namespace) -> dict[str, object]:
     boundaries = _extract_phase_boundaries(lines)
+    record_stop_stage_rows = _extract_record_stop_stage_rows(lines)
+    record_stop_stage_trace = _summarize_record_stop_stages(record_stop_stage_rows)
+    persistence_rows = _extract_persistence_rows(lines)
+    persistence_handoff = _summarize_persistence_handoff(
+        persistence_rows,
+        record_stop_ts=boundaries.get("record_stop_ts"),
+    )
     record = _verify_phase_note_pairs(
         lines,
         midi_channel_1based=args.midi_channel,
@@ -1621,6 +1788,15 @@ def _build_serial_verification(lines: list[str], args: argparse.Namespace) -> di
             issues.append("record_stored_revt_missing")
         elif not stored_record_grid.get("grid_ok", False):
             issues.append("record_stored_note_grid_bad")
+    first_missing_stage = record_stop_stage_trace.get("first_missing_stage")
+    if first_missing_stage is not None:
+        issues.append(f"record_stop_stage_missing:{first_missing_stage}")
+    if not persistence_handoff.get("phase_disabled"):
+        persistence_missing_stage = persistence_handoff.get("first_missing_stage")
+        if persistence_missing_stage is not None:
+            issues.append(f"persistence_stage_missing:{persistence_missing_stage}")
+        elif not persistence_handoff.get("result_ok", False):
+            issues.append("persistence_result_failed")
     overdub_wrap_storage: Optional[dict[str, object]] = None
     stored_overdub_span: Optional[dict[str, object]] = None
     loop_length_ticks = 0
@@ -1735,6 +1911,8 @@ def _build_serial_verification(lines: list[str], args: argparse.Namespace) -> di
         "record_loop_length": record_loop_length,
         "record_note_span": record_note_span,
         "stored_record_grid": stored_record_grid,
+        "record_stop_stage_trace": record_stop_stage_trace,
+        "persistence_handoff": persistence_handoff,
         "overdub_wrap_storage": overdub_wrap_storage,
         "stored_overdub_span": stored_overdub_span,
         "display_verification": display_verification,
@@ -2162,8 +2340,8 @@ def run() -> int:
         "--second-overdub-bars",
         type=int,
         choices=[0, 1, 2, 4, 5, 8, 16, 24, 32, 64, 128],
-        default=0,
-        help="Optional second overdub pass length in bars (0 disables)",
+        default=2,
+        help="Second overdub pass length in bars (default 2; 0 disables)",
     )
     parser.add_argument(
         "--second-overdub-low-note",
@@ -3050,6 +3228,28 @@ def run() -> int:
                     f"delta={stored_record_grid.get('min_delta')}-"
                     f"{stored_record_grid.get('max_delta')} "
                     f"bad={stored_record_grid.get('bad_delta_count')}"
+                )
+            record_stop_stage_trace = serial_verification.get("record_stop_stage_trace")
+            if record_stop_stage_trace:
+                slowest_stage = record_stop_stage_trace.get("slowest_completed_stage")
+                slowest_name = "none"
+                slowest_duration = 0
+                if isinstance(slowest_stage, dict):
+                    slowest_name = str(slowest_stage.get("stage", "none"))
+                    slowest_duration = int(slowest_stage.get("duration_us", 0))
+                print(
+                    "  VERIFY record stop stages: "
+                    f"first_missing={record_stop_stage_trace.get('first_missing_stage')} "
+                    f"slowest={slowest_name}:{slowest_duration}us"
+                )
+            persistence_handoff = serial_verification.get("persistence_handoff")
+            if persistence_handoff and not persistence_handoff.get("phase_disabled"):
+                result_row = persistence_handoff.get("result") or {}
+                print(
+                    "  VERIFY persistence handoff: "
+                    f"first_missing={persistence_handoff.get('first_missing_stage')} "
+                    f"result={result_row.get('outcome')} "
+                    f"duration_us={result_row.get('duration_us')}"
                 )
             overdub_wrap_storage = serial_verification.get("overdub_wrap_storage")
             if overdub_wrap_storage and not overdub_wrap_storage.get("phase_disabled"):

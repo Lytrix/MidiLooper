@@ -39,17 +39,60 @@ const MidiEventVec& Track::editAwareMidiEvents() const {
 
 namespace {
 
-void logMemoryAfterOverdubStop(uint32_t overdubNoteOns, const Loop& loop) {
-  const size_t takeEvents = loop.liveEventCount();
-  const void* eventsData = nullptr;
-  if (takeEvents > 0) {
-    MidiEventVec flat;
-    loop.flattenActiveCapturePasses(flat);
-    if (!flat.empty()) {
-      eventsData = flat.data();
-    }
+struct StopPathStorageStats {
+  size_t eventCount = 0;
+  size_t chunkRefCount = 0;
+};
+
+StopPathStorageStats collectStopPathStorageStats(const Loop& loop, bool includeCaptureBuffer = true) {
+  StopPathStorageStats stats{};
+  if (loop.passes.hasRecordPass() && loop.passes.recordPass.state == CapturePassState::Active) {
+    stats.chunkRefCount += loop.passes.recordPass.chunkRefs.size();
+    stats.eventCount += LoopEventStore::countEventsInChunkIds(loop.passes.recordPass.chunkRefs);
   }
-  MemoryMonitor::logStatusAtAddedNotes(overdubNoteOns, takeEvents, eventsData);
+  for (const OverdubPass& pass : loop.passes.overdubPasses) {
+    if (pass.state != CapturePassState::Active) {
+      continue;
+    }
+    stats.chunkRefCount += pass.chunkRefs.size();
+    stats.eventCount += LoopEventStore::countEventsInChunkIds(pass.chunkRefs);
+  }
+  if (loop.hasPendingCapturePass()) {
+    const PendingCapturePass& pending = loop.pendingCapturePass();
+    stats.chunkRefCount += pending.chunkRefs.size();
+    stats.eventCount += LoopEventStore::countEventsInChunkIds(pending.chunkRefs);
+  }
+  if (includeCaptureBuffer && loop.captureActive()) {
+    stats.eventCount += loop.capture.store.size();
+  }
+  return stats;
+}
+
+const char* commitResultLabel(CommitResult result) {
+  switch (result) {
+    case CommitResult::Skipped:
+      return "skipped";
+    case CommitResult::Published:
+      return "published";
+    case CommitResult::SealFailed:
+      return "seal_failed";
+  }
+  return "unknown";
+}
+
+void logRecordStopStage(const Loop& loop, uint32_t stopStartUs, const char* stage,
+                        uint32_t stageDurationUs, uint32_t heapBefore, uint32_t heapAfter,
+                        const char* outcome) {
+  const StopPathStorageStats stats = collectStopPathStorageStats(loop);
+  const uint32_t elapsedUs = micros() - stopStartUs;
+  SC_REC_STOP_STAGE(stage, elapsedUs, stageDurationUs, heapBefore, heapAfter,
+                    stats.eventCount, stats.chunkRefCount, outcome);
+}
+
+void logMemoryAfterOverdubStop(uint32_t overdubNoteOns, const Loop& loop) {
+  const StopPathStorageStats stats = collectStopPathStorageStats(loop, false);
+  MemoryMonitor::logStatusAtAddedNotes(overdubNoteOns, stats.eventCount, nullptr,
+                                       stats.chunkRefCount, stats.chunkRefCount > 0);
 }
 
 /// When record-stop snaps length shorter than raw capture, rewind the global tick so playhead
@@ -673,16 +716,23 @@ void Track::finalizeLoopAtStop(uint32_t openTailCloseTick, bool scheduleDeferred
   deferredValidateQueuedAtMs = scheduleDeferredFullValidate ? millis() : 0;
 }
 
-void Track::finalizeCommitSideEffects(CommitResult result, CommitReason reason, uint32_t closeTick) {
+CommitResult Track::finalizeCommitSideEffects(CommitResult result, CommitReason reason,
+                                              uint32_t closeTick) {
   Loop& loop = getActiveLoop();
-  const bool deferFullValidate =
-      reason == CommitReason::RecordStop || reason == CommitReason::RecordStopToStopped;
+  const bool recordStop = reason == CommitReason::RecordStop ||
+                          reason == CommitReason::RecordStopToStopped;
+  const bool overdubStop = reason == CommitReason::OverdubStop ||
+                           reason == CommitReason::OverdubStopToStopped;
+  const bool deferFullValidate = recordStop;
+  auto scheduleDeferredValidateOnly = [&]() {
+    const bool hasPublished = loop.hasPublishedEvents() && loop.loopLengthTicks > 0;
+    deferredFullMidiValidate = deferFullValidate && hasPublished;
+    deferredValidateQueuedAtMs = deferredFullMidiValidate ? millis() : 0;
+  };
 
   switch (result) {
     case CommitResult::Skipped: {
       loop.discardCapture();
-      const bool recordStop = reason == CommitReason::RecordStop ||
-                              reason == CommitReason::RecordStopToStopped;
       if (recordStop && loop.activeCapturePassCount() == 0) {
         loop.resetPassTimeline();
         loop.loopLengthTicks = 0;
@@ -692,16 +742,23 @@ void Track::finalizeCommitSideEffects(CommitResult result, CommitReason reason, 
         loop.lastTickInLoop = 0;
         loop.invalidatePlaybackCaches();
       }
-      if (reason == CommitReason::OverdubStop || reason == CommitReason::OverdubStopToStopped) {
-        finalizeLoopAtStop(closeTick, deferFullValidate);
+      if (overdubStop) {
+        finalizeLoopAtStop(closeTick, false);
         StorageManager::requestDeferredSaveState(looperState.getLooperState());
+      } else {
+        scheduleDeferredValidateOnly();
       }
       break;
     }
     case CommitResult::Published: {
       const PassId undoPassId = loop.lastPublishedPassId();
-      finalizeLoopAtStop(closeTick, deferFullValidate);
-      loop.rebuildVisualCacheFromPasses();
+      if (overdubStop) {
+        finalizeLoopAtStop(closeTick, false);
+      } else {
+        // Record stop already finalizes wrap-window at seal; defer full validate only.
+        scheduleDeferredValidateOnly();
+      }
+      loop.markDisplayCachesStale();
       const bool isRecordPass =
           loop.passes.hasRecordPass() && loop.passes.recordPass.id == undoPassId;
       if (isRecordPass) {
@@ -709,7 +766,7 @@ void Track::finalizeCommitSideEffects(CommitResult result, CommitReason reason, 
       } else {
         TrackUndo::pushOverdubPassAdded(*this, getActiveLoopIndex(), undoPassId);
       }
-      if (reason == CommitReason::OverdubStop || reason == CommitReason::OverdubStopToStopped) {
+      if (recordStop || overdubStop) {
         StorageManager::requestDeferredSaveState(looperState.getLooperState());
       }
       break;
@@ -719,22 +776,28 @@ void Track::finalizeCommitSideEffects(CommitResult result, CommitReason reason, 
       trackManager.reclaimUnreferencedDisabledPasses();
       const CommitResult retry = loop.commitCapturePass(reason, closeTick);
       if (retry != CommitResult::SealFailed) {
-        finalizeCommitSideEffects(retry, reason, closeTick);
-        return;
+        result = finalizeCommitSideEffects(retry, reason, closeTick);
+        return result;
       }
       break;
     }
   }
 
+  if (result == CommitResult::SealFailed) {
+    deferredFullMidiValidate = false;
+    deferredValidateQueuedAtMs = 0;
+  }
+
   if (result == CommitResult::Published) {
     invalidateCaches();
-    if (reason == CommitReason::RecordStop || reason == CommitReason::RecordStopToStopped) {
+    if (recordStop) {
       queueDeferredRecordRevts();
     }
-    if (reason == CommitReason::OverdubStop || reason == CommitReason::OverdubStopToStopped) {
+    if (overdubStop) {
       emitStoredMidiVerification();
     }
   }
+  return result;
 }
 
 void Track::emitStoredMidiVerification() const {
@@ -772,6 +835,11 @@ void Track::emitStoredMidiVerification() const {
 }
 
 void Track::processDeferredIdleMaintenance(uint32_t nowMs) {
+  const bool canEmitRecordRevts = !isPlaying() && !isRecording() && !isOverdubbing();
+  if (canEmitRecordRevts) {
+    processDeferredRecordRevts(64);
+  }
+
   if (!DeferredValidatePolicy::shouldRunDeferredFullValidate(
           deferredFullMidiValidate, isRecording(), isOverdubbing(), deferredValidateQueuedAtMs,
           nowMs)) {
@@ -792,21 +860,110 @@ void Track::prewarmPlaybackForSlot(uint8_t slotIndex) {
   (void)loop.getPlaybackOrder();
 }
 
-void Track::queueDeferredRecordRevts() const {
+void Track::resetDeferredRecordRevts() {
+  deferredRecordRevtsPending = false;
+  deferredRecordRevtChunkScan = false;
+  deferredRecordRevtCursor = 0;
+  deferredRecordRevtEvents.clear();
+  deferredRecordRevtChunkRefs.clear();
+  deferredRecordRevtChunkCursor = 0;
+  deferredRecordRevtChunkEvents.clear();
+  deferredRecordRevtChunkEventCursor = 0;
+}
+
+void Track::queueDeferredRecordRevts() {
   const Loop& loop = getActiveLoop();
   if (!loop.hasPublishedEvents()) {
+    resetDeferredRecordRevts();
     return;
   }
-  MidiEventVec flat;
-  loop.flattenActiveCapturePasses(flat);
+
+  resetDeferredRecordRevts();
+  deferredRecordRevtsPending = true;
+
+  const bool hasActiveRecordPass =
+      loop.passes.hasRecordPass() &&
+      loop.passes.recordPass.state == CapturePassState::Active &&
+      !loop.passes.recordPass.chunkRefs.empty();
+  bool hasActiveOverdubPass = false;
+  for (const OverdubPass& pass : loop.passes.overdubPasses) {
+    if (pass.state == CapturePassState::Active && !pass.chunkRefs.empty()) {
+      hasActiveOverdubPass = true;
+      break;
+    }
+  }
+
+  // Fast path: record-stop baseline has one active record pass and no active overdub passes.
+  if (hasActiveRecordPass && !hasActiveOverdubPass) {
+    deferredRecordRevtChunkScan = true;
+    deferredRecordRevtChunkRefs = loop.passes.recordPass.chunkRefs;
+  }
+}
+
+void Track::processDeferredRecordRevts(size_t maxEventsPerSlice) {
+  if (!deferredRecordRevtsPending) {
+    return;
+  }
+
+  const Loop& loop = getActiveLoop();
+  if (!loop.hasPublishedEvents()) {
+    resetDeferredRecordRevts();
+    return;
+  }
+
+  if (deferredRecordRevtChunkScan) {
+    size_t queued = 0;
+    while (queued < maxEventsPerSlice) {
+      if (deferredRecordRevtChunkEventCursor >= deferredRecordRevtChunkEvents.size()) {
+        deferredRecordRevtChunkEvents.clear();
+        deferredRecordRevtChunkEventCursor = 0;
+        if (deferredRecordRevtChunkCursor >= deferredRecordRevtChunkRefs.size()) {
+          break;
+        }
+        const uint16_t chunkId = deferredRecordRevtChunkRefs[deferredRecordRevtChunkCursor++];
+        LoopEventStore::appendFlattenedChunkId(chunkId, deferredRecordRevtChunkEvents);
+        continue;
+      }
+
+      const MidiEvent& evt =
+          deferredRecordRevtChunkEvents[deferredRecordRevtChunkEventCursor++];
+      if (!evt.isNoteOn()) {
+        continue;
+      }
+      SC_REC_STORED_NOTE_ON(evt.tick, evt.channel, evt.data.noteData.note);
+      ++queued;
+    }
+
+    const bool done =
+        deferredRecordRevtChunkCursor >= deferredRecordRevtChunkRefs.size() &&
+        deferredRecordRevtChunkEventCursor >= deferredRecordRevtChunkEvents.size();
+    if (done) {
+      logger.log(CAT_TRACK, LOG_DEBUG, "Queued REVT note-ons (deferred): %d",
+                 static_cast<int>(queued));
+      resetDeferredRecordRevts();
+    }
+    return;
+  }
+
+  if (deferredRecordRevtEvents.empty() && deferredRecordRevtCursor == 0) {
+    loop.flattenActiveCapturePasses(deferredRecordRevtEvents);
+  }
+
   size_t queued = 0;
-  for (const MidiEvent& evt : flat) {
+  while (deferredRecordRevtCursor < deferredRecordRevtEvents.size() &&
+         queued < maxEventsPerSlice) {
+    const MidiEvent& evt = deferredRecordRevtEvents[deferredRecordRevtCursor++];
     if (evt.isNoteOn()) {
-      SC_REC_QUEUE_STORED_NOTE_ON(evt.tick, evt.channel, evt.data.noteData.note);
+      SC_REC_STORED_NOTE_ON(evt.tick, evt.channel, evt.data.noteData.note);
       ++queued;
     }
   }
-  logger.log(CAT_TRACK, LOG_DEBUG, "Queued REVT note-ons: %d", static_cast<int>(queued));
+
+  if (deferredRecordRevtCursor >= deferredRecordRevtEvents.size()) {
+    logger.log(CAT_TRACK, LOG_DEBUG, "Queued REVT note-ons (deferred): %d",
+               static_cast<int>(queued));
+    resetDeferredRecordRevts();
+  }
 }
 
 void Track::closeOpenNotesAtLoopWrap() {
@@ -879,6 +1036,9 @@ void Track::stopRecording(uint32_t currentTick) {
 
   [[maybe_unused]] const bool captureAlignFlag = alignLoopOriginOnNextStop;
   Loop& loop = getActiveLoop();
+  const uint32_t stopPathStartUs = micros();
+  const uint32_t stopHeap = MemoryMonitor::getFreeHeap();
+  logRecordStopStage(loop, stopPathStartUs, "record_stop", 0, stopHeap, stopHeap, "entered");
 
   uint32_t rawLength = 0;
   if (currentTick >= loop.startLoopTick) {
@@ -918,7 +1078,22 @@ void Track::stopRecording(uint32_t currentTick) {
   // (the second pass and synthetic note-offs) are active for this record-stop.
   // Record-stop must close open tails at loop end, not at the stop playhead tick.
   const uint32_t closeTick = UINT32_MAX;
-  finalizeCommitSideEffects(commitResult, CommitReason::RecordStop, closeTick);
+  const uint32_t finalizeHeapBefore = MemoryMonitor::getFreeHeap();
+  const uint32_t finalizeStartUs = micros();
+  const CommitResult sideEffectResult =
+      finalizeCommitSideEffects(commitResult, CommitReason::RecordStop, closeTick);
+  const uint32_t finalizeDurationUs = micros() - finalizeStartUs;
+  const uint32_t finalizeHeapAfter = MemoryMonitor::getFreeHeap();
+  logRecordStopStage(loop, stopPathStartUs, "finalize", finalizeDurationUs, finalizeHeapBefore,
+                     finalizeHeapAfter, commitResultLabel(sideEffectResult));
+
+  const uint32_t visualHeap = MemoryMonitor::getFreeHeap();
+  logRecordStopStage(loop, stopPathStartUs, "visual_cache_request", 0, visualHeap, visualHeap,
+                     sideEffectResult == CommitResult::Published ? "deferred" : "skipped");
+
+  const uint32_t revtHeap = MemoryMonitor::getFreeHeap();
+  logRecordStopStage(loop, stopPathStartUs, "revt_queue", 0, revtHeap, revtHeap,
+                     sideEffectResult == CommitResult::Published ? "deferred" : "skipped");
 
   if (alignLoopOriginOnNextStop) {
     alignLoopOriginOnNextStop = false;
@@ -956,11 +1131,6 @@ void Track::stopRecording(uint32_t currentTick) {
   loop.lastTickInLoop = (finalLength > 0)
                             ? tickPhaseInLoop(playbackTick, recordStartTick, finalLength)
                             : 0;
-  {
-    LoopPlaybackRuntime& runtime = playbackRuntime.slot(activeLoopIndex);
-    ensurePlaybackWindowBuilt(loop, runtime);
-    reanchorPlaybackIndex(loop, runtime.primaryWindow.mergedEvents, loop.getPlaybackOrder());
-  }
 
   invalidatePlaybackCaches();
   SC_REC_STOP("stop", activeLoopIndex, playbackTick, recordStartTick, rawLength, finalLength, captureAlignFlag);
@@ -972,13 +1142,28 @@ void Track::stopRecording(uint32_t currentTick) {
 
   // Empty record-stop (commit skipped) clears loopLengthTicks; leave a valid state.
   if (loop.loopLengthTicks == 0 || loop.activeCapturePassCount() == 0) {
+    const uint32_t stageHeap = MemoryMonitor::getFreeHeap();
+    logRecordStopStage(loop, stopPathStartUs, "state_advance", 0, stageHeap, stageHeap,
+                       "skipped_empty");
+    logRecordStopStage(loop, stopPathStartUs, "save_request", 0, stageHeap, stageHeap,
+                       sideEffectResult == CommitResult::Published ? "requested" : "skipped");
     setState(TRACK_EMPTY);
     return;
   }
 
   // Return to playback after record-stop. Overdub starts on the next explicit
   // record press from PLAYING (record -> play -> overdub -> play flow).
+  const uint32_t stateAdvanceHeapBefore = MemoryMonitor::getFreeHeap();
+  const uint32_t stateAdvanceStartUs = micros();
   startPlaying(playbackTick, true);
+  const uint32_t stateAdvanceDurationUs = micros() - stateAdvanceStartUs;
+  const uint32_t stateAdvanceHeapAfter = MemoryMonitor::getFreeHeap();
+  logRecordStopStage(loop, stopPathStartUs, "state_advance", stateAdvanceDurationUs,
+                     stateAdvanceHeapBefore, stateAdvanceHeapAfter,
+                     trackState == TRACK_PLAYING ? "ok" : "failed");
+  const uint32_t saveHeap = MemoryMonitor::getFreeHeap();
+  logRecordStopStage(loop, stopPathStartUs, "save_request", 0, saveHeap, saveHeap,
+                     sideEffectResult == CommitResult::Published ? "requested" : "skipped");
 }
 
 void Track::stopRecordingToStopped(uint32_t currentTick) {
@@ -986,6 +1171,9 @@ void Track::stopRecordingToStopped(uint32_t currentTick) {
 
   alignLoopOriginOnNextStop = false;
   Loop& loop = getActiveLoop();
+  const uint32_t stopPathStartUs = micros();
+  const uint32_t stopHeap = MemoryMonitor::getFreeHeap();
+  logRecordStopStage(loop, stopPathStartUs, "record_stop", 0, stopHeap, stopHeap, "entered");
 
   uint32_t rawLength = 0;
   if (currentTick >= loop.startLoopTick) {
@@ -1022,7 +1210,22 @@ void Track::stopRecordingToStopped(uint32_t currentTick) {
 
   // Validate AFTER loopLengthTicks is known (see stopRecording for rationale).
   const uint32_t closeTick = UINT32_MAX;
-  finalizeCommitSideEffects(commitResult, CommitReason::RecordStopToStopped, closeTick);
+  const uint32_t finalizeHeapBefore = MemoryMonitor::getFreeHeap();
+  const uint32_t finalizeStartUs = micros();
+  const CommitResult sideEffectResult =
+      finalizeCommitSideEffects(commitResult, CommitReason::RecordStopToStopped, closeTick);
+  const uint32_t finalizeDurationUs = micros() - finalizeStartUs;
+  const uint32_t finalizeHeapAfter = MemoryMonitor::getFreeHeap();
+  logRecordStopStage(loop, stopPathStartUs, "finalize", finalizeDurationUs, finalizeHeapBefore,
+                     finalizeHeapAfter, commitResultLabel(sideEffectResult));
+
+  const uint32_t visualHeap = MemoryMonitor::getFreeHeap();
+  logRecordStopStage(loop, stopPathStartUs, "visual_cache_request", 0, visualHeap, visualHeap,
+                     sideEffectResult == CommitResult::Published ? "deferred" : "skipped");
+
+  const uint32_t revtHeap = MemoryMonitor::getFreeHeap();
+  logRecordStopStage(loop, stopPathStartUs, "revt_queue", 0, revtHeap, revtHeap,
+                     sideEffectResult == CommitResult::Published ? "deferred" : "skipped");
 
   [[maybe_unused]] const uint32_t recordStartTickStopped = loop.startLoopTick;
   loop.nextEventIndex = 0;
@@ -1036,11 +1239,6 @@ void Track::stopRecordingToStopped(uint32_t currentTick) {
   loop.lastTickInLoop = (loop.loopLengthTicks > 0)
                             ? tickPhaseInLoop(playbackTick, recordStartTickStopped, loop.loopLengthTicks)
                             : 0;
-  {
-    LoopPlaybackRuntime& runtime = playbackRuntime.slot(activeLoopIndex);
-    ensurePlaybackWindowBuilt(loop, runtime);
-    reanchorPlaybackIndex(loop, runtime.primaryWindow.mergedEvents, loop.getPlaybackOrder());
-  }
   invalidatePlaybackCaches();
 
   SC_REC_STOP("stopToStopped", activeLoopIndex, playbackTick, recordStartTickStopped,
@@ -1048,7 +1246,17 @@ void Track::stopRecordingToStopped(uint32_t currentTick) {
   logger.logTrackEvent("Recording stopped (to STOPPED)", playbackTick, "length=%lu",
                        static_cast<unsigned long>(loop.loopLengthTicks));
 
+  const uint32_t stateAdvanceHeapBefore = MemoryMonitor::getFreeHeap();
+  const uint32_t stateAdvanceStartUs = micros();
   setState(TRACK_STOPPED);
+  const uint32_t stateAdvanceDurationUs = micros() - stateAdvanceStartUs;
+  const uint32_t stateAdvanceHeapAfter = MemoryMonitor::getFreeHeap();
+  logRecordStopStage(loop, stopPathStartUs, "state_advance", stateAdvanceDurationUs,
+                     stateAdvanceHeapBefore, stateAdvanceHeapAfter,
+                     trackState == TRACK_STOPPED ? "ok" : "failed");
+  const uint32_t saveHeap = MemoryMonitor::getFreeHeap();
+  logRecordStopStage(loop, stopPathStartUs, "save_request", 0, saveHeap, saveHeap,
+                     sideEffectResult == CommitResult::Published ? "requested" : "skipped");
 }
 
 // -------------------------

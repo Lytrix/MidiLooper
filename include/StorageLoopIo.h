@@ -44,6 +44,11 @@ bool writePersistedCapturePassWire(const StorageIo& io, const PersistedCapturePa
 bool readPersistedCapturePassWire(const StorageIo& io, PersistedCapturePassWire& wire,
                                     ChunkIdList& chunkRefs);
 
+#if defined(PIO_UNIT_TEST_NATIVE)
+size_t getLastPersistedCapturePassWriteMaxBatchEvents();
+void resetPersistedCapturePassWriteStatsForTest();
+#endif
+
 bool writePersistedLoopSnapshot(const StorageIo& io, const PersistedLoopSnapshot& snapshot);
 bool readPersistedLoopSnapshot(const StorageIo& io, PersistedLoopSnapshot& snapshot);
 

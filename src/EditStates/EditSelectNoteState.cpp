@@ -3,6 +3,7 @@
 
 #include "EditStates/EditSelectNoteState.h"
 #include "EditManager.h"
+#include "NoteEditSessionState.h"
 #include "EditPass.h"
 #include "Track.h"
 #include "Logger.h"
@@ -86,7 +87,7 @@ void EditSelectNoteState::onButtonPress(EditManager& manager, Track& track) {
         logger.info("EditSelectNoteState: No note found, creating 32nd note at tick %lu", bracketTick);
         
         // Push undo snapshot before creating note
-        manager.pushSessionUndoBeforeMutation(track);
+        manager.beginGeometryMutation(track, NoteEditKind::Add, false);
         const std::array<MidiEvent, 2> created = createDefaultNote(track, bracketTick);
         EditChange add;
         add.type = EditChangeType::AddNote;

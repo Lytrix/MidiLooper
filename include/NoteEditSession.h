@@ -5,19 +5,18 @@
 
 #include <cstddef>
 #include <cstdint>
-#include <memory>
 #include <vector>
 
 #include "EditPass.h"
+#include "Globals.h"
 #include "LoopEventBuffer.h"
-#include "LoopEventStore.h"
+#include "NoteEditSessionUndo.h"
+#include "Utils/MemoryMonitor.h"
 #include "NoteEditFocus.h"
 #include "Utils/ExtMemAllocator.h"
 
-/// In-session undo before saveEdit — RAM store snapshots only.
+/// In-session undo before saveEdit — EditChange + focus entries (not full store clones).
 struct NoteEditSessionUndoStack {
-  static constexpr size_t kMaxDepth = 32;
-
   void clear() {
     entries_.clear();
     cursor_ = 0;
@@ -28,28 +27,32 @@ struct NoteEditSessionUndoStack {
   size_t undoCount() const { return cursor_; }
   size_t redoCount() const { return entries_.size() - cursor_; }
 
-  void pushBeforeMutation(const LoopEventStore& store) {
+  bool pushEntry(const SessionUndoEntry& entry) {
+    if (!canHeapAdmitSessionUndoEntry(entry)) {
+      return false;
+    }
     dropRedoBranch();
-    entries_.push_back(store.cloneShared());
+    entries_.push_back(entry);
     cursor_ = entries_.size();
     trimHistory();
+    return true;
   }
 
-  std::shared_ptr<const LoopEventStore> popUndoSnapshot() {
+  const SessionUndoEntry* popUndoTarget() {
     if (!canUndo()) {
       return nullptr;
     }
     --cursor_;
-    return entries_[cursor_];
+    return &entries_[cursor_];
   }
 
-  std::shared_ptr<const LoopEventStore> popRedoSnapshot() {
+  const SessionUndoEntry* popRedoTarget() {
     if (!canRedo()) {
       return nullptr;
     }
-    const auto snap = entries_[cursor_];
+    const SessionUndoEntry* target = &entries_[cursor_];
     ++cursor_;
-    return snap;
+    return target;
   }
 
   void dropRedoBranch() {
@@ -61,7 +64,14 @@ struct NoteEditSessionUndoStack {
 
  private:
   void trimHistory() {
-    while (entries_.size() > kMaxDepth) {
+    while (entries_.size() > Config::PREFERRED_SESSION_UNDO_DEPTH) {
+      entries_.erase(entries_.begin());
+      if (cursor_ > 0) {
+        --cursor_;
+      }
+    }
+    while (entries_.size() > Config::MIN_SESSION_UNDO_DEPTH &&
+           MemoryMonitor::getFreeHeap() < Config::HEAP_RESERVE_BYTES) {
       entries_.erase(entries_.begin());
       if (cursor_ > 0) {
         --cursor_;
@@ -69,8 +79,8 @@ struct NoteEditSessionUndoStack {
     }
   }
 
-  using SnapshotVec = std::vector<std::shared_ptr<const LoopEventStore>, ExtMemAllocator<std::shared_ptr<const LoopEventStore>>>;
-  SnapshotVec entries_;
+  using EntryVec = std::vector<SessionUndoEntry, ExtMemAllocator<SessionUndoEntry>>;
+  EntryVec entries_;
   size_t cursor_ = 0;
 };
 

@@ -14,8 +14,7 @@ void EditStartNoteState::onEnter(EditManager& manager, Track& track, uint32_t st
     logger.debug("Entered EditStartNoteState");
 
     initialHash = midiEventVecFnv1aHash(track.editAwareMidiEvents());
-    manager.pushSessionUndoBeforeMutation(track);
-    logger.debug("Snapshot on enter, initial hash: %u", initialHash);
+    logger.debug("EditStartNoteState enter, initial hash: %u", initialHash);
 
     const int idx = manager.getSelectedNoteIdx();
     if (idx >= 0) {

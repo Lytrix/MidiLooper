@@ -8,6 +8,8 @@
 #include "StorageLoopIo.h"
 #include "Globals.h"
 #include "Logger.h"
+#include "Utils/DebugSessionCapture.h"
+#include "Utils/MemoryMonitor.h"
 #include <SD.h>
 #include <Arduino.h>
 #include "TrackUndo.h"
@@ -288,6 +290,240 @@ namespace {
 bool deferredSavePending = false;
 bool urgentEditSavePending = false;
 uint32_t lastEditAutosaveMs = 0;
+
+enum class DeferredSaveStage : uint8_t {
+    Idle = 0,
+    TrackHeaderAndSlots,
+    LoopPool,
+    Footer,
+    UndoStacks,
+};
+
+bool deferredSaveInProgress = false;
+DeferredSaveStage deferredSaveStage = DeferredSaveStage::Idle;
+LooperState deferredSaveStateSnapshot = LOOPER_IDLE;
+File deferredSaveFile;
+uint8_t deferredSaveNumTracks = 0;
+uint8_t deferredSaveTrackCursor = 0;
+uint8_t deferredSaveSlotCursor = 0;
+uint8_t deferredSavePoolCursor = 0;
+uint8_t deferredSaveUndoTrackCursor = 0;
+bool deferredSaveTrackHeaderWritten = false;
+uint32_t deferredSaveStartedAtUs = 0;
+uint32_t deferredSaveHeapBefore = 0;
+
+void resetDeferredSaveJobState() {
+    if (deferredSaveFile) {
+        deferredSaveFile.close();
+    }
+    deferredSaveInProgress = false;
+    deferredSaveStage = DeferredSaveStage::Idle;
+    deferredSaveNumTracks = 0;
+    deferredSaveTrackCursor = 0;
+    deferredSaveSlotCursor = 0;
+    deferredSavePoolCursor = 0;
+    deferredSaveUndoTrackCursor = 0;
+    deferredSaveTrackHeaderWritten = false;
+    deferredSaveStartedAtUs = 0;
+    deferredSaveHeapBefore = 0;
+    deferredSaveStateSnapshot = LOOPER_IDLE;
+}
+
+bool beginDeferredSaveJob(const LooperState& state) {
+    deferredSaveFile = SD.open(STORAGE_FILENAME, FILE_WRITE);
+    if (!deferredSaveFile) {
+        Serial.print("[StorageManager] ERROR: Could not open file for deferred write: ");
+        Serial.println(STORAGE_FILENAME);
+        return false;
+    }
+    deferredSaveFile.seek(0);  // Overwrite
+
+    const uint32_t version = STORAGE_VERSION;
+    if (!writeRaw(deferredSaveFile, &version, sizeof(version))) {
+        Serial.println("[StorageManager] ERROR: Deferred save failed writing version");
+        return false;
+    }
+
+    const float savedBpm = bpm;
+    if (!writeRaw(deferredSaveFile, &savedBpm, sizeof(savedBpm))) {
+        Serial.println("[StorageManager] ERROR: Deferred save failed writing BPM");
+        return false;
+    }
+
+    deferredSaveStateSnapshot = state;
+    const uint32_t looperStateVal = static_cast<uint32_t>(deferredSaveStateSnapshot);
+    if (!writeRaw(deferredSaveFile, &looperStateVal, sizeof(looperStateVal))) {
+        Serial.println("[StorageManager] ERROR: Deferred save failed writing looper state");
+        return false;
+    }
+
+    const uint32_t masterLoopLength = trackManager.getMasterLoopLength();
+    if (!writeRaw(deferredSaveFile, &masterLoopLength, sizeof(masterLoopLength))) {
+        Serial.println("[StorageManager] ERROR: Deferred save failed writing master loop length");
+        return false;
+    }
+
+    deferredSaveNumTracks = Config::NUM_TRACKS;
+    if (!writeRaw(deferredSaveFile, &deferredSaveNumTracks, sizeof(deferredSaveNumTracks))) {
+        Serial.println("[StorageManager] ERROR: Deferred save failed writing track count");
+        return false;
+    }
+
+    deferredSaveTrackCursor = 0;
+    deferredSaveSlotCursor = 0;
+    deferredSavePoolCursor = 0;
+    deferredSaveUndoTrackCursor = 0;
+    deferredSaveTrackHeaderWritten = false;
+    deferredSaveStage = DeferredSaveStage::TrackHeaderAndSlots;
+    return true;
+}
+
+bool stepDeferredSaveJob() {
+    switch (deferredSaveStage) {
+        case DeferredSaveStage::TrackHeaderAndSlots: {
+            Track& track = trackManager.getTrack(deferredSaveTrackCursor);
+            if (!deferredSaveTrackHeaderWritten) {
+                TrackState stateToSave = track.getState();
+                if (stateToSave == TRACK_OVERDUBBING) {
+                    stateToSave = TRACK_PLAYING;
+                }
+                const uint32_t trackState = static_cast<uint32_t>(stateToSave);
+                if (!writeRaw(deferredSaveFile, &trackState, sizeof(trackState))) {
+                    Serial.print("[StorageManager] ERROR: Deferred save failed writing trackState for track ");
+                    Serial.println(deferredSaveTrackCursor);
+                    return false;
+                }
+
+                const bool muted = track.isMuted();
+                if (!writeRaw(deferredSaveFile, &muted, sizeof(muted))) {
+                    Serial.print("[StorageManager] ERROR: Deferred save failed writing muted for track ");
+                    Serial.println(deferredSaveTrackCursor);
+                    return false;
+                }
+                deferredSaveTrackHeaderWritten = true;
+                return true;
+            }
+
+            if (deferredSaveSlotCursor < Config::MAX_LOOPS_PER_TRACK) {
+                const uint8_t slot = deferredSaveSlotCursor;
+                const bool slotEnabled = trackManager.isSlotEnabled(deferredSaveTrackCursor, slot);
+                const bool slotMuted = trackManager.isSlotMuted(deferredSaveTrackCursor, slot);
+                const LoopId slotLoopId = track.slotRef(slot).loopId;
+                if (!writeRaw(deferredSaveFile, &slotEnabled, sizeof(slotEnabled))) {
+                    Serial.print("[StorageManager] ERROR: Deferred save failed writing slotEnabled for track ");
+                    Serial.print(deferredSaveTrackCursor);
+                    Serial.print(" slot ");
+                    Serial.println(slot);
+                    return false;
+                }
+                if (!writeRaw(deferredSaveFile, &slotMuted, sizeof(slotMuted))) {
+                    Serial.print("[StorageManager] ERROR: Deferred save failed writing slotMuted for track ");
+                    Serial.print(deferredSaveTrackCursor);
+                    Serial.print(" slot ");
+                    Serial.println(slot);
+                    return false;
+                }
+                if (!writeRaw(deferredSaveFile, &slotLoopId, sizeof(slotLoopId))) {
+                    Serial.print("[StorageManager] ERROR: Deferred save failed writing slotLoopId for track ");
+                    Serial.print(deferredSaveTrackCursor);
+                    Serial.print(" slot ");
+                    Serial.println(slot);
+                    return false;
+                }
+                deferredSaveSlotCursor++;
+                return true;
+            }
+
+            track.ensureLoopsAllocated();
+            deferredSavePoolCursor = 0;
+            deferredSaveStage = DeferredSaveStage::LoopPool;
+            return true;
+        }
+
+        case DeferredSaveStage::LoopPool: {
+            Track& track = trackManager.getTrack(deferredSaveTrackCursor);
+            Loop& loop = track.getLoop(deferredSavePoolCursor);
+            logger.log(CAT_STORAGE, LOG_DEBUG, "[StorageManager] deferred v4 saving track=%u pool=%u loopId=%lu takes=%u",
+                       deferredSaveTrackCursor, deferredSavePoolCursor,
+                       static_cast<unsigned long>(loop.loopId),
+                       static_cast<unsigned>(loop.passes.capturePassCount()));
+            const StorageIo loopIo = storageIoFromFileWrite(deferredSaveFile);
+            if (!writeLoopPersisted(loopIo, loop)) {
+                Serial.print("[StorageManager] ERROR: Deferred save failed writing loop pool entry track ");
+                Serial.print(deferredSaveTrackCursor);
+                Serial.print(" pool ");
+                Serial.println(deferredSavePoolCursor);
+                return false;
+            }
+
+            deferredSavePoolCursor++;
+            if (deferredSavePoolCursor < Config::MAX_LOOPS_PER_TRACK) {
+                return true;
+            }
+
+            deferredSaveTrackCursor++;
+            if (deferredSaveTrackCursor < deferredSaveNumTracks) {
+                deferredSaveSlotCursor = 0;
+                deferredSavePoolCursor = 0;
+                deferredSaveTrackHeaderWritten = false;
+                deferredSaveStage = DeferredSaveStage::TrackHeaderAndSlots;
+                return true;
+            }
+
+            deferredSaveStage = DeferredSaveStage::Footer;
+            return true;
+        }
+
+        case DeferredSaveStage::Footer: {
+            const uint8_t selectedTrackIdx = trackManager.getSelectedTrackIndex();
+            if (!writeRaw(deferredSaveFile, &selectedTrackIdx, sizeof(selectedTrackIdx))) {
+                Serial.println("[StorageManager] ERROR: Deferred save failed writing selected track index");
+                return false;
+            }
+
+            for (uint8_t t = 0; t < deferredSaveNumTracks; ++t) {
+                const uint8_t activeIdx = trackManager.getActiveLoopIndex(t);
+                if (!writeRaw(deferredSaveFile, &activeIdx, sizeof(activeIdx))) {
+                    Serial.print("[StorageManager] ERROR: Deferred save failed writing activeLoopIndex for track ");
+                    Serial.println(t);
+                    return false;
+                }
+            }
+
+            if (!writeRaw(deferredSaveFile, &GLOBAL_UNDO_MAGIC, sizeof(GLOBAL_UNDO_MAGIC))) {
+                Serial.println("[StorageManager] ERROR: Deferred save failed writing global undo magic");
+                return false;
+            }
+
+            deferredSaveUndoTrackCursor = 0;
+            deferredSaveStage = DeferredSaveStage::UndoStacks;
+            return true;
+        }
+
+        case DeferredSaveStage::UndoStacks: {
+            if (deferredSaveUndoTrackCursor < deferredSaveNumTracks) {
+                const Track& track = trackManager.getTrack(deferredSaveUndoTrackCursor);
+                if (!writeGlobalUndoStack(deferredSaveFile, track.getGlobalUndoStack())) {
+                    Serial.print("[StorageManager] ERROR: Deferred save failed writing global undo stack for track ");
+                    Serial.println(deferredSaveUndoTrackCursor);
+                    return false;
+                }
+                deferredSaveUndoTrackCursor++;
+                return true;
+            }
+
+            deferredSaveFile.close();
+            Serial.println("[StorageManager] State saved successfully (v4 deferred slices).");
+            deferredSaveInProgress = false;
+            deferredSaveStage = DeferredSaveStage::Idle;
+            return true;
+        }
+
+        case DeferredSaveStage::Idle:
+        default:
+            return true;
+    }
+}
 }  // namespace
 
 void StorageManager::requestUrgentEditSave() {
@@ -350,20 +586,67 @@ void StorageManager::requestDeferredSaveState(const LooperState& /*state*/) {
 #if BYPASS_STOP_UNDO_SAVE
     return;
 #endif
+    const uint32_t requestHeap = MemoryMonitor::getFreeHeap();
+    const bool alreadyPending = deferredSavePending;
     deferredSavePending = true;
+    SC_PERSIST("request", 0, requestHeap, requestHeap,
+               alreadyPending ? "already_pending" : "queued");
 }
 
 void StorageManager::processDeferredSaveState(const LooperState& state) {
 #if BYPASS_STOP_UNDO_SAVE
     (void)state;
     deferredSavePending = false;
+    resetDeferredSaveJobState();
     return;
 #endif
-    if (!deferredSavePending) {
+    if (!deferredSavePending && !deferredSaveInProgress) {
         return;
     }
-    deferredSavePending = false;
-    saveState(state);
+
+    // Do not start or continue deferred save while capture is active.
+    for (uint8_t t = 0; t < trackManager.getTrackCount(); ++t) {
+        const Track& track = trackManager.getTrack(t);
+        if (track.isRecording() || track.isOverdubbing()) {
+            return;
+        }
+    }
+
+    if (!deferredSaveInProgress && deferredSavePending) {
+        const uint32_t dispatchHeap = MemoryMonitor::getFreeHeap();
+        SC_PERSIST("dispatch", 0, dispatchHeap, dispatchHeap, "run");
+        deferredSavePending = false;
+        deferredSaveStartedAtUs = micros();
+        deferredSaveHeapBefore = MemoryMonitor::getFreeHeap();
+        deferredSaveInProgress = true;
+        if (!beginDeferredSaveJob(state)) {
+            const uint32_t saveDurationUs = micros() - deferredSaveStartedAtUs;
+            const uint32_t saveHeapAfter = MemoryMonitor::getFreeHeap();
+            SC_PERSIST("result", saveDurationUs, deferredSaveHeapBefore, saveHeapAfter, "failed");
+            resetDeferredSaveJobState();
+            return;
+        }
+    }
+
+    if (!deferredSaveInProgress) {
+        return;
+    }
+
+    const bool stepOk = stepDeferredSaveJob();
+    if (!stepOk) {
+        deferredSaveInProgress = false;
+    }
+    if (deferredSaveInProgress) {
+        return;
+    }
+
+    const uint32_t saveDurationUs = micros() - deferredSaveStartedAtUs;
+    const uint32_t saveHeapAfter = MemoryMonitor::getFreeHeap();
+    SC_PERSIST("result", saveDurationUs, deferredSaveHeapBefore, saveHeapAfter,
+               stepOk ? "ok" : "failed");
+    if (!stepOk) {
+        resetDeferredSaveJobState();
+    }
 }
 
 bool StorageManager::loadState(LooperState& state) {

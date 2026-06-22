@@ -12,6 +12,7 @@
 #include "LooperState.h"
 #include "Logger.h"
 #include "NoteEditManager.h"
+#include "NoteEditSessionState.h"
 #include "EditStates/EditSelectNoteState.h"
 #include "TrackUndo.h"
 #include "Loop.h"
@@ -352,7 +353,6 @@ void MidiButtonActions::handleToggleRecordForSlot(uint8_t slotIndex) {
     if (track.isRecording()) {
         logger.info("Loop %d: Stop Recording", slotIndex + 1);
         trackManager.stopRecordingTrack(trackIdx);
-        track.startPlaying(now);
     } else if (track.isOverdubbing()) {
         logger.info("Loop %d: Stop Overdub", slotIndex + 1);
         track.stopOverdubbing();
@@ -443,7 +443,6 @@ void MidiButtonActions::handleToggleRecord() {
     } else if (track.isRecording()) {
         logger.info("MIDI Button A: Stop Recording");
         trackManager.stopRecordingTrack(idx);
-        track.startPlaying(now);
     } else if (track.isOverdubbing()) {
         logger.info("MIDI Button A: Stop Overdub");
         track.stopOverdubbing();
@@ -579,14 +578,28 @@ void MidiButtonActions::handleMuteTrack(uint8_t trackNumber) {
 }
 
 void MidiButtonActions::handleCycleEditMode() {
+    handleCycleNoteEditType();
+}
+
+void MidiButtonActions::handleCycleNoteEditType() {
     Track& track = getCurrentTrack();
-    if (editManager.getCurrentState() == nullptr) {
+    const bool wasInEditOverlay = editManager.getCurrentState() != nullptr;
+
+    if (noteEditManager.getCurrentMainEditMode() != NoteEditManager::MAIN_MODE_NOTE_EDIT) {
         noteEditManager.sendMainEditModeChange(NoteEditManager::MAIN_MODE_NOTE_EDIT);
-        editManager.enterEditMode(editManager.getNoteHomeState(), clockManager.getCurrentTick());
+    }
+
+    if (!shouldCycleNoteEditTypeOnShortPress(wasInEditOverlay)) {
+        if (!editManager.isNoteEditActive()) {
+            editManager.openNoteEditSession(track);
+        } else if (editManager.getCurrentState() == nullptr) {
+            editManager.enterDefaultNoteEditSessionState(track, clockManager.getCurrentTick());
+        }
         logger.info("MIDI Encoder: Short press - entered note edit mode");
         return;
     }
-    noteEditManager.cycleEditMode(track);
+
+    editManager.cycleNoteEditType(track);
 }
 
 void MidiButtonActions::handleExitEditMode() {
@@ -644,7 +657,7 @@ void MidiButtonActions::handleCreateNoteAtBracket() {
     }
 
     editManager.setSelectedNoteIdx(-1);
-    editManager.pushSessionUndoBeforeMutation(track);
+    editManager.beginGeometryMutation(track, NoteEditKind::Add, false);
     const std::array<MidiEvent, 2> created =
         EditSelectNoteState::createNoteAtTick(track, bracketTick);
     EditChange add;
@@ -667,7 +680,7 @@ void MidiButtonActions::handleDeleteOrCreateNote() {
         logger.info("NOTELEN double: ignored (not in edit mode)");
         return;
     }
-    if (editManager.getSelectedNoteIdx() >= 0) {
+    if (editManager.getSelectedNoteIdx() >= 0 || editManager.hasLastFader1SelectRef()) {
         logger.info("NOTELEN double: delete selected note");
         handleDeleteNote();
         return;

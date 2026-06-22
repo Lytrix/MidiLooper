@@ -8,6 +8,7 @@
 #include "NoteEditManager.h"
 
 #include "ClockManager.h"
+#include "ClockManager.h"
 #include "TrackManager.h"
 #include "StorageManager.h"
 #include "LooperState.h"
@@ -126,7 +127,7 @@ void NoteEditManager::handleMidiCC(uint8_t channel, uint8_t ccNumber, uint8_t va
 }
 
 void NoteEditManager::moveNoteToPosition(Track& track, const NoteUtils::DisplayNote& currentNote, std::uint32_t targetTick) {
-    editManager.pushSessionUndoBeforeMutation(track);
+    editManager.beginGeometryMutation(track, NoteEditKind::Move, true);
     uint32_t fromStart = currentNote.startTick;
     const NoteEditFocus& focus = editManager.getNoteEditSession().focus;
     if (focus.active && focus.last.pitch == currentNote.note &&
@@ -159,7 +160,7 @@ void NoteEditManager::moveNoteToPosition(Track& track, const NoteUtils::DisplayN
 void NoteEditManager::changeNoteEndWithOverlapHandling(Track& track,
                                                        const NoteUtils::DisplayNote& currentNote,
                                                        std::uint32_t targetEndTick) {
-    editManager.pushSessionUndoBeforeMutation(track);
+    editManager.beginGeometryMutation(track, NoteEditKind::Length, true);
     logger.log(CAT_MIDI, LOG_DEBUG,
                "Note length change with overlap handling: pitch=%d, start=%lu, end %lu->%lu",
                currentNote.note, currentNote.startTick, currentNote.endTick, targetEndTick);
@@ -171,51 +172,61 @@ void NoteEditManager::changeNoteEndWithOverlapHandling(Track& track,
                                            dummyEnd);
 }
 
-// void NoteEditManager::processEncoderMovement(int rawDelta) {
-//     if (rawDelta == 0) return;
-    
-//     uint32_t now = millis();
-//     uint32_t interval = now - lastEncoderTime;
-//     lastEncoderTime = now;
-    
-//     // Apply acceleration based on timing and current edit state
-//     int accel = 1;
-//     if (editManager.getCurrentState() == editManager.getStartNoteState()) {
-//         if (interval < 25) accel = 24;
-//         else if (interval < 50) accel = 8;
-//         else if (interval < 100) accel = 4;
-//     } else if (editManager.getCurrentState() == editManager.getLengthNoteState()) {
-//         // Length editing: use moderate acceleration
-//         if (interval < 25) accel = 8;
-//         else if (interval < 50) accel = 4;
-//         else if (interval < 100) accel = 2;
-//     } else if (editManager.getCurrentState() == editManager.getPitchNoteState()) {
-//         // Pitch editing: slower acceleration for precision
-//         if (interval < 50) accel = 4;
-//         else if (interval < 75) accel = 3;
-//         else if (interval < 100) accel = 2;
-//     } else {
-//         // Default edit mode acceleration
-//         if (interval < 50) accel = 4;
-//         else if (interval < 75) accel = 3;
-//         else if (interval < 100) accel = 2;
-//     }
-    
-//     int finalDelta = rawDelta * accel;
-    
-//     if (editManager.getCurrentState() != nullptr) {
-//         // In edit mode: encoder changes value
-//         editManager.onEncoderTurn(trackManager.getSelectedTrack(), finalDelta);
-//         logger.log(CAT_MIDI, LOG_DEBUG, "[EDIT] MIDI Encoder value change: %d (accel=%d, raw=%d, state=%s)", 
-//                    finalDelta, accel, rawDelta, editManager.getCurrentState()->getName());
-//     } else {
-//         // Not in edit mode - just log for debug
-//         logger.log(CAT_MIDI, LOG_DEBUG, "MIDI Encoder delta: %d (not in edit mode)", finalDelta);
-//     }
-    
-//     // Update encoder position for consistency
-//     midiEncoderPosition += rawDelta;
-// }
+void NoteEditManager::processEncoderMovement(int rawDelta) {
+    if (rawDelta == 0) {
+        return;
+    }
+
+    static uint32_t lastEncoderTime = 0;
+    const uint32_t now = millis();
+    const uint32_t interval = now - lastEncoderTime;
+    lastEncoderTime = now;
+
+    int accel = 1;
+    switch (editManager.getNoteEditSessionState().kind) {
+        case NoteEditKind::Move:
+            if (interval < 25) {
+                accel = 24;
+            } else if (interval < 50) {
+                accel = 8;
+            } else if (interval < 100) {
+                accel = 4;
+            }
+            break;
+        case NoteEditKind::Length:
+            if (interval < 25) {
+                accel = 8;
+            } else if (interval < 50) {
+                accel = 4;
+            } else if (interval < 100) {
+                accel = 2;
+            }
+            break;
+        case NoteEditKind::Pitch:
+            if (interval < 50) {
+                accel = 4;
+            } else if (interval < 75) {
+                accel = 3;
+            } else if (interval < 100) {
+                accel = 2;
+            }
+            break;
+        default:
+            if (interval < 50) {
+                accel = 4;
+            } else if (interval < 75) {
+                accel = 3;
+            } else if (interval < 100) {
+                accel = 2;
+            }
+            break;
+    }
+
+    const int finalDelta = rawDelta * accel;
+    if (editManager.getCurrentState() != nullptr) {
+        editManager.onEncoderTurn(trackManager.getSelectedTrack(), finalDelta);
+    }
+}
 
 void NoteEditManager::cycleEditMode(Track& track) {
     // Use the main edit mode system instead of the old complex state system
@@ -267,9 +278,8 @@ void NoteEditManager::deleteSelectedNote(Track& track) {
 
     const NoteUtils::DisplayNote selectedNote = filteredNotes[static_cast<size_t>(selectedIdx)];
 
-    editManager.pushSessionUndoBeforeMutation(track);
-
     const bool noteEditActive = editManager.isNoteEditActive();
+    editManager.beginGeometryMutation(track, NoteEditKind::Delete, false);
     const bool deleteTargetDiffersFromFocus =
         noteEditActive && focus.active && !noteRefEquals(focus.moving, deleteTargetRef);
     if (deleteTargetDiffersFromFocus) {
@@ -413,6 +423,14 @@ void NoteEditManager::sendMainEditModeChange(MainEditMode mode) {
     
     // Update LoopEditManager mode and send feedback if switching to LOOP_EDIT mode
     loopEditManager.setMainEditMode(mode == MAIN_MODE_LOOP_EDIT);
+    if (mode == MAIN_MODE_NOTE_EDIT) {
+        Track& track = trackManager.getSelectedTrack();
+        if (!editManager.isNoteEditActive()) {
+            editManager.openNoteEditSession(track);
+        } else {
+            editManager.enterDefaultNoteEditSessionState(track, clockManager.getCurrentTick());
+        }
+    }
     if (mode == MAIN_MODE_LOOP_EDIT) {
         loopEditManager.sendCurrentLoopLengthCC(trackManager.getSelectedTrack());
     }
@@ -1090,8 +1108,6 @@ void NoteEditManager::handleSelectFaderInput(int16_t pitchValue, Track& track) {
             editManager.setBracketTick(absoluteTargetTick);
 
             if (noteIdx >= 0) {
-                editManager.setSelectedNoteIdx(noteIdx);
-
                 int notesAtPosition = 0;
                 int notePosition = 0;
                 for (const SelectNavigation::SelectNavSlot& s : slots) {
@@ -1116,9 +1132,7 @@ void NoteEditManager::handleSelectFaderInput(int16_t pitchValue, Track& track) {
                 editManager.rebuildNoteEditFocusForDisplayNote(track, notes[static_cast<size_t>(noteIdx)]);
                 const NoteRef selectRef = noteRefFromFilteredDisplayNote(
                     track.getMidiChannel(), editManager.getNoteEditSession().focus, notes, noteIdx);
-                if (selectRef.channel != 0) {
-                    editManager.setLastFader1SelectRef(selectRef);
-                }
+                editManager.applySelectNav(track, noteIdx, absoluteTargetTick, selectRef, true);
                 resetLengthEditingModeOnNoteSelect();
 
                 referenceStep = absoluteTargetTick / Config::TICKS_PER_16TH_STEP;
@@ -1126,9 +1140,8 @@ void NoteEditManager::handleSelectFaderInput(int16_t pitchValue, Track& track) {
                 noteSelectionTime = millis();
                 startEditingEnabled = false;
             } else {
-                editManager.setSelectedNoteIdx(-1);
-                editManager.clearLastFader1SelectRef();
                 editManager.rebuildNoteEditFocusAtSelect(track, -1);
+                editManager.applySelectNav(track, -1, absoluteTargetTick, {}, false);
                 logger.log(CAT_MIDI, LOG_DEBUG,
                            "Select fader: selected empty step at tick %lu (no note)", absoluteTargetTick);
             }
@@ -1477,7 +1490,7 @@ void NoteEditManager::handleNoteValueFaderInput(uint8_t ccValue, Track& track) {
             return;
         }
 
-        editManager.pushSessionUndoBeforeMutation(track);
+        editManager.beginGeometryMutation(track, NoteEditKind::Pitch, true);
 
         NoteUtils::DisplayNote pitchTarget{currentNoteValue, notes[static_cast<size_t>(selectedIdx)].velocity,
                                            noteStart, noteEnd};

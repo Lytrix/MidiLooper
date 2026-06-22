@@ -81,7 +81,7 @@
 
 ## 4. Test matrix — open
 
-- [ ] 4.1 **NoteEditSession** per-op undo native tests (select, add, delete, move coarse/fine, pitch, length before **saveNoteEditPass**) — stack smoke test only (`test_note_edit_session_undo_stack`)
+- [ ] 4.1 **NoteEditSession** per-op undo native tests — geometry **kind-boundary** push via **`pushSessionUndoOnKindChange`** + **`NoteEditSessionState`** owner (see **`note-edit-session-undo-gpio`**); stack smoke test only (`test_note_edit_session_undo_stack`)
 - [ ] 4.3 Native or host test: SD dirty + **exit flush while transport playing** (behavior shipped; test TBD)
 - [ ] 4.4 Native test: overdub during note edit + 3-step global undo (**NoteEditPassClosed** + **OverdubPassAdded** + **NoteEditPassClosed**)
 - [x] 4.5 Save/reload v4 with capture passes + **editPasses** (`test_storage_loop_io`)

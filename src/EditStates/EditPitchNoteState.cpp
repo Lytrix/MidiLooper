@@ -12,8 +12,7 @@
 void EditPitchNoteState::onEnter(EditManager& manager, Track& track, uint32_t startTick) {
     logger.debug("Entered EditPitchNoteState");
     initialHash = midiEventVecFnv1aHash(track.editAwareMidiEvents());
-    manager.pushSessionUndoBeforeMutation(track);
-    logger.debug("Snapshot on enter (pitch), initial hash: %u", initialHash);
+    logger.debug("EditPitchNoteState enter, initial hash: %u", initialHash);
 
     if (manager.getSelectedNoteIdx() >= 0) {
         const NoteUtils::DisplayNote selected = manager.liveEditDisplayNoteAtSelect(track);
