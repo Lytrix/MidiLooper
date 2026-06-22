@@ -9,10 +9,11 @@
 
 namespace DeferredValidatePolicy {
 
-/// True when a queued deferred full validate may run (PLAYING-only, age exceeded).
-inline bool shouldRunDeferredFullValidate(bool queued, bool isRecording, bool isOverdubbing,
-                                          uint32_t queuedAtMs, uint32_t nowMs) {
-  if (!queued || isRecording || isOverdubbing) {
+/// True when a queued deferred full validate may run after capture/playback is idle.
+inline bool shouldRunDeferredFullValidate(bool queued, bool isPlaying, bool isRecording,
+                                          bool isOverdubbing, uint32_t queuedAtMs,
+                                          uint32_t nowMs) {
+  if (!queued || isPlaying || isRecording || isOverdubbing) {
     return false;
   }
   if (queuedAtMs == 0) {

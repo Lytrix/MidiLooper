@@ -6,6 +6,7 @@
 #include <map>
 #include <cstdint>
 #include "MidiEvent.h"
+#include "Utils/PsramFirstAllocator.h"
 #include <unordered_map>
 #include <utility> // for std::pair
 
@@ -58,13 +59,15 @@ bool isPreferredWrapTailForHeadOff(uint32_t tailOnTick, uint32_t headOffTick,
      uint32_t endTick;
  };
 
+using DisplayNoteVec = std::vector<DisplayNote, PsramFirstAllocator<DisplayNote>>;
+
 /**
  * @class CachedNoteList
  * @brief Caches reconstructed notes to avoid expensive recalculation
  */
 class CachedNoteList {
 private:
-    std::vector<DisplayNote> cachedNotes;
+    DisplayNoteVec cachedNotes;
     uint32_t lastMidiHash;
     uint32_t lastLoopLength;
     bool isValid;
@@ -72,7 +75,7 @@ private:
 public:
     CachedNoteList() : lastMidiHash(0), lastLoopLength(0), isValid(false) {}
     
-    const std::vector<DisplayNote>& getNotes(const MidiEventVec& midiEvents, uint32_t loopLength);
+    const DisplayNoteVec& getNotes(const MidiEventVec& midiEvents, uint32_t loopLength);
     void invalidate() { isValid = false; }
     
 private:
@@ -93,6 +96,9 @@ private:
  */
 std::vector<DisplayNote> reconstructNotes(const MidiEventVec& midiEvents, uint32_t loopLength,
                                           bool verboseLog = true);
+
+DisplayNoteVec reconstructDisplayNotes(const MidiEventVec& midiEvents, uint32_t loopLength,
+                                       bool verboseLog = true);
 
 struct OpenNoteOn {
     uint8_t note;

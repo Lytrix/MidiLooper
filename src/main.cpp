@@ -43,7 +43,7 @@ void setup() {
         f.close();
       }
     }
-    delay(5000);
+    delay(500);
   }
 
   // Initialise the global MIDI event pool now that the Teensy core has completed
@@ -197,7 +197,8 @@ void loop() {
   }
   
   // Only update display if enough time has passed (steady-rate)
-  if (now - lastDisplayUpdate >= LCD::DISPLAY_UPDATE_INTERVAL) {
+  if (!StorageManager::isDeferredSaveActive() &&
+      now - lastDisplayUpdate >= LCD::DISPLAY_UPDATE_INTERVAL) {
     lastDisplayUpdate = now;
     displayManager.update();
   }

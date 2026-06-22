@@ -1002,7 +1002,8 @@ std::vector<NoteUtils::DisplayNote> NoteEditManager::selectableDisplayNotesForEd
     const Track& track) {
     const uint32_t loopLength = track.getLoopLength();
     if (!editManager.isNoteEditActive() || loopLength == 0) {
-        return track.getCachedNotes();
+        const auto& cachedNotes = track.getCachedNotes();
+        return std::vector<NoteUtils::DisplayNote>(cachedNotes.begin(), cachedNotes.end());
     }
     const NoteEditFocus& focus = editManager.getNoteEditSession().focus;
     return filterSelectableDisplayNotes(track.editAwareMidiEvents(), focus,

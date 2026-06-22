@@ -94,7 +94,7 @@ void ClockManager::actuallyTransition(ClockSource from, ClockSource to) {
     pulseFillCount = 0;
     pulseHead = 0;
     bpmSmoothed = 0.0f;
-    StorageManager::saveState(looperState.getLooperState());
+    StorageManager::requestDeferredSaveState(looperState.getLooperState());
     logger.info("MIDI clock lost, switching to internal at %.1f BPM", (double)bpm);
   } else if (from == CLOCK_INTERNAL && to == CLOCK_EXTERNAL) {
     logger.info("External MIDI clock detected");

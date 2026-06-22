@@ -316,7 +316,7 @@ void EditSelectNoteState::selectNextNoteSequential(EditManager& manager, Track& 
 }
 
 int EditSelectNoteState::findNoteIndexInOriginalList(const NoteUtils::DisplayNote& targetNote,
-                                                     const std::vector<NoteUtils::DisplayNote>& originalNotes) const {
+                                                     const std::vector<NoteUtils::DisplayNote, PsramFirstAllocator<NoteUtils::DisplayNote>>& originalNotes) const {
     // Find the note in the original unsorted notes list by matching note properties
     for (int i = 0; i < (int)originalNotes.size(); ++i) {
         const auto& note = originalNotes[i];

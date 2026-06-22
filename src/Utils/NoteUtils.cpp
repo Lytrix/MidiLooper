@@ -229,7 +229,8 @@ uint32_t NoteUtils::CachedNoteList::computeMidiHash(const MidiEventVec& midiEven
     return midiEventVecFnv1aHash(midiEvents);
 }
 
-const std::vector<NoteUtils::DisplayNote>& NoteUtils::CachedNoteList::getNotes(const MidiEventVec& midiEvents, uint32_t loopLength) {
+const NoteUtils::DisplayNoteVec&
+NoteUtils::CachedNoteList::getNotes(const MidiEventVec& midiEvents, uint32_t loopLength) {
     uint32_t currentHash = computeMidiHash(midiEvents);
     
     if (isValid && currentHash == lastMidiHash && loopLength == lastLoopLength) {
@@ -237,7 +238,7 @@ const std::vector<NoteUtils::DisplayNote>& NoteUtils::CachedNoteList::getNotes(c
     }
     
     // Cache miss - rebuild notes
-    cachedNotes = reconstructNotes(midiEvents, loopLength);
+    cachedNotes = reconstructDisplayNotes(midiEvents, loopLength, false);
     lastMidiHash = currentHash;
     lastLoopLength = loopLength;
     isValid = true;
@@ -245,10 +246,13 @@ const std::vector<NoteUtils::DisplayNote>& NoteUtils::CachedNoteList::getNotes(c
     return cachedNotes;
 }
 
-std::vector<NoteUtils::DisplayNote> NoteUtils::reconstructNotes(const MidiEventVec& midiEvents, uint32_t loopLength,
-                                                                bool verboseLog) {
+namespace {
+
+template <typename NoteVector>
+NoteVector reconstructNotesImpl(const MidiEventVec& midiEvents, uint32_t loopLength,
+                                bool verboseLog) {
     using DisplayNote = NoteUtils::DisplayNote;
-    std::vector<DisplayNote> notes;
+    NoteVector notes;
     std::map<uint8_t, std::vector<DisplayNote>> activeNoteStacks;
 
     if (loopLength == 0) {
@@ -424,14 +428,17 @@ std::vector<NoteUtils::DisplayNote> NoteUtils::reconstructNotes(const MidiEventV
     }
     
     // Deduplicate notes with same pitch, start, and end
-    std::set<std::tuple<uint8_t, uint32_t, uint32_t>> seenNotes;
-    std::vector<DisplayNote> finalNotes;
+    NoteVector finalNotes;
     
     size_t originalCount = notes.size();
     for (const auto& note : notes) {
-        auto key = std::make_tuple(note.note, note.startTick, note.endTick);
-        if (seenNotes.find(key) == seenNotes.end()) {
-            seenNotes.insert(key);
+        const bool alreadySeen = std::any_of(
+            finalNotes.begin(), finalNotes.end(), [&](const DisplayNote& existing) {
+                return existing.note == note.note &&
+                       existing.startTick == note.startTick &&
+                       existing.endTick == note.endTick;
+            });
+        if (!alreadySeen) {
             finalNotes.push_back(note);
         } else if (logDetails) {
             logger.log(CAT_TRACK, LOG_DEBUG, "Deduplicated note: pitch=%d, start=%lu, end=%lu",
@@ -445,6 +452,18 @@ std::vector<NoteUtils::DisplayNote> NoteUtils::reconstructNotes(const MidiEventV
     }
     
     return finalNotes;
+}
+
+}  // namespace
+
+std::vector<NoteUtils::DisplayNote> NoteUtils::reconstructNotes(
+    const MidiEventVec& midiEvents, uint32_t loopLength, bool verboseLog) {
+    return reconstructNotesImpl<std::vector<DisplayNote>>(midiEvents, loopLength, verboseLog);
+}
+
+NoteUtils::DisplayNoteVec NoteUtils::reconstructDisplayNotes(
+    const MidiEventVec& midiEvents, uint32_t loopLength, bool verboseLog) {
+    return reconstructNotesImpl<DisplayNoteVec>(midiEvents, loopLength, verboseLog);
 }
 
 std::vector<NoteUtils::OpenNoteOn> NoteUtils::findOpenNoteOns(const MidiEventVec& midiEvents,

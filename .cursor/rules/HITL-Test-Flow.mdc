@@ -21,10 +21,10 @@ Run from project root:
  --no-fixed-grid-notes --start-transport \
  --overdub-start-delay-bars 0 --overdub-start-delay-beats 1 \
  --phase-wait-ms 500 --final-wait-ms 3000 --press-ms 120 \
- --undo-redo-delay-ms 500
+ --undo-redo-delay-ms 3000
 ```
 
-Undo/redo after overdub stop is **on by default** (500 ms wait, double-press undo, 500 ms wait, triple-press redo). Use `--no-undo-redo-after-overdub-stop` to skip.
+Undo/redo after overdub stop is **on by default** (3 s wait, double-press undo, 3 s wait, triple-press redo — long loops need deferred save to finish before button presses). Use `--no-undo-redo-after-overdub-stop` to skip.
 
 A **second overdub pass** is **on by default** (2 bars, C0–B1 / MIDI 12–35, 1-beat step and gate, 1-beat start delay). Use `--second-overdub-bars 0` to run record + single overdub only.
 

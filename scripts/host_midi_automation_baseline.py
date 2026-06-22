@@ -56,6 +56,8 @@ RECORD_GRID_STEP_CLOCKS = 6  # 16th notes at 24 PPQN
 OVERDUB_GRID_STEP_CLOCKS = 12  # 8th notes at 24 PPQN
 TICKS_PER_BEAT = TICKS_PER_BAR // 4
 DEFAULT_RECORD_NOTE_SPAN_MIN_RATIO = 0.9
+DEFAULT_LONG_RUN_BAR_THRESHOLD = 48
+DEFAULT_RECORD_STOP_RAM2_FLOOR_BYTES = 12 * 1024
 
 
 @dataclass(frozen=True)
@@ -92,6 +94,12 @@ PERSISTENCE_STAGE_SEQUENCE: tuple[str, ...] = (
 
 
 def _expected_transition_expectations(args: argparse.Namespace) -> tuple[TransitionExpectation, ...]:
+    if getattr(args, "record_only", False):
+        return (
+            TransitionExpectation("ARMED", "RECORDING", 1),
+            TransitionExpectation("RECORDING", "STOPPED_RECORDING", 1),
+            TransitionExpectation("STOPPED_RECORDING", "PLAYING", 1),
+        )
     overdub_pass_count = 2 if getattr(args, "second_overdub_bars", 0) else 1
     return (
         TransitionExpectation("ARMED", "RECORDING", 1),
@@ -1137,6 +1145,146 @@ def _summarize_persistence_handoff(
     }
 
 
+def _summarize_ram2_headroom(
+    record_stop_stage_rows: list[dict[str, object]],
+    persistence_rows: list[dict[str, object]],
+) -> dict[str, object]:
+    samples: list[dict[str, object]] = []
+    for row in record_stop_stage_rows:
+        stage_name = str(row.get("stage", ""))
+        timestamp = int(row.get("timestamp", 0))
+        for key in ("heap_before", "heap_after"):
+            if key not in row:
+                continue
+            samples.append(
+                {
+                    "source": "record_stop_stage",
+                    "stage": stage_name,
+                    "field": key,
+                    "timestamp": timestamp,
+                    "free_ram2_bytes": int(row[key]),
+                }
+            )
+    for row in persistence_rows:
+        stage_name = str(row.get("stage", ""))
+        timestamp = int(row.get("timestamp", 0))
+        for key in ("heap_before", "heap_after"):
+            if key not in row:
+                continue
+            free_ram2 = int(row[key])
+            if free_ram2 <= 0:
+                continue
+            samples.append(
+                {
+                    "source": "persistence",
+                    "stage": stage_name,
+                    "field": key,
+                    "timestamp": timestamp,
+                    "free_ram2_bytes": free_ram2,
+                }
+            )
+
+    if not samples:
+        return {
+            "phase_disabled": True,
+            "sample_count": 0,
+            "min_free_ram2_bytes": None,
+            "min_sample": None,
+        }
+
+    min_sample = min(samples, key=lambda sample: int(sample["free_ram2_bytes"]))
+    return {
+        "phase_disabled": False,
+        "sample_count": len(samples),
+        "min_free_ram2_bytes": int(min_sample["free_ram2_bytes"]),
+        "min_sample": min_sample,
+    }
+
+
+def _verify_record_stop_ram2_floor(
+    record_stop_stage_rows: list[dict[str, object]],
+    *,
+    floor_bytes: int,
+    enabled: bool,
+) -> dict[str, object]:
+    if not enabled:
+        return {
+            "phase_disabled": True,
+            "enabled": False,
+            "floor_bytes": floor_bytes,
+            "record_stop_heap_before": None,
+            "record_stop_heap_after": None,
+            "floor_ok": True,
+            "record_stop_row_missing": False,
+        }
+
+    record_stop_row: Optional[dict[str, object]] = None
+    for row in record_stop_stage_rows:
+        if str(row.get("stage", "")) == "record_stop":
+            record_stop_row = row
+            break
+
+    if record_stop_row is None:
+        return {
+            "phase_disabled": False,
+            "enabled": True,
+            "floor_bytes": floor_bytes,
+            "record_stop_heap_before": None,
+            "record_stop_heap_after": None,
+            "floor_ok": False,
+            "record_stop_row_missing": True,
+        }
+
+    record_stop_heap_before = int(record_stop_row["heap_before"])
+    record_stop_heap_after = int(record_stop_row["heap_after"])
+    return {
+        "phase_disabled": False,
+        "enabled": True,
+        "floor_bytes": floor_bytes,
+        "record_stop_heap_before": record_stop_heap_before,
+        "record_stop_heap_after": record_stop_heap_after,
+        "floor_ok": record_stop_heap_before >= floor_bytes,
+        "record_stop_row_missing": False,
+    }
+
+
+def _verify_long_run_persistence_result(
+    persistence_handoff: dict[str, object],
+    *,
+    enabled: bool,
+) -> dict[str, object]:
+    if not enabled:
+        return {
+            "phase_disabled": True,
+            "enabled": False,
+            "result_present": False,
+            "result_ok": True,
+            "outcome": None,
+            "stage": None,
+        }
+
+    result_row = persistence_handoff.get("result")
+    result_row_dict = result_row if isinstance(result_row, dict) else None
+    result_present = result_row_dict is not None
+    result_ok = bool(persistence_handoff.get("result_ok"))
+    outcome: Optional[str] = None
+    stage: Optional[str] = None
+    if result_row_dict is not None:
+        outcome_value = result_row_dict.get("outcome")
+        stage_value = result_row_dict.get("stage")
+        outcome = str(outcome_value) if outcome_value is not None else None
+        stage = str(stage_value) if stage_value is not None else None
+
+    return {
+        "phase_disabled": False,
+        "enabled": True,
+        "result_present": result_present,
+        "result_ok": result_ok,
+        "outcome": outcome,
+        "stage": stage,
+    }
+
+
 def _extract_first_note_offset(
     lines: list[str],
     *,
@@ -1699,6 +1847,7 @@ def _verify_overdub_wrap_storage(
 
 
 def _build_serial_verification(lines: list[str], args: argparse.Namespace) -> dict[str, object]:
+    record_only = bool(getattr(args, "record_only", False))
     boundaries = _extract_phase_boundaries(lines)
     record_stop_stage_rows = _extract_record_stop_stage_rows(lines)
     record_stop_stage_trace = _summarize_record_stop_stages(record_stop_stage_rows)
@@ -1706,6 +1855,17 @@ def _build_serial_verification(lines: list[str], args: argparse.Namespace) -> di
     persistence_handoff = _summarize_persistence_handoff(
         persistence_rows,
         record_stop_ts=boundaries.get("record_stop_ts"),
+    )
+    is_long_record_run = bool(args.record_bars and args.record_bars >= args.long_run_bar_threshold)
+    ram2_headroom = _summarize_ram2_headroom(record_stop_stage_rows, persistence_rows)
+    record_stop_ram2_floor = _verify_record_stop_ram2_floor(
+        record_stop_stage_rows,
+        floor_bytes=args.record_stop_min_free_ram2_bytes,
+        enabled=is_long_record_run,
+    )
+    long_run_persistence_result = _verify_long_run_persistence_result(
+        persistence_handoff,
+        enabled=is_long_record_run,
     )
     record = _verify_phase_note_pairs(
         lines,
@@ -1715,14 +1875,27 @@ def _build_serial_verification(lines: list[str], args: argparse.Namespace) -> di
         low_note=args.record_low_note,
         high_note=args.record_high_note,
     )
-    overdub = _verify_phase_note_pairs(
-        lines,
-        midi_channel_1based=args.midi_channel,
-        phase_start_ts=boundaries["overdub_start_ts"],
-        phase_stop_ts=boundaries["overdub_stop_ts"],
-        low_note=args.overdub_low_note,
-        high_note=args.overdub_high_note,
-    )
+    if record_only:
+        overdub = {
+            "phase_disabled": True,
+            "phase_missing": False,
+            "note_on_count": 0,
+            "note_off_count": 0,
+            "unmatched_open_notes": 0,
+            "out_of_range_count": 0,
+            "sequence_mismatch_count": 0,
+            "out_of_range_examples": [],
+            "sequence_examples": [],
+        }
+    else:
+        overdub = _verify_phase_note_pairs(
+            lines,
+            midi_channel_1based=args.midi_channel,
+            phase_start_ts=boundaries["overdub_start_ts"],
+            phase_stop_ts=boundaries["overdub_stop_ts"],
+            low_note=args.overdub_low_note,
+            high_note=args.overdub_high_note,
+        )
     recs_lengths = _extract_recs_lengths(lines)
     record_loop_length: Optional[dict[str, object]] = None
     record_note_span: Optional[dict[str, object]] = None
@@ -1744,22 +1917,30 @@ def _build_serial_verification(lines: list[str], args: argparse.Namespace) -> di
         phase_start_ts=boundaries["record_start_ts"],
         phase_stop_ts=boundaries["record_stop_ts"],
     )
-    overdub_first_note_offset = _extract_first_note_offset(
-        lines,
-        midi_channel_1based=args.midi_channel,
-        phase_start_ts=boundaries["overdub_start_ts"],
-        phase_stop_ts=boundaries["overdub_stop_ts"],
-    )
+    if record_only:
+        overdub_first_note_offset = {
+            "offset_us": None,
+            "offset_ms": None,
+            "offset_clocks": None,
+            "phase_missing": True,
+        }
+    else:
+        overdub_first_note_offset = _extract_first_note_offset(
+            lines,
+            midi_channel_1based=args.midi_channel,
+            phase_start_ts=boundaries["overdub_start_ts"],
+            phase_stop_ts=boundaries["overdub_stop_ts"],
+        )
     issues: list[str] = []
-    if record["phase_missing"] or overdub["phase_missing"]:
+    if record["phase_missing"] or (not record_only and overdub["phase_missing"]):
         issues.append("missing_phase_boundaries")
     if record["unmatched_open_notes"] > 0:
         issues.append("record_unmatched_open_notes")
-    if overdub["unmatched_open_notes"] > 0:
+    if not record_only and overdub["unmatched_open_notes"] > 0:
         issues.append("overdub_unmatched_open_notes")
     if record["out_of_range_count"] > 0:
         issues.append("record_out_of_range_notes")
-    if overdub["out_of_range_count"] > 0:
+    if not record_only and overdub["out_of_range_count"] > 0:
         issues.append("overdub_out_of_range_notes")
     record_offset_clocks = record_first_note_offset["offset_clocks"]
     overdub_offset_clocks = overdub_first_note_offset["offset_clocks"]
@@ -1767,10 +1948,11 @@ def _build_serial_verification(lines: list[str], args: argparse.Namespace) -> di
         issues.append("record_first_note_missing")
     elif record_offset_clocks > args.record_first_note_max_clocks:
         issues.append("record_first_note_too_late")
-    if overdub_offset_clocks is None:
-        issues.append("overdub_first_note_missing")
-    elif overdub_offset_clocks > args.overdub_first_note_max_clocks:
-        issues.append("overdub_first_note_too_late")
+    if not record_only:
+        if overdub_offset_clocks is None:
+            issues.append("overdub_first_note_missing")
+        elif overdub_offset_clocks > args.overdub_first_note_max_clocks:
+            issues.append("overdub_first_note_too_late")
     if record_loop_length is not None:
         if record_loop_length.get("recs_missing"):
             if "record_recs_missing" not in issues:
@@ -1783,7 +1965,7 @@ def _build_serial_verification(lines: list[str], args: argparse.Namespace) -> di
                 issues.append("record_recs_missing")
         elif not record_note_span.get("raw_span_ok", False):
             issues.append("record_note_span_too_short")
-    if stored_record_grid is not None:
+    if stored_record_grid is not None and not record_only:
         if stored_record_grid.get("revt_missing"):
             issues.append("record_stored_revt_missing")
         elif not stored_record_grid.get("grid_ok", False):
@@ -1797,12 +1979,22 @@ def _build_serial_verification(lines: list[str], args: argparse.Namespace) -> di
             issues.append(f"persistence_stage_missing:{persistence_missing_stage}")
         elif not persistence_handoff.get("result_ok", False):
             issues.append("persistence_result_failed")
+    if not record_stop_ram2_floor.get("phase_disabled", True):
+        if record_stop_ram2_floor.get("record_stop_row_missing", False):
+            issues.append("record_stop_ram2_heap_missing")
+        elif not record_stop_ram2_floor.get("floor_ok", False):
+            issues.append("record_stop_ram2_heap_below_floor")
+    if not long_run_persistence_result.get("phase_disabled", True):
+        if not long_run_persistence_result.get("result_present", False):
+            issues.append("long_run_persistence_result_missing")
+        elif not long_run_persistence_result.get("result_ok", False):
+            issues.append("long_run_persistence_result_failed")
     overdub_wrap_storage: Optional[dict[str, object]] = None
     stored_overdub_span: Optional[dict[str, object]] = None
     loop_length_ticks = 0
     if record_loop_length and record_loop_length.get("actual_final_length") is not None:
         loop_length_ticks = int(record_loop_length["actual_final_length"])
-    if loop_length_ticks > 0 and args.overdub_bars and args.bar_sync_from_midi_clock:
+    if (not record_only) and loop_length_ticks > 0 and args.overdub_bars and args.bar_sync_from_midi_clock:
         memory_note_count = _extract_overdub_memory_note_count(
             lines, overdub_stop_ts=boundaries.get("overdub_stop_ts")
         )
@@ -1818,7 +2010,7 @@ def _build_serial_verification(lines: list[str], args: argparse.Namespace) -> di
             memory_note_count=memory_note_count,
             before_ts=boundaries.get("second_overdub_start_ts"),
         )
-    if loop_length_ticks > 0:
+    if (not record_only) and loop_length_ticks > 0:
         overdub_wrap_storage = _verify_overdub_wrap_storage(
             lines,
             boundaries=boundaries,
@@ -1842,7 +2034,7 @@ def _build_serial_verification(lines: list[str], args: argparse.Namespace) -> di
     second_overdub: Optional[dict[str, object]] = None
     second_overdub_first_note_offset: Optional[dict[str, object]] = None
     stored_second_overdub_span: Optional[dict[str, object]] = None
-    if getattr(args, "second_overdub_bars", 0) and args.bar_sync_from_midi_clock:
+    if (not record_only) and getattr(args, "second_overdub_bars", 0) and args.bar_sync_from_midi_clock:
         second_overdub = _verify_phase_note_pairs(
             lines,
             midi_channel_1based=args.midi_channel,
@@ -1895,7 +2087,7 @@ def _build_serial_verification(lines: list[str], args: argparse.Namespace) -> di
                 elif not stored_second_overdub_span.get("bars_match_ok", False):
                     issues.append("second_overdub_stored_bars_short")
     display_verification: Optional[dict[str, object]] = None
-    if loop_length_ticks > 0:
+    if not record_only and loop_length_ticks > 0:
         display_verification = _verify_display_snapshots(
             lines,
             boundaries=boundaries,
@@ -1913,6 +2105,9 @@ def _build_serial_verification(lines: list[str], args: argparse.Namespace) -> di
         "stored_record_grid": stored_record_grid,
         "record_stop_stage_trace": record_stop_stage_trace,
         "persistence_handoff": persistence_handoff,
+        "ram2_headroom": ram2_headroom,
+        "record_stop_ram2_floor": record_stop_ram2_floor,
+        "long_run_persistence_result": long_run_persistence_result,
         "overdub_wrap_storage": overdub_wrap_storage,
         "stored_overdub_span": stored_overdub_span,
         "display_verification": display_verification,
@@ -2150,6 +2345,11 @@ def run() -> int:
     parser.add_argument("--out-dir", type=Path, default=Path("captures"), help="Run report output directory")
     parser.add_argument("--start-transport", action="store_true", help="Press global transport once at start")
     parser.add_argument(
+        "--record-only",
+        action="store_true",
+        help="Run only through record stop (skip overdub and second overdub phases)",
+    )
+    parser.add_argument(
         "--stop-after-overdub",
         action="store_true",
         default=True,
@@ -2179,14 +2379,14 @@ def run() -> int:
     parser.add_argument(
         "--record-bars",
         type=int,
-        choices=[1, 2, 4, 5, 8, 16, 24, 32, 64, 128],
+        choices=[1, 2, 4, 5, 8, 16, 24, 32, 48, 64, 128],
         default=0,
         help="Record duration in bars (overrides --record-seconds)",
     )
     parser.add_argument(
         "--overdub-bars",
         type=int,
-        choices=[1, 2, 4, 5, 8, 16, 24, 32, 64, 128],
+        choices=[1, 2, 4, 5, 8, 16, 24, 32, 48, 64, 128],
         default=0,
         help="Overdub duration in bars (overrides --overdub-seconds)",
     )
@@ -2249,8 +2449,11 @@ def run() -> int:
     parser.add_argument(
         "--undo-redo-delay-ms",
         type=int,
-        default=500,
-        help="Wait after overdub stop before undo, and between undo and redo (default: 500)",
+        default=3000,
+        help=(
+            "Wait after overdub stop before undo, and between undo and redo "
+            "(default: 3000 — long loops need deferred save to finish first)"
+        ),
     )
     parser.add_argument(
         "--midi-channel",
@@ -2332,6 +2535,18 @@ def run() -> int:
         default=12,
         help="Max allowed MIDI clocks from OVERDUBBING entry to first overdub note-on (default: 12)",
     )
+    parser.add_argument(
+        "--long-run-bar-threshold",
+        type=int,
+        default=DEFAULT_LONG_RUN_BAR_THRESHOLD,
+        help="Treat runs with --record-bars >= this value as long runs (default: 48)",
+    )
+    parser.add_argument(
+        "--record-stop-min-free-ram2-bytes",
+        type=int,
+        default=DEFAULT_RECORD_STOP_RAM2_FLOOR_BYTES,
+        help="Long-run check: minimum allowed RAM2 free heap at record_stop entry (default: 12288)",
+    )
     parser.add_argument("--record-low-note", type=int, default=48, help="Record phase lowest note (default C3)")
     parser.add_argument("--record-high-note", type=int, default=79, help="Record phase highest note (default G5)")
     parser.add_argument("--overdub-low-note", type=int, default=24, help="Overdub phase lowest note (default C1)")
@@ -2339,7 +2554,7 @@ def run() -> int:
     parser.add_argument(
         "--second-overdub-bars",
         type=int,
-        choices=[0, 1, 2, 4, 5, 8, 16, 24, 32, 64, 128],
+        choices=[0, 1, 2, 4, 5, 8, 16, 24, 32, 48, 64, 128],
         default=2,
         help="Second overdub pass length in bars (default 2; 0 disables)",
     )
@@ -2408,6 +2623,10 @@ def run() -> int:
     if args.midi_channel is None:
         args.midi_channel = args.track_number if args.track_number else 1
 
+    if args.record_only:
+        args.second_overdub_bars = 0
+        args.undo_redo_after_overdub_stop = False
+
     if not (1 <= args.midi_channel <= 16):
         raise SystemExit("--midi-channel must be in [1, 16]")
     if args.midi_channel == CONTROL_CHANNEL_1BASED:
@@ -2422,6 +2641,10 @@ def run() -> int:
         raise SystemExit("--record-first-note-max-clocks must be >= 0")
     if args.overdub_first_note_max_clocks < 0:
         raise SystemExit("--overdub-first-note-max-clocks must be >= 0")
+    if args.long_run_bar_threshold < 0:
+        raise SystemExit("--long-run-bar-threshold must be >= 0")
+    if args.record_stop_min_free_ram2_bytes < 0:
+        raise SystemExit("--record-stop-min-free-ram2-bytes must be >= 0")
     if args.overdub_start_delay_beats < 0:
         raise SystemExit("--overdub-start-delay-beats must be >= 0")
     if args.undo_redo_after_overdub_stop and not (args.serial_port or args.verify_serial_log):
@@ -2774,29 +2997,6 @@ def run() -> int:
                             print("[warn] Retry did not reach STOPPED_RECORDING->PLAYING transition.")
                 time.sleep(args.phase_wait_ms / 1000.0)
 
-                od_pass_reason, od_notes, od_cc, od_clock_count, od_timing, od_fallback_seconds = _run_overdub_pass(
-                    idx,
-                    out_port,
-                    in_port,
-                    serial_collector,
-                    abort,
-                    args,
-                    overdub_bars=args.overdub_bars or 0,
-                    low_note=args.overdub_low_note,
-                    high_note=args.overdub_high_note,
-                    step_clocks=OVERDUB_GRID_STEP_CLOCKS,
-                    gate_clocks=OVERDUB_GRID_STEP_CLOCKS,
-                    phase_start_delay_bars=args.overdub_start_delay_bars,
-                    phase_start_delay_beats=args.overdub_start_delay_beats,
-                    pass_label="overdub",
-                    seconds_per_bar=seconds_per_bar,
-                )
-                if od_pass_reason:
-                    if od_pass_reason.startswith("midi clock"):
-                        print(f"[error] {od_pass_reason}; aborting track run.")
-                    abort_reason = od_pass_reason
-                    break
-
                 od2_notes = 0
                 od2_cc = 0
                 od2_clock_count = 0
@@ -2807,66 +3007,101 @@ def run() -> int:
                     "stop_press_sent_during_stream": 0.0,
                 }
                 od2_fallback_seconds = False
-                if args.second_overdub_bars:
-                    od2_pass_reason, od2_notes, od2_cc, od2_clock_count, od2_timing, od2_fallback_seconds = (
-                        _run_overdub_pass(
-                            idx,
-                            out_port,
-                            in_port,
-                            serial_collector,
-                            abort,
-                            args,
-                            overdub_bars=args.second_overdub_bars,
-                            low_note=args.second_overdub_low_note,
-                            high_note=args.second_overdub_high_note,
-                            step_clocks=args.second_overdub_step_clocks,
-                            gate_clocks=args.second_overdub_gate_clocks,
-                            phase_start_delay_bars=args.second_overdub_start_delay_bars,
-                            phase_start_delay_beats=args.second_overdub_start_delay_beats,
-                            pass_label="second overdub",
-                            seconds_per_bar=seconds_per_bar,
-                        )
+                od_notes = 0
+                od_cc = 0
+                od_clock_count = 0
+                od_timing: dict[str, float] = {
+                    "grid_steps_emitted": 0.0,
+                    "max_abs_grid_jitter_clocks": 0.0,
+                    "mean_abs_grid_jitter_clocks": 0.0,
+                    "stop_press_sent_during_stream": 0.0,
+                }
+                od_fallback_seconds = False
+
+                if not args.record_only:
+                    od_pass_reason, od_notes, od_cc, od_clock_count, od_timing, od_fallback_seconds = _run_overdub_pass(
+                        idx,
+                        out_port,
+                        in_port,
+                        serial_collector,
+                        abort,
+                        args,
+                        overdub_bars=args.overdub_bars or 0,
+                        low_note=args.overdub_low_note,
+                        high_note=args.overdub_high_note,
+                        step_clocks=OVERDUB_GRID_STEP_CLOCKS,
+                        gate_clocks=OVERDUB_GRID_STEP_CLOCKS,
+                        phase_start_delay_bars=args.overdub_start_delay_bars,
+                        phase_start_delay_beats=args.overdub_start_delay_beats,
+                        pass_label="overdub",
+                        seconds_per_bar=seconds_per_bar,
                     )
-                    if od2_pass_reason:
-                        if od2_pass_reason.startswith("midi clock"):
-                            print(f"[error] {od2_pass_reason}; aborting track run.")
-                        abort_reason = od2_pass_reason
+                    if od_pass_reason:
+                        if od_pass_reason.startswith("midi clock"):
+                            print(f"[error] {od_pass_reason}; aborting track run.")
+                        abort_reason = od_pass_reason
                         break
+
+                    if args.second_overdub_bars:
+                        od2_pass_reason, od2_notes, od2_cc, od2_clock_count, od2_timing, od2_fallback_seconds = (
+                            _run_overdub_pass(
+                                idx,
+                                out_port,
+                                in_port,
+                                serial_collector,
+                                abort,
+                                args,
+                                overdub_bars=args.second_overdub_bars,
+                                low_note=args.second_overdub_low_note,
+                                high_note=args.second_overdub_high_note,
+                                step_clocks=args.second_overdub_step_clocks,
+                                gate_clocks=args.second_overdub_gate_clocks,
+                                phase_start_delay_bars=args.second_overdub_start_delay_bars,
+                                phase_start_delay_beats=args.second_overdub_start_delay_beats,
+                                pass_label="second overdub",
+                                seconds_per_bar=seconds_per_bar,
+                            )
+                        )
+                        if od2_pass_reason:
+                            if od2_pass_reason.startswith("midi clock"):
+                                print(f"[error] {od2_pass_reason}; aborting track run.")
+                            abort_reason = od2_pass_reason
+                            break
+
+                    if args.undo_redo_after_overdub_stop:
+                        undo_redo_gap_s = max(args.undo_redo_delay_ms, 0) / 1000.0
+                        time.sleep(undo_redo_gap_s)
+                        print(f"[track {idx}] undo after overdub stop (double press)")
+                        _send_multi_short_press(
+                            out_port,
+                            note=RECORD_BUTTON_NOTE,
+                            channel_1based=CONTROL_CHANNEL_1BASED,
+                            press_ms=args.press_ms,
+                            count=2,
+                        )
+                        time.sleep(undo_redo_gap_s)
+                        print(f"[track {idx}] redo after overdub stop (triple press)")
+                        _send_multi_short_press(
+                            out_port,
+                            note=RECORD_BUTTON_NOTE,
+                            channel_1based=CONTROL_CHANNEL_1BASED,
+                            press_ms=args.press_ms,
+                            count=3,
+                        )
+                        time.sleep(args.phase_wait_ms / 1000.0)
+                    if args.stop_after_overdub:
+                        print(f"[track {idx}] transport stop")
+                        _send_short_press(
+                            out_port,
+                            note=GLOBAL_TRANSPORT_NOTE,
+                            channel_1based=CONTROL_CHANNEL_1BASED,
+                            press_ms=args.press_ms,
+                        )
+                        time.sleep(args.phase_wait_ms / 1000.0)
 
                 if (reason := abort.check()) is not None:
                     abort_reason = reason
                     break
-
-                if args.undo_redo_after_overdub_stop:
-                    undo_redo_gap_s = max(args.undo_redo_delay_ms, 0) / 1000.0
-                    time.sleep(undo_redo_gap_s)
-                    print(f"[track {idx}] undo after overdub stop (double press)")
-                    _send_multi_short_press(
-                        out_port,
-                        note=RECORD_BUTTON_NOTE,
-                        channel_1based=CONTROL_CHANNEL_1BASED,
-                        press_ms=args.press_ms,
-                        count=2,
-                    )
-                    time.sleep(undo_redo_gap_s)
-                    print(f"[track {idx}] redo after overdub stop (triple press)")
-                    _send_multi_short_press(
-                        out_port,
-                        note=RECORD_BUTTON_NOTE,
-                        channel_1based=CONTROL_CHANNEL_1BASED,
-                        press_ms=args.press_ms,
-                        count=3,
-                    )
-                    time.sleep(args.phase_wait_ms / 1000.0)
-                if args.stop_after_overdub:
-                    print(f"[track {idx}] transport stop")
-                    _send_short_press(
-                        out_port,
-                        note=GLOBAL_TRANSPORT_NOTE,
-                        channel_1based=CONTROL_CHANNEL_1BASED,
-                        press_ms=args.press_ms,
-                    )
-                    time.sleep(args.phase_wait_ms / 1000.0)
 
                 midi_in_messages += _drain_input_messages(in_port)
                 per_track_stats.append(
@@ -2934,7 +3169,7 @@ def run() -> int:
         # 16th-note grid; allow one-step edge variance at boundaries.
         expected_record_notes_min = max(1, args.record_bars * 16 - 1)
         expected_record_clocks = args.record_bars * MIDI_CLOCKS_PER_BAR
-    if args.overdub_bars and args.bar_sync_from_midi_clock:
+    if (not args.record_only) and args.overdub_bars and args.bar_sync_from_midi_clock:
         expected_overdub_notes_min = _expected_overdub_notes_min(args.overdub_bars, OVERDUB_GRID_STEP_CLOCKS)
         expected_overdub_clocks = args.overdub_bars * MIDI_CLOCKS_PER_BAR
     if args.second_overdub_bars and args.bar_sync_from_midi_clock:
@@ -3115,7 +3350,7 @@ def run() -> int:
                 overall_ok = False
         if args.undo_redo_after_overdub_stop and (undo_log_count < expected_min or redo_log_count < expected_min):
             overall_ok = False
-        if args.clear_before_record and not any(
+        if (not args.record_only) and args.clear_before_record and not any(
             r.get("result") == "already_empty_ignored" for r in clear_precondition_results
         ) and (
             not bool(clear_undo_prune.get("found")) or not bool(clear_undo_prune.get("remaining_zero"))
@@ -3250,6 +3485,30 @@ def run() -> int:
                     f"first_missing={persistence_handoff.get('first_missing_stage')} "
                     f"result={result_row.get('outcome')} "
                     f"duration_us={result_row.get('duration_us')}"
+                )
+            ram2_headroom = serial_verification.get("ram2_headroom")
+            if ram2_headroom and not ram2_headroom.get("phase_disabled"):
+                min_sample = ram2_headroom.get("min_sample") or {}
+                print(
+                    "  VERIFY min free RAM2: "
+                    f"{ram2_headroom.get('min_free_ram2_bytes')} bytes "
+                    f"at {min_sample.get('source')}:{min_sample.get('stage')}/{min_sample.get('field')}"
+                )
+            record_stop_ram2_floor = serial_verification.get("record_stop_ram2_floor")
+            if record_stop_ram2_floor and not record_stop_ram2_floor.get("phase_disabled"):
+                print(
+                    "  VERIFY record_stop RAM2 floor: "
+                    f"heap_before={record_stop_ram2_floor.get('record_stop_heap_before')} "
+                    f"floor={record_stop_ram2_floor.get('floor_bytes')} "
+                    f"ok={record_stop_ram2_floor.get('floor_ok')}"
+                )
+            long_run_persistence_result = serial_verification.get("long_run_persistence_result")
+            if long_run_persistence_result and not long_run_persistence_result.get("phase_disabled"):
+                print(
+                    "  VERIFY long-run save outcome stage: "
+                    f"stage={long_run_persistence_result.get('stage')} "
+                    f"outcome={long_run_persistence_result.get('outcome')} "
+                    f"ok={long_run_persistence_result.get('result_ok')}"
                 )
             overdub_wrap_storage = serial_verification.get("overdub_wrap_storage")
             if overdub_wrap_storage and not overdub_wrap_storage.get("phase_disabled"):

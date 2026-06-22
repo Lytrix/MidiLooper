@@ -2,7 +2,7 @@
 
 Agent-oriented map of how loop MIDI events are stored, cleaned up, snapshotted, and persisted. Read this before changing `Loop`, `Track`, `TrackUndo`, `StorageManager`, `StorageLoopIo`, or stop-path code.
 
-For display-only note pairing (piano roll, loop shorten), see [`NOTE_WRAPPING_LOGIC.md`](NOTE_WRAPPING_LOGIC.md). For overdub undo history design rationale, see [`../plans/overdub_undo_baseline_phase1_refinement.md`](../plans/overdub_undo_baseline_phase1_refinement.md). For the scalability roadmap (chunk pool, deferred validate), see [`../plans/memory_scalability_refactor_enhancement.md`](../plans/memory_scalability_refactor_enhancement.md).
+For display-only note pairing (piano roll, loop shorten), see [`NOTE_WRAPPING_LOGIC.md`](NOTE_WRAPPING_LOGIC.md). For overdub undo history design rationale, see [`../plans/overdub_undo_baseline_phase1_refinement.md`](../plans/overdub_undo_baseline_phase1_refinement.md). For the scalability roadmap (chunk pool, deferred validate), see [`../plans/memory_scalability_refactor_enhancement.md`](../plans/memory_scalability_refactor_enhancement.md). For central deferred SD save routing and chunk-bounded writer stages, see [`DEFERRED_RUNTIME_PERSISTENCE.md`](DEFERRED_RUNTIME_PERSISTENCE.md).
 
 ---
 
@@ -84,6 +84,20 @@ flowchart LR
 - **`saveNoteEditPass`** checks **`Config::HEAP_RESERVE_BYTES`** (32 KiB) plus estimated **EditChange** list size before appending an **editPass** row.
 - **`reclaimUnreferencedDisabledPasses`** frees **Disabled** capture/edit pass rows whose ids are not pinned by any **`GlobalUndoStack`** entry (`include/PassReclaim.h`, `TrackManager::reclaimUnreferencedDisabledPasses`). Runs on idle (`main.cpp`), after undo trim / redo-branch drop, and once on seal/edit admission retry.
 
+**RAM2 headroom policy (long-record-memory-headroom):**
+
+- **`LoopEventStoreConfig::RAM2_SAFETY_FLOOR_BYTES`** = **12 KiB** is the non-critical RAM2 floor.
+- **`LoopEventStore::hasRam2HeadroomForNonCriticalWork(freeHeapBytes)`** gates deferred save admission using a **stop-path** `getFreeHeap()` sample (`requestDeferredSaveState`); the main loop does not re-query heap while save slices run.
+- Below floor, non-critical persistence work defers (`PERS,defer,...,heap_floor`) and retries on later idle iterations; MIDI clock, note-out, and playback are not gated.
+- Runtime persistence requests route through `StorageManager::requestDeferredSaveState`; direct synchronous `saveState()` is a cold-path writer and is not used by record/overdub stop, undo/redo, loop edit debounce, clear track, edit autosave, or clock-source transition.
+- `StorageManager::processDeferredSaveState` advances at most one small writer step per main-loop iteration after MIDI/clock/playback servicing. OLED display updates are skipped while a deferred save is active so non-timing SPI work does not compete with SD persistence.
+- Length-scaling non-hot buffers are PSRAM-first:
+  - `NoteUtils::CachedNoteList` storage
+  - `PlaybackOrderVec`
+  - `LoopPasses` materialize merge temporaries
+  - `GlobalUndoStack` entry vector (`UndoEntryVec`)
+  - display note storage (`VisualCache.notes`, `CapturePreview.notes`, `DisplayManager::liveDisplayNotes`)
+- During live record display, `DisplayManager::resolveDisplayNotes` reads the incrementally maintained `CapturePreview.notes` and open tails instead of flattening the whole capture store each frame. `SC_DISP` capture telemetry reports direct event counts without building a frame-only `MidiEventVec`.
 
 **Copy-on-write wrapper (`CowLoopEventStore`):**
 
@@ -220,6 +234,7 @@ Hardware **Button A double-press** calls `undoOverdub` directly. MIDI record dou
 **Files:** `src/StorageManager.cpp`, `include/StorageLoopIo.h`, `src/StorageLoopIo.cpp` (format **v4**)
 
 - Per-slot loop pool entries persist **`LoopPasses`** (capture passes + **editPasses** tail) via `writeLoopPersisted` / `readLoopPersisted`.
+- `writeLoopPersisted` streams capture-pass events in bounded batches and records max batch size through storage-loop-io test hooks; the deferred save path writes live loop pool entries as metadata, capture-pass headers, and one capture chunk per main-loop iteration.
 - **`startLoopTick`** is stored in each loop snapshot and restored by **`applySnapshotToLoop`** on load (phase origin for `tickPhaseInLoop`).
 - Truncated or corrupt **editPasses** tails fail **`readPersistedEditsTail`** (load aborts — no silent empty edits).
 - Invalid persisted **`slotLoopId`** values outside `0..MAX_LOOPS_PER_TRACK-1` are repaired to the slot pool index on load (warning logged).
@@ -227,6 +242,7 @@ Hardware **Button A double-press** calls `undoOverdub` directly. MIDI record dou
 - Global undo stack is persisted in v4 (magic + entries).
 - After load, **`validateAndCleanupMidiEvents()`** runs once per slot with events.
 - Chunk IDs are **in-RAM only** until a format version bump; save/load flattens chunk contents through the persisted snapshot path.
+- `StorageManager::processDeferredSaveState` runs as background work when no track is recording/overdubbing, including while playback is active; each slice yields back to the main loop before the next iteration.
 
 ---
 
@@ -239,7 +255,7 @@ Hardware **Button A double-press** calls `undoOverdub` directly. MIDI record dou
 | `teensy41-capture` | Silent production-style capture build (no session serial) |
 | `teensy41-capture-bypass` | Adds `BYPASS_STOP_UNDO_SAVE=1` — skips undo snapshot push and `saveState` on stop (diagnostic only) |
 
-**Do not** add `MemoryMonitor` or full-loop validation on record/overdub stop hot paths. Idle maintenance, deferred SD save (`processDeferredSaveState`), and `HotPathTelemetry` deferred summary are wired in `main()` — SD save runs only when **no** track is playing/recording/overdubbing; deferred full validate runs per track after **`Config::deferredValidateMaxDelayMs`** even during **PLAYING** (blocked while that track is capturing). **`TrackManager::prewarmPlaybackRuntime()`** runs after early loop allocation and successful **`loadState`** so first playback tick does not allocate runtime.
+**Do not** add `MemoryMonitor` or full-loop validation on record/overdub stop hot paths. Idle maintenance, deferred SD save (`processDeferredSaveState`), and `HotPathTelemetry` deferred summary are wired in `main()` — deferred save runs only when **no** track is recording/overdubbing, and can continue during **PLAYING**; deferred full validate runs only when the track is not **PLAYING**, **RECORDING**, or **OVERDUBBING**. **`TrackManager::prewarmPlaybackRuntime()`** runs after early loop allocation and successful **`loadState`** so first playback tick does not allocate runtime.
 
 Record stop calls `queueDeferredRecordRevts()` after a published commit. Non-`SESSION_CAPTURE` builds stub all `#CAP` / REVT macros.
 
@@ -258,7 +274,7 @@ Record stop calls `queueDeferredRecordRevts()` after a published commit. Non-`SE
 | `test/test_capture_state_guards` | Overdub **beginCapture** idempotency |
 | `test/test_loop_pool` | **findById** null + slot-index fallback |
 | `test/test_playback_prewarm` | Playback runtime / order prealloc stability |
-| `test/test_deferred_validate_policy` | PLAYING-only deferred validate delay |
+| `test/test_deferred_validate_policy` | Deferred validate delay and playback/capture blocking |
 | `test/test_edit_apply` | **editPasses** overlay via `applyEditChangeList` |
 | `test/test_redo_functionality` | Undo/redo stacks (host `Track`; listed in `test_ignore` for native — run on Teensy env if needed) |
 

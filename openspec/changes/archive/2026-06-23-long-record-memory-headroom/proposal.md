@@ -13,15 +13,16 @@ Mechanism: `ExtMemAllocator::allocate()` (`include/Utils/ExtMemAllocator.h`) cal
 
 - Add a PSRAM-first allocator and re-target the length-scaling, non-hot containers (note cache, playback order, `materializeToFlat` temporaries, undo snapshots) so they consume the 8 MB PSRAM instead of the scarce 512 KB RAM2 heap. Keep time-critical and small state in fast RAM.
 - Add a RAM2 safety-floor admission guard (extending the existing chunk admission idea in `loop-event-pool-admission`) so growth-heavy and persistence work yields when free RAM2 drops below a configured floor, while the MIDI clock / note-out / playback path is never blocked.
-- Harden the deferred save into a fully bounded incremental writer so persistence never needs a large contiguous RAM2 allocation, fixing the 48-bar save that currently dispatches but never reaches `PERS,result`.
+- Harden runtime persistence into a central deferred writer so every runtime save request is serialized in bounded slices after MIDI clock, note-out, playback, record, and overdub servicing. Direct synchronous `saveState()` is reserved for cold/maintenance contexts, not runtime interactions.
+- Keep the existing v4 snapshot format for this change; journal-style append/replay persistence is future work after the long-record HITL gates pass.
 - Add native coverage (forced-low free-heap simulation) and HITL gates proving free RAM2 stays above the floor and `PERS,result,...,ok` is reached at 48 and 64 bars.
 
-This change is delivered in two sequenced milestones: M1 = allocation re-targeting + RAM2 floor guard (root-cause fix), M2 = bounded incremental deferred save hardening (defense-in-depth).
+This change is delivered in two sequenced milestones: M1 = allocation re-targeting + RAM2 floor guard (root-cause fix), M2 = central bounded deferred runtime save hardening (defense-in-depth).
 
 ## Capabilities
 
 ### New Capabilities
-- `long-record-memory-headroom`: Long records keep RAM2 headroom by directing length-scaling buffers to PSRAM, enforcing a RAM2 safety floor, and persisting via a bounded incremental writer, so recording well past 32 bars does not crash and the recorded pass survives.
+- `long-record-memory-headroom`: Long records keep RAM2 headroom by directing length-scaling buffers to PSRAM, enforcing a RAM2 safety floor, and routing runtime persistence through a central bounded deferred writer, so recording well past 32 bars does not crash and the recorded pass survives.
 
 ### Related Capabilities (referenced, not redefined here)
 - `loop-event-pool-admission`: this change adds a RAM2 free-heap floor alongside the existing chunk/heap admission.

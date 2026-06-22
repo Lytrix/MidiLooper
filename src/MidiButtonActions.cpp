@@ -544,7 +544,7 @@ void MidiButtonActions::handleClearTrack() {
     } else {
         TrackUndo::pushClearTrackSnapshot(track);
         track.clear();
-        StorageManager::saveState(looperState.getLooperState());
+        StorageManager::requestDeferredSaveState(looperState.getLooperState());
         logger.info("MIDI: Clear Track");
     }
 }

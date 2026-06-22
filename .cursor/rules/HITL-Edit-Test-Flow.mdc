@@ -28,7 +28,7 @@ pio run -e teensy41-capture-serial -t upload
   --record-bars 2 \
   --start-transport \
   --phase-wait-ms 500 --final-wait-ms 3000 --press-ms 120 \
-  --undo-redo-delay-ms 500
+  --undo-redo-delay-ms 3000
 ```
 
 3. Stop capture with Ctrl+C.

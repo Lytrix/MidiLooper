@@ -42,7 +42,9 @@ struct PersistedCapturePassWire {
 bool writePersistedCapturePassWire(const StorageIo& io, const PersistedCapturePassWire& wire,
                                    const ChunkIdList& chunkRefs);
 bool readPersistedCapturePassWire(const StorageIo& io, PersistedCapturePassWire& wire,
-                                    ChunkIdList& chunkRefs);
+                                  ChunkIdList& chunkRefs, uint32_t loopLengthTicks);
+bool writePersistedEditsTail(const StorageIo& io, PassId nextPassId,
+                             const EditPassVec& editPasses);
 
 #if defined(PIO_UNIT_TEST_NATIVE)
 size_t getLastPersistedCapturePassWriteMaxBatchEvents();
