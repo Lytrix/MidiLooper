@@ -23,13 +23,13 @@
 #include "VisualCache.h"
 #include "TrackState.h"
 #include "Utils/NoteUtils.h"
-#include "Utils/ExtMemAllocator.h"
+#include "Utils/PsramFirstAllocator.h"
 #include "Globals.h"
 #include "PassReclaim.h"
 
 class Track;
 
-using PlaybackOrderVec = std::vector<size_t, ExtMemAllocator<size_t>>;
+using PlaybackOrderVec = std::vector<size_t, PsramFirstAllocator<size_t>>;
 
 struct Loop {
   Capture capture;

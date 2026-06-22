@@ -7,8 +7,10 @@
 #include <vector>
 
 #include "Utils/NoteUtils.h"
+#include "Utils/PsramFirstAllocator.h"
 
 using VisualBarVec = std::vector<uint8_t>;
+using DisplayNoteVec = std::vector<NoteUtils::DisplayNote, PsramFirstAllocator<NoteUtils::DisplayNote>>;
 
 inline uint32_t visualBarForTick(uint32_t tick, uint32_t ticksPerBar) {
   if (ticksPerBar == 0) {
@@ -19,7 +21,7 @@ inline uint32_t visualBarForTick(uint32_t tick, uint32_t ticksPerBar) {
 
 struct VisualCache {
   uint32_t revision = 0;
-  std::vector<NoteUtils::DisplayNote> notes;
+  DisplayNoteVec notes;
   VisualBarVec dirtyBars;
 
   void clear() {
@@ -28,7 +30,10 @@ struct VisualCache {
     dirtyBars.clear();
   }
 
-  void setNotes(const std::vector<NoteUtils::DisplayNote>& inNotes) { notes = inNotes; }
+  template <typename Allocator>
+  void setNotes(const std::vector<NoteUtils::DisplayNote, Allocator>& inNotes) {
+    notes.assign(inNotes.begin(), inNotes.end());
+  }
 
   void markBarDirty(uint32_t bar) {
     if (dirtyBars.size() <= bar) {
@@ -40,7 +45,7 @@ struct VisualCache {
 
 struct CapturePreview {
   uint32_t revision = 0;
-  std::vector<NoteUtils::DisplayNote> notes;
+  DisplayNoteVec notes;
   VisualBarVec dirtyBars;
 
   void clear() {
@@ -59,7 +64,7 @@ struct CapturePreview {
 
 struct VisualCacheDelta {
   bool replaceAll = false;
-  std::vector<NoteUtils::DisplayNote> notes;
+  DisplayNoteVec notes;
   VisualBarVec dirtyBars;
 
   void clear() {

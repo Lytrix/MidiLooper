@@ -235,6 +235,7 @@ public:
 
   /// Allocate LoopPool if not yet done (deferred from ctor to avoid static-init crash)
   void ensureLoopsAllocated();
+  bool loopsAllocated() const { return loopPool_.initialized(); }
 
   /// Active loop (used for playback, recording, display)
   Loop& getActiveLoop() { return getLoop(activeLoopIndex); }
@@ -245,18 +246,20 @@ public:
   // ==========================================
   
   /// Get cached display notes - avoids expensive reconstructNotes() calls
-  const std::vector<NoteUtils::DisplayNote>& getCachedNotes() const {
+  const std::vector<NoteUtils::DisplayNote, PsramFirstAllocator<NoteUtils::DisplayNote>>&
+  getCachedNotes() const {
     return getActiveLoop().getNoteCache().getNotes(editAwareMidiEvents(), getActiveLoop().loopLengthTicks);
   }
 
   /// Per-slot cached notes for display (e.g. follow selected slot while activeLoopIndex is capture phase).
   uint32_t getLoopLengthForSlot(uint8_t slotIndex) const { return getLoop(slotIndex).loopLengthTicks; }
   uint32_t getLoopStartTickForSlot(uint8_t slotIndex) const { return getLoop(slotIndex).loopStartTick; }
-  const std::vector<NoteUtils::DisplayNote>& getCachedNotesForSlot(uint8_t slotIndex) const {
+  const std::vector<NoteUtils::DisplayNote, PsramFirstAllocator<NoteUtils::DisplayNote>>&
+  getCachedNotesForSlot(uint8_t slotIndex) const {
     const Loop& loop = getLoop(slotIndex);
     return loop.getNoteCache().getNotes(loop.midiEvents(), loop.loopLengthTicks);
   }
-  const std::vector<NoteUtils::DisplayNote>& getVisualNotesForSlot(uint8_t slotIndex) const {
+  const DisplayNoteVec& getVisualNotesForSlot(uint8_t slotIndex) const {
     Loop& loop = const_cast<Loop&>(getLoop(slotIndex));
     loop.ensureVisualCacheBuilt();
     return loop.visualCache.notes;

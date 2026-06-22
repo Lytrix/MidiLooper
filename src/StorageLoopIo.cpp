@@ -3,7 +3,13 @@
 
 #include "StorageLoopIo.h"
 
+#if defined(ARDUINO)
+#include <Arduino.h>
+#endif
+
 #include "LoopEventStore.h"
+#include "Utils/MemoryMonitor.h"
+#include "Utils/PsramFirstAllocator.h"
 
 namespace {
 
@@ -19,10 +25,35 @@ bool ioRead(const StorageIo& io, void* data, size_t size) {
 size_t g_lastPersistedCapturePassWriteMaxBatchEvents = 0;
 #endif
 
+constexpr uint32_t MAX_PERSISTED_CAPTURE_PASS_EVENTS =
+    static_cast<uint32_t>(LoopEventStoreConfig::POOL_CHUNK_COUNT) *
+    LoopEventStoreConfig::CHUNK_CAPACITY;
+
+uint32_t maxPersistedEventTick(uint32_t loopLengthTicks) {
+  if (loopLengthTicks == 0 || loopLengthTicks >= 0x80000000u) {
+    return LoopEventStoreConfig::BAR_TICKS;
+  }
+  return loopLengthTicks + LoopEventStoreConfig::BAR_TICKS;
+}
+
+bool canStagePersistedEvent(size_t stagedEventCount) {
+  if ((stagedEventCount % LoopEventStoreConfig::CHUNK_CAPACITY) != 0) {
+    return true;
+  }
+  if (!LoopEventStore::canAllocChunkWithReserve()) {
+    return false;
+  }
+#if defined(ARDUINO)
+  return LoopEventStore::hasRam2HeadroomForNonCriticalWork(MemoryMonitor::getFreeHeap());
+#else
+  return true;
+#endif
+}
+
 bool writePersistedCapturePassPayloadChunkStream(const StorageIo& io,
                                                  const ChunkIdList& chunkRefs,
                                                  size_t* maxBatchEvents) {
-  MidiEventVec batch;
+  std::vector<MidiEvent, PsramFirstAllocator<MidiEvent>> batch;
   batch.reserve(LoopEventStoreConfig::CHUNK_CAPACITY);
   for (uint16_t chunkId : chunkRefs) {
     batch.clear();
@@ -36,6 +67,9 @@ bool writePersistedCapturePassPayloadChunkStream(const StorageIo& io,
     if (!ioWrite(io, batch.data(), batch.size() * sizeof(MidiEvent))) {
       return false;
     }
+#if defined(ARDUINO)
+    yield();
+#endif
   }
   return true;
 }
@@ -65,7 +99,7 @@ bool writePersistedCapturePassWire(const StorageIo& io, const PersistedCapturePa
 }
 
 bool readPersistedCapturePassWire(const StorageIo& io, PersistedCapturePassWire& wire,
-                                    ChunkIdList& chunkRefs) {
+                                  ChunkIdList& chunkRefs, uint32_t loopLengthTicks) {
   uint32_t midiCount = 0;
   if (!ioRead(io, &wire.id, sizeof(wire.id))) return false;
   if (!ioRead(io, &wire.mergeSequence, sizeof(wire.mergeSequence))) return false;
@@ -78,12 +112,22 @@ bool readPersistedCapturePassWire(const StorageIo& io, PersistedCapturePassWire&
   if (midiCount == 0) {
     return true;
   }
+  if (midiCount > MAX_PERSISTED_CAPTURE_PASS_EVENTS) {
+    return false;
+  }
 
   LoopEventStore staging;
+  auto failStagingRead = [&staging]() {
+    staging.clear();
+    return false;
+  };
+  const uint32_t maxTick = maxPersistedEventTick(loopLengthTicks);
   for (uint32_t i = 0; i < midiCount; ++i) {
     MidiEvent evt{};
-    if (!ioRead(io, &evt, sizeof(evt))) return false;
-    if (!staging.append(evt)) return false;
+    if (!ioRead(io, &evt, sizeof(evt))) return failStagingRead();
+    if (evt.tick > maxTick) return failStagingRead();
+    if (!canStagePersistedEvent(staging.size())) return failStagingRead();
+    if (!staging.append(evt)) return failStagingRead();
   }
   staging.detachChunksTo(chunkRefs);
   return true;
@@ -167,11 +211,12 @@ bool readPersistedEditPass(const StorageIo& io, EditPass& editPass) {
   return true;
 }
 
-bool writePersistedEditsTail(const StorageIo& io, const PersistedLoopSnapshot& snapshot) {
-  if (!ioWrite(io, &snapshot.nextPassId, sizeof(snapshot.nextPassId))) return false;
-  const uint32_t editCount = static_cast<uint32_t>(snapshot.passes.editPasses.size());
+bool writePersistedEditsTail(const StorageIo& io, PassId nextPassId,
+                             const EditPassVec& editPasses) {
+  if (!ioWrite(io, &nextPassId, sizeof(nextPassId))) return false;
+  const uint32_t editCount = static_cast<uint32_t>(editPasses.size());
   if (!ioWrite(io, &editCount, sizeof(editCount))) return false;
-  for (const EditPass& editPass : snapshot.passes.editPasses) {
+  for (const EditPass& editPass : editPasses) {
     if (!writePersistedEditPass(io, editPass)) return false;
   }
   return true;
@@ -238,7 +283,7 @@ bool writePersistedLoopSnapshot(const StorageIo& io, const PersistedLoopSnapshot
       return false;
     }
   }
-  return writePersistedEditsTail(io, snapshot);
+  return writePersistedEditsTail(io, snapshot.nextPassId, snapshot.passes.editPasses);
 }
 
 bool readPersistedLoopSnapshot(const StorageIo& io, PersistedLoopSnapshot& snapshot) {
@@ -264,7 +309,9 @@ bool readPersistedLoopSnapshot(const StorageIo& io, PersistedLoopSnapshot& snaps
   for (uint32_t i = 0; i < passCount; ++i) {
     PersistedCapturePassWire wire{};
     ChunkIdList chunkRefs;
-    if (!readPersistedCapturePassWire(io, wire, chunkRefs)) return false;
+    if (!readPersistedCapturePassWire(io, wire, chunkRefs, snapshot.loopLengthTicks)) {
+      return false;
+    }
     if (wire.typeRaw == 0) {
       RecordPass record{};
       record.id = wire.id;
@@ -293,21 +340,49 @@ bool readPersistedLoopSnapshot(const StorageIo& io, PersistedLoopSnapshot& snaps
 
 #include "Loop.h"
 
-PersistedLoopSnapshot snapshotFromLoop(const Loop& loop) {
-  PersistedLoopSnapshot snapshot{};
-  snapshot.loopId = loop.loopId;
-  snapshot.startLoopTick = loop.startLoopTick;
-  snapshot.loopLengthTicks = loop.loopLengthTicks;
-  snapshot.loopStartTick = loop.loopStartTick;
-  snapshot.nextPassId = loop.nextPassId_;
-  snapshot.nextMergeSequence = loop.nextMergeSequence_;
-  snapshot.lastPublishedPassId = loop.lastPublishedPassId_;
-  snapshot.passes = loop.passes;
-  return snapshot;
-}
-
 bool writeLoopPersisted(const StorageIo& io, const Loop& loop) {
-  return writePersistedLoopSnapshot(io, snapshotFromLoop(loop));
+  if (!ioWrite(io, &loop.loopId, sizeof(loop.loopId))) return false;
+  if (!ioWrite(io, &loop.startLoopTick, sizeof(loop.startLoopTick))) return false;
+  if (!ioWrite(io, &loop.loopLengthTicks, sizeof(loop.loopLengthTicks))) return false;
+  if (!ioWrite(io, &loop.loopStartTick, sizeof(loop.loopStartTick))) return false;
+  if (!ioWrite(io, &loop.nextPassId_, sizeof(loop.nextPassId_))) return false;
+  if (!ioWrite(io, &loop.nextMergeSequence_, sizeof(loop.nextMergeSequence_))) return false;
+  if (!ioWrite(io, &loop.lastPublishedPassId_, sizeof(loop.lastPublishedPassId_))) {
+    return false;
+  }
+
+  uint32_t persistedCount = 0;
+  if (loop.passes.hasRecordPass()) {
+    ++persistedCount;
+  }
+  persistedCount += static_cast<uint32_t>(loop.passes.overdubPasses.size());
+  if (!ioWrite(io, &persistedCount, sizeof(persistedCount))) return false;
+
+  if (loop.passes.hasRecordPass()) {
+    PersistedCapturePassWire wire{};
+    wire.id = loop.passes.recordPass.id;
+    wire.mergeSequence = 0;
+    wire.stateRaw = static_cast<uint8_t>(loop.passes.recordPass.state);
+    wire.typeRaw = 0;
+    wire.sealedAtTick = loop.passes.recordPass.sealedAtTick;
+    if (!writePersistedCapturePassWire(io, wire, loop.passes.recordPass.chunkRefs)) {
+      return false;
+    }
+  }
+
+  for (const OverdubPass& pass : loop.passes.overdubPasses) {
+    PersistedCapturePassWire wire{};
+    wire.id = pass.id;
+    wire.mergeSequence = pass.mergeSequence;
+    wire.stateRaw = static_cast<uint8_t>(pass.state);
+    wire.typeRaw = 1;
+    wire.sealedAtTick = pass.sealedAtTick;
+    if (!writePersistedCapturePassWire(io, wire, pass.chunkRefs)) {
+      return false;
+    }
+  }
+
+  return writePersistedEditsTail(io, loop.nextPassId_, loop.passes.editPasses);
 }
 
 bool readLoopPersisted(const StorageIo& io, Loop& loop) {

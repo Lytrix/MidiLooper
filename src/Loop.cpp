@@ -103,7 +103,9 @@ void applyCaptureEventToPreview(CapturePreview& preview, const MidiEvent& evt, u
 void rebuildCapturePreviewFromStore(Loop& loop) {
   MidiEventVec flat;
   loop.capture.store.flatten(flat);
-  loop.capturePreview.notes = NoteUtils::reconstructNotes(flat, loop.loopLengthTicks, false);
+  const NoteUtils::DisplayNoteVec rebuiltNotes =
+      NoteUtils::reconstructDisplayNotes(flat, loop.loopLengthTicks, false);
+  loop.capturePreview.notes.assign(rebuiltNotes.begin(), rebuiltNotes.end());
   loop.capturePreview.dirtyBars.clear();
   if (loop.loopLengthTicks > 0) {
     for (const auto& note : loop.capturePreview.notes) {
@@ -848,7 +850,9 @@ void Loop::discardPendingCapturePass() {
 void Loop::rebuildVisualCacheFromPasses() {
   MidiEventVec flat;
   flattenActiveCapturePasses(flat);
-  visualCache.notes = NoteUtils::reconstructNotes(flat, loopLengthTicks, false);
+  const NoteUtils::DisplayNoteVec rebuiltNotes =
+      NoteUtils::reconstructDisplayNotes(flat, loopLengthTicks, false);
+  visualCache.notes.assign(rebuiltNotes.begin(), rebuiltNotes.end());
   visualCache.dirtyBars.clear();
   for (const auto& n : visualCache.notes) {
     const uint32_t endTick = n.endTick >= n.startTick ? n.endTick : n.startTick;

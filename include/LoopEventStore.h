@@ -10,11 +10,13 @@
 
 #include "MidiEvent.h"
 #include "Utils/ExtMemAllocator.h"
+#include "Utils/PsramFirstAllocator.h"
 
 namespace LoopEventStoreConfig {
 constexpr uint16_t CHUNK_CAPACITY = 256;
 constexpr uint16_t POOL_CHUNK_COUNT = 512;
 constexpr uint32_t BAR_TICKS = 768;
+constexpr uint32_t RAM2_SAFETY_FLOOR_BYTES = 12 * 1024;
 }  // namespace LoopEventStoreConfig
 
 struct EventChunk {
@@ -38,6 +40,8 @@ class LoopEventStore {
   static uint16_t usedChunkCount();
   static uint16_t freeChunkCount();
   static bool canAllocChunkWithReserve();
+  static bool hasRam2HeadroomForNonCriticalWork(uint32_t freeHeapBytes);
+  static uint32_t ram2SafetyFloorBytes();
 
   LoopEventStore() = default;
   LoopEventStore(const LoopEventStore&) = delete;
@@ -66,8 +70,12 @@ class LoopEventStore {
   void flatten(MidiEventVec& out) const;
   /// Append events from one chunk id (read-only; does not mutate id).
   static void appendFlattenedChunkId(uint16_t id, MidiEventVec& out);
+  static void appendFlattenedChunkId(
+      uint16_t id, std::vector<MidiEvent, PsramFirstAllocator<MidiEvent>>& out);
   /// Append events from chunk refs (read-only; does not mutate ids).
   static void appendFlattenedChunkIds(const ChunkIdList& ids, MidiEventVec& out);
+  static void appendFlattenedChunkIds(
+      const ChunkIdList& ids, std::vector<MidiEvent, PsramFirstAllocator<MidiEvent>>& out);
   /// Count events referenced by chunk ids without flattening.
   static size_t countEventsInChunkIds(const ChunkIdList& ids);
   void loadFromFlat(const MidiEventVec& events);

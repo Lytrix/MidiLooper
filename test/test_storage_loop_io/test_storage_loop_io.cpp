@@ -392,6 +392,45 @@ void test_64_bar_record_snapshot_reloads_after_reboot_simulation() {
   TEST_ASSERT_EQUAL(expectedLastTick, playbackFlat.back().tick);
 }
 
+void test_64_bar_save_completes_at_ram2_floor_with_bounded_batch() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  resetPersistedCapturePassWriteStatsForTest();
+
+  constexpr uint32_t kRecordBars = 64u;
+  const uint32_t expectedLoopLengthTicks = kRecordBars * Config::TICKS_PER_BAR;
+  const uint32_t floorBytes = LoopEventStore::ram2SafetyFloorBytes();
+  MemoryMonitor::setNativeTestFreeHeap(floorBytes);
+
+  PersistedLoopSnapshot original{};
+  original.loopId = 13;
+  original.startLoopTick = 0;
+  original.loopLengthTicks = expectedLoopLengthTicks;
+  original.loopStartTick = 0;
+  original.nextPassId = 2;
+  original.nextMergeSequence = 1;
+  original.lastPublishedPassId = 1;
+  original.passes.recordPass = makeRecordPassForBars(1, CapturePassState::Active, kRecordBars);
+
+  std::vector<uint8_t> buffer;
+  MemoryStorageIo mem(&buffer);
+  TEST_ASSERT_TRUE(writePersistedLoopSnapshot(mem.io(), original));
+
+  const size_t maxBatchEvents = getLastPersistedCapturePassWriteMaxBatchEvents();
+  TEST_ASSERT_GREATER_THAN(0u, maxBatchEvents);
+  TEST_ASSERT_LESS_OR_EQUAL_UINT32(LoopEventStoreConfig::CHUNK_CAPACITY,
+                                   static_cast<uint32_t>(maxBatchEvents));
+
+  PersistedLoopSnapshot restored{};
+  mem.resetRead();
+  TEST_ASSERT_TRUE(readPersistedLoopSnapshot(mem.io(), restored));
+  TEST_ASSERT_EQUAL(13u, restored.loopId);
+  TEST_ASSERT_EQUAL(expectedLoopLengthTicks, restored.loopLengthTicks);
+  TEST_ASSERT_TRUE(restored.passes.hasRecordPass());
+
+  MemoryMonitor::resetNativeTestFreeHeap();
+}
+
 int main(int /*argc*/, char** /*argv*/) {
   UNITY_BEGIN();
   RUN_TEST(test_write_read_loop_snapshot_roundtrip);
@@ -402,5 +441,6 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_truncated_edit_tail_fails_read);
   RUN_TEST(test_capture_pass_write_uses_chunk_stream_batch_bound);
   RUN_TEST(test_64_bar_record_snapshot_reloads_after_reboot_simulation);
+  RUN_TEST(test_64_bar_save_completes_at_ram2_floor_with_bounded_batch);
   return UNITY_END();
 }

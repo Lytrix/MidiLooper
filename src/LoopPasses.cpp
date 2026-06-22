@@ -4,26 +4,29 @@
 #include "LoopPasses.h"
 
 #include "EditApply.h"
+#include "Utils/PsramFirstAllocator.h"
 
 #include <algorithm>
 #include <vector>
 
 namespace {
 
-void mergeSortedMidiVectors(MidiEventVec& base, MidiEventVec&& addition) {
+void mergeSortedMidiVectors(
+    MidiEventVec& base,
+    std::vector<MidiEvent, PsramFirstAllocator<MidiEvent>>&& addition) {
   if (addition.empty()) {
     return;
   }
   if (base.empty()) {
-    base = std::move(addition);
+    base.assign(addition.begin(), addition.end());
     return;
   }
-  MidiEventVec merged;
+  std::vector<MidiEvent, PsramFirstAllocator<MidiEvent>> merged;
   merged.reserve(base.size() + addition.size());
   std::merge(base.begin(), base.end(), addition.begin(), addition.end(),
              std::back_inserter(merged),
              [](const MidiEvent& a, const MidiEvent& b) { return a.tick < b.tick; });
-  base = std::move(merged);
+  base.assign(merged.begin(), merged.end());
 }
 
 void collectActiveOverdubPassesSorted(const OverdubPassVec& overdubPasses,
@@ -50,7 +53,7 @@ void appendActiveCapturePassesToFlat(const LoopPasses& passes, MidiEventVec& out
   std::vector<const OverdubPass*> activeOverdubs;
   collectActiveOverdubPassesSorted(passes.overdubPasses, activeOverdubs);
   for (const OverdubPass* pass : activeOverdubs) {
-    MidiEventVec layer;
+    std::vector<MidiEvent, PsramFirstAllocator<MidiEvent>> layer;
     LoopEventStore::appendFlattenedChunkIds(pass->chunkRefs, layer);
     mergeSortedMidiVectors(out, std::move(layer));
   }

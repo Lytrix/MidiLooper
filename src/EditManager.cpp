@@ -277,7 +277,8 @@ std::vector<DisplayNote> EditManager::selectableDisplayNotesAtEditSelect(const T
         return filterSelectableDisplayNotes(track.editAwareMidiEvents(), noteEditSession.focus,
                                             track.getMidiChannel(), loopLength);
     }
-    return track.getCachedNotes();
+    const auto& cachedNotes = track.getCachedNotes();
+    return std::vector<DisplayNote>(cachedNotes.begin(), cachedNotes.end());
 }
 
 DisplayNote EditManager::liveEditDisplayNoteAtSelect(const Track& track) const {

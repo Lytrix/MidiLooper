@@ -343,7 +343,7 @@ void TrackManager::handleTransportStop() {
     }
   }
   forceLedUpdate(currentTick);
-  StorageManager::saveState(looperState.getLooperState());
+  StorageManager::requestDeferredSaveState(looperState.getLooperState());
 }
 
 void TrackManager::clearTrack(uint8_t trackIndex) {
@@ -476,7 +476,7 @@ void TrackManager::finalizeCaptureAndSelectSlot(uint8_t trackIndex, uint8_t newS
     if (autoAlignEnabled) {
       t.setLoopLength(masterLoopLength);
     }
-    StorageManager::saveState(looperState.getLooperState());
+    StorageManager::requestDeferredSaveState(looperState.getLooperState());
   } else if (t.isOverdubbing()) {
     t.stopOverdubbing();
   }

@@ -55,11 +55,9 @@ Run `/opsx:apply` on `openspec/changes/m8-edit/tasks.md`.
 
 **`edit-record-display-length-mode`** — D1 live record display, D2 edit refresh, D3 length-mode leak. Reopened 2026-06-22; spike RC1–RC4 in `BUG.md`. HITL `_verify_live_record_display` (warn by default). Run `/opsx:apply` on `openspec/changes/edit-record-display-length-mode/tasks.md`.
 
-**`long-record-memory-headroom`** — Fix >32-bar record crash (RAM2 heap exhaustion via `ExtMemAllocator` malloc-first). M1: PSRAM-first re-target of length-scaling buffers + RAM2 floor guard. M2: bounded incremental deferred save. Supersedes `record-stop-64-bar-crash`. Run `/opsx:apply` on `openspec/changes/long-record-memory-headroom/tasks.md`.
+**`long-loop-piano-roll-window`** — 16-bar detailed piano-roll window + overview strip + LOOP_EDIT move/resize. M1 display-only, M2 LOOP_EDIT controls. Plan: `docs/plans/long_loop_piano_roll_overview_enhancement.md`. Run `/opsx:apply` on `openspec/changes/long-loop-piano-roll-window/tasks.md`.
 
-**Parked (superseded):** `openspec/changes/record-stop-64-bar-crash/` — superseded by `long-record-memory-headroom`; see its `PARKED.md`. Shipped chunk-stream writer + `RECS`/`PERS` instrumentation reused; display-scaling §6 deferred to **`long-loop-piano-roll-window`**.
-
-**`long-loop-piano-roll-window`** — 16-bar detailed piano-roll window + overview strip + LOOP_EDIT move/resize. Apply **after** `long-record-memory-headroom`. M1 display-only, M2 LOOP_EDIT controls. Plan: `docs/plans/long_loop_piano_roll_overview_enhancement.md`. Run `/opsx:apply` on `openspec/changes/long-loop-piano-roll-window/tasks.md` when prerequisite ships.
+**Archived:** `openspec/changes/archive/2026-06-23-long-record-memory-headroom/` (**Closed** 2026-06-23) — PSRAM-first length-scaling buffers, RAM2 floor admission, central deferred runtime save (chunk-bounded SD writer), display visualCache fallback, HITL 48/64 record + 64+64 overdub. Spec: `openspec/specs/long-record-memory-headroom/`. Guide: `docs/Guides/DEFERRED_RUNTIME_PERSISTENCE.md`. Supersedes `record-stop-64-bar-crash`.
 
 **Parked archive copy:** `archive/2026-06-20-parked-edit-record-display-length-mode/` (superseded by active change above).
 

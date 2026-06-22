@@ -841,8 +841,8 @@ void Track::processDeferredIdleMaintenance(uint32_t nowMs) {
   }
 
   if (!DeferredValidatePolicy::shouldRunDeferredFullValidate(
-          deferredFullMidiValidate, isRecording(), isOverdubbing(), deferredValidateQueuedAtMs,
-          nowMs)) {
+          deferredFullMidiValidate, isPlaying(), isRecording(), isOverdubbing(),
+          deferredValidateQueuedAtMs, nowMs)) {
     if (deferredFullMidiValidate && deferredValidateQueuedAtMs == 0) {
       deferredValidateQueuedAtMs = nowMs;
     }
@@ -1087,12 +1087,11 @@ void Track::stopRecording(uint32_t currentTick) {
   logRecordStopStage(loop, stopPathStartUs, "finalize", finalizeDurationUs, finalizeHeapBefore,
                      finalizeHeapAfter, commitResultLabel(sideEffectResult));
 
-  const uint32_t visualHeap = MemoryMonitor::getFreeHeap();
-  logRecordStopStage(loop, stopPathStartUs, "visual_cache_request", 0, visualHeap, visualHeap,
+  logRecordStopStage(loop, stopPathStartUs, "visual_cache_request", 0, finalizeHeapAfter,
+                     finalizeHeapAfter,
                      sideEffectResult == CommitResult::Published ? "deferred" : "skipped");
 
-  const uint32_t revtHeap = MemoryMonitor::getFreeHeap();
-  logRecordStopStage(loop, stopPathStartUs, "revt_queue", 0, revtHeap, revtHeap,
+  logRecordStopStage(loop, stopPathStartUs, "revt_queue", 0, finalizeHeapAfter, finalizeHeapAfter,
                      sideEffectResult == CommitResult::Published ? "deferred" : "skipped");
 
   if (alignLoopOriginOnNextStop) {
@@ -1142,10 +1141,9 @@ void Track::stopRecording(uint32_t currentTick) {
 
   // Empty record-stop (commit skipped) clears loopLengthTicks; leave a valid state.
   if (loop.loopLengthTicks == 0 || loop.activeCapturePassCount() == 0) {
-    const uint32_t stageHeap = MemoryMonitor::getFreeHeap();
-    logRecordStopStage(loop, stopPathStartUs, "state_advance", 0, stageHeap, stageHeap,
+    logRecordStopStage(loop, stopPathStartUs, "state_advance", 0, stopHeap, stopHeap,
                        "skipped_empty");
-    logRecordStopStage(loop, stopPathStartUs, "save_request", 0, stageHeap, stageHeap,
+    logRecordStopStage(loop, stopPathStartUs, "save_request", 0, stopHeap, stopHeap,
                        sideEffectResult == CommitResult::Published ? "requested" : "skipped");
     setState(TRACK_EMPTY);
     return;
@@ -1161,9 +1159,12 @@ void Track::stopRecording(uint32_t currentTick) {
   logRecordStopStage(loop, stopPathStartUs, "state_advance", stateAdvanceDurationUs,
                      stateAdvanceHeapBefore, stateAdvanceHeapAfter,
                      trackState == TRACK_PLAYING ? "ok" : "failed");
-  const uint32_t saveHeap = MemoryMonitor::getFreeHeap();
-  logRecordStopStage(loop, stopPathStartUs, "save_request", 0, saveHeap, saveHeap,
+  logRecordStopStage(loop, stopPathStartUs, "save_request", 0, stateAdvanceHeapAfter,
+                     stateAdvanceHeapAfter,
                      sideEffectResult == CommitResult::Published ? "requested" : "skipped");
+  if (sideEffectResult == CommitResult::Published) {
+    StorageManager::requestDeferredSaveState(looperState.getLooperState(), stateAdvanceHeapAfter);
+  }
 }
 
 void Track::stopRecordingToStopped(uint32_t currentTick) {
@@ -1219,12 +1220,11 @@ void Track::stopRecordingToStopped(uint32_t currentTick) {
   logRecordStopStage(loop, stopPathStartUs, "finalize", finalizeDurationUs, finalizeHeapBefore,
                      finalizeHeapAfter, commitResultLabel(sideEffectResult));
 
-  const uint32_t visualHeap = MemoryMonitor::getFreeHeap();
-  logRecordStopStage(loop, stopPathStartUs, "visual_cache_request", 0, visualHeap, visualHeap,
+  logRecordStopStage(loop, stopPathStartUs, "visual_cache_request", 0, finalizeHeapAfter,
+                     finalizeHeapAfter,
                      sideEffectResult == CommitResult::Published ? "deferred" : "skipped");
 
-  const uint32_t revtHeap = MemoryMonitor::getFreeHeap();
-  logRecordStopStage(loop, stopPathStartUs, "revt_queue", 0, revtHeap, revtHeap,
+  logRecordStopStage(loop, stopPathStartUs, "revt_queue", 0, finalizeHeapAfter, finalizeHeapAfter,
                      sideEffectResult == CommitResult::Published ? "deferred" : "skipped");
 
   [[maybe_unused]] const uint32_t recordStartTickStopped = loop.startLoopTick;
@@ -1254,9 +1254,12 @@ void Track::stopRecordingToStopped(uint32_t currentTick) {
   logRecordStopStage(loop, stopPathStartUs, "state_advance", stateAdvanceDurationUs,
                      stateAdvanceHeapBefore, stateAdvanceHeapAfter,
                      trackState == TRACK_STOPPED ? "ok" : "failed");
-  const uint32_t saveHeap = MemoryMonitor::getFreeHeap();
-  logRecordStopStage(loop, stopPathStartUs, "save_request", 0, saveHeap, saveHeap,
+  logRecordStopStage(loop, stopPathStartUs, "save_request", 0, stateAdvanceHeapAfter,
+                     stateAdvanceHeapAfter,
                      sideEffectResult == CommitResult::Published ? "requested" : "skipped");
+  if (sideEffectResult == CommitResult::Published) {
+    StorageManager::requestDeferredSaveState(looperState.getLooperState(), stateAdvanceHeapAfter);
+  }
 }
 
 // -------------------------

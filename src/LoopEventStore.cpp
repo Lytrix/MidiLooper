@@ -98,6 +98,14 @@ bool LoopEventStore::canAllocChunkWithReserve() {
   return freeChunkCount() > PassConfig::CHUNK_RESERVE;
 }
 
+bool LoopEventStore::hasRam2HeadroomForNonCriticalWork(uint32_t freeHeapBytes) {
+  return freeHeapBytes >= LoopEventStoreConfig::RAM2_SAFETY_FLOOR_BYTES;
+}
+
+uint32_t LoopEventStore::ram2SafetyFloorBytes() {
+  return LoopEventStoreConfig::RAM2_SAFETY_FLOOR_BYTES;
+}
+
 uint16_t LoopEventStore::allocChunk() {
   if (!poolReady_) {
     initPool();
@@ -349,7 +357,33 @@ void LoopEventStore::appendFlattenedChunkId(uint16_t id, MidiEventVec& out) {
   out.insert(out.end(), c.events, c.events + c.used);
 }
 
+void LoopEventStore::appendFlattenedChunkId(
+    uint16_t id, std::vector<MidiEvent, PsramFirstAllocator<MidiEvent>>& out) {
+  if (id >= LoopEventStoreConfig::POOL_CHUNK_COUNT || !pool_ || !poolUsed_[id]) {
+    return;
+  }
+  const EventChunk& c = pool_[id];
+  out.reserve(out.size() + c.used);
+  out.insert(out.end(), c.events, c.events + c.used);
+}
+
 void LoopEventStore::appendFlattenedChunkIds(const ChunkIdList& ids, MidiEventVec& out) {
+  const size_t prevSize = out.size();
+  size_t extra = 0;
+  for (uint16_t id : ids) {
+    if (id >= LoopEventStoreConfig::POOL_CHUNK_COUNT || !pool_ || !poolUsed_[id]) {
+      continue;
+    }
+    extra += pool_[id].used;
+  }
+  out.reserve(prevSize + extra);
+  for (uint16_t id : ids) {
+    appendFlattenedChunkId(id, out);
+  }
+}
+
+void LoopEventStore::appendFlattenedChunkIds(
+    const ChunkIdList& ids, std::vector<MidiEvent, PsramFirstAllocator<MidiEvent>>& out) {
   const size_t prevSize = out.size();
   size_t extra = 0;
   for (uint16_t id : ids) {
