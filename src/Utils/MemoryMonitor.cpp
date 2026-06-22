@@ -111,14 +111,17 @@ void logStatus() {
 }
 
 void logStatusAtAddedNotes(uint32_t addedNoteOns, size_t loopEventCount,
-                           const void* loopEventsData) {
+                           const void* loopEventsData, size_t loopChunkRefCount,
+                           bool loopChunkBacked) {
   const uint32_t freeK = getFreeHeap() / 1024;
   const uint32_t totalK = getTotalHeap() / 1024;
   const uint32_t usedK = getUsedHeap() / 1024;
 
   const auto poolStats = MemoryPool::globalMidiEventPool.getStats();
   const char* loopStorage = "empty";
-  if (loopEventCount > 0 && loopEventsData != nullptr) {
+  if (loopChunkBacked && loopChunkRefCount > 0) {
+    loopStorage = "chunk_refs";
+  } else if (loopEventCount > 0 && loopEventsData != nullptr) {
     loopStorage = isInPsram(loopEventsData) ? "psram" : "heap";
   }
 
@@ -135,16 +138,19 @@ void logStatusAtAddedNotes(uint32_t addedNoteOns, size_t loopEventCount,
   if (isPsramAvailable()) {
     logger.log(CAT_GENERAL, LOG_INFO,
                "[Memory] notes=%lu psram chip=%u MB pool=%lu KB "
-               "midi_pool=%zu/%zu loop_events=%zu loop_buf=%s",
+               "midi_pool=%zu/%zu loop_events=%zu loop_chunks=%zu loop_buf=%s",
                (unsigned long)addedNoteOns,
                (unsigned)external_psram_size,
                (unsigned long)(getPsramTotalBytes() / 1024),
-               poolStats.first, poolStats.second, loopEventCount, loopStorage);
+               poolStats.first, poolStats.second,
+               loopEventCount, loopChunkRefCount, loopStorage);
   } else {
     logger.log(CAT_GENERAL, LOG_INFO,
-               "[Memory] notes=%lu psram unavailable midi_pool=%zu/%zu loop_events=%zu loop_buf=%s",
+               "[Memory] notes=%lu psram unavailable midi_pool=%zu/%zu "
+               "loop_events=%zu loop_chunks=%zu loop_buf=%s",
                (unsigned long)addedNoteOns,
-               poolStats.first, poolStats.second, loopEventCount, loopStorage);
+               poolStats.first, poolStats.second,
+               loopEventCount, loopChunkRefCount, loopStorage);
   }
 
   if (isLowMemory(20 * 1024)) {
@@ -182,7 +188,7 @@ uint32_t getPsramFreeBytes() { return 0; }
 uint32_t getPsramUsedBytes() { return 0; }
 bool isLowMemory(uint32_t) { return false; }
 void logStatus() {}
-void logStatusAtAddedNotes(uint32_t, size_t, const void*) {}
+void logStatusAtAddedNotes(uint32_t, size_t, const void*, size_t, bool) {}
 
 }  // namespace MemoryMonitor
 
@@ -199,7 +205,7 @@ uint32_t getPsramFreeBytes() { return 0; }
 uint32_t getPsramUsedBytes() { return 0; }
 bool isLowMemory(uint32_t) { return false; }
 void logStatus() {}
-void logStatusAtAddedNotes(uint32_t, size_t, const void*) {}
+void logStatusAtAddedNotes(uint32_t, size_t, const void*, size_t, bool) {}
 
 }  // namespace MemoryMonitor
 

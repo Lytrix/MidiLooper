@@ -16,7 +16,10 @@
 #include "MidiHandler.h"
 #include "NoteEditManager.h"
 #include "NoteEditFocus.h"
-#include <algorithm>
+#include "NoteEditSessionUndo.h"
+#include "NoteEditSessionState.h"
+#include "Utils/MemoryMonitor.h"
+#include "ClockManager.h"
 #include <map>
 #include <vector>
 #include <cmath>
@@ -126,6 +129,7 @@ void EditManager::commitAllPendingNoteEditActions(Track& track) {
     if (id == kInvalidEditPassId) {
         return;
     }
+    lastPushedGeometryKind_ = NoteEditKind::Select;
 
     track.invalidateCaches();
 
@@ -303,6 +307,8 @@ void EditManager::openNoteEditSession(Track& track) {
     noteEditSession.undoStack.clear();
     loop.rematerializeEditView(noteEditSession.store.mutStore());
     noteEditSession.store.discardFlatCache();
+    resetNoteEditSessionState();
+    enterDefaultNoteEditSessionState(track, clockManager.getCurrentTick());
     logger.debug("NoteEditSession opened editPass=0");
 }
 
@@ -422,27 +428,223 @@ EditPassId EditManager::commitEditAction(Track& track, EditChangeList changes) {
     return id;
 }
 
-void EditManager::pushSessionUndoBeforeMutation(Track& track) {
+void EditManager::pushSessionUndoOnKindChange(Track& track, NoteEditKind kind) {
+    if (!shouldPushGeometryKindUndo(lastPushedGeometryKind_, kind)) {
+        return;
+    }
     if (!noteEditSession.active) {
         return;
     }
     if (noteEditSession.store.isFlatDirty()) {
         noteEditSession.store.syncFlatToStore();
     }
-    noteEditSession.undoStack.pushBeforeMutation(noteEditSession.store.readStore());
+    const SessionUndoEntry entry =
+        buildSessionUndoEntry(noteEditSession.focus, sessionState.selection,
+                              noteEditSession.store.readFlat(), track.getMidiChannel(),
+                              track.getLoopLength());
+    if (!noteEditSession.undoStack.pushEntry(entry)) {
+        logger.log(CAT_TRACK, LOG_WARNING,
+                   "Session undo push rejected: heap below reserve (need=%u free=%u)",
+                   static_cast<unsigned>(Config::HEAP_RESERVE_BYTES +
+                                         estimatedSessionUndoEntryBytes(entry)),
+                   static_cast<unsigned>(MemoryMonitor::getFreeHeap()));
+        return;
+    }
+    lastPushedGeometryKind_ = kind;
     (void)track;
+}
+
+void EditManager::restoreSessionUndoEntry(Track& track, const SessionUndoEntry& entry) {
+    Loop& loop = track.getActiveLoop();
+    applySessionUndoEntry(loop, noteEditSession.store, entry, track.getLoopLength());
+    noteEditSession.focus = entry.focus;
+    sessionState.selection = entry.selection;
+}
+
+void EditManager::applyGeometryKindFromControl(Track& track, NoteEditKind kind,
+                                               bool fromFaderControl) {
+    (void)track;
+    sessionState.kind = kind;
+    if (fromFaderControl && isGeometryEditKind(kind)) {
+        encoderCycleNeedsAnchor_ = true;
+    }
+}
+
+void EditManager::beginGeometryMutation(Track& track, NoteEditKind kind, bool fromFaderControl) {
+    applyGeometryKindFromControl(track, kind, fromFaderControl);
+    pushSessionUndoOnKindChange(track, kind);
+}
+
+void EditManager::resetNoteEditSessionState() {
+    sessionState = {};
+    encoderCycleNeedsAnchor_ = false;
+    lastPushedGeometryKind_ = NoteEditKind::Select;
+}
+
+void EditManager::applySelectNav(Track& track, int displayIdx, uint32_t bracket,
+                                 const NoteRef& ref, bool hasNote) {
+    const NoteEditSelection priorSelection = sessionState.selection;
+    sessionState.kind = NoteEditKind::Select;
+    sessionState.selection.displayIdx = displayIdx;
+    sessionState.selection.bracketTick = bracket;
+    sessionState.selection.hasNote = hasNote;
+    sessionState.selection.ref = hasNote ? ref : NoteRef{};
+    if (shouldResetGeometryKindUndoOnSelectChange(priorSelection, hasNote, ref)) {
+        lastPushedGeometryKind_ = NoteEditKind::Select;
+    }
+    syncNoteEditSessionStateToUi(track);
+}
+
+void EditManager::applyCycleEditKind(Track& track) {
+    sessionState.kind =
+        resolveEncoderCyclePress(sessionState.kind, encoderCycleNeedsAnchor_);
+    encoderCycleNeedsAnchor_ = false;
+    syncNoteEditSessionStateToUi(track);
+}
+
+void EditManager::syncNoteEditSessionStateToUi(Track& track) {
+    // Push authoritative sessionState into legacy UI fields (do not read legacy back in).
+    const int prevSelectedIdx = selectedNoteIdx;
+    selectedNoteIdx = sessionState.selection.displayIdx;
+    bracketTick = sessionState.selection.bracketTick;
+    if (sessionState.selection.hasNote) {
+        if (sessionState.selection.ref.channel != 0) {
+            setLastFader1SelectRef(sessionState.selection.ref);
+        }
+    } else {
+        clearLastFader1SelectRef();
+    }
+    if (prevSelectedIdx != selectedNoteIdx) {
+        logger.log(CAT_MIDI, LOG_DEBUG, "Note selection changed: %d -> %d", prevSelectedIdx,
+                   selectedNoteIdx);
+    }
+
+    EditModeState mode = EDIT_MODE_SELECT;
+    EditNoteState* targetState = &selectNoteState;
+    switch (sessionState.kind) {
+        case NoteEditKind::Select:
+        case NoteEditKind::Add:
+        case NoteEditKind::Delete:
+            mode = EDIT_MODE_SELECT;
+            targetState = &selectNoteState;
+            break;
+        case NoteEditKind::Move:
+            mode = EDIT_MODE_START;
+            targetState = &startNoteState;
+            break;
+        case NoteEditKind::Length:
+            mode = EDIT_MODE_LENGTH;
+            targetState = &lengthNoteState;
+            break;
+        case NoteEditKind::Pitch:
+            mode = EDIT_MODE_PITCH;
+            targetState = &pitchNoteState;
+            break;
+    }
+
+    currentEditMode = mode;
+    if (currentState != targetState) {
+        if (currentState) {
+            if (currentState == &startNoteState || currentState == &lengthNoteState ||
+                currentState == &pitchNoteState) {
+                commitAllPendingNoteEditActions(track);
+            }
+            currentState->onExit(*this, track);
+        }
+        currentState = targetState;
+        if (currentState) {
+            currentState->onEnter(*this, track, bracketTick);
+        }
+    }
+    sendEditModeProgram(mode);
+    if (sessionState.selection.hasNote) {
+        noteEditManager.sendSelectnoteFaderUpdate(track);
+    }
+}
+
+void EditManager::enterDefaultNoteEditSessionState(Track& track, uint32_t startTick) {
+    const uint32_t loopLength = track.getLoopLength();
+    if (loopLength == 0) {
+        bracketTick = 0;
+        selectedNoteIdx = -1;
+        clearLastFader1SelectRef();
+        sessionState.kind = NoteEditKind::Select;
+        sessionState.selection = {};
+        return;
+    }
+
+    bracketTick = startTick % loopLength;
+    selectNoteAtBracket(track, startTick);
+    if (selectedNoteIdx < 0) {
+        selectClosestNote(track, startTick);
+    }
+
+    NoteRef ref{};
+    if (selectedNoteIdx >= 0) {
+        const auto notes = selectableDisplayNotesAtEditSelect(track);
+        if (selectedNoteIdx < static_cast<int>(notes.size())) {
+            ref = noteRefFromDisplay(track.getMidiChannel(),
+                                     notes[static_cast<size_t>(selectedNoteIdx)]);
+            setLastFader1SelectRef(ref);
+        }
+    } else {
+        clearLastFader1SelectRef();
+    }
+
+    sessionState.kind = NoteEditKind::Select;
+    sessionState.selection.displayIdx = selectedNoteIdx;
+    sessionState.selection.bracketTick = bracketTick;
+    sessionState.selection.hasNote = selectedNoteIdx >= 0;
+    sessionState.selection.ref = ref;
+    syncNoteEditSessionStateToUi(track);
+}
+
+void EditManager::applyUndoRedoLanding(Track& track) {
+    encoderCycleNeedsAnchor_ = false;
+    lastPushedGeometryKind_ = NoteEditKind::Select;
+
+    int displayIdx = -1;
+    uint32_t bracket = bracketTick;
+    NoteRef ref{};
+    bool hasNote = false;
+
+    const NoteEditFocus& focus = noteEditSession.focus;
+    const auto notes = selectableDisplayNotesAtEditSelect(track);
+    if (focus.active) {
+        displayIdx = filteredDisplayNoteIndexForNoteRef(track.getMidiChannel(), focus, notes,
+                                                        focus.moving);
+        if (displayIdx >= 0 && displayIdx < static_cast<int>(notes.size())) {
+            const DisplayNote& dn = notes[static_cast<size_t>(displayIdx)];
+            ref = noteRefFromDisplay(track.getMidiChannel(), dn);
+            bracket = dn.startTick % track.getLoopLength();
+            hasNote = true;
+        }
+    } else if (!notes.empty()) {
+        selectClosestNote(track, bracketTick);
+        displayIdx = selectedNoteIdx;
+        if (displayIdx >= 0) {
+            ref = noteRefFromDisplay(track.getMidiChannel(),
+                                     notes[static_cast<size_t>(displayIdx)]);
+            bracket = notes[static_cast<size_t>(displayIdx)].startTick % track.getLoopLength();
+            hasNote = true;
+        }
+    }
+
+    noteEditManager.resetLengthEditingModeOnNoteSelect();
+    applySelectNav(track, displayIdx, bracket, ref, hasNote);
 }
 
 bool EditManager::sessionUndo(Track& track) {
     if (!noteEditSession.active || !noteEditSession.undoStack.canUndo()) {
         return false;
     }
-    const auto snap = noteEditSession.undoStack.popUndoSnapshot();
-    if (!snap) {
+    const SessionUndoEntry* entry = noteEditSession.undoStack.popUndoTarget();
+    if (entry == nullptr) {
         return false;
     }
-    noteEditSession.store.restoreFromSnapshot(snap->cloneShared());
+    restoreSessionUndoEntry(track, *entry);
     track.invalidateCaches();
+    applyUndoRedoLanding(track);
     return true;
 }
 
@@ -450,13 +652,19 @@ bool EditManager::sessionRedo(Track& track) {
     if (!noteEditSession.active || !noteEditSession.undoStack.canRedo()) {
         return false;
     }
-    const auto snap = noteEditSession.undoStack.popRedoSnapshot();
-    if (!snap) {
+    const SessionUndoEntry* entry = noteEditSession.undoStack.popRedoTarget();
+    if (entry == nullptr) {
         return false;
     }
-    noteEditSession.store.restoreFromSnapshot(snap->cloneShared());
+    restoreSessionUndoEntry(track, *entry);
     track.invalidateCaches();
+    applyUndoRedoLanding(track);
     return true;
+}
+
+bool EditManager::isSessionUndoDisplayActive() const {
+    return noteEditSession.active &&
+           noteEditManager.getCurrentMainEditMode() == NoteEditManager::MAIN_MODE_NOTE_EDIT;
 }
 
 MidiEventVec& EditManager::sessionMidiEvents() {
@@ -503,6 +711,9 @@ void EditManager::setState(EditNoteState* newState, Track& track, uint32_t start
 
 void EditManager::onEncoderTurn(Track& track, int delta) {
     if (currentState) {
+        if (isGeometryEditKind(sessionState.kind)) {
+            pushSessionUndoOnKindChange(track, sessionState.kind);
+        }
         int step = (delta > 0) ? 1 : -1;
         for (int i = 0; i < abs(delta); ++i) {
             currentState->onEncoderTurn(*this, track, step);
@@ -621,7 +832,11 @@ void EditManager::exitEditMode(Track& track) {
     hasMovedBracket = false;
     if (currentState) currentState->onExit(*this, track);
     currentState = nullptr;
+    resetNoteEditSessionState();
     closeNoteEditSession(track);
+    if (noteEditManager.getCurrentMainEditMode() != NoteEditManager::MAIN_MODE_LOOP_EDIT) {
+        noteEditManager.sendMainEditModeChange(NoteEditManager::MAIN_MODE_LOOP_EDIT);
+    }
 }
 
 void EditManager::moveBracket(int delta, const Track& track, uint32_t ticksPerStep) {
@@ -692,29 +907,13 @@ void EditManager::exitPitchEditMode(Track& track) {
 }
 
 // EditModeManager functionality
-void EditManager::cycleEditMode(Track& track) {
-    switch (currentEditMode) {
-        case EDIT_MODE_NONE:
-        case EDIT_MODE_SELECT:
-            currentEditMode = EDIT_MODE_START;
-            setState(&startNoteState, track, bracketTick);
-            break;
-        case EDIT_MODE_START:
-            currentEditMode = EDIT_MODE_LENGTH;
-            setState(&lengthNoteState, track, bracketTick);
-            break;
-        case EDIT_MODE_LENGTH:
-            currentEditMode = EDIT_MODE_PITCH;
-            setState(&pitchNoteState, track, bracketTick);
-            break;
-        case EDIT_MODE_PITCH:
-            currentEditMode = EDIT_MODE_SELECT;
-            setState(&selectNoteState, track, bracketTick);
-            break;
+void EditManager::cycleNoteEditType(Track& track) {
+    if (!noteEditSession.active) {
+        openNoteEditSession(track);
     }
-    
-    sendEditModeProgram(currentEditMode);
-    logger.log(CAT_TRACK, LOG_DEBUG, "Edit mode cycled to: %d", currentEditMode);
+    applyCycleEditKind(track);
+    logger.log(CAT_TRACK, LOG_DEBUG, "Note edit type cycled to kind=%d",
+               static_cast<int>(sessionState.kind));
 }
 
 void EditManager::sendEditModeProgram(EditModeState mode) {
@@ -780,9 +979,7 @@ void EditManager::setMainEditMode(MainEditMode mode) {
 }
 
 size_t EditManager::getDisplayUndoCount(const Track& track) const {
-    if (noteEditSession.active &&
-        (currentState == &startNoteState || currentState == &lengthNoteState ||
-         currentState == &pitchNoteState)) {
+    if (isSessionUndoDisplayActive()) {
         return noteEditSession.undoStack.undoCount();
     }
     return TrackUndo::getUndoCount(track);

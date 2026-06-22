@@ -59,6 +59,7 @@ public:
 
     // Edit mode methods (must be public for MidiButtonActions)
     void cycleEditMode(Track& track);
+    void processEncoderMovement(int rawDelta);
     void deleteSelectedNote(Track& track);
     void toggleLengthEditingMode();
     /** Force position-edit routing when opening or closing a note-edit session. */

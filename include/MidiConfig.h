@@ -117,7 +117,7 @@ namespace Pitchbend {
 namespace Transport {
   constexpr uint8_t NOTE_RECORD = 36;   // C2, Button A
   constexpr uint8_t NOTE_PLAY = 37;     // C#2, Button B
-  constexpr uint8_t NOTE_UNDO = 38;     // D2, Button C
+  constexpr uint8_t NOTE_EDIT_MODE = 38;  // D2, Button C — note edit mode cycle (B2.31)
   constexpr uint8_t NOTE_REDO = 39;     // D#2, Button D
 }
 

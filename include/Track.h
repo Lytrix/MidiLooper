@@ -116,7 +116,8 @@ public:
   /// Wrap-window only: record/overdub stop hot path. Schedules deferred full validate.
   void finalizeLoopAtStop(uint32_t openTailCloseTick = UINT32_MAX,
                           bool scheduleDeferredFullValidate = true);
-  void finalizeCommitSideEffects(CommitResult result, CommitReason reason, uint32_t closeTick);
+  CommitResult finalizeCommitSideEffects(CommitResult result, CommitReason reason,
+                                         uint32_t closeTick);
   void emitStoredMidiVerification() const;
   /// Idle maintenance: deferred full validate + session REVT flush (non-blocking stop path).
   void processDeferredIdleMaintenance(uint32_t nowMs);
@@ -300,6 +301,14 @@ private:
   bool jamPlaybackActive;     // True = track uses jamTick for playback
   bool alignLoopOriginOnNextStop;
   uint16_t recordAddedNoteOnCount;  // note-ons this overdub pass (memory log at overdub stop)
+  bool deferredRecordRevtsPending = false;
+  bool deferredRecordRevtChunkScan = false;
+  size_t deferredRecordRevtCursor = 0;
+  MidiEventVec deferredRecordRevtEvents;
+  ChunkIdList deferredRecordRevtChunkRefs;
+  size_t deferredRecordRevtChunkCursor = 0;
+  MidiEventVec deferredRecordRevtChunkEvents;
+  size_t deferredRecordRevtChunkEventCursor = 0;
   bool deferredFullMidiValidate = false;
   uint32_t deferredValidateQueuedAtMs = 0;
   uint32_t playbackGeneration = 0;
@@ -307,7 +316,9 @@ private:
   GlobalUndoStack undoStack;
   static const uint32_t TICKS_PER_BAR;
 
-  void queueDeferredRecordRevts() const;
+  void resetDeferredRecordRevts();
+  void queueDeferredRecordRevts();
+  void processDeferredRecordRevts(size_t maxEventsPerSlice = 64);
 
   void syncSlotRefsFromPool();
 

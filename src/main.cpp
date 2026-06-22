@@ -8,7 +8,7 @@
 #include "ClockManager.h"
 #include "MidiHandler.h"
 #include "TrackManager.h"
-#include "ButtonManager.h"
+#include "GpioButtonManager.h"
 #include "MidiButtonManager.h"
 #include "MidiFaderManager.h"
 #include "BarStepButtonHandler.h"
@@ -108,6 +108,10 @@ void setup() {
 
   clockManager.setup();
   displayManager.setup();
+#if defined(ENABLE_GPIO_BUTTONS)
+  gpioButtonManager.setup({Buttons::BUTTON_A_PIN, Buttons::BUTTON_B_PIN, Buttons::BUTTON_C_PIN,
+                           Buttons::BUTTON_D_PIN, Buttons::ENCODER_BUTTON_PIN});
+#endif
   Serial.println("Main: Display Setup done");
 
   logger.info("Performance monitoring initialized");
@@ -157,6 +161,9 @@ void loop() {
   barStepButtonHandler.update();
   
   noteEditManager.update();
+#if defined(ENABLE_GPIO_BUTTONS)
+  gpioButtonManager.update();
+#endif
   looper.update();
 
   bool timingCriticalTrackActive = false;
@@ -176,8 +183,9 @@ void loop() {
     trackManager.getTrack(i).processDeferredIdleMaintenance(now);
   }
 
+  StorageManager::processDeferredSaveState(looperState.getLooperState());
+
   if (!timingCriticalTrackActive) {
-    StorageManager::processDeferredSaveState(looperState.getLooperState());
     StorageManager::processEditAutosave(looperState.getLooperState());
     trackManager.reclaimUnreferencedDisabledPasses();
   }

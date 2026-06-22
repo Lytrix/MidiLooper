@@ -15,6 +15,31 @@ bool ioRead(const StorageIo& io, void* data, size_t size) {
   return io.read && io.read(data, size);
 }
 
+#if defined(PIO_UNIT_TEST_NATIVE)
+size_t g_lastPersistedCapturePassWriteMaxBatchEvents = 0;
+#endif
+
+bool writePersistedCapturePassPayloadChunkStream(const StorageIo& io,
+                                                 const ChunkIdList& chunkRefs,
+                                                 size_t* maxBatchEvents) {
+  MidiEventVec batch;
+  batch.reserve(LoopEventStoreConfig::CHUNK_CAPACITY);
+  for (uint16_t chunkId : chunkRefs) {
+    batch.clear();
+    LoopEventStore::appendFlattenedChunkId(chunkId, batch);
+    if (batch.empty()) {
+      continue;
+    }
+    if (maxBatchEvents && batch.size() > *maxBatchEvents) {
+      *maxBatchEvents = batch.size();
+    }
+    if (!ioWrite(io, batch.data(), batch.size() * sizeof(MidiEvent))) {
+      return false;
+    }
+  }
+  return true;
+}
+
 }  // namespace
 
 bool writePersistedCapturePassWire(const StorageIo& io, const PersistedCapturePassWire& wire,
@@ -25,13 +50,17 @@ bool writePersistedCapturePassWire(const StorageIo& io, const PersistedCapturePa
   if (!ioWrite(io, &wire.typeRaw, sizeof(wire.typeRaw))) return false;
   if (!ioWrite(io, &wire.sealedAtTick, sizeof(wire.sealedAtTick))) return false;
 
-  MidiEventVec flat;
-  LoopEventStore::appendFlattenedChunkIds(chunkRefs, flat);
-  const uint32_t midiCount = static_cast<uint32_t>(flat.size());
+  const uint32_t midiCount =
+      static_cast<uint32_t>(LoopEventStore::countEventsInChunkIds(chunkRefs));
   if (!ioWrite(io, &midiCount, sizeof(midiCount))) return false;
-  if (midiCount > 0 && !ioWrite(io, flat.data(), midiCount * sizeof(MidiEvent))) {
+  size_t maxBatchEvents = 0;
+  if (midiCount > 0 &&
+      !writePersistedCapturePassPayloadChunkStream(io, chunkRefs, &maxBatchEvents)) {
     return false;
   }
+#if defined(PIO_UNIT_TEST_NATIVE)
+  g_lastPersistedCapturePassWriteMaxBatchEvents = maxBatchEvents;
+#endif
   return true;
 }
 
@@ -59,6 +88,16 @@ bool readPersistedCapturePassWire(const StorageIo& io, PersistedCapturePassWire&
   staging.detachChunksTo(chunkRefs);
   return true;
 }
+
+#if defined(PIO_UNIT_TEST_NATIVE)
+size_t getLastPersistedCapturePassWriteMaxBatchEvents() {
+  return g_lastPersistedCapturePassWriteMaxBatchEvents;
+}
+
+void resetPersistedCapturePassWriteStatsForTest() {
+  g_lastPersistedCapturePassWriteMaxBatchEvents = 0;
+}
+#endif
 
 bool writePersistedEditChange(const StorageIo& io, const EditChange& change) {
   const uint8_t typeRaw = static_cast<uint8_t>(change.type);

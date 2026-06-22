@@ -25,9 +25,17 @@ void test_deferred_validate_blocked_during_capture() {
       DeferredValidatePolicy::shouldRunDeferredFullValidate(true, false, true, queuedAt, now));
 }
 
+void test_deferred_validate_not_triggered_when_now_is_before_queue_timestamp() {
+  const uint32_t queuedAt = 10000u;
+  const uint32_t now = 9990u;  // Same-loop stale now snapshot before queue assignment.
+  TEST_ASSERT_FALSE(DeferredValidatePolicy::shouldRunDeferredFullValidate(true, false, false,
+                                                                          queuedAt, now));
+}
+
 int main(int /*argc*/, char** /*argv*/) {
   UNITY_BEGIN();
   RUN_TEST(test_deferred_validate_waits_until_delay_elapsed);
   RUN_TEST(test_deferred_validate_blocked_during_capture);
+  RUN_TEST(test_deferred_validate_not_triggered_when_now_is_before_queue_timestamp);
   return UNITY_END();
 }

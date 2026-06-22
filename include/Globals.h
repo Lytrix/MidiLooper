@@ -40,13 +40,19 @@ namespace LCD {
   const uint32_t DISPLAY_UPDATE_INTERVAL = 30 ; // in ms (approx. 333Hz)
 }
 
-// Button Configuration
+// GPIO button and encoder pin map (Teensy 4.1 base module).
+// MIDI transport notes 36–39 align numerically by convention; namespaces differ (MIDI vs pinMode).
 namespace Buttons {
-  const int RECORD = 37;      // Record/Overdub button
-  const int PLAY   = 36;      // Play/Stop button
-  const int ENCODER_PIN_A = 29;
-  const int ENCODER_PIN_B = 30;
-  const int ENCODER_BUTTON_PIN = 31;
+  constexpr int ENCODER_PIN_A = 29;
+  constexpr int ENCODER_PIN_B = 30;
+  constexpr int ENCODER_BUTTON_PIN = 31;
+  constexpr int BUTTON_A_PIN = 36;  // Record / play / delete action family
+  constexpr int BUTTON_B_PIN = 37;  // Track select / mute / delete action family
+  constexpr int BUTTON_C_PIN = 38;  // Loop / note edit mode switch (NOTE_EDIT_MODE)
+  constexpr int BUTTON_D_PIN = 39;  // Play / stop transport action family
+  // Legacy aliases (same pins as BUTTON_A/B)
+  const int PLAY   = BUTTON_A_PIN;
+  const int RECORD = BUTTON_B_PIN;
 }
 
 // MIDI Configuration (channels, CCs, record exclusion, LED feedback)
@@ -76,6 +82,10 @@ namespace Config {
   constexpr uint16_t MIN_UNDO_DEPTH = 8;
   /// Hard safety rail — trim oldest entries when exceeded regardless of pressure.
   constexpr uint16_t ABSOLUTE_MAX_UNDO_ENTRIES = 512;
+  /// Target in-session undo depth when memory is not under pressure.
+  constexpr uint16_t PREFERRED_SESSION_UNDO_DEPTH = 32;
+  /// Try to keep at least this many session undo entries when trimming under pressure.
+  constexpr uint16_t MIN_SESSION_UNDO_DEPTH = 4;
   /// Minimum free heap (bytes) held back for edit vectors and undo metadata.
   constexpr uint32_t HEAP_RESERVE_BYTES = 32 * 1024;
   constexpr uint8_t  PLAYBACK_WINDOW_MIN_BARS = 2;

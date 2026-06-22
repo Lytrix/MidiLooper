@@ -55,6 +55,10 @@ from host_midi_automation_baseline import (  # noqa: E402
 # DROID main controls (MidiConfig::Transport / LengthEdit)
 EDIT_BUTTON_NOTE = 38
 LENGTH_EDIT_NOTE = 35
+EDIT_ENTER_LOG_PATTERNS: tuple[str, ...] = (
+    "MIDI Encoder: Short press - entered note edit mode",
+    "Note edit: short press entered Select overlay",
+)
 FADER_SELECT_SETTLE_MS = 650
 NOTE_SELECTION_GRACE_MS = 750
 COARSE_EDIT_READY_MS = 1200
@@ -812,6 +816,218 @@ def _recording_transition_baseline(lines: list[str]) -> int:
     )
 
 
+def _is_edit_enter_line(line: str) -> bool:
+    return any(pattern in line for pattern in EDIT_ENTER_LOG_PATTERNS)
+
+
+def _find_edit_enter_index(lines: list[str]) -> Optional[int]:
+    for i, line in enumerate(lines):
+        if _is_edit_enter_line(line):
+            return i
+    return None
+
+
+def _find_session_enter_anchor(lines: list[str]) -> Optional[int]:
+    enter_idx = _find_edit_enter_index(lines)
+    if enter_idx is not None:
+        return enter_idx
+    for i, line in enumerate(lines):
+        if "NoteEditSession opened editPass=0" in line:
+            return i
+    return None
+
+
+def _verify_session_state_enter(lines: list[str]) -> dict[str, object]:
+    """Enter press lands Select kind; must not cycle geometry kind on the same press."""
+    issues: list[str] = []
+    anchor_idx = _find_session_enter_anchor(lines)
+    if anchor_idx is None:
+        issues.append("session_state:enter_log_missing")
+        return {"ok": False, "issues": issues, "enter_index": None}
+
+    window = lines[anchor_idx : anchor_idx + 24]
+    if not any(_is_edit_enter_line(line) for line in window):
+        issues.append("session_state:enter_log_missing")
+
+    select_seen = False
+    cycle_before_select = False
+    for line in window:
+        if "Entered SELECT mode" in line or "edit mode program: 1" in line:
+            select_seen = True
+        if not select_seen and "Note edit type cycled to kind=" in line:
+            cycle_before_select = True
+        if not select_seen and "Entered EditStartNoteState" in line:
+            cycle_before_select = True
+
+    if cycle_before_select:
+        issues.append("session_state:cycle_on_enter_press")
+    if not select_seen:
+        issues.append("session_state:select_kind_missing_at_enter")
+    return {
+        "ok": not issues,
+        "issues": issues,
+        "enter_index": anchor_idx,
+        "select_seen": select_seen,
+        "cycle_on_enter": cycle_before_select,
+    }
+
+
+_DISP_RECORDING_RE = re.compile(
+    r",DISP,0,RECORDING,(\d+),(\d+),(\d+),(\d+),(\d+),(\d+)"
+)
+
+
+def _verify_live_record_display(lines: list[str], *, min_loop_len: int = 48) -> dict[str, object]:
+    """During RECORD, piano-roll frameNotes should appear while capture events grow."""
+    issues: list[str] = []
+    reca_idx: Optional[int] = None
+    record_end_idx: Optional[int] = None
+    for i, line in enumerate(lines):
+        if ",RECA," in line and reca_idx is None:
+            reca_idx = i
+        if reca_idx is not None and ",ST,Track,RECORDING,STOPPED_RECORDING" in line:
+            record_end_idx = i
+            break
+    if reca_idx is None:
+        issues.append("live_record_display:reca_missing")
+        return {"ok": False, "issues": issues}
+
+    window = lines[reca_idx : record_end_idx if record_end_idx is not None else len(lines)]
+    rows: list[tuple[int, int, int, int, int, int]] = []
+    for line in window:
+        m = _DISP_RECORDING_RE.search(line)
+        if m:
+            rows.append(tuple(int(g) for g in m.groups()))
+
+    frame_positive = [
+        r for r in rows if r[3] > 0 and r[1] > 0 and r[0] >= min_loop_len
+    ]
+    sustained_zero = 0
+    max_sustained_zero = 0
+    for loop_len, take, _visual, frame, _buf, _pub in rows:
+        if take > 0 and frame == 0 and loop_len >= min_loop_len:
+            sustained_zero += 1
+            max_sustained_zero = max(max_sustained_zero, sustained_zero)
+        else:
+            sustained_zero = 0
+
+    if rows and not frame_positive:
+        issues.append("live_record_display:no_frame_notes_during_record")
+    if max_sustained_zero >= 5:
+        issues.append(f"live_record_display:sustained_frame_zero:{max_sustained_zero}")
+
+    return {
+        "ok": not issues,
+        "issues": issues,
+        "disp_samples": len(rows),
+        "frame_positive_samples": len(frame_positive),
+        "max_sustained_frame_zero": max_sustained_zero,
+    }
+
+
+def _verify_warmup_empty_nav_create(lines: list[str]) -> dict[str, object]:
+    """First empty fader-1 nav after enter must allow NOTELEN create (not stale delete)."""
+    issues: list[str] = []
+    enter_idx = _find_session_enter_anchor(lines)
+    if enter_idx is None:
+        issues.append("warmup_create:enter_anchor_missing")
+        return {"ok": False, "issues": issues}
+
+    empty_idx: Optional[int] = None
+    for i in range(enter_idx + 1, len(lines)):
+        if "selected empty step at tick" in lines[i]:
+            empty_idx = i
+            break
+    if empty_idx is None:
+        issues.append("warmup_create:empty_nav_missing")
+        return {"ok": False, "issues": issues, "empty_nav_index": None}
+
+    notelen_double_idx: Optional[int] = None
+    notelen_action: Optional[str] = None
+    search_end = min(empty_idx + 150, len(lines))
+    for i in range(empty_idx + 1, search_end):
+        if "Button press: Length Edit Mode (double)" not in lines[i]:
+            continue
+        notelen_double_idx = i
+        window = lines[i : i + 4]
+        if any("NOTELEN double: create note at bracket" in line for line in window):
+            notelen_action = "create"
+        elif any("NOTELEN double: delete selected note" in line for line in window):
+            notelen_action = "delete"
+        break
+
+    if notelen_double_idx is None:
+        issues.append("warmup_create:notelen_double_missing")
+    elif notelen_action != "create":
+        issues.append(f"warmup_create:notelen_action_{notelen_action or 'unknown'}")
+
+    created_seen = any(
+        "Created 32nd note" in line for line in lines[empty_idx:search_end]
+    )
+    if not created_seen:
+        issues.append("warmup_create:created_32nd_missing")
+
+    return {
+        "ok": not issues,
+        "issues": issues,
+        "empty_nav_index": empty_idx,
+        "notelen_double_index": notelen_double_idx,
+        "notelen_action": notelen_action,
+        "created_seen": created_seen,
+    }
+
+
+def _verify_session_undo_redo_routing(lines: list[str]) -> dict[str, object]:
+    """In-edit undo/redo uses NoteEditSession stack; post-exit uses pass undo."""
+    issues: list[str] = []
+    enter_idx = _find_edit_enter_index(lines)
+    exit_idx: Optional[int] = None
+    if enter_idx is not None:
+        for i in range(enter_idx + 1, len(lines)):
+            if "exited edit mode" in lines[i]:
+                exit_idx = i
+                break
+
+    in_edit_undo = 0
+    in_edit_redo = 0
+    post_exit_undo = 0
+    post_exit_redo = 0
+    if enter_idx is not None and exit_idx is not None:
+        in_window = lines[enter_idx:exit_idx]
+        post_window = lines[exit_idx:]
+        in_edit_undo = sum(1 for line in in_window if "NoteEditSession undo" in line)
+        in_edit_redo = sum(1 for line in in_window if "NoteEditSession redo" in line)
+        post_exit_undo = sum(
+            1
+            for line in post_window
+            if "Note edit pass undone" in line or "Overdub undone" in line
+        )
+        post_exit_redo = sum(
+            1
+            for line in post_window
+            if "Note edit pass redone" in line or "Overdub redone" in line
+        )
+        if in_edit_undo < 1:
+            issues.append("session_undo:in_edit_missing")
+        if in_edit_redo < 1:
+            issues.append("session_redo:in_edit_missing")
+        if post_exit_undo < 1:
+            issues.append("session_undo:post_exit_missing")
+        if post_exit_redo < 1:
+            issues.append("session_redo:post_exit_missing")
+    else:
+        issues.append("session_undo:enter_or_exit_window_missing")
+
+    return {
+        "ok": not issues,
+        "issues": issues,
+        "in_edit_undo": in_edit_undo,
+        "in_edit_redo": in_edit_redo,
+        "post_exit_undo": post_exit_undo,
+        "post_exit_redo": post_exit_redo,
+    }
+
+
 def _serial_contains(lines: list[str], needle: str) -> bool:
     return any(needle in line for line in lines)
 
@@ -1560,7 +1776,7 @@ def _verify_beat_move_routing(lines: list[str]) -> dict[str, object]:
     issues: list[str] = []
     beat_shuttle_steps = {M0_STEP, M0_STEP + BEAT_MOVE_STEPS}
 
-    if not _serial_contains(lines, "MIDI Encoder: Short press - entered note edit mode"):
+    if not any(_is_edit_enter_line(line) for line in lines):
         issues.append("missing_edit_session_enter_log")
 
     for line in lines:
@@ -1575,7 +1791,7 @@ def _verify_beat_move_routing(lines: list[str]) -> dict[str, object]:
         line_idx = lines.index(line)
         window = lines[line_idx : line_idx + 6]
         if any("exited edit mode" in w for w in window):
-            if not _serial_contains(lines[:line_idx], "Short press - entered note edit mode"):
+            if not any(_is_edit_enter_line(line) for line in lines[:line_idx]):
                 issues.append(f"edit_button_stuck_long_press:duration={duration_ms}")
         break
 
@@ -2931,7 +3147,7 @@ def _verify_m8_edit_pass_commit(lines: list[str]) -> dict[str, object]:
     enter_idx: Optional[int] = None
     exit_idx: Optional[int] = None
     for i, line in enumerate(lines):
-        if enter_idx is None and "entered note edit mode" in line:
+        if enter_idx is None and _is_edit_enter_line(line):
             enter_idx = i
         if enter_idx is not None and "exited edit mode" in line:
             exit_idx = i
@@ -2984,6 +3200,19 @@ def _verify_edit_serial(
         issues.append(f"undo_log_low:{undo_log_count}<{min_undo_logs}")
     if redo_log_count < min_redo_logs:
         issues.append(f"redo_log_low:{redo_log_count}<{min_redo_logs}")
+
+    session_state_enter: Optional[dict[str, object]] = None
+    session_undo_routing: Optional[dict[str, object]] = None
+    warmup_empty_nav_create: Optional[dict[str, object]] = None
+    session_state_enter = _verify_session_state_enter(lines)
+    if not session_state_enter.get("ok"):
+        issues.extend(session_state_enter.get("issues", []))
+    session_undo_routing = _verify_session_undo_redo_routing(lines)
+    if not session_undo_routing.get("ok"):
+        issues.extend(session_undo_routing.get("issues", []))
+    warmup_empty_nav_create = _verify_warmup_empty_nav_create(lines)
+    if not warmup_empty_nav_create.get("ok"):
+        issues.extend(warmup_empty_nav_create.get("issues", []))
 
     move_display: Optional[dict[str, object]] = None
     beat_move_routing: Optional[dict[str, object]] = None
@@ -3048,6 +3277,9 @@ def _verify_edit_serial(
         "revt_ticks": revt_ticks,
         "undo_log_count": undo_log_count,
         "redo_log_count": redo_log_count,
+        "session_state_enter": session_state_enter,
+        "session_undo_routing": session_undo_routing,
+        "warmup_empty_nav_create": warmup_empty_nav_create,
         "move_display": move_display,
         "beat_move_routing": beat_move_routing,
         "m0_warmup": m0_warmup,
@@ -3424,8 +3656,8 @@ def _run_edit_scenarios(
             undo_redo_delay_ms=undo_redo_delay_ms,
             phase="in-edit",
         )
-        markers.append("Overdub undone")
-        markers.append("Overdub redone")
+        markers.append("NoteEditSession undo")
+        markers.append("NoteEditSession redo")
 
     # Exit edit
     _send_long_press(
@@ -3444,10 +3676,8 @@ def _run_edit_scenarios(
             undo_redo_delay_ms=undo_redo_delay_ms,
             phase="post-exit",
         )
-        if "Overdub undone" not in markers:
-            markers.append("Overdub undone")
-        if "Overdub redone" not in markers:
-            markers.append("Overdub redone")
+        markers.append("Note edit pass undone")
+        markers.append("Note edit pass redone")
 
     return markers
 
@@ -3553,6 +3783,12 @@ def main() -> int:
         action="store_true",
         dest="require_m8_pass_verify",
         help=argparse.SUPPRESS,
+    )
+    parser.add_argument(
+        "--require-live-record-display",
+        action="store_true",
+        default=False,
+        help="Fail when RECORD piano-roll frameNotes stay zero while capture grows (D1 regression)",
     )
     args = parser.parse_args()
 
@@ -3834,6 +4070,7 @@ def main() -> int:
                 verify_m8_edit_pass=args.require_m8_pass_verify,
                 record_layout=record_layout if standard_edit_fixture else None,
             )
+            live_record_display = _verify_live_record_display(verification_lines)
             serial_verification = {
                 "has_cap_lines": has_cap,
                 "state_counts": _count_capture_state_entries(verification_lines),
@@ -3841,6 +4078,7 @@ def main() -> int:
                     f"{a}->{b}": c
                     for (a, b), c in _count_capture_transitions(verification_lines).items()
                 },
+                "record": {"live_record_display": live_record_display},
                 "edit": edit_check,
             }
 
@@ -3855,6 +4093,7 @@ def main() -> int:
             "undo_redo_delay_ms": args.undo_redo_delay_ms,
             "long_over_short_pitch_case": args.long_over_short_pitch_case,
             "require_m8_pass_verify": args.require_m8_pass_verify,
+            "require_live_record_display": args.require_live_record_display,
             "fixture_note_count": len(record_fixture),
             "fixture_notes_sent": note_count,
             "record_layout": {
@@ -3944,8 +4183,46 @@ def main() -> int:
                     print(f"    deteriorated: {event}")
                 for row in note_lengths.get("below_peak_at_end", [])[:5]:
                     print(f"    below_peak: {row}")
+            session_state_enter = serial_verification.get("edit", {}).get("session_state_enter")
+            if session_state_enter:
+                print(
+                    f"  session-state enter: ok={session_state_enter.get('ok')} "
+                    f"select={session_state_enter.get('select_seen')} "
+                    f"cycle_on_enter={session_state_enter.get('cycle_on_enter')}"
+                )
+            session_undo_routing = serial_verification.get("edit", {}).get("session_undo_routing")
+            if session_undo_routing:
+                print(
+                    f"  session undo routing: in_edit_undo={session_undo_routing.get('in_edit_undo')} "
+                    f"in_edit_redo={session_undo_routing.get('in_edit_redo')} "
+                    f"post_exit_undo={session_undo_routing.get('post_exit_undo')} "
+                    f"post_exit_redo={session_undo_routing.get('post_exit_redo')}"
+                )
+            warmup_create = serial_verification.get("edit", {}).get("warmup_empty_nav_create")
+            if warmup_create:
+                print(
+                    f"  warmup empty-nav create: ok={warmup_create.get('ok')} "
+                    f"action={warmup_create.get('notelen_action')} "
+                    f"created={warmup_create.get('created_seen')}"
+                )
+            live_record_display = serial_verification.get("record", {}).get("live_record_display")
+            if live_record_display:
+                print(
+                    f"  live record display: ok={live_record_display.get('ok')} "
+                    f"samples={live_record_display.get('disp_samples')} "
+                    f"frame+={live_record_display.get('frame_positive_samples')} "
+                    f"sustained_zero={live_record_display.get('max_sustained_frame_zero')}"
+                )
+                if live_record_display.get("issues"):
+                    print(f"    live_record_display issues: {live_record_display.get('issues')}")
             if not edit_ok:
                 print(f"  issues: {serial_verification['edit'].get('issues')}")
+                return 1
+            if (
+                args.require_live_record_display
+                and live_record_display is not None
+                and not live_record_display.get("ok", False)
+            ):
                 return 1
         return 0
     finally:

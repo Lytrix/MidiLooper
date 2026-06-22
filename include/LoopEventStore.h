@@ -64,8 +64,12 @@ class LoopEventStore {
   void mergeFrom(LoopEventStore& other);
 
   void flatten(MidiEventVec& out) const;
+  /// Append events from one chunk id (read-only; does not mutate id).
+  static void appendFlattenedChunkId(uint16_t id, MidiEventVec& out);
   /// Append events from chunk refs (read-only; does not mutate ids).
   static void appendFlattenedChunkIds(const ChunkIdList& ids, MidiEventVec& out);
+  /// Count events referenced by chunk ids without flattening.
+  static size_t countEventsInChunkIds(const ChunkIdList& ids);
   void loadFromFlat(const MidiEventVec& events);
 
   /// Shift every event tick by delta; bumps up if any tick would go negative.

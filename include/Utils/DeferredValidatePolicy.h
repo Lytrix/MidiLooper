@@ -18,7 +18,11 @@ inline bool shouldRunDeferredFullValidate(bool queued, bool isRecording, bool is
   if (queuedAtMs == 0) {
     return false;
   }
-  return (nowMs - queuedAtMs) >= Config::deferredValidateMaxDelayMs;
+  const int32_t elapsedMs = static_cast<int32_t>(nowMs - queuedAtMs);
+  if (elapsedMs < 0) {
+    return false;
+  }
+  return static_cast<uint32_t>(elapsedMs) >= Config::deferredValidateMaxDelayMs;
 }
 
 }  // namespace

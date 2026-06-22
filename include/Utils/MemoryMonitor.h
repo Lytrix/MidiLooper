@@ -61,9 +61,13 @@ void logStatus();
  * @param addedNoteOns Total note-ons stored this record/overdub pass.
  * @param loopEventCount Events in the active loop vector (all types).
  * @param loopEventsData Pointer to loop.midiEvents storage, or nullptr when empty.
+ * @param loopChunkRefCount Active chunk refs for chunk-backed storage metadata.
+ * @param loopChunkBacked True when loop events are represented by chunk refs.
  */
 void logStatusAtAddedNotes(uint32_t addedNoteOns, size_t loopEventCount = 0,
-                          const void* loopEventsData = nullptr);
+                          const void* loopEventsData = nullptr,
+                          size_t loopChunkRefCount = 0,
+                          bool loopChunkBacked = false);
 
 #if defined(PIO_UNIT_TEST_NATIVE)
 void setNativeTestFreeHeap(uint32_t bytes);

@@ -4,8 +4,10 @@
 #include "Loop.h"
 #include "Utils/LoopStopFinalize.h"
 #include "Utils/MemoryMonitor.h"
+#include "Utils/DebugSessionCapture.h"
 #include "Logger.h"
 #include <algorithm>
+#include <chrono>
 
 namespace {
 
@@ -162,6 +164,67 @@ size_t estimatedEditPassBytes(const EditChangeList& changes) {
 bool canHeapAdmitEditPass(const EditChangeList& changes) {
   const size_t needed = Config::HEAP_RESERVE_BYTES + estimatedEditPassBytes(changes);
   return MemoryMonitor::getFreeHeap() >= needed;
+}
+
+const char* sealOutcomeLabel(SealOutcome outcome) {
+  switch (outcome) {
+    case SealOutcome::Ok:
+      return "ok";
+    case SealOutcome::SkippedEmpty:
+      return "skipped_empty";
+    case SealOutcome::FailedValidation:
+      return "failed_validation";
+    case SealOutcome::AlreadyPending:
+      return "already_pending";
+    case SealOutcome::PoolExhausted:
+      return "pool_exhausted";
+  }
+  return "unknown";
+}
+
+size_t stopPathChunkRefCount(const Loop& loop) {
+  size_t refs = 0;
+  if (loop.passes.hasRecordPass() && loop.passes.recordPass.state == CapturePassState::Active) {
+    refs += loop.passes.recordPass.chunkRefs.size();
+  }
+  for (const OverdubPass& pass : loop.passes.overdubPasses) {
+    if (pass.state == CapturePassState::Active) {
+      refs += pass.chunkRefs.size();
+    }
+  }
+  if (loop.hasPendingCapturePass()) {
+    refs += loop.pendingCapturePass().chunkRefs.size();
+  }
+  return refs;
+}
+
+size_t stopPathEventCount(const Loop& loop) {
+  size_t events = 0;
+  if (loop.passes.hasRecordPass() && loop.passes.recordPass.state == CapturePassState::Active) {
+    events += LoopEventStore::countEventsInChunkIds(loop.passes.recordPass.chunkRefs);
+  }
+  for (const OverdubPass& pass : loop.passes.overdubPasses) {
+    if (pass.state == CapturePassState::Active) {
+      events += LoopEventStore::countEventsInChunkIds(pass.chunkRefs);
+    }
+  }
+  if (loop.hasPendingCapturePass()) {
+    events += LoopEventStore::countEventsInChunkIds(loop.pendingCapturePass().chunkRefs);
+  }
+  if (loop.captureActive()) {
+    events += loop.capture.store.size();
+  }
+  return events;
+}
+
+uint32_t traceMicros() {
+#if defined(ARDUINO)
+  return micros();
+#else
+  using namespace std::chrono;
+  return static_cast<uint32_t>(
+      duration_cast<microseconds>(steady_clock::now().time_since_epoch()).count());
+#endif
 }
 
 }  // namespace
@@ -455,7 +518,7 @@ void Loop::commitStopFinalizeFromStore(LoopEventStore& merged) {
 
   ++playbackRevision;
   discardEditFlatMaterialization();
-  rebuildVisualCacheFromPasses();
+  markDisplayCachesStale();
 }
 
 void Loop::seedRecordPassFromStore(LoopEventStore& store) {
@@ -709,23 +772,51 @@ bool Loop::setCapturePassState(PassId id, CapturePassState state) {
 }
 
 CommitResult Loop::commitCapturePass(CommitReason reason, uint32_t sealedAtTick) {
-  (void)reason;
+  const bool emitStopStage = reason == CommitReason::RecordStop ||
+                             reason == CommitReason::RecordStopToStopped;
+  const uint32_t commitStartUs = traceMicros();
+  auto emitStage = [&](const char* stage, uint32_t durationUs,
+                       uint32_t heapBefore, uint32_t heapAfter, const char* outcome) {
+    if (!emitStopStage) {
+      return;
+    }
+    const uint32_t elapsedUs = traceMicros() - commitStartUs;
+    SC_REC_STOP_STAGE(stage, elapsedUs, durationUs, heapBefore, heapAfter,
+                      stopPathEventCount(*this), stopPathChunkRefCount(*this), outcome);
+  };
+
   if (capture.store.empty()) {
+    const uint32_t heap = MemoryMonitor::getFreeHeap();
+    emitStage("seal", 0, heap, heap, "skipped_empty");
+    emitStage("publish", 0, heap, heap, "not_run");
     discardCapture();
     return CommitResult::Skipped;
   }
 
+  const uint32_t sealHeapBefore = MemoryMonitor::getFreeHeap();
+  const uint32_t sealStartUs = traceMicros();
   const SealOutcome seal = sealCapture(sealedAtTick);
+  const uint32_t sealDurationUs = traceMicros() - sealStartUs;
+  const uint32_t sealHeapAfter = MemoryMonitor::getFreeHeap();
+  emitStage("seal", sealDurationUs, sealHeapBefore, sealHeapAfter, sealOutcomeLabel(seal));
   if (seal != SealOutcome::Ok) {
+    emitStage("publish", 0, sealHeapAfter, sealHeapAfter, "not_run");
     return CommitResult::SealFailed;
   }
 
+  const uint32_t publishHeapBefore = MemoryMonitor::getFreeHeap();
+  const uint32_t publishStartUs = traceMicros();
   if (!publishPendingCapturePass()) {
+    const uint32_t publishDurationUs = traceMicros() - publishStartUs;
+    const uint32_t publishHeapAfter = MemoryMonitor::getFreeHeap();
+    emitStage("publish", publishDurationUs, publishHeapBefore, publishHeapAfter, "failed");
     return CommitResult::SealFailed;
   }
+  const uint32_t publishDurationUs = traceMicros() - publishStartUs;
+  const uint32_t publishHeapAfter = MemoryMonitor::getFreeHeap();
+  emitStage("publish", publishDurationUs, publishHeapBefore, publishHeapAfter, "ok");
 
   markPassDerivedStale();
-  rebuildVisualCacheFromPasses();
   return CommitResult::Published;
 }
 

@@ -56,6 +56,7 @@ public:
     void handleMuteTrack(uint8_t trackNumber);
     void handleSoloTrack(uint8_t trackNumber);
     void handleCycleEditMode();
+    void handleCycleNoteEditType();
     void handleExitEditMode();
     void handleDeleteNote();
     void handleCreateNoteAtBracket();

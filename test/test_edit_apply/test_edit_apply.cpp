@@ -10,6 +10,8 @@
 #include "../../src/LoopEventStore.cpp"
 #include "../../src/Utils/MemoryMonitor.cpp"
 #include "../../src/Loop.cpp"
+#include "../../src/NoteEditFocus.cpp"
+#include "../../src/NoteEditSessionUndo.cpp"
 
 #include "EditApply.h"
 #include "EditPass.h"
@@ -393,14 +395,12 @@ void test_note_edit_session_undo_stack() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
   NoteEditSessionUndoStack stack;
-  LoopEventStore store;
-  TEST_ASSERT_TRUE(store.append(MidiEvent::NoteOn(1, 1, 60, 100)));
-  stack.pushBeforeMutation(store);
-  TEST_ASSERT_TRUE(store.append(MidiEvent::NoteOff(10, 1, 60, 0)));
+  SessionUndoEntry entry;
+  entry.changes.push_back({});
+  TEST_ASSERT_TRUE(stack.pushEntry(entry));
   TEST_ASSERT_TRUE(stack.canUndo());
-  const auto snap = stack.popUndoSnapshot();
-  TEST_ASSERT_NOT_NULL(snap.get());
-  TEST_ASSERT_EQUAL(1u, snap->size());
+  const SessionUndoEntry* target = stack.popUndoTarget();
+  TEST_ASSERT_NOT_NULL(target);
 }
 
 void test_add_note_rematerialize_session_store() {

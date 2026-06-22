@@ -189,6 +189,13 @@ Full-loop pass over `loop.midiEvents()` (materialized flat):
 
 While **NoteEditSession** is active, `handleUndo` / `handleRedo` prefer session undo (`NoteEditSession undo` / `redo` logs) before the global stack.
 
+**E:** entries (pool-budget §9): **`SessionUndoEntry`** = **`EditChangeList`** + **`NoteEditFocus`** + **`NoteEditSelection`**. Pushed at geometry-kind boundaries via **`pushSessionUndoOnKindChange`** (not per fader tick). Restore: **`rematerializeEditView`** + **`applyEditChangeList`** + focus/selection replay — no **`cloneShared`** per step.
+
+- Depth target **`Config::PREFERRED_SESSION_UNDO_DEPTH`** (32); pressure trim keeps at least **`MIN_SESSION_UNDO_DEPTH`** (4).
+- Push checks heap admission (**`HEAP_RESERVE_BYTES`** + estimated entry bytes); rejected pushes log a warning.
+
+Committed **editPass** rows store **EditChange**; live **NoteEditSession.store** is materialized from **passes**; **E:** stack stores edit-scope metadata only.
+
 ### Routing (`handleUndo`)
 
 1. **NoteEditSession** undo if active and session stack non-empty
