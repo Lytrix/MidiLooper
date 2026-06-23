@@ -123,6 +123,8 @@ Each **loop slot** (`Loop`) separates live capture from committed timeline **pas
 
 Committed **passes** materialize via `LoopPasses::materialize()` for playback and display; live note edit reads/writes **NoteEditSession.store**. Full storage rules: [`docs/Guides/LOOP_MIDI_STORAGE_AND_VALIDATION.md`](docs/Guides/LOOP_MIDI_STORAGE_AND_VALIDATION.md).
 
+**How the system works (record → memory → playback → display → SD):** [`docs/plans/record_overdub_memory_display_timeline_enhancement.md`](docs/plans/record_overdub_memory_display_timeline_enhancement.md) — end-to-end timeline with Mermaid diagrams (PSRAM chunks, play-ahead, deferred save, boot reload). Pair with [`docs/Guides/DEFERRED_RUNTIME_PERSISTENCE.md`](docs/Guides/DEFERRED_RUNTIME_PERSISTENCE.md) for save FSM detail.
+
 **Read the numbers first:** [`include/MidiConfig.h`](include/MidiConfig.h) — channels, notes, CCs, LED bases.
 
 **Remap any controller:** [`docs/Guides/MIDI_CONFIG_GUIDE.md`](docs/Guides/MIDI_CONFIG_GUIDE.md) — checklist, tables, `MidiButtonConfig.cpp`, and matching `droid/midilooper_v1.ini` if you want to make your own Droid setup.

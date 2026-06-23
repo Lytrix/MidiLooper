@@ -18,14 +18,14 @@
 - [x] 2.6 Keep `PERS` success/failure and stage/cursor telemetry without heap queries in the main loop; remove or gate noisy diagnostic rows before closeout.
 - [x] 2.7 Confirm `processDeferredSaveState` placement in `src/main.cpp` runs after MIDI/clock/playback servicing and never on the record/overdub critical path.
 - [x] 2.8 Native test: full 64-bar save runs to completion under a forced-low RAM2 floor; assert max temporary event batch ≤ `CHUNK_CAPACITY`.
-- [x] 2.9 HITL gate: 64+64 baseline reaches `STOPPED_RECORDING -> PLAYING -> OVERDUBBING` and `PERS,result,...,ok`; reload-after-reboot covered by native `test_64_bar_record_snapshot_reloads_after_reboot_simulation`.
+- [x] 2.9 HITL gate: 64+64 baseline reaches `STOPPED_RECORDING -> PLAYING -> OVERDUBBING` and `PERS,result,...,ok`; reload-after-reboot covered by native `test_64_bar_record_snapshot_reloads_after_reboot_simulation`. **Also verified 2026-06-23:** 64+64+64 (two full overdub passes, `--second-overdub-bars 64`) PASS — `captures/host_midi_automation_baseline_20260623_112324.json` (1025 record notes, RAM2 16384 B at stop, undo/redo OK).
 
 ## 3. Verification and HITL gates
 
 - [x] 3.1 Extend `scripts/host_midi_automation_baseline.py` with a free-RAM2 floor assertion at stop and a `PERS,result,...,ok` requirement for long runs.
 - [x] 3.2 Extend baseline report with min free RAM2 during the run and the save outcome stage.
 - [x] 3.3 Run `pio test -e native` (full matrix) and capture pass/fail evidence in change notes.
-- [x] 3.4 Run 48/64-bar record-only and 64+64 HITL baselines per `.cursor/rules/HITL-Test-Flow.mdc`; store deterministic capture artifacts.
+- [x] 3.4 Run 48/64-bar record-only and 64+64 HITL baselines per `.cursor/rules/HITL-Test-Flow.mdc`; store deterministic capture artifacts. **2026-06-23:** added 64+64+64 two-full-overdub gate (`--record-bars 64 --overdub-bars 64 --second-overdub-bars 64`, `--undo-redo-delay-ms 3000`) — PASS `captures/host_midi_automation_baseline_20260623_112324.json`.
 
 ## 4. Carried forward from superseded `record-stop-64-bar-crash`
 

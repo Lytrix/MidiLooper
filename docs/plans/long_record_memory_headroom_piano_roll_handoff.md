@@ -46,7 +46,8 @@ Recording past ~32 bars crashed (USB serial drops). Root cause was **RAM2 heap e
 
 ### Verification (done)
 - Native: `pio test -e native` (146 tests)
-- HITL: 48/64-bar record-only, 64+64 overdub, canonical 2+2 overdub baseline
+- HITL: 48/64-bar record-only, 64+64 overdub, canonical 2+2 overdub baseline, 64+64+64 two-full-overdub (`captures/host_midi_automation_baseline_20260623_112324.json`)
+- Timeline reference: [`record_overdub_memory_display_timeline_enhancement.md`](record_overdub_memory_display_timeline_enhancement.md)
 
 ---
 
