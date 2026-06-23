@@ -1,9 +1,9 @@
-# Handoff — scoped edit pass payload (step 2)
+# Handoff — scoped edit pass payload shipped; persistence closeout next
 
 **Date:** 2026-06-23  
 **Branch:** `refactor/timeline-data-model`  
-**Tip:** `839553b` — **3 commits ahead** of `origin/refactor/timeline-data-model` (not pushed at handoff time)  
-**Status:** **`edit-session-state` shipped** — **start step 2 in a new chat**.
+**Tip:** `be370f4` — **pushed** to `origin/refactor/timeline-data-model`  
+**Status:** **`scoped-edit-pass-payload`** and **`scoped-edit-pass-persistence`** archived — see **`docs/plans/scoped_edit_pass_persistence_handoff.md`**.
 
 Use this doc to continue without re-reading the full prior thread.
 
@@ -13,30 +13,32 @@ Use this doc to continue without re-reading the full prior thread.
 
 | Item | Commit / evidence |
 |------|-------------------|
-| **`scoped-edit-pass-model`** | Archived `openspec/changes/archive/2026-06-23-scoped-edit-pass-model/` |
-| **`edit-session-state`** | `839553b`; archived `openspec/changes/archive/2026-06-23-edit-session-state/`; spec `openspec/specs/note-edit-session-state/spec.md` |
-| **`EditSession`** on **EditManager** | `include/EditSession.h`; `editSession` replaces `NoteEditSession` |
-| **`EditPassType`** / **`passType`** on **EditPass** | Renamed from `EditSessionType` / `sessionType` on stored rows |
-| **`cycleEditSession`** / **`getEditSessionType()`** | `MainEditMode` / `cycleMainEditMode` removed |
-| Note-edit regressions (pre-payload) | `f946d82` |
-| Native tests | **155/155** at last run |
-| Edit HITL | **PASS** `captures/host_midi_automation_edit_baseline_20260623_194854.json` |
+| **`edit-session-state`** | `839553b`; archived `openspec/changes/archive/2026-06-23-edit-session-state/` |
+| **`scoped-edit-pass-payload`** | `be370f4` firmware + HITL; change folder `openspec/changes/scoped-edit-pass-payload/` — **§1–§6.2 done**, **§6.3 validate + archive open** |
+| **EditPass row shape** | `include/EditPass.h` — `target`, `startTick`, `endTick`, `pitch`, `velocity`, `addedEvents`; no **EditChange** / **EditChangeList** |
+| **Apply** | `applyNoteEditPass` / `applyNoteEditPassSequence` in `src/EditApply.cpp` |
+| **Session undo** | `SessionUndoEntry.editRows` / `redoEditRows`; `buildSessionStoreEditPasses` |
+| **SD v5** | `STORAGE_VERSION 5`; tail marker **EPT3**; `writePersistedEditPass` / `readPersistedEditPass` only; v1–v4 rejected |
+| **Edit HITL script** | `scripts/host_midi_automation_edit_baseline.py` — arm-then-record prelude (transport off → EMPTY→ARMED → RECORDING starts transport) |
+| Native tests | **155/155** at last run (`pio test -e native`) |
+| Edit HITL | **PASS** `captures/host_midi_automation_edit_baseline_20260623_232352.json` (`loop_start=0`, `loop_length=1536`, `serial edit verification ok=True`) |
 
-### Behavior locks (still true after `839553b`)
+### Behavior locks (still true)
 
 | Path | Behavior |
 |------|----------|
 | **`exitEditMode`** | commit pending → **`closeNoteEditPass`** → `sessionType → Loop` → deferred save |
 | **`cycleEditSession`** | `Loop ↔ Note` toggle only; **no** `closeNoteEditPass` from toggle alone |
-| **`sendEditSessionChange`** | **must** set `editSession.sessionType` (fixed in same session as HITL) |
 | **`isNoteEditActive()`** | `editSession.active` (store open) — **not** `sessionType == Note` |
-| **`getEditSessionType()`** | loop vs note **UI** routing |
+| Record from EMPTY | **Arm** with transport **stopped** (EMPTY→ARMED), then **record** press starts transport (ARMED→RECORDING, `RECA` loop_start=0) |
 
-### Still in firmware (step 2 removes)
+### Deleted (grep should stay clean)
 
-- **`EditChange`**, **`EditChangeType`**, **`EditChangeList`**
-- **`applyEditChangeList`** and dual-read v4 SD helpers in **`StorageLoopIo.cpp`**
+- **`EditChange`**, **`EditChangeType`**, **`EditChangeList`**, **`applyEditChangeList`**
+- SD v4 edit helpers (`readPersistedEditPassLegacyV4`, `readPersistedEditChange`, …)
 - Legacy **`EditPassKind`**, **`noteEditPassIndex`** on **EditPass**
+
+(`NoteMovementUtils::NoteEditChangeKind` is unrelated — live UI move/length/pitch only.)
 
 ---
 
@@ -44,117 +46,122 @@ Use this doc to continue without re-reading the full prior thread.
 
 | Step | Change | Gate |
 |------|--------|------|
-| **2** ← **start here** | **`scoped-edit-pass-payload`** | `pio test -e native` after §2 + §4; edit HITL; archive |
-| **3** | **`scoped-edit-pass-persistence`** | investigation closeout only — no payload duplication |
+| **A** ← **start here** | **`scoped-edit-pass-payload` §6.3** | `openspec validate scoped-edit-pass-payload` → **`/opsx:archive`** |
+| **B** | **`scoped-edit-pass-persistence`** | **Closed** — archived 2026-06-23 |
+| **C** (parallel) | **`m8-edit`** §4 test matrix + archive | native + optional HITL |
+| **D** (after B or parallel) | **pool-budget §9** revisit | **Closed** 2026-06-23 — `openspec/specs/note-edit-session-undo/spec.md`; no session **`cloneShared`** push |
 
-**One OpenSpec change per chat.** Read only that change’s `tasks.md` + `design.md` (D1–D7 for payload).
+**One OpenSpec *implementation* change per chat** unless §6.3 archive only.
 
 ---
 
-## Step 2 — `scoped-edit-pass-payload`
+## Step A — `scoped-edit-pass-payload` closeout (§6.3)
 
-### Read first
+Firmware, native, and edit HITL are done. **Remaining on this change:**
 
-1. `openspec/changes/scoped-edit-pass-payload/tasks.md` — **implementation map**
-2. `openspec/changes/scoped-edit-pass-payload/design.md` — **D1–D7 only**
+| Task | Status | Command / action |
+|------|--------|------------------|
+| **6.2** Edit HITL | **Done** | `captures/host_midi_automation_edit_baseline_20260623_232352.json` |
+| **6.3** Validate + archive | **Open** | `openspec validate scoped-edit-pass-payload` then `/opsx:archive` |
 
-### Goal
-
-Single **EditPass** row shape (RAM + SD); delete **EditChange** everywhere.
-
-### Target note row (RAM + v5 wire)
-
-```cpp
-EditPassType passType;
-EditActionType actionType;
-EditPropertyType propertyType;  // add NoteRange, Velocity; drop StartTick/EndTick
-NoteRef target;
-uint32_t startTick, endTick;
-uint8_t pitch, velocity;
-MidiEventVec addedEvents;       // Create only
-// DELETE: EditChangeList changes, EditPassKind kind, noteEditPassIndex
+```bash
+pio test -e native   # confirm still green
+openspec validate scoped-edit-pass-payload
+# /opsx:archive scoped-edit-pass-payload
 ```
 
-### Locked row semantics
-
-| User edit | actionType | propertyType | Fields |
-|-----------|------------|--------------|--------|
-| Add | Create | None | `addedEvents` |
-| Delete | Delete | None | `target` |
-| Move | Update | **NoteRange** | `target`, `startTick`, `endTick` |
-| Length | Update | **Length** | `target`, `startTick`, `endTick` |
-| Pitch | Update | **Pitch** | `target`, `pitch` |
-| Velocity | Update | **Velocity** | `target`, `velocity` |
-
-No “payload” blob vocabulary.
-
-### Locked SD policy
-
-- **`STORAGE_VERSION 5`**; `loadState` rejects v1–v4 → empty start (**no migration**, **no dual-read**)
-- New edits tail marker (**EPT3** or successor); delete legacy SD helpers (design **D7** list)
-- Canonical wire per row: `id`, `passType`, `editPassIndex`, `state`, `actionType`, `propertyType`, `target`, ticks, pitch, velocity, `addedEventCount` × **MidiEvent**
-
-### Task order (`tasks.md`)
-
-| § | Work | Native gate |
-|---|------|-------------|
-| **1** | Row model — **EditPropertyType**, **EditPass** fields, commit builders | — |
-| **2** | **`applyNoteEditPass`**; delete **`applyEditChangeList`** / **EditChange** | **`pio test -e native`** |
-| **3** | Session undo row shape (**SessionUndoEntry**) | — |
-| **4** | SD v5 read/write; delete v4 helpers | **`pio test -e native`** |
-| **5** | Grep cleanup — zero **EditChange** refs | — |
-| **6** | Full native + edit HITL + validate + archive | both |
-
-### Primary files
-
-`include/EditPass.h`, `include/NoteEditFocus.h`, `src/EditManager.cpp`, `src/Loop.cpp`,
-`src/EditApply.cpp`, `src/LoopPasses.cpp`, `src/StorageLoopIo.cpp`, `src/StorageManager.cpp`,
-`include/NoteEditSessionUndo.h`, `src/NoteEditSessionUndo.cpp`,
-`test/test_edit_apply`, `test/test_note_edit_session_undo`, `test/test_storage_loop_io`.
-
-### Out of scope for step 2
-
-- **`EditSessionType`** / **`cycleEditSession`** — shipped in step 1
-- CC edit UI/apply
-- Tick delta SD compaction (m8-edit §6.1)
-- Velocity HITL (enum + apply land; UI control deferred)
+After archive: delta lands in `openspec/specs/timeline-passes/`; active folder moves under `openspec/changes/archive/`.
 
 ---
 
-## Step 3 — `scoped-edit-pass-persistence` (after step 2)
+## Step B — `scoped-edit-pass-persistence` (closeout only)
 
-Investigation closeout only. Regression fixes already in **`f946d82`**.  
-See `openspec/changes/scoped-edit-pass-persistence/tasks.md` **Done when** section.  
-Do **not** duplicate payload row work.
+**Read:** `openspec/changes/scoped-edit-pass-persistence/tasks.md` + `design.md`
+
+**Goal:** Document and evidence-gate exit vs toggle paths — **not** firmware feature work unless a scenario fails.
+
+| § | Work |
+|---|------|
+| **1.2** | Vocabulary note: **`EditSessionType`** (live) vs **`EditPassType`** (stored row) |
+| **2** | Exit matrix: **`exitEditMode`** vs **`cycleEditSession`**; scenario entries for pass close + undo/redo |
+| **3–4** | Trace merge + deferred-save boundaries (`saveNoteEditPass`, `closeNoteEditPass`, `PERS,result,ok`) |
+| **5.2** | Map HITL markers: `NoteEditPassClosed`, scoped post-exit undo/redo |
+| **6** | `openspec validate` + native reference tests |
+
+**Do not:** re-implement **EditPass** fields, SD v5 wire, or **applyNoteEditPass**.
+
+**HITL reference (post-payload):** `captures/host_midi_automation_edit_baseline_20260623_232352.json`
 
 ---
 
-## Recommended new-chat prompt (step 2 only)
+## Parallel tracks (pick one per session)
+
+### `m8-edit` — test gate + archive
+
+Open: `openspec/changes/m8-edit/tasks.md` §4–§5.
+
+| Task | Notes |
+|------|--------|
+| **§4.1** | Session undo native matrix — **`note-edit-session-undo-gpio`** landed; extend `test_note_edit_session_undo` if gaps remain |
+| **§4.3** | SD exit flush while **PLAYING** — update for **v5** wire (was v4 in task text) |
+| **§4.4** | Overdub during note edit + 3-step global undo |
+| **§5.3** | `openspec validate m8-edit` + archive |
+
+**§4.7** full HITL optional if overlap Track C tracked separately.
+
+### `note-edit-session-undo-gpio`
+
+Tasks **complete**; folder still under `openspec/changes/note-edit-session-undo-gpio/` — archive when convenient (can batch with m8-edit).
+
+### `long-loop-piano-roll-window`
+
+Display + LOOP_EDIT controls — see `docs/plans/long_loop_piano_roll_overview_enhancement.md`.
+
+### `edit-record-display-length-mode`
+
+Reopened D1–D3 — `openspec/changes/edit-record-display-length-mode/tasks.md`.
+
+### pool-budget §9 (deferred)
+
+**§9 closed 2026-06-23:** main spec **`openspec/specs/note-edit-session-undo/spec.md`**; firmware uses **`SessionUndoEntry.editRows`**; no session-undo **`cloneShared`** push path in production.
+
+---
+
+## Edit HITL — script gotchas (for future runs)
+
+Canonical command: `.cursor/rules/HITL-Edit-Test-Flow.mdc`
+
+| Mistake | Symptom | Fix |
+|---------|---------|-----|
+| Skip clear when **ARMED** | Stale undo, wrong note count / merges | Clear unless **EMPTY** only |
+| Start **transport** before first record press | EMPTY→RECORDING at wrong tick (`loop_start≠0`) | Arm with transport off; second press starts transport |
+| `_ensure_midi_clock` before fixture stream | First note ~1 beat late (`m0_tick=192`) | Stream fixture immediately after RECORDING |
+
+---
+
+## Recommended new-chat prompts
+
+### Archive only (quick)
 
 ```text
-Continue from docs/plans/edit_session_state_payload_handoff.md — step 2 only.
-
-/opsx:apply scoped-edit-pass-payload — follow tasks.md section by section (§1→§6).
-edit-session-state is merged (839553b); EditPassType rename is done.
-
-Rules:
-- One change this session (scoped-edit-pass-payload) only.
-- STORAGE_VERSION 5, no migration, no dual-read v4.
-- Run pio test -e native after §2 apply and after §4 SD.
-- Delete EditChange / EditChangeList / applyEditChangeList when §2 lands.
-- Match existing code patterns; minimal diff.
-
-After native pass, run edit HITL per .cursor/rules/HITL-Edit-Test-Flow.mdc if firmware changed.
-Do not upload Teensy unless I confirm.
+Close scoped-edit-pass-payload §6.3 per docs/plans/edit_session_state_payload_handoff.md.
+Run pio test -e native, openspec validate scoped-edit-pass-payload, then /opsx:archive scoped-edit-pass-payload.
 ```
 
-### Next chat after step 2 (persistence only)
+### Persistence closeout
 
 ```text
-Continue from docs/plans/edit_session_state_payload_handoff.md — step 3 only.
+Continue from docs/plans/edit_session_state_payload_handoff.md — step B only.
 
-/opsx:apply scoped-edit-pass-persistence — closeout tasks only; payload is merged.
-Do not re-implement EditPass row shape or SD v5.
+/opsx:apply scoped-edit-pass-persistence — investigation closeout tasks (§1.2–§6).
+Payload + SD v5 shipped in be370f4; do not redo EditPass row shape.
+```
+
+### M8 test gate
+
+```text
+/opsx:apply m8-edit — §4.1 session undo native matrix (or §4.3 v5 exit-flush test).
+Read openspec/changes/m8-edit/tasks.md; STORAGE_VERSION is 5.
 ```
 
 ---
@@ -162,6 +169,7 @@ Do not re-implement EditPass row shape or SD v5.
 ## Related docs
 
 - Vocabulary: `.cursor/rules/Naming-Vocabulary-Teensy-Looper.mdc`
-- Storage constraints: `docs/Guides/LOOP_MIDI_STORAGE_AND_VALIDATION.md`
-- Naming drift (separate track): `docs/plans/naming_drift_scoped_edit_pass_handoff.md`
-- Edit HITL flow: `.cursor/rules/HITL-Edit-Test-Flow.mdc`
+- Storage: `docs/Guides/LOOP_MIDI_STORAGE_AND_VALIDATION.md`
+- Edit HITL: `.cursor/rules/HITL-Edit-Test-Flow.mdc`
+- Naming drift (separate): `docs/plans/naming_drift_scoped_edit_pass_handoff.md` (Track 1 largely shipped in `5fb37a3`)
+- Piano roll: `docs/plans/long_record_memory_headroom_piano_roll_handoff.md`

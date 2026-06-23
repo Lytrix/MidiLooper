@@ -34,7 +34,7 @@ flowchart LR
   materializedStore --> playback[Track playback order]
   materializedStore --> validate[validateAndCleanupMidiEvents]
   materializedStore --> display[NoteUtils reconstructNotes]
-  passes --> sdSave[StorageLoopIo v4 on save]
+  passes --> sdSave[StorageLoopIo v5 on save]
 ```
 
 **Rule:** Hot playback paths use **`mergeActiveCapturePasses`** / chunk refs plus **`LoopPasses::materialize`** — not a full-loop materialization on every stop. During **NoteEditSession**, live mutations go to **`EditManager::noteEditSession.store`**; **`saveNoteEditPass()`** appends **EditPass** rows to **`passes.editPasses[]`** without rewriting capture passes.
@@ -44,14 +44,14 @@ flowchart LR
 | Layer | Storage | Global undo (when applicable) |
 |-------|---------|------------------------------|
 | **recordPass** / **overdubPass** | `Loop::passes` capture passes (chunk refs) | **RecordPassAdded** / **OverdubPassAdded** (disable pass on undo) |
-| **editPass** | `Loop::passes.editPasses[]` (`EditPassType` + `EditActionType` + `EditPropertyType`; legacy note payload remains `EditChange`) | **NoteEditPassClosed** / **ControlChangeEditPassClosed** (per closed edit-pass batch) |
+| **editPass** | `Loop::passes.editPasses[]` (`EditPassType` + `EditActionType` + `EditPropertyType` + row fields) | **NoteEditPassClosed** / **ControlChangeEditPassClosed** (per closed edit-pass batch) |
 | **NoteEditSession** | RAM `noteEditSession.store` while editing | `NoteEditSessionUndoStack` (before `saveNoteEditPass`) |
 
 - **`LoopPasses::materialize()`** — merge active capture passes, then overlay active **editPasses** in storage order (`EditPassType::Note` apply path; explicit `ControlChange` no-op stub until CC edit apply ships).
 - **`saveNoteEditPass()`** — one committed **editPass** row; may share a **noteEditPassIndex** batch.
 - **`closeNoteEditPass()`** — note-edit exit / overdub-while-editing boundary; pushes **NoteEditPassClosed** for all **editPass** ids in the closed batch.
 - **§0.6.1 record routing** — at most one **recordPass** per slot; a second record stop routes to **overdubPass** (`effectiveCapturePassPhase` in `sealCapture`).
-- **SD v4** — `StorageLoopIo` persists **passes** per pool slot (wire-compatible capture-pass encoding + **editPasses** tail); `autosaveIntervalMs` (5 min) + urgent flush on note-edit exit when dirty.
+- **SD v5** — `StorageLoopIo` persists **passes** per pool slot (wire-compatible capture-pass encoding + **editPasses** tail); `autosaveIntervalMs` (5 min) + urgent flush on note-edit exit when dirty.
 
 **Future session names (not implemented):** **LoopEditSession**, **ControlChangeEditSession**; playback/jam session **TBD**.
 
@@ -81,7 +81,7 @@ flowchart LR
 
 - **`PassConfig::CHUNK_RESERVE`** (default 16) — chunks held back for playback headroom.
 - **`sealCapture`** returns **`SealOutcome::PoolExhausted`** when `canAllocChunkWithReserve()` is false; there is **no** fixed `capturePassCount` cap.
-- **`saveNoteEditPass`** checks **`Config::HEAP_RESERVE_BYTES`** (32 KiB) plus estimated **EditChange** list size before appending an **editPass** row.
+- **`saveNoteEditPass`** checks **`Config::HEAP_RESERVE_BYTES`** (32 KiB) plus estimated **editPass** row payload before appending an **editPass** row.
 - **`reclaimUnreferencedDisabledPasses`** frees **Disabled** capture/edit pass rows whose ids are not pinned by any **`GlobalUndoStack`** entry (`include/PassReclaim.h`, `TrackManager::reclaimUnreferencedDisabledPasses`). Runs on idle (`main.cpp`), after undo trim / redo-branch drop, and once on seal/edit admission retry.
 
 **RAM2 headroom policy (long-record-memory-headroom):**
@@ -203,12 +203,12 @@ Full-loop pass over `loop.midiEvents()` (materialized flat):
 
 While **NoteEditSession** is active, `handleUndo` / `handleRedo` prefer session undo (`NoteEditSession undo` / `redo` logs) before the global stack.
 
-**E:** entries (pool-budget §9): **`SessionUndoEntry`** = **`EditChangeList`** + **`NoteEditFocus`** + **`NoteEditSelection`**. Pushed at geometry-kind boundaries via **`pushSessionUndoOnKindChange`** (not per fader tick). Restore: **`rematerializeEditView`** + **`applyEditChangeList`** + focus/selection replay — no **`cloneShared`** per step.
+**E:** entries (pool-budget §9): **`SessionUndoEntry`** = **`editRows`** (scoped pre-commit **editPass** rows) + **`NoteEditFocus`** + **`NoteEditSelection`**. Pushed at geometry-kind boundaries via **`pushSessionUndoOnKindChange`** (not per fader tick). Restore: materialize from **passes** (excluding post-push committed **editPass** ids) + **`applyNoteEditPassSequence`** + focus/selection replay — no **`cloneShared`** per step.
 
 - Depth target **`Config::PREFERRED_SESSION_UNDO_DEPTH`** (32); pressure trim keeps at least **`MIN_SESSION_UNDO_DEPTH`** (4).
 - Push checks heap admission (**`HEAP_RESERVE_BYTES`** + estimated entry bytes); rejected pushes log a warning.
 
-Committed **editPass** rows store **EditChange**; live **NoteEditSession.store** is materialized from **passes**; **E:** stack stores edit-scope metadata only.
+Committed **editPass** rows store canonical **EditPass** row fields (SD v5); live **NoteEditSession.store** is materialized from **passes**; **E:** stack stores edit-scope metadata only.
 
 ### Routing (`handleUndo`)
 
@@ -272,12 +272,13 @@ Record stop calls `queueDeferredRecordRevts()` after a published commit; idle ma
 | `test/test_noteutils_reconstruct` | Display note pairing vs loop length |
 | `test/test_take_capture` | Capture pass seal/publish, record vs overdub routing |
 | `test/test_loop_take_survival` | Pass timeline survives rematerialize and stop finalize |
-| `test/test_storage_loop_io` | SD v4 pass round-trip, **startLoopTick** apply, truncated edit tail |
+| `test/test_storage_loop_io` | SD v5 pass round-trip, **startLoopTick** apply, truncated edit tail |
 | `test/test_capture_state_guards` | Overdub **beginCapture** idempotency |
 | `test/test_loop_pool` | **findById** null + slot-index fallback |
 | `test/test_playback_prewarm` | Playback runtime / order prealloc stability |
 | `test/test_deferred_validate_policy` | Deferred validate delay and playback/capture blocking |
-| `test/test_edit_apply` | **editPasses** overlay via `applyEditChangeList` |
+| `test/test_edit_apply` | **editPasses** overlay via **applyNoteEditPass** / **applyNoteEditPassSequence** |
+| `test/test_note_edit_session_undo` | **E:** **editRows** restore parity vs clone; 128-bar bounded entry memory |
 | `test/test_redo_functionality` | Undo/redo stacks (host `Track`; listed in `test_ignore` for native — run on Teensy env if needed) |
 
 Run: `pio test -e native` from project root.
@@ -297,7 +298,7 @@ Run: `pio test -e native` from project root.
 | Wrap-window finalize | `Utils/LoopStopFinalize.h` |
 | Undo | `TrackUndo.cpp`, `GlobalUndoStack.h` |
 | Undo routing | `MidiButtonActions.cpp` (`handleUndo`), `ButtonManager.cpp` |
-| SD v4 passes I/O | `StorageLoopIo.h/.cpp`, `StorageManager.cpp` |
+| SD v5 passes I/O | `StorageLoopIo.h/.cpp`, `StorageManager.cpp` |
 | Main idle hooks | `main.cpp` |
 | Display notes | `Utils/NoteUtils.cpp` |
 
