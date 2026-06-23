@@ -90,6 +90,7 @@ Memory back-off and deferred save run only from main-loop background context in 
 - 2026-06-22: `pio test -e native -f test_storage_loop_io` passed with `test_64_bar_save_completes_at_ram2_floor_with_bounded_batch`, confirming 64-bar save completion at the RAM2 floor and max temporary capture-pass batch `<= LoopEventStoreConfig::CHUNK_CAPACITY`.
 - 2026-06-22: `pio test -e native` passed (`146 test cases: 146 succeeded`), including `test_pool_budget` RAM2-floor guards, PSRAM placement for display note storage, and `test_storage_loop_io` long-record persistence coverage.
 - 2026-06-22 HITL after display/allocator fixes: 48-bar record-only kept RAM2 above the floor (`record_stop` heap `135168`, min observed RAM2 `77824`) but reset after `PERS,dispatch`. Diagnostic slice telemetry reached `track_header_slots` through track 0 slot 1 before reconnect, proving the remaining failure is runtime save architecture.
+- 2026-06-23 HITL closeout: 64+64+64 (two full overdub passes) PASS — `captures/host_midi_automation_baseline_20260623_112324.json` (`record_bars=64`, `overdub_bars=64`, `second_overdub_bars=64`; 1025 record notes; `PERS,result,...,ok`; RAM2 16384 B at `record_stop`; undo/redo after second overdub stop OK; display snapshots OK).
 
 ## Open Questions Resolution
 
