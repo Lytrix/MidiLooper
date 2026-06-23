@@ -140,7 +140,7 @@ void test_session_undo_four_kind_steps_bounded_entries() {
 
   TEST_ASSERT_EQUAL(4u, stack.undoCount());
   MidiEventVec materialized;
-  loop.passes.materializeToFlat(materialized, loop.loopLengthTicks);
+  loop.passes.materializeToEventVector(materialized, loop.loopLengthTicks);
   const size_t oneCloneBytes = materialized.size() * sizeof(MidiEvent);
   TEST_ASSERT_LESS_THAN(totalEntryBytes, oneCloneBytes * stack.undoCount());
 }

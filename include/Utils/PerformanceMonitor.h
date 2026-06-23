@@ -215,8 +215,8 @@ private:
     }
     
     void updateMemoryMetrics() {
-        currentMetrics.freeRAMBytes = MemoryMonitor::getFreeHeap();
-        currentMetrics.usedRAMBytes = MemoryMonitor::getUsedHeap();
+        currentMetrics.freeRAMBytes = MemoryMonitor::getInternalHeapFreeBytes();
+        currentMetrics.usedRAMBytes = MemoryMonitor::getInternalHeapUsedBytes();
         currentMetrics.heapFragmentationPercent = 0;  // Would need heap analysis
     }
     

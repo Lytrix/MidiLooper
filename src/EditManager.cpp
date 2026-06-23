@@ -181,7 +181,7 @@ void EditManager::rebuildNoteEditFocusAtSelect(Track& track, int selectedNoteIdx
     // session preview — otherwise a pending length preview (e.g. end 680) becomes baseline
     // on fader-1 reselect and the next ChangeLength commit is a no-op on rematerialize.
     MidiEventVec loopMidiEventsFromPasses;
-    loop.passes.materializeToFlat( loopMidiEventsFromPasses, loopLength);
+    loop.passes.materializeToEventVector( loopMidiEventsFromPasses, loopLength);
     rebuildNoteEditFocusFromStore(noteEditSession.focus, loopMidiEventsFromPasses, channel,
                                   loopLength, selectedNoteIdx);
 
@@ -211,7 +211,7 @@ void EditManager::rebuildNoteEditFocusForDisplayNote(Track& track,
     }
 
     MidiEventVec loopMidiEventsFromPasses;
-    loop.passes.materializeToFlat( loopMidiEventsFromPasses, loopLength);
+    loop.passes.materializeToEventVector( loopMidiEventsFromPasses, loopLength);
     rebuildNoteEditFocusFromStore(noteEditSession.focus, loopMidiEventsFromPasses, channel,
                                   loopLength, -1);
 
@@ -407,13 +407,13 @@ EditPassId EditManager::commitEditAction(Track& track, EditChangeList changes) {
         // Drop live session flat before replay — takes + edits[] is canonical after saveNoteEditPass.
         noteEditSession.store.discardFlatCache();
         MidiEventVec loopMidiEventsFromPasses;
-        loop.passes.materializeToFlat( loopMidiEventsFromPasses,
+        loop.passes.materializeToEventVector( loopMidiEventsFromPasses,
                          loopLength);
         logChangeLengthCommitTrace("replay_flat", loopMidiEventsFromPasses,
                                    loopLength, homePitch, homeStart);
 
         MidiEventVec takeOnlyFlat;
-        loop.flattenActiveCapturePasses(takeOnlyFlat);
+        loop.mergeActiveCapturePasses(takeOnlyFlat);
         logChangeLengthCommitTrace("take_only", takeOnlyFlat, loopLength, homePitch,
                                    homeStart);
 
@@ -422,7 +422,7 @@ EditPassId EditManager::commitEditAction(Track& track, EditChangeList changes) {
         logChangeLengthCommitTrace("session_store", noteEditSession.store.readFlat(),
                                    loopLength, homePitch, homeStart);
 
-        logChangeLengthCommitTrace("loop_editFlat", loop.midiEvents(), loopLength,
+        logChangeLengthCommitTrace("loop_materialized", loop.midiEvents(), loopLength,
                                    homePitch, homeStart);
     }
     track.invalidateCaches();
@@ -448,7 +448,7 @@ void EditManager::pushSessionUndoOnKindChange(Track& track, NoteEditKind kind) {
                    "Session undo push rejected: heap below reserve (need=%u free=%u)",
                    static_cast<unsigned>(Config::HEAP_RESERVE_BYTES +
                                          estimatedSessionUndoEntryBytes(entry)),
-                   static_cast<unsigned>(MemoryMonitor::getFreeHeap()));
+                   static_cast<unsigned>(MemoryMonitor::getInternalHeapFreeBytes()));
         return;
     }
     lastPushedGeometryKind_ = kind;

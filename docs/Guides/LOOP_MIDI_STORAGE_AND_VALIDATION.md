@@ -14,7 +14,7 @@ Each **loop slot** (`Loop` in `include/Loop.h`) holds live capture, committed **
 |-------|------|------|
 | `capture` | `Capture` | Live record/overdub append buffer (`capture.store`, `capture.phase`) |
 | `passes` | `LoopPasses` | Canonical timeline: **recordPass**, **overdubPasses[]**, **editPasses[]** |
-| `editFlat_` | `CowLoopEventStore` | Derived materialized MIDI cache behind `midiEvents()` (non-canonical) |
+| `passesMaterializedStore_` | `CowLoopEventStore` | Derived materialized MIDI cache behind `midiEvents()` (non-canonical) |
 
 ```mermaid
 flowchart LR
@@ -28,16 +28,16 @@ flowchart LR
   subgraph materialized [Materialized view]
     recordPass --> materialize[LoopPasses::materialize]
     editPasses --> materialize
-    materialize --> editFlat[editFlat_ / midiEvents]
-    undoRestore[undo restore] --> editFlat
+    materialize --> materializedStore[passesMaterializedStore_ / midiEvents]
+    undoRestore[undo restore] --> materializedStore
   end
-  editFlat --> playback[Track playback order]
-  editFlat --> validate[validateAndCleanupMidiEvents]
-  editFlat --> display[NoteUtils reconstructNotes]
+  materializedStore --> playback[Track playback order]
+  materializedStore --> validate[validateAndCleanupMidiEvents]
+  materializedStore --> display[NoteUtils reconstructNotes]
   passes --> sdSave[StorageLoopIo v4 on save]
 ```
 
-**Rule:** Hot playback paths use **`flattenActiveCapturePasses`** / chunk refs plus **`LoopPasses::materialize`** — not a full-loop flatten on every stop. During **NoteEditSession**, live mutations go to **`EditManager::noteEditSession.store`**; **`saveNoteEditPass()`** appends **EditPass** rows to **`passes.editPasses[]`** without rewriting capture passes.
+**Rule:** Hot playback paths use **`mergeActiveCapturePasses`** / chunk refs plus **`LoopPasses::materialize`** — not a full-loop materialization on every stop. During **NoteEditSession**, live mutations go to **`EditManager::noteEditSession.store`**; **`saveNoteEditPass()`** appends **EditPass** rows to **`passes.editPasses[]`** without rewriting capture passes.
 
 ### Passes — Capture / recordPass / overdubPass / editPass / NoteEditSession
 
@@ -63,7 +63,7 @@ flowchart LR
 
 - Events live in fixed **256-event PSRAM chunks** (`LoopEventStoreConfig::CHUNK_CAPACITY`).
 - A global pool holds up to **512 chunks** (`POOL_CHUNK_COUNT`); initialized once in `main()` via `LoopEventStore::initPool()`.
-- Chunk ID lists use `ExtMemAllocator` (PSRAM on Teensy, heap fallback in native tests).
+- Chunk ID lists use `InternalHeapFirstAllocator` (internal heap first on Teensy, external-memory fallback in native tests).
 
 **Key operations:**
 
@@ -86,8 +86,8 @@ flowchart LR
 
 **RAM2 headroom policy (long-record-memory-headroom):**
 
-- **`LoopEventStoreConfig::RAM2_SAFETY_FLOOR_BYTES`** = **12 KiB** is the non-critical RAM2 floor.
-- **`LoopEventStore::hasRam2HeadroomForNonCriticalWork(freeHeapBytes)`** gates deferred save admission using a **stop-path** `getFreeHeap()` sample (`requestDeferredSaveState`); the main loop does not re-query heap while save slices run.
+- **`LoopEventStoreConfig::INTERNAL_HEAP_SAFETY_FLOOR_BYTES`** = **12 KiB** is the non-critical internal-heap floor.
+- **`LoopEventStore::hasInternalHeapHeadroomForNonCriticalWork(freeHeapBytes)`** gates deferred save admission using a **stop-path** `getInternalHeapFreeBytes()` sample (`requestDeferredSaveState`); the main loop does not re-query heap while save slices run.
 - Below floor, non-critical persistence work defers (`PERS,defer,...,heap_floor`) and retries on later idle iterations; MIDI clock, note-out, and playback are not gated.
 - Runtime persistence requests route through `StorageManager::requestDeferredSaveState`; direct synchronous `saveState()` is a cold-path writer and is not used by record/overdub stop, undo/redo, loop edit debounce, clear track, edit autosave, or clock-source transition.
 - `StorageManager::processDeferredSaveState` advances at most one small writer step per main-loop iteration after MIDI/clock/playback servicing. OLED display updates are skipped while a deferred save is active so non-timing SPI work does not compete with SD persistence.
@@ -134,7 +134,7 @@ There are **three separate** “note correctness” mechanisms; do not conflate 
 
 Runs on **every** record stop and overdub stop (after `loopLengthTicks` is known):
 
-- **`flattenActiveCapturePasses`** into a temp store (active **recordPass** + **overdubPasses** only — no edit overlay).
+- **`mergeActiveCapturePasses`** into a temp store (active **recordPass** + **overdubPasses** only — no edit overlay).
 - Flushes `pendingNotes` via `store.append(NoteOff(...))`.
 - Calls `LoopStopFinalize::finalizeWrapWindowOnStore` on the **head + tail 1-bar window** (default `wrapWindow = TICKS_PER_BAR`):
   - Pairs tail note-ons with head note-offs for **wrapped** notes (head-window scan only).
@@ -167,7 +167,7 @@ Full-loop pass over `loop.midiEvents()` (materialized flat):
 
 **Files:** `src/Utils/NoteUtils.cpp`, tests in `test/test_noteutils_reconstruct/`
 
-`NoteUtils::reconstructNotes(events, loopLength)` builds **DisplayNote** segments for piano roll / LEDs. It discards note-ons at or beyond `loopLength` and wraps note-offs for UI — see [`NOTE_WRAPPING_LOGIC.md`](NOTE_WRAPPING_LOGIC.md). It does **not** write back to committed passes or `editFlat_`.
+`NoteUtils::reconstructNotes(events, loopLength)` builds **DisplayNote** segments for piano roll / LEDs. It discards note-ons at or beyond `loopLength` and wraps note-offs for UI — see [`NOTE_WRAPPING_LOGIC.md`](NOTE_WRAPPING_LOGIC.md). It does **not** write back to committed passes or `passesMaterializedStore_`.
 
 ---
 
@@ -305,7 +305,7 @@ Run: `pio test -e native` from project root.
 
 1. **Using shallow copy for undo restore** — pass snapshots must deep-clone chunk refs when captured/restored.
 2. **Full `validateAndCleanupMidiEvents` on stop** — replaced by `finalizeLoopAtStop` + idle deferral for long loops.
-3. **Treating `midiEvents()` as canonical storage** — **passes** + **NoteEditSession.store** are source of truth; `editFlat_` is derived.
+3. **Treating `midiEvents()` as canonical storage** — **passes** + **NoteEditSession.store** are source of truth; `passesMaterializedStore_` is derived.
 4. **Treating `midiEvents()` writes as canonical** — they are derived-cache-only; canonical loop ownership remains in passes.
 5. **Assuming SD stores chunk IDs** — v4 persists pass-shaped snapshots; do not read/write chunk IDs to disk without a format version bump.
 6. **Confusing `reconstructNotes` with storage validation** — UI wrapping ≠ committed event cleanup.

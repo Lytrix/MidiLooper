@@ -64,6 +64,20 @@ lifecycle.
 | **OverdubPassAdded** | undo | **overdubPass** |
 | **NoteEditPassClosed** | undo | closed **noteEditPass** batch |
 
+## Merge/materialize and memory tiers
+
+Use these names consistently in code and active docs:
+
+| Concept | Use | Avoid |
+|------|-----|-------|
+| Active capture pass replay | **merge** (`mergeActiveCapturePasses`, `mergeMaterializedPassesWithCapture`) | flatten |
+| Full pass replay to MIDI vector | **materialize** (`materializeToEventVector`) | flat / flatten |
+| Internal heap (malloc/new) | **internal heap** (`InternalHeapFirstAllocator`, `getInternalHeapFreeBytes`) | RAM2 in new identifiers |
+| External memory pool (EXTMEM/PSRAM) | **external memory pool** (`ExternalMemoryFirstAllocator`, `isInExternalMemoryPool`) | PSRAM in new identifiers |
+
+Platform/SDK symbols that must stay unchanged behind shims are allowed (for example:
+`extmem_malloc`, `extmem_free`, `external_psram_size`).
+
 ## UI rename
 
 - `class EditState` → **`EditNoteState`** (note-edit FSM base)

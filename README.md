@@ -123,7 +123,9 @@ Each **loop slot** (`Loop`) separates live capture from committed timeline **pas
 
 Committed **passes** materialize via `LoopPasses::materialize()` for playback and display; live note edit reads/writes **NoteEditSession.store**. Full storage rules: [`docs/Guides/LOOP_MIDI_STORAGE_AND_VALIDATION.md`](docs/Guides/LOOP_MIDI_STORAGE_AND_VALIDATION.md).
 
-**How the system works (record → memory → playback → display → SD):** [`docs/plans/record_overdub_memory_display_timeline_enhancement.md`](docs/plans/record_overdub_memory_display_timeline_enhancement.md) — end-to-end timeline with Mermaid diagrams (PSRAM chunks, play-ahead, deferred save, boot reload). Pair with [`docs/Guides/DEFERRED_RUNTIME_PERSISTENCE.md`](docs/Guides/DEFERRED_RUNTIME_PERSISTENCE.md) for save FSM detail.
+Naming notes: **merge** means active capture pass merge (`mergeActiveCapturePasses`, `mergeMaterializedPassesWithCapture`), **materialize** means full pass replay (`materializeToEventVector`), and memory tiers are **internal heap** (fast RAM) plus **external memory pool** (external RAM / PSRAM hardware).
+
+**How the system works (record → memory → playback → display → SD):** [`docs/plans/record_overdub_memory_display_timeline_enhancement.md`](docs/plans/record_overdub_memory_display_timeline_enhancement.md) — end-to-end timeline with Mermaid diagrams (external memory pool chunks, play-ahead, deferred save, boot reload). Pair with [`docs/Guides/DEFERRED_RUNTIME_PERSISTENCE.md`](docs/Guides/DEFERRED_RUNTIME_PERSISTENCE.md) for save FSM detail.
 
 **Read the numbers first:** [`include/MidiConfig.h`](include/MidiConfig.h) — channels, notes, CCs, LED bases.
 

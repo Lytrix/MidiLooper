@@ -404,7 +404,7 @@ const DisplayNoteVec& DisplayManager::resolveDisplayNotes(const Track& track, ui
         if (cacheCold || contextChanged || eventsShrunk || eventsAdded || loopLengthChanged ||
             captureRevisionChanged) {
             if (track.isOverdubbing()) {
-                loop.buildLiveEventView(liveDisplayEventBuffer);
+                loop.mergeMaterializedPassesWithCapture(liveDisplayEventBuffer);
             } else {
                 liveDisplayEventBuffer.clear();
             }
@@ -426,7 +426,7 @@ const DisplayNoteVec& DisplayManager::resolveDisplayNotes(const Track& track, ui
 
         if (track.isRecording() || track.isOverdubbing()) {
             if (track.isOverdubbing()) {
-                loop.buildLiveEventView(liveDisplayEventBuffer);
+                loop.mergeMaterializedPassesWithCapture(liveDisplayEventBuffer);
             }
             rebuildLiveDisplayNotes();
             const uint32_t playheadCloseTick = resolvePlayheadInLoop(track, displaySlot, currentTick);
@@ -478,9 +478,9 @@ const DisplayNoteVec& DisplayManager::resolveDisplayNotes(const Track& track, ui
 
     Loop& mutLoop = const_cast<Loop&>(loop);
     mutLoop.ensureVisualCacheBuilt();
-    mutLoop.buildLiveEventView(liveDisplayEventBuffer);
+    mutLoop.mergeMaterializedPassesWithCapture(liveDisplayEventBuffer);
 
-    // Prefer visualCache (flattenActiveCapturePasses) over reconstructing the full
+    // Prefer visualCache (mergeActiveCapturePasses) over reconstructing the full
     // materialized view — after long overdub stop heap can be too low for a second
     // RAM2-heavy reconstruct while deferred save is still running.
     if (!loop.visualCache.notes.empty()) {

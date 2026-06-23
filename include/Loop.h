@@ -23,13 +23,13 @@
 #include "VisualCache.h"
 #include "TrackState.h"
 #include "Utils/NoteUtils.h"
-#include "Utils/PsramFirstAllocator.h"
+#include "Utils/ExternalMemoryFirstAllocator.h"
 #include "Globals.h"
 #include "PassReclaim.h"
 
 class Track;
 
-using PlaybackOrderVec = std::vector<size_t, PsramFirstAllocator<size_t>>;
+using PlaybackOrderVec = std::vector<size_t, ExternalMemoryFirstAllocator<size_t>>;
 
 struct Loop {
   Capture capture;
@@ -71,7 +71,7 @@ struct Loop {
 
   bool hasPublishedEvents() const;
 
-  void flattenActiveCapturePasses(MidiEventVec& out) const;
+  void mergeActiveCapturePasses(MidiEventVec& out) const;
 
   MidiEventVec& midiEvents();
   const MidiEventVec& midiEvents() const;
@@ -99,7 +99,7 @@ struct Loop {
   bool captureActive() const;
   size_t liveEventCount() const;
   bool ensureCaptureEventsSorted();
-  void buildLiveEventView(MidiEventVec& out) const;
+  void mergeMaterializedPassesWithCapture(MidiEventVec& out) const;
   void rebuildVisualCacheFromPasses();
   void ensureVisualCacheBuilt();
   void markDisplayCachesStale();
@@ -107,7 +107,7 @@ struct Loop {
   void shiftActiveCapturePassTicks(int64_t delta);
   size_t nativeTestLiveEventCount() const { return liveEventCount(); }
   void seedRecordPassFromStore(LoopEventStore& store);
-  void discardEditFlatMaterialization();
+  void discardPassesMaterializedCache();
   void commitStopFinalizeFromStore(LoopEventStore& merged);
 
   SealOutcome sealCapture(uint32_t sealedAtTick);
@@ -153,8 +153,8 @@ struct Loop {
  private:
   friend class TrackUndo;
 
-  CowLoopEventStore editFlat_;
-  bool editFlatStale_ = true;
+  CowLoopEventStore passesMaterializedStore_;
+  bool passesMaterializedStoreStale_ = true;
 
   void materializeEditViewFromPasses() const;
   void freeActiveCapturePassChunks();

@@ -18,7 +18,7 @@ The fix is two-part:
 
 | Layer | Mechanism |
 |-------|-----------|
-| **M1 — headroom** | PSRAM-first length-scaling buffers + RAM2 floor admission (`LoopEventStore::hasRam2HeadroomForNonCriticalWork`) |
+| **M1 — headroom** | External-memory-first length-scaling buffers + internal-heap floor admission (`LoopEventStore::hasInternalHeapHeadroomForNonCriticalWork`) |
 | **M2 — writer** | Central **deferred save** — one bounded SD slice per main-loop iteration, chunk-sized working set |
 
 In-RAM MIDI events still live in the **PSRAM chunk pool** (`LoopEventStore`). SD persistence **streams** those chunks without building a full-loop flat buffer in RAM2.
@@ -62,14 +62,14 @@ flowchart TB
 | `ClockManager.cpp` | Clock source transition |
 | `StorageManager::processEditAutosave` | Periodic edit dirty flush |
 
-`requestDeferredSaveState(state, admissionHeap)` accepts an optional **stop-path heap sample**. When provided, admission uses that sample instead of calling `getFreeHeap()` from the main loop (avoids re-entrant heap walks during save slices).
+`requestDeferredSaveState(state, admissionHeap)` accepts an optional **stop-path heap sample**. When provided, admission uses that sample instead of calling `getInternalHeapFreeBytes()` from the main loop (avoids re-entrant heap walks during save slices).
 
 ---
 
 ## Scheduler rules (`processDeferredSaveState`)
 
 1. **No work while capture active** — returns immediately if any track is `RECORDING` or `OVERDUBBING`.
-2. **Admission** — before `dispatch`, checks `hasRam2HeadroomForNonCriticalWork(admissionHeap)`. Below floor: `PERS,defer,...,heap_floor` and retry next idle iteration. Once `deferredSaveInProgress`, slices run to completion without re-gating.
+2. **Admission** — before `dispatch`, checks `hasInternalHeapHeadroomForNonCriticalWork(admissionHeap)`. Below floor: `PERS,defer,...,heap_floor` and retry next idle iteration. Once `deferredSaveInProgress`, slices run to completion without re-gating.
 3. **One logical step per call** — each invocation advances at most one sub-step (header field, one chunk batch, one undo entry fragment, etc.).
 4. **Display** — `isDeferredSaveActive()` is true only while **`deferredSaveInProgress`** (SD file open), not while merely queued. OLED updates skip during in-flight writes.
 5. **Dirty flags** — edit/loop dirty state clears only after **`PERS,result,...,ok`**. Failed or incomplete saves leave dirty set for retry.
@@ -108,7 +108,7 @@ Telemetry: `#CAP,PERS,<phase>,duration_us,heap_before,heap_after,<detail>` plus 
 
 Capture passes persist as **chunk refs**, not flattened RAM buffers:
 
-- `writeCapturePassChunkStream` reads at most **`LoopEventStoreConfig::CHUNK_CAPACITY` (256)** events into `deferredSaveMidiBatch` (`PsramFirstAllocator<MidiEvent>`) per slice.
+- `writeCapturePassChunkStream` reads at most **`LoopEventStoreConfig::CHUNK_CAPACITY` (256)** events into `deferredSaveMidiBatch` (`ExternalMemoryFirstAllocator<MidiEvent>`) per slice.
 - Pass headers and edit tails write in separate deferred sub-stages (`DeferredLoopWriteStage`).
 - Native gate: `test_64_bar_save_completes_at_ram2_floor_with_bounded_batch` asserts max batch ≤ `CHUNK_CAPACITY`.
 
@@ -125,11 +125,11 @@ Load path validates the completion marker and can **quarantine** a partial file 
 
 ---
 
-## PSRAM-first buffers (M1)
+## External-memory-first buffers (M1)
 
-**File:** `include/Utils/PsramFirstAllocator.h`
+**File:** `include/Utils/ExternalMemoryFirstAllocator.h`
 
-Length-scaling containers use `PsramFirstAllocator` (`extmem_malloc` first, `malloc` fallback):
+Length-scaling containers use `ExternalMemoryFirstAllocator` (`extmem_malloc` first, `malloc` fallback):
 
 - `NoteUtils::CachedNoteList`, `PlaybackOrderVec`, `LoopPasses` materialize temporaries
 - `GlobalUndoStack` entry vector
@@ -137,16 +137,16 @@ Length-scaling containers use `PsramFirstAllocator` (`extmem_malloc` first, `mal
 - `NoteUtils::DisplayNoteVec` / `reconstructDisplayNotes()` for playback display
 - `StorageManager::deferredSaveMidiBatch`
 
-**Display note:** playback display prefers **`visualCache.notes`** (built from `flattenActiveCapturePasses`) over re-reconstructing the full materialized view when heap is tight after overdub stop.
+**Display note:** playback display prefers **`visualCache.notes`** (built from `mergeActiveCapturePasses`) over re-reconstructing the full materialized view when heap is tight after overdub stop.
 
 ---
 
-## RAM2 floor constants
+## Internal-heap floor constants
 
 | Constant | Value | Role |
 |----------|-------|------|
 | `Config::HEAP_RESERVE_BYTES` | 32 KiB | Edit admission, general reserve |
-| `LoopEventStoreConfig::RAM2_SAFETY_FLOOR_BYTES` | 12 KiB | Deferred save / non-critical growth admission |
+| `LoopEventStoreConfig::INTERNAL_HEAP_SAFETY_FLOOR_BYTES` | 12 KiB | Deferred save / non-critical growth admission |
 
 HITL baseline asserts `heap_before ≥ 12288` at `record_stop` entry for runs ≥ 48 bars (`scripts/host_midi_automation_baseline.py`).
 

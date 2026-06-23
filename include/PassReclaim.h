@@ -11,11 +11,11 @@
 #include "Globals.h"
 #include "LoopPasses.h"
 #include "StorageLoopIo.h"
-#include "Utils/ExtMemAllocator.h"
+#include "Utils/InternalHeapFirstAllocator.h"
 
 struct SlotPassReferences {
-  std::vector<PassId, ExtMemAllocator<PassId>> capturePassIds;
-  std::vector<EditPassId, ExtMemAllocator<EditPassId>> editPassIds;
+  std::vector<PassId, InternalHeapFirstAllocator<PassId>> capturePassIds;
+  std::vector<EditPassId, InternalHeapFirstAllocator<EditPassId>> editPassIds;
 
   void pinCapturePass(PassId id) {
     if (id == kInvalidPassId) {

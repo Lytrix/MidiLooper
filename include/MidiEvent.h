@@ -12,7 +12,7 @@
 #include <cstdint>
 #include <algorithm> // For std::clamp
 #include <vector>
-#include "Utils/ExtMemAllocator.h"
+#include "Utils/InternalHeapFirstAllocator.h"
 
 /**
  * @struct MidiEvent
@@ -268,9 +268,9 @@ struct MidiEvent {
 /**
  * @brief Canonical vector type for MIDI event storage.
  *
- * Uses ExtMemAllocator so allocations prefer fast internal RAM and
- * automatically spill to PSRAM when internal RAM is exhausted.
+ * Uses InternalHeapFirstAllocator so allocations prefer the internal heap and
+ * automatically spill to the external memory pool when needed.
  * Use MidiEventVec everywhere instead of std::vector<MidiEvent>.
  */
-using MidiEventVec = std::vector<MidiEvent, ExtMemAllocator<MidiEvent>>;
+using MidiEventVec = std::vector<MidiEvent, InternalHeapFirstAllocator<MidiEvent>>;
 

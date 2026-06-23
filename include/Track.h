@@ -246,7 +246,7 @@ public:
   // ==========================================
   
   /// Get cached display notes - avoids expensive reconstructNotes() calls
-  const std::vector<NoteUtils::DisplayNote, PsramFirstAllocator<NoteUtils::DisplayNote>>&
+  const std::vector<NoteUtils::DisplayNote, ExternalMemoryFirstAllocator<NoteUtils::DisplayNote>>&
   getCachedNotes() const {
     return getActiveLoop().getNoteCache().getNotes(editAwareMidiEvents(), getActiveLoop().loopLengthTicks);
   }
@@ -254,7 +254,7 @@ public:
   /// Per-slot cached notes for display (e.g. follow selected slot while activeLoopIndex is capture phase).
   uint32_t getLoopLengthForSlot(uint8_t slotIndex) const { return getLoop(slotIndex).loopLengthTicks; }
   uint32_t getLoopStartTickForSlot(uint8_t slotIndex) const { return getLoop(slotIndex).loopStartTick; }
-  const std::vector<NoteUtils::DisplayNote, PsramFirstAllocator<NoteUtils::DisplayNote>>&
+  const std::vector<NoteUtils::DisplayNote, ExternalMemoryFirstAllocator<NoteUtils::DisplayNote>>&
   getCachedNotesForSlot(uint8_t slotIndex) const {
     const Loop& loop = getLoop(slotIndex);
     return loop.getNoteCache().getNotes(loop.midiEvents(), loop.loopLengthTicks);

@@ -9,14 +9,14 @@
 #include <vector>
 
 #include "MidiEvent.h"
-#include "Utils/ExtMemAllocator.h"
-#include "Utils/PsramFirstAllocator.h"
+#include "Utils/InternalHeapFirstAllocator.h"
+#include "Utils/ExternalMemoryFirstAllocator.h"
 
 namespace LoopEventStoreConfig {
 constexpr uint16_t CHUNK_CAPACITY = 256;
 constexpr uint16_t POOL_CHUNK_COUNT = 512;
 constexpr uint32_t BAR_TICKS = 768;
-constexpr uint32_t RAM2_SAFETY_FLOOR_BYTES = 12 * 1024;
+constexpr uint32_t INTERNAL_HEAP_SAFETY_FLOOR_BYTES = 12 * 1024;
 }  // namespace LoopEventStoreConfig
 
 struct EventChunk {
@@ -26,8 +26,8 @@ struct EventChunk {
   uint32_t lastTick = 0;
 };
 
-using ChunkIdList = std::vector<uint16_t, ExtMemAllocator<uint16_t>>;
-using BarIndexVec = std::vector<size_t, ExtMemAllocator<size_t>>;
+using ChunkIdList = std::vector<uint16_t, InternalHeapFirstAllocator<uint16_t>>;
+using BarIndexVec = std::vector<size_t, InternalHeapFirstAllocator<size_t>>;
 
 /// Append-only fixed-size event chunks backed by a global PSRAM pool.
 class LoopEventStore {
@@ -40,8 +40,8 @@ class LoopEventStore {
   static uint16_t usedChunkCount();
   static uint16_t freeChunkCount();
   static bool canAllocChunkWithReserve();
-  static bool hasRam2HeadroomForNonCriticalWork(uint32_t freeHeapBytes);
-  static uint32_t ram2SafetyFloorBytes();
+  static bool hasInternalHeapHeadroomForNonCriticalWork(uint32_t freeHeapBytes);
+  static uint32_t internalHeapSafetyFloorBytes();
 
   LoopEventStore() = default;
   LoopEventStore(const LoopEventStore&) = delete;
@@ -69,13 +69,13 @@ class LoopEventStore {
 
   void flatten(MidiEventVec& out) const;
   /// Append events from one chunk id (read-only; does not mutate id).
-  static void appendFlattenedChunkId(uint16_t id, MidiEventVec& out);
-  static void appendFlattenedChunkId(
-      uint16_t id, std::vector<MidiEvent, PsramFirstAllocator<MidiEvent>>& out);
+  static void appendChunkRefEvent(uint16_t id, MidiEventVec& out);
+  static void appendChunkRefEvent(
+      uint16_t id, std::vector<MidiEvent, ExternalMemoryFirstAllocator<MidiEvent>>& out);
   /// Append events from chunk refs (read-only; does not mutate ids).
-  static void appendFlattenedChunkIds(const ChunkIdList& ids, MidiEventVec& out);
-  static void appendFlattenedChunkIds(
-      const ChunkIdList& ids, std::vector<MidiEvent, PsramFirstAllocator<MidiEvent>>& out);
+  static void appendChunkRefEvents(const ChunkIdList& ids, MidiEventVec& out);
+  static void appendChunkRefEvents(
+      const ChunkIdList& ids, std::vector<MidiEvent, ExternalMemoryFirstAllocator<MidiEvent>>& out);
   /// Count events referenced by chunk ids without flattening.
   static size_t countEventsInChunkIds(const ChunkIdList& ids);
   void loadFromFlat(const MidiEventVec& events);

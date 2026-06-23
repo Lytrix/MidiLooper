@@ -121,7 +121,7 @@ ChunkIdList deepCloneChunkRefs(const ChunkIdList& refs) {
     return {};
   }
   MidiEventVec flat;
-  LoopEventStore::appendFlattenedChunkIds(refs, flat);
+  LoopEventStore::appendChunkRefEvents(refs, flat);
   LoopEventStore store;
   store.loadFromFlat(flat);
   ChunkIdList cloned;
@@ -165,7 +165,7 @@ size_t estimatedEditPassBytes(const EditChangeList& changes) {
 
 bool canHeapAdmitEditPass(const EditChangeList& changes) {
   const size_t needed = Config::HEAP_RESERVE_BYTES + estimatedEditPassBytes(changes);
-  return MemoryMonitor::getFreeHeap() >= needed;
+  return MemoryMonitor::getInternalHeapFreeBytes() >= needed;
 }
 
 const char* sealOutcomeLabel(SealOutcome outcome) {
@@ -244,11 +244,11 @@ bool Loop::hasPublishedEvents() const {
   return false;
 }
 
-void Loop::flattenActiveCapturePasses(MidiEventVec& out) const {
+void Loop::mergeActiveCapturePasses(MidiEventVec& out) const {
   out.clear();
   if (passes.hasRecordPass() && passes.recordPass.state == CapturePassState::Active &&
       !passes.recordPass.chunkRefs.empty()) {
-    LoopEventStore::appendFlattenedChunkIds(passes.recordPass.chunkRefs, out);
+    LoopEventStore::appendChunkRefEvents(passes.recordPass.chunkRefs, out);
   }
   std::vector<const OverdubPass*> activeOverdubs;
   for (const OverdubPass& pass : passes.overdubPasses) {
@@ -262,7 +262,7 @@ void Loop::flattenActiveCapturePasses(MidiEventVec& out) const {
             });
   for (const OverdubPass* pass : activeOverdubs) {
     MidiEventVec layer;
-    LoopEventStore::appendFlattenedChunkIds(pass->chunkRefs, layer);
+    LoopEventStore::appendChunkRefEvents(pass->chunkRefs, layer);
     if (out.empty()) {
       out = std::move(layer);
       continue;
@@ -282,14 +282,14 @@ void Loop::flattenActiveCapturePasses(MidiEventVec& out) const {
 void Loop::materializeEditViewFromPasses() const {
   Loop* self = const_cast<Loop*>(this);
   const bool storeEmptyPublished =
-      self->hasPublishedEvents() && self->editFlat_.readStore().empty() &&
+      self->hasPublishedEvents() && self->passesMaterializedStore_.readStore().empty() &&
       self->passes.editPasses.empty();
-  if (!editFlatStale_ && !storeEmptyPublished) {
+  if (!passesMaterializedStoreStale_ && !storeEmptyPublished) {
     return;
   }
-  passes.materialize(self->editFlat_.mutStore(), self->loopLengthTicks);
-  self->editFlat_.discardFlatCache();
-  self->editFlatStale_ = false;
+  passes.materialize(self->passesMaterializedStore_.mutStore(), self->loopLengthTicks);
+  self->passesMaterializedStore_.discardFlatCache();
+  self->passesMaterializedStoreStale_ = false;
 }
 
 void Loop::rematerializeEditView(LoopEventStore& store) const {
@@ -304,7 +304,7 @@ EditPassId Loop::saveNoteEditPass(uint8_t noteEditPassIndex, EditChangeList chan
     logger.log(CAT_TRACK, LOG_WARNING,
                "saveNoteEditPass rejected: heap below reserve (need=%u free=%u)",
                static_cast<unsigned>(Config::HEAP_RESERVE_BYTES + estimatedEditPassBytes(changes)),
-               static_cast<unsigned>(MemoryMonitor::getFreeHeap()));
+               static_cast<unsigned>(MemoryMonitor::getInternalHeapFreeBytes()));
     return kInvalidEditPassId;
   }
   EditPass editPass;
@@ -416,7 +416,7 @@ void Loop::reclaimUnreferencedDisabledPasses(const SlotPassReferences& refs) {
 }
 
 void Loop::markPassDerivedStale() {
-  editFlatStale_ = true;
+  passesMaterializedStoreStale_ = true;
   playbackOrderDirty = true;
   visualCacheDirty = true;
   invalidatePlaybackCaches();
@@ -424,12 +424,12 @@ void Loop::markPassDerivedStale() {
 
 MidiEventVec& Loop::midiEvents() {
   materializeEditViewFromPasses();
-  return editFlat_.mutFlat();
+  return passesMaterializedStore_.mutFlat();
 }
 
 const MidiEventVec& Loop::midiEvents() const {
   materializeEditViewFromPasses();
-  return editFlat_.readFlat();
+  return passesMaterializedStore_.readFlat();
 }
 
 LoopSnapshotRef Loop::sharePassesSnapshot() const {
@@ -461,15 +461,15 @@ void Loop::restorePassesSnapshot(const PersistedLoopSnapshot& snapshot) {
   playbackOrderDirty = true;
   passes = deepClonePasses(snapshot.passes);
   ++playbackRevision;
-  discardEditFlatMaterialization();
+  discardPassesMaterializedCache();
   markDisplayCachesStale();
   rebuildVisualCacheFromPasses();
 }
 
-void Loop::discardEditFlatMaterialization() {
-  editFlat_.mutStore().clear();
-  editFlat_.discardFlatCache();
-  editFlatStale_ = true;
+void Loop::discardPassesMaterializedCache() {
+  passesMaterializedStore_.mutStore().clear();
+  passesMaterializedStore_.discardFlatCache();
+  passesMaterializedStoreStale_ = true;
 }
 
 void Loop::commitStopFinalizeFromStore(LoopEventStore& merged) {
@@ -519,20 +519,20 @@ void Loop::commitStopFinalizeFromStore(LoopEventStore& merged) {
   }
 
   ++playbackRevision;
-  discardEditFlatMaterialization();
+  discardPassesMaterializedCache();
   markDisplayCachesStale();
 }
 
 void Loop::seedRecordPassFromStore(LoopEventStore& store) {
   resetPassTimeline();
   if (store.empty()) {
-    discardEditFlatMaterialization();
+    discardPassesMaterializedCache();
     return;
   }
   ChunkIdList refs;
   store.detachChunksTo(refs);
   if (refs.empty()) {
-    discardEditFlatMaterialization();
+    discardPassesMaterializedCache();
     return;
   }
   RecordPass record{};
@@ -543,7 +543,7 @@ void Loop::seedRecordPassFromStore(LoopEventStore& store) {
   lastPublishedPassId_ = passes.recordPass.id;
   ++playbackRevision;
   markPassDerivedStale();
-  discardEditFlatMaterialization();
+  discardPassesMaterializedCache();
   rebuildVisualCacheFromPasses();
 }
 
@@ -554,7 +554,7 @@ void Loop::shiftActiveCapturePassTicks(int64_t delta) {
   if (passes.hasRecordPass() && passes.recordPass.state == CapturePassState::Active &&
       !passes.recordPass.chunkRefs.empty()) {
     MidiEventVec flat;
-    LoopEventStore::appendFlattenedChunkIds(passes.recordPass.chunkRefs, flat);
+    LoopEventStore::appendChunkRefEvents(passes.recordPass.chunkRefs, flat);
     if (!flat.empty()) {
       LoopEventStore staging;
       staging.loadFromFlat(flat);
@@ -570,7 +570,7 @@ void Loop::shiftActiveCapturePassTicks(int64_t delta) {
       continue;
     }
     MidiEventVec flat;
-    LoopEventStore::appendFlattenedChunkIds(pass.chunkRefs, flat);
+    LoopEventStore::appendChunkRefEvents(pass.chunkRefs, flat);
     if (flat.empty()) {
       continue;
     }
@@ -642,7 +642,7 @@ bool Loop::appendCaptureEvent(const MidiEvent& evt) {
 
 size_t Loop::liveEventCount() const {
   MidiEventVec flat;
-  passes.materializeToFlat(flat, loopLengthTicks);
+  passes.materializeToEventVector(flat, loopLengthTicks);
   size_t count = flat.size();
   if (captureActive()) {
     count += capture.store.size();
@@ -663,8 +663,8 @@ bool Loop::ensureCaptureEventsSorted() {
   return true;
 }
 
-void Loop::buildLiveEventView(MidiEventVec& out) const {
-  passes.materializeToFlat(out, loopLengthTicks);
+void Loop::mergeMaterializedPassesWithCapture(MidiEventVec& out) const {
+  passes.materializeToEventVector(out, loopLengthTicks);
   if (!captureActive() || capture.store.empty()) {
     return;
   }
@@ -743,9 +743,9 @@ void Loop::resetPassTimeline() {
   capturePreview.clear();
   pendingVisualDelta.clear();
   visualCacheDirty = true;
-  editFlat_.mutStore().clear();
-  editFlat_.discardFlatCache();
-  editFlatStale_ = true;
+  passesMaterializedStore_.mutStore().clear();
+  passesMaterializedStore_.discardFlatCache();
+  passesMaterializedStoreStale_ = true;
 }
 
 bool Loop::setCapturePassState(PassId id, CapturePassState state) {
@@ -788,34 +788,34 @@ CommitResult Loop::commitCapturePass(CommitReason reason, uint32_t sealedAtTick)
   };
 
   if (capture.store.empty()) {
-    const uint32_t heap = MemoryMonitor::getFreeHeap();
+    const uint32_t heap = MemoryMonitor::getInternalHeapFreeBytes();
     emitStage("seal", 0, heap, heap, "skipped_empty");
     emitStage("publish", 0, heap, heap, "not_run");
     discardCapture();
     return CommitResult::Skipped;
   }
 
-  const uint32_t sealHeapBefore = MemoryMonitor::getFreeHeap();
+  const uint32_t sealHeapBefore = MemoryMonitor::getInternalHeapFreeBytes();
   const uint32_t sealStartUs = traceMicros();
   const SealOutcome seal = sealCapture(sealedAtTick);
   const uint32_t sealDurationUs = traceMicros() - sealStartUs;
-  const uint32_t sealHeapAfter = MemoryMonitor::getFreeHeap();
+  const uint32_t sealHeapAfter = MemoryMonitor::getInternalHeapFreeBytes();
   emitStage("seal", sealDurationUs, sealHeapBefore, sealHeapAfter, sealOutcomeLabel(seal));
   if (seal != SealOutcome::Ok) {
     emitStage("publish", 0, sealHeapAfter, sealHeapAfter, "not_run");
     return CommitResult::SealFailed;
   }
 
-  const uint32_t publishHeapBefore = MemoryMonitor::getFreeHeap();
+  const uint32_t publishHeapBefore = MemoryMonitor::getInternalHeapFreeBytes();
   const uint32_t publishStartUs = traceMicros();
   if (!publishPendingCapturePass()) {
     const uint32_t publishDurationUs = traceMicros() - publishStartUs;
-    const uint32_t publishHeapAfter = MemoryMonitor::getFreeHeap();
+    const uint32_t publishHeapAfter = MemoryMonitor::getInternalHeapFreeBytes();
     emitStage("publish", publishDurationUs, publishHeapBefore, publishHeapAfter, "failed");
     return CommitResult::SealFailed;
   }
   const uint32_t publishDurationUs = traceMicros() - publishStartUs;
-  const uint32_t publishHeapAfter = MemoryMonitor::getFreeHeap();
+  const uint32_t publishHeapAfter = MemoryMonitor::getInternalHeapFreeBytes();
   emitStage("publish", publishDurationUs, publishHeapBefore, publishHeapAfter, "ok");
 
   markPassDerivedStale();
@@ -849,7 +849,7 @@ void Loop::discardPendingCapturePass() {
 
 void Loop::rebuildVisualCacheFromPasses() {
   MidiEventVec flat;
-  flattenActiveCapturePasses(flat);
+  mergeActiveCapturePasses(flat);
   const NoteUtils::DisplayNoteVec rebuiltNotes =
       NoteUtils::reconstructDisplayNotes(flat, loopLengthTicks, false);
   visualCache.notes.assign(rebuiltNotes.begin(), rebuiltNotes.end());
@@ -970,7 +970,7 @@ void Loop::invalidateCaches() {
 
 void Loop::invalidatePlaybackCaches() {
   playbackOrderDirty = true;
-  editFlat_.discardFlatCache();
+  passesMaterializedStore_.discardFlatCache();
   if (noteCache_) {
     noteCache_->invalidate();
   }

@@ -7,7 +7,7 @@
 #include <vector>
 
 #include "MidiEvent.h"
-#include "Utils/ExtMemAllocator.h"
+#include "Utils/InternalHeapFirstAllocator.h"
 
 using PassId = uint32_t;
 constexpr PassId kInvalidPassId = 0;
@@ -44,8 +44,8 @@ struct EditChange {
   MidiEventVec addedEvents;
 };
 
-using EditChangeList = std::vector<EditChange, ExtMemAllocator<EditChange>>;
-using EditPassIdList = std::vector<EditPassId, ExtMemAllocator<EditPassId>>;
+using EditChangeList = std::vector<EditChange, InternalHeapFirstAllocator<EditChange>>;
+using EditPassIdList = std::vector<EditPassId, InternalHeapFirstAllocator<EditPassId>>;
 
 struct EditPass {
   EditPassId id = kInvalidEditPassId;
@@ -55,4 +55,4 @@ struct EditPass {
   EditChangeList changes;
 };
 
-using EditPassVec = std::vector<EditPass, ExtMemAllocator<EditPass>>;
+using EditPassVec = std::vector<EditPass, InternalHeapFirstAllocator<EditPass>>;

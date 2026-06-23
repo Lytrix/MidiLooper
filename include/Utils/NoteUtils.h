@@ -6,7 +6,7 @@
 #include <map>
 #include <cstdint>
 #include "MidiEvent.h"
-#include "Utils/PsramFirstAllocator.h"
+#include "Utils/ExternalMemoryFirstAllocator.h"
 #include <unordered_map>
 #include <utility> // for std::pair
 
@@ -59,7 +59,7 @@ bool isPreferredWrapTailForHeadOff(uint32_t tailOnTick, uint32_t headOffTick,
      uint32_t endTick;
  };
 
-using DisplayNoteVec = std::vector<DisplayNote, PsramFirstAllocator<DisplayNote>>;
+using DisplayNoteVec = std::vector<DisplayNote, ExternalMemoryFirstAllocator<DisplayNote>>;
 
 /**
  * @class CachedNoteList

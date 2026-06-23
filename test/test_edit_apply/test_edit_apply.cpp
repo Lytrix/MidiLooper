@@ -160,7 +160,7 @@ void test_change_pitch_on_lengthened_note_keeps_same_pitch_neighbor() {
   passes.editPasses.push_back(repitch);
 
   MidiEventVec flat;
-  passes.materializeToFlat(flat);
+  passes.materializeToEventVector(flat);
 
   // M0 became pitch 67 spanning 8..680.
   TEST_ASSERT_EQUAL(1, countMatching(flat, true, 67, 8));
@@ -195,7 +195,7 @@ void test_lengthen_after_move_keeps_p0_fixture_gate() {
   passes.editPasses.push_back(lengthen);
 
   MidiEventVec flat;
-  passes.materializeToFlat(flat);
+  passes.materializeToEventVector(flat);
 
   TEST_ASSERT_EQUAL(1, countMatching(flat, true, 60, 192));
   TEST_ASSERT_EQUAL(1, countMatching(flat, true, 60, 576));
@@ -230,7 +230,7 @@ void test_change_length_rematerialize_keeps_p0_off_not_loop_end() {
   passes.editPasses.push_back(lengthen);
 
   MidiEventVec flat;
-  passes.materializeToFlat(flat, kLoopLength);
+  passes.materializeToEventVector(flat, kLoopLength);
 
   const std::vector<NoteUtils::DisplayNote> notes =
       NoteUtils::reconstructNotes(flat, kLoopLength, true);
@@ -281,7 +281,7 @@ void test_change_pitch_on_overlapping_note_keeps_neighbor_endtick() {
   passes.editPasses.push_back(repitch);
 
   MidiEventVec flat;
-  passes.materializeToFlat(flat);
+  passes.materializeToEventVector(flat);
 
   TEST_ASSERT_EQUAL(1, countMatching(flat, true, 67, 9));
   TEST_ASSERT_EQUAL(1, countMatching(flat, false, 67, 681));
@@ -341,7 +341,7 @@ void test_save_edit_appends_without_collapsing_takes() {
   TEST_ASSERT_EQUAL(1u, loop.passes.editPasses.size());
 
   MidiEventVec flat;
-  loop.passes.materializeToFlat(flat);
+  loop.passes.materializeToEventVector(flat);
   TEST_ASSERT_EQUAL(2u, flat.size());
 }
 
@@ -356,7 +356,7 @@ void test_disable_edits_restores_take_only_view() {
   const EditPassId id = loop.saveNoteEditPass(0, EditChangeList{del});
   loop.disableEditPasses(EditPassIdList{id});
   MidiEventVec flat;
-  loop.passes.materializeToFlat(flat);
+  loop.passes.materializeToEventVector(flat);
   TEST_ASSERT_EQUAL(2u, flat.size());
 }
 
@@ -375,7 +375,7 @@ void test_reset_take_timeline_clears_stale_edits() {
   TEST_ASSERT_EQUAL(1u, loop.passes.editPasses.size());
 
   MidiEventVec withStaleEdit;
-  loop.passes.materializeToFlat(withStaleEdit);
+  loop.passes.materializeToEventVector(withStaleEdit);
   TEST_ASSERT_EQUAL(67, withStaleEdit[0].data.noteData.note);
 
   loop.resetPassTimeline();
@@ -385,7 +385,7 @@ void test_reset_take_timeline_clears_stale_edits() {
 
   loop.passes.recordPass = makeRecordPassWithNote(1, 8);
   MidiEventVec fresh;
-  loop.passes.materializeToFlat(fresh);
+  loop.passes.materializeToEventVector(fresh);
   TEST_ASSERT_EQUAL(2u, fresh.size());
   TEST_ASSERT_EQUAL(60, fresh[0].data.noteData.note);
   TEST_ASSERT_EQUAL(60, fresh[1].data.noteData.note);
@@ -446,7 +446,7 @@ void test_move_note_uses_track_channel() {
   pushEditPassChange(passes, 1, EditChangeList{ch});
 
   MidiEventVec flat;
-  passes.materializeToFlat(flat);
+  passes.materializeToEventVector(flat);
   TEST_ASSERT_EQUAL(1, countMatching(flat, true, 60, 58));
   TEST_ASSERT_EQUAL(0, countMatching(flat, true, 60, 10));
 
@@ -456,7 +456,7 @@ void test_move_note_uses_track_channel() {
   badPasses.editPasses.clear();
   pushEditPassChange(badPasses, 1, EditChangeList{badCh});
   MidiEventVec flatBad;
-  badPasses.materializeToFlat(flatBad);
+  badPasses.materializeToEventVector(flatBad);
   TEST_ASSERT_EQUAL(1, countMatching(flatBad, true, 60, 10));
   TEST_ASSERT_EQUAL(0, countMatching(flatBad, true, 60, 58));
 }
@@ -526,7 +526,7 @@ void test_change_length_rematerialize_hitl_195830_ticks() {
   CowLoopEventStore session;
   session.discardFlatCache();
   MidiEventVec loopMidiEventsFromTakesAndEdits;
-  loop.passes.materializeToFlat(loopMidiEventsFromTakesAndEdits, kLoopLength);
+  loop.passes.materializeToEventVector(loopMidiEventsFromTakesAndEdits, kLoopLength);
   session.mutStore().loadFromFlat(loopMidiEventsFromTakesAndEdits);
   session.discardFlatCache();
 
@@ -584,7 +584,7 @@ void test_overlap_round_trip_replay_lengthen_delete_pitch() {
   pushEditPassChange(passes, 2, std::move(boundary));
 
   MidiEventVec flat;
-  passes.materializeToFlat(flat, kLoopLength);
+  passes.materializeToEventVector(flat, kLoopLength);
 
   TEST_ASSERT_EQUAL(1, countMatching(flat, true, 67, 8));
   TEST_ASSERT_EQUAL(1, countMatching(flat, false, 67, 680));
@@ -623,7 +623,7 @@ void test_pre_commit_order_overlap_changes_before_move_and_pitch() {
   pushEditPassChange(passes, 1, std::move(ordered));
 
   MidiEventVec flatOrdered;
-  passes.materializeToFlat(flatOrdered, kLoopLength);
+  passes.materializeToEventVector(flatOrdered, kLoopLength);
   TEST_ASSERT_EQUAL(1, countMatching(flatOrdered, true, 67, 496));
   TEST_ASSERT_EQUAL(1, countMatching(flatOrdered, false, 67, 1168));
   TEST_ASSERT_EQUAL(1, countMatching(flatOrdered, true, 60, 584));
@@ -638,7 +638,7 @@ void test_pre_commit_order_overlap_changes_before_move_and_pitch() {
   wrongOrder.push_back(pitch2);
   pushEditPassChange(passes2, 1, std::move(wrongOrder));
   MidiEventVec flatWrong;
-  passes2.materializeToFlat(flatWrong, kLoopLength);
+  passes2.materializeToEventVector(flatWrong, kLoopLength);
   TEST_ASSERT_EQUAL(1, countMatching(flatWrong, true, 67, 496));
   TEST_ASSERT_EQUAL(0, countMatching(flatWrong, false, 60, 495));
   TEST_ASSERT_EQUAL(1, countMatching(flatWrong, false, 60, 680));
@@ -664,7 +664,7 @@ void test_pre_commit_delete_before_mover_change_length() {
 
   pushEditPassChange(passes, 1, std::move(preCommit));
   MidiEventVec flat;
-  passes.materializeToFlat(flat);
+  passes.materializeToEventVector(flat);
   TEST_ASSERT_EQUAL(1, countMatching(flat, true, 60, 8));
   TEST_ASSERT_EQUAL(1, countMatching(flat, false, 60, 680));
   TEST_ASSERT_EQUAL(0, countMatching(flat, true, 60, 584));

@@ -3,7 +3,7 @@
 
 #include "Utils/MemoryMonitor.h"
 #if defined(__IMXRT1062__)
-#include "Utils/ExtMemAllocator.h"
+#include "Utils/InternalHeapFirstAllocator.h"
 #include "Utils/MemoryPool.h"
 #include "Logger.h"
 #include <Arduino.h>
@@ -47,61 +47,61 @@ void getPsramStats(size_t* totalUsed, size_t* totalFree) {
 
 }  // namespace
 
-uint32_t getFreeHeap() {
+uint32_t getInternalHeapFreeBytes() {
   int32_t freeBytes = reinterpret_cast<char*>(&_heap_end) - __brkval;
   return freeBytes > 0 ? static_cast<uint32_t>(freeBytes) : 0;
 }
 
-uint32_t getTotalHeap() {
+uint32_t getInternalHeapTotalBytes() {
   return static_cast<uint32_t>(reinterpret_cast<char*>(&_heap_end) -
                                reinterpret_cast<char*>(&_heap_start));
 }
 
-uint32_t getUsedHeap() {
-  uint32_t total = getTotalHeap();
-  uint32_t free = getFreeHeap();
+uint32_t getInternalHeapUsedBytes() {
+  uint32_t total = getInternalHeapTotalBytes();
+  uint32_t free = getInternalHeapFreeBytes();
   return total > free ? total - free : 0;
 }
 
-bool isPsramAvailable() {
+bool isExternalMemoryPoolAvailable() {
   return external_psram_size > 0 && extmem_smalloc_pool.pool_size > 0 &&
          extmem_smalloc_pool.pool != nullptr;
 }
 
-uint32_t getPsramTotalBytes() {
+uint32_t getExternalMemoryPoolTotalBytes() {
   return static_cast<uint32_t>(extmem_smalloc_pool.pool_size);
 }
 
-uint32_t getPsramFreeBytes() {
+uint32_t getExternalMemoryPoolFreeBytes() {
   size_t freeBytes = 0;
   getPsramStats(nullptr, &freeBytes);
   return static_cast<uint32_t>(freeBytes);
 }
 
-uint32_t getPsramUsedBytes() {
+uint32_t getExternalMemoryPoolUsedBytes() {
   size_t usedBytes = 0;
   getPsramStats(&usedBytes, nullptr);
   return static_cast<uint32_t>(usedBytes);
 }
 
 bool isLowMemory(uint32_t thresholdBytes) {
-  return getFreeHeap() < thresholdBytes;
+  return getInternalHeapFreeBytes() < thresholdBytes;
 }
 
 void logStatus() {
-  const uint32_t freeK = getFreeHeap() / 1024;
-  const uint32_t totalK = getTotalHeap() / 1024;
-  const uint32_t usedK = getUsedHeap() / 1024;
+  const uint32_t freeK = getInternalHeapFreeBytes() / 1024;
+  const uint32_t totalK = getInternalHeapTotalBytes() / 1024;
+  const uint32_t usedK = getInternalHeapUsedBytes() / 1024;
   logger.log(CAT_GENERAL, LOG_INFO,
              "[Memory] heap free=%lu used=%lu total=%lu KB",
              (unsigned long)freeK, (unsigned long)usedK, (unsigned long)totalK);
-  if (isPsramAvailable()) {
+  if (isExternalMemoryPoolAvailable()) {
     logger.log(CAT_GENERAL, LOG_INFO,
                "[Memory] psram chip=%u MB free=%lu used=%lu pool=%lu KB",
                (unsigned)external_psram_size,
-               (unsigned long)(getPsramFreeBytes() / 1024),
-               (unsigned long)(getPsramUsedBytes() / 1024),
-               (unsigned long)(getPsramTotalBytes() / 1024));
+               (unsigned long)(getExternalMemoryPoolFreeBytes() / 1024),
+               (unsigned long)(getExternalMemoryPoolUsedBytes() / 1024),
+               (unsigned long)(getExternalMemoryPoolTotalBytes() / 1024));
   } else {
     logger.log(CAT_GENERAL, LOG_INFO, "[Memory] psram unavailable");
   }
@@ -113,16 +113,16 @@ void logStatus() {
 void logStatusAtAddedNotes(uint32_t addedNoteOns, size_t loopEventCount,
                            const void* loopEventsData, size_t loopChunkRefCount,
                            bool loopChunkBacked) {
-  const uint32_t freeK = getFreeHeap() / 1024;
-  const uint32_t totalK = getTotalHeap() / 1024;
-  const uint32_t usedK = getUsedHeap() / 1024;
+  const uint32_t freeK = getInternalHeapFreeBytes() / 1024;
+  const uint32_t totalK = getInternalHeapTotalBytes() / 1024;
+  const uint32_t usedK = getInternalHeapUsedBytes() / 1024;
 
   const auto poolStats = MemoryPool::globalMidiEventPool.getStats();
   const char* loopStorage = "empty";
   if (loopChunkBacked && loopChunkRefCount > 0) {
     loopStorage = "chunk_refs";
   } else if (loopEventCount > 0 && loopEventsData != nullptr) {
-    loopStorage = isInPsram(loopEventsData) ? "psram" : "heap";
+    loopStorage = isInExternalMemoryPool(loopEventsData) ? "psram" : "heap";
   }
 
   logger.log(CAT_GENERAL, LOG_INFO,
@@ -130,18 +130,19 @@ void logStatusAtAddedNotes(uint32_t addedNoteOns, size_t loopEventCount,
              (unsigned long)addedNoteOns,
              (unsigned long)freeK, (unsigned long)usedK, (unsigned long)totalK);
 
-  // NOTE: do NOT call getPsramFreeBytes()/getPsramUsedBytes() here. They walk the
+  // NOTE: do NOT call getExternalMemoryPoolFreeBytes()/getExternalMemoryPoolUsedBytes() here.
+  // They walk the
   // entire PSRAM smalloc pool header chain (sm_malloc_stats_pool), which on an 8 MB
   // pool stalls the loop for hundreds of ms. This runs on the record/overdub note-on
   // hot path, so only O(1) fields are reported. Full free/used PSRAM stats are logged
   // off the hot path in logStatus() (boot/setup). pool=KB below is pool_size (O(1)).
-  if (isPsramAvailable()) {
+  if (isExternalMemoryPoolAvailable()) {
     logger.log(CAT_GENERAL, LOG_INFO,
                "[Memory] notes=%lu psram chip=%u MB pool=%lu KB "
                "midi_pool=%zu/%zu loop_events=%zu loop_chunks=%zu loop_buf=%s",
                (unsigned long)addedNoteOns,
                (unsigned)external_psram_size,
-               (unsigned long)(getPsramTotalBytes() / 1024),
+               (unsigned long)(getExternalMemoryPoolTotalBytes() / 1024),
                poolStats.first, poolStats.second,
                loopEventCount, loopChunkRefCount, loopStorage);
   } else {
@@ -177,15 +178,15 @@ void resetNativeTestFreeHeap() {
   g_nativeTestFreeHeap = UINT32_MAX;
 }
 
-uint32_t getFreeHeap() {
+uint32_t getInternalHeapFreeBytes() {
   return g_nativeTestHeapOverride ? g_nativeTestFreeHeap : UINT32_MAX;
 }
-uint32_t getTotalHeap() { return UINT32_MAX; }
-uint32_t getUsedHeap() { return 0; }
-bool isPsramAvailable() { return false; }
-uint32_t getPsramTotalBytes() { return 0; }
-uint32_t getPsramFreeBytes() { return 0; }
-uint32_t getPsramUsedBytes() { return 0; }
+uint32_t getInternalHeapTotalBytes() { return UINT32_MAX; }
+uint32_t getInternalHeapUsedBytes() { return 0; }
+bool isExternalMemoryPoolAvailable() { return false; }
+uint32_t getExternalMemoryPoolTotalBytes() { return 0; }
+uint32_t getExternalMemoryPoolFreeBytes() { return 0; }
+uint32_t getExternalMemoryPoolUsedBytes() { return 0; }
 bool isLowMemory(uint32_t) { return false; }
 void logStatus() {}
 void logStatusAtAddedNotes(uint32_t, size_t, const void*, size_t, bool) {}
@@ -196,13 +197,13 @@ void logStatusAtAddedNotes(uint32_t, size_t, const void*, size_t, bool) {}
 
 namespace MemoryMonitor {
 
-uint32_t getFreeHeap() { return 0; }
-uint32_t getTotalHeap() { return 0; }
-uint32_t getUsedHeap() { return 0; }
-bool isPsramAvailable() { return false; }
-uint32_t getPsramTotalBytes() { return 0; }
-uint32_t getPsramFreeBytes() { return 0; }
-uint32_t getPsramUsedBytes() { return 0; }
+uint32_t getInternalHeapFreeBytes() { return 0; }
+uint32_t getInternalHeapTotalBytes() { return 0; }
+uint32_t getInternalHeapUsedBytes() { return 0; }
+bool isExternalMemoryPoolAvailable() { return false; }
+uint32_t getExternalMemoryPoolTotalBytes() { return 0; }
+uint32_t getExternalMemoryPoolFreeBytes() { return 0; }
+uint32_t getExternalMemoryPoolUsedBytes() { return 0; }
 bool isLowMemory(uint32_t) { return false; }
 void logStatus() {}
 void logStatusAtAddedNotes(uint32_t, size_t, const void*, size_t, bool) {}

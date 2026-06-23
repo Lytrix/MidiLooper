@@ -241,7 +241,7 @@ bool applyRedoEntry(Track& track, UndoEntry& entry) {
                 }
             }
             ++loop.playbackRevision;
-            loop.discardEditFlatMaterialization();
+            loop.discardPassesMaterializedCache();
             loop.invalidateCaches();
             if (editManager.isNoteEditActive()) {
                 loop.rematerializeEditView(editManager.getNoteEditSession().store.mutStore());

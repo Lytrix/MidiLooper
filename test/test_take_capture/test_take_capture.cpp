@@ -50,7 +50,7 @@ void test_capture_phase_maps_capture_pass_phase() {
                     static_cast<uint8_t>(capturePassPhaseForCapturePhase(CapturePhase::Overdub)));
 }
 
-void test_append_flattened_chunk_ids_preserves_pass_refs() {
+void test_append_chunk_ref_events_preserves_pass_refs() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
   LoopEventStore capture;
@@ -61,7 +61,7 @@ void test_append_flattened_chunk_ids_preserves_pass_refs() {
   capture.detachChunksTo(refs);
 
   MidiEventVec flat;
-  LoopEventStore::appendFlattenedChunkIds(refs, flat);
+  LoopEventStore::appendChunkRefEvents(refs, flat);
   TEST_ASSERT_EQUAL(2u, flat.size());
   TEST_ASSERT_EQUAL(10u, flat[0].tick);
   TEST_ASSERT_EQUAL(20u, flat[1].tick);
@@ -90,7 +90,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_detach_chunks_moves_ownership);
   RUN_TEST(test_adopt_chunk_ids_releases_pending_refs);
   RUN_TEST(test_capture_phase_maps_capture_pass_phase);
-  RUN_TEST(test_append_flattened_chunk_ids_preserves_pass_refs);
+  RUN_TEST(test_append_chunk_ref_events_preserves_pass_refs);
   RUN_TEST(test_capture_store_spans_multiple_chunks);
   return UNITY_END();
 }

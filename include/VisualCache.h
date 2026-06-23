@@ -7,10 +7,11 @@
 #include <vector>
 
 #include "Utils/NoteUtils.h"
-#include "Utils/PsramFirstAllocator.h"
+#include "Utils/ExternalMemoryFirstAllocator.h"
 
 using VisualBarVec = std::vector<uint8_t>;
-using DisplayNoteVec = std::vector<NoteUtils::DisplayNote, PsramFirstAllocator<NoteUtils::DisplayNote>>;
+using DisplayNoteVec =
+    std::vector<NoteUtils::DisplayNote, ExternalMemoryFirstAllocator<NoteUtils::DisplayNote>>;
 
 inline uint32_t visualBarForTick(uint32_t tick, uint32_t ticksPerBar) {
   if (ticksPerBar == 0) {

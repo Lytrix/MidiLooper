@@ -282,7 +282,7 @@ void test_build_pre_commit_changes_replay_lengthen_delete_pitch() {
   passes.editPasses.push_back(post);
 
   MidiEventVec flat;
-  passes.materializeToFlat(flat, kLoopLength);
+  passes.materializeToEventVector(flat, kLoopLength);
 
   int m0HomeOn = 0;
   int m0HomeOff = 0;
@@ -315,7 +315,7 @@ void test_reselect_keeps_commit_baseline_with_pending_length() {
   passes.recordPass = std::move(record);
 
   MidiEventVec committed;
-  passes.materializeToFlat(committed, kLoopLength);
+  passes.materializeToEventVector(committed, kLoopLength);
 
   NoteEditFocus focus;
   rebuildNoteEditFocusFromStore(focus, committed, 5, kLoopLength, 0);
