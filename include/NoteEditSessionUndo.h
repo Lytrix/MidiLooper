@@ -29,6 +29,10 @@ SessionUndoEntry buildSessionUndoEntry(const NoteEditFocus& focus, NoteEditSelec
                                        const MidiEventVec& sessionFlat, uint8_t channel,
                                        uint32_t loopLength,
                                        const EditPassIdList& editPassIdsAtPush);
+SessionUndoEntry buildSessionUndoEntryAfterLiveCaptureDuringNoteEdit(
+    const NoteEditFocus& focus, NoteEditSelection selection,
+    const MidiEventVec& baselineStoreEvents, const MidiEventVec& sessionStoreEvents,
+    uint8_t channel, uint32_t loopLength, const EditPassIdList& editPassIdsAtPush);
 EditPassVec buildSessionStoreEditPasses(const MidiEventVec& baselineStoreEvents,
                                         const MidiEventVec& sessionStoreEvents, uint8_t channel,
                                         uint32_t loopLength);

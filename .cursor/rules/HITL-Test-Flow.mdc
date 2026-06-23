@@ -10,10 +10,10 @@ Transition verification is always required for baseline validation in this repos
 
 ## Canonical test command
 
-Run from project root:
+Preferred entry point (same behavior as legacy script):
 
 ```bash
-.venv/bin/python scripts/host_midi_automation_baseline.py \
+.venv/bin/python scripts/host_midi_hitl.py run --preset base \
  --midi-out "Teensy" --midi-in "Teensy" \
  --serial-port /dev/cu.usbmodem154944801 \
  --track-number 5 --midi-channel 5 \
@@ -35,6 +35,8 @@ instead of a hard wall-clock timeout. Use `--max-run-seconds N` only if you want
 an optional hard cap.
 
 Undo/redo still runs after the **last** overdub stop (tests most recent pass).
+
+**Modular runner:** `host_midi_hitl.py run --preset base` (legacy `host_midi_automation_baseline.py` delegates to the same preset). See [`docs/plans/hitl_modular_scenarios_enhancement.md`](docs/plans/hitl_modular_scenarios_enhancement.md).
 
 ## Required pass criteria
 

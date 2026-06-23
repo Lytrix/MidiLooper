@@ -3610,4 +3610,15 @@ def run() -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(run())
+    import sys
+    from pathlib import Path
+
+    if "-h" in sys.argv or "--help" in sys.argv:
+        raise SystemExit(run())
+
+    _root = Path(__file__).resolve().parent
+    if str(_root) not in sys.path:
+        sys.path.insert(0, str(_root))
+    from hitl.runner import main as hitl_main
+
+    raise SystemExit(hitl_main(["run", "--preset", "base", *sys.argv[1:]]))

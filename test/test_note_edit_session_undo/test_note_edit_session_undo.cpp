@@ -37,6 +37,21 @@ RecordPass makeRecordPassWithNote(uint8_t channel, uint32_t startTick) {
   return pass;
 }
 
+OverdubPass makeOverdubPassWithNote(uint8_t channel, uint32_t startTick, uint8_t pitch,
+                                    PassId id) {
+  LoopEventStore store;
+  TEST_ASSERT_TRUE(store.append(MidiEvent::NoteOn(startTick, channel, pitch, 100)));
+  TEST_ASSERT_TRUE(store.append(MidiEvent::NoteOff(startTick + 48, channel, pitch, 0)));
+  ChunkIdList refs;
+  store.detachChunksTo(refs);
+  OverdubPass pass{};
+  pass.id = id;
+  pass.mergeSequence = 1;
+  pass.state = CapturePassState::Active;
+  pass.chunkRefs = std::move(refs);
+  return pass;
+}
+
 void applyMoveToSession(NoteEditFocus& focus, MidiEventVec& flat, uint8_t channel,
                         uint32_t newStart) {
   const uint32_t len = focus.last.endTick - focus.last.startTick;
@@ -372,6 +387,101 @@ void test_session_undo_four_kind_steps_bounded_entries() {
   TEST_ASSERT_LESS_THAN(totalEntryBytes, oneCloneBytes * stack.undoCount());
 }
 
+void test_session_undo_live_capture_during_note_edit() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+
+  Loop loop;
+  loop.loopLengthTicks = 768;
+  loop.passes.recordPass = makeRecordPassWithNote(5, 10);
+  loop.nextPassId_ = 2;
+
+  CowLoopEventStore session;
+  loop.rematerializeEditView(session.mutStore());
+  session.discardFlatCache();
+  TEST_ASSERT_TRUE(hasDisplayNote(session.readFlat(), loop.loopLengthTicks, 60, 10, 58));
+
+  const MidiEventVec baselineEvents = session.readFlat();
+  MidiEventVec& flat = session.mutFlat();
+  flat.push_back(MidiEvent::NoteOn(100, 5, 72, 100));
+  flat.push_back(MidiEvent::NoteOff(148, 5, 72, 0));
+  session.syncFlatToStore();
+  TEST_ASSERT_TRUE(hasDisplayNote(session.readFlat(), loop.loopLengthTicks, 72, 100, 148));
+
+  SessionUndoEntry entry;
+  entry.redoEditRows =
+      buildSessionStoreEditPasses(baselineEvents, session.readFlat(), 5, loop.loopLengthTicks);
+  entry.hasRedoPayload = true;
+  TEST_ASSERT_FALSE(entry.redoEditRows.empty());
+
+  applySessionUndoEntry(loop, session, entry, loop.loopLengthTicks, EditPassIdList{});
+  TEST_ASSERT_TRUE(hasDisplayNote(session.readFlat(), loop.loopLengthTicks, 60, 10, 58));
+  TEST_ASSERT_FALSE(hasDisplayNote(session.readFlat(), loop.loopLengthTicks, 72, 100, 148));
+
+  applySessionRedoEntry(loop, session, entry, loop.loopLengthTicks, EditPassIdList{});
+  TEST_ASSERT_TRUE(hasDisplayNote(session.readFlat(), loop.loopLengthTicks, 72, 100, 148));
+}
+
+void test_session_live_capture_survives_pass_replay() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+
+  Loop loop;
+  loop.loopLengthTicks = 768;
+  loop.passes.recordPass = makeRecordPassWithNote(5, 10);
+  loop.nextPassId_ = 2;
+
+  CowLoopEventStore session;
+  loop.rematerializeEditView(session.mutStore());
+  session.discardFlatCache();
+  MidiEventVec& flat = session.mutFlat();
+  flat.push_back(MidiEvent::NoteOn(100, 5, 72, 100));
+  flat.push_back(MidiEvent::NoteOff(148, 5, 72, 0));
+  session.syncFlatToStore();
+  const MidiEventVec sessionSnapshot = session.readFlat();
+
+  MidiEventVec loopMidiEventsFromPasses;
+  loop.passes.materializeToEventVector(loopMidiEventsFromPasses, loop.loopLengthTicks);
+  const EditPassVec sessionOverlay =
+      buildSessionStoreEditPasses(loopMidiEventsFromPasses, sessionSnapshot, 5,
+                                  loop.loopLengthTicks);
+  TEST_ASSERT_FALSE(sessionOverlay.empty());
+  applyNoteEditPassSequence(loopMidiEventsFromPasses, sessionOverlay, loop.loopLengthTicks);
+
+  TEST_ASSERT_TRUE(hasDisplayNote(loopMidiEventsFromPasses, loop.loopLengthTicks, 60, 10, 58));
+  TEST_ASSERT_TRUE(hasDisplayNote(loopMidiEventsFromPasses, loop.loopLengthTicks, 72, 100, 148));
+}
+
+void test_live_capture_baked_on_close_without_prior_edit_passes() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+
+  Loop loop;
+  loop.loopLengthTicks = 768;
+  loop.passes.recordPass = makeRecordPassWithNote(5, 10);
+  loop.passes.overdubPasses.push_back(makeOverdubPassWithNote(5, 100, 24, 2));
+  loop.nextPassId_ = 3;
+
+  MidiEventVec baselineEvents;
+  loop.passes.materializeToEventVector(baselineEvents, loop.loopLengthTicks);
+  MidiEventVec sessionEvents = baselineEvents;
+  sessionEvents.push_back(MidiEvent::NoteOn(200, 5, 12, 100));
+  sessionEvents.push_back(MidiEvent::NoteOff(248, 5, 12, 0));
+
+  const EditPassVec bakeRows =
+      buildSessionStoreEditPasses(baselineEvents, sessionEvents, 5, loop.loopLengthTicks);
+  TEST_ASSERT_FALSE(bakeRows.empty());
+  for (const EditPass& row : bakeRows) {
+    EditPass copy = row;
+    const EditPassId id = loop.saveNoteEditPass(0, std::move(copy));
+    TEST_ASSERT_NOT_EQUAL(kInvalidEditPassId, id);
+  }
+
+  MidiEventVec materialized;
+  loop.passes.materializeToEventVector(materialized, loop.loopLengthTicks);
+  TEST_ASSERT_TRUE(hasDisplayNote(materialized, loop.loopLengthTicks, 12, 200, 248));
+}
+
 int main(int argc, char** argv) {
   UNITY_BEGIN();
   RUN_TEST(test_session_undo_stack_push_entry);
@@ -382,5 +492,8 @@ int main(int argc, char** argv) {
   RUN_TEST(test_visual_cache_reflects_active_edit_passes);
   RUN_TEST(test_session_undo_move_after_add_committed_restores_insert_position);
   RUN_TEST(test_session_undo_four_kind_steps_bounded_entries);
+  RUN_TEST(test_session_undo_live_capture_during_note_edit);
+  RUN_TEST(test_session_live_capture_survives_pass_replay);
+  RUN_TEST(test_live_capture_baked_on_close_without_prior_edit_passes);
   return UNITY_END();
 }

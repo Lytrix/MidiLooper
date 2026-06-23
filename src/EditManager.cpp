@@ -17,8 +17,11 @@
 #include "NoteEditManager.h"
 #include "NoteEditFocus.h"
 #include "NoteEditSessionUndo.h"
+#include "EditApply.h"
+#include "EditSession.h"
 #include "NoteEditSessionState.h"
 #include "Utils/MemoryMonitor.h"
+#include "Utils/LoopStopFinalize.h"
 #include "ClockManager.h"
 #include <map>
 #include <vector>
@@ -325,8 +328,7 @@ void EditManager::closeNoteEditPass(Track& track) {
         return;
     }
     Loop& loop = track.getActiveLoop();
-    if (editSession.replaceEditPassOnClose &&
-        !editSession.editPassIds.empty()) {
+    if (editSession.replaceEditPassOnClose) {
         if (editSession.store.isFlatDirty()) {
             editSession.store.syncFlatToStore();
         }
@@ -337,48 +339,67 @@ void EditManager::closeNoteEditPass(Track& track) {
         EditPassVec replacementRows =
             buildSessionStoreEditPasses(baselineStoreEvents, editSession.store.readFlat(),
                                         track.getMidiChannel(), track.getLoopLength());
-        const EditPassIdList staleEditPassIds = editSession.editPassIds;
-        editSession.editPassIds.clear();
 
-        if (replacementRows.empty()) {
-            loop.replaceNoteEditPass(editSession.editPassIndex, staleEditPassIds, EditPassVec{});
-            track.invalidateCaches();
-        } else {
-            const unsigned replacementRowCount =
-                static_cast<unsigned>(replacementRows.size());
-            EditPassIdList replacementIds =
-                loop.replaceNoteEditPass(editSession.editPassIndex, staleEditPassIds,
-                                         std::move(replacementRows));
-            if (replacementIds.empty()) {
-                trackManager.reclaimUnreferencedDisabledPasses();
-                replacementRows =
-                    buildSessionStoreEditPasses(baselineStoreEvents,
-                                                editSession.store.readFlat(),
-                                                track.getMidiChannel(),
-                                                track.getLoopLength());
-                replacementIds =
-                    loop.replaceNoteEditPass(editSession.editPassIndex, staleEditPassIds,
-                                             std::move(replacementRows));
-            }
-
-            if (!replacementIds.empty()) {
-                for (const EditPassId id : replacementIds) {
-                    editSession.editPassIds.push_back(id);
+        if (editSession.editPassIds.empty()) {
+            if (!replacementRows.empty()) {
+                const EditPassType passType = passTypeForSession(editSession.sessionType);
+                for (EditPass& row : replacementRows) {
+                    const EditPassId id =
+                        loop.saveNoteEditPass(editSession.editPassIndex, std::move(row), passType);
+                    if (id != kInvalidEditPassId) {
+                        editSession.editPassIds.push_back(id);
+                    }
                 }
                 track.invalidateCaches();
                 logger.log(CAT_TRACK, LOG_INFO,
-                           "NoteEditPass replaced editPass=%u stale=%u replacement=%u rows=%u",
+                           "NoteEditPass live capture baked editPass=%u rows=%u",
                            static_cast<unsigned>(editSession.editPassIndex),
-                           static_cast<unsigned>(staleEditPassIds.size()),
-                           static_cast<unsigned>(replacementIds.front()),
-                           replacementRowCount);
+                           static_cast<unsigned>(replacementRows.size()));
+            }
+        } else {
+            const EditPassIdList staleEditPassIds = editSession.editPassIds;
+            editSession.editPassIds.clear();
+
+            if (replacementRows.empty()) {
+                loop.replaceNoteEditPass(editSession.editPassIndex, staleEditPassIds, EditPassVec{});
+                track.invalidateCaches();
             } else {
-                editSession.editPassIds = staleEditPassIds;
-                logger.log(CAT_TRACK, LOG_WARNING,
-                           "NoteEditPass replace rejected editPass=%u stale=%u rows=%u",
-                           static_cast<unsigned>(editSession.editPassIndex),
-                           static_cast<unsigned>(staleEditPassIds.size()),
-                           replacementRowCount);
+                const unsigned replacementRowCount =
+                    static_cast<unsigned>(replacementRows.size());
+                EditPassIdList replacementIds =
+                    loop.replaceNoteEditPass(editSession.editPassIndex, staleEditPassIds,
+                                             std::move(replacementRows));
+                if (replacementIds.empty()) {
+                    trackManager.reclaimUnreferencedDisabledPasses();
+                    replacementRows =
+                        buildSessionStoreEditPasses(baselineStoreEvents,
+                                                    editSession.store.readFlat(),
+                                                    track.getMidiChannel(),
+                                                    track.getLoopLength());
+                    replacementIds =
+                        loop.replaceNoteEditPass(editSession.editPassIndex, staleEditPassIds,
+                                                 std::move(replacementRows));
+                }
+
+                if (!replacementIds.empty()) {
+                    for (const EditPassId id : replacementIds) {
+                        editSession.editPassIds.push_back(id);
+                    }
+                    track.invalidateCaches();
+                    logger.log(CAT_TRACK, LOG_INFO,
+                               "NoteEditPass replaced editPass=%u stale=%u replacement=%u rows=%u",
+                               static_cast<unsigned>(editSession.editPassIndex),
+                               static_cast<unsigned>(staleEditPassIds.size()),
+                               static_cast<unsigned>(replacementIds.front()),
+                               replacementRowCount);
+                } else {
+                    editSession.editPassIds = staleEditPassIds;
+                    logger.log(CAT_TRACK, LOG_WARNING,
+                               "NoteEditPass replace rejected editPass=%u stale=%u rows=%u",
+                               static_cast<unsigned>(editSession.editPassIndex),
+                               static_cast<unsigned>(staleEditPassIds.size()),
+                               replacementRowCount);
+                }
             }
         }
         editSession.replaceEditPassOnClose = false;
@@ -478,6 +499,10 @@ EditPassId EditManager::commitEditAction(Track& track, EditPassVec rows) {
     }
 
     // Drop live session flat before replay — takes + edits[] is canonical after saveNoteEditPass.
+    if (editSession.store.isFlatDirty()) {
+        editSession.store.syncFlatToStore();
+    }
+    const MidiEventVec sessionSnapshot = editSession.store.readFlat();
     editSession.store.discardFlatCache();
     MidiEventVec loopMidiEventsFromPasses;
     loop.passes.materializeToEventVector( loopMidiEventsFromPasses,
@@ -489,6 +514,13 @@ EditPassId EditManager::commitEditAction(Track& track, EditPassVec rows) {
     loop.mergeActiveCapturePasses(takeOnlyFlat);
     logChangeLengthCommitTrace("take_only", takeOnlyFlat, loopLength, homePitch,
                                homeStart);
+
+    const EditPassVec sessionOverlay =
+        buildSessionStoreEditPasses(loopMidiEventsFromPasses, sessionSnapshot,
+                                    track.getMidiChannel(), loopLength);
+    if (!sessionOverlay.empty()) {
+        applyNoteEditPassSequence(loopMidiEventsFromPasses, sessionOverlay, loopLength);
+    }
 
     editSession.store.mutStore().loadFromFlat(loopMidiEventsFromPasses);
     editSession.store.discardFlatCache();
@@ -525,6 +557,77 @@ void EditManager::pushSessionUndoOnKindChange(Track& track, NoteEditKind kind) {
     }
     lastPushedGeometryKind_ = kind;
     (void)track;
+}
+
+void EditManager::foldLiveCaptureIntoNoteEditSession(Track& track, uint32_t closeTick) {
+    if (!editSession.active) {
+        return;
+    }
+    Loop& loop = track.getActiveLoop();
+    const uint32_t loopLength = track.getLoopLength();
+    if (loop.capture.store.empty()) {
+        loop.discardCapture();
+        loop.discardPendingCapturePass();
+        return;
+    }
+
+    loop.ensureCaptureEventsSorted();
+
+    if (loopLength > 0) {
+        (void)LoopStopFinalize::finalizeWrapWindowOnStore(loop.capture.store, loopLength, closeTick,
+                                                          Config::TICKS_PER_BAR);
+    }
+
+    if (editSession.store.isFlatDirty()) {
+        editSession.store.syncFlatToStore();
+    }
+    const MidiEventVec baselineStoreEvents = editSession.store.readFlat();
+
+    MidiEventVec captureFlat;
+    loop.capture.store.flatten(captureFlat);
+    MidiEventVec& sessionFlat = editSession.store.mutFlat();
+    if (sessionFlat.empty()) {
+        sessionFlat = std::move(captureFlat);
+    } else if (!captureFlat.empty()) {
+        MidiEventVec merged;
+        merged.reserve(sessionFlat.size() + captureFlat.size());
+        std::merge(sessionFlat.begin(), sessionFlat.end(), captureFlat.begin(), captureFlat.end(),
+                   std::back_inserter(merged),
+                   [](const MidiEvent& a, const MidiEvent& b) { return a.tick < b.tick; });
+        sessionFlat = std::move(merged);
+    }
+    editSession.store.syncFlatToStore();
+    loop.discardCapture();
+    loop.discardPendingCapturePass();
+
+    const EditPassVec redoRows = buildSessionStoreEditPasses(
+        baselineStoreEvents, editSession.store.readFlat(), track.getMidiChannel(), loopLength);
+    if (redoRows.empty()) {
+        return;
+    }
+
+    SessionUndoEntry entry;
+    entry.selection = sessionState.selection;
+    entry.focus = editSession.focus;
+    entry.editPassIdsAtPush = editSession.editPassIds;
+    entry.redoEditRows = redoRows;
+    entry.redoFocus = editSession.focus;
+    entry.redoSelection = sessionState.selection;
+    entry.redoEditPassIds = editSession.editPassIds;
+    entry.hasRedoPayload = true;
+
+    if (!editSession.undoStack.pushEntry(entry)) {
+        logger.log(CAT_TRACK, LOG_WARNING,
+                   "Session live capture undo push rejected: heap below reserve (need=%u free=%u)",
+                   static_cast<unsigned>(Config::HEAP_RESERVE_BYTES +
+                                         estimatedSessionUndoEntryBytes(entry)),
+                   static_cast<unsigned>(MemoryMonitor::getInternalHeapFreeBytes()));
+        return;
+    }
+    editSession.replaceEditPassOnClose = true;
+    track.invalidateCaches();
+    logger.log(CAT_TRACK, LOG_INFO, "EditSession live capture folded rows=%u",
+               static_cast<unsigned>(redoRows.size()));
 }
 
 void EditManager::restoreSessionUndoEntry(Track& track, const SessionUndoEntry& entry) {
@@ -723,15 +826,23 @@ bool EditManager::sessionUndo(Track& track) {
     if (entry == nullptr) {
         return false;
     }
-    entry->redoEditPassIds = editSession.editPassIds;
-    entry->redoEditRows = std::move(redoPayload.editRows);
-    entry->redoFocus = std::move(redoPayload.focus);
-    entry->redoSelection = redoPayload.selection;
-    entry->hasRedoPayload = true;
+    const bool liveCaptureEntry =
+        entry->hasRedoPayload && entry->editRows.empty() && !entry->redoEditRows.empty();
+    if (liveCaptureEntry) {
+        entry->redoFocus = editSession.focus;
+        entry->redoSelection = sessionState.selection;
+        entry->redoEditPassIds = editSession.editPassIds;
+    } else {
+        entry->redoEditPassIds = editSession.editPassIds;
+        entry->redoEditRows = std::move(redoPayload.editRows);
+        entry->redoFocus = std::move(redoPayload.focus);
+        entry->redoSelection = redoPayload.selection;
+        entry->hasRedoPayload = true;
+    }
     editSession.replaceEditPassOnClose = true;
-    restoreSessionUndoEntry(track, *entry);
 
     Loop& loop = track.getActiveLoop();
+    restoreSessionUndoEntry(track, *entry);
     EditPassIdList passesToDisable;
     for (const EditPassId id : editSession.editPassIds) {
         bool keptAtPush = false;

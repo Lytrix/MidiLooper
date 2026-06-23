@@ -17,7 +17,6 @@ public:
     static void pushNoteEditPassClosed(Track& track, uint8_t noteEditPassIndex,
                                        EditPassIdList editPassIds);
     static void beginOverdubSession(Track& track);
-    static void endOverdubSession(Track& track);
     static void undoOverdub(Track& track);
     static void redoOverdub(Track& track);
     static size_t getUndoCount(const Track& track);
