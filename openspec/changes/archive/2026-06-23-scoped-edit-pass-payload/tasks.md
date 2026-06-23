@@ -84,7 +84,8 @@ with file version check.
 ## 6. Validation
 
 - [x] 6.1 `pio test -e native` (all suites touching **EditPass**).
-- [x] 6.2 Edit HITL baseline (`host_midi_automation_edit_baseline.py`); archive change.
+- [x] 6.2 Edit HITL baseline (`host_midi_automation_edit_baseline.py`).
+- [x] 6.3 `openspec validate scoped-edit-pass-payload` then **`/opsx:archive`**.
 
 ## Deferred
 

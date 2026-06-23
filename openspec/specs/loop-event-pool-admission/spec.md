@@ -1,8 +1,8 @@
 ## Purpose
 
 Chunk-backed capture admission for **sealCapture** — O(1) pool stats and reserve-based gates.
-Shipped in **pool-budget** groups 1–2 (archived 2026-06-22). Session undo **EditChange** entries
-(task group 9) remain in the archived change folder.
+Shipped in **pool-budget** groups 1–2 (archived 2026-06-22). Session undo small entries (task group 9)
+shipped in **note-edit-session-undo** spec.
 
 ## Requirements
 

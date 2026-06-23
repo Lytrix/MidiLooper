@@ -1,11 +1,9 @@
 ## Purpose
 
 Loop capture and note-edit history live in **`passes[]`** (**LoopPasses**) per slot: optional
-**recordPass**, ordered **overdubPasses**, and **editPasses** with **EditPassKind**. Shipped in
+**recordPass**, ordered **overdubPasses**, and **editPasses** with **EditPassType**. Shipped in
 **timeline-pass-model** (supersedes **Take** / `takes[]` + **Edit** / `edits[]`).
-
 ## Requirements
-
 ### Requirement: Loop passes owner
 
 The system SHALL store capture and note-edit history on a loop through **`passes[]`**
@@ -13,7 +11,7 @@ The system SHALL store capture and note-edit history on a loop through **`passes
 
 - zero or one **recordPass**,
 - zero or more **overdubPass** entries ordered by `mergeSequence`,
-- zero or more **editPass** entries in **`editPasses[]`**, each tagged with **noteEditPassIndex**.
+- zero or more **editPass** entries in **`editPasses[]`**, each tagged with **editPassIndex**.
 
 A pass SHALL be described as **pending** only while it is **not** yet in **`passes[]`**. The system
 SHALL NOT use **committed** as a pass state label, container name, or pass undo kind suffix.
@@ -26,47 +24,57 @@ SHALL NOT use **committed** as a pass state label, container name, or pass undo 
 
 ### Requirement: Four pass kinds two storage families
 
-The system SHALL support four pass **kinds**: **recordPass**, **overdubPass**, **noteEditPass**,
-and **controlChangeEditPass**. Capture kinds SHALL use chunk-backed **recordPass** and
-**overdubPass** storage. Edit kinds SHALL use **editPass** rows in **`editPasses[]`** with
-**EditPassKind** discriminant (**NoteEdit** | **ControlChange**).
+The system SHALL support capture pass rows and scoped edit pass rows. Capture rows SHALL remain
+**recordPass** and **overdubPass** storage. Edit rows SHALL remain in **`editPasses[]`** and SHALL
+use **EditPassType** to identify the edited domain (**Note** | **ControlChange** | future
+**Audio**).
 
 The system SHALL NOT merge **recordPass** and **overdubPass** into a single capturePass type.
 The system SHALL NOT split **editPasses[]** into separate note and CC arrays unless a follow-up
 change proves payload incompatibility.
 
-#### Scenario: Note edit row is editPass with NoteEdit kind
+#### Scenario: Note edit row is scoped editPass
 
 - **WHEN** **saveNoteEditPass** runs after a delete-note edit
-- **THEN** one **editPass** with **EditPassKind::NoteEdit** is appended to **`editPasses[]`**
-- **AND** **noteEditPassIndex** tags the batch on that row
+- **THEN** one **editPass** with **EditPassType::Note** is appended to **`editPasses[]`**
+- **AND** **editPassIndex** tags the note-edit batch on that row
 
-#### Scenario: ControlChange kind reserved
+#### Scenario: ControlChange edit row is scoped editPass
 
-- **WHEN** firmware loads a loop with no CC edit feature enabled
-- **THEN** **`editPasses[]`** MAY contain only **EditPassKind::NoteEdit** rows
-- **AND** materialize SHALL ignore or no-op **EditPassKind::ControlChange** until CC edit ships
+- **WHEN** **saveControlChangeEditPass** runs after a CC value edit
+- **THEN** one **editPass** with **EditPassType::ControlChange** is appended to **`editPasses[]`**
+- **AND** **editPassIndex** tags the control-change edit batch on that row
 
 ### Requirement: editPass in passes
 
-Each **saveNoteEditPass** SHALL append one **editPass** with **EditPassKind::NoteEdit** to
-**`passes.editPasses[]`** only when **heap admission** succeeds for the appended **EditChange** list.
-An **editPass** SHALL hold **editPassId**, **EditPassKind**, batch index, and an **EditChange** list.
+Each **saveNoteEditPass** SHALL append one scoped **editPass** with **EditPassType::Note** to
+**`passes.editPasses[]`** only when heap admission succeeds for the appended row payload.
+Each future **saveControlChangeEditPass** SHALL append one scoped **editPass** with
+**EditPassType::ControlChange** under the same admission rule.
 
-When heap admission fails, **saveNoteEditPass** SHALL return **`kInvalidEditPassId`** and SHALL NOT
-append a row. The system SHALL NOT use a fixed maximum **editPass** row count as the primary gate.
+An **editPass** SHALL hold **editPassId**, **EditPassType**, **editPassIndex**, **EditPassState**,
+**EditActionType**, **EditPropertyType**, and row fields scoped by **EditPassType**.
+
+When heap admission fails, the save call SHALL return **`kInvalidEditPassId`** and SHALL NOT append
+a row. The system SHALL NOT use a fixed maximum **editPass** row count as the primary gate.
 
 #### Scenario: saveNoteEditPass after delete when heap allows
 
 - **WHEN** the user completes delete-note and **saveNoteEditPass** runs
 - **AND** heap admission succeeds
-- **THEN** one **EditPassKind::NoteEdit** **editPass** is appended to **`passes.editPasses[]`**
+- **THEN** one **EditPassType::Note** **editPass** is appended to **`passes.editPasses[]`**
+- **AND** capture passes in **`passes[]`** remain chunk-backed
+
+#### Scenario: saveControlChangeEditPass after value update when heap allows
+
+- **WHEN** the user completes a CC value edit and **saveControlChangeEditPass** runs
+- **AND** heap admission succeeds
+- **THEN** one **EditPassType::ControlChange** **editPass** is appended to **`passes.editPasses[]`**
 - **AND** capture passes in **`passes[]`** remain chunk-backed
 
 #### Scenario: saveNoteEditPass rejected on heap pressure
 
-- **WHEN** **`MemoryMonitor::getFreeHeap()`** is below **`HEAP_RESERVE_BYTES`** plus the estimated
-  cost of the new **EditChange** list
+- **WHEN** internal heap headroom is below the configured reserve plus the estimated cost of the new row payload
 - **THEN** **saveNoteEditPass** returns **`kInvalidEditPassId`**
 - **AND** **`passes.editPasses.size()`** is unchanged
 
@@ -90,14 +98,66 @@ and **pass-reclaim**.
 
 ### Requirement: noteEditPass batch vs editPass row
 
-A **noteEditPass** SHALL denote the open/close boundary in **NoteEditSession** (**closeNoteEditPass**).
-Multiple **editPass** rows MAY share one **noteEditPassIndex** within the same closed batch.
+A **noteEditPass** SHALL denote the open/close boundary in **NoteEditSession**
+(**closeNoteEditPass**). Multiple scoped **editPass** rows MAY share one **editPassIndex** when
+**EditPassType::Note**.
 
-#### Scenario: Close disables editPass ids in batch
+A **controlChangeEditPass** SHALL denote the open/close boundary in **ControlChangeEditSession**
+(**closeControlChangeEditPass**). Multiple scoped **editPass** rows MAY share one **editPassIndex**
+when **EditPassType::ControlChange**.
+
+**saveNoteEditPass** SHALL remain the merge boundary into **`passes.editPasses[]`**.
+
+Leaving NOTE_EDIT via **exitEditMode** SHALL evaluate pending NOTE_EDIT actions and, when edit
+changes exist, SHALL append scoped **editPass** rows before **closeNoteEditPass**.
+
+**cycleEditSession** SHALL toggle **EditSessionType** (`Loop` ↔ `Note`) only and SHALL NOT run
+**closeNoteEditPass** from the toggle alone.
+
+#### Scenario: Full NOTE_EDIT exit appends and closes pass
+
+- **WHEN** NOTE_EDIT leaves through **exitEditMode**
+- **AND** pending note-edit changes exist
+- **THEN** **saveNoteEditPass** appends one or more rows to **`passes.editPasses[]`**
+- **AND** **closeNoteEditPass** emits **NoteEditPassClosed** for that closed batch
+
+#### Scenario: NOTE_EDIT session toggle does not close pass
+
+- **WHEN** NOTE_EDIT transitions through **cycleEditSession**
+- **THEN** **EditSessionType** toggles between **Loop** and **Note**
+- **AND** **closeNoteEditPass** does not run from the toggle alone
+
+#### Scenario: Close disables note editPass ids in batch
 
 - **WHEN** **closeNoteEditPass** runs on note edit exit
 - **THEN** **NoteEditPassClosed** undo records all **editPassId** values from that **noteEditPass**
 - **AND** undo disables those **editPass** rows in **`passes.editPasses[]`**
+
+#### Scenario: Close disables control-change editPass ids in batch
+
+- **WHEN** **closeControlChangeEditPass** runs on control-change edit exit
+- **THEN** **ControlChangeEditPassClosed** undo records all **editPassId** values from that **controlChangeEditPass**
+- **AND** undo disables those **editPass** rows in **`passes.editPasses[]`**
+
+### Requirement: Deferred save boundary after note edit exit
+
+NOTE_EDIT exit persistence SHALL use deferred save handoff. Runtime behavior SHALL preserve MIDI
+timing during playback by avoiding blocking save work in playback hot paths.
+
+The system SHALL provide evidence markers from save request to deferred-save completion for
+NOTE_EDIT exit persistence.
+
+#### Scenario: Exit triggers deferred save request and completion markers
+
+- **WHEN** NOTE_EDIT exits with `isEditStateDirty() == true`
+- **THEN** the serial trace includes deferred save request markers (`PERS,request`)
+- **AND** completion markers include `PERS,result,ok` when deferred save completes
+
+#### Scenario: Replay checks after exit align with persisted boundary
+
+- **WHEN** NOTE_EDIT workflows perform in-edit undo/redo and post-exit undo/redo
+- **THEN** marker sequence includes **NoteEditPassClosed** and scoped post-exit undo/redo markers
+- **AND** replay verification does not report missing insertions caused by exit persistence boundary loss
 
 ### Requirement: Pending capture pass
 
@@ -145,10 +205,12 @@ Global undo SHALL use:
 
 - **RecordPassAdded** — disables one **recordPass** in **`passes[]`** by id,
 - **OverdubPassAdded** — disables one **overdubPass** by id,
-- **NoteEditPassClosed** — disables all **editPass** ids from one closed **noteEditPass**.
+- **NoteEditPassClosed** — disables all **editPass** ids from one closed **noteEditPass**,
+- **ControlChangeEditPassClosed** — disables all **editPass** ids from one closed **controlChangeEditPass**.
 
 The system SHALL NOT use **TakeCommitted**, **NoteEditSessionCommitted**, or `*PassCommitted`
-undo kind names.
+undo kind names. Undo and redo SHALL toggle pass state and SHALL NOT append **EditActionType**
+`Create` or `Delete` rows to represent undo history.
 
 #### Scenario: Overdub stop pushes OverdubPassAdded
 
@@ -160,25 +222,83 @@ undo kind names.
 - **WHEN** note edit mode exits and **closeNoteEditPass** runs
 - **THEN** **NoteEditPassClosed** is pushed with all **editPassId** values from that **noteEditPass**
 
+#### Scenario: Control-change edit exit pushes ControlChangeEditPassClosed
+
+- **WHEN** control-change edit mode exits and **closeControlChangeEditPass** runs
+- **THEN** **ControlChangeEditPassClosed** is pushed with all **editPassId** values from that **controlChangeEditPass**
+
+#### Scenario: Undo disables pass rows without creating edit rows
+
+- **WHEN** global undo applies **NoteEditPassClosed** or **ControlChangeEditPassClosed**
+- **THEN** the referenced **editPass** rows become **Disabled**
+- **AND** no new **EditActionType::Delete** row is appended
+
 ### Requirement: Two-phase pass materialize (phase 1)
 
 **LoopPasses::materialize** SHALL replay in two phases unless a future change supersedes:
 
 1. Merge Active **recordPass** (if present) and Active **overdubPasses** by `mergeSequence`.
-2. Apply Active **editPass** entries in storage order.
+2. Apply Active scoped **editPass** entries in storage order, dispatching by **EditPassType**.
 
 #### Scenario: Materialize matches applyEdits overlay semantics
 
 - **WHEN** native tests run pre-migration **applyEdits** fixture vectors after migration
 - **THEN** materialized MIDI events SHALL match prior output byte-for-byte
 
-### Requirement: editPass op-list payload
+#### Scenario: Materialize dispatches note and control-change rows
 
-Each **editPass** SHALL store an ordered **EditChange** list. **editPass** entries SHALL NOT
-be stored as capture chunk passes.
+- **WHEN** **`passes.editPasses[]`** contains Active **EditPassType::Note** and **EditPassType::ControlChange** rows
+- **THEN** materialize applies note rows through **applyNoteEditPass**
+- **AND** materialize applies control-change rows through the control-change edit pass handler
+- **AND** capture rows remain chunk-backed
 
-#### Scenario: editPass holds EditChange list
+### Requirement: Note editPass stored as target and MIDI fields
 
-- **WHEN** **saveNoteEditPass** appends an **editPass** after a move-note edit
-- **THEN** the **editPass** contains one or more **EditChange** entries with **NoteRef** targets
-- **AND** no new capture chunk pass is created
+Note **editPass** rows SHALL store **EditPassType**, **EditActionType**, **EditPropertyType**, a
+baseline **NoteRef** **target**, and the MIDI note fields required for that property:
+
+- **Create:** **note on** + **note off** events
+- **Delete:** **target** only
+- **NoteRange** (move): **target**, `startTick`, `endTick`
+- **Length:** **target**, `startTick`, `endTick` (start-point length edit may use `startTick` later)
+- **Pitch:** **target**, pitch
+- **Velocity:** **target**, **note on** velocity
+
+Firmware SHALL NOT use a generic **payload** blob or legacy **EditChange** lists on new writes.
+
+#### Scenario: Length row stores full tick span
+
+- **WHEN** a length edit is committed
+- **THEN** the row has **propertyType = Length** with `startTick` and `endTick`
+- **AND** apply uses length/overlap semantics (not move semantics)
+
+#### Scenario: Length row ready for start-point edit
+
+- **WHEN** only the note end changes today
+- **THEN** `endTick` reflects the new end and `startTick` is still stored on the row
+- **AND** a future start-point length UI can change `startTick` without a storage format change
+
+#### Scenario: Move row uses NoteRange
+
+- **WHEN** a move edit is committed
+- **THEN** the row has **propertyType = NoteRange** with `startTick` and `endTick`
+- **AND** apply uses move semantics (distinct from **Length**)
+
+#### Scenario: v4 state file rejected on load
+
+- **WHEN** SD contains storage version 1–4
+- **THEN** **loadState** returns **false**
+- **AND** firmware runs with default empty in-RAM state
+
+#### Scenario: v5 save writes canonical edit rows only
+
+- **WHEN** a loop with edits is saved under v5
+- **THEN** each **editPass** row on disk uses **EditPassType** and MIDI field columns only
+- **AND** no **EditChange** blobs are written
+
+#### Scenario: v5 load reads canonical edit rows only
+
+- **WHEN** a v5 state file is loaded
+- **THEN** **readPersistedEditsTail** parses only the canonical edit-row wire
+- **AND** materialize matches the saved loop
+

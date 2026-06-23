@@ -45,7 +45,7 @@
 - [x] 7.1 Update `docs/Guides/LOOP_MIDI_STORAGE_AND_VALIDATION.md` — admission, reclaim, global undo trim
 - [x] 7.2 Run `pio test -e native` — full suite green after groups 1–6
 - [x] 7.3 HITL canonical baseline if user confirms firmware upload (groups 1–6)
-- [x] 7.4 `/opsx:archive` only after groups 1–9 complete and specs merged (groups 1–6 archived 2026-06-22; §9 deferred to **note-edit-session-undo-gpio** follow-up)
+- [x] 7.4 `/opsx:archive` — groups 1–9 complete; main spec **`note-edit-session-undo`** merged 2026-06-23 (§9 vocabulary post-**scoped-edit-pass-payload**)
 
 ## 8. Follow-up (parked in design D8)
 
@@ -53,19 +53,20 @@
 
 ## 9. Small session undo entries (after `note-edit-session-undo-gpio`)
 
-Replace **`NoteEditSessionUndoStack`** **`cloneShared`** payloads with **EditChange + focus** entries
+Replace **`NoteEditSessionUndoStack`** **`cloneShared`** payloads with **editRows** + **focus** entries
 (design D10). Depends on kind-boundary **`pushSessionUndoOnKindChange`** from **gpio** change.
+**Closeout:** main spec [`openspec/specs/note-edit-session-undo/spec.md`](../../../specs/note-edit-session-undo/spec.md) — 2026-06-23.
 
-- [x] 9.1 Add `SessionUndoEntry` (`EditChangeList`, `NoteEditFocus`, selection/bracket fields) in
+- [x] 9.1 Add `SessionUndoEntry` (`editRows`, `NoteEditFocus`, selection/bracket fields) in
       `NoteEditSessionUndo.h`; remove `shared_ptr<const LoopEventStore>` entry type
 - [x] 9.2 Implement `buildSessionUndoEntry` using `resolveOverlapNotesForPreCommit` +
-      `buildPreCommitEditChanges` (or equivalent) at kind boundary
+      `buildPreCommitEditPasses` at kind boundary
 - [x] 9.3 `pushSessionUndoOnKindChange` → append `SessionUndoEntry`; remove `pushSessionUndoBeforeMutation`
       **`cloneShared`** path
-- [x] 9.4 `sessionUndo` / `sessionRedo`: `rematerializeEditView` + apply entry chain + restore focus +
+- [x] 9.4 `sessionUndo` / `sessionRedo`: materialize + **applyNoteEditPassSequence** + restore focus +
       `applyUndoRedoLanding` / `syncNoteEditSessionStateToUi`
 - [x] 9.5 Add `PREFERRED_SESSION_UNDO_DEPTH` + heap admission before push; pressure trim of oldest entries
-- [x] 9.6 Native parity: clone-based vs EditChange-based undo — overlap round-trip, move → pitch → move back
+- [x] 9.6 Native parity: clone-based vs **editRows**-based undo — overlap round-trip, move → pitch → move back
 - [x] 9.7 Native: 128-bar fixture — four kind-boundary **E:** steps without N× full-loop clone memory
-- [x] 9.8 Document in `LOOP_MIDI_STORAGE_AND_VALIDATION.md`: committed **editPass** = **EditChange**;
-      live store = **materialize**; **E:** = **EditChange** + **focus** entries (not **cloneShared** stack)
+- [x] 9.8 Document in `LOOP_MIDI_STORAGE_AND_VALIDATION.md`: committed **editPass** = **EditPass** row fields;
+      live store = **materialize**; **E:** = **editRows** + **focus** entries (not **cloneShared** stack)
