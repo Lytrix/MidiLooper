@@ -27,7 +27,9 @@ In-RAM MIDI events still live in the **PSRAM chunk pool** (`LoopEventStore`). SD
 
 ## Central routing
 
-Runtime code **must not** call synchronous `StorageManager::saveState()` on the hot path. It calls **`requestDeferredSaveState()`**, which queues work consumed by **`processDeferredSaveState()`** in `main.cpp` **after** MIDI/clock/playback servicing.
+Runtime code **must not** call `StorageManager::saveState()` on the hot path. It calls **`requestDeferredSaveState()`**, which queues work consumed by **`processDeferredSaveState()`** in `main.cpp` **after** MIDI/clock/playback servicing.
+
+**`saveState()`** is a maintenance entry point only: it queues (or continues) a deferred save and **drains every slice synchronously** until `PERS,result,...,ok` or failure. There is no second on-disk format or duplicate writer — one chunk-bounded FSM serves both paths.
 
 ```mermaid
 flowchart TB

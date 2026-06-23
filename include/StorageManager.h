@@ -10,8 +10,9 @@
  * @brief Manages persistent saving and loading of the looper state to non-volatile storage.
  *
  * Provides static methods to serialize the current LooperState to external memory (e.g., SD card
- * or flash) and to reload it on startup. Runtime callers should request deferred saves; saveState()
- * is the synchronous cold-path writer.
+ * or flash) and to reload it on startup. Runtime callers should request deferred saves via
+ * requestDeferredSaveState(); saveState() drains the deferred writer synchronously (maintenance /
+ * explicit flush only — not for hot paths).
  */
 class StorageManager {
 public:

@@ -190,126 +190,6 @@ static bool readGlobalUndoStack(File& file, GlobalUndoStack& stack) {
     return true;
 }
 
-bool StorageManager::saveState(const LooperState& state) {
-#if BYPASS_STOP_UNDO_SAVE
-    (void)state;
-    Serial.println("[StorageManager] BYPASS_STOP_UNDO_SAVE: skip saveState");
-    return true;
-#endif
-    HotPathTelemetry::ScopedSaveState telemetryScope;
-    Serial.println("[StorageManager] Saving state to SD card...");
-    File file = SD.open(STORAGE_FILENAME, FILE_WRITE);
-    if (!file) {
-        Serial.print("[StorageManager] ERROR: Could not open file for writing: ");
-        Serial.println(STORAGE_FILENAME);
-        return false;
-    }
-    file.seek(0); // Overwrite
-
-    uint32_t version = STORAGE_VERSION;
-    if (!writeRaw(file, &version, sizeof(version))) { Serial.println("[StorageManager] ERROR: Failed to write version"); file.close(); return false; }
-
-    float savedBpm = bpm;
-    if (!writeRaw(file, &savedBpm, sizeof(savedBpm))) { Serial.println("[StorageManager] ERROR: Failed to write BPM"); file.close(); return false; }
-
-    // Save looper state
-    uint32_t looperStateVal = persistedLooperStateRaw(state);
-    if (!writeRaw(file, &looperStateVal, sizeof(looperStateVal))) { Serial.println("[StorageManager] ERROR: Failed to write looper state"); file.close(); return false; }
-
-    // Save master loop length
-    uint32_t masterLoopLength = trackManager.getMasterLoopLength();
-    if (!writeRaw(file, &masterLoopLength, sizeof(masterLoopLength))) { Serial.println("[StorageManager] ERROR: Failed to write master loop length"); file.close(); return false; }
-
-    // Save all tracks
-    uint8_t numTracks = Config::NUM_TRACKS;
-    if (!writeRaw(file, &numTracks, sizeof(numTracks))) { Serial.println("[StorageManager] ERROR: Failed to write numTracks"); file.close(); return false; }
-    for (uint8_t t = 0; t < numTracks; ++t) {
-        Track &track = trackManager.getTrack(t);
-        // Track state
-        TrackState stateToSave = track.getState();
-        // Ensure we save the state as TRACK_PLAYING when still in overdubbing to avoid state machine corruption
-        if (stateToSave == TRACK_OVERDUBBING) stateToSave = TRACK_PLAYING;
-        uint32_t trackState = (uint32_t)stateToSave;
-        if (!writeRaw(file, &trackState, sizeof(trackState))) { Serial.print("[StorageManager] ERROR: Failed to write trackState for track "); Serial.println(t); file.close(); return false; }
-        // Muted
-        bool muted = track.isMuted();
-        if (!writeRaw(file, &muted, sizeof(muted))) { Serial.print("[StorageManager] ERROR: Failed to write muted for track "); Serial.println(t); file.close(); return false; }
-
-        for (uint8_t s = 0; s < Config::MAX_LOOPS_PER_TRACK; ++s) {
-            const bool slotEnabled = trackManager.isSlotEnabled(t, s);
-            const bool slotMuted = trackManager.isSlotMuted(t, s);
-            const LoopId slotLoopId = track.slotRef(s).loopId;
-
-            logger.log(CAT_STORAGE, LOG_DEBUG, "[StorageManager] v4 saving track=%u slot=%u loopId=%lu",
-                       t, s, static_cast<unsigned long>(slotLoopId));
-
-            if (!writeRaw(file, &slotEnabled, sizeof(slotEnabled))) { Serial.print("[StorageManager] ERROR: Failed to write slotEnabled for track "); Serial.print(t); Serial.print(" slot "); Serial.println(s); file.close(); return false; }
-            if (!writeRaw(file, &slotMuted, sizeof(slotMuted))) { Serial.print("[StorageManager] ERROR: Failed to write slotMuted for track "); Serial.print(t); Serial.print(" slot "); Serial.println(s); file.close(); return false; }
-            if (!writeRaw(file, &slotLoopId, sizeof(slotLoopId))) { Serial.print("[StorageManager] ERROR: Failed to write slotLoopId for track "); Serial.print(t); Serial.print(" slot "); Serial.println(s); file.close(); return false; }
-        }
-
-        track.ensureLoopsAllocated();
-        const StorageIo loopIo = storageIoFromFileWrite(file);
-        for (uint8_t p = 0; p < Config::MAX_LOOPS_PER_TRACK; ++p) {
-            Loop& loop = track.loopPool_.at(p);
-            logger.log(CAT_STORAGE, LOG_DEBUG, "[StorageManager] v4 saving track=%u pool=%u loopId=%lu takes=%u",
-                       t, p, static_cast<unsigned long>(loop.loopId),
-                       static_cast<unsigned>(loop.passes.capturePassCount()));
-            if (!writeLoopPersisted(loopIo, loop)) {
-                Serial.print("[StorageManager] ERROR: Failed to write loop pool entry track ");
-                Serial.print(t);
-                Serial.print(" pool ");
-                Serial.println(p);
-                file.close();
-                return false;
-            }
-            yield();
-        }
-    }
-    // Save selected track index
-    uint8_t selectedTrackIdx = trackManager.getSelectedTrackIndex();
-    if (!file.write(&selectedTrackIdx, sizeof(selectedTrackIdx))) {
-        Serial.println("[StorageManager] ERROR: Failed to write selected track index");
-        file.close();
-        return false;
-    }
-
-    // Save active loop slot index per track
-    for (uint8_t t = 0; t < numTracks; ++t) {
-        uint8_t activeIdx = trackManager.getActiveLoopIndex(t);
-        if (!file.write(&activeIdx, sizeof(activeIdx))) {
-            Serial.println("[StorageManager] ERROR: Failed to write activeLoopIndex for track");
-            file.close();
-            return false;
-        }
-    }
-
-    // Optional v3 extension tail: per-track GlobalUndoStack (M3).
-    if (!writeRaw(file, &GLOBAL_UNDO_MAGIC, sizeof(GLOBAL_UNDO_MAGIC))) {
-        Serial.println("[StorageManager] ERROR: Failed to write global undo magic");
-        file.close();
-        return false;
-    }
-    for (uint8_t t = 0; t < numTracks; ++t) {
-        const Track& track = trackManager.getTrack(t);
-        if (!writeGlobalUndoStack(file, track.getGlobalUndoStack())) {
-            Serial.print("[StorageManager] ERROR: Failed to write global undo stack for track ");
-            Serial.println(t);
-            file.close();
-            return false;
-        }
-    }
-    if (!writeRaw(file, &STORAGE_COMPLETE_MAGIC, sizeof(STORAGE_COMPLETE_MAGIC))) {
-        Serial.println("[StorageManager] ERROR: Failed to write storage completion marker");
-        file.close();
-        return false;
-    }
-    file.close();
-    Serial.println("[StorageManager] State saved successfully (v4).");
-    telemetryScope.setOk(true);
-    return true;
-}
-
 namespace {
 bool deferredSavePending = false;
 bool urgentEditSavePending = false;
@@ -392,6 +272,7 @@ uint32_t deferredSaveStartedAtUs = 0;
 uint32_t deferredSaveHeapBefore = 0;
 uint32_t deferredSaveAdmissionHeap = 0;
 bool deferredSaveHeapFloorDeferred = false;
+bool deferredSaveLastCompletedOk = false;
 std::vector<MidiEvent, PsramFirstAllocator<MidiEvent>> deferredSaveMidiBatch;
 
 bool anyAllocatedLoopEditStateDirty() {
@@ -1447,6 +1328,7 @@ void StorageManager::processDeferredSaveState(const LooperState& state) {
             const uint32_t saveDurationUs = micros() - deferredSaveStartedAtUs;
             SC_PERSIST("result", saveDurationUs, deferredSaveHeapBefore, deferredSaveHeapBefore,
                        "failed");
+            deferredSaveLastCompletedOk = false;
             resetDeferredSaveJobState();
             return;
         }
@@ -1470,6 +1352,7 @@ void StorageManager::processDeferredSaveState(const LooperState& state) {
     const uint32_t saveDurationUs = micros() - deferredSaveStartedAtUs;
     SC_PERSIST("result", saveDurationUs, deferredSaveHeapBefore, deferredSaveHeapBefore,
                stepOk ? "ok" : "failed");
+    deferredSaveLastCompletedOk = stepOk;
     if (stepOk && clearEditDirtyAfterDeferredSave) {
         clearAllocatedLoopEditStateDirty();
         clearEditDirtyAfterDeferredSave = false;
@@ -1477,6 +1360,46 @@ void StorageManager::processDeferredSaveState(const LooperState& state) {
     if (!stepOk) {
         resetDeferredSaveJobState();
     }
+}
+
+bool StorageManager::saveState(const LooperState& state) {
+#if BYPASS_STOP_UNDO_SAVE
+    (void)state;
+    Serial.println("[StorageManager] BYPASS_STOP_UNDO_SAVE: skip saveState");
+    return true;
+#endif
+    HotPathTelemetry::ScopedSaveState telemetryScope;
+    Serial.println("[StorageManager] Draining deferred save to SD card...");
+
+    if (!deferredSaveInProgress) {
+        deferredSaveAdmissionHeap = UINT32_MAX;
+        const bool alreadyPending = deferredSavePending;
+        deferredSavePending = true;
+        SC_PERSIST("request", 0, 0, 0,
+                   alreadyPending ? "sync_drain_already_pending" : "sync_drain");
+    }
+
+    deferredSaveLastCompletedOk = false;
+    constexpr uint32_t kMaxDrainSteps = 200000u;
+    uint32_t steps = 0;
+    while ((deferredSavePending || deferredSaveInProgress) && steps < kMaxDrainSteps) {
+        processDeferredSaveState(state);
+        yield();
+        steps++;
+    }
+
+    const bool completed = !deferredSavePending && !deferredSaveInProgress;
+    if (!completed) {
+        Serial.println("[StorageManager] ERROR: Deferred save drain exceeded step limit");
+        return false;
+    }
+    if (!deferredSaveLastCompletedOk) {
+        Serial.println("[StorageManager] ERROR: Deferred save drain failed");
+        return false;
+    }
+    Serial.println("[StorageManager] State saved successfully (v4).");
+    telemetryScope.setOk(true);
+    return true;
 }
 
 bool StorageManager::loadState(LooperState& state) {
