@@ -332,19 +332,8 @@ void TrackUndo::pushNoteEditPassClosed(Track& track, uint8_t noteEditPassIndex,
 void TrackUndo::beginOverdubSession(Track& track) {
     if (editManager.isNoteEditActive()) {
         editManager.commitAllPendingNoteEditActions(track);
-        editManager.closeNoteEditPass(track);
     }
     (void)track;
-}
-
-void TrackUndo::endOverdubSession(Track& track) {
-    if (!editManager.isNoteEditActive()) {
-        return;
-    }
-    Loop& loop = track.getActiveLoop();
-    loop.rematerializeEditView(editManager.getEditSession().store.mutStore());
-    editManager.getEditSession().store.discardFlatCache();
-    editManager.getEditSession().undoStack.clear();
 }
 
 void TrackUndo::undoOverdub(Track& track) {

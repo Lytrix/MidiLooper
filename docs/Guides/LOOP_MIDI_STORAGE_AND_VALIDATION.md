@@ -195,7 +195,7 @@ Full-loop pass over `loop.midiEvents()` (materialized flat):
 | Undo 1 | Disable last overdub pass | 1 entry (cursor) |
 | Undo 2 | Disable record pass → empty slot | 0 entries (cursor) |
 
-`beginOverdubSession` closes an open **noteEditPass** when entering overdub while editing; it does **not** push an extra capture-pass undo entry.
+`beginOverdubSession` commits pending note-edit actions when entering overdub while editing; it does **not** call **closeNoteEditPass** or push capture-pass undo. In-edit overdub stop folds capture into **NoteEditSession.store** and pushes one **E:** entry (live capture **`redoEditRows`**); no **OverdubPassAdded** until edit exit.
 
 **Important:** clear-slot snapshot entries capture a deep-cloned pass snapshot (`PersistedLoopSnapshot`) so undo/redo never aliases live chunk refs.
 

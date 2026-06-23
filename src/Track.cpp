@@ -763,7 +763,7 @@ CommitResult Track::finalizeCommitSideEffects(CommitResult result, CommitReason 
           loop.passes.hasRecordPass() && loop.passes.recordPass.id == undoPassId;
       if (isRecordPass) {
         TrackUndo::pushRecordPassAdded(*this, getActiveLoopIndex(), undoPassId);
-      } else {
+      } else if (!editManager.isNoteEditActive()) {
         TrackUndo::pushOverdubPassAdded(*this, getActiveLoopIndex(), undoPassId);
       }
       if (recordStop || overdubStop) {
@@ -1320,11 +1320,24 @@ void Track::stopOverdubbing() {
   if (loop.loopLengthTicks > 0) {
     closeTick = tickPhaseInLoop(currentTick, loop.startLoopTick, loop.loopLengthTicks);
   }
+  if (editManager.isNoteEditActive()) {
+    closeOpenNotesAtLoopWrap();
+    editManager.foldLiveCaptureIntoNoteEditSession(*this, closeTick);
+    pendingNotes.clear();
+    setState(TRACK_PLAYING);
+    logMemoryAfterOverdubStop(recordAddedNoteOnCount, loop);
+    logger.logTrackEvent("Overdubbing stopped", currentTick);
+    logger.info("Overdub stopped (in-edit fold): events=%d, undo_entries=%d",
+                static_cast<int>(loop.liveEventCount()), TrackUndo::getUndoCount(*this));
+    resetPlaybackState(currentTick);
+    displayManager.emitDisplayCaptureSnapshot(*this, activeLoopIndex, currentTick);
+    HotPathTelemetry::requestDeferredSummary("overdub_stop");
+    return;
+  }
   const CommitResult commitResult =
       loop.commitCapturePass(CommitReason::OverdubStop, currentTick);
   setState(TRACK_PLAYING);
   finalizeCommitSideEffects(commitResult, CommitReason::OverdubStop, closeTick);
-  TrackUndo::endOverdubSession(*this);
   logMemoryAfterOverdubStop(recordAddedNoteOnCount, loop);
   logger.logTrackEvent("Overdubbing stopped", currentTick);
   logger.info("Overdub stopped: events=%d, undo_entries=%d", static_cast<int>(loop.liveEventCount()),
@@ -1345,10 +1358,21 @@ void Track::stopOverdubbingToStopped() {
     closeTick = tickPhaseInLoop(currentTick, loop.startLoopTick, loop.loopLengthTicks);
   }
   sendAllNotesOff();
+  if (editManager.isNoteEditActive()) {
+    closeOpenNotesAtLoopWrap();
+    editManager.foldLiveCaptureIntoNoteEditSession(*this, closeTick);
+    pendingNotes.clear();
+    logMemoryAfterOverdubStop(recordAddedNoteOnCount, loop);
+    setState(TRACK_STOPPED);
+    resetPlaybackState(currentTick);
+    displayManager.emitDisplayCaptureSnapshot(*this, activeLoopIndex, currentTick);
+    logger.logTrackEvent("Overdubbing stopped (to STOPPED)", currentTick);
+    HotPathTelemetry::requestDeferredSummary("overdub_stop_to_stopped");
+    return;
+  }
   const CommitResult commitResult =
       loop.commitCapturePass(CommitReason::OverdubStopToStopped, currentTick);
   finalizeCommitSideEffects(commitResult, CommitReason::OverdubStopToStopped, closeTick);
-  TrackUndo::endOverdubSession(*this);
   logMemoryAfterOverdubStop(recordAddedNoteOnCount, loop);
   setState(TRACK_STOPPED);
   resetPlaybackState(currentTick);

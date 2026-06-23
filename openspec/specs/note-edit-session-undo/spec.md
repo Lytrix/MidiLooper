@@ -67,6 +67,36 @@ Native tests SHALL prove that materialize + **applyNoteEditPassSequence** restor
 - **WHEN** the same edit sequence is undone via clone-based and **editRows**-based paths
 - **THEN** **NoteEditSession.store** event content and **NoteEditFocus** SHALL match
 
+### Requirement: Session undo for live capture during note edit
+
+When overdub stops while note edit mode is active, the system SHALL fold capture events into
+**NoteEditSession.store** without publishing an **overdubPass** to **passes[]**. The system SHALL
+push one **SessionUndoEntry** with pre-filled **`redoEditRows`** from **`buildSessionStoreEditPasses`**
+(baseline session flat → folded session flat). Undo SHALL restore the pre-fold session store via
+materialize + empty **`editRows`**; redo SHALL apply stored **`redoEditRows`**.
+
+The system SHALL NOT push **OverdubPassAdded** on the global stack while **`isNoteEditActive()`**.
+Overdub start during note edit SHALL NOT call **closeNoteEditPass**.
+
+#### Scenario: In-edit overdub stop folds into session store
+
+- **WHEN** overdub stops while **`isNoteEditActive()`**
+- **THEN** capture events merge into **NoteEditSession.store**
+- **AND** one **SessionUndoEntry** is appended with non-empty **`redoEditRows`**
+- **AND** no **overdubPass** is published to **passes[]**
+
+#### Scenario: Session undo removes folded live capture notes
+
+- **WHEN** **sessionUndo** runs on a live-capture entry
+- **THEN** **NoteEditSession.store** no longer contains notes added by that overdub
+- **AND** **GlobalUndoStack** cursor is unchanged
+
+#### Scenario: Session redo restores folded live capture notes
+
+- **WHEN** **sessionRedo** runs after live-capture session undo
+- **THEN** **NoteEditSession.store** again contains the folded overdub notes
+- **AND** **applySessionRedoEntry** applies pre-filled **`redoEditRows`**
+
 ### Requirement: Session undo admission and trim
 
 Before appending a **SessionUndoEntry**, the system SHALL check heap admission for the entry payload.
