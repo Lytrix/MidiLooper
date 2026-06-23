@@ -14,6 +14,12 @@ struct SessionUndoEntry {
   EditChangeList changes;
   NoteEditFocus focus;
   NoteEditSelection selection;
+  EditPassIdList editPassIdsAtPush;
+  EditChangeList redoChanges;
+  NoteEditFocus redoFocus;
+  NoteEditSelection redoSelection;
+  EditPassIdList redoEditPassIds;
+  bool hasRedoPayload = false;
 };
 
 size_t estimatedSessionUndoEntryBytes(const SessionUndoEntry& entry);
@@ -21,9 +27,15 @@ bool canHeapAdmitSessionUndoEntry(const SessionUndoEntry& entry);
 
 SessionUndoEntry buildSessionUndoEntry(const NoteEditFocus& focus, NoteEditSelection selection,
                                        const MidiEventVec& sessionFlat, uint8_t channel,
-                                       uint32_t loopLength);
+                                       uint32_t loopLength,
+                                       const EditPassIdList& editPassIdsAtPush);
+EditChangeList buildSessionStoreEditChanges(const MidiEventVec& baselineStoreEvents,
+                                            const MidiEventVec& sessionStoreEvents,
+                                            uint8_t channel, uint32_t loopLength);
 
 void applySessionUndoEntry(Loop& loop, CowLoopEventStore& store, const SessionUndoEntry& entry,
-                           uint32_t loopLength);
+                           uint32_t loopLength, const EditPassIdList& currentEditPassIds);
+void applySessionRedoEntry(Loop& loop, CowLoopEventStore& store, const SessionUndoEntry& entry,
+                           uint32_t loopLength, const EditPassIdList& currentEditPassIds);
 
 bool sessionUndoStoresMatch(const LoopEventStore& a, const LoopEventStore& b);

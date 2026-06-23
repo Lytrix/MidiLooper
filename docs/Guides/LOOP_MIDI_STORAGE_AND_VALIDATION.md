@@ -44,10 +44,10 @@ flowchart LR
 | Layer | Storage | Global undo (when applicable) |
 |-------|---------|------------------------------|
 | **recordPass** / **overdubPass** | `Loop::passes` capture passes (chunk refs) | **RecordPassAdded** / **OverdubPassAdded** (disable pass on undo) |
-| **editPass** | `Loop::passes.editPasses[]` (`EditPass` + `EditChange` + `NoteRef`) | **NoteEditPassClosed** (per closed **noteEditPass** batch) |
+| **editPass** | `Loop::passes.editPasses[]` (`EditSessionType` + `EditActionType` + `EditPropertyType`; legacy note payload remains `EditChange`) | **NoteEditPassClosed** / **ControlChangeEditPassClosed** (per closed edit-pass batch) |
 | **NoteEditSession** | RAM `noteEditSession.store` while editing | `NoteEditSessionUndoStack` (before `saveNoteEditPass`) |
 
-- **`LoopPasses::materialize()`** — merge active capture passes, then overlay active **editPasses** (`EditApply`).
+- **`LoopPasses::materialize()`** — merge active capture passes, then overlay active **editPasses** in storage order (`EditSessionType::Note` apply path; explicit `ControlChange` no-op stub until CC edit apply ships).
 - **`saveNoteEditPass()`** — one committed **editPass** row; may share a **noteEditPassIndex** batch.
 - **`closeNoteEditPass()`** — note-edit exit / overdub-while-editing boundary; pushes **NoteEditPassClosed** for all **editPass** ids in the closed batch.
 - **§0.6.1 record routing** — at most one **recordPass** per slot; a second record stop routes to **overdubPass** (`effectiveCapturePassPhase` in `sealCapture`).
@@ -180,7 +180,7 @@ Full-loop pass over `loop.midiEvents()` (materialized flat):
 | `UndoEntryKind` | Push | Undo action |
 |-----------------|------|-------------|
 | **RecordPassAdded** / **OverdubPassAdded** | `commitCapturePass` publish | `setCapturePassState(Disabled)` |
-| **NoteEditPassClosed** | `closeNoteEditPass` | `disableEditPasses(ids)` |
+| **NoteEditPassClosed** / **ControlChangeEditPassClosed** | close scoped edit-pass batch | set referenced `editPasses[]` rows to **Disabled** |
 | **ClearSlot** | long-press clear (`pushClearTrackSnapshot`) | restore `beforeSnapshot` + geometry + track state |
 | **LoopBoundaryChange** | loop-start edit | restore prior loop start/length |
 
@@ -235,6 +235,7 @@ Hardware **Button A double-press** calls `undoOverdub` directly. MIDI record dou
 
 - Per-slot loop pool entries persist **`LoopPasses`** (capture passes + **editPasses** tail) via `writeLoopPersisted` / `readLoopPersisted`.
 - `writeLoopPersisted` streams capture-pass events in bounded batches and records max batch size through storage-loop-io test hooks; the deferred save path writes live loop pool entries as metadata, capture-pass headers, and one capture chunk per main-loop iteration.
+- Scoped edit tails write `EditSessionType` / `EditActionType` / `EditPropertyType` metadata and dual-read legacy v4 note-edit rows during migration.
 - **`startLoopTick`** is stored in each loop snapshot and restored by **`applySnapshotToLoop`** on load (phase origin for `tickPhaseInLoop`).
 - Truncated or corrupt **editPasses** tails fail **`readPersistedEditsTail`** (load aborts — no silent empty edits).
 - Invalid persisted **`slotLoopId`** values outside `0..MAX_LOOPS_PER_TRACK-1` are repaired to the slot pool index on load (warning logged).
@@ -257,7 +258,7 @@ Hardware **Button A double-press** calls `undoOverdub` directly. MIDI record dou
 
 **Do not** add `MemoryMonitor` or full-loop validation on record/overdub stop hot paths. Idle maintenance, deferred SD save (`processDeferredSaveState`), and `HotPathTelemetry` deferred summary are wired in `main()` — deferred save runs only when **no** track is recording/overdubbing, and can continue during **PLAYING**; deferred full validate runs only when the track is not **PLAYING**, **RECORDING**, or **OVERDUBBING**. **`TrackManager::prewarmPlaybackRuntime()`** runs after early loop allocation and successful **`loadState`** so first playback tick does not allocate runtime.
 
-Record stop calls `queueDeferredRecordRevts()` after a published commit. Non-`SESSION_CAPTURE` builds stub all `#CAP` / REVT macros.
+Record stop calls `queueDeferredRecordRevts()` after a published commit; idle maintenance emits REVT while `PLAYING` (not only when transport is stopped). Non-`SESSION_CAPTURE` builds stub all `#CAP` / REVT macros.
 
 ---
 

@@ -79,8 +79,14 @@ struct Loop {
   void rematerializeEditView(LoopEventStore& store) const;
 
   EditPassId saveNoteEditPass(uint8_t noteEditPassIndex, EditChangeList changes);
+  EditPassId replaceNoteEditPass(uint8_t noteEditPassIndex,
+                                 const EditPassIdList& staleEditPassIds,
+                                 EditChangeList changes);
 
   void disableEditPasses(const EditPassIdList& ids);
+  void enableEditPasses(const EditPassIdList& ids);
+  void materializeExcludingEditPassIds(const EditPassIdList& excludeIds,
+                                       MidiEventVec& out) const;
 
   void markEditStateDirty() { editStateDirty_ = true; }
   bool isEditStateDirty() const { return editStateDirty_; }

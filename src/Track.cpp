@@ -835,8 +835,9 @@ void Track::emitStoredMidiVerification() const {
 }
 
 void Track::processDeferredIdleMaintenance(uint32_t nowMs) {
-  const bool canEmitRecordRevts = !isPlaying() && !isRecording() && !isOverdubbing();
-  if (canEmitRecordRevts) {
+  // REVT capture is chunked and reads committed passes only; allow while PLAYING so
+  // record-stop -> PLAYING does not strand deferred REVT until transport stops.
+  if (!isRecording() && !isOverdubbing()) {
     processDeferredRecordRevts(64);
   }
 

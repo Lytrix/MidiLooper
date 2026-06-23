@@ -3,6 +3,8 @@
 
 #include <unity.h>
 
+#include <utility>
+
 #include "../../src/Logger.cpp"
 #include "../../src/Utils/NoteUtils.cpp"
 #include "../../src/EditApply.cpp"
@@ -53,6 +55,18 @@ void applyMoveToSession(NoteEditFocus& focus, MidiEventVec& flat, uint8_t channe
   }
 }
 
+bool hasDisplayNote(const MidiEventVec& flat, uint32_t loopLength, uint8_t pitch,
+                    uint32_t startTick, uint32_t endTick) {
+  const std::vector<NoteUtils::DisplayNote> notes =
+      NoteUtils::reconstructNotes(flat, loopLength, false);
+  for (const NoteUtils::DisplayNote& note : notes) {
+    if (note.note == pitch && note.startTick == startTick && note.endTick == endTick) {
+      return true;
+    }
+  }
+  return false;
+}
+
 }  // namespace
 
 void test_session_undo_stack_push_entry() {
@@ -83,8 +97,10 @@ void test_session_undo_entry_matches_clone_restore() {
   focus.last = focus.commitBaseline;
 
   const auto cloneSnap = session.readStore().cloneShared();
+  const EditPassIdList noEditPasses{};
   const SessionUndoEntry entry =
-      buildSessionUndoEntry(focus, NoteEditSelection{}, session.readFlat(), 5, loop.loopLengthTicks);
+      buildSessionUndoEntry(focus, NoteEditSelection{}, session.readFlat(), 5, loop.loopLengthTicks,
+                            noEditPasses);
 
   MidiEventVec& flat = session.mutFlat();
   applyMoveToSession(focus, flat, 5, 58);
@@ -94,9 +110,214 @@ void test_session_undo_entry_matches_clone_restore() {
   viaClone.restoreFromSnapshot(cloneSnap);
 
   CowLoopEventStore viaEntry;
-  applySessionUndoEntry(loop, viaEntry, entry, loop.loopLengthTicks);
+  applySessionUndoEntry(loop, viaEntry, entry, loop.loopLengthTicks, noEditPasses);
 
   TEST_ASSERT_TRUE(sessionUndoStoresMatch(viaClone.readStore(), viaEntry.readStore()));
+}
+
+void test_session_redo_entry_restores_after_state() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+
+  Loop loop;
+  loop.loopLengthTicks = 768;
+  loop.passes.recordPass = makeRecordPassWithNote(5, 10);
+  loop.nextPassId_ = 2;
+
+  CowLoopEventStore session;
+  loop.rematerializeEditView(session.mutStore());
+  session.discardFlatCache();
+
+  NoteEditFocus focus;
+  rebuildNoteEditFocusFromStore(focus, session.readFlat(), 5, loop.loopLengthTicks, 0);
+  focus.last = focus.commitBaseline;
+  const EditPassIdList noEditPasses{};
+  const SessionUndoEntry beforeEntry =
+      buildSessionUndoEntry(focus, NoteEditSelection{}, session.readFlat(), 5, loop.loopLengthTicks,
+                            noEditPasses);
+
+  MidiEventVec& flat = session.mutFlat();
+  applyMoveToSession(focus, flat, 5, 58);
+  session.syncFlatToStore();
+  const auto movedSnap = session.readStore().cloneShared();
+
+  SessionUndoEntry undoEntry = beforeEntry;
+  SessionUndoEntry redoPayload =
+      buildSessionUndoEntry(focus, NoteEditSelection{}, session.readFlat(), 5, loop.loopLengthTicks,
+                            noEditPasses);
+  undoEntry.redoChanges = std::move(redoPayload.changes);
+  undoEntry.redoFocus = std::move(redoPayload.focus);
+  undoEntry.redoSelection = redoPayload.selection;
+  undoEntry.redoEditPassIds = noEditPasses;
+  undoEntry.hasRedoPayload = true;
+
+  applySessionUndoEntry(loop, session, undoEntry, loop.loopLengthTicks, noEditPasses);
+  CowLoopEventStore baseline;
+  loop.rematerializeEditView(baseline.mutStore());
+  TEST_ASSERT_TRUE(sessionUndoStoresMatch(baseline.readStore(), session.readStore()));
+
+  applySessionRedoEntry(loop, session, undoEntry, loop.loopLengthTicks, noEditPasses);
+  CowLoopEventStore moved;
+  moved.restoreFromSnapshot(movedSnap);
+  TEST_ASSERT_TRUE(sessionUndoStoresMatch(moved.readStore(), session.readStore()));
+}
+
+void test_replace_note_edit_pass_uses_final_session_store() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+
+  Loop loop;
+  loop.loopLengthTicks = 768;
+  loop.passes.recordPass = makeRecordPassWithNote(5, 10);
+  loop.nextPassId_ = 2;
+
+  EditChange staleMove;
+  staleMove.type = EditChangeType::MoveNote;
+  staleMove.target = {5, 60, 10, 58};
+  staleMove.newStartTick = 58;
+  staleMove.newEndTick = 106;
+  const EditPassId staleId = loop.saveNoteEditPass(0, EditChangeList{staleMove});
+  TEST_ASSERT_EQUAL(2u, staleId);
+
+  MidiEventVec baselineEvents;
+  loop.mergeActiveCapturePasses(baselineEvents);
+  MidiEventVec finalSessionEvents = baselineEvents;
+  for (MidiEvent& evt : finalSessionEvents) {
+    if (evt.isNoteOn() && evt.channel == 5 && evt.data.noteData.note == 60 && evt.tick == 10) {
+      evt.tick = 106;
+    }
+    if (evt.isNoteOff() && evt.channel == 5 && evt.data.noteData.note == 60 && evt.tick == 58) {
+      evt.tick = 154;
+    }
+  }
+
+  EditChangeList replacement =
+      buildSessionStoreEditChanges(baselineEvents, finalSessionEvents, 5, loop.loopLengthTicks);
+  TEST_ASSERT_FALSE(replacement.empty());
+  const EditPassId replacementId =
+      loop.replaceNoteEditPass(0, EditPassIdList{staleId}, std::move(replacement));
+  TEST_ASSERT_EQUAL(3u, replacementId);
+
+  MidiEventVec materialized;
+  loop.passes.materializeToEventVector(materialized, loop.loopLengthTicks);
+  TEST_ASSERT_TRUE(hasDisplayNote(materialized, loop.loopLengthTicks, 60, 106, 154));
+  TEST_ASSERT_FALSE(hasDisplayNote(materialized, loop.loopLengthTicks, 60, 58, 106));
+}
+
+void test_replace_note_edit_pass_disables_stale_rows_when_final_store_matches_baseline() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+
+  Loop loop;
+  loop.loopLengthTicks = 768;
+  loop.passes.recordPass = makeRecordPassWithNote(5, 10);
+  loop.nextPassId_ = 2;
+
+  EditChange staleMove;
+  staleMove.type = EditChangeType::MoveNote;
+  staleMove.target = {5, 60, 10, 58};
+  staleMove.newStartTick = 58;
+  staleMove.newEndTick = 106;
+  const EditPassId staleId = loop.saveNoteEditPass(0, EditChangeList{staleMove});
+  TEST_ASSERT_EQUAL(2u, staleId);
+
+  MidiEventVec baselineEvents;
+  loop.mergeActiveCapturePasses(baselineEvents);
+  const EditChangeList replacement =
+      buildSessionStoreEditChanges(baselineEvents, baselineEvents, 5, loop.loopLengthTicks);
+  TEST_ASSERT_TRUE(replacement.empty());
+  const EditPassId replacementId =
+      loop.replaceNoteEditPass(0, EditPassIdList{staleId}, EditChangeList{});
+  TEST_ASSERT_EQUAL(kInvalidEditPassId, replacementId);
+
+  MidiEventVec materialized;
+  loop.passes.materializeToEventVector(materialized, loop.loopLengthTicks);
+  TEST_ASSERT_TRUE(hasDisplayNote(materialized, loop.loopLengthTicks, 60, 10, 58));
+  TEST_ASSERT_FALSE(hasDisplayNote(materialized, loop.loopLengthTicks, 60, 58, 106));
+}
+
+void test_visual_cache_reflects_active_edit_passes() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+
+  Loop loop;
+  loop.loopLengthTicks = 768;
+  loop.passes.recordPass = makeRecordPassWithNote(5, 10);
+  loop.nextPassId_ = 2;
+
+  EditChange move;
+  move.type = EditChangeType::MoveNote;
+  move.target = {5, 60, 10, 58};
+  move.newStartTick = 106;
+  move.newEndTick = 154;
+  const EditPassId editPassId = loop.saveNoteEditPass(0, EditChangeList{move});
+  TEST_ASSERT_EQUAL(2u, editPassId);
+
+  loop.rebuildVisualCacheFromPasses();
+  TEST_ASSERT_FALSE(loop.visualCache.notes.empty());
+  TEST_ASSERT_TRUE(
+      hasDisplayNote(loop.midiEvents(), loop.loopLengthTicks, 60, 106, 154));
+  TEST_ASSERT_FALSE(
+      hasDisplayNote(loop.midiEvents(), loop.loopLengthTicks, 60, 10, 58));
+
+  bool foundMovedInVisualCache = false;
+  for (const NoteUtils::DisplayNote& note : loop.visualCache.notes) {
+    if (note.note == 60 && note.startTick == 106 && note.endTick == 154) {
+      foundMovedInVisualCache = true;
+      break;
+    }
+  }
+  TEST_ASSERT_TRUE(foundMovedInVisualCache);
+}
+
+void test_session_undo_move_after_add_committed_restores_insert_position() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+
+  Loop loop;
+  loop.loopLengthTicks = 768;
+  loop.passes.recordPass = makeRecordPassWithNote(5, 10);
+  loop.nextPassId_ = 2;
+
+  EditChange add;
+  add.type = EditChangeType::AddNote;
+  add.addedEvents.push_back(MidiEvent::NoteOn(48, 5, 72, 100));
+  add.addedEvents.push_back(MidiEvent::NoteOff(96, 5, 72, 0));
+  const EditPassId addId = loop.saveNoteEditPass(0, EditChangeList{add});
+  TEST_ASSERT_EQUAL(2u, addId);
+
+  CowLoopEventStore session;
+  loop.passes.materializeToEventVector(session.mutFlat(), loop.loopLengthTicks);
+  session.syncFlatToStore();
+
+  NoteEditFocus focus;
+  focus.active = true;
+  focus.commitBaseline = {72, 100, 48, 96};
+  focus.last = focus.commitBaseline;
+  focus.moving = {5, 72, 48, 96};
+  focus.movingNoteRange = {48, 96};
+
+  const EditPassIdList idsAtPush{addId};
+  const SessionUndoEntry entry =
+      buildSessionUndoEntry(focus, NoteEditSelection{}, session.readFlat(), 5, loop.loopLengthTicks,
+                            idsAtPush);
+
+  EditChange move;
+  move.type = EditChangeType::MoveNote;
+  move.target = {5, 72, 48, 96};
+  move.newStartTick = 106;
+  move.newEndTick = 154;
+  const EditPassId moveId = loop.saveNoteEditPass(0, EditChangeList{move});
+  TEST_ASSERT_EQUAL(3u, moveId);
+
+  loop.passes.materializeToEventVector(session.mutFlat(), loop.loopLengthTicks);
+  session.syncFlatToStore();
+  TEST_ASSERT_TRUE(hasDisplayNote(session.readFlat(), loop.loopLengthTicks, 72, 106, 154));
+
+  const EditPassIdList currentIds{addId, moveId};
+  applySessionUndoEntry(loop, session, entry, loop.loopLengthTicks, currentIds);
+  TEST_ASSERT_TRUE(hasDisplayNote(session.readFlat(), loop.loopLengthTicks, 72, 48, 96));
+  TEST_ASSERT_FALSE(hasDisplayNote(session.readFlat(), loop.loopLengthTicks, 72, 106, 154));
 }
 
 void test_session_undo_four_kind_steps_bounded_entries() {
@@ -121,7 +342,7 @@ void test_session_undo_four_kind_steps_bounded_entries() {
   size_t totalEntryBytes = 0;
   for (NoteEditKind kind : kinds) {
     const SessionUndoEntry entry = buildSessionUndoEntry(
-        focus, NoteEditSelection{}, session.readFlat(), 5, loop.loopLengthTicks);
+        focus, NoteEditSelection{}, session.readFlat(), 5, loop.loopLengthTicks, EditPassIdList{});
     totalEntryBytes += estimatedSessionUndoEntryBytes(entry);
     TEST_ASSERT_TRUE(stack.pushEntry(entry));
     if (kind == NoteEditKind::Move) {
@@ -149,6 +370,11 @@ int main(int argc, char** argv) {
   UNITY_BEGIN();
   RUN_TEST(test_session_undo_stack_push_entry);
   RUN_TEST(test_session_undo_entry_matches_clone_restore);
+  RUN_TEST(test_session_redo_entry_restores_after_state);
+  RUN_TEST(test_replace_note_edit_pass_uses_final_session_store);
+  RUN_TEST(test_replace_note_edit_pass_disables_stale_rows_when_final_store_matches_baseline);
+  RUN_TEST(test_visual_cache_reflects_active_edit_passes);
+  RUN_TEST(test_session_undo_move_after_add_committed_restores_insert_position);
   RUN_TEST(test_session_undo_four_kind_steps_bounded_entries);
   return UNITY_END();
 }

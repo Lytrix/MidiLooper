@@ -107,6 +107,10 @@ RecordPass makeEditRecordFixtureRecordPassCh5_195830(PassId id) {
 void pushEditPassChange(LoopPasses& passes, EditPassId id, EditChangeList changes) {
   EditPass editPass{};
   editPass.id = id;
+  editPass.sessionType = EditSessionType::Note;
+  editPass.editPassIndex = 0;
+  editPass.actionType = EditActionType::Update;
+  editPass.propertyType = EditPropertyType::None;
   editPass.kind = EditPassKind::NoteEdit;
   editPass.state = EditPassState::Active;
   editPass.changes = std::move(changes);
@@ -339,10 +343,110 @@ void test_save_edit_appends_without_collapsing_takes() {
   TEST_ASSERT_EQUAL(3u, id);
   TEST_ASSERT_EQUAL(2u, loop.passes.capturePassCount());
   TEST_ASSERT_EQUAL(1u, loop.passes.editPasses.size());
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(EditSessionType::Note),
+                          static_cast<uint8_t>(loop.passes.editPasses[0].sessionType));
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(EditActionType::Delete),
+                          static_cast<uint8_t>(loop.passes.editPasses[0].actionType));
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(EditPropertyType::None),
+                          static_cast<uint8_t>(loop.passes.editPasses[0].propertyType));
 
   MidiEventVec flat;
   loop.passes.materializeToEventVector(flat);
   TEST_ASSERT_EQUAL(2u, flat.size());
+}
+
+void test_save_note_edit_pass_sets_scoped_action_property_mapping() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+
+  EditChange del;
+  del.type = EditChangeType::DeleteNote;
+  del.target = {1, 60, 10, 20};
+  const EditPassId delId = loop.saveNoteEditPass(2, EditChangeList{del});
+  TEST_ASSERT_NOT_EQUAL(kInvalidEditPassId, delId);
+  const EditPass& delPass = loop.passes.editPasses.back();
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(EditSessionType::Note),
+                          static_cast<uint8_t>(delPass.sessionType));
+  TEST_ASSERT_EQUAL_UINT8(2u, delPass.editPassIndex);
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(EditActionType::Delete),
+                          static_cast<uint8_t>(delPass.actionType));
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(EditPropertyType::None),
+                          static_cast<uint8_t>(delPass.propertyType));
+
+  EditChange pitch;
+  pitch.type = EditChangeType::ChangePitch;
+  pitch.target = {1, 60, 10, 20};
+  pitch.newPitch = 67;
+  const EditPassId pitchId = loop.saveNoteEditPass(3, EditChangeList{pitch});
+  TEST_ASSERT_NOT_EQUAL(kInvalidEditPassId, pitchId);
+  const EditPass& pitchPass = loop.passes.editPasses.back();
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(EditActionType::Update),
+                          static_cast<uint8_t>(pitchPass.actionType));
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(EditPropertyType::Pitch),
+                          static_cast<uint8_t>(pitchPass.propertyType));
+
+  EditChange length;
+  length.type = EditChangeType::ChangeLength;
+  length.target = {1, 60, 10, 20};
+  length.newEndTick = 28;
+  const EditPassId lengthId = loop.saveNoteEditPass(4, EditChangeList{length});
+  TEST_ASSERT_NOT_EQUAL(kInvalidEditPassId, lengthId);
+  const EditPass& lengthPass = loop.passes.editPasses.back();
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(EditActionType::Update),
+                          static_cast<uint8_t>(lengthPass.actionType));
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(EditPropertyType::Length),
+                          static_cast<uint8_t>(lengthPass.propertyType));
+
+  EditChange moveStart;
+  moveStart.type = EditChangeType::MoveNote;
+  moveStart.target = {1, 60, 10, 20};
+  moveStart.newStartTick = 14;
+  moveStart.newEndTick = 24;
+  const EditPassId moveStartId = loop.saveNoteEditPass(5, EditChangeList{moveStart});
+  TEST_ASSERT_NOT_EQUAL(kInvalidEditPassId, moveStartId);
+  const EditPass& moveStartPass = loop.passes.editPasses.back();
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(EditPropertyType::StartTick),
+                          static_cast<uint8_t>(moveStartPass.propertyType));
+
+  EditChange moveEnd;
+  moveEnd.type = EditChangeType::MoveNote;
+  moveEnd.target = {1, 60, 10, 20};
+  moveEnd.newStartTick = 10;
+  moveEnd.newEndTick = 24;
+  const EditPassId moveEndId = loop.saveNoteEditPass(6, EditChangeList{moveEnd});
+  TEST_ASSERT_NOT_EQUAL(kInvalidEditPassId, moveEndId);
+  const EditPass& moveEndPass = loop.passes.editPasses.back();
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(EditPropertyType::EndTick),
+                          static_cast<uint8_t>(moveEndPass.propertyType));
+}
+
+void test_edit_pass_state_toggle_does_not_append_edit_actions() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+
+  EditChange del;
+  del.type = EditChangeType::DeleteNote;
+  del.target = {1, 60, 10, 20};
+  const EditPassId id = loop.saveNoteEditPass(0, EditChangeList{del});
+  TEST_ASSERT_NOT_EQUAL(kInvalidEditPassId, id);
+  TEST_ASSERT_EQUAL(1u, loop.passes.editPasses.size());
+  const EditActionType beforeAction = loop.passes.editPasses[0].actionType;
+
+  loop.disableEditPasses(EditPassIdList{id});
+  TEST_ASSERT_EQUAL(1u, loop.passes.editPasses.size());
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(EditPassState::Disabled),
+                          static_cast<uint8_t>(loop.passes.editPasses[0].state));
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(beforeAction),
+                          static_cast<uint8_t>(loop.passes.editPasses[0].actionType));
+
+  loop.passes.editPasses[0].state = EditPassState::Active;
+  TEST_ASSERT_EQUAL(1u, loop.passes.editPasses.size());
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(EditPassState::Active),
+                          static_cast<uint8_t>(loop.passes.editPasses[0].state));
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(beforeAction),
+                          static_cast<uint8_t>(loop.passes.editPasses[0].actionType));
 }
 
 void test_disable_edits_restores_take_only_view() {
@@ -678,6 +782,8 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_change_pitch_on_overlapping_note_keeps_neighbor_endtick);
   RUN_TEST(test_apply_edits_delete_note);
   RUN_TEST(test_save_edit_appends_without_collapsing_takes);
+  RUN_TEST(test_save_note_edit_pass_sets_scoped_action_property_mapping);
+  RUN_TEST(test_edit_pass_state_toggle_does_not_append_edit_actions);
   RUN_TEST(test_disable_edits_restores_take_only_view);
   RUN_TEST(test_reset_take_timeline_clears_stale_edits);
   RUN_TEST(test_note_edit_session_undo_stack);

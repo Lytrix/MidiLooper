@@ -12,6 +12,8 @@ if str(_SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(_SCRIPT_DIR))
 
 from host_midi_automation_edit_baseline import (
+    SCOPED_EDIT_PASS_REDONE,
+    SCOPED_EDIT_PASS_UNDONE,
     _verify_session_state_enter,
     _verify_session_undo_redo_routing,
     _verify_warmup_empty_nav_create,
@@ -47,12 +49,23 @@ class EditSessionStateSerialVerifyTests(unittest.TestCase):
             "[2] MIDI: NoteEditSession undo",
             "[3] MIDI: NoteEditSession redo",
             "[4] MIDI Encoder: Long press - exited edit mode",
-            "[5] Note edit pass undone editPass=0 edits=6",
-            "[6] Note edit pass redone editPass=0 edits=6",
+            f"[5] {SCOPED_EDIT_PASS_UNDONE} session=0 editPass=0 edits=6",
+            f"[6] {SCOPED_EDIT_PASS_REDONE} session=0 editPass=0 edits=6",
         ]
         result = _verify_session_undo_redo_routing(lines)
         self.assertTrue(result["ok"])
         self.assertEqual(result["in_edit_undo"], 1)
+        self.assertEqual(result["post_exit_redo"], 1)
+
+    def test_session_undo_routing_accepts_legacy_post_exit_markers(self) -> None:
+        lines = [
+            "[1] MIDI Encoder: Short press - entered note edit mode",
+            "[4] MIDI Encoder: Long press - exited edit mode",
+            "[5] Note edit pass undone editPass=0 edits=6",
+            "[6] Note edit pass redone editPass=0 edits=6",
+        ]
+        result = _verify_session_undo_redo_routing(lines)
+        self.assertEqual(result["post_exit_undo"], 1)
         self.assertEqual(result["post_exit_redo"], 1)
 
     def test_warmup_empty_nav_creates_note(self) -> None:

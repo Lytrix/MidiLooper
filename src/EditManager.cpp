@@ -82,6 +82,11 @@ void logChangeLengthCommitTrace(const char* stage,
                static_cast<unsigned>(flat.size()));
 }
 
+void materializePassesExcludingEditPasses(const Loop& loop, const EditPassIdList& editPassIds,
+                                          MidiEventVec& out) {
+    loop.materializeExcludingEditPassIds(editPassIds, out);
+}
+
 }  // namespace
 
 void EditManager::ensureNoteEditFocusForLiveEdit(Track& track,
@@ -305,6 +310,7 @@ void EditManager::openNoteEditSession(Track& track) {
     noteEditSession.editPassIndex = 0;
     noteEditSession.noteEditPassIds.clear();
     noteEditSession.pendingChanges.clear();
+    noteEditSession.replaceNoteEditPassOnClose = false;
     noteEditSession.undoStack.clear();
     loop.rematerializeEditView(noteEditSession.store.mutStore());
     noteEditSession.store.discardFlatCache();
@@ -316,6 +322,64 @@ void EditManager::openNoteEditSession(Track& track) {
 void EditManager::closeNoteEditPass(Track& track) {
     if (!noteEditSession.active) {
         return;
+    }
+    Loop& loop = track.getActiveLoop();
+    if (noteEditSession.replaceNoteEditPassOnClose &&
+        !noteEditSession.noteEditPassIds.empty()) {
+        if (noteEditSession.store.isFlatDirty()) {
+            noteEditSession.store.syncFlatToStore();
+        }
+
+        MidiEventVec baselineStoreEvents;
+        materializePassesExcludingEditPasses(loop, noteEditSession.noteEditPassIds,
+                                             baselineStoreEvents);
+        EditChangeList replacementChanges =
+            buildSessionStoreEditChanges(baselineStoreEvents, noteEditSession.store.readFlat(),
+                                         track.getMidiChannel(), track.getLoopLength());
+        const EditPassIdList staleEditPassIds = noteEditSession.noteEditPassIds;
+        noteEditSession.noteEditPassIds.clear();
+
+        if (replacementChanges.empty()) {
+            loop.replaceNoteEditPass(noteEditSession.editPassIndex, staleEditPassIds,
+                                     EditChangeList{});
+            track.invalidateCaches();
+        } else {
+            const unsigned replacementChangeCount =
+                static_cast<unsigned>(replacementChanges.size());
+            EditPassId id = loop.replaceNoteEditPass(noteEditSession.editPassIndex,
+                                                     staleEditPassIds,
+                                                     std::move(replacementChanges));
+            if (id == kInvalidEditPassId) {
+                trackManager.reclaimUnreferencedDisabledPasses();
+                replacementChanges =
+                    buildSessionStoreEditChanges(baselineStoreEvents,
+                                                 noteEditSession.store.readFlat(),
+                                                 track.getMidiChannel(),
+                                                 track.getLoopLength());
+                id = loop.replaceNoteEditPass(noteEditSession.editPassIndex,
+                                              staleEditPassIds,
+                                              std::move(replacementChanges));
+            }
+
+            if (id != kInvalidEditPassId) {
+                noteEditSession.noteEditPassIds.push_back(id);
+                track.invalidateCaches();
+                logger.log(CAT_TRACK, LOG_INFO,
+                           "NoteEditPass replaced editPass=%u stale=%u replacement=%u changes=%u",
+                           static_cast<unsigned>(noteEditSession.editPassIndex),
+                           static_cast<unsigned>(staleEditPassIds.size()),
+                           static_cast<unsigned>(id),
+                           replacementChangeCount);
+            } else {
+                noteEditSession.noteEditPassIds = staleEditPassIds;
+                logger.log(CAT_TRACK, LOG_WARNING,
+                           "NoteEditPass replace rejected editPass=%u stale=%u changes=%u",
+                           static_cast<unsigned>(noteEditSession.editPassIndex),
+                           static_cast<unsigned>(staleEditPassIds.size()),
+                           static_cast<unsigned>(replacementChanges.size()));
+            }
+        }
+        noteEditSession.replaceNoteEditPassOnClose = false;
     }
     if (!noteEditSession.noteEditPassIds.empty()) {
         TrackUndo::pushNoteEditPassClosed(track, noteEditSession.editPassIndex,
@@ -339,6 +403,7 @@ void EditManager::closeNoteEditSession(Track& track) {
     noteEditSession.active = false;
     noteEditSession.editPassIndex = 0;
     noteEditSession.pendingChanges.clear();
+    noteEditSession.replaceNoteEditPassOnClose = false;
     clearLastFader1SelectRef();
 }
 
@@ -442,7 +507,7 @@ void EditManager::pushSessionUndoOnKindChange(Track& track, NoteEditKind kind) {
     const SessionUndoEntry entry =
         buildSessionUndoEntry(noteEditSession.focus, sessionState.selection,
                               noteEditSession.store.readFlat(), track.getMidiChannel(),
-                              track.getLoopLength());
+                              track.getLoopLength(), noteEditSession.noteEditPassIds);
     if (!noteEditSession.undoStack.pushEntry(entry)) {
         logger.log(CAT_TRACK, LOG_WARNING,
                    "Session undo push rejected: heap below reserve (need=%u free=%u)",
@@ -457,7 +522,8 @@ void EditManager::pushSessionUndoOnKindChange(Track& track, NoteEditKind kind) {
 
 void EditManager::restoreSessionUndoEntry(Track& track, const SessionUndoEntry& entry) {
     Loop& loop = track.getActiveLoop();
-    applySessionUndoEntry(loop, noteEditSession.store, entry, track.getLoopLength());
+    applySessionUndoEntry(loop, noteEditSession.store, entry, track.getLoopLength(),
+                          noteEditSession.noteEditPassIds);
     noteEditSession.focus = entry.focus;
     sessionState.selection = entry.selection;
 }
@@ -639,11 +705,44 @@ bool EditManager::sessionUndo(Track& track) {
     if (!noteEditSession.active || !noteEditSession.undoStack.canUndo()) {
         return false;
     }
-    const SessionUndoEntry* entry = noteEditSession.undoStack.popUndoTarget();
+    if (noteEditSession.store.isFlatDirty()) {
+        noteEditSession.store.syncFlatToStore();
+    }
+    SessionUndoEntry redoPayload =
+        buildSessionUndoEntry(noteEditSession.focus, sessionState.selection,
+                              noteEditSession.store.readFlat(), track.getMidiChannel(),
+                              track.getLoopLength(), noteEditSession.noteEditPassIds);
+    SessionUndoEntry* entry = noteEditSession.undoStack.popUndoTarget();
     if (entry == nullptr) {
         return false;
     }
+    entry->redoEditPassIds = noteEditSession.noteEditPassIds;
+    entry->redoChanges = std::move(redoPayload.changes);
+    entry->redoFocus = std::move(redoPayload.focus);
+    entry->redoSelection = redoPayload.selection;
+    entry->hasRedoPayload = true;
+    noteEditSession.replaceNoteEditPassOnClose = true;
     restoreSessionUndoEntry(track, *entry);
+
+    Loop& loop = track.getActiveLoop();
+    EditPassIdList passesToDisable;
+    for (const EditPassId id : noteEditSession.noteEditPassIds) {
+        bool keptAtPush = false;
+        for (const EditPassId pushId : entry->editPassIdsAtPush) {
+            if (pushId == id) {
+                keptAtPush = true;
+                break;
+            }
+        }
+        if (!keptAtPush) {
+            passesToDisable.push_back(id);
+        }
+    }
+    if (!passesToDisable.empty()) {
+        loop.disableEditPasses(passesToDisable);
+        noteEditSession.noteEditPassIds = entry->editPassIdsAtPush;
+    }
+
     track.invalidateCaches();
     applyUndoRedoLanding(track);
     return true;
@@ -653,11 +752,22 @@ bool EditManager::sessionRedo(Track& track) {
     if (!noteEditSession.active || !noteEditSession.undoStack.canRedo()) {
         return false;
     }
-    const SessionUndoEntry* entry = noteEditSession.undoStack.popRedoTarget();
+    SessionUndoEntry* entry = noteEditSession.undoStack.peekRedoTarget();
     if (entry == nullptr) {
         return false;
     }
-    restoreSessionUndoEntry(track, *entry);
+    if (!entry->hasRedoPayload) {
+        return false;
+    }
+    Loop& loop = track.getActiveLoop();
+    loop.enableEditPasses(entry->redoEditPassIds);
+    noteEditSession.noteEditPassIds = entry->redoEditPassIds;
+    applySessionRedoEntry(loop, noteEditSession.store, *entry, track.getLoopLength(),
+                          noteEditSession.noteEditPassIds);
+    noteEditSession.focus = entry->redoFocus;
+    sessionState.selection = entry->redoSelection;
+    noteEditSession.undoStack.advanceRedoCursor();
+    noteEditSession.replaceNoteEditPassOnClose = true;
     track.invalidateCaches();
     applyUndoRedoLanding(track);
     return true;
@@ -824,7 +934,7 @@ void EditManager::exitEditMode(Track& track) {
     closeNoteEditPass(track);
     if (track.getActiveLoop().isEditStateDirty()) {
         StorageManager::requestUrgentEditSave();
-        // Flush now — main loop defers processEditAutosave while transport is active.
+        // Queue urgent deferred save request for NOTE_EDIT exit boundary.
         StorageManager::processEditAutosave(looperState.getLooperState());
     }
     track.invalidateCaches();
