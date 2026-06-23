@@ -64,7 +64,7 @@ public:
     void openNoteEditSession(Track& track);
     void closeNoteEditSession(Track& track);
     void closeNoteEditPass(Track& track);
-    EditPassId commitEditAction(Track& track, EditChangeList changes);
+    EditPassId commitEditAction(Track& track, EditPassVec rows);
     void pushSessionUndoOnKindChange(Track& track, NoteEditKind kind);
     void restoreSessionUndoEntry(Track& track, const SessionUndoEntry& entry);
     void beginGeometryMutation(Track& track, NoteEditKind kind, bool fromFaderControl);

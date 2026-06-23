@@ -9,19 +9,32 @@
 #include "Utils/MemoryMonitor.h"
 #include "Utils/NoteUtils.h"
 
+namespace {
+
+EditPass makeSessionStoreRow(EditActionType actionType, EditPropertyType propertyType) {
+  EditPass row{};
+  row.passType = EditPassType::Note;
+  row.actionType = actionType;
+  row.propertyType = propertyType;
+  row.state = EditPassState::Active;
+  return row;
+}
+
+}  // namespace
+
 size_t estimatedSessionUndoEntryBytes(const SessionUndoEntry& entry) {
   size_t bytes = sizeof(SessionUndoEntry);
-  bytes += entry.changes.size() * sizeof(EditChange);
-  for (const EditChange& change : entry.changes) {
-    bytes += change.addedEvents.size() * sizeof(MidiEvent);
+  bytes += entry.editRows.size() * sizeof(EditPass);
+  for (const EditPass& row : entry.editRows) {
+    bytes += row.addedEvents.size() * sizeof(MidiEvent);
   }
   bytes += entry.focus.baselineMap.size() * (sizeof(NoteRef) + sizeof(NoteBaseline));
   bytes += entry.focus.overlapNotes.size() * (sizeof(NoteRef) + sizeof(OverlapNote));
   bytes += entry.editPassIdsAtPush.size() * sizeof(EditPassId);
   if (entry.hasRedoPayload) {
-    bytes += entry.redoChanges.size() * sizeof(EditChange);
-    for (const EditChange& change : entry.redoChanges) {
-      bytes += change.addedEvents.size() * sizeof(MidiEvent);
+    bytes += entry.redoEditRows.size() * sizeof(EditPass);
+    for (const EditPass& row : entry.redoEditRows) {
+      bytes += row.addedEvents.size() * sizeof(MidiEvent);
     }
     bytes += entry.redoFocus.baselineMap.size() * (sizeof(NoteRef) + sizeof(NoteBaseline));
     bytes += entry.redoFocus.overlapNotes.size() * (sizeof(NoteRef) + sizeof(OverlapNote));
@@ -50,14 +63,14 @@ SessionUndoEntry buildSessionUndoEntry(const NoteEditFocus& focus, NoteEditSelec
   MidiEventVec resolvedFlat = sessionFlat;
   NoteEditFocus focusCopy = focus;
   resolveOverlapNotesForPreCommit(resolvedFlat, focusCopy, channel, loopLength);
-  entry.changes = buildPreCommitEditChanges(focusCopy, channel);
+  entry.editRows = buildPreCommitEditPasses(focusCopy, channel);
   return entry;
 }
 
-EditChangeList buildSessionStoreEditChanges(const MidiEventVec& baselineStoreEvents,
-                                            const MidiEventVec& sessionStoreEvents,
-                                            uint8_t channel, uint32_t loopLength) {
-  EditChangeList changes;
+EditPassVec buildSessionStoreEditPasses(const MidiEventVec& baselineStoreEvents,
+                                        const MidiEventVec& sessionStoreEvents, uint8_t channel,
+                                        uint32_t loopLength) {
+  EditPassVec rows;
   const std::vector<NoteUtils::DisplayNote> baselineNotes =
       NoteUtils::reconstructNotes(baselineStoreEvents, loopLength, false);
   const std::vector<NoteUtils::DisplayNote> sessionNotes =
@@ -83,10 +96,9 @@ EditChangeList buildSessionStoreEditChanges(const MidiEventVec& baselineStoreEve
       continue;
     }
 
-    EditChange del;
-    del.type = EditChangeType::DeleteNote;
-    del.target = {channel, baseline.note, baseline.startTick, baseline.endTick};
-    changes.push_back(std::move(del));
+    EditPass row = makeSessionStoreRow(EditActionType::Delete, EditPropertyType::None);
+    row.target = {channel, baseline.note, baseline.startTick, baseline.endTick};
+    rows.push_back(std::move(row));
   }
 
   std::vector<bool> matchedBaseline(baselineNotes.size(), false);
@@ -104,15 +116,14 @@ EditChangeList buildSessionStoreEditChanges(const MidiEventVec& baselineStoreEve
       continue;
     }
 
-    EditChange add;
-    add.type = EditChangeType::AddNote;
-    add.addedEvents.push_back(MidiEvent::NoteOn(session.startTick, channel, session.note,
+    EditPass row = makeSessionStoreRow(EditActionType::Create, EditPropertyType::None);
+    row.addedEvents.push_back(MidiEvent::NoteOn(session.startTick, channel, session.note,
                                                 session.velocity));
-    add.addedEvents.push_back(MidiEvent::NoteOff(session.endTick, channel, session.note, 0));
-    changes.push_back(std::move(add));
+    row.addedEvents.push_back(MidiEvent::NoteOff(session.endTick, channel, session.note, 0));
+    rows.push_back(std::move(row));
   }
 
-  return changes;
+  return rows;
 }
 
 namespace {
@@ -137,16 +148,16 @@ EditPassIdList editPassIdsCommittedAfterBaseline(const EditPassIdList& currentId
   return exclude;
 }
 
-void applySessionEditChanges(Loop& loop, CowLoopEventStore& store, const EditChangeList& changes,
-                             uint32_t loopLength, const EditPassIdList& currentEditPassIds,
-                             const EditPassIdList& baselineEditPassIds) {
+void applySessionEditRows(Loop& loop, CowLoopEventStore& store, const EditPassVec& rows,
+                        uint32_t loopLength, const EditPassIdList& currentEditPassIds,
+                        const EditPassIdList& baselineEditPassIds) {
   const EditPassIdList passesToExclude =
       editPassIdsCommittedAfterBaseline(currentEditPassIds, baselineEditPassIds);
   MidiEventVec flat;
   loop.materializeExcludingEditPassIds(passesToExclude, flat);
   store.mutStore().loadFromFlat(flat);
   store.discardFlatCache();
-  applyEditChangeList(store.mutFlat(), changes, loopLength);
+  applyNoteEditPassSequence(store.mutFlat(), rows, loopLength);
   store.syncFlatToStore();
 }
 
@@ -154,8 +165,8 @@ void applySessionEditChanges(Loop& loop, CowLoopEventStore& store, const EditCha
 
 void applySessionUndoEntry(Loop& loop, CowLoopEventStore& store, const SessionUndoEntry& entry,
                            uint32_t loopLength, const EditPassIdList& currentEditPassIds) {
-  applySessionEditChanges(loop, store, entry.changes, loopLength, currentEditPassIds,
-                          entry.editPassIdsAtPush);
+  applySessionEditRows(loop, store, entry.editRows, loopLength, currentEditPassIds,
+                       entry.editPassIdsAtPush);
 }
 
 void applySessionRedoEntry(Loop& loop, CowLoopEventStore& store, const SessionUndoEntry& entry,
@@ -163,8 +174,8 @@ void applySessionRedoEntry(Loop& loop, CowLoopEventStore& store, const SessionUn
   if (!entry.hasRedoPayload) {
     return;
   }
-  applySessionEditChanges(loop, store, entry.redoChanges, loopLength, currentEditPassIds,
-                          entry.redoEditPassIds);
+  applySessionEditRows(loop, store, entry.redoEditRows, loopLength, currentEditPassIds,
+                       entry.redoEditPassIds);
 }
 
 bool sessionUndoStoresMatch(const LoopEventStore& a, const LoopEventStore& b) {

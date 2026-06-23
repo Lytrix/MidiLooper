@@ -25,25 +25,13 @@ enum class EditPropertyType : uint8_t {
   None,
   Pitch,
   Length,
-  StartTick,
-  EndTick,
+  NoteRange,
+  Velocity,
   Tick,
   Value,
 };
 
-/// Legacy row discriminant kept for v4 read migration.
-enum class EditPassKind : uint8_t { NoteEdit, ControlChange };
-
-/// Legacy note-edit payload action kind used by EditChange during migration.
-enum class EditChangeType : uint8_t {
-  DeleteNote,
-  AddNote,
-  MoveNote,
-  ChangePitch,
-  ChangeLength,
-};
-
-/// Stable note target inside an EditChange (not a display index).
+/// Stable note target on an edit pass row (not a display index).
 struct NoteRef {
   uint8_t channel = 0;
   uint8_t note = 0;
@@ -59,17 +47,6 @@ struct ControlChangeRef {
   uint8_t value = 0;
 };
 
-/// Legacy note-edit payload entry used until scoped payload migration is complete.
-struct EditChange {
-  EditChangeType type = EditChangeType::DeleteNote;
-  NoteRef target{};
-  uint8_t newPitch = 0;
-  uint32_t newStartTick = 0;
-  uint32_t newEndTick = 0;
-  MidiEventVec addedEvents;
-};
-
-using EditChangeList = std::vector<EditChange, InternalHeapFirstAllocator<EditChange>>;
 using EditPassIdList = std::vector<EditPassId, InternalHeapFirstAllocator<EditPassId>>;
 
 struct EditPass {
@@ -78,14 +55,14 @@ struct EditPass {
   uint8_t editPassIndex = 0;
   EditActionType actionType = EditActionType::Update;
   EditPropertyType propertyType = EditPropertyType::None;
-
-  // Legacy fields retained during scoped payload migration.
-  EditPassKind kind = EditPassKind::NoteEdit;
-  uint8_t noteEditPassIndex = 0;
   EditPassState state = EditPassState::Active;
 
-  // Legacy note-edit payload retained until scoped target/payload rows replace it.
-  EditChangeList changes;
+  NoteRef target{};
+  uint32_t startTick = 0;
+  uint32_t endTick = 0;
+  uint8_t pitch = 0;
+  uint8_t velocity = 0;
+  MidiEventVec addedEvents;
 };
 
 using EditPassVec = std::vector<EditPass, InternalHeapFirstAllocator<EditPass>>;

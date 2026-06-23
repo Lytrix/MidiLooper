@@ -43,48 +43,48 @@ with file version check.
 
 ## 1. Row model (no payload blob)
 
-- [ ] 1.1 Extend **EditPropertyType**: add **NoteRange**, **Velocity**; **remove** **StartTick** /
+- [x] 1.1 Extend **EditPropertyType**: add **NoteRange**, **Velocity**; **remove** **StartTick** /
       **EndTick**; move commits use **NoteRange** + both ticks.
-- [ ] 1.2 **`EditPass`**: add row fields (see map); delete **`EditChangeList changes`** and legacy
+- [x] 1.2 **`EditPass`**: add row fields (see map); delete **`EditChangeList changes`** and legacy
       **`EditPassKind`** / **`noteEditPassIndex`**.
-- [ ] 1.3 Replace **`buildPreCommitEditChanges`** / **`buildPreCommitOverlapEditChanges`** output
+- [x] 1.3 Replace **`buildPreCommitEditChanges`** / **`buildPreCommitOverlapEditChanges`** output
       with row builder(s); update **`commitEditAction`**, **`closeNoteEditPass`** /
       **`replaceNoteEditPassOnClose`**.
 
 ## 2. Apply / materialize
 
-- [ ] 2.1 Add **`applyNoteEditPass(MidiEventVec&, const EditPass&, uint32_t loopLength)`**;
+- [x] 2.1 Add **`applyNoteEditPass(MidiEventVec&, const EditPass&, uint32_t loopLength)`**;
       dispatch on `actionType` + `propertyType` (**NoteRange** vs **Length** semantics).
-- [ ] 2.2 Delete **`applyEditChangeList`**, **`EditChange`**, **`EditChangeType`**, SD legacy
+- [x] 2.2 Delete **`applyEditChangeList`**, **`EditChange`**, **`EditChangeType`**, SD legacy
       helpers listed in design D7.
 
 ## 3. Session undo
 
-- [ ] 3.1 **`SessionUndoEntry`**: replace **`EditChangeList`** with same fields as one **`EditPass`**
+- [x] 3.1 **`SessionUndoEntry`**: replace **`EditChangeList`** with same fields as one **`EditPass`**
       row (+ existing focus/selection/**editPassIdsAtPush**); update **`buildSessionUndoEntry`** /
       **`applySessionUndoEntry`** / redo path.
-- [ ] 3.2 Update **`test_note_edit_session_undo`** (stale pass, add+move undo, visual cache) and
+- [x] 3.2 Update **`test_note_edit_session_undo`** (stale pass, add+move undo, visual cache) and
       **`test_edit_apply`** matrices; drop **`EditChangeList`** fixtures.
 
 ## 4. SD (v5 canonical wire, no migration)
 
-- [ ] 4.1 **`STORAGE_VERSION 5`** in `StorageManager.cpp`; **`loadState`** `version != 5` → false.
-- [ ] 4.2 Implement v5 row wire (fixed layout above); new tail marker; **`writePersistedEditPass`** /
+- [x] 4.1 **`STORAGE_VERSION 5`** in `StorageManager.cpp`; **`loadState`** `version != 5` → false.
+- [x] 4.2 Implement v5 row wire (fixed layout above); new tail marker; **`writePersistedEditPass`** /
       **`readPersistedEditPass`** only (rename from `*Scoped`).
-- [ ] 4.3 Delete **`readPersistedEditPassLegacyV4`**, **`readPersistedEditChange`**,
+- [x] 4.3 Delete **`readPersistedEditPassLegacyV4`**, **`readPersistedEditChange`**,
       **`writePersistedEditChange`**, **`derive*FromLegacyChanges`** from `StorageLoopIo.cpp`.
-- [ ] 4.4 **`test_storage_loop_io`**: v5 round-trip; feed v4 bytes → version check fails; truncated
+- [x] 4.4 **`test_storage_loop_io`**: v5 round-trip; feed v4 bytes → version check fails; truncated
       tail → **`readPersistedEditsTail`** false; remove **`test_dual_read_legacy_edit_tail_v4_rows`**.
 
 ## 5. Delete legacy (firmware RAM)
 
-- [ ] 5.1 Grep cleanup: zero remaining **`EditChange`** / **`EditChangeList`** / **`EditChangeType`**
+- [x] 5.1 Grep cleanup: zero remaining **`EditChange`** / **`EditChangeList`** / **`EditChangeType`**
       references (includes **`estimatedEditPassBytes`**, pool-budget tests).
 
 ## 6. Validation
 
-- [ ] 6.1 `pio test -e native` (all suites touching **EditPass**).
-- [ ] 6.2 Edit HITL baseline (`host_midi_automation_edit_baseline.py`); archive change.
+- [x] 6.1 `pio test -e native` (all suites touching **EditPass**).
+- [x] 6.2 Edit HITL baseline (`host_midi_automation_edit_baseline.py`); archive change.
 
 ## Deferred
 

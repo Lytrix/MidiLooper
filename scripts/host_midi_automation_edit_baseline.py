@@ -44,6 +44,7 @@ from host_midi_automation_baseline import (  # noqa: E402
     _clock_seen_within,
     _count_capture_state_entries,
     _count_capture_transitions,
+    _drain_input_messages,
     _ensure_midi_clock,
     _extract_revt_note_on_ticks,
     _find_midi_port,
@@ -1115,10 +1116,12 @@ def _can_skip_clear_for_record(lines: list[str]) -> bool:
 
 
 def _track_cleared_for_record(lines: list[str]) -> bool:
-    """EMPTY, or STOPPED with no committed loop length — ready for a fresh record."""
+    """EMPTY, ARMED without loop content, or STOPPED with no committed loop length."""
     latest = _latest_track_state(lines)
     if latest == "EMPTY":
         return True
+    if latest == "ARMED":
+        return not _serial_suggests_loop_content(lines)
     if latest == "STOPPED":
         recs = _extract_last_recs_stop(lines)
         if recs is not None and int(recs.get("final_length", 0)) != 0:
@@ -1184,34 +1187,6 @@ def _stop_transport_if_running(
     )
     time.sleep(phase_wait_ms / 1000.0)
     return True
-
-
-def _start_transport_for_record(
-    out_port: mido.ports.BaseOutput,
-    in_port: mido.ports.BaseInput,
-    *,
-    press_ms: int,
-    phase_wait_ms: int,
-    abort: Optional[RunAbort],
-) -> bool:
-    """Start transport for fixture record once the track is EMPTY (no auto-play on EMPTY)."""
-    if _clock_seen_within(in_port, 0.5):
-        return True
-    print("[edit-hitl] transport start for fixture record")
-    _send_short_press(
-        out_port,
-        note=GLOBAL_TRANSPORT_NOTE,
-        channel_1based=CONTROL_CHANNEL_1BASED,
-        press_ms=press_ms,
-    )
-    time.sleep(phase_wait_ms / 1000.0)
-    return _ensure_midi_clock(
-        in_port,
-        out_port,
-        min_clocks=24,
-        timeout_s=2.0,
-        abort=abort,
-    )
 
 
 def _ensure_clear_to_empty(
@@ -1305,16 +1280,16 @@ def _ensure_recording_started(
     state_sync_timeout_ms: int,
     abort: Optional[RunAbort],
 ) -> bool:
-    """Short-press record until capture is active; safe retry when not yet recording."""
+    """Arm then record: EMPTY -> ARMED (transport off), then ARMED -> RECORDING starts transport."""
     snap = serial_collector.snapshot()
     baseline_reca = _count_reca_markers(snap)
     baseline_recording_transitions = _recording_transition_baseline(snap)
     state_counts = _count_capture_state_entries(snap)
     expected_recording_count = state_counts.get("RECORDING", 0) + 1
     latest = _latest_track_state(snap)
-    if latest not in (None, "EMPTY", "STOPPED"):
+    if latest not in (None, "EMPTY", "ARMED", "STOPPED"):
         print(
-            f"[warn] Record precondition: expected EMPTY/STOPPED before record press, "
+            f"[warn] Record precondition: expected EMPTY/ARMED/STOPPED before record press, "
             f"latest state={latest}"
         )
 
@@ -4011,13 +3986,21 @@ def main() -> int:
         )
         time.sleep(args.phase_wait_ms / 1000.0)
 
+        transport_stopped_for_clear = False
         if args.start_transport:
-            _stop_transport_if_running(
+            transport_stopped_for_clear = _stop_transport_if_running(
                 out_port,
                 in_port,
                 press_ms=args.press_ms,
                 phase_wait_ms=args.phase_wait_ms,
             )
+            if transport_stopped_for_clear:
+                drained = _drain_input_messages(in_port)
+                if drained:
+                    print(
+                        f"[edit-hitl] drained {drained} stale MIDI input messages "
+                        "after transport stop"
+                    )
 
         if args.clear_before_record:
             if serial_collector is not None:
@@ -4053,49 +4036,31 @@ def main() -> int:
                 )
                 time.sleep(args.phase_wait_ms / 1000.0)
 
-        if args.start_transport:
-            if not _start_transport_for_record(
-                out_port,
-                in_port,
-                press_ms=args.press_ms,
-                phase_wait_ms=args.phase_wait_ms,
-                abort=abort,
-            ):
-                print("[error] Transport start for record failed; aborting")
-                return 1
+        if args.start_transport and transport_stopped_for_clear:
+            if _clock_seen_within(in_port, 0.5):
+                print(
+                    "[warn] MIDI clock still running after transport stop; "
+                    "stopping transport before arm/record"
+                )
+                _stop_transport_if_running(
+                    out_port,
+                    in_port,
+                    press_ms=args.press_ms,
+                    phase_wait_ms=args.phase_wait_ms,
+                )
+                _drain_input_messages(in_port)
 
         print(f"[edit-hitl] record {args.record_bars} bars (fixture, ch{midi_channel})")
-        if not _ensure_midi_clock(
-            in_port,
-            out_port,
-            min_clocks=24,
-            timeout_s=3.0,
-            abort=abort,
-        ):
-            print("[error] MIDI clock not available before record; aborting")
-            return 1
 
         reached_recording = False
         if serial_collector is not None:
-            pre_record_snap = serial_collector.snapshot()
-            if not _serial_has_track_state(pre_record_snap):
-                print("[edit-hitl] arm/record (serial has no track state yet)")
-                _send_short_press(
-                    out_port,
-                    note=RECORD_BUTTON_NOTE,
-                    channel_1based=CONTROL_CHANNEL_1BASED,
-                    press_ms=args.press_ms,
-                )
-                time.sleep(min(args.phase_wait_ms, 120) / 1000.0)
-                reached_recording = True
-            else:
-                reached_recording = _ensure_recording_started(
-                    out_port,
-                    serial_collector,
-                    press_ms=args.press_ms,
-                    state_sync_timeout_ms=args.state_sync_timeout_ms,
-                    abort=abort,
-                )
+            reached_recording = _ensure_recording_started(
+                out_port,
+                serial_collector,
+                press_ms=args.press_ms,
+                state_sync_timeout_ms=args.state_sync_timeout_ms,
+                abort=abort,
+            )
             if not reached_recording:
                 latest = _latest_track_state(serial_collector.snapshot())
                 print(
@@ -4106,6 +4071,13 @@ def main() -> int:
                 )
                 return 1
         else:
+            _send_short_press(
+                out_port,
+                note=RECORD_BUTTON_NOTE,
+                channel_1based=CONTROL_CHANNEL_1BASED,
+                press_ms=args.press_ms,
+            )
+            time.sleep(min(args.phase_wait_ms, 120) / 1000.0)
             _send_short_press(
                 out_port,
                 note=RECORD_BUTTON_NOTE,

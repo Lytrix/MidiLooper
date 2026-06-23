@@ -30,7 +30,7 @@ inline EditPassType passTypeForSession(EditSessionType session) {
   return EditPassType::Note;
 }
 
-/// In-session undo before saveEdit — EditChange + focus entries (not full store clones).
+/// In-session undo before saveEdit — edit pass rows + focus entries (not full store clones).
 struct NoteEditSessionUndoStack {
   void clear() {
     entries_.clear();
@@ -121,7 +121,6 @@ struct EditSession {
   bool active = false;
   bool replaceEditPassOnClose = false;
   EditPassIdList editPassIds;
-  EditChangeList pendingChanges;
 
   bool isNote() const { return sessionType == EditSessionType::Note; }
 };

@@ -16,7 +16,7 @@ struct StorageIo {
   std::function<bool(void*, size_t)> read;
 };
 
-/// v4 on-wire loop block (capture passes + editPasses tail).
+/// v5 on-wire loop block (capture passes + editPasses tail).
 struct PersistedLoopSnapshot {
   LoopId loopId = kInvalidLoopId;
   uint32_t startLoopTick = 0;

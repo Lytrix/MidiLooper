@@ -109,6 +109,13 @@ void applyChangePitch(MidiEventVec& events, const NoteRef& ref, uint8_t newPitch
   }
 }
 
+void applyChangeVelocity(MidiEventVec& events, const NoteRef& ref, uint8_t newVelocity) {
+  const int onIndex = findNoteOnIndex(events, ref);
+  if (onIndex >= 0) {
+    events[onIndex].data.noteData.velocity = newVelocity;
+  }
+}
+
 void shortenNoteEnd(MidiEventVec& events, const NoteRef& ref, uint32_t newEndTick) {
   const int onIndex = findNoteOnIndex(events, ref);
   const int offIndex = findNoteOffIndex(events, ref, onIndex);
@@ -207,8 +214,8 @@ void applyChangeLength(MidiEventVec& events, const NoteRef& ref, uint32_t newEnd
                    [](const MidiEvent& a, const MidiEvent& b) { return a.tick < b.tick; });
 }
 
-void applyAddNote(MidiEventVec& events, const EditChange& change) {
-  for (const MidiEvent& evt : change.addedEvents) {
+void applyAddNote(MidiEventVec& events, const MidiEventVec& addedEvents) {
+  for (const MidiEvent& evt : addedEvents) {
     events.push_back(evt);
   }
   std::sort(events.begin(), events.end(),
@@ -222,51 +229,60 @@ bool noteRefSameIdentity(const NoteRef& a, const NoteRef& b) {
 
 }  // namespace
 
-void applyEditChange(MidiEventVec& events, const EditChange& change, uint32_t loopLengthTicks) {
-  switch (change.type) {
-    case EditChangeType::DeleteNote:
-      applyDeleteNote(events, change.target);
+void applyNoteEditPass(MidiEventVec& events, const EditPass& editPass, uint32_t loopLengthTicks) {
+  switch (editPass.actionType) {
+    case EditActionType::Delete:
+      applyDeleteNote(events, editPass.target);
       break;
-    case EditChangeType::MoveNote:
-      applyMoveNote(events, change.target, change.newStartTick, change.newEndTick);
+    case EditActionType::Create:
+      applyAddNote(events, editPass.addedEvents);
       break;
-    case EditChangeType::ChangePitch:
-      applyChangePitch(events, change.target, change.newPitch);
-      break;
-    case EditChangeType::ChangeLength:
-      applyChangeLength(events, change.target, change.newEndTick, loopLengthTicks);
-      break;
-    case EditChangeType::AddNote:
-      applyAddNote(events, change);
+    case EditActionType::Update:
+      switch (editPass.propertyType) {
+        case EditPropertyType::NoteRange:
+          applyMoveNote(events, editPass.target, editPass.startTick, editPass.endTick);
+          break;
+        case EditPropertyType::Length:
+          applyChangeLength(events, editPass.target, editPass.endTick, loopLengthTicks);
+          break;
+        case EditPropertyType::Pitch:
+          applyChangePitch(events, editPass.target, editPass.pitch);
+          break;
+        case EditPropertyType::Velocity:
+          applyChangeVelocity(events, editPass.target, editPass.velocity);
+          break;
+        default:
+          break;
+      }
       break;
   }
 }
 
-void applyEditChangeList(MidiEventVec& events, const EditChangeList& changes,
-                         uint32_t loopLengthTicks) {
+void applyNoteEditPassSequence(MidiEventVec& events, const EditPassVec& rows,
+                               uint32_t loopLengthTicks) {
   NoteRef trackedBaseline{};
   uint32_t trackedStart = 0;
   uint32_t trackedEnd = 0;
   bool tracked = false;
 
-  for (const EditChange& change : changes) {
-    EditChange resolved = change;
-    if (tracked) {
-      if (noteRefSameIdentity(resolved.target, trackedBaseline)) {
-        resolved.target.startTick = trackedStart;
-        resolved.target.endTick = trackedEnd;
-      }
+  for (const EditPass& row : rows) {
+    EditPass resolved = row;
+    if (tracked && noteRefSameIdentity(resolved.target, trackedBaseline)) {
+      resolved.target.startTick = trackedStart;
+      resolved.target.endTick = trackedEnd;
     }
-    applyEditChange(events, resolved, loopLengthTicks);
-    if (resolved.type == EditChangeType::MoveNote) {
-      trackedBaseline = change.target;
-      trackedStart = change.newStartTick;
-      trackedEnd = change.newEndTick;
+    applyNoteEditPass(events, resolved, loopLengthTicks);
+    if (resolved.actionType == EditActionType::Update &&
+        resolved.propertyType == EditPropertyType::NoteRange) {
+      trackedBaseline = row.target;
+      trackedStart = row.startTick;
+      trackedEnd = row.endTick;
       tracked = true;
-    } else if (resolved.type == EditChangeType::ChangeLength) {
-      trackedBaseline = change.target;
-      trackedStart = change.target.startTick;
-      trackedEnd = change.newEndTick;
+    } else if (resolved.actionType == EditActionType::Update &&
+               resolved.propertyType == EditPropertyType::Length) {
+      trackedBaseline = row.target;
+      trackedStart = row.target.startTick;
+      trackedEnd = row.endTick;
       tracked = true;
     }
   }

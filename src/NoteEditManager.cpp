@@ -357,10 +357,12 @@ void NoteEditManager::deleteSelectedNote(Track& track) {
 
     logger.info("MIDI Encoder: Deleted %d MIDI events for note", deletedCount);
 
-    EditChange del;
-    del.type = EditChangeType::DeleteNote;
+    EditPass del{};
+    del.passType = EditPassType::Note;
+    del.actionType = EditActionType::Delete;
+    del.propertyType = EditPropertyType::None;
     del.target = {track.getMidiChannel(), notePitch, noteStart, noteEnd};
-    editManager.commitEditAction(track, EditChangeList{del});
+    editManager.commitEditAction(track, EditPassVec{del});
     track.invalidateCaches();
 
     editManager.setSelectedNoteIdx(-1);

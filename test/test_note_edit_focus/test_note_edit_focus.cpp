@@ -132,19 +132,21 @@ void test_pre_commit_edit_change_order_delete_shorten_move_length_pitch() {
   shortenedEntry.shortenedEndTick = 495;
   focus.overlapNotes[overlapShort] = shortenedEntry;
 
-  const EditChangeList changes = buildPreCommitEditChanges(focus, 1);
-  TEST_ASSERT_EQUAL(3, static_cast<int>(changes.size()));
-  TEST_ASSERT_EQUAL(static_cast<int>(EditChangeType::DeleteNote),
-                    static_cast<int>(changes[0].type));
-  TEST_ASSERT_TRUE(noteRefEquals(changes[0].target, overlapHidden));
-  TEST_ASSERT_EQUAL(static_cast<int>(EditChangeType::ChangeLength),
-                    static_cast<int>(changes[1].type));
-  TEST_ASSERT_TRUE(noteRefEquals(changes[1].target, overlapShort));
-  TEST_ASSERT_EQUAL_UINT32(495, changes[1].newEndTick);
-  TEST_ASSERT_EQUAL(static_cast<int>(EditChangeType::MoveNote),
-                    static_cast<int>(changes[2].type));
-  TEST_ASSERT_EQUAL_UINT32(520, changes[2].newStartTick);
-  TEST_ASSERT_EQUAL_UINT32(1200, changes[2].newEndTick);
+  const EditPassVec rows = buildPreCommitEditPasses(focus, 1);
+  TEST_ASSERT_EQUAL(3, static_cast<int>(rows.size()));
+  TEST_ASSERT_EQUAL(static_cast<int>(EditActionType::Delete),
+                    static_cast<int>(rows[0].actionType));
+  TEST_ASSERT_TRUE(noteRefEquals(rows[0].target, overlapHidden));
+  TEST_ASSERT_EQUAL(static_cast<int>(EditActionType::Update),
+                    static_cast<int>(rows[1].actionType));
+  TEST_ASSERT_EQUAL(static_cast<int>(EditPropertyType::Length),
+                    static_cast<int>(rows[1].propertyType));
+  TEST_ASSERT_TRUE(noteRefEquals(rows[1].target, overlapShort));
+  TEST_ASSERT_EQUAL_UINT32(495, rows[1].endTick);
+  TEST_ASSERT_EQUAL(static_cast<int>(EditPropertyType::NoteRange),
+                    static_cast<int>(rows[2].propertyType));
+  TEST_ASSERT_EQUAL_UINT32(520, rows[2].startTick);
+  TEST_ASSERT_EQUAL_UINT32(1200, rows[2].endTick);
 }
 
 void test_pre_commit_store_diff_subset_mover_and_overlap_notes() {
@@ -245,8 +247,8 @@ void test_build_pre_commit_changes_replay_lengthen_delete_pitch() {
   hidden.state = OverlapNoteStoreState::Hidden;
   focus.overlapNotes[overlapHidden] = hidden;
 
-  const EditChangeList changes = buildPreCommitEditChanges(focus, 1);
-  TEST_ASSERT_EQUAL(2, static_cast<int>(changes.size()));
+  const EditPassVec rows = buildPreCommitEditPasses(focus, 1);
+  TEST_ASSERT_EQUAL(2, static_cast<int>(rows.size()));
 
   LoopEventStore store;
   store.append(MidiEvent::NoteOn(8, 1, 60, 100));
@@ -264,22 +266,24 @@ void test_build_pre_commit_changes_replay_lengthen_delete_pitch() {
   LoopPasses passes;
   passes.recordPass = std::move(record);
 
-  EditChange lengthen;
-  lengthen.type = EditChangeType::ChangeLength;
-  lengthen.target = {1, 60, 8, 104};
-  lengthen.newEndTick = 680;
   EditPass pre{};
   pre.id = 1;
-  pre.kind = EditPassKind::NoteEdit;
+  pre.passType = EditPassType::Note;
+  pre.actionType = EditActionType::Update;
+  pre.propertyType = EditPropertyType::Length;
   pre.state = EditPassState::Active;
-  pre.changes.push_back(lengthen);
+  pre.target = {1, 60, 8, 104};
+  pre.startTick = 8;
+  pre.endTick = 680;
   passes.editPasses.push_back(pre);
-  EditPass post{};
-  post.id = 2;
-  post.kind = EditPassKind::NoteEdit;
-  post.state = EditPassState::Active;
-  post.changes = changes;
-  passes.editPasses.push_back(post);
+  EditPassId nextId = 2;
+  for (const EditPass& row : rows) {
+    EditPass post = row;
+    post.id = nextId++;
+    post.passType = EditPassType::Note;
+    post.state = EditPassState::Active;
+    passes.editPasses.push_back(post);
+  }
 
   MidiEventVec flat;
   passes.materializeToEventVector(flat, kLoopLength);
@@ -325,11 +329,11 @@ void test_reselect_keeps_commit_baseline_with_pending_length() {
   TEST_ASSERT_EQUAL(104u, focus.commitBaseline.endTick);
   TEST_ASSERT_EQUAL(680u, focus.last.endTick);
 
-  EditChangeList changes = buildPreCommitEditChanges(focus, 5);
-  TEST_ASSERT_EQUAL(1, static_cast<int>(changes.size()));
-  TEST_ASSERT_EQUAL(EditChangeType::ChangeLength, changes[0].type);
-  TEST_ASSERT_EQUAL(104u, changes[0].target.endTick);
-  TEST_ASSERT_EQUAL(680u, changes[0].newEndTick);
+  EditPassVec rows = buildPreCommitEditPasses(focus, 5);
+  TEST_ASSERT_EQUAL(1, static_cast<int>(rows.size()));
+  TEST_ASSERT_EQUAL(EditPropertyType::Length, rows[0].propertyType);
+  TEST_ASSERT_EQUAL(104u, rows[0].target.endTick);
+  TEST_ASSERT_EQUAL(680u, rows[0].endTick);
 }
 
 void test_filter_excludes_hidden_overlap_note() {

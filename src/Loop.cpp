@@ -154,88 +154,15 @@ LoopPasses deepClonePasses(const LoopPasses& passes) {
   return cloned;
 }
 
-size_t estimatedEditPassBytes(const EditChangeList& changes) {
+size_t estimatedEditPassBytes(const EditPass& row) {
   size_t bytes = sizeof(EditPass);
-  bytes += changes.size() * sizeof(EditChange);
-  for (const EditChange& change : changes) {
-    bytes += change.addedEvents.size() * sizeof(MidiEvent);
-  }
+  bytes += row.addedEvents.size() * sizeof(MidiEvent);
   return bytes;
 }
 
-bool canHeapAdmitEditPass(const EditChangeList& changes) {
-  const size_t needed = Config::HEAP_RESERVE_BYTES + estimatedEditPassBytes(changes);
+bool canHeapAdmitEditPass(const EditPass& row) {
+  const size_t needed = Config::HEAP_RESERVE_BYTES + estimatedEditPassBytes(row);
   return MemoryMonitor::getInternalHeapFreeBytes() >= needed;
-}
-
-EditActionType mapEditActionType(const EditChangeType type) {
-  switch (type) {
-    case EditChangeType::AddNote:
-      return EditActionType::Create;
-    case EditChangeType::DeleteNote:
-      return EditActionType::Delete;
-    case EditChangeType::MoveNote:
-    case EditChangeType::ChangePitch:
-    case EditChangeType::ChangeLength:
-      return EditActionType::Update;
-  }
-  return EditActionType::Update;
-}
-
-EditPropertyType mapNoteEditPropertyType(const EditChange& change) {
-  switch (change.type) {
-    case EditChangeType::ChangePitch:
-      return EditPropertyType::Pitch;
-    case EditChangeType::ChangeLength:
-      return EditPropertyType::Length;
-    case EditChangeType::MoveNote:
-      if (change.newStartTick != change.target.startTick) {
-        return EditPropertyType::StartTick;
-      }
-      if (change.newEndTick != change.target.endTick) {
-        return EditPropertyType::EndTick;
-      }
-      return EditPropertyType::None;
-    case EditChangeType::AddNote:
-    case EditChangeType::DeleteNote:
-      return EditPropertyType::None;
-  }
-  return EditPropertyType::None;
-}
-
-EditActionType deriveEditActionType(const EditChangeList& changes) {
-  if (changes.empty()) {
-    return EditActionType::Update;
-  }
-  const EditActionType first = mapEditActionType(changes.front().type);
-  for (const EditChange& change : changes) {
-    if (mapEditActionType(change.type) != first) {
-      return EditActionType::Update;
-    }
-  }
-  return first;
-}
-
-EditPropertyType deriveEditPropertyType(const EditChangeList& changes,
-                                        EditActionType actionType) {
-  if (changes.empty() || actionType != EditActionType::Update) {
-    return EditPropertyType::None;
-  }
-  EditPropertyType resolved = EditPropertyType::None;
-  for (const EditChange& change : changes) {
-    const EditPropertyType next = mapNoteEditPropertyType(change);
-    if (next == EditPropertyType::None) {
-      continue;
-    }
-    if (resolved == EditPropertyType::None) {
-      resolved = next;
-      continue;
-    }
-    if (resolved != next) {
-      return EditPropertyType::None;
-    }
-  }
-  return resolved;
 }
 
 const char* sealOutcomeLabel(SealOutcome outcome) {
@@ -366,54 +293,49 @@ void Loop::rematerializeEditView(LoopEventStore& store) const {
   passes.materialize(store, loopLengthTicks);
 }
 
-EditPassId Loop::saveNoteEditPass(uint8_t noteEditPassIndex, EditChangeList changes,
-                                  EditPassType passType) {
-  if (changes.empty()) {
-    return kInvalidEditPassId;
-  }
-  if (!canHeapAdmitEditPass(changes)) {
+EditPassId Loop::saveNoteEditPass(uint8_t editPassIndex, EditPass row, EditPassType passType) {
+  if (!canHeapAdmitEditPass(row)) {
     logger.log(CAT_TRACK, LOG_WARNING,
                "saveNoteEditPass rejected: heap below reserve (need=%u free=%u)",
-               static_cast<unsigned>(Config::HEAP_RESERVE_BYTES + estimatedEditPassBytes(changes)),
+               static_cast<unsigned>(Config::HEAP_RESERVE_BYTES + estimatedEditPassBytes(row)),
                static_cast<unsigned>(MemoryMonitor::getInternalHeapFreeBytes()));
     return kInvalidEditPassId;
   }
-  EditPass editPass;
-  editPass.id = nextPassId_++;
-  editPass.passType = passType;
-  editPass.editPassIndex = noteEditPassIndex;
-  editPass.actionType = deriveEditActionType(changes);
-  editPass.propertyType = deriveEditPropertyType(changes, editPass.actionType);
-  // Keep legacy fields populated until scoped target/payload migration is complete.
-  editPass.kind = EditPassKind::NoteEdit;
-  editPass.noteEditPassIndex = noteEditPassIndex;
-  editPass.state = EditPassState::Active;
-  editPass.changes = std::move(changes);
-  passes.editPasses.push_back(std::move(editPass));
+  row.id = nextPassId_++;
+  row.passType = passType;
+  row.editPassIndex = editPassIndex;
+  row.state = EditPassState::Active;
+  passes.editPasses.push_back(std::move(row));
   ++playbackRevision;
   editStateDirty_ = true;
   markPassDerivedStale();
   return passes.editPasses.back().id;
 }
 
-EditPassId Loop::replaceNoteEditPass(uint8_t noteEditPassIndex,
-                                     const EditPassIdList& staleEditPassIds,
-                                     EditChangeList changes) {
+EditPassIdList Loop::replaceNoteEditPass(uint8_t editPassIndex,
+                                         const EditPassIdList& staleEditPassIds,
+                                         EditPassVec rows) {
+  EditPassIdList replacementIds;
   if (staleEditPassIds.empty()) {
-    return kInvalidEditPassId;
+    return replacementIds;
   }
-  if (changes.empty()) {
+  if (rows.empty()) {
     disableEditPasses(staleEditPassIds);
     editStateDirty_ = true;
-    return kInvalidEditPassId;
+    return replacementIds;
   }
 
-  const EditPassId replacementId = saveNoteEditPass(noteEditPassIndex, std::move(changes));
-  if (replacementId == kInvalidEditPassId) {
-    return kInvalidEditPassId;
+  for (EditPass& row : rows) {
+    const EditPassId id = saveNoteEditPass(editPassIndex, std::move(row));
+    if (id != kInvalidEditPassId) {
+      replacementIds.push_back(id);
+    }
+  }
+  if (replacementIds.empty()) {
+    return replacementIds;
   }
   disableEditPasses(staleEditPassIds);
-  return replacementId;
+  return replacementIds;
 }
 
 void Loop::disableEditPasses(const EditPassIdList& ids) {
@@ -711,18 +633,16 @@ void Loop::shiftActiveCapturePassTicks(int64_t delta) {
     if (editPass.passType != EditPassType::Note) {
       continue;
     }
-    for (EditChange& change : editPass.changes) {
-      change.target.startTick =
-          static_cast<uint32_t>(static_cast<int64_t>(change.target.startTick) + delta);
-      change.target.endTick =
-          static_cast<uint32_t>(static_cast<int64_t>(change.target.endTick) + delta);
-      change.newStartTick =
-          static_cast<uint32_t>(static_cast<int64_t>(change.newStartTick) + delta);
-      change.newEndTick =
-          static_cast<uint32_t>(static_cast<int64_t>(change.newEndTick) + delta);
-      for (MidiEvent& evt : change.addedEvents) {
-        evt.tick = static_cast<uint32_t>(static_cast<int64_t>(evt.tick) + delta);
-      }
+    editPass.target.startTick =
+        static_cast<uint32_t>(static_cast<int64_t>(editPass.target.startTick) + delta);
+    editPass.target.endTick =
+        static_cast<uint32_t>(static_cast<int64_t>(editPass.target.endTick) + delta);
+    editPass.startTick =
+        static_cast<uint32_t>(static_cast<int64_t>(editPass.startTick) + delta);
+    editPass.endTick =
+        static_cast<uint32_t>(static_cast<int64_t>(editPass.endTick) + delta);
+    for (MidiEvent& evt : editPass.addedEvents) {
+      evt.tick = static_cast<uint32_t>(static_cast<int64_t>(evt.tick) + delta);
     }
   }
   ++playbackRevision;
