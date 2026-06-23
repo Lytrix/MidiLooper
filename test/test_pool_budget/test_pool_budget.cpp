@@ -174,11 +174,11 @@ void test_save_note_edit_pass_rejected_when_heap_below_reserve() {
   MemoryMonitor::setNativeTestFreeHeap(1024);
 
   Loop loop;
-  EditChange del{};
-  del.type = EditChangeType::DeleteNote;
+  EditPass del{};
+  del.actionType = EditActionType::Delete;
   del.target = {1, 60, 0, 48};
   const size_t before = loop.passes.editPasses.size();
-  const EditPassId id = loop.saveNoteEditPass(0, EditChangeList{del});
+  const EditPassId id = loop.saveNoteEditPass(0, del);
   TEST_ASSERT_EQUAL(kInvalidEditPassId, id);
   TEST_ASSERT_EQUAL(before, loop.passes.editPasses.size());
 
@@ -191,10 +191,10 @@ void test_save_note_edit_pass_succeeds_when_heap_headroom() {
   MemoryMonitor::resetNativeTestFreeHeap();
 
   Loop loop;
-  EditChange del{};
-  del.type = EditChangeType::DeleteNote;
+  EditPass del{};
+  del.actionType = EditActionType::Delete;
   del.target = {1, 60, 0, 48};
-  const EditPassId id = loop.saveNoteEditPass(0, EditChangeList{del});
+  const EditPassId id = loop.saveNoteEditPass(0, del);
   TEST_ASSERT_NOT_EQUAL(kInvalidEditPassId, id);
   TEST_ASSERT_EQUAL(1u, loop.passes.editPasses.size());
 }

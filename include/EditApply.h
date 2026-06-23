@@ -7,9 +7,9 @@
 #include "LoopEventStore.h"
 #include "LoopPasses.h"
 
-/// Apply one EditChange to a flat MIDI list (used by materialize and tests).
-void applyEditChange(MidiEventVec& events, const EditChange& change, uint32_t loopLengthTicks);
+/// Apply one note edit pass row to a flat MIDI list.
+void applyNoteEditPass(MidiEventVec& events, const EditPass& editPass, uint32_t loopLengthTicks);
 
-/// Apply an ordered EditChange list with move/length identity tracking.
-void applyEditChangeList(MidiEventVec& events, const EditChangeList& changes,
-                         uint32_t loopLengthTicks);
+/// Apply ordered note edit pass rows with move/length identity tracking.
+void applyNoteEditPassSequence(MidiEventVec& events, const EditPassVec& rows,
+                               uint32_t loopLengthTicks);

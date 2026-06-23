@@ -139,11 +139,11 @@ uint32_t overlapNoteEffectiveEnd(const OverlapNote& entry);
 void resolveOverlapNotesForPreCommit(MidiEventVec& sessionStoreEvents, NoteEditFocus& focus,
                                      uint8_t channel, uint32_t loopLength);
 
-/// B1: overlap-only EditChangeList (Hidden → DeleteNote, Shortened → ChangeLength).
-EditChangeList buildPreCommitOverlapEditChanges(const NoteEditFocus& focus);
+/// B1: overlap-only edit pass rows (Hidden → Delete, Shortened → Length).
+EditPassVec buildPreCommitOverlapEditPasses(const NoteEditFocus& focus);
 
-/// B1: ordered EditChangeList per design § Pre-commit emission (skip no-ops).
-EditChangeList buildPreCommitEditChanges(const NoteEditFocus& focus, uint8_t channel);
+/// B1: ordered edit pass rows per pre-commit emission (skip no-ops).
+EditPassVec buildPreCommitEditPasses(const NoteEditFocus& focus, uint8_t channel);
 
 /// NOTE_EDIT select/display inventory: session reconstruction minus Hidden and innerUnderMovingNote.
 std::vector<NoteUtils::DisplayNote> filterSelectableDisplayNotes(

@@ -89,11 +89,13 @@ void EditSelectNoteState::onButtonPress(EditManager& manager, Track& track) {
         // Push undo snapshot before creating note
         manager.beginGeometryMutation(track, NoteEditKind::Add, false);
         const std::array<MidiEvent, 2> created = createDefaultNote(track, bracketTick);
-        EditChange add;
-        add.type = EditChangeType::AddNote;
+        EditPass add{};
+        add.passType = EditPassType::Note;
+        add.actionType = EditActionType::Create;
+        add.propertyType = EditPropertyType::None;
         add.addedEvents.push_back(created[0]);
         add.addedEvents.push_back(created[1]);
-        manager.commitEditAction(track, EditChangeList{add});
+        manager.commitEditAction(track, EditPassVec{add});
         track.invalidateCaches();
 
         // Select the newly created note and enter start note editing

@@ -262,19 +262,31 @@ void resolveOverlapNotesForPreCommit(MidiEventVec& sessionStoreEvents, NoteEditF
   }
 }
 
-EditChangeList buildPreCommitOverlapEditChanges(const NoteEditFocus& focus) {
-  EditChangeList changes;
+namespace {
+
+EditPass makeNoteEditRow(EditActionType actionType, EditPropertyType propertyType) {
+  EditPass row{};
+  row.passType = EditPassType::Note;
+  row.actionType = actionType;
+  row.propertyType = propertyType;
+  row.state = EditPassState::Active;
+  return row;
+}
+
+}  // namespace
+
+EditPassVec buildPreCommitOverlapEditPasses(const NoteEditFocus& focus) {
+  EditPassVec rows;
   if (!focus.active) {
-    return changes;
+    return rows;
   }
 
   for (const auto& [ref, entry] : focus.overlapNotes) {
     (void)ref;
     if (entry.state == OverlapNoteStoreState::Hidden && !entry.preCommitEmitted) {
-      EditChange del;
-      del.type = EditChangeType::DeleteNote;
-      del.target = entry.ref;
-      changes.push_back(del);
+      EditPass row = makeNoteEditRow(EditActionType::Delete, EditPropertyType::None);
+      row.target = entry.ref;
+      rows.push_back(row);
     }
   }
 
@@ -282,15 +294,15 @@ EditChangeList buildPreCommitOverlapEditChanges(const NoteEditFocus& focus) {
     (void)ref;
     if (entry.state == OverlapNoteStoreState::Shortened &&
         entry.shortenedEndTick != entry.baseline.endTick) {
-      EditChange ch;
-      ch.type = EditChangeType::ChangeLength;
-      ch.target = entry.ref;
-      ch.newEndTick = entry.shortenedEndTick;
-      changes.push_back(ch);
+      EditPass row = makeNoteEditRow(EditActionType::Update, EditPropertyType::Length);
+      row.target = entry.ref;
+      row.startTick = entry.ref.startTick;
+      row.endTick = entry.shortenedEndTick;
+      rows.push_back(row);
     }
   }
 
-  return changes;
+  return rows;
 }
 
 namespace {
@@ -379,10 +391,10 @@ int filteredDisplayNoteIndexForNoteRef(uint8_t channel, const NoteEditFocus& foc
   return -1;
 }
 
-EditChangeList buildPreCommitEditChanges(const NoteEditFocus& focus, uint8_t channel) {
-  EditChangeList changes = buildPreCommitOverlapEditChanges(focus);
+EditPassVec buildPreCommitEditPasses(const NoteEditFocus& focus, uint8_t channel) {
+  EditPassVec rows = buildPreCommitOverlapEditPasses(focus);
   if (!focus.active) {
-    return changes;
+    return rows;
   }
 
   const NoteRef moverRef{channel, focus.commitBaseline.pitch, focus.commitBaseline.startTick,
@@ -393,27 +405,25 @@ EditChangeList buildPreCommitEditChanges(const NoteEditFocus& focus, uint8_t cha
   const bool pitchChanged = focus.last.pitch != focus.commitBaseline.pitch;
 
   if (startChanged) {
-    EditChange move;
-    move.type = EditChangeType::MoveNote;
-    move.target = moverRef;
-    move.newStartTick = focus.last.startTick;
-    move.newEndTick = focus.last.endTick;
-    changes.push_back(move);
+    EditPass row = makeNoteEditRow(EditActionType::Update, EditPropertyType::NoteRange);
+    row.target = moverRef;
+    row.startTick = focus.last.startTick;
+    row.endTick = focus.last.endTick;
+    rows.push_back(row);
   } else if (endChanged) {
-    EditChange ch;
-    ch.type = EditChangeType::ChangeLength;
-    ch.target = moverRef;
-    ch.newEndTick = focus.last.endTick;
-    changes.push_back(ch);
+    EditPass row = makeNoteEditRow(EditActionType::Update, EditPropertyType::Length);
+    row.target = moverRef;
+    row.startTick = focus.commitBaseline.startTick;
+    row.endTick = focus.last.endTick;
+    rows.push_back(row);
   }
 
   if (pitchChanged) {
-    EditChange pch;
-    pch.type = EditChangeType::ChangePitch;
-    pch.target = moverRef;
-    pch.newPitch = focus.last.pitch;
-    changes.push_back(pch);
+    EditPass row = makeNoteEditRow(EditActionType::Update, EditPropertyType::Pitch);
+    row.target = moverRef;
+    row.pitch = focus.last.pitch;
+    rows.push_back(row);
   }
 
-  return changes;
+  return rows;
 }

@@ -21,7 +21,7 @@
 #include <vector>
 
 #define STORAGE_FILENAME "/midilooper_state.raw"
-#define STORAGE_VERSION 4
+#define STORAGE_VERSION 5
 static constexpr uint32_t GLOBAL_UNDO_MAGIC = 0x33535547UL;  // "GUS3"
 static constexpr uint32_t STORAGE_COMPLETE_MAGIC = 0x45564153UL;  // "SAVE"
 
@@ -1421,7 +1421,7 @@ bool StorageManager::loadState(LooperState& state) {
         return false;
     }
     Serial.println("[StorageManager] Version read OK");
-    if (version != 4) {
+    if (version != 5) {
         Serial.print("[StorageManager] ERROR: Unsupported legacy storage version. Found: ");
         Serial.println(version);
         file.close();

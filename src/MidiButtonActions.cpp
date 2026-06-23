@@ -660,11 +660,13 @@ void MidiButtonActions::handleCreateNoteAtBracket() {
     editManager.beginGeometryMutation(track, NoteEditKind::Add, false);
     const std::array<MidiEvent, 2> created =
         EditSelectNoteState::createNoteAtTick(track, bracketTick);
-    EditChange add;
-    add.type = EditChangeType::AddNote;
+    EditPass add{};
+    add.passType = EditPassType::Note;
+    add.actionType = EditActionType::Create;
+    add.propertyType = EditPropertyType::None;
     add.addedEvents.push_back(created[0]);
     add.addedEvents.push_back(created[1]);
-    const EditPassId id = editManager.commitEditAction(track, EditChangeList{add});
+    const EditPassId id = editManager.commitEditAction(track, EditPassVec{add});
     if (id == kInvalidEditPassId) {
         logger.info("Create note failed (edit session commit rejected)");
         return;

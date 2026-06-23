@@ -11,11 +11,11 @@
 class Loop;
 
 struct SessionUndoEntry {
-  EditChangeList changes;
+  EditPassVec editRows;
   NoteEditFocus focus;
   NoteEditSelection selection;
   EditPassIdList editPassIdsAtPush;
-  EditChangeList redoChanges;
+  EditPassVec redoEditRows;
   NoteEditFocus redoFocus;
   NoteEditSelection redoSelection;
   EditPassIdList redoEditPassIds;
@@ -29,9 +29,9 @@ SessionUndoEntry buildSessionUndoEntry(const NoteEditFocus& focus, NoteEditSelec
                                        const MidiEventVec& sessionFlat, uint8_t channel,
                                        uint32_t loopLength,
                                        const EditPassIdList& editPassIdsAtPush);
-EditChangeList buildSessionStoreEditChanges(const MidiEventVec& baselineStoreEvents,
-                                            const MidiEventVec& sessionStoreEvents,
-                                            uint8_t channel, uint32_t loopLength);
+EditPassVec buildSessionStoreEditPasses(const MidiEventVec& baselineStoreEvents,
+                                        const MidiEventVec& sessionStoreEvents, uint8_t channel,
+                                        uint32_t loopLength);
 
 void applySessionUndoEntry(Loop& loop, CowLoopEventStore& store, const SessionUndoEntry& entry,
                            uint32_t loopLength, const EditPassIdList& currentEditPassIds);

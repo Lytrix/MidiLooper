@@ -78,11 +78,11 @@ struct Loop {
 
   void rematerializeEditView(LoopEventStore& store) const;
 
-  EditPassId saveNoteEditPass(uint8_t noteEditPassIndex, EditChangeList changes,
+  EditPassId saveNoteEditPass(uint8_t editPassIndex, EditPass row,
                               EditPassType passType = EditPassType::Note);
-  EditPassId replaceNoteEditPass(uint8_t noteEditPassIndex,
-                                 const EditPassIdList& staleEditPassIds,
-                                 EditChangeList changes);
+  EditPassIdList replaceNoteEditPass(uint8_t editPassIndex,
+                                     const EditPassIdList& staleEditPassIds,
+                                     EditPassVec rows);
 
   void disableEditPasses(const EditPassIdList& ids);
   void enableEditPasses(const EditPassIdList& ids);

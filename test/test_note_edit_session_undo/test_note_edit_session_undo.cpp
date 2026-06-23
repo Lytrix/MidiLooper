@@ -145,7 +145,7 @@ void test_session_redo_entry_restores_after_state() {
   SessionUndoEntry redoPayload =
       buildSessionUndoEntry(focus, NoteEditSelection{}, session.readFlat(), 5, loop.loopLengthTicks,
                             noEditPasses);
-  undoEntry.redoChanges = std::move(redoPayload.changes);
+  undoEntry.redoEditRows = std::move(redoPayload.editRows);
   undoEntry.redoFocus = std::move(redoPayload.focus);
   undoEntry.redoSelection = redoPayload.selection;
   undoEntry.redoEditPassIds = noEditPasses;
@@ -171,12 +171,13 @@ void test_replace_note_edit_pass_uses_final_session_store() {
   loop.passes.recordPass = makeRecordPassWithNote(5, 10);
   loop.nextPassId_ = 2;
 
-  EditChange staleMove;
-  staleMove.type = EditChangeType::MoveNote;
+  EditPass staleMove{};
+  staleMove.actionType = EditActionType::Update;
+  staleMove.propertyType = EditPropertyType::NoteRange;
   staleMove.target = {5, 60, 10, 58};
-  staleMove.newStartTick = 58;
-  staleMove.newEndTick = 106;
-  const EditPassId staleId = loop.saveNoteEditPass(0, EditChangeList{staleMove});
+  staleMove.startTick = 58;
+  staleMove.endTick = 106;
+  const EditPassId staleId = loop.saveNoteEditPass(0, staleMove);
   TEST_ASSERT_EQUAL(2u, staleId);
 
   MidiEventVec baselineEvents;
@@ -191,11 +192,12 @@ void test_replace_note_edit_pass_uses_final_session_store() {
     }
   }
 
-  EditChangeList replacement =
-      buildSessionStoreEditChanges(baselineEvents, finalSessionEvents, 5, loop.loopLengthTicks);
+  EditPassVec replacement =
+      buildSessionStoreEditPasses(baselineEvents, finalSessionEvents, 5, loop.loopLengthTicks);
   TEST_ASSERT_FALSE(replacement.empty());
-  const EditPassId replacementId =
+  const EditPassIdList replacementIds =
       loop.replaceNoteEditPass(0, EditPassIdList{staleId}, std::move(replacement));
+  const EditPassId replacementId = replacementIds.empty() ? kInvalidEditPassId : replacementIds.front();
   TEST_ASSERT_EQUAL(3u, replacementId);
 
   MidiEventVec materialized;
@@ -213,21 +215,23 @@ void test_replace_note_edit_pass_disables_stale_rows_when_final_store_matches_ba
   loop.passes.recordPass = makeRecordPassWithNote(5, 10);
   loop.nextPassId_ = 2;
 
-  EditChange staleMove;
-  staleMove.type = EditChangeType::MoveNote;
+  EditPass staleMove{};
+  staleMove.actionType = EditActionType::Update;
+  staleMove.propertyType = EditPropertyType::NoteRange;
   staleMove.target = {5, 60, 10, 58};
-  staleMove.newStartTick = 58;
-  staleMove.newEndTick = 106;
-  const EditPassId staleId = loop.saveNoteEditPass(0, EditChangeList{staleMove});
+  staleMove.startTick = 58;
+  staleMove.endTick = 106;
+  const EditPassId staleId = loop.saveNoteEditPass(0, staleMove);
   TEST_ASSERT_EQUAL(2u, staleId);
 
   MidiEventVec baselineEvents;
   loop.mergeActiveCapturePasses(baselineEvents);
-  const EditChangeList replacement =
-      buildSessionStoreEditChanges(baselineEvents, baselineEvents, 5, loop.loopLengthTicks);
+  const EditPassVec replacement =
+      buildSessionStoreEditPasses(baselineEvents, baselineEvents, 5, loop.loopLengthTicks);
   TEST_ASSERT_TRUE(replacement.empty());
-  const EditPassId replacementId =
-      loop.replaceNoteEditPass(0, EditPassIdList{staleId}, EditChangeList{});
+  const EditPassIdList replacementIds =
+      loop.replaceNoteEditPass(0, EditPassIdList{staleId}, EditPassVec{});
+  const EditPassId replacementId = replacementIds.empty() ? kInvalidEditPassId : replacementIds.front();
   TEST_ASSERT_EQUAL(kInvalidEditPassId, replacementId);
 
   MidiEventVec materialized;
@@ -245,12 +249,13 @@ void test_visual_cache_reflects_active_edit_passes() {
   loop.passes.recordPass = makeRecordPassWithNote(5, 10);
   loop.nextPassId_ = 2;
 
-  EditChange move;
-  move.type = EditChangeType::MoveNote;
+  EditPass move{};
+  move.actionType = EditActionType::Update;
+  move.propertyType = EditPropertyType::NoteRange;
   move.target = {5, 60, 10, 58};
-  move.newStartTick = 106;
-  move.newEndTick = 154;
-  const EditPassId editPassId = loop.saveNoteEditPass(0, EditChangeList{move});
+  move.startTick = 106;
+  move.endTick = 154;
+  const EditPassId editPassId = loop.saveNoteEditPass(0, move);
   TEST_ASSERT_EQUAL(2u, editPassId);
 
   loop.rebuildVisualCacheFromPasses();
@@ -279,11 +284,11 @@ void test_session_undo_move_after_add_committed_restores_insert_position() {
   loop.passes.recordPass = makeRecordPassWithNote(5, 10);
   loop.nextPassId_ = 2;
 
-  EditChange add;
-  add.type = EditChangeType::AddNote;
+  EditPass add{};
+  add.actionType = EditActionType::Create;
   add.addedEvents.push_back(MidiEvent::NoteOn(48, 5, 72, 100));
   add.addedEvents.push_back(MidiEvent::NoteOff(96, 5, 72, 0));
-  const EditPassId addId = loop.saveNoteEditPass(0, EditChangeList{add});
+  const EditPassId addId = loop.saveNoteEditPass(0, add);
   TEST_ASSERT_EQUAL(2u, addId);
 
   CowLoopEventStore session;
@@ -302,12 +307,13 @@ void test_session_undo_move_after_add_committed_restores_insert_position() {
       buildSessionUndoEntry(focus, NoteEditSelection{}, session.readFlat(), 5, loop.loopLengthTicks,
                             idsAtPush);
 
-  EditChange move;
-  move.type = EditChangeType::MoveNote;
+  EditPass move{};
+  move.actionType = EditActionType::Update;
+  move.propertyType = EditPropertyType::NoteRange;
   move.target = {5, 72, 48, 96};
-  move.newStartTick = 106;
-  move.newEndTick = 154;
-  const EditPassId moveId = loop.saveNoteEditPass(0, EditChangeList{move});
+  move.startTick = 106;
+  move.endTick = 154;
+  const EditPassId moveId = loop.saveNoteEditPass(0, move);
   TEST_ASSERT_EQUAL(3u, moveId);
 
   loop.passes.materializeToEventVector(session.mutFlat(), loop.loopLengthTicks);
