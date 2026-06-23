@@ -38,8 +38,10 @@ lifecycle.
 
 | Name | Role |
 |------|------|
-| **EditChangeType** | Enum of change types |
-| **EditPassKind** | NoteEdit \| ControlChange on **editPass** |
+| **EditSessionType** | Edited domain on **editPass** (`Note` \| `ControlChange` \| future `Audio`) |
+| **EditActionType** | Stored action on **editPass** (`Create` \| `Update` \| `Delete`) |
+| **EditPropertyType** | Updated field on **editPass** (`Pitch`, `Length`, `StartTick`, `EndTick`, `Tick`, `Value`, `None`) |
+| **EditChangeType** | Legacy note-edit payload change type during scoped-row migration |
 | **EditPassId** / **PassId** | Stable id per pass row (unified **nextPassId_**) |
 | **NoteRef** | Stable note target in an **EditChange** |
 

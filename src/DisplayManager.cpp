@@ -480,8 +480,8 @@ const DisplayNoteVec& DisplayManager::resolveDisplayNotes(const Track& track, ui
     mutLoop.ensureVisualCacheBuilt();
     mutLoop.mergeMaterializedPassesWithCapture(liveDisplayEventBuffer);
 
-    // Prefer visualCache (mergeActiveCapturePasses) over reconstructing the full
-    // materialized view — after long overdub stop heap can be too low for a second
+    // Prefer visualCache (passes.materializeToEventVector) over reconstructing the full
+    // materialized view again — after long overdub stop heap can be too low for a second
     // RAM2-heavy reconstruct while deferred save is still running.
     if (!loop.visualCache.notes.empty()) {
         liveDisplayNotes.assign(loop.visualCache.notes.begin(), loop.visualCache.notes.end());

@@ -168,6 +168,76 @@ bool canHeapAdmitEditPass(const EditChangeList& changes) {
   return MemoryMonitor::getInternalHeapFreeBytes() >= needed;
 }
 
+EditActionType mapEditActionType(const EditChangeType type) {
+  switch (type) {
+    case EditChangeType::AddNote:
+      return EditActionType::Create;
+    case EditChangeType::DeleteNote:
+      return EditActionType::Delete;
+    case EditChangeType::MoveNote:
+    case EditChangeType::ChangePitch:
+    case EditChangeType::ChangeLength:
+      return EditActionType::Update;
+  }
+  return EditActionType::Update;
+}
+
+EditPropertyType mapNoteEditPropertyType(const EditChange& change) {
+  switch (change.type) {
+    case EditChangeType::ChangePitch:
+      return EditPropertyType::Pitch;
+    case EditChangeType::ChangeLength:
+      return EditPropertyType::Length;
+    case EditChangeType::MoveNote:
+      if (change.newStartTick != change.target.startTick) {
+        return EditPropertyType::StartTick;
+      }
+      if (change.newEndTick != change.target.endTick) {
+        return EditPropertyType::EndTick;
+      }
+      return EditPropertyType::None;
+    case EditChangeType::AddNote:
+    case EditChangeType::DeleteNote:
+      return EditPropertyType::None;
+  }
+  return EditPropertyType::None;
+}
+
+EditActionType deriveEditActionType(const EditChangeList& changes) {
+  if (changes.empty()) {
+    return EditActionType::Update;
+  }
+  const EditActionType first = mapEditActionType(changes.front().type);
+  for (const EditChange& change : changes) {
+    if (mapEditActionType(change.type) != first) {
+      return EditActionType::Update;
+    }
+  }
+  return first;
+}
+
+EditPropertyType deriveEditPropertyType(const EditChangeList& changes,
+                                        EditActionType actionType) {
+  if (changes.empty() || actionType != EditActionType::Update) {
+    return EditPropertyType::None;
+  }
+  EditPropertyType resolved = EditPropertyType::None;
+  for (const EditChange& change : changes) {
+    const EditPropertyType next = mapNoteEditPropertyType(change);
+    if (next == EditPropertyType::None) {
+      continue;
+    }
+    if (resolved == EditPropertyType::None) {
+      resolved = next;
+      continue;
+    }
+    if (resolved != next) {
+      return EditPropertyType::None;
+    }
+  }
+  return resolved;
+}
+
 const char* sealOutcomeLabel(SealOutcome outcome) {
   switch (outcome) {
     case SealOutcome::Ok:
@@ -309,6 +379,11 @@ EditPassId Loop::saveNoteEditPass(uint8_t noteEditPassIndex, EditChangeList chan
   }
   EditPass editPass;
   editPass.id = nextPassId_++;
+  editPass.sessionType = EditSessionType::Note;
+  editPass.editPassIndex = noteEditPassIndex;
+  editPass.actionType = deriveEditActionType(changes);
+  editPass.propertyType = deriveEditPropertyType(changes, editPass.actionType);
+  // Keep legacy fields populated until scoped target/payload migration is complete.
   editPass.kind = EditPassKind::NoteEdit;
   editPass.noteEditPassIndex = noteEditPassIndex;
   editPass.state = EditPassState::Active;
@@ -318,6 +393,26 @@ EditPassId Loop::saveNoteEditPass(uint8_t noteEditPassIndex, EditChangeList chan
   editStateDirty_ = true;
   markPassDerivedStale();
   return passes.editPasses.back().id;
+}
+
+EditPassId Loop::replaceNoteEditPass(uint8_t noteEditPassIndex,
+                                     const EditPassIdList& staleEditPassIds,
+                                     EditChangeList changes) {
+  if (staleEditPassIds.empty()) {
+    return kInvalidEditPassId;
+  }
+  if (changes.empty()) {
+    disableEditPasses(staleEditPassIds);
+    editStateDirty_ = true;
+    return kInvalidEditPassId;
+  }
+
+  const EditPassId replacementId = saveNoteEditPass(noteEditPassIndex, std::move(changes));
+  if (replacementId == kInvalidEditPassId) {
+    return kInvalidEditPassId;
+  }
+  disableEditPasses(staleEditPassIds);
+  return replacementId;
 }
 
 void Loop::disableEditPasses(const EditPassIdList& ids) {
@@ -330,6 +425,32 @@ void Loop::disableEditPasses(const EditPassIdList& ids) {
   }
   ++playbackRevision;
   markPassDerivedStale();
+}
+
+void Loop::enableEditPasses(const EditPassIdList& ids) {
+  for (const EditPassId id : ids) {
+    for (EditPass& editPass : passes.editPasses) {
+      if (editPass.id == id) {
+        editPass.state = EditPassState::Active;
+      }
+    }
+  }
+  ++playbackRevision;
+  markPassDerivedStale();
+}
+
+void Loop::materializeExcludingEditPassIds(const EditPassIdList& excludeIds,
+                                           MidiEventVec& out) const {
+  LoopPasses scopedPasses = passes;
+  for (EditPass& editPass : scopedPasses.editPasses) {
+    for (const EditPassId id : excludeIds) {
+      if (editPass.id == id) {
+        editPass.state = EditPassState::Disabled;
+        break;
+      }
+    }
+  }
+  scopedPasses.materializeToEventVector(out, loopLengthTicks);
 }
 
 void Loop::freeActiveCapturePassChunks() {
@@ -584,6 +705,9 @@ void Loop::shiftActiveCapturePassTicks(int64_t delta) {
   }
   for (EditPass& editPass : passes.editPasses) {
     if (editPass.state != EditPassState::Active) {
+      continue;
+    }
+    if (editPass.sessionType != EditSessionType::Note) {
       continue;
     }
     for (EditChange& change : editPass.changes) {
@@ -849,7 +973,7 @@ void Loop::discardPendingCapturePass() {
 
 void Loop::rebuildVisualCacheFromPasses() {
   MidiEventVec flat;
-  mergeActiveCapturePasses(flat);
+  passes.materializeToEventVector(flat, loopLengthTicks);
   const NoteUtils::DisplayNoteVec rebuiltNotes =
       NoteUtils::reconstructDisplayNotes(flat, loopLengthTicks, false);
   visualCache.notes.assign(rebuiltNotes.begin(), rebuiltNotes.end());

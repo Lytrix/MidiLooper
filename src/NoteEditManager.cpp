@@ -234,15 +234,24 @@ void NoteEditManager::cycleEditMode(Track& track) {
 }
 
 void NoteEditManager::cycleMainEditMode(Track& track) {
-    // Toggle between the two modes
-    currentMainEditMode = (currentMainEditMode == MAIN_MODE_NOTE_EDIT) ? 
-                          MAIN_MODE_LOOP_EDIT : MAIN_MODE_NOTE_EDIT;
-    
-    // Send the mode change
+    if (currentMainEditMode == MAIN_MODE_NOTE_EDIT) {
+        // Treat NOTE_EDIT -> LOOP_EDIT as a full edit-session boundary so
+        // pending note-edit changes are committed/closed consistently.
+        if (editManager.isNoteEditActive() || editManager.getCurrentState() != nullptr) {
+            logger.log(CAT_MIDI, LOG_INFO,
+                       "Main Edit Mode toggle: exited edit mode via exitEditMode boundary");
+            editManager.exitEditMode(track);
+            return;
+        }
+        currentMainEditMode = MAIN_MODE_LOOP_EDIT;
+        sendMainEditModeChange(currentMainEditMode);
+        logger.log(CAT_MIDI, LOG_INFO, "Cycled to mode: LOOP_EDIT");
+        return;
+    }
+
+    currentMainEditMode = MAIN_MODE_NOTE_EDIT;
     sendMainEditModeChange(currentMainEditMode);
-    
-    logger.log(CAT_MIDI, LOG_INFO, "Cycled to mode: %s", 
-               (currentMainEditMode == MAIN_MODE_NOTE_EDIT) ? "NOTE_EDIT" : "LOOP_EDIT");
+    logger.log(CAT_MIDI, LOG_INFO, "Cycled to mode: NOTE_EDIT");
 }
 
 void NoteEditManager::deleteSelectedNote(Track& track) {
@@ -1141,6 +1150,10 @@ void NoteEditManager::handleSelectFaderInput(int16_t pitchValue, Track& track) {
                 noteSelectionTime = millis();
                 startEditingEnabled = false;
             } else {
+                // Preserve pending mover edits before clearing focus on an empty-step select.
+                // Without this, exiting NOTE_EDIT can drop the current editPass when the last
+                // fader-1 selection is empty (focus becomes inactive before commit).
+                editManager.commitAllPendingNoteEditActions(track);
                 editManager.rebuildNoteEditFocusAtSelect(track, -1);
                 editManager.applySelectNav(track, -1, absoluteTargetTick, {}, false);
                 logger.log(CAT_MIDI, LOG_DEBUG,

@@ -50,8 +50,9 @@ struct UndoEntry {
   bool hasTrackState = false;
   bool hasRedoPayload = false;
 
-  EditPassIdList noteEditPassIds;
-  uint8_t noteEditPassIndex = 0;
+  EditPassIdList editPassIds;
+  uint8_t editPassIndex = 0;
+  EditSessionType editSessionType = EditSessionType::Note;
 };
 
 using UndoEntryVec = std::vector<UndoEntry, ExternalMemoryFirstAllocator<UndoEntry>>;

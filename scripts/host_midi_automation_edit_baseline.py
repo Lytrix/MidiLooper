@@ -46,11 +46,32 @@ from host_midi_automation_baseline import (  # noqa: E402
     _count_capture_transitions,
     _ensure_midi_clock,
     _extract_revt_note_on_ticks,
+    _find_midi_port,
     _send_multi_short_press,
     _send_short_press,
     _wait_for_state_entry_count,
     _wait_for_transition_count,
 )
+
+DEFAULT_PERSISTENCE_WAIT_TIMEOUT_S = 30.0
+
+# Canonical scoped edit-pass undo serial markers (TrackUndo post-exit global undo).
+SCOPED_EDIT_PASS_UNDONE = "Scoped edit pass undone"
+SCOPED_EDIT_PASS_REDONE = "Scoped edit pass redone"
+_LEGACY_EDIT_PASS_UNDONE_MARKERS = (
+    SCOPED_EDIT_PASS_UNDONE,
+    "Note edit pass undone",
+    "Note edit span undone",
+)
+_LEGACY_EDIT_PASS_REDONE_MARKERS = (
+    SCOPED_EDIT_PASS_REDONE,
+    "Note edit pass redone",
+    "Note edit span redone",
+)
+_SERIAL_MARKER_ALIASES: dict[str, tuple[str, ...]] = {
+    SCOPED_EDIT_PASS_UNDONE: _LEGACY_EDIT_PASS_UNDONE_MARKERS,
+    SCOPED_EDIT_PASS_REDONE: _LEGACY_EDIT_PASS_REDONE_MARKERS,
+}
 
 # DROID main controls (MidiConfig::Transport / LengthEdit)
 EDIT_BUTTON_NOTE = 38
@@ -1000,12 +1021,12 @@ def _verify_session_undo_redo_routing(lines: list[str]) -> dict[str, object]:
         post_exit_undo = sum(
             1
             for line in post_window
-            if "Note edit pass undone" in line or "Overdub undone" in line
+            if _line_is_scoped_edit_pass_undo(line) or "Overdub undone" in line
         )
         post_exit_redo = sum(
             1
             for line in post_window
-            if "Note edit pass redone" in line or "Overdub redone" in line
+            if _line_is_scoped_edit_pass_redo(line) or "Overdub redone" in line
         )
         if in_edit_undo < 1:
             issues.append("session_undo:in_edit_missing")
@@ -1032,8 +1053,29 @@ def _serial_contains(lines: list[str], needle: str) -> bool:
     return any(needle in line for line in lines)
 
 
+def _serial_contains_any(lines: list[str], needles: tuple[str, ...]) -> bool:
+    return any(needle in line for line in lines for needle in needles)
+
+
 def _count_serial_substrings(lines: list[str], needle: str) -> int:
     return sum(1 for line in lines if needle in line)
+
+
+def _count_serial_substrings_any(lines: list[str], needles: tuple[str, ...]) -> int:
+    return sum(1 for line in lines if any(needle in line for needle in needles))
+
+
+def _line_is_scoped_edit_pass_undo(line: str) -> bool:
+    return any(marker in line for marker in _LEGACY_EDIT_PASS_UNDONE_MARKERS)
+
+
+def _line_is_scoped_edit_pass_redo(line: str) -> bool:
+    return any(marker in line for marker in _LEGACY_EDIT_PASS_REDONE_MARKERS)
+
+
+def _serial_marker_found(lines: list[str], marker: str) -> bool:
+    aliases = _SERIAL_MARKER_ALIASES.get(marker, (marker,))
+    return _serial_contains_any(lines, aliases)
 
 
 def _serial_has_clear_ignored_empty(lines: list[str], *, after_index: int = 0) -> bool:
@@ -1346,6 +1388,41 @@ def _send_global_redo(
         channel_1based=CONTROL_CHANNEL_1BASED,
         press_ms=press_ms,
     )
+
+
+def _persistence_result_ok(line: str) -> bool:
+    if ",PERS,result," not in line:
+        return False
+    parts = line.split(",")
+    return len(parts) >= 8 and parts[7].strip() == "ok"
+
+
+def _wait_for_persistence_result_after_marker(
+    collector: SerialCaptureCollector,
+    *,
+    marker: str,
+    timeout_s: float = DEFAULT_PERSISTENCE_WAIT_TIMEOUT_S,
+    abort: Optional[RunAbort] = None,
+) -> bool:
+    """Wait for #CAP PERS,result,ok queued after edit exit (or other anchor line)."""
+    deadline = time.monotonic() + max(timeout_s, 0.0)
+    anchor_idx = -1
+    while time.monotonic() < deadline:
+        if abort is not None:
+            reason = abort.check()
+            if reason:
+                print(f"[warn] persistence wait aborted: {reason}")
+                return False
+        lines = collector.snapshot()
+        for i, line in enumerate(lines):
+            if marker in line:
+                anchor_idx = max(anchor_idx, i)
+        if anchor_idx >= 0:
+            for line in lines[anchor_idx + 1 :]:
+                if _persistence_result_ok(line):
+                    return True
+        time.sleep(0.05)
+    return False
 
 
 def _undo_redo_pair(
@@ -2562,6 +2639,7 @@ def _verify_delay_move_insert_reorder(
                         break
 
     insert_present_after_in_edit_redo = False
+    pre_undo_insert_selected: Optional[bool] = None
     create_lines = [
         i for i, line in enumerate(lines) if "EditSelectNoteState: Created 32nd note" in line
     ]
@@ -2584,7 +2662,40 @@ def _verify_delay_move_insert_reorder(
             -1,
         )
         if undo_line >= 0 and redo_line > undo_line:
-            redo_window = lines[redo_line : redo_line + 80]
+            pre_undo_select_lines = [
+                line
+                for line in lines[last_create:undo_line]
+                if "Select fader:" in line and f"tick {insert_tick}" in line
+            ]
+            if pre_undo_select_lines:
+                pre_undo_last = pre_undo_select_lines[-1]
+                if "selected note" in pre_undo_last:
+                    pre_undo_insert_selected = True
+                elif "selected empty step" in pre_undo_last:
+                    pre_undo_insert_selected = False
+            exit_line = next(
+                (
+                    i
+                    for i, line in enumerate(lines[redo_line:], start=redo_line)
+                    if "exited edit mode" in line
+                ),
+                -1,
+            )
+            window_end = (
+                exit_line if exit_line > redo_line else min(len(lines), redo_line + 800)
+            )
+            redo_window = lines[redo_line:window_end]
+            select_probe_lines = [
+                line
+                for line in redo_window
+                if "Select fader:" in line and f"tick {insert_tick}" in line
+            ]
+            insert_selected_after_in_edit_redo = any(
+                "selected note" in line for line in select_probe_lines
+            )
+            insert_empty_after_in_edit_redo = any(
+                "selected empty step" in line for line in select_probe_lines
+            )
             insert_present_after_in_edit_redo = any(
                 (m := re.search(
                     rf"Final note: pitch={M0_PITCH}, start=(\d+), end=(\d+)", line
@@ -2593,6 +2704,16 @@ def _verify_delay_move_insert_reorder(
                 and 12 <= int(m.group(2)) - int(m.group(1)) <= 36
                 for line in redo_window
             )
+            if pre_undo_insert_selected is True:
+                insert_present_after_in_edit_redo = (
+                    insert_present_after_in_edit_redo or insert_selected_after_in_edit_redo
+                )
+            elif pre_undo_insert_selected is False:
+                insert_present_after_in_edit_redo = insert_empty_after_in_edit_redo
+            else:
+                insert_present_after_in_edit_redo = (
+                    insert_present_after_in_edit_redo or insert_selected_after_in_edit_redo
+                )
 
     if not d_delay_to_a:
         issues.append("missing_d_delay_move_to_a")
@@ -2635,6 +2756,7 @@ def _verify_delay_move_insert_reorder(
         "move_back_off_insert": move_back_off_insert,
         "insert_restored_after_move_back": insert_restored_after_move_back,
         "insert_present_after_in_edit_redo": insert_present_after_in_edit_redo,
+        "pre_undo_insert_selected": pre_undo_insert_selected,
     }
 
 
@@ -3136,14 +3258,21 @@ def _verify_split_victim_round_trip(
 def _count_note_edit_pass_undo_logs(lines: list[str]) -> int:
     return (
         _count_serial_substrings(lines, "NoteEditSession undo")
-        + _count_serial_substrings(lines, "Note edit pass undone")
-        + _count_serial_substrings(lines, "Note edit span undone")
+        + _count_serial_substrings_any(lines, _LEGACY_EDIT_PASS_UNDONE_MARKERS)
         + _count_serial_substrings(lines, "Overdub undone")
     )
 
 
+def _count_note_edit_pass_redo_logs(lines: list[str]) -> int:
+    return (
+        _count_serial_substrings(lines, "NoteEditSession redo")
+        + _count_serial_substrings_any(lines, _LEGACY_EDIT_PASS_REDONE_MARKERS)
+        + _count_serial_substrings(lines, "Overdub redone")
+    )
+
+
 def _verify_m8_edit_pass_commit(lines: list[str]) -> dict[str, object]:
-    """Exactly one note-edit pass close between enter and exit note edit."""
+    """Exactly one note-edit pass close, with replacement after in-edit undo/redo."""
     enter_idx: Optional[int] = None
     exit_idx: Optional[int] = None
     for i, line in enumerate(lines):
@@ -3164,9 +3293,20 @@ def _verify_m8_edit_pass_commit(lines: list[str]) -> dict[str, object]:
         for w in window
         if "NoteEditPassClosed" in w or "NoteEditSessionCommitted" in w
     )
+    in_edit_undo_redo = any("NoteEditSession undo" in w for w in window) and any(
+        "NoteEditSession redo" in w for w in window
+    )
+    replacement_count = sum(1 for w in window if "NoteEditPass replaced" in w)
     if committed_count != 1:
         issues.append(f"m8_pass:committed_count:{committed_count}!=1")
-    return {"ok": not issues, "committed_count": committed_count, "issues": issues}
+    if in_edit_undo_redo and replacement_count < 1:
+        issues.append("m8_pass:replacement_missing_after_in_edit_undo_redo")
+    return {
+        "ok": not issues,
+        "committed_count": committed_count,
+        "replacement_count": replacement_count,
+        "issues": issues,
+    }
 
 
 def _verify_edit_serial(
@@ -3184,18 +3324,14 @@ def _verify_edit_serial(
 ) -> dict[str, object]:
     revt_ticks = _extract_revt_note_on_ticks(lines)
     issues: list[str] = []
-    markers_found = {m: _serial_contains(lines, m) for m in expected_markers}
+    markers_found = {m: _serial_marker_found(lines, m) for m in expected_markers}
     for m, found in markers_found.items():
         if not found:
             issues.append(f"missing_marker:{m}")
     if len(revt_ticks) < min_revt_count:
         issues.append(f"revt_count_low:{len(revt_ticks)}<{min_revt_count}")
     undo_log_count = _count_note_edit_pass_undo_logs(lines)
-    redo_log_count = (
-        _count_serial_substrings(lines, "NoteEditSession redo")
-        + _count_serial_substrings(lines, "Note edit pass redone")
-        + _count_serial_substrings(lines, "Overdub redone")
-    )
+    redo_log_count = _count_note_edit_pass_redo_logs(lines)
     if undo_log_count < min_undo_logs:
         issues.append(f"undo_log_low:{undo_log_count}<{min_undo_logs}")
     if redo_log_count < min_redo_logs:
@@ -3588,6 +3724,9 @@ def _run_edit_scenarios(
     in_edit_undo_redo: bool = True,
     post_exit_undo_redo: bool = True,
     long_over_short_pitch_case: bool = True,
+    serial_collector: Optional[SerialCaptureCollector] = None,
+    persistence_wait_timeout_s: float = DEFAULT_PERSISTENCE_WAIT_TIMEOUT_S,
+    abort: Optional[RunAbort] = None,
 ) -> list[str]:
     """Run combined edit session; return expected serial marker substrings."""
     markers: list[str] = []
@@ -3658,6 +3797,21 @@ def _run_edit_scenarios(
         )
         markers.append("NoteEditSession undo")
         markers.append("NoteEditSession redo")
+        # Force a deterministic post-redo read path so serial verification can
+        # confirm the inserted note is present after in-edit session redo.
+        print("[edit-hitl] post-redo probe: enter select mode")
+        _send_short_press(
+            out_port,
+            note=EDIT_BUTTON_NOTE,
+            channel_1based=CONTROL_CHANNEL_1BASED,
+            press_ms=press_ms,
+        )
+        pause()
+        print("[edit-hitl] post-redo probe: select insert step")
+        _fader1_select_sixteenth_step(
+            out_port, layout=layout, fixture_step=INSERT_NOTE_STEP
+        )
+        pause()
 
     # Exit edit
     _send_long_press(
@@ -3670,22 +3824,35 @@ def _run_edit_scenarios(
     pause()
 
     if post_exit_undo_redo:
+        if serial_collector is not None:
+            if _wait_for_persistence_result_after_marker(
+                serial_collector,
+                marker="exited edit mode",
+                timeout_s=persistence_wait_timeout_s,
+                abort=abort,
+            ):
+                print("[edit-hitl] deferred persist complete before post-exit undo")
+            else:
+                print(
+                    "[warn] Timed out waiting for PERS,result,ok after edit exit; "
+                    "continuing with post-exit undo"
+                )
         _undo_redo_pair(
             out_port,
             press_ms=press_ms,
             undo_redo_delay_ms=undo_redo_delay_ms,
             phase="post-exit",
         )
-        markers.append("Note edit pass undone")
-        markers.append("Note edit pass redone")
+        markers.append(SCOPED_EDIT_PASS_UNDONE)
+        markers.append(SCOPED_EDIT_PASS_REDONE)
 
     return markers
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Note-edit HITL automation baseline")
-    parser.add_argument("--midi-out", required=True)
-    parser.add_argument("--midi-in", required=True)
+    parser.add_argument("--midi-out", default="Teensy", help="MIDI output port substring")
+    parser.add_argument("--midi-in", default="Teensy", help="MIDI input port substring")
     parser.add_argument("--serial-port", default=None)
     parser.add_argument("--serial-baud", type=int, default=115200)
     parser.add_argument("--verify-serial-log", type=Path, default=None)
@@ -3727,8 +3894,14 @@ def main() -> int:
     parser.add_argument(
         "--undo-redo-delay-ms",
         type=int,
-        default=500,
-        help="Wait before/after in-edit and post-exit undo/redo presses (default 500)",
+        default=3000,
+        help="Wait before/after in-edit and post-exit undo/redo presses (default 3000)",
+    )
+    parser.add_argument(
+        "--persistence-wait-timeout-s",
+        type=float,
+        default=DEFAULT_PERSISTENCE_WAIT_TIMEOUT_S,
+        help="Max wait for PERS,result,ok after edit exit before post-exit undo (default 30)",
     )
     parser.add_argument(
         "--in-edit-undo-redo",
@@ -3804,8 +3977,8 @@ def main() -> int:
     track_index = args.track_number - 1
     midi_channel = args.midi_channel if args.midi_channel is not None else args.track_number
 
-    out_name = args.midi_out
-    in_name = args.midi_in
+    out_name = _find_midi_port(args.midi_out, is_input=False)
+    in_name = _find_midi_port(args.midi_in, is_input=True)
     out_port = mido.open_output(out_name)
     in_port = mido.open_input(in_name)
 
@@ -4036,6 +4209,9 @@ def main() -> int:
             in_edit_undo_redo=args.in_edit_undo_redo,
             post_exit_undo_redo=args.post_exit_undo_redo,
             long_over_short_pitch_case=args.long_over_short_pitch_case,
+            serial_collector=serial_collector,
+            persistence_wait_timeout_s=args.persistence_wait_timeout_s,
+            abort=abort,
         )
 
         min_undo_logs = int(args.in_edit_undo_redo) + int(args.post_exit_undo_redo)

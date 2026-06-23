@@ -38,7 +38,7 @@ struct NoteEditSessionUndoStack {
     return true;
   }
 
-  const SessionUndoEntry* popUndoTarget() {
+  SessionUndoEntry* popUndoTarget() {
     if (!canUndo()) {
       return nullptr;
     }
@@ -46,13 +46,26 @@ struct NoteEditSessionUndoStack {
     return &entries_[cursor_];
   }
 
-  const SessionUndoEntry* popRedoTarget() {
+  SessionUndoEntry* popRedoTarget() {
     if (!canRedo()) {
       return nullptr;
     }
-    const SessionUndoEntry* target = &entries_[cursor_];
+    SessionUndoEntry* target = &entries_[cursor_];
     ++cursor_;
     return target;
+  }
+
+  SessionUndoEntry* peekRedoTarget() {
+    if (!canRedo()) {
+      return nullptr;
+    }
+    return &entries_[cursor_];
+  }
+
+  void advanceRedoCursor() {
+    if (canRedo()) {
+      ++cursor_;
+    }
   }
 
   void dropRedoBranch() {
@@ -90,6 +103,7 @@ struct NoteEditSession {
   NoteEditFocus focus;
   uint8_t editPassIndex = 0;
   bool active = false;
+  bool replaceNoteEditPassOnClose = false;
   EditPassIdList noteEditPassIds;
   EditChangeList pendingChanges;
 };

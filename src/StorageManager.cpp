@@ -1233,6 +1233,8 @@ void StorageManager::processEditAutosave(const LooperState& state) {
         urgentEditSavePending = false;
         clearEditDirtyAfterDeferredSave = true;
         requestDeferredSaveState(state);
+        // Runtime policy: urgent NOTE_EDIT save requests stay deferred to avoid
+        // blocking playback timing on synchronous SD drain.
         lastEditAutosaveMs = nowMs;
         return;
     }

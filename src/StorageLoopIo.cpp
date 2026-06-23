@@ -28,6 +28,7 @@ size_t g_lastPersistedCapturePassWriteMaxBatchEvents = 0;
 constexpr uint32_t MAX_PERSISTED_CAPTURE_PASS_EVENTS =
     static_cast<uint32_t>(LoopEventStoreConfig::POOL_CHUNK_COUNT) *
     LoopEventStoreConfig::CHUNK_CAPACITY;
+constexpr uint32_t PERSISTED_EDITS_TAIL_SCOPED_MARKER = 0x45505432u;  // "EPT2"
 
 uint32_t maxPersistedEventTick(uint32_t loopLengthTicks) {
   if (loopLengthTicks == 0 || loopLengthTicks >= 0x80000000u) {
@@ -169,6 +170,9 @@ bool readPersistedEditChange(const StorageIo& io, EditChange& change) {
   if (!ioRead(io, &change.newStartTick, sizeof(change.newStartTick))) return false;
   if (!ioRead(io, &change.newEndTick, sizeof(change.newEndTick))) return false;
   if (!ioRead(io, &addedCount, sizeof(addedCount))) return false;
+  if (typeRaw > static_cast<uint8_t>(EditChangeType::ChangeLength)) {
+    return false;
+  }
   change.type = static_cast<EditChangeType>(typeRaw);
   change.addedEvents.clear();
   change.addedEvents.reserve(addedCount);
@@ -180,11 +184,108 @@ bool readPersistedEditChange(const StorageIo& io, EditChange& change) {
   return true;
 }
 
-bool writePersistedEditPass(const StorageIo& io, const EditPass& editPass) {
+EditActionType deriveActionTypeFromLegacyChanges(const EditChangeList& changes) {
+  if (changes.empty()) {
+    return EditActionType::Update;
+  }
+  auto mapLegacyAction = [](EditChangeType type) {
+    switch (type) {
+      case EditChangeType::AddNote:
+        return EditActionType::Create;
+      case EditChangeType::DeleteNote:
+        return EditActionType::Delete;
+      case EditChangeType::MoveNote:
+      case EditChangeType::ChangePitch:
+      case EditChangeType::ChangeLength:
+        return EditActionType::Update;
+    }
+    return EditActionType::Update;
+  };
+
+  const EditActionType first = mapLegacyAction(changes.front().type);
+  for (const EditChange& change : changes) {
+    if (mapLegacyAction(change.type) != first) {
+      return EditActionType::Update;
+    }
+  }
+  return first;
+}
+
+EditPropertyType derivePropertyTypeFromLegacyChanges(const EditChangeList& changes,
+                                                     EditActionType actionType) {
+  if (changes.empty() || actionType != EditActionType::Update) {
+    return EditPropertyType::None;
+  }
+
+  auto mapLegacyProperty = [](const EditChange& change) {
+    switch (change.type) {
+      case EditChangeType::ChangePitch:
+        return EditPropertyType::Pitch;
+      case EditChangeType::ChangeLength:
+        return EditPropertyType::Length;
+      case EditChangeType::MoveNote:
+        if (change.newStartTick != change.target.startTick) {
+          return EditPropertyType::StartTick;
+        }
+        if (change.newEndTick != change.target.endTick) {
+          return EditPropertyType::EndTick;
+        }
+        return EditPropertyType::None;
+      case EditChangeType::AddNote:
+      case EditChangeType::DeleteNote:
+        return EditPropertyType::None;
+    }
+    return EditPropertyType::None;
+  };
+
+  EditPropertyType resolved = EditPropertyType::None;
+  for (const EditChange& change : changes) {
+    const EditPropertyType next = mapLegacyProperty(change);
+    if (next == EditPropertyType::None) {
+      continue;
+    }
+    if (resolved == EditPropertyType::None) {
+      resolved = next;
+      continue;
+    }
+    if (resolved != next) {
+      return EditPropertyType::None;
+    }
+  }
+  return resolved;
+}
+
+bool isValidSessionTypeRaw(uint8_t raw) {
+  return raw <= static_cast<uint8_t>(EditSessionType::Audio);
+}
+
+bool isValidActionTypeRaw(uint8_t raw) {
+  return raw <= static_cast<uint8_t>(EditActionType::Delete);
+}
+
+bool isValidPropertyTypeRaw(uint8_t raw) {
+  return raw <= static_cast<uint8_t>(EditPropertyType::Value);
+}
+
+bool isValidEditPassStateRaw(uint8_t raw) {
+  return raw <= static_cast<uint8_t>(EditPassState::Disabled);
+}
+
+bool writePersistedEditPassScoped(const StorageIo& io, const EditPass& editPass) {
+  const uint8_t sessionTypeRaw = static_cast<uint8_t>(editPass.sessionType);
   const uint8_t stateRaw = static_cast<uint8_t>(editPass.state);
+  const uint8_t actionTypeRaw = static_cast<uint8_t>(editPass.actionType);
+  const uint8_t propertyTypeRaw = static_cast<uint8_t>(editPass.propertyType);
+  const uint8_t editPassIndex =
+      (editPass.editPassIndex == 0 && editPass.noteEditPassIndex != 0)
+          ? editPass.noteEditPassIndex
+          : editPass.editPassIndex;
   if (!ioWrite(io, &editPass.id, sizeof(editPass.id))) return false;
-  if (!ioWrite(io, &editPass.noteEditPassIndex, sizeof(editPass.noteEditPassIndex))) return false;
+  if (!ioWrite(io, &sessionTypeRaw, sizeof(sessionTypeRaw))) return false;
+  if (!ioWrite(io, &editPassIndex, sizeof(editPassIndex))) return false;
   if (!ioWrite(io, &stateRaw, sizeof(stateRaw))) return false;
+  if (!ioWrite(io, &actionTypeRaw, sizeof(actionTypeRaw))) return false;
+  if (!ioWrite(io, &propertyTypeRaw, sizeof(propertyTypeRaw))) return false;
   const uint32_t changeCount = static_cast<uint32_t>(editPass.changes.size());
   if (!ioWrite(io, &changeCount, sizeof(changeCount))) return false;
   for (const EditChange& change : editPass.changes) {
@@ -193,15 +294,56 @@ bool writePersistedEditPass(const StorageIo& io, const EditPass& editPass) {
   return true;
 }
 
-bool readPersistedEditPass(const StorageIo& io, EditPass& editPass) {
+bool readPersistedEditPassLegacyV4(const StorageIo& io, EditPass& editPass) {
   uint8_t stateRaw = 0;
   uint32_t changeCount = 0;
   if (!ioRead(io, &editPass.id, sizeof(editPass.id))) return false;
   if (!ioRead(io, &editPass.noteEditPassIndex, sizeof(editPass.noteEditPassIndex))) return false;
   if (!ioRead(io, &stateRaw, sizeof(stateRaw))) return false;
+  if (!isValidEditPassStateRaw(stateRaw)) return false;
   if (!ioRead(io, &changeCount, sizeof(changeCount))) return false;
   editPass.state = static_cast<EditPassState>(stateRaw);
   editPass.kind = EditPassKind::NoteEdit;
+  editPass.changes.clear();
+  editPass.changes.reserve(changeCount);
+  for (uint32_t i = 0; i < changeCount; ++i) {
+    EditChange change{};
+    if (!readPersistedEditChange(io, change)) return false;
+    editPass.changes.push_back(std::move(change));
+  }
+  editPass.sessionType = EditSessionType::Note;
+  editPass.editPassIndex = editPass.noteEditPassIndex;
+  editPass.actionType = deriveActionTypeFromLegacyChanges(editPass.changes);
+  editPass.propertyType = derivePropertyTypeFromLegacyChanges(editPass.changes, editPass.actionType);
+  editPass.kind = EditPassKind::NoteEdit;
+  return true;
+}
+
+bool readPersistedEditPassScoped(const StorageIo& io, EditPass& editPass) {
+  uint8_t sessionTypeRaw = 0;
+  uint8_t stateRaw = 0;
+  uint8_t actionTypeRaw = 0;
+  uint8_t propertyTypeRaw = 0;
+  uint32_t changeCount = 0;
+  if (!ioRead(io, &editPass.id, sizeof(editPass.id))) return false;
+  if (!ioRead(io, &sessionTypeRaw, sizeof(sessionTypeRaw))) return false;
+  if (!isValidSessionTypeRaw(sessionTypeRaw)) return false;
+  if (!ioRead(io, &editPass.editPassIndex, sizeof(editPass.editPassIndex))) return false;
+  if (!ioRead(io, &stateRaw, sizeof(stateRaw))) return false;
+  if (!isValidEditPassStateRaw(stateRaw)) return false;
+  if (!ioRead(io, &actionTypeRaw, sizeof(actionTypeRaw))) return false;
+  if (!isValidActionTypeRaw(actionTypeRaw)) return false;
+  if (!ioRead(io, &propertyTypeRaw, sizeof(propertyTypeRaw))) return false;
+  if (!isValidPropertyTypeRaw(propertyTypeRaw)) return false;
+  if (!ioRead(io, &changeCount, sizeof(changeCount))) return false;
+  editPass.sessionType = static_cast<EditSessionType>(sessionTypeRaw);
+  editPass.state = static_cast<EditPassState>(stateRaw);
+  editPass.actionType = static_cast<EditActionType>(actionTypeRaw);
+  editPass.propertyType = static_cast<EditPropertyType>(propertyTypeRaw);
+  editPass.kind = editPass.sessionType == EditSessionType::ControlChange
+                      ? EditPassKind::ControlChange
+                      : EditPassKind::NoteEdit;
+  editPass.noteEditPassIndex = editPass.editPassIndex;
   editPass.changes.clear();
   editPass.changes.reserve(changeCount);
   for (uint32_t i = 0; i < changeCount; ++i) {
@@ -215,10 +357,12 @@ bool readPersistedEditPass(const StorageIo& io, EditPass& editPass) {
 bool writePersistedEditsTail(const StorageIo& io, PassId nextPassId,
                              const EditPassVec& editPasses) {
   if (!ioWrite(io, &nextPassId, sizeof(nextPassId))) return false;
+  const uint32_t marker = PERSISTED_EDITS_TAIL_SCOPED_MARKER;
+  if (!ioWrite(io, &marker, sizeof(marker))) return false;
   const uint32_t editCount = static_cast<uint32_t>(editPasses.size());
   if (!ioWrite(io, &editCount, sizeof(editCount))) return false;
   for (const EditPass& editPass : editPasses) {
-    if (!writePersistedEditPass(io, editPass)) return false;
+    if (!writePersistedEditPassScoped(io, editPass)) return false;
   }
   return true;
 }
@@ -227,15 +371,23 @@ bool readPersistedEditsTail(const StorageIo& io, PersistedLoopSnapshot& snapshot
   if (!ioRead(io, &snapshot.nextPassId, sizeof(snapshot.nextPassId))) {
     return false;
   }
-  uint32_t editCount = 0;
-  if (!ioRead(io, &editCount, sizeof(editCount))) {
+  uint32_t markerOrCount = 0;
+  if (!ioRead(io, &markerOrCount, sizeof(markerOrCount))) {
+    return false;
+  }
+  const bool scopedTail = markerOrCount == PERSISTED_EDITS_TAIL_SCOPED_MARKER;
+  uint32_t editCount = markerOrCount;
+  if (scopedTail && !ioRead(io, &editCount, sizeof(editCount))) {
     return false;
   }
   snapshot.passes.editPasses.clear();
   snapshot.passes.editPasses.reserve(editCount);
   for (uint32_t i = 0; i < editCount; ++i) {
     EditPass editPass{};
-    if (!readPersistedEditPass(io, editPass)) return false;
+    const bool ok =
+        scopedTail ? readPersistedEditPassScoped(io, editPass)
+                   : readPersistedEditPassLegacyV4(io, editPass);
+    if (!ok) return false;
     snapshot.passes.editPasses.push_back(std::move(editPass));
   }
   if (snapshot.nextPassId == 0) {

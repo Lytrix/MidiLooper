@@ -127,6 +127,35 @@ bool enableCapturePass(Loop& loop, PassId passId) {
     return loop.setCapturePassState(passId, CapturePassState::Active);
 }
 
+bool setEditPassState(Loop& loop, const EditPassIdList& ids, EditPassState state,
+                      EditSessionType sessionType) {
+    if (ids.empty()) {
+        return false;
+    }
+
+    bool touched = false;
+    for (const EditPassId id : ids) {
+        for (EditPass& editPass : loop.passes.editPasses) {
+            if (editPass.id != id) {
+                continue;
+            }
+            if (editPass.sessionType != sessionType) {
+                continue;
+            }
+            if (editPass.state != state) {
+                editPass.state = state;
+                touched = true;
+            }
+        }
+    }
+
+    if (touched) {
+        ++loop.playbackRevision;
+        loop.discardPassesMaterializedCache();
+    }
+    return touched;
+}
+
 bool applyUndoEntry(Track& track, UndoEntry& entry) {
     Loop& loop = track.getLoop(entry.slotIndex);
     switch (entry.kind) {
@@ -167,10 +196,14 @@ bool applyUndoEntry(Track& track, UndoEntry& entry) {
             }
             return true;
         case UndoEntryKind::NoteEditPassClosed:
-            if (entry.noteEditPassIds.empty()) {
+        case UndoEntryKind::ControlChangeEditPassClosed:
+            if (entry.editPassIds.empty()) {
                 return false;
             }
-            loop.disableEditPasses(entry.noteEditPassIds);
+            if (!setEditPassState(loop, entry.editPassIds, EditPassState::Disabled,
+                                  entry.editSessionType)) {
+                return false;
+            }
             loop.rebuildVisualCacheFromPasses();
             loop.invalidateCaches();
             if (editManager.isNoteEditActive()) {
@@ -179,12 +212,11 @@ bool applyUndoEntry(Track& track, UndoEntry& entry) {
                 editManager.getNoteEditSession().undoStack.clear();
             }
             entry.hasRedoPayload = true;
-            logger.log(CAT_TRACK, LOG_INFO, "Note edit pass undone editPass=%u edits=%u",
-                       static_cast<unsigned>(entry.noteEditPassIndex),
-                       static_cast<unsigned>(entry.noteEditPassIds.size()));
+            logger.log(CAT_TRACK, LOG_INFO, "Scoped edit pass undone session=%u editPass=%u edits=%u",
+                       static_cast<unsigned>(entry.editSessionType),
+                       static_cast<unsigned>(entry.editPassIndex),
+                       static_cast<unsigned>(entry.editPassIds.size()));
             return true;
-        case UndoEntryKind::ControlChangeEditPassClosed:
-            return false;
     }
     return false;
 }
@@ -230,30 +262,25 @@ bool applyRedoEntry(Track& track, UndoEntry& entry) {
             }
             return true;
         case UndoEntryKind::NoteEditPassClosed:
-            if (!entry.hasRedoPayload || entry.noteEditPassIds.empty()) {
+        case UndoEntryKind::ControlChangeEditPassClosed:
+            if (!entry.hasRedoPayload || entry.editPassIds.empty()) {
                 return false;
             }
-            for (const EditPassId id : entry.noteEditPassIds) {
-                for (EditPass& editPass : loop.passes.editPasses) {
-                    if (editPass.id == id) {
-                        editPass.state = EditPassState::Active;
-                    }
-                }
+            if (!setEditPassState(loop, entry.editPassIds, EditPassState::Active,
+                                  entry.editSessionType)) {
+                return false;
             }
-            ++loop.playbackRevision;
-            loop.discardPassesMaterializedCache();
             loop.invalidateCaches();
             if (editManager.isNoteEditActive()) {
                 loop.rematerializeEditView(editManager.getNoteEditSession().store.mutStore());
                 editManager.getNoteEditSession().store.discardFlatCache();
                 editManager.getNoteEditSession().undoStack.clear();
             }
-            logger.log(CAT_TRACK, LOG_INFO, "Note edit pass redone editPass=%u edits=%u",
-                       static_cast<unsigned>(entry.noteEditPassIndex),
-                       static_cast<unsigned>(entry.noteEditPassIds.size()));
+            logger.log(CAT_TRACK, LOG_INFO, "Scoped edit pass redone session=%u editPass=%u edits=%u",
+                       static_cast<unsigned>(entry.editSessionType),
+                       static_cast<unsigned>(entry.editPassIndex),
+                       static_cast<unsigned>(entry.editPassIds.size()));
             return true;
-        case UndoEntryKind::ControlChangeEditPassClosed:
-            return false;
     }
     return false;
 }
@@ -296,8 +323,9 @@ void TrackUndo::pushNoteEditPassClosed(Track& track, uint8_t noteEditPassIndex,
     entry.kind = UndoEntryKind::NoteEditPassClosed;
     entry.slotIndex = track.getActiveLoopIndex();
     entry.loopId = loop.loopId;
-    entry.noteEditPassIndex = noteEditPassIndex;
-    entry.noteEditPassIds = std::move(editPassIds);
+    entry.editPassIndex = noteEditPassIndex;
+    entry.editSessionType = EditSessionType::Note;
+    entry.editPassIds = std::move(editPassIds);
     pushUndoEntry(track, std::move(entry));
 }
 

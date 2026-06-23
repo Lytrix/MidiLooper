@@ -61,15 +61,26 @@ void appendActiveCapturePassesToFlat(const LoopPasses& passes, MidiEventVec& out
 
 void applyActiveEditPasses(MidiEventVec& events, const EditPassVec& editPasses,
                            uint32_t loopLengthTicks) {
+  auto applyNoteEditPass = [&](const EditPass& editPass) {
+    applyEditChangeList(events, editPass.changes, loopLengthTicks);
+  };
+  auto applyControlChangeEditPass = [&](const EditPass& /*editPass*/) {
+    // Explicit scoped dispatch placeholder for ControlChange edit rows.
+    // Intentionally no-op until ControlChange edit apply behavior ships.
+  };
+
   for (const EditPass& editPass : editPasses) {
     if (editPass.state != EditPassState::Active) {
       continue;
     }
-    switch (editPass.kind) {
-      case EditPassKind::NoteEdit:
-        applyEditChangeList(events, editPass.changes, loopLengthTicks);
+    switch (editPass.sessionType) {
+      case EditSessionType::Note:
+        applyNoteEditPass(editPass);
         break;
-      case EditPassKind::ControlChange:
+      case EditSessionType::ControlChange:
+        applyControlChangeEditPass(editPass);
+        break;
+      case EditSessionType::Audio:
         break;
     }
   }

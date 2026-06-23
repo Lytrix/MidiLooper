@@ -112,11 +112,14 @@ Each **loop slot** (`Loop`) separates live capture from committed timeline **pas
 | **passes** (`LoopPasses`) | Canonical timeline: **recordPass**, **overdubPasses[]**, **editPasses[]** |
 | **recordPass** / **overdubPass** | Committed capture from record or overdub stop |
 | **editPass** | One `saveNoteEditPass()` row in **passes.editPasses[]** |
+| **EditSessionType** | Edited domain on each `editPass` (`Note`, `ControlChange`, future `Audio`) |
+| **EditActionType** | Stored edit action (`Create`, `Update`, `Delete`) |
+| **EditPropertyType** | Updated stored field (`Pitch`, `Length`, `StartTick`, `EndTick`, `Tick`, `Value`, `None`) |
 | **commitCapturePass()** | Seal **Capture** into **recordPass** or append **overdubPass** |
 | **RecordPassAdded** / **OverdubPassAdded** | Global undo when a capture pass commits |
 | **NoteEditPassClosed** | Global undo when a note-edit pass batch closes on exit |
-| **NoteEditSession** | Live note-edit RAM scope (`EditManager`; **EditChange** batches per **noteEditPassIndex**) |
-| **saveNoteEditPass()** | Persist an **EditChange** list into **passes.editPasses[]** |
+| **NoteEditSession** | Live note-edit RAM scope (`EditManager`; note-edit batches tracked by **noteEditPassIndex**) |
+| **saveNoteEditPass()** | Persist note scoped rows into **passes.editPasses[]** (legacy **EditChange** payload retained during migration) |
 | **closeNoteEditPass()** | Flush a **noteEditPass** batch and push **NoteEditPassClosed** undo |
 | **EditNoteState** | Base class for note-edit UI states (`EditSelectNoteState`, …) |
 | **DebugSessionCapture** | Instrumented `#CAP` serial fixtures (`teensy41-capture-serial` build) |

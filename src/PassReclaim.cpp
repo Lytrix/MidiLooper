@@ -34,7 +34,8 @@ void collectReferencedPasses(const GlobalUndoStack& stack, PassReferenceSet& out
         slotRefs.pinCapturePass(entry.passId);
         break;
       case UndoEntryKind::NoteEditPassClosed:
-        for (EditPassId id : entry.noteEditPassIds) {
+      case UndoEntryKind::ControlChangeEditPassClosed:
+        for (EditPassId id : entry.editPassIds) {
           slotRefs.pinEditPass(id);
         }
         break;
@@ -47,7 +48,6 @@ void collectReferencedPasses(const GlobalUndoStack& stack, PassReferenceSet& out
         }
         break;
       case UndoEntryKind::LoopBoundaryChange:
-      case UndoEntryKind::ControlChangeEditPassClosed:
         break;
     }
   }
