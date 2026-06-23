@@ -11,7 +11,7 @@
 
 For a 64-bar loop this compresses 64 bars into the same horizontal pixels as 2 bars, making individual notes unreadable. The display path may also reconstruct or hold more `DisplayNote` entries than the detailed layer needs.
 
-Display scaling was scoped in `record-stop-64-bar-crash` §6 but parked when the RAM2 root cause was identified. This change implements that display scope as a follow-on after `long-record-memory-headroom`.
+Display scaling was scoped in `record-stop-64-bar-crash` §6 but archived when the RAM2 root cause was identified. This change implements that display scope as a follow-on after **`long-record-memory-headroom` shipped**.
 
 **Locked product decisions (from plan):**
 - Detailed window is **fixed at loop start** (tick 0, bars 0–15) until the user moves it in LOOP_EDIT (M2); no auto-follow playhead.

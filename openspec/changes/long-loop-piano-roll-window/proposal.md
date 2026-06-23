@@ -1,6 +1,6 @@
 ## Why
 
-Loops longer than 16 bars compress the full loop onto the piano-roll width in `DisplayManager::drawPianoRoll`, making notes unreadable and forcing the display path to work with more note data than the 32-row framebuffer can usefully show. Display scaling was deferred from `record-stop-64-bar-crash` (parked) because the RAM2 crash fix (`long-record-memory-headroom`) must ship first — long loops must record and persist reliably before navigation UX matters.
+Loops longer than 16 bars compress the full loop onto the piano-roll width in `DisplayManager::drawPianoRoll`, making notes unreadable and forcing the display path to work with more note data than the 32-row framebuffer can usefully show. Display scaling was deferred from `record-stop-64-bar-crash` (archived) because the RAM2 crash fix (`long-record-memory-headroom`, **shipped**) had to land first.
 
 Brownfield plan: [docs/plans/long_loop_piano_roll_overview_enhancement.md](../../../docs/plans/long_loop_piano_roll_overview_enhancement.md).
 
@@ -19,13 +19,13 @@ Delivery is phased in one change: M1 display-only first, then M2 LOOP_EDIT contr
 - `long-loop-piano-roll-window`: Long loops render a bounded detailed piano-roll window (max 16 bars), a full-loop overview strip with window box, and LOOP_EDIT navigation to move/resize the window.
 
 ### Related Capabilities (referenced, not redefined here)
-- `long-record-memory-headroom`: prerequisite — must ship before this change; restores reliable 48/64-bar record without crash.
+- `long-record-memory-headroom`: prerequisite — **shipped**; restores reliable 48/64-bar record without crash.
 - `edit-record-display-length-mode`: D1 live-record display gates must not regress when the window filter is added.
 
 ## Impact
 
-- **Apply order:** after `long-record-memory-headroom` completes and passes 48/64-bar HITL.
+- **Apply order:** after `long-record-memory-headroom` (shipped; 48/64-bar HITL passed).
 - Affected firmware: `DisplayManager.cpp` / `DisplayManager.h` (window state, filter, overview strip), `LoopEditManager.cpp` (M2 controls), `DebugSessionCapture.h` (DISP/OVW markers).
 - Affected verification: `scripts/host_midi_automation_baseline.py` or dedicated `scripts/test_long_loop_display_serial_verify.py`; native window-filter tests.
-- Carries forward display scope from parked `record-stop-64-bar-crash` §6 (see its `PARKED.md`).
+- Carries forward display scope from archived `record-stop-64-bar-crash` §6 (`openspec/changes/archive/2026-06-22-record-stop-64-bar-crash/PARKED.md`).
 - Non-goals: loop storage/capture/persistence changes, NOTE_EDIT piano-roll changes, jam full-arrangement navigation, overview note-density/velocity shading in v1.

@@ -1,8 +1,8 @@
 # Long-loop piano roll window and overview strip
 
-**Apply after:** `long-record-memory-headroom` (OpenSpec change must ship first — long loops must not crash before display scaling is useful).
+**Apply after:** `long-record-memory-headroom` (**shipped** — spec `openspec/specs/long-record-memory-headroom/spec.md`).
 
-**Supersedes display scope from:** `record-stop-64-bar-crash` §6 (parked in `PARKED.md`).
+**Supersedes display scope from:** `record-stop-64-bar-crash` §6 (archived — `openspec/changes/archive/2026-06-22-record-stop-64-bar-crash/PARKED.md`).
 
 **Suggested follow-on OpenSpec change id:** `long-loop-piano-roll-window` — scaffolded at [openspec/changes/long-loop-piano-roll-window/](../../openspec/changes/long-loop-piano-roll-window/).
 
@@ -12,7 +12,7 @@
 
 Today `DisplayManager::drawPianoRoll` maps the **full** loop length onto the piano-roll width (`jamLength` / `loopLength` in [src/DisplayManager.cpp](src/DisplayManager.cpp)). For loops longer than 16 bars, notes compress to unreadable slivers and the display path may reconstruct or filter more notes than the 32-row framebuffer can usefully show.
 
-The parked `record-stop-64-bar-crash` change correctly separated this from the RAM2 crash fix. This plan delivers the display work as its own change **after** `long-record-memory-headroom` restores reliable 48/64-bar record and persistence.
+The archived `record-stop-64-bar-crash` change correctly separated this from the RAM2 crash fix. **`long-record-memory-headroom` shipped** (deferred save + PSRAM-first buffers); this plan delivers the display work next.
 
 ## Goals
 
@@ -23,7 +23,7 @@ The parked `record-stop-64-bar-crash` change correctly separated this from the R
 
 ## Non-goals
 
-- Changing loop storage, capture, or persistence (handled by `long-record-memory-headroom`).
+- Changing loop storage, capture, or persistence (shipped in `long-record-memory-headroom`).
 - Note-count density or velocity shading in the overview strip (v1 is binary **has notes** / **no notes** only).
 - NOTE_EDIT piano-roll changes (window applies to loop playback / LOOP_EDIT display context).
 - Jam-mode full-arrangement navigation (jam display may keep existing behavior unless explicitly extended later).

@@ -1,6 +1,6 @@
 # Parked — 2026-06-22 (superseded)
 
-**Status:** Parked. Superseded by `openspec/changes/long-record-memory-headroom/`.
+**Status:** Archived (superseded). Successor shipped: `openspec/changes/archive/2026-06-23-long-record-memory-headroom/` — spec at `openspec/specs/long-record-memory-headroom/spec.md`.
 
 ## Why superseded
 
@@ -19,7 +19,7 @@ successor change re-targets those buffers to PSRAM and adds a RAM2 floor guard.
 
 ## What carried forward
 
-Into `long-record-memory-headroom`:
+Into `long-record-memory-headroom` (now archived):
 
 - Open: overdub start after long stop; native + HITL gates; docs closeout
   (see successor `tasks.md` §3–§5).
