@@ -57,7 +57,9 @@ Run `/opsx:apply` on `openspec/changes/m8-edit/tasks.md`.
 
 **`long-loop-piano-roll-window`** — 16-bar detailed piano-roll window + overview strip + LOOP_EDIT move/resize. M1 display-only, M2 LOOP_EDIT controls. Plan: `docs/plans/long_loop_piano_roll_overview_enhancement.md`. Run `/opsx:apply` on `openspec/changes/long-loop-piano-roll-window/tasks.md`.
 
-**Archived:** `openspec/changes/archive/2026-06-23-long-record-memory-headroom/` (**Closed** 2026-06-23) — PSRAM-first length-scaling buffers, RAM2 floor admission, central deferred runtime save (chunk-bounded SD writer), display visualCache fallback, HITL 48/64 record + 64+64 overdub. Spec: `openspec/specs/long-record-memory-headroom/`. Guide: `docs/Guides/DEFERRED_RUNTIME_PERSISTENCE.md`. Supersedes `record-stop-64-bar-crash`.
+**Archived:** `openspec/changes/archive/2026-06-23-long-record-memory-headroom/` (**Closed** 2026-06-23) — PSRAM-first length-scaling buffers, RAM2 floor admission, central deferred runtime save (chunk-bounded SD writer), display visualCache fallback, HITL 48/64 record + 64+64 overdub. Spec: `openspec/specs/long-record-memory-headroom/`. Guide: `docs/Guides/DEFERRED_RUNTIME_PERSISTENCE.md`.
+
+**Archived (superseded):** `openspec/changes/archive/2026-06-22-record-stop-64-bar-crash/` — stop-path timing hypothesis; superseded by memory-headroom archive above.
 
 **Parked archive copy:** `archive/2026-06-20-parked-edit-record-display-length-mode/` (superseded by active change above).
 

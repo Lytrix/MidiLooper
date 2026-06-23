@@ -13,7 +13,7 @@
 - Piano-roll note editing: select, start, length, pitch, move, wrap (`EditManager`, `EditStates/`, `NoteEditManager`)
 - Loop start/length fader editing (`LoopEditManager`)
 - SSD1322 OLED piano roll + track strip (`DisplayManager`); controller LED feedback (`MidiLedManager`)
-- SD persistence v3 with auto-save (`StorageManager`); PSRAM memory pool (`MemoryPool`, `ExtMemAllocator`)
+- SD persistence v4 (passes via `StorageLoopIo`) with deferred runtime save (`StorageManager::requestDeferredSaveState` / `processDeferredSaveState`); PSRAM chunk pool + PSRAM-first length-scaling allocators (`LoopEventStore`, `PsramFirstAllocator`)
 - DROID USB host MIDI buttons/faders (`MidiHandler`, `MidiButtonManager`, `MidiFaderManager`)
 
 **Not in firmware** (docs may suggest otherwise):
@@ -51,7 +51,7 @@ The goal here is to map the concepts you listed to the codebase’s existing sub
 | `Note selecting, editing` | `NoteEditManager` + `EditManager` + `EditStates` | `NoteEditManager` routes MIDI note/fader inputs; movement + identity is managed by `EditManager`; individual edit behaviors live in `src/EditStates/*` (select/start/length/pitch) |
 | `Undo system for Note edits/Loop edits` | `TrackUndo` | `TrackUndo` provides capture-pass undo (`pushRecordPassAdded` / `pushOverdubPassAdded`), **NoteEditPassClosed**, `undoOverdub(...)`, `redoOverdub(...)`, plus clear and loop-start undo/redo via `pushLoopStartSnapshot(...)` / `undoLoopStart(...)` / `redoLoopStart(...)` |
 | `1 Redo` | `TrackUndo` | Redo is part of `TrackUndo`: `redoOverdub(...)` and `redoClearTrack(...)` |
-| `Storage Load/Save logic for Loops, State machine` | `StorageManager` + `LooperStateManager` | Persistence is `StorageManager::saveState(...)` / `StorageManager::loadState(...)`; global state + overlays are in `LooperStateManager` (see `LooperState` enum + edit/settings overlays) |
+| `Storage Load/Save logic for Loops, State machine` | `StorageManager` + `LooperStateManager` | Runtime persistence: `requestDeferredSaveState` → `processDeferredSaveState` (chunk-bounded SD v4 writer); load: `loadState(...)`; maintenance drain: `saveState(...)`; guide: `docs/Guides/DEFERRED_RUNTIME_PERSISTENCE.md`; global state + overlays in `LooperStateManager` |
 | `MidiClock, Ports, Midi In/Out` | `MidiHandler` (+ `ClockManager`) | MIDI IO routing is `MidiHandler` (`handleMidiInput()`, `handleMidiMessage(...)`); clock pulses route into `ClockManager` via `clockManager.onMidiClockPulse()` |
 
 ---
