@@ -13,7 +13,22 @@
 #include "NoteEditSessionUndo.h"
 #include "Utils/MemoryMonitor.h"
 #include "NoteEditFocus.h"
+#include "NoteEditSessionState.h"
 #include "Utils/InternalHeapFirstAllocator.h"
+
+enum class EditSessionType : uint8_t { Loop, Note, ControlChange };
+
+inline EditPassType passTypeForSession(EditSessionType session) {
+  switch (session) {
+    case EditSessionType::Note:
+      return EditPassType::Note;
+    case EditSessionType::ControlChange:
+      return EditPassType::ControlChange;
+    case EditSessionType::Loop:
+      break;
+  }
+  return EditPassType::Note;
+}
 
 /// In-session undo before saveEdit — EditChange + focus entries (not full store clones).
 struct NoteEditSessionUndoStack {
@@ -97,13 +112,16 @@ struct NoteEditSessionUndoStack {
   size_t cursor_ = 0;
 };
 
-struct NoteEditSession {
+struct EditSession {
+  EditSessionType sessionType = EditSessionType::Loop;
   CowLoopEventStore store;
   NoteEditSessionUndoStack undoStack;
   NoteEditFocus focus;
   uint8_t editPassIndex = 0;
   bool active = false;
-  bool replaceNoteEditPassOnClose = false;
-  EditPassIdList noteEditPassIds;
+  bool replaceEditPassOnClose = false;
+  EditPassIdList editPassIds;
   EditChangeList pendingChanges;
+
+  bool isNote() const { return sessionType == EditSessionType::Note; }
 };

@@ -38,7 +38,8 @@ lifecycle.
 
 | Name | Role |
 |------|------|
-| **EditSessionType** | Edited domain on **editPass** (`Note` \| `ControlChange` \| future `Audio`) |
+| **EditSessionType** | Live edit session on **EditSession** (`Loop` \| `Note` \| `ControlChange`) |
+| **EditPassType** | Stored domain on **editPass** (`Note` \| `ControlChange` \| `Audio`) |
 | **EditActionType** | Stored action on **editPass** (`Create` \| `Update` \| `Delete`) |
 | **EditPropertyType** | Updated field on **editPass** (`Pitch`, `Length`, `StartTick`, `EndTick`, `Tick`, `Value`, `None`) |
 | **EditChangeType** | Legacy note-edit payload change type during scoped-row migration |
@@ -49,7 +50,7 @@ lifecycle.
 
 | Scope | UI domain |
 |------|--------|
-| **NoteEditSession** | Note edit (`EditManager`) — M8 |
+| **EditSession** | Live edit RAM owner on **EditManager** (`sessionType`, `store`, focus, undo stack) |
 | **LoopEditSession** | Loop length edit — future |
 | **ControlChangeEditSession** | CC edit UI — future |
 | **JamSession** / **PerformanceSession** | Playback/jam UI — **TBD** |

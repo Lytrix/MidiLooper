@@ -17,7 +17,7 @@ constexpr EditPassId kInvalidEditPassId = kInvalidPassId;
 
 enum class EditPassState : uint8_t { Active, Disabled };
 
-enum class EditSessionType : uint8_t { Note, ControlChange, Audio };
+enum class EditPassType : uint8_t { Note, ControlChange, Audio };
 
 enum class EditActionType : uint8_t { Create, Update, Delete };
 
@@ -74,7 +74,7 @@ using EditPassIdList = std::vector<EditPassId, InternalHeapFirstAllocator<EditPa
 
 struct EditPass {
   EditPassId id = kInvalidEditPassId;
-  EditSessionType sessionType = EditSessionType::Note;
+  EditPassType passType = EditPassType::Note;
   uint8_t editPassIndex = 0;
   EditActionType actionType = EditActionType::Update;
   EditPropertyType propertyType = EditPropertyType::None;

@@ -128,7 +128,7 @@ bool enableCapturePass(Loop& loop, PassId passId) {
 }
 
 bool setEditPassState(Loop& loop, const EditPassIdList& ids, EditPassState state,
-                      EditSessionType sessionType) {
+                      EditPassType passType) {
     if (ids.empty()) {
         return false;
     }
@@ -139,7 +139,7 @@ bool setEditPassState(Loop& loop, const EditPassIdList& ids, EditPassState state
             if (editPass.id != id) {
                 continue;
             }
-            if (editPass.sessionType != sessionType) {
+            if (editPass.passType != passType) {
                 continue;
             }
             if (editPass.state != state) {
@@ -190,9 +190,9 @@ bool applyUndoEntry(Track& track, UndoEntry& entry) {
             loop.rebuildVisualCacheFromPasses();
             loop.invalidateCaches();
             if (editManager.isNoteEditActive()) {
-                loop.rematerializeEditView(editManager.getNoteEditSession().store.mutStore());
-                editManager.getNoteEditSession().store.discardFlatCache();
-                editManager.getNoteEditSession().undoStack.clear();
+                loop.rematerializeEditView(editManager.getEditSession().store.mutStore());
+                editManager.getEditSession().store.discardFlatCache();
+                editManager.getEditSession().undoStack.clear();
             }
             return true;
         case UndoEntryKind::NoteEditPassClosed:
@@ -201,19 +201,19 @@ bool applyUndoEntry(Track& track, UndoEntry& entry) {
                 return false;
             }
             if (!setEditPassState(loop, entry.editPassIds, EditPassState::Disabled,
-                                  entry.editSessionType)) {
+                                  entry.editPassType)) {
                 return false;
             }
             loop.rebuildVisualCacheFromPasses();
             loop.invalidateCaches();
             if (editManager.isNoteEditActive()) {
-                loop.rematerializeEditView(editManager.getNoteEditSession().store.mutStore());
-                editManager.getNoteEditSession().store.discardFlatCache();
-                editManager.getNoteEditSession().undoStack.clear();
+                loop.rematerializeEditView(editManager.getEditSession().store.mutStore());
+                editManager.getEditSession().store.discardFlatCache();
+                editManager.getEditSession().undoStack.clear();
             }
             entry.hasRedoPayload = true;
             logger.log(CAT_TRACK, LOG_INFO, "Scoped edit pass undone session=%u editPass=%u edits=%u",
-                       static_cast<unsigned>(entry.editSessionType),
+                       static_cast<unsigned>(entry.editPassType),
                        static_cast<unsigned>(entry.editPassIndex),
                        static_cast<unsigned>(entry.editPassIds.size()));
             return true;
@@ -256,9 +256,9 @@ bool applyRedoEntry(Track& track, UndoEntry& entry) {
             loop.rebuildVisualCacheFromPasses();
             loop.invalidateCaches();
             if (editManager.isNoteEditActive()) {
-                loop.rematerializeEditView(editManager.getNoteEditSession().store.mutStore());
-                editManager.getNoteEditSession().store.discardFlatCache();
-                editManager.getNoteEditSession().undoStack.clear();
+                loop.rematerializeEditView(editManager.getEditSession().store.mutStore());
+                editManager.getEditSession().store.discardFlatCache();
+                editManager.getEditSession().undoStack.clear();
             }
             return true;
         case UndoEntryKind::NoteEditPassClosed:
@@ -267,17 +267,17 @@ bool applyRedoEntry(Track& track, UndoEntry& entry) {
                 return false;
             }
             if (!setEditPassState(loop, entry.editPassIds, EditPassState::Active,
-                                  entry.editSessionType)) {
+                                  entry.editPassType)) {
                 return false;
             }
             loop.invalidateCaches();
             if (editManager.isNoteEditActive()) {
-                loop.rematerializeEditView(editManager.getNoteEditSession().store.mutStore());
-                editManager.getNoteEditSession().store.discardFlatCache();
-                editManager.getNoteEditSession().undoStack.clear();
+                loop.rematerializeEditView(editManager.getEditSession().store.mutStore());
+                editManager.getEditSession().store.discardFlatCache();
+                editManager.getEditSession().undoStack.clear();
             }
             logger.log(CAT_TRACK, LOG_INFO, "Scoped edit pass redone session=%u editPass=%u edits=%u",
-                       static_cast<unsigned>(entry.editSessionType),
+                       static_cast<unsigned>(entry.editPassType),
                        static_cast<unsigned>(entry.editPassIndex),
                        static_cast<unsigned>(entry.editPassIds.size()));
             return true;
@@ -324,7 +324,7 @@ void TrackUndo::pushNoteEditPassClosed(Track& track, uint8_t noteEditPassIndex,
     entry.slotIndex = track.getActiveLoopIndex();
     entry.loopId = loop.loopId;
     entry.editPassIndex = noteEditPassIndex;
-    entry.editSessionType = EditSessionType::Note;
+    entry.editPassType = EditPassType::Note;
     entry.editPassIds = std::move(editPassIds);
     pushUndoEntry(track, std::move(entry));
 }
@@ -342,9 +342,9 @@ void TrackUndo::endOverdubSession(Track& track) {
         return;
     }
     Loop& loop = track.getActiveLoop();
-    loop.rematerializeEditView(editManager.getNoteEditSession().store.mutStore());
-    editManager.getNoteEditSession().store.discardFlatCache();
-    editManager.getNoteEditSession().undoStack.clear();
+    loop.rematerializeEditView(editManager.getEditSession().store.mutStore());
+    editManager.getEditSession().store.discardFlatCache();
+    editManager.getEditSession().undoStack.clear();
 }
 
 void TrackUndo::undoOverdub(Track& track) {

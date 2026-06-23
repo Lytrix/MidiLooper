@@ -34,7 +34,7 @@ class EditSessionStateSerialVerifyTests(unittest.TestCase):
 
     def test_enter_fails_when_cycle_before_select(self) -> None:
         lines = [
-            "[1] NoteEditSession opened editPass=0",
+            "[1] EditSession opened editPass=0",
             "[1] Entered EditStartNoteState",
             "[1] Note edit type cycled to kind=3",
             "[1] MIDI Encoder: Entered SELECT mode (bracket=8)",
@@ -46,8 +46,8 @@ class EditSessionStateSerialVerifyTests(unittest.TestCase):
     def test_session_undo_routing_in_and_post_exit(self) -> None:
         lines = [
             "[1] MIDI Encoder: Short press - entered note edit mode",
-            "[2] MIDI: NoteEditSession undo",
-            "[3] MIDI: NoteEditSession redo",
+            "[2] MIDI: EditSession undo",
+            "[3] MIDI: EditSession redo",
             "[4] MIDI Encoder: Long press - exited edit mode",
             f"[5] {SCOPED_EDIT_PASS_UNDONE} session=0 editPass=0 edits=6",
             f"[6] {SCOPED_EDIT_PASS_REDONE} session=0 editPass=0 edits=6",

@@ -255,8 +255,8 @@ EditPropertyType derivePropertyTypeFromLegacyChanges(const EditChangeList& chang
   return resolved;
 }
 
-bool isValidSessionTypeRaw(uint8_t raw) {
-  return raw <= static_cast<uint8_t>(EditSessionType::Audio);
+bool isValidPassTypeRaw(uint8_t raw) {
+  return raw <= static_cast<uint8_t>(EditPassType::Audio);
 }
 
 bool isValidActionTypeRaw(uint8_t raw) {
@@ -272,7 +272,7 @@ bool isValidEditPassStateRaw(uint8_t raw) {
 }
 
 bool writePersistedEditPassScoped(const StorageIo& io, const EditPass& editPass) {
-  const uint8_t sessionTypeRaw = static_cast<uint8_t>(editPass.sessionType);
+  const uint8_t passTypeRaw = static_cast<uint8_t>(editPass.passType);
   const uint8_t stateRaw = static_cast<uint8_t>(editPass.state);
   const uint8_t actionTypeRaw = static_cast<uint8_t>(editPass.actionType);
   const uint8_t propertyTypeRaw = static_cast<uint8_t>(editPass.propertyType);
@@ -281,7 +281,7 @@ bool writePersistedEditPassScoped(const StorageIo& io, const EditPass& editPass)
           ? editPass.noteEditPassIndex
           : editPass.editPassIndex;
   if (!ioWrite(io, &editPass.id, sizeof(editPass.id))) return false;
-  if (!ioWrite(io, &sessionTypeRaw, sizeof(sessionTypeRaw))) return false;
+  if (!ioWrite(io, &passTypeRaw, sizeof(passTypeRaw))) return false;
   if (!ioWrite(io, &editPassIndex, sizeof(editPassIndex))) return false;
   if (!ioWrite(io, &stateRaw, sizeof(stateRaw))) return false;
   if (!ioWrite(io, &actionTypeRaw, sizeof(actionTypeRaw))) return false;
@@ -311,7 +311,7 @@ bool readPersistedEditPassLegacyV4(const StorageIo& io, EditPass& editPass) {
     if (!readPersistedEditChange(io, change)) return false;
     editPass.changes.push_back(std::move(change));
   }
-  editPass.sessionType = EditSessionType::Note;
+  editPass.passType = EditPassType::Note;
   editPass.editPassIndex = editPass.noteEditPassIndex;
   editPass.actionType = deriveActionTypeFromLegacyChanges(editPass.changes);
   editPass.propertyType = derivePropertyTypeFromLegacyChanges(editPass.changes, editPass.actionType);
@@ -320,14 +320,14 @@ bool readPersistedEditPassLegacyV4(const StorageIo& io, EditPass& editPass) {
 }
 
 bool readPersistedEditPassScoped(const StorageIo& io, EditPass& editPass) {
-  uint8_t sessionTypeRaw = 0;
+  uint8_t passTypeRaw = 0;
   uint8_t stateRaw = 0;
   uint8_t actionTypeRaw = 0;
   uint8_t propertyTypeRaw = 0;
   uint32_t changeCount = 0;
   if (!ioRead(io, &editPass.id, sizeof(editPass.id))) return false;
-  if (!ioRead(io, &sessionTypeRaw, sizeof(sessionTypeRaw))) return false;
-  if (!isValidSessionTypeRaw(sessionTypeRaw)) return false;
+  if (!ioRead(io, &passTypeRaw, sizeof(passTypeRaw))) return false;
+  if (!isValidPassTypeRaw(passTypeRaw)) return false;
   if (!ioRead(io, &editPass.editPassIndex, sizeof(editPass.editPassIndex))) return false;
   if (!ioRead(io, &stateRaw, sizeof(stateRaw))) return false;
   if (!isValidEditPassStateRaw(stateRaw)) return false;
@@ -336,11 +336,11 @@ bool readPersistedEditPassScoped(const StorageIo& io, EditPass& editPass) {
   if (!ioRead(io, &propertyTypeRaw, sizeof(propertyTypeRaw))) return false;
   if (!isValidPropertyTypeRaw(propertyTypeRaw)) return false;
   if (!ioRead(io, &changeCount, sizeof(changeCount))) return false;
-  editPass.sessionType = static_cast<EditSessionType>(sessionTypeRaw);
+  editPass.passType = static_cast<EditPassType>(passTypeRaw);
   editPass.state = static_cast<EditPassState>(stateRaw);
   editPass.actionType = static_cast<EditActionType>(actionTypeRaw);
   editPass.propertyType = static_cast<EditPropertyType>(propertyTypeRaw);
-  editPass.kind = editPass.sessionType == EditSessionType::ControlChange
+  editPass.kind = editPass.passType == EditPassType::ControlChange
                       ? EditPassKind::ControlChange
                       : EditPassKind::NoteEdit;
   editPass.noteEditPassIndex = editPass.editPassIndex;

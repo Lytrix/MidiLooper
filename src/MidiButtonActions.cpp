@@ -471,9 +471,9 @@ void MidiButtonActions::handleSelectTrack(uint8_t trackNumber) {
 
 void MidiButtonActions::handleUndo() {
     Track& track = getCurrentTrack();
-    if (editManager.isNoteEditActive() && editManager.getNoteEditSession().undoStack.canUndo()) {
+    if (editManager.isNoteEditActive() && editManager.getEditSession().undoStack.canUndo()) {
         if (editManager.sessionUndo(track)) {
-            logger.info("MIDI: NoteEditSession undo");
+            logger.info("MIDI: EditSession undo");
             return;
         }
     }
@@ -492,9 +492,9 @@ void MidiButtonActions::handleUndo() {
 
 void MidiButtonActions::handleRedo() {
     Track& track = getCurrentTrack();
-    if (editManager.isNoteEditActive() && editManager.getNoteEditSession().undoStack.canRedo()) {
+    if (editManager.isNoteEditActive() && editManager.getEditSession().undoStack.canRedo()) {
         if (editManager.sessionRedo(track)) {
-            logger.info("MIDI: NoteEditSession redo");
+            logger.info("MIDI: EditSession redo");
             return;
         }
     }
@@ -585,8 +585,8 @@ void MidiButtonActions::handleCycleNoteEditType() {
     Track& track = getCurrentTrack();
     const bool wasInEditOverlay = editManager.getCurrentState() != nullptr;
 
-    if (noteEditManager.getCurrentMainEditMode() != NoteEditManager::MAIN_MODE_NOTE_EDIT) {
-        noteEditManager.sendMainEditModeChange(NoteEditManager::MAIN_MODE_NOTE_EDIT);
+    if (editManager.getEditSessionType() != EditSessionType::Note) {
+        editManager.sendEditSessionChange(EditSessionType::Note);
     }
 
     if (!shouldCycleNoteEditTypeOnShortPress(wasInEditOverlay)) {

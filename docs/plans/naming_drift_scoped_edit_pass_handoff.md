@@ -134,7 +134,8 @@ Use **Property**, not **Parameter**. In this repo, `parameter` already means con
 
 - Whether note move stores `StartTick` + `EndTick` or a scoped note-range payload.
 - Whether `EditPropertyType::Length` stores user-facing length or maps directly to `EndTick`.
-- Exact SD version bump / dual-read strategy for scoped edit rows.
+- Exact SD strategy: **`scoped-edit-pass-payload`** — **STORAGE_VERSION** **5**, reject v1–v4, no
+  migration.
 
 ---
 

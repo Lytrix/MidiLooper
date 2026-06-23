@@ -195,7 +195,7 @@ void GpioButtonManager::handleButton(ButtonId button, ButtonAction action) {
         case BUTTON_C:
             switch (action) {
                 case BUTTON_SHORT_PRESS:
-                    noteEditManager.cycleMainEditMode(trackManager.getSelectedTrack());
+                    editManager.cycleEditSession(trackManager.getSelectedTrack());
                     break;
                 default:
                     break;

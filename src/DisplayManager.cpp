@@ -315,7 +315,7 @@ uint32_t DisplayManager::resolveLoopOriginTick(const Track& track, uint8_t displ
     if (track.isJamming()) {
         return track.getLoopStartTick();
     }
-    if (noteEditManager.getCurrentMainEditMode() != NoteEditManager::MAIN_MODE_LOOP_EDIT) {
+    if (editManager.getEditSessionType() != EditSessionType::Loop) {
         return 0;
     }
     return track.getLoopStartTickForSlot(displaySlot);
@@ -452,11 +452,11 @@ const DisplayNoteVec& DisplayManager::resolveDisplayNotes(const Track& track, ui
     }
 
     // NOTE_EDIT: session store (editAware) is the live edit buffer; filter for Hidden / inner overlap.
-    if (noteEditManager.getCurrentMainEditMode() == NoteEditManager::MAIN_MODE_NOTE_EDIT) {
+    if (editManager.getEditSessionType() == EditSessionType::Note) {
         invalidateLiveDisplayCache();
         const uint32_t loopLength = resolveDisplayLoopLength(track, displaySlot, currentTick);
         if (editManager.isNoteEditActive() && loopLength > 0) {
-            const NoteEditFocus& focus = editManager.getNoteEditSession().focus;
+            const NoteEditFocus& focus = editManager.getEditSession().focus;
             const std::vector<DisplayNote> filtered =
                 filterSelectableDisplayNotes(track.editAwareMidiEvents(), focus,
                                              track.getMidiChannel(), loopLength);
@@ -762,7 +762,7 @@ void DisplayManager::drawAllNotes(const Track& track, uint8_t displaySlot, uint3
 // --- Helper: Draw bracket ---
 void DisplayManager::drawBracket(uint32_t bracketTick, uint32_t lengthLoop, int pianoRollY1) {
     // Draw bracket when in NOTE_EDIT mode (simplified since we use dedicated faders)
-    if (noteEditManager.getCurrentMainEditMode() == NoteEditManager::MAIN_MODE_NOTE_EDIT) {
+    if (editManager.getEditSessionType() == EditSessionType::Note) {
         // Use the bracketTick parameter passed to this function (already adjusted for loop start)
         const int pianoRollY1 = 31;
 
@@ -863,10 +863,10 @@ DisplayManager::SidebarMode DisplayManager::resolveSidebarMode(const Track& sele
     if (slotState == SlotOpState::SLOT_OP_OVERDUBBING || selectedTrack.getState() == TRACK_OVERDUBBING) {
         return SidebarMode::OVERD;
     }
-    if (noteEditManager.getCurrentMainEditMode() == NoteEditManager::MAIN_MODE_LOOP_EDIT) {
+    if (editManager.getEditSessionType() == EditSessionType::Loop) {
         return SidebarMode::LOOP_EDIT;
     }
-    if (noteEditManager.getCurrentMainEditMode() == NoteEditManager::MAIN_MODE_NOTE_EDIT) {
+    if (editManager.getEditSessionType() == EditSessionType::Note) {
         return SidebarMode::NOTE_EDIT;
     }
     if (selectedTrack.getState() == TRACK_PLAYING) {
@@ -1139,7 +1139,7 @@ void DisplayManager::drawNoteInfo(uint32_t currentTick, Track& selectedTrack, ui
         }
 #if defined(SESSION_CAPTURE)
         if (validNote &&
-            noteEditManager.getCurrentMainEditMode() == NoteEditManager::MAIN_MODE_NOTE_EDIT &&
+            editManager.getEditSessionType() == EditSessionType::Note &&
             selectedIdx >= 0) {
             static uint8_t capLastPitch = 255;
             static uint32_t capLastStorage = UINT32_MAX;
@@ -1165,7 +1165,7 @@ void DisplayManager::drawNoteInfo(uint32_t currentTick, Track& selectedTrack, ui
     int y = DISPLAY_HEIGHT;
     // Draw the time string (ticksToBarsBeats16thTicks2Dec)
     // Highlight the time when in NOTE_EDIT mode (simplified since we use dedicated faders)
-    bool isStartNote = (noteEditManager.getCurrentMainEditMode() == NoteEditManager::MAIN_MODE_NOTE_EDIT);
+    bool isStartNote = (editManager.getEditSessionType() == EditSessionType::Note);
     _display.gfx.select_font(&Font5x7FixedMono);
     int timeStrLen = strlen(startStr);
     for (int i = 0; i < timeStrLen; ++i) {

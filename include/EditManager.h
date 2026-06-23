@@ -5,7 +5,7 @@
 #include <cstdint>
 #include "EditNoteState.h"
 #include "NoteEditSessionUndo.h"
-#include "NoteEditSession.h"
+#include "EditSession.h"
 #include "EditNoteHomeState.h"
 #include "EditStates/EditSelectNoteState.h"
 #include "EditStartNoteState.h"
@@ -53,10 +53,14 @@ public:
     void enterEditMode(EditNoteState* newState, uint32_t startTick);
     void exitEditMode(Track& track);
 
-    /// NoteEditSession lifecycle (M8).
-    bool isNoteEditActive() const { return noteEditSession.active; }
-    NoteEditSession& getNoteEditSession() { return noteEditSession; }
-    const NoteEditSession& getNoteEditSession() const { return noteEditSession; }
+    /// EditSession lifecycle (M8).
+    bool isNoteEditActive() const { return editSession.active; }
+    bool isNoteSessionStoreOpen() const { return editSession.active; }
+    EditSession& getEditSession() { return editSession; }
+    const EditSession& getEditSession() const { return editSession; }
+    EditSessionType getEditSessionType() const { return editSession.sessionType; }
+    void cycleEditSession(Track& track);
+    void sendEditSessionChange(EditSessionType sessionType);
     void openNoteEditSession(Track& track);
     void closeNoteEditSession(Track& track);
     void closeNoteEditPass(Track& track);
@@ -155,20 +159,8 @@ public:
     void sendEditModeProgram(EditModeState mode);
     
     // LoopManager functionality
-    void cycleMainEditMode(Track& track);
-    void sendMainEditModeChange(uint8_t mode);
     void sendCurrentLoopLengthCC(Track& track);
     void onTrackChanged(Track& newTrack);
-    
-    // Main edit mode management
-    enum MainEditMode {
-        // Logical mode IDs (MIDI program mapping is handled by implementation).
-        MAIN_MODE_LOOP_EDIT = 0,
-        MAIN_MODE_NOTE_EDIT = 1
-    };
-    
-    MainEditMode getCurrentMainEditMode() const { return currentMainEditMode; }
-    void setMainEditMode(MainEditMode mode);
 
     struct RemovedNote {
         uint8_t note;
@@ -200,7 +192,7 @@ private:
 
     EditNoteState* currentState = nullptr;
     EditNoteState* previousState = nullptr;
-    NoteEditSession noteEditSession;
+    EditSession editSession;
     NoteEditSessionState sessionState;
     NoteEditKind lastPushedGeometryKind_ = NoteEditKind::Select;
     bool encoderCycleNeedsAnchor_ = false;
@@ -208,9 +200,6 @@ private:
     
     // EditModeManager state
     EditModeState currentEditMode = EDIT_MODE_NONE;
-    
-    // LoopManager state
-    MainEditMode currentMainEditMode = MAIN_MODE_NOTE_EDIT;
     
 };
 

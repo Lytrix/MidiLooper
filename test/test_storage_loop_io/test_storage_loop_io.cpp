@@ -232,7 +232,7 @@ void test_write_read_edits_tail_roundtrip() {
 
   EditPass editPass{};
   editPass.id = 1;
-  editPass.sessionType = EditSessionType::Note;
+  editPass.passType = EditPassType::Note;
   editPass.editPassIndex = 0;
   editPass.actionType = EditActionType::Delete;
   editPass.propertyType = EditPropertyType::None;
@@ -256,8 +256,8 @@ void test_write_read_edits_tail_roundtrip() {
   TEST_ASSERT_EQUAL(original.nextPassId, restored.nextPassId);
   TEST_ASSERT_EQUAL(1u, restored.passes.editPasses.size());
   TEST_ASSERT_EQUAL(1u, restored.passes.editPasses[0].id);
-  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(EditSessionType::Note),
-                          static_cast<uint8_t>(restored.passes.editPasses[0].sessionType));
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(EditPassType::Note),
+                          static_cast<uint8_t>(restored.passes.editPasses[0].passType));
   TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(EditActionType::Delete),
                           static_cast<uint8_t>(restored.passes.editPasses[0].actionType));
   TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(EditPropertyType::None),
@@ -323,8 +323,8 @@ void test_dual_read_legacy_edit_tail_v4_rows() {
   TEST_ASSERT_TRUE(readPersistedLoopSnapshot(mem.io(), restored));
   TEST_ASSERT_EQUAL(1u, restored.passes.editPasses.size());
   const EditPass& editPass = restored.passes.editPasses[0];
-  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(EditSessionType::Note),
-                          static_cast<uint8_t>(editPass.sessionType));
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(EditPassType::Note),
+                          static_cast<uint8_t>(editPass.passType));
   TEST_ASSERT_EQUAL_UINT8(7u, editPass.editPassIndex);
   TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(EditActionType::Delete),
                           static_cast<uint8_t>(editPass.actionType));

@@ -88,23 +88,9 @@ public:
 
 
 
-    // Main edit mode switching (for mode button functionality)
-    enum MainEditMode {
-        // Logical mode IDs (MIDI program mapping is handled in sendMainEditModeChange()).
-        MAIN_MODE_LOOP_EDIT = 0,
-        MAIN_MODE_NOTE_EDIT = 1
-    };
-    
-    // Getter for current main edit mode
-    MainEditMode getCurrentMainEditMode() const { return currentMainEditMode; }
-    
-    // Main edit mode methods
-    void sendMainEditModeChange(MainEditMode mode);
-    void cycleMainEditMode(Track& track);
+    // Main edit session switching (for mode button functionality)
+    void cycleEditSession(Track& track);
     void onTrackChanged(Track& newTrack);
-    
-    // Current main edit mode state. Startup policy is set by orchestration (main/looper setup).
-    MainEditMode currentMainEditMode = MAIN_MODE_NOTE_EDIT;
 
 
 
