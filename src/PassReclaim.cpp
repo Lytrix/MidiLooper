@@ -56,7 +56,8 @@ void collectReferencedPasses(const GlobalUndoStack& stack, PassReferenceSet& out
 bool overUndoMemoryPressure(const GlobalUndoStack& stack) {
   const bool chunkPressure =
       LoopEventStore::freeChunkCount() <= PassConfig::CHUNK_RESERVE;
-  const bool heapPressure = MemoryMonitor::getFreeHeap() < Config::HEAP_RESERVE_BYTES;
+  const bool heapPressure =
+      MemoryMonitor::getInternalHeapFreeBytes() < Config::HEAP_RESERVE_BYTES;
   if (chunkPressure || heapPressure) {
     return true;
   }

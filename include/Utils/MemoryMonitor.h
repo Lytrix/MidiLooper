@@ -5,7 +5,7 @@
  * @file MemoryMonitor.h
  * @brief Runtime memory monitoring for embedded systems (Teensy 4.1).
  *
- * Reports internal malloc heap and (on Teensy 4.1) PSRAM pool usage.
+ * Reports internal heap and external memory pool usage.
  * Integrates with PerformanceMonitor and can be logged periodically.
  */
 #pragma once
@@ -21,30 +21,30 @@ namespace MemoryMonitor {
  * On Teensy 4.1: Uses the sbrk-managed heap (RAM used by malloc/new).
  * Returns 0 if the platform has no supported heap reporting.
  */
-uint32_t getFreeHeap();
+uint32_t getInternalHeapFreeBytes();
 
 /**
  * @brief Get total heap size in bytes (configured pool).
  * Returns 0 if unknown.
  */
-uint32_t getTotalHeap();
+uint32_t getInternalHeapTotalBytes();
 
 /**
  * @brief Get used heap in bytes (total - free).
  */
-uint32_t getUsedHeap();
+uint32_t getInternalHeapUsedBytes();
 
 /** @brief True when Teensy PSRAM extmem pool is configured (chip detected). */
-bool isPsramAvailable();
+bool isExternalMemoryPoolAvailable();
 
 /** @brief Total PSRAM pool size in bytes (0 when unavailable). */
-uint32_t getPsramTotalBytes();
+uint32_t getExternalMemoryPoolTotalBytes();
 
 /** @brief Free bytes in the PSRAM extmem pool (0 when unavailable). */
-uint32_t getPsramFreeBytes();
+uint32_t getExternalMemoryPoolFreeBytes();
 
 /** @brief Used bytes in the PSRAM extmem pool (0 when unavailable). */
-uint32_t getPsramUsedBytes();
+uint32_t getExternalMemoryPoolUsedBytes();
 
 /**
  * @brief Check if free heap is below a threshold (e.g. 10 KB).

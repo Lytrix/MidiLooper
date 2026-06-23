@@ -5,10 +5,10 @@
 #include <vector>
 #include <utility>
 
-#include "Utils/ExtMemAllocator.h"
+#include "Utils/InternalHeapFirstAllocator.h"
 
 void test_midivec_stress_grow_shrink_clear() {
-    using Vec = std::vector<int, ExtMemAllocator<int>>;
+    using Vec = std::vector<int, InternalHeapFirstAllocator<int>>;
     Vec v;
     constexpr int n = 50'000;
     v.reserve(n / 2);
@@ -23,7 +23,7 @@ void test_midivec_stress_grow_shrink_clear() {
 }
 
 void test_midivec_move_assign() {
-    using Vec = std::vector<uint32_t, ExtMemAllocator<uint32_t>>;
+    using Vec = std::vector<uint32_t, InternalHeapFirstAllocator<uint32_t>>;
     Vec a;
     for (int i = 0; i < 1000; ++i) {
         a.push_back(static_cast<uint32_t>(i));
@@ -36,7 +36,7 @@ void test_midivec_move_assign() {
 }
 
 void test_midivec_resize_down_and_up() {
-    using Vec = std::vector<uint8_t, ExtMemAllocator<uint8_t>>;
+    using Vec = std::vector<uint8_t, InternalHeapFirstAllocator<uint8_t>>;
     Vec v;
     v.resize(20'000, 0x5A);
     TEST_ASSERT_EQUAL(20'000u, v.size());

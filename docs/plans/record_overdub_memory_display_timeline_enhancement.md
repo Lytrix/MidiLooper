@@ -1,6 +1,6 @@
 # Record/overdub MIDI — memory, playback, display, and SD timeline
 
-Agent-oriented timeline of how record and overdub MIDI moves through capture, PSRAM chunk storage, playback, OLED display, deferred SD save, and boot reload. Grounded in firmware after **`long-record-memory-headroom`** shipped.
+Agent-oriented timeline of how record and overdub MIDI moves through capture, external-memory chunk storage, playback, OLED display, deferred SD save, and boot reload. Grounded in firmware after **`long-record-memory-headroom`** shipped.
 
 **Related guides:**
 
@@ -17,7 +17,7 @@ Agent-oriented timeline of how record and overdub MIDI moves through capture, PS
 |------|---------|
 | **Capture** | Live record/overdub append buffer (`Loop::capture.store`, `capture.phase`) |
 | **passes** | Canonical timeline on `Loop`: **recordPass**, **overdubPasses[]**, **editPasses[]** |
-| **chunkRefs** | List of PSRAM chunk IDs pointing at 256-event `MidiEvent` blocks |
+| **chunkRefs** | List of external-memory chunk IDs pointing at 256-event `MidiEvent` blocks |
 | **primaryWindow** | `LoopPlaybackRuntime::primaryWindow` — cached `mergedEvents` + playback metadata |
 | **visualCache** | `Loop::visualCache.notes` — `DisplayNote` list rebuilt from active capture passes |
 | **play-ahead** | Sorted `playbackOrder` + `nextEventIndex` / `captureNextEventIndex` cursors |
@@ -28,16 +28,16 @@ Agent-oriented timeline of how record and overdub MIDI moves through capture, PS
 
 ```mermaid
 flowchart TB
-  subgraph ram2 [RAM2 heap ~512KB]
+  subgraph internalHeap [internal heap ~512KB]
     hotState[Track/Loop fixed state cursors indices]
-    mallocFallback[PsramFirstAllocator malloc fallback]
+    mallocFallback[ExternalMemoryFirstAllocator malloc fallback]
     poolMeta[Chunk pool metadata poolUsed_]
     undoSmall[Small undo refs structs]
   end
 
-  subgraph psram [PSRAM ~8MB]
+  subgraph externalMemory [external memory pool ~8MB]
     chunkPool["LoopEventStore chunk pool\n512 chunks x 256 MidiEvent"]
-    psramVecs["PsramFirstAllocator vectors\nplaybackOrder mergedEvents visualCache notes deferredSaveMidiBatch"]
+    externalVecs["ExternalMemoryFirstAllocator vectors\nplaybackOrder mergedEvents visualCache notes deferredSaveMidiBatch"]
   end
 
   subgraph sd [SD card]
@@ -45,8 +45,8 @@ flowchart TB
   end
 
   chunkPool -->|"chunkRefs on RecordPass/OverdubPass"| passes[LoopPasses]
-  psramVecs --> playbackWin[PlaybackWindow.mergedEvents]
-  psramVecs --> displayNotes[VisualCache / DisplayNoteVec]
+  externalVecs --> playbackWin[PlaybackWindow.mergedEvents]
+  externalVecs --> displayNotes[VisualCache / DisplayNoteVec]
   passes -->|"deferred save slices ≤256 events"| v4file
   v4file -->|"loadState readLoopPersisted"| chunkPool
 ```
@@ -58,9 +58,9 @@ From `include/LoopEventStore.h`, `include/Globals.h`:
 | Guard | Value | Effect |
 |-------|-------|--------|
 | `CHUNK_CAPACITY` | 256 events | Max events per chunk + per SD save slice batch |
-| `POOL_CHUNK_COUNT` | 512 | Global PSRAM pool |
+| `POOL_CHUNK_COUNT` | 512 | Global external-memory pool |
 | `CHUNK_RESERVE` | 16 | Held back at `sealCapture` |
-| `RAM2_SAFETY_FLOOR_BYTES` | 12 KiB | Deferred save admission |
+| `INTERNAL_HEAP_SAFETY_FLOOR_BYTES` | 12 KiB | Deferred save admission |
 | `HEAP_RESERVE_BYTES` | 32 KiB | Edit-pass admission |
 | `PLAYBACK_WINDOW_MAX_BARS` | 8 | Metadata on `PlaybackWindow` (scaffolding — see playback section) |
 
@@ -101,7 +101,7 @@ sequenceDiagram
   Note over Clock,Main: T2 — Playing back committed pass
   Clock->>Track: playMidiEvents
   Track->>Play: ensurePlaybackWindowBuilt
-  Play->>Loop: flattenActiveCapturePasses → mergedEvents
+  Play->>Loop: mergeActiveCapturePasses → mergedEvents
   Play->>Play: rebuildPlaybackOrder PSRAM
   Track->>Midi: sendMidiEvent via nextEventIndex
 
@@ -136,12 +136,12 @@ sequenceDiagram
 
 | Step | What happens | Memory |
 |------|----------------|--------|
-| MIDI in | `Track::noteOn` stores pending pair; `recordMidiEvents` stamps tick | RAM2 small maps |
-| Append | `capture.store.append` grows PSRAM chunks | PSRAM pool |
-| Live display | `CapturePreview` + `captureDisplayRevision`; record path avoids full flatten per frame | PSRAM preview notes |
+| MIDI in | `Track::noteOn` stores pending pair; `recordMidiEvents` stamps tick | internal-heap small maps |
+| Append | `capture.store.append` grows external-memory chunks | external-memory pool |
+| Live display | `CapturePreview` + `captureDisplayRevision`; record path avoids full flatten per frame | external-memory preview notes |
 | Stop seal | `LoopStopFinalize` on wrap window only (not full loop) | In-chunk / staging store |
 | Detach | `capture.store.detachChunksTo(pendingCapturePass_.chunkRefs)` — moves chunk IDs, no copy | Chunk refs vector |
-| Publish | Chunk refs land in `recordPass` or `overdubPasses[]`; live capture cleared | `passes` structs in RAM2; event data in PSRAM |
+| Publish | Chunk refs land in `recordPass` or `overdubPasses[]`; live capture cleared | `passes` structs in internal heap; event data in external memory pool |
 
 **Rule:** Stop path does **not** call full `validateAndCleanupMidiEvents`. Full validate is deferred via `Track::processDeferredIdleMaintenance` when transport is idle (`src/main.cpp`).
 
@@ -155,7 +155,7 @@ sequenceDiagram
 flowchart LR
   tick[Clock tick] --> phase[tickPhaseInLoop]
   phase --> build[ensurePlaybackWindowBuilt]
-  build -->|"if playbackRevision changed"| flat[flattenActiveCapturePasses]
+  build -->|"if playbackRevision changed"| flat[mergeActiveCapturePasses]
   flat --> merged[primaryWindow.mergedEvents PsramFirst]
   merged --> order[rebuildPlaybackOrder]
   order --> cursor[nextEventIndex play-ahead]
@@ -169,7 +169,7 @@ flowchart LR
 
 ### Current behavior
 
-- `flattenActiveCapturePasses` merges **all active** `recordPass` + `overdubPasses` chunk refs into one sorted `MidiEventVec` — not a bar-filtered subset.
+- `mergeActiveCapturePasses` merges **all active** `recordPass` + `overdubPasses` chunk refs into one sorted `MidiEventVec` — not a bar-filtered subset.
 - `effectiveWindowBars` / `windowStartBar` on `PlaybackWindow` and `PlaybackCursor` are **scaffolding** (set to `PLAYBACK_WINDOW_MAX_BARS = 8` in `ensurePlaybackWindowBuilt`); they do **not** slice events by bar window today.
 - **Play-ahead** = sorted `playbackOrder` + monotonic `nextEventIndex` / `captureNextEventIndex`, reset on loop wrap (`lastTickInLoop`).
 - `prewarmPlaybackForSlot` only touches `getPlaybackOrder()` allocation — does not pre-build `mergedEvents`.
@@ -180,13 +180,13 @@ During overdub, `playMidiEvents` plays committed `mergedEvents` first, then live
 
 ## Phase: display
 
-**Files:** `src/DisplayManager.cpp`, `src/Loop.cpp` (`rebuildVisualCacheFromPasses`, `buildLiveEventView`)
+**Files:** `src/DisplayManager.cpp`, `src/Loop.cpp` (`rebuildVisualCacheFromPasses`, `mergeMaterializedPassesWithCapture`)
 
 | Mode | Source | RAM note |
 |------|--------|----------|
 | Live record (not playing) | `capture.store.size` + `CapturePreview` | Incremental; no per-frame full flatten |
-| Live overdub / playing | `buildLiveEventView` = `materializeToFlat` + capture merge | PSRAM temporaries |
-| Playback / stopped | Prefer `visualCache.notes` from `flattenActiveCapturePasses` → `reconstructDisplayNotes` | Avoids second full reconstruct when heap tight after stop |
+| Live overdub / playing | `mergeMaterializedPassesWithCapture` = `materializeToEventVector` + capture merge | external-memory temporaries |
+| Playback / stopped | Prefer `visualCache.notes` from `mergeActiveCapturePasses` → `reconstructDisplayNotes` | Avoids second full reconstruct when heap tight after stop |
 | OLED draw | `drawPianoRoll` maps **full** `loopLength` to screen width | Long loops compress; see `long-loop-piano-roll-window` |
 
 Display updates are **skipped** while `StorageManager::isDeferredSaveActive()` (SD file open) so SPI/OLED work does not compete with persistence.
@@ -200,7 +200,7 @@ Display updates are **skipped** while `StorageManager::isDeferredSaveActive()` (
 ```mermaid
 flowchart TB
   req[requestDeferredSaveState] --> pending[deferredSavePending]
-  pending --> admit{RAM2 >= 12KiB floor?}
+  pending --> admit{internal heap >= 12KiB floor?}
   admit -->|no| defer[PERS defer heap_floor retry]
   admit -->|yes| dispatch[PERS dispatch]
   dispatch --> slices[One FSM slice per main loop iter]
@@ -216,7 +216,7 @@ flowchart TB
 
 - Runtime save triggers: record/overdub stop, undo/redo, clear, autosave (`Track::finalizeCommitSideEffects`).
 - `saveState()` is maintenance-only: drains the same deferred FSM synchronously (no second on-disk format).
-- SD stores **chunk streams** (≤256 events per read batch), not a full-loop flat buffer in RAM2.
+- SD stores **chunk streams** (≤256 events per read batch), not a full-loop flat buffer in internal heap.
 
 ### Main-loop ordering (`src/main.cpp`)
 
@@ -233,12 +233,12 @@ After MIDI/clock/playback service:
 
 From `captures/host_midi_automation_baseline_20260623_112324.json` (64 + 64 + 64 record/overdub):
 
-| Moment | Typical RAM2 | What allocates |
+| Moment | Typical internal heap | What allocates |
 |--------|--------------|----------------|
-| Mid 64-bar record | Falls as length-scaling buffers grow | Note cache, playback order, materialize temps — **PSRAM-first** after memory-headroom |
+| Mid 64-bar record | Falls as length-scaling buffers grow | Note cache, playback order, materialize temps — **external-memory-first** after memory-headroom |
 | `record_stop` entry | ≥ 12 KiB (observed 16 KiB) | Stop path avoids full flatten |
 | Post-stop idle | Low but above floor | `visualCache` rebuild; deferred save slices |
-| During `PERS` slices | Stable | Batch ≤ 256 events in PSRAM; display paused |
+| During `PERS` slices | Stable | Batch ≤ 256 events in external memory; display paused |
 | After `PERS,result,ok` | Recovers | Display resumes; undo/redo safe |
 
 ---
@@ -249,7 +249,7 @@ From `captures/host_midi_automation_baseline_20260623_112324.json` (64 + 64 + 64
 |---------|-------------------|
 | Live capture append | `Loop::appendCaptureEvent` |
 | Stop commit | `Loop::commitCapturePass` → `sealCapture` / `publishPendingCapturePass` |
-| Playback merge | `Loop::flattenActiveCapturePasses` → `PlaybackWindow::mergedEvents` |
+| Playback merge | `Loop::mergeActiveCapturePasses` → `PlaybackWindow::mergedEvents` |
 | Play-ahead cursor | `Track::playMidiEvents`, `loop.nextEventIndex` |
 | Display notes | `DisplayManager::resolveDisplayNotes`, `Loop::visualCache` |
 | Queue save | `StorageManager::requestDeferredSaveState` |

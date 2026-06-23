@@ -9,7 +9,7 @@
 
 #include "LoopEventStore.h"
 #include "Utils/MemoryMonitor.h"
-#include "Utils/PsramFirstAllocator.h"
+#include "Utils/ExternalMemoryFirstAllocator.h"
 
 namespace {
 
@@ -44,7 +44,8 @@ bool canStagePersistedEvent(size_t stagedEventCount) {
     return false;
   }
 #if defined(ARDUINO)
-  return LoopEventStore::hasRam2HeadroomForNonCriticalWork(MemoryMonitor::getFreeHeap());
+  return LoopEventStore::hasInternalHeapHeadroomForNonCriticalWork(
+      MemoryMonitor::getInternalHeapFreeBytes());
 #else
   return true;
 #endif
@@ -53,11 +54,11 @@ bool canStagePersistedEvent(size_t stagedEventCount) {
 bool writePersistedCapturePassPayloadChunkStream(const StorageIo& io,
                                                  const ChunkIdList& chunkRefs,
                                                  size_t* maxBatchEvents) {
-  std::vector<MidiEvent, PsramFirstAllocator<MidiEvent>> batch;
+  std::vector<MidiEvent, ExternalMemoryFirstAllocator<MidiEvent>> batch;
   batch.reserve(LoopEventStoreConfig::CHUNK_CAPACITY);
   for (uint16_t chunkId : chunkRefs) {
     batch.clear();
-    LoopEventStore::appendFlattenedChunkId(chunkId, batch);
+    LoopEventStore::appendChunkRefEvent(chunkId, batch);
     if (batch.empty()) {
       continue;
     }

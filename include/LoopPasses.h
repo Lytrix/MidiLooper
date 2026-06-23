@@ -8,7 +8,7 @@
 
 #include "EditPass.h"
 #include "LoopEventStore.h"
-#include "Utils/ExtMemAllocator.h"
+#include "Utils/InternalHeapFirstAllocator.h"
 
 using LoopId = uint32_t;
 constexpr LoopId kInvalidLoopId = UINT32_MAX;
@@ -71,7 +71,7 @@ struct Capture {
   CapturePhase phase = CapturePhase::None;
 };
 
-using OverdubPassVec = std::vector<OverdubPass, ExtMemAllocator<OverdubPass>>;
+using OverdubPassVec = std::vector<OverdubPass, InternalHeapFirstAllocator<OverdubPass>>;
 
 struct LoopPasses {
   RecordPass recordPass{};
@@ -85,7 +85,7 @@ struct LoopPasses {
   }
 
   void materialize(LoopEventStore& out, uint32_t loopLengthTicks = 0) const;
-  void materializeToFlat(MidiEventVec& out, uint32_t loopLengthTicks = 0) const;
+  void materializeToEventVector(MidiEventVec& out, uint32_t loopLengthTicks = 0) const;
 };
 
 inline CapturePassPhase capturePassPhaseForCapturePhase(CapturePhase phase) {

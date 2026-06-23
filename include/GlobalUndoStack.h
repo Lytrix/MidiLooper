@@ -8,8 +8,8 @@
 #include "EditPass.h"
 #include "StorageLoopIo.h"
 #include "TrackState.h"
-#include "Utils/ExtMemAllocator.h"
-#include "Utils/PsramFirstAllocator.h"
+#include "Utils/InternalHeapFirstAllocator.h"
+#include "Utils/ExternalMemoryFirstAllocator.h"
 
 using UndoEntryId = uint32_t;
 
@@ -54,7 +54,7 @@ struct UndoEntry {
   uint8_t noteEditPassIndex = 0;
 };
 
-using UndoEntryVec = std::vector<UndoEntry, PsramFirstAllocator<UndoEntry>>;
+using UndoEntryVec = std::vector<UndoEntry, ExternalMemoryFirstAllocator<UndoEntry>>;
 
 struct GlobalUndoStack {
   UndoEntryVec entries;

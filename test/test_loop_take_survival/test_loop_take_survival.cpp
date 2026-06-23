@@ -45,12 +45,12 @@ void appendOverdubPass(Loop& loop) {
 }
 
 void simulatePostOverdubStopPath(Loop& loop) {
-  loop.discardEditFlatMaterialization();
+  loop.discardPassesMaterializedCache();
   loop.invalidateCaches();
   loop.invalidateCaches();
 
   MidiEventVec flat;
-  loop.flattenActiveCapturePasses(flat);
+  loop.mergeActiveCapturePasses(flat);
   LoopEventStore merged;
   merged.loadFromFlat(flat);
   loop.commitStopFinalizeFromStore(merged);
@@ -61,7 +61,7 @@ void simulatePostOverdubStopPath(Loop& loop) {
 size_t snapshotEventCount(const LoopSnapshotRef& snapshot) {
   TEST_ASSERT_NOT_NULL(snapshot.get());
   MidiEventVec flat;
-  snapshot->passes.materializeToFlat(flat, snapshot->loopLengthTicks);
+  snapshot->passes.materializeToEventVector(flat, snapshot->loopLengthTicks);
   return flat.size();
 }
 
@@ -87,10 +87,10 @@ void test_discard_materialization_preserves_takes() {
   LoopEventStore::initPool();
   Loop loop;
   seedPublishedPair(loop);
-  loop.discardEditFlatMaterialization();
+  loop.discardPassesMaterializedCache();
   const size_t before = loop.nativeTestLiveEventCount();
   (void)loop.midiEvents();
-  loop.discardEditFlatMaterialization();
+  loop.discardPassesMaterializedCache();
 
   TEST_ASSERT_TRUE(loop.hasPublishedEvents());
   TEST_ASSERT_EQUAL(before, loop.nativeTestLiveEventCount());
@@ -118,7 +118,7 @@ void test_readonly_flat_access_preserves_takes() {
   appendOverdubPass(loop);
   TEST_ASSERT_EQUAL(4u, loop.nativeTestLiveEventCount());
 
-  loop.discardEditFlatMaterialization();
+  loop.discardPassesMaterializedCache();
   TEST_ASSERT_EQUAL(4u, loop.midiEvents().size());
   loop.invalidateCaches();
 
@@ -175,7 +175,7 @@ void test_multi_take_flatten_matches_live_event_count() {
 
   TEST_ASSERT_EQUAL(4u, loop.nativeTestLiveEventCount());
   MidiEventVec flat;
-  loop.flattenActiveCapturePasses(flat);
+  loop.mergeActiveCapturePasses(flat);
   TEST_ASSERT_EQUAL(4u, flat.size());
 }
 

@@ -12,7 +12,7 @@ The **story and layout** of the looper start at the **[root `README.md`](../READ
 |----------|---------|
 | [CODE_STRUCTURE.md](Guides/CODE_STRUCTURE.md) | Handler / Manager / Processor / Actions naming and module overview |
 | [**LOOP_MIDI_STORAGE_AND_VALIDATION.md**](Guides/LOOP_MIDI_STORAGE_AND_VALIDATION.md) | **Capture / passes (record, overdub, edit), commitCapturePass, validation tiers, undo stacks, SD v4** — read before touching Loop/Track undo or stop paths |
-| [**record_overdub_memory_display_timeline_enhancement.md**](plans/record_overdub_memory_display_timeline_enhancement.md) | **Record/overdub pipeline overview** — Mermaid timelines: capture → PSRAM → playback → OLED → deferred SD |
+| [**record_overdub_memory_display_timeline_enhancement.md**](plans/record_overdub_memory_display_timeline_enhancement.md) | **Record/overdub pipeline overview** — Mermaid timelines: capture → external memory pool (external RAM / PSRAM) → playback → OLED → deferred SD |
 | [DEFERRED_RUNTIME_PERSISTENCE.md](Guides/DEFERRED_RUNTIME_PERSISTENCE.md) | Central deferred save routing and chunk-bounded SD writer stages |
 | [MIDI_CONFIG_GUIDE.md](Guides/MIDI_CONFIG_GUIDE.md) | Remapping channels, notes, and CCs; quick reference tables |
 | [**control-surface/**](Guides/control-surface/) | Per-row notes: Scenes, Tracks, Jams, Loops, Bars/16ths, Main controls, Faders, Display |

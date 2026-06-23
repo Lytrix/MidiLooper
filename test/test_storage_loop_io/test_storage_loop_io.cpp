@@ -162,7 +162,7 @@ void test_write_read_loop_snapshot_roundtrip() {
                     static_cast<uint8_t>(restored.passes.recordPass.state));
 
   MidiEventVec flat;
-  LoopEventStore::appendFlattenedChunkIds(restored.passes.recordPass.chunkRefs, flat);
+  LoopEventStore::appendChunkRefEvents(restored.passes.recordPass.chunkRefs, flat);
   TEST_ASSERT_EQUAL(1u, flat.size());
   TEST_ASSERT_EQUAL(10u, flat[0].tick);
 }
@@ -328,7 +328,7 @@ void test_capture_pass_write_uses_chunk_stream_batch_bound() {
   TEST_ASSERT_TRUE(restored.passes.hasRecordPass());
 
   MidiEventVec flat;
-  LoopEventStore::appendFlattenedChunkIds(restored.passes.recordPass.chunkRefs, flat);
+  LoopEventStore::appendChunkRefEvents(restored.passes.recordPass.chunkRefs, flat);
   TEST_ASSERT_EQUAL(expectedEventCount, flat.size());
   TEST_ASSERT_EQUAL(0u, flat.front().tick);
   TEST_ASSERT_EQUAL(static_cast<uint32_t>(expectedEventCount - 1u), flat.back().tick);
@@ -374,7 +374,7 @@ void test_64_bar_record_snapshot_reloads_after_reboot_simulation() {
   TEST_ASSERT_EQUAL(1u, restored.passes.recordPass.id);
 
   MidiEventVec restoredFlat;
-  LoopEventStore::appendFlattenedChunkIds(restored.passes.recordPass.chunkRefs, restoredFlat);
+  LoopEventStore::appendChunkRefEvents(restored.passes.recordPass.chunkRefs, restoredFlat);
   TEST_ASSERT_EQUAL(expectedEventCount, restoredFlat.size());
   TEST_ASSERT_EQUAL(0u, restoredFlat.front().tick);
   TEST_ASSERT_EQUAL(expectedLastTick, restoredFlat.back().tick);
@@ -386,7 +386,7 @@ void test_64_bar_record_snapshot_reloads_after_reboot_simulation() {
   TEST_ASSERT_TRUE(!reloadedLoop.visualCache.notes.empty());
 
   MidiEventVec playbackFlat;
-  reloadedLoop.flattenActiveCapturePasses(playbackFlat);
+  reloadedLoop.mergeActiveCapturePasses(playbackFlat);
   TEST_ASSERT_EQUAL(expectedEventCount, playbackFlat.size());
   TEST_ASSERT_EQUAL(0u, playbackFlat.front().tick);
   TEST_ASSERT_EQUAL(expectedLastTick, playbackFlat.back().tick);
@@ -399,7 +399,7 @@ void test_64_bar_save_completes_at_ram2_floor_with_bounded_batch() {
 
   constexpr uint32_t kRecordBars = 64u;
   const uint32_t expectedLoopLengthTicks = kRecordBars * Config::TICKS_PER_BAR;
-  const uint32_t floorBytes = LoopEventStore::ram2SafetyFloorBytes();
+  const uint32_t floorBytes = LoopEventStore::internalHeapSafetyFloorBytes();
   MemoryMonitor::setNativeTestFreeHeap(floorBytes);
 
   PersistedLoopSnapshot original{};

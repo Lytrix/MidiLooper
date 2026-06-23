@@ -15,7 +15,7 @@
 #include "TrackUndo.h"
 #include "Utils/MemoryPool.h"
 #include "Utils/HotPathTelemetry.h"
-#include "Utils/PsramFirstAllocator.h"
+#include "Utils/ExternalMemoryFirstAllocator.h"
 #include <array>
 #include <cstdio>
 #include <vector>
@@ -273,7 +273,7 @@ uint32_t deferredSaveHeapBefore = 0;
 uint32_t deferredSaveAdmissionHeap = 0;
 bool deferredSaveHeapFloorDeferred = false;
 bool deferredSaveLastCompletedOk = false;
-std::vector<MidiEvent, PsramFirstAllocator<MidiEvent>> deferredSaveMidiBatch;
+std::vector<MidiEvent, ExternalMemoryFirstAllocator<MidiEvent>> deferredSaveMidiBatch;
 
 bool anyAllocatedLoopEditStateDirty() {
     for (uint8_t t = 0; t < trackManager.getTrackCount(); ++t) {
@@ -318,7 +318,7 @@ static void quarantineStorageFile() {
 }
 
 static void stabilizeBootMemoryAfterLoad() {
-    uint32_t freeHeap = MemoryMonitor::getFreeHeap();
+    uint32_t freeHeap = MemoryMonitor::getInternalHeapFreeBytes();
     if (freeHeap < Config::HEAP_RESERVE_BYTES) {
         Serial.print("[StorageManager] Boot heap below reserve after load (");
         Serial.print(freeHeap);
@@ -326,7 +326,7 @@ static void stabilizeBootMemoryAfterLoad() {
         for (uint8_t t = 0; t < trackManager.getTrackCount(); ++t) {
             trackManager.getTrack(t).getGlobalUndoStack().clear();
         }
-        freeHeap = MemoryMonitor::getFreeHeap();
+        freeHeap = MemoryMonitor::getInternalHeapFreeBytes();
     }
 
     if (freeHeap < Config::HEAP_RESERVE_BYTES) {
@@ -622,7 +622,7 @@ bool writeDeferredCapturePassHeader(File& file, const PersistedCapturePassWire& 
 
 bool writeDeferredCapturePassChunk(File& file, uint16_t chunkId) {
     deferredSaveMidiBatch.clear();
-    LoopEventStore::appendFlattenedChunkId(chunkId, deferredSaveMidiBatch);
+    LoopEventStore::appendChunkRefEvent(chunkId, deferredSaveMidiBatch);
     if (deferredSaveMidiBatch.empty()) {
         return true;
     }
@@ -1300,11 +1300,12 @@ void StorageManager::processDeferredSaveState(const LooperState& state) {
         }
     }
 
-    // Admission uses a caller-provided heap sample when available; do not call getFreeHeap() here.
+    // Admission uses a caller-provided heap sample when available; do not sample
+    // getInternalHeapFreeBytes() here.
     // Once dispatch has started, run every slice to completion without re-gating.
     if (!deferredSaveInProgress) {
         if (deferredSaveAdmissionHeap != UINT32_MAX &&
-            !LoopEventStore::hasRam2HeadroomForNonCriticalWork(deferredSaveAdmissionHeap)) {
+            !LoopEventStore::hasInternalHeapHeadroomForNonCriticalWork(deferredSaveAdmissionHeap)) {
             if (!deferredSaveHeapFloorDeferred) {
                 SC_PERSIST("defer", 0, deferredSaveAdmissionHeap, deferredSaveAdmissionHeap,
                            "heap_floor");

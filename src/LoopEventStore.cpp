@@ -98,12 +98,12 @@ bool LoopEventStore::canAllocChunkWithReserve() {
   return freeChunkCount() > PassConfig::CHUNK_RESERVE;
 }
 
-bool LoopEventStore::hasRam2HeadroomForNonCriticalWork(uint32_t freeHeapBytes) {
-  return freeHeapBytes >= LoopEventStoreConfig::RAM2_SAFETY_FLOOR_BYTES;
+bool LoopEventStore::hasInternalHeapHeadroomForNonCriticalWork(uint32_t freeHeapBytes) {
+  return freeHeapBytes >= LoopEventStoreConfig::INTERNAL_HEAP_SAFETY_FLOOR_BYTES;
 }
 
-uint32_t LoopEventStore::ram2SafetyFloorBytes() {
-  return LoopEventStoreConfig::RAM2_SAFETY_FLOOR_BYTES;
+uint32_t LoopEventStore::internalHeapSafetyFloorBytes() {
+  return LoopEventStoreConfig::INTERNAL_HEAP_SAFETY_FLOOR_BYTES;
 }
 
 uint16_t LoopEventStore::allocChunk() {
@@ -348,7 +348,7 @@ void LoopEventStore::flatten(MidiEventVec& out) const {
   }
 }
 
-void LoopEventStore::appendFlattenedChunkId(uint16_t id, MidiEventVec& out) {
+void LoopEventStore::appendChunkRefEvent(uint16_t id, MidiEventVec& out) {
   if (id >= LoopEventStoreConfig::POOL_CHUNK_COUNT || !pool_ || !poolUsed_[id]) {
     return;
   }
@@ -357,8 +357,8 @@ void LoopEventStore::appendFlattenedChunkId(uint16_t id, MidiEventVec& out) {
   out.insert(out.end(), c.events, c.events + c.used);
 }
 
-void LoopEventStore::appendFlattenedChunkId(
-    uint16_t id, std::vector<MidiEvent, PsramFirstAllocator<MidiEvent>>& out) {
+void LoopEventStore::appendChunkRefEvent(
+    uint16_t id, std::vector<MidiEvent, ExternalMemoryFirstAllocator<MidiEvent>>& out) {
   if (id >= LoopEventStoreConfig::POOL_CHUNK_COUNT || !pool_ || !poolUsed_[id]) {
     return;
   }
@@ -367,7 +367,7 @@ void LoopEventStore::appendFlattenedChunkId(
   out.insert(out.end(), c.events, c.events + c.used);
 }
 
-void LoopEventStore::appendFlattenedChunkIds(const ChunkIdList& ids, MidiEventVec& out) {
+void LoopEventStore::appendChunkRefEvents(const ChunkIdList& ids, MidiEventVec& out) {
   const size_t prevSize = out.size();
   size_t extra = 0;
   for (uint16_t id : ids) {
@@ -378,12 +378,12 @@ void LoopEventStore::appendFlattenedChunkIds(const ChunkIdList& ids, MidiEventVe
   }
   out.reserve(prevSize + extra);
   for (uint16_t id : ids) {
-    appendFlattenedChunkId(id, out);
+    appendChunkRefEvent(id, out);
   }
 }
 
-void LoopEventStore::appendFlattenedChunkIds(
-    const ChunkIdList& ids, std::vector<MidiEvent, PsramFirstAllocator<MidiEvent>>& out) {
+void LoopEventStore::appendChunkRefEvents(
+    const ChunkIdList& ids, std::vector<MidiEvent, ExternalMemoryFirstAllocator<MidiEvent>>& out) {
   const size_t prevSize = out.size();
   size_t extra = 0;
   for (uint16_t id : ids) {
@@ -394,7 +394,7 @@ void LoopEventStore::appendFlattenedChunkIds(
   }
   out.reserve(prevSize + extra);
   for (uint16_t id : ids) {
-    appendFlattenedChunkId(id, out);
+    appendChunkRefEvent(id, out);
   }
 }
 

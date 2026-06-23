@@ -4,7 +4,7 @@
 #include "LoopPasses.h"
 
 #include "EditApply.h"
-#include "Utils/PsramFirstAllocator.h"
+#include "Utils/ExternalMemoryFirstAllocator.h"
 
 #include <algorithm>
 #include <vector>
@@ -13,7 +13,7 @@ namespace {
 
 void mergeSortedMidiVectors(
     MidiEventVec& base,
-    std::vector<MidiEvent, PsramFirstAllocator<MidiEvent>>&& addition) {
+    std::vector<MidiEvent, ExternalMemoryFirstAllocator<MidiEvent>>&& addition) {
   if (addition.empty()) {
     return;
   }
@@ -21,7 +21,7 @@ void mergeSortedMidiVectors(
     base.assign(addition.begin(), addition.end());
     return;
   }
-  std::vector<MidiEvent, PsramFirstAllocator<MidiEvent>> merged;
+  std::vector<MidiEvent, ExternalMemoryFirstAllocator<MidiEvent>> merged;
   merged.reserve(base.size() + addition.size());
   std::merge(base.begin(), base.end(), addition.begin(), addition.end(),
              std::back_inserter(merged),
@@ -47,14 +47,14 @@ void collectActiveOverdubPassesSorted(const OverdubPassVec& overdubPasses,
 void appendActiveCapturePassesToFlat(const LoopPasses& passes, MidiEventVec& out) {
   if (passes.hasRecordPass() && passes.recordPass.state == CapturePassState::Active &&
       !passes.recordPass.chunkRefs.empty()) {
-    LoopEventStore::appendFlattenedChunkIds(passes.recordPass.chunkRefs, out);
+    LoopEventStore::appendChunkRefEvents(passes.recordPass.chunkRefs, out);
   }
 
   std::vector<const OverdubPass*> activeOverdubs;
   collectActiveOverdubPassesSorted(passes.overdubPasses, activeOverdubs);
   for (const OverdubPass* pass : activeOverdubs) {
-    std::vector<MidiEvent, PsramFirstAllocator<MidiEvent>> layer;
-    LoopEventStore::appendFlattenedChunkIds(pass->chunkRefs, layer);
+    std::vector<MidiEvent, ExternalMemoryFirstAllocator<MidiEvent>> layer;
+    LoopEventStore::appendChunkRefEvents(pass->chunkRefs, layer);
     mergeSortedMidiVectors(out, std::move(layer));
   }
 }
@@ -77,7 +77,7 @@ void applyActiveEditPasses(MidiEventVec& events, const EditPassVec& editPasses,
 
 }  // namespace
 
-void LoopPasses::materializeToFlat(MidiEventVec& out, uint32_t loopLengthTicks) const {
+void LoopPasses::materializeToEventVector(MidiEventVec& out, uint32_t loopLengthTicks) const {
   out.clear();
   appendActiveCapturePassesToFlat(*this, out);
   applyActiveEditPasses(out, editPasses, loopLengthTicks);
@@ -85,7 +85,7 @@ void LoopPasses::materializeToFlat(MidiEventVec& out, uint32_t loopLengthTicks) 
 
 void LoopPasses::materialize(LoopEventStore& out, uint32_t loopLengthTicks) const {
   MidiEventVec flat;
-  materializeToFlat(flat, loopLengthTicks);
+  materializeToEventVector(flat, loopLengthTicks);
   out.clear();
   if (!flat.empty()) {
     out.loadFromFlat(flat);

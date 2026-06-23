@@ -202,35 +202,37 @@ void test_save_note_edit_pass_succeeds_when_heap_headroom() {
 void test_noncritical_work_deferred_when_heap_below_floor() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
-  const uint32_t floor = LoopEventStore::ram2SafetyFloorBytes();
+  const uint32_t floor = LoopEventStore::internalHeapSafetyFloorBytes();
   TEST_ASSERT_TRUE(floor > 0u);
 
   MemoryMonitor::setNativeTestFreeHeap(floor - 1u);
   TEST_ASSERT_FALSE(
-      LoopEventStore::hasRam2HeadroomForNonCriticalWork(MemoryMonitor::getFreeHeap()));
+      LoopEventStore::hasInternalHeapHeadroomForNonCriticalWork(
+          MemoryMonitor::getInternalHeapFreeBytes()));
 
   MemoryMonitor::setNativeTestFreeHeap(floor);
   TEST_ASSERT_TRUE(
-      LoopEventStore::hasRam2HeadroomForNonCriticalWork(MemoryMonitor::getFreeHeap()));
+      LoopEventStore::hasInternalHeapHeadroomForNonCriticalWork(
+          MemoryMonitor::getInternalHeapFreeBytes()));
   MemoryMonitor::resetNativeTestFreeHeap();
 }
 
-void test_psram_first_buffers_report_storage_region() {
+void test_external_memory_first_buffers_report_storage_region() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
 
-  // Playback order vector was re-targeted to PsramFirstAllocator.
+  // Playback order vector was re-targeted to ExternalMemoryFirstAllocator.
   Loop loop;
   auto& playbackOrder = loop.getPlaybackOrder();
   playbackOrder.push_back(0u);
   TEST_ASSERT_NOT_NULL(playbackOrder.data());
 #if EXTMEM_AVAILABLE
-  TEST_ASSERT_TRUE(isInPsram(playbackOrder.data()));
+  TEST_ASSERT_TRUE(isInExternalMemoryPool(playbackOrder.data()));
 #else
-  TEST_ASSERT_FALSE(isInPsram(playbackOrder.data()));
+  TEST_ASSERT_FALSE(isInExternalMemoryPool(playbackOrder.data()));
 #endif
 
-  // Per-loop cached note list was re-targeted to PsramFirstAllocator.
+  // Per-loop cached note list was re-targeted to ExternalMemoryFirstAllocator.
   MidiEventVec events;
   events.push_back(MidiEvent::NoteOn(0, 1, 60, 100));
   events.push_back(MidiEvent::NoteOff(48, 1, 60, 0));
@@ -239,9 +241,9 @@ void test_psram_first_buffers_report_storage_region() {
   TEST_ASSERT_EQUAL(1u, cachedNotes.size());
   TEST_ASSERT_NOT_NULL(cachedNotes.data());
 #if EXTMEM_AVAILABLE
-  TEST_ASSERT_TRUE(isInPsram(cachedNotes.data()));
+  TEST_ASSERT_TRUE(isInExternalMemoryPool(cachedNotes.data()));
 #else
-  TEST_ASSERT_FALSE(isInPsram(cachedNotes.data()));
+  TEST_ASSERT_FALSE(isInExternalMemoryPool(cachedNotes.data()));
 #endif
 
   loop.visualCache.notes.push_back(NoteUtils::DisplayNote{60, 100, 0, 48});
@@ -249,11 +251,11 @@ void test_psram_first_buffers_report_storage_region() {
   loop.capturePreview.notes.push_back(NoteUtils::DisplayNote{62, 100, 96, 144});
   TEST_ASSERT_NOT_NULL(loop.capturePreview.notes.data());
 #if EXTMEM_AVAILABLE
-  TEST_ASSERT_TRUE(isInPsram(loop.visualCache.notes.data()));
-  TEST_ASSERT_TRUE(isInPsram(loop.capturePreview.notes.data()));
+  TEST_ASSERT_TRUE(isInExternalMemoryPool(loop.visualCache.notes.data()));
+  TEST_ASSERT_TRUE(isInExternalMemoryPool(loop.capturePreview.notes.data()));
 #else
-  TEST_ASSERT_FALSE(isInPsram(loop.visualCache.notes.data()));
-  TEST_ASSERT_FALSE(isInPsram(loop.capturePreview.notes.data()));
+  TEST_ASSERT_FALSE(isInExternalMemoryPool(loop.visualCache.notes.data()));
+  TEST_ASSERT_FALSE(isInExternalMemoryPool(loop.capturePreview.notes.data()));
 #endif
 }
 
@@ -285,7 +287,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_save_note_edit_pass_rejected_when_heap_below_reserve);
   RUN_TEST(test_save_note_edit_pass_succeeds_when_heap_headroom);
   RUN_TEST(test_noncritical_work_deferred_when_heap_below_floor);
-  RUN_TEST(test_psram_first_buffers_report_storage_region);
+  RUN_TEST(test_external_memory_first_buffers_report_storage_region);
   RUN_TEST(test_trim_pressure_when_chunk_reserve_violated);
   return UNITY_END();
 }

@@ -21,7 +21,7 @@ size_t estimatedSessionUndoEntryBytes(const SessionUndoEntry& entry) {
 
 bool canHeapAdmitSessionUndoEntry(const SessionUndoEntry& entry) {
   const size_t needed = Config::HEAP_RESERVE_BYTES + estimatedSessionUndoEntryBytes(entry);
-  return MemoryMonitor::getFreeHeap() >= needed;
+  return MemoryMonitor::getInternalHeapFreeBytes() >= needed;
 }
 
 SessionUndoEntry buildSessionUndoEntry(const NoteEditFocus& focus, NoteEditSelection selection,

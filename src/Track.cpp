@@ -132,7 +132,7 @@ void ensurePlaybackWindowBuilt(Loop& loop, LoopPlaybackRuntime& runtime) {
   if (runtime.primaryWindow.builtFromRevision == loop.playbackRevision) {
     return;
   }
-  loop.flattenActiveCapturePasses(runtime.primaryWindow.mergedEvents);
+  loop.mergeActiveCapturePasses(runtime.primaryWindow.mergedEvents);
   runtime.primaryWindow.builtFromRevision = loop.playbackRevision;
   runtime.primaryWindow.effectiveWindowBars = Config::PLAYBACK_WINDOW_MAX_BARS;
   loop.playbackOrderDirty = true;
@@ -392,7 +392,7 @@ void Track::shiftMidiEvents(int32_t offset) {
 uint32_t Track::findLastEventTick() const {
     const Loop& loop = getActiveLoop();
     MidiEventVec flat;
-    loop.flattenActiveCapturePasses(flat);
+    loop.mergeActiveCapturePasses(flat);
     uint32_t last = 0;
     for (const auto &evt : flat) {
         last = std::max(last, evt.tick);
@@ -475,7 +475,7 @@ void Track::finalizePendingNotes(uint32_t offAbsTick) {
 void Track::validateAndCleanupMidiEvents(uint32_t openTailCloseTick) {
     Loop& loop = getActiveLoop();
     MidiEventVec materializedEvents;
-    loop.flattenActiveCapturePasses(materializedEvents);
+    loop.mergeActiveCapturePasses(materializedEvents);
     const size_t publishedBefore = materializedEvents.size();
     if (materializedEvents.empty()) return;
     
@@ -682,7 +682,7 @@ void Track::finalizeLoopAtStop(uint32_t openTailCloseTick, bool scheduleDeferred
   }
 
   MidiEventVec flat;
-  loop.flattenActiveCapturePasses(flat);
+  loop.mergeActiveCapturePasses(flat);
   if (flat.empty()) {
     deferredFullMidiValidate = false;
     deferredValidateQueuedAtMs = 0;
@@ -807,7 +807,7 @@ void Track::emitStoredMidiVerification() const {
   }
 
   MidiEventVec flat;
-  loop.flattenActiveCapturePasses(flat);
+  loop.mergeActiveCapturePasses(flat);
   for (const MidiEvent& evt : flat) {
     if (evt.isNoteOn()) {
       SC_STORED_NOTE_EVENT('N', evt.tick, evt.channel, evt.data.noteData.note);
@@ -921,7 +921,7 @@ void Track::processDeferredRecordRevts(size_t maxEventsPerSlice) {
           break;
         }
         const uint16_t chunkId = deferredRecordRevtChunkRefs[deferredRecordRevtChunkCursor++];
-        LoopEventStore::appendFlattenedChunkId(chunkId, deferredRecordRevtChunkEvents);
+        LoopEventStore::appendChunkRefEvent(chunkId, deferredRecordRevtChunkEvents);
         continue;
       }
 
@@ -946,7 +946,7 @@ void Track::processDeferredRecordRevts(size_t maxEventsPerSlice) {
   }
 
   if (deferredRecordRevtEvents.empty() && deferredRecordRevtCursor == 0) {
-    loop.flattenActiveCapturePasses(deferredRecordRevtEvents);
+    loop.mergeActiveCapturePasses(deferredRecordRevtEvents);
   }
 
   size_t queued = 0;
@@ -981,7 +981,7 @@ void Track::closeOpenNotesAtLoopWrap() {
 
   const uint32_t closeTick = loop.loopLengthTicks - 1;
   MidiEventVec liveView;
-  loop.buildLiveEventView(liveView);
+  loop.mergeMaterializedPassesWithCapture(liveView);
 
   std::vector<MidiEvent> syntheticNoteOffs;
   syntheticNoteOffs.reserve(pendingNotes.size());
@@ -1037,7 +1037,7 @@ void Track::stopRecording(uint32_t currentTick) {
   [[maybe_unused]] const bool captureAlignFlag = alignLoopOriginOnNextStop;
   Loop& loop = getActiveLoop();
   const uint32_t stopPathStartUs = micros();
-  const uint32_t stopHeap = MemoryMonitor::getFreeHeap();
+  const uint32_t stopHeap = MemoryMonitor::getInternalHeapFreeBytes();
   logRecordStopStage(loop, stopPathStartUs, "record_stop", 0, stopHeap, stopHeap, "entered");
 
   uint32_t rawLength = 0;
@@ -1078,12 +1078,12 @@ void Track::stopRecording(uint32_t currentTick) {
   // (the second pass and synthetic note-offs) are active for this record-stop.
   // Record-stop must close open tails at loop end, not at the stop playhead tick.
   const uint32_t closeTick = UINT32_MAX;
-  const uint32_t finalizeHeapBefore = MemoryMonitor::getFreeHeap();
+  const uint32_t finalizeHeapBefore = MemoryMonitor::getInternalHeapFreeBytes();
   const uint32_t finalizeStartUs = micros();
   const CommitResult sideEffectResult =
       finalizeCommitSideEffects(commitResult, CommitReason::RecordStop, closeTick);
   const uint32_t finalizeDurationUs = micros() - finalizeStartUs;
-  const uint32_t finalizeHeapAfter = MemoryMonitor::getFreeHeap();
+  const uint32_t finalizeHeapAfter = MemoryMonitor::getInternalHeapFreeBytes();
   logRecordStopStage(loop, stopPathStartUs, "finalize", finalizeDurationUs, finalizeHeapBefore,
                      finalizeHeapAfter, commitResultLabel(sideEffectResult));
 
@@ -1151,11 +1151,11 @@ void Track::stopRecording(uint32_t currentTick) {
 
   // Return to playback after record-stop. Overdub starts on the next explicit
   // record press from PLAYING (record -> play -> overdub -> play flow).
-  const uint32_t stateAdvanceHeapBefore = MemoryMonitor::getFreeHeap();
+  const uint32_t stateAdvanceHeapBefore = MemoryMonitor::getInternalHeapFreeBytes();
   const uint32_t stateAdvanceStartUs = micros();
   startPlaying(playbackTick, true);
   const uint32_t stateAdvanceDurationUs = micros() - stateAdvanceStartUs;
-  const uint32_t stateAdvanceHeapAfter = MemoryMonitor::getFreeHeap();
+  const uint32_t stateAdvanceHeapAfter = MemoryMonitor::getInternalHeapFreeBytes();
   logRecordStopStage(loop, stopPathStartUs, "state_advance", stateAdvanceDurationUs,
                      stateAdvanceHeapBefore, stateAdvanceHeapAfter,
                      trackState == TRACK_PLAYING ? "ok" : "failed");
@@ -1173,7 +1173,7 @@ void Track::stopRecordingToStopped(uint32_t currentTick) {
   alignLoopOriginOnNextStop = false;
   Loop& loop = getActiveLoop();
   const uint32_t stopPathStartUs = micros();
-  const uint32_t stopHeap = MemoryMonitor::getFreeHeap();
+  const uint32_t stopHeap = MemoryMonitor::getInternalHeapFreeBytes();
   logRecordStopStage(loop, stopPathStartUs, "record_stop", 0, stopHeap, stopHeap, "entered");
 
   uint32_t rawLength = 0;
@@ -1211,12 +1211,12 @@ void Track::stopRecordingToStopped(uint32_t currentTick) {
 
   // Validate AFTER loopLengthTicks is known (see stopRecording for rationale).
   const uint32_t closeTick = UINT32_MAX;
-  const uint32_t finalizeHeapBefore = MemoryMonitor::getFreeHeap();
+  const uint32_t finalizeHeapBefore = MemoryMonitor::getInternalHeapFreeBytes();
   const uint32_t finalizeStartUs = micros();
   const CommitResult sideEffectResult =
       finalizeCommitSideEffects(commitResult, CommitReason::RecordStopToStopped, closeTick);
   const uint32_t finalizeDurationUs = micros() - finalizeStartUs;
-  const uint32_t finalizeHeapAfter = MemoryMonitor::getFreeHeap();
+  const uint32_t finalizeHeapAfter = MemoryMonitor::getInternalHeapFreeBytes();
   logRecordStopStage(loop, stopPathStartUs, "finalize", finalizeDurationUs, finalizeHeapBefore,
                      finalizeHeapAfter, commitResultLabel(sideEffectResult));
 
@@ -1246,11 +1246,11 @@ void Track::stopRecordingToStopped(uint32_t currentTick) {
   logger.logTrackEvent("Recording stopped (to STOPPED)", playbackTick, "length=%lu",
                        static_cast<unsigned long>(loop.loopLengthTicks));
 
-  const uint32_t stateAdvanceHeapBefore = MemoryMonitor::getFreeHeap();
+  const uint32_t stateAdvanceHeapBefore = MemoryMonitor::getInternalHeapFreeBytes();
   const uint32_t stateAdvanceStartUs = micros();
   setState(TRACK_STOPPED);
   const uint32_t stateAdvanceDurationUs = micros() - stateAdvanceStartUs;
-  const uint32_t stateAdvanceHeapAfter = MemoryMonitor::getFreeHeap();
+  const uint32_t stateAdvanceHeapAfter = MemoryMonitor::getInternalHeapFreeBytes();
   logRecordStopStage(loop, stopPathStartUs, "state_advance", stateAdvanceDurationUs,
                      stateAdvanceHeapBefore, stateAdvanceHeapAfter,
                      trackState == TRACK_STOPPED ? "ok" : "failed");

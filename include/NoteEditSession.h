@@ -13,7 +13,7 @@
 #include "NoteEditSessionUndo.h"
 #include "Utils/MemoryMonitor.h"
 #include "NoteEditFocus.h"
-#include "Utils/ExtMemAllocator.h"
+#include "Utils/InternalHeapFirstAllocator.h"
 
 /// In-session undo before saveEdit — EditChange + focus entries (not full store clones).
 struct NoteEditSessionUndoStack {
@@ -71,7 +71,7 @@ struct NoteEditSessionUndoStack {
       }
     }
     while (entries_.size() > Config::MIN_SESSION_UNDO_DEPTH &&
-           MemoryMonitor::getFreeHeap() < Config::HEAP_RESERVE_BYTES) {
+           MemoryMonitor::getInternalHeapFreeBytes() < Config::HEAP_RESERVE_BYTES) {
       entries_.erase(entries_.begin());
       if (cursor_ > 0) {
         --cursor_;
@@ -79,7 +79,7 @@ struct NoteEditSessionUndoStack {
     }
   }
 
-  using EntryVec = std::vector<SessionUndoEntry, ExtMemAllocator<SessionUndoEntry>>;
+  using EntryVec = std::vector<SessionUndoEntry, InternalHeapFirstAllocator<SessionUndoEntry>>;
   EntryVec entries_;
   size_t cursor_ = 0;
 };

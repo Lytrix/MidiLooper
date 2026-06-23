@@ -3,7 +3,7 @@
 
 /**
  * @file test_extmem_allocator.cpp
- * @brief Unit tests for ExtMemAllocator spillover logic.
+ * @brief Unit tests for InternalHeapFirstAllocator.
  *
  * These tests run on the native toolchain (no Teensy hardware required).
  * On the native build EXTMEM_AVAILABLE is 0, so extmem_malloc() always
@@ -25,13 +25,13 @@
 
 // Include the allocator under test. On native builds EXTMEM_AVAILABLE == 0
 // so extmem_malloc / extmem_free are no-ops.
-#include "Utils/ExtMemAllocator.h"
+#include "Utils/InternalHeapFirstAllocator.h"
 
 // ---------------------------------------------------------------------------
 // Test 1: A small allocation uses internal RAM (address < EXTMEM_PSRAM_START)
 // ---------------------------------------------------------------------------
 void test_small_allocation_stays_in_internal_ram() {
-    ExtMemAllocator<uint32_t> alloc;
+    InternalHeapFirstAllocator<uint32_t> alloc;
     uint32_t* ptr = alloc.allocate(1);
 
     TEST_ASSERT_NOT_NULL(ptr);
@@ -47,8 +47,8 @@ void test_small_allocation_stays_in_internal_ram() {
 // ---------------------------------------------------------------------------
 // Test 2: Allocator works correctly with std::vector
 // ---------------------------------------------------------------------------
-void test_vector_with_ext_mem_allocator() {
-    std::vector<int, ExtMemAllocator<int>> v;
+void test_vector_with_internal_heap_first_allocator() {
+    std::vector<int, InternalHeapFirstAllocator<int>> v;
     for (int i = 0; i < 1000; ++i) v.push_back(i);
 
     TEST_ASSERT_EQUAL(1000, (int)v.size());
@@ -62,8 +62,8 @@ void test_vector_with_ext_mem_allocator() {
 // Test 3: Two allocator instances of the same type compare equal
 // ---------------------------------------------------------------------------
 void test_allocator_equality() {
-    ExtMemAllocator<int> a1;
-    ExtMemAllocator<int> a2;
+    InternalHeapFirstAllocator<int> a1;
+    InternalHeapFirstAllocator<int> a2;
     TEST_ASSERT_TRUE(a1 == a2);
     TEST_ASSERT_FALSE(a1 != a2);
 }
@@ -72,8 +72,8 @@ void test_allocator_equality() {
 // Test 4: Rebind produces a compatible allocator for a different type
 // ---------------------------------------------------------------------------
 void test_allocator_rebind() {
-    ExtMemAllocator<int> intAlloc;
-    ExtMemAllocator<int>::rebind<char>::other charAlloc(intAlloc);
+    InternalHeapFirstAllocator<int> intAlloc;
+    InternalHeapFirstAllocator<int>::rebind<char>::other charAlloc(intAlloc);
 
     char* p = charAlloc.allocate(10);
     TEST_ASSERT_NOT_NULL(p);
@@ -89,7 +89,7 @@ void test_zero_size_allocation_does_not_crash() {
     // malloc(0) is implementation-defined — may return null or a unique ptr.
     // On the native build there is no PSRAM so extmem_malloc() is a no-op.
     // We simply assert that allocate(0) completes without hard-faulting.
-    ExtMemAllocator<uint8_t> alloc;
+    InternalHeapFirstAllocator<uint8_t> alloc;
     uint8_t* ptr = alloc.allocate(0);
     // malloc(0) can legitimately return nullptr or a non-null ptr — both OK.
     if (ptr) alloc.deallocate(ptr, 0);
@@ -99,7 +99,7 @@ void test_zero_size_allocation_does_not_crash() {
 // Test 6: deallocate(nullptr) is safe
 // ---------------------------------------------------------------------------
 void test_deallocate_null_is_safe() {
-    ExtMemAllocator<int> alloc;
+    InternalHeapFirstAllocator<int> alloc;
     // Must not crash or assert.
     alloc.deallocate(nullptr, 0);
 }
@@ -112,7 +112,7 @@ void test_deallocate_null_is_safe() {
 void test_fallback_to_internal_ram_when_psram_unavailable() {
     // On native EXTMEM_AVAILABLE == 0, extmem_malloc() is a no-op returning
     // nullptr. The allocator must therefore succeed via malloc() alone.
-    std::vector<uint8_t, ExtMemAllocator<uint8_t>> buf;
+    std::vector<uint8_t, InternalHeapFirstAllocator<uint8_t>> buf;
     buf.resize(4096, 0xAB);
     TEST_ASSERT_EQUAL(4096u, buf.size());
     for (auto b : buf) TEST_ASSERT_EQUAL_HEX8(0xAB, b);
@@ -123,7 +123,7 @@ int main(int /*argc*/, char** /*argv*/) {
     UNITY_BEGIN();
 
     RUN_TEST(test_small_allocation_stays_in_internal_ram);
-    RUN_TEST(test_vector_with_ext_mem_allocator);
+    RUN_TEST(test_vector_with_internal_heap_first_allocator);
     RUN_TEST(test_allocator_equality);
     RUN_TEST(test_allocator_rebind);
     RUN_TEST(test_zero_size_allocation_does_not_crash);
