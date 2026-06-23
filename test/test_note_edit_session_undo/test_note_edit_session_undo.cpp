@@ -19,7 +19,7 @@
 #include "Globals.h"
 #include "Loop.h"
 #include "LoopEventStore.h"
-#include "NoteEditSession.h"
+#include "EditSession.h"
 #include "NoteEditSessionUndo.h"
 
 namespace {

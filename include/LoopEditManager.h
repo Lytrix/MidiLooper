@@ -16,6 +16,8 @@
 #include "MidiConfig.h"
 #include "Utils/NoteUtils.h"
 
+#include "EditSession.h"
+
 /**
  * @class LoopEditManager
  * @brief Manages loop editing functionality including loop start and length editing.
@@ -46,16 +48,11 @@ public:
     // Update method for grace period checking and debounced SD flush (call every frame).
     void update();
     
-    // Configuration
-    void setMainEditMode(bool isLoopEditMode) { currentMainEditMode = isLoopEditMode; }
-    bool isLoopEditMode() const { return currentMainEditMode; }
+    bool isLoopEditMode() const;
 
 private:
     MidiHandler& midiHandler;
-    
-    // Loop edit mode state
-    bool currentMainEditMode = false;
-    
+
     // Loop start editing grace period and state
     static constexpr uint32_t LOOP_START_GRACE_PERIOD = 1000; // ms
     uint32_t loopStartEditingTime = 0;

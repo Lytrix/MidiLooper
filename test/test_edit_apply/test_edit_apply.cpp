@@ -18,7 +18,7 @@
 #include "Loop.h"
 #include "LoopPasses.h"
 #include "LoopEventBuffer.h"
-#include "NoteEditSession.h"
+#include "EditSession.h"
 
 namespace {
 
@@ -107,7 +107,7 @@ RecordPass makeEditRecordFixtureRecordPassCh5_195830(PassId id) {
 void pushEditPassChange(LoopPasses& passes, EditPassId id, EditChangeList changes) {
   EditPass editPass{};
   editPass.id = id;
-  editPass.sessionType = EditSessionType::Note;
+  editPass.passType = EditPassType::Note;
   editPass.editPassIndex = 0;
   editPass.actionType = EditActionType::Update;
   editPass.propertyType = EditPropertyType::None;
@@ -343,8 +343,8 @@ void test_save_edit_appends_without_collapsing_takes() {
   TEST_ASSERT_EQUAL(3u, id);
   TEST_ASSERT_EQUAL(2u, loop.passes.capturePassCount());
   TEST_ASSERT_EQUAL(1u, loop.passes.editPasses.size());
-  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(EditSessionType::Note),
-                          static_cast<uint8_t>(loop.passes.editPasses[0].sessionType));
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(EditPassType::Note),
+                          static_cast<uint8_t>(loop.passes.editPasses[0].passType));
   TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(EditActionType::Delete),
                           static_cast<uint8_t>(loop.passes.editPasses[0].actionType));
   TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(EditPropertyType::None),
@@ -366,8 +366,8 @@ void test_save_note_edit_pass_sets_scoped_action_property_mapping() {
   const EditPassId delId = loop.saveNoteEditPass(2, EditChangeList{del});
   TEST_ASSERT_NOT_EQUAL(kInvalidEditPassId, delId);
   const EditPass& delPass = loop.passes.editPasses.back();
-  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(EditSessionType::Note),
-                          static_cast<uint8_t>(delPass.sessionType));
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(EditPassType::Note),
+                          static_cast<uint8_t>(delPass.passType));
   TEST_ASSERT_EQUAL_UINT8(2u, delPass.editPassIndex);
   TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(EditActionType::Delete),
                           static_cast<uint8_t>(delPass.actionType));

@@ -366,7 +366,8 @@ void Loop::rematerializeEditView(LoopEventStore& store) const {
   passes.materialize(store, loopLengthTicks);
 }
 
-EditPassId Loop::saveNoteEditPass(uint8_t noteEditPassIndex, EditChangeList changes) {
+EditPassId Loop::saveNoteEditPass(uint8_t noteEditPassIndex, EditChangeList changes,
+                                  EditPassType passType) {
   if (changes.empty()) {
     return kInvalidEditPassId;
   }
@@ -379,7 +380,7 @@ EditPassId Loop::saveNoteEditPass(uint8_t noteEditPassIndex, EditChangeList chan
   }
   EditPass editPass;
   editPass.id = nextPassId_++;
-  editPass.sessionType = EditSessionType::Note;
+  editPass.passType = passType;
   editPass.editPassIndex = noteEditPassIndex;
   editPass.actionType = deriveEditActionType(changes);
   editPass.propertyType = deriveEditPropertyType(changes, editPass.actionType);
@@ -707,7 +708,7 @@ void Loop::shiftActiveCapturePassTicks(int64_t delta) {
     if (editPass.state != EditPassState::Active) {
       continue;
     }
-    if (editPass.sessionType != EditSessionType::Note) {
+    if (editPass.passType != EditPassType::Note) {
       continue;
     }
     for (EditChange& change : editPass.changes) {

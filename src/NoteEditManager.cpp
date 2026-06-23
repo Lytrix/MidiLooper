@@ -30,9 +30,6 @@ NoteEditManager noteEditManager;
 
 NoteEditManager::NoteEditManager() 
     : loopEditManager(midiHandler) {
-    // Fader states are now managed by MidiFaderProcessor
-    // Set initial loop edit mode state
-    loopEditManager.setMainEditMode(currentMainEditMode == MAIN_MODE_LOOP_EDIT);
 }
 
 // Delegate MIDI note handling to V2 system
@@ -70,7 +67,7 @@ void NoteEditManager::handleMidiPitchbend(uint8_t channel, int16_t pitchValue) {
     
     // Route channel 16 based on current edit mode
     if (channel == PITCHBEND_SELECT_CHANNEL) {  // Channel 16
-        if (currentMainEditMode == MAIN_MODE_LOOP_EDIT) {
+        if (editManager.getEditSessionType() == EditSessionType::Loop) {
             // In loop edit mode: Route to loop start fader
             loopEditManager.handleLoopStartFaderInput(pitchValue, trackManager.getSelectedTrack());
             logger.log(CAT_MIDI, LOG_DEBUG, "Pitchbend ch=%d routed to loop start fader (LOOP_EDIT mode)", channel);
@@ -129,7 +126,7 @@ void NoteEditManager::handleMidiCC(uint8_t channel, uint8_t ccNumber, uint8_t va
 void NoteEditManager::moveNoteToPosition(Track& track, const NoteUtils::DisplayNote& currentNote, std::uint32_t targetTick) {
     editManager.beginGeometryMutation(track, NoteEditKind::Move, true);
     uint32_t fromStart = currentNote.startTick;
-    const NoteEditFocus& focus = editManager.getNoteEditSession().focus;
+    const NoteEditFocus& focus = editManager.getEditSession().focus;
     if (focus.active && focus.last.pitch == currentNote.note &&
         focus.last.startTick == currentNote.startTick) {
         fromStart = focus.last.startTick;
@@ -140,7 +137,7 @@ void NoteEditManager::moveNoteToPosition(Track& track, const NoteUtils::DisplayN
     logger.log(CAT_MIDI, LOG_DEBUG,
                "Note movement with overlap handling: from=%lu to=%lu difference=%ld overlapNotes=%zu",
                fromStart, targetTick, tickDifference,
-               editManager.getNoteEditSession().focus.overlapNotes.size());
+               editManager.getEditSession().focus.overlapNotes.size());
 
     editManager.ensureNoteEditFocusForLiveEdit(track, currentNote);
     if (focus.active) {
@@ -229,29 +226,11 @@ void NoteEditManager::processEncoderMovement(int rawDelta) {
 }
 
 void NoteEditManager::cycleEditMode(Track& track) {
-    // Use the main edit mode system instead of the old complex state system
-    cycleMainEditMode(track);
+    editManager.cycleEditSession(track);
 }
 
-void NoteEditManager::cycleMainEditMode(Track& track) {
-    if (currentMainEditMode == MAIN_MODE_NOTE_EDIT) {
-        // Treat NOTE_EDIT -> LOOP_EDIT as a full edit-session boundary so
-        // pending note-edit changes are committed/closed consistently.
-        if (editManager.isNoteEditActive() || editManager.getCurrentState() != nullptr) {
-            logger.log(CAT_MIDI, LOG_INFO,
-                       "Main Edit Mode toggle: exited edit mode via exitEditMode boundary");
-            editManager.exitEditMode(track);
-            return;
-        }
-        currentMainEditMode = MAIN_MODE_LOOP_EDIT;
-        sendMainEditModeChange(currentMainEditMode);
-        logger.log(CAT_MIDI, LOG_INFO, "Cycled to mode: LOOP_EDIT");
-        return;
-    }
-
-    currentMainEditMode = MAIN_MODE_NOTE_EDIT;
-    sendMainEditModeChange(currentMainEditMode);
-    logger.log(CAT_MIDI, LOG_INFO, "Cycled to mode: NOTE_EDIT");
+void NoteEditManager::cycleEditSession(Track& track) {
+    editManager.cycleEditSession(track);
 }
 
 void NoteEditManager::deleteSelectedNote(Track& track) {
@@ -265,7 +244,7 @@ void NoteEditManager::deleteSelectedNote(Track& track) {
 
     const std::vector<NoteUtils::DisplayNote> filteredNotes =
         selectableDisplayNotesForEditUi(track);
-    const NoteEditFocus& focus = editManager.getNoteEditSession().focus;
+    const NoteEditFocus& focus = editManager.getEditSession().focus;
     const uint8_t channel = track.getMidiChannel();
 
     int selectedIdx = editManager.getSelectedNoteIdx();
@@ -305,7 +284,7 @@ void NoteEditManager::deleteSelectedNote(Track& track) {
     const std::vector<NoteUtils::DisplayNote> notesAfter =
         selectableDisplayNotesForEditUi(track);
     const int refreshedIdx = filteredDisplayNoteIndexForNoteRef(
-        track.getMidiChannel(), editManager.getNoteEditSession().focus, notesAfter, deleteTargetRef);
+        track.getMidiChannel(), editManager.getEditSession().focus, notesAfter, deleteTargetRef);
     if (refreshedIdx >= 0 && refreshedIdx < static_cast<int>(notesAfter.size())) {
         const NoteUtils::DisplayNote& refreshed = notesAfter[static_cast<size_t>(refreshedIdx)];
         notePitch = refreshed.note;
@@ -390,59 +369,9 @@ void NoteEditManager::deleteSelectedNote(Track& track) {
 
     // Since we're using dedicated faders now, we don't need to manage complex edit modes
     // Just send the current main edit mode to keep the system synchronized
-    sendMainEditModeChange(currentMainEditMode);
+    editManager.sendEditSessionChange(editManager.getEditSessionType());
     
     logger.info("MIDI Encoder: Note deleted, maintaining current edit mode");
-}
-
-void NoteEditManager::sendMainEditModeChange(MainEditMode mode) {
-    // Keep local mode state aligned even when mode is set from startup orchestration.
-    currentMainEditMode = mode;
-
-    uint8_t program;
-    uint8_t triggerNote;
-    const char* modeName;
-    
-    switch (mode) {
-        case MAIN_MODE_LOOP_EDIT:
-            program = 0;
-            triggerNote = 100;
-            modeName = "LOOP_EDIT";
-            break;
-        case MAIN_MODE_NOTE_EDIT:
-            program = 1;
-            triggerNote = 0;
-            modeName = "NOTE_EDIT";
-            break;
-        default:
-            logger.log(CAT_MIDI, LOG_ERROR, "Unknown main edit mode: %d", static_cast<int>(mode));
-            return;
-    }
-    
-    // Send program change on channel 16
-    midiHandler.sendProgramChange(PROGRAM_CHANGE_CHANNEL, program);
-    
-    // Send trigger note on channel 16
-    midiHandler.sendLedFeedbackNoteOn(triggerNote, 64);
-    delay(10);  // Short note duration
-    midiHandler.sendLedFeedbackNoteOff(triggerNote);
-    
-    logger.log(CAT_MIDI, LOG_INFO, "Main Edit Mode: %s (Program %d, Note %d trigger)", 
-               modeName, program, triggerNote);
-    
-    // Update LoopEditManager mode and send feedback if switching to LOOP_EDIT mode
-    loopEditManager.setMainEditMode(mode == MAIN_MODE_LOOP_EDIT);
-    if (mode == MAIN_MODE_NOTE_EDIT) {
-        Track& track = trackManager.getSelectedTrack();
-        if (!editManager.isNoteEditActive()) {
-            editManager.openNoteEditSession(track);
-        } else {
-            editManager.enterDefaultNoteEditSessionState(track, clockManager.getCurrentTick());
-        }
-    }
-    if (mode == MAIN_MODE_LOOP_EDIT) {
-        loopEditManager.sendCurrentLoopLengthCC(trackManager.getSelectedTrack());
-    }
 }
 
 void NoteEditManager::sendStartNotePitchbend(Track& track) {
@@ -983,7 +912,7 @@ int resolveNoteIdxAtSlot(const std::vector<SelectNavigation::SelectNavSlot>& slo
         return candidates.front();
     }
 
-    const NoteEditFocus& focus = editManager.getNoteEditSession().focus;
+    const NoteEditFocus& focus = editManager.getEditSession().focus;
     if (editManager.isNoteEditActive() && focus.active) {
         const uint8_t movingPitch = focus.last.pitch;
         const uint32_t movingStart = focus.last.startTick;
@@ -1014,7 +943,7 @@ std::vector<NoteUtils::DisplayNote> NoteEditManager::selectableDisplayNotesForEd
         const auto& cachedNotes = track.getCachedNotes();
         return std::vector<NoteUtils::DisplayNote>(cachedNotes.begin(), cachedNotes.end());
     }
-    const NoteEditFocus& focus = editManager.getNoteEditSession().focus;
+    const NoteEditFocus& focus = editManager.getEditSession().focus;
     return filterSelectableDisplayNotes(track.editAwareMidiEvents(), focus,
                                         track.getMidiChannel(), loopLength);
 }
@@ -1033,9 +962,9 @@ std::vector<SelectNavigation::SelectNavSlot> NoteEditManager::buildSelectNavigat
 
 void NoteEditManager::handleSelectFaderInput(int16_t pitchValue, Track& track) {
     // Only process fader input when in NOTE_EDIT mode
-    if (currentMainEditMode != MAIN_MODE_NOTE_EDIT) {
+    if (editManager.getEditSessionType() != EditSessionType::Note) {
         logger.log(CAT_MIDI, LOG_DEBUG, "Select fader input ignored: not in NOTE_EDIT mode (current mode: %s)", 
-                   (currentMainEditMode == MAIN_MODE_LOOP_EDIT) ? "LOOP_EDIT" : "UNKNOWN");
+                   (editManager.getEditSessionType() == EditSessionType::Loop) ? "LOOP_EDIT" : "UNKNOWN");
         return;
     }
     
@@ -1141,7 +1070,7 @@ void NoteEditManager::handleSelectFaderInput(int16_t pitchValue, Track& track) {
                 editManager.commitAllPendingNoteEditActions(track);
                 editManager.rebuildNoteEditFocusForDisplayNote(track, notes[static_cast<size_t>(noteIdx)]);
                 const NoteRef selectRef = noteRefFromFilteredDisplayNote(
-                    track.getMidiChannel(), editManager.getNoteEditSession().focus, notes, noteIdx);
+                    track.getMidiChannel(), editManager.getEditSession().focus, notes, noteIdx);
                 editManager.applySelectNav(track, noteIdx, absoluteTargetTick, selectRef, true);
                 resetLengthEditingModeOnNoteSelect();
 
@@ -1165,9 +1094,9 @@ void NoteEditManager::handleSelectFaderInput(int16_t pitchValue, Track& track) {
 
 void NoteEditManager::handleCoarseFaderInput(int16_t pitchValue, Track& track) {
     // Only process fader input when in NOTE_EDIT mode
-    if (currentMainEditMode != MAIN_MODE_NOTE_EDIT) {
+    if (editManager.getEditSessionType() != EditSessionType::Note) {
         logger.log(CAT_MIDI, LOG_DEBUG, "Coarse fader input ignored: not in NOTE_EDIT mode (current mode: %s)", 
-                   (currentMainEditMode == MAIN_MODE_LOOP_EDIT) ? "LOOP_EDIT" : "UNKNOWN");
+                   (editManager.getEditSessionType() == EditSessionType::Loop) ? "LOOP_EDIT" : "UNKNOWN");
         return;
     }
     
@@ -1213,7 +1142,7 @@ void NoteEditManager::handleCoarseFaderInput(int16_t pitchValue, Track& track) {
         uint32_t currentNoteStartTick = currentNote.startTick;
         uint32_t loopStartTick = track.getLoopStartTick();
         
-        if (editManager.getNoteEditSession().focus.active) {
+        if (editManager.getEditSession().focus.active) {
             logger.log(CAT_MIDI, LOG_DEBUG, "Coarse fader using focus.last: pitch=%d, start=%lu",
                        currentNote.note,
                        static_cast<unsigned long>(currentNote.startTick));
@@ -1319,9 +1248,9 @@ void NoteEditManager::handleCoarseFaderInput(int16_t pitchValue, Track& track) {
 
 void NoteEditManager::handleFineFaderInput(uint8_t ccValue, Track& track) {
     // Only process fader input when in NOTE_EDIT mode
-    if (currentMainEditMode != MAIN_MODE_NOTE_EDIT) {
+    if (editManager.getEditSessionType() != EditSessionType::Note) {
         logger.log(CAT_MIDI, LOG_DEBUG, "Fine fader input ignored: not in NOTE_EDIT mode (current mode: %s)", 
-                   (currentMainEditMode == MAIN_MODE_LOOP_EDIT) ? "LOOP_EDIT" : "UNKNOWN");
+                   (editManager.getEditSessionType() == EditSessionType::Loop) ? "LOOP_EDIT" : "UNKNOWN");
         return;
     }
     
@@ -1347,7 +1276,7 @@ void NoteEditManager::handleFineFaderInput(uint8_t ccValue, Track& track) {
         NoteUtils::DisplayNote currentNote = editManager.liveEditDisplayNoteAtSelect(track);
         uint32_t loopStartTick = track.getLoopStartTick();
         
-        if (editManager.getNoteEditSession().focus.active) {
+        if (editManager.getEditSession().focus.active) {
             logger.log(CAT_MIDI, LOG_DEBUG, "Fine fader using focus.last: pitch=%d, start=%lu",
                        currentNote.note,
                        static_cast<unsigned long>(currentNote.startTick));
@@ -1455,9 +1384,9 @@ void NoteEditManager::handleFineFaderInput(uint8_t ccValue, Track& track) {
 
 void NoteEditManager::handleNoteValueFaderInput(uint8_t ccValue, Track& track) {
     // Only process fader input when in NOTE_EDIT mode
-    if (currentMainEditMode != MAIN_MODE_NOTE_EDIT) {
+    if (editManager.getEditSessionType() != EditSessionType::Note) {
         logger.log(CAT_MIDI, LOG_DEBUG, "Note value fader input ignored: not in NOTE_EDIT mode (current mode: %s)", 
-                   (currentMainEditMode == MAIN_MODE_LOOP_EDIT) ? "LOOP_EDIT" : "UNKNOWN");
+                   (editManager.getEditSessionType() == EditSessionType::Loop) ? "LOOP_EDIT" : "UNKNOWN");
         return;
     }
     
@@ -1484,7 +1413,7 @@ void NoteEditManager::handleNoteValueFaderInput(uint8_t ccValue, Track& track) {
         const uint8_t currentNoteValue = liveNote.note;
         uint32_t noteStart = liveNote.startTick;
         uint32_t noteEnd = liveNote.endTick;
-        if (editManager.getNoteEditSession().focus.active) {
+        if (editManager.getEditSession().focus.active) {
             logger.log(CAT_MIDI, LOG_DEBUG,
                        "Pitch edit using focus.last: pitch=%d, start=%lu, end=%lu",
                        currentNoteValue,
@@ -1640,7 +1569,7 @@ void NoteEditManager::toggleLengthEditingMode() {
 
 void NoteEditManager::onTrackChanged(Track& newTrack) {
     // If we're in loop edit mode, send the new track's loop length as CC feedback
-    if (currentMainEditMode == MAIN_MODE_LOOP_EDIT) {
+    if (editManager.getEditSessionType() == EditSessionType::Loop) {
         loopEditManager.onTrackChanged(newTrack);
     }
 }

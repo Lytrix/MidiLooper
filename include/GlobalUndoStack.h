@@ -52,7 +52,7 @@ struct UndoEntry {
 
   EditPassIdList editPassIds;
   uint8_t editPassIndex = 0;
-  EditSessionType editSessionType = EditSessionType::Note;
+  EditPassType editPassType = EditPassType::Note;
 };
 
 using UndoEntryVec = std::vector<UndoEntry, ExternalMemoryFirstAllocator<UndoEntry>>;

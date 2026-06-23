@@ -51,7 +51,7 @@ void EditLengthNoteState::onEncoderTurn(EditManager& manager, Track& track, int 
     const uint8_t notePitch = liveNote.note;
     const uint32_t noteStart = liveNote.startTick;
     uint32_t currentEnd = liveNote.endTick;
-    const NoteEditFocus& focus = manager.getNoteEditSession().focus;
+    const NoteEditFocus& focus = manager.getEditSession().focus;
     if (focus.active && focus.last.pitch == liveNote.note &&
         focus.last.startTick == liveNote.startTick) {
         currentEnd = focus.last.endTick;

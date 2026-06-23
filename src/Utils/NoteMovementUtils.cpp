@@ -17,11 +17,11 @@ namespace NoteMovementUtils {
 namespace {
 
 NoteEditFocus& editFocus(EditManager& manager) {
-    return manager.getNoteEditSession().focus;
+    return manager.getEditSession().focus;
 }
 
 const NoteEditFocus& editFocus(const EditManager& manager) {
-    return manager.getNoteEditSession().focus;
+    return manager.getEditSession().focus;
 }
 
 OverlapNoteRestore overlapNoteToRestorePayload(const OverlapNote& entry) {
@@ -646,7 +646,7 @@ void finalReconstructAndSelect(Track& track,
         (newEnd >= loopLength && loopLength > 0) ? (newEnd % loopLength) : newEnd;
 
     if (manager.isNoteEditActive()) {
-        const NoteEditFocus& focus = manager.getNoteEditSession().focus;
+        const NoteEditFocus& focus = manager.getEditSession().focus;
         const std::vector<NoteUtils::DisplayNote> filtered = filterSelectableDisplayNotes(
             midiEvents, focus, track.getMidiChannel(), loopLength);
 
@@ -877,7 +877,7 @@ bool applyPitchChange(Track& track, EditManager& manager,
     NoteUtils::removeDuplicateNotePairsAtSpan(midiEvents, newNoteValue, noteStart, noteEnd);
     NoteUtils::ensureNoteOffsBeforeNoteOnsAtTick(midiEvents, newNoteValue, noteStart);
 
-    noteEditFocusApplyPitch(manager.getNoteEditSession().focus, newNoteValue, noteStart, noteEnd,
+    noteEditFocusApplyPitch(manager.getEditSession().focus, newNoteValue, noteStart, noteEnd,
                             loopLength);
     track.invalidateCaches();
     return true;
@@ -1009,9 +1009,9 @@ void moveNoteWithOverlapHandling(Track& track, EditManager& manager,
 
         noteOnEvent->tick = newStart;
         noteOffEvent->tick = newEnd;
-        noteEditFocusApplyMoveEnd(manager.getNoteEditSession().focus, newStart, newEnd);
+        noteEditFocusApplyMoveEnd(manager.getEditSession().focus, newStart, newEnd);
         if (actualCurrentPitch != currentNote.note) {
-            noteEditFocusApplyPitch(manager.getNoteEditSession().focus, actualCurrentPitch,
+            noteEditFocusApplyPitch(manager.getEditSession().focus, actualCurrentPitch,
                                     newStart, newEnd, loopLength);
         }
         logger.log(CAT_MIDI, LOG_DEBUG, "Moved note events: pitch=%u start->%lu end->%lu", movingNotePitch, newStart, newEnd);
@@ -1144,7 +1144,7 @@ void changeLengthWithOverlapHandling(Track& track, EditManager& manager,
 
     if (noteOffEvent) {
         noteOffEvent->tick = newEnd;
-        noteEditFocusApplyLengthEnd(manager.getNoteEditSession().focus, newEnd);
+        noteEditFocusApplyLengthEnd(manager.getEditSession().focus, newEnd);
         // origEnd / commitBaseline.end stay at length-session baseline so
         // commitAllPendingNoteEditActions can detect pending ChangeLength on reselect.
         manager.setBracketTick(newEnd % loopLength);
@@ -1193,7 +1193,7 @@ void extendShortenedNotes(MidiEventVec& midiEvents,
             noteOffEvent->tick = newEndTick;
             
             // Update the tracking in overlap notes
-            for (auto& [ref, entry] : manager.getNoteEditSession().focus.overlapNotes) {
+            for (auto& [ref, entry] : manager.getEditSession().focus.overlapNotes) {
                 if (entry.baseline.pitch == noteToExtend.pitch &&
                     entry.baseline.startTick == noteToExtend.startTick &&
                     entry.state == OverlapNoteStoreState::Shortened) {

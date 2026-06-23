@@ -203,7 +203,7 @@ void BarStepButtonHandler::handleNoteOn(uint8_t note, uint8_t velocity) {
     bool potentialHoldTwo = (info.type == BarStepButtonType::BAR && pressedBarCount() >= 2) ||
                             (info.type == BarStepButtonType::SIXTEENTH && pressed16thCount() >= 2);
 
-    bool isLoopEdit = noteEditManager.getCurrentMainEditMode() == NoteEditManager::MAIN_MODE_LOOP_EDIT;
+    bool isLoopEdit = editManager.getEditSessionType() == EditSessionType::Loop;
     if (isLoopEdit && trackRef.isJamPlaybackActive() && !potentialHoldTwo) {
       uint32_t loopLength = trackRef.getLoopLength();
       uint32_t loopStartTick = trackRef.getLoopStartTick();
@@ -397,7 +397,7 @@ void BarStepButtonHandler::processPendingPresses() {
 
 void BarStepButtonHandler::onPressDetected(const BarStepButtonInfo& info, BarStepPressType pressType,
                                            uint8_t rangeStart, uint8_t rangeEnd, bool didImmediateSeek) {
-  bool isLoopEdit = noteEditManager.getCurrentMainEditMode() == NoteEditManager::MAIN_MODE_LOOP_EDIT;
+  bool isLoopEdit = editManager.getEditSessionType() == EditSessionType::Loop;
   testLog("BarStepButton: onPressDetected type=%s step=%d pressType=%d mode=%s [TEST POINT: action dispatch]",
           info.type == BarStepButtonType::SIXTEENTH ? "16th" : "bar", info.stepIndex, (int)pressType,
           isLoopEdit ? "LOOP_EDIT" : "NOTE_EDIT");

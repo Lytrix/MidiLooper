@@ -77,7 +77,7 @@ void MidiFaderProcessor::processFaderInput(MidiMapping::FaderType faderType, int
     state.lastCCValue = ccValue;
     state.lastUpdateTime = now;
     
-    const NoteEditFocus& focus = editManager.getNoteEditSession().focus;
+    const NoteEditFocus& focus = editManager.getEditSession().focus;
     if (editManager.isNoteEditActive() && focus.active && currentDriverFader != faderType) {
         logger.log(CAT_MIDI, LOG_DEBUG, "Committing note movement - switching from fader %d to fader %d", 
                    (int)currentDriverFader, (int)faderType);
@@ -250,7 +250,7 @@ void MidiFaderProcessor::initializeFaderStates() {
 }
 
 void MidiFaderProcessor::commitMovingNote() {
-    const NoteEditFocus& focus = editManager.getNoteEditSession().focus;
+    const NoteEditFocus& focus = editManager.getEditSession().focus;
     if (!editManager.isNoteEditActive() || !focus.active) {
         return;
     }

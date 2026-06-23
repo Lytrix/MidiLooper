@@ -50,7 +50,7 @@ With default **`--require-m8-pass-verify`** (on):
 - Record prelude completes (fixture `REVT` count matches fixture notes).
 - Edit session markers present (`entered note edit mode`, `Created 32nd note`, `Deleting note`, `POSITION EDIT`, `exited edit mode`, …).
 - **Exactly one** `NoteEditSessionCommitted` between enter and exit edit.
-- In-edit undo/redo (default on): `NoteEditSession undo` and `NoteEditSession redo` in serial.
+- In-edit undo/redo (default on): `EditSession undo` and `EditSession redo` in serial.
 - Post-exit undo/redo (default on): `Scoped edit pass undone` / `Scoped edit pass redone` after exit (legacy `Note edit pass undone/redone` still accepted on replay). Script waits for `PERS,result,ok` after edit exit before post-exit button presses.
 - Move/display / overlap checks pass for the standard fixture (see script report `issues`).
 

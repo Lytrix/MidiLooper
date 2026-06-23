@@ -2,6 +2,7 @@
 //  Licensed under the PolyForm Noncommercial 1.0.0
 
 #include "LoopEditManager.h"
+#include "EditManager.h"
 #include "Globals.h"
 #include "ClockManager.h"
 #include "TrackManager.h"
@@ -11,6 +12,10 @@ LoopEditManager::LoopEditManager(MidiHandler& midiHandler)
     : midiHandler(midiHandler) {
 }
 
+bool LoopEditManager::isLoopEditMode() const {
+    return editManager.getEditSessionType() == EditSessionType::Loop;
+}
+
 void LoopEditManager::scheduleDebouncedLoopEditSave() {
     pendingLoopEditSaveAtMs = millis() + LOOP_EDIT_SAVE_DEBOUNCE_MS;
 }
@@ -18,7 +23,7 @@ void LoopEditManager::scheduleDebouncedLoopEditSave() {
 
 void LoopEditManager::handleLoopStartFaderInput(int16_t pitchValue, Track& track) {
     // Only process fader input when in LOOP_EDIT mode
-    if (!currentMainEditMode) {
+    if (!isLoopEditMode()) {
         logger.log(CAT_MIDI, LOG_DEBUG, "Loop start fader input ignored: not in LOOP_EDIT mode");
         return;
     }
@@ -148,7 +153,7 @@ void LoopEditManager::updateLoopEndpointAfterGracePeriod(Track& track) {
 
 void LoopEditManager::handleLoopLengthInput(uint8_t ccValue, Track& track) {
     // Only process loop length input when in LOOP_EDIT mode
-    if (!currentMainEditMode) {
+    if (!isLoopEditMode()) {
         logger.log(CAT_MIDI, LOG_DEBUG, "Loop length input ignored: not in LOOP_EDIT mode");
         return;
     }
@@ -223,7 +228,7 @@ uint8_t LoopEditManager::calculateCCFromLoopLength(uint32_t loopLength) {
 
 void LoopEditManager::onTrackChanged(Track& newTrack) {
     // If we're in loop edit mode, send the new track's loop length as CC feedback
-    if (currentMainEditMode) {
+    if (isLoopEditMode()) {
         sendCurrentLoopLengthCC(newTrack);
         logger.log(CAT_MIDI, LOG_DEBUG, "Track changed while in loop edit mode, updating loop length CC");
     }

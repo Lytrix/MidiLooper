@@ -73,14 +73,14 @@ void applyActiveEditPasses(MidiEventVec& events, const EditPassVec& editPasses,
     if (editPass.state != EditPassState::Active) {
       continue;
     }
-    switch (editPass.sessionType) {
-      case EditSessionType::Note:
+    switch (editPass.passType) {
+      case EditPassType::Note:
         applyNoteEditPass(editPass);
         break;
-      case EditSessionType::ControlChange:
+      case EditPassType::ControlChange:
         applyControlChangeEditPass(editPass);
         break;
-      case EditSessionType::Audio:
+      case EditPassType::Audio:
         break;
     }
   }

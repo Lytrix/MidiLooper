@@ -93,7 +93,7 @@ void setup() {
   looper.setup();  // SD + loadState; setSelectedTrack triggers forceLedUpdate (midi now ready)
 
   // Startup policy: enter LOOP_EDIT deterministically and sync DROID explicitly.
-  noteEditManager.sendMainEditModeChange(NoteEditManager::MAIN_MODE_LOOP_EDIT);
+  editManager.sendEditSessionChange(EditSessionType::Loop);
 
   for (uint8_t i = 0; i < trackManager.getTrackCount(); ++i) {
     TrackState state = trackManager.getTrack(i).getState();

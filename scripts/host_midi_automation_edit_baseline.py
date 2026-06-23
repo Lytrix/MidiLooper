@@ -853,7 +853,7 @@ def _find_session_enter_anchor(lines: list[str]) -> Optional[int]:
     if enter_idx is not None:
         return enter_idx
     for i, line in enumerate(lines):
-        if "NoteEditSession opened editPass=0" in line:
+        if "EditSession opened editPass=0" in line:
             return i
     return None
 
@@ -1016,8 +1016,8 @@ def _verify_session_undo_redo_routing(lines: list[str]) -> dict[str, object]:
     if enter_idx is not None and exit_idx is not None:
         in_window = lines[enter_idx:exit_idx]
         post_window = lines[exit_idx:]
-        in_edit_undo = sum(1 for line in in_window if "NoteEditSession undo" in line)
-        in_edit_redo = sum(1 for line in in_window if "NoteEditSession redo" in line)
+        in_edit_undo = sum(1 for line in in_window if "EditSession undo" in line)
+        in_edit_redo = sum(1 for line in in_window if "EditSession redo" in line)
         post_exit_undo = sum(
             1
             for line in post_window
@@ -2649,7 +2649,7 @@ def _verify_delay_move_insert_reorder(
             (
                 i
                 for i, line in enumerate(lines[last_create:], start=last_create)
-                if "NoteEditSession undo" in line or "Overdub undone" in line
+                if "EditSession undo" in line or "Overdub undone" in line
             ),
             -1,
         )
@@ -2657,7 +2657,7 @@ def _verify_delay_move_insert_reorder(
             (
                 i
                 for i, line in enumerate(lines[last_create:], start=last_create)
-                if "NoteEditSession redo" in line or "Overdub redone" in line
+                if "EditSession redo" in line or "Overdub redone" in line
             ),
             -1,
         )
@@ -3257,7 +3257,7 @@ def _verify_split_victim_round_trip(
 
 def _count_note_edit_pass_undo_logs(lines: list[str]) -> int:
     return (
-        _count_serial_substrings(lines, "NoteEditSession undo")
+        _count_serial_substrings(lines, "EditSession undo")
         + _count_serial_substrings_any(lines, _LEGACY_EDIT_PASS_UNDONE_MARKERS)
         + _count_serial_substrings(lines, "Overdub undone")
     )
@@ -3265,7 +3265,7 @@ def _count_note_edit_pass_undo_logs(lines: list[str]) -> int:
 
 def _count_note_edit_pass_redo_logs(lines: list[str]) -> int:
     return (
-        _count_serial_substrings(lines, "NoteEditSession redo")
+        _count_serial_substrings(lines, "EditSession redo")
         + _count_serial_substrings_any(lines, _LEGACY_EDIT_PASS_REDONE_MARKERS)
         + _count_serial_substrings(lines, "Overdub redone")
     )
@@ -3293,8 +3293,8 @@ def _verify_m8_edit_pass_commit(lines: list[str]) -> dict[str, object]:
         for w in window
         if "NoteEditPassClosed" in w or "NoteEditSessionCommitted" in w
     )
-    in_edit_undo_redo = any("NoteEditSession undo" in w for w in window) and any(
-        "NoteEditSession redo" in w for w in window
+    in_edit_undo_redo = any("EditSession undo" in w for w in window) and any(
+        "EditSession redo" in w for w in window
     )
     replacement_count = sum(1 for w in window if "NoteEditPass replaced" in w)
     if committed_count != 1:
@@ -3795,8 +3795,8 @@ def _run_edit_scenarios(
             undo_redo_delay_ms=undo_redo_delay_ms,
             phase="in-edit",
         )
-        markers.append("NoteEditSession undo")
-        markers.append("NoteEditSession redo")
+        markers.append("EditSession undo")
+        markers.append("EditSession redo")
         # Force a deterministic post-redo read path so serial verification can
         # confirm the inserted note is present after in-edit session redo.
         print("[edit-hitl] post-redo probe: enter select mode")

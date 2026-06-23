@@ -56,7 +56,7 @@ void EditStartNoteState::onEncoderTurn(EditManager& manager, Track& track, int d
     manager.ensureNoteEditFocusForLiveEdit(track, liveNote);
 
     uint32_t fromStart = liveNote.startTick;
-    const NoteEditFocus& focus = manager.getNoteEditSession().focus;
+    const NoteEditFocus& focus = manager.getEditSession().focus;
     if (focus.active && focus.last.pitch == liveNote.note &&
         focus.last.startTick == liveNote.startTick) {
         fromStart = focus.last.startTick;

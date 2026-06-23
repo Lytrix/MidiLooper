@@ -44,10 +44,10 @@ flowchart LR
 | Layer | Storage | Global undo (when applicable) |
 |-------|---------|------------------------------|
 | **recordPass** / **overdubPass** | `Loop::passes` capture passes (chunk refs) | **RecordPassAdded** / **OverdubPassAdded** (disable pass on undo) |
-| **editPass** | `Loop::passes.editPasses[]` (`EditSessionType` + `EditActionType` + `EditPropertyType`; legacy note payload remains `EditChange`) | **NoteEditPassClosed** / **ControlChangeEditPassClosed** (per closed edit-pass batch) |
+| **editPass** | `Loop::passes.editPasses[]` (`EditPassType` + `EditActionType` + `EditPropertyType`; legacy note payload remains `EditChange`) | **NoteEditPassClosed** / **ControlChangeEditPassClosed** (per closed edit-pass batch) |
 | **NoteEditSession** | RAM `noteEditSession.store` while editing | `NoteEditSessionUndoStack` (before `saveNoteEditPass`) |
 
-- **`LoopPasses::materialize()`** — merge active capture passes, then overlay active **editPasses** in storage order (`EditSessionType::Note` apply path; explicit `ControlChange` no-op stub until CC edit apply ships).
+- **`LoopPasses::materialize()`** — merge active capture passes, then overlay active **editPasses** in storage order (`EditPassType::Note` apply path; explicit `ControlChange` no-op stub until CC edit apply ships).
 - **`saveNoteEditPass()`** — one committed **editPass** row; may share a **noteEditPassIndex** batch.
 - **`closeNoteEditPass()`** — note-edit exit / overdub-while-editing boundary; pushes **NoteEditPassClosed** for all **editPass** ids in the closed batch.
 - **§0.6.1 record routing** — at most one **recordPass** per slot; a second record stop routes to **overdubPass** (`effectiveCapturePassPhase` in `sealCapture`).
@@ -231,11 +231,12 @@ Hardware **Button A double-press** calls `undoOverdub` directly. MIDI record dou
 
 ## SD persistence
 
-**Files:** `src/StorageManager.cpp`, `include/StorageLoopIo.h`, `src/StorageLoopIo.cpp` (format **v4**)
+**Files:** `src/StorageManager.cpp`, `include/StorageLoopIo.h`, `src/StorageLoopIo.cpp`
 
 - Per-slot loop pool entries persist **`LoopPasses`** (capture passes + **editPasses** tail) via `writeLoopPersisted` / `readLoopPersisted`.
 - `writeLoopPersisted` streams capture-pass events in bounded batches and records max batch size through storage-loop-io test hooks; the deferred save path writes live loop pool entries as metadata, capture-pass headers, and one capture chunk per main-loop iteration.
-- Scoped edit tails write `EditSessionType` / `EditActionType` / `EditPropertyType` metadata and dual-read legacy v4 note-edit rows during migration.
+- **STORAGE_VERSION** **5** (when **`scoped-edit-pass-payload`** ships): **loadState** rejects v1–v4; firmware starts empty. **No** edit-tail migration.
+- v5 **editPasses** tail: canonical **EditPassType** row wire only (**NoteRef** + property fields); **no** **EditChange** on disk.
 - **`startLoopTick`** is stored in each loop snapshot and restored by **`applySnapshotToLoop`** on load (phase origin for `tickPhaseInLoop`).
 - Truncated or corrupt **editPasses** tails fail **`readPersistedEditsTail`** (load aborts — no silent empty edits).
 - Invalid persisted **`slotLoopId`** values outside `0..MAX_LOOPS_PER_TRACK-1` are repaired to the slot pool index on load (warning logged).
