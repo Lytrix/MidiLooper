@@ -131,8 +131,9 @@ private:
     void drawTrackStatus(uint8_t selectedTrack, uint32_t currentMillis);
     // Piano roll rendering
     void drawPianoRoll(uint32_t currentTick, Track& selectedTrack, uint8_t displaySlot, const DisplayNoteVec& notes);
-    void drawOverviewStrip(uint32_t fullLoopLength, uint32_t windowStart, uint32_t windowLength,
-                           uint32_t playheadTick, const DisplayNoteVec& notes, int y0, int y1);
+    void drawOverviewStrip(uint32_t fullLoopLength, uint32_t loopOriginTick, uint32_t windowStart,
+                           uint32_t windowLength, uint32_t playheadTick, int minPitch, int maxPitch,
+                           const DisplayNoteVec& notes, int y0, int y1);
     bool shouldAutoFollowDetailedWindow(const Track& track, uint32_t loopLength) const;
     // Info area rendering
     void drawInfoArea(uint32_t currentTick, Track& selectedTrack, uint8_t displaySlot);

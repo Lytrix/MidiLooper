@@ -910,34 +910,44 @@ void DisplayManager::drawNoteBar(const DisplayNote& e, int y, uint32_t s, uint32
     }
 }
 
-void DisplayManager::drawOverviewStrip(uint32_t fullLoopLength, uint32_t windowStart,
-                                       uint32_t windowLength, uint32_t playheadTick,
+void DisplayManager::drawOverviewStrip(uint32_t fullLoopLength, uint32_t loopOriginTick,
+                                       uint32_t windowStart, uint32_t windowLength,
+                                       uint32_t playheadTick, int minPitch, int maxPitch,
                                        const DisplayNoteVec& notes, int y0, int y1) {
     if (fullLoopLength == 0 || y1 < y0) {
         return;
     }
     const int width = pianoRollWidth();
-    const uint32_t loopBars = (fullLoopLength + Config::TICKS_PER_BAR - 1) / Config::TICKS_PER_BAR;
-    const uint32_t barsPerSegment =
-        DisplayWindowUtils::chooseBarsPerSegment(loopBars, static_cast<uint32_t>(width));
-    const uint32_t segmentTicks = barsPerSegment * Config::TICKS_PER_BAR;
-    const uint32_t segmentCount = (fullLoopLength + segmentTicks - 1) / segmentTicks;
-    for (uint32_t seg = 0; seg < segmentCount; ++seg) {
-        const uint32_t segStart = seg * segmentTicks;
-        const uint32_t segEnd = std::min(fullLoopLength, segStart + segmentTicks);
-        const bool hasNotes =
-            DisplayWindowUtils::segmentHasNotes(notes, fullLoopLength, segStart, segEnd);
-        const int x0 = TRACK_MARGIN + map(segStart, 0, fullLoopLength, 0, width);
-        const int x1 = TRACK_MARGIN + map(segEnd, 0, fullLoopLength, 0, width);
-        const uint8_t brightness = hasNotes ? 6 : 2;
-        _display.gfx.draw_rect_filled(_display.api.getFrameBuffer(), x0, y0, x1, y1, brightness);
+    constexpr uint8_t kOverviewRestBrightness = 1;
+    constexpr uint8_t kOverviewNoteBrightness = 5;
+    constexpr uint8_t kOverviewWindowOutlineBrightness = 10;
+
+    _display.gfx.draw_rect_filled(_display.api.getFrameBuffer(), TRACK_MARGIN, y0,
+                                  TRACK_MARGIN + width, y1, kOverviewRestBrightness);
+
+    for (const DisplayNote& n : notes) {
+        uint32_t startTick = (n.startTick >= loopOriginTick)
+                                 ? (n.startTick - loopOriginTick)
+                                 : (n.startTick + fullLoopLength - loopOriginTick);
+        startTick %= fullLoopLength;
+        uint32_t endTick = (n.endTick >= loopOriginTick) ? (n.endTick - loopOriginTick)
+                                                         : (n.endTick + fullLoopLength - loopOriginTick);
+        endTick %= fullLoopLength;
+        if (startTick >= fullLoopLength && endTick >= fullLoopLength) {
+            continue;
+        }
+
+        int y = map(n.note, minPitch, maxPitch, y1, y0);
+        y = constrain(y, y0, y1);
+        drawNoteBar(n, y, startTick, endTick, fullLoopLength, kOverviewNoteBrightness);
     }
 
     const uint32_t windowEnd = windowStart + windowLength;
     const int boxX0 = TRACK_MARGIN + map(windowStart % fullLoopLength, 0, fullLoopLength, 0, width);
     const int boxX1 =
         TRACK_MARGIN + map(std::min(windowEnd, fullLoopLength), 0, fullLoopLength, 0, width);
-    _display.gfx.draw_rect(_display.api.getFrameBuffer(), boxX0, y0, boxX1, y1, 10);
+    _display.gfx.draw_rect(_display.api.getFrameBuffer(), boxX0, y0, boxX1, y1,
+                           kOverviewWindowOutlineBrightness);
 
     const float displayPlayhead = resolveDisplayPlayheadInLoop(playheadTick, fullLoopLength);
     const int playX = mapPlayheadTickToScreenX(displayPlayhead, fullLoopLength);
@@ -1029,8 +1039,8 @@ void DisplayManager::drawPianoRoll(uint32_t currentTick, Track& selectedTrack, u
         }
 
         if (useBoundedWindow) {
-            drawOverviewStrip(loopLength, windowStart, windowLength, jamPos, notes, kOverviewStripY0,
-                              kOverviewStripY1);
+            drawOverviewStrip(loopLength, jamStartTick, windowStart, windowLength, jamPos, minPitch,
+                              maxPitch, notes, kOverviewStripY0, kOverviewStripY1);
             if (jamPos >= windowStart && jamPos < windowStart + windowLength) {
                 const float relativePlayhead =
                     static_cast<float>(jamPos - windowStart) + clockManager.getDisplayTickPhase();
