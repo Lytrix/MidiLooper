@@ -16,7 +16,9 @@
 #include "MidiHandler.h"
 #include "Utils/HotPathTelemetry.h"
 #include "Utils/DebugSessionCapture.h"
+#include "Utils/DisplayWindowUtils.h"
 #include "TrackStateMachine.h"
+#include <algorithm>
 #include <string>
 #include <Font5x7Fixed.h>
 #include <Font5x7FixedMono.h>
@@ -32,8 +34,37 @@ constexpr int SIDEBAR_SEPARATOR_BRIGHTNESS = 2;
 constexpr int MODE_VALUE_BRIGHTNESS = 3; // match brightness of bottom-strip labels
 constexpr int SIDEBAR_TEXT_BRIGHTNESS = 5;
 constexpr int SIDEBAR_VALUE_BRIGHTNESS = 5; // match LEN / numeric field values in drawInfoField
+constexpr int kDetailedPianoRollRows = 32;
+constexpr int kDetailedPianoRollY0 = 0;
+constexpr int kDetailedPianoRollY1 = kDetailedPianoRollRows - 1;
+constexpr int kOverviewGapRows = 1;
+constexpr int kOverviewStripRows = 8;
+constexpr int kOverviewStripY0 = kDetailedPianoRollY1 + kOverviewGapRows + 1;
+constexpr int kOverviewStripY1 = kOverviewStripY0 + kOverviewStripRows - 1;
+constexpr int kPianoRollRegionBottomY = kOverviewStripY1;
 constexpr int pianoRollRightX() { return DISPLAY_WIDTH - SIDEBAR_WIDTH - 1; }
 constexpr int pianoRollWidth() { return pianoRollRightX() - DisplayManager::TRACK_MARGIN; }
+
+float resolveDisplayPlayheadInLoop(uint32_t playheadTick, uint32_t loopLength) {
+    if (loopLength == 0) {
+        return 0.0f;
+    }
+    float tick = static_cast<float>(playheadTick % loopLength) + clockManager.getDisplayTickPhase();
+    const float loopLengthF = static_cast<float>(loopLength);
+    if (tick >= loopLengthF) {
+        tick -= loopLengthF;
+    }
+    return tick;
+}
+
+int mapPlayheadTickToScreenX(float tickInView, uint32_t viewLength) {
+    if (viewLength == 0) {
+        return DisplayManager::TRACK_MARGIN;
+    }
+    const float x =
+        (tickInView / static_cast<float>(viewLength)) * static_cast<float>(pianoRollWidth());
+    return DisplayManager::TRACK_MARGIN + static_cast<int>(x);
+}
 
 uint32_t clampOpenNoteCloseTick(uint32_t closeTick, uint32_t loopLength) {
     if (loopLength == 0) {
@@ -399,6 +430,17 @@ const DisplayNoteVec& DisplayManager::resolveDisplayNotes(const Track& track, ui
             liveDisplayNotes.assign(loop.capturePreview.notes.begin(),
                                     loop.capturePreview.notes.end());
             committedDisplayEnd = 0;
+            if (liveDisplayNotes.empty() && track.isRecording() && !loop.capture.store.empty()) {
+                MidiEventVec captureFlat;
+                Loop& mutLoop = const_cast<Loop&>(loop);
+                mutLoop.ensureCaptureEventsSorted();
+                loop.capture.store.flatten(captureFlat);
+                if (!captureFlat.empty()) {
+                    const NoteUtils::DisplayNoteVec reconstructed =
+                        NoteUtils::reconstructDisplayNotes(captureFlat, liveLoopLength, false);
+                    liveDisplayNotes.assign(reconstructed.begin(), reconstructed.end());
+                }
+            }
         };
 
         if (cacheCold || contextChanged || eventsShrunk || eventsAdded || loopLengthChanged ||
@@ -515,6 +557,22 @@ void DisplayManager::emitDisplayCaptureSnapshot(const Track& track, uint8_t disp
     const size_t bufferEvents =
         (track.isRecording() && !track.isPlaying()) ? loop.capture.store.size()
                                                     : loop.liveEventCount();
+    const uint32_t boundedThreshold =
+        DisplayWindowUtils::kMaxDetailedWindowBars * Config::TICKS_PER_BAR;
+    if (!track.isJamming() && loopLen > boundedThreshold && displaySlot < kDisplaySlotCount) {
+        const uint8_t windowBars =
+            std::min<uint8_t>(detailedWindowBars_[displaySlot],
+                              DisplayWindowUtils::kMaxDetailedWindowBars);
+        const uint32_t windowStart = detailedWindowStartTick_[displaySlot];
+        const uint32_t windowLength = static_cast<uint32_t>(windowBars) * Config::TICKS_PER_BAR;
+        const DisplayNoteVec windowNotes = DisplayWindowUtils::filterDisplayNotesToWindow(
+            frameNotes, windowStart, windowLength, loopLen);
+        SC_DISP_WINDOW(displaySlot, TrackStateMachine::toString(track.getState()), loopLen,
+                       bufferEvents, loop.visualCache.notes.size(), frameNotes.size(),
+                       bufferEvents, loop.hasPublishedEvents() ? 1 : 0, windowStart, windowBars,
+                       windowNotes.size());
+        return;
+    }
 
     SC_DISP(displaySlot, TrackStateMachine::toString(track.getState()), loopLen,
             bufferEvents, loop.visualCache.notes.size(), frameNotes.size(),
@@ -696,44 +754,81 @@ int DisplayManager::noteToScreenY(uint8_t note) {
 }
 
 // --- Helper: Draw grid lines (bars, beats, 16ths) ---
-void DisplayManager::drawGridLines(uint32_t lengthLoop, int pianoRollY0, int pianoRollY1) {
-    const int barBrightness = 3;      // 50%
-    const int beatBrightness = 2;     // 25%
-    const int sixteenthBrightness = 1;// 10%
+void DisplayManager::drawGridLines(uint32_t lengthLoop, int pianoRollY0, int pianoRollY1,
+                                   uint32_t windowStartTick) {
+    if (lengthLoop == 0) {
+        return;
+    }
+    const int barBrightness = 3;       // 50%
+    const int beatBrightness = 2;      // 25%
+    const int sixteenthBrightness = 1; // 10%
     const uint32_t ticksPerBar = Config::TICKS_PER_BAR;
     const uint32_t ticksPerBeat = Config::TICKS_PER_QUARTER_NOTE;
     const uint32_t ticksPerSixteenth = Config::TICKS_PER_QUARTER_NOTE / 4;
-    // Bar lines
-    for (uint32_t t = 0; t < lengthLoop; t += ticksPerBar) {
-        int x = TRACK_MARGIN + map(t, 0, lengthLoop, 0, pianoRollWidth());
-        _display.gfx.draw_vline(_display.api.getFrameBuffer(), x, pianoRollY0, pianoRollY1, barBrightness);
+    const uint32_t windowEnd = windowStartTick + lengthLoop;
+    const int rollWidth = pianoRollWidth();
+
+    auto tickToColumn = [&](uint32_t absTick) -> int {
+        if (absTick < windowStartTick || absTick >= windowEnd) {
+            return -1;
+        }
+        const uint32_t relTick = absTick - windowStartTick;
+        return TRACK_MARGIN + map(relTick, 0, lengthLoop, 0, rollWidth);
+    };
+
+    const uint32_t firstBarTick = (windowStartTick / ticksPerBar) * ticksPerBar;
+    for (uint32_t absTick = firstBarTick; absTick < windowEnd; absTick += ticksPerBar) {
+        if (absTick < windowStartTick) {
+            continue;
+        }
+        const int x = tickToColumn(absTick);
+        if (x >= 0) {
+            _display.gfx.draw_vline(_display.api.getFrameBuffer(), x, pianoRollY0, pianoRollY1,
+                                    barBrightness);
+        }
     }
-    // Beat lines
-    bool showBeat = (lengthLoop <= 9 * ticksPerBar);
+
+    const bool showBeat = (lengthLoop <= 9 * ticksPerBar);
     if (showBeat) {
-        for (uint32_t t = ticksPerBeat; t < lengthLoop; t += ticksPerBeat) {
-            if (t % ticksPerBar == 0) continue;
-            int x = TRACK_MARGIN + map(t, 0, lengthLoop, 0, pianoRollWidth());
-            for (int y = pianoRollY0; y <= pianoRollY1; y += 2) {
-                _display.gfx.draw_pixel(_display.api.getFrameBuffer(), x, y, beatBrightness);
+        const uint32_t firstBeatTick =
+            windowStartTick - (windowStartTick % ticksPerBeat);
+        for (uint32_t absTick = firstBeatTick; absTick < windowEnd; absTick += ticksPerBeat) {
+            if (absTick < windowStartTick || absTick % ticksPerBar == 0) {
+                continue;
+            }
+            const int x = tickToColumn(absTick);
+            if (x >= 0) {
+                for (int y = pianoRollY0; y <= pianoRollY1; y += 2) {
+                    _display.gfx.draw_pixel(_display.api.getFrameBuffer(), x, y, beatBrightness);
+                }
             }
         }
     }
-    // Sixteenth lines
-    bool showSixteenth = (lengthLoop <= 5 * ticksPerBar);
+
+    const bool showSixteenth = (lengthLoop <= 5 * ticksPerBar);
     if (showSixteenth) {
-        for (uint32_t t = ticksPerSixteenth; t < lengthLoop; t += ticksPerSixteenth) {
-            if (t % ticksPerBar == 0 || t % ticksPerBeat == 0) continue;
-            int x = TRACK_MARGIN + map(t, 0, lengthLoop, 0, pianoRollWidth());
-            for (int y = pianoRollY0; y <= pianoRollY1; y += 4) {
-                _display.gfx.draw_pixel(_display.api.getFrameBuffer(), x, y, sixteenthBrightness);
+        const uint32_t firstSixteenthTick =
+            windowStartTick - (windowStartTick % ticksPerSixteenth);
+        for (uint32_t absTick = firstSixteenthTick; absTick < windowEnd;
+             absTick += ticksPerSixteenth) {
+            if (absTick < windowStartTick || absTick % ticksPerBar == 0 ||
+                absTick % ticksPerBeat == 0) {
+                continue;
+            }
+            const int x = tickToColumn(absTick);
+            if (x >= 0) {
+                for (int y = pianoRollY0; y <= pianoRollY1; y += 4) {
+                    _display.gfx.draw_pixel(_display.api.getFrameBuffer(), x, y, sixteenthBrightness);
+                }
             }
         }
     }
 }
 
 // --- Helper: Draw all notes ---
-void DisplayManager::drawAllNotes(const Track& track, uint8_t displaySlot, uint32_t currentTick, uint32_t /*startLoop*/, uint32_t lengthLoop, int minPitch, int maxPitch,
+void DisplayManager::drawAllNotes(const Track& track, uint8_t displaySlot, uint32_t currentTick,
+                                  uint32_t lengthLoop, int minPitch, int maxPitch, int pianoRollY0,
+                                  int pianoRollY1, bool windowRelativeTicks,
                                   const DisplayNoteVec& notes) {
     const uint32_t loopLength = track.isJamming() ? track.getLoopLength()
                                                   : resolveDisplayLoopLength(track, displaySlot, currentTick);
@@ -745,15 +840,25 @@ void DisplayManager::drawAllNotes(const Track& track, uint8_t displaySlot, uint3
         const auto& n = notes[i];
         int noteBrightness = (i == selectedIdx) ? HIGHLIGHT_COLOR : 7;
 
-        // Adjust note positions relative to jam start, using loopLength for wrapping
-        uint32_t adjustedStartTick = (n.startTick - jamStartTick + loopLength) % loopLength;
-        uint32_t adjustedEndTick = (n.endTick - jamStartTick + loopLength) % loopLength;
+        uint32_t adjustedStartTick;
+        uint32_t adjustedEndTick;
+        if (windowRelativeTicks) {
+            adjustedStartTick = n.startTick;
+            adjustedEndTick = n.endTick;
+        } else {
+            adjustedStartTick = (n.startTick - jamStartTick + loopLength) % loopLength;
+            adjustedEndTick = (n.endTick - jamStartTick + loopLength) % loopLength;
+        }
 
-        // Skip notes entirely outside the jam window
-        if (adjustedStartTick >= lengthLoop && adjustedEndTick >= lengthLoop) continue;
+        if (!windowRelativeTicks && adjustedStartTick >= lengthLoop && adjustedEndTick >= lengthLoop) {
+            continue;
+        }
+        if (windowRelativeTicks && adjustedStartTick >= lengthLoop) {
+            continue;
+        }
 
-        int y = map(n.note, minPitch, maxPitch, 31, 0);
-        y = constrain(y, 0, 31);
+        int y = map(n.note, minPitch, maxPitch, pianoRollY1, pianoRollY0);
+        y = constrain(y, pianoRollY0, pianoRollY1);
 
         drawNoteBar(n, y, adjustedStartTick, adjustedEndTick, lengthLoop, noteBrightness);
     }
@@ -763,12 +868,7 @@ void DisplayManager::drawAllNotes(const Track& track, uint8_t displaySlot, uint3
 void DisplayManager::drawBracket(uint32_t bracketTick, uint32_t lengthLoop, int pianoRollY1) {
     // Draw bracket when in NOTE_EDIT mode (simplified since we use dedicated faders)
     if (editManager.getEditSessionType() == EditSessionType::Note) {
-        // Use the bracketTick parameter passed to this function (already adjusted for loop start)
-        const int pianoRollY1 = 31;
-
-        // Convert bracketTick to screen X position
         int bracketX = TRACK_MARGIN + map(bracketTick, 0, lengthLoop, 0, pianoRollWidth());
-        // Draw bracket (e.g., vertical line or rectangle)
         _display.gfx.draw_vline(_display.api.getFrameBuffer(), bracketX, 0, pianoRollY1, BRACKET_COLOR);
     }
 }
@@ -810,6 +910,49 @@ void DisplayManager::drawNoteBar(const DisplayNote& e, int y, uint32_t s, uint32
     }
 }
 
+void DisplayManager::drawOverviewStrip(uint32_t fullLoopLength, uint32_t windowStart,
+                                       uint32_t windowLength, uint32_t playheadTick,
+                                       const DisplayNoteVec& notes, int y0, int y1) {
+    if (fullLoopLength == 0 || y1 < y0) {
+        return;
+    }
+    const int width = pianoRollWidth();
+    const uint32_t loopBars = (fullLoopLength + Config::TICKS_PER_BAR - 1) / Config::TICKS_PER_BAR;
+    const uint32_t barsPerSegment =
+        DisplayWindowUtils::chooseBarsPerSegment(loopBars, static_cast<uint32_t>(width));
+    const uint32_t segmentTicks = barsPerSegment * Config::TICKS_PER_BAR;
+    const uint32_t segmentCount = (fullLoopLength + segmentTicks - 1) / segmentTicks;
+    for (uint32_t seg = 0; seg < segmentCount; ++seg) {
+        const uint32_t segStart = seg * segmentTicks;
+        const uint32_t segEnd = std::min(fullLoopLength, segStart + segmentTicks);
+        const bool hasNotes =
+            DisplayWindowUtils::segmentHasNotes(notes, fullLoopLength, segStart, segEnd);
+        const int x0 = TRACK_MARGIN + map(segStart, 0, fullLoopLength, 0, width);
+        const int x1 = TRACK_MARGIN + map(segEnd, 0, fullLoopLength, 0, width);
+        const uint8_t brightness = hasNotes ? 6 : 2;
+        _display.gfx.draw_rect_filled(_display.api.getFrameBuffer(), x0, y0, x1, y1, brightness);
+    }
+
+    const uint32_t windowEnd = windowStart + windowLength;
+    const int boxX0 = TRACK_MARGIN + map(windowStart % fullLoopLength, 0, fullLoopLength, 0, width);
+    const int boxX1 =
+        TRACK_MARGIN + map(std::min(windowEnd, fullLoopLength), 0, fullLoopLength, 0, width);
+    _display.gfx.draw_rect(_display.api.getFrameBuffer(), boxX0, y0, boxX1, y1, 10);
+
+    const float displayPlayhead = resolveDisplayPlayheadInLoop(playheadTick, fullLoopLength);
+    const int playX = mapPlayheadTickToScreenX(displayPlayhead, fullLoopLength);
+    _display.gfx.draw_vline(_display.api.getFrameBuffer(), playX, y0, y1, PLAYHEAD_COLOR);
+}
+
+bool DisplayManager::shouldAutoFollowDetailedWindow(const Track& track, uint32_t loopLength) const {
+    const uint32_t boundedThreshold =
+        DisplayWindowUtils::kMaxDetailedWindowBars * Config::TICKS_PER_BAR;
+    if (track.isJamming() || loopLength <= boundedThreshold) {
+        return false;
+    }
+    return track.isRecording() || track.isPlaying() || track.isOverdubbing();
+}
+
 // --- Draw piano roll using cached notes ---
 void DisplayManager::drawPianoRoll(uint32_t currentTick, Track& selectedTrack, uint8_t displaySlot, const DisplayNoteVec& notes) {
     auto& track = selectedTrack;
@@ -818,12 +961,42 @@ void DisplayManager::drawPianoRoll(uint32_t currentTick, Track& selectedTrack, u
                                                  : loopLength;
     const uint32_t jamStartTick = track.isJamming() ? track.getJamStartTick()
                                                     : resolveLoopOriginTick(track, displaySlot);
-    const int pianoRollY0 = 0;
-    const int pianoRollY1 = 31;
+    const uint32_t boundedThreshold =
+        DisplayWindowUtils::kMaxDetailedWindowBars * Config::TICKS_PER_BAR;
+    const bool useBoundedWindow =
+        !track.isJamming() && loopLength > boundedThreshold && displaySlot < kDisplaySlotCount;
+    uint32_t windowStart = 0;
+    uint32_t windowLength = jamLength;
+    uint8_t windowBars = DisplayWindowUtils::kMaxDetailedWindowBars;
+    if (useBoundedWindow) {
+        windowBars = std::min<uint8_t>(detailedWindowBars_[displaySlot],
+                                       DisplayWindowUtils::kMaxDetailedWindowBars);
+        windowLength = static_cast<uint32_t>(windowBars) * Config::TICKS_PER_BAR;
+        const uint32_t jamPos = resolvePlayheadInLoop(track, displaySlot, currentTick);
+        if (shouldAutoFollowDetailedWindow(track, loopLength)) {
+            detailedWindowStartTick_[displaySlot] =
+                DisplayWindowUtils::resolveCenteredWindowStart(jamPos, windowLength, loopLength);
+        }
+        windowStart = detailedWindowStartTick_[displaySlot];
+        if (windowStart + windowLength > loopLength) {
+            windowStart = loopLength > windowLength ? loopLength - windowLength : 0;
+            detailedWindowStartTick_[displaySlot] = windowStart;
+        }
+    }
+    DisplayNoteVec windowFilteredNotes;
+    const DisplayNoteVec* detailedNotes = &notes;
+    if (useBoundedWindow) {
+        windowFilteredNotes = DisplayWindowUtils::filterDisplayNotesToWindow(
+            notes, windowStart, windowLength, loopLength);
+        detailedNotes = &windowFilteredNotes;
+    }
+    const uint32_t detailedLength = useBoundedWindow ? windowLength : jamLength;
+    const int pianoRollY0 = kDetailedPianoRollY0;
+    const int pianoRollY1 = kDetailedPianoRollY1;
     if (loopLength > 0) {
         const uint32_t jamPos = resolvePlayheadInLoop(track, displaySlot, currentTick);
 
-        // Compute min/max pitch for scaling
+        // Pitch range from all loop notes so overdub/capture pitches rescale the roll height.
         int minPitch = 127;
         int maxPitch = 0;
         for (const auto& n : notes) {
@@ -837,20 +1010,39 @@ void DisplayManager::drawPianoRoll(uint32_t currentTick, Track& selectedTrack, u
             maxPitch = minPitch + 1;
         }
 
-        drawGridLines(jamLength, pianoRollY0, pianoRollY1);
-        drawAllNotes(track, displaySlot, currentTick, 0, jamLength, minPitch, maxPitch, notes);
+        drawGridLines(detailedLength, pianoRollY0, pianoRollY1,
+                      useBoundedWindow ? windowStart : 0);
+        drawAllNotes(track, displaySlot, currentTick, detailedLength, minPitch, maxPitch, pianoRollY0,
+                     pianoRollY1, useBoundedWindow, *detailedNotes);
 
         // Adjust bracket tick to be relative to jam start
         uint32_t bracketTick = editManager.getBracketTick();
         uint32_t relativeBracketTick = (bracketTick - jamStartTick + loopLength) % loopLength;
-        if (relativeBracketTick < jamLength) {
-            drawBracket(relativeBracketTick, jamLength, pianoRollY1);
+        if (useBoundedWindow) {
+            if (relativeBracketTick >= windowStart &&
+                relativeBracketTick < windowStart + windowLength) {
+                relativeBracketTick -= windowStart;
+                drawBracket(relativeBracketTick, detailedLength, pianoRollY1);
+            }
+        } else if (relativeBracketTick < jamLength) {
+            drawBracket(relativeBracketTick, detailedLength, pianoRollY1);
         }
 
-        // Draw playhead cursor if within jam window
-        if (jamPos < jamLength) {
-            int cx = TRACK_MARGIN + map(jamPos, 0, jamLength, 0, pianoRollWidth());
-            _display.gfx.draw_vline(_display.api.getFrameBuffer(), cx, 0, 32, 3);
+        if (useBoundedWindow) {
+            drawOverviewStrip(loopLength, windowStart, windowLength, jamPos, notes, kOverviewStripY0,
+                              kOverviewStripY1);
+            if (jamPos >= windowStart && jamPos < windowStart + windowLength) {
+                const float relativePlayhead =
+                    static_cast<float>(jamPos - windowStart) + clockManager.getDisplayTickPhase();
+                const int cx = mapPlayheadTickToScreenX(relativePlayhead, detailedLength);
+                _display.gfx.draw_vline(_display.api.getFrameBuffer(), cx, pianoRollY0, pianoRollY1,
+                                        PLAYHEAD_COLOR);
+            }
+        } else if (jamPos < jamLength) {
+            const float displayPlayhead = resolveDisplayPlayheadInLoop(jamPos, jamLength);
+            const int cx = mapPlayheadTickToScreenX(displayPlayhead, jamLength);
+            _display.gfx.draw_vline(_display.api.getFrameBuffer(), cx, pianoRollY0, pianoRollY1,
+                                    PLAYHEAD_COLOR);
         }
     }
 }
@@ -910,7 +1102,8 @@ void DisplayManager::drawSidebar(Track& selectedTrack, uint8_t displaySlot) {
     const int sidebarX = DISPLAY_WIDTH - SIDEBAR_WIDTH;
 
     // Keep the separator tall enough to stay visually tied to the piano roll region.
-    _display.gfx.draw_vline(_display.api.getFrameBuffer(), sidebarX - 1, 0, 39, SIDEBAR_SEPARATOR_BRIGHTNESS);
+    _display.gfx.draw_vline(_display.api.getFrameBuffer(), sidebarX - 1, 0, kPianoRollRegionBottomY,
+                            SIDEBAR_SEPARATOR_BRIGHTNESS);
 
     static float displayedBpm = 0.0f;
     if (displayedBpm == 0.0f || fabsf(bpm - displayedBpm) >= 0.f) {
@@ -1186,6 +1379,10 @@ void DisplayManager::drawNoteInfo(uint32_t currentTick, Track& selectedTrack, ui
         drawInfoField(fields[i].label, fields[i].value, infoX, y, fields[i].highlight, 5);
         infoX += strlen(fields[i].label) * 6 + 6 + strlen(fields[i].value) * 6 + 6; // label + colon + value + space
     }
+}
+
+void DisplayManager::requestNoteInfoRefresh(Track& track) {
+    (void)track.getCachedNotes();
 }
 
 void DisplayManager::update() {

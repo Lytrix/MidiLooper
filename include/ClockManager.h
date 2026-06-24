@@ -42,6 +42,8 @@ public:
 
   // --- Accessors ---
   uint32_t getCurrentTick() const;
+  /// Sub-tick phase in [0, 1) from time since last clock pulse; display-only (not for MIDI/scheduling).
+  float getDisplayTickPhase() const;
   bool isExternalClockPresent() const;
   ClockSource getClockSource() const;
   bool isClockRunning() const;

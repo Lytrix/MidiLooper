@@ -10,6 +10,7 @@
 #include "ClockManager.h"   // for clockManager
 #include "Globals.h"
 #include "EditManager.h"
+#include "Utils/DisplayWindowUtils.h"
 #include <vector>
 #include <cstdint>
 #include "MidiEvent.h"
@@ -41,6 +42,9 @@ public:
     /// Emit #CAP DISP snapshot for HITL display verification (capture builds).
     void emitDisplayCaptureSnapshot(const Track& track, uint8_t displaySlot, uint32_t currentTick);
 
+    /// Force cached note rebuild after edit mutations (D2 display refresh).
+    void requestNoteInfoRefresh(Track& track);
+
     // Margin for piano roll, info area and note info
     static constexpr int TRACK_MARGIN = 22; 
     // Display buffer size
@@ -53,10 +57,11 @@ public:
     uint8_t lastPlayedTrackIndex = 255;  // Invalid so we don't use stale data on first run
 
     // Helper functions for piano roll rendering
-    void drawGridLines(uint32_t lengthLoop, int pianoRollY0, int pianoRollY1);
+    void drawGridLines(uint32_t lengthLoop, int pianoRollY0, int pianoRollY1, uint32_t windowStartTick);
     void drawNoteBar(const DisplayNote& e, int y, uint32_t s, uint32_t eTick, uint32_t lengthLoop, int noteBrightness);
-    void drawAllNotes(const Track& track, uint8_t displaySlot, uint32_t currentTick, uint32_t startLoop, uint32_t lengthLoop, int minPitch, int maxPitch,
-                      const DisplayNoteVec& notes);
+    void drawAllNotes(const Track& track, uint8_t displaySlot, uint32_t currentTick, uint32_t lengthLoop,
+                      int minPitch, int maxPitch, int pianoRollY0, int pianoRollY1,
+                      bool windowRelativeTicks, const DisplayNoteVec& notes);
     void drawBracket(uint32_t bracketTick, uint32_t lengthLoop, int pianoRollY1);
 
 private:
@@ -87,7 +92,8 @@ private:
     
     // Edit bracket and note highlight
     static constexpr int BRACKET_COLOR = 8;
-    static constexpr int HIGHLIGHT_COLOR = 10;  
+    static constexpr int HIGHLIGHT_COLOR = 10;
+    static constexpr int PLAYHEAD_COLOR = 10;
 
     uint32_t _prevDrawTick = 0;
     SSD1322 _display;
@@ -116,11 +122,18 @@ private:
     uint8_t liveDisplayCacheSlot = 255;
     TrackState liveDisplayCacheTrackState = NUM_TRACK_STATES;
 
+    static constexpr uint8_t kDisplaySlotCount = Config::MAX_LOOPS_PER_TRACK;
+    uint32_t detailedWindowStartTick_[kDisplaySlotCount] = {};
+    uint8_t detailedWindowBars_[kDisplaySlotCount] = {16, 16, 16, 16, 16, 16, 16, 16};
+
     static constexpr float PULSE_SPEED = 1.0f; // Pulses per second (slowed by 40%)
     // Track status rendering
     void drawTrackStatus(uint8_t selectedTrack, uint32_t currentMillis);
     // Piano roll rendering
     void drawPianoRoll(uint32_t currentTick, Track& selectedTrack, uint8_t displaySlot, const DisplayNoteVec& notes);
+    void drawOverviewStrip(uint32_t fullLoopLength, uint32_t windowStart, uint32_t windowLength,
+                           uint32_t playheadTick, const DisplayNoteVec& notes, int y0, int y1);
+    bool shouldAutoFollowDetailedWindow(const Track& track, uint32_t loopLength) const;
     // Info area rendering
     void drawInfoArea(uint32_t currentTick, Track& selectedTrack, uint8_t displaySlot);
     void drawSidebar(Track& selectedTrack, uint8_t displaySlot);
