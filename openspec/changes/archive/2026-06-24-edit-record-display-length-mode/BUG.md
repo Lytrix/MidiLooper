@@ -79,6 +79,7 @@ Design session required before patch if fader state machine ownership changes be
 |------|--------|
 | 2026-06-19 | OpenSpec `edit-record-display-length-mode` opened from HITL/manual reports. Overlap LIFO fix landed separately in `NoteMovementUtils`. |
 | 2026-06-22 | **Reopened.** Spike on `015537` vs `015318` serial: D1 confirmed via `#CAP DISP` (`frame=0` for 191/191 RECORD lines in `015537`; `190/191` with `frame>0` in `015318`). Root causes documented below. HITL `live_record_display` gate added (warn-only until D1 fix lands). **RC1 shipped:** `resolveDisplayNotes` live-record branch first; `exitEditMode` resets `MAIN_MODE_LOOP_EDIT`. |
+| 2026-06-24 | **Closed.** D3 length-mode routing reset on toggle/select + post-select coarse settle; D2 `requestNoteInfoRefresh`; D1 RC2 capture-store fallback + RC4 `captureDisplayRevision` bump on append. Native 171/171; edit baseline verify replay `20260623_232352`. |
 
 ---
 

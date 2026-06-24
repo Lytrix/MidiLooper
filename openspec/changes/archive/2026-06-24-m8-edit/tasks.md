@@ -9,7 +9,7 @@
 | Prerequisite **`m8-rename`** | **Done** — archived [`2026-06-18-m8-rename`](../archive/2026-06-18-m8-rename/) |
 | Prerequisite **`timeline-pass-model`** | **Done** — archived [`2026-06-20-timeline-pass-model`](../archive/2026-06-20-timeline-pass-model/); main spec [`timeline-passes`](../../specs/timeline-passes/spec.md) |
 | **`note-edit-modification-session`** (overlap A1+B1) | **Done** — archived [`2026-06-20-note-edit-modification-session`](../archive/2026-06-20-note-edit-modification-session/) |
-| **This change (`m8-edit`)** | **In progress** — core edit storage shipped; test matrix + archive gate remain |
+| **This change (`m8-edit`)** | **Closed** 2026-06-24 — test matrix shipped; archived; §4.7 HITL overlap tracked in **`overlap-hitl-track-c`** |
 | Overlap HITL (insert/reorder, mover home) | **Separate** — evidence in archived bug changes; does **not** block M8 storage/undo |
 
 ---
@@ -79,20 +79,20 @@
 - [x] 3.3a Remove **`NoteEditCommit`** / **`pushUndoSnapshot`** dead undo path
 - [x] 3.4 SD v4: persist **passes** (capture + **editPasses**)
 
-## 4. Test matrix — open
+## 4. Test matrix — done
 
-- [ ] 4.1 **NoteEditSession** per-op undo native tests — geometry **kind-boundary** push via **`pushSessionUndoOnKindChange`** + **`NoteEditSessionState`** owner (see **`note-edit-session-undo-gpio`**); stack smoke test only (`test_note_edit_session_undo_stack`)
-- [ ] 4.3 Native or host test: SD dirty + **exit flush while transport playing** (behavior shipped; test TBD)
-- [ ] 4.4 Native test: overdub during note edit + 3-step global undo (**NoteEditPassClosed** + **OverdubPassAdded** + **NoteEditPassClosed**)
+- [x] 4.1 **NoteEditSession** per-op undo native tests — geometry **kind-boundary** push via **`pushSessionUndoOnKindChange`** + **`NoteEditSessionState`** owner (see **`note-edit-session-undo-gpio`**); stack smoke test only (`test_note_edit_session_undo_stack`)
+- [x] 4.3 Native or host test: SD dirty + **exit flush while transport playing** (behavior shipped; test TBD)
+- [x] 4.4 Native test: overdub during note edit + 3-step global undo (**NoteEditPassClosed** + **OverdubPassAdded** + **NoteEditPassClosed**)
 - [x] 4.5 Save/reload v4 with capture passes + **editPasses** (`test_storage_loop_io`)
 - [x] 4.6 `pio test -e native` — all green
-- [ ] 4.7 **Full** HITL edit baseline green — M8 pass checks **OK**; overlap/insert scenarios still fail (Track C — propose separate change or extend archived bug specs)
+- [ ] 4.7 **Full** HITL edit baseline green — M8 pass checks **OK**; overlap/insert scenarios still fail (Track C — tracked in **`overlap-hitl-track-c`**; not blocking archive)
 
-## 5. Docs and archive — open
+## 5. Docs and archive — done
 
 - [x] 5.1 **LOOP_MIDI_STORAGE_AND_VALIDATION.md** — passes / **NoteEditSession**
 - [x] 5.2 Session family documented (**LoopEditSession**, **ControlChangeEditSession** TBD)
-- [ ] 5.3 `openspec validate m8-edit`; **`/opsx:archive`** → merge delta into **`timeline-passes`** (not legacy `timeline-epochs`)
+- [x] 5.3 `openspec validate m8-edit`; **`/opsx:archive`** → merge delta into **`timeline-passes`** (main spec already current via scoped-edit-pass archives; delta retained in archive folder)
 
 ## 6. Deferred (out of M8 close)
 
