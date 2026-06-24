@@ -43,6 +43,28 @@ uint32_t ClockManager::getCurrentTick() const {
   return tick;
 }
 
+float ClockManager::getDisplayTickPhase() const {
+  if (!sequencerRunning) {
+    return 0.0f;
+  }
+  noInterrupts();
+  const uint32_t lastTickUs =
+      (clockSource == CLOCK_EXTERNAL) ? lastMidiClockTime : lastInternalTickTime;
+  const uint32_t tickDurationUs = (clockSource == CLOCK_EXTERNAL)
+                                      ? (microsPerTick * Config::TICKS_PER_CLOCK)
+                                      : microsPerTick;
+  interrupts();
+  if (tickDurationUs == 0) {
+    return 0.0f;
+  }
+  const uint32_t elapsedUs = micros() - lastTickUs;
+  float phase = static_cast<float>(elapsedUs) / static_cast<float>(tickDurationUs);
+  if (phase >= 1.0f) {
+    phase = 0.999f;
+  }
+  return phase;
+}
+
 bool ClockManager::isExternalClockPresent() const {
   return clockSource == CLOCK_EXTERNAL;
 }

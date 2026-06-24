@@ -167,6 +167,16 @@ inline void displaySnapshot(uint8_t slot, const char* trackState, uint32_t loopL
                 takeEvents, visualNotes, frameNotes, bufferEvents, published);
 }
 
+inline void displaySnapshotWindow(uint8_t slot, const char* trackState, uint32_t loopLen,
+                                  size_t takeEvents, size_t visualNotes, size_t frameNotes,
+                                  size_t bufferEvents, int published, uint32_t windowStartTick,
+                                  uint8_t windowBars, size_t windowNoteCount) {
+  Serial.printf("#CAP,%lu,DISP,%u,%s,%lu,%zu,%zu,%zu,%zu,%d,%lu,%u,%zu\r\n",
+                (unsigned long)micros(), slot, trackState, (unsigned long)loopLen,
+                takeEvents, visualNotes, frameNotes, bufferEvents, published,
+                (unsigned long)windowStartTick, windowBars, windowNoteCount);
+}
+
 inline void displayNoteInfo(uint8_t pitch, uint32_t storageStart, uint32_t displayStart,
                             uint32_t length, int selectedIdx) {
   Serial.printf("#CAP,%lu,DNTE,%u,%lu,%lu,%lu,%d\r\n",
@@ -231,6 +241,10 @@ inline void update(uint32_t currentTick, uint32_t ticksPerBar) {
 #define SC_STORED_NOTE_EVENT(kind, tick, ch, note) DebugSessionCapture::storedNoteEvent(kind, tick, ch, note)
 #define SC_DISP(slot, state, loopLen, take, visual, frame, buffer, published) \
   DebugSessionCapture::displaySnapshot(slot, state, loopLen, take, visual, frame, buffer, published)
+#define SC_DISP_WINDOW(slot, state, loopLen, take, visual, frame, buffer, published, wStart, wBars, \
+                       wNotes) \
+  DebugSessionCapture::displaySnapshotWindow(slot, state, loopLen, take, visual, frame, buffer, \
+                                             published, wStart, wBars, wNotes)
 #define SC_DNTE(pitch, storageStart, displayStart, length, selectedIdx) \
   DebugSessionCapture::displayNoteInfo(pitch, storageStart, displayStart, length, selectedIdx)
 #define SC_STORED_WRAP_PAIR(onTick, offTick, ch, note) DebugSessionCapture::storedWrapPair(onTick, offTick, ch, note)
@@ -256,6 +270,9 @@ inline void update(uint32_t currentTick, uint32_t ticksPerBar) {
 #define SC_REC_STORED_NOTE_ON(tick, ch, note) ((void)0)
 #define SC_STORED_NOTE_EVENT(kind, tick, ch, note) ((void)0)
 #define SC_DISP(slot, state, loopLen, take, visual, frame, buffer, published) ((void)0)
+#define SC_DISP_WINDOW(slot, state, loopLen, take, visual, frame, buffer, published, wStart, wBars, \
+                       wNotes) \
+  ((void)0)
 #define SC_DNTE(pitch, storageStart, displayStart, length, selectedIdx) ((void)0)
 #define SC_STORED_WRAP_PAIR(onTick, offTick, ch, note) ((void)0)
 #define SC_REC_QUEUE_STORED_NOTE_ON(tick, ch, note) ((void)0)

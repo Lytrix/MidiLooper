@@ -4,7 +4,7 @@
 
 **Supersedes display scope from:** `record-stop-64-bar-crash` §6 (archived — `openspec/changes/archive/2026-06-22-record-stop-64-bar-crash/PARKED.md`).
 
-**Suggested follow-on OpenSpec change id:** `long-loop-piano-roll-window` — scaffolded at [openspec/changes/long-loop-piano-roll-window/](../../openspec/changes/long-loop-piano-roll-window/).
+**Suggested follow-on OpenSpec change id:** `long-loop-piano-roll-window` — active at [openspec/changes/long-loop-piano-roll-window/](../../openspec/changes/long-loop-piano-roll-window/). **M1 shipped** 2026-06-24 (`DisplayWindowUtils`, bounded roll + overview strip + `SC_DISP_WINDOW`); M2 LOOP_EDIT controls remain open.
 
 ---
 
