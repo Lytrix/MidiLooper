@@ -87,3 +87,5 @@ JSON: [`captures/host_midi_automation_edit_baseline_20260620_161431.json`](../..
 | 2026-06-20 | OpenSpec change opened | This BUG.md + parent Track C mapping |
 | 2026-06-20 | §1 verifier fixes + log replay `161431` | All four sub-verifiers green (H1 + restore log alias) |
 | 2026-06-20 | §2.1 session undo pushes | `NoteEditManager` move/length/pitch — live HITL pending |
+| 2026-06-24 | §2.4 native `test_session_undo_move_back_insert_before_save_note_edit_pass` | `pio test -e native` green |
+| 2026-06-24 | Live HITL + verify replay `20260623_232352` | `serial_verification.edit.ok` true; `insert_reorder`, `long_over_short_pitch`, `change_length_store`, `split_overlap_note_round_trip` all `ok: true`; serial `EditSession undo` / `EditSession redo` |

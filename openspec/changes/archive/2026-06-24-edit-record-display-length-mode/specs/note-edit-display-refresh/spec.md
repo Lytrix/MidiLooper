@@ -23,7 +23,7 @@ After a successful position, pitch, or length edit mutation that calls `Track::i
 
 ### Requirement: DNTE emission on store mutation
 
-The firmware SHOULD emit `#CAP DNTE` (or equivalent note-info capture) when the selected note's storage start or length changes due to edit mutation, not only on fader 1 select events.
+The firmware SHALL emit `#CAP DNTE` (or equivalent note-info capture) when the selected note's storage start or length changes due to edit mutation, not only on fader 1 select events.
 
 #### Scenario: Post-move DNTE
 
