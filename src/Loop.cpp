@@ -682,6 +682,7 @@ bool Loop::appendCaptureEvent(const MidiEvent& evt) {
   }
   captureEventsSortDirty = true;
   applyCaptureEventToPreview(capturePreview, evt, Config::TICKS_PER_BAR);
+  ++captureDisplayRevision;
   return true;
 }
 

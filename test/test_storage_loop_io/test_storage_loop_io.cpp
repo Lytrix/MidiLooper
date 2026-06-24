@@ -16,6 +16,8 @@
 #include "LoopPasses.h"
 #include "NoteEditFocus.h"
 #include "StorageLoopIo.h"
+#include "Loop.h"
+#include "EditPass.h"
 
 namespace {
 
@@ -129,6 +131,17 @@ RecordPass makeRecordPassForBars(PassId id, CapturePassState state, uint32_t bar
   pass.state = state;
   pass.chunkRefs = std::move(refs);
   return pass;
+}
+
+EditPass makePitchEditPass(uint8_t ch, uint8_t note, uint32_t start, uint32_t end,
+                           uint8_t pitch) {
+  EditPass row{};
+  row.passType = EditPassType::Note;
+  row.actionType = EditActionType::Update;
+  row.propertyType = EditPropertyType::Pitch;
+  row.target = {ch, note, start, end};
+  row.pitch = pitch;
+  return row;
 }
 
 }  // namespace
@@ -539,6 +552,55 @@ void test_64_bar_save_completes_at_ram2_floor_with_bounded_batch() {
   MemoryMonitor::resetNativeTestFreeHeap();
 }
 
+void test_save_note_edit_pass_marks_edit_dirty() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+
+  Loop loop;
+  loop.loopLengthTicks = 768;
+  loop.passes.recordPass = makeRecordPassWire(1, 0, CapturePassState::Active, 0, 10);
+  loop.nextPassId_ = 2;
+
+  TEST_ASSERT_FALSE(loop.isEditStateDirty());
+  const EditPassId editId =
+      loop.saveNoteEditPass(0, makePitchEditPass(1, 60, 10, 20, 67));
+  TEST_ASSERT_NOT_EQUAL(kInvalidEditPassId, editId);
+  TEST_ASSERT_TRUE(loop.isEditStateDirty());
+}
+
+void test_simulated_exit_flush_clears_edit_dirty() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+
+  Loop loop;
+  loop.loopLengthTicks = 768;
+  loop.passes.recordPass = makeRecordPassWire(1, 0, CapturePassState::Active, 0, 10);
+  loop.nextPassId_ = 2;
+  loop.saveNoteEditPass(0, makePitchEditPass(1, 60, 10, 20, 67));
+  TEST_ASSERT_TRUE(loop.isEditStateDirty());
+
+  PersistedLoopSnapshot snapshot{};
+  snapshot.loopId = 1;
+  snapshot.loopLengthTicks = loop.loopLengthTicks;
+  snapshot.nextPassId = loop.nextPassId_;
+  snapshot.passes.recordPass = loop.passes.recordPass;
+  snapshot.passes.editPasses = loop.passes.editPasses;
+
+  std::vector<uint8_t> buffer;
+  MemoryStorageIo mem(&buffer);
+  TEST_ASSERT_TRUE(writePersistedLoopSnapshot(mem.io(), snapshot));
+
+  loop.clearEditStateDirty();
+  TEST_ASSERT_FALSE(loop.isEditStateDirty());
+
+  PersistedLoopSnapshot restored{};
+  mem.resetRead();
+  TEST_ASSERT_TRUE(readPersistedLoopSnapshot(mem.io(), restored));
+  TEST_ASSERT_EQUAL(1u, restored.passes.editPasses.size());
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(EditPropertyType::Pitch),
+                          static_cast<uint8_t>(restored.passes.editPasses[0].propertyType));
+}
+
 int main(int /*argc*/, char** /*argv*/) {
   UNITY_BEGIN();
   RUN_TEST(test_write_read_loop_snapshot_roundtrip);
@@ -552,5 +614,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_capture_pass_write_uses_chunk_stream_batch_bound);
   RUN_TEST(test_64_bar_record_snapshot_reloads_after_reboot_simulation);
   RUN_TEST(test_64_bar_save_completes_at_ram2_floor_with_bounded_batch);
+  RUN_TEST(test_save_note_edit_pass_marks_edit_dirty);
+  RUN_TEST(test_simulated_exit_flush_clears_edit_dirty);
   return UNITY_END();
 }

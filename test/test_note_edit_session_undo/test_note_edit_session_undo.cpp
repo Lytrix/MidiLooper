@@ -20,9 +20,35 @@
 #include "Loop.h"
 #include "LoopEventStore.h"
 #include "EditSession.h"
+#include "NoteEditSessionState.h"
 #include "NoteEditSessionUndo.h"
 
 namespace {
+
+struct KindBoundaryUndoState {
+  NoteEditKind lastPushed = NoteEditKind::Select;
+};
+
+bool pushKindBoundaryUndo(NoteEditSessionUndoStack& stack, KindBoundaryUndoState& state,
+                          NoteEditFocus& focus, const NoteEditSelection& selection,
+                          CowLoopEventStore& session, uint8_t channel, uint32_t loopLength,
+                          const EditPassIdList& editPassIds, NoteEditKind kind) {
+  if (!shouldPushGeometryKindUndo(state.lastPushed, kind)) {
+    return false;
+  }
+  if (session.isFlatDirty()) {
+    session.syncFlatToStore();
+  }
+  const SessionUndoEntry entry =
+      buildSessionUndoEntry(focus, selection, session.readFlat(), channel, loopLength,
+                            editPassIds);
+  if (!stack.pushEntry(entry)) {
+    return false;
+  }
+  state.lastPushed = kind;
+  return true;
+}
+
 
 RecordPass makeRecordPassWithNote(uint8_t channel, uint32_t startTick) {
   LoopEventStore store;
@@ -452,6 +478,129 @@ void test_session_live_capture_survives_pass_replay() {
   TEST_ASSERT_TRUE(hasDisplayNote(loopMidiEventsFromPasses, loop.loopLengthTicks, 72, 100, 148));
 }
 
+void test_kind_boundary_move_twice_one_undo_entry() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+
+  Loop loop;
+  loop.loopLengthTicks = 768;
+  loop.passes.recordPass = makeRecordPassWithNote(5, 10);
+  loop.nextPassId_ = 2;
+
+  NoteEditSessionUndoStack stack;
+  KindBoundaryUndoState state;
+  CowLoopEventStore session;
+  loop.rematerializeEditView(session.mutStore());
+  session.discardFlatCache();
+  NoteEditFocus focus;
+  rebuildNoteEditFocusFromStore(focus, session.readFlat(), 5, loop.loopLengthTicks, 0);
+  focus.last = focus.commitBaseline;
+
+  TEST_ASSERT_TRUE(
+      pushKindBoundaryUndo(stack, state, focus, NoteEditSelection{}, session, 5,
+                           loop.loopLengthTicks, EditPassIdList{}, NoteEditKind::Move));
+  MidiEventVec& flat = session.mutFlat();
+  applyMoveToSession(focus, flat, 5, 58);
+  session.syncFlatToStore();
+
+  TEST_ASSERT_FALSE(
+      pushKindBoundaryUndo(stack, state, focus, NoteEditSelection{}, session, 5,
+                           loop.loopLengthTicks, EditPassIdList{}, NoteEditKind::Move));
+  TEST_ASSERT_EQUAL(1u, stack.undoCount());
+}
+
+void test_kind_boundary_add_then_move_two_entries() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+
+  Loop loop;
+  loop.loopLengthTicks = 768;
+  loop.passes.recordPass = makeRecordPassWithNote(5, 10);
+  loop.nextPassId_ = 2;
+
+  NoteEditSessionUndoStack stack;
+  KindBoundaryUndoState state;
+  CowLoopEventStore session;
+  loop.rematerializeEditView(session.mutStore());
+  session.discardFlatCache();
+  NoteEditFocus focus;
+  rebuildNoteEditFocusFromStore(focus, session.readFlat(), 5, loop.loopLengthTicks, 0);
+  focus.last = focus.commitBaseline;
+
+  TEST_ASSERT_TRUE(
+      pushKindBoundaryUndo(stack, state, focus, NoteEditSelection{}, session, 5,
+                           loop.loopLengthTicks, EditPassIdList{}, NoteEditKind::Add));
+  TEST_ASSERT_TRUE(
+      pushKindBoundaryUndo(stack, state, focus, NoteEditSelection{}, session, 5,
+                           loop.loopLengthTicks, EditPassIdList{}, NoteEditKind::Move));
+  TEST_ASSERT_EQUAL(2u, stack.undoCount());
+}
+
+void test_kind_boundary_reselect_move_pushes_again() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+
+  Loop loop;
+  loop.loopLengthTicks = 768;
+  loop.passes.recordPass = makeRecordPassWithNote(5, 10);
+  loop.nextPassId_ = 2;
+
+  NoteEditSessionUndoStack stack;
+  KindBoundaryUndoState state;
+  CowLoopEventStore session;
+  loop.rematerializeEditView(session.mutStore());
+  session.discardFlatCache();
+  NoteEditFocus focus;
+  rebuildNoteEditFocusFromStore(focus, session.readFlat(), 5, loop.loopLengthTicks, 0);
+  focus.last = focus.commitBaseline;
+  NoteEditSelection selection{};
+
+  TEST_ASSERT_TRUE(pushKindBoundaryUndo(stack, state, focus, selection, session, 5,
+                                        loop.loopLengthTicks, EditPassIdList{},
+                                        NoteEditKind::Move));
+  applyMoveToSession(focus, session.mutFlat(), 5, 58);
+  session.syncFlatToStore();
+
+  NoteEditSelection priorSelection = selection;
+  priorSelection.hasNote = true;
+  priorSelection.ref = {5, 60, focus.commitBaseline.startTick, focus.commitBaseline.endTick};
+  selection.hasNote = true;
+  selection.ref = {5, 64, 200, 248};
+  if (shouldResetGeometryKindUndoOnSelectChange(priorSelection, selection.hasNote,
+                                                selection.ref)) {
+    state.lastPushed = NoteEditKind::Select;
+  }
+
+  TEST_ASSERT_TRUE(pushKindBoundaryUndo(stack, state, focus, selection, session, 5,
+                                        loop.loopLengthTicks, EditPassIdList{},
+                                        NoteEditKind::Move));
+  TEST_ASSERT_EQUAL(2u, stack.undoCount());
+}
+
+void test_kind_boundary_select_nav_no_push() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+
+  Loop loop;
+  loop.loopLengthTicks = 768;
+  loop.passes.recordPass = makeRecordPassWithNote(5, 10);
+  loop.nextPassId_ = 2;
+
+  NoteEditSessionUndoStack stack;
+  KindBoundaryUndoState state;
+  CowLoopEventStore session;
+  loop.rematerializeEditView(session.mutStore());
+  session.discardFlatCache();
+  NoteEditFocus focus;
+  rebuildNoteEditFocusFromStore(focus, session.readFlat(), 5, loop.loopLengthTicks, 0);
+  focus.last = focus.commitBaseline;
+
+  TEST_ASSERT_FALSE(
+      pushKindBoundaryUndo(stack, state, focus, NoteEditSelection{}, session, 5,
+                           loop.loopLengthTicks, EditPassIdList{}, NoteEditKind::Select));
+  TEST_ASSERT_EQUAL(0u, stack.undoCount());
+}
+
 void test_live_capture_baked_on_close_without_prior_edit_passes() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
@@ -494,6 +643,10 @@ int main(int argc, char** argv) {
   RUN_TEST(test_session_undo_four_kind_steps_bounded_entries);
   RUN_TEST(test_session_undo_live_capture_during_note_edit);
   RUN_TEST(test_session_live_capture_survives_pass_replay);
+  RUN_TEST(test_kind_boundary_move_twice_one_undo_entry);
+  RUN_TEST(test_kind_boundary_add_then_move_two_entries);
+  RUN_TEST(test_kind_boundary_reselect_move_pushes_again);
+  RUN_TEST(test_kind_boundary_select_nav_no_push);
   RUN_TEST(test_live_capture_baked_on_close_without_prior_edit_passes);
   return UNITY_END();
 }
