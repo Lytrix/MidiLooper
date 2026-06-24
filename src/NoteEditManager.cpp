@@ -1116,6 +1116,12 @@ void NoteEditManager::handleCoarseFaderInput(int16_t pitchValue, Track& track) {
     
     // Movement filtering - prevent jitter from rescheduling updates
     uint32_t now = millis();
+    if (!lengthEditingMode &&
+        (now - noteSelectionTime) < static_cast<uint32_t>(FEEDBACK_IGNORE_PERIOD)) {
+        logger.log(CAT_MIDI, LOG_DEBUG,
+                   "Coarse fader: ignoring input during post-select routing settle");
+        return;
+    }
     int16_t movementDelta = abs(pitchValue - lastUserCoarseFaderValue);
     uint32_t timeSinceLastMovement = (lastCoarseFaderTime > 0) ? (now - lastCoarseFaderTime) : COARSE_STABILITY_TIME;
     
@@ -1521,11 +1527,13 @@ void NoteEditManager::resetLengthEditingModeOnSessionBoundary() {
 }
 
 void NoteEditManager::resetLengthEditingModeOnNoteSelect() {
-    if (!lengthEditingMode) {
-        return;
+    if (lengthEditingMode) {
+        lengthEditingMode = false;
+        logger.info("[MIDI] Length editing mode DISABLED (note select)");
     }
-    lengthEditingMode = false;
-    logger.info("[MIDI] Length editing mode DISABLED (note select)");
+    currentDriverFader = MidiMapping::FaderType::FADER_SELECT;
+    lastUserCoarseFaderValue = 0;
+    lastCoarseFaderTime = 0;
 }
 
 void NoteEditManager::toggleLengthEditingMode() {
@@ -1538,24 +1546,25 @@ void NoteEditManager::toggleLengthEditingMode() {
     }
     lastLengthModeToggleTime = now;
     
-    // Toggle the mode
-    lengthEditingMode = !lengthEditingMode;
+    const bool enabling = !lengthEditingMode;
+    lengthEditingMode = enabling;
     
     if (lengthEditingMode) {
         logger.info("[MIDI] Length editing mode ENABLED");
         logger.info("[MIDI] Faders 1, 2 & 3 now control NOTE END position (length editing)");
     } else {
+        currentDriverFader = MidiMapping::FaderType::FADER_SELECT;
+        lastDriverFaderTime = now;
+        lastUserCoarseFaderValue = 0;
+        lastCoarseFaderTime = 0;
         logger.info("[MIDI] Length editing mode DISABLED");
         logger.info("[MIDI] Faders 1, 2 & 3 now control NOTE START position (position editing)");
+        Track& track = trackManager.getSelectedTrack();
+        editManager.commitAllPendingNoteEditActions(track);
     }
 
     // Send fader updates to reflect the new mode (like select note does)
     Track& track = trackManager.getSelectedTrack();
-    if (!lengthEditingMode) {
-        currentDriverFader = MidiMapping::FaderType::FADER_SELECT;
-        lastDriverFaderTime = now;
-        editManager.commitAllPendingNoteEditActions(track);
-    }
     
     // Only update if we have notes to edit
     const std::vector<NoteUtils::DisplayNote> notes = selectableDisplayNotesForEditUi(track);

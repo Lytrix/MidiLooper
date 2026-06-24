@@ -35,6 +35,30 @@ RecordPass makeRecordPassWithNote(PassId id, uint32_t tick) {
   return pass;
 }
 
+OverdubPass makeOverdubPassWithNote(PassId id, uint32_t tick, uint8_t pitch) {
+  LoopEventStore store;
+  TEST_ASSERT_TRUE(store.append(MidiEvent::NoteOn(tick, 1, pitch, 100)));
+  TEST_ASSERT_TRUE(store.append(MidiEvent::NoteOff(tick + 10, 1, pitch, 0)));
+  ChunkIdList refs;
+  store.detachChunksTo(refs);
+  OverdubPass pass{};
+  pass.id = id;
+  pass.mergeSequence = 1;
+  pass.state = CapturePassState::Active;
+  pass.chunkRefs = std::move(refs);
+  return pass;
+}
+
+int countNoteOns(const MidiEventVec& flat, uint8_t pitch) {
+  int count = 0;
+  for (const MidiEvent& evt : flat) {
+    if (evt.isNoteOn() && evt.data.noteData.note == pitch) {
+      ++count;
+    }
+  }
+  return count;
+}
+
 RecordPass makeRecordPassWithTwoNotes(PassId id, uint32_t startA, uint32_t endA, uint32_t startB,
                                       uint32_t endB, uint8_t pitch) {
   LoopEventStore store;
@@ -665,6 +689,137 @@ void test_pre_commit_delete_before_mover_change_length() {
   TEST_ASSERT_EQUAL(0, countMatching(flat, true, 60, 584));
 }
 
+void test_global_undo_overdub_pass_added_disables_overdub() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  loop.loopLengthTicks = 768;
+  loop.passes.recordPass = makeRecordPassWithNote(1, 10);
+  loop.passes.overdubPasses.push_back(makeOverdubPassWithNote(2, 100, 72));
+  loop.nextPassId_ = 3;
+
+  MidiEventVec withOverdub;
+  loop.passes.materializeToEventVector(withOverdub, loop.loopLengthTicks);
+  TEST_ASSERT_EQUAL(1, countNoteOns(withOverdub, 60));
+  TEST_ASSERT_EQUAL(1, countNoteOns(withOverdub, 72));
+
+  TEST_ASSERT_TRUE(loop.setCapturePassState(2, CapturePassState::Disabled));
+
+  MidiEventVec afterUndo;
+  loop.passes.materializeToEventVector(afterUndo, loop.loopLengthTicks);
+  TEST_ASSERT_EQUAL(1, countNoteOns(afterUndo, 60));
+  TEST_ASSERT_EQUAL(0, countNoteOns(afterUndo, 72));
+}
+
+void test_global_undo_note_edit_pass_closed_disables_edit_rows() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  loop.loopLengthTicks = 768;
+  loop.passes.recordPass = makeRecordPassWithNote(1, 10);
+  loop.nextPassId_ = 2;
+  const EditPassId editId = loop.saveNoteEditPass(0, makePitchRow(1, 60, 10, 20, 67));
+
+  MidiEventVec withEdit;
+  loop.passes.materializeToEventVector(withEdit, loop.loopLengthTicks);
+  TEST_ASSERT_EQUAL(1, countNoteOns(withEdit, 67));
+
+  loop.disableEditPasses(EditPassIdList{editId});
+
+  MidiEventVec afterUndo;
+  loop.passes.materializeToEventVector(afterUndo, loop.loopLengthTicks);
+  TEST_ASSERT_EQUAL(1, countNoteOns(afterUndo, 60));
+  TEST_ASSERT_EQUAL(0, countNoteOns(afterUndo, 67));
+}
+
+void test_global_undo_three_step_restores_record_baseline() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  loop.loopLengthTicks = 768;
+  loop.passes.recordPass = makeRecordPassWithNote(1, 10);
+  loop.nextPassId_ = 2;
+
+  const EditPassId preOverdubEdit =
+      loop.saveNoteEditPass(0, makePitchRow(1, 60, 10, 20, 67));
+  loop.passes.overdubPasses.push_back(makeOverdubPassWithNote(3, 100, 72));
+  loop.nextPassId_ = 4;
+
+  EditPass add{};
+  add.passType = EditPassType::Note;
+  add.actionType = EditActionType::Create;
+  add.addedEvents.push_back(MidiEvent::NoteOn(200, 1, 48, 100));
+  add.addedEvents.push_back(MidiEvent::NoteOff(210, 1, 48, 0));
+  const EditPassId postOverdubEdit = loop.saveNoteEditPass(1, add);
+
+  loop.disableEditPasses(EditPassIdList{postOverdubEdit});
+  TEST_ASSERT_TRUE(loop.setCapturePassState(3, CapturePassState::Disabled));
+  loop.disableEditPasses(EditPassIdList{preOverdubEdit});
+
+  MidiEventVec baseline;
+  loop.passes.materializeToEventVector(baseline, loop.loopLengthTicks);
+  TEST_ASSERT_EQUAL(1, countNoteOns(baseline, 60));
+  TEST_ASSERT_EQUAL(0, countNoteOns(baseline, 67));
+  TEST_ASSERT_EQUAL(0, countNoteOns(baseline, 72));
+  TEST_ASSERT_EQUAL(0, countNoteOns(baseline, 48));
+}
+
+void test_session_undo_move_back_insert_before_save_note_edit_pass() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+
+  Loop loop;
+  loop.loopLengthTicks = 768;
+  loop.passes.recordPass = makeEditRecordFixtureRecordPass(1);
+  loop.nextPassId_ = 2;
+
+  CowLoopEventStore session;
+  loop.passes.materializeToEventVector(session.mutFlat(), loop.loopLengthTicks);
+  session.syncFlatToStore();
+
+  NoteEditFocus focus;
+  focus.active = true;
+  focus.commitBaseline = {60, 100, 8, 104};
+  focus.last = focus.commitBaseline;
+  focus.moving = {1, 60, 8, 104};
+  focus.movingNoteRange = {8, 104};
+
+  const SessionUndoEntry entry =
+      buildSessionUndoEntry(focus, NoteEditSelection{}, session.readFlat(), 1,
+                            loop.loopLengthTicks, EditPassIdList{});
+
+  focus.last.startTick = 496;
+  focus.last.endTick = 1168;
+  noteEditFocusApplyMoveEnd(focus, focus.last.startTick, focus.last.endTick);
+  MidiEventVec& flat = session.mutFlat();
+  for (MidiEvent& evt : flat) {
+    if (evt.isNoteOn() && evt.channel == 1 && evt.data.noteData.note == 60 && evt.tick == 8) {
+      evt.tick = 496;
+    }
+    if (evt.isNoteOff() && evt.channel == 1 && evt.data.noteData.note == 60 && evt.tick == 104) {
+      evt.tick = 1168;
+    }
+  }
+  session.syncFlatToStore();
+  TEST_ASSERT_EQUAL(1, countMatching(session.readFlat(), true, 60, 496));
+
+  SessionUndoEntry undoEntry = entry;
+  SessionUndoEntry redoPayload =
+      buildSessionUndoEntry(focus, NoteEditSelection{}, session.readFlat(), 1,
+                            loop.loopLengthTicks, EditPassIdList{});
+  undoEntry.redoEditRows = std::move(redoPayload.editRows);
+  undoEntry.redoFocus = std::move(redoPayload.focus);
+  undoEntry.redoSelection = redoPayload.selection;
+  undoEntry.hasRedoPayload = true;
+
+  applySessionUndoEntry(loop, session, undoEntry, loop.loopLengthTicks, EditPassIdList{});
+  TEST_ASSERT_EQUAL(1, countMatching(session.readFlat(), true, 60, 8));
+  TEST_ASSERT_EQUAL(0, countMatching(session.readFlat(), true, 60, 496));
+
+  applySessionRedoEntry(loop, session, undoEntry, loop.loopLengthTicks, EditPassIdList{});
+  TEST_ASSERT_EQUAL(1, countMatching(session.readFlat(), true, 60, 496));
+}
+
 int main(int /*argc*/, char** /*argv*/) {
   UNITY_BEGIN();
   RUN_TEST(test_change_pitch_on_lengthened_note_keeps_same_pitch_neighbor);
@@ -685,5 +840,9 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_overlap_round_trip_replay_lengthen_delete_pitch);
   RUN_TEST(test_pre_commit_order_overlap_changes_before_move_and_pitch);
   RUN_TEST(test_pre_commit_delete_before_mover_change_length);
+  RUN_TEST(test_global_undo_overdub_pass_added_disables_overdub);
+  RUN_TEST(test_global_undo_note_edit_pass_closed_disables_edit_rows);
+  RUN_TEST(test_global_undo_three_step_restores_record_baseline);
+  RUN_TEST(test_session_undo_move_back_insert_before_save_note_edit_pass);
   return UNITY_END();
 }

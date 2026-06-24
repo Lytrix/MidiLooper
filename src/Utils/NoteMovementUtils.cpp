@@ -4,6 +4,7 @@
 
 #include "Logger.h"
 #include "Globals.h"
+#include "DisplayManager.h"
 #include "NoteEditFocus.h"
 #include "Utils/MidiEventUtils.h"
 #include "Utils/NoteMovementUtils.h"
@@ -698,6 +699,8 @@ void finalReconstructAndSelect(Track& track,
     }
 
     manager.syncSelectedNoteIdxToFilteredInventory(track);
+    track.invalidateCaches();
+    displayManager.requestNoteInfoRefresh(track);
 }
 
 bool applyPitchChange(Track& track, EditManager& manager,
