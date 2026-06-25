@@ -203,6 +203,8 @@ Full-loop pass over `loop.midiEvents()` (materialized flat):
 
 While **NoteEditSession** is active, `handleUndo` / `handleRedo` prefer session undo (`NoteEditSession undo` / `redo` logs) before the global stack.
 
+**Redo branch:** undo only moves the stack **cursor**; entries after the cursor stay until a **new** geometry push (`pushEntry`) or global **`pushUndoEntry`** (new pass). Triple-press redo walks the cursor forward through those entries.
+
 **E:** entries (pool-budget §9): **`SessionUndoEntry`** = **`editRows`** (scoped pre-commit **editPass** rows) + **`NoteEditFocus`** + **`NoteEditSelection`**. Pushed at geometry-kind boundaries via **`pushSessionUndoOnKindChange`** (not per fader tick). Restore: materialize from **passes** (excluding post-push committed **editPass** ids) + **`applyNoteEditPassSequence`** + focus/selection replay — no **`cloneShared`** per step.
 
 - Depth target **`Config::PREFERRED_SESSION_UNDO_DEPTH`** (32); pressure trim keeps at least **`MIN_SESSION_UNDO_DEPTH`** (4).
@@ -223,7 +225,7 @@ Hardware **Button A double-press** calls `undoOverdub` directly. MIDI record dou
 **Global undo depth (pool-budget):**
 
 - Target depth **`Config::PREFERRED_UNDO_DEPTH`** (99) when chunk reserve and heap reserve are satisfied.
-- **`trimUndoStackForMemory`** drops oldest entries under pressure (`freeChunkCount() <= CHUNK_RESERVE`, heap below **`HEAP_RESERVE_BYTES`**, or depth above preferred with pressure) while keeping at least **`MIN_UNDO_DEPTH`** (8).
+- **`trimUndoStackForMemory`** drops oldest entries under pressure (`freeChunkCount() <= CHUNK_RESERVE`, heap below **`HEAP_RESERVE_BYTES`**, or depth above preferred with pressure) while keeping at least **`MIN_UNDO_DEPTH`** (8). When **`cursor > 0`**, trim removes the undo-history side (oldest entry) first so the redo branch at **`cursor..end`** stays intact. When **`cursor == 0`**, the full stack is the redo branch — trim skips unless **`ABSOLUTE_MAX_UNDO_ENTRIES`** or memory pressure forces a last-resort drop.
 - **`ABSOLUTE_MAX_UNDO_ENTRIES`** (512) is a hard overflow rail.
 - After each trim, redo-branch drop, or slot prune: **`reclaimUnreferencedDisabledPasses`** so disabled pass chunks and **ClearSlot** snapshot clones can be freed.
 

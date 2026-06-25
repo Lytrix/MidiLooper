@@ -10,7 +10,7 @@ Multi-track MIDI looper with full undo/redo, auto-save/load, and clear visual fe
 - 192 PPQN internal clock for live recording
 - 24 PPQN MIDI Sync
 - 256×64 OLED display (a 16×2 LCD driver exists but its pins are disabled in `Globals.h`)
-- 25 undo snapshots per slot (`Config::MAX_UNDO_HISTORY`), covering overdub and clear
+- Memory-aware undo per slot (`PREFERRED_UNDO_DEPTH` 99 when reserves are healthy; trims under chunk/heap pressure; `ABSOLUTE_MAX_UNDO_ENTRIES` 512), covering overdub, clear, and loop-start edits. Redo branch survives full undo until a new pass commits.
 - Track clear Undo (restore last cleared track)
 - Overdub Undo (revert last overdub layer)
 - **Loop Start Point Editing** (dynamic loop start position control with fader) — [`LOOP_START_EDITING.md`](Guides/LOOP_START_EDITING.md)

@@ -68,3 +68,7 @@ void pinPassesFromLoopPasses(const LoopPasses& passes, SlotPassReferences& refs)
 void collectReferencedPasses(const GlobalUndoStack& stack, PassReferenceSet& out);
 
 bool overUndoMemoryPressure(const GlobalUndoStack& stack);
+
+/// Trim global undo entries under depth/pressure rails. Prefers dropping entries before
+/// cursor (undo history) so the redo branch at cursor..end stays intact when cursor > 0.
+size_t trimGlobalUndoStackForMemory(GlobalUndoStack& stack);

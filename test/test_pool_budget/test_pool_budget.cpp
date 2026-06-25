@@ -275,6 +275,79 @@ void test_trim_pressure_when_chunk_reserve_violated() {
   TEST_ASSERT_TRUE(overUndoMemoryPressure(stack));
 }
 
+void test_trim_preserves_redo_branch_when_cursor_zero_no_pressure() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  MemoryMonitor::resetNativeTestFreeHeap();
+
+  GlobalUndoStack stack;
+  for (uint8_t i = 0; i < 3; ++i) {
+    UndoEntry entry;
+    entry.kind = UndoEntryKind::OverdubPassAdded;
+    entry.passId = i + 1;
+    stack.entries.push_back(entry);
+  }
+  stack.cursor = 0;
+  TEST_ASSERT_EQUAL(3u, stack.redoCount());
+  TEST_ASSERT_FALSE(overUndoMemoryPressure(stack));
+
+  const size_t trimmed = trimGlobalUndoStackForMemory(stack);
+  TEST_ASSERT_EQUAL(0u, trimmed);
+  TEST_ASSERT_EQUAL(3u, stack.entries.size());
+  TEST_ASSERT_EQUAL(0u, stack.cursor);
+  TEST_ASSERT_EQUAL(3u, stack.redoCount());
+}
+
+void test_trim_drops_undo_side_before_redo_branch() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  MemoryMonitor::resetNativeTestFreeHeap();
+
+  GlobalUndoStack stack;
+  for (uint8_t i = 0; i < Config::MIN_UNDO_DEPTH + 2; ++i) {
+    UndoEntry entry;
+    entry.kind = UndoEntryKind::RecordPassAdded;
+    entry.passId = i + 1;
+    stack.entries.push_back(entry);
+  }
+  stack.cursor = 2;
+  const size_t redoBefore = stack.redoCount();
+  TEST_ASSERT_TRUE(redoBefore > 0);
+
+  consumeChunksUntilReserve();
+  TEST_ASSERT_TRUE(overUndoMemoryPressure(stack));
+
+  trimGlobalUndoStackForMemory(stack);
+  TEST_ASSERT_TRUE(stack.entries.size() < Config::MIN_UNDO_DEPTH + 2);
+  TEST_ASSERT_EQUAL(redoBefore, stack.redoCount());
+}
+
+void test_new_push_clears_redo_branch() {
+  GlobalUndoStack stack;
+  for (uint8_t i = 0; i < 3; ++i) {
+    UndoEntry entry;
+    entry.kind = UndoEntryKind::OverdubPassAdded;
+    entry.passId = i + 1;
+    stack.entries.push_back(entry);
+  }
+  stack.cursor = 1;
+  TEST_ASSERT_EQUAL(2u, stack.redoCount());
+
+  if (stack.cursor < stack.entries.size()) {
+    stack.entries.erase(stack.entries.begin() + static_cast<std::ptrdiff_t>(stack.cursor),
+                        stack.entries.end());
+  }
+  UndoEntry fresh;
+  fresh.kind = UndoEntryKind::OverdubPassAdded;
+  fresh.passId = 99;
+  stack.entries.push_back(std::move(fresh));
+  stack.cursor = stack.entries.size();
+
+  TEST_ASSERT_EQUAL(0u, stack.redoCount());
+  TEST_ASSERT_EQUAL(2u, stack.entries.size());
+  TEST_ASSERT_EQUAL(99u, stack.entries.back().passId);
+}
+
 int main(int /*argc*/, char** /*argv*/) {
   UNITY_BEGIN();
   RUN_TEST(test_chunk_stats_match_pool_bitmap);
@@ -289,5 +362,8 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_noncritical_work_deferred_when_heap_below_floor);
   RUN_TEST(test_external_memory_first_buffers_report_storage_region);
   RUN_TEST(test_trim_pressure_when_chunk_reserve_violated);
+  RUN_TEST(test_trim_preserves_redo_branch_when_cursor_zero_no_pressure);
+  RUN_TEST(test_trim_drops_undo_side_before_redo_branch);
+  RUN_TEST(test_new_push_clears_redo_branch);
   return UNITY_END();
 }

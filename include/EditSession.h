@@ -91,18 +91,45 @@ struct NoteEditSessionUndoStack {
   }
 
  private:
+  bool trimOneSessionUndoEntryForDepthCap() {
+    if (entries_.empty()) {
+      return false;
+    }
+    if (cursor_ > 0) {
+      entries_.erase(entries_.begin());
+      --cursor_;
+      return true;
+    }
+    entries_.erase(entries_.begin());
+    return true;
+  }
+
+  bool trimOneSessionUndoEntryForMemoryPressure() {
+    if (entries_.empty()) {
+      return false;
+    }
+    if (cursor_ > 0) {
+      entries_.erase(entries_.begin());
+      --cursor_;
+      return true;
+    }
+    if (entries_.size() > Config::PREFERRED_SESSION_UNDO_DEPTH) {
+      entries_.erase(entries_.begin());
+      return true;
+    }
+    return false;
+  }
+
   void trimHistory() {
     while (entries_.size() > Config::PREFERRED_SESSION_UNDO_DEPTH) {
-      entries_.erase(entries_.begin());
-      if (cursor_ > 0) {
-        --cursor_;
+      if (!trimOneSessionUndoEntryForDepthCap()) {
+        break;
       }
     }
     while (entries_.size() > Config::MIN_SESSION_UNDO_DEPTH &&
            MemoryMonitor::getInternalHeapFreeBytes() < Config::HEAP_RESERVE_BYTES) {
-      entries_.erase(entries_.begin());
-      if (cursor_ > 0) {
-        --cursor_;
+      if (!trimOneSessionUndoEntryForMemoryPressure()) {
+        break;
       }
     }
   }

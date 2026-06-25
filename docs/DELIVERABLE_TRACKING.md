@@ -7,7 +7,7 @@
 **Shipped** (in firmware on `feature/track-multi-looping`):
 
 - 8 tracks × 8 loop slots: per-slot record, overdub, clear, mute, quantized switching, multi-slot hold layering (`Track`, `TrackManager`, `SlotStateMachine`)
-- Undo/redo per slot (overdub, clear, loop start) — depth `MAX_UNDO_HISTORY = 25` (`TrackUndo`)
+- Undo/redo per slot (overdub, clear, loop start) — memory-aware depth (`PREFERRED_UNDO_DEPTH` 99, `MIN_UNDO_DEPTH` 8, `ABSOLUTE_MAX_UNDO_ENTRIES` 512; `trimGlobalUndoStackForMemory` in `PassReclaim` / `TrackUndo`). Redo branch preserved after full undo until a new pass pushes.
 - 192 PPQN internal clock, 24 PPQN MIDI sync with internal fallback (`ClockManager`, `ClockSourceStateMachine`)
 - Jam regions via Bars/16ths buttons (`BarStepButtonHandler`, jam state on `Track`)
 - Piano-roll note editing: select, start, length, pitch, move, wrap (`EditManager`, `EditStates/`, `NoteEditManager`)

@@ -37,22 +37,7 @@ void dropRedoBranch(GlobalUndoStack& stack) {
 }
 
 void trimUndoStackForMemory(Track& track) {
-    GlobalUndoStack& stack = track.getGlobalUndoStack();
-    auto shouldTrim = [&]() {
-        if (stack.entries.size() > Config::ABSOLUTE_MAX_UNDO_ENTRIES) {
-            return true;
-        }
-        if (stack.entries.size() <= Config::MIN_UNDO_DEPTH) {
-            return false;
-        }
-        return overUndoMemoryPressure(stack);
-    };
-
-    while (shouldTrim()) {
-        stack.entries.erase(stack.entries.begin());
-        if (stack.cursor > 0) {
-            --stack.cursor;
-        }
+    if (trimGlobalUndoStackForMemory(track.getGlobalUndoStack()) > 0) {
         trackManager.reclaimUnreferencedDisabledPasses();
     }
 }

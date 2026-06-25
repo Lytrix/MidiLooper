@@ -18,6 +18,8 @@
 #include "Utils/DebugSessionCapture.h"
 #include "Utils/DisplayWindowUtils.h"
 #include "TrackStateMachine.h"
+#include "MidiButtonManager.h"
+#include "MidiConfig.h"
 #include <algorithm>
 #include <string>
 #include <Font5x7Fixed.h>
@@ -45,11 +47,27 @@ constexpr int kPianoRollRegionBottomY = kOverviewStripY1;
 constexpr int pianoRollRightX() { return DISPLAY_WIDTH - SIDEBAR_WIDTH - 1; }
 constexpr int pianoRollWidth() { return pianoRollRightX() - DisplayManager::TRACK_MARGIN; }
 
+bool isPlayStopButtonHeld() {
+    return midiButtonManager.isButtonPressed(MidiConfig::ExtendedTransport::NOTE_PLAY_STOP,
+                                             MidiConfig::Channels::SELECT);
+}
+
+float displayPlayheadPhase() {
+    if (isPlayStopButtonHeld()) {
+        return clockManager.getDisplayTickPhase();
+    }
+    if (editManager.getEditSessionType() == EditSessionType::Note) {
+        return 0.0f;
+    }
+    return clockManager.getDisplayTickPhase();
+}
+
 float resolveDisplayPlayheadInLoop(uint32_t playheadTick, uint32_t loopLength) {
     if (loopLength == 0) {
         return 0.0f;
     }
-    float tick = static_cast<float>(playheadTick % loopLength) + clockManager.getDisplayTickPhase();
+    const float phase = displayPlayheadPhase();
+    float tick = static_cast<float>(playheadTick % loopLength) + phase;
     const float loopLengthF = static_cast<float>(loopLength);
     if (tick >= loopLengthF) {
         tick -= loopLengthF;
@@ -918,12 +936,49 @@ void DisplayManager::drawOverviewStrip(uint32_t fullLoopLength, uint32_t loopOri
         return;
     }
     const int width = pianoRollWidth();
-    constexpr uint8_t kOverviewRestBrightness = 1;
-    constexpr uint8_t kOverviewNoteBrightness = 5;
-    constexpr uint8_t kOverviewWindowOutlineBrightness = 10;
+    constexpr uint8_t kOverviewRestInsideBrightness = 1;
+    constexpr uint8_t kOverviewRestOutsideBrightness = 0;
+    constexpr uint8_t kOverviewNoteInsideBrightness = 2;
+    constexpr uint8_t kOverviewNoteOutsideBrightness = 1;
+    constexpr uint8_t kOverviewWindowSideBrightness = 3;
+    constexpr uint8_t kOverviewWindowEdgeBrightness = 2;
+
+    const uint32_t windowEnd = windowStart + windowLength;
+    const int boxX0 = TRACK_MARGIN + map(windowStart % fullLoopLength, 0, fullLoopLength, 0, width);
+    const int boxX1 =
+        TRACK_MARGIN + map(std::min(windowEnd, fullLoopLength), 0, fullLoopLength, 0, width);
 
     _display.gfx.draw_rect_filled(_display.api.getFrameBuffer(), TRACK_MARGIN, y0,
-                                  TRACK_MARGIN + width, y1, kOverviewRestBrightness);
+                                  TRACK_MARGIN + width, y1, kOverviewRestOutsideBrightness);
+    _display.gfx.draw_rect_filled(_display.api.getFrameBuffer(), boxX0, y0, boxX1, y1,
+                                  kOverviewRestInsideBrightness);
+
+    auto drawNoteInsideWindow = [&](const DisplayNote& note, int y, uint32_t startTick,
+                                    uint32_t endTick, int noteBrightness) {
+        if (windowLength == 0) {
+            return;
+        }
+        auto clipDraw = [&](uint32_t segStart, uint32_t segEnd) {
+            if (segEnd <= segStart) {
+                return;
+            }
+            const uint32_t insideStart = std::max(segStart, windowStart);
+            const uint32_t insideEnd = std::min(segEnd, windowEnd);
+            if (insideStart < insideEnd) {
+                drawNoteBar(note, y, insideStart, insideEnd, fullLoopLength, noteBrightness);
+            }
+        };
+        const bool isWrapped = (endTick < startTick) || (endTick > fullLoopLength);
+        if (!isWrapped && endTick >= startTick) {
+            clipDraw(startTick, endTick);
+            return;
+        }
+        clipDraw(startTick % fullLoopLength, fullLoopLength);
+        const uint32_t wrappedEndTick = endTick % fullLoopLength;
+        if (wrappedEndTick > 0) {
+            clipDraw(0, wrappedEndTick);
+        }
+    };
 
     for (const DisplayNote& n : notes) {
         uint32_t startTick = (n.startTick >= loopOriginTick)
@@ -939,15 +994,18 @@ void DisplayManager::drawOverviewStrip(uint32_t fullLoopLength, uint32_t loopOri
 
         int y = map(n.note, minPitch, maxPitch, y1, y0);
         y = constrain(y, y0, y1);
-        drawNoteBar(n, y, startTick, endTick, fullLoopLength, kOverviewNoteBrightness);
+        drawNoteBar(n, y, startTick, endTick, fullLoopLength, kOverviewNoteOutsideBrightness);
+        drawNoteInsideWindow(n, y, startTick, endTick, kOverviewNoteInsideBrightness);
     }
 
-    const uint32_t windowEnd = windowStart + windowLength;
-    const int boxX0 = TRACK_MARGIN + map(windowStart % fullLoopLength, 0, fullLoopLength, 0, width);
-    const int boxX1 =
-        TRACK_MARGIN + map(std::min(windowEnd, fullLoopLength), 0, fullLoopLength, 0, width);
-    _display.gfx.draw_rect(_display.api.getFrameBuffer(), boxX0, y0, boxX1, y1,
-                           kOverviewWindowOutlineBrightness);
+    _display.gfx.draw_vline(_display.api.getFrameBuffer(), boxX0, y0, y1,
+                            kOverviewWindowSideBrightness);
+    _display.gfx.draw_vline(_display.api.getFrameBuffer(), boxX1, y0, y1,
+                            kOverviewWindowSideBrightness);
+    _display.gfx.draw_rect_filled(_display.api.getFrameBuffer(), boxX0, y0, boxX1, y0,
+                                  kOverviewWindowEdgeBrightness);
+    _display.gfx.draw_rect_filled(_display.api.getFrameBuffer(), boxX0, y1, boxX1, y1,
+                                  kOverviewWindowEdgeBrightness);
 
     const float displayPlayhead = resolveDisplayPlayheadInLoop(playheadTick, fullLoopLength);
     const int playX = mapPlayheadTickToScreenX(displayPlayhead, fullLoopLength);
@@ -960,7 +1018,29 @@ bool DisplayManager::shouldAutoFollowDetailedWindow(const Track& track, uint32_t
     if (track.isJamming() || loopLength <= boundedThreshold) {
         return false;
     }
+    if (isPlayStopButtonHeld()) {
+        return true;
+    }
+    if (editManager.getEditSessionType() == EditSessionType::Note) {
+        return false;
+    }
     return track.isRecording() || track.isPlaying() || track.isOverdubbing();
+}
+
+void DisplayManager::centerDetailedWindowOnPlayhead(Track& track, uint8_t displaySlot,
+                                                    uint32_t currentTick) {
+    const uint32_t loopLength = resolveDisplayLoopLength(track, displaySlot, currentTick);
+    const uint32_t boundedThreshold =
+        DisplayWindowUtils::kMaxDetailedWindowBars * Config::TICKS_PER_BAR;
+    if (track.isJamming() || loopLength <= boundedThreshold || displaySlot >= kDisplaySlotCount) {
+        return;
+    }
+    const uint8_t windowBars = std::min<uint8_t>(detailedWindowBars_[displaySlot],
+                                                 DisplayWindowUtils::kMaxDetailedWindowBars);
+    const uint32_t windowLength = static_cast<uint32_t>(windowBars) * Config::TICKS_PER_BAR;
+    const uint32_t playhead = resolvePlayheadInLoop(track, displaySlot, currentTick);
+    detailedWindowStartTick_[displaySlot] =
+        DisplayWindowUtils::resolveCenteredWindowStart(playhead, windowLength, loopLength);
 }
 
 // --- Draw piano roll using cached notes ---
@@ -1042,8 +1122,9 @@ void DisplayManager::drawPianoRoll(uint32_t currentTick, Track& selectedTrack, u
             drawOverviewStrip(loopLength, jamStartTick, windowStart, windowLength, jamPos, minPitch,
                               maxPitch, notes, kOverviewStripY0, kOverviewStripY1);
             if (jamPos >= windowStart && jamPos < windowStart + windowLength) {
+                const float phase = displayPlayheadPhase();
                 const float relativePlayhead =
-                    static_cast<float>(jamPos - windowStart) + clockManager.getDisplayTickPhase();
+                    static_cast<float>(jamPos - windowStart) + phase;
                 const int cx = mapPlayheadTickToScreenX(relativePlayhead, detailedLength);
                 _display.gfx.draw_vline(_display.api.getFrameBuffer(), cx, pianoRollY0, pianoRollY1,
                                         PLAYHEAD_COLOR);

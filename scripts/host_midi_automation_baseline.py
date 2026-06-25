@@ -43,6 +43,7 @@ except ImportError as exc:  # pragma: no cover - import guard
 
 TRACK_SELECT_NOTE_BASE = 60
 RECORD_BUTTON_NOTE = 36
+PLAY_STOP_BUTTON_NOTE = 40
 GLOBAL_TRANSPORT_NOTE = 39
 CONTROL_CHANNEL_1BASED = 16
 

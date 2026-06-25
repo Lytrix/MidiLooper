@@ -66,3 +66,43 @@ bool overUndoMemoryPressure(const GlobalUndoStack& stack) {
   }
   return false;
 }
+
+size_t trimGlobalUndoStackForMemory(GlobalUndoStack& stack) {
+  size_t trimmed = 0;
+
+  auto shouldTrim = [&]() {
+    if (stack.entries.empty()) {
+      return false;
+    }
+    if (stack.entries.size() > Config::ABSOLUTE_MAX_UNDO_ENTRIES) {
+      return true;
+    }
+    if (stack.entries.size() <= Config::MIN_UNDO_DEPTH) {
+      return false;
+    }
+    return overUndoMemoryPressure(stack);
+  };
+
+  while (shouldTrim()) {
+    if (stack.cursor > 0) {
+      stack.entries.erase(stack.entries.begin());
+      --stack.cursor;
+      ++trimmed;
+      continue;
+    }
+
+    // cursor == 0: entire stack is the redo branch. Keep it unless absolute rail or pressure.
+    if (stack.entries.size() > Config::ABSOLUTE_MAX_UNDO_ENTRIES) {
+      stack.entries.erase(stack.entries.begin());
+      ++trimmed;
+      continue;
+    }
+    if (!overUndoMemoryPressure(stack)) {
+      break;
+    }
+    stack.entries.erase(stack.entries.begin());
+    ++trimmed;
+  }
+
+  return trimmed;
+}
