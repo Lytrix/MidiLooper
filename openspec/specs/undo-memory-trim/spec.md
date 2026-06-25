@@ -29,12 +29,34 @@ The system SHALL trim the oldest undo entries when **`overUndoMemoryPressure`** 
 
 Trimming SHALL continue while pressure remains and **`entries.size() > MIN_UNDO_DEPTH`**.
 
+When **`cursor > 0`**, trimming SHALL remove entries from the undo-history side (index `0`) and
+decrement **`cursor`**, preserving the redo branch **`entries[cursor..size)`**.
+
+When **`cursor == 0`**, the full stack is the redo branch. Trimming SHALL NOT remove entries solely
+because **`entries.size() > MIN_UNDO_DEPTH`** unless **`ABSOLUTE_MAX_UNDO_ENTRIES`** is exceeded or
+**`overUndoMemoryPressure`** is true.
+
 #### Scenario: Trim under chunk pressure
 
 - **WHEN** **`freeChunkCount()`** is at or below **`CHUNK_RESERVE`**
 - **AND** **`entries.size() > MIN_UNDO_DEPTH`**
 - **THEN** the oldest undo entry is removed
 - **AND** **`reclaimUnreferencedDisabledPasses`** runs
+
+#### Scenario: Redo branch preserved after full undo when memory is healthy
+
+- **WHEN** a track has 3 **`OverdubPassAdded`** entries and **`cursor == 0`** (all undos applied)
+- **AND** chunk reserve and heap reserve are satisfied
+- **AND** **`entries.size() <= ABSOLUTE_MAX_UNDO_ENTRIES`**
+- **THEN** **`trimGlobalUndoStackForMemory`** removes zero entries
+- **AND** **`redoCount()`** remains 3
+
+#### Scenario: Redo branch cleared on new pass
+
+- **WHEN** the user has undone entries leaving a non-empty redo branch
+- **AND** a new capture pass commits (**`pushUndoEntry`**)
+- **THEN** entries after **`cursor`** are removed before the new entry is appended
+- **AND** **`redoCount()`** is 0
 
 ### Requirement: Reclaim after undo stack mutation
 

@@ -54,7 +54,7 @@ Below is the **cheat sheet** of all available button gestures.
 | [**Loops**](docs/Guides/control-surface/Loops.md) | Select/record slot; when playing, switch slot quantized to next 16th; selected slot toggles mute | If pressed slot is selected and filled: clear slot. If not selected and filled: queue single-slot switch at loop end | Slot undo | Slot redo | Hold one or more slots, release to commit multi-slot enabled set on next 16th |
 | [**Bars**](docs/Guides/control-surface/Bars-and-16ths.md) | Seek bar; move single-bar jam | Enter one-bar or two-bar jam | Exit jam | Undo loop start edit | Hold bar A → press bar B for range |
 | [**16ths**](docs/Guides/control-surface/Bars-and-16ths.md) | Seek 16th in jam; set / jump region | 16th jam / seek | Exit jam | Undo loop start | Hold 16th A → press 16th B for range |
-| [**Main controls**](docs/Guides/control-surface/Main-controls.md) | **35** NOTELEN: start vs end · **36** record/play · **37** next track · **38** enter / cycle edit · **39** transport | **36** clear · **37** mute · **38** exit edit | **35** delete selected note or create at empty bracket · **36** undo overdub · **37** undo clear | **36** redo overdub · **37** redo clear | Notes 40–48: extended transport in guide |
+| [**Main controls**](docs/Guides/control-surface/Main-controls.md) | **35** NOTELEN: start vs end · **36** record/play · **37** next track · **38** enter / cycle edit · **39** transport | **36** clear · **37** mute · **38** exit edit | **35** delete/create · **36** undo overdub · **37** undo clear | **36** redo overdub · **37** redo clear | **40** play/stop: long = snap window · hold = track playhead (long loops) · **41–48** extended transport |
 
 **Main controls detail (channel 16):**
 
@@ -65,6 +65,19 @@ Below is the **cheat sheet** of all available button gestures.
 | **37** MUTE/DE | Next track | Mute current track | Undo clear | Redo clear |
 | **38** Edit | Enter edit / cycle NOTE_EDIT ↔ LOOP_EDIT | Exit edit | — | — |
 | **39** Transport | Global start/stop | — | Reset to loop start | — |
+
+**Extended transport (channel 16, notes 40–47):**
+
+| Note | Short | Long | Hold (while pressed) |
+|------|-------|------|----------------------|
+| **40** Play/Stop | Toggle play/stop on selected track | Center detailed piano-roll window on current playhead (loops **>16 bars**) | Window and playhead track current tick (same as playback auto-follow; restores during NOTE_EDIT) |
+| **41** | Set loop start | — | — |
+| **42** | Set loop end | — | — |
+| **43** | Quantize | — | — |
+| **44** Copy/Paste | Copy note | Paste note | — |
+| **45–48** | Move current tick (beat / 16th nudge) | — | — |
+
+During **NOTE_EDIT** on long loops, the detailed window stays fixed until you **long-press** or **hold** play/stop (note 40). Short press still toggles play. See [**Display**](docs/Guides/control-surface/Display.md#long-loop-bounded-window).
 
 ## Faders
 

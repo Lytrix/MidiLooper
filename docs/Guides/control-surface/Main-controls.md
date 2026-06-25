@@ -40,3 +40,18 @@ Add and delete notes use **NOTELEN** (note 35) double-press — see below.
 ## More
 
 Global transport (e.g. note 39), nudge, loop-edit helpers — [`MidiButtonConfig.cpp`](../../../src/Utils/MidiButtonConfig.cpp), [`MIDI_CONFIG_GUIDE.md`](../MIDI_CONFIG_GUIDE.md).
+
+## Extended transport (channel 16, notes 40–47)
+
+Per-track play/stop and tick nudge. Note **40** is separate from main REC/PLAY (note 36).
+
+| Note | Short | Long | Hold |
+|------|-------|------|------|
+| **40** Play/Stop | Toggle play/stop | On loops **longer than 16 bars**, center the detailed piano-roll window on the current playhead (does not toggle play) | While held, window and playhead track the current tick — same auto-follow as during playback; overrides NOTE_EDIT window freeze |
+| **41** | Set loop start | — | — |
+| **42** | Set loop end | — | — |
+| **43** | Quantize | — | — |
+| **44** | Copy note | Paste note | — |
+| **45–48** | Move current tick (± beat / 16th) | — | — |
+
+Long-press threshold for note 40 matches other buttons (default **600 ms**). During NOTE_EDIT the bounded window stays fixed until you long-press or hold play/stop.

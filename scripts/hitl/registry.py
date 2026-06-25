@@ -23,6 +23,8 @@ PRESET_SCENARIOS: dict[str, tuple[str, ...]] = {
     "edit_full": ("edit_record_prelude", "edit_full"),
     "edit_minimal": ("edit_record_prelude", "edit_minimal"),
     "edit_overdub_during_note_edit": ("edit_overdub_during_note_edit",),
+    "long_loop_display_window": ("long_loop_display_window",),
+    "two_overdub_undo_redo": ("two_overdub_undo_redo",),
 }
 
 
@@ -38,6 +40,12 @@ def _lazy_registry() -> dict[str, ScenarioSpec]:
         run_edit_record_prelude,
         verify_edit_record_prelude,
     )
+    from hitl.scenarios.long_loop_display_window import (
+        run_long_loop_display_window,
+        verify_long_loop_display_window,
+    )
+    from hitl.scenarios.two_overdub_undo_redo import run_two_overdub_undo_redo
+    from hitl.verify.two_overdub_undo_redo import verify_two_overdub_undo_redo
 
     return {
         "base": ScenarioSpec(
@@ -69,6 +77,18 @@ def _lazy_registry() -> dict[str, ScenarioSpec]:
             description="Record, overdub, edit, in-edit overdub, session undo, exit, global undo",
             run=run_edit_overdub_during_note_edit,
             verify=verify_edit_overdub_during_note_edit,
+        ),
+        "long_loop_display_window": ScenarioSpec(
+            scenario_id="long_loop_display_window",
+            description="Long loop: NOTE_EDIT window freeze, play/stop long-press snap, hold-to-track",
+            run=run_long_loop_display_window,
+            verify=verify_long_loop_display_window,
+        ),
+        "two_overdub_undo_redo": ScenarioSpec(
+            scenario_id="two_overdub_undo_redo",
+            description="Record + 2 overdub passes + undo to display-empty + redo restore",
+            run=run_two_overdub_undo_redo,
+            verify=verify_two_overdub_undo_redo,
         ),
     }
 

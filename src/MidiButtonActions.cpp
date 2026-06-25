@@ -16,6 +16,7 @@
 #include "EditStates/EditSelectNoteState.h"
 #include "TrackUndo.h"
 #include "Loop.h"
+#include "DisplayManager.h"
 
 namespace {
 uint8_t refSlotPhaseForQueue(const Track& track, uint8_t previousSlot) {
@@ -70,6 +71,9 @@ void MidiButtonActions::executeAction(MidiButtonConfig::ActionType actionType, u
             break;
         case MidiButtonConfig::ActionType::TOGGLE_PLAY:
             handleTogglePlay();
+            break;
+        case MidiButtonConfig::ActionType::CENTER_DETAILED_WINDOW_ON_PLAYHEAD:
+            handleCenterDetailedWindowOnPlayhead();
             break;
         case MidiButtonConfig::ActionType::MOVE_CURRENT_TICK:
             handleMoveCurrentTick(static_cast<int32_t>(parameter));
@@ -734,6 +738,15 @@ void MidiButtonActions::handleTogglePlay() {
     Track& track = getCurrentTrack();
     track.togglePlayStop();
     logger.info("Track play/stop toggled");
+}
+
+void MidiButtonActions::handleCenterDetailedWindowOnPlayhead() {
+    Track& track = getCurrentTrack();
+    const uint8_t trackIdx = trackManager.getSelectedTrackIndex();
+    const uint8_t displaySlot = trackManager.getSelectedSlotIndex(trackIdx);
+    const uint32_t now = getCurrentTick();
+    displayManager.centerDetailedWindowOnPlayhead(track, displaySlot, now);
+    logger.info("Detailed window centered on playhead");
 }
 
 void MidiButtonActions::handleMoveCurrentTick(int32_t tickOffset) {

@@ -163,7 +163,8 @@ void Config::loadConfiguration() {
     
     // Extended transport (ch16; note 40 used for Play/Stop to avoid conflict with 39)
     addButton(ButtonConfig(MidiConfig::ExtendedTransport::NOTE_PLAY_STOP, ch16, "Play/Stop")
-              .onShortPress(ActionType::TOGGLE_PLAY));
+              .onShortPress(ActionType::TOGGLE_PLAY)
+              .onLongPress(ActionType::CENTER_DETAILED_WINDOW_ON_PLAYHEAD));
     
     addButton(ButtonConfig(MidiConfig::ExtendedTransport::NOTE_SET_LOOP_START, ch16, "Set Loop Start")
               .onShortPress(ActionType::SET_LOOP_START));

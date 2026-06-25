@@ -120,6 +120,39 @@ void test_session_undo_stack_push_entry() {
   TEST_ASSERT_NOT_NULL(target);
 }
 
+void test_session_three_step_undo_redo_chain() {
+  NoteEditSessionUndoStack stack;
+  for (int i = 0; i < 3; ++i) {
+    SessionUndoEntry entry;
+    entry.selection.hasNote = true;
+    TEST_ASSERT_TRUE(stack.pushEntry(entry));
+  }
+  TEST_ASSERT_EQUAL(3u, stack.undoCount());
+  TEST_ASSERT_EQUAL(0u, stack.redoCount());
+
+  for (int i = 0; i < 3; ++i) {
+    SessionUndoEntry* undoTarget = stack.popUndoTarget();
+    TEST_ASSERT_NOT_NULL(undoTarget);
+  }
+  TEST_ASSERT_EQUAL(0u, stack.undoCount());
+  TEST_ASSERT_EQUAL(3u, stack.redoCount());
+
+  for (int i = 0; i < 3; ++i) {
+    TEST_ASSERT_TRUE(stack.canRedo());
+    SessionUndoEntry* redoTarget = stack.peekRedoTarget();
+    TEST_ASSERT_NOT_NULL(redoTarget);
+    stack.advanceRedoCursor();
+  }
+  TEST_ASSERT_EQUAL(3u, stack.undoCount());
+  TEST_ASSERT_EQUAL(0u, stack.redoCount());
+
+  SessionUndoEntry fresh;
+  fresh.selection.hasNote = true;
+  TEST_ASSERT_TRUE(stack.pushEntry(fresh));
+  TEST_ASSERT_EQUAL(4u, stack.undoCount());
+  TEST_ASSERT_EQUAL(0u, stack.redoCount());
+}
+
 void test_session_undo_entry_matches_clone_restore() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
@@ -634,6 +667,7 @@ void test_live_capture_baked_on_close_without_prior_edit_passes() {
 int main(int argc, char** argv) {
   UNITY_BEGIN();
   RUN_TEST(test_session_undo_stack_push_entry);
+  RUN_TEST(test_session_three_step_undo_redo_chain);
   RUN_TEST(test_session_undo_entry_matches_clone_restore);
   RUN_TEST(test_session_redo_entry_restores_after_state);
   RUN_TEST(test_replace_note_edit_pass_uses_final_session_store);
