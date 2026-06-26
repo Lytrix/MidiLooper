@@ -1,9 +1,11 @@
 # Handoff — workspace session persistence + storage layout
 
 **Date:** 2026-06-26  
-**Branch:** `refactor/timeline-data-model` (confirm with `git branch`)  
-**Tip:** `fe464b7` + **uncommitted** persistence/save-display work (see below)  
-**Status:** **M1 shipped (uncommitted)** · save-status-display **~done** · hybrid layout **OpenSpec only**
+**Branch:** `refactor/timeline-data-model`  
+**Tip:** `f4acf2e` — M1 + M2 backend + save-status display **committed**  
+**Status:** M1 + M2 backend **shipped** · display/tests **pending** · hybrid layout **OpenSpec only**
+
+**Next work:** [`hybrid_layout_workspace_m2_display_handoff.md`](hybrid_layout_workspace_m2_display_handoff.md) — task **1.1** first, then **2.13**, **2.14**, M3+.
 
 Prior chat transcript:
 [`19cef367-7beb-4322-98c6-3e619ef0449c`](../../.cursor/projects/Users-eelkejager-Documents-PlatformIO-Projects-250513-215524-teensy41/agent-transcripts/19cef367-7beb-4322-98c6-3e619ef0449c/19cef367-7beb-4322-98c6-3e619ef0449c.jsonl)
@@ -26,7 +28,7 @@ Vocabulary: **Set** on SD — not bare "Session" (avoids collision with **NoteEd
 
 ---
 
-## What shipped this session (uncommitted)
+## What shipped (commit `f4acf2e`)
 
 ### M1 — CurrentSet persistence (v6)
 
@@ -41,7 +43,17 @@ Vocabulary: **Set** on SD — not bare "Session" (avoids collision with **NoteEd
 | Native tests | `test_current_set_storage`, `test_v5_migration` — **PASS** |
 | Guide update | `docs/Guides/DEFERRED_RUNTIME_PERSISTENCE.md` (v6 layout, scheduler, sidebar) |
 
-OpenSpec `workspace-session-persistence` tasks **1.1–1.12 checked** in `tasks.md`.
+### M2 — SavedSet snapshots (backend)
+
+| Item | Evidence |
+|------|----------|
+| SetIndex + reconcile | `SavedSetCatalog`, `StorageManager::writeSetIndexToSd` |
+| `saveNewSet` / `loadSetIntoCurrent` | `StorageManager.cpp` — copy CurrentSet tree, metadata trailer |
+| 8h failsafe | `processSavedSetFailsafe` in idle maintenance (`main.cpp`) |
+| Dirty anchor hooks | record/overdub/edit/clear → `markCurrentSetMaterialChange` |
+| Native tests | `test_saved_set_catalog` — **PASS** |
+
+OpenSpec `workspace-session-persistence` tasks **1.1–1.12, 2.1–2.12, 2.8–2.9, 6.1, 6.3** checked in `tasks.md`.
 
 ### Snappy save refinements (fixes display hang vs early M1)
 
@@ -78,26 +90,8 @@ OpenSpec `workspace-session-persistence` tasks **1.1–1.12 checked** in `tasks.
 
 ---
 
-## Uncommitted working tree
-
-```
-Modified:  docs/Guides/DEFERRED_RUNTIME_PERSISTENCE.md
-           include/DisplayManager.h, StorageManager.h, DebugSessionCapture.h
-           src/DisplayManager.cpp, StorageManager.cpp, main.cpp
-           src/Track.cpp, TrackManager.cpp, TrackUndo.cpp, LoopEditManager.cpp
-           src/MidiButtonActions.cpp
-           scripts/hitl/scenarios/edit_minimal.py
-
-New:       include/CurrentSetStorage.h, DeferredSaveDisplayStatus.h, RtcTime.h
-           src/CurrentSetStorage.cpp, RtcTime.cpp
-           test/test_current_set_storage/, test/test_v5_migration/, test/test_save_status_display/
-           openspec/changes/workspace-session-persistence/
-           openspec/changes/save-status-display/
-           openspec/changes/currentset-savedset-storage-layout/
-           docs/plans/workspace_session_persistence_handoff.md (this file)
-```
-
-**Native matrix:** `pio test -e native` → **195/195 PASS** (2026-06-26).
+**Native matrix:** `pio test -e native` → **205/205 PASS** (2026-06-26).  
+**HITL baseline:** PASS — `captures/host_midi_automation_baseline_20260626_192325.json`.
 
 ---
 
@@ -105,7 +99,7 @@ New:       include/CurrentSetStorage.h, DeferredSaveDisplayStatus.h, RtcTime.h
 
 | Change | Status | Apply |
 |--------|--------|-------|
-| `workspace-session-persistence` | M1 done; M2–M5 pending | `/opsx:apply` → **M2** next |
+| `workspace-session-persistence` | M1 + M2 backend done; display/M3+ pending | `/opsx:apply` → **2.13** after hybrid **1.1** |
 | `save-status-display` | Code done; manual 4.3 pending | Archive after hardware check |
 | `currentset-savedset-storage-layout` | **OpenSpec only** — validated | `/opsx:apply` when ready (after or parallel to M2 planning) |
 
@@ -178,7 +172,7 @@ CurrentSet → latest RecoveryPoint → newest SavedSet → empty default.
 | Milestone | Focus | Status |
 |-----------|-------|--------|
 | **M1** | CurrentSet, deferred FSM, v5 migration, boot stub | **Done (uncommitted)** |
-| **M2** | SetIndex, saveNewSet, 8h failsafe, loadSetIntoCurrent, UI basics | Pending |
+| **M2** | SetIndex, saveNewSet, 8h failsafe, loadSetIntoCurrent | **Backend done** · UI 2.13–2.14 pending |
 | **M3** | Slot loop import (long-press → IMPORT LOOP) | Pending |
 | **M4** | RecoveryPointManager, prune, full boot recovery, browser polish | Pending |
 | **M5** | Favorites | Future |
@@ -247,24 +241,10 @@ Coordinate `DisplayManager` browser work with **`long-loop-piano-roll-window`** 
 3. **Slot-summary field set** — exact rows for browser (hybrid layout OpenSpec TBD)
 4. **RecoveryPoint FSM** — extend deferred FSM vs separate queue (M4)
 5. **DROID gestures** — SAVE NEW, load set, IMPORT LOOP (M2/M3 tasks)
-6. **Commit strategy** — large uncommitted diff; consider splitting: M1 persistence / save spinner / HITL script
+6. **Commit strategy** — shipped as single commit `f4acf2e`; next work split per [`hybrid_layout_workspace_m2_display_handoff.md`](hybrid_layout_workspace_m2_display_handoff.md)
 
 ---
 
-## Suggested first prompts
+## Suggested first prompt
 
-**Commit + continue M2:**
-
-> Read `docs/plans/workspace_session_persistence_handoff.md`. Review uncommitted M1 + save-status changes, run `pio test -e native`, then implement `workspace-session-persistence` milestone M2 per `tasks.md`.
-
-**Hybrid storage layout:**
-
-> Read the handoff and implement `currentset-savedset-storage-layout` task 1.1 (remove transport-stop full-slot dirty) plus slot metadata index (section 2).
-
-**Manual verification:**
-
-> Build `teensy41-capture-serial`, upload if I confirm, then verify save spinner during record → PLAYING and confirm loop is fully persisted before transport stop.
-
-**Archive save-status-display:**
-
-> Complete save-status-display task 4.3 manual check, then `/opsx:archive save-status-display`.
+> Read `docs/plans/hybrid_layout_workspace_m2_display_handoff.md`. Implement hybrid layout task **1.1**, then workspace **2.13** and **2.14**.
