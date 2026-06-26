@@ -127,6 +127,7 @@ void TrackManager::stopRecordingTrack(uint8_t trackIndex) {
     tracks[trackIndex].setLoopLength(masterLoopLength);
   }
   Serial.println("Saving state after recording");
+  StorageManager::markCurrentSetLoopSlotDirty(trackIndex, tracks[trackIndex].getActiveLoopIndex());
   StorageManager::requestDeferredSaveState(looperState.getLooperState());
 }
 
@@ -343,6 +344,7 @@ void TrackManager::handleTransportStop() {
     }
   }
   forceLedUpdate(currentTick);
+  StorageManager::markAllCurrentSetLoopSlotsDirty();
   StorageManager::requestDeferredSaveState(looperState.getLooperState());
 }
 
@@ -476,6 +478,7 @@ void TrackManager::finalizeCaptureAndSelectSlot(uint8_t trackIndex, uint8_t newS
     if (autoAlignEnabled) {
       t.setLoopLength(masterLoopLength);
     }
+    StorageManager::markCurrentSetLoopSlotDirty(trackIndex, captureSlot);
     StorageManager::requestDeferredSaveState(looperState.getLooperState());
   } else if (t.isOverdubbing()) {
     t.stopOverdubbing();

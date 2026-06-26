@@ -42,6 +42,15 @@ void trimUndoStackForMemory(Track& track) {
     }
 }
 
+uint8_t resolveTrackIndexForPersistence(const Track& track) {
+    for (uint8_t i = 0; i < trackManager.getTrackCount(); ++i) {
+        if (&trackManager.getTrack(i) == &track) {
+            return i;
+        }
+    }
+    return trackManager.getSelectedTrackIndex();
+}
+
 void pushUndoEntry(Track& track, UndoEntry&& entry) {
     GlobalUndoStack& stack = track.getGlobalUndoStack();
     dropRedoBranch(stack);
@@ -343,6 +352,8 @@ void TrackUndo::undoOverdub(Track& track) {
                  static_cast<int>(entry.kind),
                  static_cast<int>(getUndoCount(track)));
     logger.logTrackEvent("Overdub undone", clockManager.getCurrentTick());
+    StorageManager::markCurrentSetLoopSlotDirty(resolveTrackIndexForPersistence(track),
+                                                track.getActiveLoopIndex());
     StorageManager::requestDeferredSaveState(looperState.getLooperState());
 }
 
@@ -361,6 +372,8 @@ void TrackUndo::redoOverdub(Track& track) {
                  static_cast<int>(entry.kind),
                  static_cast<int>(getRedoCount(track)));
     logger.logTrackEvent("Overdub redone", clockManager.getCurrentTick());
+    StorageManager::markCurrentSetLoopSlotDirty(resolveTrackIndexForPersistence(track),
+                                                track.getActiveLoopIndex());
     StorageManager::requestDeferredSaveState(looperState.getLooperState());
 }
 

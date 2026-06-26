@@ -20,6 +20,8 @@
 #include "TrackStateMachine.h"
 #include "MidiButtonManager.h"
 #include "MidiConfig.h"
+#include "StorageManager.h"
+#include "DeferredSaveDisplayStatus.h"
 #include <algorithm>
 #include <string>
 #include <Font5x7Fixed.h>
@@ -36,6 +38,12 @@ constexpr int SIDEBAR_SEPARATOR_BRIGHTNESS = 2;
 constexpr int MODE_VALUE_BRIGHTNESS = 3; // match brightness of bottom-strip labels
 constexpr int SIDEBAR_TEXT_BRIGHTNESS = 5;
 constexpr int SIDEBAR_VALUE_BRIGHTNESS = 5; // match LEN / numeric field values in drawInfoField
+constexpr int kSaveStatusDotY = 47;
+constexpr int kSaveStatusDotSpacing = 2;
+constexpr uint8_t kSaveStatusDimBrightness = 2;
+constexpr uint8_t kSaveStatusActiveBrightness = 8;
+constexpr uint8_t kSaveStatusCompletedBrightness = 15;
+constexpr uint8_t kSaveStatusFailedBrightness = 6;
 constexpr int kDetailedPianoRollRows = 32;
 constexpr int kDetailedPianoRollY0 = 0;
 constexpr int kDetailedPianoRollY1 = kDetailedPianoRollRows - 1;
@@ -1231,7 +1239,7 @@ void DisplayManager::drawSidebar(Track& selectedTrack, uint8_t displaySlot) {
         _display.gfx.draw_text(_display.api.getFrameBuffer(), txt, x, y, brightness);
     };
 
-    // BPM: one decimal place. Use a real '.' + full glyph advance so "100.0" cannot read as "1000".
+    // BPM: one decimal place, but draw the '.' as a single pixel so width ~= 4 chars (vs 5 for full ".").
     const int bpmY = 7;
     const uint8_t bpmBright = SIDEBAR_TEXT_BRIGHTNESS;
     char wholeBuf[12];
@@ -1245,14 +1253,14 @@ void DisplayManager::drawSidebar(Track& selectedTrack, uint8_t displaySlot) {
     snprintf(wholeBuf, sizeof(wholeBuf), "%d", whole);
     char fracStr[2] = { static_cast<char>('0' + tenth), '\0' };
     const int wWhole = static_cast<int>(strlen(wholeBuf)) * 6;
-    constexpr int kGlyph = 6;
-    const int wBpm = wWhole + kGlyph + kGlyph;
+    constexpr int kThinDotAdvance = 1;
+    const int wBpm = wWhole + kThinDotAdvance + 6;
     const int bpmStartX = textRight - wBpm;
     _display.gfx.draw_text(_display.api.getFrameBuffer(), wholeBuf, bpmStartX, bpmY, bpmBright);
     const int dotX = bpmStartX + wWhole;
-    const uint8_t dotBright = (bpmBright * 2) / 3;
-    _display.gfx.draw_text(_display.api.getFrameBuffer(), ".", dotX, bpmY, dotBright);
-    _display.gfx.draw_text(_display.api.getFrameBuffer(), fracStr, dotX + kGlyph, bpmY, bpmBright);
+    // One-pixel decimal: align with the descender row of digits (Font5x7 mono top-left at bpmY).
+    _display.gfx.draw_pixel(_display.api.getFrameBuffer(), dotX - 1, bpmY - 1, bpmBright);
+    _display.gfx.draw_text(_display.api.getFrameBuffer(), fracStr, dotX + kThinDotAdvance, bpmY, bpmBright);
 
     drawRight(modeTop, 17, MODE_VALUE_BRIGHTNESS);
     drawRight(modeBottom, 27, MODE_VALUE_BRIGHTNESS);
@@ -1272,6 +1280,47 @@ void DisplayManager::drawSidebar(Track& selectedTrack, uint8_t displaySlot) {
                            MODE_VALUE_BRIGHTNESS);
     _display.gfx.draw_text(_display.api.getFrameBuffer(), undoValStr, undoValX, undoY,
                            SIDEBAR_VALUE_BRIGHTNESS);
+
+    drawSaveStatusIndicator(millis(), textRight);
+}
+
+void DisplayManager::drawSaveStatusIndicator(uint32_t nowMs, int textRight) {
+    const DeferredSaveDisplayStatus status = StorageManager::getDeferredSaveDisplayStatus(nowMs);
+    static DeferredSaveDisplayPhase lastReportedPhase = DeferredSaveDisplayPhase::Idle;
+    if (status.phase != lastReportedPhase) {
+        SC_SAVE(deferredSaveDisplayPhaseName(status.phase), status.rotateStep);
+        lastReportedPhase = status.phase;
+    }
+
+    if (status.phase == DeferredSaveDisplayPhase::Idle) {
+        return;
+    }
+
+    constexpr int kDotCount = 4;
+    constexpr int kTotalWidth = kDotCount + (kDotCount - 1) * kSaveStatusDotSpacing;
+    const int startX = textRight - kTotalWidth + 1;
+    for (int i = 0; i < kDotCount; ++i) {
+        uint8_t brightness = 0;
+        switch (status.phase) {
+            case DeferredSaveDisplayPhase::Pending:
+                brightness = kSaveStatusDimBrightness;
+                break;
+            case DeferredSaveDisplayPhase::InProgress:
+                brightness = (static_cast<int>(status.rotateStep) == i) ? kSaveStatusActiveBrightness
+                                                                        : kSaveStatusDimBrightness;
+                break;
+            case DeferredSaveDisplayPhase::Completed:
+                brightness = kSaveStatusCompletedBrightness;
+                break;
+            case DeferredSaveDisplayPhase::Failed:
+                brightness = kSaveStatusFailedBrightness;
+                break;
+            default:
+                break;
+        }
+        const int x = startX + i * (1 + kSaveStatusDotSpacing);
+        _display.gfx.draw_pixel(_display.api.getFrameBuffer(), x, kSaveStatusDotY, brightness);
+    }
 }
 
 // Draw info area

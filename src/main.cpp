@@ -90,6 +90,7 @@ void setup() {
 
   midiHandler.setup();
   trackManager.setup();
+  displayManager.setup();
   looper.setup();  // SD + loadState; setSelectedTrack triggers forceLedUpdate (midi now ready)
 
   // Startup policy: enter LOOP_EDIT deterministically and sync DROID explicitly.
@@ -107,7 +108,6 @@ void setup() {
   }
 
   clockManager.setup();
-  displayManager.setup();
 #if defined(ENABLE_GPIO_BUTTONS)
   gpioButtonManager.setup({Buttons::BUTTON_A_PIN, Buttons::BUTTON_B_PIN, Buttons::BUTTON_C_PIN,
                            Buttons::BUTTON_D_PIN, Buttons::ENCODER_BUTTON_PIN});
@@ -179,29 +179,30 @@ void loop() {
 
   SC_REC_FLUSH_PENDING_REVTS(64);
 
-  for (uint8_t i = 0; i < trackManager.getTrackCount(); ++i) {
-    trackManager.getTrack(i).processDeferredIdleMaintenance(now);
-  }
-
-  StorageManager::processDeferredSaveState(looperState.getLooperState());
-
-  if (!timingCriticalTrackActive) {
-    StorageManager::processEditAutosave(looperState.getLooperState());
-    trackManager.reclaimUnreferencedDisabledPasses();
-  }
-
   // Update SELECT mode for overdubbing if active
   if (editManager.getCurrentState() == editManager.getSelectNoteState()) {
     auto* selectState = static_cast<EditSelectNoteState*>(editManager.getSelectNoteState());
     selectState->updateForOverdubbing(editManager, trackManager.getSelectedTrack());
   }
-  
-  // Only update display if enough time has passed (steady-rate)
+
+  // Render display before deferred SD slices so UI stays responsive.
   if (!StorageManager::isDeferredSaveActive() &&
       now - lastDisplayUpdate >= LCD::DISPLAY_UPDATE_INTERVAL) {
     lastDisplayUpdate = now;
     displayManager.update();
   }
+
+  for (uint8_t i = 0; i < trackManager.getTrackCount(); ++i) {
+    trackManager.getTrack(i).processDeferredIdleMaintenance(now);
+  }
+
+  if (!timingCriticalTrackActive) {
+    StorageManager::processEditAutosave(looperState.getLooperState());
+    StorageManager::processSavedSetFailsafe(looperState.getLooperState());
+    trackManager.reclaimUnreferencedDisabledPasses();
+  }
+
+  StorageManager::processDeferredSaveState(looperState.getLooperState());
 
   // Log memory every 60 seconds only when transport/capture is idle.
   // Runtime PSRAM stats walk (sm_malloc_stats_pool) can take hundreds of ms

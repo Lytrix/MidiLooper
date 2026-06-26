@@ -20,8 +20,24 @@ The fix is two-part:
 |-------|-----------|
 | **M1 — headroom** | External-memory-first length-scaling buffers + internal-heap floor admission (`LoopEventStore::hasInternalHeapHeadroomForNonCriticalWork`) |
 | **M2 — writer** | Central **deferred save** — one bounded SD slice per main-loop iteration, chunk-sized working set |
+| **M3 — CurrentSet (v6)** | Deferred FSM writes `Sets/_current/meta.bin` + per-slot `loop_TT_SS.bin` (not monolithic `/midilooper_state.raw`) |
 
 In-RAM MIDI events still live in the **PSRAM chunk pool** (`LoopEventStore`). SD persistence **streams** those chunks without building a full-loop flat buffer in RAM2.
+
+---
+
+## SD layout (v6 CurrentSet)
+
+Runtime deferred saves target **`Sets/_current/`**:
+
+| File | Content |
+|------|---------|
+| `meta.bin` | v6 header (anchor fields, `lastActiveUnix`), transport, track/slot metadata, footer, global undo — **no inline loop bodies** |
+| `loop_TT_SS.bin` | One slot per file (`loop_00_07.bin`, …); `StorageLoopIo` payload + `STORAGE_COMPLETE_MAGIC` footer |
+
+Atomic write pattern per file: `.tmp` → verify completion marker → rename.
+
+Boot: `loadState` → `Sets/_current/`; on failure → latest RecoveryPoint under `checkpoints/` → newest SavedSet → empty. v5 `/midilooper_state.raw` migrates once to CurrentSet then quarantines to `/state.bad.{millis}`.
 
 ---
 
@@ -45,8 +61,11 @@ flowchart TB
   triggers --> REQ[requestDeferredSaveState]
   REQ --> Q[deferredSavePending]
   Q --> PROC[processDeferredSaveState]
-  PROC -->|one slice / loop iter| SD[(SD v4 file)]
-  SD --> CM[STORAGE_COMPLETE_MAGIC footer]
+  PROC -->|one slice / loop iter| SD[(Sets/_current/)]
+  SD --> META[meta.bin]
+  SD --> LOOP[loop_TT_SS.bin]
+  META --> CM[STORAGE_COMPLETE_MAGIC]
+  LOOP --> CM
 ```
 
 ### Call sites (request only)
@@ -71,15 +90,29 @@ flowchart TB
 1. **No work while capture active** — returns immediately if any track is `RECORDING` or `OVERDUBBING`.
 2. **Admission** — before `dispatch`, checks `hasInternalHeapHeadroomForNonCriticalWork(admissionHeap)`. Below floor: `PERS,defer,...,heap_floor` and retry next idle iteration. Once `deferredSaveInProgress`, slices run to completion without re-gating.
 3. **One logical step per call** — each invocation advances at most one sub-step (header field, one chunk batch, one undo entry fragment, etc.).
-4. **Display** — `isDeferredSaveActive()` is true only while **`deferredSaveInProgress`** (SD file open), not while merely queued. OLED updates skip during in-flight writes.
+4. **Display** — `isDeferredSaveActive()` reflects active SD-I/O windows in the current slice, not whole-job queued/in-progress state.
 5. **Dirty flags** — edit/loop dirty state clears only after **`PERS,result,...,ok`**. Failed or incomplete saves leave dirty set for retry.
 
 Placement in `src/main.cpp`:
 
 ```cpp
-// After transport/MIDI service, before idle maintenance:
+// After transport/MIDI service and display update:
 StorageManager::processDeferredSaveState(looperState.getLooperState());
 ```
+
+### Sidebar save status indicator
+
+`DisplayManager::drawSidebar` draws a **4-dot row** below the undo field (bottom-right). One combined channel reflects deferred save phase via `StorageManager::getDeferredSaveDisplayStatus(nowMs)`:
+
+| Phase | Visual |
+|-------|--------|
+| Idle | dots off |
+| Pending | all dim (queued, e.g. blocked during capture) |
+| InProgress | one bright dot rotates every ~200 ms |
+| Completed | all bright ≤800 ms after `PERS,result,...,ok` |
+| Failed | all mid brightness ≤800 ms after failed result |
+
+Capture builds emit `#CAP,SAVE,<phase>,rotateStep` on phase transitions only.
 
 ---
 
@@ -89,12 +122,12 @@ Top-level stages (`DeferredSaveStage` in `StorageManager.cpp`):
 
 | Stage | Content |
 |-------|---------|
-| `GlobalHeader` | Version, BPM, looper state, master length, track count |
+| `CurrentSetMeta` | v6 meta header + BPM, looper state, master length, track count |
 | `TrackHeaderAndSlots` | Per-track header + slot metadata (enabled, muted, loop id) |
-| `LoopPool` | Per-slot loop snapshot via `stepDeferredLoopPersist` / `StorageLoopIo` |
+| `CurrentSetLoopSlot` | Per-slot `loop_TT_SS.bin` via `stepDeferredLoopPersist` / `StorageLoopIo`; clean slots are skipped via CurrentSet dirty tracking |
 | `Footer` | Selected track, active loop indices, undo magic |
 | `UndoStacks` | Global undo entries (bounded per slice — no full-pass flatten) |
-| `CompletionMarker` | `STORAGE_COMPLETE_MAGIC` (`"SAVE"`) — load fails hard if missing |
+| `CurrentSetCompletion` | Patch `lastActiveUnix` in `meta.bin`; `PERS,result,...,ok` |
 
 Nested cursors (`deferredSaveTrackCursor`, `deferredSavePoolCursor`, `deferredSaveChunkCursor`, `deferredSaveUndoEntryCursor`, …) resume mid-stage on the next main-loop call.
 

@@ -28,6 +28,7 @@
  *                                               OLED piano-roll snapshot (display vs storage)
  *   DNTE ,<pitch>,<storageStart>,<displayStart>,<length>,<selectedIdx>
  *                                               OLED note-info row (edit selection; display ticks)
+ *   SAVE ,<phase>,<rotateStep>                 sidebar deferred-save status phase transition
  *   WRAP ,<onTick>,<offTick>,<ch>,<note>       wrapped tail-on / head-off pair in committed store
  *   BAR  ,<tick>,<bar>                         bar boundary marker (tick<->micros alignment)
  */
@@ -134,6 +135,11 @@ inline void persistence(const char* stage, uint32_t durationUs,
                 (unsigned long)heapBefore, (unsigned long)heapAfter, outcome);
 }
 
+inline void saveDisplayPhase(const char* phase, uint8_t rotateStep) {
+  Serial.printf("#CAP,%lu,SAVE,%s,%u\r\n",
+                (unsigned long)micros(), phase, rotateStep);
+}
+
 struct PendingRevt {
   uint32_t tick;
   uint8_t ch;
@@ -237,6 +243,7 @@ inline void update(uint32_t currentTick, uint32_t ticksPerBar) {
                                            DebugSessionCapture::recStopStage(stage, elapsedUs, durationUs, heapBefore, heapAfter, eventCount, chunkRefCount, outcome)
 #define SC_PERSIST(stage, durationUs, heapBefore, heapAfter, outcome) \
                                            DebugSessionCapture::persistence(stage, durationUs, heapBefore, heapAfter, outcome)
+#define SC_SAVE(phase, rotateStep)         DebugSessionCapture::saveDisplayPhase(phase, rotateStep)
 #define SC_REC_STORED_NOTE_ON(tick, ch, note) DebugSessionCapture::recStoredNoteOn(tick, ch, note)
 #define SC_STORED_NOTE_EVENT(kind, tick, ch, note) DebugSessionCapture::storedNoteEvent(kind, tick, ch, note)
 #define SC_DISP(slot, state, loopLen, take, visual, frame, buffer, published) \
@@ -267,6 +274,7 @@ inline void update(uint32_t currentTick, uint32_t ticksPerBar) {
 #define SC_REC_STOP(kind, slot, tick, start, raw, final, align) ((void)0)
 #define SC_REC_STOP_STAGE(stage, elapsedUs, durationUs, heapBefore, heapAfter, eventCount, chunkRefCount, outcome) ((void)0)
 #define SC_PERSIST(stage, durationUs, heapBefore, heapAfter, outcome) ((void)0)
+#define SC_SAVE(phase, rotateStep)         ((void)0)
 #define SC_REC_STORED_NOTE_ON(tick, ch, note) ((void)0)
 #define SC_STORED_NOTE_EVENT(kind, tick, ch, note) ((void)0)
 #define SC_DISP(slot, state, loopLen, take, visual, frame, buffer, published) ((void)0)

@@ -1,0 +1,182 @@
+//  Copyright (c)  2025 Lytrix (Eelke Jager)
+//  Licensed under the PolyForm Noncommercial 1.0.0
+
+#include <cstring>
+#include <map>
+#include <string>
+#include <unity.h>
+#include <vector>
+
+#include "../../src/CurrentSetStorage.cpp"
+#include "../../src/Logger.cpp"
+#include "../../src/Utils/NoteUtils.cpp"
+#include "../../src/LoopEventStore.cpp"
+#include "../../src/EditApply.cpp"
+#include "../../src/LoopPasses.cpp"
+#include "../../src/StorageLoopIo.cpp"
+#include "../../src/Utils/MemoryMonitor.cpp"
+#include "../../src/Loop.cpp"
+#include "CurrentSetStorage.h"
+#include "StorageLoopIo.h"
+
+namespace {
+
+template <typename T>
+void appendRaw(std::vector<uint8_t>& buffer, const T& value) {
+  const uint8_t* ptr = reinterpret_cast<const uint8_t*>(&value);
+  buffer.insert(buffer.end(), ptr, ptr + sizeof(T));
+}
+
+class MemoryStorageIo {
+ public:
+  explicit MemoryStorageIo(std::vector<uint8_t>* buffer) : buffer_(buffer) {}
+
+  StorageIo io() {
+    return StorageIo{
+        [this](const void* data, size_t size) { return write(data, size); },
+        [this](void* data, size_t size) { return read(data, size); },
+    };
+  }
+
+  void resetRead() { readPos_ = 0; }
+
+ private:
+  bool write(const void* data, size_t size) {
+    const auto* bytes = static_cast<const uint8_t*>(data);
+    buffer_->insert(buffer_->end(), bytes, bytes + size);
+    return true;
+  }
+
+  bool read(void* data, size_t size) {
+    if (readPos_ + size > buffer_->size()) {
+      return false;
+    }
+    std::memcpy(data, buffer_->data() + readPos_, size);
+    readPos_ += size;
+    return true;
+  }
+
+  std::vector<uint8_t>* buffer_;
+  size_t readPos_ = 0;
+};
+
+PersistedLoopSnapshot makeSampleLoopSnapshot() {
+  PersistedLoopSnapshot snapshot{};
+  snapshot.loopId = 0;
+  snapshot.loopLengthTicks = 768;
+  snapshot.nextPassId = 2;
+  RecordPass record{};
+  record.id = 1;
+  record.state = CapturePassState::Active;
+  LoopEventStore capture;
+  TEST_ASSERT_TRUE(capture.append(MidiEvent::NoteOn(0, 1, 60, 100)));
+  capture.detachChunksTo(record.chunkRefs);
+  snapshot.passes.recordPass = std::move(record);
+  return snapshot;
+}
+
+}  // namespace
+
+void test_meta_header_round_trip() {
+  CurrentSetStorage::MetaHeader written{};
+  written.containerVersion = CurrentSetStorage::CONTAINER_VERSION;
+  written.lastActiveUnix = 1780000000UL;
+  written.anchor.loadedFromSequence = 3;
+  written.anchor.lastAnchoredSequence = 3;
+  written.anchor.lastMaterialChangeUnix = 1779990000UL;
+  written.anchor.hasMaterialChangesSinceAnchor = 0;
+
+  std::vector<uint8_t> buffer;
+  MemoryStorageIo ioWriter(&buffer);
+  TEST_ASSERT_TRUE(CurrentSetStorage::writeMetaHeader(ioWriter.io(), written));
+
+  MemoryStorageIo ioReader(&buffer);
+  CurrentSetStorage::MetaHeader readBack{};
+  TEST_ASSERT_TRUE(CurrentSetStorage::readMetaHeader(ioReader.io(), readBack));
+  TEST_ASSERT_EQUAL_UINT32(written.containerVersion, readBack.containerVersion);
+  TEST_ASSERT_EQUAL_UINT32(written.lastActiveUnix, readBack.lastActiveUnix);
+  TEST_ASSERT_EQUAL_UINT32(written.anchor.loadedFromSequence, readBack.anchor.loadedFromSequence);
+  TEST_ASSERT_EQUAL_UINT32(written.anchor.lastAnchoredSequence,
+                             readBack.anchor.lastAnchoredSequence);
+  TEST_ASSERT_EQUAL_UINT8(written.anchor.hasMaterialChangesSinceAnchor,
+                          readBack.anchor.hasMaterialChangesSinceAnchor);
+}
+
+void test_loop_slot_path_two_digit_padding() {
+  char path[48];
+  TEST_ASSERT_TRUE(CurrentSetStorage::formatLoopSlotPath(path, sizeof(path), 0, 7));
+  TEST_ASSERT_EQUAL_STRING("/Sets/_current/loop_00_07.bin", path);
+  TEST_ASSERT_TRUE(CurrentSetStorage::formatLoopSlotPath(path, sizeof(path), 15, 15));
+  TEST_ASSERT_EQUAL_STRING("/Sets/_current/loop_15_15.bin", path);
+}
+
+void test_loop_slot_temp_path_two_digit_padding() {
+  char path[48];
+  TEST_ASSERT_TRUE(CurrentSetStorage::formatLoopSlotTempPath(path, sizeof(path), 0, 7));
+  TEST_ASSERT_EQUAL_STRING("/Sets/_current/loop_00_07.bin.tmp", path);
+  TEST_ASSERT_TRUE(CurrentSetStorage::formatLoopSlotTempPath(path, sizeof(path), 15, 15));
+  TEST_ASSERT_EQUAL_STRING("/Sets/_current/loop_15_15.bin.tmp", path);
+}
+
+void test_loop_file_round_trip_with_complete_magic() {
+  const PersistedLoopSnapshot snapshot = makeSampleLoopSnapshot();
+  std::vector<uint8_t> buffer;
+  MemoryStorageIo ioWriter(&buffer);
+  TEST_ASSERT_TRUE(writePersistedLoopSnapshot(ioWriter.io(), snapshot));
+  TEST_ASSERT_TRUE(CurrentSetStorage::writeCompleteMagic(ioWriter.io()));
+
+  TEST_ASSERT_TRUE(CurrentSetStorage::verifyCompleteMagicAtEnd(buffer.data(), buffer.size()));
+
+  MemoryStorageIo ioReader(&buffer);
+  const size_t payloadSize = buffer.size() - sizeof(CurrentSetStorage::COMPLETE_MAGIC);
+  (void)payloadSize;
+
+  PersistedLoopSnapshot readBack{};
+  TEST_ASSERT_TRUE(readPersistedLoopSnapshot(ioReader.io(), readBack));
+  TEST_ASSERT_EQUAL_UINT32(snapshot.loopLengthTicks, readBack.loopLengthTicks);
+  TEST_ASSERT_TRUE(readBack.passes.hasRecordPass());
+}
+
+void test_complete_magic_fail_hard_without_footer() {
+  std::vector<uint8_t> buffer = {0x01, 0x02, 0x03};
+  TEST_ASSERT_FALSE(CurrentSetStorage::verifyCompleteMagicAtEnd(buffer.data(), buffer.size()));
+}
+
+void test_meta_header_anchor_fields_round_trip() {
+  CurrentSetStorage::MetaHeader written{};
+  written.containerVersion = CurrentSetStorage::CONTAINER_VERSION;
+  written.lastActiveUnix = 1800000123UL;
+  written.anchor.loadedFromSequence = 9;
+  written.anchor.lastAnchoredSequence = 7;
+  written.anchor.lastMaterialChangeUnix = 1799999999UL;
+  written.anchor.hasMaterialChangesSinceAnchor = 1;
+
+  std::vector<uint8_t> buffer;
+  MemoryStorageIo ioWriter(&buffer);
+  TEST_ASSERT_TRUE(CurrentSetStorage::writeMetaHeader(ioWriter.io(), written));
+
+  MemoryStorageIo ioReader(&buffer);
+  CurrentSetStorage::MetaHeader readBack{};
+  TEST_ASSERT_TRUE(CurrentSetStorage::readMetaHeader(ioReader.io(), readBack));
+  TEST_ASSERT_EQUAL_UINT32(written.anchor.loadedFromSequence,
+                           readBack.anchor.loadedFromSequence);
+  TEST_ASSERT_EQUAL_UINT32(written.anchor.lastAnchoredSequence,
+                           readBack.anchor.lastAnchoredSequence);
+  TEST_ASSERT_EQUAL_UINT32(written.anchor.lastMaterialChangeUnix,
+                           readBack.anchor.lastMaterialChangeUnix);
+  TEST_ASSERT_EQUAL_UINT8(written.anchor.hasMaterialChangesSinceAnchor,
+                          readBack.anchor.hasMaterialChangesSinceAnchor);
+}
+
+int main(int argc, char** argv) {
+  (void)argc;
+  (void)argv;
+  UNITY_BEGIN();
+  RUN_TEST(test_meta_header_round_trip);
+  RUN_TEST(test_loop_slot_path_two_digit_padding);
+  RUN_TEST(test_loop_slot_temp_path_two_digit_padding);
+  RUN_TEST(test_loop_file_round_trip_with_complete_magic);
+  RUN_TEST(test_complete_magic_fail_hard_without_footer);
+  RUN_TEST(test_meta_header_anchor_fields_round_trip);
+  return UNITY_END();
+}
