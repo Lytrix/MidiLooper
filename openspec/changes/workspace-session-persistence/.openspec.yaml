@@ -1,0 +1,5 @@
+schema: spec-driven
+created: 2026-06-25
+status: proposed
+kind: enhancement
+# Layout revision 2026-06-25: single root /Sets/, CurrentSet/SavedSet vocabulary

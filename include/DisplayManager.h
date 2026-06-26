@@ -141,6 +141,7 @@ private:
     // Info area rendering
     void drawInfoArea(uint32_t currentTick, Track& selectedTrack, uint8_t displaySlot);
     void drawSidebar(Track& selectedTrack, uint8_t displaySlot);
+    void drawSaveStatusIndicator(uint32_t nowMs, int textRight);
     SidebarMode resolveSidebarMode(const Track& selectedTrack, uint8_t displaySlot) const;
     const char* sidebarModeLabel(SidebarMode mode) const;
     MidiOutput resolveMidiOutput() const;

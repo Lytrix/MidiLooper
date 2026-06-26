@@ -40,6 +40,11 @@ MidiButtonActions midiButtonActions;
 
 namespace {
 
+// SavedSet gesture map (M2 placeholder):
+// - SAVE NEW: dedicated combo remains TBD until Set Browser UX is wired.
+// - LOAD INTO CURRENT: routed from browser selection, not a direct transport shortcut.
+// Keep this mapping note here so button-routing work lands in one module.
+
 /// Armed + transport stopped: record press starts transport (DIN Start). Armed + transport running: cancel arm.
 bool handleArmedRecordPress(uint8_t trackIdx) {
   Track& track = trackManager.getTrack(trackIdx);
@@ -538,6 +543,16 @@ void MidiButtonActions::handleRedoClearTrack() {
 void MidiButtonActions::handleClearTrack() {
     Track& track = getCurrentTrack();
 
+    // Clear mutates pass ownership; complete any in-flight deferred save first so
+    // the writer cannot read a slot while it is being reset.
+    if (StorageManager::hasDeferredSaveWork()) {
+        logger.info("Clear waiting for deferred save completion");
+        if (!StorageManager::saveState(looperState.getLooperState())) {
+            logger.error("Clear aborted: could not complete deferred save first");
+            return;
+        }
+    }
+
     if (!track.hasData()) {
         if (!track.isEmpty()) {
             track.setState(TRACK_EMPTY);
@@ -548,6 +563,7 @@ void MidiButtonActions::handleClearTrack() {
     } else {
         TrackUndo::pushClearTrackSnapshot(track);
         track.clear();
+        StorageManager::markCurrentSetTrackDirty(trackManager.getSelectedTrackIndex());
         StorageManager::requestDeferredSaveState(looperState.getLooperState());
         logger.info("MIDI: Clear Track");
     }

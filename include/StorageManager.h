@@ -3,7 +3,13 @@
 
 #pragma once
 #include <cstdint>
+#include <vector>
+#include "DeferredSaveDisplayStatus.h"
 #include "LooperState.h"
+
+#if defined(ARDUINO)
+#include <SD.h>
+#endif
 
 /**
  * @class StorageManager
@@ -18,9 +24,30 @@ class StorageManager {
 public:
     static bool saveState(const LooperState& state);
     static bool loadState(LooperState& state);
-    static void requestDeferredSaveState(const LooperState& state, uint32_t admissionHeap = UINT32_MAX);
+    static void requestDeferredSaveState(const LooperState& state, uint32_t admissionHeap = UINT32_MAX,
+                                         bool isUrgentRequest = false);
     static void processDeferredSaveState(const LooperState& state);
     static bool isDeferredSaveActive();
+    static bool hasDeferredSaveWork();
     static void requestUrgentEditSave();
     static void processEditAutosave(const LooperState& state);
+    static bool saveNewSet(char* savedSetFolderOut = nullptr, size_t outSize = 0);
+    static bool loadSetIntoCurrent(const char* savedSetFolderName);
+    static void processSavedSetFailsafe(const LooperState& state);
+    static void markCurrentSetLoopSlotDirty(uint8_t trackIndex, uint8_t slotIndex);
+    static void markCurrentSetTrackDirty(uint8_t trackIndex);
+    static void markAllCurrentSetLoopSlotsDirty();
+    static DeferredSaveDisplayStatus getDeferredSaveDisplayStatus(uint32_t nowMs);
+
+private:
+    static bool loadCurrentSetFromSd(LooperState& state);
+    static bool loadCurrentSetFromDirectory(const char* setDir, LooperState& state);
+    static bool loadV5MonolithIntoRam(LooperState& state);
+    static bool migrateV5MonolithToCurrentSet(LooperState& state);
+    static bool attemptBootRecoveryChain(LooperState& state);
+    static bool tryLoadLatestRecoveryPoint(LooperState& state);
+    static bool tryLoadNewestSavedSet(LooperState& state);
+    static bool loadCurrentSetMetaAndTracks(File& file, const char* setDir, LooperState& state,
+                                            std::vector<uint8_t>& activeLoopIndex,
+                                            uint8_t& selectedTrackIdx);
 }; 

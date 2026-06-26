@@ -239,6 +239,8 @@ void LoopEditManager::update() {
         uint32_t now = millis();
         if ((int32_t)(now - pendingLoopEditSaveAtMs) >= 0) {
             pendingLoopEditSaveAtMs = 0;
+            StorageManager::markCurrentSetLoopSlotDirty(trackManager.getSelectedTrackIndex(),
+                                                        trackManager.getSelectedTrack().getActiveLoopIndex());
             StorageManager::requestDeferredSaveState(looperState.getLooperState());
             logger.log(CAT_MIDI, LOG_DEBUG, "State save queued (debounced after loop edit)");
         }
