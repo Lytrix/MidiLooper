@@ -109,6 +109,23 @@ bool readSlotIndexEntryFromRevisionBytes(const uint8_t* fileBytes, size_t fileSi
 bool validateRevisionFooterFromBytes(const uint8_t* fileBytes, size_t fileSize,
                                      RevisionFooter& footerOut);
 
+/// Locates a chunk body in the revision payload (offset relative to file start).
+bool findChunkBodyInRevisionBytes(const uint8_t* fileBytes, size_t fileSize,
+                                  const RevisionHeader& header, ChunkType type,
+                                  uint8_t trackIndex, uint8_t slotIndex,
+                                  uint32_t& bodyOffsetInFileOut, uint32_t& bodyLengthOut);
+
+/// Reads SlotIndex entry count from a validated revision byte buffer.
+bool readSlotIndexEntryCountFromRevisionBytes(const uint8_t* fileBytes, size_t fileSize,
+                                              const RevisionHeader& header,
+                                              uint16_t& entryCountOut);
+
+/// Fills slot index entries from SlotIndex chunk (stack buffer, no heap).
+bool readSlotIndexEntriesFromRevisionBytes(const uint8_t* fileBytes, size_t fileSize,
+                                           const RevisionHeader& header,
+                                           SlotIndexEntry* entriesOut, uint16_t maxEntries,
+                                           uint16_t& entryCountOut);
+
 constexpr size_t kSlotIndexBodyPrefixByteSize = 4;
 
 inline size_t slotIndexChunkBodySize(uint16_t entryCount) {

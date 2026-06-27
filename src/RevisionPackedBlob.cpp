@@ -165,8 +165,7 @@ bool findSlotIndexChunkBody(const uint8_t* fileBytes, size_t fileSize,
   }
   const uint8_t* payload = fileBytes + payloadOffset;
   size_t cursor = 0;
-  uint16_t chunksSeen = 0;
-  while (chunksSeen < header.chunkCount && cursor + kChunkHeaderByteSize <= header.payloadSize) {
+  while (cursor + kChunkHeaderByteSize <= header.payloadSize) {
     ChunkHeaderWire chunkWire{};
     std::memcpy(&chunkWire, payload + cursor, sizeof(chunkWire));
     const size_t bodyStart = cursor + kChunkHeaderByteSize;
@@ -180,7 +179,6 @@ bool findSlotIndexChunkBody(const uint8_t* fileBytes, size_t fileSize,
       return true;
     }
     cursor = bodyEnd;
-    ++chunksSeen;
   }
   return false;
 }
@@ -376,6 +374,80 @@ bool validateRevisionFooterFromBytes(const uint8_t* fileBytes, size_t fileSize,
           ? 0U
           : computeRevisionPayloadChecksum(fileBytes + payloadOffset, header.payloadSize);
   return footerOut.payloadCrc32 == expectedPayloadCrc;
+}
+
+bool findChunkBodyInRevisionBytes(const uint8_t* fileBytes, size_t fileSize,
+                                  const RevisionHeader& header, ChunkType type,
+                                  uint8_t trackIndex, uint8_t slotIndex,
+                                  uint32_t& bodyOffsetInFileOut, uint32_t& bodyLengthOut) {
+  bodyOffsetInFileOut = 0;
+  bodyLengthOut = 0;
+  if (fileBytes == nullptr || header.payloadSize == 0) {
+    return false;
+  }
+  const size_t payloadOffset = kRevisionHeaderByteSize;
+  if (payloadOffset + header.payloadSize > fileSize) {
+    return false;
+  }
+  const uint8_t* payload = fileBytes + payloadOffset;
+  size_t cursor = 0;
+  while (cursor + kChunkHeaderByteSize <= header.payloadSize) {
+    ChunkHeaderWire chunkWire{};
+    std::memcpy(&chunkWire, payload + cursor, sizeof(chunkWire));
+    const size_t bodyStart = cursor + kChunkHeaderByteSize;
+    const size_t bodyEnd = bodyStart + static_cast<size_t>(chunkWire.bodyLength);
+    if (bodyEnd > header.payloadSize) {
+      return false;
+    }
+    if (chunkWire.type == static_cast<uint8_t>(type) &&
+        chunkWire.trackIndex == trackIndex && chunkWire.slotIndex == slotIndex) {
+      bodyOffsetInFileOut = static_cast<uint32_t>(payloadOffset + bodyStart);
+      bodyLengthOut = chunkWire.bodyLength;
+      return true;
+    }
+    cursor = bodyEnd;
+  }
+  return false;
+}
+
+bool readSlotIndexEntryCountFromRevisionBytes(const uint8_t* fileBytes, size_t fileSize,
+                                              const RevisionHeader& header,
+                                              uint16_t& entryCountOut) {
+  entryCountOut = 0;
+  const uint8_t* slotIndexBody = nullptr;
+  size_t slotIndexBodySize = 0;
+  if (!findSlotIndexChunkBody(fileBytes, fileSize, header, slotIndexBody, slotIndexBodySize) ||
+      slotIndexBodySize < kSlotIndexBodyPrefixByteSize) {
+    return false;
+  }
+  std::memcpy(&entryCountOut, slotIndexBody, sizeof(entryCountOut));
+  const size_t expectedSize =
+      kSlotIndexBodyPrefixByteSize + static_cast<size_t>(entryCountOut) * kSlotIndexEntryByteSize;
+  return slotIndexBodySize >= expectedSize;
+}
+
+bool readSlotIndexEntriesFromRevisionBytes(const uint8_t* fileBytes, size_t fileSize,
+                                           const RevisionHeader& header,
+                                           SlotIndexEntry* entriesOut, uint16_t maxEntries,
+                                           uint16_t& entryCountOut) {
+  entryCountOut = 0;
+  if (entriesOut == nullptr || maxEntries == 0) {
+    return false;
+  }
+  uint16_t totalEntries = 0;
+  if (!readSlotIndexEntryCountFromRevisionBytes(fileBytes, fileSize, header, totalEntries)) {
+    return false;
+  }
+  for (uint16_t i = 0; i < totalEntries; ++i) {
+    if (i >= maxEntries) {
+      return false;
+    }
+    if (!readSlotIndexEntryFromRevisionBytes(fileBytes, fileSize, header, i, entriesOut[i])) {
+      return false;
+    }
+    ++entryCountOut;
+  }
+  return true;
 }
 
 }  // namespace RevisionPackedBlob

@@ -1738,6 +1738,16 @@ void DisplayManager::requestNoteInfoRefresh(Track& track) {
 void DisplayManager::update() {
     const uint32_t telemetryStartUs = micros();
     uint32_t currentTick = clockManager.getCurrentTick();
+    if (StorageManager::consumeRevisionLoadDisplayRefreshPending()) {
+        invalidateLiveDisplayCache();
+        for (uint8_t trackIndex = 0; trackIndex < trackManager.getTrackCount(); ++trackIndex) {
+            Track& track = trackManager.getTrack(trackIndex);
+            for (uint8_t slotIndex = 0; slotIndex < Config::MAX_LOOPS_PER_TRACK; ++slotIndex) {
+                track.getLoop(slotIndex).markDisplayCachesStale();
+            }
+        }
+        trackManager.forceLedUpdate(currentTick);
+    }
     Track& selTrack = trackManager.getSelectedTrack();
     const uint8_t displaySlot = trackManager.getSelectedSlotIndex(trackManager.getSelectedTrackIndex());
     uint32_t displayTick = selTrack.getEffectivePlaybackTick(currentTick);

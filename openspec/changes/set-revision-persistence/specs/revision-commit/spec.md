@@ -103,3 +103,31 @@ revision → validate → update catalog.
 - **WHEN** recording is active and Save is requested
 - **THEN** revision is generated incrementally via deferred FSM
 - **AND** recording continues uninterrupted
+
+### Requirement: Transport chunk precedes runtime bundle body
+
+On revision **WRITE**, the Transport chunk SHALL include a typed chunk header (`type = Transport`,
+`trackIndex = 0`, `slotIndex = 0`) before the runtime bundle body bytes. The body SHALL copy the
+completed `runtime.bundle.bin` payload (after epoch header, before complete magic). Commit SHALL fail
+if the runtime bundle body is empty.
+
+#### Scenario: Transport chunk is discoverable on load
+
+- **WHEN** commit **WRITE** finishes for a revision with a valid runtime bundle
+- **THEN** load **VALIDATE** locates the Transport chunk in the chunk stream
+- **AND** reload RAM reads a valid CurrentSet meta header from the restored bundle
+
+### Requirement: Commit includes occupied LoopSlots only
+
+Revision **WRITE** SHALL include **LoopSlot** chunks only for slots with published capture or edit
+content in RAM (`hasPublishedEvents`, `recordPass`, or non-empty `overdubPasses`). Empty SD shell
+files SHALL NOT populate SlotIndex.
+
+SlotIndex entries SHALL record `loopLengthTicks`, `noteCount`, and `bars` from the live loop at
+commit time.
+
+#### Scenario: Record baseline produces single-slot revision
+
+- **WHEN** the user records on track 5 slot 0 and commits a revision
+- **THEN** SlotIndex lists track 4 slot 0 (0-based) with non-zero `loopLengthTicks`
+- **AND** other empty slots are omitted from the revision payload

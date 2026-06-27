@@ -112,7 +112,7 @@ static bool readLoopSnapshot(File& file, LoopSnapshotRef& snapshot) {
     return true;
 }
 
-[[maybe_unused]] static bool writeGlobalUndoStack(File& file, const GlobalUndoStack& stack) {
+static bool writeGlobalUndoStack(File& file, const GlobalUndoStack& stack) {
     uint32_t entryCount = static_cast<uint32_t>(stack.entries.size());
     uint32_t cursor = static_cast<uint32_t>(stack.cursor);
     uint32_t nextEntryId = stack.nextEntryId;
@@ -364,7 +364,52 @@ std::array<uint8_t, 512> revisionCommitCopyBuffer{};
 uint32_t revisionCommitPayloadCrc = 0;
 bool revisionCommitPayloadCrcSeeded = false;
 bool revisionCommitAllocatedNewSet = false;
+bool revisionCommitSlotIndexChunkWritten = false;
 uint32_t lastRevisionCommitBlockedLogAtMs = 0;
+
+enum class RevisionLoadStage : uint8_t {
+    Idle = 0,
+    Validate,
+    Write,
+    ReloadRam,
+    Complete,
+};
+
+enum class RevisionLoadWriteStage : uint8_t {
+    PrepareEpoch = 0,
+    OpenMetaTemp,
+    CopyTransportBody,
+    FinalizeMetaTemp,
+    WriteLoopSlots,
+};
+
+bool revisionLoadPending = false;
+bool revisionLoadInProgress = false;
+bool revisionLoadSdIoActive = false;
+RevisionLoadStage revisionLoadStage = RevisionLoadStage::Idle;
+RevisionLoadWriteStage revisionLoadWriteStage = RevisionLoadWriteStage::PrepareEpoch;
+uint16_t revisionLoadSetId = 0;
+uint16_t revisionLoadRevisionId = 0;
+char revisionLoadSourcePath[80] = {};
+RevisionPackedBlob::RevisionHeader revisionLoadHeader{};
+uint16_t revisionLoadSlotIndexCount = 0;
+uint32_t revisionLoadWorkspaceEpoch = 0;
+uint32_t revisionLoadTransportFileOffset = 0;
+uint32_t revisionLoadTransportBodySize = 0;
+uint32_t revisionLoadTransportReadPos = 0;
+uint8_t revisionLoadCopyTrackCursor = 0;
+uint8_t revisionLoadCopySlotCursor = 0;
+uint32_t revisionLoadSlotBodyRemaining = 0;
+uint32_t revisionLoadSlotReadPos = 0;
+File revisionLoadSourceFile;
+bool revisionLoadSourceFileOpen = false;
+File revisionLoadDestFile;
+bool revisionLoadDestFileOpen = false;
+bool revisionLoadWritingEmptySlot = false;
+DeferredLoopWriteStage revisionLoadLoopWriteStage = DeferredLoopWriteStage::Header;
+uint32_t lastRevisionLoadBlockedLogAtMs = 0;
+bool revisionLoadUsedDefaultTransport = false;
+bool revisionLoadDisplayRefreshPending = false;
 
 #if defined(SESSION_CAPTURE)
 struct HitlRevisionCommitBackup {
@@ -1166,6 +1211,7 @@ void fillSlotSummariesForTrack(uint8_t trackIndex, const Track& track,
                                size_t summaryCount);
 
 bool writeWorkspaceMetaAfterDeferredSave();
+bool writeCurrentSetMetaHeaderToOpenFile(File& file);
 
 void resetRevisionCommitJobState() {
     if (revisionCommitFile) {
@@ -1197,6 +1243,7 @@ void resetRevisionCommitJobState() {
     revisionCommitPayloadCrc = 0;
     revisionCommitPayloadCrcSeeded = false;
     revisionCommitAllocatedNewSet = false;
+    revisionCommitSlotIndexChunkWritten = false;
     lastRevisionCommitBlockedLogAtMs = 0;
     revisionCommitHeader = RevisionPackedBlob::RevisionHeader{};
     revisionCommitCatalogIndex = SetRevisionCatalog::SetCatalogIndex{};
@@ -1233,7 +1280,10 @@ uint32_t resolveRevisionCommitSourceEpoch() {
     return currentWorkspaceEpoch;
 }
 
-bool slotSourceFileMatchesEpoch(const char* path, uint32_t expectedEpoch, uint32_t& bodySizeOut) {
+/// Loop slots are written only when dirty; unchanged slots keep an older epoch on SD but still
+/// belong to the workspace snapshot at sourceEpoch. Include any non-empty slot with epoch <= max.
+bool slotSourceFileReadableForRevisionCommit(const char* path, uint32_t maxEpoch,
+                                             uint32_t& bodySizeOut) {
     bodySizeOut = 0;
     if (path == nullptr || !SD.exists(path)) {
         return false;
@@ -1247,13 +1297,16 @@ bool slotSourceFileMatchesEpoch(const char* path, uint32_t expectedEpoch, uint32
     if (CurrentWorkspaceStorage::fileStartsWithEpochHeader(file)) {
         CurrentWorkspaceStorage::EpochFileHeader epochHeader{};
         const StorageIo epochIo = storageIoFromFileRead(file);
-        if (!CurrentWorkspaceStorage::readEpochFileHeader(epochIo, epochHeader) ||
-            !CurrentWorkspaceStorage::epochHeaderMatchesEpoch(epochHeader, expectedEpoch)) {
+        if (!CurrentWorkspaceStorage::readEpochFileHeader(epochIo, epochHeader)) {
+            file.close();
+            return false;
+        }
+        if (epochHeader.epoch > maxEpoch) {
             file.close();
             return false;
         }
         payloadOffset = CurrentWorkspaceStorage::kEpochFileHeaderByteSize;
-    } else if (expectedEpoch != 0) {
+    } else if (maxEpoch != 0) {
         file.close();
         return false;
     }
@@ -1263,7 +1316,10 @@ bool slotSourceFileMatchesEpoch(const char* path, uint32_t expectedEpoch, uint32
     }
     bodySizeOut = static_cast<uint32_t>(fileSize - payloadOffset - sizeof(STORAGE_COMPLETE_MAGIC));
     file.close();
-    return bodySizeOut > 0;
+    if (bodySizeOut == 0) {
+        return false;
+    }
+    return CurrentSetStorage::verifyFileCompleteMagic(path);
 }
 
 bool prepareRevisionCommitLayout() {
@@ -1277,14 +1333,13 @@ bool prepareRevisionCommitLayout() {
             if (CurrentWorkspaceStorage::fileStartsWithEpochHeader(bundle)) {
                 CurrentWorkspaceStorage::EpochFileHeader epochHeader{};
                 const StorageIo epochIo = storageIoFromFileRead(bundle);
-                if (CurrentWorkspaceStorage::readEpochFileHeader(epochIo, epochHeader) &&
-                    CurrentWorkspaceStorage::epochHeaderMatchesEpoch(epochHeader,
-                                                                     revisionCommitSourceEpoch)) {
+                if (CurrentWorkspaceStorage::readEpochFileHeader(epochIo, epochHeader)) {
                     payloadOffset = CurrentWorkspaceStorage::kEpochFileHeaderByteSize;
-                    if (fileSize >= payloadOffset + sizeof(STORAGE_COMPLETE_MAGIC)) {
-                        revisionCommitRuntimeBundleSize =
-                            static_cast<uint32_t>(fileSize - payloadOffset -
-                                                  sizeof(STORAGE_COMPLETE_MAGIC));
+                    if (fileSize >= payloadOffset + sizeof(STORAGE_COMPLETE_MAGIC) &&
+                        CurrentSetStorage::verifyFileCompleteMagic(
+                            CurrentSetStorage::kCurrentMetaPath)) {
+                        revisionCommitRuntimeBundleSize = static_cast<uint32_t>(
+                            fileSize - payloadOffset - sizeof(STORAGE_COMPLETE_MAGIC));
                     }
                 }
             }
@@ -1300,7 +1355,13 @@ bool prepareRevisionCommitLayout() {
                 continue;
             }
             uint32_t bodySize = 0;
-            if (!slotSourceFileMatchesEpoch(slotPath, revisionCommitSourceEpoch, bodySize)) {
+            if (!slotSourceFileReadableForRevisionCommit(slotPath, revisionCommitSourceEpoch,
+                                                         bodySize)) {
+                continue;
+            }
+            const Loop& loop = trackManager.getTrack(trackIndex).getLoop(slotIndex);
+            if (!loop.hasPublishedEvents() && !loop.passes.hasRecordPass() &&
+                loop.passes.overdubPasses.empty()) {
                 continue;
             }
             if (revisionCommitSlotIndexCount >= kMaxRevisionLoopIndexEntries) {
@@ -1313,6 +1374,21 @@ bool prepareRevisionCommitLayout() {
             entry.slotIndex = slotIndex;
             entry.occupied = 1;
             entry.bodyLength = bodySize;
+            entry.loopLengthTicks = loop.loopLengthTicks;
+            const uint32_t ticksPerBar = Track::getTicksPerBar();
+            if (loop.loopLengthTicks > 0 && ticksPerBar > 0) {
+                entry.bars = static_cast<uint16_t>(loop.loopLengthTicks / ticksPerBar);
+            }
+            size_t eventCount = 0;
+            if (loop.passes.hasRecordPass()) {
+                eventCount +=
+                    LoopEventStore::countEventsInChunkIds(loop.passes.recordPass.chunkRefs);
+            }
+            for (const OverdubPass& pass : loop.passes.overdubPasses) {
+                eventCount += LoopEventStore::countEventsInChunkIds(pass.chunkRefs);
+            }
+            entry.noteCount =
+                static_cast<uint16_t>(eventCount > UINT16_MAX ? UINT16_MAX : eventCount / 2U);
             ++revisionCommitSlotIndexCount;
         }
     }
@@ -1491,6 +1567,57 @@ bool writeRevisionCommitChunkHeader(RevisionPackedBlob::ChunkType type, uint8_t 
     return true;
 }
 
+bool writeRevisionCommitSlotIndexChunkFromFooter() {
+    if (revisionCommitSlotIndexChunkWritten) {
+        return true;
+    }
+    if (!revisionCommitFile) {
+        return false;
+    }
+    const uint32_t slotIndexBodySize = static_cast<uint32_t>(
+        RevisionPackedBlob::slotIndexChunkBodySize(revisionCommitSlotIndexCount));
+    if (!writeRevisionCommitChunkHeader(RevisionPackedBlob::ChunkType::SlotIndex, 0, 0,
+                                        slotIndexBodySize)) {
+        return false;
+    }
+    ++revisionCommitChunkCount;
+    const uint16_t entryCount = revisionCommitSlotIndexCount;
+    const uint16_t reservedPrefix = 0;
+    if (revisionCommitFile.write(reinterpret_cast<const uint8_t*>(&entryCount),
+                                 sizeof(entryCount)) != sizeof(entryCount) ||
+        revisionCommitFile.write(reinterpret_cast<const uint8_t*>(&reservedPrefix),
+                                 sizeof(reservedPrefix)) != sizeof(reservedPrefix)) {
+        return false;
+    }
+    uint8_t prefixWire[RevisionPackedBlob::kSlotIndexBodyPrefixByteSize];
+    std::memcpy(prefixWire, &entryCount, sizeof(entryCount));
+    std::memcpy(prefixWire + sizeof(entryCount), &reservedPrefix, sizeof(reservedPrefix));
+    if (!appendRevisionCommitPayloadCrc(prefixWire, sizeof(prefixWire))) {
+        return false;
+    }
+    revisionCommitPayloadWriteOffset +=
+        static_cast<uint32_t>(RevisionPackedBlob::kSlotIndexBodyPrefixByteSize);
+    const StorageIo io = storageIoFromFileWrite(revisionCommitFile);
+    for (uint16_t i = 0; i < revisionCommitSlotIndexCount; ++i) {
+        if (!RevisionPackedBlob::writeSlotIndexEntry(io, revisionCommitSlotEntries[i])) {
+            return false;
+        }
+        uint8_t entryWire[RevisionPackedBlob::kSlotIndexEntryByteSize];
+        if (!RevisionPackedBlob::slotIndexEntryWireBytes(revisionCommitSlotEntries[i], entryWire,
+                                                         sizeof(entryWire))) {
+            return false;
+        }
+        if (!appendRevisionCommitPayloadCrc(entryWire, sizeof(entryWire))) {
+            return false;
+        }
+        revisionCommitPayloadWriteOffset +=
+            static_cast<uint32_t>(RevisionPackedBlob::kSlotIndexEntryByteSize);
+    }
+    revisionCommitSlotIndexWriteCursor = revisionCommitSlotIndexCount;
+    revisionCommitSlotIndexChunkWritten = true;
+    return true;
+}
+
 bool copyRevisionCommitChunk(File& dest, File& src, uint32_t& readPos, uint32_t& bytesRemaining,
                              uint32_t chunkSize) {
     if (bytesRemaining == 0) {
@@ -1510,7 +1637,7 @@ bool copyRevisionCommitChunk(File& dest, File& src, uint32_t& readPos, uint32_t&
     }
     readPos += written;
     bytesRemaining -= static_cast<uint32_t>(written);
-    if (written > 0) {
+    if (written > 0 && revisionCommitInProgress) {
         if (!appendRevisionCommitPayloadCrc(revisionCommitCopyBuffer.data(), written)) {
             return false;
         }
@@ -1549,18 +1676,17 @@ bool stepRevisionCommitWrite() {
 
         case RevisionWriteStage::WriteTransportChunk:
             if (revisionCommitRuntimeBundleSize == 0) {
-                revisionCommitCopyTrackCursor = 0;
-                revisionCommitCopySlotCursor = 0;
-                revisionWriteStage = RevisionWriteStage::WriteLoopSlotChunks;
-                return true;
+                Serial.println("[StorageManager] ERROR: Revision commit missing runtime bundle body");
+                return false;
             }
-            if (revisionCommitRuntimeBundleReadPos ==
-                CurrentWorkspaceStorage::kEpochFileHeaderByteSize) {
+            if (revisionCommitRuntimeBundleReadPos == 0) {
                 if (!writeRevisionCommitChunkHeader(RevisionPackedBlob::ChunkType::Transport, 0, 0,
                                                     revisionCommitRuntimeBundleSize)) {
                     return false;
                 }
                 ++revisionCommitChunkCount;
+                revisionCommitRuntimeBundleReadPos =
+                    CurrentWorkspaceStorage::kEpochFileHeaderByteSize;
             }
             if (!revisionCommitSourceFileOpen) {
                 revisionCommitSourceFile = SD.open(CurrentSetStorage::kCurrentMetaPath, FILE_READ);
@@ -1690,6 +1816,7 @@ bool stepRevisionCommitWrite() {
                 }
                 revisionCommitPayloadWriteOffset +=
                     static_cast<uint32_t>(RevisionPackedBlob::kSlotIndexBodyPrefixByteSize);
+                revisionCommitSlotIndexChunkWritten = true;
             }
             if (revisionCommitSlotIndexWriteCursor < revisionCommitSlotIndexCount) {
                 const StorageIo io = storageIoFromFileWrite(revisionCommitFile);
@@ -1718,6 +1845,9 @@ bool stepRevisionCommitWrite() {
 
         case RevisionWriteStage::WriteFooter: {
             if (!revisionCommitFile) {
+                return false;
+            }
+            if (!writeRevisionCommitSlotIndexChunkFromFooter()) {
                 return false;
             }
             revisionCommitHeader.chunkCount = revisionCommitChunkCount;
@@ -2031,6 +2161,709 @@ bool stepRevisionCommitJob() {
 
         case RevisionCommitStage::Complete:
             return stepRevisionCommitComplete();
+    }
+    return false;
+}
+
+void resetRevisionLoadJobState() {
+    if (revisionLoadSourceFileOpen) {
+        revisionLoadSourceFile.close();
+        revisionLoadSourceFileOpen = false;
+    }
+    if (revisionLoadDestFileOpen) {
+        revisionLoadDestFile.close();
+        revisionLoadDestFileOpen = false;
+    }
+    revisionLoadInProgress = false;
+    revisionLoadSdIoActive = false;
+    revisionLoadStage = RevisionLoadStage::Idle;
+    revisionLoadWriteStage = RevisionLoadWriteStage::PrepareEpoch;
+    revisionLoadSetId = 0;
+    revisionLoadRevisionId = 0;
+    revisionLoadSourcePath[0] = '\0';
+    revisionLoadSlotIndexCount = 0;
+    revisionLoadWorkspaceEpoch = 0;
+    revisionLoadTransportFileOffset = 0;
+    revisionLoadTransportBodySize = 0;
+    revisionLoadTransportReadPos = 0;
+    revisionLoadCopyTrackCursor = 0;
+    revisionLoadCopySlotCursor = 0;
+    revisionLoadSlotBodyRemaining = 0;
+    revisionLoadSlotReadPos = 0;
+    revisionLoadWritingEmptySlot = false;
+    revisionLoadLoopWriteStage = DeferredLoopWriteStage::Header;
+    lastRevisionLoadBlockedLogAtMs = 0;
+    revisionLoadUsedDefaultTransport = false;
+    revisionLoadDisplayRefreshPending = false;
+    revisionLoadHeader = RevisionPackedBlob::RevisionHeader{};
+    for (uint16_t i = 0; i < kMaxRevisionLoopIndexEntries; ++i) {
+        revisionCommitSlotEntries[i] = RevisionPackedBlob::SlotIndexEntry{};
+    }
+}
+
+bool findRevisionLoadSlotEntry(uint8_t trackIndex, uint8_t slotIndex,
+                               RevisionPackedBlob::SlotIndexEntry& entryOut) {
+    for (uint16_t i = 0; i < revisionLoadSlotIndexCount; ++i) {
+        if (revisionCommitSlotEntries[i].trackIndex == trackIndex &&
+            revisionCommitSlotEntries[i].slotIndex == slotIndex) {
+            entryOut = revisionCommitSlotEntries[i];
+            return true;
+        }
+    }
+    return false;
+}
+
+uint32_t revisionLoadLoopSlotBodyFileOffset(const RevisionPackedBlob::SlotIndexEntry& entry) {
+    return RevisionPackedBlob::kRevisionHeaderByteSize + entry.chunkOffset +
+           static_cast<uint32_t>(RevisionPackedBlob::kChunkHeaderByteSize);
+}
+
+bool revisionLoadSlotIndexEntryOccupied(uint8_t trackIndex, uint8_t slotIndex) {
+    for (uint16_t index = 0; index < revisionLoadSlotIndexCount; ++index) {
+        const RevisionPackedBlob::SlotIndexEntry& entry = revisionCommitSlotEntries[index];
+        if (entry.trackIndex == trackIndex && entry.slotIndex == slotIndex) {
+            return entry.occupied != 0;
+        }
+    }
+    return false;
+}
+
+uint32_t revisionLoadDefaultMasterLoopLength() {
+    uint32_t maxLength = 0;
+    for (uint16_t index = 0; index < revisionLoadSlotIndexCount; ++index) {
+        const RevisionPackedBlob::SlotIndexEntry& entry = revisionCommitSlotEntries[index];
+        if (entry.occupied != 0 && entry.loopLengthTicks > maxLength) {
+            maxLength = entry.loopLengthTicks;
+        }
+    }
+    return maxLength;
+}
+
+uint8_t revisionLoadDefaultActiveLoopIndex(uint8_t trackIndex) {
+    for (uint16_t index = 0; index < revisionLoadSlotIndexCount; ++index) {
+        const RevisionPackedBlob::SlotIndexEntry& entry = revisionCommitSlotEntries[index];
+        if (entry.trackIndex == trackIndex && entry.occupied != 0) {
+            return entry.slotIndex;
+        }
+    }
+    return 0;
+}
+
+bool writeDefaultRevisionLoadTransportBody(File& file) {
+    if (!writeCurrentSetMetaHeaderToOpenFile(file)) {
+        return false;
+    }
+
+    const float savedBpm = bpm;
+    if (!writeRaw(file, &savedBpm, sizeof(savedBpm))) {
+        return false;
+    }
+
+    const uint32_t looperStateVal = persistedLooperStateRaw(LOOPER_IDLE);
+    if (!writeRaw(file, &looperStateVal, sizeof(looperStateVal))) {
+        return false;
+    }
+
+    const uint32_t masterLoopLength = revisionLoadDefaultMasterLoopLength();
+    if (!writeRaw(file, &masterLoopLength, sizeof(masterLoopLength))) {
+        return false;
+    }
+
+    const uint8_t numTracks = Config::NUM_TRACKS;
+    if (!writeRaw(file, &numTracks, sizeof(numTracks))) {
+        return false;
+    }
+
+    for (uint8_t trackIndex = 0; trackIndex < numTracks; ++trackIndex) {
+        uint32_t trackState = static_cast<uint32_t>(TRACK_EMPTY);
+        for (uint8_t slotIndex = 0; slotIndex < Config::MAX_LOOPS_PER_TRACK; ++slotIndex) {
+            if (revisionLoadSlotIndexEntryOccupied(trackIndex, slotIndex)) {
+                trackState = static_cast<uint32_t>(TRACK_STOPPED);
+                break;
+            }
+        }
+        const bool muted = false;
+        if (!writeRaw(file, &trackState, sizeof(trackState)) || !writeRaw(file, &muted, sizeof(muted))) {
+            return false;
+        }
+
+        for (uint8_t slotIndex = 0; slotIndex < Config::MAX_LOOPS_PER_TRACK; ++slotIndex) {
+            const bool slotEnabled = revisionLoadSlotIndexEntryOccupied(trackIndex, slotIndex);
+            const bool slotMuted = false;
+            const LoopId slotLoopId = static_cast<LoopId>(slotIndex);
+            if (!writeRaw(file, &slotEnabled, sizeof(slotEnabled)) ||
+                !writeRaw(file, &slotMuted, sizeof(slotMuted)) ||
+                !writeRaw(file, &slotLoopId, sizeof(slotLoopId))) {
+                return false;
+            }
+        }
+    }
+
+    const uint8_t selectedTrackIdx = 0;
+    if (!writeRaw(file, &selectedTrackIdx, sizeof(selectedTrackIdx))) {
+        return false;
+    }
+    for (uint8_t trackIndex = 0; trackIndex < numTracks; ++trackIndex) {
+        const uint8_t activeLoopIndex = revisionLoadDefaultActiveLoopIndex(trackIndex);
+        if (!writeRaw(file, &activeLoopIndex, sizeof(activeLoopIndex))) {
+            return false;
+        }
+    }
+
+    if (!writeRaw(file, &GLOBAL_UNDO_MAGIC, sizeof(GLOBAL_UNDO_MAGIC))) {
+        return false;
+    }
+
+    GlobalUndoStack emptyUndoStack{};
+    emptyUndoStack.clear();
+    return writeGlobalUndoStack(file, emptyUndoStack);
+}
+
+bool stepDeferredEmptyLoopPersist(File& file, LoopId loopId, bool& loopDone);
+
+bool readRevisionChunkHeaderFromFile(File& file, uint32_t fileOffset,
+                                     RevisionPackedBlob::ChunkHeader& chunkHeaderOut) {
+    if (!file.seek(fileOffset)) {
+        return false;
+    }
+    const StorageIo io = storageIoFromFileRead(file);
+    return RevisionPackedBlob::readChunkHeader(io, chunkHeaderOut);
+}
+
+bool findChunkBodyInRevisionFile(File& file, size_t fileSize,
+                                 const RevisionPackedBlob::RevisionHeader& header,
+                                 RevisionPackedBlob::ChunkType type, uint8_t trackIndex,
+                                 uint8_t slotIndex, uint32_t& bodyOffsetInFileOut,
+                                 uint32_t& bodyLengthOut) {
+    bodyOffsetInFileOut = 0;
+    bodyLengthOut = 0;
+    if (header.payloadSize == 0) {
+        return false;
+    }
+    const size_t payloadOffset = RevisionPackedBlob::kRevisionHeaderByteSize;
+    if (payloadOffset + header.payloadSize > fileSize) {
+        return false;
+    }
+
+    size_t cursor = 0;
+    while (cursor + RevisionPackedBlob::kChunkHeaderByteSize <= header.payloadSize) {
+        RevisionPackedBlob::ChunkHeader chunkHeader{};
+        if (!readRevisionChunkHeaderFromFile(file,
+                                             static_cast<uint32_t>(payloadOffset + cursor),
+                                             chunkHeader)) {
+            return false;
+        }
+        const size_t bodyStart = cursor + RevisionPackedBlob::kChunkHeaderByteSize;
+        const size_t bodyEnd = bodyStart + static_cast<size_t>(chunkHeader.bodyLength);
+        if (bodyEnd > header.payloadSize) {
+            return false;
+        }
+        if (chunkHeader.type == static_cast<uint8_t>(type) &&
+            chunkHeader.trackIndex == trackIndex && chunkHeader.slotIndex == slotIndex) {
+            bodyOffsetInFileOut = static_cast<uint32_t>(payloadOffset + bodyStart);
+            bodyLengthOut = chunkHeader.bodyLength;
+            return true;
+        }
+        cursor = bodyEnd;
+    }
+    return false;
+}
+
+bool readSlotIndexEntryCountFromRevisionFile(File& file, size_t fileSize,
+                                             const RevisionPackedBlob::RevisionHeader& header,
+                                             uint16_t& entryCountOut) {
+    entryCountOut = 0;
+    uint32_t bodyOffsetInFile = 0;
+    uint32_t bodyLength = 0;
+    if (!findChunkBodyInRevisionFile(file, fileSize, header,
+                                     RevisionPackedBlob::ChunkType::SlotIndex, 0, 0,
+                                     bodyOffsetInFile, bodyLength)) {
+        return false;
+    }
+    if (bodyLength < RevisionPackedBlob::kSlotIndexBodyPrefixByteSize) {
+        return false;
+    }
+    if (!file.seek(bodyOffsetInFile) ||
+        file.read(reinterpret_cast<uint8_t*>(&entryCountOut), sizeof(entryCountOut)) !=
+            static_cast<int>(sizeof(entryCountOut))) {
+        return false;
+    }
+    const size_t expectedBodySize =
+        RevisionPackedBlob::kSlotIndexBodyPrefixByteSize +
+        static_cast<size_t>(entryCountOut) * RevisionPackedBlob::kSlotIndexEntryByteSize;
+    return bodyLength >= expectedBodySize;
+}
+
+bool readSlotIndexEntriesFromRevisionFile(
+    File& file, size_t fileSize, const RevisionPackedBlob::RevisionHeader& header,
+    RevisionPackedBlob::SlotIndexEntry* entriesOut, uint16_t maxEntries,
+    uint16_t& entryCountOut) {
+    entryCountOut = 0;
+    if (entriesOut == nullptr || maxEntries == 0) {
+        return false;
+    }
+
+    uint16_t totalEntries = 0;
+    if (!readSlotIndexEntryCountFromRevisionFile(file, fileSize, header, totalEntries)) {
+        return false;
+    }
+
+    uint32_t bodyOffsetInFile = 0;
+    uint32_t bodyLength = 0;
+    if (!findChunkBodyInRevisionFile(file, fileSize, header,
+                                     RevisionPackedBlob::ChunkType::SlotIndex, 0, 0,
+                                     bodyOffsetInFile, bodyLength)) {
+        return false;
+    }
+
+    for (uint16_t index = 0; index < totalEntries; ++index) {
+        if (index >= maxEntries) {
+            return false;
+        }
+        const uint32_t entryOffset =
+            bodyOffsetInFile + RevisionPackedBlob::kSlotIndexBodyPrefixByteSize +
+            static_cast<uint32_t>(index) * RevisionPackedBlob::kSlotIndexEntryByteSize;
+        if (entryOffset + RevisionPackedBlob::kSlotIndexEntryByteSize >
+            bodyOffsetInFile + bodyLength) {
+            return false;
+        }
+        if (!file.seek(entryOffset)) {
+            return false;
+        }
+        const StorageIo io = storageIoFromFileRead(file);
+        if (!RevisionPackedBlob::readSlotIndexEntry(io, entriesOut[index])) {
+            return false;
+        }
+        ++entryCountOut;
+    }
+    return true;
+}
+
+bool validateRevisionLoadFileFooterFromSd(File& file, size_t fileSize,
+                                          RevisionPackedBlob::RevisionHeader& headerOut) {
+    if (fileSize < RevisionPackedBlob::kRevisionHeaderByteSize +
+                        RevisionPackedBlob::kRevisionFooterByteSize) {
+        return false;
+    }
+    uint8_t headerBytes[RevisionPackedBlob::kRevisionHeaderByteSize];
+    if (!file.seek(0) ||
+        file.read(headerBytes, sizeof(headerBytes)) != static_cast<int>(sizeof(headerBytes)) ||
+        !RevisionPackedBlob::parseRevisionHeaderFromBytes(headerBytes, sizeof(headerBytes),
+                                                          headerOut)) {
+        return false;
+    }
+
+    const size_t payloadOffset = RevisionPackedBlob::kRevisionHeaderByteSize;
+    const size_t payloadSize =
+        fileSize - payloadOffset - RevisionPackedBlob::kRevisionFooterByteSize;
+    if (payloadSize > UINT32_MAX) {
+        return false;
+    }
+
+    uint32_t payloadCrc = 0;
+    if (!computeRevisionCommitPayloadCrcFromFile(
+            file, static_cast<uint32_t>(payloadOffset), static_cast<uint32_t>(payloadSize),
+            payloadCrc)) {
+        return false;
+    }
+
+    RevisionPackedBlob::RevisionFooter footer{};
+    if (!file.seek(fileSize - RevisionPackedBlob::kRevisionFooterByteSize) ||
+        !readRaw(file, &footer.completeMagic, sizeof(footer.completeMagic)) ||
+        !readRaw(file, &footer.payloadCrc32, sizeof(footer.payloadCrc32)) ||
+        !readRaw(file, &footer.fileSize, sizeof(footer.fileSize))) {
+        return false;
+    }
+
+    if (footer.completeMagic != RevisionPackedBlob::kRevisionCompleteMagic ||
+        footer.fileSize != static_cast<uint32_t>(fileSize) ||
+        footer.payloadCrc32 != payloadCrc) {
+        Serial.print("[StorageManager] ERROR: Revision load SD footer mismatch footerCrc=");
+        Serial.print(footer.payloadCrc32);
+        Serial.print(" expectedCrc=");
+        Serial.print(payloadCrc);
+        Serial.print(" payloadSize=");
+        Serial.println(static_cast<uint32_t>(payloadSize));
+        return false;
+    }
+
+    if (headerOut.payloadSize != static_cast<uint32_t>(payloadSize)) {
+        headerOut.payloadSize = static_cast<uint32_t>(payloadSize);
+    }
+    return true;
+}
+
+bool beginRevisionLoadValidate() {
+    if (!SetRevisionCatalog::formatRevisionPath(revisionLoadSourcePath,
+                                                sizeof(revisionLoadSourcePath),
+                                                revisionLoadSetId, revisionLoadRevisionId,
+                                                false)) {
+        return false;
+    }
+    if (!SD.exists(revisionLoadSourcePath)) {
+        Serial.print("[StorageManager] ERROR: Revision file missing ");
+        Serial.println(revisionLoadSourcePath);
+        return false;
+    }
+
+    File file = SD.open(revisionLoadSourcePath, FILE_READ);
+    if (!file) {
+        return false;
+    }
+    const size_t fileSize = file.size();
+    if (fileSize < RevisionPackedBlob::kRevisionHeaderByteSize +
+                        RevisionPackedBlob::kRevisionFooterByteSize) {
+        file.close();
+        return false;
+    }
+
+    if (!validateRevisionLoadFileFooterFromSd(file, fileSize, revisionLoadHeader)) {
+        file.close();
+        return false;
+    }
+
+    revisionLoadSlotIndexCount = 0;
+    revisionLoadTransportFileOffset = 0;
+    revisionLoadTransportBodySize = 0;
+    revisionLoadUsedDefaultTransport = false;
+
+    if (!findChunkBodyInRevisionFile(file, fileSize, revisionLoadHeader,
+                                     RevisionPackedBlob::ChunkType::Transport, 0, 0,
+                                     revisionLoadTransportFileOffset,
+                                     revisionLoadTransportBodySize) ||
+        revisionLoadTransportBodySize == 0) {
+        revisionLoadTransportFileOffset = 0;
+        revisionLoadTransportBodySize = 0;
+        revisionLoadUsedDefaultTransport = true;
+        Serial.println(
+            "[StorageManager] Revision load missing Transport chunk; using default transport");
+    }
+
+    if (!readSlotIndexEntriesFromRevisionFile(file, fileSize, revisionLoadHeader,
+                                              revisionCommitSlotEntries,
+                                              kMaxRevisionLoopIndexEntries,
+                                              revisionLoadSlotIndexCount)) {
+        uint16_t slotIndexEntryCount = 0;
+        const bool hasSlotIndexChunk = readSlotIndexEntryCountFromRevisionFile(
+            file, fileSize, revisionLoadHeader, slotIndexEntryCount);
+        file.close();
+        if (!hasSlotIndexChunk) {
+            revisionLoadSlotIndexCount = 0;
+        } else {
+            Serial.print("[StorageManager] ERROR: Revision load slot index parse failed fileSize=");
+            Serial.print(static_cast<uint32_t>(fileSize));
+            Serial.print(" hdrChunkCount=");
+            Serial.print(revisionLoadHeader.chunkCount);
+            Serial.print(" hdrPayloadSize=");
+            Serial.print(revisionLoadHeader.payloadSize);
+            Serial.print(" slotIndexEntryCount=");
+            Serial.println(slotIndexEntryCount);
+            return false;
+        }
+    } else {
+        file.close();
+    }
+
+    revisionLoadWriteStage = RevisionLoadWriteStage::PrepareEpoch;
+    revisionLoadStage = RevisionLoadStage::Write;
+    return true;
+}
+
+bool openRevisionLoadLoopSlotTemp(uint8_t trackIndex, uint8_t slotIndex) {
+    if (revisionLoadDestFileOpen) {
+        revisionLoadDestFile.close();
+        revisionLoadDestFileOpen = false;
+    }
+    char tempPath[48];
+    if (!CurrentSetStorage::formatLoopSlotTempPath(tempPath, sizeof(tempPath), trackIndex,
+                                                   slotIndex)) {
+        return false;
+    }
+    revisionLoadDestFile = SD.open(tempPath, FILE_WRITE);
+    if (!revisionLoadDestFile) {
+        return false;
+    }
+    revisionLoadDestFile.seek(0);
+    if (!CurrentWorkspaceStorage::writeEpochHeaderPlaceholder(revisionLoadDestFile,
+                                                              revisionLoadWorkspaceEpoch)) {
+        revisionLoadDestFile.close();
+        return false;
+    }
+    revisionLoadDestFileOpen = true;
+    return true;
+}
+
+bool finalizeRevisionLoadLoopSlotTemp(uint8_t trackIndex, uint8_t slotIndex) {
+    if (!revisionLoadDestFileOpen) {
+        return false;
+    }
+    if (!writeRaw(revisionLoadDestFile, &STORAGE_COMPLETE_MAGIC, sizeof(STORAGE_COMPLETE_MAGIC))) {
+        revisionLoadDestFile.close();
+        revisionLoadDestFileOpen = false;
+        return false;
+    }
+    revisionLoadDestFile.close();
+    revisionLoadDestFileOpen = false;
+
+    char tempPath[48];
+    char finalPath[48];
+    if (!CurrentSetStorage::formatLoopSlotTempPath(tempPath, sizeof(tempPath), trackIndex,
+                                                   slotIndex) ||
+        !CurrentSetStorage::formatLoopSlotPath(finalPath, sizeof(finalPath), trackIndex,
+                                               slotIndex)) {
+        return false;
+    }
+    if (!CurrentWorkspaceStorage::finalizeEpochFileHeaderCrc(tempPath)) {
+        return false;
+    }
+    if (!CurrentSetStorage::verifyFileCompleteMagic(tempPath)) {
+        return false;
+    }
+    return CurrentSetStorage::atomicRenameTempFile(tempPath, finalPath);
+}
+
+bool stepRevisionLoadWrite() {
+    switch (revisionLoadWriteStage) {
+        case RevisionLoadWriteStage::PrepareEpoch:
+            ++currentWorkspaceEpoch;
+            revisionLoadWorkspaceEpoch = currentWorkspaceEpoch;
+            if (!CurrentSetStorage::ensureDirectory(PersistenceLayout::kRoot) ||
+                !CurrentSetStorage::ensureDirectory(CurrentSetStorage::kCurrentSetDir) ||
+                !CurrentSetStorage::ensureDirectory(CurrentWorkspaceStorage::kCurrentTempDir) ||
+                !CurrentSetStorage::ensureDirectory(CurrentSetStorage::kCurrentSlotsDir)) {
+                return false;
+            }
+            revisionLoadWriteStage = RevisionLoadWriteStage::OpenMetaTemp;
+            return true;
+
+        case RevisionLoadWriteStage::OpenMetaTemp:
+            revisionLoadDestFile = SD.open(CurrentSetStorage::kCurrentMetaTempPath, FILE_WRITE);
+            if (!revisionLoadDestFile) {
+                return false;
+            }
+            revisionLoadDestFile.seek(0);
+            if (!CurrentWorkspaceStorage::writeEpochHeaderPlaceholder(revisionLoadDestFile,
+                                                                      revisionLoadWorkspaceEpoch)) {
+                revisionLoadDestFile.close();
+                return false;
+            }
+            revisionLoadDestFileOpen = true;
+            revisionLoadTransportReadPos = 0;
+            revisionLoadWriteStage = RevisionLoadWriteStage::CopyTransportBody;
+            return true;
+
+        case RevisionLoadWriteStage::CopyTransportBody:
+            if (revisionLoadTransportBodySize == 0) {
+                if (!writeDefaultRevisionLoadTransportBody(revisionLoadDestFile)) {
+                    Serial.println(
+                        "[StorageManager] ERROR: Revision load failed writing default transport");
+                    revisionLoadDestFile.close();
+                    revisionLoadDestFileOpen = false;
+                    return false;
+                }
+                revisionLoadWriteStage = RevisionLoadWriteStage::FinalizeMetaTemp;
+                return true;
+            }
+            if (!revisionLoadSourceFileOpen) {
+                revisionLoadSourceFile = SD.open(revisionLoadSourcePath, FILE_READ);
+                if (!revisionLoadSourceFile) {
+                    return false;
+                }
+                revisionLoadSourceFileOpen = true;
+            }
+            if (revisionLoadTransportReadPos == 0) {
+                revisionLoadTransportReadPos = revisionLoadTransportFileOffset;
+            }
+            {
+                const uint32_t endPos =
+                    revisionLoadTransportFileOffset + revisionLoadTransportBodySize;
+                uint32_t remaining = endPos - revisionLoadTransportReadPos;
+                if (remaining > 0) {
+                    if (!copyRevisionCommitChunk(
+                            revisionLoadDestFile, revisionLoadSourceFile,
+                            revisionLoadTransportReadPos, remaining,
+                            static_cast<uint32_t>(revisionCommitCopyBuffer.size()))) {
+                        return false;
+                    }
+                    if (remaining > 0) {
+                        return true;
+                    }
+                }
+            }
+            if (revisionLoadSourceFileOpen) {
+                revisionLoadSourceFile.close();
+                revisionLoadSourceFileOpen = false;
+            }
+            revisionLoadWriteStage = RevisionLoadWriteStage::FinalizeMetaTemp;
+            return true;
+
+        case RevisionLoadWriteStage::FinalizeMetaTemp: {
+            if (!revisionLoadDestFileOpen) {
+                return false;
+            }
+            if (!writeRaw(revisionLoadDestFile, &STORAGE_COMPLETE_MAGIC,
+                          sizeof(STORAGE_COMPLETE_MAGIC))) {
+                revisionLoadDestFile.close();
+                revisionLoadDestFileOpen = false;
+                return false;
+            }
+            revisionLoadDestFile.close();
+            revisionLoadDestFileOpen = false;
+            if (!CurrentWorkspaceStorage::finalizeEpochFileHeaderCrc(
+                    CurrentSetStorage::kCurrentMetaTempPath)) {
+                return false;
+            }
+            if (!CurrentSetStorage::verifyFileCompleteMagic(CurrentSetStorage::kCurrentMetaTempPath)) {
+                return false;
+            }
+            if (!CurrentSetStorage::atomicRenameTempFile(CurrentSetStorage::kCurrentMetaTempPath,
+                                                           CurrentSetStorage::kCurrentMetaPath)) {
+                return false;
+            }
+            revisionLoadCopyTrackCursor = 0;
+            revisionLoadCopySlotCursor = 0;
+            revisionLoadSlotBodyRemaining = 0;
+            revisionLoadWriteStage = RevisionLoadWriteStage::WriteLoopSlots;
+            return true;
+        }
+
+        case RevisionLoadWriteStage::WriteLoopSlots:
+            while (revisionLoadCopyTrackCursor < Config::NUM_TRACKS) {
+                while (revisionLoadCopySlotCursor < Config::MAX_LOOPS_PER_TRACK) {
+                    const uint8_t trackIndex = revisionLoadCopyTrackCursor;
+                    const uint8_t slotIndex = revisionLoadCopySlotCursor;
+                    RevisionPackedBlob::SlotIndexEntry slotEntry{};
+                    const bool hasSlotEntry =
+                        findRevisionLoadSlotEntry(trackIndex, slotIndex, slotEntry);
+
+                    if (revisionLoadSlotBodyRemaining == 0 && !revisionLoadDestFileOpen &&
+                        !revisionLoadWritingEmptySlot) {
+                        if (!openRevisionLoadLoopSlotTemp(trackIndex, slotIndex)) {
+                            return false;
+                        }
+                        if (hasSlotEntry) {
+                            revisionLoadWritingEmptySlot = false;
+                            revisionLoadSlotReadPos =
+                                revisionLoadLoopSlotBodyFileOffset(slotEntry);
+                            revisionLoadSlotBodyRemaining = slotEntry.bodyLength;
+                            revisionLoadLoopWriteStage = DeferredLoopWriteStage::Header;
+                        } else {
+                            revisionLoadWritingEmptySlot = true;
+                            revisionLoadLoopWriteStage = DeferredLoopWriteStage::Header;
+                        }
+                    }
+
+                    if (revisionLoadWritingEmptySlot) {
+                        bool loopDone = false;
+                        if (!stepDeferredEmptyLoopPersist(
+                                revisionLoadDestFile, static_cast<LoopId>(slotIndex), loopDone)) {
+                            return false;
+                        }
+                        if (!loopDone) {
+                            return true;
+                        }
+                    } else if (revisionLoadSlotBodyRemaining > 0) {
+                        if (!revisionLoadSourceFileOpen) {
+                            revisionLoadSourceFile = SD.open(revisionLoadSourcePath, FILE_READ);
+                            if (!revisionLoadSourceFile) {
+                                return false;
+                            }
+                            revisionLoadSourceFileOpen = true;
+                        }
+                        if (!copyRevisionCommitChunk(
+                                revisionLoadDestFile, revisionLoadSourceFile,
+                                revisionLoadSlotReadPos, revisionLoadSlotBodyRemaining,
+                                static_cast<uint32_t>(revisionCommitCopyBuffer.size()))) {
+                            return false;
+                        }
+                        if (revisionLoadSlotBodyRemaining > 0) {
+                            return true;
+                        }
+                        if (revisionLoadSourceFileOpen) {
+                            revisionLoadSourceFile.close();
+                            revisionLoadSourceFileOpen = false;
+                        }
+                    }
+
+                    if (!writeRaw(revisionLoadDestFile, &STORAGE_COMPLETE_MAGIC,
+                                  sizeof(STORAGE_COMPLETE_MAGIC))) {
+                        return false;
+                    }
+                    if (!finalizeRevisionLoadLoopSlotTemp(trackIndex, slotIndex)) {
+                        return false;
+                    }
+                    revisionLoadWritingEmptySlot = false;
+                    revisionLoadSlotBodyRemaining = 0;
+                    ++revisionLoadCopySlotCursor;
+                }
+                revisionLoadCopySlotCursor = 0;
+                ++revisionLoadCopyTrackCursor;
+            }
+            revisionLoadStage = RevisionLoadStage::ReloadRam;
+            return true;
+    }
+    return false;
+}
+
+bool stepRevisionLoadReloadRam(LooperState& state) {
+    currentWorkspaceEpoch = revisionLoadWorkspaceEpoch;
+    lastCommittedWorkspaceEpoch = revisionLoadWorkspaceEpoch;
+    workspaceDerivedFromSetId = revisionLoadHeader.setId;
+    workspaceDerivedFromRevisionId = revisionLoadHeader.revisionId;
+    if (!writeWorkspaceMetaAfterDeferredSave()) {
+        Serial.println("[StorageManager] ERROR: Revision load failed writing workspace.bin");
+        return false;
+    }
+    if (!StorageManager::loadCurrentWorkspaceFromSd(state)) {
+        Serial.println("[StorageManager] ERROR: Revision load failed reloading current workspace");
+        return false;
+    }
+    forceCurrentSetFullLoopWrite = false;
+    syncCurrentSetDirtyTrackingFromLoadedState();
+    clearCurrentSetLoadedFromFolder();
+    currentSetAnchorFields = CurrentSetStorage::AnchorFields{};
+    revisionLoadStage = RevisionLoadStage::Complete;
+    return true;
+}
+
+bool stepRevisionLoadComplete() {
+    Serial.print("[StorageManager] Revision load complete S");
+    Serial.print(revisionLoadSetId);
+    Serial.print(" v");
+    Serial.println(revisionLoadRevisionId);
+#if defined(SESSION_CAPTURE)
+    char revLoadDetail[40];
+    if (revisionLoadUsedDefaultTransport) {
+        std::snprintf(revLoadDetail, sizeof(revLoadDetail), "S%04u_v%04u,default_transport",
+                      revisionLoadSetId, revisionLoadRevisionId);
+    } else {
+        std::snprintf(revLoadDetail, sizeof(revLoadDetail), "S%04u_v%04u", revisionLoadSetId,
+                      revisionLoadRevisionId);
+    }
+    SC_PERSIST("rev_load_complete", 0, revisionLoadSetId, revisionLoadRevisionId, revLoadDetail);
+#endif
+    revisionLoadDisplayRefreshPending = true;
+    revisionLoadStage = RevisionLoadStage::Idle;
+    revisionLoadInProgress = false;
+    return true;
+}
+
+bool stepRevisionLoadJob(LooperState& state) {
+    switch (revisionLoadStage) {
+        case RevisionLoadStage::Idle:
+            return true;
+
+        case RevisionLoadStage::Validate:
+            return beginRevisionLoadValidate();
+
+        case RevisionLoadStage::Write:
+            return stepRevisionLoadWrite();
+
+        case RevisionLoadStage::ReloadRam:
+            return stepRevisionLoadReloadRam(state);
+
+        case RevisionLoadStage::Complete:
+            return stepRevisionLoadComplete();
     }
     return false;
 }
@@ -3336,10 +4169,12 @@ void StorageManager::processDeferredSaveState(const LooperState& state) {
     deferredSavePending = false;
     resetDeferredSaveJobState();
     resetRevisionCommitJobState();
+    resetRevisionLoadJobState();
     return;
 #endif
     deferredSaveSdIoActive = false;
     revisionCommitSdIoActive = false;
+    revisionLoadSdIoActive = false;
 
     const uint32_t sliceBudgetUs = resolveMaxPersistenceMicros(state);
     const uint32_t sliceStartUs = micros();
@@ -3352,12 +4187,15 @@ void StorageManager::processDeferredSaveState(const LooperState& state) {
     while (!sliceBudgetExhausted()) {
         const bool revisionBlockedByDeferredSave =
             revisionCommitPending && (deferredSavePending || deferredSaveInProgress);
-        if (revisionBlockedByDeferredSave) {
+        const bool revisionBlockedByLoad =
+            revisionCommitPending && (revisionLoadPending || revisionLoadInProgress);
+        if (revisionBlockedByDeferredSave || revisionBlockedByLoad) {
             const uint32_t nowMs = millis();
             if (nowMs - lastRevisionCommitBlockedLogAtMs >= 5000U) {
                 lastRevisionCommitBlockedLogAtMs = nowMs;
                 SC_PERSIST("rev_blocked", 0, deferredSavePending ? 1U : 0U,
-                           deferredSaveInProgress ? 1U : 0U, "deferred_save_active");
+                           deferredSaveInProgress ? 1U : 0U,
+                           revisionBlockedByLoad ? "load_active" : "deferred_save_active");
             }
         } else if (revisionCommitInProgress || revisionCommitPending) {
             if (!revisionCommitInProgress && revisionCommitPending) {
@@ -3380,6 +4218,48 @@ void StorageManager::processDeferredSaveState(const LooperState& state) {
                 break;
             }
             if (revisionCommitInProgress) {
+                break;
+            }
+            continue;
+        }
+
+        const bool revisionLoadBlockedByDeferredSave =
+            revisionLoadPending && (deferredSavePending || deferredSaveInProgress);
+        const bool revisionLoadBlockedByCommit =
+            revisionLoadPending && (revisionCommitPending || revisionCommitInProgress);
+        if (revisionLoadBlockedByDeferredSave || revisionLoadBlockedByCommit) {
+            const uint32_t nowMs = millis();
+            if (nowMs - lastRevisionLoadBlockedLogAtMs >= 5000U) {
+                lastRevisionLoadBlockedLogAtMs = nowMs;
+                SC_PERSIST("rev_load_blocked", 0,
+                           revisionLoadBlockedByDeferredSave ? 1U : 0U,
+                           revisionLoadBlockedByCommit ? 1U : 0U,
+                           revisionLoadBlockedByDeferredSave ? "deferred_save_active"
+                                                               : "commit_active");
+            }
+        } else if (revisionLoadInProgress || revisionLoadPending) {
+            if (!revisionLoadInProgress && revisionLoadPending) {
+                revisionLoadPending = false;
+                revisionLoadInProgress = true;
+                revisionLoadStage = RevisionLoadStage::Validate;
+                SC_PERSIST("rev_load_dispatch", 0, revisionLoadSetId, revisionLoadRevisionId,
+                           "run");
+            }
+
+            const uint32_t ioStartUs = micros();
+            revisionLoadSdIoActive = true;
+            const bool revLoadStepOk =
+                stepRevisionLoadJob(const_cast<LooperState&>(state));
+            revisionLoadSdIoActive = false;
+            deferredSaveDisplayBlockUs += micros() - ioStartUs;
+
+            if (!revLoadStepOk) {
+                Serial.print("[StorageManager] ERROR: Revision load failed at stage ");
+                Serial.println(static_cast<uint8_t>(revisionLoadStage));
+                resetRevisionLoadJobState();
+                break;
+            }
+            if (revisionLoadInProgress) {
                 break;
             }
             continue;
@@ -3512,6 +4392,44 @@ bool StorageManager::isRevisionCommitActive() {
 #endif
 }
 
+void StorageManager::requestLoadRevision(uint16_t setId, uint16_t revisionId) {
+#if BYPASS_STOP_UNDO_SAVE
+    (void)setId;
+    (void)revisionId;
+    return;
+#endif
+    if (setId == 0 || revisionId == 0) {
+        return;
+    }
+    revisionLoadSetId = setId;
+    revisionLoadRevisionId = revisionId;
+    revisionLoadPending = true;
+    SC_PERSIST("rev_load_request", 0, setId, revisionId, "queued");
+}
+
+bool StorageManager::hasRevisionLoadWork() {
+#if BYPASS_STOP_UNDO_SAVE
+    return false;
+#else
+    return revisionLoadPending || revisionLoadInProgress;
+#endif
+}
+
+bool StorageManager::isRevisionLoadActive() {
+#if BYPASS_STOP_UNDO_SAVE
+    return false;
+#else
+    return revisionLoadSdIoActive;
+#endif
+}
+
+#if defined(SESSION_CAPTURE)
+void StorageManager::requestLoadRevisionForHitl(uint16_t setId, uint16_t revisionId) {
+    requestLoadRevision(setId, revisionId);
+    SC_PERSIST("rev_load_hitl_arm", 0, setId, revisionId, "armed");
+}
+#endif
+
 #if defined(SESSION_CAPTURE)
 bool removeEmptyDirectoryIfPresent(const char* path) {
     if (path == nullptr || path[0] == '\0' || !SD.exists(path)) {
@@ -3534,6 +4452,31 @@ bool removeEmptyDirectoryIfPresent(const char* path) {
     }
     dir.close();
     return SD.rmdir(path);
+}
+
+bool parseRevisionSetFolderEntryName(const char* name, uint16_t& setIdOut) {
+    if (name == nullptr || name[0] == '\0') {
+        return false;
+    }
+    const char* base = name;
+    if (const char* slash = std::strrchr(name, '/')) {
+        base = slash + 1;
+    }
+    if (base[0] != 'S') {
+        return false;
+    }
+    unsigned setId = 0;
+    for (const char* cursor = base + 1; *cursor != '\0'; ++cursor) {
+        if (*cursor < '0' || *cursor > '9') {
+            return false;
+        }
+        setId = setId * 10U + static_cast<unsigned>(*cursor - '0');
+    }
+    if (setId == 0U || setId > 0xFFFFU) {
+        return false;
+    }
+    setIdOut = static_cast<uint16_t>(setId);
+    return true;
 }
 
 bool removeHitlSetFolderTree(const char* setFolderPath) {
@@ -3594,6 +4537,80 @@ bool removeHitlSetFolderTree(const char* setFolderPath) {
         (void)SD.remove(setMetaTempPath);
     }
     return removeEmptyDirectoryIfPresent(setFolderPath);
+}
+
+bool StorageManager::nukeHitlSetsCatalog() {
+#if BYPASS_STOP_UNDO_SAVE
+    return false;
+#else
+    if (revisionCommitPending || revisionCommitInProgress || revisionLoadPending ||
+        revisionLoadInProgress) {
+        SC_PERSIST("rev_nuke_sets", 0, 0, 0, "active_job");
+        return false;
+    }
+
+    SC_PERSIST("rev_nuke_sets", 0, 0, 0, "started");
+    hitlRevisionCommitBackup = HitlRevisionCommitBackup{};
+
+    constexpr uint8_t kMaxSetFolders = 32;
+    char setFolderPaths[kMaxSetFolders][52];
+    uint8_t setFolderCount = 0;
+
+    if (SD.exists(SetRevisionCatalog::kSetsRoot)) {
+        File setsDir = SD.open(SetRevisionCatalog::kSetsRoot);
+        if (setsDir) {
+            while (true) {
+                File entry = setsDir.openNextFile();
+                if (!entry) {
+                    break;
+                }
+                const bool isDirectory = entry.isDirectory();
+                const char* name = entry.name();
+                entry.close();
+                if (!isDirectory || setFolderCount >= kMaxSetFolders) {
+                    continue;
+                }
+                uint16_t setId = 0;
+                if (!parseRevisionSetFolderEntryName(name, setId)) {
+                    continue;
+                }
+                if (!SetRevisionCatalog::formatSetFolderPath(setFolderPaths[setFolderCount],
+                                                              sizeof(setFolderPaths[0]), setId)) {
+                    continue;
+                }
+                ++setFolderCount;
+            }
+            setsDir.close();
+        }
+    }
+
+    bool ok = true;
+    for (uint8_t i = 0; i < setFolderCount; ++i) {
+        if (!removeHitlSetFolderTree(setFolderPaths[i])) {
+            ok = false;
+        }
+    }
+
+    if (SD.exists(SetRevisionCatalog::kSetIndexPath)) {
+        ok = SD.remove(SetRevisionCatalog::kSetIndexPath) && ok;
+    }
+    if (SD.exists(SetRevisionCatalog::kSetIndexTempPath)) {
+        (void)SD.remove(SetRevisionCatalog::kSetIndexTempPath);
+    }
+
+    workspaceDerivedFromSetId = 0;
+    workspaceDerivedFromRevisionId = 0;
+    workspaceLastCommittedRevisionId = 0;
+    if (!writeWorkspaceMetaAfterDeferredSave()) {
+        ok = false;
+    }
+
+    SC_PERSIST("rev_nuke_sets", 0, setFolderCount, 0, ok ? "ok" : "failed");
+    Serial.print("[StorageManager] HITL sets catalog nuke removed ");
+    Serial.print(setFolderCount);
+    Serial.println(ok ? " folders" : " folders (partial failure)");
+    return ok;
+#endif
 }
 
 void StorageManager::requestCommitRevisionForHitl() {
@@ -3703,6 +4720,30 @@ void StorageManager::processHitlSerialCommands() {
                 requestCommitRevisionForHitl();
             } else if (std::strcmp(lineBuffer, "!REV_CLEANUP") == 0) {
                 cleanupHitlRevisionCommit();
+            } else if (std::strcmp(lineBuffer, "!REV_NUKE_SETS") == 0) {
+                nukeHitlSetsCatalog();
+            } else if (std::strncmp(lineBuffer, "!REV_LOAD ", 10) == 0) {
+                const char* cursor = lineBuffer + 10;
+                unsigned setId = 0;
+                unsigned revisionId = 0;
+                while (*cursor == ' ') {
+                    ++cursor;
+                }
+                while (*cursor >= '0' && *cursor <= '9') {
+                    setId = setId * 10U + static_cast<unsigned>(*cursor - '0');
+                    ++cursor;
+                }
+                while (*cursor == ' ') {
+                    ++cursor;
+                }
+                while (*cursor >= '0' && *cursor <= '9') {
+                    revisionId = revisionId * 10U + static_cast<unsigned>(*cursor - '0');
+                    ++cursor;
+                }
+                if (setId > 0U && setId <= 0xFFFFU && revisionId > 0U && revisionId <= 0xFFFFU) {
+                    requestLoadRevisionForHitl(static_cast<uint16_t>(setId),
+                                               static_cast<uint16_t>(revisionId));
+                }
             }
             lineLength = 0;
             continue;
@@ -3727,6 +4768,14 @@ DeferredSaveDisplayStatus StorageManager::getDeferredSaveDisplayStatus(uint32_t 
     inputs.failedAtMs = deferredSaveFailedAtMs;
     return resolveDeferredSaveDisplayStatus(nowMs, inputs);
 #endif
+}
+
+bool StorageManager::consumeRevisionLoadDisplayRefreshPending() {
+    if (!revisionLoadDisplayRefreshPending) {
+        return false;
+    }
+    revisionLoadDisplayRefreshPending = false;
+    return true;
 }
 
 bool StorageManager::saveState(const LooperState& state) {
@@ -3823,6 +4872,7 @@ static bool readLoopFromCurrentSetFile(File& file, Loop& loop) {
 
     BoundedFileIo bounded(file, payloadSize);
     if (!readLoopPersisted(bounded.io(), loop)) {
+        Serial.println("[StorageManager] ERROR: readLoopPersisted failed for current loop file");
         return false;
     }
     uint32_t magic = 0;
@@ -4054,6 +5104,8 @@ bool StorageManager::loadCurrentSetFromDirectory(const char* setDir, LooperState
     }
     File file = SD.open(metaPath, FILE_READ);
     if (!file) {
+        Serial.print("[StorageManager] ERROR: Could not open CurrentSet meta ");
+        Serial.println(metaPath);
         return false;
     }
     std::vector<uint8_t> activeLoopIndex;
@@ -4071,6 +5123,10 @@ bool StorageManager::loadCurrentSetFromSd(LooperState& state) {
         Serial.println("[StorageManager] CurrentSet loaded successfully (v6).");
     }
     return ok;
+}
+
+bool StorageManager::loadCurrentWorkspaceFromSd(LooperState& state) {
+    return loadCurrentSetFromDirectory(CurrentSetStorage::kCurrentSetDir, state);
 }
 
 bool StorageManager::loadV5MonolithIntoRam(LooperState& state) {

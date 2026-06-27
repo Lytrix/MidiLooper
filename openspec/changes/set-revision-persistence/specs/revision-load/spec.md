@@ -83,3 +83,39 @@ After load completes, **Current** SHALL remain the live editable workspace.
 - **WHEN** the user loads `S0003` `v0009` into Current
 - **AND** records a new loop
 - **THEN** deferred save writes to `/current/` paths
+
+### Requirement: Deferred load validates revision from SD incrementally
+
+`loadRevisionIntoCurrent` **VALIDATE** SHALL stream the revision payload from SD to verify footer
+CRC and locate typed chunks — without loading the full revision file into a fixed-size RAM buffer.
+
+#### Scenario: Large revision validates on device
+
+- **WHEN** a revision file exceeds 4 KB
+- **AND** the user loads that revision into Current
+- **THEN** validate succeeds by walking the chunk stream and computing payload CRC from SD
+- **AND** load proceeds to **WRITE**
+
+### Requirement: Missing Transport chunk degrades to defaults
+
+When a revision lacks a Transport chunk or the Transport body is empty, load SHALL NOT fail at
+**VALIDATE**. The system SHALL synthesize a default `runtime.bundle.bin` transport body (BPM,
+track/slot enablement from **SlotIndex**, empty undo stacks) and SHALL still restore all **LoopSlot**
+chunks into `/MidiLooper/current/slots/`.
+
+#### Scenario: Legacy revision without Transport still restores loops
+
+- **WHEN** a revision contains LoopSlot and SlotIndex chunks but no Transport chunk
+- **THEN** load completes with default transport metadata
+- **AND** occupied slots from SlotIndex contain loop pass data after reload RAM
+
+### Requirement: Display refreshes after load completes
+
+When deferred load reaches **COMPLETE**, the system SHALL signal the display layer to invalidate live
+display caches and per-loop visual caches so the piano roll reflects restored loop data without
+requiring a manual track change.
+
+#### Scenario: Piano roll updates after HITL load
+
+- **WHEN** `loadRevisionIntoCurrent` completes for a revision with occupied LoopSlots
+- **THEN** the next display update rebuilds notes from restored pass storage

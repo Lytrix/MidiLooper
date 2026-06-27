@@ -27,6 +27,8 @@ PRESET_SCENARIOS: dict[str, tuple[str, ...]] = {
     "load_save_display": ("load_save_display",),
     "current_set_incremental_save": ("current_set_incremental_save",),
     "revision_commit_save": ("revision_commit_save",),
+    "revision_load": ("revision_load",),
+    "revision_load_record": ("base", "revision_load_post_record"),
     "two_overdub_undo_redo": ("two_overdub_undo_redo",),
 }
 
@@ -53,6 +55,9 @@ def _lazy_registry() -> dict[str, ScenarioSpec]:
     from hitl.verify.current_set_incremental_save import verify_current_set_incremental_save
     from hitl.scenarios.revision_commit_save import run_revision_commit_save
     from hitl.verify.revision_commit_save import verify_revision_commit_save
+    from hitl.scenarios.revision_load import run_revision_load
+    from hitl.scenarios.revision_load_post_record import run_revision_load_post_record
+    from hitl.verify.revision_load import verify_revision_load
     from hitl.scenarios.two_overdub_undo_redo import run_two_overdub_undo_redo
     from hitl.verify.two_overdub_undo_redo import verify_two_overdub_undo_redo
 
@@ -110,6 +115,18 @@ def _lazy_registry() -> dict[str, ScenarioSpec]:
             description="HITL revision commit (!REV_COMMIT) with catalog cleanup (!REV_CLEANUP)",
             run=run_revision_commit_save,
             verify=verify_revision_commit_save,
+        ),
+        "revision_load": ScenarioSpec(
+            scenario_id="revision_load",
+            description="HITL revision commit, load (!REV_LOAD), catalog cleanup (!REV_CLEANUP)",
+            run=run_revision_load,
+            verify=verify_revision_load,
+        ),
+        "revision_load_post_record": ScenarioSpec(
+            scenario_id="revision_load_post_record",
+            description="Revision commit/load after record baseline (no transport-stop prelude)",
+            run=run_revision_load_post_record,
+            verify=verify_revision_load,
         ),
         "two_overdub_undo_redo": ScenarioSpec(
             scenario_id="two_overdub_undo_redo",

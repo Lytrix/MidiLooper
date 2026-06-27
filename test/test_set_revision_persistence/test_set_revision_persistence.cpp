@@ -304,6 +304,26 @@ void test_revision_blob_parser_without_heap() {
   TEST_ASSERT_EQUAL_UINT32(120, header.sourceEpoch);
   TEST_ASSERT_EQUAL_UINT16(4, header.chunkCount);
 
+  uint32_t transportOffset = 0;
+  uint32_t transportLength = 0;
+  TEST_ASSERT_TRUE(RevisionPackedBlob::findChunkBodyInRevisionBytes(
+      file.data(), file.size(), header, RevisionPackedBlob::ChunkType::Transport, 0, 0,
+      transportOffset, transportLength));
+  TEST_ASSERT_EQUAL_UINT32(16, transportLength);
+
+  uint16_t slotIndexCount = 0;
+  TEST_ASSERT_TRUE(RevisionPackedBlob::readSlotIndexEntryCountFromRevisionBytes(
+      file.data(), file.size(), header, slotIndexCount));
+  TEST_ASSERT_EQUAL_UINT16(2, slotIndexCount);
+
+  RevisionPackedBlob::SlotIndexEntry indexedEntries[4]{};
+  uint16_t indexedCount = 0;
+  TEST_ASSERT_TRUE(RevisionPackedBlob::readSlotIndexEntriesFromRevisionBytes(
+      file.data(), file.size(), header, indexedEntries, 4, indexedCount));
+  TEST_ASSERT_EQUAL_UINT16(2, indexedCount);
+  TEST_ASSERT_EQUAL_UINT8(0, indexedEntries[0].trackIndex);
+  TEST_ASSERT_EQUAL_UINT8(1, indexedEntries[0].slotIndex);
+
   RevisionPackedBlob::SlotIndexEntry entry0{};
   TEST_ASSERT_TRUE(RevisionPackedBlob::readSlotIndexEntryFromRevisionBytes(
       file.data(), file.size(), header, 0, entry0));
@@ -322,6 +342,19 @@ void test_revision_blob_parser_without_heap() {
       RevisionPackedBlob::validateRevisionFooterFromBytes(file.data(), file.size(), footer));
   TEST_ASSERT_EQUAL_UINT32(RevisionPackedBlob::kRevisionCompleteMagic, footer.completeMagic);
   TEST_ASSERT_EQUAL_UINT32(static_cast<uint32_t>(file.size()), footer.fileSize);
+}
+
+void test_revision_slot_index_parse_ignores_zero_chunk_count() {
+  std::vector<uint8_t> file = buildSampleRevisionBlob();
+  RevisionPackedBlob::RevisionHeader header{};
+  TEST_ASSERT_TRUE(
+      RevisionPackedBlob::parseRevisionHeaderFromBytes(file.data(), file.size(), header));
+  header.chunkCount = 0;
+
+  uint16_t slotIndexCount = 0;
+  TEST_ASSERT_TRUE(RevisionPackedBlob::readSlotIndexEntryCountFromRevisionBytes(
+      file.data(), file.size(), header, slotIndexCount));
+  TEST_ASSERT_EQUAL_UINT16(2, slotIndexCount);
 }
 
 void test_revision_header_rejects_bad_magic() {
@@ -380,6 +413,7 @@ int main(int argc, char** argv) {
   RUN_TEST(test_current_slot_path_formatting);
   RUN_TEST(test_revision_header_wire_size);
   RUN_TEST(test_revision_blob_parser_without_heap);
+  RUN_TEST(test_revision_slot_index_parse_ignores_zero_chunk_count);
   RUN_TEST(test_revision_header_rejects_bad_magic);
   RUN_TEST(test_epoch_file_bytes_validate_with_header);
   RUN_TEST(test_epoch_file_bytes_legacy_without_header);

@@ -3,7 +3,7 @@
 **Date:** 2026-06-27  
 **OpenSpec:** `openspec/changes/set-revision-persistence/`  
 **Architecture plan:** `docs/plans/set_revision_persistence_architecture_enhancement.md`  
-**Apply command:** `/opsx:apply` on `tasks.md` — **next: task 3.2 (deferred load)**
+**Apply command:** `/opsx:apply` on `tasks.md` — **next: task 3.3 (SNAPSHOT epoch freeze audit)**
 
 ---
 
@@ -13,7 +13,7 @@
 
 ---
 
-## What is done (tasks 1.x–2.x, 3.1)
+## What is done (tasks 1.x–2.x, 3.1–3.2)
 
 ### Section 1 — metadata + catalog + REVPK02
 
@@ -84,6 +84,47 @@ OpenSpec **pros/cons** (format vs MIDI timing): `proposal.md` + `design.md` § R
 
 **Verified 2026-06-27:** PASS (`S0001_v0001`, cleanup restores catalog/workspace).
 
+### Section 3.2 — revision load (shipped 2026-06-27)
+
+| Item | Detail |
+|------|--------|
+| FSM | `VALIDATE → WRITE (new epoch) → ReloadRam → COMPLETE` on deferred infrastructure |
+| API | `requestLoadRevision()`, `hasRevisionLoadWork()`, `isRevisionLoadActive()` |
+| VALIDATE | Stream footer CRC + chunk walk from SD (no 4 KB full-file buffer) |
+| WRITE | New Current epoch; copy Transport + LoopSlots; empty slots get deferred empty loop wire |
+| Transport missing | Default `runtime.bundle.bin` from SlotIndex (`occupied`, `loopLengthTicks`); LoopSlots still restore |
+| Commit fix | Transport chunk header written when `readPos == 0`; bundle body size without strict epoch match |
+| SlotIndex | Occupied slots only; `loopLengthTicks`, `noteCount`, `bars` at commit |
+| Display | `consumeRevisionLoadDisplayRefreshPending()` → invalidate live + visual caches |
+| Provenance | `derivedFromSetId/RevisionId` updated in ReloadRam; `workspace.bin` written |
+
+**SESSION_CAPTURE hooks:** `!REV_LOAD <setId> <revisionId>`; `rev_load_request`, `rev_load_dispatch`, `rev_load_complete` (detail may include `,default_transport`).
+
+### HITL — revision load
+
+| File | Role |
+|------|------|
+| `scripts/hitl/scenarios/revision_load.py` | Transport stop → `!REV_COMMIT` → `!REV_LOAD` → `!REV_CLEANUP` |
+| `scripts/hitl/scenarios/revision_load_post_record.py` | Skip transport prelude (after base record save) |
+| `scripts/hitl/verify/revision_load.py` | Serial: commit + load `rev_*` lines, `rev_cleanup ok` |
+| `scripts/hitl/registry.py` | Presets `revision_load`, `revision_load_record` (= `base` + post-record) |
+
+```bash
+# Empty-workspace smoke (no loop data):
+.venv/bin/python scripts/host_midi_hitl.py run --preset revision_load \
+  --midi-out "Teensy" --midi-in "Teensy" \
+  --serial-port /dev/cu.usbmodem154944801 --track-number 5
+
+# Record baseline → commit → load (loop data):
+.venv/bin/python scripts/host_midi_hitl.py run --preset revision_load_record \
+  --midi-out "Teensy" --midi-in "Teensy" \
+  --serial-port /dev/cu.usbmodem154944801 --track-number 5
+```
+
+**Verified 2026-06-27:** `revision_load_record` PASS — base record on track 5, `rev_load_complete` `S0001_v0019`.
+
+Use `--skip-hitl-cleanup` when debugging failed load. Optional dev `!REV_NUKE_SETS` via `--nuke-sets-before-run` (not default).
+
 ### Naming (locked on SD)
 
 | File | Path |
@@ -109,10 +150,9 @@ pio run -e teensy41-capture-serial             # ask before upload
 
 ## What is NOT done (start here)
 
-### Section 3 — revision load + hardening (priority order)
+### Section 3 — hardening (priority order)
 
-- [ ] **3.2** Deferred **load** → new Current epoch; provenance after 100% (**next**)
-- [ ] **3.3** SNAPSHOT freezes completed epoch only (audit vs current SNAPSHOT)
+- [ ] **3.3** SNAPSHOT freezes completed epoch only (audit vs current SNAPSHOT) (**next**)
 - [ ] **3.4** `lastCommittedEpoch` sync — firmware updates on COMPLETE; add native test
 - [ ] **3.5** Native: commit during PLAYING uses budget; no materialize on WRITE
 - [ ] **3.6** Remove SavedSet shims; stream commit via `StorageLoopIo` / pass shapes (replace opaque copy)
@@ -122,7 +162,6 @@ pio run -e teensy41-capture-serial             # ask before upload
 
 **Open engineering items (not separate tasks):**
 
-- Slice-bounded footer/validate CRC read for large revisions (today: full payload read in `WriteFooter` one step)
 - Incremental payload CRC during WRITE (optional; footer uses file read as source of truth)
 
 ### Sections 4–7
@@ -160,7 +199,7 @@ sets    = immutable revision history  →  MidiLooper/sets/
 | HITL serial hooks | `src/main.cpp` (`processHitlSerialCommands`) |
 | Workspace / catalog | `src/CurrentWorkspaceStorage.cpp`, `SetRevisionCatalog.cpp` |
 | Native tests | `test/test_set_revision_persistence/` |
-| HITL | `scripts/hitl/scenarios/revision_commit_save.py`, `verify/revision_commit_save.py` |
+| HITL | `scripts/hitl/scenarios/revision_commit_save.py`, `revision_load.py`, `revision_load_post_record.py` |
 | Overlay stub | `src/DisplayManager.cpp` (`drawLoadSaveView`) |
 | OpenSpec | `openspec/changes/set-revision-persistence/` |
 
@@ -183,9 +222,8 @@ Order: (1) highest valid `MidiLooper/current/` epoch → (2) exact derived `v###
 ## Suggested next-chat prompt
 
 ```text
-/opsx:apply set-revision-persistence — task 3.2 (deferred revision load into new Current epoch).
+/opsx:apply set-revision-persistence — task 3.3 (SNAPSHOT epoch freeze audit).
 Read docs/plans/set_revision_persistence_handoff.md first.
-Load REVPK02: parse SlotIndex chunk, seek LoopSlot chunks, restore via StorageLoopIo / epoch files.
-Provenance (derivedFromSetId/RevisionId) only after load 100%. No materialize on load hot path.
-Run pio test -e native after changes. HITL revision_commit_save as smoke; ask before Teensy upload.
+Audit beginRevisionCommitSnapshot vs completed epoch boundary; post-snapshot capture → next epoch.
+Run pio test -e native after changes. HITL revision_load_record as smoke; ask before Teensy upload.
 ```
