@@ -99,6 +99,12 @@ bool finalizeEpochFileHeaderCrc(const char* path);
 bool fileStartsWithEpochHeader(File& file);
 bool writeWorkspaceMetaFile(const WorkspaceMetaRecord& record);
 bool readWorkspaceMetaFile(WorkspaceMetaRecord& record);
+
+/// Epoch header, body CRC, and completion marker for a persisted Current file.
+bool validateEpochFileOnSd(const char* path, uint32_t expectedEpoch);
+
+/// Boot probe only — epoch header finalized + SAVE token; no full-file body CRC walk.
+bool validateEpochFileOnSdQuick(const char* path, uint32_t expectedEpoch);
 #endif
 
 }  // namespace CurrentWorkspaceStorage

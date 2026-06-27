@@ -11,7 +11,9 @@
 #include "../../src/PersistenceSchema.cpp"
 #include "../../src/RevisionPackedBlob.cpp"
 #include "../../src/RevisionLoadPolicy.cpp"
+#include "../../src/BootRecoveryPolicy.cpp"
 #include "../../src/SetRevisionCatalog.cpp"
+#include "BootRecoveryPolicy.h"
 #include "CurrentWorkspaceStorage.h"
 #include "PersistenceBudget.h"
 #include "RevisionCommitPolicy.h"
@@ -456,6 +458,14 @@ void test_persistence_slice_budget_never_exhausted_when_idle() {
       PersistenceBudget::persistenceSliceBudgetExhausted(Config::maxPersistenceMicrosIdle, 1000000U));
 }
 
+void test_persistence_slice_budget_idle_capped_per_loop() {
+  TEST_ASSERT_EQUAL_UINT32(
+      Config::maxPersistenceMicrosPerLoop,
+      PersistenceBudget::resolvePersistenceSliceBudgetUs(false, false));
+  TEST_ASSERT_TRUE(PersistenceBudget::persistenceSliceBudgetExhausted(
+      Config::maxPersistenceMicrosPerLoop, Config::maxPersistenceMicrosPerLoop));
+}
+
 void test_revision_commit_write_path_does_not_materialize() {
   TEST_ASSERT_FALSE(RevisionCommitPolicy::kWritePathUsesLoopPassesMaterialize);
 }
@@ -486,6 +496,55 @@ void test_minimal_loading_overlay_during_pipeline() {
   TEST_ASSERT_TRUE(RevisionLoadPolicy::isMinimalLoadingOverlayActive(true, false, false, true));
   TEST_ASSERT_FALSE(RevisionLoadPolicy::isMinimalLoadingOverlayActive(false, true, true, true));
   TEST_ASSERT_FALSE(RevisionLoadPolicy::isMinimalLoadingOverlayActive(true, false, false, false));
+}
+
+void test_boot_recovery_plan_includes_derived_and_latest() {
+  const BootRecoveryPolicy::RevisionRecoveryPlan plan =
+      BootRecoveryPolicy::buildRevisionRecoveryPlan(3, 9, 10);
+  TEST_ASSERT_EQUAL_UINT16(3, plan.setId);
+  TEST_ASSERT_EQUAL_UINT16(9, plan.derivedRevisionId);
+  TEST_ASSERT_EQUAL_UINT16(10, plan.latestRevisionId);
+}
+
+void test_boot_recovery_plan_skips_without_set_id() {
+  const BootRecoveryPolicy::RevisionRecoveryPlan plan =
+      BootRecoveryPolicy::buildRevisionRecoveryPlan(0, 9, 10);
+  TEST_ASSERT_EQUAL_UINT16(0, plan.setId);
+  TEST_ASSERT_EQUAL_UINT16(0, plan.derivedRevisionId);
+  TEST_ASSERT_EQUAL_UINT16(0, plan.latestRevisionId);
+}
+
+void test_boot_recovery_latest_fallback_when_derived_fails() {
+  TEST_ASSERT_EQUAL_UINT16(10, BootRecoveryPolicy::resolveLatestRevisionFallback(9, 10));
+  TEST_ASSERT_EQUAL_UINT16(0, BootRecoveryPolicy::resolveLatestRevisionFallback(10, 10));
+  TEST_ASSERT_EQUAL_UINT16(10, BootRecoveryPolicy::resolveLatestRevisionFallback(0, 10));
+}
+
+bool probeEpochComplete(uint32_t candidateEpoch, void* context) {
+  const auto* completeEpochs = static_cast<const uint8_t*>(context);
+  if (completeEpochs == nullptr || candidateEpoch == 0 || candidateEpoch > 8) {
+    return false;
+  }
+  return completeEpochs[candidateEpoch] != 0;
+}
+
+void test_boot_recovery_resolves_highest_valid_epoch() {
+  const uint8_t completeEpochs[9] = {0, 1, 0, 0, 1, 0, 0, 0, 0};
+  TEST_ASSERT_EQUAL_UINT32(
+      4, BootRecoveryPolicy::resolveHighestValidWorkspaceEpoch(8, probeEpochComplete,
+                                                               const_cast<uint8_t*>(completeEpochs)));
+  TEST_ASSERT_EQUAL_UINT32(
+      0, BootRecoveryPolicy::resolveHighestValidWorkspaceEpoch(0, probeEpochComplete,
+                                                               const_cast<uint8_t*>(completeEpochs)));
+}
+
+void test_boot_epoch_candidate_rejects_partial_successor() {
+  TEST_ASSERT_FALSE(BootRecoveryPolicy::isWorkspaceEpochBootCandidate(
+      41, true, true, true));
+  TEST_ASSERT_FALSE(BootRecoveryPolicy::isWorkspaceEpochBootCandidate(
+      41, false, false, true));
+  TEST_ASSERT_TRUE(BootRecoveryPolicy::isWorkspaceEpochBootCandidate(
+      41, true, false, true));
 }
 
 int main(int argc, char** argv) {
@@ -519,11 +578,17 @@ int main(int argc, char** argv) {
   RUN_TEST(test_revision_commit_idle_uses_unbounded_persistence_budget);
   RUN_TEST(test_persistence_slice_budget_exhausted_during_playing_commit);
   RUN_TEST(test_persistence_slice_budget_never_exhausted_when_idle);
+  RUN_TEST(test_persistence_slice_budget_idle_capped_per_loop);
   RUN_TEST(test_revision_commit_write_path_does_not_materialize);
   RUN_TEST(test_revision_commit_loop_slot_streams_via_storage_loop_io);
   RUN_TEST(test_dirty_load_request_shows_prompt_when_workspace_dirty);
   RUN_TEST(test_dirty_load_request_dispatches_when_workspace_clean);
   RUN_TEST(test_save_then_load_dispatches_after_commit_complete);
   RUN_TEST(test_minimal_loading_overlay_during_pipeline);
+  RUN_TEST(test_boot_recovery_plan_includes_derived_and_latest);
+  RUN_TEST(test_boot_recovery_plan_skips_without_set_id);
+  RUN_TEST(test_boot_recovery_latest_fallback_when_derived_fails);
+  RUN_TEST(test_boot_recovery_resolves_highest_valid_epoch);
+  RUN_TEST(test_boot_epoch_candidate_rejects_partial_successor);
   return UNITY_END();
 }

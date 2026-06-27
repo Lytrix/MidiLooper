@@ -28,8 +28,8 @@
 - [x] 3.5 Native: commit during PLAYING uses budget; no materialize on WRITE path.
 - [x] 3.6 Remove SavedSet shims; stream via `StorageLoopIo` / pass shapes.
 - [x] 3.7 DIRTY_PROMPT Yes/No/Cancel; minimal until pipeline done.
-- [ ] 3.8 Boot: Current epoch → derived rev → latest → recovery checkpoints → empty.
-- [ ] 3.9 8h failsafe when epochs diverge > 8h.
+- [x] 3.8 Boot: Current epoch → derived rev → latest → recovery checkpoints → empty.
+- [ ] 3.9 **Parked** — 8h failsafe when epochs diverge > 8h (spec in `recovery-boot`; needs field testing before implementation — legacy `processSavedSetFailsafe` unchanged).
 
 ## 4. Set browser overlay
 

@@ -348,6 +348,104 @@ bool readWorkspaceMetaFile(WorkspaceMetaRecord& record) {
   return ok;
 }
 
+bool validateEpochFileOnSd(const char* path, uint32_t expectedEpoch) {
+  if (path == nullptr) {
+    return false;
+  }
+  File file = SD.open(path, FILE_READ);
+  if (!file) {
+    return false;
+  }
+  const size_t fileSize = file.size();
+  if (fileSize < sizeof(CurrentSetStorage::kSaveFileToken)) {
+    file.close();
+    return false;
+  }
+
+  size_t bodyOffset = 0;
+  if (fileStartsWithEpochHeader(file)) {
+    EpochFileHeader header{};
+    const StorageIo epochIo = StorageIo{
+        [](const void*, size_t) { return false; },
+        [&file](void* data, size_t size) {
+          return file.read(static_cast<uint8_t*>(data), size) == size;
+        },
+    };
+    if (!readEpochFileHeader(epochIo, header)) {
+      file.close();
+      return false;
+    }
+    if (!epochHeaderMatchesEpoch(header, expectedEpoch)) {
+      file.close();
+      return false;
+    }
+    bodyOffset = kEpochFileHeaderByteSize;
+    if (!file.seek(bodyOffset)) {
+      file.close();
+      return false;
+    }
+    uint32_t bodyCrc = 0;
+    uint8_t buffer[256];
+    while (file.available()) {
+      const int bytesRead = file.read(buffer, sizeof(buffer));
+      if (bytesRead <= 0) {
+        break;
+      }
+      bodyCrc = PersistenceSchema::crc32Continue(bodyCrc, buffer,
+                                                 static_cast<size_t>(bytesRead));
+    }
+    if (header.crc32 != bodyCrc) {
+      file.close();
+      return false;
+    }
+  } else if (expectedEpoch != 0) {
+    file.close();
+    return false;
+  }
+
+  file.close();
+  return CurrentSetStorage::verifySaveFileTokenAtPath(path);
+}
+
+bool validateEpochFileOnSdQuick(const char* path, uint32_t expectedEpoch) {
+  if (path == nullptr) {
+    return false;
+  }
+  File file = SD.open(path, FILE_READ);
+  if (!file) {
+    return false;
+  }
+  const size_t fileSize = file.size();
+  if (fileSize < sizeof(CurrentSetStorage::kSaveFileToken)) {
+    file.close();
+    return false;
+  }
+
+  if (fileStartsWithEpochHeader(file)) {
+    EpochFileHeader header{};
+    const StorageIo epochIo = StorageIo{
+        [](const void*, size_t) { return false; },
+        [&file](void* data, size_t size) {
+          return file.read(static_cast<uint8_t*>(data), size) == size;
+        },
+    };
+    if (!readEpochFileHeader(epochIo, header)) {
+      file.close();
+      return false;
+    }
+    if (!epochHeaderMatchesEpoch(header, expectedEpoch) || header.crc32 == 0) {
+      file.close();
+      return false;
+    }
+  } else if (expectedEpoch != 0) {
+    file.close();
+    return false;
+  }
+
+  file.close();
+  return CurrentSetStorage::verifySaveFileTokenAtPath(path);
+}
+
 #endif
 
 }  // namespace CurrentWorkspaceStorage

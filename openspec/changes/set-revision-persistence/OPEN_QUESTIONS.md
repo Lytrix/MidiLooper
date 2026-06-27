@@ -30,6 +30,14 @@ Prior gap items A1–E2 remain closed; see spec files listed below.
 - `revision-commit`, `revision-load`, `recovery-boot`
 - `set-browser-overlay`, `slot-loop-import`, `loop-slot-buttons`
 
+## Parked tasks (2026-06-27)
+
+| Task | Topic | Rationale |
+|------|-------|-----------|
+| **3.9** | Eight-hour failsafe → silent **revision commit** when `currentEpoch != lastCommittedEpoch` | Spec'd in `recovery-boot/spec.md`; implementation **parked** until field testing validates trigger conditions and whether to retire legacy `processSavedSetFailsafe` (`saveNewSet` anchor). |
+
+**Next apply:** section **4** overlay or parked **3.9**.
+
 ## Deferred v2
 
 Load all slots from track, MIDI encoder, revision compaction, catalog search, partial revision restore.
