@@ -3,7 +3,7 @@
 - [x] 1.1 Structs per `current-workspace` (epochs) + `set-revision-catalog`; `schemaVersion` only.
 - [x] 1.2 `SetRevisionCatalog` — `index.bin`, `set.bin`; revision id on COMPLETE only.
 - [x] 1.3 Set id monotonic from `index.bin`; failed revision reuses id.
-- [x] 1.4 `REVPK01` layout — pass/chunk refs, `sourceEpoch`, 12 B footer (no footerVersion).
+- [x] 1.4 `REVPK02` layout — typed chunk stream, SlotIndex directory, `sourceEpoch`, 12 B footer.
 - [x] 1.5 Native: catalog + packed blob parser (no heap, no materialize on save path).
 
 ## 2. Current workspace
@@ -15,7 +15,7 @@
 
 ## 3. Revision commit and load
 
-- [ ] 3.1 Commit FSM stages on deferred save infrastructure; `maxPersistenceMicros` slices.
+- [x] 3.1 Commit FSM stages on deferred save infrastructure; `maxPersistenceMicros` slices.
 - [ ] 3.2 Deferred load → new Current epoch; provenance after 100%.
 - [ ] 3.3 SNAPSHOT freezes completed epoch; post-snapshot capture → next epoch.
 - [ ] 3.4 `lastCommittedEpoch` sync at COMPLETE only.

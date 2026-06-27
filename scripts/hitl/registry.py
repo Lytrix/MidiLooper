@@ -26,6 +26,7 @@ PRESET_SCENARIOS: dict[str, tuple[str, ...]] = {
     "long_loop_display_window": ("long_loop_display_window",),
     "load_save_display": ("load_save_display",),
     "current_set_incremental_save": ("current_set_incremental_save",),
+    "revision_commit_save": ("revision_commit_save",),
     "two_overdub_undo_redo": ("two_overdub_undo_redo",),
 }
 
@@ -50,6 +51,8 @@ def _lazy_registry() -> dict[str, ScenarioSpec]:
     from hitl.verify.load_save_display import verify_load_save_display
     from hitl.scenarios.current_set_incremental_save import run_current_set_incremental_save
     from hitl.verify.current_set_incremental_save import verify_current_set_incremental_save
+    from hitl.scenarios.revision_commit_save import run_revision_commit_save
+    from hitl.verify.revision_commit_save import verify_revision_commit_save
     from hitl.scenarios.two_overdub_undo_redo import run_two_overdub_undo_redo
     from hitl.verify.two_overdub_undo_redo import verify_two_overdub_undo_redo
 
@@ -101,6 +104,12 @@ def _lazy_registry() -> dict[str, ScenarioSpec]:
             description="Transport-stop idle save w0_s64; record-stop incremental w1_s63",
             run=run_current_set_incremental_save,
             verify=verify_current_set_incremental_save,
+        ),
+        "revision_commit_save": ScenarioSpec(
+            scenario_id="revision_commit_save",
+            description="HITL revision commit (!REV_COMMIT) with catalog cleanup (!REV_CLEANUP)",
+            run=run_revision_commit_save,
+            verify=verify_revision_commit_save,
         ),
         "two_overdub_undo_redo": ScenarioSpec(
             scenario_id="two_overdub_undo_redo",

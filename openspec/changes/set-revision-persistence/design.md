@@ -75,6 +75,21 @@ Persistence SHALL yield to higher-priority runtime work via `maxPersistenceMicro
 | Revision ids | Visible only after VALIDATE; failed commit reuses id |
 | Schema | `schemaVersion` only (major reject / minor ignore unknown) |
 | File names | Runtime fixed-layout records use `.bin` (`workspace.bin`, `set.bin`, `index.bin`, `v####.bin`); human-editable config uses `.json` (`settings.json`) |
+| Revision format | `REVPK02` — header + typed chunk stream + CRC footer (see below) |
+
+### REVPK02 vs REVPK01 (timing + architecture)
+
+LMDB-inspired **mental model only** — catalog/workspace = root meta; `v####.bin` = immutable snapshot; single deferred writer. Not an LMDB library.
+
+| | REVPK02 | REVPK01 |
+|---|---------|---------|
+| Architecture / streaming | Better — chunk stream matches slice writes and future `StorageLoopIo` commit | Fixed offset table + opaque blobs |
+| MIDI timing while playing | **Neutral** — same deferred FSM + `maxPersistenceMicros` | Same |
+| On-disk simplicity | More structure (chunk headers, `SlotIndex` last) | Simpler fixed index |
+
+**Timing guarantee** comes from `maxPersistenceMicrosActive`, chunk-bounded copies, no materialize on save, and `rev_blocked` while `current/` deferred save runs — not from the revision format. Epoch save to `current/` is the primary save-during-play path; revision commit is heavier but slice-budgeted.
+
+**Open item:** footer/validate CRC must remain chunk-bounded as payload grows. Commit still copies opaque epoch files until task **3.6**.
 
 ### Boot / recovery
 

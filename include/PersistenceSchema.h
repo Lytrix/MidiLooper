@@ -8,7 +8,7 @@
 
 namespace PersistenceSchema {
 
-/// Shared schemaVersion for workspace.bin, index.bin, set.bin, and REVPK01 (major/minor u16).
+/// Shared schemaVersion for workspace.bin, index.bin, set.bin, and REVPK02 (major/minor u16).
 constexpr uint16_t kSetRevisionSchemaVersion = 0x0001U;
 
 inline uint8_t schemaMajor(uint16_t schemaVersion) {
