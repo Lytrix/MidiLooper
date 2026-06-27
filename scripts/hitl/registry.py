@@ -25,6 +25,8 @@ PRESET_SCENARIOS: dict[str, tuple[str, ...]] = {
     "edit_overdub_during_note_edit": ("edit_overdub_during_note_edit",),
     "long_loop_display_window": ("long_loop_display_window",),
     "load_save_display": ("load_save_display",),
+    "load_save_overlay_scroll": ("load_save_overlay_scroll",),
+    "load_save_overlay_scroll_only": ("load_save_overlay_scroll_only",),
     "current_set_incremental_save": ("current_set_incremental_save",),
     "revision_commit_save": ("revision_commit_save",),
     "revision_load": ("revision_load",),
@@ -54,6 +56,11 @@ def _lazy_registry() -> dict[str, ScenarioSpec]:
     )
     from hitl.scenarios.load_save_display import run_load_save_display
     from hitl.verify.load_save_display import verify_load_save_display
+    from hitl.scenarios.load_save_overlay_scroll import (
+        run_load_save_overlay_scroll,
+        run_load_save_overlay_scroll_only,
+    )
+    from hitl.verify.load_save_overlay_scroll import verify_load_save_overlay_scroll
     from hitl.scenarios.current_set_incremental_save import run_current_set_incremental_save
     from hitl.verify.current_set_incremental_save import verify_current_set_incremental_save
     from hitl.scenarios.revision_commit_save import run_revision_commit_save
@@ -112,6 +119,18 @@ def _lazy_registry() -> dict[str, ScenarioSpec]:
             description="Play/Stop double-press enters and exits load/save set browser",
             run=run_load_save_display,
             verify=verify_load_save_display,
+        ),
+        "load_save_overlay_scroll": ScenarioSpec(
+            scenario_id="load_save_overlay_scroll",
+            description="Serial overlay scroll + dirty-prompt cancel (!OVERLAY_* hooks)",
+            run=run_load_save_overlay_scroll,
+            verify=verify_load_save_overlay_scroll,
+        ),
+        "load_save_overlay_scroll_only": ScenarioSpec(
+            scenario_id="load_save_overlay_scroll_only",
+            description="Root overlay scroll only; 8s dwell; no record/dirty phase",
+            run=run_load_save_overlay_scroll_only,
+            verify=verify_load_save_overlay_scroll,
         ),
         "current_set_incremental_save": ScenarioSpec(
             scenario_id="current_set_incremental_save",

@@ -1425,6 +1425,9 @@ void DisplayManager::adjustLoadSaveListSelection(int delta) {
         loadSaveListScrollOffset_ =
             loadSaveListSelection_ - static_cast<uint8_t>(kListVisibleRows - 1);
     }
+#if defined(SESSION_CAPTURE)
+    SC_OVERLAY_SEL(0, loadSaveListSelection_);
+#endif
 }
 
 void DisplayManager::confirmLoadSaveFocusedRow() {
@@ -1435,7 +1438,11 @@ void DisplayManager::confirmLoadSaveFocusedRow() {
     const StorageManager::SetBrowserOverlayMode overlayMode =
         StorageManager::getSetBrowserOverlayMode();
     if (overlayMode == StorageManager::SetBrowserOverlayMode::DirtyPrompt) {
-        switch (StorageManager::getRevisionLoadDirtyPromptSelection()) {
+        const uint8_t selection = StorageManager::getRevisionLoadDirtyPromptSelection();
+#if defined(SESSION_CAPTURE)
+        SC_OVERLAY_CONFIRM(1, selection);
+#endif
+        switch (selection) {
             case 0:
                 StorageManager::confirmRevisionLoadDirtyPromptSaveThenLoad();
                 break;
@@ -1456,6 +1463,9 @@ void DisplayManager::confirmLoadSaveFocusedRow() {
         return;
     }
 
+#if defined(SESSION_CAPTURE)
+    SC_OVERLAY_CONFIRM(0, loadSaveListSelection_);
+#endif
     StorageManager::requestCommitRevision();
     looperState.exitLoadSaveMode();
 #if defined(SESSION_CAPTURE)

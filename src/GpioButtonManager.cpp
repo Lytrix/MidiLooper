@@ -10,7 +10,7 @@
 #include "EditManager.h"
 #include "NoteEditSessionState.h"
 #include "LooperState.h"
-#include "SetBrowserOverlayPolicy.h"
+#include "DisplayManager.h"
 #include "Logger.h"
 #include <Encoder.h>
 
@@ -151,8 +151,9 @@ void GpioButtonManager::update() {
     const long newEncoderPos = gpioEncoder.read() / 4;
     const int rawDelta = static_cast<int>(newEncoderPos - encoderPosition);
     if (rawDelta != 0) {
-        if (!(looperState.isLoadSaveModeActive() &&
-              SetBrowserOverlayPolicy::shouldSuppressNoteEditEncoderInput())) {
+        if (looperState.isLoadSaveModeActive()) {
+            displayManager.adjustLoadSaveListSelection(rawDelta);
+        } else {
             noteEditManager.processEncoderMovement(rawDelta);
         }
         encoderPosition = newEncoderPos;
