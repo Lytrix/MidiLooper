@@ -41,7 +41,7 @@ struct SlotSummary {
 };
 #pragma pack(pop)
 
-static_assert(sizeof(SlotSummary) == kSlotSummaryByteSize, "SlotSummary wire size mismatch");
+static_assert(sizeof(SlotSummary) == kSlotSummaryByteSize, "SlotSummary SD file size mismatch");
 
 struct WorkspaceMetaRecord {
   uint16_t schemaVersion = PersistenceSchema::kSetRevisionSchemaVersion;
@@ -75,6 +75,17 @@ bool writeEpochFileHeader(const StorageIo& io, const EpochFileHeader& header);
 bool readEpochFileHeader(const StorageIo& io, EpochFileHeader& header);
 
 bool isWorkspaceDirty(uint32_t currentEpoch, uint32_t lastCommittedEpoch);
+
+/// Last fully written Current epoch to freeze at revision commit SNAPSHOT.
+uint32_t resolveCompletedWorkspaceEpochForRevisionSnapshot(uint32_t currentWorkspaceEpoch,
+                                                           uint32_t deferredSaveWorkspaceEpoch,
+                                                           bool deferredSaveInProgress);
+
+/// Live epoch after SNAPSHOT so post-snapshot capture belongs to the next boundary.
+uint32_t workspaceEpochAfterRevisionSnapshot(uint32_t snapshotSourceEpoch);
+
+/// Revision commit COMPLETE sync — matches live epoch so dirty clears (see current-workspace spec).
+uint32_t syncLastCommittedEpochAfterRevisionCommitComplete(uint32_t currentWorkspaceEpoch);
 
 bool isEpochHeaderChecksumValid(const EpochFileHeader& header);
 bool epochHeaderMatchesEpoch(const EpochFileHeader& header, uint32_t expectedEpoch);

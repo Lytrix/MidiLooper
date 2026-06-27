@@ -78,13 +78,13 @@ bool writePersistedCapturePassPayloadChunkStream(const StorageIo& io,
 
 }  // namespace
 
-bool writePersistedCapturePassWire(const StorageIo& io, const PersistedCapturePassWire& wire,
+bool writeCapturePassSlotFileHeader(const StorageIo& io, const CapturePassSlotFileHeader& passHeader,
                                    const ChunkIdList& chunkRefs) {
-  if (!ioWrite(io, &wire.id, sizeof(wire.id))) return false;
-  if (!ioWrite(io, &wire.mergeSequence, sizeof(wire.mergeSequence))) return false;
-  if (!ioWrite(io, &wire.stateRaw, sizeof(wire.stateRaw))) return false;
-  if (!ioWrite(io, &wire.typeRaw, sizeof(wire.typeRaw))) return false;
-  if (!ioWrite(io, &wire.sealedAtTick, sizeof(wire.sealedAtTick))) return false;
+  if (!ioWrite(io, &passHeader.id, sizeof(passHeader.id))) return false;
+  if (!ioWrite(io, &passHeader.mergeSequence, sizeof(passHeader.mergeSequence))) return false;
+  if (!ioWrite(io, &passHeader.stateRaw, sizeof(passHeader.stateRaw))) return false;
+  if (!ioWrite(io, &passHeader.typeRaw, sizeof(passHeader.typeRaw))) return false;
+  if (!ioWrite(io, &passHeader.sealedAtTick, sizeof(passHeader.sealedAtTick))) return false;
 
   const uint32_t midiCount =
       static_cast<uint32_t>(LoopEventStore::countEventsInChunkIds(chunkRefs));
@@ -100,14 +100,14 @@ bool writePersistedCapturePassWire(const StorageIo& io, const PersistedCapturePa
   return true;
 }
 
-bool readPersistedCapturePassWire(const StorageIo& io, PersistedCapturePassWire& wire,
+bool readCapturePassSlotFileHeader(const StorageIo& io, CapturePassSlotFileHeader& passHeader,
                                   ChunkIdList& chunkRefs, uint32_t loopLengthTicks) {
   uint32_t midiCount = 0;
-  if (!ioRead(io, &wire.id, sizeof(wire.id))) return false;
-  if (!ioRead(io, &wire.mergeSequence, sizeof(wire.mergeSequence))) return false;
-  if (!ioRead(io, &wire.stateRaw, sizeof(wire.stateRaw))) return false;
-  if (!ioRead(io, &wire.typeRaw, sizeof(wire.typeRaw))) return false;
-  if (!ioRead(io, &wire.sealedAtTick, sizeof(wire.sealedAtTick))) return false;
+  if (!ioRead(io, &passHeader.id, sizeof(passHeader.id))) return false;
+  if (!ioRead(io, &passHeader.mergeSequence, sizeof(passHeader.mergeSequence))) return false;
+  if (!ioRead(io, &passHeader.stateRaw, sizeof(passHeader.stateRaw))) return false;
+  if (!ioRead(io, &passHeader.typeRaw, sizeof(passHeader.typeRaw))) return false;
+  if (!ioRead(io, &passHeader.sealedAtTick, sizeof(passHeader.sealedAtTick))) return false;
   if (!ioRead(io, &midiCount, sizeof(midiCount))) return false;
 
   chunkRefs.clear();
@@ -282,28 +282,42 @@ bool writePersistedLoopSnapshot(const StorageIo& io, const PersistedLoopSnapshot
   if (!ioWrite(io, &persistedCount, sizeof(persistedCount))) return false;
 
   if (snapshot.passes.hasRecordPass()) {
-    PersistedCapturePassWire wire{};
-    wire.id = snapshot.passes.recordPass.id;
-    wire.mergeSequence = 0;
-    wire.stateRaw = static_cast<uint8_t>(snapshot.passes.recordPass.state);
-    wire.typeRaw = 0;
-    wire.sealedAtTick = snapshot.passes.recordPass.sealedAtTick;
-    if (!writePersistedCapturePassWire(io, wire, snapshot.passes.recordPass.chunkRefs)) {
+    CapturePassSlotFileHeader passHeader{};
+    passHeader.id = snapshot.passes.recordPass.id;
+    passHeader.mergeSequence = 0;
+    passHeader.stateRaw = static_cast<uint8_t>(snapshot.passes.recordPass.state);
+    passHeader.typeRaw = 0;
+    passHeader.sealedAtTick = snapshot.passes.recordPass.sealedAtTick;
+    if (!writeCapturePassSlotFileHeader(io, passHeader, snapshot.passes.recordPass.chunkRefs)) {
       return false;
     }
   }
   for (const OverdubPass& pass : snapshot.passes.overdubPasses) {
-    PersistedCapturePassWire wire{};
-    wire.id = pass.id;
-    wire.mergeSequence = pass.mergeSequence;
-    wire.stateRaw = static_cast<uint8_t>(pass.state);
-    wire.typeRaw = 1;
-    wire.sealedAtTick = pass.sealedAtTick;
-    if (!writePersistedCapturePassWire(io, wire, pass.chunkRefs)) {
+    CapturePassSlotFileHeader passHeader{};
+    passHeader.id = pass.id;
+    passHeader.mergeSequence = pass.mergeSequence;
+    passHeader.stateRaw = static_cast<uint8_t>(pass.state);
+    passHeader.typeRaw = 1;
+    passHeader.sealedAtTick = pass.sealedAtTick;
+    if (!writeCapturePassSlotFileHeader(io, passHeader, pass.chunkRefs)) {
       return false;
     }
   }
   return writePersistedEditsTail(io, snapshot.nextPassId, snapshot.passes.editPasses);
+}
+
+size_t measureLoopSnapshotSlotFileBytes(const PersistedLoopSnapshot& snapshot) {
+  size_t nbytes = 0;
+  StorageIo io{
+      [&nbytes](const void* data, size_t size) -> bool {
+        nbytes += size;
+        return true;
+      },
+      nullptr};
+  if (!writePersistedLoopSnapshot(io, snapshot)) {
+    return 0;
+  }
+  return nbytes;
 }
 
 bool readPersistedLoopSnapshot(const StorageIo& io, PersistedLoopSnapshot& snapshot) {
@@ -327,24 +341,24 @@ bool readPersistedLoopSnapshot(const StorageIo& io, PersistedLoopSnapshot& snaps
 
   snapshot.passes = LoopPasses{};
   for (uint32_t i = 0; i < passCount; ++i) {
-    PersistedCapturePassWire wire{};
+    CapturePassSlotFileHeader passHeader{};
     ChunkIdList chunkRefs;
-    if (!readPersistedCapturePassWire(io, wire, chunkRefs, snapshot.loopLengthTicks)) {
+    if (!readCapturePassSlotFileHeader(io, passHeader, chunkRefs, snapshot.loopLengthTicks)) {
       return false;
     }
-    if (wire.typeRaw == 0) {
+    if (passHeader.typeRaw == 0) {
       RecordPass record{};
-      record.id = wire.id;
-      record.state = static_cast<CapturePassState>(wire.stateRaw);
-      record.sealedAtTick = wire.sealedAtTick;
+      record.id = passHeader.id;
+      record.state = static_cast<CapturePassState>(passHeader.stateRaw);
+      record.sealedAtTick = passHeader.sealedAtTick;
       record.chunkRefs = std::move(chunkRefs);
       snapshot.passes.recordPass = std::move(record);
     } else {
       OverdubPass overdub{};
-      overdub.id = wire.id;
-      overdub.mergeSequence = wire.mergeSequence;
-      overdub.state = static_cast<CapturePassState>(wire.stateRaw);
-      overdub.sealedAtTick = wire.sealedAtTick;
+      overdub.id = passHeader.id;
+      overdub.mergeSequence = passHeader.mergeSequence;
+      overdub.state = static_cast<CapturePassState>(passHeader.stateRaw);
+      overdub.sealedAtTick = passHeader.sealedAtTick;
       overdub.chunkRefs = std::move(chunkRefs);
       snapshot.passes.overdubPasses.push_back(std::move(overdub));
     }
@@ -379,30 +393,44 @@ bool writeLoopPersisted(const StorageIo& io, const Loop& loop) {
   if (!ioWrite(io, &persistedCount, sizeof(persistedCount))) return false;
 
   if (loop.passes.hasRecordPass()) {
-    PersistedCapturePassWire wire{};
-    wire.id = loop.passes.recordPass.id;
-    wire.mergeSequence = 0;
-    wire.stateRaw = static_cast<uint8_t>(loop.passes.recordPass.state);
-    wire.typeRaw = 0;
-    wire.sealedAtTick = loop.passes.recordPass.sealedAtTick;
-    if (!writePersistedCapturePassWire(io, wire, loop.passes.recordPass.chunkRefs)) {
+    CapturePassSlotFileHeader passHeader{};
+    passHeader.id = loop.passes.recordPass.id;
+    passHeader.mergeSequence = 0;
+    passHeader.stateRaw = static_cast<uint8_t>(loop.passes.recordPass.state);
+    passHeader.typeRaw = 0;
+    passHeader.sealedAtTick = loop.passes.recordPass.sealedAtTick;
+    if (!writeCapturePassSlotFileHeader(io, passHeader, loop.passes.recordPass.chunkRefs)) {
       return false;
     }
   }
 
   for (const OverdubPass& pass : loop.passes.overdubPasses) {
-    PersistedCapturePassWire wire{};
-    wire.id = pass.id;
-    wire.mergeSequence = pass.mergeSequence;
-    wire.stateRaw = static_cast<uint8_t>(pass.state);
-    wire.typeRaw = 1;
-    wire.sealedAtTick = pass.sealedAtTick;
-    if (!writePersistedCapturePassWire(io, wire, pass.chunkRefs)) {
+    CapturePassSlotFileHeader passHeader{};
+    passHeader.id = pass.id;
+    passHeader.mergeSequence = pass.mergeSequence;
+    passHeader.stateRaw = static_cast<uint8_t>(pass.state);
+    passHeader.typeRaw = 1;
+    passHeader.sealedAtTick = pass.sealedAtTick;
+    if (!writeCapturePassSlotFileHeader(io, passHeader, pass.chunkRefs)) {
       return false;
     }
   }
 
   return writePersistedEditsTail(io, loop.nextPassId_, loop.passes.editPasses);
+}
+
+size_t measureLoopSlotFileBytes(const Loop& loop) {
+  size_t nbytes = 0;
+  StorageIo io{
+      [&nbytes](const void* data, size_t size) -> bool {
+        nbytes += size;
+        return true;
+      },
+      nullptr};
+  if (!writeLoopPersisted(io, loop)) {
+    return 0;
+  }
+  return nbytes;
 }
 
 bool readLoopPersisted(const StorageIo& io, Loop& loop) {

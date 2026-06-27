@@ -11,7 +11,7 @@ namespace {
 
 #pragma pack(push, 1)
 
-struct SetCatalogIndexWire {
+struct SetCatalogIndexFileLayout {
   uint16_t schemaVersion;
   uint16_t reserved;
   uint32_t nextSetId;
@@ -19,7 +19,7 @@ struct SetCatalogIndexWire {
   uint32_t catalogChecksum;
 };
 
-struct SetMetaRecordWire {
+struct SetMetaRecordFileLayout {
   uint16_t schemaVersion;
   uint16_t setId;
   uint16_t latestRevisionId;
@@ -34,10 +34,10 @@ struct SetMetaRecordWire {
 
 #pragma pack(pop)
 
-static_assert(sizeof(SetCatalogIndexWire) == kSetCatalogIndexByteSize,
-              "SetCatalogIndexWire size mismatch");
-static_assert(sizeof(SetMetaRecordWire) == kSetMetaRecordByteSize,
-              "SetMetaRecordWire size mismatch");
+static_assert(sizeof(SetCatalogIndexFileLayout) == kSetCatalogIndexByteSize,
+              "SetCatalogIndexFileLayout size mismatch");
+static_assert(sizeof(SetMetaRecordFileLayout) == kSetMetaRecordByteSize,
+              "SetMetaRecordFileLayout size mismatch");
 
 bool ioWrite(const StorageIo& io, const void* data, size_t size) {
   return io.write && io.write(data, size);
@@ -47,79 +47,79 @@ bool ioRead(const StorageIo& io, void* data, size_t size) {
   return io.read && io.read(data, size);
 }
 
-SetCatalogIndexWire toWire(const SetCatalogIndex& index) {
-  SetCatalogIndexWire wire{};
-  wire.schemaVersion = index.schemaVersion;
-  wire.reserved = index.reserved;
-  wire.nextSetId = index.nextSetId;
-  wire.setCount = index.setCount;
-  wire.catalogChecksum = index.catalogChecksum;
-  return wire;
+SetCatalogIndexFileLayout toFileLayout(const SetCatalogIndex& index) {
+  SetCatalogIndexFileLayout fileLayout{};
+  fileLayout.schemaVersion = index.schemaVersion;
+  fileLayout.reserved = index.reserved;
+  fileLayout.nextSetId = index.nextSetId;
+  fileLayout.setCount = index.setCount;
+  fileLayout.catalogChecksum = index.catalogChecksum;
+  return fileLayout;
 }
 
-void fromWire(const SetCatalogIndexWire& wire, SetCatalogIndex& index) {
-  index.schemaVersion = wire.schemaVersion;
-  index.reserved = wire.reserved;
-  index.nextSetId = wire.nextSetId;
-  index.setCount = wire.setCount;
-  index.catalogChecksum = wire.catalogChecksum;
+void fromFileLayout(const SetCatalogIndexFileLayout& fileLayout, SetCatalogIndex& index) {
+  index.schemaVersion = fileLayout.schemaVersion;
+  index.reserved = fileLayout.reserved;
+  index.nextSetId = fileLayout.nextSetId;
+  index.setCount = fileLayout.setCount;
+  index.catalogChecksum = fileLayout.catalogChecksum;
 }
 
-SetMetaRecordWire toWire(const SetMetaRecord& record) {
-  SetMetaRecordWire wire{};
-  wire.schemaVersion = record.schemaVersion;
-  wire.setId = record.setId;
-  wire.latestRevisionId = record.latestRevisionId;
-  wire.revisionCount = record.revisionCount;
-  wire.createdUnix = record.createdUnix;
-  wire.updatedUnix = record.updatedUnix;
-  std::memcpy(wire.subtitle, record.subtitle, sizeof(wire.subtitle));
-  wire.favorite = record.favorite;
-  std::memcpy(wire.reserved, record.reserved, sizeof(wire.reserved));
-  wire.crc32 = record.crc32;
-  return wire;
+SetMetaRecordFileLayout toFileLayout(const SetMetaRecord& record) {
+  SetMetaRecordFileLayout fileLayout{};
+  fileLayout.schemaVersion = record.schemaVersion;
+  fileLayout.setId = record.setId;
+  fileLayout.latestRevisionId = record.latestRevisionId;
+  fileLayout.revisionCount = record.revisionCount;
+  fileLayout.createdUnix = record.createdUnix;
+  fileLayout.updatedUnix = record.updatedUnix;
+  std::memcpy(fileLayout.subtitle, record.subtitle, sizeof(fileLayout.subtitle));
+  fileLayout.favorite = record.favorite;
+  std::memcpy(fileLayout.reserved, record.reserved, sizeof(fileLayout.reserved));
+  fileLayout.crc32 = record.crc32;
+  return fileLayout;
 }
 
-void fromWire(const SetMetaRecordWire& wire, SetMetaRecord& record) {
-  record.schemaVersion = wire.schemaVersion;
-  record.setId = wire.setId;
-  record.latestRevisionId = wire.latestRevisionId;
-  record.revisionCount = wire.revisionCount;
-  record.createdUnix = wire.createdUnix;
-  record.updatedUnix = wire.updatedUnix;
-  std::memcpy(record.subtitle, wire.subtitle, sizeof(record.subtitle));
-  record.favorite = wire.favorite;
-  std::memcpy(record.reserved, wire.reserved, sizeof(record.reserved));
-  record.crc32 = wire.crc32;
+void fromFileLayout(const SetMetaRecordFileLayout& fileLayout, SetMetaRecord& record) {
+  record.schemaVersion = fileLayout.schemaVersion;
+  record.setId = fileLayout.setId;
+  record.latestRevisionId = fileLayout.latestRevisionId;
+  record.revisionCount = fileLayout.revisionCount;
+  record.createdUnix = fileLayout.createdUnix;
+  record.updatedUnix = fileLayout.updatedUnix;
+  std::memcpy(record.subtitle, fileLayout.subtitle, sizeof(record.subtitle));
+  record.favorite = fileLayout.favorite;
+  std::memcpy(record.reserved, fileLayout.reserved, sizeof(record.reserved));
+  record.crc32 = fileLayout.crc32;
 }
 
 }  // namespace
 
 uint32_t computeSetCatalogIndexChecksum(const SetCatalogIndex& index) {
-  SetCatalogIndexWire wire = toWire(index);
-  wire.catalogChecksum = 0;
-  return PersistenceSchema::crc32(reinterpret_cast<const uint8_t*>(&wire), sizeof(wire));
+  SetCatalogIndexFileLayout fileLayout = toFileLayout(index);
+  fileLayout.catalogChecksum = 0;
+  return PersistenceSchema::crc32(reinterpret_cast<const uint8_t*>(&fileLayout), sizeof(fileLayout));
 }
 
 uint32_t computeSetMetaChecksum(const SetMetaRecord& record) {
-  SetMetaRecordWire wire = toWire(record);
-  wire.crc32 = 0;
-  return PersistenceSchema::crc32(reinterpret_cast<const uint8_t*>(&wire), sizeof(wire));
+  SetMetaRecordFileLayout fileLayout = toFileLayout(record);
+  fileLayout.crc32 = 0;
+  return PersistenceSchema::crc32(reinterpret_cast<const uint8_t*>(&fileLayout), sizeof(fileLayout));
 }
 
 bool writeSetCatalogIndex(const StorageIo& io, const SetCatalogIndex& index) {
   SetCatalogIndex stamped = index;
   stamped.catalogChecksum = computeSetCatalogIndexChecksum(index);
-  const SetCatalogIndexWire wire = toWire(stamped);
-  return ioWrite(io, &wire, sizeof(wire));
+  const SetCatalogIndexFileLayout fileLayout = toFileLayout(stamped);
+  return ioWrite(io, &fileLayout, sizeof(fileLayout));
 }
 
 bool readSetCatalogIndex(const StorageIo& io, SetCatalogIndex& index) {
-  SetCatalogIndexWire wire{};
-  if (!ioRead(io, &wire, sizeof(wire))) {
+  SetCatalogIndexFileLayout fileLayout{};
+  if (!ioRead(io, &fileLayout, sizeof(fileLayout))) {
     return false;
   }
-  fromWire(wire, index);
+  fromFileLayout(fileLayout, index);
   if (!PersistenceSchema::isSchemaMajorCompatible(index.schemaVersion,
                                                   PersistenceSchema::kSetRevisionSchemaVersion)) {
     return false;
@@ -137,16 +137,16 @@ bool readSetCatalogIndex(const StorageIo& io, SetCatalogIndex& index) {
 bool writeSetMetaRecord(const StorageIo& io, const SetMetaRecord& record) {
   SetMetaRecord stamped = record;
   stamped.crc32 = computeSetMetaChecksum(record);
-  const SetMetaRecordWire wire = toWire(stamped);
-  return ioWrite(io, &wire, sizeof(wire));
+  const SetMetaRecordFileLayout fileLayout = toFileLayout(stamped);
+  return ioWrite(io, &fileLayout, sizeof(fileLayout));
 }
 
 bool readSetMetaRecord(const StorageIo& io, SetMetaRecord& record) {
-  SetMetaRecordWire wire{};
-  if (!ioRead(io, &wire, sizeof(wire))) {
+  SetMetaRecordFileLayout fileLayout{};
+  if (!ioRead(io, &fileLayout, sizeof(fileLayout))) {
     return false;
   }
-  fromWire(wire, record);
+  fromFileLayout(fileLayout, record);
   if (!PersistenceSchema::isSchemaMajorCompatible(record.schemaVersion,
                                                   PersistenceSchema::kSetRevisionSchemaVersion)) {
     return false;

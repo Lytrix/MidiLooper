@@ -123,12 +123,12 @@ void test_loop_file_round_trip_with_complete_magic() {
   std::vector<uint8_t> buffer;
   MemoryStorageIo ioWriter(&buffer);
   TEST_ASSERT_TRUE(writePersistedLoopSnapshot(ioWriter.io(), snapshot));
-  TEST_ASSERT_TRUE(CurrentSetStorage::writeCompleteMagic(ioWriter.io()));
+  TEST_ASSERT_TRUE(CurrentSetStorage::writeSaveFileToken(ioWriter.io()));
 
-  TEST_ASSERT_TRUE(CurrentSetStorage::verifyCompleteMagicAtEnd(buffer.data(), buffer.size()));
+  TEST_ASSERT_TRUE(CurrentSetStorage::verifySaveFileTokenAtEnd(buffer.data(), buffer.size()));
 
   MemoryStorageIo ioReader(&buffer);
-  const size_t payloadSize = buffer.size() - sizeof(CurrentSetStorage::COMPLETE_MAGIC);
+  const size_t payloadSize = buffer.size() - sizeof(CurrentSetStorage::kSaveFileToken);
   (void)payloadSize;
 
   PersistedLoopSnapshot readBack{};
@@ -139,7 +139,7 @@ void test_loop_file_round_trip_with_complete_magic() {
 
 void test_complete_magic_fail_hard_without_footer() {
   std::vector<uint8_t> buffer = {0x01, 0x02, 0x03};
-  TEST_ASSERT_FALSE(CurrentSetStorage::verifyCompleteMagicAtEnd(buffer.data(), buffer.size()));
+  TEST_ASSERT_FALSE(CurrentSetStorage::verifySaveFileTokenAtEnd(buffer.data(), buffer.size()));
 }
 
 void test_runtime_bundle_header_anchor_fields_round_trip() {

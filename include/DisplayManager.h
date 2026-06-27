@@ -16,6 +16,7 @@
 #include "MidiEvent.h"
 #include "Utils/NoteUtils.h"
 #include "SavedSetCatalog.h"
+#include "RevisionLoadPolicy.h"
 
 // Shared struct for UI note representation
 using DisplayNote = NoteUtils::DisplayNote;
@@ -156,6 +157,8 @@ private:
     void refreshLoadSaveListCache();
     void refreshAutoSaveBeforeLoadToast(uint32_t nowMs);
     void drawLoadSaveView(uint32_t nowMs);
+    void drawLoadSaveDirtyPromptView();
+    void drawLoadSaveMinimalLoadingView(uint32_t nowMs);
     void drawLoadSaveSetDetail(int detailX, const SavedSetCatalog::SavedSetMetadata& metadata,
                                bool isCurrentRow, const char* folderName, uint32_t nowMs);
     void drawLoadSaveTrackFilledBar(int x, int y, uint8_t filledSlots, uint8_t maxSlots,

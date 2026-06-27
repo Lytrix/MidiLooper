@@ -90,7 +90,7 @@ Host unit test: `scripts/test_revision_load_serial_verify.py`.
 
 ### `revision_load_record` (base record → commit → load)
 
-Runs canonical **`base`** record/overdub on the selected track, then **`revision_load_post_record`** (skips transport-stop prelude — commits immediately after the record baseline deferred save). Use this when verifying loop data round-trips through a revision.
+Runs canonical **`base`** record/overdub on the selected track (preset injects bar-synced 2+2 baseline flags from HITL-Test-Flow), then **`revision_load_post_record`** (skips transport-stop prelude and the pre-commit deferred-save drain — base already flushed loops to SD). Use this when verifying loop data round-trips through a revision.
 
 ```bash
 .venv/bin/python scripts/host_midi_hitl.py run --preset revision_load_record \

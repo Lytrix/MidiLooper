@@ -3,7 +3,7 @@
 **Date:** 2026-06-27  
 **OpenSpec:** `openspec/changes/set-revision-persistence/`  
 **Architecture plan:** `docs/plans/set_revision_persistence_architecture_enhancement.md`  
-**Apply command:** `/opsx:apply` on `tasks.md` — **next: task 3.3 (SNAPSHOT epoch freeze audit)**
+**Apply command:** `/opsx:apply` on `tasks.md` — **next: task 3.8 (boot recovery chain)**
 
 ---
 
@@ -13,17 +13,17 @@
 
 ---
 
-## What is done (tasks 1.x–2.x, 3.1–3.2)
+## What is done (tasks 1.x–2.x, 3.1–3.6)
 
 ### Section 1 — metadata + catalog + REVPK02
 
 | Task | Deliverable |
 |------|-------------|
-| 1.1 | Wire structs: `WorkspaceMetaRecord`, `SetCatalogIndex`, `SetMetaRecord`, epoch file header |
+| 1.1 | SD file layouts: `WorkspaceMetaRecord`, `SetCatalogIndex`, `SetMetaRecord`, `EpochFileHeader`; pass header `CapturePassSlotFileHeader` |
 | 1.2 | `SetRevisionCatalog` — `index.bin`, `set.bin`; revision id on COMPLETE only |
 | 1.3 | Monotonic Set id; failed revision reuses id |
 | 1.4 | `RevisionPackedBlob` — **REVPK02**: 128 B header, typed chunk stream (`Transport` / `LoopSlot` / `SlotIndex`), 12 B CRC footer |
-| 1.5 | Native: `test_set_revision_persistence` (17 tests) |
+| 1.5 | Native: `test_set_revision_persistence` (28 tests) |
 
 **New modules:** `PersistenceLayout`, `PersistenceSchema`, `CurrentWorkspaceStorage`, `SetRevisionCatalog`, `RevisionPackedBlob`
 
@@ -32,10 +32,10 @@
 ```text
 [Header]     chunkCount, payloadSize, sourceEpoch, …
 [Chunks]     Transport → LoopSlot(s) → SlotIndex (directory written last)
-[Footer]     completeMagic + payloadCrc32 + fileSize
+[Footer]     SVOK + payloadCrc32 + fileSize  (see DEFERRED_RUNTIME_PERSISTENCE.md § Persistence tokens)
 ```
 
-`LoopSlot` bodies target `StorageLoopIo` v5 wire (`recordPass`, `overdubPasses[]`, `editPasses[]`). Commit WRITE still **copies opaque** `current/` epoch file bodies until **3.6**.
+`LoopSlot` bodies use `StorageLoopIo` v5 **slot file layout** (`recordPass`, `overdubPasses[]`, `editPasses[]`) streamed to SD on commit (task 3.6).
 
 OpenSpec **pros/cons** (format vs MIDI timing): `proposal.md` + `design.md` § REVPK02 vs REVPK01.
 
@@ -55,9 +55,9 @@ OpenSpec **pros/cons** (format vs MIDI timing): `proposal.md` + `design.md` § R
 | FSM | `REQUEST → SNAPSHOT → WRITE → VALIDATE → CATALOG_UPDATE → COMPLETE` on deferred infrastructure |
 | API | `StorageManager::requestCommitRevision()`, `hasRevisionCommitWork()`, `isRevisionCommitActive()` |
 | Budget | `Config::maxPersistenceMicrosActive` (300µs) while PLAYING/RECORDING/OVERDUBBING |
-| WRITE | REVPK02 chunk stream from completed `current/` epoch (opaque copy interim) |
-| VALIDATE | Header CRC + payload CRC + `completeMagic`; patch `revisionId` + `chunkCount` on header |
-| COMPLETE | Updates `lastCommittedWorkspaceEpoch`, `workspaceDerivedFromSetId/RevisionId`, `workspace.bin` |
+| WRITE | REVPK02 chunk stream — LoopSlots via `StorageLoopIo` pass shapes; Transport opaque copy interim |
+| VALIDATE | Header CRC + payload CRC + **SVOK**; patch `revisionId` + `chunkCount` on header |
+| COMPLETE | Updates `lastCommittedWorkspaceEpoch` (= live `currentWorkspaceEpoch`), `workspaceDerivedFromSetId/RevisionId`, `workspace.bin` |
 | Block | Revision blocked while deferred `current/` save active (`rev_blocked` serial) |
 
 **Firmware helpers:** `appendRevisionCommitPayloadCrc`, `computeRevisionCommitPayloadCrcFromFile` (footer CRC from on-disk payload — fixes incremental CRC mismatch on Teensy).
@@ -139,7 +139,7 @@ Use `--skip-hitl-cleanup` when debugging failed load. Optional dev `!REV_NUKE_SE
 ### Verification (green as of 2026-06-27)
 
 ```bash
-pio test -e native                              # 229 tests
+pio test -e native                              # 232 tests
 pio test -e native -f test_set_revision_persistence
 openspec validate set-revision-persistence
 pio run -e teensy41-capture-serial             # ask before upload
@@ -150,14 +150,48 @@ pio run -e teensy41-capture-serial             # ask before upload
 
 ## What is NOT done (start here)
 
+### Section 3.3 — SNAPSHOT epoch freeze (shipped 2026-06-27)
+
+| Item | Detail |
+|------|--------|
+| Source epoch | `resolveCompletedWorkspaceEpochForRevisionSnapshot` — idle: `currentWorkspaceEpoch`; deferred save in progress: `deferredSaveWorkspaceEpoch - 1` |
+| Post-snapshot | `currentWorkspaceEpoch = sourceEpoch + 1` at SNAPSHOT; rollback on commit failure |
+| Runtime bundle | Same epoch cap as loop slots via `slotSourceFileReadableForRevisionCommit` |
+| Native | `test_revision_snapshot_source_epoch_*`, `test_revision_snapshot_bumps_live_epoch` |
+
+### Section 3.4 — lastCommittedEpoch sync (shipped 2026-06-27)
+
+| Item | Detail |
+|------|--------|
+| COMPLETE | `lastCommittedEpoch = currentWorkspaceEpoch` (clears dirty after 3.3 snapshot bump) |
+| Deferred save | Writes `workspace.bin` with existing `lastCommittedEpoch` — no sync on epoch save |
+| Load | ReloadRam sets `currentEpoch == lastCommittedEpoch` to new loaded epoch |
+| Native | `test_last_committed_sync_after_revision_commit_complete_clears_dirty`, deferred-save dirty scenario |
+
+### Section 3.5 — PLAYING budget + no materialize (shipped 2026-06-27)
+
+| Item | Detail |
+|------|--------|
+| Budget | `PersistenceBudget::resolveMaxPersistenceMicros` — PLAYING/RECORDING/OVERDUBBING/capture → 300µs; idle → unbounded |
+| Slice loop | `persistenceSliceBudgetExhausted` shared by deferred save and revision commit in `processDeferredSaveState` |
+| No materialize | `RevisionCommitPolicy::kWritePathUsesLoopPassesMaterialize = false`; compile-time `static_assert` in StorageManager |
+| Native | `test_revision_commit_playing_*`, slice budget tests, `test_revision_commit_write_path_does_not_materialize` |
+
+### Section 3.6 — StorageLoopIo stream commit (shipped 2026-06-27)
+
+| Item | Detail |
+|------|--------|
+| LoopSlot WRITE | `stepDeferredLoopPersist` + `measureLoopSlotFileBytes` from live RAM passes (chunk refs) |
+| Layout | SlotIndex `bodyLength` from `measureLoopSlotFileBytes`, not opaque SD epoch file size |
+| Transport | Still opaque copy of `runtime.bundle.bin` (split transport.bin deferred) |
+| CRC | `LoopPersistPayloadCrc::RevisionCommit` on streamed loop body bytes |
+| Native | `test_measure_persisted_loop_snapshot_wire_bytes_matches_buffer`, policy stream flag |
+
 ### Section 3 — hardening (priority order)
 
-- [ ] **3.3** SNAPSHOT freezes completed epoch only (audit vs current SNAPSHOT) (**next**)
-- [ ] **3.4** `lastCommittedEpoch` sync — firmware updates on COMPLETE; add native test
-- [ ] **3.5** Native: commit during PLAYING uses budget; no materialize on WRITE
-- [ ] **3.6** Remove SavedSet shims; stream commit via `StorageLoopIo` / pass shapes (replace opaque copy)
-- [ ] **3.7** DIRTY_PROMPT Yes/No/Cancel
-- [ ] **3.8** Boot: Current epoch → derived rev → latest → recovery → empty
+- [x] **3.6** Remove SavedSet shims; stream commit via `StorageLoopIo` / pass shapes (replace opaque copy)
+- [x] **3.7** DIRTY_PROMPT Yes/No/Cancel — pipeline + minimal overlay display
+- [ ] **3.8** Boot: Current epoch → derived rev → latest → recovery → empty (**next**)
 - [ ] **3.9** 8h failsafe when epochs diverge > 8h
 
 **Open engineering items (not separate tasks):**
@@ -219,11 +253,23 @@ Order: (1) highest valid `MidiLooper/current/` epoch → (2) exact derived `v###
 
 ---
 
+### Section 3.7 — DIRTY_PROMPT (shipped 2026-06-27)
+
+| Item | Detail |
+|------|--------|
+| Gate | `requestLoadRevision` → `rev_load_dirty_prompt` when `currentEpoch != lastCommittedEpoch` |
+| **Yes** | `confirmRevisionLoadDirtyPromptSaveThenLoad` → commit then staged load (`rev_load_dirty_yes`) |
+| **No** | `confirmRevisionLoadDirtyPromptDiscard` → discard uncommitted, load (`rev_load_dirty_no`) |
+| **Cancel** | `cancelRevisionLoadDirtyPrompt` → clear staged target (`rev_load_dirty_cancel`) |
+| Overlay | `getSetBrowserOverlayMode()` — `DirtyPrompt` / `MinimalLoading` / `Root` |
+| Display | `drawLoadSaveDirtyPromptView`, `drawLoadSaveMinimalLoadingView` |
+| HITL serial | `!REV_LOAD_DIRTY_YES`, `!REV_LOAD_DIRTY_NO`, `!REV_LOAD_DIRTY_CANCEL` |
+| Native | `RevisionLoadPolicy` + 4 dirty-pipeline tests |
+
 ## Suggested next-chat prompt
 
 ```text
-/opsx:apply set-revision-persistence — task 3.3 (SNAPSHOT epoch freeze audit).
+/opsx:apply set-revision-persistence — task 3.8 (boot recovery chain).
 Read docs/plans/set_revision_persistence_handoff.md first.
-Audit beginRevisionCommitSnapshot vs completed epoch boundary; post-snapshot capture → next epoch.
-Run pio test -e native after changes. HITL revision_load_record as smoke; ask before Teensy upload.
+Run pio test -e native after changes.
 ```

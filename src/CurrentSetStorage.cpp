@@ -95,18 +95,18 @@ bool readMetaHeader(const StorageIo& io, MetaHeader& header) {
   return true;
 }
 
-bool writeCompleteMagic(const StorageIo& io) {
-  const uint32_t magic = COMPLETE_MAGIC;
+bool writeSaveFileToken(const StorageIo& io) {
+  const uint32_t magic = kSaveFileToken;
   return ioWrite(io, &magic, sizeof(magic));
 }
 
-bool verifyCompleteMagicAtEnd(const uint8_t* fileBytes, size_t fileSize) {
-  if (fileBytes == nullptr || fileSize < sizeof(COMPLETE_MAGIC)) {
+bool verifySaveFileTokenAtEnd(const uint8_t* fileBytes, size_t fileSize) {
+  if (fileBytes == nullptr || fileSize < sizeof(kSaveFileToken)) {
     return false;
   }
   uint32_t magic = 0;
-  std::memcpy(&magic, fileBytes + fileSize - sizeof(COMPLETE_MAGIC), sizeof(magic));
-  return magic == COMPLETE_MAGIC;
+  std::memcpy(&magic, fileBytes + fileSize - sizeof(kSaveFileToken), sizeof(magic));
+  return magic == kSaveFileToken;
 }
 
 bool shouldWriteLoopPayloadForSlot(bool forceCurrentSetFullLoopWrite, bool slotDirty) {
@@ -168,23 +168,23 @@ bool atomicRenameTempFile(const char* tempPath, const char* finalPath) {
   return SD.rename(tempPath, finalPath);
 }
 
-bool verifyFileCompleteMagic(const char* path) {
+bool verifySaveFileTokenAtPath(const char* path) {
   File file = SD.open(path, FILE_READ);
   if (!file) {
     return false;
   }
   const size_t fileSize = file.size();
-  if (fileSize < sizeof(COMPLETE_MAGIC)) {
+  if (fileSize < sizeof(kSaveFileToken)) {
     file.close();
     return false;
   }
-  if (!file.seek(fileSize - sizeof(COMPLETE_MAGIC))) {
+  if (!file.seek(fileSize - sizeof(kSaveFileToken))) {
     file.close();
     return false;
   }
   uint32_t magic = 0;
   const bool ok = file.read(reinterpret_cast<uint8_t*>(&magic), sizeof(magic)) == sizeof(magic) &&
-                  magic == COMPLETE_MAGIC;
+                  magic == kSaveFileToken;
   file.close();
   return ok;
 }

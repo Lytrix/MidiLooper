@@ -23,11 +23,11 @@
   - [x] 3.2d Load tolerates missing/empty Transport chunk — default transport from SlotIndex; LoopSlots still restore.
   - [x] 3.2e Display refresh pending consumed after load (`consumeRevisionLoadDisplayRefreshPending`).
   - [x] 3.2f HITL: `revision_load`, `revision_load_record` (base + post-record commit/load), `!REV_LOAD` / `!REV_CLEANUP`.
-- [ ] 3.3 SNAPSHOT freezes completed epoch; post-snapshot capture → next epoch.
-- [ ] 3.4 `lastCommittedEpoch` sync at COMPLETE only.
-- [ ] 3.5 Native: commit during PLAYING uses budget; no materialize on WRITE path.
-- [ ] 3.6 Remove SavedSet shims; stream via `StorageLoopIo` / pass shapes.
-- [ ] 3.7 DIRTY_PROMPT Yes/No/Cancel; minimal until pipeline done.
+- [x] 3.3 SNAPSHOT freezes completed epoch; post-snapshot capture → next epoch.
+- [x] 3.4 `lastCommittedEpoch` sync at COMPLETE only.
+- [x] 3.5 Native: commit during PLAYING uses budget; no materialize on WRITE path.
+- [x] 3.6 Remove SavedSet shims; stream via `StorageLoopIo` / pass shapes.
+- [x] 3.7 DIRTY_PROMPT Yes/No/Cancel; minimal until pipeline done.
 - [ ] 3.8 Boot: Current epoch → derived rev → latest → recovery checkpoints → empty.
 - [ ] 3.9 8h failsafe when epochs diverge > 8h.
 

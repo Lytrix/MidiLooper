@@ -38,7 +38,7 @@ const char* basenameFromPath(const char* name) {
   return (lastSlash != nullptr) ? lastSlash + 1 : name;
 }
 
-struct SavedSetMetadataTrailerWire {
+struct SavedSetMetadataTrailerFileLayout {
   uint32_t magic = kSavedSetMetaTrailerMagic;
   uint32_t sequence = 0;
   uint8_t folderNamingMode = 0;
@@ -51,8 +51,8 @@ struct SavedSetMetadataTrailerWire {
   char userLabel[kSavedSetLabelCapacity] = {};
 };
 
-static_assert(sizeof(SavedSetMetadataTrailerWire) == kSavedSetMetadataTrailerByteSize,
-              "SavedSet metadata trailer wire size mismatch");
+static_assert(sizeof(SavedSetMetadataTrailerFileLayout) == kSavedSetMetadataTrailerByteSize,
+              "SavedSet metadata trailer SD file size mismatch");
 
 bool unixToUtcDate(uint32_t unixTime, int& year, unsigned& month, unsigned& day) {
   if (unixTime == 0) {
@@ -228,36 +228,36 @@ void formatDefaultSavedSetLabel(uint32_t createdAtUnix, const char* fallbackFold
 
 bool writeSavedSetMetadataTrailer(const StorageIo& io,
                                   const SavedSetMetadata& metadata) {
-  SavedSetMetadataTrailerWire wire{};
-  wire.sequence = metadata.sequence;
-  wire.folderNamingMode = static_cast<uint8_t>(metadata.folderNamingMode);
-  wire.createdAtUnix = metadata.createdAtUnix;
-  wire.masterLoopBars = metadata.masterLoopBars;
-  wire.trackCount = metadata.trackCount;
-  wire.filledSlotCount = metadata.filledSlotCount;
-  std::memcpy(wire.perTrackFilledSlots, metadata.perTrackFilledSlots,
-              sizeof(wire.perTrackFilledSlots));
-  std::memcpy(wire.userLabel, metadata.userLabel, sizeof(wire.userLabel));
-  return ioWrite(io, &wire, sizeof(wire));
+  SavedSetMetadataTrailerFileLayout fileLayout{};
+  fileLayout.sequence = metadata.sequence;
+  fileLayout.folderNamingMode = static_cast<uint8_t>(metadata.folderNamingMode);
+  fileLayout.createdAtUnix = metadata.createdAtUnix;
+  fileLayout.masterLoopBars = metadata.masterLoopBars;
+  fileLayout.trackCount = metadata.trackCount;
+  fileLayout.filledSlotCount = metadata.filledSlotCount;
+  std::memcpy(fileLayout.perTrackFilledSlots, metadata.perTrackFilledSlots,
+              sizeof(fileLayout.perTrackFilledSlots));
+  std::memcpy(fileLayout.userLabel, metadata.userLabel, sizeof(fileLayout.userLabel));
+  return ioWrite(io, &fileLayout, sizeof(fileLayout));
 }
 
 bool readSavedSetMetadataTrailer(const StorageIo& io, SavedSetMetadata& metadata) {
-  SavedSetMetadataTrailerWire wire{};
-  if (!ioRead(io, &wire, sizeof(wire))) {
+  SavedSetMetadataTrailerFileLayout fileLayout{};
+  if (!ioRead(io, &fileLayout, sizeof(fileLayout))) {
     return false;
   }
-  if (wire.magic != kSavedSetMetaTrailerMagic || wire.sequence == 0) {
+  if (fileLayout.magic != kSavedSetMetaTrailerMagic || fileLayout.sequence == 0) {
     return false;
   }
-  metadata.sequence = wire.sequence;
-  metadata.folderNamingMode = static_cast<FolderNamingMode>(wire.folderNamingMode);
-  metadata.createdAtUnix = wire.createdAtUnix;
-  metadata.masterLoopBars = wire.masterLoopBars;
-  metadata.trackCount = wire.trackCount;
-  metadata.filledSlotCount = wire.filledSlotCount;
-  std::memcpy(metadata.perTrackFilledSlots, wire.perTrackFilledSlots,
+  metadata.sequence = fileLayout.sequence;
+  metadata.folderNamingMode = static_cast<FolderNamingMode>(fileLayout.folderNamingMode);
+  metadata.createdAtUnix = fileLayout.createdAtUnix;
+  metadata.masterLoopBars = fileLayout.masterLoopBars;
+  metadata.trackCount = fileLayout.trackCount;
+  metadata.filledSlotCount = fileLayout.filledSlotCount;
+  std::memcpy(metadata.perTrackFilledSlots, fileLayout.perTrackFilledSlots,
               sizeof(metadata.perTrackFilledSlots));
-  std::memcpy(metadata.userLabel, wire.userLabel, sizeof(metadata.userLabel));
+  std::memcpy(metadata.userLabel, fileLayout.userLabel, sizeof(metadata.userLabel));
   metadata.userLabel[sizeof(metadata.userLabel) - 1] = '\0';
   return true;
 }

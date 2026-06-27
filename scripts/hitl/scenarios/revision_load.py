@@ -243,13 +243,10 @@ def run_revision_load(args: object) -> int:
                 "(record baseline already flushed loops to SD)"
             )
             transport_stop_anchor = len(serial_collector.snapshot())
-            if not wait_for_deferred_save_idle(
-                serial_collector,
-                after_line_index=serial_start_index,
-                timeout_s=save_drain_s,
-                log_prefix=log_prefix,
-            ):
-                print(f"{log_prefix} warn: deferred save may still be active before commit")
+            print(
+                f"{log_prefix} skip deferred-save drain before commit "
+                "(base preset already reported PERS,result,ok)"
+            )
         else:
             print(f"{log_prefix} start transport")
             _ensure_transport_running(

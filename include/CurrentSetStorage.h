@@ -14,7 +14,7 @@
 namespace CurrentSetStorage {
 
 constexpr uint32_t CONTAINER_VERSION = 6;
-constexpr uint32_t COMPLETE_MAGIC = 0x45564153UL;  // "SAVE"
+constexpr uint32_t kSaveFileToken = 0x45564153UL;  // "SAVE"
 
 /// Legacy flat SavedSet folders (brownfield) under sets/archive until 3.6.
 inline constexpr const char* kSetsRoot = PersistenceLayout::kSetsRoot;
@@ -66,8 +66,8 @@ bool formatLoopSlotTempPath(char* out, size_t outSize, uint8_t trackIndex, uint8
 bool writeMetaHeader(const StorageIo& io, const MetaHeader& header);
 bool readMetaHeader(const StorageIo& io, MetaHeader& header);
 
-bool writeCompleteMagic(const StorageIo& io);
-bool verifyCompleteMagicAtEnd(const uint8_t* fileBytes, size_t fileSize);
+bool writeSaveFileToken(const StorageIo& io);
+bool verifySaveFileTokenAtEnd(const uint8_t* fileBytes, size_t fileSize);
 
 bool shouldWriteLoopPayloadForSlot(bool forceCurrentSetFullLoopWrite, bool slotDirty);
 
@@ -87,7 +87,7 @@ void applyLoadedSetAnchorFields(uint32_t sourceSequence, AnchorFields& anchor);
 #if defined(ARDUINO)
 bool ensureDirectory(const char* path);
 bool atomicRenameTempFile(const char* tempPath, const char* finalPath);
-bool verifyFileCompleteMagic(const char* path);
+bool verifySaveFileTokenAtPath(const char* path);
 bool patchLastActiveUnix(const char* metaPath, uint32_t lastActiveUnix);
 bool patchAnchorFields(const char* metaPath, const AnchorFields& anchor);
 #endif

@@ -92,7 +92,7 @@ void appendV5MonolithFixture(std::vector<uint8_t>& buffer) {
     appendRaw(buffer, cursor);
     appendRaw(buffer, nextEntryId);
   }
-  appendRaw(buffer, CurrentSetStorage::COMPLETE_MAGIC);
+  appendRaw(buffer, CurrentSetStorage::kSaveFileToken);
 }
 
 size_t expectedV5FixtureBytes() {
@@ -110,7 +110,7 @@ size_t expectedV5FixtureBytes() {
                                  loopBytesPerTrack);
   const size_t footerBytes = sizeof(uint8_t) + 8 * sizeof(uint8_t) + sizeof(kGlobalUndoMagic) +
                              8 * (sizeof(uint32_t) + sizeof(uint32_t) + sizeof(uint32_t));
-  return headerBytes + trackBytes + footerBytes + sizeof(CurrentSetStorage::COMPLETE_MAGIC);
+  return headerBytes + trackBytes + footerBytes + sizeof(CurrentSetStorage::kSaveFileToken);
 }
 
 }  // namespace
@@ -119,7 +119,7 @@ void test_v5_monolith_fixture_has_completion_marker() {
   std::vector<uint8_t> monolith;
   appendV5MonolithFixture(monolith);
   TEST_ASSERT_TRUE(
-      CurrentSetStorage::verifyCompleteMagicAtEnd(monolith.data(), monolith.size()));
+      CurrentSetStorage::verifySaveFileTokenAtEnd(monolith.data(), monolith.size()));
 }
 
 void test_migration_target_loop_names_are_two_digit() {

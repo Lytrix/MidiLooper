@@ -16,7 +16,7 @@ namespace {
 
 #pragma pack(push, 1)
 
-struct WorkspaceMetaWire {
+struct WorkspaceMetaFileLayout {
   uint16_t schemaVersion;
   uint32_t currentEpoch;
   uint32_t lastCommittedEpoch;
@@ -29,7 +29,7 @@ struct WorkspaceMetaWire {
   uint32_t crc32;
 };
 
-struct EpochFileHeaderWire {
+struct EpochFileHeaderFileLayout {
   uint32_t epoch;
   uint16_t schemaVersion;
   uint32_t crc32;
@@ -37,10 +37,10 @@ struct EpochFileHeaderWire {
 
 #pragma pack(pop)
 
-static_assert(sizeof(WorkspaceMetaWire) == kWorkspaceMetaByteSize,
-              "WorkspaceMetaWire size mismatch");
-static_assert(sizeof(EpochFileHeaderWire) == kEpochFileHeaderByteSize,
-              "EpochFileHeaderWire size mismatch");
+static_assert(sizeof(WorkspaceMetaFileLayout) == kWorkspaceMetaByteSize,
+              "WorkspaceMetaFileLayout size mismatch");
+static_assert(sizeof(EpochFileHeaderFileLayout) == kEpochFileHeaderByteSize,
+              "EpochFileHeaderFileLayout size mismatch");
 
 bool ioWrite(const StorageIo& io, const void* data, size_t size) {
   return io.write && io.write(data, size);
@@ -50,46 +50,46 @@ bool ioRead(const StorageIo& io, void* data, size_t size) {
   return io.read && io.read(data, size);
 }
 
-WorkspaceMetaWire toWire(const WorkspaceMetaRecord& record) {
-  WorkspaceMetaWire wire{};
-  wire.schemaVersion = record.schemaVersion;
-  wire.currentEpoch = record.currentEpoch;
-  wire.lastCommittedEpoch = record.lastCommittedEpoch;
-  wire.derivedFromSetId = record.derivedFromSetId;
-  wire.derivedFromRevisionId = record.derivedFromRevisionId;
-  wire.lastCommittedRevisionId = record.lastCommittedRevisionId;
-  wire.slotCount = record.slotCount;
-  std::memcpy(wire.slotSummary, record.slotSummary, sizeof(wire.slotSummary));
-  wire.updatedUnix = record.updatedUnix;
-  wire.crc32 = record.crc32;
-  return wire;
+WorkspaceMetaFileLayout toFileLayout(const WorkspaceMetaRecord& record) {
+  WorkspaceMetaFileLayout fileLayout{};
+  fileLayout.schemaVersion = record.schemaVersion;
+  fileLayout.currentEpoch = record.currentEpoch;
+  fileLayout.lastCommittedEpoch = record.lastCommittedEpoch;
+  fileLayout.derivedFromSetId = record.derivedFromSetId;
+  fileLayout.derivedFromRevisionId = record.derivedFromRevisionId;
+  fileLayout.lastCommittedRevisionId = record.lastCommittedRevisionId;
+  fileLayout.slotCount = record.slotCount;
+  std::memcpy(fileLayout.slotSummary, record.slotSummary, sizeof(fileLayout.slotSummary));
+  fileLayout.updatedUnix = record.updatedUnix;
+  fileLayout.crc32 = record.crc32;
+  return fileLayout;
 }
 
-void fromWire(const WorkspaceMetaWire& wire, WorkspaceMetaRecord& record) {
-  record.schemaVersion = wire.schemaVersion;
-  record.currentEpoch = wire.currentEpoch;
-  record.lastCommittedEpoch = wire.lastCommittedEpoch;
-  record.derivedFromSetId = wire.derivedFromSetId;
-  record.derivedFromRevisionId = wire.derivedFromRevisionId;
-  record.lastCommittedRevisionId = wire.lastCommittedRevisionId;
-  record.slotCount = wire.slotCount;
-  std::memcpy(record.slotSummary, wire.slotSummary, sizeof(record.slotSummary));
-  record.updatedUnix = wire.updatedUnix;
-  record.crc32 = wire.crc32;
+void fromFileLayout(const WorkspaceMetaFileLayout& fileLayout, WorkspaceMetaRecord& record) {
+  record.schemaVersion = fileLayout.schemaVersion;
+  record.currentEpoch = fileLayout.currentEpoch;
+  record.lastCommittedEpoch = fileLayout.lastCommittedEpoch;
+  record.derivedFromSetId = fileLayout.derivedFromSetId;
+  record.derivedFromRevisionId = fileLayout.derivedFromRevisionId;
+  record.lastCommittedRevisionId = fileLayout.lastCommittedRevisionId;
+  record.slotCount = fileLayout.slotCount;
+  std::memcpy(record.slotSummary, fileLayout.slotSummary, sizeof(record.slotSummary));
+  record.updatedUnix = fileLayout.updatedUnix;
+  record.crc32 = fileLayout.crc32;
 }
 
-EpochFileHeaderWire toWire(const EpochFileHeader& header) {
-  EpochFileHeaderWire wire{};
-  wire.epoch = header.epoch;
-  wire.schemaVersion = header.schemaVersion;
-  wire.crc32 = header.crc32;
-  return wire;
+EpochFileHeaderFileLayout toFileLayout(const EpochFileHeader& header) {
+  EpochFileHeaderFileLayout fileLayout{};
+  fileLayout.epoch = header.epoch;
+  fileLayout.schemaVersion = header.schemaVersion;
+  fileLayout.crc32 = header.crc32;
+  return fileLayout;
 }
 
-void fromWire(const EpochFileHeaderWire& wire, EpochFileHeader& header) {
-  header.epoch = wire.epoch;
-  header.schemaVersion = wire.schemaVersion;
-  header.crc32 = wire.crc32;
+void fromFileLayout(const EpochFileHeaderFileLayout& fileLayout, EpochFileHeader& header) {
+  header.epoch = fileLayout.epoch;
+  header.schemaVersion = fileLayout.schemaVersion;
+  header.crc32 = fileLayout.crc32;
 }
 
 }  // namespace
@@ -113,30 +113,30 @@ bool formatSlotTempPath(char* out, size_t outSize, uint8_t slotIndex, bool undoS
 }
 
 uint32_t computeWorkspaceMetaChecksum(const WorkspaceMetaRecord& record) {
-  WorkspaceMetaWire wire = toWire(record);
-  wire.crc32 = 0;
-  return PersistenceSchema::crc32(reinterpret_cast<const uint8_t*>(&wire), sizeof(wire));
+  WorkspaceMetaFileLayout fileLayout = toFileLayout(record);
+  fileLayout.crc32 = 0;
+  return PersistenceSchema::crc32(reinterpret_cast<const uint8_t*>(&fileLayout), sizeof(fileLayout));
 }
 
 uint32_t computeEpochFileHeaderChecksum(const EpochFileHeader& header) {
-  EpochFileHeaderWire wire = toWire(header);
-  wire.crc32 = 0;
-  return PersistenceSchema::crc32(reinterpret_cast<const uint8_t*>(&wire), sizeof(wire));
+  EpochFileHeaderFileLayout fileLayout = toFileLayout(header);
+  fileLayout.crc32 = 0;
+  return PersistenceSchema::crc32(reinterpret_cast<const uint8_t*>(&fileLayout), sizeof(fileLayout));
 }
 
 bool writeWorkspaceMeta(const StorageIo& io, const WorkspaceMetaRecord& record) {
   WorkspaceMetaRecord stamped = record;
   stamped.crc32 = computeWorkspaceMetaChecksum(record);
-  const WorkspaceMetaWire wire = toWire(stamped);
-  return ioWrite(io, &wire, sizeof(wire));
+  const WorkspaceMetaFileLayout fileLayout = toFileLayout(stamped);
+  return ioWrite(io, &fileLayout, sizeof(fileLayout));
 }
 
 bool readWorkspaceMeta(const StorageIo& io, WorkspaceMetaRecord& record) {
-  WorkspaceMetaWire wire{};
-  if (!ioRead(io, &wire, sizeof(wire))) {
+  WorkspaceMetaFileLayout fileLayout{};
+  if (!ioRead(io, &fileLayout, sizeof(fileLayout))) {
     return false;
   }
-  fromWire(wire, record);
+  fromFileLayout(fileLayout, record);
   if (!PersistenceSchema::isSchemaMajorCompatible(record.schemaVersion,
                                                   PersistenceSchema::kSetRevisionSchemaVersion)) {
     return false;
@@ -151,22 +151,39 @@ bool readWorkspaceMeta(const StorageIo& io, WorkspaceMetaRecord& record) {
 bool writeEpochFileHeader(const StorageIo& io, const EpochFileHeader& header) {
   EpochFileHeader stamped = header;
   stamped.crc32 = computeEpochFileHeaderChecksum(header);
-  const EpochFileHeaderWire wire = toWire(stamped);
-  return ioWrite(io, &wire, sizeof(wire));
+  const EpochFileHeaderFileLayout fileLayout = toFileLayout(stamped);
+  return ioWrite(io, &fileLayout, sizeof(fileLayout));
 }
 
 bool readEpochFileHeader(const StorageIo& io, EpochFileHeader& header) {
-  EpochFileHeaderWire wire{};
-  if (!ioRead(io, &wire, sizeof(wire))) {
+  EpochFileHeaderFileLayout fileLayout{};
+  if (!ioRead(io, &fileLayout, sizeof(fileLayout))) {
     return false;
   }
-  fromWire(wire, header);
+  fromFileLayout(fileLayout, header);
   return PersistenceSchema::isSchemaMajorCompatible(header.schemaVersion,
                                                   PersistenceSchema::kSetRevisionSchemaVersion);
 }
 
 bool isWorkspaceDirty(uint32_t currentEpoch, uint32_t lastCommittedEpoch) {
   return currentEpoch != lastCommittedEpoch;
+}
+
+uint32_t resolveCompletedWorkspaceEpochForRevisionSnapshot(uint32_t currentWorkspaceEpoch,
+                                                           uint32_t deferredSaveWorkspaceEpoch,
+                                                           bool deferredSaveInProgress) {
+  if (deferredSaveInProgress && deferredSaveWorkspaceEpoch > 0) {
+    return deferredSaveWorkspaceEpoch - 1U;
+  }
+  return currentWorkspaceEpoch;
+}
+
+uint32_t workspaceEpochAfterRevisionSnapshot(uint32_t snapshotSourceEpoch) {
+  return snapshotSourceEpoch + 1U;
+}
+
+uint32_t syncLastCommittedEpochAfterRevisionCommitComplete(uint32_t currentWorkspaceEpoch) {
+  return currentWorkspaceEpoch;
 }
 
 bool isEpochHeaderChecksumValid(const EpochFileHeader& header) {
@@ -193,15 +210,15 @@ bool validateEpochFileBytes(const uint8_t* fileBytes, size_t fileSize, uint32_t 
     return false;
   }
   if (!expectEpochHeader) {
-    return fileSize >= sizeof(CurrentSetStorage::COMPLETE_MAGIC);
+    return fileSize >= sizeof(CurrentSetStorage::kSaveFileToken);
   }
   if (fileSize < kEpochFileHeaderByteSize) {
     return false;
   }
-  EpochFileHeaderWire wire{};
-  std::memcpy(&wire, fileBytes, sizeof(wire));
+  EpochFileHeaderFileLayout fileLayout{};
+  std::memcpy(&fileLayout, fileBytes, sizeof(fileLayout));
   EpochFileHeader header{};
-  fromWire(wire, header);
+  fromFileLayout(fileLayout, header);
   if (!PersistenceSchema::isSchemaMajorCompatible(header.schemaVersion,
                                                   PersistenceSchema::kSetRevisionSchemaVersion)) {
     return false;
@@ -222,8 +239,8 @@ bool writeEpochHeaderPlaceholder(File& file, uint32_t epoch) {
   header.epoch = epoch;
   header.schemaVersion = PersistenceSchema::kSetRevisionSchemaVersion;
   header.crc32 = 0;
-  const EpochFileHeaderWire wire = toWire(header);
-  return file.write(reinterpret_cast<const uint8_t*>(&wire), sizeof(wire)) == sizeof(wire);
+  const EpochFileHeaderFileLayout fileLayout = toFileLayout(header);
+  return file.write(reinterpret_cast<const uint8_t*>(&fileLayout), sizeof(fileLayout)) == sizeof(fileLayout);
 }
 
 bool finalizeEpochFileHeaderCrc(const char* path) {

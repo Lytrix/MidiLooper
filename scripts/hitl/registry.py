@@ -29,6 +29,9 @@ PRESET_SCENARIOS: dict[str, tuple[str, ...]] = {
     "revision_commit_save": ("revision_commit_save",),
     "revision_load": ("revision_load",),
     "revision_load_record": ("base", "revision_load_post_record"),
+    "revision_load_dirty_yes": ("base", "revision_load_dirty_yes"),
+    "revision_load_dirty_no": ("base", "revision_load_dirty_no"),
+    "revision_load_dirty_cancel": ("base", "revision_load_dirty_cancel"),
     "two_overdub_undo_redo": ("two_overdub_undo_redo",),
 }
 
@@ -57,7 +60,13 @@ def _lazy_registry() -> dict[str, ScenarioSpec]:
     from hitl.verify.revision_commit_save import verify_revision_commit_save
     from hitl.scenarios.revision_load import run_revision_load
     from hitl.scenarios.revision_load_post_record import run_revision_load_post_record
+    from hitl.scenarios.revision_load_dirty import (
+        run_revision_load_dirty_cancel,
+        run_revision_load_dirty_no,
+        run_revision_load_dirty_yes,
+    )
     from hitl.verify.revision_load import verify_revision_load
+    from hitl.verify.revision_load_dirty import verify_revision_load_dirty
     from hitl.scenarios.two_overdub_undo_redo import run_two_overdub_undo_redo
     from hitl.verify.two_overdub_undo_redo import verify_two_overdub_undo_redo
 
@@ -127,6 +136,24 @@ def _lazy_registry() -> dict[str, ScenarioSpec]:
             description="Revision commit/load after record baseline (no transport-stop prelude)",
             run=run_revision_load_post_record,
             verify=verify_revision_load,
+        ),
+        "revision_load_dirty_yes": ScenarioSpec(
+            scenario_id="revision_load_dirty_yes",
+            description="Dirty prompt Yes: save-then-load after second record",
+            run=run_revision_load_dirty_yes,
+            verify=verify_revision_load_dirty,
+        ),
+        "revision_load_dirty_no": ScenarioSpec(
+            scenario_id="revision_load_dirty_no",
+            description="Dirty prompt No: discard uncommitted and load",
+            run=run_revision_load_dirty_no,
+            verify=verify_revision_load_dirty,
+        ),
+        "revision_load_dirty_cancel": ScenarioSpec(
+            scenario_id="revision_load_dirty_cancel",
+            description="Dirty prompt Cancel: abort staged load",
+            run=run_revision_load_dirty_cancel,
+            verify=verify_revision_load_dirty,
         ),
         "two_overdub_undo_redo": ScenarioSpec(
             scenario_id="two_overdub_undo_redo",

@@ -1336,6 +1336,15 @@ void DisplayManager::adjustLoadSaveListSelection(int delta) {
     if (delta == 0) {
         return;
     }
+    if (StorageManager::getSetBrowserOverlayMode() ==
+        StorageManager::SetBrowserOverlayMode::DirtyPrompt) {
+        StorageManager::adjustRevisionLoadDirtyPromptSelection(delta);
+        return;
+    }
+    if (StorageManager::getSetBrowserOverlayMode() ==
+        StorageManager::SetBrowserOverlayMode::MinimalLoading) {
+        return;
+    }
     const size_t totalRows = 1 + loadSaveListCount_;
     if (totalRows == 0) {
         loadSaveListSelection_ = 0;
@@ -1448,7 +1457,41 @@ void DisplayManager::drawAutoSaveBeforeLoadToast(int detailX, uint32_t nowMs) {
                            DISPLAY_HEIGHT - 8, 15);
 }
 
+void DisplayManager::drawLoadSaveDirtyPromptView() {
+    constexpr int kLeftMargin = 2;
+    constexpr int kRowsStartY = 8;
+    _display.gfx.select_font(&Font5x7FixedMono);
+    _display.gfx.draw_text(_display.api.getFrameBuffer(), "Save Current?", kLeftMargin, 0, 15);
+
+    static const char* kRows[] = {"Yes", "No", "Cancel"};
+    const uint8_t selection = StorageManager::getRevisionLoadDirtyPromptSelection();
+    for (uint8_t row = 0; row < RevisionLoadPolicy::kDirtyPromptRowCount; ++row) {
+        const int rowY = kRowsStartY + static_cast<int>(row) * 8;
+        const uint8_t brightness = row == selection ? 15 : 5;
+        _display.gfx.draw_text(_display.api.getFrameBuffer(), kRows[row], kLeftMargin, rowY,
+                               brightness);
+    }
+}
+
+void DisplayManager::drawLoadSaveMinimalLoadingView(uint32_t nowMs) {
+    constexpr int kLeftMargin = 2;
+    _display.gfx.select_font(&Font5x7FixedMono);
+    _display.gfx.draw_text(_display.api.getFrameBuffer(), "Loading...", kLeftMargin, 0, 15);
+    drawSaveStatusIndicator(nowMs, DISPLAY_WIDTH - 4);
+}
+
 void DisplayManager::drawLoadSaveView(uint32_t nowMs) {
+    const StorageManager::SetBrowserOverlayMode overlayMode =
+        StorageManager::getSetBrowserOverlayMode();
+    if (overlayMode == StorageManager::SetBrowserOverlayMode::DirtyPrompt) {
+        drawLoadSaveDirtyPromptView();
+        return;
+    }
+    if (overlayMode == StorageManager::SetBrowserOverlayMode::MinimalLoading) {
+        drawLoadSaveMinimalLoadingView(nowMs);
+        return;
+    }
+
     constexpr int kLoadSaveDividerX = DISPLAY_WIDTH / 2;
     constexpr int kLoadSaveRightX = kLoadSaveDividerX + 1;
     constexpr int kLoadSaveLeftMargin = 2;
