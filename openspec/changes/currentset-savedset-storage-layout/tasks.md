@@ -1,18 +1,23 @@
 ## 1. CurrentSet incremental policy hardening
 
-- [ ] 1.1 Remove default transport-stop full-slot dirty marking; keep full dirty only for explicit migration/repair paths.
-- [ ] 1.2 Keep deferred save slot-skip behavior and confirm only dirty `loop_TT_SS.bin` files are rewritten in normal runtime flows.
-- [ ] 1.3 Add/extend native tests that assert stop-path save does not force full 64-slot payload rewrite.
+- [x] 1.1 Remove default transport-stop full-slot dirty marking; keep full dirty only for explicit migration/repair paths.
+- [x] 1.2 Keep deferred save slot-skip behavior and confirm only dirty `loop_TT_SS.bin` files are rewritten in normal runtime flows.
+- [x] 1.3 Add/extend native tests that assert stop-path save does not force full 64-slot payload rewrite.
 
 ## 2. Slot metadata index
 
-- [ ] 2.1 Define fixed-width slot-summary schema in CurrentSet `meta.bin` and wire read/write helpers.
+> **Parked** — superseded by `set-revision-persistence` task 2.3 (`workspace.bin` slot summary).
+> See `PARKED.md`.
+
+- [ ] 2.1 Define fixed-width slot-summary schema in CurrentSet `workspace.bin` and wire read/write helpers.
 - [ ] 2.2 Update slot-summary rows from all material mutation paths (record, overdub, edit commit, clear, import).
 - [ ] 2.3 Add native tests for slot-summary correctness and deterministic parser behavior without dynamic allocation.
 
 ## 3. SavedSet packed storage
 
-- [ ] 3.1 Implement SavedSet packed writer (`meta.bin` + `loops.bin`) with blob index table (`track`, `slot`, `offset`, `length`, `crc`).
+> **Parked** — replaced by append-only Set revisions. See `PARKED.md`.
+
+- [ ] 3.1 Implement SavedSet packed writer (`set.bin` + `loops.bin`) with blob index table (`track`, `slot`, `offset`, `length`, `crc`).
 - [ ] 3.2 Implement packed SavedSet loader that rebuilds CurrentSet from index+blob data.
 - [ ] 3.3 Add atomic temp→verify→rename commit flow for both packed files and rollback-safe failure handling.
 

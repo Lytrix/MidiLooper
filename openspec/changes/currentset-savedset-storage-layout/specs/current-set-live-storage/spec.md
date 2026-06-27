@@ -47,6 +47,6 @@ CurrentSet loader SHALL continue to load existing v6 per-slot trees without
 requiring SavedSet packing support.
 
 #### Scenario: Existing v6 tree loads after layout change
-- **WHEN** boot finds `Sets/_current/meta.bin` and `loop_TT_SS.bin` payload files
+- **WHEN** boot finds `MidiLooper/current/workspace.bin` and `loop_TT_SS.bin` payload files
 - **THEN** load succeeds using per-slot payload reads
 - **AND** runtime state is restored from the same CurrentSet layout

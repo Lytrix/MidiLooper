@@ -1,6 +1,6 @@
 ## Context
 
-Current runtime persistence already writes `Sets/_current/meta.bin` and per-slot
+Current runtime persistence already writes `MidiLooper/current/workspace.bin` and per-slot
 `loop_TT_SS.bin` files via deferred, chunk-bounded slices in `StorageManager`.
 This is the correct shape for mutable live edits because only dirty slots need
 payload rewrites. The open issue is layout policy split:
@@ -25,8 +25,8 @@ Hot-path constraints:
 **Goals:**
 
 - Keep CurrentSet mutable writes incremental at slot scope.
-- Add slot-summary metadata in `meta.bin` for fast slot-list rendering/search.
-- Define immutable SavedSet packaging with low file count (`meta.bin` + `loops.bin`).
+- Add slot-summary metadata in `workspace.bin` for fast slot-list rendering/search.
+- Define immutable SavedSet packaging with low file count (`set.bin` + `loops.bin`).
 - Keep boot/recovery resilience via atomic temp→verify→rename and completion magic.
 - Keep read compatibility for existing CurrentSet v6 trees.
 
@@ -42,8 +42,8 @@ Hot-path constraints:
 
 ### Decision 1: Split by mutability boundary
 
-- **CurrentSet:** `meta.bin` + per-slot loop files stays the live format.
-- **SavedSet:** `meta.bin` + packed `loops.bin` becomes snapshot format.
+- **CurrentSet:** `workspace.bin` + per-slot loop files stays the live format.
+- **SavedSet:** `set.bin` + packed `loops.bin` becomes snapshot format.
 
 Rationale:
 
@@ -53,10 +53,10 @@ Rationale:
 Alternatives considered:
 
 - Single mutable monolith: rejected (high rewrite cost and wear for small edits).
-- Two-file mutable CurrentSet (`meta.bin` + packed loops): rejected for same
+- Two-file mutable CurrentSet (`workspace.bin` + packed loops): rejected for same
   rewrite amplification problem unless a log-structured segment GC layer is added.
 
-### Decision 2: `meta.bin` is the slot browser index
+### Decision 2: `workspace.bin` is the slot browser index
 
 CurrentSet and SavedSet metadata will include slot-summary rows sufficient for
 slot-list UI and catalog filters without opening loop payload files.
@@ -104,7 +104,7 @@ Alternatives considered:
 
 - **Risk:** SavedSet packed format diverges from CurrentSet file model.  
   **Mitigation:** explicit per-set `containerVersion` and format discriminator in
-  SavedSet `meta.bin`; loader dispatches by format.
+  SavedSet `set.bin`; loader dispatches by format.
 
 - **Risk:** Slot summaries in meta can drift from payloads if update hooks miss
   mutation paths.  
@@ -114,7 +114,7 @@ Alternatives considered:
 - **Risk:** Migration complexity from existing SavedSet trees once implemented.  
   **Mitigation:** phased rollout: write-new/read-both, then optional repack tool.
 
-- **Risk:** Larger `meta.bin` from summary/index rows.  
+- **Risk:** Larger `workspace.bin` from summary/index rows.  
   **Mitigation:** fixed-width compact rows and bounded fields; no dynamic strings
   in hot-path writer.
 
@@ -123,10 +123,10 @@ Alternatives considered:
 1. **Phase A — CurrentSet policy hardening**
    - Keep existing CurrentSet file layout.
    - Remove default full-dirty on transport stop.
-   - Add slot-summary rows in CurrentSet `meta.bin`.
+   - Add slot-summary rows in CurrentSet `workspace.bin`.
 
 2. **Phase B — SavedSet packed format introduce**
-   - Implement SavedSet writer for `meta.bin` + `loops.bin`.
+   - Implement SavedSet writer for `set.bin` + `loops.bin`.
    - Implement loader for packed SavedSet into CurrentSet.
    - Keep CurrentSet load path unchanged.
 

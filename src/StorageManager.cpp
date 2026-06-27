@@ -7,6 +7,8 @@
 #include "Slot.h"
 #include "StorageLoopIo.h"
 #include "CurrentSetStorage.h"
+#include "CurrentWorkspaceStorage.h"
+#include "PersistenceLayout.h"
 #include "SavedSetCatalog.h"
 #include "RtcTime.h"
 #include "Globals.h"
@@ -289,13 +291,50 @@ std::vector<MidiEvent, ExternalMemoryFirstAllocator<MidiEvent>> deferredSaveMidi
 uint16_t deferredSaveLoopSlotsWritten = 0;
 uint16_t deferredSaveLoopSlotsSkipped = 0;
 uint32_t deferredSaveDisplayBlockUs = 0;
+// Full payload rewrite only for explicit migration/recovery/repair paths:
+// migrateV5MonolithToCurrentSet, tryLoadLatestRecoveryPoint, tryLoadNewestSavedSet.
+// Normal runtime uses per-slot dirty bitmap + shouldWriteCurrentSetLoopSlot().
 bool forceCurrentSetFullLoopWrite = true;
 std::array<std::array<bool, Config::MAX_LOOPS_PER_TRACK>, Config::NUM_TRACKS>
     currentSetLoopSlotDirty{};
 uint32_t lastSavedSetFailsafeCheckAtMs = 0;
+uint32_t currentSetLastActiveUnix = 0;
+char currentSetLoadedFromFolder[16] = {};
+uint32_t currentWorkspaceEpoch = 0;
+uint32_t lastCommittedWorkspaceEpoch = 0;
+uint16_t workspaceDerivedFromSetId = 0;
+uint16_t workspaceDerivedFromRevisionId = 0;
+uint16_t workspaceLastCommittedRevisionId = 0;
+uint32_t deferredSaveWorkspaceEpoch = 0;
+char autoSaveBeforeLoadFolderPending[16] = {};
+bool autoSaveBeforeLoadFolderPendingValid = false;
 
 constexpr size_t kSavedSetPathCapacity = 64;
 constexpr uint32_t kSavedSetFailsafeCheckIntervalMs = 1000;
+
+void clearCurrentSetLoadedFromFolder() {
+    currentSetLoadedFromFolder[0] = '\0';
+}
+
+bool setCurrentSetLoadedFromFolder(const char* folderName) {
+    if (folderName == nullptr || folderName[0] == '\0') {
+        clearCurrentSetLoadedFromFolder();
+        return false;
+    }
+    const int written = std::snprintf(currentSetLoadedFromFolder,
+                                      sizeof(currentSetLoadedFromFolder), "%s", folderName);
+    if (written <= 0 ||
+        static_cast<size_t>(written) >= sizeof(currentSetLoadedFromFolder)) {
+        clearCurrentSetLoadedFromFolder();
+        return false;
+    }
+    return true;
+}
+
+void clearAutoSaveBeforeLoadFolderPending() {
+    autoSaveBeforeLoadFolderPending[0] = '\0';
+    autoSaveBeforeLoadFolderPendingValid = false;
+}
 
 void markCurrentSetMaterialChange() {
     currentSetAnchorFields.hasMaterialChangesSinceAnchor = 1;
@@ -347,11 +386,6 @@ void clearCurrentSetLoopSlotDirtyInternal(uint8_t trackIndex, uint8_t slotIndex)
 
 void syncCurrentSetDirtyTrackingFromLoadedState() {
     for (uint8_t t = 0; t < Config::NUM_TRACKS; ++t) {
-        Track& track = trackManager.getTrack(t);
-        if (!track.loopsAllocated()) {
-            markCurrentSetTrackDirtyInternal(t, false);
-            continue;
-        }
         for (uint8_t s = 0; s < Config::MAX_LOOPS_PER_TRACK; ++s) {
             currentSetLoopSlotDirty[t][s] = false;
         }
@@ -506,16 +540,54 @@ bool formatSavedSetDirectoryPath(const char* folderName, char* out, size_t outSi
     if (folderName == nullptr || folderName[0] == '\0' || out == nullptr || outSize == 0) {
         return false;
     }
-    const int written = std::snprintf(out, outSize, "%s/%s", CurrentSetStorage::kSetsRoot,
+    const int written = std::snprintf(out, outSize, "%s/%s", CurrentSetStorage::kSetsArchiveDir,
                                       folderName);
     return written > 0 && static_cast<size_t>(written) < outSize;
 }
 
+bool resolveSavedSetFolderNameBySequence(uint32_t sequence, char* out, size_t outSize) {
+    if (out == nullptr || outSize == 0 || sequence == 0 ||
+        !SD.exists(CurrentSetStorage::kSetsArchiveDir)) {
+        return false;
+    }
+    File dir = SD.open(CurrentSetStorage::kSetsArchiveDir);
+    if (!dir) {
+        return false;
+    }
+    bool found = false;
+    while (true) {
+        File entry = dir.openNextFile();
+        if (!entry) {
+            break;
+        }
+        const bool isDirectory = entry.isDirectory();
+        const char* name = entry.name();
+        entry.close();
+        uint32_t parsedSequence = 0;
+        if (!isDirectory ||
+            !SavedSetCatalog::parseSavedSetFolderName(name, parsedSequence, nullptr) ||
+            parsedSequence != sequence) {
+            continue;
+        }
+        const char* baseName = std::strrchr(name, '/');
+        if (baseName != nullptr) {
+            baseName += 1;
+        } else {
+            baseName = name;
+        }
+        const int written = std::snprintf(out, outSize, "%s", baseName);
+        found = written > 0 && static_cast<size_t>(written) < outSize;
+        break;
+    }
+    dir.close();
+    return found;
+}
+
 uint32_t scanHighestSavedSetSequenceOnSd() {
-    if (!SD.exists(CurrentSetStorage::kSetsRoot)) {
+    if (!SD.exists(CurrentSetStorage::kSetsArchiveDir)) {
         return 0;
     }
-    File dir = SD.open(CurrentSetStorage::kSetsRoot);
+    File dir = SD.open(CurrentSetStorage::kSetsArchiveDir);
     if (!dir) {
         return 0;
     }
@@ -636,9 +708,10 @@ bool copyCurrentSetMetaToSavedSet(const char* savedSetDir,
 
     char destinationTempPath[kSavedSetPathCapacity];
     char destinationPath[kSavedSetPathCapacity];
-    if (std::snprintf(destinationTempPath, sizeof(destinationTempPath), "%s/meta.bin.tmp",
-                      savedSetDir) <= 0 ||
-        std::snprintf(destinationPath, sizeof(destinationPath), "%s/meta.bin", savedSetDir) <= 0) {
+    if (std::snprintf(destinationTempPath, sizeof(destinationTempPath), "%s/%s",
+                      savedSetDir, CurrentSetStorage::kSetBinTempFileName) <= 0 ||
+        std::snprintf(destinationPath, sizeof(destinationPath), "%s/%s", savedSetDir,
+                      CurrentSetStorage::kSetBinFileName) <= 0) {
         source.close();
         return false;
     }
@@ -705,8 +778,12 @@ bool patchCurrentSetAnchor() {
 }
 
 bool saveNewSetInternal(const LooperState& state, char* savedSetFolderOut, size_t outSize) {
-    if (!CurrentSetStorage::ensureDirectory(CurrentSetStorage::kSetsRoot) ||
-        !CurrentSetStorage::ensureDirectory(CurrentSetStorage::kCurrentSetDir)) {
+    if (!CurrentSetStorage::ensureDirectory(PersistenceLayout::kRoot) ||
+        !CurrentSetStorage::ensureDirectory(CurrentSetStorage::kSetsRoot) ||
+        !CurrentSetStorage::ensureDirectory(CurrentSetStorage::kSetsArchiveDir) ||
+        !CurrentSetStorage::ensureDirectory(CurrentSetStorage::kCurrentSetDir) ||
+        !CurrentSetStorage::ensureDirectory(CurrentWorkspaceStorage::kCurrentTempDir) ||
+        !CurrentSetStorage::ensureDirectory(CurrentSetStorage::kCurrentSlotsDir)) {
         return false;
     }
     if (!SD.exists(CurrentSetStorage::kCurrentMetaPath)) {
@@ -759,13 +836,16 @@ bool saveNewSetInternal(const LooperState& state, char* savedSetFolderOut, size_
 }
 
 bool copySavedSetIntoCurrent(const char* sourceSetDir) {
-    if (!CurrentSetStorage::ensureDirectory(CurrentSetStorage::kSetsRoot) ||
-        !CurrentSetStorage::ensureDirectory(CurrentSetStorage::kCurrentSetDir)) {
+    if (!CurrentSetStorage::ensureDirectory(PersistenceLayout::kRoot) ||
+        !CurrentSetStorage::ensureDirectory(CurrentSetStorage::kCurrentSetDir) ||
+        !CurrentSetStorage::ensureDirectory(CurrentWorkspaceStorage::kCurrentTempDir) ||
+        !CurrentSetStorage::ensureDirectory(CurrentSetStorage::kCurrentSlotsDir)) {
         return false;
     }
 
     char sourceMetaPath[kSavedSetPathCapacity];
-    if (std::snprintf(sourceMetaPath, sizeof(sourceMetaPath), "%s/meta.bin", sourceSetDir) <= 0) {
+    if (std::snprintf(sourceMetaPath, sizeof(sourceMetaPath), "%s/%s", sourceSetDir,
+                      CurrentSetStorage::kSetBinFileName) <= 0) {
         return false;
     }
     if (!copyFileBinary(sourceMetaPath, CurrentSetStorage::kCurrentMetaTempPath)) {
@@ -969,6 +1049,68 @@ void resetDeferredSaveJobState() {
     deferredSaveStateSnapshot = LOOPER_IDLE;
 }
 
+void fillSlotSummariesForTrack(uint8_t trackIndex, const Track& track,
+                               CurrentWorkspaceStorage::SlotSummary* summaries,
+                               size_t summaryCount) {
+    if (summaries == nullptr || summaryCount == 0) {
+        return;
+    }
+    const uint32_t ticksPerBar = Track::getTicksPerBar();
+    const uint8_t slotLimit = static_cast<uint8_t>(
+        summaryCount < Config::MAX_LOOPS_PER_TRACK ? summaryCount : Config::MAX_LOOPS_PER_TRACK);
+    for (uint8_t slot = 0; slot < slotLimit; ++slot) {
+        const Loop& loop = track.getLoop(slot);
+        CurrentWorkspaceStorage::SlotSummary& summary = summaries[slot];
+        summary = CurrentWorkspaceStorage::SlotSummary{};
+        summary.muted = trackManager.isSlotMuted(trackIndex, slot) ? 1 : 0;
+        const bool occupied = loop.passes.hasRecordPass() || !loop.passes.overdubPasses.empty() ||
+                              loop.hasPendingCapturePass();
+        summary.occupied = occupied ? 1 : 0;
+        if (!occupied || loop.loopLengthTicks == 0 || ticksPerBar == 0) {
+            continue;
+        }
+        size_t eventCount = 0;
+        if (loop.passes.hasRecordPass()) {
+            eventCount +=
+                LoopEventStore::countEventsInChunkIds(loop.passes.recordPass.chunkRefs);
+        }
+        for (const OverdubPass& pass : loop.passes.overdubPasses) {
+            eventCount += LoopEventStore::countEventsInChunkIds(pass.chunkRefs);
+        }
+        summary.noteCount =
+            static_cast<uint16_t>(eventCount > UINT16_MAX ? UINT16_MAX : eventCount / 2U);
+        summary.bars = static_cast<uint16_t>(loop.loopLengthTicks / ticksPerBar);
+    }
+}
+
+bool writeWorkspaceMetaAfterDeferredSave() {
+    CurrentWorkspaceStorage::WorkspaceMetaRecord record{};
+    record.currentEpoch = currentWorkspaceEpoch;
+    record.lastCommittedEpoch = lastCommittedWorkspaceEpoch;
+    record.derivedFromSetId = workspaceDerivedFromSetId;
+    record.derivedFromRevisionId = workspaceDerivedFromRevisionId;
+    record.lastCommittedRevisionId = workspaceLastCommittedRevisionId;
+    record.updatedUnix = static_cast<uint64_t>(RtcTime::getUnixTime());
+    const uint8_t selectedTrack = trackManager.getSelectedTrackIndex();
+    if (selectedTrack < trackManager.getTrackCount()) {
+        fillSlotSummariesForTrack(selectedTrack, trackManager.getTrack(selectedTrack),
+                                  record.slotSummary, CurrentWorkspaceStorage::kSlotSummaryCount);
+    }
+    return CurrentWorkspaceStorage::writeWorkspaceMetaFile(record);
+}
+
+void loadWorkspaceMetaCountersFromSd() {
+    CurrentWorkspaceStorage::WorkspaceMetaRecord record{};
+    if (!CurrentWorkspaceStorage::readWorkspaceMetaFile(record)) {
+        return;
+    }
+    currentWorkspaceEpoch = record.currentEpoch;
+    lastCommittedWorkspaceEpoch = record.lastCommittedEpoch;
+    workspaceDerivedFromSetId = record.derivedFromSetId;
+    workspaceDerivedFromRevisionId = record.derivedFromRevisionId;
+    workspaceLastCommittedRevisionId = record.lastCommittedRevisionId;
+}
+
 bool writeCurrentSetMetaHeaderToOpenFile(File& file) {
     CurrentSetStorage::MetaHeader header{};
     header.containerVersion = CurrentSetStorage::CONTAINER_VERSION;
@@ -983,6 +1125,10 @@ bool finalizeDeferredMetaTempFile() {
         return false;
     }
     deferredSaveFile.close();
+    if (!CurrentWorkspaceStorage::finalizeEpochFileHeaderCrc(
+            CurrentSetStorage::kCurrentMetaTempPath)) {
+        return false;
+    }
     if (!CurrentSetStorage::verifyFileCompleteMagic(CurrentSetStorage::kCurrentMetaTempPath)) {
         return false;
     }
@@ -1027,6 +1173,12 @@ bool openDeferredLoopSlotTemp(uint8_t trackIndex, uint8_t slotIndex) {
         return false;
     }
     deferredSaveLoopFile.seek(0);
+    if (!CurrentWorkspaceStorage::writeEpochHeaderPlaceholder(deferredSaveLoopFile,
+                                                              deferredSaveWorkspaceEpoch)) {
+        deferredSaveLoopFile.close();
+        deferredSaveLoopFileOpen = false;
+        return false;
+    }
     deferredSaveLoopFileOpen = true;
     return true;
 }
@@ -1051,6 +1203,9 @@ bool finalizeDeferredLoopSlotTemp(uint8_t trackIndex, uint8_t slotIndex) {
                                                slotIndex)) {
         return false;
     }
+    if (!CurrentWorkspaceStorage::finalizeEpochFileHeaderCrc(tempPath)) {
+        return false;
+    }
     if (!CurrentSetStorage::verifyFileCompleteMagic(tempPath)) {
         return false;
     }
@@ -1058,13 +1213,11 @@ bool finalizeDeferredLoopSlotTemp(uint8_t trackIndex, uint8_t slotIndex) {
 }
 
 bool shouldWriteCurrentSetLoopSlot(uint8_t trackIndex, uint8_t slotIndex) {
-    if (forceCurrentSetFullLoopWrite) {
-        return true;
-    }
     if (trackIndex >= Config::NUM_TRACKS || slotIndex >= Config::MAX_LOOPS_PER_TRACK) {
         return true;
     }
-    return currentSetLoopSlotDirty[trackIndex][slotIndex];
+    return CurrentSetStorage::shouldWriteLoopPayloadForSlot(
+        forceCurrentSetFullLoopWrite, currentSetLoopSlotDirty[trackIndex][slotIndex]);
 }
 
 bool trackHasCurrentSetDirtyLoopSlot(uint8_t trackIndex) {
@@ -1083,9 +1236,16 @@ bool trackHasCurrentSetDirtyLoopSlot(uint8_t trackIndex) {
 }
 
 bool beginDeferredSaveJob(const LooperState& state) {
-    if (!CurrentSetStorage::ensureDirectory(CurrentSetStorage::kSetsRoot) ||
-        !CurrentSetStorage::ensureDirectory(CurrentSetStorage::kCurrentSetDir)) {
-        Serial.println("[StorageManager] ERROR: Could not create Sets/_current directory");
+    ++currentWorkspaceEpoch;
+    deferredSaveWorkspaceEpoch = currentWorkspaceEpoch;
+
+    if (!CurrentSetStorage::ensureDirectory(PersistenceLayout::kRoot) ||
+        !CurrentSetStorage::ensureDirectory(CurrentSetStorage::kCurrentSetDir) ||
+        !CurrentSetStorage::ensureDirectory(CurrentWorkspaceStorage::kCurrentTempDir) ||
+        !CurrentSetStorage::ensureDirectory(CurrentSetStorage::kCurrentSlotsDir) ||
+        !CurrentSetStorage::ensureDirectory(PersistenceLayout::kRecoveryRoot) ||
+        !CurrentSetStorage::ensureDirectory(CurrentSetStorage::kCheckpointsDir)) {
+        Serial.println("[StorageManager] ERROR: Could not create MidiLooper/current directories");
         return false;
     }
 
@@ -1095,6 +1255,13 @@ bool beginDeferredSaveJob(const LooperState& state) {
         return false;
     }
     deferredSaveFile.seek(0);
+
+    if (!CurrentWorkspaceStorage::writeEpochHeaderPlaceholder(deferredSaveFile,
+                                                              deferredSaveWorkspaceEpoch)) {
+        Serial.println("[StorageManager] ERROR: Deferred save failed writing epoch header");
+        deferredSaveFile.close();
+        return false;
+    }
 
     if (!writeCurrentSetMetaHeaderToOpenFile(deferredSaveFile)) {
         Serial.println("[StorageManager] ERROR: Deferred save failed writing CurrentSet meta header");
@@ -1637,6 +1804,7 @@ bool stepDeferredSaveJob() {
             }
 
             if (!trackHasCurrentSetDirtyLoopSlot(deferredSaveTrackCursor)) {
+                deferredSaveLoopSlotsSkipped += Config::MAX_LOOPS_PER_TRACK;
                 deferredSaveTrackCursor++;
                 deferredSaveSlotCursor = 0;
                 deferredSavePoolCursor = 0;
@@ -1834,6 +2002,11 @@ bool stepDeferredSaveJob() {
                 Serial.println("[StorageManager] ERROR: Deferred save failed patching lastActiveUnix");
                 return false;
             }
+            currentSetLastActiveUnix = lastActiveUnix;
+            if (!writeWorkspaceMetaAfterDeferredSave()) {
+                Serial.println("[StorageManager] ERROR: Deferred save failed writing workspace.bin");
+                return false;
+            }
             if (quarantineLegacyMonolithAfterSave) {
                 quarantineStorageFile();
                 quarantineLegacyMonolithAfterSave = false;
@@ -1876,8 +2049,12 @@ bool StorageManager::loadSetIntoCurrent(const char* savedSetFolderName) {
         return false;
     }
 
-    if (currentSetAnchorFields.hasMaterialChangesSinceAnchor != 0 &&
-        !saveNewSetInternal(looperState.getLooperState(), nullptr, 0)) {
+    char autoSavedFolderName[16] = {};
+    const bool shouldAutoSave =
+        CurrentSetStorage::shouldAutoSaveBeforeLoadIntoCurrent(currentSetAnchorFields);
+    if (shouldAutoSave &&
+        !saveNewSetInternal(looperState.getLooperState(), autoSavedFolderName,
+                            sizeof(autoSavedFolderName))) {
         return false;
     }
 
@@ -1889,11 +2066,22 @@ bool StorageManager::loadSetIntoCurrent(const char* savedSetFolderName) {
 
     forceCurrentSetFullLoopWrite = false;
     syncCurrentSetDirtyTrackingFromLoadedState();
-    currentSetAnchorFields.loadedFromSequence = sourceSequence;
-    currentSetAnchorFields.lastAnchoredSequence = sourceSequence;
-    currentSetAnchorFields.hasMaterialChangesSinceAnchor = 0;
-    currentSetAnchorFields.lastMaterialChangeUnix = 0;
-    return patchCurrentSetAnchor();
+    setCurrentSetLoadedFromFolder(savedSetFolderName);
+    CurrentSetStorage::applyLoadedSetAnchorFields(sourceSequence, currentSetAnchorFields);
+    if (!patchCurrentSetAnchor()) {
+        return false;
+    }
+    if (shouldAutoSave && autoSavedFolderName[0] != '\0') {
+        const int written = std::snprintf(autoSaveBeforeLoadFolderPending,
+                                          sizeof(autoSaveBeforeLoadFolderPending), "%s",
+                                          autoSavedFolderName);
+        autoSaveBeforeLoadFolderPendingValid =
+            written > 0 &&
+            static_cast<size_t>(written) < sizeof(autoSaveBeforeLoadFolderPending);
+    } else {
+        clearAutoSaveBeforeLoadFolderPending();
+    }
+    return true;
 }
 
 void StorageManager::processSavedSetFailsafe(const LooperState& state) {
@@ -1926,6 +2114,150 @@ void StorageManager::processSavedSetFailsafe(const LooperState& state) {
     } else {
         Serial.println("[StorageManager] ERROR: Eight-hour failsafe saveNewSet failed");
     }
+}
+
+uint32_t StorageManager::getCurrentSetLastActiveUnix() {
+    return currentSetLastActiveUnix;
+}
+
+bool StorageManager::isCurrentWorkspaceDirty() {
+    return CurrentWorkspaceStorage::isWorkspaceDirty(currentWorkspaceEpoch,
+                                                     lastCommittedWorkspaceEpoch);
+}
+
+uint32_t StorageManager::getCurrentWorkspaceEpoch() {
+    return currentWorkspaceEpoch;
+}
+
+uint32_t StorageManager::getLastCommittedWorkspaceEpoch() {
+    return lastCommittedWorkspaceEpoch;
+}
+
+bool StorageManager::copyCurrentSetLoadedFromFolder(char* out, size_t outSize) {
+    if (out == nullptr || outSize == 0 || currentSetLoadedFromFolder[0] == '\0') {
+        return false;
+    }
+    const int written = std::snprintf(out, outSize, "%s", currentSetLoadedFromFolder);
+    return written > 0 && static_cast<size_t>(written) < outSize;
+}
+
+bool StorageManager::consumeAutoSaveBeforeLoadFolder(char* out, size_t outSize) {
+    if (out == nullptr || outSize == 0 || !autoSaveBeforeLoadFolderPendingValid) {
+        return false;
+    }
+    const int written =
+        std::snprintf(out, outSize, "%s", autoSaveBeforeLoadFolderPending);
+    const bool copied =
+        written > 0 && static_cast<size_t>(written) < outSize;
+    clearAutoSaveBeforeLoadFolderPending();
+    return copied;
+}
+
+bool readSavedSetMetadataFromMetaPath(const char* metaPath,
+                                      SavedSetCatalog::SavedSetMetadata& metadata) {
+    File file = SD.open(metaPath, FILE_READ);
+    if (!file) {
+        return false;
+    }
+    const size_t fileSize = file.size();
+    const size_t trailerTailSize =
+        SavedSetCatalog::kSavedSetMetadataTrailerByteSize + sizeof(STORAGE_COMPLETE_MAGIC);
+    if (fileSize < trailerTailSize) {
+        file.close();
+        return false;
+    }
+    if (!file.seek(fileSize - trailerTailSize)) {
+        file.close();
+        return false;
+    }
+    const StorageIo trailerIo = storageIoFromFileRead(file);
+    const bool ok = SavedSetCatalog::readSavedSetMetadataTrailer(trailerIo, metadata);
+    file.close();
+    return ok;
+}
+
+size_t StorageManager::listSavedSetFolderEntries(SavedSetCatalog::SavedSetFolderListEntry* entries,
+                                                 size_t maxEntries) {
+    if (entries == nullptr || maxEntries == 0 ||
+        !SD.exists(CurrentSetStorage::kSetsArchiveDir)) {
+        return 0;
+    }
+
+    size_t count = 0;
+    File dir = SD.open(CurrentSetStorage::kSetsArchiveDir);
+    if (!dir) {
+        return 0;
+    }
+    while (true) {
+        File entry = dir.openNextFile();
+        if (!entry) {
+            break;
+        }
+        const bool isDirectory = entry.isDirectory();
+        const char* name = entry.name();
+        entry.close();
+        uint32_t sequence = 0;
+        if (!isDirectory || !parseSavedSetSequence(name, sequence) || sequence == 0) {
+            continue;
+        }
+        const char* baseName = std::strrchr(name, '/');
+        if (baseName != nullptr) {
+            baseName += 1;
+        } else {
+            baseName = name;
+        }
+        if (count < maxEntries) {
+            const int written = std::snprintf(entries[count].folderName,
+                                              sizeof(entries[count].folderName), "%s", baseName);
+            if (written <= 0 ||
+                static_cast<size_t>(written) >= sizeof(entries[count].folderName)) {
+                continue;
+            }
+            entries[count].sequence = sequence;
+        }
+        ++count;
+    }
+    dir.close();
+
+    const size_t sortCount = count < maxEntries ? count : maxEntries;
+    for (size_t i = 0; i + 1 < sortCount; ++i) {
+        for (size_t j = i + 1; j < sortCount; ++j) {
+            if (entries[j].sequence > entries[i].sequence) {
+                const SavedSetCatalog::SavedSetFolderListEntry tmp = entries[i];
+                entries[i] = entries[j];
+                entries[j] = tmp;
+            }
+        }
+    }
+    return count < maxEntries ? count : maxEntries;
+}
+
+bool StorageManager::readSavedSetMetadataForFolder(const char* folderName,
+                                                   SavedSetCatalog::SavedSetMetadata& metadata) {
+    if (folderName == nullptr || folderName[0] == '\0') {
+        return false;
+    }
+    char metaPath[kSavedSetPathCapacity];
+    const int written =
+        std::snprintf(metaPath, sizeof(metaPath), "%s/%s/%s", CurrentSetStorage::kSetsRoot,
+                      folderName, CurrentSetStorage::kSetBinFileName);
+    if (written <= 0 || static_cast<size_t>(written) >= sizeof(metaPath)) {
+        return false;
+    }
+    return readSavedSetMetadataFromMetaPath(metaPath, metadata);
+}
+
+bool StorageManager::readCurrentSetBrowserMetadata(SavedSetCatalog::SavedSetMetadata& metadata) {
+    const uint32_t sequence = currentSetAnchorFields.loadedFromSequence;
+    if (!buildSavedSetMetadata(sequence != 0 ? sequence : 1,
+                               SavedSetCatalog::FolderNamingMode::Unknown,
+                               currentSetLastActiveUnix, metadata)) {
+        return false;
+    }
+    metadata.sequence = sequence;
+    metadata.createdAtUnix = currentSetLastActiveUnix;
+    metadata.userLabel[0] = '\0';
+    return true;
 }
 
 void StorageManager::markCurrentSetLoopSlotDirty(uint8_t trackIndex, uint8_t slotIndex) {
@@ -2221,8 +2553,20 @@ static bool readLoopFromCurrentSetFile(File& file, Loop& loop) {
     if (fileSize < sizeof(STORAGE_COMPLETE_MAGIC)) {
         return false;
     }
-    const size_t payloadSize = fileSize - sizeof(STORAGE_COMPLETE_MAGIC);
-    if (!file.seek(0)) {
+    size_t payloadOffset = 0;
+    if (CurrentWorkspaceStorage::fileStartsWithEpochHeader(file)) {
+        CurrentWorkspaceStorage::EpochFileHeader epochHeader{};
+        const StorageIo epochIo = storageIoFromFileRead(file);
+        if (!CurrentWorkspaceStorage::readEpochFileHeader(epochIo, epochHeader)) {
+            return false;
+        }
+        payloadOffset = CurrentWorkspaceStorage::kEpochFileHeaderByteSize;
+    }
+    if (fileSize < payloadOffset + sizeof(STORAGE_COMPLETE_MAGIC)) {
+        return false;
+    }
+    const size_t payloadSize = fileSize - payloadOffset - sizeof(STORAGE_COMPLETE_MAGIC);
+    if (!file.seek(payloadOffset)) {
         return false;
     }
 
@@ -2284,6 +2628,21 @@ static bool applyLoadedTransportFooter(uint8_t numTracks, const std::vector<uint
 bool StorageManager::loadCurrentSetMetaAndTracks(File& file, const char* setDir, LooperState& state,
                                         std::vector<uint8_t>& activeLoopIndex,
                                         uint8_t& selectedTrackIdx) {
+    if (!CurrentWorkspaceStorage::fileStartsWithEpochHeader(file)) {
+        if (!file.seek(0)) {
+            return false;
+        }
+    } else {
+        CurrentWorkspaceStorage::EpochFileHeader epochHeader{};
+        const StorageIo epochIo = storageIoFromFileRead(file);
+        if (!CurrentWorkspaceStorage::readEpochFileHeader(epochIo, epochHeader)) {
+            Serial.println("[StorageManager] ERROR: Failed to read Current epoch header");
+            return false;
+        }
+        currentWorkspaceEpoch = epochHeader.epoch;
+        deferredSaveWorkspaceEpoch = epochHeader.epoch;
+    }
+
     CurrentSetStorage::MetaHeader metaHeader{};
     const StorageIo metaIo = storageIoFromFileRead(file);
     if (!CurrentSetStorage::readMetaHeader(metaIo, metaHeader)) {
@@ -2295,7 +2654,19 @@ bool StorageManager::loadCurrentSetMetaAndTracks(File& file, const char* setDir,
         Serial.println(metaHeader.containerVersion);
         return false;
     }
+    currentSetLastActiveUnix = metaHeader.lastActiveUnix;
     currentSetAnchorFields = metaHeader.anchor;
+    if (currentSetAnchorFields.loadedFromSequence != 0) {
+        if (!resolveSavedSetFolderNameBySequence(currentSetAnchorFields.loadedFromSequence,
+                                                 currentSetLoadedFromFolder,
+                                                 sizeof(currentSetLoadedFromFolder))) {
+            std::snprintf(currentSetLoadedFromFolder, sizeof(currentSetLoadedFromFolder),
+                          "%05lu",
+                          static_cast<unsigned long>(currentSetAnchorFields.loadedFromSequence));
+        }
+    } else {
+        clearCurrentSetLoadedFromFolder();
+    }
 
     float savedBpm = 0;
     if (!readRaw(file, &savedBpm, sizeof(savedBpm))) {
@@ -2357,10 +2728,7 @@ bool StorageManager::loadCurrentSetMetaAndTracks(File& file, const char* setDir,
 
         for (uint8_t s = 0; s < Config::MAX_LOOPS_PER_TRACK; ++s) {
             char loopPath[64];
-            const int written = std::snprintf(loopPath, sizeof(loopPath), "%s/loop_%02u_%02u.bin",
-                                              setDir, static_cast<unsigned>(t),
-                                              static_cast<unsigned>(s));
-            if (written <= 0 || static_cast<size_t>(written) >= sizeof(loopPath)) {
+            if (!CurrentSetStorage::formatLoopSlotPath(loopPath, sizeof(loopPath), t, s)) {
                 return false;
             }
             if (!SD.exists(loopPath)) {
@@ -2448,10 +2816,19 @@ bool StorageManager::loadCurrentSetMetaAndTracks(File& file, const char* setDir,
 }
 
 bool StorageManager::loadCurrentSetFromDirectory(const char* setDir, LooperState& state) {
-    char metaPath[64];
-    const int written = std::snprintf(metaPath, sizeof(metaPath), "%s/meta.bin", setDir);
-    if (written <= 0 || static_cast<size_t>(written) >= sizeof(metaPath)) {
-        return false;
+    char metaPath[80];
+    if (setDir != nullptr && std::strcmp(setDir, CurrentSetStorage::kCurrentSetDir) == 0) {
+        const int written = std::snprintf(metaPath, sizeof(metaPath), "%s",
+                                        CurrentSetStorage::kCurrentRuntimeBundlePath);
+        if (written <= 0 || static_cast<size_t>(written) >= sizeof(metaPath)) {
+            return false;
+        }
+    } else {
+        const int written = std::snprintf(metaPath, sizeof(metaPath), "%s/%s", setDir,
+                                          CurrentSetStorage::kSetBinFileName);
+        if (written <= 0 || static_cast<size_t>(written) >= sizeof(metaPath)) {
+            return false;
+        }
     }
     File file = SD.open(metaPath, FILE_READ);
     if (!file) {
@@ -2466,6 +2843,7 @@ bool StorageManager::loadCurrentSetFromDirectory(const char* setDir, LooperState
 
 bool StorageManager::loadCurrentSetFromSd(LooperState& state) {
     Serial.println("[StorageManager] Loading CurrentSet from SD...");
+    loadWorkspaceMetaCountersFromSd();
     const bool ok = loadCurrentSetFromDirectory(CurrentSetStorage::kCurrentSetDir, state);
     if (ok) {
         Serial.println("[StorageManager] CurrentSet loaded successfully (v6).");
@@ -2797,7 +3175,7 @@ bool StorageManager::loadState(LooperState& state) {
         if (loadCurrentSetFromSd(state)) {
             SavedSetCatalog::SetIndex index{};
             if (!reconcileSetIndexOnSd(index)) {
-                Serial.println("[StorageManager] WARN: could not reconcile Sets/index.bin");
+                Serial.println("[StorageManager] WARN: could not reconcile MidiLooper/sets/index.bin");
             }
             forceCurrentSetFullLoopWrite = false;
             syncCurrentSetDirtyTrackingFromLoadedState();

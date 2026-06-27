@@ -162,8 +162,10 @@ void Config::loadConfiguration() {
     constexpr int32_t tick16 = static_cast<int32_t>(::Config::TICKS_PER_16TH_STEP);
     
     // Extended transport (ch16; note 40 used for Play/Stop to avoid conflict with 39)
+    // Double-press: load/save set browser. Long-press release: snap detailed window; hold tracks playhead.
     addButton(ButtonConfig(MidiConfig::ExtendedTransport::NOTE_PLAY_STOP, ch16, "Play/Stop")
               .onShortPress(ActionType::TOGGLE_PLAY)
+              .onDoublePress(ActionType::TOGGLE_LOAD_SAVE_MODE)
               .onLongPress(ActionType::CENTER_DETAILED_WINDOW_ON_PLAYHEAD));
     
     addButton(ButtonConfig(MidiConfig::ExtendedTransport::NOTE_SET_LOOP_START, ch16, "Set Loop Start")

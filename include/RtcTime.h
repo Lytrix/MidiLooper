@@ -20,8 +20,11 @@ uint32_t getUnixTime();
 /// True when getUnixTime() is non-zero and on or after 2026-01-01 UTC.
 bool hasValidDateForFolderNaming();
 
-/// Format unix time for display (e.g. "25 June 2026"); empty when invalid.
+/// Format unix time for display (e.g. "25 Jun 2026 19:32", UTC); empty when invalid.
 void formatLastActive(uint32_t unixTime, char* out, size_t outSize);
+
+/// Full date and time for set detail (e.g. "16 July 2026 18:42", UTC); empty when invalid.
+void formatDetailDateTime(uint32_t unixTime, char* out, size_t outSize);
 
 #if defined(PIO_UNIT_TEST_NATIVE)
 void setUnixTimeForTest(uint32_t unixTime);

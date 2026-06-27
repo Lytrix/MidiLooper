@@ -43,6 +43,9 @@ void requestStateTransition(LooperState newState, bool quantize = false); // Que
     void exitEditMode();                   // Exit edit overlay
     void enterSettingsMode();               // Enter settings overlay
     void exitSettingsMode();                // Exit settings overlay
+    void enterLoadSaveMode();               // Enter load/save set browser overlay
+    void exitLoadSaveMode();                // Exit load/save set browser overlay
+    bool isLoadSaveModeActive() const { return loadSaveOverlayActive; }
     void setEditContext(EditContext ctx);   // Change edit context
     EditContext getEditContext();
     // ---
@@ -61,6 +64,7 @@ private:
     bool transitionArmed = false;
     bool editOverlayActive = false;
     bool settingsOverlayActive = false;
+    bool loadSaveOverlayActive = false;
     EditContext editContext = EDIT_NONE;
 };
 

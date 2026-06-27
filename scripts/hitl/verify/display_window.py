@@ -145,6 +145,7 @@ def verify_long_loop_display_window(lines: list[str], args: object) -> dict[str,
         "long_loop_disp_row_count": len(long_loop_rows),
         "enter_note_edit_line": enter_idx,
         "snap_line": snap_idx,
+        "hold_start_line": hold_start_idx,
         "hold_disp_rows": len(hold_rows),
         "expected_loop_len_ticks": expected_loop_len,
     }

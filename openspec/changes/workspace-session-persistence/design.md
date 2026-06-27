@@ -68,23 +68,23 @@ Single root — all persistence under `/Sets/`:
 /Sets/
     index.bin             # SetIndex { uint32_t nextSequence }
     _current/
-        meta.bin
+        workspace.bin
         loop_00_00.bin … loop_07_07.bin
         checkpoints/
             _260625_1842/
-                meta.bin
+                workspace.bin
                 loop_*.bin
     00001/                # UID form when RTC invalid (sequence 001)
-        meta.bin
+        set.bin
         loop_*.bin …
     260625_001/           # date form; first SavedSet is _001 not _000
     260625_003/
 ```
 
-**meta.bin (v6):** `uint32_t containerVersion`, RTC `lastActiveUnix`, BPM, looper state,
+**workspace.bin (v6):** `uint32_t containerVersion`, RTC `lastActiveUnix`, BPM, looper state,
 master loop length, per-track headers (state, muted), per-slot metadata (enabled, muted,
 loopId), footer (selected track, active loop indices), global undo block — semantic equivalent
-of today's monolith sections minus inline loop pool. SavedSet meta adds optional user label and
+of today's monolith sections minus inline loop pool. SavedSet `set.bin` adds optional user label and
 summary stats for browser.
 
 **loop_TT_SS.bin:** Format `loop_%02u_%02u.bin` (e.g. `loop_00_00`, `loop_07_07`). Existing
@@ -107,7 +107,7 @@ All set containers live under `/Sets/`. Catalog enumerates SavedSet folders in *
 Refactor the existing `DeferredSaveStage` FSM to write CurrentSet files instead of a monolith
 offset. Stages become:
 
-1. `CurrentSetMeta` — write `Sets/_current/meta.bin` via temp + rename
+1. `CurrentSetMeta` — write `MidiLooper/current/workspace.bin` via temp + rename
 2. `CurrentSetLoopSlot` — one slot file per slice (`loop_TT_SS.bin` temp → verify → rename)
 3. Completion — update `lastActiveUnix` in meta on successful full CurrentSet flush
 
@@ -126,11 +126,11 @@ Meta write uses the same temp → rename pattern.
 
 ### Decision 4: saveNewSet excludes checkpoints
 
-**saveNewSet** copies `Sets/_current/meta.bin` and all `Sets/_current/loop_*.bin` to
+**saveNewSet** copies `MidiLooper/current/workspace.bin` and all `MidiLooper/current/slots/loop_*.bin` to
 `Sets/NNNNNN/` where `NNNNNN` comes from **SetIndex** `nextSequence`. It SHALL NOT copy
 `Sets/_current/checkpoints/`.
 
-SavedSet is a full loop inventory copy (all 64 slot files + meta) for simpler import in v1.
+SavedSet is a full loop inventory copy (all 64 slot files + `set.bin`) for simpler import in v1.
 
 ### Decision 5: Boot recovery chain
 

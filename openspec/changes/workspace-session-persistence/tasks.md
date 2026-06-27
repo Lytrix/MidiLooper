@@ -1,7 +1,7 @@
 ## 1. Milestone M1 — CurrentSet persistence + boot recovery
 
 - [x] 1.1 Add `RtcTime` module (SNVS init, `getUnixTime`, `formatLastActive`, fallback when no battery).
-- [x] 1.2 Define v6 `meta.bin` schema including dirty anchor fields (`loadedFromSequence`, `lastAnchoredSequence`, `lastMaterialChangeUnix`, `hasMaterialChangesSinceAnchor`).
+- [x] 1.2 Define v6 `workspace.bin` schema including dirty anchor fields (`loadedFromSequence`, `lastAnchoredSequence`, `lastMaterialChangeUnix`, `hasMaterialChangesSinceAnchor`).
 - [x] 1.3 Implement `writeCurrentSetMeta` / `readCurrentSetMeta` with temp → verify → rename under `Sets/_current/`.
 - [x] 1.4 Implement `writeCurrentSetLoopSlot` / `readCurrentSetLoopSlot` per `Sets/_current/loop_TT_SS.bin` (2-digit zero-padded) with per-file `STORAGE_COMPLETE_MAGIC`.
 - [x] 1.5 Refactor `DeferredSaveStage` FSM: retarget from monolith to CurrentSet meta + per-slot files (one slot step per slice).
@@ -18,7 +18,7 @@
 - [x] 2.1 Implement **SetIndex** at `Sets/index.bin`; reconcile sequence from date-form and UID-form folders.
 - [x] 2.2 Implement hybrid folder naming: `YYMMDD_NNN` when RTC ≥ 2026-01-01, else 5-digit UID; sequence from index only.
 - [x] 2.3 Implement `saveNewSet`: allocate sequence → create folder → copy CurrentSet; increment index after success; exclude `checkpoints/`.
-- [x] 2.4 SavedSet `meta.bin`: `sequence`, `folderNamingMode`, label, `createdAtUnix`, summary stats.
+- [x] 2.4 SavedSet `set.bin`: `sequence`, `folderNamingMode`, label, `createdAtUnix`, summary stats.
 - [x] 2.5 Default list label: full date (e.g. `25 June 2026`) when no user label + valid `createdAtUnix`; else UID.
 - [x] 2.6 Document SAVE NEW gesture in `MidiButtonActions` (TBD).
 - [x] 2.7 Native: `test_saved_set_catalog` — hybrid naming, RTC threshold, reconcile, checkpoints excluded.
@@ -26,8 +26,8 @@
 - [x] 2.9 Native: failsafe creates next sequence; skips when CurrentSet unchanged; defers during capture.
 - [x] 2.11 Implement **loadSetIntoCurrent**: auto **saveNewSet** when dirty; copy SavedSet → `_current`; update provenance meta.
 - [x] 2.12 Wire dirty anchor updates on record/overdub/edit/clear/import (same hooks as deferred save).
-- [ ] 2.13 Display: CURRENT always highlighted; `From:` provenance; brief toast on auto-save before load.
-- [ ] 2.14 Native: load dirty CurrentSet → auto SavedSet created → `_current` replaced; clean load skips auto-save.
+- [x] 2.13 Display: CURRENT always highlighted; `From:` provenance; brief toast on auto-save before load.
+- [x] 2.14 Native: load dirty CurrentSet → auto SavedSet created → `_current` replaced; clean load skips auto-save.
 
 ## 3. Milestone M3 — Slot loop import
 
@@ -63,7 +63,10 @@
 - [ ] 6.4 Update `docs/DELIVERABLE_TRACKING.md` row 80 (load/save sets) on archive.
 - [ ] 6.5 `/opsx:archive` when M1–M4 gates pass (M5 may remain open as follow-up change).
 
-**Apply order:** M1 → M2 → M3 → M4 in sequence. Coordinate `DisplayManager` browser work with `long-loop-piano-roll-window` M2 to avoid merge conflicts.
+**Apply order:** M1 → M2 → **see `set-revision-persistence`** for M3+ (this file's M3–M4 superseded).
+
+> **Superseded 2026-06-26:** M3 slot import, M4 RecoveryPoint polish, auto-save-before-load →
+> `openspec/changes/set-revision-persistence/`. See `SUPERSEDED.md`.
 
 **Non-goals reminder:** updateLastSet, jam/Scenes SD fields, lazy slot load, open EditSession RAM restore, SD noun **Session** / `currentSession`.
 

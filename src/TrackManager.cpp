@@ -344,7 +344,6 @@ void TrackManager::handleTransportStop() {
     }
   }
   forceLedUpdate(currentTick);
-  StorageManager::markAllCurrentSetLoopSlotsDirty();
   StorageManager::requestDeferredSaveState(looperState.getLooperState());
 }
 

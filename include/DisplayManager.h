@@ -15,6 +15,7 @@
 #include <cstdint>
 #include "MidiEvent.h"
 #include "Utils/NoteUtils.h"
+#include "SavedSetCatalog.h"
 
 // Shared struct for UI note representation
 using DisplayNote = NoteUtils::DisplayNote;
@@ -41,6 +42,9 @@ public:
     void clearDisplayBuffer();
     /// Emit #CAP DISP snapshot for HITL display verification (capture builds).
     void emitDisplayCaptureSnapshot(const Track& track, uint8_t displaySlot, uint32_t currentTick);
+
+    /// Scroll set list selection in load/save mode (for future button/encoder wiring).
+    void adjustLoadSaveListSelection(int delta);
 
     /// Force cached note rebuild after edit mutations (D2 display refresh).
     void requestNoteInfoRefresh(Track& track);
@@ -128,6 +132,15 @@ private:
     static constexpr uint8_t kDisplaySlotCount = Config::MAX_LOOPS_PER_TRACK;
     uint32_t detailedWindowStartTick_[kDisplaySlotCount] = {};
     uint8_t detailedWindowBars_[kDisplaySlotCount] = {16, 16, 16, 16, 16, 16, 16, 16};
+    uint32_t autoSaveBeforeLoadToastExpiresAtMs_ = 0;
+    char autoSaveBeforeLoadToastText_[24] = {};
+    static constexpr size_t kLoadSaveListCapacity = 16;
+    SavedSetCatalog::SavedSetFolderListEntry loadSaveListEntries_[kLoadSaveListCapacity] = {};
+    size_t loadSaveListCount_ = 0;
+    uint8_t loadSaveListSelection_ = 0;
+    uint8_t loadSaveListScrollOffset_ = 0;
+    bool loadSaveListCacheValid_ = false;
+    bool loadSaveModeWasActive_ = false;
 
     static constexpr float PULSE_SPEED = 1.0f; // Pulses per second (slowed by 40%)
     // Track status rendering
@@ -139,7 +152,15 @@ private:
                            const DisplayNoteVec& notes, int y0, int y1);
     bool shouldAutoFollowDetailedWindow(const Track& track, uint32_t loopLength) const;
     // Info area rendering
-    void drawInfoArea(uint32_t currentTick, Track& selectedTrack, uint8_t displaySlot);
+    void drawInfoArea(uint32_t currentTick, Track& selectedTrack, uint8_t displaySlot, uint32_t nowMs);
+    void refreshLoadSaveListCache();
+    void refreshAutoSaveBeforeLoadToast(uint32_t nowMs);
+    void drawLoadSaveView(uint32_t nowMs);
+    void drawLoadSaveSetDetail(int detailX, const SavedSetCatalog::SavedSetMetadata& metadata,
+                               bool isCurrentRow, const char* folderName, uint32_t nowMs);
+    void drawLoadSaveTrackFilledBar(int x, int y, uint8_t filledSlots, uint8_t maxSlots,
+                                    uint8_t brightness);
+    void drawAutoSaveBeforeLoadToast(int detailX, uint32_t nowMs);
     void drawSidebar(Track& selectedTrack, uint8_t displaySlot);
     void drawSaveStatusIndicator(uint32_t nowMs, int textRight);
     SidebarMode resolveSidebarMode(const Track& selectedTrack, uint8_t displaySlot) const;
