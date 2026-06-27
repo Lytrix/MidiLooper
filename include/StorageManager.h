@@ -7,6 +7,7 @@
 #include <vector>
 #include "DeferredSaveDisplayStatus.h"
 #include "LooperState.h"
+#include "RevisionLoadPolicy.h"
 #include "SavedSetCatalog.h"
 
 #if defined(ARDUINO)
@@ -52,6 +53,18 @@ public:
     static bool isCurrentWorkspaceDirty();
     static uint32_t getCurrentWorkspaceEpoch();
     static uint32_t getLastCommittedWorkspaceEpoch();
+    enum class SetBrowserOverlayMode : uint8_t {
+        Root = 0,
+        DirtyPrompt,
+        MinimalLoading,
+    };
+    static SetBrowserOverlayMode getSetBrowserOverlayMode();
+    static bool isRevisionLoadDirtyPromptActive();
+    static uint8_t getRevisionLoadDirtyPromptSelection();
+    static void adjustRevisionLoadDirtyPromptSelection(int delta);
+    static void confirmRevisionLoadDirtyPromptSaveThenLoad();
+    static void confirmRevisionLoadDirtyPromptDiscard();
+    static void cancelRevisionLoadDirtyPrompt();
     static void requestCommitRevision();
     static bool hasRevisionCommitWork();
     static bool isRevisionCommitActive();
@@ -63,6 +76,9 @@ public:
     static void requestCommitRevisionForHitl();
     static bool cleanupHitlRevisionCommit();
     static void requestLoadRevisionForHitl(uint16_t setId, uint16_t revisionId);
+    static void confirmRevisionLoadDirtyPromptSaveThenLoadForHitl();
+    static void confirmRevisionLoadDirtyPromptDiscardForHitl();
+    static void cancelRevisionLoadDirtyPromptForHitl();
     static bool nukeHitlSetsCatalog();
     static void processHitlSerialCommands();
 #endif

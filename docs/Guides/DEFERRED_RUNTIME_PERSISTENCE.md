@@ -33,11 +33,66 @@ Runtime deferred saves target **`MidiLooper/current/`**:
 | File | Content |
 |------|---------|
 | `workspace.bin` | Epoch/provenance record; v6 interim runtime bundle lives under `temp/runtime.bundle.bin` until transport/global split |
-| `loop_TT_SS.bin` | One slot per file under `slots/` (`loop_00_07.bin`, …); `StorageLoopIo` payload + `STORAGE_COMPLETE_MAGIC` footer |
+| `loop_TT_SS.bin` | One slot per file under `slots/` (`loop_00_07.bin`, …); `StorageLoopIo` payload + **SAVE** token (see below) |
 
-Atomic write pattern per file: `.tmp` → verify completion marker → rename.
+Atomic write pattern per file: `.tmp` → verify **SAVE** token at file end → rename.
 
 Boot: `loadState` → `MidiLooper/current/`; on failure → latest recovery checkpoint → newest SavedSet under `sets/archive/` → empty. v5 `/midilooper_state.raw` migrates once to CurrentSet then quarantines to `/state.bad.{millis}`.
+
+### Persistence tokens: **SAVE** and **SVOK**
+
+**Token** means a **fixed 4-byte ASCII tag** written when an SD save finishes, so load/validate can reject truncated `.tmp` files. The tag **is** the four letters on disk — not a separate abstract id. Use **SAVE** / **SVOK** in docs and logs; reserve **marker** for loop tick / timeline semantics elsewhere.
+
+| Token | Where | Bytes on SD (LE u32) | Meaning |
+|-------|--------|----------------------|---------|
+| **SAVE** | Last 4 bytes of each CurrentSet epoch file (`runtime.bundle.bin`, `loop_TT_SS.bin`, …) | `'S' 'A' 'V' 'E'` → `0x45564153` | Deferred save completed this file |
+| **SVOK** | First u32 of the 12-byte REVPK02 footer on `sets/S####/v####.bin` | `'S' 'V' 'O' 'K'` → `0x53564F4B` | Revision snapshot pack valid (“snapshot OK”) |
+
+**CurrentSet slot file:**
+
+```text
+[epoch header]  optional 16 B when v6 epoch wrapper present
+[payload]       StorageLoopIo v5 slot file body (loop passes on SD) OR runtime bundle body
+[4 B]           SAVE
+```
+
+**REVPK02 revision footer (12 B at end of `v####.bin`):**
+
+```text
+SVOK           u32   must match ASCII SVOK
+payloadCrc32   u32   CRC over full chunk payload stream
+fileSize       u32   total file size (must match SD size)
+```
+
+**Verify:** seek to last 4 bytes (CurrentSet) or read footer (revision); compare **SAVE** or **SVOK** before parsing payload. Write each token **once** per file — a second **SAVE** in the payload corrupts load (revision load bug, 2026-06-27).
+
+**Code:** `CurrentSetStorage::kSaveFileToken` (**SAVE**); `RevisionPackedBlob::kRevisionSvokFileToken` / `RevisionFooter::svokToken` (**SVOK**).
+
+### SD file vocabulary
+
+Data lives in two places — name which one you mean:
+
+| Layer | Domain | Examples |
+|-------|--------|----------|
+| **RAM** | Live loop MIDI — **capture**, **passes**, **editPasses**, PSRAM **chunks** | `Loop::passes`, `NoteEditSession.store`, `LoopEventStore` |
+| **SD card** | Files under `MidiLooper/` on the Teensy **SD card** (FAT) | `loop_TT_SS.bin`, `workspace.bin`, `sets/S####/v####.bin` |
+
+| Term | Meaning | Code examples |
+|------|---------|---------------|
+| **FileToken** | 4-byte ASCII file footer — **SAVE** or **SVOK** | `kSaveFileToken`, `kRevisionSvokFileToken`, `writeSaveFileToken` |
+| **FileHeader** | Fixed bytes at start of a file or revision chunk section | `EpochFileHeader`, `RevisionHeader`, `ChunkHeader` |
+| **Pass file header** | Fixed bytes before one capture/overdub pass body in a **slot file** — always use full name | `CapturePassSlotFileHeader`, `writeDeferredCapturePassHeader` |
+| **Directory entry** | Fixed index row — always spell out entity + `Entry` | `RevisionLoopSlotDirectoryEntry` |
+| **FileBytes** | Exact SD bytes (CRC / streaming) | `revisionChunkHeaderFileBytes`, `measureLoopSlotFileBytes` |
+| **Chunk** | Variable REVPK02 section or RAM PSRAM event chunk — always qualify | revision **LoopSlot** chunk; RAM **chunk** ID |
+| **Epoch** | Workspace save generation counter | `currentEpoch`, `sourceEpoch` |
+| **Slot file** | One loop on SD (`loop_TT_SS.bin`) | `writeLoopPersisted` / `readLoopPersisted` |
+
+**Naming rule:** prefer the **longer spelled-out identifier** so the entity and scope are readable (`CapturePassSlotFileHeader`, not `PassHeader`). Directory/index rows end in **`Entry`** (`RevisionLoopSlotDirectoryEntry`, not `SlotIndexEntry`).
+
+Private encode structs in `.cpp` use `*FileLayout` + local `fileLayout` (`toFileLayout` / `fromFileLayout`).
+
+**Integration:** “wire GPIO in `main`” → **connect** / **hook up** / **integrate** (not SD vocabulary).
 
 ---
 
@@ -64,7 +119,7 @@ flowchart TB
   PROC -->|one slice / loop iter| SD[(MidiLooper/current/)]
   SD --> META[workspace.bin]
   SD --> LOOP[loop_TT_SS.bin]
-  META --> CM[STORAGE_COMPLETE_MAGIC]
+  META --> CM[SAVE token]
   LOOP --> CM
 ```
 

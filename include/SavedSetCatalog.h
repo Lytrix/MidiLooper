@@ -14,7 +14,7 @@ namespace SavedSetCatalog {
 constexpr uint32_t kSavedSetMetaTrailerMagic = 0x44535453UL;  // "SSTD"
 constexpr uint32_t kEightHourFailsafeSeconds = 8UL * 60UL * 60UL;
 constexpr size_t kSavedSetLabelCapacity = 32;
-/// Byte size of on-disk SavedSet metadata trailer (before COMPLETE_MAGIC).
+/// Byte size of on-disk SavedSet metadata trailer (before kSaveFileToken).
 constexpr size_t kSavedSetMetadataTrailerByteSize = 60;
 
 enum class FolderNamingMode : uint8_t {

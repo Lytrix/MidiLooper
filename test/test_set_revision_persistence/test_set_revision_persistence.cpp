@@ -6,11 +6,16 @@
 #include <unity.h>
 #include <vector>
 
+#include "../../src/PersistenceBudget.cpp"
 #include "../../src/CurrentWorkspaceStorage.cpp"
 #include "../../src/PersistenceSchema.cpp"
 #include "../../src/RevisionPackedBlob.cpp"
+#include "../../src/RevisionLoadPolicy.cpp"
 #include "../../src/SetRevisionCatalog.cpp"
 #include "CurrentWorkspaceStorage.h"
+#include "PersistenceBudget.h"
+#include "RevisionCommitPolicy.h"
+#include "RevisionLoadPolicy.h"
 #include "RevisionPackedBlob.h"
 #include "SetRevisionCatalog.h"
 
@@ -87,7 +92,7 @@ std::vector<uint8_t> buildSampleRevisionBlob() {
   const std::vector<uint8_t> loopPayload0(64, 0xDD);
   const std::vector<uint8_t> loopPayload1(48, 0xEE);
 
-  RevisionPackedBlob::SlotIndexEntry entry0{};
+  RevisionPackedBlob::RevisionLoopSlotDirectoryEntry entry0{};
   entry0.trackIndex = 0;
   entry0.slotIndex = 1;
   entry0.occupied = 1;
@@ -96,7 +101,7 @@ std::vector<uint8_t> buildSampleRevisionBlob() {
   entry0.noteCount = 12;
   entry0.bars = 2;
 
-  RevisionPackedBlob::SlotIndexEntry entry1{};
+  RevisionPackedBlob::RevisionLoopSlotDirectoryEntry entry1{};
   entry1.trackIndex = 2;
   entry1.slotIndex = 3;
   entry1.occupied = 1;
@@ -137,9 +142,9 @@ std::vector<uint8_t> buildSampleRevisionBlob() {
   slotIndexBody.insert(slotIndexBody.end(), reinterpret_cast<const uint8_t*>(&reservedPrefix),
                        reinterpret_cast<const uint8_t*>(&reservedPrefix) + sizeof(reservedPrefix));
   MemoryStorageIo entry0Writer(&slotIndexBody);
-  TEST_ASSERT_TRUE(RevisionPackedBlob::writeSlotIndexEntry(entry0Writer.io(), entry0));
+  TEST_ASSERT_TRUE(RevisionPackedBlob::writeRevisionLoopSlotDirectoryEntry(entry0Writer.io(), entry0));
   MemoryStorageIo entry1Writer(&slotIndexBody);
-  TEST_ASSERT_TRUE(RevisionPackedBlob::writeSlotIndexEntry(entry1Writer.io(), entry1));
+  TEST_ASSERT_TRUE(RevisionPackedBlob::writeRevisionLoopSlotDirectoryEntry(entry1Writer.io(), entry1));
   appendChunk(RevisionPackedBlob::ChunkType::SlotIndex, 0, 0, slotIndexBody);
 
   header.chunkCount = 4;
@@ -288,10 +293,10 @@ void test_current_slot_path_formatting() {
   TEST_ASSERT_EQUAL_STRING("/MidiLooper/current/undo/slot_03.bin.tmp", path);
 }
 
-void test_revision_header_wire_size() {
+void test_revision_header_sd_file_byte_size() {
   TEST_ASSERT_EQUAL(128, RevisionPackedBlob::kRevisionHeaderByteSize);
   TEST_ASSERT_EQUAL(8, RevisionPackedBlob::kChunkHeaderByteSize);
-  TEST_ASSERT_EQUAL(32, RevisionPackedBlob::kSlotIndexEntryByteSize);
+  TEST_ASSERT_EQUAL(32, RevisionPackedBlob::kRevisionLoopSlotDirectoryEntryByteSize);
   TEST_ASSERT_EQUAL(12, RevisionPackedBlob::kRevisionFooterByteSize);
 }
 
@@ -312,27 +317,27 @@ void test_revision_blob_parser_without_heap() {
   TEST_ASSERT_EQUAL_UINT32(16, transportLength);
 
   uint16_t slotIndexCount = 0;
-  TEST_ASSERT_TRUE(RevisionPackedBlob::readSlotIndexEntryCountFromRevisionBytes(
+  TEST_ASSERT_TRUE(RevisionPackedBlob::readRevisionLoopSlotDirectoryEntryCountFromRevisionBytes(
       file.data(), file.size(), header, slotIndexCount));
   TEST_ASSERT_EQUAL_UINT16(2, slotIndexCount);
 
-  RevisionPackedBlob::SlotIndexEntry indexedEntries[4]{};
+  RevisionPackedBlob::RevisionLoopSlotDirectoryEntry indexedEntries[4]{};
   uint16_t indexedCount = 0;
-  TEST_ASSERT_TRUE(RevisionPackedBlob::readSlotIndexEntriesFromRevisionBytes(
+  TEST_ASSERT_TRUE(RevisionPackedBlob::readRevisionLoopSlotDirectoryEntriesFromRevisionBytes(
       file.data(), file.size(), header, indexedEntries, 4, indexedCount));
   TEST_ASSERT_EQUAL_UINT16(2, indexedCount);
   TEST_ASSERT_EQUAL_UINT8(0, indexedEntries[0].trackIndex);
   TEST_ASSERT_EQUAL_UINT8(1, indexedEntries[0].slotIndex);
 
-  RevisionPackedBlob::SlotIndexEntry entry0{};
-  TEST_ASSERT_TRUE(RevisionPackedBlob::readSlotIndexEntryFromRevisionBytes(
+  RevisionPackedBlob::RevisionLoopSlotDirectoryEntry entry0{};
+  TEST_ASSERT_TRUE(RevisionPackedBlob::readRevisionLoopSlotDirectoryEntryFromRevisionBytes(
       file.data(), file.size(), header, 0, entry0));
   TEST_ASSERT_EQUAL_UINT8(0, entry0.trackIndex);
   TEST_ASSERT_EQUAL_UINT8(1, entry0.slotIndex);
   TEST_ASSERT_EQUAL_UINT32(64, entry0.bodyLength);
 
-  RevisionPackedBlob::SlotIndexEntry entry1{};
-  TEST_ASSERT_TRUE(RevisionPackedBlob::readSlotIndexEntryFromRevisionBytes(
+  RevisionPackedBlob::RevisionLoopSlotDirectoryEntry entry1{};
+  TEST_ASSERT_TRUE(RevisionPackedBlob::readRevisionLoopSlotDirectoryEntryFromRevisionBytes(
       file.data(), file.size(), header, 1, entry1));
   TEST_ASSERT_EQUAL_UINT8(2, entry1.trackIndex);
   TEST_ASSERT_EQUAL_UINT32(48, entry1.bodyLength);
@@ -340,7 +345,7 @@ void test_revision_blob_parser_without_heap() {
   RevisionPackedBlob::RevisionFooter footer{};
   TEST_ASSERT_TRUE(
       RevisionPackedBlob::validateRevisionFooterFromBytes(file.data(), file.size(), footer));
-  TEST_ASSERT_EQUAL_UINT32(RevisionPackedBlob::kRevisionCompleteMagic, footer.completeMagic);
+  TEST_ASSERT_EQUAL_UINT32(RevisionPackedBlob::kRevisionSvokFileToken, footer.svokToken);
   TEST_ASSERT_EQUAL_UINT32(static_cast<uint32_t>(file.size()), footer.fileSize);
 }
 
@@ -352,7 +357,7 @@ void test_revision_slot_index_parse_ignores_zero_chunk_count() {
   header.chunkCount = 0;
 
   uint16_t slotIndexCount = 0;
-  TEST_ASSERT_TRUE(RevisionPackedBlob::readSlotIndexEntryCountFromRevisionBytes(
+  TEST_ASSERT_TRUE(RevisionPackedBlob::readRevisionLoopSlotDirectoryEntryCountFromRevisionBytes(
       file.data(), file.size(), header, slotIndexCount));
   TEST_ASSERT_EQUAL_UINT16(2, slotIndexCount);
 }
@@ -396,6 +401,93 @@ void test_workspace_dirty_matches_epoch_divergence() {
   TEST_ASSERT_FALSE(CurrentWorkspaceStorage::isWorkspaceDirty(5, 5));
 }
 
+void test_revision_snapshot_source_epoch_idle() {
+  TEST_ASSERT_EQUAL_UINT32(
+      120,
+      CurrentWorkspaceStorage::resolveCompletedWorkspaceEpochForRevisionSnapshot(120, 0, false));
+}
+
+void test_revision_snapshot_source_epoch_during_deferred_save() {
+  TEST_ASSERT_EQUAL_UINT32(
+      119,
+      CurrentWorkspaceStorage::resolveCompletedWorkspaceEpochForRevisionSnapshot(120, 120, true));
+}
+
+void test_revision_snapshot_bumps_live_epoch() {
+  TEST_ASSERT_EQUAL_UINT32(121,
+                           CurrentWorkspaceStorage::workspaceEpochAfterRevisionSnapshot(120));
+}
+
+void test_last_committed_sync_after_revision_commit_complete_clears_dirty() {
+  const uint32_t sourceEpoch = 120;
+  const uint32_t currentAfterSnapshot =
+      CurrentWorkspaceStorage::workspaceEpochAfterRevisionSnapshot(sourceEpoch);
+  const uint32_t lastCommitted =
+      CurrentWorkspaceStorage::syncLastCommittedEpochAfterRevisionCommitComplete(
+          currentAfterSnapshot);
+  TEST_ASSERT_EQUAL_UINT32(121, lastCommitted);
+  TEST_ASSERT_FALSE(
+      CurrentWorkspaceStorage::isWorkspaceDirty(currentAfterSnapshot, lastCommitted));
+}
+
+void test_record_deferred_save_leaves_workspace_dirty_until_commit_complete() {
+  TEST_ASSERT_TRUE(CurrentWorkspaceStorage::isWorkspaceDirty(120, 119));
+}
+
+void test_revision_commit_playing_uses_active_persistence_budget() {
+  TEST_ASSERT_EQUAL_UINT32(Config::maxPersistenceMicrosActive,
+                           PersistenceBudget::resolveMaxPersistenceMicros(false, true));
+}
+
+void test_revision_commit_idle_uses_unbounded_persistence_budget() {
+  TEST_ASSERT_EQUAL_UINT32(Config::maxPersistenceMicrosIdle,
+                           PersistenceBudget::resolveMaxPersistenceMicros(false, false));
+}
+
+void test_persistence_slice_budget_exhausted_during_playing_commit() {
+  TEST_ASSERT_TRUE(PersistenceBudget::persistenceSliceBudgetExhausted(
+      Config::maxPersistenceMicrosActive, Config::maxPersistenceMicrosActive));
+  TEST_ASSERT_FALSE(PersistenceBudget::persistenceSliceBudgetExhausted(
+      Config::maxPersistenceMicrosActive, Config::maxPersistenceMicrosActive - 1U));
+}
+
+void test_persistence_slice_budget_never_exhausted_when_idle() {
+  TEST_ASSERT_FALSE(
+      PersistenceBudget::persistenceSliceBudgetExhausted(Config::maxPersistenceMicrosIdle, 1000000U));
+}
+
+void test_revision_commit_write_path_does_not_materialize() {
+  TEST_ASSERT_FALSE(RevisionCommitPolicy::kWritePathUsesLoopPassesMaterialize);
+}
+
+void test_revision_commit_loop_slot_streams_via_storage_loop_io() {
+  TEST_ASSERT_TRUE(RevisionCommitPolicy::kLoopSlotBodyUsesStorageLoopIoStream);
+}
+
+void test_dirty_load_request_shows_prompt_when_workspace_dirty() {
+  TEST_ASSERT_EQUAL(RevisionLoadPolicy::LoadRequestGate::ShowDirtyPrompt,
+                    RevisionLoadPolicy::resolveLoadRequestGate(true));
+}
+
+void test_dirty_load_request_dispatches_when_workspace_clean() {
+  TEST_ASSERT_EQUAL(RevisionLoadPolicy::LoadRequestGate::DispatchImmediately,
+                    RevisionLoadPolicy::resolveLoadRequestGate(false));
+}
+
+void test_save_then_load_dispatches_after_commit_complete() {
+  TEST_ASSERT_TRUE(RevisionLoadPolicy::shouldDispatchStagedLoadAfterCommitComplete(true, true));
+  TEST_ASSERT_FALSE(RevisionLoadPolicy::shouldDispatchStagedLoadAfterCommitComplete(true, false));
+  TEST_ASSERT_FALSE(RevisionLoadPolicy::shouldDispatchStagedLoadAfterCommitComplete(false, true));
+}
+
+void test_minimal_loading_overlay_during_pipeline() {
+  TEST_ASSERT_TRUE(RevisionLoadPolicy::isMinimalLoadingOverlayActive(true, true, false, false));
+  TEST_ASSERT_TRUE(RevisionLoadPolicy::isMinimalLoadingOverlayActive(true, false, true, false));
+  TEST_ASSERT_TRUE(RevisionLoadPolicy::isMinimalLoadingOverlayActive(true, false, false, true));
+  TEST_ASSERT_FALSE(RevisionLoadPolicy::isMinimalLoadingOverlayActive(false, true, true, true));
+  TEST_ASSERT_FALSE(RevisionLoadPolicy::isMinimalLoadingOverlayActive(true, false, false, false));
+}
+
 int main(int argc, char** argv) {
   (void)argc;
   (void)argv;
@@ -411,12 +503,27 @@ int main(int argc, char** argv) {
   RUN_TEST(test_revision_id_visible_only_after_complete);
   RUN_TEST(test_catalog_path_formatting);
   RUN_TEST(test_current_slot_path_formatting);
-  RUN_TEST(test_revision_header_wire_size);
+  RUN_TEST(test_revision_header_sd_file_byte_size);
   RUN_TEST(test_revision_blob_parser_without_heap);
   RUN_TEST(test_revision_slot_index_parse_ignores_zero_chunk_count);
   RUN_TEST(test_revision_header_rejects_bad_magic);
   RUN_TEST(test_epoch_file_bytes_validate_with_header);
   RUN_TEST(test_epoch_file_bytes_legacy_without_header);
   RUN_TEST(test_workspace_dirty_matches_epoch_divergence);
+  RUN_TEST(test_revision_snapshot_source_epoch_idle);
+  RUN_TEST(test_revision_snapshot_source_epoch_during_deferred_save);
+  RUN_TEST(test_revision_snapshot_bumps_live_epoch);
+  RUN_TEST(test_last_committed_sync_after_revision_commit_complete_clears_dirty);
+  RUN_TEST(test_record_deferred_save_leaves_workspace_dirty_until_commit_complete);
+  RUN_TEST(test_revision_commit_playing_uses_active_persistence_budget);
+  RUN_TEST(test_revision_commit_idle_uses_unbounded_persistence_budget);
+  RUN_TEST(test_persistence_slice_budget_exhausted_during_playing_commit);
+  RUN_TEST(test_persistence_slice_budget_never_exhausted_when_idle);
+  RUN_TEST(test_revision_commit_write_path_does_not_materialize);
+  RUN_TEST(test_revision_commit_loop_slot_streams_via_storage_loop_io);
+  RUN_TEST(test_dirty_load_request_shows_prompt_when_workspace_dirty);
+  RUN_TEST(test_dirty_load_request_dispatches_when_workspace_clean);
+  RUN_TEST(test_save_then_load_dispatches_after_commit_complete);
+  RUN_TEST(test_minimal_loading_overlay_during_pipeline);
   return UNITY_END();
 }

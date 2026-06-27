@@ -2,7 +2,7 @@
 //  Licensed under the PolyForm Noncommercial 1.0.0
 //
 //  REVPK02 — LMDB-inspired revision snapshot: fixed header, typed chunk stream, CRC footer.
-//  LoopSlot chunk bodies use StorageLoopIo v5 wire (recordPass, overdubPasses, editPasses).
+//  LoopSlot chunk bodies use StorageLoopIo v5 slot file layout (recordPass, overdubPasses, editPasses).
 
 #pragma once
 
@@ -15,11 +15,11 @@
 namespace RevisionPackedBlob {
 
 constexpr char kRevisionMagic[] = "REVPK02";
-constexpr uint32_t kRevisionCompleteMagic = 0x53564F4BU;  // "SVOK"
+constexpr uint32_t kRevisionSvokFileToken = 0x53564F4BU;  // "SVOK"
 constexpr uint16_t kRevisionHeaderSize = 128;
 constexpr size_t kRevisionHeaderByteSize = 128;
 constexpr size_t kChunkHeaderByteSize = 8;
-constexpr size_t kSlotIndexEntryByteSize = 32;
+constexpr size_t kRevisionLoopSlotDirectoryEntryByteSize = 32;
 constexpr size_t kRevisionFooterByteSize = 12;
 
 enum class ChunkType : uint8_t {
@@ -53,8 +53,8 @@ struct ChunkHeader {
   uint32_t bodyLength = 0;
 };
 
-/// Directory entry inside a SlotIndex chunk (offset relative to payload start).
-struct SlotIndexEntry {
+/// Directory entry inside a revision SlotIndex chunk (offset relative to payload start).
+struct RevisionLoopSlotDirectoryEntry {
   uint8_t trackIndex = 0;
   uint8_t slotIndex = 0;
   uint8_t occupied = 0;
@@ -68,7 +68,7 @@ struct SlotIndexEntry {
 };
 
 struct RevisionFooter {
-  uint32_t completeMagic = kRevisionCompleteMagic;
+  uint32_t svokToken = kRevisionSvokFileToken;
   uint32_t payloadCrc32 = 0;
   uint32_t fileSize = 0;
 };
@@ -82,12 +82,12 @@ bool readRevisionHeader(const StorageIo& io, RevisionHeader& header);
 bool writeChunkHeader(const StorageIo& io, const ChunkHeader& chunkHeader);
 bool readChunkHeader(const StorageIo& io, ChunkHeader& chunkHeader);
 
-bool writeSlotIndexEntry(const StorageIo& io, const SlotIndexEntry& entry);
-bool readSlotIndexEntry(const StorageIo& io, SlotIndexEntry& entry);
+bool writeRevisionLoopSlotDirectoryEntry(const StorageIo& io, const RevisionLoopSlotDirectoryEntry& entry);
+bool readRevisionLoopSlotDirectoryEntry(const StorageIo& io, RevisionLoopSlotDirectoryEntry& entry);
 
-/// Writes packed wire bytes for incremental payload CRC (matches on-disk layout).
-bool slotIndexEntryWireBytes(const SlotIndexEntry& entry, uint8_t* out, size_t outSize);
-bool chunkHeaderWireBytes(const ChunkHeader& chunkHeader, uint8_t* out, size_t outSize);
+/// SD file bytes for incremental payload CRC (matches on-disk layout).
+bool revisionLoopSlotDirectoryEntryFileBytes(const RevisionLoopSlotDirectoryEntry& entry, uint8_t* out, size_t outSize);
+bool revisionChunkHeaderFileBytes(const ChunkHeader& chunkHeader, uint8_t* out, size_t outSize);
 
 bool writeRevisionFooter(const StorageIo& io, const RevisionFooter& footer);
 bool readRevisionFooterAtOffset(const uint8_t* fileBytes, size_t fileSize,
@@ -98,13 +98,13 @@ bool parseRevisionHeaderFromBytes(const uint8_t* fileBytes, size_t fileSize,
                                   RevisionHeader& headerOut);
 
 /// Reads one SlotIndex entry from a SlotIndex chunk body (after entryCount prefix).
-bool readSlotIndexEntryFromBytes(const uint8_t* slotIndexBody, size_t slotIndexBodySize,
-                                 uint16_t index, SlotIndexEntry& entryOut);
+bool readRevisionLoopSlotDirectoryEntryFromBytes(const uint8_t* slotIndexBody, size_t slotIndexBodySize,
+                                 uint16_t index, RevisionLoopSlotDirectoryEntry& entryOut);
 
 /// Locates the SlotIndex chunk in the payload and reads entry at index.
-bool readSlotIndexEntryFromRevisionBytes(const uint8_t* fileBytes, size_t fileSize,
+bool readRevisionLoopSlotDirectoryEntryFromRevisionBytes(const uint8_t* fileBytes, size_t fileSize,
                                          const RevisionHeader& header, uint16_t index,
-                                         SlotIndexEntry& entryOut);
+                                         RevisionLoopSlotDirectoryEntry& entryOut);
 
 bool validateRevisionFooterFromBytes(const uint8_t* fileBytes, size_t fileSize,
                                      RevisionFooter& footerOut);
@@ -116,21 +116,21 @@ bool findChunkBodyInRevisionBytes(const uint8_t* fileBytes, size_t fileSize,
                                   uint32_t& bodyOffsetInFileOut, uint32_t& bodyLengthOut);
 
 /// Reads SlotIndex entry count from a validated revision byte buffer.
-bool readSlotIndexEntryCountFromRevisionBytes(const uint8_t* fileBytes, size_t fileSize,
+bool readRevisionLoopSlotDirectoryEntryCountFromRevisionBytes(const uint8_t* fileBytes, size_t fileSize,
                                               const RevisionHeader& header,
                                               uint16_t& entryCountOut);
 
 /// Fills slot index entries from SlotIndex chunk (stack buffer, no heap).
-bool readSlotIndexEntriesFromRevisionBytes(const uint8_t* fileBytes, size_t fileSize,
+bool readRevisionLoopSlotDirectoryEntriesFromRevisionBytes(const uint8_t* fileBytes, size_t fileSize,
                                            const RevisionHeader& header,
-                                           SlotIndexEntry* entriesOut, uint16_t maxEntries,
+                                           RevisionLoopSlotDirectoryEntry* entriesOut, uint16_t maxEntries,
                                            uint16_t& entryCountOut);
 
 constexpr size_t kSlotIndexBodyPrefixByteSize = 4;
 
 inline size_t slotIndexChunkBodySize(uint16_t entryCount) {
   return kSlotIndexBodyPrefixByteSize +
-         static_cast<size_t>(entryCount) * kSlotIndexEntryByteSize;
+         static_cast<size_t>(entryCount) * kRevisionLoopSlotDirectoryEntryByteSize;
 }
 
 }  // namespace RevisionPackedBlob

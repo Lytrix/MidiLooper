@@ -16,7 +16,7 @@ struct StorageIo {
   std::function<bool(void*, size_t)> read;
 };
 
-/// v5 on-wire loop block (capture passes + editPasses tail).
+/// v5 loop slot file body in RAM (capture passes + editPasses tail) (capture passes + editPasses tail).
 struct PersistedLoopSnapshot {
   LoopId loopId = kInvalidLoopId;
   uint32_t startLoopTick = 0;
@@ -30,8 +30,8 @@ struct PersistedLoopSnapshot {
 
 using LoopSnapshotRef = std::shared_ptr<PersistedLoopSnapshot>;
 
-/// Legacy v4 take wire entry (recordPass / overdubPass on disk).
-struct PersistedCapturePassWire {
+/// Capture/overdub pass header in loop slot file (v4 take-shaped) (recordPass / overdubPass on disk).
+struct CapturePassSlotFileHeader {
   PassId id = kInvalidPassId;
   uint32_t mergeSequence = 0;
   uint8_t stateRaw = 0;
@@ -39,9 +39,9 @@ struct PersistedCapturePassWire {
   uint32_t sealedAtTick = 0;
 };
 
-bool writePersistedCapturePassWire(const StorageIo& io, const PersistedCapturePassWire& wire,
+bool writeCapturePassSlotFileHeader(const StorageIo& io, const CapturePassSlotFileHeader& passHeader,
                                    const ChunkIdList& chunkRefs);
-bool readPersistedCapturePassWire(const StorageIo& io, PersistedCapturePassWire& wire,
+bool readCapturePassSlotFileHeader(const StorageIo& io, CapturePassSlotFileHeader& passHeader,
                                   ChunkIdList& chunkRefs, uint32_t loopLengthTicks);
 bool writePersistedEditsTail(const StorageIo& io, PassId nextPassId,
                              const EditPassVec& editPasses);
@@ -54,10 +54,14 @@ void resetPersistedCapturePassWriteStatsForTest();
 bool writePersistedLoopSnapshot(const StorageIo& io, const PersistedLoopSnapshot& snapshot);
 bool readPersistedLoopSnapshot(const StorageIo& io, PersistedLoopSnapshot& snapshot);
 
+/// Byte length of loop slot file body produced by writePersistedLoopSnapshot / writeLoopPersisted.
+size_t measureLoopSnapshotSlotFileBytes(const PersistedLoopSnapshot& snapshot);
+
 struct Loop;
 void applySnapshotToLoop(Loop& loop, const PersistedLoopSnapshot& snapshot);
 
 #if !defined(PIO_UNIT_TEST_NATIVE)
+size_t measureLoopSlotFileBytes(const Loop& loop);
 bool writeLoopPersisted(const StorageIo& io, const Loop& loop);
 bool readLoopPersisted(const StorageIo& io, Loop& loop);
 #endif

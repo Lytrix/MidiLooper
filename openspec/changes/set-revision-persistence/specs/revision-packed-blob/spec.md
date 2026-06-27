@@ -70,7 +70,7 @@ Each chunk:
 | `body` | u8[bodyLength] | |
 
 - **`LoopSlot` body** — `StorageLoopIo` v5 wire (`recordPass`, `overdubPasses[]`, `editPasses[]`).
-- **`SlotIndex` body** — `entryCount` (u16), reserved (u16), then **SlotIndexEntry** (32 B × N):
+- **`SlotIndex` body** — `entryCount` (u16), reserved (u16), then **RevisionLoopSlotDirectoryEntry** (32 B × N):
   `trackIndex`, `slotIndex`, `occupied`, `chunkOffset` (relative to payload start), `bodyLength`,
   `loopLengthTicks`, `noteCount`, `bars`, reserved.
 - Commit writes **SlotIndex last** so offsets are final before footer CRC.

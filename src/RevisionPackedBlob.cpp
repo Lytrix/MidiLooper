@@ -10,7 +10,7 @@ namespace {
 
 #pragma pack(push, 1)
 
-struct RevisionHeaderWire {
+struct RevisionHeaderFileLayout {
   char magic[8];
   uint16_t schemaVersion;
   uint16_t headerSize;
@@ -26,7 +26,7 @@ struct RevisionHeaderWire {
   uint8_t reserved[84];
 };
 
-struct ChunkHeaderWire {
+struct RevisionChunkHeaderFileLayout {
   uint8_t type;
   uint8_t trackIndex;
   uint8_t slotIndex;
@@ -34,7 +34,7 @@ struct ChunkHeaderWire {
   uint32_t bodyLength;
 };
 
-struct SlotIndexEntryWire {
+struct RevisionLoopSlotDirectoryEntryFileLayout {
   uint8_t trackIndex;
   uint8_t slotIndex;
   uint8_t occupied;
@@ -47,21 +47,21 @@ struct SlotIndexEntryWire {
   uint8_t reserved1[12];
 };
 
-struct RevisionFooterWire {
-  uint32_t completeMagic;
+struct RevisionFooterFileLayout {
+  uint32_t svokToken;
   uint32_t payloadCrc32;
   uint32_t fileSize;
 };
 
 #pragma pack(pop)
 
-static_assert(sizeof(RevisionHeaderWire) == kRevisionHeaderByteSize,
-              "RevisionHeaderWire size mismatch");
-static_assert(sizeof(ChunkHeaderWire) == kChunkHeaderByteSize, "ChunkHeaderWire size mismatch");
-static_assert(sizeof(SlotIndexEntryWire) == kSlotIndexEntryByteSize,
-              "SlotIndexEntryWire size mismatch");
-static_assert(sizeof(RevisionFooterWire) == kRevisionFooterByteSize,
-              "RevisionFooterWire size mismatch");
+static_assert(sizeof(RevisionHeaderFileLayout) == kRevisionHeaderByteSize,
+              "RevisionHeaderFileLayout size mismatch");
+static_assert(sizeof(RevisionChunkHeaderFileLayout) == kChunkHeaderByteSize, "RevisionChunkHeaderFileLayout size mismatch");
+static_assert(sizeof(RevisionLoopSlotDirectoryEntryFileLayout) == kRevisionLoopSlotDirectoryEntryByteSize,
+              "RevisionLoopSlotDirectoryEntryFileLayout size mismatch");
+static_assert(sizeof(RevisionFooterFileLayout) == kRevisionFooterByteSize,
+              "RevisionFooterFileLayout size mismatch");
 
 bool ioWrite(const StorageIo& io, const void* data, size_t size) {
   return io.write && io.write(data, size);
@@ -71,82 +71,82 @@ bool ioRead(const StorageIo& io, void* data, size_t size) {
   return io.read && io.read(data, size);
 }
 
-RevisionHeaderWire toWire(const RevisionHeader& header) {
-  RevisionHeaderWire wire{};
-  std::memcpy(wire.magic, header.magic, sizeof(wire.magic));
-  wire.schemaVersion = header.schemaVersion;
-  wire.headerSize = header.headerSize;
-  wire.revisionId = header.revisionId;
-  wire.setId = header.setId;
-  wire.sourceEpoch = header.sourceEpoch;
-  wire.createdUnix = header.createdUnix;
-  wire.chunkCount = header.chunkCount;
-  wire.reserved0 = header.reserved0;
-  wire.payloadSize = header.payloadSize;
-  wire.headerCrc32 = header.headerCrc32;
-  wire.workspaceFlags = header.workspaceFlags;
-  return wire;
+RevisionHeaderFileLayout toFileLayout(const RevisionHeader& header) {
+  RevisionHeaderFileLayout fileLayout{};
+  std::memcpy(fileLayout.magic, header.magic, sizeof(fileLayout.magic));
+  fileLayout.schemaVersion = header.schemaVersion;
+  fileLayout.headerSize = header.headerSize;
+  fileLayout.revisionId = header.revisionId;
+  fileLayout.setId = header.setId;
+  fileLayout.sourceEpoch = header.sourceEpoch;
+  fileLayout.createdUnix = header.createdUnix;
+  fileLayout.chunkCount = header.chunkCount;
+  fileLayout.reserved0 = header.reserved0;
+  fileLayout.payloadSize = header.payloadSize;
+  fileLayout.headerCrc32 = header.headerCrc32;
+  fileLayout.workspaceFlags = header.workspaceFlags;
+  return fileLayout;
 }
 
-void fromWire(const RevisionHeaderWire& wire, RevisionHeader& header) {
-  std::memcpy(header.magic, wire.magic, sizeof(header.magic));
-  header.schemaVersion = wire.schemaVersion;
-  header.headerSize = wire.headerSize;
-  header.revisionId = wire.revisionId;
-  header.setId = wire.setId;
-  header.sourceEpoch = wire.sourceEpoch;
-  header.createdUnix = wire.createdUnix;
-  header.chunkCount = wire.chunkCount;
-  header.reserved0 = wire.reserved0;
-  header.payloadSize = wire.payloadSize;
-  header.headerCrc32 = wire.headerCrc32;
-  header.workspaceFlags = wire.workspaceFlags;
+void fromFileLayout(const RevisionHeaderFileLayout& fileLayout, RevisionHeader& header) {
+  std::memcpy(header.magic, fileLayout.magic, sizeof(header.magic));
+  header.schemaVersion = fileLayout.schemaVersion;
+  header.headerSize = fileLayout.headerSize;
+  header.revisionId = fileLayout.revisionId;
+  header.setId = fileLayout.setId;
+  header.sourceEpoch = fileLayout.sourceEpoch;
+  header.createdUnix = fileLayout.createdUnix;
+  header.chunkCount = fileLayout.chunkCount;
+  header.reserved0 = fileLayout.reserved0;
+  header.payloadSize = fileLayout.payloadSize;
+  header.headerCrc32 = fileLayout.headerCrc32;
+  header.workspaceFlags = fileLayout.workspaceFlags;
 }
 
-ChunkHeaderWire toWire(const ChunkHeader& chunkHeader) {
-  ChunkHeaderWire wire{};
-  wire.type = chunkHeader.type;
-  wire.trackIndex = chunkHeader.trackIndex;
-  wire.slotIndex = chunkHeader.slotIndex;
-  wire.reserved = chunkHeader.reserved;
-  wire.bodyLength = chunkHeader.bodyLength;
-  return wire;
+RevisionChunkHeaderFileLayout toFileLayout(const ChunkHeader& chunkHeader) {
+  RevisionChunkHeaderFileLayout fileLayout{};
+  fileLayout.type = chunkHeader.type;
+  fileLayout.trackIndex = chunkHeader.trackIndex;
+  fileLayout.slotIndex = chunkHeader.slotIndex;
+  fileLayout.reserved = chunkHeader.reserved;
+  fileLayout.bodyLength = chunkHeader.bodyLength;
+  return fileLayout;
 }
 
-void fromWire(const ChunkHeaderWire& wire, ChunkHeader& chunkHeader) {
-  chunkHeader.type = wire.type;
-  chunkHeader.trackIndex = wire.trackIndex;
-  chunkHeader.slotIndex = wire.slotIndex;
-  chunkHeader.reserved = wire.reserved;
-  chunkHeader.bodyLength = wire.bodyLength;
+void fromFileLayout(const RevisionChunkHeaderFileLayout& fileLayout, ChunkHeader& chunkHeader) {
+  chunkHeader.type = fileLayout.type;
+  chunkHeader.trackIndex = fileLayout.trackIndex;
+  chunkHeader.slotIndex = fileLayout.slotIndex;
+  chunkHeader.reserved = fileLayout.reserved;
+  chunkHeader.bodyLength = fileLayout.bodyLength;
 }
 
-SlotIndexEntryWire toWire(const SlotIndexEntry& entry) {
-  SlotIndexEntryWire wire{};
-  wire.trackIndex = entry.trackIndex;
-  wire.slotIndex = entry.slotIndex;
-  wire.occupied = entry.occupied;
-  wire.reserved0 = entry.reserved0;
-  wire.chunkOffset = entry.chunkOffset;
-  wire.bodyLength = entry.bodyLength;
-  wire.loopLengthTicks = entry.loopLengthTicks;
-  wire.noteCount = entry.noteCount;
-  wire.bars = entry.bars;
-  std::memcpy(wire.reserved1, entry.reserved1, sizeof(wire.reserved1));
-  return wire;
+RevisionLoopSlotDirectoryEntryFileLayout toFileLayout(const RevisionLoopSlotDirectoryEntry& entry) {
+  RevisionLoopSlotDirectoryEntryFileLayout fileLayout{};
+  fileLayout.trackIndex = entry.trackIndex;
+  fileLayout.slotIndex = entry.slotIndex;
+  fileLayout.occupied = entry.occupied;
+  fileLayout.reserved0 = entry.reserved0;
+  fileLayout.chunkOffset = entry.chunkOffset;
+  fileLayout.bodyLength = entry.bodyLength;
+  fileLayout.loopLengthTicks = entry.loopLengthTicks;
+  fileLayout.noteCount = entry.noteCount;
+  fileLayout.bars = entry.bars;
+  std::memcpy(fileLayout.reserved1, entry.reserved1, sizeof(fileLayout.reserved1));
+  return fileLayout;
 }
 
-void fromWire(const SlotIndexEntryWire& wire, SlotIndexEntry& entry) {
-  entry.trackIndex = wire.trackIndex;
-  entry.slotIndex = wire.slotIndex;
-  entry.occupied = wire.occupied;
-  entry.reserved0 = wire.reserved0;
-  entry.chunkOffset = wire.chunkOffset;
-  entry.bodyLength = wire.bodyLength;
-  entry.loopLengthTicks = wire.loopLengthTicks;
-  entry.noteCount = wire.noteCount;
-  entry.bars = wire.bars;
-  std::memcpy(entry.reserved1, wire.reserved1, sizeof(entry.reserved1));
+void fromFileLayout(const RevisionLoopSlotDirectoryEntryFileLayout& fileLayout, RevisionLoopSlotDirectoryEntry& entry) {
+  entry.trackIndex = fileLayout.trackIndex;
+  entry.slotIndex = fileLayout.slotIndex;
+  entry.occupied = fileLayout.occupied;
+  entry.reserved0 = fileLayout.reserved0;
+  entry.chunkOffset = fileLayout.chunkOffset;
+  entry.bodyLength = fileLayout.bodyLength;
+  entry.loopLengthTicks = fileLayout.loopLengthTicks;
+  entry.noteCount = fileLayout.noteCount;
+  entry.bars = fileLayout.bars;
+  std::memcpy(entry.reserved1, fileLayout.reserved1, sizeof(entry.reserved1));
 }
 
 bool magicMatches(const char* magic) {
@@ -166,16 +166,16 @@ bool findSlotIndexChunkBody(const uint8_t* fileBytes, size_t fileSize,
   const uint8_t* payload = fileBytes + payloadOffset;
   size_t cursor = 0;
   while (cursor + kChunkHeaderByteSize <= header.payloadSize) {
-    ChunkHeaderWire chunkWire{};
-    std::memcpy(&chunkWire, payload + cursor, sizeof(chunkWire));
+    RevisionChunkHeaderFileLayout chunkFileLayout{};
+    std::memcpy(&chunkFileLayout, payload + cursor, sizeof(chunkFileLayout));
     const size_t bodyStart = cursor + kChunkHeaderByteSize;
-    const size_t bodyEnd = bodyStart + static_cast<size_t>(chunkWire.bodyLength);
+    const size_t bodyEnd = bodyStart + static_cast<size_t>(chunkFileLayout.bodyLength);
     if (bodyEnd > header.payloadSize) {
       return false;
     }
-    if (chunkWire.type == static_cast<uint8_t>(ChunkType::SlotIndex)) {
+    if (chunkFileLayout.type == static_cast<uint8_t>(ChunkType::SlotIndex)) {
       bodyOut = payload + bodyStart;
-      bodySizeOut = chunkWire.bodyLength;
+      bodySizeOut = chunkFileLayout.bodyLength;
       return true;
     }
     cursor = bodyEnd;
@@ -186,9 +186,9 @@ bool findSlotIndexChunkBody(const uint8_t* fileBytes, size_t fileSize,
 }  // namespace
 
 uint32_t computeRevisionHeaderChecksum(const RevisionHeader& header) {
-  RevisionHeaderWire wire = toWire(header);
-  wire.headerCrc32 = 0;
-  return PersistenceSchema::crc32(reinterpret_cast<const uint8_t*>(&wire), sizeof(wire));
+  RevisionHeaderFileLayout fileLayout = toFileLayout(header);
+  fileLayout.headerCrc32 = 0;
+  return PersistenceSchema::crc32(reinterpret_cast<const uint8_t*>(&fileLayout), sizeof(fileLayout));
 }
 
 uint32_t computeRevisionPayloadChecksum(const uint8_t* payload, size_t payloadSize) {
@@ -207,16 +207,16 @@ bool writeRevisionHeader(const StorageIo& io, const RevisionHeader& header) {
     std::memcpy(stamped.magic, kRevisionMagic, sizeof(stamped.magic));
   }
   stamped.headerCrc32 = computeRevisionHeaderChecksum(stamped);
-  const RevisionHeaderWire wire = toWire(stamped);
-  return ioWrite(io, &wire, sizeof(wire));
+  const RevisionHeaderFileLayout fileLayout = toFileLayout(stamped);
+  return ioWrite(io, &fileLayout, sizeof(fileLayout));
 }
 
 bool readRevisionHeader(const StorageIo& io, RevisionHeader& header) {
-  RevisionHeaderWire wire{};
-  if (!ioRead(io, &wire, sizeof(wire))) {
+  RevisionHeaderFileLayout fileLayout{};
+  if (!ioRead(io, &fileLayout, sizeof(fileLayout))) {
     return false;
   }
-  fromWire(wire, header);
+  fromFileLayout(fileLayout, header);
   if (!magicMatches(header.magic)) {
     return false;
   }
@@ -235,54 +235,54 @@ bool readRevisionHeader(const StorageIo& io, RevisionHeader& header) {
 }
 
 bool writeChunkHeader(const StorageIo& io, const ChunkHeader& chunkHeader) {
-  const ChunkHeaderWire wire = toWire(chunkHeader);
-  return ioWrite(io, &wire, sizeof(wire));
+  const RevisionChunkHeaderFileLayout fileLayout = toFileLayout(chunkHeader);
+  return ioWrite(io, &fileLayout, sizeof(fileLayout));
 }
 
 bool readChunkHeader(const StorageIo& io, ChunkHeader& chunkHeader) {
-  ChunkHeaderWire wire{};
-  if (!ioRead(io, &wire, sizeof(wire))) {
+  RevisionChunkHeaderFileLayout fileLayout{};
+  if (!ioRead(io, &fileLayout, sizeof(fileLayout))) {
     return false;
   }
-  fromWire(wire, chunkHeader);
+  fromFileLayout(fileLayout, chunkHeader);
   return true;
 }
 
-bool writeSlotIndexEntry(const StorageIo& io, const SlotIndexEntry& entry) {
-  const SlotIndexEntryWire wire = toWire(entry);
-  return ioWrite(io, &wire, sizeof(wire));
+bool writeRevisionLoopSlotDirectoryEntry(const StorageIo& io, const RevisionLoopSlotDirectoryEntry& entry) {
+  const RevisionLoopSlotDirectoryEntryFileLayout fileLayout = toFileLayout(entry);
+  return ioWrite(io, &fileLayout, sizeof(fileLayout));
 }
 
-bool slotIndexEntryWireBytes(const SlotIndexEntry& entry, uint8_t* out, size_t outSize) {
-  if (out == nullptr || outSize < kSlotIndexEntryByteSize) {
+bool revisionLoopSlotDirectoryEntryFileBytes(const RevisionLoopSlotDirectoryEntry& entry, uint8_t* out, size_t outSize) {
+  if (out == nullptr || outSize < kRevisionLoopSlotDirectoryEntryByteSize) {
     return false;
   }
-  const SlotIndexEntryWire wire = toWire(entry);
-  std::memcpy(out, &wire, sizeof(wire));
+  const RevisionLoopSlotDirectoryEntryFileLayout fileLayout = toFileLayout(entry);
+  std::memcpy(out, &fileLayout, sizeof(fileLayout));
   return true;
 }
 
-bool chunkHeaderWireBytes(const ChunkHeader& chunkHeader, uint8_t* out, size_t outSize) {
+bool revisionChunkHeaderFileBytes(const ChunkHeader& chunkHeader, uint8_t* out, size_t outSize) {
   if (out == nullptr || outSize < kChunkHeaderByteSize) {
     return false;
   }
-  const ChunkHeaderWire wire = toWire(chunkHeader);
-  std::memcpy(out, &wire, sizeof(wire));
+  const RevisionChunkHeaderFileLayout fileLayout = toFileLayout(chunkHeader);
+  std::memcpy(out, &fileLayout, sizeof(fileLayout));
   return true;
 }
 
-bool readSlotIndexEntry(const StorageIo& io, SlotIndexEntry& entry) {
-  SlotIndexEntryWire wire{};
-  if (!ioRead(io, &wire, sizeof(wire))) {
+bool readRevisionLoopSlotDirectoryEntry(const StorageIo& io, RevisionLoopSlotDirectoryEntry& entry) {
+  RevisionLoopSlotDirectoryEntryFileLayout fileLayout{};
+  if (!ioRead(io, &fileLayout, sizeof(fileLayout))) {
     return false;
   }
-  fromWire(wire, entry);
+  fromFileLayout(fileLayout, entry);
   return true;
 }
 
 bool writeRevisionFooter(const StorageIo& io, const RevisionFooter& footer) {
-  const RevisionFooterWire wire{footer.completeMagic, footer.payloadCrc32, footer.fileSize};
-  return ioWrite(io, &wire, sizeof(wire));
+  const RevisionFooterFileLayout fileLayout{footer.svokToken, footer.payloadCrc32, footer.fileSize};
+  return ioWrite(io, &fileLayout, sizeof(fileLayout));
 }
 
 bool readRevisionFooterAtOffset(const uint8_t* fileBytes, size_t fileSize,
@@ -291,12 +291,12 @@ bool readRevisionFooterAtOffset(const uint8_t* fileBytes, size_t fileSize,
     return false;
   }
   const size_t footerOffset = fileSize - kRevisionFooterByteSize;
-  RevisionFooterWire wire{};
-  std::memcpy(&wire, fileBytes + footerOffset, sizeof(wire));
-  footer.completeMagic = wire.completeMagic;
-  footer.payloadCrc32 = wire.payloadCrc32;
-  footer.fileSize = wire.fileSize;
-  return footer.completeMagic == kRevisionCompleteMagic && footer.fileSize == fileSize;
+  RevisionFooterFileLayout fileLayout{};
+  std::memcpy(&fileLayout, fileBytes + footerOffset, sizeof(fileLayout));
+  footer.svokToken = fileLayout.svokToken;
+  footer.payloadCrc32 = fileLayout.payloadCrc32;
+  footer.fileSize = fileLayout.fileSize;
+  return footer.svokToken == kRevisionSvokFileToken && footer.fileSize == fileSize;
 }
 
 bool parseRevisionHeaderFromBytes(const uint8_t* fileBytes, size_t fileSize,
@@ -304,9 +304,9 @@ bool parseRevisionHeaderFromBytes(const uint8_t* fileBytes, size_t fileSize,
   if (fileBytes == nullptr || fileSize < kRevisionHeaderByteSize) {
     return false;
   }
-  RevisionHeaderWire wire{};
-  std::memcpy(&wire, fileBytes, sizeof(wire));
-  fromWire(wire, headerOut);
+  RevisionHeaderFileLayout fileLayout{};
+  std::memcpy(&fileLayout, fileBytes, sizeof(fileLayout));
+  fromFileLayout(fileLayout, headerOut);
   if (!magicMatches(headerOut.magic)) {
     return false;
   }
@@ -324,8 +324,8 @@ bool parseRevisionHeaderFromBytes(const uint8_t* fileBytes, size_t fileSize,
   return storedCrc == expected;
 }
 
-bool readSlotIndexEntryFromBytes(const uint8_t* slotIndexBody, size_t slotIndexBodySize,
-                                 uint16_t index, SlotIndexEntry& entryOut) {
+bool readRevisionLoopSlotDirectoryEntryFromBytes(const uint8_t* slotIndexBody, size_t slotIndexBodySize,
+                                 uint16_t index, RevisionLoopSlotDirectoryEntry& entryOut) {
   if (slotIndexBody == nullptr || slotIndexBodySize < kSlotIndexBodyPrefixByteSize) {
     return false;
   }
@@ -335,25 +335,25 @@ bool readSlotIndexEntryFromBytes(const uint8_t* slotIndexBody, size_t slotIndexB
     return false;
   }
   const size_t entryOffset =
-      kSlotIndexBodyPrefixByteSize + static_cast<size_t>(index) * kSlotIndexEntryByteSize;
-  if (entryOffset + kSlotIndexEntryByteSize > slotIndexBodySize) {
+      kSlotIndexBodyPrefixByteSize + static_cast<size_t>(index) * kRevisionLoopSlotDirectoryEntryByteSize;
+  if (entryOffset + kRevisionLoopSlotDirectoryEntryByteSize > slotIndexBodySize) {
     return false;
   }
-  SlotIndexEntryWire wire{};
-  std::memcpy(&wire, slotIndexBody + entryOffset, sizeof(wire));
-  fromWire(wire, entryOut);
+  RevisionLoopSlotDirectoryEntryFileLayout fileLayout{};
+  std::memcpy(&fileLayout, slotIndexBody + entryOffset, sizeof(fileLayout));
+  fromFileLayout(fileLayout, entryOut);
   return true;
 }
 
-bool readSlotIndexEntryFromRevisionBytes(const uint8_t* fileBytes, size_t fileSize,
+bool readRevisionLoopSlotDirectoryEntryFromRevisionBytes(const uint8_t* fileBytes, size_t fileSize,
                                          const RevisionHeader& header, uint16_t index,
-                                         SlotIndexEntry& entryOut) {
+                                         RevisionLoopSlotDirectoryEntry& entryOut) {
   const uint8_t* slotIndexBody = nullptr;
   size_t slotIndexBodySize = 0;
   if (!findSlotIndexChunkBody(fileBytes, fileSize, header, slotIndexBody, slotIndexBodySize)) {
     return false;
   }
-  return readSlotIndexEntryFromBytes(slotIndexBody, slotIndexBodySize, index, entryOut);
+  return readRevisionLoopSlotDirectoryEntryFromBytes(slotIndexBody, slotIndexBodySize, index, entryOut);
 }
 
 bool validateRevisionFooterFromBytes(const uint8_t* fileBytes, size_t fileSize,
@@ -392,17 +392,17 @@ bool findChunkBodyInRevisionBytes(const uint8_t* fileBytes, size_t fileSize,
   const uint8_t* payload = fileBytes + payloadOffset;
   size_t cursor = 0;
   while (cursor + kChunkHeaderByteSize <= header.payloadSize) {
-    ChunkHeaderWire chunkWire{};
-    std::memcpy(&chunkWire, payload + cursor, sizeof(chunkWire));
+    RevisionChunkHeaderFileLayout chunkFileLayout{};
+    std::memcpy(&chunkFileLayout, payload + cursor, sizeof(chunkFileLayout));
     const size_t bodyStart = cursor + kChunkHeaderByteSize;
-    const size_t bodyEnd = bodyStart + static_cast<size_t>(chunkWire.bodyLength);
+    const size_t bodyEnd = bodyStart + static_cast<size_t>(chunkFileLayout.bodyLength);
     if (bodyEnd > header.payloadSize) {
       return false;
     }
-    if (chunkWire.type == static_cast<uint8_t>(type) &&
-        chunkWire.trackIndex == trackIndex && chunkWire.slotIndex == slotIndex) {
+    if (chunkFileLayout.type == static_cast<uint8_t>(type) &&
+        chunkFileLayout.trackIndex == trackIndex && chunkFileLayout.slotIndex == slotIndex) {
       bodyOffsetInFileOut = static_cast<uint32_t>(payloadOffset + bodyStart);
-      bodyLengthOut = chunkWire.bodyLength;
+      bodyLengthOut = chunkFileLayout.bodyLength;
       return true;
     }
     cursor = bodyEnd;
@@ -410,7 +410,7 @@ bool findChunkBodyInRevisionBytes(const uint8_t* fileBytes, size_t fileSize,
   return false;
 }
 
-bool readSlotIndexEntryCountFromRevisionBytes(const uint8_t* fileBytes, size_t fileSize,
+bool readRevisionLoopSlotDirectoryEntryCountFromRevisionBytes(const uint8_t* fileBytes, size_t fileSize,
                                               const RevisionHeader& header,
                                               uint16_t& entryCountOut) {
   entryCountOut = 0;
@@ -422,27 +422,27 @@ bool readSlotIndexEntryCountFromRevisionBytes(const uint8_t* fileBytes, size_t f
   }
   std::memcpy(&entryCountOut, slotIndexBody, sizeof(entryCountOut));
   const size_t expectedSize =
-      kSlotIndexBodyPrefixByteSize + static_cast<size_t>(entryCountOut) * kSlotIndexEntryByteSize;
+      kSlotIndexBodyPrefixByteSize + static_cast<size_t>(entryCountOut) * kRevisionLoopSlotDirectoryEntryByteSize;
   return slotIndexBodySize >= expectedSize;
 }
 
-bool readSlotIndexEntriesFromRevisionBytes(const uint8_t* fileBytes, size_t fileSize,
+bool readRevisionLoopSlotDirectoryEntriesFromRevisionBytes(const uint8_t* fileBytes, size_t fileSize,
                                            const RevisionHeader& header,
-                                           SlotIndexEntry* entriesOut, uint16_t maxEntries,
+                                           RevisionLoopSlotDirectoryEntry* entriesOut, uint16_t maxEntries,
                                            uint16_t& entryCountOut) {
   entryCountOut = 0;
   if (entriesOut == nullptr || maxEntries == 0) {
     return false;
   }
   uint16_t totalEntries = 0;
-  if (!readSlotIndexEntryCountFromRevisionBytes(fileBytes, fileSize, header, totalEntries)) {
+  if (!readRevisionLoopSlotDirectoryEntryCountFromRevisionBytes(fileBytes, fileSize, header, totalEntries)) {
     return false;
   }
   for (uint16_t i = 0; i < totalEntries; ++i) {
     if (i >= maxEntries) {
       return false;
     }
-    if (!readSlotIndexEntryFromRevisionBytes(fileBytes, fileSize, header, i, entriesOut[i])) {
+    if (!readRevisionLoopSlotDirectoryEntryFromRevisionBytes(fileBytes, fileSize, header, i, entriesOut[i])) {
       return false;
     }
     ++entryCountOut;
