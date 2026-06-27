@@ -23,6 +23,13 @@ def count_play_stop_double_press_gestures(lines: list[str]) -> int:
     return sum(1 for line in lines if _GS_DOUBLE_PRESS_RE.search(line))
 
 
+def last_load_save_mode_active(lines: list[str]) -> Optional[int]:
+    events = extract_load_save_mode_events(lines)
+    if not events:
+        return None
+    return events[-1]
+
+
 def verify_load_save_display(lines: list[str], args: object) -> dict[str, object]:
     issues: list[str] = []
     min_double_presses = int(getattr(args, "min_double_presses", 2) or 2)
@@ -42,6 +49,8 @@ def verify_load_save_display(lines: list[str], args: object) -> dict[str, object
         issues.append("missing_load_save_enter_ldsv_1")
     if exit_idx is None:
         issues.append("missing_load_save_exit_ldsv_0")
+    if ldsv and ldsv[-1] != 0:
+        issues.append("load_save_overlay_still_active_at_end")
     if enter_idx is not None and exit_idx is not None and exit_idx <= enter_idx:
         issues.append("load_save_exit_before_enter")
 
@@ -50,6 +59,9 @@ def verify_load_save_display(lines: list[str], args: object) -> dict[str, object
             "insufficient_play_stop_double_press_gestures "
             f"count={double_press_gestures} min={min_double_presses}"
         )
+
+    if enter_idx is not None and double_press_gestures == 0:
+        issues.append("ldsv_enter_without_play_stop_double_press_gesture")
 
     return {
         "ok": not issues,
