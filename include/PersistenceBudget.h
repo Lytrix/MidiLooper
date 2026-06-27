@@ -12,6 +12,9 @@ namespace PersistenceBudget {
 /// Slice budget for deferred save and revision commit while capture or transport is active.
 uint32_t resolveMaxPersistenceMicros(bool captureActive, bool transportBudgetActive);
 
+/// Effective per-loop slice budget (idle mode capped at maxPersistenceMicrosPerLoop).
+uint32_t resolvePersistenceSliceBudgetUs(bool captureActive, bool transportBudgetActive);
+
 /// Same exhaustion rule as `processDeferredSaveState` slice loop.
 bool persistenceSliceBudgetExhausted(uint32_t sliceBudgetUs, uint32_t elapsedUs);
 

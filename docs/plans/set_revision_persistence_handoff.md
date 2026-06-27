@@ -3,7 +3,7 @@
 **Date:** 2026-06-27  
 **OpenSpec:** `openspec/changes/set-revision-persistence/`  
 **Architecture plan:** `docs/plans/set_revision_persistence_architecture_enhancement.md`  
-**Apply command:** `/opsx:apply` on `tasks.md` — **next: task 3.8 (boot recovery chain)**
+**Apply command:** `/opsx:apply` on `tasks.md` — **next: task 3.9 (parked) or section 4 overlay**
 
 ---
 
@@ -139,7 +139,7 @@ Use `--skip-hitl-cleanup` when debugging failed load. Optional dev `!REV_NUKE_SE
 ### Verification (green as of 2026-06-27)
 
 ```bash
-pio test -e native                              # 232 tests
+pio test -e native                              # 251 tests
 pio test -e native -f test_set_revision_persistence
 openspec validate set-revision-persistence
 pio run -e teensy41-capture-serial             # ask before upload
@@ -191,8 +191,8 @@ pio run -e teensy41-capture-serial             # ask before upload
 
 - [x] **3.6** Remove SavedSet shims; stream commit via `StorageLoopIo` / pass shapes (replace opaque copy)
 - [x] **3.7** DIRTY_PROMPT Yes/No/Cancel — pipeline + minimal overlay display
-- [ ] **3.8** Boot: Current epoch → derived rev → latest → recovery → empty (**next**)
-- [ ] **3.9** 8h failsafe when epochs diverge > 8h
+- [x] **3.8** Boot: Current epoch → derived rev → latest → recovery → empty
+- [ ] **3.9** **Parked** — 8h failsafe when epochs diverge > 8h (see `recovery-boot` spec; defer until field testing confirms revision-commit vs legacy SavedSet failsafe — `processSavedSetFailsafe` still runs today)
 
 **Open engineering items (not separate tasks):**
 
@@ -239,9 +239,20 @@ sets    = immutable revision history  →  MidiLooper/sets/
 
 ---
 
-## Boot / recovery (spec — not fully implemented)
+## Boot / recovery (shipped 3.8)
 
-Order: (1) highest valid `MidiLooper/current/` epoch → (2) exact derived `v####.bin` → (3) latest validated on Set → (4) `recovery/checkpoints/` → (5) empty.
+Order on boot:
+
+1. Boot hygiene — discard incomplete `v####.bin.tmp` under `sets/S####/revisions/`
+2. **Current workspace** — highest valid epoch (`loadCurrentWorkspaceAtBoot`)
+3. **Derived revision** — `workspace.bin` provenance → synchronous deferred load
+4. **Latest validated revision** on that Set (when derived fails or differs)
+5. **Recovery checkpoints** — `MidiLooper/recovery/checkpoints/`
+6. **Empty** Current
+
+`BootRecoveryPolicy` — native-tested plan/fallback/epoch-scan helpers. Firmware: `validateEpochFileOnSd`, `discardIncompleteRevisionTempFilesOnSd`, `runBootRevisionLoadSynchronously`.
+
+SavedSet fallback removed from boot chain (brownfield v5 monolith migration unchanged).
 
 ---
 
@@ -266,10 +277,20 @@ Order: (1) highest valid `MidiLooper/current/` epoch → (2) exact derived `v###
 | HITL serial | `!REV_LOAD_DIRTY_YES`, `!REV_LOAD_DIRTY_NO`, `!REV_LOAD_DIRTY_CANCEL` |
 | Native | `RevisionLoadPolicy` + 4 dirty-pipeline tests |
 
+### Section 3.8 — Boot recovery chain (shipped 2026-06-27)
+
+| Item | Detail |
+|------|--------|
+| Step 1 | `loadCurrentWorkspaceAtBoot` — scan down from `workspace.bin` epoch; ignore partial successor slot epochs |
+| Step 2–3 | `attemptBootRecoveryChain` — derived revision then latest on Set via `runBootRevisionLoadSynchronously` |
+| Step 4 | `tryLoadLatestRecoveryPoint` (unchanged path layout) |
+| Hygiene | `discardIncompleteRevisionTempFilesOnSd` at `loadState` |
+| Policy | `BootRecoveryPolicy` + 5 native tests |
+| Removed | SavedSet newest-folder fallback from boot chain |
+
 ## Suggested next-chat prompt
 
 ```text
-/opsx:apply set-revision-persistence — task 3.8 (boot recovery chain).
+/opsx:apply set-revision-persistence — section 4 overlay or parked 3.9.
 Read docs/plans/set_revision_persistence_handoff.md first.
-Run pio test -e native after changes.
 ```

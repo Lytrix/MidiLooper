@@ -13,6 +13,7 @@
 #include "RevisionPackedBlob.h"
 #include "RevisionCommitPolicy.h"
 #include "RevisionLoadPolicy.h"
+#include "BootRecoveryPolicy.h"
 #include "PersistenceSchema.h"
 #include "SavedSetCatalog.h"
 #include "RtcTime.h"
@@ -199,6 +200,21 @@ static bool readGlobalUndoStack(File& file, GlobalUndoStack& stack) {
     }
     return true;
 }
+
+static void applyLoadedTrackStateAfterLoopSlots(Track& track, TrackState loadedTrackState,
+                                                bool anySlotHasEvents, bool muted);
+static bool loadLoopSlotFromCurrentSetSd(uint8_t trackIndex, uint8_t slotIndex, Track& track,
+                                         bool& anySlotHasEventsOut);
+static bool readCurrentSetTrackSlotMetadata(File& file, uint8_t trackIndex, Track& track,
+                                            TrackState& loadedTrackStateOut, bool& mutedOut);
+static bool readCurrentSetFilePreamble(File& file, LooperState& loadedLooperStateOut,
+                                       uint32_t& masterLoopLengthOut, uint8_t& numTracksOut);
+static bool readCurrentSetFileEpilogue(File& file, uint8_t numTracks,
+                                       std::vector<uint8_t>& activeLoopIndex,
+                                       uint8_t& selectedTrackIdxOut);
+static bool applyLoadedTransportFooter(uint8_t numTracks, const std::vector<uint8_t>& activeLoopIndex,
+                                       uint8_t selectedTrackIdx, LooperState& state,
+                                       LooperState loadedLooperState, uint32_t masterLoopLength);
 
 namespace {
 bool deferredSavePending = false;
@@ -398,6 +414,13 @@ enum class RevisionLoadWriteStage : uint8_t {
     WriteLoopSlots,
 };
 
+enum class RevisionLoadReloadRamStage : uint8_t {
+    WriteWorkspaceMeta = 0,
+    ReadMetaHeaders,
+    LoadLoopSlot,
+    ReadFooter,
+};
+
 bool revisionLoadPending = false;
 bool revisionLoadInProgress = false;
 bool revisionLoadSdIoActive = false;
@@ -425,6 +448,9 @@ DeferredLoopWriteStage revisionLoadLoopWriteStage = DeferredLoopWriteStage::Head
 uint32_t lastRevisionLoadBlockedLogAtMs = 0;
 bool revisionLoadUsedDefaultTransport = false;
 bool revisionLoadDisplayRefreshPending = false;
+bool bootRevisionRecoveryPending = false;
+uint16_t bootRevisionRecoverySetId = 0;
+uint16_t bootRevisionRecoveryRevisionId = 0;
 bool revisionLoadRequestStaged = false;
 uint16_t revisionLoadStagedSetId = 0;
 uint16_t revisionLoadStagedRevisionId = 0;
@@ -432,6 +458,19 @@ bool revisionLoadDirtyPromptActive = false;
 uint8_t revisionLoadDirtyPromptSelection = 0;
 bool revisionLoadPipelineActive = false;
 bool revisionLoadSaveThenLoadPipeline = false;
+RevisionLoadReloadRamStage revisionLoadReloadRamStage = RevisionLoadReloadRamStage::WriteWorkspaceMeta;
+File revisionLoadReloadMetaFile;
+bool revisionLoadReloadMetaFileOpen = false;
+uint8_t revisionLoadReloadTrackCursor = 0;
+uint8_t revisionLoadReloadSlotCursor = 0;
+uint8_t revisionLoadReloadNumTracks = 0;
+bool revisionLoadReloadAnySlotHasEvents[Config::NUM_TRACKS] = {};
+TrackState revisionLoadReloadLoadedTrackState[Config::NUM_TRACKS] = {};
+bool revisionLoadReloadMuted[Config::NUM_TRACKS] = {};
+std::vector<uint8_t> revisionLoadReloadActiveLoopIndex;
+uint8_t revisionLoadReloadSelectedTrackIdx = 0;
+LooperState revisionLoadReloadLooperState = LOOPER_IDLE;
+uint32_t revisionLoadReloadMasterLoopLength = 0;
 
 #if defined(SESSION_CAPTURE)
 struct HitlRevisionCommitBackup {
@@ -602,6 +641,26 @@ static void stabilizeBootMemoryAfterLoad() {
     trackManager.prewarmPlaybackRuntime();
 }
 
+static void resetLoopSlotToEmpty(Loop& loop, uint8_t slotIndex) {
+    loop.discardPendingCapturePass();
+    loop.discardCapture();
+    loop.resetPassTimeline();
+    loop.loopId = static_cast<LoopId>(slotIndex);
+    loop.startLoopTick = 0;
+    loop.loopLengthTicks = 0;
+    loop.loopStartTick = 0;
+    loop.nextPassId_ = 1;
+    loop.nextMergeSequence_ = 0;
+    loop.lastPublishedPassId_ = kInvalidPassId;
+    loop.lastTickInLoop = 0;
+    loop.nextEventIndex = 0;
+    loop.clearEditStateDirty();
+    loop.visualCache.clear();
+    loop.capturePreview.clear();
+    loop.pendingVisualDelta.clear();
+    loop.invalidateCaches();
+}
+
 void resetTracksAfterFailedLoad() {
     trackManager.setMasterLoopLength(0);
     for (uint8_t t = 0; t < trackManager.getTrackCount(); ++t) {
@@ -614,24 +673,7 @@ void resetTracksAfterFailedLoad() {
         for (uint8_t s = 0; s < Config::MAX_LOOPS_PER_TRACK; ++s) {
             trackManager.setSlotEnabled(t, s, false);
             trackManager.setSlotMuted(t, s, false);
-            Loop& loop = track.getLoop(s);
-            loop.discardPendingCapturePass();
-            loop.discardCapture();
-            loop.resetPassTimeline();
-            loop.loopId = static_cast<LoopId>(s);
-            loop.startLoopTick = 0;
-            loop.loopLengthTicks = 0;
-            loop.loopStartTick = 0;
-            loop.nextPassId_ = 1;
-            loop.nextMergeSequence_ = 0;
-            loop.lastPublishedPassId_ = kInvalidPassId;
-            loop.lastTickInLoop = 0;
-            loop.nextEventIndex = 0;
-            loop.clearEditStateDirty();
-            loop.visualCache.clear();
-            loop.capturePreview.clear();
-            loop.pendingVisualDelta.clear();
-            loop.invalidateCaches();
+            resetLoopSlotToEmpty(track.getLoop(s), s);
         }
     }
     trackManager.setSelectedTrack(0);
@@ -1303,6 +1345,12 @@ bool isCaptureActiveForPersistence() {
 
 uint32_t resolveMaxPersistenceMicros(const LooperState& state) {
     return PersistenceBudget::resolveMaxPersistenceMicros(
+        isCaptureActiveForPersistence(),
+        state == LOOPER_PLAYING || state == LOOPER_OVERDUBBING || state == LOOPER_RECORDING);
+}
+
+uint32_t resolvePersistenceSliceBudgetUs(const LooperState& state) {
+    return PersistenceBudget::resolvePersistenceSliceBudgetUs(
         isCaptureActiveForPersistence(),
         state == LOOPER_PLAYING || state == LOOPER_OVERDUBBING || state == LOOPER_RECORDING);
 }
@@ -2198,6 +2246,26 @@ void clearRevisionLoadPromptAndPipelineState() {
     revisionLoadSaveThenLoadPipeline = false;
 }
 
+void resetRevisionLoadReloadRamState() {
+    if (revisionLoadReloadMetaFileOpen) {
+        revisionLoadReloadMetaFile.close();
+        revisionLoadReloadMetaFileOpen = false;
+    }
+    revisionLoadReloadRamStage = RevisionLoadReloadRamStage::WriteWorkspaceMeta;
+    revisionLoadReloadTrackCursor = 0;
+    revisionLoadReloadSlotCursor = 0;
+    revisionLoadReloadNumTracks = 0;
+    revisionLoadReloadActiveLoopIndex.clear();
+    revisionLoadReloadSelectedTrackIdx = 0;
+    revisionLoadReloadLooperState = LOOPER_IDLE;
+    revisionLoadReloadMasterLoopLength = 0;
+    for (uint8_t t = 0; t < Config::NUM_TRACKS; ++t) {
+        revisionLoadReloadAnySlotHasEvents[t] = false;
+        revisionLoadReloadLoadedTrackState[t] = TRACK_EMPTY;
+        revisionLoadReloadMuted[t] = false;
+    }
+}
+
 void dispatchStagedRevisionLoad() {
     if (!revisionLoadRequestStaged) {
         return;
@@ -2246,6 +2314,7 @@ void resetRevisionLoadJobState() {
     for (uint16_t i = 0; i < kMaxRevisionLoopIndexEntries; ++i) {
         revisionLoadSlotDirectoryEntries[i] = RevisionPackedBlob::RevisionLoopSlotDirectoryEntry{};
     }
+    resetRevisionLoadReloadRamState();
     clearRevisionLoadPromptAndPipelineState();
 }
 
@@ -2858,24 +2927,100 @@ bool stepRevisionLoadWrite() {
 }
 
 bool stepRevisionLoadReloadRam(LooperState& state) {
-    currentWorkspaceEpoch = revisionLoadWorkspaceEpoch;
-    lastCommittedWorkspaceEpoch = revisionLoadWorkspaceEpoch;
-    workspaceDerivedFromSetId = revisionLoadHeader.setId;
-    workspaceDerivedFromRevisionId = revisionLoadHeader.revisionId;
-    if (!writeWorkspaceMetaAfterDeferredSave()) {
-        Serial.println("[StorageManager] ERROR: Revision load failed writing workspace.bin");
-        return false;
+    switch (revisionLoadReloadRamStage) {
+        case RevisionLoadReloadRamStage::WriteWorkspaceMeta:
+            currentWorkspaceEpoch = revisionLoadWorkspaceEpoch;
+            lastCommittedWorkspaceEpoch = revisionLoadWorkspaceEpoch;
+            workspaceDerivedFromSetId = revisionLoadHeader.setId;
+            workspaceDerivedFromRevisionId = revisionLoadHeader.revisionId;
+            if (!writeWorkspaceMetaAfterDeferredSave()) {
+                Serial.println("[StorageManager] ERROR: Revision load failed writing workspace.bin");
+                return false;
+            }
+            resetTracksAfterFailedLoad();
+            revisionLoadReloadMetaFile =
+                SD.open(CurrentSetStorage::kCurrentRuntimeBundlePath, FILE_READ);
+            if (!revisionLoadReloadMetaFile) {
+                Serial.println("[StorageManager] ERROR: Revision load failed opening runtime bundle");
+                return false;
+            }
+            revisionLoadReloadMetaFileOpen = true;
+            revisionLoadReloadRamStage = RevisionLoadReloadRamStage::ReadMetaHeaders;
+            return true;
+
+        case RevisionLoadReloadRamStage::ReadMetaHeaders: {
+            if (!readCurrentSetFilePreamble(revisionLoadReloadMetaFile, revisionLoadReloadLooperState,
+                                            revisionLoadReloadMasterLoopLength,
+                                            revisionLoadReloadNumTracks)) {
+                return false;
+            }
+            revisionLoadReloadActiveLoopIndex.assign(revisionLoadReloadNumTracks, 0);
+            for (uint8_t t = 0; t < revisionLoadReloadNumTracks; ++t) {
+                Track& track = trackManager.getTrack(t);
+                if (!readCurrentSetTrackSlotMetadata(revisionLoadReloadMetaFile, t, track,
+                                                     revisionLoadReloadLoadedTrackState[t],
+                                                     revisionLoadReloadMuted[t])) {
+                    return false;
+                }
+                revisionLoadReloadAnySlotHasEvents[t] = false;
+            }
+            revisionLoadReloadTrackCursor = 0;
+            revisionLoadReloadSlotCursor = 0;
+            revisionLoadReloadRamStage = RevisionLoadReloadRamStage::LoadLoopSlot;
+            return true;
+        }
+
+        case RevisionLoadReloadRamStage::LoadLoopSlot: {
+            if (revisionLoadReloadTrackCursor >= revisionLoadReloadNumTracks) {
+                revisionLoadReloadRamStage = RevisionLoadReloadRamStage::ReadFooter;
+                return true;
+            }
+            Track& track = trackManager.getTrack(revisionLoadReloadTrackCursor);
+            if (!loadLoopSlotFromCurrentSetSd(revisionLoadReloadTrackCursor,
+                                              revisionLoadReloadSlotCursor, track,
+                                              revisionLoadReloadAnySlotHasEvents
+                                                  [revisionLoadReloadTrackCursor])) {
+                return false;
+            }
+            ++revisionLoadReloadSlotCursor;
+            if (revisionLoadReloadSlotCursor >= Config::MAX_LOOPS_PER_TRACK) {
+                applyLoadedTrackStateAfterLoopSlots(
+                    track, revisionLoadReloadLoadedTrackState[revisionLoadReloadTrackCursor],
+                    revisionLoadReloadAnySlotHasEvents[revisionLoadReloadTrackCursor],
+                    revisionLoadReloadMuted[revisionLoadReloadTrackCursor]);
+                ++revisionLoadReloadTrackCursor;
+                revisionLoadReloadSlotCursor = 0;
+            }
+            return true;
+        }
+
+        case RevisionLoadReloadRamStage::ReadFooter: {
+            if (!readCurrentSetFileEpilogue(revisionLoadReloadMetaFile, revisionLoadReloadNumTracks,
+                                            revisionLoadReloadActiveLoopIndex,
+                                            revisionLoadReloadSelectedTrackIdx)) {
+                return false;
+            }
+            if (revisionLoadReloadMetaFileOpen) {
+                revisionLoadReloadMetaFile.close();
+                revisionLoadReloadMetaFileOpen = false;
+            }
+            if (!applyLoadedTransportFooter(revisionLoadReloadNumTracks,
+                                            revisionLoadReloadActiveLoopIndex,
+                                            revisionLoadReloadSelectedTrackIdx, state,
+                                            revisionLoadReloadLooperState,
+                                            revisionLoadReloadMasterLoopLength)) {
+                return false;
+            }
+            forceCurrentSetFullLoopWrite = false;
+            syncCurrentSetDirtyTrackingFromLoadedState();
+            clearCurrentSetLoadedFromFolder();
+            currentSetAnchorFields = CurrentSetStorage::AnchorFields{};
+            resetRevisionLoadReloadRamState();
+            revisionLoadStage = RevisionLoadStage::Complete;
+            return true;
+        }
     }
-    if (!StorageManager::loadCurrentWorkspaceFromSd(state)) {
-        Serial.println("[StorageManager] ERROR: Revision load failed reloading current workspace");
-        return false;
-    }
-    forceCurrentSetFullLoopWrite = false;
-    syncCurrentSetDirtyTrackingFromLoadedState();
-    clearCurrentSetLoadedFromFolder();
-    currentSetAnchorFields = CurrentSetStorage::AnchorFields{};
-    revisionLoadStage = RevisionLoadStage::Complete;
-    return true;
+    return false;
 }
 
 bool stepRevisionLoadComplete() {
@@ -4320,13 +4465,27 @@ void StorageManager::processDeferredSaveState(const LooperState& state) {
     revisionCommitSdIoActive = false;
     revisionLoadSdIoActive = false;
 
-    const uint32_t sliceBudgetUs = resolveMaxPersistenceMicros(state);
+    const uint32_t sliceBudgetUs = resolvePersistenceSliceBudgetUs(state);
     const uint32_t sliceStartUs = micros();
 
     auto sliceBudgetExhausted = [&]() {
         return PersistenceBudget::persistenceSliceBudgetExhausted(sliceBudgetUs,
                                                                   micros() - sliceStartUs);
     };
+
+    if (bootRevisionRecoveryPending && !revisionLoadPending && !revisionLoadInProgress &&
+        !revisionCommitPending && !revisionCommitInProgress && !deferredSavePending &&
+        !deferredSaveInProgress) {
+        bootRevisionRecoveryPending = false;
+        revisionLoadSetId = bootRevisionRecoverySetId;
+        revisionLoadRevisionId = bootRevisionRecoveryRevisionId;
+        revisionLoadPending = true;
+        revisionLoadPipelineActive = true;
+        Serial.print("[StorageManager] Boot recovery: queued revision load S");
+        Serial.print(revisionLoadSetId);
+        Serial.print(" v");
+        Serial.println(revisionLoadRevisionId);
+    }
 
     while (!sliceBudgetExhausted()) {
         const bool revisionBlockedByDeferredSave =
@@ -5061,27 +5220,97 @@ static bool readLoopFromCurrentSetFile(File& file, Loop& loop) {
     return readRaw(file, &magic, sizeof(magic)) && magic == CurrentSetStorage::kSaveFileToken;
 }
 
-static bool applyLoadedTransportFooter(uint8_t numTracks, const std::vector<uint8_t>& activeLoopIndex,
-                                       uint8_t selectedTrackIdx, LooperState& state,
-                                       LooperState loadedLooperState, uint32_t masterLoopLength) {
-    state = loadedLooperState;
-    trackManager.setMasterLoopLength(masterLoopLength);
-    for (uint8_t t = 0; t < numTracks; ++t) {
-        trackManager.getTrack(t).setActiveLoopIndex(activeLoopIndex[t]);
-        trackManager.setSelectedSlotIndex(t, activeLoopIndex[t]);
+static void applyLoadedTrackStateAfterLoopSlots(Track& track, TrackState loadedTrackState,
+                                                bool anySlotHasEvents, bool muted) {
+    if (loadedTrackState == TRACK_RECORDING || loadedTrackState == TRACK_ARMED ||
+        loadedTrackState == TRACK_STOPPED_RECORDING || loadedTrackState == TRACK_PLAYING ||
+        loadedTrackState == TRACK_OVERDUBBING) {
+        loadedTrackState = anySlotHasEvents ? TRACK_STOPPED : TRACK_EMPTY;
     }
-    if (selectedTrackIdx < Config::NUM_TRACKS) {
-        trackManager.setSelectedTrack(selectedTrackIdx);
-    } else {
-        trackManager.setSelectedTrack(0);
+    if (loadedTrackState == TRACK_EMPTY && anySlotHasEvents) {
+        loadedTrackState = TRACK_STOPPED;
     }
-    stabilizeBootMemoryAfterLoad();
+    track.forceSetState(loadedTrackState);
+    if (muted != track.isMuted()) {
+        track.toggleMuteTrack();
+    }
+}
+
+static bool loadLoopSlotFromCurrentSetSd(uint8_t trackIndex, uint8_t slotIndex, Track& track,
+                                         bool& anySlotHasEventsOut) {
+    char loopPath[64];
+    if (!CurrentSetStorage::formatLoopSlotPath(loopPath, sizeof(loopPath), trackIndex, slotIndex)) {
+        return false;
+    }
+    Loop& loop = track.getLoop(slotIndex);
+    if (!SD.exists(loopPath)) {
+        resetLoopSlotToEmpty(loop, slotIndex);
+        return true;
+    }
+    if (!CurrentSetStorage::verifySaveFileTokenAtPath(loopPath)) {
+        Serial.print("[StorageManager] WARN: loop file incomplete, treating slot as empty ");
+        Serial.println(loopPath);
+        resetLoopSlotToEmpty(loop, slotIndex);
+        return true;
+    }
+    File loopFile = SD.open(loopPath, FILE_READ);
+    if (!loopFile) {
+        Serial.print("[StorageManager] WARN: could not open loop file, treating slot as empty ");
+        Serial.println(loopPath);
+        resetLoopSlotToEmpty(loop, slotIndex);
+        return true;
+    }
+    const bool readOk = readLoopFromCurrentSetFile(loopFile, loop);
+    loopFile.close();
+    if (!readOk) {
+        Serial.print("[StorageManager] WARN: loop read failed, treating slot as empty ");
+        Serial.println(loopPath);
+        resetLoopSlotToEmpty(loop, slotIndex);
+        return true;
+    }
+    if (loop.hasPublishedEvents()) {
+        anySlotHasEventsOut = true;
+    }
     return true;
 }
 
-bool StorageManager::loadCurrentSetMetaAndTracks(File& file, const char* setDir, LooperState& state,
-                                        std::vector<uint8_t>& activeLoopIndex,
-                                        uint8_t& selectedTrackIdx) {
+static bool readCurrentSetTrackSlotMetadata(File& file, uint8_t trackIndex, Track& track,
+                                            TrackState& loadedTrackStateOut, bool& mutedOut) {
+    track.ensureLoopsAllocated();
+
+    uint32_t trackStateRaw = 0;
+    if (!readRaw(file, &trackStateRaw, sizeof(trackStateRaw))) {
+        return false;
+    }
+    loadedTrackStateOut = static_cast<TrackState>(trackStateRaw);
+
+    bool muted = false;
+    if (!readRaw(file, &muted, sizeof(muted))) {
+        return false;
+    }
+    mutedOut = muted;
+
+    for (uint8_t s = 0; s < Config::MAX_LOOPS_PER_TRACK; ++s) {
+        bool slotEnabled = false;
+        bool slotMuted = false;
+        LoopId slotLoopId = kInvalidLoopId;
+        if (!readRaw(file, &slotEnabled, sizeof(slotEnabled)) ||
+            !readRaw(file, &slotMuted, sizeof(slotMuted)) ||
+            !readRaw(file, &slotLoopId, sizeof(slotLoopId))) {
+            return false;
+        }
+        if (slotLoopId == kInvalidLoopId || slotLoopId >= Config::MAX_LOOPS_PER_TRACK) {
+            slotLoopId = static_cast<LoopId>(s);
+        }
+        trackManager.setSlotEnabled(trackIndex, s, slotEnabled);
+        trackManager.setSlotMuted(trackIndex, s, slotMuted);
+        track.getLoop(s).loopId = slotLoopId;
+    }
+    return true;
+}
+
+static bool readCurrentSetFilePreamble(File& file, LooperState& loadedLooperStateOut,
+                                       uint32_t& masterLoopLengthOut, uint8_t& numTracksOut) {
     if (!CurrentWorkspaceStorage::fileStartsWithEpochHeader(file)) {
         if (!file.seek(0)) {
             return false;
@@ -5134,97 +5363,26 @@ bool StorageManager::loadCurrentSetMetaAndTracks(File& file, const char* setDir,
     if (!readRaw(file, &looperStateVal, sizeof(looperStateVal))) {
         return false;
     }
-    const LooperState loadedLooperState = sanitizeLoadedLooperState(static_cast<LooperState>(looperStateVal));
+    loadedLooperStateOut = sanitizeLoadedLooperState(static_cast<LooperState>(looperStateVal));
 
     uint32_t masterLoopLength = 0;
     if (!readRaw(file, &masterLoopLength, sizeof(masterLoopLength))) {
         return false;
     }
+    masterLoopLengthOut = masterLoopLength;
 
     uint8_t numTracks = 0;
     if (!readRaw(file, &numTracks, sizeof(numTracks)) || numTracks != Config::NUM_TRACKS) {
         return false;
     }
+    numTracksOut = numTracks;
+    return true;
+}
 
-    activeLoopIndex.assign(numTracks, 0);
-    for (uint8_t t = 0; t < numTracks; ++t) {
-        Track& track = trackManager.getTrack(t);
-        track.ensureLoopsAllocated();
-
-        uint32_t trackStateRaw = 0;
-        if (!readRaw(file, &trackStateRaw, sizeof(trackStateRaw))) {
-            return false;
-        }
-        TrackState loadedTrackState = static_cast<TrackState>(trackStateRaw);
-
-        bool muted = false;
-        if (!readRaw(file, &muted, sizeof(muted))) {
-            return false;
-        }
-
-        bool anySlotHasEvents = false;
-        for (uint8_t s = 0; s < Config::MAX_LOOPS_PER_TRACK; ++s) {
-            bool slotEnabled = false;
-            bool slotMuted = false;
-            LoopId slotLoopId = kInvalidLoopId;
-            if (!readRaw(file, &slotEnabled, sizeof(slotEnabled)) ||
-                !readRaw(file, &slotMuted, sizeof(slotMuted)) ||
-                !readRaw(file, &slotLoopId, sizeof(slotLoopId))) {
-                return false;
-            }
-            if (slotLoopId == kInvalidLoopId || slotLoopId >= Config::MAX_LOOPS_PER_TRACK) {
-                slotLoopId = static_cast<LoopId>(s);
-            }
-            trackManager.setSlotEnabled(t, s, slotEnabled);
-            trackManager.setSlotMuted(t, s, slotMuted);
-            track.slots_[s].loopId = slotLoopId;
-        }
-
-        for (uint8_t s = 0; s < Config::MAX_LOOPS_PER_TRACK; ++s) {
-            char loopPath[64];
-            if (!CurrentSetStorage::formatLoopSlotPath(loopPath, sizeof(loopPath), t, s)) {
-                return false;
-            }
-            if (!SD.exists(loopPath)) {
-                Serial.print("[StorageManager] ERROR: Missing CurrentSet loop file ");
-                Serial.println(loopPath);
-                return false;
-            }
-            if (!CurrentSetStorage::verifySaveFileTokenAtPath(loopPath)) {
-                Serial.print("[StorageManager] ERROR: CurrentSet loop file missing completion marker ");
-                Serial.println(loopPath);
-                return false;
-            }
-            File loopFile = SD.open(loopPath, FILE_READ);
-            if (!loopFile) {
-                return false;
-            }
-            Loop& loop = track.getLoop(s);
-            if (!readLoopFromCurrentSetFile(loopFile, loop)) {
-                loopFile.close();
-                return false;
-            }
-            loopFile.close();
-            if (loop.hasPublishedEvents()) {
-                anySlotHasEvents = true;
-            }
-        }
-
-        if (loadedTrackState == TRACK_RECORDING || loadedTrackState == TRACK_ARMED ||
-            loadedTrackState == TRACK_STOPPED_RECORDING || loadedTrackState == TRACK_PLAYING ||
-            loadedTrackState == TRACK_OVERDUBBING) {
-            loadedTrackState = anySlotHasEvents ? TRACK_STOPPED : TRACK_EMPTY;
-        }
-        if (loadedTrackState == TRACK_EMPTY && anySlotHasEvents) {
-            loadedTrackState = TRACK_STOPPED;
-        }
-        track.forceSetState(loadedTrackState);
-        if (muted != track.isMuted()) {
-            track.toggleMuteTrack();
-        }
-    }
-
-    if (!readRaw(file, &selectedTrackIdx, sizeof(selectedTrackIdx))) {
+static bool readCurrentSetFileEpilogue(File& file, uint8_t numTracks,
+                                       std::vector<uint8_t>& activeLoopIndex,
+                                       uint8_t& selectedTrackIdxOut) {
+    if (!readRaw(file, &selectedTrackIdxOut, sizeof(selectedTrackIdxOut))) {
         return false;
     }
     for (uint8_t t = 0; t < numTracks; ++t) {
@@ -5264,9 +5422,62 @@ bool StorageManager::loadCurrentSetMetaAndTracks(File& file, const char* setDir,
         Serial.println("[StorageManager] ERROR: CurrentSet meta completion marker mismatch");
         return false;
     }
+    return true;
+}
 
-  return applyLoadedTransportFooter(numTracks, activeLoopIndex, selectedTrackIdx, state,
-                                    loadedLooperState, masterLoopLength);
+static bool applyLoadedTransportFooter(uint8_t numTracks, const std::vector<uint8_t>& activeLoopIndex,
+                                       uint8_t selectedTrackIdx, LooperState& state,
+                                       LooperState loadedLooperState, uint32_t masterLoopLength) {
+    state = loadedLooperState;
+    trackManager.setMasterLoopLength(masterLoopLength);
+    for (uint8_t t = 0; t < numTracks; ++t) {
+        trackManager.getTrack(t).setActiveLoopIndex(activeLoopIndex[t]);
+        trackManager.setSelectedSlotIndex(t, activeLoopIndex[t]);
+    }
+    if (selectedTrackIdx < Config::NUM_TRACKS) {
+        trackManager.setSelectedTrack(selectedTrackIdx);
+    } else {
+        trackManager.setSelectedTrack(0);
+    }
+    stabilizeBootMemoryAfterLoad();
+    return true;
+}
+
+bool StorageManager::loadCurrentSetMetaAndTracks(File& file, const char* setDir, LooperState& state,
+                                        std::vector<uint8_t>& activeLoopIndex,
+                                        uint8_t& selectedTrackIdx) {
+    (void)setDir;
+    LooperState loadedLooperState = LOOPER_IDLE;
+    uint32_t masterLoopLength = 0;
+    uint8_t numTracks = 0;
+    if (!readCurrentSetFilePreamble(file, loadedLooperState, masterLoopLength, numTracks)) {
+        return false;
+    }
+
+    activeLoopIndex.assign(numTracks, 0);
+    for (uint8_t t = 0; t < numTracks; ++t) {
+        Track& track = trackManager.getTrack(t);
+        TrackState loadedTrackState = TRACK_EMPTY;
+        bool muted = false;
+        if (!readCurrentSetTrackSlotMetadata(file, t, track, loadedTrackState, muted)) {
+            return false;
+        }
+
+        bool anySlotHasEvents = false;
+        for (uint8_t s = 0; s < Config::MAX_LOOPS_PER_TRACK; ++s) {
+            if (!loadLoopSlotFromCurrentSetSd(t, s, track, anySlotHasEvents)) {
+                return false;
+            }
+        }
+        applyLoadedTrackStateAfterLoopSlots(track, loadedTrackState, anySlotHasEvents, muted);
+    }
+
+    if (!readCurrentSetFileEpilogue(file, numTracks, activeLoopIndex, selectedTrackIdx)) {
+        return false;
+    }
+
+    return applyLoadedTransportFooter(numTracks, activeLoopIndex, selectedTrackIdx, state,
+                                      loadedLooperState, masterLoopLength);
 }
 
 bool StorageManager::loadCurrentSetFromDirectory(const char* setDir, LooperState& state) {
@@ -5284,6 +5495,16 @@ bool StorageManager::loadCurrentSetFromDirectory(const char* setDir, LooperState
             return false;
         }
     }
+    if (!SD.exists(metaPath)) {
+        Serial.print("[StorageManager] ERROR: CurrentSet meta missing ");
+        Serial.println(metaPath);
+        return false;
+    }
+    if (!CurrentSetStorage::verifySaveFileTokenAtPath(metaPath)) {
+        Serial.print("[StorageManager] ERROR: CurrentSet meta incomplete ");
+        Serial.println(metaPath);
+        return false;
+    }
     File file = SD.open(metaPath, FILE_READ);
     if (!file) {
         Serial.print("[StorageManager] ERROR: Could not open CurrentSet meta ");
@@ -5294,16 +5515,6 @@ bool StorageManager::loadCurrentSetFromDirectory(const char* setDir, LooperState
     uint8_t selectedTrackIdx = 0;
     const bool ok = loadCurrentSetMetaAndTracks(file, setDir, state, activeLoopIndex, selectedTrackIdx);
     file.close();
-    return ok;
-}
-
-bool StorageManager::loadCurrentSetFromSd(LooperState& state) {
-    Serial.println("[StorageManager] Loading CurrentSet from SD...");
-    loadWorkspaceMetaCountersFromSd();
-    const bool ok = loadCurrentSetFromDirectory(CurrentSetStorage::kCurrentSetDir, state);
-    if (ok) {
-        Serial.println("[StorageManager] CurrentSet loaded successfully (v6).");
-    }
     return ok;
 }
 
@@ -5530,6 +5741,160 @@ bool StorageManager::migrateV5MonolithToCurrentSet(LooperState& state) {
     return true;
 }
 
+bool readSetLatestRevisionIdFromSd(uint16_t setId, uint16_t& latestRevisionIdOut) {
+    latestRevisionIdOut = 0;
+    char setMetaPath[64];
+    if (!SetRevisionCatalog::formatSetMetaPath(setMetaPath, sizeof(setMetaPath), setId)) {
+        return false;
+    }
+    if (!SD.exists(setMetaPath)) {
+        return false;
+    }
+    File file = SD.open(setMetaPath, FILE_READ);
+    if (!file) {
+        return false;
+    }
+    SetRevisionCatalog::SetMetaRecord meta{};
+    const StorageIo io = storageIoFromFileRead(file);
+    const bool ok = SetRevisionCatalog::readSetMetaRecord(io, meta);
+    file.close();
+    if (!ok || meta.latestRevisionId == 0) {
+        return false;
+    }
+    latestRevisionIdOut = meta.latestRevisionId;
+    return true;
+}
+
+void queueBootRevisionRecovery(uint16_t setId, uint16_t revisionId) {
+    if (setId == 0 || revisionId == 0) {
+        return;
+    }
+    bootRevisionRecoverySetId = setId;
+    bootRevisionRecoveryRevisionId = revisionId;
+    bootRevisionRecoveryPending = true;
+}
+
+void discardIncompleteCurrentWorkspaceTempFilesOnSd() {
+    uint16_t removedCount = 0;
+    if (SD.exists(CurrentSetStorage::kCurrentRuntimeBundleTempPath)) {
+        if (SD.remove(CurrentSetStorage::kCurrentRuntimeBundleTempPath)) {
+            ++removedCount;
+            Serial.println("[StorageManager] Boot hygiene: removed incomplete runtime bundle temp");
+        }
+    }
+    for (uint8_t trackIndex = 0; trackIndex < Config::NUM_TRACKS; ++trackIndex) {
+        for (uint8_t slotIndex = 0; slotIndex < Config::MAX_LOOPS_PER_TRACK; ++slotIndex) {
+            char tempPath[48];
+            if (!CurrentSetStorage::formatLoopSlotTempPath(tempPath, sizeof(tempPath), trackIndex,
+                                                           slotIndex)) {
+                continue;
+            }
+            if (!SD.exists(tempPath)) {
+                continue;
+            }
+            if (SD.remove(tempPath)) {
+                ++removedCount;
+            }
+        }
+    }
+    if (removedCount > 0) {
+        Serial.print("[StorageManager] Boot hygiene: discarded ");
+        Serial.print(removedCount);
+        Serial.println(" incomplete current-workspace temp file(s)");
+    }
+}
+
+void discardIncompleteRevisionTempFilesOnSd() {
+    if (!SD.exists(SetRevisionCatalog::kSetsRoot)) {
+        return;
+    }
+    File setsDir = SD.open(SetRevisionCatalog::kSetsRoot);
+    if (!setsDir) {
+        return;
+    }
+    uint16_t removedCount = 0;
+    while (true) {
+        File setEntry = setsDir.openNextFile();
+        if (!setEntry) {
+            break;
+        }
+        const bool isSetDirectory = setEntry.isDirectory();
+        char setFolderName[16] = {};
+        const char* setName = setEntry.name();
+        if (setName != nullptr) {
+            std::snprintf(setFolderName, sizeof(setFolderName), "%s", setName);
+        }
+        setEntry.close();
+        if (!isSetDirectory || setFolderName[0] != 'S') {
+            continue;
+        }
+
+        char revisionsDir[48];
+        if (std::snprintf(revisionsDir, sizeof(revisionsDir), "%s/%s/revisions",
+                          SetRevisionCatalog::kSetsRoot, setFolderName) <= 0) {
+            continue;
+        }
+        if (!SD.exists(revisionsDir)) {
+            continue;
+        }
+        File revisions = SD.open(revisionsDir);
+        if (!revisions) {
+            continue;
+        }
+        while (true) {
+            File revisionEntry = revisions.openNextFile();
+            if (!revisionEntry) {
+                break;
+            }
+            char revisionName[24] = {};
+            const char* revisionFileName = revisionEntry.name();
+            revisionEntry.close();
+            if (revisionFileName == nullptr) {
+                continue;
+            }
+            std::snprintf(revisionName, sizeof(revisionName), "%s", revisionFileName);
+            const size_t nameLen = std::strlen(revisionName);
+            const size_t tempSuffixLen = std::strlen(SetRevisionCatalog::kRevisionTempSuffix);
+            if (nameLen <= tempSuffixLen ||
+                std::strcmp(revisionName + nameLen - tempSuffixLen,
+                            SetRevisionCatalog::kRevisionTempSuffix) != 0) {
+                continue;
+            }
+            char tempPath[72];
+            if (std::snprintf(tempPath, sizeof(tempPath), "%s/%s", revisionsDir, revisionName) <=
+                0) {
+                continue;
+            }
+            if (SD.remove(tempPath)) {
+                ++removedCount;
+                Serial.print("[StorageManager] Boot hygiene: removed incomplete revision ");
+                Serial.println(tempPath);
+            }
+        }
+        revisions.close();
+    }
+    setsDir.close();
+    if (removedCount > 0) {
+        Serial.print("[StorageManager] Boot hygiene: discarded ");
+        Serial.print(removedCount);
+        Serial.println(" incomplete revision temp file(s)");
+    }
+}
+
+bool StorageManager::loadCurrentWorkspaceAtBoot(LooperState& state) {
+    Serial.println("[StorageManager] Loading Current workspace from SD...");
+    loadWorkspaceMetaCountersFromSd();
+    const bool ok = loadCurrentSetFromDirectory(CurrentSetStorage::kCurrentSetDir, state);
+    if (ok) {
+        Serial.println("[StorageManager] Current workspace loaded successfully.");
+    }
+    return ok;
+}
+
+bool StorageManager::loadCurrentSetFromSd(LooperState& state) {
+    return loadCurrentWorkspaceAtBoot(state);
+}
+
 bool StorageManager::tryLoadLatestRecoveryPoint(LooperState& state) {
     if (!SD.exists(CurrentSetStorage::kCheckpointsDir)) {
         return false;
@@ -5617,12 +5982,46 @@ bool StorageManager::tryLoadNewestSavedSet(LooperState& state) {
 }
 
 bool StorageManager::attemptBootRecoveryChain(LooperState& state) {
-    if (tryLoadLatestRecoveryPoint(state)) {
-        Serial.println("[StorageManager] Boot recovered from RecoveryPoint.");
-        return true;
+    CurrentWorkspaceStorage::WorkspaceMetaRecord workspaceMeta{};
+    if (!CurrentWorkspaceStorage::readWorkspaceMetaFile(workspaceMeta)) {
+        workspaceMeta.derivedFromSetId = workspaceDerivedFromSetId;
+        workspaceMeta.derivedFromRevisionId = workspaceDerivedFromRevisionId;
     }
-    if (tryLoadNewestSavedSet(state)) {
-        Serial.println("[StorageManager] Boot recovered from newest SavedSet.");
+
+    const BootRecoveryPolicy::RevisionRecoveryPlan plan =
+        BootRecoveryPolicy::buildRevisionRecoveryPlan(
+            workspaceMeta.derivedFromSetId, workspaceMeta.derivedFromRevisionId, 0);
+
+    if (plan.setId != 0) {
+        uint16_t catalogLatestRevisionId = 0;
+        readSetLatestRevisionIdFromSd(plan.setId, catalogLatestRevisionId);
+        const BootRecoveryPolicy::RevisionRecoveryPlan resolvedPlan =
+            BootRecoveryPolicy::buildRevisionRecoveryPlan(
+                plan.setId, plan.derivedRevisionId, catalogLatestRevisionId);
+
+        if (resolvedPlan.derivedRevisionId != 0) {
+            Serial.print("[StorageManager] Boot recovery: queue derived revision S");
+            Serial.print(resolvedPlan.setId);
+            Serial.print(" v");
+            Serial.println(resolvedPlan.derivedRevisionId);
+            queueBootRevisionRecovery(resolvedPlan.setId, resolvedPlan.derivedRevisionId);
+            return true;
+        }
+
+        const uint16_t latestFallback = BootRecoveryPolicy::resolveLatestRevisionFallback(
+            resolvedPlan.derivedRevisionId, resolvedPlan.latestRevisionId);
+        if (latestFallback != 0) {
+            Serial.print("[StorageManager] Boot recovery: queue latest revision S");
+            Serial.print(resolvedPlan.setId);
+            Serial.print(" v");
+            Serial.println(latestFallback);
+            queueBootRevisionRecovery(resolvedPlan.setId, latestFallback);
+            return true;
+        }
+    }
+
+    if (tryLoadLatestRecoveryPoint(state)) {
+        Serial.println("[StorageManager] Boot recovered from recovery checkpoint.");
         return true;
     }
     Serial.println("[StorageManager] Boot recovery chain exhausted; starting empty.");
@@ -5631,8 +6030,14 @@ bool StorageManager::attemptBootRecoveryChain(LooperState& state) {
 
 bool StorageManager::loadState(LooperState& state) {
     RtcTime::init();
-    if (SD.exists(CurrentSetStorage::kCurrentMetaPath)) {
-        if (loadCurrentSetFromSd(state)) {
+    discardIncompleteRevisionTempFilesOnSd();
+    discardIncompleteCurrentWorkspaceTempFilesOnSd();
+
+    const bool hasCurrentWorkspace =
+        SD.exists(CurrentSetStorage::kCurrentMetaPath) ||
+        SD.exists(CurrentWorkspaceStorage::kWorkspaceMetaPath);
+    if (hasCurrentWorkspace) {
+        if (loadCurrentWorkspaceAtBoot(state)) {
             SavedSetCatalog::SetIndex index{};
             if (!reconcileSetIndexOnSd(index)) {
                 Serial.println("[StorageManager] WARN: could not reconcile MidiLooper/sets/index.bin");
@@ -5641,7 +6046,7 @@ bool StorageManager::loadState(LooperState& state) {
             syncCurrentSetDirtyTrackingFromLoadedState();
             return true;
         }
-        Serial.println("[StorageManager] CurrentSet load failed; attempting boot recovery chain.");
+        Serial.println("[StorageManager] Current workspace load failed; attempting boot recovery chain.");
         resetTracksAfterFailedLoad();
         if (attemptBootRecoveryChain(state)) {
             return true;

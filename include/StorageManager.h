@@ -89,6 +89,7 @@ private:
     static bool loadV5MonolithIntoRam(LooperState& state);
     static bool migrateV5MonolithToCurrentSet(LooperState& state);
     static bool attemptBootRecoveryChain(LooperState& state);
+    static bool loadCurrentWorkspaceAtBoot(LooperState& state);
     static bool tryLoadLatestRecoveryPoint(LooperState& state);
     static bool tryLoadNewestSavedSet(LooperState& state);
     static bool loadCurrentSetMetaAndTracks(File& file, const char* setDir, LooperState& state,

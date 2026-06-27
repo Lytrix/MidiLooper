@@ -185,9 +185,8 @@ void loop() {
     selectState->updateForOverdubbing(editManager, trackManager.getSelectedTrack());
   }
 
-  // Render display before deferred SD slices so UI stays responsive.
-  if (!StorageManager::isDeferredSaveActive() &&
-      now - lastDisplayUpdate >= LCD::DISPLAY_UPDATE_INTERVAL) {
+  // Render display before deferred SD slices; keep updating during SD I/O.
+  if (now - lastDisplayUpdate >= LCD::DISPLAY_UPDATE_INTERVAL) {
     lastDisplayUpdate = now;
     displayManager.update();
   }

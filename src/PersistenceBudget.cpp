@@ -12,6 +12,14 @@ uint32_t resolveMaxPersistenceMicros(bool captureActive, bool transportBudgetAct
   return Config::maxPersistenceMicrosIdle;
 }
 
+uint32_t resolvePersistenceSliceBudgetUs(bool captureActive, bool transportBudgetActive) {
+  const uint32_t modeBudget = resolveMaxPersistenceMicros(captureActive, transportBudgetActive);
+  if (modeBudget != UINT32_MAX) {
+    return modeBudget;
+  }
+  return Config::maxPersistenceMicrosPerLoop;
+}
+
 bool persistenceSliceBudgetExhausted(uint32_t sliceBudgetUs, uint32_t elapsedUs) {
   return sliceBudgetUs != UINT32_MAX && elapsedUs >= sliceBudgetUs;
 }

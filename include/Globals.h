@@ -99,6 +99,8 @@ namespace Config {
   constexpr uint32_t maxPersistenceMicrosActive = 300;
   /// Unbounded persistence slice when transport idle and capture inactive.
   constexpr uint32_t maxPersistenceMicrosIdle = UINT32_MAX;
+  /// Cap each main loop() persistence drain so display/MIDI stay responsive when idle.
+  constexpr uint32_t maxPersistenceMicrosPerLoop = 3000;
 }
  
 // --------------------
