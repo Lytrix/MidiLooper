@@ -17,12 +17,35 @@
 #include "TrackUndo.h"
 #include "Loop.h"
 #include "DisplayManager.h"
+#include "Utils/PressTiming.h"
 
 namespace {
 uint8_t refSlotPhaseForQueue(const Track& track, uint8_t previousSlot) {
   if (previousSlot >= ::Config::MAX_LOOPS_PER_TRACK) return ::Config::INVALID_LOOP_SLOT;
   const Loop& rl = track.getLoop(previousSlot);
   return (rl.loopLengthTicks > 0) ? previousSlot : ::Config::INVALID_LOOP_SLOT;
+}
+
+uint32_t overlayPlayStopFirstShortAtMs = 0;
+
+void resetOverlayPlayStopPairedShort() {
+  overlayPlayStopFirstShortAtMs = 0;
+}
+
+void handleOverlayPlayStopShort(uint32_t now) {
+  constexpr uint32_t kPairWindowMs = PressTiming::DOUBLE_TAP_WINDOW;
+  if (overlayPlayStopFirstShortAtMs != 0 &&
+      (now - overlayPlayStopFirstShortAtMs) > kPairWindowMs) {
+    overlayPlayStopFirstShortAtMs = 0;
+  }
+  if (overlayPlayStopFirstShortAtMs != 0 &&
+      (now - overlayPlayStopFirstShortAtMs) <= kPairWindowMs) {
+    resetOverlayPlayStopPairedShort();
+    looperState.exitLoadSaveMode();
+    logger.info("Load/save mode exited (paired play/stop short press)");
+    return;
+  }
+  overlayPlayStopFirstShortAtMs = now;
 }
 
 }  // namespace
@@ -76,7 +99,12 @@ void MidiButtonActions::executeAction(MidiButtonConfig::ActionType actionType, u
             handleToggleRecord();
             break;
         case MidiButtonConfig::ActionType::TOGGLE_PLAY:
-            handleTogglePlay();
+            if (looperState.isLoadSaveModeActive()) {
+                handleOverlayPlayStopShort(millis());
+            } else {
+                resetOverlayPlayStopPairedShort();
+                handleTogglePlay();
+            }
             break;
         case MidiButtonConfig::ActionType::TOGGLE_LOAD_SAVE_MODE:
             handleToggleLoadSaveMode();
@@ -755,15 +783,13 @@ void MidiButtonActions::syncTransportLed() {
 
 // Stubbed implementations for future expansion
 void MidiButtonActions::handleTogglePlay() {
-    if (looperState.isLoadSaveModeActive()) {
-        return;
-    }
     Track& track = getCurrentTrack();
     track.togglePlayStop();
     logger.info("Track play/stop toggled");
 }
 
 void MidiButtonActions::handleToggleLoadSaveMode() {
+    resetOverlayPlayStopPairedShort();
     if (looperState.isLoadSaveModeActive()) {
         looperState.exitLoadSaveMode();
         logger.info("Load/save mode exited");

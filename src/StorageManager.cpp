@@ -22,6 +22,9 @@
 #include "Logger.h"
 #include "Utils/DebugSessionCapture.h"
 #include "Utils/MemoryMonitor.h"
+#if defined(SESSION_CAPTURE)
+#include "DisplayManager.h"
+#endif
 #include <SD.h>
 #include <Arduino.h>
 #include "TrackUndo.h"
@@ -5103,6 +5106,8 @@ void StorageManager::processHitlSerialCommands() {
                 confirmRevisionLoadDirtyPromptDiscardForHitl();
             } else if (std::strcmp(lineBuffer, "!REV_LOAD_DIRTY_CANCEL") == 0) {
                 cancelRevisionLoadDirtyPromptForHitl();
+            } else if (std::strcmp(lineBuffer, "!OVERLAY_SAVE") == 0) {
+                displayManager.confirmLoadSaveFocusedRow();
             } else if (std::strncmp(lineBuffer, "!REV_LOAD ", 10) == 0) {
                 const char* cursor = lineBuffer + 10;
                 unsigned setId = 0;
@@ -5145,6 +5150,8 @@ DeferredSaveDisplayStatus StorageManager::getDeferredSaveDisplayStatus(uint32_t 
     DeferredSaveDisplayInputs inputs{};
     inputs.savePending = deferredSavePending;
     inputs.saveInProgress = deferredSaveInProgress;
+    inputs.revisionCommitPending = revisionCommitPending;
+    inputs.revisionCommitInProgress = revisionCommitInProgress;
     inputs.completedAtMs = deferredSaveCompletedAtMs;
     inputs.failedAtMs = deferredSaveFailedAtMs;
     return resolveDeferredSaveDisplayStatus(nowMs, inputs);

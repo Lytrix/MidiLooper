@@ -73,7 +73,8 @@ private:
     void processPendingPresses();
     void handleButtonRelease(uint8_t channel, uint8_t note, uint32_t pressDuration);
     void onShortRelease(ButtonState& state, uint8_t channel, uint8_t note, uint32_t now,
-                        uint32_t effectiveDoubleTap, uint32_t effectiveTripleTap);
+                        uint32_t effectiveDoubleTap, uint32_t effectiveTripleTap,
+                        bool awaitTripleTap);
     void transitionToIdle(ButtonState& state);
     void triggerButtonPress(uint8_t note, uint8_t channel, MidiButtonConfig::PressType pressType);
 };

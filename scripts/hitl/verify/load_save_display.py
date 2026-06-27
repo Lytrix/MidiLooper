@@ -30,6 +30,26 @@ def last_load_save_mode_active(lines: list[str]) -> Optional[int]:
     return events[-1]
 
 
+def is_load_save_overlay_active(lines: list[str]) -> bool:
+    return last_load_save_mode_active(lines) == 1
+
+
+def find_last_enter_exit_indices(ldsv: list[int]) -> tuple[Optional[int], Optional[int]]:
+    """Last LDSV=1 followed by a later LDSV=0 in the verify window."""
+    exit_idx: Optional[int] = None
+    enter_idx: Optional[int] = None
+    for i in range(len(ldsv) - 1, -1, -1):
+        if ldsv[i] == 0 and exit_idx is None:
+            exit_idx = i
+    if exit_idx is None:
+        return None, None
+    for i in range(exit_idx - 1, -1, -1):
+        if ldsv[i] == 1:
+            enter_idx = i
+            return enter_idx, exit_idx
+    return None, exit_idx
+
+
 def verify_load_save_display(lines: list[str], args: object) -> dict[str, object]:
     issues: list[str] = []
     min_double_presses = int(getattr(args, "min_double_presses", 2) or 2)
@@ -37,13 +57,7 @@ def verify_load_save_display(lines: list[str], args: object) -> dict[str, object
     ldsv = extract_load_save_mode_events(lines)
     double_press_gestures = count_play_stop_double_press_gestures(lines)
 
-    enter_idx: Optional[int] = None
-    exit_idx: Optional[int] = None
-    for i, value in enumerate(ldsv):
-        if value == 1 and enter_idx is None:
-            enter_idx = i
-        elif value == 0 and enter_idx is not None and exit_idx is None:
-            exit_idx = i
+    enter_idx, exit_idx = find_last_enter_exit_indices(ldsv)
 
     if enter_idx is None:
         issues.append("missing_load_save_enter_ldsv_1")

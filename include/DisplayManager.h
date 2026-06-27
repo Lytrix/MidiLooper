@@ -47,6 +47,9 @@ public:
     /// Scroll set list selection in load/save mode (for future button/encoder wiring).
     void adjustLoadSaveListSelection(int delta);
 
+    /// Confirm the focused overlay row (Save queues revision commit and exits overlay).
+    void confirmLoadSaveFocusedRow();
+
     /// Force cached note rebuild after edit mutations (D2 display refresh).
     void requestNoteInfoRefresh(Track& track);
 
@@ -162,9 +165,15 @@ private:
     void drawLoadSaveRevisionHistoryView(uint16_t setId);
     void drawLoadSaveLoopPickView(uint16_t setId);
     void drawLoadSaveSetDetail(int detailX, const SavedSetCatalog::SavedSetMetadata& metadata,
-                               bool isCurrentRow, const char* folderName, uint32_t nowMs);
-    void drawLoadSaveTrackFilledBar(int x, int y, uint8_t filledSlots, uint8_t maxSlots,
-                                    uint8_t brightness);
+                               bool isCurrentRow, const char* folderName, uint32_t nowMs,
+                               const char* detailTitle = nullptr);
+    void drawLoadSaveTrackFilledBar(int x, int y, int barWidth, int barHeight, uint8_t filledSlots,
+                                    uint8_t maxSlots, uint8_t brightness);
+    void drawLoadSaveDetailMetricAtColon(int colonX, int y, const char* label, const char* value,
+                                         int labelCharCount);
+    void drawLoadSaveDetailMetricLeft(int detailX, int y, const char* label, const char* value);
+    void drawLoadSaveDetailMetricRight(int y, const char* label, const char* value,
+                                       int labelCharCount);
     void drawAutoSaveBeforeLoadToast(int detailX, uint32_t nowMs);
     void drawSidebar(Track& selectedTrack, uint8_t displaySlot);
     void drawSaveStatusIndicator(uint32_t nowMs, int textRight);

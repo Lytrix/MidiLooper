@@ -63,4 +63,23 @@ bool isDrillMode(Mode mode) {
   return mode == Mode::RevisionHistory || mode == Mode::LoopPick;
 }
 
+size_t rootWorkspaceListRowCount(size_t setCount) {
+  return kRootFirstSetRowIndex + setCount;
+}
+
+bool isRootSaveRow(uint8_t listSelection) {
+  return listSelection == kRootSaveRowIndex;
+}
+
+bool isRootCurrentRow(uint8_t listSelection) {
+  return listSelection == kRootCurrentRowIndex;
+}
+
+size_t rootSetFolderListIndex(uint8_t listSelection) {
+  if (listSelection < kRootFirstSetRowIndex) {
+    return static_cast<size_t>(-1);
+  }
+  return static_cast<size_t>(listSelection - kRootFirstSetRowIndex);
+}
+
 }  // namespace SetBrowserOverlayPolicy
