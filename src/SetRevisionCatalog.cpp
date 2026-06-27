@@ -231,4 +231,19 @@ bool formatRevisionPath(char* out, size_t outSize, uint16_t setId, uint16_t revi
   return written > 0 && static_cast<size_t>(written) < outSize;
 }
 
+void sortSetBrowserListEntriesByUpdatedUnixDesc(SetBrowserListEntry* entries, size_t count) {
+  if (entries == nullptr || count < 2) {
+    return;
+  }
+  for (size_t i = 0; i + 1 < count; ++i) {
+    for (size_t j = i + 1; j < count; ++j) {
+      if (entries[j].updatedUnix > entries[i].updatedUnix) {
+        const SetBrowserListEntry tmp = entries[i];
+        entries[i] = entries[j];
+        entries[j] = tmp;
+      }
+    }
+  }
+}
+
 }  // namespace SetRevisionCatalog

@@ -17,6 +17,7 @@
 #include "Utils/NoteUtils.h"
 #include "SavedSetCatalog.h"
 #include "RevisionLoadPolicy.h"
+#include "SetRevisionCatalog.h"
 
 // Shared struct for UI note representation
 using DisplayNote = NoteUtils::DisplayNote;
@@ -150,7 +151,7 @@ private:
     uint32_t autoSaveBeforeLoadToastExpiresAtMs_ = 0;
     char autoSaveBeforeLoadToastText_[24] = {};
     static constexpr size_t kLoadSaveListCapacity = 16;
-    SavedSetCatalog::SavedSetFolderListEntry loadSaveListEntries_[kLoadSaveListCapacity] = {};
+    SetRevisionCatalog::SetBrowserListEntry loadSaveListEntries_[kLoadSaveListCapacity] = {};
     size_t loadSaveListCount_ = 0;
     uint8_t loadSaveListSelection_ = 0;
     uint8_t loadSaveListScrollOffset_ = 0;
@@ -179,6 +180,8 @@ private:
     void drawLoadSaveSetDetail(int detailX, const SavedSetCatalog::SavedSetMetadata& metadata,
                                bool isCurrentRow, const char* folderName, uint32_t nowMs,
                                const char* detailTitle = nullptr);
+    void drawLoadSaveRevisionCatalogSetDetail(int detailX,
+                                              const SetRevisionCatalog::SetMetaRecord& meta);
     void drawLoadSaveTrackFilledBar(int x, int y, int barWidth, int barHeight, uint8_t filledSlots,
                                     uint8_t maxSlots, uint8_t brightness);
     void drawLoadSaveDetailMetricAtColon(int colonX, int y, const char* label, const char* value,

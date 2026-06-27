@@ -1383,8 +1383,8 @@ void DisplayManager::drawSaveStatusIndicator(uint32_t nowMs, int textRight) {
 }
 
 void DisplayManager::refreshLoadSaveListCache() {
-    loadSaveListCount_ =
-        StorageManager::listSavedSetFolderEntries(loadSaveListEntries_, kLoadSaveListCapacity);
+    loadSaveListCount_ = StorageManager::listSetRevisionBrowserEntries(loadSaveListEntries_,
+                                                                       kLoadSaveListCapacity);
     loadSaveListCacheValid_ = true;
 }
 
@@ -1675,6 +1675,42 @@ void DisplayManager::drawLoadSaveSetDetail(int detailX, const SavedSetCatalog::S
     }
 }
 
+void DisplayManager::drawLoadSaveRevisionCatalogSetDetail(
+    int detailX, const SetRevisionCatalog::SetMetaRecord& meta) {
+    _display.gfx.select_font(&Font5x7FixedMono);
+    int y = 0;
+
+    char line[40];
+    std::snprintf(line, sizeof(line), "S%04u", static_cast<unsigned>(meta.setId));
+    _display.gfx.draw_text(_display.api.getFrameBuffer(), line, detailX, y, 15);
+    y += kLoadSaveTextLineStep;
+
+    if (meta.subtitle[0] != '\0') {
+        copyLoadSaveBrowserLabel(line, sizeof(line), meta.subtitle);
+        _display.gfx.draw_text(_display.api.getFrameBuffer(), line, detailX, y, 15);
+        y += kLoadSaveTextLineStep;
+    }
+
+    char dateTime[40];
+    RtcTime::formatDetailDateTime(static_cast<uint32_t>(meta.updatedUnix), dateTime,
+                                  sizeof(dateTime));
+    if (dateTime[0] == '\0') {
+        std::snprintf(dateTime, sizeof(dateTime), "--");
+    }
+    _display.gfx.draw_text(_display.api.getFrameBuffer(), dateTime, detailX, y, 5);
+    y += kLoadSaveTextLineStep;
+
+    std::snprintf(line, sizeof(line), "Rev v%04u",
+                  static_cast<unsigned>(meta.latestRevisionId));
+    _display.gfx.draw_text(_display.api.getFrameBuffer(), line, detailX, y, 5);
+    y += kLoadSaveTextLineStep;
+
+    char valueStr[8];
+    std::snprintf(valueStr, sizeof(valueStr), "%u", meta.revisionCount);
+    drawLoadSaveDetailMetricLeft(detailX, y, "Revs", valueStr);
+    drawLoadSaveDetailMetricRight(y, "Fav", meta.favorite != 0 ? "Y" : "N", 3);
+}
+
 void DisplayManager::drawAutoSaveBeforeLoadToast(int detailX, uint32_t nowMs) {
     if (autoSaveBeforeLoadToastText_[0] == '\0' ||
         nowMs >= autoSaveBeforeLoadToastExpiresAtMs_) {
@@ -1787,13 +1823,22 @@ void DisplayManager::drawLoadSaveView(uint32_t nowMs) {
             char browserLabel[24];
             copyLoadSaveBrowserLabel(browserLabel, sizeof(browserLabel),
                                      loadSaveListEntries_[savedIndex].folderName);
+            if (loadSaveListEntries_[savedIndex].favorite != 0) {
+                const size_t labelLen = std::strlen(browserLabel);
+                if (labelLen + 1 < sizeof(browserLabel)) {
+                    browserLabel[labelLen] = '*';
+                    browserLabel[labelLen + 1] = '\0';
+                }
+            }
             _display.gfx.draw_text(_display.api.getFrameBuffer(), browserLabel,
                                    kLoadSaveLeftPadding, rowY, brightness);
         }
     }
 
     SavedSetCatalog::SavedSetMetadata detailMetadata{};
+    SetRevisionCatalog::SetMetaRecord catalogDetailMeta{};
     bool detailOk = false;
+    bool catalogDetailOk = false;
     const bool isSaveRow = SetBrowserOverlayPolicy::isRootSaveRow(loadSaveListSelection_);
     const bool isCurrentRow = SetBrowserOverlayPolicy::isRootCurrentRow(loadSaveListSelection_);
     const char* folderName = nullptr;
@@ -1811,12 +1856,15 @@ void DisplayManager::drawLoadSaveView(uint32_t nowMs) {
             SetBrowserOverlayPolicy::rootSetFolderListIndex(loadSaveListSelection_);
         if (savedIndex < loadSaveListCount_) {
             folderName = loadSaveListEntries_[savedIndex].folderName;
-            detailOk = StorageManager::readSavedSetMetadataForFolder(folderName, detailMetadata);
+            catalogDetailOk =
+                StorageManager::readSetRevisionCatalogMetaForFolder(folderName, catalogDetailMeta);
         }
     }
 
     drawAutoSaveBeforeLoadToast(kLoadSaveDetailX, nowMs);
-    if (detailOk) {
+    if (catalogDetailOk) {
+        drawLoadSaveRevisionCatalogSetDetail(kLoadSaveDetailX, catalogDetailMeta);
+    } else if (detailOk) {
         const char* detailTitle = isSaveRow ? "Save Current" : nullptr;
         drawLoadSaveSetDetail(kLoadSaveDetailX, detailMetadata, isCurrentRow, folderName,
                               nowMs, detailTitle);
