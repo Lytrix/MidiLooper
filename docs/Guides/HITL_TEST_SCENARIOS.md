@@ -46,6 +46,8 @@ Presets are defined in [`scripts/hitl/registry.py`](../../scripts/hitl/registry.
 | `long_loop_display_window` | `long_loop_display_window` | 24+ bar record → NOTE_EDIT window freeze → play/stop long-press snap → hold-to-track | **Yes** | `verify_long_loop_display_window` |
 | `two_overdub_undo_redo` | `two_overdub_undo_redo` | Record → **2** overdub passes → global undo ×3 (display **empty**) → global redo ×3 | **Yes** | `verify_two_overdub_undo_redo` |
 | `revision_commit_save` | `revision_commit_save` | Transport stop (current epoch) → `!REV_COMMIT` → `!REV_CLEANUP` (no catalog pollution) | **Yes** | `verify_revision_commit_save` |
+| `revision_load` | `revision_load` | Transport stop → `!REV_COMMIT` → `!REV_LOAD` → `!REV_CLEANUP` | **Yes** | `verify_revision_load` |
+| `revision_load_record` | `base`, `revision_load_post_record` | Base record/overdub → commit → load (loop data) | **Yes** | `verify_revision_load` |
 
 ### `revision_commit_save` (packed revision write + cleanup)
 
@@ -65,6 +67,37 @@ Requires `teensy41-capture-serial` (SESSION_CAPTURE). Host sends serial `!REV_CO
 Run after `base` preset: the scenario waits for the prior deferred save to finish before `!REV_COMMIT`. Serial may emit `#CAP,...,PERS,rev_blocked,...,deferred_save_active` while blocked.
 
 Use `--skip-hitl-cleanup` only when debugging a failed commit (leaves revision on SD).
+
+### `revision_load` (packed revision commit + deferred load + cleanup)
+
+Requires `teensy41-capture-serial` (SESSION_CAPTURE). Commits a revision from Current, loads it back with `!REV_LOAD <setId> <revisionId>`, then restores catalog state with `!REV_CLEANUP`.
+
+```bash
+.venv/bin/python scripts/host_midi_hitl.py run --preset revision_load \
+  --midi-out "Teensy" --midi-in "Teensy" \
+  --serial-port /dev/cu.usbmodem154944801 \
+  --track-number 5 \
+  --phase-wait-ms 500 --press-ms 120 \
+  --prior-save-drain-wait-ms 120000 \
+  --deferred-save-wait-ms 120000 \
+  --revision-commit-wait-ms 180000 \
+  --revision-load-wait-ms 180000
+```
+
+Use `--skip-hitl-cleanup` when debugging a failed load. Optional dev wipe of all sets: `--nuke-sets-before-run` (synchronous SD — can stall USB; not part of default pass criteria).
+
+Host unit test: `scripts/test_revision_load_serial_verify.py`.
+
+### `revision_load_record` (base record → commit → load)
+
+Runs canonical **`base`** record/overdub on the selected track, then **`revision_load_post_record`** (skips transport-stop prelude — commits immediately after the record baseline deferred save). Use this when verifying loop data round-trips through a revision.
+
+```bash
+.venv/bin/python scripts/host_midi_hitl.py run --preset revision_load_record \
+  --midi-out "Teensy" --midi-in "Teensy" \
+  --serial-port /dev/cu.usbmodem154944801 \
+  --track-number 5
+```
 
 ### `base` (record/overdub baseline)
 

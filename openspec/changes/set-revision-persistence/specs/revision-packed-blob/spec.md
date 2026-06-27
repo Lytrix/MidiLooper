@@ -127,6 +127,24 @@ files in chunk-bounded slices — not a synchronous RAM snapshot.
 - **THEN** progress uses `maxPersistenceMicros` budget per slice
 - **AND** USB MIDI clock and note output continue without multi-second contiguous SD blocks
 
+#### Scenario: Transport chunk ordering on disk
+
+- **WHEN** commit **WRITE** assembles a revision with a runtime bundle and at least one LoopSlot
+- **THEN** the Transport chunk appears in the payload stream with a valid chunk header before its body
+- **AND** SlotIndex is written last with final chunk offsets
+
+### Requirement: Load may proceed without Transport chunk
+
+A revision missing Transport data is **invalid for full workspace round-trip** but SHALL remain
+loadable: load restores LoopSlot bodies and applies default transport (see `revision-load` spec).
+New commits SHALL always include a valid Transport chunk when `runtime.bundle.bin` is present.
+
+#### Scenario: Pre-fix revision without Transport header
+
+- **WHEN** an older dev revision was committed without a Transport chunk header
+- **AND** the user loads that revision
+- **THEN** load uses default transport and still restores LoopSlot chunks
+
 ### Requirement: Revision files are never mutated
 
 Once validated and committed, `v####.bin` SHALL NOT be modified.

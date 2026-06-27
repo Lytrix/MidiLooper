@@ -26,6 +26,7 @@ class StorageManager {
 public:
     static bool saveState(const LooperState& state);
     static bool loadState(LooperState& state);
+    static bool loadCurrentWorkspaceFromSd(LooperState& state);
     static void requestDeferredSaveState(const LooperState& state, uint32_t admissionHeap = UINT32_MAX,
                                          bool isUrgentRequest = false);
     static void processDeferredSaveState(const LooperState& state);
@@ -54,9 +55,15 @@ public:
     static void requestCommitRevision();
     static bool hasRevisionCommitWork();
     static bool isRevisionCommitActive();
+    static void requestLoadRevision(uint16_t setId, uint16_t revisionId);
+    static bool hasRevisionLoadWork();
+    static bool isRevisionLoadActive();
+    static bool consumeRevisionLoadDisplayRefreshPending();
 #if defined(SESSION_CAPTURE)
     static void requestCommitRevisionForHitl();
     static bool cleanupHitlRevisionCommit();
+    static void requestLoadRevisionForHitl(uint16_t setId, uint16_t revisionId);
+    static bool nukeHitlSetsCatalog();
     static void processHitlSerialCommands();
 #endif
 

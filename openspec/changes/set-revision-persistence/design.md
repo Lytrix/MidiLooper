@@ -89,7 +89,20 @@ LMDB-inspired **mental model only** — catalog/workspace = root meta; `v####.bi
 
 **Timing guarantee** comes from `maxPersistenceMicrosActive`, chunk-bounded copies, no materialize on save, and `rev_blocked` while `current/` deferred save runs — not from the revision format. Epoch save to `current/` is the primary save-during-play path; revision commit is heavier but slice-budgeted.
 
-**Open item:** footer/validate CRC must remain chunk-bounded as payload grows. Commit still copies opaque epoch files until task **3.6**.
+**Open item:** ~~footer/validate CRC must remain chunk-bounded as payload grows~~ — **shipped (3.2a):** load validate streams payload CRC from SD; commit footer reads on-disk payload. Commit still copies opaque epoch files until task **3.6**.
+
+### 3.2 shipped refinements (2026-06-27)
+
+| Item | Behavior |
+|------|----------|
+| Transport chunk on commit | First Transport slice writes chunk header when `readPos == 0`, then copies runtime bundle body (epoch header skipped). Commit fails if bundle body empty. |
+| Runtime bundle sizing | Accept any valid epoch-header `runtime.bundle.bin` with complete magic (no strict epoch equality with RAM). |
+| Occupied LoopSlots only | SlotIndex lists slots with published capture/edit content in RAM — not every empty SD shell file. |
+| SlotIndex metadata | `loopLengthTicks`, `noteCount`, `bars` filled at commit for overlay/default-transport paths. |
+| Load without Transport | Missing or empty Transport chunk logs a warning; writes default transport from SlotIndex; LoopSlot restore continues. |
+| Reload RAM | `loadCurrentWorkspaceFromSd` after SD write; `revisionLoadDisplayRefreshPending` → display cache invalidation. |
+| HITL | `revision_load` (transport-stop prelude); `revision_load_record` = canonical base record + `revision_load_post_record` (skip prelude, commit immediately after record save). |
+
 
 ### Boot / recovery
 

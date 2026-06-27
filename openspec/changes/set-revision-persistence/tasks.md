@@ -16,7 +16,13 @@
 ## 3. Revision commit and load
 
 - [x] 3.1 Commit FSM stages on deferred save infrastructure; `maxPersistenceMicros` slices.
-- [ ] 3.2 Deferred load → new Current epoch; provenance after 100%.
+- [x] 3.2 Deferred load → new Current epoch; provenance after 100%.
+  - [x] 3.2a Load **VALIDATE** streams footer CRC + chunk walk from SD (no full-file RAM cap).
+  - [x] 3.2b Commit **WRITE** emits Transport chunk header before runtime bundle body.
+  - [x] 3.2c Commit includes **occupied** LoopSlots only (published passes/events); SlotIndex carries `loopLengthTicks`, `noteCount`, `bars`.
+  - [x] 3.2d Load tolerates missing/empty Transport chunk — default transport from SlotIndex; LoopSlots still restore.
+  - [x] 3.2e Display refresh pending consumed after load (`consumeRevisionLoadDisplayRefreshPending`).
+  - [x] 3.2f HITL: `revision_load`, `revision_load_record` (base + post-record commit/load), `!REV_LOAD` / `!REV_CLEANUP`.
 - [ ] 3.3 SNAPSHOT freezes completed epoch; post-snapshot capture → next epoch.
 - [ ] 3.4 `lastCommittedEpoch` sync at COMPLETE only.
 - [ ] 3.5 Native: commit during PLAYING uses budget; no materialize on WRITE path.
