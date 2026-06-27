@@ -165,6 +165,24 @@ void GpioButtonManager::handleButton(ButtonId button, ButtonAction action) {
         switch (button) {
             case BUTTON_D:
                 break;
+            case BUTTON_ENCODER:
+                switch (action) {
+                    case BUTTON_SHORT_PRESS:
+                        displayManager.handleLoadSaveOverlayPress(
+                            DisplayManager::LoadSaveOverlayPressType::Short);
+                        break;
+                    case BUTTON_DOUBLE_PRESS:
+                        displayManager.handleLoadSaveOverlayPress(
+                            DisplayManager::LoadSaveOverlayPressType::Double);
+                        break;
+                    case BUTTON_LONG_PRESS:
+                        displayManager.handleLoadSaveOverlayPress(
+                            DisplayManager::LoadSaveOverlayPressType::Long);
+                        break;
+                    default:
+                        break;
+                }
+                return;
             default:
                 return;
         }

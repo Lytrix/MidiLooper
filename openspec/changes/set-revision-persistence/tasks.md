@@ -37,7 +37,8 @@
 - [x] 4.2 Save → commit REQUEST + exit; playback/persistence continue.
 - [x] 4.3 Overlay input-modal: suspend record/overdub arm, loop slot gestures, note-edit; keep transport + deferred FSM.
 - [x] 4.4 GPIO encoder rotation → overlay list focus (ROOT + DIRTY_PROMPT via `adjustLoadSaveListSelection`).
-- [ ] 4.5–4.10 (encoder button row actions, set browser actions, loop picker, HITL `set_revision_overlay`).
+- [x] 4.5 GPIO encoder button → overlay row actions (short confirm/load, double favorite, long history/exit).
+- [ ] 4.6–4.10 (set browser actions, loop picker, HITL `set_revision_overlay`).
 
 ## 5–7. Loop copy, recovery docs, verification
 

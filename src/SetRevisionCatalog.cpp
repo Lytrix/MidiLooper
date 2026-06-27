@@ -185,6 +185,25 @@ void applyValidatedRevisionToSetMeta(SetMetaRecord& meta, uint16_t revisionId,
   meta.updatedUnix = updatedUnix;
 }
 
+bool parseSetIdFromFolderName(const char* folderName, uint16_t& setIdOut) {
+  setIdOut = 0;
+  if (folderName == nullptr || folderName[0] != 'S') {
+    return false;
+  }
+  unsigned value = 0;
+  for (const char* cursor = folderName + 1; *cursor >= '0' && *cursor <= '9'; ++cursor) {
+    value = value * 10U + static_cast<unsigned>(*cursor - '0');
+    if (value > 0xFFFFU) {
+      return false;
+    }
+  }
+  if (value == 0) {
+    return false;
+  }
+  setIdOut = static_cast<uint16_t>(value);
+  return true;
+}
+
 bool formatSetFolderPath(char* out, size_t outSize, uint16_t setId) {
   if (out == nullptr || outSize == 0) {
     return false;

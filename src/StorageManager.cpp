@@ -4029,6 +4029,8 @@ bool stepDeferredSaveJob() {
 }
 }  // namespace
 
+bool readSetLatestRevisionIdFromSd(uint16_t setId, uint16_t& latestRevisionIdOut);
+
 void StorageManager::requestUrgentEditSave() {
 #if BYPASS_STOP_UNDO_SAVE
     return;
@@ -4752,7 +4754,7 @@ void StorageManager::requestLoadRevision(uint16_t setId, uint16_t revisionId) {
     (void)setId;
     (void)revisionId;
     return;
-#endif
+#else
     if (setId == 0 || revisionId == 0) {
         return;
     }
@@ -4773,6 +4775,52 @@ void StorageManager::requestLoadRevision(uint16_t setId, uint16_t revisionId) {
     }
 
     dispatchStagedRevisionLoad();
+#endif
+}
+
+void StorageManager::requestLoadLatestRevisionForSet(uint16_t setId) {
+#if BYPASS_STOP_UNDO_SAVE
+    (void)setId;
+    return;
+#else
+    if (setId == 0) {
+        return;
+    }
+    uint16_t latestRevisionId = 0;
+    if (!readSetLatestRevisionIdFromSd(setId, latestRevisionId)) {
+        return;
+    }
+    requestLoadRevision(setId, latestRevisionId);
+#endif
+}
+
+bool StorageManager::toggleSetRevisionCatalogFavorite(uint16_t setId) {
+#if BYPASS_STOP_UNDO_SAVE
+    (void)setId;
+    return false;
+#else
+    if (setId == 0) {
+        return false;
+    }
+    char setMetaPath[64];
+    if (!SetRevisionCatalog::formatSetMetaPath(setMetaPath, sizeof(setMetaPath), setId) ||
+        !SD.exists(setMetaPath)) {
+        return false;
+    }
+    File file = SD.open(setMetaPath, FILE_READ);
+    if (!file) {
+        return false;
+    }
+    SetRevisionCatalog::SetMetaRecord meta{};
+    const StorageIo readIo = storageIoFromFileRead(file);
+    const bool readOk = SetRevisionCatalog::readSetMetaRecord(readIo, meta);
+    file.close();
+    if (!readOk || meta.setId != setId) {
+        return false;
+    }
+    meta.favorite = meta.favorite != 0 ? 0 : 1;
+    return writeSetMetaRecordFile(setId, meta);
+#endif
 }
 
 bool StorageManager::hasRevisionLoadWork() {
