@@ -102,7 +102,8 @@ void MidiButtonProcessor::transitionToIdle(ButtonState& state) {
 }
 
 void MidiButtonProcessor::onShortRelease(ButtonState& state, uint8_t channel, uint8_t note, uint32_t now,
-                                         uint32_t effectiveDoubleTap, uint32_t effectiveTripleTap) {
+                                         uint32_t effectiveDoubleTap, uint32_t effectiveTripleTap,
+                                         bool awaitTripleTap) {
     const uint8_t channel0 = channel - 1;  // 0-based for callback
 
     if (state.tapState == TapState::PendingDouble && (now - state.secondTapTime <= effectiveTripleTap)) {
@@ -111,11 +112,17 @@ void MidiButtonProcessor::onShortRelease(ButtonState& state, uint8_t channel, ui
         transitionToIdle(state);
         triggerButtonPress(note, channel0, MidiButtonConfig::PressType::TRIPLE_PRESS);
     } else if (state.lastTapTime > 0 && (now - state.lastTapTime <= effectiveDoubleTap)) {
-        // Second tap within window - set up for potential triple tap
-        logger.log(CAT_BUTTON, LOG_DEBUG, "Second tap detected, waiting for triple");
-        state.secondTapTime = now;
-        state.tapState = TapState::PendingDouble;
-        state.tapStateExpireTime = now + effectiveTripleTap;
+        if (!awaitTripleTap) {
+            logger.log(CAT_BUTTON, LOG_DEBUG, "Double press detected (no triple action)");
+            transitionToIdle(state);
+            triggerButtonPress(note, channel0, MidiButtonConfig::PressType::DOUBLE_PRESS);
+        } else {
+            // Second tap within window - wait for potential triple tap
+            logger.log(CAT_BUTTON, LOG_DEBUG, "Second tap detected, waiting for triple");
+            state.secondTapTime = now;
+            state.tapState = TapState::PendingDouble;
+            state.tapStateExpireTime = now + effectiveTripleTap;
+        }
     } else {
         // First tap or outside double tap window - delay decision
         logger.log(CAT_BUTTON, LOG_DEBUG, "First tap or outside window, scheduling short press");
@@ -137,6 +144,8 @@ void MidiButtonProcessor::handleButtonRelease(uint8_t channel, uint8_t note, uin
     uint32_t effectiveLongPress = (cfg && cfg->longPressTime > 0)   ? cfg->longPressTime  : longPressTime;
     uint32_t effectiveDoubleTap = (cfg && cfg->doubleTapWindow > 0) ? cfg->doubleTapWindow : doubleTapWindow;
     uint32_t effectiveTripleTap = (cfg && cfg->tripleTapWindow > 0) ? cfg->tripleTapWindow : tripleTapWindow;
+    const bool awaitTripleTap =
+        cfg != nullptr && cfg->triplePressAction != MidiButtonConfig::ActionType::NONE;
 
     logger.log(CAT_BUTTON, LOG_DEBUG, "handleButtonRelease: Ch%d Note%d, duration=%lu, effectiveLongPress=%lu",
                channel, note, pressDuration, effectiveLongPress);
@@ -151,7 +160,8 @@ void MidiButtonProcessor::handleButtonRelease(uint8_t channel, uint8_t note, uin
         // Short press - check for multiple taps
         logger.log(CAT_BUTTON, LOG_DEBUG, "Short press detected: duration=%lu < effectiveLongPress=%lu",
                    pressDuration, effectiveLongPress);
-        onShortRelease(state, channel, note, now, effectiveDoubleTap, effectiveTripleTap);
+        onShortRelease(state, channel, note, now, effectiveDoubleTap, effectiveTripleTap,
+                       awaitTripleTap);
     }
 }
 

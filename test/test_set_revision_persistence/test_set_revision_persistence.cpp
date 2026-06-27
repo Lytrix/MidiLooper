@@ -593,6 +593,23 @@ void test_overlay_reset_clears_drill_state() {
   TEST_ASSERT_EQUAL(SetBrowserOverlayPolicy::EntryKind::WorkspaceSetBrowser, nav.entryKind);
 }
 
+void test_root_workspace_list_row_indices() {
+  TEST_ASSERT_TRUE(SetBrowserOverlayPolicy::isRootSaveRow(0));
+  TEST_ASSERT_TRUE(SetBrowserOverlayPolicy::isRootCurrentRow(1));
+  TEST_ASSERT_FALSE(SetBrowserOverlayPolicy::isRootSaveRow(1));
+  TEST_ASSERT_EQUAL(static_cast<size_t>(0),
+                    SetBrowserOverlayPolicy::rootSetFolderListIndex(2));
+  TEST_ASSERT_EQUAL(static_cast<size_t>(1),
+                    SetBrowserOverlayPolicy::rootSetFolderListIndex(3));
+  TEST_ASSERT_EQUAL(static_cast<size_t>(-1),
+                    SetBrowserOverlayPolicy::rootSetFolderListIndex(0));
+}
+
+void test_root_workspace_list_row_count() {
+  TEST_ASSERT_EQUAL(2U, SetBrowserOverlayPolicy::rootWorkspaceListRowCount(0));
+  TEST_ASSERT_EQUAL(5U, SetBrowserOverlayPolicy::rootWorkspaceListRowCount(3));
+}
+
 int main(int argc, char** argv) {
   (void)argc;
   (void)argv;
@@ -640,5 +657,7 @@ int main(int argc, char** argv) {
   RUN_TEST(test_overlay_open_revision_history_preserves_parent_focus);
   RUN_TEST(test_overlay_navigate_back_restores_parent_focus);
   RUN_TEST(test_overlay_reset_clears_drill_state);
+  RUN_TEST(test_root_workspace_list_row_indices);
+  RUN_TEST(test_root_workspace_list_row_count);
   return UNITY_END();
 }

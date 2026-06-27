@@ -41,6 +41,29 @@ def _track_select_note(track_number_1based: int) -> int:
     return TRACK_SELECT_NOTE_BASE + (track_number_1based - 1)
 
 
+def _wait_load_save_mode(
+    serial_collector: object,
+    expected: int,
+    timeout_ms: int,
+) -> bool:
+    deadline = time.time() + timeout_ms / 1000.0
+    while time.time() < deadline:
+        if last_load_save_mode_active(serial_collector.snapshot()) == expected:
+            return True
+        time.sleep(0.05)
+    return last_load_save_mode_active(serial_collector.snapshot()) == expected
+
+
+def _wait_serial_cap_ready(serial_collector: object, timeout_ms: int = 8000) -> bool:
+    deadline = time.time() + timeout_ms / 1000.0
+    while time.time() < deadline:
+        for line in serial_collector.snapshot():
+            if "#CAP," in line:
+                return True
+        time.sleep(0.05)
+    return False
+
+
 def _sync_load_save_overlay_closed(
     out_port: object,
     serial_collector: Optional[object],
@@ -51,16 +74,21 @@ def _sync_load_save_overlay_closed(
     gap_ms: int,
     gesture_settle_ms: int,
     send_double_press: object,
-) -> int:
-    """Idempotently close overlay; return serial line index after sync for verification."""
+) -> None:
+    """Close overlay when serial shows it open. Never toggle while CAP is unavailable."""
     if serial_collector is None:
-        return 0
+        return
+    if not _wait_serial_cap_ready(serial_collector):
+        print("[load-save-display-hitl] warn: serial CAP not ready; skipping overlay sync")
+        return
     for attempt in range(2):
         time.sleep(0.2)
-        if last_load_save_mode_active(serial_collector.snapshot()) == 0:
-            return len(serial_collector.snapshot())
+        last = last_load_save_mode_active(serial_collector.snapshot())
+        if last != 1:
+            return
         print(
-            f"[load-save-display-hitl] sync overlay closed (attempt {attempt + 1}/2)"
+            f"[load-save-display-hitl] sync overlay closed "
+            f"(attempt {attempt + 1}/2, last_ldsv={last})"
         )
         send_double_press(
             out_port,
@@ -69,8 +97,9 @@ def _sync_load_save_overlay_closed(
             press_ms=press_ms,
             gap_ms=gap_ms,
         )
-        time.sleep(gesture_settle_ms / 1000.0)
-    return len(serial_collector.snapshot())
+        _wait_load_save_mode(serial_collector, 0, max(gesture_settle_ms, 800))
+    if last_load_save_mode_active(serial_collector.snapshot()) == 1:
+        print("[load-save-display-hitl] warn: overlay still open after sync")
 
 
 def run_load_save_display(args: object) -> int:
@@ -101,8 +130,9 @@ def run_load_save_display(args: object) -> int:
         if ns.serial_port:
             serial_collector = SerialCaptureCollector(ns.serial_port, baud=ns.serial_baud)
             serial_collector.start()
+            time.sleep(1.0)
 
-        serial_verify_offset = _sync_load_save_overlay_closed(
+        _sync_load_save_overlay_closed(
             out_port,
             serial_collector,
             note=PLAY_STOP_BUTTON_NOTE,
@@ -130,6 +160,9 @@ def run_load_save_display(args: object) -> int:
         )
         time.sleep(ns.phase_wait_ms / 1000.0)
 
+        if serial_collector is not None:
+            serial_verify_offset = len(serial_collector.snapshot())
+
         print("[load-save-display-hitl] play/stop double press — enter load/save")
         _send_double_press(
             out_port,
@@ -143,6 +176,8 @@ def run_load_save_display(args: object) -> int:
             "(double-press dispatch)"
         )
         time.sleep(ns.gesture_settle_ms / 1000.0)
+        if serial_collector is not None:
+            _wait_load_save_mode(serial_collector, 1, max(ns.gesture_settle_ms, 800))
         ctx.markers.append("phase:load_save_enter")
         print(
             f"[load-save-display-hitl] waiting {ns.load_save_display_wait_ms}ms before exit"
@@ -159,6 +194,8 @@ def run_load_save_display(args: object) -> int:
             gap_ms=ns.double_press_gap_ms,
         )
         time.sleep(ns.gesture_settle_ms / 1000.0)
+        if serial_collector is not None:
+            _wait_load_save_mode(serial_collector, 0, max(ns.gesture_settle_ms, 1200))
         ctx.markers.append("phase:load_save_exit")
         time.sleep(ns.phase_wait_ms / 1000.0)
 

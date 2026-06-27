@@ -21,6 +21,8 @@ struct DeferredSaveDisplayStatus {
 struct DeferredSaveDisplayInputs {
     bool savePending = false;
     bool saveInProgress = false;
+    bool revisionCommitPending = false;
+    bool revisionCommitInProgress = false;
     uint32_t completedAtMs = 0;
     uint32_t failedAtMs = 0;
 };
@@ -48,12 +50,16 @@ inline const char* deferredSaveDisplayPhaseName(DeferredSaveDisplayPhase phase) 
 inline DeferredSaveDisplayStatus resolveDeferredSaveDisplayStatus(uint32_t nowMs,
                                                                   const DeferredSaveDisplayInputs& inputs) {
     DeferredSaveDisplayStatus status{};
-    if (inputs.saveInProgress) {
+    const bool persistenceInProgress =
+        inputs.saveInProgress || inputs.revisionCommitInProgress;
+    const bool persistencePending =
+        inputs.savePending || inputs.revisionCommitPending;
+    if (persistenceInProgress) {
         status.phase = DeferredSaveDisplayPhase::InProgress;
         status.rotateStep = static_cast<uint8_t>((nowMs / kDeferredSaveDisplayRotateMs) % 4);
         return status;
     }
-    if (inputs.savePending) {
+    if (persistencePending) {
         status.phase = DeferredSaveDisplayPhase::Pending;
         return status;
     }

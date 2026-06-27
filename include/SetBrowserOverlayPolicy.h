@@ -3,6 +3,7 @@
 
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 
 namespace SetBrowserOverlayPolicy {
@@ -49,5 +50,16 @@ void openLoopPick(NavigationState& nav, uint16_t setId, uint8_t listSelection,
 bool navigateBack(NavigationState& nav, uint8_t& outListSelection, uint8_t& outListScrollOffset);
 
 bool isDrillMode(Mode mode);
+
+/// Root workspace Set browser list: Save, Current, then Set rows.
+constexpr uint8_t kRootSaveRowIndex = 0;
+constexpr uint8_t kRootCurrentRowIndex = 1;
+constexpr uint8_t kRootFirstSetRowIndex = 2;
+
+size_t rootWorkspaceListRowCount(size_t setCount);
+bool isRootSaveRow(uint8_t listSelection);
+bool isRootCurrentRow(uint8_t listSelection);
+/// Set folder list index when `listSelection` is a Set row; otherwise SIZE_MAX.
+size_t rootSetFolderListIndex(uint8_t listSelection);
 
 }  // namespace SetBrowserOverlayPolicy

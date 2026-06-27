@@ -79,11 +79,17 @@ void LooperStateManager::exitSettingsMode() {
 }
 
 void LooperStateManager::enterLoadSaveMode() {
+  if (this->loadSaveOverlayActive) {
+    return;
+  }
   this->loadSaveOverlayActive = true;
   SC_LOADSAVE(1);
 }
 
 void LooperStateManager::exitLoadSaveMode() {
+  if (!this->loadSaveOverlayActive) {
+    return;
+  }
   this->loadSaveOverlayActive = false;
   SC_LOADSAVE(0);
 }

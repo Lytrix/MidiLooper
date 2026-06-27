@@ -167,7 +167,8 @@ void Config::loadConfiguration() {
               .onShortPress(ActionType::TOGGLE_PLAY)
               .onDoublePress(ActionType::TOGGLE_LOAD_SAVE_MODE)
               .onLongPress(ActionType::CENTER_DETAILED_WINDOW_ON_PLAYHEAD)
-              .withDebounce(50));
+              .withDebounce(50)
+              .withTiming(400, 400, 3000));
     
     addButton(ButtonConfig(MidiConfig::ExtendedTransport::NOTE_SET_LOOP_START, ch16, "Set Loop Start")
               .onShortPress(ActionType::SET_LOOP_START));

@@ -72,6 +72,22 @@ void test_pending_overrides_completed_flash() {
     TEST_ASSERT_EQUAL(DeferredSaveDisplayPhase::Pending, status.phase);
 }
 
+void test_revision_commit_pending_shows_pending() {
+    DeferredSaveDisplayInputs inputs{};
+    inputs.revisionCommitPending = true;
+    const DeferredSaveDisplayStatus status = resolveDeferredSaveDisplayStatus(1000, inputs);
+    TEST_ASSERT_EQUAL(DeferredSaveDisplayPhase::Pending, status.phase);
+}
+
+void test_revision_commit_in_progress_overrides_pending() {
+    DeferredSaveDisplayInputs inputs{};
+    inputs.revisionCommitPending = true;
+    inputs.revisionCommitInProgress = true;
+    const DeferredSaveDisplayStatus status = resolveDeferredSaveDisplayStatus(400, inputs);
+    TEST_ASSERT_EQUAL(DeferredSaveDisplayPhase::InProgress, status.phase);
+    TEST_ASSERT_EQUAL(2, status.rotateStep);
+}
+
 int main(int argc, char** argv) {
     (void)argc;
     (void)argv;
@@ -84,5 +100,7 @@ int main(int argc, char** argv) {
     RUN_TEST(test_failed_flash_within_800_ms);
     RUN_TEST(test_in_progress_overrides_completed_flash);
     RUN_TEST(test_pending_overrides_completed_flash);
+    RUN_TEST(test_revision_commit_pending_shows_pending);
+    RUN_TEST(test_revision_commit_in_progress_overrides_pending);
     return UNITY_END();
 }
