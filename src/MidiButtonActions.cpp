@@ -17,6 +17,7 @@
 #include "TrackUndo.h"
 #include "Loop.h"
 #include "DisplayManager.h"
+#include "SetBrowserOverlayPolicy.h"
 #include "Utils/PressTiming.h"
 
 namespace {
@@ -94,6 +95,11 @@ MidiButtonActions::MidiButtonActions() {
 
 // Execute action based on type
 void MidiButtonActions::executeAction(MidiButtonConfig::ActionType actionType, uint32_t parameter) {
+    if (looperState.isLoadSaveModeActive() &&
+        SetBrowserOverlayPolicy::shouldSuppressGlobalMidiAction(actionType)) {
+        return;
+    }
+
     switch (actionType) {
         case MidiButtonConfig::ActionType::TOGGLE_RECORD:
             handleToggleRecord();

@@ -6,6 +6,8 @@
 #include <cstddef>
 #include <cstdint>
 
+#include "Utils/MidiButtonConfig.h"
+
 namespace SetBrowserOverlayPolicy {
 
 enum class Mode : uint8_t {
@@ -61,5 +63,11 @@ bool isRootSaveRow(uint8_t listSelection);
 bool isRootCurrentRow(uint8_t listSelection);
 /// Set folder list index when `listSelection` is a Set row; otherwise SIZE_MAX.
 size_t rootSetFolderListIndex(uint8_t listSelection);
+
+/// True when load/save overlay is active and global handlers must not run this MIDI action.
+bool shouldSuppressGlobalMidiAction(MidiButtonConfig::ActionType actionType);
+
+/// True when GPIO encoder rotation / pitch-edit hold must not drive note edit.
+bool shouldSuppressNoteEditEncoderInput();
 
 }  // namespace SetBrowserOverlayPolicy

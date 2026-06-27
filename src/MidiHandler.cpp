@@ -14,6 +14,7 @@
 #include "MidiConfig.h"
 #include "NoteEditManager.h"
 #include "Utils/DebugSessionCapture.h"
+#include "LooperState.h"
 
 MIDI_CREATE_INSTANCE(HardwareSerial, Serial8, MIDIserial);  // Teensy Serial8 for 5-pin DIN MIDI
 
@@ -301,9 +302,10 @@ void MidiHandler::handleNoteOff(byte channel, byte note, byte velocity, uint32_t
 }
 
 void MidiHandler::handleControlChange(byte channel, byte control, byte value, uint32_t tickNow) {
-  // Route CC to NoteEditManager for fader handling
-  noteEditManager.handleMidiCC(channel, control, value);
-  
+  if (!looperState.isLoadSaveModeActive()) {
+    noteEditManager.handleMidiCC(channel, control, value);
+  }
+
   // Route to track recording (skip control channels 13-16)
   if (!isControlChannel(channel)) {
   trackManager.getSelectedTrack().recordMidiEvents(midi::ControlChange, channel, control, value, tickNow);
@@ -313,10 +315,11 @@ void MidiHandler::handleControlChange(byte channel, byte control, byte value, ui
 void MidiHandler::handlePitchBend(byte channel, int pitchValue, uint32_t tickNow) {
   // Convert unsigned 14-bit pitchbend (0-16383) to signed format (-8192 to 8191)
   int16_t signedPitchValue = pitchValue - 8192;
-  
-  // Route pitchbend to NoteEditManager for fader handling
-  noteEditManager.handleMidiPitchbend(channel, signedPitchValue);
-  
+
+  if (!looperState.isLoadSaveModeActive()) {
+    noteEditManager.handleMidiPitchbend(channel, signedPitchValue);
+  }
+
   // Route to track recording (skip control channels 13-16)
   if (!isControlChannel(channel)) {
     trackManager.getSelectedTrack().recordMidiEvents(midi::PitchBend, channel, pitchValue & 0x7F, (pitchValue >> 7) & 0x7F, tickNow);

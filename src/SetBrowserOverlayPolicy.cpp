@@ -82,4 +82,26 @@ size_t rootSetFolderListIndex(uint8_t listSelection) {
   return static_cast<size_t>(listSelection - kRootFirstSetRowIndex);
 }
 
+bool shouldSuppressGlobalMidiAction(MidiButtonConfig::ActionType actionType) {
+  using ActionType = MidiButtonConfig::ActionType;
+  switch (actionType) {
+    case ActionType::NONE:
+    case ActionType::TOGGLE_PLAY:
+    case ActionType::TOGGLE_LOAD_SAVE_MODE:
+    case ActionType::TOGGLE_TRANSPORT:
+    case ActionType::RESET_TO_LOOP_START:
+    case ActionType::SELECT_TRACK:
+    case ActionType::MUTE_TRACK:
+    case ActionType::SOLO_TRACK:
+    case ActionType::CENTER_DETAILED_WINDOW_ON_PLAYHEAD:
+      return false;
+    default:
+      return true;
+  }
+}
+
+bool shouldSuppressNoteEditEncoderInput() {
+  return true;
+}
+
 }  // namespace SetBrowserOverlayPolicy
