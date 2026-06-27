@@ -43,6 +43,15 @@ struct SetMetaRecord {
   uint32_t crc32 = 0;
 };
 
+/// One Set row in the workspace browser (catalog `sets/S####/` only).
+struct SetBrowserListEntry {
+  char folderName[16] = {};
+  uint16_t setId = 0;
+  uint16_t latestRevisionId = 0;
+  uint64_t updatedUnix = 0;
+  uint8_t favorite = 0;
+};
+
 uint32_t computeSetCatalogIndexChecksum(const SetCatalogIndex& index);
 uint32_t computeSetMetaChecksum(const SetMetaRecord& record);
 
@@ -69,5 +78,8 @@ bool formatSetFolderPath(char* out, size_t outSize, uint16_t setId);
 bool formatSetMetaPath(char* out, size_t outSize, uint16_t setId);
 bool formatRevisionPath(char* out, size_t outSize, uint16_t setId, uint16_t revisionId,
                         bool tempFile);
+
+/// Sort workspace browser rows newest `updatedUnix` first (stable enough for small N).
+void sortSetBrowserListEntriesByUpdatedUnixDesc(SetBrowserListEntry* entries, size_t count);
 
 }  // namespace SetRevisionCatalog

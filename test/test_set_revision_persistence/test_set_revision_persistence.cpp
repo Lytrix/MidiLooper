@@ -650,6 +650,23 @@ void test_parse_set_id_from_catalog_folder_name() {
   TEST_ASSERT_FALSE(SetRevisionCatalog::parseSetIdFromFolderName(nullptr, setId));
 }
 
+void test_set_browser_list_sorts_by_updated_unix_desc() {
+  SetRevisionCatalog::SetBrowserListEntry entries[3] = {};
+  std::snprintf(entries[0].folderName, sizeof(entries[0].folderName), "S0001");
+  entries[0].setId = 1;
+  entries[0].updatedUnix = 100;
+  std::snprintf(entries[1].folderName, sizeof(entries[1].folderName), "S0002");
+  entries[1].setId = 2;
+  entries[1].updatedUnix = 300;
+  std::snprintf(entries[2].folderName, sizeof(entries[2].folderName), "S0003");
+  entries[2].setId = 3;
+  entries[2].updatedUnix = 200;
+  SetRevisionCatalog::sortSetBrowserListEntriesByUpdatedUnixDesc(entries, 3);
+  TEST_ASSERT_EQUAL_UINT16(2, entries[0].setId);
+  TEST_ASSERT_EQUAL_UINT16(3, entries[1].setId);
+  TEST_ASSERT_EQUAL_UINT16(1, entries[2].setId);
+}
+
 int main(int argc, char** argv) {
   (void)argc;
   (void)argv;
@@ -703,5 +720,6 @@ int main(int argc, char** argv) {
   RUN_TEST(test_overlay_input_modal_allows_transport_and_overlay_actions);
   RUN_TEST(test_overlay_input_modal_suppresses_note_edit_encoder);
   RUN_TEST(test_parse_set_id_from_catalog_folder_name);
+  RUN_TEST(test_set_browser_list_sorts_by_updated_unix_desc);
   return UNITY_END();
 }

@@ -9,6 +9,7 @@
 #include "LooperState.h"
 #include "RevisionLoadPolicy.h"
 #include "SavedSetCatalog.h"
+#include "SetRevisionCatalog.h"
 #include "SetBrowserOverlayPolicy.h"
 
 #if defined(ARDUINO)
@@ -44,6 +45,10 @@ public:
     static bool consumeAutoSaveBeforeLoadFolder(char* out, size_t outSize);
     static size_t listSavedSetFolderEntries(SavedSetCatalog::SavedSetFolderListEntry* entries,
                                             size_t maxEntries);
+    static size_t listSetRevisionBrowserEntries(SetRevisionCatalog::SetBrowserListEntry* entries,
+                                                size_t maxEntries);
+    static bool readSetRevisionCatalogMetaForFolder(const char* folderName,
+                                                    SetRevisionCatalog::SetMetaRecord& meta);
     static bool readSavedSetMetadataForFolder(const char* folderName,
                                               SavedSetCatalog::SavedSetMetadata& metadata);
     static bool readCurrentSetBrowserMetadata(SavedSetCatalog::SavedSetMetadata& metadata);

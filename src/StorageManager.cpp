@@ -4030,6 +4030,7 @@ bool stepDeferredSaveJob() {
 }  // namespace
 
 bool readSetLatestRevisionIdFromSd(uint16_t setId, uint16_t& latestRevisionIdOut);
+bool parseRevisionSetFolderEntryName(const char* name, uint16_t& setIdOut);
 
 void StorageManager::requestUrgentEditSave() {
 #if BYPASS_STOP_UNDO_SAVE
@@ -4353,6 +4354,113 @@ size_t StorageManager::listSavedSetFolderEntries(SavedSetCatalog::SavedSetFolder
         }
     }
     return count < maxEntries ? count : maxEntries;
+}
+
+size_t StorageManager::listSetRevisionBrowserEntries(SetRevisionCatalog::SetBrowserListEntry* entries,
+                                                     size_t maxEntries) {
+#if BYPASS_STOP_UNDO_SAVE
+    (void)entries;
+    (void)maxEntries;
+    return 0;
+#else
+    if (entries == nullptr || maxEntries == 0 || !SD.exists(SetRevisionCatalog::kSetsRoot)) {
+        return 0;
+    }
+
+    SetRevisionCatalog::SetBrowserListEntry scratch[16];
+    constexpr size_t kScratchCapacity = 16;
+    const size_t capacity = maxEntries < kScratchCapacity ? maxEntries : kScratchCapacity;
+    size_t count = 0;
+
+    File setsDir = SD.open(SetRevisionCatalog::kSetsRoot);
+    if (!setsDir) {
+        return 0;
+    }
+    while (true) {
+        File setEntry = setsDir.openNextFile();
+        if (!setEntry) {
+            break;
+        }
+        const bool isDirectory = setEntry.isDirectory();
+        const char* name = setEntry.name();
+        setEntry.close();
+        if (!isDirectory || count >= capacity) {
+            continue;
+        }
+
+        uint16_t setId = 0;
+        if (!parseRevisionSetFolderEntryName(name, setId)) {
+            continue;
+        }
+
+        char setMetaPath[64];
+        if (!SetRevisionCatalog::formatSetMetaPath(setMetaPath, sizeof(setMetaPath), setId) ||
+            !SD.exists(setMetaPath)) {
+            continue;
+        }
+        File metaFile = SD.open(setMetaPath, FILE_READ);
+        if (!metaFile) {
+            continue;
+        }
+        SetRevisionCatalog::SetMetaRecord meta{};
+        const StorageIo metaIo = storageIoFromFileRead(metaFile);
+        const bool readOk = SetRevisionCatalog::readSetMetaRecord(metaIo, meta);
+        metaFile.close();
+        if (!readOk || meta.setId != setId || meta.latestRevisionId == 0) {
+            continue;
+        }
+
+        SetRevisionCatalog::SetBrowserListEntry& row = scratch[count];
+        const int folderWritten =
+            std::snprintf(row.folderName, sizeof(row.folderName), "S%04u", setId);
+        if (folderWritten <= 0 ||
+            static_cast<size_t>(folderWritten) >= sizeof(row.folderName)) {
+            continue;
+        }
+        row.setId = setId;
+        row.latestRevisionId = meta.latestRevisionId;
+        row.updatedUnix = meta.updatedUnix;
+        row.favorite = meta.favorite;
+        ++count;
+    }
+    setsDir.close();
+
+    SetRevisionCatalog::sortSetBrowserListEntriesByUpdatedUnixDesc(scratch, count);
+    for (size_t i = 0; i < count; ++i) {
+        entries[i] = scratch[i];
+    }
+    return count;
+#endif
+}
+
+bool StorageManager::readSetRevisionCatalogMetaForFolder(const char* folderName,
+                                                           SetRevisionCatalog::SetMetaRecord& meta) {
+#if BYPASS_STOP_UNDO_SAVE
+    (void)folderName;
+    (void)meta;
+    return false;
+#else
+    if (folderName == nullptr || folderName[0] == '\0') {
+        return false;
+    }
+    uint16_t setId = 0;
+    if (!SetRevisionCatalog::parseSetIdFromFolderName(folderName, setId)) {
+        return false;
+    }
+    char setMetaPath[64];
+    if (!SetRevisionCatalog::formatSetMetaPath(setMetaPath, sizeof(setMetaPath), setId) ||
+        !SD.exists(setMetaPath)) {
+        return false;
+    }
+    File file = SD.open(setMetaPath, FILE_READ);
+    if (!file) {
+        return false;
+    }
+    const StorageIo io = storageIoFromFileRead(file);
+    const bool ok = SetRevisionCatalog::readSetMetaRecord(io, meta);
+    file.close();
+    return ok && meta.setId == setId;
+#endif
 }
 
 bool StorageManager::readSavedSetMetadataForFolder(const char* folderName,
