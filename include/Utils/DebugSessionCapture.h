@@ -30,6 +30,8 @@
  *                                               OLED note-info row (edit selection; display ticks)
  *   SAVE ,<phase>,<rotateStep>                 sidebar deferred-save status phase transition
  *   LDSV ,<1|0>                                load/save set browser overlay active
+ *   OVLY ,sel,<mode>,<row>                     overlay list focus (mode 0=root 1=dirty)
+ *   OVLY ,confirm,<mode>,<row>                 overlay row confirm (encoder/MIDI substitute)
  *   WRAP ,<onTick>,<offTick>,<ch>,<note>       wrapped tail-on / head-off pair in committed store
  *   BAR  ,<tick>,<bar>                         bar boundary marker (tick<->micros alignment)
  */
@@ -145,6 +147,14 @@ inline void loadSaveMode(uint8_t active) {
   Serial.printf("#CAP,%lu,LDSV,%u\r\n", (unsigned long)micros(), active);
 }
 
+inline void overlayListSelection(uint8_t mode, uint8_t row) {
+  Serial.printf("#CAP,%lu,OVLY,sel,%u,%u\r\n", (unsigned long)micros(), mode, row);
+}
+
+inline void overlayRowConfirm(uint8_t mode, uint8_t row) {
+  Serial.printf("#CAP,%lu,OVLY,confirm,%u,%u\r\n", (unsigned long)micros(), mode, row);
+}
+
 struct PendingRevt {
   uint32_t tick;
   uint8_t ch;
@@ -250,6 +260,8 @@ inline void update(uint32_t currentTick, uint32_t ticksPerBar) {
                                            DebugSessionCapture::persistence(stage, durationUs, heapBefore, heapAfter, outcome)
 #define SC_SAVE(phase, rotateStep)         DebugSessionCapture::saveDisplayPhase(phase, rotateStep)
 #define SC_LOADSAVE(active)                DebugSessionCapture::loadSaveMode(active)
+#define SC_OVERLAY_SEL(mode, row)          DebugSessionCapture::overlayListSelection(mode, row)
+#define SC_OVERLAY_CONFIRM(mode, row)      DebugSessionCapture::overlayRowConfirm(mode, row)
 #define SC_REC_STORED_NOTE_ON(tick, ch, note) DebugSessionCapture::recStoredNoteOn(tick, ch, note)
 #define SC_STORED_NOTE_EVENT(kind, tick, ch, note) DebugSessionCapture::storedNoteEvent(kind, tick, ch, note)
 #define SC_DISP(slot, state, loopLen, take, visual, frame, buffer, published) \
@@ -282,6 +294,8 @@ inline void update(uint32_t currentTick, uint32_t ticksPerBar) {
 #define SC_PERSIST(stage, durationUs, heapBefore, heapAfter, outcome) ((void)0)
 #define SC_SAVE(phase, rotateStep)         ((void)0)
 #define SC_LOADSAVE(active)                ((void)0)
+#define SC_OVERLAY_SEL(mode, row)          ((void)0)
+#define SC_OVERLAY_CONFIRM(mode, row)      ((void)0)
 #define SC_REC_STORED_NOTE_ON(tick, ch, note) ((void)0)
 #define SC_STORED_NOTE_EVENT(kind, tick, ch, note) ((void)0)
 #define SC_DISP(slot, state, loopLen, take, visual, frame, buffer, published) ((void)0)

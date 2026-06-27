@@ -24,6 +24,7 @@
 #include "Utils/MemoryMonitor.h"
 #if defined(SESSION_CAPTURE)
 #include "DisplayManager.h"
+#include "LooperState.h"
 #endif
 #include <SD.h>
 #include <Arduino.h>
@@ -4204,6 +4205,9 @@ void StorageManager::adjustRevisionLoadDirtyPromptSelection(int delta) {
         next = static_cast<int>(RevisionLoadPolicy::kDirtyPromptRowCount) - 1;
     }
     revisionLoadDirtyPromptSelection = static_cast<uint8_t>(next);
+#if defined(SESSION_CAPTURE)
+    SC_OVERLAY_SEL(1, revisionLoadDirtyPromptSelection);
+#endif
 }
 
 void StorageManager::confirmRevisionLoadDirtyPromptSaveThenLoad() {
@@ -5108,6 +5112,35 @@ void StorageManager::processHitlSerialCommands() {
                 cancelRevisionLoadDirtyPromptForHitl();
             } else if (std::strcmp(lineBuffer, "!OVERLAY_SAVE") == 0) {
                 displayManager.confirmLoadSaveFocusedRow();
+            } else if (std::strcmp(lineBuffer, "!OVERLAY_CONFIRM") == 0) {
+                displayManager.confirmLoadSaveFocusedRow();
+            } else if (std::strcmp(lineBuffer, "!OVERLAY_ENTER") == 0) {
+                looperState.enterLoadSaveMode();
+            } else if (std::strcmp(lineBuffer, "!OVERLAY_EXIT") == 0) {
+                looperState.exitLoadSaveMode();
+            } else if (std::strncmp(lineBuffer, "!OVERLAY_SCROLL ", 16) == 0) {
+                const char* cursor = lineBuffer + 16;
+                while (*cursor == ' ') {
+                    ++cursor;
+                }
+                int delta = 0;
+                bool negative = false;
+                if (*cursor == '-') {
+                    negative = true;
+                    ++cursor;
+                } else if (*cursor == '+') {
+                    ++cursor;
+                }
+                while (*cursor >= '0' && *cursor <= '9') {
+                    delta = delta * 10 + (*cursor - '0');
+                    ++cursor;
+                }
+                if (negative) {
+                    delta = -delta;
+                }
+                if (delta != 0) {
+                    displayManager.adjustLoadSaveListSelection(delta);
+                }
             } else if (std::strncmp(lineBuffer, "!REV_LOAD ", 10) == 0) {
                 const char* cursor = lineBuffer + 10;
                 unsigned setId = 0;

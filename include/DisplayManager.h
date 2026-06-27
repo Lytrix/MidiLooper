@@ -44,8 +44,10 @@ public:
     /// Emit #CAP DISP snapshot for HITL display verification (capture builds).
     void emitDisplayCaptureSnapshot(const Track& track, uint8_t displaySlot, uint32_t currentTick);
 
-    /// Scroll set list selection in load/save mode (for future button/encoder wiring).
+    /// Scroll set list selection in load/save mode (encoder GPIO + HITL !OVERLAY_SCROLL).
     void adjustLoadSaveListSelection(int delta);
+
+    uint8_t getLoadSaveListSelection() const { return loadSaveListSelection_; }
 
     /// Confirm the focused overlay row (Save queues revision commit and exits overlay).
     void confirmLoadSaveFocusedRow();
