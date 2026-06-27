@@ -18,26 +18,29 @@ struct RevisionHeaderWire {
   uint16_t setId;
   uint32_t sourceEpoch;
   uint64_t createdUnix;
-  uint32_t transportOffset;
-  uint32_t globalOffset;
-  uint32_t undoOffset;
-  uint32_t loopIndexOffset;
-  uint16_t loopIndexCount;
-  uint16_t loopIndexPadding;
+  uint16_t chunkCount;
+  uint16_t reserved0;
   uint32_t payloadSize;
   uint32_t headerCrc32;
   uint32_t workspaceFlags;
-  uint8_t reserved[56];
-  uint8_t trailingPad[12];
+  uint8_t reserved[84];
 };
 
-struct LoopIndexEntryWire {
+struct ChunkHeaderWire {
+  uint8_t type;
+  uint8_t trackIndex;
+  uint8_t slotIndex;
+  uint8_t reserved;
+  uint32_t bodyLength;
+};
+
+struct SlotIndexEntryWire {
   uint8_t trackIndex;
   uint8_t slotIndex;
   uint8_t occupied;
   uint8_t reserved0;
-  uint32_t blobOffset;
-  uint32_t blobSize;
+  uint32_t chunkOffset;
+  uint32_t bodyLength;
   uint32_t loopLengthTicks;
   uint16_t noteCount;
   uint16_t bars;
@@ -54,8 +57,9 @@ struct RevisionFooterWire {
 
 static_assert(sizeof(RevisionHeaderWire) == kRevisionHeaderByteSize,
               "RevisionHeaderWire size mismatch");
-static_assert(sizeof(LoopIndexEntryWire) == kLoopIndexEntryByteSize,
-              "LoopIndexEntryWire size mismatch");
+static_assert(sizeof(ChunkHeaderWire) == kChunkHeaderByteSize, "ChunkHeaderWire size mismatch");
+static_assert(sizeof(SlotIndexEntryWire) == kSlotIndexEntryByteSize,
+              "SlotIndexEntryWire size mismatch");
 static_assert(sizeof(RevisionFooterWire) == kRevisionFooterByteSize,
               "RevisionFooterWire size mismatch");
 
@@ -76,12 +80,8 @@ RevisionHeaderWire toWire(const RevisionHeader& header) {
   wire.setId = header.setId;
   wire.sourceEpoch = header.sourceEpoch;
   wire.createdUnix = header.createdUnix;
-  wire.transportOffset = header.transportOffset;
-  wire.globalOffset = header.globalOffset;
-  wire.undoOffset = header.undoOffset;
-  wire.loopIndexOffset = header.loopIndexOffset;
-  wire.loopIndexCount = header.loopIndexCount;
-  wire.loopIndexPadding = 0;
+  wire.chunkCount = header.chunkCount;
+  wire.reserved0 = header.reserved0;
   wire.payloadSize = header.payloadSize;
   wire.headerCrc32 = header.headerCrc32;
   wire.workspaceFlags = header.workspaceFlags;
@@ -96,24 +96,39 @@ void fromWire(const RevisionHeaderWire& wire, RevisionHeader& header) {
   header.setId = wire.setId;
   header.sourceEpoch = wire.sourceEpoch;
   header.createdUnix = wire.createdUnix;
-  header.transportOffset = wire.transportOffset;
-  header.globalOffset = wire.globalOffset;
-  header.undoOffset = wire.undoOffset;
-  header.loopIndexOffset = wire.loopIndexOffset;
-  header.loopIndexCount = wire.loopIndexCount;
+  header.chunkCount = wire.chunkCount;
+  header.reserved0 = wire.reserved0;
   header.payloadSize = wire.payloadSize;
   header.headerCrc32 = wire.headerCrc32;
   header.workspaceFlags = wire.workspaceFlags;
 }
 
-LoopIndexEntryWire toWire(const LoopIndexEntry& entry) {
-  LoopIndexEntryWire wire{};
+ChunkHeaderWire toWire(const ChunkHeader& chunkHeader) {
+  ChunkHeaderWire wire{};
+  wire.type = chunkHeader.type;
+  wire.trackIndex = chunkHeader.trackIndex;
+  wire.slotIndex = chunkHeader.slotIndex;
+  wire.reserved = chunkHeader.reserved;
+  wire.bodyLength = chunkHeader.bodyLength;
+  return wire;
+}
+
+void fromWire(const ChunkHeaderWire& wire, ChunkHeader& chunkHeader) {
+  chunkHeader.type = wire.type;
+  chunkHeader.trackIndex = wire.trackIndex;
+  chunkHeader.slotIndex = wire.slotIndex;
+  chunkHeader.reserved = wire.reserved;
+  chunkHeader.bodyLength = wire.bodyLength;
+}
+
+SlotIndexEntryWire toWire(const SlotIndexEntry& entry) {
+  SlotIndexEntryWire wire{};
   wire.trackIndex = entry.trackIndex;
   wire.slotIndex = entry.slotIndex;
   wire.occupied = entry.occupied;
   wire.reserved0 = entry.reserved0;
-  wire.blobOffset = entry.blobOffset;
-  wire.blobSize = entry.blobSize;
+  wire.chunkOffset = entry.chunkOffset;
+  wire.bodyLength = entry.bodyLength;
   wire.loopLengthTicks = entry.loopLengthTicks;
   wire.noteCount = entry.noteCount;
   wire.bars = entry.bars;
@@ -121,13 +136,13 @@ LoopIndexEntryWire toWire(const LoopIndexEntry& entry) {
   return wire;
 }
 
-void fromWire(const LoopIndexEntryWire& wire, LoopIndexEntry& entry) {
+void fromWire(const SlotIndexEntryWire& wire, SlotIndexEntry& entry) {
   entry.trackIndex = wire.trackIndex;
   entry.slotIndex = wire.slotIndex;
   entry.occupied = wire.occupied;
   entry.reserved0 = wire.reserved0;
-  entry.blobOffset = wire.blobOffset;
-  entry.blobSize = wire.blobSize;
+  entry.chunkOffset = wire.chunkOffset;
+  entry.bodyLength = wire.bodyLength;
   entry.loopLengthTicks = wire.loopLengthTicks;
   entry.noteCount = wire.noteCount;
   entry.bars = wire.bars;
@@ -136,6 +151,38 @@ void fromWire(const LoopIndexEntryWire& wire, LoopIndexEntry& entry) {
 
 bool magicMatches(const char* magic) {
   return std::memcmp(magic, kRevisionMagic, sizeof(kRevisionMagic)) == 0;
+}
+
+bool findSlotIndexChunkBody(const uint8_t* fileBytes, size_t fileSize,
+                            const RevisionHeader& header, const uint8_t*& bodyOut,
+                            size_t& bodySizeOut) {
+  if (fileBytes == nullptr || header.payloadSize == 0) {
+    return false;
+  }
+  const size_t payloadOffset = kRevisionHeaderByteSize;
+  if (payloadOffset + header.payloadSize > fileSize) {
+    return false;
+  }
+  const uint8_t* payload = fileBytes + payloadOffset;
+  size_t cursor = 0;
+  uint16_t chunksSeen = 0;
+  while (chunksSeen < header.chunkCount && cursor + kChunkHeaderByteSize <= header.payloadSize) {
+    ChunkHeaderWire chunkWire{};
+    std::memcpy(&chunkWire, payload + cursor, sizeof(chunkWire));
+    const size_t bodyStart = cursor + kChunkHeaderByteSize;
+    const size_t bodyEnd = bodyStart + static_cast<size_t>(chunkWire.bodyLength);
+    if (bodyEnd > header.payloadSize) {
+      return false;
+    }
+    if (chunkWire.type == static_cast<uint8_t>(ChunkType::SlotIndex)) {
+      bodyOut = payload + bodyStart;
+      bodySizeOut = chunkWire.bodyLength;
+      return true;
+    }
+    cursor = bodyEnd;
+    ++chunksSeen;
+  }
+  return false;
 }
 
 }  // namespace
@@ -189,13 +236,45 @@ bool readRevisionHeader(const StorageIo& io, RevisionHeader& header) {
   return storedCrc == expected;
 }
 
-bool writeLoopIndexEntry(const StorageIo& io, const LoopIndexEntry& entry) {
-  const LoopIndexEntryWire wire = toWire(entry);
+bool writeChunkHeader(const StorageIo& io, const ChunkHeader& chunkHeader) {
+  const ChunkHeaderWire wire = toWire(chunkHeader);
   return ioWrite(io, &wire, sizeof(wire));
 }
 
-bool readLoopIndexEntry(const StorageIo& io, LoopIndexEntry& entry) {
-  LoopIndexEntryWire wire{};
+bool readChunkHeader(const StorageIo& io, ChunkHeader& chunkHeader) {
+  ChunkHeaderWire wire{};
+  if (!ioRead(io, &wire, sizeof(wire))) {
+    return false;
+  }
+  fromWire(wire, chunkHeader);
+  return true;
+}
+
+bool writeSlotIndexEntry(const StorageIo& io, const SlotIndexEntry& entry) {
+  const SlotIndexEntryWire wire = toWire(entry);
+  return ioWrite(io, &wire, sizeof(wire));
+}
+
+bool slotIndexEntryWireBytes(const SlotIndexEntry& entry, uint8_t* out, size_t outSize) {
+  if (out == nullptr || outSize < kSlotIndexEntryByteSize) {
+    return false;
+  }
+  const SlotIndexEntryWire wire = toWire(entry);
+  std::memcpy(out, &wire, sizeof(wire));
+  return true;
+}
+
+bool chunkHeaderWireBytes(const ChunkHeader& chunkHeader, uint8_t* out, size_t outSize) {
+  if (out == nullptr || outSize < kChunkHeaderByteSize) {
+    return false;
+  }
+  const ChunkHeaderWire wire = toWire(chunkHeader);
+  std::memcpy(out, &wire, sizeof(wire));
+  return true;
+}
+
+bool readSlotIndexEntry(const StorageIo& io, SlotIndexEntry& entry) {
+  SlotIndexEntryWire wire{};
   if (!ioRead(io, &wire, sizeof(wire))) {
     return false;
   }
@@ -247,22 +326,36 @@ bool parseRevisionHeaderFromBytes(const uint8_t* fileBytes, size_t fileSize,
   return storedCrc == expected;
 }
 
-bool readLoopIndexEntryFromBytes(const uint8_t* fileBytes, size_t fileSize,
-                                 const RevisionHeader& header, uint16_t index,
-                                 LoopIndexEntry& entryOut) {
-  if (fileBytes == nullptr || index >= header.loopIndexCount) {
+bool readSlotIndexEntryFromBytes(const uint8_t* slotIndexBody, size_t slotIndexBodySize,
+                                 uint16_t index, SlotIndexEntry& entryOut) {
+  if (slotIndexBody == nullptr || slotIndexBodySize < kSlotIndexBodyPrefixByteSize) {
+    return false;
+  }
+  uint16_t entryCount = 0;
+  std::memcpy(&entryCount, slotIndexBody, sizeof(entryCount));
+  if (index >= entryCount) {
     return false;
   }
   const size_t entryOffset =
-      static_cast<size_t>(header.loopIndexOffset) +
-      static_cast<size_t>(index) * kLoopIndexEntryByteSize;
-  if (entryOffset + kLoopIndexEntryByteSize > fileSize) {
+      kSlotIndexBodyPrefixByteSize + static_cast<size_t>(index) * kSlotIndexEntryByteSize;
+  if (entryOffset + kSlotIndexEntryByteSize > slotIndexBodySize) {
     return false;
   }
-  LoopIndexEntryWire wire{};
-  std::memcpy(&wire, fileBytes + entryOffset, sizeof(wire));
+  SlotIndexEntryWire wire{};
+  std::memcpy(&wire, slotIndexBody + entryOffset, sizeof(wire));
   fromWire(wire, entryOut);
   return true;
+}
+
+bool readSlotIndexEntryFromRevisionBytes(const uint8_t* fileBytes, size_t fileSize,
+                                         const RevisionHeader& header, uint16_t index,
+                                         SlotIndexEntry& entryOut) {
+  const uint8_t* slotIndexBody = nullptr;
+  size_t slotIndexBodySize = 0;
+  if (!findSlotIndexChunkBody(fileBytes, fileSize, header, slotIndexBody, slotIndexBodySize)) {
+    return false;
+  }
+  return readSlotIndexEntryFromBytes(slotIndexBody, slotIndexBodySize, index, entryOut);
 }
 
 bool validateRevisionFooterFromBytes(const uint8_t* fileBytes, size_t fileSize,
@@ -274,9 +367,7 @@ bool validateRevisionFooterFromBytes(const uint8_t* fileBytes, size_t fileSize,
   if (!parseRevisionHeaderFromBytes(fileBytes, fileSize, header)) {
     return false;
   }
-  const size_t payloadOffset =
-      static_cast<size_t>(header.loopIndexOffset) +
-      static_cast<size_t>(header.loopIndexCount) * kLoopIndexEntryByteSize;
+  const size_t payloadOffset = kRevisionHeaderByteSize;
   if (payloadOffset + header.payloadSize + kRevisionFooterByteSize > fileSize) {
     return false;
   }

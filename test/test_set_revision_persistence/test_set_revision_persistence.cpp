@@ -82,56 +82,72 @@ std::vector<uint8_t> buildSampleRevisionBlob() {
   header.setId = 1;
   header.sourceEpoch = 120;
   header.createdUnix = 1782345600ULL;
-  header.loopIndexOffset = RevisionPackedBlob::kRevisionHeaderByteSize;
-  header.loopIndexCount = 2;
 
-  RevisionPackedBlob::LoopIndexEntry entry0{};
+  const std::vector<uint8_t> transportPayload(16, 0xAA);
+  const std::vector<uint8_t> loopPayload0(64, 0xDD);
+  const std::vector<uint8_t> loopPayload1(48, 0xEE);
+
+  RevisionPackedBlob::SlotIndexEntry entry0{};
   entry0.trackIndex = 0;
   entry0.slotIndex = 1;
   entry0.occupied = 1;
-  const uint32_t payloadBase =
-      static_cast<uint32_t>(RevisionPackedBlob::kRevisionHeaderByteSize +
-                            2U * RevisionPackedBlob::kLoopIndexEntryByteSize);
-  header.transportOffset = payloadBase;
-  entry0.blobOffset = payloadBase + 16U + 8U + 32U;
-  entry0.blobSize = 64;
+  entry0.bodyLength = static_cast<uint32_t>(loopPayload0.size());
   entry0.loopLengthTicks = 768;
   entry0.noteCount = 12;
   entry0.bars = 2;
 
-  header.globalOffset = header.transportOffset + 16U;
-  header.undoOffset = header.globalOffset + 8U;
-
-  RevisionPackedBlob::LoopIndexEntry entry1{};
+  RevisionPackedBlob::SlotIndexEntry entry1{};
   entry1.trackIndex = 2;
   entry1.slotIndex = 3;
   entry1.occupied = 1;
-  entry1.blobOffset = entry0.blobOffset + entry0.blobSize;
-  entry1.blobSize = 48;
+  entry1.bodyLength = static_cast<uint32_t>(loopPayload1.size());
   entry1.loopLengthTicks = 1536;
   entry1.noteCount = 24;
   entry1.bars = 4;
 
-  const std::vector<uint8_t> transportPayload(16, 0xAA);
-  const std::vector<uint8_t> globalPayload(8, 0xBB);
-  const std::vector<uint8_t> undoPayload(32, 0xCC);
-  const std::vector<uint8_t> loopPayload0(64, 0xDD);
-  const std::vector<uint8_t> loopPayload1(48, 0xEE);
-
   std::vector<uint8_t> payload;
-  payload.insert(payload.end(), transportPayload.begin(), transportPayload.end());
-  payload.insert(payload.end(), globalPayload.begin(), globalPayload.end());
-  payload.insert(payload.end(), undoPayload.begin(), undoPayload.end());
-  payload.insert(payload.end(), loopPayload0.begin(), loopPayload0.end());
-  payload.insert(payload.end(), loopPayload1.begin(), loopPayload1.end());
+
+  auto appendChunk = [&](RevisionPackedBlob::ChunkType type, uint8_t track, uint8_t slot,
+                         const std::vector<uint8_t>& body) {
+    RevisionPackedBlob::ChunkHeader chunkHeader{};
+    chunkHeader.type = static_cast<uint8_t>(type);
+    chunkHeader.trackIndex = track;
+    chunkHeader.slotIndex = slot;
+    chunkHeader.bodyLength = static_cast<uint32_t>(body.size());
+    MemoryStorageIo chunkWriter(&payload);
+    TEST_ASSERT_TRUE(RevisionPackedBlob::writeChunkHeader(chunkWriter.io(), chunkHeader));
+    payload.insert(payload.end(), body.begin(), body.end());
+  };
+
+  appendChunk(RevisionPackedBlob::ChunkType::Transport, 0, 0, transportPayload);
+
+  entry0.chunkOffset = static_cast<uint32_t>(payload.size());
+  appendChunk(RevisionPackedBlob::ChunkType::LoopSlot, entry0.trackIndex, entry0.slotIndex,
+              loopPayload0);
+
+  entry1.chunkOffset = static_cast<uint32_t>(payload.size());
+  appendChunk(RevisionPackedBlob::ChunkType::LoopSlot, entry1.trackIndex, entry1.slotIndex,
+              loopPayload1);
+
+  const uint16_t entryCount = 2;
+  const uint16_t reservedPrefix = 0;
+  std::vector<uint8_t> slotIndexBody;
+  slotIndexBody.insert(slotIndexBody.end(), reinterpret_cast<const uint8_t*>(&entryCount),
+                       reinterpret_cast<const uint8_t*>(&entryCount) + sizeof(entryCount));
+  slotIndexBody.insert(slotIndexBody.end(), reinterpret_cast<const uint8_t*>(&reservedPrefix),
+                       reinterpret_cast<const uint8_t*>(&reservedPrefix) + sizeof(reservedPrefix));
+  MemoryStorageIo entry0Writer(&slotIndexBody);
+  TEST_ASSERT_TRUE(RevisionPackedBlob::writeSlotIndexEntry(entry0Writer.io(), entry0));
+  MemoryStorageIo entry1Writer(&slotIndexBody);
+  TEST_ASSERT_TRUE(RevisionPackedBlob::writeSlotIndexEntry(entry1Writer.io(), entry1));
+  appendChunk(RevisionPackedBlob::ChunkType::SlotIndex, 0, 0, slotIndexBody);
+
+  header.chunkCount = 4;
   header.payloadSize = static_cast<uint32_t>(payload.size());
 
   std::vector<uint8_t> file;
   MemoryStorageIo headerWriter(&file);
   TEST_ASSERT_TRUE(RevisionPackedBlob::writeRevisionHeader(headerWriter.io(), header));
-  MemoryStorageIo indexWriter(&file);
-  TEST_ASSERT_TRUE(RevisionPackedBlob::writeLoopIndexEntry(indexWriter.io(), entry0));
-  TEST_ASSERT_TRUE(RevisionPackedBlob::writeLoopIndexEntry(indexWriter.io(), entry1));
   file.insert(file.end(), payload.begin(), payload.end());
 
   RevisionPackedBlob::RevisionFooter footer{};
@@ -274,7 +290,8 @@ void test_current_slot_path_formatting() {
 
 void test_revision_header_wire_size() {
   TEST_ASSERT_EQUAL(128, RevisionPackedBlob::kRevisionHeaderByteSize);
-  TEST_ASSERT_EQUAL(32, RevisionPackedBlob::kLoopIndexEntryByteSize);
+  TEST_ASSERT_EQUAL(8, RevisionPackedBlob::kChunkHeaderByteSize);
+  TEST_ASSERT_EQUAL(32, RevisionPackedBlob::kSlotIndexEntryByteSize);
   TEST_ASSERT_EQUAL(12, RevisionPackedBlob::kRevisionFooterByteSize);
 }
 
@@ -285,20 +302,20 @@ void test_revision_blob_parser_without_heap() {
       RevisionPackedBlob::parseRevisionHeaderFromBytes(file.data(), file.size(), header));
   TEST_ASSERT_EQUAL_UINT16(5, header.revisionId);
   TEST_ASSERT_EQUAL_UINT32(120, header.sourceEpoch);
-  TEST_ASSERT_EQUAL_UINT16(2, header.loopIndexCount);
+  TEST_ASSERT_EQUAL_UINT16(4, header.chunkCount);
 
-  RevisionPackedBlob::LoopIndexEntry entry0{};
-  TEST_ASSERT_TRUE(RevisionPackedBlob::readLoopIndexEntryFromBytes(
+  RevisionPackedBlob::SlotIndexEntry entry0{};
+  TEST_ASSERT_TRUE(RevisionPackedBlob::readSlotIndexEntryFromRevisionBytes(
       file.data(), file.size(), header, 0, entry0));
   TEST_ASSERT_EQUAL_UINT8(0, entry0.trackIndex);
   TEST_ASSERT_EQUAL_UINT8(1, entry0.slotIndex);
-  TEST_ASSERT_EQUAL_UINT32(64, entry0.blobSize);
+  TEST_ASSERT_EQUAL_UINT32(64, entry0.bodyLength);
 
-  RevisionPackedBlob::LoopIndexEntry entry1{};
-  TEST_ASSERT_TRUE(RevisionPackedBlob::readLoopIndexEntryFromBytes(
+  RevisionPackedBlob::SlotIndexEntry entry1{};
+  TEST_ASSERT_TRUE(RevisionPackedBlob::readSlotIndexEntryFromRevisionBytes(
       file.data(), file.size(), header, 1, entry1));
   TEST_ASSERT_EQUAL_UINT8(2, entry1.trackIndex);
-  TEST_ASSERT_EQUAL_UINT32(48, entry1.blobSize);
+  TEST_ASSERT_EQUAL_UINT32(48, entry1.bodyLength);
 
   RevisionPackedBlob::RevisionFooter footer{};
   TEST_ASSERT_TRUE(

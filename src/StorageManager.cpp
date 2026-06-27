@@ -9,6 +9,9 @@
 #include "CurrentSetStorage.h"
 #include "CurrentWorkspaceStorage.h"
 #include "PersistenceLayout.h"
+#include "SetRevisionCatalog.h"
+#include "RevisionPackedBlob.h"
+#include "PersistenceSchema.h"
 #include "SavedSetCatalog.h"
 #include "RtcTime.h"
 #include "Globals.h"
@@ -308,6 +311,81 @@ uint16_t workspaceLastCommittedRevisionId = 0;
 uint32_t deferredSaveWorkspaceEpoch = 0;
 char autoSaveBeforeLoadFolderPending[16] = {};
 bool autoSaveBeforeLoadFolderPendingValid = false;
+
+enum class RevisionCommitStage : uint8_t {
+    Idle = 0,
+    Snapshot,
+    Write,
+    Validate,
+    CatalogUpdate,
+    Complete,
+};
+
+enum class RevisionWriteStage : uint8_t {
+    PrepareLayout = 0,
+    OpenTempFile,
+    WriteHeader,
+    WriteTransportChunk,
+    WriteLoopSlotChunks,
+    WriteSlotIndexChunk,
+    WriteFooter,
+};
+
+bool revisionCommitPending = false;
+bool revisionCommitInProgress = false;
+bool revisionCommitSdIoActive = false;
+RevisionCommitStage revisionCommitStage = RevisionCommitStage::Idle;
+RevisionWriteStage revisionWriteStage = RevisionWriteStage::PrepareLayout;
+uint32_t revisionCommitSourceEpoch = 0;
+uint16_t revisionCommitSetId = 0;
+uint16_t revisionCommitPendingRevisionId = 0;
+char revisionCommitTempPath[80] = {};
+char revisionCommitFinalPath[80] = {};
+File revisionCommitFile;
+SetRevisionCatalog::SetCatalogIndex revisionCommitCatalogIndex{};
+SetRevisionCatalog::SetMetaRecord revisionCommitSetMeta{};
+RevisionPackedBlob::RevisionHeader revisionCommitHeader{};
+constexpr uint16_t kMaxRevisionLoopIndexEntries =
+    static_cast<uint16_t>(Config::NUM_TRACKS * Config::MAX_LOOPS_PER_TRACK);
+RevisionPackedBlob::SlotIndexEntry revisionCommitSlotEntries[kMaxRevisionLoopIndexEntries];
+uint16_t revisionCommitSlotIndexCount = 0;
+uint16_t revisionCommitSlotIndexWriteCursor = 0;
+uint32_t revisionCommitPayloadWriteOffset = 0;
+uint16_t revisionCommitChunkCount = 0;
+uint8_t revisionCommitCopyTrackCursor = 0;
+uint8_t revisionCommitCopySlotCursor = 0;
+uint32_t revisionCommitRuntimeBundleSize = 0;
+uint32_t revisionCommitRuntimeBundleReadPos = 0;
+uint32_t revisionCommitSlotReadPos = 0;
+uint32_t revisionCommitSlotBodyRemaining = 0;
+File revisionCommitSourceFile;
+bool revisionCommitSourceFileOpen = false;
+std::array<uint8_t, 512> revisionCommitCopyBuffer{};
+uint32_t revisionCommitPayloadCrc = 0;
+bool revisionCommitPayloadCrcSeeded = false;
+bool revisionCommitAllocatedNewSet = false;
+uint32_t lastRevisionCommitBlockedLogAtMs = 0;
+
+#if defined(SESSION_CAPTURE)
+struct HitlRevisionCommitBackup {
+    bool armed = false;
+    bool hadIndexOnSd = false;
+    SetRevisionCatalog::SetCatalogIndex catalogIndex{};
+    bool hadSetMetaOnSd = false;
+    SetRevisionCatalog::SetMetaRecord setMeta{};
+    uint32_t workspaceLastCommittedEpoch = 0;
+    uint16_t workspaceDerivedFromSetId = 0;
+    uint16_t workspaceDerivedFromRevisionId = 0;
+    uint16_t workspaceLastCommittedRevisionId = 0;
+    uint16_t committedSetId = 0;
+    uint16_t committedRevisionId = 0;
+    bool createdNewSetFolder = false;
+    char revisionFinalPath[80] = {};
+    char setFolderPath[48] = {};
+};
+
+HitlRevisionCommitBackup hitlRevisionCommitBackup{};
+#endif
 
 constexpr size_t kSavedSetPathCapacity = 64;
 constexpr uint32_t kSavedSetFailsafeCheckIntervalMs = 1000;
@@ -1081,6 +1159,880 @@ void fillSlotSummariesForTrack(uint8_t trackIndex, const Track& track,
             static_cast<uint16_t>(eventCount > UINT16_MAX ? UINT16_MAX : eventCount / 2U);
         summary.bars = static_cast<uint16_t>(loop.loopLengthTicks / ticksPerBar);
     }
+}
+
+void fillSlotSummariesForTrack(uint8_t trackIndex, const Track& track,
+                               CurrentWorkspaceStorage::SlotSummary* summaries,
+                               size_t summaryCount);
+
+bool writeWorkspaceMetaAfterDeferredSave();
+
+void resetRevisionCommitJobState() {
+    if (revisionCommitFile) {
+        revisionCommitFile.close();
+    }
+    if (revisionCommitSourceFileOpen) {
+        revisionCommitSourceFile.close();
+        revisionCommitSourceFileOpen = false;
+    }
+    revisionCommitInProgress = false;
+    revisionCommitSdIoActive = false;
+    revisionCommitStage = RevisionCommitStage::Idle;
+    revisionWriteStage = RevisionWriteStage::PrepareLayout;
+    revisionCommitSourceEpoch = 0;
+    revisionCommitSetId = 0;
+    revisionCommitPendingRevisionId = 0;
+    revisionCommitTempPath[0] = '\0';
+    revisionCommitFinalPath[0] = '\0';
+    revisionCommitSlotIndexCount = 0;
+    revisionCommitSlotIndexWriteCursor = 0;
+    revisionCommitPayloadWriteOffset = 0;
+    revisionCommitChunkCount = 0;
+    revisionCommitCopyTrackCursor = 0;
+    revisionCommitCopySlotCursor = 0;
+    revisionCommitRuntimeBundleSize = 0;
+    revisionCommitRuntimeBundleReadPos = 0;
+    revisionCommitSlotReadPos = 0;
+    revisionCommitSlotBodyRemaining = 0;
+    revisionCommitPayloadCrc = 0;
+    revisionCommitPayloadCrcSeeded = false;
+    revisionCommitAllocatedNewSet = false;
+    lastRevisionCommitBlockedLogAtMs = 0;
+    revisionCommitHeader = RevisionPackedBlob::RevisionHeader{};
+    revisionCommitCatalogIndex = SetRevisionCatalog::SetCatalogIndex{};
+    revisionCommitSetMeta = SetRevisionCatalog::SetMetaRecord{};
+    for (uint16_t i = 0; i < kMaxRevisionLoopIndexEntries; ++i) {
+        revisionCommitSlotEntries[i] = RevisionPackedBlob::SlotIndexEntry{};
+    }
+}
+
+bool isCaptureActiveForPersistence() {
+    for (uint8_t trackIndex = 0; trackIndex < trackManager.getTrackCount(); ++trackIndex) {
+        const Track& track = trackManager.getTrack(trackIndex);
+        if (track.isRecording() || track.isOverdubbing()) {
+            return true;
+        }
+    }
+    return false;
+}
+
+uint32_t resolveMaxPersistenceMicros(const LooperState& state) {
+    if (isCaptureActiveForPersistence()) {
+        return Config::maxPersistenceMicrosActive;
+    }
+    if (state == LOOPER_PLAYING || state == LOOPER_OVERDUBBING || state == LOOPER_RECORDING) {
+        return Config::maxPersistenceMicrosActive;
+    }
+    return Config::maxPersistenceMicrosIdle;
+}
+
+uint32_t resolveRevisionCommitSourceEpoch() {
+    if (deferredSaveInProgress && deferredSaveWorkspaceEpoch > 0) {
+        return deferredSaveWorkspaceEpoch - 1U;
+    }
+    return currentWorkspaceEpoch;
+}
+
+bool slotSourceFileMatchesEpoch(const char* path, uint32_t expectedEpoch, uint32_t& bodySizeOut) {
+    bodySizeOut = 0;
+    if (path == nullptr || !SD.exists(path)) {
+        return false;
+    }
+    File file = SD.open(path, FILE_READ);
+    if (!file) {
+        return false;
+    }
+    const size_t fileSize = file.size();
+    size_t payloadOffset = 0;
+    if (CurrentWorkspaceStorage::fileStartsWithEpochHeader(file)) {
+        CurrentWorkspaceStorage::EpochFileHeader epochHeader{};
+        const StorageIo epochIo = storageIoFromFileRead(file);
+        if (!CurrentWorkspaceStorage::readEpochFileHeader(epochIo, epochHeader) ||
+            !CurrentWorkspaceStorage::epochHeaderMatchesEpoch(epochHeader, expectedEpoch)) {
+            file.close();
+            return false;
+        }
+        payloadOffset = CurrentWorkspaceStorage::kEpochFileHeaderByteSize;
+    } else if (expectedEpoch != 0) {
+        file.close();
+        return false;
+    }
+    if (fileSize < payloadOffset + sizeof(STORAGE_COMPLETE_MAGIC)) {
+        file.close();
+        return false;
+    }
+    bodySizeOut = static_cast<uint32_t>(fileSize - payloadOffset - sizeof(STORAGE_COMPLETE_MAGIC));
+    file.close();
+    return bodySizeOut > 0;
+}
+
+bool prepareRevisionCommitLayout() {
+    revisionCommitSlotIndexCount = 0;
+    revisionCommitRuntimeBundleSize = 0;
+    if (SD.exists(CurrentSetStorage::kCurrentMetaPath)) {
+        File bundle = SD.open(CurrentSetStorage::kCurrentMetaPath, FILE_READ);
+        if (bundle) {
+            const size_t fileSize = bundle.size();
+            size_t payloadOffset = 0;
+            if (CurrentWorkspaceStorage::fileStartsWithEpochHeader(bundle)) {
+                CurrentWorkspaceStorage::EpochFileHeader epochHeader{};
+                const StorageIo epochIo = storageIoFromFileRead(bundle);
+                if (CurrentWorkspaceStorage::readEpochFileHeader(epochIo, epochHeader) &&
+                    CurrentWorkspaceStorage::epochHeaderMatchesEpoch(epochHeader,
+                                                                     revisionCommitSourceEpoch)) {
+                    payloadOffset = CurrentWorkspaceStorage::kEpochFileHeaderByteSize;
+                    if (fileSize >= payloadOffset + sizeof(STORAGE_COMPLETE_MAGIC)) {
+                        revisionCommitRuntimeBundleSize =
+                            static_cast<uint32_t>(fileSize - payloadOffset -
+                                                  sizeof(STORAGE_COMPLETE_MAGIC));
+                    }
+                }
+            }
+            bundle.close();
+        }
+    }
+
+    for (uint8_t trackIndex = 0; trackIndex < Config::NUM_TRACKS; ++trackIndex) {
+        for (uint8_t slotIndex = 0; slotIndex < Config::MAX_LOOPS_PER_TRACK; ++slotIndex) {
+            char slotPath[48];
+            if (!CurrentSetStorage::formatLoopSlotPath(slotPath, sizeof(slotPath), trackIndex,
+                                                       slotIndex)) {
+                continue;
+            }
+            uint32_t bodySize = 0;
+            if (!slotSourceFileMatchesEpoch(slotPath, revisionCommitSourceEpoch, bodySize)) {
+                continue;
+            }
+            if (revisionCommitSlotIndexCount >= kMaxRevisionLoopIndexEntries) {
+                return false;
+            }
+            RevisionPackedBlob::SlotIndexEntry& entry =
+                revisionCommitSlotEntries[revisionCommitSlotIndexCount];
+            entry = RevisionPackedBlob::SlotIndexEntry{};
+            entry.trackIndex = trackIndex;
+            entry.slotIndex = slotIndex;
+            entry.occupied = 1;
+            entry.bodyLength = bodySize;
+            ++revisionCommitSlotIndexCount;
+        }
+    }
+    return true;
+}
+
+bool beginRevisionCommitSnapshot() {
+    revisionCommitSourceEpoch = resolveRevisionCommitSourceEpoch();
+    if (revisionCommitSourceEpoch == 0) {
+        Serial.println("[StorageManager] ERROR: Revision commit has no completed source epoch");
+        return false;
+    }
+
+    if (!CurrentSetStorage::ensureDirectory(PersistenceLayout::kRoot) ||
+        !CurrentSetStorage::ensureDirectory(SetRevisionCatalog::kSetsRoot)) {
+        return false;
+    }
+
+    File indexFile = SD.open(SetRevisionCatalog::kSetIndexPath, FILE_READ);
+    if (indexFile) {
+        const StorageIo indexIo = storageIoFromFileRead(indexFile);
+        (void)SetRevisionCatalog::readSetCatalogIndex(indexIo, revisionCommitCatalogIndex);
+        indexFile.close();
+    }
+
+    revisionCommitSetId = workspaceDerivedFromSetId;
+    revisionCommitAllocatedNewSet = false;
+    if (revisionCommitSetId == 0) {
+        revisionCommitSetId = SetRevisionCatalog::allocateNextSetId(revisionCommitCatalogIndex);
+        revisionCommitAllocatedNewSet = true;
+        revisionCommitSetMeta = SetRevisionCatalog::SetMetaRecord{};
+        revisionCommitSetMeta.setId = revisionCommitSetId;
+    } else {
+        char setMetaPath[64];
+        if (!SetRevisionCatalog::formatSetMetaPath(setMetaPath, sizeof(setMetaPath),
+                                                   revisionCommitSetId)) {
+            return false;
+        }
+        File setMetaFile = SD.open(setMetaPath, FILE_READ);
+        if (!setMetaFile) {
+            Serial.println(
+                "[StorageManager] WARN: Derived set missing on SD; allocating new set for commit");
+            revisionCommitSetId = SetRevisionCatalog::allocateNextSetId(revisionCommitCatalogIndex);
+            revisionCommitAllocatedNewSet = true;
+            revisionCommitSetMeta = SetRevisionCatalog::SetMetaRecord{};
+            revisionCommitSetMeta.setId = revisionCommitSetId;
+        } else {
+            const StorageIo setMetaIo = storageIoFromFileRead(setMetaFile);
+            const bool metaOk =
+                SetRevisionCatalog::readSetMetaRecord(setMetaIo, revisionCommitSetMeta);
+            setMetaFile.close();
+            if (!metaOk) {
+                Serial.println(
+                    "[StorageManager] WARN: Derived set meta invalid; allocating new set for commit");
+                revisionCommitSetId =
+                    SetRevisionCatalog::allocateNextSetId(revisionCommitCatalogIndex);
+                revisionCommitAllocatedNewSet = true;
+                revisionCommitSetMeta = SetRevisionCatalog::SetMetaRecord{};
+                revisionCommitSetMeta.setId = revisionCommitSetId;
+            }
+        }
+    }
+
+    revisionCommitPendingRevisionId =
+        SetRevisionCatalog::peekNextRevisionId(revisionCommitSetMeta);
+
+    char setFolderPath[48];
+    char revisionsDirPath[56];
+    if (!SetRevisionCatalog::formatSetFolderPath(setFolderPath, sizeof(setFolderPath),
+                                                 revisionCommitSetId) ||
+        !SetRevisionCatalog::formatRevisionPath(revisionCommitTempPath,
+                                                sizeof(revisionCommitTempPath),
+                                                revisionCommitSetId,
+                                                revisionCommitPendingRevisionId, true) ||
+        !SetRevisionCatalog::formatRevisionPath(revisionCommitFinalPath,
+                                                sizeof(revisionCommitFinalPath),
+                                                revisionCommitSetId,
+                                                revisionCommitPendingRevisionId, false)) {
+        return false;
+    }
+    const int revisionsWritten = std::snprintf(
+        revisionsDirPath, sizeof(revisionsDirPath), "%s/revisions", setFolderPath);
+    if (revisionsWritten <= 0 ||
+        static_cast<size_t>(revisionsWritten) >= sizeof(revisionsDirPath)) {
+        return false;
+    }
+    if (!CurrentSetStorage::ensureDirectory(setFolderPath) ||
+        !CurrentSetStorage::ensureDirectory(revisionsDirPath)) {
+        return false;
+    }
+
+    revisionCommitHeader = RevisionPackedBlob::RevisionHeader{};
+    std::memcpy(revisionCommitHeader.magic, RevisionPackedBlob::kRevisionMagic,
+                sizeof(revisionCommitHeader.magic));
+    revisionCommitHeader.revisionId = 0;
+    revisionCommitHeader.setId = revisionCommitSetId;
+    revisionCommitHeader.sourceEpoch = revisionCommitSourceEpoch;
+    revisionCommitHeader.createdUnix = static_cast<uint64_t>(RtcTime::getUnixTime());
+
+    if (!prepareRevisionCommitLayout()) {
+        return false;
+    }
+
+    revisionWriteStage = RevisionWriteStage::OpenTempFile;
+    revisionCommitStage = RevisionCommitStage::Write;
+    return true;
+}
+
+bool appendRevisionCommitPayloadCrc(const uint8_t* data, size_t size) {
+    if (data == nullptr || size == 0) {
+        return true;
+    }
+    if (!revisionCommitPayloadCrcSeeded) {
+        revisionCommitPayloadCrc = PersistenceSchema::crc32(data, size);
+        revisionCommitPayloadCrcSeeded = true;
+    } else {
+        revisionCommitPayloadCrc =
+            PersistenceSchema::crc32Continue(revisionCommitPayloadCrc, data, size);
+    }
+    return true;
+}
+
+bool computeRevisionCommitPayloadCrcFromFile(File& file, uint32_t payloadOffset,
+                                             uint32_t payloadSize, uint32_t& crcOut) {
+    if (payloadSize == 0) {
+        crcOut = 0;
+        return true;
+    }
+    if (!file.seek(payloadOffset)) {
+        return false;
+    }
+    uint32_t remaining = payloadSize;
+    uint32_t crc = 0;
+    bool seeded = false;
+    while (remaining > 0) {
+        const size_t chunkSize =
+            remaining > revisionCommitCopyBuffer.size() ? revisionCommitCopyBuffer.size() : remaining;
+        const int bytesRead =
+            file.read(revisionCommitCopyBuffer.data(), static_cast<size_t>(chunkSize));
+        if (bytesRead <= 0) {
+            return false;
+        }
+        const size_t written = static_cast<size_t>(bytesRead);
+        if (!seeded) {
+            crc = PersistenceSchema::crc32(revisionCommitCopyBuffer.data(), written);
+            seeded = true;
+        } else {
+            crc = PersistenceSchema::crc32Continue(crc, revisionCommitCopyBuffer.data(), written);
+        }
+        remaining -= static_cast<uint32_t>(written);
+    }
+    crcOut = crc;
+    return true;
+}
+
+bool writeRevisionCommitChunkHeader(RevisionPackedBlob::ChunkType type, uint8_t trackIndex,
+                                    uint8_t slotIndex, uint32_t bodyLength) {
+    RevisionPackedBlob::ChunkHeader chunkHeader{};
+    chunkHeader.type = static_cast<uint8_t>(type);
+    chunkHeader.trackIndex = trackIndex;
+    chunkHeader.slotIndex = slotIndex;
+    chunkHeader.bodyLength = bodyLength;
+    const StorageIo io = storageIoFromFileWrite(revisionCommitFile);
+    if (!RevisionPackedBlob::writeChunkHeader(io, chunkHeader)) {
+        return false;
+    }
+    uint8_t headerWire[RevisionPackedBlob::kChunkHeaderByteSize];
+    if (!RevisionPackedBlob::chunkHeaderWireBytes(chunkHeader, headerWire, sizeof(headerWire))) {
+        return false;
+    }
+    if (!appendRevisionCommitPayloadCrc(headerWire, sizeof(headerWire))) {
+        return false;
+    }
+    revisionCommitPayloadWriteOffset +=
+        static_cast<uint32_t>(RevisionPackedBlob::kChunkHeaderByteSize);
+    return true;
+}
+
+bool copyRevisionCommitChunk(File& dest, File& src, uint32_t& readPos, uint32_t& bytesRemaining,
+                             uint32_t chunkSize) {
+    if (bytesRemaining == 0) {
+        return true;
+    }
+    const uint32_t toRead = bytesRemaining < chunkSize ? bytesRemaining : chunkSize;
+    if (!src.seek(readPos)) {
+        return false;
+    }
+    const int bytesRead = src.read(revisionCommitCopyBuffer.data(), toRead);
+    if (bytesRead <= 0) {
+        return false;
+    }
+    const auto written = static_cast<size_t>(bytesRead);
+    if (dest.write(revisionCommitCopyBuffer.data(), written) != bytesRead) {
+        return false;
+    }
+    readPos += written;
+    bytesRemaining -= static_cast<uint32_t>(written);
+    if (written > 0) {
+        if (!appendRevisionCommitPayloadCrc(revisionCommitCopyBuffer.data(), written)) {
+            return false;
+        }
+        revisionCommitPayloadWriteOffset += static_cast<uint32_t>(written);
+    }
+    return true;
+}
+
+bool stepRevisionCommitWrite() {
+    switch (revisionWriteStage) {
+        case RevisionWriteStage::PrepareLayout:
+            return false;
+
+        case RevisionWriteStage::OpenTempFile:
+            revisionCommitFile = SD.open(revisionCommitTempPath, FILE_WRITE);
+            if (!revisionCommitFile) {
+                Serial.println("[StorageManager] ERROR: Could not open revision temp file");
+                return false;
+            }
+            revisionCommitFile.seek(0);
+            revisionWriteStage = RevisionWriteStage::WriteHeader;
+            return true;
+
+        case RevisionWriteStage::WriteHeader: {
+            revisionCommitPayloadCrc = 0;
+            revisionCommitPayloadCrcSeeded = false;
+            revisionCommitPayloadWriteOffset = 0;
+            revisionCommitChunkCount = 0;
+            const StorageIo io = storageIoFromFileWrite(revisionCommitFile);
+            if (!RevisionPackedBlob::writeRevisionHeader(io, revisionCommitHeader)) {
+                return false;
+            }
+            revisionWriteStage = RevisionWriteStage::WriteTransportChunk;
+            return true;
+        }
+
+        case RevisionWriteStage::WriteTransportChunk:
+            if (revisionCommitRuntimeBundleSize == 0) {
+                revisionCommitCopyTrackCursor = 0;
+                revisionCommitCopySlotCursor = 0;
+                revisionWriteStage = RevisionWriteStage::WriteLoopSlotChunks;
+                return true;
+            }
+            if (revisionCommitRuntimeBundleReadPos ==
+                CurrentWorkspaceStorage::kEpochFileHeaderByteSize) {
+                if (!writeRevisionCommitChunkHeader(RevisionPackedBlob::ChunkType::Transport, 0, 0,
+                                                    revisionCommitRuntimeBundleSize)) {
+                    return false;
+                }
+                ++revisionCommitChunkCount;
+            }
+            if (!revisionCommitSourceFileOpen) {
+                revisionCommitSourceFile = SD.open(CurrentSetStorage::kCurrentMetaPath, FILE_READ);
+                if (!revisionCommitSourceFile) {
+                    return false;
+                }
+                revisionCommitSourceFileOpen = true;
+            }
+            {
+                const uint32_t endPos = CurrentWorkspaceStorage::kEpochFileHeaderByteSize +
+                                        revisionCommitRuntimeBundleSize;
+                uint32_t remaining = endPos - revisionCommitRuntimeBundleReadPos;
+                if (remaining > 0) {
+                    if (!copyRevisionCommitChunk(
+                            revisionCommitFile, revisionCommitSourceFile,
+                            revisionCommitRuntimeBundleReadPos, remaining,
+                            static_cast<uint32_t>(revisionCommitCopyBuffer.size()))) {
+                        return false;
+                    }
+                    if (remaining > 0) {
+                        return true;
+                    }
+                }
+            }
+            if (revisionCommitSourceFileOpen) {
+                revisionCommitSourceFile.close();
+                revisionCommitSourceFileOpen = false;
+            }
+            revisionCommitCopyTrackCursor = 0;
+            revisionCommitCopySlotCursor = 0;
+            revisionWriteStage = RevisionWriteStage::WriteLoopSlotChunks;
+            return true;
+
+        case RevisionWriteStage::WriteLoopSlotChunks:
+            while (revisionCommitCopyTrackCursor < Config::NUM_TRACKS) {
+                while (revisionCommitCopySlotCursor < Config::MAX_LOOPS_PER_TRACK) {
+                    const uint8_t trackIndex = revisionCommitCopyTrackCursor;
+                    const uint8_t slotIndex = revisionCommitCopySlotCursor;
+                    uint16_t slotEntryIndex = 0;
+                    bool foundEntry = false;
+                    for (uint16_t i = 0; i < revisionCommitSlotIndexCount; ++i) {
+                        if (revisionCommitSlotEntries[i].trackIndex == trackIndex &&
+                            revisionCommitSlotEntries[i].slotIndex == slotIndex) {
+                            slotEntryIndex = i;
+                            foundEntry = true;
+                            break;
+                        }
+                    }
+                    if (!foundEntry) {
+                        ++revisionCommitCopySlotCursor;
+                        continue;
+                    }
+                    if (revisionCommitSlotBodyRemaining == 0) {
+                        revisionCommitSlotEntries[slotEntryIndex].chunkOffset =
+                            revisionCommitPayloadWriteOffset;
+                        if (!writeRevisionCommitChunkHeader(RevisionPackedBlob::ChunkType::LoopSlot,
+                                                            trackIndex, slotIndex,
+                                                            revisionCommitSlotEntries[slotEntryIndex]
+                                                                .bodyLength)) {
+                            return false;
+                        }
+                        ++revisionCommitChunkCount;
+                        char slotPath[48];
+                        if (!CurrentSetStorage::formatLoopSlotPath(slotPath, sizeof(slotPath),
+                                                                   trackIndex, slotIndex)) {
+                            return false;
+                        }
+                        if (!revisionCommitSourceFileOpen) {
+                            revisionCommitSourceFile = SD.open(slotPath, FILE_READ);
+                            if (!revisionCommitSourceFile) {
+                                return false;
+                            }
+                            revisionCommitSourceFileOpen = true;
+                        }
+                        revisionCommitSlotReadPos =
+                            CurrentWorkspaceStorage::kEpochFileHeaderByteSize;
+                        revisionCommitSlotBodyRemaining =
+                            revisionCommitSlotEntries[slotEntryIndex].bodyLength;
+                    }
+                    if (revisionCommitSlotBodyRemaining > 0) {
+                        if (!copyRevisionCommitChunk(
+                                revisionCommitFile, revisionCommitSourceFile,
+                                revisionCommitSlotReadPos, revisionCommitSlotBodyRemaining,
+                                static_cast<uint32_t>(revisionCommitCopyBuffer.size()))) {
+                            return false;
+                        }
+                        if (revisionCommitSlotBodyRemaining > 0) {
+                            return true;
+                        }
+                    }
+                    if (revisionCommitSourceFileOpen) {
+                        revisionCommitSourceFile.close();
+                        revisionCommitSourceFileOpen = false;
+                    }
+                    ++revisionCommitCopySlotCursor;
+                }
+                revisionCommitCopySlotCursor = 0;
+                ++revisionCommitCopyTrackCursor;
+            }
+            revisionCommitSlotIndexWriteCursor = 0;
+            revisionWriteStage = RevisionWriteStage::WriteSlotIndexChunk;
+            return true;
+
+        case RevisionWriteStage::WriteSlotIndexChunk: {
+            if (revisionCommitSlotIndexWriteCursor == 0) {
+                const uint32_t slotIndexBodySize = static_cast<uint32_t>(
+                    RevisionPackedBlob::slotIndexChunkBodySize(revisionCommitSlotIndexCount));
+                if (!writeRevisionCommitChunkHeader(RevisionPackedBlob::ChunkType::SlotIndex, 0, 0,
+                                                    slotIndexBodySize)) {
+                    return false;
+                }
+                ++revisionCommitChunkCount;
+                const uint16_t entryCount = revisionCommitSlotIndexCount;
+                const uint16_t reservedPrefix = 0;
+                if (revisionCommitFile.write(reinterpret_cast<const uint8_t*>(&entryCount),
+                                             sizeof(entryCount)) != sizeof(entryCount) ||
+                    revisionCommitFile.write(reinterpret_cast<const uint8_t*>(&reservedPrefix),
+                                             sizeof(reservedPrefix)) != sizeof(reservedPrefix)) {
+                    return false;
+                }
+                uint8_t prefixWire[RevisionPackedBlob::kSlotIndexBodyPrefixByteSize];
+                std::memcpy(prefixWire, &entryCount, sizeof(entryCount));
+                std::memcpy(prefixWire + sizeof(entryCount), &reservedPrefix,
+                            sizeof(reservedPrefix));
+                if (!appendRevisionCommitPayloadCrc(prefixWire, sizeof(prefixWire))) {
+                    return false;
+                }
+                revisionCommitPayloadWriteOffset +=
+                    static_cast<uint32_t>(RevisionPackedBlob::kSlotIndexBodyPrefixByteSize);
+            }
+            if (revisionCommitSlotIndexWriteCursor < revisionCommitSlotIndexCount) {
+                const StorageIo io = storageIoFromFileWrite(revisionCommitFile);
+                if (!RevisionPackedBlob::writeSlotIndexEntry(
+                        io, revisionCommitSlotEntries[revisionCommitSlotIndexWriteCursor])) {
+                    return false;
+                }
+                const RevisionPackedBlob::SlotIndexEntry& entry =
+                    revisionCommitSlotEntries[revisionCommitSlotIndexWriteCursor];
+                uint8_t entryWire[RevisionPackedBlob::kSlotIndexEntryByteSize];
+                if (!RevisionPackedBlob::slotIndexEntryWireBytes(entry, entryWire,
+                                                                 sizeof(entryWire))) {
+                    return false;
+                }
+                if (!appendRevisionCommitPayloadCrc(entryWire, sizeof(entryWire))) {
+                    return false;
+                }
+                revisionCommitPayloadWriteOffset +=
+                    static_cast<uint32_t>(RevisionPackedBlob::kSlotIndexEntryByteSize);
+                ++revisionCommitSlotIndexWriteCursor;
+                return true;
+            }
+            revisionWriteStage = RevisionWriteStage::WriteFooter;
+            return true;
+        }
+
+        case RevisionWriteStage::WriteFooter: {
+            if (!revisionCommitFile) {
+                return false;
+            }
+            revisionCommitHeader.chunkCount = revisionCommitChunkCount;
+            revisionCommitHeader.payloadSize = revisionCommitPayloadWriteOffset;
+            uint32_t payloadCrc = 0;
+            if (!computeRevisionCommitPayloadCrcFromFile(
+                    revisionCommitFile, static_cast<uint32_t>(RevisionPackedBlob::kRevisionHeaderByteSize),
+                    revisionCommitHeader.payloadSize, payloadCrc)) {
+                return false;
+            }
+            RevisionPackedBlob::RevisionFooter footer{};
+            footer.payloadCrc32 =
+                revisionCommitHeader.payloadSize == 0U ? 0U : payloadCrc;
+            footer.fileSize =
+                static_cast<uint32_t>(revisionCommitFile.size()) +
+                static_cast<uint32_t>(RevisionPackedBlob::kRevisionFooterByteSize);
+            const StorageIo footerIo = storageIoFromFileWrite(revisionCommitFile);
+            if (!RevisionPackedBlob::writeRevisionFooter(footerIo, footer)) {
+                return false;
+            }
+            revisionCommitFile.flush();
+            revisionCommitFile.close();
+            revisionCommitHeader.revisionId = revisionCommitPendingRevisionId;
+            revisionCommitHeader.headerCrc32 =
+                RevisionPackedBlob::computeRevisionHeaderChecksum(revisionCommitHeader);
+            revisionCommitStage = RevisionCommitStage::Validate;
+            return true;
+        }
+    }
+    return false;
+}
+
+bool stepRevisionCommitValidate() {
+    File file = SD.open(revisionCommitTempPath, FILE_READ);
+    if (!file) {
+        return false;
+    }
+    const size_t fileSize = file.size();
+    if (fileSize < RevisionPackedBlob::kRevisionHeaderByteSize +
+                        RevisionPackedBlob::kRevisionFooterByteSize) {
+        file.close();
+        SD.remove(revisionCommitTempPath);
+        return false;
+    }
+
+    uint8_t headerBytes[RevisionPackedBlob::kRevisionHeaderByteSize];
+    if (file.read(headerBytes, sizeof(headerBytes)) != static_cast<int>(sizeof(headerBytes))) {
+        file.close();
+        SD.remove(revisionCommitTempPath);
+        return false;
+    }
+
+    RevisionPackedBlob::RevisionHeader header{};
+    if (!RevisionPackedBlob::parseRevisionHeaderFromBytes(headerBytes, sizeof(headerBytes),
+                                                          header)) {
+        file.close();
+        SD.remove(revisionCommitTempPath);
+        return false;
+    }
+
+    const size_t payloadOffset = RevisionPackedBlob::kRevisionHeaderByteSize;
+    const size_t payloadSize =
+        fileSize - payloadOffset - RevisionPackedBlob::kRevisionFooterByteSize;
+    if (payloadSize > UINT32_MAX) {
+        file.close();
+        SD.remove(revisionCommitTempPath);
+        return false;
+    }
+    if (payloadOffset + payloadSize + RevisionPackedBlob::kRevisionFooterByteSize > fileSize) {
+        file.close();
+        SD.remove(revisionCommitTempPath);
+        return false;
+    }
+
+    uint32_t payloadCrc = 0;
+    bool payloadCrcSeeded = false;
+    if (payloadSize > 0) {
+        if (!file.seek(payloadOffset)) {
+            file.close();
+            SD.remove(revisionCommitTempPath);
+            return false;
+        }
+        uint32_t remaining = static_cast<uint32_t>(payloadSize);
+        while (remaining > 0) {
+            const size_t chunkSize =
+                remaining > revisionCommitCopyBuffer.size() ? revisionCommitCopyBuffer.size()
+                                                            : remaining;
+            const int bytesRead =
+                file.read(revisionCommitCopyBuffer.data(), static_cast<size_t>(chunkSize));
+            if (bytesRead <= 0) {
+                file.close();
+                SD.remove(revisionCommitTempPath);
+                return false;
+            }
+            const size_t written = static_cast<size_t>(bytesRead);
+            if (!payloadCrcSeeded) {
+                payloadCrc = PersistenceSchema::crc32(revisionCommitCopyBuffer.data(), written);
+                payloadCrcSeeded = true;
+            } else {
+                payloadCrc = PersistenceSchema::crc32Continue(payloadCrc,
+                                                              revisionCommitCopyBuffer.data(),
+                                                              written);
+            }
+            remaining -= static_cast<uint32_t>(written);
+        }
+    }
+
+    RevisionPackedBlob::RevisionFooter footer{};
+    if (!file.seek(fileSize - RevisionPackedBlob::kRevisionFooterByteSize) ||
+        !readRaw(file, &footer.completeMagic, sizeof(footer.completeMagic)) ||
+        !readRaw(file, &footer.payloadCrc32, sizeof(footer.payloadCrc32)) ||
+        !readRaw(file, &footer.fileSize, sizeof(footer.fileSize))) {
+        file.close();
+        SD.remove(revisionCommitTempPath);
+        return false;
+    }
+    file.close();
+
+    if (footer.completeMagic != RevisionPackedBlob::kRevisionCompleteMagic ||
+        footer.fileSize != static_cast<uint32_t>(fileSize) ||
+        footer.payloadCrc32 != payloadCrc) {
+        Serial.print("[StorageManager] ERROR: Revision validate footer magic=");
+        Serial.print(footer.completeMagic, HEX);
+        Serial.print(" fileSize=");
+        Serial.print(footer.fileSize);
+        Serial.print(" expectedCrc=");
+        Serial.print(payloadCrc);
+        Serial.print(" footerCrc=");
+        Serial.println(footer.payloadCrc32);
+        SD.remove(revisionCommitTempPath);
+        return false;
+    }
+
+    header.revisionId = revisionCommitPendingRevisionId;
+    header.chunkCount = revisionCommitChunkCount;
+    header.payloadSize = static_cast<uint32_t>(payloadSize);
+    header.headerCrc32 = RevisionPackedBlob::computeRevisionHeaderChecksum(header);
+    revisionCommitFile = SD.open(revisionCommitTempPath, FILE_WRITE);
+    if (!revisionCommitFile) {
+        return false;
+    }
+    revisionCommitFile.seek(0);
+    const StorageIo headerIo = storageIoFromFileWrite(revisionCommitFile);
+    if (!RevisionPackedBlob::writeRevisionHeader(headerIo, header)) {
+        revisionCommitFile.close();
+        return false;
+    }
+    revisionCommitFile.close();
+
+    if (!CurrentSetStorage::atomicRenameTempFile(revisionCommitTempPath,
+                                                 revisionCommitFinalPath)) {
+        return false;
+    }
+    revisionCommitHeader = header;
+    revisionCommitStage = RevisionCommitStage::CatalogUpdate;
+    return true;
+}
+
+bool stepRevisionCommitCatalogUpdate() {
+    const uint64_t updatedUnix = static_cast<uint64_t>(RtcTime::getUnixTime());
+    SetRevisionCatalog::applyValidatedRevisionToSetMeta(revisionCommitSetMeta,
+                                                       revisionCommitPendingRevisionId,
+                                                       updatedUnix);
+
+    char setMetaPath[64];
+    char setMetaTempPath[72];
+    if (!SetRevisionCatalog::formatSetMetaPath(setMetaPath, sizeof(setMetaPath),
+                                               revisionCommitSetId)) {
+        return false;
+    }
+    const int tempWritten = std::snprintf(setMetaTempPath, sizeof(setMetaTempPath), "%s.tmp",
+                                          setMetaPath);
+    if (tempWritten <= 0 || static_cast<size_t>(tempWritten) >= sizeof(setMetaTempPath)) {
+        return false;
+    }
+
+    File setMetaTemp = SD.open(setMetaTempPath, FILE_WRITE);
+    if (!setMetaTemp) {
+        return false;
+    }
+    const StorageIo setMetaIo = storageIoFromFileWrite(setMetaTemp);
+    if (!SetRevisionCatalog::writeSetMetaRecord(setMetaIo, revisionCommitSetMeta)) {
+        setMetaTemp.close();
+        return false;
+    }
+    setMetaTemp.close();
+    if (!CurrentSetStorage::atomicRenameTempFile(setMetaTempPath, setMetaPath)) {
+        return false;
+    }
+
+    revisionCommitCatalogIndex.catalogChecksum =
+        SetRevisionCatalog::computeSetCatalogIndexChecksum(revisionCommitCatalogIndex);
+    File indexTemp = SD.open(SetRevisionCatalog::kSetIndexTempPath, FILE_WRITE);
+    if (!indexTemp) {
+        return false;
+    }
+    const StorageIo indexIo = storageIoFromFileWrite(indexTemp);
+    if (!SetRevisionCatalog::writeSetCatalogIndex(indexIo, revisionCommitCatalogIndex)) {
+        indexTemp.close();
+        return false;
+    }
+    indexTemp.close();
+    if (!CurrentSetStorage::atomicRenameTempFile(SetRevisionCatalog::kSetIndexTempPath,
+                                                 SetRevisionCatalog::kSetIndexPath)) {
+        return false;
+    }
+
+    revisionCommitStage = RevisionCommitStage::Complete;
+    return true;
+}
+
+bool writeSetCatalogIndexFile(const SetRevisionCatalog::SetCatalogIndex& index) {
+    File indexTemp = SD.open(SetRevisionCatalog::kSetIndexTempPath, FILE_WRITE);
+    if (!indexTemp) {
+        return false;
+    }
+    const StorageIo indexIo = storageIoFromFileWrite(indexTemp);
+    if (!SetRevisionCatalog::writeSetCatalogIndex(indexIo, index)) {
+        indexTemp.close();
+        return false;
+    }
+    indexTemp.close();
+    return CurrentSetStorage::atomicRenameTempFile(SetRevisionCatalog::kSetIndexTempPath,
+                                                   SetRevisionCatalog::kSetIndexPath);
+}
+
+bool writeSetMetaRecordFile(uint16_t setId, const SetRevisionCatalog::SetMetaRecord& record) {
+    char setMetaPath[64];
+    char setMetaTempPath[72];
+    if (!SetRevisionCatalog::formatSetMetaPath(setMetaPath, sizeof(setMetaPath), setId)) {
+        return false;
+    }
+    const int tempWritten = std::snprintf(setMetaTempPath, sizeof(setMetaTempPath), "%s.tmp",
+                                          setMetaPath);
+    if (tempWritten <= 0 || static_cast<size_t>(tempWritten) >= sizeof(setMetaTempPath)) {
+        return false;
+    }
+    File setMetaTemp = SD.open(setMetaTempPath, FILE_WRITE);
+    if (!setMetaTemp) {
+        return false;
+    }
+    const StorageIo setMetaIo = storageIoFromFileWrite(setMetaTemp);
+    if (!SetRevisionCatalog::writeSetMetaRecord(setMetaIo, record)) {
+        setMetaTemp.close();
+        return false;
+    }
+    setMetaTemp.close();
+    return CurrentSetStorage::atomicRenameTempFile(setMetaTempPath, setMetaPath);
+}
+
+bool stepRevisionCommitComplete() {
+    lastCommittedWorkspaceEpoch = revisionCommitSourceEpoch;
+    workspaceDerivedFromSetId = revisionCommitSetId;
+    workspaceDerivedFromRevisionId = revisionCommitPendingRevisionId;
+    workspaceLastCommittedRevisionId = revisionCommitPendingRevisionId;
+    if (!writeWorkspaceMetaAfterDeferredSave()) {
+        return false;
+    }
+    Serial.print("[StorageManager] Revision commit complete S");
+    Serial.print(revisionCommitSetId);
+    Serial.print(" v");
+    Serial.println(revisionCommitPendingRevisionId);
+#if defined(SESSION_CAPTURE)
+    if (hitlRevisionCommitBackup.armed) {
+        hitlRevisionCommitBackup.committedSetId = revisionCommitSetId;
+        hitlRevisionCommitBackup.committedRevisionId = revisionCommitPendingRevisionId;
+        hitlRevisionCommitBackup.createdNewSetFolder = revisionCommitAllocatedNewSet;
+        const int folderWritten = std::snprintf(hitlRevisionCommitBackup.setFolderPath,
+                                                sizeof(hitlRevisionCommitBackup.setFolderPath),
+                                                "%s/S%04u", SetRevisionCatalog::kSetsRoot,
+                                                revisionCommitSetId);
+        const int revisionWritten = std::snprintf(
+            hitlRevisionCommitBackup.revisionFinalPath,
+            sizeof(hitlRevisionCommitBackup.revisionFinalPath), "%s",
+            revisionCommitFinalPath);
+        if (folderWritten <= 0 ||
+            static_cast<size_t>(folderWritten) >= sizeof(hitlRevisionCommitBackup.setFolderPath) ||
+            revisionWritten <= 0 ||
+            static_cast<size_t>(revisionWritten) >=
+                sizeof(hitlRevisionCommitBackup.revisionFinalPath)) {
+            return false;
+        }
+        char revCompleteDetail[24];
+        std::snprintf(revCompleteDetail, sizeof(revCompleteDetail), "S%04u_v%04u",
+                        revisionCommitSetId, revisionCommitPendingRevisionId);
+        SC_PERSIST("rev_complete", 0, revisionCommitSetId, revisionCommitPendingRevisionId,
+                   revCompleteDetail);
+    }
+#endif
+    revisionCommitStage = RevisionCommitStage::Idle;
+    revisionCommitInProgress = false;
+    return true;
+}
+
+bool stepRevisionCommitJob() {
+    switch (revisionCommitStage) {
+        case RevisionCommitStage::Idle:
+            return true;
+
+        case RevisionCommitStage::Snapshot:
+            return beginRevisionCommitSnapshot();
+
+        case RevisionCommitStage::Write:
+            return stepRevisionCommitWrite();
+
+        case RevisionCommitStage::Validate:
+            return stepRevisionCommitValidate();
+
+        case RevisionCommitStage::CatalogUpdate:
+            return stepRevisionCommitCatalogUpdate();
+
+        case RevisionCommitStage::Complete:
+            return stepRevisionCommitComplete();
+    }
+    return false;
 }
 
 bool writeWorkspaceMetaAfterDeferredSave() {
@@ -2383,115 +3335,385 @@ void StorageManager::processDeferredSaveState(const LooperState& state) {
     (void)state;
     deferredSavePending = false;
     resetDeferredSaveJobState();
+    resetRevisionCommitJobState();
     return;
 #endif
     deferredSaveSdIoActive = false;
-    if (!deferredSavePending && !deferredSaveInProgress) {
-        return;
-    }
+    revisionCommitSdIoActive = false;
 
-    // Do not start or continue deferred save while capture is active.
-    for (uint8_t t = 0; t < trackManager.getTrackCount(); ++t) {
-        const Track& track = trackManager.getTrack(t);
-        if (track.isRecording() || track.isOverdubbing()) {
-            return;
-        }
-    }
+    const uint32_t sliceBudgetUs = resolveMaxPersistenceMicros(state);
+    const uint32_t sliceStartUs = micros();
 
-    // Admission uses a caller-provided heap sample when available; do not sample
-    // getInternalHeapFreeBytes() here.
-    // Once dispatch has started, run every slice to completion without re-gating.
-    if (!deferredSaveInProgress) {
-        if (deferredSaveAdmissionHeap != UINT32_MAX &&
-            !LoopEventStore::hasInternalHeapHeadroomForNonCriticalWork(deferredSaveAdmissionHeap)) {
-            if (!deferredSaveHeapFloorDeferred) {
-                SC_PERSIST("defer", 0, deferredSaveAdmissionHeap, deferredSaveAdmissionHeap,
-                           "heap_floor");
-                deferredSaveHeapFloorDeferred = true;
+    auto sliceBudgetExhausted = [&]() {
+        return sliceBudgetUs != UINT32_MAX &&
+               (micros() - sliceStartUs) >= sliceBudgetUs;
+    };
+
+    while (!sliceBudgetExhausted()) {
+        const bool revisionBlockedByDeferredSave =
+            revisionCommitPending && (deferredSavePending || deferredSaveInProgress);
+        if (revisionBlockedByDeferredSave) {
+            const uint32_t nowMs = millis();
+            if (nowMs - lastRevisionCommitBlockedLogAtMs >= 5000U) {
+                lastRevisionCommitBlockedLogAtMs = nowMs;
+                SC_PERSIST("rev_blocked", 0, deferredSavePending ? 1U : 0U,
+                           deferredSaveInProgress ? 1U : 0U, "deferred_save_active");
             }
-            return;
-        }
-        deferredSaveHeapFloorDeferred = false;
-    }
+        } else if (revisionCommitInProgress || revisionCommitPending) {
+            if (!revisionCommitInProgress && revisionCommitPending) {
+                revisionCommitPending = false;
+                revisionCommitInProgress = true;
+                revisionCommitStage = RevisionCommitStage::Snapshot;
+                SC_PERSIST("rev_dispatch", 0, 0, 0, "run");
+            }
 
-    if (!deferredSaveInProgress && deferredSavePending) {
-        const uint32_t dispatchHeap = deferredSaveAdmissionHeap == UINT32_MAX
-                                          ? 0
-                                          : deferredSaveAdmissionHeap;
-        SC_PERSIST("dispatch", 0, dispatchHeap, dispatchHeap, "run");
-        deferredSavePending = false;
-        deferredSaveStartedAtUs = micros();
-        deferredSaveHeapBefore = dispatchHeap;
-        deferredSaveLoopSlotsWritten = 0;
-        deferredSaveLoopSlotsSkipped = 0;
-        deferredSaveDisplayBlockUs = 0;
-        deferredSaveInProgress = true;
+            const uint32_t ioStartUs = micros();
+            revisionCommitSdIoActive = true;
+            const bool revStepOk = stepRevisionCommitJob();
+            revisionCommitSdIoActive = false;
+            deferredSaveDisplayBlockUs += micros() - ioStartUs;
+
+            if (!revStepOk) {
+                Serial.print("[StorageManager] ERROR: Revision commit failed at stage ");
+                Serial.println(static_cast<uint8_t>(revisionCommitStage));
+                resetRevisionCommitJobState();
+                break;
+            }
+            if (revisionCommitInProgress) {
+                break;
+            }
+            continue;
+        }
+
+        if (!deferredSavePending && !deferredSaveInProgress) {
+            break;
+        }
+
+        if (isCaptureActiveForPersistence()) {
+            break;
+        }
+
+        if (!deferredSaveInProgress) {
+            if (deferredSaveAdmissionHeap != UINT32_MAX &&
+                !LoopEventStore::hasInternalHeapHeadroomForNonCriticalWork(
+                    deferredSaveAdmissionHeap)) {
+                if (!deferredSaveHeapFloorDeferred) {
+                    SC_PERSIST("defer", 0, deferredSaveAdmissionHeap, deferredSaveAdmissionHeap,
+                               "heap_floor");
+                    deferredSaveHeapFloorDeferred = true;
+                }
+                break;
+            }
+            deferredSaveHeapFloorDeferred = false;
+        }
+
+        if (!deferredSaveInProgress && deferredSavePending) {
+            const uint32_t dispatchHeap = deferredSaveAdmissionHeap == UINT32_MAX
+                                              ? 0
+                                              : deferredSaveAdmissionHeap;
+            SC_PERSIST("dispatch", 0, dispatchHeap, dispatchHeap, "run");
+            deferredSavePending = false;
+            deferredSaveStartedAtUs = micros();
+            deferredSaveHeapBefore = dispatchHeap;
+            deferredSaveLoopSlotsWritten = 0;
+            deferredSaveLoopSlotsSkipped = 0;
+            deferredSaveDisplayBlockUs = 0;
+            deferredSaveInProgress = true;
+            const uint32_t ioStartUs = micros();
+            deferredSaveSdIoActive = true;
+            const bool beginOk = beginDeferredSaveJob(state);
+            deferredSaveDisplayBlockUs += micros() - ioStartUs;
+            deferredSaveSdIoActive = false;
+            if (!beginOk) {
+                const uint32_t saveDurationUs = micros() - deferredSaveStartedAtUs;
+                SC_PERSIST("result", saveDurationUs, deferredSaveHeapBefore, deferredSaveHeapBefore,
+                           "failed");
+                deferredSaveLastCompletedOk = false;
+                deferredSaveFailedAtMs = millis();
+                deferredSaveCompletedAtMs = 0;
+                resetDeferredSaveJobState();
+                break;
+            }
+            deferredSaveUrgentRequested = false;
+            break;
+        }
+
+        if (!deferredSaveInProgress) {
+            break;
+        }
+
+        emitDeferredSaveSliceTelemetry("start");
         const uint32_t ioStartUs = micros();
         deferredSaveSdIoActive = true;
-        const bool beginOk = beginDeferredSaveJob(state);
+        const bool stepOk = stepDeferredSaveJob();
         deferredSaveDisplayBlockUs += micros() - ioStartUs;
         deferredSaveSdIoActive = false;
-        if (!beginOk) {
-            const uint32_t saveDurationUs = micros() - deferredSaveStartedAtUs;
-            SC_PERSIST("result", saveDurationUs, deferredSaveHeapBefore, deferredSaveHeapBefore,
-                       "failed");
-            deferredSaveLastCompletedOk = false;
-            deferredSaveFailedAtMs = millis();
+        emitDeferredSaveSliceTelemetry(stepOk ? "done" : "failed");
+        if (!stepOk) {
+            deferredSaveInProgress = false;
+        }
+        if (deferredSaveInProgress) {
+            break;
+        }
+
+        const uint32_t saveDurationUs = micros() - deferredSaveStartedAtUs;
+        const char* resultOutcome = stepOk ? "ok" : "failed";
+        SC_PERSIST("result", saveDurationUs, deferredSaveHeapBefore, deferredSaveHeapBefore,
+                   resultOutcome);
+        char resultStats[72];
+        std::snprintf(resultStats, sizeof(resultStats), "w%u_s%u_db%lu",
+                      static_cast<unsigned>(deferredSaveLoopSlotsWritten),
+                      static_cast<unsigned>(deferredSaveLoopSlotsSkipped),
+                      static_cast<unsigned long>(deferredSaveDisplayBlockUs));
+        SC_PERSIST("result_stats", saveDurationUs, deferredSaveHeapBefore, deferredSaveHeapBefore,
+                   resultStats);
+        deferredSaveLastCompletedOk = stepOk;
+        const uint32_t resultAtMs = millis();
+        if (stepOk) {
+            deferredSaveCompletedAtMs = resultAtMs;
+            deferredSaveFailedAtMs = 0;
+        } else {
+            deferredSaveFailedAtMs = resultAtMs;
             deferredSaveCompletedAtMs = 0;
-            resetDeferredSaveJobState();
-            return;
+        }
+        if (stepOk && clearEditDirtyAfterDeferredSave) {
+            clearAllocatedLoopEditStateDirty();
+            clearEditDirtyAfterDeferredSave = false;
         }
         deferredSaveUrgentRequested = false;
-        return;
-    }
-
-    if (!deferredSaveInProgress) {
-        return;
-    }
-
-    emitDeferredSaveSliceTelemetry("start");
-    const uint32_t ioStartUs = micros();
-    deferredSaveSdIoActive = true;
-    const bool stepOk = stepDeferredSaveJob();
-    deferredSaveDisplayBlockUs += micros() - ioStartUs;
-    deferredSaveSdIoActive = false;
-    emitDeferredSaveSliceTelemetry(stepOk ? "done" : "failed");
-    if (!stepOk) {
-        deferredSaveInProgress = false;
-    }
-    if (deferredSaveInProgress) {
-        return;
-    }
-
-    const uint32_t saveDurationUs = micros() - deferredSaveStartedAtUs;
-    const char* resultOutcome = stepOk ? "ok" : "failed";
-    SC_PERSIST("result", saveDurationUs, deferredSaveHeapBefore, deferredSaveHeapBefore,
-               resultOutcome);
-    char resultStats[72];
-    std::snprintf(resultStats, sizeof(resultStats), "w%u_s%u_db%lu",
-                  static_cast<unsigned>(deferredSaveLoopSlotsWritten),
-                  static_cast<unsigned>(deferredSaveLoopSlotsSkipped),
-                  static_cast<unsigned long>(deferredSaveDisplayBlockUs));
-    SC_PERSIST("result_stats", saveDurationUs, deferredSaveHeapBefore, deferredSaveHeapBefore,
-               resultStats);
-    deferredSaveLastCompletedOk = stepOk;
-    const uint32_t resultAtMs = millis();
-    if (stepOk) {
-        deferredSaveCompletedAtMs = resultAtMs;
-        deferredSaveFailedAtMs = 0;
-    } else {
-        deferredSaveFailedAtMs = resultAtMs;
-        deferredSaveCompletedAtMs = 0;
-    }
-    if (stepOk && clearEditDirtyAfterDeferredSave) {
-        clearAllocatedLoopEditStateDirty();
-        clearEditDirtyAfterDeferredSave = false;
-    }
-    deferredSaveUrgentRequested = false;
-    if (!stepOk) {
-        resetDeferredSaveJobState();
+        if (!stepOk) {
+            resetDeferredSaveJobState();
+        }
+        break;
     }
 }
+
+void StorageManager::requestCommitRevision() {
+#if BYPASS_STOP_UNDO_SAVE
+    return;
+#endif
+    revisionCommitPending = true;
+    SC_PERSIST("rev_request", 0, 0, 0, "queued");
+}
+
+bool StorageManager::hasRevisionCommitWork() {
+#if BYPASS_STOP_UNDO_SAVE
+    return false;
+#else
+    return revisionCommitPending || revisionCommitInProgress;
+#endif
+}
+
+bool StorageManager::isRevisionCommitActive() {
+#if BYPASS_STOP_UNDO_SAVE
+    return false;
+#else
+    return revisionCommitSdIoActive;
+#endif
+}
+
+#if defined(SESSION_CAPTURE)
+bool removeEmptyDirectoryIfPresent(const char* path) {
+    if (path == nullptr || path[0] == '\0' || !SD.exists(path)) {
+        return true;
+    }
+    File dir = SD.open(path);
+    if (!dir || !dir.isDirectory()) {
+        if (dir) {
+            dir.close();
+        }
+        return false;
+    }
+    while (true) {
+        File entry = dir.openNextFile();
+        if (!entry) {
+            break;
+        }
+        entry.close();
+        return false;
+    }
+    dir.close();
+    return SD.rmdir(path);
+}
+
+bool removeHitlSetFolderTree(const char* setFolderPath) {
+    if (setFolderPath == nullptr || setFolderPath[0] == '\0') {
+        return false;
+    }
+    char revisionsDir[56];
+    const int revisionsWritten =
+        std::snprintf(revisionsDir, sizeof(revisionsDir), "%s/revisions", setFolderPath);
+    if (revisionsWritten <= 0 ||
+        static_cast<size_t>(revisionsWritten) >= sizeof(revisionsDir)) {
+        return false;
+    }
+    if (SD.exists(revisionsDir)) {
+        File revisions = SD.open(revisionsDir);
+        if (revisions && revisions.isDirectory()) {
+            while (true) {
+                File entry = revisions.openNextFile();
+                if (!entry) {
+                    break;
+                }
+                char entryPath[96];
+                const char* name = entry.name();
+                entry.close();
+                const int entryWritten =
+                    std::snprintf(entryPath, sizeof(entryPath), "%s/%s", revisionsDir, name);
+                if (entryWritten <= 0 ||
+                    static_cast<size_t>(entryWritten) >= sizeof(entryPath)) {
+                    return false;
+                }
+                if (!SD.remove(entryPath)) {
+                    return false;
+                }
+            }
+            revisions.close();
+        } else if (revisions) {
+            revisions.close();
+        }
+        if (!removeEmptyDirectoryIfPresent(revisionsDir)) {
+            return false;
+        }
+    }
+
+    char setMetaPath[64];
+    const int metaWritten =
+        std::snprintf(setMetaPath, sizeof(setMetaPath), "%s/set.bin", setFolderPath);
+    if (metaWritten > 0 && static_cast<size_t>(metaWritten) < sizeof(setMetaPath) &&
+        SD.exists(setMetaPath)) {
+        if (!SD.remove(setMetaPath)) {
+            return false;
+        }
+    }
+    char setMetaTempPath[68];
+    const int metaTempWritten =
+        std::snprintf(setMetaTempPath, sizeof(setMetaTempPath), "%s/set.bin.tmp", setFolderPath);
+    if (metaTempWritten > 0 && static_cast<size_t>(metaTempWritten) < sizeof(setMetaTempPath) &&
+        SD.exists(setMetaTempPath)) {
+        (void)SD.remove(setMetaTempPath);
+    }
+    return removeEmptyDirectoryIfPresent(setFolderPath);
+}
+
+void StorageManager::requestCommitRevisionForHitl() {
+#if BYPASS_STOP_UNDO_SAVE
+    return;
+#else
+    hitlRevisionCommitBackup = HitlRevisionCommitBackup{};
+    hitlRevisionCommitBackup.armed = true;
+    hitlRevisionCommitBackup.workspaceLastCommittedEpoch = lastCommittedWorkspaceEpoch;
+    hitlRevisionCommitBackup.workspaceDerivedFromSetId = workspaceDerivedFromSetId;
+    hitlRevisionCommitBackup.workspaceDerivedFromRevisionId = workspaceDerivedFromRevisionId;
+    hitlRevisionCommitBackup.workspaceLastCommittedRevisionId = workspaceLastCommittedRevisionId;
+
+    if (SD.exists(SetRevisionCatalog::kSetIndexPath)) {
+        File indexFile = SD.open(SetRevisionCatalog::kSetIndexPath, FILE_READ);
+        if (indexFile) {
+            const StorageIo indexIo = storageIoFromFileRead(indexFile);
+            hitlRevisionCommitBackup.hadIndexOnSd =
+                SetRevisionCatalog::readSetCatalogIndex(indexIo,
+                                                        hitlRevisionCommitBackup.catalogIndex);
+            indexFile.close();
+        }
+    }
+
+    if (workspaceDerivedFromSetId != 0) {
+        char setMetaPath[64];
+        if (SetRevisionCatalog::formatSetMetaPath(setMetaPath, sizeof(setMetaPath),
+                                                  workspaceDerivedFromSetId)) {
+            File setMetaFile = SD.open(setMetaPath, FILE_READ);
+            if (setMetaFile) {
+                const StorageIo setMetaIo = storageIoFromFileRead(setMetaFile);
+                hitlRevisionCommitBackup.hadSetMetaOnSd = SetRevisionCatalog::readSetMetaRecord(
+                    setMetaIo, hitlRevisionCommitBackup.setMeta);
+                setMetaFile.close();
+            }
+        }
+    }
+
+    requestCommitRevision();
+    SC_PERSIST("rev_hitl_arm", 0, 0, 0, "armed");
+#endif
+}
+
+bool StorageManager::cleanupHitlRevisionCommit() {
+#if BYPASS_STOP_UNDO_SAVE
+    return false;
+#else
+    if (!hitlRevisionCommitBackup.armed) {
+        SC_PERSIST("rev_cleanup", 0, 0, 0, "not_armed");
+        return false;
+    }
+
+    bool ok = true;
+    if (hitlRevisionCommitBackup.revisionFinalPath[0] != '\0' &&
+        SD.exists(hitlRevisionCommitBackup.revisionFinalPath)) {
+        ok = SD.remove(hitlRevisionCommitBackup.revisionFinalPath) && ok;
+    }
+    char revisionTempPath[84];
+    const int tempWritten = std::snprintf(revisionTempPath, sizeof(revisionTempPath), "%s.tmp",
+                                          hitlRevisionCommitBackup.revisionFinalPath);
+    if (tempWritten > 0 && static_cast<size_t>(tempWritten) < sizeof(revisionTempPath) &&
+        SD.exists(revisionTempPath)) {
+        (void)SD.remove(revisionTempPath);
+    }
+
+    if (hitlRevisionCommitBackup.createdNewSetFolder) {
+        ok = removeHitlSetFolderTree(hitlRevisionCommitBackup.setFolderPath) && ok;
+        if (hitlRevisionCommitBackup.hadIndexOnSd) {
+            ok = writeSetCatalogIndexFile(hitlRevisionCommitBackup.catalogIndex) && ok;
+        } else if (SD.exists(SetRevisionCatalog::kSetIndexPath)) {
+            ok = SD.remove(SetRevisionCatalog::kSetIndexPath) && ok;
+        }
+    } else if (hitlRevisionCommitBackup.hadSetMetaOnSd) {
+        ok = writeSetMetaRecordFile(hitlRevisionCommitBackup.committedSetId,
+                                    hitlRevisionCommitBackup.setMeta) &&
+             ok;
+    }
+
+    lastCommittedWorkspaceEpoch = hitlRevisionCommitBackup.workspaceLastCommittedEpoch;
+    workspaceDerivedFromSetId = hitlRevisionCommitBackup.workspaceDerivedFromSetId;
+    workspaceDerivedFromRevisionId = hitlRevisionCommitBackup.workspaceDerivedFromRevisionId;
+    workspaceLastCommittedRevisionId = hitlRevisionCommitBackup.workspaceLastCommittedRevisionId;
+    if (!writeWorkspaceMetaAfterDeferredSave()) {
+        ok = false;
+    }
+
+    hitlRevisionCommitBackup = HitlRevisionCommitBackup{};
+    SC_PERSIST("rev_cleanup", 0, 0, 0, ok ? "ok" : "failed");
+    return ok;
+#endif
+}
+
+void StorageManager::processHitlSerialCommands() {
+#if BYPASS_STOP_UNDO_SAVE
+    return;
+#else
+    static char lineBuffer[48];
+    static size_t lineLength = 0;
+    while (Serial.available() > 0) {
+        const char ch = static_cast<char>(Serial.read());
+        if (ch == '\r') {
+            continue;
+        }
+        if (ch == '\n') {
+            lineBuffer[lineLength] = '\0';
+            if (std::strcmp(lineBuffer, "!REV_COMMIT") == 0) {
+                requestCommitRevisionForHitl();
+            } else if (std::strcmp(lineBuffer, "!REV_CLEANUP") == 0) {
+                cleanupHitlRevisionCommit();
+            }
+            lineLength = 0;
+            continue;
+        }
+        if (lineLength + 1 < sizeof(lineBuffer)) {
+            lineBuffer[lineLength++] = ch;
+        }
+    }
+#endif
+}
+#endif
 
 DeferredSaveDisplayStatus StorageManager::getDeferredSaveDisplayStatus(uint32_t nowMs) {
 #if BYPASS_STOP_UNDO_SAVE

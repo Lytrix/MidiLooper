@@ -36,46 +36,57 @@ Materialized MIDI (e.g. `LoopPasses::materialize`) remains **runtime cache only*
 
 ### Requirement: Revision packed file byte layout
 
-Each `v####.bin` SHALL use this on-disk layout (task **1.4**):
+Each `v####.bin` SHALL use **REVPK02** on-disk layout (task **1.4**):
 
 **RevisionHeader (128 bytes, offset 0x0000)**
 
 | Field | Type | Notes |
 |-------|------|-------|
-| `magic` | char[8] | `"REVPK01\0"` |
+| `magic` | char[8] | `"REVPK02\0"` |
 | `schemaVersion` | u16 | Major/minor compatibility |
 | `headerSize` | u16 | `128` |
 | `revisionId` | u16 | Assigned at VALIDATE (0 in `.tmp`) |
 | `setId` | u16 | |
 | `sourceEpoch` | u32 | Current epoch at SNAPSHOT |
 | `createdUnix` | u64 | |
-| `transportOffset` | u32 | |
-| `globalOffset` | u32 | |
-| `undoOffset` | u32 | |
-| `loopIndexOffset` | u32 | |
-| `loopIndexCount` | u16 | |
-| `payloadSize` | u32 | |
+| `chunkCount` | u16 | Typed chunks in payload stream |
+| `reserved0` | u16 | |
+| `payloadSize` | u32 | Bytes between header and footer |
 | `headerCrc32` | u32 | |
 | `workspaceFlags` | u32 | |
-| `reserved` | u8[56] | |
+| `reserved` | u8[84] | |
 
-**LoopIndexEntry (32 bytes × loopIndexCount)** — references pass/chunk blob offsets, not flat MIDI.
+**Payload — append-only chunk stream**
 
-**Payload sections**: transport, global, undo, per-slot pass/chunk blobs (via existing `StorageLoopIo`
-serialization shapes where applicable).
+Each chunk:
+
+| Field | Type | Notes |
+|-------|------|-------|
+| `type` | u8 | `Transport` \| `Global` \| `Undo` \| `SlotIndex` \| `LoopSlot` |
+| `trackIndex` | u8 | |
+| `slotIndex` | u8 | |
+| `reserved` | u8 | |
+| `bodyLength` | u32 | |
+| `body` | u8[bodyLength] | |
+
+- **`LoopSlot` body** — `StorageLoopIo` v5 wire (`recordPass`, `overdubPasses[]`, `editPasses[]`).
+- **`SlotIndex` body** — `entryCount` (u16), reserved (u16), then **SlotIndexEntry** (32 B × N):
+  `trackIndex`, `slotIndex`, `occupied`, `chunkOffset` (relative to payload start), `bodyLength`,
+  `loopLengthTicks`, `noteCount`, `bars`, reserved.
+- Commit writes **SlotIndex last** so offsets are final before footer CRC.
 
 **Footer (12 bytes, end of file)**
 
 | Field | Type | Notes |
 |-------|------|-------|
 | `completeMagic` | u32 | `0x53564F4B` |
-| `payloadCrc32` | u32 | |
+| `payloadCrc32` | u32 | Over full payload stream |
 | `fileSize` | u32 | |
 
-#### Scenario: Native parser reads index without heap
+#### Scenario: Native parser reads SlotIndex without heap
 
 - **WHEN** a host test opens a valid `v0001.bin`
-- **THEN** loop index entries are readable from fixed offsets without dynamic allocation
+- **THEN** SlotIndex entries are readable by scanning the chunk stream without dynamic allocation
 
 ### Requirement: Single schema compatibility
 

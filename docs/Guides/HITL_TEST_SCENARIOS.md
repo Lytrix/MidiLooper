@@ -45,6 +45,26 @@ Presets are defined in [`scripts/hitl/registry.py`](../../scripts/hitl/registry.
 | `edit_overdub_during_note_edit` | `edit_overdub_during_note_edit` | Record → overdub → edit → in-edit overdub → **E:** session undo/redo → exit → global undo | **Yes** | `verify_edit_overdub_during_note_edit` |
 | `long_loop_display_window` | `long_loop_display_window` | 24+ bar record → NOTE_EDIT window freeze → play/stop long-press snap → hold-to-track | **Yes** | `verify_long_loop_display_window` |
 | `two_overdub_undo_redo` | `two_overdub_undo_redo` | Record → **2** overdub passes → global undo ×3 (display **empty**) → global redo ×3 | **Yes** | `verify_two_overdub_undo_redo` |
+| `revision_commit_save` | `revision_commit_save` | Transport stop (current epoch) → `!REV_COMMIT` → `!REV_CLEANUP` (no catalog pollution) | **Yes** | `verify_revision_commit_save` |
+
+### `revision_commit_save` (packed revision write + cleanup)
+
+Requires `teensy41-capture-serial` (SESSION_CAPTURE). Host sends serial `!REV_COMMIT` / `!REV_CLEANUP`; firmware backs up `index.bin` / `set.bin`, commits `v####.bin`, then restores catalog state and deletes the test revision.
+
+```bash
+.venv/bin/python scripts/host_midi_hitl.py run --preset revision_commit_save \
+  --midi-out "Teensy" --midi-in "Teensy" \
+  --serial-port /dev/cu.usbmodem154944801 \
+  --track-number 5 \
+  --phase-wait-ms 500 --press-ms 120 \
+  --prior-save-drain-wait-ms 120000 \
+  --deferred-save-wait-ms 120000 \
+  --revision-commit-wait-ms 180000
+```
+
+Run after `base` preset: the scenario waits for the prior deferred save to finish before `!REV_COMMIT`. Serial may emit `#CAP,...,PERS,rev_blocked,...,deferred_save_active` while blocked.
+
+Use `--skip-hitl-cleanup` only when debugging a failed commit (leaves revision on SD).
 
 ### `base` (record/overdub baseline)
 

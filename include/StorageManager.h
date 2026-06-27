@@ -51,6 +51,14 @@ public:
     static bool isCurrentWorkspaceDirty();
     static uint32_t getCurrentWorkspaceEpoch();
     static uint32_t getLastCommittedWorkspaceEpoch();
+    static void requestCommitRevision();
+    static bool hasRevisionCommitWork();
+    static bool isRevisionCommitActive();
+#if defined(SESSION_CAPTURE)
+    static void requestCommitRevisionForHitl();
+    static bool cleanupHitlRevisionCommit();
+    static void processHitlSerialCommands();
+#endif
 
 private:
     static bool loadCurrentSetFromSd(LooperState& state);

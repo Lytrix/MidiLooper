@@ -177,6 +177,11 @@ class SerialCaptureCollector:
                 return None
             return time.monotonic() - self._last_line_at
 
+    def write_line(self, text: str) -> None:
+        payload = (text.rstrip("\n") + "\n").encode("utf-8")
+        self._serial.write(payload)
+        self._serial.flush()
+
     def heartbeat_abort_reason(self, timeout_s: float) -> Optional[str]:
         if self._error:
             return f"serial read error: {self._error}"

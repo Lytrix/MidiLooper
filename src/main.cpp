@@ -204,6 +204,10 @@ void loop() {
 
   StorageManager::processDeferredSaveState(looperState.getLooperState());
 
+#if defined(SESSION_CAPTURE)
+  StorageManager::processHitlSerialCommands();
+#endif
+
   // Log memory every 60 seconds only when transport/capture is idle.
   // Runtime PSRAM stats walk (sm_malloc_stats_pool) can take hundreds of ms
   // on large pools and must never run during PLAYING/RECORDING/OVERDUBBING.

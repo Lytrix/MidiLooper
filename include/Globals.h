@@ -95,6 +95,10 @@ namespace Config {
   constexpr uint32_t autosaveIntervalMs = 300000;
   /// Wall-clock max wait before deferred full validate runs while track is PLAYING-only.
   constexpr uint32_t deferredValidateMaxDelayMs = 60000;
+  /// Max SD persistence slice duration while capture or playback is active (revision-commit spec).
+  constexpr uint32_t maxPersistenceMicrosActive = 300;
+  /// Unbounded persistence slice when transport idle and capture inactive.
+  constexpr uint32_t maxPersistenceMicrosIdle = UINT32_MAX;
 }
  
 // --------------------

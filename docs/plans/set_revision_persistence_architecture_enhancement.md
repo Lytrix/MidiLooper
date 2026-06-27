@@ -37,9 +37,20 @@ Does **not** refactor: `StorageManager` core, `LoopPasses`, chunk pool, material
 | Layer | SD path | Model |
 |-------|---------|--------|
 | **Current** | `MidiLooper/current/` | Epoch-based; dirty = `currentEpoch != lastCommittedEpoch` |
-| **Sets** | `MidiLooper/sets/S####/` | Immutable `v####.bin` snapshots |
+| **Sets** | `MidiLooper/sets/S####/` | Immutable `v####.bin` snapshots (REVPK02 chunk stream) |
 | **Recovery** | `MidiLooper/recovery/checkpoints/` | Boot fallback after Current + derived revision |
 | **Commit** | FSM: REQUEST → SNAPSHOT → WRITE → VALIDATE → CATALOG → COMPLETE | Current unchanged after Save |
+
+### REVPK02 revision blob (LMDB-inspired)
+
+```text
+[Fixed 128 B header]  identity, sourceEpoch, chunkCount, payloadSize, headerCrc
+[Chunk stream]        Transport | LoopSlot (StorageLoopIo v5) | SlotIndex directory
+[12 B footer]         completeMagic + payloadCrc32 + fileSize
+```
+
+`LoopSlot` chunk bodies carry canonical pass storage (`recordPass`, `overdubPasses[]`, `editPasses[]`).
+`SlotIndex` chunk is written last during commit so directory offsets match final payload layout.
 
 ## File naming
 

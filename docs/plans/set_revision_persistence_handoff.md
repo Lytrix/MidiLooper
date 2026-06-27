@@ -3,29 +3,41 @@
 **Date:** 2026-06-27  
 **OpenSpec:** `openspec/changes/set-revision-persistence/`  
 **Architecture plan:** `docs/plans/set_revision_persistence_architecture_enhancement.md`  
-**Apply command:** `/opsx:apply` on `tasks.md` — **next: section 3.x**
+**Apply command:** `/opsx:apply` on `tasks.md` — **next: task 3.2 (deferred load)**
 
 ---
 
 ## One-line goal
 
-**Current** (mutable, epoch-based) + **Sets** (immutable revisions). Save appends packed `v####.bin` snapshots via deferred FSM; Current unchanged after Save. Extend existing pass/chunk storage — **no** StorageManager / LoopPasses rewrite.
+**Current** (mutable, epoch-based) + **Sets** (immutable revisions). Save appends packed `v####.bin` (REVPK02 chunk stream) via deferred FSM; Current unchanged after Save. Extend existing pass/chunk storage — **no** StorageManager / LoopPasses rewrite.
 
 ---
 
-## What is done (tasks 1.1–2.4)
+## What is done (tasks 1.x–2.x, 3.1)
 
-### Section 1 — metadata + catalog + REVPK01
+### Section 1 — metadata + catalog + REVPK02
 
 | Task | Deliverable |
 |------|-------------|
 | 1.1 | Wire structs: `WorkspaceMetaRecord`, `SetCatalogIndex`, `SetMetaRecord`, epoch file header |
 | 1.2 | `SetRevisionCatalog` — `index.bin`, `set.bin`; revision id on COMPLETE only |
 | 1.3 | Monotonic Set id; failed revision reuses id |
-| 1.4 | `RevisionPackedBlob` — REVPK01 128 B header, loop index, 12 B footer |
+| 1.4 | `RevisionPackedBlob` — **REVPK02**: 128 B header, typed chunk stream (`Transport` / `LoopSlot` / `SlotIndex`), 12 B CRC footer |
 | 1.5 | Native: `test_set_revision_persistence` (17 tests) |
 
 **New modules:** `PersistenceLayout`, `PersistenceSchema`, `CurrentWorkspaceStorage`, `SetRevisionCatalog`, `RevisionPackedBlob`
+
+**REVPK02 layout (LMDB-inspired mental model — not an LMDB port):**
+
+```text
+[Header]     chunkCount, payloadSize, sourceEpoch, …
+[Chunks]     Transport → LoopSlot(s) → SlotIndex (directory written last)
+[Footer]     completeMagic + payloadCrc32 + fileSize
+```
+
+`LoopSlot` bodies target `StorageLoopIo` v5 wire (`recordPass`, `overdubPasses[]`, `editPasses[]`). Commit WRITE still **copies opaque** `current/` epoch file bodies until **3.6**.
+
+OpenSpec **pros/cons** (format vs MIDI timing): `proposal.md` + `design.md` § REVPK02 vs REVPK01.
 
 ### Section 2 — current workspace on SD
 
@@ -36,7 +48,41 @@
 | 2.3 | `SlotSummary[8]` in `workspace.bin` for overlay preview |
 | 2.4 | Native: epoch valid/invalid; dirty = `currentEpoch != lastCommittedEpoch` |
 
-**Extended (not replaced):** `StorageManager.cpp` deferred FSM — epoch increment at job start, header prefix on bundle + slot files, `writeWorkspaceMetaAfterDeferredSave()`.
+### Section 3.1 — revision commit (shipped)
+
+| Item | Detail |
+|------|--------|
+| FSM | `REQUEST → SNAPSHOT → WRITE → VALIDATE → CATALOG_UPDATE → COMPLETE` on deferred infrastructure |
+| API | `StorageManager::requestCommitRevision()`, `hasRevisionCommitWork()`, `isRevisionCommitActive()` |
+| Budget | `Config::maxPersistenceMicrosActive` (300µs) while PLAYING/RECORDING/OVERDUBBING |
+| WRITE | REVPK02 chunk stream from completed `current/` epoch (opaque copy interim) |
+| VALIDATE | Header CRC + payload CRC + `completeMagic`; patch `revisionId` + `chunkCount` on header |
+| COMPLETE | Updates `lastCommittedWorkspaceEpoch`, `workspaceDerivedFromSetId/RevisionId`, `workspace.bin` |
+| Block | Revision blocked while deferred `current/` save active (`rev_blocked` serial) |
+
+**Firmware helpers:** `appendRevisionCommitPayloadCrc`, `computeRevisionCommitPayloadCrcFromFile` (footer CRC from on-disk payload — fixes incremental CRC mismatch on Teensy).
+
+**Stale provenance:** if `workspaceDerivedFromSetId != 0` but `set.bin` missing, commit allocates new Set id.
+
+### HITL — revision commit save (with cleanup)
+
+| File | Role |
+|------|------|
+| `scripts/hitl/scenarios/revision_commit_save.py` | Transport stop → deferred idle → `!REV_COMMIT` → `!REV_CLEANUP` |
+| `scripts/hitl/verify/revision_commit_save.py` | Serial: `rev_request`, `rev_hitl_arm`, `rev_dispatch`, `rev_complete`, `rev_cleanup ok` |
+| `scripts/hitl/deferred_save_idle.py` | Wait for `PERS,result,ok` before commit |
+| `scripts/hitl/registry.py` | Preset `revision_commit_save` |
+
+**SESSION_CAPTURE hooks** (`main.cpp`, `StorageManager.cpp`): `!REV_COMMIT`, `!REV_CLEANUP`; telemetry `rev_*` via `#CAP,PERS,…`.
+
+```bash
+.venv/bin/python scripts/host_midi_hitl.py run --preset revision_commit_save \
+  --midi-out "Teensy" --midi-in "Teensy" \
+  --serial-port /dev/cu.usbmodem154944801 \
+  --track-number 5
+```
+
+**Verified 2026-06-27:** PASS (`S0001_v0001`, cleanup restores catalog/workspace).
 
 ### Naming (locked on SD)
 
@@ -48,11 +94,6 @@
 | Catalog | `/MidiLooper/sets/index.bin` |
 | Per-Set metadata | `/MidiLooper/sets/S####/set.bin` |
 | Revision snapshot | `/MidiLooper/sets/S####/revisions/v####.bin` |
-| Human settings (future) | `/MidiLooper/system/settings.json` |
-
-Runtime records use `.bin` (fixed layout / memcpy). Internal C++ names may still say `Meta` (e.g. `kWorkspaceMetaPath` → **`workspace.bin`** on disk).
-
-Legacy flat SavedSet folders (brownfield): `set.bin` via `CurrentSetStorage::kSetBinFileName` under `sets/archive/` until task **3.6**.
 
 ### Verification (green as of 2026-06-27)
 
@@ -61,29 +102,34 @@ pio test -e native                              # 229 tests
 pio test -e native -f test_set_revision_persistence
 openspec validate set-revision-persistence
 pio run -e teensy41-capture-serial             # ask before upload
+# HITL: revision_commit_save preset (see above)
 ```
 
 ---
 
 ## What is NOT done (start here)
 
-### Section 3 — revision commit and load (priority)
+### Section 3 — revision load + hardening (priority order)
 
-- [ ] **3.1** Commit FSM stages on deferred infrastructure; `maxPersistenceMicros` slices
-- [ ] **3.2** Deferred load → new Current epoch; provenance after 100%
-- [ ] **3.3** SNAPSHOT freezes completed epoch only
-- [ ] **3.4** `lastCommittedEpoch` sync at COMPLETE only
+- [ ] **3.2** Deferred **load** → new Current epoch; provenance after 100% (**next**)
+- [ ] **3.3** SNAPSHOT freezes completed epoch only (audit vs current SNAPSHOT)
+- [ ] **3.4** `lastCommittedEpoch` sync — firmware updates on COMPLETE; add native test
 - [ ] **3.5** Native: commit during PLAYING uses budget; no materialize on WRITE
-- [ ] **3.6** Remove SavedSet shims; stream via `StorageLoopIo` / pass shapes
+- [ ] **3.6** Remove SavedSet shims; stream commit via `StorageLoopIo` / pass shapes (replace opaque copy)
 - [ ] **3.7** DIRTY_PROMPT Yes/No/Cancel
 - [ ] **3.8** Boot: Current epoch → derived rev → latest → recovery → empty
 - [ ] **3.9** 8h failsafe when epochs diverge > 8h
+
+**Open engineering items (not separate tasks):**
+
+- Slice-bounded footer/validate CRC read for large revisions (today: full payload read in `WriteFooter` one step)
+- Incremental payload CRC during WRITE (optional; footer uses file read as source of truth)
 
 ### Sections 4–7
 
 Overlay modes, loop picker, button remap, HITL `set_revision_overlay` — spec'd, not coded.
 
-**Interim gap:** deferred FSM still writes single **runtime bundle** (`temp/runtime.bundle.bin`). OpenSpec target split `transport.bin` + `global.bin` is future work within 2.x/3.x — do not block 3.1 on split.
+**Interim gap:** deferred FSM still writes single **runtime bundle** (`temp/runtime.bundle.bin`). OpenSpec target split `transport.bin` + `global.bin` is future work — do not block 3.2 on split.
 
 ---
 
@@ -98,6 +144,7 @@ sets    = immutable revision history  →  MidiLooper/sets/
 - Revision **WRITE** streams pass/chunk refs — **no** `LoopPasses::materialize` on save path
 - Save SHALL NOT move, clear, or reload Current
 - Runtime priority: MIDI → playback → clock → display → persistence (`maxPersistenceMicros`)
+- **MIDI timing** is guaranteed by slice budget + chunk-bounded I/O, not by REVPK01 vs REVPK02 format
 
 **Do NOT refactor:** StorageManager core FSM shape, `StorageLoopIo`, `LoopPasses`, chunk pool, stop-path materialize.
 
@@ -108,32 +155,37 @@ sets    = immutable revision history  →  MidiLooper/sets/
 | Area | Path |
 |------|------|
 | Path constants | `include/PersistenceLayout.h`, `CurrentSetStorage.h`, `CurrentWorkspaceStorage.h`, `SetRevisionCatalog.h` |
-| Deferred FSM + epoch | `src/StorageManager.cpp` (~300 epoch vars; ~1035–2020 FSM; `writeWorkspaceMetaAfterDeferredSave`) |
-| Workspace / catalog / REVPK01 | `src/CurrentWorkspaceStorage.cpp`, `SetRevisionCatalog.cpp`, `RevisionPackedBlob.cpp` |
-| Native tests | `test/test_set_revision_persistence/`, `test/test_current_set_storage/` |
+| REVPK02 wire + parser | `include/RevisionPackedBlob.h`, `src/RevisionPackedBlob.cpp` |
+| Commit FSM + epoch | `src/StorageManager.cpp` (`stepRevisionCommit*`, `processDeferredSaveState` ~3300+) |
+| HITL serial hooks | `src/main.cpp` (`processHitlSerialCommands`) |
+| Workspace / catalog | `src/CurrentWorkspaceStorage.cpp`, `SetRevisionCatalog.cpp` |
+| Native tests | `test/test_set_revision_persistence/` |
+| HITL | `scripts/hitl/scenarios/revision_commit_save.py`, `verify/revision_commit_save.py` |
 | Overlay stub | `src/DisplayManager.cpp` (`drawLoadSaveView`) |
-| OpenSpec tasks | `openspec/changes/set-revision-persistence/tasks.md` |
+| OpenSpec | `openspec/changes/set-revision-persistence/` |
 
 ---
 
-## Boot / recovery (spec — partial firmware)
+## Boot / recovery (spec — not fully implemented)
 
-Order: (1) highest valid `MidiLooper/current/` epoch → (2) exact derived `v####.bin` → (3) latest validated on Set → (4) `recovery/checkpoints/` → (5) empty. Partial epochs ignored.
+Order: (1) highest valid `MidiLooper/current/` epoch → (2) exact derived `v####.bin` → (3) latest validated on Set → (4) `recovery/checkpoints/` → (5) empty.
 
 ---
 
 ## Superseded (do not extend)
 
-- `openspec/changes/workspace-session-persistence/` — flat SavedSet model (docs updated to `workspace.bin` / `set.bin` naming where touched)
+- `openspec/changes/workspace-session-persistence/` — flat SavedSet model
 - `openspec/changes/currentset-savedset-storage-layout/` §2–3 — parked
+- **REVPK01** — retired; no on-disk migration (dev stage)
 
 ---
 
 ## Suggested next-chat prompt
 
 ```text
-/opsx:apply set-revision-persistence — start task 3.1 (revision commit FSM on deferred save).
+/opsx:apply set-revision-persistence — task 3.2 (deferred revision load into new Current epoch).
 Read docs/plans/set_revision_persistence_handoff.md first.
-Hook SNAPSHOT → WRITE → VALIDATE → CATALOG_UPDATE; no materialize on save path.
-Run pio test -e native after 3.5. Ask before Teensy upload.
+Load REVPK02: parse SlotIndex chunk, seek LoopSlot chunks, restore via StorageLoopIo / epoch files.
+Provenance (derivedFromSetId/RevisionId) only after load 100%. No materialize on load hot path.
+Run pio test -e native after changes. HITL revision_commit_save as smoke; ask before Teensy upload.
 ```
