@@ -21,6 +21,7 @@
 #include "MidiButtonManager.h"
 #include "MidiConfig.h"
 #include "StorageManager.h"
+#include "SetBrowserOverlayPolicy.h"
 #include "RtcTime.h"
 #include "DeferredSaveDisplayStatus.h"
 #include "LooperState.h"
@@ -1345,6 +1346,9 @@ void DisplayManager::adjustLoadSaveListSelection(int delta) {
         StorageManager::SetBrowserOverlayMode::MinimalLoading) {
         return;
     }
+    if (SetBrowserOverlayPolicy::isDrillMode(StorageManager::getSetBrowserOverlayMode())) {
+        return;
+    }
     const size_t totalRows = 1 + loadSaveListCount_;
     if (totalRows == 0) {
         loadSaveListSelection_ = 0;
@@ -1480,6 +1484,24 @@ void DisplayManager::drawLoadSaveMinimalLoadingView(uint32_t nowMs) {
     drawSaveStatusIndicator(nowMs, DISPLAY_WIDTH - 4);
 }
 
+void DisplayManager::drawLoadSaveRevisionHistoryView(uint16_t setId) {
+    constexpr int kLeftMargin = 2;
+    char header[16];
+    std::snprintf(header, sizeof(header), "S%04u", static_cast<unsigned>(setId));
+    _display.gfx.select_font(&Font5x7FixedMono);
+    _display.gfx.draw_text(_display.api.getFrameBuffer(), header, kLeftMargin, 0, 15);
+    _display.gfx.draw_text(_display.api.getFrameBuffer(), "Revisions", kLeftMargin, 8, 5);
+}
+
+void DisplayManager::drawLoadSaveLoopPickView(uint16_t setId) {
+    constexpr int kLeftMargin = 2;
+    char header[16];
+    std::snprintf(header, sizeof(header), "S%04u", static_cast<unsigned>(setId));
+    _display.gfx.select_font(&Font5x7FixedMono);
+    _display.gfx.draw_text(_display.api.getFrameBuffer(), header, kLeftMargin, 0, 15);
+    _display.gfx.draw_text(_display.api.getFrameBuffer(), "Loops", kLeftMargin, 8, 5);
+}
+
 void DisplayManager::drawLoadSaveView(uint32_t nowMs) {
     const StorageManager::SetBrowserOverlayMode overlayMode =
         StorageManager::getSetBrowserOverlayMode();
@@ -1489,6 +1511,14 @@ void DisplayManager::drawLoadSaveView(uint32_t nowMs) {
     }
     if (overlayMode == StorageManager::SetBrowserOverlayMode::MinimalLoading) {
         drawLoadSaveMinimalLoadingView(nowMs);
+        return;
+    }
+    if (overlayMode == StorageManager::SetBrowserOverlayMode::RevisionHistory) {
+        drawLoadSaveRevisionHistoryView(StorageManager::getSetBrowserOverlayDrilledSetId());
+        return;
+    }
+    if (overlayMode == StorageManager::SetBrowserOverlayMode::LoopPick) {
+        drawLoadSaveLoopPickView(StorageManager::getSetBrowserOverlayDrilledSetId());
         return;
     }
 
@@ -1799,9 +1829,12 @@ void DisplayManager::update() {
 
     const bool loadSaveActive = looperState.isLoadSaveModeActive();
     if (loadSaveActive && !loadSaveModeWasActive_) {
+        StorageManager::resetSetBrowserOverlayNavigation();
         refreshLoadSaveListCache();
         loadSaveListSelection_ = 0;
         loadSaveListScrollOffset_ = 0;
+    } else if (!loadSaveActive && loadSaveModeWasActive_) {
+        StorageManager::resetSetBrowserOverlayNavigation();
     }
     loadSaveModeWasActive_ = loadSaveActive;
 

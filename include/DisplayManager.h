@@ -159,6 +159,8 @@ private:
     void drawLoadSaveView(uint32_t nowMs);
     void drawLoadSaveDirtyPromptView();
     void drawLoadSaveMinimalLoadingView(uint32_t nowMs);
+    void drawLoadSaveRevisionHistoryView(uint16_t setId);
+    void drawLoadSaveLoopPickView(uint16_t setId);
     void drawLoadSaveSetDetail(int detailX, const SavedSetCatalog::SavedSetMetadata& metadata,
                                bool isCurrentRow, const char* folderName, uint32_t nowMs);
     void drawLoadSaveTrackFilledBar(int x, int y, uint8_t filledSlots, uint8_t maxSlots,

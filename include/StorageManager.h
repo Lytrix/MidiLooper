@@ -9,6 +9,7 @@
 #include "LooperState.h"
 #include "RevisionLoadPolicy.h"
 #include "SavedSetCatalog.h"
+#include "SetBrowserOverlayPolicy.h"
 
 #if defined(ARDUINO)
 #include <SD.h>
@@ -53,12 +54,19 @@ public:
     static bool isCurrentWorkspaceDirty();
     static uint32_t getCurrentWorkspaceEpoch();
     static uint32_t getLastCommittedWorkspaceEpoch();
-    enum class SetBrowserOverlayMode : uint8_t {
-        Root = 0,
-        DirtyPrompt,
-        MinimalLoading,
-    };
+    using SetBrowserOverlayMode = SetBrowserOverlayPolicy::Mode;
+    using SetBrowserOverlayEntryKind = SetBrowserOverlayPolicy::EntryKind;
     static SetBrowserOverlayMode getSetBrowserOverlayMode();
+    static SetBrowserOverlayEntryKind getSetBrowserOverlayEntryKind();
+    static void resetSetBrowserOverlayNavigation();
+    static void setSetBrowserOverlayEntryKind(SetBrowserOverlayEntryKind kind);
+    static bool openSetBrowserRevisionHistory(uint16_t setId, uint8_t listSelection,
+                                              uint8_t listScrollOffset);
+    static bool openSetBrowserLoopPick(uint16_t setId, uint8_t listSelection,
+                                       uint8_t listScrollOffset);
+    static bool navigateSetBrowserOverlayBack(uint8_t& outListSelection,
+                                              uint8_t& outListScrollOffset);
+    static uint16_t getSetBrowserOverlayDrilledSetId();
     static bool isRevisionLoadDirtyPromptActive();
     static uint8_t getRevisionLoadDirtyPromptSelection();
     static void adjustRevisionLoadDirtyPromptSelection(int delta);

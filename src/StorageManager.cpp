@@ -13,6 +13,7 @@
 #include "RevisionPackedBlob.h"
 #include "RevisionCommitPolicy.h"
 #include "RevisionLoadPolicy.h"
+#include "SetBrowserOverlayPolicy.h"
 #include "BootRecoveryPolicy.h"
 #include "PersistenceSchema.h"
 #include "SavedSetCatalog.h"
@@ -458,6 +459,7 @@ bool revisionLoadDirtyPromptActive = false;
 uint8_t revisionLoadDirtyPromptSelection = 0;
 bool revisionLoadPipelineActive = false;
 bool revisionLoadSaveThenLoadPipeline = false;
+SetBrowserOverlayPolicy::NavigationState setBrowserOverlayNavigation{};
 RevisionLoadReloadRamStage revisionLoadReloadRamStage = RevisionLoadReloadRamStage::WriteWorkspaceMeta;
 File revisionLoadReloadMetaFile;
 bool revisionLoadReloadMetaFileOpen = false;
@@ -4131,15 +4133,53 @@ uint32_t StorageManager::getLastCommittedWorkspaceEpoch() {
 }
 
 StorageManager::SetBrowserOverlayMode StorageManager::getSetBrowserOverlayMode() {
-    if (revisionLoadDirtyPromptActive) {
-        return SetBrowserOverlayMode::DirtyPrompt;
+    const bool minimalLoading = RevisionLoadPolicy::isMinimalLoadingOverlayActive(
+        revisionLoadPipelineActive, revisionCommitInProgress, revisionLoadPending,
+        revisionLoadInProgress);
+    return SetBrowserOverlayPolicy::resolveActiveMode(
+        setBrowserOverlayNavigation, revisionLoadDirtyPromptActive, minimalLoading);
+}
+
+StorageManager::SetBrowserOverlayEntryKind StorageManager::getSetBrowserOverlayEntryKind() {
+    return setBrowserOverlayNavigation.entryKind;
+}
+
+void StorageManager::resetSetBrowserOverlayNavigation() {
+    SetBrowserOverlayPolicy::resetNavigation(setBrowserOverlayNavigation);
+}
+
+void StorageManager::setSetBrowserOverlayEntryKind(SetBrowserOverlayEntryKind kind) {
+    SetBrowserOverlayPolicy::setEntryKind(setBrowserOverlayNavigation, kind);
+}
+
+bool StorageManager::openSetBrowserRevisionHistory(uint16_t setId, uint8_t listSelection,
+                                                   uint8_t listScrollOffset) {
+    if (setId == 0) {
+        return false;
     }
-    if (RevisionLoadPolicy::isMinimalLoadingOverlayActive(
-            revisionLoadPipelineActive, revisionCommitInProgress, revisionLoadPending,
-            revisionLoadInProgress)) {
-        return SetBrowserOverlayMode::MinimalLoading;
+    SetBrowserOverlayPolicy::openRevisionHistory(setBrowserOverlayNavigation, setId, listSelection,
+                                                 listScrollOffset);
+    return true;
+}
+
+bool StorageManager::openSetBrowserLoopPick(uint16_t setId, uint8_t listSelection,
+                                            uint8_t listScrollOffset) {
+    if (setId == 0) {
+        return false;
     }
-    return SetBrowserOverlayMode::Root;
+    SetBrowserOverlayPolicy::openLoopPick(setBrowserOverlayNavigation, setId, listSelection,
+                                          listScrollOffset);
+    return true;
+}
+
+bool StorageManager::navigateSetBrowserOverlayBack(uint8_t& outListSelection,
+                                                   uint8_t& outListScrollOffset) {
+    return SetBrowserOverlayPolicy::navigateBack(setBrowserOverlayNavigation, outListSelection,
+                                                 outListScrollOffset);
+}
+
+uint16_t StorageManager::getSetBrowserOverlayDrilledSetId() {
+    return setBrowserOverlayNavigation.drilledSetId;
 }
 
 bool StorageManager::isRevisionLoadDirtyPromptActive() {
