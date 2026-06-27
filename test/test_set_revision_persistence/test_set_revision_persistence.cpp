@@ -12,6 +12,7 @@
 #include "../../src/RevisionPackedBlob.cpp"
 #include "../../src/RevisionLoadPolicy.cpp"
 #include "../../src/BootRecoveryPolicy.cpp"
+#include "../../src/SetBrowserOverlayPolicy.cpp"
 #include "../../src/SetRevisionCatalog.cpp"
 #include "BootRecoveryPolicy.h"
 #include "CurrentWorkspaceStorage.h"
@@ -19,6 +20,7 @@
 #include "RevisionCommitPolicy.h"
 #include "RevisionLoadPolicy.h"
 #include "RevisionPackedBlob.h"
+#include "SetBrowserOverlayPolicy.h"
 #include "SetRevisionCatalog.h"
 
 namespace {
@@ -547,6 +549,50 @@ void test_boot_epoch_candidate_rejects_partial_successor() {
       41, true, false, true));
 }
 
+void test_overlay_mode_priority_dirty_then_minimal() {
+  SetBrowserOverlayPolicy::NavigationState nav{};
+  nav.drillMode = SetBrowserOverlayPolicy::Mode::RevisionHistory;
+  nav.drilledSetId = 5;
+  TEST_ASSERT_EQUAL(SetBrowserOverlayPolicy::Mode::DirtyPrompt,
+                    SetBrowserOverlayPolicy::resolveActiveMode(nav, true, true));
+  TEST_ASSERT_EQUAL(SetBrowserOverlayPolicy::Mode::MinimalLoading,
+                    SetBrowserOverlayPolicy::resolveActiveMode(nav, false, true));
+  TEST_ASSERT_EQUAL(SetBrowserOverlayPolicy::Mode::RevisionHistory,
+                    SetBrowserOverlayPolicy::resolveActiveMode(nav, false, false));
+}
+
+void test_overlay_open_revision_history_preserves_parent_focus() {
+  SetBrowserOverlayPolicy::NavigationState nav{};
+  SetBrowserOverlayPolicy::openRevisionHistory(nav, 12, 3, 7);
+  TEST_ASSERT_EQUAL(SetBrowserOverlayPolicy::Mode::RevisionHistory, nav.drillMode);
+  TEST_ASSERT_EQUAL(SetBrowserOverlayPolicy::Mode::Root, nav.parentDrillMode);
+  TEST_ASSERT_EQUAL_UINT16(12, nav.drilledSetId);
+  TEST_ASSERT_EQUAL_UINT8(3, nav.parentListSelection);
+  TEST_ASSERT_EQUAL_UINT8(7, nav.parentListScrollOffset);
+}
+
+void test_overlay_navigate_back_restores_parent_focus() {
+  SetBrowserOverlayPolicy::NavigationState nav{};
+  SetBrowserOverlayPolicy::openLoopPick(nav, 8, 2, 4);
+  uint8_t selection = 0;
+  uint8_t scroll = 0;
+  TEST_ASSERT_TRUE(SetBrowserOverlayPolicy::navigateBack(nav, selection, scroll));
+  TEST_ASSERT_EQUAL(SetBrowserOverlayPolicy::Mode::Root, nav.drillMode);
+  TEST_ASSERT_EQUAL_UINT16(0, nav.drilledSetId);
+  TEST_ASSERT_EQUAL_UINT8(2, selection);
+  TEST_ASSERT_EQUAL_UINT8(4, scroll);
+  TEST_ASSERT_FALSE(SetBrowserOverlayPolicy::navigateBack(nav, selection, scroll));
+}
+
+void test_overlay_reset_clears_drill_state() {
+  SetBrowserOverlayPolicy::NavigationState nav{};
+  SetBrowserOverlayPolicy::openRevisionHistory(nav, 3, 1, 1);
+  SetBrowserOverlayPolicy::resetNavigation(nav);
+  TEST_ASSERT_EQUAL(SetBrowserOverlayPolicy::Mode::Root, nav.drillMode);
+  TEST_ASSERT_EQUAL_UINT16(0, nav.drilledSetId);
+  TEST_ASSERT_EQUAL(SetBrowserOverlayPolicy::EntryKind::WorkspaceSetBrowser, nav.entryKind);
+}
+
 int main(int argc, char** argv) {
   (void)argc;
   (void)argv;
@@ -590,5 +636,9 @@ int main(int argc, char** argv) {
   RUN_TEST(test_boot_recovery_latest_fallback_when_derived_fails);
   RUN_TEST(test_boot_recovery_resolves_highest_valid_epoch);
   RUN_TEST(test_boot_epoch_candidate_rejects_partial_successor);
+  RUN_TEST(test_overlay_mode_priority_dirty_then_minimal);
+  RUN_TEST(test_overlay_open_revision_history_preserves_parent_focus);
+  RUN_TEST(test_overlay_navigate_back_restores_parent_focus);
+  RUN_TEST(test_overlay_reset_clears_drill_state);
   return UNITY_END();
 }
