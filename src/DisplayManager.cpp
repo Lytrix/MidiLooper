@@ -22,6 +22,7 @@
 #include "MidiConfig.h"
 #include "StorageManager.h"
 #include "SetBrowserOverlayPolicy.h"
+#include "SetRevisionCatalog.h"
 #include "RtcTime.h"
 #include "DeferredSaveDisplayStatus.h"
 #include "LooperState.h"
@@ -1385,6 +1386,73 @@ void DisplayManager::refreshLoadSaveListCache() {
     loadSaveListCount_ =
         StorageManager::listSavedSetFolderEntries(loadSaveListEntries_, kLoadSaveListCapacity);
     loadSaveListCacheValid_ = true;
+}
+
+uint16_t DisplayManager::resolveFocusedRootSetId() const {
+    const size_t savedIndex =
+        SetBrowserOverlayPolicy::rootSetFolderListIndex(loadSaveListSelection_);
+    if (savedIndex >= loadSaveListCount_) {
+        return 0;
+    }
+    uint16_t setId = 0;
+    if (!SetRevisionCatalog::parseSetIdFromFolderName(loadSaveListEntries_[savedIndex].folderName,
+                                                      setId)) {
+        return 0;
+    }
+    return setId;
+}
+
+void DisplayManager::handleLoadSaveOverlayPress(LoadSaveOverlayPressType pressType) {
+    if (!looperState.isLoadSaveModeActive()) {
+        return;
+    }
+
+    const StorageManager::SetBrowserOverlayMode overlayMode =
+        StorageManager::getSetBrowserOverlayMode();
+    if (overlayMode == StorageManager::SetBrowserOverlayMode::MinimalLoading) {
+        return;
+    }
+
+    if (overlayMode == StorageManager::SetBrowserOverlayMode::DirtyPrompt) {
+        if (pressType == LoadSaveOverlayPressType::Short) {
+            confirmLoadSaveFocusedRow();
+        } else if (pressType == LoadSaveOverlayPressType::Long) {
+            StorageManager::cancelRevisionLoadDirtyPrompt();
+            looperState.exitLoadSaveMode();
+        }
+        return;
+    }
+
+    if (overlayMode != StorageManager::SetBrowserOverlayMode::Root) {
+        return;
+    }
+
+    const bool isSaveRow = SetBrowserOverlayPolicy::isRootSaveRow(loadSaveListSelection_);
+    const uint16_t focusedSetId = resolveFocusedRootSetId();
+    const bool isSetRow = focusedSetId != 0;
+
+    switch (pressType) {
+        case LoadSaveOverlayPressType::Short:
+            if (isSaveRow) {
+                confirmLoadSaveFocusedRow();
+            } else if (isSetRow) {
+                StorageManager::requestLoadLatestRevisionForSet(focusedSetId);
+            }
+            break;
+        case LoadSaveOverlayPressType::Double:
+            if (isSetRow) {
+                StorageManager::toggleSetRevisionCatalogFavorite(focusedSetId);
+            }
+            break;
+        case LoadSaveOverlayPressType::Long:
+            if (isSetRow) {
+                StorageManager::openSetBrowserRevisionHistory(focusedSetId, loadSaveListSelection_,
+                                                              loadSaveListScrollOffset_);
+            } else {
+                looperState.exitLoadSaveMode();
+            }
+            break;
+    }
 }
 
 void DisplayManager::adjustLoadSaveListSelection(int delta) {

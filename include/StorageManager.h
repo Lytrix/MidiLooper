@@ -77,6 +77,8 @@ public:
     static bool hasRevisionCommitWork();
     static bool isRevisionCommitActive();
     static void requestLoadRevision(uint16_t setId, uint16_t revisionId);
+    static void requestLoadLatestRevisionForSet(uint16_t setId);
+    static bool toggleSetRevisionCatalogFavorite(uint16_t setId);
     static bool hasRevisionLoadWork();
     static bool isRevisionLoadActive();
     static bool consumeRevisionLoadDisplayRefreshPending();

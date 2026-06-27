@@ -641,6 +641,15 @@ void test_overlay_input_modal_suppresses_note_edit_encoder() {
   TEST_ASSERT_TRUE(SetBrowserOverlayPolicy::shouldSuppressNoteEditEncoderInput());
 }
 
+void test_parse_set_id_from_catalog_folder_name() {
+  uint16_t setId = 0;
+  TEST_ASSERT_TRUE(SetRevisionCatalog::parseSetIdFromFolderName("S0012", setId));
+  TEST_ASSERT_EQUAL_UINT16(12, setId);
+  TEST_ASSERT_FALSE(SetRevisionCatalog::parseSetIdFromFolderName("20250628_00001", setId));
+  TEST_ASSERT_FALSE(SetRevisionCatalog::parseSetIdFromFolderName("S0000", setId));
+  TEST_ASSERT_FALSE(SetRevisionCatalog::parseSetIdFromFolderName(nullptr, setId));
+}
+
 int main(int argc, char** argv) {
   (void)argc;
   (void)argv;
@@ -693,5 +702,6 @@ int main(int argc, char** argv) {
   RUN_TEST(test_overlay_input_modal_suppresses_record_and_edit_actions);
   RUN_TEST(test_overlay_input_modal_allows_transport_and_overlay_actions);
   RUN_TEST(test_overlay_input_modal_suppresses_note_edit_encoder);
+  RUN_TEST(test_parse_set_id_from_catalog_folder_name);
   return UNITY_END();
 }

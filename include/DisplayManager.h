@@ -49,6 +49,15 @@ public:
 
     uint8_t getLoadSaveListSelection() const { return loadSaveListSelection_; }
 
+    enum class LoadSaveOverlayPressType : uint8_t {
+        Short = 0,
+        Double,
+        Long,
+    };
+
+    /// GPIO encoder button in overlay: short/double/long row actions.
+    void handleLoadSaveOverlayPress(LoadSaveOverlayPressType pressType);
+
     /// Confirm the focused overlay row (Save queues revision commit and exits overlay).
     void confirmLoadSaveFocusedRow();
 
@@ -160,6 +169,7 @@ private:
     // Info area rendering
     void drawInfoArea(uint32_t currentTick, Track& selectedTrack, uint8_t displaySlot, uint32_t nowMs);
     void refreshLoadSaveListCache();
+    uint16_t resolveFocusedRootSetId() const;
     void refreshAutoSaveBeforeLoadToast(uint32_t nowMs);
     void drawLoadSaveView(uint32_t nowMs);
     void drawLoadSaveDirtyPromptView();

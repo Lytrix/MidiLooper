@@ -62,6 +62,9 @@ uint16_t peekNextRevisionId(const SetMetaRecord& meta);
 void applyValidatedRevisionToSetMeta(SetMetaRecord& meta, uint16_t revisionId,
                                      uint64_t updatedUnix);
 
+/// Parse `S####` catalog folder basename; false for legacy SavedSet folder names.
+bool parseSetIdFromFolderName(const char* folderName, uint16_t& setIdOut);
+
 bool formatSetFolderPath(char* out, size_t outSize, uint16_t setId);
 bool formatSetMetaPath(char* out, size_t outSize, uint16_t setId);
 bool formatRevisionPath(char* out, size_t outSize, uint16_t setId, uint16_t revisionId,
