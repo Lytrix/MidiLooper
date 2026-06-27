@@ -129,7 +129,7 @@ void test_migration_target_loop_names_are_two_digit() {
       TEST_ASSERT_TRUE(
           CurrentSetStorage::formatLoopSlotPath(path, sizeof(path), track, slot));
       char expected[48];
-      std::snprintf(expected, sizeof(expected), "/Sets/_current/loop_%02u_%02u.bin",
+      std::snprintf(expected, sizeof(expected), "/MidiLooper/current/slots/loop_%02u_%02u.bin",
                     static_cast<unsigned>(track), static_cast<unsigned>(slot));
       TEST_ASSERT_EQUAL_STRING(expected, path);
     }

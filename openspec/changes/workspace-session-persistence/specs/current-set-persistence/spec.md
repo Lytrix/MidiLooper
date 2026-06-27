@@ -10,7 +10,7 @@ listed as a SavedSet entry.
 
 #### Scenario: Boot loads CurrentSet
 
-- **WHEN** the device boots and `Sets/_current/meta.bin` is valid
+- **WHEN** the device boots and `MidiLooper/current/workspace.bin` is valid
 - **THEN** runtime RAM mirrors the CurrentSet content
 - **AND** transport and slot state are restored from CurrentSet meta
 
@@ -24,7 +24,7 @@ listed as a SavedSet entry.
 
 CurrentSet SHALL persist under `Sets/_current/` with:
 
-- `meta.bin` — versioned global transport, track headers, slot metadata, active indices, global undo
+- `workspace.bin` — versioned global transport, track headers, slot metadata, active indices, global undo
 - `loop_TT_SS.bin` — per-slot loop blob using existing `StorageLoopIo` wire (2-digit zero-padded track and slot, e.g. `loop_00_07.bin`)
 
 All set containers SHALL live under the single SD root `/Sets/`.
@@ -32,7 +32,7 @@ All set containers SHALL live under the single SD root `/Sets/`.
 #### Scenario: Meta excludes inline loop bodies
 
 - **WHEN** CurrentSet meta is written
-- **THEN** loop MIDI payloads are not embedded in `meta.bin`
+- **THEN** loop MIDI payloads are not embedded in `workspace.bin`
 - **AND** each slot has a corresponding `loop_TT_SS.bin` file in `Sets/_current/`
 
 #### Scenario: Two-digit loop filename supports future caps
@@ -73,7 +73,7 @@ stop or other hot paths.
 
 - **WHEN** a full CurrentSet flush completes
 - **THEN** serial telemetry reports `PERS,result,...,ok`
-- **AND** `meta.bin` records updated `lastActiveUnix` from RTC
+- **AND** `workspace.bin` records updated `lastActiveUnix` from RTC
 
 ### Requirement: v5 monolith migration to CurrentSet
 
@@ -90,7 +90,7 @@ is absent and a valid v5 `/midilooper_state.raw` exists, load the monolith once,
 
 ### Requirement: CurrentSet meta tracks provenance and dirty anchor
 
-CurrentSet `meta.bin` SHALL include fields for load/save coordination at minimum:
+CurrentSet `workspace.bin` SHALL include fields for load/save coordination at minimum:
 
 - `uint32_t loadedFromSequence` — SavedSet sequence last loaded into CurrentSet (0 if never loaded from a SavedSet)
 - `uint32_t lastAnchoredSequence` — sequence of the last SavedSet that captured CurrentSet state (manual, auto-before-load, or failsafe); 0 if none since boot

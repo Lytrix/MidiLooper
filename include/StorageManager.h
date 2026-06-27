@@ -2,10 +2,12 @@
 //  Licensed under the PolyForm Noncommercial 1.0.0
 
 #pragma once
+#include <cstddef>
 #include <cstdint>
 #include <vector>
 #include "DeferredSaveDisplayStatus.h"
 #include "LooperState.h"
+#include "SavedSetCatalog.h"
 
 #if defined(ARDUINO)
 #include <SD.h>
@@ -34,10 +36,21 @@ public:
     static bool saveNewSet(char* savedSetFolderOut = nullptr, size_t outSize = 0);
     static bool loadSetIntoCurrent(const char* savedSetFolderName);
     static void processSavedSetFailsafe(const LooperState& state);
+    static uint32_t getCurrentSetLastActiveUnix();
+    static bool copyCurrentSetLoadedFromFolder(char* out, size_t outSize);
+    static bool consumeAutoSaveBeforeLoadFolder(char* out, size_t outSize);
+    static size_t listSavedSetFolderEntries(SavedSetCatalog::SavedSetFolderListEntry* entries,
+                                            size_t maxEntries);
+    static bool readSavedSetMetadataForFolder(const char* folderName,
+                                              SavedSetCatalog::SavedSetMetadata& metadata);
+    static bool readCurrentSetBrowserMetadata(SavedSetCatalog::SavedSetMetadata& metadata);
     static void markCurrentSetLoopSlotDirty(uint8_t trackIndex, uint8_t slotIndex);
     static void markCurrentSetTrackDirty(uint8_t trackIndex);
     static void markAllCurrentSetLoopSlotsDirty();
     static DeferredSaveDisplayStatus getDeferredSaveDisplayStatus(uint32_t nowMs);
+    static bool isCurrentWorkspaceDirty();
+    static uint32_t getCurrentWorkspaceEpoch();
+    static uint32_t getLastCommittedWorkspaceEpoch();
 
 private:
     static bool loadCurrentSetFromSd(LooperState& state);

@@ -5,11 +5,11 @@ CurrentSet currently uses per-slot loop files, which is good for incremental wri
 ## What Changes
 
 - Keep **CurrentSet** (`Sets/_current`) as a mutable, incremental-write layout:
-  - `meta.bin` as the live index and transport/footer state
+  - `workspace.bin` as the live index and transport/footer state
   - per-slot `loop_TT_SS.bin` files for loop payloads
-- Add explicit slot-summary metadata in CurrentSet `meta.bin` for fast slot-list queries without opening loop files.
+- Add explicit slot-summary metadata in CurrentSet `workspace.bin` for fast slot-list queries without opening loop files.
 - Define **SavedSet** as immutable packed snapshots with low file count:
-  - `meta.bin` with SavedSet metadata and packed-loop index table
+  - `set.bin` with SavedSet metadata and packed-loop index table
   - `loops.bin` containing packed loop payload blobs for non-empty slots
 - Separate write policy by scope:
   - live runtime mutations stay per-slot incremental
@@ -19,14 +19,14 @@ CurrentSet currently uses per-slot loop files, which is good for incremental wri
 
 **BREAKING**
 
-- SavedSet on-disk payload layout changes from per-slot loop files to packed `loops.bin` + index table in `meta.bin` (CurrentSet layout is retained).
+- SavedSet on-disk payload layout changes from per-slot loop files to packed `loops.bin` + index table in `set.bin` (CurrentSet layout is retained).
 
 ## Capabilities
 
 ### New Capabilities
 
 - `current-set-live-storage`: Mutable CurrentSet layout and write policy optimized for dirty-slot incremental persistence.
-- `saved-set-packed-storage`: Immutable SavedSet two-file packaging (`meta.bin` + `loops.bin`) with blob index table.
+- `saved-set-packed-storage`: Immutable SavedSet two-file packaging (`set.bin` + `loops.bin`) with blob index table.
 - `slot-metadata-index`: Slot summary/index fields for fast slot-list browsing/search without loop-file reads.
 
 ### Modified Capabilities

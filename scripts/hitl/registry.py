@@ -24,6 +24,8 @@ PRESET_SCENARIOS: dict[str, tuple[str, ...]] = {
     "edit_minimal": ("edit_record_prelude", "edit_minimal"),
     "edit_overdub_during_note_edit": ("edit_overdub_during_note_edit",),
     "long_loop_display_window": ("long_loop_display_window",),
+    "load_save_display": ("load_save_display",),
+    "current_set_incremental_save": ("current_set_incremental_save",),
     "two_overdub_undo_redo": ("two_overdub_undo_redo",),
 }
 
@@ -44,6 +46,10 @@ def _lazy_registry() -> dict[str, ScenarioSpec]:
         run_long_loop_display_window,
         verify_long_loop_display_window,
     )
+    from hitl.scenarios.load_save_display import run_load_save_display
+    from hitl.verify.load_save_display import verify_load_save_display
+    from hitl.scenarios.current_set_incremental_save import run_current_set_incremental_save
+    from hitl.verify.current_set_incremental_save import verify_current_set_incremental_save
     from hitl.scenarios.two_overdub_undo_redo import run_two_overdub_undo_redo
     from hitl.verify.two_overdub_undo_redo import verify_two_overdub_undo_redo
 
@@ -83,6 +89,18 @@ def _lazy_registry() -> dict[str, ScenarioSpec]:
             description="Long loop: NOTE_EDIT window freeze, play/stop long-press snap, hold-to-track",
             run=run_long_loop_display_window,
             verify=verify_long_loop_display_window,
+        ),
+        "load_save_display": ScenarioSpec(
+            scenario_id="load_save_display",
+            description="Play/Stop double-press enters and exits load/save set browser",
+            run=run_load_save_display,
+            verify=verify_load_save_display,
+        ),
+        "current_set_incremental_save": ScenarioSpec(
+            scenario_id="current_set_incremental_save",
+            description="Transport-stop idle save w0_s64; record-stop incremental w1_s63",
+            run=run_current_set_incremental_save,
+            verify=verify_current_set_incremental_save,
         ),
         "two_overdub_undo_redo": ScenarioSpec(
             scenario_id="two_overdub_undo_redo",

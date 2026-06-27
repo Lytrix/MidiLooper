@@ -51,6 +51,9 @@ struct SavedSetMetadataTrailerWire {
   char userLabel[kSavedSetLabelCapacity] = {};
 };
 
+static_assert(sizeof(SavedSetMetadataTrailerWire) == kSavedSetMetadataTrailerByteSize,
+              "SavedSet metadata trailer wire size mismatch");
+
 bool unixToUtcDate(uint32_t unixTime, int& year, unsigned& month, unsigned& day) {
   if (unixTime == 0) {
     return false;

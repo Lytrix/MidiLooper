@@ -29,7 +29,7 @@ bool formatLoopSlotPath(char* out, size_t outSize, uint8_t trackIndex, uint8_t s
     return false;
   }
   const int written =
-      std::snprintf(out, outSize, "%s/loop_%02u_%02u.bin", kCurrentSetDir,
+      std::snprintf(out, outSize, "%s/loop_%02u_%02u.bin", kCurrentSlotsDir,
                     static_cast<unsigned>(trackIndex), static_cast<unsigned>(slotIndex));
   return written > 0 && static_cast<size_t>(written) < outSize;
 }
@@ -38,7 +38,7 @@ bool formatLoopSlotTempPath(char* out, size_t outSize, uint8_t trackIndex, uint8
   if (out == nullptr || outSize < 36) {
     return false;
   }
-  const int written = std::snprintf(out, outSize, "%s/loop_%02u_%02u.bin.tmp", kCurrentSetDir,
+  const int written = std::snprintf(out, outSize, "%s/loop_%02u_%02u.bin.tmp", kCurrentSlotsDir,
                                     static_cast<unsigned>(trackIndex),
                                     static_cast<unsigned>(slotIndex));
   return written > 0 && static_cast<size_t>(written) < outSize;
@@ -107,6 +107,40 @@ bool verifyCompleteMagicAtEnd(const uint8_t* fileBytes, size_t fileSize) {
   uint32_t magic = 0;
   std::memcpy(&magic, fileBytes + fileSize - sizeof(COMPLETE_MAGIC), sizeof(magic));
   return magic == COMPLETE_MAGIC;
+}
+
+bool shouldWriteLoopPayloadForSlot(bool forceCurrentSetFullLoopWrite, bool slotDirty) {
+  return forceCurrentSetFullLoopWrite || slotDirty;
+}
+
+LoopSlotPayloadWriteCounts countLoopSlotPayloadWrites(
+    bool forceFullRewrite,
+    const bool slotDirty[Config::NUM_TRACKS][Config::MAX_LOOPS_PER_TRACK]) {
+  LoopSlotPayloadWriteCounts counts{};
+  if (slotDirty == nullptr) {
+    return counts;
+  }
+  for (uint8_t track = 0; track < Config::NUM_TRACKS; ++track) {
+    for (uint8_t slot = 0; slot < Config::MAX_LOOPS_PER_TRACK; ++slot) {
+      if (shouldWriteLoopPayloadForSlot(forceFullRewrite, slotDirty[track][slot])) {
+        ++counts.writes;
+      } else {
+        ++counts.skips;
+      }
+    }
+  }
+  return counts;
+}
+
+bool shouldAutoSaveBeforeLoadIntoCurrent(const AnchorFields& anchor) {
+  return anchor.hasMaterialChangesSinceAnchor != 0;
+}
+
+void applyLoadedSetAnchorFields(uint32_t sourceSequence, AnchorFields& anchor) {
+  anchor.loadedFromSequence = sourceSequence;
+  anchor.lastAnchoredSequence = sourceSequence;
+  anchor.hasMaterialChangesSinceAnchor = 0;
+  anchor.lastMaterialChangeUnix = 0;
 }
 
 #if defined(ARDUINO)

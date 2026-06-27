@@ -21,7 +21,10 @@
 #include "MidiButtonManager.h"
 #include "MidiConfig.h"
 #include "StorageManager.h"
+#include "RtcTime.h"
 #include "DeferredSaveDisplayStatus.h"
+#include "LooperState.h"
+#include "SavedSetCatalog.h"
 #include <algorithm>
 #include <string>
 #include <Font5x7Fixed.h>
@@ -1323,8 +1326,215 @@ void DisplayManager::drawSaveStatusIndicator(uint32_t nowMs, int textRight) {
     }
 }
 
+void DisplayManager::refreshLoadSaveListCache() {
+    loadSaveListCount_ =
+        StorageManager::listSavedSetFolderEntries(loadSaveListEntries_, kLoadSaveListCapacity);
+    loadSaveListCacheValid_ = true;
+}
+
+void DisplayManager::adjustLoadSaveListSelection(int delta) {
+    if (delta == 0) {
+        return;
+    }
+    const size_t totalRows = 1 + loadSaveListCount_;
+    if (totalRows == 0) {
+        loadSaveListSelection_ = 0;
+        return;
+    }
+    int next = static_cast<int>(loadSaveListSelection_) + delta;
+    if (next < 0) {
+        next = 0;
+    } else if (static_cast<size_t>(next) >= totalRows) {
+        next = static_cast<int>(totalRows) - 1;
+    }
+    loadSaveListSelection_ = static_cast<uint8_t>(next);
+
+    constexpr int kListRowsStartY = 8;
+    constexpr int kListVisibleRows = (DISPLAY_HEIGHT - kListRowsStartY) / 8;
+    if (loadSaveListSelection_ < loadSaveListScrollOffset_) {
+        loadSaveListScrollOffset_ = loadSaveListSelection_;
+    } else if (loadSaveListSelection_ >= loadSaveListScrollOffset_ + kListVisibleRows) {
+        loadSaveListScrollOffset_ =
+            loadSaveListSelection_ - static_cast<uint8_t>(kListVisibleRows - 1);
+    }
+}
+
+void DisplayManager::drawLoadSaveTrackFilledBar(int x, int y, uint8_t filledSlots,
+                                                uint8_t maxSlots, uint8_t brightness) {
+    constexpr int kSegments = 8;
+    constexpr int kSegmentWidth = 3;
+    constexpr int kSegmentGap = 1;
+    if (maxSlots == 0) {
+        maxSlots = 1;
+    }
+    for (int segment = 0; segment < kSegments; ++segment) {
+        const bool filled = static_cast<uint32_t>(filledSlots) * kSegments >
+                            static_cast<uint32_t>(segment) * maxSlots;
+        const uint8_t segmentBrightness = filled ? brightness : 1;
+        for (int py = 0; py < 5; ++py) {
+            for (int px = 0; px < kSegmentWidth; ++px) {
+                _display.gfx.draw_pixel(_display.api.getFrameBuffer(),
+                                        x + segment * (kSegmentWidth + kSegmentGap) + px, y + py,
+                                        segmentBrightness);
+            }
+        }
+    }
+}
+
+void DisplayManager::drawLoadSaveSetDetail(int detailX, const SavedSetCatalog::SavedSetMetadata& metadata,
+                                           bool isCurrentRow, const char* folderName,
+                                           uint32_t nowMs) {
+    _display.gfx.select_font(&Font5x7FixedMono);
+    int y = 0;
+
+    char line[40];
+    if (metadata.userLabel[0] != '\0') {
+        std::snprintf(line, sizeof(line), "UID: %s", metadata.userLabel);
+    } else if (metadata.sequence != 0) {
+        std::snprintf(line, sizeof(line), "UID: %05lu",
+                      static_cast<unsigned long>(metadata.sequence));
+    } else {
+        std::snprintf(line, sizeof(line), "UID: --");
+    }
+    _display.gfx.draw_text(_display.api.getFrameBuffer(), line, detailX, y, 15);
+    y += 8;
+
+    char dateTime[40];
+    RtcTime::formatDetailDateTime(metadata.createdAtUnix, dateTime, sizeof(dateTime));
+    if (dateTime[0] == '\0') {
+        std::snprintf(dateTime, sizeof(dateTime), "--");
+    }
+    _display.gfx.draw_text(_display.api.getFrameBuffer(), dateTime, detailX, y, 5);
+    y += 8;
+
+    std::snprintf(line, sizeof(line), "Bars: %u", metadata.masterLoopBars);
+    _display.gfx.draw_text(_display.api.getFrameBuffer(), line, detailX, y, 5);
+    y += 8;
+
+    std::snprintf(line, sizeof(line), "Tracks: %u", metadata.trackCount);
+    _display.gfx.draw_text(_display.api.getFrameBuffer(), line, detailX, y, 5);
+    y += 8;
+
+    std::snprintf(line, sizeof(line), "Loops: %u", metadata.filledSlotCount);
+    _display.gfx.draw_text(_display.api.getFrameBuffer(), line, detailX, y, 5);
+    y += 10;
+
+    const uint8_t trackRows = metadata.trackCount > 0 ? metadata.trackCount : 0;
+    for (uint8_t trackIndex = 0; trackIndex < trackRows; ++trackIndex) {
+        std::snprintf(line, sizeof(line), "T%u", static_cast<unsigned>(trackIndex + 1));
+        _display.gfx.draw_text(_display.api.getFrameBuffer(), line, detailX, y, 5);
+        drawLoadSaveTrackFilledBar(detailX + 18, y + 1, metadata.perTrackFilledSlots[trackIndex],
+                                   Config::MAX_LOOPS_PER_TRACK, 8);
+        y += 8;
+    }
+
+    if (isCurrentRow && folderName != nullptr && folderName[0] != '\0' &&
+        (autoSaveBeforeLoadToastText_[0] == '\0' ||
+         nowMs >= autoSaveBeforeLoadToastExpiresAtMs_)) {
+        char fromLine[32];
+        std::snprintf(fromLine, sizeof(fromLine), "From: %s", folderName);
+        _display.gfx.draw_text(_display.api.getFrameBuffer(), fromLine, detailX,
+                               DISPLAY_HEIGHT - 8, 5);
+    }
+}
+
+void DisplayManager::drawAutoSaveBeforeLoadToast(int detailX, uint32_t nowMs) {
+    if (autoSaveBeforeLoadToastText_[0] == '\0' ||
+        nowMs >= autoSaveBeforeLoadToastExpiresAtMs_) {
+        return;
+    }
+    _display.gfx.select_font(&Font5x7FixedMono);
+    _display.gfx.draw_text(_display.api.getFrameBuffer(), autoSaveBeforeLoadToastText_, detailX,
+                           DISPLAY_HEIGHT - 8, 15);
+}
+
+void DisplayManager::drawLoadSaveView(uint32_t nowMs) {
+    constexpr int kLoadSaveDividerX = DISPLAY_WIDTH / 2;
+    constexpr int kLoadSaveRightX = kLoadSaveDividerX + 1;
+    constexpr int kLoadSaveLeftMargin = 2;
+    constexpr int kLoadSaveDetailMargin = kLoadSaveRightX + 2;
+    constexpr int kListRowsStartY = 8;
+    constexpr int kListVisibleRows = (DISPLAY_HEIGHT - kListRowsStartY) / 8;
+
+    _display.gfx.select_font(&Font5x7FixedMono);
+    _display.gfx.draw_text(_display.api.getFrameBuffer(), "Sets", kLoadSaveLeftMargin, 0, 5);
+
+    for (int row = 0; row < DISPLAY_HEIGHT; ++row) {
+        _display.gfx.draw_pixel(_display.api.getFrameBuffer(), kLoadSaveDividerX, row, 2);
+    }
+
+    const size_t totalRows = 1 + loadSaveListCount_;
+    for (int visibleRow = 0; visibleRow < kListVisibleRows; ++visibleRow) {
+        const size_t listIndex = static_cast<size_t>(loadSaveListScrollOffset_) +
+                                 static_cast<size_t>(visibleRow);
+        if (listIndex >= totalRows) {
+            break;
+        }
+        const int rowY = kListRowsStartY + visibleRow * 8;
+        const bool selected = listIndex == loadSaveListSelection_;
+        const uint8_t brightness = selected ? 15 : 5;
+
+        if (listIndex == 0) {
+            _display.gfx.draw_text(_display.api.getFrameBuffer(), "CURRENT", kLoadSaveLeftMargin,
+                                   rowY, brightness);
+            continue;
+        }
+
+        const size_t savedIndex = listIndex - 1;
+        if (savedIndex < loadSaveListCount_) {
+            _display.gfx.draw_text(_display.api.getFrameBuffer(),
+                                   loadSaveListEntries_[savedIndex].folderName, kLoadSaveLeftMargin,
+                                   rowY, brightness);
+        }
+    }
+
+    SavedSetCatalog::SavedSetMetadata detailMetadata{};
+    bool detailOk = false;
+    bool isCurrentRow = loadSaveListSelection_ == 0;
+    const char* folderName = nullptr;
+    char loadedFromFolder[16];
+
+    if (isCurrentRow) {
+        detailOk = StorageManager::readCurrentSetBrowserMetadata(detailMetadata);
+        if (StorageManager::copyCurrentSetLoadedFromFolder(loadedFromFolder,
+                                                           sizeof(loadedFromFolder))) {
+            folderName = loadedFromFolder;
+        }
+    } else {
+        const size_t savedIndex = static_cast<size_t>(loadSaveListSelection_) - 1;
+        if (savedIndex < loadSaveListCount_) {
+            folderName = loadSaveListEntries_[savedIndex].folderName;
+            detailOk = StorageManager::readSavedSetMetadataForFolder(folderName, detailMetadata);
+        }
+    }
+
+    drawAutoSaveBeforeLoadToast(kLoadSaveDetailMargin, nowMs);
+    if (detailOk) {
+        drawLoadSaveSetDetail(kLoadSaveDetailMargin, detailMetadata, isCurrentRow, folderName, nowMs);
+    }
+}
+
+void DisplayManager::refreshAutoSaveBeforeLoadToast(uint32_t nowMs) {
+    char savedFolder[16];
+    if (!StorageManager::consumeAutoSaveBeforeLoadFolder(savedFolder, sizeof(savedFolder))) {
+        return;
+    }
+    const int written =
+        std::snprintf(autoSaveBeforeLoadToastText_, sizeof(autoSaveBeforeLoadToastText_),
+                      "Saved %s", savedFolder);
+    if (written <= 0 ||
+        static_cast<size_t>(written) >= sizeof(autoSaveBeforeLoadToastText_)) {
+        autoSaveBeforeLoadToastText_[0] = '\0';
+        autoSaveBeforeLoadToastExpiresAtMs_ = 0;
+        return;
+    }
+    autoSaveBeforeLoadToastExpiresAtMs_ = nowMs + 1500;
+}
+
 // Draw info area
-void DisplayManager::drawInfoArea(uint32_t currentTick, Track& selectedTrack, uint8_t displaySlot) {
+void DisplayManager::drawInfoArea(uint32_t currentTick, Track& selectedTrack, uint8_t displaySlot,
+                                  uint32_t nowMs) {
+    (void)nowMs;
     // 1. Current position (playhead) as musical time, with leading zeros and 2 decimals for ticks
     char posStr[24];
     char lenStr[8];
@@ -1532,8 +1742,24 @@ void DisplayManager::update() {
     const uint8_t displaySlot = trackManager.getSelectedSlotIndex(trackManager.getSelectedTrackIndex());
     uint32_t displayTick = selTrack.getEffectivePlaybackTick(currentTick);
     uint32_t now = millis();
+    refreshAutoSaveBeforeLoadToast(now);
+
+    const bool loadSaveActive = looperState.isLoadSaveModeActive();
+    if (loadSaveActive && !loadSaveModeWasActive_) {
+        refreshLoadSaveListCache();
+        loadSaveListSelection_ = 0;
+        loadSaveListScrollOffset_ = 0;
+    }
+    loadSaveModeWasActive_ = loadSaveActive;
 
     _display.gfx.fill_buffer(_display.api.getFrameBuffer(), 0);
+
+    if (loadSaveActive) {
+        drawLoadSaveView(now);
+        _display.api.display();
+        HotPathTelemetry::recordDisplayUpdate(micros() - telemetryStartUs);
+        return;
+    }
 
     drawTrackStatus(trackManager.getSelectedTrackIndex(), now);
     const DisplayNoteVec& frameNotes = resolveDisplayNotes(selTrack, displaySlot, displayTick);
@@ -1542,7 +1768,7 @@ void DisplayManager::update() {
 #endif
     drawPianoRoll(displayTick, selTrack, displaySlot, frameNotes);
     drawSidebar(selTrack, displaySlot);
-    drawInfoArea(displayTick, selTrack, displaySlot);
+    drawInfoArea(displayTick, selTrack, displaySlot, now);
     drawNoteInfo(displayTick, selTrack, displaySlot, frameNotes);
 
    _display.api.display();

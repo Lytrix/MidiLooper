@@ -86,18 +86,18 @@ than the highest `sequence` extracted from any existing SavedSet folder (date fo
 
 ### Requirement: saveNewSet excludes checkpoints
 
-**saveNewSet** SHALL copy `Sets/_current/meta.bin` and all `Sets/_current/loop_*.bin` files to the
+**saveNewSet** SHALL copy `MidiLooper/current/workspace.bin` (and interim runtime bundle / slot files under `MidiLooper/current/`) and all loop slot files to the
 new SavedSet folder. It SHALL NOT copy `Sets/_current/checkpoints/` or any RecoveryPoint content.
 
 #### Scenario: SavedSet has no checkpoints subfolder
 
 - **WHEN** **saveNewSet** completes
-- **THEN** the new SavedSet folder contains `meta.bin` and `loop_*.bin` only
+- **THEN** the new SavedSet folder contains `set.bin` and `loop_*.bin` only
 - **AND** no `checkpoints/` directory exists under the SavedSet folder
 
 ### Requirement: SavedSet metadata
 
-Each SavedSet `meta.bin` SHALL include at minimum:
+Each SavedSet `set.bin` SHALL include at minimum:
 
 - `uint32_t sequence` — from **SetIndex** at save time (authoritative ordering key)
 - `uint8_t folderNamingMode` — date form vs UID form (for catalog display)

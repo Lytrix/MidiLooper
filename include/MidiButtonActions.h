@@ -72,6 +72,7 @@ public:
 
     // Extended actions (stubbed for future)
     void handleTogglePlay();
+    void handleToggleLoadSaveMode();
     void handleCenterDetailedWindowOnPlayhead();
     void handleMoveCurrentTick(int32_t tickOffset);
 

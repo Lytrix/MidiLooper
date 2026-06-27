@@ -5,6 +5,7 @@
 #include "LooperState.h"
 #include "TrackManager.h"
 #include "MidiHandler.h"
+#include "Utils/DebugSessionCapture.h"
 
 LooperStateManager looperState;
 
@@ -42,6 +43,10 @@ void LooperStateManager::update() {
     // Settings overlay logic
     return;
   }
+  if (this->loadSaveOverlayActive) {
+    // Load/save set browser overlay logic
+    return;
+  }
   // Main looper state logic
   if (this->transitionArmed) {
     this->actuallyTransition();
@@ -71,6 +76,16 @@ void LooperStateManager::enterSettingsMode() {
 
 void LooperStateManager::exitSettingsMode() {
   this->settingsOverlayActive = false;
+}
+
+void LooperStateManager::enterLoadSaveMode() {
+  this->loadSaveOverlayActive = true;
+  SC_LOADSAVE(1);
+}
+
+void LooperStateManager::exitLoadSaveMode() {
+  this->loadSaveOverlayActive = false;
+  SC_LOADSAVE(0);
 }
 
 void LooperStateManager::setEditContext(EditContext ctx) {

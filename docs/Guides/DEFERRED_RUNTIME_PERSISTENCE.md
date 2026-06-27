@@ -20,7 +20,7 @@ The fix is two-part:
 |-------|-----------|
 | **M1 — headroom** | External-memory-first length-scaling buffers + internal-heap floor admission (`LoopEventStore::hasInternalHeapHeadroomForNonCriticalWork`) |
 | **M2 — writer** | Central **deferred save** — one bounded SD slice per main-loop iteration, chunk-sized working set |
-| **M3 — CurrentSet (v6)** | Deferred FSM writes `Sets/_current/meta.bin` + per-slot `loop_TT_SS.bin` (not monolithic `/midilooper_state.raw`) |
+| **M3 — CurrentSet (v6)** | Deferred FSM writes `MidiLooper/current/workspace.bin` + per-slot `loop_TT_SS.bin` (not monolithic `/midilooper_state.raw`) |
 
 In-RAM MIDI events still live in the **PSRAM chunk pool** (`LoopEventStore`). SD persistence **streams** those chunks without building a full-loop flat buffer in RAM2.
 
@@ -28,16 +28,16 @@ In-RAM MIDI events still live in the **PSRAM chunk pool** (`LoopEventStore`). SD
 
 ## SD layout (v6 CurrentSet)
 
-Runtime deferred saves target **`Sets/_current/`**:
+Runtime deferred saves target **`MidiLooper/current/`**:
 
 | File | Content |
 |------|---------|
-| `meta.bin` | v6 header (anchor fields, `lastActiveUnix`), transport, track/slot metadata, footer, global undo — **no inline loop bodies** |
-| `loop_TT_SS.bin` | One slot per file (`loop_00_07.bin`, …); `StorageLoopIo` payload + `STORAGE_COMPLETE_MAGIC` footer |
+| `workspace.bin` | Epoch/provenance record; v6 interim runtime bundle lives under `temp/runtime.bundle.bin` until transport/global split |
+| `loop_TT_SS.bin` | One slot per file under `slots/` (`loop_00_07.bin`, …); `StorageLoopIo` payload + `STORAGE_COMPLETE_MAGIC` footer |
 
 Atomic write pattern per file: `.tmp` → verify completion marker → rename.
 
-Boot: `loadState` → `Sets/_current/`; on failure → latest RecoveryPoint under `checkpoints/` → newest SavedSet → empty. v5 `/midilooper_state.raw` migrates once to CurrentSet then quarantines to `/state.bad.{millis}`.
+Boot: `loadState` → `MidiLooper/current/`; on failure → latest recovery checkpoint → newest SavedSet under `sets/archive/` → empty. v5 `/midilooper_state.raw` migrates once to CurrentSet then quarantines to `/state.bad.{millis}`.
 
 ---
 
@@ -61,8 +61,8 @@ flowchart TB
   triggers --> REQ[requestDeferredSaveState]
   REQ --> Q[deferredSavePending]
   Q --> PROC[processDeferredSaveState]
-  PROC -->|one slice / loop iter| SD[(Sets/_current/)]
-  SD --> META[meta.bin]
+  PROC -->|one slice / loop iter| SD[(MidiLooper/current/)]
+  SD --> META[workspace.bin]
   SD --> LOOP[loop_TT_SS.bin]
   META --> CM[STORAGE_COMPLETE_MAGIC]
   LOOP --> CM
@@ -127,7 +127,7 @@ Top-level stages (`DeferredSaveStage` in `StorageManager.cpp`):
 | `CurrentSetLoopSlot` | Per-slot `loop_TT_SS.bin` via `stepDeferredLoopPersist` / `StorageLoopIo`; clean slots are skipped via CurrentSet dirty tracking |
 | `Footer` | Selected track, active loop indices, undo magic |
 | `UndoStacks` | Global undo entries (bounded per slice — no full-pass flatten) |
-| `CurrentSetCompletion` | Patch `lastActiveUnix` in `meta.bin`; `PERS,result,...,ok` |
+| `CurrentSetCompletion` | Patch `lastActiveUnix`; write `workspace.bin`; `PERS,result,...,ok` |
 
 Nested cursors (`deferredSaveTrackCursor`, `deferredSavePoolCursor`, `deferredSaveChunkCursor`, `deferredSaveUndoEntryCursor`, …) resume mid-stage on the next main-loop call.
 

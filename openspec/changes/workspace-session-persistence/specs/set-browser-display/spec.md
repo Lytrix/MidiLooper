@@ -14,7 +14,7 @@ CURRENT status SHALL include `Last active: {date} {time}` from CurrentSet meta. 
 
 - **WHEN** the device finishes boot load from CurrentSet
 - **THEN** info area shows `CURRENT` as the active row
-- **AND** last-active timestamp comes from `Sets/_current/meta.bin`
+- **AND** last-active timestamp comes from `MidiLooper/current/workspace.bin`
 
 #### Scenario: From provenance after load set
 

@@ -62,7 +62,7 @@ On successful RecoveryPoint or SavedSet recovery, the system SHALL restore conte
 
 #### Scenario: Corrupt CurrentSet recovers from RecoveryPoint
 
-- **WHEN** `Sets/_current/meta.bin` fails validation
+- **WHEN** `MidiLooper/current/workspace.bin` fails validation
 - **AND** a valid RecoveryPoint exists under `checkpoints/`
 - **THEN** CurrentSet is rebuilt from the RecoveryPoint
 - **AND** the device boots with recovered musical state

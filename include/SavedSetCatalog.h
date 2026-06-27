@@ -14,6 +14,8 @@ namespace SavedSetCatalog {
 constexpr uint32_t kSavedSetMetaTrailerMagic = 0x44535453UL;  // "SSTD"
 constexpr uint32_t kEightHourFailsafeSeconds = 8UL * 60UL * 60UL;
 constexpr size_t kSavedSetLabelCapacity = 32;
+/// Byte size of on-disk SavedSet metadata trailer (before COMPLETE_MAGIC).
+constexpr size_t kSavedSetMetadataTrailerByteSize = 60;
 
 enum class FolderNamingMode : uint8_t {
   Unknown = 0,
@@ -34,6 +36,11 @@ struct SavedSetMetadata {
   uint8_t trackCount = 0;
   uint8_t filledSlotCount = 0;
   uint8_t perTrackFilledSlots[Config::NUM_TRACKS] = {};
+};
+
+struct SavedSetFolderListEntry {
+  char folderName[16];
+  uint32_t sequence;
 };
 
 bool writeSetIndex(const StorageIo& io, const SetIndex& index);

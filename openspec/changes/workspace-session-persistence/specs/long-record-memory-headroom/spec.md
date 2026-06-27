@@ -7,7 +7,7 @@ event buffer is no larger than one loop-event chunk (`LoopEventStoreConfig::CHUN
 including the undo-stack stage, so it can complete when free RAM2 is low. Runtime save requests
 SHALL be routed through this central deferred writer rather than direct synchronous SD writes.
 
-In v6, deferred save slices SHALL target **CurrentSet** files (`Sets/_current/meta.bin` and
+In v6, deferred save slices SHALL target **CurrentSet** files (`MidiLooper/current/workspace.bin` and
 `Sets/_current/loop_TT_SS.bin`) instead of a single monolith byte stream. Slice boundaries and
 admission rules are unchanged; only write targets change.
 

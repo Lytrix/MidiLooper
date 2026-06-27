@@ -6,12 +6,12 @@ slot-list browsing without opening loop payload files.
 
 #### Scenario: CurrentSet slot browser reads metadata only
 - **WHEN** UI renders slot list for CurrentSet
-- **THEN** it reads slot-summary rows from `meta.bin`
+- **THEN** it reads slot-summary rows from `workspace.bin`
 - **AND** it does not open per-slot payload files for basic list data
 
 #### Scenario: SavedSet catalog detail reads metadata only
 - **WHEN** UI renders slot summary for a SavedSet entry
-- **THEN** it reads slot-summary rows from SavedSet `meta.bin`
+- **THEN** it reads slot-summary rows from SavedSet `set.bin`
 - **AND** it does not open `loops.bin` for basic list data
 
 ### Requirement: Slot summaries update on material slot mutations

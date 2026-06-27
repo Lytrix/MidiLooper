@@ -15,7 +15,7 @@ remain RAM-only modes on top of the loaded set — SD persistence uses **Set**, 
 ## What Changes
 
 - **CurrentSet persistence:** Replace monolithic v5 autosave target with `Sets/_current/` on SD —
-  `meta.bin` (global transport + slot tables + undo) and per-slot `loop_TT_SS.bin` files
+  `workspace.bin` (global transport + slot tables + undo) and per-slot `loop_TT_SS.bin` files
   (zero-padded 2-digit track/slot, e.g. `loop_00_07.bin`) using existing `StorageLoopIo` loop
   blobs. CurrentSet loads on every boot and is never user-deleted.
 - **SavedSet snapshots:** User-initiated SAVE NEW copies CurrentSet into immutable SavedSet folders

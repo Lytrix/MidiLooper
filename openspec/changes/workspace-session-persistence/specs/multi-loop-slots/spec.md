@@ -32,7 +32,7 @@ to the pool index for that slot and continue load when loading CurrentSet or Sav
 
 #### Scenario: Corrupt slotLoopId repaired in CurrentSet meta
 
-- **WHEN** `Sets/_current/meta.bin` contains **slotLoopId** = 0xFFFFFFFF for track T slot S
+- **WHEN** `MidiLooper/current/workspace.bin` contains **slotLoopId** = 0xFFFFFFFF for track T slot S
 - **THEN** after load **slots_[S].loopId** = S (stable 1:1 id)
 - **AND** load completes successfully
 - **AND** a warning is logged

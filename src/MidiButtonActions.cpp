@@ -40,10 +40,11 @@ MidiButtonActions midiButtonActions;
 
 namespace {
 
-// SavedSet gesture map (M2 placeholder):
+// SavedSet gesture map (M2):
+// - Play/Stop double-press: toggle load/save set browser (enter + exit).
+// - Play/Stop long-press release: center detailed window on playhead; hold tracks playhead.
 // - SAVE NEW: dedicated combo remains TBD until Set Browser UX is wired.
 // - LOAD INTO CURRENT: routed from browser selection, not a direct transport shortcut.
-// Keep this mapping note here so button-routing work lands in one module.
 
 /// Armed + transport stopped: record press starts transport (DIN Start). Armed + transport running: cancel arm.
 bool handleArmedRecordPress(uint8_t trackIdx) {
@@ -76,6 +77,9 @@ void MidiButtonActions::executeAction(MidiButtonConfig::ActionType actionType, u
             break;
         case MidiButtonConfig::ActionType::TOGGLE_PLAY:
             handleTogglePlay();
+            break;
+        case MidiButtonConfig::ActionType::TOGGLE_LOAD_SAVE_MODE:
+            handleToggleLoadSaveMode();
             break;
         case MidiButtonConfig::ActionType::CENTER_DETAILED_WINDOW_ON_PLAYHEAD:
             handleCenterDetailedWindowOnPlayhead();
@@ -751,12 +755,28 @@ void MidiButtonActions::syncTransportLed() {
 
 // Stubbed implementations for future expansion
 void MidiButtonActions::handleTogglePlay() {
+    if (looperState.isLoadSaveModeActive()) {
+        return;
+    }
     Track& track = getCurrentTrack();
     track.togglePlayStop();
     logger.info("Track play/stop toggled");
 }
 
+void MidiButtonActions::handleToggleLoadSaveMode() {
+    if (looperState.isLoadSaveModeActive()) {
+        looperState.exitLoadSaveMode();
+        logger.info("Load/save mode exited");
+        return;
+    }
+    looperState.enterLoadSaveMode();
+    logger.info("Load/save mode entered");
+}
+
 void MidiButtonActions::handleCenterDetailedWindowOnPlayhead() {
+    if (looperState.isLoadSaveModeActive()) {
+        return;
+    }
     Track& track = getCurrentTrack();
     const uint8_t trackIdx = trackManager.getSelectedTrackIndex();
     const uint8_t displaySlot = trackManager.getSelectedSlotIndex(trackIdx);
