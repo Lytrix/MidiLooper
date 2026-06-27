@@ -5,6 +5,7 @@
 #include "Logger.h"
 #include "Utils/PressTiming.h"
 #include "MidiConfig.h"
+#include "LooperState.h"
 #include <functional>
 
 MidiButtonManager midiButtonManager;
@@ -160,6 +161,13 @@ bool MidiButtonManager::isValidNote(uint8_t note) const {
 }
 
 void MidiButtonManager::updateLoopHoldLayering() {
+    if (looperState.isLoadSaveModeActive()) {
+        for (uint8_t slot = 0; slot < Config::MAX_LOOPS_PER_TRACK; ++slot) {
+            loopButtonHeld[slot] = false;
+        }
+        return;
+    }
+
     constexpr uint8_t ch = MidiButtonConfig::Channels::TRACK_SELECT;
     constexpr uint8_t baseNote = MidiConfig::Led::LOOP_SELECT_LED_BASE;
     uint32_t defaultLongPressMs = PressTiming::LONG_PRESS_TIME;

@@ -22,6 +22,7 @@
 #include "RevisionPackedBlob.h"
 #include "SetBrowserOverlayPolicy.h"
 #include "SetRevisionCatalog.h"
+#include "Utils/MidiButtonConfig.h"
 
 namespace {
 
@@ -610,6 +611,36 @@ void test_root_workspace_list_row_count() {
   TEST_ASSERT_EQUAL(5U, SetBrowserOverlayPolicy::rootWorkspaceListRowCount(3));
 }
 
+void test_overlay_input_modal_suppresses_record_and_edit_actions() {
+  using ActionType = MidiButtonConfig::ActionType;
+  TEST_ASSERT_TRUE(SetBrowserOverlayPolicy::shouldSuppressGlobalMidiAction(
+      ActionType::TOGGLE_RECORD));
+  TEST_ASSERT_TRUE(SetBrowserOverlayPolicy::shouldSuppressGlobalMidiAction(
+      ActionType::TOGGLE_RECORD_FOR_SLOT));
+  TEST_ASSERT_TRUE(SetBrowserOverlayPolicy::shouldSuppressGlobalMidiAction(
+      ActionType::OVERDUB_FOR_SLOT));
+  TEST_ASSERT_TRUE(SetBrowserOverlayPolicy::shouldSuppressGlobalMidiAction(
+      ActionType::CYCLE_EDIT_MODE));
+  TEST_ASSERT_TRUE(SetBrowserOverlayPolicy::shouldSuppressGlobalMidiAction(
+      ActionType::DELETE_OR_CREATE_NOTE));
+}
+
+void test_overlay_input_modal_allows_transport_and_overlay_actions() {
+  using ActionType = MidiButtonConfig::ActionType;
+  TEST_ASSERT_FALSE(SetBrowserOverlayPolicy::shouldSuppressGlobalMidiAction(
+      ActionType::TOGGLE_PLAY));
+  TEST_ASSERT_FALSE(SetBrowserOverlayPolicy::shouldSuppressGlobalMidiAction(
+      ActionType::TOGGLE_LOAD_SAVE_MODE));
+  TEST_ASSERT_FALSE(SetBrowserOverlayPolicy::shouldSuppressGlobalMidiAction(
+      ActionType::TOGGLE_TRANSPORT));
+  TEST_ASSERT_FALSE(SetBrowserOverlayPolicy::shouldSuppressGlobalMidiAction(
+      ActionType::SELECT_TRACK));
+}
+
+void test_overlay_input_modal_suppresses_note_edit_encoder() {
+  TEST_ASSERT_TRUE(SetBrowserOverlayPolicy::shouldSuppressNoteEditEncoderInput());
+}
+
 int main(int argc, char** argv) {
   (void)argc;
   (void)argv;
@@ -659,5 +690,8 @@ int main(int argc, char** argv) {
   RUN_TEST(test_overlay_reset_clears_drill_state);
   RUN_TEST(test_root_workspace_list_row_indices);
   RUN_TEST(test_root_workspace_list_row_count);
+  RUN_TEST(test_overlay_input_modal_suppresses_record_and_edit_actions);
+  RUN_TEST(test_overlay_input_modal_allows_transport_and_overlay_actions);
+  RUN_TEST(test_overlay_input_modal_suppresses_note_edit_encoder);
   return UNITY_END();
 }

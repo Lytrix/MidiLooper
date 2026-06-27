@@ -35,7 +35,8 @@
 
 - [x] 4.1 Modes: ROOT, DIRTY_PROMPT, REVISION_HISTORY, LOOP_PICK, MINIMAL_LOADING.
 - [x] 4.2 Save → commit REQUEST + exit; playback/persistence continue.
-- [ ] 4.3–4.10 (unchanged UX tasks — overlay input-modal, encoder GPIO, loop picker).
+- [x] 4.3 Overlay input-modal: suspend record/overdub arm, loop slot gestures, note-edit; keep transport + deferred FSM.
+- [ ] 4.4–4.10 (encoder GPIO routing, set browser actions, loop picker, HITL `set_revision_overlay`).
 
 ## 5–7. Loop copy, recovery docs, verification
 

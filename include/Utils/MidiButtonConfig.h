@@ -4,7 +4,11 @@
 #ifndef MIDI_BUTTON_CONFIG_H
 #define MIDI_BUTTON_CONFIG_H
 
+#if defined(PIO_UNIT_TEST_NATIVE)
+#include <cstdint>
+#else
 #include <Arduino.h>
+#endif
 #include <cstdint>
 #include "MidiConfig.h"
 #include <vector>

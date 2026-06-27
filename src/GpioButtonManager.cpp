@@ -9,6 +9,8 @@
 #include "NoteEditManager.h"
 #include "EditManager.h"
 #include "NoteEditSessionState.h"
+#include "LooperState.h"
+#include "SetBrowserOverlayPolicy.h"
 #include "Logger.h"
 #include <Encoder.h>
 
@@ -123,6 +125,7 @@ void GpioButtonManager::update() {
         encoderButtonHoldStart = now;
     }
     if (encoderButtonHeld && (now - encoderButtonHoldStart >= kEncoderHoldDelay) &&
+        !looperState.isLoadSaveModeActive() &&
         (editManager.getNoteEditSessionState().kind == NoteEditKind::Select ||
          editManager.getNoteEditSessionState().kind == NoteEditKind::Move)) {
         if (!pitchEditActive) {
@@ -148,12 +151,24 @@ void GpioButtonManager::update() {
     const long newEncoderPos = gpioEncoder.read() / 4;
     const int rawDelta = static_cast<int>(newEncoderPos - encoderPosition);
     if (rawDelta != 0) {
-        noteEditManager.processEncoderMovement(rawDelta);
+        if (!(looperState.isLoadSaveModeActive() &&
+              SetBrowserOverlayPolicy::shouldSuppressNoteEditEncoderInput())) {
+            noteEditManager.processEncoderMovement(rawDelta);
+        }
         encoderPosition = newEncoderPos;
     }
 }
 
 void GpioButtonManager::handleButton(ButtonId button, ButtonAction action) {
+    if (looperState.isLoadSaveModeActive()) {
+        switch (button) {
+            case BUTTON_D:
+                break;
+            default:
+                return;
+        }
+    }
+
     switch (button) {
         case BUTTON_A:
             switch (action) {
