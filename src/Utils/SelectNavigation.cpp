@@ -16,6 +16,13 @@ uint32_t noteRelativeTick(uint32_t absolutePos, uint32_t loopStartTick, uint32_t
     return relativePos % loopLength;
 }
 
+uint32_t noteStorageTick(uint32_t relativeTick, uint32_t loopStartTick, uint32_t loopLength) {
+    if (loopLength == 0) {
+        return 0;
+    }
+    return (relativeTick + loopStartTick) % loopLength;
+}
+
 std::vector<SelectNavSlot> buildSelectNavigationSlots(
     uint32_t loopLength,
     uint32_t loopStartTick,

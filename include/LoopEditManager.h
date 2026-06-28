@@ -41,6 +41,12 @@ public:
     // Loop length editing
     void handleLoopLengthInput(uint8_t ccValue, Track& track);
     void sendCurrentLoopLengthCC(Track& track);
+    void sendCurrentLoopStartPitchbend(Track& track);
+
+    /** Cancel pending loop-start grace work and ignore motor feedback briefly. */
+    void onLeaveLoopEditSession();
+    /** Push loop fader positions to DROID without applying input. */
+    void onEnterLoopEditSession(Track& track);
     
     // Track change handling
     void onTrackChanged(Track& newTrack);
@@ -73,6 +79,12 @@ private:
 
     static constexpr uint32_t LOOP_EDIT_SAVE_DEBOUNCE_MS = 400;
     uint32_t pendingLoopEditSaveAtMs = 0;
+
+    static constexpr uint32_t LOOP_EDIT_FEEDBACK_IGNORE_MS = 1500;
+    uint32_t feedbackIgnoreUntilMs_ = 0;
+
+    bool shouldIgnoreLoopFaderInput() const;
+    std::vector<uint32_t> buildLoopStartFaderPositions(const Track& track) const;
 };
 
 #endif // LOOP_EDIT_MANAGER_H 

@@ -329,6 +329,10 @@ void EditManager::syncNoteEditFocusLastFromSessionStore(Track& track) {
             MidiEvent* noteOffEvent = NoteMovementUtils::findCorrespondingNoteOff(
                 events, &evt, focus.last.pitch, startTick, focus.last.endTick);
             if (!noteOffEvent) {
+                noteOffEvent = NoteMovementUtils::findNoteOffForNoteOnAtStart(
+                    events, focus.last.pitch, startTick);
+            }
+            if (!noteOffEvent) {
                 continue;
             }
             focus.last.startTick = startTick;
@@ -359,6 +363,7 @@ void EditManager::openNoteEditSession(Track& track) {
     editSession.store.discardFlatCache();
     resetNoteEditSessionState();
     enterDefaultNoteEditSessionState(track, clockManager.getCurrentTick());
+    noteEditManager.sendNoteEditSessionFaderFeedback(track);
     logger.debug("EditSession opened editPass=0");
 }
 
@@ -1119,6 +1124,7 @@ void EditManager::enterEditMode(EditNoteState* newState, uint32_t startTick) {
 
 void EditManager::exitEditMode(Track& track) {
     noteEditManager.resetLengthEditingModeOnSessionBoundary();
+    syncNoteEditFocusLastFromSessionStore(track);
     commitAllPendingNoteEditActions(track);
 
     closeNoteEditPass(track);
@@ -1223,6 +1229,10 @@ void EditManager::sendEditModeProgram(EditModeState mode) {
 
 void EditManager::cycleEditSession(Track& track) {
     if (editSession.sessionType == EditSessionType::Note) {
+        noteEditManager.resetLengthEditingModeOnSessionBoundary();
+        syncNoteEditFocusLastFromSessionStore(track);
+        commitAllPendingNoteEditActions(track);
+        track.invalidateCaches();
         editSession.sessionType = EditSessionType::Loop;
     } else {
         editSession.sessionType = EditSessionType::Note;
@@ -1262,28 +1272,14 @@ void EditManager::sendEditSessionChange(EditSessionType sessionType) {
                modeName, program, triggerNote);
 
     if (sessionType == EditSessionType::Note) {
+        noteEditManager.loopEditManager.onLeaveLoopEditSession();
         Track& track = trackManager.getSelectedTrack();
         reopenNoteEditSession(track);
     }
     if (sessionType == EditSessionType::Loop) {
-        sendCurrentLoopLengthCC(trackManager.getSelectedTrack());
+        noteEditManager.loopEditManager.onEnterLoopEditSession(
+            trackManager.getSelectedTrack());
     }
-}
-
-void EditManager::sendCurrentLoopLengthCC(Track& track) {
-    uint32_t loopLength = track.getLoopLength();
-    if (loopLength == 0) return;
-    
-    // Convert loop length to bars (1-8 bars)
-    uint8_t bars = loopLength / Config::TICKS_PER_BAR;
-    if (bars == 0) bars = 1;
-    if (bars > 8) bars = 8;
-    
-    // Convert to CC value (0-127)
-    uint8_t ccValue = ((bars - 1) * 127) / 7; // Map 1-8 bars to 0-127
-    
-    midiHandler.sendControlChange(MidiConfig::LoopEdit::LENGTH_CC_CHANNEL, MidiConfig::LoopEdit::LENGTH_CC_NUMBER, ccValue);
-    logger.log(CAT_MIDI, LOG_DEBUG, "Sent loop length CC: bars=%d cc=%d", bars, ccValue);
 }
 
 void EditManager::onTrackChanged(Track& newTrack) {
@@ -1292,10 +1288,11 @@ void EditManager::onTrackChanged(Track& newTrack) {
     currentState = nullptr;
     selectedNoteIdx = -1;
     hasMovedBracket = false;
-    
-    // Send current loop length for new track
-    sendCurrentLoopLengthCC(newTrack);
-    
+
+    if (editSession.sessionType == EditSessionType::Loop) {
+        noteEditManager.loopEditManager.onEnterLoopEditSession(newTrack);
+    }
+
     logger.log(CAT_TRACK, LOG_DEBUG, "Edit state reset for new track");
 }
 

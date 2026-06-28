@@ -82,6 +82,28 @@ void test_empty_step_single_slot() {
     TEST_ASSERT_EQUAL(-1, slots[1].noteIdx);
 }
 
+void test_loop_start_offset_maps_first_slot_to_storage_tick() {
+    const uint32_t loopLength = 1536;
+    const uint32_t loopStartTick = 48;
+    const uint32_t bracketStorageTick = loopStartTick;
+
+    std::vector<NoteUtils::DisplayNote> notes;
+    notes.push_back({60, 100, loopStartTick, loopStartTick + 96});
+
+    const auto slots = SelectNavigation::buildSelectNavigationSlots(
+        loopLength, loopStartTick, notes, bracketStorageTick, false);
+
+    TEST_ASSERT_EQUAL(0, slots[0].relativeTick);
+    TEST_ASSERT_EQUAL(0, slots[0].noteIdx);
+    TEST_ASSERT_EQUAL(
+        loopStartTick,
+        SelectNavigation::noteStorageTick(slots[0].relativeTick, loopStartTick, loopLength));
+
+    const int slotIdx = SelectNavigation::findSlotIndexForSelection(
+        slots, 0, bracketStorageTick, loopStartTick, loopLength);
+    TEST_ASSERT_EQUAL(0, slotIdx);
+}
+
 int main(int argc, char** argv) {
     (void)argc;
     (void)argv;
@@ -89,5 +111,6 @@ int main(int argc, char** argv) {
     RUN_TEST(test_same_step_three_notes_yield_three_nav_slots);
     RUN_TEST(test_find_slot_index_matches_selected_note);
     RUN_TEST(test_empty_step_single_slot);
+    RUN_TEST(test_loop_start_offset_maps_first_slot_to_storage_tick);
     return UNITY_END();
 }

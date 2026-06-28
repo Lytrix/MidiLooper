@@ -481,6 +481,7 @@ void EditSelectNoteState::sendTargetPitchbend(EditManager& manager, Track& track
                loopLength, numSteps, bracketTick);
     
     if (numSteps > 0) {
+        const uint32_t loopStartTick = track.getLoopStartTick() % loopLength;
         const std::vector<SelectNavigation::SelectNavSlot> slots =
             NoteEditManager::buildSelectNavigationSlots(track, bracketTick, true);
 
@@ -488,7 +489,7 @@ void EditSelectNoteState::sendTargetPitchbend(EditManager& manager, Track& track
 
         if (!slots.empty()) {
             const int currentPosIndex = SelectNavigation::findSlotIndexForSelection(
-            slots, manager.getSelectedNoteIdx(), bracketTick, 0, loopLength);
+            slots, manager.getSelectedNoteIdx(), bracketTick, loopStartTick, loopLength);
 
             if (currentPosIndex >= 0) {
                 // Calculate what pitchbend value corresponds to this position

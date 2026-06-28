@@ -161,12 +161,6 @@ bool isPlayStopButtonHeld() {
 }
 
 float displayPlayheadPhase() {
-    if (isPlayStopButtonHeld()) {
-        return clockManager.getDisplayTickPhase();
-    }
-    if (editManager.getEditSessionType() == EditSessionType::Note) {
-        return 0.0f;
-    }
     return clockManager.getDisplayTickPhase();
 }
 
@@ -472,9 +466,6 @@ uint32_t DisplayManager::resolveLoopOriginTick(const Track& track, uint8_t displ
     if (track.isJamming()) {
         return track.getLoopStartTick();
     }
-    if (editManager.getEditSessionType() != EditSessionType::Loop) {
-        return 0;
-    }
     return track.getLoopStartTickForSlot(displaySlot);
 }
 
@@ -646,6 +637,13 @@ const DisplayNoteVec& DisplayManager::resolveDisplayNotes(const Track& track, ui
     const uint32_t loopLength = resolveDisplayLoopLength(track, displaySlot, currentTick);
     if (loopLength == 0 || (!loop.hasPublishedEvents() && !loop.captureActive())) {
         liveDisplayNotes.clear();
+        return liveDisplayNotes;
+    }
+
+    if (editManager.isNoteEditActive()) {
+        invalidateLiveDisplayCache();
+        const auto& cachedNotes = track.getCachedNotes();
+        liveDisplayNotes.assign(cachedNotes.begin(), cachedNotes.end());
         return liveDisplayNotes;
     }
 

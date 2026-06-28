@@ -122,8 +122,10 @@ void NoteEditManager::handleMidiNote(uint8_t channel, uint8_t note, uint8_t velo
 
 void NoteEditManager::update() {
     uint32_t now = millis();
+
+    processSessionFaderSync(now);
     
-    // Handle pending selectnote fader updates
+    // Handle pending selectnote fader updates (post-edit fader 1 resync)
     if (pendingSelectnoteUpdate && now >= selectnoteUpdateTime) {
         pendingSelectnoteUpdate = false;
         Track& track = trackManager.getSelectedTrack();
@@ -480,51 +482,148 @@ void NoteEditManager::sendSelectnoteFaderUpdate(Track& track) {
 }
 
 void NoteEditManager::performSelectnoteFaderUpdate(Track& track) {
-    // Send program change first to activate selectnote fader
-    midiHandler.sendProgramChange(PITCHBEND_SELECT_CHANNEL, 1);  // Program 1 for SELECT mode
+    midiHandler.sendProgramChange(PITCHBEND_SELECT_CHANNEL, 1);
     logger.log(CAT_MIDI, LOG_DEBUG, "Sent Program Change: ch=%d program=1 (SELECT mode for selectnote fader)", 
                PITCHBEND_SELECT_CHANNEL);
     
-    // Send selectnote fader position update
     EditSelectNoteState::sendTargetPitchbend(editManager, track);
     
-    // Check if we should update fader 2 position
-    // Use extended protection period to prevent updates during active fader 2 use
     uint32_t now = millis();
     bool recentEditingActivity = (lastEditingActivityTime > 0 && (now - lastEditingActivityTime) < FADER2_PROTECTION_PERIOD);
     bool inPitchbendIgnorePeriod = (lastPitchbendSentTime > 0 && (now - lastPitchbendSentTime) < PITCHBEND_IGNORE_PERIOD);
     
-    if (!recentEditingActivity && !inPitchbendIgnorePeriod) {
-        // Safe to update fader 2 position - no recent activity and not in ignore period
-        midiHandler.sendProgramChange(PITCHBEND_START_CHANNEL, 2);  // Program 2 for COARSE+FINE editing
+    if (!recentEditingActivity && !inPitchbendIgnorePeriod &&
+        editManager.getSelectedNoteIdx() >= 0) {
+        midiHandler.sendProgramChange(PITCHBEND_START_CHANNEL, 2);
         logger.log(CAT_MIDI, LOG_DEBUG, "Sent Program Change: ch=%d program=2 (updating fader 2 position)", 
                    PITCHBEND_START_CHANNEL);
-        
-        // Send updated coarse and fine positions for fader 2 and 3
         sendStartNotePitchbend(track);
         logger.log(CAT_MIDI, LOG_DEBUG, "Updated fader 2/3 positions to match note position");
-    } else {
-        if (recentEditingActivity) {
-            logger.log(CAT_MIDI, LOG_DEBUG, "Skipping fader 2 update - recent editing activity (%lu ms ago)", 
-                       now - lastEditingActivityTime);
-        }
-        if (inPitchbendIgnorePeriod) {
-            logger.log(CAT_MIDI, LOG_DEBUG, "Skipping fader 2 update - in pitchbend ignore period (%lu ms ago)", 
-                       now - lastPitchbendSentTime);
-        }
+    } else if (recentEditingActivity) {
+        logger.log(CAT_MIDI, LOG_DEBUG, "Skipping fader 2 update - recent editing activity (%lu ms ago)", 
+                   now - lastEditingActivityTime);
+    } else if (inPitchbendIgnorePeriod) {
+        logger.log(CAT_MIDI, LOG_DEBUG, "Skipping fader 2 update - in pitchbend ignore period (%lu ms ago)", 
+                   now - lastPitchbendSentTime);
     }
     
-    // Record when we sent this update to ignore incoming feedback
     uint32_t sentAt = millis();
     lastSelectnoteSentTime = sentAt;
     auto& selectState = midiFaderManager.getFaderStateMutable(MidiMapping::FaderType::FADER_SELECT);
     selectState.lastSentTime = sentAt;
     lastUserSelectFaderValue = selectState.lastSentPitchbend;
     lastSelectFaderTime = sentAt;
+    selectFaderFeedbackIgnoreUntilMs_ = sentAt + FEEDBACK_IGNORE_PERIOD;
     logger.log(CAT_MIDI, LOG_DEBUG, "Selectnote fader updated - ignoring incoming for %dms", PITCHBEND_IGNORE_PERIOD);
 }
 
+void NoteEditManager::armChannel15FaderFeedbackIgnore(uint32_t sentAt) {
+    midiFaderManager.getFaderStateMutable(MidiMapping::FaderType::FADER_COARSE).lastSentTime = sentAt;
+    midiFaderManager.getFaderStateMutable(MidiMapping::FaderType::FADER_FINE).lastSentTime = sentAt;
+    midiFaderManager.getFaderStateMutable(MidiMapping::FaderType::FADER_NOTE_VALUE).lastSentTime = sentAt;
+    lastPitchbendSentTime = sentAt;
+}
+
+void NoteEditManager::sendSessionFader1Sync(Track& track) {
+    (void)track;
+    midiHandler.sendProgramChange(PITCHBEND_SELECT_CHANNEL, 1);
+    EditSelectNoteState::sendTargetPitchbend(editManager, track);
+
+    const uint32_t sentAt = millis();
+    lastSelectnoteSentTime = sentAt;
+    auto& selectState = midiFaderManager.getFaderStateMutable(MidiMapping::FaderType::FADER_SELECT);
+    selectState.lastSentTime = sentAt;
+    lastUserSelectFaderValue = selectState.lastSentPitchbend;
+    lastSelectFaderTime = sentAt;
+    selectFaderFeedbackIgnoreUntilMs_ = sentAt + FEEDBACK_IGNORE_PERIOD;
+    logger.log(CAT_MIDI, LOG_DEBUG, "Session fader sync: sent fader 1 to select bracket");
+}
+
+void NoteEditManager::sendSessionFader2CoarseSync(Track& track) {
+    midiHandler.sendProgramChange(PITCHBEND_START_CHANNEL, 2);
+    sendCoarseFaderPosition(track);
+    armChannel15FaderFeedbackIgnore(millis());
+    logger.log(CAT_MIDI, LOG_DEBUG, "Session fader sync: sent fader 2 coarse to selected note");
+}
+
+void NoteEditManager::sendSessionFader3And4Sync(Track& track) {
+    sendFineFaderPosition(track);
+    sendNoteValueFaderPosition(track);
+    armChannel15FaderFeedbackIgnore(millis());
+    logger.log(CAT_MIDI, LOG_DEBUG, "Session fader sync: sent fader 3 fine and fader 4 note value");
+}
+
+void NoteEditManager::processSessionFaderSync(uint32_t now) {
+    if (sessionFaderSyncStep_ == 0 || now < sessionFaderSyncDueMs_) {
+        return;
+    }
+
+    Track& track = trackManager.getSelectedTrack();
+    const uint8_t step = sessionFaderSyncStep_;
+
+    switch (step) {
+        case 1:
+            sendSessionFader1Sync(track);
+            if (sessionFaderSyncIncludeNotePosition_ && editManager.getSelectedNoteIdx() >= 0) {
+                sessionFaderSyncStep_ = 2;
+                sessionFaderSyncDueMs_ = now + SELECTNOTE_UPDATE_DELAY;
+            } else {
+                sessionFaderSyncStep_ = 0;
+            }
+            break;
+        case 2:
+            sendSessionFader2CoarseSync(track);
+            sessionFaderSyncStep_ = 3;
+            sessionFaderSyncDueMs_ = now + SELECTNOTE_UPDATE_DELAY;
+            break;
+        case 3:
+            sendSessionFader3And4Sync(track);
+            sessionFaderSyncStep_ = 0;
+            break;
+        default:
+            sessionFaderSyncStep_ = 0;
+            break;
+    }
+}
+
+void NoteEditManager::deferSelectFaderSyncToBracket(Track& track, bool syncNotePositionFadersAfter) {
+    (void)track;
+    const uint32_t now = millis();
+    sessionFaderSyncIncludeNotePosition_ = syncNotePositionFadersAfter;
+    sessionFaderSyncStep_ = 1;
+    sessionFaderSyncDueMs_ = now + SELECTNOTE_UPDATE_DELAY;
+    selectFaderFeedbackIgnoreUntilMs_ = sessionFaderSyncDueMs_;
+    auto& selectState =
+        midiFaderManager.getFaderStateMutable(MidiMapping::FaderType::FADER_SELECT);
+    selectState.lastSentTime = now;
+    logger.log(CAT_MIDI, LOG_DEBUG,
+               "Session fader sync scheduled: fader 1 in %lu ms (note position chain=%d)",
+               static_cast<unsigned long>(SELECTNOTE_UPDATE_DELAY),
+               syncNotePositionFadersAfter ? 1 : 0);
+}
+
+void NoteEditManager::sendNoteEditSessionFaderFeedback(Track& track) {
+    if (editManager.getEditSessionType() != EditSessionType::Note) {
+        return;
+    }
+
+    const uint32_t now = millis();
+    const bool hasSelectedNote = editManager.getSelectedNoteIdx() >= 0;
+
+    deferSelectFaderSyncToBracket(track, hasSelectedNote);
+
+    startEditingEnabled = true;
+    noteSelectionTime = now;
+    lastSelectFaderTime = now;
+    logger.log(CAT_MIDI, LOG_DEBUG,
+               "NOTE_EDIT session fader feedback deferred (fader 2–4 with fader 1 when note selected=%d)",
+               hasSelectedNote ? 1 : 0);
+}
+
 void NoteEditManager::enableStartEditing() {
+    if (sessionFaderSyncStep_ != 0) {
+        return;
+    }
     uint32_t now = millis();
     if (now - noteSelectionTime >= NOTE_SELECTION_GRACE_PERIOD) {
         if (!startEditingEnabled) {
@@ -561,7 +660,15 @@ bool NoteEditManager::shouldIgnoreFaderInput(MidiMapping::FaderType faderType) {
 
 bool NoteEditManager::shouldIgnoreFaderInput(MidiMapping::FaderType faderType, int16_t pitchbendValue, uint8_t ccValue) {
     MidiFaderProcessor::FaderState& state = midiFaderManager.getFaderStateMutable(faderType);
-    uint32_t now = millis();    
+    uint32_t now = millis();
+
+    if (faderType == MidiMapping::FaderType::FADER_SELECT &&
+        selectFaderFeedbackIgnoreUntilMs_ != 0 && now < selectFaderFeedbackIgnoreUntilMs_) {
+        logger.log(CAT_MIDI, LOG_DEBUG,
+                   "Ignoring fader 1 input (pending bracket sync): %lu ms remaining",
+                   selectFaderFeedbackIgnoreUntilMs_ - now);
+        return true;
+    }
     
     // No feedback prevention if we haven't sent anything recently
     if (state.lastSentTime == 0 || (now - state.lastSentTime) >= FEEDBACK_IGNORE_PERIOD) {
@@ -967,11 +1074,12 @@ std::vector<NoteUtils::DisplayNote> NoteEditManager::selectableDisplayNotesForEd
 
 std::vector<SelectNavigation::SelectNavSlot> NoteEditManager::buildSelectNavigationSlots(
     const Track& track, uint32_t bracketTick, bool includeBracketIfMissing) {
-    // NOTE_EDIT uses loop storage ticks (0 origin); loopStartTick is display/loop-edit only.
+    const uint32_t loopLength = track.getLoopLength();
+    const uint32_t loopStartTick = loopLength > 0 ? track.getLoopStartTick() % loopLength : 0;
     const std::vector<NoteUtils::DisplayNote> notes = selectableDisplayNotesForEditUi(track);
     return SelectNavigation::buildSelectNavigationSlots(
-        track.getLoopLength(),
-        0,
+        loopLength,
+        loopStartTick,
         notes,
         bracketTick,
         includeBracketIfMissing);
@@ -1028,6 +1136,7 @@ void NoteEditManager::handleSelectFaderInput(int16_t pitchValue, Track& track) {
     uint32_t loopLength = track.getLoopLength();
     if (loopLength == 0) return;
 
+    const uint32_t loopStartTick = track.getLoopStartTick() % loopLength;
     const std::vector<SelectNavigation::SelectNavSlot> slots =
         buildSelectNavigationSlots(track, editManager.getBracketTick(), true);
 
@@ -1035,7 +1144,8 @@ void NoteEditManager::handleSelectFaderInput(int16_t pitchValue, Track& track) {
         int posIndex = map(pitchValue, MidiConfig::Pitchbend::MIN, MidiConfig::Pitchbend::MAX, 0,
                            (int)slots.size() - 1);
         const SelectNavigation::SelectNavSlot& slot = slots[posIndex];
-        const uint32_t absoluteTargetTick = slot.relativeTick % loopLength;
+        const uint32_t absoluteTargetTick =
+            SelectNavigation::noteStorageTick(slot.relativeTick, loopStartTick, loopLength);
         const std::vector<NoteUtils::DisplayNote> notes = selectableDisplayNotesForEditUi(track);
         const bool selectingNewTick = absoluteTargetTick != editManager.getBracketTick();
         int noteIdx = resolveNoteIdxAtSlot(slots, slot, editManager, notes, selectingNewTick);
@@ -1460,6 +1570,13 @@ void NoteEditManager::handleNoteValueFaderInput(uint8_t ccValue, Track& track) {
 }
 
 void NoteEditManager::handleFaderInput(MidiMapping::FaderType faderType, int16_t pitchbendValue, uint8_t ccValue) {
+    if (sessionFaderSyncStep_ != 0) {
+        logger.log(CAT_MIDI, LOG_DEBUG,
+                   "Fader %d input ignored during session fader sync (step %u)",
+                   static_cast<int>(faderType), sessionFaderSyncStep_);
+        return;
+    }
+
     // Check if we should ignore this input (feedback prevention)
     if (shouldIgnoreFaderInput(faderType, pitchbendValue, ccValue)) {
         return;

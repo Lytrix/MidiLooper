@@ -152,7 +152,7 @@ private:
     bool isLiveRecordingDisplay(const Track& track, uint8_t displaySlot) const;
     uint32_t resolveDisplayLoopLength(const Track& track, uint8_t displaySlot, uint32_t currentTick) const;
     uint32_t resolveDisplayTick(const Track& track, uint8_t displaySlot, uint32_t currentTick) const;
-    /// loopStartTick bracket offset — only in LOOP_EDIT; NOTE_EDIT uses storage ticks (0 origin).
+    /// Loop-start tick used to align piano-roll X (same in LOOP_EDIT and NOTE_EDIT).
     uint32_t resolveLoopOriginTick(const Track& track, uint8_t displaySlot) const;
     uint32_t resolvePlayheadInLoop(const Track& track, uint8_t displaySlot, uint32_t currentTick) const;
     const DisplayNoteVec& resolveDisplayNotes(const Track& track, uint8_t displaySlot,

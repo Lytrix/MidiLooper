@@ -71,6 +71,10 @@ public:
     void sendStartNotePitchbend(Track& track);  // Sends coarse pitchbend ch15 and fine CC2 ch15
     void sendSelectnoteFaderUpdate(Track& track);  // Schedules selectnote pitchbend ch16 update with delay
     void performSelectnoteFaderUpdate(Track& track);  // Actually sends the selectnote fader update
+    /** Block fader 1 input and schedule sync to the current select bracket after ignore delay. */
+    void deferSelectFaderSyncToBracket(Track& track, bool syncNotePositionFadersAfter = false);
+    /** Deferred fader 1; fader 2–4 after sync when a note is selected. */
+    void sendNoteEditSessionFaderFeedback(Track& track);
     void enableStartEditing();
     void moveNoteToPosition(Track& track, const NoteUtils::DisplayNote& currentNote, std::uint32_t targetTick);
     void changeNoteEndWithOverlapHandling(Track& track, const NoteUtils::DisplayNote& currentNote,
@@ -149,6 +153,18 @@ private:
     bool pendingSelectnoteUpdate = false;
     uint32_t selectnoteUpdateTime = 0;
     static constexpr uint32_t SELECTNOTE_UPDATE_DELAY = 1600; // Wait 1600ms after coarse/fine updates
+    /** Blanket ignore for fader 1 while deferred sync runs and motor settles. */
+    uint32_t selectFaderFeedbackIgnoreUntilMs_ = 0;
+    /** NOTE_EDIT session entry: 1=fader1, 2=fader2, 3=fader3+4 (each step waits SELECTNOTE_UPDATE_DELAY). */
+    uint8_t sessionFaderSyncStep_ = 0;
+    uint32_t sessionFaderSyncDueMs_ = 0;
+    bool sessionFaderSyncIncludeNotePosition_ = false;
+
+    void processSessionFaderSync(uint32_t now);
+    void sendSessionFader1Sync(Track& track);
+    void sendSessionFader2CoarseSync(Track& track);
+    void sendSessionFader3And4Sync(Track& track);
+    void armChannel15FaderFeedbackIgnore(uint32_t sentAt);
     
     // Additional protection against fader 2 updates during active use
     static constexpr uint32_t FADER2_PROTECTION_PERIOD = 2000; // Don't update fader 2 for 2 seconds after any fader 2 activity
