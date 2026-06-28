@@ -479,6 +479,14 @@ LooperState revisionLoadReloadLooperState = LOOPER_IDLE;
 uint32_t revisionLoadReloadMasterLoopLength = 0;
 
 #if defined(SESSION_CAPTURE)
+#if defined(__IMXRT1062__)
+#define CAPTURE_HITL_MEM FLASHMEM
+#define CAPTURE_HITL_DATA DMAMEM
+#else
+#define CAPTURE_HITL_MEM
+#define CAPTURE_HITL_DATA
+#endif
+
 struct HitlRevisionCommitBackup {
     bool armed = false;
     bool hadIndexOnSd = false;
@@ -497,7 +505,7 @@ struct HitlRevisionCommitBackup {
     char setFolderPath[48] = {};
 };
 
-HitlRevisionCommitBackup hitlRevisionCommitBackup{};
+CAPTURE_HITL_DATA HitlRevisionCommitBackup hitlRevisionCommitBackup{};
 #endif
 
 constexpr size_t kSavedSetPathCapacity = 64;
@@ -4967,7 +4975,7 @@ void StorageManager::cancelRevisionLoadDirtyPromptForHitl() {
 #endif
 
 #if defined(SESSION_CAPTURE)
-bool removeEmptyDirectoryIfPresent(const char* path) {
+CAPTURE_HITL_MEM bool removeEmptyDirectoryIfPresent(const char* path) {
     if (path == nullptr || path[0] == '\0' || !SD.exists(path)) {
         return true;
     }
@@ -4990,7 +4998,7 @@ bool removeEmptyDirectoryIfPresent(const char* path) {
     return SD.rmdir(path);
 }
 
-bool parseRevisionSetFolderEntryName(const char* name, uint16_t& setIdOut) {
+CAPTURE_HITL_MEM bool parseRevisionSetFolderEntryName(const char* name, uint16_t& setIdOut) {
     if (name == nullptr || name[0] == '\0') {
         return false;
     }
@@ -5015,7 +5023,7 @@ bool parseRevisionSetFolderEntryName(const char* name, uint16_t& setIdOut) {
     return true;
 }
 
-bool removeHitlSetFolderTree(const char* setFolderPath) {
+CAPTURE_HITL_MEM bool removeHitlSetFolderTree(const char* setFolderPath) {
     if (setFolderPath == nullptr || setFolderPath[0] == '\0') {
         return false;
     }
@@ -5075,7 +5083,7 @@ bool removeHitlSetFolderTree(const char* setFolderPath) {
     return removeEmptyDirectoryIfPresent(setFolderPath);
 }
 
-bool StorageManager::nukeHitlSetsCatalog() {
+CAPTURE_HITL_MEM bool StorageManager::nukeHitlSetsCatalog() {
 #if BYPASS_STOP_UNDO_SAVE
     return false;
 #else
@@ -5149,7 +5157,7 @@ bool StorageManager::nukeHitlSetsCatalog() {
 #endif
 }
 
-void StorageManager::requestCommitRevisionForHitl() {
+CAPTURE_HITL_MEM void StorageManager::requestCommitRevisionForHitl() {
 #if BYPASS_STOP_UNDO_SAVE
     return;
 #else
@@ -5191,7 +5199,7 @@ void StorageManager::requestCommitRevisionForHitl() {
 #endif
 }
 
-bool StorageManager::cleanupHitlRevisionCommit() {
+CAPTURE_HITL_MEM bool StorageManager::cleanupHitlRevisionCommit() {
 #if BYPASS_STOP_UNDO_SAVE
     return false;
 #else
@@ -5241,41 +5249,44 @@ bool StorageManager::cleanupHitlRevisionCommit() {
 #endif
 }
 
-void StorageManager::processHitlSerialCommands() {
+namespace {
+CAPTURE_HITL_DATA char sHitlSerialLineBuffer[48];
+CAPTURE_HITL_DATA size_t sHitlSerialLineLength = 0;
+}  // namespace
+
+CAPTURE_HITL_MEM void StorageManager::processHitlSerialCommands() {
 #if BYPASS_STOP_UNDO_SAVE
     return;
 #else
-    static char lineBuffer[48];
-    static size_t lineLength = 0;
     while (Serial.available() > 0) {
         const char ch = static_cast<char>(Serial.read());
         if (ch == '\r') {
             continue;
         }
         if (ch == '\n') {
-            lineBuffer[lineLength] = '\0';
-            if (std::strcmp(lineBuffer, "!REV_COMMIT") == 0) {
+            sHitlSerialLineBuffer[sHitlSerialLineLength] = '\0';
+            if (std::strcmp(sHitlSerialLineBuffer, "!REV_COMMIT") == 0) {
                 requestCommitRevisionForHitl();
-            } else if (std::strcmp(lineBuffer, "!REV_CLEANUP") == 0) {
+            } else if (std::strcmp(sHitlSerialLineBuffer, "!REV_CLEANUP") == 0) {
                 cleanupHitlRevisionCommit();
-            } else if (std::strcmp(lineBuffer, "!REV_NUKE_SETS") == 0) {
+            } else if (std::strcmp(sHitlSerialLineBuffer, "!REV_NUKE_SETS") == 0) {
                 nukeHitlSetsCatalog();
-            } else if (std::strcmp(lineBuffer, "!REV_LOAD_DIRTY_YES") == 0) {
+            } else if (std::strcmp(sHitlSerialLineBuffer, "!REV_LOAD_DIRTY_YES") == 0) {
                 confirmRevisionLoadDirtyPromptSaveThenLoadForHitl();
-            } else if (std::strcmp(lineBuffer, "!REV_LOAD_DIRTY_NO") == 0) {
+            } else if (std::strcmp(sHitlSerialLineBuffer, "!REV_LOAD_DIRTY_NO") == 0) {
                 confirmRevisionLoadDirtyPromptDiscardForHitl();
-            } else if (std::strcmp(lineBuffer, "!REV_LOAD_DIRTY_CANCEL") == 0) {
+            } else if (std::strcmp(sHitlSerialLineBuffer, "!REV_LOAD_DIRTY_CANCEL") == 0) {
                 cancelRevisionLoadDirtyPromptForHitl();
-            } else if (std::strcmp(lineBuffer, "!OVERLAY_SAVE") == 0) {
+            } else if (std::strcmp(sHitlSerialLineBuffer, "!OVERLAY_SAVE") == 0) {
                 displayManager.confirmLoadSaveFocusedRow();
-            } else if (std::strcmp(lineBuffer, "!OVERLAY_CONFIRM") == 0) {
+            } else if (std::strcmp(sHitlSerialLineBuffer, "!OVERLAY_CONFIRM") == 0) {
                 displayManager.confirmLoadSaveFocusedRow();
-            } else if (std::strcmp(lineBuffer, "!OVERLAY_ENTER") == 0) {
+            } else if (std::strcmp(sHitlSerialLineBuffer, "!OVERLAY_ENTER") == 0) {
                 looperState.enterLoadSaveMode();
-            } else if (std::strcmp(lineBuffer, "!OVERLAY_EXIT") == 0) {
+            } else if (std::strcmp(sHitlSerialLineBuffer, "!OVERLAY_EXIT") == 0) {
                 looperState.exitLoadSaveMode();
-            } else if (std::strncmp(lineBuffer, "!OVERLAY_SCROLL ", 16) == 0) {
-                const char* cursor = lineBuffer + 16;
+            } else if (std::strncmp(sHitlSerialLineBuffer, "!OVERLAY_SCROLL ", 16) == 0) {
+                const char* cursor = sHitlSerialLineBuffer + 16;
                 while (*cursor == ' ') {
                     ++cursor;
                 }
@@ -5297,8 +5308,8 @@ void StorageManager::processHitlSerialCommands() {
                 if (delta != 0) {
                     displayManager.adjustLoadSaveListSelection(delta);
                 }
-            } else if (std::strncmp(lineBuffer, "!REV_LOAD ", 10) == 0) {
-                const char* cursor = lineBuffer + 10;
+            } else if (std::strncmp(sHitlSerialLineBuffer, "!REV_LOAD ", 10) == 0) {
+                const char* cursor = sHitlSerialLineBuffer + 10;
                 unsigned setId = 0;
                 unsigned revisionId = 0;
                 while (*cursor == ' ') {
@@ -5320,11 +5331,11 @@ void StorageManager::processHitlSerialCommands() {
                                                static_cast<uint16_t>(revisionId));
                 }
             }
-            lineLength = 0;
+            sHitlSerialLineLength = 0;
             continue;
         }
-        if (lineLength + 1 < sizeof(lineBuffer)) {
-            lineBuffer[lineLength++] = ch;
+        if (sHitlSerialLineLength + 1 < sizeof(sHitlSerialLineBuffer)) {
+            sHitlSerialLineBuffer[sHitlSerialLineLength++] = ch;
         }
     }
 #endif

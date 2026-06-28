@@ -8,6 +8,14 @@
 #include <Arduino.h>
 #include <cstring>
 
+#if defined(__IMXRT1062__)
+#define PERF_MEM_ATTR FLASHMEM
+#define PERF_DATA_ATTR DMAMEM
+#else
+#define PERF_MEM_ATTR
+#define PERF_DATA_ATTR
+#endif
+
 namespace HotPathTelemetry {
 
 namespace {
@@ -17,16 +25,20 @@ constexpr uint32_t kUndoSnapshotBudgetUs = 2000;
 constexpr uint32_t kDisplayUpdateBudgetUs = 30000;
 constexpr uint32_t kSaveStateBudgetUs = 150000;
 
-Metric overdubStartMetric;
-Metric overdubSessionOpenMetric;
-Metric undoSnapshotMetric;
-Metric displayUpdateMetric;
-Metric saveStateMetric;
-uint32_t saveStateFailures = 0;
-uint32_t maxUndoDepth = 0;
-SnapshotStats snapshotStats;
-char deferredSummaryCheckpoint[32] = {};
-bool deferredSummaryPending = false;
+struct TelemetryState {
+  Metric overdubStartMetric;
+  Metric overdubSessionOpenMetric;
+  Metric undoSnapshotMetric;
+  Metric displayUpdateMetric;
+  Metric saveStateMetric;
+  uint32_t saveStateFailures = 0;
+  uint32_t maxUndoDepth = 0;
+  SnapshotStats snapshotStats;
+  char deferredSummaryCheckpoint[32] = {};
+  bool deferredSummaryPending = false;
+};
+
+PERF_DATA_ATTR TelemetryState telemetryState;
 
 void updateMetric(Metric& metric, uint32_t elapsedUs, uint32_t budgetUs) {
   metric.samples++;
@@ -42,115 +54,110 @@ uint32_t averageUs(const Metric& metric) {
 
 }  // namespace
 
-void reset() {
-  overdubStartMetric = {};
-  overdubSessionOpenMetric = {};
-  undoSnapshotMetric = {};
-  displayUpdateMetric = {};
-  saveStateMetric = {};
-  saveStateFailures = 0;
-  maxUndoDepth = 0;
-  snapshotStats = {};
-  deferredSummaryCheckpoint[0] = '\0';
-  deferredSummaryPending = false;
+PERF_MEM_ATTR void reset() {
+  telemetryState = {};
 }
 
-void recordOverdubStart(uint32_t elapsedUs, uint32_t sourceEvents, uint32_t undoDepth) {
-  updateMetric(overdubStartMetric, elapsedUs, kOverdubStartBudgetUs);
-  if (sourceEvents > snapshotStats.maxSourceEvents) {
-    snapshotStats.maxSourceEvents = sourceEvents;
+PERF_MEM_ATTR void recordOverdubStart(uint32_t elapsedUs, uint32_t sourceEvents, uint32_t undoDepth) {
+  updateMetric(telemetryState.overdubStartMetric, elapsedUs, kOverdubStartBudgetUs);
+  if (sourceEvents > telemetryState.snapshotStats.maxSourceEvents) {
+    telemetryState.snapshotStats.maxSourceEvents = sourceEvents;
   }
-  if (undoDepth > maxUndoDepth) {
-    maxUndoDepth = undoDepth;
+  if (undoDepth > telemetryState.maxUndoDepth) {
+    telemetryState.maxUndoDepth = undoDepth;
   }
 }
 
-void recordOverdubSessionOpen(uint32_t elapsedUs, uint32_t sourceEvents) {
-  updateMetric(overdubSessionOpenMetric, elapsedUs, kOverdubStartBudgetUs);
-  if (sourceEvents > snapshotStats.maxSourceEvents) {
-    snapshotStats.maxSourceEvents = sourceEvents;
+PERF_MEM_ATTR void recordOverdubSessionOpen(uint32_t elapsedUs, uint32_t sourceEvents) {
+  updateMetric(telemetryState.overdubSessionOpenMetric, elapsedUs, kOverdubStartBudgetUs);
+  if (sourceEvents > telemetryState.snapshotStats.maxSourceEvents) {
+    telemetryState.snapshotStats.maxSourceEvents = sourceEvents;
   }
 }
 
-void recordUndoSnapshot(uint32_t elapsedUs, uint32_t sourceEvents, uint32_t copiedEvents) {
-  updateMetric(undoSnapshotMetric, elapsedUs, kUndoSnapshotBudgetUs);
-  snapshotStats.samples++;
-  if (sourceEvents > snapshotStats.maxSourceEvents) {
-    snapshotStats.maxSourceEvents = sourceEvents;
+PERF_MEM_ATTR void recordUndoSnapshot(uint32_t elapsedUs, uint32_t sourceEvents,
+                                      uint32_t copiedEvents) {
+  updateMetric(telemetryState.undoSnapshotMetric, elapsedUs, kUndoSnapshotBudgetUs);
+  telemetryState.snapshotStats.samples++;
+  if (sourceEvents > telemetryState.snapshotStats.maxSourceEvents) {
+    telemetryState.snapshotStats.maxSourceEvents = sourceEvents;
   }
-  if (copiedEvents > snapshotStats.maxCopiedEvents) {
-    snapshotStats.maxCopiedEvents = copiedEvents;
+  if (copiedEvents > telemetryState.snapshotStats.maxCopiedEvents) {
+    telemetryState.snapshotStats.maxCopiedEvents = copiedEvents;
   }
   if (copiedEvents < sourceEvents) {
-    snapshotStats.droppedEvents += (sourceEvents - copiedEvents);
+    telemetryState.snapshotStats.droppedEvents += (sourceEvents - copiedEvents);
   }
 }
 
-void recordSaveState(uint32_t elapsedUs, bool ok) {
-  updateMetric(saveStateMetric, elapsedUs, kSaveStateBudgetUs);
-  if (!ok) saveStateFailures++;
+PERF_MEM_ATTR void recordSaveState(uint32_t elapsedUs, bool ok) {
+  updateMetric(telemetryState.saveStateMetric, elapsedUs, kSaveStateBudgetUs);
+  if (!ok) telemetryState.saveStateFailures++;
 }
 
-void recordDisplayUpdate(uint32_t elapsedUs) {
-  updateMetric(displayUpdateMetric, elapsedUs, kDisplayUpdateBudgetUs);
+PERF_MEM_ATTR void recordDisplayUpdate(uint32_t elapsedUs) {
+  updateMetric(telemetryState.displayUpdateMetric, elapsedUs, kDisplayUpdateBudgetUs);
 }
 
-void emitSummary(const char* checkpoint) {
+PERF_MEM_ATTR void emitSummary(const char* checkpoint) {
   Serial.printf(
       "PERF,%s,overdub_start[s=%lu,max=%lu,avg=%lu,over=%lu],"
       "undo_snapshot[s=%lu,max=%lu,avg=%lu,over=%lu,max_src=%lu,max_copied=%lu,dropped=%lu],"
       "save_state[s=%lu,max=%lu,avg=%lu,over=%lu,fail=%lu],"
       "display[s=%lu,max=%lu,avg=%lu,over=%lu],max_undo_depth=%lu\n",
       checkpoint ? checkpoint : "unknown",
-      static_cast<unsigned long>(overdubStartMetric.samples),
-      static_cast<unsigned long>(overdubStartMetric.maxUs),
-      static_cast<unsigned long>(averageUs(overdubStartMetric)),
-      static_cast<unsigned long>(overdubStartMetric.overBudget),
-      static_cast<unsigned long>(undoSnapshotMetric.samples),
-      static_cast<unsigned long>(undoSnapshotMetric.maxUs),
-      static_cast<unsigned long>(averageUs(undoSnapshotMetric)),
-      static_cast<unsigned long>(undoSnapshotMetric.overBudget),
-      static_cast<unsigned long>(snapshotStats.maxSourceEvents),
-      static_cast<unsigned long>(snapshotStats.maxCopiedEvents),
-      static_cast<unsigned long>(snapshotStats.droppedEvents),
-      static_cast<unsigned long>(saveStateMetric.samples),
-      static_cast<unsigned long>(saveStateMetric.maxUs),
-      static_cast<unsigned long>(averageUs(saveStateMetric)),
-      static_cast<unsigned long>(saveStateMetric.overBudget),
-      static_cast<unsigned long>(saveStateFailures),
-      static_cast<unsigned long>(displayUpdateMetric.samples),
-      static_cast<unsigned long>(displayUpdateMetric.maxUs),
-      static_cast<unsigned long>(averageUs(displayUpdateMetric)),
-      static_cast<unsigned long>(displayUpdateMetric.overBudget),
-      static_cast<unsigned long>(maxUndoDepth));
+      static_cast<unsigned long>(telemetryState.overdubStartMetric.samples),
+      static_cast<unsigned long>(telemetryState.overdubStartMetric.maxUs),
+      static_cast<unsigned long>(averageUs(telemetryState.overdubStartMetric)),
+      static_cast<unsigned long>(telemetryState.overdubStartMetric.overBudget),
+      static_cast<unsigned long>(telemetryState.undoSnapshotMetric.samples),
+      static_cast<unsigned long>(telemetryState.undoSnapshotMetric.maxUs),
+      static_cast<unsigned long>(averageUs(telemetryState.undoSnapshotMetric)),
+      static_cast<unsigned long>(telemetryState.undoSnapshotMetric.overBudget),
+      static_cast<unsigned long>(telemetryState.snapshotStats.maxSourceEvents),
+      static_cast<unsigned long>(telemetryState.snapshotStats.maxCopiedEvents),
+      static_cast<unsigned long>(telemetryState.snapshotStats.droppedEvents),
+      static_cast<unsigned long>(telemetryState.saveStateMetric.samples),
+      static_cast<unsigned long>(telemetryState.saveStateMetric.maxUs),
+      static_cast<unsigned long>(averageUs(telemetryState.saveStateMetric)),
+      static_cast<unsigned long>(telemetryState.saveStateMetric.overBudget),
+      static_cast<unsigned long>(telemetryState.saveStateFailures),
+      static_cast<unsigned long>(telemetryState.displayUpdateMetric.samples),
+      static_cast<unsigned long>(telemetryState.displayUpdateMetric.maxUs),
+      static_cast<unsigned long>(averageUs(telemetryState.displayUpdateMetric)),
+      static_cast<unsigned long>(telemetryState.displayUpdateMetric.overBudget),
+      static_cast<unsigned long>(telemetryState.maxUndoDepth));
 }
 
-void requestDeferredSummary(const char* checkpoint) {
+PERF_MEM_ATTR void requestDeferredSummary(const char* checkpoint) {
   if (checkpoint == nullptr) {
-    deferredSummaryCheckpoint[0] = '\0';
+    telemetryState.deferredSummaryCheckpoint[0] = '\0';
   } else {
-    strncpy(deferredSummaryCheckpoint, checkpoint, sizeof(deferredSummaryCheckpoint) - 1);
-    deferredSummaryCheckpoint[sizeof(deferredSummaryCheckpoint) - 1] = '\0';
+    strncpy(telemetryState.deferredSummaryCheckpoint, checkpoint,
+            sizeof(telemetryState.deferredSummaryCheckpoint) - 1);
+    telemetryState.deferredSummaryCheckpoint[sizeof(telemetryState.deferredSummaryCheckpoint) - 1] =
+        '\0';
   }
-  deferredSummaryPending = true;
+  telemetryState.deferredSummaryPending = true;
 }
 
-void processDeferredSummary() {
-  if (!deferredSummaryPending) {
+PERF_MEM_ATTR void processDeferredSummary() {
+  if (!telemetryState.deferredSummaryPending) {
     return;
   }
-  deferredSummaryPending = false;
-  emitSummary(deferredSummaryCheckpoint[0] ? deferredSummaryCheckpoint : "deferred");
+  telemetryState.deferredSummaryPending = false;
+  emitSummary(telemetryState.deferredSummaryCheckpoint[0] ? telemetryState.deferredSummaryCheckpoint
+                                                          : "deferred");
 }
 
-ScopedSaveState::ScopedSaveState() : startUs(micros()), ok_(false) {}
+PERF_MEM_ATTR ScopedSaveState::ScopedSaveState() : startUs(micros()), ok_(false) {}
 
-ScopedSaveState::~ScopedSaveState() {
+PERF_MEM_ATTR ScopedSaveState::~ScopedSaveState() {
   const uint32_t elapsedUs = micros() - startUs;
   recordSaveState(elapsedUs, ok_);
 }
 
-void ScopedSaveState::setOk(bool ok) { ok_ = ok; }
+PERF_MEM_ATTR void ScopedSaveState::setOk(bool ok) { ok_ = ok; }
 
 }  // namespace HotPathTelemetry
 
