@@ -93,4 +93,8 @@ void moveNoteWithOverlapHandling(Track& track, EditManager& manager,
     /** Pair-identified note-off at endTick for (pitch, startTick); safe when same-pitch overlap notes share ticks. */
     MidiEvent* findNoteOffPairedAt(MidiEventVec& midiEvents, uint8_t pitch, uint32_t startTick,
                                    uint32_t endTick);
+
+    /** LIFO-paired note-off for the note-on at startTick (ignores stale expected end). */
+    MidiEvent* findNoteOffForNoteOnAtStart(MidiEventVec& midiEvents, uint8_t pitch,
+                                           uint32_t startTick);
 } 

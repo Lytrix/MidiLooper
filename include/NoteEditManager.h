@@ -95,6 +95,7 @@ public:
 
 
 private:
+    static int16_t loopTickToCoarsePitchbend(uint32_t tick, uint32_t loopLength);
 
     
 
@@ -166,6 +167,8 @@ private:
     
     // Length editing mode state
     bool lengthEditingMode = false;
+    /** End tick when coarse last moved (or NOTELEN enabled); fine fader is ±1/16th from here. */
+    uint32_t lengthFineAnchorEndTick = 0;
     uint32_t lastLengthModeToggleTime = 0;
     static constexpr uint32_t LENGTH_MODE_DEBOUNCE_TIME = 100; // 100ms debounce protection
     
