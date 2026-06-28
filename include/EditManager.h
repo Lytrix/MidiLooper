@@ -103,6 +103,8 @@ public:
     std::vector<NoteUtils::DisplayNote> selectableDisplayNotesAtEditSelect(const Track& track) const;
     /// Live mover geometry: **focus.last** when active, else inventory at **selectedNoteIdx**.
     NoteUtils::DisplayNote liveEditDisplayNoteAtSelect(const Track& track) const;
+    /// Refresh **focus.last** start/end from the live session store note-on/off pair.
+    void syncNoteEditFocusLastFromSessionStore(Track& track);
     MidiEventVec& sessionMidiEvents();
     const MidiEventVec& sessionMidiEvents() const;
 

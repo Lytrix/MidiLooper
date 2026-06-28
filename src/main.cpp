@@ -79,8 +79,8 @@ void setup() {
 
   // Initialize logger (Serial already begun above)
 #if defined(SESSION_CAPTURE)
-  logger.setup(LOG_DEBUG);
-  logger.setCategoryEnabled(CAT_MIDI, true);
+  logger.setup(LOG_INFO);
+  logger.setCategoryEnabled(CAT_MIDI, false);
 #else
   logger.setup(LOG_WARNING);
   logger.setCategoryEnabled(CAT_MIDI, false);
@@ -91,6 +91,7 @@ void setup() {
   midiHandler.setup();
   trackManager.setup();
   displayManager.setup();
+  displayManager.drawBootStatusMessage("Loading...");
   looper.setup();  // SD + loadState; setSelectedTrack triggers forceLedUpdate (midi now ready)
 
   // Startup policy: enter LOOP_EDIT deterministically and sync DROID explicitly.

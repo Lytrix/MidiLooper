@@ -183,6 +183,9 @@ private:
     bool loadSaveListCacheValid_ = false;
     bool loadSaveRevisionListCacheValid_ = false;
     bool loadSaveModeWasActive_ = false;
+    bool workspaceDisplayRefreshPending_ = false;
+
+    void applyWorkspaceDisplayRefreshPending(uint32_t currentTick);
 
     struct LoadSaveDetailCacheKey {
         SetBrowserOverlayPolicy::Mode mode = SetBrowserOverlayPolicy::Mode::Root;

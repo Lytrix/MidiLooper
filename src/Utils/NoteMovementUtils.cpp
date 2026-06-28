@@ -8,6 +8,7 @@
 #include "NoteEditFocus.h"
 #include "Utils/MidiEventUtils.h"
 #include "Utils/NoteMovementUtils.h"
+#include "Globals.h"
 #include "Utils/DebugSessionCapture.h"
 #include <algorithm>
 #include <map>
@@ -531,6 +532,41 @@ MidiEvent* findNoteOffPairedAt(MidiEventVec& midiEvents, uint8_t pitch, uint32_t
     return nullptr;
 }
 
+MidiEvent* findNoteOffForNoteOnAtStart(MidiEventVec& midiEvents, uint8_t pitch,
+                                       uint32_t startTick) {
+    for (auto& evt : midiEvents) {
+        if (evt.type == midi::NoteOn && evt.data.noteData.velocity > 0 &&
+            evt.data.noteData.note == pitch && evt.tick == startTick) {
+            return findCorrespondingNoteOff(midiEvents, &evt, pitch, startTick, 0);
+        }
+    }
+    return nullptr;
+}
+
+namespace {
+
+uint32_t resolveMovingNoteLengthTicks(MidiEventVec& midiEvents, uint8_t pitch, uint32_t startTick,
+                                      uint32_t fallbackEndTick, uint32_t loopLength) {
+    if (loopLength == 0) {
+        return 0;
+    }
+    if (MidiEvent* noteOffEvent = findNoteOffForNoteOnAtStart(midiEvents, pitch, startTick)) {
+        const uint32_t pairedEnd = noteOffEvent->tick;
+        if (pairedEnd > startTick && pairedEnd <= startTick + loopLength) {
+            return pairedEnd - startTick;
+        }
+        return calculateNoteLength(startTick, pairedEnd, loopLength);
+    }
+    const uint32_t displayFallbackEnd =
+        (fallbackEndTick >= loopLength) ? (fallbackEndTick % loopLength) : fallbackEndTick;
+    if (fallbackEndTick > startTick && fallbackEndTick <= startTick + loopLength) {
+        return fallbackEndTick - startTick;
+    }
+    return calculateNoteLength(startTick, displayFallbackEnd, loopLength);
+}
+
+}  // namespace
+
 void applyShortenOrDelete(MidiEventVec& midiEvents,
                          const std::vector<std::pair<NoteUtils::DisplayNote, uint32_t>>& notesToShorten,
                          const std::vector<NoteUtils::DisplayNote>& notesToDelete,
@@ -638,7 +674,8 @@ void finalReconstructAndSelect(Track& track,
                               uint8_t movingNotePitch,
                               uint32_t newStart,
                               uint32_t newEnd,
-                              uint32_t loopLength) {
+                              uint32_t loopLength,
+                              uint32_t bracketTick) {
     std::sort(midiEvents.begin(), midiEvents.end(),
               [](const MidiEvent& a, const MidiEvent& b) { return a.tick < b.tick; });
 
@@ -692,10 +729,10 @@ void finalReconstructAndSelect(Track& track,
         manager.setSelectedNoteIdx(newSelectedIdx);
         logger.log(CAT_MIDI, LOG_DEBUG, "Updated selectedNoteIdx: %d -> %d (note at new position)",
                    oldSelectedIdx, newSelectedIdx);
-        manager.setBracketTick(newStart);
+        manager.setBracketTick(bracketTick);
     } else {
         logger.log(CAT_MIDI, LOG_DEBUG, "Warning: Could not find moved note in filtered list");
-        manager.setBracketTick(newStart);
+        manager.setBracketTick(bracketTick);
     }
 
     manager.syncSelectedNoteIdxToFilteredInventory(track);
@@ -903,6 +940,10 @@ void moveNoteWithOverlapHandling(Track& track, EditManager& manager,
         logger.log(CAT_MIDI, LOG_DEBUG, "Loop length is 0, cannot move notes");
         return;
     }
+
+    if (focus.active) {
+        manager.syncNoteEditFocusLastFromSessionStore(track);
+    }
     
     // If there's no actual movement, just update the bracket position and return
     if (delta == 0) {
@@ -925,7 +966,6 @@ void moveNoteWithOverlapHandling(Track& track, EditManager& manager,
     logger.log(CAT_MIDI, LOG_DEBUG, "Moving note: pitch=%d, start=%lu, end=%lu", 
               movingNotePitch, currentStart, currentEnd);
     
-    // Calculate note length and new positions with wrap-around
     uint32_t displayCurrentEnd = (currentEnd >= loopLength) ? (currentEnd % loopLength) : currentEnd;
     if (focus.active && focus.last.pitch == movingNotePitch &&
         focus.last.startTick == currentStart &&
@@ -934,7 +974,8 @@ void moveNoteWithOverlapHandling(Track& track, EditManager& manager,
         displayCurrentEnd =
             (currentEnd >= loopLength) ? (currentEnd % loopLength) : currentEnd;
     }
-    uint32_t noteLen = calculateNoteLength(currentStart, displayCurrentEnd, loopLength);
+    const uint32_t noteLen = resolveMovingNoteLengthTicks(
+        midiEvents, movingNotePitch, currentStart, currentEnd, loopLength);
     uint32_t newStart = targetTick;
     uint32_t newEnd = newStart + noteLen;
     uint32_t displayNewEnd = newEnd % loopLength;
@@ -1026,7 +1067,8 @@ void moveNoteWithOverlapHandling(Track& track, EditManager& manager,
                   movingNotePitch, currentStart, currentEnd);
     }
 
-    finalReconstructAndSelect(track, midiEvents, manager, movingNotePitch, newStart, newEnd, loopLength);
+    finalReconstructAndSelect(track, midiEvents, manager, movingNotePitch, newStart, newEnd,
+                              loopLength, newStart);
 
     track.invalidateCaches();
 }
@@ -1037,6 +1079,7 @@ void changeLengthWithOverlapHandling(Track& track, EditManager& manager,
     auto& midiEvents = track.editAwareMidiEvents();
     uint32_t loopLength = track.getLoopLength();
     manager.ensureNoteEditFocusForLiveEdit(track, currentNote);
+    manager.syncNoteEditFocusLastFromSessionStore(track);
     const uint8_t channel = track.getMidiChannel();
     const NoteEditFocus& focus = editFocus(manager);
 
@@ -1053,20 +1096,33 @@ void changeLengthWithOverlapHandling(Track& track, EditManager& manager,
         noteStart = focus.last.startTick;
         currentEnd = focus.last.endTick;
     }
-    uint32_t displayCurrentEnd =
-        (currentEnd >= loopLength) ? (currentEnd % loopLength) : currentEnd;
+    if (loopLength > 0) {
+        noteStart %= loopLength;
+        currentEnd %= loopLength;
+        targetEndTick %= loopLength;
+    }
+    uint32_t displayCurrentEnd = currentEnd;
 
     if (targetEndTick == currentEnd) {
         manager.setBracketTick(targetEndTick % loopLength);
         return;
     }
 
-    const int delta = (targetEndTick > currentEnd) ? 1 : -1;
+    const uint32_t minNoteDuration = Config::TICKS_PER_16TH_STEP;
+    const bool nonWrapMovingNote =
+        currentEnd > noteStart && (currentEnd - noteStart) < loopLength;
+
+    uint32_t newStart = noteStart;
+    uint32_t newEnd = targetEndTick;
+
+    if (nonWrapMovingNote && newEnd < noteStart + minNoteDuration) {
+        newEnd = noteStart + minNoteDuration;
+    }
+
+    const int delta = (newEnd > currentEnd) ? 1 : -1;
     const uint32_t baselineStart =
         focus.active ? focus.commitBaseline.startTick : noteStart;
 
-    const uint32_t newStart = noteStart;
-    const uint32_t newEnd = targetEndTick;
     const uint32_t displayNewEnd = newEnd % loopLength;
 
     logger.log(CAT_MIDI, LOG_DEBUG,
@@ -1132,35 +1188,44 @@ void changeLengthWithOverlapHandling(Track& track, EditManager& manager,
                          onIndex, offIndex);
     manager.syncSelectedNoteIdxToFilteredInventory(track);
 
-    MidiEvent* noteOffEvent =
-        findNoteOffPairedAt(midiEvents, notePitch, noteStart, displayCurrentEnd);
-    if (!noteOffEvent) {
-        for (auto& evt : midiEvents) {
-            if (evt.type == midi::NoteOn && evt.data.noteData.velocity > 0 &&
-                evt.data.noteData.note == notePitch && evt.tick == noteStart) {
-                noteOffEvent = findCorrespondingNoteOff(midiEvents, &evt, notePitch, noteStart,
-                                                        displayCurrentEnd);
-                break;
-            }
+    MidiEvent* noteOnEvent = nullptr;
+    for (auto& evt : midiEvents) {
+        if (evt.type == midi::NoteOn && evt.data.noteData.velocity > 0 &&
+            evt.data.noteData.note == notePitch && evt.tick == noteStart) {
+            noteOnEvent = &evt;
+            break;
         }
     }
 
-    if (noteOffEvent) {
+    MidiEvent* noteOffEvent = nullptr;
+    if (noteOnEvent) {
+        noteOffEvent = findCorrespondingNoteOff(midiEvents, noteOnEvent, notePitch, noteStart,
+                                                displayCurrentEnd);
+    }
+    if (!noteOffEvent) {
+        noteOffEvent = findNoteOffForNoteOnAtStart(midiEvents, notePitch, noteStart);
+    }
+    if (!noteOffEvent) {
+        noteOffEvent =
+            findNoteOffPairedAt(midiEvents, notePitch, noteStart, displayCurrentEnd);
+    }
+
+    if (noteOnEvent && noteOffEvent) {
+        noteOnEvent->tick = newStart;
         noteOffEvent->tick = newEnd;
         noteEditFocusApplyLengthEnd(manager.getEditSession().focus, newEnd);
-        // origEnd / commitBaseline.end stay at length-session baseline so
-        // commitAllPendingNoteEditActions can detect pending ChangeLength on reselect.
-        manager.setBracketTick(newEnd % loopLength);
+        manager.setBracketTick(displayNewEnd);
         logger.log(CAT_MIDI, LOG_DEBUG,
-                  "Updated note-off after length overlap: pitch=%d, start=%lu, end=%lu",
-                  notePitch, noteStart, newEnd);
+                  "Updated note events after length overlap: pitch=%d, start=%lu, end=%lu",
+                  notePitch, newStart, newEnd);
     } else {
         logger.log(CAT_MIDI, LOG_DEBUG,
                   "Warning: could not find note-off for length edit pitch=%d start=%lu end=%lu",
                   notePitch, noteStart, displayCurrentEnd);
     }
 
-    finalReconstructAndSelect(track, midiEvents, manager, notePitch, newStart, newEnd, loopLength);
+    finalReconstructAndSelect(track, midiEvents, manager, notePitch, newStart, newEnd, loopLength,
+                              displayNewEnd);
 
     NoteUtils::orderSamePitchNoteOffsForLifo(midiEvents, track.getMidiChannel(), notePitch);
 

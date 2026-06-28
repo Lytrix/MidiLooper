@@ -748,6 +748,15 @@ DISP_CAPTURE_MEM void DisplayManager::maybeEmitDisplayCaptureOnChange(const Trac
         return;
     }
 
+    if (regression) {
+        static uint32_t lastRegressionCaptureMs = 0;
+        const uint32_t nowMs = millis();
+        if (nowMs - lastRegressionCaptureMs < 500U) {
+            return;
+        }
+        lastRegressionCaptureMs = nowMs;
+    }
+
     lastFrameNotes = frameNoteCount;
     lastSlot = displaySlot;
     lastState = state;
@@ -883,7 +892,9 @@ void DisplayManager::setup() {
     //Serial.println("Text drawn.");
     _display.api.display();
     Serial.println("DisplayManager: Text sent to display");
+#if !defined(SESSION_CAPTURE)
     delay(1500);
+#endif
     clearDisplayBuffer();
 }
 
@@ -2080,7 +2091,7 @@ void DisplayManager::drawLoadSaveMinimalLoadingView(uint32_t nowMs) {
         _display.gfx.draw_text(_display.api.getFrameBuffer(), "Saving", kLeftMargin, 0, 15);
         const DeferredSaveDisplayStatus saveStatus =
             StorageManager::getDeferredSaveDisplayStatus(nowMs);
-        drawPersistenceStatusDots(kLeftMargin + 6 * 6 + 2, std::max(0, 0 - 4), saveStatus);
+        drawPersistenceStatusDots(kLeftMargin + 6 * 6 + 2, kSaveStatusDotY, saveStatus);
     } else {
         const uint16_t setId = StorageManager::getRevisionLoadDisplayTargetSetId();
         if (setId != 0) {
@@ -2456,22 +2467,30 @@ void DisplayManager::requestNoteInfoRefresh(Track& track) {
     (void)track.getCachedNotes();
 }
 
+void DisplayManager::applyWorkspaceDisplayRefreshPending(uint32_t currentTick) {
+    if (!workspaceDisplayRefreshPending_) {
+        return;
+    }
+    workspaceDisplayRefreshPending_ = false;
+    invalidateLiveDisplayCache();
+    for (uint8_t trackIndex = 0; trackIndex < trackManager.getTrackCount(); ++trackIndex) {
+        Track& track = trackManager.getTrack(trackIndex);
+        for (uint8_t slotIndex = 0; slotIndex < Config::MAX_LOOPS_PER_TRACK; ++slotIndex) {
+            track.getLoop(slotIndex).markDisplayCachesStale();
+        }
+        track.invalidateCaches();
+    }
+    editManager.rematerializeNoteEditSessionAfterWorkspaceReload(
+        trackManager.getSelectedTrack());
+    trackManager.forceLedUpdate(currentTick);
+}
+
 void DisplayManager::update() {
     const uint32_t telemetryStartUs = micros();
     uint32_t currentTick = clockManager.getCurrentTick();
     const bool loadSaveActive = looperState.isLoadSaveModeActive();
     if (!loadSaveActive && StorageManager::consumeRevisionLoadDisplayRefreshPending()) {
-        invalidateLiveDisplayCache();
-        for (uint8_t trackIndex = 0; trackIndex < trackManager.getTrackCount(); ++trackIndex) {
-            Track& track = trackManager.getTrack(trackIndex);
-            for (uint8_t slotIndex = 0; slotIndex < Config::MAX_LOOPS_PER_TRACK; ++slotIndex) {
-                track.getLoop(slotIndex).markDisplayCachesStale();
-            }
-            track.invalidateCaches();
-        }
-        editManager.rematerializeNoteEditSessionAfterWorkspaceReload(
-            trackManager.getSelectedTrack());
-        trackManager.forceLedUpdate(currentTick);
+        workspaceDisplayRefreshPending_ = true;
     }
     Track& selTrack = trackManager.getSelectedTrack();
     const uint8_t displaySlot = trackManager.getSelectedSlotIndex(trackManager.getSelectedTrackIndex());
@@ -2504,6 +2523,7 @@ void DisplayManager::update() {
     if (loadSaveActive) {
         drawLoadSaveView(now);
         _display.api.display();
+        applyWorkspaceDisplayRefreshPending(currentTick);
         HotPathTelemetry::recordDisplayUpdate(micros() - telemetryStartUs);
         return;
     }
@@ -2519,5 +2539,6 @@ void DisplayManager::update() {
     drawNoteInfo(displayTick, selTrack, displaySlot, frameNotes);
 
    _display.api.display();
+    applyWorkspaceDisplayRefreshPending(currentTick);
     HotPathTelemetry::recordDisplayUpdate(micros() - telemetryStartUs);
 }

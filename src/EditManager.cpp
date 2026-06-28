@@ -23,6 +23,7 @@
 #include "Utils/MemoryMonitor.h"
 #include "Utils/LoopStopFinalize.h"
 #include "ClockManager.h"
+#include "Utils/NoteMovementUtils.h"
 #include <map>
 #include <vector>
 #include <cmath>
@@ -301,6 +302,44 @@ DisplayNote EditManager::liveEditDisplayNoteAtSelect(const Track& track) const {
         return {last.pitch, last.velocity, last.startTick, last.endTick};
     }
     return notes[static_cast<size_t>(idx)];
+}
+
+void EditManager::syncNoteEditFocusLastFromSessionStore(Track& track) {
+    if (!editSession.active || !editSession.focus.active) {
+        return;
+    }
+    const uint32_t loopLength = track.getLoopLength();
+    if (loopLength == 0) {
+        return;
+    }
+
+    NoteEditFocus& focus = editSession.focus;
+    MidiEventVec& events = sessionMidiEvents();
+    const uint32_t startCandidates[] = {focus.last.startTick, focus.commitBaseline.startTick};
+
+    for (uint32_t startTick : startCandidates) {
+        for (auto& evt : events) {
+            if (evt.channel != track.getMidiChannel()) {
+                continue;
+            }
+            if (evt.type != midi::NoteOn || evt.data.noteData.velocity == 0 ||
+                evt.data.noteData.note != focus.last.pitch || evt.tick != startTick) {
+                continue;
+            }
+            MidiEvent* noteOffEvent = NoteMovementUtils::findCorrespondingNoteOff(
+                events, &evt, focus.last.pitch, startTick, focus.last.endTick);
+            if (!noteOffEvent) {
+                continue;
+            }
+            focus.last.startTick = startTick;
+            focus.last.endTick = noteOffEvent->tick;
+            if (focus.movingNoteRange.end <= focus.last.startTick ||
+                focus.last.endTick > focus.movingNoteRange.end) {
+                focus.movingNoteRange.end = focus.last.endTick;
+            }
+            return;
+        }
+    }
 }
 
 EditManager editManager;
