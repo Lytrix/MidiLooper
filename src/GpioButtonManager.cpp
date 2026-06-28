@@ -163,6 +163,16 @@ void GpioButtonManager::update() {
 void GpioButtonManager::handleButton(ButtonId button, ButtonAction action) {
     if (looperState.isLoadSaveModeActive()) {
         switch (button) {
+            case BUTTON_A:
+                if (action == BUTTON_SHORT_PRESS) {
+                    displayManager.adjustLoadSaveListSelection(1);
+                }
+                return;
+            case BUTTON_B:
+                if (action == BUTTON_SHORT_PRESS) {
+                    displayManager.adjustLoadSaveListSelection(-1);
+                }
+                return;
             case BUTTON_D:
                 break;
             case BUTTON_ENCODER:

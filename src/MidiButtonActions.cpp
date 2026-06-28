@@ -65,7 +65,10 @@ MidiButtonActions midiButtonActions;
 namespace {
 
 // SavedSet gesture map (M2):
-// - Play/Stop double-press: toggle load/save set browser (enter + exit).
+// - Edit mode (note 38) double-press: toggle load/save set browser (enter + exit).
+// - In overlay: record (36) short = scroll down; track (37) short = scroll up;
+//   NOTELEN (35) short = confirm row / dirty prompt.
+// - Play/Stop (note 40) double-press: also toggles load/save (extended transport).
 // - Play/Stop long-press release: center detailed window on playhead; hold tracks playhead.
 // - SAVE NEW: dedicated combo remains TBD until Set Browser UX is wired.
 // - LOAD INTO CURRENT: routed from browser selection, not a direct transport shortcut.
@@ -95,9 +98,24 @@ MidiButtonActions::MidiButtonActions() {
 
 // Execute action based on type
 void MidiButtonActions::executeAction(MidiButtonConfig::ActionType actionType, uint32_t parameter) {
-    if (looperState.isLoadSaveModeActive() &&
-        SetBrowserOverlayPolicy::shouldSuppressGlobalMidiAction(actionType)) {
-        return;
+    if (looperState.isLoadSaveModeActive()) {
+        switch (SetBrowserOverlayPolicy::mapLoadSaveOverlayInputAction(actionType)) {
+            case SetBrowserOverlayPolicy::LoadSaveOverlayInputAction::ScrollDown:
+                displayManager.adjustLoadSaveListSelection(1);
+                return;
+            case SetBrowserOverlayPolicy::LoadSaveOverlayInputAction::ScrollUp:
+                displayManager.adjustLoadSaveListSelection(-1);
+                return;
+            case SetBrowserOverlayPolicy::LoadSaveOverlayInputAction::ConfirmFocusedRow:
+                displayManager.handleLoadSaveOverlayPress(
+                    DisplayManager::LoadSaveOverlayPressType::Short);
+                return;
+            default:
+                break;
+        }
+        if (SetBrowserOverlayPolicy::shouldSuppressGlobalMidiAction(actionType)) {
+            return;
+        }
     }
 
     switch (actionType) {
@@ -636,7 +654,9 @@ void MidiButtonActions::handleMuteTrack(uint8_t trackNumber) {
 }
 
 void MidiButtonActions::handleCycleEditMode() {
-    handleCycleNoteEditType();
+    Track& track = getCurrentTrack();
+    editManager.cycleEditSession(track);
+    logger.info("MIDI Edit Mode: Short press - cycled LOOP_EDIT ↔ NOTE_EDIT");
 }
 
 void MidiButtonActions::handleCycleNoteEditType() {
