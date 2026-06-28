@@ -92,6 +92,7 @@ public:
     static void confirmRevisionLoadDirtyPromptDiscard();
     static void cancelRevisionLoadDirtyPrompt();
     static void requestCommitRevision();
+    static void beginOverlaySaveRowCommit();
     static bool hasRevisionCommitWork();
     static bool isRevisionCommitActive();
     static void requestLoadRevision(uint16_t setId, uint16_t revisionId);
@@ -99,6 +100,8 @@ public:
     static bool toggleSetRevisionCatalogFavorite(uint16_t setId);
     static bool hasRevisionLoadWork();
     static bool isRevisionLoadActive();
+    static bool isOverlayCatalogReadAllowed();
+    static SetBrowserOverlayPolicy::PersistencePhase getSetBrowserOverlayPersistencePhase();
     static bool consumeRevisionLoadDisplayRefreshPending();
 #if defined(SESSION_CAPTURE)
     static void requestCommitRevisionForHitl();

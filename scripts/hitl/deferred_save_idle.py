@@ -8,6 +8,26 @@ import time
 _PERS_RESULT_OK_RE = re.compile(r"#CAP,\d+,PERS,result,\d+,\d+,\d+,ok\b")
 _PERS_SLICE_RE = re.compile(r"#CAP,\d+,PERS,slice,")
 _PERS_DISPATCH_RE = re.compile(r"#CAP,\d+,PERS,dispatch,")
+_SAVE_IDLE_RE = re.compile(r"#CAP,\d+,SAVE,idle,\d+\b")
+_PERS_RESULT_OK_RE_TAIL = _PERS_RESULT_OK_RE
+
+
+def deferred_save_idle_in_tail(lines: list[str], *, lookback: int = 80) -> bool:
+    """True when recent serial tail shows SAVE idle after PERS,result,ok with no newer slices."""
+    tail = lines[-lookback:] if lookback > 0 else lines
+    last_ok_index = -1
+    for index, line in enumerate(tail):
+        if _PERS_RESULT_OK_RE_TAIL.search(line):
+            last_ok_index = index
+        if _PERS_SLICE_RE.search(line) or _PERS_DISPATCH_RE.search(line):
+            if last_ok_index >= 0 and index > last_ok_index:
+                last_ok_index = -1
+    if last_ok_index < 0:
+        return False
+    after_ok = tail[last_ok_index + 1 :]
+    if any(_PERS_SLICE_RE.search(line) or _PERS_DISPATCH_RE.search(line) for line in after_ok):
+        return False
+    return any(_SAVE_IDLE_RE.search(line) for line in after_ok)
 
 
 def wait_for_deferred_save_idle(

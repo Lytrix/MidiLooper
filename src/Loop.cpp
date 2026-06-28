@@ -697,9 +697,6 @@ size_t Loop::liveEventCount() const {
 }
 
 size_t Loop::displayEventCountHint() const {
-  if (visualCacheDirty) {
-    const_cast<Loop*>(this)->ensureVisualCacheBuilt();
-  }
   size_t count = publishedMaterializedEventCount_;
   if (captureActive()) {
     count += capture.store.size();

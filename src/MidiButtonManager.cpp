@@ -4,9 +4,9 @@
 #include "MidiButtonManager.h"
 #include "Logger.h"
 #include "DisplayManager.h"
-#include "Utils/PressTiming.h"
 #include "MidiConfig.h"
 #include "LooperState.h"
+#include "Utils/PressTiming.h"
 #include <functional>
 
 MidiButtonManager midiButtonManager;
@@ -41,8 +41,8 @@ void MidiButtonManager::handleMidiNote(uint8_t channel, uint8_t note, uint8_t ve
     if (!isValidChannel(channel) || !isValidNote(note)) {
         return;
     }
-    
-    // Delegate to processor
+
+    // Delegate to processor (classifies short / long / double on release)
     processor.handleMidiNote(channel, note, velocity, isNoteOn);
 }
 
@@ -56,23 +56,37 @@ void MidiButtonManager::onButtonPress(uint8_t note, uint8_t channel, MidiButtonC
         return;
     }
 
-    if (looperState.isLoadSaveModeActive() &&
-        config->channel == MidiConfig::Channels::SELECT &&
-        config->note == MidiConfig::LengthEdit::NOTE) {
+    const bool overlayMainControl =
+        looperState.isLoadSaveModeActive() &&
+        config->channel == MidiConfig::Channels::SELECT;
+
+    if (overlayMainControl && config->note == MidiConfig::LengthEdit::NOTE) {
         using PressType = MidiButtonConfig::PressType;
         using OverlayPress = DisplayManager::LoadSaveOverlayPressType;
-        if (pressType == PressType::LONG_PRESS) {
-            displayManager.handleLoadSaveOverlayPress(OverlayPress::Long);
-            return;
-        }
         if (pressType == PressType::DOUBLE_PRESS) {
             displayManager.handleLoadSaveOverlayPress(OverlayPress::Double);
-            return;
         }
-        if (pressType == PressType::SHORT_PRESS) {
-            displayManager.handleLoadSaveOverlayPress(OverlayPress::Short);
-            return;
+        return;
+    }
+
+    if (overlayMainControl && config->note == MidiConfig::Transport::NOTE_EDIT_MODE) {
+        using PressType = MidiButtonConfig::PressType;
+        using OverlayPress = DisplayManager::LoadSaveOverlayPressType;
+        switch (pressType) {
+            case PressType::SHORT_PRESS:
+                displayManager.handleLoadSaveOverlayPress(OverlayPress::Short);
+                break;
+            case PressType::LONG_PRESS:
+                displayManager.handleLoadSaveOverlayPress(OverlayPress::Long);
+                break;
+            case PressType::DOUBLE_PRESS:
+                actions.executeAction(MidiButtonConfig::ActionType::TOGGLE_LOAD_SAVE_MODE,
+                                      config->parameter);
+                break;
+            default:
+                break;
         }
+        return;
     }
     
     logger.info("Button press: %s (%s)", config->description, 

@@ -27,6 +27,7 @@ PRESET_SCENARIOS: dict[str, tuple[str, ...]] = {
     "load_save_display": ("load_save_display",),
     "load_save_overlay_scroll": ("load_save_overlay_scroll",),
     "load_save_overlay_scroll_only": ("load_save_overlay_scroll_only",),
+    "load_save_overlay_load": ("load_save_overlay_load",),
     "current_set_incremental_save": ("current_set_incremental_save",),
     "revision_commit_save": ("revision_commit_save",),
     "revision_load": ("revision_load",),
@@ -61,6 +62,8 @@ def _lazy_registry() -> dict[str, ScenarioSpec]:
         run_load_save_overlay_scroll_only,
     )
     from hitl.verify.load_save_overlay_scroll import verify_load_save_overlay_scroll
+    from hitl.scenarios.load_save_overlay_load import run_load_save_overlay_load
+    from hitl.verify.load_save_overlay_load import verify_load_save_overlay_load
     from hitl.scenarios.current_set_incremental_save import run_current_set_incremental_save
     from hitl.verify.current_set_incremental_save import verify_current_set_incremental_save
     from hitl.scenarios.revision_commit_save import run_revision_commit_save
@@ -131,6 +134,12 @@ def _lazy_registry() -> dict[str, ScenarioSpec]:
             description="Root overlay scroll only; 3s/row + 12s dwell; no record/dirty phase",
             run=run_load_save_overlay_scroll_only,
             verify=verify_load_save_overlay_scroll,
+        ),
+        "load_save_overlay_load": ScenarioSpec(
+            scenario_id="load_save_overlay_load",
+            description="MIDI overlay load Set row (Edit enter, Record scroll, Edit short confirm)",
+            run=run_load_save_overlay_load,
+            verify=verify_load_save_overlay_load,
         ),
         "current_set_incremental_save": ScenarioSpec(
             scenario_id="current_set_incremental_save",

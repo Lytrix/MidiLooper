@@ -207,7 +207,9 @@ private:
     // Info area rendering
     void drawInfoArea(uint32_t currentTick, Track& selectedTrack, uint8_t displaySlot, uint32_t nowMs);
     void refreshLoadSaveListCache();
-    void refreshLoadSaveRevisionHistoryCache(uint16_t setId);
+    void refreshLoadSaveRevisionHistoryCache(uint16_t setId, bool forceCatalogRead = false);
+    void ensureLoadSaveRevisionListCache(uint16_t setId, bool forceCatalogRead = false);
+    void invalidateLoadSaveRevisionListCache();
     uint16_t resolveFocusedRootSetId() const;
     uint16_t resolveFocusedRevisionId() const;
     void adjustLoadSaveListSelectionInDrillMode(int delta);

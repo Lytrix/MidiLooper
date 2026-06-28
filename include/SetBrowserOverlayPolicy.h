@@ -32,9 +32,27 @@ struct NavigationState {
   EntryKind entryKind = EntryKind::WorkspaceSetBrowser;
 };
 
+enum class PersistencePhase : uint8_t {
+  Idle = 0,
+  AwaitingCommitThenLoad,
+  LoadInProgress,
+  CommitOnlyBackground,
+};
+
 /// Transient modes (dirty prompt, minimal loading) take priority over drill navigation.
 Mode resolveActiveMode(const NavigationState& nav, bool dirtyPromptActive,
                        bool minimalLoadingActive);
+
+/// True when overlay should show MINIMAL_LOADING (overlay must be open).
+bool isMinimalLoadingOverlayActive(PersistencePhase phase, bool overlayOpen,
+                                   bool commitPending, bool commitInProgress);
+
+/// True when a new revision load request must be rejected.
+bool isOverlayLoadRequestBlocked(PersistencePhase phase, bool loadPending,
+                                 bool loadInProgress);
+
+/// True when overlay enter should preserve drill navigation (pipeline still running).
+bool shouldPreserveOverlayNavigationOnEnter(PersistencePhase phase);
 
 void resetNavigation(NavigationState& nav);
 
@@ -67,7 +85,7 @@ size_t rootSetFolderListIndex(uint8_t listSelection);
 /// True when load/save overlay is active and global handlers must not run this MIDI action.
 bool shouldSuppressGlobalMidiAction(MidiButtonConfig::ActionType actionType);
 
-/// Load/save overlay remaps main-control short presses (record / track / NOTELEN).
+/// Load/save overlay remaps main-control short presses (record / track / edit mode).
 enum class LoadSaveOverlayInputAction : uint8_t {
   None = 0,
   ScrollDown,

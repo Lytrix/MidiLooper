@@ -323,6 +323,22 @@ void EditManager::openNoteEditSession(Track& track) {
     logger.debug("EditSession opened editPass=0");
 }
 
+void EditManager::reopenNoteEditSession(Track& track) {
+    if (editSession.active) {
+        editSession.store.mutStore().clear();
+        editSession.store.discardFlatCache();
+        editSession.undoStack.clear();
+        editSession.editPassIds.clear();
+        editSession.active = false;
+        resetNoteEditSessionState();
+        selectedNoteIdx = -1;
+        hasMovedBracket = false;
+    }
+    editSession.sessionType = EditSessionType::Note;
+    openNoteEditSession(track);
+    track.invalidateCaches();
+}
+
 void EditManager::closeNoteEditPass(Track& track) {
     if (!editSession.active) {
         return;
@@ -428,6 +444,24 @@ void EditManager::closeNoteEditSession(Track& track) {
     editSession.editPassIndex = 0;
     editSession.replaceEditPassOnClose = false;
     clearLastFader1SelectRef();
+}
+
+void EditManager::rematerializeNoteEditSessionAfterWorkspaceReload(Track& track) {
+    if (editSession.sessionType == EditSessionType::Note) {
+        reopenNoteEditSession(track);
+        return;
+    }
+    if (editSession.active) {
+        editSession.store.mutStore().clear();
+        editSession.store.discardFlatCache();
+        editSession.undoStack.clear();
+        editSession.editPassIds.clear();
+        editSession.active = false;
+        resetNoteEditSessionState();
+        selectedNoteIdx = -1;
+        hasMovedBracket = false;
+    }
+    track.invalidateCaches();
 }
 
 EditPassId EditManager::commitEditAction(Track& track, EditPassVec rows) {
@@ -1153,11 +1187,6 @@ void EditManager::cycleEditSession(Track& track) {
         editSession.sessionType = EditSessionType::Loop;
     } else {
         editSession.sessionType = EditSessionType::Note;
-        if (!editSession.active) {
-            openNoteEditSession(track);
-        } else {
-            enterDefaultNoteEditSessionState(track, clockManager.getCurrentTick());
-        }
     }
     sendEditSessionChange(editSession.sessionType);
     logger.log(CAT_TRACK, LOG_DEBUG, "Edit session cycled to: %d",
@@ -1195,11 +1224,7 @@ void EditManager::sendEditSessionChange(EditSessionType sessionType) {
 
     if (sessionType == EditSessionType::Note) {
         Track& track = trackManager.getSelectedTrack();
-        if (!editSession.active) {
-            openNoteEditSession(track);
-        } else {
-            enterDefaultNoteEditSessionState(track, clockManager.getCurrentTick());
-        }
+        reopenNoteEditSession(track);
     }
     if (sessionType == EditSessionType::Loop) {
         sendCurrentLoopLengthCC(trackManager.getSelectedTrack());

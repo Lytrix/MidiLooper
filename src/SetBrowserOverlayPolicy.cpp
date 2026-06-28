@@ -16,6 +16,35 @@ Mode resolveActiveMode(const NavigationState& nav, bool dirtyPromptActive,
   return nav.drillMode;
 }
 
+bool isMinimalLoadingOverlayActive(PersistencePhase phase, bool overlayOpen,
+                                   bool commitPending, bool commitInProgress) {
+  if (!overlayOpen) {
+    return false;
+  }
+  if (phase == PersistencePhase::AwaitingCommitThenLoad ||
+      phase == PersistencePhase::LoadInProgress) {
+    return true;
+  }
+  if (phase == PersistencePhase::CommitOnlyBackground &&
+      (commitPending || commitInProgress)) {
+    return true;
+  }
+  return false;
+}
+
+bool isOverlayLoadRequestBlocked(PersistencePhase phase, bool loadPending,
+                                 bool loadInProgress) {
+  if (loadPending || loadInProgress) {
+    return true;
+  }
+  return phase == PersistencePhase::AwaitingCommitThenLoad ||
+         phase == PersistencePhase::LoadInProgress;
+}
+
+bool shouldPreserveOverlayNavigationOnEnter(PersistencePhase phase) {
+  return phase != PersistencePhase::Idle;
+}
+
 void resetNavigation(NavigationState& nav) {
   nav.drillMode = Mode::Root;
   nav.parentDrillMode = Mode::Root;
@@ -107,7 +136,7 @@ LoadSaveOverlayInputAction mapLoadSaveOverlayInputAction(
       return LoadSaveOverlayInputAction::ScrollDown;
     case ActionType::SELECT_TRACK:
       return LoadSaveOverlayInputAction::ScrollUp;
-    case ActionType::TOGGLE_LENGTH_EDIT_MODE:
+    case ActionType::CYCLE_EDIT_MODE:
       return LoadSaveOverlayInputAction::ConfirmFocusedRow;
     default:
       return LoadSaveOverlayInputAction::None;
