@@ -157,17 +157,6 @@ void test_default_label_prefers_date_then_fallback() {
   TEST_ASSERT_EQUAL_STRING("00003", label);
 }
 
-void test_eight_hour_failsafe_policy() {
-  const uint32_t lastChange = 1782345600UL;
-  TEST_ASSERT_FALSE(SavedSetCatalog::shouldRunEightHourFailsafe(
-      true, lastChange, lastChange + SavedSetCatalog::kEightHourFailsafeSeconds - 1, false));
-  TEST_ASSERT_TRUE(SavedSetCatalog::shouldRunEightHourFailsafe(
-      true, lastChange, lastChange + SavedSetCatalog::kEightHourFailsafeSeconds, false));
-  TEST_ASSERT_FALSE(SavedSetCatalog::shouldRunEightHourFailsafe(
-      false, lastChange, lastChange + SavedSetCatalog::kEightHourFailsafeSeconds, false));
-  TEST_ASSERT_FALSE(SavedSetCatalog::shouldRunEightHourFailsafe(
-      true, lastChange, lastChange + SavedSetCatalog::kEightHourFailsafeSeconds, true));
-}
 
 int main(int argc, char** argv) {
   (void)argc;
@@ -182,6 +171,5 @@ int main(int argc, char** argv) {
   RUN_TEST(test_allocate_next_sequence_advances_index);
   RUN_TEST(test_saved_set_metadata_trailer_round_trip);
   RUN_TEST(test_default_label_prefers_date_then_fallback);
-  RUN_TEST(test_eight_hour_failsafe_policy);
   return UNITY_END();
 }

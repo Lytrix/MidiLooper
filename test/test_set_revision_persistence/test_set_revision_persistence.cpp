@@ -684,6 +684,20 @@ void test_set_browser_list_sorts_by_updated_unix_desc() {
   TEST_ASSERT_EQUAL_UINT16(1, entries[2].setId);
 }
 
+void test_revision_browser_list_sorts_by_created_unix_desc() {
+  SetRevisionCatalog::RevisionBrowserListEntry entries[3] = {};
+  entries[0].revisionId = 1;
+  entries[0].createdUnix = 100;
+  entries[1].revisionId = 2;
+  entries[1].createdUnix = 300;
+  entries[2].revisionId = 3;
+  entries[2].createdUnix = 200;
+  SetRevisionCatalog::sortRevisionBrowserListEntriesByCreatedUnixDesc(entries, 3);
+  TEST_ASSERT_EQUAL_UINT16(2, entries[0].revisionId);
+  TEST_ASSERT_EQUAL_UINT16(3, entries[1].revisionId);
+  TEST_ASSERT_EQUAL_UINT16(1, entries[2].revisionId);
+}
+
 int main(int argc, char** argv) {
   (void)argc;
   (void)argv;
@@ -739,5 +753,6 @@ int main(int argc, char** argv) {
   RUN_TEST(test_overlay_input_modal_suppresses_note_edit_encoder);
   RUN_TEST(test_parse_set_id_from_catalog_folder_name);
   RUN_TEST(test_set_browser_list_sorts_by_updated_unix_desc);
+  RUN_TEST(test_revision_browser_list_sorts_by_created_unix_desc);
   return UNITY_END();
 }

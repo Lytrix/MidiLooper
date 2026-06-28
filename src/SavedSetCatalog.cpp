@@ -262,16 +262,4 @@ bool readSavedSetMetadataTrailer(const StorageIo& io, SavedSetMetadata& metadata
   return true;
 }
 
-bool shouldRunEightHourFailsafe(bool hasMaterialChangesSinceAnchor,
-                                uint32_t lastMaterialChangeUnix, uint32_t nowUnix,
-                                bool captureActive) {
-  if (!hasMaterialChangesSinceAnchor || captureActive) {
-    return false;
-  }
-  if (lastMaterialChangeUnix == 0 || nowUnix == 0 || nowUnix < lastMaterialChangeUnix) {
-    return false;
-  }
-  return nowUnix - lastMaterialChangeUnix >= kEightHourFailsafeSeconds;
-}
-
 }  // namespace SavedSetCatalog

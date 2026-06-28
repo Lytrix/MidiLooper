@@ -18,6 +18,8 @@
 #include "SavedSetCatalog.h"
 #include "RevisionLoadPolicy.h"
 #include "SetRevisionCatalog.h"
+#include "SetBrowserOverlayPolicy.h"
+#include "DeferredSaveDisplayStatus.h"
 
 // Shared struct for UI note representation
 using DisplayNote = NoteUtils::DisplayNote;
@@ -50,6 +52,8 @@ public:
     void setup();
     void update();
     void clearDisplayBuffer();
+    /// Full-screen boot status (splash / SD load); pushes frame to OLED immediately.
+    void drawBootStatusMessage(const char* text);
     /// Emit #CAP DISP snapshot for HITL display verification (capture builds).
     void emitDisplayCaptureSnapshot(const Track& track, uint8_t displaySlot, uint32_t currentTick);
 
@@ -69,6 +73,13 @@ public:
 
     /// Confirm the focused overlay row (Save queues revision commit and exits overlay).
     void confirmLoadSaveFocusedRow();
+
+#if defined(SESSION_CAPTURE)
+    /// HITL: drill into revision history for one Set (overlay must be active).
+    void openRevisionHistoryFromHitl(uint16_t setId);
+    /// HITL: long-press back from revision history or loop pick drill-down.
+    void navigateLoadSaveOverlayBackFromHitl();
+#endif
 
     /// Force cached note rebuild after edit mutations (D2 display refresh).
     void requestNoteInfoRefresh(Track& track);
@@ -161,10 +172,26 @@ private:
     static constexpr size_t kLoadSaveListCapacity = 16;
     SetRevisionCatalog::SetBrowserListEntry loadSaveListEntries_[kLoadSaveListCapacity] = {};
     size_t loadSaveListCount_ = 0;
+    SetRevisionCatalog::RevisionBrowserListEntry loadSaveRevisionListEntries_[kLoadSaveListCapacity] =
+        {};
+    size_t loadSaveRevisionListCount_ = 0;
+    uint16_t loadSaveRevisionListSetId_ = 0;
     uint8_t loadSaveListSelection_ = 0;
     uint8_t loadSaveListScrollOffset_ = 0;
     bool loadSaveListCacheValid_ = false;
+    bool loadSaveRevisionListCacheValid_ = false;
     bool loadSaveModeWasActive_ = false;
+
+    struct LoadSaveDetailCacheKey {
+        SetBrowserOverlayPolicy::Mode mode = SetBrowserOverlayPolicy::Mode::Root;
+        uint8_t listSelection = 0;
+        uint16_t drilledSetId = 0;
+        char setFolderName[16] = {};
+    };
+    LoadSaveDetailCacheKey loadSaveDetailCacheKey_{};
+    LoadSaveWorkspaceDetailParams loadSaveDetailCache_{};
+    bool loadSaveDetailCacheValid_ = false;
+    bool loadSaveDetailCacheOk_ = false;
 
     static constexpr float PULSE_SPEED = 1.0f; // Pulses per second (slowed by 40%)
     // Track status rendering
@@ -178,12 +205,17 @@ private:
     // Info area rendering
     void drawInfoArea(uint32_t currentTick, Track& selectedTrack, uint8_t displaySlot, uint32_t nowMs);
     void refreshLoadSaveListCache();
+    void refreshLoadSaveRevisionHistoryCache(uint16_t setId);
     uint16_t resolveFocusedRootSetId() const;
+    uint16_t resolveFocusedRevisionId() const;
+    void adjustLoadSaveListSelectionInDrillMode(int delta);
+    void invalidateLoadSaveDetailCache();
+    bool resolveLoadSaveWorkspaceDetail(LoadSaveWorkspaceDetailParams& out);
     void refreshAutoSaveBeforeLoadToast(uint32_t nowMs);
     void drawLoadSaveView(uint32_t nowMs);
     void drawLoadSaveDirtyPromptView();
     void drawLoadSaveMinimalLoadingView(uint32_t nowMs);
-    void drawLoadSaveRevisionHistoryView(uint16_t setId);
+    void drawLoadSaveRevisionHistoryView(uint32_t nowMs, uint16_t setId);
     void drawLoadSaveLoopPickView(uint16_t setId);
     void drawLoadSaveWorkspaceDetail(int detailX, const LoadSaveWorkspaceDetailParams& params);
     void drawLoadSaveTrackFilledBar(int x, int y, int barWidth, int barHeight, uint8_t filledSlots,
@@ -197,6 +229,9 @@ private:
     void drawAutoSaveBeforeLoadToast(int detailX, uint32_t nowMs);
     void drawSidebar(Track& selectedTrack, uint8_t displaySlot);
     void drawSaveStatusIndicator(uint32_t nowMs, int textRight);
+    void drawPersistenceStatusDots(int startX, int dotY, const DeferredSaveDisplayStatus& status);
+    void drawLoadSaveRowLoadStatusDots(int labelLeftX, int labelCharCount, int rowY, uint32_t nowMs,
+                                       uint16_t setId, uint16_t revisionId);
     SidebarMode resolveSidebarMode(const Track& selectedTrack, uint8_t displaySlot) const;
     const char* sidebarModeLabel(SidebarMode mode) const;
     MidiOutput resolveMidiOutput() const;

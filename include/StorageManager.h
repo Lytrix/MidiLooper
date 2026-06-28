@@ -39,7 +39,6 @@ public:
     static void processEditAutosave(const LooperState& state);
     static bool saveNewSet(char* savedSetFolderOut = nullptr, size_t outSize = 0);
     static bool loadSetIntoCurrent(const char* savedSetFolderName);
-    static void processSavedSetFailsafe(const LooperState& state);
     static uint32_t getCurrentSetLastActiveUnix();
     static bool copyCurrentSetLoadedFromFolder(char* out, size_t outSize);
     static bool consumeAutoSaveBeforeLoadFolder(char* out, size_t outSize);
@@ -47,6 +46,11 @@ public:
                                             size_t maxEntries);
     static size_t listSetRevisionBrowserEntries(SetRevisionCatalog::SetBrowserListEntry* entries,
                                                 size_t maxEntries);
+    static size_t listSetRevisionHistoryEntries(
+        uint16_t setId, SetRevisionCatalog::RevisionBrowserListEntry* entries, size_t maxEntries);
+    static bool readSetRevisionHistoryBrowserMetadata(
+        uint16_t setId, uint16_t revisionId, SavedSetCatalog::SavedSetMetadata& metadata,
+        uint32_t& createdUnixOut);
     static bool readSetRevisionCatalogMetaForFolder(const char* folderName,
                                                     SetRevisionCatalog::SetMetaRecord& meta);
     static bool readSetRevisionCatalogBrowserMetadata(const char* folderName,
@@ -60,6 +64,9 @@ public:
     static void markCurrentSetTrackDirty(uint8_t trackIndex);
     static void markAllCurrentSetLoopSlotsDirty();
     static DeferredSaveDisplayStatus getDeferredSaveDisplayStatus(uint32_t nowMs);
+    static DeferredSaveDisplayStatus getDeferredLoadDisplayStatus(uint32_t nowMs);
+    static uint16_t getRevisionLoadDisplayTargetSetId();
+    static uint16_t getRevisionLoadDisplayTargetRevisionId();
     static bool isCurrentWorkspaceDirty();
     static uint32_t getCurrentWorkspaceEpoch();
     static uint32_t getLastCommittedWorkspaceEpoch();

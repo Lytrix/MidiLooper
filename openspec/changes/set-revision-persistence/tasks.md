@@ -39,7 +39,8 @@
 - [x] 4.4 GPIO encoder rotation → overlay list focus (ROOT + DIRTY_PROMPT via `adjustLoadSaveListSelection`).
 - [x] 4.5 GPIO encoder button → overlay row actions (short confirm/load, double favorite, long history/exit).
 - [x] 4.6 Workspace Set browser lists revision catalog (`sets/S####/`), sorted by `updatedUnix`.
-- [ ] 4.7–4.10 (revision history UI, loop picker, HITL `set_revision_overlay`).
+- [x] 4.7 Revision history UI — list, scroll, load, back navigation, detail preview.
+- [ ] 4.8–4.10 Loop picker UI + HITL `set_revision_overlay`.
 
 ## 5–7. Loop copy, recovery docs, verification
 

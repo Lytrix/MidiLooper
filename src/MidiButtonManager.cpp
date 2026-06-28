@@ -3,6 +3,7 @@
 
 #include "MidiButtonManager.h"
 #include "Logger.h"
+#include "DisplayManager.h"
 #include "Utils/PressTiming.h"
 #include "MidiConfig.h"
 #include "LooperState.h"
@@ -53,6 +54,21 @@ void MidiButtonManager::onButtonPress(uint8_t note, uint8_t channel, MidiButtonC
     if (config == nullptr) {
         logger.debug("No configuration found for button: Ch%d Note%d", channel, note);
         return;
+    }
+
+    if (looperState.isLoadSaveModeActive() &&
+        config->channel == MidiConfig::Channels::SELECT &&
+        config->note == MidiConfig::LengthEdit::NOTE) {
+        using PressType = MidiButtonConfig::PressType;
+        using OverlayPress = DisplayManager::LoadSaveOverlayPressType;
+        if (pressType == PressType::LONG_PRESS) {
+            displayManager.handleLoadSaveOverlayPress(OverlayPress::Long);
+            return;
+        }
+        if (pressType == PressType::DOUBLE_PRESS) {
+            displayManager.handleLoadSaveOverlayPress(OverlayPress::Double);
+            return;
+        }
     }
     
     logger.info("Button press: %s (%s)", config->description, 

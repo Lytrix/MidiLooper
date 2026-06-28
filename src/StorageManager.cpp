@@ -317,6 +317,10 @@ bool deferredSaveHeapFloorDeferred = false;
 bool deferredSaveLastCompletedOk = false;
 uint32_t deferredSaveCompletedAtMs = 0;
 uint32_t deferredSaveFailedAtMs = 0;
+uint32_t revisionLoadCompletedAtMs = 0;
+uint32_t revisionLoadFailedAtMs = 0;
+uint16_t revisionLoadLastDisplaySetId = 0;
+uint16_t revisionLoadLastDisplayRevisionId = 0;
 std::vector<MidiEvent, ExternalMemoryFirstAllocator<MidiEvent>> deferredSaveMidiBatch;
 uint16_t deferredSaveLoopSlotsWritten = 0;
 uint16_t deferredSaveLoopSlotsSkipped = 0;
@@ -327,7 +331,6 @@ uint32_t deferredSaveDisplayBlockUs = 0;
 bool forceCurrentSetFullLoopWrite = true;
 std::array<std::array<bool, Config::MAX_LOOPS_PER_TRACK>, Config::NUM_TRACKS>
     currentSetLoopSlotDirty{};
-uint32_t lastSavedSetFailsafeCheckAtMs = 0;
 uint32_t currentSetLastActiveUnix = 0;
 char currentSetLoadedFromFolder[16] = {};
 uint32_t currentWorkspaceEpoch = 0;
@@ -383,6 +386,7 @@ constexpr uint16_t kMaxRevisionLoopIndexEntries =
 RevisionPackedBlob::RevisionLoopSlotDirectoryEntry revisionCommitSlotEntries[kMaxRevisionLoopIndexEntries];
 RevisionPackedBlob::RevisionLoopSlotDirectoryEntry
     revisionLoadSlotDirectoryEntries[kMaxRevisionLoopIndexEntries];
+// Shared by revision-load FSM and overlay catalog detail reads (never concurrent).
 uint16_t revisionCommitSlotIndexCount = 0;
 uint16_t revisionCommitSlotIndexWriteCursor = 0;
 uint32_t revisionCommitPayloadWriteOffset = 0;
@@ -509,7 +513,6 @@ CAPTURE_HITL_DATA HitlRevisionCommitBackup hitlRevisionCommitBackup{};
 #endif
 
 constexpr size_t kSavedSetPathCapacity = 64;
-constexpr uint32_t kSavedSetFailsafeCheckIntervalMs = 1000;
 
 void clearCurrentSetLoadedFromFolder() {
     currentSetLoadedFromFolder[0] = '\0';
@@ -3053,6 +3056,10 @@ bool stepRevisionLoadComplete() {
     }
     SC_PERSIST("rev_load_complete", 0, revisionLoadSetId, revisionLoadRevisionId, revLoadDetail);
 #endif
+    revisionLoadLastDisplaySetId = revisionLoadSetId;
+    revisionLoadLastDisplayRevisionId = revisionLoadRevisionId;
+    revisionLoadCompletedAtMs = millis();
+    revisionLoadFailedAtMs = 0;
     revisionLoadDisplayRefreshPending = true;
     revisionLoadStage = RevisionLoadStage::Idle;
     revisionLoadInProgress = false;
@@ -4098,38 +4105,6 @@ bool StorageManager::loadSetIntoCurrent(const char* savedSetFolderName) {
     return true;
 }
 
-void StorageManager::processSavedSetFailsafe(const LooperState& state) {
-    const uint32_t nowMs = millis();
-    if (nowMs - lastSavedSetFailsafeCheckAtMs < kSavedSetFailsafeCheckIntervalMs) {
-        return;
-    }
-    lastSavedSetFailsafeCheckAtMs = nowMs;
-
-    bool captureActive = false;
-    for (uint8_t trackIndex = 0; trackIndex < trackManager.getTrackCount(); ++trackIndex) {
-        const Track& track = trackManager.getTrack(trackIndex);
-        if (track.isRecording() || track.isOverdubbing()) {
-            captureActive = true;
-            break;
-        }
-    }
-
-    if (!SavedSetCatalog::shouldRunEightHourFailsafe(
-            currentSetAnchorFields.hasMaterialChangesSinceAnchor != 0,
-            currentSetAnchorFields.lastMaterialChangeUnix, RtcTime::getUnixTime(),
-            captureActive)) {
-        return;
-    }
-
-    char folderName[16];
-    if (saveNewSetInternal(state, folderName, sizeof(folderName))) {
-        Serial.print("[StorageManager] Eight-hour failsafe SavedSet created: ");
-        Serial.println(folderName);
-    } else {
-        Serial.println("[StorageManager] ERROR: Eight-hour failsafe saveNewSet failed");
-    }
-}
-
 uint32_t StorageManager::getCurrentSetLastActiveUnix() {
     return currentSetLastActiveUnix;
 }
@@ -4565,11 +4540,126 @@ bool StorageManager::readSetRevisionCatalogBrowserMetadata(
         updatedUnixOut = static_cast<uint32_t>(header.createdUnix);
         metadata.createdAtUnix = updatedUnixOut;
     }
-    RevisionPackedBlob::RevisionLoopSlotDirectoryEntry entries[kMaxRevisionLoopIndexEntries];
     uint16_t entryCount = 0;
-    if (readSlotIndexEntriesFromRevisionFile(revisionFile, fileSize, header, entries,
+    if (readSlotIndexEntriesFromRevisionFile(revisionFile, fileSize, header,
+                                             revisionLoadSlotDirectoryEntries,
                                              kMaxRevisionLoopIndexEntries, entryCount)) {
-        applyRevisionSlotDirectoryToSavedSetMetadata(entries, entryCount, metadata);
+        applyRevisionSlotDirectoryToSavedSetMetadata(revisionLoadSlotDirectoryEntries, entryCount,
+                                                     metadata);
+    }
+    revisionFile.close();
+    return true;
+#endif
+}
+
+size_t StorageManager::listSetRevisionHistoryEntries(
+    uint16_t setId, SetRevisionCatalog::RevisionBrowserListEntry* entries, size_t maxEntries) {
+#if BYPASS_STOP_UNDO_SAVE
+    (void)setId;
+    (void)entries;
+    (void)maxEntries;
+    return 0;
+#else
+    if (setId == 0 || entries == nullptr || maxEntries == 0) {
+        return 0;
+    }
+
+    char setMetaPath[64];
+    if (!SetRevisionCatalog::formatSetMetaPath(setMetaPath, sizeof(setMetaPath), setId) ||
+        !SD.exists(setMetaPath)) {
+        return 0;
+    }
+    File metaFile = SD.open(setMetaPath, FILE_READ);
+    if (!metaFile) {
+        return 0;
+    }
+    SetRevisionCatalog::SetMetaRecord meta{};
+    const StorageIo metaIo = storageIoFromFileRead(metaFile);
+    const bool metaOk = SetRevisionCatalog::readSetMetaRecord(metaIo, meta);
+    metaFile.close();
+    if (!metaOk || meta.setId != setId || meta.latestRevisionId == 0) {
+        return 0;
+    }
+
+    SetRevisionCatalog::RevisionBrowserListEntry scratch[16];
+    constexpr size_t kScratchCapacity = 16;
+    const size_t capacity = maxEntries < kScratchCapacity ? maxEntries : kScratchCapacity;
+    size_t count = 0;
+
+    for (uint16_t revisionId = meta.latestRevisionId;
+         revisionId > 0 && count < capacity; --revisionId) {
+        char revisionPath[80];
+        if (!SetRevisionCatalog::formatRevisionPath(revisionPath, sizeof(revisionPath), setId,
+                                                    revisionId, false) ||
+            !SD.exists(revisionPath)) {
+            continue;
+        }
+        File revisionFile = SD.open(revisionPath, FILE_READ);
+        if (!revisionFile) {
+            continue;
+        }
+        RevisionPackedBlob::RevisionHeader header{};
+        const bool headerOk = readRevisionHeaderFromRevisionFile(revisionFile, header);
+        revisionFile.close();
+        if (!headerOk || header.revisionId != revisionId) {
+            continue;
+        }
+        SetRevisionCatalog::RevisionBrowserListEntry& row = scratch[count];
+        row.revisionId = revisionId;
+        row.createdUnix = header.createdUnix;
+        ++count;
+    }
+
+    SetRevisionCatalog::sortRevisionBrowserListEntriesByCreatedUnixDesc(scratch, count);
+    for (size_t i = 0; i < count; ++i) {
+        entries[i] = scratch[i];
+    }
+    return count;
+#endif
+}
+
+bool StorageManager::readSetRevisionHistoryBrowserMetadata(
+    uint16_t setId, uint16_t revisionId, SavedSetCatalog::SavedSetMetadata& metadata,
+    uint32_t& createdUnixOut) {
+#if BYPASS_STOP_UNDO_SAVE
+    (void)setId;
+    (void)revisionId;
+    (void)metadata;
+    (void)createdUnixOut;
+    return false;
+#else
+    if (setId == 0 || revisionId == 0) {
+        return false;
+    }
+    metadata = {};
+    createdUnixOut = 0;
+
+    char revisionPath[80];
+    if (!SetRevisionCatalog::formatRevisionPath(revisionPath, sizeof(revisionPath), setId,
+                                                revisionId, false) ||
+        !SD.exists(revisionPath)) {
+        return false;
+    }
+    File revisionFile = SD.open(revisionPath, FILE_READ);
+    if (!revisionFile) {
+        return false;
+    }
+    const size_t fileSize = revisionFile.size();
+    RevisionPackedBlob::RevisionHeader header{};
+    if (!readRevisionHeaderFromRevisionFile(revisionFile, header)) {
+        revisionFile.close();
+        return false;
+    }
+    if (header.createdUnix != 0) {
+        createdUnixOut = static_cast<uint32_t>(header.createdUnix);
+        metadata.createdAtUnix = createdUnixOut;
+    }
+    uint16_t entryCount = 0;
+    if (readSlotIndexEntriesFromRevisionFile(revisionFile, fileSize, header,
+                                             revisionLoadSlotDirectoryEntries,
+                                             kMaxRevisionLoopIndexEntries, entryCount)) {
+        applyRevisionSlotDirectoryToSavedSetMetadata(revisionLoadSlotDirectoryEntries, entryCount,
+                                                     metadata);
     }
     revisionFile.close();
     return true;
@@ -4834,6 +4924,13 @@ void StorageManager::processDeferredSaveState(const LooperState& state) {
             if (!revLoadStepOk) {
                 Serial.print("[StorageManager] ERROR: Revision load failed at stage ");
                 Serial.println(static_cast<uint8_t>(revisionLoadStage));
+                revisionLoadLastDisplaySetId =
+                    revisionLoadSetId != 0 ? revisionLoadSetId : revisionLoadStagedSetId;
+                revisionLoadLastDisplayRevisionId = revisionLoadRevisionId != 0
+                                                          ? revisionLoadRevisionId
+                                                          : revisionLoadStagedRevisionId;
+                revisionLoadFailedAtMs = millis();
+                revisionLoadCompletedAtMs = 0;
                 resetRevisionLoadJobState();
                 break;
             }
@@ -5413,6 +5510,21 @@ CAPTURE_HITL_MEM void StorageManager::processHitlSerialCommands() {
                 if (delta != 0) {
                     displayManager.adjustLoadSaveListSelection(delta);
                 }
+            } else if (std::strncmp(sHitlSerialLineBuffer, "!OVERLAY_REV_HISTORY ", 21) == 0) {
+                const char* cursor = sHitlSerialLineBuffer + 21;
+                while (*cursor == ' ') {
+                    ++cursor;
+                }
+                unsigned setId = 0;
+                while (*cursor >= '0' && *cursor <= '9') {
+                    setId = setId * 10U + static_cast<unsigned>(*cursor - '0');
+                    ++cursor;
+                }
+                if (setId > 0U && setId <= 0xFFFFU) {
+                    displayManager.openRevisionHistoryFromHitl(static_cast<uint16_t>(setId));
+                }
+            } else if (std::strcmp(sHitlSerialLineBuffer, "!OVERLAY_BACK") == 0) {
+                displayManager.navigateLoadSaveOverlayBackFromHitl();
             } else if (std::strncmp(sHitlSerialLineBuffer, "!REV_LOAD ", 10) == 0) {
                 const char* cursor = sHitlSerialLineBuffer + 10;
                 unsigned setId = 0;
@@ -5460,6 +5572,56 @@ DeferredSaveDisplayStatus StorageManager::getDeferredSaveDisplayStatus(uint32_t 
     inputs.completedAtMs = deferredSaveCompletedAtMs;
     inputs.failedAtMs = deferredSaveFailedAtMs;
     return resolveDeferredSaveDisplayStatus(nowMs, inputs);
+#endif
+}
+
+DeferredSaveDisplayStatus StorageManager::getDeferredLoadDisplayStatus(uint32_t nowMs) {
+#if BYPASS_STOP_UNDO_SAVE
+    (void)nowMs;
+    return {};
+#else
+    DeferredLoadDisplayInputs inputs{};
+    inputs.loadPending = revisionLoadPending;
+    inputs.loadInProgress = revisionLoadInProgress;
+    inputs.saveThenLoadCommitInProgress =
+        revisionLoadSaveThenLoadPipeline && revisionCommitInProgress;
+    inputs.completedAtMs = revisionLoadCompletedAtMs;
+    inputs.failedAtMs = revisionLoadFailedAtMs;
+    return resolveDeferredLoadDisplayStatus(nowMs, inputs);
+#endif
+}
+
+uint16_t StorageManager::getRevisionLoadDisplayTargetSetId() {
+#if BYPASS_STOP_UNDO_SAVE
+    return 0;
+#else
+    if (revisionLoadPipelineActive || revisionLoadPending || revisionLoadInProgress) {
+        if (revisionLoadSetId != 0) {
+            return revisionLoadSetId;
+        }
+        return revisionLoadStagedSetId;
+    }
+    if (revisionLoadCompletedAtMs != 0 || revisionLoadFailedAtMs != 0) {
+        return revisionLoadLastDisplaySetId;
+    }
+    return 0;
+#endif
+}
+
+uint16_t StorageManager::getRevisionLoadDisplayTargetRevisionId() {
+#if BYPASS_STOP_UNDO_SAVE
+    return 0;
+#else
+    if (revisionLoadPipelineActive || revisionLoadPending || revisionLoadInProgress) {
+        if (revisionLoadRevisionId != 0) {
+            return revisionLoadRevisionId;
+        }
+        return revisionLoadStagedRevisionId;
+    }
+    if (revisionLoadCompletedAtMs != 0 || revisionLoadFailedAtMs != 0) {
+        return revisionLoadLastDisplayRevisionId;
+    }
+    return 0;
 #endif
 }
 
