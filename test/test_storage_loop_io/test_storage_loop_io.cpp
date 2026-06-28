@@ -504,6 +504,7 @@ void test_64_bar_record_snapshot_reloads_after_reboot_simulation() {
   applySnapshotToLoop(reloadedLoop, restored);
   TEST_ASSERT_EQUAL(expectedLoopLengthTicks, reloadedLoop.loopLengthTicks);
   TEST_ASSERT_TRUE(reloadedLoop.hasPublishedEvents());
+  reloadedLoop.ensureVisualCacheBuilt();
   TEST_ASSERT_TRUE(!reloadedLoop.visualCache.notes.empty());
 
   MidiEventVec playbackFlat;

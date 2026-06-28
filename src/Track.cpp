@@ -1321,10 +1321,10 @@ void Track::startOverdubbing(uint32_t currentTick) {
   loop.beginCapture(CapturePhase::Overdub);
   TrackUndo::beginOverdubSession(*this);
   logger.info("Overdub session opened: events=%d, undo_entries=%d",
-              static_cast<int>(loop.liveEventCount()),
+              static_cast<int>(loop.displayEventCountHint()),
               static_cast<int>(TrackUndo::getUndoCount(*this)));
   HotPathTelemetry::recordOverdubStart(micros() - telemetryStartUs,
-                                       static_cast<uint32_t>(loop.liveEventCount()),
+                                       static_cast<uint32_t>(loop.displayEventCountHint()),
                                        static_cast<uint32_t>(TrackUndo::getUndoCount(*this)));
   logger.logTrackEvent("Overdubbing started", currentTick);
 }
@@ -1345,7 +1345,7 @@ void Track::stopOverdubbing() {
     logMemoryAfterOverdubStop(recordAddedNoteOnCount, loop);
     logger.logTrackEvent("Overdubbing stopped", currentTick);
     logger.info("Overdub stopped (in-edit fold): events=%d, undo_entries=%d",
-                static_cast<int>(loop.liveEventCount()), TrackUndo::getUndoCount(*this));
+                static_cast<int>(loop.displayEventCountHint()), TrackUndo::getUndoCount(*this));
     resetPlaybackState(currentTick);
     displayManager.emitDisplayCaptureSnapshot(*this, activeLoopIndex, currentTick);
     HotPathTelemetry::requestDeferredSummary("overdub_stop");
@@ -1357,7 +1357,7 @@ void Track::stopOverdubbing() {
   finalizeCommitSideEffects(commitResult, CommitReason::OverdubStop, closeTick);
   logMemoryAfterOverdubStop(recordAddedNoteOnCount, loop);
   logger.logTrackEvent("Overdubbing stopped", currentTick);
-  logger.info("Overdub stopped: events=%d, undo_entries=%d", static_cast<int>(loop.liveEventCount()),
+  logger.info("Overdub stopped: events=%d, undo_entries=%d", static_cast<int>(loop.displayEventCountHint()),
               TrackUndo::getUndoCount(*this));
 
   // Preserve phase origin from record-stop rewind so playback cursor and event phase stay aligned.

@@ -8,17 +8,24 @@
 
 /**
  * SNVS-backed wall clock for CurrentSet timestamps and SavedSet folder naming.
- * Falls back to 0 when RTC is unset or unavailable (no battery / native tests).
+ * When the RTC reads invalid (unset battery, ~2019 default), firmware auto-seeds
+ * from build time and raises to the newest timestamp on SD when available.
  */
 namespace RtcTime {
 
 void init();
 
-/// Unix epoch seconds; 0 when RTC invalid or unset.
+/// Unix epoch seconds; auto-corrects invalid SNVS time before returning on Teensy.
 uint32_t getUnixTime();
 
-/// True when getUnixTime() is non-zero and on or after 2026-01-01 UTC.
+/// True when unix time is non-zero and on or after 2026-01-01 UTC.
 bool hasValidDateForFolderNaming();
+
+/// Seed SNVS from firmware build time when the clock reads invalid.
+bool ensureWallClockValid();
+
+/// Raise SNVS time to at least floorUnix when floor is valid and the clock is behind.
+void raiseWallClockToAtLeast(uint32_t floorUnix);
 
 /// Format unix time for display (e.g. "25 Jun 2026 19:32", UTC); empty when invalid.
 void formatLastActive(uint32_t unixTime, char* out, size_t outSize);

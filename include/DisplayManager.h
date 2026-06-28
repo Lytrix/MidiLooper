@@ -56,6 +56,8 @@ public:
     void drawBootStatusMessage(const char* text);
     /// Emit #CAP DISP snapshot for HITL display verification (capture builds).
     void emitDisplayCaptureSnapshot(const Track& track, uint8_t displaySlot, uint32_t currentTick);
+    void emitDisplayCaptureSnapshot(const Track& track, uint8_t displaySlot, uint32_t currentTick,
+                                    const DisplayNoteVec& frameNotes);
 
     /// Scroll set list selection in load/save mode (encoder GPIO + HITL !OVERLAY_SCROLL).
     void adjustLoadSaveListSelection(int delta);
@@ -108,7 +110,7 @@ public:
 
 private:
     void maybeEmitDisplayCaptureOnChange(const Track& track, uint8_t displaySlot, uint32_t currentTick,
-                                         size_t frameNoteCount);
+                                         const DisplayNoteVec& frameNotes);
 
     enum class SidebarMode : uint8_t {
         LOOP_EDIT,
@@ -213,7 +215,7 @@ private:
     bool resolveLoadSaveWorkspaceDetail(LoadSaveWorkspaceDetailParams& out);
     void refreshAutoSaveBeforeLoadToast(uint32_t nowMs);
     void drawLoadSaveView(uint32_t nowMs);
-    void drawLoadSaveDirtyPromptView();
+    void drawLoadSaveDirtyPromptView(uint32_t nowMs);
     void drawLoadSaveMinimalLoadingView(uint32_t nowMs);
     void drawLoadSaveRevisionHistoryView(uint32_t nowMs, uint16_t setId);
     void drawLoadSaveLoopPickView(uint16_t setId);

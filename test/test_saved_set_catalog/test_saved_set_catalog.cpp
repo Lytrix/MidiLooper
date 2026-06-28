@@ -104,6 +104,27 @@ void test_rtc_threshold_for_folder_naming() {
   RtcTime::resetForTest();
 }
 
+void test_rtc_ensure_wall_clock_valid_seeds_invalid_time() {
+  RtcTime::resetForTest();
+  RtcTime::setUnixTimeForTest(1546300800UL);  // Jan 2019 — typical unset RTC
+  TEST_ASSERT_FALSE(RtcTime::hasValidDateForFolderNaming());
+  TEST_ASSERT_TRUE(RtcTime::ensureWallClockValid());
+  TEST_ASSERT_TRUE(RtcTime::hasValidDateForFolderNaming());
+  RtcTime::resetForTest();
+}
+
+void test_rtc_raise_wall_clock_to_at_least() {
+  RtcTime::resetForTest();
+  RtcTime::setUnixTimeForTest(1767225600UL);
+  RtcTime::raiseWallClockToAtLeast(1800000000UL);
+  TEST_ASSERT_EQUAL_UINT32(1800000000UL, RtcTime::getUnixTime());
+
+  RtcTime::setUnixTimeForTest(1900000000UL);
+  RtcTime::raiseWallClockToAtLeast(1800000000UL);
+  TEST_ASSERT_EQUAL_UINT32(1900000000UL, RtcTime::getUnixTime());
+  RtcTime::resetForTest();
+}
+
 void test_reconcile_next_sequence_from_mixed_folders() {
   TEST_ASSERT_EQUAL_UINT32(8, SavedSetCatalog::reconcileNextSequence(7, 7));
   TEST_ASSERT_EQUAL_UINT32(9, SavedSetCatalog::reconcileNextSequence(4, 8));
@@ -167,6 +188,8 @@ int main(int argc, char** argv) {
   RUN_TEST(test_catalog_filters_reserved_entries);
   RUN_TEST(test_format_saved_set_folder_name_hybrid_modes);
   RUN_TEST(test_rtc_threshold_for_folder_naming);
+  RUN_TEST(test_rtc_ensure_wall_clock_valid_seeds_invalid_time);
+  RUN_TEST(test_rtc_raise_wall_clock_to_at_least);
   RUN_TEST(test_reconcile_next_sequence_from_mixed_folders);
   RUN_TEST(test_allocate_next_sequence_advances_index);
   RUN_TEST(test_saved_set_metadata_trailer_round_trip);

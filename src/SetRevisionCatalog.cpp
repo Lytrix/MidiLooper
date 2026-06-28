@@ -253,7 +253,11 @@ void sortRevisionBrowserListEntriesByCreatedUnixDesc(RevisionBrowserListEntry* e
   }
   for (size_t i = 0; i + 1 < count; ++i) {
     for (size_t j = i + 1; j < count; ++j) {
-      if (entries[j].createdUnix > entries[i].createdUnix) {
+      const bool jIsNewer =
+          entries[j].revisionId > entries[i].revisionId ||
+          (entries[j].revisionId == entries[i].revisionId &&
+           entries[j].createdUnix > entries[i].createdUnix);
+      if (jIsNewer) {
         const RevisionBrowserListEntry tmp = entries[i];
         entries[i] = entries[j];
         entries[j] = tmp;

@@ -69,6 +69,10 @@ void MidiButtonManager::onButtonPress(uint8_t note, uint8_t channel, MidiButtonC
             displayManager.handleLoadSaveOverlayPress(OverlayPress::Double);
             return;
         }
+        if (pressType == PressType::SHORT_PRESS) {
+            displayManager.handleLoadSaveOverlayPress(OverlayPress::Short);
+            return;
+        }
     }
     
     logger.info("Button press: %s (%s)", config->description, 
