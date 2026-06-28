@@ -50,6 +50,15 @@ def find_last_enter_exit_indices(ldsv: list[int]) -> tuple[Optional[int], Option
     return None, exit_idx
 
 
+def load_save_overlay_exited_after_line(lines: list[str], after_line_index: int) -> bool:
+    """True when LDSV=0 appears at or after the given line index."""
+    for i in range(after_line_index, len(lines)):
+        match = _LDSV_RE.search(lines[i])
+        if match is not None and int(match.group(1)) == 0:
+            return True
+    return False
+
+
 def verify_load_save_display(lines: list[str], args: object) -> dict[str, object]:
     issues: list[str] = []
     min_double_presses = int(getattr(args, "min_double_presses", 2) or 2)

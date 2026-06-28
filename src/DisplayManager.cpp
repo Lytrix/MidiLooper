@@ -627,10 +627,18 @@ const DisplayNoteVec& DisplayManager::resolveDisplayNotes(const Track& track, ui
                 filterSelectableDisplayNotes(track.editAwareMidiEvents(), focus,
                                              track.getMidiChannel(), loopLength);
             liveDisplayNotes.assign(filtered.begin(), filtered.end());
-            return liveDisplayNotes;
+        } else if (loopLength > 0) {
+            const auto& cachedNotes = track.getCachedNotes();
+            liveDisplayNotes.assign(cachedNotes.begin(), cachedNotes.end());
         }
-        const auto& cachedNotes = track.getCachedNotes();
-        liveDisplayNotes.assign(cachedNotes.begin(), cachedNotes.end());
+        if (liveDisplayNotes.empty() && loopLength > 0) {
+            const Loop& loop = track.getLoop(displaySlot);
+            if (loop.hasPublishedEvents() || loop.captureActive()) {
+                Loop& mutLoop = const_cast<Loop&>(loop);
+                mutLoop.ensureVisualCacheBuilt();
+                liveDisplayNotes.assign(loop.visualCache.notes.begin(), loop.visualCache.notes.end());
+            }
+        }
         return liveDisplayNotes;
     }
 
@@ -1481,16 +1489,38 @@ void DisplayManager::drawLoadSaveRowLoadStatusDots(int labelLeftX, int labelChar
 }
 
 void DisplayManager::refreshLoadSaveListCache() {
+    if (!StorageManager::isOverlayCatalogReadAllowed()) {
+        return;
+    }
     loadSaveListCount_ = StorageManager::listSetRevisionBrowserEntries(loadSaveListEntries_,
                                                                        kLoadSaveListCapacity);
     loadSaveListCacheValid_ = true;
 }
 
-void DisplayManager::refreshLoadSaveRevisionHistoryCache(uint16_t setId) {
+void DisplayManager::invalidateLoadSaveRevisionListCache() {
+    loadSaveRevisionListCacheValid_ = false;
+    loadSaveRevisionListCount_ = 0;
+    loadSaveRevisionListSetId_ = 0;
+}
+
+void DisplayManager::refreshLoadSaveRevisionHistoryCache(uint16_t setId, bool forceCatalogRead) {
+    if (!forceCatalogRead && !StorageManager::isOverlayCatalogReadAllowed()) {
+        return;
+    }
     loadSaveRevisionListSetId_ = setId;
     loadSaveRevisionListCount_ = StorageManager::listSetRevisionHistoryEntries(
         setId, loadSaveRevisionListEntries_, kLoadSaveListCapacity);
     loadSaveRevisionListCacheValid_ = true;
+}
+
+void DisplayManager::ensureLoadSaveRevisionListCache(uint16_t setId, bool forceCatalogRead) {
+    if (setId == 0) {
+        return;
+    }
+    if (forceCatalogRead || !loadSaveRevisionListCacheValid_ ||
+        loadSaveRevisionListSetId_ != setId) {
+        refreshLoadSaveRevisionHistoryCache(setId, forceCatalogRead);
+    }
 }
 
 uint16_t DisplayManager::resolveFocusedRootSetId() const {
@@ -1508,7 +1538,8 @@ uint16_t DisplayManager::resolveFocusedRootSetId() const {
 }
 
 uint16_t DisplayManager::resolveFocusedRevisionId() const {
-    if (loadSaveListSelection_ >= loadSaveRevisionListCount_) {
+    if (!loadSaveRevisionListCacheValid_ ||
+        loadSaveListSelection_ >= loadSaveRevisionListCount_) {
         return 0;
     }
     return loadSaveRevisionListEntries_[loadSaveListSelection_].revisionId;
@@ -1543,6 +1574,16 @@ bool DisplayManager::resolveLoadSaveWorkspaceDetail(LoadSaveWorkspaceDetailParam
         std::strcmp(loadSaveDetailCacheKey_.setFolderName, key.setFolderName) == 0) {
         out = loadSaveDetailCache_;
         return loadSaveDetailCacheOk_;
+    }
+
+    const bool overlayCatalogReadAllowed = StorageManager::isOverlayCatalogReadAllowed();
+    if (!overlayCatalogReadAllowed && loadSaveDetailCacheValid_) {
+        out = loadSaveDetailCache_;
+        return loadSaveDetailCacheOk_;
+    }
+    if (!overlayCatalogReadAllowed) {
+        out = {};
+        return false;
     }
 
     loadSaveDetailCacheKey_ = key;
@@ -1610,6 +1651,7 @@ void DisplayManager::handleLoadSaveOverlayPress(LoadSaveOverlayPressType pressTy
         const uint16_t setId = StorageManager::getSetBrowserOverlayDrilledSetId();
         switch (pressType) {
             case LoadSaveOverlayPressType::Short: {
+                ensureLoadSaveRevisionListCache(setId, true);
                 const uint16_t revisionId = resolveFocusedRevisionId();
                 if (revisionId != 0) {
                     StorageManager::requestLoadRevision(setId, revisionId);
@@ -1623,7 +1665,7 @@ void DisplayManager::handleLoadSaveOverlayPress(LoadSaveOverlayPressType pressTy
                                                                   parentScroll)) {
                     loadSaveListSelection_ = parentSelection;
                     loadSaveListScrollOffset_ = parentScroll;
-                    loadSaveRevisionListCacheValid_ = false;
+                    invalidateLoadSaveRevisionListCache();
                     invalidateLoadSaveDetailCache();
                 }
                 break;
@@ -1663,6 +1705,7 @@ void DisplayManager::handleLoadSaveOverlayPress(LoadSaveOverlayPressType pressTy
                 invalidateLoadSaveDetailCache();
                 loadSaveListSelection_ = 0;
                 loadSaveListScrollOffset_ = 0;
+                ensureLoadSaveRevisionListCache(focusedSetId, true);
 #if defined(SESSION_CAPTURE)
                 SC_OVERLAY_SEL(static_cast<int>(StorageManager::SetBrowserOverlayMode::RevisionHistory),
                                loadSaveListSelection_);
@@ -1789,6 +1832,7 @@ void DisplayManager::confirmLoadSaveFocusedRow() {
     }
     if (overlayMode == StorageManager::SetBrowserOverlayMode::RevisionHistory) {
         const uint16_t setId = StorageManager::getSetBrowserOverlayDrilledSetId();
+        ensureLoadSaveRevisionListCache(setId, true);
         const uint16_t revisionId = resolveFocusedRevisionId();
         if (revisionId != 0) {
 #if defined(SESSION_CAPTURE)
@@ -1797,6 +1841,11 @@ void DisplayManager::confirmLoadSaveFocusedRow() {
                 loadSaveListSelection_);
 #endif
             StorageManager::requestLoadRevision(setId, revisionId);
+        } else {
+#if defined(SESSION_CAPTURE)
+            SC_PERSIST("rev_overlay_load_skip", 0, setId, loadSaveListSelection_,
+                       loadSaveRevisionListCount_ > 0 ? "bad_selection" : "empty_list");
+#endif
         }
         return;
     }
@@ -1804,18 +1853,25 @@ void DisplayManager::confirmLoadSaveFocusedRow() {
         return;
     }
 
-    if (!SetBrowserOverlayPolicy::isRootSaveRow(loadSaveListSelection_)) {
+    if (SetBrowserOverlayPolicy::isRootSaveRow(loadSaveListSelection_)) {
+#if defined(SESSION_CAPTURE)
+        SC_OVERLAY_CONFIRM(0, loadSaveListSelection_);
+#endif
+        StorageManager::beginOverlaySaveRowCommit();
+        looperState.exitLoadSaveMode();
+#if defined(SESSION_CAPTURE)
+        SC_PERSIST("rev_overlay_save", 0, 0, 0, "queued_exit");
+#endif
         return;
     }
 
+    const uint16_t setId = resolveFocusedRootSetId();
+    if (setId != 0) {
 #if defined(SESSION_CAPTURE)
-    SC_OVERLAY_CONFIRM(0, loadSaveListSelection_);
+        SC_OVERLAY_CONFIRM(0, loadSaveListSelection_);
 #endif
-    StorageManager::requestCommitRevision();
-    looperState.exitLoadSaveMode();
-#if defined(SESSION_CAPTURE)
-    SC_PERSIST("rev_overlay_save", 0, 0, 0, "queued_exit");
-#endif
+        StorageManager::requestLoadLatestRevisionForSet(setId);
+    }
 }
 
 #if defined(SESSION_CAPTURE)
@@ -1825,7 +1881,7 @@ void DisplayManager::openRevisionHistoryFromHitl(uint16_t setId) {
     }
     StorageManager::openSetBrowserRevisionHistory(setId, loadSaveListSelection_,
                                                   loadSaveListScrollOffset_);
-    loadSaveRevisionListCacheValid_ = false;
+    invalidateLoadSaveRevisionListCache();
     loadSaveListSelection_ = 0;
     loadSaveListScrollOffset_ = 0;
     SC_OVERLAY_SEL(static_cast<int>(StorageManager::SetBrowserOverlayMode::RevisionHistory),
@@ -2020,23 +2076,28 @@ void DisplayManager::drawLoadSaveDirtyPromptView(uint32_t nowMs) {
 void DisplayManager::drawLoadSaveMinimalLoadingView(uint32_t nowMs) {
     constexpr int kLeftMargin = 2;
     _display.gfx.select_font(&Font5x7FixedMono);
-    const uint16_t setId = StorageManager::getRevisionLoadDisplayTargetSetId();
-    if (setId != 0) {
-        char label[16];
-        std::snprintf(label, sizeof(label), "S%04u", static_cast<unsigned>(setId));
-        _display.gfx.draw_text(_display.api.getFrameBuffer(), label, kLeftMargin, 0, 15);
-        drawLoadSaveRowLoadStatusDots(kLeftMargin, static_cast<int>(std::strlen(label)), 0, nowMs,
-                                      setId, 0);
+    if (StorageManager::hasRevisionCommitWork()) {
+        _display.gfx.draw_text(_display.api.getFrameBuffer(), "Saving", kLeftMargin, 0, 15);
+        const DeferredSaveDisplayStatus saveStatus =
+            StorageManager::getDeferredSaveDisplayStatus(nowMs);
+        drawPersistenceStatusDots(kLeftMargin + 6 * 6 + 2, std::max(0, 0 - 4), saveStatus);
     } else {
-        _display.gfx.draw_text(_display.api.getFrameBuffer(), "Loading...", kLeftMargin, 0, 15);
+        const uint16_t setId = StorageManager::getRevisionLoadDisplayTargetSetId();
+        if (setId != 0) {
+            char label[16];
+            std::snprintf(label, sizeof(label), "S%04u", static_cast<unsigned>(setId));
+            _display.gfx.draw_text(_display.api.getFrameBuffer(), label, kLeftMargin, 0, 15);
+            drawLoadSaveRowLoadStatusDots(kLeftMargin, static_cast<int>(std::strlen(label)), 0,
+                                          nowMs, setId, 0);
+        } else {
+            _display.gfx.draw_text(_display.api.getFrameBuffer(), "Loading...", kLeftMargin, 0, 15);
+        }
     }
     drawSaveStatusIndicator(nowMs, DISPLAY_WIDTH - 4);
 }
 
 void DisplayManager::drawLoadSaveRevisionHistoryView(uint32_t nowMs, uint16_t setId) {
-    if (!loadSaveRevisionListCacheValid_ || loadSaveRevisionListSetId_ != setId) {
-        refreshLoadSaveRevisionHistoryCache(setId);
-    }
+    ensureLoadSaveRevisionListCache(setId);
 
     const int kLoadSaveDividerX = loadSaveDividerX();
     const int kLoadSaveDetailX = loadSaveDetailContentX();
@@ -2406,7 +2467,10 @@ void DisplayManager::update() {
             for (uint8_t slotIndex = 0; slotIndex < Config::MAX_LOOPS_PER_TRACK; ++slotIndex) {
                 track.getLoop(slotIndex).markDisplayCachesStale();
             }
+            track.invalidateCaches();
         }
+        editManager.rematerializeNoteEditSessionAfterWorkspaceReload(
+            trackManager.getSelectedTrack());
         trackManager.forceLedUpdate(currentTick);
     }
     Track& selTrack = trackManager.getSelectedTrack();
@@ -2416,15 +2480,21 @@ void DisplayManager::update() {
     refreshAutoSaveBeforeLoadToast(now);
 
     if (loadSaveActive && !loadSaveModeWasActive_) {
-        StorageManager::resetSetBrowserOverlayNavigation();
-        refreshLoadSaveListCache();
-        loadSaveRevisionListCacheValid_ = false;
+        const bool preserveNavigation = SetBrowserOverlayPolicy::shouldPreserveOverlayNavigationOnEnter(
+            StorageManager::getSetBrowserOverlayPersistencePhase());
+        if (!preserveNavigation) {
+            StorageManager::resetSetBrowserOverlayNavigation();
+            loadSaveListSelection_ = 0;
+            loadSaveListScrollOffset_ = 0;
+            invalidateLoadSaveRevisionListCache();
+        }
+        if (!loadSaveListCacheValid_ && StorageManager::isOverlayCatalogReadAllowed()) {
+            refreshLoadSaveListCache();
+        }
         invalidateLoadSaveDetailCache();
-        loadSaveListSelection_ = 0;
-        loadSaveListScrollOffset_ = 0;
     } else if (!loadSaveActive && loadSaveModeWasActive_) {
         StorageManager::resetSetBrowserOverlayNavigation();
-        loadSaveRevisionListCacheValid_ = false;
+        invalidateLoadSaveRevisionListCache();
         invalidateLoadSaveDetailCache();
     }
     loadSaveModeWasActive_ = loadSaveActive;

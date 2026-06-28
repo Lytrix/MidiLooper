@@ -3,6 +3,8 @@
 
 #include "RevisionLoadPolicy.h"
 
+#include "SetBrowserOverlayPolicy.h"
+
 namespace RevisionLoadPolicy {
 
 LoadRequestGate resolveLoadRequestGate(bool workspaceDirty) {
@@ -15,12 +17,23 @@ bool shouldDispatchStagedLoadAfterCommitComplete(bool saveThenLoadPipelineActive
   return saveThenLoadPipelineActive && commitSucceeded;
 }
 
-bool isMinimalLoadingOverlayActive(bool pipelineActive, bool commitInProgress,
-                                   bool loadPending, bool loadInProgress) {
+bool isMinimalLoadingOverlayActive(bool pipelineActive, bool commitPending,
+                                   bool commitInProgress, bool loadPending,
+                                   bool loadInProgress) {
+  (void)loadPending;
+  (void)loadInProgress;
   if (!pipelineActive) {
     return false;
   }
-  return commitInProgress || loadPending || loadInProgress;
+  SetBrowserOverlayPolicy::PersistencePhase phase =
+      SetBrowserOverlayPolicy::PersistencePhase::Idle;
+  if (commitPending || commitInProgress) {
+    phase = SetBrowserOverlayPolicy::PersistencePhase::AwaitingCommitThenLoad;
+  } else {
+    phase = SetBrowserOverlayPolicy::PersistencePhase::LoadInProgress;
+  }
+  return SetBrowserOverlayPolicy::isMinimalLoadingOverlayActive(phase, true, commitPending,
+                                                                commitInProgress);
 }
 
 }  // namespace RevisionLoadPolicy

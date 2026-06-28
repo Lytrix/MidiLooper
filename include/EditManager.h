@@ -62,7 +62,10 @@ public:
     void cycleEditSession(Track& track);
     void sendEditSessionChange(EditSessionType sessionType);
     void openNoteEditSession(Track& track);
+    void reopenNoteEditSession(Track& track);
     void closeNoteEditSession(Track& track);
+    /// Rebuild session store from loop passes after workspace revision load replaced RAM.
+    void rematerializeNoteEditSessionAfterWorkspaceReload(Track& track);
     void closeNoteEditPass(Track& track);
     EditPassId commitEditAction(Track& track, EditPassVec rows);
     void pushSessionUndoOnKindChange(Track& track, NoteEditKind kind);

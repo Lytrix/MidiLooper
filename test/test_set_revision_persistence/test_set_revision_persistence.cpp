@@ -11,6 +11,7 @@
 #include "../../src/PersistenceSchema.cpp"
 #include "../../src/RevisionPackedBlob.cpp"
 #include "../../src/RevisionLoadPolicy.cpp"
+#include "../../src/OverlayCatalogReadPolicy.cpp"
 #include "../../src/BootRecoveryPolicy.cpp"
 #include "../../src/SetBrowserOverlayPolicy.cpp"
 #include "../../src/SetRevisionCatalog.cpp"
@@ -19,6 +20,7 @@
 #include "PersistenceBudget.h"
 #include "RevisionCommitPolicy.h"
 #include "RevisionLoadPolicy.h"
+#include "OverlayCatalogReadPolicy.h"
 #include "RevisionPackedBlob.h"
 #include "SetBrowserOverlayPolicy.h"
 #include "SetRevisionCatalog.h"
@@ -494,11 +496,104 @@ void test_save_then_load_dispatches_after_commit_complete() {
 }
 
 void test_minimal_loading_overlay_during_pipeline() {
-  TEST_ASSERT_TRUE(RevisionLoadPolicy::isMinimalLoadingOverlayActive(true, true, false, false));
-  TEST_ASSERT_TRUE(RevisionLoadPolicy::isMinimalLoadingOverlayActive(true, false, true, false));
-  TEST_ASSERT_TRUE(RevisionLoadPolicy::isMinimalLoadingOverlayActive(true, false, false, true));
-  TEST_ASSERT_FALSE(RevisionLoadPolicy::isMinimalLoadingOverlayActive(false, true, true, true));
-  TEST_ASSERT_FALSE(RevisionLoadPolicy::isMinimalLoadingOverlayActive(true, false, false, false));
+  using Phase = SetBrowserOverlayPolicy::PersistencePhase;
+  TEST_ASSERT_TRUE(SetBrowserOverlayPolicy::isMinimalLoadingOverlayActive(
+      Phase::AwaitingCommitThenLoad, true, true, false));
+  TEST_ASSERT_TRUE(SetBrowserOverlayPolicy::isMinimalLoadingOverlayActive(
+      Phase::AwaitingCommitThenLoad, true, false, true));
+  TEST_ASSERT_TRUE(SetBrowserOverlayPolicy::isMinimalLoadingOverlayActive(
+      Phase::LoadInProgress, true, false, false));
+  TEST_ASSERT_TRUE(SetBrowserOverlayPolicy::isMinimalLoadingOverlayActive(
+      Phase::CommitOnlyBackground, true, true, false));
+  TEST_ASSERT_FALSE(SetBrowserOverlayPolicy::isMinimalLoadingOverlayActive(
+      Phase::Idle, true, false, false));
+  TEST_ASSERT_FALSE(SetBrowserOverlayPolicy::isMinimalLoadingOverlayActive(
+      Phase::LoadInProgress, false, false, false));
+  TEST_ASSERT_FALSE(SetBrowserOverlayPolicy::isMinimalLoadingOverlayActive(
+      Phase::CommitOnlyBackground, true, false, false));
+}
+
+void test_overlay_persistence_phase_blocks_load_request() {
+  using Phase = SetBrowserOverlayPolicy::PersistencePhase;
+  TEST_ASSERT_FALSE(SetBrowserOverlayPolicy::isOverlayLoadRequestBlocked(Phase::Idle, false,
+                                                                         false));
+  TEST_ASSERT_TRUE(SetBrowserOverlayPolicy::isOverlayLoadRequestBlocked(
+      Phase::LoadInProgress, false, false));
+  TEST_ASSERT_TRUE(SetBrowserOverlayPolicy::isOverlayLoadRequestBlocked(
+      Phase::AwaitingCommitThenLoad, false, false));
+  TEST_ASSERT_TRUE(SetBrowserOverlayPolicy::isOverlayLoadRequestBlocked(Phase::Idle, true, false));
+  TEST_ASSERT_FALSE(SetBrowserOverlayPolicy::isOverlayLoadRequestBlocked(
+      Phase::CommitOnlyBackground, false, false));
+}
+
+void test_overlay_preserve_navigation_on_enter() {
+  using Phase = SetBrowserOverlayPolicy::PersistencePhase;
+  TEST_ASSERT_FALSE(SetBrowserOverlayPolicy::shouldPreserveOverlayNavigationOnEnter(Phase::Idle));
+  TEST_ASSERT_TRUE(SetBrowserOverlayPolicy::shouldPreserveOverlayNavigationOnEnter(
+      Phase::LoadInProgress));
+  TEST_ASSERT_TRUE(SetBrowserOverlayPolicy::shouldPreserveOverlayNavigationOnEnter(
+      Phase::AwaitingCommitThenLoad));
+  TEST_ASSERT_TRUE(SetBrowserOverlayPolicy::shouldPreserveOverlayNavigationOnEnter(
+      Phase::CommitOnlyBackground));
+}
+
+void test_legacy_minimal_loading_shim() {
+  TEST_ASSERT_TRUE(
+      RevisionLoadPolicy::isMinimalLoadingOverlayActive(true, true, false, false, false));
+  TEST_ASSERT_TRUE(
+      RevisionLoadPolicy::isMinimalLoadingOverlayActive(true, false, true, false, false));
+  TEST_ASSERT_TRUE(
+      RevisionLoadPolicy::isMinimalLoadingOverlayActive(true, false, false, true, false));
+  TEST_ASSERT_TRUE(
+      RevisionLoadPolicy::isMinimalLoadingOverlayActive(true, false, false, false, true));
+  TEST_ASSERT_FALSE(
+      RevisionLoadPolicy::isMinimalLoadingOverlayActive(false, true, true, true, true));
+  TEST_ASSERT_TRUE(
+      RevisionLoadPolicy::isMinimalLoadingOverlayActive(true, false, false, false, false));
+}
+
+void test_overlay_catalog_read_allowed_when_persistence_idle() {
+  OverlayCatalogReadPolicy::OverlayCatalogReadInputs inputs{};
+  TEST_ASSERT_TRUE(OverlayCatalogReadPolicy::isOverlayCatalogReadAllowed(inputs));
+}
+
+void test_overlay_catalog_read_blocked_during_deferred_save_work() {
+  OverlayCatalogReadPolicy::OverlayCatalogReadInputs inputs{};
+  inputs.deferredSavePending = true;
+  TEST_ASSERT_TRUE(OverlayCatalogReadPolicy::isOverlayCatalogReadAllowed(inputs));
+  inputs.deferredSavePending = false;
+  inputs.deferredSaveInProgress = true;
+  TEST_ASSERT_FALSE(OverlayCatalogReadPolicy::isOverlayCatalogReadAllowed(inputs));
+}
+
+void test_overlay_catalog_read_blocked_during_revision_commit_work() {
+  OverlayCatalogReadPolicy::OverlayCatalogReadInputs inputs{};
+  inputs.revisionCommitPending = true;
+  TEST_ASSERT_TRUE(OverlayCatalogReadPolicy::isOverlayCatalogReadAllowed(inputs));
+  inputs.revisionCommitPending = false;
+  inputs.revisionCommitInProgress = true;
+  TEST_ASSERT_FALSE(OverlayCatalogReadPolicy::isOverlayCatalogReadAllowed(inputs));
+}
+
+void test_overlay_catalog_read_blocked_during_revision_load_work() {
+  OverlayCatalogReadPolicy::OverlayCatalogReadInputs inputs{};
+  inputs.revisionLoadPending = true;
+  TEST_ASSERT_TRUE(OverlayCatalogReadPolicy::isOverlayCatalogReadAllowed(inputs));
+  inputs.revisionLoadPending = false;
+  inputs.revisionLoadInProgress = true;
+  TEST_ASSERT_FALSE(OverlayCatalogReadPolicy::isOverlayCatalogReadAllowed(inputs));
+}
+
+void test_overlay_catalog_read_blocked_during_sd_io_slice() {
+  OverlayCatalogReadPolicy::OverlayCatalogReadInputs inputs{};
+  inputs.deferredSaveSdIoActive = true;
+  TEST_ASSERT_FALSE(OverlayCatalogReadPolicy::isOverlayCatalogReadAllowed(inputs));
+  inputs.deferredSaveSdIoActive = false;
+  inputs.revisionCommitSdIoActive = true;
+  TEST_ASSERT_FALSE(OverlayCatalogReadPolicy::isOverlayCatalogReadAllowed(inputs));
+  inputs.revisionCommitSdIoActive = false;
+  inputs.revisionLoadSdIoActive = true;
+  TEST_ASSERT_FALSE(OverlayCatalogReadPolicy::isOverlayCatalogReadAllowed(inputs));
 }
 
 void test_boot_recovery_plan_includes_derived_and_latest() {
@@ -637,7 +732,7 @@ void test_overlay_input_modal_allows_transport_and_overlay_actions() {
       ActionType::TOGGLE_TRANSPORT));
 }
 
-void test_overlay_input_maps_record_track_notelen_for_browser() {
+void test_overlay_input_maps_record_track_edit_for_browser() {
   using ActionType = MidiButtonConfig::ActionType;
   using InputAction = SetBrowserOverlayPolicy::LoadSaveOverlayInputAction;
   TEST_ASSERT_EQUAL(static_cast<int>(InputAction::ScrollDown),
@@ -648,10 +743,10 @@ void test_overlay_input_maps_record_track_notelen_for_browser() {
                         ActionType::SELECT_TRACK)));
   TEST_ASSERT_EQUAL(static_cast<int>(InputAction::ConfirmFocusedRow),
                     static_cast<int>(SetBrowserOverlayPolicy::mapLoadSaveOverlayInputAction(
-                        ActionType::TOGGLE_LENGTH_EDIT_MODE)));
+                        ActionType::CYCLE_EDIT_MODE)));
   TEST_ASSERT_EQUAL(static_cast<int>(InputAction::None),
                     static_cast<int>(SetBrowserOverlayPolicy::mapLoadSaveOverlayInputAction(
-                        ActionType::CYCLE_EDIT_MODE)));
+                        ActionType::TOGGLE_LENGTH_EDIT_MODE)));
 }
 
 void test_overlay_input_modal_suppresses_note_edit_encoder() {
@@ -750,6 +845,14 @@ int main(int argc, char** argv) {
   RUN_TEST(test_dirty_load_request_dispatches_when_workspace_clean);
   RUN_TEST(test_save_then_load_dispatches_after_commit_complete);
   RUN_TEST(test_minimal_loading_overlay_during_pipeline);
+  RUN_TEST(test_overlay_persistence_phase_blocks_load_request);
+  RUN_TEST(test_overlay_preserve_navigation_on_enter);
+  RUN_TEST(test_legacy_minimal_loading_shim);
+  RUN_TEST(test_overlay_catalog_read_allowed_when_persistence_idle);
+  RUN_TEST(test_overlay_catalog_read_blocked_during_deferred_save_work);
+  RUN_TEST(test_overlay_catalog_read_blocked_during_revision_commit_work);
+  RUN_TEST(test_overlay_catalog_read_blocked_during_revision_load_work);
+  RUN_TEST(test_overlay_catalog_read_blocked_during_sd_io_slice);
   RUN_TEST(test_boot_recovery_plan_includes_derived_and_latest);
   RUN_TEST(test_boot_recovery_plan_skips_without_set_id);
   RUN_TEST(test_boot_recovery_latest_fallback_when_derived_fails);
@@ -763,7 +866,7 @@ int main(int argc, char** argv) {
   RUN_TEST(test_root_workspace_list_row_count);
   RUN_TEST(test_overlay_input_modal_suppresses_record_and_edit_actions);
   RUN_TEST(test_overlay_input_modal_allows_transport_and_overlay_actions);
-  RUN_TEST(test_overlay_input_maps_record_track_notelen_for_browser);
+  RUN_TEST(test_overlay_input_maps_record_track_edit_for_browser);
   RUN_TEST(test_overlay_input_modal_suppresses_note_edit_encoder);
   RUN_TEST(test_parse_set_id_from_catalog_folder_name);
   RUN_TEST(test_set_browser_list_sorts_by_updated_unix_desc);
