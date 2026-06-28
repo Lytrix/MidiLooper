@@ -33,6 +33,12 @@
 #include <Font5x7Fixed.h>
 #include <Font5x7FixedMono.h>
 
+#if defined(SESSION_CAPTURE) && defined(__IMXRT1062__)
+#define DISP_CAPTURE_MEM FLASHMEM
+#else
+#define DISP_CAPTURE_MEM
+#endif
+
 DisplayManager displayManager;
 namespace {
 MidiEventVec liveDisplayEventBuffer;
@@ -634,7 +640,7 @@ const DisplayNoteVec& DisplayManager::resolveDisplayNotes(const Track& track, ui
     return liveDisplayNotes;
 }
 
-void DisplayManager::emitDisplayCaptureSnapshot(const Track& track, uint8_t displaySlot,
+DISP_CAPTURE_MEM void DisplayManager::emitDisplayCaptureSnapshot(const Track& track, uint8_t displaySlot,
                                                 uint32_t currentTick) {
     const Loop& loop = track.getLoop(displaySlot);
     const uint32_t loopLen = resolveDisplayLoopLength(track, displaySlot, currentTick);
@@ -664,7 +670,7 @@ void DisplayManager::emitDisplayCaptureSnapshot(const Track& track, uint8_t disp
             bufferEvents, loop.hasPublishedEvents() ? 1 : 0);
 }
 
-void DisplayManager::maybeEmitDisplayCaptureOnChange(const Track& track, uint8_t displaySlot,
+DISP_CAPTURE_MEM void DisplayManager::maybeEmitDisplayCaptureOnChange(const Track& track, uint8_t displaySlot,
                                                      uint32_t currentTick, size_t frameNoteCount) {
     static size_t lastFrameNotes = static_cast<size_t>(-1);
     static uint8_t lastSlot = 255;
