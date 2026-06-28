@@ -622,6 +622,8 @@ void test_overlay_input_modal_suppresses_record_and_edit_actions() {
   TEST_ASSERT_TRUE(SetBrowserOverlayPolicy::shouldSuppressGlobalMidiAction(
       ActionType::CYCLE_EDIT_MODE));
   TEST_ASSERT_TRUE(SetBrowserOverlayPolicy::shouldSuppressGlobalMidiAction(
+      ActionType::TOGGLE_LENGTH_EDIT_MODE));
+  TEST_ASSERT_TRUE(SetBrowserOverlayPolicy::shouldSuppressGlobalMidiAction(
       ActionType::DELETE_OR_CREATE_NOTE));
 }
 
@@ -633,8 +635,23 @@ void test_overlay_input_modal_allows_transport_and_overlay_actions() {
       ActionType::TOGGLE_LOAD_SAVE_MODE));
   TEST_ASSERT_FALSE(SetBrowserOverlayPolicy::shouldSuppressGlobalMidiAction(
       ActionType::TOGGLE_TRANSPORT));
-  TEST_ASSERT_FALSE(SetBrowserOverlayPolicy::shouldSuppressGlobalMidiAction(
-      ActionType::SELECT_TRACK));
+}
+
+void test_overlay_input_maps_record_track_notelen_for_browser() {
+  using ActionType = MidiButtonConfig::ActionType;
+  using InputAction = SetBrowserOverlayPolicy::LoadSaveOverlayInputAction;
+  TEST_ASSERT_EQUAL(static_cast<int>(InputAction::ScrollDown),
+                    static_cast<int>(SetBrowserOverlayPolicy::mapLoadSaveOverlayInputAction(
+                        ActionType::TOGGLE_RECORD)));
+  TEST_ASSERT_EQUAL(static_cast<int>(InputAction::ScrollUp),
+                    static_cast<int>(SetBrowserOverlayPolicy::mapLoadSaveOverlayInputAction(
+                        ActionType::SELECT_TRACK)));
+  TEST_ASSERT_EQUAL(static_cast<int>(InputAction::ConfirmFocusedRow),
+                    static_cast<int>(SetBrowserOverlayPolicy::mapLoadSaveOverlayInputAction(
+                        ActionType::TOGGLE_LENGTH_EDIT_MODE)));
+  TEST_ASSERT_EQUAL(static_cast<int>(InputAction::None),
+                    static_cast<int>(SetBrowserOverlayPolicy::mapLoadSaveOverlayInputAction(
+                        ActionType::CYCLE_EDIT_MODE)));
 }
 
 void test_overlay_input_modal_suppresses_note_edit_encoder() {
@@ -718,6 +735,7 @@ int main(int argc, char** argv) {
   RUN_TEST(test_root_workspace_list_row_count);
   RUN_TEST(test_overlay_input_modal_suppresses_record_and_edit_actions);
   RUN_TEST(test_overlay_input_modal_allows_transport_and_overlay_actions);
+  RUN_TEST(test_overlay_input_maps_record_track_notelen_for_browser);
   RUN_TEST(test_overlay_input_modal_suppresses_note_edit_encoder);
   RUN_TEST(test_parse_set_id_from_catalog_folder_name);
   RUN_TEST(test_set_browser_list_sorts_by_updated_unix_desc);

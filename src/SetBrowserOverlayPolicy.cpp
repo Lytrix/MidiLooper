@@ -90,13 +90,27 @@ bool shouldSuppressGlobalMidiAction(MidiButtonConfig::ActionType actionType) {
     case ActionType::TOGGLE_LOAD_SAVE_MODE:
     case ActionType::TOGGLE_TRANSPORT:
     case ActionType::RESET_TO_LOOP_START:
-    case ActionType::SELECT_TRACK:
     case ActionType::MUTE_TRACK:
     case ActionType::SOLO_TRACK:
     case ActionType::CENTER_DETAILED_WINDOW_ON_PLAYHEAD:
       return false;
     default:
       return true;
+  }
+}
+
+LoadSaveOverlayInputAction mapLoadSaveOverlayInputAction(
+    MidiButtonConfig::ActionType actionType) {
+  using ActionType = MidiButtonConfig::ActionType;
+  switch (actionType) {
+    case ActionType::TOGGLE_RECORD:
+      return LoadSaveOverlayInputAction::ScrollDown;
+    case ActionType::SELECT_TRACK:
+      return LoadSaveOverlayInputAction::ScrollUp;
+    case ActionType::TOGGLE_LENGTH_EDIT_MODE:
+      return LoadSaveOverlayInputAction::ConfirmFocusedRow;
+    default:
+      return LoadSaveOverlayInputAction::None;
   }
 }
 

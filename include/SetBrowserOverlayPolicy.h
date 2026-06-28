@@ -67,6 +67,17 @@ size_t rootSetFolderListIndex(uint8_t listSelection);
 /// True when load/save overlay is active and global handlers must not run this MIDI action.
 bool shouldSuppressGlobalMidiAction(MidiButtonConfig::ActionType actionType);
 
+/// Load/save overlay remaps main-control short presses (record / track / NOTELEN).
+enum class LoadSaveOverlayInputAction : uint8_t {
+  None = 0,
+  ScrollDown,
+  ScrollUp,
+  ConfirmFocusedRow,
+};
+
+LoadSaveOverlayInputAction mapLoadSaveOverlayInputAction(
+    MidiButtonConfig::ActionType actionType);
+
 /// True when GPIO encoder rotation / pitch-edit hold must not drive note edit.
 bool shouldSuppressNoteEditEncoderInput();
 

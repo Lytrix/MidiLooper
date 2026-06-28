@@ -140,12 +140,13 @@ void Config::loadConfiguration() {
               .onLongPress(ActionType::MUTE_TRACK)
               .withParameter(255));
     
-    // Encoder Button - Edit Mode (mode cycle + exit only; add/delete on NOTELEN double)
+    // Edit mode (B2.31): short = LOOP ↔ NOTE; double = load/save overlay; long = exit note edit
     addButton(ButtonConfig(MidiConfig::Transport::NOTE_EDIT_MODE, ch16, "Edit Mode")
               .onShortPress(ActionType::CYCLE_EDIT_MODE)
+              .onDoublePress(ActionType::TOGGLE_LOAD_SAVE_MODE)
               .onLongPress(ActionType::EXIT_EDIT_MODE));
     
-    // NOTELEN (B2.32): position vs length toggle; double = delete selected or create at bracket
+    // NOTELEN (B2.32): short = position vs length; double = delete/create
     addButton(ButtonConfig(MidiConfig::LengthEdit::NOTE, ch16, "Length Edit Mode")
               .onShortPress(ActionType::TOGGLE_LENGTH_EDIT_MODE)
               .onDoublePress(ActionType::DELETE_OR_CREATE_NOTE));

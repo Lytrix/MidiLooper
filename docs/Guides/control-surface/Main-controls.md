@@ -26,7 +26,7 @@ Legacy strip: **short** = next track, **long** = mute current, **double/triple**
 
 ## Edit mode (note 38)
 
-**Short:** enter edit / cycle NOTE_EDIT ↔ LOOP_EDIT. **Long:** exit edit.
+**Short:** enter edit / cycle NOTE_EDIT ↔ LOOP_EDIT. **Double:** toggle load/save overlay. **Long:** exit edit.
 
 Add and delete notes use **NOTELEN** (note 35) double-press — see below.
 
@@ -36,6 +36,17 @@ Add and delete notes use **NOTELEN** (note 35) double-press — see below.
 |-------|------|
 | Short | Toggle note **start** vs **end** (length) editing |
 | Double | Delete selected note, or create at bracket when empty |
+
+## Load/save overlay (when open)
+
+| Control | Short press |
+|---------|-------------|
+| **Edit mode** (note 38) double | Enter / exit overlay |
+| **Record** (note 36) | Scroll list **down** |
+| **Track select** (note 37) | Scroll list **up** |
+| **NOTELEN** (note 35) | Confirm focused row (Save, load Set, or dirty-prompt choice) |
+
+Normal record / track / NOTELEN behavior resumes when the overlay is closed.
 
 ## More
 
