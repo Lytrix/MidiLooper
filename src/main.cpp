@@ -91,6 +91,7 @@ void setup() {
   midiHandler.setup();
   trackManager.setup();
   displayManager.setup();
+  displayManager.drawBootStatusMessage("Loading workspace...");
   looper.setup();  // SD + loadState; setSelectedTrack triggers forceLedUpdate (midi now ready)
 
   // Startup policy: enter LOOP_EDIT deterministically and sync DROID explicitly.
@@ -121,6 +122,10 @@ void setup() {
   trackManager.clearLeds();
   // Send initial 16th-note LEDs on startup (otherwise only sent when switching tracks or clock runs)
   trackManager.forceLedUpdate(clockManager.getCurrentTick());
+
+  // Paint the live UI immediately instead of waiting for the first loop() pass.
+  displayManager.update();
+
   HotPathTelemetry::emitSummary("startup");
 
   SC_SESSION_HEADER();
@@ -197,7 +202,6 @@ void loop() {
 
   if (!timingCriticalTrackActive) {
     StorageManager::processEditAutosave(looperState.getLooperState());
-    StorageManager::processSavedSetFailsafe(looperState.getLooperState());
     trackManager.reclaimUnreferencedDisabledPasses();
   }
 

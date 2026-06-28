@@ -52,6 +52,12 @@ struct SetBrowserListEntry {
   uint8_t favorite = 0;
 };
 
+/// One revision row in the revision-history drill-down (newest first).
+struct RevisionBrowserListEntry {
+  uint16_t revisionId = 0;
+  uint64_t createdUnix = 0;
+};
+
 uint32_t computeSetCatalogIndexChecksum(const SetCatalogIndex& index);
 uint32_t computeSetMetaChecksum(const SetMetaRecord& record);
 
@@ -81,5 +87,9 @@ bool formatRevisionPath(char* out, size_t outSize, uint16_t setId, uint16_t revi
 
 /// Sort workspace browser rows newest `updatedUnix` first (stable enough for small N).
 void sortSetBrowserListEntriesByUpdatedUnixDesc(SetBrowserListEntry* entries, size_t count);
+
+/// Sort revision history rows newest `createdUnix` first (stable enough for small N).
+void sortRevisionBrowserListEntriesByCreatedUnixDesc(RevisionBrowserListEntry* entries,
+                                                     size_t count);
 
 }  // namespace SetRevisionCatalog

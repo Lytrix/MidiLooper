@@ -246,4 +246,20 @@ void sortSetBrowserListEntriesByUpdatedUnixDesc(SetBrowserListEntry* entries, si
   }
 }
 
+void sortRevisionBrowserListEntriesByCreatedUnixDesc(RevisionBrowserListEntry* entries,
+                                                     size_t count) {
+  if (entries == nullptr || count < 2) {
+    return;
+  }
+  for (size_t i = 0; i + 1 < count; ++i) {
+    for (size_t j = i + 1; j < count; ++j) {
+      if (entries[j].createdUnix > entries[i].createdUnix) {
+        const RevisionBrowserListEntry tmp = entries[i];
+        entries[i] = entries[j];
+        entries[j] = tmp;
+      }
+    }
+  }
+}
+
 }  // namespace SetRevisionCatalog

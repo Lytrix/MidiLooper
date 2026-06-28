@@ -12,7 +12,6 @@
 namespace SavedSetCatalog {
 
 constexpr uint32_t kSavedSetMetaTrailerMagic = 0x44535453UL;  // "SSTD"
-constexpr uint32_t kEightHourFailsafeSeconds = 8UL * 60UL * 60UL;
 constexpr size_t kSavedSetLabelCapacity = 32;
 /// Byte size of on-disk SavedSet metadata trailer (before kSaveFileToken).
 constexpr size_t kSavedSetMetadataTrailerByteSize = 60;
@@ -64,9 +63,5 @@ void formatDefaultSavedSetLabel(uint32_t createdAtUnix, const char* fallbackFold
 bool writeSavedSetMetadataTrailer(const StorageIo& io,
                                   const SavedSetMetadata& metadata);
 bool readSavedSetMetadataTrailer(const StorageIo& io, SavedSetMetadata& metadata);
-
-bool shouldRunEightHourFailsafe(bool hasMaterialChangesSinceAnchor,
-                                uint32_t lastMaterialChangeUnix, uint32_t nowUnix,
-                                bool captureActive);
 
 }  // namespace SavedSetCatalog

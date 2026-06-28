@@ -76,3 +76,37 @@ inline DeferredSaveDisplayStatus resolveDeferredSaveDisplayStatus(uint32_t nowMs
     }
     return status;
 }
+
+struct DeferredLoadDisplayInputs {
+    bool loadPending = false;
+    bool loadInProgress = false;
+    bool saveThenLoadCommitInProgress = false;
+    uint32_t completedAtMs = 0;
+    uint32_t failedAtMs = 0;
+};
+
+inline DeferredSaveDisplayStatus resolveDeferredLoadDisplayStatus(
+    uint32_t nowMs, const DeferredLoadDisplayInputs& inputs) {
+    DeferredSaveDisplayStatus status{};
+    const bool loadInProgress = inputs.loadInProgress || inputs.saveThenLoadCommitInProgress;
+    if (loadInProgress) {
+        status.phase = DeferredSaveDisplayPhase::InProgress;
+        status.rotateStep = static_cast<uint8_t>((nowMs / kDeferredSaveDisplayRotateMs) % 4);
+        return status;
+    }
+    if (inputs.loadPending) {
+        status.phase = DeferredSaveDisplayPhase::Pending;
+        return status;
+    }
+    if (inputs.completedAtMs != 0 && nowMs >= inputs.completedAtMs &&
+        (nowMs - inputs.completedAtMs) < kDeferredSaveDisplayFlashMs) {
+        status.phase = DeferredSaveDisplayPhase::Completed;
+        return status;
+    }
+    if (inputs.failedAtMs != 0 && nowMs >= inputs.failedAtMs &&
+        (nowMs - inputs.failedAtMs) < kDeferredSaveDisplayFlashMs) {
+        status.phase = DeferredSaveDisplayPhase::Failed;
+        return status;
+    }
+    return status;
+}

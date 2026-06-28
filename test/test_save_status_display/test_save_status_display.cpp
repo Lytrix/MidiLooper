@@ -88,6 +88,36 @@ void test_revision_commit_in_progress_overrides_pending() {
     TEST_ASSERT_EQUAL(2, status.rotateStep);
 }
 
+void test_load_idle_when_no_load_activity() {
+    DeferredLoadDisplayInputs inputs{};
+    const DeferredSaveDisplayStatus status = resolveDeferredLoadDisplayStatus(1000, inputs);
+    TEST_ASSERT_EQUAL(DeferredSaveDisplayPhase::Idle, status.phase);
+}
+
+void test_load_pending_when_queued_not_dispatching() {
+    DeferredLoadDisplayInputs inputs{};
+    inputs.loadPending = true;
+    const DeferredSaveDisplayStatus status = resolveDeferredLoadDisplayStatus(1000, inputs);
+    TEST_ASSERT_EQUAL(DeferredSaveDisplayPhase::Pending, status.phase);
+}
+
+void test_load_in_progress_overrides_pending() {
+    DeferredLoadDisplayInputs inputs{};
+    inputs.loadPending = true;
+    inputs.loadInProgress = true;
+    const DeferredSaveDisplayStatus status = resolveDeferredLoadDisplayStatus(450, inputs);
+    TEST_ASSERT_EQUAL(DeferredSaveDisplayPhase::InProgress, status.phase);
+    TEST_ASSERT_EQUAL(2, status.rotateStep);
+}
+
+void test_save_then_load_commit_counts_as_load_in_progress() {
+    DeferredLoadDisplayInputs inputs{};
+    inputs.loadPending = true;
+    inputs.saveThenLoadCommitInProgress = true;
+    const DeferredSaveDisplayStatus status = resolveDeferredLoadDisplayStatus(400, inputs);
+    TEST_ASSERT_EQUAL(DeferredSaveDisplayPhase::InProgress, status.phase);
+}
+
 int main(int argc, char** argv) {
     (void)argc;
     (void)argv;
@@ -102,5 +132,9 @@ int main(int argc, char** argv) {
     RUN_TEST(test_pending_overrides_completed_flash);
     RUN_TEST(test_revision_commit_pending_shows_pending);
     RUN_TEST(test_revision_commit_in_progress_overrides_pending);
+    RUN_TEST(test_load_idle_when_no_load_activity);
+    RUN_TEST(test_load_pending_when_queued_not_dispatching);
+    RUN_TEST(test_load_in_progress_overrides_pending);
+    RUN_TEST(test_save_then_load_commit_counts_as_load_in_progress);
     return UNITY_END();
 }

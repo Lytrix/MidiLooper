@@ -757,6 +757,18 @@ void DisplayManager::clearDisplayBuffer() {
     Serial.println("DisplayManager: Display buffer displayed");
 }
 
+void DisplayManager::drawBootStatusMessage(const char* text) {
+    if (text == nullptr) {
+        return;
+    }
+    _display.gfx.fill_buffer(_display.api.getFrameBuffer(), 0);
+    _display.gfx.select_font(&Font5x7Fixed);
+    const int textWidth = static_cast<int>(std::strlen(text)) * 6;
+    const int x = std::max(0, (DISPLAY_WIDTH - textWidth) / 2);
+    _display.gfx.draw_text(_display.api.getFrameBuffer(), text, x, 32, 15);
+    _display.api.display();
+}
+
 // Helper: Map TrackState to status letter
 static char trackStateToLetter(TrackState state, bool muted) {
     if (muted) return 'M';
@@ -854,7 +866,6 @@ void DisplayManager::setup() {
     _display.api.display();
     Serial.println("DisplayManager: Text sent to display");
     delay(1500);
-    clearDisplayBuffer();
 }
 
 
@@ -1384,21 +1395,13 @@ void DisplayManager::drawSidebar(Track& selectedTrack, uint8_t displaySlot) {
     drawSaveStatusIndicator(millis(), textRight);
 }
 
-void DisplayManager::drawSaveStatusIndicator(uint32_t nowMs, int textRight) {
-    const DeferredSaveDisplayStatus status = StorageManager::getDeferredSaveDisplayStatus(nowMs);
-    static DeferredSaveDisplayPhase lastReportedPhase = DeferredSaveDisplayPhase::Idle;
-    if (status.phase != lastReportedPhase) {
-        SC_SAVE(deferredSaveDisplayPhaseName(status.phase), status.rotateStep);
-        lastReportedPhase = status.phase;
-    }
-
+void DisplayManager::drawPersistenceStatusDots(int startX, int dotY,
+                                             const DeferredSaveDisplayStatus& status) {
     if (status.phase == DeferredSaveDisplayPhase::Idle) {
         return;
     }
 
     constexpr int kDotCount = 4;
-    constexpr int kTotalWidth = kDotCount + (kDotCount - 1) * kSaveStatusDotSpacing;
-    const int startX = textRight - kTotalWidth + 1;
     for (int i = 0; i < kDotCount; ++i) {
         uint8_t brightness = 0;
         switch (status.phase) {
@@ -1419,14 +1422,64 @@ void DisplayManager::drawSaveStatusIndicator(uint32_t nowMs, int textRight) {
                 break;
         }
         const int x = startX + i * (1 + kSaveStatusDotSpacing);
-        _display.gfx.draw_pixel(_display.api.getFrameBuffer(), x, kSaveStatusDotY, brightness);
+        _display.gfx.draw_pixel(_display.api.getFrameBuffer(), x, dotY, brightness);
     }
+}
+
+void DisplayManager::drawSaveStatusIndicator(uint32_t nowMs, int textRight) {
+    const DeferredSaveDisplayStatus status = StorageManager::getDeferredSaveDisplayStatus(nowMs);
+    static DeferredSaveDisplayPhase lastReportedPhase = DeferredSaveDisplayPhase::Idle;
+    if (status.phase != lastReportedPhase) {
+        SC_SAVE(deferredSaveDisplayPhaseName(status.phase), status.rotateStep);
+        lastReportedPhase = status.phase;
+    }
+
+    if (status.phase == DeferredSaveDisplayPhase::Idle) {
+        return;
+    }
+
+    constexpr int kDotCount = 4;
+    constexpr int kTotalWidth = kDotCount + (kDotCount - 1) * kSaveStatusDotSpacing;
+    const int startX = textRight - kTotalWidth + 1;
+    drawPersistenceStatusDots(startX, kSaveStatusDotY, status);
+}
+
+void DisplayManager::drawLoadSaveRowLoadStatusDots(int labelLeftX, int labelCharCount, int rowY,
+                                                   uint32_t nowMs, uint16_t setId,
+                                                   uint16_t revisionId) {
+    if (setId == 0) {
+        return;
+    }
+    if (StorageManager::getRevisionLoadDisplayTargetSetId() != setId) {
+        return;
+    }
+    if (revisionId != 0 &&
+        StorageManager::getRevisionLoadDisplayTargetRevisionId() != revisionId) {
+        return;
+    }
+    const DeferredSaveDisplayStatus loadStatus =
+        StorageManager::getDeferredLoadDisplayStatus(nowMs);
+    if (loadStatus.phase == DeferredSaveDisplayPhase::Idle) {
+        return;
+    }
+    constexpr int kDotGapAfterLabel = 2;
+    const int dotsStartX =
+        labelLeftX + labelCharCount * kLoadSaveDetailCharWidth + kDotGapAfterLabel;
+    const int dotY = rowY - 4;
+    drawPersistenceStatusDots(dotsStartX, dotY, loadStatus);
 }
 
 void DisplayManager::refreshLoadSaveListCache() {
     loadSaveListCount_ = StorageManager::listSetRevisionBrowserEntries(loadSaveListEntries_,
                                                                        kLoadSaveListCapacity);
     loadSaveListCacheValid_ = true;
+}
+
+void DisplayManager::refreshLoadSaveRevisionHistoryCache(uint16_t setId) {
+    loadSaveRevisionListSetId_ = setId;
+    loadSaveRevisionListCount_ = StorageManager::listSetRevisionHistoryEntries(
+        setId, loadSaveRevisionListEntries_, kLoadSaveListCapacity);
+    loadSaveRevisionListCacheValid_ = true;
 }
 
 uint16_t DisplayManager::resolveFocusedRootSetId() const {
@@ -1441,6 +1494,84 @@ uint16_t DisplayManager::resolveFocusedRootSetId() const {
         return 0;
     }
     return setId;
+}
+
+uint16_t DisplayManager::resolveFocusedRevisionId() const {
+    if (loadSaveListSelection_ >= loadSaveRevisionListCount_) {
+        return 0;
+    }
+    return loadSaveRevisionListEntries_[loadSaveListSelection_].revisionId;
+}
+
+void DisplayManager::invalidateLoadSaveDetailCache() {
+    loadSaveDetailCacheValid_ = false;
+}
+
+bool DisplayManager::resolveLoadSaveWorkspaceDetail(LoadSaveWorkspaceDetailParams& out) {
+    const StorageManager::SetBrowserOverlayMode overlayMode =
+        StorageManager::getSetBrowserOverlayMode();
+    const SetBrowserOverlayPolicy::Mode policyMode =
+        static_cast<SetBrowserOverlayPolicy::Mode>(overlayMode);
+
+    LoadSaveDetailCacheKey key{};
+    key.mode = policyMode;
+    key.listSelection = loadSaveListSelection_;
+    key.drilledSetId = StorageManager::getSetBrowserOverlayDrilledSetId();
+    if (policyMode == SetBrowserOverlayPolicy::Mode::Root) {
+        const size_t savedIndex =
+            SetBrowserOverlayPolicy::rootSetFolderListIndex(loadSaveListSelection_);
+        if (savedIndex < loadSaveListCount_) {
+            std::snprintf(key.setFolderName, sizeof(key.setFolderName), "%s",
+                          loadSaveListEntries_[savedIndex].folderName);
+        }
+    }
+
+    if (loadSaveDetailCacheValid_ && loadSaveDetailCacheKey_.mode == key.mode &&
+        loadSaveDetailCacheKey_.listSelection == key.listSelection &&
+        loadSaveDetailCacheKey_.drilledSetId == key.drilledSetId &&
+        std::strcmp(loadSaveDetailCacheKey_.setFolderName, key.setFolderName) == 0) {
+        out = loadSaveDetailCache_;
+        return loadSaveDetailCacheOk_;
+    }
+
+    loadSaveDetailCacheKey_ = key;
+    loadSaveDetailCache_ = {};
+    bool detailOk = false;
+
+    if (policyMode == SetBrowserOverlayPolicy::Mode::RevisionHistory) {
+        const uint16_t setId = key.drilledSetId;
+        const uint16_t revisionId = resolveFocusedRevisionId();
+        loadSaveDetailCache_.setId = setId;
+        loadSaveDetailCache_.revisionId = revisionId;
+        if (setId != 0 && revisionId != 0) {
+            detailOk = StorageManager::readSetRevisionHistoryBrowserMetadata(
+                setId, revisionId, loadSaveDetailCache_.metrics,
+                loadSaveDetailCache_.timestampUnix);
+        }
+    } else if (policyMode == SetBrowserOverlayPolicy::Mode::Root) {
+        const bool isSaveRow = SetBrowserOverlayPolicy::isRootSaveRow(loadSaveListSelection_);
+        const bool isCurrentRow =
+            SetBrowserOverlayPolicy::isRootCurrentRow(loadSaveListSelection_);
+        if (isSaveRow || isCurrentRow) {
+            detailOk = StorageManager::readCurrentSetBrowserMetadata(loadSaveDetailCache_.metrics);
+            loadSaveDetailCache_.timestampUnix = loadSaveDetailCache_.metrics.createdAtUnix;
+            loadSaveDetailCache_.setId = StorageManager::getCurrentWorkspaceDerivedSetId();
+            loadSaveDetailCache_.revisionId =
+                StorageManager::getCurrentWorkspaceDerivedRevisionId();
+            if (isCurrentRow && StorageManager::isCurrentWorkspaceDirty()) {
+                loadSaveDetailCache_.markRevisionUnsaved = true;
+            }
+        } else if (key.setFolderName[0] != '\0') {
+            detailOk = StorageManager::readSetRevisionCatalogBrowserMetadata(
+                key.setFolderName, loadSaveDetailCache_.metrics, loadSaveDetailCache_.setId,
+                loadSaveDetailCache_.revisionId, loadSaveDetailCache_.timestampUnix);
+        }
+    }
+
+    loadSaveDetailCacheValid_ = true;
+    loadSaveDetailCacheOk_ = detailOk;
+    out = loadSaveDetailCache_;
+    return detailOk;
 }
 
 void DisplayManager::handleLoadSaveOverlayPress(LoadSaveOverlayPressType pressType) {
@@ -1460,6 +1591,34 @@ void DisplayManager::handleLoadSaveOverlayPress(LoadSaveOverlayPressType pressTy
         } else if (pressType == LoadSaveOverlayPressType::Long) {
             StorageManager::cancelRevisionLoadDirtyPrompt();
             looperState.exitLoadSaveMode();
+        }
+        return;
+    }
+
+    if (overlayMode == StorageManager::SetBrowserOverlayMode::RevisionHistory) {
+        const uint16_t setId = StorageManager::getSetBrowserOverlayDrilledSetId();
+        switch (pressType) {
+            case LoadSaveOverlayPressType::Short: {
+                const uint16_t revisionId = resolveFocusedRevisionId();
+                if (revisionId != 0) {
+                    StorageManager::requestLoadRevision(setId, revisionId);
+                }
+                break;
+            }
+            case LoadSaveOverlayPressType::Long: {
+                uint8_t parentSelection = 0;
+                uint8_t parentScroll = 0;
+                if (StorageManager::navigateSetBrowserOverlayBack(parentSelection,
+                                                                  parentScroll)) {
+                    loadSaveListSelection_ = parentSelection;
+                    loadSaveListScrollOffset_ = parentScroll;
+                    loadSaveRevisionListCacheValid_ = false;
+                    invalidateLoadSaveDetailCache();
+                }
+                break;
+            }
+            default:
+                break;
         }
         return;
     }
@@ -1489,6 +1648,14 @@ void DisplayManager::handleLoadSaveOverlayPress(LoadSaveOverlayPressType pressTy
             if (isSetRow) {
                 StorageManager::openSetBrowserRevisionHistory(focusedSetId, loadSaveListSelection_,
                                                               loadSaveListScrollOffset_);
+                loadSaveRevisionListCacheValid_ = false;
+                invalidateLoadSaveDetailCache();
+                loadSaveListSelection_ = 0;
+                loadSaveListScrollOffset_ = 0;
+#if defined(SESSION_CAPTURE)
+                SC_OVERLAY_SEL(static_cast<int>(StorageManager::SetBrowserOverlayMode::RevisionHistory),
+                               loadSaveListSelection_);
+#endif
             } else {
                 looperState.exitLoadSaveMode();
             }
@@ -1510,6 +1677,7 @@ void DisplayManager::adjustLoadSaveListSelection(int delta) {
         return;
     }
     if (SetBrowserOverlayPolicy::isDrillMode(StorageManager::getSetBrowserOverlayMode())) {
+        adjustLoadSaveListSelectionInDrillMode(delta);
         return;
     }
     const size_t totalRows =
@@ -1525,6 +1693,7 @@ void DisplayManager::adjustLoadSaveListSelection(int delta) {
         next = static_cast<int>(totalRows) - 1;
     }
     loadSaveListSelection_ = static_cast<uint8_t>(next);
+    invalidateLoadSaveDetailCache();
 
     constexpr int kListRowsStartY = kLoadSaveTextLineStep;
     constexpr int kListVisibleRows = (DISPLAY_HEIGHT - kListRowsStartY) / kLoadSaveTextLineStep;
@@ -1536,6 +1705,49 @@ void DisplayManager::adjustLoadSaveListSelection(int delta) {
     }
 #if defined(SESSION_CAPTURE)
     SC_OVERLAY_SEL(0, loadSaveListSelection_);
+#endif
+}
+
+void DisplayManager::adjustLoadSaveListSelectionInDrillMode(int delta) {
+    if (delta == 0) {
+        return;
+    }
+    const StorageManager::SetBrowserOverlayMode overlayMode =
+        StorageManager::getSetBrowserOverlayMode();
+    if (overlayMode != StorageManager::SetBrowserOverlayMode::RevisionHistory) {
+        return;
+    }
+
+    const uint16_t setId = StorageManager::getSetBrowserOverlayDrilledSetId();
+    if (!loadSaveRevisionListCacheValid_ || loadSaveRevisionListSetId_ != setId) {
+        refreshLoadSaveRevisionHistoryCache(setId);
+    }
+
+    const size_t totalRows = loadSaveRevisionListCount_;
+    if (totalRows == 0) {
+        loadSaveListSelection_ = 0;
+        return;
+    }
+    int next = static_cast<int>(loadSaveListSelection_) + delta;
+    if (next < 0) {
+        next = 0;
+    } else if (static_cast<size_t>(next) >= totalRows) {
+        next = static_cast<int>(totalRows) - 1;
+    }
+    loadSaveListSelection_ = static_cast<uint8_t>(next);
+    invalidateLoadSaveDetailCache();
+
+    constexpr int kListRowsStartY = kLoadSaveTextLineStep;
+    constexpr int kListVisibleRows = (DISPLAY_HEIGHT - kListRowsStartY) / kLoadSaveTextLineStep;
+    if (loadSaveListSelection_ < loadSaveListScrollOffset_) {
+        loadSaveListScrollOffset_ = loadSaveListSelection_;
+    } else if (loadSaveListSelection_ >= loadSaveListScrollOffset_ + kListVisibleRows) {
+        loadSaveListScrollOffset_ =
+            loadSaveListSelection_ - static_cast<uint8_t>(kListVisibleRows - 1);
+    }
+#if defined(SESSION_CAPTURE)
+    SC_OVERLAY_SEL(static_cast<int>(StorageManager::SetBrowserOverlayMode::RevisionHistory),
+                   loadSaveListSelection_);
 #endif
 }
 
@@ -1564,6 +1776,19 @@ void DisplayManager::confirmLoadSaveFocusedRow() {
         }
         return;
     }
+    if (overlayMode == StorageManager::SetBrowserOverlayMode::RevisionHistory) {
+        const uint16_t setId = StorageManager::getSetBrowserOverlayDrilledSetId();
+        const uint16_t revisionId = resolveFocusedRevisionId();
+        if (revisionId != 0) {
+#if defined(SESSION_CAPTURE)
+            SC_OVERLAY_CONFIRM(
+                static_cast<int>(StorageManager::SetBrowserOverlayMode::RevisionHistory),
+                loadSaveListSelection_);
+#endif
+            StorageManager::requestLoadRevision(setId, revisionId);
+        }
+        return;
+    }
     if (overlayMode != StorageManager::SetBrowserOverlayMode::Root) {
         return;
     }
@@ -1581,6 +1806,28 @@ void DisplayManager::confirmLoadSaveFocusedRow() {
     SC_PERSIST("rev_overlay_save", 0, 0, 0, "queued_exit");
 #endif
 }
+
+#if defined(SESSION_CAPTURE)
+void DisplayManager::openRevisionHistoryFromHitl(uint16_t setId) {
+    if (!looperState.isLoadSaveModeActive() || setId == 0) {
+        return;
+    }
+    StorageManager::openSetBrowserRevisionHistory(setId, loadSaveListSelection_,
+                                                  loadSaveListScrollOffset_);
+    loadSaveRevisionListCacheValid_ = false;
+    loadSaveListSelection_ = 0;
+    loadSaveListScrollOffset_ = 0;
+    SC_OVERLAY_SEL(static_cast<int>(StorageManager::SetBrowserOverlayMode::RevisionHistory),
+                   loadSaveListSelection_);
+}
+
+void DisplayManager::navigateLoadSaveOverlayBackFromHitl() {
+    if (!looperState.isLoadSaveModeActive()) {
+        return;
+    }
+    handleLoadSaveOverlayPress(LoadSaveOverlayPressType::Long);
+}
+#endif
 
 void DisplayManager::drawLoadSaveTrackFilledBar(int x, int y, int barWidth, int barHeight,
                                                 uint8_t filledSlots, uint8_t maxSlots,
@@ -1754,17 +2001,61 @@ void DisplayManager::drawLoadSaveDirtyPromptView() {
 void DisplayManager::drawLoadSaveMinimalLoadingView(uint32_t nowMs) {
     constexpr int kLeftMargin = 2;
     _display.gfx.select_font(&Font5x7FixedMono);
-    _display.gfx.draw_text(_display.api.getFrameBuffer(), "Loading...", kLeftMargin, 0, 15);
+    const uint16_t setId = StorageManager::getRevisionLoadDisplayTargetSetId();
+    if (setId != 0) {
+        char label[16];
+        std::snprintf(label, sizeof(label), "S%04u", static_cast<unsigned>(setId));
+        _display.gfx.draw_text(_display.api.getFrameBuffer(), label, kLeftMargin, 0, 15);
+        drawLoadSaveRowLoadStatusDots(kLeftMargin, static_cast<int>(std::strlen(label)), 0, nowMs,
+                                      setId, 0);
+    } else {
+        _display.gfx.draw_text(_display.api.getFrameBuffer(), "Loading...", kLeftMargin, 0, 15);
+    }
     drawSaveStatusIndicator(nowMs, DISPLAY_WIDTH - 4);
 }
 
-void DisplayManager::drawLoadSaveRevisionHistoryView(uint16_t setId) {
-    constexpr int kLeftMargin = 2;
+void DisplayManager::drawLoadSaveRevisionHistoryView(uint32_t nowMs, uint16_t setId) {
+    if (!loadSaveRevisionListCacheValid_ || loadSaveRevisionListSetId_ != setId) {
+        refreshLoadSaveRevisionHistoryCache(setId);
+    }
+
+    const int kLoadSaveDividerX = loadSaveDividerX();
+    const int kLoadSaveDetailX = loadSaveDetailContentX();
+    constexpr int kListRowsStartY = kLoadSaveTextLineStep;
+    constexpr int kListVisibleRows = (DISPLAY_HEIGHT - kListRowsStartY) / kLoadSaveTextLineStep;
+
     char header[16];
     std::snprintf(header, sizeof(header), "S%04u", static_cast<unsigned>(setId));
     _display.gfx.select_font(&Font5x7FixedMono);
-    _display.gfx.draw_text(_display.api.getFrameBuffer(), header, kLeftMargin, 0, 15);
-    _display.gfx.draw_text(_display.api.getFrameBuffer(), "Revisions", kLeftMargin, 8, 5);
+    _display.gfx.draw_text(_display.api.getFrameBuffer(), header, kLoadSaveLeftPadding, 0, 15);
+
+    for (int row = 0; row < DISPLAY_HEIGHT; ++row) {
+        _display.gfx.draw_pixel(_display.api.getFrameBuffer(), kLoadSaveDividerX, row, 2);
+    }
+
+    for (int visibleRow = 0; visibleRow < kListVisibleRows; ++visibleRow) {
+        const size_t listIndex = static_cast<size_t>(loadSaveListScrollOffset_) +
+                                 static_cast<size_t>(visibleRow);
+        if (listIndex >= loadSaveRevisionListCount_) {
+            break;
+        }
+        const int rowY = kListRowsStartY + visibleRow * kLoadSaveTextLineStep;
+        const bool selected = listIndex == loadSaveListSelection_;
+        const uint8_t brightness = selected ? 15 : 5;
+        char revisionLabel[8];
+        std::snprintf(revisionLabel, sizeof(revisionLabel), "v%04u",
+                      static_cast<unsigned>(loadSaveRevisionListEntries_[listIndex].revisionId));
+        _display.gfx.draw_text(_display.api.getFrameBuffer(), revisionLabel, kLoadSaveLeftPadding,
+                               rowY, brightness);
+        drawLoadSaveRowLoadStatusDots(
+            kLoadSaveLeftPadding, static_cast<int>(std::strlen(revisionLabel)), rowY, nowMs, setId,
+            loadSaveRevisionListEntries_[listIndex].revisionId);
+    }
+
+    LoadSaveWorkspaceDetailParams detailParams{};
+    if (resolveLoadSaveWorkspaceDetail(detailParams)) {
+        drawLoadSaveWorkspaceDetail(kLoadSaveDetailX, detailParams);
+    }
 }
 
 void DisplayManager::drawLoadSaveLoopPickView(uint16_t setId) {
@@ -1788,7 +2079,7 @@ void DisplayManager::drawLoadSaveView(uint32_t nowMs) {
         return;
     }
     if (overlayMode == StorageManager::SetBrowserOverlayMode::RevisionHistory) {
-        drawLoadSaveRevisionHistoryView(StorageManager::getSetBrowserOverlayDrilledSetId());
+        drawLoadSaveRevisionHistoryView(nowMs, StorageManager::getSetBrowserOverlayDrilledSetId());
         return;
     }
     if (overlayMode == StorageManager::SetBrowserOverlayMode::LoopPick) {
@@ -1846,34 +2137,19 @@ void DisplayManager::drawLoadSaveView(uint32_t nowMs) {
             }
             _display.gfx.draw_text(_display.api.getFrameBuffer(), browserLabel,
                                    kLoadSaveLeftPadding, rowY, brightness);
+            uint16_t rowSetId = 0;
+            if (SetRevisionCatalog::parseSetIdFromFolderName(
+                    loadSaveListEntries_[savedIndex].folderName, rowSetId)) {
+                drawLoadSaveRowLoadStatusDots(kLoadSaveLeftPadding,
+                                              static_cast<int>(std::strlen(browserLabel)), rowY,
+                                              nowMs, rowSetId, 0);
+            }
         }
     }
 
     LoadSaveWorkspaceDetailParams detailParams{};
-    bool detailOk = false;
-    const bool isSaveRow = SetBrowserOverlayPolicy::isRootSaveRow(loadSaveListSelection_);
-    const bool isCurrentRow = SetBrowserOverlayPolicy::isRootCurrentRow(loadSaveListSelection_);
-
-    if (isSaveRow || isCurrentRow) {
-        detailOk = StorageManager::readCurrentSetBrowserMetadata(detailParams.metrics);
-        detailParams.timestampUnix = detailParams.metrics.createdAtUnix;
-        detailParams.setId = StorageManager::getCurrentWorkspaceDerivedSetId();
-        detailParams.revisionId = StorageManager::getCurrentWorkspaceDerivedRevisionId();
-        if (isCurrentRow && StorageManager::isCurrentWorkspaceDirty()) {
-            detailParams.markRevisionUnsaved = true;
-        }
-    } else {
-        const size_t savedIndex =
-            SetBrowserOverlayPolicy::rootSetFolderListIndex(loadSaveListSelection_);
-        if (savedIndex < loadSaveListCount_) {
-            detailOk = StorageManager::readSetRevisionCatalogBrowserMetadata(
-                loadSaveListEntries_[savedIndex].folderName, detailParams.metrics,
-                detailParams.setId, detailParams.revisionId, detailParams.timestampUnix);
-        }
-    }
-
     drawAutoSaveBeforeLoadToast(kLoadSaveDetailX, nowMs);
-    if (detailOk) {
+    if (resolveLoadSaveWorkspaceDetail(detailParams)) {
         drawLoadSaveWorkspaceDetail(kLoadSaveDetailX, detailParams);
     }
 }
@@ -2122,10 +2398,14 @@ void DisplayManager::update() {
     if (loadSaveActive && !loadSaveModeWasActive_) {
         StorageManager::resetSetBrowserOverlayNavigation();
         refreshLoadSaveListCache();
+        loadSaveRevisionListCacheValid_ = false;
+        invalidateLoadSaveDetailCache();
         loadSaveListSelection_ = 0;
         loadSaveListScrollOffset_ = 0;
     } else if (!loadSaveActive && loadSaveModeWasActive_) {
         StorageManager::resetSetBrowserOverlayNavigation();
+        loadSaveRevisionListCacheValid_ = false;
+        invalidateLoadSaveDetailCache();
     }
     loadSaveModeWasActive_ = loadSaveActive;
 
