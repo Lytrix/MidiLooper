@@ -164,8 +164,6 @@ public:
     void cycleNoteEditType(Track& track);
     void sendEditModeProgram(EditModeState mode);
     
-    // LoopManager functionality
-    void sendCurrentLoopLengthCC(Track& track);
     void onTrackChanged(Track& newTrack);
 
     struct RemovedNote {

@@ -17,6 +17,7 @@ struct SelectNavSlot {
 };
 
 uint32_t noteRelativeTick(uint32_t absolutePos, uint32_t loopStartTick, uint32_t loopLength);
+uint32_t noteStorageTick(uint32_t relativeTick, uint32_t loopStartTick, uint32_t loopLength);
 
 std::vector<SelectNavSlot> buildSelectNavigationSlots(
     uint32_t loopLength,
