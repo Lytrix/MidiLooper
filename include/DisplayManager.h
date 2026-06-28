@@ -22,6 +22,14 @@
 // Shared struct for UI note representation
 using DisplayNote = NoteUtils::DisplayNote;
 
+struct LoadSaveWorkspaceDetailParams {
+    uint32_t timestampUnix = 0;
+    uint16_t setId = 0;
+    uint16_t revisionId = 0;
+    bool markRevisionUnsaved = false;
+    SavedSetCatalog::SavedSetMetadata metrics{};
+};
+
 /**
  * @class DisplayManager
  * @brief Renders the graphical user interface for the MIDI looper.
@@ -177,18 +185,15 @@ private:
     void drawLoadSaveMinimalLoadingView(uint32_t nowMs);
     void drawLoadSaveRevisionHistoryView(uint16_t setId);
     void drawLoadSaveLoopPickView(uint16_t setId);
-    void drawLoadSaveSetDetail(int detailX, const SavedSetCatalog::SavedSetMetadata& metadata,
-                               bool isCurrentRow, const char* folderName, uint32_t nowMs,
-                               const char* detailTitle = nullptr);
-    void drawLoadSaveRevisionCatalogSetDetail(int detailX,
-                                              const SetRevisionCatalog::SetMetaRecord& meta);
+    void drawLoadSaveWorkspaceDetail(int detailX, const LoadSaveWorkspaceDetailParams& params);
     void drawLoadSaveTrackFilledBar(int x, int y, int barWidth, int barHeight, uint8_t filledSlots,
                                     uint8_t maxSlots, uint8_t brightness);
+    void drawLoadSaveDetailDateColumn(uint32_t timestampUnix);
     void drawLoadSaveDetailMetricAtColon(int colonX, int y, const char* label, const char* value,
-                                         int labelCharCount);
+                                         int labelCharCount, bool showUnsavedMarker = false);
     void drawLoadSaveDetailMetricLeft(int detailX, int y, const char* label, const char* value);
     void drawLoadSaveDetailMetricRight(int y, const char* label, const char* value,
-                                       int labelCharCount);
+                                       int labelCharCount, bool showUnsavedMarker = false);
     void drawAutoSaveBeforeLoadToast(int detailX, uint32_t nowMs);
     void drawSidebar(Track& selectedTrack, uint8_t displaySlot);
     void drawSaveStatusIndicator(uint32_t nowMs, int textRight);

@@ -26,6 +26,15 @@ void formatLastActive(uint32_t unixTime, char* out, size_t outSize);
 /// Full date and time for set detail (e.g. "16 July 2026 18:42", UTC); empty when invalid.
 void formatDetailDateTime(uint32_t unixTime, char* out, size_t outSize);
 
+struct LoadSaveDetailDateParts {
+  char year[8] = {};
+  char monthDay[12] = {};
+  char timeOfDay[8] = {};
+};
+
+/// Split unix time for load/save detail date column (year, "D MON", HH:MM).
+void formatLoadSaveDetailDateParts(uint32_t unixTime, LoadSaveDetailDateParts& parts);
+
 #if defined(PIO_UNIT_TEST_NATIVE)
 void setUnixTimeForTest(uint32_t unixTime);
 void resetForTest();

@@ -128,7 +128,7 @@ def _lazy_registry() -> dict[str, ScenarioSpec]:
         ),
         "load_save_overlay_scroll_only": ScenarioSpec(
             scenario_id="load_save_overlay_scroll_only",
-            description="Root overlay scroll only; 8s dwell; no record/dirty phase",
+            description="Root overlay scroll only; 3s/row + 12s dwell; no record/dirty phase",
             run=run_load_save_overlay_scroll_only,
             verify=verify_load_save_overlay_scroll,
         ),

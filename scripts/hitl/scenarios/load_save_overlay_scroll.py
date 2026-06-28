@@ -71,6 +71,14 @@ def _wait_overlay_selection(
     return False
 
 
+def _dwell_on_overlay_row(ns: argparse.Namespace, log_prefix: str, row_label: str) -> None:
+    dwell_ms = int(getattr(ns, "overlay_scroll_step_dwell_ms", 0) or 0)
+    if dwell_ms <= 0:
+        return
+    print(f"{log_prefix} dwell {dwell_ms}ms on {row_label}")
+    time.sleep(dwell_ms / 1000.0)
+
+
 def _parse_overlay_scroll_args(args: object) -> argparse.Namespace:
     parser = argparse.ArgumentParser(add_help=False)
     parser.add_argument("--midi-out", default="Teensy")
@@ -89,21 +97,27 @@ def _parse_overlay_scroll_args(args: object) -> argparse.Namespace:
         help="Root list scroll only; skip record/dirty-prompt phase",
     )
     parser.add_argument(
+        "--overlay-scroll-step-dwell-ms",
+        type=int,
+        default=3000,
+        help="Pause on each root/dirty list row after scroll (0 = immediate)",
+    )
+    parser.add_argument(
         "--overlay-root-dwell-ms",
         type=int,
         default=None,
-        help="Pause with root overlay open before exit (default 2500 full / 8000 scroll-only)",
+        help="Pause with root overlay open before exit (default 5000 full / 12000 scroll-only)",
     )
     parser.add_argument(
         "--overlay-dirty-dwell-ms",
         type=int,
-        default=1500,
+        default=3000,
         help="Pause on dirty Cancel row before confirm (0 = immediate)",
     )
     legacy = list(getattr(args, "legacy_args", []) or [])
     ns = parser.parse_args(legacy)
     if ns.overlay_root_dwell_ms is None:
-        ns.overlay_root_dwell_ms = 8000 if ns.overlay_scroll_only else 2500
+        ns.overlay_root_dwell_ms = 12000 if ns.overlay_scroll_only else 5000
     return ns
 
 
@@ -151,6 +165,7 @@ def run_load_save_overlay_scroll(args: object) -> int:
             print(f"{log_prefix} error: overlay did not enter")
             return 2
         ctx.markers.append("phase:overlay_enter")
+        _dwell_on_overlay_row(ns, log_prefix, "Save row")
 
         root_scroll_anchor = len(serial_collector.snapshot())
         setattr(args, "overlay_root_scroll_anchor", root_scroll_anchor - verify_offset)
@@ -167,6 +182,34 @@ def run_load_save_overlay_scroll(args: object) -> int:
         ):
             return 2
         ctx.markers.append("phase:root_scroll_current")
+        _dwell_on_overlay_row(ns, log_prefix, "Current row")
+
+        print(f"{log_prefix} serial !OVERLAY_SCROLL 1 (Current -> catalog set)")
+        serial_collector.write_line("!OVERLAY_SCROLL 1")
+        if _wait_overlay_selection(
+            serial_collector,
+            mode=0,
+            row=2,
+            after_line_index=root_scroll_anchor,
+            timeout_s=2.0,
+            log_prefix=log_prefix,
+        ):
+            ctx.markers.append("phase:root_scroll_catalog_set")
+            _dwell_on_overlay_row(ns, log_prefix, "catalog set row")
+        else:
+            print(f"{log_prefix} note: no catalog set row (OVLY,sel,0,2); continuing")
+
+        print(f"{log_prefix} serial !OVERLAY_SCROLL -1 (catalog set -> Current)")
+        serial_collector.write_line("!OVERLAY_SCROLL -1")
+        _wait_overlay_selection(
+            serial_collector,
+            mode=0,
+            row=1,
+            after_line_index=root_scroll_anchor,
+            timeout_s=2.0,
+            log_prefix=log_prefix,
+        )
+        _dwell_on_overlay_row(ns, log_prefix, "Current row")
 
         print(f"{log_prefix} serial !OVERLAY_SCROLL -1 (Current -> Save)")
         serial_collector.write_line("!OVERLAY_SCROLL -1")
@@ -180,6 +223,7 @@ def run_load_save_overlay_scroll(args: object) -> int:
         ):
             return 2
         ctx.markers.append("phase:root_scroll_save")
+        _dwell_on_overlay_row(ns, log_prefix, "Save row")
 
         root_dwell_ms = int(ns.overlay_root_dwell_ms)
         if root_dwell_ms > 0:
@@ -210,6 +254,8 @@ def run_load_save_overlay_scroll(args: object) -> int:
                     {
                         "scenario": "load_save_overlay_scroll_only",
                         "track_number": ns.track_number,
+                        "overlay_scroll_step_dwell_ms": ns.overlay_scroll_step_dwell_ms,
+                        "overlay_root_dwell_ms": ns.overlay_root_dwell_ms,
                         "serial_verification": check,
                         "markers": ctx.markers,
                     },
@@ -297,6 +343,7 @@ def run_load_save_overlay_scroll(args: object) -> int:
         ):
             return 2
         ctx.markers.append("phase:dirty_scroll_cancel")
+        _dwell_on_overlay_row(ns, log_prefix, "dirty prompt Cancel row")
 
         dirty_dwell_ms = int(ns.overlay_dirty_dwell_ms)
         if dirty_dwell_ms > 0:
@@ -338,6 +385,9 @@ def run_load_save_overlay_scroll(args: object) -> int:
                     "track_number": ns.track_number,
                     "setup_set_id": set_id,
                     "setup_revision_id": revision_id,
+                    "overlay_scroll_step_dwell_ms": ns.overlay_scroll_step_dwell_ms,
+                    "overlay_root_dwell_ms": ns.overlay_root_dwell_ms,
+                    "overlay_dirty_dwell_ms": ns.overlay_dirty_dwell_ms,
                     "serial_verification": check,
                     "markers": ctx.markers,
                 },
