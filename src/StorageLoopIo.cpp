@@ -462,5 +462,4 @@ void applySnapshotToLoop(Loop& loop, const PersistedLoopSnapshot& snapshot) {
   loop.playbackOrderDirty = true;
   loop.passes = snapshot.passes;
   loop.markDisplayCachesStale();
-  loop.rebuildVisualCacheFromPasses();
 }

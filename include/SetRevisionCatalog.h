@@ -88,7 +88,7 @@ bool formatRevisionPath(char* out, size_t outSize, uint16_t setId, uint16_t revi
 /// Sort workspace browser rows newest `updatedUnix` first (stable enough for small N).
 void sortSetBrowserListEntriesByUpdatedUnixDesc(SetBrowserListEntry* entries, size_t count);
 
-/// Sort revision history rows newest `createdUnix` first (stable enough for small N).
+/// Sort revision history rows newest revision first (`revisionId` desc, then `createdUnix`).
 void sortRevisionBrowserListEntriesByCreatedUnixDesc(RevisionBrowserListEntry* entries,
                                                      size_t count);
 

@@ -696,6 +696,17 @@ size_t Loop::liveEventCount() const {
   return count;
 }
 
+size_t Loop::displayEventCountHint() const {
+  if (visualCacheDirty) {
+    const_cast<Loop*>(this)->ensureVisualCacheBuilt();
+  }
+  size_t count = publishedMaterializedEventCount_;
+  if (captureActive()) {
+    count += capture.store.size();
+  }
+  return count;
+}
+
 bool Loop::captureActive() const {
   return capture.phase != CapturePhase::None;
 }
@@ -896,6 +907,7 @@ void Loop::discardPendingCapturePass() {
 void Loop::rebuildVisualCacheFromPasses() {
   MidiEventVec flat;
   passes.materializeToEventVector(flat, loopLengthTicks);
+  publishedMaterializedEventCount_ = flat.size();
   const NoteUtils::DisplayNoteVec rebuiltNotes =
       NoteUtils::reconstructDisplayNotes(flat, loopLengthTicks, false);
   visualCache.notes.assign(rebuiltNotes.begin(), rebuiltNotes.end());

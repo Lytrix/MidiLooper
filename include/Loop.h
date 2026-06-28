@@ -48,6 +48,7 @@ struct Loop {
   CapturePreview capturePreview;
   VisualCacheDelta pendingVisualDelta;
   bool visualCacheDirty = true;
+  size_t publishedMaterializedEventCount_ = 0;
   uint32_t nextMergeSequence_ = 0;
   PassId lastPublishedPassId_ = kInvalidPassId;
 
@@ -105,6 +106,8 @@ struct Loop {
   PassId lastPublishedPassId() const { return lastPublishedPassId_; }
   bool captureActive() const;
   size_t liveEventCount() const;
+  /// Published pass event count + active capture size; builds visual cache if needed. Display/LED only.
+  size_t displayEventCountHint() const;
   bool ensureCaptureEventsSorted();
   void mergeMaterializedPassesWithCapture(MidiEventVec& out) const;
   void rebuildVisualCacheFromPasses();

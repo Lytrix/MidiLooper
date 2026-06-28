@@ -506,7 +506,6 @@ uint32_t DisplayManager::resolvePlayheadInLoop(const Track& track, uint8_t displ
 const DisplayNoteVec& DisplayManager::resolveDisplayNotes(const Track& track, uint8_t displaySlot,
                                                           uint32_t currentTick) {
     if (track.isJamming()) {
-        invalidateLiveDisplayCache();
         const auto& cachedNotes = track.getCachedNotes();
         liveDisplayNotes.assign(cachedNotes.begin(), cachedNotes.end());
         return liveDisplayNotes;
@@ -524,7 +523,7 @@ const DisplayNoteVec& DisplayManager::resolveDisplayNotes(const Track& track, ui
         const TrackState liveTrackState = track.isRecording() ? TRACK_RECORDING : TRACK_OVERDUBBING;
         const size_t eventCount =
             (track.isRecording() && !track.isPlaying()) ? loop.capture.store.size()
-                                                        : loop.liveEventCount();
+                                                        : loop.displayEventCountHint();
         const bool cacheCold = liveDisplayCacheEventCount == static_cast<size_t>(-1);
         const bool contextChanged = displaySlot != liveDisplayCacheSlot ||
                                     liveTrackState != liveDisplayCacheTrackState;
@@ -569,8 +568,10 @@ const DisplayNoteVec& DisplayManager::resolveDisplayNotes(const Track& track, ui
             }
         };
 
-        if (cacheCold || contextChanged || eventsShrunk || eventsAdded || loopLengthChanged ||
-            captureRevisionChanged) {
+        const bool needsFullLiveRebuild = cacheCold || contextChanged || eventsShrunk || eventsAdded ||
+                                          loopLengthChanged || captureRevisionChanged;
+
+        if (needsFullLiveRebuild) {
             if (track.isOverdubbing()) {
                 loop.mergeMaterializedPassesWithCapture(liveDisplayEventBuffer);
             } else {
@@ -590,17 +591,14 @@ const DisplayNoteVec& DisplayManager::resolveDisplayNotes(const Track& track, ui
             liveDisplayCacheCaptureRevision = loop.captureDisplayRevision;
         } else {
             liveDisplayCacheLoopLength = liveLoopLength;
+            if (track.isRecording() || track.isOverdubbing()) {
+                rebuildLiveDisplayNotes();
+            }
         }
 
         if (track.isRecording() || track.isOverdubbing()) {
-            if (track.isOverdubbing()) {
-                loop.mergeMaterializedPassesWithCapture(liveDisplayEventBuffer);
-            }
-            rebuildLiveDisplayNotes();
             const uint32_t playheadCloseTick = resolvePlayheadInLoop(track, displaySlot, currentTick);
             if (track.isOverdubbing()) {
-                liveDisplayCacheOpenNotes =
-                    NoteUtils::findOpenNoteOns(liveDisplayEventBuffer, liveLoopLength);
                 MidiEventVec captureEvents;
                 const std::vector<NoteUtils::OpenNoteOn> captureOpens = findCaptureOpenNoteOns(loop);
                 if (!captureOpens.empty()) {
@@ -636,16 +634,22 @@ const DisplayNoteVec& DisplayManager::resolveDisplayNotes(const Track& track, ui
         return liveDisplayNotes;
     }
 
-    invalidateLiveDisplayCache();
     const Loop& loop = track.getLoop(displaySlot);
     const uint32_t loopLength = resolveDisplayLoopLength(track, displaySlot, currentTick);
-    if (loopLength == 0 || (!loop.hasPublishedEvents() && loop.liveEventCount() == 0)) {
+    if (loopLength == 0 || (!loop.hasPublishedEvents() && !loop.captureActive())) {
         liveDisplayNotes.clear();
         return liveDisplayNotes;
     }
 
     Loop& mutLoop = const_cast<Loop&>(loop);
     mutLoop.ensureVisualCacheBuilt();
+    const bool needsLiveMergeForDisplay =
+        loop.captureActive() || track.isRecording() || track.isOverdubbing();
+    if (!needsLiveMergeForDisplay) {
+        liveDisplayNotes.assign(loop.visualCache.notes.begin(), loop.visualCache.notes.end());
+        return liveDisplayNotes;
+    }
+
     mutLoop.mergeMaterializedPassesWithCapture(liveDisplayEventBuffer);
 
     // Prefer visualCache (passes.materializeToEventVector) over reconstructing the full
@@ -676,13 +680,12 @@ const DisplayNoteVec& DisplayManager::resolveDisplayNotes(const Track& track, ui
 }
 
 DISP_CAPTURE_MEM void DisplayManager::emitDisplayCaptureSnapshot(const Track& track, uint8_t displaySlot,
-                                                uint32_t currentTick) {
+                                                uint32_t currentTick,
+                                                const DisplayNoteVec& frameNotes) {
     const Loop& loop = track.getLoop(displaySlot);
     const uint32_t loopLen = resolveDisplayLoopLength(track, displaySlot, currentTick);
-    const DisplayNoteVec& frameNotes = resolveDisplayNotes(track, displaySlot, currentTick);
     const size_t bufferEvents =
-        (track.isRecording() && !track.isPlaying()) ? loop.capture.store.size()
-                                                    : loop.liveEventCount();
+        (track.isRecording() && !track.isPlaying()) ? loop.capture.store.size() : frameNotes.size();
     const uint32_t boundedThreshold =
         DisplayWindowUtils::kMaxDetailedWindowBars * Config::TICKS_PER_BAR;
     if (!track.isJamming() && loopLen > boundedThreshold && displaySlot < kDisplaySlotCount) {
@@ -705,8 +708,15 @@ DISP_CAPTURE_MEM void DisplayManager::emitDisplayCaptureSnapshot(const Track& tr
             bufferEvents, loop.hasPublishedEvents() ? 1 : 0);
 }
 
+DISP_CAPTURE_MEM void DisplayManager::emitDisplayCaptureSnapshot(const Track& track, uint8_t displaySlot,
+                                                uint32_t currentTick) {
+    const DisplayNoteVec& frameNotes = resolveDisplayNotes(track, displaySlot, currentTick);
+    emitDisplayCaptureSnapshot(track, displaySlot, currentTick, frameNotes);
+}
+
 DISP_CAPTURE_MEM void DisplayManager::maybeEmitDisplayCaptureOnChange(const Track& track, uint8_t displaySlot,
-                                                     uint32_t currentTick, size_t frameNoteCount) {
+                                                     uint32_t currentTick,
+                                                     const DisplayNoteVec& frameNotes) {
     static size_t lastFrameNotes = static_cast<size_t>(-1);
     static uint8_t lastSlot = 255;
     static TrackState lastState = NUM_TRACK_STATES;
@@ -716,9 +726,9 @@ DISP_CAPTURE_MEM void DisplayManager::maybeEmitDisplayCaptureOnChange(const Trac
     const Loop& loop = track.getLoop(displaySlot);
     const TrackState state = track.getState();
     const uint32_t loopLen = resolveDisplayLoopLength(track, displaySlot, currentTick);
+    const size_t frameNoteCount = frameNotes.size();
     const size_t takeEvents =
-        (track.isRecording() && !track.isPlaying()) ? loop.capture.store.size()
-                                                    : loop.liveEventCount();
+        (track.isRecording() && !track.isPlaying()) ? loop.capture.store.size() : frameNoteCount;
 
     const bool changed = frameNoteCount != lastFrameNotes || displaySlot != lastSlot ||
                          state != lastState || loopLen != lastLoopLen ||
@@ -735,7 +745,7 @@ DISP_CAPTURE_MEM void DisplayManager::maybeEmitDisplayCaptureOnChange(const Trac
     lastState = state;
     lastLoopLen = loopLen;
     lastTakeEvents = takeEvents;
-    emitDisplayCaptureSnapshot(track, displaySlot, currentTick);
+    emitDisplayCaptureSnapshot(track, displaySlot, currentTick, frameNotes);
 }
 
 void DisplayManager::invalidateLiveDisplayCache() {
@@ -866,6 +876,7 @@ void DisplayManager::setup() {
     _display.api.display();
     Serial.println("DisplayManager: Text sent to display");
     delay(1500);
+    clearDisplayBuffer();
 }
 
 
@@ -1982,7 +1993,7 @@ void DisplayManager::drawAutoSaveBeforeLoadToast(int detailX, uint32_t nowMs) {
                            DISPLAY_HEIGHT - kLoadSaveTextLineStep, 15);
 }
 
-void DisplayManager::drawLoadSaveDirtyPromptView() {
+void DisplayManager::drawLoadSaveDirtyPromptView(uint32_t nowMs) {
     constexpr int kLeftMargin = 2;
     constexpr int kRowsStartY = 8;
     _display.gfx.select_font(&Font5x7FixedMono);
@@ -1996,6 +2007,14 @@ void DisplayManager::drawLoadSaveDirtyPromptView() {
         _display.gfx.draw_text(_display.api.getFrameBuffer(), kRows[row], kLeftMargin, rowY,
                                brightness);
     }
+
+    const DeferredSaveDisplayStatus saveStatus =
+        StorageManager::getDeferredSaveDisplayStatus(nowMs);
+    if (saveStatus.phase != DeferredSaveDisplayPhase::Idle) {
+        _display.gfx.draw_text(_display.api.getFrameBuffer(), "Saving", kLeftMargin, 32, 5);
+        drawPersistenceStatusDots(kLeftMargin + 6 * 6 + 2, 32 - 4, saveStatus);
+    }
+    drawSaveStatusIndicator(nowMs, DISPLAY_WIDTH - 4);
 }
 
 void DisplayManager::drawLoadSaveMinimalLoadingView(uint32_t nowMs) {
@@ -2071,7 +2090,7 @@ void DisplayManager::drawLoadSaveView(uint32_t nowMs) {
     const StorageManager::SetBrowserOverlayMode overlayMode =
         StorageManager::getSetBrowserOverlayMode();
     if (overlayMode == StorageManager::SetBrowserOverlayMode::DirtyPrompt) {
-        drawLoadSaveDirtyPromptView();
+        drawLoadSaveDirtyPromptView(nowMs);
         return;
     }
     if (overlayMode == StorageManager::SetBrowserOverlayMode::MinimalLoading) {
@@ -2152,6 +2171,7 @@ void DisplayManager::drawLoadSaveView(uint32_t nowMs) {
     if (resolveLoadSaveWorkspaceDetail(detailParams)) {
         drawLoadSaveWorkspaceDetail(kLoadSaveDetailX, detailParams);
     }
+    drawSaveStatusIndicator(nowMs, DISPLAY_WIDTH - 4);
 }
 
 void DisplayManager::refreshAutoSaveBeforeLoadToast(uint32_t nowMs) {
@@ -2378,7 +2398,8 @@ void DisplayManager::requestNoteInfoRefresh(Track& track) {
 void DisplayManager::update() {
     const uint32_t telemetryStartUs = micros();
     uint32_t currentTick = clockManager.getCurrentTick();
-    if (StorageManager::consumeRevisionLoadDisplayRefreshPending()) {
+    const bool loadSaveActive = looperState.isLoadSaveModeActive();
+    if (!loadSaveActive && StorageManager::consumeRevisionLoadDisplayRefreshPending()) {
         invalidateLiveDisplayCache();
         for (uint8_t trackIndex = 0; trackIndex < trackManager.getTrackCount(); ++trackIndex) {
             Track& track = trackManager.getTrack(trackIndex);
@@ -2394,7 +2415,6 @@ void DisplayManager::update() {
     uint32_t now = millis();
     refreshAutoSaveBeforeLoadToast(now);
 
-    const bool loadSaveActive = looperState.isLoadSaveModeActive();
     if (loadSaveActive && !loadSaveModeWasActive_) {
         StorageManager::resetSetBrowserOverlayNavigation();
         refreshLoadSaveListCache();
@@ -2421,7 +2441,7 @@ void DisplayManager::update() {
     drawTrackStatus(trackManager.getSelectedTrackIndex(), now);
     const DisplayNoteVec& frameNotes = resolveDisplayNotes(selTrack, displaySlot, displayTick);
 #if defined(SESSION_CAPTURE)
-    maybeEmitDisplayCaptureOnChange(selTrack, displaySlot, displayTick, frameNotes.size());
+    maybeEmitDisplayCaptureOnChange(selTrack, displaySlot, displayTick, frameNotes);
 #endif
     drawPianoRoll(displayTick, selTrack, displaySlot, frameNotes);
     drawSidebar(selTrack, displaySlot);

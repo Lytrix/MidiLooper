@@ -693,8 +693,22 @@ void test_revision_browser_list_sorts_by_created_unix_desc() {
   entries[2].revisionId = 3;
   entries[2].createdUnix = 200;
   SetRevisionCatalog::sortRevisionBrowserListEntriesByCreatedUnixDesc(entries, 3);
-  TEST_ASSERT_EQUAL_UINT16(2, entries[0].revisionId);
-  TEST_ASSERT_EQUAL_UINT16(3, entries[1].revisionId);
+  TEST_ASSERT_EQUAL_UINT16(3, entries[0].revisionId);
+  TEST_ASSERT_EQUAL_UINT16(2, entries[1].revisionId);
+  TEST_ASSERT_EQUAL_UINT16(1, entries[2].revisionId);
+}
+
+void test_revision_browser_list_sorts_by_revision_id_when_timestamps_inverted() {
+  SetRevisionCatalog::RevisionBrowserListEntry entries[3] = {};
+  entries[0].revisionId = 1;
+  entries[0].createdUnix = 1782000000ULL;
+  entries[1].revisionId = 2;
+  entries[1].createdUnix = 1782100000ULL;
+  entries[2].revisionId = 3;
+  entries[2].createdUnix = 1546300800ULL;
+  SetRevisionCatalog::sortRevisionBrowserListEntriesByCreatedUnixDesc(entries, 3);
+  TEST_ASSERT_EQUAL_UINT16(3, entries[0].revisionId);
+  TEST_ASSERT_EQUAL_UINT16(2, entries[1].revisionId);
   TEST_ASSERT_EQUAL_UINT16(1, entries[2].revisionId);
 }
 
@@ -754,5 +768,6 @@ int main(int argc, char** argv) {
   RUN_TEST(test_parse_set_id_from_catalog_folder_name);
   RUN_TEST(test_set_browser_list_sorts_by_updated_unix_desc);
   RUN_TEST(test_revision_browser_list_sorts_by_created_unix_desc);
+  RUN_TEST(test_revision_browser_list_sorts_by_revision_id_when_timestamps_inverted);
   return UNITY_END();
 }

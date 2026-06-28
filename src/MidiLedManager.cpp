@@ -1,4 +1,5 @@
 #include "MidiLedManager.h"
+#include "Loop.h"
 #include "Utils/NoteUtils.h"
 #include "TickPhase.h"
 
@@ -213,10 +214,27 @@ bool noteOnInRange(const MidiEvent& event, uint32_t rangeStart, uint32_t rangeEn
     return noteTick >= rangeStart || noteTick < rangeEnd;
 }
 
+bool displayNoteStartsInRange(const NoteUtils::DisplayNote& note, uint32_t loopLength,
+                            uint32_t rangeStart, uint32_t rangeEnd) {
+    if (loopLength == 0) {
+        return false;
+    }
+    const uint32_t startTick = note.startTick % loopLength;
+    if (rangeStart < rangeEnd) {
+        return startTick >= rangeStart && startTick < rangeEnd;
+    }
+    return startTick >= rangeStart || startTick < rangeEnd;
+}
+
 bool hasNoteOnInRange(const Loop& loop, uint32_t rangeStart, uint32_t rangeEnd) {
-    for (const auto& event : loop.midiEvents()) {
-        if (noteOnInRange(event, rangeStart, rangeEnd)) {
-            return true;
+    if (loop.hasPublishedEvents()) {
+        Loop& mutLoop = const_cast<Loop&>(loop);
+        mutLoop.ensureVisualCacheBuilt();
+        const uint32_t loopLength = loop.loopLengthTicks;
+        for (const NoteUtils::DisplayNote& note : loop.visualCache.notes) {
+            if (displayNoteStartsInRange(note, loopLength, rangeStart, rangeEnd)) {
+                return true;
+            }
         }
     }
     if (loop.captureActive()) {
