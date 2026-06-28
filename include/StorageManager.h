@@ -49,6 +49,10 @@ public:
                                                 size_t maxEntries);
     static bool readSetRevisionCatalogMetaForFolder(const char* folderName,
                                                     SetRevisionCatalog::SetMetaRecord& meta);
+    static bool readSetRevisionCatalogBrowserMetadata(const char* folderName,
+                                                      SavedSetCatalog::SavedSetMetadata& metadata,
+                                                      uint16_t& setIdOut, uint16_t& revisionIdOut,
+                                                      uint32_t& updatedUnixOut);
     static bool readSavedSetMetadataForFolder(const char* folderName,
                                               SavedSetCatalog::SavedSetMetadata& metadata);
     static bool readCurrentSetBrowserMetadata(SavedSetCatalog::SavedSetMetadata& metadata);
@@ -59,6 +63,8 @@ public:
     static bool isCurrentWorkspaceDirty();
     static uint32_t getCurrentWorkspaceEpoch();
     static uint32_t getLastCommittedWorkspaceEpoch();
+    static uint16_t getCurrentWorkspaceDerivedSetId();
+    static uint16_t getCurrentWorkspaceDerivedRevisionId();
     using SetBrowserOverlayMode = SetBrowserOverlayPolicy::Mode;
     using SetBrowserOverlayEntryKind = SetBrowserOverlayPolicy::EntryKind;
     static SetBrowserOverlayMode getSetBrowserOverlayMode();

@@ -93,6 +93,29 @@ void formatDetailDateTime(uint32_t unixTime, char* out, size_t outSize) {
                 minute);
 }
 
+void formatLoadSaveDetailDateParts(uint32_t unixTime, LoadSaveDetailDateParts& parts) {
+  parts = {};
+  std::snprintf(parts.year, sizeof(parts.year), "--");
+  std::snprintf(parts.monthDay, sizeof(parts.monthDay), "--");
+  std::snprintf(parts.timeOfDay, sizeof(parts.timeOfDay), "--");
+  if (unixTime == 0) {
+    return;
+  }
+  int year = 0;
+  unsigned month = 0;
+  unsigned day = 0;
+  unsigned hour = 0;
+  unsigned minute = 0;
+  if (!unixToUtcDateTime(unixTime, year, month, day, hour, minute) || month < 1 || month > 12) {
+    return;
+  }
+  static const char* kMonthAbbrev[] = {"JAN", "FEB", "MAR", "APR", "MAY", "JUN",
+                                       "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"};
+  std::snprintf(parts.year, sizeof(parts.year), "%d", year);
+  std::snprintf(parts.monthDay, sizeof(parts.monthDay), "%u %s", day, kMonthAbbrev[month - 1]);
+  std::snprintf(parts.timeOfDay, sizeof(parts.timeOfDay), "%02u:%02u", hour, minute);
+}
+
 void formatLastActive(uint32_t unixTime, char* out, size_t outSize) {
   if (out == nullptr || outSize == 0) {
     return;

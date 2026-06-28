@@ -63,13 +63,32 @@ constexpr uint8_t kLoadSaveDetailLabelBrightness = 3;  // matches drawInfoField 
 constexpr uint8_t kLoadSaveDetailColonBrightness = 4;
 constexpr uint8_t kLoadSaveDetailValueBrightness = 5;
 constexpr int kLoadSaveDetailRightMargin = 1;
+constexpr int kLoadSaveDetailDateRightMargin = 0;
 constexpr int kLoadSaveDetailBpmValueChars = 3;
-constexpr int kLoadSaveDetailRightLabelChars = 4;  // "BARS"
+constexpr int kLoadSaveDetailRightLabelChars = 4;  // "Bars"
 constexpr int kLoadSaveLeftPadding = 2;
 constexpr int kLoadSaveDetailLeftPadding = 6;  // px gap after centre divider column
 constexpr int kLoadSaveTextLineStep = 9;       // 7px font + 1px descender + 1px below
+constexpr int kLoadSaveDetailContentTopY = kLoadSaveTextLineStep;  // align with list rows; y=0 clipped
 constexpr int kLoadSaveTrackRowGap = 1;
 constexpr int kLoadSaveSlotHorizontalGap = 4;
+constexpr int kLoadSaveDetailDateLineCount = 3;
+constexpr int kLoadSaveDetailDateColumnChars = 5;  // "31 AUG", "13:30"
+constexpr int kLoadSaveDetailDateColumnGap = 6;    // match kLoadSaveDetailLeftPadding
+constexpr int kLoadSaveDetailUnsavedMarkerSize = 2;
+constexpr int kLoadSaveDetailUnsavedMarkerGap = 2;
+constexpr int kLoadSaveDetailFontHeight = 7;
+
+void drawLoadSaveDetailUnsavedMarker(SSD1322& display, int labelX, int metricBottomY) {
+    const int squareLeftX = labelX - kLoadSaveDetailUnsavedMarkerGap - kLoadSaveDetailUnsavedMarkerSize;
+    // draw_text y is the font bottom row; center the marker on the cap height above it.
+    const int textCenterY = metricBottomY - kLoadSaveDetailFontHeight / 2;
+    const int squareTopY = textCenterY - kLoadSaveDetailUnsavedMarkerSize / 2;
+    display.gfx.draw_rect_filled(display.api.getFrameBuffer(), squareLeftX, squareTopY,
+                                 squareLeftX + kLoadSaveDetailUnsavedMarkerSize - 1,
+                                 squareTopY + kLoadSaveDetailUnsavedMarkerSize - 1,
+                                 kLoadSaveDetailValueBrightness);
+}
 
 constexpr int loadSaveDividerX() { return DISPLAY_WIDTH / 2; }
 
@@ -85,6 +104,22 @@ constexpr int loadSaveDetailRightColonX() {
     const int detailRightX = DISPLAY_WIDTH - kLoadSaveDetailRightMargin;
     const int valueX = detailRightX - kLoadSaveDetailBpmValueChars * kLoadSaveDetailCharWidth;
     return valueX - kLoadSaveDetailColonWidth;
+}
+
+constexpr int loadSaveDetailDateLineY(int lineIndex) {
+    // Bottom line at DISPLAY_HEIGHT — same baseline as the main note info strip.
+    return DISPLAY_HEIGHT -
+           (kLoadSaveDetailDateLineCount - 1 - lineIndex) * kLoadSaveTextLineStep;
+}
+
+constexpr int loadSaveDetailDateTextLeftX() {
+    const int detailRightX = DISPLAY_WIDTH - 1 - kLoadSaveDetailDateRightMargin;
+    return detailRightX - kLoadSaveDetailDateColumnChars * kLoadSaveDetailCharWidth + 1;
+}
+
+constexpr int loadSaveDetailSlotBarWidth(int detailX) {
+    const int slotBarRightX = loadSaveDetailDateTextLeftX() - kLoadSaveDetailDateColumnGap;
+    return slotBarRightX - detailX;
 }
 
 constexpr int loadSaveBrowserMaxTextChars() {
@@ -1577,10 +1612,14 @@ void DisplayManager::drawLoadSaveTrackFilledBar(int x, int y, int barWidth, int 
 }
 
 void DisplayManager::drawLoadSaveDetailMetricAtColon(int colonX, int y, const char* label,
-                                                     const char* value, int labelCharCount) {
+                                                     const char* value, int labelCharCount,
+                                                     bool showUnsavedMarker) {
     const int labelX = colonX - labelCharCount * kLoadSaveDetailCharWidth;
     const int valueX = colonX + kLoadSaveDetailColonWidth;
     _display.gfx.select_font(&Font5x7FixedMono);
+    if (showUnsavedMarker) {
+        drawLoadSaveDetailUnsavedMarker(_display, labelX, y);
+    }
     _display.gfx.draw_text(_display.api.getFrameBuffer(), label, labelX, y,
                            kLoadSaveDetailLabelBrightness);
     _display.gfx.draw_text(_display.api.getFrameBuffer(), ":", colonX, y,
@@ -1596,125 +1635,94 @@ void DisplayManager::drawLoadSaveDetailMetricLeft(int detailX, int y, const char
 }
 
 void DisplayManager::drawLoadSaveDetailMetricRight(int y, const char* label, const char* value,
-                                                   int labelCharCount) {
-    drawLoadSaveDetailMetricAtColon(loadSaveDetailRightColonX(), y, label, value, labelCharCount);
+                                                   int labelCharCount, bool showUnsavedMarker) {
+    drawLoadSaveDetailMetricAtColon(loadSaveDetailRightColonX(), y, label, value, labelCharCount,
+                                    showUnsavedMarker);
 }
 
-void DisplayManager::drawLoadSaveSetDetail(int detailX, const SavedSetCatalog::SavedSetMetadata& metadata,
-                                           bool isCurrentRow, const char* folderName,
-                                           uint32_t nowMs, const char* detailTitle) {
+void DisplayManager::drawLoadSaveDetailDateColumn(uint32_t timestampUnix) {
+    RtcTime::LoadSaveDetailDateParts parts{};
+    RtcTime::formatLoadSaveDetailDateParts(timestampUnix, parts);
+    const char* lines[kLoadSaveDetailDateLineCount] = {parts.year, parts.monthDay,
+                                                       parts.timeOfDay};
+    const int detailRightX = DISPLAY_WIDTH - 1 - kLoadSaveDetailDateRightMargin;
     _display.gfx.select_font(&Font5x7FixedMono);
-    int y = 0;
-    if (detailTitle != nullptr && detailTitle[0] != '\0') {
-        _display.gfx.draw_text(_display.api.getFrameBuffer(), detailTitle, detailX, y, 15);
-        y += kLoadSaveTextLineStep;
+    for (int line = 0; line < kLoadSaveDetailDateLineCount; ++line) {
+        const int y = loadSaveDetailDateLineY(line);
+        const int textWidth =
+            static_cast<int>(std::strlen(lines[line])) * kLoadSaveDetailCharWidth;
+        const int textX = detailRightX - textWidth + 1;
+        _display.gfx.draw_text(_display.api.getFrameBuffer(), lines[line], textX, y,
+                               kLoadSaveDetailValueBrightness);
     }
+}
 
-    char line[40];
-    if (metadata.userLabel[0] != '\0') {
-        std::snprintf(line, sizeof(line), "UID: %s", metadata.userLabel);
-    } else if (metadata.sequence != 0) {
-        std::snprintf(line, sizeof(line), "UID: %05lu",
-                      static_cast<unsigned long>(metadata.sequence));
+void DisplayManager::drawLoadSaveWorkspaceDetail(int detailX,
+                                                 const LoadSaveWorkspaceDetailParams& params) {
+    _display.gfx.select_font(&Font5x7FixedMono);
+    int y = kLoadSaveDetailContentTopY;
+
+    char valueStr[12];
+    if (params.setId != 0) {
+        std::snprintf(valueStr, sizeof(valueStr), "%2u", static_cast<unsigned>(params.setId));
     } else {
-        std::snprintf(line, sizeof(line), "UID: --");
+        std::snprintf(valueStr, sizeof(valueStr), "--");
     }
-    _display.gfx.draw_text(_display.api.getFrameBuffer(), line, detailX, y, 15);
+    drawLoadSaveDetailMetricLeft(detailX, y, "Set", valueStr);
+
+    if (params.revisionId != 0) {
+        std::snprintf(valueStr, sizeof(valueStr), "%3u", static_cast<unsigned>(params.revisionId));
+    } else {
+        std::snprintf(valueStr, sizeof(valueStr), "%3s", "--");
+    }
+    drawLoadSaveDetailMetricRight(y, "Rev", valueStr, 3, params.markRevisionUnsaved);
     y += kLoadSaveTextLineStep;
 
-    char dateTime[40];
-    RtcTime::formatDetailDateTime(metadata.createdAtUnix, dateTime, sizeof(dateTime));
-    if (dateTime[0] == '\0') {
-        std::snprintf(dateTime, sizeof(dateTime), "--");
-    }
-    _display.gfx.draw_text(_display.api.getFrameBuffer(), dateTime, detailX, y, 5);
-    y += kLoadSaveTextLineStep;
-
-    char valueStr[8];
-    std::snprintf(valueStr, sizeof(valueStr), "%u", metadata.trackCount);
+    std::snprintf(valueStr, sizeof(valueStr), "%2u", params.metrics.trackCount);
     drawLoadSaveDetailMetricLeft(detailX, y, "Tracks", valueStr);
     std::snprintf(valueStr, sizeof(valueStr), "%3u",
                   static_cast<unsigned>(std::min(bpm + 0.5f, 999.0f)));
     drawLoadSaveDetailMetricRight(y, "BPM", valueStr, 3);
     y += kLoadSaveTextLineStep;
 
-    std::snprintf(valueStr, sizeof(valueStr), "%u", metadata.filledSlotCount);
-    drawLoadSaveDetailMetricLeft(detailX, y, "Loops", valueStr);
-    std::snprintf(valueStr, sizeof(valueStr), "%3u", static_cast<unsigned>(metadata.masterLoopBars));
-    drawLoadSaveDetailMetricRight(y, "BARS", valueStr, kLoadSaveDetailRightLabelChars);
+    std::snprintf(valueStr, sizeof(valueStr), "%2u", params.metrics.filledSlotCount);
+    drawLoadSaveDetailMetricLeft(detailX, y, "Loops ", valueStr);
+    std::snprintf(valueStr, sizeof(valueStr), "%3u",
+                  static_cast<unsigned>(params.metrics.masterLoopBars));
+    drawLoadSaveDetailMetricRight(y, "Bars", valueStr, kLoadSaveDetailRightLabelChars);
     y += kLoadSaveTextLineStep;
 
-    const int detailBarWidth = DISPLAY_WIDTH - detailX - kLoadSaveDetailRightMargin;
-    const bool showFromLine = isCurrentRow && folderName != nullptr && folderName[0] != '\0' &&
-                              (autoSaveBeforeLoadToastText_[0] == '\0' ||
-                               nowMs >= autoSaveBeforeLoadToastExpiresAtMs_);
-    const int trackAreaBottom =
-        showFromLine ? DISPLAY_HEIGHT - kLoadSaveTextLineStep : DISPLAY_HEIGHT;
-    const int trackAreaHeight = trackAreaBottom - y;
+    const int detailBarWidth = loadSaveDetailSlotBarWidth(detailX);
+    const int slotAreaTop = y;
+    const int slotAreaBottom = DISPLAY_HEIGHT;
+    const int slotAreaHeight = slotAreaBottom - slotAreaTop;
     constexpr uint8_t kTrackRows = Config::NUM_TRACKS;
-    int trackRowHeight = 1;
-    if (trackAreaHeight > 0 && kTrackRows > 0) {
-        trackRowHeight =
-            (trackAreaHeight - static_cast<int>(kTrackRows - 1) * kLoadSaveTrackRowGap) /
-            static_cast<int>(kTrackRows);
-        if (trackRowHeight < 1) {
-            trackRowHeight = 1;
-        }
-    }
+    const int baseRowHeight =
+        slotAreaHeight > 0 && kTrackRows > 0
+            ? (slotAreaHeight - static_cast<int>(kTrackRows - 1) * kLoadSaveTrackRowGap) /
+                  static_cast<int>(kTrackRows)
+            : 1;
+    const int rowHeightRemainder =
+        slotAreaHeight - static_cast<int>(kTrackRows) * baseRowHeight -
+        static_cast<int>(kTrackRows - 1) * kLoadSaveTrackRowGap;
 
+    int rowY = slotAreaTop;
     for (uint8_t trackIndex = 0; trackIndex < kTrackRows; ++trackIndex) {
-        const int rowY =
-            y + static_cast<int>(trackIndex) * (trackRowHeight + kLoadSaveTrackRowGap);
-        if (rowY + trackRowHeight > trackAreaBottom) {
-            break;
+        const int rowHeight =
+            baseRowHeight + (static_cast<int>(trackIndex) < rowHeightRemainder ? 1 : 0);
+        if (detailBarWidth > 0 && rowHeight > 0 && rowY < slotAreaBottom) {
+            const int drawHeight = std::min(rowHeight, slotAreaBottom - rowY);
+            drawLoadSaveTrackFilledBar(detailX, rowY, detailBarWidth, drawHeight,
+                                       params.metrics.perTrackFilledSlots[trackIndex],
+                                       Config::MAX_LOOPS_PER_TRACK, 8);
         }
-        drawLoadSaveTrackFilledBar(detailX, rowY, detailBarWidth, trackRowHeight,
-                                   metadata.perTrackFilledSlots[trackIndex],
-                                   Config::MAX_LOOPS_PER_TRACK, 8);
+        rowY += rowHeight;
+        if (trackIndex + 1 < kTrackRows) {
+            rowY += kLoadSaveTrackRowGap;
+        }
     }
 
-    if (showFromLine) {
-        char fromLine[32];
-        std::snprintf(fromLine, sizeof(fromLine), "From: %s", folderName);
-        _display.gfx.draw_text(_display.api.getFrameBuffer(), fromLine, detailX,
-                               DISPLAY_HEIGHT - kLoadSaveTextLineStep, 5);
-    }
-}
-
-void DisplayManager::drawLoadSaveRevisionCatalogSetDetail(
-    int detailX, const SetRevisionCatalog::SetMetaRecord& meta) {
-    _display.gfx.select_font(&Font5x7FixedMono);
-    int y = 0;
-
-    char line[40];
-    std::snprintf(line, sizeof(line), "S%04u", static_cast<unsigned>(meta.setId));
-    _display.gfx.draw_text(_display.api.getFrameBuffer(), line, detailX, y, 15);
-    y += kLoadSaveTextLineStep;
-
-    if (meta.subtitle[0] != '\0') {
-        copyLoadSaveBrowserLabel(line, sizeof(line), meta.subtitle);
-        _display.gfx.draw_text(_display.api.getFrameBuffer(), line, detailX, y, 15);
-        y += kLoadSaveTextLineStep;
-    }
-
-    char dateTime[40];
-    RtcTime::formatDetailDateTime(static_cast<uint32_t>(meta.updatedUnix), dateTime,
-                                  sizeof(dateTime));
-    if (dateTime[0] == '\0') {
-        std::snprintf(dateTime, sizeof(dateTime), "--");
-    }
-    _display.gfx.draw_text(_display.api.getFrameBuffer(), dateTime, detailX, y, 5);
-    y += kLoadSaveTextLineStep;
-
-    std::snprintf(line, sizeof(line), "Rev v%04u",
-                  static_cast<unsigned>(meta.latestRevisionId));
-    _display.gfx.draw_text(_display.api.getFrameBuffer(), line, detailX, y, 5);
-    y += kLoadSaveTextLineStep;
-
-    char valueStr[8];
-    std::snprintf(valueStr, sizeof(valueStr), "%u", meta.revisionCount);
-    drawLoadSaveDetailMetricLeft(detailX, y, "Revs", valueStr);
-    drawLoadSaveDetailMetricRight(y, "Fav", meta.favorite != 0 ? "Y" : "N", 3);
+    drawLoadSaveDetailDateColumn(params.timestampUnix);
 }
 
 void DisplayManager::drawAutoSaveBeforeLoadToast(int detailX, uint32_t nowMs) {
@@ -1841,39 +1849,32 @@ void DisplayManager::drawLoadSaveView(uint32_t nowMs) {
         }
     }
 
-    SavedSetCatalog::SavedSetMetadata detailMetadata{};
-    SetRevisionCatalog::SetMetaRecord catalogDetailMeta{};
+    LoadSaveWorkspaceDetailParams detailParams{};
     bool detailOk = false;
-    bool catalogDetailOk = false;
     const bool isSaveRow = SetBrowserOverlayPolicy::isRootSaveRow(loadSaveListSelection_);
     const bool isCurrentRow = SetBrowserOverlayPolicy::isRootCurrentRow(loadSaveListSelection_);
-    const char* folderName = nullptr;
-    char loadedFromFolder[16];
 
     if (isSaveRow || isCurrentRow) {
-        detailOk = StorageManager::readCurrentSetBrowserMetadata(detailMetadata);
-        if (isCurrentRow &&
-            StorageManager::copyCurrentSetLoadedFromFolder(loadedFromFolder,
-                                                           sizeof(loadedFromFolder))) {
-            folderName = loadedFromFolder;
+        detailOk = StorageManager::readCurrentSetBrowserMetadata(detailParams.metrics);
+        detailParams.timestampUnix = detailParams.metrics.createdAtUnix;
+        detailParams.setId = StorageManager::getCurrentWorkspaceDerivedSetId();
+        detailParams.revisionId = StorageManager::getCurrentWorkspaceDerivedRevisionId();
+        if (isCurrentRow && StorageManager::isCurrentWorkspaceDirty()) {
+            detailParams.markRevisionUnsaved = true;
         }
     } else {
         const size_t savedIndex =
             SetBrowserOverlayPolicy::rootSetFolderListIndex(loadSaveListSelection_);
         if (savedIndex < loadSaveListCount_) {
-            folderName = loadSaveListEntries_[savedIndex].folderName;
-            catalogDetailOk =
-                StorageManager::readSetRevisionCatalogMetaForFolder(folderName, catalogDetailMeta);
+            detailOk = StorageManager::readSetRevisionCatalogBrowserMetadata(
+                loadSaveListEntries_[savedIndex].folderName, detailParams.metrics,
+                detailParams.setId, detailParams.revisionId, detailParams.timestampUnix);
         }
     }
 
     drawAutoSaveBeforeLoadToast(kLoadSaveDetailX, nowMs);
-    if (catalogDetailOk) {
-        drawLoadSaveRevisionCatalogSetDetail(kLoadSaveDetailX, catalogDetailMeta);
-    } else if (detailOk) {
-        const char* detailTitle = isSaveRow ? "Save Current" : nullptr;
-        drawLoadSaveSetDetail(kLoadSaveDetailX, detailMetadata, isCurrentRow, folderName,
-                              nowMs, detailTitle);
+    if (detailOk) {
+        drawLoadSaveWorkspaceDetail(kLoadSaveDetailX, detailParams);
     }
 }
 

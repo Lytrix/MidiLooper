@@ -4147,6 +4147,14 @@ uint32_t StorageManager::getLastCommittedWorkspaceEpoch() {
     return lastCommittedWorkspaceEpoch;
 }
 
+uint16_t StorageManager::getCurrentWorkspaceDerivedSetId() {
+    return workspaceDerivedFromSetId;
+}
+
+uint16_t StorageManager::getCurrentWorkspaceDerivedRevisionId() {
+    return workspaceDerivedFromRevisionId;
+}
+
 StorageManager::SetBrowserOverlayMode StorageManager::getSetBrowserOverlayMode() {
     const bool minimalLoading = RevisionLoadPolicy::isMinimalLoadingOverlayActive(
         revisionLoadPipelineActive, revisionCommitInProgress, revisionLoadPending,
@@ -4380,58 +4388,50 @@ size_t StorageManager::listSetRevisionBrowserEntries(SetRevisionCatalog::SetBrow
     const size_t capacity = maxEntries < kScratchCapacity ? maxEntries : kScratchCapacity;
     size_t count = 0;
 
-    File setsDir = SD.open(SetRevisionCatalog::kSetsRoot);
-    if (!setsDir) {
-        return 0;
+    if (SD.exists(SetRevisionCatalog::kSetIndexPath)) {
+        File indexFile = SD.open(SetRevisionCatalog::kSetIndexPath, FILE_READ);
+        if (indexFile) {
+            SetRevisionCatalog::SetCatalogIndex catalogIndex{};
+            const StorageIo indexIo = storageIoFromFileRead(indexFile);
+            const bool indexOk = SetRevisionCatalog::readSetCatalogIndex(indexIo, catalogIndex);
+            indexFile.close();
+            if (indexOk && catalogIndex.nextSetId > 1U) {
+                for (uint32_t candidateSetId = 1;
+                     candidateSetId < catalogIndex.nextSetId && count < capacity; ++candidateSetId) {
+                    const uint16_t setId = static_cast<uint16_t>(candidateSetId);
+                    char setMetaPath[64];
+                    if (!SetRevisionCatalog::formatSetMetaPath(setMetaPath, sizeof(setMetaPath),
+                                                               setId) ||
+                        !SD.exists(setMetaPath)) {
+                        continue;
+                    }
+                    File metaFile = SD.open(setMetaPath, FILE_READ);
+                    if (!metaFile) {
+                        continue;
+                    }
+                    SetRevisionCatalog::SetMetaRecord meta{};
+                    const StorageIo metaIo = storageIoFromFileRead(metaFile);
+                    const bool readOk = SetRevisionCatalog::readSetMetaRecord(metaIo, meta);
+                    metaFile.close();
+                    if (!readOk || meta.setId != setId || meta.latestRevisionId == 0) {
+                        continue;
+                    }
+                    SetRevisionCatalog::SetBrowserListEntry& row = scratch[count];
+                    const int folderWritten =
+                        std::snprintf(row.folderName, sizeof(row.folderName), "S%04u", setId);
+                    if (folderWritten <= 0 ||
+                        static_cast<size_t>(folderWritten) >= sizeof(row.folderName)) {
+                        continue;
+                    }
+                    row.setId = setId;
+                    row.latestRevisionId = meta.latestRevisionId;
+                    row.updatedUnix = meta.updatedUnix;
+                    row.favorite = meta.favorite;
+                    ++count;
+                }
+            }
+        }
     }
-    while (true) {
-        File setEntry = setsDir.openNextFile();
-        if (!setEntry) {
-            break;
-        }
-        const bool isDirectory = setEntry.isDirectory();
-        const char* name = setEntry.name();
-        setEntry.close();
-        if (!isDirectory || count >= capacity) {
-            continue;
-        }
-
-        uint16_t setId = 0;
-        if (!parseRevisionSetFolderEntryName(name, setId)) {
-            continue;
-        }
-
-        char setMetaPath[64];
-        if (!SetRevisionCatalog::formatSetMetaPath(setMetaPath, sizeof(setMetaPath), setId) ||
-            !SD.exists(setMetaPath)) {
-            continue;
-        }
-        File metaFile = SD.open(setMetaPath, FILE_READ);
-        if (!metaFile) {
-            continue;
-        }
-        SetRevisionCatalog::SetMetaRecord meta{};
-        const StorageIo metaIo = storageIoFromFileRead(metaFile);
-        const bool readOk = SetRevisionCatalog::readSetMetaRecord(metaIo, meta);
-        metaFile.close();
-        if (!readOk || meta.setId != setId || meta.latestRevisionId == 0) {
-            continue;
-        }
-
-        SetRevisionCatalog::SetBrowserListEntry& row = scratch[count];
-        const int folderWritten =
-            std::snprintf(row.folderName, sizeof(row.folderName), "S%04u", setId);
-        if (folderWritten <= 0 ||
-            static_cast<size_t>(folderWritten) >= sizeof(row.folderName)) {
-            continue;
-        }
-        row.setId = setId;
-        row.latestRevisionId = meta.latestRevisionId;
-        row.updatedUnix = meta.updatedUnix;
-        row.favorite = meta.favorite;
-        ++count;
-    }
-    setsDir.close();
 
     SetRevisionCatalog::sortSetBrowserListEntriesByUpdatedUnixDesc(scratch, count);
     for (size_t i = 0; i < count; ++i) {
@@ -4468,6 +4468,111 @@ bool StorageManager::readSetRevisionCatalogMetaForFolder(const char* folderName,
     const bool ok = SetRevisionCatalog::readSetMetaRecord(io, meta);
     file.close();
     return ok && meta.setId == setId;
+#endif
+}
+
+namespace {
+
+void applyRevisionSlotDirectoryToSavedSetMetadata(
+    const RevisionPackedBlob::RevisionLoopSlotDirectoryEntry* entries, uint16_t entryCount,
+    SavedSetCatalog::SavedSetMetadata& metadata) {
+    metadata.trackCount = 0;
+    metadata.filledSlotCount = 0;
+    metadata.masterLoopBars = 0;
+    for (uint8_t trackIndex = 0; trackIndex < Config::NUM_TRACKS; ++trackIndex) {
+        metadata.perTrackFilledSlots[trackIndex] = 0;
+    }
+    uint16_t maxBars = 0;
+    for (uint16_t index = 0; index < entryCount; ++index) {
+        const RevisionPackedBlob::RevisionLoopSlotDirectoryEntry& entry = entries[index];
+        if (entry.occupied == 0) {
+            continue;
+        }
+        if (entry.trackIndex >= Config::NUM_TRACKS || entry.slotIndex >= Config::MAX_LOOPS_PER_TRACK) {
+            continue;
+        }
+        ++metadata.perTrackFilledSlots[entry.trackIndex];
+        if (entry.bars > maxBars) {
+            maxBars = entry.bars;
+        }
+    }
+    uint16_t filledTotal = 0;
+    for (uint8_t trackIndex = 0; trackIndex < Config::NUM_TRACKS; ++trackIndex) {
+        if (metadata.perTrackFilledSlots[trackIndex] > 0) {
+            ++metadata.trackCount;
+            filledTotal += metadata.perTrackFilledSlots[trackIndex];
+        }
+    }
+    metadata.filledSlotCount =
+        static_cast<uint8_t>(filledTotal > 255 ? 255 : filledTotal);
+    metadata.masterLoopBars = maxBars;
+}
+
+bool readRevisionHeaderFromRevisionFile(File& file, RevisionPackedBlob::RevisionHeader& headerOut) {
+    uint8_t headerBytes[RevisionPackedBlob::kRevisionHeaderByteSize];
+    if (!file.seek(0) ||
+        file.read(headerBytes, sizeof(headerBytes)) != static_cast<int>(sizeof(headerBytes))) {
+        return false;
+    }
+    return RevisionPackedBlob::parseRevisionHeaderFromBytes(headerBytes, sizeof(headerBytes),
+                                                          headerOut);
+}
+
+}  // namespace
+
+bool StorageManager::readSetRevisionCatalogBrowserMetadata(
+    const char* folderName, SavedSetCatalog::SavedSetMetadata& metadata, uint16_t& setIdOut,
+    uint16_t& revisionIdOut, uint32_t& updatedUnixOut) {
+#if BYPASS_STOP_UNDO_SAVE
+    (void)folderName;
+    (void)metadata;
+    (void)setIdOut;
+    (void)revisionIdOut;
+    (void)updatedUnixOut;
+    return false;
+#else
+    SetRevisionCatalog::SetMetaRecord meta{};
+    if (!readSetRevisionCatalogMetaForFolder(folderName, meta)) {
+        return false;
+    }
+    setIdOut = meta.setId;
+    revisionIdOut = meta.latestRevisionId;
+    updatedUnixOut = static_cast<uint32_t>(meta.updatedUnix);
+    metadata = {};
+    metadata.createdAtUnix = updatedUnixOut;
+
+    if (meta.latestRevisionId == 0) {
+        return true;
+    }
+
+    char revisionPath[80];
+    if (!SetRevisionCatalog::formatRevisionPath(revisionPath, sizeof(revisionPath), meta.setId,
+                                                meta.latestRevisionId, false) ||
+        !SD.exists(revisionPath)) {
+        return true;
+    }
+    File revisionFile = SD.open(revisionPath, FILE_READ);
+    if (!revisionFile) {
+        return true;
+    }
+    const size_t fileSize = revisionFile.size();
+    RevisionPackedBlob::RevisionHeader header{};
+    if (!readRevisionHeaderFromRevisionFile(revisionFile, header)) {
+        revisionFile.close();
+        return true;
+    }
+    if (header.createdUnix != 0) {
+        updatedUnixOut = static_cast<uint32_t>(header.createdUnix);
+        metadata.createdAtUnix = updatedUnixOut;
+    }
+    RevisionPackedBlob::RevisionLoopSlotDirectoryEntry entries[kMaxRevisionLoopIndexEntries];
+    uint16_t entryCount = 0;
+    if (readSlotIndexEntriesFromRevisionFile(revisionFile, fileSize, header, entries,
+                                             kMaxRevisionLoopIndexEntries, entryCount)) {
+        applyRevisionSlotDirectoryToSavedSetMetadata(entries, entryCount, metadata);
+    }
+    revisionFile.close();
+    return true;
 #endif
 }
 
