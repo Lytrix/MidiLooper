@@ -1,46 +1,63 @@
 schema: spec-driven
 
 context: |
-  MidiLooper — Teensy 4.1 firmware (PlatformIO, env `teensy41` / `native` tests).
+  MidiLooper — Teensy 4.1 firmware (PlatformIO; default firmware env `teensy41-capture-serial`; host tests `native`).
+
   Language: C++17; hot paths must stay allocation-free where possible.
 
   Architecture:
   - `Track` / `Loop` / `LoopPool` — per-track multi-slot loops (`MAX_LOOPS_PER_TRACK = 8`)
-  - `Loop` stores published MIDI in **takes** (chunk refs); capture uses **Capture**
+  - `Loop` timeline: **passes[]** (recordPass, overdubPasses, editPasses) + live **Capture**
   - `ClockManager` — 192 PPQN internal, 24 PPQN MIDI clock
-  - `TrackUndo`, `StorageManager` (SD v4 epoch flatten), `DisplayManager`, DROID USB MIDI
+  - `TrackUndo`, `StorageManager` (SD v4+ loops, Current workspace, Set revisions), `DisplayManager`, DROID USB MIDI
+  - Live note edit: `EditManager` / `NoteEditSession.store`
 
-  Timeline refactor milestones (branch `refactor/timeline-data-model`):
-  - M1–M7 shipped: take-equivalent storage (code still says Epoch until m8-rename)
-  - M8 rename (OpenSpec `m8-rename`): Epoch→Take, CaptureLayer→Capture — apply first
-  - M8 edit (OpenSpec `m8-edit`): Edit op-lists + NoteEditSession — after rename merges
-  - Post-M8: pool/playback hardening → JamRecorder (JamAction) → M10 → D13 capture
+  Milestone status (Jun 2026):
+  - M1–M7 shipped; M8 edit + pool-budget + loop-ownership + long-record-memory-headroom **archived** → `openspec/specs/`
+  - **Active work:** persistence / overlay — see `docs/runtime/CURRENT_WORK.md` + `PROJECT_STATE.md`
+  - Post-persistence sequencing: `docs/runtime/ROADMAP.md` (informational — not implementation authority)
 
   Jam D13 arrangement capture is PARKED — see
-  openspec/changes/archive/20260617-parked-jam-recording-d13/PARKED.md
+  `openspec/changes/archive/20260617-parked-jam-recording-d13/PARKED.md`
 
-  Existing docs (brownfield — cite, do not duplicate wholesale):
-  - `docs/DELIVERABLE_TRACKING.md` — shipped vs next overview
-  - `docs/plans/phase-3-multi-loop.md` — jam recording requirements
+  Authority (agents):
+  - `docs/00-authority/README.md` — hierarchy + conflict resolution (OpenSpec = behavior; architecture = structure)
+  - `docs/runtime/PROJECT_STATE.md` — execution context (load first)
+  - `docs/runtime/CURRENT_WORK.md` — implementation scope (required before coding)
+  - `docs/runtime/ROADMAP.md` — future milestones (optional; never sole authority)
+  - `docs/DECISION_LOG.md` — search before new abstractions; append at closeout
+  - `docs/templates/DECISION_REVIEW.md` — mandatory before firmware implementation
+  - `openspec/specs/` — normative requirements after `/opsx:archive`
+  - `docs/plans/` — handoffs and historical context; do not treat as live queue
+
+  Brownfield docs (cite, do not duplicate wholesale):
+  - `docs/00-authority/DELIVERY_RULES.md` — OpenSpec process and guards
+  - `docs/DELIVERABLE_TRACKING.md` — shipped vs next
+  - `docs/plans/phase-3-multi-loop.md` — jam requirements (D13 deferred)
   - `docs/Guides/LOOP_MIDI_STORAGE_AND_VALIDATION.md` — capture/stop/undo constraints
-  - `docs/Guides/jam-bar-step-phases.md` — jam tick / bar-step behavior
+  - `docs/Guides/DEFERRED_RUNTIME_PERSISTENCE.md` — deferred save FSM
 
   Conventions:
-  - Reuse repo nouns: capture, take, slot, overdub, SEVT/REVT (session capture), HITL baseline
-  - Plans in `docs/plans/` remain historical; **OpenSpec** `openspec/specs/` is source of truth going forward
-  - Before push: `pio test -e native`; HITL when firmware timing/storage changes
+  - Reuse repo nouns: **passes**, **Capture**, **editPass**, **NoteEditSession**, slot, overdub, jam, JamAction, HITL baseline
+  - See `.cursor/rules/Naming-Vocabulary-Teensy-Looper.mdc`
+  - Before push: `pio test -e native`; HITL when firmware timing/storage/edit changes
   - Do not upload Teensy firmware without user confirmation
 
   OpenSpec CLI requires Node.js >= 20 (`nvm use 20`).
 
 rules:
   proposal:
-    - Link to existing `docs/plans/` and `docs/DELIVERABLE_TRACKING.md` when brownfield
+    - Link to `docs/DELIVERABLE_TRACKING.md` and relevant `openspec/specs/` when brownfield
+    - Check `docs/runtime/CURRENT_WORK.md` for implementation scope — not ROADMAP alone
     - List open product decisions (TBD) explicitly; do not invent UX without flagging
     - Non-goals section when scope is easy to over-expand (jam vs scenes vs LFO)
   design:
-    - Path B Edit overlay and EditSessionUndoStack are locked for M8
-    - Name primary files (`Loop.cpp`, `EditManager.cpp`, etc.) and hot-path constraints
+    - Respect ownership in `docs/00-authority/ARCHITECTURE_RULES.md`
+    - Ownership moves only via transfer protocol (reassessment, migration, compat removal trigger)
+    - Name primary files (`Loop.cpp`, `EditManager.cpp`, `StorageManager.cpp`) and hot-path constraints
+    - No full validate on record/overdub stop; deferred save via `requestDeferredSaveState`
   tasks:
-    - Chunk tasks for reviewable PRs; reference deliverable IDs (M8) where applicable
-    - Apply m8-rename before m8-edit; m8-edit gate: full test_edit_session matrix before archive
+    - Chunk tasks for reviewable PRs; implement from `openspec/changes/<name>/tasks.md`
+    - Complete DECISION_REVIEW + PREFLIGHT before firmware edits; search DECISION_LOG
+    - Native tests required for logic changes; HITL per DELIVERY_RULES verification matrix
+    - Archive only after gates pass; update PROJECT_STATE and CURRENT_WORK after session

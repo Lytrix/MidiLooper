@@ -57,6 +57,9 @@ struct UndoEntry {
 
 using UndoEntryVec = std::vector<UndoEntry, ExternalMemoryFirstAllocator<UndoEntry>>;
 
+/// On-disk token before per-track undo stacks in `runtime.bundle.bin` footer (wire bytes: "GUS3").
+constexpr uint32_t kGlobalUndoStackToken = 0x33535547UL;
+
 struct GlobalUndoStack {
   UndoEntryVec entries;
   UndoEntryId nextEntryId = 1;

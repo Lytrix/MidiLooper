@@ -17,12 +17,12 @@
 #include "../../src/Utils/MemoryMonitor.cpp"
 #include "../../src/Loop.cpp"
 #include "CurrentSetStorage.h"
+#include "GlobalUndoStack.h"
 #include "StorageLoopIo.h"
 
 namespace {
 
 constexpr uint32_t kV5StorageVersion = 5;
-constexpr uint32_t kGlobalUndoMagic = 0x33535547UL;
 
 template <typename T>
 void appendRaw(std::vector<uint8_t>& buffer, const T& value) {
@@ -83,7 +83,7 @@ void appendV5MonolithFixture(std::vector<uint8_t>& buffer) {
     const uint8_t activeIdx = 0;
     appendRaw(buffer, activeIdx);
   }
-  appendRaw(buffer, kGlobalUndoMagic);
+  appendRaw(buffer, kGlobalUndoStackToken);
   for (uint8_t t = 0; t < numTracks; ++t) {
     const uint32_t entryCount = 0;
     const uint32_t cursor = 0;
@@ -108,7 +108,7 @@ size_t expectedV5FixtureBytes() {
   const size_t loopBytesPerTrack = 8 * loopHeaderBytesPerLoop;
   const size_t trackBytes = 8 * (sizeof(uint32_t) + sizeof(bool) + slotMetaBytesPerTrack +
                                  loopBytesPerTrack);
-  const size_t footerBytes = sizeof(uint8_t) + 8 * sizeof(uint8_t) + sizeof(kGlobalUndoMagic) +
+  const size_t footerBytes = sizeof(uint8_t) + 8 * sizeof(uint8_t) + sizeof(kGlobalUndoStackToken) +
                              8 * (sizeof(uint32_t) + sizeof(uint32_t) + sizeof(uint32_t));
   return headerBytes + trackBytes + footerBytes + sizeof(CurrentSetStorage::kSaveFileToken);
 }

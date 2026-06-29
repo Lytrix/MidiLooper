@@ -4,6 +4,27 @@ The **story and layout** of the looper start at the **[root `README.md`](../READ
 
 **Cursor plan exports** and phased design archives: **[`plans/`](plans/README.md)**.
 
+## Agent context harness (governance layer)
+
+Does **not** change firmware — process and documentation for coding agents.
+
+| Document | Role |
+|----------|------|
+| [**00-authority/**](00-authority/README.md) | Authority hierarchy: intent → architecture → delivery |
+| [runtime/PROJECT_STATE.md](runtime/PROJECT_STATE.md) | Execution context — **load first** |
+| [runtime/CURRENT_WORK.md](runtime/CURRENT_WORK.md) | Implementation scope (now / not now) — **required before coding** |
+| [runtime/ROADMAP.md](runtime/ROADMAP.md) | Future milestones — informational only |
+| [DECISION_LOG.md](DECISION_LOG.md) | Accepted / superseded decisions — **search before new abstractions** |
+| [templates/DECISION_REVIEW.md](templates/DECISION_REVIEW.md) | Mandatory historical review before firmware implementation |
+| [AGENT_CONTEXT_MAP.md](AGENT_CONTEXT_MAP.md) | Domain → required docs |
+| [ARCHITECTURE_REASSESSMENT.md](ARCHITECTURE_REASSESSMENT.md) | When to pause for design review |
+| [templates/PREFLIGHT.md](templates/PREFLIGHT.md) | Planning template before implementation |
+| [templates/OWNERSHIP_TRANSFER.md](templates/OWNERSHIP_TRANSFER.md) | Ownership move proposal (with removal schedule) |
+| [templates/SESSION_CLOSEOUT.md](templates/SESSION_CLOSEOUT.md) | Before closing design-heavy chats |
+| [agents/](agents/architect.md) | Architect / builder / reviewer roles |
+
+Cursor rule: `.cursor/rules/Agent-Context-Workflow.mdc`
+
 ---
 
 ## Guides
@@ -60,7 +81,7 @@ Add new topical guides under `Guides/` and extend this table.
 
 | Document | Role |
 |----------|------|
-| [PROJECT_INTENT.md](PROJECT_INTENT.md) | **Canonical project goal and decision log** — read this first; conflicts resolve in its favor |
+| [00-authority/PROJECT_INTENT.md](00-authority/PROJECT_INTENT.md) | **Canonical project goal and decision log** — read this first; conflicts resolve in its favor |
 | [FEATURES.md](FEATURES.md) | Full technical feature checklist (also linked from root `README`) |
 | [FEATURE_PLANS.md](FEATURE_PLANS.md) | Conventions, **Phase 3 / multi-loop** pointer |
 | [plans/README.md](plans/README.md) | Design exports and phase specs (`docs/plans/`) |

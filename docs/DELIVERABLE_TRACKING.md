@@ -1,6 +1,6 @@
 # Deliverable Tracking (Main vs Refinement)
 
-> Project goal and decision log: [PROJECT_INTENT.md](PROJECT_INTENT.md). This page is the single shipped-vs-next overview.
+> Project goal and decision log: [00-authority/PROJECT_INTENT.md](00-authority/PROJECT_INTENT.md). This page is the single shipped-vs-next overview.
 
 ## Shipped vs Next (updated Jun 2026)
 
