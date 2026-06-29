@@ -17,6 +17,7 @@
 #include "SetBrowserOverlayPolicy.h"
 #include "StorageActivitySnapshot.h"
 #include "StorageSession.h"
+#include "StorageManagerInternal.h"
 #include "BootRecoveryPolicy.h"
 #include "PersistenceSchema.h"
 #include "SavedSetCatalog.h"
@@ -39,6 +40,8 @@
 #include <cstdio>
 #include <cstring>
 #include <vector>
+
+using namespace StorageManagerInternal;
 
 #define STORAGE_FILENAME CurrentSetStorage::kLegacyMonolithPath
 #define STORAGE_VERSION 5
@@ -225,256 +228,6 @@ static bool applyLoadedTransportFooter(uint8_t numTracks, const std::vector<uint
                                        LooperState loadedLooperState, uint32_t masterLoopLength);
 
 namespace {
-bool deferredSavePending = false;
-bool urgentEditSavePending = false;
-uint32_t lastEditAutosaveMs = 0;
-bool clearEditDirtyAfterDeferredSave = false;
-bool quarantineLegacyMonolithAfterSave = false;
-
-enum class DeferredSaveStage : uint8_t {
-    Idle = 0,
-    CurrentSetMeta,
-    TrackHeaderAndSlots,
-    CurrentSetLoopSlot,
-    Footer,
-    UndoStacks,
-    CurrentSetCompletion,
-};
-
-enum class DeferredGlobalHeaderStage : uint8_t {
-    Version = 0,
-    Bpm,
-    LooperState,
-    MasterLoopLength,
-    TrackCount,
-};
-
-enum class DeferredTrackWriteStage : uint8_t {
-    TrackState = 0,
-    Muted,
-};
-
-enum class DeferredSlotWriteStage : uint8_t {
-    SlotEnabled = 0,
-    SlotMuted,
-    SlotLoopId,
-};
-
-enum class DeferredFooterWriteStage : uint8_t {
-    SelectedTrack = 0,
-    ActiveLoopIndex,
-    UndoMagic,
-};
-
-enum class DeferredLoopWriteStage : uint8_t {
-    Header = 0,
-    CapturePassHeader,
-    CapturePassChunk,
-    EditTail,
-};
-
-enum class LoopPersistPayloadCrc : uint8_t {
-    None = 0,
-    RevisionCommit,
-};
-
-enum class DeferredUndoWriteStage : uint8_t {
-    Header = 0,
-    EntryHeader,
-    BeforeSnapshotPresence,
-    BeforeSnapshotLoop,
-    AfterSnapshotPresence,
-    AfterSnapshotLoop,
-    EntryTail,
-};
-
-bool deferredSaveInProgress = false;
-bool deferredSaveSdIoActive = false;
-bool deferredSaveUrgentRequested = false;
-DeferredSaveStage deferredSaveStage = DeferredSaveStage::Idle;
-DeferredGlobalHeaderStage deferredGlobalHeaderStage = DeferredGlobalHeaderStage::Version;
-DeferredTrackWriteStage deferredTrackWriteStage = DeferredTrackWriteStage::TrackState;
-DeferredSlotWriteStage deferredSlotWriteStage = DeferredSlotWriteStage::SlotEnabled;
-DeferredFooterWriteStage deferredFooterWriteStage = DeferredFooterWriteStage::SelectedTrack;
-DeferredLoopWriteStage deferredLoopWriteStage = DeferredLoopWriteStage::Header;
-DeferredUndoWriteStage deferredUndoWriteStage = DeferredUndoWriteStage::Header;
-LooperState deferredSaveStateSnapshot = LOOPER_IDLE;
-File deferredSaveFile;
-File deferredSaveLoopFile;
-bool deferredSaveLoopFileOpen = false;
-CurrentSetStorage::AnchorFields currentSetAnchorFields{};
-uint8_t deferredSaveNumTracks = 0;
-uint8_t deferredSaveTrackCursor = 0;
-uint8_t deferredSaveSlotCursor = 0;
-uint8_t deferredSavePoolCursor = 0;
-uint8_t deferredSaveUndoTrackCursor = 0;
-uint16_t deferredSaveCapturePassCursor = 0;
-uint16_t deferredSaveChunkCursor = 0;
-uint32_t deferredSaveUndoEntryCursor = 0;
-bool deferredSaveTrackHeaderWritten = false;
-uint8_t deferredSaveFooterTrackCursor = 0;
-uint32_t deferredSaveStartedAtUs = 0;
-uint32_t deferredSaveHeapBefore = 0;
-uint32_t deferredSaveAdmissionHeap = 0;
-bool deferredSaveHeapFloorDeferred = false;
-bool deferredSaveLastCompletedOk = false;
-uint32_t deferredSaveCompletedAtMs = 0;
-uint32_t deferredSaveFailedAtMs = 0;
-uint32_t revisionLoadCompletedAtMs = 0;
-uint32_t revisionLoadFailedAtMs = 0;
-uint16_t revisionLoadLastDisplaySetId = 0;
-uint16_t revisionLoadLastDisplayRevisionId = 0;
-std::vector<MidiEvent, ExternalMemoryFirstAllocator<MidiEvent>> deferredSaveMidiBatch;
-uint16_t deferredSaveLoopSlotsWritten = 0;
-uint16_t deferredSaveLoopSlotsSkipped = 0;
-uint32_t deferredSaveDisplayBlockUs = 0;
-// Full payload rewrite only for explicit migration/recovery/repair paths:
-// migrateV5MonolithToCurrentSet, tryLoadLatestRecoveryPoint, tryLoadNewestSavedSet.
-// Normal runtime uses per-slot dirty bitmap + shouldWriteCurrentSetLoopSlot().
-bool forceCurrentSetFullLoopWrite = true;
-std::array<std::array<bool, Config::MAX_LOOPS_PER_TRACK>, Config::NUM_TRACKS>
-    currentSetLoopSlotDirty{};
-uint32_t currentSetLastActiveUnix = 0;
-char currentSetLoadedFromFolder[16] = {};
-uint32_t currentWorkspaceEpoch = 0;
-uint32_t lastCommittedWorkspaceEpoch = 0;
-uint16_t workspaceDerivedFromSetId = 0;
-uint16_t workspaceDerivedFromRevisionId = 0;
-uint16_t workspaceLastCommittedRevisionId = 0;
-uint32_t deferredSaveWorkspaceEpoch = 0;
-char autoSaveBeforeLoadFolderPending[16] = {};
-bool autoSaveBeforeLoadFolderPendingValid = false;
-
-enum class RevisionCommitStage : uint8_t {
-    Idle = 0,
-    Snapshot,
-    Write,
-    Validate,
-    CatalogUpdate,
-    Complete,
-};
-
-static_assert(!RevisionCommitPolicy::kWritePathUsesLoopPassesMaterialize,
-              "revision commit WRITE must not call LoopPasses::materialize");
-static_assert(RevisionCommitPolicy::kLoopSlotBodyUsesStorageLoopIoStream,
-              "revision commit LoopSlot bodies must stream via StorageLoopIo");
-
-enum class RevisionWriteStage : uint8_t {
-    PrepareLayout = 0,
-    OpenTempFile,
-    WriteHeader,
-    WriteTransportChunk,
-    WriteLoopSlotChunks,
-    WriteSlotIndexChunk,
-    WriteFooter,
-};
-
-bool revisionCommitPending = false;
-bool revisionCommitInProgress = false;
-bool revisionCommitSdIoActive = false;
-RevisionCommitStage revisionCommitStage = RevisionCommitStage::Idle;
-RevisionWriteStage revisionWriteStage = RevisionWriteStage::PrepareLayout;
-uint32_t revisionCommitSourceEpoch = 0;
-uint32_t revisionCommitWorkspaceEpochBeforeSnapshot = 0;
-uint16_t revisionCommitSetId = 0;
-uint16_t revisionCommitPendingRevisionId = 0;
-char revisionCommitTempPath[80] = {};
-char revisionCommitFinalPath[80] = {};
-File revisionCommitFile;
-SetRevisionCatalog::SetCatalogIndex revisionCommitCatalogIndex{};
-SetRevisionCatalog::SetMetaRecord revisionCommitSetMeta{};
-RevisionPackedBlob::RevisionHeader revisionCommitHeader{};
-constexpr uint16_t kMaxRevisionLoopIndexEntries =
-    static_cast<uint16_t>(Config::NUM_TRACKS * Config::MAX_LOOPS_PER_TRACK);
-RevisionPackedBlob::RevisionLoopSlotDirectoryEntry revisionCommitSlotEntries[kMaxRevisionLoopIndexEntries];
-RevisionPackedBlob::RevisionLoopSlotDirectoryEntry
-    revisionLoadSlotDirectoryEntries[kMaxRevisionLoopIndexEntries];
-// Shared by revision-load FSM and overlay catalog detail reads (never concurrent).
-uint16_t revisionCommitSlotIndexCount = 0;
-uint16_t revisionCommitSlotIndexWriteCursor = 0;
-uint32_t revisionCommitPayloadWriteOffset = 0;
-uint16_t revisionCommitChunkCount = 0;
-uint8_t revisionCommitCopyTrackCursor = 0;
-uint8_t revisionCommitCopySlotCursor = 0;
-uint32_t revisionCommitRuntimeBundleSize = 0;
-uint32_t revisionCommitRuntimeBundleReadPos = 0;
-uint32_t revisionCommitSlotReadPos = 0;
-uint32_t revisionCommitSlotBodyRemaining = 0;
-bool revisionCommitLoopSlotBodyActive = false;
-File revisionCommitSourceFile;
-bool revisionCommitSourceFileOpen = false;
-std::array<uint8_t, 512> revisionCommitCopyBuffer{};
-uint32_t revisionCommitPayloadCrc = 0;
-bool revisionCommitPayloadCrcSeeded = false;
-bool revisionCommitAllocatedNewSet = false;
-bool revisionCommitSlotIndexChunkWritten = false;
-uint32_t lastRevisionCommitBlockedLogAtMs = 0;
-
-enum class RevisionLoadStage : uint8_t {
-    Idle = 0,
-    Validate,
-    Write,
-    ReloadRam,
-    Complete,
-};
-
-enum class RevisionLoadWriteStage : uint8_t {
-    PrepareEpoch = 0,
-    OpenMetaTemp,
-    CopyTransportBody,
-    FinalizeMetaTemp,
-    WriteLoopSlots,
-};
-
-enum class RevisionLoadReloadRamStage : uint8_t {
-    WriteWorkspaceMeta = 0,
-    ReadMetaHeaders,
-    LoadLoopSlot,
-    ReadFooter,
-};
-
-RevisionLoadStage revisionLoadStage = RevisionLoadStage::Idle;
-RevisionLoadWriteStage revisionLoadWriteStage = RevisionLoadWriteStage::PrepareEpoch;
-uint16_t revisionLoadSetId = 0;
-uint16_t revisionLoadRevisionId = 0;
-char revisionLoadSourcePath[80] = {};
-RevisionPackedBlob::RevisionHeader revisionLoadHeader{};
-uint16_t revisionLoadSlotIndexCount = 0;
-uint32_t revisionLoadWorkspaceEpoch = 0;
-uint32_t revisionLoadTransportFileOffset = 0;
-uint32_t revisionLoadTransportBodySize = 0;
-uint32_t revisionLoadTransportReadPos = 0;
-uint8_t revisionLoadCopyTrackCursor = 0;
-uint8_t revisionLoadCopySlotCursor = 0;
-uint32_t revisionLoadSlotBodyRemaining = 0;
-uint32_t revisionLoadSlotReadPos = 0;
-File revisionLoadSourceFile;
-bool revisionLoadSourceFileOpen = false;
-File revisionLoadDestFile;
-bool revisionLoadDestFileOpen = false;
-bool revisionLoadWritingEmptySlot = false;
-DeferredLoopWriteStage revisionLoadLoopWriteStage = DeferredLoopWriteStage::Header;
-uint32_t lastRevisionLoadBlockedLogAtMs = 0;
-bool revisionLoadUsedDefaultTransport = false;
-bool revisionLoadDisplayRefreshPending = false;
-bool bootRevisionRecoveryPending = false;
-uint16_t bootRevisionRecoverySetId = 0;
-uint16_t bootRevisionRecoveryRevisionId = 0;
-StorageSession storageSession{};
-RevisionLoadReloadRamStage revisionLoadReloadRamStage = RevisionLoadReloadRamStage::WriteWorkspaceMeta;
-File revisionLoadReloadMetaFile;
-bool revisionLoadReloadMetaFileOpen = false;
-uint8_t revisionLoadReloadTrackCursor = 0;
-uint8_t revisionLoadReloadSlotCursor = 0;
-uint8_t revisionLoadReloadNumTracks = 0;
-bool revisionLoadReloadAnySlotHasEvents[Config::NUM_TRACKS] = {};
-TrackState revisionLoadReloadLoadedTrackState[Config::NUM_TRACKS] = {};
-bool revisionLoadReloadMuted[Config::NUM_TRACKS] = {};
-std::vector<uint8_t> revisionLoadReloadActiveLoopIndex;
-uint8_t revisionLoadReloadSelectedTrackIdx = 0;
-LooperState revisionLoadReloadLooperState = LOOPER_IDLE;
-uint32_t revisionLoadReloadMasterLoopLength = 0;
-
 #if defined(SESSION_CAPTURE)
 #if defined(__IMXRT1062__)
 #define CAPTURE_HITL_MEM FLASHMEM
@@ -4133,99 +3886,6 @@ uint16_t StorageManager::getCurrentWorkspaceDerivedRevisionId() {
     return workspaceDerivedFromRevisionId;
 }
 
-StorageActivitySnapshot buildStorageActivitySnapshot() {
-    StorageActivitySnapshot snapshot{};
-    snapshot.deferredSavePending = deferredSavePending;
-    snapshot.deferredSaveInProgress = deferredSaveInProgress;
-    snapshot.deferredSaveSdIoActive = deferredSaveSdIoActive;
-    snapshot.revisionCommitPending = revisionCommitPending;
-    snapshot.revisionCommitInProgress = revisionCommitInProgress;
-    snapshot.revisionCommitSdIoActive = revisionCommitSdIoActive;
-    snapshot.revisionCommitOverlayBackground = storageSession.revisionCommit.overlayBackgroundCommit;
-    snapshot.revisionLoadPending = storageSession.revisionLoad.pending;
-    snapshot.revisionLoadInProgress = storageSession.revisionLoad.inProgress;
-    snapshot.revisionLoadSdIoActive = storageSession.revisionLoad.sdIoActive;
-    snapshot.revisionLoadDirtyPromptActive = storageSession.revisionLoad.heldForWorkspaceDirty;
-    snapshot.loadAfterRevisionCommit = storageSession.revisionLoad.loadAfterRevisionCommit;
-    snapshot.overlayOpen = looperState.isLoadSaveModeActive();
-    snapshot.navigation = storageSession.setBrowserNavigation;
-    return snapshot;
-}
-
-StorageManager::SetBrowserOverlayMode StorageManager::getSetBrowserOverlayMode() {
-    return resolveOverlayMode(buildStorageActivitySnapshot());
-}
-
-SetBrowserOverlayPolicy::PersistencePhase StorageManager::getSetBrowserOverlayPersistencePhase() {
-    return resolvePersistencePhase(buildStorageActivitySnapshot());
-}
-
-StorageManager::SetBrowserOverlayEntryKind StorageManager::getSetBrowserOverlayEntryKind() {
-    return storageSession.setBrowserNavigation.entryKind;
-}
-
-void StorageManager::resetSetBrowserOverlayNavigation() {
-    SetBrowserOverlayPolicy::resetNavigation(storageSession.setBrowserNavigation);
-}
-
-void StorageManager::setSetBrowserOverlayEntryKind(SetBrowserOverlayEntryKind kind) {
-    SetBrowserOverlayPolicy::setEntryKind(storageSession.setBrowserNavigation, kind);
-}
-
-bool StorageManager::openSetBrowserRevisionHistory(uint16_t setId, uint8_t listSelection,
-                                                   uint8_t listScrollOffset) {
-    if (setId == 0) {
-        return false;
-    }
-    SetBrowserOverlayPolicy::openRevisionHistory(storageSession.setBrowserNavigation, setId, listSelection,
-                                                 listScrollOffset);
-    return true;
-}
-
-bool StorageManager::openSetBrowserLoopPick(uint16_t setId, uint8_t listSelection,
-                                            uint8_t listScrollOffset) {
-    if (setId == 0) {
-        return false;
-    }
-    SetBrowserOverlayPolicy::openLoopPick(storageSession.setBrowserNavigation, setId, listSelection,
-                                          listScrollOffset);
-    return true;
-}
-
-bool StorageManager::navigateSetBrowserOverlayBack(uint8_t& outListSelection,
-                                                   uint8_t& outListScrollOffset) {
-    return SetBrowserOverlayPolicy::navigateBack(storageSession.setBrowserNavigation, outListSelection,
-                                                 outListScrollOffset);
-}
-
-uint16_t StorageManager::getSetBrowserOverlayDrilledSetId() {
-    return storageSession.setBrowserNavigation.drilledSetId;
-}
-
-bool StorageManager::isRevisionLoadDirtyPromptActive() {
-    return storageSession.revisionLoad.heldForWorkspaceDirty;
-}
-
-uint8_t StorageManager::getRevisionLoadDirtyPromptSelection() {
-    return static_cast<uint8_t>(storageSession.revisionLoad.confirmChoice);
-}
-
-void StorageManager::adjustRevisionLoadDirtyPromptSelection(int delta) {
-    if (!storageSession.revisionLoad.heldForWorkspaceDirty || delta == 0) {
-        return;
-    }
-    int next = static_cast<int>(storageSession.revisionLoad.confirmChoice) + delta;
-    if (next < 0) {
-        next = 0;
-    } else if (next >= static_cast<int>(RevisionLoadPolicy::kDirtyPromptRowCount)) {
-        next = static_cast<int>(RevisionLoadPolicy::kDirtyPromptRowCount) - 1;
-    }
-    storageSession.revisionLoad.confirmChoice =
-        static_cast<RevisionLoadPolicy::DirtyPromptChoice>(next);
-#if defined(SESSION_CAPTURE)
-    SC_OVERLAY_SEL(1, static_cast<uint8_t>(storageSession.revisionLoad.confirmChoice));
-#endif
-}
 
 void StorageManager::confirmRevisionLoadDirtyPromptSaveThenLoad() {
 #if BYPASS_STOP_UNDO_SAVE
@@ -5202,15 +4862,6 @@ void StorageManager::requestCommitRevision() {
     SC_PERSIST("rev_request", 0, 0, 0, "queued");
 }
 
-void StorageManager::beginOverlaySaveRowCommit() {
-#if BYPASS_STOP_UNDO_SAVE
-    return;
-#else
-    storageSession.revisionCommit.overlayBackgroundCommit = true;
-    requestCommitRevision();
-#endif
-}
-
 bool StorageManager::hasRevisionCommitWork() {
 #if BYPASS_STOP_UNDO_SAVE
     return false;
@@ -5316,14 +4967,6 @@ bool StorageManager::isRevisionLoadActive() {
     return false;
 #else
     return storageSession.revisionLoad.sdIoActive;
-#endif
-}
-
-bool StorageManager::isOverlayCatalogReadAllowed() {
-#if BYPASS_STOP_UNDO_SAVE
-    return true;
-#else
-    return ::isOverlayCatalogReadAllowed(buildStorageActivitySnapshot());
 #endif
 }
 
@@ -5743,64 +5386,6 @@ DeferredSaveDisplayStatus StorageManager::getDeferredSaveDisplayStatus(uint32_t 
     inputs.failedAtMs = deferredSaveFailedAtMs;
     return resolveDeferredSaveDisplayStatus(nowMs, inputs);
 #endif
-}
-
-DeferredSaveDisplayStatus StorageManager::getDeferredLoadDisplayStatus(uint32_t nowMs) {
-#if BYPASS_STOP_UNDO_SAVE
-    (void)nowMs;
-    return {};
-#else
-    DeferredLoadDisplayInputs inputs{};
-    inputs.loadPending = storageSession.revisionLoad.pending;
-    inputs.loadInProgress = storageSession.revisionLoad.inProgress;
-    inputs.saveThenLoadCommitInProgress =
-        storageSession.revisionLoad.loadAfterRevisionCommit && revisionCommitInProgress;
-    inputs.completedAtMs = revisionLoadCompletedAtMs;
-    inputs.failedAtMs = revisionLoadFailedAtMs;
-    return resolveDeferredLoadDisplayStatus(nowMs, inputs);
-#endif
-}
-
-uint16_t StorageManager::getRevisionLoadDisplayTargetSetId() {
-#if BYPASS_STOP_UNDO_SAVE
-    return 0;
-#else
-    if (isRevisionLoadDisplayPipelineActive(buildStorageActivitySnapshot())) {
-        if (revisionLoadSetId != 0) {
-            return revisionLoadSetId;
-        }
-        return storageSession.revisionLoad.requestedSetId;
-    }
-    if (revisionLoadCompletedAtMs != 0 || revisionLoadFailedAtMs != 0) {
-        return revisionLoadLastDisplaySetId;
-    }
-    return 0;
-#endif
-}
-
-uint16_t StorageManager::getRevisionLoadDisplayTargetRevisionId() {
-#if BYPASS_STOP_UNDO_SAVE
-    return 0;
-#else
-    if (isRevisionLoadDisplayPipelineActive(buildStorageActivitySnapshot())) {
-        if (revisionLoadRevisionId != 0) {
-            return revisionLoadRevisionId;
-        }
-        return storageSession.revisionLoad.requestedRevisionId;
-    }
-    if (revisionLoadCompletedAtMs != 0 || revisionLoadFailedAtMs != 0) {
-        return revisionLoadLastDisplayRevisionId;
-    }
-    return 0;
-#endif
-}
-
-bool StorageManager::consumeRevisionLoadDisplayRefreshPending() {
-    if (!revisionLoadDisplayRefreshPending) {
-        return false;
-    }
-    revisionLoadDisplayRefreshPending = false;
-    return true;
 }
 
 bool StorageManager::saveState(const LooperState& state) {
