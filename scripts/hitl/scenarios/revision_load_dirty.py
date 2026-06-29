@@ -1,4 +1,4 @@
-"""Dirty-prompt revision load HITL (Yes / No / Cancel after record makes workspace dirty)."""
+"""Dirty-prompt revision load HITL via load/save overlay MIDI (watchable on OLED)."""
 
 from __future__ import annotations
 
@@ -10,7 +10,20 @@ from pathlib import Path
 from typing import Optional
 
 from hitl.context import get_context
-from hitl.deferred_save_idle import wait_for_deferred_save_idle
+from hitl.scenarios.load_save_overlay_helpers import (
+    DIRTY_PROMPT_ROW,
+    dwell_ms,
+    enter_load_save_overlay,
+    exit_load_save_overlay,
+    midi_confirm_overlay_row,
+    midi_scroll_dirty_prompt_row,
+    midi_scroll_to_root_row,
+    overlay_scroll_steps_to_set_row,
+    parse_overlay_watch_args,
+    recover_load_save_overlay,
+    make_workspace_dirty_again,
+    wait_serial_cap_ready,
+)
 from hitl.scenarios.revision_load import _parse_common_args, _wait_for_pattern_after
 from hitl.verify.revision_load_dirty import verify_revision_load_dirty
 
@@ -23,109 +36,12 @@ _REV_LOAD_DIRTY_PROMPT_RE = re.compile(
 _REV_LOAD_COMPLETE_RE = re.compile(
     r"#CAP,\d+,PERS,rev_load_complete,\d+,\d+,\d+,S\d{4}_v\d{4}\b"
 )
-_REVISION_JOB_FAILED_RE = re.compile(
-    r"\[StorageManager\] ERROR: Revision (commit|load) failed|"
-    r"\[StorageManager\] ERROR: Revision validate"
-)
-
-_DIRTY_COMMANDS = {
-    "yes": "!REV_LOAD_DIRTY_YES",
-    "no": "!REV_LOAD_DIRTY_NO",
-    "cancel": "!REV_LOAD_DIRTY_CANCEL",
-}
 
 
 def _track_select_note(track_number_1based: int) -> int:
     from host_midi_automation_baseline import TRACK_SELECT_NOTE_BASE
 
     return TRACK_SELECT_NOTE_BASE + (track_number_1based - 1)
-
-
-def _make_workspace_dirty_again(
-    out_port,
-    in_port,
-    serial_collector,
-    *,
-    track_number: int,
-    record_bars: int,
-    press_ms: int,
-    phase_wait_ms: int,
-    save_drain_s: float,
-    log_prefix: str,
-) -> bool:
-    from host_midi_automation_baseline import (
-        CONTROL_CHANNEL_1BASED,
-        RECORD_BUTTON_NOTE,
-        MIDI_CLOCKS_PER_BAR,
-        _send_short_press,
-        _wait_for_clock_pulses,
-    )
-    from host_midi_automation_edit_baseline import _ensure_transport_running
-
-    print(f"{log_prefix} make workspace dirty: {record_bars}-bar record on track {track_number}")
-    _ensure_transport_running(
-        out_port,
-        in_port,
-        press_ms=press_ms,
-        phase_wait_ms=phase_wait_ms,
-    )
-    time.sleep(phase_wait_ms / 1000.0)
-
-    dirty_record_anchor = len(serial_collector.snapshot())
-    _send_short_press(
-        out_port,
-        note=RECORD_BUTTON_NOTE,
-        channel_1based=CONTROL_CHANNEL_1BASED,
-        press_ms=press_ms,
-    )
-    time.sleep(phase_wait_ms / 1000.0)
-
-    target_clocks = record_bars * MIDI_CLOCKS_PER_BAR
-    seen = _wait_for_clock_pulses(
-        in_port,
-        target_clocks,
-        timeout_s=max(30.0, record_bars * 6.0),
-    )
-    if seen < target_clocks:
-        print(f"{log_prefix} warn: record clock wait incomplete ({seen}/{target_clocks})")
-    time.sleep(phase_wait_ms / 1000.0)
-
-    _send_short_press(
-        out_port,
-        note=RECORD_BUTTON_NOTE,
-        channel_1based=CONTROL_CHANNEL_1BASED,
-        press_ms=press_ms,
-    )
-    time.sleep(phase_wait_ms / 1000.0)
-
-    if not wait_for_deferred_save_idle(
-        serial_collector,
-        after_line_index=dirty_record_anchor,
-        timeout_s=save_drain_s,
-        log_prefix=log_prefix,
-    ):
-        print(f"{log_prefix} error: deferred save did not finish after dirty record")
-        return False
-
-    from host_midi_automation_edit_baseline import _stop_transport_if_running
-
-    stop_anchor = len(serial_collector.snapshot())
-    print(f"{log_prefix} transport stop before load request")
-    _stop_transport_if_running(
-        out_port,
-        in_port,
-        press_ms=press_ms,
-        phase_wait_ms=phase_wait_ms,
-    )
-    if not wait_for_deferred_save_idle(
-        serial_collector,
-        after_line_index=stop_anchor,
-        timeout_s=save_drain_s,
-        log_prefix=log_prefix,
-    ):
-        print(f"{log_prefix} warn: deferred save still active after transport stop")
-    print(f"{log_prefix} dirty record saved (workspace should be dirty)")
-    return True
 
 
 def run_revision_load_dirty(args: object) -> int:
@@ -136,52 +52,73 @@ def run_revision_load_dirty(args: object) -> int:
         _find_midi_port,
         _send_short_press,
     )
+    from host_midi_automation_edit_baseline import _send_double_press
 
     choice = str(getattr(args, "dirty_prompt_choice", "") or "").lower()
-    if choice not in _DIRTY_COMMANDS:
+    if choice not in DIRTY_PROMPT_ROW:
         print(f"[revision-load-dirty-hitl] error: unknown dirty_prompt_choice={choice!r}")
         return 2
 
-    ns = _parse_common_args(args)
+    rev_ns = _parse_common_args(args)
+    watch_ns = parse_overlay_watch_args(args)
     setattr(args, "skip_workspace_save_prelude", True)
     setattr(args, "require_sets_nuke", False)
     setattr(args, "require_hitl_cleanup", False)
     ctx = get_context(args)
     log_prefix = f"[revision-load-dirty-{choice}-hitl]"
-    save_drain_s = ns.deferred_save_wait_ms / 1000.0
-    commit_wait_s = ns.revision_commit_wait_ms / 1000.0
-    load_wait_s = ns.revision_load_wait_ms / 1000.0
-    dirty_command = _DIRTY_COMMANDS[choice]
+    save_drain_s = rev_ns.deferred_save_wait_ms / 1000.0
+    commit_wait_s = rev_ns.revision_commit_wait_ms / 1000.0
+    load_wait_s = rev_ns.revision_load_wait_ms / 1000.0
     record_bars = int(getattr(args, "record_bars", None) or 2)
+    catalog_set_index = int(getattr(args, "catalog_set_index", watch_ns.catalog_set_index))
+    target_root_row = overlay_scroll_steps_to_set_row(catalog_set_index)
+    dirty_row = DIRTY_PROMPT_ROW[choice]
 
     import mido
 
-    out_port = mido.open_output(_find_midi_port(ns.midi_out, "output"))
-    in_port = mido.open_input(_find_midi_port(ns.midi_in, "input"))
+    out_port = mido.open_output(_find_midi_port(watch_ns.midi_out, "output"))
+    in_port = mido.open_input(_find_midi_port(watch_ns.midi_in, "input"))
     serial_collector: Optional[SerialCaptureCollector] = None
     exit_code = 0
 
     try:
-        if not ns.serial_port:
+        if not watch_ns.serial_port:
             print(f"{log_prefix} error: --serial-port is required")
             return 2
 
-        serial_collector = SerialCaptureCollector(ns.serial_port, baud=ns.serial_baud)
+        serial_collector = SerialCaptureCollector(watch_ns.serial_port, baud=watch_ns.serial_baud)
         serial_collector.start()
-        time.sleep(0.3)
+        time.sleep(1.0)
+        if not wait_serial_cap_ready(serial_collector):
+            print(f"{log_prefix} warn: serial CAP not ready yet")
 
-        print(f"{log_prefix} select track {ns.track_number}")
+        print(
+            f"{log_prefix} plan: overlay MIDI load + dirty={choice} "
+            f"row={target_root_row} dwell={watch_ns.overlay_scroll_step_dwell_ms}ms"
+        )
+
+        recover_load_save_overlay(
+            out_port,
+            serial_collector,
+            press_ms=watch_ns.press_ms,
+            gap_ms=watch_ns.double_press_gap_ms,
+            gesture_settle_ms=watch_ns.gesture_settle_ms,
+            send_double_press=_send_double_press,
+            log_prefix=log_prefix,
+        )
+
+        print(f"{log_prefix} select track {watch_ns.track_number}")
         _send_short_press(
             out_port,
-            note=_track_select_note(ns.track_number),
+            note=_track_select_note(watch_ns.track_number),
             channel_1based=CONTROL_CHANNEL_1BASED,
-            press_ms=ns.press_ms,
+            press_ms=watch_ns.press_ms,
         )
-        time.sleep(ns.phase_wait_ms / 1000.0)
+        time.sleep(watch_ns.phase_wait_ms / 1000.0)
 
         setup_commit_anchor = len(serial_collector.snapshot())
         setattr(args, "revision_setup_commit_anchor", setup_commit_anchor)
-        print(f"{log_prefix} serial !REV_COMMIT (setup revision on SD)")
+        print(f"{log_prefix} serial !REV_COMMIT (setup revision on SD only)")
         serial_collector.write_line("!REV_COMMIT")
         ctx.markers.append("phase:setup_revision_commit")
 
@@ -203,32 +140,65 @@ def run_revision_load_dirty(args: object) -> int:
 
         dirty_record_anchor = len(serial_collector.snapshot())
         setattr(args, "revision_dirty_record_anchor", dirty_record_anchor)
-        if not _make_workspace_dirty_again(
+        if not make_workspace_dirty_again(
             out_port,
             in_port,
             serial_collector,
-            track_number=ns.track_number,
+            track_number=watch_ns.track_number,
             record_bars=record_bars,
-            press_ms=ns.press_ms,
-            phase_wait_ms=ns.phase_wait_ms,
+            press_ms=watch_ns.press_ms,
+            phase_wait_ms=watch_ns.phase_wait_ms,
             save_drain_s=save_drain_s,
             log_prefix=log_prefix,
         ):
             return 2
         ctx.markers.append("phase:dirty_record")
 
-        load_command = f"!REV_LOAD {set_id} {revision_id}"
-        load_anchor = len(serial_collector.snapshot())
-        setattr(args, "revision_load_serial_anchor", load_anchor)
-        print(f"{log_prefix} serial {load_command} (expect dirty prompt)")
-        serial_collector.write_line(load_command)
-        ctx.markers.append("phase:revision_load_request")
+        if not enter_load_save_overlay(
+            out_port,
+            serial_collector,
+            press_ms=watch_ns.press_ms,
+            gap_ms=watch_ns.double_press_gap_ms,
+            gesture_settle_ms=watch_ns.gesture_settle_ms,
+            send_double_press=_send_double_press,
+            log_prefix=log_prefix,
+        ):
+            return 2
+        ctx.markers.append("phase:overlay_enter_midi")
+        dwell_ms(watch_ns.overlay_root_dwell_ms, log_prefix, "root overlay open")
+
+        scroll_anchor = midi_scroll_to_root_row(
+            out_port,
+            serial_collector,
+            target_row=target_root_row,
+            channel_1based=CONTROL_CHANNEL_1BASED,
+            press_ms=watch_ns.press_ms,
+            phase_wait_ms=watch_ns.phase_wait_ms,
+            step_dwell_ms=watch_ns.overlay_scroll_step_dwell_ms,
+            send_short_press=_send_short_press,
+            log_prefix=log_prefix,
+        )
+        ctx.markers.append("phase:overlay_scrolled_to_set_row")
+
+        confirm_anchor = len(serial_collector.snapshot())
+        setattr(args, "overlay_load_confirm_anchor", confirm_anchor)
+        setattr(args, "revision_load_serial_anchor", confirm_anchor)
+        midi_confirm_overlay_row(
+            out_port,
+            channel_1based=CONTROL_CHANNEL_1BASED,
+            press_ms=watch_ns.press_ms,
+            gesture_settle_ms=watch_ns.gesture_settle_ms,
+            send_short_press=_send_short_press,
+            log_prefix=log_prefix,
+            action_label=f"load Set row {target_root_row} (expect dirty prompt)",
+        )
+        ctx.markers.append("phase:overlay_confirm_load_midi")
 
         if (
             _wait_for_pattern_after(
                 serial_collector,
                 _REV_LOAD_DIRTY_PROMPT_RE,
-                after_line_index=load_anchor,
+                after_line_index=confirm_anchor,
                 timeout_s=30.0,
                 log_prefix=log_prefix,
                 label="rev_load_dirty_prompt",
@@ -237,21 +207,53 @@ def run_revision_load_dirty(args: object) -> int:
         ):
             print(f"{log_prefix} error: timed out waiting for rev_load_dirty_prompt")
             return 2
+        ctx.markers.append("phase:dirty_prompt_shown")
+        dwell_ms(watch_ns.overlay_dirty_dwell_ms, log_prefix, "dirty prompt visible")
 
-        dirty_choice_anchor = len(serial_collector.snapshot())
-        setattr(args, "revision_dirty_choice_anchor", dirty_choice_anchor)
-        print(f"{log_prefix} serial {dirty_command}")
-        serial_collector.write_line(dirty_command)
+        dirty_scroll_anchor = midi_scroll_dirty_prompt_row(
+            out_port,
+            serial_collector,
+            target_row=dirty_row,
+            channel_1based=CONTROL_CHANNEL_1BASED,
+            press_ms=watch_ns.press_ms,
+            phase_wait_ms=watch_ns.phase_wait_ms,
+            step_dwell_ms=watch_ns.overlay_dirty_dwell_ms,
+            send_short_press=_send_short_press,
+            log_prefix=log_prefix,
+            choice=choice,
+        )
+
+        dirty_confirm_anchor = len(serial_collector.snapshot())
+        setattr(args, "revision_dirty_choice_anchor", dirty_confirm_anchor)
+        setattr(args, "overlay_dirty_confirm_anchor", dirty_confirm_anchor)
+        midi_confirm_overlay_row(
+            out_port,
+            channel_1based=CONTROL_CHANNEL_1BASED,
+            press_ms=watch_ns.press_ms,
+            gesture_settle_ms=watch_ns.gesture_settle_ms,
+            send_short_press=_send_short_press,
+            log_prefix=log_prefix,
+            action_label=f"dirty prompt {choice}",
+        )
         ctx.markers.append(f"phase:dirty_prompt_{choice}")
 
         if choice == "cancel":
             time.sleep(2.0)
+            exit_load_save_overlay(
+                out_port,
+                serial_collector,
+                press_ms=watch_ns.press_ms,
+                gap_ms=watch_ns.double_press_gap_ms,
+                gesture_settle_ms=watch_ns.gesture_settle_ms,
+                send_double_press=_send_double_press,
+                log_prefix=log_prefix,
+            )
         elif choice == "no":
             if (
                 _wait_for_pattern_after(
                     serial_collector,
                     _REV_LOAD_COMPLETE_RE,
-                    after_line_index=dirty_choice_anchor,
+                    after_line_index=dirty_confirm_anchor,
                     timeout_s=load_wait_s,
                     log_prefix=log_prefix,
                     label="rev_load_complete",
@@ -260,12 +262,12 @@ def run_revision_load_dirty(args: object) -> int:
             ):
                 print(f"{log_prefix} error: timed out waiting for rev_load_complete")
                 return 2
-            print(f"{log_prefix} discard-load completed")
+            print(f"{log_prefix} discard-load completed via overlay")
         else:
             second_commit = _wait_for_pattern_after(
                 serial_collector,
                 _REV_COMPLETE_RE,
-                after_line_index=dirty_choice_anchor,
+                after_line_index=dirty_confirm_anchor,
                 timeout_s=commit_wait_s,
                 log_prefix=log_prefix,
                 label="save-then-load rev_complete",
@@ -277,7 +279,7 @@ def run_revision_load_dirty(args: object) -> int:
                 _wait_for_pattern_after(
                     serial_collector,
                     _REV_LOAD_COMPLETE_RE,
-                    after_line_index=dirty_choice_anchor,
+                    after_line_index=dirty_confirm_anchor,
                     timeout_s=load_wait_s,
                     log_prefix=log_prefix,
                     label="rev_load_complete",
@@ -286,7 +288,7 @@ def run_revision_load_dirty(args: object) -> int:
             ):
                 print(f"{log_prefix} error: timed out waiting for rev_load_complete after dirty yes")
                 return 2
-            print(f"{log_prefix} save-then-load completed")
+            print(f"{log_prefix} save-then-load completed via overlay")
 
         lines = serial_collector.snapshot()
         check = verify_revision_load_dirty(lines, args)
@@ -303,11 +305,8 @@ def run_revision_load_dirty(args: object) -> int:
                 {
                     "scenario": f"revision_load_dirty_{choice}",
                     "dirty_prompt_choice": choice,
-                    "track_number": ns.track_number,
-                    "setup_commit_anchor": setup_commit_anchor,
-                    "dirty_record_anchor": dirty_record_anchor,
-                    "load_anchor": load_anchor,
-                    "dirty_choice_anchor": dirty_choice_anchor,
+                    "track_number": watch_ns.track_number,
+                    "overlay_scroll_step_dwell_ms": watch_ns.overlay_scroll_step_dwell_ms,
                     "setup_set_id": set_id,
                     "setup_revision_id": revision_id,
                     "serial_verification": check,

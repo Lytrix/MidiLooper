@@ -14,6 +14,7 @@
 - Loop start/length fader editing (`LoopEditManager`)
 - SSD1322 OLED piano roll + track strip (`DisplayManager`); controller LED feedback (`MidiLedManager`)
 - SD persistence v4 (passes via `StorageLoopIo`) with deferred runtime save (`StorageManager::requestDeferredSaveState` / `processDeferredSaveState`); PSRAM chunk pool + PSRAM-first length-scaling allocators (`LoopEventStore`, `PsramFirstAllocator`)
+- **StorageSession persistence refactor (DEC-012, Jun 2026):** job RAM on `storageSession`; FSM split `WorkspaceSave` / `RevisionCommit` / `RevisionLoad` + `Overlay.cpp`; revision-load request vocabulary; normative specs `revision-load`, `storage-session-jobs`, `storage-session-layout`
 - DROID USB host MIDI buttons/faders (`MidiHandler`, `MidiButtonManager`, `MidiFaderManager`)
 
 **Not in firmware** (docs may suggest otherwise):

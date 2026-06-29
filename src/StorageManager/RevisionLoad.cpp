@@ -27,7 +27,7 @@
 
 namespace StorageManagerInternal {
 
-STORAGE_PERSIST_MEM void clearRevisionLoadPromptAndPipelineState() {
+STORAGE_PERSIST_MEM void clearRevisionLoadRequestState() {
     storageSession.revisionLoad.requested = false;
     storageSession.revisionLoad.requestedSetId = 0;
     storageSession.revisionLoad.requestedRevisionId = 0;
@@ -56,7 +56,7 @@ STORAGE_PERSIST_MEM void resetRevisionLoadReloadRamState() {
     }
 }
 
-STORAGE_PERSIST_MEM void dispatchStagedRevisionLoad() {
+STORAGE_PERSIST_MEM void dispatchRequestedRevisionLoad() {
     if (!storageSession.revisionLoad.requested) {
         return;
     }
@@ -104,7 +104,7 @@ STORAGE_PERSIST_MEM void resetRevisionLoadJobState() {
         storageSession.revisionLoad.slotDirectoryEntries[i] = RevisionPackedBlob::RevisionLoopSlotDirectoryEntry{};
     }
     resetRevisionLoadReloadRamState();
-    clearRevisionLoadPromptAndPipelineState();
+    clearRevisionLoadRequestState();
 }
 
 STORAGE_PERSIST_MEM bool findRevisionLoadSlotEntry(uint8_t trackIndex, uint8_t slotIndex,

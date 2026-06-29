@@ -87,7 +87,7 @@ STORAGE_PERSIST_MEM uint16_t StorageManager::getSetBrowserOverlayDrilledSetId() 
     return storageSession.setBrowserNavigation.drilledSetId;
 }
 
-STORAGE_PERSIST_MEM bool StorageManager::isRevisionLoadDirtyPromptActive() {
+STORAGE_PERSIST_MEM bool StorageManager::isRevisionLoadHeldForWorkspaceDirty() {
     return storageSession.revisionLoad.heldForWorkspaceDirty;
 }
 
@@ -187,7 +187,7 @@ STORAGE_PERSIST_MEM bool StorageManager::consumeRevisionLoadDisplayRefreshPendin
     return true;
 }
 
-STORAGE_PERSIST_MEM void StorageManager::confirmRevisionLoadDirtyPromptSaveThenLoad() {
+STORAGE_PERSIST_MEM void StorageManager::confirmRevisionLoadAfterCommit() {
 #if BYPASS_STOP_UNDO_SAVE
     return;
 #else
@@ -202,7 +202,7 @@ STORAGE_PERSIST_MEM void StorageManager::confirmRevisionLoadDirtyPromptSaveThenL
 #endif
 }
 
-STORAGE_PERSIST_MEM void StorageManager::confirmRevisionLoadDirtyPromptDiscard() {
+STORAGE_PERSIST_MEM void StorageManager::confirmRevisionLoadDiscardWorkspace() {
 #if BYPASS_STOP_UNDO_SAVE
     return;
 #else
@@ -213,11 +213,11 @@ STORAGE_PERSIST_MEM void StorageManager::confirmRevisionLoadDirtyPromptDiscard()
     storageSession.revisionLoad.loadAfterRevisionCommit = false;
     SC_PERSIST("rev_load_dirty_no", 0, storageSession.revisionLoad.requestedSetId,
                storageSession.revisionLoad.requestedRevisionId, "discard_load");
-    dispatchStagedRevisionLoad();
+    dispatchRequestedRevisionLoad();
 #endif
 }
 
-STORAGE_PERSIST_MEM void StorageManager::cancelRevisionLoadDirtyPrompt() {
+STORAGE_PERSIST_MEM void StorageManager::cancelRevisionLoadRequest() {
 #if BYPASS_STOP_UNDO_SAVE
     return;
 #else
@@ -226,7 +226,7 @@ STORAGE_PERSIST_MEM void StorageManager::cancelRevisionLoadDirtyPrompt() {
     }
     SC_PERSIST("rev_load_dirty_cancel", 0, storageSession.revisionLoad.requestedSetId,
                storageSession.revisionLoad.requestedRevisionId, "cancel");
-    clearRevisionLoadPromptAndPipelineState();
+    clearRevisionLoadRequestState();
 #endif
 }
 
@@ -250,14 +250,13 @@ STORAGE_PERSIST_MEM void StorageManager::requestLoadRevision(uint16_t setId, uin
     storageSession.revisionLoad.requested = true;
     storageSession.revisionLoad.confirmChoice = RevisionLoadPolicy::DirtyPromptChoice::None;
 
-    if (RevisionLoadPolicy::resolveLoadRequestGate(isCurrentWorkspaceDirty()) ==
-        RevisionLoadPolicy::LoadRequestGate::ShowDirtyPrompt) {
+    if (RevisionLoadPolicy::shouldHoldRevisionLoadRequest(isCurrentWorkspaceDirty())) {
         storageSession.revisionLoad.heldForWorkspaceDirty = true;
         SC_PERSIST("rev_load_dirty_prompt", 0, setId, revisionId, "shown");
         return;
     }
 
-    dispatchStagedRevisionLoad();
+    dispatchRequestedRevisionLoad();
 #endif
 }
 
@@ -299,16 +298,16 @@ STORAGE_PERSIST_MEM void StorageManager::requestLoadRevisionForHitl(uint16_t set
     SC_PERSIST("rev_load_hitl_arm", 0, setId, revisionId, "armed");
 }
 
-STORAGE_PERSIST_MEM void StorageManager::confirmRevisionLoadDirtyPromptSaveThenLoadForHitl() {
-    confirmRevisionLoadDirtyPromptSaveThenLoad();
+STORAGE_PERSIST_MEM void StorageManager::confirmRevisionLoadAfterCommitForHitl() {
+    confirmRevisionLoadAfterCommit();
 }
 
-STORAGE_PERSIST_MEM void StorageManager::confirmRevisionLoadDirtyPromptDiscardForHitl() {
-    confirmRevisionLoadDirtyPromptDiscard();
+STORAGE_PERSIST_MEM void StorageManager::confirmRevisionLoadDiscardWorkspaceForHitl() {
+    confirmRevisionLoadDiscardWorkspace();
 }
 
-STORAGE_PERSIST_MEM void StorageManager::cancelRevisionLoadDirtyPromptForHitl() {
-    cancelRevisionLoadDirtyPrompt();
+STORAGE_PERSIST_MEM void StorageManager::cancelRevisionLoadRequestForHitl() {
+    cancelRevisionLoadRequest();
 }
 #endif
 

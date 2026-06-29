@@ -43,7 +43,11 @@ def verify_revision_load_dirty(lines: list[str], args: object) -> dict[str, obje
     setup_commit_anchor = _anchor_index(args, "revision_setup_commit_anchor", 0)
     dirty_record_anchor = _anchor_index(args, "revision_dirty_record_anchor", -1)
     load_anchor = _anchor_index(args, "revision_load_serial_anchor", -1)
+    if load_anchor < 0:
+        load_anchor = _anchor_index(args, "overlay_load_confirm_anchor", -1)
     dirty_choice_anchor = _anchor_index(args, "revision_dirty_choice_anchor", -1)
+    if dirty_choice_anchor < 0:
+        dirty_choice_anchor = _anchor_index(args, "overlay_dirty_confirm_anchor", -1)
 
     setup_complete = _first_match_after(lines, _REV_COMPLETE_RE, setup_commit_anchor)
     if setup_complete is None:

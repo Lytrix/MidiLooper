@@ -158,8 +158,8 @@ struct HitlRevisionCommitBackup {
 extern HitlRevisionCommitBackup hitlRevisionCommitBackup;
 #endif
 
-void clearRevisionLoadPromptAndPipelineState();
-void dispatchStagedRevisionLoad();
+void clearRevisionLoadRequestState();
+void dispatchRequestedRevisionLoad();
 void resetRevisionLoadJobState();
 bool stepRevisionLoadJob(LooperState& state);
 

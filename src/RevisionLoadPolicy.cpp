@@ -5,14 +5,13 @@
 
 namespace RevisionLoadPolicy {
 
-LoadRequestGate resolveLoadRequestGate(bool workspaceDirty) {
-  return workspaceDirty ? LoadRequestGate::ShowDirtyPrompt
-                        : LoadRequestGate::DispatchImmediately;
+bool shouldHoldRevisionLoadRequest(bool workspaceDirty) {
+  return workspaceDirty;
 }
 
-bool shouldDispatchStagedLoadAfterCommitComplete(bool saveThenLoadPipelineActive,
-                                                 bool commitSucceeded) {
-  return saveThenLoadPipelineActive && commitSucceeded;
+bool shouldDispatchRequestedLoadAfterCommitComplete(bool loadAfterRevisionCommitActive,
+                                                    bool commitSucceeded) {
+  return loadAfterRevisionCommitActive && commitSucceeded;
 }
 
 }  // namespace RevisionLoadPolicy

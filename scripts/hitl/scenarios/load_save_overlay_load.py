@@ -20,12 +20,20 @@ from typing import Optional
 
 from hitl.context import get_context
 from hitl.deferred_save_idle import deferred_save_idle_in_tail, wait_for_deferred_save_idle
-from hitl.verify.load_save_display import last_load_save_mode_active
-from hitl.scenarios.load_save_overlay_scroll import (
-    _wait_load_save_mode,
-    _wait_overlay_selection,
-    _wait_serial_cap_ready,
+from hitl.scenarios.load_save_overlay_helpers import (
+    DIRTY_PROMPT_ROW,
+    dwell_ms,
+    enter_load_save_overlay,
+    midi_confirm_overlay_row,
+    midi_scroll_dirty_prompt_row,
+    midi_scroll_to_root_row,
+    overlay_scroll_steps_to_set_row,
+    parse_overlay_watch_args,
+    recover_load_save_overlay,
+    wait_overlay_selection,
+    wait_serial_cap_ready,
 )
+from hitl.scenarios.load_save_overlay_scroll import _wait_load_save_mode
 from hitl.scenarios.revision_load import _wait_for_pattern_after
 from hitl.verify.load_save_overlay_load import verify_load_save_overlay_load
 
@@ -43,7 +51,7 @@ _REV_LOAD_DIRTY_YES_RE = re.compile(
 )
 
 ROOT_FIRST_SET_ROW = 2
-_DIRTY_PROMPT_ROW = {"yes": 0, "no": 1, "cancel": 2}
+_DIRTY_PROMPT_ROW = DIRTY_PROMPT_ROW
 
 
 def _parse_overlay_load_args(args: object) -> argparse.Namespace:
@@ -118,107 +126,6 @@ def _wait_serial_any_line(serial_collector: object, timeout_ms: int = 12000) -> 
     return bool(serial_collector.snapshot())
 
 
-def _recover_load_save_overlay(
-    out_port: object,
-    serial_collector: object,
-    *,
-    press_ms: int,
-    gap_ms: int,
-    gesture_settle_ms: int,
-    send_double_press: object,
-    log_prefix: str,
-) -> None:
-    """Exit dirty prompt, minimal loading, or open overlay so a fresh enter can run."""
-    from host_midi_automation_baseline import CONTROL_CHANNEL_1BASED, PLAY_STOP_BUTTON_NOTE
-    from host_midi_automation_edit_baseline import EDIT_BUTTON_NOTE
-
-    if _wait_serial_cap_ready(serial_collector, timeout_ms=3000):
-        serial_collector.write_line("!REV_LOAD_DIRTY_CANCEL")
-        time.sleep(0.2)
-        serial_collector.write_line("!OVERLAY_EXIT")
-        time.sleep(0.3)
-        _wait_load_save_mode(serial_collector, 0, max(gesture_settle_ms, 1000))
-
-    for note, label in (
-        (PLAY_STOP_BUTTON_NOTE, "play/stop"),
-        (EDIT_BUTTON_NOTE, "edit"),
-    ):
-        if last_load_save_mode_active(serial_collector.snapshot()) != 1:
-            continue
-        print(f"{log_prefix} recovery: {label} double-press to close overlay")
-        send_double_press(
-            out_port,
-            note=note,
-            channel_1based=CONTROL_CHANNEL_1BASED,
-            press_ms=press_ms,
-            gap_ms=gap_ms,
-        )
-        time.sleep(gesture_settle_ms / 1000.0)
-        _wait_load_save_mode(serial_collector, 0, max(gesture_settle_ms, 1000))
-
-
-def _enter_load_save_overlay(
-    out_port: object,
-    serial_collector: object,
-    *,
-    press_ms: int,
-    gap_ms: int,
-    gesture_settle_ms: int,
-    send_double_press: object,
-    log_prefix: str,
-) -> bool:
-    """Enter overlay; edit/play-stop double-press toggles, so retry once if still closed."""
-    from host_midi_automation_baseline import CONTROL_CHANNEL_1BASED, PLAY_STOP_BUTTON_NOTE
-    from host_midi_automation_edit_baseline import EDIT_BUTTON_NOTE
-
-    cap_ready = _wait_serial_cap_ready(serial_collector, timeout_ms=5000)
-    if cap_ready and last_load_save_mode_active(serial_collector.snapshot()) != 1:
-        print(f"{log_prefix} serial !OVERLAY_ENTER")
-        serial_collector.write_line("!OVERLAY_ENTER")
-        time.sleep(gesture_settle_ms / 1000.0)
-        if _wait_load_save_mode(serial_collector, 1, max(gesture_settle_ms, 1500)):
-            return True
-    for attempt, note in enumerate((EDIT_BUTTON_NOTE, PLAY_STOP_BUTTON_NOTE), start=1):
-        label = "edit" if note == EDIT_BUTTON_NOTE else "play/stop"
-        print(f"{log_prefix} {label} double-press — enter load/save overlay (try {attempt})")
-        send_double_press(
-            out_port,
-            note=note,
-            channel_1based=CONTROL_CHANNEL_1BASED,
-            press_ms=press_ms,
-            gap_ms=gap_ms,
-        )
-        time.sleep(gesture_settle_ms / 1000.0)
-        if not cap_ready:
-            print(f"{log_prefix} warn: cannot verify LDSV — proceeding after gesture settle")
-            return True
-        if _wait_load_save_mode(serial_collector, 1, max(gesture_settle_ms, 1500)):
-            return True
-        if last_load_save_mode_active(serial_collector.snapshot()) == 1:
-            return True
-    print(f"{log_prefix} warn: LDSV not verified — proceeding after overlay enter gestures")
-    return True
-
-
-def _midi_scroll_overlay_down(
-    out_port: object,
-    *,
-    steps: int,
-    channel_1based: int,
-    press_ms: int,
-    phase_wait_ms: int,
-    send_short_press: object,
-) -> None:
-    for _ in range(steps):
-        send_short_press(
-            out_port,
-            note=36,
-            channel_1based=channel_1based,
-            press_ms=press_ms,
-        )
-        time.sleep(phase_wait_ms / 1000.0)
-
-
 def run_load_save_overlay_load(args: object) -> int:
     from host_midi_automation_baseline import (
         CONTROL_CHANNEL_1BASED,
@@ -235,6 +142,10 @@ def run_load_save_overlay_load(args: object) -> int:
     )
 
     ns = _parse_overlay_load_args(args)
+    watch = parse_overlay_watch_args(args)
+    ns.overlay_scroll_step_dwell_ms = watch.overlay_scroll_step_dwell_ms
+    ns.overlay_root_dwell_ms = watch.overlay_root_dwell_ms
+    ns.overlay_dirty_dwell_ms = watch.overlay_dirty_dwell_ms
     if ns.overlay_load_only:
         ns.skip_workspace_save_prelude = True
         ns.skip_setup_commit = True
@@ -244,8 +155,7 @@ def run_load_save_overlay_load(args: object) -> int:
     save_drain_s = ns.deferred_save_wait_ms / 1000.0
     commit_wait_s = ns.revision_commit_wait_ms / 1000.0
     load_wait_s = ns.revision_load_wait_ms / 1000.0
-    target_root_row = _overlay_scroll_steps_to_set_row(ns.catalog_set_index)
-    scroll_steps = target_root_row
+    target_root_row = overlay_scroll_steps_to_set_row(ns.catalog_set_index)
 
     setattr(args, "expected_set_id", ns.expected_set_id)
     setattr(args, "overlay_target_root_row", target_root_row)
@@ -277,7 +187,7 @@ def run_load_save_overlay_load(args: object) -> int:
             return 2
         if not _wait_serial_any_line(serial_collector):
             print(f"{log_prefix} warn: no serial lines yet (is capture-serial firmware flashed?)")
-        if not _wait_serial_cap_ready(serial_collector):
+        if not wait_serial_cap_ready(serial_collector):
             print(f"{log_prefix} warn: serial CAP not ready yet")
         print(
             f"{log_prefix} plan: skip_prelude={ns.skip_workspace_save_prelude} "
@@ -288,7 +198,7 @@ def run_load_save_overlay_load(args: object) -> int:
         verify_offset = len(serial_collector.snapshot())
         setattr(args, "overlay_load_verify_offset", verify_offset)
 
-        _recover_load_save_overlay(
+        recover_load_save_overlay(
             out_port,
             serial_collector,
             press_ms=ns.press_ms,
@@ -372,7 +282,7 @@ def run_load_save_overlay_load(args: object) -> int:
         enter_anchor = len(serial_collector.snapshot())
         setattr(args, "overlay_load_enter_anchor", enter_anchor)
 
-        if not _enter_load_save_overlay(
+        if not enter_load_save_overlay(
             out_port,
             serial_collector,
             press_ms=ns.press_ms,
@@ -383,50 +293,33 @@ def run_load_save_overlay_load(args: object) -> int:
         ):
             return 2
         ctx.markers.append("phase:overlay_enter_midi")
+        dwell_ms(ns.overlay_root_dwell_ms, log_prefix, "root overlay open")
 
-        scroll_anchor = len(serial_collector.snapshot())
-        cap_ready = _wait_serial_cap_ready(serial_collector, timeout_ms=500)
-        print(
-            f"{log_prefix} record short x{scroll_steps} — scroll to Set row "
-            f"{target_root_row} (catalog index {ns.catalog_set_index})"
-        )
-        _midi_scroll_overlay_down(
+        scroll_anchor = midi_scroll_to_root_row(
             out_port,
-            steps=scroll_steps,
+            serial_collector,
+            target_row=target_root_row,
             channel_1based=CONTROL_CHANNEL_1BASED,
             press_ms=ns.press_ms,
             phase_wait_ms=ns.phase_wait_ms,
+            step_dwell_ms=ns.overlay_scroll_step_dwell_ms,
             send_short_press=_send_short_press,
+            log_prefix=log_prefix,
         )
-        if cap_ready:
-            if not _wait_overlay_selection(
-                serial_collector,
-                mode=0,
-                row=target_root_row,
-                after_line_index=scroll_anchor,
-                timeout_s=5.0,
-                log_prefix=log_prefix,
-            ):
-                print(
-                    f"{log_prefix} warn: OVLY sel not seen — continuing "
-                    "(catalog row may differ or capture lag)"
-                )
-        else:
-            print(f"{log_prefix} warn: serial CAP unavailable — timed scroll only")
-            time.sleep(ns.gesture_settle_ms / 1000.0)
         ctx.markers.append("phase:overlay_scrolled_to_set_row")
 
         confirm_anchor = len(serial_collector.snapshot())
         setattr(args, "overlay_load_confirm_anchor", confirm_anchor)
 
-        print(f"{log_prefix} edit mode short — confirm load on focused Set row")
-        _send_short_press(
+        midi_confirm_overlay_row(
             out_port,
-            note=EDIT_BUTTON_NOTE,
             channel_1based=CONTROL_CHANNEL_1BASED,
             press_ms=ns.press_ms,
+            gesture_settle_ms=ns.gesture_settle_ms,
+            send_short_press=_send_short_press,
+            log_prefix=log_prefix,
+            action_label=f"load Set row {target_root_row}",
         )
-        time.sleep(ns.gesture_settle_ms / 1000.0)
         ctx.markers.append("phase:overlay_confirm_load_midi")
 
         dirty_match = _wait_for_pattern_after(
@@ -440,50 +333,29 @@ def run_load_save_overlay_load(args: object) -> int:
         if dirty_match is not None:
             setattr(args, "expect_dirty_prompt", True)
             dirty_row = _DIRTY_PROMPT_ROW[ns.dirty_prompt_choice]
-            dirty_scroll_steps = dirty_row
-            dirty_scroll_anchor = len(serial_collector.snapshot())
-            if dirty_scroll_steps > 0:
-                print(
-                    f"{log_prefix} record short x{dirty_scroll_steps} — "
-                    f"dirty prompt row {dirty_row} ({ns.dirty_prompt_choice})"
-                )
-                _midi_scroll_overlay_down(
-                    out_port,
-                    steps=dirty_scroll_steps,
-                    channel_1based=CONTROL_CHANNEL_1BASED,
-                    press_ms=ns.press_ms,
-                    phase_wait_ms=ns.phase_wait_ms,
-                    send_short_press=_send_short_press,
-                )
-                if not _wait_overlay_selection(
-                    serial_collector,
-                    mode=1,
-                    row=dirty_row,
-                    after_line_index=dirty_scroll_anchor,
-                    timeout_s=5.0,
-                    log_prefix=log_prefix,
-                ):
-                    print(
-                        f"{log_prefix} warn: dirty OVLY sel not seen — continuing"
-                    )
-                    time.sleep(ns.gesture_settle_ms / 1000.0)
-            else:
-                print(
-                    f"{log_prefix} dirty prompt — confirm Yes (row 0, default selection)"
-                )
-            dirty_confirm_anchor = len(serial_collector.snapshot())
-            setattr(args, "overlay_dirty_confirm_anchor", dirty_confirm_anchor)
-            print(
-                f"{log_prefix} edit mode short — confirm dirty prompt "
-                f"({ns.dirty_prompt_choice})"
-            )
-            _send_short_press(
+            dirty_scroll_anchor = midi_scroll_dirty_prompt_row(
                 out_port,
-                note=EDIT_BUTTON_NOTE,
+                serial_collector,
+                target_row=dirty_row,
                 channel_1based=CONTROL_CHANNEL_1BASED,
                 press_ms=ns.press_ms,
+                phase_wait_ms=ns.phase_wait_ms,
+                step_dwell_ms=ns.overlay_dirty_dwell_ms,
+                send_short_press=_send_short_press,
+                log_prefix=log_prefix,
+                choice=ns.dirty_prompt_choice,
             )
-            time.sleep(ns.gesture_settle_ms / 1000.0)
+            dirty_confirm_anchor = len(serial_collector.snapshot())
+            setattr(args, "overlay_dirty_confirm_anchor", dirty_confirm_anchor)
+            midi_confirm_overlay_row(
+                out_port,
+                channel_1based=CONTROL_CHANNEL_1BASED,
+                press_ms=ns.press_ms,
+                gesture_settle_ms=ns.gesture_settle_ms,
+                send_short_press=_send_short_press,
+                log_prefix=log_prefix,
+                action_label=f"dirty prompt {ns.dirty_prompt_choice}",
+            )
             ctx.markers.append(f"phase:dirty_prompt_{ns.dirty_prompt_choice}")
             if ns.dirty_prompt_choice == "cancel":
                 print(f"{log_prefix} dirty prompt Cancel — load should not complete")
