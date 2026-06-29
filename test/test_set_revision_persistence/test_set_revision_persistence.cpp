@@ -11,6 +11,7 @@
 #include "../../src/PersistenceSchema.cpp"
 #include "../../src/RevisionPackedBlob.cpp"
 #include "../../src/RevisionLoadPolicy.cpp"
+#include "../../src/StorageActivitySnapshot.cpp"
 #include "../../src/OverlayCatalogReadPolicy.cpp"
 #include "../../src/BootRecoveryPolicy.cpp"
 #include "../../src/SetBrowserOverlayPolicy.cpp"
@@ -20,6 +21,7 @@
 #include "PersistenceBudget.h"
 #include "RevisionCommitPolicy.h"
 #include "RevisionLoadPolicy.h"
+#include "StorageActivitySnapshot.h"
 #include "OverlayCatalogReadPolicy.h"
 #include "RevisionPackedBlob.h"
 #include "SetBrowserOverlayPolicy.h"
@@ -498,19 +500,19 @@ void test_save_then_load_dispatches_after_commit_complete() {
 void test_minimal_loading_overlay_during_pipeline() {
   using Phase = SetBrowserOverlayPolicy::PersistencePhase;
   TEST_ASSERT_TRUE(SetBrowserOverlayPolicy::isMinimalLoadingOverlayActive(
-      Phase::AwaitingCommitThenLoad, true, true, false));
+      Phase::AwaitingRevisionCommit, true, true, false));
   TEST_ASSERT_TRUE(SetBrowserOverlayPolicy::isMinimalLoadingOverlayActive(
-      Phase::AwaitingCommitThenLoad, true, false, true));
+      Phase::AwaitingRevisionCommit, true, false, true));
   TEST_ASSERT_TRUE(SetBrowserOverlayPolicy::isMinimalLoadingOverlayActive(
-      Phase::LoadInProgress, true, false, false));
+      Phase::RevisionLoadActive, true, false, false));
   TEST_ASSERT_TRUE(SetBrowserOverlayPolicy::isMinimalLoadingOverlayActive(
-      Phase::CommitOnlyBackground, true, true, false));
+      Phase::RevisionCommitActive, true, true, false));
   TEST_ASSERT_FALSE(SetBrowserOverlayPolicy::isMinimalLoadingOverlayActive(
       Phase::Idle, true, false, false));
   TEST_ASSERT_FALSE(SetBrowserOverlayPolicy::isMinimalLoadingOverlayActive(
-      Phase::LoadInProgress, false, false, false));
+      Phase::RevisionLoadActive, false, false, false));
   TEST_ASSERT_FALSE(SetBrowserOverlayPolicy::isMinimalLoadingOverlayActive(
-      Phase::CommitOnlyBackground, true, false, false));
+      Phase::RevisionCommitActive, true, false, false));
 }
 
 void test_overlay_persistence_phase_blocks_load_request() {
@@ -518,38 +520,127 @@ void test_overlay_persistence_phase_blocks_load_request() {
   TEST_ASSERT_FALSE(SetBrowserOverlayPolicy::isOverlayLoadRequestBlocked(Phase::Idle, false,
                                                                          false));
   TEST_ASSERT_TRUE(SetBrowserOverlayPolicy::isOverlayLoadRequestBlocked(
-      Phase::LoadInProgress, false, false));
+      Phase::RevisionLoadActive, false, false));
   TEST_ASSERT_TRUE(SetBrowserOverlayPolicy::isOverlayLoadRequestBlocked(
-      Phase::AwaitingCommitThenLoad, false, false));
+      Phase::AwaitingRevisionCommit, false, false));
   TEST_ASSERT_TRUE(SetBrowserOverlayPolicy::isOverlayLoadRequestBlocked(Phase::Idle, true, false));
   TEST_ASSERT_FALSE(SetBrowserOverlayPolicy::isOverlayLoadRequestBlocked(
-      Phase::CommitOnlyBackground, false, false));
+      Phase::RevisionCommitActive, false, false));
 }
 
 void test_overlay_preserve_navigation_on_enter() {
   using Phase = SetBrowserOverlayPolicy::PersistencePhase;
   TEST_ASSERT_FALSE(SetBrowserOverlayPolicy::shouldPreserveOverlayNavigationOnEnter(Phase::Idle));
   TEST_ASSERT_TRUE(SetBrowserOverlayPolicy::shouldPreserveOverlayNavigationOnEnter(
-      Phase::LoadInProgress));
+      Phase::RevisionLoadActive));
   TEST_ASSERT_TRUE(SetBrowserOverlayPolicy::shouldPreserveOverlayNavigationOnEnter(
-      Phase::AwaitingCommitThenLoad));
+      Phase::AwaitingRevisionCommit));
   TEST_ASSERT_TRUE(SetBrowserOverlayPolicy::shouldPreserveOverlayNavigationOnEnter(
-      Phase::CommitOnlyBackground));
+      Phase::RevisionCommitActive));
 }
 
-void test_legacy_minimal_loading_shim() {
-  TEST_ASSERT_TRUE(
-      RevisionLoadPolicy::isMinimalLoadingOverlayActive(true, true, false, false, false));
-  TEST_ASSERT_TRUE(
-      RevisionLoadPolicy::isMinimalLoadingOverlayActive(true, false, true, false, false));
-  TEST_ASSERT_TRUE(
-      RevisionLoadPolicy::isMinimalLoadingOverlayActive(true, false, false, true, false));
-  TEST_ASSERT_TRUE(
-      RevisionLoadPolicy::isMinimalLoadingOverlayActive(true, false, false, false, true));
-  TEST_ASSERT_FALSE(
-      RevisionLoadPolicy::isMinimalLoadingOverlayActive(false, true, true, true, true));
-  TEST_ASSERT_TRUE(
-      RevisionLoadPolicy::isMinimalLoadingOverlayActive(true, false, false, false, false));
+void test_resolve_persistence_phase_save_then_load_awaiting_commit() {
+  using Phase = SetBrowserOverlayPolicy::PersistencePhase;
+  StorageActivitySnapshot snapshot{};
+  snapshot.loadAfterRevisionCommit = true;
+  snapshot.revisionCommitPending = true;
+  TEST_ASSERT_EQUAL(Phase::AwaitingRevisionCommit, resolvePersistencePhase(snapshot));
+}
+
+void test_resolve_persistence_phase_active_revision_load() {
+  using Phase = SetBrowserOverlayPolicy::PersistencePhase;
+  StorageActivitySnapshot snapshot{};
+  snapshot.revisionLoadInProgress = true;
+  TEST_ASSERT_EQUAL(Phase::RevisionLoadActive, resolvePersistencePhase(snapshot));
+}
+
+void test_resolve_persistence_phase_overlay_background_commit() {
+  using Phase = SetBrowserOverlayPolicy::PersistencePhase;
+  StorageActivitySnapshot snapshot{};
+  snapshot.revisionCommitOverlayBackground = true;
+  snapshot.revisionCommitInProgress = true;
+  TEST_ASSERT_EQUAL(Phase::RevisionCommitActive, resolvePersistencePhase(snapshot));
+}
+
+void test_resolve_persistence_phase_idle_when_no_jobs() {
+  using Phase = SetBrowserOverlayPolicy::PersistencePhase;
+  StorageActivitySnapshot snapshot{};
+  TEST_ASSERT_EQUAL(Phase::Idle, resolvePersistencePhase(snapshot));
+}
+
+void test_storage_activity_snapshot_contract_idle_overlay_closed() {
+  using Mode = SetBrowserOverlayPolicy::Mode;
+  StorageActivitySnapshot snapshot{};
+  snapshot.overlayOpen = false;
+  TEST_ASSERT_FALSE(isMinimalLoadingOverlayActive(snapshot));
+  TEST_ASSERT_EQUAL(Mode::Root, resolveOverlayMode(snapshot));
+  TEST_ASSERT_TRUE(isOverlayCatalogReadAllowed(snapshot));
+}
+
+void test_storage_activity_snapshot_contract_dirty_prompt_priority() {
+  using Mode = SetBrowserOverlayPolicy::Mode;
+  StorageActivitySnapshot snapshot{};
+  snapshot.overlayOpen = true;
+  snapshot.revisionLoadDirtyPromptActive = true;
+  snapshot.revisionLoadInProgress = true;
+  TEST_ASSERT_TRUE(isMinimalLoadingOverlayActive(snapshot));
+  TEST_ASSERT_EQUAL(Mode::DirtyPrompt, resolveOverlayMode(snapshot));
+  TEST_ASSERT_FALSE(isOverlayCatalogReadAllowed(snapshot));
+}
+
+void test_storage_activity_snapshot_contract_minimal_loading_awaiting_commit() {
+  using Mode = SetBrowserOverlayPolicy::Mode;
+  StorageActivitySnapshot snapshot{};
+  snapshot.overlayOpen = true;
+  snapshot.loadAfterRevisionCommit = true;
+  snapshot.revisionCommitPending = true;
+  TEST_ASSERT_TRUE(isMinimalLoadingOverlayActive(snapshot));
+  TEST_ASSERT_EQUAL(Mode::MinimalLoading, resolveOverlayMode(snapshot));
+  TEST_ASSERT_TRUE(isOverlayCatalogReadAllowed(snapshot));
+}
+
+void test_storage_activity_snapshot_contract_minimal_loading_active_load() {
+  using Mode = SetBrowserOverlayPolicy::Mode;
+  StorageActivitySnapshot snapshot{};
+  snapshot.overlayOpen = true;
+  snapshot.revisionLoadInProgress = true;
+  TEST_ASSERT_TRUE(isMinimalLoadingOverlayActive(snapshot));
+  TEST_ASSERT_EQUAL(Mode::MinimalLoading, resolveOverlayMode(snapshot));
+  TEST_ASSERT_FALSE(isOverlayCatalogReadAllowed(snapshot));
+}
+
+void test_storage_activity_snapshot_contract_commit_background_with_pending() {
+  using Mode = SetBrowserOverlayPolicy::Mode;
+  StorageActivitySnapshot snapshot{};
+  snapshot.overlayOpen = true;
+  snapshot.revisionCommitOverlayBackground = true;
+  snapshot.revisionCommitPending = true;
+  TEST_ASSERT_TRUE(isMinimalLoadingOverlayActive(snapshot));
+  TEST_ASSERT_EQUAL(Mode::MinimalLoading, resolveOverlayMode(snapshot));
+  TEST_ASSERT_TRUE(isOverlayCatalogReadAllowed(snapshot));
+}
+
+void test_storage_activity_snapshot_contract_drill_mode_when_idle_pipeline() {
+  using Mode = SetBrowserOverlayPolicy::Mode;
+  StorageActivitySnapshot snapshot{};
+  snapshot.overlayOpen = true;
+  SetBrowserOverlayPolicy::openRevisionHistory(snapshot.navigation, 7, 2, 1);
+  TEST_ASSERT_FALSE(isMinimalLoadingOverlayActive(snapshot));
+  TEST_ASSERT_EQUAL(Mode::RevisionHistory, resolveOverlayMode(snapshot));
+  TEST_ASSERT_TRUE(isOverlayCatalogReadAllowed(snapshot));
+}
+
+void test_storage_activity_snapshot_contract_sd_io_blocks_catalog_read() {
+  StorageActivitySnapshot snapshot{};
+  snapshot.overlayOpen = true;
+  snapshot.deferredSaveSdIoActive = true;
+  TEST_ASSERT_FALSE(isOverlayCatalogReadAllowed(snapshot));
+  snapshot.deferredSaveSdIoActive = false;
+  snapshot.revisionCommitSdIoActive = true;
+  TEST_ASSERT_FALSE(isOverlayCatalogReadAllowed(snapshot));
+  snapshot.revisionCommitSdIoActive = false;
+  snapshot.revisionLoadSdIoActive = true;
+  TEST_ASSERT_FALSE(isOverlayCatalogReadAllowed(snapshot));
 }
 
 void test_overlay_catalog_read_allowed_when_persistence_idle() {
@@ -848,9 +939,19 @@ int main(int argc, char** argv) {
   RUN_TEST(test_dirty_load_request_dispatches_when_workspace_clean);
   RUN_TEST(test_save_then_load_dispatches_after_commit_complete);
   RUN_TEST(test_minimal_loading_overlay_during_pipeline);
+  RUN_TEST(test_resolve_persistence_phase_save_then_load_awaiting_commit);
+  RUN_TEST(test_resolve_persistence_phase_active_revision_load);
+  RUN_TEST(test_resolve_persistence_phase_overlay_background_commit);
+  RUN_TEST(test_resolve_persistence_phase_idle_when_no_jobs);
+  RUN_TEST(test_storage_activity_snapshot_contract_idle_overlay_closed);
+  RUN_TEST(test_storage_activity_snapshot_contract_dirty_prompt_priority);
+  RUN_TEST(test_storage_activity_snapshot_contract_minimal_loading_awaiting_commit);
+  RUN_TEST(test_storage_activity_snapshot_contract_minimal_loading_active_load);
+  RUN_TEST(test_storage_activity_snapshot_contract_commit_background_with_pending);
+  RUN_TEST(test_storage_activity_snapshot_contract_drill_mode_when_idle_pipeline);
+  RUN_TEST(test_storage_activity_snapshot_contract_sd_io_blocks_catalog_read);
   RUN_TEST(test_overlay_persistence_phase_blocks_load_request);
   RUN_TEST(test_overlay_preserve_navigation_on_enter);
-  RUN_TEST(test_legacy_minimal_loading_shim);
   RUN_TEST(test_overlay_catalog_read_allowed_when_persistence_idle);
   RUN_TEST(test_overlay_catalog_read_blocked_during_deferred_save_work);
   RUN_TEST(test_overlay_catalog_read_blocked_during_revision_commit_work);

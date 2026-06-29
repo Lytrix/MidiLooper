@@ -28,9 +28,4 @@ LoadRequestGate resolveLoadRequestGate(bool workspaceDirty);
 bool shouldDispatchStagedLoadAfterCommitComplete(bool saveThenLoadPipelineActive,
                                                  bool commitSucceeded);
 
-/// Overlay minimal spinner until load (and optional preceding commit) finish.
-bool isMinimalLoadingOverlayActive(bool pipelineActive, bool commitPending,
-                                   bool commitInProgress, bool loadPending,
-                                   bool loadInProgress);
-
 }  // namespace RevisionLoadPolicy
