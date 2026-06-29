@@ -70,7 +70,8 @@ def _parse_common_args(args: object) -> argparse.Namespace:
         help="Skip transport stop prelude (use after record baseline flushed loops to SD)",
     )
     legacy = list(getattr(args, "legacy_args", []) or [])
-    return parser.parse_args(legacy)
+    known, _unknown = parser.parse_known_args(legacy)
+    return known
 
 
 def _track_select_note(track_number_1based: int) -> int:

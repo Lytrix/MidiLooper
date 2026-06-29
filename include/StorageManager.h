@@ -85,12 +85,12 @@ public:
     static bool navigateSetBrowserOverlayBack(uint8_t& outListSelection,
                                               uint8_t& outListScrollOffset);
     static uint16_t getSetBrowserOverlayDrilledSetId();
-    static bool isRevisionLoadDirtyPromptActive();
+    static bool isRevisionLoadHeldForWorkspaceDirty();
     static uint8_t getRevisionLoadDirtyPromptSelection();
     static void adjustRevisionLoadDirtyPromptSelection(int delta);
-    static void confirmRevisionLoadDirtyPromptSaveThenLoad();
-    static void confirmRevisionLoadDirtyPromptDiscard();
-    static void cancelRevisionLoadDirtyPrompt();
+    static void confirmRevisionLoadAfterCommit();
+    static void confirmRevisionLoadDiscardWorkspace();
+    static void cancelRevisionLoadRequest();
     static void requestCommitRevision();
     static void beginOverlaySaveRowCommit();
     static bool hasRevisionCommitWork();
@@ -107,9 +107,9 @@ public:
     static void requestCommitRevisionForHitl();
     static bool cleanupHitlRevisionCommit();
     static void requestLoadRevisionForHitl(uint16_t setId, uint16_t revisionId);
-    static void confirmRevisionLoadDirtyPromptSaveThenLoadForHitl();
-    static void confirmRevisionLoadDirtyPromptDiscardForHitl();
-    static void cancelRevisionLoadDirtyPromptForHitl();
+    static void confirmRevisionLoadAfterCommitForHitl();
+    static void confirmRevisionLoadDiscardWorkspaceForHitl();
+    static void cancelRevisionLoadRequestForHitl();
     static bool nukeHitlSetsCatalog();
     static void processHitlSerialCommands();
 #endif

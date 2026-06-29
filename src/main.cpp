@@ -197,7 +197,7 @@ void loop() {
     trackManager.getTrack(i).processDeferredIdleMaintenance(now);
   }
 
-  if (!timingCriticalTrackActive && !StorageManager::isRevisionLoadDirtyPromptActive()) {
+  if (!timingCriticalTrackActive && !StorageManager::isRevisionLoadHeldForWorkspaceDirty()) {
     StorageManager::processEditAutosave(looperState.getLooperState());
     trackManager.reclaimUnreferencedDisabledPasses();
   }

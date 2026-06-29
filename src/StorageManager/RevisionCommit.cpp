@@ -70,7 +70,7 @@ STORAGE_PERSIST_MEM void resetRevisionCommitJobState() {
         storageSession.revisionCommit.slotEntries[i] = RevisionPackedBlob::RevisionLoopSlotDirectoryEntry{};
     }
     if (storageSession.revisionLoad.loadAfterRevisionCommit) {
-        clearRevisionLoadPromptAndPipelineState();
+        clearRevisionLoadRequestState();
     }
 }
 

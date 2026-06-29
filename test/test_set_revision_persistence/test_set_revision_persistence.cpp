@@ -482,19 +482,17 @@ void test_revision_commit_loop_slot_streams_via_storage_loop_io() {
 }
 
 void test_dirty_load_request_shows_prompt_when_workspace_dirty() {
-  TEST_ASSERT_EQUAL(RevisionLoadPolicy::LoadRequestGate::ShowDirtyPrompt,
-                    RevisionLoadPolicy::resolveLoadRequestGate(true));
+  TEST_ASSERT_TRUE(RevisionLoadPolicy::shouldHoldRevisionLoadRequest(true));
 }
 
 void test_dirty_load_request_dispatches_when_workspace_clean() {
-  TEST_ASSERT_EQUAL(RevisionLoadPolicy::LoadRequestGate::DispatchImmediately,
-                    RevisionLoadPolicy::resolveLoadRequestGate(false));
+  TEST_ASSERT_FALSE(RevisionLoadPolicy::shouldHoldRevisionLoadRequest(false));
 }
 
 void test_save_then_load_dispatches_after_commit_complete() {
-  TEST_ASSERT_TRUE(RevisionLoadPolicy::shouldDispatchStagedLoadAfterCommitComplete(true, true));
-  TEST_ASSERT_FALSE(RevisionLoadPolicy::shouldDispatchStagedLoadAfterCommitComplete(true, false));
-  TEST_ASSERT_FALSE(RevisionLoadPolicy::shouldDispatchStagedLoadAfterCommitComplete(false, true));
+  TEST_ASSERT_TRUE(RevisionLoadPolicy::shouldDispatchRequestedLoadAfterCommitComplete(true, true));
+  TEST_ASSERT_FALSE(RevisionLoadPolicy::shouldDispatchRequestedLoadAfterCommitComplete(true, false));
+  TEST_ASSERT_FALSE(RevisionLoadPolicy::shouldDispatchRequestedLoadAfterCommitComplete(false, true));
 }
 
 void test_minimal_loading_overlay_during_pipeline() {

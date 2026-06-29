@@ -1444,10 +1444,10 @@ void StorageManager::processDeferredSaveState(const LooperState& state) {
             if (storageSession.revisionCommit.inProgress) {
                 break;
             }
-            if (RevisionLoadPolicy::shouldDispatchStagedLoadAfterCommitComplete(
+            if (RevisionLoadPolicy::shouldDispatchRequestedLoadAfterCommitComplete(
                     storageSession.revisionLoad.loadAfterRevisionCommit, true)) {
                 storageSession.revisionLoad.loadAfterRevisionCommit = false;
-                dispatchStagedRevisionLoad();
+                dispatchRequestedRevisionLoad();
             }
             continue;
         }
@@ -1933,8 +1933,10 @@ CAPTURE_HITL_MEM bool StorageManager::cleanupHitlRevisionCommit() {
 }
 
 namespace {
-CAPTURE_HITL_DATA char sHitlSerialLineBuffer[48];
-CAPTURE_HITL_DATA size_t sHitlSerialLineLength = 0;
+// Serial line accumulator must live in RAM: processHitlSerialCommands is FLASHMEM and cannot
+// access DMAMEM on IMXRT1062.
+char sHitlSerialLineBuffer[48];
+size_t sHitlSerialLineLength = 0;
 }  // namespace
 
 CAPTURE_HITL_MEM void StorageManager::processHitlSerialCommands() {
@@ -1955,11 +1957,11 @@ CAPTURE_HITL_MEM void StorageManager::processHitlSerialCommands() {
             } else if (std::strcmp(sHitlSerialLineBuffer, "!REV_NUKE_SETS") == 0) {
                 nukeHitlSetsCatalog();
             } else if (std::strcmp(sHitlSerialLineBuffer, "!REV_LOAD_DIRTY_YES") == 0) {
-                confirmRevisionLoadDirtyPromptSaveThenLoadForHitl();
+                confirmRevisionLoadAfterCommitForHitl();
             } else if (std::strcmp(sHitlSerialLineBuffer, "!REV_LOAD_DIRTY_NO") == 0) {
-                confirmRevisionLoadDirtyPromptDiscardForHitl();
+                confirmRevisionLoadDiscardWorkspaceForHitl();
             } else if (std::strcmp(sHitlSerialLineBuffer, "!REV_LOAD_DIRTY_CANCEL") == 0) {
-                cancelRevisionLoadDirtyPromptForHitl();
+                cancelRevisionLoadRequestForHitl();
             } else if (std::strcmp(sHitlSerialLineBuffer, "!OVERLAY_SAVE") == 0) {
                 displayManager.confirmLoadSaveFocusedRow();
             } else if (std::strcmp(sHitlSerialLineBuffer, "!OVERLAY_CONFIRM") == 0) {

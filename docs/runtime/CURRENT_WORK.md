@@ -2,18 +2,18 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-06-29 (StorageSession §8 job struct migration complete)
+Last updated: 2026-06-29 (DEC-012 archived — `storage-session-state-refactor`)
 
 ---
 
 ## Now implementing
 
-Set revision persistence + load/save overlay UX + **StorageSession state refactor (DEC-012)** on branch `load-save-sets-loops`:
+Set revision persistence + load/save overlay UX on branch `load-save-sets-loops`:
 
-- **Primary OpenSpec (Tier 3):** `openspec/changes/storage-session-state-refactor/tasks.md`
-- Supporting OpenSpec: `set-revision-persistence`, overlay display regression, save-status display
-- Handoff (open items): [storage_session_state_refactor_open_items_handoff.md](../plans/storage_session_state_refactor_open_items_handoff.md)
-- Handoff (full DEC-012 spec): [storage_session_state_refactor_handoff.md](../plans/storage_session_state_refactor_handoff.md)
+- **Primary OpenSpec:** `set-revision-persistence` (remaining overlay items; LoopPick parked)
+- Supporting: `load-save-overlay-display-regression`, `save-status-display`, `workspace-session-persistence`
+- **Next persistence slice (after branch merge):** `transport.bin` / `global.bin` workspace split — new OpenSpec when scoped
+- Handoff: [set_revision_persistence_handoff.md](../plans/set_revision_persistence_handoff.md)
 
 ## Explicitly NOT implementing
 
@@ -21,27 +21,20 @@ Set revision persistence + load/save overlay UX + **StorageSession state refacto
 - `currentset-savedset-storage-layout` — parked; superseded by revision model
 - JamRecorder, M10 Scenes, playback hardening — not this sprint
 - New `*Manager` classes for persistence — extend `StorageManager` (DEC-008)
-- GPIO `ButtonManager` revival — unless explicitly scoped in a new CURRENT_WORK revision
 
 ## Current target
 
-1. **Tier 3 (remaining)** — [`storage-session-state-refactor` tasks](../openspec/changes/storage-session-state-refactor/tasks.md): Step **§9** next (backend API renames); §7.6 HITL overlay verification pending hardware
-2. Remaining `set-revision-persistence` `tasks.md` items (overlay slice — LoopPick parked)
+1. Remaining `set-revision-persistence` `tasks.md` items (overlay slice)
+2. Optional: `transport.bin` / `global.bin` OpenSpec when user scopes post–DEC-012
 
-## Completion conditions
+## Completion conditions (DEC-012 — done)
 
-- [x] Tier 0 complete per storage session handoff
-- [x] Tier 2 complete per storage session handoff
-- [x] Tier 3 FSM TU split complete (`storage-session-state-refactor` tasks §1–§6)
-- [x] Overlay TU complete (`storage-session-state-refactor` tasks §7.1–§7.5)
-- [ ] Overlay HITL verification (`storage-session-state-refactor` tasks §7.6)
-- [x] `StorageSession` job struct migration (`storage-session-state-refactor` tasks §8)
-- [ ] Backend API + policy renames (`storage-session-state-refactor` tasks §9–§10)
-- [x] `pio test -e native` passes for touched logic
-- [ ] Overlay load/save flow manually verified on hardware when UI/SD paths change
-- [ ] PROJECT_STATE + this file updated at session close
+- [x] Tier 0–3 per [storage_session_state_refactor handoff](../plans/storage_session_state_refactor_open_items_handoff.md)
+- [x] HITL overlay matrix (MIDI watchable presets) — 2026-06-29
+- [x] `pio test -e native` (292 tests)
+- [x] Specs in `openspec/specs/{revision-load,storage-session-jobs,storage-session-layout}/`
+- [x] OpenSpec archived: `openspec/changes/archive/2026-06-29-storage-session-state-refactor/`
 
 ## Blocked by
 
 - None for revision/overlay track
-- Parked flat SavedSet layout — do not revive without new OpenSpec + DECISION_LOG entry

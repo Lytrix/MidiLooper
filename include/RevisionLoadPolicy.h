@@ -7,11 +7,6 @@
 
 namespace RevisionLoadPolicy {
 
-enum class LoadRequestGate : uint8_t {
-  DispatchImmediately = 0,
-  ShowDirtyPrompt,
-};
-
 enum class DirtyPromptChoice : uint8_t {
   None = 0,
   SaveThenLoad,
@@ -21,11 +16,11 @@ enum class DirtyPromptChoice : uint8_t {
 
 constexpr uint8_t kDirtyPromptRowCount = 3;
 
-/// Whether a revision load request should run immediately or wait for dirty prompt.
-LoadRequestGate resolveLoadRequestGate(bool workspaceDirty);
+/// When true, a revision load request is held for dirty-workspace confirmation.
+bool shouldHoldRevisionLoadRequest(bool workspaceDirty);
 
 /// After revision commit COMPLETE during save-then-load pipeline.
-bool shouldDispatchStagedLoadAfterCommitComplete(bool saveThenLoadPipelineActive,
-                                                 bool commitSucceeded);
+bool shouldDispatchRequestedLoadAfterCommitComplete(bool loadAfterRevisionCommitActive,
+                                                    bool commitSucceeded);
 
 }  // namespace RevisionLoadPolicy

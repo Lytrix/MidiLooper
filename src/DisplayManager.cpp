@@ -1650,7 +1650,7 @@ void DisplayManager::handleLoadSaveOverlayPress(LoadSaveOverlayPressType pressTy
         if (pressType == LoadSaveOverlayPressType::Short) {
             confirmLoadSaveFocusedRow();
         } else if (pressType == LoadSaveOverlayPressType::Long) {
-            StorageManager::cancelRevisionLoadDirtyPrompt();
+            StorageManager::cancelRevisionLoadRequest();
             looperState.exitLoadSaveMode();
         }
         return;
@@ -1828,13 +1828,13 @@ void DisplayManager::confirmLoadSaveFocusedRow() {
 #endif
         switch (selection) {
             case 0:
-                StorageManager::confirmRevisionLoadDirtyPromptSaveThenLoad();
+                StorageManager::confirmRevisionLoadAfterCommit();
                 break;
             case 1:
-                StorageManager::confirmRevisionLoadDirtyPromptDiscard();
+                StorageManager::confirmRevisionLoadDiscardWorkspace();
                 break;
             default:
-                StorageManager::cancelRevisionLoadDirtyPrompt();
+                StorageManager::cancelRevisionLoadRequest();
                 break;
         }
         return;
@@ -2510,8 +2510,8 @@ void DisplayManager::update() {
         }
         invalidateLoadSaveDetailCache();
     } else if (!loadSaveActive && loadSaveModeWasActive_) {
-        if (StorageManager::isRevisionLoadDirtyPromptActive()) {
-            StorageManager::cancelRevisionLoadDirtyPrompt();
+        if (StorageManager::isRevisionLoadHeldForWorkspaceDirty()) {
+            StorageManager::cancelRevisionLoadRequest();
         }
         StorageManager::resetSetBrowserOverlayNavigation();
         invalidateLoadSaveRevisionListCache();

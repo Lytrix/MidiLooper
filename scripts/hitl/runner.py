@@ -53,6 +53,30 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_false",
         dest="post_exit_global_undo_redo",
     )
+    run_parser.add_argument(
+        "--overlay-scroll-step-dwell-ms",
+        type=int,
+        default=3000,
+        help="Pause on each overlay list row so you can watch the OLED (0=immediate)",
+    )
+    run_parser.add_argument(
+        "--overlay-root-dwell-ms",
+        type=int,
+        default=5000,
+        help="Pause with root overlay open before scroll/exit",
+    )
+    run_parser.add_argument(
+        "--overlay-dirty-dwell-ms",
+        type=int,
+        default=3000,
+        help="Pause on dirty-prompt row before confirm",
+    )
+    run_parser.add_argument(
+        "--catalog-set-index",
+        type=int,
+        default=0,
+        help="0 = first Set row in overlay root list (after Save/Current)",
+    )
     return parser
 
 

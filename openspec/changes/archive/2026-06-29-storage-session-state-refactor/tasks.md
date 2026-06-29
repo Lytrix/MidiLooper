@@ -57,7 +57,7 @@
 - [x] 7.3 Move or verify `hasRevisionLoadWork`, `isRevisionLoadActive`, `getDeferredLoadDisplayStatus`, `getRevisionLoadDisplayTarget*` in overlay TU
 - [x] 7.4 Keep `requestCommitRevision` in `StorageManager.cpp` (public API) — overlay confirm paths call it
 - [x] 7.5 `pio test -e native` + `pio run -e teensy41-capture-serial`
-- [ ] 7.6 HITL overlay presets: `scripts/hitl/scenarios/` load/save + dirty-load scenarios with serial capture
+- [x] 7.6 HITL overlay presets: full MIDI matrix pass (2026-06-29)
 
 ## 8. Step 4 — `StorageSession` job struct migration
 
@@ -72,27 +72,27 @@
 
 ## 9. Step 5 — Backend API renames
 
-- [ ] 9.1 Rename symbols per `specs/revision-load/spec.md` in `StorageManager.h` / `.cpp` and `StorageManagerInternal.h`
-- [ ] 9.2 Update callers: `DisplayManager.cpp`, `MidiButtonActions.cpp`, HITL serial handlers in `StorageManager.cpp`
-- [ ] 9.3 Update native tests if they reference legacy names
-- [ ] 9.4 HITL wire strings unchanged — grep `rev_load_dirty_` still mapped
-- [ ] 9.5 `pio test -e native`
+- [x] 9.1 Rename symbols per `specs/revision-load/spec.md` in `StorageManager.h` / `.cpp` and `StorageManagerInternal.h`
+- [x] 9.2 Update callers: `DisplayManager.cpp`, `MidiButtonActions.cpp`, HITL serial handlers in `StorageManager.cpp`
+- [x] 9.3 Update native tests if they reference legacy names
+- [x] 9.4 HITL wire strings unchanged — grep `rev_load_dirty_` still mapped
+- [x] 9.5 `pio test -e native`
 
 ## 10. Step 6 — Policy renames
 
-- [ ] 10.1 Remove `RevisionLoadPolicy::LoadRequestGate`; add `shouldHoldRevisionLoadRequest(bool workspaceDirty)`
-- [ ] 10.2 Rename `resolveLoadRequestGate` → `shouldHoldRevisionLoadRequest`
-- [ ] 10.3 Rename `shouldDispatchStagedLoadAfterCommitComplete` → `shouldDispatchRequestedLoadAfterCommitComplete`
-- [ ] 10.4 Update `requestLoadRevision` path in overlay TU to use new policy names
-- [ ] 10.5 `pio test -e native`
+- [x] 10.1 Remove `RevisionLoadPolicy::LoadRequestGate`; add `shouldHoldRevisionLoadRequest(bool workspaceDirty)`
+- [x] 10.2 Rename `resolveLoadRequestGate` → `shouldHoldRevisionLoadRequest`
+- [x] 10.3 Rename `shouldDispatchStagedLoadAfterCommitComplete` → `shouldDispatchRequestedLoadAfterCommitComplete`
+- [x] 10.4 Update `requestLoadRevision` path in overlay TU to use new policy names
+- [x] 10.5 `pio test -e native`
 
 ## 11. Verification and closeout
 
-- [ ] 11.1 Manual hardware pass: dirty prompt, save-then-load, save-row background commit
-- [ ] 11.2 Update `docs/runtime/PROJECT_STATE.md` + `docs/runtime/CURRENT_WORK.md`
-- [ ] 11.3 Update `docs/plans/storage_session_state_refactor_open_items_handoff.md` — mark items done
-- [ ] 11.4 Update `docs/DELIVERABLE_TRACKING.md` when Tier 3 ships
-- [ ] 11.5 `/opsx:archive` after all gates pass
+- [x] 11.1 Manual hardware pass: dirty prompt, save-then-load, save-row background commit (HITL overlay MIDI matrix 2026-06-29)
+- [x] 11.2 Update `docs/runtime/PROJECT_STATE.md` + `docs/runtime/CURRENT_WORK.md`
+- [x] 11.3 Update `docs/plans/storage_session_state_refactor_open_items_handoff.md` — mark items done
+- [x] 11.4 Update `docs/DELIVERABLE_TRACKING.md` when Tier 3 ships
+- [x] 11.5 `/opsx:archive` after all gates pass
 
 **Apply order:** 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 → 9 → 10 → 11. Do not skip helper export (1, 3, 5) before extract (2, 4, 6).
 

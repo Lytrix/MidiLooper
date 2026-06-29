@@ -32,9 +32,9 @@ PRESET_SCENARIOS: dict[str, tuple[str, ...]] = {
     "revision_commit_save": ("revision_commit_save",),
     "revision_load": ("revision_load",),
     "revision_load_record": ("base", "revision_load_post_record"),
-    "revision_load_dirty_yes": ("base", "revision_load_dirty_yes"),
-    "revision_load_dirty_no": ("base", "revision_load_dirty_no"),
-    "revision_load_dirty_cancel": ("base", "revision_load_dirty_cancel"),
+    "revision_load_dirty_yes": ("revision_load_dirty_yes",),
+    "revision_load_dirty_no": ("revision_load_dirty_no",),
+    "revision_load_dirty_cancel": ("revision_load_dirty_cancel",),
     "two_overdub_undo_redo": ("two_overdub_undo_redo",),
 }
 
