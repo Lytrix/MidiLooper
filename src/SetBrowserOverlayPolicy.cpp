@@ -136,8 +136,6 @@ LoadSaveOverlayInputAction mapLoadSaveOverlayInputAction(
       return LoadSaveOverlayInputAction::ScrollDown;
     case ActionType::SELECT_TRACK:
       return LoadSaveOverlayInputAction::ScrollUp;
-    case ActionType::CYCLE_EDIT_MODE:
-      return LoadSaveOverlayInputAction::ConfirmFocusedRow;
     default:
       return LoadSaveOverlayInputAction::None;
   }
