@@ -18,12 +18,12 @@ namespace StorageManagerInternal {
 
 StorageActivitySnapshot buildStorageActivitySnapshot() {
     StorageActivitySnapshot snapshot{};
-    snapshot.deferredSavePending = deferredSavePending;
-    snapshot.deferredSaveInProgress = deferredSaveInProgress;
-    snapshot.deferredSaveSdIoActive = deferredSaveSdIoActive;
-    snapshot.revisionCommitPending = revisionCommitPending;
-    snapshot.revisionCommitInProgress = revisionCommitInProgress;
-    snapshot.revisionCommitSdIoActive = revisionCommitSdIoActive;
+    snapshot.deferredSavePending = storageSession.currentWorkspaceSave.pending;
+    snapshot.deferredSaveInProgress = storageSession.currentWorkspaceSave.inProgress;
+    snapshot.deferredSaveSdIoActive = storageSession.currentWorkspaceSave.sdIoActive;
+    snapshot.revisionCommitPending = storageSession.revisionCommit.pending;
+    snapshot.revisionCommitInProgress = storageSession.revisionCommit.inProgress;
+    snapshot.revisionCommitSdIoActive = storageSession.revisionCommit.sdIoActive;
     snapshot.revisionCommitOverlayBackground = storageSession.revisionCommit.overlayBackgroundCommit;
     snapshot.revisionLoadPending = storageSession.revisionLoad.pending;
     snapshot.revisionLoadInProgress = storageSession.revisionLoad.inProgress;
@@ -138,9 +138,9 @@ DeferredSaveDisplayStatus StorageManager::getDeferredLoadDisplayStatus(uint32_t 
     inputs.loadPending = storageSession.revisionLoad.pending;
     inputs.loadInProgress = storageSession.revisionLoad.inProgress;
     inputs.saveThenLoadCommitInProgress =
-        storageSession.revisionLoad.loadAfterRevisionCommit && revisionCommitInProgress;
-    inputs.completedAtMs = revisionLoadCompletedAtMs;
-    inputs.failedAtMs = revisionLoadFailedAtMs;
+        storageSession.revisionLoad.loadAfterRevisionCommit && storageSession.revisionCommit.inProgress;
+    inputs.completedAtMs = storageSession.revisionLoad.completedAtMs;
+    inputs.failedAtMs = storageSession.revisionLoad.failedAtMs;
     return resolveDeferredLoadDisplayStatus(nowMs, inputs);
 #endif
 }
@@ -150,13 +150,13 @@ STORAGE_PERSIST_MEM uint16_t StorageManager::getRevisionLoadDisplayTargetSetId()
     return 0;
 #else
     if (isRevisionLoadDisplayPipelineActive(buildStorageActivitySnapshot())) {
-        if (revisionLoadSetId != 0) {
-            return revisionLoadSetId;
+        if (storageSession.revisionLoad.setId != 0) {
+            return storageSession.revisionLoad.setId;
         }
         return storageSession.revisionLoad.requestedSetId;
     }
-    if (revisionLoadCompletedAtMs != 0 || revisionLoadFailedAtMs != 0) {
-        return revisionLoadLastDisplaySetId;
+    if (storageSession.revisionLoad.completedAtMs != 0 || storageSession.revisionLoad.failedAtMs != 0) {
+        return storageSession.revisionLoad.lastDisplaySetId;
     }
     return 0;
 #endif
@@ -167,23 +167,23 @@ STORAGE_PERSIST_MEM uint16_t StorageManager::getRevisionLoadDisplayTargetRevisio
     return 0;
 #else
     if (isRevisionLoadDisplayPipelineActive(buildStorageActivitySnapshot())) {
-        if (revisionLoadRevisionId != 0) {
-            return revisionLoadRevisionId;
+        if (storageSession.revisionLoad.revisionId != 0) {
+            return storageSession.revisionLoad.revisionId;
         }
         return storageSession.revisionLoad.requestedRevisionId;
     }
-    if (revisionLoadCompletedAtMs != 0 || revisionLoadFailedAtMs != 0) {
-        return revisionLoadLastDisplayRevisionId;
+    if (storageSession.revisionLoad.completedAtMs != 0 || storageSession.revisionLoad.failedAtMs != 0) {
+        return storageSession.revisionLoad.lastDisplayRevisionId;
     }
     return 0;
 #endif
 }
 
 STORAGE_PERSIST_MEM bool StorageManager::consumeRevisionLoadDisplayRefreshPending() {
-    if (!revisionLoadDisplayRefreshPending) {
+    if (!storageSession.revisionLoad.displayRefreshPending) {
         return false;
     }
-    revisionLoadDisplayRefreshPending = false;
+    storageSession.revisionLoad.displayRefreshPending = false;
     return true;
 }
 

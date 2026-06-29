@@ -21,38 +21,21 @@ Finish DEC-012: export shared persistence helpers, split FSM translation units, 
 |------|-------------|
 | **0** | `StorageActivitySnapshot`, `buildStorageActivitySnapshot()`, contract tests; removed `RevisionLoadPolicy::isMinimalLoadingOverlayActive` wrapper |
 | **2** | `resolvePersistencePhase()`; renamed `PersistencePhase` values; removed `revisionLoadPipelineActive` + imperative phase assignments; partial `StorageSession` (`revisionLoad`, `revisionCommit.overlayBackgroundCommit`, `setBrowserNavigation`) |
-| **3 partial** | `StorageManagerInternal.h` + `src/StorageManager/{Internal,Overlay,FileIo,RuntimeBundleFooter,WorkspaceSave,RevisionCommit,RevisionLoad}.cpp`; FSM TUs (§1–§6); overlay load dispatch + dirty-prompt paths in `Overlay.cpp` (§7.1–§7.5) |
+| **3 partial** | `StorageManagerInternal.h` + `src/StorageManager/{Internal,Overlay,FileIo,RuntimeBundleFooter,WorkspaceSave,RevisionCommit,RevisionLoad}.cpp`; FSM TUs (§1–§6); overlay load dispatch + dirty-prompt paths in `Overlay.cpp` (§7.1–§7.5); **`StorageSession` job struct migration** (§8) |
 
-**Verification (green on 2026-06-29):** `pio test -e native` (292 tests), `pio run -e teensy41-capture-serial`.
+**Verification (green on 2026-06-29):** `pio test -e native` (292 tests), `pio run -e teensy41-capture-serial`. §8 struct migration verified same day.
 
 ---
 
 ## Open items (priority order)
 
-### 1. Tier 3 — `StorageSession` job struct migration (next)
+### 1. Tier 3 — Backend API renames (next)
 
-**OpenSpec:** tasks **§8** + spec [`storage-session-jobs`](../../openspec/changes/storage-session-state-refactor/specs/storage-session-jobs/spec.md).
+**OpenSpec:** tasks **§9** + spec [`revision-load/spec.md`](../../openspec/changes/storage-session-state-refactor/specs/revision-load/spec.md).
+
+**§8 shipped:** `CurrentWorkspaceSaveJob`, `RevisionCommitJob`, `RevisionLoadJob`, `BootRecoveryJob` on `storageSession`; job externs removed from `StorageManagerInternal.h`. Durable workspace facts (`currentWorkspaceEpoch`, …) remain file-scope in `Internal.cpp`.
 
 Overlay TU **shipped** (§7.1–§7.5). **Pending hardware:** §7.6 HITL overlay presets.
-
-`StorageSession` today holds only revision load request/hold/dispatch + `revisionCommit.overlayBackgroundCommit` + navigation. Still **extern** in `StorageManagerInternal` (not nested structs):
-
-| Target job member | Still extern statics (examples) |
-|-----------------|----------------------------------|
-| `currentWorkspaceSave` | `deferredSavePending`, `deferredSaveStage`, `deferredSaveFile`, cursors, … |
-| `revisionCommit` | `revisionCommitPending`, `revisionCommitStage`, `revisionCommitFile`, paths, slot entries, … |
-| `revisionLoad` (extend) | `revisionLoadStage`, `revisionLoadSetId`, reload RAM cursors, source/dest files, … |
-| `bootRecovery` | `bootRevisionRecoveryPending`, `bootRevisionRecoverySetId`, `bootRevisionRecoveryRevisionId` |
-
-Migrate incrementally per FSM TU split: when moving deferred save FSM, colocate `deferredSave*` into `storageSession.currentWorkspaceSave` (struct fields TBD — extend `StorageSession.h`).
-
-**Do not** migrate durable workspace facts (`currentWorkspaceEpoch`, `lastCommittedWorkspaceEpoch`, …) into `StorageSession`.
-
----
-
-### 4. Backend API renames (after struct migration stable)
-
-**OpenSpec:** tasks **§9** + delta [`revision-load/spec.md`](../../openspec/changes/storage-session-state-refactor/specs/revision-load/spec.md).
 
 Public `StorageManager` API still uses legacy names. Rename per parent handoff (keep HITL wire strings):
 
@@ -97,8 +80,9 @@ Update callers: `DisplayManager.cpp`, `MidiButtonActions.cpp`, HITL serial in `S
 |------|------|
 | `src/StorageManager.cpp` | Public API + orchestrator (`processDeferredSaveState`); FSM bodies until Step 2 extract |
 | `include/StorageManager.h` | Public `StorageManager` API |
-| `include/StorageManagerInternal.h` | Stage enums, extern job state, shared helper + FSM entry declarations |
-| `src/StorageManager/Internal.cpp` | Job RAM definitions; workspace meta / telemetry / budget helpers |
+| `include/StorageManagerInternal.h` | Shared helper + FSM entry declarations; durable workspace externs only |
+| `include/StorageSession.h` | Job stage enums + `StorageSession` job structs (DEC-012) |
+| `src/StorageManager/Internal.cpp` | `storageSession` instance + durable workspace facts |
 | `src/StorageManager/Overlay.cpp` | Snapshot, overlay navigation, load request + dirty-prompt dispatch (shipped) |
 | `src/StorageManager/FileIo.cpp` | `writeRaw`/`readRaw`, `storageIoFromFile*`, deferred stage-name strings |
 | `src/StorageManager/WorkspaceSave.cpp` | *(Step 2)* `currentWorkspaceSave` FSM |

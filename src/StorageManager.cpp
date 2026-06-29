@@ -1102,9 +1102,9 @@ bool StorageManager::readSetRevisionCatalogBrowserMetadata(
     }
     uint16_t entryCount = 0;
     if (readSlotIndexEntriesFromRevisionFile(revisionFile, fileSize, header,
-                                             revisionLoadSlotDirectoryEntries,
+                                             storageSession.revisionLoad.slotDirectoryEntries,
                                              kMaxRevisionLoopIndexEntries, entryCount)) {
-        applyRevisionSlotDirectoryToSavedSetMetadata(revisionLoadSlotDirectoryEntries, entryCount,
+        applyRevisionSlotDirectoryToSavedSetMetadata(storageSession.revisionLoad.slotDirectoryEntries, entryCount,
                                                      metadata);
     }
     revisionFile.close();
@@ -1216,9 +1216,9 @@ bool StorageManager::readSetRevisionHistoryBrowserMetadata(
     }
     uint16_t entryCount = 0;
     if (readSlotIndexEntriesFromRevisionFile(revisionFile, fileSize, header,
-                                             revisionLoadSlotDirectoryEntries,
+                                             storageSession.revisionLoad.slotDirectoryEntries,
                                              kMaxRevisionLoopIndexEntries, entryCount)) {
-        applyRevisionSlotDirectoryToSavedSetMetadata(revisionLoadSlotDirectoryEntries, entryCount,
+        applyRevisionSlotDirectoryToSavedSetMetadata(storageSession.revisionLoad.slotDirectoryEntries, entryCount,
                                                      metadata);
     }
     revisionFile.close();
@@ -1342,15 +1342,15 @@ void StorageManager::requestDeferredSaveState(const LooperState& /*state*/, uint
     (void)isUrgentRequest;
     return;
 #endif
-    const bool alreadyPending = deferredSavePending;
-    if (admissionHeap != UINT32_MAX || deferredSaveAdmissionHeap == 0) {
-        deferredSaveAdmissionHeap = admissionHeap;
+    const bool alreadyPending = storageSession.currentWorkspaceSave.pending;
+    if (admissionHeap != UINT32_MAX || storageSession.currentWorkspaceSave.admissionHeap == 0) {
+        storageSession.currentWorkspaceSave.admissionHeap = admissionHeap;
     }
-    const uint32_t reportedHeap = deferredSaveAdmissionHeap == UINT32_MAX
+    const uint32_t reportedHeap = storageSession.currentWorkspaceSave.admissionHeap == UINT32_MAX
                                       ? 0
-                                      : deferredSaveAdmissionHeap;
-    deferredSaveUrgentRequested = deferredSaveUrgentRequested || isUrgentRequest;
-    deferredSavePending = true;
+                                      : storageSession.currentWorkspaceSave.admissionHeap;
+    storageSession.currentWorkspaceSave.urgentRequested = storageSession.currentWorkspaceSave.urgentRequested || isUrgentRequest;
+    storageSession.currentWorkspaceSave.pending = true;
     SC_PERSIST("request", 0, reportedHeap, reportedHeap,
                alreadyPending ? "already_pending" : "queued");
 }
@@ -1360,7 +1360,7 @@ bool StorageManager::isDeferredSaveActive() {
     return false;
 #else
     // Active only during the SD-write section of a save slice.
-    return deferredSaveSdIoActive;
+    return storageSession.currentWorkspaceSave.sdIoActive;
 #endif
 }
 
@@ -1368,21 +1368,21 @@ bool StorageManager::hasDeferredSaveWork() {
 #if BYPASS_STOP_UNDO_SAVE
     return false;
 #else
-    return deferredSavePending || deferredSaveInProgress;
+    return storageSession.currentWorkspaceSave.pending || storageSession.currentWorkspaceSave.inProgress;
 #endif
 }
 
 void StorageManager::processDeferredSaveState(const LooperState& state) {
 #if BYPASS_STOP_UNDO_SAVE
     (void)state;
-    deferredSavePending = false;
+    storageSession.currentWorkspaceSave.pending = false;
     resetDeferredSaveJobState();
     resetRevisionCommitJobState();
     resetRevisionLoadJobState();
     return;
 #endif
-    deferredSaveSdIoActive = false;
-    revisionCommitSdIoActive = false;
+    storageSession.currentWorkspaceSave.sdIoActive = false;
+    storageSession.revisionCommit.sdIoActive = false;
     storageSession.revisionLoad.sdIoActive = false;
 
     const uint32_t sliceBudgetUs = resolvePersistenceSliceBudgetUs(state);
@@ -1393,55 +1393,55 @@ void StorageManager::processDeferredSaveState(const LooperState& state) {
                                                                   micros() - sliceStartUs);
     };
 
-    if (bootRevisionRecoveryPending && !storageSession.revisionLoad.pending && !storageSession.revisionLoad.inProgress &&
-        !revisionCommitPending && !revisionCommitInProgress && !deferredSavePending &&
-        !deferredSaveInProgress) {
-        bootRevisionRecoveryPending = false;
-        revisionLoadSetId = bootRevisionRecoverySetId;
-        revisionLoadRevisionId = bootRevisionRecoveryRevisionId;
+    if (storageSession.bootRecovery.pending && !storageSession.revisionLoad.pending && !storageSession.revisionLoad.inProgress &&
+        !storageSession.revisionCommit.pending && !storageSession.revisionCommit.inProgress && !storageSession.currentWorkspaceSave.pending &&
+        !storageSession.currentWorkspaceSave.inProgress) {
+        storageSession.bootRecovery.pending = false;
+        storageSession.revisionLoad.setId = storageSession.bootRecovery.setId;
+        storageSession.revisionLoad.revisionId = storageSession.bootRecovery.revisionId;
         storageSession.revisionLoad.pending = true;
         Serial.print("[StorageManager] Boot recovery: queued revision load S");
-        Serial.print(revisionLoadSetId);
+        Serial.print(storageSession.revisionLoad.setId);
         Serial.print(" v");
-        Serial.println(revisionLoadRevisionId);
+        Serial.println(storageSession.revisionLoad.revisionId);
     }
 
     stepWallClockFromSdCatalogSync(2);
 
     while (!sliceBudgetExhausted()) {
         const bool revisionBlockedByDeferredSave =
-            revisionCommitPending && (deferredSavePending || deferredSaveInProgress);
+            storageSession.revisionCommit.pending && (storageSession.currentWorkspaceSave.pending || storageSession.currentWorkspaceSave.inProgress);
         const bool revisionBlockedByLoad =
-            revisionCommitPending && (storageSession.revisionLoad.pending || storageSession.revisionLoad.inProgress);
+            storageSession.revisionCommit.pending && (storageSession.revisionLoad.pending || storageSession.revisionLoad.inProgress);
         if (revisionBlockedByDeferredSave || revisionBlockedByLoad) {
             const uint32_t nowMs = millis();
-            if (nowMs - lastRevisionCommitBlockedLogAtMs >= 5000U) {
-                lastRevisionCommitBlockedLogAtMs = nowMs;
-                SC_PERSIST("rev_blocked", 0, deferredSavePending ? 1U : 0U,
-                           deferredSaveInProgress ? 1U : 0U,
+            if (nowMs - storageSession.revisionCommit.lastBlockedLogAtMs >= 5000U) {
+                storageSession.revisionCommit.lastBlockedLogAtMs = nowMs;
+                SC_PERSIST("rev_blocked", 0, storageSession.currentWorkspaceSave.pending ? 1U : 0U,
+                           storageSession.currentWorkspaceSave.inProgress ? 1U : 0U,
                            revisionBlockedByLoad ? "load_active" : "deferred_save_active");
             }
-        } else if (revisionCommitInProgress || revisionCommitPending) {
-            if (!revisionCommitInProgress && revisionCommitPending) {
-                revisionCommitPending = false;
-                revisionCommitInProgress = true;
-                revisionCommitStage = RevisionCommitStage::Snapshot;
+        } else if (storageSession.revisionCommit.inProgress || storageSession.revisionCommit.pending) {
+            if (!storageSession.revisionCommit.inProgress && storageSession.revisionCommit.pending) {
+                storageSession.revisionCommit.pending = false;
+                storageSession.revisionCommit.inProgress = true;
+                storageSession.revisionCommit.stage = RevisionCommitStage::Snapshot;
                 SC_PERSIST("rev_dispatch", 0, 0, 0, "run");
             }
 
             const uint32_t ioStartUs = micros();
-            revisionCommitSdIoActive = true;
+            storageSession.revisionCommit.sdIoActive = true;
             const bool revStepOk = stepRevisionCommitJob();
-            revisionCommitSdIoActive = false;
-            deferredSaveDisplayBlockUs += micros() - ioStartUs;
+            storageSession.revisionCommit.sdIoActive = false;
+            storageSession.currentWorkspaceSave.displayBlockUs += micros() - ioStartUs;
 
             if (!revStepOk) {
                 Serial.print("[StorageManager] ERROR: Revision commit failed at stage ");
-                Serial.println(static_cast<uint8_t>(revisionCommitStage));
+                Serial.println(static_cast<uint8_t>(storageSession.revisionCommit.stage));
                 resetRevisionCommitJobState();
                 break;
             }
-            if (revisionCommitInProgress) {
+            if (storageSession.revisionCommit.inProgress) {
                 break;
             }
             if (RevisionLoadPolicy::shouldDispatchStagedLoadAfterCommitComplete(
@@ -1453,13 +1453,13 @@ void StorageManager::processDeferredSaveState(const LooperState& state) {
         }
 
         const bool revisionLoadBlockedByDeferredSave =
-            storageSession.revisionLoad.pending && (deferredSavePending || deferredSaveInProgress);
+            storageSession.revisionLoad.pending && (storageSession.currentWorkspaceSave.pending || storageSession.currentWorkspaceSave.inProgress);
         const bool revisionLoadBlockedByCommit =
-            storageSession.revisionLoad.pending && (revisionCommitPending || revisionCommitInProgress);
+            storageSession.revisionLoad.pending && (storageSession.revisionCommit.pending || storageSession.revisionCommit.inProgress);
         if (revisionLoadBlockedByDeferredSave || revisionLoadBlockedByCommit) {
             const uint32_t nowMs = millis();
-            if (nowMs - lastRevisionLoadBlockedLogAtMs >= 5000U) {
-                lastRevisionLoadBlockedLogAtMs = nowMs;
+            if (nowMs - storageSession.revisionLoad.lastBlockedLogAtMs >= 5000U) {
+                storageSession.revisionLoad.lastBlockedLogAtMs = nowMs;
                 SC_PERSIST("rev_load_blocked", 0,
                            revisionLoadBlockedByDeferredSave ? 1U : 0U,
                            revisionLoadBlockedByCommit ? 1U : 0U,
@@ -1470,8 +1470,8 @@ void StorageManager::processDeferredSaveState(const LooperState& state) {
             if (!storageSession.revisionLoad.inProgress && storageSession.revisionLoad.pending) {
                 storageSession.revisionLoad.pending = false;
                 storageSession.revisionLoad.inProgress = true;
-                revisionLoadStage = RevisionLoadStage::Validate;
-                SC_PERSIST("rev_load_dispatch", 0, revisionLoadSetId, revisionLoadRevisionId,
+                storageSession.revisionLoad.stage = RevisionLoadStage::Validate;
+                SC_PERSIST("rev_load_dispatch", 0, storageSession.revisionLoad.setId, storageSession.revisionLoad.revisionId,
                            "run");
             }
 
@@ -1480,18 +1480,18 @@ void StorageManager::processDeferredSaveState(const LooperState& state) {
             const bool revLoadStepOk =
                 stepRevisionLoadJob(const_cast<LooperState&>(state));
             storageSession.revisionLoad.sdIoActive = false;
-            deferredSaveDisplayBlockUs += micros() - ioStartUs;
+            storageSession.currentWorkspaceSave.displayBlockUs += micros() - ioStartUs;
 
             if (!revLoadStepOk) {
                 Serial.print("[StorageManager] ERROR: Revision load failed at stage ");
-                Serial.println(static_cast<uint8_t>(revisionLoadStage));
-                revisionLoadLastDisplaySetId =
-                    revisionLoadSetId != 0 ? revisionLoadSetId : storageSession.revisionLoad.requestedSetId;
-                revisionLoadLastDisplayRevisionId = revisionLoadRevisionId != 0
-                                                          ? revisionLoadRevisionId
+                Serial.println(static_cast<uint8_t>(storageSession.revisionLoad.stage));
+                storageSession.revisionLoad.lastDisplaySetId =
+                    storageSession.revisionLoad.setId != 0 ? storageSession.revisionLoad.setId : storageSession.revisionLoad.requestedSetId;
+                storageSession.revisionLoad.lastDisplayRevisionId = storageSession.revisionLoad.revisionId != 0
+                                                          ? storageSession.revisionLoad.revisionId
                                                           : storageSession.revisionLoad.requestedRevisionId;
-                revisionLoadFailedAtMs = millis();
-                revisionLoadCompletedAtMs = 0;
+                storageSession.revisionLoad.failedAtMs = millis();
+                storageSession.revisionLoad.completedAtMs = 0;
                 resetRevisionLoadJobState();
                 break;
             }
@@ -1501,7 +1501,7 @@ void StorageManager::processDeferredSaveState(const LooperState& state) {
             continue;
         }
 
-        if (!deferredSavePending && !deferredSaveInProgress) {
+        if (!storageSession.currentWorkspaceSave.pending && !storageSession.currentWorkspaceSave.inProgress) {
             break;
         }
 
@@ -1509,94 +1509,94 @@ void StorageManager::processDeferredSaveState(const LooperState& state) {
             break;
         }
 
-        if (!deferredSaveInProgress) {
-            if (deferredSaveAdmissionHeap != UINT32_MAX &&
+        if (!storageSession.currentWorkspaceSave.inProgress) {
+            if (storageSession.currentWorkspaceSave.admissionHeap != UINT32_MAX &&
                 !LoopEventStore::hasInternalHeapHeadroomForNonCriticalWork(
-                    deferredSaveAdmissionHeap)) {
-                if (!deferredSaveHeapFloorDeferred) {
-                    SC_PERSIST("defer", 0, deferredSaveAdmissionHeap, deferredSaveAdmissionHeap,
+                    storageSession.currentWorkspaceSave.admissionHeap)) {
+                if (!storageSession.currentWorkspaceSave.heapFloorDeferred) {
+                    SC_PERSIST("defer", 0, storageSession.currentWorkspaceSave.admissionHeap, storageSession.currentWorkspaceSave.admissionHeap,
                                "heap_floor");
-                    deferredSaveHeapFloorDeferred = true;
+                    storageSession.currentWorkspaceSave.heapFloorDeferred = true;
                 }
                 break;
             }
-            deferredSaveHeapFloorDeferred = false;
+            storageSession.currentWorkspaceSave.heapFloorDeferred = false;
         }
 
-        if (!deferredSaveInProgress && deferredSavePending) {
-            const uint32_t dispatchHeap = deferredSaveAdmissionHeap == UINT32_MAX
+        if (!storageSession.currentWorkspaceSave.inProgress && storageSession.currentWorkspaceSave.pending) {
+            const uint32_t dispatchHeap = storageSession.currentWorkspaceSave.admissionHeap == UINT32_MAX
                                               ? 0
-                                              : deferredSaveAdmissionHeap;
+                                              : storageSession.currentWorkspaceSave.admissionHeap;
             SC_PERSIST("dispatch", 0, dispatchHeap, dispatchHeap, "run");
-            deferredSavePending = false;
-            deferredSaveStartedAtUs = micros();
-            deferredSaveHeapBefore = dispatchHeap;
-            deferredSaveLoopSlotsWritten = 0;
-            deferredSaveLoopSlotsSkipped = 0;
-            deferredSaveDisplayBlockUs = 0;
-            deferredSaveInProgress = true;
+            storageSession.currentWorkspaceSave.pending = false;
+            storageSession.currentWorkspaceSave.startedAtUs = micros();
+            storageSession.currentWorkspaceSave.heapBefore = dispatchHeap;
+            storageSession.currentWorkspaceSave.loopSlotsWritten = 0;
+            storageSession.currentWorkspaceSave.loopSlotsSkipped = 0;
+            storageSession.currentWorkspaceSave.displayBlockUs = 0;
+            storageSession.currentWorkspaceSave.inProgress = true;
             const uint32_t ioStartUs = micros();
-            deferredSaveSdIoActive = true;
+            storageSession.currentWorkspaceSave.sdIoActive = true;
             const bool beginOk = beginDeferredSaveJob(state);
-            deferredSaveDisplayBlockUs += micros() - ioStartUs;
-            deferredSaveSdIoActive = false;
+            storageSession.currentWorkspaceSave.displayBlockUs += micros() - ioStartUs;
+            storageSession.currentWorkspaceSave.sdIoActive = false;
             if (!beginOk) {
-                const uint32_t saveDurationUs = micros() - deferredSaveStartedAtUs;
-                SC_PERSIST("result", saveDurationUs, deferredSaveHeapBefore, deferredSaveHeapBefore,
+                const uint32_t saveDurationUs = micros() - storageSession.currentWorkspaceSave.startedAtUs;
+                SC_PERSIST("result", saveDurationUs, storageSession.currentWorkspaceSave.heapBefore, storageSession.currentWorkspaceSave.heapBefore,
                            "failed");
-                deferredSaveLastCompletedOk = false;
-                deferredSaveFailedAtMs = millis();
-                deferredSaveCompletedAtMs = 0;
+                storageSession.currentWorkspaceSave.lastCompletedOk = false;
+                storageSession.currentWorkspaceSave.failedAtMs = millis();
+                storageSession.currentWorkspaceSave.completedAtMs = 0;
                 resetDeferredSaveJobState();
                 break;
             }
-            deferredSaveUrgentRequested = false;
+            storageSession.currentWorkspaceSave.urgentRequested = false;
             break;
         }
 
-        if (!deferredSaveInProgress) {
+        if (!storageSession.currentWorkspaceSave.inProgress) {
             break;
         }
 
         emitDeferredSaveSliceTelemetry("start");
         const uint32_t ioStartUs = micros();
-        deferredSaveSdIoActive = true;
+        storageSession.currentWorkspaceSave.sdIoActive = true;
         const bool stepOk = stepDeferredSaveJob();
-        deferredSaveDisplayBlockUs += micros() - ioStartUs;
-        deferredSaveSdIoActive = false;
+        storageSession.currentWorkspaceSave.displayBlockUs += micros() - ioStartUs;
+        storageSession.currentWorkspaceSave.sdIoActive = false;
         emitDeferredSaveSliceTelemetry(stepOk ? "done" : "failed");
         if (!stepOk) {
-            deferredSaveInProgress = false;
+            storageSession.currentWorkspaceSave.inProgress = false;
         }
-        if (deferredSaveInProgress) {
+        if (storageSession.currentWorkspaceSave.inProgress) {
             break;
         }
 
-        const uint32_t saveDurationUs = micros() - deferredSaveStartedAtUs;
+        const uint32_t saveDurationUs = micros() - storageSession.currentWorkspaceSave.startedAtUs;
         const char* resultOutcome = stepOk ? "ok" : "failed";
-        SC_PERSIST("result", saveDurationUs, deferredSaveHeapBefore, deferredSaveHeapBefore,
+        SC_PERSIST("result", saveDurationUs, storageSession.currentWorkspaceSave.heapBefore, storageSession.currentWorkspaceSave.heapBefore,
                    resultOutcome);
         char resultStats[72];
         std::snprintf(resultStats, sizeof(resultStats), "w%u_s%u_db%lu",
-                      static_cast<unsigned>(deferredSaveLoopSlotsWritten),
-                      static_cast<unsigned>(deferredSaveLoopSlotsSkipped),
-                      static_cast<unsigned long>(deferredSaveDisplayBlockUs));
-        SC_PERSIST("result_stats", saveDurationUs, deferredSaveHeapBefore, deferredSaveHeapBefore,
+                      static_cast<unsigned>(storageSession.currentWorkspaceSave.loopSlotsWritten),
+                      static_cast<unsigned>(storageSession.currentWorkspaceSave.loopSlotsSkipped),
+                      static_cast<unsigned long>(storageSession.currentWorkspaceSave.displayBlockUs));
+        SC_PERSIST("result_stats", saveDurationUs, storageSession.currentWorkspaceSave.heapBefore, storageSession.currentWorkspaceSave.heapBefore,
                    resultStats);
-        deferredSaveLastCompletedOk = stepOk;
+        storageSession.currentWorkspaceSave.lastCompletedOk = stepOk;
         const uint32_t resultAtMs = millis();
         if (stepOk) {
-            deferredSaveCompletedAtMs = resultAtMs;
-            deferredSaveFailedAtMs = 0;
+            storageSession.currentWorkspaceSave.completedAtMs = resultAtMs;
+            storageSession.currentWorkspaceSave.failedAtMs = 0;
         } else {
-            deferredSaveFailedAtMs = resultAtMs;
-            deferredSaveCompletedAtMs = 0;
+            storageSession.currentWorkspaceSave.failedAtMs = resultAtMs;
+            storageSession.currentWorkspaceSave.completedAtMs = 0;
         }
         if (stepOk && clearEditDirtyAfterDeferredSave) {
             clearAllocatedLoopEditStateDirty();
             clearEditDirtyAfterDeferredSave = false;
         }
-        deferredSaveUrgentRequested = false;
+        storageSession.currentWorkspaceSave.urgentRequested = false;
         if (!stepOk) {
             resetDeferredSaveJobState();
         }
@@ -1608,7 +1608,7 @@ void StorageManager::requestCommitRevision() {
 #if BYPASS_STOP_UNDO_SAVE
     return;
 #endif
-    revisionCommitPending = true;
+    storageSession.revisionCommit.pending = true;
     SC_PERSIST("rev_request", 0, 0, 0, "queued");
 }
 
@@ -1616,7 +1616,7 @@ bool StorageManager::hasRevisionCommitWork() {
 #if BYPASS_STOP_UNDO_SAVE
     return false;
 #else
-    return revisionCommitPending || revisionCommitInProgress;
+    return storageSession.revisionCommit.pending || storageSession.revisionCommit.inProgress;
 #endif
 }
 
@@ -1624,7 +1624,7 @@ bool StorageManager::isRevisionCommitActive() {
 #if BYPASS_STOP_UNDO_SAVE
     return false;
 #else
-    return revisionCommitSdIoActive;
+    return storageSession.revisionCommit.sdIoActive;
 #endif
 }
 
@@ -1770,7 +1770,7 @@ CAPTURE_HITL_MEM bool StorageManager::nukeHitlSetsCatalog() {
 #if BYPASS_STOP_UNDO_SAVE
     return false;
 #else
-    if (revisionCommitPending || revisionCommitInProgress || storageSession.revisionLoad.pending ||
+    if (storageSession.revisionCommit.pending || storageSession.revisionCommit.inProgress || storageSession.revisionLoad.pending ||
         storageSession.revisionLoad.inProgress) {
         SC_PERSIST("rev_nuke_sets", 0, 0, 0, "active_job");
         return false;
@@ -2046,12 +2046,12 @@ DeferredSaveDisplayStatus StorageManager::getDeferredSaveDisplayStatus(uint32_t 
     return {};
 #else
     DeferredSaveDisplayInputs inputs{};
-    inputs.savePending = deferredSavePending;
-    inputs.saveInProgress = deferredSaveInProgress;
-    inputs.revisionCommitPending = revisionCommitPending;
-    inputs.revisionCommitInProgress = revisionCommitInProgress;
-    inputs.completedAtMs = deferredSaveCompletedAtMs;
-    inputs.failedAtMs = deferredSaveFailedAtMs;
+    inputs.savePending = storageSession.currentWorkspaceSave.pending;
+    inputs.saveInProgress = storageSession.currentWorkspaceSave.inProgress;
+    inputs.revisionCommitPending = storageSession.revisionCommit.pending;
+    inputs.revisionCommitInProgress = storageSession.revisionCommit.inProgress;
+    inputs.completedAtMs = storageSession.currentWorkspaceSave.completedAtMs;
+    inputs.failedAtMs = storageSession.currentWorkspaceSave.failedAtMs;
     return resolveDeferredSaveDisplayStatus(nowMs, inputs);
 #endif
 }
@@ -2065,30 +2065,30 @@ bool StorageManager::saveState(const LooperState& state) {
     HotPathTelemetry::ScopedSaveState telemetryScope;
     Serial.println("[StorageManager] Draining deferred save to SD card...");
 
-    if (!deferredSaveInProgress) {
-        deferredSaveAdmissionHeap = UINT32_MAX;
-        deferredSaveUrgentRequested = true;
-        const bool alreadyPending = deferredSavePending;
-        deferredSavePending = true;
+    if (!storageSession.currentWorkspaceSave.inProgress) {
+        storageSession.currentWorkspaceSave.admissionHeap = UINT32_MAX;
+        storageSession.currentWorkspaceSave.urgentRequested = true;
+        const bool alreadyPending = storageSession.currentWorkspaceSave.pending;
+        storageSession.currentWorkspaceSave.pending = true;
         SC_PERSIST("request", 0, 0, 0,
                    alreadyPending ? "sync_drain_already_pending" : "sync_drain");
     }
 
-    deferredSaveLastCompletedOk = false;
+    storageSession.currentWorkspaceSave.lastCompletedOk = false;
     constexpr uint32_t kMaxDrainSteps = 200000u;
     uint32_t steps = 0;
-    while ((deferredSavePending || deferredSaveInProgress) && steps < kMaxDrainSteps) {
+    while ((storageSession.currentWorkspaceSave.pending || storageSession.currentWorkspaceSave.inProgress) && steps < kMaxDrainSteps) {
         processDeferredSaveState(state);
         yield();
         steps++;
     }
 
-    const bool completed = !deferredSavePending && !deferredSaveInProgress;
+    const bool completed = !storageSession.currentWorkspaceSave.pending && !storageSession.currentWorkspaceSave.inProgress;
     if (!completed) {
         Serial.println("[StorageManager] ERROR: Deferred save drain exceeded step limit");
         return false;
     }
-    if (!deferredSaveLastCompletedOk) {
+    if (!storageSession.currentWorkspaceSave.lastCompletedOk) {
         Serial.println("[StorageManager] ERROR: Deferred save drain failed");
         return false;
     }
@@ -2334,7 +2334,7 @@ bool readCurrentSetFilePreamble(File& file, LooperState& loadedLooperStateOut,
             return false;
         }
         currentWorkspaceEpoch = epochHeader.epoch;
-        deferredSaveWorkspaceEpoch = epochHeader.epoch;
+        storageSession.currentWorkspaceSave.workspaceEpoch = epochHeader.epoch;
     }
 
     CurrentSetStorage::MetaHeader metaHeader{};
@@ -2749,9 +2749,9 @@ void queueBootRevisionRecovery(uint16_t setId, uint16_t revisionId) {
     if (setId == 0 || revisionId == 0) {
         return;
     }
-    bootRevisionRecoverySetId = setId;
-    bootRevisionRecoveryRevisionId = revisionId;
-    bootRevisionRecoveryPending = true;
+    storageSession.bootRecovery.setId = setId;
+    storageSession.bootRecovery.revisionId = revisionId;
+    storageSession.bootRecovery.pending = true;
 }
 
 void discardIncompleteCurrentWorkspaceTempFilesOnSd() {
@@ -3009,6 +3009,7 @@ bool StorageManager::attemptBootRecoveryChain(LooperState& state) {
 }
 
 bool StorageManager::loadState(LooperState& state) {
+    resetStorageSessionJobs();
     RtcTime::init();
     syncWallClockFromSdTimestampsQuick();
     discardIncompleteRevisionTempFilesOnSd();

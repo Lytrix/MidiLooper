@@ -43,52 +43,52 @@ static void clearCurrentSetLoopSlotDirtyInternal(uint8_t trackIndex, uint8_t slo
 }
 
 STORAGE_PERSIST_MEM void resetDeferredLoopWriteState() {
-    deferredLoopWriteStage = DeferredLoopWriteStage::Header;
-    deferredSaveCapturePassCursor = 0;
-    deferredSaveChunkCursor = 0;
-    deferredSaveMidiBatch.clear();
+    storageSession.currentWorkspaceSave.loopWriteStage = DeferredLoopWriteStage::Header;
+    storageSession.currentWorkspaceSave.capturePassCursor = 0;
+    storageSession.currentWorkspaceSave.chunkCursor = 0;
+    storageSession.currentWorkspaceSave.midiBatch.clear();
 }
 
 STORAGE_PERSIST_MEM void resetDeferredUndoWriteState() {
-    deferredUndoWriteStage = DeferredUndoWriteStage::Header;
-    deferredSaveUndoEntryCursor = 0;
+    storageSession.currentWorkspaceSave.undoWriteStage = DeferredUndoWriteStage::Header;
+    storageSession.currentWorkspaceSave.undoEntryCursor = 0;
     resetDeferredLoopWriteState();
 }
 
 
 STORAGE_PERSIST_MEM void resetDeferredSaveJobState() {
-    if (deferredSaveFile) {
-        deferredSaveFile.close();
+    if (storageSession.currentWorkspaceSave.file) {
+        storageSession.currentWorkspaceSave.file.close();
     }
-    if (deferredSaveLoopFile) {
-        deferredSaveLoopFile.close();
+    if (storageSession.currentWorkspaceSave.loopFile) {
+        storageSession.currentWorkspaceSave.loopFile.close();
     }
-    deferredSaveLoopFileOpen = false;
-    deferredSaveInProgress = false;
-    deferredSaveSdIoActive = false;
-    deferredSaveStage = DeferredSaveStage::Idle;
-    deferredGlobalHeaderStage = DeferredGlobalHeaderStage::Bpm;
-    deferredTrackWriteStage = DeferredTrackWriteStage::TrackState;
-    deferredSlotWriteStage = DeferredSlotWriteStage::SlotEnabled;
-    deferredFooterWriteStage = DeferredFooterWriteStage::SelectedTrack;
-    deferredSaveNumTracks = 0;
-    deferredSaveTrackCursor = 0;
-    deferredSaveSlotCursor = 0;
-    deferredSavePoolCursor = 0;
-    deferredSaveUndoTrackCursor = 0;
-    deferredSaveFooterTrackCursor = 0;
+    storageSession.currentWorkspaceSave.loopFileOpen = false;
+    storageSession.currentWorkspaceSave.inProgress = false;
+    storageSession.currentWorkspaceSave.sdIoActive = false;
+    storageSession.currentWorkspaceSave.stage = DeferredSaveStage::Idle;
+    storageSession.currentWorkspaceSave.globalHeaderStage = DeferredGlobalHeaderStage::Bpm;
+    storageSession.currentWorkspaceSave.trackWriteStage = DeferredTrackWriteStage::TrackState;
+    storageSession.currentWorkspaceSave.slotWriteStage = DeferredSlotWriteStage::SlotEnabled;
+    storageSession.currentWorkspaceSave.footerWriteStage = DeferredFooterWriteStage::SelectedTrack;
+    storageSession.currentWorkspaceSave.numTracks = 0;
+    storageSession.currentWorkspaceSave.trackCursor = 0;
+    storageSession.currentWorkspaceSave.slotCursor = 0;
+    storageSession.currentWorkspaceSave.poolCursor = 0;
+    storageSession.currentWorkspaceSave.undoTrackCursor = 0;
+    storageSession.currentWorkspaceSave.footerTrackCursor = 0;
     resetDeferredLoopWriteState();
     resetDeferredUndoWriteState();
-    deferredSaveTrackHeaderWritten = false;
-    deferredSaveStartedAtUs = 0;
-    deferredSaveHeapBefore = 0;
-    deferredSaveAdmissionHeap = 0;
-    deferredSaveHeapFloorDeferred = false;
-    deferredSaveUrgentRequested = false;
-    deferredSaveLoopSlotsWritten = 0;
-    deferredSaveLoopSlotsSkipped = 0;
-    deferredSaveDisplayBlockUs = 0;
-    deferredSaveStateSnapshot = LOOPER_IDLE;
+    storageSession.currentWorkspaceSave.trackHeaderWritten = false;
+    storageSession.currentWorkspaceSave.startedAtUs = 0;
+    storageSession.currentWorkspaceSave.heapBefore = 0;
+    storageSession.currentWorkspaceSave.admissionHeap = 0;
+    storageSession.currentWorkspaceSave.heapFloorDeferred = false;
+    storageSession.currentWorkspaceSave.urgentRequested = false;
+    storageSession.currentWorkspaceSave.loopSlotsWritten = 0;
+    storageSession.currentWorkspaceSave.loopSlotsSkipped = 0;
+    storageSession.currentWorkspaceSave.displayBlockUs = 0;
+    storageSession.currentWorkspaceSave.stateSnapshot = LOOPER_IDLE;
 }
 
 
@@ -102,10 +102,10 @@ STORAGE_PERSIST_MEM bool writeCurrentSetMetaHeaderToOpenFile(File& file) {
 }
 
 STORAGE_PERSIST_MEM bool finalizeDeferredMetaTempFile() {
-    if (!writeRaw(deferredSaveFile, &CurrentSetStorage::kSaveFileToken, sizeof(CurrentSetStorage::kSaveFileToken))) {
+    if (!writeRaw(storageSession.currentWorkspaceSave.file, &CurrentSetStorage::kSaveFileToken, sizeof(CurrentSetStorage::kSaveFileToken))) {
         return false;
     }
-    deferredSaveFile.close();
+    storageSession.currentWorkspaceSave.file.close();
     if (!CurrentWorkspaceStorage::finalizeEpochFileHeaderCrc(
             CurrentSetStorage::kCurrentMetaTempPath)) {
         return false;
@@ -118,63 +118,63 @@ STORAGE_PERSIST_MEM bool finalizeDeferredMetaTempFile() {
 }
 
 STORAGE_PERSIST_MEM bool closeDeferredMetaTempForLoopWrites() {
-    if (deferredSaveFile) {
-        deferredSaveFile.close();
+    if (storageSession.currentWorkspaceSave.file) {
+        storageSession.currentWorkspaceSave.file.close();
     }
     return true;
 }
 
 STORAGE_PERSIST_MEM bool reopenDeferredMetaTempForAppend() {
-    deferredSaveFile = SD.open(CurrentSetStorage::kCurrentMetaTempPath, FILE_WRITE);
-    if (!deferredSaveFile) {
+    storageSession.currentWorkspaceSave.file = SD.open(CurrentSetStorage::kCurrentMetaTempPath, FILE_WRITE);
+    if (!storageSession.currentWorkspaceSave.file) {
         Serial.println("[StorageManager] ERROR: Could not reopen CurrentSet meta temp for append");
         return false;
     }
-    if (!deferredSaveFile.seek(deferredSaveFile.size())) {
-        deferredSaveFile.close();
+    if (!storageSession.currentWorkspaceSave.file.seek(storageSession.currentWorkspaceSave.file.size())) {
+        storageSession.currentWorkspaceSave.file.close();
         return false;
     }
     return true;
 }
 
 STORAGE_PERSIST_MEM bool openDeferredLoopSlotTemp(uint8_t trackIndex, uint8_t slotIndex) {
-    if (deferredSaveLoopFileOpen) {
-        deferredSaveLoopFile.close();
-        deferredSaveLoopFileOpen = false;
+    if (storageSession.currentWorkspaceSave.loopFileOpen) {
+        storageSession.currentWorkspaceSave.loopFile.close();
+        storageSession.currentWorkspaceSave.loopFileOpen = false;
     }
     char tempPath[48];
     if (!CurrentSetStorage::formatLoopSlotTempPath(tempPath, sizeof(tempPath), trackIndex,
                                                    slotIndex)) {
         return false;
     }
-    deferredSaveLoopFile = SD.open(tempPath, FILE_WRITE);
-    if (!deferredSaveLoopFile) {
+    storageSession.currentWorkspaceSave.loopFile = SD.open(tempPath, FILE_WRITE);
+    if (!storageSession.currentWorkspaceSave.loopFile) {
         Serial.print("[StorageManager] ERROR: Could not open loop temp file: ");
         Serial.println(tempPath);
         return false;
     }
-    deferredSaveLoopFile.seek(0);
-    if (!CurrentWorkspaceStorage::writeEpochHeaderPlaceholder(deferredSaveLoopFile,
-                                                              deferredSaveWorkspaceEpoch)) {
-        deferredSaveLoopFile.close();
-        deferredSaveLoopFileOpen = false;
+    storageSession.currentWorkspaceSave.loopFile.seek(0);
+    if (!CurrentWorkspaceStorage::writeEpochHeaderPlaceholder(storageSession.currentWorkspaceSave.loopFile,
+                                                              storageSession.currentWorkspaceSave.workspaceEpoch)) {
+        storageSession.currentWorkspaceSave.loopFile.close();
+        storageSession.currentWorkspaceSave.loopFileOpen = false;
         return false;
     }
-    deferredSaveLoopFileOpen = true;
+    storageSession.currentWorkspaceSave.loopFileOpen = true;
     return true;
 }
 
 STORAGE_PERSIST_MEM bool finalizeDeferredLoopSlotTemp(uint8_t trackIndex, uint8_t slotIndex) {
-    if (!deferredSaveLoopFileOpen) {
+    if (!storageSession.currentWorkspaceSave.loopFileOpen) {
         return false;
     }
-    if (!writeRaw(deferredSaveLoopFile, &CurrentSetStorage::kSaveFileToken, sizeof(CurrentSetStorage::kSaveFileToken))) {
-        deferredSaveLoopFile.close();
-        deferredSaveLoopFileOpen = false;
+    if (!writeRaw(storageSession.currentWorkspaceSave.loopFile, &CurrentSetStorage::kSaveFileToken, sizeof(CurrentSetStorage::kSaveFileToken))) {
+        storageSession.currentWorkspaceSave.loopFile.close();
+        storageSession.currentWorkspaceSave.loopFileOpen = false;
         return false;
     }
-    deferredSaveLoopFile.close();
-    deferredSaveLoopFileOpen = false;
+    storageSession.currentWorkspaceSave.loopFile.close();
+    storageSession.currentWorkspaceSave.loopFileOpen = false;
 
     char tempPath[48];
     char finalPath[48];
@@ -219,7 +219,7 @@ STORAGE_PERSIST_MEM bool trackHasCurrentSetDirtyLoopSlot(uint8_t trackIndex) {
 
 STORAGE_PERSIST_MEM bool beginDeferredSaveJob(const LooperState& state) {
     ++currentWorkspaceEpoch;
-    deferredSaveWorkspaceEpoch = currentWorkspaceEpoch;
+    storageSession.currentWorkspaceSave.workspaceEpoch = currentWorkspaceEpoch;
 
     if (!CurrentSetStorage::ensureDirectory(PersistenceLayout::kRoot) ||
         !CurrentSetStorage::ensureDirectory(CurrentSetStorage::kCurrentSetDir) ||
@@ -231,41 +231,41 @@ STORAGE_PERSIST_MEM bool beginDeferredSaveJob(const LooperState& state) {
         return false;
     }
 
-    deferredSaveFile = SD.open(CurrentSetStorage::kCurrentMetaTempPath, FILE_WRITE);
-    if (!deferredSaveFile) {
+    storageSession.currentWorkspaceSave.file = SD.open(CurrentSetStorage::kCurrentMetaTempPath, FILE_WRITE);
+    if (!storageSession.currentWorkspaceSave.file) {
         Serial.println("[StorageManager] ERROR: Could not open CurrentSet meta temp file");
         return false;
     }
-    deferredSaveFile.seek(0);
+    storageSession.currentWorkspaceSave.file.seek(0);
 
-    if (!CurrentWorkspaceStorage::writeEpochHeaderPlaceholder(deferredSaveFile,
-                                                              deferredSaveWorkspaceEpoch)) {
+    if (!CurrentWorkspaceStorage::writeEpochHeaderPlaceholder(storageSession.currentWorkspaceSave.file,
+                                                              storageSession.currentWorkspaceSave.workspaceEpoch)) {
         Serial.println("[StorageManager] ERROR: Deferred save failed writing epoch header");
-        deferredSaveFile.close();
+        storageSession.currentWorkspaceSave.file.close();
         return false;
     }
 
-    if (!writeCurrentSetMetaHeaderToOpenFile(deferredSaveFile)) {
+    if (!writeCurrentSetMetaHeaderToOpenFile(storageSession.currentWorkspaceSave.file)) {
         Serial.println("[StorageManager] ERROR: Deferred save failed writing CurrentSet meta header");
-        deferredSaveFile.close();
+        storageSession.currentWorkspaceSave.file.close();
         return false;
     }
 
-    deferredSaveStateSnapshot = state;
-    deferredSaveNumTracks = Config::NUM_TRACKS;
-    deferredGlobalHeaderStage = DeferredGlobalHeaderStage::Bpm;
-    deferredSaveTrackCursor = 0;
-    deferredSaveSlotCursor = 0;
-    deferredSavePoolCursor = 0;
-    deferredSaveUndoTrackCursor = 0;
-    deferredSaveFooterTrackCursor = 0;
-    deferredSaveTrackHeaderWritten = false;
-    deferredTrackWriteStage = DeferredTrackWriteStage::TrackState;
-    deferredSlotWriteStage = DeferredSlotWriteStage::SlotEnabled;
-    deferredFooterWriteStage = DeferredFooterWriteStage::SelectedTrack;
+    storageSession.currentWorkspaceSave.stateSnapshot = state;
+    storageSession.currentWorkspaceSave.numTracks = Config::NUM_TRACKS;
+    storageSession.currentWorkspaceSave.globalHeaderStage = DeferredGlobalHeaderStage::Bpm;
+    storageSession.currentWorkspaceSave.trackCursor = 0;
+    storageSession.currentWorkspaceSave.slotCursor = 0;
+    storageSession.currentWorkspaceSave.poolCursor = 0;
+    storageSession.currentWorkspaceSave.undoTrackCursor = 0;
+    storageSession.currentWorkspaceSave.footerTrackCursor = 0;
+    storageSession.currentWorkspaceSave.trackHeaderWritten = false;
+    storageSession.currentWorkspaceSave.trackWriteStage = DeferredTrackWriteStage::TrackState;
+    storageSession.currentWorkspaceSave.slotWriteStage = DeferredSlotWriteStage::SlotEnabled;
+    storageSession.currentWorkspaceSave.footerWriteStage = DeferredFooterWriteStage::SelectedTrack;
     resetDeferredLoopWriteState();
     resetDeferredUndoWriteState();
-    deferredSaveStage = DeferredSaveStage::CurrentSetMeta;
+    storageSession.currentWorkspaceSave.stage = DeferredSaveStage::CurrentSetMeta;
     return true;
 }
 
@@ -345,20 +345,20 @@ STORAGE_PERSIST_MEM bool writeDeferredCapturePassHeader(File& file, const Captur
 
 STORAGE_PERSIST_MEM bool writeDeferredCapturePassChunk(File& file, uint16_t chunkId,
                                    LoopPersistPayloadCrc crcMode = LoopPersistPayloadCrc::None) {
-    deferredSaveMidiBatch.clear();
-    LoopEventStore::appendChunkRefEvent(chunkId, deferredSaveMidiBatch);
-    if (deferredSaveMidiBatch.empty()) {
+    storageSession.currentWorkspaceSave.midiBatch.clear();
+    LoopEventStore::appendChunkRefEvent(chunkId, storageSession.currentWorkspaceSave.midiBatch);
+    if (storageSession.currentWorkspaceSave.midiBatch.empty()) {
         return true;
     }
-    return persistenceWriteRaw(file, deferredSaveMidiBatch.data(),
-                              deferredSaveMidiBatch.size() * sizeof(MidiEvent), crcMode);
+    return persistenceWriteRaw(file, storageSession.currentWorkspaceSave.midiBatch.data(),
+                              storageSession.currentWorkspaceSave.midiBatch.size() * sizeof(MidiEvent), crcMode);
 }
 
 STORAGE_PERSIST_MEM bool stepDeferredLoopPersist(File& file, const Loop& loop, bool& loopDone,
                               LoopPersistPayloadCrc crcMode = LoopPersistPayloadCrc::None) {
     loopDone = false;
 
-    switch (deferredLoopWriteStage) {
+    switch (storageSession.currentWorkspaceSave.loopWriteStage) {
         case DeferredLoopWriteStage::Header:
             if (!writeDeferredLoopHeader(file, loop.loopId, loop.startLoopTick, loop.loopLengthTicks,
                                          loop.loopStartTick, loop.nextPassId_,
@@ -366,47 +366,47 @@ STORAGE_PERSIST_MEM bool stepDeferredLoopPersist(File& file, const Loop& loop, b
                                          loop.passes, crcMode)) {
                 return false;
             }
-            deferredSaveCapturePassCursor = 0;
-            deferredSaveChunkCursor = 0;
-            deferredLoopWriteStage = DeferredLoopWriteStage::CapturePassHeader;
+            storageSession.currentWorkspaceSave.capturePassCursor = 0;
+            storageSession.currentWorkspaceSave.chunkCursor = 0;
+            storageSession.currentWorkspaceSave.loopWriteStage = DeferredLoopWriteStage::CapturePassHeader;
             return true;
 
         case DeferredLoopWriteStage::CapturePassHeader: {
-            if (deferredSaveCapturePassCursor >= loop.passes.capturePassCount()) {
-                deferredLoopWriteStage = DeferredLoopWriteStage::EditTail;
+            if (storageSession.currentWorkspaceSave.capturePassCursor >= loop.passes.capturePassCount()) {
+                storageSession.currentWorkspaceSave.loopWriteStage = DeferredLoopWriteStage::EditTail;
                 return true;
             }
 
             CapturePassSlotFileHeader passHeader{};
             const ChunkIdList* chunkRefs = nullptr;
-            if (!selectDeferredCapturePass(loop.passes, deferredSaveCapturePassCursor, passHeader, chunkRefs) ||
+            if (!selectDeferredCapturePass(loop.passes, storageSession.currentWorkspaceSave.capturePassCursor, passHeader, chunkRefs) ||
                 chunkRefs == nullptr) {
                 return false;
             }
             if (!writeDeferredCapturePassHeader(file, passHeader, *chunkRefs, crcMode)) {
                 return false;
             }
-            deferredSaveChunkCursor = 0;
-            deferredLoopWriteStage = DeferredLoopWriteStage::CapturePassChunk;
+            storageSession.currentWorkspaceSave.chunkCursor = 0;
+            storageSession.currentWorkspaceSave.loopWriteStage = DeferredLoopWriteStage::CapturePassChunk;
             return true;
         }
 
         case DeferredLoopWriteStage::CapturePassChunk: {
             CapturePassSlotFileHeader passHeader{};
             const ChunkIdList* chunkRefs = nullptr;
-            if (!selectDeferredCapturePass(loop.passes, deferredSaveCapturePassCursor, passHeader, chunkRefs) ||
+            if (!selectDeferredCapturePass(loop.passes, storageSession.currentWorkspaceSave.capturePassCursor, passHeader, chunkRefs) ||
                 chunkRefs == nullptr) {
                 return false;
             }
             (void)passHeader;
 
-            if (deferredSaveChunkCursor < chunkRefs->size()) {
-                const uint16_t chunkId = (*chunkRefs)[deferredSaveChunkCursor++];
+            if (storageSession.currentWorkspaceSave.chunkCursor < chunkRefs->size()) {
+                const uint16_t chunkId = (*chunkRefs)[storageSession.currentWorkspaceSave.chunkCursor++];
                 return writeDeferredCapturePassChunk(file, chunkId, crcMode);
             }
 
-            ++deferredSaveCapturePassCursor;
-            deferredLoopWriteStage = DeferredLoopWriteStage::CapturePassHeader;
+            ++storageSession.currentWorkspaceSave.capturePassCursor;
+            storageSession.currentWorkspaceSave.loopWriteStage = DeferredLoopWriteStage::CapturePassHeader;
             return true;
         }
 
@@ -430,13 +430,13 @@ STORAGE_PERSIST_MEM bool stepDeferredEmptyLoopPersist(File& file, LoopId loopId,
     loopDone = false;
     const LoopPasses emptyPasses{};
 
-    switch (deferredLoopWriteStage) {
+    switch (storageSession.currentWorkspaceSave.loopWriteStage) {
         case DeferredLoopWriteStage::Header:
             if (!writeDeferredLoopHeader(file, loopId, 0, 0, 0, 1, 0, kInvalidPassId,
                                          emptyPasses)) {
                 return false;
             }
-            deferredLoopWriteStage = DeferredLoopWriteStage::EditTail;
+            storageSession.currentWorkspaceSave.loopWriteStage = DeferredLoopWriteStage::EditTail;
             return true;
 
         case DeferredLoopWriteStage::CapturePassHeader:
@@ -461,7 +461,7 @@ STORAGE_PERSIST_MEM bool stepDeferredLoopSnapshotPersist(File& file, const Persi
                                      bool& loopDone) {
     loopDone = false;
 
-    switch (deferredLoopWriteStage) {
+    switch (storageSession.currentWorkspaceSave.loopWriteStage) {
         case DeferredLoopWriteStage::Header:
             if (!writeDeferredLoopHeader(file, snapshot.loopId, snapshot.startLoopTick,
                                          snapshot.loopLengthTicks, snapshot.loopStartTick,
@@ -469,20 +469,20 @@ STORAGE_PERSIST_MEM bool stepDeferredLoopSnapshotPersist(File& file, const Persi
                                          snapshot.lastPublishedPassId, snapshot.passes)) {
                 return false;
             }
-            deferredSaveCapturePassCursor = 0;
-            deferredSaveChunkCursor = 0;
-            deferredLoopWriteStage = DeferredLoopWriteStage::CapturePassHeader;
+            storageSession.currentWorkspaceSave.capturePassCursor = 0;
+            storageSession.currentWorkspaceSave.chunkCursor = 0;
+            storageSession.currentWorkspaceSave.loopWriteStage = DeferredLoopWriteStage::CapturePassHeader;
             return true;
 
         case DeferredLoopWriteStage::CapturePassHeader: {
-            if (deferredSaveCapturePassCursor >= snapshot.passes.capturePassCount()) {
-                deferredLoopWriteStage = DeferredLoopWriteStage::EditTail;
+            if (storageSession.currentWorkspaceSave.capturePassCursor >= snapshot.passes.capturePassCount()) {
+                storageSession.currentWorkspaceSave.loopWriteStage = DeferredLoopWriteStage::EditTail;
                 return true;
             }
 
             CapturePassSlotFileHeader passHeader{};
             const ChunkIdList* chunkRefs = nullptr;
-            if (!selectDeferredCapturePass(snapshot.passes, deferredSaveCapturePassCursor, passHeader,
+            if (!selectDeferredCapturePass(snapshot.passes, storageSession.currentWorkspaceSave.capturePassCursor, passHeader,
                                            chunkRefs) ||
                 chunkRefs == nullptr) {
                 return false;
@@ -490,28 +490,28 @@ STORAGE_PERSIST_MEM bool stepDeferredLoopSnapshotPersist(File& file, const Persi
             if (!writeDeferredCapturePassHeader(file, passHeader, *chunkRefs)) {
                 return false;
             }
-            deferredSaveChunkCursor = 0;
-            deferredLoopWriteStage = DeferredLoopWriteStage::CapturePassChunk;
+            storageSession.currentWorkspaceSave.chunkCursor = 0;
+            storageSession.currentWorkspaceSave.loopWriteStage = DeferredLoopWriteStage::CapturePassChunk;
             return true;
         }
 
         case DeferredLoopWriteStage::CapturePassChunk: {
             CapturePassSlotFileHeader passHeader{};
             const ChunkIdList* chunkRefs = nullptr;
-            if (!selectDeferredCapturePass(snapshot.passes, deferredSaveCapturePassCursor, passHeader,
+            if (!selectDeferredCapturePass(snapshot.passes, storageSession.currentWorkspaceSave.capturePassCursor, passHeader,
                                            chunkRefs) ||
                 chunkRefs == nullptr) {
                 return false;
             }
             (void)passHeader;
 
-            if (deferredSaveChunkCursor < chunkRefs->size()) {
-                const uint16_t chunkId = (*chunkRefs)[deferredSaveChunkCursor++];
+            if (storageSession.currentWorkspaceSave.chunkCursor < chunkRefs->size()) {
+                const uint16_t chunkId = (*chunkRefs)[storageSession.currentWorkspaceSave.chunkCursor++];
                 return writeDeferredCapturePassChunk(file, chunkId);
             }
 
-            ++deferredSaveCapturePassCursor;
-            deferredLoopWriteStage = DeferredLoopWriteStage::CapturePassHeader;
+            ++storageSession.currentWorkspaceSave.capturePassCursor;
+            storageSession.currentWorkspaceSave.loopWriteStage = DeferredLoopWriteStage::CapturePassHeader;
             return true;
         }
 
@@ -562,7 +562,7 @@ STORAGE_PERSIST_MEM bool writeDeferredSnapshotPresence(File& file, const LoopSna
 STORAGE_PERSIST_MEM bool stepDeferredUndoStackPersist(File& file, const GlobalUndoStack& stack, bool& stackDone) {
     stackDone = false;
 
-    switch (deferredUndoWriteStage) {
+    switch (storageSession.currentWorkspaceSave.undoWriteStage) {
         case DeferredUndoWriteStage::Header: {
             const uint32_t entryCount = static_cast<uint32_t>(stack.entries.size());
             const uint32_t cursor = static_cast<uint32_t>(stack.cursor);
@@ -570,41 +570,41 @@ STORAGE_PERSIST_MEM bool stepDeferredUndoStackPersist(File& file, const GlobalUn
             if (!writeRaw(file, &entryCount, sizeof(entryCount))) return false;
             if (!writeRaw(file, &cursor, sizeof(cursor))) return false;
             if (!writeRaw(file, &nextEntryId, sizeof(nextEntryId))) return false;
-            deferredSaveUndoEntryCursor = 0;
-            deferredUndoWriteStage = DeferredUndoWriteStage::EntryHeader;
+            storageSession.currentWorkspaceSave.undoEntryCursor = 0;
+            storageSession.currentWorkspaceSave.undoWriteStage = DeferredUndoWriteStage::EntryHeader;
             return true;
         }
 
         case DeferredUndoWriteStage::EntryHeader: {
-            if (deferredSaveUndoEntryCursor >= stack.entries.size()) {
+            if (storageSession.currentWorkspaceSave.undoEntryCursor >= stack.entries.size()) {
                 resetDeferredUndoWriteState();
                 stackDone = true;
                 return true;
             }
-            const UndoEntry& entry = stack.entries[deferredSaveUndoEntryCursor];
+            const UndoEntry& entry = stack.entries[storageSession.currentWorkspaceSave.undoEntryCursor];
             if (!writeDeferredUndoEntryHeader(file, entry)) {
                 return false;
             }
-            deferredUndoWriteStage = DeferredUndoWriteStage::BeforeSnapshotPresence;
+            storageSession.currentWorkspaceSave.undoWriteStage = DeferredUndoWriteStage::BeforeSnapshotPresence;
             return true;
         }
 
         case DeferredUndoWriteStage::BeforeSnapshotPresence: {
-            const UndoEntry& entry = stack.entries[deferredSaveUndoEntryCursor];
+            const UndoEntry& entry = stack.entries[storageSession.currentWorkspaceSave.undoEntryCursor];
             if (!writeDeferredSnapshotPresence(file, entry.beforeSnapshot)) {
                 return false;
             }
             if (entry.beforeSnapshot) {
                 resetDeferredLoopWriteState();
-                deferredUndoWriteStage = DeferredUndoWriteStage::BeforeSnapshotLoop;
+                storageSession.currentWorkspaceSave.undoWriteStage = DeferredUndoWriteStage::BeforeSnapshotLoop;
             } else {
-                deferredUndoWriteStage = DeferredUndoWriteStage::AfterSnapshotPresence;
+                storageSession.currentWorkspaceSave.undoWriteStage = DeferredUndoWriteStage::AfterSnapshotPresence;
             }
             return true;
         }
 
         case DeferredUndoWriteStage::BeforeSnapshotLoop: {
-            const UndoEntry& entry = stack.entries[deferredSaveUndoEntryCursor];
+            const UndoEntry& entry = stack.entries[storageSession.currentWorkspaceSave.undoEntryCursor];
             if (!entry.beforeSnapshot) {
                 return false;
             }
@@ -613,27 +613,27 @@ STORAGE_PERSIST_MEM bool stepDeferredUndoStackPersist(File& file, const GlobalUn
                 return false;
             }
             if (snapshotDone) {
-                deferredUndoWriteStage = DeferredUndoWriteStage::AfterSnapshotPresence;
+                storageSession.currentWorkspaceSave.undoWriteStage = DeferredUndoWriteStage::AfterSnapshotPresence;
             }
             return true;
         }
 
         case DeferredUndoWriteStage::AfterSnapshotPresence: {
-            const UndoEntry& entry = stack.entries[deferredSaveUndoEntryCursor];
+            const UndoEntry& entry = stack.entries[storageSession.currentWorkspaceSave.undoEntryCursor];
             if (!writeDeferredSnapshotPresence(file, entry.afterSnapshot)) {
                 return false;
             }
             if (entry.afterSnapshot) {
                 resetDeferredLoopWriteState();
-                deferredUndoWriteStage = DeferredUndoWriteStage::AfterSnapshotLoop;
+                storageSession.currentWorkspaceSave.undoWriteStage = DeferredUndoWriteStage::AfterSnapshotLoop;
             } else {
-                deferredUndoWriteStage = DeferredUndoWriteStage::EntryTail;
+                storageSession.currentWorkspaceSave.undoWriteStage = DeferredUndoWriteStage::EntryTail;
             }
             return true;
         }
 
         case DeferredUndoWriteStage::AfterSnapshotLoop: {
-            const UndoEntry& entry = stack.entries[deferredSaveUndoEntryCursor];
+            const UndoEntry& entry = stack.entries[storageSession.currentWorkspaceSave.undoEntryCursor];
             if (!entry.afterSnapshot) {
                 return false;
             }
@@ -642,18 +642,18 @@ STORAGE_PERSIST_MEM bool stepDeferredUndoStackPersist(File& file, const GlobalUn
                 return false;
             }
             if (snapshotDone) {
-                deferredUndoWriteStage = DeferredUndoWriteStage::EntryTail;
+                storageSession.currentWorkspaceSave.undoWriteStage = DeferredUndoWriteStage::EntryTail;
             }
             return true;
         }
 
         case DeferredUndoWriteStage::EntryTail: {
-            const UndoEntry& entry = stack.entries[deferredSaveUndoEntryCursor];
+            const UndoEntry& entry = stack.entries[storageSession.currentWorkspaceSave.undoEntryCursor];
             if (!writeDeferredUndoEntryTail(file, entry)) {
                 return false;
             }
-            ++deferredSaveUndoEntryCursor;
-            deferredUndoWriteStage = DeferredUndoWriteStage::EntryHeader;
+            ++storageSession.currentWorkspaceSave.undoEntryCursor;
+            storageSession.currentWorkspaceSave.undoWriteStage = DeferredUndoWriteStage::EntryHeader;
             return true;
         }
     }
@@ -663,221 +663,221 @@ STORAGE_PERSIST_MEM bool stepDeferredUndoStackPersist(File& file, const GlobalUn
 
 
 STORAGE_PERSIST_MEM bool stepDeferredSaveJob() {
-    switch (deferredSaveStage) {
+    switch (storageSession.currentWorkspaceSave.stage) {
         case DeferredSaveStage::CurrentSetMeta:
-            switch (deferredGlobalHeaderStage) {
+            switch (storageSession.currentWorkspaceSave.globalHeaderStage) {
                 case DeferredGlobalHeaderStage::Version:
-                    deferredGlobalHeaderStage = DeferredGlobalHeaderStage::Bpm;
+                    storageSession.currentWorkspaceSave.globalHeaderStage = DeferredGlobalHeaderStage::Bpm;
                     return true;
 
                 case DeferredGlobalHeaderStage::Bpm: {
                     const float savedBpm = bpm;
-                    if (!writeRaw(deferredSaveFile, &savedBpm, sizeof(savedBpm))) {
+                    if (!writeRaw(storageSession.currentWorkspaceSave.file, &savedBpm, sizeof(savedBpm))) {
                         Serial.println("[StorageManager] ERROR: Deferred save failed writing BPM");
                         return false;
                     }
-                    deferredGlobalHeaderStage = DeferredGlobalHeaderStage::LooperState;
+                    storageSession.currentWorkspaceSave.globalHeaderStage = DeferredGlobalHeaderStage::LooperState;
                     return true;
                 }
 
                 case DeferredGlobalHeaderStage::LooperState: {
                     const uint32_t looperStateVal =
-                        persistedLooperStateRaw(deferredSaveStateSnapshot);
-                    if (!writeRaw(deferredSaveFile, &looperStateVal, sizeof(looperStateVal))) {
+                        persistedLooperStateRaw(storageSession.currentWorkspaceSave.stateSnapshot);
+                    if (!writeRaw(storageSession.currentWorkspaceSave.file, &looperStateVal, sizeof(looperStateVal))) {
                         Serial.println("[StorageManager] ERROR: Deferred save failed writing looper state");
                         return false;
                     }
-                    deferredGlobalHeaderStage = DeferredGlobalHeaderStage::MasterLoopLength;
+                    storageSession.currentWorkspaceSave.globalHeaderStage = DeferredGlobalHeaderStage::MasterLoopLength;
                     return true;
                 }
 
                 case DeferredGlobalHeaderStage::MasterLoopLength: {
                     const uint32_t masterLoopLength = trackManager.getMasterLoopLength();
-                    if (!writeRaw(deferredSaveFile, &masterLoopLength, sizeof(masterLoopLength))) {
+                    if (!writeRaw(storageSession.currentWorkspaceSave.file, &masterLoopLength, sizeof(masterLoopLength))) {
                         Serial.println("[StorageManager] ERROR: Deferred save failed writing master loop length");
                         return false;
                     }
-                    deferredGlobalHeaderStage = DeferredGlobalHeaderStage::TrackCount;
+                    storageSession.currentWorkspaceSave.globalHeaderStage = DeferredGlobalHeaderStage::TrackCount;
                     return true;
                 }
 
                 case DeferredGlobalHeaderStage::TrackCount:
-                    if (!writeRaw(deferredSaveFile, &deferredSaveNumTracks,
-                                  sizeof(deferredSaveNumTracks))) {
+                    if (!writeRaw(storageSession.currentWorkspaceSave.file, &storageSession.currentWorkspaceSave.numTracks,
+                                  sizeof(storageSession.currentWorkspaceSave.numTracks))) {
                         Serial.println("[StorageManager] ERROR: Deferred save failed writing track count");
                         return false;
                     }
-                    deferredSaveTrackCursor = 0;
-                    deferredSaveSlotCursor = 0;
-                    deferredSavePoolCursor = 0;
-                    deferredSaveTrackHeaderWritten = false;
-                    deferredTrackWriteStage = DeferredTrackWriteStage::TrackState;
-                    deferredSlotWriteStage = DeferredSlotWriteStage::SlotEnabled;
-                    deferredSaveStage = DeferredSaveStage::TrackHeaderAndSlots;
+                    storageSession.currentWorkspaceSave.trackCursor = 0;
+                    storageSession.currentWorkspaceSave.slotCursor = 0;
+                    storageSession.currentWorkspaceSave.poolCursor = 0;
+                    storageSession.currentWorkspaceSave.trackHeaderWritten = false;
+                    storageSession.currentWorkspaceSave.trackWriteStage = DeferredTrackWriteStage::TrackState;
+                    storageSession.currentWorkspaceSave.slotWriteStage = DeferredSlotWriteStage::SlotEnabled;
+                    storageSession.currentWorkspaceSave.stage = DeferredSaveStage::TrackHeaderAndSlots;
                     return true;
             }
             return false;
 
         case DeferredSaveStage::TrackHeaderAndSlots: {
-            Track& track = trackManager.getTrack(deferredSaveTrackCursor);
-            if (!deferredSaveTrackHeaderWritten) {
-                switch (deferredTrackWriteStage) {
+            Track& track = trackManager.getTrack(storageSession.currentWorkspaceSave.trackCursor);
+            if (!storageSession.currentWorkspaceSave.trackHeaderWritten) {
+                switch (storageSession.currentWorkspaceSave.trackWriteStage) {
                     case DeferredTrackWriteStage::TrackState: {
                         TrackState stateToSave = track.getState();
                         if (stateToSave == TRACK_OVERDUBBING) {
                             stateToSave = TRACK_PLAYING;
                         }
                         const uint32_t trackState = static_cast<uint32_t>(stateToSave);
-                        if (!writeRaw(deferredSaveFile, &trackState, sizeof(trackState))) {
+                        if (!writeRaw(storageSession.currentWorkspaceSave.file, &trackState, sizeof(trackState))) {
                             Serial.print("[StorageManager] ERROR: Deferred save failed writing trackState for track ");
-                            Serial.println(deferredSaveTrackCursor);
+                            Serial.println(storageSession.currentWorkspaceSave.trackCursor);
                             return false;
                         }
-                        deferredTrackWriteStage = DeferredTrackWriteStage::Muted;
+                        storageSession.currentWorkspaceSave.trackWriteStage = DeferredTrackWriteStage::Muted;
                         return true;
                     }
 
                     case DeferredTrackWriteStage::Muted: {
                         const bool muted = track.isMuted();
-                        if (!writeRaw(deferredSaveFile, &muted, sizeof(muted))) {
+                        if (!writeRaw(storageSession.currentWorkspaceSave.file, &muted, sizeof(muted))) {
                             Serial.print("[StorageManager] ERROR: Deferred save failed writing muted for track ");
-                            Serial.println(deferredSaveTrackCursor);
+                            Serial.println(storageSession.currentWorkspaceSave.trackCursor);
                             return false;
                         }
-                        deferredSaveTrackHeaderWritten = true;
-                        deferredTrackWriteStage = DeferredTrackWriteStage::TrackState;
-                        deferredSlotWriteStage = DeferredSlotWriteStage::SlotEnabled;
+                        storageSession.currentWorkspaceSave.trackHeaderWritten = true;
+                        storageSession.currentWorkspaceSave.trackWriteStage = DeferredTrackWriteStage::TrackState;
+                        storageSession.currentWorkspaceSave.slotWriteStage = DeferredSlotWriteStage::SlotEnabled;
                         return true;
                     }
                 }
                 return false;
             }
 
-            if (deferredSaveSlotCursor < Config::MAX_LOOPS_PER_TRACK) {
-                const uint8_t slot = deferredSaveSlotCursor;
-                switch (deferredSlotWriteStage) {
+            if (storageSession.currentWorkspaceSave.slotCursor < Config::MAX_LOOPS_PER_TRACK) {
+                const uint8_t slot = storageSession.currentWorkspaceSave.slotCursor;
+                switch (storageSession.currentWorkspaceSave.slotWriteStage) {
                     case DeferredSlotWriteStage::SlotEnabled: {
                         const bool slotEnabled =
-                            trackManager.isSlotEnabled(deferredSaveTrackCursor, slot);
-                        if (!writeRaw(deferredSaveFile, &slotEnabled, sizeof(slotEnabled))) {
+                            trackManager.isSlotEnabled(storageSession.currentWorkspaceSave.trackCursor, slot);
+                        if (!writeRaw(storageSession.currentWorkspaceSave.file, &slotEnabled, sizeof(slotEnabled))) {
                             Serial.print("[StorageManager] ERROR: Deferred save failed writing slotEnabled for track ");
-                            Serial.print(deferredSaveTrackCursor);
+                            Serial.print(storageSession.currentWorkspaceSave.trackCursor);
                             Serial.print(" slot ");
                             Serial.println(slot);
                             return false;
                         }
-                        deferredSlotWriteStage = DeferredSlotWriteStage::SlotMuted;
+                        storageSession.currentWorkspaceSave.slotWriteStage = DeferredSlotWriteStage::SlotMuted;
                         return true;
                     }
 
                     case DeferredSlotWriteStage::SlotMuted: {
                         const bool slotMuted =
-                            trackManager.isSlotMuted(deferredSaveTrackCursor, slot);
-                        if (!writeRaw(deferredSaveFile, &slotMuted, sizeof(slotMuted))) {
+                            trackManager.isSlotMuted(storageSession.currentWorkspaceSave.trackCursor, slot);
+                        if (!writeRaw(storageSession.currentWorkspaceSave.file, &slotMuted, sizeof(slotMuted))) {
                             Serial.print("[StorageManager] ERROR: Deferred save failed writing slotMuted for track ");
-                            Serial.print(deferredSaveTrackCursor);
+                            Serial.print(storageSession.currentWorkspaceSave.trackCursor);
                             Serial.print(" slot ");
                             Serial.println(slot);
                             return false;
                         }
-                        deferredSlotWriteStage = DeferredSlotWriteStage::SlotLoopId;
+                        storageSession.currentWorkspaceSave.slotWriteStage = DeferredSlotWriteStage::SlotLoopId;
                         return true;
                     }
 
                     case DeferredSlotWriteStage::SlotLoopId: {
                         const LoopId slotLoopId = track.slotRef(slot).loopId;
-                        if (!writeRaw(deferredSaveFile, &slotLoopId, sizeof(slotLoopId))) {
+                        if (!writeRaw(storageSession.currentWorkspaceSave.file, &slotLoopId, sizeof(slotLoopId))) {
                             Serial.print("[StorageManager] ERROR: Deferred save failed writing slotLoopId for track ");
-                            Serial.print(deferredSaveTrackCursor);
+                            Serial.print(storageSession.currentWorkspaceSave.trackCursor);
                             Serial.print(" slot ");
                             Serial.println(slot);
                             return false;
                         }
-                        deferredSaveSlotCursor++;
-                        deferredSlotWriteStage = DeferredSlotWriteStage::SlotEnabled;
+                        storageSession.currentWorkspaceSave.slotCursor++;
+                        storageSession.currentWorkspaceSave.slotWriteStage = DeferredSlotWriteStage::SlotEnabled;
                         return true;
                     }
                 }
                 return false;
             }
 
-            if (!trackHasCurrentSetDirtyLoopSlot(deferredSaveTrackCursor)) {
-                deferredSaveLoopSlotsSkipped += Config::MAX_LOOPS_PER_TRACK;
-                deferredSaveTrackCursor++;
-                deferredSaveSlotCursor = 0;
-                deferredSavePoolCursor = 0;
-                deferredSaveTrackHeaderWritten = false;
-                deferredTrackWriteStage = DeferredTrackWriteStage::TrackState;
-                deferredSlotWriteStage = DeferredSlotWriteStage::SlotEnabled;
-                if (deferredSaveTrackCursor < deferredSaveNumTracks) {
+            if (!trackHasCurrentSetDirtyLoopSlot(storageSession.currentWorkspaceSave.trackCursor)) {
+                storageSession.currentWorkspaceSave.loopSlotsSkipped += Config::MAX_LOOPS_PER_TRACK;
+                storageSession.currentWorkspaceSave.trackCursor++;
+                storageSession.currentWorkspaceSave.slotCursor = 0;
+                storageSession.currentWorkspaceSave.poolCursor = 0;
+                storageSession.currentWorkspaceSave.trackHeaderWritten = false;
+                storageSession.currentWorkspaceSave.trackWriteStage = DeferredTrackWriteStage::TrackState;
+                storageSession.currentWorkspaceSave.slotWriteStage = DeferredSlotWriteStage::SlotEnabled;
+                if (storageSession.currentWorkspaceSave.trackCursor < storageSession.currentWorkspaceSave.numTracks) {
                     return true;
                 }
-                deferredSaveStage = DeferredSaveStage::Footer;
-                deferredFooterWriteStage = DeferredFooterWriteStage::SelectedTrack;
-                deferredSaveFooterTrackCursor = 0;
+                storageSession.currentWorkspaceSave.stage = DeferredSaveStage::Footer;
+                storageSession.currentWorkspaceSave.footerWriteStage = DeferredFooterWriteStage::SelectedTrack;
+                storageSession.currentWorkspaceSave.footerTrackCursor = 0;
                 return true;
             }
 
-            deferredSavePoolCursor = 0;
+            storageSession.currentWorkspaceSave.poolCursor = 0;
             resetDeferredLoopWriteState();
             if (!closeDeferredMetaTempForLoopWrites()) {
                 return false;
             }
-            deferredSaveStage = DeferredSaveStage::CurrentSetLoopSlot;
+            storageSession.currentWorkspaceSave.stage = DeferredSaveStage::CurrentSetLoopSlot;
             return true;
         }
 
         case DeferredSaveStage::CurrentSetLoopSlot: {
-            const uint8_t trackIndex = deferredSaveTrackCursor;
-            const uint8_t slotIndex = deferredSavePoolCursor;
+            const uint8_t trackIndex = storageSession.currentWorkspaceSave.trackCursor;
+            const uint8_t slotIndex = storageSession.currentWorkspaceSave.poolCursor;
             if (!shouldWriteCurrentSetLoopSlot(trackIndex, slotIndex)) {
-                ++deferredSaveLoopSlotsSkipped;
-                deferredSavePoolCursor++;
-                if (deferredSavePoolCursor < Config::MAX_LOOPS_PER_TRACK) {
+                ++storageSession.currentWorkspaceSave.loopSlotsSkipped;
+                storageSession.currentWorkspaceSave.poolCursor++;
+                if (storageSession.currentWorkspaceSave.poolCursor < Config::MAX_LOOPS_PER_TRACK) {
                     return true;
                 }
-                deferredSaveTrackCursor++;
-                if (deferredSaveTrackCursor < deferredSaveNumTracks) {
-                    deferredSaveSlotCursor = 0;
-                    deferredSavePoolCursor = 0;
+                storageSession.currentWorkspaceSave.trackCursor++;
+                if (storageSession.currentWorkspaceSave.trackCursor < storageSession.currentWorkspaceSave.numTracks) {
+                    storageSession.currentWorkspaceSave.slotCursor = 0;
+                    storageSession.currentWorkspaceSave.poolCursor = 0;
                     resetDeferredLoopWriteState();
-                    deferredSaveTrackHeaderWritten = false;
-                    deferredTrackWriteStage = DeferredTrackWriteStage::TrackState;
-                    deferredSlotWriteStage = DeferredSlotWriteStage::SlotEnabled;
+                    storageSession.currentWorkspaceSave.trackHeaderWritten = false;
+                    storageSession.currentWorkspaceSave.trackWriteStage = DeferredTrackWriteStage::TrackState;
+                    storageSession.currentWorkspaceSave.slotWriteStage = DeferredSlotWriteStage::SlotEnabled;
                     if (!reopenDeferredMetaTempForAppend()) {
                         return false;
                     }
-                    deferredSaveStage = DeferredSaveStage::TrackHeaderAndSlots;
+                    storageSession.currentWorkspaceSave.stage = DeferredSaveStage::TrackHeaderAndSlots;
                     return true;
                 }
                 if (!reopenDeferredMetaTempForAppend()) {
                     return false;
                 }
-                deferredSaveStage = DeferredSaveStage::Footer;
-                deferredFooterWriteStage = DeferredFooterWriteStage::SelectedTrack;
-                deferredSaveFooterTrackCursor = 0;
+                storageSession.currentWorkspaceSave.stage = DeferredSaveStage::Footer;
+                storageSession.currentWorkspaceSave.footerWriteStage = DeferredFooterWriteStage::SelectedTrack;
+                storageSession.currentWorkspaceSave.footerTrackCursor = 0;
                 return true;
             }
 
-            if (!deferredSaveLoopFileOpen &&
+            if (!storageSession.currentWorkspaceSave.loopFileOpen &&
                 !openDeferredLoopSlotTemp(trackIndex, slotIndex)) {
                 return false;
             }
-            Track& track = trackManager.getTrack(deferredSaveTrackCursor);
+            Track& track = trackManager.getTrack(storageSession.currentWorkspaceSave.trackCursor);
             bool loopDone = false;
             const bool loopWriteOk = track.loopsAllocated()
                                          ? stepDeferredLoopPersist(
-                                               deferredSaveLoopFile,
-                                               track.getLoop(deferredSavePoolCursor), loopDone)
+                                               storageSession.currentWorkspaceSave.loopFile,
+                                               track.getLoop(storageSession.currentWorkspaceSave.poolCursor), loopDone)
                                          : stepDeferredEmptyLoopPersist(
-                                               deferredSaveLoopFile,
-                                               static_cast<LoopId>(deferredSavePoolCursor),
+                                               storageSession.currentWorkspaceSave.loopFile,
+                                               static_cast<LoopId>(storageSession.currentWorkspaceSave.poolCursor),
                                                loopDone);
             if (!loopWriteOk) {
                 Serial.print("[StorageManager] ERROR: Deferred save failed writing loop pool entry track ");
-                Serial.print(deferredSaveTrackCursor);
+                Serial.print(storageSession.currentWorkspaceSave.trackCursor);
                 Serial.print(" pool ");
-                Serial.println(deferredSavePoolCursor);
+                Serial.println(storageSession.currentWorkspaceSave.poolCursor);
                 return false;
             }
             if (!loopDone) {
@@ -891,96 +891,96 @@ STORAGE_PERSIST_MEM bool stepDeferredSaveJob() {
                 Serial.println(slotIndex);
                 return false;
             }
-            ++deferredSaveLoopSlotsWritten;
+            ++storageSession.currentWorkspaceSave.loopSlotsWritten;
             clearCurrentSetLoopSlotDirtyInternal(trackIndex, slotIndex);
 
-            deferredSavePoolCursor++;
-            if (deferredSavePoolCursor < Config::MAX_LOOPS_PER_TRACK) {
+            storageSession.currentWorkspaceSave.poolCursor++;
+            if (storageSession.currentWorkspaceSave.poolCursor < Config::MAX_LOOPS_PER_TRACK) {
                 resetDeferredLoopWriteState();
                 return true;
             }
 
-            deferredSaveTrackCursor++;
-            if (deferredSaveTrackCursor < deferredSaveNumTracks) {
-                deferredSaveSlotCursor = 0;
-                deferredSavePoolCursor = 0;
+            storageSession.currentWorkspaceSave.trackCursor++;
+            if (storageSession.currentWorkspaceSave.trackCursor < storageSession.currentWorkspaceSave.numTracks) {
+                storageSession.currentWorkspaceSave.slotCursor = 0;
+                storageSession.currentWorkspaceSave.poolCursor = 0;
                 resetDeferredLoopWriteState();
-                deferredSaveTrackHeaderWritten = false;
-                deferredTrackWriteStage = DeferredTrackWriteStage::TrackState;
-                deferredSlotWriteStage = DeferredSlotWriteStage::SlotEnabled;
+                storageSession.currentWorkspaceSave.trackHeaderWritten = false;
+                storageSession.currentWorkspaceSave.trackWriteStage = DeferredTrackWriteStage::TrackState;
+                storageSession.currentWorkspaceSave.slotWriteStage = DeferredSlotWriteStage::SlotEnabled;
                 if (!reopenDeferredMetaTempForAppend()) {
                     return false;
                 }
-                deferredSaveStage = DeferredSaveStage::TrackHeaderAndSlots;
+                storageSession.currentWorkspaceSave.stage = DeferredSaveStage::TrackHeaderAndSlots;
                 return true;
             }
 
             if (!reopenDeferredMetaTempForAppend()) {
                 return false;
             }
-            deferredSaveStage = DeferredSaveStage::Footer;
-            deferredFooterWriteStage = DeferredFooterWriteStage::SelectedTrack;
-            deferredSaveFooterTrackCursor = 0;
+            storageSession.currentWorkspaceSave.stage = DeferredSaveStage::Footer;
+            storageSession.currentWorkspaceSave.footerWriteStage = DeferredFooterWriteStage::SelectedTrack;
+            storageSession.currentWorkspaceSave.footerTrackCursor = 0;
             return true;
         }
 
         case DeferredSaveStage::Footer: {
-            switch (deferredFooterWriteStage) {
+            switch (storageSession.currentWorkspaceSave.footerWriteStage) {
                 case DeferredFooterWriteStage::SelectedTrack: {
                     const uint8_t selectedTrackIdx = trackManager.getSelectedTrackIndex();
-                    if (!writeRaw(deferredSaveFile, &selectedTrackIdx,
+                    if (!writeRaw(storageSession.currentWorkspaceSave.file, &selectedTrackIdx,
                                   sizeof(selectedTrackIdx))) {
                         Serial.println("[StorageManager] ERROR: Deferred save failed writing selected track index");
                         return false;
                     }
-                    deferredSaveFooterTrackCursor = 0;
-                    deferredFooterWriteStage = DeferredFooterWriteStage::ActiveLoopIndex;
+                    storageSession.currentWorkspaceSave.footerTrackCursor = 0;
+                    storageSession.currentWorkspaceSave.footerWriteStage = DeferredFooterWriteStage::ActiveLoopIndex;
                     return true;
                 }
 
                 case DeferredFooterWriteStage::ActiveLoopIndex:
-                    if (deferredSaveFooterTrackCursor < deferredSaveNumTracks) {
+                    if (storageSession.currentWorkspaceSave.footerTrackCursor < storageSession.currentWorkspaceSave.numTracks) {
                         const uint8_t activeIdx =
-                            trackManager.getActiveLoopIndex(deferredSaveFooterTrackCursor);
-                        if (!writeRaw(deferredSaveFile, &activeIdx, sizeof(activeIdx))) {
+                            trackManager.getActiveLoopIndex(storageSession.currentWorkspaceSave.footerTrackCursor);
+                        if (!writeRaw(storageSession.currentWorkspaceSave.file, &activeIdx, sizeof(activeIdx))) {
                             Serial.print("[StorageManager] ERROR: Deferred save failed writing activeLoopIndex for track ");
-                            Serial.println(deferredSaveFooterTrackCursor);
+                            Serial.println(storageSession.currentWorkspaceSave.footerTrackCursor);
                             return false;
                         }
-                        ++deferredSaveFooterTrackCursor;
+                        ++storageSession.currentWorkspaceSave.footerTrackCursor;
                         return true;
                     }
-                    deferredFooterWriteStage = DeferredFooterWriteStage::GlobalUndoStackToken;
+                    storageSession.currentWorkspaceSave.footerWriteStage = DeferredFooterWriteStage::GlobalUndoStackToken;
                     return true;
 
                 case DeferredFooterWriteStage::GlobalUndoStackToken:
-                    if (!writeRaw(deferredSaveFile, &kGlobalUndoStackToken,
+                    if (!writeRaw(storageSession.currentWorkspaceSave.file, &kGlobalUndoStackToken,
                                   sizeof(kGlobalUndoStackToken))) {
                         Serial.println("[StorageManager] ERROR: Deferred save failed writing global undo stack token");
                         return false;
                     }
-                    deferredSaveUndoTrackCursor = 0;
+                    storageSession.currentWorkspaceSave.undoTrackCursor = 0;
                     resetDeferredUndoWriteState();
-                    deferredSaveStage = DeferredSaveStage::UndoStacks;
+                    storageSession.currentWorkspaceSave.stage = DeferredSaveStage::UndoStacks;
                     return true;
             }
             return false;
         }
 
         case DeferredSaveStage::UndoStacks: {
-            if (deferredSaveUndoTrackCursor < deferredSaveNumTracks) {
-                const Track& track = trackManager.getTrack(deferredSaveUndoTrackCursor);
+            if (storageSession.currentWorkspaceSave.undoTrackCursor < storageSession.currentWorkspaceSave.numTracks) {
+                const Track& track = trackManager.getTrack(storageSession.currentWorkspaceSave.undoTrackCursor);
                 bool stackDone = false;
-                if (!stepDeferredUndoStackPersist(deferredSaveFile, track.getGlobalUndoStack(),
+                if (!stepDeferredUndoStackPersist(storageSession.currentWorkspaceSave.file, track.getGlobalUndoStack(),
                                                   stackDone)) {
                     Serial.print("[StorageManager] ERROR: Deferred save failed writing global undo stack for track ");
-                    Serial.println(deferredSaveUndoTrackCursor);
+                    Serial.println(storageSession.currentWorkspaceSave.undoTrackCursor);
                     return false;
                 }
                 if (!stackDone) {
                     return true;
                 }
-                deferredSaveUndoTrackCursor++;
+                storageSession.currentWorkspaceSave.undoTrackCursor++;
                 resetDeferredUndoWriteState();
                 return true;
             }
@@ -989,7 +989,7 @@ STORAGE_PERSIST_MEM bool stepDeferredSaveJob() {
                 Serial.println("[StorageManager] ERROR: Deferred save failed finalizing CurrentSet meta");
                 return false;
             }
-            deferredSaveStage = DeferredSaveStage::CurrentSetCompletion;
+            storageSession.currentWorkspaceSave.stage = DeferredSaveStage::CurrentSetCompletion;
             return true;
         }
 
@@ -1012,8 +1012,8 @@ STORAGE_PERSIST_MEM bool stepDeferredSaveJob() {
             }
             forceCurrentSetFullLoopWrite = false;
             Serial.println("[StorageManager] CurrentSet saved successfully (v6 deferred slices).");
-            deferredSaveInProgress = false;
-            deferredSaveStage = DeferredSaveStage::Idle;
+            storageSession.currentWorkspaceSave.inProgress = false;
+            storageSession.currentWorkspaceSave.stage = DeferredSaveStage::Idle;
             return true;
         }
 

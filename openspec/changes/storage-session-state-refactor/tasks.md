@@ -61,14 +61,14 @@
 
 ## 8. Step 4 — `StorageSession` job struct migration
 
-- [ ] 8.1 Extend `include/StorageSession.h`: `CurrentWorkspaceSaveJob`, expand `RevisionCommitJob`, expand `RevisionLoadJob`, add `BootRecoveryJob`
-- [ ] 8.2 Migrate `deferredSave*` externs → `storageSession.currentWorkspaceSave` (with `Internal.cpp` definitions updated)
-- [ ] 8.3 Migrate `revisionCommit*` stage externs (except durable epoch facts) → `storageSession.revisionCommit`
-- [ ] 8.4 Migrate `revisionLoad*` stage externs → `storageSession.revisionLoad`
-- [ ] 8.5 Migrate `bootRevisionRecovery*` → `storageSession.bootRecovery`
-- [ ] 8.6 Trim migrated symbols from `StorageManagerInternal.h` extern list
-- [ ] 8.7 Update `buildStorageActivitySnapshot()` and policy inputs to read struct members only
-- [ ] 8.8 `pio test -e native`
+- [x] 8.1 Extend `include/StorageSession.h`: `CurrentWorkspaceSaveJob`, expand `RevisionCommitJob`, expand `RevisionLoadJob`, add `BootRecoveryJob`
+- [x] 8.2 Migrate `deferredSave*` externs → `storageSession.currentWorkspaceSave` (with `Internal.cpp` definitions updated)
+- [x] 8.3 Migrate `revisionCommit*` stage externs (except durable epoch facts) → `storageSession.revisionCommit`
+- [x] 8.4 Migrate `revisionLoad*` stage externs → `storageSession.revisionLoad`
+- [x] 8.5 Migrate `bootRevisionRecovery*` → `storageSession.bootRecovery`
+- [x] 8.6 Trim migrated symbols from `StorageManagerInternal.h` extern list
+- [x] 8.7 Update `buildStorageActivitySnapshot()` and policy inputs to read struct members only
+- [x] 8.8 `pio test -e native`
 
 ## 9. Step 5 — Backend API renames
 

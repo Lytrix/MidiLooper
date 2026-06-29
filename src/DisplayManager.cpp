@@ -2510,6 +2510,9 @@ void DisplayManager::update() {
         }
         invalidateLoadSaveDetailCache();
     } else if (!loadSaveActive && loadSaveModeWasActive_) {
+        if (StorageManager::isRevisionLoadDirtyPromptActive()) {
+            StorageManager::cancelRevisionLoadDirtyPrompt();
+        }
         StorageManager::resetSetBrowserOverlayNavigation();
         invalidateLoadSaveRevisionListCache();
         invalidateLoadSaveDetailCache();
