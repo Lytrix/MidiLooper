@@ -125,11 +125,18 @@ Replace imperative `setBrowserOverlayPersistencePhase` assignments with policy o
 
 - Move anonymous statics into job structs; `reset*JobState()` touch struct members
 
-### Tier 3 — next slice, **before** `transport.bin` / `global.bin`
+### Tier 3 — in progress
 
-- `StorageManagerDeferredSave.cpp`, `StorageManagerRevisionCommit.cpp`, `StorageManagerRevisionLoad.cpp`, `StorageManagerOverlay.cpp`
-- `include/StorageManagerInternal.h` — `StorageSession`, stage enums
-- Preserve `FLASHMEM` / `DMAMEM` attributes per TU
+**Shipped (2026-06-29):**
+
+- `include/StorageManagerInternal.h` — stage enums, `kMaxRevisionLoopIndexEntries`, extern job state
+- `src/StorageManagerInternal.cpp` — `StorageSession` + deferred save / revision commit / revision load RAM
+- `src/StorageManagerOverlay.cpp` — `buildStorageActivitySnapshot()`, overlay mode/navigation/dirty-prompt UI, catalog-read gate, load display status
+
+**Remaining (before `transport.bin` / `global.bin`):**
+
+- `StorageManagerDeferredSave.cpp`, `StorageManagerRevisionCommit.cpp`, `StorageManagerRevisionLoad.cpp` — FSM bodies still in `StorageManager.cpp` anonymous namespace; split blocked on shared helpers (`writeRaw`, `storageIoFromFile*`, stage-name strings)
+- Move `requestLoadRevision` / dirty-prompt confirm paths into overlay TU once internal dispatch APIs are exported
 
 ---
 
