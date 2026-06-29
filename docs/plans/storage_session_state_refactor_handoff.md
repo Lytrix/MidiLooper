@@ -130,13 +130,12 @@ Replace imperative `setBrowserOverlayPersistencePhase` assignments with policy o
 **Shipped (2026-06-29):**
 
 - `include/StorageManagerInternal.h` — stage enums, `kMaxRevisionLoopIndexEntries`, extern job state
-- `src/StorageManagerInternal.cpp` — `StorageSession` + deferred save / revision commit / revision load RAM
-- `src/StorageManagerOverlay.cpp` — `buildStorageActivitySnapshot()`, overlay mode/navigation/dirty-prompt UI, catalog-read gate, load display status
+- `src/StorageManager/Internal.cpp` — `StorageSession` + deferred save / revision commit / revision load RAM
+- `src/StorageManager/Overlay.cpp` — `buildStorageActivitySnapshot()`, overlay mode/navigation/dirty-prompt UI, catalog-read gate, load display status
+- `src/StorageManager/FileIo.cpp` — `writeRaw`/`readRaw`, `storageIoFromFile*`, deferred stage-name strings
+- Step 2 job FSM TUs: `src/StorageManager/WorkspaceSave.cpp`, `RevisionCommit.cpp`, `RevisionLoad.cpp` — **not yet extracted**; see [`storage-session-state-refactor` tasks](../../openspec/changes/storage-session-state-refactor/tasks.md)
 
-**Remaining (before `transport.bin` / `global.bin`):**
-
-- `StorageManagerDeferredSave.cpp`, `StorageManagerRevisionCommit.cpp`, `StorageManagerRevisionLoad.cpp` — FSM bodies still in `StorageManager.cpp` anonymous namespace; split blocked on shared helpers (`writeRaw`, `storageIoFromFile*`, stage-name strings)
-- Move `requestLoadRevision` / dirty-prompt confirm paths into overlay TU once internal dispatch APIs are exported
+**Remaining (before `transport.bin` / `global.bin`):** see **[storage_session_state_refactor_open_items_handoff.md](storage_session_state_refactor_open_items_handoff.md)** and OpenSpec **`storage-session-state-refactor`**.
 
 ---
 
@@ -160,8 +159,8 @@ Loop MIDI validate on stop (`LoopStopFinalize`) — **not** `StorageSession`.
 |------|------|
 | Session aggregate (new) | `include/StorageSession.h` |
 | Activity snapshot (Tier 0) | `include/StorageActivitySnapshot.h`, `src/StorageActivitySnapshot.cpp` |
-| Internal shared (Tier 3) | `include/StorageManagerInternal.h` |
-| Owner + drain | `src/StorageManager.cpp` (+ split TUs) |
+| Internal shared (Tier 3) | `include/StorageManagerInternal.h`, `src/StorageManager/{Internal,Overlay,FileIo}.cpp` |
+| Owner + drain | `src/StorageManager.cpp`; job FSMs → `src/StorageManager/{WorkspaceSave,RevisionCommit,RevisionLoad}.cpp` (Step 2) |
 | Overlay policy | `include/SetBrowserOverlayPolicy.h`, `src/SetBrowserOverlayPolicy.cpp` |
 | Load policy | `include/RevisionLoadPolicy.h`, `src/RevisionLoadPolicy.cpp` |
 | Catalog read gate | `include/OverlayCatalogReadPolicy.h` |

@@ -7,7 +7,7 @@ alwaysApply: true
 
 Use with global **`naming-and-terminology`**: clear **action + scope** (ideal two words; longer when needed for completeness), no abbreviations, reuse terms below.
 
-Read before M8+ edit storage, OpenSpec **`m8-rename`** then **`m8-edit`**, or timeline refactors.
+Read before edit storage, timeline refactors, or OpenSpec persistence changes. Archived baseline: **`m8-rename`**, **`m8-edit`**, **`pool-budget`** (see `openspec/specs/`).
 
 ## Scope words (Loop slot)
 

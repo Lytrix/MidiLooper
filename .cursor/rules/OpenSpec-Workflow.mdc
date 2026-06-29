@@ -1,12 +1,11 @@
 ---
-description: OpenSpec workflow — m8-edit active; m8-rename archived; jam deferred
+description: OpenSpec workflow — active changes in PROJECT_STATE; timeline guards and verification
 alwaysApply: true
 ---
 
 # OpenSpec workflow (MidiLooper)
 
-This repo uses [OpenSpec](https://github.com/Fission-AI/OpenSpec) for spec-driven
-development on the **timeline data model** track (`refactor/timeline-data-model`).
+Spec-driven development for the **timeline data model** track and related changes. **Authoritative process detail:** [`docs/00-authority/DELIVERY_RULES.md`](docs/00-authority/DELIVERY_RULES.md). **Active change list:** [`docs/runtime/PROJECT_STATE.md`](docs/runtime/PROJECT_STATE.md) + scope [`CURRENT_WORK.md`](docs/runtime/CURRENT_WORK.md). Roadmap: [`ROADMAP.md`](docs/runtime/ROADMAP.md) (not implementation authority).
 
 ## Setup
 
@@ -15,8 +14,7 @@ development on the **timeline data model** track (`refactor/timeline-data-model`
 - Source of truth: `openspec/specs/` (archived behavior after `/opsx:archive`)
 - Active work: `openspec/changes/<name>/` (proposal, specs deltas, design, tasks)
 - Navigation: `docs/plans/openspec_integration_overview.md`
-
-Restart Cursor after `openspec init` / `openspec update` so slash commands appear.
+- Restart Cursor after `openspec init` / `openspec update` so slash commands appear
 
 ## Cursor commands
 
@@ -28,61 +26,35 @@ Restart Cursor after `openspec init` / `openspec update` so slash commands appea
 | `/opsx:sync` | Reconcile specs with implementation drift |
 | `/opsx:archive` | Merge delta specs into `openspec/specs/`, archive change folder |
 
-## Deliverable sequence (timeline plan — locked)
+## Deliverable sequence (timeline — locked)
 
-M1–M7 are **shipped**. Post-M7 order:
+M1–M7 **shipped**. M8 edit + pool-budget **archived** to `openspec/specs/`.
 
-1. **M8 edit** — `m8-edit` (**active** — `/opsx:apply`)
-2. **Hardening** — playback-window polish (propose when M8 done); **pool-budget** groups 1–6 **shipped**
-3. **JamRecorder** — `jam-recorder` change (JamAction / D3, **not** D13 MIDI capture)
+Post-M7 order (do not reorder without project decision):
+
+1. **Persistence / overlay** (current scope — see CURRENT_WORK)
+2. **Hardening** — playback-window polish
+3. **JamRecorder** — JamAction / D3 (**not** D13 MIDI capture)
 4. **M10** — full Jam entity + Scenes + SD
-5. **D13 arrangement capture** — only after R1–R5 locked in phase-3 docs
+5. **D13 arrangement capture** — only after R1–R5 in `docs/plans/phase-3-multi-loop.md`
 
-Do **not** start D13-style `jam-recording` before M8. Parked reference:
-`openspec/changes/archive/20260617-parked-jam-recording-d13/`.
+**Hard stop:** Do **not** start D13-style `jam-recording` before JamRecorder path. Parked: `openspec/changes/archive/20260617-parked-jam-recording-d13/`.
 
 ## Active changes
 
-**Recommended apply order:** **`m8-edit`** §4 (test matrix + archive) is next after pool-budget **§9** closeout.
+**Do not maintain a static list here** — it goes stale. Check:
 
-**Archived:** `openspec/changes/archive/2026-06-23-note-edit-session-undo-gpio/` — geometry-kind **E:**, **`NoteEditSessionState`**, GPIO **`GpioButtonManager`**. Prerequisite for pool-budget **§9** (shipped — spec **`note-edit-session-undo`**).
-
-**`m8-edit`** — Edit op-lists, NoteEditSession, retire `editFlat_`.
-Run `/opsx:apply` on `openspec/changes/m8-edit/tasks.md`.
-
-**`edit-record-display-length-mode`** — D1 live record display, D2 edit refresh, D3 length-mode leak. Reopened 2026-06-22; spike RC1–RC4 in `BUG.md`. HITL `_verify_live_record_display` (warn by default). Run `/opsx:apply` on `openspec/changes/edit-record-display-length-mode/tasks.md`.
-
-**`long-loop-piano-roll-window`** — 16-bar detailed piano-roll window + overview strip + LOOP_EDIT move/resize. M1 display-only, M2 LOOP_EDIT controls. Plan: `docs/plans/long_loop_piano_roll_overview_enhancement.md`. Run `/opsx:apply` on `openspec/changes/long-loop-piano-roll-window/tasks.md`.
-
-**Archived:** `openspec/changes/archive/2026-06-23-long-record-memory-headroom/` (**Closed** 2026-06-23) — PSRAM-first length-scaling buffers, RAM2 floor admission, central deferred runtime save (chunk-bounded SD writer), display visualCache fallback, HITL 48/64 record + 64+64 overdub. Spec: `openspec/specs/long-record-memory-headroom/`. Guide: `docs/Guides/DEFERRED_RUNTIME_PERSISTENCE.md`.
-
-**Archived (superseded):** `openspec/changes/archive/2026-06-22-record-stop-64-bar-crash/` — stop-path timing hypothesis; superseded by memory-headroom archive above.
-
-**Parked archive copy:** `archive/2026-06-20-parked-edit-record-display-length-mode/` (superseded by active change above).
-
-**Archived (bug evidence):** `note-move-pitch-overlap-flaky`, `lengthen-overlap-neighbor-restore`, `change-length-commit-rematerialize` (Track C insert/reorder deferred).
-
-**Archived:** `openspec/changes/archive/2026-06-22-pool-budget/` (chunk/heap admission, **`reclaimUnreferencedDisabledPasses`**, **`PREFERRED_UNDO_DEPTH`** undo trim; **§9** session **editRows** undo — spec **`note-edit-session-undo`**).  
-**Archived:** `openspec/changes/archive/2026-06-22-loop-ownership-hardening/` (overdub guard, slot resolution, `startLoopTick`, SD tail fail-hard, prewarm, deferred validate; edit cap deferred to **`pool-budget`**).  
-**Archived:** `openspec/changes/archive/2026-06-18-m8-rename/` (Take/Capture vocabulary).  
-**Archived:** `openspec/changes/archive/2026-06-19-overlap-hidden-note-select/` (**Closed** 2026-06-20).  
-**Archived:** `openspec/changes/archive/2026-06-20-note-edit-hitl-focus-restore/` (B1/B2 focus restore).  
-**Archived:** `openspec/changes/archive/2026-06-20-edit-focus-selection-drift/` (recheck done; superseded by hitl-focus-restore).  
-**Archived:** `openspec/changes/archive/2026-06-20-timeline-pass-model/` (**passes[]**).  
-**Archived:** `openspec/changes/archive/2026-06-20-m8-pass-vocabulary/` (**edit pass** vocabulary).  
-**Archived:** `openspec/changes/archive/2026-06-20-note-edit-modification-session/` (overlap A1 + B1).  
-**Archived:** `openspec/changes/archive/2026-06-20-note-edit-focus-reads/` (Phase 2a–2d **focus.last**).  
-**Archived:** `openspec/changes/archive/2026-06-20-note-move-pitch-overlap-flaky/` (overlap root-cause evidence).  
-**Archived:** `openspec/changes/archive/2026-06-20-lengthen-overlap-neighbor-restore/` (overlap HITL evidence).  
-**Archived:** `openspec/changes/archive/2026-06-20-change-length-commit-rematerialize/` (Track A+B; spec `openspec/specs/change-length-commit-rematerialize/`).
+1. [`docs/runtime/PROJECT_STATE.md`](docs/runtime/PROJECT_STATE.md)
+2. `ls openspec/changes/` (exclude `archive/`)
+3. `openspec/changes/<name>/tasks.md` before implementing
 
 ## Brownfield docs
 
-Cite in OpenSpec artifacts; do not duplicate wholesale:
+Cite in OpenSpec artifacts; do not duplicate wholesale (see DELIVERY_RULES):
 
-- `~/.cursor/plans/timeline_data_model_refactor_9cbaeb60.plan.md` — M1–M7 + post-M7 order
+- `~/.cursor/plans/timeline_data_model_refactor_9cbaeb60.plan.md` — M1–M10 order
 - `docs/DELIVERABLE_TRACKING.md` — shipped vs next
-- `docs/Guides/LOOP_MIDI_STORAGE_AND_VALIDATION.md` — capture/stop/undo constraints
+- `docs/Guides/LOOP_MIDI_STORAGE_AND_VALIDATION.md` — capture/stop/undo
 - `docs/plans/phase-3-multi-loop.md` — jam requirements (D13 deferred)
 
 ## Naming
@@ -92,6 +64,17 @@ Reuse **passes**, **Capture**, **editPass**, **NoteEditSession**, slot, overdub,
 
 ## Verification
 
-- **m8-edit:** full native matrix + HITL per `.cursor/rules/HITL-Test-Flow.mdc`
-- **note-edit-modification-session:** native `test_edit_apply` + HITL edit baseline per child BUG specs
-- Teensy upload only when user confirms after firmware build
+| Domain | Gates |
+|--------|--------|
+| Timeline / capture / undo | `pio test -e native` + HITL baseline per `HITL-Test-Flow.mdc` |
+| Note edit / overlap | Native `test_edit_apply` + HITL edit per `HITL-Edit-Test-Flow.mdc` |
+| Persistence / overlay | Native persistence tests; manual overlay when UI/SD coupled |
+| Live record display bugs | `openspec/changes/archive/2026-06-24-edit-record-display-length-mode/BUG.md` RC1–RC4 when in scope |
+
+Teensy upload only when user confirms after firmware build (`teensy41-capture-serial`).
+
+## Archived reference
+
+Normative specs: `openspec/specs/` (timeline-epochs, timeline-passes, note-edit-session-undo, long-record-memory-headroom, multi-loop-slots, …).
+
+Change history: `openspec/changes/archive/`.

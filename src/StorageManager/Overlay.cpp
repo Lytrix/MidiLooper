@@ -49,15 +49,15 @@ StorageManager::SetBrowserOverlayEntryKind StorageManager::getSetBrowserOverlayE
     return storageSession.setBrowserNavigation.entryKind;
 }
 
-void StorageManager::resetSetBrowserOverlayNavigation() {
+STORAGE_PERSIST_MEM void StorageManager::resetSetBrowserOverlayNavigation() {
     SetBrowserOverlayPolicy::resetNavigation(storageSession.setBrowserNavigation);
 }
 
-void StorageManager::setSetBrowserOverlayEntryKind(SetBrowserOverlayEntryKind kind) {
+STORAGE_PERSIST_MEM void StorageManager::setSetBrowserOverlayEntryKind(SetBrowserOverlayEntryKind kind) {
     SetBrowserOverlayPolicy::setEntryKind(storageSession.setBrowserNavigation, kind);
 }
 
-bool StorageManager::openSetBrowserRevisionHistory(uint16_t setId, uint8_t listSelection,
+STORAGE_PERSIST_MEM bool StorageManager::openSetBrowserRevisionHistory(uint16_t setId, uint8_t listSelection,
                                                    uint8_t listScrollOffset) {
     if (setId == 0) {
         return false;
@@ -67,7 +67,7 @@ bool StorageManager::openSetBrowserRevisionHistory(uint16_t setId, uint8_t listS
     return true;
 }
 
-bool StorageManager::openSetBrowserLoopPick(uint16_t setId, uint8_t listSelection,
+STORAGE_PERSIST_MEM bool StorageManager::openSetBrowserLoopPick(uint16_t setId, uint8_t listSelection,
                                             uint8_t listScrollOffset) {
     if (setId == 0) {
         return false;
@@ -77,25 +77,25 @@ bool StorageManager::openSetBrowserLoopPick(uint16_t setId, uint8_t listSelectio
     return true;
 }
 
-bool StorageManager::navigateSetBrowserOverlayBack(uint8_t& outListSelection,
+STORAGE_PERSIST_MEM bool StorageManager::navigateSetBrowserOverlayBack(uint8_t& outListSelection,
                                                    uint8_t& outListScrollOffset) {
     return SetBrowserOverlayPolicy::navigateBack(storageSession.setBrowserNavigation, outListSelection,
                                                  outListScrollOffset);
 }
 
-uint16_t StorageManager::getSetBrowserOverlayDrilledSetId() {
+STORAGE_PERSIST_MEM uint16_t StorageManager::getSetBrowserOverlayDrilledSetId() {
     return storageSession.setBrowserNavigation.drilledSetId;
 }
 
-bool StorageManager::isRevisionLoadDirtyPromptActive() {
+STORAGE_PERSIST_MEM bool StorageManager::isRevisionLoadDirtyPromptActive() {
     return storageSession.revisionLoad.heldForWorkspaceDirty;
 }
 
-uint8_t StorageManager::getRevisionLoadDirtyPromptSelection() {
+STORAGE_PERSIST_MEM uint8_t StorageManager::getRevisionLoadDirtyPromptSelection() {
     return static_cast<uint8_t>(storageSession.revisionLoad.confirmChoice);
 }
 
-void StorageManager::adjustRevisionLoadDirtyPromptSelection(int delta) {
+STORAGE_PERSIST_MEM void StorageManager::adjustRevisionLoadDirtyPromptSelection(int delta) {
     if (!storageSession.revisionLoad.heldForWorkspaceDirty || delta == 0) {
         return;
     }
@@ -112,7 +112,7 @@ void StorageManager::adjustRevisionLoadDirtyPromptSelection(int delta) {
 #endif
 }
 
-void StorageManager::beginOverlaySaveRowCommit() {
+STORAGE_PERSIST_MEM void StorageManager::beginOverlaySaveRowCommit() {
 #if BYPASS_STOP_UNDO_SAVE
     return;
 #else
@@ -121,7 +121,7 @@ void StorageManager::beginOverlaySaveRowCommit() {
 #endif
 }
 
-bool StorageManager::isOverlayCatalogReadAllowed() {
+STORAGE_PERSIST_MEM bool StorageManager::isOverlayCatalogReadAllowed() {
 #if BYPASS_STOP_UNDO_SAVE
     return true;
 #else
@@ -145,7 +145,7 @@ DeferredSaveDisplayStatus StorageManager::getDeferredLoadDisplayStatus(uint32_t 
 #endif
 }
 
-uint16_t StorageManager::getRevisionLoadDisplayTargetSetId() {
+STORAGE_PERSIST_MEM uint16_t StorageManager::getRevisionLoadDisplayTargetSetId() {
 #if BYPASS_STOP_UNDO_SAVE
     return 0;
 #else
@@ -162,7 +162,7 @@ uint16_t StorageManager::getRevisionLoadDisplayTargetSetId() {
 #endif
 }
 
-uint16_t StorageManager::getRevisionLoadDisplayTargetRevisionId() {
+STORAGE_PERSIST_MEM uint16_t StorageManager::getRevisionLoadDisplayTargetRevisionId() {
 #if BYPASS_STOP_UNDO_SAVE
     return 0;
 #else
@@ -179,11 +179,136 @@ uint16_t StorageManager::getRevisionLoadDisplayTargetRevisionId() {
 #endif
 }
 
-bool StorageManager::consumeRevisionLoadDisplayRefreshPending() {
+STORAGE_PERSIST_MEM bool StorageManager::consumeRevisionLoadDisplayRefreshPending() {
     if (!revisionLoadDisplayRefreshPending) {
         return false;
     }
     revisionLoadDisplayRefreshPending = false;
     return true;
 }
+
+STORAGE_PERSIST_MEM void StorageManager::confirmRevisionLoadDirtyPromptSaveThenLoad() {
+#if BYPASS_STOP_UNDO_SAVE
+    return;
+#else
+    if (!storageSession.revisionLoad.heldForWorkspaceDirty || !storageSession.revisionLoad.requested) {
+        return;
+    }
+    storageSession.revisionLoad.heldForWorkspaceDirty = false;
+    storageSession.revisionLoad.loadAfterRevisionCommit = true;
+    SC_PERSIST("rev_load_dirty_yes", 0, storageSession.revisionLoad.requestedSetId,
+               storageSession.revisionLoad.requestedRevisionId, "save_then_load");
+    requestCommitRevision();
+#endif
+}
+
+STORAGE_PERSIST_MEM void StorageManager::confirmRevisionLoadDirtyPromptDiscard() {
+#if BYPASS_STOP_UNDO_SAVE
+    return;
+#else
+    if (!storageSession.revisionLoad.heldForWorkspaceDirty || !storageSession.revisionLoad.requested) {
+        return;
+    }
+    storageSession.revisionLoad.heldForWorkspaceDirty = false;
+    storageSession.revisionLoad.loadAfterRevisionCommit = false;
+    SC_PERSIST("rev_load_dirty_no", 0, storageSession.revisionLoad.requestedSetId,
+               storageSession.revisionLoad.requestedRevisionId, "discard_load");
+    dispatchStagedRevisionLoad();
+#endif
+}
+
+STORAGE_PERSIST_MEM void StorageManager::cancelRevisionLoadDirtyPrompt() {
+#if BYPASS_STOP_UNDO_SAVE
+    return;
+#else
+    if (!storageSession.revisionLoad.heldForWorkspaceDirty) {
+        return;
+    }
+    SC_PERSIST("rev_load_dirty_cancel", 0, storageSession.revisionLoad.requestedSetId,
+               storageSession.revisionLoad.requestedRevisionId, "cancel");
+    clearRevisionLoadPromptAndPipelineState();
+#endif
+}
+
+STORAGE_PERSIST_MEM void StorageManager::requestLoadRevision(uint16_t setId, uint16_t revisionId) {
+#if BYPASS_STOP_UNDO_SAVE
+    (void)setId;
+    (void)revisionId;
+    return;
+#else
+    if (setId == 0 || revisionId == 0) {
+        SC_PERSIST("rev_load_skip", 0, setId, revisionId, "bad_id");
+        return;
+    }
+    if (storageSession.revisionLoad.heldForWorkspaceDirty ||
+        isOverlayLoadRequestBlocked(buildStorageActivitySnapshot())) {
+        SC_PERSIST("rev_load_skip", 0, setId, revisionId, "pipeline_busy");
+        return;
+    }
+    storageSession.revisionLoad.requestedSetId = setId;
+    storageSession.revisionLoad.requestedRevisionId = revisionId;
+    storageSession.revisionLoad.requested = true;
+    storageSession.revisionLoad.confirmChoice = RevisionLoadPolicy::DirtyPromptChoice::None;
+
+    if (RevisionLoadPolicy::resolveLoadRequestGate(isCurrentWorkspaceDirty()) ==
+        RevisionLoadPolicy::LoadRequestGate::ShowDirtyPrompt) {
+        storageSession.revisionLoad.heldForWorkspaceDirty = true;
+        SC_PERSIST("rev_load_dirty_prompt", 0, setId, revisionId, "shown");
+        return;
+    }
+
+    dispatchStagedRevisionLoad();
+#endif
+}
+
+STORAGE_PERSIST_MEM void StorageManager::requestLoadLatestRevisionForSet(uint16_t setId) {
+#if BYPASS_STOP_UNDO_SAVE
+    (void)setId;
+    return;
+#else
+    if (setId == 0) {
+        return;
+    }
+    uint16_t latestRevisionId = 0;
+    if (!readSetLatestRevisionIdFromSd(setId, latestRevisionId)) {
+        return;
+    }
+    requestLoadRevision(setId, latestRevisionId);
+#endif
+}
+
+STORAGE_PERSIST_MEM bool StorageManager::hasRevisionLoadWork() {
+#if BYPASS_STOP_UNDO_SAVE
+    return false;
+#else
+    return storageSession.revisionLoad.pending || storageSession.revisionLoad.inProgress;
+#endif
+}
+
+STORAGE_PERSIST_MEM bool StorageManager::isRevisionLoadActive() {
+#if BYPASS_STOP_UNDO_SAVE
+    return false;
+#else
+    return storageSession.revisionLoad.sdIoActive;
+#endif
+}
+
+#if defined(SESSION_CAPTURE)
+STORAGE_PERSIST_MEM void StorageManager::requestLoadRevisionForHitl(uint16_t setId, uint16_t revisionId) {
+    requestLoadRevision(setId, revisionId);
+    SC_PERSIST("rev_load_hitl_arm", 0, setId, revisionId, "armed");
+}
+
+STORAGE_PERSIST_MEM void StorageManager::confirmRevisionLoadDirtyPromptSaveThenLoadForHitl() {
+    confirmRevisionLoadDirtyPromptSaveThenLoad();
+}
+
+STORAGE_PERSIST_MEM void StorageManager::confirmRevisionLoadDirtyPromptDiscardForHitl() {
+    confirmRevisionLoadDirtyPromptDiscard();
+}
+
+STORAGE_PERSIST_MEM void StorageManager::cancelRevisionLoadDirtyPromptForHitl() {
+    cancelRevisionLoadDirtyPrompt();
+}
+#endif
 

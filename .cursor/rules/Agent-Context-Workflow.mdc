@@ -1,0 +1,43 @@
+---
+description: Agent context harness — progress by default; reassess only on formal triggers
+alwaysApply: true
+---
+
+# Agent context workflow
+
+Lightweight governance for coding agents. **Does not change firmware behavior** — documentation and process only.
+
+**Default: continue implementation.** Use the [decision ladder](docs/00-authority/ARCHITECTURE_RULES.md#progress-bias-and-decision-ladder). Stop only on [formal triggers](docs/ARCHITECTURE_REASSESSMENT.md#formal-triggers).
+
+## Before coding
+
+1. Read [`docs/runtime/PROJECT_STATE.md`](docs/runtime/PROJECT_STATE.md) and [`docs/runtime/CURRENT_WORK.md`](docs/runtime/CURRENT_WORK.md)
+2. [`docs/runtime/ROADMAP.md`](docs/runtime/ROADMAP.md) — optional; never sole authority
+3. Determine **domain** ([`docs/AGENT_CONTEXT_MAP.md`](docs/AGENT_CONTEXT_MAP.md))
+4. Skim authority + [`docs/DECISION_LOG.md`](docs/DECISION_LOG.md) for the topic (quick `rg` — not a stop)
+5. **Decision ladder:** extend owner → reuse extension point → follow DEC-### → if [formal trigger](docs/ARCHITECTURE_REASSESSMENT.md#formal-triggers) → reassess (max **one** per session) → else **implement**
+6. **Authority conflict** (OpenSpec vs architecture) is a formal trigger — STOP only then
+7. Confirm task is in **CURRENT_WORK** § Now implementing — if not, ask user or update CURRENT_WORK
+8. **Preflight:** brief inline summary for normal extension work; full [`PREFLIGHT.md`](docs/templates/PREFLIGHT.md) only if a formal trigger fired
+9. Proceed with implementation — state preferred path and confidence when alternatives exist; do not block on vagueness
+
+Authority: [`docs/00-authority/README.md`](docs/00-authority/README.md). OpenSpec: [`.cursor/rules/OpenSpec-Workflow.mdc`](OpenSpec-Workflow.mdc).
+
+## After coding
+
+1. Update [`docs/runtime/PROJECT_STATE.md`](docs/runtime/PROJECT_STATE.md) and [`docs/runtime/CURRENT_WORK.md`](docs/runtime/CURRENT_WORK.md)
+2. Update [`docs/DELIVERABLE_TRACKING.md`](docs/DELIVERABLE_TRACKING.md) when something ships
+3. Update OpenSpec `tasks.md` for the active change
+4. Run `pio test -e native` before push/merge (see Testing-Workflow rule)
+
+## Session closeout
+
+When design or exclusions were discussed: [`SESSION_CLOSEOUT.md`](docs/templates/SESSION_CLOSEOUT.md), update runtime docs, append [`DECISION_LOG.md`](docs/DECISION_LOG.md).
+
+## Roles (optional)
+
+- Plan: [`docs/agents/architect.md`](docs/agents/architect.md)
+- Implement: [`docs/agents/builder.md`](docs/agents/builder.md)
+- Verify: [`docs/agents/reviewer.md`](docs/agents/reviewer.md)
+
+Delivery: [`docs/00-authority/DELIVERY_RULES.md`](docs/00-authority/DELIVERY_RULES.md).

@@ -291,6 +291,10 @@ SavedSet fallback removed from boot chain (brownfield v5 monolith migration unch
 ## Suggested next-chat prompt
 
 ```text
-/opsx:apply set-revision-persistence — section 4 overlay or parked 3.9.
+Read docs/plans/storage_session_state_refactor_handoff.md (DEC-012).
+Implement Tier 0: StorageActivitySnapshot, contract tests, remove RevisionLoadPolicy::isMinimalLoadingOverlayActive wrapper.
+pio test -e native.
+
+Or /opsx:apply set-revision-persistence — remaining tasks.md overlay items.
 Read docs/plans/set_revision_persistence_handoff.md first.
 ```
