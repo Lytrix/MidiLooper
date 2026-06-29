@@ -21,11 +21,11 @@ bool isMinimalLoadingOverlayActive(PersistencePhase phase, bool overlayOpen,
   if (!overlayOpen) {
     return false;
   }
-  if (phase == PersistencePhase::AwaitingCommitThenLoad ||
-      phase == PersistencePhase::LoadInProgress) {
+  if (phase == PersistencePhase::AwaitingRevisionCommit ||
+      phase == PersistencePhase::RevisionLoadActive) {
     return true;
   }
-  if (phase == PersistencePhase::CommitOnlyBackground &&
+  if (phase == PersistencePhase::RevisionCommitActive &&
       (commitPending || commitInProgress)) {
     return true;
   }
@@ -37,8 +37,8 @@ bool isOverlayLoadRequestBlocked(PersistencePhase phase, bool loadPending,
   if (loadPending || loadInProgress) {
     return true;
   }
-  return phase == PersistencePhase::AwaitingCommitThenLoad ||
-         phase == PersistencePhase::LoadInProgress;
+  return phase == PersistencePhase::AwaitingRevisionCommit ||
+         phase == PersistencePhase::RevisionLoadActive;
 }
 
 bool shouldPreserveOverlayNavigationOnEnter(PersistencePhase phase) {

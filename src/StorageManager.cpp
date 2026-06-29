@@ -15,6 +15,8 @@
 #include "RevisionLoadPolicy.h"
 #include "OverlayCatalogReadPolicy.h"
 #include "SetBrowserOverlayPolicy.h"
+#include "StorageActivitySnapshot.h"
+#include "StorageSession.h"
 #include "BootRecoveryPolicy.h"
 #include "PersistenceSchema.h"
 #include "SavedSetCatalog.h"
@@ -431,9 +433,6 @@ enum class RevisionLoadReloadRamStage : uint8_t {
     ReadFooter,
 };
 
-bool revisionLoadPending = false;
-bool revisionLoadInProgress = false;
-bool revisionLoadSdIoActive = false;
 RevisionLoadStage revisionLoadStage = RevisionLoadStage::Idle;
 RevisionLoadWriteStage revisionLoadWriteStage = RevisionLoadWriteStage::PrepareEpoch;
 uint16_t revisionLoadSetId = 0;
@@ -461,16 +460,7 @@ bool revisionLoadDisplayRefreshPending = false;
 bool bootRevisionRecoveryPending = false;
 uint16_t bootRevisionRecoverySetId = 0;
 uint16_t bootRevisionRecoveryRevisionId = 0;
-bool revisionLoadRequestStaged = false;
-uint16_t revisionLoadStagedSetId = 0;
-uint16_t revisionLoadStagedRevisionId = 0;
-bool revisionLoadDirtyPromptActive = false;
-uint8_t revisionLoadDirtyPromptSelection = 0;
-bool revisionLoadPipelineActive = false;
-bool revisionLoadSaveThenLoadPipeline = false;
-SetBrowserOverlayPolicy::PersistencePhase setBrowserOverlayPersistencePhase =
-    SetBrowserOverlayPolicy::PersistencePhase::Idle;
-SetBrowserOverlayPolicy::NavigationState setBrowserOverlayNavigation{};
+StorageSession storageSession{};
 RevisionLoadReloadRamStage revisionLoadReloadRamStage = RevisionLoadReloadRamStage::WriteWorkspaceMeta;
 File revisionLoadReloadMetaFile;
 bool revisionLoadReloadMetaFileOpen = false;
@@ -1348,7 +1338,7 @@ void resetRevisionCommitJobState() {
     for (uint16_t i = 0; i < kMaxRevisionLoopIndexEntries; ++i) {
         revisionCommitSlotEntries[i] = RevisionPackedBlob::RevisionLoopSlotDirectoryEntry{};
     }
-    if (revisionLoadSaveThenLoadPipeline) {
+    if (storageSession.revisionLoad.loadAfterRevisionCommit) {
         clearRevisionLoadPromptAndPipelineState();
     }
 }
@@ -2239,10 +2229,7 @@ bool stepRevisionCommitComplete() {
     revisionCommitStage = RevisionCommitStage::Idle;
     revisionCommitInProgress = false;
     deferredSaveCompletedAtMs = millis();
-    if (setBrowserOverlayPersistencePhase ==
-        SetBrowserOverlayPolicy::PersistencePhase::CommitOnlyBackground) {
-        setBrowserOverlayPersistencePhase = SetBrowserOverlayPolicy::PersistencePhase::Idle;
-    }
+    storageSession.revisionCommit.overlayBackgroundCommit = false;
     return true;
 }
 
@@ -2270,19 +2257,12 @@ bool stepRevisionCommitJob() {
 }
 
 void clearRevisionLoadPromptAndPipelineState() {
-    revisionLoadRequestStaged = false;
-    revisionLoadStagedSetId = 0;
-    revisionLoadStagedRevisionId = 0;
-    revisionLoadDirtyPromptActive = false;
-    revisionLoadDirtyPromptSelection = 0;
-    revisionLoadPipelineActive = false;
-    revisionLoadSaveThenLoadPipeline = false;
-    if (setBrowserOverlayPersistencePhase ==
-            SetBrowserOverlayPolicy::PersistencePhase::AwaitingCommitThenLoad ||
-        setBrowserOverlayPersistencePhase ==
-            SetBrowserOverlayPolicy::PersistencePhase::LoadInProgress) {
-        setBrowserOverlayPersistencePhase = SetBrowserOverlayPolicy::PersistencePhase::Idle;
-    }
+    storageSession.revisionLoad.requested = false;
+    storageSession.revisionLoad.requestedSetId = 0;
+    storageSession.revisionLoad.requestedRevisionId = 0;
+    storageSession.revisionLoad.heldForWorkspaceDirty = false;
+    storageSession.revisionLoad.confirmChoice = RevisionLoadPolicy::DirtyPromptChoice::None;
+    storageSession.revisionLoad.loadAfterRevisionCommit = false;
 }
 
 void resetRevisionLoadReloadRamState() {
@@ -2306,17 +2286,14 @@ void resetRevisionLoadReloadRamState() {
 }
 
 void dispatchStagedRevisionLoad() {
-    if (!revisionLoadRequestStaged) {
+    if (!storageSession.revisionLoad.requested) {
         return;
     }
-    revisionLoadSetId = revisionLoadStagedSetId;
-    revisionLoadRevisionId = revisionLoadStagedRevisionId;
-    revisionLoadRequestStaged = false;
-    revisionLoadDirtyPromptActive = false;
-    revisionLoadPending = true;
-    revisionLoadPipelineActive = true;
-    setBrowserOverlayPersistencePhase =
-        SetBrowserOverlayPolicy::PersistencePhase::LoadInProgress;
+    revisionLoadSetId = storageSession.revisionLoad.requestedSetId;
+    revisionLoadRevisionId = storageSession.revisionLoad.requestedRevisionId;
+    storageSession.revisionLoad.requested = false;
+    storageSession.revisionLoad.heldForWorkspaceDirty = false;
+    storageSession.revisionLoad.pending = true;
     SC_PERSIST("rev_load_request", 0, revisionLoadSetId, revisionLoadRevisionId, "queued");
 }
 
@@ -2329,8 +2306,8 @@ void resetRevisionLoadJobState() {
         revisionLoadDestFile.close();
         revisionLoadDestFileOpen = false;
     }
-    revisionLoadInProgress = false;
-    revisionLoadSdIoActive = false;
+    storageSession.revisionLoad.inProgress = false;
+    storageSession.revisionLoad.sdIoActive = false;
     revisionLoadStage = RevisionLoadStage::Idle;
     revisionLoadWriteStage = RevisionLoadWriteStage::PrepareEpoch;
     revisionLoadSetId = 0;
@@ -3086,9 +3063,7 @@ bool stepRevisionLoadComplete() {
     revisionLoadFailedAtMs = 0;
     revisionLoadDisplayRefreshPending = true;
     revisionLoadStage = RevisionLoadStage::Idle;
-    revisionLoadInProgress = false;
-    revisionLoadPipelineActive = false;
-    setBrowserOverlayPersistencePhase = SetBrowserOverlayPolicy::PersistencePhase::Idle;
+    storageSession.revisionLoad.inProgress = false;
     if (looperState.isLoadSaveModeActive()) {
         looperState.exitLoadSaveMode();
     }
@@ -4158,29 +4133,43 @@ uint16_t StorageManager::getCurrentWorkspaceDerivedRevisionId() {
     return workspaceDerivedFromRevisionId;
 }
 
+StorageActivitySnapshot buildStorageActivitySnapshot() {
+    StorageActivitySnapshot snapshot{};
+    snapshot.deferredSavePending = deferredSavePending;
+    snapshot.deferredSaveInProgress = deferredSaveInProgress;
+    snapshot.deferredSaveSdIoActive = deferredSaveSdIoActive;
+    snapshot.revisionCommitPending = revisionCommitPending;
+    snapshot.revisionCommitInProgress = revisionCommitInProgress;
+    snapshot.revisionCommitSdIoActive = revisionCommitSdIoActive;
+    snapshot.revisionCommitOverlayBackground = storageSession.revisionCommit.overlayBackgroundCommit;
+    snapshot.revisionLoadPending = storageSession.revisionLoad.pending;
+    snapshot.revisionLoadInProgress = storageSession.revisionLoad.inProgress;
+    snapshot.revisionLoadSdIoActive = storageSession.revisionLoad.sdIoActive;
+    snapshot.revisionLoadDirtyPromptActive = storageSession.revisionLoad.heldForWorkspaceDirty;
+    snapshot.loadAfterRevisionCommit = storageSession.revisionLoad.loadAfterRevisionCommit;
+    snapshot.overlayOpen = looperState.isLoadSaveModeActive();
+    snapshot.navigation = storageSession.setBrowserNavigation;
+    return snapshot;
+}
+
 StorageManager::SetBrowserOverlayMode StorageManager::getSetBrowserOverlayMode() {
-    const bool overlayOpen = looperState.isLoadSaveModeActive();
-    const bool minimalLoading = SetBrowserOverlayPolicy::isMinimalLoadingOverlayActive(
-        setBrowserOverlayPersistencePhase, overlayOpen, revisionCommitPending,
-        revisionCommitInProgress);
-    return SetBrowserOverlayPolicy::resolveActiveMode(
-        setBrowserOverlayNavigation, revisionLoadDirtyPromptActive, minimalLoading);
+    return resolveOverlayMode(buildStorageActivitySnapshot());
 }
 
 SetBrowserOverlayPolicy::PersistencePhase StorageManager::getSetBrowserOverlayPersistencePhase() {
-    return setBrowserOverlayPersistencePhase;
+    return resolvePersistencePhase(buildStorageActivitySnapshot());
 }
 
 StorageManager::SetBrowserOverlayEntryKind StorageManager::getSetBrowserOverlayEntryKind() {
-    return setBrowserOverlayNavigation.entryKind;
+    return storageSession.setBrowserNavigation.entryKind;
 }
 
 void StorageManager::resetSetBrowserOverlayNavigation() {
-    SetBrowserOverlayPolicy::resetNavigation(setBrowserOverlayNavigation);
+    SetBrowserOverlayPolicy::resetNavigation(storageSession.setBrowserNavigation);
 }
 
 void StorageManager::setSetBrowserOverlayEntryKind(SetBrowserOverlayEntryKind kind) {
-    SetBrowserOverlayPolicy::setEntryKind(setBrowserOverlayNavigation, kind);
+    SetBrowserOverlayPolicy::setEntryKind(storageSession.setBrowserNavigation, kind);
 }
 
 bool StorageManager::openSetBrowserRevisionHistory(uint16_t setId, uint8_t listSelection,
@@ -4188,7 +4177,7 @@ bool StorageManager::openSetBrowserRevisionHistory(uint16_t setId, uint8_t listS
     if (setId == 0) {
         return false;
     }
-    SetBrowserOverlayPolicy::openRevisionHistory(setBrowserOverlayNavigation, setId, listSelection,
+    SetBrowserOverlayPolicy::openRevisionHistory(storageSession.setBrowserNavigation, setId, listSelection,
                                                  listScrollOffset);
     return true;
 }
@@ -4198,42 +4187,43 @@ bool StorageManager::openSetBrowserLoopPick(uint16_t setId, uint8_t listSelectio
     if (setId == 0) {
         return false;
     }
-    SetBrowserOverlayPolicy::openLoopPick(setBrowserOverlayNavigation, setId, listSelection,
+    SetBrowserOverlayPolicy::openLoopPick(storageSession.setBrowserNavigation, setId, listSelection,
                                           listScrollOffset);
     return true;
 }
 
 bool StorageManager::navigateSetBrowserOverlayBack(uint8_t& outListSelection,
                                                    uint8_t& outListScrollOffset) {
-    return SetBrowserOverlayPolicy::navigateBack(setBrowserOverlayNavigation, outListSelection,
+    return SetBrowserOverlayPolicy::navigateBack(storageSession.setBrowserNavigation, outListSelection,
                                                  outListScrollOffset);
 }
 
 uint16_t StorageManager::getSetBrowserOverlayDrilledSetId() {
-    return setBrowserOverlayNavigation.drilledSetId;
+    return storageSession.setBrowserNavigation.drilledSetId;
 }
 
 bool StorageManager::isRevisionLoadDirtyPromptActive() {
-    return revisionLoadDirtyPromptActive;
+    return storageSession.revisionLoad.heldForWorkspaceDirty;
 }
 
 uint8_t StorageManager::getRevisionLoadDirtyPromptSelection() {
-    return revisionLoadDirtyPromptSelection;
+    return static_cast<uint8_t>(storageSession.revisionLoad.confirmChoice);
 }
 
 void StorageManager::adjustRevisionLoadDirtyPromptSelection(int delta) {
-    if (!revisionLoadDirtyPromptActive || delta == 0) {
+    if (!storageSession.revisionLoad.heldForWorkspaceDirty || delta == 0) {
         return;
     }
-    int next = static_cast<int>(revisionLoadDirtyPromptSelection) + delta;
+    int next = static_cast<int>(storageSession.revisionLoad.confirmChoice) + delta;
     if (next < 0) {
         next = 0;
     } else if (next >= static_cast<int>(RevisionLoadPolicy::kDirtyPromptRowCount)) {
         next = static_cast<int>(RevisionLoadPolicy::kDirtyPromptRowCount) - 1;
     }
-    revisionLoadDirtyPromptSelection = static_cast<uint8_t>(next);
+    storageSession.revisionLoad.confirmChoice =
+        static_cast<RevisionLoadPolicy::DirtyPromptChoice>(next);
 #if defined(SESSION_CAPTURE)
-    SC_OVERLAY_SEL(1, revisionLoadDirtyPromptSelection);
+    SC_OVERLAY_SEL(1, static_cast<uint8_t>(storageSession.revisionLoad.confirmChoice));
 #endif
 }
 
@@ -4241,15 +4231,12 @@ void StorageManager::confirmRevisionLoadDirtyPromptSaveThenLoad() {
 #if BYPASS_STOP_UNDO_SAVE
     return;
 #else
-    if (!revisionLoadDirtyPromptActive || !revisionLoadRequestStaged) {
+    if (!storageSession.revisionLoad.heldForWorkspaceDirty || !storageSession.revisionLoad.requested) {
         return;
     }
-    revisionLoadDirtyPromptActive = false;
-    revisionLoadPipelineActive = true;
-    revisionLoadSaveThenLoadPipeline = true;
-    setBrowserOverlayPersistencePhase =
-        SetBrowserOverlayPolicy::PersistencePhase::AwaitingCommitThenLoad;
-    SC_PERSIST("rev_load_dirty_yes", 0, revisionLoadStagedSetId, revisionLoadStagedRevisionId,
+    storageSession.revisionLoad.heldForWorkspaceDirty = false;
+    storageSession.revisionLoad.loadAfterRevisionCommit = true;
+    SC_PERSIST("rev_load_dirty_yes", 0, storageSession.revisionLoad.requestedSetId, storageSession.revisionLoad.requestedRevisionId,
                "save_then_load");
     requestCommitRevision();
 #endif
@@ -4259,12 +4246,12 @@ void StorageManager::confirmRevisionLoadDirtyPromptDiscard() {
 #if BYPASS_STOP_UNDO_SAVE
     return;
 #else
-    if (!revisionLoadDirtyPromptActive || !revisionLoadRequestStaged) {
+    if (!storageSession.revisionLoad.heldForWorkspaceDirty || !storageSession.revisionLoad.requested) {
         return;
     }
-    revisionLoadDirtyPromptActive = false;
-    revisionLoadSaveThenLoadPipeline = false;
-    SC_PERSIST("rev_load_dirty_no", 0, revisionLoadStagedSetId, revisionLoadStagedRevisionId,
+    storageSession.revisionLoad.heldForWorkspaceDirty = false;
+    storageSession.revisionLoad.loadAfterRevisionCommit = false;
+    SC_PERSIST("rev_load_dirty_no", 0, storageSession.revisionLoad.requestedSetId, storageSession.revisionLoad.requestedRevisionId,
                "discard_load");
     dispatchStagedRevisionLoad();
 #endif
@@ -4274,10 +4261,10 @@ void StorageManager::cancelRevisionLoadDirtyPrompt() {
 #if BYPASS_STOP_UNDO_SAVE
     return;
 #else
-    if (!revisionLoadDirtyPromptActive) {
+    if (!storageSession.revisionLoad.heldForWorkspaceDirty) {
         return;
     }
-    SC_PERSIST("rev_load_dirty_cancel", 0, revisionLoadStagedSetId, revisionLoadStagedRevisionId,
+    SC_PERSIST("rev_load_dirty_cancel", 0, storageSession.revisionLoad.requestedSetId, storageSession.revisionLoad.requestedRevisionId,
                "cancel");
     clearRevisionLoadPromptAndPipelineState();
 #endif
@@ -4986,7 +4973,7 @@ void StorageManager::processDeferredSaveState(const LooperState& state) {
 #endif
     deferredSaveSdIoActive = false;
     revisionCommitSdIoActive = false;
-    revisionLoadSdIoActive = false;
+    storageSession.revisionLoad.sdIoActive = false;
 
     const uint32_t sliceBudgetUs = resolvePersistenceSliceBudgetUs(state);
     const uint32_t sliceStartUs = micros();
@@ -4996,16 +4983,13 @@ void StorageManager::processDeferredSaveState(const LooperState& state) {
                                                                   micros() - sliceStartUs);
     };
 
-    if (bootRevisionRecoveryPending && !revisionLoadPending && !revisionLoadInProgress &&
+    if (bootRevisionRecoveryPending && !storageSession.revisionLoad.pending && !storageSession.revisionLoad.inProgress &&
         !revisionCommitPending && !revisionCommitInProgress && !deferredSavePending &&
         !deferredSaveInProgress) {
         bootRevisionRecoveryPending = false;
         revisionLoadSetId = bootRevisionRecoverySetId;
         revisionLoadRevisionId = bootRevisionRecoveryRevisionId;
-        revisionLoadPending = true;
-        revisionLoadPipelineActive = true;
-        setBrowserOverlayPersistencePhase =
-            SetBrowserOverlayPolicy::PersistencePhase::LoadInProgress;
+        storageSession.revisionLoad.pending = true;
         Serial.print("[StorageManager] Boot recovery: queued revision load S");
         Serial.print(revisionLoadSetId);
         Serial.print(" v");
@@ -5018,7 +5002,7 @@ void StorageManager::processDeferredSaveState(const LooperState& state) {
         const bool revisionBlockedByDeferredSave =
             revisionCommitPending && (deferredSavePending || deferredSaveInProgress);
         const bool revisionBlockedByLoad =
-            revisionCommitPending && (revisionLoadPending || revisionLoadInProgress);
+            revisionCommitPending && (storageSession.revisionLoad.pending || storageSession.revisionLoad.inProgress);
         if (revisionBlockedByDeferredSave || revisionBlockedByLoad) {
             const uint32_t nowMs = millis();
             if (nowMs - lastRevisionCommitBlockedLogAtMs >= 5000U) {
@@ -5051,17 +5035,17 @@ void StorageManager::processDeferredSaveState(const LooperState& state) {
                 break;
             }
             if (RevisionLoadPolicy::shouldDispatchStagedLoadAfterCommitComplete(
-                    revisionLoadSaveThenLoadPipeline, true)) {
-                revisionLoadSaveThenLoadPipeline = false;
+                    storageSession.revisionLoad.loadAfterRevisionCommit, true)) {
+                storageSession.revisionLoad.loadAfterRevisionCommit = false;
                 dispatchStagedRevisionLoad();
             }
             continue;
         }
 
         const bool revisionLoadBlockedByDeferredSave =
-            revisionLoadPending && (deferredSavePending || deferredSaveInProgress);
+            storageSession.revisionLoad.pending && (deferredSavePending || deferredSaveInProgress);
         const bool revisionLoadBlockedByCommit =
-            revisionLoadPending && (revisionCommitPending || revisionCommitInProgress);
+            storageSession.revisionLoad.pending && (revisionCommitPending || revisionCommitInProgress);
         if (revisionLoadBlockedByDeferredSave || revisionLoadBlockedByCommit) {
             const uint32_t nowMs = millis();
             if (nowMs - lastRevisionLoadBlockedLogAtMs >= 5000U) {
@@ -5072,36 +5056,36 @@ void StorageManager::processDeferredSaveState(const LooperState& state) {
                            revisionLoadBlockedByDeferredSave ? "deferred_save_active"
                                                                : "commit_active");
             }
-        } else if (revisionLoadInProgress || revisionLoadPending) {
-            if (!revisionLoadInProgress && revisionLoadPending) {
-                revisionLoadPending = false;
-                revisionLoadInProgress = true;
+        } else if (storageSession.revisionLoad.inProgress || storageSession.revisionLoad.pending) {
+            if (!storageSession.revisionLoad.inProgress && storageSession.revisionLoad.pending) {
+                storageSession.revisionLoad.pending = false;
+                storageSession.revisionLoad.inProgress = true;
                 revisionLoadStage = RevisionLoadStage::Validate;
                 SC_PERSIST("rev_load_dispatch", 0, revisionLoadSetId, revisionLoadRevisionId,
                            "run");
             }
 
             const uint32_t ioStartUs = micros();
-            revisionLoadSdIoActive = true;
+            storageSession.revisionLoad.sdIoActive = true;
             const bool revLoadStepOk =
                 stepRevisionLoadJob(const_cast<LooperState&>(state));
-            revisionLoadSdIoActive = false;
+            storageSession.revisionLoad.sdIoActive = false;
             deferredSaveDisplayBlockUs += micros() - ioStartUs;
 
             if (!revLoadStepOk) {
                 Serial.print("[StorageManager] ERROR: Revision load failed at stage ");
                 Serial.println(static_cast<uint8_t>(revisionLoadStage));
                 revisionLoadLastDisplaySetId =
-                    revisionLoadSetId != 0 ? revisionLoadSetId : revisionLoadStagedSetId;
+                    revisionLoadSetId != 0 ? revisionLoadSetId : storageSession.revisionLoad.requestedSetId;
                 revisionLoadLastDisplayRevisionId = revisionLoadRevisionId != 0
                                                           ? revisionLoadRevisionId
-                                                          : revisionLoadStagedRevisionId;
+                                                          : storageSession.revisionLoad.requestedRevisionId;
                 revisionLoadFailedAtMs = millis();
                 revisionLoadCompletedAtMs = 0;
                 resetRevisionLoadJobState();
                 break;
             }
-            if (revisionLoadInProgress) {
+            if (storageSession.revisionLoad.inProgress) {
                 break;
             }
             continue;
@@ -5222,8 +5206,7 @@ void StorageManager::beginOverlaySaveRowCommit() {
 #if BYPASS_STOP_UNDO_SAVE
     return;
 #else
-    setBrowserOverlayPersistencePhase =
-        SetBrowserOverlayPolicy::PersistencePhase::CommitOnlyBackground;
+    storageSession.revisionCommit.overlayBackgroundCommit = true;
     requestCommitRevision();
 #endif
 }
@@ -5254,21 +5237,19 @@ void StorageManager::requestLoadRevision(uint16_t setId, uint16_t revisionId) {
         SC_PERSIST("rev_load_skip", 0, setId, revisionId, "bad_id");
         return;
     }
-    if (revisionLoadDirtyPromptActive ||
-        SetBrowserOverlayPolicy::isOverlayLoadRequestBlocked(setBrowserOverlayPersistencePhase,
-                                                             revisionLoadPending,
-                                                             revisionLoadInProgress)) {
+    if (storageSession.revisionLoad.heldForWorkspaceDirty ||
+        isOverlayLoadRequestBlocked(buildStorageActivitySnapshot())) {
         SC_PERSIST("rev_load_skip", 0, setId, revisionId, "pipeline_busy");
         return;
     }
-    revisionLoadStagedSetId = setId;
-    revisionLoadStagedRevisionId = revisionId;
-    revisionLoadRequestStaged = true;
-    revisionLoadDirtyPromptSelection = 0;
+    storageSession.revisionLoad.requestedSetId = setId;
+    storageSession.revisionLoad.requestedRevisionId = revisionId;
+    storageSession.revisionLoad.requested = true;
+    storageSession.revisionLoad.confirmChoice = RevisionLoadPolicy::DirtyPromptChoice::None;
 
     if (RevisionLoadPolicy::resolveLoadRequestGate(isCurrentWorkspaceDirty()) ==
         RevisionLoadPolicy::LoadRequestGate::ShowDirtyPrompt) {
-        revisionLoadDirtyPromptActive = true;
+        storageSession.revisionLoad.heldForWorkspaceDirty = true;
         SC_PERSIST("rev_load_dirty_prompt", 0, setId, revisionId, "shown");
         return;
     }
@@ -5326,7 +5307,7 @@ bool StorageManager::hasRevisionLoadWork() {
 #if BYPASS_STOP_UNDO_SAVE
     return false;
 #else
-    return revisionLoadPending || revisionLoadInProgress;
+    return storageSession.revisionLoad.pending || storageSession.revisionLoad.inProgress;
 #endif
 }
 
@@ -5334,7 +5315,7 @@ bool StorageManager::isRevisionLoadActive() {
 #if BYPASS_STOP_UNDO_SAVE
     return false;
 #else
-    return revisionLoadSdIoActive;
+    return storageSession.revisionLoad.sdIoActive;
 #endif
 }
 
@@ -5342,17 +5323,7 @@ bool StorageManager::isOverlayCatalogReadAllowed() {
 #if BYPASS_STOP_UNDO_SAVE
     return true;
 #else
-    OverlayCatalogReadPolicy::OverlayCatalogReadInputs inputs{};
-    inputs.deferredSavePending = deferredSavePending;
-    inputs.deferredSaveInProgress = deferredSaveInProgress;
-    inputs.revisionCommitPending = revisionCommitPending;
-    inputs.revisionCommitInProgress = revisionCommitInProgress;
-    inputs.revisionLoadPending = revisionLoadPending;
-    inputs.revisionLoadInProgress = revisionLoadInProgress;
-    inputs.deferredSaveSdIoActive = deferredSaveSdIoActive;
-    inputs.revisionCommitSdIoActive = revisionCommitSdIoActive;
-    inputs.revisionLoadSdIoActive = revisionLoadSdIoActive;
-    return OverlayCatalogReadPolicy::isOverlayCatalogReadAllowed(inputs);
+    return ::isOverlayCatalogReadAllowed(buildStorageActivitySnapshot());
 #endif
 }
 
@@ -5488,8 +5459,8 @@ CAPTURE_HITL_MEM bool StorageManager::nukeHitlSetsCatalog() {
 #if BYPASS_STOP_UNDO_SAVE
     return false;
 #else
-    if (revisionCommitPending || revisionCommitInProgress || revisionLoadPending ||
-        revisionLoadInProgress) {
+    if (revisionCommitPending || revisionCommitInProgress || storageSession.revisionLoad.pending ||
+        storageSession.revisionLoad.inProgress) {
         SC_PERSIST("rev_nuke_sets", 0, 0, 0, "active_job");
         return false;
     }
@@ -5780,10 +5751,10 @@ DeferredSaveDisplayStatus StorageManager::getDeferredLoadDisplayStatus(uint32_t 
     return {};
 #else
     DeferredLoadDisplayInputs inputs{};
-    inputs.loadPending = revisionLoadPending;
-    inputs.loadInProgress = revisionLoadInProgress;
+    inputs.loadPending = storageSession.revisionLoad.pending;
+    inputs.loadInProgress = storageSession.revisionLoad.inProgress;
     inputs.saveThenLoadCommitInProgress =
-        revisionLoadSaveThenLoadPipeline && revisionCommitInProgress;
+        storageSession.revisionLoad.loadAfterRevisionCommit && revisionCommitInProgress;
     inputs.completedAtMs = revisionLoadCompletedAtMs;
     inputs.failedAtMs = revisionLoadFailedAtMs;
     return resolveDeferredLoadDisplayStatus(nowMs, inputs);
@@ -5794,11 +5765,11 @@ uint16_t StorageManager::getRevisionLoadDisplayTargetSetId() {
 #if BYPASS_STOP_UNDO_SAVE
     return 0;
 #else
-    if (revisionLoadPipelineActive || revisionLoadPending || revisionLoadInProgress) {
+    if (isRevisionLoadDisplayPipelineActive(buildStorageActivitySnapshot())) {
         if (revisionLoadSetId != 0) {
             return revisionLoadSetId;
         }
-        return revisionLoadStagedSetId;
+        return storageSession.revisionLoad.requestedSetId;
     }
     if (revisionLoadCompletedAtMs != 0 || revisionLoadFailedAtMs != 0) {
         return revisionLoadLastDisplaySetId;
@@ -5811,11 +5782,11 @@ uint16_t StorageManager::getRevisionLoadDisplayTargetRevisionId() {
 #if BYPASS_STOP_UNDO_SAVE
     return 0;
 #else
-    if (revisionLoadPipelineActive || revisionLoadPending || revisionLoadInProgress) {
+    if (isRevisionLoadDisplayPipelineActive(buildStorageActivitySnapshot())) {
         if (revisionLoadRevisionId != 0) {
             return revisionLoadRevisionId;
         }
-        return revisionLoadStagedRevisionId;
+        return storageSession.revisionLoad.requestedRevisionId;
     }
     if (revisionLoadCompletedAtMs != 0 || revisionLoadFailedAtMs != 0) {
         return revisionLoadLastDisplayRevisionId;

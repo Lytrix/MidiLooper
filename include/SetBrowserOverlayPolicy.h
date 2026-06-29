@@ -34,9 +34,9 @@ struct NavigationState {
 
 enum class PersistencePhase : uint8_t {
   Idle = 0,
-  AwaitingCommitThenLoad,
-  LoadInProgress,
-  CommitOnlyBackground,
+  AwaitingRevisionCommit,
+  RevisionLoadActive,
+  RevisionCommitActive,
 };
 
 /// Transient modes (dirty prompt, minimal loading) take priority over drill navigation.
