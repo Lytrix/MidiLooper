@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-06-29 (StorageSession Tier 3 partial)
+Last updated: 2026-06-29 (StorageSession §8 job struct migration complete)
 
 ---
 
@@ -25,7 +25,7 @@ Set revision persistence + load/save overlay UX + **StorageSession state refacto
 
 ## Current target
 
-1. **Tier 3 (remaining)** — [`storage-session-state-refactor` tasks](../openspec/changes/storage-session-state-refactor/tasks.md): Step **§8** next (`StorageSession` job struct migration); §7.6 HITL overlay verification pending hardware
+1. **Tier 3 (remaining)** — [`storage-session-state-refactor` tasks](../openspec/changes/storage-session-state-refactor/tasks.md): Step **§9** next (backend API renames); §7.6 HITL overlay verification pending hardware
 2. Remaining `set-revision-persistence` `tasks.md` items (overlay slice — LoopPick parked)
 
 ## Completion conditions
@@ -35,7 +35,8 @@ Set revision persistence + load/save overlay UX + **StorageSession state refacto
 - [x] Tier 3 FSM TU split complete (`storage-session-state-refactor` tasks §1–§6)
 - [x] Overlay TU complete (`storage-session-state-refactor` tasks §7.1–§7.5)
 - [ ] Overlay HITL verification (`storage-session-state-refactor` tasks §7.6)
-- [ ] `StorageSession` job struct migration + API renames (`storage-session-state-refactor` tasks §8–§11)
+- [x] `StorageSession` job struct migration (`storage-session-state-refactor` tasks §8)
+- [ ] Backend API + policy renames (`storage-session-state-refactor` tasks §9–§10)
 - [x] `pio test -e native` passes for touched logic
 - [ ] Overlay load/save flow manually verified on hardware when UI/SD paths change
 - [ ] PROJECT_STATE + this file updated at session close

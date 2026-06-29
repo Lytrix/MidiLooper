@@ -37,22 +37,22 @@ STORAGE_PERSIST_MEM void clearRevisionLoadPromptAndPipelineState() {
 }
 
 STORAGE_PERSIST_MEM void resetRevisionLoadReloadRamState() {
-    if (revisionLoadReloadMetaFileOpen) {
-        revisionLoadReloadMetaFile.close();
-        revisionLoadReloadMetaFileOpen = false;
+    if (storageSession.revisionLoad.reloadMetaFileOpen) {
+        storageSession.revisionLoad.reloadMetaFile.close();
+        storageSession.revisionLoad.reloadMetaFileOpen = false;
     }
-    revisionLoadReloadRamStage = RevisionLoadReloadRamStage::WriteWorkspaceMeta;
-    revisionLoadReloadTrackCursor = 0;
-    revisionLoadReloadSlotCursor = 0;
-    revisionLoadReloadNumTracks = 0;
-    revisionLoadReloadActiveLoopIndex.clear();
-    revisionLoadReloadSelectedTrackIdx = 0;
-    revisionLoadReloadLooperState = LOOPER_IDLE;
-    revisionLoadReloadMasterLoopLength = 0;
+    storageSession.revisionLoad.reloadRamStage = RevisionLoadReloadRamStage::WriteWorkspaceMeta;
+    storageSession.revisionLoad.reloadTrackCursor = 0;
+    storageSession.revisionLoad.reloadSlotCursor = 0;
+    storageSession.revisionLoad.reloadNumTracks = 0;
+    storageSession.revisionLoad.reloadActiveLoopIndex.clear();
+    storageSession.revisionLoad.reloadSelectedTrackIdx = 0;
+    storageSession.revisionLoad.reloadLooperState = LOOPER_IDLE;
+    storageSession.revisionLoad.reloadMasterLoopLength = 0;
     for (uint8_t t = 0; t < Config::NUM_TRACKS; ++t) {
-        revisionLoadReloadAnySlotHasEvents[t] = false;
-        revisionLoadReloadLoadedTrackState[t] = TRACK_EMPTY;
-        revisionLoadReloadMuted[t] = false;
+        storageSession.revisionLoad.reloadAnySlotHasEvents[t] = false;
+        storageSession.revisionLoad.reloadLoadedTrackState[t] = TRACK_EMPTY;
+        storageSession.revisionLoad.reloadMuted[t] = false;
     }
 }
 
@@ -60,48 +60,48 @@ STORAGE_PERSIST_MEM void dispatchStagedRevisionLoad() {
     if (!storageSession.revisionLoad.requested) {
         return;
     }
-    revisionLoadSetId = storageSession.revisionLoad.requestedSetId;
-    revisionLoadRevisionId = storageSession.revisionLoad.requestedRevisionId;
+    storageSession.revisionLoad.setId = storageSession.revisionLoad.requestedSetId;
+    storageSession.revisionLoad.revisionId = storageSession.revisionLoad.requestedRevisionId;
     storageSession.revisionLoad.requested = false;
     storageSession.revisionLoad.heldForWorkspaceDirty = false;
     storageSession.revisionLoad.pending = true;
-    SC_PERSIST("rev_load_request", 0, revisionLoadSetId, revisionLoadRevisionId, "queued");
+    SC_PERSIST("rev_load_request", 0, storageSession.revisionLoad.setId, storageSession.revisionLoad.revisionId, "queued");
 }
 
 STORAGE_PERSIST_MEM void resetRevisionLoadJobState() {
-    if (revisionLoadSourceFileOpen) {
-        revisionLoadSourceFile.close();
-        revisionLoadSourceFileOpen = false;
+    if (storageSession.revisionLoad.sourceFileOpen) {
+        storageSession.revisionLoad.sourceFile.close();
+        storageSession.revisionLoad.sourceFileOpen = false;
     }
-    if (revisionLoadDestFileOpen) {
-        revisionLoadDestFile.close();
-        revisionLoadDestFileOpen = false;
+    if (storageSession.revisionLoad.destFileOpen) {
+        storageSession.revisionLoad.destFile.close();
+        storageSession.revisionLoad.destFileOpen = false;
     }
     storageSession.revisionLoad.inProgress = false;
     storageSession.revisionLoad.sdIoActive = false;
-    revisionLoadStage = RevisionLoadStage::Idle;
-    revisionLoadWriteStage = RevisionLoadWriteStage::PrepareEpoch;
-    revisionLoadSetId = 0;
-    revisionLoadRevisionId = 0;
-    revisionLoadSourcePath[0] = '\0';
-    revisionLoadSlotIndexCount = 0;
-    revisionLoadWorkspaceEpoch = 0;
-    revisionLoadTransportFileOffset = 0;
-    revisionLoadTransportBodySize = 0;
-    revisionLoadTransportReadPos = 0;
-    revisionLoadCopyTrackCursor = 0;
-    revisionLoadCopySlotCursor = 0;
-    revisionLoadSlotBodyRemaining = 0;
-    revisionLoadSlotReadPos = 0;
-    revisionLoadWritingEmptySlot = false;
-    revisionLoadLoopWriteStage = DeferredLoopWriteStage::Header;
-    lastRevisionLoadBlockedLogAtMs = 0;
-    revisionLoadUsedDefaultTransport = false;
-    revisionLoadDisplayRefreshPending = false;
-    revisionLoadHeader = RevisionPackedBlob::RevisionHeader{};
-    revisionLoadSlotIndexCount = 0;
+    storageSession.revisionLoad.stage = RevisionLoadStage::Idle;
+    storageSession.revisionLoad.writeStage = RevisionLoadWriteStage::PrepareEpoch;
+    storageSession.revisionLoad.setId = 0;
+    storageSession.revisionLoad.revisionId = 0;
+    storageSession.revisionLoad.sourcePath[0] = '\0';
+    storageSession.revisionLoad.slotIndexCount = 0;
+    storageSession.revisionLoad.workspaceEpoch = 0;
+    storageSession.revisionLoad.transportFileOffset = 0;
+    storageSession.revisionLoad.transportBodySize = 0;
+    storageSession.revisionLoad.transportReadPos = 0;
+    storageSession.revisionLoad.copyTrackCursor = 0;
+    storageSession.revisionLoad.copySlotCursor = 0;
+    storageSession.revisionLoad.slotBodyRemaining = 0;
+    storageSession.revisionLoad.slotReadPos = 0;
+    storageSession.revisionLoad.writingEmptySlot = false;
+    storageSession.revisionLoad.loopWriteStage = DeferredLoopWriteStage::Header;
+    storageSession.revisionLoad.lastBlockedLogAtMs = 0;
+    storageSession.revisionLoad.usedDefaultTransport = false;
+    storageSession.revisionLoad.displayRefreshPending = false;
+    storageSession.revisionLoad.header = RevisionPackedBlob::RevisionHeader{};
+    storageSession.revisionLoad.slotIndexCount = 0;
     for (uint16_t i = 0; i < kMaxRevisionLoopIndexEntries; ++i) {
-        revisionLoadSlotDirectoryEntries[i] = RevisionPackedBlob::RevisionLoopSlotDirectoryEntry{};
+        storageSession.revisionLoad.slotDirectoryEntries[i] = RevisionPackedBlob::RevisionLoopSlotDirectoryEntry{};
     }
     resetRevisionLoadReloadRamState();
     clearRevisionLoadPromptAndPipelineState();
@@ -109,10 +109,10 @@ STORAGE_PERSIST_MEM void resetRevisionLoadJobState() {
 
 STORAGE_PERSIST_MEM bool findRevisionLoadSlotEntry(uint8_t trackIndex, uint8_t slotIndex,
                                RevisionPackedBlob::RevisionLoopSlotDirectoryEntry& entryOut) {
-    for (uint16_t i = 0; i < revisionLoadSlotIndexCount; ++i) {
-        if (revisionLoadSlotDirectoryEntries[i].trackIndex == trackIndex &&
-            revisionLoadSlotDirectoryEntries[i].slotIndex == slotIndex) {
-            entryOut = revisionLoadSlotDirectoryEntries[i];
+    for (uint16_t i = 0; i < storageSession.revisionLoad.slotIndexCount; ++i) {
+        if (storageSession.revisionLoad.slotDirectoryEntries[i].trackIndex == trackIndex &&
+            storageSession.revisionLoad.slotDirectoryEntries[i].slotIndex == slotIndex) {
+            entryOut = storageSession.revisionLoad.slotDirectoryEntries[i];
             return true;
         }
     }
@@ -125,9 +125,9 @@ STORAGE_PERSIST_MEM uint32_t revisionLoadLoopSlotBodyFileOffset(const RevisionPa
 }
 
 STORAGE_PERSIST_MEM bool revisionLoadRevisionLoopSlotDirectoryEntryOccupied(uint8_t trackIndex, uint8_t slotIndex) {
-    for (uint16_t index = 0; index < revisionLoadSlotIndexCount; ++index) {
+    for (uint16_t index = 0; index < storageSession.revisionLoad.slotIndexCount; ++index) {
         const RevisionPackedBlob::RevisionLoopSlotDirectoryEntry& entry =
-            revisionLoadSlotDirectoryEntries[index];
+            storageSession.revisionLoad.slotDirectoryEntries[index];
         if (entry.trackIndex == trackIndex && entry.slotIndex == slotIndex) {
             return entry.occupied != 0;
         }
@@ -137,9 +137,9 @@ STORAGE_PERSIST_MEM bool revisionLoadRevisionLoopSlotDirectoryEntryOccupied(uint
 
 STORAGE_PERSIST_MEM uint32_t revisionLoadDefaultMasterLoopLength() {
     uint32_t maxLength = 0;
-    for (uint16_t index = 0; index < revisionLoadSlotIndexCount; ++index) {
+    for (uint16_t index = 0; index < storageSession.revisionLoad.slotIndexCount; ++index) {
         const RevisionPackedBlob::RevisionLoopSlotDirectoryEntry& entry =
-            revisionLoadSlotDirectoryEntries[index];
+            storageSession.revisionLoad.slotDirectoryEntries[index];
         if (entry.occupied != 0 && entry.loopLengthTicks > maxLength) {
             maxLength = entry.loopLengthTicks;
         }
@@ -148,9 +148,9 @@ STORAGE_PERSIST_MEM uint32_t revisionLoadDefaultMasterLoopLength() {
 }
 
 STORAGE_PERSIST_MEM uint8_t revisionLoadDefaultActiveLoopIndex(uint8_t trackIndex) {
-    for (uint16_t index = 0; index < revisionLoadSlotIndexCount; ++index) {
+    for (uint16_t index = 0; index < storageSession.revisionLoad.slotIndexCount; ++index) {
         const RevisionPackedBlob::RevisionLoopSlotDirectoryEntry& entry =
-            revisionLoadSlotDirectoryEntries[index];
+            storageSession.revisionLoad.slotDirectoryEntries[index];
         if (entry.trackIndex == trackIndex && entry.occupied != 0) {
             return entry.slotIndex;
         }
@@ -406,19 +406,19 @@ STORAGE_PERSIST_MEM bool validateRevisionLoadFileFooterFromSd(File& file, size_t
 }
 
 STORAGE_PERSIST_MEM bool beginRevisionLoadValidate() {
-    if (!SetRevisionCatalog::formatRevisionPath(revisionLoadSourcePath,
-                                                sizeof(revisionLoadSourcePath),
-                                                revisionLoadSetId, revisionLoadRevisionId,
+    if (!SetRevisionCatalog::formatRevisionPath(storageSession.revisionLoad.sourcePath,
+                                                sizeof(storageSession.revisionLoad.sourcePath),
+                                                storageSession.revisionLoad.setId, storageSession.revisionLoad.revisionId,
                                                 false)) {
         return false;
     }
-    if (!SD.exists(revisionLoadSourcePath)) {
+    if (!SD.exists(storageSession.revisionLoad.sourcePath)) {
         Serial.print("[StorageManager] ERROR: Revision file missing ");
-        Serial.println(revisionLoadSourcePath);
+        Serial.println(storageSession.revisionLoad.sourcePath);
         return false;
     }
 
-    File file = SD.open(revisionLoadSourcePath, FILE_READ);
+    File file = SD.open(storageSession.revisionLoad.sourcePath, FILE_READ);
     if (!file) {
         return false;
     }
@@ -429,45 +429,45 @@ STORAGE_PERSIST_MEM bool beginRevisionLoadValidate() {
         return false;
     }
 
-    if (!validateRevisionLoadFileFooterFromSd(file, fileSize, revisionLoadHeader)) {
+    if (!validateRevisionLoadFileFooterFromSd(file, fileSize, storageSession.revisionLoad.header)) {
         file.close();
         return false;
     }
 
-    revisionLoadSlotIndexCount = 0;
-    revisionLoadTransportFileOffset = 0;
-    revisionLoadTransportBodySize = 0;
-    revisionLoadUsedDefaultTransport = false;
+    storageSession.revisionLoad.slotIndexCount = 0;
+    storageSession.revisionLoad.transportFileOffset = 0;
+    storageSession.revisionLoad.transportBodySize = 0;
+    storageSession.revisionLoad.usedDefaultTransport = false;
 
-    if (!findChunkBodyInRevisionFile(file, fileSize, revisionLoadHeader,
+    if (!findChunkBodyInRevisionFile(file, fileSize, storageSession.revisionLoad.header,
                                      RevisionPackedBlob::ChunkType::Transport, 0, 0,
-                                     revisionLoadTransportFileOffset,
-                                     revisionLoadTransportBodySize) ||
-        revisionLoadTransportBodySize == 0) {
-        revisionLoadTransportFileOffset = 0;
-        revisionLoadTransportBodySize = 0;
-        revisionLoadUsedDefaultTransport = true;
+                                     storageSession.revisionLoad.transportFileOffset,
+                                     storageSession.revisionLoad.transportBodySize) ||
+        storageSession.revisionLoad.transportBodySize == 0) {
+        storageSession.revisionLoad.transportFileOffset = 0;
+        storageSession.revisionLoad.transportBodySize = 0;
+        storageSession.revisionLoad.usedDefaultTransport = true;
         Serial.println(
             "[StorageManager] Revision load missing Transport chunk; using default transport");
     }
 
-    if (!readSlotIndexEntriesFromRevisionFile(file, fileSize, revisionLoadHeader,
-                                              revisionLoadSlotDirectoryEntries,
+    if (!readSlotIndexEntriesFromRevisionFile(file, fileSize, storageSession.revisionLoad.header,
+                                              storageSession.revisionLoad.slotDirectoryEntries,
                                               kMaxRevisionLoopIndexEntries,
-                                              revisionLoadSlotIndexCount)) {
+                                              storageSession.revisionLoad.slotIndexCount)) {
         uint16_t slotIndexEntryCount = 0;
         const bool hasSlotIndexChunk = readRevisionLoopSlotDirectoryEntryCountFromRevisionFile(
-            file, fileSize, revisionLoadHeader, slotIndexEntryCount);
+            file, fileSize, storageSession.revisionLoad.header, slotIndexEntryCount);
         file.close();
         if (!hasSlotIndexChunk) {
-            revisionLoadSlotIndexCount = 0;
+            storageSession.revisionLoad.slotIndexCount = 0;
         } else {
             Serial.print("[StorageManager] ERROR: Revision load slot index parse failed fileSize=");
             Serial.print(static_cast<uint32_t>(fileSize));
             Serial.print(" hdrChunkCount=");
-            Serial.print(revisionLoadHeader.chunkCount);
+            Serial.print(storageSession.revisionLoad.header.chunkCount);
             Serial.print(" hdrPayloadSize=");
-            Serial.print(revisionLoadHeader.payloadSize);
+            Serial.print(storageSession.revisionLoad.header.payloadSize);
             Serial.print(" slotIndexEntryCount=");
             Serial.println(slotIndexEntryCount);
             return false;
@@ -476,46 +476,46 @@ STORAGE_PERSIST_MEM bool beginRevisionLoadValidate() {
         file.close();
     }
 
-    revisionLoadWriteStage = RevisionLoadWriteStage::PrepareEpoch;
-    revisionLoadStage = RevisionLoadStage::Write;
+    storageSession.revisionLoad.writeStage = RevisionLoadWriteStage::PrepareEpoch;
+    storageSession.revisionLoad.stage = RevisionLoadStage::Write;
     return true;
 }
 
 STORAGE_PERSIST_MEM bool openRevisionLoadLoopSlotTemp(uint8_t trackIndex, uint8_t slotIndex) {
-    if (revisionLoadDestFileOpen) {
-        revisionLoadDestFile.close();
-        revisionLoadDestFileOpen = false;
+    if (storageSession.revisionLoad.destFileOpen) {
+        storageSession.revisionLoad.destFile.close();
+        storageSession.revisionLoad.destFileOpen = false;
     }
     char tempPath[48];
     if (!CurrentSetStorage::formatLoopSlotTempPath(tempPath, sizeof(tempPath), trackIndex,
                                                    slotIndex)) {
         return false;
     }
-    revisionLoadDestFile = SD.open(tempPath, FILE_WRITE);
-    if (!revisionLoadDestFile) {
+    storageSession.revisionLoad.destFile = SD.open(tempPath, FILE_WRITE);
+    if (!storageSession.revisionLoad.destFile) {
         return false;
     }
-    revisionLoadDestFile.seek(0);
-    if (!CurrentWorkspaceStorage::writeEpochHeaderPlaceholder(revisionLoadDestFile,
-                                                              revisionLoadWorkspaceEpoch)) {
-        revisionLoadDestFile.close();
+    storageSession.revisionLoad.destFile.seek(0);
+    if (!CurrentWorkspaceStorage::writeEpochHeaderPlaceholder(storageSession.revisionLoad.destFile,
+                                                              storageSession.revisionLoad.workspaceEpoch)) {
+        storageSession.revisionLoad.destFile.close();
         return false;
     }
-    revisionLoadDestFileOpen = true;
+    storageSession.revisionLoad.destFileOpen = true;
     return true;
 }
 
 STORAGE_PERSIST_MEM bool finalizeRevisionLoadLoopSlotTemp(uint8_t trackIndex, uint8_t slotIndex) {
-    if (!revisionLoadDestFileOpen) {
+    if (!storageSession.revisionLoad.destFileOpen) {
         return false;
     }
-    if (!writeRaw(revisionLoadDestFile, &CurrentSetStorage::kSaveFileToken, sizeof(CurrentSetStorage::kSaveFileToken))) {
-        revisionLoadDestFile.close();
-        revisionLoadDestFileOpen = false;
+    if (!writeRaw(storageSession.revisionLoad.destFile, &CurrentSetStorage::kSaveFileToken, sizeof(CurrentSetStorage::kSaveFileToken))) {
+        storageSession.revisionLoad.destFile.close();
+        storageSession.revisionLoad.destFileOpen = false;
         return false;
     }
-    revisionLoadDestFile.close();
-    revisionLoadDestFileOpen = false;
+    storageSession.revisionLoad.destFile.close();
+    storageSession.revisionLoad.destFileOpen = false;
 
     char tempPath[48];
     char finalPath[48];
@@ -535,66 +535,66 @@ STORAGE_PERSIST_MEM bool finalizeRevisionLoadLoopSlotTemp(uint8_t trackIndex, ui
 }
 
 STORAGE_PERSIST_MEM bool stepRevisionLoadWrite() {
-    switch (revisionLoadWriteStage) {
+    switch (storageSession.revisionLoad.writeStage) {
         case RevisionLoadWriteStage::PrepareEpoch:
             ++currentWorkspaceEpoch;
-            revisionLoadWorkspaceEpoch = currentWorkspaceEpoch;
+            storageSession.revisionLoad.workspaceEpoch = currentWorkspaceEpoch;
             if (!CurrentSetStorage::ensureDirectory(PersistenceLayout::kRoot) ||
                 !CurrentSetStorage::ensureDirectory(CurrentSetStorage::kCurrentSetDir) ||
                 !CurrentSetStorage::ensureDirectory(CurrentWorkspaceStorage::kCurrentTempDir) ||
                 !CurrentSetStorage::ensureDirectory(CurrentSetStorage::kCurrentSlotsDir)) {
                 return false;
             }
-            revisionLoadWriteStage = RevisionLoadWriteStage::OpenMetaTemp;
+            storageSession.revisionLoad.writeStage = RevisionLoadWriteStage::OpenMetaTemp;
             return true;
 
         case RevisionLoadWriteStage::OpenMetaTemp:
-            revisionLoadDestFile = SD.open(CurrentSetStorage::kCurrentMetaTempPath, FILE_WRITE);
-            if (!revisionLoadDestFile) {
+            storageSession.revisionLoad.destFile = SD.open(CurrentSetStorage::kCurrentMetaTempPath, FILE_WRITE);
+            if (!storageSession.revisionLoad.destFile) {
                 return false;
             }
-            revisionLoadDestFile.seek(0);
-            if (!CurrentWorkspaceStorage::writeEpochHeaderPlaceholder(revisionLoadDestFile,
-                                                                      revisionLoadWorkspaceEpoch)) {
-                revisionLoadDestFile.close();
+            storageSession.revisionLoad.destFile.seek(0);
+            if (!CurrentWorkspaceStorage::writeEpochHeaderPlaceholder(storageSession.revisionLoad.destFile,
+                                                                      storageSession.revisionLoad.workspaceEpoch)) {
+                storageSession.revisionLoad.destFile.close();
                 return false;
             }
-            revisionLoadDestFileOpen = true;
-            revisionLoadTransportReadPos = 0;
-            revisionLoadWriteStage = RevisionLoadWriteStage::CopyTransportBody;
+            storageSession.revisionLoad.destFileOpen = true;
+            storageSession.revisionLoad.transportReadPos = 0;
+            storageSession.revisionLoad.writeStage = RevisionLoadWriteStage::CopyTransportBody;
             return true;
 
         case RevisionLoadWriteStage::CopyTransportBody:
-            if (revisionLoadTransportBodySize == 0) {
-                if (!writeDefaultRevisionLoadTransportBody(revisionLoadDestFile)) {
+            if (storageSession.revisionLoad.transportBodySize == 0) {
+                if (!writeDefaultRevisionLoadTransportBody(storageSession.revisionLoad.destFile)) {
                     Serial.println(
                         "[StorageManager] ERROR: Revision load failed writing default transport");
-                    revisionLoadDestFile.close();
-                    revisionLoadDestFileOpen = false;
+                    storageSession.revisionLoad.destFile.close();
+                    storageSession.revisionLoad.destFileOpen = false;
                     return false;
                 }
-                revisionLoadWriteStage = RevisionLoadWriteStage::FinalizeMetaTemp;
+                storageSession.revisionLoad.writeStage = RevisionLoadWriteStage::FinalizeMetaTemp;
                 return true;
             }
-            if (!revisionLoadSourceFileOpen) {
-                revisionLoadSourceFile = SD.open(revisionLoadSourcePath, FILE_READ);
-                if (!revisionLoadSourceFile) {
+            if (!storageSession.revisionLoad.sourceFileOpen) {
+                storageSession.revisionLoad.sourceFile = SD.open(storageSession.revisionLoad.sourcePath, FILE_READ);
+                if (!storageSession.revisionLoad.sourceFile) {
                     return false;
                 }
-                revisionLoadSourceFileOpen = true;
+                storageSession.revisionLoad.sourceFileOpen = true;
             }
-            if (revisionLoadTransportReadPos == 0) {
-                revisionLoadTransportReadPos = revisionLoadTransportFileOffset;
+            if (storageSession.revisionLoad.transportReadPos == 0) {
+                storageSession.revisionLoad.transportReadPos = storageSession.revisionLoad.transportFileOffset;
             }
             {
                 const uint32_t endPos =
-                    revisionLoadTransportFileOffset + revisionLoadTransportBodySize;
-                uint32_t remaining = endPos - revisionLoadTransportReadPos;
+                    storageSession.revisionLoad.transportFileOffset + storageSession.revisionLoad.transportBodySize;
+                uint32_t remaining = endPos - storageSession.revisionLoad.transportReadPos;
                 if (remaining > 0) {
                     if (!copyRevisionCommitChunk(
-                            revisionLoadDestFile, revisionLoadSourceFile,
-                            revisionLoadTransportReadPos, remaining,
-                            static_cast<uint32_t>(revisionCommitCopyBuffer.size()))) {
+                            storageSession.revisionLoad.destFile, storageSession.revisionLoad.sourceFile,
+                            storageSession.revisionLoad.transportReadPos, remaining,
+                            static_cast<uint32_t>(storageSession.revisionCommit.copyBuffer.size()))) {
                         return false;
                     }
                     if (remaining > 0) {
@@ -602,25 +602,25 @@ STORAGE_PERSIST_MEM bool stepRevisionLoadWrite() {
                     }
                 }
             }
-            if (revisionLoadSourceFileOpen) {
-                revisionLoadSourceFile.close();
-                revisionLoadSourceFileOpen = false;
+            if (storageSession.revisionLoad.sourceFileOpen) {
+                storageSession.revisionLoad.sourceFile.close();
+                storageSession.revisionLoad.sourceFileOpen = false;
             }
-            revisionLoadWriteStage = RevisionLoadWriteStage::FinalizeMetaTemp;
+            storageSession.revisionLoad.writeStage = RevisionLoadWriteStage::FinalizeMetaTemp;
             return true;
 
         case RevisionLoadWriteStage::FinalizeMetaTemp: {
-            if (!revisionLoadDestFileOpen) {
+            if (!storageSession.revisionLoad.destFileOpen) {
                 return false;
             }
-            if (!writeRaw(revisionLoadDestFile, &CurrentSetStorage::kSaveFileToken,
+            if (!writeRaw(storageSession.revisionLoad.destFile, &CurrentSetStorage::kSaveFileToken,
                           sizeof(CurrentSetStorage::kSaveFileToken))) {
-                revisionLoadDestFile.close();
-                revisionLoadDestFileOpen = false;
+                storageSession.revisionLoad.destFile.close();
+                storageSession.revisionLoad.destFileOpen = false;
                 return false;
             }
-            revisionLoadDestFile.close();
-            revisionLoadDestFileOpen = false;
+            storageSession.revisionLoad.destFile.close();
+            storageSession.revisionLoad.destFileOpen = false;
             if (!CurrentWorkspaceStorage::finalizeEpochFileHeaderCrc(
                     CurrentSetStorage::kCurrentMetaTempPath)) {
                 return false;
@@ -632,170 +632,170 @@ STORAGE_PERSIST_MEM bool stepRevisionLoadWrite() {
                                                            CurrentSetStorage::kCurrentMetaPath)) {
                 return false;
             }
-            revisionLoadCopyTrackCursor = 0;
-            revisionLoadCopySlotCursor = 0;
-            revisionLoadSlotBodyRemaining = 0;
-            revisionLoadWriteStage = RevisionLoadWriteStage::WriteLoopSlots;
+            storageSession.revisionLoad.copyTrackCursor = 0;
+            storageSession.revisionLoad.copySlotCursor = 0;
+            storageSession.revisionLoad.slotBodyRemaining = 0;
+            storageSession.revisionLoad.writeStage = RevisionLoadWriteStage::WriteLoopSlots;
             return true;
         }
 
         case RevisionLoadWriteStage::WriteLoopSlots:
-            while (revisionLoadCopyTrackCursor < Config::NUM_TRACKS) {
-                while (revisionLoadCopySlotCursor < Config::MAX_LOOPS_PER_TRACK) {
-                    const uint8_t trackIndex = revisionLoadCopyTrackCursor;
-                    const uint8_t slotIndex = revisionLoadCopySlotCursor;
+            while (storageSession.revisionLoad.copyTrackCursor < Config::NUM_TRACKS) {
+                while (storageSession.revisionLoad.copySlotCursor < Config::MAX_LOOPS_PER_TRACK) {
+                    const uint8_t trackIndex = storageSession.revisionLoad.copyTrackCursor;
+                    const uint8_t slotIndex = storageSession.revisionLoad.copySlotCursor;
                     RevisionPackedBlob::RevisionLoopSlotDirectoryEntry slotEntry{};
                     const bool hasSlotEntry =
                         findRevisionLoadSlotEntry(trackIndex, slotIndex, slotEntry);
 
-                    if (revisionLoadSlotBodyRemaining == 0 && !revisionLoadDestFileOpen &&
-                        !revisionLoadWritingEmptySlot) {
+                    if (storageSession.revisionLoad.slotBodyRemaining == 0 && !storageSession.revisionLoad.destFileOpen &&
+                        !storageSession.revisionLoad.writingEmptySlot) {
                         if (!openRevisionLoadLoopSlotTemp(trackIndex, slotIndex)) {
                             return false;
                         }
                         if (hasSlotEntry) {
-                            revisionLoadWritingEmptySlot = false;
-                            revisionLoadSlotReadPos =
+                            storageSession.revisionLoad.writingEmptySlot = false;
+                            storageSession.revisionLoad.slotReadPos =
                                 revisionLoadLoopSlotBodyFileOffset(slotEntry);
-                            revisionLoadSlotBodyRemaining = slotEntry.bodyLength;
-                            revisionLoadLoopWriteStage = DeferredLoopWriteStage::Header;
+                            storageSession.revisionLoad.slotBodyRemaining = slotEntry.bodyLength;
+                            storageSession.revisionLoad.loopWriteStage = DeferredLoopWriteStage::Header;
                         } else {
-                            revisionLoadWritingEmptySlot = true;
-                            revisionLoadLoopWriteStage = DeferredLoopWriteStage::Header;
+                            storageSession.revisionLoad.writingEmptySlot = true;
+                            storageSession.revisionLoad.loopWriteStage = DeferredLoopWriteStage::Header;
                         }
                     }
 
-                    if (revisionLoadWritingEmptySlot) {
+                    if (storageSession.revisionLoad.writingEmptySlot) {
                         bool loopDone = false;
                         if (!stepDeferredEmptyLoopPersist(
-                                revisionLoadDestFile, static_cast<LoopId>(slotIndex), loopDone)) {
+                                storageSession.revisionLoad.destFile, static_cast<LoopId>(slotIndex), loopDone)) {
                             return false;
                         }
                         if (!loopDone) {
                             return true;
                         }
-                    } else if (revisionLoadSlotBodyRemaining > 0) {
-                        if (!revisionLoadSourceFileOpen) {
-                            revisionLoadSourceFile = SD.open(revisionLoadSourcePath, FILE_READ);
-                            if (!revisionLoadSourceFile) {
+                    } else if (storageSession.revisionLoad.slotBodyRemaining > 0) {
+                        if (!storageSession.revisionLoad.sourceFileOpen) {
+                            storageSession.revisionLoad.sourceFile = SD.open(storageSession.revisionLoad.sourcePath, FILE_READ);
+                            if (!storageSession.revisionLoad.sourceFile) {
                                 return false;
                             }
-                            revisionLoadSourceFileOpen = true;
+                            storageSession.revisionLoad.sourceFileOpen = true;
                         }
                         if (!copyRevisionCommitChunk(
-                                revisionLoadDestFile, revisionLoadSourceFile,
-                                revisionLoadSlotReadPos, revisionLoadSlotBodyRemaining,
-                                static_cast<uint32_t>(revisionCommitCopyBuffer.size()))) {
+                                storageSession.revisionLoad.destFile, storageSession.revisionLoad.sourceFile,
+                                storageSession.revisionLoad.slotReadPos, storageSession.revisionLoad.slotBodyRemaining,
+                                static_cast<uint32_t>(storageSession.revisionCommit.copyBuffer.size()))) {
                             return false;
                         }
-                        if (revisionLoadSlotBodyRemaining > 0) {
+                        if (storageSession.revisionLoad.slotBodyRemaining > 0) {
                             return true;
                         }
-                        if (revisionLoadSourceFileOpen) {
-                            revisionLoadSourceFile.close();
-                            revisionLoadSourceFileOpen = false;
+                        if (storageSession.revisionLoad.sourceFileOpen) {
+                            storageSession.revisionLoad.sourceFile.close();
+                            storageSession.revisionLoad.sourceFileOpen = false;
                         }
                     }
 
                     if (!finalizeRevisionLoadLoopSlotTemp(trackIndex, slotIndex)) {
                         return false;
                     }
-                    revisionLoadWritingEmptySlot = false;
-                    revisionLoadSlotBodyRemaining = 0;
-                    ++revisionLoadCopySlotCursor;
+                    storageSession.revisionLoad.writingEmptySlot = false;
+                    storageSession.revisionLoad.slotBodyRemaining = 0;
+                    ++storageSession.revisionLoad.copySlotCursor;
                 }
-                revisionLoadCopySlotCursor = 0;
-                ++revisionLoadCopyTrackCursor;
+                storageSession.revisionLoad.copySlotCursor = 0;
+                ++storageSession.revisionLoad.copyTrackCursor;
             }
-            revisionLoadStage = RevisionLoadStage::ReloadRam;
+            storageSession.revisionLoad.stage = RevisionLoadStage::ReloadRam;
             return true;
     }
     return false;
 }
 
 STORAGE_PERSIST_MEM bool stepRevisionLoadReloadRam(LooperState& state) {
-    switch (revisionLoadReloadRamStage) {
+    switch (storageSession.revisionLoad.reloadRamStage) {
         case RevisionLoadReloadRamStage::WriteWorkspaceMeta:
-            currentWorkspaceEpoch = revisionLoadWorkspaceEpoch;
-            lastCommittedWorkspaceEpoch = revisionLoadWorkspaceEpoch;
-            workspaceDerivedFromSetId = revisionLoadHeader.setId;
-            workspaceDerivedFromRevisionId = revisionLoadHeader.revisionId;
+            currentWorkspaceEpoch = storageSession.revisionLoad.workspaceEpoch;
+            lastCommittedWorkspaceEpoch = storageSession.revisionLoad.workspaceEpoch;
+            workspaceDerivedFromSetId = storageSession.revisionLoad.header.setId;
+            workspaceDerivedFromRevisionId = storageSession.revisionLoad.header.revisionId;
             if (!writeWorkspaceMetaAfterDeferredSave()) {
                 Serial.println("[StorageManager] ERROR: Revision load failed writing workspace.bin");
                 return false;
             }
             resetTracksAfterFailedLoad();
-            revisionLoadReloadMetaFile =
+            storageSession.revisionLoad.reloadMetaFile =
                 SD.open(CurrentSetStorage::kCurrentRuntimeBundlePath, FILE_READ);
-            if (!revisionLoadReloadMetaFile) {
+            if (!storageSession.revisionLoad.reloadMetaFile) {
                 Serial.println("[StorageManager] ERROR: Revision load failed opening runtime bundle");
                 return false;
             }
-            revisionLoadReloadMetaFileOpen = true;
-            revisionLoadReloadRamStage = RevisionLoadReloadRamStage::ReadMetaHeaders;
+            storageSession.revisionLoad.reloadMetaFileOpen = true;
+            storageSession.revisionLoad.reloadRamStage = RevisionLoadReloadRamStage::ReadMetaHeaders;
             return true;
 
         case RevisionLoadReloadRamStage::ReadMetaHeaders: {
-            if (!readCurrentSetFilePreamble(revisionLoadReloadMetaFile, revisionLoadReloadLooperState,
-                                            revisionLoadReloadMasterLoopLength,
-                                            revisionLoadReloadNumTracks)) {
+            if (!readCurrentSetFilePreamble(storageSession.revisionLoad.reloadMetaFile, storageSession.revisionLoad.reloadLooperState,
+                                            storageSession.revisionLoad.reloadMasterLoopLength,
+                                            storageSession.revisionLoad.reloadNumTracks)) {
                 return false;
             }
-            revisionLoadReloadActiveLoopIndex.assign(revisionLoadReloadNumTracks, 0);
-            for (uint8_t t = 0; t < revisionLoadReloadNumTracks; ++t) {
+            storageSession.revisionLoad.reloadActiveLoopIndex.assign(storageSession.revisionLoad.reloadNumTracks, 0);
+            for (uint8_t t = 0; t < storageSession.revisionLoad.reloadNumTracks; ++t) {
                 Track& track = trackManager.getTrack(t);
-                if (!readCurrentSetTrackSlotMetadata(revisionLoadReloadMetaFile, t, track,
-                                                     revisionLoadReloadLoadedTrackState[t],
-                                                     revisionLoadReloadMuted[t])) {
+                if (!readCurrentSetTrackSlotMetadata(storageSession.revisionLoad.reloadMetaFile, t, track,
+                                                     storageSession.revisionLoad.reloadLoadedTrackState[t],
+                                                     storageSession.revisionLoad.reloadMuted[t])) {
                     return false;
                 }
-                revisionLoadReloadAnySlotHasEvents[t] = false;
+                storageSession.revisionLoad.reloadAnySlotHasEvents[t] = false;
             }
-            revisionLoadReloadTrackCursor = 0;
-            revisionLoadReloadSlotCursor = 0;
-            revisionLoadReloadRamStage = RevisionLoadReloadRamStage::LoadLoopSlot;
+            storageSession.revisionLoad.reloadTrackCursor = 0;
+            storageSession.revisionLoad.reloadSlotCursor = 0;
+            storageSession.revisionLoad.reloadRamStage = RevisionLoadReloadRamStage::LoadLoopSlot;
             return true;
         }
 
         case RevisionLoadReloadRamStage::LoadLoopSlot: {
-            if (revisionLoadReloadTrackCursor >= revisionLoadReloadNumTracks) {
-                revisionLoadReloadRamStage = RevisionLoadReloadRamStage::ReadFooter;
+            if (storageSession.revisionLoad.reloadTrackCursor >= storageSession.revisionLoad.reloadNumTracks) {
+                storageSession.revisionLoad.reloadRamStage = RevisionLoadReloadRamStage::ReadFooter;
                 return true;
             }
-            Track& track = trackManager.getTrack(revisionLoadReloadTrackCursor);
-            if (!loadLoopSlotFromCurrentSetSd(revisionLoadReloadTrackCursor,
-                                              revisionLoadReloadSlotCursor, track,
-                                              revisionLoadReloadAnySlotHasEvents
-                                                  [revisionLoadReloadTrackCursor])) {
+            Track& track = trackManager.getTrack(storageSession.revisionLoad.reloadTrackCursor);
+            if (!loadLoopSlotFromCurrentSetSd(storageSession.revisionLoad.reloadTrackCursor,
+                                              storageSession.revisionLoad.reloadSlotCursor, track,
+                                              storageSession.revisionLoad.reloadAnySlotHasEvents
+                                                  [storageSession.revisionLoad.reloadTrackCursor])) {
                 return false;
             }
-            ++revisionLoadReloadSlotCursor;
-            if (revisionLoadReloadSlotCursor >= Config::MAX_LOOPS_PER_TRACK) {
+            ++storageSession.revisionLoad.reloadSlotCursor;
+            if (storageSession.revisionLoad.reloadSlotCursor >= Config::MAX_LOOPS_PER_TRACK) {
                 applyLoadedTrackStateAfterLoopSlots(
-                    track, revisionLoadReloadLoadedTrackState[revisionLoadReloadTrackCursor],
-                    revisionLoadReloadAnySlotHasEvents[revisionLoadReloadTrackCursor],
-                    revisionLoadReloadMuted[revisionLoadReloadTrackCursor]);
-                ++revisionLoadReloadTrackCursor;
-                revisionLoadReloadSlotCursor = 0;
+                    track, storageSession.revisionLoad.reloadLoadedTrackState[storageSession.revisionLoad.reloadTrackCursor],
+                    storageSession.revisionLoad.reloadAnySlotHasEvents[storageSession.revisionLoad.reloadTrackCursor],
+                    storageSession.revisionLoad.reloadMuted[storageSession.revisionLoad.reloadTrackCursor]);
+                ++storageSession.revisionLoad.reloadTrackCursor;
+                storageSession.revisionLoad.reloadSlotCursor = 0;
             }
             return true;
         }
 
         case RevisionLoadReloadRamStage::ReadFooter: {
-            if (!readCurrentSetFileEpilogue(revisionLoadReloadMetaFile, revisionLoadReloadNumTracks,
-                                            revisionLoadReloadActiveLoopIndex,
-                                            revisionLoadReloadSelectedTrackIdx)) {
+            if (!readCurrentSetFileEpilogue(storageSession.revisionLoad.reloadMetaFile, storageSession.revisionLoad.reloadNumTracks,
+                                            storageSession.revisionLoad.reloadActiveLoopIndex,
+                                            storageSession.revisionLoad.reloadSelectedTrackIdx)) {
                 return false;
             }
-            if (revisionLoadReloadMetaFileOpen) {
-                revisionLoadReloadMetaFile.close();
-                revisionLoadReloadMetaFileOpen = false;
+            if (storageSession.revisionLoad.reloadMetaFileOpen) {
+                storageSession.revisionLoad.reloadMetaFile.close();
+                storageSession.revisionLoad.reloadMetaFileOpen = false;
             }
-            if (!applyLoadedTransportFooter(revisionLoadReloadNumTracks,
-                                            revisionLoadReloadActiveLoopIndex,
-                                            revisionLoadReloadSelectedTrackIdx, state,
-                                            revisionLoadReloadLooperState,
-                                            revisionLoadReloadMasterLoopLength)) {
+            if (!applyLoadedTransportFooter(storageSession.revisionLoad.reloadNumTracks,
+                                            storageSession.revisionLoad.reloadActiveLoopIndex,
+                                            storageSession.revisionLoad.reloadSelectedTrackIdx, state,
+                                            storageSession.revisionLoad.reloadLooperState,
+                                            storageSession.revisionLoad.reloadMasterLoopLength)) {
                 return false;
             }
             forceCurrentSetFullLoopWrite = false;
@@ -803,7 +803,7 @@ STORAGE_PERSIST_MEM bool stepRevisionLoadReloadRam(LooperState& state) {
             clearCurrentSetLoadedFromFolder();
             currentSetAnchorFields = CurrentSetStorage::AnchorFields{};
             resetRevisionLoadReloadRamState();
-            revisionLoadStage = RevisionLoadStage::Complete;
+            storageSession.revisionLoad.stage = RevisionLoadStage::Complete;
             return true;
         }
     }
@@ -812,26 +812,26 @@ STORAGE_PERSIST_MEM bool stepRevisionLoadReloadRam(LooperState& state) {
 
 STORAGE_PERSIST_MEM bool stepRevisionLoadComplete() {
     Serial.print("[StorageManager] Revision load complete S");
-    Serial.print(revisionLoadSetId);
+    Serial.print(storageSession.revisionLoad.setId);
     Serial.print(" v");
-    Serial.println(revisionLoadRevisionId);
+    Serial.println(storageSession.revisionLoad.revisionId);
 #if defined(SESSION_CAPTURE)
     char revLoadDetail[40];
-    if (revisionLoadUsedDefaultTransport) {
+    if (storageSession.revisionLoad.usedDefaultTransport) {
         std::snprintf(revLoadDetail, sizeof(revLoadDetail), "S%04u_v%04u,default_transport",
-                      revisionLoadSetId, revisionLoadRevisionId);
+                      storageSession.revisionLoad.setId, storageSession.revisionLoad.revisionId);
     } else {
-        std::snprintf(revLoadDetail, sizeof(revLoadDetail), "S%04u_v%04u", revisionLoadSetId,
-                      revisionLoadRevisionId);
+        std::snprintf(revLoadDetail, sizeof(revLoadDetail), "S%04u_v%04u", storageSession.revisionLoad.setId,
+                      storageSession.revisionLoad.revisionId);
     }
-    SC_PERSIST("rev_load_complete", 0, revisionLoadSetId, revisionLoadRevisionId, revLoadDetail);
+    SC_PERSIST("rev_load_complete", 0, storageSession.revisionLoad.setId, storageSession.revisionLoad.revisionId, revLoadDetail);
 #endif
-    revisionLoadLastDisplaySetId = revisionLoadSetId;
-    revisionLoadLastDisplayRevisionId = revisionLoadRevisionId;
-    revisionLoadCompletedAtMs = millis();
-    revisionLoadFailedAtMs = 0;
-    revisionLoadDisplayRefreshPending = true;
-    revisionLoadStage = RevisionLoadStage::Idle;
+    storageSession.revisionLoad.lastDisplaySetId = storageSession.revisionLoad.setId;
+    storageSession.revisionLoad.lastDisplayRevisionId = storageSession.revisionLoad.revisionId;
+    storageSession.revisionLoad.completedAtMs = millis();
+    storageSession.revisionLoad.failedAtMs = 0;
+    storageSession.revisionLoad.displayRefreshPending = true;
+    storageSession.revisionLoad.stage = RevisionLoadStage::Idle;
     storageSession.revisionLoad.inProgress = false;
     if (looperState.isLoadSaveModeActive()) {
         looperState.exitLoadSaveMode();
@@ -840,7 +840,7 @@ STORAGE_PERSIST_MEM bool stepRevisionLoadComplete() {
 }
 
 STORAGE_PERSIST_MEM bool stepRevisionLoadJob(LooperState& state) {
-    switch (revisionLoadStage) {
+    switch (storageSession.revisionLoad.stage) {
         case RevisionLoadStage::Idle:
             return true;
 
