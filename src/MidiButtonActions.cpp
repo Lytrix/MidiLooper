@@ -67,9 +67,8 @@ namespace {
 // SavedSet gesture map (M2):
 // - Edit mode (note 38) double-press: toggle load/save set browser (enter + exit).
 // - In overlay: record (36) short = scroll down; track (37) short = scroll up;
-//   edit mode (38) short = confirm row / dirty prompt; edit mode long = back /
-//   revision history / exit (same as GPIO encoder long in overlay).
-//   NOTELEN (35) double = favorite on Set row (root overlay only).
+//   edit mode (38) short = confirm row (MidiButtonManager); edit long/double = overlay nav;
+//   NOTELEN (35) double = favorite on Set row (root only). Confirm is not on NOTELEN.
 // - Play/Stop (note 40) double-press: also toggles load/save (extended transport).
 // - Play/Stop long-press release: center detailed window on playhead; hold tracks playhead.
 // - SAVE NEW: dedicated combo remains TBD until Set Browser UX is wired.
@@ -107,10 +106,6 @@ void MidiButtonActions::executeAction(MidiButtonConfig::ActionType actionType, u
                 return;
             case SetBrowserOverlayPolicy::LoadSaveOverlayInputAction::ScrollUp:
                 displayManager.adjustLoadSaveListSelection(-1);
-                return;
-            case SetBrowserOverlayPolicy::LoadSaveOverlayInputAction::ConfirmFocusedRow:
-                displayManager.handleLoadSaveOverlayPress(
-                    DisplayManager::LoadSaveOverlayPressType::Short);
                 return;
             default:
                 break;

@@ -741,12 +741,15 @@ void test_overlay_input_maps_record_track_edit_for_browser() {
   TEST_ASSERT_EQUAL(static_cast<int>(InputAction::ScrollUp),
                     static_cast<int>(SetBrowserOverlayPolicy::mapLoadSaveOverlayInputAction(
                         ActionType::SELECT_TRACK)));
-  TEST_ASSERT_EQUAL(static_cast<int>(InputAction::ConfirmFocusedRow),
+  TEST_ASSERT_EQUAL(static_cast<int>(InputAction::None),
                     static_cast<int>(SetBrowserOverlayPolicy::mapLoadSaveOverlayInputAction(
                         ActionType::CYCLE_EDIT_MODE)));
   TEST_ASSERT_EQUAL(static_cast<int>(InputAction::None),
                     static_cast<int>(SetBrowserOverlayPolicy::mapLoadSaveOverlayInputAction(
                         ActionType::TOGGLE_LENGTH_EDIT_MODE)));
+  TEST_ASSERT_EQUAL(static_cast<int>(InputAction::None),
+                    static_cast<int>(SetBrowserOverlayPolicy::mapLoadSaveOverlayInputAction(
+                        ActionType::DELETE_OR_CREATE_NOTE)));
 }
 
 void test_overlay_input_modal_suppresses_note_edit_encoder() {

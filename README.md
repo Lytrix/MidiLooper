@@ -121,7 +121,7 @@ During **NOTE_EDIT** on long loops, the detailed window stays fixed until you **
 
 ### Load / save overlay (Sets & revisions)
 
-**Enter / exit:** **Edit mode** (note **38**) **double-press** toggles the overlay. While open, normal record / track / NOTELEN gestures are **remapped** (below). The GPIO encoder (when enabled) scrolls the list and confirms rows the same way.
+**Enter / exit:** **Edit mode** (note **38**) **double-press** toggles the overlay. While open, record / track gestures scroll the list; **confirm** is **Edit short** or **encoder short** only (not NOTELEN).
 
 **On SD card** ([`docs/Guides/DEFERRED_RUNTIME_PERSISTENCE.md`](docs/Guides/DEFERRED_RUNTIME_PERSISTENCE.md)):
 
@@ -136,16 +136,16 @@ During **NOTE_EDIT** on long loops, the detailed window stays fixed until you **
 |---------|-------|------|--------|
 | **REC/PLAY** (36) | Scroll list **down** | — | — |
 | **Track / MUTE** (37) | Scroll list **up** | — | — |
-| **Edit mode** (38) | **Activate** focused row (save, load, or dirty-prompt choice) | At **root**: exit overlay · In **revision history**: back to Set list | Exit overlay |
+| **Edit mode** (38) | **Confirm** focused row (save, load, dirty-prompt choice) | At **root**: exit overlay · In **revision history**: back to Set list | Exit overlay |
 | **NOTELEN** (35) | — (suppressed) | — | Toggle **favorite** on focused **Set** row (root list) |
 
-GPIO **encoder** (when enabled): rotate = scroll; **short press** = same as Edit **38** short (activate row).
+GPIO **encoder** (when enabled): rotate = scroll; **short press** = confirm (same as Edit **38** short).
 
-**Root list rows:** **Save** → **Edit short** (or encoder short) queues a **revision commit** (background, chunk-bounded) and closes the overlay. **Current** → detail only. **Set** folder (e.g. `S0001`) → **Edit short** loads **latest validated revision** into Current; **Edit long** opens **revision history** for that Set; **NOTELEN double** toggles **favorite** on the focused Set row.
+**Root list rows:** **Save** → **Edit short** or **encoder short** queues a **revision commit** (background, chunk-bounded) and closes the overlay. **Current** → detail only. **Set** folder (e.g. `S0001`) → **Edit short** loads **latest validated revision** into Current; **Edit long** opens **revision history**; **NOTELEN double** toggles **favorite**.
 
-**Revision history:** scroll with record/track (or encoder); **Edit short** loads the focused revision; **Edit long** goes back.
+**Revision history:** scroll with record/track (or encoder); **Edit short** or **encoder short** loads the focused revision; **Edit long** goes back.
 
-**Dirty workspace:** loading when Current has unsaved changes opens a **Yes / No / Cancel** prompt — **Edit short** confirms the highlighted choice (save-then-load, discard, or cancel); **Edit long** cancels.
+**Dirty workspace:** **Yes / No / Cancel** prompt — **Edit short** or **encoder short** confirms the highlighted choice; **Edit long** cancels.
 
 Detail panel shows Set id, revision, track/loop counts, BPM, bars, per-track slot bars, and **RTC date/time** when the revision was saved. More: [`docs/Guides/control-surface/Main-controls.md`](docs/Guides/control-surface/Main-controls.md), handoff [`docs/plans/set_revision_persistence_handoff.md`](docs/plans/set_revision_persistence_handoff.md).
 

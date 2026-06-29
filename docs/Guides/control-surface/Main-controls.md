@@ -39,12 +39,14 @@ Add and delete notes use **NOTELEN** (note 35) double-press — see below.
 
 ## Load/save overlay (when open)
 
-| Control | Short press |
-|---------|-------------|
-| **Edit mode** (note 38) double | Enter / exit overlay |
-| **Record** (note 36) | Scroll list **down** |
-| **Track select** (note 37) | Scroll list **up** |
-| **NOTELEN** (note 35) | Confirm focused row (Save, load Set, or dirty-prompt choice) |
+| Control | Short | Long | Double |
+|---------|-------|------|--------|
+| **Edit mode** (38) | **Confirm** focused row (save, load, dirty-prompt choice) | Back / exit (context-dependent) | Enter / exit overlay |
+| **Record** (36) | Scroll list **down** | — | — |
+| **Track select** (37) | Scroll list **up** | — | — |
+| **NOTELEN** (35) | — (suppressed) | — | Toggle **favorite** on focused **Set** row (root list only) |
+
+**GPIO encoder:** rotate = scroll; **short press** = same as Edit **38** short (confirm row).
 
 Normal record / track / NOTELEN behavior resumes when the overlay is closed.
 
