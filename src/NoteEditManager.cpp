@@ -967,6 +967,23 @@ void NoteEditManager::sendCoarseFaderPosition(Track& track) {
             lengthEditingMode ? lengthEditLoopTickToCoarsePitchbend(anchorTick, loopLength)
                               : loopTickToCoarsePitchbend(anchorTick, loopLength);
 
+#if defined(SESSION_CAPTURE)
+        {
+            const uint32_t loopStartTick = track.getLoopStartTick() % loopLength;
+            const uint32_t storageTick = lengthEditingMode ? liveNote.endTick : liveNote.startTick;
+            const uint32_t relTick =
+                SelectNavigation::noteRelativeTick(storageTick, loopStartTick, loopLength);
+            const int16_t expectedPbRel = loopTickToCoarsePitchbend(relTick, loopLength);
+            const int slotIndex = selectNavSlotIndexForPitchbend(track, lastUserSelectFaderValue);
+            logger.info(
+                "#DBG outbound_ctx f2 anchor_tick=%lu rel_tick=%lu loop_start=%lu loop_len=%lu "
+                "pb=%d expected_pb_rel=%d step=%lu f1_pb=%d slot=%d mode=%s",
+                anchorTick, relTick, loopStartTick, loopLength, coarseMidiPitchbend,
+                expectedPbRel, currentSixteenthStep, lastUserSelectFaderValue, slotIndex,
+                modeLabel);
+        }
+#endif
+
         midiHandler.sendPitchBend(PITCHBEND_START_CHANNEL, coarseMidiPitchbend);
 
         auto& coarseState = midiFaderManager.getFaderStateMutable(MidiMapping::FaderType::FADER_COARSE);
