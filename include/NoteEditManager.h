@@ -17,6 +17,7 @@
 #include "LoopEditManager.h"
 #include "MidiConfig.h"
 #include "Utils/SelectNavigation.h"
+#include "Utils/NoteEditFaderOutboundPlan.h"
 
 /**
  * @class NoteEditManager
@@ -67,131 +68,106 @@ public:
     /** Return fader 2/3 to position edit after fader-1 note select (leaves length mode). */
     void resetLengthEditingModeOnNoteSelect();
     
-    // Legacy methods - to be replaced by unified system
-    void sendStartNotePitchbend(Track& track);  // Sends coarse pitchbend ch15 and fine CC2 ch15
-    void sendSelectnoteFaderUpdate(Track& track);  // Schedules selectnote pitchbend ch16 update with delay
-    void performSelectnoteFaderUpdate(Track& track);  // Actually sends the selectnote fader update
-    /** Block fader 1 input and schedule sync to the current select bracket after ignore delay. */
-    void deferSelectFaderSyncToBracket(Track& track, bool syncNotePositionFadersAfter = false);
-    /** Deferred fader 1; fader 2–4 after sync when a note is selected. */
+    void sendStartNotePitchbend(Track& track);
+    /** NOTE_EDIT session entry: grace period + deferred selectnote fader sync. */
     void sendNoteEditSessionFaderFeedback(Track& track);
-    void enableStartEditing();
+    /** GPIO / bar-step note select: fader1 bracket + dependent refresh. */
+    void scheduleNoteSelectFaderSync(Track& track);
+    bool isFaderOutboundActive() const;
     void moveNoteToPosition(Track& track, const NoteUtils::DisplayNote& currentNote, std::uint32_t targetTick);
     void changeNoteEndWithOverlapHandling(Track& track, const NoteUtils::DisplayNote& currentNote,
                                           std::uint32_t targetEndTick);
-    void refreshEditingActivity();  // Mark editing activity to prevent note selection changes
-    
-    // Overlap handling helper functions
-    
-    // void applyTemporaryOverlapChanges(std::vector<MidiEvent>& midiEvents,
-    //                                  const std::vector<std::pair<NoteUtils::DisplayNote, std::uint32_t>>& notesToShorten,
-    //                                  const std::vector<NoteUtils::DisplayNote>& notesToDelete,
-    //                                  EditManager& manager, std::uint32_t loopLength,
-    //                                  NoteUtils::EventIndexMap& onIndex, NoteUtils::EventIndexMap& offIndex);
-    // void restoreTemporaryNotes(...); — removed with MovingNoteIdentity (Phase 2d)
-
-
+    void refreshEditingActivity();
 
     // Main edit session switching (for mode button functionality)
     void cycleEditSession(Track& track);
     void onTrackChanged(Track& newTrack);
 
-
-
 private:
     static int16_t loopTickToCoarsePitchbend(uint32_t tick, uint32_t loopLength);
 
-    
-
-    
     // MIDI constants (from MidiConfig)
-    static constexpr uint8_t PITCHBEND_SELECT_CHANNEL = MidiConfig::Fader::SELECT_CHANNEL;
-    static constexpr uint8_t PITCHBEND_START_CHANNEL = MidiConfig::Fader::COARSE_CHANNEL;
+    static constexpr uint8_t PITCHBEND_SELECT_CHANNEL = MidiConfig::Fader::SELECT_MOTOR_CHANNEL;
+    static constexpr uint8_t PITCHBEND_START_CHANNEL = MidiConfig::Fader::COARSE_MOTOR_CHANNEL;
     static constexpr uint8_t PROGRAM_CHANGE_CHANNEL = MidiConfig::PROGRAM_CHANGE_CHANNEL;
     static constexpr uint8_t FINE_CC_CHANNEL = MidiConfig::Fader::FINE_CHANNEL;
     static constexpr uint8_t FINE_CC_NUMBER = MidiConfig::Fader::FINE_CC;
     static constexpr uint8_t NOTE_VALUE_CC_CHANNEL = MidiConfig::Fader::NOTE_VALUE_CHANNEL;
     static constexpr uint8_t NOTE_VALUE_CC_NUMBER = MidiConfig::Fader::NOTE_VALUE_CC;
 
-
-    
-    // Grace period for start editing to prevent conflicts
-    static constexpr uint32_t NOTE_SELECTION_GRACE_PERIOD = 750; // ms
+    static constexpr uint32_t NOTE_SELECTION_GRACE_PERIOD = 750;
     uint32_t noteSelectionTime = 0;
     bool startEditingEnabled = true;
     uint32_t lastEditingActivityTime = 0;
     
-    // Smart selection and coarse fader stability - prevent feedback and jitter
     int16_t lastUserSelectFaderValue = MidiConfig::Pitchbend::CENTER;
     uint32_t lastSelectFaderTime = 0;
-    static constexpr int16_t SELECT_MOVEMENT_THRESHOLD = 100; // Minimum pitchbend change to be considered intentional
-    static constexpr uint32_t SELECT_STABILITY_TIME = 500; // ms between movements to be considered stable
+    static constexpr int16_t SELECT_MOVEMENT_THRESHOLD = 100;
     
-    // Coarse fader movement stability - prevent jitter from rescheduling updates
     int16_t lastUserCoarseFaderValue = MidiConfig::Pitchbend::CENTER;
     uint32_t lastCoarseFaderTime = 0;
-    static constexpr int16_t COARSE_MOVEMENT_THRESHOLD = 150; // Minimum pitchbend change to be considered intentional
-    static constexpr uint32_t COARSE_STABILITY_TIME = 1000; // ms between movements to be considered stable
+    static constexpr int16_t COARSE_MOVEMENT_THRESHOLD = 150;
+    static constexpr uint32_t COARSE_STABILITY_TIME = 1000;
     
-    // Fine CC control state
-    uint8_t lastFineCCValue = 64;     // CC2 on channel 16 (center value)
+    uint8_t lastFineCCValue = 64;
     bool fineCCInitialized = false;
-    uint32_t referenceStep = 0;       // 16th step position set by coarse movement
-    
+    uint32_t referenceStep = 0;
 
-
-    
-
-
-    
-    // Feedback prevention for motorized faders
     uint32_t lastPitchbendSentTime = 0;
-    uint32_t lastSelectnoteSentTime = 0;  // Track when we last sent selectnote fader updates
-    static constexpr uint32_t PITCHBEND_IGNORE_PERIOD = 1500; // 1500ms to ignore incoming pitchbend after sending
-    
-    // Scheduled selectnote fader update
-    bool pendingSelectnoteUpdate = false;
-    uint32_t selectnoteUpdateTime = 0;
-    static constexpr uint32_t SELECTNOTE_UPDATE_DELAY = 1600; // Wait 1600ms after coarse/fine updates
-    /** Blanket ignore for fader 1 while deferred sync runs and motor settles. */
+    uint32_t lastSelectnoteSentTime = 0;
+    static constexpr uint32_t PITCHBEND_IGNORE_PERIOD = 1500;
+    static constexpr uint32_t SELECTNOTE_UPDATE_DELAY = 1600;
     uint32_t selectFaderFeedbackIgnoreUntilMs_ = 0;
-    /** NOTE_EDIT session entry: 1=fader1, 2=fader2, 3=fader3+4 (each step waits SELECTNOTE_UPDATE_DELAY). */
-    uint8_t sessionFaderSyncStep_ = 0;
-    uint32_t sessionFaderSyncDueMs_ = 0;
-    bool sessionFaderSyncIncludeNotePosition_ = false;
 
-    void processSessionFaderSync(uint32_t now);
-    void sendSessionFader1Sync(Track& track);
-    void sendSessionFader2CoarseSync(Track& track);
-    void sendSessionFader3And4Sync(Track& track);
+    NoteEditFaderOutbound::SelectPhase faderSelectPhase_ =
+        NoteEditFaderOutbound::SelectPhase::Idle;
+    uint32_t fader1LastUserInputMs_ = 0;
+    int lastAppliedSelectSlotIndex_ = -1;
+
+    NoteEditFaderOutbound::Trigger activeOutboundTrigger_ =
+        NoteEditFaderOutbound::Trigger::None;
+    NoteEditFaderOutbound::Trigger pendingOutboundTrigger_ =
+        NoteEditFaderOutbound::Trigger::None;
+    NoteEditFaderOutbound::Step outboundStep_ = NoteEditFaderOutbound::Step::Idle;
+    NoteEditFaderOutbound::PlanFlags outboundPlan_{};
+    uint32_t outboundStepStartedMs_ = 0;
+    int16_t outboundSentFader1Pitchbend_ = 0;
+
+    void requestFaderOutbound(NoteEditFaderOutbound::Trigger trigger);
+    void cancelActiveFaderOutbound();
+    void processFaderOutbound();
+    void processFaderSelectQuiet();
+    void sendFader1BracketFeedback(Track& track);
+    void logOutboundStep(const char* label);
+    void logSelectSlot(int slotIndex, int16_t pitchValue, bool ignored);
+    void sendSelectnoteFaderUpdate(Track& track);
+    void performSelectnoteFaderUpdate(Track& track);
+    void armNoteEditDroidMotorBank();
+    int selectNavSlotIndexForPitchbend(Track& track, int16_t pitchValue);
+    bool applyNoteSelectFromFader1Pitchbend(Track& track, int16_t pitchValue,
+                                            int16_t priorPitchValue, uint32_t now,
+                                            bool enforceStaleEchoLockout,
+                                            bool sendDependentFeedback);
+    void enableStartEditing();
     void armChannel15FaderFeedbackIgnore(uint32_t sentAt);
+    void armCoarseFaderFeedbackIgnore(uint32_t sentAt);
+    void armChannel15CcFaderFeedbackIgnore(uint32_t sentAt);
     
-    // Additional protection against fader 2 updates during active use
-    static constexpr uint32_t FADER2_PROTECTION_PERIOD = 2000; // Don't update fader 2 for 2 seconds after any fader 2 activity
+    static constexpr uint32_t FADER2_PROTECTION_PERIOD = 2000;
     
-
-    
-    // Fader state management - now delegated to MidiFaderProcessor
     MidiFaderProcessor* faderProcessor = nullptr;
     uint32_t lastDriverFaderUpdateTime = 0;
     MidiMapping::FaderType currentDriverFader = MidiMapping::FaderType::FADER_SELECT;
     uint32_t lastDriverFaderTime = 0;
-    static constexpr uint32_t FADER_UPDATE_DELAY = 1500; // 1.5 seconds delay for other faders
-    static constexpr uint32_t FEEDBACK_IGNORE_PERIOD = 1500; // 1.5s to ignore feedback
+    static constexpr uint32_t FADER_UPDATE_DELAY = 1500;
+    static constexpr uint32_t FEEDBACK_IGNORE_PERIOD = 1500;
     
-
-    
-    // Length editing mode state
     bool lengthEditingMode = false;
-    /** End tick when coarse last moved (or NOTELEN enabled); fine fader is ±1/16th from here. */
     uint32_t lengthFineAnchorEndTick = 0;
     uint32_t lastLengthModeToggleTime = 0;
-    static constexpr uint32_t LENGTH_MODE_DEBOUNCE_TIME = 100; // 100ms debounce protection
-    
+    static constexpr uint32_t LENGTH_MODE_DEBOUNCE_TIME = 100;
 
-    
 public:
-    // Unified fader methods
     void setFaderProcessor(MidiFaderProcessor* processor) { faderProcessor = processor; }
     void handleFaderInput(MidiMapping::FaderType faderType, int16_t pitchbendValue = 0, uint8_t ccValue = 0);
     void scheduleOtherFaderUpdates(MidiMapping::FaderType driverFader);
@@ -200,19 +176,19 @@ public:
     bool shouldIgnoreFaderInput(MidiMapping::FaderType faderType);
     bool shouldIgnoreFaderInput(MidiMapping::FaderType faderType, int16_t pitchbendValue, uint8_t ccValue);
     
-    // Individual fader handler methods
     void sendCoarseFaderPosition(Track& track);
     void sendFineFaderPosition(Track& track);
+    void sendCoarseFaderMotorTrigger();
+    void sendFineFaderMotorTrigger();
     void sendNoteValueFaderPosition(Track& track);
+    void sendNoteValueFaderMotorTrigger();
 
-
-    // Edit mode cycling - keeping the old system for now but not using it
     enum EditModeState {
-        EDIT_MODE_NONE = 0,     // Not in edit mode
-        EDIT_MODE_SELECT = 1,   // Select note or grid position
-        EDIT_MODE_START = 2,    // Move start note position
-        EDIT_MODE_LENGTH = 3,   // Change note length
-        EDIT_MODE_PITCH = 4     // Change note pitch
+        EDIT_MODE_NONE = 0,
+        EDIT_MODE_SELECT = 1,
+        EDIT_MODE_START = 2,
+        EDIT_MODE_LENGTH = 3,
+        EDIT_MODE_PITCH = 4
     };
     EditModeState currentEditMode = EDIT_MODE_NONE;
 
@@ -220,4 +196,4 @@ public:
 
 extern NoteEditManager noteEditManager;
 
-#endif // NOTE_EDIT_MANAGER_H 
+#endif // NOTE_EDIT_MANAGER_H

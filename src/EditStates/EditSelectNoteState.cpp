@@ -502,11 +502,11 @@ void EditSelectNoteState::sendTargetPitchbend(EditManager& manager, Track& track
                            MidiConfig::Pitchbend::MIN, MidiConfig::Pitchbend::MAX);
                 
                 // Send the pitchbend value to external device (select fader channel)
-                midiHandler.sendPitchBend(MidiConfig::Fader::SELECT_CHANNEL, targetPitchbend);
+                midiHandler.sendPitchBend(MidiConfig::Fader::SELECT_MOTOR_CHANNEL, targetPitchbend);
                 
                 // Send note trigger to help motorized fader update (similar to fader 3)
-                midiHandler.sendNoteOn(MidiConfig::Fader::SELECT_CHANNEL, 0, 127);
-                midiHandler.sendNoteOff(MidiConfig::Fader::SELECT_CHANNEL, 0, 0);
+                midiHandler.sendNoteOn(MidiConfig::Fader::SELECT_MOTOR_CHANNEL, 0, 127);
+                midiHandler.sendNoteOff(MidiConfig::Fader::SELECT_MOTOR_CHANNEL, 0, 0);
                 
                 // Record the value we sent for smart feedback detection
                 midiFaderManager.getFaderStateMutable(MidiMapping::FaderType::FADER_SELECT).lastSentPitchbend = targetPitchbend;

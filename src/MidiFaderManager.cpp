@@ -3,6 +3,7 @@
 
 #include "MidiFaderManager.h"
 #include "Logger.h"
+#include "MidiConfig.h"
 #include <functional>
 
 MidiFaderManager midiFaderManager;
@@ -126,7 +127,7 @@ bool MidiFaderManager::isValidChannel(uint8_t channel) const {
 }
 
 bool MidiFaderManager::isValidPitchbend(int16_t pitchValue) const {
-    return pitchValue >= -8192 && pitchValue <= 8191;
+    return MidiConfig::Pitchbend::isValidLogical(pitchValue);
 }
 
 bool MidiFaderManager::isValidCC(uint8_t ccValue) const {

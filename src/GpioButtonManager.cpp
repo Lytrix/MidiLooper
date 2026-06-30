@@ -142,6 +142,9 @@ void GpioButtonManager::update() {
                                        editManager.getBracketTick(),
                                        editManager.getLastFader1SelectRef(),
                                        editManager.getSelectedNoteIdx() >= 0);
+            if (editManager.getSelectedNoteIdx() >= 0) {
+                noteEditManager.scheduleNoteSelectFaderSync(trackManager.getSelectedTrack());
+            }
         }
         encoderButtonHoldStart = 0;
         pitchEditActive = false;

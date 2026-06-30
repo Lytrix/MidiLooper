@@ -25,21 +25,21 @@ void Config::loadBasicConfiguration() {
     faderConfigs.clear();
     
     // Fader 1: Note Selection (Channel 16, Pitchbend)
-    FaderConfig fader1(MidiMapping::FaderType::FADER_SELECT, MidiConfig::Fader::SELECT_CHANNEL, "Note Selection");
+    FaderConfig fader1(MidiMapping::FaderType::FADER_SELECT, MidiConfig::Fader::SELECT_MOTOR_CHANNEL, "Note Selection");
     fader1.withAction(ActionType::SELECT_NOTE)
           .withFeedbackIgnore(100)
           .withDeadbands(23, 1)
           .withCenters(0, 64)
-          .withGroup(MidiConfig::Fader::SELECT_CHANNEL);
+          .withGroup(MidiConfig::Fader::SELECT_MOTOR_CHANNEL);
     faderConfigs.push_back(fader1);
     
-    // Fader 2: Coarse Note Movement (Channel 15, Pitchbend)
-    FaderConfig fader2(MidiMapping::FaderType::FADER_COARSE, MidiConfig::Fader::COARSE_CHANNEL, "Coarse Movement");
+    // Fader 2: Coarse Note Movement (Channel 14, Pitchbend)
+    FaderConfig fader2(MidiMapping::FaderType::FADER_COARSE, MidiConfig::Fader::COARSE_MOTOR_CHANNEL, "Coarse Movement");
     fader2.withAction(ActionType::MOVE_NOTE_COARSE)
           .withFeedbackIgnore(100)
           .withDeadbands(23, 1)
           .withCenters(0, 64)
-          .withGroup(MidiConfig::Fader::COARSE_CHANNEL);
+          .withGroup(MidiConfig::Fader::COARSE_MOTOR_CHANNEL);
     faderConfigs.push_back(fader2);
     
     // Fader 3: Fine Note Movement (Channel 15, CC2)

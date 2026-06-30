@@ -48,6 +48,8 @@ Presets are defined in [`scripts/hitl/registry.py`](../../scripts/hitl/registry.
 | `revision_commit_save` | `revision_commit_save` | Transport stop (current epoch) → `!REV_COMMIT` → `!REV_CLEANUP` (no catalog pollution) | **Yes** | `verify_revision_commit_save` |
 | `revision_load` | `revision_load` | Transport stop → `!REV_COMMIT` → `!REV_LOAD` → `!REV_CLEANUP` | **Yes** | `verify_revision_load` |
 | `revision_load_record` | `base`, `revision_load_post_record` | Base record/overdub → commit → load (loop data) | **Yes** | `verify_revision_load` |
+| `fader_motor_probe` | `fader_motor_probe` | NOTE_EDIT arm + fader motor pitchbend/note-0 steps (host → Teensy → DROID) | Optional | `verify_fader_motor_probe` |
+| `fader_motor_sweep` | `fader_motor_sweep` | Quarter sweep 0 % → 25 % → 50 % → 75 % → 100 % on fader1 (default) | Optional | `verify_fader_motor_probe` |
 
 ### `revision_commit_save` (packed revision write + cleanup)
 
@@ -185,6 +187,38 @@ Legacy entry: `scripts/host_midi_automation_edit_baseline.py`.
 
 **E:** session undo after in-edit overdub targets the in-edit overdub layer only. Pre-edit overdub stays.
 
+### `fader_motor_probe` / `fader_motor_sweep`
+
+Isolated DROID motorfader check: host USB MIDI → Teensy (`teensy41-capture-serial-fader-probe`) → DROID
+USB host. See **[`DROID_MOTORFADER_PITCHBEND.md`](DROID_MOTORFADER_PITCHBEND.md)** for pitchbend scale,
+NOTE_EDIT arm (~50 % snap), and **`pitch_note_off`** trigger ordering.
+
+```bash
+.venv/bin/python scripts/host_midi_hitl.py run --preset fader_motor_sweep \
+  --midi-out "Teensy" --midi-in "Teensy" --settle-ms 2500
+```
+
+Optional: `--fader fader2`, `--fader both` (ch16 + ch14 same pitchbend/trigger per step),
+`--timing note_pitch_off` (legacy wrong order), `--no-edit-state-pc`.
+
+### NOTE_EDIT fader select refresh (Phase 3 verify)
+
+Manual repro on `teensy41-capture-serial`: fast fader1 sweep then slow final creep; fader1 to physical min.
+Wait ≥400 ms quiet; confirm F2/F3/F4 motors match final note. Serial verifier (capture log):
+
+```bash
+.venv/bin/python -c "
+from hitl.verify.note_edit_fader_select_refresh import verify_note_edit_fader_select_refresh
+import sys
+lines = open(sys.argv[1]).read().splitlines()
+print(verify_note_edit_fader_select_refresh(lines))
+" captures/session_YYYYMMDD_HHMMSS.log
+```
+
+Pass: each fader1 inbound cluster has `MO,224,14` or `#DBG outbound_step=SEND_F2` within 3 s;
+max gap between F2 bursts ≤30 s; pipeline shows `BEGIN` → `ARM` → `SEND_F2` → `TRIGGER_F2` → … → `DONE`
+and/or `QUIET_REFRESH` after user-classified quiet.
+
 ---
 
 ## Native (host) tests vs HITL
@@ -202,5 +236,6 @@ Run `pio test -e native` before push/merge. Run relevant HITL preset when changi
 ## Related docs
 
 - Implementation notes: [`docs/plans/hitl_modular_scenarios_enhancement.md`](../plans/hitl_modular_scenarios_enhancement.md)
+- DROID motorfader pitchbend / probe timing: [`DROID_MOTORFADER_PITCHBEND.md`](DROID_MOTORFADER_PITCHBEND.md)
 - Cursor rule (canonical `base` command): [`.cursor/rules/HITL-Test-Flow.mdc`](../../.cursor/rules/HITL-Test-Flow.mdc)
 - Undo/redo storage rules: [`LOOP_MIDI_STORAGE_AND_VALIDATION.md`](LOOP_MIDI_STORAGE_AND_VALIDATION.md)

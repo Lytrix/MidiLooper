@@ -36,6 +36,8 @@ PRESET_SCENARIOS: dict[str, tuple[str, ...]] = {
     "revision_load_dirty_no": ("revision_load_dirty_no",),
     "revision_load_dirty_cancel": ("revision_load_dirty_cancel",),
     "two_overdub_undo_redo": ("two_overdub_undo_redo",),
+    "fader_motor_probe": ("fader_motor_probe",),
+    "fader_motor_sweep": ("fader_motor_sweep",),
 }
 
 
@@ -79,6 +81,11 @@ def _lazy_registry() -> dict[str, ScenarioSpec]:
     from hitl.verify.revision_load_dirty import verify_revision_load_dirty
     from hitl.scenarios.two_overdub_undo_redo import run_two_overdub_undo_redo
     from hitl.verify.two_overdub_undo_redo import verify_two_overdub_undo_redo
+    from hitl.scenarios.fader_motor_probe import (
+        run_fader_motor_probe_scenario,
+        run_fader_motor_sweep_scenario,
+        verify_fader_motor_probe_scenario,
+    )
 
     return {
         "base": ScenarioSpec(
@@ -188,6 +195,18 @@ def _lazy_registry() -> dict[str, ScenarioSpec]:
             description="Record + 2 overdub passes + undo to display-empty + redo restore",
             run=run_two_overdub_undo_redo,
             verify=verify_two_overdub_undo_redo,
+        ),
+        "fader_motor_probe": ScenarioSpec(
+            scenario_id="fader_motor_probe",
+            description="Raw ch16 PC + fader1/fader2 pitchbend/note-0 motor probe (fader-probe firmware)",
+            run=run_fader_motor_probe_scenario,
+            verify=verify_fader_motor_probe_scenario,
+        ),
+        "fader_motor_sweep": ScenarioSpec(
+            scenario_id="fader_motor_sweep",
+            description="Fader motor quarter sweep 0/25/50/75/100 % (fader-probe firmware)",
+            run=run_fader_motor_sweep_scenario,
+            verify=verify_fader_motor_probe_scenario,
         ),
     }
 

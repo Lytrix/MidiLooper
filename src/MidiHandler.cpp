@@ -21,6 +21,29 @@ MIDI_CREATE_INSTANCE(HardwareSerial, Serial8, MIDIserial);  // Teensy Serial8 fo
 MidiHandler midiHandler;  // Global instance
 MidiHandler* MidiHandler::instance = nullptr;  // Static instance pointer
 
+namespace {
+bool isMotorFaderUsbHostServiceMessage(uint8_t type, uint8_t channel, uint8_t data1) {
+  if (channel != MidiConfig::Fader::COARSE_CHANNEL &&
+      channel != MidiConfig::Fader::SELECT_CHANNEL &&
+      channel != MidiConfig::Fader::FINE_CHANNEL) {
+    return false;
+  }
+  if (type == midi::PitchBend) {
+    return channel == MidiConfig::Fader::COARSE_CHANNEL ||
+           channel == MidiConfig::Fader::SELECT_CHANNEL;
+  }
+  if (type != midi::NoteOn && type != midi::NoteOff) {
+    return false;
+  }
+  if (channel == MidiConfig::Fader::SELECT_CHANNEL ||
+      channel == MidiConfig::Fader::COARSE_CHANNEL) {
+    return data1 == MidiConfig::Fader::MOTOR_TRIGGER_NOTE;
+  }
+  return data1 == MidiConfig::Fader::FINE_MOTOR_TRIGGER_NOTE ||
+         data1 == MidiConfig::Fader::NOTE_VALUE_MOTOR_TRIGGER_NOTE;
+}
+}  // namespace
+
 // Helper function to get readable MIDI message type name
 const char* getMidiTypeName(byte type) {
   switch (type) {
@@ -141,6 +164,12 @@ void MidiHandler::handleMidiMessage(byte type, byte channel, byte data1, byte da
   SC_MIDI_IN(source == SOURCE_USB ? 'U' : source == SOURCE_SERIAL ? 'S' : 'H',
              type, channel, data1, data2);
 
+#if defined(MIDI_USB_FADER_PROBE_PASSTHROUGH)
+  if (source == SOURCE_USB) {
+    mirrorUsbFaderProbePassthrough(type, channel, data1, data2);
+  }
+#endif
+
   // Log incoming MIDI messages (skip Clock to avoid log spam at 24 PPQN)
   if (type != midi::Clock) {
     const char* sourceStr = (source == SOURCE_USB) ? "USB" :
@@ -234,6 +263,118 @@ bool MidiHandler::isLedChannel(byte channel) {
   return (channel >= MidiConfig::LED_CHANNEL_MIN && channel <= MidiConfig::LED_CHANNEL_MAX);
 }
 
+#if defined(MIDI_USB_FADER_PROBE_PASSTHROUGH)
+void MidiHandler::mirrorUsbFaderProbePassthrough(byte type, byte channel, byte data1, byte data2) {
+  const bool isFaderMotorChannel =
+      channel == MidiConfig::Fader::COARSE_CHANNEL || channel == MidiConfig::Fader::SELECT_CHANNEL;
+  const bool isEditModeLedTrigger =
+      channel == MidiConfig::Channels::LED_FEEDBACK &&
+      (type == midi::NoteOn || type == midi::NoteOff) && data1 == 0;
+  if (!isFaderMotorChannel && !isEditModeLedTrigger) {
+    return;
+  }
+  if (!usbHostMIDI) {
+    return;
+  }
+  paceDroidUsbHostBeforeSend();
+  switch (type) {
+    case midi::NoteOn:
+      usbHostMIDI.sendNoteOn(data1, data2, channel);
+      break;
+    case midi::NoteOff:
+      usbHostMIDI.sendNoteOff(data1, data2, channel);
+      break;
+    case midi::ControlChange:
+      usbHostMIDI.sendControlChange(data1, data2, channel);
+      break;
+    case midi::PitchBend: {
+      const int16_t pitchValue = MidiConfig::Pitchbend::logicalToWireSigned(
+          static_cast<int16_t>(((static_cast<int>(data2) << 7) | data1) - 8192));
+      usbHostMIDI.sendPitchBend(pitchValue, channel);
+      break;
+    }
+    case midi::ProgramChange:
+      usbHostMIDI.sendProgramChange(data1, channel);
+      break;
+    default:
+      return;
+  }
+  serviceUsbHostAfterOutboundPacket();
+}
+#endif
+
+void MidiHandler::paceDroidUsbHostBeforeSend() {
+  const uint32_t now = micros();
+  if (lastDroidUsbHostSendMicros_ == 0) {
+    return;
+  }
+  const uint32_t elapsed = now - lastDroidUsbHostSendMicros_;
+  const uint32_t gap = MidiConfig::DroidUsbHost::MIN_PACKET_GAP_MICROS;
+  if (elapsed < gap) {
+    delayMicroseconds(static_cast<uint16_t>(gap - elapsed));
+  }
+}
+
+void MidiHandler::markDroidUsbHostSent() {
+  lastDroidUsbHostSendMicros_ = micros();
+}
+
+void MidiHandler::queueLedUsbHostFeedback(uint8_t note, uint8_t velocityOrZero) {
+  for (size_t i = 0; i < ledPendingCount_; ++i) {
+    if (ledPendingNotes_[i] == note) {
+      ledPendingVelocities_[i] = velocityOrZero;
+      return;
+    }
+  }
+  if (ledPendingCount_ >= MidiConfig::DroidUsbHost::LED_PENDING_MAX) {
+  // Drop oldest entry when full; coalescing keeps the queue small in normal use.
+    ledPendingCount_--;
+    for (size_t i = 0; i < ledPendingCount_; ++i) {
+      ledPendingNotes_[i] = ledPendingNotes_[i + 1];
+      ledPendingVelocities_[i] = ledPendingVelocities_[i + 1];
+    }
+  }
+  ledPendingNotes_[ledPendingCount_] = note;
+  ledPendingVelocities_[ledPendingCount_] = velocityOrZero;
+  ledPendingCount_++;
+}
+
+void MidiHandler::processDroidUsbHostOutbound() {
+  if (!usbHostMIDI || ledPendingCount_ == 0 || droidMotorOutboundPriority_) {
+    return;
+  }
+  constexpr uint8_t ch = MidiConfig::Led::CHANNEL;
+  uint8_t drained = 0;
+  while (ledPendingCount_ > 0 &&
+         drained < MidiConfig::DroidUsbHost::LED_DRAIN_MAX_PER_LOOP) {
+    const uint8_t note = ledPendingNotes_[0];
+    const uint8_t velocity = ledPendingVelocities_[0];
+    ledPendingCount_--;
+    for (size_t i = 0; i < ledPendingCount_; ++i) {
+      ledPendingNotes_[i] = ledPendingNotes_[i + 1];
+      ledPendingVelocities_[i] = ledPendingVelocities_[i + 1];
+    }
+
+    paceDroidUsbHostBeforeSend();
+    if (velocity > 0) {
+      usbHostMIDI.sendNoteOn(note, velocity, ch);
+    } else {
+      usbHostMIDI.sendNoteOn(note, 0, ch);
+    }
+    serviceUsbHostAfterOutboundPacket();
+    drained++;
+  }
+}
+
+void MidiHandler::setDroidMotorOutboundPriority(bool active) {
+  droidMotorOutboundPriority_ = active;
+}
+
+void MidiHandler::serviceUsbHostAfterOutboundPacket() {
+  usbHost.Task();
+  markDroidUsbHostSent();
+}
+
 void MidiHandler::sendMidiThru(byte type, byte channel, byte data1, byte data2) {
   switch (type) {
     case midi::NoteOn:
@@ -252,7 +393,8 @@ void MidiHandler::sendMidiThru(byte type, byte channel, byte data1, byte data2) 
       if (usbHostMIDI) usbHostMIDI.sendControlChange(data1, data2, channel);
       break;
     case midi::PitchBend: {
-      int16_t pitchValue = ((data2 << 7) | data1) - 8192;
+      const int16_t pitchValue = MidiConfig::Pitchbend::logicalToWireSigned(
+          static_cast<int16_t>(((data2 << 7) | data1) - 8192));
       if (outputUSB) usbMIDI.sendPitchBend(pitchValue, channel);
       if (outputSerial) MIDIserial.sendPitchBend(pitchValue, channel);
       if (usbHostMIDI) usbHostMIDI.sendPitchBend(pitchValue, channel);
@@ -313,8 +455,8 @@ void MidiHandler::handleControlChange(byte channel, byte control, byte value, ui
 }
 
 void MidiHandler::handlePitchBend(byte channel, int pitchValue, uint32_t tickNow) {
-  // Convert unsigned 14-bit pitchbend (0-16383) to signed format (-8192 to 8191)
-  int16_t signedPitchValue = pitchValue - 8192;
+  const int16_t signedPitchValue =
+      MidiConfig::Pitchbend::unsignedToLogical(static_cast<uint16_t>(pitchValue));
 
   if (!looperState.isLoadSaveModeActive()) {
     noteEditManager.handleMidiPitchbend(channel, signedPitchValue);
@@ -322,7 +464,8 @@ void MidiHandler::handlePitchBend(byte channel, int pitchValue, uint32_t tickNow
 
   // Route to track recording (skip control channels 13-16)
   if (!isControlChannel(channel)) {
-    trackManager.getSelectedTrack().recordMidiEvents(midi::PitchBend, channel, pitchValue & 0x7F, (pitchValue >> 7) & 0x7F, tickNow);
+    trackManager.getSelectedTrack().recordMidiEvents(
+        midi::PitchBend, channel, pitchValue & 0x7F, (pitchValue >> 7) & 0x7F, tickNow);
   }
 }
 
@@ -363,7 +506,15 @@ void MidiHandler::sendMidiEvent(const MidiEvent& event) {
         case midi::NoteOn: {
             if (outputUSB) usbMIDI.sendNoteOn(event.data.noteData.note, event.data.noteData.velocity, event.channel);
             if (outputSerial) MIDIserial.sendNoteOn(event.data.noteData.note, event.data.noteData.velocity, event.channel);
-            if (usbHostMIDI) usbHostMIDI.sendNoteOn(event.data.noteData.note, event.data.noteData.velocity, event.channel);
+            if (usbHostMIDI) {
+                if (isLedChannel(event.channel)) {
+                    queueLedUsbHostFeedback(event.data.noteData.note, event.data.noteData.velocity);
+                } else {
+                    paceDroidUsbHostBeforeSend();
+                    usbHostMIDI.sendNoteOn(event.data.noteData.note, event.data.noteData.velocity, event.channel);
+                    serviceUsbHostAfterOutboundPacket();
+                }
+            }
             if (!isLedChannel(event.channel)) {
                 logger.log(CAT_MIDI, LOG_DEBUG,
                     "OUT NoteOn  usb=%d ser=%d host=%d ch=%u note=%u vel=%u",
@@ -381,7 +532,15 @@ void MidiHandler::sendMidiEvent(const MidiEvent& event) {
         case midi::NoteOff: {
             if (outputUSB) usbMIDI.sendNoteOff(event.data.noteData.note, event.data.noteData.velocity, event.channel);
             if (outputSerial) MIDIserial.sendNoteOff(event.data.noteData.note, event.data.noteData.velocity, event.channel);
-            if (usbHostMIDI) usbHostMIDI.sendNoteOff(event.data.noteData.note, event.data.noteData.velocity, event.channel);
+            if (usbHostMIDI) {
+                if (isLedChannel(event.channel)) {
+                    queueLedUsbHostFeedback(event.data.noteData.note, 0);
+                } else {
+                    paceDroidUsbHostBeforeSend();
+                    usbHostMIDI.sendNoteOff(event.data.noteData.note, event.data.noteData.velocity, event.channel);
+                    serviceUsbHostAfterOutboundPacket();
+                }
+            }
             if (!isLedChannel(event.channel)) {
                 logger.log(CAT_MIDI, LOG_DEBUG,
                     "OUT NoteOff usb=%d ser=%d host=%d ch=%u note=%u vel=%u",
@@ -405,15 +564,24 @@ void MidiHandler::sendMidiEvent(const MidiEvent& event) {
                 MIDIserial.sendControlChange(event.data.ccData.cc, event.data.ccData.value, event.channel);
             }
             if (usbHostMIDI && !skipCc123OnLedCh) {
+                paceDroidUsbHostBeforeSend();
                 usbHostMIDI.sendControlChange(event.data.ccData.cc, event.data.ccData.value, event.channel);
+                serviceUsbHostAfterOutboundPacket();
             }
             break;
         }
-        case midi::PitchBend:
-            if (outputUSB) usbMIDI.sendPitchBend(event.data.pitchBend, event.channel);
-            if (outputSerial) MIDIserial.sendPitchBend(event.data.pitchBend, event.channel);
-            if (usbHostMIDI) usbHostMIDI.sendPitchBend(event.data.pitchBend, event.channel);
+        case midi::PitchBend: {
+            const int16_t wirePitch =
+                MidiConfig::Pitchbend::logicalToWireSigned(event.data.pitchBend);
+            if (outputUSB) usbMIDI.sendPitchBend(wirePitch, event.channel);
+            if (outputSerial) MIDIserial.sendPitchBend(wirePitch, event.channel);
+            if (usbHostMIDI) {
+                paceDroidUsbHostBeforeSend();
+                usbHostMIDI.sendPitchBend(wirePitch, event.channel);
+                serviceUsbHostAfterOutboundPacket();
+            }
             break;
+        }
         case midi::AfterTouchChannel:
             if (outputUSB) usbMIDI.sendAfterTouch(event.data.channelPressure, event.channel);
             if (outputSerial) MIDIserial.sendAfterTouch(event.data.channelPressure, event.channel);
@@ -422,7 +590,11 @@ void MidiHandler::sendMidiEvent(const MidiEvent& event) {
         case midi::ProgramChange:
             if (outputUSB) usbMIDI.sendProgramChange(event.data.program, event.channel);
             if (outputSerial) MIDIserial.sendProgramChange(event.data.program, event.channel);
-            if (usbHostMIDI) usbHostMIDI.sendProgramChange(event.data.program, event.channel);
+            if (usbHostMIDI) {
+                paceDroidUsbHostBeforeSend();
+                usbHostMIDI.sendProgramChange(event.data.program, event.channel);
+                serviceUsbHostAfterOutboundPacket();
+            }
             break;
         case midi::SystemExclusive:
             if (outputUSB) usbMIDI.sendSysEx(event.data.sysexData.length, event.data.sysexData.data, true);
@@ -471,15 +643,8 @@ void MidiHandler::sendNoteOff(uint8_t channel, uint8_t note, uint8_t velocity) {
     sendMidiEvent(MidiEvent::NoteOff(0, channel, note, velocity));
 }
 
-namespace {
-constexpr uint16_t kLedUsbHostPadMicros = 50;
-}
-
 void MidiHandler::serviceUsbHostAfterLedPacket() {
-  usbHost.Task();
-  if (kLedUsbHostPadMicros > 0) {
-    delayMicroseconds(kLedUsbHostPadMicros);
-  }
+  serviceUsbHostAfterOutboundPacket();
 }
 
 void MidiHandler::sendLedFeedbackNoteOn(uint8_t note, uint8_t velocity) {
@@ -488,8 +653,7 @@ void MidiHandler::sendLedFeedbackNoteOn(uint8_t note, uint8_t velocity) {
   if (outputUSB) usbMIDI.sendNoteOn(note, velocity, ch);
   if (outputSerial) MIDIserial.sendNoteOn(note, velocity, ch);
   if (usbHostMIDI) {
-    usbHostMIDI.sendNoteOn(note, velocity, ch);
-    serviceUsbHostAfterLedPacket();
+    queueLedUsbHostFeedback(note, velocity);
   }
 }
 
@@ -499,8 +663,7 @@ void MidiHandler::sendLedFeedbackNoteOff(uint8_t note) {
   if (outputUSB) usbMIDI.sendNoteOff(note, 0, ch);
   if (outputSerial) MIDIserial.sendNoteOff(note, 0, ch);
   if (usbHostMIDI) {
-    usbHostMIDI.sendNoteOn(note, 0, ch);
-    serviceUsbHostAfterLedPacket();
+    queueLedUsbHostFeedback(note, 0);
   }
 }
 
@@ -588,10 +751,10 @@ void MidiHandler::usbHostProgramChange(uint8_t channel, uint8_t program) {
 
 void MidiHandler::usbHostPitchChange(uint8_t channel, int pitch) {
   if (instance) {
-    // USBHost_t36 already delivers signed pitch (-8192..8191). Re-splitting that int as
-    // MIDI bytes and subtracting 8192 again in handlePitchBend corrupts the value (two
-    // halves of the range). Encode back to unsigned 14-bit before the shared path.
-    const uint16_t unsignedPitch = static_cast<uint16_t>(pitch + 8192);
+    // USBHost_t36 delivers signed pitch. Re-splitting as bytes and subtracting 8192 again
+    // in handlePitchBend corrupts the value; encode logical pitch to unsigned 14-bit first.
+    const uint16_t unsignedPitch = MidiConfig::Pitchbend::logicalToUnsigned(
+        static_cast<int16_t>(pitch));
     instance->handleMidiMessage(midi::PitchBend, channel,
                                 unsignedPitch & 0x7F, (unsignedPitch >> 7) & 0x7F,
                                 SOURCE_USB_HOST);
