@@ -231,7 +231,7 @@ stateDiagram
 
 ### D34 — Send path honesty + single motor trigger owner
 
-**Status:** Phase 12 (deferred from Phase 7).
+**Status:** Partial (§7.6.3–7.6.4 shipped 2026-06-30; dead-wrapper cleanup remains Phase 12).
 
 **Decision:** `sendCoarseFaderPosition` / `sendFineFaderPosition` / `sendNoteValueFaderPosition` return `bool`; `processFaderOutbound` skips trigger + `#DBG` step when send returns false. One owner for motor triggers — pipeline **or** send helpers, not both (extends D20).
 

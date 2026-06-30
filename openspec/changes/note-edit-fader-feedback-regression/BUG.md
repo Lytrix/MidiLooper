@@ -144,6 +144,31 @@ After flash with `2ecf25d`, every `#DBG outbound_ctx` row shows `pb != expected_
 | Ownership change? | **No** — tick input fix only in send helpers. |
 | State transition change? | **No** — no new session type or mode. |
 
+### RC12 — Pace-skip overreach in `droidMotorOutboundPriority_` (2026-06-30)
+
+**Status:** Fixed in §7.6.1 (unified handoff).
+
+**Symptom:** After `3adb27b` ch15 motor bypass, F2 coarse motor latch regressed (~80% user-visible on `session_20260630_222821`).
+
+**Cause:** `paceDroidUsbHostBeforeSend()` returned early when `droidMotorOutboundPriority_` was active, skipping inter-packet gap pacing for motor fader USB host sends — not only LED drain.
+
+**Fix:** Remove pace-skip early return; keep LED queue bypass (`queueAsLed = isLedChannel && !droidMotorOutboundPriority_`) and `processDroidUsbHostOutbound` early return when priority active.
+
+### RC13 — Duplicate `QUIET_REFRESH` and trigger-only pipeline steps (2026-06-30)
+
+**Status:** Fixed in §7.6.2–7.6.4.
+
+**Symptom:** `session_20260630_222821`: 13/13 quiet bursts repeated same `pb` + tick; `SEND_F2` logged on empty slot with trigger-only burst; double F2 motor triggers (send helper + pipeline).
+
+**Fix:** `processFaderSelectQuiet` schedules outbound only when selection/slot changed; send helpers return `bool`; pipeline skips trigger steps on no-op; motor triggers owned by pipeline `TriggerCoarse` / `TriggerFine` / `TriggerNoteValue` only.
+
+**Architecture checkpoint:**
+
+| Question | Answer |
+|----------|--------|
+| Ownership change? | **No** — transport pacing + pipeline gating only. |
+| State transition change? | **No** — no new session type or mode. |
+
 ---
 
 ## Spike 2026-06-30 — `session_20260630_113422.log` (Phase 3)
