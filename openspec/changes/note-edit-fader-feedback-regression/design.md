@@ -1,12 +1,20 @@
 ## Context
 
-NOTE_EDIT DROID faders are owned by `NoteEditManager` (not `MidiFaderProcessor`). Outbound feedback uses deferred chains (`SELECTNOTE_UPDATE_DELAY` = 1600 ms) and layered ignore windows (`FEEDBACK_IGNORE_PERIOD` = 1500 ms, `selectFaderFeedbackIgnoreUntilMs_`, `sessionFaderSyncStep_`).
+NOTE_EDIT DROID faders are owned by `NoteEditManager` (not `MidiFaderProcessor` for ch14/16 inbound). Outbound feedback uses a single frame-stepped pipeline:
 
-Commit `d49e4c8` introduced `deferSelectFaderSyncToBracket` → `processSessionFaderSync` (steps 1–3: fader1, fader2 coarse, fader3/4) to fix loop-edit → NOTE_EDIT bracket pull. The same commit documents fader2 coarse as unreliable. `syncNoteEditSessionStateToUi` still calls `sendSelectnoteFaderUpdate` on every select, creating a second 1600 ms scheduler that races with session sync.
+- `requestFaderOutbound(Trigger)` — schedule or coalesce outbound work
+- `processFaderOutbound()` — frame-stepped steps in `NoteEditFaderOutboundPlan.h`
+- `processFaderSelectQuiet()` — 400 ms user-classified quiet gate before dependent F2–F4 refresh
 
-Inbound edit geometry (`handleCoarseFaderInput`, `toggleLengthEditingMode`, `lengthEditCoarsePitchbendToLoopTick`) was fixed in `d576f85` — this bug is **outbound-first**.
+Layered ignore windows remain: `FEEDBACK_IGNORE_PERIOD`, `selectFaderFeedbackIgnoreUntilMs_`, `armCoarseFaderFeedbackIgnore`, `armChannel15CcFaderFeedbackIgnore`.
 
-Primary files: `src/NoteEditManager.cpp`, `include/NoteEditManager.h`, `src/EditManager.cpp`.
+Inbound edit geometry (`handleCoarseFaderInput`, `toggleLengthEditingMode`, `lengthEditCoarsePitchbendToLoopTick`) was fixed in `d576f85`. Phase 3 fixed timing/policy (RC5–RC10). **RC11** (loop-relative outbound tick) is open — outbound send helpers still use `storageTick % loopLength` while select/inbound use `SelectNavigation::noteRelativeTick`.
+
+Primary files: `src/NoteEditManager.cpp`, `include/NoteEditManager.h`, `include/Utils/NoteEditFaderOutboundPlan.h`, `src/Utils/SelectNavigation.cpp`, `src/EditManager.cpp`.
+
+### Phase 1 (historical)
+
+Commit `d49e4c8` introduced `deferSelectFaderSyncToBracket` → `processSessionFaderSync` (steps 1–3: fader1, fader2 coarse, fader3/4) and `sessionFaderSyncStep_` input gating. Phase 1 paired coarse+fine and deduped schedulers (D1–D5). **Removed in Phase 3** — replaced by `requestFaderOutbound` / `processFaderOutbound`. References to `deferSelectFaderSyncToBracket`, `sessionFaderSyncStep_`, `isSessionFaderSyncActive`, `sendChannel15NotePositionFeedback`, and `DeferredRefresh` in older tasks are historical only.
 
 ## Goals / Non-Goals
 
@@ -25,6 +33,10 @@ Primary files: `src/NoteEditManager.cpp`, `include/NoteEditManager.h`, `src/Edit
 - Changing note edit store, overlap, or undo paths.
 
 ## Decisions
+
+### Phase 1 decisions (historical — D1–D5)
+
+Phase 1 addressed duplicate millis schedulers and fader2/fader3 split at session open. Implementation used `deferSelectFaderSyncToBracket` and `sessionFaderSyncStep_` — superseded by Phase 3 coordinator. Decisions D1–D5 remain valid as intent; live API names differ.
 
 ### D1 — Single outbound coordinator (Option A, recommended)
 
@@ -83,14 +95,14 @@ Rollback: revert `NoteEditManager` sync changes; pre-`d49e4c8` behavior restores
 
 ## Open Questions
 
-- **TBD:** Final sync latency budget — is immediate fader1 (Option B) required for product feel, or is ≤2 s chain acceptable?
-- **TBD:** HITL fail vs warn on missing `Session fader sync: sent fader 2 coarse` until firmware fix verified on device.
+- **Sync latency budget:** Resolved in Phase 3 — frame-stepped coordinator, 400 ms user-classified quiet before dependent refresh.
+- **HITL gate strictness:** Timing verifier **PASS** (`session_20260630_191718`); coordinate gate `pb == expected_pb_rel` pending Phase 8.
 
 ---
 
-## Phase 2 — Deferred refresh pipeline (2026-06-30)
+## Phase 2 — Deferred refresh pipeline (2026-06-30) — superseded
 
-**Context:** Phase 1 replaced millis-deferred schedulers with a frame-stepped coordinator (`NoteEditFaderOutboundPlan`, `processFaderOutbound`). Bug persists because `requestFaderOutbound` still preempts in-flight ch15 sequences on every fader1 note select.
+**Status:** Partially implemented then superseded by Phase 3. `DeferredRefresh` and 1000 ms stability timer removed from live code.
 
 ### Phase 2 goals
 
@@ -192,3 +204,104 @@ stateDiagram
 | 400 ms lag after last user sample | Tunable `kFader1QuietMs`; slot change updates selection live |
 | Motor echo classified as user | Smart feedback ignore; quiet only on classified user input |
 | Hybrid diagnostic + coordinator | Single path only (D15) |
+
+---
+
+## Phase 7 — Bracket / send-path hygiene (2026-06-30)
+
+**Context:** After Phase 3 fixed F1↔F2 timing, hardware still showed bracket snap-back, display freeze on heavy F3, and send-path honesty issues. See [phase7 handoff](../../../docs/plans/note_edit_fader_feedback_phase7_handoff.md).
+
+### D31 — Bracket-tick → F1 pitchbend
+
+**Status:** Shipped.
+
+**Decision:** F1 bracket outbound uses session bracket tick for pitchbend mapping.
+
+### D36 — Session bracket on geometry moves
+
+**Status:** Shipped.
+
+**Decision:** `EditManager::commitBracketTickFromGeometry` sets both `sessionState.selection.bracketTick` and legacy `bracketTick` on geometry-path moves (F2/F3 edit, NOTELEN). F1 nav path unchanged (`applySelectNav`).
+
+### D37 — Geometry F1 feedback without touching nav state
+
+**Status:** Shipped.
+
+**Decision:** Geometry-driven F1 bracket send (`Fader1BracketOnly` / `scheduleOtherFaderUpdates`) SHALL NOT overwrite `lastUserSelectFaderValue` / `lastSelectFaderTime`.
+
+### D34 — Send path honesty + single motor trigger owner
+
+**Status:** Phase 12 (deferred from Phase 7).
+
+**Decision:** `sendCoarseFaderPosition` / `sendFineFaderPosition` / `sendNoteValueFaderPosition` return `bool`; `processFaderOutbound` skips trigger + `#DBG` step when send returns false. One owner for motor triggers — pipeline **or** send helpers, not both (extends D20).
+
+### D35 — Fine throttle + display refresh
+
+**Status:** Phase 11 (parked).
+
+**Decision:** Coalesced `requestNoteInfoRefresh` after invalidate; rate-limit geometry `SEND_F1` bursts.
+
+### D32 / D33 — Rate-limit geometry SEND_F1; motor priority
+
+**Status:** Phase 11 (parked).
+
+**Decision:** Cap F1 outbound rate during F2/F3 geometry edit; prioritize dependent outbound motor stages.
+
+---
+
+## Phase 8 — Loop-relative outbound tick (2026-06-30)
+
+**Context:** HITL timing PASS on `session_20260630_191718` but `#DBG outbound_ctx` confirms RC11 — F2 motor offset ~50% when `loopStartTick ≠ 0`.
+
+### D17 — Loop-relative outbound tick
+
+**Decision:** `sendCoarseFaderPosition` (position and length modes) SHALL compute anchor via `SelectNavigation::noteRelativeTick(storageTick, loopStartTick, loopLength)` before `loopTickToCoarsePitchbend` / `lengthEditLoopTickToCoarsePitchbend`. Position mode uses `startTick`; length mode uses `endTick`.
+
+**Rationale:** F1 select and F2 inbound already use loop-relative ticks; outbound must match.
+
+**Architecture checkpoint:** Tick input fix only — no ownership or session-mode change.
+
+---
+
+## Phase 9 — Symmetric F1 ignore during F2 outbound (2026-06-30)
+
+**Context:** F1 bracket send arms `selectFaderFeedbackIgnoreUntilMs_`; F2 coarse send arms only `armCoarseFaderFeedbackIgnore`. F2 motor echo can re-trigger select during dependent refresh.
+
+### D18 — Symmetric F1 ignore during F2 outbound
+
+**Decision:** Arm `selectFaderFeedbackIgnoreUntilMs_` at `processFaderOutbound` `SendCoarse` (or start of `sendCoarseFaderPosition` when called from pipeline). Preserve user override via `SELECT_MOVEMENT_THRESHOLD` in `shouldIgnoreFaderInput`.
+
+**Capture gate:** No spurious `#DBG select_slot` during `SEND_F2` / `TRIGGER_F2` window.
+
+---
+
+## Phase 10 — F3/F4 unified dependent pipeline (2026-06-30)
+
+### D19 — F3 relative tick + single pipeline burst
+
+**Decision:** `sendFineFaderPosition` position mode mirrors D17 (relative start tick for fine offset). One `NoteSelectDependent` trigger runs F2 + F3 + F4 in sequence; no fader3-only path. Optional `#DBG outbound_ctx_f3` under `SESSION_CAPTURE`.
+
+F4 note-value: no tick fix; stays in same pipeline step.
+
+---
+
+## Phase 11 — Parked (after Phases 8–10)
+
+Only if still reproducing after coordinate fix:
+
+- D35 display freeze on heavy F3
+- D36/D37 bracket regressions
+- NOTELEN tasks 4.2 / 6.2
+- D31 if F1 offset remains after RC11 fix
+
+---
+
+## Phase 12 — Stale code cleanup (after Phase 8.4)
+
+**Gate:** Do not start until Phase 8.3 capture passes (`pb == expected_pb_rel`).
+
+### D20 — Dead API removal + single trigger owner
+
+**Decision:** Remove dead outbound wrappers (`sendStartNotePitchbend`, `performSelectnoteFaderUpdate`, `sendFaderUpdate`, `sendFaderPosition`), ghost state (`NoteEditManager::faderHandler`, `faderProcessor`, `markFaderSent`, `lastSelectnoteSentTime`, `PITCHBEND_IGNORE_PERIOD`), and no-op `MidiFaderProcessor::scheduleOtherFaderUpdates` wrapper. Pick one motor-trigger owner (D34/D20).
+
+**Live API names:** `requestFaderOutbound`, `processFaderOutbound`, `scheduleNoteSelectFaderSync`, `sendNoteEditSessionFaderFeedback`.

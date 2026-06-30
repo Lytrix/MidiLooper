@@ -304,6 +304,9 @@ void MidiHandler::mirrorUsbFaderProbePassthrough(byte type, byte channel, byte d
 #endif
 
 void MidiHandler::paceDroidUsbHostBeforeSend() {
+  if (droidMotorOutboundPriority_) {
+    return;
+  }
   const uint32_t now = micros();
   if (lastDroidUsbHostSendMicros_ == 0) {
     return;
@@ -507,7 +510,9 @@ void MidiHandler::sendMidiEvent(const MidiEvent& event) {
             if (outputUSB) usbMIDI.sendNoteOn(event.data.noteData.note, event.data.noteData.velocity, event.channel);
             if (outputSerial) MIDIserial.sendNoteOn(event.data.noteData.note, event.data.noteData.velocity, event.channel);
             if (usbHostMIDI) {
-                if (isLedChannel(event.channel)) {
+                const bool queueAsLed =
+                    isLedChannel(event.channel) && !droidMotorOutboundPriority_;
+                if (queueAsLed) {
                     queueLedUsbHostFeedback(event.data.noteData.note, event.data.noteData.velocity);
                 } else {
                     paceDroidUsbHostBeforeSend();
@@ -515,7 +520,7 @@ void MidiHandler::sendMidiEvent(const MidiEvent& event) {
                     serviceUsbHostAfterOutboundPacket();
                 }
             }
-            if (!isLedChannel(event.channel)) {
+            if (!isLedChannel(event.channel) || droidMotorOutboundPriority_) {
                 logger.log(CAT_MIDI, LOG_DEBUG,
                     "OUT NoteOn  usb=%d ser=%d host=%d ch=%u note=%u vel=%u",
                     outputUSB ? 1 : 0, outputSerial ? 1 : 0, usbHostMIDI ? 1 : 0,
@@ -533,7 +538,9 @@ void MidiHandler::sendMidiEvent(const MidiEvent& event) {
             if (outputUSB) usbMIDI.sendNoteOff(event.data.noteData.note, event.data.noteData.velocity, event.channel);
             if (outputSerial) MIDIserial.sendNoteOff(event.data.noteData.note, event.data.noteData.velocity, event.channel);
             if (usbHostMIDI) {
-                if (isLedChannel(event.channel)) {
+                const bool queueAsLed =
+                    isLedChannel(event.channel) && !droidMotorOutboundPriority_;
+                if (queueAsLed) {
                     queueLedUsbHostFeedback(event.data.noteData.note, 0);
                 } else {
                     paceDroidUsbHostBeforeSend();
@@ -541,7 +548,7 @@ void MidiHandler::sendMidiEvent(const MidiEvent& event) {
                     serviceUsbHostAfterOutboundPacket();
                 }
             }
-            if (!isLedChannel(event.channel)) {
+            if (!isLedChannel(event.channel) || droidMotorOutboundPriority_) {
                 logger.log(CAT_MIDI, LOG_DEBUG,
                     "OUT NoteOff usb=%d ser=%d host=%d ch=%u note=%u vel=%u",
                     outputUSB ? 1 : 0, outputSerial ? 1 : 0, usbHostMIDI ? 1 : 0,

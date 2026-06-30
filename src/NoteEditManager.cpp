@@ -494,6 +494,7 @@ void NoteEditManager::cancelActiveFaderOutbound() {
     outboundStep_ = NoteEditFaderOutbound::Step::Idle;
     outboundPlan_ = {};
     outboundStepStartedMs_ = 0;
+    midiHandler.setDroidMotorOutboundPriority(false);
 }
 
 void NoteEditManager::requestFaderOutbound(NoteEditFaderOutbound::Trigger trigger) {
@@ -526,12 +527,17 @@ void NoteEditManager::requestFaderOutbound(NoteEditFaderOutbound::Trigger trigge
     outboundStep_ = NoteEditFaderOutbound::nextEnabledStep(NoteEditFaderOutbound::Step::Idle,
                                                              outboundPlan_);
     outboundStepStartedMs_ = millis();
+    midiHandler.setDroidMotorOutboundPriority(true);
     logOutboundStep("BEGIN");
 }
 
 void NoteEditManager::sendFader1BracketFeedback(Track& track) {
     if (editManager.getEditSessionType() != EditSessionType::Note) {
         return;
+    }
+    const bool pipelineActive = isFaderOutboundActive();
+    if (!pipelineActive) {
+        midiHandler.setDroidMotorOutboundPriority(true);
     }
     EditSelectNoteState::sendTargetPitchbend(editManager, track);
     const uint32_t sentAt = millis();
@@ -543,11 +549,15 @@ void NoteEditManager::sendFader1BracketFeedback(Track& track) {
     lastSelectFaderTime = sentAt;
     selectFaderFeedbackIgnoreUntilMs_ = sentAt + FEEDBACK_IGNORE_PERIOD;
     logOutboundStep("SEND_F1");
+    if (!pipelineActive) {
+        midiHandler.setDroidMotorOutboundPriority(false);
+    }
 }
 
 void NoteEditManager::processFaderOutbound() {
     if (outboundStep_ == NoteEditFaderOutbound::Step::Idle ||
         outboundStep_ == NoteEditFaderOutbound::Step::Done) {
+        midiHandler.setDroidMotorOutboundPriority(false);
         if (pendingOutboundTrigger_ != NoteEditFaderOutbound::Trigger::None) {
             const NoteEditFaderOutbound::Trigger pending = pendingOutboundTrigger_;
             pendingOutboundTrigger_ = NoteEditFaderOutbound::Trigger::None;
@@ -556,11 +566,15 @@ void NoteEditManager::processFaderOutbound() {
         return;
     }
 
+    midiHandler.setDroidMotorOutboundPriority(true);
+
     const uint32_t now = millis();
     if (outboundStepStartedMs_ > 0 &&
         (now - outboundStepStartedMs_) > NoteEditFaderOutbound::kOutboundWatchdogMs) {
         logger.info("NOTE_EDIT outbound watchdog — forcing Done");
         outboundStep_ = NoteEditFaderOutbound::Step::Done;
+        midiHandler.setDroidMotorOutboundPriority(false);
+        return;
     }
 
     Track& track = trackManager.getSelectedTrack();
@@ -631,9 +645,11 @@ void NoteEditManager::processFaderOutbound() {
             logOutboundStep("DONE");
             activeOutboundTrigger_ = NoteEditFaderOutbound::Trigger::None;
             outboundStep_ = NoteEditFaderOutbound::Step::Idle;
+            midiHandler.setDroidMotorOutboundPriority(false);
             return;
         default:
             outboundStep_ = NoteEditFaderOutbound::Step::Idle;
+            midiHandler.setDroidMotorOutboundPriority(false);
             return;
     }
 }

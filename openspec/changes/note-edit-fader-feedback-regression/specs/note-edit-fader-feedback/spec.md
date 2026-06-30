@@ -24,13 +24,13 @@ When the user changes note selection via fader1 during NOTE_EDIT and `lengthEdit
 #### Scenario: Select different note in position mode
 
 - **WHEN** fader1 select changes `selectedNoteIdx` and `lengthEditingMode == false`
-- **AND** fader1 has been stable for ≥1000 ms since the last select change
+- **AND** fader1 has had no user-classified input for ≥400 ms since the last select change (`kFader1QuietMs`)
 - **THEN** outbound feedback updates fader2 and fader3 to the new note start
 - **AND** serial does not show fader3-only position sync without fader2 coarse for that selection
 
 #### Scenario: Rapid fader1 select coalesces to final note
 
-- **WHEN** the user moves fader1 across multiple notes within 1000 ms
+- **WHEN** the user moves fader1 across multiple notes within 400 ms
 - **THEN** the system SHALL coalesce dependent refresh to the final selected note
 - **AND** SHALL run one complete F2 → F3 → F4 outbound pipeline after fader1 quiet period
 
@@ -59,30 +59,30 @@ When the user enables length editing via NOTELEN (`toggleLengthEditingMode` true
 
 ### Requirement: Session fader sync input gating
 
-During deferred session fader sync, the system SHALL block fader input only as needed to prevent motor-echo feedback. Fader1 input SHALL NOT remain blocked for the full multi-step sync chain after fader1 feedback has been sent and `FEEDBACK_IGNORE_PERIOD` has elapsed.
+During NOTE_EDIT session open outbound (`SessionOpen` trigger), the system SHALL block fader input only as needed to prevent motor-echo feedback. Fader1 input SHALL NOT remain blocked for the full ch15 pipeline after fader1 feedback has been sent and `FEEDBACK_IGNORE_PERIOD` has elapsed.
 
 #### Scenario: Fader1 usable after its ignore window
 
-- **WHEN** session fader sync step 1 has sent fader1 feedback and `FEEDBACK_IGNORE_PERIOD` has elapsed
-- **AND** session sync step is ≥ 2 (ch15 feedback pending)
+- **WHEN** `SessionOpen` pipeline has sent fader1 bracket feedback and `FEEDBACK_IGNORE_PERIOD` has elapsed
+- **AND** ch15 dependent feedback (F2–F4) is still pending or in progress
 - **THEN** fader1 inbound SHALL be accepted (subject to normal select stability thresholds)
 - **AND** ch15 faders MAY remain blocked until coarse+fine sync completes
 
 #### Scenario: No duplicate schedulers on session open
 
-- **WHEN** `deferSelectFaderSyncToBracket` starts session fader sync
-- **THEN** any pending `sendSelectnoteFaderUpdate` SHALL be cancelled or suppressed
-- **AND** `syncNoteEditSessionStateToUi` SHALL NOT schedule a competing selectnote update while `sessionFaderSyncStep_ != 0`
+- **WHEN** `sendNoteEditSessionFaderFeedback` starts `SessionOpen` outbound
+- **THEN** the system SHALL NOT schedule a competing note-select outbound for the same geometry
+- **AND** `syncNoteEditSessionStateToUi` SHALL NOT restart outbound while `SessionOpen` pipeline is active
 
 ### Requirement: Coarse outbound feedback timestamps
 
-All outbound fader2 coarse feedback paths (`sendCoarseFaderPosition`, session sync step 2, `sendStartNotePitchbend`, NOTELEN enable) SHALL update the coarse fader state's `lastSentTime` and `lastSentPitchbend` consistently so smart feedback ignore operates correctly.
+All outbound fader2 coarse feedback paths (`sendCoarseFaderPosition`, `processFaderOutbound` `SendCoarse`, NOTELEN enable) SHALL update the coarse fader state's `lastSentTime` and `lastSentPitchbend` consistently so smart feedback ignore operates correctly.
 
-#### Scenario: Coarse lastSentTime after session sync
+#### Scenario: Coarse lastSentTime after dependent refresh
 
-- **WHEN** session fader sync sends fader2 coarse
+- **WHEN** `processFaderOutbound` sends fader2 coarse on `SendCoarse`
 - **THEN** `midiFaderManager` coarse fader state `lastSentTime` is set to the send time
-- **AND** channel 15 group ignore is armed via `armChannel15FaderFeedbackIgnore` or equivalent
+- **AND** channel 15 coarse ignore is armed via `armCoarseFaderFeedbackIgnore` or equivalent
 
 ### Requirement: Slot-index navigation on fader1 select
 
@@ -162,3 +162,58 @@ Under `teensy41-capture-serial` build, the system SHALL emit `#DBG select_slot` 
 
 - **WHEN** fader1 input is classified as feedback and ignored
 - **THEN** serial MAY include `#DBG select_slot idx=-1 ignored=1`
+
+### Requirement: Loop-relative outbound tick (F2 coarse)
+
+When sending fader2 coarse outbound during NOTE_EDIT, the system SHALL map pitchbend from the loop-relative tick, not storage tick modulo loop length alone. Position mode (`!lengthEditingMode`) SHALL use `SelectNavigation::noteRelativeTick(startTick, loopStartTick, loopLength)`. Length mode SHALL use `noteRelativeTick(endTick, loopStartTick, loopLength)`.
+
+#### Scenario: Non-zero loop start — position mode
+
+- **WHEN** `loopStartTick = 424`, `loopLength = 768`, selected note `startTick = 0`, and `lengthEditingMode == false`
+- **THEN** outbound F2 coarse pitchbend maps to relative tick 344 (~47.8% of loop)
+- **AND** serial `#DBG outbound_ctx` shows `pb == expected_pb_rel`
+
+#### Scenario: Length mode end anchor
+
+- **WHEN** NOTELEN enables length mode with non-zero `loopStartTick`
+- **THEN** fader2 coarse feedback uses loop-relative end tick before pitchbend mapping
+
+### Requirement: Loop-relative outbound tick (F3 fine) — Phase 10
+
+When sending fader3 fine outbound in position mode, the system SHALL compute fine offset from loop-relative start tick, not `startTick % loopLength` alone.
+
+#### Scenario: Fine offset with non-zero loop start
+
+- **WHEN** `loopStartTick ≠ 0` and position-mode fine feedback runs after F2 coarse
+- **THEN** fine CC reflects offset from reference step using loop-relative start tick
+- **AND** F3 motor aligns with selected note start on piano roll
+
+### Requirement: F1 ignore during F2 outbound
+
+While the ch15 outbound pipeline is on `SendCoarse` through `TriggerCoarse`, user-classified fader1 samples SHALL NOT re-trigger note selection. Motor-echo classification SHALL remain subject to `SELECT_MOVEMENT_THRESHOLD`.
+
+#### Scenario: No spurious select during F2 send window
+
+- **WHEN** `processFaderOutbound` executes `SendCoarse` and `TriggerCoarse` for dependent refresh
+- **THEN** serial SHALL NOT show new `#DBG select_slot` with `ignored=0` caused by F2 motor echo during that window
+- **AND** `selectFaderFeedbackIgnoreUntilMs_` is armed at `SendCoarse`
+
+### Requirement: Outbound coordinate instrumentation (capture-serial)
+
+Under `teensy41-capture-serial` build, the system SHALL emit `#DBG outbound_ctx` lines from `sendCoarseFaderPosition` with `anchor_tick`, `rel_tick`, `loop_start`, `loop_len`, `pb`, and `expected_pb_rel`.
+
+#### Scenario: Position-mode coordinate pass gate
+
+- **WHEN** position-mode F2 outbound runs with `loopStartTick ≠ 0`
+- **THEN** every `#DBG outbound_ctx f2` line shows `pb == expected_pb_rel`
+- **AND** `anchor_tick` used for send equals `rel_tick` after Phase 8 fix
+
+### Requirement: Single motor trigger owner (Phase 12)
+
+Each dependent fader stage SHALL emit at most one motor trigger per outbound pipeline step. Until Phase 12 ships, duplicate triggers from send helpers and `processFaderOutbound` are a known violation tracked in [BUG.md](../../BUG.md) and design D34/D20.
+
+#### Scenario: One trigger per F2 stage after cleanup
+
+- **WHEN** Phase 12 cleanup is complete and dependent refresh runs
+- **THEN** each `SEND_F2` / `TRIGGER_F2` pair emits exactly one `MO,224,14` motor trigger for that stage
+- **AND** `sendCoarseFaderPosition` does not call `sendCoarseFaderMotorTrigger` when pipeline owns triggers

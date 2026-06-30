@@ -61,7 +61,7 @@ public:
   /** Drain paced LED feedback queue to DROID USB host (call from main loop). */
   void processDroidUsbHostOutbound();
 
-  /** When true, LED queue drain is paused so motorfader outbound is not starved. */
+  /** When true, LED queue drain is paused and fader motor outbound skips MIN_PACKET_GAP pacing. */
   void setDroidMotorOutboundPriority(bool active);
 
   // --- Output Routing ---

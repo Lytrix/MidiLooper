@@ -27,6 +27,7 @@ This blocks trust in NOTE_EDIT on hardware and is orthogonal to active persisten
 
 - **Firmware:** [`NoteEditManager.cpp`](../../src/NoteEditManager.cpp), [`NoteEditManager.h`](../../include/NoteEditManager.h), [`EditManager.cpp`](../../src/EditManager.cpp) (`syncNoteEditSessionStateToUi` guard).
 - **Tests:** New native suite `test_note_edit_fader_feedback` (mapping + sync invariants); HITL edit baseline serial gates.
+- **Scripts:** `scripts/analyze_fader2_select_feedback.py`, `scripts/hitl/verify/note_edit_fader_select_refresh.py`.
 - **Brownfield:** [BUG.md](./BUG.md); related archived `edit-record-display-length-mode` (D3 length lifecycle — do not regress).
 - **Docs:** Update [PROJECT_STATE.md](../../docs/runtime/PROJECT_STATE.md) when shipped.
 
@@ -39,7 +40,7 @@ This blocks trust in NOTE_EDIT on hardware and is orthogonal to active persisten
 ## Open Decisions (TBD)
 
 - **Sync latency budget:** Resolved in Phase 3 — frame-stepped coordinator, 400 ms user-classified quiet before dependent refresh.
-- **HITL gate strictness:** Fail edit baseline on missing fader2 sync vs warn-only until firmware fix lands.
+- **HITL gate strictness:** Timing verifier **PASS** on `session_20260630_191718`; coordinate gate `pb == expected_pb_rel` pending Phase 8.
 
 ---
 
@@ -86,3 +87,83 @@ Diagnostic path (immediate F2–F4 + PC re-arm + millis settle + pitch deadband)
 
 - No `MidiFaderProcessor` migration.
 - No persistence/overlay scope.
+
+### Phase 3 status (2026-06-30)
+
+- **HITL timing PASS** — `note_edit_fader_select_refresh` verifier on `session_20260630_191718` (0 clusters missing F2, max gap 3.1 s).
+- **Absolute motor alignment open** — RC11 loop-relative tick bug; F2 motor ~50% offset when `loopStartTick ≠ 0`.
+
+---
+
+## Phase 7 — Bracket / send-path hygiene (2026-06-30)
+
+### What Changes (Phase 7)
+
+- **D31, D36, D37 shipped:** Bracket-tick F1 pitchbend; `commitBracketTickFromGeometry` for session + legacy bracket; geometry F1 feedback without touching nav state.
+- **D34 deferred to Phase 12:** Send-path honesty (bool return from send helpers); single motor-trigger owner.
+- **D35, D32, D33 parked to Phase 11:** Fine throttle, display refresh, rate-limit geometry SEND_F1.
+
+See [phase7 handoff](../../../docs/plans/note_edit_fader_feedback_phase7_handoff.md).
+
+---
+
+## Phase 8 — F2 loop-relative outbound tick (2026-06-30)
+
+### Why (Phase 8)
+
+RC11 — `sendCoarseFaderPosition` uses `startTick % loopLength` while F1 select and F2 inbound use `noteRelativeTick`. Capture `session_20260630_191718` confirms `pb != expected_pb_rel` on every `#DBG outbound_ctx` row when `loop_start ≠ 0`.
+
+### What Changes (Phase 8)
+
+- **`noteRelativeTick` in `sendCoarseFaderPosition`:** Position mode (start tick) and length mode (end tick) before pitchbend mapping.
+- **Native test:** `loopStartTick=424` round-trip in `test_note_edit_fader_feedback`.
+- **Capture gate:** All position-mode `outbound_ctx` rows have `pb == expected_pb_rel`.
+
+---
+
+## Phase 9 — Block F1 during F2 outbound (2026-06-30)
+
+### What Changes (Phase 9)
+
+- Arm `selectFaderFeedbackIgnoreUntilMs_` at `SendCoarse` (symmetric with F1 bracket send).
+- Preserve user override via `SELECT_MOVEMENT_THRESHOLD`.
+- Capture gate: no spurious `#DBG select_slot` during `SEND_F2` / `TRIGGER_F2` window.
+
+---
+
+## Phase 10 — F3/F4 unified dependent pipeline (2026-06-30)
+
+### What Changes (Phase 10)
+
+- **`sendFineFaderPosition`:** Loop-relative tick for position-mode fine offset (mirror Phase 8).
+- **Native test:** Fine CC round-trip with `loopStartTick=424`.
+- **Optional `#DBG outbound_ctx_f3`** capture line.
+- **One `NoteSelectDependent` burst** for F2 + F3 + F4; no fader3-only path.
+- F4 note-value: no tick fix; same pipeline step.
+
+---
+
+## Phase 11 — Parked (after Phases 8–10)
+
+Only if still reproducing:
+
+- D35 display freeze on heavy F3 use
+- D36/D37 bracket regressions
+- NOTELEN tasks 4.2 / 6.2
+- D31 if F1 offset remains after RC11 fix
+
+---
+
+## Phase 12 — Stale code cleanup (after Phase 8.4)
+
+**Gate:** Do not remove firmware or fix double triggers before Phase 8.3 capture passes.
+
+### What Changes (Phase 12)
+
+**Dead outbound wrappers** (zero callers): `sendSelectnoteFaderUpdate` thin wrapper kept until callers migrated; remove `sendStartNotePitchbend`, `performSelectnoteFaderUpdate`, `sendFaderUpdate`, `sendFaderPosition`.
+
+**Ghost state:** `lastSelectnoteSentTime`, `PITCHBEND_IGNORE_PERIOD`, `NoteEditManager::faderHandler`, `faderProcessor`, `markFaderSent`.
+
+**Live bug:** Double motor triggers — send helpers and `processFaderOutbound` both fire triggers; pick one owner (D34/D20).
+
+**OpenSpec stale reference sweep:** Remove or rewrite references to `deferSelectFaderSyncToBracket`, `sessionFaderSyncStep_`, `sendChannel15NotePositionFeedback`, `DeferredRefresh`, `isSessionFaderSyncActive`.
