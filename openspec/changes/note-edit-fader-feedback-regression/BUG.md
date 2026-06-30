@@ -1,7 +1,7 @@
 # BUG — NOTE_EDIT fader feedback regression (select + NOTELEN length)
 
 **Change:** `note-edit-fader-feedback-regression`  
-**Status:** OpenSpec proposal (2026-06-29) — implement after `/opsx:apply`  
+**Status:** Phase 3 coordinator **shipped** (2026-06-30); HITL timing verifier **PASS** (`session_20260630_191718`); **RC11** loop-relative coordinate bug **open** — Phase 8 next.  
 **Introduced by:** commit `d49e4c8` — *"Improve NOTE edit display alignment and deferred session fader sync"* (2026-06-29); commit message notes: *"Known issue: fader 2 coarse updates still do not run reliably on every session entry."*
 
 **Related:** Archived `edit-record-display-length-mode` (D3 length-mode lifecycle — shipped 2026-06-24); `d576f85` NOTELEN length mapping (linear coarse, anchor fine).
@@ -71,7 +71,7 @@ Step 3 can send fader3 without step 2 coarse completing — explains fader3-only
 
 ### RC5 — Preempt-on-request during fader1 select movement (Phase 2)
 
-**Status:** Open — Phase 1 frame-stepped coordinator shipped but bug persists on hardware.
+**Status:** **Resolved (Phase 3)** — non-preemptive coalesce + 400 ms user-classified quiet gate.
 
 Every `requestFaderOutbound()` call unconditionally invokes `cancelActiveFaderOutbound()` before restarting (`NoteEditManager.cpp`). On fader1 note select, `handleSelectFaderInput` → `sendNoteSelectFaderFeedback` → `requestFaderOutbound(NoteSelect, skipFader1=true)` fires **immediately** on each selection change. While the user is still moving fader1 across notes, each new select cancels an in-flight ch15 pipeline (coarse → trigger → fine → trigger → note-value → trigger).
 
@@ -89,9 +89,9 @@ Every `requestFaderOutbound()` call unconditionally invokes `cancelActiveFaderOu
 
 ### RC6 — Fader1Only clears pending dependent refresh (Phase 2 follow-up)
 
-`scheduleOtherFaderUpdates(FADER_COARSE/FINE/NOTE_VALUE)` called `requestFaderOutbound(Fader1Only)`, which preempts and sets `pendingRefresh_.pending = false`. Any fader2–4 edit after fader1 note select **cancelled** the scheduled F2–F4 refresh. Capture `session_20260630_103043.log`: after successful `BEGIN_REFRESH` at 47.701 s, fader2 inbound at 54.090 s produced repeated `DONE` (Fader1Only) with no further `WAIT_STABLE` until 57.998 s.
+**Status:** **Resolved (Phase 3)** — inline `sendFader1BracketFeedback` in `scheduleOtherFaderUpdates`; no outbound state machine restart on geometry F1 feedback.
 
-**Fix:** Inline `sendFader1BracketFeedback` in `scheduleOtherFaderUpdates` — no outbound state machine, pending refresh preserved.
+`scheduleOtherFaderUpdates(FADER_COARSE/FINE/NOTE_VALUE)` called `requestFaderOutbound(Fader1Only)`, which preempts and sets `pendingRefresh_.pending = false`. Any fader2–4 edit after fader1 note select **cancelled** the scheduled F2–F4 refresh. Capture `session_20260630_103043.log`: after successful `BEGIN_REFRESH` at 47.701 s, fader2 inbound at 54.090 s produced repeated `DONE` (Fader1Only) with no further `WAIT_STABLE` until 57.998 s.
 
 ### RC7 — Navigation deadband suppresses trailing select (Phase 3)
 
@@ -117,6 +117,33 @@ Every `requestFaderOutbound()` call unconditionally invokes `cancelActiveFaderOu
 
 **Phase 3 fix:** Single outbound state machine; not a MIDI TX queue issue (`MidiHandler` sends synchronously).
 
+### RC11 — F2/F3 outbound uses storage tick, not loop-relative tick (Phase 8)
+
+**Status:** Open — coordinate bug separate from RC5–RC10 timing fixes.
+
+**Symptom:** F2 motor ~50% offset from expected note start when `loopStartTick ≠ 0`; updates responsively but wrong coordinate. Same class on F3 position-mode fine offset (Phase 10).
+
+**Cause:** `sendCoarseFaderPosition` and `sendFineFaderPosition` (position mode) use storage tick (`liveNote.startTick % loopLength`). F1 select navigation and F2 **inbound** use `SelectNavigation::noteRelativeTick(storageTick, loopStartTick, loopLength)`.
+
+**Capture proof** (`session_20260630_191718.log`, `loop_start=424`, `loop_len=768`):
+
+| Storage tick | Rel tick | Sent F2 | Expected (rel) |
+|-------------|----------|---------|----------------|
+| 0 | 344 | 0.0% | ~47.8% |
+| 448 | 24 | 62.2% | ~3.3% |
+| 509 | 85 | 70.7% | ~11.8% |
+
+After flash with `2ecf25d`, every `#DBG outbound_ctx` row shows `pb != expected_pb_rel` when `anchor_tick != rel_tick`.
+
+**Phase 8 fix:** Use `noteRelativeTick` before `loopTickToCoarsePitchbend` / fine offset math in outbound send helpers.
+
+**Architecture checkpoint:**
+
+| Question | Answer |
+|----------|--------|
+| Ownership change? | **No** — tick input fix only in send helpers. |
+| State transition change? | **No** — no new session type or mode. |
+
 ---
 
 ## Spike 2026-06-30 — `session_20260630_113422.log` (Phase 3)
@@ -129,6 +156,27 @@ Every `requestFaderOutbound()` call unconditionally invokes `cancelActiveFaderOu
 | `#DBG outbound_step=SEND_F1` without `SEND_F2` | Many (hybrid build) |
 
 Fast fader1 sweeps (12–20 s) show 0.1–0.3 s F2 burst spacing; slow tails and post-sweep micro-moves often have no F2 within 3 s. Fader1 pitchbend min (`MI,H,224,16,0,94` at ~28.5 s) precedes F2 coarse by ~2.4 s — selection/feedback lag.
+
+---
+
+## Spike 2026-06-30 — `session_20260630_191718.log` (Phase 3 + RC11)
+
+| Check | Result |
+|-------|--------|
+| HITL `note_edit_fader_select_refresh` | **PASS** — 0 clusters missing F2, max gap 3.1 s |
+| F1 inbound | Full −8192..8191, slots 0..29 |
+| F1→F2 dependent refresh | 57 F2 value changes; responsive |
+| F2→F1 bracket follow | 91 F1 outbound during F2 manual phase |
+| `#DBG outbound_ctx` | Confirms RC11 — `pb != expected_pb_rel` when `anchor_tick != rel_tick` |
+
+**Analyze:**
+
+```bash
+python3 scripts/analyze_fader2_select_feedback.py captures/session_20260630_191718.log --after 51.0
+rg '#DBG outbound_ctx|#DBG select_slot|#DBG outbound_step' captures/session_20260630_191718.log
+```
+
+**Phase 8 pass gate:** every position-mode `outbound_ctx` line has `pb == expected_pb_rel`.
 
 ---
 
@@ -187,6 +235,9 @@ Patch allowed without formal reassessment.
 | 2026-06-30 | **Phase 2:** Deferred dependent refresh pipeline — non-preemptive NoteSelect coalesce, 1000 ms fader1 quiet gate, `#DBG outbound_step` instrumentation. Native tests extended. |
 | 2026-06-30 | **Diagnostic path:** immediate F2–F4 + PC re-arm + settle timer — partial motor improvement, erratic on fast-then-slow (RC7–RC10). |
 | 2026-06-30 | **Phase 3:** Selection-driven outbound state machine — slot-index navigation, 400 ms user-classified quiet, frame-stepped coordinator restored. |
+| 2026-06-30 | **`ab1e3b0`:** WIP Phases 1–3 outbound coordinator + capture diagnosis. |
+| 2026-06-30 | **`2ecf25d`:** F2 outbound capture diagnostics (`#DBG outbound_ctx`) + `scripts/analyze_fader2_select_feedback.py`. |
+| 2026-06-30 | **Capture `session_20260630_191718.log`:** HITL timing verifier **PASS**; RC11 confirmed via `outbound_ctx` (`pb != expected_pb_rel`). |
 
 ---
 

@@ -1,10 +1,11 @@
 # Tasks — note-edit-fader-feedback-regression
 
-**Status:** Ready for `/opsx:apply`  
-**Gate:** Fix scheduler dedupe (§1) before NOTELEN gates (§4). Run `pio test -e native` before push. HITL edit baseline on hardware after firmware fix.
+**Status:** Phase 3 **shipped** (2026-06-30); HITL timing **PASS**; RC11 open — **Phase 8** next. Phase 8–12 OpenSpec doc reconciliation **complete**.
+
+**Gate:** Phase 8 firmware before Phase 12 cleanup. Phase 12 MUST NOT start until Phase 8.3 capture passes (`pb == expected_pb_rel`). Run `pio test -e native` before push.
 
 **Evidence:** [BUG.md](./BUG.md)  
-**Design:** [design.md](./design.md) — Option A (single coordinator) unless TBD resolves to Option B.
+**Design:** [design.md](./design.md) — live path: `requestFaderOutbound` / `processFaderOutbound` (Phase 3).
 
 ---
 
@@ -12,6 +13,8 @@
 
 - [x] 0.1 Repro on hardware per [BUG.md](./BUG.md) manual steps; capture serial with `teensy41-capture-serial`.
 - [x] 0.2 Grep capture for `Session fader sync`, `Skipping fader 2`, `Length editing mode ENABLED`, `LENGTH EDIT` — attach log path to BUG.md patch history.
+
+> **Historical — Phase 1 implementation (§1–§6).** APIs below (`deferSelectFaderSyncToBracket`, `sessionFaderSyncStep_`, `isSessionFaderSyncActive`, `sendStartNotePitchbend`, `sendFaderUpdate`) were removed in Phase 3. Kept for traceability.
 
 ## 1. Scheduler dedupe and paired sync (RC1, RC2)
 
@@ -48,9 +51,11 @@
 
 ---
 
+> **Historical — Phase 2 deferred refresh (§7–§11).** `DeferredRefresh` and 1000 ms stability timer superseded by Phase 3. Kept for traceability.
+
 ## Phase 2 — Deferred refresh pipeline (RC5)
 
-**Status:** In progress (2026-06-30)  
+**Status:** Superseded by Phase 3 (2026-06-30)  
 **Design:** [design.md](./design.md) Phase 2 — D6–D11  
 **Gate:** Implement §7–§8 before HITL §9. Run `pio test -e native` before push.
 
@@ -134,10 +139,89 @@
 
 ## 19. Capture verification
 
-- [ ] 19.1 Fresh capture after Phase 3 flash — run verify script; no F1 cluster >3 s without `SEND_F2`/`MO,224,14`
+- [x] 19.1 Fresh capture after Phase 3 flash — HITL **PASS** on `session_20260630_191718` (0 clusters missing F2, max gap 3.1 s)
 
 ## 20. Phase 3 verification and docs
 
 - [x] 20.1 `pio test -e native` — all pass (305/305)
 - [ ] 20.2 NOTELEN regression (task 4.2)
 - [ ] 20.3 Update [PROJECT_STATE.md](../../docs/runtime/PROJECT_STATE.md) when Phase 3 shipped
+
+---
+
+## Phase 7 — Bracket / send-path (partial)
+
+**Design:** [design.md](./design.md) Phase 7 — D31–D38  
+**Handoff:** [phase7 handoff](../../../docs/plans/note_edit_fader_feedback_phase7_handoff.md)
+
+- [x] 7.1 D31 — Bracket-tick → F1 pitchbend (shipped)
+- [x] 7.2 D36 — `commitBracketTickFromGeometry` session + legacy bracket (shipped)
+- [x] 7.3 D37 — Geometry F1 feedback without touching nav state (shipped)
+- [ ] 7.4 D34 — Send-path honesty + single motor trigger owner (deferred → Phase 12)
+- [ ] 7.5 D35 / D32 / D33 — Fine throttle, display refresh, rate-limit SEND_F1 (parked → Phase 11)
+
+---
+
+## Phase 8 — F2 loop-relative tick (RC11)
+
+**Design:** [design.md](./design.md) D17  
+**Gate:** §8.1–§8.3 before Phase 9. Run `pio test -e native` before push.
+
+- [ ] 8.1 `noteRelativeTick` in `sendCoarseFaderPosition` (position mode start tick; length mode end tick)
+- [ ] 8.2 Native test in `test/test_note_edit_fader_feedback/test_note_edit_fader_feedback.cpp` with `loopStartTick=424`
+- [ ] 8.3 Capture: all `#DBG outbound_ctx f2` position-mode rows `pb == expected_pb_rel`
+- [ ] 8.4 Manual: fader1 sweep with non-zero loop start — F2 motor matches note start
+
+---
+
+## Phase 9 — F1 ignore during F2 outbound
+
+**Design:** [design.md](./design.md) D18
+
+- [ ] 9.1 Arm `selectFaderFeedbackIgnoreUntilMs_` at `processFaderOutbound` `SendCoarse`
+- [ ] 9.2 Capture: no spurious `#DBG select_slot` during `SEND_F2` / `TRIGGER_F2` window
+
+---
+
+## Phase 10 — F3/F4 unified dependent pipeline
+
+**Design:** [design.md](./design.md) D19
+
+- [ ] 10.1 `sendFineFaderPosition`: loop-relative tick for position-mode fine offset (mirror 8.1)
+- [ ] 10.2 Native fine CC round-trip with `loopStartTick=424`
+- [ ] 10.3 Optional `#DBG outbound_ctx_f3` capture line
+- [ ] 10.4 One `NoteSelectDependent` → F2 + F3 + F4 MO lines; no fader3-only path
+- [ ] 10.5 Manual: F3 motor aligned; if display freeze on heavy F3 → Phase 11 / D35
+
+---
+
+## Phase 11 — Parked (after Phases 8–10)
+
+Only if still reproducing after coordinate fix:
+
+- [ ] 11.1 D35 — Fine throttle + `requestNoteInfoRefresh` display refresh
+- [ ] 11.2 D36/D37 bracket regression verify
+- [ ] 11.3 NOTELEN tasks 4.2 / 6.2
+- [ ] 11.4 D31 — Bracket-tick F1 pitchbend if offset remains after RC11 fix
+
+---
+
+## Phase 12 — Stale code cleanup (after 8.4)
+
+**Design:** [design.md](./design.md) D20  
+**Gate:** Do NOT start until Phase 8.3 capture passes.
+
+- [ ] 12.1 Remove dead wrappers: `sendStartNotePitchbend`, `performSelectnoteFaderUpdate`, `sendFaderUpdate`, `sendFaderPosition`
+- [ ] 12.2 Remove ghost state: `lastSelectnoteSentTime`, `PITCHBEND_IGNORE_PERIOD`, `NoteEditManager::faderHandler`, `faderProcessor`, `markFaderSent`
+- [ ] 12.3 Single motor trigger owner — pipeline OR send helpers, not both (D34/D20)
+- [ ] 12.4 OpenSpec stale reference sweep (`deferSelectFaderSyncToBracket`, `sessionFaderSyncStep_`, `DeferredRefresh`, `isSessionFaderSyncActive`, `sendChannel15NotePositionFeedback`)
+
+---
+
+## Phase 8–12 doc reconciliation
+
+- [x] 21.1 [BUG.md](./BUG.md) — RC11 + patch history (`session_20260630_191718`, `2ecf25d`)
+- [x] 21.2 [design.md](./design.md) — context rewrite + D17–D20 + Phase 7
+- [x] 21.3 [proposal.md](./proposal.md) — Phase 7–12 sections + Phase 3 HITL PASS
+- [x] 21.4 [spec.md](./specs/note-edit-fader-feedback/spec.md) — 400 ms drift fix + new requirements
+- [x] 21.5 [tasks.md](./tasks.md) — Phase 7–12 sections (this file)
