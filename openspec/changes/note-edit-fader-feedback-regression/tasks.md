@@ -157,8 +157,19 @@
 - [x] 7.1 D31 — Bracket-tick → F1 pitchbend (shipped)
 - [x] 7.2 D36 — `commitBracketTickFromGeometry` session + legacy bracket (shipped)
 - [x] 7.3 D37 — Geometry F1 feedback without touching nav state (shipped)
-- [ ] 7.4 D34 — Send-path honesty + single motor trigger owner (deferred → Phase 12)
+- [ ] 7.4 D34 — Send-path honesty + single motor trigger owner (partial — see §7.6)
 - [ ] 7.5 D35 / D32 / D33 — Fine throttle, display refresh, rate-limit SEND_F1 (parked → Phase 11)
+
+### 7.6 Dependent outbound tuning (unified handoff — 2026-06-30)
+
+**Handoff:** [note_edit_fader_dependent_outbound_unified_handoff.md](../../../docs/plans/note_edit_fader_dependent_outbound_unified_handoff.md)  
+**Base:** `3adb27b`
+
+- [x] 7.6.1 Pace-skip removed from `paceDroidUsbHostBeforeSend`; LED bypass kept (`droidMotorOutboundPriority_`)
+- [x] 7.6.2 `processFaderSelectQuiet`: skip duplicate refresh when slot/pb unchanged; log `QUIET_REFRESH` only when outbound scheduled
+- [x] 7.6.3 D34 send-path honesty: send helpers return `bool`; pipeline skips `SEND_F*` + trigger on no-op
+- [x] 7.6.4 D20 single motor trigger owner: pipeline `TriggerCoarse/Fine/NoteValue` only (removed inline triggers from send helpers)
+- [ ] 7.6.5 Capture verify: no duplicate `QUIET_REFRESH`; no trigger-only `SEND_F2/3/4`; one `MO,224,14` per F2 stage
 
 ---
 
@@ -213,7 +224,7 @@ Only if still reproducing after coordinate fix:
 
 - [ ] 12.1 Remove dead wrappers: `sendStartNotePitchbend`, `performSelectnoteFaderUpdate`, `sendFaderUpdate`, `sendFaderPosition`
 - [ ] 12.2 Remove ghost state: `lastSelectnoteSentTime`, `PITCHBEND_IGNORE_PERIOD`, `NoteEditManager::faderHandler`, `faderProcessor`, `markFaderSent`
-- [ ] 12.3 Single motor trigger owner — pipeline OR send helpers, not both (D34/D20)
+- [ ] 12.3 Single motor trigger owner — pipeline OR send helpers, not both (D34/D20) — **shipped** in §7.6.4; keep task until dead wrappers removed in 12.1
 - [ ] 12.4 OpenSpec stale reference sweep (`deferSelectFaderSyncToBracket`, `sessionFaderSyncStep_`, `DeferredRefresh`, `isSessionFaderSyncActive`, `sendChannel15NotePositionFeedback`)
 
 ---

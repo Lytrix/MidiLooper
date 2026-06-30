@@ -604,10 +604,15 @@ void NoteEditManager::processFaderOutbound() {
             outboundStepStartedMs_ = now;
             return;
         case NoteEditFaderOutbound::Step::SendCoarse:
-            sendCoarseFaderPosition(track);
-            armCoarseFaderFeedbackIgnore(now);
-            logOutboundStep("SEND_F2");
-            outboundStep_ = NoteEditFaderOutbound::advanceOutboundStep(outboundStep_, outboundPlan_);
+            if (sendCoarseFaderPosition(track)) {
+                armCoarseFaderFeedbackIgnore(now);
+                logOutboundStep("SEND_F2");
+                outboundStep_ =
+                    NoteEditFaderOutbound::advanceOutboundStep(outboundStep_, outboundPlan_);
+            } else {
+                outboundStep_ = NoteEditFaderOutbound::advanceOutboundStep(
+                    NoteEditFaderOutbound::Step::TriggerCoarse, outboundPlan_);
+            }
             outboundStepStartedMs_ = now;
             return;
         case NoteEditFaderOutbound::Step::TriggerCoarse:
@@ -617,10 +622,15 @@ void NoteEditManager::processFaderOutbound() {
             outboundStepStartedMs_ = now;
             return;
         case NoteEditFaderOutbound::Step::SendFine:
-            sendFineFaderPosition(track);
-            armChannel15CcFaderFeedbackIgnore(now);
-            logOutboundStep("SEND_F3");
-            outboundStep_ = NoteEditFaderOutbound::advanceOutboundStep(outboundStep_, outboundPlan_);
+            if (sendFineFaderPosition(track)) {
+                armChannel15CcFaderFeedbackIgnore(now);
+                logOutboundStep("SEND_F3");
+                outboundStep_ =
+                    NoteEditFaderOutbound::advanceOutboundStep(outboundStep_, outboundPlan_);
+            } else {
+                outboundStep_ = NoteEditFaderOutbound::advanceOutboundStep(
+                    NoteEditFaderOutbound::Step::TriggerFine, outboundPlan_);
+            }
             outboundStepStartedMs_ = now;
             return;
         case NoteEditFaderOutbound::Step::TriggerFine:
@@ -630,9 +640,14 @@ void NoteEditManager::processFaderOutbound() {
             outboundStepStartedMs_ = now;
             return;
         case NoteEditFaderOutbound::Step::SendNoteValue:
-            sendNoteValueFaderPosition(track);
-            logOutboundStep("SEND_F4");
-            outboundStep_ = NoteEditFaderOutbound::advanceOutboundStep(outboundStep_, outboundPlan_);
+            if (sendNoteValueFaderPosition(track)) {
+                logOutboundStep("SEND_F4");
+                outboundStep_ =
+                    NoteEditFaderOutbound::advanceOutboundStep(outboundStep_, outboundPlan_);
+            } else {
+                outboundStep_ = NoteEditFaderOutbound::advanceOutboundStep(
+                    NoteEditFaderOutbound::Step::TriggerNoteValue, outboundPlan_);
+            }
             outboundStepStartedMs_ = now;
             return;
         case NoteEditFaderOutbound::Step::TriggerNoteValue:
@@ -668,16 +683,17 @@ void NoteEditManager::processFaderSelectQuiet() {
 
     faderSelectPhase_ = NoteEditFaderOutbound::SelectPhase::PendingDependentRefresh;
     Track& track = trackManager.getSelectedTrack();
-    const int slotBefore = selectNavSlotIndexForPitchbend(track, lastUserSelectFaderValue);
-    applyNoteSelectFromFader1Pitchbend(track, lastUserSelectFaderValue, lastUserSelectFaderValue,
-                                       now, false, false);
-    const int slotAfter = selectNavSlotIndexForPitchbend(track, lastUserSelectFaderValue);
-    if (editManager.getSelectedNoteIdx() >= 0 ||
-        (slotAfter >= 0 && slotAfter != slotBefore)) {
+    const int slotIndex = selectNavSlotIndexForPitchbend(track, lastUserSelectFaderValue);
+    const bool selectionApplied = applyNoteSelectFromFader1Pitchbend(
+        track, lastUserSelectFaderValue, lastUserSelectFaderValue, now, false, false);
+    const bool needsDependentRefresh =
+        selectionApplied || (slotIndex >= 0 && slotIndex != lastAppliedSelectSlotIndex_);
+    if (needsDependentRefresh) {
+        lastAppliedSelectSlotIndex_ = slotIndex;
         requestFaderOutbound(NoteEditFaderOutbound::Trigger::NoteSelectDependent);
+        logOutboundStep("QUIET_REFRESH");
     }
     faderSelectPhase_ = NoteEditFaderOutbound::SelectPhase::Idle;
-    logOutboundStep("QUIET_REFRESH");
 }
 
 int NoteEditManager::selectNavSlotIndexForPitchbend(Track& track, int16_t pitchValue) {
@@ -950,14 +966,16 @@ int16_t NoteEditManager::loopTickToCoarsePitchbend(uint32_t tick, uint32_t loopL
     return constrain(pitchbend, MidiConfig::Pitchbend::MIN, MidiConfig::Pitchbend::MAX);
 }
 
-void NoteEditManager::sendCoarseFaderPosition(Track& track) {
+bool NoteEditManager::sendCoarseFaderPosition(Track& track) {
     if (editManager.getSelectedNoteIdx() < 0) {
         logger.log(CAT_MIDI, LOG_DEBUG, "No note selected for coarse position");
-        return;
+        return false;
     }
     
     uint32_t loopLength = track.getLoopLength();
-    if (loopLength == 0) return;
+    if (loopLength == 0) {
+        return false;
+    }
     
     const std::vector<NoteUtils::DisplayNote> notes = selectableDisplayNotesForEditUi(track);
     int selectedIdx = editManager.getSelectedNoteIdx();
@@ -1009,21 +1027,24 @@ void NoteEditManager::sendCoarseFaderPosition(Track& track) {
         logger.log(CAT_MIDI, LOG_DEBUG,
                    "Sent coarse pitchbend=%d on ch%d (step %lu)",
                    coarseMidiPitchbend, PITCHBEND_START_CHANNEL, currentSixteenthStep);
-        sendCoarseFaderMotorTrigger();
-    } else {
-        logger.log(CAT_MIDI, LOG_DEBUG, "Coarse position: Invalid selectedIdx=%d, notes.size()=%lu", 
-                   selectedIdx, notes.size());
+        return true;
     }
+
+    logger.log(CAT_MIDI, LOG_DEBUG, "Coarse position: Invalid selectedIdx=%d, notes.size()=%lu", 
+               selectedIdx, notes.size());
+    return false;
 }
 
-void NoteEditManager::sendFineFaderPosition(Track& track) {
+bool NoteEditManager::sendFineFaderPosition(Track& track) {
     if (editManager.getSelectedNoteIdx() < 0) {
         logger.log(CAT_MIDI, LOG_DEBUG, "No note selected for fine position");
-        return;
+        return false;
     }
     
     uint32_t loopLength = track.getLoopLength();
-    if (loopLength == 0) return;
+    if (loopLength == 0) {
+        return false;
+    }
     
     const std::vector<NoteUtils::DisplayNote> notes = selectableDisplayNotesForEditUi(track);
     int selectedIdx = editManager.getSelectedNoteIdx();
@@ -1050,46 +1071,49 @@ void NoteEditManager::sendFineFaderPosition(Track& track) {
             logger.log(CAT_MIDI, LOG_DEBUG,
                        "Sent fine CC=%d (length anchor offset %ld)",
                        fineCCValue, offsetFromAnchor);
-            sendFineFaderMotorTrigger();
-        } else {
-            targetTick = liveNote.startTick % loopLength;
-
-            const uint32_t referenceStepStartTick = referenceStep * Config::TICKS_PER_16TH_STEP;
-            const int32_t offsetFromReferenceStep =
-                static_cast<int32_t>(targetTick) -
-                static_cast<int32_t>(referenceStepStartTick);
-
-            logger.log(CAT_MIDI, LOG_DEBUG,
-                       "Fine fader position (POSITION EDIT): offset %ld -> CC=%d",
-                       offsetFromReferenceStep, targetTick);
-
-            // CC64 = 0 tick offset from reference step start, CC0 = -64 ticks, CC127 = +63 ticks
-            uint8_t fineCCValue =
-                (uint8_t)constrain(64 + offsetFromReferenceStep, 0, 127);
-            midiHandler.sendControlChange(FINE_CC_CHANNEL, FINE_CC_NUMBER, fineCCValue);
-
-            midiFaderManager.getFaderStateMutable(MidiMapping::FaderType::FADER_FINE).lastSentCC =
-                fineCCValue;
-
-            logger.log(CAT_MIDI, LOG_DEBUG,
-                       "Sent fine CC=%d (note offset %ld from reference step %lu)",
-                       fineCCValue, offsetFromReferenceStep, referenceStep);
-            sendFineFaderMotorTrigger();
+            return true;
         }
-    } else {
-        logger.log(CAT_MIDI, LOG_DEBUG, "Fine position: Invalid selectedIdx=%d, notes.size()=%lu", 
-                   selectedIdx, notes.size());
+
+        targetTick = liveNote.startTick % loopLength;
+
+        const uint32_t referenceStepStartTick = referenceStep * Config::TICKS_PER_16TH_STEP;
+        const int32_t offsetFromReferenceStep =
+            static_cast<int32_t>(targetTick) -
+            static_cast<int32_t>(referenceStepStartTick);
+
+        logger.log(CAT_MIDI, LOG_DEBUG,
+                   "Fine fader position (POSITION EDIT): offset %ld -> CC=%d",
+                   offsetFromReferenceStep, targetTick);
+
+        // CC64 = 0 tick offset from reference step start, CC0 = -64 ticks, CC127 = +63 ticks
+        uint8_t fineCCValue =
+            (uint8_t)constrain(64 + offsetFromReferenceStep, 0, 127);
+        midiHandler.sendControlChange(FINE_CC_CHANNEL, FINE_CC_NUMBER, fineCCValue);
+
+        midiFaderManager.getFaderStateMutable(MidiMapping::FaderType::FADER_FINE).lastSentCC =
+            fineCCValue;
+
+        logger.log(CAT_MIDI, LOG_DEBUG,
+                   "Sent fine CC=%d (note offset %ld from reference step %lu)",
+                   fineCCValue, offsetFromReferenceStep, referenceStep);
+        return true;
     }
+
+    logger.log(CAT_MIDI, LOG_DEBUG, "Fine position: Invalid selectedIdx=%d, notes.size()=%lu", 
+               selectedIdx, notes.size());
+    return false;
 }
 
-void NoteEditManager::sendNoteValueFaderPosition(Track& track) {
+bool NoteEditManager::sendNoteValueFaderPosition(Track& track) {
     if (editManager.getSelectedNoteIdx() < 0) {
         logger.log(CAT_MIDI, LOG_DEBUG, "No note selected for note value position");
-        return;
+        return false;
     }
     
     uint32_t loopLength = track.getLoopLength();
-    if (loopLength == 0) return;
+    if (loopLength == 0) {
+        return false;
+    }
     
     const std::vector<NoteUtils::DisplayNote> notes = selectableDisplayNotesForEditUi(track);
     int selectedIdx = editManager.getSelectedNoteIdx();
@@ -1107,11 +1131,12 @@ void NoteEditManager::sendNoteValueFaderPosition(Track& track) {
             noteValue;
 
         logger.log(CAT_MIDI, LOG_DEBUG, "Sent note value CC=%d (note value %d)", noteValue, noteValue);
-        sendNoteValueFaderMotorTrigger();
-    } else {
-        logger.log(CAT_MIDI, LOG_DEBUG, "Note value: Invalid selectedIdx=%d, notes.size()=%lu", 
-                   selectedIdx, notes.size());
+        return true;
     }
+
+    logger.log(CAT_MIDI, LOG_DEBUG, "Note value: Invalid selectedIdx=%d, notes.size()=%lu", 
+               selectedIdx, notes.size());
+    return false;
 }
 
 void NoteEditManager::sendCoarseFaderMotorTrigger() {

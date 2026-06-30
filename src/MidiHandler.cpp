@@ -304,9 +304,6 @@ void MidiHandler::mirrorUsbFaderProbePassthrough(byte type, byte channel, byte d
 #endif
 
 void MidiHandler::paceDroidUsbHostBeforeSend() {
-  if (droidMotorOutboundPriority_) {
-    return;
-  }
   const uint32_t now = micros();
   if (lastDroidUsbHostSendMicros_ == 0) {
     return;

@@ -176,11 +176,11 @@ public:
     bool shouldIgnoreFaderInput(MidiMapping::FaderType faderType);
     bool shouldIgnoreFaderInput(MidiMapping::FaderType faderType, int16_t pitchbendValue, uint8_t ccValue);
     
-    void sendCoarseFaderPosition(Track& track);
-    void sendFineFaderPosition(Track& track);
+    bool sendCoarseFaderPosition(Track& track);
+    bool sendFineFaderPosition(Track& track);
     void sendCoarseFaderMotorTrigger();
     void sendFineFaderMotorTrigger();
-    void sendNoteValueFaderPosition(Track& track);
+    bool sendNoteValueFaderPosition(Track& track);
     void sendNoteValueFaderMotorTrigger();
 
     enum EditModeState {
