@@ -62,7 +62,11 @@ How to remap channels, notes, and CCs for your own controller. The looper is **c
 | Channel | Role |
 |---------|------|
 | 16 | Fader 1 — pitchbend for note/16th select |
-| 15 | Fader 2 — pitchbend; Fader 3 — CC 2; Fader 4 — CC 3 (note value) |
+| 14 | Fader 2 — pitchbend for coarse position (NOTE_EDIT) |
+| 15 | Fader 3 — CC 2; Fader 4 — CC 3 (note value) |
+
+Motorfader pitchbend scale, NOTE_EDIT arm behavior, and HITL probe timing:
+[`DROID_MOTORFADER_PITCHBEND.md`](DROID_MOTORFADER_PITCHBEND.md).
 
 ### Loop editing
 

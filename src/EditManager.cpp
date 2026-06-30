@@ -737,7 +737,9 @@ void EditManager::resetNoteEditSessionState() {
 }
 
 void EditManager::applySelectNav(Track& track, int displayIdx, uint32_t bracket,
-                                 const NoteRef& ref, bool hasNote) {
+                                 const NoteRef& ref, bool hasNote, bool requestFaderSync,
+                                 bool skipFader1Outbound) {
+    (void)skipFader1Outbound;
     const NoteEditSelection priorSelection = sessionState.selection;
     sessionState.kind = NoteEditKind::Select;
     sessionState.selection.displayIdx = displayIdx;
@@ -748,6 +750,9 @@ void EditManager::applySelectNav(Track& track, int displayIdx, uint32_t bracket,
         lastPushedGeometryKind_ = NoteEditKind::Select;
     }
     syncNoteEditSessionStateToUi(track);
+    if (requestFaderSync && hasNote) {
+        noteEditManager.scheduleNoteSelectFaderSync(track);
+    }
 }
 
 void EditManager::applyCycleEditKind(Track& track) {
@@ -812,9 +817,6 @@ void EditManager::syncNoteEditSessionStateToUi(Track& track) {
         }
     }
     sendEditModeProgram(mode);
-    if (sessionState.selection.hasNote) {
-        noteEditManager.sendSelectnoteFaderUpdate(track);
-    }
 }
 
 void EditManager::enterDefaultNoteEditSessionState(Track& track, uint32_t startTick) {
@@ -887,6 +889,9 @@ void EditManager::applyUndoRedoLanding(Track& track) {
 
     noteEditManager.resetLengthEditingModeOnNoteSelect();
     applySelectNav(track, displayIdx, bracket, ref, hasNote);
+    if (hasNote) {
+        noteEditManager.scheduleNoteSelectFaderSync(track);
+    }
 }
 
 bool EditManager::sessionUndo(Track& track) {
@@ -1222,9 +1227,9 @@ void EditManager::cycleNoteEditType(Track& track) {
 }
 
 void EditManager::sendEditModeProgram(EditModeState mode) {
-    // Send program change to indicate current edit mode
-    midiHandler.sendProgramChange(MidiConfig::PROGRAM_CHANGE_CHANNEL, mode);
-    logger.log(CAT_MIDI, LOG_DEBUG, "Sent edit mode program: %d", mode);
+    // Note edit kind (select/move/length/pitch) does not use ch16 program change.
+    // Session type (loop vs note) is sendEditSessionChange only: PC 0 = loop, PC 1 = note.
+    logger.log(CAT_MIDI, LOG_DEBUG, "Note edit kind=%d (no program change)", mode);
 }
 
 void EditManager::cycleEditSession(Track& track) {
@@ -1245,18 +1250,18 @@ void EditManager::cycleEditSession(Track& track) {
 void EditManager::sendEditSessionChange(EditSessionType sessionType) {
     editSession.sessionType = sessionType;
 
-    uint8_t program = 0;
+    uint8_t program = MidiConfig::SessionProgram::LOOP_EDIT;
     uint8_t triggerNote = 0;
     const char* modeName = "LOOP_EDIT";
 
     switch (sessionType) {
         case EditSessionType::Loop:
-            program = 0;
+            program = MidiConfig::SessionProgram::LOOP_EDIT;
             triggerNote = 100;
             modeName = "LOOP_EDIT";
             break;
         case EditSessionType::Note:
-            program = 1;
+            program = MidiConfig::SessionProgram::NOTE_EDIT;
             triggerNote = 0;
             modeName = "NOTE_EDIT";
             break;

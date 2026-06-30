@@ -36,8 +36,8 @@ void Config::initialize() {
     
     // Initialize default fader mappings
     faderConfigs = {
-        FaderConfig(FaderType::FADER_SELECT, MidiConfig::Fader::SELECT_CHANNEL, 0, true, "Note Selection"),
-        FaderConfig(FaderType::FADER_COARSE, MidiConfig::Fader::COARSE_CHANNEL, 0, true, "Coarse Position"),
+        FaderConfig(FaderType::FADER_SELECT, MidiConfig::Fader::SELECT_MOTOR_CHANNEL, 0, true, "Note Selection"),
+        FaderConfig(FaderType::FADER_COARSE, MidiConfig::Fader::COARSE_MOTOR_CHANNEL, 0, true, "Coarse Position"),
         FaderConfig(FaderType::FADER_FINE, MidiConfig::Fader::FINE_CHANNEL, MidiConfig::Fader::FINE_CC, false, "Fine Position"),
         FaderConfig(FaderType::FADER_NOTE_VALUE, MidiConfig::Fader::NOTE_VALUE_CHANNEL, MidiConfig::Fader::NOTE_VALUE_CC, false, "Note Value")
     };
@@ -76,8 +76,10 @@ void Config::addFaderMapping(uint8_t channel, uint8_t ccNumber, bool usePitchBen
     }
     
     FaderType type;
-    if (channel == MidiConfig::Fader::SELECT_CHANNEL) {
+    if (channel == MidiConfig::Fader::SELECT_MOTOR_CHANNEL) {
         type = FaderType::FADER_SELECT;
+    } else if (channel == MidiConfig::Fader::COARSE_MOTOR_CHANNEL && usePitchBend) {
+        type = FaderType::FADER_COARSE;
     } else if (usePitchBend) {
         type = FaderType::FADER_COARSE;
     } else if (ccNumber == MidiConfig::Fader::FINE_CC) {

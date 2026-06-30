@@ -78,7 +78,8 @@ public:
     NoteEditSessionState& getNoteEditSessionState() { return sessionState; }
     const NoteEditSessionState& getNoteEditSessionState() const { return sessionState; }
     void applySelectNav(Track& track, int displayIdx, uint32_t bracketTick, const NoteRef& ref,
-                        bool hasNote);
+                        bool hasNote, bool requestFaderSync = false,
+                        bool skipFader1Outbound = false);
     void applyCycleEditKind(Track& track);
     void applyGeometryKindFromControl(Track& track, NoteEditKind kind, bool fromFaderControl);
     void applyUndoRedoLanding(Track& track);

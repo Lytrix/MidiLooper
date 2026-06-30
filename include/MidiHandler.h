@@ -58,6 +58,12 @@ public:
   void sendStop();
   void sendContinueMIDI();
 
+  /** Drain paced LED feedback queue to DROID USB host (call from main loop). */
+  void processDroidUsbHostOutbound();
+
+  /** When true, LED queue drain is paused so motorfader outbound is not starved. */
+  void setDroidMotorOutboundPriority(bool active);
+
   // --- Output Routing ---
   void setOutputUSB(bool enable);
   void setOutputSerial(bool enable);
@@ -92,7 +98,20 @@ private:
   bool isControlChannel(byte channel);
   bool isLedChannel(byte channel);
   void sendMidiThru(byte type, byte channel, byte data1, byte data2);
+#if defined(MIDI_USB_FADER_PROBE_PASSTHROUGH)
+  void mirrorUsbFaderProbePassthrough(byte type, byte channel, byte data1, byte data2);
+#endif
   void serviceUsbHostAfterLedPacket();
+  void serviceUsbHostAfterOutboundPacket();
+  void paceDroidUsbHostBeforeSend();
+  void markDroidUsbHostSent();
+  void queueLedUsbHostFeedback(uint8_t note, uint8_t velocityOrZero);
+
+  uint32_t lastDroidUsbHostSendMicros_ = 0;
+  uint8_t ledPendingNotes_[MidiConfig::DroidUsbHost::LED_PENDING_MAX];
+  uint8_t ledPendingVelocities_[MidiConfig::DroidUsbHost::LED_PENDING_MAX];
+  size_t ledPendingCount_ = 0;
+  bool droidMotorOutboundPriority_ = false;
 
   // --- Message Handlers ---
   void handleNoteOn(byte channel, byte note, byte velocity, uint32_t tickNow);

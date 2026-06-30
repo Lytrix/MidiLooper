@@ -10,7 +10,8 @@
 #endif
 
 #include <cstdint>
-#include <algorithm> // For std::clamp
+#include <algorithm>  // std::clamp
+#include "MidiConfig.h"
 #include <vector>
 #include "Utils/InternalHeapFirstAllocator.h"
 
@@ -38,7 +39,7 @@ struct MidiEvent {
         struct { uint8_t cc, value; } ccData;            // Control Change
         uint8_t program;                                 // Program Change
         uint8_t channelPressure;                        // Channel Aftertouch (mono)
-        int16_t pitchBend;                              // Pitch Bend (-8192 to +8191)
+        int16_t pitchBend;                              // Pitch Bend (-8192 to +8192 logical)
 
         // System Common Messages
         struct {                                        // System Exclusive
@@ -95,13 +96,13 @@ struct MidiEvent {
     }
     static int16_t clampPitchBend(int16_t v) {
 #if !defined(PIO_UNIT_TEST_NATIVE)
-        if (v < -8192 || v > 8191) {
+        if (!MidiConfig::Pitchbend::isValidLogical(v)) {
             Serial.print("[MidiEvent] WARNING: Pitch bend out of range: ");
             Serial.print(v);
-            Serial.println(" (clamped to -8192 to 8191)");
+            Serial.println(" (clamped to -8192 to 8192)");
         }
 #endif
-        return std::clamp(v, (int16_t)-8192, (int16_t)8191);
+        return MidiConfig::Pitchbend::clampLogical(v);
     }
     static uint16_t clamp14bit(uint16_t v) {
 #if !defined(PIO_UNIT_TEST_NATIVE)

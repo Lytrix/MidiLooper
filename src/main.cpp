@@ -79,8 +79,8 @@ void setup() {
 
   // Initialize logger (Serial already begun above)
 #if defined(SESSION_CAPTURE)
-  logger.setup(LOG_INFO);
-  logger.setCategoryEnabled(CAT_MIDI, false);
+  logger.setup(LOG_DEBUG);
+  logger.setCategoryEnabled(CAT_MIDI, true);
 #else
   logger.setup(LOG_WARNING);
   logger.setCategoryEnabled(CAT_MIDI, false);
@@ -137,12 +137,15 @@ void loop() {
   // Poll MIDI input
   midiHandler.handleMidiInput();
 
+  midiHandler.processDroidUsbHostOutbound();
+
   // LED updates (decoupled from clock path - runs in main loop)
   static uint32_t lastLedUpdate = 0;
   constexpr uint32_t LED_UPDATE_INTERVAL_MS = 8;
   if (now - lastLedUpdate >= LED_UPDATE_INTERVAL_MS) {
     lastLedUpdate = now;
     trackManager.updateLedsDeferred();
+    midiHandler.processDroidUsbHostOutbound();
   }
 
   // Detect clock source changes (external timeout -> internal fallback)
