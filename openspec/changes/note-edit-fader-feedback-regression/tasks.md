@@ -194,6 +194,41 @@
 - [x] 7.9.3 Pipeline always `DONE`; `SKIP_SEND` capture log
 - [ ] 7.9.4 Capture: `BEGIN` == `DONE`; empty steps show `SEND_F2` + `mode=EMPTY_STEP`
 
+### 7.10 Option D aggressive refresh — superseded
+
+**Superseded by:** [note_edit_fader_feedback_selection_driven_refactor.md](../../../docs/plans/note_edit_fader_feedback_selection_driven_refactor.md) (2026-07-01)  
+**Prior handoff:** [note_edit_fader_feedback_option_d_aggressive_refresh_handoff.md](../../../docs/plans/note_edit_fader_feedback_option_d_aggressive_refresh_handoff.md)
+
+Option D timing levers (quiet gate, stale-echo relax, dirty flags) replaced by selection-driven synchronous `sendDependentFaderFeedbackNow` on bracket/note change.
+
+- [x] 7.10.1 **RC-D4** — Finish RC-B: every `BEGIN` reaches `DONE` (preempt/cancel paths)
+- [x] 7.10.2 **RC-D1** — Reduce `kFader1QuietMs` (shipped; removed in 7.12)
+- [x] 7.10.3 **RC-D2** — Stale-echo relax (shipped; removed in 7.12)
+- [x] 7.10.4 **RC-D3** — N/A: dirty flags removed in 7.12 instead of rollback lever
+- [ ] 7.10.5 Capture pass: max inter-`SEND_F2` gap < 1.0s; `clusters_missing_f2_within_3s` = 0
+- [x] 7.10.6 **RC-D5** — Parked; superseded by 7.12 synchronous send
+
+### 7.12 Selection-driven fader refresh (Plan A)
+
+**Handoff:** [note_edit_fader_feedback_selection_driven_refactor.md](../../../docs/plans/note_edit_fader_feedback_selection_driven_refactor.md)
+
+- [x] 7.12.1 `sendDependentFaderFeedbackNow` — synchronous F2+F3+F4 burst on selection change; no `armSelectFaderFeedbackIgnore` on dependent sends
+- [x] 7.12.2 `handleSelectFaderInput` — `shouldApplySelectionOnTargetChange` gate → apply → `sendDependentFaderFeedbackNow`
+- [x] 7.12.3 Remove grace/stale-echo lockout from `applyNoteSelectFromFader1Pitchbend`; simplify signature
+- [x] 7.12.4 Remove `processFaderSelectQuiet`, `kFader1QuietMs`, `SelectPhase`, dirty flags, `NoteSelectDependent` trigger, coalesce
+- [x] 7.12.5 Pipeline retained for `SessionOpen`, `NoteSelectWithFader1`, `LengthModeEnter/Exit`, `Fader1BracketOnly` only
+- [x] 7.12.6 Native tests updated (`pio test -e native` pass)
+- [ ] 7.12.7 Capture: every `select_apply apply=1` followed by `SEND_F2`/`SEND_F3`/`SEND_F4`; slow F1 sweep no longer swallowed
+- [x] 7.12.8 **Plan B fallback** — `NoteSelectDependent` pipeline for dependent refresh (replaces synchronous burst)
+- [x] 7.12.9 **Plan C** — restart-on-selection (no `NoteSelectDependent` coalesce); delta partial plans; focus-aware `resolveNoteIdxAtSlot`
+- [x] 7.12.10 **Sync drain** — `drainDependentFaderOutboundUntilDone` after `NoteSelectDependent` apply; `liveEditDisplayNoteAtSelect` for F4; `pendingOutboundPlan_` on idle drain
+- [x] 7.12.11 **Same-tick sibling select** — `SelectNavigation::resolveNoteIdxAtSlot` trusts `slot.noteIdx`; slot-index apply gate; `same_tick_sibling` capture reason
+- [x] 7.12.12 **Geometry driver override** — F1 select passes through when `userDelta >= SELECT_MOVEMENT_THRESHOLD`; `#DBG geometry_override`
+- [x] 7.12.13 **F4 duplicate diagnostic** — `#DBG outbound_ctx f4 duplicate=1` on unchanged CC reselect
+- [ ] 7.12.14 Capture: fast adjacent-16th sweep after F4 burst — no geometry-block gap without override; `duplicate=1` rows on reselect
+- [x] 7.12.15 **Nav-slot apply gate** — `lastAppliedSelectNavSlotIndex_` vs pitch `posIndex`; `reason=nav_slot`; FULL plan on every slot change; `resolveNoteIdxAtSlot` → `slot.noteIdx` only; `#DBG select_apply prior_slot=`
+- [ ] 7.12.16 Capture: no `apply=0` when `prior_slot != slot` in adjacent-slot sweep
+
 ---
 
 ## Phase 8 — F2 loop-relative tick (RC11)

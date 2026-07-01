@@ -32,4 +32,7 @@ int findSlotIndexForSelection(const std::vector<SelectNavSlot>& slots,
                               uint32_t loopStartTick,
                               uint32_t loopLength);
 
+/// Resolve filtered note index for a nav slot (always **slot.noteIdx**; -1 for empty steps).
+int resolveNoteIdxAtSlot(const SelectNavSlot& slot);
+
 }  // namespace SelectNavigation
