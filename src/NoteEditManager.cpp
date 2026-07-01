@@ -612,15 +612,25 @@ void NoteEditManager::resetFeedbackGeometrySnapshot() {
 }
 
 void NoteEditManager::stampFeedbackPositionFromSelection(Track& track) {
-    if (editManager.getSelectedNoteIdx() < 0) {
-        return;
-    }
     const uint32_t loopLength = track.getLoopLength();
     if (loopLength == 0) {
         return;
     }
-    const NoteUtils::DisplayNote liveNote = editManager.liveEditDisplayNoteAtSelect(track);
     const uint32_t loopStartTick = track.getLoopStartTick() % loopLength;
+
+    if (editManager.getSelectedNoteIdx() < 0) {
+        lastFeedbackAnchorRelTick_ =
+            SelectNavigation::noteRelativeTick(editManager.getBracketTick(), loopStartTick,
+                                               loopLength);
+#if defined(SESSION_CAPTURE)
+        logger.info("#DBG feedback_geometry_stamp pos_tick=%lu pitch=%d",
+                    lastFeedbackAnchorRelTick_,
+                    static_cast<int>(lastFeedbackNotePitch_));
+#endif
+        return;
+    }
+
+    const NoteUtils::DisplayNote liveNote = editManager.liveEditDisplayNoteAtSelect(track);
     lastFeedbackAnchorRelTick_ =
         SelectNavigation::noteRelativeTick(liveNote.startTick, loopStartTick, loopLength);
 #if defined(SESSION_CAPTURE)
@@ -1109,16 +1119,53 @@ int16_t NoteEditManager::loopTickToCoarsePitchbend(uint32_t tick, uint32_t loopL
 }
 
 bool NoteEditManager::sendCoarseFaderPosition(Track& track) {
-    if (editManager.getSelectedNoteIdx() < 0) {
-        logger.log(CAT_MIDI, LOG_DEBUG, "No note selected for coarse position");
-        return false;
-    }
-    
     uint32_t loopLength = track.getLoopLength();
     if (loopLength == 0) {
         return false;
     }
-    
+
+    const uint32_t loopStartTick = track.getLoopStartTick() % loopLength;
+
+    if (editManager.getSelectedNoteIdx() < 0) {
+        if (lengthEditingMode) {
+            logger.log(CAT_MIDI, LOG_DEBUG, "No note selected for coarse position");
+            return false;
+        }
+
+        const uint32_t anchorTick =
+            SelectNavigation::noteRelativeTick(editManager.getBracketTick(), loopStartTick,
+                                               loopLength);
+        const uint32_t currentSixteenthStep = anchorTick / Config::TICKS_PER_16TH_STEP;
+        const int16_t coarseMidiPitchbend = loopTickToCoarsePitchbend(anchorTick, loopLength);
+
+        logger.log(CAT_MIDI, LOG_DEBUG,
+                   "Coarse fader position (EMPTY_STEP): step %lu tick %lu -> pitchbend",
+                   currentSixteenthStep, anchorTick);
+
+#if defined(SESSION_CAPTURE)
+        {
+            const int16_t expectedPbRel = loopTickToCoarsePitchbend(anchorTick, loopLength);
+            const int slotIndex = selectNavSlotIndexForPitchbend(track, lastUserSelectFaderValue);
+            logger.info(
+                "#DBG outbound_ctx f2 anchor_tick=%lu rel_tick=%lu loop_start=%lu loop_len=%lu "
+                "pb=%d expected_pb_rel=%d step=%lu f1_pb=%d slot=%d mode=EMPTY_STEP",
+                anchorTick, anchorTick, loopStartTick, loopLength, coarseMidiPitchbend,
+                expectedPbRel, currentSixteenthStep, lastUserSelectFaderValue, slotIndex);
+        }
+#endif
+
+        midiHandler.sendPitchBend(PITCHBEND_START_CHANNEL, coarseMidiPitchbend);
+
+        auto& coarseState = midiFaderManager.getFaderStateMutable(MidiMapping::FaderType::FADER_COARSE);
+        coarseState.lastSentPitchbend = coarseMidiPitchbend;
+        coarseState.lastSentTime = millis();
+
+        logger.log(CAT_MIDI, LOG_DEBUG,
+                   "Sent coarse pitchbend=%d on ch%d (step %lu)",
+                   coarseMidiPitchbend, PITCHBEND_START_CHANNEL, currentSixteenthStep);
+        return true;
+    }
+
     const std::vector<NoteUtils::DisplayNote> notes = selectableDisplayNotesForEditUi(track);
     int selectedIdx = editManager.getSelectedNoteIdx();
     
@@ -1182,16 +1229,43 @@ bool NoteEditManager::sendCoarseFaderPosition(Track& track) {
 }
 
 bool NoteEditManager::sendFineFaderPosition(Track& track) {
-    if (editManager.getSelectedNoteIdx() < 0) {
-        logger.log(CAT_MIDI, LOG_DEBUG, "No note selected for fine position");
-        return false;
-    }
-    
     uint32_t loopLength = track.getLoopLength();
     if (loopLength == 0) {
         return false;
     }
-    
+
+    const uint32_t loopStartTick = track.getLoopStartTick() % loopLength;
+
+    if (editManager.getSelectedNoteIdx() < 0) {
+        if (lengthEditingMode) {
+            logger.log(CAT_MIDI, LOG_DEBUG, "No note selected for fine position");
+            return false;
+        }
+
+        const uint32_t bracketRelTick =
+            SelectNavigation::noteRelativeTick(editManager.getBracketTick(), loopStartTick,
+                                               loopLength);
+        const uint32_t stepStartTick =
+            (bracketRelTick / Config::TICKS_PER_16TH_STEP) * Config::TICKS_PER_16TH_STEP;
+        const int32_t offsetFromReferenceStep =
+            static_cast<int32_t>(bracketRelTick) -
+            static_cast<int32_t>(stepStartTick);
+        const uint8_t fineCCValue =
+            static_cast<uint8_t>(constrain(64 + offsetFromReferenceStep, 0, 127));
+
+        logger.log(CAT_MIDI, LOG_DEBUG,
+                   "Fine fader position (EMPTY_STEP): offset %ld -> CC=%d",
+                   offsetFromReferenceStep, fineCCValue);
+
+        midiHandler.sendControlChange(FINE_CC_CHANNEL, FINE_CC_NUMBER, fineCCValue);
+        midiFaderManager.getFaderStateMutable(MidiMapping::FaderType::FADER_FINE).lastSentCC =
+            fineCCValue;
+        logger.log(CAT_MIDI, LOG_DEBUG,
+                   "Sent fine CC=%d (empty step offset %ld)",
+                   fineCCValue, offsetFromReferenceStep);
+        return true;
+    }
+
     const std::vector<NoteUtils::DisplayNote> notes = selectableDisplayNotesForEditUi(track);
     int selectedIdx = editManager.getSelectedNoteIdx();
     
@@ -1519,6 +1593,7 @@ bool NoteEditManager::applyNoteSelectFromFader1Pitchbend(Track& track, int16_t p
             editManager.commitAllPendingNoteEditActions(track);
             editManager.rebuildNoteEditFocusAtSelect(track, -1);
             editManager.applySelectNav(track, -1, absoluteTargetTick, {}, false, false);
+            referenceStep = absoluteTargetTick / Config::TICKS_PER_16TH_STEP;
             startEditingEnabled = true;
             logger.log(CAT_MIDI, LOG_DEBUG,
                        "Select fader: selected empty step at tick %lu (no note)", absoluteTargetTick);

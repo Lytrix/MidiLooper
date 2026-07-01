@@ -182,6 +182,20 @@ void test_plan_select_dependent_none_when_clean() {
     TEST_ASSERT_EQUAL(NoteEditFaderOutbound::Step::Done, step);
 }
 
+void test_empty_step_bracket_rel_tick_maps_to_coarse_pitchbend() {
+    const uint32_t loopLength = 1536;
+    const uint32_t loopStartTick = 0;
+    const uint32_t bracketTick = 144;
+    const uint32_t relTick =
+        loopRelativeTickForTest(bracketTick, loopStartTick, loopLength);
+    TEST_ASSERT_EQUAL_UINT32(144, relTick);
+    const int16_t pb =
+        NoteEditLengthFaderMapping::loopTickToCoarsePitchbend(relTick, loopLength);
+    const uint32_t step = relTick / 48;
+    TEST_ASSERT_EQUAL_UINT32(3, step);
+    TEST_ASSERT_TRUE(MidiConfig::Pitchbend::isValidLogical(pb));
+}
+
 void test_outbound_pipeline_advances_through_triggers() {
     const auto plan =
         NoteEditFaderOutbound::planForTrigger(NoteEditFaderOutbound::Trigger::NoteSelectDependent);
@@ -215,6 +229,7 @@ int main(int argc, char** argv) {
     RUN_TEST(test_plan_select_dependent_position_only_skips_f4);
     RUN_TEST(test_plan_select_dependent_full_when_both_dirty);
     RUN_TEST(test_plan_select_dependent_none_when_clean);
+    RUN_TEST(test_empty_step_bracket_rel_tick_maps_to_coarse_pitchbend);
     RUN_TEST(test_outbound_pipeline_advances_through_triggers);
     return UNITY_END();
 }

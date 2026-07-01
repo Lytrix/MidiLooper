@@ -179,6 +179,21 @@
 - [x] 7.7.4 Rate-limit geometry F1 bracket send (150 ms)
 - [ ] 7.7.5 Capture: zero `Select fader: selected note` during F2-only drag; DNTE continuous through session end
 
+### 7.8 Selection-driven dependent refresh (stall-fix steps 1–4)
+
+- [x] 7.8.1 Feedback geometry snapshot fields
+- [x] 7.8.2 Dirty flags + `planForSelectDependent`
+- [x] 7.8.3 Selection-driven schedule + coalesce re-eval at `DONE`
+- [x] 7.8.4 Narrow `processFaderSelectQuiet` path
+- [ ] 7.8.5 Capture: fast vs slow — document RC-E/RC-F; empty-step pass after RC-A
+
+### 7.9 Empty-step position feedback (RC-A/B)
+
+- [x] 7.9.1 `sendCoarseFaderPosition` / `sendFineFaderPosition` bracket anchor when `noteIdx < 0`
+- [x] 7.9.2 `stampFeedbackPositionFromSelection` from bracket when empty
+- [ ] 7.9.3 Pipeline always `DONE`; `SKIP_SEND` capture log
+- [ ] 7.9.4 Capture: `BEGIN` == `DONE`; empty steps show `SEND_F2` + `mode=EMPTY_STEP`
+
 ---
 
 ## Phase 8 — F2 loop-relative tick (RC11)
