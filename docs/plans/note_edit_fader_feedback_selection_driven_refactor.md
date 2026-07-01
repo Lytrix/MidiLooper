@@ -18,11 +18,12 @@
 | Pipeline for session/GPIO/length-mode F1-bracket paths | **Retained** |
 | Plan B: pipeline for dependent refresh (`NoteSelectDependent`) | **Shipped** (local) |
 | Plan C: restart-on-selection + delta partial plans | **Shipped** (local) |
-| Sync drain after `NoteSelectDependent` apply | **Shipped** (local) |
+| Sync drain after `NoteSelectDependent` apply | **Superseded** — live F1 uses `syncMotorsFromSelectTarget` |
 | Nav-slot-index apply gate (`lastAppliedSelectNavSlotIndex_`) | **Shipped** (local) |
 | Same-tick sibling select (`resolveNoteIdxAtSlot`) | **Shipped** (local) |
-| Geometry driver F1 override | **Shipped** (local) |
-| Capture verification | **Pending** — flash + co-located note sweep |
+| Geometry driver F1 override | **Removed** — F1 select no longer geometry-blocked |
+| Inline motor sync on every accepted F1 pitchbend | **Shipped** (dwell-gap fix) |
+| Capture verification | **Pending** — flash + slow 3-note glide A/B |
 
 ---
 
@@ -36,26 +37,24 @@ Layered compensations (quiet timer, dirty flags, coalesce, grace period, stale-e
 
 ## Solution
 
-**Single rule:** when pitch-mapped nav **slot index** differs from `lastAppliedSelectNavSlotIndex_`, apply selection from `slots[posIndex]` and run a **FULL** `NoteSelectDependent` pipeline (F2 + F3 + F4).
+**Single rule (updated — dwell-gap fix):** on every **accepted** F1 pitchbend, `syncMotorsFromSelectTarget` sends F2+F3+F4 from the resolved target (rate-limited by 16th step / note index). When pitch-mapped nav **slot index** or **note index** differs from `lastAppliedSelectNavSlotIndex_` / `lastAppliedSelectNoteIdx_`, apply selection from `slots[posIndex]`.
 
-- Slot change → always FULL dependent burst (including same-tick siblings)
-- Same slot index → `apply=0` (micro-wiggle within slot)
+- Slot or note index change → `apply=1` + `applyNoteSelectFromFader1Pitchbend` (no `NoteSelectDependent` on live F1 path)
+- Same slot **and** note index → `apply=0` (selection unchanged) but motors still sync on step/note change
 - Bracket tick / `findSlotIndexForSelection` → **not** used in apply gate
 - `resolveNoteIdxAtSlot` → always `slot.noteIdx`
-- In-flight `NoteSelectDependent` → **RESTART** (cancel stale burst), not COALESCE
-- After each `apply=1`, **sync-drain** before next pitchbend is handled
-- GPIO / session open → `syncLastAppliedSelectNavSlotFromSelection` seeds `lastApplied`
+- GPIO / session open → pipeline (`SessionOpen`, `NoteSelectWithFader1`) unchanged
 
 ```mermaid
 flowchart LR
     pb[Fader1 pitchbend] --> resolve[resolveFader1SelectTarget]
-    resolve --> gate{"posIndex != lastApplied?"}
-    gate -->|no| stop[ignore]
+    resolve --> sync[syncMotorsFromSelectTarget]
+    resolve --> gate{"nav slot/note changed?"}
+    gate -->|no| stop[apply=0]
     gate -->|yes| apply[applyNoteSelectFromFader1Pitchbend]
-    apply --> send[requestFaderOutbound NoteSelectDependent]
 ```
 
-**Cross-talk guard retained:** value-based `shouldIgnoreFaderInput` + `armSelectFaderFeedbackIgnore` only on real fader-1 motor sends (`sendFader1BracketFeedback`).
+**Cross-talk guard:** value-based echo reject only (`shouldIgnoreSelectFaderEcho`); `armSelectFaderFeedbackIgnore` only on real fader-1 motor sends (`sendFader1BracketFeedback`). No geometry block, no 1500 ms / 200 ms time walls on F1 select.
 
 ---
 
@@ -95,24 +94,17 @@ rg 'select_apply|outbound_step=' captures/<session>.log
 .venv/bin/python scripts/analyze_fader2_select_feedback.py captures/<session>.log
 ```
 
-**Pass criteria:**
+**Pass criteria (outcome-based — not log-only `SEND_F*`):**
 
 | Check | Target |
 |-------|--------|
-| Every `select_apply apply=1` | Followed by `SEND_F2` + `SEND_F3` (+ `SEND_F4` when note selected) |
-| Slow F1 sweep | No multi-second gaps without dependent send |
-| `QUIET_REFRESH` | Absent (path removed) |
-| `COALESCE` on `NoteSelectDependent` | Absent — use `RESTART` instead |
-| `select_apply reason=nav_slot` | Present when `prior_slot != slot` |
-| `select_apply prior_slot=` | Logged on every apply decision (capture-serial) |
-| `dependent_plan mode=FULL` | On every nav-slot `apply=1` (no `NOTE_ONLY` on siblings) |
-| `(2/2 notes at this position)` | Present when selecting second sibling at same 16th |
-| `outbound_step=DRAIN_DONE` | Present after each `apply=1` dependent burst |
-| `#DBG outbound_ctx f4` | `pitch` matches selected note on reselect |
-| `#DBG geometry_override` | Present when F1 crosses geometry lockout with `userDelta >= 100` |
-| `#DBG outbound_ctx f4 duplicate=1` | Logged on reselect with unchanged F4 CC (motor trigger still fires) |
-| Zero `RESTART` without `SEND_F4` | On fast F1 oscillation (`apply=1` pairs) |
-| Stall regression | No duplicate same-tick `SEND_F2` spam |
+| **Dwell motor gap** | Same `select_slot idx`, F1 pitch span ≥ 200 → `MO,224,14` changes within 300 ms |
+| **DNTE–motor coupling** | `DNTE` selectedIdx change → F2 or F4 MO change within 50 ms |
+| **Slow F1 sweep** | `fader_select_dwell_gap_ok` = true; `select_ignored_rate` ≈ 0 (echo-only) |
+| `QUIET_REFRESH` / `COALESCE` on live F1 | Absent |
+| `select_apply reason=nav_slot` | When `prior_slot != slot` |
+| `#DBG outbound_ctx f2 mode=SELECT_SYNC` | On inline motor sync (live F1 path) |
+| Manual HITL | Slow 3-note glide — all three motors move visibly |
 
 ---
 

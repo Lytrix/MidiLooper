@@ -5,6 +5,7 @@
 
 #include "Utils/NoteEditLengthFaderMapping.h"
 #include "Utils/NoteEditFaderOutboundPlan.h"
+#include "Utils/NoteEditFaderSelectSync.h"
 #include "Utils/SelectNavigation.h"
 #include "MidiConfig.h"
 
@@ -312,6 +313,54 @@ void test_outbound_pipeline_advances_through_note_select_dependent() {
     TEST_ASSERT_EQUAL(NoteEditFaderOutbound::Step::Done, step);
 }
 
+void test_select_fader_echo_rejects_near_last_sent() {
+    TEST_ASSERT_TRUE(
+        NoteEditFaderSelectSync::shouldIgnoreSelectFaderEcho(5000, 5050, 100));
+    TEST_ASSERT_FALSE(
+        NoteEditFaderSelectSync::shouldIgnoreSelectFaderEcho(5000, 5200, 100));
+}
+
+void test_select_fader_echo_accepts_small_user_delta() {
+    TEST_ASSERT_FALSE(
+        NoteEditFaderSelectSync::shouldIgnoreSelectFaderEcho(4500, 4620, 100));
+}
+
+void test_motor_sync_rate_limit_same_step_skips() {
+    uint32_t lastStep = UINT32_MAX;
+    int lastNoteIdx = -2;
+    TEST_ASSERT_TRUE(
+        NoteEditFaderSelectSync::shouldSyncMotorsOnSelectTarget(12, 5, lastStep, lastNoteIdx));
+    TEST_ASSERT_EQUAL_UINT32(12, lastStep);
+    TEST_ASSERT_EQUAL_INT(5, lastNoteIdx);
+    TEST_ASSERT_FALSE(
+        NoteEditFaderSelectSync::shouldSyncMotorsOnSelectTarget(12, 5, lastStep, lastNoteIdx));
+}
+
+void test_motor_sync_rate_limit_step_change_fires() {
+    uint32_t lastStep = 8;
+    int lastNoteIdx = 3;
+    TEST_ASSERT_TRUE(
+        NoteEditFaderSelectSync::shouldSyncMotorsOnSelectTarget(9, 3, lastStep, lastNoteIdx));
+    TEST_ASSERT_EQUAL_UINT32(9, lastStep);
+}
+
+void test_motor_sync_rate_limit_note_change_fires() {
+    uint32_t lastStep = 8;
+    int lastNoteIdx = 3;
+    TEST_ASSERT_TRUE(
+        NoteEditFaderSelectSync::shouldSyncMotorsOnSelectTarget(8, 4, lastStep, lastNoteIdx));
+    TEST_ASSERT_EQUAL_INT(4, lastNoteIdx);
+}
+
+void test_nav_unchanged_still_allows_motor_sync_on_step_change() {
+    TEST_ASSERT_FALSE(
+        NoteEditFaderOutbound::shouldApplySelectionOnNavChange(7, 12, 7, 12));
+    uint32_t lastStep = 4;
+    int lastNoteIdx = -1;
+    TEST_ASSERT_TRUE(
+        NoteEditFaderSelectSync::shouldSyncMotorsOnSelectTarget(5, -1, lastStep, lastNoteIdx));
+}
+
 int main(int argc, char** argv) {
     (void)argc;
     (void)argv;
@@ -341,5 +390,11 @@ int main(int argc, char** argv) {
     RUN_TEST(test_empty_step_bracket_rel_tick_maps_to_coarse_pitchbend);
     RUN_TEST(test_outbound_pipeline_advances_through_session_open);
     RUN_TEST(test_outbound_pipeline_advances_through_note_select_dependent);
+    RUN_TEST(test_select_fader_echo_rejects_near_last_sent);
+    RUN_TEST(test_select_fader_echo_accepts_small_user_delta);
+    RUN_TEST(test_motor_sync_rate_limit_same_step_skips);
+    RUN_TEST(test_motor_sync_rate_limit_step_change_fires);
+    RUN_TEST(test_motor_sync_rate_limit_note_change_fires);
+    RUN_TEST(test_nav_unchanged_still_allows_motor_sync_on_step_change);
     return UNITY_END();
 }

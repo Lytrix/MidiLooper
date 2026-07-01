@@ -18,6 +18,7 @@
 #include "MidiConfig.h"
 #include "Utils/SelectNavigation.h"
 #include "Utils/NoteEditFaderOutboundPlan.h"
+#include "Utils/NoteEditFaderSelectSync.h"
 
 /**
  * @class NoteEditManager
@@ -104,6 +105,8 @@ private:
     uint32_t lastSelectFaderTime = 0;
     int lastAppliedSelectNavSlotIndex_ = -1;
     int lastAppliedSelectNoteIdx_ = -1;
+    uint32_t lastSyncedSelectStep_ = UINT32_MAX;
+    int lastSyncedSelectNoteIdx_ = -2;
     static constexpr int16_t SELECT_MOVEMENT_THRESHOLD = 100;
     
     int16_t lastUserCoarseFaderValue = MidiConfig::Pitchbend::CENTER;
@@ -147,7 +150,7 @@ private:
     void completeOutboundPipelineAtDone(Track& track, uint32_t now);
     void sendFader1BracketFeedback(Track& track, bool updateNavStateFromOutbound = true);
     void logOutboundStep(const char* label);
-    void logSelectSlot(int slotIndex, int16_t pitchValue, bool ignored);
+    void logSelectSlot(int slotIndex, int16_t pitchValue, bool ignored, const char* reason = nullptr);
     void logSelectApplyDecision(uint32_t targetBracketTick, int targetNoteIdx, int slotIndex,
                                 int priorSlotIndex, bool apply, const char* reason);
     void resetSelectNavSlotApplyState();
@@ -164,6 +167,7 @@ private:
         bool valid = false;
     };
     Fader1SelectTarget resolveFader1SelectTarget(Track& track, int16_t pitchValue);
+    void syncMotorsFromSelectTarget(Track& track, const Fader1SelectTarget& target);
     void enableStartEditing();
     void armChannel15FaderFeedbackIgnore(uint32_t sentAt);
     void armCoarseFaderFeedbackIgnore(uint32_t sentAt);
