@@ -139,7 +139,6 @@ void NoteEditManager::update() {
         enableStartEditing();
     }
 
-    processFaderSelectQuiet();
     processFaderOutbound();
 
     loopEditManager.update();
@@ -485,17 +484,30 @@ void NoteEditManager::logSelectSlot(int slotIndex, int16_t pitchValue, bool igno
 }
 
 void NoteEditManager::logSelectApplyDecision(uint32_t targetBracketTick, int targetNoteIdx,
-                                             int slotIndex, bool apply, const char* reason) {
+                                             int slotIndex, int priorSlotIndex, bool apply,
+                                             const char* reason) {
 #if defined(SESSION_CAPTURE)
-    logger.info("#DBG select_apply bracket_tick=%lu note_idx=%d slot=%d apply=%d reason=%s",
-                targetBracketTick, targetNoteIdx, slotIndex, apply ? 1 : 0, reason);
+    logger.info(
+        "#DBG select_apply bracket_tick=%lu note_idx=%d slot=%d prior_slot=%d apply=%d reason=%s",
+        targetBracketTick, targetNoteIdx, slotIndex, priorSlotIndex, apply ? 1 : 0, reason);
 #else
     (void)targetBracketTick;
     (void)targetNoteIdx;
     (void)slotIndex;
+    (void)priorSlotIndex;
     (void)apply;
     (void)reason;
 #endif
+}
+
+void NoteEditManager::resetSelectNavSlotApplyState() {
+    lastAppliedSelectNavSlotIndex_ = -1;
+    lastAppliedSelectNoteIdx_ = -1;
+}
+
+void NoteEditManager::syncLastAppliedSelectNavFromPitch(Track& track) {
+    lastAppliedSelectNavSlotIndex_ = selectNavSlotIndexForPitchbend(track, lastUserSelectFaderValue);
+    lastAppliedSelectNoteIdx_ = editManager.getSelectedNoteIdx();
 }
 
 bool NoteEditManager::isFaderOutboundActive() const {
@@ -503,7 +515,37 @@ bool NoteEditManager::isFaderOutboundActive() const {
            outboundStep_ != NoteEditFaderOutbound::Step::Done;
 }
 
+void NoteEditManager::queuePendingOutbound(NoteEditFaderOutbound::Trigger trigger,
+                                           const NoteEditFaderOutbound::PlanFlags* planOverride) {
+    pendingOutboundTrigger_ = trigger;
+    pendingOutboundPlan_ = planOverride != nullptr ? *planOverride
+                                                   : NoteEditFaderOutbound::planForTrigger(trigger);
+    pendingOutboundPlanValid_ = true;
+}
+
+void NoteEditManager::drainDependentFaderOutboundUntilDone() {
+    if (activeOutboundTrigger_ != NoteEditFaderOutbound::Trigger::NoteSelectDependent) {
+        return;
+    }
+
+    static constexpr int kMaxDrainSteps = 12;
+    int steps = 0;
+    while (outboundStep_ != NoteEditFaderOutbound::Step::Idle && steps < kMaxDrainSteps) {
+        processFaderOutbound();
+        ++steps;
+    }
+
+#if defined(SESSION_CAPTURE)
+    logger.info("#DBG outbound_step=DRAIN_DONE steps=%d", steps);
+#endif
+}
+
 void NoteEditManager::cancelActiveFaderOutbound() {
+    if (outboundStep_ != NoteEditFaderOutbound::Step::Idle &&
+        outboundStep_ != NoteEditFaderOutbound::Step::Done) {
+        Track& track = trackManager.getSelectedTrack();
+        completeOutboundPipelineAtDone(track, millis());
+    }
     activeOutboundTrigger_ = NoteEditFaderOutbound::Trigger::None;
     outboundStep_ = NoteEditFaderOutbound::Step::Idle;
     outboundPlan_ = {};
@@ -517,10 +559,20 @@ void NoteEditManager::requestFaderOutbound(NoteEditFaderOutbound::Trigger trigge
         return;
     }
 
-    if (NoteEditFaderOutbound::shouldCoalesceDependentRefresh(trigger, outboundStep_)) {
-        pendingOutboundTrigger_ = trigger;
+    if (NoteEditFaderOutbound::shouldRestartDependentPipelineOnSelectionChange(
+            trigger, activeOutboundTrigger_, outboundStep_)) {
+        logOutboundStep("RESTART");
+        cancelActiveFaderOutbound();
+    } else if (NoteEditFaderOutbound::shouldCoalesceDependentRefresh(trigger, outboundStep_)) {
+        queuePendingOutbound(trigger, planOverride);
         logOutboundStep("COALESCE");
         return;
+    }
+
+    if (outboundStep_ == NoteEditFaderOutbound::Step::Done) {
+        Track& track = trackManager.getSelectedTrack();
+        completeOutboundPipelineAtDone(track, millis());
+        outboundStep_ = NoteEditFaderOutbound::Step::Idle;
     }
 
     if (isFaderOutboundActive()) {
@@ -531,13 +583,14 @@ void NoteEditManager::requestFaderOutbound(NoteEditFaderOutbound::Trigger trigge
             sendFader1BracketFeedback(track, false);
             return;
         } else {
-            pendingOutboundTrigger_ = trigger;
+            queuePendingOutbound(trigger, planOverride);
             return;
         }
     }
 
     activeOutboundTrigger_ = trigger;
     pendingOutboundTrigger_ = NoteEditFaderOutbound::Trigger::None;
+    pendingOutboundPlanValid_ = false;
     outboundPlan_ = planOverride != nullptr ? *planOverride
                                             : NoteEditFaderOutbound::planForTrigger(trigger);
     outboundStep_ = NoteEditFaderOutbound::nextEnabledStep(NoteEditFaderOutbound::Step::Idle,
@@ -545,62 +598,6 @@ void NoteEditManager::requestFaderOutbound(NoteEditFaderOutbound::Trigger trigge
     outboundStepStartedMs_ = millis();
     midiHandler.setDroidMotorOutboundPriority(true);
     logOutboundStep("BEGIN");
-}
-
-void NoteEditManager::evaluateDependentFaderRefreshDirty(Track& track,
-                                                         bool& needsPositionRefresh,
-                                                         bool& needsPitchRefresh) {
-    needsPositionRefresh = false;
-    needsPitchRefresh = false;
-
-    const uint32_t loopLength = track.getLoopLength();
-    if (loopLength == 0) {
-        return;
-    }
-
-    const uint32_t loopStartTick = track.getLoopStartTick() % loopLength;
-
-    if (editManager.getSelectedNoteIdx() < 0) {
-        const uint32_t bracketRelTick =
-            SelectNavigation::noteRelativeTick(editManager.getBracketTick(), loopStartTick,
-                                               loopLength);
-        needsPositionRefresh =
-            lastFeedbackAnchorRelTick_ == kFeedbackAnchorRelTickUnset ||
-            bracketRelTick != lastFeedbackAnchorRelTick_;
-        return;
-    }
-
-    const NoteUtils::DisplayNote liveNote = editManager.liveEditDisplayNoteAtSelect(track);
-    const uint32_t relStart =
-        SelectNavigation::noteRelativeTick(liveNote.startTick, loopStartTick, loopLength);
-
-    needsPositionRefresh =
-        lastFeedbackAnchorRelTick_ == kFeedbackAnchorRelTickUnset ||
-        relStart != lastFeedbackAnchorRelTick_;
-    needsPitchRefresh = lastFeedbackNotePitch_ == kFeedbackNotePitchUnset ||
-                        static_cast<int8_t>(liveNote.note) != lastFeedbackNotePitch_;
-}
-
-bool NoteEditManager::requestDependentFaderRefreshFromSelection(Track& track) {
-    bool needsPositionRefresh = false;
-    bool needsPitchRefresh = false;
-    evaluateDependentFaderRefreshDirty(track, needsPositionRefresh, needsPitchRefresh);
-    if (!needsPositionRefresh && !needsPitchRefresh) {
-#if defined(SESSION_CAPTURE)
-        logger.info("#DBG dependent_refresh_skip pos=0 pitch=0");
-#endif
-        return false;
-    }
-
-    const NoteEditFaderOutbound::PlanFlags plan =
-        NoteEditFaderOutbound::planForSelectDependent(needsPositionRefresh, needsPitchRefresh);
-#if defined(SESSION_CAPTURE)
-    logger.info("#DBG dependent_refresh_schedule pos=%d pitch=%d coarse=%d fine=%d note=%d",
-                needsPositionRefresh ? 1 : 0, needsPitchRefresh ? 1 : 0, plan.coarse ? 1 : 0,
-                plan.fine ? 1 : 0, plan.noteValue ? 1 : 0);
-#endif
-    requestFaderOutbound(NoteEditFaderOutbound::Trigger::NoteSelectDependent, &plan);
-    return true;
 }
 
 bool NoteEditManager::isGeometryDriverActive(uint32_t now) const {
@@ -617,63 +614,6 @@ void NoteEditManager::armSelectFaderFeedbackIgnore(uint32_t sentAt, uint32_t dur
     const uint32_t until = sentAt + durationMs;
     if (until > selectFaderFeedbackIgnoreUntilMs_) {
         selectFaderFeedbackIgnoreUntilMs_ = until;
-    }
-}
-
-void NoteEditManager::resetFeedbackGeometrySnapshot() {
-    lastFeedbackAnchorRelTick_ = kFeedbackAnchorRelTickUnset;
-    lastFeedbackNotePitch_ = kFeedbackNotePitchUnset;
-}
-
-void NoteEditManager::stampFeedbackPositionFromSelection(Track& track) {
-    const uint32_t loopLength = track.getLoopLength();
-    if (loopLength == 0) {
-        return;
-    }
-    const uint32_t loopStartTick = track.getLoopStartTick() % loopLength;
-
-    if (editManager.getSelectedNoteIdx() < 0) {
-        lastFeedbackAnchorRelTick_ =
-            SelectNavigation::noteRelativeTick(editManager.getBracketTick(), loopStartTick,
-                                               loopLength);
-#if defined(SESSION_CAPTURE)
-        logger.info("#DBG feedback_geometry_stamp pos_tick=%lu pitch=%d",
-                    lastFeedbackAnchorRelTick_,
-                    static_cast<int>(lastFeedbackNotePitch_));
-#endif
-        return;
-    }
-
-    const NoteUtils::DisplayNote liveNote = editManager.liveEditDisplayNoteAtSelect(track);
-    lastFeedbackAnchorRelTick_ =
-        SelectNavigation::noteRelativeTick(liveNote.startTick, loopStartTick, loopLength);
-#if defined(SESSION_CAPTURE)
-    logger.info("#DBG feedback_geometry_stamp pos_tick=%lu pitch=%d",
-                lastFeedbackAnchorRelTick_,
-                static_cast<int>(lastFeedbackNotePitch_));
-#endif
-}
-
-void NoteEditManager::stampFeedbackPitchFromSelection(Track& track) {
-    if (editManager.getSelectedNoteIdx() < 0) {
-        return;
-    }
-    const NoteUtils::DisplayNote liveNote = editManager.liveEditDisplayNoteAtSelect(track);
-    lastFeedbackNotePitch_ = static_cast<int8_t>(liveNote.note);
-#if defined(SESSION_CAPTURE)
-    logger.info("#DBG feedback_geometry_stamp pos_tick=%lu pitch=%d",
-                lastFeedbackAnchorRelTick_,
-                static_cast<int>(lastFeedbackNotePitch_));
-#endif
-}
-
-void NoteEditManager::stampFeedbackGeometrySnapshotAtDone(
-    Track& track, const NoteEditFaderOutbound::PlanFlags& plan) {
-    if (plan.coarse || plan.fine) {
-        stampFeedbackPositionFromSelection(track);
-    }
-    if (plan.noteValue) {
-        stampFeedbackPitchFromSelection(track);
     }
 }
 
@@ -703,12 +643,15 @@ void NoteEditManager::sendFader1BracketFeedback(Track& track, bool updateNavStat
 }
 
 void NoteEditManager::completeOutboundPipelineAtDone(Track& track, uint32_t now) {
+    (void)now;
+    const NoteEditFaderOutbound::Trigger completedTrigger = activeOutboundTrigger_;
     startEditingEnabled = true;
     logOutboundStep("DONE");
-    stampFeedbackGeometrySnapshotAtDone(track, outboundPlan_);
-    armSelectFaderFeedbackIgnore(now, F2_OUTBOUND_SELECT_IGNORE_TAIL_MS);
     activeOutboundTrigger_ = NoteEditFaderOutbound::Trigger::None;
     midiHandler.setDroidMotorOutboundPriority(false);
+    if (completedTrigger == NoteEditFaderOutbound::Trigger::NoteSelectWithFader1) {
+        syncLastAppliedSelectNavFromPitch(track);
+    }
 }
 
 void NoteEditManager::processFaderOutbound() {
@@ -723,12 +666,10 @@ void NoteEditManager::processFaderOutbound() {
         if (pendingOutboundTrigger_ != NoteEditFaderOutbound::Trigger::None) {
             const NoteEditFaderOutbound::Trigger pending = pendingOutboundTrigger_;
             pendingOutboundTrigger_ = NoteEditFaderOutbound::Trigger::None;
-            if (pending == NoteEditFaderOutbound::Trigger::NoteSelectDependent) {
-                Track& track = trackManager.getSelectedTrack();
-                requestDependentFaderRefreshFromSelection(track);
-            } else {
-                requestFaderOutbound(pending);
-            }
+            const NoteEditFaderOutbound::PlanFlags* planPtr =
+                pendingOutboundPlanValid_ ? &pendingOutboundPlan_ : nullptr;
+            pendingOutboundPlanValid_ = false;
+            requestFaderOutbound(pending, planPtr);
         }
         return;
     }
@@ -771,9 +712,7 @@ void NoteEditManager::processFaderOutbound() {
             return;
         case NoteEditFaderOutbound::Step::SendCoarse:
             if (sendCoarseFaderPosition(track)) {
-                stampFeedbackPositionFromSelection(track);
                 armCoarseFaderFeedbackIgnore(now);
-                armSelectFaderFeedbackIgnore(now, FEEDBACK_IGNORE_PERIOD);
                 logOutboundStep("SEND_F2");
                 outboundStep_ =
                     NoteEditFaderOutbound::advanceOutboundStep(outboundStep_, outboundPlan_);
@@ -786,7 +725,6 @@ void NoteEditManager::processFaderOutbound() {
             return;
         case NoteEditFaderOutbound::Step::TriggerCoarse:
             sendCoarseFaderMotorTrigger();
-            armSelectFaderFeedbackIgnore(now, F2_OUTBOUND_SELECT_IGNORE_TAIL_MS);
             logOutboundStep("TRIGGER_F2");
             outboundStep_ = NoteEditFaderOutbound::advanceOutboundStep(outboundStep_, outboundPlan_);
             outboundStepStartedMs_ = now;
@@ -812,7 +750,6 @@ void NoteEditManager::processFaderOutbound() {
             return;
         case NoteEditFaderOutbound::Step::SendNoteValue:
             if (sendNoteValueFaderPosition(track)) {
-                stampFeedbackPitchFromSelection(track);
                 logOutboundStep("SEND_F4");
                 outboundStep_ =
                     NoteEditFaderOutbound::advanceOutboundStep(outboundStep_, outboundPlan_);
@@ -831,49 +768,10 @@ void NoteEditManager::processFaderOutbound() {
             outboundStepStartedMs_ = now;
             return;
         default:
-            outboundStep_ = NoteEditFaderOutbound::Step::Idle;
-            midiHandler.setDroidMotorOutboundPriority(false);
+            logger.info("NOTE_EDIT outbound unexpected step — forcing Done");
+            outboundStep_ = NoteEditFaderOutbound::Step::Done;
             return;
     }
-}
-
-void NoteEditManager::processFaderSelectQuiet() {
-    if (editManager.getEditSessionType() != EditSessionType::Note) {
-        return;
-    }
-    if (faderSelectPhase_ != NoteEditFaderOutbound::SelectPhase::UserMovingFader1) {
-        return;
-    }
-    const uint32_t now = millis();
-    if (!NoteEditFaderOutbound::isUserQuiet(now, fader1LastUserInputMs_)) {
-        return;
-    }
-
-    faderSelectPhase_ = NoteEditFaderOutbound::SelectPhase::PendingDependentRefresh;
-    Track& track = trackManager.getSelectedTrack();
-    const Fader1SelectTarget target = resolveFader1SelectTarget(track, lastUserSelectFaderValue);
-    if (!target.valid) {
-        faderSelectPhase_ = NoteEditFaderOutbound::SelectPhase::Idle;
-        return;
-    }
-
-    bool refreshed = false;
-    if (NoteEditFaderOutbound::shouldApplySelectionOnTargetChange(
-            target.absoluteTargetTick, target.noteIdx, editManager.getBracketTick(),
-            editManager.getSelectedNoteIdx())) {
-        logSelectApplyDecision(target.absoluteTargetTick, target.noteIdx, target.slotIndex, true,
-                               "quiet_bracket_or_note");
-        const bool selectionApplied = applyNoteSelectFromFader1Pitchbend(
-            track, lastUserSelectFaderValue, lastUserSelectFaderValue, now, false, false);
-        if (selectionApplied) {
-            refreshed = requestDependentFaderRefreshFromSelection(track);
-        }
-    }
-    lastAppliedSelectSlotIndex_ = target.slotIndex;
-    if (refreshed) {
-        logOutboundStep("QUIET_REFRESH");
-    }
-    faderSelectPhase_ = NoteEditFaderOutbound::SelectPhase::Idle;
 }
 
 int NoteEditManager::selectNavSlotIndexForPitchbend(Track& track, int16_t pitchValue) {
@@ -922,8 +820,8 @@ void NoteEditManager::enableStartEditing() {
 
 void NoteEditManager::scheduleNoteSelectFaderSync(Track& track) {
     noteSelectionTime = millis();
-    lastAppliedSelectSlotIndex_ = selectNavSlotIndexForPitchbend(track, lastUserSelectFaderValue);
     requestFaderOutbound(NoteEditFaderOutbound::Trigger::NoteSelectWithFader1);
+    (void)track;
 }
 
 void NoteEditManager::sendNoteEditSessionFaderFeedback(Track& track) {
@@ -931,9 +829,7 @@ void NoteEditManager::sendNoteEditSessionFaderFeedback(Track& track) {
         return;
     }
 
-    faderSelectPhase_ = NoteEditFaderOutbound::SelectPhase::Idle;
-    lastAppliedSelectSlotIndex_ = -1;
-    resetFeedbackGeometrySnapshot();
+    resetSelectNavSlotApplyState();
     noteSelectionTime = millis();
     requestFaderOutbound(NoteEditFaderOutbound::Trigger::SessionOpen);
     logger.info("NOTE_EDIT session fader sync: outbound coordinator");
@@ -1373,9 +1269,12 @@ bool NoteEditManager::sendNoteValueFaderPosition(Track& track) {
     int selectedIdx = editManager.getSelectedNoteIdx();
     
     if (selectedIdx >= 0 && selectedIdx < (int)notes.size()) {
-        // Note value doesn't need relative positioning - it's just the MIDI note number
-        uint8_t noteValue = notes[static_cast<size_t>(selectedIdx)].note;
-        
+        const NoteUtils::DisplayNote liveNote = editManager.liveEditDisplayNoteAtSelect(track);
+#if defined(SESSION_CAPTURE)
+        logger.info("#DBG outbound_ctx f4 pitch=%d selected_idx=%d", liveNote.note, selectedIdx);
+#endif
+        const uint8_t noteValue = liveNote.note;
+
         logger.log(CAT_MIDI, LOG_DEBUG, "Note value fader position: note %d -> CC=%d",
                    noteValue, noteValue);
         
@@ -1410,57 +1309,6 @@ void NoteEditManager::sendNoteValueFaderMotorTrigger() {
                             0);
 }
 
-namespace {
-
-/// When several notes share a nav slot tick, keep the active moving note selected (**focus.last**).
-int resolveNoteIdxAtSlot(const std::vector<SelectNavigation::SelectNavSlot>& slots,
-                         const SelectNavigation::SelectNavSlot& slot,
-                         const EditManager& editManager,
-                         const std::vector<NoteUtils::DisplayNote>& notes,
-                         bool selectingNewTick) {
-    if (slot.noteIdx < 0) {
-        return slot.noteIdx;
-    }
-    std::vector<int> candidates;
-    for (const SelectNavigation::SelectNavSlot& candidate : slots) {
-        if (candidate.noteIdx >= 0 && candidate.relativeTick == slot.relativeTick &&
-            candidate.noteIdx < static_cast<int>(notes.size())) {
-            candidates.push_back(candidate.noteIdx);
-        }
-    }
-    if (candidates.empty()) {
-        return slot.noteIdx;
-    }
-
-    if (selectingNewTick) {
-        // When jumping to a new step, keep selection deterministic: first slot at that step.
-        return candidates.front();
-    }
-
-    const NoteEditFocus& focus = editManager.getEditSession().focus;
-    if (editManager.isNoteEditActive() && focus.active) {
-        const uint8_t movingPitch = focus.last.pitch;
-        const uint32_t movingStart = focus.last.startTick;
-        for (int candidateIdx : candidates) {
-            const NoteUtils::DisplayNote& n = notes[static_cast<size_t>(candidateIdx)];
-            if (n.note == movingPitch && n.startTick == movingStart) {
-                return candidateIdx;
-            }
-        }
-        const int selectedIdx = editManager.getSelectedNoteIdx();
-        if (selectedIdx >= 0 && selectedIdx < static_cast<int>(notes.size())) {
-            const NoteUtils::DisplayNote& sel = notes[static_cast<size_t>(selectedIdx)];
-            if (sel.note == movingPitch && sel.startTick == movingStart) {
-                return selectedIdx;
-            }
-        }
-        return slot.noteIdx;
-    }
-    return candidates.front();
-}
-
-}  // namespace
-
 NoteEditManager::Fader1SelectTarget NoteEditManager::resolveFader1SelectTarget(Track& track,
                                                                                 int16_t pitchValue) {
     Fader1SelectTarget target;
@@ -1480,10 +1328,7 @@ NoteEditManager::Fader1SelectTarget NoteEditManager::resolveFader1SelectTarget(T
     target.slotIndex = posIndex;
     target.absoluteTargetTick =
         SelectNavigation::noteStorageTick(slot.relativeTick, loopStartTick, loopLength);
-    const std::vector<NoteUtils::DisplayNote> notes = selectableDisplayNotesForEditUi(track);
-    const bool selectingNewTick = target.absoluteTargetTick != editManager.getBracketTick();
-    target.noteIdx =
-        resolveNoteIdxAtSlot(slots, slot, editManager, notes, selectingNewTick);
+    target.noteIdx = SelectNavigation::resolveNoteIdxAtSlot(slot);
     target.valid = true;
     return target;
 }
@@ -1521,21 +1366,27 @@ void NoteEditManager::handleSelectFaderInput(int16_t pitchValue, Track& track) {
     }
 
     const uint32_t now = millis();
-    const int16_t priorSelectFaderValue = lastUserSelectFaderValue;
 
     const int slotIndex = selectNavSlotIndexForPitchbend(track, pitchValue);
     if (isGeometryDriverActive(now)) {
-        logSelectSlot(slotIndex, pitchValue, true);
+        const int16_t userDelta = abs(pitchValue - lastUserSelectFaderValue);
+        if (userDelta < SELECT_MOVEMENT_THRESHOLD) {
+            logSelectSlot(slotIndex, pitchValue, true);
+            logger.log(CAT_MIDI, LOG_DEBUG,
+                       "Select fader input blocked during geometry driver (fader %d)",
+                       static_cast<int>(currentDriverFader));
+            return;
+        }
         logger.log(CAT_MIDI, LOG_DEBUG,
-                   "Select fader input blocked during geometry driver (fader %d)",
-                   static_cast<int>(currentDriverFader));
-        return;
+                   "Fader 1 user select overrides geometry driver (delta=%d)", userDelta);
+#if defined(SESSION_CAPTURE)
+        logger.info("#DBG geometry_override delta=%d fader=%d", userDelta,
+                    static_cast<int>(currentDriverFader));
+#endif
     }
 
     lastUserSelectFaderValue = pitchValue;
     lastSelectFaderTime = now;
-    fader1LastUserInputMs_ = now;
-    faderSelectPhase_ = NoteEditFaderOutbound::SelectPhase::UserMovingFader1;
 
     logSelectSlot(slotIndex, pitchValue, false);
 
@@ -1544,46 +1395,38 @@ void NoteEditManager::handleSelectFaderInput(int16_t pitchValue, Track& track) {
         return;
     }
 
-    if (NoteEditFaderOutbound::shouldApplySelectionOnTargetChange(
-            target.absoluteTargetTick, target.noteIdx, editManager.getBracketTick(),
-            editManager.getSelectedNoteIdx())) {
-        logSelectApplyDecision(target.absoluteTargetTick, target.noteIdx, target.slotIndex, true,
-                               "bracket_or_note");
-        const bool selectionApplied =
-            applyNoteSelectFromFader1Pitchbend(track, pitchValue, priorSelectFaderValue, now, true,
-                                               false);
-        lastAppliedSelectSlotIndex_ = target.slotIndex;
-        if (selectionApplied) {
-            requestDependentFaderRefreshFromSelection(track);
-        } else {
-            logSelectApplyDecision(target.absoluteTargetTick, target.noteIdx, target.slotIndex, false,
-                                   "apply_blocked");
+    const int priorSlotIndex = lastAppliedSelectNavSlotIndex_;
+    const bool navChanged = NoteEditFaderOutbound::shouldApplySelectionOnNavChange(
+        priorSlotIndex, lastAppliedSelectNoteIdx_, target.slotIndex, target.noteIdx);
+
+    if (navChanged) {
+        logSelectApplyDecision(target.absoluteTargetTick, target.noteIdx, target.slotIndex,
+                               priorSlotIndex, true, "nav_slot");
+        applyNoteSelectFromFader1Pitchbend(track, pitchValue, target.slotIndex);
+        lastAppliedSelectNavSlotIndex_ = target.slotIndex;
+        lastAppliedSelectNoteIdx_ = target.noteIdx;
+        const NoteEditFaderOutbound::PlanFlags plan =
+            NoteEditFaderOutbound::planForTrigger(
+                NoteEditFaderOutbound::Trigger::NoteSelectDependent);
+#if defined(SESSION_CAPTURE)
+        const char* planMode = "FULL";
+        if (target.noteIdx < 0) {
+            planMode = "EMPTY_STEP";
         }
+        logger.info("#DBG dependent_plan mode=%s coarse=%d fine=%d note=%d", planMode,
+                    plan.coarse ? 1 : 0, plan.fine ? 1 : 0, plan.noteValue ? 1 : 0);
+#endif
+        requestFaderOutbound(NoteEditFaderOutbound::Trigger::NoteSelectDependent, &plan);
+        drainDependentFaderOutboundUntilDone();
     } else {
-        logSelectApplyDecision(target.absoluteTargetTick, target.noteIdx, target.slotIndex, false,
-                               "unchanged");
+        logSelectApplyDecision(target.absoluteTargetTick, target.noteIdx, target.slotIndex,
+                               priorSlotIndex, false, "unchanged");
     }
 }
 
 bool NoteEditManager::applyNoteSelectFromFader1Pitchbend(Track& track, int16_t pitchValue,
-                                                         int16_t priorPitchValue, uint32_t now,
-                                                         bool enforceStaleEchoLockout,
-                                                         bool sendDependentFeedback) {
-    // Check if we're in grace period after recent editing activity (live nav only).
-    if (enforceStaleEchoLockout && lastEditingActivityTime > 0 &&
-        (now - lastEditingActivityTime) < NOTE_SELECTION_GRACE_PERIOD) {
-        const int16_t graceOverrideDelta = abs(pitchValue - priorPitchValue);
-        if (graceOverrideDelta < SELECT_MOVEMENT_THRESHOLD) {
-            uint32_t remaining = NOTE_SELECTION_GRACE_PERIOD - (now - lastEditingActivityTime);
-            logger.log(CAT_MIDI, LOG_DEBUG,
-                       "Note selection disabled - editing grace period: %lu ms remaining", remaining);
-            return false;
-        }
-        logger.log(CAT_MIDI, LOG_DEBUG,
-                   "Fader1 select overrides editing grace (delta=%d)", graceOverrideDelta);
-    }
-
-    uint32_t loopLength = track.getLoopLength();
+                                                         int posIndex) {
+    const uint32_t loopLength = track.getLoopLength();
     if (loopLength == 0) {
         return false;
     }
@@ -1592,90 +1435,58 @@ bool NoteEditManager::applyNoteSelectFromFader1Pitchbend(Track& track, int16_t p
     const std::vector<SelectNavigation::SelectNavSlot> slots =
         buildSelectNavigationSlots(track, editManager.getBracketTick(), true);
 
-    if (slots.empty()) {
+    if (slots.empty() || posIndex < 0 || posIndex >= static_cast<int>(slots.size())) {
         return false;
     }
 
-    int posIndex = map(pitchValue, MidiConfig::Pitchbend::MIN, MidiConfig::Pitchbend::MAX, 0,
-                       (int)slots.size() - 1);
-    const SelectNavigation::SelectNavSlot& slot = slots[posIndex];
+    const SelectNavigation::SelectNavSlot& slot = slots[static_cast<size_t>(posIndex)];
     const uint32_t absoluteTargetTick =
         SelectNavigation::noteStorageTick(slot.relativeTick, loopStartTick, loopLength);
     const std::vector<NoteUtils::DisplayNote> notes = selectableDisplayNotesForEditUi(track);
-    const bool selectingNewTick = absoluteTargetTick != editManager.getBracketTick();
-    int noteIdx = resolveNoteIdxAtSlot(slots, slot, editManager, notes, selectingNewTick);
+    const int noteIdx = SelectNavigation::resolveNoteIdxAtSlot(slot);
 
-    if (enforceStaleEchoLockout && isGeometryDriverActive(now)) {
-        logger.log(CAT_MIDI, LOG_DEBUG,
-                   "Select fader: ignoring apply during geometry driver");
-        return false;
-    }
+    (void)pitchValue;
 
-    if (enforceStaleEchoLockout) {
-        const bool positionEditLockout =
-            currentDriverFader != MidiMapping::FaderType::FADER_SELECT &&
-            lastDriverFaderTime > 0 &&
-            (now - lastDriverFaderTime) < (SELECTNOTE_UPDATE_DELAY + 200);
-        if (positionEditLockout && absoluteTargetTick != editManager.getBracketTick()) {
-            const int16_t deltaFromPrior = abs(pitchValue - priorPitchValue);
-            if (deltaFromPrior < SELECT_MOVEMENT_THRESHOLD) {
-                logger.log(CAT_MIDI, LOG_DEBUG,
-                           "Select fader: ignoring stale echo during edit sync (fader1 tick %lu, bracket %lu, delta=%d)",
-                           absoluteTargetTick, editManager.getBracketTick(), deltaFromPrior);
-                return false;
-            }
-        }
-    }
-
-    if (absoluteTargetTick != editManager.getBracketTick() || noteIdx != editManager.getSelectedNoteIdx()) {
-        if (noteIdx >= 0) {
-            int notesAtPosition = 0;
-            int notePosition = 0;
-            for (const SelectNavigation::SelectNavSlot& s : slots) {
-                if (s.relativeTick == slot.relativeTick && s.noteIdx >= 0) {
-                    notesAtPosition++;
-                    if (s.noteIdx == noteIdx) {
-                        notePosition = notesAtPosition;
-                    }
+    if (noteIdx >= 0) {
+        int notesAtPosition = 0;
+        int notePosition = 0;
+        for (const SelectNavigation::SelectNavSlot& s : slots) {
+            if (s.relativeTick == slot.relativeTick && s.noteIdx >= 0) {
+                notesAtPosition++;
+                if (s.noteIdx == noteIdx) {
+                    notePosition = notesAtPosition;
                 }
             }
-
-            if (notesAtPosition > 1) {
-                logger.log(CAT_MIDI, LOG_INFO,
-                           "Select fader: selected note %d at tick %lu (%d/%d notes at this position)",
-                           noteIdx, absoluteTargetTick, notePosition, notesAtPosition);
-            } else {
-                logger.log(CAT_MIDI, LOG_DEBUG, "Select fader: selected note %d at tick %lu", noteIdx,
-                           absoluteTargetTick);
-            }
-
-            editManager.commitAllPendingNoteEditActions(track);
-            editManager.rebuildNoteEditFocusForDisplayNote(track, notes[static_cast<size_t>(noteIdx)]);
-            const NoteRef selectRef = noteRefFromFilteredDisplayNote(
-                track.getMidiChannel(), editManager.getEditSession().focus, notes, noteIdx);
-            editManager.applySelectNav(track, noteIdx, absoluteTargetTick, selectRef, true, false);
-            resetLengthEditingModeOnNoteSelect();
-            referenceStep = absoluteTargetTick / Config::TICKS_PER_16TH_STEP;
-            noteSelectionTime = millis();
-            if (!isGeometryDriverActive(now)) {
-                currentDriverFader = MidiMapping::FaderType::FADER_SELECT;
-            }
-            if (sendDependentFeedback) {
-                requestDependentFaderRefreshFromSelection(track);
-            }
-        } else {
-            editManager.commitAllPendingNoteEditActions(track);
-            editManager.rebuildNoteEditFocusAtSelect(track, -1);
-            editManager.applySelectNav(track, -1, absoluteTargetTick, {}, false, false);
-            referenceStep = absoluteTargetTick / Config::TICKS_PER_16TH_STEP;
-            startEditingEnabled = true;
-            logger.log(CAT_MIDI, LOG_DEBUG,
-                       "Select fader: selected empty step at tick %lu (no note)", absoluteTargetTick);
         }
-        return true;
-    }
 
-    return false;
+        if (notesAtPosition > 1) {
+            logger.log(CAT_MIDI, LOG_INFO,
+                       "Select fader: selected note %d at tick %lu (%d/%d notes at this position)",
+                       noteIdx, absoluteTargetTick, notePosition, notesAtPosition);
+        } else {
+            logger.log(CAT_MIDI, LOG_DEBUG, "Select fader: selected note %d at tick %lu", noteIdx,
+                       absoluteTargetTick);
+        }
+
+        editManager.commitAllPendingNoteEditActions(track);
+        editManager.rebuildNoteEditFocusForDisplayNote(track, notes[static_cast<size_t>(noteIdx)]);
+        const NoteRef selectRef = noteRefFromFilteredDisplayNote(
+            track.getMidiChannel(), editManager.getEditSession().focus, notes, noteIdx);
+        editManager.applySelectNav(track, noteIdx, absoluteTargetTick, selectRef, true, false);
+        resetLengthEditingModeOnNoteSelect();
+        referenceStep = absoluteTargetTick / Config::TICKS_PER_16TH_STEP;
+        noteSelectionTime = millis();
+        currentDriverFader = MidiMapping::FaderType::FADER_SELECT;
+    } else {
+        editManager.commitAllPendingNoteEditActions(track);
+        editManager.rebuildNoteEditFocusAtSelect(track, -1);
+        editManager.applySelectNav(track, -1, absoluteTargetTick, {}, false, false);
+        referenceStep = absoluteTargetTick / Config::TICKS_PER_16TH_STEP;
+        startEditingEnabled = true;
+        logger.log(CAT_MIDI, LOG_DEBUG, "Select fader: selected empty step at tick %lu (no note)",
+                   absoluteTargetTick);
+    }
+    return true;
 }
 
 void NoteEditManager::handleCoarseFaderInput(int16_t pitchValue, Track& track) {
@@ -2068,6 +1879,7 @@ void NoteEditManager::handleFaderInput(MidiMapping::FaderType faderType, int16_t
 }
 
 void NoteEditManager::resetLengthEditingModeOnSessionBoundary() {
+    resetSelectNavSlotApplyState();
     if (!lengthEditingMode) {
         return;
     }

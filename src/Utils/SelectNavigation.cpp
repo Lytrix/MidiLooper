@@ -118,4 +118,8 @@ int findSlotIndexForSelection(const std::vector<SelectNavSlot>& slots,
     return -1;
 }
 
+int resolveNoteIdxAtSlot(const SelectNavSlot& slot) {
+    return slot.noteIdx;
+}
+
 }  // namespace SelectNavigation

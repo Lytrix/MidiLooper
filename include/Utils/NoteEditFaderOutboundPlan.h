@@ -31,12 +31,6 @@ enum class Step : uint8_t {
     Done,
 };
 
-enum class SelectPhase : uint8_t {
-    Idle = 0,
-    UserMovingFader1,
-    PendingDependentRefresh,
-};
-
 struct PlanFlags {
     bool fader1 = false;
     bool waitFader1Echo = false;
@@ -45,7 +39,6 @@ struct PlanFlags {
     bool noteValue = false;
 };
 
-constexpr uint32_t kFader1QuietMs = 400;
 constexpr uint32_t kOutboundWatchdogMs = 5000;
 constexpr uint32_t kFader1EchoWaitCapMs = 1600;
 
@@ -101,13 +94,28 @@ inline PlanFlags planForSelectDependent(bool needsPositionRefresh, bool needsPit
     return plan;
 }
 
+inline PlanFlags planForSelectDependentFromDelta(uint32_t priorBracketTick, int priorNoteIdx,
+                                               uint32_t newBracketTick, int newNoteIdx) {
+    (void)priorNoteIdx;
+    if (newNoteIdx < 0) {
+        return planForSelectDependent(true, false);
+    }
+    if (newBracketTick != priorBracketTick) {
+        return planForSelectDependent(true, true);
+    }
+    if (newNoteIdx != priorNoteIdx) {
+        return planForSelectDependent(false, true);
+    }
+    return {};
+}
+
 inline bool shouldPreemptActivePipeline(Trigger incoming) {
     return incoming == Trigger::SessionOpen || incoming == Trigger::LengthModeEnter ||
            incoming == Trigger::LengthModeExit;
 }
 
 inline bool shouldCoalesceDependentRefresh(Trigger incoming, Step activeStep) {
-    if (incoming != Trigger::NoteSelectDependent && incoming != Trigger::NoteSelectWithFader1) {
+    if (incoming != Trigger::NoteSelectWithFader1) {
         return false;
     }
     return activeStep != Step::Idle && activeStep != Step::Done;
@@ -128,15 +136,27 @@ inline bool isChannel15OutboundStep(Step step) {
     }
 }
 
-inline bool isUserQuiet(uint32_t nowMs, uint32_t lastUserInputMs, uint32_t quietMs = kFader1QuietMs) {
-    if (lastUserInputMs == 0) {
+inline bool shouldRestartDependentPipelineOnSelectionChange(Trigger incoming, Trigger activeTrigger,
+                                                            Step activeStep) {
+    if (incoming != Trigger::NoteSelectDependent) {
         return false;
     }
-    return nowMs >= lastUserInputMs && (nowMs - lastUserInputMs) >= quietMs;
+    if (activeTrigger != Trigger::NoteSelectDependent) {
+        return false;
+    }
+    return isChannel15OutboundStep(activeStep);
 }
 
 inline bool shouldApplySelectionOnSlotChange(int priorSlotIndex, int newSlotIndex) {
     return newSlotIndex >= 0 && priorSlotIndex != newSlotIndex;
+}
+
+inline bool shouldApplySelectionOnNavChange(int priorSlotIndex, int priorNoteIdx, int newSlotIndex,
+                                            int newNoteIdx) {
+    if (newSlotIndex < 0) {
+        return false;
+    }
+    return priorSlotIndex != newSlotIndex || priorNoteIdx != newNoteIdx;
 }
 
 inline bool shouldApplySelectionOnTargetChange(uint32_t targetBracketTick, int targetNoteIdx,

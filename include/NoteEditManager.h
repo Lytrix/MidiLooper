@@ -102,6 +102,8 @@ private:
     
     int16_t lastUserSelectFaderValue = MidiConfig::Pitchbend::CENTER;
     uint32_t lastSelectFaderTime = 0;
+    int lastAppliedSelectNavSlotIndex_ = -1;
+    int lastAppliedSelectNoteIdx_ = -1;
     static constexpr int16_t SELECT_MOVEMENT_THRESHOLD = 100;
     
     int16_t lastUserCoarseFaderValue = MidiConfig::Pitchbend::CENTER;
@@ -119,58 +121,42 @@ private:
     static constexpr uint32_t SELECTNOTE_UPDATE_DELAY = 1600;
     uint32_t selectFaderFeedbackIgnoreUntilMs_ = 0;
 
-    NoteEditFaderOutbound::SelectPhase faderSelectPhase_ =
-        NoteEditFaderOutbound::SelectPhase::Idle;
-    uint32_t fader1LastUserInputMs_ = 0;
-    int lastAppliedSelectSlotIndex_ = -1;
-
     NoteEditFaderOutbound::Trigger activeOutboundTrigger_ =
         NoteEditFaderOutbound::Trigger::None;
     NoteEditFaderOutbound::Trigger pendingOutboundTrigger_ =
         NoteEditFaderOutbound::Trigger::None;
+    NoteEditFaderOutbound::PlanFlags pendingOutboundPlan_{};
+    bool pendingOutboundPlanValid_ = false;
     NoteEditFaderOutbound::Step outboundStep_ = NoteEditFaderOutbound::Step::Idle;
     NoteEditFaderOutbound::PlanFlags outboundPlan_{};
     uint32_t outboundStepStartedMs_ = 0;
     int16_t outboundSentFader1Pitchbend_ = 0;
     uint32_t lastGeometryFader1BracketSentMs_ = 0;
 
-    static constexpr uint32_t kFeedbackAnchorRelTickUnset = UINT32_MAX;
-    static constexpr int8_t kFeedbackNotePitchUnset = -1;
-    uint32_t lastFeedbackAnchorRelTick_ = kFeedbackAnchorRelTickUnset;
-    int8_t lastFeedbackNotePitch_ = kFeedbackNotePitchUnset;
-
-    static constexpr uint32_t F2_OUTBOUND_SELECT_IGNORE_TAIL_MS = 400;
     static constexpr uint32_t GEOMETRY_F1_BRACKET_MIN_GAP_MS = 150;
 
     bool isGeometryDriverActive(uint32_t now) const;
     void armSelectFaderFeedbackIgnore(uint32_t sentAt, uint32_t durationMs);
-    void resetFeedbackGeometrySnapshot();
-    void stampFeedbackPositionFromSelection(Track& track);
-    void stampFeedbackPitchFromSelection(Track& track);
-    void stampFeedbackGeometrySnapshotAtDone(Track& track,
-                                           const NoteEditFaderOutbound::PlanFlags& plan);
-    void evaluateDependentFaderRefreshDirty(Track& track, bool& needsPositionRefresh,
-                                          bool& needsPitchRefresh);
-    bool requestDependentFaderRefreshFromSelection(Track& track);
     void requestFaderOutbound(NoteEditFaderOutbound::Trigger trigger,
                               const NoteEditFaderOutbound::PlanFlags* planOverride = nullptr);
+    void queuePendingOutbound(NoteEditFaderOutbound::Trigger trigger,
+                              const NoteEditFaderOutbound::PlanFlags* planOverride = nullptr);
+    void drainDependentFaderOutboundUntilDone();
     void cancelActiveFaderOutbound();
     void processFaderOutbound();
     void completeOutboundPipelineAtDone(Track& track, uint32_t now);
-    void processFaderSelectQuiet();
     void sendFader1BracketFeedback(Track& track, bool updateNavStateFromOutbound = true);
     void logOutboundStep(const char* label);
     void logSelectSlot(int slotIndex, int16_t pitchValue, bool ignored);
     void logSelectApplyDecision(uint32_t targetBracketTick, int targetNoteIdx, int slotIndex,
-                                bool apply, const char* reason);
+                                int priorSlotIndex, bool apply, const char* reason);
+    void resetSelectNavSlotApplyState();
+    void syncLastAppliedSelectNavFromPitch(Track& track);
     void sendSelectnoteFaderUpdate(Track& track);
     void performSelectnoteFaderUpdate(Track& track);
     void armNoteEditDroidMotorBank();
     int selectNavSlotIndexForPitchbend(Track& track, int16_t pitchValue);
-    bool applyNoteSelectFromFader1Pitchbend(Track& track, int16_t pitchValue,
-                                            int16_t priorPitchValue, uint32_t now,
-                                            bool enforceStaleEchoLockout,
-                                            bool sendDependentFeedback);
+    bool applyNoteSelectFromFader1Pitchbend(Track& track, int16_t pitchValue, int posIndex);
     struct Fader1SelectTarget {
         uint32_t absoluteTargetTick = 0;
         int noteIdx = -1;
