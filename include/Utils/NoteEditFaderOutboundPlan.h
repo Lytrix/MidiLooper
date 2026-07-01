@@ -139,6 +139,11 @@ inline bool shouldApplySelectionOnSlotChange(int priorSlotIndex, int newSlotInde
     return newSlotIndex >= 0 && priorSlotIndex != newSlotIndex;
 }
 
+inline bool shouldApplySelectionOnTargetChange(uint32_t targetBracketTick, int targetNoteIdx,
+                                               uint32_t currentBracketTick, int currentNoteIdx) {
+    return targetBracketTick != currentBracketTick || targetNoteIdx != currentNoteIdx;
+}
+
 inline Step nextEnabledStep(Step step, const PlanFlags& plan) {
     switch (step) {
         case Step::Idle:

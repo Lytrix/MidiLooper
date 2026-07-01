@@ -156,10 +156,13 @@ private:
                               const NoteEditFaderOutbound::PlanFlags* planOverride = nullptr);
     void cancelActiveFaderOutbound();
     void processFaderOutbound();
+    void completeOutboundPipelineAtDone(Track& track, uint32_t now);
     void processFaderSelectQuiet();
     void sendFader1BracketFeedback(Track& track, bool updateNavStateFromOutbound = true);
     void logOutboundStep(const char* label);
     void logSelectSlot(int slotIndex, int16_t pitchValue, bool ignored);
+    void logSelectApplyDecision(uint32_t targetBracketTick, int targetNoteIdx, int slotIndex,
+                                bool apply, const char* reason);
     void sendSelectnoteFaderUpdate(Track& track);
     void performSelectnoteFaderUpdate(Track& track);
     void armNoteEditDroidMotorBank();
@@ -168,6 +171,13 @@ private:
                                             int16_t priorPitchValue, uint32_t now,
                                             bool enforceStaleEchoLockout,
                                             bool sendDependentFeedback);
+    struct Fader1SelectTarget {
+        uint32_t absoluteTargetTick = 0;
+        int noteIdx = -1;
+        int slotIndex = -1;
+        bool valid = false;
+    };
+    Fader1SelectTarget resolveFader1SelectTarget(Track& track, int16_t pitchValue);
     void enableStartEditing();
     void armChannel15FaderFeedbackIgnore(uint32_t sentAt);
     void armCoarseFaderFeedbackIgnore(uint32_t sentAt);
