@@ -22,8 +22,9 @@
 | Nav-slot-index apply gate (`lastAppliedSelectNavSlotIndex_`) | **Shipped** (local) |
 | Same-tick sibling select (`resolveNoteIdxAtSlot`) | **Shipped** (local) |
 | Geometry driver F1 override | **Removed** — F1 select no longer geometry-blocked |
-| Inline motor sync on every accepted F1 pitchbend | **Shipped** (dwell-gap fix) |
-| Capture verification | **Pending** — flash + slow 3-note glide A/B |
+| Inline motor sync on display selection index change | **Superseded** — ref-driven (`NoteRef` / `noteEditSelectionTargetChanged`) |
+| Phase A NoteRef selection gates + windowed nav | **Shipped** (2026-07-02) |
+| Capture verification | **Partial** — `edit_full` + `fader_motor_sweep`; dwell-gap OK; `select_ignored_rate` 0.15 on edit baseline |
 
 ---
 
@@ -37,21 +38,21 @@ Layered compensations (quiet timer, dirty flags, coalesce, grace period, stale-e
 
 ## Solution
 
-**Single rule (updated — dwell-gap fix):** on every **accepted** F1 pitchbend, `syncMotorsFromSelectTarget` sends F2+F3+F4 from the resolved target (rate-limited by 16th step / note index). When pitch-mapped nav **slot index** or **note index** differs from `lastAppliedSelectNavSlotIndex_` / `lastAppliedSelectNoteIdx_`, apply selection from `slots[posIndex]`.
+**Single rule (NoteRef-driven — 2026-07-02):** F2/F3/F4 motor sync fires when **`NoteRef` identity** changes via `EditManager::applySelectNav` (`syncMotorsForDisplaySelection`). Live F1 apply uses `shouldApplySelectionOnNoteRefChange` — not list index alone.
 
-- Slot or note index change → `apply=1` + `applyNoteSelectFromFader1Pitchbend` (no `NoteSelectDependent` on live F1 path)
-- Same slot **and** note index → `apply=0` (selection unchanged) but motors still sync on step/note change
-- Bracket tick / `findSlotIndexForSelection` → **not** used in apply gate
-- `resolveNoteIdxAtSlot` → always `slot.noteIdx`
-- GPIO / session open → pipeline (`SessionOpen`, `NoteSelectWithFader1`) unchanged
+- NoteRef change → `apply=1` + `applyNoteSelectFromFader1Pitchbend` → `applySelectNav` → motor sync (`reason=display_note_changed`)
+- Same NoteRef (inventory rebuild / index shift) → `apply=0`; no motor sync
+- Empty step (bracket-only nav) → apply when bracket changes; motor sync on clear/empty-step bracket moves
+- GPIO / session open → pipeline (`SessionOpen`, `NoteSelectWithFader1`) unchanged (`requestFaderSync=true`)
 
 ```mermaid
 flowchart LR
     pb[Fader1 pitchbend] --> resolve[resolveFader1SelectTarget]
-    resolve --> sync[syncMotorsFromSelectTarget]
-    resolve --> gate{"nav slot/note changed?"}
+    resolve --> gate{"noteIdx changed?"}
     gate -->|no| stop[apply=0]
     gate -->|yes| apply[applyNoteSelectFromFader1Pitchbend]
+    apply --> nav[applySelectNav]
+    nav --> sync[syncMotorsForDisplaySelection]
 ```
 
 **Cross-talk guard:** value-based echo reject only (`shouldIgnoreSelectFaderEcho`); `armSelectFaderFeedbackIgnore` only on real fader-1 motor sends (`sendFader1BracketFeedback`). No geometry block, no 1500 ms / 200 ms time walls on F1 select.

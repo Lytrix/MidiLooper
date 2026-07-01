@@ -39,10 +39,6 @@ public:
     static std::array<MidiEvent, 2> createNoteAtTick(Track& track, uint32_t tick);
 
 private:
-    void selectNextNoteSequential(EditManager& manager, Track& track);
-    void selectPreviousNoteSequential(EditManager& manager, Track& track);
-    int findNoteIndexInOriginalList(const NoteUtils::DisplayNote& targetNote, 
-                                   const std::vector<NoteUtils::DisplayNote, ExternalMemoryFirstAllocator<NoteUtils::DisplayNote>>& originalNotes) const;
     std::array<MidiEvent, 2> createDefaultNote(Track& track, uint32_t tick) const;
     
     // Track MIDI events count to detect new notes during overdubbing

@@ -15,16 +15,6 @@ inline bool shouldIgnoreSelectFaderEcho(int16_t incomingPitchbend, int16_t lastS
     return diff <= tolerance;
 }
 
-inline bool shouldSyncMotorsOnSelectTarget(uint32_t sixteenthStep, int noteIdx,
-                                           uint32_t& lastSyncedStep, int& lastSyncedNoteIdx) {
-    if (sixteenthStep == lastSyncedStep && noteIdx == lastSyncedNoteIdx) {
-        return false;
-    }
-    lastSyncedStep = sixteenthStep;
-    lastSyncedNoteIdx = noteIdx;
-    return true;
-}
-
 }  // namespace NoteEditFaderSelectSync
 
 #endif

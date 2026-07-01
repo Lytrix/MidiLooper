@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "EditPass.h"
+#include "EntityIds.h"
 #include "MidiEvent.h"
 
 namespace NoteUtils {

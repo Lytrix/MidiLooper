@@ -1174,6 +1174,27 @@ bool DisplayManager::shouldAutoFollowDetailedWindow(const Track& track, uint32_t
     return track.isRecording() || track.isPlaying() || track.isOverdubbing();
 }
 
+DetailedWindowContext DisplayManager::resolveDetailedWindow(const Track& track, uint8_t displaySlot,
+                                                            uint32_t currentTick) const {
+    DetailedWindowContext ctx;
+    const uint32_t loopLength = resolveDisplayLoopLength(track, displaySlot, currentTick);
+    const uint32_t boundedThreshold =
+        DisplayWindowUtils::kMaxDetailedWindowBars * Config::TICKS_PER_BAR;
+    if (track.isJamming() || loopLength <= boundedThreshold || displaySlot >= kDisplaySlotCount) {
+        return ctx;
+    }
+    const uint8_t windowBars = std::min<uint8_t>(detailedWindowBars_[displaySlot],
+                                                 DisplayWindowUtils::kMaxDetailedWindowBars);
+    ctx.active = true;
+    ctx.windowLengthTicks = static_cast<uint32_t>(windowBars) * Config::TICKS_PER_BAR;
+    ctx.windowStartTick = detailedWindowStartTick_[displaySlot];
+    if (ctx.windowStartTick + ctx.windowLengthTicks > loopLength) {
+        ctx.windowStartTick =
+            loopLength > ctx.windowLengthTicks ? loopLength - ctx.windowLengthTicks : 0;
+    }
+    return ctx;
+}
+
 void DisplayManager::centerDetailedWindowOnPlayhead(Track& track, uint8_t displaySlot,
                                                     uint32_t currentTick) {
     const uint32_t loopLength = resolveDisplayLoopLength(track, displaySlot, currentTick);

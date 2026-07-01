@@ -20,6 +20,8 @@
 #include "Utils/NoteEditFaderOutboundPlan.h"
 #include "Utils/NoteEditFaderSelectSync.h"
 
+class DisplayManager;
+
 /**
  * @class NoteEditManager
  * @brief Manages MIDI note-based button logic and fader control.
@@ -51,10 +53,10 @@ public:
     void handleNoteValueFaderInput(uint8_t ccValue, Track& track);
 
     /** One nav slot per note (multiple per 16th when notes share a step) or empty grid step. */
-    static std::vector<SelectNavigation::SelectNavSlot> buildSelectNavigationSlots(
-        const Track& track, uint32_t bracketTick, bool includeBracketIfMissing = true);
-    /// NOTE_EDIT UI list: filtered when **NoteEditSession** active, else **getCachedNotes()** copy.
-    static std::vector<NoteUtils::DisplayNote> selectableDisplayNotesForEditUi(const Track& track);
+    std::vector<SelectNavigation::SelectNavSlot> buildSelectNavigationSlots(
+        const Track& track, uint32_t bracketTick, bool includeBracketIfMissing = true) const;
+    /// NOTE_EDIT UI list: filtered (+ window when long loop) when session active, else cached copy.
+    std::vector<NoteUtils::DisplayNote> selectableDisplayNotesForEditUi(const Track& track) const;
 
     // Loop editing is now handled by LoopEditManager
     LoopEditManager loopEditManager;
@@ -74,6 +76,9 @@ public:
     void sendNoteEditSessionFaderFeedback(Track& track);
     /** GPIO / bar-step note select: fader1 bracket + dependent refresh. */
     void scheduleNoteSelectFaderSync(Track& track);
+    /** F2/F3/F4 motor sync when NoteRef selection identity changes (live F1 path). */
+    void syncMotorsForDisplaySelection(Track& track, const NoteEditSelection& priorSelection,
+                                       const NoteEditSelection& nextSelection);
     bool isFaderOutboundActive() const;
     void moveNoteToPosition(Track& track, const NoteUtils::DisplayNote& currentNote, std::uint32_t targetTick);
     void changeNoteEndWithOverlapHandling(Track& track, const NoteUtils::DisplayNote& currentNote,
@@ -97,16 +102,17 @@ private:
     static constexpr uint8_t NOTE_VALUE_CC_NUMBER = MidiConfig::Fader::NOTE_VALUE_CC;
 
     static constexpr uint32_t NOTE_SELECTION_GRACE_PERIOD = 750;
+    static constexpr uint32_t SELECT_DEPENDENT_SETTLE_MS = 450;
     uint32_t noteSelectionTime = 0;
+    uint32_t selectDependentSettleUntilMs_ = 0;
     bool startEditingEnabled = true;
     uint32_t lastEditingActivityTime = 0;
     
     int16_t lastUserSelectFaderValue = MidiConfig::Pitchbend::CENTER;
     uint32_t lastSelectFaderTime = 0;
-    int lastAppliedSelectNavSlotIndex_ = -1;
-    int lastAppliedSelectNoteIdx_ = -1;
-    uint32_t lastSyncedSelectStep_ = UINT32_MAX;
-    int lastSyncedSelectNoteIdx_ = -2;
+    uint32_t lastSelectMotorSyncMs_ = 0;
+    int16_t lastMotorSyncF1Pitch_ = MidiConfig::Pitchbend::CENTER;
+    bool selectDependentSettleBlockLogged_ = false;
     static constexpr int16_t SELECT_MOVEMENT_THRESHOLD = 100;
     
     int16_t lastUserCoarseFaderValue = MidiConfig::Pitchbend::CENTER;
@@ -153,8 +159,11 @@ private:
     void logSelectSlot(int slotIndex, int16_t pitchValue, bool ignored, const char* reason = nullptr);
     void logSelectApplyDecision(uint32_t targetBracketTick, int targetNoteIdx, int slotIndex,
                                 int priorSlotIndex, bool apply, const char* reason);
+    void logSelectMotorSyncDecision(int noteIdx, int priorNoteIdx, bool sent, const char* reason,
+                                    int16_t f1Pitch, int16_t priorMotorSyncF1Pitch,
+                                    uint32_t sinceSyncMs, int16_t f2Pb, int f4Cc,
+                                    int16_t priorF2Pb, int priorF4Cc, bool motorValueChanged);
     void resetSelectNavSlotApplyState();
-    void syncLastAppliedSelectNavFromPitch(Track& track);
     void sendSelectnoteFaderUpdate(Track& track);
     void performSelectnoteFaderUpdate(Track& track);
     void armNoteEditDroidMotorBank();
@@ -166,8 +175,18 @@ private:
         int slotIndex = -1;
         bool valid = false;
     };
+    struct PlannedMotorSyncValues {
+        int16_t f2Pb = 0;
+        int f4Cc = -1;
+    };
+    PlannedMotorSyncValues plannedMotorSyncValuesFromSelectTarget(
+        const Track& track, const Fader1SelectTarget& target);
     Fader1SelectTarget resolveFader1SelectTarget(Track& track, int16_t pitchValue);
-    void syncMotorsFromSelectTarget(Track& track, const Fader1SelectTarget& target);
+    void syncMotorsFromSelectTarget(Track& track, const Fader1SelectTarget& target,
+                                    const NoteEditFaderOutbound::PlanFlags& plan);
+    void armSelectDependentSettle(uint32_t sentAt);
+    void recordFaderInputForValidation(MidiMapping::FaderType faderType, int16_t pitchbendValue,
+                                       uint8_t ccValue);
     void enableStartEditing();
     void armChannel15FaderFeedbackIgnore(uint32_t sentAt);
     void armCoarseFaderFeedbackIgnore(uint32_t sentAt);
@@ -176,6 +195,7 @@ private:
     static constexpr uint32_t FADER2_PROTECTION_PERIOD = 2000;
     
     MidiFaderProcessor* faderProcessor = nullptr;
+    DisplayManager* displayManager_ = nullptr;
     uint32_t lastDriverFaderUpdateTime = 0;
     MidiMapping::FaderType currentDriverFader = MidiMapping::FaderType::FADER_SELECT;
     uint32_t lastDriverFaderTime = 0;
@@ -189,6 +209,7 @@ private:
 
 public:
     void setFaderProcessor(MidiFaderProcessor* processor) { faderProcessor = processor; }
+    void setDisplayManager(DisplayManager* manager) { displayManager_ = manager; }
     void handleFaderInput(MidiMapping::FaderType faderType, int16_t pitchbendValue = 0, uint8_t ccValue = 0);
     void scheduleOtherFaderUpdates(MidiMapping::FaderType driverFader);
     void sendFaderUpdate(MidiMapping::FaderType faderType, Track& track);

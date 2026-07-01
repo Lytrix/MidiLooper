@@ -2,6 +2,7 @@
 //  Licensed under the PolyForm Noncommercial 1.0.0
 
 #include "Utils/SelectNavigation.h"
+#include "NoteEditSessionState.h"
 #include <algorithm>
 
 namespace SelectNavigation {
@@ -116,6 +117,27 @@ int findSlotIndexForSelection(const std::vector<SelectNavSlot>& slots,
     }
 
     return -1;
+}
+
+int findSlotIndexForNoteRef(const std::vector<SelectNavSlot>& slots,
+                            const std::vector<NoteUtils::DisplayNote>& notes,
+                            const NoteRef& ref, bool hasNote, uint32_t bracketTick,
+                            uint32_t loopStartTick, uint32_t loopLength, uint8_t channel) {
+    if (hasNote) {
+        for (int i = 0; i < static_cast<int>(slots.size()); ++i) {
+            const int noteIdx = slots[static_cast<size_t>(i)].noteIdx;
+            if (noteIdx < 0 || noteIdx >= static_cast<int>(notes.size())) {
+                continue;
+            }
+            const NoteRef candidate = {channel, notes[static_cast<size_t>(noteIdx)].note,
+                                       notes[static_cast<size_t>(noteIdx)].startTick,
+                                       notes[static_cast<size_t>(noteIdx)].endTick};
+            if (noteRefSameTarget(ref, candidate)) {
+                return i;
+            }
+        }
+    }
+    return findSlotIndexForSelection(slots, -1, bracketTick, loopStartTick, loopLength);
 }
 
 int resolveNoteIdxAtSlot(const SelectNavSlot& slot) {

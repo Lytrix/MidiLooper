@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <vector>
 
+#include "EntityIds.h"
 #include "MidiEvent.h"
 #include "Utils/InternalHeapFirstAllocator.h"
 

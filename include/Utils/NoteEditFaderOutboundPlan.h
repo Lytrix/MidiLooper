@@ -5,6 +5,8 @@
 
 #include <cstdint>
 
+#include "EditPass.h"
+
 namespace NoteEditFaderOutbound {
 
 enum class Trigger : uint8_t {
@@ -109,6 +111,41 @@ inline PlanFlags planForSelectDependentFromDelta(uint32_t priorBracketTick, int 
     return {};
 }
 
+inline PlanFlags planForSelectDependentFromRefChange(bool priorHasNote, const NoteRef& priorRef,
+                                                     bool newHasNote, const NoteRef& newRef,
+                                                     uint32_t priorBracketTick,
+                                                     uint32_t newBracketTick) {
+    if (!newHasNote) {
+        return planForSelectDependent(true, false);
+    }
+    if (newBracketTick != priorBracketTick) {
+        return planForSelectDependent(true, true);
+    }
+    if (!priorHasNote ||
+        priorRef.channel != newRef.channel || priorRef.note != newRef.note ||
+        priorRef.startTick != newRef.startTick || priorRef.endTick != newRef.endTick) {
+        return planForSelectDependent(false, true);
+    }
+    return {};
+}
+
+inline bool shouldApplySelectionOnNoteRefChange(bool priorHasNote, const NoteRef& priorRef,
+                                                bool newHasNote, const NoteRef& newRef,
+                                                uint32_t priorBracketTick,
+                                                uint32_t newBracketTick) {
+    if (priorBracketTick != newBracketTick) {
+        return true;
+    }
+    if (priorHasNote != newHasNote) {
+        return true;
+    }
+    if (newHasNote && priorHasNote) {
+        return priorRef.channel != newRef.channel || priorRef.note != newRef.note ||
+               priorRef.startTick != newRef.startTick || priorRef.endTick != newRef.endTick;
+    }
+    return false;
+}
+
 inline bool shouldPreemptActivePipeline(Trigger incoming) {
     return incoming == Trigger::SessionOpen || incoming == Trigger::LengthModeEnter ||
            incoming == Trigger::LengthModeExit;
@@ -149,6 +186,10 @@ inline bool shouldRestartDependentPipelineOnSelectionChange(Trigger incoming, Tr
 
 inline bool shouldApplySelectionOnSlotChange(int priorSlotIndex, int newSlotIndex) {
     return newSlotIndex >= 0 && priorSlotIndex != newSlotIndex;
+}
+
+inline bool shouldApplySelectionOnNoteChange(int priorNoteIdx, int newNoteIdx) {
+    return newNoteIdx >= 0 && priorNoteIdx != newNoteIdx;
 }
 
 inline bool shouldApplySelectionOnNavChange(int priorSlotIndex, int priorNoteIdx, int newSlotIndex,

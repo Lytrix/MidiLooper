@@ -169,6 +169,44 @@ After flash with `2ecf25d`, every `#DBG outbound_ctx` row shows `pb != expected_
 | Ownership change? | **No** — transport pacing + pipeline gating only. |
 | State transition change? | **No** — no new session type or mode. |
 
+### RC14 — Fader motor skip perceptual rate (2026-07-01)
+
+**Status:** Investigation complete (Phase 0–1); Phase 2 hybrid gate **deferred** pending DROID ch13 ack spike.
+
+**Symptom:** Slow F1 glide across adjacent notes — user reports ~60% of notes not updating fader motors; fast sweeps track better.
+
+**Dual root cause:**
+
+1. **Firmware gate (note-only motor sync):** `handleSelectFaderInput` calls `syncMotorsFromSelectTarget` only when `noteIdx` changes. Same-note F1 crawl logs `unchanged_note` (~95% suppression). Empty steps log `empty_step_ignored` — no position sync.
+2. **DROID motor path (MO ≠ MI):** `sent=1` and `MO,224,14` prove Teensy **commanded** an update; they do **not** prove the physical fader moved or reported position back.
+
+**MO vs MI matrix (correlator on existing captures):**
+
+| Session | MO ch14 | MI ch14 | MO→MI pairs | miss rate | note_changed | visible F2 (MI) |
+|---------|---------|---------|-------------|-----------|--------------|-----------------|
+| `session_20260701_164040` | 8 | 0 | 0/8 | **1.00** | 8 | 0/8 (0%) |
+| `session_20260701_163558` | 95 | 19 | 19/95 | **0.80** | 94 | 34/94 (36%) |
+
+**164040 detail:** 153 F1 select events, 8 `note_changed` apply, 145 `unchanged_note`, 8 `sent=1` with distinct F2 pitchbend MO — **zero** `MI,H,224,14` echoes. F4 MO sent 8 times but only 4 distinct CC values (revisit same pitch → no visible movement).
+
+**163558 detail:** 94 `note_changed`, 952 `unchanged_note` (95% suppressed). DNTE–motor false positives fixed (±50 ms window): `dnte_motor_misses` 28 → 1 with updated analyzer.
+
+**Phase 0–1 shipped:**
+
+- `scripts/hitl/verify/fader_motor_echo_correlation.py` — MO→MI pairing + ch13 ack support
+- DROID `midilooper_v1.ini` — ch13 motor-ack circuits (notes 80–87: clear/set_changed per fader)
+- `#DBG select_motor_sync` extended with `f2_pb`, `f4_cc`, `prior_f2_pb`, `prior_f4_cc`, `motor_value_changed`
+- Analyzer integration in `scripts/analyze_fader2_select_feedback.py` (`--mi-strict` flag)
+
+**Next gate:** Reload DROID patch in Forge; re-capture 164040 scenario; correlator must show ch13 clear acks matching every MO notegate before Phase 2 hybrid motor gate.
+
+**Analyze:**
+
+```bash
+PYTHONPATH=scripts python3 scripts/analyze_fader2_select_feedback.py captures/session_20260701_164040.log
+PYTHONPATH=scripts python3 scripts/analyze_fader2_select_feedback.py captures/session_20260701_163558.log --after 29
+```
+
 ---
 
 ## Spike 2026-06-30 — `session_20260630_113422.log` (Phase 3)
@@ -263,6 +301,7 @@ Patch allowed without formal reassessment.
 | 2026-06-30 | **`ab1e3b0`:** WIP Phases 1–3 outbound coordinator + capture diagnosis. |
 | 2026-06-30 | **`2ecf25d`:** F2 outbound capture diagnostics (`#DBG outbound_ctx`) + `scripts/analyze_fader2_select_feedback.py`. |
 | 2026-06-30 | **Capture `session_20260630_191718.log`:** HITL timing verifier **PASS**; RC11 confirmed via `outbound_ctx` (`pb != expected_pb_rel`). |
+| 2026-07-01 | **RC14 Phase 0–1:** MO→MI correlator + DROID ch13 ack patch + extended `select_motor_sync` logs; `164040` 8/8 MO without MI echo; Phase 2 deferred. |
 
 ---
 
@@ -378,7 +417,7 @@ The current regression is a scheduler-policy issue inside `NoteEditManager`, not
 
 **Symptom:** Fast F1 sweeps track; slow F1 crawls do not — delta/time gates and `apply=0` motor silence.
 
-**Fix:** `syncMotorsFromSelectTarget` on every accepted F1 pitchbend; F1 echo-only ignore; geometry/time walls removed from select path.
+**Fix:** `syncMotorsFromSelectTarget` when selected **note** changes (`noteIdx`); F1 echo-only ignore; geometry/time walls removed from select path. Same-note F1 crawl logs `unchanged_note` and does not send motors.
 
 **Analyzer:** `python scripts/analyze_fader2_select_feedback.py captures/<session>.log` — exit code 2 when `fader_select_dwell_gap_ok` is false.
 
@@ -392,3 +431,78 @@ The current regression is a scheduler-policy issue inside `NoteEditManager`, not
 **Manual:** Slow 3-note F1 glide — F2/F3/F4 motors move visibly at each step.
 
 **Capture log markers:** `#DBG outbound_ctx f2 mode=SELECT_SYNC`, `#DBG select_slot ignored=1 reason=echo`.
+
+### Select-dependent settle window (2026-07-01)
+
+**Symptom:** F2/F3/F4 motor echo after `SELECT_SYNC` passes the 200 ms `POST_UPDATE_GRACE_PERIOD` and triggers `moveNoteWithOverlapHandling` / pitch edits (~200–400 ms after sync burst). Stale `noteSelectionTime` from session entry fails the 1500 ms post-select coarse block.
+
+**Fix:**
+
+1. **Settle gate** — `SELECT_DEPENDENT_SETTLE_MS` (450): after any select-dependent motor send (`syncMotorsFromSelectTarget` or pipeline `SendCoarse`/`SendFine`/`SendNoteValue`), F2/F3/F4 inbound is validation-only (`recordFaderInputForValidation`) — no geometry edits.
+2. **Note-changed motor sync** — `syncMotorsFromSelectTarget` only when `noteIdx` changes; apply selection before sync so F4 pitch reflects applied note.
+
+**Capture pass criteria:**
+
+| Gate | Rule |
+|------|------|
+| Echo edit block | Zero `moveNoteWithOverlapHandling` within 450 ms of `#DBG outbound_ctx f2 mode=SELECT_SYNC` |
+| F4 echo block | Zero F4 pitch-edit CC within 450 ms of `SELECT_SYNC` |
+| Settle armed | `#DBG select_dependent_settle until_ms=...` after each sync burst |
+| Note crossing motors | `display_note_changed` → `select_motor_sync sent=1` + `MO,224,14` |
+
+### Display-driven motor sync (2026-07-01)
+
+**Symptom:** Capture `session_20260701_173857` — step/slot motor dedup (`shouldSyncMotorsOnSelectTarget`) decoupled motor sync from display note info; `step_changed` never fired; same-step F1 crawl logic blocked intended pitch (F4) updates.
+
+**Fix:**
+
+1. **Motor sync on display index change** — `EditManager::applySelectNav` calls `syncMotorsForDisplaySelection` when `priorSelection.displayIdx != displayIdx` and `requestFaderSync=false`.
+2. **Note-only apply gate** — `handleSelectFaderInput` uses `editManager.getSelectedNoteIdx()` + `shouldApplySelectionOnNoteChange`; no inline motor sync.
+3. **Remove step/slot motor state** — drop `lastMotorSynced*`, `shouldSyncMotorsOnSelectTarget`, `markMotorsSyncedForSelectTarget`.
+
+**Capture pass criteria:**
+
+| Gate | Rule |
+|------|------|
+| Note crossing | `select_motor_sync sent=1 reason=display_note_changed` + `#DBG outbound_ctx f2 mode=SELECT_SYNC` on every display index change |
+| Same-note crawl | No apply, no motor sync |
+| Revisit | Motor sync even when F2/F4 values match prior sends |
+
+### Same-bracket sibling F4-only motor sync (2026-07-01)
+
+**Symptom:** Capture `session_20260701_175927` — grouped same-tick notes update display NOTE row but F4 pitch fader appears stuck; `syncMotorsFromSelectTarget` sent full F2+F3+F4 burst when only F4 should move (`mo_mi_f4_miss_rate=0.898` on DROID path).
+
+**Fix:**
+
+1. **Snapshot-driven motor sync gate** — `applySelectNav` uses `displayNoteInfoChanged` (pitch, storageStart, displayStartTick, selectedIdx) + `NoteRef` change; not index-only.
+2. **F4-only same-bracket path** — `planForSelectDependentFromDelta` drives `syncMotorsFromSelectTarget`; same bracket + different noteIdx → F4 CC + trigger only (`reason=display_pitch_changed_same_bracket`).
+3. **Apply gate** — `handleSelectFaderInput` uses `shouldApplySelectionOnTargetChange` (bracket + noteIdx).
+
+**Capture pass criteria:**
+
+| Gate | Rule |
+|------|------|
+| Same-bracket sibling apply | `select_motor_sync sent=1` within 50 ms; F4 MO value change within 50 ms |
+| Same-bracket F4-only | `reason=display_pitch_changed_same_bracket`; no F2 MO required |
+| Different bracket | `reason=display_note_changed`; full F2+F3+F4 burst |
+| Analyzer | `fader_select_sibling_sync_ok` via `scripts/hitl/verify/fader_select_sibling_sync.py` |
+
+### Note-changed-only motor sync (2026-07-01)
+
+**Symptom:** Capture `session_20260701_160025` — missing F2/F3/F4 motors during slow F1 crawl were **`apply=0` on same note**, not a rate-limit failure. Slot-index apply + per-pitch `syncMotorsFromSelectTarget` + `shouldSyncMotorsOnSelectTarget` duplicated gates and fired motors on every pitchbend before silently skipping.
+
+**Fix:**
+
+1. **Note-only apply + sync** — live F1 path uses `shouldApplySelectionOnNoteChange(priorNoteIdx, newNoteIdx)`; apply selection and `syncMotorsFromSelectTarget` only when `noteIdx` changes (`noteIdx >= 0`).
+2. **Empty steps ignored** — `noteIdx == -1` → no apply, no sync; prior note selection held until F1 lands on another note.
+3. **Drop live rate-limit** — remove `forceSync` / `shouldSyncMotorsOnSelectTarget` from live path; sync always sends when invoked.
+4. **Diagnostic logging** — `#DBG select_motor_sync sent=… reason=sent|unchanged_note|empty_step_ignored`; `#DBG select_dependent_settle_block` (first per settle window).
+
+**Capture pass criteria:**
+
+| Gate | Rule |
+|------|------|
+| Note crossing | `select_motor_sync sent=1 reason=sent` + `#DBG outbound_ctx f2 mode=SELECT_SYNC` on every `note_changed` apply |
+| Same-note crawl | `select_motor_sync sent=0 reason=unchanged_note` — no MO expected |
+| Empty slot pass | `select_motor_sync sent=0 reason=empty_step_ignored` — prior note held |
+| Settle block | `#DBG select_dependent_settle_block` at most once per settle window |

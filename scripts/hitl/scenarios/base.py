@@ -15,14 +15,8 @@ def run_base_scenario(args: object) -> int:
     import host_midi_automation_baseline as baseline
 
     legacy = list(getattr(args, "legacy_args", []) or [])
-    preset = getattr(args, "preset", None)
-    if preset in (
-        "revision_load_record",
-        "revision_load_dirty_yes",
-        "revision_load_dirty_no",
-        "revision_load_dirty_cancel",
-    ):
-        legacy = merge_legacy_cli_args(canonical_baseline_legacy_args(), legacy)
+    # HITL-Test-Flow.md canonical 2+2 bar-synced record/overdub; user flags override via last-wins.
+    legacy = merge_legacy_cli_args(canonical_baseline_legacy_args(), legacy)
     old_argv = sys.argv
     try:
         sys.argv = ["host_midi_automation_baseline.py"] + legacy

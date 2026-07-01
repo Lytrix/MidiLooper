@@ -11,6 +11,7 @@
 
 #include <cstdint>
 #include <algorithm>  // std::clamp
+#include "EntityIds.h"
 #include "MidiConfig.h"
 #include <vector>
 #include "Utils/InternalHeapFirstAllocator.h"

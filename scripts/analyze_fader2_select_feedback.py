@@ -137,6 +137,11 @@ def main() -> int:
     parser.add_argument("log", type=Path, help="Capture log path")
     parser.add_argument("--limit", type=int, default=30, help="Rows to print (default 30)")
     parser.add_argument("--after", type=float, default=0.0, help="Only rows after wall time (seconds)")
+    parser.add_argument(
+        "--mi-strict",
+        action="store_true",
+        help="Exit code 3 when mo_mi_f2_miss_rate > 0 after note_changed apply",
+    )
     args = parser.parse_args()
 
     if not args.log.is_file():
@@ -157,14 +162,27 @@ def main() -> int:
     try:
         from hitl.verify.note_edit_fader_select_refresh import verify_note_edit_fader_select_refresh
         from hitl.verify.fader_select_dwell_gap import verify_fader_select_dwell_gap
+        from hitl.verify.fader_motor_echo_correlation import verify_fader_motor_echo_correlation
+        from hitl.verify.fader_select_sibling_sync import verify_fader_select_sibling_sync
 
         refresh = verify_note_edit_fader_select_refresh(lines)
         dwell = verify_fader_select_dwell_gap(lines)
+        echo = verify_fader_motor_echo_correlation(lines)
+        sibling = verify_fader_select_sibling_sync(lines)
         print("HITL refresh verifier:", refresh)
         print("Dwell-gap verifier:", dwell)
+        print("Motor echo correlator:", echo)
+        print("Sibling sync verifier:", sibling)
         print()
         if not dwell.get("fader_select_dwell_gap_ok", True):
             exit_code = 2
+        if not sibling.get("fader_select_sibling_sync_ok", True):
+            exit_code = 4
+        if args.mi_strict:
+            miss_rate = float(echo.get("mo_mi_f2_miss_rate", 0.0))
+            note_changed = int(echo.get("note_changed_count", 0))
+            if note_changed > 0 and miss_rate > 0:
+                exit_code = 3
     except ImportError:
         pass
 
