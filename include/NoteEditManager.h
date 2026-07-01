@@ -132,12 +132,18 @@ private:
     NoteEditFaderOutbound::PlanFlags outboundPlan_{};
     uint32_t outboundStepStartedMs_ = 0;
     int16_t outboundSentFader1Pitchbend_ = 0;
+    uint32_t lastGeometryFader1BracketSentMs_ = 0;
 
+    static constexpr uint32_t F2_OUTBOUND_SELECT_IGNORE_TAIL_MS = 400;
+    static constexpr uint32_t GEOMETRY_F1_BRACKET_MIN_GAP_MS = 150;
+
+    bool isGeometryDriverActive(uint32_t now) const;
+    void armSelectFaderFeedbackIgnore(uint32_t sentAt, uint32_t durationMs);
     void requestFaderOutbound(NoteEditFaderOutbound::Trigger trigger);
     void cancelActiveFaderOutbound();
     void processFaderOutbound();
     void processFaderSelectQuiet();
-    void sendFader1BracketFeedback(Track& track);
+    void sendFader1BracketFeedback(Track& track, bool updateNavStateFromOutbound = true);
     void logOutboundStep(const char* label);
     void logSelectSlot(int slotIndex, int16_t pitchValue, bool ignored);
     void sendSelectnoteFaderUpdate(Track& track);

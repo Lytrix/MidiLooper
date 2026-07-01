@@ -7,6 +7,21 @@
 #include "Utils/NoteEditFaderOutboundPlan.h"
 #include "MidiConfig.h"
 
+namespace {
+
+uint32_t loopRelativeTickForTest(uint32_t storageTick, uint32_t loopStartTick,
+                                 uint32_t loopLength) {
+    if (loopLength == 0) {
+        return 0;
+    }
+    const uint32_t relativePos = (storageTick >= loopStartTick)
+                                     ? (storageTick - loopStartTick)
+                                     : (storageTick + loopLength - loopStartTick);
+    return relativePos % loopLength;
+}
+
+}  // namespace
+
 void test_length_coarse_pitchbend_round_trip_at_loop_start() {
     const uint32_t loopLength = 1536;
     const uint32_t tick = 0;
@@ -100,6 +115,24 @@ void test_user_quiet_after_400ms() {
     TEST_ASSERT_TRUE(NoteEditFaderOutbound::isUserQuiet(900, 400));
 }
 
+void test_outbound_coarse_uses_loop_relative_tick_with_nonzero_loop_start() {
+    const uint32_t loopLength = 768;
+    const uint32_t loopStartTick = 424;
+    const uint32_t storageStartTick = 0;
+    const uint32_t relTick =
+        loopRelativeTickForTest(storageStartTick, loopStartTick, loopLength);
+    TEST_ASSERT_EQUAL_UINT32(344, relTick);
+    const int16_t pb =
+        NoteEditLengthFaderMapping::loopTickToCoarsePitchbend(relTick, loopLength);
+    const int16_t expectedPb =
+        NoteEditLengthFaderMapping::loopTickToCoarsePitchbend(relTick, loopLength);
+    TEST_ASSERT_EQUAL_INT16(expectedPb, pb);
+    TEST_ASSERT_NOT_EQUAL(
+        NoteEditLengthFaderMapping::loopTickToCoarsePitchbend(storageStartTick % loopLength,
+                                                              loopLength),
+        pb);
+}
+
 void test_outbound_pipeline_advances_through_triggers() {
     const auto plan =
         NoteEditFaderOutbound::planForTrigger(NoteEditFaderOutbound::Trigger::NoteSelectDependent);
@@ -128,6 +161,7 @@ int main(int argc, char** argv) {
     RUN_TEST(test_slot_change_triggers_selection_apply);
     RUN_TEST(test_coalesce_dependent_while_channel15_active);
     RUN_TEST(test_user_quiet_after_400ms);
+    RUN_TEST(test_outbound_coarse_uses_loop_relative_tick_with_nonzero_loop_start);
     RUN_TEST(test_outbound_pipeline_advances_through_triggers);
     return UNITY_END();
 }

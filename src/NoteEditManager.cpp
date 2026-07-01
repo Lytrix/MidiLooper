@@ -513,7 +513,7 @@ void NoteEditManager::requestFaderOutbound(NoteEditFaderOutbound::Trigger trigge
             cancelActiveFaderOutbound();
         } else if (trigger == NoteEditFaderOutbound::Trigger::Fader1BracketOnly) {
             Track& track = trackManager.getSelectedTrack();
-            sendFader1BracketFeedback(track);
+            sendFader1BracketFeedback(track, false);
             return;
         } else {
             pendingOutboundTrigger_ = trigger;
@@ -531,7 +531,24 @@ void NoteEditManager::requestFaderOutbound(NoteEditFaderOutbound::Trigger trigge
     logOutboundStep("BEGIN");
 }
 
-void NoteEditManager::sendFader1BracketFeedback(Track& track) {
+bool NoteEditManager::isGeometryDriverActive(uint32_t now) const {
+    if (currentDriverFader == MidiMapping::FaderType::FADER_SELECT) {
+        return false;
+    }
+    if (lastDriverFaderTime == 0) {
+        return false;
+    }
+    return (now - lastDriverFaderTime) < COARSE_STABILITY_TIME;
+}
+
+void NoteEditManager::armSelectFaderFeedbackIgnore(uint32_t sentAt, uint32_t durationMs) {
+    const uint32_t until = sentAt + durationMs;
+    if (until > selectFaderFeedbackIgnoreUntilMs_) {
+        selectFaderFeedbackIgnoreUntilMs_ = until;
+    }
+}
+
+void NoteEditManager::sendFader1BracketFeedback(Track& track, bool updateNavStateFromOutbound) {
     if (editManager.getEditSessionType() != EditSessionType::Note) {
         return;
     }
@@ -545,9 +562,11 @@ void NoteEditManager::sendFader1BracketFeedback(Track& track) {
     auto& selectState = midiFaderManager.getFaderStateMutable(MidiMapping::FaderType::FADER_SELECT);
     selectState.lastSentTime = sentAt;
     outboundSentFader1Pitchbend_ = selectState.lastSentPitchbend;
-    lastUserSelectFaderValue = selectState.lastSentPitchbend;
-    lastSelectFaderTime = sentAt;
-    selectFaderFeedbackIgnoreUntilMs_ = sentAt + FEEDBACK_IGNORE_PERIOD;
+    if (updateNavStateFromOutbound) {
+        lastUserSelectFaderValue = selectState.lastSentPitchbend;
+        lastSelectFaderTime = sentAt;
+    }
+    armSelectFaderFeedbackIgnore(sentAt, FEEDBACK_IGNORE_PERIOD);
     logOutboundStep("SEND_F1");
     if (!pipelineActive) {
         midiHandler.setDroidMotorOutboundPriority(false);
@@ -606,6 +625,7 @@ void NoteEditManager::processFaderOutbound() {
         case NoteEditFaderOutbound::Step::SendCoarse:
             if (sendCoarseFaderPosition(track)) {
                 armCoarseFaderFeedbackIgnore(now);
+                armSelectFaderFeedbackIgnore(now, FEEDBACK_IGNORE_PERIOD);
                 logOutboundStep("SEND_F2");
                 outboundStep_ =
                     NoteEditFaderOutbound::advanceOutboundStep(outboundStep_, outboundPlan_);
@@ -617,6 +637,7 @@ void NoteEditManager::processFaderOutbound() {
             return;
         case NoteEditFaderOutbound::Step::TriggerCoarse:
             sendCoarseFaderMotorTrigger();
+            armSelectFaderFeedbackIgnore(now, F2_OUTBOUND_SELECT_IGNORE_TAIL_MS);
             logOutboundStep("TRIGGER_F2");
             outboundStep_ = NoteEditFaderOutbound::advanceOutboundStep(outboundStep_, outboundPlan_);
             outboundStepStartedMs_ = now;
@@ -658,6 +679,7 @@ void NoteEditManager::processFaderOutbound() {
             outboundStepStartedMs_ = now;
             startEditingEnabled = true;
             logOutboundStep("DONE");
+            armSelectFaderFeedbackIgnore(now, F2_OUTBOUND_SELECT_IGNORE_TAIL_MS);
             activeOutboundTrigger_ = NoteEditFaderOutbound::Trigger::None;
             outboundStep_ = NoteEditFaderOutbound::Step::Idle;
             midiHandler.setDroidMotorOutboundPriority(false);
@@ -877,15 +899,20 @@ bool NoteEditManager::shouldIgnoreFaderInput(MidiMapping::FaderType faderType, i
 
 void NoteEditManager::scheduleOtherFaderUpdates(MidiMapping::FaderType driverFader) {
     Track& track = trackManager.getSelectedTrack();
+    const uint32_t now = millis();
 
     switch (driverFader) {
         case MidiMapping::FaderType::FADER_COARSE:
         case MidiMapping::FaderType::FADER_FINE:
         case MidiMapping::FaderType::FADER_NOTE_VALUE:
-            sendFader1BracketFeedback(track);
+            if (now - lastGeometryFader1BracketSentMs_ < GEOMETRY_F1_BRACKET_MIN_GAP_MS) {
+                return;
+            }
+            lastGeometryFader1BracketSentMs_ = now;
+            sendFader1BracketFeedback(track, false);
             break;
         case MidiMapping::FaderType::FADER_SELECT:
-            sendFader1BracketFeedback(track);
+            sendFader1BracketFeedback(track, true);
             break;
         default:
             break;
@@ -982,14 +1009,19 @@ bool NoteEditManager::sendCoarseFaderPosition(Track& track) {
     
     if (selectedIdx >= 0 && selectedIdx < (int)notes.size()) {
         const NoteUtils::DisplayNote liveNote = editManager.liveEditDisplayNoteAtSelect(track);
+        const uint32_t loopStartTick = track.getLoopStartTick() % loopLength;
         uint32_t anchorTick = 0;
         const char* modeLabel = "POSITION EDIT";
 
         if (lengthEditingMode) {
-            anchorTick = liveNote.endTick % loopLength;
+            const uint32_t storageTick = liveNote.endTick;
+            anchorTick =
+                SelectNavigation::noteRelativeTick(storageTick, loopStartTick, loopLength);
             modeLabel = "LENGTH EDIT";
         } else {
-            anchorTick = liveNote.startTick % loopLength;
+            const uint32_t storageTick = liveNote.startTick;
+            anchorTick =
+                SelectNavigation::noteRelativeTick(storageTick, loopStartTick, loopLength);
         }
 
         const uint32_t currentSixteenthStep = anchorTick / Config::TICKS_PER_16TH_STEP;
@@ -1003,7 +1035,6 @@ bool NoteEditManager::sendCoarseFaderPosition(Track& track) {
 
 #if defined(SESSION_CAPTURE)
         {
-            const uint32_t loopStartTick = track.getLoopStartTick() % loopLength;
             const uint32_t storageTick = lengthEditingMode ? liveNote.endTick : liveNote.startTick;
             const uint32_t relTick =
                 SelectNavigation::noteRelativeTick(storageTick, loopStartTick, loopLength);
@@ -1244,12 +1275,20 @@ void NoteEditManager::handleSelectFaderInput(int16_t pitchValue, Track& track) {
     const int priorSlotIndex =
         (lastSelectFaderTime == 0) ? -1 : selectNavSlotIndexForPitchbend(track, priorSelectFaderValue);
 
+    const int slotIndex = selectNavSlotIndexForPitchbend(track, pitchValue);
+    if (isGeometryDriverActive(now)) {
+        logSelectSlot(slotIndex, pitchValue, true);
+        logger.log(CAT_MIDI, LOG_DEBUG,
+                   "Select fader input blocked during geometry driver (fader %d)",
+                   static_cast<int>(currentDriverFader));
+        return;
+    }
+
     lastUserSelectFaderValue = pitchValue;
     lastSelectFaderTime = now;
     fader1LastUserInputMs_ = now;
     faderSelectPhase_ = NoteEditFaderOutbound::SelectPhase::UserMovingFader1;
 
-    const int slotIndex = selectNavSlotIndexForPitchbend(track, pitchValue);
     logSelectSlot(slotIndex, pitchValue, false);
 
     if (NoteEditFaderOutbound::shouldApplySelectionOnSlotChange(priorSlotIndex, slotIndex)) {
@@ -1300,6 +1339,12 @@ bool NoteEditManager::applyNoteSelectFromFader1Pitchbend(Track& track, int16_t p
     const bool selectingNewTick = absoluteTargetTick != editManager.getBracketTick();
     int noteIdx = resolveNoteIdxAtSlot(slots, slot, editManager, notes, selectingNewTick);
 
+    if (enforceStaleEchoLockout && isGeometryDriverActive(now)) {
+        logger.log(CAT_MIDI, LOG_DEBUG,
+                   "Select fader: ignoring apply during geometry driver");
+        return false;
+    }
+
     if (enforceStaleEchoLockout) {
         const bool positionEditLockout =
             currentDriverFader != MidiMapping::FaderType::FADER_SELECT &&
@@ -1346,7 +1391,9 @@ bool NoteEditManager::applyNoteSelectFromFader1Pitchbend(Track& track, int16_t p
             resetLengthEditingModeOnNoteSelect();
             referenceStep = absoluteTargetTick / Config::TICKS_PER_16TH_STEP;
             noteSelectionTime = millis();
-            currentDriverFader = MidiMapping::FaderType::FADER_SELECT;
+            if (!isGeometryDriverActive(now)) {
+                currentDriverFader = MidiMapping::FaderType::FADER_SELECT;
+            }
             if (sendDependentFeedback) {
                 requestFaderOutbound(NoteEditFaderOutbound::Trigger::NoteSelectDependent);
             }
