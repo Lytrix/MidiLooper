@@ -73,6 +73,7 @@ void setup() {
   
   // Connect NoteEditManager to MidiFaderProcessor
   noteEditManager.setFaderProcessor(&midiFaderManager.getProcessor());
+  noteEditManager.setDisplayManager(&displayManager);
   
   // Keep old manager temporarily for move note logic
   //midiButtonManager.setup();

@@ -5,6 +5,7 @@
 
 #include <cstdint>
 #include "EditPass.h"
+#include "EntityIds.h"
 
 enum class NoteEditKind {
   Select,
@@ -18,7 +19,6 @@ enum class NoteEditKind {
 struct NoteEditSelection {
   bool hasNote = false;
   NoteRef ref{};
-  int displayIdx = -1;
   uint32_t bracketTick = 0;
 };
 
@@ -55,12 +55,31 @@ inline bool shouldPushGeometryKindUndo(NoteEditKind lastPushed, NoteEditKind mut
   return isGeometryEditKind(mutationKind) && mutationKind != lastPushed;
 }
 
+inline bool noteRefSameTarget(const NoteRef& a, const NoteRef& b) {
+  return a.channel == b.channel && a.note == b.note && a.startTick == b.startTick &&
+         a.endTick == b.endTick;
+}
+
 inline bool noteEditSelectionSameNoteTarget(const NoteEditSelection& sel, const NoteRef& ref) {
   if (!sel.hasNote) {
     return false;
   }
-  return sel.ref.channel == ref.channel && sel.ref.note == ref.note &&
-         sel.ref.startTick == ref.startTick && sel.ref.endTick == ref.endTick;
+  return noteRefSameTarget(sel.ref, ref);
+}
+
+/// True when bracket, hasNote, or NoteRef identity changed (not list index).
+inline bool noteEditSelectionTargetChanged(const NoteEditSelection& prior, uint32_t nextBracket,
+                                           bool nextHasNote, const NoteRef& nextRef) {
+  if (prior.bracketTick != nextBracket) {
+    return true;
+  }
+  if (prior.hasNote != nextHasNote) {
+    return true;
+  }
+  if (nextHasNote && prior.hasNote) {
+    return !noteEditSelectionSameNoteTarget(prior, nextRef);
+  }
+  return false;
 }
 
 /// After fader-1 targets a different note (or clears selection), the next geometry mutation

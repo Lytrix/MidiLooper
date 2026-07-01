@@ -3,6 +3,7 @@
 
 #pragma once
 #include <cstdint>
+#include "EntityIds.h"
 #include "EditNoteState.h"
 #include "NoteEditSessionUndo.h"
 #include "EditSession.h"
@@ -77,9 +78,10 @@ public:
 
     NoteEditSessionState& getNoteEditSessionState() { return sessionState; }
     const NoteEditSessionState& getNoteEditSessionState() const { return sessionState; }
-    void applySelectNav(Track& track, int displayIdx, uint32_t bracketTick, const NoteRef& ref,
-                        bool hasNote, bool requestFaderSync = false,
-                        bool skipFader1Outbound = false);
+    void applySelectNav(Track& track, uint32_t bracketTick, const NoteRef& ref, bool hasNote,
+                        bool requestFaderSync = false, bool skipFader1Outbound = false);
+    /// Encoder / legacy helpers: step fader-1 nav slots over windowed selectable inventory.
+    void stepSelectNavSlot(Track& track, int delta);
     void applyCycleEditKind(Track& track);
     void applyGeometryKindFromControl(Track& track, NoteEditKind kind, bool fromFaderControl);
     void applyUndoRedoLanding(Track& track);
@@ -190,10 +192,6 @@ private:
     bool hasMovedBracket = false; // true if the bracket has been moved since entering edit mode
     // Temporarily store undo count when entering an edit state to freeze display until exit
     size_t undoCountOnStateEnter = 0;
-
-    /// @brief If multiple notes at bracket, cycle through them before moving bracket
-    int notesAtBracketIdx = 0;
-    std::vector<int> notesAtBracketTick;
 
     EditNoteState* currentState = nullptr;
     EditNoteState* previousState = nullptr;

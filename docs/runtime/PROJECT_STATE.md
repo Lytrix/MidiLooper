@@ -2,7 +2,7 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-06-30 (note-edit-fader-feedback Phase 2 deferred refresh pipeline)
+Last updated: 2026-07-02 (note-edit-stable-note-id Phase A shipped)
 
 ---
 
@@ -20,6 +20,7 @@ Last updated: 2026-06-30 (note-edit-fader-feedback Phase 2 deferred refresh pipe
 | `save-status-display` | Deferred save status on display |
 | `long-loop-piano-roll-window` | 16-bar piano-roll window + overview |
 | `note-edit-fader-feedback-regression` | NOTE_EDIT fader outbound sync — Phase 2 deferred refresh pipeline (in progress) |
+| `note-edit-stable-note-id` | Stable **NoteId** identity — Phase 0 + Phase A shipped; Phase B next when scoped |
 
 **Archived (2026-06-29):** `storage-session-state-refactor` (DEC-012) → `openspec/changes/archive/2026-06-29-storage-session-state-refactor/`
 

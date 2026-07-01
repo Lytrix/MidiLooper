@@ -241,6 +241,53 @@ Option D timing levers (quiet gate, stale-echo relax, dirty flags) replaced by s
 - [x] 7.13.6 Analyzer: `scripts/hitl/verify/fader_select_dwell_gap.py` + `analyze_fader2_select_feedback.py` integration
 - [ ] 7.13.7 Capture A/B: slow 3-note glide + fast sweep; `fader_select_dwell_gap_ok`; manual motor follow
 
+### 7.13.8 Select-dependent settle window + forced motor sync
+
+**Plan:** [`select_settle_window_fix`](../../.cursor/plans/select_settle_window_fix_c2960581.plan.md)
+
+- [x] 7.13.8.1 `SELECT_DEPENDENT_SETTLE_MS` (450) + `selectDependentSettleUntilMs_` + `armSelectDependentSettle`
+- [x] 7.13.8.2 `handleFaderInput` validation-only gate for F2/F3/F4 during settle (no move/pitch edits)
+- [x] 7.13.8.3 `syncMotorsFromSelectTarget(track, target, forceSync)` — `forceSync` on `navChanged`; apply before sync
+- [x] 7.13.8.4 Arm settle from `syncMotorsFromSelectTarget` + pipeline `SendCoarse`/`SendFine`/`SendNoteValue`
+- [x] 7.13.8.5 Native tests: force-sync state mark, settle constant sanity (`pio test -e native`)
+- [ ] 7.13.8.6 Capture: zero `moveNoteWithOverlapHandling` / F4 pitch edit within 450 ms of `SELECT_SYNC`
+
+### 7.13.9 Note-changed-only apply + motor sync
+
+**Plan:** [`motor_sync_skip_logging`](../../.cursor/plans/motor_sync_skip_logging_c477e9ea.plan.md)
+
+- [x] 7.13.9.1 `shouldApplySelectionOnNoteChange` in `NoteEditFaderOutboundPlan.h`
+- [x] 7.13.9.2 `handleSelectFaderInput` — note-only gate; empty `noteIdx=-1` ignored
+- [x] 7.13.9.3 Remove live `forceSync` / `shouldSyncMotorsOnSelectTarget` from `syncMotorsFromSelectTarget`
+- [x] 7.13.9.4 Native tests: note-only gate + empty ignore (`pio test -e native`)
+
+### 7.13.10 Display-driven motor sync (remove step/slot gating)
+
+- [x] 7.13.10.1 `syncMotorsForDisplaySelection` + hook in `EditManager::applySelectNav` when `displayIdx` changes
+- [x] 7.13.10.2 `handleSelectFaderInput` — note-only apply; remove inline step/slot motor sync
+- [x] 7.13.10.3 Remove `lastMotorSynced*`, `shouldSyncMotorsOnSelectTarget` from live path
+- [x] 7.13.10.4 Native tests: display-driven gate (`pio test -e native`)
+- [x] 7.13.10.5 Capture: snapshot-driven motor sync + same-bracket F4-only path; `fader_select_sibling_sync.py`
+
+### 7.14 Select motor sync diagnostic logging
+
+- [x] 7.14.1 `#DBG select_motor_sync` — `sent`, `reason=sent|unchanged_note|empty_step_ignored`
+- [x] 7.14.2 `#DBG select_dependent_settle_block` — first per settle window
+- [x] 7.14.3 Analyzer: `fader_select_dwell_gap.py` parses `select_motor_sync`; dwell gap only when `sent=1` without MO
+- [ ] 7.14.4 Capture: 4-note slow glide on `session_20260701_160025` scenario — note crossings `sent=1`, crawl `unchanged_note`
+
+### 7.15 Fader skip RCA — Phase 0–1 (MO→MI investigation)
+
+**Plan:** fader skip RCA fix — Phase 0 + 1 only; Phase 2 deferred.
+
+- [x] 7.15.1 `scripts/hitl/verify/fader_motor_echo_correlation.py` — MO→MI pairing + ch13 ack notes 80–87
+- [x] 7.15.2 DROID `midilooper_v1.ini` — gatetool/quantizer/midiout ch13 motor-ack blocks
+- [x] 7.15.3 `#DBG select_motor_sync` — `f2_pb`, `f4_cc`, `prior_f2_pb`, `prior_f4_cc`, `motor_value_changed`, `unchanged_motor_value` reason
+- [x] 7.15.4 Analyzer: correlator in `analyze_fader2_select_feedback.py`; DNTE ±50 ms + MI hits in `fader_select_dwell_gap.py`
+- [x] 7.15.5 BUG.md RC14 — correlator metrics on `164040` + `163558`
+- [ ] 7.15.6 DROID Forge reload + re-capture 164040 — ch13 ack pairing within 20 ms of MO
+- [ ] 7.15.7 Phase 2 hybrid motor gate — blocked on 7.15.6
+
 ---
 
 ## Phase 8 — F2 loop-relative tick (RC11)

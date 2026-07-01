@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-06-29 (DEC-012 archived — `storage-session-state-refactor`)
+Last updated: 2026-07-02 (note-edit-stable-note-id Phase A shipped)
 
 ---
 
@@ -14,6 +14,10 @@ Set revision persistence + load/save overlay UX on branch `load-save-sets-loops`
 - Supporting: `load-save-overlay-display-regression`, `save-status-display`, `workspace-session-persistence`
 - **Next persistence slice (after branch merge):** `transport.bin` / `global.bin` workspace split — new OpenSpec when scoped
 - Handoff: [set_revision_persistence_handoff.md](../plans/set_revision_persistence_handoff.md)
+
+## Registered — not yet implementing
+
+- **`note-edit-stable-note-id`** — Phase A shipped (NoteRef gates, windowed nav, encoder routing). Phase B (`NoteId`) unblocked for planning; implement when scoped.
 
 ## Explicitly NOT implementing
 

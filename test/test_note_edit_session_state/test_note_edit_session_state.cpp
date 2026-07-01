@@ -6,6 +6,8 @@
 #include "../../src/NoteEditSessionState.cpp"
 
 #include "NoteEditSessionState.h"
+#include "EntityIds.h"
+#include "LoopPasses.h"
 
 void test_advance_encoder_cycle_order() {
   TEST_ASSERT_EQUAL(static_cast<int>(NoteEditKind::Move),
@@ -59,6 +61,12 @@ void test_reset_geometry_undo_on_note_target_change() {
   TEST_ASSERT_FALSE(shouldResetGeometryKindUndoOnSelectChange(none, true, noteB));
 }
 
+void test_entity_id_invalid_sentinels() {
+  TEST_ASSERT_EQUAL(0u, kInvalidNoteId);
+  TEST_ASSERT_EQUAL(UINT32_MAX, kInvalidTrackId);
+  TEST_ASSERT_EQUAL(kInvalidLoopId, kInvalidTrackId);
+}
+
 void test_move_after_reselect_pushes_fresh_geometry_undo() {
   TEST_ASSERT_FALSE(shouldPushGeometryKindUndo(NoteEditKind::Move, NoteEditKind::Move));
   TEST_ASSERT_TRUE(shouldPushGeometryKindUndo(NoteEditKind::Select, NoteEditKind::Move));
@@ -73,6 +81,7 @@ int main(int argc, char** argv) {
   RUN_TEST(test_should_not_cycle_when_overlay_inactive);
   RUN_TEST(test_should_cycle_when_overlay_active);
   RUN_TEST(test_reset_geometry_undo_on_note_target_change);
+  RUN_TEST(test_entity_id_invalid_sentinels);
   RUN_TEST(test_move_after_reselect_pushes_fresh_geometry_undo);
   return UNITY_END();
 }

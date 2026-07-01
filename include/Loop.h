@@ -16,6 +16,7 @@
 #include <vector>
 #include <memory>
 #include "MidiEvent.h"
+#include "EntityIds.h"
 #include "LoopEventBuffer.h"
 #include "StorageLoopIo.h"
 #include "EditPass.h"

@@ -2735,6 +2735,15 @@ def run() -> int:
                 )
                 time.sleep(args.phase_wait_ms / 1000.0)
 
+                from hitl.edit_mode_precondition import ensure_loop_edit_before_record
+
+                ensure_loop_edit_before_record(
+                    out_port,
+                    serial_collector,
+                    press_ms=args.press_ms,
+                    phase_wait_ms=args.phase_wait_ms,
+                )
+
                 # Recover from a prior aborted run: stop then restart transport so
                 # USB MIDI clock reaches the host again (stuck RECORDING can mute it).
                 if args.start_transport:

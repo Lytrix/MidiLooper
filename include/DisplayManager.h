@@ -21,6 +21,12 @@
 #include "SetBrowserOverlayPolicy.h"
 #include "DeferredSaveDisplayStatus.h"
 
+struct DetailedWindowContext {
+    bool active = false;
+    uint32_t windowStartTick = 0;
+    uint32_t windowLengthTicks = 0;
+};
+
 // Shared struct for UI note representation
 using DisplayNote = NoteUtils::DisplayNote;
 
@@ -58,6 +64,10 @@ public:
     void emitDisplayCaptureSnapshot(const Track& track, uint8_t displaySlot, uint32_t currentTick);
     void emitDisplayCaptureSnapshot(const Track& track, uint8_t displaySlot, uint32_t currentTick,
                                     const DisplayNoteVec& frameNotes);
+
+    /// Bounded piano-roll window for long loops (shared with NOTE_EDIT fader nav inventory).
+    DetailedWindowContext resolveDetailedWindow(const Track& track, uint8_t displaySlot,
+                                                uint32_t currentTick) const;
 
     /// Scroll set list selection in load/save mode (encoder GPIO + HITL !OVERLAY_SCROLL).
     void adjustLoadSaveListSelection(int delta);
