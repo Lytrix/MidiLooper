@@ -133,6 +133,55 @@ void test_outbound_coarse_uses_loop_relative_tick_with_nonzero_loop_start() {
         pb);
 }
 
+void test_plan_select_dependent_pitch_only_skips_f2_f3() {
+    const auto plan = NoteEditFaderOutbound::planForSelectDependent(false, true);
+    TEST_ASSERT_FALSE(plan.coarse);
+    TEST_ASSERT_FALSE(plan.fine);
+    TEST_ASSERT_TRUE(plan.noteValue);
+    NoteEditFaderOutbound::Step step = NoteEditFaderOutbound::nextEnabledStep(
+        NoteEditFaderOutbound::Step::Idle, plan);
+    TEST_ASSERT_EQUAL(NoteEditFaderOutbound::Step::ArmMotorBank, step);
+    step = NoteEditFaderOutbound::advanceOutboundStep(step, plan);
+    TEST_ASSERT_EQUAL(NoteEditFaderOutbound::Step::SendNoteValue, step);
+}
+
+void test_plan_select_dependent_position_only_skips_f4() {
+    const auto plan = NoteEditFaderOutbound::planForSelectDependent(true, false);
+    TEST_ASSERT_TRUE(plan.coarse);
+    TEST_ASSERT_TRUE(plan.fine);
+    TEST_ASSERT_FALSE(plan.noteValue);
+    NoteEditFaderOutbound::Step step = NoteEditFaderOutbound::nextEnabledStep(
+        NoteEditFaderOutbound::Step::Idle, plan);
+    TEST_ASSERT_EQUAL(NoteEditFaderOutbound::Step::ArmMotorBank, step);
+    step = NoteEditFaderOutbound::advanceOutboundStep(step, plan);
+    TEST_ASSERT_EQUAL(NoteEditFaderOutbound::Step::SendCoarse, step);
+    step = NoteEditFaderOutbound::advanceOutboundStep(step, plan);
+    TEST_ASSERT_EQUAL(NoteEditFaderOutbound::Step::TriggerCoarse, step);
+    step = NoteEditFaderOutbound::advanceOutboundStep(step, plan);
+    TEST_ASSERT_EQUAL(NoteEditFaderOutbound::Step::SendFine, step);
+    step = NoteEditFaderOutbound::advanceOutboundStep(step, plan);
+    TEST_ASSERT_EQUAL(NoteEditFaderOutbound::Step::TriggerFine, step);
+    step = NoteEditFaderOutbound::advanceOutboundStep(step, plan);
+    TEST_ASSERT_EQUAL(NoteEditFaderOutbound::Step::Done, step);
+}
+
+void test_plan_select_dependent_full_when_both_dirty() {
+    const auto plan = NoteEditFaderOutbound::planForSelectDependent(true, true);
+    TEST_ASSERT_TRUE(plan.coarse);
+    TEST_ASSERT_TRUE(plan.fine);
+    TEST_ASSERT_TRUE(plan.noteValue);
+}
+
+void test_plan_select_dependent_none_when_clean() {
+    const auto plan = NoteEditFaderOutbound::planForSelectDependent(false, false);
+    TEST_ASSERT_FALSE(plan.coarse);
+    TEST_ASSERT_FALSE(plan.fine);
+    TEST_ASSERT_FALSE(plan.noteValue);
+    NoteEditFaderOutbound::Step step = NoteEditFaderOutbound::nextEnabledStep(
+        NoteEditFaderOutbound::Step::Idle, plan);
+    TEST_ASSERT_EQUAL(NoteEditFaderOutbound::Step::Done, step);
+}
+
 void test_outbound_pipeline_advances_through_triggers() {
     const auto plan =
         NoteEditFaderOutbound::planForTrigger(NoteEditFaderOutbound::Trigger::NoteSelectDependent);
@@ -162,6 +211,10 @@ int main(int argc, char** argv) {
     RUN_TEST(test_coalesce_dependent_while_channel15_active);
     RUN_TEST(test_user_quiet_after_400ms);
     RUN_TEST(test_outbound_coarse_uses_loop_relative_tick_with_nonzero_loop_start);
+    RUN_TEST(test_plan_select_dependent_pitch_only_skips_f2_f3);
+    RUN_TEST(test_plan_select_dependent_position_only_skips_f4);
+    RUN_TEST(test_plan_select_dependent_full_when_both_dirty);
+    RUN_TEST(test_plan_select_dependent_none_when_clean);
     RUN_TEST(test_outbound_pipeline_advances_through_triggers);
     return UNITY_END();
 }
