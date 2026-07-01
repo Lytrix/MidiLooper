@@ -169,7 +169,15 @@
 - [x] 7.6.2 `processFaderSelectQuiet`: skip duplicate refresh when slot/pb unchanged; log `QUIET_REFRESH` only when outbound scheduled
 - [x] 7.6.3 D34 send-path honesty: send helpers return `bool`; pipeline skips `SEND_F*` + trigger on no-op
 - [x] 7.6.4 D20 single motor trigger owner: pipeline `TriggerCoarse/Fine/NoteValue` only (removed inline triggers from send helpers)
-- [ ] 7.6.5 Capture verify: no duplicate `QUIET_REFRESH`; no trigger-only `SEND_F2/3/4`; one `MO,224,14` per F2 stage
+- [x] 7.6.5 Capture verify: no duplicate `QUIET_REFRESH`; no trigger-only `SEND_F2/3/4`; one `MO,224,14` per F2 stage — **pre-fix baseline** `session_20260630_222821`; post-fix capture pending after flash
+
+### 7.7 F2-drag F1 cross-talk (2026-06-30)
+
+- [x] 7.7.1 Phase 9: `armSelectFaderFeedbackIgnore` at `SendCoarse` / `TriggerCoarse` / post-`DONE`
+- [x] 7.7.2 Geometry driver lockout in `handleSelectFaderInput` + `applyNoteSelectFromFader1Pitchbend`
+- [x] 7.7.3 D37: geometry `sendFader1BracketFeedback(track, false)` — no nav-state overwrite
+- [x] 7.7.4 Rate-limit geometry F1 bracket send (150 ms)
+- [ ] 7.7.5 Capture: zero `Select fader: selected note` during F2-only drag; DNTE continuous through session end
 
 ---
 
@@ -178,8 +186,8 @@
 **Design:** [design.md](./design.md) D17  
 **Gate:** §8.1–§8.3 before Phase 9. Run `pio test -e native` before push.
 
-- [ ] 8.1 `noteRelativeTick` in `sendCoarseFaderPosition` (position mode start tick; length mode end tick)
-- [ ] 8.2 Native test in `test/test_note_edit_fader_feedback/test_note_edit_fader_feedback.cpp` with `loopStartTick=424`
+- [ ] 8.1 `noteRelativeTick` in `sendCoarseFaderPosition` (position mode start tick; length mode end tick) — **shipped** 2026-06-30
+- [x] 8.2 Native test in `test/test_note_edit_fader_feedback/test_note_edit_fader_feedback.cpp` with `loopStartTick=424`
 - [ ] 8.3 Capture: all `#DBG outbound_ctx f2` position-mode rows `pb == expected_pb_rel`
 - [ ] 8.4 Manual: fader1 sweep with non-zero loop start — F2 motor matches note start
 
@@ -189,7 +197,7 @@
 
 **Design:** [design.md](./design.md) D18
 
-- [ ] 9.1 Arm `selectFaderFeedbackIgnoreUntilMs_` at `processFaderOutbound` `SendCoarse`
+- [x] 9.1 Arm `selectFaderFeedbackIgnoreUntilMs_` at `processFaderOutbound` `SendCoarse` through `TriggerCoarse` + post-`DONE` tail
 - [ ] 9.2 Capture: no spurious `#DBG select_slot` during `SEND_F2` / `TRIGGER_F2` window
 
 ---

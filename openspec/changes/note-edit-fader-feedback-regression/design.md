@@ -225,7 +225,7 @@ stateDiagram
 
 ### D37 — Geometry F1 feedback without touching nav state
 
-**Status:** Shipped.
+**Status:** Shipped (2026-06-30).
 
 **Decision:** Geometry-driven F1 bracket send (`Fader1BracketOnly` / `scheduleOtherFaderUpdates`) SHALL NOT overwrite `lastUserSelectFaderValue` / `lastSelectFaderTime`.
 
@@ -268,6 +268,8 @@ stateDiagram
 **Context:** F1 bracket send arms `selectFaderFeedbackIgnoreUntilMs_`; F2 coarse send arms only `armCoarseFaderFeedbackIgnore`. F2 motor echo can re-trigger select during dependent refresh.
 
 ### D18 — Symmetric F1 ignore during F2 outbound
+
+**Status:** Shipped (2026-06-30).
 
 **Decision:** Arm `selectFaderFeedbackIgnoreUntilMs_` at `processFaderOutbound` `SendCoarse` (or start of `sendCoarseFaderPosition` when called from pipeline). Preserve user override via `SELECT_MOVEMENT_THRESHOLD` in `shouldIgnoreFaderInput`.
 
