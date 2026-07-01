@@ -100,6 +100,15 @@ void test_slot_change_triggers_selection_apply() {
     TEST_ASSERT_FALSE(NoteEditFaderOutbound::shouldApplySelectionOnSlotChange(3, -1));
 }
 
+void test_bracket_or_note_change_triggers_selection_apply() {
+    TEST_ASSERT_TRUE(
+        NoteEditFaderOutbound::shouldApplySelectionOnTargetChange(48, 60, 0, 60));
+    TEST_ASSERT_TRUE(
+        NoteEditFaderOutbound::shouldApplySelectionOnTargetChange(0, 72, 0, 60));
+    TEST_ASSERT_FALSE(
+        NoteEditFaderOutbound::shouldApplySelectionOnTargetChange(0, 60, 0, 60));
+}
+
 void test_coalesce_dependent_while_channel15_active() {
     TEST_ASSERT_TRUE(NoteEditFaderOutbound::shouldCoalesceDependentRefresh(
         NoteEditFaderOutbound::Trigger::NoteSelectDependent,
@@ -222,6 +231,7 @@ int main(int argc, char** argv) {
     RUN_TEST(test_outbound_plan_session_open_includes_fader1_and_dependents);
     RUN_TEST(test_outbound_plan_note_select_dependent_skips_fader1);
     RUN_TEST(test_slot_change_triggers_selection_apply);
+    RUN_TEST(test_bracket_or_note_change_triggers_selection_apply);
     RUN_TEST(test_coalesce_dependent_while_channel15_active);
     RUN_TEST(test_user_quiet_after_400ms);
     RUN_TEST(test_outbound_coarse_uses_loop_relative_tick_with_nonzero_loop_start);

@@ -191,7 +191,7 @@
 
 - [x] 7.9.1 `sendCoarseFaderPosition` / `sendFineFaderPosition` bracket anchor when `noteIdx < 0`
 - [x] 7.9.2 `stampFeedbackPositionFromSelection` from bracket when empty
-- [ ] 7.9.3 Pipeline always `DONE`; `SKIP_SEND` capture log
+- [x] 7.9.3 Pipeline always `DONE`; `SKIP_SEND` capture log
 - [ ] 7.9.4 Capture: `BEGIN` == `DONE`; empty steps show `SEND_F2` + `mode=EMPTY_STEP`
 
 ---
