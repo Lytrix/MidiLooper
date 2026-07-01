@@ -89,6 +89,18 @@ inline PlanFlags planForTrigger(Trigger trigger) {
     return plan;
 }
 
+inline PlanFlags planForSelectDependent(bool needsPositionRefresh, bool needsPitchRefresh) {
+    PlanFlags plan;
+    if (needsPositionRefresh) {
+        plan.coarse = true;
+        plan.fine = true;
+    }
+    if (needsPitchRefresh) {
+        plan.noteValue = true;
+    }
+    return plan;
+}
+
 inline bool shouldPreemptActivePipeline(Trigger incoming) {
     return incoming == Trigger::SessionOpen || incoming == Trigger::LengthModeEnter ||
            incoming == Trigger::LengthModeExit;
@@ -153,21 +165,30 @@ inline Step nextEnabledStep(Step step, const PlanFlags& plan) {
             }
             return nextEnabledStep(Step::SendCoarse, plan);
         case Step::SendCoarse:
-            return Step::TriggerCoarse;
+            if (plan.coarse) {
+                return Step::TriggerCoarse;
+            }
+            return nextEnabledStep(Step::TriggerCoarse, plan);
         case Step::TriggerCoarse:
             if (plan.fine) {
                 return Step::SendFine;
             }
             return nextEnabledStep(Step::SendFine, plan);
         case Step::SendFine:
-            return Step::TriggerFine;
+            if (plan.fine) {
+                return Step::TriggerFine;
+            }
+            return nextEnabledStep(Step::TriggerFine, plan);
         case Step::TriggerFine:
             if (plan.noteValue) {
                 return Step::SendNoteValue;
             }
             return nextEnabledStep(Step::SendNoteValue, plan);
         case Step::SendNoteValue:
-            return Step::TriggerNoteValue;
+            if (plan.noteValue) {
+                return Step::TriggerNoteValue;
+            }
+            return nextEnabledStep(Step::TriggerNoteValue, plan);
         case Step::TriggerNoteValue:
         case Step::Done:
             return Step::Done;

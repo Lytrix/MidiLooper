@@ -134,12 +134,26 @@ private:
     int16_t outboundSentFader1Pitchbend_ = 0;
     uint32_t lastGeometryFader1BracketSentMs_ = 0;
 
+    static constexpr uint32_t kFeedbackAnchorRelTickUnset = UINT32_MAX;
+    static constexpr int8_t kFeedbackNotePitchUnset = -1;
+    uint32_t lastFeedbackAnchorRelTick_ = kFeedbackAnchorRelTickUnset;
+    int8_t lastFeedbackNotePitch_ = kFeedbackNotePitchUnset;
+
     static constexpr uint32_t F2_OUTBOUND_SELECT_IGNORE_TAIL_MS = 400;
     static constexpr uint32_t GEOMETRY_F1_BRACKET_MIN_GAP_MS = 150;
 
     bool isGeometryDriverActive(uint32_t now) const;
     void armSelectFaderFeedbackIgnore(uint32_t sentAt, uint32_t durationMs);
-    void requestFaderOutbound(NoteEditFaderOutbound::Trigger trigger);
+    void resetFeedbackGeometrySnapshot();
+    void stampFeedbackPositionFromSelection(Track& track);
+    void stampFeedbackPitchFromSelection(Track& track);
+    void stampFeedbackGeometrySnapshotAtDone(Track& track,
+                                           const NoteEditFaderOutbound::PlanFlags& plan);
+    void evaluateDependentFaderRefreshDirty(Track& track, bool& needsPositionRefresh,
+                                          bool& needsPitchRefresh);
+    bool requestDependentFaderRefreshFromSelection(Track& track);
+    void requestFaderOutbound(NoteEditFaderOutbound::Trigger trigger,
+                              const NoteEditFaderOutbound::PlanFlags* planOverride = nullptr);
     void cancelActiveFaderOutbound();
     void processFaderOutbound();
     void processFaderSelectQuiet();
