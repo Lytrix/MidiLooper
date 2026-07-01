@@ -371,3 +371,24 @@ The current regression is a scheduler-policy issue inside `NoteEditManager`, not
 1. **Deferred note-select policy** (`note_select_deferred`) with grace gating prevents immediate ch15 updates during active fader1 movement.
 2. **Length-mode coarse edits** repeatedly schedule delayed fader1 resync (`sendSelectnoteFaderUpdate`), creating continuous deferral churn.
 3. **Coarse blanket ignore window** drops immediate post-outbound coarse inbound events.
+
+---
+
+## Dwell-gap fix — serial pass criteria (2026-07-01)
+
+**Symptom:** Fast F1 sweeps track; slow F1 crawls do not — delta/time gates and `apply=0` motor silence.
+
+**Fix:** `syncMotorsFromSelectTarget` on every accepted F1 pitchbend; F1 echo-only ignore; geometry/time walls removed from select path.
+
+**Analyzer:** `python scripts/analyze_fader2_select_feedback.py captures/<session>.log` — exit code 2 when `fader_select_dwell_gap_ok` is false.
+
+| Gate | Rule |
+|------|------|
+| Dwell motor gap | Same `select_slot idx`, F1 pitch span ≥ 200 → `#CAP MO,224,14` value change within 300 ms |
+| DNTE–motor coupling | `DNTE` selectedIdx change → F2 (`MO,224,14`) or F4 (`MO,176,15,3,*`) change within 50 ms |
+| Ignored rate | `select_ignored_rate` ≈ 0 on slow segment (echo-only `reason=echo`) |
+| Not sufficient | `apply=1` → `SEND_F*` alone — FAIL if dwell gap > 0 |
+
+**Manual:** Slow 3-note F1 glide — F2/F3/F4 motors move visibly at each step.
+
+**Capture log markers:** `#DBG outbound_ctx f2 mode=SELECT_SYNC`, `#DBG select_slot ignored=1 reason=echo`.

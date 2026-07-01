@@ -24,6 +24,7 @@
 #include "Utils/MidiEventUtils.h"
 #include "Utils/MidiMapping.h"
 #include "Utils/NoteEditFaderOutboundPlan.h"
+#include "Utils/NoteEditFaderSelectSync.h"
 #include "MidiFaderManager.h"
 #include "MidiFaderProcessor.h"
 
@@ -158,17 +159,14 @@ void NoteEditManager::handleMidiPitchbend(uint8_t channel, int16_t pitchValue) {
             logger.log(CAT_MIDI, LOG_DEBUG, "Pitchbend ch=%d routed to loop start fader (LOOP_EDIT mode)", channel);
             return;
         } else {
-            if (currentDriverFader == MidiMapping::FaderType::FADER_NOTE_VALUE &&
-                lastDriverFaderTime > 0 &&
-                (millis() - lastDriverFaderTime) < SELECTNOTE_UPDATE_DELAY) {
+            if (currentDriverFader == MidiMapping::FaderType::FADER_NOTE_VALUE) {
                 auto& selectState =
                     midiFaderManager.getFaderStateMutable(MidiMapping::FaderType::FADER_SELECT);
-                const int16_t echoDiff = abs(pitchValue - selectState.lastSentPitchbend);
-                static constexpr int16_t kSelectEchoTolerance = 100;
-                if (echoDiff <= kSelectEchoTolerance) {
+                if (NoteEditFaderSelectSync::shouldIgnoreSelectFaderEcho(
+                        pitchValue, selectState.lastSentPitchbend, SELECT_MOVEMENT_THRESHOLD)) {
                     logger.log(CAT_MIDI, LOG_DEBUG,
-                               "Pitchbend ch=%d ignored (ch16 echo after note-value edit, diff=%d)",
-                               channel, echoDiff);
+                               "Pitchbend ch=%d ignored (ch16 echo after note-value edit, diff<=%d)",
+                               channel, SELECT_MOVEMENT_THRESHOLD);
                     return;
                 }
             }
@@ -473,13 +471,21 @@ void NoteEditManager::logOutboundStep(const char* label) {
 #endif
 }
 
-void NoteEditManager::logSelectSlot(int slotIndex, int16_t pitchValue, bool ignored) {
+void NoteEditManager::logSelectSlot(int slotIndex, int16_t pitchValue, bool ignored,
+                                    const char* reason) {
 #if defined(SESSION_CAPTURE)
-    logger.info("#DBG select_slot idx=%d pitch=%d ignored=%d", slotIndex, pitchValue, ignored ? 1 : 0);
+    if (ignored && reason != nullptr) {
+        logger.info("#DBG select_slot idx=%d pitch=%d ignored=%d reason=%s", slotIndex, pitchValue,
+                    1, reason);
+    } else {
+        logger.info("#DBG select_slot idx=%d pitch=%d ignored=%d", slotIndex, pitchValue,
+                    ignored ? 1 : 0);
+    }
 #else
     (void)slotIndex;
     (void)pitchValue;
     (void)ignored;
+    (void)reason;
 #endif
 }
 
@@ -503,6 +509,8 @@ void NoteEditManager::logSelectApplyDecision(uint32_t targetBracketTick, int tar
 void NoteEditManager::resetSelectNavSlotApplyState() {
     lastAppliedSelectNavSlotIndex_ = -1;
     lastAppliedSelectNoteIdx_ = -1;
+    lastSyncedSelectStep_ = UINT32_MAX;
+    lastSyncedSelectNoteIdx_ = -2;
 }
 
 void NoteEditManager::syncLastAppliedSelectNavFromPitch(Track& track) {
@@ -878,22 +886,20 @@ bool NoteEditManager::shouldIgnoreFaderInput(MidiMapping::FaderType faderType, i
     MidiFaderProcessor::FaderState& state = midiFaderManager.getFaderStateMutable(faderType);
     uint32_t now = millis();
 
-    if (faderType == MidiMapping::FaderType::FADER_SELECT &&
-        selectFaderFeedbackIgnoreUntilMs_ != 0 && now < selectFaderFeedbackIgnoreUntilMs_) {
-        if (pitchbendValue != -1) {
-            const int16_t userDelta = abs(pitchbendValue - state.lastSentPitchbend);
-            if (userDelta >= SELECT_MOVEMENT_THRESHOLD) {
-                selectFaderFeedbackIgnoreUntilMs_ = 0;
-                logger.log(CAT_MIDI, LOG_DEBUG,
-                           "Fader 1 user select overrides pending bracket sync (delta=%d)",
-                           userDelta);
-                return false;
-            }
+    if (faderType == MidiMapping::FaderType::FADER_SELECT) {
+        if (pitchbendValue == -1) {
+            return false;
         }
-        logger.log(CAT_MIDI, LOG_DEBUG,
-                   "Ignoring fader 1 input (pending bracket sync): %lu ms remaining",
-                   selectFaderFeedbackIgnoreUntilMs_ - now);
-        return true;
+        if (state.lastSentTime > 0 &&
+            NoteEditFaderSelectSync::shouldIgnoreSelectFaderEcho(pitchbendValue,
+                                                                 state.lastSentPitchbend,
+                                                                 SELECT_MOVEMENT_THRESHOLD)) {
+            logger.log(CAT_MIDI, LOG_DEBUG,
+                       "Ignoring fader 1 pitchbend %d (motor echo: sent %d)",
+                       pitchbendValue, state.lastSentPitchbend);
+            return true;
+        }
+        return false;
     }
     
     // No feedback prevention if we haven't sent anything recently
@@ -1358,6 +1364,77 @@ std::vector<SelectNavigation::SelectNavSlot> NoteEditManager::buildSelectNavigat
         includeBracketIfMissing);
 }
 
+void NoteEditManager::syncMotorsFromSelectTarget(Track& track, const Fader1SelectTarget& target) {
+    const uint32_t loopLength = track.getLoopLength();
+    if (loopLength == 0 || !target.valid) {
+        return;
+    }
+
+    const uint32_t loopStartTick = track.getLoopStartTick() % loopLength;
+    const uint32_t relTick =
+        SelectNavigation::noteRelativeTick(target.absoluteTargetTick, loopStartTick, loopLength);
+    const uint32_t sixteenthStep = relTick / Config::TICKS_PER_16TH_STEP;
+    if (!NoteEditFaderSelectSync::shouldSyncMotorsOnSelectTarget(
+            sixteenthStep, target.noteIdx, lastSyncedSelectStep_, lastSyncedSelectNoteIdx_)) {
+        return;
+    }
+
+    const int16_t coarseMidiPitchbend = loopTickToCoarsePitchbend(relTick, loopLength);
+#if defined(SESSION_CAPTURE)
+    {
+        const int16_t expectedPbRel = loopTickToCoarsePitchbend(relTick, loopLength);
+        logger.info(
+            "#DBG outbound_ctx f2 anchor_tick=%lu rel_tick=%lu loop_start=%lu loop_len=%lu "
+            "pb=%d expected_pb_rel=%d step=%lu f1_pb=%d slot=%d mode=SELECT_SYNC",
+            relTick, relTick, loopStartTick, loopLength, coarseMidiPitchbend, expectedPbRel,
+            sixteenthStep, lastUserSelectFaderValue, target.slotIndex);
+    }
+#endif
+
+    midiHandler.sendPitchBend(PITCHBEND_START_CHANNEL, coarseMidiPitchbend);
+    auto& coarseState = midiFaderManager.getFaderStateMutable(MidiMapping::FaderType::FADER_COARSE);
+    coarseState.lastSentPitchbend = coarseMidiPitchbend;
+    coarseState.lastSentTime = millis();
+    sendCoarseFaderMotorTrigger();
+
+    const uint32_t stepStartTick = sixteenthStep * Config::TICKS_PER_16TH_STEP;
+    int32_t offsetFromReferenceStep =
+        static_cast<int32_t>(relTick) - static_cast<int32_t>(stepStartTick);
+    uint8_t fineCCValue = static_cast<uint8_t>(constrain(64 + offsetFromReferenceStep, 0, 127));
+
+    if (target.noteIdx >= 0) {
+        const std::vector<NoteUtils::DisplayNote> notes = selectableDisplayNotesForEditUi(track);
+        if (target.noteIdx < static_cast<int>(notes.size())) {
+            const uint32_t noteTick =
+                notes[static_cast<size_t>(target.noteIdx)].startTick % loopLength;
+            offsetFromReferenceStep =
+                static_cast<int32_t>(noteTick) - static_cast<int32_t>(stepStartTick);
+            fineCCValue =
+                static_cast<uint8_t>(constrain(64 + offsetFromReferenceStep, 0, 127));
+        }
+    }
+
+    midiHandler.sendControlChange(FINE_CC_CHANNEL, FINE_CC_NUMBER, fineCCValue);
+    midiFaderManager.getFaderStateMutable(MidiMapping::FaderType::FADER_FINE).lastSentCC =
+        fineCCValue;
+    sendFineFaderMotorTrigger();
+
+    if (target.noteIdx >= 0) {
+        const std::vector<NoteUtils::DisplayNote> notes = selectableDisplayNotesForEditUi(track);
+        if (target.noteIdx < static_cast<int>(notes.size())) {
+            const uint8_t noteValue = notes[static_cast<size_t>(target.noteIdx)].note;
+#if defined(SESSION_CAPTURE)
+            logger.info("#DBG outbound_ctx f4 pitch=%d selected_idx=%d mode=SELECT_SYNC", noteValue,
+                        target.noteIdx);
+#endif
+            midiHandler.sendControlChange(NOTE_VALUE_CC_CHANNEL, NOTE_VALUE_CC_NUMBER, noteValue);
+            midiFaderManager.getFaderStateMutable(MidiMapping::FaderType::FADER_NOTE_VALUE)
+                .lastSentCC = noteValue;
+            sendNoteValueFaderMotorTrigger();
+        }
+    }
+}
+
 void NoteEditManager::handleSelectFaderInput(int16_t pitchValue, Track& track) {
     if (editManager.getEditSessionType() != EditSessionType::Note) {
         logger.log(CAT_MIDI, LOG_DEBUG, "Select fader input ignored: not in NOTE_EDIT mode (current mode: %s)", 
@@ -1367,33 +1444,18 @@ void NoteEditManager::handleSelectFaderInput(int16_t pitchValue, Track& track) {
 
     const uint32_t now = millis();
 
-    const int slotIndex = selectNavSlotIndexForPitchbend(track, pitchValue);
-    if (isGeometryDriverActive(now)) {
-        const int16_t userDelta = abs(pitchValue - lastUserSelectFaderValue);
-        if (userDelta < SELECT_MOVEMENT_THRESHOLD) {
-            logSelectSlot(slotIndex, pitchValue, true);
-            logger.log(CAT_MIDI, LOG_DEBUG,
-                       "Select fader input blocked during geometry driver (fader %d)",
-                       static_cast<int>(currentDriverFader));
-            return;
-        }
-        logger.log(CAT_MIDI, LOG_DEBUG,
-                   "Fader 1 user select overrides geometry driver (delta=%d)", userDelta);
-#if defined(SESSION_CAPTURE)
-        logger.info("#DBG geometry_override delta=%d fader=%d", userDelta,
-                    static_cast<int>(currentDriverFader));
-#endif
-    }
-
     lastUserSelectFaderValue = pitchValue;
     lastSelectFaderTime = now;
 
+    const int slotIndex = selectNavSlotIndexForPitchbend(track, pitchValue);
     logSelectSlot(slotIndex, pitchValue, false);
 
     const Fader1SelectTarget target = resolveFader1SelectTarget(track, pitchValue);
     if (!target.valid) {
         return;
     }
+
+    syncMotorsFromSelectTarget(track, target);
 
     const int priorSlotIndex = lastAppliedSelectNavSlotIndex_;
     const bool navChanged = NoteEditFaderOutbound::shouldApplySelectionOnNavChange(
@@ -1405,19 +1467,6 @@ void NoteEditManager::handleSelectFaderInput(int16_t pitchValue, Track& track) {
         applyNoteSelectFromFader1Pitchbend(track, pitchValue, target.slotIndex);
         lastAppliedSelectNavSlotIndex_ = target.slotIndex;
         lastAppliedSelectNoteIdx_ = target.noteIdx;
-        const NoteEditFaderOutbound::PlanFlags plan =
-            NoteEditFaderOutbound::planForTrigger(
-                NoteEditFaderOutbound::Trigger::NoteSelectDependent);
-#if defined(SESSION_CAPTURE)
-        const char* planMode = "FULL";
-        if (target.noteIdx < 0) {
-            planMode = "EMPTY_STEP";
-        }
-        logger.info("#DBG dependent_plan mode=%s coarse=%d fine=%d note=%d", planMode,
-                    plan.coarse ? 1 : 0, plan.fine ? 1 : 0, plan.noteValue ? 1 : 0);
-#endif
-        requestFaderOutbound(NoteEditFaderOutbound::Trigger::NoteSelectDependent, &plan);
-        drainDependentFaderOutboundUntilDone();
     } else {
         logSelectApplyDecision(target.absoluteTargetTick, target.noteIdx, target.slotIndex,
                                priorSlotIndex, false, "unchanged");
@@ -1842,7 +1891,7 @@ void NoteEditManager::handleNoteValueFaderInput(uint8_t ccValue, Track& track) {
 void NoteEditManager::handleFaderInput(MidiMapping::FaderType faderType, int16_t pitchbendValue, uint8_t ccValue) {
     if (shouldIgnoreFaderInput(faderType, pitchbendValue, ccValue)) {
         if (faderType == MidiMapping::FaderType::FADER_SELECT) {
-            logSelectSlot(-1, pitchbendValue, true);
+            logSelectSlot(-1, pitchbendValue, true, "echo");
         }
         return;
     }

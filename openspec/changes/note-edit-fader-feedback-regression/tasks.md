@@ -218,16 +218,28 @@ Option D timing levers (quiet gate, stale-echo relax, dirty flags) replaced by s
 - [x] 7.12.4 Remove `processFaderSelectQuiet`, `kFader1QuietMs`, `SelectPhase`, dirty flags, `NoteSelectDependent` trigger, coalesce
 - [x] 7.12.5 Pipeline retained for `SessionOpen`, `NoteSelectWithFader1`, `LengthModeEnter/Exit`, `Fader1BracketOnly` only
 - [x] 7.12.6 Native tests updated (`pio test -e native` pass)
-- [ ] 7.12.7 Capture: every `select_apply apply=1` followed by `SEND_F2`/`SEND_F3`/`SEND_F4`; slow F1 sweep no longer swallowed
+- [ ] 7.12.7 Capture: dwell motor gap = 0 on slow F1 sweep (`fader_select_dwell_gap_ok`); `MO,224,14` follows live target not only `apply=1`
 - [x] 7.12.8 **Plan B fallback** — `NoteSelectDependent` pipeline for dependent refresh (replaces synchronous burst)
 - [x] 7.12.9 **Plan C** — restart-on-selection (no `NoteSelectDependent` coalesce); delta partial plans; focus-aware `resolveNoteIdxAtSlot`
 - [x] 7.12.10 **Sync drain** — `drainDependentFaderOutboundUntilDone` after `NoteSelectDependent` apply; `liveEditDisplayNoteAtSelect` for F4; `pendingOutboundPlan_` on idle drain
 - [x] 7.12.11 **Same-tick sibling select** — `SelectNavigation::resolveNoteIdxAtSlot` trusts `slot.noteIdx`; slot-index apply gate; `same_tick_sibling` capture reason
-- [x] 7.12.12 **Geometry driver override** — F1 select passes through when `userDelta >= SELECT_MOVEMENT_THRESHOLD`; `#DBG geometry_override`
+- [x] 7.12.12 **Geometry driver override** — superseded: geometry block removed from F1 select (dwell-gap fix)
 - [x] 7.12.13 **F4 duplicate diagnostic** — `#DBG outbound_ctx f4 duplicate=1` on unchanged CC reselect
 - [ ] 7.12.14 Capture: fast adjacent-16th sweep after F4 burst — no geometry-block gap without override; `duplicate=1` rows on reselect
 - [x] 7.12.15 **Nav-slot apply gate** — `lastAppliedSelectNavSlotIndex_` vs pitch `posIndex`; `reason=nav_slot`; FULL plan on every slot change; `resolveNoteIdxAtSlot` → `slot.noteIdx` only; `#DBG select_apply prior_slot=`
 - [ ] 7.12.16 Capture: no `apply=0` when `prior_slot != slot` in adjacent-slot sweep
+
+### 7.13 Dwell-gap fix (inline motor sync)
+
+**Plan:** dwell-gap fix — rip fast-bypass layers + `syncMotorsFromSelectTarget`
+
+- [x] 7.13.1 Remove geometry driver block from `handleSelectFaderInput`
+- [x] 7.13.2 F1 `shouldIgnoreFaderInput` — echo-only (`NoteEditFaderSelectSync`); no time walls
+- [x] 7.13.3 Remove F4→F1 1600 ms echo wall in `handleMidiPitchbend`
+- [x] 7.13.4 `syncMotorsFromSelectTarget` on every accepted F1 pitchbend; demote live `NoteSelectDependent`
+- [x] 7.13.5 Native tests: echo accept/reject, motor sync rate-limit (`pio test -e native`)
+- [x] 7.13.6 Analyzer: `scripts/hitl/verify/fader_select_dwell_gap.py` + `analyze_fader2_select_feedback.py` integration
+- [ ] 7.13.7 Capture A/B: slow 3-note glide + fast sweep; `fader_select_dwell_gap_ok`; manual motor follow
 
 ---
 

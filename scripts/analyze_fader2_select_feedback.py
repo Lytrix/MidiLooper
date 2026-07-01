@@ -153,16 +153,23 @@ def main() -> int:
     scripts_dir = Path(__file__).resolve().parent
     if str(scripts_dir) not in sys.path:
         sys.path.insert(0, str(scripts_dir))
+    exit_code = 0
     try:
         from hitl.verify.note_edit_fader_select_refresh import verify_note_edit_fader_select_refresh
+        from hitl.verify.fader_select_dwell_gap import verify_fader_select_dwell_gap
 
-        print("HITL verifier:", verify_note_edit_fader_select_refresh(lines))
+        refresh = verify_note_edit_fader_select_refresh(lines)
+        dwell = verify_fader_select_dwell_gap(lines)
+        print("HITL refresh verifier:", refresh)
+        print("Dwell-gap verifier:", dwell)
         print()
+        if not dwell.get("fader_select_dwell_gap_ok", True):
+            exit_code = 2
     except ImportError:
         pass
 
     print_table(rows, args.limit)
-    return 0
+    return exit_code
 
 
 if __name__ == "__main__":
