@@ -28,7 +28,7 @@ Standalone **Handler** classes (e.g. `BarStepButtonHandler`) process events in o
 | `MidiHandler` | MIDI I/O and routing |
 | `MidiLedManager` | LED feedback to controller (e.g. bar/step, track/loop rows) |
 | `MidiButtonManager` / `MidiButtonProcessor` / `MidiButtonActions` | Gesture detection and actions |
-| `NoteEditManager` / `EditManager` / `EditNoteState` | Note edit UI and piano roll (`EditStates/` overlays) |
+| `NoteEditManager` / `EditManager` / `EditNoteState` | Note edit UI and piano roll (`EditStates/` overlays); `NoteEditManager` owns NOTE_EDIT fader inbound guards and select/geometry motor-sync queues |
 | `DisplayManager` | Piano roll and track status display |
 
-For deeper implementation history, see **[`docs/Refinements/`](../README.md#refinements)**. For loop MIDI memory, validation, and undo behavior, see **[`LOOP_MIDI_STORAGE_AND_VALIDATION.md`](LOOP_MIDI_STORAGE_AND_VALIDATION.md)**.
+For deeper implementation history, see **[`docs/Refinements/`](../README.md#refinements)**. For loop MIDI memory, validation, and undo behavior, see **[`LOOP_MIDI_STORAGE_AND_VALIDATION.md`](LOOP_MIDI_STORAGE_AND_VALIDATION.md)**. For DROID motor fader sync during NOTE_EDIT, see **[`DROID_MOTORFADER_PITCHBEND.md`](DROID_MOTORFADER_PITCHBEND.md)**.

@@ -1,13 +1,15 @@
-"""§7.18.8 acceptance: every note_changed apply drives F2+F3+F4 MO + ch13 set_changed acks."""
+"""§7.18.8 acceptance: debounced dwell clusters drive F2+F3+F4 MO + ch13 acks."""
 
 from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
 
-# Three fader timed bursts (NoteEditFaderMotorTiming): ~249 ms each → ~750 ms total + margin.
-_DEFAULT_MOTOR_MO_WINDOW_S = 1.0
-_DEFAULT_MOTOR_SYNC_WINDOW_S = 0.08
+# Parallel interleaved burst (NoteEditFaderMotorTiming): ~249 ms total + margin.
+_DEFAULT_MOTOR_MO_WINDOW_S = 0.4
+_DEFAULT_MOTOR_SYNC_MIN_DELAY_S = 0.3
+_DEFAULT_MOTOR_SYNC_MAX_DELAY_S = 0.65
+_SELECT_FADER_MOTOR_IDLE_S = 0.3
 # ch13 clear ack after notegate (DROID); burst delays spread MO — use CAP-interpolated time.
 _DEFAULT_NOTEGATE_ACK_WINDOW_S = 0.75
 
@@ -22,6 +24,7 @@ _CLEAR_ACK = {
 @dataclass
 class TripleMotorAckResult:
     note_changed_count: int = 0
+    dwell_cluster_count: int = 0
     select_sync_count: int = 0
     motor_sync_sent_count: int = 0
     live_begin_count: int = 0
@@ -114,12 +117,53 @@ def _first_in_window(
     return best_idx
 
 
+def _cluster_note_changed_applies(
+    applies: list[tuple[float, int, int]],
+    *,
+    cluster_gap_s: float = _SELECT_FADER_MOTOR_IDLE_S,
+) -> list[list[tuple[float, int, int]]]:
+    if not applies:
+        return []
+    clusters: list[list[tuple[float, int, int]]] = []
+    current = [applies[0]]
+    for item in applies[1:]:
+        if item[0] - current[-1][0] < cluster_gap_s:
+            current.append(item)
+        else:
+            clusters.append(current)
+            current = [item]
+    clusters.append(current)
+    return clusters
+
+
+def _first_in_window_after(
+    events: list[tuple[float, object]],
+    anchor_t: float,
+    min_delay_s: float,
+    max_delay_s: float,
+    *,
+    used: set[int] | None = None,
+) -> int | None:
+    best_idx: int | None = None
+    best_dt = max_delay_s + 1.0
+    for i, (et, _val) in enumerate(events):
+        if used is not None and i in used:
+            continue
+        dt = et - anchor_t
+        if min_delay_s <= dt <= max_delay_s and dt < best_dt:
+            best_dt = dt
+            best_idx = i
+    return best_idx
+
+
 def verify_note_edit_select_triple_motor_ack(
     lines: list[str],
     *,
-    motor_sync_window_s: float = _DEFAULT_MOTOR_SYNC_WINDOW_S,
+    motor_sync_min_delay_s: float = _DEFAULT_MOTOR_SYNC_MIN_DELAY_S,
+    motor_sync_max_delay_s: float = _DEFAULT_MOTOR_SYNC_MAX_DELAY_S,
     motor_mo_window_s: float = _DEFAULT_MOTOR_MO_WINDOW_S,
     ack_window_s: float = _DEFAULT_NOTEGATE_ACK_WINDOW_S,
+    cluster_gap_s: float = _SELECT_FADER_MOTOR_IDLE_S,
     max_select_ignored_rate: float = 0.05,
 ) -> dict[str, object]:
     wall_stamped = _wall_times_and_lines(lines)
@@ -210,31 +254,47 @@ def verify_note_edit_select_triple_motor_ack(
         apply_zero_times = [t for t in apply_zero_times if t > session_open_done_t]
 
     result.note_changed_count = len(note_changed_applies)
+    dwell_clusters = _cluster_note_changed_applies(
+        note_changed_applies, cluster_gap_s=cluster_gap_s
+    )
+    result.dwell_cluster_count = len(dwell_clusters)
 
     used_f2: set[int] = set()
     used_f3: set[int] = set()
     used_f4: set[int] = set()
     used_acks: set[int] = set()
+    used_sync: set[int] = set()
 
-    for apply_t, note_idx, bracket in note_changed_applies:
+    for cluster in dwell_clusters:
+        apply_t, note_idx, bracket = cluster[-1]
         for pt, _pn, pb in note_changed_applies:
             if pt < apply_t and pb == bracket and _pn != note_idx:
                 result.sibling_apply_count += 1
                 break
 
-    for apply_t, note_idx, bracket in note_changed_applies:
-        sync_idx = _first_in_window(motor_sync_sent_events, apply_t, motor_sync_window_s)
+    for cluster in dwell_clusters:
+        apply_t, note_idx, bracket = cluster[-1]
+        sync_idx = _first_in_window_after(
+            motor_sync_sent_events,
+            apply_t,
+            motor_sync_min_delay_s,
+            motor_sync_max_delay_s,
+            used=used_sync,
+        )
         if sync_idx is None:
             result.motor_misses += 1
             result.details.append(
-                f"t={apply_t:.3f}s note_idx={note_idx}: no select_motor_sync sent=1 within "
-                f"{motor_sync_window_s * 1000:.0f}ms"
+                f"t={apply_t:.3f}s note_idx={note_idx}: no select_motor_sync sent=1 between "
+                f"{motor_sync_min_delay_s * 1000:.0f}ms and "
+                f"{motor_sync_max_delay_s * 1000:.0f}ms after cluster end"
             )
             continue
+        used_sync.add(sync_idx)
+        sync_t = motor_sync_sent_events[sync_idx][0]
 
-        f2_idx = _first_in_window(mo_f2, apply_t, motor_mo_window_s, used=used_f2)
-        f3_idx = _first_in_window(mo_f3, apply_t, motor_mo_window_s, used=used_f3)
-        f4_idx = _first_in_window(mo_f4, apply_t, motor_mo_window_s, used=used_f4)
+        f2_idx = _first_in_window(mo_f2, sync_t, motor_mo_window_s, used=used_f2)
+        f3_idx = _first_in_window(mo_f3, sync_t, motor_mo_window_s, used=used_f3)
+        f4_idx = _first_in_window(mo_f4, sync_t, motor_mo_window_s, used=used_f4)
 
         if f2_idx is None or f3_idx is None or f4_idx is None:
             result.motor_misses += 1
@@ -247,7 +307,7 @@ def verify_note_edit_select_triple_motor_ack(
                 missing.append("F4")
             result.details.append(
                 f"t={apply_t:.3f}s note_idx={note_idx} bracket={bracket}: missing MO "
-                f"{','.join(missing)} within {motor_mo_window_s * 1000:.0f}ms"
+                f"{','.join(missing)} within {motor_mo_window_s * 1000:.0f}ms of motor sync"
             )
         else:
             used_f2.add(f2_idx)
@@ -259,12 +319,12 @@ def verify_note_edit_select_triple_motor_ack(
                 ("f3", mo_f3_trig, _CLEAR_ACK["f3"]),
                 ("f4", mo_f4_trig, _CLEAR_ACK["f4"]),
             ):
-                trig_idx = _first_in_window(trig_events, apply_t, motor_mo_window_s, used=None)
+                trig_idx = _first_in_window(trig_events, sync_t, motor_mo_window_s, used=None)
                 if trig_idx is None:
                     result.ack_misses += 1
                     result.details.append(
                         f"t={apply_t:.3f}s {label.upper()}: no notegate MO within "
-                        f"{motor_mo_window_s * 1000:.0f}ms of apply"
+                        f"{motor_mo_window_s * 1000:.0f}ms of motor sync"
                     )
                     continue
                 mo_t = trig_events[trig_idx][0]
@@ -281,7 +341,12 @@ def verify_note_edit_select_triple_motor_ack(
                     used_acks.add(ack_idx)
 
     for zero_t in apply_zero_times:
-        sync_idx = _first_in_window(motor_sync_sent_events, zero_t, motor_sync_window_s)
+        sync_idx = _first_in_window_after(
+            motor_sync_sent_events,
+            zero_t,
+            0.0,
+            motor_sync_max_delay_s,
+        )
         if sync_idx is not None:
             result.apply_zero_motor_violations += 1
 
@@ -291,10 +356,10 @@ def verify_note_edit_select_triple_motor_ack(
         ignored_rate = select_ignored / total_select
 
     if result.note_changed_count > 0:
-        if result.select_sync_count < result.note_changed_count:
+        if result.select_sync_count < result.dwell_cluster_count:
             result.details.append(
-                f"SELECT_SYNC count {result.select_sync_count} < note_changed "
-                f"{result.note_changed_count}"
+                f"SELECT_SYNC count {result.select_sync_count} < dwell_clusters "
+                f"{result.dwell_cluster_count}"
             )
         if result.live_begin_count > 0:
             result.details.append(
@@ -315,8 +380,9 @@ def verify_note_edit_select_triple_motor_ack(
 
     result.ok = (
         result.note_changed_count > 0
-        and result.select_sync_count >= result.note_changed_count
-        and result.motor_sync_sent_count >= result.note_changed_count
+        and result.dwell_cluster_count > 0
+        and result.select_sync_count >= result.dwell_cluster_count
+        and result.motor_sync_sent_count >= result.dwell_cluster_count
         and result.live_begin_count == 0
         and result.motor_misses == 0
         and result.ack_misses == 0
@@ -327,6 +393,7 @@ def verify_note_edit_select_triple_motor_ack(
     return {
         "note_edit_select_triple_motor_ack_ok": result.ok,
         "note_changed_count": result.note_changed_count,
+        "dwell_cluster_count": result.dwell_cluster_count,
         "select_sync_count": result.select_sync_count,
         "motor_sync_sent_count": result.motor_sync_sent_count,
         "live_begin_count": result.live_begin_count,

@@ -160,7 +160,7 @@ The four faders sit beside the button grid. Their role changes depending on whet
 | **Fader 3** | 16th fine offset | — |
 | **Fader 4** | Note pitch | — |
 
-Midi channels, CCs, and pitchbend mappings can be found in [`include/MidiConfig.h`](include/MidiConfig.h) and the [**MIDI config guide**](docs/Guides/MIDI_CONFIG_GUIDE.md). More detail: [**Faders**](docs/Guides/control-surface/Faders.md), [loop start editing](docs/Guides/LOOP_START_EDITING.md), and [fader state](docs/Guides/FADER_STATE_SYSTEM.md).
+Midi channels, CCs, and pitchbend mappings can be found in [`include/MidiConfig.h`](include/MidiConfig.h) and the [**MIDI config guide**](docs/Guides/MIDI_CONFIG_GUIDE.md). Motorized DROID faders: [**DROID motorfader pitchbend**](docs/Guides/DROID_MOTORFADER_PITCHBEND.md) (select/geometry sync, feedback ignore). More detail: [**Faders**](docs/Guides/control-surface/Faders.md), [loop start editing](docs/Guides/LOOP_START_EDITING.md), and [fader state](docs/Guides/FADER_STATE_SYSTEM.md).
 
 ## Display
 
@@ -181,7 +181,7 @@ For more detail: [**Display**](docs/Guides/control-surface/Display.md).
 - **Ableton:** on the MIDI **Out** port that sends clock to the Teensy, set **MIDI Clock Sync Delay** (Preferences → Link/Tempo/MIDI → Output → Sync). In the tested setup, steady-state recorded notes landed on-grid at **-11 ms** when notes return over **DIN**, and **-9 ms** when they return over **Teensy USB**.
 - **Bitwig:** there is no per-port MIDI clock sync delay. Send clock via **Settings → Controllers → Generic → MIDI Clock Transmitter** (or **HW Instrument → Send MIDI Clock**). Compensate on **each track** that sends clock or notes to the Teensy: set **Track Delay** (note offset) to about **-11 ms** (DIN return) or **-9 ms** (USB return) and fine-tune by recording a known pattern. Apply the same offset on every outbound track in the chain.
 
-For more details on the logic: [loop start / length](docs/Guides/LOOP_START_EDITING.md), [jam phases](docs/Guides/jam-bar-step-phases.md), [note moves](docs/Guides/MOVE_NOTE_LOGIC.md), [fader state](docs/Guides/FADER_STATE_SYSTEM.md). A compact **Channel 16** listing lives under [**Config summary**](docs/Guides/MIDI_CONFIG_GUIDE.md#config-summary-default-droid-mapping) in the MIDI guide.
+For more details on the logic: [loop start / length](docs/Guides/LOOP_START_EDITING.md), [jam phases](docs/Guides/jam-bar-step-phases.md), [note moves](docs/Guides/MOVE_NOTE_LOGIC.md), [DROID motor faders](docs/Guides/DROID_MOTORFADER_PITCHBEND.md), [fader state](docs/Guides/FADER_STATE_SYSTEM.md). A compact **Channel 16** listing lives under [**Config summary**](docs/Guides/MIDI_CONFIG_GUIDE.md#config-summary-default-droid-mapping) in the MIDI guide.
 
 State persistence uses storage **version 4+** on loop slots (**passes** timeline per slot: record, overdub, and edit passes), plus **CurrentSet v6** workspace files and **Set revision** packs on SD. Runtime auto-save writes **Current**; explicit **Save** in the overlay commits an immutable revision without clearing Current. See [**Load / save overlay**](#load--save-overlay-sets--revisions) and [`docs/Guides/DEFERRED_RUNTIME_PERSISTENCE.md`](docs/Guides/DEFERRED_RUNTIME_PERSISTENCE.md).
 

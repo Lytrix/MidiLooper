@@ -22,7 +22,7 @@
 | Sync drain after `NoteSelectDependent` apply | **Superseded** — live F1 uses `syncMotorsFromSelectTarget` |
 | Nav-slot-index apply gate (`lastAppliedSelectNavSlotIndex_`) | **Shipped** (local) |
 | Same-tick sibling select (`resolveNoteIdxAtSlot`) | **Shipped** (local) |
-| Geometry driver F1 override | **Removed** — F1 select no longer geometry-blocked |
+| Geometry driver F1 override | **Kind-scoped guard** (§7.24) — F1 select blocked during `isGeometryEditKind`; outbound geometry F1 motor unchanged |
 | Inline motor sync on display selection index change | **Superseded** — ref-driven (`NoteRef` / `noteEditSelectionTargetChanged`) |
 | Phase A NoteRef selection gates + windowed nav | **Shipped** (2026-07-02, `d3d5798`) |
 | Capture verification | **PASS** — `phase_a_slow_fader_sweep_20260702_011229` — 59 slots, `select_ignored_rate=0`, sibling sync OK |
@@ -56,7 +56,7 @@ flowchart LR
     nav --> sync[syncMotorsForDisplaySelection]
 ```
 
-**Cross-talk guard:** value-based echo reject only (`shouldIgnoreSelectFaderEcho`); `armSelectFaderFeedbackIgnore` only on real fader-1 motor sends (`sendFader1BracketFeedback`). No geometry block, no 1500 ms / 200 ms time walls on F1 select.
+**Cross-talk guard:** value-based echo reject (`shouldIgnoreSelectFaderEcho`); `selectFaderFeedbackIgnoreUntilMs_` on inbound F1 after real fader-1 motor sends (`sendFader1BracketFeedback`, `sendFader1MotorTimedBurst`). **Geometry kinds:** `handleSelectFaderInput` early return (`geometry_edit_active`) — see [`note_edit_geometry_f1_selection_guard_bugfix.md`](note_edit_geometry_f1_selection_guard_bugfix.md). No blanket time walls on F1 select in **Select** kind.
 
 ---
 

@@ -9,7 +9,10 @@ import re
 from dataclasses import dataclass, field
 
 from hitl.verify.fader_motor_echo_correlation import verify_fader_motor_echo_correlation
-from hitl.verify.note_edit_select_triple_motor_ack import verify_note_edit_select_triple_motor_ack
+from hitl.verify.note_edit_select_triple_motor_ack import (
+    _cluster_note_changed_applies,
+    verify_note_edit_select_triple_motor_ack,
+)
 
 
 @dataclass
@@ -105,11 +108,14 @@ def _nearest_after(
 def verify_outbound_motor_values(
     lines: list[str],
     *,
-    motor_mo_window_s: float = 1.0,
+    motor_mo_window_s: float = 0.4,
+    motor_sync_min_delay_s: float = 0.3,
+    motor_sync_max_delay_s: float = 0.65,
+    cluster_gap_s: float = 0.3,
     ctx_lookback_s: float = 0.01,
     ctx_lookahead_s: float = 0.1,
 ) -> dict[str, object]:
-    """Each apply=1 note_changed: MO F2/F4 match outbound_ctx (or select_motor_sync plan)."""
+    """Each dwell cluster end: MO F2/F4 match outbound_ctx (or select_motor_sync plan)."""
     stamped = _wall_times_and_lines(lines)
     result = OutboundValueResult()
 
@@ -162,7 +168,13 @@ def verify_outbound_motor_values(
     used_f2: set[int] = set()
     used_f4: set[int] = set()
 
-    for apply_t, note_idx in note_changed_applies:
+    clustered = _cluster_note_changed_applies(
+        [(t, note_idx, 0) for t, note_idx in note_changed_applies],
+        cluster_gap_s=cluster_gap_s,
+    )
+
+    for cluster in clustered:
+        apply_t, note_idx, _bracket = cluster[-1]
         expected_f2: int | None = None
         expected_f4: int | None = None
 
@@ -199,13 +211,13 @@ def verify_outbound_motor_values(
         plan_idx = _nearest_after(
             [(et, None) for et, _f2, _f4 in motor_plan],
             apply_t,
-            ctx_lookahead_s,
+            motor_sync_max_delay_s,
         )
         if plan_idx is None:
             plan_idx = _nearest_before(
                 [(et, None) for et, _f2, _f4 in motor_plan],
                 apply_t,
-                ctx_lookback_s,
+                motor_sync_max_delay_s,
             )
         if plan_idx is not None:
             plan_f2, plan_f4 = motor_plan[plan_idx][1], motor_plan[plan_idx][2]
@@ -214,8 +226,9 @@ def verify_outbound_motor_values(
             if expected_f4 is None and plan_f4 >= 0:
                 expected_f4 = plan_f4
 
+        mo_anchor_t = apply_t + motor_sync_min_delay_s
         if expected_f2 is not None:
-            mo_idx = _first_in_window(mo_f2, apply_t, motor_mo_window_s, used=used_f2)
+            mo_idx = _first_in_window(mo_f2, mo_anchor_t, motor_mo_window_s, used=used_f2)
             if mo_idx is None:
                 result.f2_value_misses += 1
                 result.details.append(
@@ -233,7 +246,7 @@ def verify_outbound_motor_values(
                     )
 
         if expected_f4 is not None and note_idx >= 0:
-            mo_idx = _first_in_window(mo_f4, apply_t, motor_mo_window_s, used=used_f4)
+            mo_idx = _first_in_window(mo_f4, mo_anchor_t, motor_mo_window_s, used=used_f4)
             if mo_idx is None:
                 result.f4_value_misses += 1
                 result.details.append(
@@ -279,8 +292,7 @@ def verify_note_edit_select_dependent_faders(
     lines: list[str],
     args: object | None = None,
     *,
-    motor_sync_window_s: float = 0.08,
-    motor_mo_window_s: float = 1.0,
+    motor_mo_window_s: float = 0.4,
     min_perceptual_rate_f2: float = 0.0,
     min_perceptual_rate_f4: float = 0.0,
     require_outbound_value_match: bool = True,
@@ -288,7 +300,6 @@ def verify_note_edit_select_dependent_faders(
     """Full gate bundle for NOTE_EDIT dependent fader motor feedback."""
     triple = verify_note_edit_select_triple_motor_ack(
         lines,
-        motor_sync_window_s=motor_sync_window_s,
         motor_mo_window_s=motor_mo_window_s,
     )
     echo = verify_fader_motor_echo_correlation(lines)

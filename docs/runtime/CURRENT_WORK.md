@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-07-02 (note-edit-stable-note-id Phase B shipped)
+Last updated: 2026-07-02 (geometry F1 selection guard shipped)
 
 ---
 
@@ -19,8 +19,8 @@ Set revision persistence + load/save overlay UX on branch `load-save-sets-loops`
 
 - **`note-edit-stable-note-id`** — Phase B **shipped**: `NoteId` on `MidiEvent`, `EditorSelection`, SD v6, co-location complete. Native 336 PASS; §7.17.8 HITL sweep PASS.
   - Handoff: [note_edit_stable_note_id_phase_a_handoff.md](../plans/note_edit_stable_note_id_phase_a_handoff.md)
-- **`note-edit-fader-feedback-regression`** — **§7.18.1–7.18.4 + 7.18.9 shipped** (EditorSelection motor sync wiring); **§7.18.5–7.18.8 capture acceptance pending** (manual slow sweep + ch13 triple-fader verifier).
-  - Handoff: [note_edit_fader_feedback_selection_driven_refactor.md](../plans/note_edit_fader_feedback_selection_driven_refactor.md)
+- **`note-edit-fader-feedback-regression`** — **§7.24 geometry F1 selection guard shipped** (HITL PASS 2026-07-02); **§7.18.5–7.18.8 capture acceptance pending** (manual slow sweep + ch13 triple-fader verifier).
+  - Handoffs: [note_edit_fader_feedback_selection_driven_refactor.md](../plans/note_edit_fader_feedback_selection_driven_refactor.md), [note_edit_geometry_f1_selection_guard_bugfix.md](../plans/note_edit_geometry_f1_selection_guard_bugfix.md)
 
 ## Explicitly NOT implementing
 

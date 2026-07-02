@@ -277,6 +277,34 @@ stateDiagram
 
 ---
 
+## §7.24 — Geometry F1 selection guard (2026-07-02)
+
+**Context:** Split geometry→F1 motor sync (`sendFader1MotorTimedBurst`) works, but F1 motor echo re-triggered `applySelectNav` during Move — capture `session_20260702_183747`. `selectFaderFeedbackIgnoreUntilMs_` was armed on outbound F1 but not checked on inbound F1.
+
+### D38 — Kind-scoped F1 select block during geometry edit
+
+**Status:** Shipped (2026-07-02).
+
+**Decision:** While `NoteEditKind` is a geometry edit kind (`isGeometryEditKind`), `handleSelectFaderInput` SHALL NOT run select navigation or `applySelectNav`. Log `geometry_edit_active` and return before clearing geometry motor pending. User F1 note select resumes in **Select** kind only.
+
+**Rationale:** Geometry driver owns moving-note identity; F1 motor sync is outbound-only during Move/Length/Pitch. Distinct from §7.13 driver-time block (removed for dwell-gap) — this guard is **kind-scoped**, not input-source-scoped.
+
+### D39 — Inbound F1 feedback ignore window
+
+**Status:** Shipped (2026-07-02).
+
+**Decision:** `shouldIgnoreFaderInput` for `FADER_SELECT` SHALL return true when `now < selectFaderFeedbackIgnoreUntilMs_`, after value-echo check. Catches geometry motor landing off by > `SELECT_MOVEMENT_THRESHOLD` without blocking deliberate F1 select after window expires.
+
+### D40 — Lightweight geometry selection UI sync
+
+**Status:** Shipped (2026-07-02).
+
+**Decision:** `applySelectionFromGeometryEdit` calls `syncGeometrySelectionToUi` (bracket tick + `requestNoteInfoRefresh` only). Do not recompute `selectedNoteIdx` or run edit-state `onExit`/`onEnter` during geometry moves.
+
+**Capture gate:** No `select_apply apply=1` and no `Exited EditStartNoteState` within `FEEDBACK_IGNORE_PERIOD` after `geometry_motor_sync sent=1`.
+
+---
+
 ## Phase 10 — F3/F4 unified dependent pipeline (2026-06-30)
 
 ### D19 — F3 relative tick + single pipeline burst
