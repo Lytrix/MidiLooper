@@ -126,6 +126,27 @@ inline PlanFlags planForSelectDependentFromNoteIdChange(NoteId priorPrimary, Not
     return {};
 }
 
+/** F2/F3/F4 geometry driver: refresh F1 bracket motor when selection bracket moves. */
+inline PlanFlags planForGeometryDriverMotorSync(uint32_t priorBracketTick, uint32_t newBracketTick) {
+    PlanFlags plan;
+    if (newBracketTick != priorBracketTick) {
+        plan.fader1 = true;
+    }
+    return plan;
+}
+
+/** Select-driver and geometry-driver motor plans must not overlap (symmetric queues). */
+inline bool motorSyncPlansAreDirectionIsolated(const PlanFlags& selectDriverPlan,
+                                               const PlanFlags& geometryDriverPlan) {
+    if (geometryDriverPlan.coarse || geometryDriverPlan.fine || geometryDriverPlan.noteValue) {
+        return false;
+    }
+    if (selectDriverPlan.fader1) {
+        return false;
+    }
+    return true;
+}
+
 inline bool shouldApplySelectionOnNoteIdChange(NoteId priorPrimary, NoteId newPrimary,
                                                uint32_t priorBracketTick,
                                                uint32_t newBracketTick) {
@@ -211,15 +232,12 @@ inline Step nextEnabledStep(Step step, const PlanFlags& plan) {
             }
             return Step::Done;
         case Step::SendCoarse:
-            if (plan.fine) {
-                return Step::SendFine;
-            }
-            return nextEnabledStep(Step::SendFine, plan);
+            return Step::Done;
         case Step::SendFine:
             if (plan.noteValue) {
                 return Step::SendNoteValue;
             }
-            return nextEnabledStep(Step::SendNoteValue, plan);
+            return Step::Done;
         case Step::SendNoteValue:
         case Step::Done:
             return Step::Done;

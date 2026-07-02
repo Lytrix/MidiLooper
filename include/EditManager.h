@@ -80,6 +80,10 @@ public:
     const NoteEditSessionState& getNoteEditSessionState() const { return sessionState; }
     void applySelectNav(Track& track, uint32_t bracketTick, NoteId primaryNote,
                         bool requestFaderSync = false, bool skipFader1Outbound = false);
+    /** Geometry edit: refresh EditorSelection + UI immediately; no dependent motor scheduling. */
+    void applySelectionFromGeometryEdit(Track& track, uint32_t bracketTick, NoteId primaryNote);
+    /// Geometry edit: refresh bracket + display only; preserve selectedNoteIdx and edit state.
+    void syncGeometrySelectionToUi(Track& track);
     /// Encoder / legacy helpers: step fader-1 nav slots over windowed selectable inventory.
     void stepSelectNavSlot(Track& track, int delta);
     void applyCycleEditKind(Track& track);

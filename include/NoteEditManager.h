@@ -17,6 +17,7 @@
 #include "LoopEditManager.h"
 #include "MidiConfig.h"
 #include "Utils/SelectNavigation.h"
+#include "Utils/NoteEditFaderMotorTiming.h"
 #include "Utils/NoteEditFaderOutboundPlan.h"
 #include "Utils/NoteEditFaderSelectSync.h"
 #include "NoteEditSessionState.h"
@@ -80,7 +81,11 @@ public:
     void syncReferenceStepFromBracketTick(uint32_t bracketTick);
     /** GPIO / bar-step note select: fader1 bracket + dependent refresh. */
     void scheduleNoteSelectFaderSync(Track& track);
-    /** F2/F3/F4 motor sync when NoteId selection identity changes (live F1 path). */
+    /** Queue F2/F3/F4 motor sync after F1 idle, or F1 bracket sync after geometry fader idle. */
+    void scheduleSelectDependentMotorSync(Track& track, const EditorSelection& priorSelection,
+                                          const EditorSelection& nextSelection,
+                                          bool geometryIsDriver = false);
+    /** F2/F3/F4 motor sync when NoteId selection identity changes (immediate flush). */
     void syncMotorsForDisplaySelection(Track& track, const EditorSelection& priorSelection,
                                        const EditorSelection& nextSelection);
     bool isFaderOutboundActive() const;
@@ -107,6 +112,14 @@ private:
 
     static constexpr uint32_t NOTE_SELECTION_GRACE_PERIOD = 750;
     static constexpr uint32_t SELECT_DEPENDENT_SETTLE_MS = 450;
+    static constexpr uint32_t kSelectFaderMotorIdleMs =
+        NoteEditFaderMotorTiming::kSelectFaderMotorIdleMs;
+    struct Fader1SelectTarget {
+        uint32_t absoluteTargetTick = 0;
+        int noteIdx = -1;
+        int slotIndex = -1;
+        bool valid = false;
+    };
     uint32_t noteSelectionTime = 0;
     uint32_t selectDependentSettleUntilMs_ = 0;
     bool startEditingEnabled = true;
@@ -114,10 +127,16 @@ private:
     
     int16_t lastUserSelectFaderValue = MidiConfig::Pitchbend::CENTER;
     uint32_t lastSelectFaderTime = 0;
+    uint32_t lastMotorSyncDriverInputMs_ = 0;
     uint32_t lastSelectMotorSyncMs_ = 0;
     int16_t lastMotorSyncF1Pitch_ = MidiConfig::Pitchbend::CENTER;
     bool selectDependentSettleBlockLogged_ = false;
     bool suppressSelectDependentMotorSync_ = false;
+    bool pendingSelectDriverMotorSyncValid_ = false;
+    bool pendingGeometryDriverMotorSyncValid_ = false;
+    Fader1SelectTarget pendingSelectMotorTarget_{};
+    NoteEditFaderOutbound::PlanFlags pendingSelectMotorPlan_{};
+    EditorSelection pendingSelectMotorPriorSelection_{};
     static constexpr int16_t SELECT_MOVEMENT_THRESHOLD = 100;
     
     int16_t lastUserCoarseFaderValue = MidiConfig::Pitchbend::CENTER;
@@ -145,10 +164,6 @@ private:
     NoteEditFaderOutbound::PlanFlags outboundPlan_{};
     uint32_t outboundStepStartedMs_ = 0;
     int16_t outboundSentFader1Pitchbend_ = 0;
-    uint32_t lastGeometryFader1BracketSentMs_ = 0;
-
-    static constexpr uint32_t GEOMETRY_F1_BRACKET_MIN_GAP_MS = 150;
-
     bool isGeometryDriverActive(uint32_t now) const;
     void armSelectFaderFeedbackIgnore(uint32_t sentAt, uint32_t durationMs);
     void requestFaderOutbound(NoteEditFaderOutbound::Trigger trigger,
@@ -160,6 +175,7 @@ private:
     void processFaderOutbound();
     void completeOutboundPipelineAtDone(Track& track, uint32_t now);
     void sendFader1BracketFeedback(Track& track, bool updateNavStateFromOutbound = true);
+    bool sendFader1MotorTimedBurst(Track& track);
     void logOutboundStep(const char* label);
     void logSelectSlot(int slotIndex, int16_t pitchValue, bool ignored, const char* reason = nullptr);
     void logSelectApplyDecision(uint32_t targetBracketTick, int targetNoteIdx, int slotIndex,
@@ -173,12 +189,6 @@ private:
     void performSelectnoteFaderUpdate(Track& track);
     int selectNavSlotIndexForPitchbend(Track& track, int16_t pitchValue);
     bool applyNoteSelectFromFader1Pitchbend(Track& track, int16_t pitchValue, int posIndex);
-    struct Fader1SelectTarget {
-        uint32_t absoluteTargetTick = 0;
-        int noteIdx = -1;
-        int slotIndex = -1;
-        bool valid = false;
-    };
     struct PlannedMotorSyncValues {
         int16_t f2Pb = 0;
         int f4Cc = -1;
@@ -186,8 +196,16 @@ private:
     PlannedMotorSyncValues plannedMotorSyncValuesFromSelectTarget(
         const Track& track, const Fader1SelectTarget& target);
     Fader1SelectTarget resolveFader1SelectTarget(Track& track, int16_t pitchValue);
+    void clearPendingSelectDependentMotorSync();
+    void clearPendingGeometryDriverMotorSync();
+    void processPendingSelectDependentMotorSync(Track& track);
+    void processPendingGeometryDriverMotorSync(Track& track);
+    void syncSelectionFromGeometryEdit(Track& track);
     void syncMotorsFromSelectTarget(Track& track, const Fader1SelectTarget& target,
                                     const NoteEditFaderOutbound::PlanFlags& plan);
+    bool sendDependentFadersParallelTimedBurst(Track& track,
+                                               const NoteEditFaderOutbound::PlanFlags& plan,
+                                               const Fader1SelectTarget* selectTarget);
     bool sendCoarseMotorPositionFromSelectTarget(Track& track, const Fader1SelectTarget& target);
     bool sendFineMotorPositionFromSelectTarget(Track& track, const Fader1SelectTarget& target);
     bool sendNoteValueMotorPositionFromSelectTarget(Track& track, const Fader1SelectTarget& target);

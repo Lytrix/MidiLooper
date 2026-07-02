@@ -198,6 +198,24 @@ While the ch15 outbound pipeline is on `SendCoarse` through `TriggerCoarse`, use
 - **THEN** serial SHALL NOT show new `#DBG select_slot` with `ignored=0` caused by F2 motor echo during that window
 - **AND** `selectFaderFeedbackIgnoreUntilMs_` is armed at `SendCoarse`
 
+### Requirement: Geometry F1 inbound guard during geometry edit kinds
+
+While `NoteEditKind` is Move, Length, Pitch, Add, or Delete (`isGeometryEditKind`), inbound fader1 pitchbend SHALL NOT run select navigation or `applySelectNav`. Geometry-driven F1 bracket motor sync is outbound-only until the user returns to Select kind.
+
+#### Scenario: F1 motor echo after geometry flush does not change selection
+
+- **WHEN** `geometry_motor_sync sent=1` has sent F1 via `sendFader1MotorTimedBurst`
+- **AND** inbound fader1 pitchbend arrives within `FEEDBACK_IGNORE_PERIOD` (motor echo or user touch during geometry kind)
+- **THEN** serial SHALL NOT show `#DBG select_apply ... apply=1` caused by that inbound sample
+- **AND** serial SHALL NOT show `Exited EditStartNoteState` from fader1 echo during an active Move edit
+- **AND** `handleSelectFaderInput` MAY log `geometry_edit_active` or ignore via `selectFaderFeedbackIgnoreUntilMs_`
+
+#### Scenario: Geometry selection sync preserves moving note index
+
+- **WHEN** `applySelectionFromGeometryEdit` updates `EditorSelection` from a geometry driver move
+- **THEN** `syncGeometrySelectionToUi` updates bracket tick and requests display refresh
+- **AND** `selectedNoteIdx` and the active geometry edit state (e.g. `EditStartNoteState`) are preserved
+
 ### Requirement: Outbound coordinate instrumentation (capture-serial)
 
 Under `teensy41-capture-serial` build, the system SHALL emit `#DBG outbound_ctx` lines from `sendCoarseFaderPosition` with `anchor_tick`, `rel_tick`, `loop_start`, `loop_len`, `pb`, and `expected_pb_rel`.

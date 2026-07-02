@@ -38,7 +38,9 @@ Cursor rule: `.cursor/rules/Agent-Context-Workflow.mdc`
 | [MIDI_CONFIG_GUIDE.md](Guides/MIDI_CONFIG_GUIDE.md) | Remapping channels, notes, and CCs; quick reference tables |
 | [**control-surface/**](Guides/control-surface/) | Per-row notes: Scenes, Tracks, Jams, Loops, Bars/16ths, Main controls, Faders, Display |
 | [LOOP_START_EDITING.md](Guides/LOOP_START_EDITING.md) | Loop start point editing (live / fader) |
-| [FADER_STATE_SYSTEM.md](Guides/FADER_STATE_SYSTEM.md) | Fader state machine and hardware feedback |
+| [FADER_STATE_SYSTEM.md](Guides/FADER_STATE_SYSTEM.md) | Fader state machine; § NOTE_EDIT motor feedback (2026) |
+| [DROID_MOTORFADER_PITCHBEND.md](Guides/DROID_MOTORFADER_PITCHBEND.md) | DROID motorized fader scale, NOTE_EDIT arm, select/geometry motor sync, HITL probe |
+| [HITL_TEST_SCENARIOS.md](Guides/HITL_TEST_SCENARIOS.md) | Hardware-in-the-loop presets and serial verifiers |
 | [MOVE_NOTE_LOGIC.md](Guides/MOVE_NOTE_LOGIC.md) | Note movement and overlap resolution |
 | [NOTE_WRAPPING_LOGIC.md](Guides/NOTE_WRAPPING_LOGIC.md) | Note and loop wrap-around behavior |
 | [jam-bar-step-phases.md](Guides/jam-bar-step-phases.md) | Jam loops: bar/16th buttons, `jamTick`, HOLD_TWO, playback regions |

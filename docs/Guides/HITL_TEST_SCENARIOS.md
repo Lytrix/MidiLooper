@@ -236,6 +236,16 @@ Or run phases separately: `--preset base` then `--scenarios note_edit_select_dep
 
 Verify-only (sweep log): `--scenarios note_edit_select_dependent_faders --verify-serial-log captures/note_edit_select_dependent_faders_*_serial.log --verify-only`
 
+### Geometry F1 motor sync guard (host verifier)
+
+After geometry-driven F1 motor flush, inbound F1 must not trigger `select_apply` or exit Move state within **1500 ms**. Host unit tests (no Teensy):
+
+```bash
+.venv/bin/python scripts/test_note_edit_geometry_fader1_serial_verify.py
+```
+
+Manual: move note with F2/F3 in Move kind; confirm F1 follows and selection/kind stay on moving note. Plan: [`note_edit_geometry_f1_selection_guard_bugfix.md`](../plans/note_edit_geometry_f1_selection_guard_bugfix.md).
+
 ---
 
 ## Native (host) tests vs HITL

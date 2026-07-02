@@ -128,6 +128,7 @@ RC11 — `sendCoarseFaderPosition` uses `startTick % loopLength` while F1 select
 - Arm `selectFaderFeedbackIgnoreUntilMs_` at `SendCoarse` (symmetric with F1 bracket send).
 - Preserve user override via `SELECT_MOVEMENT_THRESHOLD`.
 - Capture gate: no spurious `#DBG select_slot` during `SEND_F2` / `TRIGGER_F2` window.
+- **§7.24 (2026-07-02):** Inbound F1 also honors `selectFaderFeedbackIgnoreUntilMs_`; kind-scoped geometry F1 guard (D38–D40).
 
 ---
 

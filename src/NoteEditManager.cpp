@@ -145,6 +145,8 @@ void NoteEditManager::update() {
     }
 
     processFaderOutbound();
+    processPendingSelectDependentMotorSync(trackManager.getSelectedTrack());
+    processPendingGeometryDriverMotorSync(trackManager.getSelectedTrack());
 
     loopEditManager.update();
     faderHandler.update();
@@ -546,19 +548,95 @@ void NoteEditManager::resetSelectNavSlotApplyState() {
     lastMotorSyncF1Pitch_ = MidiConfig::Pitchbend::CENTER;
     selectDependentSettleUntilMs_ = 0;
     selectDependentSettleBlockLogged_ = false;
+    clearPendingSelectDependentMotorSync();
+    clearPendingGeometryDriverMotorSync();
 }
 
-void NoteEditManager::syncMotorsForDisplaySelection(Track& track,
-                                                    const EditorSelection& priorSelection,
-                                                    const EditorSelection& nextSelection) {
-    if (suppressSelectDependentMotorSync_) {
+void NoteEditManager::clearPendingSelectDependentMotorSync() {
+    pendingSelectDriverMotorSyncValid_ = false;
+    pendingSelectMotorTarget_ = {};
+    pendingSelectMotorPlan_ = {};
+    pendingSelectMotorPriorSelection_ = {};
+}
+
+void NoteEditManager::clearPendingGeometryDriverMotorSync() {
+    pendingGeometryDriverMotorSyncValid_ = false;
+}
+
+void NoteEditManager::syncSelectionFromGeometryEdit(Track& track) {
+    const EditorSelection priorSelection = editManager.getNoteEditSessionState().selection;
+    const uint32_t loopLength = track.getLoopLength();
+    if (loopLength == 0) {
         return;
     }
-    const NoteEditFaderOutbound::PlanFlags plan =
+
+    uint32_t bracketTick = editManager.getBracketTick() % loopLength;
+    NoteId primaryNote = kInvalidNoteId;
+
+    const NoteEditFocus& focus = editManager.getEditSession().focus;
+    if (focus.active && focus.movingNoteId != kInvalidNoteId) {
+        primaryNote = focus.movingNoteId;
+        bracketTick = lengthEditingMode ? focus.last.endTick % loopLength
+                                        : focus.last.startTick % loopLength;
+    } else {
+        const int selectedIdx = editManager.getSelectedNoteIdx();
+        if (selectedIdx >= 0) {
+            const std::vector<NoteUtils::DisplayNote> notes =
+                editManager.selectableDisplayNotesAtEditSelect(track);
+            if (selectedIdx < static_cast<int>(notes.size())) {
+                const NoteUtils::DisplayNote& selected = notes[static_cast<size_t>(selectedIdx)];
+                primaryNote = selected.noteId;
+                bracketTick = lengthEditingMode ? selected.endTick % loopLength
+                                                : selected.startTick % loopLength;
+            }
+        }
+    }
+
+    if (priorSelection.bracketTick == bracketTick) {
+        if (editorSelectionTargetChanged(priorSelection, bracketTick, primaryNote)) {
+            editManager.setBracketTick(bracketTick);
+            editManager.applySelectionFromGeometryEdit(track, bracketTick, primaryNote);
+        }
+        return;
+    }
+
+    editManager.setBracketTick(bracketTick);
+    editManager.applySelectionFromGeometryEdit(track, bracketTick, primaryNote);
+    scheduleSelectDependentMotorSync(track, priorSelection,
+                                     editManager.getNoteEditSessionState().selection, true);
+}
+
+void NoteEditManager::scheduleSelectDependentMotorSync(Track& track,
+                                                       const EditorSelection& priorSelection,
+                                                       const EditorSelection& nextSelection,
+                                                       bool geometryIsDriver) {
+    if (suppressSelectDependentMotorSync_) {
+        clearPendingSelectDependentMotorSync();
+        clearPendingGeometryDriverMotorSync();
+        return;
+    }
+
+    if (geometryIsDriver) {
+        const NoteEditFaderOutbound::PlanFlags plan =
+            NoteEditFaderOutbound::planForGeometryDriverMotorSync(priorSelection.bracketTick,
+                                                                  nextSelection.bracketTick);
+        if (!plan.fader1) {
+            return;
+        }
+        pendingGeometryDriverMotorSyncValid_ = true;
+        (void)track;
+#if defined(SESSION_CAPTURE)
+        logger.info("#DBG selection_motor_sync scheduled=1 driver=geometry f1=1 bracket_tick=%lu",
+                    static_cast<unsigned long>(nextSelection.bracketTick));
+#endif
+        return;
+    }
+
+    const NoteEditFaderOutbound::PlanFlags newPlan =
         NoteEditFaderOutbound::planForSelectDependentFromNoteIdChange(
             priorSelection.primaryNote, nextSelection.primaryNote, priorSelection.bracketTick,
             nextSelection.bracketTick);
-    if (!plan.coarse && !plan.fine && !plan.noteValue) {
+    if (!newPlan.coarse && !newPlan.fine && !newPlan.noteValue) {
         return;
     }
 
@@ -578,7 +656,47 @@ void NoteEditManager::syncMotorsForDisplaySelection(Track& track,
     target.slotIndex = -1;
     target.valid = true;
 
+    if (pendingSelectDriverMotorSyncValid_) {
+        pendingSelectMotorPlan_.coarse |= newPlan.coarse;
+        pendingSelectMotorPlan_.fine |= newPlan.fine;
+        pendingSelectMotorPlan_.noteValue |= newPlan.noteValue;
+    } else {
+        pendingSelectMotorPriorSelection_ = priorSelection;
+        pendingSelectMotorPlan_ = newPlan;
+        pendingSelectDriverMotorSyncValid_ = true;
+    }
+    pendingSelectMotorTarget_ = target;
+    (void)track;
+#if defined(SESSION_CAPTURE)
+    logger.info("#DBG selection_motor_sync scheduled=1 driver=select f1=0 f2=%d f4=%d note_idx=%d "
+                "bracket_tick=%lu",
+                newPlan.coarse ? 1 : 0, newPlan.noteValue ? 1 : 0, noteIdx,
+                static_cast<unsigned long>(nextSelection.bracketTick));
+#endif
+}
+
+void NoteEditManager::processPendingSelectDependentMotorSync(Track& track) {
+    if (!pendingSelectDriverMotorSyncValid_ || suppressSelectDependentMotorSync_) {
+        return;
+    }
+    if (isFaderOutboundActive()) {
+        return;
+    }
     const uint32_t now = millis();
+    if (!NoteEditFaderMotorTiming::shouldFlushSelectDependentMotorSync(
+            now, lastMotorSyncDriverInputMs_, pendingSelectDriverMotorSyncValid_)) {
+        return;
+    }
+
+    const Fader1SelectTarget target = pendingSelectMotorTarget_;
+    const NoteEditFaderOutbound::PlanFlags plan = pendingSelectMotorPlan_;
+    const EditorSelection priorSelection = pendingSelectMotorPriorSelection_;
+    clearPendingSelectDependentMotorSync();
+
+    if (!plan.coarse && !plan.fine && !plan.noteValue) {
+        return;
+    }
+
     const uint32_t sinceSyncMs =
         lastSelectMotorSyncMs_ > 0 ? now - lastSelectMotorSyncMs_ : 0U;
     const int16_t priorMotorSyncF1Pitch = lastMotorSyncF1Pitch_;
@@ -586,19 +704,42 @@ void NoteEditManager::syncMotorsForDisplaySelection(Track& track,
         midiFaderManager.getFaderState(MidiMapping::FaderType::FADER_COARSE).lastSentPitchbend;
     const int priorF4Cc = static_cast<int>(
         midiFaderManager.getFaderState(MidiMapping::FaderType::FADER_NOTE_VALUE).lastSentCC);
-    const PlannedMotorSyncValues planned =
-        plannedMotorSyncValuesFromSelectTarget(track, target);
+    const PlannedMotorSyncValues planned = plannedMotorSyncValuesFromSelectTarget(track, target);
     const bool motorValueChanged =
         (plan.coarse && planned.f2Pb != priorF2Pb) ||
         (plan.noteValue && planned.f4Cc >= 0 && planned.f4Cc != priorF4Cc);
-
     const char* reason = (!plan.coarse && plan.noteValue) ? "display_pitch_changed_same_bracket"
                                                           : "display_note_changed";
 
-    logSelectMotorSyncDecision(noteIdx, -1, true, reason, lastUserSelectFaderValue,
+    logSelectMotorSyncDecision(target.noteIdx, -1, true, reason, lastUserSelectFaderValue,
                                priorMotorSyncF1Pitch, sinceSyncMs, planned.f2Pb, planned.f4Cc,
                                priorF2Pb, priorF4Cc, motorValueChanged);
+    (void)priorSelection;
     syncMotorsFromSelectTarget(track, target, plan);
+}
+
+void NoteEditManager::processPendingGeometryDriverMotorSync(Track& track) {
+    if (!pendingGeometryDriverMotorSyncValid_ || suppressSelectDependentMotorSync_) {
+        return;
+    }
+    if (isFaderOutboundActive()) {
+        return;
+    }
+    const uint32_t now = millis();
+    if (!NoteEditFaderMotorTiming::shouldFlushSelectDependentMotorSync(
+            now, lastMotorSyncDriverInputMs_, pendingGeometryDriverMotorSyncValid_)) {
+        return;
+    }
+
+    clearPendingGeometryDriverMotorSync();
+    sendFader1MotorTimedBurst(track);
+}
+
+void NoteEditManager::syncMotorsForDisplaySelection(Track& track,
+                                                    const EditorSelection& priorSelection,
+                                                    const EditorSelection& nextSelection) {
+    scheduleSelectDependentMotorSync(track, priorSelection, nextSelection);
+    processPendingSelectDependentMotorSync(track);
 }
 
 void NoteEditManager::armSelectDependentSettle(uint32_t sentAt) {
@@ -669,6 +810,8 @@ void NoteEditManager::cancelActiveFaderOutbound() {
     outboundStep_ = NoteEditFaderOutbound::Step::Idle;
     outboundPlan_ = {};
     outboundStepStartedMs_ = 0;
+    clearPendingSelectDependentMotorSync();
+    clearPendingGeometryDriverMotorSync();
     midiHandler.setDroidMotorOutboundPriority(false);
 }
 
@@ -696,6 +839,8 @@ void NoteEditManager::requestFaderOutbound(NoteEditFaderOutbound::Trigger trigge
 
     if (isFaderOutboundActive()) {
         if (NoteEditFaderOutbound::shouldPreemptActivePipeline(trigger)) {
+            clearPendingSelectDependentMotorSync();
+            clearPendingGeometryDriverMotorSync();
             cancelActiveFaderOutbound();
         } else if (trigger == NoteEditFaderOutbound::Trigger::Fader1BracketOnly) {
             Track& track = trackManager.getSelectedTrack();
@@ -767,6 +912,38 @@ void NoteEditManager::sendFader1BracketFeedback(Track& track, bool updateNavStat
     }
 }
 
+bool NoteEditManager::sendFader1MotorTimedBurst(Track& track) {
+    if (editManager.getEditSessionType() != EditSessionType::Note) {
+        return false;
+    }
+
+    int16_t targetPitchbend = 0;
+    if (!EditSelectNoteState::resolveTargetPitchbend(editManager, track, targetPitchbend)) {
+        return false;
+    }
+
+    midiHandler.setDroidMotorOutboundPriority(true);
+    NoteEditFaderMotorTiming::runMotorFaderBurst(
+        [&]() { midiHandler.sendPitchBend(PITCHBEND_SELECT_CHANNEL, targetPitchbend); },
+        [&]() { midiHandler.sendNoteOn(PITCHBEND_SELECT_CHANNEL, 0, 127); },
+        [&]() { midiHandler.sendNoteOff(PITCHBEND_SELECT_CHANNEL, 0, 0); });
+
+    const uint32_t sentAt = millis();
+    lastSelectnoteSentTime = sentAt;
+    auto& selectState = midiFaderManager.getFaderStateMutable(MidiMapping::FaderType::FADER_SELECT);
+    selectState.lastSentPitchbend = targetPitchbend;
+    selectState.lastSentTime = sentAt;
+    armSelectFaderFeedbackIgnore(sentAt, FEEDBACK_IGNORE_PERIOD);
+    logOutboundStep("SEND_F1");
+#if defined(SESSION_CAPTURE)
+    logger.info("#DBG geometry_motor_sync sent=1 bracket_tick=%lu pb=%d mode=GEOMETRY_SYNC sequence=timed_burst",
+                static_cast<unsigned long>(editManager.getBracketTick()), targetPitchbend);
+#endif
+    midiHandler.setDroidMotorOutboundPriority(false);
+    (void)track;
+    return true;
+}
+
 void NoteEditManager::completeOutboundPipelineAtDone(Track& track, uint32_t now) {
     (void)now;
     const NoteEditFaderOutbound::Trigger completedTrigger = activeOutboundTrigger_;
@@ -832,43 +1009,36 @@ void NoteEditManager::processFaderOutbound() {
             outboundStep_ = NoteEditFaderOutbound::advanceOutboundStep(outboundStep_, outboundPlan_);
             outboundStepStartedMs_ = now;
             return;
-        case NoteEditFaderOutbound::Step::SendCoarse:
-            if (sendCoarseFaderTimedUpdate(track)) {
-                armCoarseFaderFeedbackIgnore(now);
-                armSelectDependentSettle(now);
-                logOutboundStep("SEND_F2");
-                outboundStep_ =
-                    NoteEditFaderOutbound::advanceOutboundStep(outboundStep_, outboundPlan_);
+        case NoteEditFaderOutbound::Step::SendCoarse: {
+            const bool sent = sendDependentFadersParallelTimedBurst(track, outboundPlan_, nullptr);
+            if (sent) {
+                const uint32_t sentAt = millis();
+                if (outboundPlan_.coarse) {
+                    armCoarseFaderFeedbackIgnore(sentAt);
+                }
+                if (outboundPlan_.fine || outboundPlan_.noteValue) {
+                    armChannel15CcFaderFeedbackIgnore(sentAt);
+                }
+                if (outboundPlan_.noteValue) {
+                    armChannel15FaderFeedbackIgnore(sentAt);
+                }
+                armSelectDependentSettle(sentAt);
+                logOutboundStep("SEND_F2_F3_F4");
             } else {
                 logOutboundStep("SKIP_SEND");
-                outboundStep_ = NoteEditFaderOutbound::advanceOutboundStep(outboundStep_, outboundPlan_);
             }
+            outboundStep_ = NoteEditFaderOutbound::Step::Done;
             outboundStepStartedMs_ = now;
             return;
+        }
         case NoteEditFaderOutbound::Step::SendFine:
-            if (sendFineFaderTimedUpdate(track)) {
-                armChannel15CcFaderFeedbackIgnore(now);
-                armSelectDependentSettle(now);
-                logOutboundStep("SEND_F3");
-                outboundStep_ =
-                    NoteEditFaderOutbound::advanceOutboundStep(outboundStep_, outboundPlan_);
-            } else {
-                logOutboundStep("SKIP_SEND");
-                outboundStep_ = NoteEditFaderOutbound::advanceOutboundStep(outboundStep_, outboundPlan_);
-            }
+            logOutboundStep("SKIP_SEND");
+            outboundStep_ = NoteEditFaderOutbound::Step::Done;
             outboundStepStartedMs_ = now;
             return;
         case NoteEditFaderOutbound::Step::SendNoteValue:
-            if (sendNoteValueFaderTimedUpdate(track)) {
-                armChannel15CcFaderFeedbackIgnore(now);
-                armSelectDependentSettle(now);
-                logOutboundStep("SEND_F4");
-                armChannel15FaderFeedbackIgnore(now);
-                outboundStep_ = NoteEditFaderOutbound::Step::Done;
-            } else {
-                logOutboundStep("SKIP_SEND");
-                outboundStep_ = NoteEditFaderOutbound::Step::Done;
-            }
+            logOutboundStep("SKIP_SEND");
+            outboundStep_ = NoteEditFaderOutbound::Step::Done;
             outboundStepStartedMs_ = now;
             return;
         default:
@@ -916,6 +1086,8 @@ void NoteEditManager::enableStartEditing() {
 
 void NoteEditManager::prepareNoteEditSessionOpen() {
     suppressSelectDependentMotorSync_ = true;
+    clearPendingSelectDependentMotorSync();
+    clearPendingGeometryDriverMotorSync();
     startEditingEnabled = false;
 }
 
@@ -999,6 +1171,12 @@ bool NoteEditManager::shouldIgnoreFaderInput(MidiMapping::FaderType faderType, i
                        pitchbendValue, state.lastSentPitchbend);
             return true;
         }
+        if (selectFaderFeedbackIgnoreUntilMs_ != 0 && now < selectFaderFeedbackIgnoreUntilMs_) {
+            logger.log(CAT_MIDI, LOG_DEBUG,
+                       "Ignoring fader 1 pitchbend %d (feedback ignore window until %lu)",
+                       pitchbendValue, selectFaderFeedbackIgnoreUntilMs_);
+            return true;
+        }
         return false;
     }
     
@@ -1060,17 +1238,12 @@ bool NoteEditManager::shouldIgnoreFaderInput(MidiMapping::FaderType faderType, i
 
 void NoteEditManager::scheduleOtherFaderUpdates(MidiMapping::FaderType driverFader) {
     Track& track = trackManager.getSelectedTrack();
-    const uint32_t now = millis();
 
     switch (driverFader) {
         case MidiMapping::FaderType::FADER_COARSE:
         case MidiMapping::FaderType::FADER_FINE:
         case MidiMapping::FaderType::FADER_NOTE_VALUE:
-            if (now - lastGeometryFader1BracketSentMs_ < GEOMETRY_F1_BRACKET_MIN_GAP_MS) {
-                return;
-            }
-            lastGeometryFader1BracketSentMs_ = now;
-            sendFader1BracketFeedback(track, false);
+            syncSelectionFromGeometryEdit(track);
             break;
         case MidiMapping::FaderType::FADER_SELECT:
             sendFader1BracketFeedback(track, true);
@@ -1580,30 +1753,127 @@ void NoteEditManager::syncMotorsFromSelectTarget(
 
     midiHandler.setDroidMotorOutboundPriority(true);
 #if defined(SESSION_CAPTURE)
-    logger.info("#DBG select_motor_sync mode=SELECT_SYNC sequence=timed_burst");
+    logger.info("#DBG select_motor_sync mode=SELECT_SYNC sequence=parallel_timed_burst");
 #endif
 
-    if (plan.coarse) {
-        sendCoarseMotorTimedUpdateFromSelectTarget(track, target);
-    }
-    if (plan.fine) {
-        sendFineMotorTimedUpdateFromSelectTarget(track, target);
-    }
-    if (plan.noteValue) {
-        sendNoteValueMotorTimedUpdateFromSelectTarget(track, target);
+    if (sendDependentFadersParallelTimedBurst(track, plan, &target)) {
+        const uint32_t sentAt = millis();
+        lastSelectMotorSyncMs_ = sentAt;
+        lastMotorSyncF1Pitch_ = lastUserSelectFaderValue;
+        if (plan.coarse) {
+            armCoarseFaderFeedbackIgnore(sentAt);
+        }
+        if (plan.fine || plan.noteValue) {
+            armChannel15CcFaderFeedbackIgnore(sentAt);
+        }
+        armSelectDependentSettle(sentAt);
     }
 
     midiHandler.setDroidMotorOutboundPriority(false);
-    const uint32_t sentAt = millis();
-    lastSelectMotorSyncMs_ = sentAt;
-    lastMotorSyncF1Pitch_ = lastUserSelectFaderValue;
+}
+
+bool NoteEditManager::sendDependentFadersParallelTimedBurst(
+    Track& track, const NoteEditFaderOutbound::PlanFlags& plan,
+    const Fader1SelectTarget* selectTarget) {
+    bool sentCoarse = false;
+    bool sentFine = false;
+    bool sentNoteValue = false;
+
     if (plan.coarse) {
-        armCoarseFaderFeedbackIgnore(sentAt);
+        sentCoarse =
+            selectTarget != nullptr
+                ? sendCoarseMotorPositionFromSelectTarget(track, *selectTarget)
+                : sendCoarseFaderPosition(track);
     }
-    if (plan.fine || plan.noteValue) {
-        armChannel15CcFaderFeedbackIgnore(sentAt);
+    if (plan.fine) {
+        sentFine = selectTarget != nullptr ? sendFineMotorPositionFromSelectTarget(track, *selectTarget)
+                                           : sendFineFaderPosition(track);
     }
-    armSelectDependentSettle(sentAt);
+    if (plan.noteValue) {
+        sentNoteValue = selectTarget != nullptr
+                            ? sendNoteValueMotorPositionFromSelectTarget(track, *selectTarget)
+                            : sendNoteValueFaderPosition(track);
+    }
+
+    if (!sentCoarse && !sentFine && !sentNoteValue) {
+        return false;
+    }
+
+    const int16_t coarsePitchbend =
+        midiFaderManager.getFaderState(MidiMapping::FaderType::FADER_COARSE).lastSentPitchbend;
+    const uint8_t fineCcValue =
+        midiFaderManager.getFaderState(MidiMapping::FaderType::FADER_FINE).lastSentCC;
+    const uint8_t noteValueCc =
+        midiFaderManager.getFaderState(MidiMapping::FaderType::FADER_NOTE_VALUE).lastSentCC;
+
+    struct DependentMotorBurstSlot {
+        NoteEditManager* owner = nullptr;
+        bool enabled = false;
+        int16_t coarsePitchbend = 0;
+        uint8_t fineCcValue = 0;
+        uint8_t noteValueCc = 0;
+        bool isCoarse = false;
+        bool isFine = false;
+        bool isNoteValue = false;
+        void sendPosition() {
+            if (!enabled) {
+                return;
+            }
+            if (isCoarse) {
+                midiHandler.sendPitchBend(PITCHBEND_START_CHANNEL, coarsePitchbend);
+            } else if (isFine) {
+                midiHandler.sendControlChange(FINE_CC_CHANNEL, FINE_CC_NUMBER, fineCcValue);
+            } else if (isNoteValue) {
+                midiHandler.sendControlChange(NOTE_VALUE_CC_CHANNEL, NOTE_VALUE_CC_NUMBER,
+                                              noteValueCc);
+            }
+        }
+        void sendNoteOn() {
+            if (!enabled || owner == nullptr) {
+                return;
+            }
+            if (isCoarse) {
+                owner->sendCoarseFaderMotorNoteOn();
+            } else if (isFine) {
+                owner->sendFineFaderMotorNoteOn();
+            } else if (isNoteValue) {
+                owner->sendNoteValueFaderMotorNoteOn();
+            }
+        }
+        void sendNoteOff() {
+            if (!enabled || owner == nullptr) {
+                return;
+            }
+            if (isCoarse) {
+                owner->sendCoarseFaderMotorNoteOff();
+            } else if (isFine) {
+                owner->sendFineFaderMotorNoteOff();
+            } else if (isNoteValue) {
+                owner->sendNoteValueFaderMotorNoteOff();
+            }
+        }
+    };
+
+    DependentMotorBurstSlot coarseSlot;
+    coarseSlot.owner = this;
+    coarseSlot.enabled = plan.coarse && sentCoarse;
+    coarseSlot.isCoarse = true;
+    coarseSlot.coarsePitchbend = coarsePitchbend;
+
+    DependentMotorBurstSlot fineSlot;
+    fineSlot.owner = this;
+    fineSlot.enabled = plan.fine && sentFine;
+    fineSlot.isFine = true;
+    fineSlot.fineCcValue = fineCcValue;
+
+    DependentMotorBurstSlot noteValueSlot;
+    noteValueSlot.owner = this;
+    noteValueSlot.enabled = plan.noteValue && sentNoteValue;
+    noteValueSlot.isNoteValue = true;
+    noteValueSlot.noteValueCc = noteValueCc;
+
+    NoteEditFaderMotorTiming::runParallelMotorFaderBursts(coarseSlot, fineSlot, noteValueSlot);
+    return true;
 }
 
 bool NoteEditManager::sendCoarseMotorPositionFromSelectTarget(Track& track,
@@ -1713,12 +1983,19 @@ void NoteEditManager::handleSelectFaderInput(int16_t pitchValue, Track& track) {
         return;
     }
 
+    const int slotIndex = selectNavSlotIndexForPitchbend(track, pitchValue);
+    if (isGeometryEditKind(editManager.getNoteEditSessionState().kind)) {
+        logSelectSlot(slotIndex, pitchValue, true, "geometry_edit_active");
+        return;
+    }
+
     const uint32_t now = millis();
 
+    clearPendingGeometryDriverMotorSync();
     lastUserSelectFaderValue = pitchValue;
     lastSelectFaderTime = now;
+    lastMotorSyncDriverInputMs_ = now;
 
-    const int slotIndex = selectNavSlotIndexForPitchbend(track, pitchValue);
     logSelectSlot(slotIndex, pitchValue, false);
 
     const Fader1SelectTarget target = resolveFader1SelectTarget(track, pitchValue);
@@ -1865,6 +2142,8 @@ void NoteEditManager::handleCoarseFaderInput(int16_t pitchValue, Track& track) {
         // Update tracking values
         lastUserCoarseFaderValue = pitchValue;
         lastCoarseFaderTime = now;
+        lastMotorSyncDriverInputMs_ = now;
+        clearPendingSelectDependentMotorSync();
         
         logger.log(CAT_MIDI, LOG_DEBUG, "Coarse fader: significant movement (delta=%d, time=%lu ms) - %s mode", 
                    movementDelta, timeSinceLastMovement, lengthEditingMode ? "LENGTH EDIT" : "POSITION EDIT");
@@ -2072,7 +2351,9 @@ void NoteEditManager::handleFineFaderInput(uint8_t ccValue, Track& track) {
         // Set up driver tracking for fine fader
         this->currentDriverFader = MidiMapping::FaderType::FADER_FINE;
         this->lastDriverFaderTime = millis();
-        
+        lastMotorSyncDriverInputMs_ = millis();
+        clearPendingSelectDependentMotorSync();
+
         scheduleOtherFaderUpdates(MidiMapping::FaderType::FADER_FINE);
     }
 }
@@ -2164,7 +2445,6 @@ void NoteEditManager::handleNoteValueFaderInput(uint8_t ccValue, Track& track) {
 
         if (newSelectedIdx >= 0) {
             editManager.setSelectedNoteIdx(newSelectedIdx);
-            editManager.setBracketTick(noteStart);
             logger.log(CAT_MIDI, LOG_DEBUG,
                        "Updated selectedNoteIdx: %d -> %d (note with new value)",
                        selectedIdx, newSelectedIdx);
@@ -2174,11 +2454,11 @@ void NoteEditManager::handleNoteValueFaderInput(uint8_t ccValue, Track& track) {
                        "Resynced selection after pitch (merged note idx not found)");
         }
 
-        // Mark editing activity to prevent note selection changes
         refreshEditingActivity();
-        // Set up driver tracking for note value fader
         this->currentDriverFader = MidiMapping::FaderType::FADER_NOTE_VALUE;
         this->lastDriverFaderTime = millis();
+        lastMotorSyncDriverInputMs_ = millis();
+        clearPendingSelectDependentMotorSync();
         scheduleOtherFaderUpdates(MidiMapping::FaderType::FADER_NOTE_VALUE);
     }
 }

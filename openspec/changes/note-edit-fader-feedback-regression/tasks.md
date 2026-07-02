@@ -337,7 +337,7 @@ Option D timing levers (quiet gate, stale-echo relax, dirty flags) replaced by s
   - §7.12.10 `drainDependentFaderOutboundUntilDone` — dead code (zero call sites); remove in Phase 12 or 7.18 follow-up
   - §7.12.13 `duplicate=1` diagnostic — not in firmware; drop or implement
   - §7.12.15 `prior_slot` logging — always `-1`; wire or drop
-  - §9.1 F1 ignore during F2 outbound — not wired at `SendCoarse` (only coarse ignore); revisit after 7.18.5 if echo persists
+  - §9.1 F1 ignore during F2 outbound — `selectFaderFeedbackIgnoreUntilMs_` wired on inbound F1 for geometry motor echo (§7.24.2); `SendCoarse` arm unchanged
 
 #### 7.18.8 Manual capture acceptance — select move + ch13 triple-fader proof
 
@@ -448,6 +448,32 @@ Per `apply=1` timestamp, confirm within 300 ms: `MO,224,14` + `MO,176,15,2` + `M
 - [x] 7.22.4 Preset `note_edit_select_dependent_faders` in `scripts/hitl/registry.py`; catalog row in `HITL_TEST_SCENARIOS.md`
 - [ ] 7.22.5 Hardware baseline capture on current firmware; record pass/fail metrics before Phase 2 value fix
 
+### 7.23 Select-dependent motor debounce + parallel burst
+
+**Plan:** fader parallel debounce (600 ms F1 idle, parallel F2/F3/F4 burst)
+
+- [x] 7.23.1 `scheduleSelectDependentMotorSync` + `processPendingSelectDependentMotorSync` in `NoteEditManager::update()`
+- [x] 7.23.2 `applySelectNav` → schedule (not synchronous `syncMotorsForDisplaySelection`)
+- [x] 7.23.3 `NoteEditFaderMotorTiming::runParallelMotorFaderBursts` + `syncMotorsFromSelectTarget` refactor
+- [x] 7.23.4 SessionOpen / `NoteSelectWithFader1` — single `SendCoarse` parallel dependent step → `Done`
+- [x] 7.23.5 Native + host verifier updates (cluster/dwell semantics, MO window ~400 ms)
+- [ ] 7.23.6 HITL capture: `note_edit_select_dependent_faders` — one motor cluster per dwell stop; display tracks during sweep
+
+### 7.24 Geometry F1 selection guard (2026-07-02)
+
+**Evidence:** [`captures/session_20260702_183747.log`](../../../captures/session_20260702_183747.log) — `geometry_motor_sync sent=1` → F1 echo 11 ms later (`pb` diff 198 > 100) → `select_apply apply=1` → `Exited EditStartNoteState` → wrong note selected.  
+**Plan:** [`docs/plans/note_edit_geometry_f1_selection_guard_bugfix.md`](../../../docs/plans/note_edit_geometry_f1_selection_guard_bugfix.md)
+
+- [x] 7.24.1 Block `handleSelectFaderInput` when `isGeometryEditKind`; log `geometry_edit_active`
+- [x] 7.24.2 `shouldIgnoreFaderInput` FADER_SELECT — check `selectFaderFeedbackIgnoreUntilMs_` after value-echo (geometry motor landing off-threshold)
+- [x] 7.24.3 `EditManager::syncGeometrySelectionToUi`; `applySelectionFromGeometryEdit` uses it (preserve `selectedNoteIdx` + edit state)
+- [x] 7.24.4 Native: `test_geometry_edit_kind_blocks_f1_select_apply_policy`; `pio test -e native` 54 pass (`test_note_edit_fader_feedback`)
+- [x] 7.24.5 Host serial: `verify_geometry_fader1_no_select_apply_after_flush` + capture-shaped tests in `scripts/test_note_edit_geometry_fader1_serial_verify.py`
+- [x] 7.24.6 Docs: geometry F1 inbound guard in [`DROID_MOTORFADER_PITCHBEND.md`](../../../docs/Guides/DROID_MOTORFADER_PITCHBEND.md); guides index + [`FADER_STATE_SYSTEM.md`](../../../docs/Guides/FADER_STATE_SYSTEM.md) § NOTE_EDIT motor feedback, [`Faders.md`](../../../docs/Guides/control-surface/Faders.md), [`HITL_TEST_SCENARIOS.md`](../../../docs/Guides/HITL_TEST_SCENARIOS.md)
+- [x] 7.24.7 Manual HITL — geometry move + F1 motor follow; moving note stays selected; kind stays Move (user PASS 2026-07-02)
+
+**Note:** §7.13.1 removed driver-time geometry block for dwell-gap; §7.24 adds **kind-scoped** guard (Move/Length/Pitch/Add/Delete only). §9.1 inbound gap partially closed for geometry F1 motor path (field was armed but unused on F1 inbound).
+
 ---
 
 ## Phase 8 — F2 loop-relative tick (RC11)
@@ -466,7 +492,7 @@ Per `apply=1` timestamp, confirm within 300 ms: `MO,224,14` + `MO,176,15,2` + `M
 
 **Design:** [design.md](./design.md) D18
 
-- [x] 9.1 Arm `selectFaderFeedbackIgnoreUntilMs_` at `processFaderOutbound` `SendCoarse` through `TriggerCoarse` + post-`DONE` tail
+- [x] 9.1 Arm `selectFaderFeedbackIgnoreUntilMs_` at `processFaderOutbound` `SendCoarse` through `TriggerCoarse` + post-`DONE` tail; inbound F1 check on geometry motor path (§7.24.2)
 - [ ] 9.2 Capture: no spurious `#DBG select_slot` during `SEND_F2` / `TRIGGER_F2` window
 
 ---

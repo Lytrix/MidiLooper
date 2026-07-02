@@ -1,5 +1,7 @@
 # Fader State System Documentation
 
+> **NOTE_EDIT motorized faders (2026):** Authoritative behavior for DROID motor sync, split select/geometry queues, and F1 inbound guards is in [**DROID_MOTORFADER_PITCHBEND.md**](DROID_MOTORFADER_PITCHBEND.md). Bugfix handoff: [`note_edit_geometry_f1_selection_guard_bugfix.md`](../plans/note_edit_geometry_f1_selection_guard_bugfix.md). The V2 sections below describe the generic `MidiFaderProcessor` pipeline; **timing and feedback rules for NOTE_EDIT** are owned by `NoteEditManager` (see § NOTE_EDIT motor feedback below).
+
 ## Overview
 
 The Fader State System is a modular, configuration-driven architecture that manages all hardware fader interactions in the MIDI looper. The V2 system separates concerns into specialized components while maintaining smooth, predictable behavior through intelligent state management and feedback prevention.
@@ -158,6 +160,41 @@ void handleSelectFaderInput(int16_t pitchbendValue, Track& track) {
 }
 ```
 
+## NOTE_EDIT motor feedback (`NoteEditManager`, 2026)
+
+During **NOTE_EDIT**, fader inbound/outbound for motorized DROID faders is **not** the generic `MidiFaderProcessor::shouldIgnoreFaderInput` blanket ignore. `NoteEditManager` owns feedback prevention and motor sync.
+
+### Split motor-sync queues
+
+| Direction | Driver | Pending queue | Flush trigger |
+|-----------|--------|---------------|---------------|
+| F1 → F2/F3/F4 | Select fader (user note select) | `pendingSelectDriverMotorSync_` | **300 ms** F1 idle (`kSelectFaderMotorIdleMs`) |
+| F2/F3/F4 → F1 | Geometry faders (move/length/pitch) | `pendingGeometryDriverMotorSync_` | **300 ms** geometry-fader idle (`lastMotorSyncDriverInputMs_`) |
+
+Queues **do not merge**. Input on one driver **cancels** the opposite pending queue. Flush uses `NoteEditFaderMotorTiming::runParallelMotorFaderBursts` (F1→dependents) or `sendFader1MotorTimedBurst` (geometry→F1).
+
+### Live F1 select (Select kind)
+
+- `handleSelectFaderInput` → `applyNoteSelectFromFader1Pitchbend` → `applySelectNav(..., requestFaderSync=false)` → schedules **select-dependent** motor sync (F2+F3+F4), not full outbound pipeline restart.
+- Motor sync fires on **`EditorSelection.primaryNote`** / `NoteId` change, not list-index-only shifts.
+
+### Geometry edit kinds (Move / Length / Pitch / Add / Delete)
+
+- `syncSelectionFromGeometryEdit` updates `EditorSelection` from **moving-note `NoteId`** (focus when active).
+- `applySelectionFromGeometryEdit` → `syncGeometrySelectionToUi` (bracket + display refresh only; **does not** recompute `selectedNoteIdx` or exit `EditStartNoteState`).
+- F1 bracket motor is **outbound-only**: `handleSelectFaderInput` returns early (`geometry_edit_active`) while `isGeometryEditKind` is active. User F1 note select resumes in **Select** kind (encoder cycle).
+
+### F1 feedback ignore
+
+| Mechanism | When |
+|-----------|------|
+| Value echo | `NoteEditFaderSelectSync::shouldIgnoreSelectFaderEcho` — inbound within **1500 ms** of last send and delta ≤ `SELECT_MOVEMENT_THRESHOLD` (100) |
+| Armed window | `selectFaderFeedbackIgnoreUntilMs_` after `sendFader1BracketFeedback` / `sendFader1MotorTimedBurst` — inbound F1 ignored until window expires (catches motor landing off-threshold) |
+
+`NoteEditManager::FEEDBACK_IGNORE_PERIOD` = **1500 ms** (not the 100 ms examples elsewhere in this file).
+
+**Capture analysis:** [`DROID_MOTORFADER_PITCHBEND.md`](DROID_MOTORFADER_PITCHBEND.md), host verifier `scripts/test_note_edit_geometry_fader1_serial_verify.py`.
+
 ## Channel Architecture (Enhanced)
 
 ### Smart Channel Management
@@ -191,8 +228,11 @@ struct FaderConfig {
 4. **Channel-Based**: Coordinate shared channel faders
 
 ### Optimized Ignore Periods
+
+> **Superseded for NOTE_EDIT:** see § NOTE_EDIT motor feedback above. `NoteEditManager` uses **1500 ms** `FEEDBACK_IGNORE_PERIOD` plus value-echo and `selectFaderFeedbackIgnoreUntilMs_`. The 100 ms example below is **not** current NOTE_EDIT behavior.
+
 ```cpp
-// Reduced from 1500ms to 100ms for better responsiveness
+// Generic MidiFaderProcessor examples — do not use for NOTE_EDIT motor sync
 static constexpr uint32_t FEEDBACK_IGNORE_PERIOD = 100;
 ```
 

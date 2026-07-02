@@ -38,14 +38,16 @@ The preset runs **`base`** then **`note_edit_select_dependent_faders`** in one `
 
 **Reuse seed:** `--scenarios note_edit_select_dependent_faders --seed-serial-log captures/<base>.log` after a passing base run.
 
-## Verifier gates (per `apply=1 reason=note_changed`)
+## Verifier gates (per dwell cluster — last `apply=1 reason=note_changed` in cluster)
 
 Composes (no edits to) `note_edit_select_triple_motor_ack`, `fader_motor_echo_correlation`.
 
+During an F1 sweep many `note_changed` applies may occur; motors flush once after **600 ms** F1 idle. Scenario `dwell-ms=800` allows idle + burst.
+
 | Gate | Threshold |
 |------|-----------|
-| Timely | `select_motor_sync sent=1` ≤ **80 ms**; F2/F3/F4 MO ≤ **300 ms** |
-| Consistent | Full F2+F3+F4 MO + ch13 acks 83/85/87; no motor on `unchanged_note` |
+| Timely | `select_motor_sync sent=1` **600–950 ms** after cluster end; F2/F3/F4 MO ≤ **400 ms** after sync |
+| Consistent | One full F2+F3+F4 MO + ch13 acks 83/85/87 per dwell cluster; no motor on `unchanged_note` |
 | Values | MO F2 pb / F4 cc match `#DBG outbound_ctx` or `select_motor_sync` plan |
 | RC11 signal | `pb != expected_pb_rel` on `outbound_ctx f2` reported (non-fatal count) |
 | Perceptual | Optional `--min-perceptual-f2/f4` (default 0 for baseline capture) |

@@ -162,6 +162,7 @@ Always load first:
 - [Guides/CODE_STRUCTURE.md](Guides/CODE_STRUCTURE.md)
 - [Guides/MIDI_CONFIG_GUIDE.md](Guides/MIDI_CONFIG_GUIDE.md)
 - Relevant control-surface row guide under [Guides/control-surface/](Guides/control-surface/)
+- NOTE_EDIT motorized faders: [Guides/DROID_MOTORFADER_PITCHBEND.md](Guides/DROID_MOTORFADER_PITCHBEND.md)
 
 **Optional**
 

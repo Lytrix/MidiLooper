@@ -203,8 +203,6 @@ void test_outbound_pipeline_note_only_dependent_plan() {
         NoteEditFaderOutbound::Step::Idle, plan);
     TEST_ASSERT_EQUAL(NoteEditFaderOutbound::Step::SendCoarse, step);
     step = NoteEditFaderOutbound::advanceOutboundStep(step, plan);
-    TEST_ASSERT_EQUAL(NoteEditFaderOutbound::Step::SendNoteValue, step);
-    step = NoteEditFaderOutbound::advanceOutboundStep(step, plan);
     TEST_ASSERT_EQUAL(NoteEditFaderOutbound::Step::Done, step);
 }
 
@@ -338,7 +336,7 @@ void test_outbound_pipeline_advances_through_session_open() {
     step = NoteEditFaderOutbound::advanceOutboundStep(step, plan);
     TEST_ASSERT_EQUAL(NoteEditFaderOutbound::Step::SendCoarse, step);
     step = NoteEditFaderOutbound::advanceOutboundStep(step, plan);
-    TEST_ASSERT_EQUAL(NoteEditFaderOutbound::Step::SendFine, step);
+    TEST_ASSERT_EQUAL(NoteEditFaderOutbound::Step::Done, step);
 }
 
 void test_outbound_pipeline_advances_through_note_select_dependent() {
@@ -348,9 +346,15 @@ void test_outbound_pipeline_advances_through_note_select_dependent() {
         NoteEditFaderOutbound::Step::Idle, plan);
     TEST_ASSERT_EQUAL(NoteEditFaderOutbound::Step::SendCoarse, step);
     step = NoteEditFaderOutbound::advanceOutboundStep(step, plan);
-    TEST_ASSERT_EQUAL(NoteEditFaderOutbound::Step::SendFine, step);
-    step = NoteEditFaderOutbound::advanceOutboundStep(step, plan);
-    TEST_ASSERT_EQUAL(NoteEditFaderOutbound::Step::SendNoteValue, step);
+    TEST_ASSERT_EQUAL(NoteEditFaderOutbound::Step::Done, step);
+}
+
+void test_outbound_pipeline_length_mode_enter_parallel_dependent_step() {
+    const auto plan =
+        NoteEditFaderOutbound::planForTrigger(NoteEditFaderOutbound::Trigger::LengthModeEnter);
+    NoteEditFaderOutbound::Step step = NoteEditFaderOutbound::nextEnabledStep(
+        NoteEditFaderOutbound::Step::Idle, plan);
+    TEST_ASSERT_EQUAL(NoteEditFaderOutbound::Step::SendCoarse, step);
     step = NoteEditFaderOutbound::advanceOutboundStep(step, plan);
     TEST_ASSERT_EQUAL(NoteEditFaderOutbound::Step::Done, step);
 }
@@ -372,6 +376,68 @@ void test_motor_fader_burst_invokes_position_and_notegate_callbacks() {
     TEST_ASSERT_EQUAL(3, positionCount);
     TEST_ASSERT_EQUAL(1, noteOnCount);
     TEST_ASSERT_EQUAL(1, noteOffCount);
+}
+
+void test_select_fader_motor_idle_ms_constant() {
+    TEST_ASSERT_EQUAL_UINT32(300, NoteEditFaderMotorTiming::kSelectFaderMotorIdleMs);
+}
+
+void test_should_flush_select_dependent_motor_sync_after_idle() {
+    TEST_ASSERT_FALSE(NoteEditFaderMotorTiming::shouldFlushSelectDependentMotorSync(
+        1000, 300, false));
+    TEST_ASSERT_FALSE(NoteEditFaderMotorTiming::shouldFlushSelectDependentMotorSync(
+        599, 300, true));
+    TEST_ASSERT_TRUE(NoteEditFaderMotorTiming::shouldFlushSelectDependentMotorSync(
+        600, 300, true));
+    TEST_ASSERT_TRUE(NoteEditFaderMotorTiming::shouldFlushSelectDependentMotorSync(
+        500, 0, true));
+}
+
+struct ParallelMotorTestSlot {
+    bool enabled = false;
+    int positionCount = 0;
+    int noteOnCount = 0;
+    int noteOffCount = 0;
+    int slotId = 0;
+    void sendPosition() {
+        if (enabled) {
+            ++positionCount;
+        }
+    }
+    void sendNoteOn() {
+        if (enabled) {
+            ++noteOnCount;
+        }
+    }
+    void sendNoteOff() {
+        if (enabled) {
+            ++noteOffCount;
+        }
+    }
+};
+
+void test_parallel_motor_fader_burst_interleaves_enabled_slots() {
+    ParallelMotorTestSlot slot0;
+    slot0.enabled = true;
+    slot0.slotId = 2;
+    ParallelMotorTestSlot slot1;
+    slot1.enabled = true;
+    slot1.slotId = 3;
+    ParallelMotorTestSlot slot2;
+    slot2.enabled = true;
+    slot2.slotId = 4;
+
+    NoteEditFaderMotorTiming::runParallelMotorFaderBursts(slot0, slot1, slot2);
+
+    TEST_ASSERT_EQUAL(3, slot0.positionCount);
+    TEST_ASSERT_EQUAL(3, slot1.positionCount);
+    TEST_ASSERT_EQUAL(3, slot2.positionCount);
+    TEST_ASSERT_EQUAL(1, slot0.noteOnCount);
+    TEST_ASSERT_EQUAL(1, slot1.noteOnCount);
+    TEST_ASSERT_EQUAL(1, slot2.noteOnCount);
+    TEST_ASSERT_EQUAL(1, slot0.noteOffCount);
+    TEST_ASSERT_EQUAL(1, slot1.noteOffCount);
+    TEST_ASSERT_EQUAL(1, slot2.noteOffCount);
 }
 
 void test_ch13_ack_correlation_window_ms_for_capture_logs() {
@@ -515,6 +581,53 @@ void test_same_bracket_sibling_plan_includes_all_motors() {
     TEST_ASSERT_TRUE(sibling.noteValue);
 }
 
+void test_geometry_driver_plan_refreshes_fader1_on_bracket_change() {
+    const auto plan = NoteEditFaderOutbound::planForGeometryDriverMotorSync(100, 200);
+    TEST_ASSERT_TRUE(plan.fader1);
+    TEST_ASSERT_FALSE(plan.coarse);
+    TEST_ASSERT_FALSE(plan.fine);
+    TEST_ASSERT_FALSE(plan.noteValue);
+}
+
+void test_geometry_driver_plan_empty_when_bracket_unchanged() {
+    const auto plan = NoteEditFaderOutbound::planForGeometryDriverMotorSync(438, 438);
+    TEST_ASSERT_FALSE(plan.fader1);
+    TEST_ASSERT_FALSE(plan.coarse);
+    TEST_ASSERT_FALSE(plan.fine);
+    TEST_ASSERT_FALSE(plan.noteValue);
+}
+
+void test_select_dependent_plan_excludes_fader1() {
+    const auto bracketChange = NoteEditFaderOutbound::planForSelectDependentFromNoteIdChange(
+        1, 2, 100, 200);
+    TEST_ASSERT_FALSE(bracketChange.fader1);
+    const auto sibling = NoteEditFaderOutbound::planForSelectDependentFromNoteIdChange(1, 2, 579,
+                                                                                       579);
+    TEST_ASSERT_FALSE(sibling.fader1);
+}
+
+void test_geometry_edit_kind_blocks_f1_select_apply_policy() {
+    // Contract: F1 inbound select navigation is suppressed during geometry edit kinds.
+    TEST_ASSERT_TRUE(isGeometryEditKind(NoteEditKind::Move));
+    TEST_ASSERT_TRUE(isGeometryEditKind(NoteEditKind::Length));
+    TEST_ASSERT_TRUE(isGeometryEditKind(NoteEditKind::Pitch));
+    TEST_ASSERT_TRUE(isGeometryEditKind(NoteEditKind::Add));
+    TEST_ASSERT_TRUE(isGeometryEditKind(NoteEditKind::Delete));
+    TEST_ASSERT_FALSE(isGeometryEditKind(NoteEditKind::Select));
+}
+
+void test_motor_sync_plans_are_direction_isolated() {
+    const auto selectPlan = NoteEditFaderOutbound::planForSelectDependentFromNoteIdChange(1, 2, 100,
+                                                                                        200);
+    const auto geometryPlan = NoteEditFaderOutbound::planForGeometryDriverMotorSync(100, 200);
+    TEST_ASSERT_TRUE(
+        NoteEditFaderOutbound::motorSyncPlansAreDirectionIsolated(selectPlan, geometryPlan));
+    NoteEditFaderOutbound::PlanFlags mixed = selectPlan;
+    mixed.fader1 = true;
+    TEST_ASSERT_FALSE(
+        NoteEditFaderOutbound::motorSyncPlansAreDirectionIsolated(mixed, geometryPlan));
+}
+
 int main(int argc, char** argv) {
     (void)argc;
     (void)argv;
@@ -551,8 +664,12 @@ int main(int argc, char** argv) {
     RUN_TEST(test_empty_step_bracket_rel_tick_maps_to_coarse_pitchbend);
     RUN_TEST(test_outbound_pipeline_advances_through_session_open);
     RUN_TEST(test_outbound_pipeline_advances_through_note_select_dependent);
+    RUN_TEST(test_outbound_pipeline_length_mode_enter_parallel_dependent_step);
     RUN_TEST(test_motor_fader_timing_matches_ableton_reference_midis);
     RUN_TEST(test_motor_fader_burst_invokes_position_and_notegate_callbacks);
+    RUN_TEST(test_select_fader_motor_idle_ms_constant);
+    RUN_TEST(test_should_flush_select_dependent_motor_sync_after_idle);
+    RUN_TEST(test_parallel_motor_fader_burst_interleaves_enabled_slots);
     RUN_TEST(test_ch13_ack_correlation_window_ms_for_capture_logs);
     RUN_TEST(test_select_fader_echo_rejects_near_last_sent);
     RUN_TEST(test_select_fader_echo_accepts_small_user_delta);
@@ -564,5 +681,10 @@ int main(int argc, char** argv) {
     RUN_TEST(test_filtered_display_note_index_for_selection);
     RUN_TEST(test_window_filter_excludes_notes_outside_nav_inventory);
     RUN_TEST(test_same_bracket_sibling_plan_includes_all_motors);
+    RUN_TEST(test_geometry_driver_plan_refreshes_fader1_on_bracket_change);
+    RUN_TEST(test_geometry_driver_plan_empty_when_bracket_unchanged);
+    RUN_TEST(test_geometry_edit_kind_blocks_f1_select_apply_policy);
+    RUN_TEST(test_select_dependent_plan_excludes_fader1);
+    RUN_TEST(test_motor_sync_plans_are_direction_isolated);
     return UNITY_END();
 }

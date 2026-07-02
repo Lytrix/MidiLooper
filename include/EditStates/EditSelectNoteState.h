@@ -33,6 +33,8 @@ public:
     
 public:
     static void sendTargetPitchbend(EditManager& manager, Track& track);
+    /** Resolve ch16 motor pitchbend for current EditorSelection; false if slots empty. */
+    static bool resolveTargetPitchbend(EditManager& manager, Track& track, int16_t& outPitchbend);
     /// Creates a default 32nd note at tick and returns its {noteOn, noteOff} events so
     /// callers can record an exact AddNote edit (the buffer is sorted, so the created
     /// events are not necessarily the last two entries).

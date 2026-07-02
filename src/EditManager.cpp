@@ -23,6 +23,7 @@
 #include "Utils/MemoryMonitor.h"
 #include "Utils/LoopStopFinalize.h"
 #include "ClockManager.h"
+#include "DisplayManager.h"
 #include "Utils/NoteMovementUtils.h"
 #include "Utils/NoteEditDisplaySnapshot.h"
 #include "Utils/SelectNavigation.h"
@@ -738,6 +739,24 @@ void EditManager::resetNoteEditSessionState() {
     lastPushedGeometryKind_ = NoteEditKind::Select;
 }
 
+void EditManager::applySelectionFromGeometryEdit(Track& track, uint32_t bracketTick,
+                                                 NoteId primaryNote) {
+    sessionState.selection.bracketTick = bracketTick;
+    sessionState.selection.primaryNote = primaryNote;
+    sessionState.selection.selectedNotes.clear();
+    if (primaryNote != kInvalidNoteId) {
+        sessionState.selection.selectedNotes.push_back(primaryNote);
+    }
+    sessionState.selection.trackId = static_cast<TrackId>(trackManager.getSelectedTrackIndex());
+    sessionState.selection.loopId = track.getActiveLoop().loopId;
+    syncGeometrySelectionToUi(track);
+}
+
+void EditManager::syncGeometrySelectionToUi(Track& track) {
+    bracketTick = sessionState.selection.bracketTick;
+    displayManager.requestNoteInfoRefresh(track);
+}
+
 void EditManager::applySelectNav(Track& track, uint32_t bracketTick, NoteId primaryNote,
                                  bool requestFaderSync, bool skipFader1Outbound) {
     (void)skipFader1Outbound;
@@ -763,7 +782,7 @@ void EditManager::applySelectNav(Track& track, uint32_t bracketTick, NoteId prim
         (primaryNote != kInvalidNoteId || editorSelectionHasNote(priorSelection) ||
          priorSelection.bracketTick != bracketTick);
     if (shouldSyncMotors && !requestFaderSync) {
-        noteEditManager.syncMotorsForDisplaySelection(track, priorSelection, sessionState.selection);
+        noteEditManager.scheduleSelectDependentMotorSync(track, priorSelection, sessionState.selection);
     }
     if (requestFaderSync && primaryNote != kInvalidNoteId) {
         noteEditManager.scheduleNoteSelectFaderSync(track);

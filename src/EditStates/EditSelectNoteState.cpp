@@ -203,57 +203,69 @@ std::array<MidiEvent, 2> EditSelectNoteState::createNoteAtTick(Track& track, uin
     return helper.createDefaultNote(track, tick);
 }
 
-void EditSelectNoteState::sendTargetPitchbend(EditManager& manager, Track& track) {
-    //auto& midiEvents = track.editAwareMidiEvents();
-    uint32_t loopLength = track.getLoopLength();
-    uint32_t bracketTick = manager.getBracketTick();
-    
+bool EditSelectNoteState::resolveTargetPitchbend(EditManager& manager, Track& track,
+                                                 int16_t& outPitchbend) {
+    const uint32_t loopLength = track.getLoopLength();
+    const uint32_t bracketTick = manager.getBracketTick();
+
     if (!ValidationUtils::validateLoopLength(loopLength)) {
         logger.log(CAT_MIDI, LOG_DEBUG, "Target pitchbend: No loop length, cannot calculate");
+        return false;
+    }
+
+    const uint32_t numSteps = loopLength / Config::TICKS_PER_16TH_STEP;
+    logger.log(CAT_MIDI, LOG_DEBUG,
+               "Target pitchbend calculation: loopLength=%lu, numSteps=%lu, bracketTick=%lu",
+               loopLength, numSteps, bracketTick);
+
+    if (numSteps == 0) {
+        return false;
+    }
+
+    const uint32_t loopStartTick = track.getLoopStartTick() % loopLength;
+    const std::vector<SelectNavigation::SelectNavSlot> slots =
+        noteEditManager.buildSelectNavigationSlots(track, bracketTick, true);
+
+    logger.log(CAT_MIDI, LOG_DEBUG, "Target pitchbend: Final navigation slots: %lu", slots.size());
+
+    if (slots.empty()) {
+        return false;
+    }
+
+    const EditorSelection& sel = manager.getNoteEditSessionState().selection;
+    const auto navNotes = noteEditManager.selectableDisplayNotesForEditUi(track);
+    const int currentPosIndex = SelectNavigation::findSlotIndexForNoteId(
+        slots, navNotes, sel.primaryNote, bracketTick, loopStartTick, loopLength);
+
+    if (currentPosIndex < 0) {
+        logger.log(CAT_MIDI, LOG_DEBUG,
+                   "Target pitchbend: Current selection not found in navigation slots");
+        return false;
+    }
+
+    const float normalizedPos =
+        static_cast<float>(currentPosIndex) / static_cast<float>(slots.size() - 1);
+    int16_t targetPitchbend = static_cast<int16_t>(
+        MidiConfig::Pitchbend::MIN +
+        normalizedPos * static_cast<float>(MidiConfig::Pitchbend::MAX - MidiConfig::Pitchbend::MIN));
+    outPitchbend = constrain(targetPitchbend, MidiConfig::Pitchbend::MIN, MidiConfig::Pitchbend::MAX);
+
+    logger.log(CAT_MIDI, LOG_DEBUG,
+               "SENDING PITCHBEND: Position %d/%lu at tick %lu = value %d (range: %d to %d)",
+               currentPosIndex, slots.size(), bracketTick, outPitchbend, MidiConfig::Pitchbend::MIN,
+               MidiConfig::Pitchbend::MAX);
+    return true;
+}
+
+void EditSelectNoteState::sendTargetPitchbend(EditManager& manager, Track& track) {
+    int16_t targetPitchbend = 0;
+    if (!resolveTargetPitchbend(manager, track, targetPitchbend)) {
         return;
     }
 
-    // Calculate total number of 16th steps in the loop
-    uint32_t numSteps = loopLength / Config::TICKS_PER_16TH_STEP;
-    logger.log(CAT_MIDI, LOG_DEBUG, "Target pitchbend calculation: loopLength=%lu, numSteps=%lu, bracketTick=%lu", 
-               loopLength, numSteps, bracketTick);
-    
-    if (numSteps > 0) {
-        const uint32_t loopStartTick = track.getLoopStartTick() % loopLength;
-        const std::vector<SelectNavigation::SelectNavSlot> slots =
-            noteEditManager.buildSelectNavigationSlots(track, bracketTick, true);
-
-        logger.log(CAT_MIDI, LOG_DEBUG, "Target pitchbend: Final navigation slots: %lu", slots.size());
-
-        if (!slots.empty()) {
-            const EditorSelection& sel = manager.getNoteEditSessionState().selection;
-            const auto navNotes = noteEditManager.selectableDisplayNotesForEditUi(track);
-            const int currentPosIndex = SelectNavigation::findSlotIndexForNoteId(
-                slots, navNotes, sel.primaryNote, bracketTick, loopStartTick, loopLength);
-
-            if (currentPosIndex >= 0) {
-                // Calculate what pitchbend value corresponds to this position
-                float normalizedPos = (float)currentPosIndex / (float)(slots.size() - 1);  // 0.0 to 1.0
-                int16_t targetPitchbend = (int16_t)(MidiConfig::Pitchbend::MIN + normalizedPos * (MidiConfig::Pitchbend::MAX - MidiConfig::Pitchbend::MIN));
-                targetPitchbend = constrain(targetPitchbend, MidiConfig::Pitchbend::MIN, MidiConfig::Pitchbend::MAX);
-                
-                logger.log(CAT_MIDI, LOG_DEBUG, "SENDING PITCHBEND: Position %d/%lu at tick %lu = value %d (range: %d to %d)",
-                           currentPosIndex, slots.size(), bracketTick, targetPitchbend,
-                           MidiConfig::Pitchbend::MIN, MidiConfig::Pitchbend::MAX);
-                
-                // Send the pitchbend value to external device (select fader channel)
-                midiHandler.sendPitchBend(MidiConfig::Fader::SELECT_MOTOR_CHANNEL, targetPitchbend);
-                
-                // Send note trigger to help motorized fader update (similar to fader 3)
-                midiHandler.sendNoteOn(MidiConfig::Fader::SELECT_MOTOR_CHANNEL, 0, 127);
-                midiHandler.sendNoteOff(MidiConfig::Fader::SELECT_MOTOR_CHANNEL, 0, 0);
-                
-                // Record the value we sent for smart feedback detection
-                midiFaderManager.getFaderStateMutable(MidiMapping::FaderType::FADER_SELECT).lastSentPitchbend = targetPitchbend;
-            } else {
-                logger.log(CAT_MIDI, LOG_DEBUG,
-                           "Target pitchbend: Current selection not found in navigation slots");
-            }
-        }
-    }
+    midiHandler.sendPitchBend(MidiConfig::Fader::SELECT_MOTOR_CHANNEL, targetPitchbend);
+    midiHandler.sendNoteOn(MidiConfig::Fader::SELECT_MOTOR_CHANNEL, 0, 127);
+    midiHandler.sendNoteOff(MidiConfig::Fader::SELECT_MOTOR_CHANNEL, 0, 0);
+    midiFaderManager.getFaderStateMutable(MidiMapping::FaderType::FADER_SELECT).lastSentPitchbend =
+        targetPitchbend;
 } 

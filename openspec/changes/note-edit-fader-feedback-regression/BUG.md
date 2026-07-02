@@ -506,3 +506,13 @@ The current regression is a scheduler-policy issue inside `NoteEditManager`, not
 | Same-note crawl | `select_motor_sync sent=0 reason=unchanged_note` — no MO expected |
 | Empty slot pass | `select_motor_sync sent=0 reason=empty_step_ignored` — prior note held |
 | Settle block | `#DBG select_dependent_settle_block` at most once per settle window |
+
+### Geometry F1 motor echo re-selects wrong note (2026-07-02)
+
+**Symptom:** Capture `session_20260702_183747` — after `geometry_motor_sync sent=1` (bracket 1011, pb=3003), F1 echo at +11 ms (pitch 3201, diff 198) triggers `select_apply apply=1`, `Exited EditStartNoteState`, selection jump (e.g. 41→15). Same pattern at ~40 s. Moving note edit destroyed; F2/F3 may snap.
+
+**Cause:** (1) `selectFaderFeedbackIgnoreUntilMs_` armed but not checked on inbound F1; (2) `handleSelectFaderInput` allowed during `NoteEditKind::Move`; (3) `applySelectionFromGeometryEdit` called full `syncNoteEditSessionStateToUi`.
+
+**Fix (§7.24):** Kind-scoped early return in `handleSelectFaderInput`; inbound `selectFaderFeedbackIgnoreUntilMs_` check; `syncGeometrySelectionToUi`.
+
+**Status:** **Resolved** — manual HITL PASS 2026-07-02; host verifier `verify_geometry_fader1_no_select_apply_after_flush`.
