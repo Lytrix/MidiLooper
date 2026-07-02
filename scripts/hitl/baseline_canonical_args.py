@@ -30,3 +30,36 @@ def canonical_baseline_legacy_args() -> list[str]:
 def merge_legacy_cli_args(defaults: list[str], overrides: list[str]) -> list[str]:
     """Defaults first; argparse last-wins lets overrides replace duplicate flags."""
     return list(defaults) + list(overrides)
+
+
+_SCENARIO_ONLY_FLAGS = frozenset(
+    {
+        "--dwell-ms",
+        "--toggle-dwell-ms",
+        "--toggle-cycles",
+        "--seed-serial-log",
+        "--post-seed-settle-ms",
+        "--edit-enter-timeout-s",
+        "--skip-sweep",
+    }
+)
+
+
+def strip_scenario_only_legacy_args(legacy: list[str]) -> list[str]:
+    """Remove flags consumed by non-baseline HITL scenarios before baseline dispatch."""
+    out: list[str] = []
+    index = 0
+    while index < len(legacy):
+        token = legacy[index]
+        if token in _SCENARIO_ONLY_FLAGS:
+            if token == "--skip-sweep":
+                index += 1
+                continue
+            if index + 1 < len(legacy) and not legacy[index + 1].startswith("-"):
+                index += 2
+                continue
+            index += 1
+            continue
+        out.append(token)
+        index += 1
+    return out

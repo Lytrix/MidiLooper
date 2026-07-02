@@ -50,6 +50,13 @@ def base_preset_config(report: Mapping[str, Any] | None) -> dict[str, Any]:
     return dict(config) if isinstance(config, dict) else {}
 
 
+def base_report_ok(report: Mapping[str, Any] | None) -> bool:
+    """True when host_midi_automation_baseline JSON reports overall_ok."""
+    if report is None:
+        return False
+    return bool(report.get("overall_ok"))
+
+
 def _phase_clock_to_storage_tick(phase_clock: int) -> int:
     return phase_clock * TICKS_PER_BAR // MIDI_CLOCKS_PER_BAR
 

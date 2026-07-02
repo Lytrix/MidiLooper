@@ -38,6 +38,7 @@ PRESET_SCENARIOS: dict[str, tuple[str, ...]] = {
     "two_overdub_undo_redo": ("two_overdub_undo_redo",),
     "fader_motor_probe": ("fader_motor_probe",),
     "fader_motor_sweep": ("fader_motor_sweep",),
+    "note_edit_select_dependent_faders": ("base", "note_edit_select_dependent_faders"),
 }
 
 
@@ -85,6 +86,10 @@ def _lazy_registry() -> dict[str, ScenarioSpec]:
         run_fader_motor_probe_scenario,
         run_fader_motor_sweep_scenario,
         verify_fader_motor_probe_scenario,
+    )
+    from hitl.scenarios.note_edit_select_dependent_faders import (
+        run_note_edit_select_dependent_faders,
+        verify_note_edit_select_dependent_faders,
     )
 
     return {
@@ -207,6 +212,12 @@ def _lazy_registry() -> dict[str, ScenarioSpec]:
             description="Fader motor quarter sweep 0/25/50/75/100 % (fader-probe firmware)",
             run=run_fader_motor_sweep_scenario,
             verify=verify_fader_motor_probe_scenario,
+        ),
+        "note_edit_select_dependent_faders": ScenarioSpec(
+            scenario_id="note_edit_select_dependent_faders",
+            description="NOTE_EDIT slow F1 nav sweep + two-note toggle (after preset base seed)",
+            run=run_note_edit_select_dependent_faders,
+            verify=verify_note_edit_select_dependent_faders,
         ),
     }
 

@@ -171,7 +171,6 @@ private:
     void resetSelectNavSlotApplyState();
     void sendSelectnoteFaderUpdate(Track& track);
     void performSelectnoteFaderUpdate(Track& track);
-    void armNoteEditDroidMotorBank();
     int selectNavSlotIndexForPitchbend(Track& track, int16_t pitchValue);
     bool applyNoteSelectFromFader1Pitchbend(Track& track, int16_t pitchValue, int posIndex);
     struct Fader1SelectTarget {
@@ -189,6 +188,9 @@ private:
     Fader1SelectTarget resolveFader1SelectTarget(Track& track, int16_t pitchValue);
     void syncMotorsFromSelectTarget(Track& track, const Fader1SelectTarget& target,
                                     const NoteEditFaderOutbound::PlanFlags& plan);
+    bool sendCoarseMotorPositionFromSelectTarget(Track& track, const Fader1SelectTarget& target);
+    bool sendFineMotorPositionFromSelectTarget(Track& track, const Fader1SelectTarget& target);
+    bool sendNoteValueMotorPositionFromSelectTarget(Track& track, const Fader1SelectTarget& target);
     void armSelectDependentSettle(uint32_t sentAt);
     void recordFaderInputForValidation(MidiMapping::FaderType faderType, int16_t pitchbendValue,
                                        uint8_t ccValue);
@@ -224,10 +226,20 @@ public:
     
     bool sendCoarseFaderPosition(Track& track);
     bool sendFineFaderPosition(Track& track);
-    void sendCoarseFaderMotorTrigger();
-    void sendFineFaderMotorTrigger();
+    bool sendCoarseFaderTimedUpdate(Track& track);
+    bool sendFineFaderTimedUpdate(Track& track);
     bool sendNoteValueFaderPosition(Track& track);
-    void sendNoteValueFaderMotorTrigger();
+    bool sendNoteValueFaderTimedUpdate(Track& track);
+    void sendCoarseFaderMotorNoteOn();
+    void sendCoarseFaderMotorNoteOff();
+    void sendFineFaderMotorNoteOn();
+    void sendFineFaderMotorNoteOff();
+    void sendNoteValueFaderMotorNoteOn();
+    void sendNoteValueFaderMotorNoteOff();
+    bool sendCoarseMotorTimedUpdateFromSelectTarget(Track& track, const Fader1SelectTarget& target);
+    bool sendFineMotorTimedUpdateFromSelectTarget(Track& track, const Fader1SelectTarget& target);
+    bool sendNoteValueMotorTimedUpdateFromSelectTarget(Track& track,
+                                                       const Fader1SelectTarget& target);
 
     enum EditModeState {
         EDIT_MODE_NONE = 0,

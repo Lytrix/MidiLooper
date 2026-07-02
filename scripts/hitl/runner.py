@@ -132,6 +132,8 @@ def run_scenarios(args: argparse.Namespace, scenario_ids: list[str]) -> int:
         code = spec.run(args)
         if code != 0:
             exit_code = max(exit_code, code)
+            print(f"[hitl] scenario {sid} failed (exit {code}); aborting remaining scenarios")
+            break
     return exit_code
 
 

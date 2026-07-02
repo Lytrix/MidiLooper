@@ -50,6 +50,7 @@ Presets are defined in [`scripts/hitl/registry.py`](../../scripts/hitl/registry.
 | `revision_load_record` | `base`, `revision_load_post_record` | Base record/overdub → commit → load (loop data) | **Yes** | `verify_revision_load` |
 | `fader_motor_probe` | `fader_motor_probe` | NOTE_EDIT arm + fader motor pitchbend/note-0 steps (host → Teensy → DROID) | Optional | `verify_fader_motor_probe` |
 | `fader_motor_sweep` | `fader_motor_sweep` | Quarter sweep 0 % → 25 % → 50 % → 75 % → 100 % on fader1 (default) | Optional | `verify_fader_motor_probe` |
+| `note_edit_select_dependent_faders` | `base`, `note_edit_select_dependent_faders` | **base** (2+2 + 2 overdub) then NOTE_EDIT F1 sweep + toggle | **Yes** | `verify_note_edit_select_dependent_faders` |
 
 ### `revision_commit_save` (packed revision write + cleanup)
 
@@ -218,6 +219,22 @@ print(verify_note_edit_fader_select_refresh(lines))
 Pass: each fader1 inbound cluster has `MO,224,14` or `#DBG outbound_step=SEND_F2` within 3 s;
 max gap between F2 bursts ≤30 s; pipeline shows `BEGIN` → `ARM` → `SEND_F2` → `TRIGGER_F2` → … → `DONE`
 and/or `QUIET_REFRESH` after user-classified quiet.
+
+### `note_edit_select_dependent_faders` (F2/F3/F4 motor sync on F1 select)
+
+Runs **`base`** then **`note_edit_select_dependent_faders`** (same pattern as `revision_load_record`). Runner aborts if base fails. Plan: [`note_edit_select_dependent_faders_hitl_enhancement.md`](../plans/note_edit_select_dependent_faders_hitl_enhancement.md).
+
+```bash
+.venv/bin/python scripts/host_midi_hitl.py run --preset note_edit_select_dependent_faders \
+  --midi-out "Teensy" --midi-in "Teensy" \
+  --serial-port /dev/cu.usbmodem154944801 \
+  --track-number 5 --midi-channel 5 \
+  --dwell-ms 800 --toggle-dwell-ms 800 --toggle-cycles 6
+```
+
+Or run phases separately: `--preset base` then `--scenarios note_edit_select_dependent_faders` with the same flags.
+
+Verify-only (sweep log): `--scenarios note_edit_select_dependent_faders --verify-serial-log captures/note_edit_select_dependent_faders_*_serial.log --verify-only`
 
 ---
 

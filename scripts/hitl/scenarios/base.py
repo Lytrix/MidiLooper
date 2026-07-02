@@ -5,7 +5,11 @@ from __future__ import annotations
 import sys
 from typing import TYPE_CHECKING
 
-from hitl.baseline_canonical_args import canonical_baseline_legacy_args, merge_legacy_cli_args
+from hitl.baseline_canonical_args import (
+    canonical_baseline_legacy_args,
+    merge_legacy_cli_args,
+    strip_scenario_only_legacy_args,
+)
 
 if TYPE_CHECKING:
     pass
@@ -14,7 +18,7 @@ if TYPE_CHECKING:
 def run_base_scenario(args: object) -> int:
     import host_midi_automation_baseline as baseline
 
-    legacy = list(getattr(args, "legacy_args", []) or [])
+    legacy = strip_scenario_only_legacy_args(list(getattr(args, "legacy_args", []) or []))
     # HITL-Test-Flow.md canonical 2+2 bar-synced record/overdub; user flags override via last-wins.
     legacy = merge_legacy_cli_args(canonical_baseline_legacy_args(), legacy)
     old_argv = sys.argv
