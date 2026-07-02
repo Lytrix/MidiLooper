@@ -3,7 +3,7 @@
 
 #pragma once
 #include "EditNoteState.h"
-#include "EditPass.h"
+#include "MidiEvent.h"
 
 // New state for editing the pitch of a note
 class EditPitchNoteState : public EditNoteState {
@@ -14,8 +14,8 @@ public:
     void onButtonPress(EditManager& manager, Track& track) override;
     const char* getName() const override { return "EditPitchNote"; }
     uint32_t getInitialHash() const { return initialHash; }
-    NoteRef getTargetRef() const { return targetRef_; }
+    NoteId getTargetNoteId() const { return targetNoteId_; }
 private:
     uint32_t initialHash = 0;
-    NoteRef targetRef_{};
+    NoteId targetNoteId_ = kInvalidNoteId;
 };

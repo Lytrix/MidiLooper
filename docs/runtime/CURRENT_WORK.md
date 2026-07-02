@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-07-02 (note-edit-stable-note-id Phase A shipped)
+Last updated: 2026-07-02 (note-edit-stable-note-id Phase B shipped)
 
 ---
 
@@ -17,7 +17,10 @@ Set revision persistence + load/save overlay UX on branch `load-save-sets-loops`
 
 ## Registered — not yet implementing
 
-- **`note-edit-stable-note-id`** — Phase A shipped (NoteRef gates, windowed nav, encoder routing). Phase B (`NoteId`) unblocked for planning; implement when scoped.
+- **`note-edit-stable-note-id`** — Phase B **shipped**: `NoteId` on `MidiEvent`, `EditorSelection`, SD v6, co-location complete. Native 336 PASS; HITL NoteId sweep + §7.17.8 capture pending device.
+  - Handoff: [note_edit_stable_note_id_phase_a_handoff.md](../plans/note_edit_stable_note_id_phase_a_handoff.md)
+- **`note-edit-fader-feedback-regression`** — Phase A selection refactor shipped (§7.16); §7.17 F4 session-entry fix shipped; **Phase 8 RC11** (F2 loop-relative tick) still open.
+  - Handoff: [note_edit_fader_feedback_phase8_handoff.md](../plans/note_edit_fader_feedback_phase8_handoff.md)
 
 ## Explicitly NOT implementing
 

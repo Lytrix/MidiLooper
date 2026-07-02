@@ -2,6 +2,7 @@
 //  Licensed under the PolyForm Noncommercial 1.0.0
 
 #include "Utils/NoteUtils.h"
+#include "MidiEvent.h"
 #include "Utils/MidiEventVecFnvHash.h"
 #include "Logger.h"
 #include <algorithm>
@@ -12,6 +13,17 @@
 namespace {
 
 constexpr size_t kReconstructVerboseMaxEvents = 32;
+
+NoteId noteIdAtOnTick(const MidiEventVec& events, uint8_t channel, uint8_t pitch,
+                      uint32_t onTick) {
+  for (const MidiEvent& evt : events) {
+    if (evt.isNoteOn() && evt.channel == channel && evt.data.noteData.note == pitch &&
+        evt.tick == onTick) {
+      return evt.noteId;
+    }
+  }
+  return kInvalidNoteId;
+}
 
 bool shouldLogReconstructDetails(bool verboseLog, size_t eventCount) {
     return verboseLog && eventCount <= kReconstructVerboseMaxEvents;
@@ -299,6 +311,7 @@ NoteVector reconstructNotesImpl(const MidiEventVec& midiEvents, uint32_t loopLen
             }
             
             DisplayNote note;
+            note.noteId = evt.noteId;
             note.note = pitch;
             note.startTick = noteOnTick;
             note.endTick = noteOnTick; // Will be updated when note-off is found
@@ -330,7 +343,10 @@ NoteVector reconstructNotesImpl(const MidiEventVec& midiEvents, uint32_t loopLen
                 uint8_t wrappedVelocity = 0;
                 if (tryPairWrappedTailOn(midiEvents, noteOffTick, pitch, evt.channel, loopLength,
                                          wrappedOnTick, wrappedVelocity)) {
+                    const NoteId wrapId =
+                        noteIdAtOnTick(midiEvents, evt.channel, pitch, wrappedOnTick);
                     DisplayNote tailSeg;
+                    tailSeg.noteId = wrapId;
                     tailSeg.note = pitch;
                     tailSeg.startTick = wrappedOnTick;
                     tailSeg.endTick = loopLength - 1;
@@ -339,6 +355,7 @@ NoteVector reconstructNotesImpl(const MidiEventVec& midiEvents, uint32_t loopLen
 
                     if (noteOffTick > 0) {
                         DisplayNote headSeg;
+                        headSeg.noteId = wrapId;
                         headSeg.note = pitch;
                         headSeg.startTick = 0;
                         headSeg.endTick = noteOffTick;

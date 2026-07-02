@@ -6,7 +6,6 @@
 #include <cstdint>
 #include <vector>
 
-#include "EntityIds.h"
 #include "MidiEvent.h"
 #include "Utils/InternalHeapFirstAllocator.h"
 
@@ -40,6 +39,8 @@ struct NoteRef {
   uint32_t endTick = 0;
 };
 
+/// @deprecated Geometry-only; note targeting uses **NoteId** via **targetNoteId**.
+
 /// Stable control-change target for scoped CC edit rows.
 struct ControlChangeRef {
   uint8_t channel = 0;
@@ -58,7 +59,7 @@ struct EditPass {
   EditPropertyType propertyType = EditPropertyType::None;
   EditPassState state = EditPassState::Active;
 
-  NoteRef target{};
+  NoteId targetNoteId = kInvalidNoteId;
   uint32_t startTick = 0;
   uint32_t endTick = 0;
   uint8_t pitch = 0;

@@ -4,8 +4,17 @@
 #pragma once
 
 #include <cstdint>
+#include <vector>
+
 #include "EditPass.h"
-#include "EntityIds.h"
+#include "LoopPasses.h"
+#include "MidiEvent.h"
+#include "Utils/InternalHeapFirstAllocator.h"
+
+/// Stable track identity for **EditorSelection**.
+/// Invalid sentinel matches **LoopId** — **UINT32_MAX** (not **0**, which is a valid pool index).
+using TrackId = uint32_t;
+constexpr TrackId kInvalidTrackId = UINT32_MAX;
 
 enum class NoteEditKind {
   Select,
@@ -16,15 +25,17 @@ enum class NoteEditKind {
   Length,
 };
 
-struct NoteEditSelection {
-  bool hasNote = false;
-  NoteRef ref{};
+struct EditorSelection {
+  TrackId trackId = kInvalidTrackId;
+  LoopId loopId = kInvalidLoopId;
+  std::vector<NoteId, InternalHeapFirstAllocator<NoteId>> selectedNotes;
+  NoteId primaryNote = kInvalidNoteId;
   uint32_t bracketTick = 0;
 };
 
 struct NoteEditSessionState {
   NoteEditKind kind = NoteEditKind::Select;
-  NoteEditSelection selection{};
+  EditorSelection selection{};
 };
 
 inline bool isGeometryEditKind(NoteEditKind kind) {
@@ -55,42 +66,43 @@ inline bool shouldPushGeometryKindUndo(NoteEditKind lastPushed, NoteEditKind mut
   return isGeometryEditKind(mutationKind) && mutationKind != lastPushed;
 }
 
-inline bool noteRefSameTarget(const NoteRef& a, const NoteRef& b) {
-  return a.channel == b.channel && a.note == b.note && a.startTick == b.startTick &&
-         a.endTick == b.endTick;
+inline bool editorSelectionHasNote(const EditorSelection& sel) {
+  return sel.primaryNote != kInvalidNoteId;
 }
 
-inline bool noteEditSelectionSameNoteTarget(const NoteEditSelection& sel, const NoteRef& ref) {
-  if (!sel.hasNote) {
+inline bool editorSelectionSameNoteTarget(const EditorSelection& sel, NoteId noteId) {
+  if (!editorSelectionHasNote(sel)) {
     return false;
   }
-  return noteRefSameTarget(sel.ref, ref);
+  return sel.primaryNote == noteId;
 }
 
-/// True when bracket, hasNote, or NoteRef identity changed (not list index).
-inline bool noteEditSelectionTargetChanged(const NoteEditSelection& prior, uint32_t nextBracket,
-                                           bool nextHasNote, const NoteRef& nextRef) {
+/// True when bracket, hasNote, or **NoteId** changed (not list index).
+inline bool editorSelectionTargetChanged(const EditorSelection& prior, uint32_t nextBracket,
+                                         NoteId nextPrimaryNote) {
   if (prior.bracketTick != nextBracket) {
     return true;
   }
-  if (prior.hasNote != nextHasNote) {
+  const bool priorHas = editorSelectionHasNote(prior);
+  const bool nextHas = nextPrimaryNote != kInvalidNoteId;
+  if (priorHas != nextHas) {
     return true;
   }
-  if (nextHasNote && prior.hasNote) {
-    return !noteEditSelectionSameNoteTarget(prior, nextRef);
+  if (nextHas && priorHas) {
+    return prior.primaryNote != nextPrimaryNote;
   }
   return false;
 }
 
 /// After fader-1 targets a different note (or clears selection), the next geometry mutation
 /// SHALL push a fresh session undo step even when kind stays Move.
-inline bool shouldResetGeometryKindUndoOnSelectChange(const NoteEditSelection& prior,
-                                                      bool nextHasNote, const NoteRef& nextRef) {
-  if (prior.hasNote && !nextHasNote) {
+inline bool shouldResetGeometryKindUndoOnSelectChange(const EditorSelection& prior,
+                                                      NoteId nextPrimaryNote) {
+  if (editorSelectionHasNote(prior) && nextPrimaryNote == kInvalidNoteId) {
     return true;
   }
-  if (prior.hasNote && nextHasNote) {
-    return !noteEditSelectionSameNoteTarget(prior, nextRef);
+  if (editorSelectionHasNote(prior) && nextPrimaryNote != kInvalidNoteId) {
+    return !editorSelectionSameNoteTarget(prior, nextPrimaryNote);
   }
   return false;
 }

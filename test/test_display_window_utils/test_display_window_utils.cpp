@@ -3,6 +3,8 @@
 
 #include <unity.h>
 
+#include "MidiEvent.h"
+
 #include "../../src/Utils/DisplayWindowUtils.cpp"
 
 void test_choose_bars_per_segment_table() {
@@ -28,8 +30,8 @@ void test_filter_display_notes_to_window() {
   const uint32_t windowStart = 16u * Config::TICKS_PER_BAR;
   const uint32_t windowLength = 16u * Config::TICKS_PER_BAR;
   NoteUtils::DisplayNoteVec notes;
-  notes.push_back({60, 100, 17u * Config::TICKS_PER_BAR, 17u * Config::TICKS_PER_BAR + 48});
-  notes.push_back({72, 100, 2u * Config::TICKS_PER_BAR, 2u * Config::TICKS_PER_BAR + 48});
+  notes.push_back({kInvalidNoteId, 60, 100, 17u * Config::TICKS_PER_BAR, 17u * Config::TICKS_PER_BAR + 48});
+  notes.push_back({kInvalidNoteId, 72, 100, 2u * Config::TICKS_PER_BAR, 2u * Config::TICKS_PER_BAR + 48});
 
   const NoteUtils::DisplayNoteVec filtered =
       DisplayWindowUtils::filterDisplayNotesToWindow(notes, windowStart, windowLength,

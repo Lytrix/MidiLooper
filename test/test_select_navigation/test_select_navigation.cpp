@@ -2,6 +2,8 @@
 //  Licensed under the PolyForm Noncommercial 1.0.0
 
 #include <unity.h>
+
+#include "MidiEvent.h"
 #include <vector>
 
 #include "../../src/Utils/SelectNavigation.cpp"
@@ -24,11 +26,11 @@ void test_same_step_three_notes_yield_three_nav_slots() {
     const uint32_t chordTick = 8 * 48;
 
     std::vector<NoteUtils::DisplayNote> notes;
-    notes.push_back({60, 100, 0, 96});
-    notes.push_back({67, 100, chordTick, chordTick + 96});
-    notes.push_back({72, 100, chordTick, chordTick + 96});
-    notes.push_back({76, 100, chordTick, chordTick + 96});
-    notes.push_back({64, 100, 16 * 48, 16 * 48 + 96});
+    notes.push_back({kInvalidNoteId, 60, 100, 0, 96});
+    notes.push_back({kInvalidNoteId, 67, 100, chordTick, chordTick + 96});
+    notes.push_back({kInvalidNoteId, 72, 100, chordTick, chordTick + 96});
+    notes.push_back({kInvalidNoteId, 76, 100, chordTick, chordTick + 96});
+    notes.push_back({kInvalidNoteId, 64, 100, 16 * 48, 16 * 48 + 96});
 
     const auto slots =
         SelectNavigation::buildSelectNavigationSlots(loopLength, 0, notes, 0, false);
@@ -56,8 +58,8 @@ void test_find_slot_index_matches_selected_note() {
     const uint32_t chordTick = 8 * 48;
 
     std::vector<NoteUtils::DisplayNote> notes;
-    notes.push_back({67, 100, chordTick, chordTick + 96});
-    notes.push_back({72, 100, chordTick, chordTick + 96});
+    notes.push_back({kInvalidNoteId, 67, 100, chordTick, chordTick + 96});
+    notes.push_back({kInvalidNoteId, 72, 100, chordTick, chordTick + 96});
 
     const auto slots =
         SelectNavigation::buildSelectNavigationSlots(loopLength, 0, notes, chordTick, false);
@@ -72,7 +74,7 @@ void test_find_slot_index_matches_selected_note() {
 void test_empty_step_single_slot() {
     const uint32_t loopLength = 768;
     std::vector<NoteUtils::DisplayNote> notes;
-    notes.push_back({60, 100, 0, 96});
+    notes.push_back({kInvalidNoteId, 60, 100, 0, 96});
 
     const auto slots =
         SelectNavigation::buildSelectNavigationSlots(loopLength, 0, notes, 0, false);
@@ -88,7 +90,7 @@ void test_loop_start_offset_maps_first_slot_to_storage_tick() {
     const uint32_t bracketStorageTick = loopStartTick;
 
     std::vector<NoteUtils::DisplayNote> notes;
-    notes.push_back({60, 100, loopStartTick, loopStartTick + 96});
+    notes.push_back({kInvalidNoteId, 60, 100, loopStartTick, loopStartTick + 96});
 
     const auto slots = SelectNavigation::buildSelectNavigationSlots(
         loopLength, loopStartTick, notes, bracketStorageTick, false);

@@ -18,8 +18,7 @@ void EditLengthNoteState::onEnter(EditManager& manager, Track& track, uint32_t s
 
     if (manager.getSelectedNoteIdx() >= 0) {
         const NoteUtils::DisplayNote selected = manager.liveEditDisplayNoteAtSelect(track);
-        targetRef_ = {track.getMidiChannel(), selected.note, selected.startTick,
-                      selected.endTick};
+        targetNoteId_ = selected.noteId;
         const uint32_t loopLength = track.getLoopLength();
         manager.setBracketTick(selected.endTick % loopLength);
         logger.info("EditLengthNoteState: selected note for length edit, bracket at end %lu",

@@ -1483,6 +1483,7 @@ void Track::recordMidiEvents(midi::MidiType type, byte channel, byte data1, byte
     switch (type) {
         case midi::NoteOn:
             newEvt = MidiEvent::NoteOn(tickRelative, channel, data1, data2);
+            newEvt.noteId = loop.allocateNoteId();
             eventAdded = true;
             break;
         case midi::NoteOff:

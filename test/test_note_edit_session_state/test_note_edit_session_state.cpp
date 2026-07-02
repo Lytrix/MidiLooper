@@ -6,7 +6,7 @@
 #include "../../src/NoteEditSessionState.cpp"
 
 #include "NoteEditSessionState.h"
-#include "EntityIds.h"
+#include "MidiEvent.h"
 #include "LoopPasses.h"
 
 void test_advance_encoder_cycle_order() {
@@ -50,15 +50,15 @@ void test_should_cycle_when_overlay_active() {
 }
 
 void test_reset_geometry_undo_on_note_target_change() {
-  NoteEditSelection prior{};
-  prior.hasNote = true;
-  prior.ref = {1, 60, 8, 104};
-  NoteRef noteB{1, 64, 200, 296};
-  TEST_ASSERT_TRUE(shouldResetGeometryKindUndoOnSelectChange(prior, true, noteB));
-  TEST_ASSERT_FALSE(shouldResetGeometryKindUndoOnSelectChange(prior, true, prior.ref));
-  TEST_ASSERT_TRUE(shouldResetGeometryKindUndoOnSelectChange(prior, false, {}));
-  NoteEditSelection none{};
-  TEST_ASSERT_FALSE(shouldResetGeometryKindUndoOnSelectChange(none, true, noteB));
+  EditorSelection prior{};
+  prior.primaryNote = 1;
+  prior.primaryNote = 1;
+  constexpr NoteId noteB = 2;
+  TEST_ASSERT_TRUE(shouldResetGeometryKindUndoOnSelectChange(prior, noteB));
+  TEST_ASSERT_FALSE(shouldResetGeometryKindUndoOnSelectChange(prior, prior.primaryNote));
+  TEST_ASSERT_TRUE(shouldResetGeometryKindUndoOnSelectChange(prior, kInvalidNoteId));
+  EditorSelection none{};
+  TEST_ASSERT_FALSE(shouldResetGeometryKindUndoOnSelectChange(none, noteB));
 }
 
 void test_entity_id_invalid_sentinels() {

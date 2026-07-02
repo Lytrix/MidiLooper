@@ -19,6 +19,7 @@
 #include "Utils/SelectNavigation.h"
 #include "Utils/NoteEditFaderOutboundPlan.h"
 #include "Utils/NoteEditFaderSelectSync.h"
+#include "NoteEditSessionState.h"
 
 class DisplayManager;
 
@@ -72,13 +73,16 @@ public:
     void resetLengthEditingModeOnNoteSelect();
     
     void sendStartNotePitchbend(Track& track);
+    /** Arm SessionOpen outbound; suppress duplicate SELECT_SYNC until pipeline Done. */
+    void prepareNoteEditSessionOpen();
     /** NOTE_EDIT session entry: grace period + deferred selectnote fader sync. */
     void sendNoteEditSessionFaderFeedback(Track& track);
+    void syncReferenceStepFromBracketTick(uint32_t bracketTick);
     /** GPIO / bar-step note select: fader1 bracket + dependent refresh. */
     void scheduleNoteSelectFaderSync(Track& track);
-    /** F2/F3/F4 motor sync when NoteRef selection identity changes (live F1 path). */
-    void syncMotorsForDisplaySelection(Track& track, const NoteEditSelection& priorSelection,
-                                       const NoteEditSelection& nextSelection);
+    /** F2/F3/F4 motor sync when NoteId selection identity changes (live F1 path). */
+    void syncMotorsForDisplaySelection(Track& track, const EditorSelection& priorSelection,
+                                       const EditorSelection& nextSelection);
     bool isFaderOutboundActive() const;
     void moveNoteToPosition(Track& track, const NoteUtils::DisplayNote& currentNote, std::uint32_t targetTick);
     void changeNoteEndWithOverlapHandling(Track& track, const NoteUtils::DisplayNote& currentNote,
@@ -113,6 +117,7 @@ private:
     uint32_t lastSelectMotorSyncMs_ = 0;
     int16_t lastMotorSyncF1Pitch_ = MidiConfig::Pitchbend::CENTER;
     bool selectDependentSettleBlockLogged_ = false;
+    bool suppressSelectDependentMotorSync_ = false;
     static constexpr int16_t SELECT_MOVEMENT_THRESHOLD = 100;
     
     int16_t lastUserCoarseFaderValue = MidiConfig::Pitchbend::CENTER;

@@ -9,7 +9,7 @@
 #include <vector>
 
 #include "EditPass.h"
-#include "EntityIds.h"
+#include "MidiEvent.h"
 #include "MidiEvent.h"
 
 namespace NoteUtils {
@@ -23,34 +23,16 @@ struct NoteBaseline {
   uint32_t endTick = 0;
 };
 
-inline bool noteRefEquals(const NoteRef& a, const NoteRef& b) {
-  return a.channel == b.channel && a.note == b.note && a.startTick == b.startTick &&
-         a.endTick == b.endTick;
-}
-
-struct NoteRefHash {
-  size_t operator()(const NoteRef& ref) const noexcept {
-    size_t h = std::hash<uint8_t>{}(ref.channel);
-    h ^= std::hash<uint8_t>{}(ref.note) + 0x9e3779b9 + (h << 6) + (h >> 2);
-    h ^= std::hash<uint32_t>{}(ref.startTick) + 0x9e3779b9 + (h << 6) + (h >> 2);
-    h ^= std::hash<uint32_t>{}(ref.endTick) + 0x9e3779b9 + (h << 6) + (h >> 2);
-    return h;
-  }
+struct NoteIdHash {
+  size_t operator()(NoteId id) const noexcept { return std::hash<NoteId>{}(id); }
 };
 
-struct NoteRefEqual {
-  bool operator()(const NoteRef& a, const NoteRef& b) const noexcept {
-    return noteRefEquals(a, b);
-  }
-};
-
-using BaselineMap =
-    std::unordered_map<NoteRef, NoteBaseline, NoteRefHash, NoteRefEqual>;
+using BaselineMap = std::unordered_map<NoteId, NoteBaseline, NoteIdHash>;
 
 enum class OverlapNoteStoreState : uint8_t { Visible, Hidden, Shortened };
 
 struct OverlapNote {
-  NoteRef ref{};
+  NoteId noteId = kInvalidNoteId;
   NoteBaseline baseline{};
   OverlapNoteStoreState state = OverlapNoteStoreState::Visible;
   uint32_t shortenedEndTick = 0;
@@ -61,6 +43,7 @@ struct OverlapNote {
 
 /// Scratch payload for re-inserting a hidden/shortened overlap note into session store events.
 struct OverlapNoteRestore {
+  NoteId noteId = kInvalidNoteId;
   uint8_t pitch = 0;
   uint8_t velocity = 64;
   uint32_t startTick = 0;
@@ -70,8 +53,7 @@ struct OverlapNoteRestore {
   uint32_t shortenedToTick = 0;
 };
 
-using OverlapNoteMap =
-    std::unordered_map<NoteRef, OverlapNote, NoteRefHash, NoteRefEqual>;
+using OverlapNoteMap = std::unordered_map<NoteId, OverlapNote, NoteIdHash>;
 
 /// Tick range of the moving note on focus (start/end); used for inner overlap-note tests.
 struct MovingNoteRange {
@@ -81,7 +63,7 @@ struct MovingNoteRange {
 
 struct NoteEditFocus {
   bool active = false;
-  NoteRef moving{};
+  NoteId movingNoteId = kInvalidNoteId;
   NoteBaseline commitBaseline{};
   MovingNoteRange movingNoteRange{};
   NoteBaseline last{};
@@ -90,7 +72,7 @@ struct NoteEditFocus {
 
   void clear() {
     active = false;
-    moving = {};
+    movingNoteId = kInvalidNoteId;
     commitBaseline = {};
     movingNoteRange = {};
     last = {};
@@ -99,8 +81,7 @@ struct NoteEditFocus {
   }
 };
 
-NoteRef noteRefFromDisplay(uint8_t channel, const NoteUtils::DisplayNote& dn);
-NoteRef noteRefFromBaseline(uint8_t channel, const NoteBaseline& bl);
+NoteBaseline baselineFromDisplayNote(const NoteUtils::DisplayNote& dn);
 
 uint32_t movingNoteRangeDisplayEnd(const NoteEditFocus& focus, uint32_t loopLength);
 
@@ -108,18 +89,16 @@ bool isInnerOverlapNoteInMovingNoteRange(const NoteEditFocus& focus, uint8_t pit
                                          uint32_t noteStart, uint32_t noteEnd,
                                          uint32_t loopLength);
 
-OverlapNote* findOverlapNoteEntry(NoteEditFocus& focus, const NoteRef& ref);
-const OverlapNote* findOverlapNoteEntry(const NoteEditFocus& focus, const NoteRef& ref);
+OverlapNote* findOverlapNoteEntry(NoteEditFocus& focus, NoteId noteId);
+const OverlapNote* findOverlapNoteEntry(const NoteEditFocus& focus, NoteId noteId);
 
-NoteRef findBaselineRefForNote(const NoteEditFocus& focus, uint8_t channel,
-                               uint8_t pitch, uint32_t startTick, uint32_t endTick);
+NoteId findBaselineNoteIdForDisplay(const NoteEditFocus& focus,
+                                    const NoteUtils::DisplayNote& dn);
 
-NoteBaseline baselineForDisplayNote(const NoteEditFocus& focus, uint8_t channel,
+NoteBaseline baselineForDisplayNote(const NoteEditFocus& focus,
                                     const NoteUtils::DisplayNote& dn);
 
 /// Read-only scan of loop MIDI events → full-loop baseline inventory.
-/// **Internal / legacy encoder only** until Phase 2b — do not pass fader-1 **filtered** `selectedNoteIdx`
-/// from NOTE_EDIT UI; use **rebuildNoteEditFocusForDisplayNote** instead (C14).
 void rebuildNoteEditFocusFromStore(NoteEditFocus& focus, const MidiEventVec& loopMidiEvents,
                                    uint8_t channel, uint32_t loopLength,
                                    int selectedNoteIdx);
@@ -151,10 +130,8 @@ std::vector<NoteUtils::DisplayNote> filterSelectableDisplayNotes(
     const MidiEventVec& sessionEvents, const NoteEditFocus& focus, uint8_t channel,
     uint32_t loopLength);
 
-NoteRef noteRefFromFilteredDisplayNote(uint8_t channel, const NoteEditFocus& focus,
-                                       const std::vector<NoteUtils::DisplayNote>& filtered,
-                                       int filteredIndex);
+NoteId noteIdFromFilteredDisplayNote(const std::vector<NoteUtils::DisplayNote>& filtered,
+                                     int filteredIndex);
 
-int filteredDisplayNoteIndexForNoteRef(uint8_t channel, const NoteEditFocus& focus,
-                                       const std::vector<NoteUtils::DisplayNote>& filtered,
-                                       const NoteRef& ref);
+int filteredDisplayNoteIndexForNoteId(const std::vector<NoteUtils::DisplayNote>& filtered,
+                                    NoteId noteId);

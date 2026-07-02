@@ -483,6 +483,7 @@ LoopSnapshotRef Loop::sharePassesSnapshot() const {
   snapshot->loopLengthTicks = loopLengthTicks;
   snapshot->loopStartTick = loopStartTick;
   snapshot->nextPassId = nextPassId_;
+  snapshot->nextNoteId = nextNoteId_;
   snapshot->nextMergeSequence = nextMergeSequence_;
   snapshot->lastPublishedPassId = lastPublishedPassId_;
   snapshot->passes = deepClonePasses(passes);
@@ -498,6 +499,7 @@ void Loop::restorePassesSnapshot(const PersistedLoopSnapshot& snapshot) {
   loopLengthTicks = snapshot.loopLengthTicks;
   loopStartTick = snapshot.loopStartTick;
   nextPassId_ = snapshot.nextPassId == 0 ? 1 : snapshot.nextPassId;
+  nextNoteId_ = snapshot.nextNoteId == 0 ? 1 : snapshot.nextNoteId;
   nextMergeSequence_ = snapshot.nextMergeSequence;
   lastPublishedPassId_ = snapshot.lastPublishedPassId;
   lastTickInLoop = 0;
@@ -633,10 +635,6 @@ void Loop::shiftActiveCapturePassTicks(int64_t delta) {
     if (editPass.passType != EditPassType::Note) {
       continue;
     }
-    editPass.target.startTick =
-        static_cast<uint32_t>(static_cast<int64_t>(editPass.target.startTick) + delta);
-    editPass.target.endTick =
-        static_cast<uint32_t>(static_cast<int64_t>(editPass.target.endTick) + delta);
     editPass.startTick =
         static_cast<uint32_t>(static_cast<int64_t>(editPass.startTick) + delta);
     editPass.endTick =
@@ -773,6 +771,30 @@ void Loop::removeCaptureNoteOffAt(uint8_t channel, uint8_t note, uint32_t tick) 
   rebuildCapturePreviewFromStore(*this);
 }
 
+NoteId Loop::allocateNoteId() {
+  return nextNoteId_++;
+}
+
+void Loop::assignMissingNoteIds(MidiEventVec& events) {
+  for (MidiEvent& evt : events) {
+    if (evt.isNoteOn() && evt.noteId == kInvalidNoteId) {
+      evt.noteId = allocateNoteId();
+      logger.log(CAT_TRACK, LOG_WARNING,
+                 "assignMissingNoteIds: assigned noteId=%lu tick=%lu pitch=%u",
+                 static_cast<unsigned long>(evt.noteId), static_cast<unsigned long>(evt.tick),
+                 static_cast<unsigned>(evt.data.noteData.note));
+    }
+  }
+}
+
+void Loop::assignMissingNoteIdsInStore(LoopEventStore& store) {
+  MidiEventVec flat;
+  store.flatten(flat);
+  assignMissingNoteIds(flat);
+  store.clear();
+  store.loadFromFlat(flat);
+}
+
 void Loop::resetPassTimeline() {
   discardPendingCapturePass();
   if (passes.hasRecordPass()) {
@@ -789,6 +811,7 @@ void Loop::resetPassTimeline() {
   passes.overdubPasses.clear();
   passes.editPasses.clear();
   nextPassId_ = 1;
+  nextNoteId_ = 1;
   nextMergeSequence_ = 0;
   lastPublishedPassId_ = kInvalidPassId;
   playbackRevision = 0;
@@ -945,6 +968,7 @@ SealOutcome Loop::sealCapture(uint32_t sealedAtTick) {
   }
 
   ensureCaptureEventsSorted();
+  assignMissingNoteIdsInStore(capture.store);
 
   if (loopLengthTicks > 0 && capture.phase == CapturePhase::Record) {
     const LoopStopFinalize::Result fin =

@@ -172,7 +172,7 @@ bool writePersistedEditPass(const StorageIo& io, const EditPass& editPass) {
   if (!ioWrite(io, &stateRaw, sizeof(stateRaw))) return false;
   if (!ioWrite(io, &actionTypeRaw, sizeof(actionTypeRaw))) return false;
   if (!ioWrite(io, &propertyTypeRaw, sizeof(propertyTypeRaw))) return false;
-  if (!ioWrite(io, &editPass.target, sizeof(editPass.target))) return false;
+  if (!ioWrite(io, &editPass.targetNoteId, sizeof(editPass.targetNoteId))) return false;
   if (!ioWrite(io, &editPass.startTick, sizeof(editPass.startTick))) return false;
   if (!ioWrite(io, &editPass.endTick, sizeof(editPass.endTick))) return false;
   if (!ioWrite(io, &editPass.pitch, sizeof(editPass.pitch))) return false;
@@ -202,7 +202,7 @@ bool readPersistedEditPass(const StorageIo& io, EditPass& editPass) {
   if (!isValidActionTypeRaw(actionTypeRaw)) return false;
   if (!ioRead(io, &propertyTypeRaw, sizeof(propertyTypeRaw))) return false;
   if (!isValidPropertyTypeRaw(propertyTypeRaw)) return false;
-  if (!ioRead(io, &editPass.target, sizeof(editPass.target))) return false;
+  if (!ioRead(io, &editPass.targetNoteId, sizeof(editPass.targetNoteId))) return false;
   if (!ioRead(io, &editPass.startTick, sizeof(editPass.startTick))) return false;
   if (!ioRead(io, &editPass.endTick, sizeof(editPass.endTick))) return false;
   if (!ioRead(io, &editPass.pitch, sizeof(editPass.pitch))) return false;
@@ -269,6 +269,7 @@ bool writePersistedLoopSnapshot(const StorageIo& io, const PersistedLoopSnapshot
   if (!ioWrite(io, &snapshot.loopLengthTicks, sizeof(snapshot.loopLengthTicks))) return false;
   if (!ioWrite(io, &snapshot.loopStartTick, sizeof(snapshot.loopStartTick))) return false;
   if (!ioWrite(io, &snapshot.nextPassId, sizeof(snapshot.nextPassId))) return false;
+  if (!ioWrite(io, &snapshot.nextNoteId, sizeof(snapshot.nextNoteId))) return false;
   if (!ioWrite(io, &snapshot.nextMergeSequence, sizeof(snapshot.nextMergeSequence))) return false;
   if (!ioWrite(io, &snapshot.lastPublishedPassId, sizeof(snapshot.lastPublishedPassId))) {
     return false;
@@ -320,13 +321,19 @@ size_t measureLoopSnapshotSlotFileBytes(const PersistedLoopSnapshot& snapshot) {
   return nbytes;
 }
 
-bool readPersistedLoopSnapshot(const StorageIo& io, PersistedLoopSnapshot& snapshot) {
+bool readPersistedLoopSnapshot(const StorageIo& io, PersistedLoopSnapshot& snapshot,
+                               bool legacyDeferredHeaderWithoutNoteId) {
   snapshot = PersistedLoopSnapshot{};
   if (!ioRead(io, &snapshot.loopId, sizeof(snapshot.loopId))) return false;
   if (!ioRead(io, &snapshot.startLoopTick, sizeof(snapshot.startLoopTick))) return false;
   if (!ioRead(io, &snapshot.loopLengthTicks, sizeof(snapshot.loopLengthTicks))) return false;
   if (!ioRead(io, &snapshot.loopStartTick, sizeof(snapshot.loopStartTick))) return false;
   if (!ioRead(io, &snapshot.nextPassId, sizeof(snapshot.nextPassId))) return false;
+  if (legacyDeferredHeaderWithoutNoteId) {
+    snapshot.nextNoteId = 1;
+  } else if (!ioRead(io, &snapshot.nextNoteId, sizeof(snapshot.nextNoteId))) {
+    return false;
+  }
   if (!ioRead(io, &snapshot.nextMergeSequence, sizeof(snapshot.nextMergeSequence))) return false;
   if (!ioRead(io, &snapshot.lastPublishedPassId, sizeof(snapshot.lastPublishedPassId))) {
     return false;
@@ -367,6 +374,9 @@ bool readPersistedLoopSnapshot(const StorageIo& io, PersistedLoopSnapshot& snaps
   if (snapshot.nextPassId == 0) {
     snapshot.nextPassId = 1;
   }
+  if (snapshot.nextNoteId == 0) {
+    snapshot.nextNoteId = 1;
+  }
   return readPersistedEditsTail(io, snapshot);
 }
 
@@ -380,6 +390,7 @@ bool writeLoopPersisted(const StorageIo& io, const Loop& loop) {
   if (!ioWrite(io, &loop.loopLengthTicks, sizeof(loop.loopLengthTicks))) return false;
   if (!ioWrite(io, &loop.loopStartTick, sizeof(loop.loopStartTick))) return false;
   if (!ioWrite(io, &loop.nextPassId_, sizeof(loop.nextPassId_))) return false;
+  if (!ioWrite(io, &loop.nextNoteId_, sizeof(loop.nextNoteId_))) return false;
   if (!ioWrite(io, &loop.nextMergeSequence_, sizeof(loop.nextMergeSequence_))) return false;
   if (!ioWrite(io, &loop.lastPublishedPassId_, sizeof(loop.lastPublishedPassId_))) {
     return false;
@@ -447,19 +458,5 @@ bool readLoopPersisted(const StorageIo& io, Loop& loop) {
 #include "Loop.h"
 
 void applySnapshotToLoop(Loop& loop, const PersistedLoopSnapshot& snapshot) {
-  loop.discardPendingCapturePass();
-  loop.discardCapture();
-  loop.resetPassTimeline();
-  loop.loopId = snapshot.loopId;
-  loop.startLoopTick = snapshot.startLoopTick;
-  loop.loopLengthTicks = snapshot.loopLengthTicks;
-  loop.loopStartTick = snapshot.loopStartTick;
-  loop.nextPassId_ = snapshot.nextPassId;
-  loop.nextMergeSequence_ = snapshot.nextMergeSequence;
-  loop.lastPublishedPassId_ = snapshot.lastPublishedPassId;
-  loop.lastTickInLoop = 0;
-  loop.nextEventIndex = 0;
-  loop.playbackOrderDirty = true;
-  loop.passes = snapshot.passes;
-  loop.markDisplayCachesStale();
+  loop.restorePassesSnapshot(snapshot);
 }

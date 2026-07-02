@@ -3,7 +3,7 @@
 
 #pragma once
 #include <cstdint>
-#include "EntityIds.h"
+#include "NoteEditSessionState.h"
 #include "EditNoteState.h"
 #include "NoteEditSessionUndo.h"
 #include "EditSession.h"
@@ -78,7 +78,7 @@ public:
 
     NoteEditSessionState& getNoteEditSessionState() { return sessionState; }
     const NoteEditSessionState& getNoteEditSessionState() const { return sessionState; }
-    void applySelectNav(Track& track, uint32_t bracketTick, const NoteRef& ref, bool hasNote,
+    void applySelectNav(Track& track, uint32_t bracketTick, NoteId primaryNote,
                         bool requestFaderSync = false, bool skipFader1Outbound = false);
     /// Encoder / legacy helpers: step fader-1 nav slots over windowed selectable inventory.
     void stepSelectNavSlot(Track& track, int delta);
@@ -125,11 +125,10 @@ public:
     EditNoteState* getCurrentState() const { return currentState; }
     uint32_t getBracketTick() const { return bracketTick; }
     int getSelectedNoteIdx() const { return selectedNoteIdx; }
-    /// Last successful fader-1 select **NoteRef** (delete target when set).
-    bool hasLastFader1SelectRef() const { return lastFader1SelectRef.channel != 0; }
-    const NoteRef& getLastFader1SelectRef() const { return lastFader1SelectRef; }
-    void setLastFader1SelectRef(const NoteRef& ref);
-    void clearLastFader1SelectRef();
+    /// Last successful fader-1 select **NoteId** (delete target when set).
+    NoteId getLastFader1SelectNoteId() const { return lastFader1SelectNoteId; }
+    void setLastFader1SelectNoteId(NoteId noteId);
+    void clearLastFader1SelectNoteId();
     // Reset selection
     void resetSelection();
     void setSelectedNoteIdx(int idx);
@@ -180,7 +179,8 @@ public:
     std::map<const Track*, std::map<uint8_t, std::vector<RemovedNote>>> temporarilyRemovedNotes;
 
     /**
-     * @brief Session undo (E:) during note edit overlay; global pass undo (U:) otherwise.
+     * @brief Sidebar always shows global pass undo depth (U:). Session undo during note edit
+     * is handled separately via MIDI undo while in NOTE_EDIT.
      */
     size_t getDisplayUndoCount(const Track& track) const;
     bool isSessionUndoDisplayActive() const;
@@ -188,10 +188,8 @@ public:
 private:
     uint32_t bracketTick = 0;
     int selectedNoteIdx = -1; // -1 means no note selected
-    NoteRef lastFader1SelectRef{};
+    NoteId lastFader1SelectNoteId = kInvalidNoteId;
     bool hasMovedBracket = false; // true if the bracket has been moved since entering edit mode
-    // Temporarily store undo count when entering an edit state to freeze display until exit
-    size_t undoCountOnStateEnter = 0;
 
     EditNoteState* currentState = nullptr;
     EditNoteState* previousState = nullptr;

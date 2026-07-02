@@ -14,6 +14,8 @@
 
 #include "EditPass.h"
 #include "Loop.h"
+#include "../test_support/NoteIdTestFixtures.h"
+#include "MidiEvent.h"
 #include "LoopEventStore.h"
 #include "PassReclaim.h"
 #include "Utils/MemoryMonitor.h"
@@ -176,7 +178,7 @@ void test_save_note_edit_pass_rejected_when_heap_below_reserve() {
   Loop loop;
   EditPass del{};
   del.actionType = EditActionType::Delete;
-  del.target = {1, 60, 0, 48};
+  del.targetNoteId = 1;
   const size_t before = loop.passes.editPasses.size();
   const EditPassId id = loop.saveNoteEditPass(0, del);
   TEST_ASSERT_EQUAL(kInvalidEditPassId, id);
@@ -193,7 +195,7 @@ void test_save_note_edit_pass_succeeds_when_heap_headroom() {
   Loop loop;
   EditPass del{};
   del.actionType = EditActionType::Delete;
-  del.target = {1, 60, 0, 48};
+  del.targetNoteId = 1;
   const EditPassId id = loop.saveNoteEditPass(0, del);
   TEST_ASSERT_NOT_EQUAL(kInvalidEditPassId, id);
   TEST_ASSERT_EQUAL(1u, loop.passes.editPasses.size());

@@ -16,8 +16,7 @@ void EditPitchNoteState::onEnter(EditManager& manager, Track& track, uint32_t st
 
     if (manager.getSelectedNoteIdx() >= 0) {
         const NoteUtils::DisplayNote selected = manager.liveEditDisplayNoteAtSelect(track);
-        targetRef_ = {track.getMidiChannel(), selected.note, selected.startTick,
-                      selected.endTick};
+        targetNoteId_ = selected.noteId;
         const uint32_t loopLength = track.getLoopLength();
         manager.setBracketTick(selected.startTick % loopLength);
         logger.debug("EditPitchNoteState: bracket at note start %lu",
@@ -44,7 +43,9 @@ void EditPitchNoteState::onEncoderTurn(EditManager& manager, Track& track, int d
 
     uint32_t noteStart = liveNote.startTick;
     uint32_t noteEnd = liveNote.endTick;
-    const NoteUtils::DisplayNote pitchTarget{liveNote.note, liveNote.velocity, noteStart, noteEnd};
+    NoteUtils::DisplayNote pitchTarget = liveNote;
+    pitchTarget.startTick = noteStart;
+    pitchTarget.endTick = noteEnd;
     NoteMovementUtils::applyNoteEditChange(
         track, manager, NoteMovementUtils::NoteEditChangeKind::Pitch, pitchTarget, 0, 0, 0,
         liveNote.note, static_cast<uint8_t>(newPitch), noteStart, noteEnd);

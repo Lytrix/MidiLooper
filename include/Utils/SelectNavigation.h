@@ -6,13 +6,14 @@
 #include <cstdint>
 #include <vector>
 #include "Globals.h"
-#include "EditPass.h"
+#include "MidiEvent.h"
 #include "Utils/NoteUtils.h"
 
 namespace SelectNavigation {
 
 struct SelectNavSlot {
     uint32_t relativeTick = 0;
+    NoteId noteId = kInvalidNoteId;
     /// Index into **filterSelectableDisplayNotes** when **NoteEditSession** is active; else full note list.
     int noteIdx = -1;  // -1 = empty 16th step (no note)
 };
@@ -33,10 +34,10 @@ int findSlotIndexForSelection(const std::vector<SelectNavSlot>& slots,
                               uint32_t loopStartTick,
                               uint32_t loopLength);
 
-int findSlotIndexForNoteRef(const std::vector<SelectNavSlot>& slots,
-                            const std::vector<NoteUtils::DisplayNote>& notes,
-                            const NoteRef& ref, bool hasNote, uint32_t bracketTick,
-                            uint32_t loopStartTick, uint32_t loopLength, uint8_t channel);
+int findSlotIndexForNoteId(const std::vector<SelectNavSlot>& slots,
+                           const std::vector<NoteUtils::DisplayNote>& notes,
+                           NoteId noteId, uint32_t bracketTick, uint32_t loopStartTick,
+                           uint32_t loopLength);
 
 /// Resolve filtered note index for a nav slot (always **slot.noteIdx**; -1 for empty steps).
 int resolveNoteIdxAtSlot(const SelectNavSlot& slot);

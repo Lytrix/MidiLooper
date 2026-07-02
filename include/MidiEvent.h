@@ -11,10 +11,14 @@
 
 #include <cstdint>
 #include <algorithm>  // std::clamp
-#include "EntityIds.h"
 #include "MidiConfig.h"
 #include <vector>
 #include "Utils/InternalHeapFirstAllocator.h"
+
+/// Stable logical-note identity (stored on note-on **MidiEvent**).
+/// **0** means invalid / unassigned.
+using NoteId = uint32_t;
+constexpr NoteId kInvalidNoteId = 0;
 
 /**
  * @struct MidiEvent
@@ -33,6 +37,7 @@ struct MidiEvent {
     uint32_t tick;           // When this event occurs
     midi::MidiType type;     // What kind of MIDI event, Note, CC, Pitch Bend, etc.
     uint8_t channel;         // MIDI channel (1-16)
+    NoteId noteId = kInvalidNoteId;  // Stable identity on note-on only; 0 = invalid
     union {
         // Channel Voice Messages
         struct { uint8_t note, velocity; } noteData;      // NoteOn/NoteOff

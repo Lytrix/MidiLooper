@@ -167,6 +167,7 @@ std::array<MidiEvent, 2> EditSelectNoteState::createDefaultNote(Track& track, ui
     auto& midiEvents = track.editAwareMidiEvents();
     
     const uint8_t outCh = track.getMidiChannel();
+    Loop& loop = track.getActiveLoop();
     // Create Note On event
     MidiEvent noteOn;
     noteOn.type = midi::NoteOn;
@@ -174,6 +175,7 @@ std::array<MidiEvent, 2> EditSelectNoteState::createDefaultNote(Track& track, ui
     noteOn.channel = outCh;
     noteOn.data.noteData.note = defaultNote;
     noteOn.data.noteData.velocity = defaultVelocity;
+    noteOn.noteId = loop.allocateNoteId();
     midiEvents.push_back(noteOn);
     
     // Create Note Off event
@@ -224,11 +226,10 @@ void EditSelectNoteState::sendTargetPitchbend(EditManager& manager, Track& track
         logger.log(CAT_MIDI, LOG_DEBUG, "Target pitchbend: Final navigation slots: %lu", slots.size());
 
         if (!slots.empty()) {
-            const NoteEditSelection& sel = manager.getNoteEditSessionState().selection;
+            const EditorSelection& sel = manager.getNoteEditSessionState().selection;
             const auto navNotes = noteEditManager.selectableDisplayNotesForEditUi(track);
-            const int currentPosIndex = SelectNavigation::findSlotIndexForNoteRef(
-                slots, navNotes, sel.ref, sel.hasNote, bracketTick, loopStartTick, loopLength,
-                track.getMidiChannel());
+            const int currentPosIndex = SelectNavigation::findSlotIndexForNoteId(
+                slots, navNotes, sel.primaryNote, bracketTick, loopStartTick, loopLength);
 
             if (currentPosIndex >= 0) {
                 // Calculate what pitchbend value corresponds to this position

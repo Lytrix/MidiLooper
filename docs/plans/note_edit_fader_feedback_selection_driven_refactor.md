@@ -1,9 +1,10 @@
 # Handoff — NOTE_EDIT fader feedback: selection-driven refresh
 
-**Date:** 2026-07-01  
+**Date:** 2026-07-01 (updated 2026-07-02 — Phase A HITL PASS)  
 **Branch:** `load-save-sets-loops`  
 **OpenSpec change:** [`openspec/changes/note-edit-fader-feedback-regression/`](../../openspec/changes/note-edit-fader-feedback-regression/)  
 **Prior handoff:** [`docs/plans/note_edit_fader_feedback_option_d_aggressive_refresh_handoff.md`](note_edit_fader_feedback_option_d_aggressive_refresh_handoff.md)  
+**Phase A complete:** [`note_edit_stable_note_id_phase_a_handoff.md`](note_edit_stable_note_id_phase_a_handoff.md) — start next chat here for NoteId Phase B or fader Phase 8 RC11  
 **Build env:** `teensy41-capture-serial`  
 **Capture port:** `/dev/cu.usbmodem154944801`
 
@@ -23,8 +24,8 @@
 | Same-tick sibling select (`resolveNoteIdxAtSlot`) | **Shipped** (local) |
 | Geometry driver F1 override | **Removed** — F1 select no longer geometry-blocked |
 | Inline motor sync on display selection index change | **Superseded** — ref-driven (`NoteRef` / `noteEditSelectionTargetChanged`) |
-| Phase A NoteRef selection gates + windowed nav | **Shipped** (2026-07-02) |
-| Capture verification | **Partial** — `edit_full` + `fader_motor_sweep`; dwell-gap OK; `select_ignored_rate` 0.15 on edit baseline |
+| Phase A NoteRef selection gates + windowed nav | **Shipped** (2026-07-02, `d3d5798`) |
+| Capture verification | **PASS** — `phase_a_slow_fader_sweep_20260702_011229` — 59 slots, `select_ignored_rate=0`, sibling sync OK |
 
 ---
 

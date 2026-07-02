@@ -22,15 +22,19 @@
 #include "EditSession.h"
 #include "NoteEditSessionState.h"
 #include "NoteEditSessionUndo.h"
+#include "../test_support/NoteIdTestFixtures.h"
+#include "MidiEvent.h"
 
 namespace {
+
+using namespace NoteIdTestFixtures;
 
 struct KindBoundaryUndoState {
   NoteEditKind lastPushed = NoteEditKind::Select;
 };
 
 bool pushKindBoundaryUndo(NoteEditSessionUndoStack& stack, KindBoundaryUndoState& state,
-                          NoteEditFocus& focus, const NoteEditSelection& selection,
+                          NoteEditFocus& focus, const EditorSelection& selection,
                           CowLoopEventStore& session, uint8_t channel, uint32_t loopLength,
                           const EditPassIdList& editPassIds, NoteEditKind kind) {
   if (!shouldPushGeometryKindUndo(state.lastPushed, kind)) {
@@ -51,8 +55,9 @@ bool pushKindBoundaryUndo(NoteEditSessionUndoStack& stack, KindBoundaryUndoState
 
 
 RecordPass makeRecordPassWithNote(uint8_t channel, uint32_t startTick) {
+  resetNoteIdCounter();
   LoopEventStore store;
-  TEST_ASSERT_TRUE(store.append(MidiEvent::NoteOn(startTick, channel, 60, 100)));
+  TEST_ASSERT_TRUE(storeAppendNoteOn(store, startTick, channel, 60, 100, 1));
   TEST_ASSERT_TRUE(store.append(MidiEvent::NoteOff(startTick + 48, channel, 60, 0)));
   ChunkIdList refs;
   store.detachChunksTo(refs);
@@ -65,8 +70,9 @@ RecordPass makeRecordPassWithNote(uint8_t channel, uint32_t startTick) {
 
 OverdubPass makeOverdubPassWithNote(uint8_t channel, uint32_t startTick, uint8_t pitch,
                                     PassId id) {
+  resetNoteIdCounter();
   LoopEventStore store;
-  TEST_ASSERT_TRUE(store.append(MidiEvent::NoteOn(startTick, channel, pitch, 100)));
+  TEST_ASSERT_TRUE(storeAppendNoteOn(store, startTick, channel, pitch, 100, 1));
   TEST_ASSERT_TRUE(store.append(MidiEvent::NoteOff(startTick + 48, channel, pitch, 0)));
   ChunkIdList refs;
   store.detachChunksTo(refs);
@@ -113,7 +119,7 @@ bool hasDisplayNote(const MidiEventVec& flat, uint32_t loopLength, uint8_t pitch
 void test_session_undo_stack_push_entry() {
   NoteEditSessionUndoStack stack;
   SessionUndoEntry entry;
-  entry.selection.hasNote = true;
+  entry.selection.primaryNote = 1;
   TEST_ASSERT_TRUE(stack.pushEntry(entry));
   TEST_ASSERT_TRUE(stack.canUndo());
   const SessionUndoEntry* target = stack.popUndoTarget();
@@ -124,7 +130,7 @@ void test_session_three_step_undo_redo_chain() {
   NoteEditSessionUndoStack stack;
   for (int i = 0; i < 3; ++i) {
     SessionUndoEntry entry;
-    entry.selection.hasNote = true;
+    entry.selection.primaryNote = 1;
     TEST_ASSERT_TRUE(stack.pushEntry(entry));
   }
   TEST_ASSERT_EQUAL(3u, stack.undoCount());
@@ -147,7 +153,7 @@ void test_session_three_step_undo_redo_chain() {
   TEST_ASSERT_EQUAL(0u, stack.redoCount());
 
   SessionUndoEntry fresh;
-  fresh.selection.hasNote = true;
+  fresh.selection.primaryNote = 1;
   TEST_ASSERT_TRUE(stack.pushEntry(fresh));
   TEST_ASSERT_EQUAL(4u, stack.undoCount());
   TEST_ASSERT_EQUAL(0u, stack.redoCount());
@@ -173,7 +179,7 @@ void test_session_undo_entry_matches_clone_restore() {
   const auto cloneSnap = session.readStore().cloneShared();
   const EditPassIdList noEditPasses{};
   const SessionUndoEntry entry =
-      buildSessionUndoEntry(focus, NoteEditSelection{}, session.readFlat(), 5, loop.loopLengthTicks,
+      buildSessionUndoEntry(focus, EditorSelection{}, session.readFlat(), 5, loop.loopLengthTicks,
                             noEditPasses);
 
   MidiEventVec& flat = session.mutFlat();
@@ -207,7 +213,7 @@ void test_session_redo_entry_restores_after_state() {
   focus.last = focus.commitBaseline;
   const EditPassIdList noEditPasses{};
   const SessionUndoEntry beforeEntry =
-      buildSessionUndoEntry(focus, NoteEditSelection{}, session.readFlat(), 5, loop.loopLengthTicks,
+      buildSessionUndoEntry(focus, EditorSelection{}, session.readFlat(), 5, loop.loopLengthTicks,
                             noEditPasses);
 
   MidiEventVec& flat = session.mutFlat();
@@ -217,7 +223,7 @@ void test_session_redo_entry_restores_after_state() {
 
   SessionUndoEntry undoEntry = beforeEntry;
   SessionUndoEntry redoPayload =
-      buildSessionUndoEntry(focus, NoteEditSelection{}, session.readFlat(), 5, loop.loopLengthTicks,
+      buildSessionUndoEntry(focus, EditorSelection{}, session.readFlat(), 5, loop.loopLengthTicks,
                             noEditPasses);
   undoEntry.redoEditRows = std::move(redoPayload.editRows);
   undoEntry.redoFocus = std::move(redoPayload.focus);
@@ -248,7 +254,7 @@ void test_replace_note_edit_pass_uses_final_session_store() {
   EditPass staleMove{};
   staleMove.actionType = EditActionType::Update;
   staleMove.propertyType = EditPropertyType::NoteRange;
-  staleMove.target = {5, 60, 10, 58};
+  staleMove.targetNoteId = 1;
   staleMove.startTick = 58;
   staleMove.endTick = 106;
   const EditPassId staleId = loop.saveNoteEditPass(0, staleMove);
@@ -292,7 +298,7 @@ void test_replace_note_edit_pass_disables_stale_rows_when_final_store_matches_ba
   EditPass staleMove{};
   staleMove.actionType = EditActionType::Update;
   staleMove.propertyType = EditPropertyType::NoteRange;
-  staleMove.target = {5, 60, 10, 58};
+  staleMove.targetNoteId = 1;
   staleMove.startTick = 58;
   staleMove.endTick = 106;
   const EditPassId staleId = loop.saveNoteEditPass(0, staleMove);
@@ -326,7 +332,7 @@ void test_visual_cache_reflects_active_edit_passes() {
   EditPass move{};
   move.actionType = EditActionType::Update;
   move.propertyType = EditPropertyType::NoteRange;
-  move.target = {5, 60, 10, 58};
+  move.targetNoteId = 1;
   move.startTick = 106;
   move.endTick = 154;
   const EditPassId editPassId = loop.saveNoteEditPass(0, move);
@@ -360,7 +366,7 @@ void test_session_undo_move_after_add_committed_restores_insert_position() {
 
   EditPass add{};
   add.actionType = EditActionType::Create;
-  add.addedEvents.push_back(MidiEvent::NoteOn(48, 5, 72, 100));
+  add.addedEvents.push_back(noteOnWithNoteId(48, 5, 72, 100, 2));
   add.addedEvents.push_back(MidiEvent::NoteOff(96, 5, 72, 0));
   const EditPassId addId = loop.saveNoteEditPass(0, add);
   TEST_ASSERT_EQUAL(2u, addId);
@@ -373,18 +379,18 @@ void test_session_undo_move_after_add_committed_restores_insert_position() {
   focus.active = true;
   focus.commitBaseline = {72, 100, 48, 96};
   focus.last = focus.commitBaseline;
-  focus.moving = {5, 72, 48, 96};
+  focus.movingNoteId = 2;
   focus.movingNoteRange = {48, 96};
 
   const EditPassIdList idsAtPush{addId};
   const SessionUndoEntry entry =
-      buildSessionUndoEntry(focus, NoteEditSelection{}, session.readFlat(), 5, loop.loopLengthTicks,
+      buildSessionUndoEntry(focus, EditorSelection{}, session.readFlat(), 5, loop.loopLengthTicks,
                             idsAtPush);
 
   EditPass move{};
   move.actionType = EditActionType::Update;
   move.propertyType = EditPropertyType::NoteRange;
-  move.target = {5, 72, 48, 96};
+  move.targetNoteId = 2;
   move.startTick = 106;
   move.endTick = 154;
   const EditPassId moveId = loop.saveNoteEditPass(0, move);
@@ -422,7 +428,7 @@ void test_session_undo_four_kind_steps_bounded_entries() {
   size_t totalEntryBytes = 0;
   for (NoteEditKind kind : kinds) {
     const SessionUndoEntry entry = buildSessionUndoEntry(
-        focus, NoteEditSelection{}, session.readFlat(), 5, loop.loopLengthTicks, EditPassIdList{});
+        focus, EditorSelection{}, session.readFlat(), 5, loop.loopLengthTicks, EditPassIdList{});
     totalEntryBytes += estimatedSessionUndoEntryBytes(entry);
     TEST_ASSERT_TRUE(stack.pushEntry(entry));
     if (kind == NoteEditKind::Move) {
@@ -530,14 +536,14 @@ void test_kind_boundary_move_twice_one_undo_entry() {
   focus.last = focus.commitBaseline;
 
   TEST_ASSERT_TRUE(
-      pushKindBoundaryUndo(stack, state, focus, NoteEditSelection{}, session, 5,
+      pushKindBoundaryUndo(stack, state, focus, EditorSelection{}, session, 5,
                            loop.loopLengthTicks, EditPassIdList{}, NoteEditKind::Move));
   MidiEventVec& flat = session.mutFlat();
   applyMoveToSession(focus, flat, 5, 58);
   session.syncFlatToStore();
 
   TEST_ASSERT_FALSE(
-      pushKindBoundaryUndo(stack, state, focus, NoteEditSelection{}, session, 5,
+      pushKindBoundaryUndo(stack, state, focus, EditorSelection{}, session, 5,
                            loop.loopLengthTicks, EditPassIdList{}, NoteEditKind::Move));
   TEST_ASSERT_EQUAL(1u, stack.undoCount());
 }
@@ -561,10 +567,10 @@ void test_kind_boundary_add_then_move_two_entries() {
   focus.last = focus.commitBaseline;
 
   TEST_ASSERT_TRUE(
-      pushKindBoundaryUndo(stack, state, focus, NoteEditSelection{}, session, 5,
+      pushKindBoundaryUndo(stack, state, focus, EditorSelection{}, session, 5,
                            loop.loopLengthTicks, EditPassIdList{}, NoteEditKind::Add));
   TEST_ASSERT_TRUE(
-      pushKindBoundaryUndo(stack, state, focus, NoteEditSelection{}, session, 5,
+      pushKindBoundaryUndo(stack, state, focus, EditorSelection{}, session, 5,
                            loop.loopLengthTicks, EditPassIdList{}, NoteEditKind::Move));
   TEST_ASSERT_EQUAL(2u, stack.undoCount());
 }
@@ -586,7 +592,7 @@ void test_kind_boundary_reselect_move_pushes_again() {
   NoteEditFocus focus;
   rebuildNoteEditFocusFromStore(focus, session.readFlat(), 5, loop.loopLengthTicks, 0);
   focus.last = focus.commitBaseline;
-  NoteEditSelection selection{};
+  EditorSelection selection{};
 
   TEST_ASSERT_TRUE(pushKindBoundaryUndo(stack, state, focus, selection, session, 5,
                                         loop.loopLengthTicks, EditPassIdList{},
@@ -594,13 +600,11 @@ void test_kind_boundary_reselect_move_pushes_again() {
   applyMoveToSession(focus, session.mutFlat(), 5, 58);
   session.syncFlatToStore();
 
-  NoteEditSelection priorSelection = selection;
-  priorSelection.hasNote = true;
-  priorSelection.ref = {5, 60, focus.commitBaseline.startTick, focus.commitBaseline.endTick};
-  selection.hasNote = true;
-  selection.ref = {5, 64, 200, 248};
-  if (shouldResetGeometryKindUndoOnSelectChange(priorSelection, selection.hasNote,
-                                                selection.ref)) {
+  EditorSelection priorSelection = selection;
+  priorSelection.primaryNote = focus.movingNoteId;
+  selection.primaryNote = 2;
+  focus.movingNoteId = 2;
+  if (shouldResetGeometryKindUndoOnSelectChange(priorSelection, selection.primaryNote)) {
     state.lastPushed = NoteEditKind::Select;
   }
 
@@ -629,7 +633,7 @@ void test_kind_boundary_select_nav_no_push() {
   focus.last = focus.commitBaseline;
 
   TEST_ASSERT_FALSE(
-      pushKindBoundaryUndo(stack, state, focus, NoteEditSelection{}, session, 5,
+      pushKindBoundaryUndo(stack, state, focus, EditorSelection{}, session, 5,
                            loop.loopLengthTicks, EditPassIdList{}, NoteEditKind::Select));
   TEST_ASSERT_EQUAL(0u, stack.undoCount());
 }

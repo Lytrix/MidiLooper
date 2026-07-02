@@ -6,6 +6,7 @@
 #include <map>
 #include <cstdint>
 #include "MidiEvent.h"
+#include "MidiEvent.h"
 #include "Utils/ExternalMemoryFirstAllocator.h"
 #include <unordered_map>
 #include <utility> // for std::pair
@@ -53,6 +54,7 @@ bool isPreferredWrapTailForHeadOff(uint32_t tailOnTick, uint32_t headOffTick,
  * Contains pitch, velocity, and start/end ticks for a MIDI note event.
  ****/
  struct DisplayNote {
+     NoteId noteId = kInvalidNoteId;
      uint8_t note;
      uint8_t velocity;
      uint32_t startTick;

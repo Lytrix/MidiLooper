@@ -7,6 +7,8 @@
 
 #include "EditPass.h"
 
+#include "MidiEvent.h"
+
 namespace NoteEditFaderOutbound {
 
 enum class Trigger : uint8_t {
@@ -111,39 +113,28 @@ inline PlanFlags planForSelectDependentFromDelta(uint32_t priorBracketTick, int 
     return {};
 }
 
-inline PlanFlags planForSelectDependentFromRefChange(bool priorHasNote, const NoteRef& priorRef,
-                                                     bool newHasNote, const NoteRef& newRef,
-                                                     uint32_t priorBracketTick,
-                                                     uint32_t newBracketTick) {
-    if (!newHasNote) {
+inline PlanFlags planForSelectDependentFromNoteIdChange(NoteId priorPrimary, NoteId newPrimary,
+                                                      uint32_t priorBracketTick,
+                                                      uint32_t newBracketTick) {
+    if (newPrimary == kInvalidNoteId) {
         return planForSelectDependent(true, false);
     }
     if (newBracketTick != priorBracketTick) {
         return planForSelectDependent(true, true);
     }
-    if (!priorHasNote ||
-        priorRef.channel != newRef.channel || priorRef.note != newRef.note ||
-        priorRef.startTick != newRef.startTick || priorRef.endTick != newRef.endTick) {
+    if (priorPrimary != newPrimary) {
         return planForSelectDependent(false, true);
     }
     return {};
 }
 
-inline bool shouldApplySelectionOnNoteRefChange(bool priorHasNote, const NoteRef& priorRef,
-                                                bool newHasNote, const NoteRef& newRef,
-                                                uint32_t priorBracketTick,
-                                                uint32_t newBracketTick) {
+inline bool shouldApplySelectionOnNoteIdChange(NoteId priorPrimary, NoteId newPrimary,
+                                               uint32_t priorBracketTick,
+                                               uint32_t newBracketTick) {
     if (priorBracketTick != newBracketTick) {
         return true;
     }
-    if (priorHasNote != newHasNote) {
-        return true;
-    }
-    if (newHasNote && priorHasNote) {
-        return priorRef.channel != newRef.channel || priorRef.note != newRef.note ||
-               priorRef.startTick != newRef.startTick || priorRef.endTick != newRef.endTick;
-    }
-    return false;
+    return priorPrimary != newPrimary;
 }
 
 inline bool shouldPreemptActivePipeline(Trigger incoming) {

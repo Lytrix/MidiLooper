@@ -4,6 +4,7 @@
 #include "LoopPasses.h"
 
 #include "EditApply.h"
+#include "MidiEvent.h"
 #include "Utils/ExternalMemoryFirstAllocator.h"
 
 #include <algorithm>
@@ -61,33 +62,28 @@ void appendActiveCapturePassesToFlat(const LoopPasses& passes, MidiEventVec& out
 
 void applyActiveEditPasses(MidiEventVec& events, const EditPassVec& editPasses,
                            uint32_t loopLengthTicks) {
-  NoteRef trackedBaseline{};
+  NoteId trackedNoteId = kInvalidNoteId;
   uint32_t trackedStart = 0;
   uint32_t trackedEnd = 0;
   bool tracked = false;
 
   auto applyNoteRow = [&](const EditPass& editPass) {
     EditPass resolved = editPass;
-    if (tracked) {
-      if (resolved.target.channel == trackedBaseline.channel &&
-          resolved.target.note == trackedBaseline.note &&
-          resolved.target.startTick == trackedBaseline.startTick &&
-          resolved.target.endTick == trackedBaseline.endTick) {
-        resolved.target.startTick = trackedStart;
-        resolved.target.endTick = trackedEnd;
-      }
+    if (tracked && resolved.targetNoteId == trackedNoteId) {
+      resolved.startTick = trackedStart;
+      resolved.endTick = trackedEnd;
     }
     applyNoteEditPass(events, resolved, loopLengthTicks);
     if (resolved.actionType == EditActionType::Update &&
         resolved.propertyType == EditPropertyType::NoteRange) {
-      trackedBaseline = editPass.target;
+      trackedNoteId = editPass.targetNoteId;
       trackedStart = editPass.startTick;
       trackedEnd = editPass.endTick;
       tracked = true;
     } else if (resolved.actionType == EditActionType::Update &&
                resolved.propertyType == EditPropertyType::Length) {
-      trackedBaseline = editPass.target;
-      trackedStart = editPass.target.startTick;
+      trackedNoteId = editPass.targetNoteId;
+      trackedStart = resolved.startTick;
       trackedEnd = editPass.endTick;
       tracked = true;
     }

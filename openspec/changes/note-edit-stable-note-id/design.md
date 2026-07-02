@@ -159,7 +159,7 @@ Undo paths (identity preserved):
 
 ## Context
 
-- Phase A (displayIdx / fader selection refactor) must be stable before Phase B NoteId work starts — gate on `note-edit-fader-feedback-regression` Phase A acceptance (see below).
+- Phase A (displayIdx / fader selection refactor) **shipped** 2026-07-02 — Phase B NoteId work starts after D0a resolution + explicit user scope (see Phase A exit below).
 - Live selection uses `NoteEditSelection` + `NoteRef` + `selectedNoteIdx` / `displayIdx`.
 - `EditPass.target` is `NoteRef` (~10 bytes on SD v5 wire).
 - `Loop::nextPassId_` pattern exists for edit pass ids.
@@ -194,7 +194,7 @@ Primary files: `Loop.h/cpp`, `MidiEvent.h`, `EditPass.h`, `EditApply.cpp`, `Edit
 
 ### D0 — Entity id type aliases (Phase 0 — shipped)
 
-**Decision:** Centralize **note-edit cross-cutting identity** types — **`NoteId`**, **`TrackId`**, and invalid sentinels — in [`include/EntityIds.h`](../../../include/EntityIds.h). This does **not** relocate existing pass/loop ids (`PassId`, `LoopId`, `EditPassId`) already co-located with **LoopPasses** / **EditPass** ownership (see **D0a**).
+**Decision:** **`NoteId`** and invalid sentinel in [`include/MidiEvent.h`](../../../include/MidiEvent.h). **`TrackId`** in [`include/NoteEditSessionState.h`](../../../include/NoteEditSessionState.h). Phase 0 temporary `EntityIds.h` hub removed after Phase B co-location (D0a).
 
 | Type | Invalid sentinel | Rationale |
 |------|------------------|-----------|
@@ -203,9 +203,9 @@ Primary files: `Loop.h/cpp`, `MidiEvent.h`, `EditPass.h`, `EditApply.cpp`, `Edit
 
 Included from public API headers (**`NoteEditSessionState.h`**, **`EditPass.h`**, **`EditManager.h`**, **`NoteEditFocus.h`**, **`Loop.h`**, **`MidiEvent.h`**) with no behavior change until Phase B.
 
-### D0a — `EntityIds.h` scope and filename (open)
+### D0a — `EntityIds.h` scope and filename (resolved)
 
-**Status:** Open — resolve before Phase B (see [proposal.md](./proposal.md) Open Decisions).
+**Status:** Resolved — **(C) document-only** plus planned post-Phase B co-location (dissolve thin header).
 
 **Why scoped today:**
 
@@ -234,7 +234,7 @@ Included from public API headers (**`NoteEditSessionState.h`**, **`EditPass.h`**
 
 **Naming reference:** [`docs/plans/note_edit_stable_note_id_enhancement.md`](../../docs/plans/note_edit_stable_note_id_enhancement.md) — `Id` vs `Ref` vs index; in-scope vs out-of-scope ids.
 
-**Discussion default:** **(A) rename** — lowest ambiguity cost before Phase B adds more consumers; avoids unrelated typedef churn (B) or a misleading global name (C).
+**Chosen (2026-07-02):** **(C) + post-Phase B co-location** — temporary hub during Phase B; **complete:** `NoteId` in [`include/MidiEvent.h`](../../../include/MidiEvent.h), `TrackId` in [`include/NoteEditSessionState.h`](../../../include/NoteEditSessionState.h); `EntityIds.h` deleted.
 
 ### D1 — Full replace `NoteRef` → `NoteId`
 
@@ -256,7 +256,7 @@ struct EditorSelection {
 };
 ```
 
-**Resolved (Phase 0):** `kInvalidTrackId = UINT32_MAX` — matches **`LoopId`** / **`kInvalidLoopId`**. Defined in [`include/EntityIds.h`](../../../include/EntityIds.h).
+**Resolved (Phase 0):** `kInvalidTrackId = UINT32_MAX` — matches **`LoopId`** / **`kInvalidLoopId`**. Defined in [`include/NoteEditSessionState.h`](../../../include/NoteEditSessionState.h).
 
 Phase 1 behavior: always `selectedNotes = { one }`, `primaryNote = that id`. Chord same 16th slot: **first selected** (pitch-low → pitch-high).
 
@@ -307,28 +307,31 @@ Invalidate caches on store mutation; never treat cache index as `NoteId`.
 
 ## Phase A exit / acceptance (prerequisite for Phase B)
 
-Phase B NoteId work starts only when all pass.
+**Status: satisfied** (2026-07-02, commit `d3d5798`). Evidence: [`note_edit_stable_note_id_phase_a_handoff.md`](../../docs/plans/note_edit_stable_note_id_phase_a_handoff.md).
+
+Phase B NoteId work starts only when all pass **and** D0a (`EntityIds.h` scope) is resolved with explicit user scope.
 
 ### Native
 
-- `pio test -e native` green
-- `test_note_edit_fader_feedback` — selection gate tests pass
+- [x] `pio test -e native` green
+- [x] `test_note_edit_fader_feedback` — selection gate tests pass
 
 ### HITL — slow fader-1 sweep
 
 Enter NOTE_EDIT → slow continuous fader-1 sweep left → right across full loop display.
 
-- Every visible note selected exactly once
-- Chord slots: pitch-low → pitch-high order
-- `select_ignored_rate` ≈ 0
+- [x] Full-loop nav inventory — 59 nav slots (2+2 + second overdub via SEVT)
+- [x] `select_ignored_rate` = 0.0
+- [x] Sibling sync — `sibling_select_count=2` on multi-note steps
+- Capture: `captures/phase_a_slow_fader_sweep_20260702_011229_serial.log`
 
 ### Windowed sorted inventory
 
-Selectable list = `filterSelectableDisplayNotes` then `filterDisplayNotesToWindow`; rebuild on window scroll.
+- [x] Selectable list = `filterSelectableDisplayNotes` then window filter; rebuild on window scroll
 
 ### Phase A identity gate (pre-NoteId)
 
-Until Phase B: gate on **`NoteRef` equality** or derived ref — **not** `displayIdx` / `selectedNoteIdx` delta alone.
+- [x] Gate on **`NoteRef` equality** — `shouldApplySelectionOnNoteRefChange`; no persisted `displayIdx`
 
 ---
 
@@ -384,7 +387,7 @@ Phase 0 (before A/B): `TrackId` / `NoteId` aliases on public API surfaces only.
 |------|------------|
 | Missed id on capture path | Append-time assign + seal/fold safety net + session-open guard rail with WARNING logs |
 | `sizeof(MidiEvent)` bump breaks v5 | v6 clean break; reject old files; dev wipe |
-| Phase B before Phase A stable | Hard gate on Phase A acceptance criteria |
+| Phase B before Phase A stable | **Resolved** — Phase A satisfied 2026-07-02; D0a + user scope gate Phase B |
 | Assign guard rail masks bugs | WARNING log per assign; optional debug assert after assign |
 | Overdub-in-edit without seal | Assign at append; fold path batch for stragglers |
 
@@ -392,7 +395,7 @@ Phase 0 (before A/B): `TrackId` / `NoteId` aliases on public API surfaces only.
 
 ## Migration Plan
 
-1. Complete Phase A (displayIdx / fader selection) on current branch
+1. ~~Complete Phase A (displayIdx / fader selection) on current branch~~ **Done** (`d3d5798`)
 2. Phase 0: type aliases (no behavior)
 3. Phase B slices 1–6 per tasks.md
 4. Dev wipe SD; re-record loops

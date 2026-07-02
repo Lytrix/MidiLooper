@@ -21,63 +21,37 @@ uint32_t inferLoopLength(const MidiEventVec& events, uint32_t hint) {
   return std::max<uint32_t>(maxTick + 1u, 768u);
 }
 
-bool isNoteOnFor(const MidiEvent& evt, uint8_t channel, uint8_t note) {
-  return evt.isNoteOn() && evt.channel == channel && evt.data.noteData.note == note;
-}
-
-bool isNoteOffFor(const MidiEvent& evt, uint8_t channel, uint8_t note) {
-  return evt.isNoteOff() && evt.channel == channel && evt.data.noteData.note == note;
-}
-
-int findNoteOnIndex(const MidiEventVec& events, const NoteRef& ref) {
-  for (size_t i = 0; i < events.size(); ++i) {
-    if (isNoteOnFor(events[i], ref.channel, ref.note) && events[i].tick == ref.startTick) {
-      return static_cast<int>(i);
-    }
-  }
-  return -1;
-}
-
-int findNoteOffIndex(const MidiEventVec& events, const NoteRef& ref, int skipIndex = -1) {
-  for (size_t i = 0; i < events.size(); ++i) {
-    if (static_cast<int>(i) == skipIndex) {
-      continue;
-    }
-    if (isNoteOffFor(events[i], ref.channel, ref.note) && events[i].tick == ref.endTick) {
-      return static_cast<int>(i);
-    }
-  }
-  return -1;
-}
-
-int findNoteOffForRef(const MidiEventVec& events, const NoteRef& ref) {
-  const int onIndex = findNoteOnIndex(events, ref);
-  if (onIndex < 0) {
+int findNoteOffForOnIndex(const MidiEventVec& events, int onIndex) {
+  if (onIndex < 0 || static_cast<size_t>(onIndex) >= events.size()) {
     return -1;
   }
-  const int exact = findNoteOffIndex(events, ref, onIndex);
-  if (exact >= 0) {
-    return exact;
-  }
+  const MidiEvent& onEvt = events[static_cast<size_t>(onIndex)];
+  const uint8_t channel = onEvt.channel;
+  const uint8_t note = onEvt.data.noteData.note;
+  const uint32_t startTick = onEvt.tick;
+
   for (size_t i = static_cast<size_t>(onIndex) + 1; i < events.size(); ++i) {
     const MidiEvent& evt = events[i];
-    if (isNoteOnFor(evt, ref.channel, ref.note) && evt.tick > ref.startTick) {
+    if (evt.isNoteOn() && evt.channel == channel && evt.data.noteData.note == note &&
+        evt.tick > startTick) {
       break;
     }
-    if (isNoteOffFor(evt, ref.channel, ref.note) && evt.tick >= ref.startTick) {
+    if (evt.isNoteOff() && evt.channel == channel && evt.data.noteData.note == note &&
+        evt.tick >= startTick) {
       return static_cast<int>(i);
     }
   }
   return -1;
 }
 
-void applyDeleteNote(MidiEventVec& events, const NoteRef& ref) {
-  const int onIndex = findNoteOnIndex(events, ref);
-  const int offIndex = findNoteOffIndex(events, ref, onIndex);
-  std::vector<int> remove;
-  if (onIndex >= 0) {
-    remove.push_back(onIndex);
+void applyDeleteNoteById(MidiEventVec& events, NoteId noteId) {
+  const int onIndex = findNoteOnById(events, noteId);
+  if (onIndex < 0) {
+    return;
   }
+  const int offIndex = findNoteOffForOnIndex(events, onIndex);
+  std::vector<int> remove;
+  remove.push_back(onIndex);
   if (offIndex >= 0) {
     remove.push_back(offIndex);
   }
@@ -87,56 +61,66 @@ void applyDeleteNote(MidiEventVec& events, const NoteRef& ref) {
   }
 }
 
-void applyMoveNote(MidiEventVec& events, const NoteRef& ref, uint32_t newStart, uint32_t newEnd) {
-  const int onIndex = findNoteOnIndex(events, ref);
-  const int offIndex = findNoteOffIndex(events, ref, onIndex);
+void applyMoveNoteById(MidiEventVec& events, NoteId noteId, uint32_t newStart, uint32_t newEnd) {
+  const int onIndex = findNoteOnById(events, noteId);
+  const int offIndex = findNoteOffForOnIndex(events, onIndex);
   if (onIndex >= 0) {
-    events[onIndex].tick = newStart;
+    events[static_cast<size_t>(onIndex)].tick = newStart;
   }
   if (offIndex >= 0) {
-    events[offIndex].tick = newEnd;
+    events[static_cast<size_t>(offIndex)].tick = newEnd;
   }
 }
 
-void applyChangePitch(MidiEventVec& events, const NoteRef& ref, uint8_t newPitch) {
-  const int onIndex = findNoteOnIndex(events, ref);
-  const int offIndex = findNoteOffIndex(events, ref, onIndex);
+void applyChangePitchById(MidiEventVec& events, NoteId noteId, uint8_t newPitch) {
+  const int onIndex = findNoteOnById(events, noteId);
+  const int offIndex = findNoteOffForOnIndex(events, onIndex);
   if (onIndex >= 0) {
-    events[onIndex].data.noteData.note = newPitch;
+    events[static_cast<size_t>(onIndex)].data.noteData.note = newPitch;
   }
   if (offIndex >= 0) {
-    events[offIndex].data.noteData.note = newPitch;
+    events[static_cast<size_t>(offIndex)].data.noteData.note = newPitch;
   }
 }
 
-void applyChangeVelocity(MidiEventVec& events, const NoteRef& ref, uint8_t newVelocity) {
-  const int onIndex = findNoteOnIndex(events, ref);
+void applyChangeVelocityById(MidiEventVec& events, NoteId noteId, uint8_t newVelocity) {
+  const int onIndex = findNoteOnById(events, noteId);
   if (onIndex >= 0) {
-    events[onIndex].data.noteData.velocity = newVelocity;
+    events[static_cast<size_t>(onIndex)].data.noteData.velocity = newVelocity;
   }
 }
 
-void shortenNoteEnd(MidiEventVec& events, const NoteRef& ref, uint32_t newEndTick) {
-  const int onIndex = findNoteOnIndex(events, ref);
-  const int offIndex = findNoteOffIndex(events, ref, onIndex);
+void shortenNoteEndById(MidiEventVec& events, NoteId noteId, uint32_t newEndTick) {
+  const int onIndex = findNoteOnById(events, noteId);
+  const int offIndex = findNoteOffForOnIndex(events, onIndex);
   if (offIndex >= 0) {
-    events[offIndex].tick = newEndTick;
+    events[static_cast<size_t>(offIndex)].tick = newEndTick;
   }
 }
 
-void applyChangeLength(MidiEventVec& events, const NoteRef& ref, uint32_t newEnd,
-                       uint32_t loopLength) {
-  if (newEnd == ref.endTick) {
+void applyChangeLengthById(MidiEventVec& events, NoteId noteId, uint32_t newEnd,
+                           uint32_t loopLength) {
+  const int onIndex = findNoteOnById(events, noteId);
+  if (onIndex < 0) {
+    return;
+  }
+  const MidiEvent& onEvt = events[static_cast<size_t>(onIndex)];
+  const uint32_t refStart = onEvt.tick;
+  const int offIndex = findNoteOffForOnIndex(events, onIndex);
+  const uint32_t refEnd =
+      offIndex >= 0 ? events[static_cast<size_t>(offIndex)].tick : refStart;
+
+  if (newEnd == refEnd) {
     return;
   }
 
-  if (newEnd < ref.endTick) {
-    shortenNoteEnd(events, ref, newEnd);
+  if (newEnd < refEnd) {
+    shortenNoteEndById(events, noteId, newEnd);
     return;
   }
 
   loopLength = inferLoopLength(events, loopLength);
-  const uint32_t newStart = ref.startTick;
+  const uint32_t newStart = refStart;
   const uint32_t displayNewEnd = newEnd % loopLength;
 
   const std::vector<NoteUtils::DisplayNote> allNotes =
@@ -145,10 +129,10 @@ void applyChangeLength(MidiEventVec& events, const NoteRef& ref, uint32_t newEnd
   std::vector<std::pair<NoteUtils::DisplayNote, uint32_t>> notesToShorten;
 
   for (const NoteUtils::DisplayNote& note : allNotes) {
-    if (note.note != ref.note) {
+    if (note.noteId == noteId) {
       continue;
     }
-    if (note.startTick == ref.startTick && note.endTick == ref.endTick) {
+    if (note.note != onEvt.data.noteData.note) {
       continue;
     }
     if (!NoteUtils::notesOverlap(newStart, displayNewEnd, note.startTick, note.endTick,
@@ -192,24 +176,23 @@ void applyChangeLength(MidiEventVec& events, const NoteRef& ref, uint32_t newEnd
   }
 
   for (const auto& [note, shortenedEnd] : notesToShorten) {
-    NoteRef overlapNoteRef{ref.channel, note.note, note.startTick, note.endTick};
-    shortenNoteEnd(events, overlapNoteRef, shortenedEnd);
+    shortenNoteEndById(events, note.noteId, shortenedEnd);
   }
   for (const NoteUtils::DisplayNote& note : notesToDelete) {
-    NoteRef overlapNoteRef{ref.channel, note.note, note.startTick, note.endTick};
-    applyDeleteNote(events, overlapNoteRef);
+    applyDeleteNoteById(events, note.noteId);
   }
 
-  NoteRef currentRef = ref;
-  const int onIndex = findNoteOnIndex(events, currentRef);
-  const int offIndex = findNoteOffForRef(events, currentRef);
-  if (offIndex >= 0) {
-    events[offIndex].tick = newEnd;
-  } else if (onIndex >= 0) {
-    events.push_back(MidiEvent::NoteOff(newEnd, ref.channel, ref.note, 0));
+  const int refreshedOnIndex = findNoteOnById(events, noteId);
+  const int refreshedOffIndex = findNoteOffForOnIndex(events, refreshedOnIndex);
+  if (refreshedOffIndex >= 0) {
+    events[static_cast<size_t>(refreshedOffIndex)].tick = newEnd;
+  } else if (refreshedOnIndex >= 0) {
+    const MidiEvent& refreshedOn = events[static_cast<size_t>(refreshedOnIndex)];
+    events.push_back(
+        MidiEvent::NoteOff(newEnd, refreshedOn.channel, refreshedOn.data.noteData.note, 0));
   }
 
-  NoteUtils::orderSamePitchNoteOffsForLifo(events, ref.channel, ref.note);
+  NoteUtils::orderSamePitchNoteOffsForLifo(events, onEvt.channel, onEvt.data.noteData.note);
   std::stable_sort(events.begin(), events.end(),
                    [](const MidiEvent& a, const MidiEvent& b) { return a.tick < b.tick; });
 }
@@ -222,17 +205,28 @@ void applyAddNote(MidiEventVec& events, const MidiEventVec& addedEvents) {
             [](const MidiEvent& a, const MidiEvent& b) { return a.tick < b.tick; });
 }
 
-bool noteRefSameIdentity(const NoteRef& a, const NoteRef& b) {
-  return a.channel == b.channel && a.note == b.note && a.startTick == b.startTick &&
-         a.endTick == b.endTick;
+}  // namespace
+
+int findNoteOnById(const MidiEventVec& events, NoteId noteId) {
+  if (noteId == kInvalidNoteId) {
+    return -1;
+  }
+  for (size_t i = 0; i < events.size(); ++i) {
+    if (events[i].isNoteOn() && events[i].noteId == noteId) {
+      return static_cast<int>(i);
+    }
+  }
+  return -1;
 }
 
-}  // namespace
+void deleteNoteById(MidiEventVec& events, NoteId noteId) {
+  applyDeleteNoteById(events, noteId);
+}
 
 void applyNoteEditPass(MidiEventVec& events, const EditPass& editPass, uint32_t loopLengthTicks) {
   switch (editPass.actionType) {
     case EditActionType::Delete:
-      applyDeleteNote(events, editPass.target);
+      applyDeleteNoteById(events, editPass.targetNoteId);
       break;
     case EditActionType::Create:
       applyAddNote(events, editPass.addedEvents);
@@ -240,16 +234,16 @@ void applyNoteEditPass(MidiEventVec& events, const EditPass& editPass, uint32_t 
     case EditActionType::Update:
       switch (editPass.propertyType) {
         case EditPropertyType::NoteRange:
-          applyMoveNote(events, editPass.target, editPass.startTick, editPass.endTick);
+          applyMoveNoteById(events, editPass.targetNoteId, editPass.startTick, editPass.endTick);
           break;
         case EditPropertyType::Length:
-          applyChangeLength(events, editPass.target, editPass.endTick, loopLengthTicks);
+          applyChangeLengthById(events, editPass.targetNoteId, editPass.endTick, loopLengthTicks);
           break;
         case EditPropertyType::Pitch:
-          applyChangePitch(events, editPass.target, editPass.pitch);
+          applyChangePitchById(events, editPass.targetNoteId, editPass.pitch);
           break;
         case EditPropertyType::Velocity:
-          applyChangeVelocity(events, editPass.target, editPass.velocity);
+          applyChangeVelocityById(events, editPass.targetNoteId, editPass.velocity);
           break;
         default:
           break;
@@ -260,28 +254,28 @@ void applyNoteEditPass(MidiEventVec& events, const EditPass& editPass, uint32_t 
 
 void applyNoteEditPassSequence(MidiEventVec& events, const EditPassVec& rows,
                                uint32_t loopLengthTicks) {
-  NoteRef trackedBaseline{};
+  NoteId trackedNoteId = kInvalidNoteId;
   uint32_t trackedStart = 0;
   uint32_t trackedEnd = 0;
   bool tracked = false;
 
   for (const EditPass& row : rows) {
     EditPass resolved = row;
-    if (tracked && noteRefSameIdentity(resolved.target, trackedBaseline)) {
-      resolved.target.startTick = trackedStart;
-      resolved.target.endTick = trackedEnd;
+    if (tracked && resolved.targetNoteId == trackedNoteId) {
+      resolved.startTick = trackedStart;
+      resolved.endTick = trackedEnd;
     }
     applyNoteEditPass(events, resolved, loopLengthTicks);
     if (resolved.actionType == EditActionType::Update &&
         resolved.propertyType == EditPropertyType::NoteRange) {
-      trackedBaseline = row.target;
+      trackedNoteId = row.targetNoteId;
       trackedStart = row.startTick;
       trackedEnd = row.endTick;
       tracked = true;
     } else if (resolved.actionType == EditActionType::Update &&
                resolved.propertyType == EditPropertyType::Length) {
-      trackedBaseline = row.target;
-      trackedStart = row.target.startTick;
+      trackedNoteId = row.targetNoteId;
+      trackedStart = resolved.startTick;
       trackedEnd = row.endTick;
       tracked = true;
     }
