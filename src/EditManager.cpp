@@ -1014,7 +1014,7 @@ bool EditManager::sessionRedo(Track& track) {
 }
 
 bool EditManager::isSessionUndoDisplayActive() const {
-    return false;
+    return editSession.active && editSession.sessionType == EditSessionType::Note;
 }
 
 MidiEventVec& EditManager::sessionMidiEvents() {
@@ -1363,6 +1363,9 @@ void EditManager::onTrackChanged(Track& newTrack) {
 }
 
 size_t EditManager::getDisplayUndoCount(const Track& track) const {
+    if (isSessionUndoDisplayActive()) {
+        return editSession.undoStack.undoCount();
+    }
     return TrackUndo::getUndoCount(track);
 }
 

@@ -1984,10 +1984,6 @@ void NoteEditManager::handleSelectFaderInput(int16_t pitchValue, Track& track) {
     }
 
     const int slotIndex = selectNavSlotIndexForPitchbend(track, pitchValue);
-    if (isGeometryEditKind(editManager.getNoteEditSessionState().kind)) {
-        logSelectSlot(slotIndex, pitchValue, true, "geometry_edit_active");
-        return;
-    }
 
     const uint32_t now = millis();
 

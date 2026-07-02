@@ -607,7 +607,8 @@ void test_select_dependent_plan_excludes_fader1() {
 }
 
 void test_geometry_edit_kind_blocks_f1_select_apply_policy() {
-    // Contract: F1 inbound select navigation is suppressed during geometry edit kinds.
+    // Contract: geometry kinds are classified for undo/kind routing; F1 echo after geometry
+    // motor sync is blocked via selectFaderFeedbackIgnoreUntilMs_, not blanket F1 suppression.
     TEST_ASSERT_TRUE(isGeometryEditKind(NoteEditKind::Move));
     TEST_ASSERT_TRUE(isGeometryEditKind(NoteEditKind::Length));
     TEST_ASSERT_TRUE(isGeometryEditKind(NoteEditKind::Pitch));

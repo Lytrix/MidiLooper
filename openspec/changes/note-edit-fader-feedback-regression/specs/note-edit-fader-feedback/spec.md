@@ -228,10 +228,30 @@ Under `teensy41-capture-serial` build, the system SHALL emit `#DBG outbound_ctx`
 
 ### Requirement: Single motor trigger owner (Phase 12)
 
-Each dependent fader stage SHALL emit at most one motor trigger per outbound pipeline step. Until Phase 12 ships, duplicate triggers from send helpers and `processFaderOutbound` are a known violation tracked in [BUG.md](../../BUG.md) and design D34/D20.
+Each dependent fader stage SHALL emit at most one motor trigger per outbound pipeline step. Duplicate triggers from removed send wrappers SHALL be eliminated in Phase 12 (D20).
 
 #### Scenario: One trigger per F2 stage after cleanup
 
 - **WHEN** Phase 12 cleanup is complete and dependent refresh runs
-- **THEN** each `SEND_F2` / `TRIGGER_F2` pair emits exactly one `MO,224,14` motor trigger for that stage
-- **AND** `sendCoarseFaderPosition` does not call `sendCoarseFaderMotorTrigger` when pipeline owns triggers
+- **THEN** each `SEND_F2` / parallel burst step emits exactly one motor cluster for that stage
+- **AND** removed dead wrappers (`sendFaderUpdate`, `sendFaderPosition`, `performSelectnoteFaderUpdate`) have zero call sites
+
+### Requirement: Dead outbound API removal (Phase 12)
+
+Firmware SHALL NOT retain zero-caller NOTE_EDIT fader outbound wrappers listed in [design.md](../../design.md) D20 after Phase 12 ships.
+
+#### Scenario: Native build after dead code removal
+
+- **WHEN** Phase 12.1–12.4 tasks are complete
+- **THEN** `pio test -e native` passes
+- **AND** `Trigger::NoteSelectDependent` and `Trigger::Fader1BracketOnly` are removed from the live coordinator (tests updated)
+
+### Requirement: EditorSelection motor geometry (Phase 13)
+
+Dependent fader motor outbound SHALL resolve note pitch and position from `EditorSelection.primaryNote` when a note is selected. List index (`selectedNoteIdx`) SHALL be derived for display only and SHALL NOT be the sole motor-sync gate (D41; aligns with `note-edit-stable-note-id`).
+
+#### Scenario: Same NoteId different filtered index
+
+- **WHEN** filtered inventory rebuild shifts list index but `EditorSelection.primaryNote` is unchanged
+- **THEN** live F1 path does not fire motor sync or `applySelectNav`
+- **AND** motor send helpers do not use stale index-only geometry
