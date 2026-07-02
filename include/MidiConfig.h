@@ -114,6 +114,8 @@ constexpr uint8_t PROGRAM_CHANGE_CHANNEL = 16;
 namespace SessionProgram {
   constexpr uint8_t LOOP_EDIT = 0;  // LoopEditor motorfaders (selectat=0)
   constexpr uint8_t NOTE_EDIT = 1;  // NoteEditor motorfaders (selectat=1)
+  /** DROID: deselect motorfader banks so NOTE_EDIT PC re-runs selectat=1 (live SELECT_SYNC). */
+  constexpr uint8_t MOTOR_BANK_NEUTRAL = 127;
 }
 
 // --- Bar/Step button input (16th notes + bars, any controller) ---

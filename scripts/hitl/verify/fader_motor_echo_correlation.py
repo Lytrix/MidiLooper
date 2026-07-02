@@ -112,7 +112,7 @@ def verify_fader_motor_echo_correlation(
     lines: list[str],
     *,
     pair_window_s: float = 1.0,
-    ack_window_s: float = 0.02,
+    ack_window_s: float = 0.011,
     perceptual_window_s: float = 1.0,
 ) -> dict[str, object]:
     """Pair Teensy MO motor commands with DROID MI echoes and ch13 ack notes."""

@@ -778,8 +778,59 @@ def _extract_clear_undo_prune(lines: list[str]) -> dict[str, object]:
     }
 
 
-def _serial_has_clear_ignored_empty(lines: list[str]) -> bool:
-    return any("Clear ignored — track is empty" in line for line in lines)
+def _serial_has_clear_ignored_empty(lines: list[str], *, after_index: int = 0) -> bool:
+    for line in lines[after_index:]:
+        if "Clear ignored" in line and "track is empty" in line:
+            return True
+    return False
+
+
+def _latest_track_state(lines: list[str]) -> Optional[str]:
+    latest: Optional[str] = None
+    for line in lines:
+        if ",ST,Track," not in line:
+            continue
+        tail = line.split(",ST,Track,", 1)[1]
+        parts = tail.split(",")
+        if len(parts) >= 2:
+            latest = parts[1].strip()
+    return latest
+
+
+def _serial_suggests_loop_content(lines: list[str]) -> bool:
+    if _extract_revt_note_on_ticks(lines):
+        return True
+    latest = _latest_track_state(lines)
+    if latest in ("RECORDING", "PLAYING", "OVERDUBBING", "STOPPED_RECORDING"):
+        return True
+    if latest == "STOPPED":
+        for line in lines:
+            if ",RECS," in line and "#CAP," in line:
+                return True
+    return False
+
+
+def _can_skip_clear_before_record(lines: list[str]) -> bool:
+    """Track already empty/idle — no clear long-press needed."""
+    latest = _latest_track_state(lines)
+    if latest == "EMPTY":
+        return True
+    if _serial_has_clear_ignored_empty(lines):
+        return True
+    if not any(",ST,Track," in line for line in lines) and not _serial_suggests_loop_content(lines):
+        return True
+    return False
+
+
+def _track_cleared_for_record(lines: list[str]) -> bool:
+    latest = _latest_track_state(lines)
+    if latest == "EMPTY":
+        return True
+    if latest == "ARMED":
+        return not _serial_suggests_loop_content(lines)
+    if latest == "STOPPED" and not _serial_suggests_loop_content(lines):
+        return True
+    return False
 
 
 def _extract_phase_boundaries(lines: list[str]) -> dict[str, Optional[int]]:
@@ -2417,6 +2468,11 @@ def run() -> int:
         help="Disable clear-before-record step",
     )
     parser.add_argument(
+        "--no-loop-edit-precondition",
+        action="store_true",
+        help="Skip NOTE_EDIT exit before record (default: no-op unless serial shows NOTE_EDIT)",
+    )
+    parser.add_argument(
         "--clear-press-ms",
         type=int,
         default=900,
@@ -2742,6 +2798,7 @@ def run() -> int:
                     serial_collector,
                     press_ms=args.press_ms,
                     phase_wait_ms=args.phase_wait_ms,
+                    skip=args.no_loop_edit_precondition,
                 )
 
                 # Recover from a prior aborted run: stop then restart transport so
@@ -2785,17 +2842,38 @@ def run() -> int:
                         abort_reason = reason
                         break
                     print(f"[track {idx}] clear selected loop (long press)")
-                    expected_empty_count = None
-                    if serial_collector is not None:
-                        state_counts = _count_capture_state_entries(serial_collector.snapshot())
-                        expected_empty_count = state_counts.get("EMPTY", 0) + 1
-                    _send_short_press(
-                        out_port,
-                        note=RECORD_BUTTON_NOTE,
-                        channel_1based=CONTROL_CHANNEL_1BASED,
-                        press_ms=args.clear_press_ms,
+                    reached_empty = False
+                    clear_result = ""
+                    pre_clear_snap = (
+                        serial_collector.snapshot() if serial_collector is not None else []
                     )
-                    if serial_collector is not None and expected_empty_count is not None:
+                    if serial_collector is not None and _can_skip_clear_before_record(
+                        pre_clear_snap
+                    ):
+                        print(
+                            "[info] Track already empty or idle; skipping clear long press."
+                        )
+                        reached_empty = True
+                        clear_result = "already_empty_skip"
+                    expected_empty_count = None
+                    clear_baseline_len = len(pre_clear_snap)
+                    if not reached_empty:
+                        if serial_collector is not None:
+                            state_counts = _count_capture_state_entries(
+                                serial_collector.snapshot()
+                            )
+                            expected_empty_count = state_counts.get("EMPTY", 0) + 1
+                        _send_short_press(
+                            out_port,
+                            note=RECORD_BUTTON_NOTE,
+                            channel_1based=CONTROL_CHANNEL_1BASED,
+                            press_ms=args.clear_press_ms,
+                        )
+                    if (
+                        not reached_empty
+                        and serial_collector is not None
+                        and expected_empty_count is not None
+                    ):
                         reached_empty = _wait_for_state_entry_count(
                             serial_collector,
                             to_state="EMPTY",
@@ -2804,15 +2882,27 @@ def run() -> int:
                             abort=abort,
                         )
                         clear_result = "empty_transition" if reached_empty else ""
-                        if not reached_empty and _serial_has_clear_ignored_empty(serial_collector.snapshot()):
+                        post_snap = serial_collector.snapshot()
+                        if not reached_empty and _serial_has_clear_ignored_empty(
+                            post_snap, after_index=clear_baseline_len
+                        ):
                             print(
                                 "[info] Clear ignored on already-empty track; "
                                 "treating clear precondition as satisfied."
                             )
                             reached_empty = True
                             clear_result = "already_empty_ignored"
+                        if not reached_empty and _track_cleared_for_record(post_snap):
+                            latest = _latest_track_state(post_snap)
+                            print(
+                                f"[info] Track cleared for record without EMPTY transition "
+                                f"(latest={latest})"
+                            )
+                            reached_empty = True
+                            clear_result = "cleared_without_empty_transition"
                         if not reached_empty:
                             print("[warn] Timed out waiting for clear->EMPTY transition; retrying clear long press.")
+                            retry_baseline_len = len(serial_collector.snapshot())
                             _send_short_press(
                                 out_port,
                                 note=RECORD_BUTTON_NOTE,
@@ -2828,21 +2918,41 @@ def run() -> int:
                             )
                             if reached_empty:
                                 clear_result = "empty_transition"
-                        if not reached_empty and _serial_has_clear_ignored_empty(serial_collector.snapshot()):
-                            print(
-                                "[info] Clear ignored on already-empty track; "
-                                "treating clear precondition as satisfied."
-                            )
-                            reached_empty = True
-                            clear_result = "already_empty_ignored"
-                        if reached_empty and clear_result:
-                            clear_precondition_results.append(
-                                {
-                                    "track_index": idx,
-                                    "result": clear_result,
-                                }
-                            )
-                        if not reached_empty:
+                            post_retry = serial_collector.snapshot()
+                            if not reached_empty and _serial_has_clear_ignored_empty(
+                                post_retry, after_index=retry_baseline_len
+                            ):
+                                print(
+                                    "[info] Clear ignored on already-empty track; "
+                                    "treating clear precondition as satisfied."
+                                )
+                                reached_empty = True
+                                clear_result = "already_empty_ignored"
+                            if not reached_empty and _track_cleared_for_record(post_retry):
+                                latest = _latest_track_state(post_retry)
+                                print(
+                                    f"[info] Track cleared for record after retry "
+                                    f"(latest={latest})"
+                                )
+                                reached_empty = True
+                                clear_result = "cleared_without_empty_transition"
+                    elif not reached_empty:
+                        _send_short_press(
+                            out_port,
+                            note=RECORD_BUTTON_NOTE,
+                            channel_1based=CONTROL_CHANNEL_1BASED,
+                            press_ms=args.clear_press_ms,
+                        )
+                        reached_empty = True
+                        clear_result = "no_serial_capture"
+                    if reached_empty and clear_result:
+                        clear_precondition_results.append(
+                            {
+                                "track_index": idx,
+                                "result": clear_result,
+                            }
+                        )
+                    if not reached_empty:
                             print("[warn] Retry did not reach EMPTY after clear long press.")
                             precondition_failures.append(
                                 {

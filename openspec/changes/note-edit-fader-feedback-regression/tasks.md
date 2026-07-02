@@ -1,6 +1,6 @@
 # Tasks — note-edit-fader-feedback-regression
 
-**Status:** Phase 3 **shipped** (2026-06-30); HITL timing **PASS**; RC11 open — **Phase 8** next. Phase 8–12 OpenSpec doc reconciliation **complete**. Phase A NoteRef selection refactor **shipped** (2026-07-02, `d3d5798`) — see §7.16.
+**Status:** Phase 3 **shipped** (2026-06-30); HITL timing **PASS** on `session_20260630_191718`. **§7.18 active** (2026-07-02) — `EditorSelection` motor-sync wiring gap from `session_20260702_114249.log`. Phase A **shipped** (`d3d5798`); Phase 8 capture §8.3–8.4 open.
 
 **Gate:** Phase 8 firmware before Phase 12 cleanup. Phase 12 MUST NOT start until Phase 8.3 capture passes (`pb == expected_pb_rel`). Run `pio test -e native` before push.
 
@@ -314,7 +314,139 @@ Option D timing levers (quiet gate, stale-echo relax, dirty flags) replaced by s
 - [x] 7.17.5 F4 post-select routing settle (`FEEDBACK_IGNORE_PERIOD`) in `handleNoteValueFaderInput`
 - [x] 7.17.6 Arm f4 feedback ignore on `SEND_F4` + `SELECT_SYNC` sends (`armChannel15CcFaderFeedbackIgnore`)
 - [x] 7.17.7 Native: `test_reference_step_from_bracket_tick`; `pio test -e native` 336 pass; firmware uploaded (`teensy41-capture-serial`)
-- [ ] 7.17.8 Capture: single f4 MO on NOTE_EDIT entry after LOOP_EDIT f1 select; no spurious pitch edit within settle + grace
+- [x] 7.17.8 Capture: single f4 MO on NOTE_EDIT entry after LOOP_EDIT f1 select; no spurious pitch edit within settle + grace — user HITL sweep PASS post-upload
+
+### 7.18 EditorSelection motor sync wiring (capture regression 2026-07-02)
+
+**Evidence:** [`captures/session_20260702_114249.log`](../../../captures/session_20260702_114249.log) — 0× `mode=SELECT_SYNC`, 0× `select_motor_sync`, 325× `outbound_step=BEGIN` on live F1 select; `select_ignored_rate=0.53`.  
+**Plan:** [fader_feedback_analysis plan](../../../.cursor/plans/fader_feedback_analysis_c3b1e88b.plan.md)  
+**Root cause:** `applyNoteSelectFromFader1Pitchbend` calls `applySelectNav(..., requestFaderSync=true)` → pipeline `NoteSelectWithFader1` instead of `syncMotorsForDisplaySelection` (`EditorSelection` path).
+
+**Implement:**
+
+- [x] 7.18.1 `applyNoteSelectFromFader1Pitchbend` → `applySelectNav(..., requestFaderSync=false)` for live F1 note select; keep `requestFaderSync=true` for GPIO / session entry only
+- [x] 7.18.2 `planForSelectDependentFromNoteIdChange` — full F2+F3+F4 (`coarse`+`fine`+`noteValue`) on any `EditorSelection.primaryNote` change, including same `bracketTick`
+- [x] 7.18.3 F3 loop-relative tick in `syncMotorsFromSelectTarget` (`noteRelativeTick` for fine offset; mirror §10.1 inline path)
+- [x] 7.18.4 Native: same-bracket `NoteId` change → full motor plan; `requestFaderSync=false` path (`pio test -e native` 336 pass)
+- [ ] 7.18.5 Capture: re-run `session_20260702_114249` slow-sweep scenario — see **§7.18.8 acceptance matrix** (manual capture + ch13 triple-fader proof)
+- [ ] 7.18.6 Close [`note-edit-stable-note-id`](../note-edit-stable-note-id/) §7.3 HITL gate when §7.18.5 passes
+- [ ] 7.18.7 Reconcile falsely `[x]` tasks (audit 2026-07-02) — add notes or uncheck after §7.18.5:
+  - §7.13.4, §7.13.10.1, §7.16 motor-sync on live F1 (bypassed until 7.18.1)
+  - §7.13.7 manual slow sweep (automated PASS; manual FAIL — re-verify in 7.18.5)
+  - §7.13.10.5 same-bracket F4-only superseded by 7.18.2 (all three motors on `NoteId`)
+  - §7.12.10 `drainDependentFaderOutboundUntilDone` — dead code (zero call sites); remove in Phase 12 or 7.18 follow-up
+  - §7.12.13 `duplicate=1` diagnostic — not in firmware; drop or implement
+  - §7.12.15 `prior_slot` logging — always `-1`; wire or drop
+  - §9.1 F1 ignore during F2 outbound — not wired at `SendCoarse` (only coarse ignore); revisit after 7.18.5 if echo persists
+
+#### 7.18.8 Manual capture acceptance — select move + ch13 triple-fader proof
+
+**Purpose:** After §7.18.1–7.18.4 ship, prove every **`EditorSelection.primaryNote`** change (`apply=1 reason=note_changed`) drives **F2 + F3 + F4** motor outbound and DROID **ch13** set-changed acks — not F1 (user-driven select fader).
+
+**Prerequisite:** DROID `midilooper_v1.ini` motor-ack blocks on ch13 loaded (§7.15.2). Build **`teensy41-capture-serial`**.
+
+**Manual capture procedure**
+
+1. Terminal A — serial capture:
+
+```bash
+.venv/bin/python scripts/capture_session.py --port /dev/cu.usbmodem154944801
+```
+
+2. Hardware — enter **NOTE_EDIT** on a loop with **≥10 distinct notes** (include **≥1 same-bracket sibling pair** if available).
+3. **Slow** continuous F1 select sweep: left → right, pause ~0.5 s per note, then right → left. Do **not** touch F2/F3/F4.
+4. Ctrl+C capture → save as `captures/session_<date>_noteid_triple_motor_acceptance.log`.
+
+**Analyze**
+
+```bash
+.venv/bin/python scripts/analyze_fader2_select_feedback.py captures/session_<date>_noteid_triple_motor_acceptance.log
+# after §7.18.9 lands:
+.venv/bin/python scripts/hitl/verify/note_edit_select_triple_motor_ack.py captures/session_<date>_noteid_triple_motor_acceptance.log
+```
+
+**Pass matrix (all required)**
+
+| # | Gate | Target |
+|---|------|--------|
+| A | Live path | `mode=SELECT_SYNC` on every `apply=1 reason=note_changed`; **zero** `outbound_step=BEGIN` between session entry and session exit (except `SessionOpen` at NOTE_EDIT enter) |
+| B | Motor sync log | `#DBG select_motor_sync sent=1` on every `apply=1 reason=note_changed` within **50 ms** |
+| C | F2 outbound | `MO,224,14` pitchbend change within **300 ms** of each `apply=1` (distinct value when bracket changes; **re-send** even when value unchanged on same-bracket `NoteId` change per 7.18.2) |
+| D | F3 outbound | `MO,176,15,2,<cc>` within **300 ms** of each `apply=1` (same re-send rule as C) |
+| E | F4 outbound | `MO,176,15,3,<cc>` within **300 ms** of each `apply=1`; CC matches selected note pitch |
+| F | ch13 F2 ack | Within **20 ms** of each F2 `MO,224,14`: `MI,H,144,13,83,127` (set_changed) |
+| G | ch13 F3 ack | Within **20 ms** of each F3 `MO,176,15,2`: `MI,H,144,13,85,127` (set_changed) |
+| H | ch13 F4 ack | Within **20 ms** of each F4 `MO,176,15,3`: `MI,H,144,13,87,127` (set_changed); clear **86** may precede |
+| I | F1 echo | `select_ignored_rate` ≤ **0.05** (echo-only); no sustained `ignored=1 reason=echo` clusters during slow user sweep |
+| J | Sibling | Same-bracket `NoteId` switches: gates C–H pass (all three motors + ch13 acks, not F4-only) |
+| K | Negative | `apply=0 reason=unchanged_note` rows: **no** `select_motor_sync sent=1` and **no** F2/F3/F4 MO burst |
+
+**ch13 ack map (NOTE_EDIT)** — from `fader_motor_echo_correlation.py`:
+
+| Fader | clear | set_changed |
+|-------|------:|------------:|
+| F2 coarse | 82 | 83 |
+| F3 fine | 84 | 85 |
+| F4 note value | 86 | 87 |
+
+**Manual spot-check (if verifier not yet shipped)**
+
+```bash
+rg '#DBG select_apply.*apply=1 reason=note_changed' captures/<session>.log | wc -l
+rg 'mode=SELECT_SYNC' captures/<session>.log | wc -l   # must equal apply=1 count
+rg 'outbound_step=BEGIN' captures/<session>.log        # SessionOpen only
+rg '#DBG select_motor_sync sent=1' captures/<session>.log | wc -l
+```
+
+Per `apply=1` timestamp, confirm within 300 ms: `MO,224,14` + `MO,176,15,2` + `MO,176,15,3` and ch13 notes **83, 85, 87**.
+
+- [x] 7.18.9 Verifier: `scripts/hitl/verify/note_edit_select_triple_motor_ack.py` — per-`note_changed` gates A–K; wired into `analyze_fader2_select_feedback.py`; pre-fix `session_20260702_114249` correctly FAIL
+
+### 7.19 Motor trigger predelay (DROID USB round-trip — 2026-07-02)
+
+**Evidence:** `session_20260702_142309` — ch13 acks lag MO ~11 ms in host recordings (verifier window only, not firmware delay). Firmware `BURST` (~1 ms) between pitch/CC and trigger is correct for DROID; HITL probe `PITCH_NOTE_OFF` (20 ms) remains a conservative lab default.
+
+**Implement:**
+
+- [x] 7.19.1 `kCh13AckCorrelationWindowMs = 11` — capture/log ack pairing only (not firmware delay)
+- [x] 7.19.2 Reverted firmware ms waits between pitch/CC and notegate trigger
+- [x] 7.19.3 Reverted: §7.21 restores PC **before** burst (not after F2+F3+F4)
+- [x] 7.19.4 Native tests updated (`pio test -e native`)
+- [ ] 7.19.5 Capture acceptance after corrected timing model
+- [ ] 7.19.6 Verifier: ch13 ack paired on **notegate** MO + 11 ms window; motor_sync window 80 ms
+
+### 7.20 DROID selectAt batch arm after F2+F3+F4 (2026-07-02) — **reverted**
+
+**Evidence:** `session_20260702_151419` — PC-after-burst + resync queue: F2 lagged F1; only 38/174 selects applied motors; 52% perceptual F2 vs §7.18 `142309` era.
+
+- [x] 7.20.1 Queue coalesce — **removed** in §7.21
+- [x] 7.20.2 PC ch16 after burst — **failed** hypothesis; reverted
+- [x] 7.20.3 Remove `kMotorTriggerPredelayMs` firmware waits (11 ms is verifier-only per user)
+- [x] 7.20.4 Capture disproved PC-after-sequence (`session_20260702_151419`)
+
+### 7.21 Revert to §7.18 synchronous motor sync (2026-07-02)
+
+**Target:** `session_20260702_142309` behavior — `requestFaderSync=false` + `SELECT_SYNC` + **one PC ch16 before** F2/F3/F4 pitch→trigger burst; no async resync queue; no firmware ms delays.
+
+- [x] 7.21.1 Restore `syncMotorsFromSelectTarget` — `armNoteEditDroidMotorBank()` first, then synchronous F2/F3/F4 send+trigger
+- [x] 7.21.2 Remove `startDisplaySelectMotorSync` / resync queue / PC-after-burst
+- [x] 7.21.3 Keep §7.18.2–7.18.4 (`NoteId` full plan, `noteRelativeTick` F3, `applySelectNav(..., false)`)
+- [x] 7.21.4 `pio test -e native` — 337 pass
+- [x] 7.21.5 Capture acceptance — slow F1 sweep; compare to `142309`
+- [x] 7.21.6 Batch `selectAt` — **failed** `152946` (F2/F3 0% MI echo; F4 only partial)
+- [ ] 7.21.7 Capture: two-note alternation (F4 37↔15); MI echo on every `note_changed`
+- [x] 7.21.8 SessionOpen sequence + PC **127→1** reset prelude (`reset_arm=127_1 sequence=session_open`)
+- [ ] 7.21.9 Capture: validate 127→1 vs LOOP↔NOTE switch behavior on repeated toggles
+
+### 7.22 HITL `note_edit_select_dependent_faders` (Phase 1 — host scenario)
+
+**Plan:** [`docs/plans/note_edit_select_dependent_faders_hitl_enhancement.md`](../../../docs/plans/note_edit_select_dependent_faders_hitl_enhancement.md)
+
+- [x] 7.22.1 Preset chain `base` → `note_edit_select_dependent_faders` (runner abort if base fails)
+- [x] 7.22.2 Verifier `scripts/hitl/verify/note_edit_select_dependent_faders.py` — composes triple_motor_ack + echo + outbound value gates
+- [x] 7.22.3 Host unit test `scripts/test_note_edit_select_dependent_faders_serial_verify.py`
+- [x] 7.22.4 Preset `note_edit_select_dependent_faders` in `scripts/hitl/registry.py`; catalog row in `HITL_TEST_SCENARIOS.md`
+- [ ] 7.22.5 Hardware baseline capture on current firmware; record pass/fail metrics before Phase 2 value fix
 
 ---
 
@@ -323,7 +455,7 @@ Option D timing levers (quiet gate, stale-echo relax, dirty flags) replaced by s
 **Design:** [design.md](./design.md) D17  
 **Gate:** §8.1–§8.3 before Phase 9. Run `pio test -e native` before push.
 
-- [ ] 8.1 `noteRelativeTick` in `sendCoarseFaderPosition` (position mode start tick; length mode end tick) — **shipped** 2026-06-30
+- [x] 8.1 `noteRelativeTick` in `sendCoarseFaderPosition` (position mode start tick; length mode end tick) — shipped in firmware; inline F3 still open (§7.18.3 / §10.1)
 - [x] 8.2 Native test in `test/test_note_edit_fader_feedback/test_note_edit_fader_feedback.cpp` with `loopStartTick=424`
 - [ ] 8.3 Capture: all `#DBG outbound_ctx f2` position-mode rows `pb == expected_pb_rel`
 - [ ] 8.4 Manual: fader1 sweep with non-zero loop start — F2 motor matches note start

@@ -164,20 +164,27 @@ def main() -> int:
         from hitl.verify.fader_select_dwell_gap import verify_fader_select_dwell_gap
         from hitl.verify.fader_motor_echo_correlation import verify_fader_motor_echo_correlation
         from hitl.verify.fader_select_sibling_sync import verify_fader_select_sibling_sync
+        from hitl.verify.note_edit_select_triple_motor_ack import (
+            verify_note_edit_select_triple_motor_ack,
+        )
 
         refresh = verify_note_edit_fader_select_refresh(lines)
         dwell = verify_fader_select_dwell_gap(lines)
         echo = verify_fader_motor_echo_correlation(lines)
         sibling = verify_fader_select_sibling_sync(lines)
+        triple = verify_note_edit_select_triple_motor_ack(lines)
         print("HITL refresh verifier:", refresh)
         print("Dwell-gap verifier:", dwell)
         print("Motor echo correlator:", echo)
         print("Sibling sync verifier:", sibling)
+        print("Triple motor ack verifier (§7.18.8):", triple)
         print()
         if not dwell.get("fader_select_dwell_gap_ok", True):
             exit_code = 2
         if not sibling.get("fader_select_sibling_sync_ok", True):
             exit_code = 4
+        if not triple.get("note_edit_select_triple_motor_ack_ok", True):
+            exit_code = 5
         if args.mi_strict:
             miss_rate = float(echo.get("mo_mi_f2_miss_rate", 0.0))
             note_changed = int(echo.get("note_changed_count", 0))

@@ -25,13 +25,9 @@ enum class Step : uint8_t {
     Idle = 0,
     SendFader1Bracket,
     WaitFader1Echo,
-    ArmMotorBank,
     SendCoarse,
-    TriggerCoarse,
     SendFine,
-    TriggerFine,
     SendNoteValue,
-    TriggerNoteValue,
     Done,
 };
 
@@ -45,6 +41,8 @@ struct PlanFlags {
 
 constexpr uint32_t kOutboundWatchdogMs = 5000;
 constexpr uint32_t kFader1EchoWaitCapMs = 1600;
+/** Capture/log only: pair ch13 motor acks this many ms after MO notegate (host recording alignment). */
+constexpr uint32_t kCh13AckCorrelationWindowMs = 11;
 
 inline PlanFlags planForTrigger(Trigger trigger) {
     PlanFlags plan;
@@ -123,7 +121,7 @@ inline PlanFlags planForSelectDependentFromNoteIdChange(NoteId priorPrimary, Not
         return planForSelectDependent(true, true);
     }
     if (priorPrimary != newPrimary) {
-        return planForSelectDependent(false, true);
+        return planForSelectDependent(true, true);
     }
     return {};
 }
@@ -151,13 +149,9 @@ inline bool shouldCoalesceDependentRefresh(Trigger incoming, Step activeStep) {
 
 inline bool isChannel15OutboundStep(Step step) {
     switch (step) {
-        case Step::ArmMotorBank:
         case Step::SendCoarse:
-        case Step::TriggerCoarse:
         case Step::SendFine:
-        case Step::TriggerFine:
         case Step::SendNoteValue:
-        case Step::TriggerNoteValue:
             return true;
         default:
             return false;
@@ -203,7 +197,7 @@ inline Step nextEnabledStep(Step step, const PlanFlags& plan) {
                 return Step::SendFader1Bracket;
             }
             if (plan.coarse || plan.fine || plan.noteValue) {
-                return Step::ArmMotorBank;
+                return Step::SendCoarse;
             }
             return Step::Done;
         case Step::SendFader1Bracket:
@@ -213,40 +207,20 @@ inline Step nextEnabledStep(Step step, const PlanFlags& plan) {
             return nextEnabledStep(Step::WaitFader1Echo, plan);
         case Step::WaitFader1Echo:
             if (plan.coarse || plan.fine || plan.noteValue) {
-                return Step::ArmMotorBank;
-            }
-            return Step::Done;
-        case Step::ArmMotorBank:
-            if (plan.coarse) {
                 return Step::SendCoarse;
             }
-            return nextEnabledStep(Step::SendCoarse, plan);
+            return Step::Done;
         case Step::SendCoarse:
-            if (plan.coarse) {
-                return Step::TriggerCoarse;
-            }
-            return nextEnabledStep(Step::TriggerCoarse, plan);
-        case Step::TriggerCoarse:
             if (plan.fine) {
                 return Step::SendFine;
             }
             return nextEnabledStep(Step::SendFine, plan);
         case Step::SendFine:
-            if (plan.fine) {
-                return Step::TriggerFine;
-            }
-            return nextEnabledStep(Step::TriggerFine, plan);
-        case Step::TriggerFine:
             if (plan.noteValue) {
                 return Step::SendNoteValue;
             }
             return nextEnabledStep(Step::SendNoteValue, plan);
         case Step::SendNoteValue:
-            if (plan.noteValue) {
-                return Step::TriggerNoteValue;
-            }
-            return nextEnabledStep(Step::TriggerNoteValue, plan);
-        case Step::TriggerNoteValue:
         case Step::Done:
             return Step::Done;
     }

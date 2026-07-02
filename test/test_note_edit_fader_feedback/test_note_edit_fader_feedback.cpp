@@ -8,6 +8,7 @@
 #include "Utils/NoteEditLengthFaderMapping.h"
 #include "Utils/NoteEditFaderOutboundPlan.h"
 #include "Utils/NoteEditFaderSelectSync.h"
+#include "Utils/NoteEditFaderMotorTiming.h"
 #include "Utils/NoteEditDisplaySnapshot.h"
 #include "Utils/SelectNavigation.h"
 #include "NoteEditSessionState.h"
@@ -187,8 +188,8 @@ void test_select_dependent_plan_from_ref_change() {
 
     const auto noteOnly = NoteEditFaderOutbound::planForSelectDependentFromNoteIdChange(
         1, 2, 483, 483);
-    TEST_ASSERT_FALSE(noteOnly.coarse);
-    TEST_ASSERT_FALSE(noteOnly.fine);
+    TEST_ASSERT_TRUE(noteOnly.coarse);
+    TEST_ASSERT_TRUE(noteOnly.fine);
     TEST_ASSERT_TRUE(noteOnly.noteValue);
 
     const auto emptyStep = NoteEditFaderOutbound::planForSelectDependentFromNoteIdChange(
@@ -200,11 +201,9 @@ void test_outbound_pipeline_note_only_dependent_plan() {
     const auto plan = NoteEditFaderOutbound::planForSelectDependent(false, true);
     NoteEditFaderOutbound::Step step = NoteEditFaderOutbound::nextEnabledStep(
         NoteEditFaderOutbound::Step::Idle, plan);
-    TEST_ASSERT_EQUAL(NoteEditFaderOutbound::Step::ArmMotorBank, step);
+    TEST_ASSERT_EQUAL(NoteEditFaderOutbound::Step::SendCoarse, step);
     step = NoteEditFaderOutbound::advanceOutboundStep(step, plan);
     TEST_ASSERT_EQUAL(NoteEditFaderOutbound::Step::SendNoteValue, step);
-    step = NoteEditFaderOutbound::advanceOutboundStep(step, plan);
-    TEST_ASSERT_EQUAL(NoteEditFaderOutbound::Step::TriggerNoteValue, step);
     step = NoteEditFaderOutbound::advanceOutboundStep(step, plan);
     TEST_ASSERT_EQUAL(NoteEditFaderOutbound::Step::Done, step);
 }
@@ -337,11 +336,9 @@ void test_outbound_pipeline_advances_through_session_open() {
     step = NoteEditFaderOutbound::advanceOutboundStep(step, plan);
     TEST_ASSERT_EQUAL(NoteEditFaderOutbound::Step::WaitFader1Echo, step);
     step = NoteEditFaderOutbound::advanceOutboundStep(step, plan);
-    TEST_ASSERT_EQUAL(NoteEditFaderOutbound::Step::ArmMotorBank, step);
-    step = NoteEditFaderOutbound::advanceOutboundStep(step, plan);
     TEST_ASSERT_EQUAL(NoteEditFaderOutbound::Step::SendCoarse, step);
     step = NoteEditFaderOutbound::advanceOutboundStep(step, plan);
-    TEST_ASSERT_EQUAL(NoteEditFaderOutbound::Step::TriggerCoarse, step);
+    TEST_ASSERT_EQUAL(NoteEditFaderOutbound::Step::SendFine, step);
 }
 
 void test_outbound_pipeline_advances_through_note_select_dependent() {
@@ -349,21 +346,36 @@ void test_outbound_pipeline_advances_through_note_select_dependent() {
         NoteEditFaderOutbound::planForTrigger(NoteEditFaderOutbound::Trigger::NoteSelectDependent);
     NoteEditFaderOutbound::Step step = NoteEditFaderOutbound::nextEnabledStep(
         NoteEditFaderOutbound::Step::Idle, plan);
-    TEST_ASSERT_EQUAL(NoteEditFaderOutbound::Step::ArmMotorBank, step);
-    step = NoteEditFaderOutbound::advanceOutboundStep(step, plan);
     TEST_ASSERT_EQUAL(NoteEditFaderOutbound::Step::SendCoarse, step);
-    step = NoteEditFaderOutbound::advanceOutboundStep(step, plan);
-    TEST_ASSERT_EQUAL(NoteEditFaderOutbound::Step::TriggerCoarse, step);
     step = NoteEditFaderOutbound::advanceOutboundStep(step, plan);
     TEST_ASSERT_EQUAL(NoteEditFaderOutbound::Step::SendFine, step);
     step = NoteEditFaderOutbound::advanceOutboundStep(step, plan);
-    TEST_ASSERT_EQUAL(NoteEditFaderOutbound::Step::TriggerFine, step);
-    step = NoteEditFaderOutbound::advanceOutboundStep(step, plan);
     TEST_ASSERT_EQUAL(NoteEditFaderOutbound::Step::SendNoteValue, step);
     step = NoteEditFaderOutbound::advanceOutboundStep(step, plan);
-    TEST_ASSERT_EQUAL(NoteEditFaderOutbound::Step::TriggerNoteValue, step);
-    step = NoteEditFaderOutbound::advanceOutboundStep(step, plan);
     TEST_ASSERT_EQUAL(NoteEditFaderOutbound::Step::Done, step);
+}
+
+void test_motor_fader_timing_matches_ableton_reference_midis() {
+    TEST_ASSERT_EQUAL_UINT8(3, NoteEditFaderMotorTiming::kPositionSendCount);
+    TEST_ASSERT_EQUAL_UINT16(12, NoteEditFaderMotorTiming::kInterPositionGapTicks);
+    TEST_ASSERT_EQUAL_UINT16(24, NoteEditFaderMotorTiming::kMotorNoteDurationTicks);
+    TEST_ASSERT_EQUAL_UINT32(62, NoteEditFaderMotorTiming::kInterPositionGapMs);
+    TEST_ASSERT_EQUAL_UINT32(125, NoteEditFaderMotorTiming::kMotorNoteDurationMs);
+}
+
+void test_motor_fader_burst_invokes_position_and_notegate_callbacks() {
+    int positionCount = 0;
+    int noteOnCount = 0;
+    int noteOffCount = 0;
+    NoteEditFaderMotorTiming::runMotorFaderBurst(
+        [&]() { ++positionCount; }, [&]() { ++noteOnCount; }, [&]() { ++noteOffCount; });
+    TEST_ASSERT_EQUAL(3, positionCount);
+    TEST_ASSERT_EQUAL(1, noteOnCount);
+    TEST_ASSERT_EQUAL(1, noteOffCount);
+}
+
+void test_ch13_ack_correlation_window_ms_for_capture_logs() {
+    TEST_ASSERT_EQUAL(11, NoteEditFaderOutbound::kCh13AckCorrelationWindowMs);
 }
 
 void test_select_fader_echo_rejects_near_last_sent() {
@@ -495,11 +507,11 @@ void test_window_filter_excludes_notes_outside_nav_inventory() {
     TEST_ASSERT_TRUE(insideNoteInWindowSlots);
 }
 
-void test_same_bracket_sibling_plan_is_f4_only() {
+void test_same_bracket_sibling_plan_includes_all_motors() {
     const auto sibling = NoteEditFaderOutbound::planForSelectDependentFromNoteIdChange(
         1, 2, 579, 579);
-    TEST_ASSERT_FALSE(sibling.coarse);
-    TEST_ASSERT_FALSE(sibling.fine);
+    TEST_ASSERT_TRUE(sibling.coarse);
+    TEST_ASSERT_TRUE(sibling.fine);
     TEST_ASSERT_TRUE(sibling.noteValue);
 }
 
@@ -539,6 +551,9 @@ int main(int argc, char** argv) {
     RUN_TEST(test_empty_step_bracket_rel_tick_maps_to_coarse_pitchbend);
     RUN_TEST(test_outbound_pipeline_advances_through_session_open);
     RUN_TEST(test_outbound_pipeline_advances_through_note_select_dependent);
+    RUN_TEST(test_motor_fader_timing_matches_ableton_reference_midis);
+    RUN_TEST(test_motor_fader_burst_invokes_position_and_notegate_callbacks);
+    RUN_TEST(test_ch13_ack_correlation_window_ms_for_capture_logs);
     RUN_TEST(test_select_fader_echo_rejects_near_last_sent);
     RUN_TEST(test_select_fader_echo_accepts_small_user_delta);
     RUN_TEST(test_ref_driven_motor_sync_ignores_index_only_change);
@@ -548,6 +563,6 @@ int main(int argc, char** argv) {
     RUN_TEST(test_display_note_info_snapshot_from_ref_wrap_formula);
     RUN_TEST(test_filtered_display_note_index_for_selection);
     RUN_TEST(test_window_filter_excludes_notes_outside_nav_inventory);
-    RUN_TEST(test_same_bracket_sibling_plan_is_f4_only);
+    RUN_TEST(test_same_bracket_sibling_plan_includes_all_motors);
     return UNITY_END();
 }

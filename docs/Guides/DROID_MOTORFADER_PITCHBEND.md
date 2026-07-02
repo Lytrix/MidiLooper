@@ -74,6 +74,12 @@ DROID applies position on **notegate** (note 0). Order matters:
 
 The HITL probe defaults to **`pitch_note_off`**.
 
+Firmware `SELECT_SYNC` and outbound pipeline use `NoteEditFaderMotorTiming` (three position sends at 12-tick gaps, notegate on with the third, 24-tick note length) from `test/test_faders/fader{2,3,4}_*.mid`. Verified by `scripts/test_note_edit_fader_motor_timing.py` and native `test_note_edit_fader_feedback`.
+
+**Capture analysis:** ch13 motor acks on USB often appear ~**11 ms** after the corresponding notegate MO in host recordings (`kCh13AckCorrelationWindowMs`). Use that window in HITL verifiers only.
+
+**Live note select (`SELECT_SYNC`):** per fader **timed position burst → short notegate** (F2, F3, F4). No program change on fader updates — NOTE_EDIT PC + `selectat=1` runs once in `EditManager::sendEditSessionChange` when entering note edit.
+
 After NOTE_EDIT arm, the probe sends a **prime** pitchbend (no note) to the first sweep target so the
 first notegate does not use the 0.5 center position.
 
