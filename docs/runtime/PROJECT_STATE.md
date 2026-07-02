@@ -19,7 +19,7 @@ Last updated: 2026-07-02 (geometry F1 selection guard shipped)
 | `load-save-overlay-display-regression` | Overlay display fixes |
 | `save-status-display` | Deferred save status on display |
 | `long-loop-piano-roll-window` | 16-bar piano-roll window + overview |
-| `note-edit-fader-feedback-regression` | NOTE_EDIT fader outbound sync — Phase A NoteRef **shipped**; §7.24 geometry F1 guard **shipped** (HITL PASS); §7.18.5 triple-motor capture pending |
+| `note-edit-fader-feedback-regression` | NOTE_EDIT fader outbound sync — §7.24 geometry F1 guard **shipped**; Phase 12–13 cleanup scoped (dead code + EditorSelection migration) |
 | `note-edit-stable-note-id` | Stable **NoteId** identity — Phase 0 + A + **B shipped** (SD v6, EditorSelection, EntityIds co-location); HITL NoteId sweep pending device |
 
 **Phase A handoff:** [note_edit_stable_note_id_phase_a_handoff.md](../plans/note_edit_stable_note_id_phase_a_handoff.md)

@@ -326,12 +326,45 @@ Only if still reproducing after coordinate fix:
 
 ---
 
-## Phase 12 — Stale code cleanup (after Phase 8.4)
+## Phase 12 — Stale code cleanup
 
-**Gate:** Do not start until Phase 8.3 capture passes (`pb == expected_pb_rel`).
+**Gate:** §12.1–12.4 (zero-caller removal) when `pio test -e native` is green. §12.3 trigger trim after §12.1–12.2. Phase 8.3 still gates §8.4 RC11 capture, not dead-wrapper deletion.
 
-### D20 — Dead API removal + single trigger owner
+### D20 — Dead API removal + coordinator trim
 
-**Decision:** Remove dead outbound wrappers (`sendStartNotePitchbend`, `performSelectnoteFaderUpdate`, `sendFaderUpdate`, `sendFaderPosition`), ghost state (`NoteEditManager::faderHandler`, `faderProcessor`, `markFaderSent`, `lastSelectnoteSentTime`, `PITCHBEND_IGNORE_PERIOD`), and no-op `MidiFaderProcessor::scheduleOtherFaderUpdates` wrapper. Pick one motor-trigger owner (D34/D20).
+**Decision:** Remove dead outbound wrappers (`sendStartNotePitchbend`, `performSelectnoteFaderUpdate`, `sendSelectnoteFaderUpdate`, `sendFaderUpdate`, `sendFaderPosition`), superseded helpers (`syncMotorsForDisplaySelection`, `drainDependentFaderOutboundUntilDone`), ghost state (`NoteEditManager::faderHandler`, `faderProcessor`, `markFaderSent`, `lastSelectnoteSentTime`, duplicate `PITCHBEND_IGNORE_PERIOD`), and no-op `MidiFaderProcessor::scheduleOtherFaderUpdates` forwarder.
 
-**Live API names:** `requestFaderOutbound`, `processFaderOutbound`, `scheduleNoteSelectFaderSync`, `sendNoteEditSessionFaderFeedback`.
+Remove dead outbound triggers never requested in firmware:
+
+| Trigger / branch | Replacement |
+|------------------|-------------|
+| `NoteSelectDependent` | `scheduleSelectDependentMotorSync` + `processPendingSelectDependentMotorSync` (§7.23) |
+| `Fader1BracketOnly` | `pendingGeometryDriverMotorSync_` + `sendFader1MotorTimedBurst` (§7.24) |
+| `scheduleOtherFaderUpdates(FADER_SELECT)` | Unreachable; geometry uses F2/F3/F4 branch only |
+
+Remove index-only selection gate helpers from `NoteEditFaderOutboundPlan.h` used only in native tests (`shouldApplySelectionOnNoteChange`, `shouldApplySelectionOnTargetChange`, slot/nav variants). Live path: `shouldApplySelectionOnNoteIdChange` + `editorSelectionTargetChanged`.
+
+**Live API names after cleanup:** `requestFaderOutbound`, `processFaderOutbound`, `scheduleNoteSelectFaderSync`, `sendNoteEditSessionFaderFeedback`, `scheduleSelectDependentMotorSync`, `syncSelectionFromGeometryEdit`.
+
+Single motor trigger owner (D34): **shipped** §7.6.4 — close Phase 12 after dead send wrappers removed.
+
+---
+
+## Phase 13 — EditorSelection-only motor resolution (2026-07-02)
+
+**Context:** Code audit after §7.24 found active paths still gating motor outbound on `selectedNoteIdx` or resolving F4/fine via list index even when `EditorSelection.primaryNote` is authoritative. Aligns with `note-edit-stable-note-id` — identity vs derived display index.
+
+### D41 — EditorSelection owns fader motor geometry
+
+**Decision:** Dependent motor send helpers SHALL resolve note geometry from `EditorSelection.primaryNote` (or `focus.movingNoteId` during geometry edit) when a note is selected. `selectedNoteIdx` remains a **derived** OLED/navigation index only — not the motor-sync gate.
+
+**Migration scope:**
+
+- `sendCoarseFaderPosition` / `sendFineFaderPosition` / `sendNoteValueFaderPosition` and `send*MotorPositionFromSelectTarget`
+- `setSelectedNoteIdx`-only mutations without `applySelectNav` (bar-step, length state, movement utils, pitch fader)
+- `enterDefaultNoteEditSessionState` redundant selection rebuild
+- `syncSelectionFromGeometryEdit` `selectedNoteIdx` fallback when focus inactive
+
+**Gate:** After Phase 12.1–12.4 (dead removal). HITL regression: §7.18.8 slow F1 sweep + §7.24.7 geometry move.
+
+---

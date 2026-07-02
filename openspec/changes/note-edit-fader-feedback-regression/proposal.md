@@ -155,16 +155,31 @@ Only if still reproducing:
 
 ---
 
-## Phase 12 — Stale code cleanup (after Phase 8.4)
+## Phase 12 — Stale code cleanup
 
-**Gate:** Do not remove firmware or fix double triggers before Phase 8.3 capture passes.
+**Gate:** §12.1–12.4 (zero-caller removal) when `pio test -e native` is green. §12.3 trigger trim after §12.1–12.2. Phase 8.3 still gates §8.4 RC11 capture, not dead-wrapper deletion.
 
 ### What Changes (Phase 12)
 
-**Dead outbound wrappers** (zero callers): `sendSelectnoteFaderUpdate` thin wrapper kept until callers migrated; remove `sendStartNotePitchbend`, `performSelectnoteFaderUpdate`, `sendFaderUpdate`, `sendFaderPosition`.
+**Dead outbound wrappers** (zero callers): `sendStartNotePitchbend`, `performSelectnoteFaderUpdate`, `sendSelectnoteFaderUpdate`, `sendFaderUpdate`, `sendFaderPosition`, `syncMotorsForDisplaySelection`, `drainDependentFaderOutboundUntilDone`.
 
-**Ghost state:** `lastSelectnoteSentTime`, `PITCHBEND_IGNORE_PERIOD`, `NoteEditManager::faderHandler`, `faderProcessor`, `markFaderSent`.
+**Ghost state:** `lastSelectnoteSentTime`, duplicate `PITCHBEND_IGNORE_PERIOD`, `NoteEditManager::faderHandler`, `faderProcessor`, `markFaderSent`.
 
-**Live bug:** Double motor triggers — send helpers and `processFaderOutbound` both fire triggers; pick one owner (D34/D20).
+**Dead coordinator paths:** `Trigger::NoteSelectDependent`, `Trigger::Fader1BracketOnly`, unreachable `scheduleOtherFaderUpdates(FADER_SELECT)`; trim `MidiFaderProcessor::scheduleOtherFaderUpdates` no-op chain.
 
-**OpenSpec stale reference sweep:** Remove or rewrite references to `deferSelectFaderSyncToBracket`, `sessionFaderSyncStep_`, `sendChannel15NotePositionFeedback`, `DeferredRefresh`, `isSessionFaderSyncActive`.
+**Test-only index gates:** Remove `shouldApplySelectionOnNoteChange`, `shouldApplySelectionOnTargetChange`, slot/nav variants from production header; tests use `NoteId` gates only.
+
+**Doc sweep:** Historical references to `deferSelectFaderSyncToBracket`, `sessionFaderSyncStep_`, `NoteSelectDependent` live path.
+
+---
+
+## Phase 13 — EditorSelection-only motor paths
+
+### What Changes (Phase 13)
+
+- Motor send helpers resolve geometry from `EditorSelection.primaryNote`, not `selectedNoteIdx` alone.
+- Migrate `setSelectedNoteIdx`-only call sites to `applySelectNav` or derived-index sync.
+- Dedupe `enterDefaultNoteEditSessionState` selection rebuild.
+- Cross-ref `note-edit-stable-note-id` motor-sync on `primaryNote` delta.
+
+**Gate:** After Phase 12.1–12.4 minimum.

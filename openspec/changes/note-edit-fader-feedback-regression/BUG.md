@@ -516,3 +516,39 @@ The current regression is a scheduler-policy issue inside `NoteEditManager`, not
 **Fix (§7.24):** Kind-scoped early return in `handleSelectFaderInput`; inbound `selectFaderFeedbackIgnoreUntilMs_` check; `syncGeometrySelectionToUi`.
 
 **Status:** **Resolved** — manual HITL PASS 2026-07-02; host verifier `verify_geometry_fader1_no_select_apply_after_flush`.
+
+---
+
+## Stale code inventory (Phase 12–13 audit, 2026-07-02)
+
+Post-§7.24 code audit. Tracked in [tasks.md](./tasks.md) Phase 12–13 and [design.md](./design.md) D20 / D41.
+
+### Phase 12 — safe removal (zero callers / unreachable)
+
+| Symbol | Location | Replacement |
+|--------|----------|-------------|
+| `sendStartNotePitchbend` | `NoteEditManager` | `sendCoarseFaderPosition` + pipeline |
+| `performSelectnoteFaderUpdate` | `NoteEditManager` | `scheduleNoteSelectFaderSync` |
+| `sendSelectnoteFaderUpdate` | `NoteEditManager` | `scheduleNoteSelectFaderSync` |
+| `sendFaderUpdate` / `sendFaderPosition` | `NoteEditManager` | Dead chain |
+| `syncMotorsForDisplaySelection` | `NoteEditManager` | `scheduleSelectDependentMotorSync` via `applySelectNav` |
+| `drainDependentFaderOutboundUntilDone` | `NoteEditManager` | None (zero call sites) |
+| `lastSelectnoteSentTime` | `NoteEditManager` | Write-only ghost |
+| `PITCHBEND_IGNORE_PERIOD` (duplicate) | `NoteEditManager.h` | `FEEDBACK_IGNORE_PERIOD` |
+| `faderHandler` | `NoteEditManager` | Ghost second `MidiFaderManager` |
+| `faderProcessor` | `NoteEditManager` + `main.cpp` | Never read |
+| `markFaderSent` | `MidiFaderProcessor` / Manager | No callers |
+| `Trigger::NoteSelectDependent` | `NoteEditFaderOutboundPlan` | `scheduleSelectDependentMotorSync` (§7.23) |
+| `Trigger::Fader1BracketOnly` | coordinator | `sendFader1MotorTimedBurst` queue (§7.24) |
+| `scheduleOtherFaderUpdates(FADER_SELECT)` | `NoteEditManager` | Unreachable branch |
+| Index-only gate helpers | `NoteEditFaderOutboundPlan.h` | `shouldApplySelectionOnNoteIdChange` (tests only today) |
+
+### Phase 13 — active but index-centric (migrate, do not delete blindly)
+
+| Area | Issue |
+|------|--------|
+| `sendCoarse/Fine/NoteValueFaderPosition` | Gates on `getSelectedNoteIdx()`; SessionOpen uses `selectTarget == nullptr` path |
+| `send*MotorPositionFromSelectTarget` | F4/fine via `target.noteIdx` not `NoteId` lookup |
+| `setSelectedNoteIdx` without `applySelectNav` | `BarStepButtonHandler`, edit states, `NoteMovementUtils`, pitch fader |
+| `enterDefaultNoteEditSessionState` | Redundant `sessionState.selection` rebuild after `applySelectNav` |
+| `syncSelectionFromGeometryEdit` | `selectedNoteIdx` fallback when focus inactive |
