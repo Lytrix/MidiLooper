@@ -16,7 +16,7 @@
 #include <vector>
 #include <memory>
 #include "MidiEvent.h"
-#include "EntityIds.h"
+#include "MidiEvent.h"
 #include "LoopEventBuffer.h"
 #include "StorageLoopIo.h"
 #include "EditPass.h"
@@ -42,6 +42,7 @@ struct Loop {
   uint32_t playbackRevision = 0;
   LoopPasses passes;
   PassId nextPassId_ = 1;
+  NoteId nextNoteId_ = 1;
   bool editStateDirty_ = false;
   bool hasPendingCapturePass_ = false;
   PendingCapturePass pendingCapturePass_;
@@ -158,6 +159,10 @@ struct Loop {
 
   void invalidateCaches();
   void invalidatePlaybackCaches();
+
+  NoteId allocateNoteId();
+  void assignMissingNoteIds(MidiEventVec& events);
+  void assignMissingNoteIdsInStore(LoopEventStore& store);
 
   void clearCaptureOnNewPass();
 

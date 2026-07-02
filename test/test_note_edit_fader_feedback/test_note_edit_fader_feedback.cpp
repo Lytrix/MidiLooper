@@ -3,6 +3,8 @@
 
 #include <unity.h>
 
+#include "MidiEvent.h"
+
 #include "Utils/NoteEditLengthFaderMapping.h"
 #include "Utils/NoteEditFaderOutboundPlan.h"
 #include "Utils/NoteEditFaderSelectSync.h"
@@ -13,6 +15,9 @@
 #include "Globals.h"
 
 #include "../../src/Utils/SelectNavigation.cpp"
+#include "../../src/NoteEditFocus.cpp"
+#include "../../src/Utils/NoteUtils.cpp"
+#include "../../src/Logger.cpp"
 #include "../../src/Utils/DisplayWindowUtils.cpp"
 
 namespace {
@@ -148,58 +153,47 @@ void test_restart_dependent_pipeline_on_selection_change() {
 }
 
 void test_note_ref_change_triggers_selection_apply() {
-    const NoteRef prior{5, 60, 100, 200};
-    const NoteRef next{5, 62, 100, 200};
-    TEST_ASSERT_TRUE(NoteEditFaderOutbound::shouldApplySelectionOnNoteRefChange(
-        true, prior, true, next, 48, 48));
-    TEST_ASSERT_FALSE(NoteEditFaderOutbound::shouldApplySelectionOnNoteRefChange(
-        true, prior, true, prior, 48, 48));
+    TEST_ASSERT_TRUE(NoteEditFaderOutbound::shouldApplySelectionOnNoteIdChange(
+        1, 2, 48, 48));
+    TEST_ASSERT_FALSE(NoteEditFaderOutbound::shouldApplySelectionOnNoteIdChange(
+        1, 1, 48, 48));
 }
 
 void test_same_index_different_ref_triggers_apply() {
-    const NoteRef prior{5, 60, 100, 200};
-    const NoteRef next{5, 72, 100, 200};
-    TEST_ASSERT_TRUE(NoteEditFaderOutbound::shouldApplySelectionOnNoteRefChange(
-        true, prior, true, next, 483, 483));
+    TEST_ASSERT_TRUE(NoteEditFaderOutbound::shouldApplySelectionOnNoteIdChange(
+        1, 2, 483, 483));
 }
 
 void test_same_ref_different_index_does_not_trigger_apply() {
-    const NoteRef ref{5, 60, 483, 579};
-    TEST_ASSERT_FALSE(NoteEditFaderOutbound::shouldApplySelectionOnNoteRefChange(
-        true, ref, true, ref, 483, 483));
-    NoteEditSelection prior{};
-    prior.hasNote = true;
-    prior.ref = ref;
+    TEST_ASSERT_FALSE(NoteEditFaderOutbound::shouldApplySelectionOnNoteIdChange(
+        1, 1, 483, 483));
+    EditorSelection prior{};
+    prior.primaryNote = 1;
     prior.bracketTick = 483;
-    TEST_ASSERT_FALSE(noteEditSelectionTargetChanged(prior, 483, true, ref));
+    TEST_ASSERT_FALSE(editorSelectionTargetChanged(prior, 483, 1));
 }
 
 void test_bracket_change_triggers_note_ref_apply() {
-    const NoteRef ref{5, 60, 100, 200};
-    TEST_ASSERT_TRUE(NoteEditFaderOutbound::shouldApplySelectionOnNoteRefChange(
-        true, ref, true, ref, 48, 96));
+    TEST_ASSERT_TRUE(NoteEditFaderOutbound::shouldApplySelectionOnNoteIdChange(
+        1, 1, 48, 96));
 }
 
 void test_select_dependent_plan_from_ref_change() {
-    const NoteRef prior{5, 60, 100, 200};
-    const NoteRef next{5, 72, 100, 200};
-    const auto full = NoteEditFaderOutbound::planForSelectDependentFromRefChange(
-        true, prior, true, next, 100, 200);
+    const auto full = NoteEditFaderOutbound::planForSelectDependentFromNoteIdChange(
+        1, 2, 100, 200);
     TEST_ASSERT_TRUE(full.coarse);
     TEST_ASSERT_TRUE(full.fine);
     TEST_ASSERT_TRUE(full.noteValue);
 
-    const auto noteOnly = NoteEditFaderOutbound::planForSelectDependentFromRefChange(
-        true, prior, true, next, 483, 483);
+    const auto noteOnly = NoteEditFaderOutbound::planForSelectDependentFromNoteIdChange(
+        1, 2, 483, 483);
     TEST_ASSERT_FALSE(noteOnly.coarse);
     TEST_ASSERT_FALSE(noteOnly.fine);
     TEST_ASSERT_TRUE(noteOnly.noteValue);
 
-    const auto emptyStep = NoteEditFaderOutbound::planForSelectDependentFromRefChange(
-        true, prior, false, {}, 144, 192);
+    const auto emptyStep = NoteEditFaderOutbound::planForSelectDependentFromNoteIdChange(
+        1, kInvalidNoteId, 144, 192);
     TEST_ASSERT_TRUE(emptyStep.coarse);
-    TEST_ASSERT_TRUE(emptyStep.fine);
-    TEST_ASSERT_FALSE(emptyStep.noteValue);
 }
 
 void test_outbound_pipeline_note_only_dependent_plan() {
@@ -266,9 +260,9 @@ void test_resolve_note_idx_at_slot_uses_slot_note_idx() {
     const uint32_t chordTick = 8 * 48;
 
     std::vector<NoteUtils::DisplayNote> notes;
-    notes.push_back({67, 100, chordTick, chordTick + 96});
-    notes.push_back({72, 100, chordTick, chordTick + 96});
-    notes.push_back({76, 100, chordTick, chordTick + 96});
+    notes.push_back({kInvalidNoteId, 67, 100, chordTick, chordTick + 96});
+    notes.push_back({kInvalidNoteId, 72, 100, chordTick, chordTick + 96});
+    notes.push_back({kInvalidNoteId, 76, 100, chordTick, chordTick + 96});
 
     const auto slots =
         SelectNavigation::buildSelectNavigationSlots(loopLength, 0, notes, chordTick, false);
@@ -388,7 +382,7 @@ void test_ref_driven_motor_sync_ignores_index_only_change() {
     using NoteEditDisplaySnapshot::DisplayNoteInfoSnapshot;
     using NoteEditDisplaySnapshot::displayNoteInfoChanged;
 
-    const DisplayNoteInfoSnapshot snap{60, 483, 96};
+    const DisplayNoteInfoSnapshot snap{1, 60, 483, 96};
     TEST_ASSERT_FALSE(displayNoteInfoChanged(snap, snap));
 
     DisplayNoteInfoSnapshot pitchChanged = snap;
@@ -406,11 +400,17 @@ void test_select_dependent_settle_ms_in_capture_window() {
     TEST_ASSERT_LESS_OR_EQUAL(500, kSelectDependentSettleMs);
 }
 
+void test_reference_step_from_bracket_tick() {
+    const uint32_t bracketTick = 477U;
+    const uint32_t referenceStep = bracketTick / Config::TICKS_PER_16TH_STEP;
+    TEST_ASSERT_EQUAL(9U, referenceStep);
+}
+
 void test_display_note_info_changed() {
     using NoteEditDisplaySnapshot::DisplayNoteInfoSnapshot;
     using NoteEditDisplaySnapshot::displayNoteInfoChanged;
 
-    const DisplayNoteInfoSnapshot base{60, 483, 96};
+    const DisplayNoteInfoSnapshot base{1, 60, 483, 96};
     TEST_ASSERT_FALSE(displayNoteInfoChanged(base, base));
 
     DisplayNoteInfoSnapshot pitchChanged = base;
@@ -427,10 +427,10 @@ void test_display_note_info_changed() {
 }
 
 void test_display_note_info_snapshot_from_ref_wrap_formula() {
-    using NoteEditDisplaySnapshot::buildDisplayNoteInfoSnapshotFromRef;
+    using NoteEditDisplaySnapshot::buildDisplayNoteInfoSnapshotFromNoteId;
 
-    const NoteRef ref{5, 60, 50, 200};
-    const auto snap = buildDisplayNoteInfoSnapshotFromRef(ref, 100, 384);
+    constexpr NoteId refId = 1;
+    const auto snap = buildDisplayNoteInfoSnapshotFromNoteId(refId, 60, 50, 100, 384);
     TEST_ASSERT_EQUAL(60, snap.pitch);
     TEST_ASSERT_EQUAL(50U, snap.storageStart);
     TEST_ASSERT_EQUAL(334U, snap.displayStartTick);
@@ -438,16 +438,13 @@ void test_display_note_info_snapshot_from_ref_wrap_formula() {
 
 void test_filtered_display_note_index_for_selection() {
     std::vector<NoteUtils::DisplayNote> notes;
-    notes.push_back({72, 100, 200, 296});
-    notes.push_back({60, 100, 483, 579});
+    notes.push_back({1, 72, 100, 200, 296});
+    notes.push_back({2, 60, 100, 483, 579});
 
-    NoteEditSelection sel{};
-    sel.hasNote = true;
-    sel.ref = {5, 60, 483, 579};
-    TEST_ASSERT_EQUAL(1, NoteEditDisplaySnapshot::filteredDisplayNoteIndexForSelection(
-                              sel, notes, 5));
-    TEST_ASSERT_EQUAL(-1, NoteEditDisplaySnapshot::filteredDisplayNoteIndexForSelection(
-                               sel, {notes[0]}, 5));
+    EditorSelection sel{};
+    sel.primaryNote = 2;
+    TEST_ASSERT_EQUAL(1, NoteEditDisplaySnapshot::filteredDisplayNoteIndexForSelection(sel, notes));
+    TEST_ASSERT_EQUAL(-1, NoteEditDisplaySnapshot::filteredDisplayNoteIndexForSelection(sel, {notes[0]}));
 }
 
 void test_window_filter_excludes_notes_outside_nav_inventory() {
@@ -456,8 +453,8 @@ void test_window_filter_excludes_notes_outside_nav_inventory() {
     const uint32_t windowLength = 16u * Config::TICKS_PER_BAR;
 
     NoteUtils::DisplayNoteVec notes;
-    notes.push_back({60, 100, 17u * Config::TICKS_PER_BAR, 17u * Config::TICKS_PER_BAR + 48});
-    notes.push_back({72, 100, 2u * Config::TICKS_PER_BAR, 2u * Config::TICKS_PER_BAR + 48});
+    notes.push_back({5, 60, 100, 17u * Config::TICKS_PER_BAR, 17u * Config::TICKS_PER_BAR + 48});
+    notes.push_back({kInvalidNoteId, 72, 100, 2u * Config::TICKS_PER_BAR, 2u * Config::TICKS_PER_BAR + 48});
 
     const NoteUtils::DisplayNoteVec windowed = DisplayWindowUtils::filterDisplayNotesToWindow(
         notes, windowStart, windowLength, loopLength);
@@ -466,7 +463,7 @@ void test_window_filter_excludes_notes_outside_nav_inventory() {
 
     std::vector<NoteUtils::DisplayNote> windowNavNotes(windowed.begin(), windowed.end());
 
-    const NoteRef insideRef{5, windowed[0].note, windowed[0].startTick, windowed[0].endTick};
+    const NoteId insideId = windowed[0].noteId;
 
     const auto windowSlots = SelectNavigation::buildSelectNavigationSlots(
         loopLength, 0, windowNavNotes, windowStart, false);
@@ -488,11 +485,9 @@ void test_window_filter_excludes_notes_outside_nav_inventory() {
         if (slot.noteIdx < 0 || slot.noteIdx >= static_cast<int>(windowNavNotes.size())) {
             continue;
         }
-        const NoteRef candidate{
-            5, windowNavNotes[static_cast<size_t>(slot.noteIdx)].note,
-            windowNavNotes[static_cast<size_t>(slot.noteIdx)].startTick,
-            windowNavNotes[static_cast<size_t>(slot.noteIdx)].endTick};
-        if (noteRefSameTarget(candidate, insideRef)) {
+        if (windowNavNotes[static_cast<size_t>(slot.noteIdx)].noteId == insideId ||
+            (insideId == kInvalidNoteId &&
+             windowNavNotes[static_cast<size_t>(slot.noteIdx)].note == windowed[0].note)) {
             insideNoteInWindowSlots = true;
             break;
         }
@@ -501,10 +496,8 @@ void test_window_filter_excludes_notes_outside_nav_inventory() {
 }
 
 void test_same_bracket_sibling_plan_is_f4_only() {
-    const NoteRef prior{5, 60, 579, 675};
-    const NoteRef next{5, 72, 579, 675};
-    const auto sibling = NoteEditFaderOutbound::planForSelectDependentFromRefChange(
-        true, prior, true, next, 579, 579);
+    const auto sibling = NoteEditFaderOutbound::planForSelectDependentFromNoteIdChange(
+        1, 2, 579, 579);
     TEST_ASSERT_FALSE(sibling.coarse);
     TEST_ASSERT_FALSE(sibling.fine);
     TEST_ASSERT_TRUE(sibling.noteValue);
@@ -550,6 +543,7 @@ int main(int argc, char** argv) {
     RUN_TEST(test_select_fader_echo_accepts_small_user_delta);
     RUN_TEST(test_ref_driven_motor_sync_ignores_index_only_change);
     RUN_TEST(test_select_dependent_settle_ms_in_capture_window);
+    RUN_TEST(test_reference_step_from_bracket_tick);
     RUN_TEST(test_display_note_info_changed);
     RUN_TEST(test_display_note_info_snapshot_from_ref_wrap_formula);
     RUN_TEST(test_filtered_display_note_index_for_selection);

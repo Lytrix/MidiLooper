@@ -10,19 +10,21 @@
 
 #include "LoopPasses.h"
 #include "EditPass.h"
+#include "MidiEvent.h"
 
 struct StorageIo {
   std::function<bool(const void*, size_t)> write;
   std::function<bool(void*, size_t)> read;
 };
 
-/// v5 loop slot file body in RAM (capture passes + editPasses tail) (capture passes + editPasses tail).
+/// v6 loop slot file body in RAM (capture passes + editPasses tail).
 struct PersistedLoopSnapshot {
   LoopId loopId = kInvalidLoopId;
   uint32_t startLoopTick = 0;
   uint32_t loopLengthTicks = 0;
   uint32_t loopStartTick = 0;
   PassId nextPassId = 1;
+  NoteId nextNoteId = 1;
   uint32_t nextMergeSequence = 0;
   PassId lastPublishedPassId = kInvalidPassId;
   LoopPasses passes;
@@ -52,7 +54,10 @@ void resetPersistedCapturePassWriteStatsForTest();
 #endif
 
 bool writePersistedLoopSnapshot(const StorageIo& io, const PersistedLoopSnapshot& snapshot);
-bool readPersistedLoopSnapshot(const StorageIo& io, PersistedLoopSnapshot& snapshot);
+/// When \p legacyDeferredHeaderWithoutNoteId is true, reads the pre-v6 deferred-save header
+/// (no nextNoteId field between nextPassId and nextMergeSequence).
+bool readPersistedLoopSnapshot(const StorageIo& io, PersistedLoopSnapshot& snapshot,
+                               bool legacyDeferredHeaderWithoutNoteId = false);
 
 /// Byte length of loop slot file body produced by writePersistedLoopSnapshot / writeLoopPersisted.
 size_t measureLoopSnapshotSlotFileBytes(const PersistedLoopSnapshot& snapshot);

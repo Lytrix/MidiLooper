@@ -19,6 +19,7 @@
 #include "CurrentSetStorage.h"
 #include "GlobalUndoStack.h"
 #include "StorageLoopIo.h"
+#include "MidiEvent.h"
 
 namespace {
 
@@ -40,6 +41,8 @@ void appendEmptyLoopPool(std::vector<uint8_t>& buffer) {
     appendRaw(buffer, zero);  // loopStartTick
     const PassId nextPassId = 1;
     appendRaw(buffer, nextPassId);
+    const NoteId nextNoteId = 1;
+    appendRaw(buffer, nextNoteId);
     appendRaw(buffer, zero);  // nextMergeSequence
     const PassId invalidPass = kInvalidPassId;
     appendRaw(buffer, invalidPass);
@@ -103,7 +106,7 @@ size_t expectedV5FixtureBytes() {
       8 * (sizeof(bool) + sizeof(bool) + sizeof(LoopId));
   const size_t loopHeaderBytesPerLoop =
       sizeof(LoopId) + sizeof(uint32_t) + sizeof(uint32_t) + sizeof(uint32_t) +
-      sizeof(PassId) + sizeof(uint32_t) + sizeof(PassId) + sizeof(uint32_t) +
+      sizeof(PassId) + sizeof(NoteId) + sizeof(uint32_t) + sizeof(PassId) + sizeof(uint32_t) +
       sizeof(uint32_t);
   const size_t loopBytesPerTrack = 8 * loopHeaderBytesPerLoop;
   const size_t trackBytes = 8 * (sizeof(uint32_t) + sizeof(bool) + slotMetaBytesPerTrack +

@@ -19,13 +19,19 @@
 #include "LoopPasses.h"
 #include "LoopEventBuffer.h"
 #include "EditSession.h"
+#include "NoteEditSessionState.h"
+#include "../test_support/NoteIdTestFixtures.h"
+#include "MidiEvent.h"
 
 namespace {
 
-RecordPass makeRecordPassWithNote(PassId id, uint32_t tick) {
+using namespace NoteIdTestFixtures;
+
+RecordPass makeRecordPassWithNote(PassId id, uint32_t tick, uint8_t channel = 1) {
+  resetNoteIdCounter();
   LoopEventStore store;
-  TEST_ASSERT_TRUE(store.append(MidiEvent::NoteOn(tick, 1, 60, 100)));
-  TEST_ASSERT_TRUE(store.append(MidiEvent::NoteOff(tick + 10, 1, 60, 0)));
+  TEST_ASSERT_TRUE(storeAppendNoteOn(store, tick, channel, 60, 100, 1));
+  TEST_ASSERT_TRUE(store.append(MidiEvent::NoteOff(tick + 10, channel, 60, 0)));
   ChunkIdList refs;
   store.detachChunksTo(refs);
   RecordPass pass{};
@@ -36,8 +42,9 @@ RecordPass makeRecordPassWithNote(PassId id, uint32_t tick) {
 }
 
 OverdubPass makeOverdubPassWithNote(PassId id, uint32_t tick, uint8_t pitch) {
+  resetNoteIdCounter();
   LoopEventStore store;
-  TEST_ASSERT_TRUE(store.append(MidiEvent::NoteOn(tick, 1, pitch, 100)));
+  TEST_ASSERT_TRUE(storeAppendNoteOn(store, tick, 1, pitch, 100, 1));
   TEST_ASSERT_TRUE(store.append(MidiEvent::NoteOff(tick + 10, 1, pitch, 0)));
   ChunkIdList refs;
   store.detachChunksTo(refs);
@@ -61,10 +68,11 @@ int countNoteOns(const MidiEventVec& flat, uint8_t pitch) {
 
 RecordPass makeRecordPassWithTwoNotes(PassId id, uint32_t startA, uint32_t endA, uint32_t startB,
                                       uint32_t endB, uint8_t pitch) {
+  resetNoteIdCounter();
   LoopEventStore store;
-  TEST_ASSERT_TRUE(store.append(MidiEvent::NoteOn(startA, 1, pitch, 100)));
+  TEST_ASSERT_TRUE(storeAppendNoteOn(store, startA, 1, pitch, 100, 1));
   TEST_ASSERT_TRUE(store.append(MidiEvent::NoteOff(endA, 1, pitch, 0)));
-  TEST_ASSERT_TRUE(store.append(MidiEvent::NoteOn(startB, 1, pitch, 100)));
+  TEST_ASSERT_TRUE(storeAppendNoteOn(store, startB, 1, pitch, 100, 2));
   TEST_ASSERT_TRUE(store.append(MidiEvent::NoteOff(endB, 1, pitch, 0)));
   ChunkIdList refs;
   store.detachChunksTo(refs);
@@ -75,16 +83,19 @@ RecordPass makeRecordPassWithTwoNotes(PassId id, uint32_t startA, uint32_t endA,
   return pass;
 }
 
+static void appendFixtureNotePair(LoopEventStore& store, uint32_t onTick, uint32_t offTick,
+                                  uint8_t channel, uint8_t pitch, NoteId noteId) {
+  TEST_ASSERT_TRUE(storeAppendNoteOn(store, onTick, channel, pitch, 100, noteId));
+  TEST_ASSERT_TRUE(store.append(MidiEvent::NoteOff(offTick, channel, pitch, 0)));
+}
+
 RecordPass makeEditRecordFixtureRecordPass(PassId id) {
+  resetNoteIdCounter();
   LoopEventStore store;
-  TEST_ASSERT_TRUE(store.append(MidiEvent::NoteOn(8, 1, 60, 100)));
-  TEST_ASSERT_TRUE(store.append(MidiEvent::NoteOff(104, 1, 60, 0)));
-  TEST_ASSERT_TRUE(store.append(MidiEvent::NoteOn(201, 1, 64, 100)));
-  TEST_ASSERT_TRUE(store.append(MidiEvent::NoteOff(297, 1, 64, 0)));
-  TEST_ASSERT_TRUE(store.append(MidiEvent::NoteOn(392, 1, 67, 100)));
-  TEST_ASSERT_TRUE(store.append(MidiEvent::NoteOff(488, 1, 67, 0)));
-  TEST_ASSERT_TRUE(store.append(MidiEvent::NoteOn(584, 1, 60, 100)));
-  TEST_ASSERT_TRUE(store.append(MidiEvent::NoteOff(680, 1, 60, 0)));
+  appendFixtureNotePair(store, 8, 104, 1, 60, 1);
+  appendFixtureNotePair(store, 201, 297, 1, 64, 2);
+  appendFixtureNotePair(store, 392, 488, 1, 67, 3);
+  appendFixtureNotePair(store, 584, 680, 1, 60, 4);
   ChunkIdList refs;
   store.detachChunksTo(refs);
   RecordPass pass{};
@@ -95,11 +106,10 @@ RecordPass makeEditRecordFixtureRecordPass(PassId id) {
 }
 
 RecordPass makeEditRecordFixtureRecordPassCh5(PassId id) {
+  resetNoteIdCounter();
   LoopEventStore store;
-  TEST_ASSERT_TRUE(store.append(MidiEvent::NoteOn(8, 5, 60, 100)));
-  TEST_ASSERT_TRUE(store.append(MidiEvent::NoteOff(104, 5, 60, 0)));
-  TEST_ASSERT_TRUE(store.append(MidiEvent::NoteOn(585, 5, 60, 100)));
-  TEST_ASSERT_TRUE(store.append(MidiEvent::NoteOff(680, 5, 60, 0)));
+  appendFixtureNotePair(store, 8, 104, 5, 60, 1);
+  appendFixtureNotePair(store, 585, 680, 5, 60, 2);
   ChunkIdList refs;
   store.detachChunksTo(refs);
   RecordPass pass{};
@@ -110,15 +120,12 @@ RecordPass makeEditRecordFixtureRecordPassCh5(PassId id) {
 }
 
 RecordPass makeEditRecordFixtureRecordPassCh5_195830(PassId id) {
+  resetNoteIdCounter();
   LoopEventStore store;
-  TEST_ASSERT_TRUE(store.append(MidiEvent::NoteOn(40, 5, 60, 100)));
-  TEST_ASSERT_TRUE(store.append(MidiEvent::NoteOff(136, 5, 60, 0)));
-  TEST_ASSERT_TRUE(store.append(MidiEvent::NoteOn(232, 5, 64, 100)));
-  TEST_ASSERT_TRUE(store.append(MidiEvent::NoteOff(328, 5, 64, 0)));
-  TEST_ASSERT_TRUE(store.append(MidiEvent::NoteOn(424, 5, 67, 100)));
-  TEST_ASSERT_TRUE(store.append(MidiEvent::NoteOff(520, 5, 67, 0)));
-  TEST_ASSERT_TRUE(store.append(MidiEvent::NoteOn(616, 5, 60, 100)));
-  TEST_ASSERT_TRUE(store.append(MidiEvent::NoteOff(712, 5, 60, 0)));
+  appendFixtureNotePair(store, 40, 136, 5, 60, 1);
+  appendFixtureNotePair(store, 232, 328, 5, 64, 2);
+  appendFixtureNotePair(store, 424, 520, 5, 67, 3);
+  appendFixtureNotePair(store, 616, 712, 5, 60, 4);
   ChunkIdList refs;
   store.detachChunksTo(refs);
   RecordPass pass{};
@@ -128,43 +135,45 @@ RecordPass makeEditRecordFixtureRecordPassCh5_195830(PassId id) {
   return pass;
 }
 
-EditPass makeDeleteRow(uint8_t ch, uint8_t note, uint32_t start, uint32_t end) {
+EditPass makeDeleteRow(NoteId targetNoteId) {
   EditPass row{};
   row.passType = EditPassType::Note;
   row.actionType = EditActionType::Delete;
   row.propertyType = EditPropertyType::None;
-  row.target = {ch, note, start, end};
+  row.targetNoteId = targetNoteId;
   return row;
 }
 
-EditPass makeLengthRow(uint8_t ch, uint8_t note, uint32_t start, uint32_t end, uint32_t newEnd) {
+EditPass makeLengthRow(NoteId targetNoteId, uint32_t start, uint32_t end, uint32_t newEnd) {
   EditPass row{};
   row.passType = EditPassType::Note;
   row.actionType = EditActionType::Update;
   row.propertyType = EditPropertyType::Length;
-  row.target = {ch, note, start, end};
+  row.targetNoteId = targetNoteId;
   row.startTick = start;
   row.endTick = newEnd;
   return row;
 }
 
-EditPass makePitchRow(uint8_t ch, uint8_t note, uint32_t start, uint32_t end, uint8_t pitch) {
+EditPass makePitchRow(NoteId targetNoteId, uint32_t start, uint32_t end, uint8_t pitch) {
   EditPass row{};
   row.passType = EditPassType::Note;
   row.actionType = EditActionType::Update;
   row.propertyType = EditPropertyType::Pitch;
-  row.target = {ch, note, start, end};
+  row.targetNoteId = targetNoteId;
+  row.startTick = start;
+  row.endTick = end;
   row.pitch = pitch;
   return row;
 }
 
-EditPass makeNoteRangeRow(uint8_t ch, uint8_t note, uint32_t baseStart, uint32_t baseEnd,
+EditPass makeNoteRangeRow(NoteId targetNoteId, uint32_t baseStart, uint32_t baseEnd,
                           uint32_t newStart, uint32_t newEnd) {
   EditPass row{};
   row.passType = EditPassType::Note;
   row.actionType = EditActionType::Update;
   row.propertyType = EditPropertyType::NoteRange;
-  row.target = {ch, note, baseStart, baseEnd};
+  row.targetNoteId = targetNoteId;
   row.startTick = newStart;
   row.endTick = newEnd;
   return row;
@@ -211,19 +220,37 @@ void test_change_pitch_on_lengthened_note_keeps_same_pitch_neighbor() {
 
 
 
-  pushEditPassRow(passes, 1, makeLengthRow(1, 60, 8, 104, 680));
-  pushEditPassRow(passes, 2, makePitchRow(1, 60, 8, 680, 67));
+  pushEditPassRow(passes, 1, makeLengthRow(1, 8, 104, 680));
+  pushEditPassRow(passes, 2, makePitchRow(1, 8, 680, 67));
 
+  constexpr uint32_t kLoopLength = 1536;
   MidiEventVec flat;
-  passes.materializeToEventVector(flat);
+  passes.materializeToEventVector(flat, kLoopLength);
+  const int movingOn = findNoteOnById(flat, 1);
+  TEST_ASSERT_TRUE(movingOn >= 0);
+  TEST_ASSERT_EQUAL_UINT32(8u, flat[static_cast<size_t>(movingOn)].tick);
+  TEST_ASSERT_EQUAL_UINT8(67, flat[static_cast<size_t>(movingOn)].data.noteData.note);
 
-  // M0 became pitch 67 spanning 8..680.
-  TEST_ASSERT_EQUAL(1, countMatching(flat, true, 67, 8));
-  TEST_ASSERT_EQUAL(1, countMatching(flat, false, 67, 680));
-  // P0 (the same-pitch neighbor) stays pitch 60, end intact — no orphaned note-on.
+  const std::vector<NoteUtils::DisplayNote> notes =
+      NoteUtils::reconstructNotes(flat, kLoopLength, false);
+  bool foundM0 = false;
+  bool foundP0 = false;
+  for (const NoteUtils::DisplayNote& dn : notes) {
+    if (dn.noteId == 1) {
+      foundM0 = true;
+      TEST_ASSERT_EQUAL_UINT8(67, dn.note);
+      TEST_ASSERT_EQUAL_UINT32(8u, dn.startTick);
+      TEST_ASSERT_TRUE(dn.endTick > 104u);
+    }
+    if (dn.noteId == 2) {
+      foundP0 = true;
+      TEST_ASSERT_EQUAL_UINT8(60, dn.note);
+      TEST_ASSERT_EQUAL_UINT32(584u, dn.startTick);
+    }
+  }
+  TEST_ASSERT_TRUE(foundM0);
+  TEST_ASSERT_TRUE(foundP0);
   TEST_ASSERT_EQUAL(1, countMatching(flat, true, 60, 584));
-  TEST_ASSERT_EQUAL(1, countMatching(flat, false, 60, 680));
-  // No stray pitch-60 note-on left at M0's old start.
   TEST_ASSERT_EQUAL(0, countMatching(flat, true, 60, 8));
 }
 
@@ -238,7 +265,7 @@ void test_lengthen_after_move_keeps_p0_fixture_gate() {
 
 
 
-  pushEditPassRow(passes, 1, makeLengthRow(1, 60, 192, 288, 672));
+  pushEditPassRow(passes, 1, makeLengthRow(1, 192, 288, 672));
 
   MidiEventVec flat;
   passes.materializeToEventVector(flat);
@@ -264,7 +291,7 @@ void test_change_length_rematerialize_keeps_p0_off_not_loop_end() {
   passes.recordPass = makeRecordPassWithTwoNotes(1, 192, 288, 576, 672, 60);
 
 
-  pushEditPassRow(passes, 1, makeLengthRow(1, 60, 192, 288, 672));
+  pushEditPassRow(passes, 1, makeLengthRow(1, 192, 288, 672));
 
   MidiEventVec flat;
   passes.materializeToEventVector(flat, kLoopLength);
@@ -295,18 +322,34 @@ void test_change_pitch_on_overlapping_note_keeps_neighbor_endtick() {
 
 
 
-  pushEditPassRow(passes, 1, makeLengthRow(1, 60, 9, 105, 681));
-  pushEditPassRow(passes, 2, makePitchRow(1, 60, 9, 681, 67));
+  pushEditPassRow(passes, 1, makeLengthRow(1, 9, 105, 681));
+  pushEditPassRow(passes, 2, makePitchRow(1, 9, 681, 67));
 
+  constexpr uint32_t kLoopLength = 1536;
   MidiEventVec flat;
-  passes.materializeToEventVector(flat);
+  passes.materializeToEventVector(flat, kLoopLength);
 
-  TEST_ASSERT_EQUAL(1, countMatching(flat, true, 67, 9));
-  TEST_ASSERT_EQUAL(1, countMatching(flat, false, 67, 681));
-  // P0 untouched: still pitch 60, end 682 (no orphaned note-on → no loop-end stretch).
-  TEST_ASSERT_EQUAL(1, countMatching(flat, true, 60, 585));
-  TEST_ASSERT_EQUAL(1, countMatching(flat, false, 60, 682));
-  TEST_ASSERT_EQUAL(0, countMatching(flat, false, 67, 682));
+  const int movingOn = findNoteOnById(flat, 1);
+  TEST_ASSERT_TRUE(movingOn >= 0);
+  TEST_ASSERT_EQUAL_UINT8(67, flat[static_cast<size_t>(movingOn)].data.noteData.note);
+  const std::vector<NoteUtils::DisplayNote> notes =
+      NoteUtils::reconstructNotes(flat, kLoopLength, false);
+  bool foundM0 = false;
+  bool foundP0 = false;
+  for (const NoteUtils::DisplayNote& dn : notes) {
+    if (dn.noteId == 1) {
+      foundM0 = true;
+      TEST_ASSERT_EQUAL_UINT8(67, dn.note);
+      TEST_ASSERT_TRUE(dn.endTick > 105u);
+    }
+    if (dn.noteId == 2) {
+      foundP0 = true;
+      TEST_ASSERT_EQUAL_UINT8(60, dn.note);
+      TEST_ASSERT_EQUAL_UINT32(585u, dn.startTick);
+    }
+  }
+  TEST_ASSERT_TRUE(foundM0);
+  TEST_ASSERT_TRUE(foundP0);
 }
 
 void test_apply_edits_delete_note() {
@@ -315,7 +358,7 @@ void test_apply_edits_delete_note() {
   LoopPasses passes;
   passes.recordPass = makeRecordPassWithNote(1, 10);
 
-  pushEditPassRow(passes, 1, makeDeleteRow(1, 60, 10, 20));
+  pushEditPassRow(passes, 1, makeDeleteRow(1));
 
   LoopEventStore out;
   passes.materialize(out);
@@ -329,7 +372,7 @@ void test_save_edit_appends_without_collapsing_takes() {
   loop.passes.recordPass = makeRecordPassWithNote(1, 10);
   {
     LoopEventStore odStore;
-    TEST_ASSERT_TRUE(odStore.append(MidiEvent::NoteOn(100, 1, 60, 100)));
+    TEST_ASSERT_TRUE(storeAppendNoteOn(odStore, 100, 1, 60, 100, 2));
     TEST_ASSERT_TRUE(odStore.append(MidiEvent::NoteOff(110, 1, 60, 0)));
     ChunkIdList refs;
     odStore.detachChunksTo(refs);
@@ -342,7 +385,7 @@ void test_save_edit_appends_without_collapsing_takes() {
   }
   loop.nextPassId_ = 3;
 
-  const EditPassId id = loop.saveNoteEditPass(0, makeDeleteRow(1, 60, 10, 20));
+  const EditPassId id = loop.saveNoteEditPass(0, makeDeleteRow(1));
   TEST_ASSERT_EQUAL(3u, id);
   TEST_ASSERT_EQUAL(2u, loop.passes.capturePassCount());
   TEST_ASSERT_EQUAL(1u, loop.passes.editPasses.size());
@@ -363,7 +406,7 @@ void test_save_note_edit_pass_sets_scoped_action_property_mapping() {
   LoopEventStore::initPool();
   Loop loop;
 
-  const EditPassId delId = loop.saveNoteEditPass(2, makeDeleteRow(1, 60, 10, 20));
+  const EditPassId delId = loop.saveNoteEditPass(2, makeDeleteRow(1));
   TEST_ASSERT_NOT_EQUAL(kInvalidEditPassId, delId);
   const EditPass& delPass = loop.passes.editPasses.back();
   TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(EditPassType::Note),
@@ -374,7 +417,7 @@ void test_save_note_edit_pass_sets_scoped_action_property_mapping() {
   TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(EditPropertyType::None),
                           static_cast<uint8_t>(delPass.propertyType));
 
-  const EditPassId pitchId = loop.saveNoteEditPass(3, makePitchRow(1, 60, 10, 20, 67));
+  const EditPassId pitchId = loop.saveNoteEditPass(3, makePitchRow(1, 10, 20, 67));
   TEST_ASSERT_NOT_EQUAL(kInvalidEditPassId, pitchId);
   const EditPass& pitchPass = loop.passes.editPasses.back();
   TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(EditActionType::Update),
@@ -382,7 +425,7 @@ void test_save_note_edit_pass_sets_scoped_action_property_mapping() {
   TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(EditPropertyType::Pitch),
                           static_cast<uint8_t>(pitchPass.propertyType));
 
-  const EditPassId lengthId = loop.saveNoteEditPass(4, makeLengthRow(1, 60, 10, 20, 28));
+  const EditPassId lengthId = loop.saveNoteEditPass(4, makeLengthRow(1, 10, 20, 28));
   TEST_ASSERT_NOT_EQUAL(kInvalidEditPassId, lengthId);
   const EditPass& lengthPass = loop.passes.editPasses.back();
   TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(EditActionType::Update),
@@ -391,14 +434,14 @@ void test_save_note_edit_pass_sets_scoped_action_property_mapping() {
                           static_cast<uint8_t>(lengthPass.propertyType));
 
   const EditPassId moveStartId =
-      loop.saveNoteEditPass(5, makeNoteRangeRow(1, 60, 10, 20, 14, 24));
+      loop.saveNoteEditPass(5, makeNoteRangeRow(1, 10, 20, 14, 24));
   TEST_ASSERT_NOT_EQUAL(kInvalidEditPassId, moveStartId);
   const EditPass& moveStartPass = loop.passes.editPasses.back();
   TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(EditPropertyType::NoteRange),
                           static_cast<uint8_t>(moveStartPass.propertyType));
 
   const EditPassId moveEndId =
-      loop.saveNoteEditPass(6, makeNoteRangeRow(1, 60, 10, 20, 10, 24));
+      loop.saveNoteEditPass(6, makeNoteRangeRow(1, 10, 20, 10, 24));
   TEST_ASSERT_NOT_EQUAL(kInvalidEditPassId, moveEndId);
   const EditPass& moveEndPass = loop.passes.editPasses.back();
   TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(EditPropertyType::NoteRange),
@@ -410,7 +453,7 @@ void test_edit_pass_state_toggle_does_not_append_edit_actions() {
   LoopEventStore::initPool();
   Loop loop;
 
-  const EditPassId id = loop.saveNoteEditPass(0, makeDeleteRow(1, 60, 10, 20));
+  const EditPassId id = loop.saveNoteEditPass(0, makeDeleteRow(1));
   TEST_ASSERT_NOT_EQUAL(kInvalidEditPassId, id);
   TEST_ASSERT_EQUAL(1u, loop.passes.editPasses.size());
   const EditActionType beforeAction = loop.passes.editPasses[0].actionType;
@@ -435,7 +478,7 @@ void test_disable_edits_restores_take_only_view() {
   LoopEventStore::initPool();
   Loop loop;
   loop.passes.recordPass = makeRecordPassWithNote(1, 10);
-  const EditPassId id = loop.saveNoteEditPass(0, makeDeleteRow(1, 60, 10, 20));
+  const EditPassId id = loop.saveNoteEditPass(0, makeDeleteRow(1));
   loop.disableEditPasses(EditPassIdList{id});
   MidiEventVec flat;
   loop.passes.materializeToEventVector(flat);
@@ -449,7 +492,7 @@ void test_reset_take_timeline_clears_stale_edits() {
   loop.passes.recordPass = makeRecordPassWithNote(1, 8);
   loop.nextPassId_ = 2;
 
-  loop.saveNoteEditPass(0, makePitchRow(1, 60, 8, 18, 67));
+  loop.saveNoteEditPass(0, makePitchRow(1, 8, 18, 67));
   TEST_ASSERT_EQUAL(1u, loop.passes.editPasses.size());
 
   MidiEventVec withStaleEdit;
@@ -490,7 +533,7 @@ void test_add_note_rematerialize_session_store() {
 
   EditPass add{};
   add.actionType = EditActionType::Create;
-  add.addedEvents.push_back(MidiEvent::NoteOn(48, 5, 60, 80));
+  add.addedEvents.push_back(noteOnWithNoteId(48, 5, 60, 80, 10));
   add.addedEvents.push_back(MidiEvent::NoteOff(72, 5, 60, 0));
   const EditPassId id = loop.saveNoteEditPass(0, add);
   TEST_ASSERT_EQUAL(2u, id);
@@ -512,11 +555,12 @@ void test_move_note_uses_track_channel() {
   passes.recordPass = makeRecordPassWithNote(1, 10);
   passes.recordPass.chunkRefs.clear();
   LoopEventStore store;
-  TEST_ASSERT_TRUE(store.append(MidiEvent::NoteOn(10, 5, 60, 100)));
+  resetNoteIdCounter();
+  TEST_ASSERT_TRUE(storeAppendNoteOn(store, 10, 5, 60, 100, 1));
   TEST_ASSERT_TRUE(store.append(MidiEvent::NoteOff(106, 5, 60, 0)));
   store.detachChunksTo(passes.recordPass.chunkRefs);
 
-  pushEditPassRow(passes, 1, makeNoteRangeRow(5, 60, 10, 106, 58, 154));
+  pushEditPassRow(passes, 1, makeNoteRangeRow(1, 10, 106, 58, 154));
 
   MidiEventVec flat;
   passes.materializeToEventVector(flat);
@@ -525,8 +569,8 @@ void test_move_note_uses_track_channel() {
 
   LoopPasses badPasses = passes;
   badPasses.editPasses.clear();
-  EditPass badRow = makeNoteRangeRow(5, 60, 10, 106, 58, 154);
-  badRow.target.channel = 1;
+  EditPass badRow = makeNoteRangeRow(1, 10, 106, 58, 154);
+  badRow.targetNoteId = 99;
   pushEditPassRow(badPasses, 1, badRow);
   MidiEventVec flatBad;
   badPasses.materializeToEventVector(flatBad);
@@ -544,18 +588,15 @@ void test_lengthen_commit_rematerialize_hitl_fixture() {
   loop.passes.recordPass.id = 1;
   {
     LoopEventStore store;
-    TEST_ASSERT_TRUE(store.append(MidiEvent::NoteOn(8, 5, 60, 100)));
-    TEST_ASSERT_TRUE(store.append(MidiEvent::NoteOff(104, 5, 60, 0)));
-    TEST_ASSERT_TRUE(store.append(MidiEvent::NoteOn(200, 5, 64, 100)));
-    TEST_ASSERT_TRUE(store.append(MidiEvent::NoteOff(296, 5, 64, 0)));
-    TEST_ASSERT_TRUE(store.append(MidiEvent::NoteOn(392, 5, 67, 100)));
-    TEST_ASSERT_TRUE(store.append(MidiEvent::NoteOff(488, 5, 67, 0)));
-    TEST_ASSERT_TRUE(store.append(MidiEvent::NoteOn(585, 5, 60, 100)));
-    TEST_ASSERT_TRUE(store.append(MidiEvent::NoteOff(680, 5, 60, 0)));
+    resetNoteIdCounter();
+    appendFixtureNotePair(store, 8, 104, 5, 60, 1);
+    appendFixtureNotePair(store, 200, 296, 5, 64, 2);
+    appendFixtureNotePair(store, 392, 488, 5, 67, 3);
+    appendFixtureNotePair(store, 585, 680, 5, 60, 4);
     store.detachChunksTo(loop.passes.recordPass.chunkRefs);
   }
 
-  const EditPassId id = loop.saveNoteEditPass(0, makeLengthRow(5, 60, 8, 104, 680));
+  const EditPassId id = loop.saveNoteEditPass(0, makeLengthRow(1, 8, 104, 680));
   TEST_ASSERT_EQUAL(1u, id);
 
   CowLoopEventStore session;
@@ -584,7 +625,7 @@ void test_change_length_rematerialize_hitl_195830_ticks() {
   loop.loopLengthTicks = kLoopLength;
   loop.passes.recordPass = makeEditRecordFixtureRecordPassCh5_195830(1);
 
-  const EditPassId id = loop.saveNoteEditPass(0, makeLengthRow(5, 60, 40, 136, 712));
+  const EditPassId id = loop.saveNoteEditPass(0, makeLengthRow(1, 40, 136, 712));
   TEST_ASSERT_EQUAL(1u, id);
 
   // commitEditAction: discard live flat, replay takes+edits, load session store (matches firmware).
@@ -630,9 +671,9 @@ void test_overlap_round_trip_replay_lengthen_delete_pitch() {
   passes.recordPass = makeEditRecordFixtureRecordPass(1);
 
 
-  pushEditPassRow(passes, 1, makeLengthRow(1, 60, 8, 104, 680));
-  pushEditPassRow(passes, 2, makeDeleteRow(1, 60, 584, 680));
-  pushEditPassRow(passes, 3, makePitchRow(1, 60, 8, 680, 67));
+  pushEditPassRow(passes, 1, makeLengthRow(1, 8, 104, 680));
+  pushEditPassRow(passes, 2, makeDeleteRow(4));
+  pushEditPassRow(passes, 3, makePitchRow(1, 8, 680, 67));
 
   MidiEventVec flat;
   passes.materializeToEventVector(flat, kLoopLength);
@@ -652,9 +693,9 @@ void test_pre_commit_order_overlap_changes_before_move_and_pitch() {
   LoopPasses passes;
   passes.recordPass = makeRecordPassWithTwoNotes(1, 8, 680, 584, 680, 60);
 
-  pushEditPassRow(passes, 1, makeLengthRow(1, 60, 584, 680, 495));
-  pushEditPassRow(passes, 2, makeNoteRangeRow(1, 60, 8, 680, 496, 1168));
-  pushEditPassRow(passes, 3, makePitchRow(1, 60, 8, 680, 67));
+  pushEditPassRow(passes, 1, makeLengthRow(2, 584, 680, 495));
+  pushEditPassRow(passes, 2, makeNoteRangeRow(1, 8, 680, 496, 1168));
+  pushEditPassRow(passes, 3, makePitchRow(1, 8, 680, 67));
 
   MidiEventVec flatOrdered;
   passes.materializeToEventVector(flatOrdered, kLoopLength);
@@ -665,8 +706,8 @@ void test_pre_commit_order_overlap_changes_before_move_and_pitch() {
 
   LoopPasses passes2;
   passes2.recordPass = makeRecordPassWithTwoNotes(1, 8, 680, 584, 680, 60);
-  pushEditPassRow(passes2, 1, makeNoteRangeRow(1, 60, 8, 680, 496, 1168));
-  pushEditPassRow(passes2, 2, makePitchRow(1, 60, 8, 680, 67));
+  pushEditPassRow(passes2, 1, makeNoteRangeRow(1, 8, 680, 496, 1168));
+  pushEditPassRow(passes2, 2, makePitchRow(1, 8, 680, 67));
   MidiEventVec flatWrong;
   passes2.materializeToEventVector(flatWrong, kLoopLength);
   TEST_ASSERT_EQUAL(1, countMatching(flatWrong, true, 67, 496));
@@ -680,8 +721,8 @@ void test_pre_commit_delete_before_mover_change_length() {
   LoopPasses passes;
   passes.recordPass = makeRecordPassWithTwoNotes(1, 8, 104, 584, 680, 60);
 
-  pushEditPassRow(passes, 1, makeDeleteRow(1, 60, 584, 680));
-  pushEditPassRow(passes, 2, makeLengthRow(1, 60, 8, 104, 680));
+  pushEditPassRow(passes, 1, makeDeleteRow(2));
+  pushEditPassRow(passes, 2, makeLengthRow(1, 8, 104, 680));
   MidiEventVec flat;
   passes.materializeToEventVector(flat);
   TEST_ASSERT_EQUAL(1, countMatching(flat, true, 60, 8));
@@ -718,7 +759,7 @@ void test_global_undo_note_edit_pass_closed_disables_edit_rows() {
   loop.loopLengthTicks = 768;
   loop.passes.recordPass = makeRecordPassWithNote(1, 10);
   loop.nextPassId_ = 2;
-  const EditPassId editId = loop.saveNoteEditPass(0, makePitchRow(1, 60, 10, 20, 67));
+  const EditPassId editId = loop.saveNoteEditPass(0, makePitchRow(1, 10, 20, 67));
 
   MidiEventVec withEdit;
   loop.passes.materializeToEventVector(withEdit, loop.loopLengthTicks);
@@ -741,7 +782,7 @@ void test_global_undo_three_step_restores_record_baseline() {
   loop.nextPassId_ = 2;
 
   const EditPassId preOverdubEdit =
-      loop.saveNoteEditPass(0, makePitchRow(1, 60, 10, 20, 67));
+      loop.saveNoteEditPass(0, makePitchRow(1, 10, 20, 67));
   loop.passes.overdubPasses.push_back(makeOverdubPassWithNote(3, 100, 72));
   loop.nextPassId_ = 4;
 
@@ -781,11 +822,11 @@ void test_session_undo_move_back_insert_before_save_note_edit_pass() {
   focus.active = true;
   focus.commitBaseline = {60, 100, 8, 104};
   focus.last = focus.commitBaseline;
-  focus.moving = {1, 60, 8, 104};
+  focus.movingNoteId = 1;
   focus.movingNoteRange = {8, 104};
 
   const SessionUndoEntry entry =
-      buildSessionUndoEntry(focus, NoteEditSelection{}, session.readFlat(), 1,
+      buildSessionUndoEntry(focus, EditorSelection{}, session.readFlat(), 1,
                             loop.loopLengthTicks, EditPassIdList{});
 
   focus.last.startTick = 496;
@@ -805,7 +846,7 @@ void test_session_undo_move_back_insert_before_save_note_edit_pass() {
 
   SessionUndoEntry undoEntry = entry;
   SessionUndoEntry redoPayload =
-      buildSessionUndoEntry(focus, NoteEditSelection{}, session.readFlat(), 1,
+      buildSessionUndoEntry(focus, EditorSelection{}, session.readFlat(), 1,
                             loop.loopLengthTicks, EditPassIdList{});
   undoEntry.redoEditRows = std::move(redoPayload.editRows);
   undoEntry.redoFocus = std::move(redoPayload.focus);

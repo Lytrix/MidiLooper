@@ -44,7 +44,7 @@
 using namespace StorageManagerInternal;
 
 #define STORAGE_FILENAME CurrentSetStorage::kLegacyMonolithPath
-#define STORAGE_VERSION 5
+#define STORAGE_VERSION 6
 
 namespace {
 #if defined(SESSION_CAPTURE)
@@ -2122,6 +2122,7 @@ static void resetLoopSlotToEmpty(Loop& loop, uint8_t slotIndex) {
     loop.loopLengthTicks = 0;
     loop.loopStartTick = 0;
     loop.nextPassId_ = 1;
+    loop.nextNoteId_ = 1;
     loop.nextMergeSequence_ = 0;
     loop.lastPublishedPassId_ = kInvalidPassId;
     loop.lastTickInLoop = 0;
@@ -2225,10 +2226,20 @@ static bool readLoopFromCurrentSetFile(File& file, Loop& loop) {
     };
 
     BoundedFileIo bounded(file, payloadSize);
-    if (!readLoopPersisted(bounded.io(), loop)) {
-        Serial.println("[StorageManager] ERROR: readLoopPersisted failed for current loop file");
-        return false;
+    PersistedLoopSnapshot snapshot{};
+    if (!readPersistedLoopSnapshot(bounded.io(), snapshot, false)) {
+        if (!file.seek(payloadOffset)) {
+            Serial.println("[StorageManager] ERROR: readLoopPersisted seek retry failed");
+            return false;
+        }
+        BoundedFileIo legacyBounded(file, payloadSize);
+        if (!readPersistedLoopSnapshot(legacyBounded.io(), snapshot, true)) {
+            Serial.println("[StorageManager] ERROR: readLoopPersisted failed for current loop file");
+            return false;
+        }
+        Serial.println("[StorageManager] WARN: loop slot read used legacy deferred header (no nextNoteId)");
     }
+    applySnapshotToLoop(loop, snapshot);
     uint32_t magic = 0;
     return readRaw(file, &magic, sizeof(magic)) && magic == CurrentSetStorage::kSaveFileToken;
 }
@@ -2554,7 +2565,7 @@ bool StorageManager::loadV5MonolithIntoRam(LooperState& state) {
         return false;
     }
     Serial.println("[StorageManager] Version read OK");
-    if (version != 5) {
+    if (version != 6) {
         Serial.print("[StorageManager] ERROR: Unsupported legacy storage version. Found: ");
         Serial.println(version);
         file.close();

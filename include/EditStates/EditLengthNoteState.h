@@ -3,7 +3,7 @@
 
 #pragma once
 #include "EditNoteState.h"
-#include "EditPass.h"
+#include "MidiEvent.h"
 
 // New state for editing the length of a note
 class EditLengthNoteState : public EditNoteState {
@@ -15,9 +15,9 @@ public:
     const char* getName() const override { return "EditLengthNote"; }
     
     uint32_t getInitialHash() const { return initialHash; }
-    NoteRef getTargetRef() const { return targetRef_; }
+    NoteId getTargetNoteId() const { return targetNoteId_; }
     
 private:
     uint32_t initialHash = 0;
-    NoteRef targetRef_{};
+    NoteId targetNoteId_ = kInvalidNoteId;
 }; 

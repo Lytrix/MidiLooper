@@ -757,7 +757,8 @@ void MidiButtonActions::handleDeleteOrCreateNote() {
         logger.info("NOTELEN double: ignored (not in edit mode)");
         return;
     }
-    if (editManager.getSelectedNoteIdx() >= 0 || editManager.hasLastFader1SelectRef()) {
+    if (editManager.getSelectedNoteIdx() >= 0 ||
+        editManager.getLastFader1SelectNoteId() != kInvalidNoteId) {
         logger.info("NOTELEN double: delete selected note");
         handleDeleteNote();
         return;

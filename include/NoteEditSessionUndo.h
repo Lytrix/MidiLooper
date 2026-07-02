@@ -13,11 +13,11 @@ class Loop;
 struct SessionUndoEntry {
   EditPassVec editRows;
   NoteEditFocus focus;
-  NoteEditSelection selection;
+  EditorSelection selection;
   EditPassIdList editPassIdsAtPush;
   EditPassVec redoEditRows;
   NoteEditFocus redoFocus;
-  NoteEditSelection redoSelection;
+  EditorSelection redoSelection;
   EditPassIdList redoEditPassIds;
   bool hasRedoPayload = false;
 };
@@ -25,12 +25,12 @@ struct SessionUndoEntry {
 size_t estimatedSessionUndoEntryBytes(const SessionUndoEntry& entry);
 bool canHeapAdmitSessionUndoEntry(const SessionUndoEntry& entry);
 
-SessionUndoEntry buildSessionUndoEntry(const NoteEditFocus& focus, NoteEditSelection selection,
+SessionUndoEntry buildSessionUndoEntry(const NoteEditFocus& focus, EditorSelection selection,
                                        const MidiEventVec& sessionFlat, uint8_t channel,
                                        uint32_t loopLength,
                                        const EditPassIdList& editPassIdsAtPush);
 SessionUndoEntry buildSessionUndoEntryAfterLiveCaptureDuringNoteEdit(
-    const NoteEditFocus& focus, NoteEditSelection selection,
+    const NoteEditFocus& focus, EditorSelection selection,
     const MidiEventVec& baselineStoreEvents, const MidiEventVec& sessionStoreEvents,
     uint8_t channel, uint32_t loopLength, const EditPassIdList& editPassIdsAtPush);
 EditPassVec buildSessionStoreEditPasses(const MidiEventVec& baselineStoreEvents,

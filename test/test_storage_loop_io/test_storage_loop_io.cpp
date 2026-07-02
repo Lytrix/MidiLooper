@@ -18,6 +18,7 @@
 #include "StorageLoopIo.h"
 #include "Loop.h"
 #include "EditPass.h"
+#include "MidiEvent.h"
 
 namespace {
 
@@ -139,7 +140,7 @@ EditPass makePitchEditPass(uint8_t ch, uint8_t note, uint32_t start, uint32_t en
   row.passType = EditPassType::Note;
   row.actionType = EditActionType::Update;
   row.propertyType = EditPropertyType::Pitch;
-  row.target = {ch, note, start, end};
+  row.targetNoteId = 42;
   row.pitch = pitch;
   return row;
 }
@@ -156,6 +157,7 @@ void test_write_read_loop_snapshot_roundtrip() {
   original.loopLengthTicks = 768;
   original.loopStartTick = 12;
   original.nextPassId = 8;
+  original.nextNoteId = 12;
   original.nextMergeSequence = 1;
   original.lastPublishedPassId = 7;
   original.passes.recordPass = makeRecordPassWithEvents(7, 0, CapturePassState::Active, 0, 10);
@@ -173,6 +175,7 @@ void test_write_read_loop_snapshot_roundtrip() {
   TEST_ASSERT_EQUAL(original.loopLengthTicks, restored.loopLengthTicks);
   TEST_ASSERT_EQUAL(original.loopStartTick, restored.loopStartTick);
   TEST_ASSERT_EQUAL(original.nextPassId, restored.nextPassId);
+  TEST_ASSERT_EQUAL(original.nextNoteId, restored.nextNoteId);
   TEST_ASSERT_EQUAL(original.nextMergeSequence, restored.nextMergeSequence);
   TEST_ASSERT_EQUAL(original.lastPublishedPassId, restored.lastPublishedPassId);
   TEST_ASSERT_TRUE(restored.passes.hasRecordPass());
@@ -250,7 +253,7 @@ void test_write_read_edits_tail_roundtrip() {
   editPass.actionType = EditActionType::Delete;
   editPass.propertyType = EditPropertyType::None;
   editPass.state = EditPassState::Active;
-  editPass.target = {1, 60, 10, 20};
+  editPass.targetNoteId = 42;
   original.passes.editPasses.push_back(editPass);
 
   std::vector<uint8_t> buffer;
@@ -270,7 +273,7 @@ void test_write_read_edits_tail_roundtrip() {
                           static_cast<uint8_t>(restored.passes.editPasses[0].actionType));
   TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(EditPropertyType::None),
                           static_cast<uint8_t>(restored.passes.editPasses[0].propertyType));
-  TEST_ASSERT_TRUE(noteRefEquals(restored.passes.editPasses[0].target, editPass.target));
+  TEST_ASSERT_EQUAL(restored.passes.editPasses[0].targetNoteId, editPass.targetNoteId);
 }
 
 void test_legacy_edit_tail_v4_rejected() {
@@ -363,7 +366,7 @@ void test_truncated_edit_tail_fails_read() {
   editPass.actionType = EditActionType::Delete;
   editPass.propertyType = EditPropertyType::None;
   editPass.state = EditPassState::Active;
-  editPass.target = {1, 60, 10, 20};
+  editPass.targetNoteId = 42;
   original.passes.editPasses.push_back(editPass);
 
   std::vector<uint8_t> buffer;
@@ -602,6 +605,45 @@ void test_simulated_exit_flush_clears_edit_dirty() {
                           static_cast<uint8_t>(restored.passes.editPasses[0].propertyType));
 }
 
+void test_legacy_deferred_header_without_note_id_reads() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+
+  PersistedLoopSnapshot original{};
+  original.loopId = 9;
+  original.loopLengthTicks = 768;
+  original.nextPassId = 2;
+  original.nextNoteId = 12;
+  original.nextMergeSequence = 1;
+  original.lastPublishedPassId = 1;
+  original.passes.recordPass = makeRecordPassWithEvents(1, 0, CapturePassState::Active, 0, 10);
+
+  std::vector<uint8_t> v6Buffer;
+  MemoryStorageIo v6Mem(&v6Buffer);
+  TEST_ASSERT_TRUE(writePersistedLoopSnapshot(v6Mem.io(), original));
+
+  const size_t nextNoteIdOffset =
+      sizeof(LoopId) + (sizeof(uint32_t) * 3u) + sizeof(PassId);
+  std::vector<uint8_t> legacyBuffer = v6Buffer;
+  legacyBuffer.erase(legacyBuffer.begin() + static_cast<std::ptrdiff_t>(nextNoteIdOffset),
+                     legacyBuffer.begin() + static_cast<std::ptrdiff_t>(nextNoteIdOffset + 4u));
+
+  MemoryStorageIo legacyMem(&legacyBuffer);
+  PersistedLoopSnapshot restored{};
+  TEST_ASSERT_FALSE(readPersistedLoopSnapshot(legacyMem.io(), restored, false));
+  legacyMem.resetRead();
+  TEST_ASSERT_TRUE(readPersistedLoopSnapshot(legacyMem.io(), restored, true));
+  TEST_ASSERT_EQUAL(original.loopLengthTicks, restored.loopLengthTicks);
+  TEST_ASSERT_TRUE(restored.passes.hasRecordPass());
+  TEST_ASSERT_EQUAL(1u, restored.nextNoteId);
+
+  Loop reloadedLoop;
+  applySnapshotToLoop(reloadedLoop, restored);
+  TEST_ASSERT_TRUE(reloadedLoop.hasPublishedEvents());
+  reloadedLoop.ensureVisualCacheBuilt();
+  TEST_ASSERT_FALSE(reloadedLoop.visualCache.notes.empty());
+}
+
 void test_measure_loop_snapshot_slot_file_bytes_matches_buffer() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
@@ -625,6 +667,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_pending_take_not_persisted);
   RUN_TEST(test_write_read_edits_tail_roundtrip);
   RUN_TEST(test_legacy_edit_tail_v4_rejected);
+  RUN_TEST(test_legacy_deferred_header_without_note_id_reads);
   RUN_TEST(test_apply_snapshot_preserves_start_loop_tick);
   RUN_TEST(test_truncated_edit_tail_fails_read);
   RUN_TEST(test_corrupt_scoped_edit_tail_fails_read);

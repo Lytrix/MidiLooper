@@ -28,6 +28,7 @@ const NoteEditFocus& editFocus(const EditManager& manager) {
 
 OverlapNoteRestore overlapNoteToRestorePayload(const OverlapNote& entry) {
     OverlapNoteRestore restore;
+    restore.noteId = entry.noteId;
     restore.pitch = entry.baseline.pitch;
     restore.velocity = entry.baseline.velocity;
     restore.startTick = entry.baseline.startTick;
@@ -57,8 +58,8 @@ uint32_t overlapNoteRestoreEffectiveEnd(const OverlapNoteRestore& restore) {
 bool isAlreadyShortenedOverlap(const EditManager& manager,
                                const NoteUtils::DisplayNote& note) {
     const NoteEditFocus& focus = editFocus(manager);
-    for (const auto& [ref, entry] : focus.overlapNotes) {
-        (void)ref;
+    for (const auto& [noteId, entry] : focus.overlapNotes) {
+        (void)noteId;
         if (entry.state == OverlapNoteStoreState::Shortened &&
             entry.baseline.pitch == note.note &&
             entry.baseline.startTick == note.startTick &&
@@ -72,8 +73,8 @@ bool isAlreadyShortenedOverlap(const EditManager& manager,
 bool hasShortenedOverlapEntry(const EditManager& manager, uint8_t pitch,
                              uint32_t startTick) {
     const NoteEditFocus& focus = editFocus(manager);
-    for (const auto& [ref, entry] : focus.overlapNotes) {
-        (void)ref;
+    for (const auto& [noteId, entry] : focus.overlapNotes) {
+        (void)noteId;
         if (entry.state == OverlapNoteStoreState::Shortened &&
             entry.baseline.pitch == pitch && entry.baseline.startTick == startTick) {
             return true;
@@ -84,12 +85,12 @@ bool hasShortenedOverlapEntry(const EditManager& manager, uint8_t pitch,
 
 OverlapNote& upsertOverlapNote(EditManager& manager, uint8_t channel,
                                const NoteUtils::DisplayNote& dn) {
+    (void)channel;
     NoteEditFocus& focus = editFocus(manager);
-    const NoteRef ref =
-        findBaselineRefForNote(focus, channel, dn.note, dn.startTick, dn.endTick);
-    OverlapNote& entry = focus.overlapNotes[ref];
-    entry.ref = ref;
-    entry.baseline = baselineForDisplayNote(focus, channel, dn);
+    const NoteId noteId = findBaselineNoteIdForDisplay(focus, dn);
+    OverlapNote& entry = focus.overlapNotes[noteId];
+    entry.noteId = noteId;
+    entry.baseline = baselineForDisplayNote(focus, dn);
     return entry;
 }
 
@@ -109,8 +110,8 @@ void markOverlapShortened(EditManager& manager, uint8_t channel,
     entry.innerUnderMovingNote = false;
 }
 
-void removeOverlapEntry(EditManager& manager, const NoteRef& ref) {
-    editFocus(manager).overlapNotes.erase(ref);
+void removeOverlapEntry(EditManager& manager, NoteId noteId) {
+    editFocus(manager).overlapNotes.erase(noteId);
 }
 
 bool isInnerOverlapNoteInMovingNoteRange(const EditManager& manager, uint8_t notePitch,
@@ -132,10 +133,6 @@ void restoreNotes(MidiEventVec& midiEvents, const std::vector<OverlapNoteRestore
 
     for (const auto& nr : notesToRestore) {
         bool didRestore = false;
-        const uint8_t restoreChannel = editFocus(manager).moving.channel;
-        const NoteRef ref =
-            findBaselineRefForNote(editFocus(manager), restoreChannel, nr.pitch, nr.startTick,
-                                   nr.endTick);
 
         if (nr.wasShortened) {
             logger.log(CAT_MIDI, LOG_DEBUG,
@@ -208,21 +205,22 @@ void restoreNotes(MidiEventVec& midiEvents, const std::vector<OverlapNoteRestore
         if (didRestore) {
             restored.push_back(nr);
         }
-        (void)ref;
     }
 
     for (const auto& r : restored) {
-        const uint8_t restoreChannel = editFocus(manager).moving.channel;
-        const NoteRef ref = findBaselineRefForNote(editFocus(manager), restoreChannel, r.pitch,
-                                                   r.startTick, r.endTick);
+        NoteId noteId = r.noteId;
+        if (noteId == kInvalidNoteId) {
+            NoteUtils::DisplayNote lookup{r.noteId, r.pitch, r.velocity, r.startTick, r.endTick};
+            noteId = findBaselineNoteIdForDisplay(editFocus(manager), lookup);
+        }
         if (keepOverlapTrackingForPitchRestore) {
-            OverlapNote* entry = findOverlapNoteEntry(editFocus(manager), ref);
+            OverlapNote* entry = findOverlapNoteEntry(editFocus(manager), noteId);
             if (entry != nullptr) {
                 entry->state = OverlapNoteStoreState::Visible;
                 entry->innerUnderMovingNote = true;
             }
         } else {
-            removeOverlapEntry(manager, ref);
+            removeOverlapEntry(manager, noteId);
         }
     }
 
@@ -237,7 +235,8 @@ void restoreOverlapNotesNoLongerOverlapping(MidiEventVec& midiEvents, EditManage
     std::vector<OverlapNoteRestore> notesToRestore;
     NoteEditFocus& focus = editFocus(manager);
 
-    for (auto& [ref, entry] : focus.overlapNotes) {
+    for (auto& [noteId, entry] : focus.overlapNotes) {
+        (void)noteId;
         if (entry.state == OverlapNoteStoreState::Visible) {
             continue;
         }
@@ -294,8 +293,8 @@ void restoreOverlapNotesForPitchLaneClear(MidiEventVec& midiEvents, EditManager&
                                           uint8_t channel, uint8_t clearedPitch,
                                           uint32_t loopLength) {
     std::vector<OverlapNoteRestore> notesToRestore;
-    for (const auto& [ref, entry] : editFocus(manager).overlapNotes) {
-        (void)ref;
+    for (const auto& [noteId, entry] : editFocus(manager).overlapNotes) {
+        (void)noteId;
         if (entry.state == OverlapNoteStoreState::Visible) {
             continue;
         }
@@ -577,9 +576,8 @@ void applyShortenOrDelete(MidiEventVec& midiEvents,
                          NoteUtils::EventIndexMap& offIndex) {
     for (const auto& [dn, newEnd] : notesToShorten) {
         uint32_t currentOffTick = dn.endTick;
-        const NoteRef ref =
-            findBaselineRefForNote(editFocus(manager), channel, dn.note, dn.startTick, dn.endTick);
-        OverlapNote* existing = findOverlapNoteEntry(editFocus(manager), ref);
+        const NoteId noteId = findBaselineNoteIdForDisplay(editFocus(manager), dn);
+        OverlapNote* existing = findOverlapNoteEntry(editFocus(manager), noteId);
         if (existing != nullptr && existing->state == OverlapNoteStoreState::Shortened) {
             currentOffTick = existing->shortenedEndTick;
             existing->shortenedEndTick = newEnd;
@@ -1261,7 +1259,8 @@ void extendShortenedNotes(MidiEventVec& midiEvents,
             noteOffEvent->tick = newEndTick;
             
             // Update the tracking in overlap notes
-            for (auto& [ref, entry] : manager.getEditSession().focus.overlapNotes) {
+            for (auto& [noteId, entry] : manager.getEditSession().focus.overlapNotes) {
+                (void)noteId;
                 if (entry.baseline.pitch == noteToExtend.pitch &&
                     entry.baseline.startTick == noteToExtend.startTick &&
                     entry.state == OverlapNoteStoreState::Shortened) {
@@ -1270,7 +1269,6 @@ void extendShortenedNotes(MidiEventVec& midiEvents,
                               newEndTick);
                     break;
                 }
-                (void)ref;
             }
             
             logger.log(CAT_MIDI, LOG_DEBUG, "Extended note-off event: pitch=%d, from tick=%lu to tick=%lu", 

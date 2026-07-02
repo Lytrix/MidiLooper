@@ -8,12 +8,8 @@
 #include "Utils/NoteMovementWrap.h"
 #include "Utils/NoteUtils.h"
 
-NoteRef noteRefFromDisplay(uint8_t channel, const NoteUtils::DisplayNote& dn) {
-  return {channel, dn.note, dn.startTick, dn.endTick};
-}
-
-NoteRef noteRefFromBaseline(uint8_t channel, const NoteBaseline& bl) {
-  return {channel, bl.pitch, bl.startTick, bl.endTick};
+NoteBaseline baselineFromDisplayNote(const NoteUtils::DisplayNote& dn) {
+  return NoteBaseline{dn.note, dn.velocity, dn.startTick, dn.endTick};
 }
 
 uint32_t movingNoteRangeDisplayEnd(const NoteEditFocus& focus, uint32_t loopLength) {
@@ -38,40 +34,38 @@ bool isInnerOverlapNoteInMovingNoteRange(const NoteEditFocus& focus, uint8_t pit
       movingNoteRangeDisplayEnd(focus, loopLength), loopLength);
 }
 
-OverlapNote* findOverlapNoteEntry(NoteEditFocus& focus, const NoteRef& ref) {
-  const auto it = focus.overlapNotes.find(ref);
+OverlapNote* findOverlapNoteEntry(NoteEditFocus& focus, NoteId noteId) {
+  const auto it = focus.overlapNotes.find(noteId);
   return it == focus.overlapNotes.end() ? nullptr : &it->second;
 }
 
-const OverlapNote* findOverlapNoteEntry(const NoteEditFocus& focus, const NoteRef& ref) {
-  const auto it = focus.overlapNotes.find(ref);
+const OverlapNote* findOverlapNoteEntry(const NoteEditFocus& focus, NoteId noteId) {
+  const auto it = focus.overlapNotes.find(noteId);
   return it == focus.overlapNotes.end() ? nullptr : &it->second;
 }
 
-NoteRef findBaselineRefForNote(const NoteEditFocus& focus, uint8_t channel,
-                               uint8_t pitch, uint32_t startTick, uint32_t endTick) {
-  const NoteRef probe{channel, pitch, startTick, endTick};
-  if (focus.baselineMap.find(probe) != focus.baselineMap.end()) {
-    return probe;
+NoteId findBaselineNoteIdForDisplay(const NoteEditFocus& focus,
+                                    const NoteUtils::DisplayNote& dn) {
+  if (dn.noteId != kInvalidNoteId && focus.baselineMap.find(dn.noteId) != focus.baselineMap.end()) {
+    return dn.noteId;
   }
-  for (const auto& [ref, baseline] : focus.baselineMap) {
-    if (baseline.pitch == pitch && baseline.startTick == startTick &&
-        baseline.endTick == endTick) {
-      return ref;
+  for (const auto& [noteId, baseline] : focus.baselineMap) {
+    if (baseline.pitch == dn.note && baseline.startTick == dn.startTick &&
+        baseline.endTick == dn.endTick) {
+      return noteId;
     }
   }
-  return probe;
+  return dn.noteId;
 }
 
-NoteBaseline baselineForDisplayNote(const NoteEditFocus& focus, uint8_t channel,
+NoteBaseline baselineForDisplayNote(const NoteEditFocus& focus,
                                     const NoteUtils::DisplayNote& dn) {
-  const NoteRef ref = findBaselineRefForNote(focus, channel, dn.note, dn.startTick,
-                                             dn.endTick);
-  const auto it = focus.baselineMap.find(ref);
+  const NoteId noteId = findBaselineNoteIdForDisplay(focus, dn);
+  const auto it = focus.baselineMap.find(noteId);
   if (it != focus.baselineMap.end()) {
     return it->second;
   }
-  return NoteBaseline{dn.note, dn.velocity, dn.startTick, dn.endTick};
+  return baselineFromDisplayNote(dn);
 }
 
 uint32_t overlapNoteEffectiveEnd(const OverlapNote& entry) {
@@ -84,6 +78,7 @@ uint32_t overlapNoteEffectiveEnd(const OverlapNote& entry) {
 void rebuildNoteEditFocusFromStore(NoteEditFocus& focus, const MidiEventVec& loopMidiEvents,
                                    uint8_t channel, uint32_t loopLength,
                                    int selectedNoteIdx) {
+  (void)channel;
   focus.clear();
   if (loopLength == 0) {
     return;
@@ -92,19 +87,18 @@ void rebuildNoteEditFocusFromStore(NoteEditFocus& focus, const MidiEventVec& loo
   const std::vector<NoteUtils::DisplayNote> notes =
       NoteUtils::reconstructNotes(loopMidiEvents, loopLength, false);
   for (const NoteUtils::DisplayNote& dn : notes) {
-    const NoteRef ref{channel, dn.note, dn.startTick, dn.endTick};
-    focus.baselineMap[ref] = NoteBaseline{dn.note, dn.velocity, dn.startTick, dn.endTick};
+    if (dn.noteId != kInvalidNoteId) {
+      focus.baselineMap[dn.noteId] = baselineFromDisplayNote(dn);
+    }
   }
 
-  if (selectedNoteIdx < 0 ||
-      selectedNoteIdx >= static_cast<int>(notes.size())) {
+  if (selectedNoteIdx < 0 || selectedNoteIdx >= static_cast<int>(notes.size())) {
     return;
   }
 
   const NoteUtils::DisplayNote& selected = notes[static_cast<size_t>(selectedNoteIdx)];
-  focus.moving = {channel, selected.note, selected.startTick, selected.endTick};
-  focus.commitBaseline = {selected.note, selected.velocity, selected.startTick,
-                          selected.endTick};
+  focus.movingNoteId = selected.noteId;
+  focus.commitBaseline = baselineFromDisplayNote(selected);
   focus.movingNoteRange.start = selected.startTick;
   focus.movingNoteRange.end = selected.endTick;
   focus.last = focus.commitBaseline;
@@ -198,8 +192,10 @@ MidiEvent* findNoteOffForOn(MidiEventVec& flat, uint8_t channel, uint8_t pitch,
 }
 
 void insertNotePair(MidiEventVec& flat, uint8_t channel, const NoteBaseline& bl,
-                    uint32_t endTick) {
-  flat.push_back(MidiEvent::NoteOn(bl.startTick, channel, bl.pitch, bl.velocity));
+                    uint32_t endTick, NoteId noteId) {
+  MidiEvent noteOn = MidiEvent::NoteOn(bl.startTick, channel, bl.pitch, bl.velocity);
+  noteOn.noteId = noteId;
+  flat.push_back(noteOn);
   flat.push_back(MidiEvent::NoteOff(endTick, channel, bl.pitch, 0));
 }
 
@@ -211,7 +207,8 @@ void materializeShortenedOverlap(MidiEventVec& flat, uint8_t channel, const Over
   const std::vector<NoteUtils::DisplayNote> notes =
       NoteUtils::reconstructNotes(flat, loopLength, false);
   for (const NoteUtils::DisplayNote& dn : notes) {
-    if (dn.note == bl.pitch && dn.startTick == bl.startTick && dn.endTick == targetOff) {
+    if (dn.noteId == entry.noteId ||
+        (dn.note == bl.pitch && dn.startTick == bl.startTick && dn.endTick == targetOff)) {
       return;
     }
   }
@@ -232,19 +229,19 @@ void materializeShortenedOverlap(MidiEventVec& flat, uint8_t channel, const Over
     return;
   }
 
-  insertNotePair(flat, channel, bl, targetOff);
+  insertNotePair(flat, channel, bl, targetOff, entry.noteId);
 }
 
 }  // namespace
 
-void resolveOverlapNotesForPreCommit(MidiEventVec& sessionStoreEvents, NoteEditFocus& focus, uint8_t channel,
-                                     uint32_t loopLength) {
+void resolveOverlapNotesForPreCommit(MidiEventVec& sessionStoreEvents, NoteEditFocus& focus,
+                                     uint8_t channel, uint32_t loopLength) {
   if (!focus.active || loopLength == 0) {
     return;
   }
 
-  for (auto& [ref, entry] : focus.overlapNotes) {
-    (void)ref;
+  for (auto& [noteId, entry] : focus.overlapNotes) {
+    (void)noteId;
     if (entry.state == OverlapNoteStoreState::Visible) {
       continue;
     }
@@ -281,22 +278,22 @@ EditPassVec buildPreCommitOverlapEditPasses(const NoteEditFocus& focus) {
     return rows;
   }
 
-  for (const auto& [ref, entry] : focus.overlapNotes) {
-    (void)ref;
+  for (const auto& [noteId, entry] : focus.overlapNotes) {
+    (void)noteId;
     if (entry.state == OverlapNoteStoreState::Hidden && !entry.preCommitEmitted) {
       EditPass row = makeNoteEditRow(EditActionType::Delete, EditPropertyType::None);
-      row.target = entry.ref;
+      row.targetNoteId = entry.noteId;
       rows.push_back(row);
     }
   }
 
-  for (const auto& [ref, entry] : focus.overlapNotes) {
-    (void)ref;
+  for (const auto& [noteId, entry] : focus.overlapNotes) {
+    (void)noteId;
     if (entry.state == OverlapNoteStoreState::Shortened &&
         entry.shortenedEndTick != entry.baseline.endTick) {
       EditPass row = makeNoteEditRow(EditActionType::Update, EditPropertyType::Length);
-      row.target = entry.ref;
-      row.startTick = entry.ref.startTick;
+      row.targetNoteId = entry.noteId;
+      row.startTick = entry.baseline.startTick;
       row.endTick = entry.shortenedEndTick;
       rows.push_back(row);
     }
@@ -307,15 +304,15 @@ EditPassVec buildPreCommitOverlapEditPasses(const NoteEditFocus& focus) {
 
 namespace {
 
-const OverlapNote* findOverlapNoteForDisplayNote(const NoteEditFocus& focus, uint8_t channel,
+const OverlapNote* findOverlapNoteForDisplayNote(const NoteEditFocus& focus,
                                                  const NoteUtils::DisplayNote& dn) {
-  const NoteRef directRef =
-      findBaselineRefForNote(focus, channel, dn.note, dn.startTick, dn.endTick);
-  if (const OverlapNote* entry = findOverlapNoteEntry(focus, directRef)) {
-    return entry;
+  if (dn.noteId != kInvalidNoteId) {
+    if (const OverlapNote* entry = findOverlapNoteEntry(focus, dn.noteId)) {
+      return entry;
+    }
   }
-  for (const auto& [ref, entry] : focus.overlapNotes) {
-    (void)ref;
+  for (const auto& [noteId, entry] : focus.overlapNotes) {
+    (void)noteId;
     if (entry.baseline.pitch != dn.note || entry.baseline.startTick != dn.startTick) {
       continue;
     }
@@ -330,9 +327,9 @@ const OverlapNote* findOverlapNoteForDisplayNote(const NoteEditFocus& focus, uin
   return nullptr;
 }
 
-bool isExcludedFromSelectableDisplayNotes(const NoteEditFocus& focus, uint8_t channel,
+bool isExcludedFromSelectableDisplayNotes(const NoteEditFocus& focus,
                                           const NoteUtils::DisplayNote& dn) {
-  const OverlapNote* overlap = findOverlapNoteForDisplayNote(focus, channel, dn);
+  const OverlapNote* overlap = findOverlapNoteForDisplayNote(focus, dn);
   if (overlap == nullptr) {
     return false;
   }
@@ -347,6 +344,7 @@ bool isExcludedFromSelectableDisplayNotes(const NoteEditFocus& focus, uint8_t ch
 std::vector<NoteUtils::DisplayNote> filterSelectableDisplayNotes(
     const MidiEventVec& sessionEvents, const NoteEditFocus& focus, uint8_t channel,
     uint32_t loopLength) {
+  (void)channel;
   const std::vector<NoteUtils::DisplayNote> allNotes =
       NoteUtils::reconstructNotes(sessionEvents, loopLength, false);
   if (!focus.active || focus.overlapNotes.empty()) {
@@ -356,7 +354,7 @@ std::vector<NoteUtils::DisplayNote> filterSelectableDisplayNotes(
   std::vector<NoteUtils::DisplayNote> filtered;
   filtered.reserve(allNotes.size());
   for (const NoteUtils::DisplayNote& dn : allNotes) {
-    if (isExcludedFromSelectableDisplayNotes(focus, channel, dn)) {
+    if (isExcludedFromSelectableDisplayNotes(focus, dn)) {
       continue;
     }
     filtered.push_back(dn);
@@ -364,27 +362,21 @@ std::vector<NoteUtils::DisplayNote> filterSelectableDisplayNotes(
   return filtered;
 }
 
-NoteRef noteRefFromFilteredDisplayNote(uint8_t channel, const NoteEditFocus& focus,
-                                       const std::vector<NoteUtils::DisplayNote>& filtered,
-                                       int filteredIndex) {
+NoteId noteIdFromFilteredDisplayNote(const std::vector<NoteUtils::DisplayNote>& filtered,
+                                     int filteredIndex) {
   if (filteredIndex < 0 || filteredIndex >= static_cast<int>(filtered.size())) {
-    return {};
+    return kInvalidNoteId;
   }
-  const NoteUtils::DisplayNote& dn = filtered[static_cast<size_t>(filteredIndex)];
-  return findBaselineRefForNote(focus, channel, dn.note, dn.startTick, dn.endTick);
+  return filtered[static_cast<size_t>(filteredIndex)].noteId;
 }
 
-int filteredDisplayNoteIndexForNoteRef(uint8_t channel, const NoteEditFocus& focus,
-                                       const std::vector<NoteUtils::DisplayNote>& filtered,
-                                       const NoteRef& ref) {
+int filteredDisplayNoteIndexForNoteId(const std::vector<NoteUtils::DisplayNote>& filtered,
+                                      NoteId noteId) {
+  if (noteId == kInvalidNoteId) {
+    return -1;
+  }
   for (int i = 0; i < static_cast<int>(filtered.size()); ++i) {
-    const NoteRef atIndex = noteRefFromFilteredDisplayNote(channel, focus, filtered, i);
-    if (noteRefEquals(atIndex, ref)) {
-      return i;
-    }
-    const NoteUtils::DisplayNote& dn = filtered[static_cast<size_t>(i)];
-    if (atIndex.channel == ref.channel && atIndex.note == ref.note &&
-        dn.startTick == ref.startTick && dn.endTick == ref.endTick) {
+    if (filtered[static_cast<size_t>(i)].noteId == noteId) {
       return i;
     }
   }
@@ -396,9 +388,7 @@ EditPassVec buildPreCommitEditPasses(const NoteEditFocus& focus, uint8_t channel
   if (!focus.active) {
     return rows;
   }
-
-  const NoteRef moverRef{channel, focus.commitBaseline.pitch, focus.commitBaseline.startTick,
-                         focus.commitBaseline.endTick};
+  (void)channel;
 
   const bool startChanged = focus.last.startTick != focus.commitBaseline.startTick;
   const bool endChanged = focus.last.endTick != focus.commitBaseline.endTick;
@@ -406,13 +396,13 @@ EditPassVec buildPreCommitEditPasses(const NoteEditFocus& focus, uint8_t channel
 
   if (startChanged) {
     EditPass row = makeNoteEditRow(EditActionType::Update, EditPropertyType::NoteRange);
-    row.target = moverRef;
+    row.targetNoteId = focus.movingNoteId;
     row.startTick = focus.last.startTick;
     row.endTick = focus.last.endTick;
     rows.push_back(row);
   } else if (endChanged) {
     EditPass row = makeNoteEditRow(EditActionType::Update, EditPropertyType::Length);
-    row.target = moverRef;
+    row.targetNoteId = focus.movingNoteId;
     row.startTick = focus.commitBaseline.startTick;
     row.endTick = focus.last.endTick;
     rows.push_back(row);
@@ -420,7 +410,7 @@ EditPassVec buildPreCommitEditPasses(const NoteEditFocus& focus, uint8_t channel
 
   if (pitchChanged) {
     EditPass row = makeNoteEditRow(EditActionType::Update, EditPropertyType::Pitch);
-    row.target = moverRef;
+    row.targetNoteId = focus.movingNoteId;
     row.pitch = focus.last.pitch;
     rows.push_back(row);
   }

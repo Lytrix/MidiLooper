@@ -304,7 +304,7 @@ STORAGE_PERSIST_MEM bool selectDeferredCapturePass(const LoopPasses& passes, uin
 
 STORAGE_PERSIST_MEM bool writeDeferredLoopHeader(File& file, LoopId loopId, uint32_t startLoopTick,
                              uint32_t loopLengthTicks, uint32_t loopStartTick,
-                             PassId nextPassId, uint32_t nextMergeSequence,
+                             PassId nextPassId, NoteId nextNoteId, uint32_t nextMergeSequence,
                              PassId lastPublishedPassId, const LoopPasses& passes,
                              LoopPersistPayloadCrc crcMode = LoopPersistPayloadCrc::None) {
     if (!persistenceWriteRaw(file, &loopId, sizeof(loopId), crcMode)) return false;
@@ -314,6 +314,7 @@ STORAGE_PERSIST_MEM bool writeDeferredLoopHeader(File& file, LoopId loopId, uint
     }
     if (!persistenceWriteRaw(file, &loopStartTick, sizeof(loopStartTick), crcMode)) return false;
     if (!persistenceWriteRaw(file, &nextPassId, sizeof(nextPassId), crcMode)) return false;
+    if (!persistenceWriteRaw(file, &nextNoteId, sizeof(nextNoteId), crcMode)) return false;
     if (!persistenceWriteRaw(file, &nextMergeSequence, sizeof(nextMergeSequence), crcMode)) {
         return false;
     }
@@ -361,7 +362,7 @@ STORAGE_PERSIST_MEM bool stepDeferredLoopPersist(File& file, const Loop& loop, b
     switch (storageSession.currentWorkspaceSave.loopWriteStage) {
         case DeferredLoopWriteStage::Header:
             if (!writeDeferredLoopHeader(file, loop.loopId, loop.startLoopTick, loop.loopLengthTicks,
-                                         loop.loopStartTick, loop.nextPassId_,
+                                         loop.loopStartTick, loop.nextPassId_, loop.nextNoteId_,
                                          loop.nextMergeSequence_, loop.lastPublishedPassId_,
                                          loop.passes, crcMode)) {
                 return false;
@@ -432,7 +433,7 @@ STORAGE_PERSIST_MEM bool stepDeferredEmptyLoopPersist(File& file, LoopId loopId,
 
     switch (storageSession.currentWorkspaceSave.loopWriteStage) {
         case DeferredLoopWriteStage::Header:
-            if (!writeDeferredLoopHeader(file, loopId, 0, 0, 0, 1, 0, kInvalidPassId,
+            if (!writeDeferredLoopHeader(file, loopId, 0, 0, 0, 1, 1, 0, kInvalidPassId,
                                          emptyPasses)) {
                 return false;
             }
@@ -465,8 +466,9 @@ STORAGE_PERSIST_MEM bool stepDeferredLoopSnapshotPersist(File& file, const Persi
         case DeferredLoopWriteStage::Header:
             if (!writeDeferredLoopHeader(file, snapshot.loopId, snapshot.startLoopTick,
                                          snapshot.loopLengthTicks, snapshot.loopStartTick,
-                                         snapshot.nextPassId, snapshot.nextMergeSequence,
-                                         snapshot.lastPublishedPassId, snapshot.passes)) {
+                                         snapshot.nextPassId, snapshot.nextNoteId,
+                                         snapshot.nextMergeSequence, snapshot.lastPublishedPassId,
+                                         snapshot.passes)) {
                 return false;
             }
             storageSession.currentWorkspaceSave.capturePassCursor = 0;

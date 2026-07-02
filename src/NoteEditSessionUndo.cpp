@@ -28,16 +28,16 @@ size_t estimatedSessionUndoEntryBytes(const SessionUndoEntry& entry) {
   for (const EditPass& row : entry.editRows) {
     bytes += row.addedEvents.size() * sizeof(MidiEvent);
   }
-  bytes += entry.focus.baselineMap.size() * (sizeof(NoteRef) + sizeof(NoteBaseline));
-  bytes += entry.focus.overlapNotes.size() * (sizeof(NoteRef) + sizeof(OverlapNote));
+  bytes += entry.focus.baselineMap.size() * (sizeof(NoteId) + sizeof(NoteBaseline));
+  bytes += entry.focus.overlapNotes.size() * (sizeof(NoteId) + sizeof(OverlapNote));
   bytes += entry.editPassIdsAtPush.size() * sizeof(EditPassId);
   if (entry.hasRedoPayload) {
     bytes += entry.redoEditRows.size() * sizeof(EditPass);
     for (const EditPass& row : entry.redoEditRows) {
       bytes += row.addedEvents.size() * sizeof(MidiEvent);
     }
-    bytes += entry.redoFocus.baselineMap.size() * (sizeof(NoteRef) + sizeof(NoteBaseline));
-    bytes += entry.redoFocus.overlapNotes.size() * (sizeof(NoteRef) + sizeof(OverlapNote));
+    bytes += entry.redoFocus.baselineMap.size() * (sizeof(NoteId) + sizeof(NoteBaseline));
+    bytes += entry.redoFocus.overlapNotes.size() * (sizeof(NoteId) + sizeof(OverlapNote));
     bytes += entry.redoEditPassIds.size() * sizeof(EditPassId);
   }
   return bytes;
@@ -48,7 +48,7 @@ bool canHeapAdmitSessionUndoEntry(const SessionUndoEntry& entry) {
   return MemoryMonitor::getInternalHeapFreeBytes() >= needed;
 }
 
-SessionUndoEntry buildSessionUndoEntry(const NoteEditFocus& focus, NoteEditSelection selection,
+SessionUndoEntry buildSessionUndoEntry(const NoteEditFocus& focus, EditorSelection selection,
                                        const MidiEventVec& sessionFlat, uint8_t channel,
                                        uint32_t loopLength,
                                        const EditPassIdList& editPassIdsAtPush) {
@@ -68,7 +68,7 @@ SessionUndoEntry buildSessionUndoEntry(const NoteEditFocus& focus, NoteEditSelec
 }
 
 SessionUndoEntry buildSessionUndoEntryAfterLiveCaptureDuringNoteEdit(
-    const NoteEditFocus& focus, NoteEditSelection selection,
+    const NoteEditFocus& focus, EditorSelection selection,
     const MidiEventVec& baselineStoreEvents, const MidiEventVec& sessionStoreEvents,
     uint8_t channel, uint32_t loopLength, const EditPassIdList& editPassIdsAtPush) {
   SessionUndoEntry entry;
@@ -93,8 +93,8 @@ EditPassVec buildSessionStoreEditPasses(const MidiEventVec& baselineStoreEvents,
       NoteUtils::reconstructNotes(sessionStoreEvents, loopLength, false);
 
   auto sameNote = [](const NoteUtils::DisplayNote& a, const NoteUtils::DisplayNote& b) {
-    return a.note == b.note && a.velocity == b.velocity && a.startTick == b.startTick &&
-           a.endTick == b.endTick;
+    return a.noteId == b.noteId && a.note == b.note && a.velocity == b.velocity &&
+           a.startTick == b.startTick && a.endTick == b.endTick;
   };
 
   std::vector<bool> matchedSession(sessionNotes.size(), false);
@@ -113,7 +113,7 @@ EditPassVec buildSessionStoreEditPasses(const MidiEventVec& baselineStoreEvents,
     }
 
     EditPass row = makeSessionStoreRow(EditActionType::Delete, EditPropertyType::None);
-    row.target = {channel, baseline.note, baseline.startTick, baseline.endTick};
+    row.targetNoteId = baseline.noteId;
     rows.push_back(std::move(row));
   }
 
@@ -133,8 +133,10 @@ EditPassVec buildSessionStoreEditPasses(const MidiEventVec& baselineStoreEvents,
     }
 
     EditPass row = makeSessionStoreRow(EditActionType::Create, EditPropertyType::None);
-    row.addedEvents.push_back(MidiEvent::NoteOn(session.startTick, channel, session.note,
-                                                session.velocity));
+    MidiEvent noteOn =
+        MidiEvent::NoteOn(session.startTick, channel, session.note, session.velocity);
+    noteOn.noteId = session.noteId;
+    row.addedEvents.push_back(noteOn);
     row.addedEvents.push_back(MidiEvent::NoteOff(session.endTick, channel, session.note, 0));
     rows.push_back(std::move(row));
   }

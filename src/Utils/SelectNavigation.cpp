@@ -60,11 +60,11 @@ std::vector<SelectNavSlot> buildSelectNavigationSlots(
         });
 
         if (notesInStep.empty()) {
-            slots.push_back({stepTick, -1});
+            slots.push_back({stepTick, kInvalidNoteId, -1});
         } else {
             for (int idx : notesInStep) {
                 const uint32_t rel = noteRelativeTick(notes[idx].startTick, loopStartTick, loopLength);
-                slots.push_back({rel, idx});
+                slots.push_back({rel, notes[static_cast<size_t>(idx)].noteId, idx});
             }
         }
     }
@@ -79,7 +79,7 @@ std::vector<SelectNavSlot> buildSelectNavigationSlots(
             }
         }
         if (!bracketTickFound) {
-            slots.push_back({relativeBracketTick, -1});
+            slots.push_back({relativeBracketTick, kInvalidNoteId, -1});
             std::sort(slots.begin(), slots.end(), [](const SelectNavSlot& a, const SelectNavSlot& b) {
                 if (a.relativeTick != b.relativeTick) {
                     return a.relativeTick < b.relativeTick;
@@ -119,20 +119,18 @@ int findSlotIndexForSelection(const std::vector<SelectNavSlot>& slots,
     return -1;
 }
 
-int findSlotIndexForNoteRef(const std::vector<SelectNavSlot>& slots,
-                            const std::vector<NoteUtils::DisplayNote>& notes,
-                            const NoteRef& ref, bool hasNote, uint32_t bracketTick,
-                            uint32_t loopStartTick, uint32_t loopLength, uint8_t channel) {
-    if (hasNote) {
+int findSlotIndexForNoteId(const std::vector<SelectNavSlot>& slots,
+                           const std::vector<NoteUtils::DisplayNote>& notes,
+                           NoteId noteId, uint32_t bracketTick, uint32_t loopStartTick,
+                           uint32_t loopLength) {
+    if (noteId != kInvalidNoteId) {
         for (int i = 0; i < static_cast<int>(slots.size()); ++i) {
-            const int noteIdx = slots[static_cast<size_t>(i)].noteIdx;
-            if (noteIdx < 0 || noteIdx >= static_cast<int>(notes.size())) {
-                continue;
+            if (slots[static_cast<size_t>(i)].noteId == noteId) {
+                return i;
             }
-            const NoteRef candidate = {channel, notes[static_cast<size_t>(noteIdx)].note,
-                                       notes[static_cast<size_t>(noteIdx)].startTick,
-                                       notes[static_cast<size_t>(noteIdx)].endTick};
-            if (noteRefSameTarget(ref, candidate)) {
+            const int noteIdx = slots[static_cast<size_t>(i)].noteIdx;
+            if (noteIdx >= 0 && noteIdx < static_cast<int>(notes.size()) &&
+                notes[static_cast<size_t>(noteIdx)].noteId == noteId) {
                 return i;
             }
         }

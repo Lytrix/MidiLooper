@@ -49,12 +49,8 @@ User-confirmed 2026-07-01. Brownfield: [`docs/DELIVERABLE_TRACKING.md`](../../do
 
 ## Open Decisions (TBD)
 
-- **Phase A exit gate** — NoteId Phase B starts only after fader selection-driven refactor is stable (see design.md Phase A acceptance)
-- **`EntityIds.h` scope and naming** — Phase 0 added a shared header for **`NoteId`** and **`TrackId`** only. The filename suggests a global id registry; existing ids (`PassId`, `LoopId`, `EditPassId`, `UndoEntryId`, storage catalog ids) remain domain-local. Resolve before Phase B:
-  - **(A) Rename** the header to a scoped name (e.g. `NoteEditIdentityIds.h`, `EditorSelectionIds.h`) and update includes/tests — no behavior change.
-  - **(B) Expand** the header to hold all timeline `*Id` aliases (`PassId`, `LoopId`, …) — typedef move only; keep structs/allocation in domain headers.
-  - **(C) Keep** `EntityIds.h` but document in header + design D0 that it means **cross-cutting edit/selection entity identity**, not every `*Id` in firmware.
-  - **Out of scope for any option:** Jam/M10 ids, storage catalog ids (`setId`, `revisionId`), stack-internal ids unless a separate OpenSpec says otherwise.
+- **Phase A exit gate** — **Satisfied** (2026-07-02): HITL slow fader-1 sweep PASS — 59 nav slots, `select_ignored_rate=0`, sibling sync OK. Handoff: [`note_edit_stable_note_id_phase_a_handoff.md`](../../docs/plans/note_edit_stable_note_id_phase_a_handoff.md). Phase B starts only after D0a resolution + explicit user scope.
+- **`EntityIds.h` scope and naming** — **Resolved (2026-07-02):** **(C) document-only** + post-Phase B co-location. Temporary hub during Phase B; after Phase B, move `NoteId` → `MidiEvent.h`, `TrackId` → `NoteEditSessionState.h`, delete `EntityIds.h`. PassId/LoopId/undo/storage ids stay domain-local.
 
 ## Delivery Sequence
 

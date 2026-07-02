@@ -2,7 +2,7 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-07-02 (note-edit-stable-note-id Phase A shipped)
+Last updated: 2026-07-02 (note-edit-stable-note-id Phase B shipped)
 
 ---
 
@@ -19,8 +19,10 @@ Last updated: 2026-07-02 (note-edit-stable-note-id Phase A shipped)
 | `load-save-overlay-display-regression` | Overlay display fixes |
 | `save-status-display` | Deferred save status on display |
 | `long-loop-piano-roll-window` | 16-bar piano-roll window + overview |
-| `note-edit-fader-feedback-regression` | NOTE_EDIT fader outbound sync — Phase 2 deferred refresh pipeline (in progress) |
-| `note-edit-stable-note-id` | Stable **NoteId** identity — Phase 0 + Phase A shipped; Phase B next when scoped |
+| `note-edit-fader-feedback-regression` | NOTE_EDIT fader outbound sync — Phase A NoteRef selection **shipped** (`d3d5798`); Phase 8 RC11 open |
+| `note-edit-stable-note-id` | Stable **NoteId** identity — Phase 0 + A + **B shipped** (SD v6, EditorSelection, EntityIds co-location); HITL NoteId sweep pending device |
+
+**Phase A handoff:** [note_edit_stable_note_id_phase_a_handoff.md](../plans/note_edit_stable_note_id_phase_a_handoff.md)
 
 **Archived (2026-06-29):** `storage-session-state-refactor` (DEC-012) → `openspec/changes/archive/2026-06-29-storage-session-state-refactor/`
 
