@@ -97,4 +97,16 @@ void moveNoteWithOverlapHandling(Track& track, EditManager& manager,
     /** LIFO-paired note-off for the note-on at startTick (ignores stale expected end). */
     MidiEvent* findNoteOffForNoteOnAtStart(MidiEventVec& midiEvents, uint8_t pitch,
                                            uint32_t startTick);
+
+    /**
+     * Resolve the note-off for a live edit span: LIFO pair, paired-at, then wrap-head fallback.
+     * Returns nullptr for open tail notes that reconstruct to loopLength - 1 without a stored off.
+     */
+    MidiEvent* resolveNoteOffForEditSpan(MidiEventVec& midiEvents, MidiEvent* noteOnEvent,
+                                         uint8_t channel, uint8_t pitch, uint32_t startTick,
+                                         uint32_t displayEndTick, uint32_t loopLength);
+
+    /** True when note-on exists at startTick but no note-off pairs (display end at loop tail). */
+    bool isOpenTailNoteAtLoopEnd(const MidiEventVec& midiEvents, uint8_t channel, uint8_t pitch,
+                                 uint32_t startTick, uint32_t displayEndTick, uint32_t loopLength);
 } 

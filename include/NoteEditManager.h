@@ -20,6 +20,7 @@
 #include "Utils/NoteEditFaderMotorTiming.h"
 #include "Utils/NoteEditFaderOutboundPlan.h"
 #include "Utils/NoteEditFaderSelectSync.h"
+#include "Utils/NoteEditDependentFaderSnapshot.h"
 #include "NoteEditSessionState.h"
 
 class DisplayManager;
@@ -73,7 +74,6 @@ public:
     /** Return fader 2/3 to position edit after fader-1 note select (leaves length mode). */
     void resetLengthEditingModeOnNoteSelect();
     
-    void sendStartNotePitchbend(Track& track);
     /** Arm SessionOpen outbound; suppress duplicate SELECT_SYNC until pipeline Done. */
     void prepareNoteEditSessionOpen();
     /** NOTE_EDIT session entry: grace period + deferred selectnote fader sync. */
@@ -85,9 +85,6 @@ public:
     void scheduleSelectDependentMotorSync(Track& track, const EditorSelection& priorSelection,
                                           const EditorSelection& nextSelection,
                                           bool geometryIsDriver = false);
-    /** F2/F3/F4 motor sync when NoteId selection identity changes (immediate flush). */
-    void syncMotorsForDisplaySelection(Track& track, const EditorSelection& priorSelection,
-                                       const EditorSelection& nextSelection);
     bool isFaderOutboundActive() const;
     void moveNoteToPosition(Track& track, const NoteUtils::DisplayNote& currentNote, std::uint32_t targetTick);
     void changeNoteEndWithOverlapHandling(Track& track, const NoteUtils::DisplayNote& currentNote,
@@ -143,6 +140,7 @@ private:
     uint32_t lastCoarseFaderTime = 0;
     static constexpr int16_t COARSE_MOVEMENT_THRESHOLD = 150;
     static constexpr uint32_t COARSE_STABILITY_TIME = 1000;
+    static constexpr uint32_t DRIVER_FADER_ACTIVE_MS = 2500;
     
     uint8_t lastFineCCValue = 64;
     bool fineCCInitialized = false;
@@ -170,7 +168,6 @@ private:
                               const NoteEditFaderOutbound::PlanFlags* planOverride = nullptr);
     void queuePendingOutbound(NoteEditFaderOutbound::Trigger trigger,
                               const NoteEditFaderOutbound::PlanFlags* planOverride = nullptr);
-    void drainDependentFaderOutboundUntilDone();
     void cancelActiveFaderOutbound();
     void processFaderOutbound();
     void completeOutboundPipelineAtDone(Track& track, uint32_t now);
@@ -185,17 +182,19 @@ private:
                                     uint32_t sinceSyncMs, int16_t f2Pb, int f4Cc,
                                     int16_t priorF2Pb, int priorF4Cc, bool motorValueChanged);
     void resetSelectNavSlotApplyState();
-    void sendSelectnoteFaderUpdate(Track& track);
-    void performSelectnoteFaderUpdate(Track& track);
     int selectNavSlotIndexForPitchbend(Track& track, int16_t pitchValue);
     bool applyNoteSelectFromFader1Pitchbend(Track& track, int16_t pitchValue, int posIndex);
-    struct PlannedMotorSyncValues {
-        int16_t f2Pb = 0;
-        int f4Cc = -1;
-    };
-    PlannedMotorSyncValues plannedMotorSyncValuesFromSelectTarget(
-        const Track& track, const Fader1SelectTarget& target);
     Fader1SelectTarget resolveFader1SelectTarget(Track& track, int16_t pitchValue);
+    NoteEditDependentFaderBuildInput makeDependentFaderBuildInput(
+        const Track& track, const Fader1SelectTarget* selectTarget) const;
+    NoteEditDependentFaderSnapshot buildDependentFaderSnapshotForTrack(
+        const Track& track, const Fader1SelectTarget* selectTarget) const;
+    bool sendDependentFaderSnapshot(Track& track, const NoteEditFaderOutbound::PlanFlags& plan,
+                                    const NoteEditDependentFaderSnapshot& snapshot,
+                                    DependentFaderSendMode mode);
+    bool shouldIgnoreDependentFaderInput(MidiMapping::FaderType faderType, int16_t pitchbendValue,
+                                         uint8_t ccValue, Track& track);
+    void publishDependentFaderLatch(Track& track);
     void clearPendingSelectDependentMotorSync();
     void clearPendingGeometryDriverMotorSync();
     void processPendingSelectDependentMotorSync(Track& track);
@@ -206,9 +205,9 @@ private:
     bool sendDependentFadersParallelTimedBurst(Track& track,
                                                const NoteEditFaderOutbound::PlanFlags& plan,
                                                const Fader1SelectTarget* selectTarget);
-    bool sendCoarseMotorPositionFromSelectTarget(Track& track, const Fader1SelectTarget& target);
-    bool sendFineMotorPositionFromSelectTarget(Track& track, const Fader1SelectTarget& target);
-    bool sendNoteValueMotorPositionFromSelectTarget(Track& track, const Fader1SelectTarget& target);
+    bool sendCoarseFaderPosition(Track& track);
+    bool sendFineFaderPosition(Track& track);
+    bool sendNoteValueFaderPosition(Track& track);
     void armSelectDependentSettle(uint32_t sentAt);
     void recordFaderInputForValidation(MidiMapping::FaderType faderType, int16_t pitchbendValue,
                                        uint8_t ccValue);
@@ -237,27 +236,14 @@ public:
     void setDisplayManager(DisplayManager* manager) { displayManager_ = manager; }
     void handleFaderInput(MidiMapping::FaderType faderType, int16_t pitchbendValue = 0, uint8_t ccValue = 0);
     void scheduleOtherFaderUpdates(MidiMapping::FaderType driverFader);
-    void sendFaderUpdate(MidiMapping::FaderType faderType, Track& track);
-    void sendFaderPosition(MidiMapping::FaderType faderType, Track& track);
     bool shouldIgnoreFaderInput(MidiMapping::FaderType faderType);
     bool shouldIgnoreFaderInput(MidiMapping::FaderType faderType, int16_t pitchbendValue, uint8_t ccValue);
-    
-    bool sendCoarseFaderPosition(Track& track);
-    bool sendFineFaderPosition(Track& track);
-    bool sendCoarseFaderTimedUpdate(Track& track);
-    bool sendFineFaderTimedUpdate(Track& track);
-    bool sendNoteValueFaderPosition(Track& track);
-    bool sendNoteValueFaderTimedUpdate(Track& track);
     void sendCoarseFaderMotorNoteOn();
     void sendCoarseFaderMotorNoteOff();
     void sendFineFaderMotorNoteOn();
     void sendFineFaderMotorNoteOff();
     void sendNoteValueFaderMotorNoteOn();
     void sendNoteValueFaderMotorNoteOff();
-    bool sendCoarseMotorTimedUpdateFromSelectTarget(Track& track, const Fader1SelectTarget& target);
-    bool sendFineMotorTimedUpdateFromSelectTarget(Track& track, const Fader1SelectTarget& target);
-    bool sendNoteValueMotorTimedUpdateFromSelectTarget(Track& track,
-                                                       const Fader1SelectTarget& target);
 
     enum EditModeState {
         EDIT_MODE_NONE = 0,

@@ -21,6 +21,11 @@ NoteUtils::DisplayNoteVec filterDisplayNotesToWindow(const NoteUtils::DisplayNot
                                                      uint32_t windowStart, uint32_t windowLength,
                                                      uint32_t loopLength);
 
+/// Window inclusion filter for edit/motor/nav inventory — keeps storage ticks unchanged.
+NoteUtils::DisplayNoteVec filterDisplayNotesByWindowInclusion(
+    const NoteUtils::DisplayNoteVec& notes, uint32_t windowStart, uint32_t windowLength,
+    uint32_t loopLength);
+
 bool segmentHasNotes(const NoteUtils::DisplayNoteVec& notes, uint32_t loopLength,
                      uint32_t segStartTick, uint32_t segEndTick);
 

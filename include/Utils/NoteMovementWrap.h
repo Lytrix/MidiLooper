@@ -21,6 +21,11 @@ inline uint32_t wrapPosition(int32_t position, uint32_t loopLength) {
     return static_cast<uint32_t>(position);
 }
 
+/// Linear canonical off tick: NoteOn.tick + span length (may exceed loopLength).
+inline uint32_t linearStorageOffTickForSpanEnd(uint32_t startTick, uint32_t noteLen) {
+    return startTick + noteLen;
+}
+
 /// Length in ticks from start to end, handling wrap when end < start inside a loop.
 inline uint32_t calculateNoteLength(uint32_t start, uint32_t end, uint32_t loopLength) {
     if (end >= start) {

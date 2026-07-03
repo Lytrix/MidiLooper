@@ -21,6 +21,10 @@ Set revision persistence + load/save overlay UX on branch `load-save-sets-loops`
 - **`note-edit-stable-note-id`** — Phase B shipped; spec `openspec/specs/note-edit-stable-note-id/`.
 - Handoffs: [note_edit_fader_feedback_next_steps_handoff.md](../plans/note_edit_fader_feedback_next_steps_handoff.md), [note_edit_stable_note_id_phase_a_handoff.md](../plans/note_edit_stable_note_id_phase_a_handoff.md)
 
+## Side fix (orthogonal to persistence track)
+
+- **`note-edit-tick-coordinates-and-audition`** — geometry wrap regression during pitch edit on long loops; Tier 1+2 shipped in firmware; HITL pending. Handoff: [note_edit_geometry_wrap_regression_bugfix.md](../plans/note_edit_geometry_wrap_regression_bugfix.md)
+
 ## Explicitly NOT implementing
 
 - D13 arrangement jam **capture** — future roadmap only ([ROADMAP.md](ROADMAP.md))

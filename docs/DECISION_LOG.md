@@ -14,6 +14,8 @@ Persistent record of **accepted architectural and implementation decisions**. No
 
 | ID | Date | Topic | Status |
 |----|------|-------|--------|
+| [DEC-014](#dec-014-dual-normalization-boundaries-micro-vs-macro) | 2026-07-03 | Dual normalize micro/macro | Accepted |
+| [DEC-013](#dec-013-linear-loop-tick-validate-vs-normalize) | 2026-07-03 | Linear loop tick validate vs normalize | Accepted |
 | [DEC-012](#dec-012-storagesession-persistence-state-model) | 2026-06-29 | StorageSession persistence state | Accepted |
 | [DEC-011](#dec-011-bias-toward-progress) | 2026-06-29 | Bias toward progress | Accepted |
 | [DEC-010](#dec-010-ownership-evolution-protocol) | 2026-06-29 | Ownership evolution protocol | Accepted |
@@ -29,7 +31,56 @@ Persistent record of **accepted architectural and implementation decisions**. No
 
 ---
 
-<!-- Append new entries below (newest first). Next ID: DEC-013 -->
+<!-- Append new entries below (newest first). Next ID: DEC-015 -->
+
+## DEC-014 — Dual normalization boundaries (micro vs macro)
+
+**Date:** 2026-07-03  
+**Owner:** `LoopTickNormalize`, NOTE_EDIT commit path  
+**Status:** Accepted
+
+### Problem
+
+Single `normalizeWindow` at every boundary blurred live-interaction consistency with persistent canonical commit.
+
+### Decision
+
+- **Micro:** `normalizeWindow` on **edit closure set** at `publishDependentFaderLatch` — local geometric consistency for faders/projection; not sole persistent canonical authority.
+- **Macro:** `normalizeAll` at `commitAllPendingNoteEditActions` — full-store canonical invariants, undo snapshots, pass readers. MUST NOT be skipped.
+- **Closure set:** seed modified `NoteId`s → paired on/off, overlap participants, wrap interactors; no UI window/selection as scope.
+- **Playback during edit:** Tier 2 `sessionMidiEvents()` — verification only, no merge overlay.
+- **Set window:** drives F1/F2 range; full-loop window → wrap at fader extremes; partial-window slide deferred.
+
+### Consequences
+
+- Phase 2 wires closure-set computation + dual hooks before HITL 152335.
+- OpenSpec: `linear-loop-tick-storage`, `note-edit-modification-session`, `note-edit-fader-feedback`.
+
+---
+
+
+## DEC-013 — Linear loop tick validate vs normalize
+
+**Date:** 2026-07-03  
+**Owner:** `LoopTickNormalize`, `LoopEventValidation` (`include/Utils/`)  
+**Status:** Accepted
+
+### Problem
+
+Loop MIDI storage mixed modulo ticks, wrap-pair geometry, and projection — causing edit move cutoff and loop-stretch display inflation.
+
+### Decision
+
+- **Invariants** — pure boolean predicates in `LoopEventValidation`; MUST NOT mutate storage or call normalize.
+- **Conversion rules** — pure transforms in `LoopTickNormalize`; ONLY place legacy wrap-pair / synth-off shapes become canonical linear spans.
+- **Normalize timing** — boundary-based only (not mid-pipeline, not on SD load). See DEC-014 for micro/macro split.
+
+### Consequences
+
+- `validateAndCleanupMidiEvents` logs canonical failures and performs orphan removal only (no synth loop-end insert on idle).
+- OpenSpec: `openspec/changes/linear-loop-tick-storage/`.
+
+---
 
 ## DEC-012 — StorageSession persistence state model
 

@@ -6,6 +6,7 @@
 #include <algorithm>
 
 #include "Utils/NoteMovementWrap.h"
+#include "Utils/LoopTickNormalize.h"
 #include "Utils/NoteUtils.h"
 
 NoteBaseline baselineFromDisplayNote(const NoteUtils::DisplayNote& dn) {
@@ -98,9 +99,15 @@ void rebuildNoteEditFocusFromStore(NoteEditFocus& focus, const MidiEventVec& loo
 
   const NoteUtils::DisplayNote& selected = notes[static_cast<size_t>(selectedNoteIdx)];
   focus.movingNoteId = selected.noteId;
-  focus.commitBaseline = baselineFromDisplayNote(selected);
-  focus.movingNoteRange.start = selected.startTick;
-  focus.movingNoteRange.end = selected.endTick;
+  MidiEventVec mutableEvents = loopMidiEvents;
+  NoteBaseline linearBaseline;
+  if (findLinearNoteSpanForNoteId(mutableEvents, selected.noteId, channel, linearBaseline)) {
+    focus.commitBaseline = linearBaseline;
+  } else {
+    focus.commitBaseline = baselineFromDisplayNote(selected);
+  }
+  focus.movingNoteRange.start = focus.commitBaseline.startTick;
+  focus.movingNoteRange.end = focus.commitBaseline.endTick;
   focus.last = focus.commitBaseline;
   focus.active = true;
 }
@@ -130,17 +137,146 @@ void noteEditFocusApplyPitch(NoteEditFocus& focus, uint8_t newPitch, uint32_t st
   focus.last.pitch = newPitch;
   focus.last.startTick = start;
   focus.last.endTick = end;
-  const uint32_t candidateLength = NoteMovementUtils::calculateNoteLength(
-      focus.movingNoteRange.start, end, loopLength);
-  const uint32_t baselineLength = NoteMovementUtils::calculateNoteLength(
-      focus.movingNoteRange.start, focus.commitBaseline.endTick, loopLength);
-  if (candidateLength > baselineLength) {
+  if (end >= focus.movingNoteRange.end || end > loopLength) {
     focus.movingNoteRange.end = end;
   }
 }
 
+bool isMovingNoteOverlapScratchEntry(const NoteEditFocus& focus, NoteId noteId,
+                                     const NoteBaseline& baseline) {
+  if (!focus.active) {
+    return false;
+  }
+  if (noteId != kInvalidNoteId && noteId == focus.movingNoteId) {
+    return true;
+  }
+  return baseline.startTick == focus.commitBaseline.startTick &&
+         baseline.pitch == focus.commitBaseline.pitch;
+}
+
 bool noteEditFocusHasPendingLengthChange(const NoteEditFocus& focus) {
   return focus.active && focus.last.endTick != focus.commitBaseline.endTick;
+}
+
+namespace {
+
+MidiEvent* findLinearOffForNoteOnLifo(MidiEventVec& events, MidiEvent* noteOnEvent, uint8_t pitch) {
+  if (noteOnEvent == nullptr) {
+    return nullptr;
+  }
+  std::vector<MidiEvent*> activeNoteOnStack;
+  for (auto& evt : events) {
+    const bool isNoteOn =
+        evt.isNoteOn() && evt.data.noteData.velocity > 0 && evt.data.noteData.note == pitch;
+    const bool isNoteOff = evt.isNoteOff() && evt.data.noteData.note == pitch;
+    if (isNoteOn) {
+      activeNoteOnStack.push_back(&evt);
+    } else if (isNoteOff) {
+      for (int stackIndex = static_cast<int>(activeNoteOnStack.size()) - 1; stackIndex >= 0;
+           --stackIndex) {
+        MidiEvent* candidateOn = activeNoteOnStack[static_cast<size_t>(stackIndex)];
+        if (evt.tick <= candidateOn->tick) {
+          continue;
+        }
+        MidiEvent* pairedOn = candidateOn;
+        activeNoteOnStack.erase(activeNoteOnStack.begin() + stackIndex);
+        if (pairedOn == noteOnEvent) {
+          return &evt;
+        }
+        break;
+      }
+    }
+  }
+  return nullptr;
+}
+
+}  // namespace
+
+bool findLinearNoteSpanForNoteId(MidiEventVec& events, NoteId noteId, uint8_t channel,
+                                 NoteBaseline& outBaseline, uint32_t preferredStartTick) {
+  if (noteId == kInvalidNoteId) {
+    return false;
+  }
+  auto tryNoteOn = [&](MidiEvent& evt) -> bool {
+    if (evt.noteId != noteId || evt.channel != channel) {
+      return false;
+    }
+    if (!evt.isNoteOn() || evt.data.noteData.velocity == 0) {
+      return false;
+    }
+    if (preferredStartTick != UINT32_MAX && evt.tick != preferredStartTick) {
+      return false;
+    }
+    MidiEvent* noteOffEvent =
+        findLinearOffForNoteOnLifo(events, &evt, evt.data.noteData.note);
+    if (noteOffEvent == nullptr) {
+      return false;
+    }
+    outBaseline.pitch = evt.data.noteData.note;
+    outBaseline.velocity = evt.data.noteData.velocity;
+    outBaseline.startTick = evt.tick;
+    outBaseline.endTick = noteOffEvent->tick;
+    return true;
+  };
+
+  if (preferredStartTick != UINT32_MAX) {
+    for (MidiEvent& evt : events) {
+      if (tryNoteOn(evt)) {
+        return true;
+      }
+    }
+  }
+  for (MidiEvent& evt : events) {
+    if (tryNoteOn(evt)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+bool syncNoteEditFocusLinearFromSessionStore(NoteEditFocus& focus, MidiEventVec& events,
+                                            uint8_t channel) {
+  if (!focus.active) {
+    return false;
+  }
+  NoteBaseline linearSpan;
+  if (focus.movingNoteId != kInvalidNoteId &&
+      (findLinearNoteSpanForNoteId(events, focus.movingNoteId, channel, linearSpan,
+                                   focus.last.startTick) ||
+       findLinearNoteSpanForNoteId(events, focus.movingNoteId, channel, linearSpan,
+                                   focus.commitBaseline.startTick) ||
+       findLinearNoteSpanForNoteId(events, focus.movingNoteId, channel, linearSpan))) {
+    focus.last = linearSpan;
+    focus.movingNoteRange.start = linearSpan.startTick;
+    focus.movingNoteRange.end = linearSpan.endTick;
+    return true;
+  }
+  const uint32_t startCandidates[] = {focus.last.startTick, focus.commitBaseline.startTick};
+  for (uint32_t startTick : startCandidates) {
+    for (auto& evt : events) {
+      if (evt.channel != channel) {
+        continue;
+      }
+      if (!evt.isNoteOn() || evt.data.noteData.velocity == 0 ||
+          evt.data.noteData.note != focus.last.pitch || evt.tick != startTick) {
+        continue;
+      }
+      MidiEvent* noteOffEvent =
+          findLinearOffForNoteOnLifo(events, &evt, focus.last.pitch);
+      if (noteOffEvent == nullptr) {
+        continue;
+      }
+      focus.last.startTick = startTick;
+      focus.last.endTick = noteOffEvent->tick;
+      focus.movingNoteRange.start = startTick;
+      if (focus.movingNoteRange.end <= focus.last.startTick ||
+          focus.last.endTick > focus.movingNoteRange.end) {
+        focus.movingNoteRange.end = focus.last.endTick;
+      }
+      return true;
+    }
+  }
+  return false;
 }
 
 namespace {
@@ -272,6 +408,42 @@ EditPass makeNoteEditRow(EditActionType actionType, EditPropertyType propertyTyp
 
 }  // namespace
 
+void pruneOverlapNotesBeforePreCommit(NoteEditFocus& focus, MidiEventVec& events,
+                                      uint8_t channel) {
+  for (auto it = focus.overlapNotes.begin(); it != focus.overlapNotes.end();) {
+    OverlapNote& entry = it->second;
+    NoteBaseline linear;
+    const bool hasLinear = entry.noteId != kInvalidNoteId &&
+                           findLinearNoteSpanForNoteId(events, entry.noteId, channel, linear);
+    if (hasLinear) {
+      entry.baseline = linear;
+    }
+
+    bool erase = false;
+    if (entry.state == OverlapNoteStoreState::Hidden) {
+      if (hasLinear) {
+        erase = true;
+      }
+    } else if (entry.state == OverlapNoteStoreState::Shortened) {
+      if (entry.baseline.endTick < entry.baseline.startTick) {
+        erase = true;
+      } else if (hasLinear) {
+        const uint32_t targetOff = entry.shortenedEndTick;
+        if (targetOff == linear.endTick ||
+            (targetOff + 1 >= linear.endTick && targetOff >= linear.startTick)) {
+          erase = true;
+        }
+      }
+    }
+
+    if (erase) {
+      it = focus.overlapNotes.erase(it);
+    } else {
+      ++it;
+    }
+  }
+}
+
 EditPassVec buildPreCommitOverlapEditPasses(const NoteEditFocus& focus) {
   EditPassVec rows;
   if (!focus.active) {
@@ -341,6 +513,46 @@ bool isExcludedFromSelectableDisplayNotes(const NoteEditFocus& focus,
 
 }  // namespace
 
+std::unordered_set<NoteId> buildEditClosureNoteIds(const NoteEditFocus& focus,
+                                                 const MidiEventVec& sessionEvents,
+                                                 uint8_t channel, uint32_t loopLength) {
+  std::unordered_set<NoteId> ids;
+  if (!focus.active || loopLength == 0) {
+    return ids;
+  }
+  if (focus.movingNoteId != kInvalidNoteId) {
+    ids.insert(focus.movingNoteId);
+  }
+  for (const auto& [noteId, entry] : focus.overlapNotes) {
+    (void)entry;
+    if (noteId != kInvalidNoteId) {
+      ids.insert(noteId);
+    }
+  }
+  const uint8_t pitch = focus.last.pitch;
+  const uint32_t wrapMargin =
+      std::min(LoopTickNormalize::kDefaultWrapWindowTicks, loopLength);
+
+  for (const MidiEvent& onEvt : sessionEvents) {
+    if (!onEvt.isNoteOn() || onEvt.data.noteData.velocity == 0 || onEvt.channel != channel ||
+        onEvt.noteId == kInvalidNoteId || onEvt.data.noteData.note != pitch ||
+        ids.count(onEvt.noteId) > 0) {
+      continue;
+    }
+    for (const MidiEvent& offEvt : sessionEvents) {
+      if (!offEvt.isNoteOff() || offEvt.channel != channel ||
+          offEvt.data.noteData.note != pitch) {
+        continue;
+      }
+      if (NoteUtils::isHeadTailWrappedPair(onEvt.tick, offEvt.tick, loopLength, wrapMargin)) {
+        ids.insert(onEvt.noteId);
+        break;
+      }
+    }
+  }
+  return ids;
+}
+
 std::vector<NoteUtils::DisplayNote> filterSelectableDisplayNotes(
     const MidiEventVec& sessionEvents, const NoteEditFocus& focus, uint8_t channel,
     uint32_t loopLength) {
@@ -381,6 +593,45 @@ int filteredDisplayNoteIndexForNoteId(const std::vector<NoteUtils::DisplayNote>&
     }
   }
   return -1;
+}
+
+int filteredDisplayNoteIndexForNoteIdAndStart(const std::vector<NoteUtils::DisplayNote>& filtered,
+                                              NoteId noteId, uint32_t startTick) {
+  if (noteId == kInvalidNoteId) {
+    return -1;
+  }
+  for (int i = 0; i < static_cast<int>(filtered.size()); ++i) {
+    const NoteUtils::DisplayNote& dn = filtered[static_cast<size_t>(i)];
+    if (dn.noteId == noteId && dn.startTick == startTick) {
+      return i;
+    }
+  }
+  return -1;
+}
+
+int filteredDisplayNoteIndexForMovingNote(const std::vector<NoteUtils::DisplayNote>& filtered,
+                                          NoteId noteId, uint32_t linearStartTick) {
+  if (noteId == kInvalidNoteId) {
+    return -1;
+  }
+  const int byStorageStart =
+      filteredDisplayNoteIndexForNoteIdAndStart(filtered, noteId, linearStartTick);
+  if (byStorageStart >= 0) {
+    return byStorageStart;
+  }
+  int bestIdx = -1;
+  uint32_t bestStart = 0;
+  for (int i = 0; i < static_cast<int>(filtered.size()); ++i) {
+    const NoteUtils::DisplayNote& dn = filtered[static_cast<size_t>(i)];
+    if (dn.noteId != noteId) {
+      continue;
+    }
+    if (dn.startTick >= bestStart) {
+      bestStart = dn.startTick;
+      bestIdx = i;
+    }
+  }
+  return bestIdx;
 }
 
 EditPassVec buildPreCommitEditPasses(const NoteEditFocus& focus, uint8_t channel) {

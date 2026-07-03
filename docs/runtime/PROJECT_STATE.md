@@ -19,6 +19,9 @@ Last updated: 2026-07-03 (note-edit fader feedback + stable-note-id archived)
 | `load-save-overlay-display-regression` | Overlay display fixes |
 | `save-status-display` | Deferred save status on display |
 | `long-loop-piano-roll-window` | 16-bar piano-roll window + overview |
+| `note-edit-tick-coordinates-and-audition` | Geometry wrap regression: tick spaces + session-store playback preview |
+
+**Side fix (2026-07-03):** `note-edit-tick-coordinates-and-audition` — long-loop pitch edit regression at loop wrap; handoff [note_edit_geometry_wrap_regression_bugfix.md](../plans/note_edit_geometry_wrap_regression_bugfix.md). HITL pending.
 
 **Archived (2026-07-03):** `note-edit-fader-feedback-regression` → `openspec/changes/archive/2026-07-03-note-edit-fader-feedback-regression/`; normative spec `openspec/specs/note-edit-fader-feedback/`. Phase 12–13 + RC11 §8.3–8.4 deferred.
 
