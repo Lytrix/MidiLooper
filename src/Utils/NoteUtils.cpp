@@ -9,12 +9,13 @@
 #include <map>
 #include <set>
 #include <tuple>
+#include "Utils/NoteEditMem.h"
 
 namespace {
 
 constexpr size_t kReconstructVerboseMaxEvents = 32;
 
-NoteId noteIdAtOnTick(const MidiEventVec& events, uint8_t channel, uint8_t pitch,
+NOTE_EDIT_MEM NoteId noteIdAtOnTick(const MidiEventVec& events, uint8_t channel, uint8_t pitch,
                       uint32_t onTick) {
   for (const MidiEvent& evt : events) {
     if (evt.isNoteOn() && evt.channel == channel && evt.data.noteData.note == pitch &&
@@ -25,11 +26,11 @@ NoteId noteIdAtOnTick(const MidiEventVec& events, uint8_t channel, uint8_t pitch
   return kInvalidNoteId;
 }
 
-bool shouldLogReconstructDetails(bool verboseLog, size_t eventCount) {
+NOTE_EDIT_MEM bool shouldLogReconstructDetails(bool verboseLog, size_t eventCount) {
     return verboseLog && eventCount <= kReconstructVerboseMaxEvents;
 }
 
-bool allLaterOnsInTailOrNone(const MidiEventVec& midiEvents, uint32_t headOffTick, uint8_t pitch,
+NOTE_EDIT_MEM bool allLaterOnsInTailOrNone(const MidiEventVec& midiEvents, uint32_t headOffTick, uint8_t pitch,
                              uint8_t channel, uint32_t loopLength) {
     const uint32_t tailStart = NoteUtils::wrapTailStartTick(loopLength);
     for (const MidiEvent& evt : midiEvents) {
@@ -46,7 +47,7 @@ bool allLaterOnsInTailOrNone(const MidiEventVec& midiEvents, uint32_t headOffTic
     return true;
 }
 
-bool tryPairWrappedTailOn(const MidiEventVec& midiEvents, uint32_t noteOffTick, uint8_t pitch,
+NOTE_EDIT_MEM bool tryPairWrappedTailOn(const MidiEventVec& midiEvents, uint32_t noteOffTick, uint8_t pitch,
                           uint8_t channel, uint32_t loopLength, uint32_t& outOnTick,
                           uint8_t& outVelocity) {
     if (!allLaterOnsInTailOrNone(midiEvents, noteOffTick, pitch, channel, loopLength)) {
@@ -80,7 +81,7 @@ bool tryPairWrappedTailOn(const MidiEventVec& midiEvents, uint32_t noteOffTick, 
     return true;
 }
 
-bool hasDeferredLoopEndHeadOff(const MidiEventVec& midiEvents, size_t fromIndex, uint8_t pitch,
+NOTE_EDIT_MEM bool hasDeferredLoopEndHeadOff(const MidiEventVec& midiEvents, size_t fromIndex, uint8_t pitch,
                                uint8_t channel, uint32_t tailOnTick, uint32_t loopLength) {
     for (size_t j = fromIndex + 1; j < midiEvents.size(); ++j) {
         const MidiEvent& later = midiEvents[j];
@@ -100,7 +101,7 @@ bool hasDeferredLoopEndHeadOff(const MidiEventVec& midiEvents, size_t fromIndex,
     return false;
 }
 
-bool isLatestTailNoteOn(const MidiEventVec& midiEvents, uint32_t tailOnTick, uint8_t pitch,
+NOTE_EDIT_MEM bool isLatestTailNoteOn(const MidiEventVec& midiEvents, uint32_t tailOnTick, uint8_t pitch,
                         uint8_t channel, uint32_t loopLength) {
     const uint32_t tailStart = NoteUtils::wrapTailStartTick(loopLength);
     for (const MidiEvent& evt : midiEvents) {
@@ -117,7 +118,7 @@ bool isLatestTailNoteOn(const MidiEventVec& midiEvents, uint32_t tailOnTick, uin
     return true;
 }
 
-bool shouldDeferLoopEndOff(const MidiEventVec& midiEvents, size_t fromIndex, uint8_t pitch,
+NOTE_EDIT_MEM bool shouldDeferLoopEndOff(const MidiEventVec& midiEvents, size_t fromIndex, uint8_t pitch,
                            uint8_t channel, uint32_t tailOnTick, uint32_t loopLength) {
     if (hasDeferredLoopEndHeadOff(midiEvents, fromIndex, pitch, channel, tailOnTick, loopLength)) {
         return true;
@@ -135,7 +136,7 @@ bool shouldDeferLoopEndOff(const MidiEventVec& midiEvents, size_t fromIndex, uin
     return false;
 }
 
-bool isWrapHeldOpenNoteImpl(const MidiEventVec& midiEvents, const NoteUtils::OpenNoteOn& open,
+NOTE_EDIT_MEM bool isWrapHeldOpenNoteImpl(const MidiEventVec& midiEvents, const NoteUtils::OpenNoteOn& open,
                             uint32_t loopLength) {
     if (loopLength == 0) {
         return false;
@@ -197,12 +198,12 @@ bool isWrapHeldOpenNoteImpl(const MidiEventVec& midiEvents, const NoteUtils::Ope
 
 }  // namespace
 
-bool NoteUtils::isWrapHeldOpenNote(const MidiEventVec& midiEvents, const OpenNoteOn& open,
+NOTE_EDIT_MEM bool NoteUtils::isWrapHeldOpenNote(const MidiEventVec& midiEvents, const OpenNoteOn& open,
                                    uint32_t loopLength) {
     return isWrapHeldOpenNoteImpl(midiEvents, open, loopLength);
 }
 
-bool NoteUtils::isPreferredWrapTailForHeadOff(uint32_t tailOnTick, uint32_t headOffTick,
+NOTE_EDIT_MEM bool NoteUtils::isPreferredWrapTailForHeadOff(uint32_t tailOnTick, uint32_t headOffTick,
                                               const MidiEventVec& midiEvents, uint8_t pitch,
                                               uint8_t channel, uint32_t loopLength) {
     if (!isHeadTailWrappedPair(tailOnTick, headOffTick, loopLength)) {
@@ -223,7 +224,7 @@ bool NoteUtils::isPreferredWrapTailForHeadOff(uint32_t tailOnTick, uint32_t head
     return true;
 }
 
-bool NoteUtils::wrapPairIsUnblocked(const MidiEventVec& midiEvents, uint32_t offTick, uint32_t onTick,
+NOTE_EDIT_MEM bool NoteUtils::wrapPairIsUnblocked(const MidiEventVec& midiEvents, uint32_t offTick, uint32_t onTick,
                                     uint8_t pitch, uint8_t channel) {
     for (const auto& evt : midiEvents) {
         if (!evt.isNoteOn() || evt.channel != channel || evt.data.noteData.note != pitch) {
@@ -237,7 +238,7 @@ bool NoteUtils::wrapPairIsUnblocked(const MidiEventVec& midiEvents, uint32_t off
 }
 
 // CachedNoteList implementation
-uint32_t NoteUtils::CachedNoteList::computeMidiHash(const MidiEventVec& midiEvents) {
+NOTE_EDIT_MEM uint32_t NoteUtils::CachedNoteList::computeMidiHash(const MidiEventVec& midiEvents) {
     return midiEventVecFnv1aHash(midiEvents);
 }
 
@@ -260,7 +261,7 @@ NoteUtils::CachedNoteList::getNotes(const MidiEventVec& midiEvents, uint32_t loo
 
 namespace {
 
-int findActiveNoteOnIndexForOff(const std::vector<NoteUtils::DisplayNote>& stack,
+NOTE_EDIT_MEM int findActiveNoteOnIndexForOff(const std::vector<NoteUtils::DisplayNote>& stack,
                                 uint32_t pairingOffTick) {
   for (int stackIndex = static_cast<int>(stack.size()) - 1; stackIndex >= 0; --stackIndex) {
     if (stack[static_cast<size_t>(stackIndex)].startTick < pairingOffTick) {
@@ -508,17 +509,17 @@ NoteVector reconstructNotesImpl(const MidiEventVec& midiEvents, uint32_t loopLen
 
 }  // namespace
 
-std::vector<NoteUtils::DisplayNote> NoteUtils::reconstructNotes(
+NOTE_EDIT_MEM std::vector<NoteUtils::DisplayNote> NoteUtils::reconstructNotes(
     const MidiEventVec& midiEvents, uint32_t loopLength, bool verboseLog) {
     return reconstructNotesImpl<std::vector<DisplayNote>>(midiEvents, loopLength, verboseLog);
 }
 
-NoteUtils::DisplayNoteVec NoteUtils::reconstructDisplayNotes(
+NOTE_EDIT_MEM NoteUtils::DisplayNoteVec NoteUtils::reconstructDisplayNotes(
     const MidiEventVec& midiEvents, uint32_t loopLength, bool verboseLog) {
     return reconstructNotesImpl<DisplayNoteVec>(midiEvents, loopLength, verboseLog);
 }
 
-std::vector<NoteUtils::OpenNoteOn> NoteUtils::findOpenNoteOns(const MidiEventVec& midiEvents,
+NOTE_EDIT_MEM std::vector<NoteUtils::OpenNoteOn> NoteUtils::findOpenNoteOns(const MidiEventVec& midiEvents,
                                                                uint32_t loopLength) {
     std::vector<OpenNoteOn> openNotes;
     if (loopLength == 0) {
@@ -597,7 +598,7 @@ NoteUtils::EventIndex NoteUtils::buildEventIndex(const MidiEventVec& midiEvents)
 
 namespace {
 
-uint32_t pairedNoteOnTickForOffAtIndex(const MidiEventVec& midiEvents, uint8_t channel,
+NOTE_EDIT_MEM uint32_t pairedNoteOnTickForOffAtIndex(const MidiEventVec& midiEvents, uint8_t channel,
                                        uint8_t pitch, size_t offIndex) {
     std::vector<uint32_t> onTicks;
     for (size_t i = 0; i < midiEvents.size(); ++i) {
@@ -623,7 +624,7 @@ uint32_t pairedNoteOnTickForOffAtIndex(const MidiEventVec& midiEvents, uint8_t c
 
 }  // namespace
 
-bool NoteUtils::notesOverlap(uint32_t start1, uint32_t end1, uint32_t start2, uint32_t end2,
+NOTE_EDIT_MEM bool NoteUtils::notesOverlap(uint32_t start1, uint32_t end1, uint32_t start2, uint32_t end2,
                              uint32_t loopLength) {
     uint32_t unwrappedEnd1 = end1;
     uint32_t unwrappedEnd2 = end2;
@@ -647,7 +648,7 @@ bool NoteUtils::notesOverlap(uint32_t start1, uint32_t end1, uint32_t start2, ui
     return (start1 < unwrappedEnd2) || (start2 < unwrappedEnd1);
 }
 
-void NoteUtils::sortMidiEventsChronologically(MidiEventVec& midiEvents) {
+NOTE_EDIT_MEM void NoteUtils::sortMidiEventsChronologically(MidiEventVec& midiEvents) {
     std::sort(midiEvents.begin(), midiEvents.end(), [](const MidiEvent& a, const MidiEvent& b) {
         if (a.tick != b.tick) {
             return a.tick < b.tick;
@@ -658,7 +659,7 @@ void NoteUtils::sortMidiEventsChronologically(MidiEventVec& midiEvents) {
     });
 }
 
-void NoteUtils::orderSamePitchNoteOffsForLifo(MidiEventVec& midiEvents, uint8_t channel,
+NOTE_EDIT_MEM void NoteUtils::orderSamePitchNoteOffsForLifo(MidiEventVec& midiEvents, uint8_t channel,
                                               uint8_t pitch) {
     std::map<uint32_t, std::vector<size_t>> offsByTick;
     for (size_t i = 0; i < midiEvents.size(); ++i) {
@@ -689,7 +690,7 @@ void NoteUtils::orderSamePitchNoteOffsForLifo(MidiEventVec& midiEvents, uint8_t 
     }
 }
 
-void NoteUtils::ensureNoteOffsBeforeNoteOnsAtTick(MidiEventVec& midiEvents, uint8_t pitch,
+NOTE_EDIT_MEM void NoteUtils::ensureNoteOffsBeforeNoteOnsAtTick(MidiEventVec& midiEvents, uint8_t pitch,
                                                     uint32_t tick) {
     std::vector<size_t> indices;
     indices.reserve(4);
@@ -747,7 +748,7 @@ void NoteUtils::ensureNoteOffsBeforeNoteOnsAtTick(MidiEventVec& midiEvents, uint
     }
 }
 
-void NoteUtils::removeDuplicateNotePairsAtSpan(MidiEventVec& midiEvents, uint8_t pitch,
+NOTE_EDIT_MEM void NoteUtils::removeDuplicateNotePairsAtSpan(MidiEventVec& midiEvents, uint8_t pitch,
                                                uint32_t startTick, uint32_t endTick) {
     std::vector<size_t> onIndices;
     std::vector<size_t> offIndices;

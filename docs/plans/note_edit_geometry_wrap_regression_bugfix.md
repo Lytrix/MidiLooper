@@ -90,6 +90,7 @@ Follow-up wrap regression (`captures/session_20260703_140021.log`): F4 pitch rev
 ## Verification
 
 - Native: `pio test -e native -f test_note_edit_focus` + `test_note_edit_fader_feedback` + `test_edit_apply`
+- Firmware: `pio run -e teensy41-capture-serial` (RAM1 must link; `PERF_TELEMETRY=1` on) — see [capture_serial_ram1_recovery_extmem_debug_enhancement.md](capture_serial_ram1_recovery_extmem_debug_enhancement.md)
 - HITL: pitch wrapped moving note across overlapping wrapped neighbor; neighbor must hide/restore cleanly, no extension toward mover start.
 - HITL: move + pitch with F1 reselect — no spurious ChangeLength; wrapped overlap shorten/restore uses linear end (not display wrap tail).
 - HITL: pitch moving note onto duplicate pitch lane (e.g. 32 @ 24 + mover @ 1484) — selection stays on mover; DNTE shows linear start.
@@ -102,4 +103,6 @@ Follow-up wrap regression (`captures/session_20260703_140021.log`): F4 pitch rev
 - `src/Track.{h,cpp}`
 - `src/Utils/NoteMovementUtils.cpp`
 - `src/NoteEditFocus.cpp`
+- `include/Utils/NoteEditMem.h`
+- `src/Utils/DebugSessionCapture.cpp`
 - `test/test_note_edit_focus/test_note_edit_focus.cpp`

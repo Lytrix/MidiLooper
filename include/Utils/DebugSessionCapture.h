@@ -11,8 +11,8 @@
  * Only active when built with -D SESSION_CAPTURE (env:teensy41-capture-serial).
  * In all other builds every SC_* macro compiles to nothing.
  *
- * Implementations live in DebugSessionCapture.cpp with FLASHMEM so capture I/O stays out of
- * ITCM/RAM1 (teensy41-capture-serial RAM budget).
+ * Capture producers use FLASHMEM append paths into a PSRAM ring; flushCaptureBuffer runs from
+ * RAM each main-loop iteration and prints to USB serial (teensy41-capture-serial RAM budget).
  */
 #pragma once
 
@@ -37,6 +37,18 @@ struct PendingRevt {
   uint8_t ch;
   uint8_t note;
 };
+
+/** Allocate the external-memory capture ring (no-op when PSRAM unavailable). */
+SC_MEM_ATTR void initCaptureBuffer();
+
+/** Queue a deferred serial line (#DBG, PERF, …) for flushCaptureBuffer. */
+SC_MEM_ATTR void appendCaptureTextLine(const char* line);
+
+/**
+ * Drain up to @p maxRecords from the PSRAM ring to USB serial.
+ * Runs from RAM (not FLASHMEM) — safe for Serial and ring access from main loop.
+ */
+void flushCaptureBuffer(size_t maxRecords = 64);
 
 SC_MEM_ATTR void sessionHeader();
 SC_MEM_ATTR void midiIn(char src, uint8_t type, uint8_t ch, uint8_t d1, uint8_t d2);
@@ -109,9 +121,10 @@ SC_MEM_ATTR void update(uint32_t currentTick, uint32_t ticksPerBar);
   DebugSessionCapture::displayNoteInfo(pitch, storageStart, displayStart, length, selectedIdx)
 #define SC_STORED_WRAP_PAIR(onTick, offTick, ch, note) DebugSessionCapture::storedWrapPair(onTick, offTick, ch, note)
 #define SC_REC_QUEUE_STORED_NOTE_ON(tick, ch, note) DebugSessionCapture::queueStoredNoteOn(tick, ch, note)
-#define SC_REC_FLUSH_PENDING_REVTS(maxLines) DebugSessionCapture::flushPendingRevts(maxLines)
-#define SC_REC_FLUSH_ALL_PENDING_REVTS()   DebugSessionCapture::flushAllPendingRevts()
-#define SC_UPDATE(tick, ticksPerBar)       DebugSessionCapture::update(tick, ticksPerBar)
+#define SC_REC_FLUSH_PENDING_REVTS(maxLines) DebugSessionCapture::flushCaptureBuffer(maxLines)
+#define SC_REC_FLUSH_ALL_PENDING_REVTS()     DebugSessionCapture::flushAllPendingRevts()
+#define SC_CAPTURE_FLUSH(maxRecords)         DebugSessionCapture::flushCaptureBuffer(maxRecords)
+#define SC_UPDATE(tick, ticksPerBar)         DebugSessionCapture::update(tick, ticksPerBar)
 
 #else  // !SESSION_CAPTURE — all capture macros compile to nothing
 
@@ -141,7 +154,8 @@ SC_MEM_ATTR void update(uint32_t currentTick, uint32_t ticksPerBar);
 #define SC_STORED_WRAP_PAIR(onTick, offTick, ch, note) ((void)0)
 #define SC_REC_QUEUE_STORED_NOTE_ON(tick, ch, note) ((void)0)
 #define SC_REC_FLUSH_PENDING_REVTS(maxLines) ((void)0)
-#define SC_REC_FLUSH_ALL_PENDING_REVTS()   ((void)0)
-#define SC_UPDATE(tick, ticksPerBar)       ((void)0)
+#define SC_REC_FLUSH_ALL_PENDING_REVTS()     ((void)0)
+#define SC_CAPTURE_FLUSH(maxRecords)         ((void)0)
+#define SC_UPDATE(tick, ticksPerBar)         ((void)0)
 
 #endif  // SESSION_CAPTURE

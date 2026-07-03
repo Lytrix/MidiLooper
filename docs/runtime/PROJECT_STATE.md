@@ -2,7 +2,7 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-07-03 (note-edit fader feedback + stable-note-id archived)
+Last updated: 2026-07-04 (capture-serial RAM1 recovery)
 
 ---
 
@@ -59,6 +59,7 @@ Full log: [DECISION_LOG.md](../DECISION_LOG.md).
 - Persistence owner: `StorageManager` — no parallel save Manager without reassessment (DEC-008)
 - **`StorageSession`** (DEC-012): job RAM in `Internal.cpp`; overlay in `Overlay.cpp`; FSM in `WorkspaceSave.cpp`, `RevisionCommit.cpp`, `RevisionLoad.cpp`; orchestrator in `StorageManager.cpp`
 - HITL serial line buffer in RAM (FLASHMEM `processHitlSerialCommands` cannot access DMAMEM on IMXRT1062)
+- **Capture-serial RAM budget (2026-07-04):** note-edit overlap code in FLASHMEM (`NoteEditMem.h`); deferred `#DBG`/`REVT`/`PERF` via 96 KB PSRAM ring in `DebugSessionCapture` — see [capture_serial_ram1_recovery_extmem_debug_enhancement.md](../plans/capture_serial_ram1_recovery_extmem_debug_enhancement.md)
 - Normative specs: `openspec/specs/revision-load/`, `storage-session-jobs/`, `storage-session-layout/`
 - **Next persistence layout:** `transport.bin` / `global.bin` — not started (post DEC-012)
 - `ButtonManager` / GPIO dormant (DEC-005)

@@ -3,6 +3,7 @@
 
 #include "Logger.h"
 #include <stdarg.h>
+#include <cstring>
 #include "MidiEvent.h"
 #include "Utils/DebugSessionCapture.h"
 
@@ -106,11 +107,17 @@ void Logger::warning(const char* format, ...) {
 
 void Logger::info(const char* format, ...) {
   if (currentLevel < LOG_INFO) return;
-  printPrefix(LOG_INFO);
   va_list args;
   va_start(args, format);
   vsnprintf(logBuffer, sizeof(logBuffer), format, args);
   va_end(args);
+#if defined(SESSION_CAPTURE)
+  if (strncmp(logBuffer, "#DBG", 4) == 0) {
+    DebugSessionCapture::appendCaptureTextLine(logBuffer);
+    return;
+  }
+#endif
+  printPrefix(LOG_INFO);
   Serial.println(logBuffer);
 }
 

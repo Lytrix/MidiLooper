@@ -9,22 +9,170 @@
 #include <algorithm>
 #include <cstring>
 
+#if defined(__IMXRT1062__)
+extern "C" void* extmem_malloc(size_t size);
+extern "C" void extmem_free(void* ptr);
+#endif
+
 namespace DebugSessionCapture {
 
 namespace {
 
-constexpr size_t kPendingRevtCapacity = 512;
-
-struct PendingRevtRing {
-  PendingRevt items[kPendingRevtCapacity];
-  size_t count = 0;
+enum class CaptureRecordType : uint8_t {
+  Revt = 1,
+  Text = 2,
 };
 
-PendingRevtRing sPendingRevts DMAMEM;
+struct CaptureRecordHeader {
+  uint8_t type = 0;
+  uint16_t payloadLen = 0;
+};
+
+constexpr size_t kCaptureRingBytes = 96 * 1024;
+constexpr size_t kMaxCaptureTextBytes = 192;
+
+struct CaptureRing {
+  uint8_t* data = nullptr;
+  size_t capacity = 0;
+  size_t head = 0;
+  size_t tail = 0;
+  size_t used = 0;
+  bool overflowPending = false;
+};
+
+CaptureRing sCaptureRing;
+
+bool ensureCaptureRingAllocated() {
+  if (sCaptureRing.data != nullptr) {
+    return true;
+  }
+#if defined(__IMXRT1062__)
+  sCaptureRing.data = static_cast<uint8_t*>(extmem_malloc(kCaptureRingBytes));
+  if (sCaptureRing.data == nullptr) {
+    return false;
+  }
+  sCaptureRing.capacity = kCaptureRingBytes;
+  sCaptureRing.head = 0;
+  sCaptureRing.tail = 0;
+  sCaptureRing.used = 0;
+  return true;
+#else
+  return false;
+#endif
+}
+
+void writeByteAt(size_t index, uint8_t value) {
+  sCaptureRing.data[index % sCaptureRing.capacity] = value;
+}
+
+uint8_t readByteAt(size_t index) {
+  return sCaptureRing.data[index % sCaptureRing.capacity];
+}
+
+void writeBytesAt(size_t index, const void* src, size_t len) {
+  const uint8_t* bytes = static_cast<const uint8_t*>(src);
+  for (size_t i = 0; i < len; ++i) {
+    writeByteAt(index + i, bytes[i]);
+  }
+}
+
+void readBytesAt(size_t index, void* dest, size_t len) {
+  uint8_t* bytes = static_cast<uint8_t*>(dest);
+  for (size_t i = 0; i < len; ++i) {
+    bytes[i] = readByteAt(index + i);
+  }
+}
+
+bool readHeaderAt(size_t index, CaptureRecordHeader& headerOut) {
+  if (sCaptureRing.used < sizeof(CaptureRecordHeader)) {
+    return false;
+  }
+  readBytesAt(index, &headerOut, sizeof(CaptureRecordHeader));
+  return true;
+}
+
+size_t recordTotalBytes(const CaptureRecordHeader& header) {
+  return sizeof(CaptureRecordHeader) + header.payloadLen;
+}
+
+void advanceHead(size_t bytes) {
+  sCaptureRing.head = (sCaptureRing.head + bytes) % sCaptureRing.capacity;
+  sCaptureRing.used -= bytes;
+}
+
+void discardOldestRecord() {
+  if (sCaptureRing.used < sizeof(CaptureRecordHeader)) {
+    sCaptureRing.head = sCaptureRing.tail;
+    sCaptureRing.used = 0;
+    return;
+  }
+  CaptureRecordHeader header{};
+  if (!readHeaderAt(sCaptureRing.head, header)) {
+    sCaptureRing.head = sCaptureRing.tail;
+    sCaptureRing.used = 0;
+    return;
+  }
+  const size_t total = recordTotalBytes(header);
+  if (total > sCaptureRing.used) {
+    sCaptureRing.head = sCaptureRing.tail;
+    sCaptureRing.used = 0;
+    return;
+  }
+  advanceHead(total);
+  sCaptureRing.overflowPending = true;
+}
+
+SC_MEM_ATTR bool appendCaptureRecord(CaptureRecordType type, const void* payload, uint16_t payloadLen) {
+  if (!ensureCaptureRingAllocated()) {
+    return false;
+  }
+  const CaptureRecordHeader header{
+      static_cast<uint8_t>(type),
+      payloadLen,
+  };
+  const size_t total = recordTotalBytes(header);
+  while (sCaptureRing.used + total > sCaptureRing.capacity) {
+    discardOldestRecord();
+  }
+  writeBytesAt(sCaptureRing.tail, &header, sizeof(header));
+  writeBytesAt(sCaptureRing.tail + sizeof(header), payload, payloadLen);
+  sCaptureRing.tail = (sCaptureRing.tail + total) % sCaptureRing.capacity;
+  sCaptureRing.used += total;
+  return true;
+}
+
+void emitOverflowNotice() {
+  if (!sCaptureRing.overflowPending) {
+    return;
+  }
+  sCaptureRing.overflowPending = false;
+  Serial.printf("#CAP,%lu,RING,overflow\r\n", (unsigned long)micros());
+}
+
+void flushOneRevtRecord(const PendingRevt& revt) {
+  Serial.printf("#CAP,%lu,REVT,%lu,%u,%u\r\n",
+                (unsigned long)micros(), (unsigned long)revt.tick, revt.ch, revt.note);
+}
 
 }  // namespace
 
+SC_MEM_ATTR void initCaptureBuffer() {
+  (void)ensureCaptureRingAllocated();
+}
+
+SC_MEM_ATTR void appendCaptureTextLine(const char* line) {
+  if (line == nullptr) {
+    return;
+  }
+  const size_t len = strnlen(line, kMaxCaptureTextBytes - 1);
+  if (len == 0) {
+    return;
+  }
+  (void)appendCaptureRecord(CaptureRecordType::Text, line, static_cast<uint16_t>(len + 1));
+}
+
 SC_MEM_ATTR void sessionHeader() {
+  initCaptureBuffer();
   Serial.printf("#CAP,%lu,HDR,v1\r\n", (unsigned long)micros());
 }
 
@@ -140,9 +288,8 @@ SC_MEM_ATTR void overlayRowConfirm(uint8_t mode, uint8_t row) {
 }
 
 SC_MEM_ATTR void queueStoredNoteOn(uint32_t tick, uint8_t ch, uint8_t note) {
-  if (sPendingRevts.count < kPendingRevtCapacity) {
-    sPendingRevts.items[sPendingRevts.count++] = PendingRevt{tick, ch, note};
-  }
+  const PendingRevt revt{tick, ch, note};
+  (void)appendCaptureRecord(CaptureRecordType::Revt, &revt, sizeof(revt));
 }
 
 SC_MEM_ATTR void recStoredNoteOn(uint32_t tick, uint8_t ch, uint8_t note) {
@@ -185,25 +332,50 @@ SC_MEM_ATTR void storedWrapPair(uint32_t onTick, uint32_t offTick, uint8_t ch, u
                 (unsigned long)micros(), (unsigned long)onTick, (unsigned long)offTick, ch, note);
 }
 
-SC_MEM_ATTR size_t flushPendingRevts(size_t maxLines) {
-  const size_t n = std::min(sPendingRevts.count, maxLines);
-  for (size_t i = 0; i < n; ++i) {
-    const PendingRevt& r = sPendingRevts.items[i];
-    recStoredNoteOn(r.tick, r.ch, r.note);
+void flushCaptureBuffer(size_t maxRecords) {
+  emitOverflowNotice();
+  if (sCaptureRing.data == nullptr || sCaptureRing.used == 0) {
+    return;
   }
-  if (n > 0) {
-    const size_t rem = sPendingRevts.count - n;
-    if (rem > 0) {
-      std::memmove(sPendingRevts.items, sPendingRevts.items + n, rem * sizeof(PendingRevt));
+
+  size_t flushed = 0;
+  while (flushed < maxRecords && sCaptureRing.used >= sizeof(CaptureRecordHeader)) {
+    CaptureRecordHeader header{};
+    readBytesAt(sCaptureRing.head, &header, sizeof(header));
+    const size_t total = recordTotalBytes(header);
+    if (header.payloadLen == 0 || total > sCaptureRing.used) {
+      sCaptureRing.head = sCaptureRing.tail;
+      sCaptureRing.used = 0;
+      break;
     }
-    sPendingRevts.count = rem;
+
+    if (header.type == static_cast<uint8_t>(CaptureRecordType::Revt)) {
+      if (header.payloadLen == sizeof(PendingRevt)) {
+        PendingRevt revt{};
+        readBytesAt(sCaptureRing.head + sizeof(header), &revt, sizeof(revt));
+        flushOneRevtRecord(revt);
+      }
+    } else if (header.type == static_cast<uint8_t>(CaptureRecordType::Text)) {
+      char line[kMaxCaptureTextBytes] = {};
+      const size_t copyLen = std::min(static_cast<size_t>(header.payloadLen), sizeof(line));
+      readBytesAt(sCaptureRing.head + sizeof(header), line, copyLen);
+      line[sizeof(line) - 1] = '\0';
+      Serial.println(line);
+    }
+
+    advanceHead(total);
+    ++flushed;
   }
-  return n;
+}
+
+SC_MEM_ATTR size_t flushPendingRevts(size_t maxLines) {
+  flushCaptureBuffer(maxLines);
+  return maxLines;
 }
 
 SC_MEM_ATTR void flushAllPendingRevts() {
-  while (sPendingRevts.count > 0) {
-    flushPendingRevts(64);
+  while (sCaptureRing.used > 0) {
+    flushCaptureBuffer(64);
   }
 }
 
