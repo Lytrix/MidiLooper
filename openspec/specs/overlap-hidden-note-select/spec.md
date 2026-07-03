@@ -57,9 +57,11 @@ During an active **NoteEditSession**, any **overlap note** with store state **Hi
 - **THEN** bracket tick and selected note SHALL match the user's slot on the first stable select
 - **AND** the UI SHALL NOT briefly select a **Hidden** **overlap note** at the same or overlapping tick before correcting
 
-### Requirement: Delete targets the user-selected note
+### Requirement: Delete targets selected note by stable identity
 
-When delete is invoked on a selected note during **NoteEditSession**, the firmware SHALL commit pending edits attributable to that selection, then SHALL apply **DeleteNote** to that note's live **NoteRef** in **NoteEditSession.store**.
+When delete is invoked on a selected note during **NoteEditSession**, the firmware SHALL commit
+pending edits attributable to that selection, then SHALL apply **DeleteNote** to that note's
+**`NoteId`** in **NoteEditSession.store** (resolved to note-on + paired note-off at apply time).
 
 #### Scenario: Delete note B after moving over lengthened M0
 
@@ -68,20 +70,28 @@ When delete is invoked on a selected note during **NoteEditSession**, the firmwa
 - **AND** the lengthened mover SHALL remain in store at its edited length
 - **AND** other notes moved and committed earlier in the session SHALL remain at their edited positions
 
-#### Scenario: Delete does not rematerialize away unrelated moves
+#### Scenario: Delete hidden overlap note not in selectable inventory
 
-- **WHEN** delete pre-commit runs
-- **THEN** the firmware SHALL NOT apply **ChangeLength** or **MoveNote** for a different note than the delete target unless **focus.moving** matches that delete target's **NoteRef**
+- **WHEN** delete is invoked on a selected note that is visible in **filterSelectableDisplayNotes**
+- **THEN** delete removes the note-on and paired note-off for that note's **NoteId**
+- **AND** hidden overlap notes remain excluded from the selectable inventory
 
-### Requirement: Delete captures NoteRef before commit boundary
+#### Scenario: Delete does not mutate unrelated note
 
-When delete is invoked, the system SHALL resolve the delete target **NoteRef** from **filterSelectableDisplayNotes** before any pre-commit or **saveNoteEditPass** operation.
+- **WHEN** delete targets note B by **NoteId**
+- **THEN** the firmware SHALL NOT apply **ChangeLength** or **MoveNote** for a different **NoteId**
+  unless **focus.movingNoteId** matches the delete target
 
-#### Scenario: Delete note B with stale focus on M0
+### Requirement: Delete captures NoteId before commit boundary
 
-- **WHEN** **focus** still describes lengthened M0 but fader-1 selected note B
-- **THEN** delete pre-commit SHALL NOT emit **ChangeLength** for M0
-- **AND** delete SHALL target B's **NoteRef** after scoped focus rebuild on B
+When delete is invoked, the system SHALL resolve the delete target **`NoteId`** from
+**filterSelectableDisplayNotes** / **EditorSelection.primaryNote** before any pre-commit or
+**saveNoteEditPass** operation.
+
+#### Scenario: Delete after select switch uses new primaryNote
+
+- **WHEN** the user selects note B then invokes delete
+- **THEN** delete SHALL target B's **NoteId** after scoped focus rebuild on B
 
 ### Requirement: NOTE_EDIT display matches selectable session inventory
 

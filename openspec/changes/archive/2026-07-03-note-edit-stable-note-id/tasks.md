@@ -118,7 +118,7 @@ Run `pio test -e native` before push.
 - [x] 9.1 Allocation regression covered in extended `test_edit_apply` + `test_storage_loop_io` (`pio test -e native` 336 pass)
 - [x] 9.2 HITL edit fader sweep + baseline record/overdub — **PASS** §7.23.6 preset 2026-07-03 (2+2 base + 59-slot sweep)
 - [x] 9.3 Update [PROJECT_STATE.md](../../docs/runtime/PROJECT_STATE.md) and [CURRENT_WORK.md](../../docs/runtime/CURRENT_WORK.md)
-- [ ] 9.4 Archive change after gates pass; merge specs into `openspec/specs/`
+- [x] 9.4 Archive change after gates pass; merge specs into `openspec/specs/`
 
 ---
 

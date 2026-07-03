@@ -252,17 +252,17 @@ undo kind names. Undo and redo SHALL toggle pass state and SHALL NOT append **Ed
 - **AND** materialize applies control-change rows through the control-change edit pass handler
 - **AND** capture rows remain chunk-backed
 
-### Requirement: Note editPass stored as target and MIDI fields
+### Requirement: Note editPass stored as targetNoteId and MIDI fields
 
 Note **editPass** rows SHALL store **EditPassType**, **EditActionType**, **EditPropertyType**, a
-baseline **NoteRef** **target**, and the MIDI note fields required for that property:
+**`targetNoteId`** (**NoteId**), and the MIDI note fields required for that property:
 
-- **Create:** **note on** + **note off** events
-- **Delete:** **target** only
-- **NoteRange** (move): **target**, `startTick`, `endTick`
-- **Length:** **target**, `startTick`, `endTick` (start-point length edit may use `startTick` later)
-- **Pitch:** **target**, pitch
-- **Velocity:** **target**, **note on** velocity
+- **Create:** **note on** + **note off** events (note-on carries assigned **noteId**)
+- **Delete:** **targetNoteId** only
+- **NoteRange** (move): **targetNoteId**, `startTick`, `endTick`
+- **Length:** **targetNoteId**, `startTick`, `endTick` (start-point length edit may use `startTick` later)
+- **Pitch:** **targetNoteId**, pitch
+- **Velocity:** **targetNoteId**, **note on** velocity
 
 Firmware SHALL NOT use a generic **payload** blob or legacy **EditChange** lists on new writes.
 
@@ -290,15 +290,15 @@ Firmware SHALL NOT use a generic **payload** blob or legacy **EditChange** lists
 - **THEN** **loadState** returns **false**
 - **AND** firmware runs with default empty in-RAM state
 
-#### Scenario: v5 save writes canonical edit rows only
+#### Scenario: v6 save writes canonical edit rows with targetNoteId
 
-- **WHEN** a loop with edits is saved under v5
-- **THEN** each **editPass** row on disk uses **EditPassType** and MIDI field columns only
+- **WHEN** a loop with edits is saved under v6
+- **THEN** each **editPass** row on disk uses **EditPassType**, **`targetNoteId`**, and MIDI field columns only
 - **AND** no **EditChange** blobs are written
 
-#### Scenario: v5 load reads canonical edit rows only
+#### Scenario: v6 load reads canonical edit rows with targetNoteId
 
-- **WHEN** a v5 state file is loaded
-- **THEN** **readPersistedEditsTail** parses only the canonical edit-row wire
+- **WHEN** a v6 state file is loaded
+- **THEN** **readPersistedEditsTail** parses **targetNoteId** on each note row
 - **AND** materialize matches the saved loop
 

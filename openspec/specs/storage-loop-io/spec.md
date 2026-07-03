@@ -26,9 +26,35 @@ return **true** with **editPasses** cleared after a partial read.
 ### Requirement: Loop geometry fields apply on load
 
 **applySnapshotToLoop** SHALL copy persisted loop geometry fields from **PersistedLoopSnapshot**
-without discarding documented temporal fields.
+without discarding documented temporal fields. **nextNoteId** SHALL be restored so new notes after
+load receive ids strictly greater than any id present in the loaded loop.
 
 #### Scenario: applySnapshotToLoop sets startLoopTick
 
 - **WHEN** **applySnapshotToLoop** runs with snapshot **startLoopTick** = N
 - **THEN** **loop.startLoopTick** = N after apply
+
+#### Scenario: nextNoteId restored after load
+
+- **WHEN** a v6 snapshot with **nextNoteId** = M is loaded
+- **THEN** **loop.nextNoteId** = M after apply
+- **AND** the next allocated **noteId** on that loop is ≥ M
+
+### Requirement: SD v6 persists noteId on note-on events
+
+**PersistedMidiEvent** for note-on rows SHALL include **noteId** on v6 save and SHALL restore
+**noteId** on v6 load. Note-off rows SHALL NOT carry **noteId** on disk.
+
+#### Scenario: Round-trip noteId on capture events
+
+- **WHEN** a loop with note-on events is saved and loaded under v6
+- **THEN** each note-on **MidiEvent** retains the same **noteId** values
+
+### Requirement: SD v6 persists targetNoteId on edit rows
+
+**PersistedEditPass** note rows SHALL include **targetNoteId** on v6 save and restore on v6 load.
+
+#### Scenario: Edit row targetNoteId round-trip
+
+- **WHEN** a note **editPass** with **targetNoteId** = N is saved and loaded
+- **THEN** the in-RAM **editPass** row has **targetNoteId** = N
