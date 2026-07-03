@@ -513,9 +513,9 @@ The current regression is a scheduler-policy issue inside `NoteEditManager`, not
 
 **Cause:** (1) `selectFaderFeedbackIgnoreUntilMs_` armed but not checked on inbound F1; (2) `handleSelectFaderInput` allowed during `NoteEditKind::Move`; (3) `applySelectionFromGeometryEdit` called full `syncNoteEditSessionStateToUi`.
 
-**Fix (§7.24):** Kind-scoped early return in `handleSelectFaderInput`; inbound `selectFaderFeedbackIgnoreUntilMs_` check; `syncGeometrySelectionToUi`.
+**Fix (§7.24):** Inbound `selectFaderFeedbackIgnoreUntilMs_` check; `syncGeometrySelectionToUi`. Initial kind-scoped `handleSelectFaderInput` block **reverted** §7.24.8 (`3348857`).
 
-**Status:** **Resolved** — manual HITL PASS 2026-07-02; host verifier `verify_geometry_fader1_no_select_apply_after_flush`.
+**Status:** **Resolved** — manual HITL PASS 2026-07-02; host verifier `verify_geometry_fader1_no_select_apply_after_flush`. User F1 select during geometry edit restored 2026-07-02. Smoke re-verify: `session_20260702_222845` (echo guard PASS, 0 `geometry_edit_active`).
 
 ---
 

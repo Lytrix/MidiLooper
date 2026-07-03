@@ -56,7 +56,7 @@ flowchart LR
     nav --> sync[syncMotorsForDisplaySelection]
 ```
 
-**Cross-talk guard:** value-based echo reject (`shouldIgnoreSelectFaderEcho`); `selectFaderFeedbackIgnoreUntilMs_` on inbound F1 after real fader-1 motor sends (`sendFader1BracketFeedback`, `sendFader1MotorTimedBurst`). **Geometry kinds:** `handleSelectFaderInput` early return (`geometry_edit_active`) — see [`note_edit_geometry_f1_selection_guard_bugfix.md`](note_edit_geometry_f1_selection_guard_bugfix.md). No blanket time walls on F1 select in **Select** kind.
+**Cross-talk guard:** value-based echo reject (`shouldIgnoreSelectFaderEcho`); `selectFaderFeedbackIgnoreUntilMs_` on inbound F1 after real fader-1 motor sends (`sendFader1BracketFeedback`, `sendFader1MotorTimedBurst`). Geometry motor echo guard: see [`note_edit_geometry_f1_selection_guard_bugfix.md`](note_edit_geometry_f1_selection_guard_bugfix.md) (echo window only; user F1 select allowed during geometry edit). No blanket time walls on F1 select in **Select** kind.
 
 ---
 

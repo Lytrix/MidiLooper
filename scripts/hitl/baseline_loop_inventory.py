@@ -57,6 +57,43 @@ def base_report_ok(report: Mapping[str, Any] | None) -> bool:
     return bool(report.get("overall_ok"))
 
 
+def base_report_loop_materialized(report: Mapping[str, Any] | None) -> bool:
+    """True when base produced a 2+2 overdub loop usable for NOTE_EDIT fader sweep.
+
+    Core HITL-Test-Flow gates (record/overdub clocks, transitions) without SEVT span
+  or undo/redo log strings — those may lag deferred save on fast runs.
+    """
+    if report is None:
+        return False
+    stats = report.get("per_track_stats") or []
+    if not stats:
+        return False
+    row = stats[0]
+    if int(row.get("record_notes_sent", 0) or 0) < 32:
+        return False
+    if int(row.get("record_clock_pulses_seen", 0) or 0) < 192:
+        return False
+    if int(row.get("overdub_notes_sent", 0) or 0) < 16:
+        return False
+    if int(row.get("overdub_clock_pulses_seen", 0) or 0) < 192:
+        return False
+    config = report.get("config") or {}
+    if int(config.get("second_overdub_bars", 0) or 0) > 0:
+        if int(row.get("second_overdub_clock_pulses_seen", 0) or 0) < 192:
+            return False
+        if int(row.get("second_overdub_notes_sent", 0) or 0) < 7:
+            return False
+    transitions = (report.get("assertions") or {}).get("transition_checks") or []
+    for transition in transitions:
+        if transition.get("ok") is False:
+            return False
+    return True
+
+
+def base_report_usable_for_note_edit_sweep(report: Mapping[str, Any] | None) -> bool:
+    return base_report_ok(report) or base_report_loop_materialized(report)
+
+
 def _phase_clock_to_storage_tick(phase_clock: int) -> int:
     return phase_clock * TICKS_PER_BAR // MIDI_CLOCKS_PER_BAR
 

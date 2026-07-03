@@ -97,6 +97,21 @@ class NoteEditSelectDependentFadersSerialVerifyTests(unittest.TestCase):
         self.assertEqual(3, triple["note_changed_count"])
         self.assertEqual(1, triple.get("dwell_cluster_count", 1))
 
+    def test_ok_debounced_cluster_at_firmware_idle_boundary(self) -> None:
+        """Motor flush at 299 ms wall time must pass (firmware kSelectFaderMotorIdleMs=300)."""
+        apply_t = 10.0
+        lines = [
+            f"[{apply_t:.3f}] #DBG select_apply bracket_tick=96 slot=1 prior_slot=0 "
+            f"apply=1 reason=note_changed note_idx=3",
+        ]
+        lines.extend(
+            self._motor_sync_bundle(
+                apply_t, note_idx=3, f2_pb=200, f4_pitch=64, motor_delay_s=0.299
+            )
+        )
+        result = verify_note_edit_select_dependent_faders(lines)
+        self.assertTrue(result["ok"], result.get("issues"))
+
     def test_fail_when_f2_mo_value_mismatch(self) -> None:
         lines = self._note_changed_bundle(1.0, f2_pb=100)
         wrong_d1, wrong_d2 = _pb_wire(50)

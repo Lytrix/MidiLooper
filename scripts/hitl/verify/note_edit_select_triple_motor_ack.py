@@ -5,13 +5,19 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 
-# Parallel interleaved burst (NoteEditFaderMotorTiming): ~249 ms total + margin.
-_DEFAULT_MOTOR_MO_WINDOW_S = 0.4
-_DEFAULT_MOTOR_SYNC_MIN_DELAY_S = 0.3
-_DEFAULT_MOTOR_SYNC_MAX_DELAY_S = 0.65
-_SELECT_FADER_MOTOR_IDLE_S = 0.3
-# ch13 clear ack after notegate (DROID); burst delays spread MO — use CAP-interpolated time.
-_DEFAULT_NOTEGATE_ACK_WINDOW_S = 0.75
+from hitl.verify.select_motor_timing import (
+    MOTOR_MO_WINDOW_S,
+    MOTOR_SYNC_MAX_DELAY_S,
+    MOTOR_SYNC_MIN_DELAY_S,
+    NOTEGATE_ACK_WINDOW_S,
+    SELECT_CLUSTER_GAP_S,
+)
+
+_DEFAULT_MOTOR_MO_WINDOW_S = MOTOR_MO_WINDOW_S
+_DEFAULT_MOTOR_SYNC_MIN_DELAY_S = MOTOR_SYNC_MIN_DELAY_S
+_DEFAULT_MOTOR_SYNC_MAX_DELAY_S = MOTOR_SYNC_MAX_DELAY_S
+_SELECT_FADER_MOTOR_IDLE_S = SELECT_CLUSTER_GAP_S
+_DEFAULT_NOTEGATE_ACK_WINDOW_S = NOTEGATE_ACK_WINDOW_S
 
 # DROID ch13 motor-ack notes (NOTE_EDIT): notegate pairs with clear (even), not set_changed.
 _CLEAR_ACK = {

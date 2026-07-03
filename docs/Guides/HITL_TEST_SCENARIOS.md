@@ -232,7 +232,7 @@ Runs **`base`** then **`note_edit_select_dependent_faders`** (same pattern as `r
   --dwell-ms 800 --toggle-dwell-ms 800 --toggle-cycles 6
 ```
 
-Or run phases separately: `--preset base` then `--scenarios note_edit_select_dependent_faders` with the same flags.
+Or run phases in one shell session: `--preset note_edit_select_dependent_faders` (recommended). Split runs: `--preset base` then `--scenarios note_edit_select_dependent_faders` only when the device loop still matches the latest passing base report.
 
 Verify-only (sweep log): `--scenarios note_edit_select_dependent_faders --verify-serial-log captures/note_edit_select_dependent_faders_*_serial.log --verify-only`
 

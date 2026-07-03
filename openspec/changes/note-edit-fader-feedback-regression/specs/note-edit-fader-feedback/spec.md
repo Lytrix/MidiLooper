@@ -198,17 +198,24 @@ While the ch15 outbound pipeline is on `SendCoarse` through `TriggerCoarse`, use
 - **THEN** serial SHALL NOT show new `#DBG select_slot` with `ignored=0` caused by F2 motor echo during that window
 - **AND** `selectFaderFeedbackIgnoreUntilMs_` is armed at `SendCoarse`
 
-### Requirement: Geometry F1 inbound guard during geometry edit kinds
+### Requirement: Geometry F1 motor echo guard during geometry edit
 
-While `NoteEditKind` is Move, Length, Pitch, Add, or Delete (`isGeometryEditKind`), inbound fader1 pitchbend SHALL NOT run select navigation or `applySelectNav`. Geometry-driven F1 bracket motor sync is outbound-only until the user returns to Select kind.
+Geometry-driven F1 bracket motor sync (`sendFader1MotorTimedBurst`) is outbound-only for selection UI: `applySelectionFromGeometryEdit` SHALL use `syncGeometrySelectionToUi`. User-driven F1 select during geometry edit kinds MAY commit geometry and run `applySelectNav`. Motor echo after geometry F1 send SHALL NOT apply select navigation within `FEEDBACK_IGNORE_PERIOD`.
 
 #### Scenario: F1 motor echo after geometry flush does not change selection
 
 - **WHEN** `geometry_motor_sync sent=1` has sent F1 via `sendFader1MotorTimedBurst`
-- **AND** inbound fader1 pitchbend arrives within `FEEDBACK_IGNORE_PERIOD` (motor echo or user touch during geometry kind)
+- **AND** inbound fader1 pitchbend arrives within `FEEDBACK_IGNORE_PERIOD` (motor echo)
 - **THEN** serial SHALL NOT show `#DBG select_apply ... apply=1` caused by that inbound sample
 - **AND** serial SHALL NOT show `Exited EditStartNoteState` from fader1 echo during an active Move edit
-- **AND** `handleSelectFaderInput` MAY log `geometry_edit_active` or ignore via `selectFaderFeedbackIgnoreUntilMs_`
+- **AND** inbound F1 SHALL be ignored via `selectFaderFeedbackIgnoreUntilMs_` or value-echo check
+
+#### Scenario: User F1 select during geometry edit commits and navigates
+
+- **WHEN** the user moves fader1 to a different note while `NoteEditKind` is Move, Length, or Pitch
+- **AND** inbound is not motor echo (outside ignore window or exceeds movement threshold)
+- **THEN** firmware SHALL commit pending geometry edits and apply note select via `applySelectNav`
+- **AND** `NoteEditKind` SHALL return to Select
 
 #### Scenario: Geometry selection sync preserves moving note index
 

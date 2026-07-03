@@ -2,7 +2,7 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-07-02 (geometry F1 selection guard shipped)
+Last updated: 2026-07-03 (HITL fader sweep PASS; bug-fix scope complete)
 
 ---
 
@@ -19,12 +19,14 @@ Last updated: 2026-07-02 (geometry F1 selection guard shipped)
 | `load-save-overlay-display-regression` | Overlay display fixes |
 | `save-status-display` | Deferred save status on display |
 | `long-loop-piano-roll-window` | 16-bar piano-roll window + overview |
-| `note-edit-fader-feedback-regression` | NOTE_EDIT fader outbound sync — §7.24 geometry F1 guard **shipped**; Phase 12–13 cleanup scoped (dead code + EditorSelection migration) |
-| `note-edit-stable-note-id` | Stable **NoteId** identity — Phase 0 + A + **B shipped** (SD v6, EditorSelection, EntityIds co-location); HITL NoteId sweep pending device |
+| `note-edit-fader-feedback-regression` | **Bug-fix complete** — ready to archive; Phase 12–13 + RC11 §8.3–8.4 deferred |
+| `note-edit-stable-note-id` | Stable **NoteId** — Phase B shipped; §7.3 HITL PASS 2026-07-03 |
 
 **Phase A handoff:** [note_edit_stable_note_id_phase_a_handoff.md](../plans/note_edit_stable_note_id_phase_a_handoff.md)
 
-**Geometry F1 guard handoff:** [note_edit_geometry_f1_selection_guard_bugfix.md](../plans/note_edit_geometry_f1_selection_guard_bugfix.md)
+**Geometry F1 / fader next steps:** [note_edit_fader_feedback_next_steps_handoff.md](../plans/note_edit_fader_feedback_next_steps_handoff.md)
+
+**Geometry F1 guard (detail):** [note_edit_geometry_f1_selection_guard_bugfix.md](../plans/note_edit_geometry_f1_selection_guard_bugfix.md)
 
 **Archived (2026-06-29):** `storage-session-state-refactor` (DEC-012) → `openspec/changes/archive/2026-06-29-storage-session-state-refactor/`
 

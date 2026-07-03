@@ -182,7 +182,8 @@ Queues **do not merge**. Input on one driver **cancels** the opposite pending qu
 
 - `syncSelectionFromGeometryEdit` updates `EditorSelection` from **moving-note `NoteId`** (focus when active).
 - `applySelectionFromGeometryEdit` → `syncGeometrySelectionToUi` (bracket + display refresh only; **does not** recompute `selectedNoteIdx` or exit `EditStartNoteState`).
-- F1 bracket motor is **outbound-only**: `handleSelectFaderInput` returns early (`geometry_edit_active`) while `isGeometryEditKind` is active. User F1 note select resumes in **Select** kind (encoder cycle).
+- F1 bracket motor flush is **outbound-only** during geometry moves (`sendFader1MotorTimedBurst` after geometry-fader idle).
+- **User F1** during geometry kinds commits geometry and applies note select (`applySelectNav` → Select kind). Motor echo after geometry F1 send is blocked by `selectFaderFeedbackIgnoreUntilMs_` (see § F1 feedback ignore).
 
 ### F1 feedback ignore
 

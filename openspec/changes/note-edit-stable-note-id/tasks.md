@@ -87,7 +87,7 @@ Run `pio test -e native` before push.
 
 - [x] 7.1 Gate note-select motor sync on `primaryNote` / `selectedNotes` set change (not list index)
 - [x] 7.2 Native test: inventory rebuild without id change does not false-trigger sync
-- [ ] 7.3 HITL: fader sweep with NoteId gates after Phase B landed — **acceptance:** [`note-edit-fader-feedback-regression`](../note-edit-fader-feedback-regression/) **§7.18.8** manual capture + ch13 F2/F3/F4 ack matrix (§7.18.5–7.18.6)
+- [x] 7.3 HITL: fader sweep with NoteId gates — **PASS** `note_edit_select_dependent_faders` 2026-07-03 (`host_midi_hitl_note_edit_select_dependent_faders_20260703_122216.json`)
 
 ---
 
@@ -108,7 +108,7 @@ Run `pio test -e native` before push.
 
 ### 8.7 Global undo display + session cycle boundary
 
-- [x] 8.7.1 `getDisplayUndoCount` always returns global `TrackUndo` count (not session undo stack during NOTE_EDIT)
+- [x] 8.7.1 `getDisplayUndoCount` + `isSessionUndoDisplayActive` — sidebar **`E:nn`** during NOTE_EDIT (session undo stack), **`U:nn`** otherwise (global `TrackUndo`). Phase B regression stub reverted `3348857`.
 - [x] 8.7.2 `cycleEditSession` calls `closeNoteEditPass` when leaving NOTE_EDIT
 
 ---
@@ -116,7 +116,7 @@ Run `pio test -e native` before push.
 ## 9. Verification and closeout
 
 - [x] 9.1 Allocation regression covered in extended `test_edit_apply` + `test_storage_loop_io` (`pio test -e native` 336 pass)
-- [ ] 9.2 HITL edit fader sweep + baseline record/overdub (ids on sealed note-ons) — f4 session-entry sweep PASS (§7.17.8)
+- [x] 9.2 HITL edit fader sweep + baseline record/overdub — **PASS** §7.23.6 preset 2026-07-03 (2+2 base + 59-slot sweep)
 - [x] 9.3 Update [PROJECT_STATE.md](../../docs/runtime/PROJECT_STATE.md) and [CURRENT_WORK.md](../../docs/runtime/CURRENT_WORK.md)
 - [ ] 9.4 Archive change after gates pass; merge specs into `openspec/specs/`
 

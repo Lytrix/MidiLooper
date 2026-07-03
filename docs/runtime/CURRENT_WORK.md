@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-07-02 (geometry F1 selection guard shipped)
+Last updated: 2026-07-03 (HITL fader sweep PASS)
 
 ---
 
@@ -17,10 +17,10 @@ Set revision persistence + load/save overlay UX on branch `load-save-sets-loops`
 
 ## Registered — not yet implementing
 
-- **`note-edit-stable-note-id`** — Phase B **shipped**: `NoteId` on `MidiEvent`, `EditorSelection`, SD v6, co-location complete. Native 336 PASS; §7.17.8 HITL sweep PASS.
+- **`note-edit-stable-note-id`** — Phase B **shipped**; §7.3 HITL PASS 2026-07-03. Archive pending user `/opsx:archive`.
   - Handoff: [note_edit_stable_note_id_phase_a_handoff.md](../plans/note_edit_stable_note_id_phase_a_handoff.md)
-- **`note-edit-fader-feedback-regression`** — **§7.24 geometry F1 selection guard shipped** (HITL PASS 2026-07-02); **§7.18.5–7.18.8 capture acceptance pending** (manual slow sweep + ch13 triple-fader verifier).
-  - Handoffs: [note_edit_fader_feedback_selection_driven_refactor.md](../plans/note_edit_fader_feedback_selection_driven_refactor.md), [note_edit_geometry_f1_selection_guard_bugfix.md](../plans/note_edit_geometry_f1_selection_guard_bugfix.md)
+- **`note-edit-fader-feedback-regression`** — **bug-fix complete** 2026-07-03. HITL §7.23.6 PASS. Phase 12–13 + RC11 deferred post-archive.
+  - Handoff: [note_edit_fader_feedback_next_steps_handoff.md](../plans/note_edit_fader_feedback_next_steps_handoff.md)
 
 ## Explicitly NOT implementing
 

@@ -74,7 +74,7 @@ When overlaps occur:
 - Integrates fader input with movement system
 - Maintains stable note identity during fader operations
 - Delegates to `NoteMovementUtils` for overlap handling
-- Schedules **geometry→F1** motor sync (`pendingGeometryDriverMotorSync_`) after F2/F3/F4 moves; does **not** apply F1 inbound as note select during geometry edit kinds (see [`DROID_MOTORFADER_PITCHBEND.md`](DROID_MOTORFADER_PITCHBEND.md))
+- Schedules **geometry→F1** motor sync (`pendingGeometryDriverMotorSync_`) after F2/F3/F4 moves. User F1 select during geometry kinds commits geometry and applies navigation; motor echo after geometry F1 send is gated by `selectFaderFeedbackIgnoreUntilMs_` (see [`DROID_MOTORFADER_PITCHBEND.md`](DROID_MOTORFADER_PITCHBEND.md))
 
 **Selection UI during geometry moves:** `EditManager::applySelectionFromGeometryEdit` calls `syncGeometrySelectionToUi` (bracket + display refresh only) so `selectedNoteIdx` and `EditStartNoteState` stay on the moving note — not full `syncNoteEditSessionStateToUi`.
 
