@@ -32,7 +32,7 @@ def _parse_scenario_args(args: object) -> argparse.Namespace:
         "--seed-serial-log",
         type=Path,
         default=None,
-        help="Base seed serial log (default: latest baseline report from preset base)",
+        help="Override base seed serial log (dev only; prefer --preset for fresh 2+2 base)",
     )
     parser.add_argument(
         "--skip-sweep",
@@ -47,12 +47,27 @@ def _parse_scenario_args(args: object) -> argparse.Namespace:
 def _resolve_base_seed(
     out_dir: Path,
     seed_serial_log: Optional[Path],
+    *,
+    ctx: object | None = None,
 ) -> tuple[list[str], dict, Path | None]:
     from hitl.baseline_loop_inventory import (
         base_preset_config,
         latest_base_report,
         serial_log_from_base_report,
     )
+
+    base_serial_path: Path | None = None
+    report: dict | None = None
+
+    if ctx is not None and getattr(ctx, "base_preset_passed", False):
+        base_serial_path = getattr(ctx, "base_serial_log_path", None)
+        report = getattr(ctx, "base_report", None)
+        if base_serial_path is not None and base_serial_path.is_file():
+            return (
+                base_serial_path.read_text(encoding="utf-8", errors="replace").splitlines(),
+                base_preset_config(report),
+                base_serial_path,
+            )
 
     if seed_serial_log is not None:
         if not seed_serial_log.is_file():
@@ -68,7 +83,7 @@ def _resolve_base_seed(
     if report is None:
         raise FileNotFoundError(
             f"no host_midi_automation_baseline_*.json in {out_dir}; "
-            "run preset base first or pass --seed-serial-log"
+            "run --preset note_edit_select_dependent_faders first"
         )
     serial_path = serial_log_from_base_report(report)
     if serial_path is None:
@@ -80,16 +95,35 @@ def _resolve_base_seed(
 def _require_ok_base_seed(
     out_dir: Path,
     seed_serial_log: Optional[Path],
+    *,
+    ctx: object | None = None,
 ) -> tuple[list[str], dict, Path | None]:
-    """Load nav inventory from latest baseline report; require overall_ok unless explicit seed."""
-    from hitl.baseline_loop_inventory import base_report_ok, latest_base_report
+    """Load nav inventory from base preset; require overall_ok unless explicit seed."""
+    from hitl.baseline_loop_inventory import (
+        base_report_loop_materialized,
+        base_report_ok,
+        base_report_usable_for_note_edit_sweep,
+        latest_base_report,
+    )
 
-    seed_lines, base_config, seed_path = _resolve_base_seed(out_dir, seed_serial_log)
+    if ctx is not None and getattr(ctx, "base_preset_passed", False):
+        seed_lines, base_config, seed_path = _resolve_base_seed(
+            out_dir, seed_serial_log, ctx=ctx
+        )
+        return seed_lines, base_config, seed_path
+
     if seed_serial_log is not None:
+        print(
+            "[select-dependent-faders] WARN: --seed-serial-log without base in this run; "
+            "device loop must match seed. Prefer --preset note_edit_select_dependent_faders."
+        )
+        seed_lines, base_config, seed_path = _resolve_base_seed(
+            out_dir, seed_serial_log, ctx=ctx
+        )
         return seed_lines, base_config, seed_path
 
     report = latest_base_report(out_dir)
-    if not base_report_ok(report):
+    if not base_report_usable_for_note_edit_sweep(report):
         issues = []
         if report is not None:
             assertions = report.get("assertions") or {}
@@ -97,9 +131,21 @@ def _require_ok_base_seed(
             issues = list(verification.get("issues") or [])
         detail = f" issues={issues}" if issues else ""
         raise RuntimeError(
-            f"base preset did not pass (overall_ok=false).{detail} "
-            "Run --preset base first or pass --seed-serial-log."
+            "No passing base loop seed. Run the full preset (2-bar record + 2 overdub passes, "
+            "then F1 sweep):\n"
+            "  .venv/bin/python scripts/host_midi_hitl.py run "
+            "--preset note_edit_select_dependent_faders ...\n"
+            f"Or fix the latest base report.{detail}"
         )
+
+    seed_lines, base_config, seed_path = _resolve_base_seed(
+        out_dir, seed_serial_log, ctx=ctx
+    )
+    print(
+        f"[select-dependent-faders] using latest base seed: {seed_path} "
+        f"(overall_ok={base_report_ok(report)}, loop_materialized="
+        f"{base_report_loop_materialized(report)})"
+    )
     return seed_lines, base_config, seed_path
 
 
@@ -242,7 +288,9 @@ def run_note_edit_select_dependent_faders(args: object) -> int:
     midi_channel = ns.midi_channel if ns.midi_channel is not None else ns.track_number
 
     try:
-        seed_lines, base_config, seed_path = _require_ok_base_seed(out_dir, ns.seed_serial_log)
+        seed_lines, base_config, seed_path = _require_ok_base_seed(
+            out_dir, ns.seed_serial_log, ctx=ctx
+        )
     except (FileNotFoundError, RuntimeError) as exc:
         print(f"[select-dependent-faders] {exc}")
         return 1

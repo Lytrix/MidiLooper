@@ -13,6 +13,12 @@ from hitl.verify.note_edit_select_triple_motor_ack import (
     _cluster_note_changed_applies,
     verify_note_edit_select_triple_motor_ack,
 )
+from hitl.verify.select_motor_timing import (
+    MOTOR_MO_WINDOW_S,
+    MOTOR_SYNC_MAX_DELAY_S,
+    MOTOR_SYNC_MIN_DELAY_S,
+    SELECT_CLUSTER_GAP_S,
+)
 
 
 @dataclass
@@ -108,10 +114,10 @@ def _nearest_after(
 def verify_outbound_motor_values(
     lines: list[str],
     *,
-    motor_mo_window_s: float = 0.4,
-    motor_sync_min_delay_s: float = 0.3,
-    motor_sync_max_delay_s: float = 0.65,
-    cluster_gap_s: float = 0.3,
+    motor_mo_window_s: float = MOTOR_MO_WINDOW_S,
+    motor_sync_min_delay_s: float = MOTOR_SYNC_MIN_DELAY_S,
+    motor_sync_max_delay_s: float = MOTOR_SYNC_MAX_DELAY_S,
+    cluster_gap_s: float = SELECT_CLUSTER_GAP_S,
     ctx_lookback_s: float = 0.01,
     ctx_lookahead_s: float = 0.1,
 ) -> dict[str, object]:
@@ -292,9 +298,9 @@ def verify_note_edit_select_dependent_faders(
     lines: list[str],
     args: object | None = None,
     *,
-    motor_mo_window_s: float = 0.4,
-    min_perceptual_rate_f2: float = 0.0,
-    min_perceptual_rate_f4: float = 0.0,
+    motor_mo_window_s: float = MOTOR_MO_WINDOW_S,
+    min_perceptual_rate_f2: float = 0.80,
+    min_perceptual_rate_f4: float = 0.80,
     require_outbound_value_match: bool = True,
 ) -> dict[str, object]:
     """Full gate bundle for NOTE_EDIT dependent fader motor feedback."""

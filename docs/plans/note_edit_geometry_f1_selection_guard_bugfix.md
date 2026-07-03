@@ -12,12 +12,14 @@
 
 | Item | Status |
 |------|--------|
-| Block F1 select apply during `isGeometryEditKind` | **Shipped** |
 | Wire `selectFaderFeedbackIgnoreUntilMs_` on inbound F1 | **Shipped** |
 | `syncGeometrySelectionToUi` (no full `syncNoteEditSessionStateToUi`) | **Shipped** |
+| Kind-scoped F1 block (`geometry_edit_active`) | **Reverted** 2026-07-02 — blocked deliberate user F1 select after F2/F3/F4 moves (`session_20260702_221633`) |
+| Echo-window guard only (D39) | **Shipped** — no `select_apply` within 1500 ms of `geometry_motor_sync` |
 | Native tests (54 in `test_note_edit_fader_feedback`) | **PASS** |
 | Host serial verifier (`test_note_edit_geometry_fader1_serial_verify.py`) | **PASS** (6 tests) |
 | Manual HITL — geometry move + F1 motor follow | **PASS** (user 2026-07-02) |
+| Post-§7.24.8 smoke (`3348857`) | **PASS** — `captures/session_20260702_222845.log`; echo guard OK; 143 user F1 applies; 0 `geometry_edit_active` |
 
 ---
 
@@ -41,12 +43,12 @@ Root causes:
 
 | # | Change | File |
 |---|--------|------|
-| 1 | Early-return `handleSelectFaderInput` when `isGeometryEditKind`; log `geometry_edit_active` | `NoteEditManager.cpp` |
-| 2 | `shouldIgnoreFaderInput` FADER_SELECT: honor `selectFaderFeedbackIgnoreUntilMs_` (1500 ms) | `NoteEditManager.cpp` |
-| 3 | `EditManager::syncGeometrySelectionToUi` — bracket + `requestNoteInfoRefresh` only | `EditManager.cpp`, `EditManager.h` |
-| 4 | `applySelectionFromGeometryEdit` → `syncGeometrySelectionToUi` | `EditManager.cpp` |
+| 1 | `shouldIgnoreFaderInput` FADER_SELECT: honor `selectFaderFeedbackIgnoreUntilMs_` (1500 ms) | `NoteEditManager.cpp` |
+| 2 | `EditManager::syncGeometrySelectionToUi` — bracket + `requestNoteInfoRefresh` only | `EditManager.cpp`, `EditManager.h` |
+| 3 | `applySelectionFromGeometryEdit` → `syncGeometrySelectionToUi` | `EditManager.cpp` |
+| ~~4~~ | ~~Early-return `handleSelectFaderInput` when `isGeometryEditKind`~~ | **Removed** `3348857` — user F1 select must work during geometry edit |
 
-**Behavior:** Geometry F1 motor is **outbound-only** during Move/Length/Pitch. User F1 note select resumes in **Select** kind only. See [`DROID_MOTORFADER_PITCHBEND.md`](../Guides/DROID_MOTORFADER_PITCHBEND.md).
+**Behavior:** Geometry F1 **motor** sync is outbound-only; motor echo is blocked by the ignore window. User F1 note select during geometry edit commits geometry and applies navigation. See [`DROID_MOTORFADER_PITCHBEND.md`](../Guides/DROID_MOTORFADER_PITCHBEND.md).
 
 ---
 
@@ -74,7 +76,15 @@ pio run -e teensy41-capture-serial -t upload   # user confirms
 
 ## Relation to §7.13 dwell-gap fix
 
-§7.13.1 **removed** a coarse geometry **driver-time** block on F1 select (blocked deliberate F1 navigation during F2 drag). §7.24 re-introduces a **kind-scoped** guard: block select apply only while `NoteEditKind` is a geometry edit kind (Move/Length/Pitch/Add/Delete), not while user is in Select kind.
+§7.13.1 **removed** a coarse geometry **driver-time** block on F1 select. §7.24 initially re-introduced a **kind-scoped** inbound block; **§7.24.8** (2026-07-02, `3348857`) removed it — echo protection is `selectFaderFeedbackIgnoreUntilMs_` only.
+
+---
+
+## §7.24.8 refinement (2026-07-02)
+
+**Evidence:** `captures/session_20260702_221633` — blanket `geometry_edit_active` block prevented user F1 select after F2/F3/F4 geometry moves.
+
+**Change:** Remove kind-scoped early return from `handleSelectFaderInput`. Keep D39 (ignore window) + D40 (`syncGeometrySelectionToUi`).
 
 ---
 
@@ -83,4 +93,4 @@ pio run -e teensy41-capture-serial -t upload   # user confirms
 | Question | Answer |
 |----------|--------|
 | Ownership change? | No |
-| State transition change? | Yes — intentional: geometry motor echo must not transition `kind` to Select |
+| State transition change? | User F1 during geometry edit intentionally commits geometry and transitions to Select kind via `applySelectNav` |

@@ -36,7 +36,7 @@ The preset runs **`base`** then **`note_edit_select_dependent_faders`** in one `
   --verify-only
 ```
 
-**Reuse seed:** `--scenarios note_edit_select_dependent_faders --seed-serial-log captures/<base>.log` after a passing base run.
+**Reuse seed (dev only):** `--seed-serial-log` after a passing base capture. **Production gate:** always use `--preset note_edit_select_dependent_faders` so the runner records a fresh **2-bar record + 2 overdub** base loop before the sweep.
 
 ## Verifier gates (per dwell cluster — last `apply=1 reason=note_changed` in cluster)
 
@@ -46,7 +46,7 @@ During an F1 sweep many `note_changed` applies may occur; motors flush once afte
 
 | Gate | Threshold |
 |------|-----------|
-| Timely | `select_motor_sync sent=1` **600–950 ms** after cluster end; F2/F3/F4 MO ≤ **400 ms** after sync |
+| Timely | `select_motor_sync sent=1` **290–650 ms** after cluster end (firmware `kSelectFaderMotorIdleMs=300` + 10 ms host tolerance); F2/F3/F4 MO ≤ **400 ms** after sync |
 | Consistent | One full F2+F3+F4 MO + ch13 acks 83/85/87 per dwell cluster; no motor on `unchanged_note` |
 | Values | MO F2 pb / F4 cc match `#DBG outbound_ctx` or `select_motor_sync` plan |
 | RC11 signal | `pb != expected_pb_rel` on `outbound_ctx f2` reported (non-fatal count) |

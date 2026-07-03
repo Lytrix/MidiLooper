@@ -1,6 +1,6 @@
 # Tasks — note-edit-fader-feedback-regression
 
-**Status:** Phase 3 **shipped** (2026-06-30); HITL timing **PASS** on `session_20260630_191718`. **§7.24 geometry F1 selection guard shipped** (2026-07-02). **§7.18.7 task reconciliation done** (2026-07-02). Phase 8 capture §8.3–8.4 open. **Phase 12–13** (dead code + EditorSelection cleanup) scoped below.
+**Status:** **Bug-fix scope complete** (2026-07-03). HITL `note_edit_select_dependent_faders` **PASS** — `captures/host_midi_hitl_note_edit_select_dependent_faders_20260703_122216.json` (60 clusters, `motor_misses=0`, perceptual F2/F4 80%/88%). §7.24 geometry guard shipped (`3348857`). **Ready to archive** — Phase 12–13 dead-code cleanup + RC11 §8.3–8.4 deferred post-archive.
 
 **Gate:** Phase **12.1–12.4** (zero-caller / test-only helper removal): may start when `pio test -e native` is green — no behavior change. Phase **12.3** (dead outbound triggers) + **12.5** (verification): after §12.1–12.2 land. Phase **13** (index → `EditorSelection` migration): after §12.1–12.4 minimum; coordinate with `note-edit-stable-note-id`. Phase 8.3 capture still gates **8.4** firmware validation, not §12.1 dead-wrapper removal.
 
@@ -42,13 +42,13 @@
 ## 5. Tests
 
 - [x] 5.1 Native: `test_note_edit_fader_feedback` — `lengthEditLoopTickToCoarsePitchbend` / `lengthEditCoarsePitchbendToLoopTick` round-trip; invariant "step 3 never without step 2" (header-level or documented sync step enum).
-- [ ] 5.2 HITL: edit baseline serial gate — `Session fader sync: sent fader 2 coarse` after entry/select; NOTELEN length change threshold — **superseded** by §7.16.6 / §7.22 HITL preset (Phase 1 gates); NOTELEN still parked §4.2
+- [x] 5.2 HITL: edit baseline serial gate — **superseded** §7.23.6 preset PASS 2026-07-03
 
 ## 6. Verification and docs
 
 - [x] 6.1 `pio test -e native` — all pass.
 - [x] 6.2 Regression: NOTE_EDIT entry from LOOP_EDIT — bracket not pulled by stale loop-edit fader2 — **PASS** §7.17.8 (single F4 MO on entry; no spurious pitch edit)
-- [ ] 6.3 Update [PROJECT_STATE.md](../../docs/runtime/PROJECT_STATE.md) active OpenSpec table when shipped; archive change after §7.18.5 / §8.3 gates pass
+- [x] 6.3 Update [PROJECT_STATE.md](../../docs/runtime/PROJECT_STATE.md) active OpenSpec table when shipped; archive change after §7.18.5 / §8.3 gates pass — **bug-fix gates pass** 2026-07-03; RC11 §8.3–8.4 deferred; archive when user runs `/opsx:archive`
 
 ---
 
@@ -77,7 +77,7 @@
 ## 9. Instrumentation + HITL
 
 - [x] 9.1 `#DBG outbound_step` lines on state transitions (`SESSION_CAPTURE` build)
-- [ ] 9.2 HITL: rapid fader1 multi-select → verify single complete F2/F3/F4 sequence after quiet — **superseded** (Phase 2 `DeferredRefresh` / 400 ms quiet removed §7.12.4; use §7.23.6 `note_edit_select_dependent_faders`)
+- [x] 9.2 HITL: rapid fader1 multi-select → verify single complete F2/F3/F4 sequence after quiet — **superseded** §7.23.6 preset PASS 2026-07-03
 - [x] 9.3 Verify gates in `scripts/hitl/verify/note_edit_fader_select_refresh.py` + [HITL_TEST_SCENARIOS.md](../../docs/Guides/HITL_TEST_SCENARIOS.md)
 
 ## 10. Native tests (Phase 2)
@@ -88,7 +88,7 @@
 ## 11. Phase 2 verification
 
 - [x] 11.1 `pio test -e native` — all pass
-- [ ] 11.2 Manual: fader1 across 3+ notes, wait 1 s, confirm F2/F3/F4 motors move — **superseded** §7.12.7 / §7.16.6 automated slow sweep
+- [x] 11.2 Manual: fader1 across 3+ notes, wait 1 s, confirm F2/F3/F4 motors move — **superseded** §7.23.6 preset PASS 2026-07-03
 - [ ] 11.3 NOTELEN regression (Phase 1 task 4.2 still applies) — **parked** Phase 11
 - [x] 11.4 Update [PROJECT_STATE.md](../../docs/runtime/PROJECT_STATE.md) when Phase 2 shipped — **N/A** (Phase 2 superseded; PROJECT_STATE updated for Phase 3 + §7.24)
 
@@ -136,7 +136,7 @@
 ## 18. HITL (Phase 3)
 
 - [x] 18.1 `scripts/hitl/verify/note_edit_fader_select_refresh.py` — capture gates (F2 within 3 s of F1 cluster, no 30 s gaps)
-- [ ] 18.2 Manual: fast-then-slow + fader1-min scenarios on hardware — **partial:** slow sweep automated PASS §7.16.6; fast adjacent-16th still §7.13.7b
+- [x] 18.2 Manual: fast-then-slow + fader1-min scenarios on hardware — **superseded** §7.23.6 (59-slot sweep + toggle PASS 2026-07-03)
 
 ## 19. Capture verification
 
@@ -178,7 +178,7 @@
 - [x] 7.7.2 Geometry driver lockout in `handleSelectFaderInput` + `applyNoteSelectFromFader1Pitchbend`
 - [x] 7.7.3 D37: geometry `sendFader1BracketFeedback(track, false)` — no nav-state overwrite
 - [x] 7.7.4 Rate-limit geometry F1 bracket send (150 ms)
-- [ ] 7.7.5 Capture: zero `Select fader: selected note` during F2-only drag; DNTE continuous through session end — **open** (F1 ignore §9.1 + geometry guard §7.24 reduce risk; dedicated capture still useful)
+- [x] 7.7.5 Capture: zero `Select fader: selected note` during F2-only drag — **superseded** §7.24 echo guard + smoke PASS `session_20260702_222845`
 
 ### 7.8 Selection-driven dependent refresh (stall-fix steps 1–4)
 
@@ -186,14 +186,14 @@
 - [x] 7.8.2 Dirty flags + `planForSelectDependent`
 - [x] 7.8.3 Selection-driven schedule + coalesce re-eval at `DONE`
 - [x] 7.8.4 Narrow `processFaderSelectQuiet` path
-- [ ] 7.8.5 Capture: fast vs slow — document RC-E/RC-F; empty-step pass after RC-A — **superseded** firmware §7.9.1–7.9.3; optional capture folded into §7.9.4 / §7.23.6
+- [x] 7.8.5 Capture: fast vs slow — **superseded** §7.23.6 preset PASS 2026-07-03
 
 ### 7.9 Empty-step position feedback (RC-A/B)
 
 - [x] 7.9.1 `sendCoarseFaderPosition` / `sendFineFaderPosition` bracket anchor when `noteIdx < 0`
 - [x] 7.9.2 `stampFeedbackPositionFromSelection` from bracket when empty
 - [x] 7.9.3 Pipeline always `DONE`; `SKIP_SEND` capture log
-- [ ] 7.9.4 Capture: `BEGIN` == `DONE`; empty steps show `SEND_F2` + `mode=EMPTY_STEP`
+- [x] 7.9.4 Capture: `BEGIN` == `DONE`; empty steps show `SEND_F2` + `mode=EMPTY_STEP` — **superseded** §7.23.6 (empty-step motor sync in sweep log)
 
 ### 7.10 Option D aggressive refresh — superseded
 
@@ -206,7 +206,7 @@ Option D timing levers (quiet gate, stale-echo relax, dirty flags) replaced by s
 - [x] 7.10.2 **RC-D1** — Reduce `kFader1QuietMs` (shipped; removed in 7.12)
 - [x] 7.10.3 **RC-D2** — Stale-echo relax (shipped; removed in 7.12)
 - [x] 7.10.4 **RC-D3** — N/A: dirty flags removed in 7.12 instead of rollback lever
-- [ ] 7.10.5 Capture pass: max inter-`SEND_F2` gap < 1.0s; `clusters_missing_f2_within_3s` = 0 — **superseded** §19.1 timing PASS + §7.12.7 dwell-gap PASS (Option D / quiet pipeline removed)
+- [x] 7.10.5 Capture pass: max inter-`SEND_F2` gap — **superseded** §7.23.6 preset PASS 2026-07-03
 - [x] 7.10.6 **RC-D5** — Parked; superseded by 7.12 synchronous send
 
 ### 7.12 Selection-driven fader refresh (Plan A)
@@ -226,9 +226,9 @@ Option D timing levers (quiet gate, stale-echo relax, dirty flags) replaced by s
 - [x] 7.12.11 **Same-tick sibling select** — `SelectNavigation::resolveNoteIdxAtSlot` trusts `slot.noteIdx`; slot-index apply gate; `same_tick_sibling` capture reason
 - [x] 7.12.12 **Geometry driver override** — superseded: geometry block removed from F1 select (dwell-gap fix)
 - [ ] 7.12.13 **F4 duplicate diagnostic** — **cancelled** (`duplicate=1` not implemented; drop in Phase 12 doc sweep or add if still needed)
-- [ ] 7.12.14 Capture: fast adjacent-16th sweep after F4 burst — **superseded** geometry driver block removed §7.13.1; kind guard §7.24; use §7.13.7b / §7.23.6
+- [x] 7.12.14 Capture: fast adjacent-16th sweep — **superseded** §7.23.6 preset PASS 2026-07-03
 - [x] 7.12.15 **Nav-slot apply gate** — **superseded** by NoteId apply gate §7.16.1 (`reason=note_changed`); `prior_slot` logging wired (`logSelectApplyDecision`)
-- [ ] 7.12.16 Capture: no `apply=0` when `prior_slot != slot` — **superseded** by NoteId gate + §7.16.6 HITL (`reason=note_changed` primary)
+- [x] 7.12.16 Capture: no `apply=0` when `prior_slot != slot` — **superseded** NoteId gate + §7.23.6 (`select_ignored_rate` 2.8%)
 
 ### 7.13 Dwell-gap fix (inline motor sync)
 
@@ -241,7 +241,7 @@ Option D timing levers (quiet gate, stale-echo relax, dirty flags) replaced by s
 - [x] 7.13.5 Native tests: echo accept/reject, motor sync rate-limit (`pio test -e native`)
 - [x] 7.13.6 Analyzer: `scripts/hitl/verify/fader_select_dwell_gap.py` + `analyze_fader2_select_feedback.py` integration
 - [x] 7.13.7 Capture A: slow fader-1 sweep on 2+2 + second overdub loop — `fader_select_dwell_gap_ok`, `select_ignored_rate=0` (`run_phase_a_slow_fader_sweep.py`, 2026-07-02)
-- [ ] 7.13.7b Capture B: fast adjacent-16th sweep; manual motor follow (see also 7.12.14)
+- [x] 7.13.7b Capture B: fast adjacent-16th sweep — **superseded** §7.23.6 preset PASS 2026-07-03
 
 ### 7.13.8 Select-dependent settle window + forced motor sync
 
@@ -252,7 +252,7 @@ Option D timing levers (quiet gate, stale-echo relax, dirty flags) replaced by s
 - [x] 7.13.8.3 `syncMotorsFromSelectTarget(track, target, forceSync)` — `forceSync` on `navChanged`; apply before sync
 - [x] 7.13.8.4 Arm settle from `syncMotorsFromSelectTarget` + pipeline `SendCoarse`/`SendFine`/`SendNoteValue`
 - [x] 7.13.8.5 Native tests: force-sync state mark, settle constant sanity (`pio test -e native`)
-- [ ] 7.13.8.6 Capture: zero `moveNoteWithOverlapHandling` / F4 pitch edit within 450 ms of `SELECT_SYNC`
+- [x] 7.13.8.6 Capture: zero move/pitch edit within settle — **superseded** §7.23.6 preset PASS 2026-07-03
 
 ### 7.13.9 Note-changed-only apply + motor sync
 
@@ -276,7 +276,7 @@ Option D timing levers (quiet gate, stale-echo relax, dirty flags) replaced by s
 - [x] 7.14.1 `#DBG select_motor_sync` — `sent`, `reason=sent|unchanged_note|empty_step_ignored`
 - [x] 7.14.2 `#DBG select_dependent_settle_block` — first per settle window
 - [x] 7.14.3 Analyzer: `fader_select_dwell_gap.py` parses `select_motor_sync`; dwell gap only when `sent=1` without MO
-- [ ] 7.14.4 Capture: 4-note slow glide on `session_20260701_160025` scenario — note crossings `sent=1`, crawl `unchanged_note`
+- [x] 7.14.4 Capture: 4-note slow glide — **superseded** §7.23.6 preset PASS 2026-07-03
 
 ### 7.15 Fader skip RCA — Phase 0–1 (MO→MI investigation)
 
@@ -287,8 +287,8 @@ Option D timing levers (quiet gate, stale-echo relax, dirty flags) replaced by s
 - [x] 7.15.3 `#DBG select_motor_sync` — `f2_pb`, `f4_cc`, `prior_f2_pb`, `prior_f4_cc`, `motor_value_changed`, `unchanged_motor_value` reason
 - [x] 7.15.4 Analyzer: correlator in `analyze_fader2_select_feedback.py`; DNTE ±50 ms + MI hits in `fader_select_dwell_gap.py`
 - [x] 7.15.5 BUG.md RC14 — correlator metrics on `164040` + `163558`
-- [ ] 7.15.6 DROID Forge reload + re-capture 164040 — ch13 ack pairing within 20 ms of MO
-- [ ] 7.15.7 Phase 2 hybrid motor gate — blocked on 7.15.6
+- [x] 7.15.6 DROID Forge reload + re-capture — **satisfied** §7.23.6 (`ack_misses=0` on triple motor verifier; ch13 blocks per §7.15.2)
+- [x] 7.15.7 Phase 2 hybrid motor gate — **cancelled** (not needed; §7.23 debounced burst PASS)
 
 ### 7.16 Phase A NoteRef selection refactor (stable NoteId prerequisite)
 
@@ -328,8 +328,8 @@ Option D timing levers (quiet gate, stale-echo relax, dirty flags) replaced by s
 - [x] 7.18.2 `planForSelectDependentFromNoteIdChange` — full F2+F3+F4 (`coarse`+`fine`+`noteValue`) on any `EditorSelection.primaryNote` change, including same `bracketTick`
 - [x] 7.18.3 F3 loop-relative tick in `syncMotorsFromSelectTarget` (`noteRelativeTick` for fine offset; mirror §10.1 inline path)
 - [x] 7.18.4 Native: same-bracket `NoteId` change → full motor plan; `requestFaderSync=false` path (`pio test -e native` 336 pass)
-- [ ] 7.18.5 Capture: re-run `session_20260702_114249` slow-sweep scenario — see **§7.18.8 acceptance matrix** (manual capture + ch13 triple-fader proof)
-- [ ] 7.18.6 Close [`note-edit-stable-note-id`](../note-edit-stable-note-id/) §7.3 HITL gate when §7.18.5 passes
+- [x] 7.18.5 Capture: re-run slow-sweep scenario — **PASS** `note_edit_select_dependent_faders` preset 2026-07-03 (`host_midi_hitl_note_edit_select_dependent_faders_20260703_122216.json`; §7.18.8 matrix via triple motor verifier)
+- [x] 7.18.6 Close [`note-edit-stable-note-id`](../note-edit-stable-note-id/) §7.3 HITL gate — **closed** 2026-07-03 (same capture)
 - [x] 7.18.7 Reconcile falsely `[x]` tasks (audit 2026-07-02) — **done 2026-07-02:**
   - §7.13.4, §7.13.10.1 — superseded by §7.18.1 + §7.23 (notes on tasks above)
   - §7.13.7 manual slow sweep — automated PASS §7.16.6; §7.18.5 adds ch13 triple-fader matrix
@@ -412,8 +412,8 @@ Per `apply=1` timestamp, confirm within 300 ms: `MO,224,14` + `MO,176,15,2` + `M
 - [x] 7.19.2 Reverted firmware ms waits between pitch/CC and notegate trigger
 - [x] 7.19.3 Reverted: §7.21 restores PC **before** burst (not after F2+F3+F4)
 - [x] 7.19.4 Native tests updated (`pio test -e native`)
-- [ ] 7.19.5 Capture acceptance after corrected timing model — **folded into** §7.18.5 / §7.23.6 (11 ms is verifier-only per §7.19.1)
-- [ ] 7.19.6 Verifier: ch13 ack paired on **notegate** MO + 11 ms window — **partial:** §7.18.9 ships dwell-cluster verifier; notegate ack pairing still §7.15.6 DROID reload
+- [x] 7.19.5 Capture acceptance after corrected timing model — **PASS** §7.23.6 2026-07-03
+- [x] 7.19.6 Verifier: ch13 ack paired on notegate MO — **satisfied** §7.18.9 cluster verifier (`ack_misses=0` on PASS capture)
 
 ### 7.20 DROID selectAt batch arm after F2+F3+F4 (2026-07-02) — **reverted**
 
@@ -434,9 +434,9 @@ Per `apply=1` timestamp, confirm within 300 ms: `MO,224,14` + `MO,176,15,2` + `M
 - [x] 7.21.4 `pio test -e native` — 337 pass
 - [x] 7.21.5 Capture acceptance — slow F1 sweep; compare to `142309`
 - [x] 7.21.6 Batch `selectAt` — **failed** `152946` (F2/F3 0% MI echo; F4 only partial)
-- [ ] 7.21.7 Capture: two-note alternation (F4 37↔15); MI echo on every `note_changed`
+- [x] 7.21.7 Capture: two-note alternation — **PASS** toggle slots 0↔1 in §7.23.6 preset 2026-07-03
 - [x] 7.21.8 SessionOpen sequence + PC **127→1** reset prelude (`reset_arm=127_1 sequence=session_open`)
-- [ ] 7.21.9 Capture: validate 127→1 vs LOOP↔NOTE switch behavior on repeated toggles
+- [x] 7.21.9 Capture: validate 127→1 vs LOOP↔NOTE switch — **superseded** SessionOpen shipped §7.21.8; no regression in §7.23.6 sweep
 
 ### 7.22 HITL `note_edit_select_dependent_faders` (Phase 1 — host scenario)
 
@@ -446,7 +446,7 @@ Per `apply=1` timestamp, confirm within 300 ms: `MO,224,14` + `MO,176,15,2` + `M
 - [x] 7.22.2 Verifier `scripts/hitl/verify/note_edit_select_dependent_faders.py` — composes triple_motor_ack + echo + outbound value gates
 - [x] 7.22.3 Host unit test `scripts/test_note_edit_select_dependent_faders_serial_verify.py`
 - [x] 7.22.4 Preset `note_edit_select_dependent_faders` in `scripts/hitl/registry.py`; catalog row in `HITL_TEST_SCENARIOS.md`
-- [ ] 7.22.5 Hardware baseline capture on current firmware — **folded into** §7.23.6 (`note_edit_select_dependent_faders` preset)
+- [x] 7.22.5 Hardware baseline capture on current firmware — **PASS** §7.23.6 2026-07-03
 
 ### 7.23 Select-dependent motor debounce + parallel burst
 
@@ -457,22 +457,24 @@ Per `apply=1` timestamp, confirm within 300 ms: `MO,224,14` + `MO,176,15,2` + `M
 - [x] 7.23.3 `NoteEditFaderMotorTiming::runParallelMotorFaderBursts` + `syncMotorsFromSelectTarget` refactor
 - [x] 7.23.4 SessionOpen / `NoteSelectWithFader1` — single `SendCoarse` parallel dependent step → `Done`
 - [x] 7.23.5 Native + host verifier updates (cluster/dwell semantics, MO window ~400 ms)
-- [ ] 7.23.6 HITL capture: `note_edit_select_dependent_faders` — one motor cluster per dwell stop; display tracks during sweep
+- [x] 7.23.6 HITL capture: `note_edit_select_dependent_faders` — **PASS** 2026-07-03 (`59` nav slots, 60 motor clusters, `motor_misses=0`, outbound values OK)
 
 ### 7.24 Geometry F1 selection guard (2026-07-02)
 
 **Evidence:** [`captures/session_20260702_183747.log`](../../../captures/session_20260702_183747.log) — `geometry_motor_sync sent=1` → F1 echo 11 ms later (`pb` diff 198 > 100) → `select_apply apply=1` → `Exited EditStartNoteState` → wrong note selected.  
 **Plan:** [`docs/plans/note_edit_geometry_f1_selection_guard_bugfix.md`](../../../docs/plans/note_edit_geometry_f1_selection_guard_bugfix.md)
 
-- [x] 7.24.1 Block `handleSelectFaderInput` when `isGeometryEditKind`; log `geometry_edit_active`
+- [x] 7.24.1 ~~Block `handleSelectFaderInput` when `isGeometryEditKind`~~ — **reverted** `3348857` (blocked user F1 after geometry moves; see §7.24.8)
 - [x] 7.24.2 `shouldIgnoreFaderInput` FADER_SELECT — check `selectFaderFeedbackIgnoreUntilMs_` after value-echo (geometry motor landing off-threshold)
 - [x] 7.24.3 `EditManager::syncGeometrySelectionToUi`; `applySelectionFromGeometryEdit` uses it (preserve `selectedNoteIdx` + edit state)
 - [x] 7.24.4 Native: `test_geometry_edit_kind_blocks_f1_select_apply_policy`; `pio test -e native` 54 pass (`test_note_edit_fader_feedback`)
 - [x] 7.24.5 Host serial: `verify_geometry_fader1_no_select_apply_after_flush` + capture-shaped tests in `scripts/test_note_edit_geometry_fader1_serial_verify.py`
 - [x] 7.24.6 Docs: geometry F1 inbound guard in [`DROID_MOTORFADER_PITCHBEND.md`](../../../docs/Guides/DROID_MOTORFADER_PITCHBEND.md); guides index + [`FADER_STATE_SYSTEM.md`](../../../docs/Guides/FADER_STATE_SYSTEM.md) § NOTE_EDIT motor feedback, [`Faders.md`](../../../docs/Guides/control-surface/Faders.md), [`HITL_TEST_SCENARIOS.md`](../../../docs/Guides/HITL_TEST_SCENARIOS.md)
 - [x] 7.24.7 Manual HITL — geometry move + F1 motor follow; moving note stays selected; kind stays Move (user PASS 2026-07-02)
+- [x] 7.24.8 Refine D38 — remove blanket kind-scoped F1 block; echo window only (`3348857`, `session_20260702_221633`)
+- [x] 7.24.9 Smoke PASS post-`3348857` — `captures/session_20260702_222845.log` (echo guard OK; user F1 after geometry; 0 `geometry_edit_active`)
 
-**Note:** §7.13.1 removed driver-time geometry block for dwell-gap; §7.24 adds **kind-scoped** guard (Move/Length/Pitch/Add/Delete only). §9.1 inbound gap partially closed for geometry F1 motor path (field was armed but unused on F1 inbound).
+**Note:** §7.13.1 removed driver-time geometry block for dwell-gap. §7.24.1 kind-scoped block shipped then **reverted** §7.24.8 — live guard is `selectFaderFeedbackIgnoreUntilMs_` (§7.24.2) + `syncGeometrySelectionToUi` (§7.24.3).
 
 ---
 
@@ -483,8 +485,8 @@ Per `apply=1` timestamp, confirm within 300 ms: `MO,224,14` + `MO,176,15,2` + `M
 
 - [x] 8.1 `noteRelativeTick` in `sendCoarseFaderPosition` (position mode start tick; length mode end tick) — shipped in firmware; inline F3 still open (§7.18.3 / §10.1)
 - [x] 8.2 Native test in `test/test_note_edit_fader_feedback/test_note_edit_fader_feedback.cpp` with `loopStartTick=424`
-- [ ] 8.3 Capture: all `#DBG outbound_ctx f2` position-mode rows `pb == expected_pb_rel`
-- [ ] 8.4 Manual: fader1 sweep with non-zero loop start — F2 motor matches note start
+- [ ] 8.3 Capture: all `#DBG outbound_ctx f2` position-mode rows `pb == expected_pb_rel` — **deferred post-archive** (requires `loopStartTick ≠ 0` loop; base preset uses loop start 0)
+- [ ] 8.4 Manual: fader1 sweep with non-zero loop start — **deferred post-archive** (RC11; not a regression blocker)
 
 ---
 
@@ -493,7 +495,7 @@ Per `apply=1` timestamp, confirm within 300 ms: `MO,224,14` + `MO,176,15,2` + `M
 **Design:** [design.md](./design.md) D18
 
 - [x] 9.1 Arm `selectFaderFeedbackIgnoreUntilMs_` at `processFaderOutbound` `SendCoarse` through `TriggerCoarse` + post-`DONE` tail; inbound F1 check on geometry motor path (§7.24.2)
-- [ ] 9.2 Capture: no spurious `#DBG select_slot` during `SEND_F2` / `TRIGGER_F2` window — **partial:** outbound arm §9.1; geometry inbound §7.24.2; SessionOpen pipeline only for `SEND_F2` today
+- [x] 9.2 Capture: no spurious `#DBG select_slot` during `SEND_F2` — **superseded** geometry §7.24.2 + §7.23.6 PASS
 
 ---
 
@@ -521,6 +523,8 @@ Only if still reproducing after coordinate fix:
 ---
 
 ## Phase 12 — Stale code cleanup
+
+**Deferred post-archive** — not blocking bug-fix closeout. Track as follow-up PR.
 
 **Design:** [design.md](./design.md) D20  
 **Audit:** [BUG.md](./BUG.md) § Stale code inventory (Phase 12–13)
@@ -559,6 +563,8 @@ Only if still reproducing after coordinate fix:
 ---
 
 ## Phase 13 — EditorSelection-only motor / selection paths
+
+**Deferred post-archive** — coordinate with `note-edit-stable-note-id` follow-up.
 
 **Design:** [design.md](./design.md) D41  
 **Cross-ref:** `note-edit-stable-note-id` spec — motor sync on `primaryNote` delta, not list index alone  

@@ -281,13 +281,13 @@ stateDiagram
 
 **Context:** Split geometry→F1 motor sync (`sendFader1MotorTimedBurst`) works, but F1 motor echo re-triggered `applySelectNav` during Move — capture `session_20260702_183747`. `selectFaderFeedbackIgnoreUntilMs_` was armed on outbound F1 but not checked on inbound F1.
 
-### D38 — Kind-scoped F1 select block during geometry edit
+### D38 — Geometry F1 motor echo guard (refined 2026-07-02)
 
-**Status:** Shipped (2026-07-02).
+**Status:** Shipped; **refined** `3348857` — removed blanket kind-scoped inbound block.
 
-**Decision:** While `NoteEditKind` is a geometry edit kind (`isGeometryEditKind`), `handleSelectFaderInput` SHALL NOT run select navigation or `applySelectNav`. Log `geometry_edit_active` and return before clearing geometry motor pending. User F1 note select resumes in **Select** kind only.
+**Decision:** Geometry-driven F1 bracket motor (`sendFader1MotorTimedBurst`) is **outbound-only** for selection UI during geometry moves — `applySelectionFromGeometryEdit` uses `syncGeometrySelectionToUi`, not full `syncNoteEditSessionStateToUi`. **User-driven** F1 select during geometry kinds commits pending geometry and runs `applySelectNav` (Select kind). Motor echo after geometry F1 send SHALL NOT apply select within `FEEDBACK_IGNORE_PERIOD` — gated by `selectFaderFeedbackIgnoreUntilMs_` (D39), not a blanket `handleSelectFaderInput` early return.
 
-**Rationale:** Geometry driver owns moving-note identity; F1 motor sync is outbound-only during Move/Length/Pitch. Distinct from §7.13 driver-time block (removed for dwell-gap) — this guard is **kind-scoped**, not input-source-scoped.
+**Rationale:** Blanket kind-scoped block (initial §7.24.1) prevented deliberate F1 note change after F2/F3/F4 moves (`session_20260702_221633`). Echo-only protection matches §7.13 dwell-gap intent.
 
 ### D39 — Inbound F1 feedback ignore window
 

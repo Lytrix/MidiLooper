@@ -20,9 +20,7 @@ When motorized faders are connected (DROID patch), firmware keeps physical fader
 | **F1** (Select kind) | `EditorSelection` updates immediately | F2 + F3 + F4 parallel burst |
 | **F2 / F3 / F4** (Move / Length / Pitch) | `EditorSelection` + bracket from moving note | F1 bracket burst only |
 
-While editing geometry (Move / Length / Pitch), **F1 inbound is ignored for note select** — the F1 motor may move, but firmware does not run `applySelectNav` or exit the move edit state. Return to **Select** kind (encoder) to change notes with F1.
-
-Full timing, pitchbend scale, HITL probe, and capture gates: [**DROID_MOTORFADER_PITCHBEND.md**](../DROID_MOTORFADER_PITCHBEND.md).
+While editing geometry (Move / Length / Pitch), **F2/F3/F4** drive the moving note; F1 motor follows after ~300 ms idle. **User F1** can still change note selection (commits geometry, returns to Select kind). Motor echo after geometry F1 outbound is ignored for 1500 ms — see [**DROID_MOTORFADER_PITCHBEND.md**](../DROID_MOTORFADER_PITCHBEND.md).
 
 **Guides:** [`LOOP_START_EDITING.md`](../LOOP_START_EDITING.md), [`FADER_STATE_SYSTEM.md`](../FADER_STATE_SYSTEM.md) (§ NOTE_EDIT motor feedback), [`MOVE_NOTE_LOGIC.md`](../MOVE_NOTE_LOGIC.md).
 
