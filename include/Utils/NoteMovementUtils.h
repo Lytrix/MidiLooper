@@ -61,6 +61,9 @@ void moveNoteWithOverlapHandling(Track& track, EditManager& manager,
      */
     bool notesOverlap(uint32_t start1, uint32_t end1, uint32_t start2, uint32_t end2, uint32_t loopLength);
 
+    /** Linear storage interval overlap — no loop-wrap phantom extension. */
+    bool linearStorageSpansOverlap(uint32_t start1, uint32_t end1, uint32_t start2, uint32_t end2);
+
     /** True when [noteStart, noteEnd] lies within the moving note tick range on focus. */
     bool isNoteWithinMovingNoteRange(uint32_t noteStart, uint32_t noteEnd,
                                      uint32_t movingNoteStart, uint32_t movingNoteEnd,
@@ -74,6 +77,9 @@ void moveNoteWithOverlapHandling(Track& track, EditManager& manager,
                      int delta,
                      uint32_t loopLength,
                      const EditManager& manager,
+                     MidiEventVec& sessionEvents,
+                     uint8_t channel,
+                     NoteId movingNoteId,
                      std::vector<std::pair<NoteUtils::DisplayNote, uint32_t>>& notesToShorten,
                      std::vector<NoteUtils::DisplayNote>& notesToDelete,
                      bool allowSharedEndCoexistence = false);

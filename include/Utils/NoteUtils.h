@@ -147,4 +147,10 @@ bool notesOverlap(uint32_t start1, uint32_t end1, uint32_t start2, uint32_t end2
  */
 void orderSamePitchNoteOffsForLifo(MidiEventVec& midiEvents, uint8_t channel, uint8_t pitch);
 
+/**
+ * Sort by tick ascending; at equal ticks order note-offs before note-ons so reconstruction
+ * and LIFO pairing stay stable after geometry edits.
+ */
+void sortMidiEventsChronologically(MidiEventVec& midiEvents);
+
 } // namespace NoteUtils 

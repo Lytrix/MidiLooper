@@ -68,12 +68,8 @@ inline int filteredDisplayNoteIndexForSelection(
     if (!editorSelectionHasNote(selection)) {
         return -1;
     }
-    const int byBracket = filteredDisplayNoteIndexForNoteIdAndStart(
-        notes, selection.primaryNote, selection.bracketTick);
-    if (byBracket >= 0) {
-        return byBracket;
-    }
-    return filteredDisplayNoteIndexForNoteId(notes, selection.primaryNote);
+    return filteredDisplayNoteIndexForNoteIdAndStart(notes, selection.primaryNote,
+                                                     selection.bracketTick);
 }
 
 }  // namespace NoteEditDisplaySnapshot

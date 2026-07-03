@@ -99,6 +99,15 @@ NoteId findBaselineNoteIdForDisplay(const NoteEditFocus& focus,
 NoteBaseline baselineForDisplayNote(const NoteEditFocus& focus,
                                     const NoteUtils::DisplayNote& dn);
 
+/// Session-store linear span for overlap hide/restore; prefers live events, then baselineMap.
+NoteBaseline linearBaselineForOverlapRestore(const NoteEditFocus& focus, const OverlapNote& entry,
+                                             MidiEventVec* sessionEvents, uint8_t channel);
+
+/// Resolve storage span for an overlap DisplayNote (linear off tick, not wrap projection end).
+bool resolveLinearNoteSpanForOverlap(const NoteEditFocus& focus, MidiEventVec& events,
+                                     uint8_t channel, const NoteUtils::DisplayNote& dn,
+                                     NoteBaseline& out, uint32_t loopLength = 0);
+
 /// Read-only scan of loop MIDI events → full-loop baseline inventory.
 void rebuildNoteEditFocusFromStore(NoteEditFocus& focus, const MidiEventVec& loopMidiEvents,
                                    uint8_t channel, uint32_t loopLength,
@@ -114,14 +123,25 @@ void noteEditFocusApplyPitch(NoteEditFocus& focus, uint8_t newPitch, uint32_t st
 
 bool noteEditFocusHasPendingLengthChange(const NoteEditFocus& focus);
 
+/// Reject LIFO mispairs (e.g. on@387 with off@loopLength+displayEnd).
+bool isPlausibleStorageSpan(uint32_t startTick, uint32_t endTick, uint32_t loopLength);
+
+/// Display segment whose length exceeds half the loop is usually wrap projection, not linear span.
+bool isInflatedDisplaySpan(const NoteUtils::DisplayNote& dn, uint32_t loopLength);
+
 /// Linear on/off span in canonical storage for noteId (not display projection).
 bool findLinearNoteSpanForNoteId(MidiEventVec& events, NoteId noteId, uint8_t channel,
                                  NoteBaseline& outBaseline,
-                                 uint32_t preferredStartTick = UINT32_MAX);
+                                 uint32_t preferredStartTick = UINT32_MAX,
+                                 uint32_t loopLength = 0);
+
+/// Farthest plausible note-off with matching noteId (avoids LIFO steal from same-pitch neighbors).
+MidiEvent* findLinearOffForNoteId(MidiEventVec& events, const MidiEvent& noteOn, NoteId noteId,
+                                  uint32_t loopLength);
 
 /// Refresh focus.last (and moving note range) from session store linear span.
 bool syncNoteEditFocusLinearFromSessionStore(NoteEditFocus& focus, MidiEventVec& events,
-                                            uint8_t channel);
+                                            uint8_t channel, uint32_t loopLength = 0);
 
 uint32_t overlapNoteEffectiveEnd(const OverlapNote& entry);
 
@@ -161,6 +181,7 @@ int filteredDisplayNoteIndexForNoteId(const std::vector<NoteUtils::DisplayNote>&
 int filteredDisplayNoteIndexForNoteIdAndStart(const std::vector<NoteUtils::DisplayNote>& filtered,
                                               NoteId noteId, uint32_t startTick);
 
-/// Prefer the storage-start segment; for wrapped notes fall back to the tail (largest start tick).
+/// Prefer the linear storage-start segment; for wrapped notes accept the wrap head (start 0 or
+/// end < start). Reject unrelated low display segments when linear start is in the loop tail.
 int filteredDisplayNoteIndexForMovingNote(const std::vector<NoteUtils::DisplayNote>& filtered,
                                           NoteId noteId, uint32_t linearStartTick);

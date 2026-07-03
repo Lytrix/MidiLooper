@@ -134,9 +134,11 @@ void EditManager::commitAllPendingNoteEditActions(Track& track) {
                                      LoopTickNormalize::NormalizeScope::noteIds(closure),
                                      microOptions);
     }
-    syncNoteEditFocusLinearFromSessionStore(editSession.focus, sessionStoreEvents, channel);
+    syncNoteEditFocusLinearFromSessionStore(editSession.focus, sessionStoreEvents, channel,
+                                            loopLength);
     LoopTickNormalize::normalizeAll(sessionStoreEvents, loopLength);
-    syncNoteEditFocusLinearFromSessionStore(editSession.focus, sessionStoreEvents, channel);
+    syncNoteEditFocusLinearFromSessionStore(editSession.focus, sessionStoreEvents, channel,
+                                            loopLength);
 
     EditPassVec rows = buildPreCommitEditPasses(editSession.focus, channel);
     if (rows.empty()) {
@@ -220,10 +222,17 @@ void EditManager::rebuildNoteEditFocusAtSelect(Track& track, int selectedNoteIdx
     if (selectedNoteIdx >= 0 &&
         selectedNoteIdx < static_cast<int>(liveNotes.size())) {
         const DisplayNote& live = liveNotes[static_cast<size_t>(selectedNoteIdx)];
-        editSession.focus.last = {live.note, live.velocity, live.startTick, live.endTick};
-        if (editSession.focus.last.endTick > editSession.focus.commitBaseline.endTick) {
-            editSession.focus.movingNoteRange.end = editSession.focus.last.endTick;
+        const NoteId noteId = editSession.focus.movingNoteId;
+        MidiEventVec& sessionEvents = sessionMidiEvents();
+        NoteBaseline linearBaseline;
+        if (noteId != kInvalidNoteId &&
+            findLinearNoteSpanForNoteId(sessionEvents, noteId, channel, linearBaseline)) {
+            editSession.focus.last = linearBaseline;
+        } else {
+            editSession.focus.last = {live.note, live.velocity, live.startTick, live.endTick};
         }
+        editSession.focus.movingNoteRange.start = editSession.focus.last.startTick;
+        editSession.focus.movingNoteRange.end = editSession.focus.last.endTick;
     }
 }
 
@@ -261,9 +270,6 @@ void EditManager::rebuildNoteEditFocusForDisplayNote(Track& track,
     }
     editSession.focus.movingNoteRange.start = editSession.focus.last.startTick;
     editSession.focus.movingNoteRange.end = editSession.focus.last.endTick;
-    if (editSession.focus.last.endTick > editSession.focus.commitBaseline.endTick) {
-        editSession.focus.movingNoteRange.end = editSession.focus.last.endTick;
-    }
     editSession.focus.active = true;
 }
 
@@ -286,20 +292,8 @@ void EditManager::syncSelectedNoteIdxToFilteredInventory(Track& track) {
         return;
     }
 
-    int matchIdx = -1;
-    if (editSession.focus.active && editSession.focus.movingNoteId != kInvalidNoteId &&
-        sessionState.selection.primaryNote == editSession.focus.movingNoteId) {
-        matchIdx = filteredDisplayNoteIndexForMovingNote(
-            filtered, editSession.focus.movingNoteId, editSession.focus.last.startTick);
-        if (matchIdx < 0) {
-            matchIdx = filteredDisplayNoteIndexForNoteIdAndStart(
-                filtered, editSession.focus.movingNoteId, sessionState.selection.bracketTick);
-        }
-    }
-    if (matchIdx < 0) {
-        matchIdx = NoteEditDisplaySnapshot::filteredDisplayNoteIndexForSelection(
-            sessionState.selection, filtered);
-    }
+    int matchIdx = NoteEditDisplaySnapshot::filteredDisplayNoteIndexForSelection(
+        sessionState.selection, filtered);
     if (matchIdx < 0) {
         setSelectedNoteIdx(-1);
     } else if (matchIdx != selectedNoteIdx) {
@@ -342,7 +336,7 @@ void EditManager::syncNoteEditFocusLastFromSessionStore(Track& track) {
 
     NoteEditFocus& focus = editSession.focus;
     MidiEventVec& events = sessionMidiEvents();
-    syncNoteEditFocusLinearFromSessionStore(focus, events, track.getMidiChannel());
+    syncNoteEditFocusLinearFromSessionStore(focus, events, track.getMidiChannel(), loopLength);
 }
 
 EditManager editManager;
@@ -948,12 +942,18 @@ void EditManager::applyUndoRedoLanding(Track& track) {
 
     const NoteEditFocus& focus = editSession.focus;
     const auto notes = selectableDisplayNotesAtEditSelect(track);
-    if (focus.active) {
-        const int displayIdx = filteredDisplayNoteIndexForNoteId(notes, focus.movingNoteId);
+    if (focus.active && focus.movingNoteId != kInvalidNoteId) {
+        const uint32_t loopLength = track.getLoopLength();
+        const uint32_t bracketDisplay =
+            (focus.last.startTick >= loopLength && loopLength > 0)
+                ? (focus.last.startTick % loopLength)
+                : focus.last.startTick;
+        const int displayIdx = filteredDisplayNoteIndexForNoteIdAndStart(
+            notes, focus.movingNoteId, bracketDisplay);
         if (displayIdx >= 0 && displayIdx < static_cast<int>(notes.size())) {
             const DisplayNote& dn = notes[static_cast<size_t>(displayIdx)];
             primaryNote = dn.noteId;
-            bracket = dn.startTick % track.getLoopLength();
+            bracket = dn.startTick % loopLength;
         }
     } else if (!notes.empty()) {
         selectClosestNote(track, bracketTick);

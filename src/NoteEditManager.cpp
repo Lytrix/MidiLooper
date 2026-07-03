@@ -343,7 +343,14 @@ void NoteEditManager::deleteSelectedNote(Track& track) {
         deleteTargetNoteId = editManager.getLastFader1SelectNoteId();
     }
     if (deleteTargetNoteId != kInvalidNoteId) {
-        selectedIdx = filteredDisplayNoteIndexForNoteId(filteredNotes, deleteTargetNoteId);
+        const uint32_t bracketTick = editorSelectionHasNote(selection)
+                                         ? selection.bracketTick
+                                         : UINT32_MAX;
+        selectedIdx = bracketTick != UINT32_MAX
+                          ? filteredDisplayNoteIndexForNoteIdAndStart(filteredNotes,
+                                                                      deleteTargetNoteId,
+                                                                      bracketTick)
+                          : -1;
     }
     if (selectedIdx < 0 || selectedIdx >= static_cast<int>(filteredNotes.size())) {
         logger.info("MIDI Encoder: Selected note index out of range");
@@ -373,7 +380,10 @@ void NoteEditManager::deleteSelectedNote(Track& track) {
     const std::vector<NoteUtils::DisplayNote> notesAfter =
         selectableDisplayNotesForEditUi(track);
     const int refreshedIdx =
-        filteredDisplayNoteIndexForNoteId(notesAfter, deleteTargetNoteId);
+        editorSelectionHasNote(selection)
+            ? filteredDisplayNoteIndexForNoteIdAndStart(notesAfter, deleteTargetNoteId,
+                                                        selection.bracketTick)
+            : -1;
     if (refreshedIdx >= 0 && refreshedIdx < static_cast<int>(notesAfter.size())) {
         const NoteUtils::DisplayNote& refreshed = notesAfter[static_cast<size_t>(refreshedIdx)];
         notePitch = refreshed.note;

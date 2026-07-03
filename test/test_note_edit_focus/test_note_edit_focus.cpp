@@ -22,6 +22,7 @@
 #include "../test_support/NoteIdTestFixtures.h"
 #include "MidiEvent.h"
 #include "NoteEditSessionState.h"
+#include "Utils/NoteEditDisplaySnapshot.h"
 #include "Utils/NoteMovementWrap.h"
 
 namespace {
@@ -522,14 +523,81 @@ void test_filtered_display_note_index_for_note_id_and_start() {
   TEST_ASSERT_EQUAL(0, filteredDisplayNoteIndexForNoteId(filtered, kWrapId));
 }
 
-void test_filtered_display_note_index_for_moving_note_prefers_tail_segment() {
+void test_filtered_display_note_index_for_moving_note_exact_start_only() {
   constexpr NoteId kWrapId = 90;
   std::vector<NoteUtils::DisplayNote> filtered;
   filtered.push_back({kWrapId, 90, 100, 0, 103});
   filtered.push_back({kWrapId, 90, 100, 1472, 1535});
 
-  TEST_ASSERT_EQUAL(0, filteredDisplayNoteIndexForNoteId(filtered, kWrapId));
   TEST_ASSERT_EQUAL(1, filteredDisplayNoteIndexForMovingNote(filtered, kWrapId, 1472u));
+  TEST_ASSERT_EQUAL(-1, filteredDisplayNoteIndexForMovingNote(filtered, kWrapId, 1400u));
+}
+
+void test_filtered_display_note_index_duplicate_pitch_prefers_linear_start() {
+  constexpr NoteId kEarlyId = 10;
+  constexpr NoteId kMoverId = 32;
+  std::vector<NoteUtils::DisplayNote> filtered;
+  filtered.push_back({kEarlyId, 32, 100, 24, 47});
+  filtered.push_back({13, 13, 100, 73, 190});
+  filtered.push_back({kMoverId, 32, 100, 1484, 1535});
+  filtered.push_back({kMoverId, 32, 100, 0, 43});
+
+  TEST_ASSERT_EQUAL(2, filteredDisplayNoteIndexForMovingNote(filtered, kMoverId, 1484u));
+}
+
+void test_filtered_display_note_index_duplicate_pitch_rejects_mispaired_low_segment() {
+  constexpr NoteId kMoverId = 32;
+  std::vector<NoteUtils::DisplayNote> filtered;
+  filtered.push_back({kMoverId, 32, 100, 24, 47});
+  filtered.push_back({kMoverId, 32, 100, 1484, 1535});
+
+  TEST_ASSERT_EQUAL(1, filteredDisplayNoteIndexForMovingNote(filtered, kMoverId, 1484u));
+}
+
+void test_filtered_display_note_index_rejects_only_mispaired_low_segment() {
+  constexpr NoteId kMoverId = 32;
+  std::vector<NoteUtils::DisplayNote> filtered;
+  filtered.push_back({kMoverId, 32, 100, 24, 47});
+
+  TEST_ASSERT_EQUAL(-1, filteredDisplayNoteIndexForMovingNote(filtered, kMoverId, 1484u));
+}
+
+void test_selection_index_duplicate_pitch_uses_linear_start() {
+  constexpr NoteId kMoverId = 32;
+  EditorSelection selection;
+  selection.primaryNote = kMoverId;
+  selection.bracketTick = 1484;
+  selection.selectedNotes.push_back(kMoverId);
+
+  std::vector<NoteUtils::DisplayNote> filtered;
+  filtered.push_back({10, 32, 100, 24, 47});
+  filtered.push_back({kMoverId, 32, 100, 1484, 1535});
+
+  TEST_ASSERT_EQUAL(1, NoteEditDisplaySnapshot::filteredDisplayNoteIndexForSelection(
+                              selection, filtered));
+}
+
+void test_is_plausible_storage_span_rejects_lifo_mispair() {
+  constexpr uint32_t kLoopLength = 1536;
+  TEST_ASSERT_TRUE(isPlausibleStorageSpan(387, 436, kLoopLength));
+  TEST_ASSERT_FALSE(isPlausibleStorageSpan(387, 1972, kLoopLength));
+  TEST_ASSERT_TRUE(isPlausibleStorageSpan(1419, 1613, kLoopLength));
+}
+
+void test_find_linear_note_span_rejects_mispaired_off() {
+  constexpr uint32_t kLoopLength = 1536;
+  constexpr NoteId kNoteId = 56;
+  MidiEventVec session;
+  MidiEvent on = MidiEvent::NoteOn(387, 1, 56, 100);
+  on.noteId = kNoteId;
+  session.push_back(on);
+  session.push_back(MidiEvent::NoteOff(436, 1, 56, 0));
+  session.push_back(MidiEvent::NoteOff(1972, 1, 56, 0));
+
+  NoteBaseline linear{};
+  TEST_ASSERT_TRUE(findLinearNoteSpanForNoteId(session, kNoteId, 1, linear, 387, kLoopLength));
+  TEST_ASSERT_EQUAL_UINT32(387u, linear.startTick);
+  TEST_ASSERT_EQUAL_UINT32(436u, linear.endTick);
 }
 
 void test_is_moving_note_overlap_scratch_entry() {
@@ -570,6 +638,39 @@ void test_pitch_linear_focus_no_spurious_length_after_sync() {
   TEST_ASSERT_EQUAL_UINT32(1727u, rows[0].endTick);
 }
 
+void test_linear_baseline_for_overlap_restore_rejects_display_wrap_end() {
+  constexpr NoteId kOverlapId = 12;
+  NoteEditFocus focus;
+  focus.baselineMap[kOverlapId] = {12, 100, 1482, 1577};
+
+  OverlapNote entry;
+  entry.noteId = kOverlapId;
+  entry.baseline = {12, 100, 1482, 41};
+  entry.state = OverlapNoteStoreState::Hidden;
+
+  const NoteBaseline linear = linearBaselineForOverlapRestore(focus, entry, nullptr, 1);
+  TEST_ASSERT_EQUAL_UINT32(1482u, linear.startTick);
+  TEST_ASSERT_EQUAL_UINT32(1577u, linear.endTick);
+}
+
+void test_baseline_map_prefers_linear_span_over_wrap_projection() {
+  constexpr NoteId kWrapId = 49;
+  constexpr uint32_t kLoopLength = 1536;
+  MidiEventVec flat;
+  MidiEvent on = MidiEvent::NoteOn(49, 1, 49, 100);
+  on.noteId = kWrapId;
+  flat.push_back(on);
+  flat.push_back(MidiEvent::NoteOff(1535, 1, 49, 0));
+
+  NoteEditFocus focus;
+  rebuildNoteEditFocusFromStore(focus, flat, 1, kLoopLength, 0);
+
+  const auto it = focus.baselineMap.find(kWrapId);
+  TEST_ASSERT_TRUE(it != focus.baselineMap.end());
+  TEST_ASSERT_EQUAL_UINT32(49u, it->second.startTick);
+  TEST_ASSERT_EQUAL_UINT32(1535u, it->second.endTick);
+}
+
 void test_sync_linear_focus_same_pitch_shortened_overlap_does_not_steal_mover_off() {
   constexpr NoteId kOverlapId = 10;
   constexpr NoteId kMoverId = 32;
@@ -595,6 +696,86 @@ void test_sync_linear_focus_same_pitch_shortened_overlap_does_not_steal_mover_of
   TEST_ASSERT_EQUAL_UINT32(1577u, focus.last.endTick);
 }
 
+void test_find_linear_note_span_wrapped_mover_ignores_in_loop_orphan_off() {
+  constexpr NoteId kMoverId = 84;
+  constexpr uint32_t kLoopLength = 1536;
+  MidiEventVec session;
+  MidiEvent strayOff = MidiEvent::NoteOff(1547, 1, 31, 0);
+  session.push_back(strayOff);
+  MidiEvent moverOn = MidiEvent::NoteOn(1499, 1, 31, 100);
+  moverOn.noteId = kMoverId;
+  session.push_back(moverOn);
+  MidiEvent moverOff = MidiEvent::NoteOff(1595, 1, 31, 0);
+  moverOff.noteId = kMoverId;
+  session.push_back(moverOff);
+
+  NoteBaseline linear;
+  TEST_ASSERT_TRUE(
+      findLinearNoteSpanForNoteId(session, kMoverId, 1, linear, 1499, kLoopLength));
+  TEST_ASSERT_EQUAL_UINT32(1499u, linear.startTick);
+  TEST_ASSERT_EQUAL_UINT32(1595u, linear.endTick);
+}
+
+void test_linear_baseline_for_overlap_restore_shortened_keeps_original_end() {
+  constexpr NoteId kOverlapId = 58;
+  NoteEditFocus focus;
+  focus.baselineMap[kOverlapId] = {58, 100, 483, 1370};
+
+  OverlapNote entry;
+  entry.noteId = kOverlapId;
+  entry.baseline = {58, 100, 483, 1258};
+  entry.state = OverlapNoteStoreState::Shortened;
+  entry.shortenedEndTick = 1258;
+
+  MidiEventVec session;
+  MidiEvent on = MidiEvent::NoteOn(483, 1, 58, 100);
+  on.noteId = kOverlapId;
+  session.push_back(on);
+  session.push_back(MidiEvent::NoteOff(1258, 1, 58, 0));
+
+  const NoteBaseline linear = linearBaselineForOverlapRestore(focus, entry, &session, 1);
+  TEST_ASSERT_EQUAL_UINT32(483u, linear.startTick);
+  TEST_ASSERT_EQUAL_UINT32(1370u, linear.endTick);
+}
+
+void test_linear_baseline_for_overlap_restore_hidden_uses_hide_snapshot_not_session() {
+  constexpr NoteId kOverlapId = 31;
+  NoteEditFocus focus;
+  focus.baselineMap[kOverlapId] = {31, 100, 1451, 1595};
+
+  OverlapNote entry;
+  entry.noteId = kOverlapId;
+  entry.baseline = {31, 100, 1451, 1547};
+  entry.state = OverlapNoteStoreState::Hidden;
+
+  MidiEventVec session;
+  MidiEvent moverOn = MidiEvent::NoteOn(1499, 1, 31, 100);
+  moverOn.noteId = 84;
+  session.push_back(moverOn);
+  session.push_back(MidiEvent::NoteOff(1595, 1, 31, 0));
+
+  const NoteBaseline linear = linearBaselineForOverlapRestore(focus, entry, &session, 1);
+  TEST_ASSERT_EQUAL_UINT32(1451u, linear.startTick);
+  TEST_ASSERT_EQUAL_UINT32(1547u, linear.endTick);
+}
+
+void test_find_linear_off_for_note_id_ignores_same_pitch_neighbor_off() {
+  constexpr NoteId kMoverId = 84;
+  constexpr uint32_t kLoopLength = 1536;
+  MidiEventVec session;
+  session.push_back(MidiEvent::NoteOff(1547, 1, 31, 0));
+  MidiEvent moverOn = MidiEvent::NoteOn(1499, 1, 31, 100);
+  moverOn.noteId = kMoverId;
+  session.push_back(moverOn);
+  MidiEvent moverOff = MidiEvent::NoteOff(1595, 1, 31, 0);
+  moverOff.noteId = kMoverId;
+  session.push_back(moverOff);
+
+  MidiEvent* off = findLinearOffForNoteId(session, moverOn, kMoverId, kLoopLength);
+  TEST_ASSERT_NOT_NULL(off);
+  TEST_ASSERT_EQUAL_UINT32(1595u, off->tick);
+}
+
 int main(int /*argc*/, char** /*argv*/) {
   UNITY_BEGIN();
   RUN_TEST(test_baseline_map_includes_all_store_notes_at_select);
@@ -614,9 +795,21 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_sync_linear_focus_avoids_spurious_display_length_commit);
   RUN_TEST(test_prune_overlap_shortened_display_baseline_artifact);
   RUN_TEST(test_filtered_display_note_index_for_note_id_and_start);
-  RUN_TEST(test_filtered_display_note_index_for_moving_note_prefers_tail_segment);
+  RUN_TEST(test_filtered_display_note_index_for_moving_note_exact_start_only);
+  RUN_TEST(test_filtered_display_note_index_duplicate_pitch_prefers_linear_start);
+  RUN_TEST(test_filtered_display_note_index_duplicate_pitch_rejects_mispaired_low_segment);
+  RUN_TEST(test_filtered_display_note_index_rejects_only_mispaired_low_segment);
+  RUN_TEST(test_selection_index_duplicate_pitch_uses_linear_start);
+  RUN_TEST(test_is_plausible_storage_span_rejects_lifo_mispair);
+  RUN_TEST(test_find_linear_note_span_rejects_mispaired_off);
   RUN_TEST(test_is_moving_note_overlap_scratch_entry);
   RUN_TEST(test_pitch_linear_focus_no_spurious_length_after_sync);
+  RUN_TEST(test_linear_baseline_for_overlap_restore_rejects_display_wrap_end);
+  RUN_TEST(test_baseline_map_prefers_linear_span_over_wrap_projection);
   RUN_TEST(test_sync_linear_focus_same_pitch_shortened_overlap_does_not_steal_mover_off);
+  RUN_TEST(test_find_linear_note_span_wrapped_mover_ignores_in_loop_orphan_off);
+  RUN_TEST(test_linear_baseline_for_overlap_restore_shortened_keeps_original_end);
+  RUN_TEST(test_linear_baseline_for_overlap_restore_hidden_uses_hide_snapshot_not_session);
+  RUN_TEST(test_find_linear_off_for_note_id_ignores_same_pitch_neighbor_off);
   return UNITY_END();
 }
