@@ -15,6 +15,7 @@
 #include <algorithm>
 #include <map>
 #include <set>
+#include "Utils/NoteEditMem.h"
 
 namespace NoteMovementUtils {
 
@@ -27,25 +28,25 @@ MidiEvent* findNoteOffForOverlapShorten(MidiEventVec& midiEvents, MidiEvent* not
 
 namespace {
 
-void stampPairedNoteId(MidiEvent* noteOn, MidiEvent* noteOff) {
+NOTE_EDIT_MEM void stampPairedNoteId(MidiEvent* noteOn, MidiEvent* noteOff) {
     if (noteOn != nullptr && noteOff != nullptr && noteOn->noteId != kInvalidNoteId &&
         noteOff->noteId == kInvalidNoteId) {
         noteOff->noteId = noteOn->noteId;
     }
 }
 
-NoteEditFocus& editFocus(EditManager& manager) {
+NOTE_EDIT_MEM NoteEditFocus& editFocus(EditManager& manager) {
     return manager.getEditSession().focus;
 }
 
 MidiEvent* findNoteOnAtStart(MidiEventVec& midiEvents, uint8_t channel, uint8_t pitch,
                              uint32_t startTick);
 
-const NoteEditFocus& editFocus(const EditManager& manager) {
+NOTE_EDIT_MEM const NoteEditFocus& editFocus(const EditManager& manager) {
     return manager.getEditSession().focus;
 }
 
-OverlapNoteRestore overlapNoteToRestorePayload(const NoteEditFocus& focus, const OverlapNote& entry,
+NOTE_EDIT_MEM OverlapNoteRestore overlapNoteToRestorePayload(const NoteEditFocus& focus, const OverlapNote& entry,
                                                MidiEventVec* sessionEvents, uint8_t channel) {
     OverlapNoteRestore restore;
     restore.noteId = entry.noteId;
@@ -63,7 +64,7 @@ OverlapNoteRestore overlapNoteToRestorePayload(const NoteEditFocus& focus, const
     return restore;
 }
 
-void appendUniqueRestoreCandidate(std::vector<OverlapNoteRestore>& notesToRestore,
+NOTE_EDIT_MEM void appendUniqueRestoreCandidate(std::vector<OverlapNoteRestore>& notesToRestore,
                                   const OverlapNoteRestore& candidate) {
     for (const auto& queued : notesToRestore) {
         if (queued.pitch == candidate.pitch && queued.startTick == candidate.startTick) {
@@ -73,11 +74,11 @@ void appendUniqueRestoreCandidate(std::vector<OverlapNoteRestore>& notesToRestor
     notesToRestore.push_back(candidate);
 }
 
-uint32_t overlapNoteRestoreEffectiveEnd(const OverlapNoteRestore& restore) {
+NOTE_EDIT_MEM uint32_t overlapNoteRestoreEffectiveEnd(const OverlapNoteRestore& restore) {
     return restore.wasShortened ? restore.shortenedToTick : restore.endTick;
 }
 
-bool isAlreadyShortenedOverlap(const EditManager& manager,
+NOTE_EDIT_MEM bool isAlreadyShortenedOverlap(const EditManager& manager,
                                const NoteUtils::DisplayNote& note) {
     const NoteEditFocus& focus = editFocus(manager);
     for (const auto& [noteId, entry] : focus.overlapNotes) {
@@ -92,7 +93,7 @@ bool isAlreadyShortenedOverlap(const EditManager& manager,
     return false;
 }
 
-bool hasShortenedOverlapEntry(const EditManager& manager, uint8_t pitch,
+NOTE_EDIT_MEM bool hasShortenedOverlapEntry(const EditManager& manager, uint8_t pitch,
                              uint32_t startTick) {
     const NoteEditFocus& focus = editFocus(manager);
     for (const auto& [noteId, entry] : focus.overlapNotes) {
@@ -105,7 +106,7 @@ bool hasShortenedOverlapEntry(const EditManager& manager, uint8_t pitch,
     return false;
 }
 
-OverlapNote& upsertOverlapNote(EditManager& manager, uint8_t channel,
+NOTE_EDIT_MEM OverlapNote& upsertOverlapNote(EditManager& manager, uint8_t channel,
                                const NoteUtils::DisplayNote& dn) {
   NoteEditFocus& focus = editFocus(manager);
   const NoteId noteId = findBaselineNoteIdForDisplay(focus, dn);
@@ -129,7 +130,7 @@ OverlapNote& upsertOverlapNote(EditManager& manager, uint8_t channel,
   return entry;
 }
 
-void markOverlapHidden(EditManager& manager, uint8_t channel,
+NOTE_EDIT_MEM void markOverlapHidden(EditManager& manager, uint8_t channel,
                        const NoteUtils::DisplayNote& dn) {
     OverlapNote& entry = upsertOverlapNote(manager, channel, dn);
     entry.state = OverlapNoteStoreState::Hidden;
@@ -137,7 +138,7 @@ void markOverlapHidden(EditManager& manager, uint8_t channel,
     entry.innerUnderMovingNote = false;
 }
 
-void markOverlapHiddenFromPair(EditManager& manager, NoteId noteId, const MidiEvent& noteOn,
+NOTE_EDIT_MEM void markOverlapHiddenFromPair(EditManager& manager, NoteId noteId, const MidiEvent& noteOn,
                                const MidiEvent& noteOff) {
     NoteEditFocus& focus = editFocus(manager);
     OverlapNote& entry = focus.overlapNotes[noteId];
@@ -151,7 +152,7 @@ void markOverlapHiddenFromPair(EditManager& manager, NoteId noteId, const MidiEv
     entry.innerUnderMovingNote = false;
 }
 
-void markOverlapShortened(EditManager& manager, uint8_t channel,
+NOTE_EDIT_MEM void markOverlapShortened(EditManager& manager, uint8_t channel,
                           const NoteUtils::DisplayNote& dn, uint32_t shortenedEnd) {
     OverlapNote& entry = upsertOverlapNote(manager, channel, dn);
     NoteEditFocus& focus = editFocus(manager);
@@ -175,18 +176,18 @@ void markOverlapShortened(EditManager& manager, uint8_t channel,
     entry.innerUnderMovingNote = false;
 }
 
-void removeOverlapEntry(EditManager& manager, NoteId noteId) {
+NOTE_EDIT_MEM void removeOverlapEntry(EditManager& manager, NoteId noteId) {
     editFocus(manager).overlapNotes.erase(noteId);
 }
 
-bool isInnerOverlapNoteInMovingNoteRange(const EditManager& manager, uint8_t notePitch,
+NOTE_EDIT_MEM bool isInnerOverlapNoteInMovingNoteRange(const EditManager& manager, uint8_t notePitch,
                                          uint32_t noteStart, uint32_t noteEnd,
                                          uint32_t loopLength) {
     return isInnerOverlapNoteInMovingNoteRange(editFocus(manager), notePitch, noteStart, noteEnd,
                                                loopLength);
 }
 
-size_t restoreNotes(MidiEventVec& midiEvents, const std::vector<OverlapNoteRestore>& notesToRestore,
+NOTE_EDIT_MEM size_t restoreNotes(MidiEventVec& midiEvents, const std::vector<OverlapNoteRestore>& notesToRestore,
                     EditManager& manager, uint32_t loopLength, uint8_t channel,
                     NoteUtils::EventIndexMap& onIndex, NoteUtils::EventIndexMap& offIndex,
                     bool keepOverlapTrackingForPitchRestore) {
@@ -319,7 +320,7 @@ size_t restoreNotes(MidiEventVec& midiEvents, const std::vector<OverlapNoteResto
     return restored.size();
 }
 
-void restoreOverlapNotesNoLongerOverlapping(MidiEventVec& midiEvents, EditManager& manager,
+NOTE_EDIT_MEM void restoreOverlapNotesNoLongerOverlapping(MidiEventVec& midiEvents, EditManager& manager,
                                             uint8_t channel, uint32_t moverStart,
                                             uint32_t moverLinearEnd, uint8_t movingPitch,
                                             uint32_t originalStart, uint32_t loopLength) {
@@ -395,7 +396,7 @@ void restoreOverlapNotesNoLongerOverlapping(MidiEventVec& midiEvents, EditManage
               restoredCount);
 }
 
-void restoreOverlapNotesForPitchLaneClear(MidiEventVec& midiEvents, EditManager& manager,
+NOTE_EDIT_MEM void restoreOverlapNotesForPitchLaneClear(MidiEventVec& midiEvents, EditManager& manager,
                                           uint8_t channel, uint8_t clearedPitch,
                                           uint32_t loopLength) {
     std::vector<OverlapNoteRestore> notesToRestore;
@@ -431,7 +432,7 @@ void restoreOverlapNotesForPitchLaneClear(MidiEventVec& midiEvents, EditManager&
 
 } // namespace
 
-bool notesOverlap(uint32_t start1, uint32_t end1, uint32_t start2, uint32_t end2, uint32_t loopLength) {
+NOTE_EDIT_MEM bool notesOverlap(uint32_t start1, uint32_t end1, uint32_t start2, uint32_t end2, uint32_t loopLength) {
     // Convert to unwrapped positions for comparison
     uint32_t unwrappedEnd1 = end1;
     uint32_t unwrappedEnd2 = end2;
@@ -463,13 +464,13 @@ bool notesOverlap(uint32_t start1, uint32_t end1, uint32_t start2, uint32_t end2
     return overlap;
 }
 
-bool linearStorageSpansOverlap(uint32_t start1, uint32_t end1, uint32_t start2, uint32_t end2) {
+NOTE_EDIT_MEM bool linearStorageSpansOverlap(uint32_t start1, uint32_t end1, uint32_t start2, uint32_t end2) {
     return start1 < end2 && start2 < end1;
 }
 
 namespace {
 
-bool resolveOverlapNoteLinearSpan(const NoteEditFocus& focus, MidiEventVec& events, uint8_t channel,
+NOTE_EDIT_MEM bool resolveOverlapNoteLinearSpan(const NoteEditFocus& focus, MidiEventVec& events, uint8_t channel,
                                   const NoteUtils::DisplayNote& dn, uint32_t loopLength,
                                   NoteBaseline& out) {
     const NoteId noteId = dn.noteId != kInvalidNoteId ? dn.noteId
@@ -499,7 +500,7 @@ bool resolveOverlapNoteLinearSpan(const NoteEditFocus& focus, MidiEventVec& even
     return false;
 }
 
-bool isOtherSamePitchNote(const NoteEditFocus& focus, const NoteUtils::DisplayNote& note,
+NOTE_EDIT_MEM bool isOtherSamePitchNote(const NoteEditFocus& focus, const NoteUtils::DisplayNote& note,
                           uint8_t pitch) {
     if (note.note != pitch) {
         return false;
@@ -513,7 +514,7 @@ bool isOtherSamePitchNote(const NoteEditFocus& focus, const NoteUtils::DisplayNo
 
 }  // namespace
 
-void findOverlaps(const std::vector<NoteUtils::DisplayNote>& currentNotes,
+NOTE_EDIT_MEM void findOverlaps(const std::vector<NoteUtils::DisplayNote>& currentNotes,
                  uint8_t movingNotePitch,
                  uint32_t currentStart,
                  uint32_t newStart,
@@ -681,7 +682,7 @@ void findOverlaps(const std::vector<NoteUtils::DisplayNote>& currentNotes,
               notesToShorten.size(), notesToDelete.size());
 }
 
-MidiEvent* findCorrespondingNoteOff(MidiEventVec& midiEvents, MidiEvent* noteOnEvent,
+NOTE_EDIT_MEM MidiEvent* findCorrespondingNoteOff(MidiEventVec& midiEvents, MidiEvent* noteOnEvent,
                                     uint8_t pitch, std::uint32_t startTick,
                                     std::uint32_t endTick) {
     (void)startTick;
@@ -725,7 +726,7 @@ MidiEvent* findCorrespondingNoteOff(MidiEventVec& midiEvents, MidiEvent* noteOnE
     return nullptr;
 }
 
-MidiEvent* findNoteOffPairedAt(MidiEventVec& midiEvents, uint8_t pitch, uint32_t startTick,
+NOTE_EDIT_MEM MidiEvent* findNoteOffPairedAt(MidiEventVec& midiEvents, uint8_t pitch, uint32_t startTick,
                                uint32_t endTick) {
     std::vector<MidiEvent*> activeNoteOnStack;
     for (auto& evt : midiEvents) {
@@ -759,7 +760,7 @@ MidiEvent* findNoteOffPairedAt(MidiEventVec& midiEvents, uint8_t pitch, uint32_t
     return nullptr;
 }
 
-MidiEvent* findNoteOffForNoteOnAtStart(MidiEventVec& midiEvents, uint8_t pitch,
+NOTE_EDIT_MEM MidiEvent* findNoteOffForNoteOnAtStart(MidiEventVec& midiEvents, uint8_t pitch,
                                        uint32_t startTick) {
     for (auto& evt : midiEvents) {
         if (evt.type == midi::NoteOn && evt.data.noteData.velocity > 0 &&
@@ -770,7 +771,7 @@ MidiEvent* findNoteOffForNoteOnAtStart(MidiEventVec& midiEvents, uint8_t pitch,
     return nullptr;
 }
 
-MidiEvent* resolveNoteOffForEditSpan(MidiEventVec& midiEvents, MidiEvent* noteOnEvent,
+NOTE_EDIT_MEM MidiEvent* resolveNoteOffForEditSpan(MidiEventVec& midiEvents, MidiEvent* noteOnEvent,
                                    uint8_t channel, uint8_t pitch, uint32_t startTick,
                                    uint32_t displayEndTick, uint32_t loopLength) {
     if (!noteOnEvent) {
@@ -803,7 +804,7 @@ MidiEvent* resolveNoteOffForEditSpan(MidiEventVec& midiEvents, MidiEvent* noteOn
     return nullptr;
 }
 
-bool isOpenTailNoteAtLoopEnd(const MidiEventVec& midiEvents, uint8_t channel, uint8_t pitch,
+NOTE_EDIT_MEM bool isOpenTailNoteAtLoopEnd(const MidiEventVec& midiEvents, uint8_t channel, uint8_t pitch,
                              uint32_t startTick, uint32_t displayEndTick, uint32_t loopLength) {
     if (loopLength == 0 || displayEndTick != loopLength - 1) {
         return false;
@@ -830,7 +831,7 @@ bool isOpenTailNoteAtLoopEnd(const MidiEventVec& midiEvents, uint8_t channel, ui
 
 namespace {
 
-MidiEvent* resolveMovingNoteOffForEdit(MidiEventVec& midiEvents, MidiEvent* noteOnEvent,
+NOTE_EDIT_MEM MidiEvent* resolveMovingNoteOffForEdit(MidiEventVec& midiEvents, MidiEvent* noteOnEvent,
                                        NoteId movingNoteId, uint8_t channel, uint8_t pitch,
                                        uint32_t startTick, uint32_t displayEndTick,
                                        uint32_t loopLength) {
@@ -850,7 +851,7 @@ MidiEvent* resolveMovingNoteOffForEdit(MidiEventVec& midiEvents, MidiEvent* note
     return noteOffEvent;
 }
 
-MidiEvent* findNoteOnAtStart(MidiEventVec& midiEvents, uint8_t channel, uint8_t pitch,
+NOTE_EDIT_MEM MidiEvent* findNoteOnAtStart(MidiEventVec& midiEvents, uint8_t channel, uint8_t pitch,
                              uint32_t startTick) {
     for (auto& evt : midiEvents) {
         if (evt.type == midi::NoteOn && evt.data.noteData.velocity > 0 &&
@@ -862,7 +863,7 @@ MidiEvent* findNoteOnAtStart(MidiEventVec& midiEvents, uint8_t channel, uint8_t 
     return nullptr;
 }
 
-MidiEvent& appendNoteOffForOpenTail(MidiEventVec& midiEvents, uint8_t channel, uint8_t pitch,
+NOTE_EDIT_MEM MidiEvent& appendNoteOffForOpenTail(MidiEventVec& midiEvents, uint8_t channel, uint8_t pitch,
                                     uint32_t offTick, NoteId noteId) {
     MidiEvent offEvent = MidiEvent::NoteOff(offTick, channel, pitch, 0);
     offEvent.noteId = noteId;
@@ -871,12 +872,12 @@ MidiEvent& appendNoteOffForOpenTail(MidiEventVec& midiEvents, uint8_t channel, u
     return midiEvents.back();
 }
 
-uint32_t storageOffTickForSpanEnd(uint32_t startTick, uint32_t noteLen, uint32_t loopLength) {
+NOTE_EDIT_MEM uint32_t storageOffTickForSpanEnd(uint32_t startTick, uint32_t noteLen, uint32_t loopLength) {
     (void)loopLength;
     return NoteMovementUtils::linearStorageOffTickForSpanEnd(startTick, noteLen);
 }
 
-uint32_t displayFocusEndTickForMove(uint32_t startTick, uint32_t noteLen, uint32_t loopLength) {
+NOTE_EDIT_MEM uint32_t displayFocusEndTickForMove(uint32_t startTick, uint32_t noteLen, uint32_t loopLength) {
     if (loopLength == 0) {
         return startTick + noteLen;
     }
@@ -887,7 +888,7 @@ uint32_t displayFocusEndTickForMove(uint32_t startTick, uint32_t noteLen, uint32
     return rawEnd;
 }
 
-void scrubStaleWrapHeadOffsForMovedNote(MidiEventVec& midiEvents, uint8_t channel, uint8_t pitch,
+NOTE_EDIT_MEM void scrubStaleWrapHeadOffsForMovedNote(MidiEventVec& midiEvents, uint8_t channel, uint8_t pitch,
                                         uint32_t tailOnTick, uint32_t linearOffTick,
                                         uint32_t loopLength, NoteId movingNoteId) {
     if (loopLength == 0 || movingNoteId == kInvalidNoteId) {
@@ -925,14 +926,14 @@ void scrubStaleWrapHeadOffsForMovedNote(MidiEventVec& midiEvents, uint8_t channe
                      midiEvents.end());
 }
 
-bool stillOpenTailAfterMove(uint32_t newStart, uint32_t noteLen, uint32_t loopLength) {
+NOTE_EDIT_MEM bool stillOpenTailAfterMove(uint32_t newStart, uint32_t noteLen, uint32_t loopLength) {
     if (loopLength == 0) {
         return false;
     }
     return (newStart + noteLen) >= loopLength;
 }
 
-bool isWrapHeadOffForTailOn(const MidiEventVec& midiEvents, MidiEvent* noteOnEvent,
+NOTE_EDIT_MEM bool isWrapHeadOffForTailOn(const MidiEventVec& midiEvents, MidiEvent* noteOnEvent,
                             MidiEvent* noteOffEvent, uint8_t channel, uint8_t pitch,
                             uint32_t loopLength) {
     if (!noteOnEvent || !noteOffEvent || loopLength == 0) {
@@ -945,7 +946,7 @@ bool isWrapHeadOffForTailOn(const MidiEventVec& midiEvents, MidiEvent* noteOnEve
                                                     pitch, channel, loopLength);
 }
 
-uint32_t resolveMovingNoteLengthTicks(MidiEventVec& midiEvents, uint8_t pitch, uint32_t startTick,
+NOTE_EDIT_MEM uint32_t resolveMovingNoteLengthTicks(MidiEventVec& midiEvents, uint8_t pitch, uint32_t startTick,
                                       uint32_t fallbackEndTick, uint32_t loopLength) {
     if (loopLength == 0) {
         return 0;
@@ -967,7 +968,7 @@ uint32_t resolveMovingNoteLengthTicks(MidiEventVec& midiEvents, uint8_t pitch, u
 
 }  // namespace
 
-MidiEvent* findNoteOnForOverlapTarget(MidiEventVec& midiEvents, uint8_t channel,
+NOTE_EDIT_MEM MidiEvent* findNoteOnForOverlapTarget(MidiEventVec& midiEvents, uint8_t channel,
                                       const NoteUtils::DisplayNote& dn, NoteId noteId) {
     if (noteId != kInvalidNoteId) {
         for (auto& evt : midiEvents) {
@@ -986,7 +987,7 @@ MidiEvent* findNoteOnForOverlapTarget(MidiEventVec& midiEvents, uint8_t channel,
     return nullptr;
 }
 
-MidiEvent* findNoteOffForOverlapShorten(MidiEventVec& midiEvents, MidiEvent* noteOn,
+NOTE_EDIT_MEM MidiEvent* findNoteOffForOverlapShorten(MidiEventVec& midiEvents, MidiEvent* noteOn,
                                         const NoteUtils::DisplayNote& dn,
                                         uint32_t expectedOffTick, uint32_t loopLength) {
     if (noteOn == nullptr) {
@@ -1012,7 +1013,7 @@ MidiEvent* findNoteOffForOverlapShorten(MidiEventVec& midiEvents, MidiEvent* not
     return nullptr;
 }
 
-void applyShortenOrDelete(MidiEventVec& midiEvents,
+NOTE_EDIT_MEM void applyShortenOrDelete(MidiEventVec& midiEvents,
                          const std::vector<std::pair<NoteUtils::DisplayNote, uint32_t>>& notesToShorten,
                          const std::vector<NoteUtils::DisplayNote>& notesToDelete,
                          EditManager& manager,
@@ -1159,7 +1160,7 @@ void applyShortenOrDelete(MidiEventVec& midiEvents,
     }
 }
 
-void finalReconstructAndSelect(Track& track,
+NOTE_EDIT_MEM void finalReconstructAndSelect(Track& track,
                               MidiEventVec& midiEvents,
                               EditManager& manager,
                               uint8_t movingNotePitch,
@@ -1221,7 +1222,7 @@ void finalReconstructAndSelect(Track& track,
     displayManager.requestNoteInfoRefresh(track);
 }
 
-bool applyPitchChange(Track& track, EditManager& manager,
+NOTE_EDIT_MEM bool applyPitchChange(Track& track, EditManager& manager,
                       uint8_t currentNoteValue, uint8_t newNoteValue,
                       uint32_t& noteStart, uint32_t& noteEnd) {
     if (currentNoteValue == newNoteValue) {
@@ -1476,7 +1477,7 @@ bool applyPitchChange(Track& track, EditManager& manager,
     return true;
 }
 
-void moveNoteWithOverlapHandling(Track& track, EditManager& manager, 
+NOTE_EDIT_MEM void moveNoteWithOverlapHandling(Track& track, EditManager& manager, 
                                 const NoteUtils::DisplayNote& currentNote, 
                                 uint32_t targetTick, int delta) {
     // Session store when a note-edit session is active (matches move/length live paths).
@@ -1663,7 +1664,7 @@ void moveNoteWithOverlapHandling(Track& track, EditManager& manager,
     track.invalidateCaches();
 }
 
-void changeLengthWithOverlapHandling(Track& track, EditManager& manager,
+NOTE_EDIT_MEM void changeLengthWithOverlapHandling(Track& track, EditManager& manager,
                                      const NoteUtils::DisplayNote& currentNote,
                                      uint32_t targetEndTick) {
     auto& midiEvents = track.editAwareMidiEvents();
@@ -1812,7 +1813,7 @@ void changeLengthWithOverlapHandling(Track& track, EditManager& manager,
 }
 
 // Extend shortened notes dynamically
-void extendShortenedNotes(MidiEventVec& midiEvents,
+NOTE_EDIT_MEM void extendShortenedNotes(MidiEventVec& midiEvents,
                          const std::vector<std::pair<OverlapNoteRestore, std::uint32_t>>& notesToExtend,
                          EditManager& manager,
                          std::uint32_t loopLength) {
@@ -1861,7 +1862,7 @@ void extendShortenedNotes(MidiEventVec& midiEvents,
     }
 }
 
-bool applyNoteEditChange(Track& track, EditManager& manager, NoteEditChangeKind kind,
+NOTE_EDIT_MEM bool applyNoteEditChange(Track& track, EditManager& manager, NoteEditChangeKind kind,
                          const NoteUtils::DisplayNote& currentNote, uint32_t targetTick,
                          int delta, uint32_t targetEndTick, uint8_t currentPitch,
                          uint8_t newPitch, uint32_t& inOutStart, uint32_t& inOutEnd) {

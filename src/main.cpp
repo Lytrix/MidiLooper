@@ -183,7 +183,7 @@ void loop() {
 
   HotPathTelemetry::processDeferredSummary();
 
-  SC_REC_FLUSH_PENDING_REVTS(64);
+  SC_CAPTURE_FLUSH(64);
 
   // Update SELECT mode for overdubbing if active
   if (editManager.getCurrentState() == editManager.getSelectNoteState()) {

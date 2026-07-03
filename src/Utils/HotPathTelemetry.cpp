@@ -10,10 +10,12 @@
 
 #if defined(__IMXRT1062__)
 #define PERF_MEM_ATTR FLASHMEM
-#define PERF_DATA_ATTR DMAMEM
 #else
 #define PERF_MEM_ATTR
-#define PERF_DATA_ATTR
+#endif
+
+#if defined(SESSION_CAPTURE)
+#include "Utils/DebugSessionCapture.h"
 #endif
 
 namespace HotPathTelemetry {
@@ -38,7 +40,7 @@ struct TelemetryState {
   bool deferredSummaryPending = false;
 };
 
-PERF_DATA_ATTR TelemetryState telemetryState;
+TelemetryState telemetryState;
 
 void updateMetric(Metric& metric, uint32_t elapsedUs, uint32_t budgetUs) {
   metric.samples++;
@@ -100,11 +102,13 @@ PERF_MEM_ATTR void recordDisplayUpdate(uint32_t elapsedUs) {
 }
 
 PERF_MEM_ATTR void emitSummary(const char* checkpoint) {
-  Serial.printf(
+  char line[256];
+  snprintf(
+      line, sizeof(line),
       "PERF,%s,overdub_start[s=%lu,max=%lu,avg=%lu,over=%lu],"
       "undo_snapshot[s=%lu,max=%lu,avg=%lu,over=%lu,max_src=%lu,max_copied=%lu,dropped=%lu],"
       "save_state[s=%lu,max=%lu,avg=%lu,over=%lu,fail=%lu],"
-      "display[s=%lu,max=%lu,avg=%lu,over=%lu],max_undo_depth=%lu\n",
+      "display[s=%lu,max=%lu,avg=%lu,over=%lu],max_undo_depth=%lu",
       checkpoint ? checkpoint : "unknown",
       static_cast<unsigned long>(telemetryState.overdubStartMetric.samples),
       static_cast<unsigned long>(telemetryState.overdubStartMetric.maxUs),
@@ -127,6 +131,11 @@ PERF_MEM_ATTR void emitSummary(const char* checkpoint) {
       static_cast<unsigned long>(averageUs(telemetryState.displayUpdateMetric)),
       static_cast<unsigned long>(telemetryState.displayUpdateMetric.overBudget),
       static_cast<unsigned long>(telemetryState.maxUndoDepth));
+#if defined(SESSION_CAPTURE)
+  DebugSessionCapture::appendCaptureTextLine(line);
+#else
+  Serial.println(line);
+#endif
 }
 
 PERF_MEM_ATTR void requestDeferredSummary(const char* checkpoint) {
