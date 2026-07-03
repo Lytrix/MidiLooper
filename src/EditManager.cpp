@@ -490,6 +490,39 @@ void EditManager::closeNoteEditSession(Track& track) {
     clearLastFader1SelectNoteId();
 }
 
+void EditManager::revertNoteEditSessionForLoopClear(Track& track) {
+    if (editSession.sessionType != EditSessionType::Note && !editSession.active) {
+        return;
+    }
+
+    noteEditManager.resetLengthEditingModeOnSessionBoundary();
+    editSession.replaceEditPassOnClose = false;
+    editSession.editPassIds.clear();
+    editSession.undoStack.clear();
+    editSession.store.mutStore().clear();
+    editSession.store.discardFlatCache();
+    editSession.focus.clear();
+    editSession.active = false;
+    editSession.editPassIndex = 0;
+
+    selectedNoteIdx = -1;
+    hasMovedBracket = false;
+    clearLastFader1SelectNoteId();
+    resetNoteEditSessionState();
+    currentEditMode = EDIT_MODE_NONE;
+
+    if (currentState) {
+        currentState->onExit(*this, track);
+        currentState = nullptr;
+    }
+
+    editSession.sessionType = EditSessionType::Loop;
+    sendEditSessionChange(EditSessionType::Loop);
+    track.invalidateCaches();
+    logger.log(CAT_TRACK, LOG_INFO,
+               "Note edit session discarded after loop clear; reverted to loop edit");
+}
+
 void EditManager::rematerializeNoteEditSessionAfterWorkspaceReload(Track& track) {
     if (editSession.sessionType == EditSessionType::Note) {
         reopenNoteEditSession(track);

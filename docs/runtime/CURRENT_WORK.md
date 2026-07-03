@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-07-03 (HITL fader sweep PASS)
+Last updated: 2026-07-03 (note-edit fader feedback + stable-note-id archived)
 
 ---
 
@@ -15,12 +15,11 @@ Set revision persistence + load/save overlay UX on branch `load-save-sets-loops`
 - **Next persistence slice (after branch merge):** `transport.bin` / `global.bin` workspace split — new OpenSpec when scoped
 - Handoff: [set_revision_persistence_handoff.md](../plans/set_revision_persistence_handoff.md)
 
-## Registered — not yet implementing
+## Recently archived (2026-07-03)
 
-- **`note-edit-stable-note-id`** — Phase B **shipped**; §7.3 HITL PASS 2026-07-03. Archive pending user `/opsx:archive`.
-  - Handoff: [note_edit_stable_note_id_phase_a_handoff.md](../plans/note_edit_stable_note_id_phase_a_handoff.md)
-- **`note-edit-fader-feedback-regression`** — **bug-fix complete** 2026-07-03. HITL §7.23.6 PASS. Phase 12–13 + RC11 deferred post-archive.
-  - Handoff: [note_edit_fader_feedback_next_steps_handoff.md](../plans/note_edit_fader_feedback_next_steps_handoff.md)
+- **`note-edit-fader-feedback-regression`** — HITL §7.23.6 PASS; spec `openspec/specs/note-edit-fader-feedback/`. Phase 12–13 + RC11 §8.3–8.4 deferred.
+- **`note-edit-stable-note-id`** — Phase B shipped; spec `openspec/specs/note-edit-stable-note-id/`.
+- Handoffs: [note_edit_fader_feedback_next_steps_handoff.md](../plans/note_edit_fader_feedback_next_steps_handoff.md), [note_edit_stable_note_id_phase_a_handoff.md](../plans/note_edit_stable_note_id_phase_a_handoff.md)
 
 ## Explicitly NOT implementing
 

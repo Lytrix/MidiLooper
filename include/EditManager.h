@@ -65,6 +65,8 @@ public:
     void openNoteEditSession(Track& track);
     void reopenNoteEditSession(Track& track);
     void closeNoteEditSession(Track& track);
+    /// Discard open note-edit RAM and revert UI to loop edit when loop content is cleared.
+    void revertNoteEditSessionForLoopClear(Track& track);
     /// Rebuild session store from loop passes after workspace revision load replaced RAM.
     void rematerializeNoteEditSessionAfterWorkspaceReload(Track& track);
     void closeNoteEditPass(Track& track);

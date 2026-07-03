@@ -1457,6 +1457,7 @@ void Track::clear() {
     setState(TRACK_EMPTY);
     alignLoopOriginOnNextStop = false;
     invalidateCaches();
+    editManager.revertNoteEditSessionForLoopClear(*this);
     logger.log(CAT_TRACK, LOG_INFO, "Clear pruned undo entries=%u", static_cast<unsigned>(prunedUndo));
     logger.logTrackEvent("Track cleared", clockManager.getCurrentTick());
 }
