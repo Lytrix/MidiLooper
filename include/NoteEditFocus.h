@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <functional>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #include "EditPass.h"
@@ -113,11 +114,27 @@ void noteEditFocusApplyPitch(NoteEditFocus& focus, uint8_t newPitch, uint32_t st
 
 bool noteEditFocusHasPendingLengthChange(const NoteEditFocus& focus);
 
+/// Linear on/off span in canonical storage for noteId (not display projection).
+bool findLinearNoteSpanForNoteId(MidiEventVec& events, NoteId noteId, uint8_t channel,
+                                 NoteBaseline& outBaseline,
+                                 uint32_t preferredStartTick = UINT32_MAX);
+
+/// Refresh focus.last (and moving note range) from session store linear span.
+bool syncNoteEditFocusLinearFromSessionStore(NoteEditFocus& focus, MidiEventVec& events,
+                                            uint8_t channel);
+
 uint32_t overlapNoteEffectiveEnd(const OverlapNote& entry);
 
 /// B1: materialize Hidden/Shortened overlap notes in session store before commit (impacted refs only).
 void resolveOverlapNotesForPreCommit(MidiEventVec& sessionStoreEvents, NoteEditFocus& focus,
                                      uint8_t channel, uint32_t loopLength);
+
+/// Drop overlap scratch rows that are already materialized in session store (display-wrap baselines).
+void pruneOverlapNotesBeforePreCommit(NoteEditFocus& focus, MidiEventVec& events, uint8_t channel);
+
+/// True when overlap scratch refers to the moving note (not a restorable overlap participant).
+bool isMovingNoteOverlapScratchEntry(const NoteEditFocus& focus, NoteId noteId,
+                                     const NoteBaseline& baseline);
 
 /// B1: overlap-only edit pass rows (Hidden → Delete, Shortened → Length).
 EditPassVec buildPreCommitOverlapEditPasses(const NoteEditFocus& focus);
@@ -130,8 +147,20 @@ std::vector<NoteUtils::DisplayNote> filterSelectableDisplayNotes(
     const MidiEventVec& sessionEvents, const NoteEditFocus& focus, uint8_t channel,
     uint32_t loopLength);
 
+/// NoteIds for micro normalize scope: mover, overlap participants, same-pitch wrap interactors.
+std::unordered_set<NoteId> buildEditClosureNoteIds(const NoteEditFocus& focus,
+                                                 const MidiEventVec& sessionEvents,
+                                                 uint8_t channel, uint32_t loopLength);
+
 NoteId noteIdFromFilteredDisplayNote(const std::vector<NoteUtils::DisplayNote>& filtered,
                                      int filteredIndex);
 
 int filteredDisplayNoteIndexForNoteId(const std::vector<NoteUtils::DisplayNote>& filtered,
                                     NoteId noteId);
+
+int filteredDisplayNoteIndexForNoteIdAndStart(const std::vector<NoteUtils::DisplayNote>& filtered,
+                                              NoteId noteId, uint32_t startTick);
+
+/// Prefer the storage-start segment; for wrapped notes fall back to the tail (largest start tick).
+int filteredDisplayNoteIndexForMovingNote(const std::vector<NoteUtils::DisplayNote>& filtered,
+                                          NoteId noteId, uint32_t linearStartTick);

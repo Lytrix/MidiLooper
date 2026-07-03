@@ -17,6 +17,7 @@
 #include "Utils/HotPathTelemetry.h"
 #include "Utils/DebugSessionCapture.h"
 #include "Utils/DisplayWindowUtils.h"
+#include "Utils/NoteMovementWrap.h"
 #include "TrackStateMachine.h"
 #include "MidiButtonManager.h"
 #include "MidiConfig.h"
@@ -2416,14 +2417,9 @@ void DisplayManager::drawNoteInfo(uint32_t currentTick, Track& selectedTrack, ui
     if (noteToShow && lengthLoop > 0) {
         ticksToBarsBeats16thTicks2Dec(displayStartTick % lengthLoop, startStr, sizeof(startStr), true);
         uint8_t noteVal = noteToShow->note;
-        // Calculate note length, handling wrap-around case
-        uint32_t lenVal;
-        if (noteToShow->endTick >= noteToShow->startTick) {
-            lenVal = noteToShow->endTick - noteToShow->startTick;
-        } else {
-            // Wrapped note: endTick < startTick
-            lenVal = (lengthLoop - noteToShow->startTick) + noteToShow->endTick;
-        }
+        const uint32_t lenVal =
+            NoteMovementUtils::calculateNoteLength(noteToShow->startTick, noteToShow->endTick,
+                                                 lengthLoop);
         uint8_t velVal = noteToShow->velocity;
         validNote = (noteVal <= 127 && velVal <= 127 && lenVal < 10000);
         if (validNote) {

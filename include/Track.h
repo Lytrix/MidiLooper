@@ -276,11 +276,7 @@ public:
   }
   
   /// Invalidate caches when MIDI events change (includes flat sync when dirty).
-  void invalidateCaches() {
-    Loop& loop = getActiveLoop();
-    loop.invalidateCaches();
-    loop.playbackOrderDirty = true;
-  }
+  void invalidateCaches();
 
   /// Chunk mutations on hot paths — no flat sync.
   void invalidatePlaybackCaches() {

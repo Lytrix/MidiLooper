@@ -10,6 +10,7 @@
 #include "Utils/NoteEditFaderSelectSync.h"
 #include "Utils/NoteEditFaderMotorTiming.h"
 #include "Utils/NoteEditDisplaySnapshot.h"
+#include "Utils/NoteEditDependentFaderSnapshot.h"
 #include "Utils/SelectNavigation.h"
 #include "NoteEditSessionState.h"
 #include "MidiConfig.h"
@@ -20,6 +21,7 @@
 #include "../../src/Utils/NoteUtils.cpp"
 #include "../../src/Logger.cpp"
 #include "../../src/Utils/DisplayWindowUtils.cpp"
+#include "../../src/Utils/NoteEditDependentFaderSnapshot.cpp"
 
 namespace {
 
@@ -521,8 +523,26 @@ void test_filtered_display_note_index_for_selection() {
 
     EditorSelection sel{};
     sel.primaryNote = 2;
+    sel.bracketTick = 483;
     TEST_ASSERT_EQUAL(1, NoteEditDisplaySnapshot::filteredDisplayNoteIndexForSelection(sel, notes));
     TEST_ASSERT_EQUAL(-1, NoteEditDisplaySnapshot::filteredDisplayNoteIndexForSelection(sel, {notes[0]}));
+}
+
+void test_filtered_display_note_index_for_selection_wrap_segment() {
+    constexpr NoteId kWrapId = 90;
+    std::vector<NoteUtils::DisplayNote> notes;
+    notes.push_back({kWrapId, 90, 100, 1472, 1535});
+    notes.push_back({kWrapId, 90, 100, 0, 103});
+
+    EditorSelection tailSel{};
+    tailSel.primaryNote = kWrapId;
+    tailSel.bracketTick = 1472;
+    TEST_ASSERT_EQUAL(0, NoteEditDisplaySnapshot::filteredDisplayNoteIndexForSelection(tailSel, notes));
+
+    EditorSelection headSel{};
+    headSel.primaryNote = kWrapId;
+    headSel.bracketTick = 0;
+    TEST_ASSERT_EQUAL(1, NoteEditDisplaySnapshot::filteredDisplayNoteIndexForSelection(headSel, notes));
 }
 
 void test_window_filter_excludes_notes_outside_nav_inventory() {
@@ -571,6 +591,39 @@ void test_window_filter_excludes_notes_outside_nav_inventory() {
         }
     }
     TEST_ASSERT_TRUE(insideNoteInWindowSlots);
+}
+
+void test_window_inclusion_filter_preserves_storage_ticks() {
+    const uint32_t loopLength = 32u * Config::TICKS_PER_BAR;
+    const uint32_t windowStart = 16u * Config::TICKS_PER_BAR;
+    const uint32_t windowLength = 16u * Config::TICKS_PER_BAR;
+    const uint32_t storageStart = 17u * Config::TICKS_PER_BAR;
+
+    NoteUtils::DisplayNoteVec notes;
+    notes.push_back({5, 60, 100, storageStart, storageStart + 48});
+    notes.push_back({kInvalidNoteId, 72, 100, 2u * Config::TICKS_PER_BAR,
+                     2u * Config::TICKS_PER_BAR + 48});
+
+    const NoteUtils::DisplayNoteVec included =
+        DisplayWindowUtils::filterDisplayNotesByWindowInclusion(notes, windowStart, windowLength,
+                                                                loopLength);
+    TEST_ASSERT_EQUAL(1, static_cast<int>(included.size()));
+    TEST_ASSERT_EQUAL_UINT32(storageStart, included[0].startTick);
+
+    const NoteUtils::DisplayNoteVec remapped = DisplayWindowUtils::filterDisplayNotesToWindow(
+        notes, windowStart, windowLength, loopLength);
+    TEST_ASSERT_EQUAL(1, static_cast<int>(remapped.size()));
+    TEST_ASSERT_NOT_EQUAL(storageStart, remapped[0].startTick);
+}
+
+void test_fine_position_loop_relative_tick_with_nonzero_loop_start() {
+    const uint32_t loopLength = 768;
+    const uint32_t loopStartTick = 424;
+    const uint32_t storageStartTick = 0;
+    const uint32_t relTick =
+        loopRelativeTickForTest(storageStartTick, loopStartTick, loopLength);
+    TEST_ASSERT_EQUAL_UINT32(344, relTick);
+    TEST_ASSERT_NOT_EQUAL(storageStartTick % loopLength, relTick);
 }
 
 void test_same_bracket_sibling_plan_includes_all_motors() {
@@ -629,6 +682,46 @@ void test_motor_sync_plans_are_direction_isolated() {
         NoteEditFaderOutbound::motorSyncPlansAreDirectionIsolated(mixed, geometryPlan));
 }
 
+void test_stale_latch_ignores_f4_wrap_echo() {
+    TEST_ASSERT_TRUE(NoteEditDependentFaderFeedback::shouldIgnoreStaleLatch(
+        39, 39, 28, 3, true, true));
+}
+
+void test_stale_latch_accepts_user_pitch_after_latch_refresh() {
+    TEST_ASSERT_FALSE(NoteEditDependentFaderFeedback::shouldIgnoreStaleLatch(
+        30, 28, 28, 3, true, true));
+}
+
+void test_dependent_snapshot_position_mode_nonzero_loop_start() {
+    NoteEditDependentFaderBuildInput input{};
+    input.loopLength = 768;
+    input.loopStartTick = 424;
+    input.selectedIdx = 0;
+    input.hasLiveNote = true;
+    input.liveStartTick = 0;
+    input.liveEndTick = 96;
+    input.livePitch = 60;
+    const NoteEditDependentFaderSnapshot snapshot = buildDependentFaderSnapshot(input);
+    TEST_ASSERT_TRUE(snapshot.coarseValid);
+    TEST_ASSERT_TRUE(snapshot.fineValid);
+    TEST_ASSERT_TRUE(snapshot.valid);
+    TEST_ASSERT_EQUAL_UINT8(60, snapshot.noteValueCc);
+}
+
+void test_motor_value_changed_includes_f3_fine_cc() {
+    NoteEditDependentFaderSnapshot planned{};
+    planned.coarseValid = true;
+    planned.fineValid = true;
+    planned.valid = true;
+    planned.coarsePitchbend = 100;
+    planned.fineCc = 70;
+    planned.noteValueCc = 60;
+    TEST_ASSERT_TRUE(NoteEditDependentFaderFeedback::motorValueChanged(
+        planned, 100, 64, 60, true, true, true));
+    TEST_ASSERT_FALSE(NoteEditDependentFaderFeedback::motorValueChanged(
+        planned, 100, 70, 60, true, true, true));
+}
+
 int main(int argc, char** argv) {
     (void)argc;
     (void)argv;
@@ -680,12 +773,19 @@ int main(int argc, char** argv) {
     RUN_TEST(test_display_note_info_changed);
     RUN_TEST(test_display_note_info_snapshot_from_ref_wrap_formula);
     RUN_TEST(test_filtered_display_note_index_for_selection);
+    RUN_TEST(test_filtered_display_note_index_for_selection_wrap_segment);
     RUN_TEST(test_window_filter_excludes_notes_outside_nav_inventory);
+    RUN_TEST(test_window_inclusion_filter_preserves_storage_ticks);
+    RUN_TEST(test_fine_position_loop_relative_tick_with_nonzero_loop_start);
     RUN_TEST(test_same_bracket_sibling_plan_includes_all_motors);
     RUN_TEST(test_geometry_driver_plan_refreshes_fader1_on_bracket_change);
     RUN_TEST(test_geometry_driver_plan_empty_when_bracket_unchanged);
     RUN_TEST(test_geometry_edit_kind_blocks_f1_select_apply_policy);
     RUN_TEST(test_select_dependent_plan_excludes_fader1);
     RUN_TEST(test_motor_sync_plans_are_direction_isolated);
+    RUN_TEST(test_stale_latch_ignores_f4_wrap_echo);
+    RUN_TEST(test_stale_latch_accepts_user_pitch_after_latch_refresh);
+    RUN_TEST(test_dependent_snapshot_position_mode_nonzero_loop_start);
+    RUN_TEST(test_motor_value_changed_includes_f3_fine_cc);
     return UNITY_END();
 }

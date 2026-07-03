@@ -103,6 +103,24 @@ DisplayNoteVec filterDisplayNotesToWindow(const DisplayNoteVec& notes, uint32_t 
   return filtered;
 }
 
+DisplayNoteVec filterDisplayNotesByWindowInclusion(const DisplayNoteVec& notes,
+                                                   uint32_t windowStart, uint32_t windowLength,
+                                                   uint32_t loopLength) {
+  DisplayNoteVec filtered;
+  if (loopLength == 0 || windowLength == 0) {
+    return filtered;
+  }
+  filtered.reserve(notes.size());
+  for (const NoteUtils::DisplayNote& note : notes) {
+    if (!noteIntersectsWindow(note.startTick, note.endTick, windowStart, windowLength,
+                              loopLength)) {
+      continue;
+    }
+    filtered.push_back(note);
+  }
+  return filtered;
+}
+
 uint32_t resolveCenteredWindowStart(uint32_t playheadTick, uint32_t windowLength,
                                     uint32_t loopLength) {
   if (loopLength == 0 || windowLength == 0) {

@@ -65,6 +65,14 @@ inline bool displayNoteInfoChanged(const DisplayNoteInfoSnapshot& prior,
 
 inline int filteredDisplayNoteIndexForSelection(
     const EditorSelection& selection, const std::vector<NoteUtils::DisplayNote>& notes) {
+    if (!editorSelectionHasNote(selection)) {
+        return -1;
+    }
+    const int byBracket = filteredDisplayNoteIndexForNoteIdAndStart(
+        notes, selection.primaryNote, selection.bracketTick);
+    if (byBracket >= 0) {
+        return byBracket;
+    }
     return filteredDisplayNoteIndexForNoteId(notes, selection.primaryNote);
 }
 

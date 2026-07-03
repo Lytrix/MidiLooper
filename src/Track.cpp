@@ -22,6 +22,7 @@
 #include "Utils/MemoryMonitor.h"
 #include "Utils/HotPathTelemetry.h"
 #include "Utils/LoopStopFinalize.h"
+#include "Utils/LoopEventValidation.h"
 #include "Utils/NoteUtils.h"
 #include "DisplayManager.h"
 #include "EditManager.h"
@@ -35,6 +36,15 @@ MidiEventVec& Track::editAwareMidiEvents() {
 
 const MidiEventVec& Track::editAwareMidiEvents() const {
   return editManager.editMidiEvents(*this);
+}
+
+void Track::invalidateCaches() {
+  Loop& loop = getActiveLoop();
+  loop.invalidateCaches();
+  loop.playbackOrderDirty = true;
+  if (editManager.isNoteEditActive()) {
+    editManager.bumpSessionPreviewRevision();
+  }
 }
 
 namespace {
@@ -128,12 +138,23 @@ void reanchorPlaybackIndex(Loop& loop, const MidiEventVec& mergedEvents, const P
   loop.nextEventIndex = static_cast<uint16_t>(idx);
 }
 
-void ensurePlaybackWindowBuilt(Loop& loop, LoopPlaybackRuntime& runtime) {
-  if (runtime.primaryWindow.builtFromRevision == loop.playbackRevision) {
+void ensurePlaybackWindowBuilt(Track& track, Loop& loop, LoopPlaybackRuntime& runtime) {
+  // Projection boundary (linear-loop-tick-storage): mergedEvents are read-only input to
+  // playback order + MIDI send. NOTE_EDIT uses session store (Tier 2) — verification only;
+  // no overlay merge. See loop-wrap-projection spec and tasks.md §2.4.
+  const bool noteEditPreview = editManager.isNoteEditActive();
+  const uint32_t windowRevision = noteEditPreview ? editManager.sessionPreviewRevision()
+                                                    : loop.playbackRevision;
+  if (runtime.primaryWindow.builtFromRevision == windowRevision) {
     return;
   }
-  loop.mergeActiveCapturePasses(runtime.primaryWindow.mergedEvents);
-  runtime.primaryWindow.builtFromRevision = loop.playbackRevision;
+  if (noteEditPreview) {
+    const MidiEventVec& preview = editManager.sessionMidiEvents();
+    runtime.primaryWindow.mergedEvents.assign(preview.begin(), preview.end());
+  } else {
+    loop.mergeActiveCapturePasses(runtime.primaryWindow.mergedEvents);
+  }
+  runtime.primaryWindow.builtFromRevision = windowRevision;
   runtime.primaryWindow.effectiveWindowBars = Config::PLAYBACK_WINDOW_MAX_BARS;
   loop.playbackOrderDirty = true;
 }
@@ -487,11 +508,19 @@ void Track::validateAndCleanupMidiEvents(uint32_t openTailCloseTick) {
     loop.mergeActiveCapturePasses(materializedEvents);
     const size_t publishedBefore = materializedEvents.size();
     if (materializedEvents.empty()) return;
+
+    const LoopEventValidation::LoopEventValidationResult invariantResult =
+        LoopEventValidation::validateLoopEvents(materializedEvents, loop.loopLengthTicks,
+                                                LoopEventValidation::kCanonicalInvariantMask);
+    if (!invariantResult.passed) {
+        logger.log(CAT_MIDI, LOG_WARNING,
+                   "MIDI idle validate: non-canonical storage (check=%u); orphan repair only",
+                   static_cast<unsigned>(invariantResult.firstFailure));
+    }
     
     // Map to track active notes: key = (note, channel), value = note-on event index
     std::unordered_map<std::pair<uint8_t, uint8_t>, size_t, PairHash> activeNotes;
     std::vector<bool> eventsToKeep(materializedEvents.size(), true);
-    std::vector<MidiEvent> syntheticNoteOffs;
     int orphanedCount = 0;
     
     // Sort events by tick to ensure proper order
@@ -568,40 +597,15 @@ void Track::validateAndCleanupMidiEvents(uint32_t openTailCloseTick) {
         }
     }
     
-    // Check for remaining active notes (note-on without note-off)
+    // Remaining open note-ons: defer to normalize at capture/edit commit (no synth insert on idle).
     for (const auto& pair : activeNotes) {
-        size_t index = pair.second;
-        const MidiEvent& noteOn = materializedEvents[index];
-        if (loop.loopLengthTicks > 0) {
-            uint32_t closeTick = loop.loopLengthTicks - 1;
-            if (openTailCloseTick != UINT32_MAX) {
-                closeTick = std::min(openTailCloseTick, loop.loopLengthTicks - 1);
-                if (closeTick < noteOn.tick) {
-                    closeTick = loop.loopLengthTicks - 1;
-                }
-            }
-
-            syntheticNoteOffs.push_back(
-                MidiEvent::NoteOff(closeTick, noteOn.channel, noteOn.data.noteData.note, 0));
-            if (openTailCloseTick != UINT32_MAX) {
-                logger.log(CAT_MIDI, LOG_INFO,
-                          "Inserted synthetic note-off at stop playhead: note %d, channel %d, tick %lu",
-                          noteOn.data.noteData.note, noteOn.channel, closeTick);
-            } else {
-                logger.log(CAT_MIDI, LOG_INFO,
-                          "Inserted synthetic note-off for open tail note: note %d, channel %d, tick %lu",
-                          noteOn.data.noteData.note, noteOn.channel, closeTick);
-            }
-        } else {
-            // Loop length is not finalized yet (first record-stop path). Keep this tail
-            // note now; a later validation pass with known loop length will close it.
-            logger.log(CAT_MIDI, LOG_INFO,
-                      "Deferred open tail note cleanup (loop length unknown): note %d, channel %d, tick %lu",
-                      noteOn.data.noteData.note, noteOn.channel, noteOn.tick);
-        }
+        const MidiEvent& noteOn = materializedEvents[pair.second];
+        logger.log(CAT_MIDI, LOG_INFO,
+                  "Deferred open tail (idle validate, no synth insert): note %d, channel %d, tick %lu",
+                  noteOn.data.noteData.note, noteOn.channel, noteOn.tick);
     }
     
-    // Second pass: handle loop wrapping for remaining unmatched notes
+    // Second pass: log wrapped pairs still in storage (normalize at commit converts these).
     if (loop.loopLengthTicks > 0) {
         activeNotes.clear();
         
@@ -638,18 +642,15 @@ void Track::validateAndCleanupMidiEvents(uint32_t openTailCloseTick) {
         }
     }
     
-    // Remove orphaned events and append synthetic open-tail note-offs.
-    if (orphanedCount > 0 || !syntheticNoteOffs.empty()) {
+    // Remove orphaned events only (no synthetic note-off insert — normalize at commit).
+    if (orphanedCount > 0) {
         MidiEventVec cleanedEvents;
-        cleanedEvents.reserve(materializedEvents.size() - orphanedCount + syntheticNoteOffs.size());
+        cleanedEvents.reserve(materializedEvents.size() - orphanedCount);
         
         for (size_t i = 0; i < materializedEvents.size(); i++) {
             if (eventsToKeep[i]) {
                 cleanedEvents.push_back(materializedEvents[i]);
             }
-        }
-        for (const auto& evt : syntheticNoteOffs) {
-            cleanedEvents.push_back(evt);
         }
         std::sort(cleanedEvents.begin(), cleanedEvents.end(),
                   [](const MidiEvent& a, const MidiEvent& b) {
@@ -673,8 +674,8 @@ void Track::validateAndCleanupMidiEvents(uint32_t openTailCloseTick) {
         invalidateCaches();
         
         logger.log(CAT_MIDI, LOG_INFO, 
-                  "MIDI validation complete: removed %d orphaned events, inserted %d synthetic note-offs, %d events remaining",
-                  orphanedCount, (int)syntheticNoteOffs.size(), (int)cleanedEvents.size());
+                  "MIDI validation complete: removed %d orphaned events, %d events remaining",
+                  orphanedCount, (int)cleanedEvents.size());
     } else {
         logger.log(CAT_MIDI, LOG_INFO, 
                   "MIDI validation complete: no orphaned events found, %d events total",
@@ -1561,7 +1562,7 @@ void Track::recordMidiEvents(midi::MidiType type, byte channel, byte data1, byte
 void Track::rebuildPlaybackOrder() {
   Loop& loop = getActiveLoop();
   LoopPlaybackRuntime& runtime = playbackRuntime.slot(activeLoopIndex);
-  ensurePlaybackWindowBuilt(loop, runtime);
+  ensurePlaybackWindowBuilt(*this, loop, runtime);
   ::rebuildPlaybackOrder(loop, runtime.primaryWindow.mergedEvents);
 }
 
@@ -1577,7 +1578,7 @@ void Track::playMidiEvents(uint32_t currentTick, bool isAudible) {
     runtime.cursor.syncRevision(loop.playbackRevision, playbackGeneration);
   }
 
-  ensurePlaybackWindowBuilt(loop, runtime);
+  ensurePlaybackWindowBuilt(*this, loop, runtime);
   const MidiEventVec& mergedEvents = runtime.primaryWindow.mergedEvents;
   if (mergedEvents.empty()) {
     return;
@@ -1696,7 +1697,7 @@ void Track::playMidiEventsForSlot(uint8_t slotIndex, uint32_t currentTick, bool 
     runtime.cursor.syncRevision(loop.playbackRevision, playbackGeneration);
   }
 
-  ensurePlaybackWindowBuilt(loop, runtime);
+  ensurePlaybackWindowBuilt(*this, loop, runtime);
   const MidiEventVec& mergedEvents = runtime.primaryWindow.mergedEvents;
   if (mergedEvents.empty()) {
     return;

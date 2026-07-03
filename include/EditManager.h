@@ -116,6 +116,8 @@ public:
     void syncNoteEditFocusLastFromSessionStore(Track& track);
     MidiEventVec& sessionMidiEvents();
     const MidiEventVec& sessionMidiEvents() const;
+    void bumpSessionPreviewRevision();
+    uint32_t sessionPreviewRevision() const { return sessionPreviewRevision_; }
 
     /// Returns session store during note edit, else loop materialized events.
     MidiEventVec& editMidiEvents(Track& track);
@@ -203,6 +205,7 @@ private:
     NoteEditSessionState sessionState;
     NoteEditKind lastPushedGeometryKind_ = NoteEditKind::Select;
     bool encoderCycleNeedsAnchor_ = false;
+    uint32_t sessionPreviewRevision_ = 0;
     // Add more states as needed
     
     // EditModeManager state
