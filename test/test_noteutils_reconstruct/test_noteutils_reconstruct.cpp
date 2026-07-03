@@ -140,8 +140,8 @@ void test_reconstruct_adjacent_same_pitch_boundary_order() {
     badOrder.push_back(MidiEvent::NoteOff(1160, 5, 67, 0));
     auto corrupted = NoteUtils::reconstructNotes(badOrder, loopLength, false);
     TEST_ASSERT_EQUAL(2u, corrupted.size());
-    assert_has_note(corrupted, 67, 488, 488, 100);
-    assert_has_note(corrupted, 67, 392, 1160, 100);
+    assert_has_note(corrupted, 67, 392, 488, 100);
+    assert_has_note(corrupted, 67, 488, 1160, 100);
 
     NoteUtils::ensureNoteOffsBeforeNoteOnsAtTick(badOrder, 67, 488);
     auto fixed = NoteUtils::reconstructNotes(badOrder, loopLength, false);
@@ -165,6 +165,79 @@ void test_reconstruct_record_and_overdub_pitch_ranges() {
     assert_has_note(notes, 48, 1535, 1535, 100);
 }
 
+static void push_wrapped_lane_note(MidiEventVec& ev, uint8_t pitch, NoteId noteId) {
+    constexpr uint32_t kLoopLength = 1536;
+    constexpr uint32_t kStart = 1499;
+    constexpr uint32_t kLinearOff = 1595;
+  MidiEvent on = MidiEvent::NoteOn(kStart, 1, pitch, 100);
+  on.noteId = noteId;
+  ev.push_back(on);
+  MidiEvent off = MidiEvent::NoteOff(kLinearOff, 1, pitch, 0);
+  off.noteId = noteId;
+  ev.push_back(off);
+  (void)kLoopLength;
+}
+
+static void assert_wrapped_lane_intact(const std::vector<NoteUtils::DisplayNote>& notes,
+                                       uint8_t pitch) {
+  constexpr uint32_t kLoopLength = 1536;
+  assert_has_note(notes, pitch, 1499, kLoopLength - 1, 100);
+  assert_has_note(notes, pitch, 0, 59, 100);
+}
+
+void test_reconstruct_neighbor_wrapped_lanes_after_mover_sort() {
+  constexpr uint32_t kLoopLength = 1536;
+  MidiEventVec ev;
+  push_wrapped_lane_note(ev, 54, 54);
+  push_wrapped_lane_note(ev, 55, 55);
+  push_wrapped_lane_note(ev, 56, 56);
+
+  for (auto& evt : ev) {
+    if (evt.isNoteOn() && evt.data.noteData.note == 55) {
+      evt.tick = 1451;
+    }
+    if (evt.isNoteOff() && evt.data.noteData.note == 55) {
+      evt.tick = 1547;
+    }
+  }
+  NoteUtils::sortMidiEventsChronologically(ev);
+
+  auto notes = NoteUtils::reconstructNotes(ev, kLoopLength, false);
+  assert_wrapped_lane_intact(notes, 54);
+  assert_wrapped_lane_intact(notes, 56);
+
+  for (auto& evt : ev) {
+    if (evt.isNoteOn() && evt.data.noteData.note == 55) {
+      evt.tick = 1403;
+    }
+    if (evt.isNoteOff() && evt.data.noteData.note == 55) {
+      evt.tick = 1499;
+    }
+  }
+  NoteUtils::sortMidiEventsChronologically(ev);
+  notes = NoteUtils::reconstructNotes(ev, kLoopLength, false);
+  assert_wrapped_lane_intact(notes, 54);
+  assert_wrapped_lane_intact(notes, 56);
+}
+
+void test_reconstruct_duplicate_pitch_non_overlapping_spans() {
+    constexpr uint32_t loopLength = 1536;
+    MidiEventVec ev;
+    MidiEvent earlyOn = MidiEvent::NoteOn(24, 1, 32, 100);
+    earlyOn.noteId = 10;
+    ev.push_back(earlyOn);
+    MidiEvent lateOn = MidiEvent::NoteOn(1487, 1, 32, 100);
+    lateOn.noteId = 32;
+    ev.push_back(lateOn);
+    ev.push_back(MidiEvent::NoteOff(47, 1, 32, 0));
+    ev.push_back(MidiEvent::NoteOff(1579, 1, 32, 0));
+    auto notes = NoteUtils::reconstructNotes(ev, loopLength, false);
+    TEST_ASSERT_EQUAL(3u, notes.size());
+    assert_has_note(notes, 32, 24, 47, 100);
+    assert_has_note(notes, 32, 1487, loopLength - 1, 100);
+    assert_has_note(notes, 32, 0, 43, 100);
+}
+
 int main(int /*argc*/, char** /*argv*/) {
     UNITY_BEGIN();
     RUN_TEST(test_reconstruct_empty_loop_yields_empty);
@@ -179,5 +252,7 @@ int main(int /*argc*/, char** /*argv*/) {
     RUN_TEST(test_reconstruct_wrap_pair_blocked_by_intervening_note_on);
     RUN_TEST(test_reconstruct_adjacent_same_pitch_boundary_order);
     RUN_TEST(test_reconstruct_record_and_overdub_pitch_ranges);
+    RUN_TEST(test_reconstruct_duplicate_pitch_non_overlapping_spans);
+    RUN_TEST(test_reconstruct_neighbor_wrapped_lanes_after_mover_sort);
     return UNITY_END();
 }

@@ -260,6 +260,16 @@ NoteUtils::CachedNoteList::getNotes(const MidiEventVec& midiEvents, uint32_t loo
 
 namespace {
 
+int findActiveNoteOnIndexForOff(const std::vector<NoteUtils::DisplayNote>& stack,
+                                uint32_t pairingOffTick) {
+  for (int stackIndex = static_cast<int>(stack.size()) - 1; stackIndex >= 0; --stackIndex) {
+    if (stack[static_cast<size_t>(stackIndex)].startTick < pairingOffTick) {
+      return stackIndex;
+    }
+  }
+  return -1;
+}
+
 template <typename NoteVector>
 NoteVector reconstructNotesImpl(const MidiEventVec& midiEvents, uint32_t loopLength,
                                 bool verboseLog) {
@@ -377,8 +387,30 @@ NoteVector reconstructNotesImpl(const MidiEventVec& midiEvents, uint32_t loopLen
                 continue;
             }
             
-            // Complete the most recent note-on for this pitch
-            DisplayNote& note = activeNoteStacks[pitch].back();
+            // Pair note-off: prefer LIFO when stack top started before this off; otherwise
+            // match the latest open note-on with start < off (duplicate pitch lanes); if none,
+            // fall back to stack top for wrap-head pairing (off before on in loop time).
+            const uint32_t pairingOffTick = offWasBeyondLoop ? evt.tick : noteOffTick;
+            std::vector<DisplayNote>& stack = activeNoteStacks[pitch];
+            int pairIndex = -1;
+            if (!stack.empty() && stack.back().startTick < pairingOffTick) {
+                pairIndex = static_cast<int>(stack.size()) - 1;
+            } else {
+                pairIndex = findActiveNoteOnIndexForOff(stack, pairingOffTick);
+                if (pairIndex < 0 && !stack.empty()) {
+                    pairIndex = static_cast<int>(stack.size()) - 1;
+                }
+            }
+            if (pairIndex < 0) {
+                if (logDetails) {
+                    logger.log(CAT_TRACK, LOG_DEBUG,
+                               "Note-off without matching note-on: pitch=%d, off=%lu", pitch,
+                               pairingOffTick);
+                }
+                continue;
+            }
+
+            DisplayNote& note = stack[static_cast<size_t>(pairIndex)];
             if (!offWasBeyondLoop && noteOffTick == loopLength - 1 &&
                 note.startTick >= tailStart &&
                 shouldDeferLoopEndOff(midiEvents, eventIndex, pitch, evt.channel, note.startTick,
@@ -391,10 +423,13 @@ NoteVector reconstructNotesImpl(const MidiEventVec& midiEvents, uint32_t loopLen
                 continue;
             }
 
-            if (!offWasBeyondLoop && noteOffTick < note.startTick &&
+            const bool allowWrapSplitForBeyondLoopOff =
+                offWasBeyondLoop && note.startTick >= tailStart && tailStart > 0;
+            if (noteOffTick < note.startTick &&
                 NoteUtils::isPreferredWrapTailForHeadOff(note.startTick, noteOffTick, midiEvents, pitch,
                                                          evt.channel, loopLength) &&
-                note.startTick >= tailStart) {
+                note.startTick >= tailStart &&
+                (!offWasBeyondLoop || allowWrapSplitForBeyondLoopOff)) {
                 DisplayNote tailSeg = note;
                 tailSeg.endTick = loopLength - 1;
                 notes.push_back(tailSeg);
@@ -412,7 +447,7 @@ NoteVector reconstructNotesImpl(const MidiEventVec& midiEvents, uint32_t loopLen
                                pitch, note.startTick, loopLength - 1, noteOffTick);
                 }
 
-                activeNoteStacks[pitch].pop_back();
+                stack.erase(stack.begin() + static_cast<std::ptrdiff_t>(pairIndex));
                 continue;
             }
 
@@ -424,7 +459,7 @@ NoteVector reconstructNotesImpl(const MidiEventVec& midiEvents, uint32_t loopLen
             }
             
             notes.push_back(note);
-            activeNoteStacks[pitch].pop_back();
+            stack.erase(stack.begin() + static_cast<std::ptrdiff_t>(pairIndex));
         }
     }
 
@@ -610,6 +645,17 @@ bool NoteUtils::notesOverlap(uint32_t start1, uint32_t end1, uint32_t start2, ui
         return (start1 < unwrappedEnd2) || (start2 < end1);
     }
     return (start1 < unwrappedEnd2) || (start2 < unwrappedEnd1);
+}
+
+void NoteUtils::sortMidiEventsChronologically(MidiEventVec& midiEvents) {
+    std::sort(midiEvents.begin(), midiEvents.end(), [](const MidiEvent& a, const MidiEvent& b) {
+        if (a.tick != b.tick) {
+            return a.tick < b.tick;
+        }
+        const int aOrder = a.isNoteOff() ? 0 : (a.isNoteOn() ? 1 : 2);
+        const int bOrder = b.isNoteOff() ? 0 : (b.isNoteOn() ? 1 : 2);
+        return aOrder < bOrder;
+    });
 }
 
 void NoteUtils::orderSamePitchNoteOffsForLifo(MidiEventVec& midiEvents, uint8_t channel,

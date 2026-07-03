@@ -4,6 +4,7 @@
 #include "NoteEditFocus.h"
 
 #include <algorithm>
+#include <unordered_set>
 
 #include "Utils/NoteMovementWrap.h"
 #include "Utils/LoopTickNormalize.h"
@@ -69,6 +70,104 @@ NoteBaseline baselineForDisplayNote(const NoteEditFocus& focus,
   return baselineFromDisplayNote(dn);
 }
 
+namespace {
+
+bool isDisplayWrappedBaseline(const NoteBaseline& baseline) {
+  return baseline.endTick < baseline.startTick;
+}
+
+}  // namespace
+
+bool isPlausibleStorageSpan(uint32_t startTick, uint32_t endTick, uint32_t loopLength) {
+  if (loopLength == 0) {
+    return endTick > startTick;
+  }
+  if (endTick <= startTick) {
+    return endTick + loopLength > startTick;
+  }
+  const uint32_t length = endTick - startTick;
+  if (length > loopLength) {
+    return false;
+  }
+  if (endTick <= loopLength) {
+    return true;
+  }
+  return startTick > loopLength / 2 && endTick <= startTick + loopLength;
+}
+
+bool isInflatedDisplaySpan(const NoteUtils::DisplayNote& dn, uint32_t loopLength) {
+  if (loopLength == 0 || dn.endTick < dn.startTick) {
+    return dn.endTick < dn.startTick;
+  }
+  return (dn.endTick - dn.startTick) > loopLength / 2;
+}
+
+NoteBaseline linearBaselineForOverlapRestore(const NoteEditFocus& focus, const OverlapNote& entry,
+                                             MidiEventVec* sessionEvents, uint8_t channel) {
+  (void)sessionEvents;
+  (void)channel;
+  NoteBaseline baseline = entry.baseline;
+  if (entry.noteId == kInvalidNoteId) {
+    return baseline;
+  }
+  const auto mapIt = focus.baselineMap.find(entry.noteId);
+  if (mapIt == focus.baselineMap.end() ||
+      mapIt->second.endTick < mapIt->second.startTick) {
+    return baseline;
+  }
+  if (mapIt->second.startTick != baseline.startTick) {
+    return baseline;
+  }
+  if (entry.state == OverlapNoteStoreState::Hidden) {
+    if (isDisplayWrappedBaseline(baseline)) {
+      baseline = mapIt->second;
+    }
+    return baseline;
+  }
+  if (entry.state == OverlapNoteStoreState::Shortened) {
+    baseline = mapIt->second;
+    if (mapIt->second.endTick > entry.shortenedEndTick) {
+      baseline.endTick = mapIt->second.endTick;
+    }
+    return baseline;
+  }
+  baseline = mapIt->second;
+  return baseline;
+}
+
+bool resolveLinearNoteSpanForOverlap(const NoteEditFocus& focus, MidiEventVec& events,
+                                     uint8_t channel, const NoteUtils::DisplayNote& dn,
+                                     NoteBaseline& out, uint32_t loopLength) {
+  const NoteId noteId = findBaselineNoteIdForDisplay(focus, dn);
+  if (noteId != kInvalidNoteId &&
+      findLinearNoteSpanForNoteId(events, noteId, channel, out, dn.startTick, loopLength)) {
+    return true;
+  }
+  if (noteId != kInvalidNoteId &&
+      findLinearNoteSpanForNoteId(events, noteId, channel, out, UINT32_MAX, loopLength)) {
+    return true;
+  }
+  if (noteId != kInvalidNoteId) {
+    const auto mapIt = focus.baselineMap.find(noteId);
+    if (mapIt != focus.baselineMap.end() &&
+        mapIt->second.endTick >= mapIt->second.startTick &&
+        mapIt->second.pitch == dn.note && mapIt->second.startTick == dn.startTick &&
+        (loopLength == 0 ||
+         isPlausibleStorageSpan(mapIt->second.startTick, mapIt->second.endTick, loopLength))) {
+      out = mapIt->second;
+      return true;
+    }
+  }
+  if (dn.endTick >= dn.startTick &&
+      (loopLength == 0 || !isInflatedDisplaySpan(dn, loopLength)) &&
+      (loopLength == 0 ||
+       isPlausibleStorageSpan(dn.startTick, dn.endTick, loopLength))) {
+    out = baselineFromDisplayNote(dn);
+    return true;
+  }
+  return false;
+}
+
 uint32_t overlapNoteEffectiveEnd(const OverlapNote& entry) {
   if (entry.state == OverlapNoteStoreState::Shortened) {
     return entry.shortenedEndTick;
@@ -87,10 +186,25 @@ void rebuildNoteEditFocusFromStore(NoteEditFocus& focus, const MidiEventVec& loo
 
   const std::vector<NoteUtils::DisplayNote> notes =
       NoteUtils::reconstructNotes(loopMidiEvents, loopLength, false);
+  std::unordered_set<NoteId> noteIds;
   for (const NoteUtils::DisplayNote& dn : notes) {
     if (dn.noteId != kInvalidNoteId) {
-      focus.baselineMap[dn.noteId] = baselineFromDisplayNote(dn);
+      noteIds.insert(dn.noteId);
     }
+  }
+  MidiEventVec mutableEvents = loopMidiEvents;
+  for (NoteId noteId : noteIds) {
+    NoteBaseline linear;
+    if (findLinearNoteSpanForNoteId(mutableEvents, noteId, channel, linear, UINT32_MAX,
+                                    loopLength)) {
+      focus.baselineMap[noteId] = linear;
+    }
+  }
+  for (const NoteUtils::DisplayNote& dn : notes) {
+    if (dn.noteId == kInvalidNoteId || focus.baselineMap.count(dn.noteId) > 0) {
+      continue;
+    }
+    focus.baselineMap[dn.noteId] = baselineFromDisplayNote(dn);
   }
 
   if (selectedNoteIdx < 0 || selectedNoteIdx >= static_cast<int>(notes.size())) {
@@ -99,9 +213,9 @@ void rebuildNoteEditFocusFromStore(NoteEditFocus& focus, const MidiEventVec& loo
 
   const NoteUtils::DisplayNote& selected = notes[static_cast<size_t>(selectedNoteIdx)];
   focus.movingNoteId = selected.noteId;
-  MidiEventVec mutableEvents = loopMidiEvents;
   NoteBaseline linearBaseline;
-  if (findLinearNoteSpanForNoteId(mutableEvents, selected.noteId, channel, linearBaseline)) {
+  if (findLinearNoteSpanForNoteId(mutableEvents, selected.noteId, channel, linearBaseline,
+                                  UINT32_MAX, loopLength)) {
     focus.commitBaseline = linearBaseline;
   } else {
     focus.commitBaseline = baselineFromDisplayNote(selected);
@@ -190,10 +304,75 @@ MidiEvent* findLinearOffForNoteOnLifo(MidiEventVec& events, MidiEvent* noteOnEve
   return nullptr;
 }
 
+MidiEvent* findPlausibleOffForNoteOn(MidiEventVec& events, const MidiEvent& noteOn,
+                                     uint32_t loopLength) {
+  const uint8_t pitch = noteOn.data.noteData.note;
+  const uint32_t startTick = noteOn.tick;
+  MidiEvent* nearestInLoop = nullptr;
+  MidiEvent* nearestBeyondLoop = nullptr;
+  for (auto& evt : events) {
+    if (!evt.isNoteOff() || evt.data.noteData.note != pitch || evt.tick <= startTick) {
+      continue;
+    }
+    if (!isPlausibleStorageSpan(startTick, evt.tick, loopLength)) {
+      continue;
+    }
+    if (evt.tick <= loopLength) {
+      if (nearestInLoop == nullptr || evt.tick < nearestInLoop->tick) {
+        nearestInLoop = &evt;
+      }
+    } else if (nearestBeyondLoop == nullptr || evt.tick < nearestBeyondLoop->tick) {
+      nearestBeyondLoop = &evt;
+    }
+  }
+  if (nearestInLoop != nullptr && nearestBeyondLoop != nullptr && startTick > loopLength / 2) {
+    return nearestBeyondLoop;
+  }
+  if (nearestInLoop != nullptr) {
+    return nearestInLoop;
+  }
+  return nearestBeyondLoop;
+}
+
 }  // namespace
 
+MidiEvent* findLinearOffForNoteId(MidiEventVec& events, const MidiEvent& noteOn, NoteId noteId,
+                                  uint32_t loopLength) {
+  if (noteId == kInvalidNoteId) {
+    return nullptr;
+  }
+  MidiEvent* farthestOff = nullptr;
+  for (auto& evt : events) {
+    if (!evt.isNoteOff() || evt.noteId != noteId || evt.tick <= noteOn.tick) {
+      continue;
+    }
+    if (loopLength > 0 && !isPlausibleStorageSpan(noteOn.tick, evt.tick, loopLength)) {
+      continue;
+    }
+    if (farthestOff == nullptr || evt.tick > farthestOff->tick) {
+      farthestOff = &evt;
+    }
+  }
+  if (farthestOff != nullptr) {
+    return farthestOff;
+  }
+  MidiEvent* mutableOn = nullptr;
+  for (auto& evt : events) {
+    if (evt.noteId == noteId && evt.isNoteOn() && evt.data.noteData.velocity > 0 &&
+        evt.tick == noteOn.tick && evt.data.noteData.note == noteOn.data.noteData.note) {
+      mutableOn = &evt;
+      break;
+    }
+  }
+  if (mutableOn == nullptr) {
+    return nullptr;
+  }
+  return findLinearOffForNoteOnLifo(events, mutableOn, noteOn.data.noteData.note);
+}
+
 bool findLinearNoteSpanForNoteId(MidiEventVec& events, NoteId noteId, uint8_t channel,
-                                 NoteBaseline& outBaseline, uint32_t preferredStartTick) {
+                                 NoteBaseline& outBaseline, uint32_t preferredStartTick,
+                                 uint32_t loopLength) {
   if (noteId == kInvalidNoteId) {
     return false;
   }
@@ -207,8 +386,17 @@ bool findLinearNoteSpanForNoteId(MidiEventVec& events, NoteId noteId, uint8_t ch
     if (preferredStartTick != UINT32_MAX && evt.tick != preferredStartTick) {
       return false;
     }
-    MidiEvent* noteOffEvent =
-        findLinearOffForNoteOnLifo(events, &evt, evt.data.noteData.note);
+    MidiEvent* noteOffEvent = nullptr;
+    if (evt.noteId != kInvalidNoteId) {
+      noteOffEvent = findLinearOffForNoteId(events, evt, evt.noteId, loopLength);
+    }
+    if (noteOffEvent == nullptr) {
+      if (loopLength > 0) {
+        noteOffEvent = findPlausibleOffForNoteOn(events, evt, loopLength);
+      } else {
+        noteOffEvent = findLinearOffForNoteOnLifo(events, &evt, evt.data.noteData.note);
+      }
+    }
     if (noteOffEvent == nullptr) {
       return false;
     }
@@ -216,6 +404,10 @@ bool findLinearNoteSpanForNoteId(MidiEventVec& events, NoteId noteId, uint8_t ch
     outBaseline.velocity = evt.data.noteData.velocity;
     outBaseline.startTick = evt.tick;
     outBaseline.endTick = noteOffEvent->tick;
+    if (loopLength > 0 &&
+        !isPlausibleStorageSpan(outBaseline.startTick, outBaseline.endTick, loopLength)) {
+      return false;
+    }
     return true;
   };
 
@@ -235,17 +427,18 @@ bool findLinearNoteSpanForNoteId(MidiEventVec& events, NoteId noteId, uint8_t ch
 }
 
 bool syncNoteEditFocusLinearFromSessionStore(NoteEditFocus& focus, MidiEventVec& events,
-                                            uint8_t channel) {
+                                            uint8_t channel, uint32_t loopLength) {
   if (!focus.active) {
     return false;
   }
   NoteBaseline linearSpan;
   if (focus.movingNoteId != kInvalidNoteId &&
       (findLinearNoteSpanForNoteId(events, focus.movingNoteId, channel, linearSpan,
-                                   focus.last.startTick) ||
+                                   focus.last.startTick, loopLength) ||
        findLinearNoteSpanForNoteId(events, focus.movingNoteId, channel, linearSpan,
-                                   focus.commitBaseline.startTick) ||
-       findLinearNoteSpanForNoteId(events, focus.movingNoteId, channel, linearSpan))) {
+                                   focus.commitBaseline.startTick, loopLength) ||
+       findLinearNoteSpanForNoteId(events, focus.movingNoteId, channel, linearSpan, UINT32_MAX,
+                                   loopLength))) {
     focus.last = linearSpan;
     focus.movingNoteRange.start = linearSpan.startTick;
     focus.movingNoteRange.end = linearSpan.endTick;
@@ -611,27 +804,7 @@ int filteredDisplayNoteIndexForNoteIdAndStart(const std::vector<NoteUtils::Displ
 
 int filteredDisplayNoteIndexForMovingNote(const std::vector<NoteUtils::DisplayNote>& filtered,
                                           NoteId noteId, uint32_t linearStartTick) {
-  if (noteId == kInvalidNoteId) {
-    return -1;
-  }
-  const int byStorageStart =
-      filteredDisplayNoteIndexForNoteIdAndStart(filtered, noteId, linearStartTick);
-  if (byStorageStart >= 0) {
-    return byStorageStart;
-  }
-  int bestIdx = -1;
-  uint32_t bestStart = 0;
-  for (int i = 0; i < static_cast<int>(filtered.size()); ++i) {
-    const NoteUtils::DisplayNote& dn = filtered[static_cast<size_t>(i)];
-    if (dn.noteId != noteId) {
-      continue;
-    }
-    if (dn.startTick >= bestStart) {
-      bestStart = dn.startTick;
-      bestIdx = i;
-    }
-  }
-  return bestIdx;
+  return filteredDisplayNoteIndexForNoteIdAndStart(filtered, noteId, linearStartTick);
 }
 
 EditPassVec buildPreCommitEditPasses(const NoteEditFocus& focus, uint8_t channel) {
