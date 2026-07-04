@@ -21,7 +21,7 @@ class ScenarioSpec:
 PRESET_SCENARIOS: dict[str, tuple[str, ...]] = {
     "base": ("base",),
     "edit_full": ("edit_record_prelude", "edit_full"),
-    "edit_minimal": ("edit_record_prelude", "edit_minimal"),
+    "edit_minimal": ("base", "edit_minimal"),
     "edit_overdub_during_note_edit": ("edit_overdub_during_note_edit",),
     "long_loop_display_window": ("long_loop_display_window",),
     "load_save_display": ("load_save_display",),
@@ -113,7 +113,7 @@ def _lazy_registry() -> dict[str, ScenarioSpec]:
         ),
         "edit_minimal": ScenarioSpec(
             scenario_id="edit_minimal",
-            description="Fast edit smoke: add/delete/move/length then exit",
+            description="Base 2-bar record seed then fast edit smoke (add/delete/move/length, exit)",
             run=run_edit_minimal_scenario,
             verify=verify_edit_minimal_scenario,
         ),

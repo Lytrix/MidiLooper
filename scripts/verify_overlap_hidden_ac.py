@@ -225,7 +225,7 @@ def check_ac2(selects: list[dict]) -> tuple[bool, str]:
 
 def check_ac3(lines: list[str]) -> tuple[bool, str]:
     delete_pat = re.compile(
-        r"Deleting note pitch=(\d+), start=(\d+), end=(\d+)"
+        r"Deleting note (?:noteId=\d+ )?pitch=(\d+), start=(\d+), end=(\d+)"
     )
     cl_before = re.compile(r"Edit committed ChangeLength start=8")
     deletes: list[tuple[int, int, int]] = []
@@ -271,7 +271,7 @@ def check_ac4(lines: list[str]) -> tuple[bool, str]:
 
 def check_ac5(lines: list[str]) -> tuple[bool, str]:
     delete_pat = re.compile(
-        r"Deleting note pitch=(\d+), start=(\d+), end=(\d+)"
+        r"Deleting note (?:noteId=\d+ )?pitch=(\d+), start=(\d+), end=(\d+)"
     )
     delete_line = None
     b_start: int | None = None

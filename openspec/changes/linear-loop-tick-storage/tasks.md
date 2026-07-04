@@ -40,7 +40,7 @@
 - [x] 2.1 **Canonical mutation** — `NoteMovementUtils` linear off writes; no `% loopLength` on storage mutation; no normalize mid-`moveNote`
 - [x] 2.2 **Dual normalize wiring** — `buildEditClosureNoteIds`; micro at `publishDependentFaderLatch`; macro `normalizeAll` at `commitAllPendingNoteEditActions`
 - [x] 2.3 **Set window fader range** — current: full-loop window; F1/F2 via `NoteEditLengthFaderMapping` `% loopLength` + `selectableDisplayNotesForEditUi` window filter (partial slide deferred §2.7)
-- [x] 2.4 **Playback verification** — Tier 2 comment in `ensurePlaybackWindowBuilt`; HITL §2.6 pending
+- [x] 2.4 **Playback verification** — Tier 2 session store in `ensurePlaybackWindowBuilt`; non-edit **`mergeMaterializedPassesWithCapture`**; HITL §2.6 pending
 - [x] 2.5 Native: 1344→1345 move preserves linear off@1536 at macro commit
 - [ ] 2.6 HITL: 152335 repro
 - [x] 2.6.1 **Focus linear ticks** — `syncNoteEditFocusLinearFromSessionStore` before pre-commit; move/length focus uses linear off; re-select baseline from session (fixes spurious `ChangeLength` on wrapped re-select)

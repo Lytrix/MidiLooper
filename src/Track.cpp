@@ -140,8 +140,9 @@ void reanchorPlaybackIndex(Loop& loop, const MidiEventVec& mergedEvents, const P
 
 void ensurePlaybackWindowBuilt(Track& track, Loop& loop, LoopPlaybackRuntime& runtime) {
   // Projection boundary (linear-loop-tick-storage): mergedEvents are read-only input to
-  // playback order + MIDI send. NOTE_EDIT uses session store (Tier 2) — verification only;
-  // no overlay merge. See loop-wrap-projection spec and tasks.md §2.4.
+  // playback order + MIDI send. NOTE_EDIT uses session store (Tier 2) — full replace, no
+  // materialized underlay. Outside NOTE_EDIT, merge materialized passes (takes + editPasses)
+  // plus live capture. See loop-wrap-projection spec.
   const bool noteEditPreview = editManager.isNoteEditActive();
   const uint32_t windowRevision = noteEditPreview ? editManager.sessionPreviewRevision()
                                                     : loop.playbackRevision;
@@ -152,7 +153,7 @@ void ensurePlaybackWindowBuilt(Track& track, Loop& loop, LoopPlaybackRuntime& ru
     const MidiEventVec& preview = editManager.sessionMidiEvents();
     runtime.primaryWindow.mergedEvents.assign(preview.begin(), preview.end());
   } else {
-    loop.mergeActiveCapturePasses(runtime.primaryWindow.mergedEvents);
+    loop.mergeMaterializedPassesWithCapture(runtime.primaryWindow.mergedEvents);
   }
   runtime.primaryWindow.builtFromRevision = windowRevision;
   runtime.primaryWindow.effectiveWindowBars = Config::PLAYBACK_WINDOW_MAX_BARS;

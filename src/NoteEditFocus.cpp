@@ -139,20 +139,11 @@ NOTE_EDIT_MEM NoteBaseline linearBaselineForOverlapRestore(const NoteEditFocus& 
 NOTE_EDIT_MEM bool resolveLinearNoteSpanForOverlap(const NoteEditFocus& focus, MidiEventVec& events,
                                      uint8_t channel, const NoteUtils::DisplayNote& dn,
                                      NoteBaseline& out, uint32_t loopLength) {
-  const NoteId noteId = findBaselineNoteIdForDisplay(focus, dn);
-  if (noteId != kInvalidNoteId &&
-      findLinearNoteSpanForNoteId(events, noteId, channel, out, dn.startTick, loopLength)) {
-    return true;
-  }
-  if (noteId != kInvalidNoteId &&
-      findLinearNoteSpanForNoteId(events, noteId, channel, out, UINT32_MAX, loopLength)) {
-    return true;
-  }
+  const NoteId noteId = dn.noteId != kInvalidNoteId ? dn.noteId
+                                                    : findBaselineNoteIdForDisplay(focus, dn);
   if (noteId != kInvalidNoteId) {
     const auto mapIt = focus.baselineMap.find(noteId);
     if (mapIt != focus.baselineMap.end() &&
-        mapIt->second.endTick >= mapIt->second.startTick &&
-        mapIt->second.pitch == dn.note && mapIt->second.startTick == dn.startTick &&
         (loopLength == 0 ||
          isPlausibleStorageSpan(mapIt->second.startTick, mapIt->second.endTick, loopLength))) {
       out = mapIt->second;
@@ -164,6 +155,14 @@ NOTE_EDIT_MEM bool resolveLinearNoteSpanForOverlap(const NoteEditFocus& focus, M
       (loopLength == 0 ||
        isPlausibleStorageSpan(dn.startTick, dn.endTick, loopLength))) {
     out = baselineFromDisplayNote(dn);
+    return true;
+  }
+  if (noteId != kInvalidNoteId &&
+      findLinearNoteSpanForNoteId(events, noteId, channel, out, dn.startTick, loopLength)) {
+    return true;
+  }
+  if (noteId != kInvalidNoteId &&
+      findLinearNoteSpanForNoteId(events, noteId, channel, out, UINT32_MAX, loopLength)) {
     return true;
   }
   return false;

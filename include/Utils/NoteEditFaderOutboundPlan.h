@@ -100,7 +100,7 @@ inline PlanFlags planForSelectDependentFromDelta(uint32_t priorBracketTick, int 
                                                uint32_t newBracketTick, int newNoteIdx) {
     (void)priorNoteIdx;
     if (newNoteIdx < 0) {
-        return planForSelectDependent(true, false);
+        return {};
     }
     if (newBracketTick != priorBracketTick) {
         return planForSelectDependent(true, true);
@@ -115,7 +115,7 @@ inline PlanFlags planForSelectDependentFromNoteIdChange(NoteId priorPrimary, Not
                                                       uint32_t priorBracketTick,
                                                       uint32_t newBracketTick) {
     if (newPrimary == kInvalidNoteId) {
-        return planForSelectDependent(true, false);
+        return {};
     }
     if (newBracketTick != priorBracketTick) {
         return planForSelectDependent(true, true);

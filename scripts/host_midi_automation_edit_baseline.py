@@ -116,8 +116,11 @@ RECORD_GATE_TICKS = 2 * TICKS_PER_16TH_STEP
 PITCHBEND_MIN = -8192
 PITCHBEND_MAX = 8191
 
-FADER_SELECT_CHANNEL_1BASED = 16  # Fader 1: note / empty-step selection only (PC1 + PB)
-FADER_MOVE_CHANNEL_1BASED = 15    # Fader 2: coarse position move (PC2 + PB)
+FADER_SELECT_CHANNEL_1BASED = 16  # Fader 1: note / empty-step selection (PC1 + PB) — MidiConfig::Fader::SELECT_CHANNEL
+FADER_COARSE_CHANNEL_1BASED = 14  # Fader 2: coarse position move (PC2 + PB) — MidiConfig::Fader::COARSE_CHANNEL
+FADER_FINE_CHANNEL_1BASED = 15    # Faders 3–4: CC2/CC3 — MidiConfig::Fader::FINE_CHANNEL
+# Legacy alias (do not use for fader 3/4 CC).
+FADER_MOVE_CHANNEL_1BASED = FADER_COARSE_CHANNEL_1BASED
 FADER_FINE_CC = 2
 FADER_PITCH_CC = 3
 
@@ -606,10 +609,10 @@ def _fader2_move_to_sixteenth_step(
     """Fader 2 only: move the currently selected note to target 16th step."""
     sixteenth = layout.sixteenth_step_for(fixture_step)
     num_steps = layout.sixteenth_steps
-    _send_program_change(out_port, FADER_MOVE_CHANNEL_1BASED, 2)
+    _send_program_change(out_port, FADER_COARSE_CHANNEL_1BASED, 2)
     pb = _pb_for_sixteenth_step(sixteenth, num_steps)
     out_port.send(
-        mido.Message("pitchwheel", channel=FADER_MOVE_CHANNEL_1BASED - 1, pitch=pb)
+        mido.Message("pitchwheel", channel=FADER_COARSE_CHANNEL_1BASED - 1, pitch=pb)
     )
     print(
         f"[edit-hitl] fader2 move fixture_step={fixture_step} "
@@ -641,6 +644,49 @@ def _create_note_at_bracket(
     out_port: mido.ports.BaseOutput, *, press_ms: int, gap_ms: int = 80
 ) -> None:
     _notelen_delete_or_create_note(out_port, press_ms=press_ms, gap_ms=gap_ms)
+
+
+def _wait_for_serial_line_match(
+    collector,
+    predicate,
+    *,
+    timeout_s: float = 4.0,
+    poll_s: float = 0.05,
+) -> bool:
+    """Poll serial capture until predicate(line) is true on a new line."""
+    deadline = time.monotonic() + max(timeout_s, 0.0)
+    seen = 0
+    while time.monotonic() < deadline:
+        lines = collector.snapshot()
+        for line in lines[seen:]:
+            if predicate(line):
+                return True
+        seen = len(lines)
+        time.sleep(poll_s)
+    return False
+
+
+def _wait_for_empty_step_at_tick(
+    collector,
+    *,
+    tick: int,
+    timeout_s: float = 4.0,
+    tick_tolerance: int = 0,
+) -> bool:
+    """Wait until firmware logs empty-step selection at storage tick."""
+
+    def _matches(line: str) -> bool:
+        if "selected empty step at tick" in line:
+            match = re.search(r"selected empty step at tick (\d+)", line)
+            if match and abs(int(match.group(1)) - tick) <= tick_tolerance:
+                return True
+        if "#DBG select_apply" in line and "note_idx=-1" in line:
+            match = re.search(r"bracket_tick=(\d+)", line)
+            if match and abs(int(match.group(1)) - tick) <= tick_tolerance:
+                return True
+        return False
+
+    return _wait_for_serial_line_match(collector, _matches, timeout_s=timeout_s)
 
 
 def _send_program_change(out_port: mido.ports.BaseOutput, channel_1based: int, program: int) -> None:
@@ -694,7 +740,7 @@ def _fader4_pitch_cc(out_port: mido.ports.BaseOutput, value: int) -> None:
     out_port.send(
         mido.Message(
             "control_change",
-            channel=FADER_MOVE_CHANNEL_1BASED - 1,
+            channel=FADER_FINE_CHANNEL_1BASED - 1,
             control=FADER_PITCH_CC,
             value=max(0, min(127, value)),
         )
@@ -803,30 +849,48 @@ def _wait_for_recording_start(
     *,
     baseline_reca: int,
     baseline_recording_transitions: int,
+    baseline_latest_state: Optional[str] = None,
     timeout_s: float,
+    serial_grace_s: float = 3.0,
     abort: Optional[RunAbort],
 ) -> bool:
     """Wait for capture evidence that record actually started.
 
     Never send a second record press on timeout — that toggles stop while recording.
+    After the primary timeout, keep polling for serial_grace_s so deferred PSRAM
+    capture flush or USB TX backlog can still deliver ST/RECA lines.
     """
-    deadline = time.monotonic() + max(timeout_s, 0.0)
-    while time.monotonic() < deadline:
-        if abort is not None and abort.check() is not None:
-            return False
-        lines = collector.snapshot()
+
+    def _recording_evidence(lines: list[str]) -> bool:
         if _count_reca_markers(lines) > baseline_reca:
             return True
         if any("Recording started" in line for line in lines):
             return True
-        transitions = _count_capture_transitions(lines)
+        latest = _latest_track_state(lines)
+        if latest == "RECORDING" and baseline_latest_state != "RECORDING":
+            return True
         recording_transitions = sum(
-            count for (from_state, to_state), count in transitions.items()
+            count
+            for (from_state, to_state), count in _count_capture_transitions(lines).items()
             if to_state == "RECORDING"
         )
-        if recording_transitions > baseline_recording_transitions:
+        return recording_transitions > baseline_recording_transitions
+
+    deadline = time.monotonic() + max(timeout_s, 0.0)
+    while time.monotonic() < deadline:
+        if abort is not None and abort.check() is not None:
+            return False
+        if _recording_evidence(collector.snapshot()):
             return True
         time.sleep(0.01)
+
+    grace_deadline = time.monotonic() + max(serial_grace_s, 0.0)
+    while time.monotonic() < grace_deadline:
+        if abort is not None and abort.check() is not None:
+            return False
+        if _recording_evidence(collector.snapshot()):
+            return True
+        time.sleep(0.02)
     return False
 
 
@@ -856,6 +920,8 @@ def _find_session_enter_anchor(lines: list[str]) -> Optional[int]:
     for i, line in enumerate(lines):
         if "EditSession opened editPass=0" in line:
             return i
+        if "Edit session: NOTE_EDIT" in line:
+            return i
     return None
 
 
@@ -867,14 +933,20 @@ def _verify_session_state_enter(lines: list[str]) -> dict[str, object]:
         issues.append("session_state:enter_log_missing")
         return {"ok": False, "issues": issues, "enter_index": None}
 
-    window = lines[anchor_idx : anchor_idx + 24]
+    window = lines[anchor_idx : anchor_idx + 32]
     if not any(_is_edit_enter_line(line) for line in window):
-        issues.append("session_state:enter_log_missing")
+        if not any("Edit session: NOTE_EDIT" in line for line in window):
+            issues.append("session_state:enter_log_missing")
 
     select_seen = False
     cycle_before_select = False
     for line in window:
-        if "Entered SELECT mode" in line or "edit mode program: 1" in line:
+        if (
+            "Entered SELECT mode" in line
+            or "edit mode program: 1" in line
+            or "Edit session: NOTE_EDIT" in line
+            or "entered note edit mode" in line
+        ):
             select_seen = True
         if not select_seen and "Note edit type cycled to kind=" in line:
             cycle_before_select = True
@@ -1110,8 +1182,6 @@ def _can_skip_clear_for_record(lines: list[str]) -> bool:
         return True
     if _serial_has_clear_ignored_empty(lines):
         return True
-    if not _serial_has_track_state(lines) and not _serial_suggests_loop_content(lines):
-        return True
     return False
 
 
@@ -1278,15 +1348,17 @@ def _ensure_recording_started(
     *,
     press_ms: int,
     state_sync_timeout_ms: int,
+    serial_grace_ms: int = 3000,
     abort: Optional[RunAbort],
 ) -> bool:
     """Arm then record: EMPTY -> ARMED (transport off), then ARMED -> RECORDING starts transport."""
     snap = serial_collector.snapshot()
     baseline_reca = _count_reca_markers(snap)
     baseline_recording_transitions = _recording_transition_baseline(snap)
+    baseline_latest_state = _latest_track_state(snap)
     state_counts = _count_capture_state_entries(snap)
     expected_recording_count = state_counts.get("RECORDING", 0) + 1
-    latest = _latest_track_state(snap)
+    latest = baseline_latest_state
     if latest not in (None, "EMPTY", "ARMED", "STOPPED"):
         print(
             f"[warn] Record precondition: expected EMPTY/ARMED/STOPPED before record press, "
@@ -1301,11 +1373,14 @@ def _ensure_recording_started(
     )
 
     timeout_s = state_sync_timeout_ms / 1000.0
+    grace_s = max(serial_grace_ms, 0) / 1000.0
     reached = _wait_for_recording_start(
         serial_collector,
         baseline_reca=baseline_reca,
         baseline_recording_transitions=baseline_recording_transitions,
+        baseline_latest_state=baseline_latest_state,
         timeout_s=timeout_s,
+        serial_grace_s=grace_s,
         abort=abort,
     )
     if reached:
@@ -1313,7 +1388,20 @@ def _ensure_recording_started(
         print(f"[edit-hitl] recording started (latest track state={latest})")
         return True
 
-    print("[warn] Record did not start; retrying record press (not yet in RECORDING)")
+    fresh = serial_collector.snapshot()
+    fresh_latest = _latest_track_state(fresh)
+    if fresh_latest == "RECORDING":
+        print(
+            "[edit-hitl] recording already active after first press "
+            "(latest track state=RECORDING; markers may have been missed)"
+        )
+        return True
+
+    print(
+        f"[warn] Record did not start within timeout "
+        f"(latest={fresh_latest}, serial_lines={len(fresh)}, "
+        f"reca={_count_reca_markers(fresh)}); retrying record press"
+    )
     _send_short_press(
         out_port,
         note=RECORD_BUTTON_NOTE,
@@ -1324,7 +1412,9 @@ def _ensure_recording_started(
         serial_collector,
         baseline_reca=baseline_reca,
         baseline_recording_transitions=baseline_recording_transitions,
+        baseline_latest_state=baseline_latest_state,
         timeout_s=timeout_s,
+        serial_grace_s=grace_s,
         abort=abort,
     )
     if not reached:
@@ -1456,6 +1546,51 @@ def _parse_moved_note_events(lines: list[str]) -> list[dict[str, int]]:
             continue
         pitch, start, end = (int(x) for x in match.groups())
         events.append({"pitch": pitch, "start": start, "end": end})
+    return events
+
+
+def _parse_created_32nd_note_events(lines: list[str]) -> list[dict[str, int]]:
+    """Parse create-note serial lines (noteId present on capture-serial builds)."""
+    events: list[dict[str, int]] = []
+    pattern = re.compile(
+        r"Created 32nd note \((?:noteId=(\d+), )?pitch=(\d+), tick=(\d+)-(\d+), length=(\d+)\)"
+    )
+    for line in lines:
+        match = pattern.search(line)
+        if not match:
+            continue
+        note_id_s, pitch_s, start_s, end_s, length_s = match.groups()
+        event = {
+            "pitch": int(pitch_s),
+            "start": int(start_s),
+            "end": int(end_s),
+            "length": int(length_s),
+        }
+        if note_id_s is not None:
+            event["note_id"] = int(note_id_s)
+        events.append(event)
+    return events
+
+
+def _parse_delete_note_events(lines: list[str]) -> list[dict[str, int]]:
+    """Parse delete-note serial lines (noteId present on capture-serial builds)."""
+    events: list[dict[str, int]] = []
+    pattern = re.compile(
+        r"Deleting note (?:noteId=(\d+) )?pitch=(\d+), start=(\d+), end=(\d+)"
+    )
+    for line in lines:
+        match = pattern.search(line)
+        if not match:
+            continue
+        note_id_s, pitch_s, start_s, end_s = match.groups()
+        event = {
+            "pitch": int(pitch_s),
+            "start": int(start_s),
+            "end": int(end_s),
+        }
+        if note_id_s is not None:
+            event["note_id"] = int(note_id_s)
+        events.append(event)
     return events
 
 
@@ -1782,7 +1917,7 @@ def _verify_m0_survives_warmup(
     issues: list[str] = []
     m0_tick = layout.step_to_tick.get(M0_STEP, M0_STEP * TICKS_PER_16TH_STEP)
     delete_re = re.compile(
-        rf"Deleting note pitch={M0_PITCH}, start=(\d+), end=(\d+)"
+        rf"Deleting note (?:noteId=\d+ )?pitch={M0_PITCH}, start=(\d+), end=(\d+)"
     )
     length_edit_started = False
     early_deletes: list[int] = []

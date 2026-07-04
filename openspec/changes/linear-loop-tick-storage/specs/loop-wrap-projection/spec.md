@@ -57,6 +57,40 @@ Phase 2 task §2.4 is **verification only** — confirm HITL that transaction ge
 - **WHEN** `commitAllPendingNoteEditActions` completes with `normalizeAll`
 - **THEN** session store is canonical and playback uses that store on subsequent loops
 
+#### Scenario: Add note audible before macro commit
+
+- **WHEN** NOTE_EDIT is active and the user creates a note in the live session store
+- **THEN** `sessionPreviewRevision_` advances so the playback window rebuilds
+- **AND** playback includes the new note pair on the next loop without exiting NOTE_EDIT
+
+### Requirement: Playback outside NOTE_EDIT uses materialized passes
+
+When NOTE_EDIT is **not** active, `ensurePlaybackWindowBuilt` SHALL build `mergedEvents` from **`Loop::mergeMaterializedPassesWithCapture`** — materialized capture passes plus active **`editPasses[]`**, merged with live capture when present — not capture passes alone.
+
+Rebuild SHALL remain keyed on **`loop.playbackRevision`** (cached until passes change).
+
+#### Scenario: Committed edit pass audible after edit exit
+
+- **GIVEN** a loop with active capture passes and at least one active **editPass** row that changes note geometry
+- **WHEN** transport plays outside NOTE_EDIT
+- **THEN** `mergedEvents` reflects the materialized edit overlay
+- **AND** playback is not limited to capture passes without **editPasses**
+
+#### Scenario: NOTE_EDIT still replaces playback source
+
+- **WHEN** NOTE_EDIT is active
+- **THEN** playback SHALL NOT call **`mergeMaterializedPassesWithCapture`** for the primary window
+- **AND** **`sessionMidiEvents()`** remains the sole playback source (Tier 2)
+
+### Requirement: Live store mutation bumps playback preview
+
+Any path that mutates **`NoteEditSession.store`** during NOTE_EDIT (move, length, pitch, add, delete) SHALL call **`Track::invalidateCaches()`** or **`EditManager::bumpSessionPreviewRevision()`** so **`sessionPreviewRevision_`** advances and the playback window rebuilds.
+
+#### Scenario: Move during edit refreshes audition
+
+- **WHEN** a geometry path updates the session store during NOTE_EDIT
+- **THEN** preview revision advances before the next **`playMidiEvents`** tick
+
 ### Requirement: Piano roll and editor window clipping
 
 Long-loop piano-roll window filtering and NOTE_EDIT window probes SHALL use projection-layer wrap semantics. Notes whose linear off extends past the window end SHALL still appear when a projected head segment intersects the window.

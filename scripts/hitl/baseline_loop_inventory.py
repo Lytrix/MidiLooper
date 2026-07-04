@@ -90,8 +90,34 @@ def base_report_loop_materialized(report: Mapping[str, Any] | None) -> bool:
     return True
 
 
+def base_report_record_seed_ok(report: Mapping[str, Any] | None) -> bool:
+    """True when base record-only produced a 2-bar loop (edit_minimal seed)."""
+    if report is None:
+        return False
+    stats = report.get("per_track_stats") or []
+    if not stats:
+        return False
+    row = stats[0]
+    config = base_preset_config(report)
+    min_notes = 7 if config.get("edit_record_fixture") else 32
+    if int(row.get("record_notes_sent", 0) or 0) < min_notes:
+        return False
+    if int(row.get("record_clock_pulses_seen", 0) or 0) < 192:
+        return False
+    transitions = (report.get("assertions") or {}).get("transition_checks") or []
+    for transition in transitions:
+        if transition.get("ok") is False:
+            return False
+    return True
+
+
 def base_report_usable_for_note_edit_sweep(report: Mapping[str, Any] | None) -> bool:
-    return base_report_ok(report) or base_report_loop_materialized(report)
+    if base_report_ok(report):
+        return True
+    config = base_preset_config(report)
+    if config.get("record_only"):
+        return base_report_record_seed_ok(report)
+    return base_report_loop_materialized(report)
 
 
 def _phase_clock_to_storage_tick(phase_clock: int) -> int:
@@ -236,5 +262,66 @@ def record_layout_from_base_seed(
         loop_start=0,
         loop_length=loop_length,
         step_to_tick={},
+        nav_slots=nav_slots,
+    )
+
+
+def record_layout_from_edit_fixture(
+    config: Mapping[str, Any],
+) -> "RecordLayout":
+    """Nav layout for EDIT_RECORD_FIXTURE (edit_minimal base seed)."""
+    from host_midi_automation_edit_baseline import (
+        EDIT_RECORD_FIXTURE,
+        TICKS_PER_BAR,
+        RecordLayout,
+        _build_fixture_step_to_tick,
+        _build_select_navigation_slots,
+    )
+
+    record_bars = int(config.get("record_bars", 2) or 2)
+    loop_length = record_bars * TICKS_PER_BAR
+    note_pairs = [(n.step * TICKS_PER_16TH_STEP, n.pitch) for n in EDIT_RECORD_FIXTURE]
+    return RecordLayout(
+        loop_start=0,
+        loop_length=loop_length,
+        step_to_tick=_build_fixture_step_to_tick(
+            note_pairs,
+            EDIT_RECORD_FIXTURE,
+            loop_length=loop_length,
+        ),
+        nav_slots=_build_select_navigation_slots(
+            note_pairs,
+            loop_length=loop_length,
+            loop_start=0,
+        ),
+    )
+
+
+def record_layout_for_base_seed(
+    lines: list[str],
+    config: Mapping[str, Any],
+) -> "RecordLayout":
+    from host_midi_automation_edit_baseline import (
+        EDIT_RECORD_FIXTURE,
+        RecordLayout,
+        _build_fixture_step_to_tick,
+        _build_select_navigation_slots,
+    )
+
+    loop_length, note_pairs = materialized_note_pairs_from_base_seed(lines, config)
+    nav_slots = _build_select_navigation_slots(
+        note_pairs, loop_length=loop_length, loop_start=0
+    )
+    step_to_tick: dict[int, int] = {}
+    if config.get("edit_record_fixture"):
+        step_to_tick = _build_fixture_step_to_tick(
+            note_pairs,
+            EDIT_RECORD_FIXTURE,
+            loop_length=loop_length,
+        )
+    return RecordLayout(
+        loop_start=0,
+        loop_length=loop_length,
+        step_to_tick=step_to_tick,
         nav_slots=nav_slots,
     )

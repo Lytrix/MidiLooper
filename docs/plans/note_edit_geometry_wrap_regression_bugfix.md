@@ -36,6 +36,8 @@ Playback used `mergeActiveCapturePasses` only — live session edits not auditio
 
 1. `EditManager::sessionPreviewRevision_` bumped from `Track::invalidateCaches` when note edit active.
 2. `ensurePlaybackWindowBuilt` — session store preview when note edit active; revision key includes preview revision.
+3. **Non-edit playback** — `mergeMaterializedPassesWithCapture` (takes + active `editPasses` + live capture), not capture-only merge.
+4. `EditSelectNoteState::createDefaultNote` — `track.invalidateCaches()` after session store write so add is audible before commit returns.
 
 ### Tier 3 — unified geometry-dependent fader flow (F2–F4) — **shipped (HITL pending)**
 
