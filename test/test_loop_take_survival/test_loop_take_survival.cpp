@@ -9,7 +9,9 @@
 #include "../../src/EditApply.cpp"
 #include "../../src/LoopPasses.cpp"
 #include "../../src/Utils/MemoryMonitor.cpp"
+#include "../../src/Utils/LoopEventValidation.cpp"
 #include "../../src/Loop.cpp"
+#include "../test_support/LoopCaptureTestDeps.cpp"
 
 #include "Loop.h"
 #include "LoopEventStore.h"
@@ -28,32 +30,12 @@ void seedPublishedPair(Loop& loop) {
   loop.loopLengthTicks = kLoopLen;
 }
 
-void appendOverdubPass(Loop& loop) {
-  LoopEventStore odStore;
-  TEST_ASSERT_TRUE(odStore.append(MidiEvent::NoteOn(200, 1, 64, 90)));
-  TEST_ASSERT_TRUE(odStore.append(MidiEvent::NoteOff(248, 1, 64, 0)));
-  ChunkIdList refs;
-  odStore.detachChunksTo(refs);
-  TEST_ASSERT_FALSE(refs.empty());
-
-  OverdubPass overdub{};
-  overdub.id = 2;
-  overdub.mergeSequence = 1;
-  overdub.state = CapturePassState::Active;
-  overdub.chunkRefs = std::move(refs);
-  loop.passes.overdubPasses.push_back(std::move(overdub));
-}
-
-void simulatePostOverdubStopPath(Loop& loop) {
-  loop.discardPassesMaterializedCache();
-  loop.invalidateCaches();
-  loop.invalidateCaches();
-
-  MidiEventVec flat;
-  loop.mergeActiveCapturePasses(flat);
-  LoopEventStore merged;
-  merged.loadFromFlat(flat);
-  loop.commitStopFinalizeFromStore(merged);
+void simulateOverdubSealAndPublish(Loop& loop) {
+  loop.beginCapture(CapturePhase::Overdub);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(200, 1, 64, 90)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(248, 1, 64, 0)));
+  TEST_ASSERT_EQUAL(SealOutcome::Ok, loop.sealCapture(0));
+  TEST_ASSERT_TRUE(loop.publishPendingCapturePass());
   loop.rebuildVisualCacheFromPasses();
   loop.invalidateCaches();
 }
@@ -115,7 +97,7 @@ void test_readonly_flat_access_preserves_takes() {
   LoopEventStore::initPool();
   Loop loop;
   seedPublishedPair(loop);
-  appendOverdubPass(loop);
+  simulateOverdubSealAndPublish(loop);
   TEST_ASSERT_EQUAL(4u, loop.nativeTestLiveEventCount());
 
   loop.discardPassesMaterializedCache();
@@ -131,15 +113,17 @@ void test_post_overdub_stop_path_preserves_takes() {
   LoopEventStore::initPool();
   Loop loop;
   seedPublishedPair(loop);
-  appendOverdubPass(loop);
+  simulateOverdubSealAndPublish(loop);
   TEST_ASSERT_EQUAL(4u, loop.nativeTestLiveEventCount());
-
-  simulatePostOverdubStopPath(loop);
 
   TEST_ASSERT_TRUE(loop.hasPublishedEvents());
   TEST_ASSERT_EQUAL(4u, loop.nativeTestLiveEventCount());
   TEST_ASSERT_EQUAL(kLoopLen, loop.loopLengthTicks);
   TEST_ASSERT_FALSE(loop.visualCache.notes.empty());
+  TEST_ASSERT_TRUE(loop.passes.hasRecordPass());
+  TEST_ASSERT_EQUAL(1u, loop.passes.overdubPasses.size());
+  TEST_ASSERT_EQUAL(1u, loop.passes.recordPass.id);
+  TEST_ASSERT_EQUAL(2u, loop.passes.overdubPasses[0].id);
 }
 
 void test_commit_stop_finalize_empty_merged_preserves_takes() {
@@ -195,6 +179,18 @@ void test_pass_snapshot_ignores_derived_flat_mutation() {
   TEST_ASSERT_EQUAL(2u, loop.nativeTestLiveEventCount());
 }
 
+void test_seal_overdub_preserves_record_pass() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  seedPublishedPair(loop);
+  simulateOverdubSealAndPublish(loop);
+
+  TEST_ASSERT_TRUE(loop.setCapturePassState(2, CapturePassState::Disabled));
+  TEST_ASSERT_TRUE(loop.passes.hasRecordPass());
+  TEST_ASSERT_EQUAL(2u, loop.nativeTestLiveEventCount());
+}
+
 int main(int /*argc*/, char** /*argv*/) {
   UNITY_BEGIN();
   RUN_TEST(test_imported_takes_survive_invalidateCaches);
@@ -202,6 +198,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_restore_empty_pass_snapshot_clears_takes);
   RUN_TEST(test_readonly_flat_access_preserves_takes);
   RUN_TEST(test_post_overdub_stop_path_preserves_takes);
+  RUN_TEST(test_seal_overdub_preserves_record_pass);
   RUN_TEST(test_commit_stop_finalize_empty_merged_preserves_takes);
   RUN_TEST(test_multi_take_flatten_matches_live_event_count);
   RUN_TEST(test_pass_snapshot_ignores_derived_flat_mutation);

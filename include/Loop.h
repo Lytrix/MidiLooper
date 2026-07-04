@@ -37,6 +37,7 @@ struct Loop {
   uint16_t captureNextEventIndex = 0;
   bool captureEventsSortDirty = false;
   uint16_t captureDisplayRevision = 0;
+  uint32_t captureDedupEventsDropped_ = 0;
 
   LoopId loopId = kInvalidLoopId;
   uint32_t playbackRevision = 0;

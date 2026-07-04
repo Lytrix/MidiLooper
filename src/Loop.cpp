@@ -3,6 +3,8 @@
 
 #include "Loop.h"
 #include "Utils/LoopStopFinalize.h"
+#include "Utils/CaptureIncrementalSanity.h"
+#include "Globals.h"
 #include "Utils/MemoryMonitor.h"
 #include "Utils/DebugSessionCapture.h"
 #include "Logger.h"
@@ -46,6 +48,17 @@ bool isDuplicateCaptureEvent(const Loop& loop, const MidiEvent& candidate) {
     }
   }
   return false;
+}
+
+const char* capturePhaseLabel(CapturePhase phase) {
+  switch (phase) {
+    case CapturePhase::Record:
+      return "record";
+    case CapturePhase::Overdub:
+      return "overdub";
+    default:
+      return "none";
+  }
 }
 
 void sortCaptureStoreByTick(LoopEventStore& store) {
@@ -654,6 +667,7 @@ void Loop::beginCapture(CapturePhase phase) {
   capturePreview.clear();
   captureNextEventIndex = 0;
   captureEventsSortDirty = false;
+  captureDedupEventsDropped_ = 0;
   ++captureDisplayRevision;
 }
 
@@ -663,6 +677,7 @@ void Loop::discardCapture() {
   captureNextEventIndex = 0;
   captureEventsSortDirty = false;
   capturePreview.clear();
+  captureDedupEventsDropped_ = 0;
 }
 
 bool Loop::appendCaptureEvent(const MidiEvent& evt) {
@@ -673,6 +688,7 @@ bool Loop::appendCaptureEvent(const MidiEvent& evt) {
     return false;
   }
   if (isDuplicateCaptureEvent(*this, evt)) {
+    ++captureDedupEventsDropped_;
     return false;
   }
   if (!capture.store.append(evt)) {
@@ -970,14 +986,28 @@ SealOutcome Loop::sealCapture(uint32_t sealedAtTick) {
   ensureCaptureEventsSorted();
   assignMissingNoteIdsInStore(capture.store);
 
-  if (loopLengthTicks > 0 && capture.phase == CapturePhase::Record) {
+  const char* phaseLabel = capturePhaseLabel(capture.phase);
+  uint32_t minLenPairsRemoved = 0;
+  uint32_t wrapSyntheticOffs = 0;
+
+  if (loopLengthTicks > 0 &&
+      (capture.phase == CapturePhase::Record || capture.phase == CapturePhase::Overdub)) {
     const LoopStopFinalize::Result fin =
         LoopStopFinalize::finalizeWrapWindowOnStore(capture.store, loopLengthTicks);
-    (void)fin;
+    wrapSyntheticOffs = static_cast<uint32_t>(fin.syntheticOffsInserted);
+    minLenPairsRemoved = static_cast<uint32_t>(
+        CaptureIncrementalSanity::removePairsShorterThanNoteMinLength(
+            capture.store, loopLengthTicks, noteMinLengthTicks, noteMinLengthRemoveEnabled));
+    CaptureIncrementalSanity::verifyCaptureHotStop(capture.store, loopLengthTicks);
     if (capture.store.empty()) {
       return SealOutcome::FailedValidation;
     }
   }
+
+  SC_CAPTURE_CLEANUP(phaseLabel, "dedup", captureDedupEventsDropped_);
+  SC_CAPTURE_CLEANUP(phaseLabel, "minlen", minLenPairsRemoved);
+  SC_CAPTURE_CLEANUP(phaseLabel, "wrap_synth", wrapSyntheticOffs);
+  captureDedupEventsDropped_ = 0;
 
   const CapturePassPhase phase =
       effectiveCapturePassPhase(capture.phase, passes.hasRecordPass());
