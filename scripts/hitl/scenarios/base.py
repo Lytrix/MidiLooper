@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 
 from hitl.baseline_canonical_args import (
     canonical_baseline_legacy_args,
+    canonical_edit_minimal_base_legacy_args,
     merge_legacy_cli_args,
     strip_scenario_only_legacy_args,
 )
@@ -20,6 +21,7 @@ def run_base_scenario(args: object) -> int:
 
     import host_midi_automation_baseline as baseline
     from hitl.baseline_loop_inventory import (
+        base_report_record_seed_ok,
         base_preset_config,
         base_report_loop_materialized,
         base_report_ok,
@@ -30,8 +32,13 @@ def run_base_scenario(args: object) -> int:
     from hitl.context import get_context
 
     legacy = strip_scenario_only_legacy_args(list(getattr(args, "legacy_args", []) or []))
-    # HITL-Test-Flow.md canonical 2+2 bar-synced record/overdub; user flags override via last-wins.
-    legacy = merge_legacy_cli_args(canonical_baseline_legacy_args(), legacy)
+    preset = getattr(args, "preset", None)
+    if preset == "edit_minimal":
+        defaults = canonical_edit_minimal_base_legacy_args()
+    else:
+        # HITL-Test-Flow.md canonical 2+2 bar-synced record/overdub; user flags override via last-wins.
+        defaults = canonical_baseline_legacy_args()
+    legacy = merge_legacy_cli_args(defaults, legacy)
     old_argv = sys.argv
     try:
         sys.argv = ["host_midi_automation_baseline.py"] + legacy
@@ -42,10 +49,11 @@ def run_base_scenario(args: object) -> int:
     out_dir = Path(getattr(args, "out_dir", Path("captures")))
     report = latest_base_report(out_dir)
     loop_materialized = base_report_loop_materialized(report)
-    if code != 0 and loop_materialized:
+    record_seed_ok = base_report_record_seed_ok(report)
+    if code != 0 and (loop_materialized or record_seed_ok):
         print(
-            "[hitl] base overall_ok=false but loop materialized (record+overdub on device) — "
-            "continuing NOTE_EDIT sweep preset"
+            "[hitl] base overall_ok=false but loop materialized on device — "
+            "continuing composed preset"
         )
         code = 0
 

@@ -785,6 +785,90 @@ def _serial_has_clear_ignored_empty(lines: list[str], *, after_index: int = 0) -
     return False
 
 
+def _serial_has_clear_completed(lines: list[str], *, after_index: int = 0) -> bool:
+    for line in lines[after_index:]:
+        if "MIDI: Clear Track" in line:
+            return True
+        if "Clear reset non-empty track state to EMPTY" in line:
+            return True
+    return False
+
+
+def _count_reca_markers(lines: list[str]) -> int:
+    return sum(1 for line in lines if ",RECA," in line and "#CAP," in line)
+
+
+def _recording_transition_baseline(lines: list[str]) -> int:
+    return sum(
+        count
+        for (from_state, to_state), count in _count_capture_transitions(lines).items()
+        if to_state == "RECORDING"
+    )
+
+
+def _serial_has_recording_started(lines: list[str], *, after_index: int = 0) -> bool:
+    suffix = lines[after_index:]
+    if any(",RECA," in line and "#CAP," in line for line in suffix):
+        return True
+    if any("Recording started" in line for line in suffix):
+        return True
+    if any("MIDI Button A: Start Recording" in line for line in suffix):
+        return True
+    latest = _latest_track_state(lines)
+    if latest == "RECORDING":
+        return True
+    return False
+
+
+def _wait_for_recording_started(
+    collector: SerialCaptureCollector,
+    *,
+    baseline_len: int,
+    baseline_reca: int,
+    baseline_recording_transitions: int,
+    baseline_latest_state: Optional[str],
+    timeout_s: float,
+    serial_grace_s: float = 3.0,
+    abort: Optional[RunAbort] = None,
+) -> bool:
+    """Wait for firmware evidence that record actually started (not play/stop toggle)."""
+
+    def _evidence(lines: list[str]) -> bool:
+        suffix = lines[baseline_len:]
+        if _count_reca_markers(lines) > baseline_reca:
+            return True
+        if any("Recording started" in line for line in suffix):
+            return True
+        if any("MIDI Button A: Start Recording" in line for line in suffix):
+            return True
+        latest = _latest_track_state(lines)
+        if latest == "RECORDING" and baseline_latest_state != "RECORDING":
+            return True
+        recording_transitions = sum(
+            count
+            for (from_state, to_state), count in _count_capture_transitions(lines).items()
+            if to_state == "RECORDING"
+        )
+        return recording_transitions > baseline_recording_transitions
+
+    deadline = time.monotonic() + max(timeout_s, 0.0)
+    while time.monotonic() < deadline:
+        if abort is not None and abort.check() is not None:
+            return False
+        if _evidence(collector.snapshot()):
+            return True
+        time.sleep(0.01)
+
+    grace_deadline = time.monotonic() + max(serial_grace_s, 0.0)
+    while time.monotonic() < grace_deadline:
+        if abort is not None and abort.check() is not None:
+            return False
+        if _evidence(collector.snapshot()):
+            return True
+        time.sleep(0.02)
+    return False
+
+
 def _latest_track_state(lines: list[str]) -> Optional[str]:
     latest: Optional[str] = None
     for line in lines:
@@ -811,13 +895,15 @@ def _serial_suggests_loop_content(lines: list[str]) -> bool:
 
 
 def _can_skip_clear_before_record(lines: list[str]) -> bool:
-    """Track already empty/idle — no clear long-press needed."""
+    """Track already empty/idle — no clear long-press needed.
+
+    Requires positive serial evidence. Missing #CAP ST lines (fresh USB open, capture
+  flush lag) is not treated as empty — the slot may still hold SD-loaded loop data.
+    """
     latest = _latest_track_state(lines)
     if latest == "EMPTY":
         return True
     if _serial_has_clear_ignored_empty(lines):
-        return True
-    if not any(",ST,Track," in line for line in lines) and not _serial_suggests_loop_content(lines):
         return True
     return False
 
@@ -829,6 +915,8 @@ def _track_cleared_for_record(lines: list[str]) -> bool:
     if latest == "ARMED":
         return not _serial_suggests_loop_content(lines)
     if latest == "STOPPED" and not _serial_suggests_loop_content(lines):
+        return True
+    if _serial_has_clear_completed(lines):
         return True
     return False
 
@@ -2490,6 +2578,11 @@ def run() -> int:
         help="Run only through record stop (skip overdub and second overdub phases)",
     )
     parser.add_argument(
+        "--edit-record-fixture",
+        action="store_true",
+        help="Record EDIT_RECORD_FIXTURE notes (edit_minimal) instead of chromatic grid",
+    )
+    parser.add_argument(
         "--stop-after-overdub",
         action="store_true",
         default=True,
@@ -2665,8 +2758,20 @@ def run() -> int:
     parser.add_argument(
         "--state-sync-timeout-ms",
         type=int,
-        default=2500,
+        default=8000,
         help="Max wait for serial-confirmed state transitions before phase stream starts",
+    )
+    parser.add_argument(
+        "--serial-grace-ms",
+        type=int,
+        default=3000,
+        help="Extra serial poll after state-sync timeout (PSRAM capture flush lag)",
+    )
+    parser.add_argument(
+        "--boot-settle-ms",
+        type=int,
+        default=0,
+        help="Wait after opening USB serial before MIDI actions (Teensy resets on connect)",
     )
     parser.add_argument(
         "--overdub-start-delay-bars",
@@ -2784,6 +2889,9 @@ def run() -> int:
         args.second_overdub_bars = 0
         args.undo_redo_after_overdub_stop = False
 
+    if args.edit_record_fixture and not args.record_bars:
+        raise SystemExit("--edit-record-fixture requires --record-bars")
+
     if not (1 <= args.midi_channel <= 16):
         raise SystemExit("--midi-channel must be in [1, 16]")
     if args.midi_channel == CONTROL_CHANNEL_1BASED:
@@ -2832,7 +2940,12 @@ def run() -> int:
     if args.serial_port:
         serial_collector = SerialCaptureCollector(args.serial_port, args.serial_baud)
         serial_collector.start()
-        time.sleep(1.5)  # Teensy serial can reset on open.
+        boot_ms = max(getattr(args, "boot_settle_ms", 0), 0)
+        if boot_ms > 0:
+            print(f"Serial boot settle: {boot_ms}ms (Teensy resets when serial opens)")
+            time.sleep(boot_ms / 1000.0)
+        else:
+            time.sleep(1.5)  # Teensy serial can reset on open.
         print(f"Serial capture enabled: {args.serial_port}")
     else:
         print("Serial capture disabled (no #CAP assertions).")
@@ -2992,6 +3105,12 @@ def run() -> int:
                             )
                             reached_empty = True
                             clear_result = "already_empty_ignored"
+                        if not reached_empty and _serial_has_clear_completed(
+                            post_snap, after_index=clear_baseline_len
+                        ):
+                            print("[info] Clear completed (serial log); precondition satisfied")
+                            reached_empty = True
+                            clear_result = "clear_log_confirmed"
                         if not reached_empty and _track_cleared_for_record(post_snap):
                             latest = _latest_track_state(post_snap)
                             print(
@@ -3028,6 +3147,12 @@ def run() -> int:
                                 )
                                 reached_empty = True
                                 clear_result = "already_empty_ignored"
+                            if not reached_empty and _serial_has_clear_completed(
+                                post_retry, after_index=retry_baseline_len
+                            ):
+                                print("[info] Clear completed after retry (serial log)")
+                                reached_empty = True
+                                clear_result = "clear_log_confirmed"
                             if not reached_empty and _track_cleared_for_record(post_retry):
                                 latest = _latest_track_state(post_retry)
                                 print(
@@ -3072,37 +3197,70 @@ def run() -> int:
 
                 print(f"[track {idx}] record start")
                 reached_recording = False
-                expected_recording_count = None
-                if serial_collector is not None:
-                    state_counts = _count_capture_state_entries(serial_collector.snapshot())
-                    expected_recording_count = state_counts.get("RECORDING", 0) + 1
+                record_baseline_len = len(serial_collector.snapshot()) if serial_collector else 0
+                baseline_reca = _count_reca_markers(serial_collector.snapshot()) if serial_collector else 0
+                baseline_recording_transitions = (
+                    _recording_transition_baseline(serial_collector.snapshot())
+                    if serial_collector
+                    else 0
+                )
+                baseline_latest_state = (
+                    _latest_track_state(serial_collector.snapshot()) if serial_collector else None
+                )
                 _send_short_press(
                     out_port,
                     note=RECORD_BUTTON_NOTE,
                     channel_1based=CONTROL_CHANNEL_1BASED,
                     press_ms=args.press_ms,
                 )
-                if serial_collector is not None and expected_recording_count is not None:
-                    reached_recording = _wait_for_state_entry_count(
+                if serial_collector is not None:
+                    timeout_s = args.state_sync_timeout_ms / 1000.0
+                    grace_s = max(getattr(args, "serial_grace_ms", 0), 0) / 1000.0
+                    reached_recording = _wait_for_recording_started(
                         serial_collector,
-                        to_state="RECORDING",
-                        target_count=expected_recording_count,
-                        timeout_s=args.state_sync_timeout_ms / 1000.0,
+                        baseline_len=record_baseline_len,
+                        baseline_reca=baseline_reca,
+                        baseline_recording_transitions=baseline_recording_transitions,
+                        baseline_latest_state=baseline_latest_state,
+                        timeout_s=timeout_s,
+                        serial_grace_s=grace_s,
                         abort=abort,
                     )
                     if not reached_recording:
-                        print("[warn] Timed out waiting for ->RECORDING transition; retrying record start press.")
+                        fresh = serial_collector.snapshot()[record_baseline_len:]
+                        if any("MIDI Button A: Toggle Play/Stop" in line for line in fresh):
+                            print(
+                                "[warn] Record press toggled play/stop (track likely not empty); "
+                                "clear may have failed — retrying clear then record"
+                            )
+                            _send_short_press(
+                                out_port,
+                                note=RECORD_BUTTON_NOTE,
+                                channel_1based=CONTROL_CHANNEL_1BASED,
+                                press_ms=args.clear_press_ms,
+                            )
+                            time.sleep(args.state_sync_timeout_ms / 1000.0)
+                            record_baseline_len = len(serial_collector.snapshot())
+                            baseline_reca = _count_reca_markers(serial_collector.snapshot())
+                            baseline_recording_transitions = _recording_transition_baseline(
+                                serial_collector.snapshot()
+                            )
+                            baseline_latest_state = _latest_track_state(serial_collector.snapshot())
+                        print("[warn] Timed out waiting for recording start; retrying record press.")
                         _send_short_press(
                             out_port,
                             note=RECORD_BUTTON_NOTE,
                             channel_1based=CONTROL_CHANNEL_1BASED,
                             press_ms=args.press_ms,
                         )
-                        reached_recording = _wait_for_state_entry_count(
+                        reached_recording = _wait_for_recording_started(
                             serial_collector,
-                            to_state="RECORDING",
-                            target_count=expected_recording_count,
-                            timeout_s=args.state_sync_timeout_ms / 1000.0,
+                            baseline_len=record_baseline_len,
+                            baseline_reca=baseline_reca,
+                            baseline_recording_transitions=baseline_recording_transitions,
+                            baseline_latest_state=baseline_latest_state,
+                            timeout_s=timeout_s,
+                            serial_grace_s=grace_s,
                             abort=abort,
                         )
                         if not reached_recording:
@@ -3132,26 +3290,49 @@ def run() -> int:
                         abort_reason = "midi clock missing before record phase"
                         break
                     guard = max(10.0, args.record_bars * seconds_per_bar * 3.0)
-                    rec_notes, rec_cc, rec_clock_count, rec_timing = _stream_pattern_for_bars(
-                        out_port,
-                        in_port,
-                        midi_channel_1based=args.midi_channel,
-                        low_note=args.record_low_note,
-                        high_note=args.record_high_note,
-                        step_clocks=RECORD_GRID_STEP_CLOCKS,
-                        gate_clocks=RECORD_GRID_STEP_CLOCKS,
-                        target_bars=args.record_bars,
-                        cc_number=args.cc_number,
-                        cc_step=args.cc_step,
-                        pitch_cycle_bars=args.pitch_cycle_bars,
-                        phase_start_delay_bars=0,
-                        phase_start_delay_beats=0,
-                        max_seconds_guard=guard,
-                        fixed_note=args.record_fixed_note if args.fixed_grid_notes else None,
-                        stop_press_advance_clocks=args.stop_press_advance_clocks,
-                        abort=abort,
-                        emit_immediate_first_step=True,
-                    )
+                    if getattr(args, "edit_record_fixture", False):
+                        from host_midi_automation_edit_baseline import (
+                            EDIT_RECORD_FIXTURE,
+                            _stream_fixture_record,
+                        )
+
+                        rec_notes, rec_clock_count = _stream_fixture_record(
+                            out_port,
+                            in_port,
+                            fixture=EDIT_RECORD_FIXTURE,
+                            target_bars=args.record_bars,
+                            midi_channel_1based=args.midi_channel,
+                            stop_press_advance_clocks=args.stop_press_advance_clocks,
+                            press_ms=args.press_ms,
+                            abort=abort,
+                        )
+                        rec_cc = 0
+                        rec_timing = {
+                            "grid_steps_emitted": float(rec_notes),
+                            "max_abs_grid_jitter_clocks": 0.0,
+                            "mean_abs_grid_jitter_clocks": 0.0,
+                        }
+                    else:
+                        rec_notes, rec_cc, rec_clock_count, rec_timing = _stream_pattern_for_bars(
+                            out_port,
+                            in_port,
+                            midi_channel_1based=args.midi_channel,
+                            low_note=args.record_low_note,
+                            high_note=args.record_high_note,
+                            step_clocks=RECORD_GRID_STEP_CLOCKS,
+                            gate_clocks=RECORD_GRID_STEP_CLOCKS,
+                            target_bars=args.record_bars,
+                            cc_number=args.cc_number,
+                            cc_step=args.cc_step,
+                            pitch_cycle_bars=args.pitch_cycle_bars,
+                            phase_start_delay_bars=0,
+                            phase_start_delay_beats=0,
+                            max_seconds_guard=guard,
+                            fixed_note=args.record_fixed_note if args.fixed_grid_notes else None,
+                            stop_press_advance_clocks=args.stop_press_advance_clocks,
+                            abort=abort,
+                            emit_immediate_first_step=True,
+                        )
                 else:
                     rec_notes, rec_cc = _stream_dense_chromatic(
                         out_port,
@@ -3386,8 +3567,13 @@ def run() -> int:
     expected_second_overdub_notes_min = 0
     expected_second_overdub_clocks = 0
     if args.record_bars and args.bar_sync_from_midi_clock:
-        # 16th-note grid; allow one-step edge variance at boundaries.
-        expected_record_notes_min = max(1, args.record_bars * 16 - 1)
+        if getattr(args, "edit_record_fixture", False):
+            from host_midi_automation_edit_baseline import EDIT_RECORD_FIXTURE
+
+            expected_record_notes_min = len(EDIT_RECORD_FIXTURE)
+        else:
+            # 16th-note grid; allow one-step edge variance at boundaries.
+            expected_record_notes_min = max(1, args.record_bars * 16 - 1)
         expected_record_clocks = args.record_bars * MIDI_CLOCKS_PER_BAR
     if (not args.record_only) and args.overdub_bars and args.bar_sync_from_midi_clock:
         expected_overdub_notes_min = _expected_overdub_notes_min(args.overdub_bars, OVERDUB_GRID_STEP_CLOCKS)

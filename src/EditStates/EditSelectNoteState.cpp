@@ -185,14 +185,18 @@ std::array<MidiEvent, 2> EditSelectNoteState::createDefaultNote(Track& track, ui
     noteOff.channel = outCh;
     noteOff.data.noteData.note = defaultNote;
     noteOff.data.noteData.velocity = 0;
+    noteOff.noteId = noteOn.noteId;
     midiEvents.push_back(noteOff);
     
     // Sort events to maintain order
     std::sort(midiEvents.begin(), midiEvents.end(),
               [](const MidiEvent& a, const MidiEvent& b) { return a.tick < b.tick; });
-    
-    logger.info("EditSelectNoteState: Created 32nd note (pitch=%d, tick=%lu-%lu, length=%lu)", 
-               defaultNote, tick, endTick, noteLength);
+
+    track.invalidateCaches();
+
+    logger.info(
+        "EditSelectNoteState: Created 32nd note (noteId=%lu, pitch=%d, tick=%lu-%lu, length=%lu)",
+        static_cast<unsigned long>(noteOn.noteId), defaultNote, tick, endTick, noteLength);
     // Return the exact created events: after the sort above they are not necessarily the
     // last two entries, so callers must use these to record an AddNote edit.
     return {noteOn, noteOff};

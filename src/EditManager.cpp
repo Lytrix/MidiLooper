@@ -23,6 +23,7 @@
 #include "Utils/MemoryMonitor.h"
 #include "Utils/LoopStopFinalize.h"
 #include "Utils/LoopTickNormalize.h"
+#include "Utils/LoopEventValidation.h"
 #include "ClockManager.h"
 #include "DisplayManager.h"
 #include "Utils/NoteMovementUtils.h"
@@ -139,6 +140,15 @@ void EditManager::commitAllPendingNoteEditActions(Track& track) {
     LoopTickNormalize::normalizeAll(sessionStoreEvents, loopLength);
     syncNoteEditFocusLinearFromSessionStore(editSession.focus, sessionStoreEvents, channel,
                                             loopLength);
+
+    const LoopEventValidation::LoopEventValidationResult macroInvariantResult =
+        LoopEventValidation::validateLoopEvents(sessionStoreEvents, loopLength,
+                                                LoopEventValidation::kCanonicalInvariantMask);
+    if (!macroInvariantResult.passed) {
+        logger.log(CAT_TRACK, LOG_WARNING,
+                   "NOTE_EDIT macro commit: non-canonical store (check=%u)",
+                   static_cast<unsigned>(macroInvariantResult.firstFailure));
+    }
 
     EditPassVec rows = buildPreCommitEditPasses(editSession.focus, channel);
     if (rows.empty()) {
@@ -810,9 +820,7 @@ void EditManager::applySelectNav(Track& track, uint32_t bracketTick, NoteId prim
     const bool selectionIdentityChanged =
         editorSelectionTargetChanged(priorSelection, bracketTick, primaryNote);
     const bool shouldSyncMotors =
-        selectionIdentityChanged &&
-        (primaryNote != kInvalidNoteId || editorSelectionHasNote(priorSelection) ||
-         priorSelection.bracketTick != bracketTick);
+        selectionIdentityChanged && primaryNote != kInvalidNoteId;
     if (shouldSyncMotors && !requestFaderSync) {
         noteEditManager.scheduleSelectDependentMotorSync(track, priorSelection, sessionState.selection);
     }

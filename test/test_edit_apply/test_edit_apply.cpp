@@ -732,6 +732,35 @@ void test_pre_commit_delete_before_mover_change_length() {
   TEST_ASSERT_EQUAL(0, countMatching(flat, true, 60, 584));
 }
 
+void test_playback_merge_includes_active_edit_passes() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  loop.passes.recordPass = makeRecordPassWithNote(1, 10);
+  loop.loopLengthTicks = 768;
+  loop.nextPassId_ = 10;
+
+  const EditPassId lengthId = loop.saveNoteEditPass(0, makeLengthRow(1, 10, 20, 28));
+  TEST_ASSERT_NOT_EQUAL(kInvalidEditPassId, lengthId);
+
+  auto noteOffTick = [](const MidiEventVec& flat) -> uint32_t {
+    for (const MidiEvent& e : flat) {
+      if (e.isNoteOff() && e.data.noteData.note == 60) {
+        return e.tick;
+      }
+    }
+    return UINT32_MAX;
+  };
+
+  MidiEventVec captureOnly;
+  loop.mergeActiveCapturePasses(captureOnly);
+  TEST_ASSERT_EQUAL_UINT32(20u, noteOffTick(captureOnly));
+
+  MidiEventVec materializedPlayback;
+  loop.mergeMaterializedPassesWithCapture(materializedPlayback);
+  TEST_ASSERT_EQUAL_UINT32(28u, noteOffTick(materializedPlayback));
+}
+
 void test_global_undo_overdub_pass_added_disables_overdub() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
@@ -883,6 +912,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_overlap_round_trip_replay_lengthen_delete_pitch);
   RUN_TEST(test_pre_commit_order_overlap_changes_before_move_and_pitch);
   RUN_TEST(test_pre_commit_delete_before_mover_change_length);
+  RUN_TEST(test_playback_merge_includes_active_edit_passes);
   RUN_TEST(test_global_undo_overdub_pass_added_disables_overdub);
   RUN_TEST(test_global_undo_note_edit_pass_closed_disables_edit_rows);
   RUN_TEST(test_global_undo_three_step_restores_record_baseline);

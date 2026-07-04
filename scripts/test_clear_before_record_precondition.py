@@ -14,6 +14,7 @@ if str(_SCRIPT_DIR) not in sys.path:
 from host_midi_automation_baseline import (
     _can_skip_clear_before_record,
     _latest_track_state,
+    _serial_has_clear_completed,
     _track_cleared_for_record,
 )
 
@@ -24,8 +25,12 @@ class ClearBeforeRecordPreconditionTests(unittest.TestCase):
         self.assertTrue(_can_skip_clear_before_record(lines))
         self.assertEqual(_latest_track_state(lines), "EMPTY")
 
-    def test_skip_when_no_st_and_no_loop_content(self) -> None:
+    def test_no_skip_when_no_st_lines_without_positive_empty(self) -> None:
         lines = ["[StorageManager] idle"]
+        self.assertFalse(_can_skip_clear_before_record(lines))
+
+    def test_skip_when_clear_ignored(self) -> None:
+        lines = ["Clear ignored — track is empty"]
         self.assertTrue(_can_skip_clear_before_record(lines))
 
     def test_no_skip_when_stopped_with_recs(self) -> None:
@@ -38,6 +43,11 @@ class ClearBeforeRecordPreconditionTests(unittest.TestCase):
     def test_cleared_for_record_armed_without_content(self) -> None:
         lines = ["#CAP,1,ST,Track,EMPTY,ARMED,0"]
         self.assertTrue(_track_cleared_for_record(lines))
+
+    def test_cleared_for_record_clear_log_without_st(self) -> None:
+        lines = ["[INFO] MIDI: Clear Track"]
+        self.assertTrue(_track_cleared_for_record(lines))
+        self.assertTrue(_serial_has_clear_completed(lines))
 
 
 if __name__ == "__main__":

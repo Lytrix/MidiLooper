@@ -27,6 +27,32 @@ def canonical_baseline_legacy_args() -> list[str]:
     ]
 
 
+def canonical_edit_minimal_base_legacy_args() -> list[str]:
+    """2-bar record-only base seed for edit_minimal (proven baseline record path, no overdub)."""
+    return [
+        "--record-bars",
+        "2",
+        "--record-only",
+        "--edit-record-fixture",
+        "--no-fixed-grid-notes",
+        "--start-transport",
+        "--boot-settle-ms",
+        "10000",
+        "--state-sync-timeout-ms",
+        "8000",
+        "--serial-grace-ms",
+        "3000",
+        "--phase-wait-ms",
+        "500",
+        "--final-wait-ms",
+        "3000",
+        "--press-ms",
+        "120",
+        "--track",
+        "5",
+    ]
+
+
 def merge_legacy_cli_args(defaults: list[str], overrides: list[str]) -> list[str]:
     """Defaults first; argparse last-wins lets overrides replace duplicate flags."""
     return list(defaults) + list(overrides)
@@ -41,6 +67,14 @@ _SCENARIO_ONLY_FLAGS = frozenset(
         "--post-seed-settle-ms",
         "--edit-enter-timeout-s",
         "--skip-sweep",
+        "--boot-settle-ms",
+        "--serial-grace-ms",
+        "--clear-before-record",
+        "--no-clear-before-record",
+        "--clear-press-ms",
+        "--no-start-transport",
+        "--stop-press-advance-clocks",
+        "--use-fixture-record",
     }
 )
 
@@ -52,7 +86,13 @@ def strip_scenario_only_legacy_args(legacy: list[str]) -> list[str]:
     while index < len(legacy):
         token = legacy[index]
         if token in _SCENARIO_ONLY_FLAGS:
-            if token == "--skip-sweep":
+            if token in (
+                "--skip-sweep",
+                "--clear-before-record",
+                "--no-clear-before-record",
+                "--no-start-transport",
+                "--use-fixture-record",
+            ):
                 index += 1
                 continue
             if index + 1 < len(legacy) and not legacy[index + 1].startswith("-"):

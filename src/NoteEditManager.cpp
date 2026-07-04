@@ -32,6 +32,7 @@
 #include "Utils/NoteEditDisplaySnapshot.h"
 #include "Utils/NoteEditDependentFaderSnapshot.h"
 #include "Utils/LoopTickNormalize.h"
+#include "Utils/LoopEventValidation.h"
 #include "MidiFaderManager.h"
 #include "MidiFaderProcessor.h"
 
@@ -400,8 +401,8 @@ void NoteEditManager::deleteSelectedNote(Track& track) {
         }
     }
 
-    logger.info("MIDI Encoder: Deleting note pitch=%d, start=%lu, end=%lu",
-                notePitch, noteStart, noteEnd);
+    logger.info("MIDI Encoder: Deleting note noteId=%lu pitch=%d, start=%lu, end=%lu",
+                static_cast<unsigned long>(deleteTargetNoteId), notePitch, noteStart, noteEnd);
 
     auto& midiEvents = track.editAwareMidiEvents();
     MidiEvent* noteOnEvent = nullptr;
@@ -868,9 +869,7 @@ void NoteEditManager::requestFaderOutbound(NoteEditFaderOutbound::Trigger trigge
     outboundPlan_ = planOverride != nullptr ? *planOverride
                                             : NoteEditFaderOutbound::planForTrigger(trigger);
     if (trigger == NoteEditFaderOutbound::Trigger::SessionOpen ||
-        trigger == NoteEditFaderOutbound::Trigger::NoteSelectWithFader1 ||
-        trigger == NoteEditFaderOutbound::Trigger::LengthModeEnter ||
-        trigger == NoteEditFaderOutbound::Trigger::LengthModeExit) {
+        trigger == NoteEditFaderOutbound::Trigger::NoteSelectWithFader1) {
         startEditingEnabled = false;
     }
     outboundStep_ = NoteEditFaderOutbound::nextEnabledStep(NoteEditFaderOutbound::Step::Idle,
@@ -960,6 +959,10 @@ void NoteEditManager::completeOutboundPipelineAtDone(Track& track, uint32_t now)
     if (completedTrigger == NoteEditFaderOutbound::Trigger::SessionOpen) {
         suppressSelectDependentMotorSync_ = false;
     }
+    if (completedTrigger == NoteEditFaderOutbound::Trigger::LengthModeEnter ||
+        completedTrigger == NoteEditFaderOutbound::Trigger::LengthModeExit) {
+        startEditingEnabled = true;
+    }
     logOutboundStep("DONE");
     activeOutboundTrigger_ = NoteEditFaderOutbound::Trigger::None;
     midiHandler.setDroidMotorOutboundPriority(false);
@@ -1032,7 +1035,10 @@ void NoteEditManager::processFaderOutbound() {
                 if (outboundPlan_.noteValue) {
                     armChannel15FaderFeedbackIgnore(sentAt);
                 }
-                armSelectDependentSettle(sentAt);
+                if (activeOutboundTrigger_ != NoteEditFaderOutbound::Trigger::LengthModeEnter &&
+                    activeOutboundTrigger_ != NoteEditFaderOutbound::Trigger::LengthModeExit) {
+                    armSelectDependentSettle(sentAt);
+                }
                 logOutboundStep("SEND_F2_F3_F4");
             } else {
                 logOutboundStep("SKIP_SEND");
@@ -1326,6 +1332,17 @@ void NoteEditManager::publishDependentFaderLatch(Track& track) {
                 if (normResult.wrapPairsMerged > 0 || normResult.synthOffsPromoted > 0 ||
                     normResult.openTailsClosed > 0) {
                     editManager.bumpSessionPreviewRevision();
+                }
+                const MidiEventVec closureEvents = LoopEventValidation::extractEventsForNoteIds(
+                    store, closure);
+                const LoopEventValidation::LoopEventValidationResult microInvariantResult =
+                    LoopEventValidation::validateLoopEvents(
+                        closureEvents, loopLength,
+                        LoopEventValidation::kClosureLinearGeometryMask);
+                if (!microInvariantResult.passed) {
+                    logger.log(CAT_TRACK, LOG_WARNING,
+                               "NOTE_EDIT micro normalize: closure geometry failed (check=%u)",
+                               static_cast<unsigned>(microInvariantResult.firstFailure));
                 }
             }
         }
@@ -2238,7 +2255,6 @@ void NoteEditManager::toggleLengthEditingMode() {
     const std::vector<NoteUtils::DisplayNote> notes = selectableDisplayNotesForEditUi(track);
     const int selectedIdx = editManager.getSelectedNoteIdx();
     if (!notes.empty() && selectedIdx >= 0 && selectedIdx < static_cast<int>(notes.size())) {
-        noteSelectionTime = millis();
         if (lengthEditingMode) {
             requestFaderOutbound(NoteEditFaderOutbound::Trigger::LengthModeEnter);
         } else {

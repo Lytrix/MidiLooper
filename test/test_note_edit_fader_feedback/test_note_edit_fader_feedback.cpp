@@ -196,7 +196,9 @@ void test_select_dependent_plan_from_ref_change() {
 
     const auto emptyStep = NoteEditFaderOutbound::planForSelectDependentFromNoteIdChange(
         1, kInvalidNoteId, 144, 192);
-    TEST_ASSERT_TRUE(emptyStep.coarse);
+    TEST_ASSERT_FALSE(emptyStep.coarse);
+    TEST_ASSERT_FALSE(emptyStep.fine);
+    TEST_ASSERT_FALSE(emptyStep.noteValue);
 }
 
 void test_outbound_pipeline_note_only_dependent_plan() {

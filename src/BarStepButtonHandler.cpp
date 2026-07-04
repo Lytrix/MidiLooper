@@ -569,7 +569,9 @@ void BarStepButtonHandler::executeNoteEditAction(const BarStepButtonInfo& info, 
       }
       testLog("BarStepButton NoteEdit: seek 16th %d tick=%lu idx=%d",
               info.stepIndex, stepTick, editManager.getSelectedNoteIdx());
-      noteEditManager.scheduleNoteSelectFaderSync(track);
+      if (editManager.getSelectedNoteIdx() >= 0) {
+        noteEditManager.scheduleNoteSelectFaderSync(track);
+      }
       break;
 
     case BarStepPressType::DOUBLE_PRESS:

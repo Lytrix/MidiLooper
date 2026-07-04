@@ -103,7 +103,7 @@ NoteBaseline baselineForDisplayNote(const NoteEditFocus& focus,
 NoteBaseline linearBaselineForOverlapRestore(const NoteEditFocus& focus, const OverlapNote& entry,
                                              MidiEventVec* sessionEvents, uint8_t channel);
 
-/// Resolve storage span for an overlap DisplayNote (linear off tick, not wrap projection end).
+/// Resolve linear storage span for overlap hide/shorten/restore (baselineMap, then display, then session pair).
 bool resolveLinearNoteSpanForOverlap(const NoteEditFocus& focus, MidiEventVec& events,
                                      uint8_t channel, const NoteUtils::DisplayNote& dn,
                                      NoteBaseline& out, uint32_t loopLength = 0);
