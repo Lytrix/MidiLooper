@@ -76,6 +76,10 @@ namespace Config {
   constexpr uint32_t TICKS_PER_BAR = INTERNAL_PPQN * QUARTERS_PER_BAR; // 768 or your default value (ticksPerQuarterNote * quartersPerBar)
   constexpr uint32_t TICKS_PER_16TH_STEP = INTERNAL_PPQN / 4;          // 192 / 4 = 48 Ticks
   constexpr uint32_t DUPLICATE_TICK_TOLERANCE = TICKS_PER_16TH_STEP / 4;  // 12 ticks = 1/64th note; events within this are treated as duplicates
+  /// Default minimum completed note pair length on capture hot stop (Q16). User override: noteMinLengthTicks.
+  constexpr uint32_t DEFAULT_NOTE_MIN_LENGTH_TICKS = DUPLICATE_TICK_TOLERANCE;
+  /// Default: remove short pairs on capture hot stop. User may disable via noteMinLengthRemoveEnabled.
+  constexpr bool DEFAULT_NOTE_MIN_LENGTH_REMOVE_ENABLED = true;
   /// Target undo depth per track when memory is not under pressure.
   constexpr uint16_t PREFERRED_UNDO_DEPTH = 99;
   /// Try to keep at least this many undo entries when trimming under pressure.
@@ -112,6 +116,10 @@ extern uint32_t quartersPerBar;            // Time signature numerator
 extern const uint32_t ticksPerBar;         // Computed as ticksPerQuarterNote * quartersPerBar
 extern uint32_t now;                       // Current time
 extern uint32_t lastDisplayUpdate;    
+/// User-settable minimum completed note pair length (ticks) removed on capture hot stop. Default: DEFAULT_NOTE_MIN_LENGTH_TICKS (12).
+extern uint32_t noteMinLengthTicks;
+/// When false, hot stop skips removePairsShorterThanNoteMinLength (keep flams/grace notes). Default: true.
+extern bool noteMinLengthRemoveEnabled;
 
 // --------------------
 // System Functions

@@ -4,6 +4,7 @@
 #pragma once
 
 #include <cstdint>
+#include <unordered_set>
 
 #include "MidiEvent.h"
 
@@ -37,10 +38,21 @@ struct LoopEventValidationResult {
   LoopEventCheck firstFailure = LoopEventCheck::NoteOnInLoopRange;
 };
 
+/// Geometry checks expected on the edit closure set after micro normalize (subset of canonical 1–7).
+constexpr uint32_t kClosureLinearGeometryMask =
+    static_cast<uint32_t>(LoopEventCheck::LinearNoteOff) |
+    static_cast<uint32_t>(LoopEventCheck::NoWrappedPairStorage) |
+    static_cast<uint32_t>(LoopEventCheck::DerivedLength) |
+    static_cast<uint32_t>(LoopEventCheck::NoteIdPairing);
+
 /// Pure predicates — does not mutate events or call normalize.
 LoopEventValidationResult validateLoopEvents(const MidiEventVec& events, uint32_t loopLength,
                                              uint32_t checkMask,
                                              uint32_t wrapWindowTicks = 768);
+
+/// Events whose NoteId is in closure, plus channel/pitch-matched on/off pairs for those notes.
+MidiEventVec extractEventsForNoteIds(const MidiEventVec& events,
+                                     const std::unordered_set<NoteId>& noteIds);
 
 bool checkNoteOnInLoopRange(const MidiEventVec& events, uint32_t loopLength);
 bool checkLinearNoteOff(const MidiEventVec& events, uint32_t loopLength);
@@ -52,5 +64,13 @@ bool checkPersistedTickCap(const MidiEventVec& events, uint32_t loopLength);
 bool checkOrphanNoteOff(const MidiEventVec& events, uint32_t loopLength,
                         uint32_t wrapWindowTicks);
 bool checkOrphanNoteOn(const MidiEventVec& events, uint32_t loopLength);
+
+struct OrphanRepairResult {
+  size_t orphanedRemoved = 0;
+};
+
+/// Sorts events, removes orphan note-ons/offs (LIFO duplicate ons). Does not insert synthetic offs.
+OrphanRepairResult repairOrphanNoteEvents(MidiEventVec& events, uint32_t loopLengthTicks,
+                                          uint32_t wrapWindowTicks = 768);
 
 }  // namespace LoopEventValidation

@@ -130,37 +130,40 @@ There are **three separate** “note correctness” mechanisms; do not conflate 
 
 ### 1. Hot stop path — wrap window only
 
-**Files:** `include/Utils/LoopStopFinalize.h`, `Track::finalizeLoopAtStop` in `src/Track.cpp`
+**Files:** `include/Utils/LoopStopFinalize.h`, `Track::finalizeLoopAtStop` in `src/Track.cpp`, `Loop::sealCapture` in `src/Loop.cpp`
 
-Runs on **every** record stop and overdub stop (after `loopLengthTicks` is known):
+Runs on **every** record and overdub stop (after `loopLengthTicks` is known):
 
-- **`mergeActiveCapturePasses`** into a temp store (active **recordPass** + **overdubPasses** only — no edit overlay).
-- Flushes `pendingNotes` via `store.append(NoteOff(...))`.
-- Calls `LoopStopFinalize::finalizeWrapWindowOnStore` on the **head + tail 1-bar window** (default `wrapWindow = TICKS_PER_BAR`):
-  - Pairs tail note-ons with head note-offs for **wrapped** notes (head-window scan only).
-  - Appends synthetic note-offs for **open tail** note-ons still sounding at stop.
-- Writes back via **`commitStopFinalizeFromStore`** (rebuilds the just-published capture pass chunk list).
-- Uses `loop.invalidatePlaybackCaches()` when events change.
-- Sets `deferredFullMidiValidate = true` for later idle pass.
-- Does **not** run full-loop sort/validate on stop.
+- **`sealCapture`** on `capture.store` for **record and overdub** (before detach):
+  - `flushPendingNotesIntoCapture` before overdub commit (record uses `finalizePendingNotes` before commit).
+  - `LoopStopFinalize::finalizeWrapWindowOnStore` on the **head + tail 1-bar window**.
+  - **`removePairsShorterThanNoteMinLength`** when **`noteMinLengthRemoveEnabled`**.
+  - **`verifyCaptureHotStop`** — log warning only.
+- **`finalizeLoopAtStop`** — schedules deferred full validate on record stop only; **no write-back** on overdub stop (pass rows stay separate for undo).
+- Does **not** run full-loop `validateAndCleanupMidiEvents` on stop.
+
+### 1b. Incremental capture sanity — disabled v1
+
+**Files:** `include/Utils/CaptureIncrementalSanity.h`, `src/Utils/CaptureIncrementalSanity.cpp` (module + unit tests only)
+
+Live capture is append-only + incremental `capturePreview`. **Do not** mutate `capture.store` on `appendCaptureEvent` or in the main loop.
 
 ### 2. Cold full pass — orphaned pair cleanup
 
 **Files:** `Track::validateAndCleanupMidiEvents`, `Track::processDeferredIdleMaintenance`
 
-Full-loop pass over `loop.midiEvents()` (materialized flat):
+Full-loop pass over merged active capture passes (materialized flat):
 
-- Sorts by tick; note-offs before note-ons at equal tick.
-- Removes orphaned note-ons/offs (LIFO for duplicate note-ons).
-- Inserts synthetic note-offs for unmatched tail note-ons (uses loop length / optional playhead close tick).
-- Second pass recognizes **wrapped** pairs (note-off before note-on in tick order, &gt; half loop apart).
+- Uses **`LoopEventValidation::repairOrphanNoteEvents`** (wrap-aware) on a probe copy.
+- **v1 log-only:** reports orphan count; does **not** write back or call **`commitStopFinalizeFromStore`** (undo-safe).
+- **Q16 (shipped):** when **`noteMinLengthRemoveEnabled`**, remove completed pairs with span **&lt; `noteMinLengthTicks`** on **`sealCapture`** hot stop — see [`capture_pass_note_min_length_refinement.md`](../plans/capture_pass_note_min_length_refinement.md).
 
 **When it runs:**
 
 | Trigger | Path |
 |---------|------|
 | After stop | **Deferred** — `main()` calls `processDeferredIdleMaintenance(now)` per track; runs after **`Config::deferredValidateMaxDelayMs`** (default 60s) even while **PLAYING**; blocked while that track is **RECORDING** or **OVERDUBBING** |
-| SD load | **Immediate** — `StorageManager` after loading slot events |
+| SD load | **Not wired** — validate on load is planned; use deferred idle after boot playback |
 | Manual / legacy | Direct call (avoid on hot paths) |
 
 ### 3. Display reconstruction — not storage mutation
@@ -168,6 +171,31 @@ Full-loop pass over `loop.midiEvents()` (materialized flat):
 **Files:** `src/Utils/NoteUtils.cpp`, tests in `test/test_noteutils_reconstruct/`
 
 `NoteUtils::reconstructNotes(events, loopLength)` builds **DisplayNote** segments for piano roll / LEDs. It discards note-ons at or beyond `loopLength` and wraps note-offs for UI — see [`NOTE_WRAPPING_LOGIC.md`](NOTE_WRAPPING_LOGIC.md). It does **not** write back to committed passes or `passesMaterializedStore_`.
+
+### NOTE_EDIT live store — pairing and overlap (EditSessionAction)
+
+While **NoteEditSession** is active, **`EditManager::noteEditSession.store`** holds **linear** note-on/note-off pairs (DEC-014). The **EditSessionAction** pipeline (see [`edit-session-action-geometry`](../../openspec/changes/edit-session-action-geometry/design.md)) is the sole live mutator for overlap geometry:
+
+1. **Wrap** — display/wrapped segments are linearized before analyze (`normalizeWrapToLinear`); storage ticks stay linear.
+2. **Same pitch** — when a causing note overlaps a target on the **same pitch**, classify as **OverlapNoteOn** (mover hits target on), **OverlapNoteOff** (tail trim), or **CompleteCover** (swallow).
+3. **Cross-pitch** — time overlap across pitches stays in scope for move/length; polyphonic shorten across pitches is **deferred**.
+4. **Restore** — when constraints rebuild to baseline, explicit **RestoreNote** reinserts pairs (no scratch registry).
+5. **Boundary** — shared tick: **note-on keeps tick**; earlier **note-off → on−1** so both notes can sound.
+6. **Macro commit** — one **`noteEditPass` batch** with rows for every **`NoteId`** changed vs transaction baseline (not a second cleanup pass).
+
+Playback/materialize from committed passes uses the same **paired on/off** model as import tools that prefer **no same-pitch overlap** in the stored event list (new on implicitly ends prior same-pitch note at playback). Wrap at loop boundary is handled in **display** and **stop finalize**, not by rewriting live edit storage mid-gesture.
+
+### Capture / overdub cleanup (separate from NOTE_EDIT)
+
+| Mechanism | Role |
+|-----------|------|
+| **`finalizePendingNotes`** + **`LoopStopFinalize`** | Hot stop: close held keys; synthetic offs for tail open-ons; wrap-window pairing |
+| **`CaptureIncrementalSanity`** | During capture: pair-close, wrap slice, budget orphan repair |
+| **`isDuplicateCaptureEvent`** | Drop duplicate **events** within **12 ticks** (`DUPLICATE_TICK_TOLERANCE`) while recording |
+| **`validateAndCleanupMidiEvents`** | Idle fallback: remove orphan on/off; no synth insert |
+| **Q16** | **`removePairsShorterThanNoteMinLength`** + **`verifyCaptureHotStop`** on hot stop when enabled |
+
+NOTE_EDIT **32nd** hide floor (D16) applies to overlap **edit** only. Capture **NoteMinLength** is a user-global pair-span gate at stop — see [`capture_pass_note_min_length_refinement.md`](../plans/capture_pass_note_min_length_refinement.md).
 
 ---
 

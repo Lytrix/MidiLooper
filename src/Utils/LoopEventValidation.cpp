@@ -251,4 +251,113 @@ LoopEventValidationResult validateLoopEvents(const MidiEventVec& events, uint32_
   return result;
 }
 
+OrphanRepairResult repairOrphanNoteEvents(MidiEventVec& events, uint32_t loopLengthTicks,
+                                          uint32_t wrapWindowTicks) {
+  OrphanRepairResult result;
+  if (events.empty()) {
+    return result;
+  }
+
+  std::sort(events.begin(), events.end(), eventLess);
+
+  std::unordered_map<std::pair<uint8_t, uint8_t>, size_t, PairHash> activeNotes;
+  std::vector<bool> eventsToKeep(events.size(), true);
+
+  for (size_t i = 0; i < events.size(); ++i) {
+    const MidiEvent& evt = events[i];
+
+    if (evt.isNoteOn() && evt.data.noteData.velocity > 0) {
+      const auto key = std::make_pair(evt.data.noteData.note, evt.channel);
+      if (activeNotes.find(key) != activeNotes.end()) {
+        eventsToKeep[activeNotes[key]] = false;
+        ++result.orphanedRemoved;
+      }
+      activeNotes[key] = i;
+    } else if (evt.isNoteOff()) {
+      const auto key = std::make_pair(evt.data.noteData.note, evt.channel);
+      auto it = activeNotes.find(key);
+      if (it != activeNotes.end()) {
+        activeNotes.erase(it);
+        continue;
+      }
+      bool wrappedTailAhead = false;
+      if (loopLengthTicks > 0) {
+        const uint32_t noteOffTick = evt.tick;
+        for (size_t j = i + 1; j < events.size(); ++j) {
+          if (!eventsToKeep[j]) {
+            continue;
+          }
+          const MidiEvent& later = events[j];
+          if (!later.isNoteOn() || later.channel != evt.channel ||
+              later.data.noteData.note != evt.data.noteData.note) {
+            continue;
+          }
+          if (!NoteUtils::isHeadTailWrappedPair(later.tick, noteOffTick, loopLengthTicks,
+                                                wrapWindowTicks)) {
+            continue;
+          }
+          if (!NoteUtils::wrapPairIsUnblocked(events, noteOffTick, later.tick,
+                                              evt.data.noteData.note, evt.channel)) {
+            continue;
+          }
+          wrappedTailAhead = true;
+          break;
+        }
+      }
+      if (!wrappedTailAhead) {
+        eventsToKeep[i] = false;
+        ++result.orphanedRemoved;
+      }
+    }
+  }
+
+  if (result.orphanedRemoved == 0) {
+    return result;
+  }
+
+  MidiEventVec cleaned;
+  cleaned.reserve(events.size() - result.orphanedRemoved);
+  for (size_t i = 0; i < events.size(); ++i) {
+    if (eventsToKeep[i]) {
+      cleaned.push_back(events[i]);
+    }
+  }
+  std::sort(cleaned.begin(), cleaned.end(), eventLess);
+  events = std::move(cleaned);
+  return result;
+}
+
+MidiEventVec extractEventsForNoteIds(const MidiEventVec& events,
+                                     const std::unordered_set<NoteId>& noteIds) {
+  if (noteIds.empty()) {
+    return {};
+  }
+  std::unordered_map<std::pair<uint8_t, uint8_t>, bool, PairHash> closurePitch;
+  for (const MidiEvent& evt : events) {
+    if (!evt.isNoteOn() || evt.data.noteData.velocity == 0 || evt.noteId == kInvalidNoteId) {
+      continue;
+    }
+    if (noteIds.find(evt.noteId) != noteIds.end()) {
+      closurePitch[{evt.data.noteData.note, evt.channel}] = true;
+    }
+  }
+
+  MidiEventVec subset;
+  subset.reserve(events.size());
+  for (const MidiEvent& evt : events) {
+    if (evt.noteId != kInvalidNoteId && noteIds.find(evt.noteId) != noteIds.end()) {
+      subset.push_back(evt);
+      continue;
+    }
+    if (!evt.isNoteOn() && !evt.isNoteOff()) {
+      continue;
+    }
+    const auto key = std::make_pair(evt.data.noteData.note, evt.channel);
+    if (closurePitch.find(key) != closurePitch.end()) {
+      subset.push_back(evt);
+    }
+  }
+  return subset;
+}
+
 }  // namespace LoopEventValidation

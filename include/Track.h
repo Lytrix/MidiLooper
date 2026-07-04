@@ -318,6 +318,7 @@ private:
   void resetDeferredRecordRevts();
   void queueDeferredRecordRevts();
   void processDeferredRecordRevts(size_t maxEventsPerSlice = 64);
+  void flushPendingNotesIntoCapture(uint32_t closeTick);
 
   void syncSlotRefsFromPool();
 

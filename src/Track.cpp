@@ -503,10 +503,10 @@ void Track::finalizePendingNotes(uint32_t offAbsTick) {
 }
 
 void Track::validateAndCleanupMidiEvents(uint32_t openTailCloseTick) {
+    (void)openTailCloseTick;
     Loop& loop = getActiveLoop();
     MidiEventVec materializedEvents;
     loop.mergeActiveCapturePasses(materializedEvents);
-    const size_t publishedBefore = materializedEvents.size();
     if (materializedEvents.empty()) return;
 
     const LoopEventValidation::LoopEventValidationResult invariantResult =
@@ -514,216 +514,46 @@ void Track::validateAndCleanupMidiEvents(uint32_t openTailCloseTick) {
                                                 LoopEventValidation::kCanonicalInvariantMask);
     if (!invariantResult.passed) {
         logger.log(CAT_MIDI, LOG_WARNING,
-                   "MIDI idle validate: non-canonical storage (check=%u); orphan repair only",
+                   "MIDI idle validate: non-canonical storage (check=%u); orphan repair log-only",
                    static_cast<unsigned>(invariantResult.firstFailure));
     }
-    
-    // Map to track active notes: key = (note, channel), value = note-on event index
-    std::unordered_map<std::pair<uint8_t, uint8_t>, size_t, PairHash> activeNotes;
-    std::vector<bool> eventsToKeep(materializedEvents.size(), true);
-    int orphanedCount = 0;
-    
-    // Sort events by tick to ensure proper order
-    std::sort(materializedEvents.begin(), materializedEvents.end(),
-              [](const MidiEvent& a, const MidiEvent& b) {
-                  if (a.tick != b.tick) return a.tick < b.tick;
-                  // On equal tick, process note-offs before note-ons to avoid false overlap.
-                  const int aOrder = a.isNoteOff() ? 0 : (a.isNoteOn() ? 1 : 2);
-                  const int bOrder = b.isNoteOff() ? 0 : (b.isNoteOn() ? 1 : 2);
-                  return aOrder < bOrder;
-              });
-    
-    // First pass: match note-on/note-off pairs
-    for (size_t i = 0; i < materializedEvents.size(); i++) {
-        const MidiEvent& evt = materializedEvents[i];
-        
-        if (evt.isNoteOn()) {
-            std::pair<uint8_t, uint8_t> key = {evt.data.noteData.note, evt.channel};
-            
-            // Check if there's already an active note (orphaned note-on)
-            if (activeNotes.find(key) != activeNotes.end()) {
-                size_t prevIndex = activeNotes[key];
-                eventsToKeep[prevIndex] = false;
-                orphanedCount++;
-                logger.log(CAT_MIDI, LOG_WARNING,
-                          "Removed orphaned note-on: note %d, channel %d, tick %lu",
-                          evt.data.noteData.note, evt.channel, materializedEvents[prevIndex].tick);
-            }
-            
-            // Track this note-on
-            activeNotes[key] = i;
-            
-        } else if (evt.isNoteOff()) {
-            std::pair<uint8_t, uint8_t> key = {evt.data.noteData.note, evt.channel};
-            auto it = activeNotes.find(key);
-            
-            if (it != activeNotes.end()) {
-                // Found matching note-on, remove from active notes
-                activeNotes.erase(it);
-            } else {
-                bool wrappedTailAhead = false;
-                if (loop.loopLengthTicks > 0) {
-                    const uint32_t noteOffTick = evt.tick;
-                    for (size_t j = i + 1; j < materializedEvents.size(); ++j) {
-                        if (!eventsToKeep[j]) {
-                            continue;
-                        }
-                        const MidiEvent& later = materializedEvents[j];
-                        if (!later.isNoteOn() || later.channel != evt.channel ||
-                            later.data.noteData.note != evt.data.noteData.note) {
-                            continue;
-                        }
-                        if (!NoteUtils::isHeadTailWrappedPair(later.tick, noteOffTick,
-                                                             loop.loopLengthTicks)) {
-                            continue;
-                        }
-                        if (!NoteUtils::wrapPairIsUnblocked(materializedEvents, noteOffTick,
-                                                            later.tick, evt.data.noteData.note,
-                                                            evt.channel)) {
-                            continue;
-                        }
-                        wrappedTailAhead = true;
-                        break;
-                    }
-                }
-                if (!wrappedTailAhead) {
-                    eventsToKeep[i] = false;
-                    orphanedCount++;
-                    logger.log(CAT_MIDI, LOG_WARNING,
-                              "Removed orphaned note-off: note %d, channel %d, tick %lu",
-                              evt.data.noteData.note, evt.channel, evt.tick);
-                }
-            }
-        }
-    }
-    
-    // Remaining open note-ons: defer to normalize at capture/edit commit (no synth insert on idle).
-    for (const auto& pair : activeNotes) {
-        const MidiEvent& noteOn = materializedEvents[pair.second];
-        logger.log(CAT_MIDI, LOG_INFO,
-                  "Deferred open tail (idle validate, no synth insert): note %d, channel %d, tick %lu",
-                  noteOn.data.noteData.note, noteOn.channel, noteOn.tick);
-    }
-    
-    // Second pass: log wrapped pairs still in storage (normalize at commit converts these).
-    if (loop.loopLengthTicks > 0) {
-        activeNotes.clear();
-        
-        // Look for note-on near end that might have note-off near beginning
-        for (size_t i = 0; i < materializedEvents.size(); i++) {
-            if (!eventsToKeep[i]) continue;
-            
-            const MidiEvent& evt = materializedEvents[i];
-            
-            if (evt.isNoteOn()) {
-                std::pair<uint8_t, uint8_t> key = {evt.data.noteData.note, evt.channel};
-                activeNotes[key] = i;
-                
-            } else if (evt.isNoteOff()) {
-                std::pair<uint8_t, uint8_t> key = {evt.data.noteData.note, evt.channel};
-                auto it = activeNotes.find(key);
-                
-                if (it != activeNotes.end()) {
-                    // Check if this could be a wrapped note
-                    size_t noteOnIndex = it->second;
-                    uint32_t noteOnTick = materializedEvents[noteOnIndex].tick;
-                    uint32_t noteOffTick = evt.tick;
-                    
-                    // If note-off is much earlier than note-on, it might be wrapped
-                    if (noteOffTick < noteOnTick && (noteOnTick - noteOffTick) > (loop.loopLengthTicks / 2)) {
-                        // This looks like a wrapped note - keep both events
-                        activeNotes.erase(it);
-                        logger.log(CAT_MIDI, LOG_INFO, 
-                                  "Found wrapped note: note %d, channel %d, on-tick %lu, off-tick %lu",
-                                  evt.data.noteData.note, evt.channel, noteOnTick, noteOffTick);
-                    }
-                }
-            }
-        }
-    }
-    
-    // Remove orphaned events only (no synthetic note-off insert — normalize at commit).
-    if (orphanedCount > 0) {
-        MidiEventVec cleanedEvents;
-        cleanedEvents.reserve(materializedEvents.size() - orphanedCount);
-        
-        for (size_t i = 0; i < materializedEvents.size(); i++) {
-            if (eventsToKeep[i]) {
-                cleanedEvents.push_back(materializedEvents[i]);
-            }
-        }
-        std::sort(cleanedEvents.begin(), cleanedEvents.end(),
-                  [](const MidiEvent& a, const MidiEvent& b) {
-                      if (a.tick != b.tick) return a.tick < b.tick;
-                      const int aOrder = a.isNoteOff() ? 0 : (a.isNoteOn() ? 1 : 2);
-                      const int bOrder = b.isNoteOff() ? 0 : (b.isNoteOn() ? 1 : 2);
-                      return aOrder < bOrder;
-                  });
 
-        const bool cleanedEmpty = cleanedEvents.empty();
-        if (cleanedEmpty && publishedBefore > 0 && loop.hasPublishedEvents() &&
-            loop.loopLengthTicks > 0) {
-            invalidateCaches();
-            logger.log(CAT_MIDI, LOG_WARNING,
-                      "MIDI validation aborted flush: cleaned materialized view empty but published passes remain");
-            return;
-        }
-        LoopEventStore cleanedStore;
-        cleanedStore.loadFromFlat(cleanedEvents);
-        loop.commitStopFinalizeFromStore(cleanedStore);
-        invalidateCaches();
-        
-        logger.log(CAT_MIDI, LOG_INFO, 
-                  "MIDI validation complete: removed %d orphaned events, %d events remaining",
-                  orphanedCount, (int)cleanedEvents.size());
+    MidiEventVec repairProbe = materializedEvents;
+    const LoopEventValidation::OrphanRepairResult repair =
+        LoopEventValidation::repairOrphanNoteEvents(repairProbe, loop.loopLengthTicks,
+                                                    Config::TICKS_PER_BAR);
+
+    if (repair.orphanedRemoved > 0) {
+        logger.log(CAT_MIDI, LOG_INFO,
+                  "MIDI idle validate: would remove %d orphaned events (log-only v1), %d events remaining",
+                  static_cast<int>(repair.orphanedRemoved),
+                  static_cast<int>(repairProbe.size()));
     } else {
-        logger.log(CAT_MIDI, LOG_INFO, 
+        logger.log(CAT_MIDI, LOG_INFO,
                   "MIDI validation complete: no orphaned events found, %d events total",
-                  (int)materializedEvents.size());
+                  static_cast<int>(materializedEvents.size()));
     }
 }
 
 void Track::finalizeLoopAtStop(uint32_t openTailCloseTick, bool scheduleDeferredFullValidate) {
-  Loop& loop = getActiveLoop();
-  if (!loop.hasPublishedEvents() || loop.loopLengthTicks == 0) {
-    deferredFullMidiValidate = false;
-    deferredValidateQueuedAtMs = 0;
-    return;
-  }
-
-  MidiEventVec flat;
-  loop.mergeActiveCapturePasses(flat);
-  if (flat.empty()) {
-    deferredFullMidiValidate = false;
-    deferredValidateQueuedAtMs = 0;
-    return;
-  }
-
-  LoopEventStore merged;
-  merged.loadFromFlat(flat);
-  bool mutated = false;
-
-  if (!pendingNotes.empty()) {
-    uint32_t closeTick = loop.loopLengthTicks - 1;
-    if (openTailCloseTick != UINT32_MAX) {
-      closeTick = std::min(openTailCloseTick, loop.loopLengthTicks - 1);
-    }
-    for (const auto& kv : pendingNotes) {
-      merged.append(MidiEvent::NoteOff(closeTick, kv.first.second, kv.first.first, 0));
-    }
-    pendingNotes.clear();
-    mutated = true;
-  }
-
-  const LoopStopFinalize::Result result =
-      LoopStopFinalize::finalizeWrapWindowOnStore(merged, loop.loopLengthTicks,
-                                                  openTailCloseTick, Config::TICKS_PER_BAR);
-  if (mutated || result.syntheticOffsInserted > 0) {
-    loop.commitStopFinalizeFromStore(merged);
-    loop.invalidatePlaybackCaches();
-  }
+  (void)openTailCloseTick;
   deferredFullMidiValidate = scheduleDeferredFullValidate;
   deferredValidateQueuedAtMs = scheduleDeferredFullValidate ? millis() : 0;
+}
+
+void Track::flushPendingNotesIntoCapture(uint32_t closeTick) {
+  Loop& loop = getActiveLoop();
+  if (pendingNotes.empty() || loop.loopLengthTicks == 0 || !loop.captureActive()) {
+    return;
+  }
+  uint32_t offTick = loop.loopLengthTicks - 1;
+  if (closeTick != UINT32_MAX) {
+    offTick = std::min(closeTick, loop.loopLengthTicks - 1);
+  }
+  for (const auto& kv : pendingNotes) {
+    loop.capture.store.append(MidiEvent::NoteOff(offTick, kv.first.second, kv.first.first, 0));
+  }
+  pendingNotes.clear();
 }
 
 CommitResult Track::finalizeCommitSideEffects(CommitResult result, CommitReason reason,
@@ -1352,6 +1182,7 @@ void Track::stopOverdubbing() {
     HotPathTelemetry::requestDeferredSummary("overdub_stop");
     return;
   }
+  flushPendingNotesIntoCapture(closeTick);
   const CommitResult commitResult =
       loop.commitCapturePass(CommitReason::OverdubStop, currentTick);
   setState(TRACK_PLAYING);
@@ -1388,6 +1219,7 @@ void Track::stopOverdubbingToStopped() {
     HotPathTelemetry::requestDeferredSummary("overdub_stop_to_stopped");
     return;
   }
+  flushPendingNotesIntoCapture(closeTick);
   const CommitResult commitResult =
       loop.commitCapturePass(CommitReason::OverdubStopToStopped, currentTick);
   finalizeCommitSideEffects(commitResult, CommitReason::OverdubStopToStopped, closeTick);

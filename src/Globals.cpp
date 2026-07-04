@@ -7,6 +7,8 @@
 float bpm = 120.0f;
 uint32_t lastDisplayUpdate = 0;
 uint32_t now = millis();
+uint32_t noteMinLengthTicks = Config::DEFAULT_NOTE_MIN_LENGTH_TICKS;
+bool noteMinLengthRemoveEnabled = Config::DEFAULT_NOTE_MIN_LENGTH_REMOVE_ENABLED;
 
 // --------------------
 // Internal tracking
@@ -29,9 +31,11 @@ void setupGlobals() {
 }
 
 void loadConfig() {
-  // TODO: Load configuration from EEPROM
+  // TODO: Load noteMinLengthTicks, noteMinLengthRemoveEnabled, and other user settings from persistent storage.
+  noteMinLengthTicks = Config::DEFAULT_NOTE_MIN_LENGTH_TICKS;
+  noteMinLengthRemoveEnabled = Config::DEFAULT_NOTE_MIN_LENGTH_REMOVE_ENABLED;
 }
 
 void saveConfig() {
-  // TODO: Save configuration to EEPROM
+  // TODO: Persist noteMinLengthTicks, noteMinLengthRemoveEnabled, and other user settings.
 }

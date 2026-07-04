@@ -84,6 +84,7 @@ SC_MEM_ATTR void displaySnapshotWindow(uint8_t slot, const char* trackState, uin
 SC_MEM_ATTR void displayNoteInfo(uint8_t pitch, uint32_t storageStart, uint32_t displayStart,
                                  uint32_t length, int selectedIdx);
 SC_MEM_ATTR void storedWrapPair(uint32_t onTick, uint32_t offTick, uint8_t ch, uint8_t note);
+SC_MEM_ATTR void captureCleanup(const char* phase, const char* kind, uint32_t count);
 SC_MEM_ATTR size_t flushPendingRevts(size_t maxLines = 64);
 SC_MEM_ATTR void flushAllPendingRevts();
 SC_MEM_ATTR void update(uint32_t currentTick, uint32_t ticksPerBar);
@@ -120,6 +121,7 @@ SC_MEM_ATTR void update(uint32_t currentTick, uint32_t ticksPerBar);
 #define SC_DNTE(pitch, storageStart, displayStart, length, selectedIdx) \
   DebugSessionCapture::displayNoteInfo(pitch, storageStart, displayStart, length, selectedIdx)
 #define SC_STORED_WRAP_PAIR(onTick, offTick, ch, note) DebugSessionCapture::storedWrapPair(onTick, offTick, ch, note)
+#define SC_CAPTURE_CLEANUP(phase, kind, count) DebugSessionCapture::captureCleanup(phase, kind, count)
 #define SC_REC_QUEUE_STORED_NOTE_ON(tick, ch, note) DebugSessionCapture::queueStoredNoteOn(tick, ch, note)
 #define SC_REC_FLUSH_PENDING_REVTS(maxLines) DebugSessionCapture::flushCaptureBuffer(maxLines)
 #define SC_REC_FLUSH_ALL_PENDING_REVTS()     DebugSessionCapture::flushAllPendingRevts()
@@ -152,6 +154,7 @@ SC_MEM_ATTR void update(uint32_t currentTick, uint32_t ticksPerBar);
   ((void)0)
 #define SC_DNTE(pitch, storageStart, displayStart, length, selectedIdx) ((void)0)
 #define SC_STORED_WRAP_PAIR(onTick, offTick, ch, note) ((void)0)
+#define SC_CAPTURE_CLEANUP(phase, kind, count) ((void)0)
 #define SC_REC_QUEUE_STORED_NOTE_ON(tick, ch, note) ((void)0)
 #define SC_REC_FLUSH_PENDING_REVTS(maxLines) ((void)0)
 #define SC_REC_FLUSH_ALL_PENDING_REVTS()     ((void)0)

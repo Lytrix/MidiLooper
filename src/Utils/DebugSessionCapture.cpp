@@ -332,6 +332,11 @@ SC_MEM_ATTR void storedWrapPair(uint32_t onTick, uint32_t offTick, uint8_t ch, u
                 (unsigned long)micros(), (unsigned long)onTick, (unsigned long)offTick, ch, note);
 }
 
+SC_MEM_ATTR void captureCleanup(const char* phase, const char* kind, uint32_t count) {
+  Serial.printf("#CAP,%lu,CLN,%s,%s,%lu\r\n",
+                (unsigned long)micros(), phase, kind, (unsigned long)count);
+}
+
 void flushCaptureBuffer(size_t maxRecords) {
   emitOverflowNotice();
   if (sCaptureRing.data == nullptr || sCaptureRing.used == 0) {

@@ -1898,6 +1898,94 @@ def _verify_overdub_wrap_storage(
     }
 
 
+def _extract_capture_cleanup_rows(lines: list[str]) -> list[dict[str, object]]:
+    rows: list[dict[str, object]] = []
+    for line in lines:
+        if ",CLN," not in line:
+            continue
+        parts = line.strip().split(",")
+        if len(parts) < 6 or parts[0] != "#CAP" or parts[2] != "CLN":
+            continue
+        try:
+            ts = int(parts[1])
+            phase = parts[3]
+            kind = parts[4]
+            count = int(parts[5])
+        except ValueError:
+            continue
+        rows.append({"ts": ts, "phase": phase, "kind": kind, "count": count})
+    return rows
+
+
+def _summarize_capture_cleanup_by_phase_kind(
+    rows: list[dict[str, object]],
+) -> dict[str, dict[str, int]]:
+    totals: dict[str, dict[str, int]] = {}
+    for row in rows:
+        phase = str(row["phase"])
+        kind = str(row["kind"])
+        totals.setdefault(phase, {})
+        totals[phase][kind] = totals[phase].get(kind, 0) + int(row["count"])
+    return totals
+
+
+def _verify_capture_cleanup(
+    lines: list[str],
+    args: argparse.Namespace,
+    per_track_stats: Optional[list[dict[str, object]]] = None,
+) -> dict[str, object]:
+    rows = _extract_capture_cleanup_rows(lines)
+    by_phase_kind = _summarize_capture_cleanup_by_phase_kind(rows)
+
+    dedup_total = sum(phase_totals.get("dedup", 0) for phase_totals in by_phase_kind.values())
+    minlen_total = sum(phase_totals.get("minlen", 0) for phase_totals in by_phase_kind.values())
+    wrap_synth_total = sum(
+        phase_totals.get("wrap_synth", 0) for phase_totals in by_phase_kind.values()
+    )
+
+    issues: list[str] = []
+    max_dedup = int(getattr(args, "max_capture_dedup_events", 0))
+    if dedup_total > max_dedup:
+        issues.append("capture_dedup_exceeded")
+
+    max_minlen = getattr(args, "max_capture_minlen_pairs", None)
+    if max_minlen is not None and minlen_total > int(max_minlen):
+        issues.append("capture_minlen_exceeded")
+
+    reconciliation: list[dict[str, object]] = []
+    if per_track_stats:
+        track = per_track_stats[0]
+        phase_sent = {
+            "record": int(track.get("record_notes_sent", 0)),
+            "overdub": int(track.get("overdub_notes_sent", 0))
+            + int(track.get("second_overdub_notes_sent", 0)),
+        }
+        for phase, notes_sent in phase_sent.items():
+            cleanup = by_phase_kind.get(phase, {})
+            reconciliation.append(
+                {
+                    "phase": phase,
+                    "notes_sent": notes_sent,
+                    "dedup_events": cleanup.get("dedup", 0),
+                    "minlen_pairs": cleanup.get("minlen", 0),
+                    "wrap_synth_offs": cleanup.get("wrap_synth", 0),
+                }
+            )
+
+    return {
+        "rows": rows,
+        "by_phase_kind": by_phase_kind,
+        "dedup_total": dedup_total,
+        "minlen_pairs_total": minlen_total,
+        "wrap_synth_total": wrap_synth_total,
+        "max_dedup_events": max_dedup,
+        "max_minlen_pairs": max_minlen,
+        "reconciliation": reconciliation,
+        "issues": issues,
+        "ok": len(issues) == 0,
+    }
+
+
 def _build_serial_verification(lines: list[str], args: argparse.Namespace) -> dict[str, object]:
     record_only = bool(getattr(args, "record_only", False))
     boundaries = _extract_phase_boundaries(lines)
@@ -2530,6 +2618,18 @@ def run() -> int:
     )
     parser.add_argument("--cc-number", type=int, default=74, help="CC number for dense CC lane")
     parser.add_argument("--cc-step", type=int, default=9, help="CC step per sent note")
+    parser.add_argument(
+        "--max-capture-dedup-events",
+        type=int,
+        default=0,
+        help="Fail when live capture dedup drops exceed this total (CLN dedup sum)",
+    )
+    parser.add_argument(
+        "--max-capture-minlen-pairs",
+        type=int,
+        default=None,
+        help="Fail when NoteMinLength hot-stop pair removals exceed this (default: no limit)",
+    )
     parser.add_argument(
         "--fixed-grid-notes",
         action="store_true",
@@ -3420,6 +3520,12 @@ def run() -> int:
         )
 
     serial_verification = _build_serial_verification(verification_lines, args) if verification_lines else None
+    if serial_verification is not None:
+        capture_cleanup = _verify_capture_cleanup(verification_lines, args, per_track_stats)
+        serial_verification["capture_cleanup"] = capture_cleanup
+        for issue in capture_cleanup.get("issues", []):
+            if issue not in serial_verification["issues"]:
+                serial_verification["issues"].append(str(issue))
 
     assertions = {
         "serial_capture_enabled": bool(args.serial_port),
@@ -3645,6 +3751,32 @@ def run() -> int:
                         f"on={pair.get('on_tick')} off={pair.get('off_tick')} "
                         f"note={pair.get('note')} ch={pair.get('ch')} "
                         f"ok={pair.get('ok')}"
+                    )
+            capture_cleanup = serial_verification.get("capture_cleanup")
+            if capture_cleanup is not None:
+                print(
+                    "  VERIFY capture cleanup (CLN): "
+                    f"dedup={capture_cleanup.get('dedup_total')} "
+                    f"minlen_pairs={capture_cleanup.get('minlen_pairs_total')} "
+                    f"wrap_synth={capture_cleanup.get('wrap_synth_total')} "
+                    f"ok={capture_cleanup.get('ok')}"
+                )
+                by_phase_kind = capture_cleanup.get("by_phase_kind") or {}
+                for phase in sorted(by_phase_kind.keys()):
+                    kinds = by_phase_kind[phase]
+                    print(
+                        f"    CLN {phase}: "
+                        f"dedup={kinds.get('dedup', 0)} "
+                        f"minlen={kinds.get('minlen', 0)} "
+                        f"wrap_synth={kinds.get('wrap_synth', 0)}"
+                    )
+                for row in capture_cleanup.get("reconciliation", []):
+                    print(
+                        "    CLN reconcile "
+                        f"{row.get('phase')}: sent={row.get('notes_sent')} "
+                        f"dedup={row.get('dedup_events')} "
+                        f"minlen={row.get('minlen_pairs')} "
+                        f"wrap_synth={row.get('wrap_synth_offs')}"
                     )
             stored_overdub_span = serial_verification.get("stored_overdub_span")
             if stored_overdub_span and not stored_overdub_span.get("phase_disabled"):
