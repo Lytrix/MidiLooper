@@ -1398,14 +1398,33 @@ void EditManager::sendEditSessionChange(EditSessionType sessionType) {
     }
 }
 
+void EditManager::beforeSelectedTrackChange(Track& departingTrack) {
+    if (!editSession.active) {
+        return;
+    }
+    if (currentState == &startNoteState || currentState == &lengthNoteState ||
+        currentState == &pitchNoteState) {
+        commitAllPendingNoteEditActions(departingTrack);
+    }
+    if (editSession.sessionType == EditSessionType::Note && editSession.focus.active) {
+        syncNoteEditFocusLastFromSessionStore(departingTrack);
+    }
+    if (currentState) {
+        currentState->onExit(*this, departingTrack);
+        currentState = nullptr;
+    }
+}
+
 void EditManager::onTrackChanged(Track& newTrack) {
-    // Reset edit state when track changes
     currentEditMode = EDIT_MODE_NONE;
-    currentState = nullptr;
     selectedNoteIdx = -1;
     hasMovedBracket = false;
 
-    if (editSession.sessionType == EditSessionType::Loop) {
+    if (editSession.active && editSession.sessionType == EditSessionType::Note) {
+        reopenNoteEditSession(newTrack);
+        displayManager.invalidateLiveDisplayCache();
+        logger.log(CAT_TRACK, LOG_DEBUG, "NOTE_EDIT session reopened for new track");
+    } else if (editSession.sessionType == EditSessionType::Loop) {
         noteEditManager.loopEditManager.onEnterLoopEditSession(newTrack);
     }
 
