@@ -6,20 +6,28 @@
 
 #include "ActiveNoteLedger.h"
 #include "Globals.h"
-#include "PlaybackCursor.h"
 #include "PlaybackWindow.h"
 
 struct LoopPlaybackRuntime {
-  PlaybackCursor cursor;
+  uint32_t cachedLoopRevision = 0;
+  uint32_t cachedTrackGeneration = 0;
   ActiveNoteLedger ledger;
   PlaybackWindow primaryWindow;
-  PlaybackWindow loopHeadWindow;
+
+  bool isStale(uint32_t loopRevision, uint32_t trackGeneration) const {
+    return cachedLoopRevision != loopRevision || cachedTrackGeneration != trackGeneration;
+  }
+
+  void syncRevision(uint32_t loopRevision, uint32_t trackGeneration) {
+    cachedLoopRevision = loopRevision;
+    cachedTrackGeneration = trackGeneration;
+  }
 
   void reset(bool preserveLedger) {
-    cursor.reset(preserveLedger);
     primaryWindow.clear();
-    loopHeadWindow.clear();
     if (!preserveLedger) {
+      cachedLoopRevision = 0;
+      cachedTrackGeneration = 0;
       ledger.clear();
     }
   }

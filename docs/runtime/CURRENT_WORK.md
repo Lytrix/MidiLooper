@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-07-04 (derived-note-overlap-logic branch)
+Last updated: 2026-07-05 (derived-note-overlap-logic branch)
 
 ---
 
@@ -11,8 +11,12 @@ Last updated: 2026-07-04 (derived-note-overlap-logic branch)
 **Unified interval projection** — single wrap/linearization engine before derived overlap pipeline:
 
 - **Primary OpenSpec:** [`unified-interval-projection`](../../openspec/changes/unified-interval-projection/) — full-stack Edit + Display + Playback migration (Phases 1–5)
-- Handoff: [unified_interval_projection_enhancement.md](../plans/unified_interval_projection_enhancement.md)
+- Handoff: [unified_interval_projection_enhancement.md](../plans/unified_interval_projection_enhancement.md) · Phase 2: [unified_interval_projection_phase2_edit_projection_handoff.md](../plans/unified_interval_projection_phase2_edit_projection_handoff.md)
 - Design: [`design.md`](../../openspec/changes/unified-interval-projection/design.md)
+- **Phase 1 shipped** (2026-07-05): `IntervalProjection` core engine + `test_interval_projection` (17 cases).
+- **Phase 2 shipped** (2026-07-05): Edit projection (`buildEditProjectionContext`, `projectEditIntervalsForAnalysis`); `resolveLinearNoteSpanForOverlap` delegates to engine; `test_note_edit_focus` +4 parity cases (50 total).
+- **Phase 3 shipped** (2026-07-05): Display projection (`projectDisplayNotes`, `buildCanonicalSpansFromMidi` → engine); `DisplayWindowUtils` + `DetailedWindowContext` on `TickInterval`; `test_noteutils_reconstruct` 17 cases, `test_display_window_utils` 8 cases.
+- **Phase 4 shipped** (2026-07-05): Playback projection (`projectPlaybackEventPhase`, rolling `projectionCycleStartTick`, queued start at grid); retired `PlaybackCursor` / `loopHeadWindow`; `test_interval_projection` +3 playback-order cases. **Next:** Phase 5 integration + HITL (tasks 5.1–5.6).
 
 ## Paused — blocked by UIP
 
@@ -50,8 +54,8 @@ Set revision persistence + load/save overlay UX:
 
 ## Current target
 
-1. **`unified-interval-projection` Phase 0** — OpenSpec sign-off; DECISION_LOG on first code land
-2. **Phases 1–5** — core engine, Edit/Display/Playback migration, HITL
+1. **`unified-interval-projection` Phases 1–4** — **done** (core + Edit + Display + Playback projection)
+2. **Phase 5** — grep gate, HITL, integration
 3. **Phase 6** — sync overlap OpenSpec; resume derived overlap handoff
 
 ## Paused (persistence track)

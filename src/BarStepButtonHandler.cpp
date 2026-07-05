@@ -236,6 +236,22 @@ void BarStepButtonHandler::handleNoteOn(uint8_t note, uint8_t velocity) {
         clockManager.setCurrentTick(seekTick);
         testLog("BarStepButton: immediate seek to tick %lu (quantized 16th) [TEST POINT: immediate seek]", seekTick);
       }
+    } else if (trackRef.isPlaying() && !potentialHoldTwo) {
+      uint32_t loopLength = trackRef.getLoopLength();
+      uint32_t loopStartTick = trackRef.getLoopStartTick();
+      if (loopLength > 0) {
+        uint32_t displayPos = (info.type == BarStepButtonType::SIXTEENTH)
+                                  ? (info.stepIndex * Config::TICKS_PER_16TH_STEP)
+                                  : (info.stepIndex * Config::TICKS_PER_BAR);
+        uint32_t tickInLoop = (loopStartTick + displayPos) % loopLength;
+        tickInLoop =
+            (tickInLoop / Config::TICKS_PER_16TH_STEP) * Config::TICKS_PER_16TH_STEP;
+        const uint8_t trackIndex = trackManager.getSelectedTrackIndex();
+        trackManager.queueBarPlaybackStart(trackIndex, static_cast<int32_t>(tickInLoop),
+                                           clockManager.getCurrentTick());
+        testLog("BarStepButton: queued playback start at tick %lu [TEST POINT: bar queue]",
+                tickInLoop);
+      }
     }
   }
 }

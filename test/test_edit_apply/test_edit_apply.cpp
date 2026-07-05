@@ -12,6 +12,7 @@
 #include "../../src/Utils/LoopEventValidation.cpp"
 #include "../../src/Loop.cpp"
 #include "../test_support/LoopCaptureTestDeps.cpp"
+#include "../../src/Utils/IntervalProjection.cpp"
 #include "../../src/NoteEditFocus.cpp"
 #include "../../src/NoteEditSessionUndo.cpp"
 

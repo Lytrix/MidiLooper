@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <unordered_set>
 
+#include "Utils/IntervalProjection.h"
 #include "Utils/NoteMovementWrap.h"
 #include "Utils/LoopTickNormalize.h"
 #include "Utils/NoteUtils.h"
@@ -103,6 +104,42 @@ NOTE_EDIT_MEM bool isInflatedDisplaySpan(const NoteUtils::DisplayNote& dn, uint3
   return (dn.endTick - dn.startTick) > loopLength / 2;
 }
 
+namespace {
+
+NOTE_EDIT_MEM bool projectCanonicalBaselineForEdit(const NoteId noteId, const NoteBaseline& canonical,
+                                                   int32_t originTick, uint32_t loopLength,
+                                                   NoteBaseline& out) {
+  if (noteId == kInvalidNoteId || loopLength == 0) {
+    return false;
+  }
+  if (canonical.endTick < canonical.startTick) {
+    return false;
+  }
+  ProjectionContext context{};
+  context.type = ProjectionType::Edit;
+  context.loopLength = loopLength;
+  context.window = IntervalProjection::makeFullLoopEditAnalysisWindow(loopLength);
+  context.originTick = originTick;
+  const CanonicalNoteSpan span{
+      noteId,
+      TickInterval{static_cast<int32_t>(canonical.startTick),
+                   static_cast<int32_t>(canonical.endTick)},
+      canonical.pitch,
+      canonical.velocity,
+  };
+  const ProjectedNoteInterval projected =
+      IntervalProjection::projectEditLinearSpan(span, context);
+  if (projected.noteId == kInvalidNoteId) {
+    return false;
+  }
+  out = canonical;
+  out.startTick = static_cast<uint32_t>(projected.interval.start);
+  out.endTick = static_cast<uint32_t>(projected.interval.end);
+  return true;
+}
+
+}  // namespace
+
 NOTE_EDIT_MEM NoteBaseline linearBaselineForOverlapRestore(const NoteEditFocus& focus, const OverlapNote& entry,
                                              MidiEventVec* sessionEvents, uint8_t channel) {
   (void)sessionEvents;
@@ -141,31 +178,37 @@ NOTE_EDIT_MEM bool resolveLinearNoteSpanForOverlap(const NoteEditFocus& focus, M
                                      NoteBaseline& out, uint32_t loopLength) {
   const NoteId noteId = dn.noteId != kInvalidNoteId ? dn.noteId
                                                     : findBaselineNoteIdForDisplay(focus, dn);
+  NoteBaseline canonical{};
+  bool hasCanonical = false;
   if (noteId != kInvalidNoteId) {
     const auto mapIt = focus.baselineMap.find(noteId);
     if (mapIt != focus.baselineMap.end() &&
         (loopLength == 0 ||
          isPlausibleStorageSpan(mapIt->second.startTick, mapIt->second.endTick, loopLength))) {
-      out = mapIt->second;
-      return true;
+      canonical = mapIt->second;
+      hasCanonical = true;
     }
   }
-  if (dn.endTick >= dn.startTick &&
+  if (!hasCanonical && dn.endTick >= dn.startTick &&
       (loopLength == 0 || !isInflatedDisplaySpan(dn, loopLength)) &&
       (loopLength == 0 ||
        isPlausibleStorageSpan(dn.startTick, dn.endTick, loopLength))) {
-    out = baselineFromDisplayNote(dn);
-    return true;
+    canonical = baselineFromDisplayNote(dn);
+    hasCanonical = true;
   }
-  if (noteId != kInvalidNoteId &&
-      findLinearNoteSpanForNoteId(events, noteId, channel, out, dn.startTick, loopLength)) {
-    return true;
+  if (!hasCanonical && noteId != kInvalidNoteId &&
+      findLinearNoteSpanForNoteId(events, noteId, channel, canonical, dn.startTick, loopLength)) {
+    hasCanonical = true;
   }
-  if (noteId != kInvalidNoteId &&
-      findLinearNoteSpanForNoteId(events, noteId, channel, out, UINT32_MAX, loopLength)) {
-    return true;
+  if (!hasCanonical && noteId != kInvalidNoteId &&
+      findLinearNoteSpanForNoteId(events, noteId, channel, canonical, UINT32_MAX, loopLength)) {
+    hasCanonical = true;
   }
-  return false;
+  if (!hasCanonical) {
+    return false;
+  }
+  const int32_t originTick = static_cast<int32_t>(dn.startTick);
+  return projectCanonicalBaselineForEdit(noteId, canonical, originTick, loopLength, out);
 }
 
 NOTE_EDIT_MEM uint32_t overlapNoteEffectiveEnd(const OverlapNote& entry) {

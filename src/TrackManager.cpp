@@ -643,11 +643,26 @@ void TrackManager::requestSlotSwitch(uint8_t trackIndex,
                                       uint8_t slotIndex,
                                       SlotQuantization quantization,
                                       uint32_t queuedAtTick) {
+  if (trackIndex < Config::NUM_TRACKS && slotIndex < Config::MAX_LOOPS_PER_TRACK) {
+    Track& track = tracks[trackIndex];
+    const Loop& targetLoop = track.getLoop(slotIndex);
+    track.queuePlaybackStartAtGrid(static_cast<int32_t>(targetLoop.loopStartTick), queuedAtTick);
+  }
   slotStateMachine.requestPendingSlotSwitch(trackIndex, slotIndex, quantization, queuedAtTick);
 }
 
 void TrackManager::clearPendingSlotSwitch(uint8_t trackIndex) {
   slotStateMachine.clearPendingSlotSwitch(trackIndex);
+}
+
+void TrackManager::queueBarPlaybackStart(uint8_t trackIndex, int32_t storageTick,
+                                         uint32_t queuedAtTick) {
+  if (trackIndex >= Config::NUM_TRACKS) {
+    return;
+  }
+  slotStateMachine.clearPendingSlotSwitch(trackIndex);
+  pendingEnabledSetReplacement[trackIndex] = false;
+  tracks[trackIndex].queuePlaybackStartAtGrid(storageTick, queuedAtTick);
 }
 
 void TrackManager::setSelectedTrack(uint8_t index) {
@@ -748,7 +763,14 @@ void TrackManager::updateAllTracks(uint32_t currentTick) {
       if (targetSlot < Config::MAX_LOOPS_PER_TRACK && tracks[i].hasDataInSlot(targetSlot)) {
         slotStateMachine.clearPendingSlotSwitch(i);
         setActiveLoopIndex(i, targetSlot);
-        tracks[i].resetPlaybackState(currentTick);
+        const Loop& targetLoop = tracks[i].getLoop(targetSlot);
+        if (!tracks[i].hasQueuedPlaybackStart()) {
+          tracks[i].queuePlaybackStartAtGrid(static_cast<int32_t>(targetLoop.loopStartTick),
+                                              currentTick);
+        }
+        tracks[i].commitQueuedPlaybackStart(currentTick);
+        tracks[i].getActiveLoop().nextEventIndex = 0;
+        tracks[i].getActiveLoop().lastTickInLoop = UINT32_MAX;
 
         // If this slot switch came from a "select single slot" gesture, replace enabled set.
         if (pendingEnabledSetReplacement[i]) {
@@ -764,6 +786,12 @@ void TrackManager::updateAllTracks(uint32_t currentTick) {
         slotStateMachine.clearPendingSlotSwitch(i);
         pendingEnabledSetReplacement[i] = false;
       }
+    }
+
+    // Bar-queued playback start (no pending slot switch).
+    if (tracks[i].isPlaying() && !slotStateMachine.hasPendingSlotSwitch(i) &&
+        tracks[i].shouldCommitQueuedPlaybackStart(currentTick)) {
+      tracks[i].commitQueuedPlaybackStart(currentTick);
     }
 
     if (pendingStop[i]) {

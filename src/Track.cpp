@@ -115,16 +115,18 @@ uint32_t computeTruncationRewindTicks(uint32_t rawLength, uint32_t finalLength) 
   return rawLength - positionInBar;
 }
 
-uint32_t playbackSortPhase(const MidiEvent& evt, uint32_t loopLengthTicks) {
-  if (loopLengthTicks == 0 || evt.tick < loopLengthTicks) {
-    return evt.tick;
-  }
-  // Beyond active loop length: keep in storage but play after in-loop events each pass.
-  return loopLengthTicks + evt.tick;
+ProjectionContext makePlaybackContext(const Track& track, const Loop& loop, uint32_t currentTick) {
+  return IntervalProjection::buildPlaybackProjectionContext(
+      loop.loopLengthTicks,
+      IntervalProjection::makeFullLoopPlaybackWindow(loop.loopLengthTicks),
+      static_cast<int32_t>(currentTick), track.getProjectionCycleStartTick(),
+      static_cast<int32_t>(loop.loopStartTick), track.hasQueuedPlaybackStart(),
+      track.getQueuedStartTick());
 }
 
 /// After a mid-pass playback-order rebuild, point nextEventIndex at the current playhead.
-void reanchorPlaybackIndex(Loop& loop, const MidiEventVec& mergedEvents, const PlaybackOrderVec& order) {
+void reanchorPlaybackIndex(Loop& loop, const MidiEventVec& mergedEvents, const PlaybackOrderVec& order,
+                           const ProjectionContext& playbackContext) {
   if (loop.lastTickInLoop == UINT32_MAX) {
     loop.nextEventIndex = 0;
     return;
@@ -132,7 +134,9 @@ void reanchorPlaybackIndex(Loop& loop, const MidiEventVec& mergedEvents, const P
   size_t idx = 0;
   while (idx < order.size()) {
     const MidiEvent& e = mergedEvents[order[idx]];
-    if (e.tick >= loop.loopLengthTicks || e.tick > loop.lastTickInLoop) break;
+    const uint32_t evPhase =
+        IntervalProjection::playbackEventPhase(e.tick, playbackContext.loopLength);
+    if (evPhase > loop.lastTickInLoop) break;
     ++idx;
   }
   loop.nextEventIndex = static_cast<uint16_t>(idx);
@@ -156,21 +160,27 @@ void ensurePlaybackWindowBuilt(Track& track, Loop& loop, LoopPlaybackRuntime& ru
     loop.mergeMaterializedPassesWithCapture(runtime.primaryWindow.mergedEvents);
   }
   runtime.primaryWindow.builtFromRevision = windowRevision;
-  runtime.primaryWindow.effectiveWindowBars = Config::PLAYBACK_WINDOW_MAX_BARS;
   loop.playbackOrderDirty = true;
 }
 
-void rebuildPlaybackOrder(Loop& loop, const MidiEventVec& mergedEvents) {
+void rebuildPlaybackOrder(Loop& loop, const MidiEventVec& mergedEvents,
+                          const ProjectionContext& playbackContext) {
   PlaybackOrderVec& playbackOrder = loop.getPlaybackOrder();
   playbackOrder.resize(mergedEvents.size());
   for (size_t i = 0; i < mergedEvents.size(); i++) {
     playbackOrder[i] = i;
   }
-  uint32_t ll = loop.loopLengthTicks;
-  std::sort(playbackOrder.begin(), playbackOrder.end(),
-    [&](size_t a, size_t b) {
-      return playbackSortPhase(mergedEvents[a], ll) < playbackSortPhase(mergedEvents[b], ll);
-    });
+  std::vector<uint32_t> sortPhases(mergedEvents.size());
+  for (size_t i = 0; i < mergedEvents.size(); ++i) {
+    sortPhases[i] =
+        IntervalProjection::playbackEventPhase(mergedEvents[i].tick, playbackContext.loopLength);
+  }
+  std::sort(playbackOrder.begin(), playbackOrder.end(), [&](size_t a, size_t b) {
+    if (sortPhases[a] != sortPhases[b]) {
+      return sortPhases[a] < sortPhases[b];
+    }
+    return mergedEvents[a].tick < mergedEvents[b].tick;
+  });
   loop.playbackOrderDirty = false;
 }
 
@@ -454,9 +464,13 @@ void Track::resetPlaybackState(uint32_t currentTick) {
   invalidatePlaybackWindow(true);
   if (loop.loopLengthTicks == 0) {
     loop.lastTickInLoop = 0;
+    projectionCycleStartTick = static_cast<int32_t>(currentTick);
     return;
   }
-  loop.lastTickInLoop = tickPhaseInLoop(currentTick, loop.startLoopTick, loop.loopLengthTicks);
+  const uint32_t phase =
+      tickPhaseInLoop(currentTick, loop.startLoopTick, loop.loopLengthTicks);
+  projectionCycleStartTick = static_cast<int32_t>(currentTick) - static_cast<int32_t>(phase);
+  loop.lastTickInLoop = phase;
 }
 
 void Track::resetPlaybackStateForSlot(uint8_t slotIndex, uint32_t currentTick) {
@@ -464,7 +478,12 @@ void Track::resetPlaybackStateForSlot(uint8_t slotIndex, uint32_t currentTick) {
   Loop& loop = getLoop(slotIndex);
   if (loop.loopLengthTicks == 0) return;
   loop.nextEventIndex = 0;
-  loop.lastTickInLoop = tickPhaseInLoop(currentTick, loop.startLoopTick, loop.loopLengthTicks);
+  const uint32_t phase =
+      tickPhaseInLoop(currentTick, loop.startLoopTick, loop.loopLengthTicks);
+  if (slotIndex == activeLoopIndex) {
+    projectionCycleStartTick = static_cast<int32_t>(currentTick) - static_cast<int32_t>(phase);
+  }
+  loop.lastTickInLoop = phase;
   invalidatePlaybackWindow(true);
 }
 
@@ -976,6 +995,10 @@ void Track::stopRecording(uint32_t currentTick) {
   loop.lastTickInLoop = (finalLength > 0)
                             ? tickPhaseInLoop(playbackTick, recordStartTick, finalLength)
                             : 0;
+  if (finalLength > 0) {
+    projectionCycleStartTick =
+        static_cast<int32_t>(playbackTick) - static_cast<int32_t>(loop.lastTickInLoop);
+  }
 
   invalidatePlaybackCaches();
   SC_REC_STOP("stop", activeLoopIndex, playbackTick, recordStartTick, rawLength, finalLength, captureAlignFlag);
@@ -1127,6 +1150,12 @@ void Track::startPlaying(uint32_t currentTick, bool preserveLoopPhaseOrigin) {
       loop.startLoopTick = 0;
       loop.nextEventIndex = 0;
       loop.lastTickInLoop = UINT32_MAX;
+      projectionCycleStartTick = static_cast<int32_t>(currentTick);
+    } else if (loop.loopLengthTicks > 0) {
+      const uint32_t phase =
+          tickPhaseInLoop(currentTick, loop.startLoopTick, loop.loopLengthTicks);
+      projectionCycleStartTick =
+          static_cast<int32_t>(currentTick) - static_cast<int32_t>(phase);
     }
     logger.logTrackEvent("Playback started", currentTick);
   }
@@ -1396,7 +1425,55 @@ void Track::rebuildPlaybackOrder() {
   Loop& loop = getActiveLoop();
   LoopPlaybackRuntime& runtime = playbackRuntime.slot(activeLoopIndex);
   ensurePlaybackWindowBuilt(*this, loop, runtime);
-  ::rebuildPlaybackOrder(loop, runtime.primaryWindow.mergedEvents);
+  const uint32_t currentTick = clockManager.getCurrentTick();
+  const ProjectionContext playbackContext = makePlaybackContext(*this, loop, currentTick);
+  ::rebuildPlaybackOrder(loop, runtime.primaryWindow.mergedEvents, playbackContext);
+}
+
+void Track::queuePlaybackStartAtGrid(int32_t startTick, uint32_t queuedAtTick) {
+  useQueuedStart = true;
+  queuedStartTick = startTick;
+  queuedStartQueuedAtTick = queuedAtTick;
+  getActiveLoop().nextEventIndex = 0;
+  getActiveLoop().lastTickInLoop = UINT32_MAX;
+}
+
+void Track::clearQueuedPlaybackStart() {
+  useQueuedStart = false;
+  queuedStartTick = 0;
+  queuedStartQueuedAtTick = UINT32_MAX;
+}
+
+bool Track::shouldCommitQueuedPlaybackStart(uint32_t currentTick) const {
+  if (!useQueuedStart) {
+    return false;
+  }
+  if (currentTick == queuedStartQueuedAtTick) {
+    return false;
+  }
+  if (queuedStartGridTicks == 0) {
+    return false;
+  }
+  return (currentTick % queuedStartGridTicks) == 0;
+}
+
+void Track::commitQueuedPlaybackStart(uint32_t commitTick) {
+  if (!useQueuedStart) {
+    return;
+  }
+  Loop& loop = getActiveLoop();
+  const uint32_t loopLength = loop.loopLengthTicks;
+  if (loopLength == 0) {
+    clearQueuedPlaybackStart();
+    return;
+  }
+  const uint32_t startPhase = IntervalProjection::noteRelativeTick(
+      static_cast<uint32_t>(queuedStartTick), loop.loopStartTick, loopLength);
+  projectionCycleStartTick =
+      static_cast<int32_t>(commitTick) - static_cast<int32_t>(startPhase);
+  loop.nextEventIndex = 0;
+  loop.lastTickInLoop = UINT32_MAX;
+  clearQueuedPlaybackStart();
 }
 
 void Track::playMidiEvents(uint32_t currentTick, bool isAudible) {
@@ -1404,11 +1481,11 @@ void Track::playMidiEvents(uint32_t currentTick, bool isAudible) {
   if (!isAudible || muted || !loop.hasPublishedEvents() || loop.loopLengthTicks == 0)
     return;
   LoopPlaybackRuntime& runtime = playbackRuntime.slot(activeLoopIndex);
-  if (runtime.cursor.isStale(loop.playbackRevision, playbackGeneration)) {
+  if (runtime.isStale(loop.playbackRevision, playbackGeneration)) {
     runtime.reset(true);
     loop.nextEventIndex = 0;
     loop.captureNextEventIndex = 0;
-    runtime.cursor.syncRevision(loop.playbackRevision, playbackGeneration);
+    runtime.syncRevision(loop.playbackRevision, playbackGeneration);
   }
 
   ensurePlaybackWindowBuilt(*this, loop, runtime);
@@ -1417,17 +1494,21 @@ void Track::playMidiEvents(uint32_t currentTick, bool isAudible) {
     return;
   }
 
+  const ProjectionContext playbackContext = makePlaybackContext(*this, loop, currentTick);
+
   if (loop.playbackOrderDirty) {
-    ::rebuildPlaybackOrder(loop, mergedEvents);
-    reanchorPlaybackIndex(loop, mergedEvents, loop.getPlaybackOrder());
+    ::rebuildPlaybackOrder(loop, mergedEvents, playbackContext);
+    reanchorPlaybackIndex(loop, mergedEvents, loop.getPlaybackOrder(), playbackContext);
   }
 
-  uint32_t tickInLoop = tickPhaseInLoop(currentTick, loop.startLoopTick, loop.loopLengthTicks);
+  uint32_t tickInLoop = IntervalProjection::tickPhaseInProjectionCycle(
+      currentTick, projectionCycleStartTick, loop.loopLengthTicks);
 
   if (tickInLoop < loop.lastTickInLoop && loop.lastTickInLoop != UINT32_MAX) {
+    projectionCycleStartTick = IntervalProjection::advanceProjectionCycleStartTickOnWrap(
+        projectionCycleStartTick, loop.loopLengthTicks);
     loop.nextEventIndex = 0;
     loop.captureNextEventIndex = 0;
-    runtime.cursor.mergeCursorIndex = 0;
     if (isOverdubbing()) {
       closeOpenNotesAtLoopWrap();
     }
@@ -1436,7 +1517,6 @@ void Track::playMidiEvents(uint32_t currentTick, bool isAudible) {
 
   uint32_t prevTickInLoop = loop.lastTickInLoop;
   loop.lastTickInLoop = tickInLoop;
-  runtime.cursor.lastTickInLoop = tickInLoop;
 
   bool atLoopStart = (prevTickInLoop == UINT32_MAX) || (tickInLoop <= prevTickInLoop);
 
@@ -1458,14 +1538,12 @@ void Track::playMidiEvents(uint32_t currentTick, bool isAudible) {
   const PlaybackOrderVec& playbackOrder = loop.getPlaybackOrder();
   while (loop.nextEventIndex < playbackOrder.size()) {
     const MidiEvent &evt = mergedEvents[playbackOrder[loop.nextEventIndex]];
-    if (evt.tick >= loop.loopLengthTicks) {
-      loop.nextEventIndex++;
-      continue;
-    }
-    uint32_t evTick = evt.tick;
+    const uint32_t evTick =
+        IntervalProjection::playbackEventPhase(evt.tick, playbackContext.loopLength);
+    const uint32_t evStorageTick = evt.tick;
 
     bool crossed = atLoopStart ? (evTick <= tickInLoop) : (prevTickInLoop < evTick && evTick <= tickInLoop);
-    if (crossed && eventInJamRegion(evTick)) {
+    if (crossed && eventInJamRegion(evStorageTick)) {
       uint8_t effectiveCh = (evt.channel >= 1 && evt.channel <= 16) ? midiChannel : evt.channel;
       uint8_t note = evt.isNoteOn() || evt.isNoteOff() ? evt.data.noteData.note : 0;
       bool isDuplicate = (evt.isNoteOn() || evt.isNoteOff()) &&
@@ -1496,14 +1574,12 @@ void Track::playMidiEvents(uint32_t currentTick, bool isAudible) {
     }
     while (loop.captureNextEventIndex < loop.capture.store.size()) {
       const MidiEvent& evt = loop.capture.store.at(loop.captureNextEventIndex);
-      if (evt.tick >= loop.loopLengthTicks) {
-        loop.captureNextEventIndex++;
-        continue;
-      }
-      const uint32_t evTick = evt.tick;
+      const uint32_t evTick =
+          IntervalProjection::projectPlaybackEventPhase(evt.tick, playbackContext);
+      const uint32_t evStorageTick = evt.tick;
       const bool crossed =
           atLoopStart ? (evTick <= tickInLoop) : (prevTickInLoop < evTick && evTick <= tickInLoop);
-      if (crossed && eventInJamRegion(evTick)) {
+      if (crossed && eventInJamRegion(evStorageTick)) {
         sendMidiEvent(evt);
         loop.captureNextEventIndex++;
       } else if (evTick > tickInLoop) {
@@ -1513,8 +1589,7 @@ void Track::playMidiEvents(uint32_t currentTick, bool isAudible) {
       }
     }
   }
-  runtime.cursor.mergeCursorIndex = loop.nextEventIndex;
-  runtime.cursor.syncRevision(loop.playbackRevision, playbackGeneration);
+  runtime.syncRevision(loop.playbackRevision, playbackGeneration);
 }
 
 void Track::playMidiEventsForSlot(uint8_t slotIndex, uint32_t currentTick, bool isAudible) {
@@ -1524,10 +1599,10 @@ void Track::playMidiEventsForSlot(uint8_t slotIndex, uint32_t currentTick, bool 
   Loop& loop = getLoop(slotIndex);
   if (!loop.hasPublishedEvents() || loop.loopLengthTicks == 0) return;
   LoopPlaybackRuntime& runtime = playbackRuntime.slot(slotIndex);
-  if (runtime.cursor.isStale(loop.playbackRevision, playbackGeneration)) {
+  if (runtime.isStale(loop.playbackRevision, playbackGeneration)) {
     runtime.reset(true);
     loop.nextEventIndex = 0;
-    runtime.cursor.syncRevision(loop.playbackRevision, playbackGeneration);
+    runtime.syncRevision(loop.playbackRevision, playbackGeneration);
   }
 
   ensurePlaybackWindowBuilt(*this, loop, runtime);
@@ -1536,30 +1611,30 @@ void Track::playMidiEventsForSlot(uint8_t slotIndex, uint32_t currentTick, bool 
     return;
   }
 
+  const ProjectionContext playbackContext = makePlaybackContext(*this, loop, currentTick);
+
   if (loop.playbackOrderDirty) {
-    ::rebuildPlaybackOrder(loop, mergedEvents);
-    reanchorPlaybackIndex(loop, mergedEvents, loop.getPlaybackOrder());
+    ::rebuildPlaybackOrder(loop, mergedEvents, playbackContext);
+    reanchorPlaybackIndex(loop, mergedEvents, loop.getPlaybackOrder(), playbackContext);
   }
 
-  uint32_t tickInLoop = tickPhaseInLoop(currentTick, loop.startLoopTick, loop.loopLengthTicks);
+  uint32_t tickInLoop = IntervalProjection::tickPhaseInProjectionCycle(
+      currentTick, projectionCycleStartTick, loop.loopLengthTicks);
   if (tickInLoop < loop.lastTickInLoop) {
+    projectionCycleStartTick = IntervalProjection::advanceProjectionCycleStartTickOnWrap(
+        projectionCycleStartTick, loop.loopLengthTicks);
     loop.nextEventIndex = 0;
-    runtime.cursor.mergeCursorIndex = 0;
   }
 
   uint32_t prevTickInLoop = loop.lastTickInLoop;
   loop.lastTickInLoop = tickInLoop;
-  runtime.cursor.lastTickInLoop = tickInLoop;
   bool atLoopStart = (prevTickInLoop == UINT32_MAX) || (tickInLoop <= prevTickInLoop);
   const PlaybackOrderVec& playbackOrder = loop.getPlaybackOrder();
 
   while (loop.nextEventIndex < playbackOrder.size()) {
     const MidiEvent &evt = mergedEvents[playbackOrder[loop.nextEventIndex]];
-    if (evt.tick >= loop.loopLengthTicks) {
-      loop.nextEventIndex++;
-      continue;
-    }
-    uint32_t evTick = evt.tick;
+    const uint32_t evTick =
+        IntervalProjection::playbackEventPhase(evt.tick, playbackContext.loopLength);
     bool crossed = atLoopStart ? (evTick <= tickInLoop) : (prevTickInLoop < evTick && evTick <= tickInLoop);
     if (crossed) {
       sendMidiEvent(evt);
@@ -1570,8 +1645,7 @@ void Track::playMidiEventsForSlot(uint8_t slotIndex, uint32_t currentTick, bool 
       loop.nextEventIndex++;
     }
   }
-  runtime.cursor.mergeCursorIndex = loop.nextEventIndex;
-  runtime.cursor.syncRevision(loop.playbackRevision, playbackGeneration);
+  runtime.syncRevision(loop.playbackRevision, playbackGeneration);
 }
 
 void Track::sendMidiEvent(const MidiEvent& evt) {

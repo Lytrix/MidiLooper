@@ -132,6 +132,8 @@ public:
                           SlotQuantization quantization,
                           uint32_t queuedAtTick);
   void clearPendingSlotSwitch(uint8_t trackIndex);
+  /// Queue bar/16th playback restart at next grid; clears any pending slot switch (D14).
+  void queueBarPlaybackStart(uint8_t trackIndex, int32_t storageTick, uint32_t queuedAtTick);
 
   // --- LED Management ---
   void updateLedsDeferred();   // Call from main loop - decoupled from clock path

@@ -1187,11 +1187,14 @@ DetailedWindowContext DisplayManager::resolveDetailedWindow(const Track& track, 
     const uint8_t windowBars = std::min<uint8_t>(detailedWindowBars_[displaySlot],
                                                  DisplayWindowUtils::kMaxDetailedWindowBars);
     ctx.active = true;
-    ctx.windowLengthTicks = static_cast<uint32_t>(windowBars) * Config::TICKS_PER_BAR;
-    ctx.windowStartTick = detailedWindowStartTick_[displaySlot];
-    if (ctx.windowStartTick + ctx.windowLengthTicks > loopLength) {
-        ctx.windowStartTick =
-            loopLength > ctx.windowLengthTicks ? loopLength - ctx.windowLengthTicks : 0;
+    ctx.window = DisplayWindowUtils::makeViewportInterval(
+        detailedWindowStartTick_[displaySlot],
+        static_cast<uint32_t>(windowBars) * Config::TICKS_PER_BAR);
+    if (static_cast<uint32_t>(ctx.window.end) > loopLength) {
+        const uint32_t windowLength = static_cast<uint32_t>(ctx.window.length());
+        const uint32_t windowStart =
+            loopLength > windowLength ? loopLength - windowLength : 0;
+        ctx.window = DisplayWindowUtils::makeViewportInterval(windowStart, windowLength);
     }
     return ctx;
 }

@@ -16,6 +16,7 @@ Primary implementation paths:
 - **Pressed slot has data, slot is not selected**:
   - In multi-slot mode (more than one enabled slot): keep enabled set, optionally toggle mute if slot is enabled, and queue active-slot focus switch at next 16th.
   - In single-slot mode: queue switch to that slot at next 16th; when committed, enabled set can be replaced with that single slot.
+  - On grid commit: that track's **`projectionCycleStartTick`** resets to the commit tick and **`queuedStartTick`** applies once (default = target slot's **`loopStartTick`**).
 - **Pressed slot is empty**: use queued/immediate record flow (bar/phase quantized when configured).
 
 ### While not playing

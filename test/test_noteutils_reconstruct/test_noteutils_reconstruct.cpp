@@ -7,9 +7,11 @@
 
 // Compile production translation units into this test only (native stub Logger + real NoteUtils).
 #include "../../src/Logger.cpp"
+#include "../../src/Utils/IntervalProjection.cpp"
 #include "../../src/Utils/NoteUtils.cpp"
 
 #include "Utils/NoteUtils.h"
+#include "Utils/IntervalProjection.h"
 #include "MidiEvent.h"
 
 static void assert_has_note(const std::vector<NoteUtils::DisplayNote>& notes,
@@ -21,6 +23,74 @@ static void assert_has_note(const std::vector<NoteUtils::DisplayNote>& notes,
         return n.note == pitch && n.startTick == startTick && n.endTick == endTick && n.velocity == velocity;
     });
     TEST_ASSERT_TRUE(it != notes.end());
+}
+
+void test_project_display_notes_simple_span() {
+    constexpr uint32_t loopLength = 48;
+    std::vector<CanonicalNoteSpan> spans;
+    CanonicalNoteSpan span;
+    span.noteId = 1;
+    span.pitch = 60;
+    span.velocity = 100;
+    span.interval = TickInterval{10, 41};
+    spans.push_back(span);
+
+    const TickInterval window = IntervalProjection::makeFullLoopDisplayWindow(loopLength);
+    const ProjectionContext context =
+        IntervalProjection::buildDisplayProjectionContext(loopLength, window);
+    const NoteUtils::DisplayNoteVec notes =
+        IntervalProjection::projectDisplayNotes(spans, context);
+    TEST_ASSERT_EQUAL(1u, notes.size());
+    assert_has_note(std::vector<NoteUtils::DisplayNote>(notes.begin(), notes.end()), 60, 10, 40,
+                    100);
+}
+
+void test_project_display_notes_head_tail_split() {
+    constexpr uint32_t loopLength = 1536;
+    std::vector<CanonicalNoteSpan> spans;
+    CanonicalNoteSpan span;
+    span.noteId = 1;
+    span.pitch = 60;
+    span.velocity = 100;
+    span.interval = TickInterval{1400, 1587};
+    span.splitHeadTail = true;
+    spans.push_back(span);
+
+    const TickInterval window = IntervalProjection::makeFullLoopDisplayWindow(loopLength);
+    const ProjectionContext context =
+        IntervalProjection::buildDisplayProjectionContext(loopLength, window);
+    const NoteUtils::DisplayNoteVec notes =
+        IntervalProjection::projectDisplayNotes(spans, context);
+    TEST_ASSERT_EQUAL(2u, notes.size());
+    TEST_ASSERT_EQUAL_UINT32(1400u, notes[0].startTick);
+    TEST_ASSERT_EQUAL_UINT32(loopLength - 1, notes[0].endTick);
+    TEST_ASSERT_EQUAL_UINT32(0u, notes[1].startTick);
+    TEST_ASSERT_EQUAL_UINT32(50u, notes[1].endTick);
+}
+
+void test_project_display_notes_open_tail_with_playhead() {
+    constexpr uint32_t loopLength = 100;
+    std::vector<CanonicalNoteSpan> spans;
+    CanonicalNoteSpan span;
+    span.noteId = 1;
+    span.pitch = 60;
+    span.velocity = 100;
+    span.interval = TickInterval{90, static_cast<int32_t>(loopLength)};
+    span.isOpen = true;
+    spans.push_back(span);
+
+    const TickInterval window = IntervalProjection::makeFullLoopDisplayWindow(loopLength);
+    const ProjectionContext context =
+        IntervalProjection::buildDisplayProjectionContext(loopLength, window);
+    const NoteUtils::DisplayNoteVec closed =
+        IntervalProjection::projectDisplayNotes(spans, context);
+    TEST_ASSERT_EQUAL(1u, closed.size());
+    TEST_ASSERT_EQUAL_UINT32(99u, closed[0].endTick);
+
+    const NoteUtils::DisplayNoteVec live =
+        IntervalProjection::projectDisplayNotes(spans, context, 95);
+    TEST_ASSERT_EQUAL(1u, live.size());
+    TEST_ASSERT_EQUAL_UINT32(95u, live[0].endTick);
 }
 
 void test_reconstruct_empty_loop_yields_empty() {
@@ -240,6 +310,9 @@ void test_reconstruct_duplicate_pitch_non_overlapping_spans() {
 
 int main(int /*argc*/, char** /*argv*/) {
     UNITY_BEGIN();
+    RUN_TEST(test_project_display_notes_head_tail_split);
+    RUN_TEST(test_project_display_notes_open_tail_with_playhead);
+    RUN_TEST(test_project_display_notes_simple_span);
     RUN_TEST(test_reconstruct_empty_loop_yields_empty);
     RUN_TEST(test_reconstruct_discards_note_on_at_or_beyond_loop);
     RUN_TEST(test_reconstruct_wraps_note_off_past_boundary);
