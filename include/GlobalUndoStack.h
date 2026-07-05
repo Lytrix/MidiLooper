@@ -59,6 +59,8 @@ using UndoEntryVec = std::vector<UndoEntry, ExternalMemoryFirstAllocator<UndoEnt
 
 /// On-disk token before per-track undo stacks in `runtime.bundle.bin` footer (wire bytes: "GUS3").
 constexpr uint32_t kGlobalUndoStackToken = 0x33535547UL;
+/// Optional footer extension before `selectedSlotIndex[]` (wire bytes: "SLOT").
+constexpr uint32_t kFooterSelectedSlotExtensionToken = 0x534C4F54UL;
 
 struct GlobalUndoStack {
   UndoEntryVec entries;

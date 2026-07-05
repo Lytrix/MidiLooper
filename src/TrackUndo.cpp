@@ -309,16 +309,25 @@ void TrackUndo::pushOverdubPassAdded(Track& track, uint8_t slotIndex, PassId pas
 
 void TrackUndo::pushNoteEditPassClosed(Track& track, uint8_t noteEditPassIndex,
                                        EditPassIdList editPassIds) {
-    if (editPassIds.empty()) {
+    pushEditPassClosed(track, noteEditPassIndex, std::move(editPassIds), EditPassType::Note,
+                       track.getActiveLoopIndex());
+}
+
+void TrackUndo::pushEditPassClosed(Track& track, uint8_t editPassIndex,
+                                   EditPassIdList editPassIds, EditPassType editPassType,
+                                   uint8_t slotIndex) {
+    if (editPassIds.empty() || slotIndex >= Config::MAX_LOOPS_PER_TRACK) {
         return;
     }
-    const Loop& loop = track.getActiveLoop();
+    const Loop& loop = track.getLoop(slotIndex);
     UndoEntry entry;
-    entry.kind = UndoEntryKind::NoteEditPassClosed;
-    entry.slotIndex = track.getActiveLoopIndex();
+    entry.kind = (editPassType == EditPassType::ControlChange)
+                     ? UndoEntryKind::ControlChangeEditPassClosed
+                     : UndoEntryKind::NoteEditPassClosed;
+    entry.slotIndex = slotIndex;
     entry.loopId = loop.loopId;
-    entry.editPassIndex = noteEditPassIndex;
-    entry.editPassType = EditPassType::Note;
+    entry.editPassIndex = editPassIndex;
+    entry.editPassType = editPassType;
     entry.editPassIds = std::move(editPassIds);
     pushUndoEntry(track, std::move(entry));
 }
@@ -435,14 +444,37 @@ void TrackUndo::redoClearTrack(Track& track) {
     redoOverdub(track);
 }
 
-void TrackUndo::pushLoopStartSnapshot(Track& track) {
-    Loop& loop = track.getActiveLoop();
+void TrackUndo::pushLoopStartSnapshot(Track& track, uint8_t slotIndex) {
+    if (slotIndex >= Config::MAX_LOOPS_PER_TRACK) {
+        return;
+    }
+    Loop& loop = track.getLoop(slotIndex);
     UndoEntry entry;
     entry.kind = UndoEntryKind::LoopBoundaryChange;
-    entry.slotIndex = track.getActiveLoopIndex();
+    entry.slotIndex = slotIndex;
     entry.loopId = loop.loopId;
     entry.beforeLoopStartTick = loop.loopStartTick;
     entry.beforeLoopLengthTicks = loop.loopLengthTicks;
+    pushUndoEntry(track, std::move(entry));
+}
+
+void TrackUndo::pushLoopGeometryDepartSnapshot(Track& track, uint8_t slotIndex,
+                                              uint32_t beforeLoopStartTick,
+                                              uint32_t beforeLoopLengthTicks) {
+    if (slotIndex >= Config::MAX_LOOPS_PER_TRACK) {
+        return;
+    }
+    Loop& loop = track.getLoop(slotIndex);
+    if (loop.loopStartTick == beforeLoopStartTick &&
+        loop.loopLengthTicks == beforeLoopLengthTicks) {
+        return;
+    }
+    UndoEntry entry;
+    entry.kind = UndoEntryKind::LoopBoundaryChange;
+    entry.slotIndex = slotIndex;
+    entry.loopId = loop.loopId;
+    entry.beforeLoopStartTick = beforeLoopStartTick;
+    entry.beforeLoopLengthTicks = beforeLoopLengthTicks;
     pushUndoEntry(track, std::move(entry));
 }
 

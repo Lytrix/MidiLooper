@@ -2141,8 +2141,7 @@ void resetTracksAfterFailedLoad() {
         track.ensureLoopsAllocated();
         track.forceSetState(TRACK_EMPTY);
         track.getGlobalUndoStack().clear();
-        track.setActiveLoopIndex(0);
-        trackManager.setSelectedSlotIndex(t, 0);
+        trackManager.loadTransportSlotIndices(t, 0, 0);
         for (uint8_t s = 0; s < Config::MAX_LOOPS_PER_TRACK; ++s) {
             trackManager.setSlotEnabled(t, s, false);
             trackManager.setSlotMuted(t, s, false);
@@ -2405,19 +2404,38 @@ bool readCurrentSetFilePreamble(File& file, LooperState& loadedLooperStateOut,
 
 bool readCurrentSetFileEpilogue(File& file, uint8_t numTracks,
                                        std::vector<uint8_t>& activeLoopIndex,
+                                       std::vector<uint8_t>& selectedSlotIndex,
                                        uint8_t& selectedTrackIdxOut) {
     if (!readRaw(file, &selectedTrackIdxOut, sizeof(selectedTrackIdxOut))) {
         return false;
     }
+    activeLoopIndex.assign(numTracks, 0);
+    selectedSlotIndex.assign(numTracks, 0);
     for (uint8_t t = 0; t < numTracks; ++t) {
         if (!readRaw(file, &activeLoopIndex[t], sizeof(activeLoopIndex[t]))) {
             return false;
         }
     }
 
-    uint32_t undoStackToken = 0;
-    if (!readRaw(file, &undoStackToken, sizeof(undoStackToken)) ||
-        undoStackToken != kGlobalUndoStackToken) {
+    uint32_t footerToken = 0;
+    if (!readRaw(file, &footerToken, sizeof(footerToken))) {
+        return false;
+    }
+    if (footerToken == kFooterSelectedSlotExtensionToken) {
+        for (uint8_t t = 0; t < numTracks; ++t) {
+            if (!readRaw(file, &selectedSlotIndex[t], sizeof(selectedSlotIndex[t]))) {
+                return false;
+            }
+        }
+        if (!readRaw(file, &footerToken, sizeof(footerToken))) {
+            return false;
+        }
+    } else {
+        for (uint8_t t = 0; t < numTracks; ++t) {
+            selectedSlotIndex[t] = activeLoopIndex[t];
+        }
+    }
+    if (footerToken != kGlobalUndoStackToken) {
         return false;
     }
     for (uint8_t t = 0; t < numTracks; ++t) {
@@ -2451,13 +2469,16 @@ bool readCurrentSetFileEpilogue(File& file, uint8_t numTracks,
 }
 
 bool applyLoadedTransportFooter(uint8_t numTracks, const std::vector<uint8_t>& activeLoopIndex,
+                                       const std::vector<uint8_t>& selectedSlotIndex,
                                        uint8_t selectedTrackIdx, LooperState& state,
                                        LooperState loadedLooperState, uint32_t masterLoopLength) {
     state = loadedLooperState;
     trackManager.setMasterLoopLength(masterLoopLength);
     for (uint8_t t = 0; t < numTracks; ++t) {
-        trackManager.getTrack(t).setActiveLoopIndex(activeLoopIndex[t]);
-        trackManager.setSelectedSlotIndex(t, activeLoopIndex[t]);
+        const uint8_t activeSlot = t < activeLoopIndex.size() ? activeLoopIndex[t] : 0;
+        const uint8_t selectedSlot =
+            t < selectedSlotIndex.size() ? selectedSlotIndex[t] : activeSlot;
+        trackManager.loadTransportSlotIndices(t, activeSlot, selectedSlot);
     }
     if (selectedTrackIdx < Config::NUM_TRACKS) {
         trackManager.setSelectedTrack(selectedTrackIdx);
@@ -2482,6 +2503,7 @@ bool StorageManager::loadCurrentSetMetaAndTracks(File& file, const char* setDir,
     }
 
     activeLoopIndex.assign(numTracks, 0);
+    std::vector<uint8_t> selectedSlotIndex;
     for (uint8_t t = 0; t < numTracks; ++t) {
         Track& track = trackManager.getTrack(t);
         TrackState loadedTrackState = TRACK_EMPTY;
@@ -2499,12 +2521,13 @@ bool StorageManager::loadCurrentSetMetaAndTracks(File& file, const char* setDir,
         applyLoadedTrackStateAfterLoopSlots(track, loadedTrackState, anySlotHasEvents, muted);
     }
 
-    if (!readCurrentSetFileEpilogue(file, numTracks, activeLoopIndex, selectedTrackIdx)) {
+    if (!readCurrentSetFileEpilogue(file, numTracks, activeLoopIndex, selectedSlotIndex,
+                                    selectedTrackIdx)) {
         return false;
     }
 
-    return applyLoadedTransportFooter(numTracks, activeLoopIndex, selectedTrackIdx, state,
-                                      loadedLooperState, masterLoopLength);
+    return applyLoadedTransportFooter(numTracks, activeLoopIndex, selectedSlotIndex, selectedTrackIdx,
+                                      state, loadedLooperState, masterLoopLength);
 }
 
 bool StorageManager::loadCurrentSetFromDirectory(const char* setDir, LooperState& state) {
@@ -2701,6 +2724,7 @@ bool StorageManager::loadV5MonolithIntoRam(LooperState& state) {
             return failAfterPartialLoad();
         }
 
+        std::vector<uint8_t> selectedSlotIndex(numTracks, 0);
         for (uint8_t t = 0; t < numTracks; ++t) {
             if (!readRaw(file, &activeLoopIndex[t], sizeof(activeLoopIndex[t]))) {
                 Serial.println("[StorageManager] ERROR: Failed to read activeLoopIndex for legacy monolith");
@@ -2708,12 +2732,28 @@ bool StorageManager::loadV5MonolithIntoRam(LooperState& state) {
             }
         }
 
-        uint32_t undoStackToken = 0;
-        if (!readRaw(file, &undoStackToken, sizeof(undoStackToken))) {
+        uint32_t footerToken = 0;
+        if (!readRaw(file, &footerToken, sizeof(footerToken))) {
             Serial.println("[StorageManager] ERROR: Failed to read global undo stack token for legacy monolith");
             return failAfterPartialLoad();
         }
-        if (undoStackToken != kGlobalUndoStackToken) {
+        if (footerToken == kFooterSelectedSlotExtensionToken) {
+            for (uint8_t t = 0; t < numTracks; ++t) {
+                if (!readRaw(file, &selectedSlotIndex[t], sizeof(selectedSlotIndex[t]))) {
+                    Serial.println("[StorageManager] ERROR: Failed to read selectedSlotIndex for legacy monolith");
+                    return failAfterPartialLoad();
+                }
+            }
+            if (!readRaw(file, &footerToken, sizeof(footerToken))) {
+                Serial.println("[StorageManager] ERROR: Failed to read global undo stack token for legacy monolith");
+                return failAfterPartialLoad();
+            }
+        } else {
+            for (uint8_t t = 0; t < numTracks; ++t) {
+                selectedSlotIndex[t] = activeLoopIndex[t];
+            }
+        }
+        if (footerToken != kGlobalUndoStackToken) {
             Serial.println("[StorageManager] ERROR: Global undo stack token mismatch for legacy monolith");
             return failAfterPartialLoad();
         }
@@ -2739,8 +2779,8 @@ bool StorageManager::loadV5MonolithIntoRam(LooperState& state) {
         file.close();
         Serial.println("[StorageManager] Legacy monolith state loaded successfully (v5).");
 
-        applyLoadedTransportFooter(numTracks, activeLoopIndex, selectedTrackIdx, state,
-                                   loadedLooperState, masterLoopLength);
+        applyLoadedTransportFooter(numTracks, activeLoopIndex, selectedSlotIndex, selectedTrackIdx,
+                                   state, loadedLooperState, masterLoopLength);
         return true;
 }
 

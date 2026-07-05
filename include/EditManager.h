@@ -56,6 +56,12 @@ public:
 
     /// EditSession lifecycle (M8).
     bool isNoteEditActive() const { return editSession.active; }
+    /// Loop geometry for NOTE_EDIT — follows **selected** slot, not `activeLoopIndex`.
+    uint32_t noteEditLoopLengthTicks(const Track& track) const;
+    uint32_t noteEditLoopStartTick(const Track& track) const;
+    bool isLoopEditSession() const {
+        return editSession.sessionType == EditSessionType::Loop && !editSession.active;
+    }
     bool isNoteSessionStoreOpen() const { return editSession.active; }
     EditSession& getEditSession() { return editSession; }
     const EditSession& getEditSession() const { return editSession; }
@@ -178,6 +184,13 @@ public:
     void beforeSelectedTrackChange(Track& departingTrack);
     void onTrackChanged(Track& newTrack);
 
+    /// Commit pending note-edit work before the selected loop slot changes.
+    void beforeSelectedSlotChange(Track& track);
+    void onSelectedSlotChanged(Track& track, uint8_t previousSlot);
+
+    void commitEditSessionOnDepart(Track& track);
+    void reenterEditSessionForFocusChange(Track& track, uint8_t previousSlot);
+
     struct RemovedNote {
         uint8_t note;
         uint8_t velocity;
@@ -196,6 +209,8 @@ public:
     bool isSessionUndoDisplayActive() const;
 
 private:
+    size_t bakeNoteEditSessionStoreToPasses(Track& track);
+    void persistActiveNoteEditSession(Track& track);
     uint32_t bracketTick = 0;
     int selectedNoteIdx = -1; // -1 means no note selected
     NoteId lastFader1SelectNoteId = kInvalidNoteId;

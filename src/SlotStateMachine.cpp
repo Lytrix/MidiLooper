@@ -66,8 +66,13 @@ bool SlotStateMachine::shouldCommitPendingSlotSwitch(uint8_t trackIndex,
   if (currentTick == pendingQueuedAtTick[trackIndex]) return false;
 
   switch (pendingSlotQuantization[trackIndex]) {
-    case SlotQuantization::NextGrid:
-      return (currentTick % Config::TICKS_PER_16TH_STEP) == 0;
+    case SlotQuantization::NextGrid: {
+      const uint32_t gridTicks = track.getQueuedStartGridTicks();
+      if (gridTicks == 0) {
+        return false;
+      }
+      return (currentTick % gridTicks) == 0;
+    }
 
     case SlotQuantization::LoopEnd: {
       const uint32_t loopLen = track.getLoopLength();

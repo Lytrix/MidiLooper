@@ -46,6 +46,7 @@ STORAGE_PERSIST_MEM void resetRevisionLoadReloadRamState() {
     storageSession.revisionLoad.reloadSlotCursor = 0;
     storageSession.revisionLoad.reloadNumTracks = 0;
     storageSession.revisionLoad.reloadActiveLoopIndex.clear();
+    storageSession.revisionLoad.reloadSelectedSlotIndex.clear();
     storageSession.revisionLoad.reloadSelectedTrackIdx = 0;
     storageSession.revisionLoad.reloadLooperState = LOOPER_IDLE;
     storageSession.revisionLoad.reloadMasterLoopLength = 0;
@@ -215,6 +216,16 @@ STORAGE_PERSIST_MEM bool writeDefaultRevisionLoadTransportBody(File& file) {
     for (uint8_t trackIndex = 0; trackIndex < numTracks; ++trackIndex) {
         const uint8_t activeLoopIndex = revisionLoadDefaultActiveLoopIndex(trackIndex);
         if (!writeRaw(file, &activeLoopIndex, sizeof(activeLoopIndex))) {
+            return false;
+        }
+    }
+
+    if (!writeRaw(file, &kFooterSelectedSlotExtensionToken, sizeof(kFooterSelectedSlotExtensionToken))) {
+        return false;
+    }
+    for (uint8_t trackIndex = 0; trackIndex < numTracks; ++trackIndex) {
+        const uint8_t selectedSlotIndex = revisionLoadDefaultActiveLoopIndex(trackIndex);
+        if (!writeRaw(file, &selectedSlotIndex, sizeof(selectedSlotIndex))) {
             return false;
         }
     }
@@ -742,6 +753,7 @@ STORAGE_PERSIST_MEM bool stepRevisionLoadReloadRam(LooperState& state) {
                 return false;
             }
             storageSession.revisionLoad.reloadActiveLoopIndex.assign(storageSession.revisionLoad.reloadNumTracks, 0);
+            storageSession.revisionLoad.reloadSelectedSlotIndex.assign(storageSession.revisionLoad.reloadNumTracks, 0);
             for (uint8_t t = 0; t < storageSession.revisionLoad.reloadNumTracks; ++t) {
                 Track& track = trackManager.getTrack(t);
                 if (!readCurrentSetTrackSlotMetadata(storageSession.revisionLoad.reloadMetaFile, t, track,
@@ -784,6 +796,7 @@ STORAGE_PERSIST_MEM bool stepRevisionLoadReloadRam(LooperState& state) {
         case RevisionLoadReloadRamStage::ReadFooter: {
             if (!readCurrentSetFileEpilogue(storageSession.revisionLoad.reloadMetaFile, storageSession.revisionLoad.reloadNumTracks,
                                             storageSession.revisionLoad.reloadActiveLoopIndex,
+                                            storageSession.revisionLoad.reloadSelectedSlotIndex,
                                             storageSession.revisionLoad.reloadSelectedTrackIdx)) {
                 return false;
             }
@@ -793,6 +806,7 @@ STORAGE_PERSIST_MEM bool stepRevisionLoadReloadRam(LooperState& state) {
             }
             if (!applyLoadedTransportFooter(storageSession.revisionLoad.reloadNumTracks,
                                             storageSession.revisionLoad.reloadActiveLoopIndex,
+                                            storageSession.revisionLoad.reloadSelectedSlotIndex,
                                             storageSession.revisionLoad.reloadSelectedTrackIdx, state,
                                             storageSession.revisionLoad.reloadLooperState,
                                             storageSession.revisionLoad.reloadMasterLoopLength)) {

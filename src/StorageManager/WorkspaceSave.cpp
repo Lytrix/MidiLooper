@@ -952,7 +952,37 @@ STORAGE_PERSIST_MEM bool stepDeferredSaveJob() {
                         ++storageSession.currentWorkspaceSave.footerTrackCursor;
                         return true;
                     }
-                    storageSession.currentWorkspaceSave.footerWriteStage = DeferredFooterWriteStage::GlobalUndoStackToken;
+                    storageSession.currentWorkspaceSave.footerWriteStage = DeferredFooterWriteStage::SelectedSlotExtensionToken;
+                    return true;
+
+                case DeferredFooterWriteStage::SelectedSlotExtensionToken:
+                    if (!writeRaw(storageSession.currentWorkspaceSave.file,
+                                  &kFooterSelectedSlotExtensionToken,
+                                  sizeof(kFooterSelectedSlotExtensionToken))) {
+                        Serial.println("[StorageManager] ERROR: Deferred save failed writing selected slot extension token");
+                        return false;
+                    }
+                    storageSession.currentWorkspaceSave.footerTrackCursor = 0;
+                    storageSession.currentWorkspaceSave.footerWriteStage =
+                        DeferredFooterWriteStage::SelectedSlotIndex;
+                    return true;
+
+                case DeferredFooterWriteStage::SelectedSlotIndex:
+                    if (storageSession.currentWorkspaceSave.footerTrackCursor <
+                        storageSession.currentWorkspaceSave.numTracks) {
+                        const uint8_t selectedIdx = trackManager.getSelectedSlotIndex(
+                            storageSession.currentWorkspaceSave.footerTrackCursor);
+                        if (!writeRaw(storageSession.currentWorkspaceSave.file, &selectedIdx,
+                                      sizeof(selectedIdx))) {
+                            Serial.print("[StorageManager] ERROR: Deferred save failed writing selectedSlotIndex for track ");
+                            Serial.println(storageSession.currentWorkspaceSave.footerTrackCursor);
+                            return false;
+                        }
+                        ++storageSession.currentWorkspaceSave.footerTrackCursor;
+                        return true;
+                    }
+                    storageSession.currentWorkspaceSave.footerWriteStage =
+                        DeferredFooterWriteStage::GlobalUndoStackToken;
                     return true;
 
                 case DeferredFooterWriteStage::GlobalUndoStackToken:

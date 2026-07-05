@@ -148,6 +148,12 @@ void NoteEditManager::update() {
         enableStartEditing();
     }
 
+    const bool transportRunning = clockManager.isTransportRunning();
+    if (transportRunning && !editedNoteAuditionTransportWasRunning_) {
+        releaseEditedNoteAudition();
+    }
+    editedNoteAuditionTransportWasRunning_ = transportRunning;
+
     processFaderOutbound();
     processPendingSelectDependentMotorSync(trackManager.getSelectedTrack());
     processPendingGeometryDriverMotorSync(trackManager.getSelectedTrack());
@@ -326,7 +332,11 @@ void NoteEditManager::cycleEditMode(Track& track) {
 }
 
 void NoteEditManager::cycleEditSession(Track& track) {
+    const EditSessionType priorSession = editManager.getEditSessionType();
     editManager.cycleEditSession(track);
+    if (priorSession == EditSessionType::Note) {
+        releaseEditedNoteAudition();
+    }
 }
 
 void NoteEditManager::deleteSelectedNote(Track& track) {
@@ -482,6 +492,7 @@ void NoteEditManager::deleteSelectedNote(Track& track) {
     editManager.sendEditSessionChange(editManager.getEditSessionType());
     
     logger.info("MIDI Encoder: Note deleted, maintaining current edit mode");
+    releaseEditedNoteAudition();
 }
 
 void NoteEditManager::scheduleOtherFaderUpdates(MidiMapping::FaderType driverFader) {
@@ -1361,6 +1372,60 @@ void NoteEditManager::publishDependentFaderLatch(Track& track) {
     plan.fine = snapshot.fineValid;
     plan.noteValue = snapshot.valid;
     sendDependentFaderSnapshot(track, plan, snapshot, DependentFaderSendMode::ValueOnly);
+    sendEditedNoteAuditionWhenTransportStopped(track);
+}
+
+void NoteEditManager::releaseEditedNoteAudition() {
+    if (!editedNoteAuditionHeld_) {
+        return;
+    }
+    midiHandler.sendNoteOff(editedNoteAuditionChannel_, editedNoteAuditionPitch_, 0);
+    editedNoteAuditionHeld_ = false;
+}
+
+void NoteEditManager::sendEditedNoteAuditionWhenTransportStopped(Track& track) {
+    if (clockManager.isTransportRunning()) {
+        releaseEditedNoteAudition();
+        return;
+    }
+    if (editManager.getEditSessionType() != EditSessionType::Note ||
+        !editManager.isNoteEditActive()) {
+        releaseEditedNoteAudition();
+        return;
+    }
+
+    const NoteEditFocus& focus = editManager.getEditSession().focus;
+    if (!focus.active || focus.movingNoteId == kInvalidNoteId) {
+        releaseEditedNoteAudition();
+        return;
+    }
+
+    uint8_t pitch = focus.last.pitch;
+    uint8_t velocity = 100;
+    const uint32_t loopLength = track.getLoopLength();
+    if (loopLength > 0) {
+        MidiEventVec& store = editManager.sessionMidiEvents();
+        NoteBaseline baseline{};
+        const uint8_t storeChannel = track.getMidiChannel();
+        if (findLinearNoteSpanForNoteId(store, focus.movingNoteId, storeChannel, baseline,
+                                        focus.last.startTick, loopLength) ||
+            findLinearNoteSpanForNoteId(store, focus.movingNoteId, storeChannel, baseline,
+                                        UINT32_MAX, loopLength)) {
+            pitch = baseline.pitch;
+            if (baseline.velocity > 0) {
+                velocity = baseline.velocity;
+            }
+        }
+    }
+
+    const uint8_t outChannel = track.getMidiChannel();
+    if (editedNoteAuditionHeld_) {
+        midiHandler.sendNoteOff(editedNoteAuditionChannel_, editedNoteAuditionPitch_, 0);
+    }
+    midiHandler.sendNoteOn(outChannel, pitch, velocity);
+    editedNoteAuditionChannel_ = outChannel;
+    editedNoteAuditionPitch_ = pitch;
+    editedNoteAuditionHeld_ = true;
 }
 
 bool NoteEditManager::shouldIgnoreDependentFaderInput(MidiMapping::FaderType faderType,
@@ -1579,7 +1644,11 @@ NoteEditManager::Fader1SelectTarget NoteEditManager::resolveFader1SelectTarget(T
 
 std::vector<NoteUtils::DisplayNote> NoteEditManager::selectableDisplayNotesForEditUi(
     const Track& track) const {
-    const uint32_t loopLength = track.getLoopLength();
+    const uint8_t trackIndex = trackManager.getSelectedTrackIndex();
+    const uint8_t displaySlot = trackManager.getSelectedSlotIndex(trackIndex);
+    const uint32_t loopLength = editManager.isNoteEditActive()
+                                    ? editManager.noteEditLoopLengthTicks(track)
+                                    : track.getLoopLengthForSlot(displaySlot);
     NoteUtils::DisplayNoteVec notes;
     if (!editManager.isNoteEditActive() || loopLength == 0) {
         const auto& cachedNotes = track.getCachedNotes();
@@ -1593,7 +1662,6 @@ std::vector<NoteUtils::DisplayNote> NoteEditManager::selectableDisplayNotesForEd
     }
 
     if (displayManager_ != nullptr && loopLength > 0) {
-        const uint8_t displaySlot = track.getActiveLoopIndex();
         const uint32_t currentTick = clockManager.getCurrentTick();
         const DetailedWindowContext window =
             displayManager_->resolveDetailedWindow(track, displaySlot, currentTick);
@@ -1607,8 +1675,10 @@ std::vector<NoteUtils::DisplayNote> NoteEditManager::selectableDisplayNotesForEd
 
 std::vector<SelectNavigation::SelectNavSlot> NoteEditManager::buildSelectNavigationSlots(
     const Track& track, uint32_t bracketTick, bool includeBracketIfMissing) const {
-    const uint32_t loopLength = track.getLoopLength();
-    const uint32_t loopStartTick = loopLength > 0 ? track.getLoopStartTick() % loopLength : 0;
+    const uint32_t loopLength = editManager.isNoteEditActive()
+                                    ? editManager.noteEditLoopLengthTicks(track)
+                                    : track.getLoopLength();
+    const uint32_t loopStartTick = editManager.noteEditLoopStartTick(track);
     const std::vector<NoteUtils::DisplayNote> notes = selectableDisplayNotesForEditUi(track);
     return SelectNavigation::buildSelectNavigationSlots(
         loopLength,
@@ -1776,7 +1846,9 @@ bool NoteEditManager::applyNoteSelectFromFader1Pitchbend(Track& track, int16_t p
         startEditingEnabled = true;
         logger.log(CAT_MIDI, LOG_DEBUG, "Select fader: selected empty step at tick %lu (no note)",
                    absoluteTargetTick);
+        releaseEditedNoteAudition();
     }
+    sendEditedNoteAuditionWhenTransportStopped(track);
     return true;
 }
 
@@ -2275,6 +2347,7 @@ void NoteEditManager::toggleLengthEditingMode() {
 }
 
 void NoteEditManager::onTrackChanged(Track& newTrack) {
+    releaseEditedNoteAudition();
     // If we're in loop edit mode, send the new track's loop length as CC feedback
     if (editManager.getEditSessionType() == EditSessionType::Loop) {
         loopEditManager.onTrackChanged(newTrack);

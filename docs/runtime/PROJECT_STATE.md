@@ -14,7 +14,8 @@ Last updated: 2026-07-05 (derived-note-overlap-logic branch)
 
 | Change | Focus |
 |--------|--------|
-| **`unified-interval-projection`** | **Now implementing** — Phases 1–4 shipped; Phase 5 grep gate + native 449/449 PASS; **5.5 HITL matrix** remaining; handoff [`unified_interval_projection_enhancement.md`](../plans/unified_interval_projection_enhancement.md) |
+| **`slot-selection-focus`** | **Shipped (firmware)** — orchestrator + footer extension; manual §8 pending; [`slot_selection_focus_implementation_handoff.md`](../plans/slot_selection_focus_implementation_handoff.md) |
+| **`unified-interval-projection`** | **Now implementing** — Phases 1–4 shipped; Phase 5 grep gate + native 455/455 PASS; **5.5 HITL matrix** remaining; handoff [`unified_interval_projection_enhancement.md`](../plans/unified_interval_projection_enhancement.md) |
 | **`edit-session-action-geometry`** | **Paused** — derived overlap pipeline; blocked until UIP Phases 1–5 |
 | `set-revision-persistence` | Set revisions, overlay browser — core shipped; loop picker **4.8–4.10** paused |
 | `workspace-session-persistence` | Current workspace session model |

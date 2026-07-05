@@ -11,6 +11,9 @@
 #include "MidiLedManager.h"
 #include "SlotStateMachine.h"
 
+/// Phase 1 playback policy for slot selection (queued start remains caller-composed).
+enum class SyncPlayback : uint8_t { No = 0, Yes = 1 };
+
 /**
  * @class TrackManager
  * @brief Oversees multiple Track instances, handling selection, recording, playback,
@@ -126,7 +129,15 @@ public:
 
   // --- Slot state machine (selected UI focus + pending quantized switch) ---
   uint8_t getSelectedSlotIndex(uint8_t trackIndex) const;
-  void setSelectedSlotIndex(uint8_t trackIndex, uint8_t slotIndex);
+  uint8_t getSelectedLoopIndex(uint8_t trackIndex) const;
+  Loop& getSelectedLoop(uint8_t trackIndex);
+  const Loop& getSelectedLoop(uint8_t trackIndex) const;
+  Loop& getSelectedLoop(Track& track);
+  const Loop& getSelectedLoop(const Track& track) const;
+  void setSelectedSlotIndex(uint8_t trackIndex, uint8_t slotIndex,
+                            SyncPlayback syncPlayback = SyncPlayback::Yes);
+  /// Boot / SD load: write indices without focus lifecycle hooks.
+  void loadTransportSlotIndices(uint8_t trackIndex, uint8_t activeSlot, uint8_t selectedSlot);
   void requestSlotSwitch(uint8_t trackIndex,
                           uint8_t slotIndex,
                           SlotQuantization quantization,

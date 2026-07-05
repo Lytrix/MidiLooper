@@ -52,6 +52,8 @@ enum class DeferredSlotWriteStage : uint8_t {
 enum class DeferredFooterWriteStage : uint8_t {
   SelectedTrack = 0,
   ActiveLoopIndex,
+  SelectedSlotExtensionToken,
+  SelectedSlotIndex,
   GlobalUndoStackToken,
 };
 
@@ -252,6 +254,7 @@ struct RevisionLoadJob {
   TrackState reloadLoadedTrackState[Config::NUM_TRACKS] = {};
   bool reloadMuted[Config::NUM_TRACKS] = {};
   std::vector<uint8_t> reloadActiveLoopIndex;
+  std::vector<uint8_t> reloadSelectedSlotIndex;
   uint8_t reloadSelectedTrackIdx = 0;
   LooperState reloadLooperState = LOOPER_IDLE;
   uint32_t reloadMasterLoopLength = 0;

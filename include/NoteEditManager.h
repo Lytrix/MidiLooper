@@ -195,6 +195,8 @@ private:
     bool shouldIgnoreDependentFaderInput(MidiMapping::FaderType faderType, int16_t pitchbendValue,
                                          uint8_t ccValue, Track& track);
     void publishDependentFaderLatch(Track& track);
+    void releaseEditedNoteAudition();
+    void sendEditedNoteAuditionWhenTransportStopped(Track& track);
     void clearPendingSelectDependentMotorSync();
     void clearPendingGeometryDriverMotorSync();
     void processPendingSelectDependentMotorSync(Track& track);
@@ -227,6 +229,10 @@ private:
     static constexpr uint32_t FEEDBACK_IGNORE_PERIOD = 1500;
     
     bool lengthEditingMode = false;
+    bool editedNoteAuditionHeld_ = false;
+    bool editedNoteAuditionTransportWasRunning_ = false;
+    uint8_t editedNoteAuditionChannel_ = 0;
+    uint8_t editedNoteAuditionPitch_ = 0;
     uint32_t lengthFineAnchorEndTick = 0;
     uint32_t lastLengthModeToggleTime = 0;
     static constexpr uint32_t LENGTH_MODE_DEBOUNCE_TIME = 100;

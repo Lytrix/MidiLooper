@@ -5,7 +5,8 @@
 Primary implementation paths:
 - Mapping: [`src/Utils/MidiButtonConfig.cpp`](../../../src/Utils/MidiButtonConfig.cpp)
 - Gesture actions: [`src/MidiButtonActions.cpp`](../../../src/MidiButtonActions.cpp) (`handleToggleRecordForSlot`, `beginSlotLayerHold`, `endSlotLayerHold`)
-- Slot switching + playback commit: [`src/TrackManager.cpp`](../../../src/TrackManager.cpp)
+- Slot selection orchestrator: [`TrackManager::setSelectedSlotIndex`](../../../src/TrackManager.cpp) — Departure → Transition → Arrival on the selected track
+- Playback sync policy: default `SyncPlayback::Yes` when transport is stopped; while transport is running, selected updates immediately and active playback follows on the next grid tick (`SlotQuantization::NextGrid` / `Track::queuedStartGridTicks`, default one 16th step)
 - Pending switch logic: [`src/SlotStateMachine.cpp`](../../../src/SlotStateMachine.cpp)
 
 ## Short press
@@ -14,21 +15,27 @@ Primary implementation paths:
 
 - **Pressed slot has data, slot is selected**: toggle mute for that slot (track keeps running).
 - **Pressed slot has data, slot is not selected**:
-  - In multi-slot mode (more than one enabled slot): keep enabled set, optionally toggle mute if slot is enabled, and queue active-slot focus switch at next 16th.
-  - In single-slot mode: queue switch to that slot at next 16th; when committed, enabled set can be replaced with that single slot.
-  - On grid commit: that track's **`projectionCycleStartTick`** resets to the commit tick and **`queuedStartTick`** applies once (default = target slot's **`loopStartTick`**).
+  - Departure commits pending edit work (NOTE_EDIT / LOOP_EDIT) before the UI focus index changes.
+  - While transport is running (`clockManager.shouldQuantizeRecordStart()`): `setSelectedSlotIndex(..., SyncPlayback::No)` updates **selected** immediately; **active** switches at the next **`queuedStartGridTicks`** boundary (default 16th) via `requestSlotSwitch(NextGrid)`.
+  - In multi-slot mode: keep the enabled set; queue active switch at the grid.
+  - In **LOOP_EDIT** or **NOTE_EDIT**: queue active switch with **single-slot** enabled set replacement so only the selected loop is audible for comparison.
+  - In single-slot mode (non-edit): queue switch at the grid; when committed, enabled set can be replaced with that single slot.
+  - On grid commit: **`projectionCycleStartTick`** resets and **`queuedStartTick`** applies once (target slot's **`loopStartTick`**).
+  - When transport is not running: immediate `SyncPlayback::Yes` sync.
 - **Pressed slot is empty**: use queued/immediate record flow (bar/phase quantized when configured).
 
 ### While not playing
 
 - **Pressed slot is empty**: start recording.
-- **Pressed slot has data**: toggle play/stop on that slot.
+- **Pressed slot has data, LOOP_EDIT or NOTE_EDIT, different slot than selected**: change **selected** focus only (no play/stop toggle).
+- **Pressed slot has data** (otherwise): toggle play/stop on that slot; if global transport is stopped, it starts automatically so the clock advances. `toggleTransport()` may already start the track — play start is not double-toggled off.
 
 ## Long press
 
 - **Pressed slot is selected and has data**: clear that slot.
 - **Pressed slot is not selected and has data**:
-  - If track is playing: queue single-slot switch at **loop end**.
+  - If track is playing and transport is running: queue single-slot switch at **loop end**.
+  - If track is playing but transport is not running: switch immediately.
   - If track is not playing: select that slot and start it immediately.
 
 ## Double / Triple

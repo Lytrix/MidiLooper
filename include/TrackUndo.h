@@ -16,6 +16,9 @@ public:
     static void pushOverdubPassAdded(Track& track, uint8_t slotIndex, PassId passId);
     static void pushNoteEditPassClosed(Track& track, uint8_t noteEditPassIndex,
                                        EditPassIdList editPassIds);
+    static void pushEditPassClosed(Track& track, uint8_t editPassIndex,
+                                   EditPassIdList editPassIds, EditPassType editPassType,
+                                   uint8_t slotIndex);
     static void beginOverdubSession(Track& track);
     static void undoOverdub(Track& track);
     static void redoOverdub(Track& track);
@@ -29,6 +32,9 @@ public:
     static void redoClearTrack(Track& track);
     static bool canUndoClearTrack(const Track& track);
     static bool canRedoClearTrack(const Track& track);
-    static void pushLoopStartSnapshot(Track& track);
+    static void pushLoopStartSnapshot(Track& track, uint8_t slotIndex);
+    static void pushLoopGeometryDepartSnapshot(Track& track, uint8_t slotIndex,
+                                               uint32_t beforeLoopStartTick,
+                                               uint32_t beforeLoopLengthTicks);
     static void undoLoopStart(Track& track);
 };
