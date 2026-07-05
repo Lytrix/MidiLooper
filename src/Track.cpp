@@ -147,7 +147,8 @@ void ensurePlaybackWindowBuilt(Track& track, Loop& loop, LoopPlaybackRuntime& ru
   // playback order + MIDI send. NOTE_EDIT uses session store (Tier 2) — full replace, no
   // materialized underlay. Outside NOTE_EDIT, merge materialized passes (takes + editPasses)
   // plus live capture. See loop-wrap-projection spec.
-  const bool noteEditPreview = editManager.isNoteEditActive();
+  const bool noteEditPreview = editManager.isNoteEditActive() &&
+                               &track == &trackManager.getSelectedTrack();
   const uint32_t windowRevision = noteEditPreview ? editManager.sessionPreviewRevision()
                                                     : loop.playbackRevision;
   if (runtime.primaryWindow.builtFromRevision == windowRevision) {
