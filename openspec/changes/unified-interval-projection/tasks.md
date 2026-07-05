@@ -53,7 +53,7 @@
 - [x] 4.8 Native or HITL playback-order check — linear off at loop head
 - [x] 4.9 Update control-surface docs for queued-start / bar-press button logic (`README.md` cheat sheet, `Bars-and-16ths.md`, `Main-controls.md` as applicable)
 - [x] 4.10 **Retire `PlaybackCursor`** (D21) — move stale revision cache to **`LoopPlaybackRuntime`**; delete duplicate fields; remove **`loopHeadWindow`**; trim dead **`PlaybackWindow`** fields (D22); grep gate
-- [x] 4.11 Migrate **`playMidiEvents`** phase/wrap/sort to **`IntervalProjection`** + **`projectionCycleStartTick`**; keep **`Loop.nextEventIndex`** as event scan index
+- [x] 4.11 Migrate **`playMidiEvents`** phase/wrap/sort to **`IntervalProjection`** + **`projectionCycleStartTick`**; keep **`Loop.nextEventIndex`** as event scan index — hot path: **`playbackEventPhase`** + precomputed sort phases (D24); **`projectPlaybackEventPhase`** is the context wrapper
 
 ## 5. Integration + HITL (Phase 5 — core migration gate)
 

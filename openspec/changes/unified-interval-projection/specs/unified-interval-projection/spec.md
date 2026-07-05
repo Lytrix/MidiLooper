@@ -105,6 +105,20 @@ Different subsystems SHALL differ only by context construction — not by indepe
 - **THEN** phase uses the new `loopLength` in modulo
 - **AND** `projectionCycleStartTick` remains unchanged until the next wrap
 
+#### Scenario: Record stop aligns projection cycle to rewind playhead
+
+- **GIVEN** record stop truncates the loop and rewinds global playhead to `playbackTick`
+- **WHEN** `lastTickInLoop` is set from `playbackTick` and `loop.startLoopTick`
+- **THEN** `projectionCycleStartTick = playbackTick - lastTickInLoop`
+- **AND** playback phase on the first pass after stop matches `lastTickInLoop`
+
+#### Scenario: Preserve-phase startPlaying aligns projection cycle
+
+- **GIVEN** playback resumes with `preserveLoopPhaseOrigin=true` at global tick `T`
+- **WHEN** `startPlaying` runs
+- **THEN** `projectionCycleStartTick = T - tickPhaseInLoop(T, loop.startLoopTick, loopLength)`
+- **AND** wrap detection uses the same rolling cycle as before the pause
+
 ### Requirement: Two-stage projection pipeline
 
 The interval projection layer SHALL treat **Stage 1 (mathematics)** and **Stage 2 (consumer policy)** as independent concepts:
