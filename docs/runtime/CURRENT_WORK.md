@@ -2,18 +2,33 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-07-03 (note-edit fader feedback + stable-note-id archived)
+Last updated: 2026-07-04 (derived-note-overlap-logic branch)
 
 ---
 
 ## Now implementing
 
-Set revision persistence + load/save overlay UX on branch `load-save-sets-loops`:
+**Unified interval projection** — single wrap/linearization engine before derived overlap pipeline:
 
-- **Primary OpenSpec:** `set-revision-persistence` (remaining overlay items; LoopPick parked)
-- Supporting: `load-save-overlay-display-regression`, `save-status-display`, `workspace-session-persistence`
-- **Next persistence slice (after branch merge):** `transport.bin` / `global.bin` workspace split — new OpenSpec when scoped
+- **Primary OpenSpec:** [`unified-interval-projection`](../../openspec/changes/unified-interval-projection/) — full-stack Edit + Display + Playback migration (Phases 1–5)
+- Handoff: [unified_interval_projection_enhancement.md](../plans/unified_interval_projection_enhancement.md)
+- Design: [`design.md`](../../openspec/changes/unified-interval-projection/design.md)
+
+## Paused — blocked by UIP
+
+**Derived note overlap logic** — EditSessionAction geometry pipeline:
+
+- **OpenSpec:** [`edit-session-action-geometry`](../../openspec/changes/edit-session-action-geometry/) — **blocked** until UIP Phases 1–5 + HITL
+- Handoff: [derived_note_overlap_logic_handoff.md](../plans/derived_note_overlap_logic_handoff.md)
+- Resume at Phase 1 types after UIP Phase 6 sync
+
+## Paused on parent branch (`load-save-sets-loops`)
+
+Set revision persistence + load/save overlay UX:
+
+- **OpenSpec:** `set-revision-persistence` — remaining **4.8–4.10** loop picker + HITL `set_revision_overlay`; **3.9** parked
 - Handoff: [set_revision_persistence_handoff.md](../plans/set_revision_persistence_handoff.md)
+- Not blocking UIP (orthogonal)
 
 ## Recently archived (2026-07-03)
 
@@ -31,10 +46,17 @@ Set revision persistence + load/save overlay UX on branch `load-save-sets-loops`
 - `currentset-savedset-storage-layout` — parked; superseded by revision model
 - JamRecorder, M10 Scenes, playback hardening — not this sprint
 - New `*Manager` classes for persistence — extend `StorageManager` (DEC-008)
+- **`edit-session-action-geometry` firmware** — until UIP complete
 
 ## Current target
 
-1. Remaining `set-revision-persistence` `tasks.md` items (overlay slice)
+1. **`unified-interval-projection` Phase 0** — OpenSpec sign-off; DECISION_LOG on first code land
+2. **Phases 1–5** — core engine, Edit/Display/Playback migration, HITL
+3. **Phase 6** — sync overlap OpenSpec; resume derived overlap handoff
+
+## Paused (persistence track)
+
+1. Remaining `set-revision-persistence` **4.8–4.10** overlay loop picker
 2. Optional: `transport.bin` / `global.bin` OpenSpec when user scopes post–DEC-012
 
 ## Completion conditions (DEC-012 — done)
@@ -47,4 +69,4 @@ Set revision persistence + load/save overlay UX on branch `load-save-sets-loops`
 
 ## Blocked by
 
-- None for revision/overlay track
+- **`edit-session-action-geometry`** blocked by **`unified-interval-projection`** Phases 1–5
