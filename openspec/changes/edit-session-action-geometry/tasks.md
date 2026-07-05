@@ -1,5 +1,7 @@
 # Tasks — edit-session-action-geometry
 
+> **BLOCKED** by [`unified-interval-projection`](../unified-interval-projection/) Phases 1–5 + HITL. Do not start firmware until UIP Phase 6 sync. Edit projection replaces task **1.2a** `normalizeWrapToLinear`.
+
 ## 0. OpenSpec and docs
 
 - [ ] 0.1 `proposal.md`, `design.md`, delta specs, `tasks.md` (this change)

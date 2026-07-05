@@ -2,24 +2,27 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-07-04 (capture-serial RAM1 recovery)
+Last updated: 2026-07-04 (derived-note-overlap-logic branch)
 
 ---
 
 ## Current branch
 
-`load-save-sets-loops`
+`derived-note-overlap-logic` (from `load-save-sets-loops` @ `bbc2284`)
 
 ## Active OpenSpec
 
 | Change | Focus |
 |--------|--------|
-| `set-revision-persistence` | Set revisions, overlay browser, revision commit/load |
+| **`unified-interval-projection`** | **Now implementing** — single interval projection engine; blocks overlap; handoff [`unified_interval_projection_enhancement.md`](../plans/unified_interval_projection_enhancement.md) |
+| **`edit-session-action-geometry`** | **Paused** — derived overlap pipeline; blocked until UIP Phases 1–5 |
+| `set-revision-persistence` | Set revisions, overlay browser — core shipped; loop picker **4.8–4.10** paused |
 | `workspace-session-persistence` | Current workspace session model |
 | `load-save-overlay-display-regression` | Overlay display fixes |
 | `save-status-display` | Deferred save status on display |
-| `long-loop-piano-roll-window` | 16-bar piano-roll window + overview |
+| `long-loop-piano-roll-window` | 16-bar piano-roll window + overview; future `Timeline` projection consumer |
 | `note-edit-tick-coordinates-and-audition` | Geometry wrap regression: tick spaces + session-store playback preview |
+| `linear-loop-tick-storage` | Canonical linear storage + projection alias — prerequisite for UIP |
 
 **Side fix (2026-07-03):** `note-edit-tick-coordinates-and-audition` — long-loop pitch edit regression at loop wrap; handoff [note_edit_geometry_wrap_regression_bugfix.md](../plans/note_edit_geometry_wrap_regression_bugfix.md). HITL pending.
 
@@ -38,9 +41,11 @@ Parked (not active): `currentset-savedset-storage-layout`
 - Base module (encoder + 4 GPIO) capable in principle; DROID is extension only
 - Governance docs do not change firmware by themselves
 - Do not implement from [ROADMAP.md](ROADMAP.md) — scope is [CURRENT_WORK.md](CURRENT_WORK.md) only
+- **`edit-session-action-geometry` firmware blocked** until `unified-interval-projection` Phases 1–5 complete
 
 ## Current blockers
 
+- `edit-session-action-geometry` → blocked by `unified-interval-projection`
 - `currentset-savedset-storage-layout` parked until revision model stable — see CURRENT_WORK
 
 ## Accepted decisions (summary)
@@ -62,5 +67,6 @@ Full log: [DECISION_LOG.md](../DECISION_LOG.md).
 - **Capture-serial RAM budget (2026-07-04):** note-edit overlap code in FLASHMEM (`NoteEditMem.h`); deferred `#DBG`/`REVT`/`PERF` via 96 KB PSRAM ring in `DebugSessionCapture` — see [capture_serial_ram1_recovery_extmem_debug_enhancement.md](../plans/capture_serial_ram1_recovery_extmem_debug_enhancement.md)
 - Normative specs: `openspec/specs/revision-load/`, `storage-session-jobs/`, `storage-session-layout/`
 - **Next persistence layout:** `transport.bin` / `global.bin` — not started (post DEC-012)
+- **Interval projection:** `IntervalProjection` engine owns all wrap math — consumers supply `ProjectionContext` only
 - `ButtonManager` / GPIO dormant (DEC-005)
 - M8 edit + pool-budget archived to `openspec/specs/`
