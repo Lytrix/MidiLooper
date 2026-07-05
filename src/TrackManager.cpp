@@ -12,6 +12,7 @@
 #include "NoteEditManager.h"
 #include "EditManager.h"
 #include "PassReclaim.h"
+#include "DisplayManager.h"
 
 TrackManager trackManager;
 
@@ -319,6 +320,9 @@ void TrackManager::handleTransportStop() {
       heldLayerSlot[i][s] = false;
     }
     pendingStop[i] = false;
+    slotStateMachine.clearPendingSlotSwitch(i);
+    pendingEnabledSetReplacement[i] = false;
+    tracks[i].clearQueuedPlaybackStart();
     if (t.isRecording()) {
       // Stop recording BEFORE sendAllNotesOff(): finalizePendingNotes() must record
       // note-offs for still-held notes, but sendAllNotesOff() clears pendingNotes,
@@ -508,7 +512,7 @@ void TrackManager::finalizeCaptureAndSelectSlot(uint8_t trackIndex, uint8_t newS
     t.stopPlaying();
   }
   // Keep UI focus on the slot that received the capture so piano roll / LEDs match the new audio.
-  setSelectedSlotIndex(trackIndex, captureSlot);
+  setSelectedSlotIndex(trackIndex, captureSlot, SyncPlayback::No);
   forceLedUpdate(currentTick);
 }
 
@@ -633,10 +637,70 @@ uint8_t TrackManager::getSelectedSlotIndex(uint8_t trackIndex) const {
   return slotStateMachine.getSelectedSlotIndex(trackIndex);
 }
 
-void TrackManager::setSelectedSlotIndex(uint8_t trackIndex, uint8_t slotIndex) {
-  slotStateMachine.setSelectedSlotIndex(trackIndex, slotIndex);
+uint8_t TrackManager::getSelectedLoopIndex(uint8_t trackIndex) const {
+  return getSelectedSlotIndex(trackIndex);
+}
+
+namespace {
+
+uint8_t resolveTrackIndex(const Track& track) {
+  for (uint8_t trackIndex = 0; trackIndex < Config::NUM_TRACKS; ++trackIndex) {
+    if (&trackManager.getTrack(trackIndex) == &track) {
+      return trackIndex;
+    }
+  }
+  return trackManager.getSelectedTrackIndex();
+}
+
+}  // namespace
+
+Loop& TrackManager::getSelectedLoop(uint8_t trackIndex) {
+  return tracks[trackIndex].getLoop(getSelectedSlotIndex(trackIndex));
+}
+
+const Loop& TrackManager::getSelectedLoop(uint8_t trackIndex) const {
+  return tracks[trackIndex].getLoop(getSelectedSlotIndex(trackIndex));
+}
+
+Loop& TrackManager::getSelectedLoop(Track& track) {
+  return getSelectedLoop(resolveTrackIndex(track));
+}
+
+const Loop& TrackManager::getSelectedLoop(const Track& track) const {
+  return getSelectedLoop(resolveTrackIndex(track));
+}
+
+void TrackManager::loadTransportSlotIndices(uint8_t trackIndex, uint8_t activeSlot,
+                                            uint8_t selectedSlot) {
+  if (trackIndex >= Config::NUM_TRACKS) {
+    return;
+  }
+  tracks[trackIndex].setActiveLoopIndex(activeSlot);
+  slotStateMachine.setSelectedSlotIndex(trackIndex, selectedSlot);
+}
+
+void TrackManager::setSelectedSlotIndex(uint8_t trackIndex, uint8_t slotIndex,
+                                        SyncPlayback syncPlayback) {
+  if (trackIndex >= Config::NUM_TRACKS || slotIndex >= Config::MAX_LOOPS_PER_TRACK) {
+    return;
+  }
+  const uint8_t previousSlot = slotStateMachine.getSelectedSlotIndex(trackIndex);
+  if (slotIndex == previousSlot) {
+    return;
+  }
+  Track& track = tracks[trackIndex];
   if (trackIndex == selectedTrack) {
+    editManager.beforeSelectedSlotChange(track);
+  }
+  slotStateMachine.setSelectedSlotIndex(trackIndex, slotIndex);
+  if (syncPlayback == SyncPlayback::Yes) {
+    setActiveLoopIndex(trackIndex, slotIndex);
+  }
+  if (trackIndex == selectedTrack) {
+    editManager.onSelectedSlotChanged(tracks[trackIndex], previousSlot);
+    displayManager.invalidateForSlotChange(trackIndex, previousSlot, slotIndex);
     forceLedUpdate(clockManager.getCurrentTick());
+    StorageManager::requestDeferredSaveState(looperState.getLooperState());
   }
 }
 
@@ -644,11 +708,6 @@ void TrackManager::requestSlotSwitch(uint8_t trackIndex,
                                       uint8_t slotIndex,
                                       SlotQuantization quantization,
                                       uint32_t queuedAtTick) {
-  if (trackIndex < Config::NUM_TRACKS && slotIndex < Config::MAX_LOOPS_PER_TRACK) {
-    Track& track = tracks[trackIndex];
-    const Loop& targetLoop = track.getLoop(slotIndex);
-    track.queuePlaybackStartAtGrid(static_cast<int32_t>(targetLoop.loopStartTick), queuedAtTick);
-  }
   slotStateMachine.requestPendingSlotSwitch(trackIndex, slotIndex, quantization, queuedAtTick);
 }
 
@@ -667,14 +726,19 @@ void TrackManager::queueBarPlaybackStart(uint8_t trackIndex, int32_t storageTick
 }
 
 void TrackManager::setSelectedTrack(uint8_t index) {
-  if (index < Config::NUM_TRACKS) {
-    if (index != selectedTrack) {
-      editManager.beforeSelectedTrackChange(tracks[selectedTrack]);
-    }
-    selectedTrack = index;
-    // Force LED update when track changes
-    forceLedUpdate(clockManager.getCurrentTick());
+  if (index >= Config::NUM_TRACKS) {
+    return;
+  }
+  const bool trackChanged = (index != selectedTrack);
+  if (trackChanged) {
+    editManager.beforeSelectedTrackChange(tracks[selectedTrack]);
+  }
+  selectedTrack = index;
+  forceLedUpdate(clockManager.getCurrentTick());
+  if (trackChanged) {
     editManager.onTrackChanged(tracks[selectedTrack]);
+    const uint8_t displaySlot = getSelectedSlotIndex(index);
+    displayManager.invalidateForSlotChange(index, displaySlot, displaySlot);
   }
 }
 
@@ -767,13 +831,11 @@ void TrackManager::updateAllTracks(uint32_t currentTick) {
         slotStateMachine.clearPendingSlotSwitch(i);
         setActiveLoopIndex(i, targetSlot);
         const Loop& targetLoop = tracks[i].getLoop(targetSlot);
-        if (!tracks[i].hasQueuedPlaybackStart()) {
-          tracks[i].queuePlaybackStartAtGrid(static_cast<int32_t>(targetLoop.loopStartTick),
-                                              currentTick);
-        }
+        tracks[i].clearQueuedPlaybackStart();
+        tracks[i].queuePlaybackStartAtGrid(static_cast<int32_t>(targetLoop.loopStartTick),
+                                            currentTick);
         tracks[i].commitQueuedPlaybackStart(currentTick);
-        tracks[i].getActiveLoop().nextEventIndex = 0;
-        tracks[i].getActiveLoop().lastTickInLoop = UINT32_MAX;
+        tracks[i].resetPlaybackStateForSlot(targetSlot, currentTick);
 
         // If this slot switch came from a "select single slot" gesture, replace enabled set.
         if (pendingEnabledSetReplacement[i]) {

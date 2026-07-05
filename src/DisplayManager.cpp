@@ -774,6 +774,38 @@ DISP_CAPTURE_MEM void DisplayManager::maybeEmitDisplayCaptureOnChange(const Trac
     emitDisplayCaptureSnapshot(track, displaySlot, currentTick, frameNotes);
 }
 
+void DisplayManager::invalidateForSlotChange(uint8_t trackIndex, uint8_t previousSlot,
+                                             uint8_t newSlot) {
+    if (trackIndex >= trackManager.getTrackCount()) {
+        return;
+    }
+    invalidateLiveDisplayCache();
+    Track& track = trackManager.getTrack(trackIndex);
+    const uint8_t activeSlot = track.getActiveLoopIndex();
+    const bool playbackActive = track.isPlaying();
+
+    auto invalidateSlotDisplay = [&](uint8_t slot) {
+        if (slot >= Config::MAX_LOOPS_PER_TRACK) {
+            return;
+        }
+        Loop& loop = track.getLoop(slot);
+        if (slot == newSlot || (playbackActive && slot == activeSlot)) {
+            loop.invalidateDisplayCaches();
+        } else {
+            loop.markDisplayCachesStale();
+        }
+    };
+
+    invalidateSlotDisplay(previousSlot);
+    invalidateSlotDisplay(newSlot);
+
+    if (editManager.isNoteEditActive()) {
+        track.invalidateCaches();
+    } else if (editManager.isLoopEditSession() || !playbackActive) {
+        track.invalidateCaches();
+    }
+}
+
 void DisplayManager::invalidateLiveDisplayCache() {
     liveDisplayCacheEventCount = static_cast<size_t>(-1);
     liveDisplayCacheCaptureRevision = 0;

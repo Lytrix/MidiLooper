@@ -39,10 +39,20 @@ const MidiEventVec& Track::editAwareMidiEvents() const {
 }
 
 void Track::invalidateCaches() {
-  Loop& loop = getActiveLoop();
-  loop.invalidateCaches();
-  loop.playbackOrderDirty = true;
+  Loop& activeLoop = getActiveLoop();
+  activeLoop.invalidateCaches();
+  activeLoop.playbackOrderDirty = true;
   if (editManager.isNoteEditActive()) {
+    for (uint8_t trackIndex = 0; trackIndex < Config::NUM_TRACKS; ++trackIndex) {
+      if (&trackManager.getTrack(trackIndex) != this) {
+        continue;
+      }
+      const uint8_t selectedSlot = trackManager.getSelectedSlotIndex(trackIndex);
+      if (selectedSlot != activeLoopIndex) {
+        getLoop(selectedSlot).invalidateCaches();
+      }
+      break;
+    }
     editManager.bumpSessionPreviewRevision();
   }
 }

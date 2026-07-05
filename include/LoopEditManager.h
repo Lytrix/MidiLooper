@@ -47,6 +47,10 @@ public:
     void onLeaveLoopEditSession();
     /** Push loop fader positions to DROID without applying input. */
     void onEnterLoopEditSession(Track& track);
+    /// Rebind loop edit session to the selected slot after focus change.
+    void reopenLoopEditSession(Track& track);
+    /// Flush grace/debounced save and commit loop geometry on slot/track exit.
+    void commitLoopEditOnDepart(Track& track);
     
     // Track change handling
     void onTrackChanged(Track& newTrack);
@@ -82,6 +86,17 @@ private:
 
     static constexpr uint32_t LOOP_EDIT_FEEDBACK_IGNORE_MS = 1500;
     uint32_t feedbackIgnoreUntilMs_ = 0;
+
+    uint8_t sessionSlot_ = 255;
+    uint32_t sessionBaselineLoopStart_ = 0;
+    uint32_t sessionBaselineLoopLength_ = 0;
+
+    void captureSessionBaseline(Track& track);
+    void flushPendingLoopEditWork(Track& track);
+    uint8_t selectedSlotForTrack(const Track& track) const;
+    void applyLoopStartTick(Track& track, uint32_t startTick);
+    void applyLoopLength(Track& track, uint32_t loopLengthTicks);
+    void applyLoopLengthWithWrapping(Track& track, uint32_t loopLengthTicks);
 
     bool shouldIgnoreLoopFaderInput() const;
     std::vector<uint32_t> buildLoopStartFaderPositions(const Track& track) const;

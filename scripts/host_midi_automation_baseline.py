@@ -42,6 +42,7 @@ except ImportError as exc:  # pragma: no cover - import guard
 
 
 TRACK_SELECT_NOTE_BASE = 60
+LOOP_SELECT_NOTE_BASE = 50
 RECORD_BUTTON_NOTE = 36
 PLAY_STOP_BUTTON_NOTE = 40
 GLOBAL_TRANSPORT_NOTE = 39
@@ -2607,6 +2608,13 @@ def run() -> int:
         "Overrides --track-count/--first-track-index. "
         "Defaults --midi-channel to N when channel is omitted.",
     )
+    parser.add_argument(
+        "--loop-slot",
+        type=int,
+        default=0,
+        metavar="N",
+        help="After track select, short-press loop slot N (1-8, Loops row notes 50-57). 0 = skip.",
+    )
     parser.add_argument("--record-seconds", type=float, default=3.0, help="Dense stream duration for record phase")
     parser.add_argument("--overdub-seconds", type=float, default=2.0, help="Dense stream duration for overdub phase")
     parser.add_argument(
@@ -2885,6 +2893,9 @@ def run() -> int:
     if args.midi_channel is None:
         args.midi_channel = args.track_number if args.track_number else 1
 
+    if args.loop_slot and not (1 <= args.loop_slot <= 8):
+        raise SystemExit("--loop-slot must be in [1, 8]")
+
     if args.record_only:
         args.second_overdub_bars = 0
         args.undo_redo_after_overdub_stop = False
@@ -3003,6 +3014,16 @@ def run() -> int:
                     press_ms=args.press_ms,
                 )
                 time.sleep(args.phase_wait_ms / 1000.0)
+
+                if args.loop_slot:
+                    print(f"[track {idx}] select loop slot {args.loop_slot}")
+                    _send_short_press(
+                        out_port,
+                        note=LOOP_SELECT_NOTE_BASE + (args.loop_slot - 1),
+                        channel_1based=CONTROL_CHANNEL_1BASED,
+                        press_ms=args.press_ms,
+                    )
+                    time.sleep(args.phase_wait_ms / 1000.0)
 
                 from hitl.edit_mode_precondition import ensure_loop_edit_before_record
 

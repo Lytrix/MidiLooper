@@ -95,6 +95,9 @@ public:
     /// Force cached note rebuild after edit mutations (D2 display refresh).
     void requestNoteInfoRefresh(Track& track);
 
+    /// Invalidate display caches after slot selection changes (no synchronous draw).
+    void invalidateForSlotChange(uint8_t trackIndex, uint8_t previousSlot, uint8_t newSlot);
+
     /// Center the bounded detailed piano-roll window on the current playhead (long-loop loops only).
     void centerDetailedWindowOnPlayhead(Track& track, uint8_t displaySlot, uint32_t currentTick);
 

@@ -972,6 +972,13 @@ void Loop::markDisplayCachesStale() {
   visualCacheDirty = true;
 }
 
+void Loop::invalidateDisplayCaches() {
+  if (noteCache_) {
+    noteCache_->invalidate();
+  }
+  visualCacheDirty = true;
+}
+
 SealOutcome Loop::sealCapture(uint32_t sealedAtTick) {
   if (hasPendingCapturePass_) {
     return SealOutcome::AlreadyPending;

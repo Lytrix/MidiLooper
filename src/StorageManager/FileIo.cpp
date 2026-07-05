@@ -108,6 +108,10 @@ STORAGE_PERSIST_MEM const char* deferredFooterWriteStageName(DeferredFooterWrite
             return "selected_track";
         case DeferredFooterWriteStage::ActiveLoopIndex:
             return "active_loop_index";
+        case DeferredFooterWriteStage::SelectedSlotExtensionToken:
+            return "selected_slot_extension_token";
+        case DeferredFooterWriteStage::SelectedSlotIndex:
+            return "selected_slot_index";
         case DeferredFooterWriteStage::GlobalUndoStackToken:
             return "global_undo_stack_token";
     }

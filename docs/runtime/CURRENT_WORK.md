@@ -45,6 +45,15 @@ Set revision persistence + load/save overlay UX:
 
 - **`note-edit-tick-coordinates-and-audition`** — geometry wrap regression during pitch edit on long loops; Tier 1+2 shipped in firmware; HITL pending. Handoff: [note_edit_geometry_wrap_regression_bugfix.md](../plans/note_edit_geometry_wrap_regression_bugfix.md)
 
+## Parallel track (does not block UIP 5.5 HITL)
+
+**Slot selection focus** — canonical Departure → Transition → Arrival lifecycle for slot switch; session-type-agnostic edit rebind; independent `selectedSlotIndex` persistence:
+
+- **OpenSpec:** [`slot-selection-focus`](../../openspec/changes/slot-selection-focus/) — **firmware shipped 2026-07-05**; manual §8 pending
+- Handoff: [`slot_selection_focus_implementation_handoff.md`](../plans/slot_selection_focus_implementation_handoff.md)
+- Native: `test_slot_switch_edit_sessions` (6 cases); `pio test -e native` 455/455 PASS
+- **Remaining:** manual verification matrix §8 (NOTE_EDIT / LOOP_EDIT slot switch stopped + playing, reboot indices)
+
 ## Explicitly NOT implementing
 
 - D13 arrangement jam **capture** — future roadmap only ([ROADMAP.md](ROADMAP.md))

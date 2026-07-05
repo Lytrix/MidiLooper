@@ -64,6 +64,40 @@ MidiButtonActions midiButtonActions;
 
 namespace {
 
+bool trackHasAnyLoopData(const Track& track) {
+  for (uint8_t s = 0; s < ::Config::MAX_LOOPS_PER_TRACK; ++s) {
+    if (track.hasDataInSlot(s)) return true;
+  }
+  return false;
+}
+
+void restoreAudiblePlaybackAfterSlotClear(uint8_t trackIndex, Track& track, uint32_t now) {
+  bool foundAudible = false;
+  uint8_t newActiveSlot = 0;
+  for (uint8_t s = 0; s < ::Config::MAX_LOOPS_PER_TRACK; ++s) {
+    if (trackManager.isSlotEnabled(trackIndex, s) &&
+        !trackManager.isSlotMuted(trackIndex, s) &&
+        track.hasDataInSlot(s)) {
+      foundAudible = true;
+      newActiveSlot = s;
+      break;
+    }
+  }
+  if (foundAudible) {
+    trackManager.setActiveLoopIndex(trackIndex, newActiveSlot);
+    for (uint8_t s = 0; s < ::Config::MAX_LOOPS_PER_TRACK; ++s) {
+      if (trackManager.isSlotEnabled(trackIndex, s) &&
+          !trackManager.isSlotMuted(trackIndex, s) &&
+          track.hasDataInSlot(s)) {
+        track.resetPlaybackStateForSlot(s, now);
+      }
+    }
+    track.startPlaying(now);
+  } else {
+    track.sendAllNotesOff();
+  }
+}
+
 // SavedSet gesture map (M2):
 // - Edit mode (note 38) double-press: toggle load/save set browser (enter + exit).
 // - In overlay: record (36) short = scroll down; track (37) short = scroll up;
@@ -190,22 +224,33 @@ void MidiButtonActions::executeAction(MidiButtonConfig::ActionType actionType, u
                 // - If the slot is not selected (and filled): queue playback to start at loop-end.
                 if (slot != selectedSlot) {
                     if (slotHasData) {
-                        trackManager.setSelectedSlotIndex(tidx, slot);
                         trackManager.clearPendingSlotSwitch(tidx);
                         if (track.isPlaying()) {
-                            // Selecting a single slot: replace enabled set when the switch commits.
-                            trackManager.setPendingEnabledSetReplacement(tidx, true);
-                            trackManager.requestSlotSwitch(
-                                tidx, slot, SlotQuantization::LoopEnd, now);
-                            logger.info("Loop %d: long-press queued at loop-end", slot + 1);
+                            if (clockManager.shouldQuantizeRecordStart()) {
+                                trackManager.setSelectedSlotIndex(tidx, slot, SyncPlayback::No);
+                                trackManager.setPendingEnabledSetReplacement(tidx, true);
+                                trackManager.requestSlotSwitch(
+                                    tidx, slot, SlotQuantization::LoopEnd, now);
+                                logger.info("Loop %d: long-press queued at loop-end", slot + 1);
+                            } else {
+                                for (uint8_t s = 0; s < ::Config::MAX_LOOPS_PER_TRACK; ++s) {
+                                    trackManager.setSlotEnabled(tidx, s, (s == slot));
+                                    trackManager.setSlotMuted(tidx, s, false);
+                                }
+                                trackManager.setSelectedSlotIndex(tidx, slot);
+                                track.resetPlaybackStateForSlot(slot, now);
+                                trackManager.forceLedUpdate(now);
+                                logger.info("Loop %d: long-press switch (transport stopped)",
+                                            slot + 1);
+                            }
                         } else {
+                            trackManager.setSelectedSlotIndex(tidx, slot);
                             // No active playback loop: start immediately (and avoid a pending
                             // transition that would never commit while STOPPED/EMPTY).
                             for (uint8_t s = 0; s < ::Config::MAX_LOOPS_PER_TRACK; ++s) {
                                 trackManager.setSlotEnabled(tidx, s, (s == slot));
                                 trackManager.setSlotMuted(tidx, s, false);
                             }
-                            trackManager.setActiveLoopIndex(tidx, slot);
                             track.startPlaying(now);
                             trackManager.forceLedUpdate(now);
                             logger.info("Loop %d: long-press start (not playing)", slot + 1);
@@ -216,59 +261,7 @@ void MidiButtonActions::executeAction(MidiButtonConfig::ActionType actionType, u
 
                 // slot == selectedSlot => clear (only when it is actually filled)
                 if (!slotHasData) return;
-
-                // Cancels any pending quantized slot switching.
-                trackManager.clearPendingSlotSwitch(tidx);
-                trackManager.setPendingEnabledSetReplacement(tidx, false);
-                trackManager.cancelSlotSelectionHold(tidx);
-
-                // If capturing, finalize before clearing to avoid corrupting state.
-                if (track.isRecording() || track.isOverdubbing()) {
-                    trackManager.finalizeCaptureAndSelectSlot(tidx, slot, now);
-                } else {
-                    trackManager.setActiveLoopIndex(tidx, slot);
-                }
-
-                // Revert to codebase "clear" semantics (delete content using Track::clear()).
-                // Update slot-level flags first so multi-slot state matches deletion.
-                trackManager.setSlotEnabled(tidx, slot, false);
-                trackManager.setSlotMuted(tidx, slot, false);
-                trackManager.clearQueuedRecordingTrack(tidx, slot);
-                trackManager.setLayeredSlotHeld(tidx, slot, false);
-
-                // Active loop is the cleared slot; reuse existing clear/undo/storage logic.
                 handleClearTrack();
-
-                // Track::clear() sets TrackState to TRACK_EMPTY, which would silence all
-                // other enabled slots. Restore playback if any other enabled+unmuted slot
-                // still has data.
-                bool foundAudible = false;
-                uint8_t newActiveSlot = 0;
-                for (uint8_t s = 0; s < ::Config::MAX_LOOPS_PER_TRACK; ++s) {
-                    if (trackManager.isSlotEnabled(tidx, s) &&
-                        !trackManager.isSlotMuted(tidx, s) &&
-                        track.hasDataInSlot(s)) {
-                        foundAudible = true;
-                        newActiveSlot = s;
-                        break;
-                    }
-                }
-
-                if (foundAudible) {
-                    trackManager.setActiveLoopIndex(tidx, newActiveSlot);
-                    // Reset playback indices for all enabled+unmuted slots.
-                    for (uint8_t s = 0; s < ::Config::MAX_LOOPS_PER_TRACK; ++s) {
-                        if (trackManager.isSlotEnabled(tidx, s) &&
-                            !trackManager.isSlotMuted(tidx, s) &&
-                            track.hasDataInSlot(s)) {
-                            track.resetPlaybackStateForSlot(s, now);
-                        }
-                    }
-                    track.startPlaying(now);
-                } else {
-                    // No enabled audible slots remain: ensure silence.
-                    track.sendAllNotesOff();
-                }
             }
             break;
         case MidiButtonConfig::ActionType::UNDO_FOR_SLOT:
@@ -276,7 +269,6 @@ void MidiButtonActions::executeAction(MidiButtonConfig::ActionType actionType, u
                 uint8_t tidx = trackManager.getSelectedTrackIndex();
                 uint8_t slot = static_cast<uint8_t>(parameter);
                 trackManager.setSelectedSlotIndex(tidx, slot);
-                trackManager.setActiveLoopIndex(tidx, slot);
                 handleUndo();
             }
             break;
@@ -285,7 +277,6 @@ void MidiButtonActions::executeAction(MidiButtonConfig::ActionType actionType, u
                 uint8_t tidx = trackManager.getSelectedTrackIndex();
                 uint8_t slot = static_cast<uint8_t>(parameter);
                 trackManager.setSelectedSlotIndex(tidx, slot);
-                trackManager.setActiveLoopIndex(tidx, slot);
                 handleRedo();
             }
             break;
@@ -306,7 +297,6 @@ void MidiButtonActions::executeAction(MidiButtonConfig::ActionType actionType, u
 
                 trackManager.clearPendingSlotSwitch(tidx);
                 trackManager.setSelectedSlotIndex(tidx, slot);
-                trackManager.setActiveLoopIndex(tidx, slot);
 
                 // Ensure we are not in TRACK_EMPTY before starting overdub.
                 if (track.isEmpty()) {
@@ -362,7 +352,7 @@ void MidiButtonActions::handleToggleRecordForSlot(uint8_t slotIndex) {
         trackManager.cancelPendingRecordArm(trackIdx);
     }
 
-    // Filled + currently playing: schedule quantized switch when not selected.
+    // Filled + currently playing: quantize active sync to grid when transport is running.
     if (track.isPlaying() && slotHasData) {
         const uint8_t enabledCount = trackManager.countEnabledSlots(trackIdx);
         const bool slotEnabled = trackManager.isSlotEnabled(trackIdx, slotIndex);
@@ -386,31 +376,51 @@ void MidiButtonActions::handleToggleRecordForSlot(uint8_t slotIndex) {
             return;
         }
 
-        // Short press on a non-selected filled slot:
-        // - Always move focus/capture target.
-        trackManager.setSelectedSlotIndex(trackIdx, slotIndex);
-
-        // Multi-slot mode: keep the enabled set and mute state as-is.
-        // A non-selected short press should only move focus/capture target.
-        if (enabledCount > 1) {
-            // Schedule active-loop focus switch for capture/overdub on next 16th boundary.
-            trackManager.requestSlotSwitch(trackIdx, slotIndex, SlotQuantization::NextGrid, now);
-            return;
+        // Short press on a non-selected filled slot.
+        trackManager.clearPendingSlotSwitch(trackIdx);
+        const bool editAuditionSingleSlot =
+            editManager.isLoopEditSession() || editManager.isNoteEditActive();
+        if (clockManager.shouldQuantizeRecordStart()) {
+            trackManager.setSelectedSlotIndex(trackIdx, slotIndex, SyncPlayback::No);
+            if (enabledCount > 1 && !editAuditionSingleSlot) {
+                trackManager.setPendingEnabledSetReplacement(trackIdx, false);
+                trackManager.requestSlotSwitch(trackIdx, slotIndex, SlotQuantization::NextGrid,
+                                               now);
+            } else {
+                if (!slotEnabled || editAuditionSingleSlot) {
+                    trackManager.setPendingEnabledSetReplacement(trackIdx, true);
+                }
+                trackManager.requestSlotSwitch(trackIdx, slotIndex, SlotQuantization::NextGrid,
+                                               now);
+            }
+        } else {
+            trackManager.setPendingEnabledSetReplacement(trackIdx, false);
+            if (enabledCount == 1) {
+                for (uint8_t s = 0; s < ::Config::MAX_LOOPS_PER_TRACK; ++s) {
+                    trackManager.setSlotEnabled(trackIdx, s, (s == slotIndex));
+                    trackManager.setSlotMuted(trackIdx, s, false);
+                }
+            }
+            trackManager.setSelectedSlotIndex(trackIdx, slotIndex);
+            track.resetPlaybackStateForSlot(slotIndex, now);
         }
-
-        // Single-slot mode: switch enabled set to the pressed slot at next 16th.
-        if (!slotEnabled) {
-            trackManager.setPendingEnabledSetReplacement(trackIdx, true);
-        }
-        trackManager.requestSlotSwitch(trackIdx, slotIndex, SlotQuantization::NextGrid, now);
+        trackManager.forceLedUpdate(now);
         return;
     }
 
     // Otherwise: fall back to the existing immediate record/start toggle behavior
     // for empty slots, and immediate play/stop toggle for filled slots when not playing.
+    const bool slotSelectionChanged = (slotIndex != selectedSlot);
     trackManager.clearPendingSlotSwitch(trackIdx);
     trackManager.setSelectedSlotIndex(trackIdx, slotIndex);
-    trackManager.setActiveLoopIndex(trackIdx, slotIndex);
+
+    const bool editFocusSlotChange =
+        editManager.isLoopEditSession() || editManager.isNoteEditActive();
+    if (!track.isPlaying() && !track.isRecording() && !track.isOverdubbing() && slotHasData &&
+        slotSelectionChanged && editFocusSlotChange) {
+        trackManager.forceLedUpdate(now);
+        return;
+    }
 
     if (track.isRecording()) {
         logger.info("Loop %d: Stop Recording", slotIndex + 1);
@@ -467,7 +477,16 @@ void MidiButtonActions::handleToggleRecordForSlot(uint8_t slotIndex) {
         trackManager.forceLedUpdate(now);
     } else {
         logger.info("Loop %d: Toggle Play/Stop", slotIndex + 1);
-        track.togglePlayStop();
+        if (track.isPlaying()) {
+            track.stopPlaying();
+        } else {
+            if (!clockManager.isTransportRunning()) {
+                clockManager.toggleTransport();
+            }
+            if (!track.isPlaying()) {
+                track.startPlaying(now);
+            }
+        }
         trackManager.forceLedUpdate(now);
     }
 }
@@ -533,11 +552,16 @@ void MidiButtonActions::handleSelectTrack(uint8_t trackNumber) {
 
 void MidiButtonActions::handleUndo() {
     Track& track = getCurrentTrack();
-    if (editManager.isNoteEditActive() && editManager.getEditSession().undoStack.canUndo()) {
-        if (editManager.sessionUndo(track)) {
-            logger.info("MIDI: EditSession undo");
-            return;
+    if (editManager.isNoteEditActive()) {
+        if (editManager.getEditSession().undoStack.canUndo()) {
+            if (editManager.sessionUndo(track)) {
+                logger.info("MIDI: EditSession undo");
+                return;
+            }
         }
+        logger.info("MIDI: No session undo available (entries=%u)",
+                    static_cast<unsigned>(editManager.getEditSession().undoStack.undoCount()));
+        return;
     }
     if (TrackUndo::canUndo(track)) {
         logger.info("MIDI: Undo (entries=%d)", TrackUndo::getUndoCount(track));
@@ -554,11 +578,16 @@ void MidiButtonActions::handleUndo() {
 
 void MidiButtonActions::handleRedo() {
     Track& track = getCurrentTrack();
-    if (editManager.isNoteEditActive() && editManager.getEditSession().undoStack.canRedo()) {
-        if (editManager.sessionRedo(track)) {
-            logger.info("MIDI: EditSession redo");
-            return;
+    if (editManager.isNoteEditActive()) {
+        if (editManager.getEditSession().undoStack.canRedo()) {
+            if (editManager.sessionRedo(track)) {
+                logger.info("MIDI: EditSession redo");
+                return;
+            }
         }
+        logger.info("MIDI: No session redo available (entries=%u)",
+                    static_cast<unsigned>(editManager.getEditSession().undoStack.redoCount()));
+        return;
     }
     if (TrackUndo::canRedo(track)) {
         logger.info("MIDI: Redo (entries=%d)", TrackUndo::getRedoCount(track));
@@ -594,7 +623,13 @@ void MidiButtonActions::handleRedoClearTrack() {
 }
 
 void MidiButtonActions::handleClearTrack() {
+    // Always clear the selected slot (record long-press and slot long-press when selected).
+    // TODO: long press >5 s → "Clear All Slots?" overlay; release when shown; single click
+    // = YES, double click = NO ("YES: Click NO: Double Click").
+    uint8_t tidx = trackManager.getSelectedTrackIndex();
     Track& track = getCurrentTrack();
+    const uint8_t slot = trackManager.getSelectedSlotIndex(tidx);
+    const uint32_t now = getCurrentTick();
 
     // Clear mutates pass ownership; complete any in-flight deferred save first so
     // the writer cannot read a slot while it is being reset.
@@ -606,20 +641,42 @@ void MidiButtonActions::handleClearTrack() {
         }
     }
 
-    if (!track.hasData()) {
-        if (!track.isEmpty()) {
-            track.setState(TRACK_EMPTY);
-            logger.info("MIDI: Clear reset non-empty track state to EMPTY (no loop data)");
+    if (!track.hasDataInSlot(slot)) {
+        if (!trackHasAnyLoopData(track)) {
+            if (!track.isEmpty()) {
+                track.setState(TRACK_EMPTY);
+                logger.info("MIDI: Clear reset non-empty track state to EMPTY (no loop data)");
+            } else {
+                logger.debug("Clear ignored — track is empty");
+            }
         } else {
-            logger.debug("Clear ignored — track is empty");
+            logger.debug("Clear ignored — selected slot is empty");
         }
-    } else {
-        TrackUndo::pushClearTrackSnapshot(track);
-        track.clear();
-        StorageManager::markCurrentSetTrackDirty(trackManager.getSelectedTrackIndex());
-        StorageManager::requestDeferredSaveState(looperState.getLooperState());
-        logger.info("MIDI: Clear Track");
+        return;
     }
+
+    trackManager.clearPendingSlotSwitch(tidx);
+    trackManager.setPendingEnabledSetReplacement(tidx, false);
+    trackManager.cancelSlotSelectionHold(tidx);
+
+    if (track.isRecording() || track.isOverdubbing()) {
+        trackManager.finalizeCaptureAndSelectSlot(tidx, slot, now);
+    } else {
+        trackManager.setActiveLoopIndex(tidx, slot);
+    }
+
+    trackManager.setSlotEnabled(tidx, slot, false);
+    trackManager.setSlotMuted(tidx, slot, false);
+    trackManager.clearQueuedRecordingTrack(tidx, slot);
+    trackManager.setLayeredSlotHeld(tidx, slot, false);
+
+    TrackUndo::pushClearTrackSnapshot(track);
+    track.clear();
+    StorageManager::markCurrentSetTrackDirty(tidx);
+    StorageManager::requestDeferredSaveState(looperState.getLooperState());
+    logger.info("MIDI: Clear selected slot %u", static_cast<unsigned>(slot) + 1u);
+
+    restoreAudiblePlaybackAfterSlotClear(tidx, track, now);
 }
 
 void MidiButtonActions::handleSoloTrack(uint8_t trackNumber) {

@@ -116,6 +116,8 @@ struct Loop {
   void rebuildVisualCacheFromPasses();
   void ensureVisualCacheBuilt();
   void markDisplayCachesStale();
+  /// Note + visual caches only — does not disturb playback order or materialized pass view.
+  void invalidateDisplayCaches();
   void removeCaptureNoteOffAt(uint8_t channel, uint8_t note, uint32_t tick);
   void shiftActiveCapturePassTicks(int64_t delta);
   size_t nativeTestLiveEventCount() const { return liveEventCount(); }

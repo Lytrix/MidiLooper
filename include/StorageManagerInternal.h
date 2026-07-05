@@ -190,8 +190,10 @@ void applyLoadedTrackStateAfterLoopSlots(Track& track, TrackState loadedTrackSta
                                          bool anySlotHasEvents, bool muted);
 bool readCurrentSetFileEpilogue(File& file, uint8_t numTracks,
                                 std::vector<uint8_t>& activeLoopIndex,
+                                std::vector<uint8_t>& selectedSlotIndex,
                                 uint8_t& selectedTrackIdxOut);
 bool applyLoadedTransportFooter(uint8_t numTracks, const std::vector<uint8_t>& activeLoopIndex,
+                                const std::vector<uint8_t>& selectedSlotIndex,
                                 uint8_t selectedTrackIdx, LooperState& state,
                                 LooperState loadedLooperState, uint32_t masterLoopLength);
 

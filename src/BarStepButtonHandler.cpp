@@ -504,7 +504,7 @@ void BarStepButtonHandler::executeLoopEditAction(const BarStepButtonInfo& info, 
         uint32_t regionStartDisplay = info.stepIndex * Config::TICKS_PER_16TH_STEP;
         uint32_t regionLen = Config::TICKS_PER_16TH_STEP;
         uint32_t regionStartStorage = (loopStartTick + regionStartDisplay) % loopLength;
-        TrackUndo::pushLoopStartSnapshot(track);
+        TrackUndo::pushLoopStartSnapshot(track, track.getActiveLoopIndex());
         track.setLoopStartTick(regionStartStorage);
         track.setLoopLength(regionLen);
         testLog("BarStepButton LoopEdit HOLD_ONE 16th: loop start=%lu len=%lu [TEST POINT: loop set]", regionStartStorage, regionLen);

@@ -71,5 +71,6 @@ Brownfield: [`docs/Guides/NOTE_WRAPPING_LOGIC.md`](../../docs/Guides/NOTE_WRAPPI
 |--------|--------------|
 | `linear-loop-tick-storage` | Prerequisite — canonical linear pairs; UIP extends projection only |
 | `edit-session-action-geometry` | **Blocked** until UIP full stack |
+| `slot-selection-focus` | **Parallel** — uses Phase 4 `queuedStartTick` / `requestSlotSwitch`; display cache invalidation post-projection; **not in UIP scope**; does not gate Phase 5 HITL |
 | `long-loop-piano-roll-window` | Future `Timeline` consumer |
 | `note-edit-tick-coordinates-and-audition` | `selectedTick` / `loopStartTick` separation preserved |
