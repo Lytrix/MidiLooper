@@ -55,10 +55,11 @@ void MidiLedManager::updateLeds(Track& track, uint32_t currentTick, uint8_t disp
     }
     
     // Calculate current bar (relative to loop start for correct 16th display)
-    uint32_t currentBar = getCurrentBar(currentTick, displayLoop);
+    uint32_t currentBar = getCurrentBar(currentTick, displayLoop, track, displaySlotIndex);
     
     // Only update when bar index changes, or on first initialization.
-    uint32_t barStartTickDisplay = getCurrentBarStartTick(currentTick, displayLoop);
+    uint32_t barStartTickDisplay =
+        getCurrentBarStartTick(currentTick, displayLoop, track, displaySlotIndex);
     if (!hasInitialized || currentBar != lastUpdateBar) {
         analyzeAndUpdateBar(displayLoop, barStartTickDisplay);
         updateBarLeds(displayLoop, currentBar);
@@ -189,17 +190,26 @@ void MidiLedManager::updateTrackSelectLeds(uint8_t selectedTrackIndex, const boo
     }
 }
 
-uint32_t MidiLedManager::getCurrentBar(uint32_t currentTick, const Loop& loop) {
+uint32_t MidiLedManager::getCurrentBar(uint32_t currentTick, const Loop& loop, const Track& track,
+                                       uint8_t displaySlotIndex) {
     uint32_t ticksPerBar = 16 * Config::TICKS_PER_16TH_STEP;
-    uint32_t tickInLoopStorage = tickPhaseInLoop(currentTick, loop.startLoopTick, loop.loopLengthTicks);
+    const bool alignWithPlaybackCycle =
+        displaySlotIndex == track.getActiveLoopIndex() &&
+        (track.isPlaying() || track.isOverdubbing());
+    const uint32_t tickInLoopStorage =
+        alignWithPlaybackCycle
+            ? IntervalProjection::tickPhaseInProjectionCycle(
+                  currentTick, track.getProjectionCycleStartTick(), loop.loopLengthTicks)
+            : tickPhaseInLoop(currentTick, loop.startLoopTick, loop.loopLengthTicks);
     uint32_t tickInLoopDisplay = IntervalProjection::noteRelativeTick(
         tickInLoopStorage, loop.loopStartTick, loop.loopLengthTicks);
     return tickInLoopDisplay / ticksPerBar;
 }
 
-uint32_t MidiLedManager::getCurrentBarStartTick(uint32_t currentTick, const Loop& loop) {
+uint32_t MidiLedManager::getCurrentBarStartTick(uint32_t currentTick, const Loop& loop,
+                                                const Track& track, uint8_t displaySlotIndex) {
     uint32_t ticksPerBar = 16 * Config::TICKS_PER_16TH_STEP;
-    uint32_t currentBar = getCurrentBar(currentTick, loop);
+    uint32_t currentBar = getCurrentBar(currentTick, loop, track, displaySlotIndex);
     return currentBar * ticksPerBar;
 }
 
@@ -314,8 +324,15 @@ void MidiLedManager::updateCurrentTick(Track& track, uint32_t currentTick, uint8
     uint32_t ticksPerSixteenth = Config::TICKS_PER_16TH_STEP;
     uint32_t ticksPerBar = ticksPerSixteenth * NUM_LEDS;
     
-    // Position in loop relative to loop start (matches 16th/bar LED display)
-    uint32_t tickInLoopStorage = tickPhaseInLoop(currentTick, displayLoop.startLoopTick, loopLength);
+    // Position in loop relative to loop start (matches OLED playhead when this slot is playing).
+    const bool alignWithPlaybackCycle =
+        displaySlotIndex == track.getActiveLoopIndex() &&
+        (track.isPlaying() || track.isOverdubbing());
+    const uint32_t tickInLoopStorage =
+        alignWithPlaybackCycle
+            ? IntervalProjection::tickPhaseInProjectionCycle(
+                  currentTick, track.getProjectionCycleStartTick(), loopLength)
+            : tickPhaseInLoop(currentTick, displayLoop.startLoopTick, loopLength);
     uint32_t tickInLoopDisplay = IntervalProjection::noteRelativeTick(
         tickInLoopStorage, displayLoop.loopStartTick, loopLength);
     uint32_t tickInBar = tickInLoopDisplay % ticksPerBar;

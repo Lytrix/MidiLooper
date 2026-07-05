@@ -492,9 +492,16 @@ uint32_t DisplayManager::resolvePlayheadInLoop(const Track& track, uint8_t displ
     }
 
     const Loop& dispLoop = track.getLoop(displaySlot);
-    const uint32_t tickInLoop = tickPhaseInLoop(displayTick, dispLoop.startLoopTick, loopLength);
     const uint32_t loopOrigin = resolveLoopOriginTick(track, displaySlot);
-    return (tickInLoop - loopOrigin + loopLength) % loopLength;
+    const bool alignWithPlaybackCycle =
+        displaySlot == track.getActiveLoopIndex() &&
+        (track.isPlaying() || track.isOverdubbing());
+    const uint32_t tickInLoopStorage =
+        alignWithPlaybackCycle
+            ? IntervalProjection::tickPhaseInProjectionCycle(
+                  displayTick, track.getProjectionCycleStartTick(), loopLength)
+            : tickPhaseInLoop(displayTick, dispLoop.startLoopTick, loopLength);
+    return IntervalProjection::noteRelativeTick(tickInLoopStorage, loopOrigin, loopLength);
 }
 
 const DisplayNoteVec& DisplayManager::resolveDisplayNotes(const Track& track, uint8_t displaySlot,
@@ -805,6 +812,10 @@ void DisplayManager::invalidateForSlotChange(uint8_t trackIndex, uint8_t previou
         track.invalidateCaches();
     } else if (editManager.isLoopEditSession() || !playbackActive) {
         track.invalidateCaches();
+    }
+
+    if (playbackActive && trackIndex == trackManager.getSelectedTrackIndex()) {
+        centerDetailedWindowOnPlayhead(track, newSlot, clockManager.getCurrentTick());
     }
 }
 

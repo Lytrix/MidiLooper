@@ -60,6 +60,9 @@
 - [x] 5.1 Retire or thin-wrap duplicate helpers: `resolveLinearNoteSpanForOverlap`, `isInflatedDisplaySpan` (edit path)
 - [x] 5.2 Grep gate — no consumer-local wrap math outside `IntervalProjection` helpers
 - [x] 5.3 Migrate `MidiLedManager` / `SelectNavigation` phase modulo to centralized helpers
+- [x] 5.3a **Display playhead + LED alignment (D25)** — `resolvePlayheadInLoop` + `MidiLedManager` use **`projectionCycleStartTick`** when `displaySlot == activeLoopIndex` and playing/overdubbing; native `test_display_playhead_aligns_with_projection_cycle_after_slot_commit`; evidence [`captures/session_20260706_014145.log`](../../../captures/session_20260706_014145.log)
+- [x] 5.3b **NOTE_EDIT selection bracket display-phase** — geometry paths + highlight/note-info use `loopStartTick`-aware display ticks; plan [`unified_interval_projection_note_edit_selection_bugfix.md`](../../../docs/plans/unified_interval_projection_note_edit_selection_bugfix.md); commit `bed6697`
+- [x] 5.3c **Slot-selection focus orchestration** — `SyncPlayback`, edit depart/arrive, SD footer, `invalidateForSlotChange`; change `slot-selection-focus`; commit `b8f5456`
 - [x] 5.4 `pio test -e native` full suite
 - [x] 5.5a Native session invariant — **NTS-U1** [`test_note_edit_track_switch`](../../test/test_note_edit_track_switch/) (departing session + new loop length regression; reopen rematerialize)
 - [ ] 5.5 HITL: 152335 move-across-boundary; long-loop display; NOTE_EDIT playback audition; slot queued start (short-press)

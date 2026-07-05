@@ -34,7 +34,7 @@
 
 ## 4. DisplayManager
 
-- [x] 4.1 Add `invalidateForSlotChange(track, previousSlot, newSlot)` — cache invalidation only, no sync draw
+- [x] 4.1 Add `invalidateForSlotChange(track, previousSlot, newSlot)` — cache invalidation only, no sync draw; during playback also **`centerDetailedWindowOnPlayhead`** for the new slot (UIP D25 playhead alignment)
 - [x] 4.2 Wire from TrackManager arrival phase (not EditManager); runs even when `editSession.active == false`
 
 ## 5. Route consumers

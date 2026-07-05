@@ -70,6 +70,9 @@ Slot arrival SHALL call `DisplayManager::invalidateForSlotChange(track, previous
 
 - Invalidate live and note-edit display cache keys
 - Mark visual caches stale on previous and new slot loops
+- When transport is playing or overdubbing on the selected track, re-center the detailed piano-roll window on the playhead for the new slot (no synchronous `display()`)
+
+Playhead tick for the **active playing slot** SHALL follow **`unified-interval-projection`** D25 — storage phase from **`projectionCycleStartTick`** when `displaySlot == activeLoopIndex`, not record-time **`startLoopTick`** alone.
 
 It SHALL NOT call synchronous `display()` or block the focus-transition path. Redraw SHALL occur on the normal `DisplayManager::update()` scheduler tick.
 

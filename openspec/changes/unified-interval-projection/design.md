@@ -204,6 +204,7 @@ Brownfield **`PlaybackCursor`** is **not** the global playhead. It is a per-slot
 |---------|------------------|-----------|
 | Global transport | **`currentTick`** | unchanged |
 | Phase in loop / wrap | **`startLoopTick`** + **`tickPhaseInLoop`** | **`projectionCycleStartTick`** + **`IntervalProjection`** helpers (D13) |
+| OLED playhead + 16th/bar LEDs (active playing slot) | **`startLoopTick`** only | **`projectionCycleStartTick`** when `displaySlot == activeLoopIndex` and playing/overdubbing; else **`startLoopTick`** (stopped / audition) — **D25** |
 | Next MIDI event to send | **`Loop.nextEventIndex`** | unchanged (scan index on **`Loop`**) |
 | Last phase sent | **`Loop.lastTickInLoop`** | unchanged; **remove duplicate on `PlaybackCursor`** |
 | Merged events cache | **`PlaybackWindow.primaryWindow`** | unchanged; build path may call projection |
@@ -675,6 +676,16 @@ Same class of brownfield debt as **`PlaybackCursor`**: duplicate window fields, 
 | Queued start grid commit (D14) | unchanged — **`projectionCycleStartTick = commitTick - startPhase`** |
 
 **Regression (2026-07-05):** HITL base preset (2 overdubs) rebooted on 2nd run when the sort comparator called **`projectPlaybackEventPhase`** (which allocated **`std::vector`**) and record-stop omitted **`projectionCycleStartTick`** sync after truncation rewind.
+
+### D25 — Display playhead uses projection cycle on active playing slot (Phase 5 consumer)
+
+**Decision:** **`DisplayManager::resolvePlayheadInLoop`** and **`MidiLedManager`** 16th/bar position SHALL use **`tickPhaseInProjectionCycle(currentTick, projectionCycleStartTick, loopLength)`** when the **displayed slot** is the **active playing slot** and transport is **PLAYING** or **OVERDUBBING**. Display phase is then **`noteRelativeTick(storagePhase, loopStartTick, loopLength)`** — same pipeline as before, but storage phase matches **`playMidiEvents`**.
+
+**Stopped / audition:** When the displayed slot is not the active loop, or transport is stopped, storage phase continues to use **`tickPhaseInLoop(currentTick, loop.startLoopTick, loopLength)`** so UI focus can preview a non-audible slot.
+
+**Slot switch:** After grid commit, **`commitQueuedPlaybackStart`** re-anchors **`projectionCycleStartTick`** while **`startLoopTick`** stays at record origin — using **`startLoopTick`** for OLED playhead after switch caused a sustained offset (often ~1 bar on short loops). Evidence: [`captures/session_20260706_014145.log`](../../../captures/session_20260706_014145.log).
+
+**NOTE_EDIT selection bracket (2026-07-06):** Geometry paths SHALL write **`EditorSelection.selectedTick`** in **display phase** (`bracketDisplayTickFromStorage` / `displayStartTickFromStorage` with **`loopStartTick`**), not storage ticks at origin 0. Highlight and note-info resolve by **`primaryNote`** + display-phase bracket on the drawn note list. Plan: [`docs/plans/unified_interval_projection_note_edit_selection_bugfix.md`](../../../docs/plans/unified_interval_projection_note_edit_selection_bugfix.md).
 
 ### D15 — loopStartTick vs selectedTick (naming)
 
