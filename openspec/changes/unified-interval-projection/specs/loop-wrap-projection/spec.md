@@ -32,6 +32,17 @@ Playback SHALL order note events using **Playback projection** over canonical st
 - **THEN** playback fires the NoteOff at wrapped tick `0` in loop order
 - **AND** the note does not stick on
 
+#### Scenario: Playback order precomputes phases before sort
+
+- **GIVEN** merged playback events need reordering for wrap-correct send
+- **WHEN** `rebuildPlaybackOrder` runs
+- **THEN** each event's sort key is computed once via **`playbackEventPhase`**
+- **AND** the sort comparator does not allocate or call **`generateEquivalentIntervals`**
+
+### Requirement: Playback hot path is non-allocating
+
+Playback sort and per-tick MIDI send SHALL use **`IntervalProjection::playbackEventPhase`** (scalar k-scan over `{0, loopLength}`). The playback hot path SHALL NOT call **`generateEquivalentIntervals`**, **`projectNoteIntervals`**, or allocate containers inside **`std::sort`** comparators or the per-tick send loop. **`projectPlaybackEventPhase`** MAY wrap **`playbackEventPhase`** for tests and contextful call sites outside the hot path.
+
 ### Requirement: Piano roll and editor window clipping
 
 Long-loop piano-roll window filtering and NOTE_EDIT window probes SHALL use **Display projection** wrap semantics. Notes whose linear off extends past the window end SHALL still appear when a projected head segment intersects the window.

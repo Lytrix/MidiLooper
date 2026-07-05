@@ -603,7 +603,7 @@ Optional later: thin row **Handler** only if LTS MIDI map cannot use **`MidiButt
 
 1. Add **`Track.projectionCycleStartTick`** (per D13); migrate wrap detect and phase off **`startLoopTick`**-only paths where projection owns wrap.
 2. Replace **`tickPhaseInLoop(currentTick, loop.startLoopTick, …)`** in playback send with **`IntervalProjection`** phase helper using **`ProjectionContext`** (Playback type).
-3. Replace **`rebuildPlaybackOrder`** / **`playbackSortPhase`** modulo sort with projection-backed ordering (or thin wrapper calling **`projectNoteIntervals`** + playback selection).
+3. Replace **`rebuildPlaybackOrder`** / **`playbackSortPhase`** modulo sort with **`playbackEventPhase`** + precomputed sort phases (D24) — not allocating **`projectNoteIntervals`** in comparators.
 4. Inline stale-cache check currently on **`runtime.cursor.isStale`** → **`LoopPlaybackRuntime`** (no **`PlaybackCursor`** type).
 5. Delete **`#include "PlaybackCursor.h"`**; update **`TrackPlaybackRuntime.h`**; fix **`test_playback_prewarm`** if it includes cursor headers only.
 6. Grep gate: no **`PlaybackCursor`** identifier remains.
@@ -648,6 +648,33 @@ Same class of brownfield debt as **`PlaybackCursor`**: duplicate window fields, 
 4. Display long-loop viewport clip (task 3.3) and sub-window edit (D11) both use **`TickInterval`** — the former MAY run after head/tail **rendering**; neither promotes the viewport to **`ProjectedNoteInterval`**.
 
 **Alternative rejected:** Single type for frame and note output — conflates coordinate space with domain objects and breaks the identity invariant (D8): every **`ProjectedNoteInterval`** must refer to exactly one stored note.
+
+### D24 — Playback hot-path projection (Phase 4 guardrail)
+
+**Decision:** Playback sort keys and per-tick send phase use **`IntervalProjection::playbackEventPhase`** — a scalar, non-allocating k-scan over the full-loop playback window `{0, loopLength}`. Batch/analysis paths continue to use **`generateEquivalentIntervals`** → **`selectProjectedInterval`**.
+
+| API | Use | Heap |
+|-----|-----|------|
+| **`playbackEventPhase(storageTick, loopLength)`** | **`rebuildPlaybackOrder`**, **`playMidiEvents`** send gate | **No** |
+| **`projectPlaybackEventPhase(storageTick, context)`** | Tests, contextful call sites | Thin wrapper → **`playbackEventPhase`** |
+| **`projectNoteIntervals`** / **`generateEquivalentIntervals`** | Edit, display, overlap analysis | Allowed |
+
+**Rules:**
+
+1. **`rebuildPlaybackOrder`** SHALL precompute each event's phase, then sort — never call allocating projection inside a **`std::sort`** comparator (Teensy heap exhaustion on sustained playback).
+2. **`playMidiEvents`** SHALL use **`playbackEventPhase`** for event-tick phase vs **`lastTickInLoop`** — not **`projectNoteIntervals`** or **`generateEquivalentIntervals`** per event.
+3. **`generateEquivalentIntervals`** SHALL NOT run on the MIDI send hot path.
+
+**`projectionCycleStartTick` alignment (extends D13):** Beyond wrap **`+= loopLength`**, sync when playhead and **`lastTickInLoop`** are established together:
+
+| Event | Rule |
+|-------|------|
+| Fresh **`startPlaying`** (`preserveLoopPhaseOrigin=false`) | **`projectionCycleStartTick = currentTick`** |
+| **`startPlaying`** with **`preserveLoopPhaseOrigin=true`** | **`projectionCycleStartTick = currentTick - phase`** where `phase = tickPhaseInLoop(currentTick, loop.startLoopTick, loopLength)` |
+| Record stop after truncation rewind | **`projectionCycleStartTick = playbackTick - lastTickInLoop`** |
+| Queued start grid commit (D14) | unchanged — **`projectionCycleStartTick = commitTick - startPhase`** |
+
+**Regression (2026-07-05):** HITL base preset (2 overdubs) rebooted on 2nd run when the sort comparator called **`projectPlaybackEventPhase`** (which allocated **`std::vector`**) and record-stop omitted **`projectionCycleStartTick`** sync after truncation rewind.
 
 ### D15 — loopStartTick vs selectedTick (naming)
 
