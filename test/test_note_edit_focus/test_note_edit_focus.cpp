@@ -596,7 +596,7 @@ void test_selection_index_duplicate_pitch_uses_linear_start() {
   constexpr NoteId kMoverId = 32;
   EditorSelection selection;
   selection.primaryNote = kMoverId;
-  selection.bracketTick = 1484;
+  selection.selectedTick = 1484;
   selection.selectedNotes.push_back(kMoverId);
 
   std::vector<NoteUtils::DisplayNote> filtered;
@@ -962,7 +962,7 @@ void test_editor_selection_resolves_mover_after_macro_normalize() {
   focus.last.endTick = 1200;
   focus.movingNoteRange.end = 1200;
   sessionState.selection.primaryNote = focus.movingNoteId;
-  sessionState.selection.bracketTick = 496;
+  sessionState.selection.selectedTick = 496;
 
   runNoteEditMacroCommitNormalize(session, focus, 1, loopLength);
 
@@ -1052,7 +1052,7 @@ void test_edit_projection_context_uses_selection_and_full_loop_window() {
   constexpr uint32_t kLoopLength = 1536;
   EditorSelection selection;
   selection.primaryNote = 32;
-  selection.bracketTick = 1484;
+  selection.selectedTick = 1484;
   selection.selectedNotes.push_back(32);
 
   const ProjectionContext context = IntervalProjection::buildEditProjectionContext(
@@ -1073,7 +1073,7 @@ void test_edit_projection_batch_selects_linear_span_for_wrapped_storage() {
 
   EditorSelection selection;
   selection.primaryNote = kWrapId;
-  selection.bracketTick = 49;
+  selection.selectedTick = 49;
   selection.selectedNotes.push_back(kWrapId);
 
   const ProjectionContext context = IntervalProjection::buildEditProjectionContext(
@@ -1114,7 +1114,7 @@ void test_edit_projection_parity_resolve_linear_span_baseline_map() {
 
   EditorSelection selection;
   selection.primaryNote = kOverlapId;
-  selection.bracketTick = 483;
+  selection.selectedTick = 483;
   const ProjectionContext context = IntervalProjection::buildEditProjectionContext(
       selection, kLoopLength, IntervalProjection::makeFullLoopEditAnalysisWindow(kLoopLength), 483);
   const std::vector<CanonicalNoteSpan> spans = {
@@ -1132,7 +1132,7 @@ void test_edit_projection_parity_wrapped_mover_linear_span() {
 
   EditorSelection selection;
   selection.primaryNote = kMoverId;
-  selection.bracketTick = 1499;
+  selection.selectedTick = 1499;
   const ProjectionContext context = IntervalProjection::buildEditProjectionContext(
       selection, kLoopLength, IntervalProjection::makeFullLoopEditAnalysisWindow(kLoopLength),
       1499);

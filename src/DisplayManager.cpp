@@ -13,6 +13,8 @@
 #include "TickPhase.h"
 #include "NoteEditManager.h"
 #include "NoteEditFocus.h"
+#include "NoteEditSessionState.h"
+#include "Utils/NoteEditDisplaySnapshot.h"
 #include "MidiHandler.h"
 #include "Utils/HotPathTelemetry.h"
 #include "Utils/DebugSessionCapture.h"
@@ -1042,15 +1044,58 @@ void DisplayManager::drawGridLines(uint32_t lengthLoop, int pianoRollY0, int pia
 }
 
 // --- Helper: Draw all notes ---
+namespace {
+
+int resolveDrawHighlightIndex(const DisplayNoteVec& notes, const EditorSelection& selection,
+                              uint32_t loopStartTick, uint32_t loopLength,
+                              bool windowRelativeTicks, uint32_t windowStartTick,
+                              uint32_t bracketDisplayTick) {
+    if (!editorSelectionHasNote(selection) || loopLength == 0) {
+        return -1;
+    }
+    if (windowRelativeTicks) {
+        uint32_t bracketInWindow = bracketDisplayTick;
+        if (bracketDisplayTick >= windowStartTick) {
+            bracketInWindow = bracketDisplayTick - windowStartTick;
+        } else {
+            bracketInWindow = bracketDisplayTick + loopLength - windowStartTick;
+        }
+        for (int i = 0; i < static_cast<int>(notes.size()); ++i) {
+            const DisplayNote& dn = notes[static_cast<size_t>(i)];
+            if (dn.noteId == selection.primaryNote && dn.startTick == bracketInWindow) {
+                return i;
+            }
+        }
+        return -1;
+    }
+    return filteredDisplayNoteIndexForNoteIdAndStart(notes, selection.primaryNote,
+                                                     selection.selectedTick, loopStartTick,
+                                                     loopLength);
+}
+
+}  // namespace
+
 void DisplayManager::drawAllNotes(const Track& track, uint8_t displaySlot, uint32_t currentTick,
                                   uint32_t lengthLoop, int minPitch, int maxPitch, int pianoRollY0,
-                                  int pianoRollY1, bool windowRelativeTicks,
+                                  int pianoRollY1, bool windowRelativeTicks, uint32_t windowStartTick,
                                   const DisplayNoteVec& notes) {
     const uint32_t loopLength = track.isJamming() ? track.getLoopLength()
                                                   : resolveDisplayLoopLength(track, displaySlot, currentTick);
     const uint32_t jamStartTick = track.isJamming() ? track.getJamStartTick()
                                                     : resolveLoopOriginTick(track, displaySlot);
-    int selectedIdx = editManager.getSelectedNoteIdx();
+    int selectedIdx = -1;
+    if (editManager.getEditSessionType() == EditSessionType::Note) {
+        const EditorSelection& selection = editManager.getNoteEditSessionState().selection;
+        const uint32_t bracketDisplayTick =
+            editorSelectionHasNote(selection)
+                ? selection.selectedTick
+                : (editManager.getSelectedTick() - jamStartTick + loopLength) % loopLength;
+        selectedIdx = resolveDrawHighlightIndex(notes, selection, jamStartTick, loopLength,
+                                                windowRelativeTicks, windowStartTick,
+                                                bracketDisplayTick);
+    } else {
+        selectedIdx = editManager.getSelectedNoteIdx();
+    }
 
     for (int i = 0; i < (int)notes.size(); i++) {
         const auto& n = notes[i];
@@ -1081,10 +1126,10 @@ void DisplayManager::drawAllNotes(const Track& track, uint8_t displaySlot, uint3
 }
 
 // --- Helper: Draw bracket ---
-void DisplayManager::drawBracket(uint32_t bracketTick, uint32_t lengthLoop, int pianoRollY1) {
+void DisplayManager::drawBracket(uint32_t selectedTick, uint32_t lengthLoop, int pianoRollY1) {
     // Draw bracket when in NOTE_EDIT mode (simplified since we use dedicated faders)
     if (editManager.getEditSessionType() == EditSessionType::Note) {
-        int bracketX = TRACK_MARGIN + map(bracketTick, 0, lengthLoop, 0, pianoRollWidth());
+        int bracketX = TRACK_MARGIN + map(selectedTick, 0, lengthLoop, 0, pianoRollWidth());
         _display.gfx.draw_vline(_display.api.getFrameBuffer(), bracketX, 0, pianoRollY1, BRACKET_COLOR);
     }
 }
@@ -1325,11 +1370,11 @@ void DisplayManager::drawPianoRoll(uint32_t currentTick, Track& selectedTrack, u
         drawGridLines(detailedLength, pianoRollY0, pianoRollY1,
                       useBoundedWindow ? windowStart : 0);
         drawAllNotes(track, displaySlot, currentTick, detailedLength, minPitch, maxPitch, pianoRollY0,
-                     pianoRollY1, useBoundedWindow, *detailedNotes);
+                     pianoRollY1, useBoundedWindow, windowStart, *detailedNotes);
 
         // Adjust bracket tick to be relative to jam start
-        uint32_t bracketTick = editManager.getBracketTick();
-        uint32_t relativeBracketTick = (bracketTick - jamStartTick + loopLength) % loopLength;
+        uint32_t selectedTick = editManager.getSelectedTick();
+        uint32_t relativeBracketTick = (selectedTick - jamStartTick + loopLength) % loopLength;
         if (useBoundedWindow) {
             if (relativeBracketTick >= windowStart &&
                 relativeBracketTick < windowStart + windowLength) {
@@ -2407,15 +2452,19 @@ void DisplayManager::drawNoteInfo(uint32_t currentTick, Track& selectedTrack, ui
 
     const DisplayNote* noteToShow = nullptr;
     uint32_t displayStartTick = 0;
-    int selectedIdx = editManager.getSelectedNoteIdx();
+    const EditorSelection& selection = editManager.getNoteEditSessionState().selection;
+    int selectedIdx = -1;
+    if (editManager.getEditSessionType() == EditSessionType::Note &&
+        editorSelectionHasNote(selection)) {
+        selectedIdx = filteredDisplayNoteIndexForNoteIdAndStart(
+            notes, selection.primaryNote, selection.selectedTick, loopStartTick, lengthLoop);
+    } else {
+        selectedIdx = editManager.getSelectedNoteIdx();
+    }
     if (selectedIdx >= 0 && selectedIdx < (int)notes.size()) {
-        noteToShow = &notes[selectedIdx];
-        // Adjust display start tick to be relative to loop start point
-        displayStartTick = (noteToShow->startTick >= loopStartTick) ? 
-            (noteToShow->startTick - loopStartTick) : (noteToShow->startTick + lengthLoop - loopStartTick);
-        displayStartTick = displayStartTick % lengthLoop;
-        // Since we use dedicated faders, we don't need complex edit state checks
-        // Just use the adjusted note's start tick
+        noteToShow = &notes[static_cast<size_t>(selectedIdx)];
+        displayStartTick = NoteEditDisplaySnapshot::displayStartTickFromStorage(
+            noteToShow->startTick, loopStartTick, lengthLoop);
     }
     
     if (!noteToShow && !notes.empty()) {

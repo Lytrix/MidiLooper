@@ -65,12 +65,15 @@ inline bool displayNoteInfoChanged(const DisplayNoteInfoSnapshot& prior,
 
 template <typename NotesVec>
 inline int filteredDisplayNoteIndexForSelection(const EditorSelection& selection,
-                                                const NotesVec& notes) {
+                                                const NotesVec& notes,
+                                                uint32_t loopStartTick = 0,
+                                                uint32_t loopLength = 0) {
     if (!editorSelectionHasNote(selection)) {
         return -1;
     }
     return filteredDisplayNoteIndexForNoteIdAndStart(notes, selection.primaryNote,
-                                                     selection.bracketTick);
+                                                     selection.selectedTick, loopStartTick,
+                                                     loopLength);
 }
 
 }  // namespace NoteEditDisplaySnapshot

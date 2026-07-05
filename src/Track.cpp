@@ -38,7 +38,7 @@ const MidiEventVec& Track::editAwareMidiEvents() const {
   return editManager.editMidiEvents(*this);
 }
 
-void Track::invalidateCaches() {
+void Track::invalidateCaches(bool refreshPlaybackPreview) {
   Loop& activeLoop = getActiveLoop();
   activeLoop.invalidateCaches();
   activeLoop.playbackOrderDirty = true;
@@ -54,6 +54,9 @@ void Track::invalidateCaches() {
       break;
     }
     editManager.bumpSessionPreviewRevision();
+    if (refreshPlaybackPreview) {
+      editManager.bumpSessionPlaybackPreviewRevision();
+    }
   }
 }
 
@@ -159,7 +162,7 @@ void ensurePlaybackWindowBuilt(Track& track, Loop& loop, LoopPlaybackRuntime& ru
   // plus live capture. See loop-wrap-projection spec.
   const bool noteEditPreview = editManager.isNoteEditActive() &&
                                &track == &trackManager.getSelectedTrack();
-  const uint32_t windowRevision = noteEditPreview ? editManager.sessionPreviewRevision()
+  const uint32_t windowRevision = noteEditPreview ? editManager.sessionPlaybackPreviewRevision()
                                                     : loop.playbackRevision;
   if (runtime.primaryWindow.builtFromRevision == windowRevision) {
     return;

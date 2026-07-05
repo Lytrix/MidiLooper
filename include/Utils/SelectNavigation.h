@@ -21,22 +21,26 @@ struct SelectNavSlot {
 uint32_t noteRelativeTick(uint32_t absolutePos, uint32_t loopStartTick, uint32_t loopLength);
 uint32_t noteStorageTick(uint32_t relativeTick, uint32_t loopStartTick, uint32_t loopLength);
 
+/// NOTE_EDIT bracket / nav tick in loop display phase [0, loopLength).
+inline uint32_t displayPhaseTick(uint32_t tick, uint32_t loopLength) {
+    return loopLength > 0 ? tick % loopLength : 0;
+}
+
 std::vector<SelectNavSlot> buildSelectNavigationSlots(
     uint32_t loopLength,
     uint32_t loopStartTick,
     const std::vector<NoteUtils::DisplayNote>& notes,
-    uint32_t bracketTick,
-    bool includeBracketIfMissing = true);
+    uint32_t selectedTick,
+    bool includeSelectedTickIfMissing = true);
 
 int findSlotIndexForSelection(const std::vector<SelectNavSlot>& slots,
                               int selectedNoteIdx,
-                              uint32_t bracketTick,
-                              uint32_t loopStartTick,
+                              uint32_t selectedTick,
                               uint32_t loopLength);
 
 int findSlotIndexForNoteId(const std::vector<SelectNavSlot>& slots,
                            const std::vector<NoteUtils::DisplayNote>& notes,
-                           NoteId noteId, uint32_t bracketTick, uint32_t loopStartTick,
+                           NoteId noteId, uint32_t selectedTick,
                            uint32_t loopLength);
 
 /// Resolve filtered note index for a nav slot (always **slot.noteIdx**; -1 for empty steps).

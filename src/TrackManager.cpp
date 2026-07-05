@@ -835,7 +835,6 @@ void TrackManager::updateAllTracks(uint32_t currentTick) {
         tracks[i].queuePlaybackStartAtGrid(static_cast<int32_t>(targetLoop.loopStartTick),
                                             currentTick);
         tracks[i].commitQueuedPlaybackStart(currentTick);
-        tracks[i].resetPlaybackStateForSlot(targetSlot, currentTick);
 
         // If this slot switch came from a "select single slot" gesture, replace enabled set.
         if (pendingEnabledSetReplacement[i]) {

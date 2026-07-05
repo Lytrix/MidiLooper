@@ -238,7 +238,11 @@ void MidiButtonActions::executeAction(MidiButtonConfig::ActionType actionType, u
                                     trackManager.setSlotMuted(tidx, s, false);
                                 }
                                 trackManager.setSelectedSlotIndex(tidx, slot);
-                                track.resetPlaybackStateForSlot(slot, now);
+                                const Loop& targetLoop = track.getLoop(slot);
+                                track.clearQueuedPlaybackStart();
+                                track.queuePlaybackStartAtGrid(
+                                    static_cast<int32_t>(targetLoop.loopStartTick), now);
+                                track.commitQueuedPlaybackStart(now);
                                 trackManager.forceLedUpdate(now);
                                 logger.info("Loop %d: long-press switch (transport stopped)",
                                             slot + 1);
@@ -402,7 +406,10 @@ void MidiButtonActions::handleToggleRecordForSlot(uint8_t slotIndex) {
                 }
             }
             trackManager.setSelectedSlotIndex(trackIdx, slotIndex);
-            track.resetPlaybackStateForSlot(slotIndex, now);
+            const Loop& targetLoop = track.getLoop(slotIndex);
+            track.clearQueuedPlaybackStart();
+            track.queuePlaybackStartAtGrid(static_cast<int32_t>(targetLoop.loopStartTick), now);
+            track.commitQueuedPlaybackStart(now);
         }
         trackManager.forceLedUpdate(now);
         return;
@@ -750,12 +757,12 @@ namespace {
 
 constexpr uint32_t kBracketSnapWindow = 24;
 
-bool hasNoteNearBracket(const Track& track, uint32_t bracketTick) {
+bool hasNoteNearBracket(const Track& track, uint32_t selectedTick) {
     const uint32_t loopLength = track.getLoopLength();
     if (loopLength == 0) {
         return false;
     }
-    const uint32_t bracket = bracketTick % loopLength;
+    const uint32_t bracket = selectedTick % loopLength;
     const auto& notes = track.getCachedNotes();
     for (const auto& n : notes) {
         const uint32_t noteTick = n.startTick % loopLength;
@@ -782,8 +789,8 @@ void MidiButtonActions::handleCreateNoteAtBracket() {
     uint32_t loopLength = track.getLoopLength();
     if (loopLength == 0) return;
 
-    uint32_t bracketTick = editManager.getBracketTick() % loopLength;
-    if (hasNoteNearBracket(track, bracketTick)) {
+    uint32_t selectedTick = editManager.getSelectedTick() % loopLength;
+    if (hasNoteNearBracket(track, selectedTick)) {
         logger.info("Create note ignored (note at bracket)");
         return;
     }
@@ -791,7 +798,7 @@ void MidiButtonActions::handleCreateNoteAtBracket() {
     editManager.setSelectedNoteIdx(-1);
     editManager.beginGeometryMutation(track, NoteEditKind::Add, false);
     const std::array<MidiEvent, 2> created =
-        EditSelectNoteState::createNoteAtTick(track, bracketTick);
+        EditSelectNoteState::createNoteAtTick(track, selectedTick);
     EditPass add{};
     add.passType = EditPassType::Note;
     add.actionType = EditActionType::Create;
@@ -803,9 +810,9 @@ void MidiButtonActions::handleCreateNoteAtBracket() {
         logger.info("Create note failed (edit session commit rejected)");
         return;
     }
-    editManager.setBracketTick(bracketTick);
+    editManager.setSelectedTick(selectedTick);
     track.invalidateCaches();
-    editManager.selectNoteAtBracket(track, bracketTick);
+    editManager.selectNoteAtBracket(track, selectedTick);
 }
 
 void MidiButtonActions::handleDeleteOrCreateNote() {
@@ -824,8 +831,8 @@ void MidiButtonActions::handleDeleteOrCreateNote() {
     if (loopLength == 0) {
         return;
     }
-    const uint32_t bracketTick = editManager.getBracketTick() % loopLength;
-    if (hasNoteNearBracket(track, bracketTick)) {
+    const uint32_t selectedTick = editManager.getSelectedTick() % loopLength;
+    if (hasNoteNearBracket(track, selectedTick)) {
         logger.info("NOTELEN double: ignored (note at bracket, none selected)");
         return;
     }
@@ -910,7 +917,7 @@ void MidiButtonActions::handleMoveCurrentTick(int32_t tickOffset) {
     }
     
     // Use EditManager to set the bracket tick position
-    editManager.setBracketTick(newTick);
+    editManager.setSelectedTick(newTick);
     logger.info("Moved to tick %d (offset: %d)", newTick, tickOffset);
 }
 

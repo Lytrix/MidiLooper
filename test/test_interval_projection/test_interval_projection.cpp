@@ -235,7 +235,7 @@ void test_build_edit_projection_context_fields() {
     constexpr uint32_t loopLength = 1536;
     EditorSelection selection;
     selection.primaryNote = 42;
-    selection.bracketTick = 900;
+    selection.selectedTick = 900;
     selection.selectedNotes.push_back(42);
 
     const TickInterval window = IntervalProjection::makeFullLoopEditAnalysisWindow(loopLength);
@@ -255,7 +255,7 @@ void test_project_edit_intervals_for_analysis_batch() {
     const TickInterval window = IntervalProjection::makeFullLoopEditAnalysisWindow(loopLength);
     EditorSelection selection;
     selection.primaryNote = kTestNoteId;
-    selection.bracketTick = 950;
+    selection.selectedTick = 950;
     ProjectionContext context =
         IntervalProjection::buildEditProjectionContext(selection, loopLength, window, 950);
 

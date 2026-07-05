@@ -25,7 +25,7 @@ struct NoteEditDependentFaderBuildInput {
     uint32_t loopLength = 0;
     uint32_t loopStartTick = 0;
     int selectedIdx = -1;
-    uint32_t bracketTick = 0;
+    uint32_t selectedTick = 0;
     bool lengthEditingMode = false;
     uint32_t lengthFineAnchorEndTick = 0;
     uint32_t referenceStep = 0;

@@ -18,7 +18,7 @@ void EditPitchNoteState::onEnter(EditManager& manager, Track& track, uint32_t st
         const NoteUtils::DisplayNote selected = manager.liveEditDisplayNoteAtSelect(track);
         targetNoteId_ = selected.noteId;
         const uint32_t loopLength = track.getLoopLength();
-        manager.setBracketTick(selected.startTick % loopLength);
+        manager.setSelectedTick(selected.startTick % loopLength);
         logger.debug("EditPitchNoteState: bracket at note start %lu",
                      static_cast<unsigned long>(selected.startTick % loopLength));
     }
