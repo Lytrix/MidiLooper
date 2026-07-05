@@ -174,6 +174,8 @@ public:
     void cycleNoteEditType(Track& track);
     void sendEditModeProgram(EditModeState mode);
     
+    /// Commit pending note-edit work on the departing track before selection changes.
+    void beforeSelectedTrackChange(Track& departingTrack);
     void onTrackChanged(Track& newTrack);
 
     struct RemovedNote {

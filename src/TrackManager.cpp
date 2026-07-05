@@ -10,6 +10,7 @@
 #include "Logger.h"
 #include "MidiHandler.h"
 #include "NoteEditManager.h"
+#include "EditManager.h"
 #include "PassReclaim.h"
 
 TrackManager trackManager;
@@ -667,11 +668,13 @@ void TrackManager::queueBarPlaybackStart(uint8_t trackIndex, int32_t storageTick
 
 void TrackManager::setSelectedTrack(uint8_t index) {
   if (index < Config::NUM_TRACKS) {
+    if (index != selectedTrack) {
+      editManager.beforeSelectedTrackChange(tracks[selectedTrack]);
+    }
     selectedTrack = index;
     // Force LED update when track changes
     forceLedUpdate(clockManager.getCurrentTick());
-    // Notify NoteEditManager of track change for loop length CC feedback
-    noteEditManager.onTrackChanged(tracks[selectedTrack]);
+    editManager.onTrackChanged(tracks[selectedTrack]);
   }
 }
 
