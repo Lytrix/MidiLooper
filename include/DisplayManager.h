@@ -23,8 +23,7 @@
 
 struct DetailedWindowContext {
     bool active = false;
-    uint32_t windowStartTick = 0;
-    uint32_t windowLengthTicks = 0;
+    TickInterval window;
 };
 
 // Shared struct for UI note representation

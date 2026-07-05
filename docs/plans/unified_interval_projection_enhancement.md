@@ -79,6 +79,10 @@ Loop wrapping never mutates storage.
 
 See [`tasks.md`](../../openspec/changes/unified-interval-projection/tasks.md).
 
+| Phase | Handoff |
+|-------|---------|
+| 2 — Edit projection | [`unified_interval_projection_phase2_edit_projection_handoff.md`](unified_interval_projection_phase2_edit_projection_handoff.md) (**shipped** 2026-07-05) |
+
 ---
 
 ## Agent execution notes (one chat per phase)

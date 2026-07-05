@@ -183,6 +183,20 @@ public:
   void bumpPlaybackGeneration() { ++playbackGeneration; }
   void invalidatePlaybackWindow(bool preserveLedger = false);
 
+  /// Rolling projection cycle origin (D13) — one per track.
+  int32_t getProjectionCycleStartTick() const { return projectionCycleStartTick; }
+  void setProjectionCycleStartTick(int32_t tick) { projectionCycleStartTick = tick; }
+
+  /// One-shot queued restart at next grid tick (D14); mutually exclusive with pending slot switch.
+  void queuePlaybackStartAtGrid(int32_t startTick, uint32_t queuedAtTick);
+  void clearQueuedPlaybackStart();
+  bool hasQueuedPlaybackStart() const { return useQueuedStart; }
+  int32_t getQueuedStartTick() const { return queuedStartTick; }
+  bool shouldCommitQueuedPlaybackStart(uint32_t currentTick) const;
+  void commitQueuedPlaybackStart(uint32_t commitTick);
+  void setQueuedStartGridTicks(uint32_t gridTicks) { queuedStartGridTicks = gridTicks; }
+  uint32_t getQueuedStartGridTicks() const { return queuedStartGridTicks; }
+
   // Tempo accessors
   static uint32_t getTicksPerBar();
 
@@ -311,6 +325,11 @@ private:
   bool deferredFullMidiValidate = false;
   uint32_t deferredValidateQueuedAtMs = 0;
   uint32_t playbackGeneration = 0;
+  int32_t projectionCycleStartTick = 0;
+  bool useQueuedStart = false;
+  int32_t queuedStartTick = 0;
+  uint32_t queuedStartQueuedAtTick = UINT32_MAX;
+  uint32_t queuedStartGridTicks = Config::TICKS_PER_16TH_STEP;
   TrackPlaybackRuntime playbackRuntime;
   GlobalUndoStack undoStack;
   static const uint32_t TICKS_PER_BAR;

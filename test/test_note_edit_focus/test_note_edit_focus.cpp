@@ -8,6 +8,7 @@
 #include "../../src/Utils/LoopTickNormalize.cpp"
 #include "../../src/Utils/LoopEventValidation.cpp"
 #include "../../src/NoteEditFocus.cpp"
+#include "../../src/Utils/IntervalProjection.cpp"
 #include "../../src/EditApply.cpp"
 #include "../../src/LoopPasses.cpp"
 #include "../../src/LoopEventStore.cpp"
@@ -25,6 +26,7 @@
 #include "../test_support/NoteIdTestFixtures.h"
 #include "MidiEvent.h"
 #include "NoteEditSessionState.h"
+#include "Utils/IntervalProjection.h"
 #include "Utils/NoteEditDisplaySnapshot.h"
 #include "Utils/NoteMovementWrap.h"
 #include "Utils/LoopEventValidation.h"
@@ -1047,6 +1049,104 @@ void test_hidden_overlap_uses_baseline_map_when_display_wrap_end() {
   TEST_ASSERT_EQUAL_UINT32(1536u, linear.endTick);
 }
 
+void test_edit_projection_context_uses_selection_and_full_loop_window() {
+  constexpr uint32_t kLoopLength = 1536;
+  EditorSelection selection;
+  selection.primaryNote = 32;
+  selection.bracketTick = 1484;
+  selection.selectedNotes.push_back(32);
+
+  const ProjectionContext context = IntervalProjection::buildEditProjectionContext(
+      selection, kLoopLength, IntervalProjection::makeFullLoopEditAnalysisWindow(kLoopLength),
+      1484);
+
+  TEST_ASSERT_EQUAL(ProjectionType::Edit, context.type);
+  TEST_ASSERT_EQUAL_UINT32(kLoopLength, context.loopLength);
+  TEST_ASSERT_EQUAL_INT32(0, context.window.start);
+  TEST_ASSERT_EQUAL_INT32(static_cast<int32_t>(kLoopLength), context.window.end);
+  TEST_ASSERT_EQUAL_INT32(1484, context.originTick);
+  TEST_ASSERT_EQUAL_UINT32(1484u, static_cast<uint32_t>(context.selectedTick));
+}
+
+void test_edit_projection_batch_selects_linear_span_for_wrapped_storage() {
+  constexpr uint32_t kLoopLength = 1536;
+  constexpr NoteId kWrapId = 49;
+
+  EditorSelection selection;
+  selection.primaryNote = kWrapId;
+  selection.bracketTick = 49;
+  selection.selectedNotes.push_back(kWrapId);
+
+  const ProjectionContext context = IntervalProjection::buildEditProjectionContext(
+      selection, kLoopLength, IntervalProjection::makeFullLoopEditAnalysisWindow(kLoopLength), 49);
+
+  const std::vector<CanonicalNoteSpan> spans = {
+      {kWrapId, TickInterval{49, static_cast<int32_t>(kLoopLength - 1)}, 49, 100}};
+
+  const std::vector<ProjectedNoteInterval> projected =
+      IntervalProjection::projectEditIntervalsForAnalysis(spans, context);
+
+  TEST_ASSERT_EQUAL(1, static_cast<int>(projected.size()));
+  TEST_ASSERT_EQUAL_UINT32(kWrapId, projected[0].noteId);
+  TEST_ASSERT_EQUAL_INT32(49, projected[0].interval.start);
+  TEST_ASSERT_EQUAL_INT32(static_cast<int32_t>(kLoopLength - 1), projected[0].interval.end);
+}
+
+void test_edit_projection_parity_resolve_linear_span_baseline_map() {
+  constexpr NoteId kOverlapId = 58;
+  constexpr uint32_t kLoopLength = 1536;
+  NoteEditFocus focus;
+  focus.baselineMap[kOverlapId] = {58, 100, 483, 1370};
+
+  MidiEventVec session;
+  MidiEvent on = MidiEvent::NoteOn(483, 1, 58, 100);
+  on.noteId = kOverlapId;
+  session.push_back(on);
+  MidiEvent off = MidiEvent::NoteOff(1403, 1, 58, 0);
+  off.noteId = kOverlapId;
+  session.push_back(off);
+
+  const NoteUtils::DisplayNote dn{kOverlapId, 58, 100, 483, 1403};
+  NoteBaseline linear{};
+  TEST_ASSERT_TRUE(
+      resolveLinearNoteSpanForOverlap(focus, session, 1, dn, linear, kLoopLength));
+  TEST_ASSERT_EQUAL_UINT32(483u, linear.startTick);
+  TEST_ASSERT_EQUAL_UINT32(1370u, linear.endTick);
+
+  EditorSelection selection;
+  selection.primaryNote = kOverlapId;
+  selection.bracketTick = 483;
+  const ProjectionContext context = IntervalProjection::buildEditProjectionContext(
+      selection, kLoopLength, IntervalProjection::makeFullLoopEditAnalysisWindow(kLoopLength), 483);
+  const std::vector<CanonicalNoteSpan> spans = {
+      {kOverlapId, TickInterval{483, 1370}, 58, 100}};
+  const std::vector<ProjectedNoteInterval> projected =
+      IntervalProjection::projectEditIntervalsForAnalysis(spans, context);
+  TEST_ASSERT_EQUAL(1, static_cast<int>(projected.size()));
+  TEST_ASSERT_EQUAL_INT32(483, projected[0].interval.start);
+  TEST_ASSERT_EQUAL_INT32(1370, projected[0].interval.end);
+}
+
+void test_edit_projection_parity_wrapped_mover_linear_span() {
+  constexpr NoteId kMoverId = 84;
+  constexpr uint32_t kLoopLength = 1536;
+
+  EditorSelection selection;
+  selection.primaryNote = kMoverId;
+  selection.bracketTick = 1499;
+  const ProjectionContext context = IntervalProjection::buildEditProjectionContext(
+      selection, kLoopLength, IntervalProjection::makeFullLoopEditAnalysisWindow(kLoopLength),
+      1499);
+
+  const std::vector<CanonicalNoteSpan> spans = {{kMoverId, TickInterval{1499, 1595}, 31, 100}};
+  const std::vector<ProjectedNoteInterval> projected =
+      IntervalProjection::projectEditIntervalsForAnalysis(spans, context);
+
+  TEST_ASSERT_EQUAL(1, static_cast<int>(projected.size()));
+  TEST_ASSERT_EQUAL_INT32(1499, projected[0].interval.start);
+  TEST_ASSERT_EQUAL_INT32(1595, projected[0].interval.end);
+}
+
 int main(int /*argc*/, char** /*argv*/) {
   UNITY_BEGIN();
   RUN_TEST(test_baseline_map_includes_all_store_notes_at_select);
@@ -1091,5 +1191,9 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_edit_closure_includes_overlap_participants);
   RUN_TEST(test_shortened_overlap_materializes_linear_off_at_resolve);
   RUN_TEST(test_hidden_overlap_uses_baseline_map_when_display_wrap_end);
+  RUN_TEST(test_edit_projection_context_uses_selection_and_full_loop_window);
+  RUN_TEST(test_edit_projection_batch_selects_linear_span_for_wrapped_storage);
+  RUN_TEST(test_edit_projection_parity_resolve_linear_span_baseline_map);
+  RUN_TEST(test_edit_projection_parity_wrapped_mover_linear_span);
   return UNITY_END();
 }

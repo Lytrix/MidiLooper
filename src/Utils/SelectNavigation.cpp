@@ -2,26 +2,18 @@
 //  Licensed under the PolyForm Noncommercial 1.0.0
 
 #include "Utils/SelectNavigation.h"
+#include "Utils/IntervalProjection.h"
 #include "NoteEditSessionState.h"
 #include <algorithm>
 
 namespace SelectNavigation {
 
 uint32_t noteRelativeTick(uint32_t absolutePos, uint32_t loopStartTick, uint32_t loopLength) {
-    if (loopLength == 0) {
-        return 0;
-    }
-    uint32_t relativePos = (absolutePos >= loopStartTick)
-                               ? (absolutePos - loopStartTick)
-                               : (absolutePos + loopLength - loopStartTick);
-    return relativePos % loopLength;
+    return IntervalProjection::noteRelativeTick(absolutePos, loopStartTick, loopLength);
 }
 
 uint32_t noteStorageTick(uint32_t relativeTick, uint32_t loopStartTick, uint32_t loopLength) {
-    if (loopLength == 0) {
-        return 0;
-    }
-    return (relativeTick + loopStartTick) % loopLength;
+    return IntervalProjection::noteStorageTick(relativeTick, loopStartTick, loopLength);
 }
 
 std::vector<SelectNavSlot> buildSelectNavigationSlots(

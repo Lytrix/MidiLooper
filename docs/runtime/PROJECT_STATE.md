@@ -2,7 +2,7 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-07-04 (derived-note-overlap-logic branch)
+Last updated: 2026-07-05 (derived-note-overlap-logic branch)
 
 ---
 
@@ -14,7 +14,7 @@ Last updated: 2026-07-04 (derived-note-overlap-logic branch)
 
 | Change | Focus |
 |--------|--------|
-| **`unified-interval-projection`** | **Now implementing** — single interval projection engine; blocks overlap; handoff [`unified_interval_projection_enhancement.md`](../plans/unified_interval_projection_enhancement.md) |
+| **`unified-interval-projection`** | **Now implementing** — Phases 1–4 shipped (core + Edit + Display + Playback projection); Phase 5 integration/HITL next; handoff [`unified_interval_projection_enhancement.md`](../plans/unified_interval_projection_enhancement.md) |
 | **`edit-session-action-geometry`** | **Paused** — derived overlap pipeline; blocked until UIP Phases 1–5 |
 | `set-revision-persistence` | Set revisions, overlay browser — core shipped; loop picker **4.8–4.10** paused |
 | `workspace-session-persistence` | Current workspace session model |
@@ -67,6 +67,6 @@ Full log: [DECISION_LOG.md](../DECISION_LOG.md).
 - **Capture-serial RAM budget (2026-07-04):** note-edit overlap code in FLASHMEM (`NoteEditMem.h`); deferred `#DBG`/`REVT`/`PERF` via 96 KB PSRAM ring in `DebugSessionCapture` — see [capture_serial_ram1_recovery_extmem_debug_enhancement.md](../plans/capture_serial_ram1_recovery_extmem_debug_enhancement.md)
 - Normative specs: `openspec/specs/revision-load/`, `storage-session-jobs/`, `storage-session-layout/`
 - **Next persistence layout:** `transport.bin` / `global.bin` — not started (post DEC-012)
-- **Interval projection:** `IntervalProjection` engine owns all wrap math — consumers supply `ProjectionContext` only
+- **Interval projection:** `IntervalProjection` engine owns all wrap math — **`include/Utils/IntervalProjection.h`** + **`src/Utils/IntervalProjection.cpp`**; Phases 1–4 shipped (core + Edit + Display + Playback projection); `Track.projectionCycleStartTick` + queued start at grid; `PlaybackCursor` retired
 - `ButtonManager` / GPIO dormant (DEC-005)
 - M8 edit + pool-budget archived to `openspec/specs/`

@@ -20,6 +20,8 @@
 
 Per-**slot** record/overdub uses the **Loops** row (50–57), not only REC/PLAY — see **[`Loops.md`](Loops.md)**.
 
+**Queued playback start:** slot short-press (while playing) and bar/16th short-press (outside LOOP_EDIT) queue **`queuedStartTick`** on the next 16th grid; bar and slot queues are mutually exclusive (last wins). See **[`Loops.md`](Loops.md)** and **[`Bars-and-16ths.md`](Bars-and-16ths.md)**.
+
 ## MUTE/DE (note 37)
 
 Legacy strip: **short** = next track, **long** = mute current, **double/triple** = undo/redo **clear**. Prefer **Tracks** row for direct select/mute/solo — **[`Tracks.md`](Tracks.md)**.

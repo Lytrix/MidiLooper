@@ -1590,8 +1590,8 @@ std::vector<NoteUtils::DisplayNote> NoteEditManager::selectableDisplayNotesForEd
         const DetailedWindowContext window =
             displayManager_->resolveDetailedWindow(track, displaySlot, currentTick);
         if (window.active) {
-            notes = DisplayWindowUtils::filterDisplayNotesByWindowInclusion(
-                notes, window.windowStartTick, window.windowLengthTicks, loopLength);
+            notes = DisplayWindowUtils::filterDisplayNotesByWindowInclusion(notes, window.window,
+                                                                            loopLength);
         }
     }
     return std::vector<NoteUtils::DisplayNote>(notes.begin(), notes.end());

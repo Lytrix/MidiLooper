@@ -16,44 +16,44 @@
 
 ## 1. Core engine (Phase 1)
 
-- [ ] 1.1 Add `include/Utils/IntervalProjection.h` — `TickInterval`, `ProjectionType`, `ProjectionContext` (core + extensions), `CanonicalNoteSpan`, `ProjectedNoteInterval`
-- [ ] 1.2 Add `src/Utils/IntervalProjection.cpp` — `generateEquivalentIntervals`, `selectProjectedInterval`, `selectProjectedIntervalsForDisplay`, `projectNoteIntervals`
-- [ ] 1.3 k bounds from `window` intersect test — no fixed k cap; deterministic candidate order
-- [ ] 1.4 Centralize phase helpers — `tickPhaseInLoop`, `noteRelativeTick`, `noteStorageTick` (migrate from `SelectNavigation` / consumers)
-- [ ] 1.5 Native `test/test_interval_projection/` — 900→1080 @ L=960 equivalents; selection table per `ProjectionType`; wrap advance; mid-cycle length
-- [ ] 1.6 `generateEquivalentIntervals` has no consumer policy beyond k bounds
+- [x] 1.1 Add `include/Utils/IntervalProjection.h` — `TickInterval`, `ProjectionType`, `ProjectionContext` (core + extensions), `CanonicalNoteSpan`, `ProjectedNoteInterval`
+- [x] 1.2 Add `src/Utils/IntervalProjection.cpp` — `generateEquivalentIntervals`, `selectProjectedInterval`, `selectProjectedIntervalsForDisplay`, `projectNoteIntervals`
+- [x] 1.3 k bounds from `window` intersect test — no fixed k cap; deterministic candidate order
+- [x] 1.4 Centralize phase helpers — `tickPhaseInLoop`, `noteRelativeTick`, `noteStorageTick` (migrate from `SelectNavigation` / consumers)
+- [x] 1.5 Native `test/test_interval_projection/` — 900→1080 @ L=960 equivalents; selection table per `ProjectionType`; wrap advance; mid-cycle length
+- [x] 1.6 `generateEquivalentIntervals` has no consumer policy beyond k bounds
 
 ## 2. Edit projection (Phase 2)
 
-- [ ] 2.1 Add `buildEditProjectionContext` — `EditorSelection.primaryNote`, `selectedTick`, v1 full-loop analysis window
-- [ ] 2.2 Add `projectEditIntervalsForAnalysis` — batch Edit projection for overlap orchestrator
-- [ ] 2.3 Reuse/port brownfield linear-span logic from `NoteEditFocus` into engine; no parallel wrap paths
-- [ ] 2.4 Port `test_note_edit_focus` wrap/linear fixtures through Edit projection
-- [ ] 2.5 Retire `EditSessionInteraction.wraps` (D6 — no conditional gate)
-- [ ] 2.6 **Do not** start `edit-session-action-geometry` firmware
+- [x] 2.1 Add `buildEditProjectionContext` — `EditorSelection.primaryNote`, `selectedTick`, v1 full-loop analysis window
+- [x] 2.2 Add `projectEditIntervalsForAnalysis` — batch Edit projection for overlap orchestrator
+- [x] 2.3 Reuse/port brownfield linear-span logic from `NoteEditFocus` into engine; no parallel wrap paths
+- [x] 2.4 Port `test_note_edit_focus` wrap/linear fixtures through Edit projection
+- [x] 2.5 Retire `EditSessionInteraction.wraps` (D6 — no conditional gate)
+- [x] 2.6 **Do not** start `edit-session-action-geometry` firmware
 
 ## 3. Display projection (Phase 3)
 
-- [ ] 3.1 Add `projectDisplayNotes()` — Stage 2 display selection + rendering (head/tail split, live capture open-tail)
-- [ ] 3.2 Refactor `reconstructNotesImpl` to delegate to `projectDisplayNotes()`; preserve outward `DisplayNote` API
-- [ ] 3.3 Migrate `DisplayWindowUtils` to **`TickInterval`** intersection on **post-projection** `DisplayNote` list (D22 — not head/tail)
-- [ ] 3.3a Migrate **`DetailedWindowContext`** to **`TickInterval`** (display viewport only)
-- [ ] 3.4 Extend `test_noteutils_reconstruct` — parity with pre-migration fixtures; head/tail boundary
-- [ ] 3.5 Extend `test_display_window_utils` — viewport filter distinct from head/tail split
+- [x] 3.1 Add `projectDisplayNotes()` — Stage 2 display selection + rendering (head/tail split, live capture open-tail)
+- [x] 3.2 Refactor `reconstructNotesImpl` to delegate to `projectDisplayNotes()`; preserve outward `DisplayNote` API
+- [x] 3.3 Migrate `DisplayWindowUtils` to **`TickInterval`** intersection on **post-projection** `DisplayNote` list (D22 — not head/tail)
+- [x] 3.3a Migrate **`DetailedWindowContext`** to **`TickInterval`** (display viewport only)
+- [x] 3.4 Extend `test_noteutils_reconstruct` — parity with pre-migration fixtures; head/tail boundary
+- [x] 3.5 Extend `test_display_window_utils` — viewport filter distinct from head/tail split
 
 ## 4. Playback projection + queued start (Phase 4)
 
-- [ ] 4.1 Refactor playback event ordering via Playback projection; full rolling `projectionCycleStartTick`
-- [ ] 4.2 Preserve NOTE_EDIT Tier 2 — `sessionMidiEvents()` sole source when edit active
-- [ ] 4.3 Preserve `invalidateCaches` / `sessionPreviewRevision_` contract
-- [ ] 4.4 Implement per-track `queuedStartTick` + configurable grid quantize (default 16th)
-- [ ] 4.5 Bar press + slot button queued start — mutually exclusive, last wins at grid
-- [ ] 4.6 Pending slot replacement — last press wins; reset `queuedAtTick`
+- [x] 4.1 Refactor playback event ordering via Playback projection; full rolling `projectionCycleStartTick`
+- [x] 4.2 Preserve NOTE_EDIT Tier 2 — `sessionMidiEvents()` sole source when edit active
+- [x] 4.3 Preserve `invalidateCaches` / `sessionPreviewRevision_` contract
+- [x] 4.4 Implement per-track `queuedStartTick` + configurable grid quantize (default 16th)
+- [x] 4.5 Bar press + slot button queued start — mutually exclusive, last wins at grid
+- [x] 4.6 Pending slot replacement — last press wins; reset `queuedAtTick`
 - [x] 4.7 Design session: **resolved** — LTS Start/End events; UIP integration; **`LoopTriggerSequenceManager`**; per-Track **`projectionCycleStartTick`**
-- [ ] 4.8 Native or HITL playback-order check — linear off at loop head
-- [ ] 4.9 Update control-surface docs for queued-start / bar-press button logic (`README.md` cheat sheet, `Bars-and-16ths.md`, `Main-controls.md` as applicable)
-- [ ] 4.10 **Retire `PlaybackCursor`** (D21) — move stale revision cache to **`LoopPlaybackRuntime`**; delete duplicate fields; remove **`loopHeadWindow`**; trim dead **`PlaybackWindow`** fields (D22); grep gate
-- [ ] 4.11 Migrate **`playMidiEvents`** phase/wrap/sort to **`IntervalProjection`** + **`projectionCycleStartTick`**; keep **`Loop.nextEventIndex`** as event scan index
+- [x] 4.8 Native or HITL playback-order check — linear off at loop head
+- [x] 4.9 Update control-surface docs for queued-start / bar-press button logic (`README.md` cheat sheet, `Bars-and-16ths.md`, `Main-controls.md` as applicable)
+- [x] 4.10 **Retire `PlaybackCursor`** (D21) — move stale revision cache to **`LoopPlaybackRuntime`**; delete duplicate fields; remove **`loopHeadWindow`**; trim dead **`PlaybackWindow`** fields (D22); grep gate
+- [x] 4.11 Migrate **`playMidiEvents`** phase/wrap/sort to **`IntervalProjection`** + **`projectionCycleStartTick`**; keep **`Loop.nextEventIndex`** as event scan index
 
 ## 5. Integration + HITL (Phase 5 — core migration gate)
 

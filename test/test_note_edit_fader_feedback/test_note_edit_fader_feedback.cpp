@@ -16,6 +16,7 @@
 #include "MidiConfig.h"
 #include "Globals.h"
 
+#include "../../src/Utils/IntervalProjection.cpp"
 #include "../../src/Utils/SelectNavigation.cpp"
 #include "../../src/NoteEditFocus.cpp"
 #include "../../src/Utils/NoteUtils.cpp"

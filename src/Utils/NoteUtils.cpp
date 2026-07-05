@@ -3,6 +3,7 @@
 
 #include "Utils/NoteUtils.h"
 #include "MidiEvent.h"
+#include "Utils/IntervalProjection.h"
 #include "Utils/MidiEventVecFnvHash.h"
 #include "Logger.h"
 #include <algorithm>
@@ -261,53 +262,71 @@ NoteUtils::CachedNoteList::getNotes(const MidiEventVec& midiEvents, uint32_t loo
 
 namespace {
 
-NOTE_EDIT_MEM int findActiveNoteOnIndexForOff(const std::vector<NoteUtils::DisplayNote>& stack,
-                                uint32_t pairingOffTick) {
-  for (int stackIndex = static_cast<int>(stack.size()) - 1; stackIndex >= 0; --stackIndex) {
-    if (stack[static_cast<size_t>(stackIndex)].startTick < pairingOffTick) {
-      return stackIndex;
-    }
-  }
-  return -1;
+struct ActiveCanonicalNote {
+    NoteId noteId = kInvalidNoteId;
+    uint8_t pitch = 0;
+    uint8_t velocity = 0;
+    uint32_t startTick = 0;
+};
+
+NOTE_EDIT_MEM int32_t exclusiveEndForWrappedHeadOff(uint32_t headOffTick, uint32_t loopLength) {
+    return static_cast<int32_t>(headOffTick + loopLength + 1);
 }
 
-template <typename NoteVector>
-NoteVector reconstructNotesImpl(const MidiEventVec& midiEvents, uint32_t loopLength,
-                                bool verboseLog) {
-    using DisplayNote = NoteUtils::DisplayNote;
-    NoteVector notes;
-    std::map<uint8_t, std::vector<DisplayNote>> activeNoteStacks;
+NOTE_EDIT_MEM int32_t exclusiveEndForLinearOff(uint32_t linearOffTick) {
+    return static_cast<int32_t>(linearOffTick + 1);
+}
+
+NOTE_EDIT_MEM int32_t exclusiveEndForLoopOff(uint32_t loopOffTick) {
+    return static_cast<int32_t>(loopOffTick + 1);
+}
+
+NOTE_EDIT_MEM void pushCanonicalSpan(std::vector<CanonicalNoteSpan>& spans, NoteId noteId,
+                                     uint8_t pitch, uint8_t velocity, int32_t startTick,
+                                     int32_t exclusiveEndTick, bool isOpen = false,
+                                     bool splitHeadTail = false) {
+    CanonicalNoteSpan span;
+    span.noteId = noteId;
+    span.pitch = pitch;
+    span.velocity = velocity;
+    span.interval.start = startTick;
+    span.interval.end = exclusiveEndTick;
+    span.isOpen = isOpen;
+    span.splitHeadTail = splitHeadTail;
+    spans.push_back(span);
+}
+
+NOTE_EDIT_MEM std::vector<CanonicalNoteSpan> buildCanonicalSpansFromMidi(const MidiEventVec& midiEvents,
+                                                                         uint32_t loopLength,
+                                                                         bool verboseLog) {
+    std::vector<CanonicalNoteSpan> spans;
+    std::map<uint8_t, std::vector<ActiveCanonicalNote>> activeNoteStacks;
 
     if (loopLength == 0) {
-        return notes;
+        return spans;
     }
 
     const bool logDetails = shouldLogReconstructDetails(verboseLog, midiEvents.size());
-
     if (logDetails) {
-        logger.log(CAT_TRACK, LOG_DEBUG, "Reconstructing notes with loop length: %lu ticks", loopLength);
+        logger.log(CAT_TRACK, LOG_DEBUG, "Building canonical spans with loop length: %lu ticks",
+                   loopLength);
     }
 
     std::set<std::pair<uint8_t, uint32_t>> wrappedTailOnTicks;
-
     const uint32_t tailStart = NoteUtils::wrapTailStartTick(loopLength);
 
-    // Process ALL MIDI events to handle notes that extend beyond current loop
     for (size_t eventIndex = 0; eventIndex < midiEvents.size(); ++eventIndex) {
         const MidiEvent& evt = midiEvents[eventIndex];
-        bool isNoteOn = (evt.type == midi::NoteOn && evt.data.noteData.velocity > 0);
-        bool isNoteOff = (evt.type == midi::NoteOff || (evt.type == midi::NoteOn && evt.data.noteData.velocity == 0));
-        uint8_t pitch = evt.data.noteData.note;
-        
+        const bool isNoteOn = (evt.type == midi::NoteOn && evt.data.noteData.velocity > 0);
+        const bool isNoteOff =
+            (evt.type == midi::NoteOff || (evt.type == midi::NoteOn && evt.data.noteData.velocity == 0));
+        const uint8_t pitch = evt.data.noteData.note;
+
         if (isNoteOn) {
             uint32_t noteOnTick = evt.tick;
-
             if (wrappedTailOnTicks.count({pitch, noteOnTick}) != 0) {
                 continue;
             }
-            
-            // If note-on is beyond current loop boundary, only wrap it if it's from original loop extension
-            // For loop shortening: discard notes that start beyond the new boundary
             if (noteOnTick >= loopLength) {
                 if (logDetails) {
                     logger.log(CAT_TRACK, LOG_DEBUG,
@@ -316,39 +335,20 @@ NoteVector reconstructNotesImpl(const MidiEventVec& midiEvents, uint32_t loopLen
                 }
                 continue;
             }
-            
-            if (logDetails) {
-                logger.log(CAT_TRACK, LOG_DEBUG, "Note-on: pitch=%d, tick=%lu", pitch, noteOnTick);
-            }
-            
-            DisplayNote note;
+
+            ActiveCanonicalNote note;
             note.noteId = evt.noteId;
-            note.note = pitch;
-            note.startTick = noteOnTick;
-            note.endTick = noteOnTick; // Will be updated when note-off is found
+            note.pitch = pitch;
             note.velocity = evt.data.noteData.velocity;
-            
+            note.startTick = noteOnTick;
             activeNoteStacks[pitch].push_back(note);
-            
         } else if (isNoteOff) {
             uint32_t noteOffTick = evt.tick;
             const bool offWasBeyondLoop = noteOffTick >= loopLength;
-            
-            // Handle note-off that might be beyond current loop boundary
             if (offWasBeyondLoop) {
-                // Wrap the note-off position for notes that extend beyond loop
                 noteOffTick = noteOffTick % loopLength;
-                if (logDetails) {
-                    logger.log(CAT_TRACK, LOG_DEBUG,
-                               "Wrapped note-off: pitch=%d, original_tick=%lu -> wrapped_tick=%lu",
-                               pitch, evt.tick, noteOffTick);
-                }
             }
-            
-            if (logDetails) {
-                logger.log(CAT_TRACK, LOG_DEBUG, "Note-off: pitch=%d, tick=%lu", pitch, noteOffTick);
-            }
-            
+
             if (activeNoteStacks[pitch].empty()) {
                 uint32_t wrappedOnTick = 0;
                 uint8_t wrappedVelocity = 0;
@@ -356,139 +356,105 @@ NoteVector reconstructNotesImpl(const MidiEventVec& midiEvents, uint32_t loopLen
                                          wrappedOnTick, wrappedVelocity)) {
                     const NoteId wrapId =
                         noteIdAtOnTick(midiEvents, evt.channel, pitch, wrappedOnTick);
-                    DisplayNote tailSeg;
-                    tailSeg.noteId = wrapId;
-                    tailSeg.note = pitch;
-                    tailSeg.startTick = wrappedOnTick;
-                    tailSeg.endTick = loopLength - 1;
-                    tailSeg.velocity = wrappedVelocity;
-                    notes.push_back(tailSeg);
-
-                    if (noteOffTick > 0) {
-                        DisplayNote headSeg;
-                        headSeg.noteId = wrapId;
-                        headSeg.note = pitch;
-                        headSeg.startTick = 0;
-                        headSeg.endTick = noteOffTick;
-                        headSeg.velocity = wrappedVelocity;
-                        notes.push_back(headSeg);
-                    }
-
+                    pushCanonicalSpan(spans, wrapId, pitch, wrappedVelocity,
+                                      static_cast<int32_t>(wrappedOnTick),
+                                      exclusiveEndForWrappedHeadOff(noteOffTick, loopLength), false,
+                                      true);
                     wrappedTailOnTicks.insert({pitch, wrappedOnTick});
-                    if (logDetails) {
-                        logger.log(CAT_TRACK, LOG_DEBUG,
-                                   "Wrapped pair split: pitch=%d, tail=%lu-%lu, head=0-%lu",
-                                   pitch, wrappedOnTick, loopLength - 1, noteOffTick);
-                    }
                     continue;
-                }
-                if (logDetails) {
-                    logger.log(CAT_TRACK, LOG_DEBUG, "Note-off without matching note-on: pitch=%d", pitch);
                 }
                 continue;
             }
-            
-            // Pair note-off: prefer LIFO when stack top started before this off; otherwise
-            // match the latest open note-on with start < off (duplicate pitch lanes); if none,
-            // fall back to stack top for wrap-head pairing (off before on in loop time).
+
             const uint32_t pairingOffTick = offWasBeyondLoop ? evt.tick : noteOffTick;
-            std::vector<DisplayNote>& stack = activeNoteStacks[pitch];
+            std::vector<ActiveCanonicalNote>& stack = activeNoteStacks[pitch];
             int pairIndex = -1;
             if (!stack.empty() && stack.back().startTick < pairingOffTick) {
                 pairIndex = static_cast<int>(stack.size()) - 1;
             } else {
-                pairIndex = findActiveNoteOnIndexForOff(stack, pairingOffTick);
+                for (int stackIndex = static_cast<int>(stack.size()) - 1; stackIndex >= 0;
+                     --stackIndex) {
+                    if (stack[static_cast<size_t>(stackIndex)].startTick < pairingOffTick) {
+                        pairIndex = stackIndex;
+                        break;
+                    }
+                }
                 if (pairIndex < 0 && !stack.empty()) {
                     pairIndex = static_cast<int>(stack.size()) - 1;
                 }
             }
             if (pairIndex < 0) {
-                if (logDetails) {
-                    logger.log(CAT_TRACK, LOG_DEBUG,
-                               "Note-off without matching note-on: pitch=%d, off=%lu", pitch,
-                               pairingOffTick);
-                }
                 continue;
             }
 
-            DisplayNote& note = stack[static_cast<size_t>(pairIndex)];
+            ActiveCanonicalNote& note = stack[static_cast<size_t>(pairIndex)];
             if (!offWasBeyondLoop && noteOffTick == loopLength - 1 &&
                 note.startTick >= tailStart &&
                 shouldDeferLoopEndOff(midiEvents, eventIndex, pitch, evt.channel, note.startTick,
                                       loopLength)) {
-                if (logDetails) {
-                    logger.log(CAT_TRACK, LOG_DEBUG,
-                               "Defer loop-end off for wrap hold: pitch=%d, tail=%lu",
-                               pitch, note.startTick);
-                }
                 continue;
             }
 
             const bool allowWrapSplitForBeyondLoopOff =
                 offWasBeyondLoop && note.startTick >= tailStart && tailStart > 0;
             if (noteOffTick < note.startTick &&
-                NoteUtils::isPreferredWrapTailForHeadOff(note.startTick, noteOffTick, midiEvents, pitch,
-                                                         evt.channel, loopLength) &&
+                NoteUtils::isPreferredWrapTailForHeadOff(note.startTick, noteOffTick, midiEvents,
+                                                         pitch, evt.channel, loopLength) &&
                 note.startTick >= tailStart &&
                 (!offWasBeyondLoop || allowWrapSplitForBeyondLoopOff)) {
-                DisplayNote tailSeg = note;
-                tailSeg.endTick = loopLength - 1;
-                notes.push_back(tailSeg);
-
-                if (noteOffTick > 0) {
-                    DisplayNote headSeg = note;
-                    headSeg.startTick = 0;
-                    headSeg.endTick = noteOffTick;
-                    notes.push_back(headSeg);
-                }
-
-                if (logDetails) {
-                    logger.log(CAT_TRACK, LOG_DEBUG,
-                               "Wrapped stack split: pitch=%d, tail=%lu-%lu, head=0-%lu",
-                               pitch, note.startTick, loopLength - 1, noteOffTick);
-                }
-
+                pushCanonicalSpan(spans, note.noteId, pitch, note.velocity,
+                                  static_cast<int32_t>(note.startTick),
+                                  exclusiveEndForWrappedHeadOff(noteOffTick, loopLength), false,
+                                  true);
                 stack.erase(stack.begin() + static_cast<std::ptrdiff_t>(pairIndex));
                 continue;
             }
 
-            note.endTick = noteOffTick;
-            
-            if (logDetails) {
-                logger.log(CAT_TRACK, LOG_DEBUG, "Final note: pitch=%d, start=%lu, end=%lu",
-                           note.note, note.startTick, note.endTick);
-            }
-            
-            notes.push_back(note);
+            const int32_t exclusiveEnd = offWasBeyondLoop
+                                             ? exclusiveEndForLinearOff(evt.tick)
+                                             : exclusiveEndForLoopOff(noteOffTick);
+            pushCanonicalSpan(spans, note.noteId, pitch, note.velocity,
+                              static_cast<int32_t>(note.startTick), exclusiveEnd);
             stack.erase(stack.begin() + static_cast<std::ptrdiff_t>(pairIndex));
         }
     }
 
-    // Handle any remaining active notes (notes without explicit note-offs)
     for (auto& [pitch, noteStack] : activeNoteStacks) {
-        for (const auto& note : noteStack) {
-            DisplayNote completedNote = note;
-            completedNote.endTick = loopLength - 1; // End at loop boundary
-            
-            if (logDetails) {
-                logger.log(CAT_TRACK, LOG_DEBUG, "Active note at loop end: pitch=%d, start=%lu, end=%lu",
-                           completedNote.note, completedNote.startTick, completedNote.endTick);
-            }
-            
-            notes.push_back(completedNote);
+        for (const ActiveCanonicalNote& note : noteStack) {
+            pushCanonicalSpan(spans, note.noteId, pitch, note.velocity,
+                              static_cast<int32_t>(note.startTick),
+                              static_cast<int32_t>(loopLength), true);
         }
         (void)pitch;
     }
-    
-    // Deduplicate notes with same pitch, start, and end
+
+    return spans;
+}
+
+template <typename NoteVector>
+NoteVector reconstructNotesImpl(const MidiEventVec& midiEvents, uint32_t loopLength,
+                                bool verboseLog) {
+    using DisplayNote = NoteUtils::DisplayNote;
     NoteVector finalNotes;
-    
-    size_t originalCount = notes.size();
-    for (const auto& note : notes) {
+
+    if (loopLength == 0) {
+        return finalNotes;
+    }
+
+    const bool logDetails = shouldLogReconstructDetails(verboseLog, midiEvents.size());
+    const std::vector<CanonicalNoteSpan> spans =
+        buildCanonicalSpansFromMidi(midiEvents, loopLength, verboseLog);
+    const TickInterval window = IntervalProjection::makeFullLoopDisplayWindow(loopLength);
+    const ProjectionContext context =
+        IntervalProjection::buildDisplayProjectionContext(loopLength, window);
+    NoteUtils::DisplayNoteVec projected =
+        IntervalProjection::projectDisplayNotes(spans, context);
+
+    const size_t originalCount = projected.size();
+    for (const DisplayNote& note : projected) {
         const bool alreadySeen = std::any_of(
             finalNotes.begin(), finalNotes.end(), [&](const DisplayNote& existing) {
-                return existing.note == note.note &&
-                       existing.startTick == note.startTick &&
+                return existing.note == note.note && existing.startTick == note.startTick &&
                        existing.endTick == note.endTick;
             });
         if (!alreadySeen) {
@@ -500,10 +466,11 @@ NoteVector reconstructNotesImpl(const MidiEventVec& midiEvents, uint32_t loopLen
     }
 
     if (logDetails) {
-        logger.log(CAT_TRACK, LOG_DEBUG, "Reconstruction complete: %zu notes total (%zu duplicates removed)",
+        logger.log(CAT_TRACK, LOG_DEBUG,
+                   "Reconstruction complete: %zu notes total (%zu duplicates removed)",
                    finalNotes.size(), originalCount - finalNotes.size());
     }
-    
+
     return finalNotes;
 }
 
