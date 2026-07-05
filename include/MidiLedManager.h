@@ -68,9 +68,11 @@ private:
     uint8_t lastFocusSlotIndex = Config::INVALID_LOOP_SLOT;
     uint8_t lastSelectedTrackIndex = Config::INVALID_TRACK_INDEX;
     
-    // Helper methods (all use loopStartTick so 16th/bar LEDs reflect user's loop window)
-    uint32_t getCurrentBar(uint32_t currentTick, const Loop& loop);
-    uint32_t getCurrentBarStartTick(uint32_t currentTick, const Loop& loop);
+    // Helper methods (loopStartTick window; projection cycle when this slot is actively playing)
+    uint32_t getCurrentBar(uint32_t currentTick, const Loop& loop, const Track& track,
+                           uint8_t displaySlotIndex);
+    uint32_t getCurrentBarStartTick(uint32_t currentTick, const Loop& loop, const Track& track,
+                                    uint8_t displaySlotIndex);
     bool hasNoteInSixteenthStep(const Loop& loop, uint32_t stepStartStorage, uint32_t stepEndStorage);
     bool hasNoteInBar(const Loop& loop, uint32_t barStartStorage, uint32_t barEndStorage);
     void sendLedUpdate(uint8_t ledIndex, bool state);

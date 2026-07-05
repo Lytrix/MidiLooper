@@ -315,6 +315,31 @@ void test_build_playback_projection_context_fields() {
     TEST_ASSERT_EQUAL_INT32(240, context.queuedStartTick);
 }
 
+void test_display_playhead_aligns_with_projection_cycle_after_slot_commit() {
+    constexpr uint32_t loopLength = 1536;
+    constexpr uint32_t startLoopTick = 1;
+    constexpr int32_t projectionCycleStartTick = 55210;
+    constexpr uint32_t loopStartTick = 0;
+    constexpr uint32_t currentTick = static_cast<uint32_t>(projectionCycleStartTick) + 100U;
+
+    const uint32_t playbackPhase = IntervalProjection::tickPhaseInProjectionCycle(
+        currentTick, projectionCycleStartTick, loopLength);
+
+    const uint32_t legacyStoragePhase =
+        IntervalProjection::tickPhaseInLoop(currentTick, startLoopTick, loopLength);
+    const uint32_t legacyDisplay =
+        IntervalProjection::noteRelativeTick(legacyStoragePhase, loopStartTick, loopLength);
+
+    const uint32_t alignedStoragePhase = IntervalProjection::tickPhaseInProjectionCycle(
+        currentTick, projectionCycleStartTick, loopLength);
+    const uint32_t alignedDisplay =
+        IntervalProjection::noteRelativeTick(alignedStoragePhase, loopStartTick, loopLength);
+
+    TEST_ASSERT_EQUAL_UINT32(100U, playbackPhase);
+    TEST_ASSERT_NOT_EQUAL(playbackPhase, legacyDisplay);
+    TEST_ASSERT_EQUAL_UINT32(playbackPhase, alignedDisplay);
+}
+
 int main(int /*argc*/, char** /*argv*/) {
     UNITY_BEGIN();
     RUN_TEST(test_tick_interval_intersects_spec_example);
@@ -337,5 +362,6 @@ int main(int /*argc*/, char** /*argv*/) {
     RUN_TEST(test_playback_linear_off_at_loop_head);
     RUN_TEST(test_playback_order_linear_off_before_in_loop);
     RUN_TEST(test_build_playback_projection_context_fields);
+    RUN_TEST(test_display_playhead_aligns_with_projection_cycle_after_slot_commit);
     return UNITY_END();
 }

@@ -216,6 +216,37 @@ Playback and Edit consumers SHALL NOT use the rendering split.
 - **THEN** it delegates to **`projectDisplayNotes()`**
 - **AND** outward `DisplayNote` API is preserved
 
+### Requirement: Display playhead aligns with playback projection cycle on active slot
+
+When the **displayed loop slot** is the **active playing slot** and transport is **PLAYING** or **OVERDUBBING**, the OLED playhead position and 16th/bar LED tick indicators SHALL derive storage phase from **`projectionCycleStartTick`** via **`tickPhaseInProjectionCycle`**, then map to display coordinates with **`noteRelativeTick(..., loopStartTick, loopLength)`**. This SHALL match the phase gate used in **`playMidiEvents`**.
+
+When the displayed slot is not the active loop, or transport is stopped, storage phase MAY use **`tickPhaseInLoop(currentTick, loop.startLoopTick, loopLength)`** for focus/audition.
+
+#### Scenario: Slot switch commit — playhead matches audible MIDI
+
+- **GIVEN** slot A is playing and the user selects slot B (`SyncPlayback::No`) then playback commits at grid `T_commit`
+- **WHEN** `commitQueuedPlaybackStart` re-anchors **`projectionCycleStartTick`** for slot B
+- **THEN** the OLED position string and piano-roll playhead for slot B track **`tickPhaseInProjectionCycle`**, not record-time **`startLoopTick`** alone
+- **AND** the displayed position matches which stored events are audibly firing
+
+#### Scenario: Stopped slot audition uses record phase anchor
+
+- **GIVEN** transport is stopped and the user selects a filled slot for focus
+- **WHEN** the playhead is drawn
+- **THEN** storage phase uses **`loop.startLoopTick`**
+- **AND** display phase still applies **`loopStartTick`** offset via **`noteRelativeTick`**
+
+### Requirement: NOTE_EDIT selection bracket is display-phase (loopStart-aware)
+
+During NOTE_EDIT, **`EditorSelection.selectedTick`**, draw highlight, and dependent fader feedback SHALL use **display-phase** ticks relative to **`loopStartTick`**. Geometry commit paths SHALL NOT write storage ticks normalized at origin 0 into **`selectedTick`**.
+
+#### Scenario: Move with non-zero loopStart keeps fader 2–4 bound
+
+- **GIVEN** NOTE_EDIT on a loop with **`loopStartTick > 0`**
+- **WHEN** the user moves the selected note with coarse/fine faders
+- **THEN** **`selectedTick`** remains in display phase
+- **AND** faders 2–4 continue to edit pitch/length/start without “No note selected”
+
 ### Requirement: Batch projection API
 
 The engine SHALL expose **`projectNoteIntervals`** to project many canonical spans through generate → select in one call. Consumers SHOULD use the batch API rather than reimplementing per-note loops.
