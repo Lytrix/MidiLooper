@@ -30,19 +30,19 @@ void EditSelectNoteState::onEnter(EditManager& manager, Track& track, uint32_t s
     // or snaps to the current position if no notes exist
     manager.selectClosestNote(track, startTick);
     
-    uint32_t bracketTick = manager.getBracketTick();
+    uint32_t selectedTick = manager.getSelectedTick();
     int selectedIdx = manager.getSelectedNoteIdx();
     
     if (selectedIdx >= 0) {
         logger.info("EditSelectNoteState: Found and selected note %d at tick %lu", 
-                   selectedIdx, bracketTick);
+                   selectedIdx, selectedTick);
     } else {
-        logger.info("EditSelectNoteState: No note selected, bracket at tick %lu", bracketTick);
+        logger.info("EditSelectNoteState: No note selected, bracket at tick %lu", selectedTick);
     }
     
     // Note: Pitchbend will be sent by MidiButtonManager after program change
     
-    logger.info("MIDI Encoder: Entered SELECT mode (bracket=%lu)", bracketTick);
+    logger.info("MIDI Encoder: Entered SELECT mode (bracket=%lu)", selectedTick);
 }
 
 void EditSelectNoteState::onExit(EditManager& manager, Track& track) {
@@ -60,33 +60,33 @@ void EditSelectNoteState::onEncoderTurn(EditManager& manager, Track& track, int 
         manager.stepSelectNavSlot(track, -1);
     }
     
-    uint32_t bracketTick = manager.getBracketTick();
+    uint32_t selectedTick = manager.getSelectedTick();
     int selectedIdx = manager.getSelectedNoteIdx();
     
     if (selectedIdx >= 0) {
         logger.debug("EditSelectNoteState: Moved to tick %lu, selected note %d", 
-                    bracketTick, selectedIdx);
+                    selectedTick, selectedIdx);
     } else {
-        logger.debug("EditSelectNoteState: Moved to tick %lu, no note selected", bracketTick);
+        logger.debug("EditSelectNoteState: Moved to tick %lu, no note selected", selectedTick);
     }
 }
 
 void EditSelectNoteState::onButtonPress(EditManager& manager, Track& track) {
     logger.debug("EditSelectNoteState::onButtonPress");
     
-    uint32_t bracketTick = manager.getBracketTick();
+    uint32_t selectedTick = manager.getSelectedTick();
     
     if (manager.getSelectedNoteIdx() >= 0) {
         // There's a note at this position - enter start note editing
         logger.info("EditSelectNoteState: Note exists, entering start note edit mode");
-        manager.setState(manager.getStartNoteState(), track, bracketTick);
+        manager.setState(manager.getStartNoteState(), track, selectedTick);
     } else {
         // No note at this position - create a 32nd note
-        logger.info("EditSelectNoteState: No note found, creating 32nd note at tick %lu", bracketTick);
+        logger.info("EditSelectNoteState: No note found, creating 32nd note at tick %lu", selectedTick);
         
         // Push undo snapshot before creating note
         manager.beginGeometryMutation(track, NoteEditKind::Add, false);
-        const std::array<MidiEvent, 2> created = createDefaultNote(track, bracketTick);
+        const std::array<MidiEvent, 2> created = createDefaultNote(track, selectedTick);
         EditPass add{};
         add.passType = EditPassType::Note;
         add.actionType = EditActionType::Create;
@@ -97,8 +97,8 @@ void EditSelectNoteState::onButtonPress(EditManager& manager, Track& track) {
         track.invalidateCaches();
 
         // Select the newly created note and enter start note editing
-        manager.selectNoteAtBracket(track, bracketTick);
-        manager.setState(manager.getStartNoteState(), track, bracketTick);
+        manager.selectNoteAtBracket(track, selectedTick);
+        manager.setState(manager.getStartNoteState(), track, selectedTick);
     }
 }
 
@@ -143,7 +143,7 @@ void EditSelectNoteState::updateForOverdubbing(EditManager& manager, Track& trac
             // Update bracket to the most recent note
             if (mostRecentIdx >= 0) {
                 uint32_t newBracketTick = notes[mostRecentIdx].startTick % loopLength;
-                manager.setBracketTick(newBracketTick);
+                manager.setSelectedTick(newBracketTick);
                 manager.setSelectedNoteIdx(mostRecentIdx);
                 
                 logger.debug("EditSelectNoteState: Updated bracket to new note at tick %lu (idx=%d)", 
@@ -210,7 +210,7 @@ std::array<MidiEvent, 2> EditSelectNoteState::createNoteAtTick(Track& track, uin
 bool EditSelectNoteState::resolveTargetPitchbend(EditManager& manager, Track& track,
                                                  int16_t& outPitchbend) {
     const uint32_t loopLength = track.getLoopLength();
-    const uint32_t bracketTick = manager.getBracketTick();
+    const uint32_t selectedTick = manager.getSelectedTick();
 
     if (!ValidationUtils::validateLoopLength(loopLength)) {
         logger.log(CAT_MIDI, LOG_DEBUG, "Target pitchbend: No loop length, cannot calculate");
@@ -219,16 +219,16 @@ bool EditSelectNoteState::resolveTargetPitchbend(EditManager& manager, Track& tr
 
     const uint32_t numSteps = loopLength / Config::TICKS_PER_16TH_STEP;
     logger.log(CAT_MIDI, LOG_DEBUG,
-               "Target pitchbend calculation: loopLength=%lu, numSteps=%lu, bracketTick=%lu",
-               loopLength, numSteps, bracketTick);
+               "Target pitchbend calculation: loopLength=%lu, numSteps=%lu, selectedTick=%lu",
+               loopLength, numSteps, selectedTick);
 
     if (numSteps == 0) {
         return false;
     }
 
-    const uint32_t loopStartTick = track.getLoopStartTick() % loopLength;
+    const uint32_t loopStartTick = editManager.noteEditLoopStartTick(track);
     const std::vector<SelectNavigation::SelectNavSlot> slots =
-        noteEditManager.buildSelectNavigationSlots(track, bracketTick, true);
+        noteEditManager.buildSelectNavigationSlots(track, selectedTick, true);
 
     logger.log(CAT_MIDI, LOG_DEBUG, "Target pitchbend: Final navigation slots: %lu", slots.size());
 
@@ -239,7 +239,7 @@ bool EditSelectNoteState::resolveTargetPitchbend(EditManager& manager, Track& tr
     const EditorSelection& sel = manager.getNoteEditSessionState().selection;
     const auto navNotes = noteEditManager.selectableDisplayNotesForEditUi(track);
     const int currentPosIndex = SelectNavigation::findSlotIndexForNoteId(
-        slots, navNotes, sel.primaryNote, bracketTick, loopStartTick, loopLength);
+        slots, navNotes, sel.primaryNote, selectedTick, loopLength);
 
     if (currentPosIndex < 0) {
         logger.log(CAT_MIDI, LOG_DEBUG,
@@ -256,7 +256,7 @@ bool EditSelectNoteState::resolveTargetPitchbend(EditManager& manager, Track& tr
 
     logger.log(CAT_MIDI, LOG_DEBUG,
                "SENDING PITCHBEND: Position %d/%lu at tick %lu = value %d (range: %d to %d)",
-               currentPosIndex, slots.size(), bracketTick, outPitchbend, MidiConfig::Pitchbend::MIN,
+               currentPosIndex, slots.size(), selectedTick, outPitchbend, MidiConfig::Pitchbend::MIN,
                MidiConfig::Pitchbend::MAX);
     return true;
 }

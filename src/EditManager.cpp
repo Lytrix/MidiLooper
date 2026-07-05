@@ -29,6 +29,7 @@
 #include "Utils/NoteMovementUtils.h"
 #include "Utils/NoteEditDisplaySnapshot.h"
 #include "Utils/SelectNavigation.h"
+#include "TickPhase.h"
 #include "Utils/ValidationUtils.h"
 #include <map>
 #include <vector>
@@ -303,9 +304,40 @@ void EditManager::syncSelectedNoteIdxToFilteredInventory(Track& track) {
     }
 
     int matchIdx = NoteEditDisplaySnapshot::filteredDisplayNoteIndexForSelection(
-        sessionState.selection, filtered);
+        sessionState.selection, filtered, noteEditLoopStartTick(track),
+        noteEditLoopLengthTicks(track));
+    if (matchIdx < 0 && editorSelectionHasNote(sessionState.selection)) {
+        const NoteEditFocus& focus = editSession.focus;
+        const uint32_t loopStartTick = noteEditLoopStartTick(track);
+        if (focus.active && focus.movingNoteId == sessionState.selection.primaryNote) {
+            const bool lengthBracket = sessionState.kind == NoteEditKind::Length;
+            const uint32_t storageBracketTick =
+                lengthBracket ? focus.last.endTick : focus.last.startTick;
+            const uint32_t correctedTick = NoteEditDisplaySnapshot::displayStartTickFromStorage(
+                storageBracketTick, loopStartTick, loopLength);
+            if (sessionState.selection.selectedTick != correctedTick) {
+                sessionState.selection.selectedTick = correctedTick;
+                selectedTick = correctedTick;
+            }
+            matchIdx = NoteEditDisplaySnapshot::filteredDisplayNoteIndexForSelection(
+                sessionState.selection, filtered, loopStartTick, loopLength);
+        }
+    }
     if (matchIdx < 0) {
-        setSelectedNoteIdx(-1);
+        if (editorSelectionHasNote(sessionState.selection)) {
+            bool noteStillPresent = false;
+            for (const DisplayNote& dn : filtered) {
+                if (dn.noteId == sessionState.selection.primaryNote) {
+                    noteStillPresent = true;
+                    break;
+                }
+            }
+            if (!noteStillPresent) {
+                setSelectedNoteIdx(-1);
+            }
+        } else if (selectedNoteIdx >= 0) {
+            setSelectedNoteIdx(-1);
+        }
     } else if (matchIdx != selectedNoteIdx) {
         setSelectedNoteIdx(matchIdx);
     }
@@ -387,6 +419,7 @@ void EditManager::openNoteEditSession(Track& track) {
     noteEditManager.prepareNoteEditSessionOpen();
     enterDefaultNoteEditSessionState(track, clockManager.getCurrentTick());
     bumpSessionPreviewRevision();
+    bumpSessionPlaybackPreviewRevision();
     noteEditManager.sendNoteEditSessionFaderFeedback(track);
     logger.debug("EditSession opened editPass=0");
 }
@@ -519,11 +552,13 @@ void EditManager::closeNoteEditSession(Track& track) {
     closeNoteEditPass(track);
     editSession.store.mutStore().clear();
     editSession.store.discardFlatCache();
+    editSession.focus.clear();
     editSession.active = false;
     editSession.sessionType = EditSessionType::Loop;
     editSession.editPassIndex = 0;
     editSession.replaceEditPassOnClose = false;
     clearLastFader1SelectNoteId();
+    (void)track;
 }
 
 void EditManager::revertNoteEditSessionForLoopClear(Track& track) {
@@ -814,11 +849,12 @@ void EditManager::resetNoteEditSessionState() {
     encoderCycleNeedsAnchor_ = false;
     lastPushedGeometryKind_ = NoteEditKind::Select;
     sessionPreviewRevision_ = 0;
+    sessionPlaybackPreviewRevision_ = 0;
 }
 
-void EditManager::applySelectionFromGeometryEdit(Track& track, uint32_t bracketTick,
+void EditManager::applySelectionFromGeometryEdit(Track& track, uint32_t selectedTick,
                                                  NoteId primaryNote) {
-    sessionState.selection.bracketTick = bracketTick;
+    sessionState.selection.selectedTick = selectedTick;
     sessionState.selection.primaryNote = primaryNote;
     sessionState.selection.selectedNotes.clear();
     if (primaryNote != kInvalidNoteId) {
@@ -830,16 +866,16 @@ void EditManager::applySelectionFromGeometryEdit(Track& track, uint32_t bracketT
 }
 
 void EditManager::syncGeometrySelectionToUi(Track& track) {
-    bracketTick = sessionState.selection.bracketTick;
+    selectedTick = sessionState.selection.selectedTick;
     displayManager.requestNoteInfoRefresh(track);
 }
 
-void EditManager::applySelectNav(Track& track, uint32_t bracketTick, NoteId primaryNote,
+void EditManager::applySelectNav(Track& track, uint32_t selectedTick, NoteId primaryNote,
                                  bool requestFaderSync, bool skipFader1Outbound) {
     (void)skipFader1Outbound;
     const EditorSelection priorSelection = sessionState.selection;
     sessionState.kind = NoteEditKind::Select;
-    sessionState.selection.bracketTick = bracketTick;
+    sessionState.selection.selectedTick = selectedTick;
     sessionState.selection.primaryNote = primaryNote;
     sessionState.selection.selectedNotes.clear();
     if (primaryNote != kInvalidNoteId) {
@@ -853,7 +889,7 @@ void EditManager::applySelectNav(Track& track, uint32_t bracketTick, NoteId prim
     syncNoteEditSessionStateToUi(track);
 
     const bool selectionIdentityChanged =
-        editorSelectionTargetChanged(priorSelection, bracketTick, primaryNote);
+        editorSelectionTargetChanged(priorSelection, selectedTick, primaryNote);
     const bool shouldSyncMotors =
         selectionIdentityChanged && primaryNote != kInvalidNoteId;
     if (shouldSyncMotors && !requestFaderSync) {
@@ -876,11 +912,12 @@ void EditManager::syncNoteEditSessionStateToUi(Track& track) {
   const NoteUtils::DisplayNoteVec& notes = selectableDisplayNotesAtEditSelect(track);
   if (editorSelectionHasNote(sessionState.selection)) {
     selectedNoteIdx = NoteEditDisplaySnapshot::filteredDisplayNoteIndexForSelection(
-        sessionState.selection, notes);
+        sessionState.selection, notes, noteEditLoopStartTick(track),
+        noteEditLoopLengthTicks(track));
   } else {
     selectedNoteIdx = -1;
   }
-  bracketTick = sessionState.selection.bracketTick;
+  selectedTick = sessionState.selection.selectedTick;
     if (editorSelectionHasNote(sessionState.selection)) {
         if (sessionState.selection.primaryNote != kInvalidNoteId) {
             setLastFader1SelectNoteId(sessionState.selection.primaryNote);
@@ -927,16 +964,16 @@ void EditManager::syncNoteEditSessionStateToUi(Track& track) {
         }
         currentState = targetState;
         if (currentState) {
-            currentState->onEnter(*this, track, bracketTick);
+            currentState->onEnter(*this, track, selectedTick);
         }
     }
     sendEditModeProgram(mode);
 }
 
-void EditManager::enterDefaultNoteEditSessionState(Track& track, uint32_t startTick) {
+void EditManager::enterDefaultNoteEditSessionState(Track& track, uint32_t transportTick) {
     const uint32_t loopLength = noteEditLoopLengthTicks(track);
     if (loopLength == 0) {
-        bracketTick = 0;
+        selectedTick = 0;
         selectedNoteIdx = -1;
         clearLastFader1SelectNoteId();
         sessionState.kind = NoteEditKind::Select;
@@ -944,10 +981,15 @@ void EditManager::enterDefaultNoteEditSessionState(Track& track, uint32_t startT
         return;
     }
 
-    bracketTick = startTick % loopLength;
-    selectNoteAtBracket(track, startTick);
+    const Loop& loop = trackManager.getSelectedLoop(track);
+    const uint32_t loopStartTick = noteEditLoopStartTick(track);
+    const uint32_t playheadPhase =
+        tickPhaseInLoop(transportTick, loop.startLoopTick, loopLength);
+    selectedTick =
+        SelectNavigation::noteRelativeTick(playheadPhase, loopStartTick, loopLength);
+    selectNoteAtBracket(track, selectedTick);
     if (selectedNoteIdx < 0) {
-        selectClosestNote(track, startTick);
+        selectClosestNote(track, selectedTick);
     }
 
     NoteId primaryNote = kInvalidNoteId;
@@ -962,7 +1004,7 @@ void EditManager::enterDefaultNoteEditSessionState(Track& track, uint32_t startT
     }
 
     sessionState.kind = NoteEditKind::Select;
-    sessionState.selection.bracketTick = bracketTick;
+    sessionState.selection.selectedTick = selectedTick;
     sessionState.selection.primaryNote = primaryNote;
     sessionState.selection.selectedNotes.clear();
     if (primaryNote != kInvalidNoteId) {
@@ -972,7 +1014,7 @@ void EditManager::enterDefaultNoteEditSessionState(Track& track, uint32_t startT
     sessionState.selection.loopId = trackManager.getSelectedLoop(track).loopId;
     syncNoteEditSessionStateToUi(track);
     if (selectedNoteIdx >= 0) {
-        noteEditManager.syncReferenceStepFromBracketTick(bracketTick);
+        noteEditManager.syncReferenceStepFromSelectedTick(selectedTick);
     }
 }
 
@@ -980,30 +1022,30 @@ void EditManager::applyUndoRedoLanding(Track& track) {
     encoderCycleNeedsAnchor_ = false;
     lastPushedGeometryKind_ = NoteEditKind::Select;
 
-    uint32_t bracket = bracketTick;
+    uint32_t bracket = selectedTick;
     NoteId primaryNote = kInvalidNoteId;
 
     const NoteEditFocus& focus = editSession.focus;
     const auto notes = selectableDisplayNotesAtEditSelect(track);
     if (focus.active && focus.movingNoteId != kInvalidNoteId) {
         const uint32_t loopLength = noteEditLoopLengthTicks(track);
+        const uint32_t loopStartTick = noteEditLoopStartTick(track);
         const uint32_t bracketDisplay =
-            (focus.last.startTick >= loopLength && loopLength > 0)
-                ? (focus.last.startTick % loopLength)
-                : focus.last.startTick;
+            displayStartTickFromStorageNote(focus.last.startTick, loopStartTick, loopLength);
         const int displayIdx = filteredDisplayNoteIndexForNoteIdAndStart(
-            notes, focus.movingNoteId, bracketDisplay);
+            notes, focus.movingNoteId, bracketDisplay, loopStartTick, loopLength);
         if (displayIdx >= 0 && displayIdx < static_cast<int>(notes.size())) {
             const DisplayNote& dn = notes[static_cast<size_t>(displayIdx)];
             primaryNote = dn.noteId;
-            bracket = dn.startTick % loopLength;
+            bracket = displayStartTickFromStorageNote(dn.startTick, loopStartTick, loopLength);
         }
     } else if (!notes.empty()) {
-        selectClosestNote(track, bracketTick);
+        selectClosestNote(track, selectedTick);
         if (selectedNoteIdx >= 0) {
             const DisplayNote& dn = notes[static_cast<size_t>(selectedNoteIdx)];
             primaryNote = dn.noteId;
-            bracket = dn.startTick % noteEditLoopLengthTicks(track);
+            bracket = displayStartTickFromStorageNote(dn.startTick, noteEditLoopStartTick(track),
+                                                      noteEditLoopLengthTicks(track));
         }
     }
 
@@ -1110,6 +1152,10 @@ void EditManager::bumpSessionPreviewRevision() {
     ++sessionPreviewRevision_;
 }
 
+void EditManager::bumpSessionPlaybackPreviewRevision() {
+    ++sessionPlaybackPreviewRevision_;
+}
+
 MidiEventVec& EditManager::editMidiEvents(Track& track) {
     if (editSession.active) {
         return sessionMidiEvents();
@@ -1141,35 +1187,43 @@ void EditManager::setState(EditNoteState* newState, Track& track, uint32_t start
 }
 
 void EditManager::onEncoderTurn(Track& track, int delta) {
-    if (currentState) {
-        if (isGeometryEditKind(sessionState.kind)) {
-            pushSessionUndoOnKindChange(track, sessionState.kind);
-        }
-        int step = (delta > 0) ? 1 : -1;
-        for (int i = 0; i < abs(delta); ++i) {
-            currentState->onEncoderTurn(*this, track, step);
-        }
+    if (!isNoteEditActive() || currentState == nullptr) {
+        return;
+    }
+    if (isGeometryEditKind(sessionState.kind)) {
+        pushSessionUndoOnKindChange(track, sessionState.kind);
+    }
+    int step = (delta > 0) ? 1 : -1;
+    for (int i = 0; i < abs(delta); ++i) {
+        currentState->onEncoderTurn(*this, track, step);
     }
 }
 
 void EditManager::onButtonPress(Track& track) {
-    if (currentState) currentState->onButtonPress(*this, track);
+    if (!isNoteEditActive() || currentState == nullptr) {
+        return;
+    }
+    currentState->onButtonPress(*this, track);
 }
 
 void EditManager::selectClosestNote(Track& track, uint32_t startTick) {
     const auto notes = noteEditManager.selectableDisplayNotesForEditUi(track);
     const uint32_t loopLength = noteEditLoopLengthTicks(track);
+    const uint32_t loopStartTick = noteEditLoopStartTick(track);
     if (notes.empty() || loopLength == 0) {
-        bracketTick = loopLength > 0 ? startTick % loopLength : 0;
-        applySelectNav(track, bracketTick, kInvalidNoteId);
+        selectedTick = loopLength > 0
+                          ? SelectNavigation::displayPhaseTick(startTick, loopLength)
+                          : 0;
+        applySelectNav(track, selectedTick, kInvalidNoteId);
         hasMovedBracket = true;
         return;
     }
-    const uint32_t modStart = startTick % loopLength;
+    const uint32_t modStart = SelectNavigation::displayPhaseTick(startTick, loopLength);
     uint32_t bestDist = loopLength;
     int bestIdx = 0;
     for (int i = 0; i < static_cast<int>(notes.size()); ++i) {
-        const uint32_t noteTick = notes[static_cast<size_t>(i)].startTick % loopLength;
+        const uint32_t noteTick = displayStartTickFromStorageNote(notes[static_cast<size_t>(i)].startTick,
+                                                                  loopStartTick, loopLength);
         const uint32_t dist =
             std::min((noteTick + loopLength - modStart) % loopLength,
                      (modStart + loopLength - noteTick) % loopLength);
@@ -1179,8 +1233,8 @@ void EditManager::selectClosestNote(Track& track, uint32_t startTick) {
         }
     }
     const DisplayNote& dn = notes[static_cast<size_t>(bestIdx)];
-    bracketTick = dn.startTick % loopLength;
-    applySelectNav(track, bracketTick, dn.noteId);
+    selectedTick = displayStartTickFromStorageNote(dn.startTick, loopStartTick, loopLength);
+    applySelectNav(track, selectedTick, dn.noteId);
     hasMovedBracket = true;
 }
 
@@ -1190,13 +1244,17 @@ void EditManager::selectNoteAtBracket(Track& track, uint32_t startTick) {
         selectClosestNote(track, startTick);
         return;
     }
-    const uint32_t bracket = startTick % loopLength;
+    const uint32_t loopStartTick = noteEditLoopStartTick(track);
+    const uint32_t bracket = SelectNavigation::displayPhaseTick(startTick, loopLength);
     const auto notes = noteEditManager.selectableDisplayNotesForEditUi(track);
     for (int i = 0; i < static_cast<int>(notes.size()); ++i) {
-        if (notes[static_cast<size_t>(i)].startTick % loopLength == bracket) {
+        const uint32_t noteDisplay =
+            displayStartTickFromStorageNote(notes[static_cast<size_t>(i)].startTick, loopStartTick,
+                                            loopLength);
+        if (noteDisplay == bracket) {
             const DisplayNote& dn = notes[static_cast<size_t>(i)];
-            bracketTick = bracket;
-            applySelectNav(track, bracketTick, dn.noteId);
+            selectedTick = bracket;
+            applySelectNav(track, selectedTick, dn.noteId);
             hasMovedBracket = true;
             return;
         }
@@ -1213,9 +1271,8 @@ void EditManager::stepSelectNavSlot(Track& track, int delta) {
         return;
     }
     const uint32_t loopLength = noteEditLoopLengthTicks(track);
-    const uint32_t loopStartTick = track.getLoopStartTick() % loopLength;
     const std::vector<SelectNavigation::SelectNavSlot> slots =
-        noteEditManager.buildSelectNavigationSlots(track, bracketTick, true);
+        noteEditManager.buildSelectNavigationSlots(track, selectedTick, true);
     if (slots.empty()) {
         return;
     }
@@ -1223,7 +1280,7 @@ void EditManager::stepSelectNavSlot(Track& track, int delta) {
     const EditorSelection& sel = sessionState.selection;
     int slotIdx = SelectNavigation::findSlotIndexForNoteId(
         slots, noteEditManager.selectableDisplayNotesForEditUi(track), sel.primaryNote,
-        bracketTick, loopStartTick, loopLength);
+        selectedTick, loopLength);
     if (slotIdx < 0) {
         slotIdx = 0;
     }
@@ -1235,8 +1292,7 @@ void EditManager::stepSelectNavSlot(Track& track, int delta) {
     }
 
     const SelectNavigation::SelectNavSlot& slot = slots[static_cast<size_t>(slotIdx)];
-    const uint32_t absoluteBracket =
-        SelectNavigation::noteStorageTick(slot.relativeTick, loopStartTick, loopLength);
+    const uint32_t absoluteBracket = slot.relativeTick;
     const auto notes = noteEditManager.selectableDisplayNotesForEditUi(track);
     const int noteIdx = SelectNavigation::resolveNoteIdxAtSlot(slot);
     if (noteIdx >= 0 && noteIdx < static_cast<int>(notes.size())) {
@@ -1255,9 +1311,9 @@ void EditManager::stepSelectNavSlot(Track& track, int delta) {
 void EditManager::switchToNextState(Track& track) {
     // Example: cycle between noteState and startNoteState
     if (currentState == &noteHomeState) {
-        setState(&startNoteState, track, bracketTick);
+        setState(&startNoteState, track, selectedTick);
     } else {
-        setState(&noteHomeState, track, bracketTick);
+        setState(&noteHomeState, track, selectedTick);
     }
 }
 
@@ -1299,14 +1355,16 @@ void EditManager::moveBracket(int delta, const Track& track, uint32_t ticksPerSt
         return;
     }
     const auto notes = noteEditManager.selectableDisplayNotesForEditUi(track);
+    const uint32_t loopStartTick = noteEditLoopStartTick(track);
 
     const uint32_t SNAP_WINDOW = 24;
     if (delta > 0) {
-        const uint32_t targetTick = (bracketTick + ticksPerStep) % loopLength;
+        const uint32_t targetTick = (selectedTick + ticksPerStep) % loopLength;
         int snapIdx = -1;
         uint32_t minDist = SNAP_WINDOW + 1;
         for (int i = 0; i < static_cast<int>(notes.size()); ++i) {
-            const uint32_t noteTick = notes[static_cast<size_t>(i)].startTick % loopLength;
+            const uint32_t noteTick = displayStartTickFromStorageNote(
+                notes[static_cast<size_t>(i)].startTick, loopStartTick, loopLength);
             const uint32_t dist =
                 std::min((noteTick + loopLength - targetTick) % loopLength,
                          (targetTick + loopLength - noteTick) % loopLength);
@@ -1317,17 +1375,20 @@ void EditManager::moveBracket(int delta, const Track& track, uint32_t ticksPerSt
         }
         if (snapIdx != -1 && minDist <= SNAP_WINDOW) {
             const DisplayNote& dn = notes[static_cast<size_t>(snapIdx)];
-            applySelectNav(mutableTrack, dn.startTick % loopLength, dn.noteId);
+            applySelectNav(mutableTrack,
+                           displayStartTickFromStorageNote(dn.startTick, loopStartTick, loopLength),
+                           dn.noteId);
         } else {
             applySelectNav(mutableTrack, targetTick, kInvalidNoteId);
         }
     } else if (delta < 0) {
         const uint32_t targetTick =
-            (bracketTick + loopLength - (ticksPerStep % loopLength)) % loopLength;
+            (selectedTick + loopLength - (ticksPerStep % loopLength)) % loopLength;
         int snapIdx = -1;
         uint32_t minDist = SNAP_WINDOW + 1;
         for (int i = 0; i < static_cast<int>(notes.size()); ++i) {
-            const uint32_t noteTick = notes[static_cast<size_t>(i)].startTick % loopLength;
+            const uint32_t noteTick = displayStartTickFromStorageNote(
+                notes[static_cast<size_t>(i)].startTick, loopStartTick, loopLength);
             const uint32_t dist =
                 std::min((noteTick + loopLength - targetTick) % loopLength,
                          (targetTick + loopLength - noteTick) % loopLength);
@@ -1338,7 +1399,9 @@ void EditManager::moveBracket(int delta, const Track& track, uint32_t ticksPerSt
         }
         if (snapIdx != -1 && minDist <= SNAP_WINDOW) {
             const DisplayNote& dn = notes[static_cast<size_t>(snapIdx)];
-            applySelectNav(mutableTrack, dn.startTick % loopLength, dn.noteId);
+            applySelectNav(mutableTrack,
+                           displayStartTickFromStorageNote(dn.startTick, loopStartTick, loopLength),
+                           dn.noteId);
         } else {
             applySelectNav(mutableTrack, targetTick, kInvalidNoteId);
         }
@@ -1354,7 +1417,7 @@ void EditManager::selectPrevNote(const Track& track) {
 }
 
 void EditManager::enterPitchEditMode(Track& track) {
-    setState(&pitchNoteState, track, bracketTick);
+    setState(&pitchNoteState, track, selectedTick);
 }
 
 void EditManager::exitPitchEditMode(Track& track) {
@@ -1393,6 +1456,14 @@ void EditManager::cycleEditSession(Track& track) {
         trackManager.reclaimUnreferencedDisabledPasses();
         commitAllPendingNoteEditActions(track);
         editSession.replaceEditPassOnClose = true;
+        if (currentState) {
+            currentState->onExit(*this, track);
+            currentState = nullptr;
+        }
+        currentEditMode = EDIT_MODE_NONE;
+        selectedNoteIdx = -1;
+        hasMovedBracket = false;
+        resetNoteEditSessionState();
         closeNoteEditSession(track);
         track.invalidateCaches();
     } else {

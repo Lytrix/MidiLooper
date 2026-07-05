@@ -57,7 +57,7 @@ public:
 
     /** One nav slot per note (multiple per 16th when notes share a step) or empty grid step. */
     std::vector<SelectNavigation::SelectNavSlot> buildSelectNavigationSlots(
-        const Track& track, uint32_t bracketTick, bool includeBracketIfMissing = true) const;
+        const Track& track, uint32_t selectedTick, bool includeSelectedTickIfMissing = true) const;
     /// NOTE_EDIT UI list: filtered (+ window when long loop) when session active, else cached copy.
     std::vector<NoteUtils::DisplayNote> selectableDisplayNotesForEditUi(const Track& track) const;
 
@@ -78,7 +78,7 @@ public:
     void prepareNoteEditSessionOpen();
     /** NOTE_EDIT session entry: grace period + deferred selectnote fader sync. */
     void sendNoteEditSessionFaderFeedback(Track& track);
-    void syncReferenceStepFromBracketTick(uint32_t bracketTick);
+    void syncReferenceStepFromSelectedTick(uint32_t selectedTick);
     /** GPIO / bar-step note select: fader1 bracket + dependent refresh. */
     void scheduleNoteSelectFaderSync(Track& track);
     /** Queue F2/F3/F4 motor sync after F1 idle, or F1 bracket sync after geometry fader idle. */

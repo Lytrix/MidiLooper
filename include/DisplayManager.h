@@ -117,8 +117,9 @@ public:
     void drawNoteBar(const DisplayNote& e, int y, uint32_t s, uint32_t eTick, uint32_t lengthLoop, int noteBrightness);
     void drawAllNotes(const Track& track, uint8_t displaySlot, uint32_t currentTick, uint32_t lengthLoop,
                       int minPitch, int maxPitch, int pianoRollY0, int pianoRollY1,
-                      bool windowRelativeTicks, const DisplayNoteVec& notes);
-    void drawBracket(uint32_t bracketTick, uint32_t lengthLoop, int pianoRollY1);
+                      bool windowRelativeTicks, uint32_t windowStartTick,
+                      const DisplayNoteVec& notes);
+    void drawBracket(uint32_t selectedTick, uint32_t lengthLoop, int pianoRollY1);
 
 private:
     void maybeEmitDisplayCaptureOnChange(const Track& track, uint8_t displaySlot, uint32_t currentTick,

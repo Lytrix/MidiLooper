@@ -92,7 +92,7 @@ NoteEditDependentFaderSnapshot buildDependentFaderSnapshot(
         }
 
         const uint32_t anchorTick =
-            SelectNavigation::noteRelativeTick(input.bracketTick, loopStartTick, input.loopLength);
+            SelectNavigation::displayPhaseTick(input.selectedTick, input.loopLength);
         snapshot.coarsePitchbend = positionModeLoopTickToCoarsePitchbend(anchorTick, input.loopLength);
         snapshot.coarseValid = true;
         snapshot.fineCc = emptyStepFineCc(anchorTick);
@@ -105,8 +105,10 @@ NoteEditDependentFaderSnapshot buildDependentFaderSnapshot(
     bool haveFineTick = false;
 
     if (input.selectTarget.active) {
-        coarseAnchorTick = SelectNavigation::noteRelativeTick(input.selectTarget.absoluteTargetTick,
-                                                              loopStartTick, input.loopLength);
+        // absoluteTargetTick is projected-interval phase (slot.relativeTick / selectedTick),
+        // not storage — do not pass through noteRelativeTick.
+        coarseAnchorTick = SelectNavigation::displayPhaseTick(input.selectTarget.absoluteTargetTick,
+                                                              input.loopLength);
         if (input.hasSelectNote) {
             fineRelTick = SelectNavigation::noteRelativeTick(input.selectNoteStartTick,
                                                              loopStartTick, input.loopLength);

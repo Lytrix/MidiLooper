@@ -290,7 +290,7 @@ public:
   }
   
   /// Invalidate caches when MIDI events change (includes flat sync when dirty).
-  void invalidateCaches();
+  void invalidateCaches(bool refreshPlaybackPreview = true);
 
   /// Chunk mutations on hot paths — no flat sync.
   void invalidatePlaybackCaches() {

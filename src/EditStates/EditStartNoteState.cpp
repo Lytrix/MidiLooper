@@ -23,7 +23,7 @@ void EditStartNoteState::onEnter(EditManager& manager, Track& track, uint32_t st
         if (idx < static_cast<int>(notes.size())) {
             const NoteUtils::DisplayNote& selected = notes[static_cast<size_t>(idx)];
             manager.rebuildNoteEditFocusForDisplayNote(track, selected);
-            manager.setBracketTick(selected.startTick);
+            manager.setSelectedTick(selected.startTick);
             logger.debug("Set up move from focus: note=%d, start=%lu, end=%lu",
                          selected.note,
                          static_cast<unsigned long>(selected.startTick),
@@ -79,5 +79,5 @@ void EditStartNoteState::onEncoderTurn(EditManager& manager, Track& track, int d
 }
 
 void EditStartNoteState::onButtonPress(EditManager& manager, Track& track) {
-    manager.setState(manager.getNoteHomeState(), track, manager.getBracketTick());
+    manager.setState(manager.getNoteHomeState(), track, manager.getSelectedTick());
 }

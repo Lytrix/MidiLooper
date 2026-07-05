@@ -563,7 +563,7 @@ void BarStepButtonHandler::executeNoteEditAction(const BarStepButtonInfo& info, 
   uint32_t stepTick =
       (loopStartTick + info.stepIndex * Config::TICKS_PER_16TH_STEP) % loopLength;
 
-  editManager.setBracketTick(stepTick);
+  editManager.setSelectedTick(stepTick);
   editManager.selectClosestNote(track, stepTick);
 
   auto noteAtStep = [&]() -> bool {

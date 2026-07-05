@@ -30,7 +30,8 @@ struct EditorSelection {
   LoopId loopId = kInvalidLoopId;
   std::vector<NoteId, InternalHeapFirstAllocator<NoteId>> selectedNotes;
   NoteId primaryNote = kInvalidNoteId;
-  uint32_t bracketTick = 0;
+  /// Projected-interval select position [0, loopLength) — UIP **selectedTick**.
+  uint32_t selectedTick = 0;
 };
 
 struct NoteEditSessionState {
@@ -80,7 +81,7 @@ inline bool editorSelectionSameNoteTarget(const EditorSelection& sel, NoteId not
 /// True when bracket, hasNote, or **NoteId** changed (not list index).
 inline bool editorSelectionTargetChanged(const EditorSelection& prior, uint32_t nextBracket,
                                          NoteId nextPrimaryNote) {
-  if (prior.bracketTick != nextBracket) {
+  if (prior.selectedTick != nextBracket) {
     return true;
   }
   const bool priorHas = editorSelectionHasNote(prior);

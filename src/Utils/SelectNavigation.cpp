@@ -20,8 +20,8 @@ std::vector<SelectNavSlot> buildSelectNavigationSlots(
     uint32_t loopLength,
     uint32_t loopStartTick,
     const std::vector<NoteUtils::DisplayNote>& notes,
-    uint32_t bracketTick,
-    bool includeBracketIfMissing) {
+    uint32_t selectedTick,
+    bool includeSelectedTickIfMissing) {
     std::vector<SelectNavSlot> slots;
     if (loopLength == 0) {
         return slots;
@@ -61,17 +61,17 @@ std::vector<SelectNavSlot> buildSelectNavigationSlots(
         }
     }
 
-    if (includeBracketIfMissing) {
-        const uint32_t relativeBracketTick = noteRelativeTick(bracketTick, loopStartTick, loopLength);
-        bool bracketTickFound = false;
+    if (includeSelectedTickIfMissing) {
+        const uint32_t phaseSelectedTick = displayPhaseTick(selectedTick, loopLength);
+        bool selectedTickFound = false;
         for (const SelectNavSlot& slot : slots) {
-            if (slot.relativeTick == relativeBracketTick) {
-                bracketTickFound = true;
+            if (slot.relativeTick == phaseSelectedTick) {
+                selectedTickFound = true;
                 break;
             }
         }
-        if (!bracketTickFound) {
-            slots.push_back({relativeBracketTick, kInvalidNoteId, -1});
+        if (!selectedTickFound) {
+            slots.push_back({phaseSelectedTick, kInvalidNoteId, -1});
             std::sort(slots.begin(), slots.end(), [](const SelectNavSlot& a, const SelectNavSlot& b) {
                 if (a.relativeTick != b.relativeTick) {
                     return a.relativeTick < b.relativeTick;
@@ -86,8 +86,7 @@ std::vector<SelectNavSlot> buildSelectNavigationSlots(
 
 int findSlotIndexForSelection(const std::vector<SelectNavSlot>& slots,
                               int selectedNoteIdx,
-                              uint32_t bracketTick,
-                              uint32_t loopStartTick,
+                              uint32_t selectedTick,
                               uint32_t loopLength) {
     if (slots.empty()) {
         return -1;
@@ -101,9 +100,9 @@ int findSlotIndexForSelection(const std::vector<SelectNavSlot>& slots,
         }
     }
 
-    const uint32_t relativeBracketTick = noteRelativeTick(bracketTick, loopStartTick, loopLength);
+    const uint32_t phaseSelectedTick = displayPhaseTick(selectedTick, loopLength);
     for (int i = 0; i < (int)slots.size(); i++) {
-        if (slots[i].relativeTick == relativeBracketTick) {
+        if (slots[i].relativeTick == phaseSelectedTick) {
             return i;
         }
     }
@@ -113,7 +112,7 @@ int findSlotIndexForSelection(const std::vector<SelectNavSlot>& slots,
 
 int findSlotIndexForNoteId(const std::vector<SelectNavSlot>& slots,
                            const std::vector<NoteUtils::DisplayNote>& notes,
-                           NoteId noteId, uint32_t bracketTick, uint32_t loopStartTick,
+                           NoteId noteId, uint32_t selectedTick,
                            uint32_t loopLength) {
     if (noteId != kInvalidNoteId) {
         for (int i = 0; i < static_cast<int>(slots.size()); ++i) {
@@ -127,7 +126,7 @@ int findSlotIndexForNoteId(const std::vector<SelectNavSlot>& slots,
             }
         }
     }
-    return findSlotIndexForSelection(slots, -1, bracketTick, loopStartTick, loopLength);
+    return findSlotIndexForSelection(slots, -1, selectedTick, loopLength);
 }
 
 int resolveNoteIdxAtSlot(const SelectNavSlot& slot) {

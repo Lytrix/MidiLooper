@@ -189,15 +189,33 @@ inline int filteredDisplayNoteIndexForNoteId(const NotesVec& filtered, NoteId no
   return -1;
 }
 
+inline uint32_t displayStartTickFromStorageNote(uint32_t storageStart, uint32_t loopStartTick,
+                                                uint32_t loopLength) {
+  if (loopLength == 0) {
+    return storageStart;
+  }
+  const uint32_t displayStart = (storageStart >= loopStartTick)
+                                    ? (storageStart - loopStartTick)
+                                    : (storageStart + loopLength - loopStartTick);
+  return displayStart % loopLength;
+}
+
 template <typename NotesVec>
 inline int filteredDisplayNoteIndexForNoteIdAndStart(const NotesVec& filtered, NoteId noteId,
-                                                     uint32_t startTick) {
+                                                     uint32_t bracketDisplayTick,
+                                                     uint32_t loopStartTick = 0,
+                                                     uint32_t loopLength = 0) {
   if (noteId == kInvalidNoteId) {
     return -1;
   }
   for (int i = 0; i < static_cast<int>(filtered.size()); ++i) {
     const NoteUtils::DisplayNote& dn = filtered[static_cast<size_t>(i)];
-    if (dn.noteId == noteId && dn.startTick == startTick) {
+    if (dn.noteId != noteId) {
+      continue;
+    }
+    const uint32_t displayStart =
+        displayStartTickFromStorageNote(dn.startTick, loopStartTick, loopLength);
+    if (displayStart == bracketDisplayTick) {
       return i;
     }
   }

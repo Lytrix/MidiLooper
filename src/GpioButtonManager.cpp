@@ -138,7 +138,7 @@ void GpioButtonManager::update() {
     if (!encoderButtonHeld && wasEncoderButtonHeld) {
         if (editManager.getNoteEditSessionState().kind == NoteEditKind::Pitch) {
             editManager.applySelectNav(trackManager.getSelectedTrack(),
-                                       editManager.getBracketTick(),
+                                       editManager.getSelectedTick(),
                                        editManager.getLastFader1SelectNoteId());
             if (editManager.getSelectedNoteIdx() >= 0) {
                 noteEditManager.scheduleNoteSelectFaderSync(trackManager.getSelectedTrack());

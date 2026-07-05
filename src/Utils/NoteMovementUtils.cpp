@@ -26,6 +26,12 @@ uint32_t storageTickToDisplayPhase(uint32_t tick, uint32_t loopLength) {
     return IntervalProjection::tickPhaseInLoop(tick, 0, loopLength);
 }
 
+uint32_t bracketDisplayTickFromStorage(uint32_t storageTick, uint32_t loopStartTick,
+                                       uint32_t loopLength) {
+    return NoteEditDisplaySnapshot::displayStartTickFromStorage(storageTick, loopStartTick,
+                                                                loopLength);
+}
+
 }  // namespace
 
 MidiEvent* findNoteOnForOverlapTarget(MidiEventVec& midiEvents, uint8_t channel,
@@ -1171,7 +1177,8 @@ NOTE_EDIT_MEM void finalReconstructAndSelect(Track& track,
                               uint32_t newStart,
                               uint32_t newEnd,
                               uint32_t loopLength,
-                              uint32_t bracketTick) {
+                              uint32_t selectedTick,
+                              bool refreshPlaybackPreview) {
     NoteUtils::sortMidiEventsChronologically(midiEvents);
     int newSelectedIdx = -1;
     const uint32_t displayNewEnd = storageTickToDisplayPhase(newEnd, loopLength);
@@ -1182,9 +1189,26 @@ NOTE_EDIT_MEM void finalReconstructAndSelect(Track& track,
         const NoteUtils::DisplayNoteVec filtered = filterSelectableDisplayNotes(
             midiEvents, focus, track.getMidiChannel(), loopLength);
 
+        const uint32_t loopStartTick = manager.noteEditLoopStartTick(track);
         if (editorSelectionHasNote(selection)) {
-            newSelectedIdx =
-                NoteEditDisplaySnapshot::filteredDisplayNoteIndexForSelection(selection, filtered);
+            newSelectedIdx = NoteEditDisplaySnapshot::filteredDisplayNoteIndexForSelection(
+                selection, filtered, loopStartTick, loopLength);
+            if (newSelectedIdx < 0 && focus.active &&
+                focus.movingNoteId == selection.primaryNote) {
+                EditorSelection retrySelection = selection;
+                const bool lengthBracket =
+                    manager.getNoteEditSessionState().kind == NoteEditKind::Length;
+                const uint32_t storageBracketTick =
+                    lengthBracket ? focus.last.endTick : focus.last.startTick;
+                retrySelection.selectedTick = bracketDisplayTickFromStorage(
+                    storageBracketTick, loopStartTick, loopLength);
+                newSelectedIdx = NoteEditDisplaySnapshot::filteredDisplayNoteIndexForSelection(
+                    retrySelection, filtered, loopStartTick, loopLength);
+                if (newSelectedIdx >= 0) {
+                    manager.applySelectionFromGeometryEdit(track, retrySelection.selectedTick,
+                                                           retrySelection.primaryNote);
+                }
+            }
         }
     } else {
         const std::vector<NoteUtils::DisplayNote> finalNotes =
@@ -1204,24 +1228,29 @@ NOTE_EDIT_MEM void finalReconstructAndSelect(Track& track,
         manager.setSelectedNoteIdx(newSelectedIdx);
         logger.log(CAT_MIDI, LOG_DEBUG, "Updated selectedNoteIdx: %d -> %d (note at new position)",
                    oldSelectedIdx, newSelectedIdx);
-        manager.setBracketTick(bracketTick);
+        if (manager.isNoteEditActive() &&
+            editorSelectionHasNote(manager.getNoteEditSessionState().selection)) {
+            manager.setSelectedTick(manager.getNoteEditSessionState().selection.selectedTick);
+        } else {
+            manager.setSelectedTick(selectedTick);
+        }
     } else if (manager.isNoteEditActive()) {
         if (editorSelectionHasNote(manager.getNoteEditSessionState().selection)) {
             logger.log(CAT_MIDI, LOG_DEBUG,
                        "Keeping selectedNoteIdx %d (moving note not in filtered list)",
                        manager.getSelectedNoteIdx());
-            manager.setBracketTick(bracketTick);
+            manager.setSelectedTick(manager.getNoteEditSessionState().selection.selectedTick);
         } else {
             logger.log(CAT_MIDI, LOG_DEBUG, "Warning: Could not find moved note in filtered list");
-            manager.setBracketTick(bracketTick);
+            manager.setSelectedTick(selectedTick);
         }
     } else {
         logger.log(CAT_MIDI, LOG_DEBUG, "Warning: Could not find moved note in filtered list");
-        manager.setBracketTick(bracketTick);
+        manager.setSelectedTick(selectedTick);
     }
 
     manager.syncSelectedNoteIdxToFilteredInventory(track);
-    track.invalidateCaches();
+    track.invalidateCaches(refreshPlaybackPreview);
     displayManager.requestNoteInfoRefresh(track);
 }
 
@@ -1250,7 +1279,7 @@ NOTE_EDIT_MEM bool applyPitchChange(Track& track, EditManager& manager,
 
     restoreOverlapNotesForPitchLaneClear(midiEvents, manager, track.getMidiChannel(),
                                          currentNoteValue, loopLength);
-    track.invalidateCaches();
+    track.invalidateCaches(true);
 
     const uint8_t channel = track.getMidiChannel();
     if (focus.active && focus.movingNoteId != kInvalidNoteId) {
@@ -1337,7 +1366,7 @@ NOTE_EDIT_MEM bool applyPitchChange(Track& track, EditManager& manager,
         auto [onIndex, offIndex] = NoteUtils::buildEventIndex(midiEvents);
         applyShortenOrDelete(midiEvents, {}, adjacentToDelete, manager, track.getMidiChannel(),
                              loopLength, onIndex, offIndex);
-        track.invalidateCaches();
+        track.invalidateCaches(false);
         notes = track.getCachedNotes();
         logger.log(CAT_MIDI, LOG_DEBUG,
                    "Merged %zu suffix-adjacent same-pitch notes into moving note range %lu-%lu "
@@ -1472,10 +1501,16 @@ NOTE_EDIT_MEM bool applyPitchChange(Track& track, EditManager& manager,
         focus.overlapNotes.erase(focus.movingNoteId);
     }
     if (focus.movingNoteId != kInvalidNoteId) {
-        manager.applySelectionFromGeometryEdit(track, focus.last.startTick, focus.movingNoteId);
+        const uint32_t loopStartTick = manager.noteEditLoopStartTick(track);
+        const uint32_t bracketDisplay =
+            bracketDisplayTickFromStorage(focus.last.startTick, loopStartTick, loopLength);
+        manager.applySelectionFromGeometryEdit(track, bracketDisplay, focus.movingNoteId);
+        finalReconstructAndSelect(track, midiEvents, manager, newNoteValue, noteStart,
+                                  focus.last.endTick, loopLength, bracketDisplay, true);
+        return true;
     }
     finalReconstructAndSelect(track, midiEvents, manager, newNoteValue, noteStart,
-                              focus.last.endTick, loopLength, focus.last.startTick);
+                              focus.last.endTick, loopLength, noteStart, true);
     return true;
 }
 
@@ -1504,7 +1539,7 @@ NOTE_EDIT_MEM void moveNoteWithOverlapHandling(Track& track, EditManager& manage
     // If there's no actual movement, just update the bracket position and return
     if (delta == 0) {
         logger.log(CAT_MIDI, LOG_DEBUG, "No movement (delta=0), just updating bracket position to %lu", targetTick);
-        manager.setBracketTick(targetTick);
+        manager.setSelectedTick(targetTick);
         return;
     }
     
@@ -1652,15 +1687,15 @@ NOTE_EDIT_MEM void moveNoteWithOverlapHandling(Track& track, EditManager& manage
                   movingNotePitch, currentStart, currentEnd);
     }
 
+    const uint32_t loopStartTick = manager.noteEditLoopStartTick(track);
+    const uint32_t bracketDisplay =
+        bracketDisplayTickFromStorage(newStart, loopStartTick, loopLength);
     if (focus.active && focus.movingNoteId != kInvalidNoteId) {
-        const uint32_t bracketDisplay = storageTickToDisplayPhase(newStart, loopLength);
         manager.applySelectionFromGeometryEdit(track, bracketDisplay, focus.movingNoteId);
     }
 
     finalReconstructAndSelect(track, midiEvents, manager, movingNotePitch, newStart,
-                              displayEndForBracket, loopLength, newStart);
-
-    track.invalidateCaches();
+                              displayEndForBracket, loopLength, bracketDisplay, false);
 }
 
 NOTE_EDIT_MEM void changeLengthWithOverlapHandling(Track& track, EditManager& manager,
@@ -1694,7 +1729,9 @@ NOTE_EDIT_MEM void changeLengthWithOverlapHandling(Track& track, EditManager& ma
     uint32_t displayCurrentEnd = currentEnd;
 
     if (targetEndTick == currentEnd) {
-        manager.setBracketTick(storageTickToDisplayPhase(targetEndTick, loopLength));
+        const uint32_t loopStartTick = manager.noteEditLoopStartTick(track);
+        manager.setSelectedTick(
+            bracketDisplayTickFromStorage(targetEndTick, loopStartTick, loopLength));
         return;
     }
 
@@ -1793,7 +1830,13 @@ NOTE_EDIT_MEM void changeLengthWithOverlapHandling(Track& track, EditManager& ma
             NoteMovementUtils::linearStorageOffTickForSpanEnd(newStart, noteLen);
         noteOffEvent->tick = linearStorageOff;
         noteEditFocusApplyLengthEnd(manager.getEditSession().focus, linearStorageOff);
-        manager.setBracketTick(displayNewEnd);
+        const uint32_t loopStartTick = manager.noteEditLoopStartTick(track);
+        const uint32_t bracketDisplay =
+            bracketDisplayTickFromStorage(newEnd, loopStartTick, loopLength);
+        if (focus.active && focus.movingNoteId != kInvalidNoteId) {
+            manager.applySelectionFromGeometryEdit(track, bracketDisplay, focus.movingNoteId);
+        }
+        manager.setSelectedTick(bracketDisplay);
         logger.log(CAT_MIDI, LOG_DEBUG,
                   "Updated note events after length overlap: pitch=%d, start=%lu, linearEnd=%lu",
                   notePitch, newStart, linearStorageOff);
@@ -1803,12 +1846,13 @@ NOTE_EDIT_MEM void changeLengthWithOverlapHandling(Track& track, EditManager& ma
                   notePitch, noteStart, displayCurrentEnd);
     }
 
+    const uint32_t loopStartTick = manager.noteEditLoopStartTick(track);
+    const uint32_t lengthBracketDisplay =
+        bracketDisplayTickFromStorage(newEnd, loopStartTick, loopLength);
     finalReconstructAndSelect(track, midiEvents, manager, notePitch, newStart, newEnd, loopLength,
-                              displayNewEnd);
+                              lengthBracketDisplay, false);
 
     NoteUtils::orderSamePitchNoteOffsForLifo(midiEvents, track.getMidiChannel(), notePitch);
-
-    track.invalidateCaches();
 }
 
 // Extend shortened notes dynamically

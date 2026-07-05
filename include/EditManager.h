@@ -45,8 +45,8 @@ public:
 
     // State pattern helpers
     void selectClosestNote(Track& track, uint32_t startTick);
-    /// Select the note whose start equals bracketTick (falls back to closest).
-    void selectNoteAtBracket(Track& track, uint32_t bracketTick);
+    /// Select the note whose start equals selectedTick (falls back to closest).
+    void selectNoteAtBracket(Track& track, uint32_t selectedTick);
     void moveBracket(Track& track, int delta);
     void switchToNextState(Track& track);
 
@@ -86,10 +86,10 @@ public:
 
     NoteEditSessionState& getNoteEditSessionState() { return sessionState; }
     const NoteEditSessionState& getNoteEditSessionState() const { return sessionState; }
-    void applySelectNav(Track& track, uint32_t bracketTick, NoteId primaryNote,
+    void applySelectNav(Track& track, uint32_t selectedTick, NoteId primaryNote,
                         bool requestFaderSync = false, bool skipFader1Outbound = false);
     /** Geometry edit: refresh EditorSelection + UI immediately; no dependent motor scheduling. */
-    void applySelectionFromGeometryEdit(Track& track, uint32_t bracketTick, NoteId primaryNote);
+    void applySelectionFromGeometryEdit(Track& track, uint32_t selectedTick, NoteId primaryNote);
     /// Geometry edit: refresh bracket + display only; preserve selectedNoteIdx and edit state.
     void syncGeometrySelectionToUi(Track& track);
     /// Encoder / legacy helpers: step fader-1 nav slots over windowed selectable inventory.
@@ -124,6 +124,8 @@ public:
     const MidiEventVec& sessionMidiEvents() const;
     void bumpSessionPreviewRevision();
     uint32_t sessionPreviewRevision() const { return sessionPreviewRevision_; }
+    void bumpSessionPlaybackPreviewRevision();
+    uint32_t sessionPlaybackPreviewRevision() const { return sessionPlaybackPreviewRevision_; }
 
     /// Returns session store during note edit, else loop materialized events.
     MidiEventVec& editMidiEvents(Track& track);
@@ -137,7 +139,8 @@ public:
 
     // Getters
     EditNoteState* getCurrentState() const { return currentState; }
-    uint32_t getBracketTick() const { return bracketTick; }
+    uint32_t getSelectedTick() const { return selectedTick; }
+    [[deprecated("use getSelectedTick")]] uint32_t getBracketTick() const { return selectedTick; }
     int getSelectedNoteIdx() const { return selectedNoteIdx; }
     /// Last successful fader-1 select **NoteId** (delete target when set).
     NoteId getLastFader1SelectNoteId() const { return lastFader1SelectNoteId; }
@@ -146,8 +149,8 @@ public:
     // Reset selection
     void resetSelection();
     void setSelectedNoteIdx(int idx);
-    // Allow direct setting of the bracket tick (for precise note movement)
-    void setBracketTick(uint32_t tick) { bracketTick = tick; }
+      void setSelectedTick(uint32_t tick) { selectedTick = tick; }
+    [[deprecated("use setSelectedTick")]] void setBracketTick(uint32_t tick) { selectedTick = tick; }
     void setHasMovedBracket(bool moved) { hasMovedBracket = moved; }
 
     // Get state instances
@@ -211,7 +214,7 @@ public:
 private:
     size_t bakeNoteEditSessionStoreToPasses(Track& track);
     void persistActiveNoteEditSession(Track& track);
-    uint32_t bracketTick = 0;
+    uint32_t selectedTick = 0;
     int selectedNoteIdx = -1; // -1 means no note selected
     NoteId lastFader1SelectNoteId = kInvalidNoteId;
     bool hasMovedBracket = false; // true if the bracket has been moved since entering edit mode
@@ -223,6 +226,7 @@ private:
     NoteEditKind lastPushedGeometryKind_ = NoteEditKind::Select;
     bool encoderCycleNeedsAnchor_ = false;
     uint32_t sessionPreviewRevision_ = 0;
+    uint32_t sessionPlaybackPreviewRevision_ = 0;
     // Add more states as needed
     
     // EditModeManager state

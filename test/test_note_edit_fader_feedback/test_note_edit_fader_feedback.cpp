@@ -173,7 +173,7 @@ void test_same_ref_different_index_does_not_trigger_apply() {
         1, 1, 483, 483));
     EditorSelection prior{};
     prior.primaryNote = 1;
-    prior.bracketTick = 483;
+    prior.selectedTick = 483;
     TEST_ASSERT_FALSE(editorSelectionTargetChanged(prior, 483, 1));
 }
 
@@ -319,9 +319,9 @@ void test_outbound_coarse_uses_loop_relative_tick_with_nonzero_loop_start() {
 void test_empty_step_bracket_rel_tick_maps_to_coarse_pitchbend() {
     const uint32_t loopLength = 1536;
     const uint32_t loopStartTick = 0;
-    const uint32_t bracketTick = 144;
+    const uint32_t selectedTick = 144;
     const uint32_t relTick =
-        loopRelativeTickForTest(bracketTick, loopStartTick, loopLength);
+        loopRelativeTickForTest(selectedTick, loopStartTick, loopLength);
     TEST_ASSERT_EQUAL_UINT32(144, relTick);
     const int16_t pb =
         NoteEditLengthFaderMapping::loopTickToCoarsePitchbend(relTick, loopLength);
@@ -484,8 +484,8 @@ void test_select_dependent_settle_ms_in_capture_window() {
 }
 
 void test_reference_step_from_bracket_tick() {
-    const uint32_t bracketTick = 477U;
-    const uint32_t referenceStep = bracketTick / Config::TICKS_PER_16TH_STEP;
+    const uint32_t selectedTick = 477U;
+    const uint32_t referenceStep = selectedTick / Config::TICKS_PER_16TH_STEP;
     TEST_ASSERT_EQUAL(9U, referenceStep);
 }
 
@@ -526,7 +526,7 @@ void test_filtered_display_note_index_for_selection() {
 
     EditorSelection sel{};
     sel.primaryNote = 2;
-    sel.bracketTick = 483;
+    sel.selectedTick = 483;
     TEST_ASSERT_EQUAL(1, NoteEditDisplaySnapshot::filteredDisplayNoteIndexForSelection(sel, notes));
     const std::vector<NoteUtils::DisplayNote> singleNote{notes[0]};
     TEST_ASSERT_EQUAL(-1, NoteEditDisplaySnapshot::filteredDisplayNoteIndexForSelection(sel, singleNote));
@@ -540,13 +540,77 @@ void test_filtered_display_note_index_for_selection_wrap_segment() {
 
     EditorSelection tailSel{};
     tailSel.primaryNote = kWrapId;
-    tailSel.bracketTick = 1472;
+    tailSel.selectedTick = 1472;
     TEST_ASSERT_EQUAL(0, NoteEditDisplaySnapshot::filteredDisplayNoteIndexForSelection(tailSel, notes));
 
     EditorSelection headSel{};
     headSel.primaryNote = kWrapId;
-    headSel.bracketTick = 0;
+    headSel.selectedTick = 0;
     TEST_ASSERT_EQUAL(1, NoteEditDisplaySnapshot::filteredDisplayNoteIndexForSelection(headSel, notes));
+}
+
+void test_geometry_selection_bracket_with_loop_start_offset() {
+    constexpr NoteId kNoteId = 34;
+    const uint32_t loopLength = 1536;
+    const uint32_t loopStartTick = 11;
+    const uint32_t storageStart = 808;
+    const uint32_t displayBracket = 797;
+
+    std::vector<NoteUtils::DisplayNote> notes;
+    notes.push_back({kNoteId, 78, 100, storageStart, storageStart + 48});
+
+    EditorSelection selection{};
+    selection.primaryNote = kNoteId;
+    selection.selectedTick = displayBracket;
+
+    TEST_ASSERT_EQUAL(
+        0, NoteEditDisplaySnapshot::filteredDisplayNoteIndexForSelection(
+               selection, notes, loopStartTick, loopLength));
+
+    EditorSelection wrongBracket = selection;
+    wrongBracket.selectedTick = storageStart;
+    TEST_ASSERT_EQUAL(
+        -1, NoteEditDisplaySnapshot::filteredDisplayNoteIndexForSelection(
+                wrongBracket, notes, loopStartTick, loopLength));
+}
+
+void test_geometry_selection_bracket_loop_start_zero() {
+    constexpr NoteId kNoteId = 16;
+    const uint32_t loopLength = 1536;
+    const uint32_t loopStartTick = 0;
+    const uint32_t storageStart = 665;
+
+    std::vector<NoteUtils::DisplayNote> notes;
+    notes.push_back({kNoteId, 16, 100, storageStart, storageStart + 192});
+
+    EditorSelection selection{};
+    selection.primaryNote = kNoteId;
+    selection.selectedTick = storageStart;
+
+    TEST_ASSERT_EQUAL(
+        0, NoteEditDisplaySnapshot::filteredDisplayNoteIndexForSelection(
+               selection, notes, loopStartTick, loopLength));
+}
+
+void test_geometry_selection_bracket_after_storage_to_display_conversion() {
+    constexpr NoteId kNoteId = 75;
+    const uint32_t loopLength = 1536;
+    const uint32_t loopStartTick = 11;
+    const uint32_t storageStart = 1203;
+    const uint32_t displayBracket =
+        NoteEditDisplaySnapshot::displayStartTickFromStorage(storageStart, loopStartTick, loopLength);
+
+    std::vector<NoteUtils::DisplayNote> notes;
+    notes.push_back({kNoteId, 75, 100, storageStart, storageStart + 48});
+
+    EditorSelection selection{};
+    selection.primaryNote = kNoteId;
+    selection.selectedTick = displayBracket;
+
+    TEST_ASSERT_EQUAL(1192U, displayBracket);
+    TEST_ASSERT_EQUAL(
+        0, NoteEditDisplaySnapshot::filteredDisplayNoteIndexForSelection(
+               selection, notes, loopStartTick, loopLength));
 }
 
 void test_window_filter_excludes_notes_outside_nav_inventory() {
@@ -726,6 +790,25 @@ void test_motor_value_changed_includes_f3_fine_cc() {
         planned, 100, 70, 60, true, true, true));
 }
 
+void test_dependent_snapshot_select_target_projected_phase_not_double_converted() {
+    NoteEditDependentFaderBuildInput input{};
+    input.loopLength = 1536;
+    input.loopStartTick = 11;
+    input.selectTarget.active = true;
+    input.selectTarget.absoluteTargetTick = 0;
+    input.selectTarget.noteIdx = 2;
+    input.selectNoteStartTick = 11;
+    input.selectNotePitch = 50;
+    input.hasSelectNote = true;
+
+    const NoteEditDependentFaderSnapshot snapshot = buildDependentFaderSnapshot(input);
+    TEST_ASSERT_TRUE(snapshot.coarseValid);
+    TEST_ASSERT_TRUE(snapshot.fineValid);
+    TEST_ASSERT_TRUE(snapshot.valid);
+    TEST_ASSERT_EQUAL_INT16(MidiConfig::Pitchbend::MIN, snapshot.coarsePitchbend);
+    TEST_ASSERT_EQUAL_UINT8(50, snapshot.noteValueCc);
+}
+
 int main(int argc, char** argv) {
     (void)argc;
     (void)argv;
@@ -778,6 +861,9 @@ int main(int argc, char** argv) {
     RUN_TEST(test_display_note_info_snapshot_from_ref_wrap_formula);
     RUN_TEST(test_filtered_display_note_index_for_selection);
     RUN_TEST(test_filtered_display_note_index_for_selection_wrap_segment);
+    RUN_TEST(test_geometry_selection_bracket_with_loop_start_offset);
+    RUN_TEST(test_geometry_selection_bracket_loop_start_zero);
+    RUN_TEST(test_geometry_selection_bracket_after_storage_to_display_conversion);
     RUN_TEST(test_window_filter_excludes_notes_outside_nav_inventory);
     RUN_TEST(test_window_inclusion_filter_preserves_storage_ticks);
     RUN_TEST(test_fine_position_loop_relative_tick_with_nonzero_loop_start);
@@ -790,6 +876,7 @@ int main(int argc, char** argv) {
     RUN_TEST(test_stale_latch_ignores_f4_wrap_echo);
     RUN_TEST(test_stale_latch_accepts_user_pitch_after_latch_refresh);
     RUN_TEST(test_dependent_snapshot_position_mode_nonzero_loop_start);
+    RUN_TEST(test_dependent_snapshot_select_target_projected_phase_not_double_converted);
     RUN_TEST(test_motor_value_changed_includes_f3_fine_cc);
     return UNITY_END();
 }

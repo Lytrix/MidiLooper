@@ -298,7 +298,7 @@ ProjectionContext buildEditProjectionContext(const EditorSelection& selection, u
     context.type = ProjectionType::Edit;
     context.loopLength = loopLength;
     context.window = analysisWindow;
-    context.selectedTick = static_cast<int32_t>(selection.bracketTick);
+    context.selectedTick = static_cast<int32_t>(selection.selectedTick);
     context.originTick = primaryLinearStartTick;
     context.loopStartTick = loopStartTick;
     (void)selection.primaryNote;

@@ -42,6 +42,21 @@ bool isMotorFaderUsbHostServiceMessage(uint8_t type, uint8_t channel, uint8_t da
   return data1 == MidiConfig::Fader::FINE_MOTOR_TRIGGER_NOTE ||
          data1 == MidiConfig::Fader::NOTE_VALUE_MOTOR_TRIGGER_NOTE;
 }
+
+bool isDroidFaderFeedbackOnlyPitchbend(uint8_t channel) {
+  return channel == MidiConfig::Fader::COARSE_CHANNEL ||
+         channel == MidiConfig::Fader::SELECT_CHANNEL;
+}
+
+bool isDroidFaderFeedbackOnlyControlChange(uint8_t channel, uint8_t cc) {
+  if (channel == MidiConfig::Fader::FINE_CHANNEL) {
+    return cc == MidiConfig::Fader::FINE_CC || cc == MidiConfig::Fader::NOTE_VALUE_CC;
+  }
+  if (channel == MidiConfig::LoopEdit::LENGTH_CC_CHANNEL) {
+    return cc == MidiConfig::LoopEdit::LENGTH_CC_NUMBER;
+  }
+  return false;
+}
 }  // namespace
 
 // Helper function to get readable MIDI message type name
@@ -561,10 +576,13 @@ void MidiHandler::sendMidiEvent(const MidiEvent& event) {
         case midi::ControlChange: {
             // Skip CC 123 (All Notes Off) on LED channels - preserves DROID button LEDs on USB
             const bool skipCc123OnLedCh = (event.data.ccData.cc == 123 && isLedChannel(event.channel));
-            if (outputUSB && !skipCc123OnLedCh) {
+            const bool droidFaderFeedbackOnly =
+                usbHostMIDI &&
+                isDroidFaderFeedbackOnlyControlChange(event.channel, event.data.ccData.cc);
+            if (outputUSB && !skipCc123OnLedCh && !droidFaderFeedbackOnly) {
                 usbMIDI.sendControlChange(event.data.ccData.cc, event.data.ccData.value, event.channel);
             }
-            if (outputSerial) {
+            if (outputSerial && !droidFaderFeedbackOnly) {
                 MIDIserial.sendControlChange(event.data.ccData.cc, event.data.ccData.value, event.channel);
             }
             if (usbHostMIDI && !skipCc123OnLedCh) {
@@ -577,8 +595,14 @@ void MidiHandler::sendMidiEvent(const MidiEvent& event) {
         case midi::PitchBend: {
             const int16_t wirePitch =
                 MidiConfig::Pitchbend::logicalToWireSigned(event.data.pitchBend);
-            if (outputUSB) usbMIDI.sendPitchBend(wirePitch, event.channel);
-            if (outputSerial) MIDIserial.sendPitchBend(wirePitch, event.channel);
+            const bool droidFaderFeedbackOnly =
+                usbHostMIDI && isDroidFaderFeedbackOnlyPitchbend(event.channel);
+            if (outputUSB && !droidFaderFeedbackOnly) {
+                usbMIDI.sendPitchBend(wirePitch, event.channel);
+            }
+            if (outputSerial && !droidFaderFeedbackOnly) {
+                MIDIserial.sendPitchBend(wirePitch, event.channel);
+            }
             if (usbHostMIDI) {
                 paceDroidUsbHostBeforeSend();
                 usbHostMIDI.sendPitchBend(wirePitch, event.channel);
