@@ -144,4 +144,7 @@ uint32_t playbackEventPhase(uint32_t storageTick, uint32_t loopLength);
 /// Map one storage event tick to in-loop playback phase `[0, loopLength)`.
 uint32_t projectPlaybackEventPhase(uint32_t storageTick, const ProjectionContext& context);
 
+/// Display segment whose length exceeds half the loop is usually wrap projection, not linear span.
+bool isInflatedDisplaySpan(const NoteUtils::DisplayNote& displayNote, uint32_t loopLength);
+
 }  // namespace IntervalProjection

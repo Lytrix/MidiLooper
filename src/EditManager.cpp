@@ -311,19 +311,18 @@ void EditManager::syncSelectedNoteIdxToFilteredInventory(Track& track) {
     }
 }
 
-std::vector<DisplayNote> EditManager::selectableDisplayNotesAtEditSelect(const Track& track) const {
+NoteUtils::DisplayNoteVec EditManager::selectableDisplayNotesAtEditSelect(const Track& track) const {
     const uint32_t loopLength = track.getLoopLength();
     if (isNoteEditActive()) {
         return filterSelectableDisplayNotes(track.editAwareMidiEvents(), editSession.focus,
                                             track.getMidiChannel(), loopLength);
     }
-    const auto& cachedNotes = track.getCachedNotes();
-    return std::vector<DisplayNote>(cachedNotes.begin(), cachedNotes.end());
+    return track.getCachedNotes();
 }
 
 DisplayNote EditManager::liveEditDisplayNoteAtSelect(const Track& track) const {
     const int idx = getSelectedNoteIdx();
-    const std::vector<DisplayNote> notes = selectableDisplayNotesAtEditSelect(track);
+    const NoteUtils::DisplayNoteVec& notes = selectableDisplayNotesAtEditSelect(track);
     if (idx < 0 || idx >= static_cast<int>(notes.size())) {
         return {};
     }
@@ -652,12 +651,12 @@ EditPassId EditManager::commitEditAction(Track& track, EditPassVec rows) {
     return lastId;
 }
 
-void EditManager::pushSessionUndoOnKindChange(Track& track, NoteEditKind kind) {
+bool EditManager::pushSessionUndoOnKindChange(Track& track, NoteEditKind kind) {
     if (!shouldPushGeometryKindUndo(lastPushedGeometryKind_, kind)) {
-        return;
+        return true;
     }
     if (!editSession.active) {
-        return;
+        return true;
     }
     if (editSession.store.isFlatDirty()) {
         editSession.store.syncFlatToStore();
@@ -672,10 +671,11 @@ void EditManager::pushSessionUndoOnKindChange(Track& track, NoteEditKind kind) {
                    static_cast<unsigned>(Config::HEAP_RESERVE_BYTES +
                                          estimatedSessionUndoEntryBytes(entry)),
                    static_cast<unsigned>(MemoryMonitor::getInternalHeapFreeBytes()));
-        return;
+        return false;
     }
     lastPushedGeometryKind_ = kind;
     (void)track;
+    return true;
 }
 
 void EditManager::foldLiveCaptureIntoNoteEditSession(Track& track, uint32_t closeTick) {
@@ -769,9 +769,9 @@ void EditManager::applyGeometryKindFromControl(Track& track, NoteEditKind kind,
     }
 }
 
-void EditManager::beginGeometryMutation(Track& track, NoteEditKind kind, bool fromFaderControl) {
+bool EditManager::beginGeometryMutation(Track& track, NoteEditKind kind, bool fromFaderControl) {
     applyGeometryKindFromControl(track, kind, fromFaderControl);
-    pushSessionUndoOnKindChange(track, kind);
+    return pushSessionUndoOnKindChange(track, kind);
 }
 
 void EditManager::resetNoteEditSessionState() {
@@ -838,7 +838,7 @@ void EditManager::applyCycleEditKind(Track& track) {
 
 void EditManager::syncNoteEditSessionStateToUi(Track& track) {
   const int prevSelectedIdx = selectedNoteIdx;
-  const std::vector<DisplayNote> notes = selectableDisplayNotesAtEditSelect(track);
+  const NoteUtils::DisplayNoteVec& notes = selectableDisplayNotesAtEditSelect(track);
   if (editorSelectionHasNote(sessionState.selection)) {
     selectedNoteIdx = NoteEditDisplaySnapshot::filteredDisplayNoteIndexForSelection(
         sessionState.selection, notes);

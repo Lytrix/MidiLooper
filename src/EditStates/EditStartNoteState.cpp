@@ -18,7 +18,7 @@ void EditStartNoteState::onEnter(EditManager& manager, Track& track, uint32_t st
 
     const int idx = manager.getSelectedNoteIdx();
     if (idx >= 0) {
-        const std::vector<NoteUtils::DisplayNote> notes =
+        const NoteUtils::DisplayNoteVec& notes =
             manager.selectableDisplayNotesAtEditSelect(track);
         if (idx < static_cast<int>(notes.size())) {
             const NoteUtils::DisplayNote& selected = notes[static_cast<size_t>(idx)];

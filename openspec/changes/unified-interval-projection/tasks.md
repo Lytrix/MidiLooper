@@ -57,12 +57,13 @@
 
 ## 5. Integration + HITL (Phase 5 — core migration gate)
 
-- [ ] 5.1 Retire or thin-wrap duplicate helpers: `resolveLinearNoteSpanForOverlap`, `isInflatedDisplaySpan` (edit path)
-- [ ] 5.2 Grep gate — no consumer-local wrap math outside `IntervalProjection` helpers
-- [ ] 5.3 Migrate `MidiLedManager` / `SelectNavigation` phase modulo to centralized helpers
-- [ ] 5.4 `pio test -e native` full suite
+- [x] 5.1 Retire or thin-wrap duplicate helpers: `resolveLinearNoteSpanForOverlap`, `isInflatedDisplaySpan` (edit path)
+- [x] 5.2 Grep gate — no consumer-local wrap math outside `IntervalProjection` helpers
+- [x] 5.3 Migrate `MidiLedManager` / `SelectNavigation` phase modulo to centralized helpers
+- [x] 5.4 `pio test -e native` full suite
+- [x] 5.5a Native session invariant — **NTS-U1** [`test_note_edit_track_switch`](../../test/test_note_edit_track_switch/) (departing session + new loop length regression; reopen rematerialize)
 - [ ] 5.5 HITL: 152335 move-across-boundary; long-loop display; NOTE_EDIT playback audition; slot queued start (short-press)
-- [ ] 5.6 Update LOOP_MIDI guide NOTE_EDIT § — Edit projection replaces `normalizeWrapToLinear` bullet
+- [x] 5.6 Update LOOP_MIDI guide NOTE_EDIT § — Edit projection replaces `normalizeWrapToLinear` bullet
 
 ## 6. Unblock overlap (Phase 6)
 
@@ -95,6 +96,19 @@
 - [ ] 8.4 Native + HITL slice audition/loop
 - [ ] 8.5 Update control-surface docs — 16th slice + **`TriggerEvent`** capture gestures
 
+## 9. Type-boundary hygiene (after Phases 1–6 complete)
+
+**When:** after Phase 6 archive (`openspec/specs/unified-interval-projection/`) — not during active consumer migration. **No behavior change**; readability and one-place casts only.
+
+- [ ] 9.1 Add tick boundary helpers on **`IntervalProjection`** (or adjacent `TickPhase` shims) — e.g. `loopLengthToWindowEnd`, `storageTickToIntervalStart`, `intervalStartToStorageTick` (range-checked), `projectionCycleAnchorForPhase` (signed-safe; replace blind `static_cast<uint32_t>(projectionCycleStartTick)` in `tickPhaseInProjectionCycle`)
+- [ ] 9.2 Centralize repeated `TickInterval{0, static_cast<int32_t>(loopLength)}` — route through existing `makeFullLoop*Window` at call sites that still cast inline
+- [ ] 9.3 Sweep UIP consumer call sites — **`Track.cpp`**, **`NoteMovementUtils`**, **`DisplayWindowUtils`**, **`MidiLedManager`**, **`NoteUtils`** (projection path only): replace tick-boundary `static_cast` with helpers; leave logger/`printf` and vector `ptrdiff_t` casts as-is
+- [ ] 9.4 Document signed/`TickInterval` vs unsigned storage/`loopLength` split in `design.md` § type boundaries (one short table; no type unification)
+- [ ] 9.5 Grep gate — no new consumer-local `static_cast<int32_t>(loopLength)` or `static_cast<uint32_t>(storageTick)` outside `IntervalProjection.cpp` / helpers
+- [ ] 9.6 `pio test -e native` full suite — parity only (no fixture changes expected)
+
+**Out of scope:** unifying `MidiEvent.tick` / `loopLengthTicks` to `int32_t`; changing SD or HITL wire formats.
+
 ## Verification checklist
 
 ```bash
@@ -103,6 +117,7 @@ pio test -e native -f test_interval_projection
 pio test -e native -f test_noteutils_reconstruct
 pio test -e native -f test_display_window_utils
 pio test -e native -f test_note_edit_focus
+pio test -e native -f test_note_edit_track_switch
 openspec validate unified-interval-projection
 ```
 
@@ -121,3 +136,12 @@ Firmware build (ask before upload): `pio run -e teensy41-capture-serial`
 | Change | Blocked work |
 |--------|----------------|
 | `edit-session-action-geometry` | Phases 1–4 firmware; `EditSessionAction.h`, analyze, resolver, apply, wire |
+
+## TODO
+
+- [ ] **NOTE_EDIT track switch — integration test backlog** — plan: [`docs/plans/note_edit_track_switch_integration_test_list_enhancement.md`](../../docs/plans/note_edit_track_switch_integration_test_list_enhancement.md). Fix: `TrackManager::setSelectedTrack` → `editManager.beforeSelectedTrackChange` + `onTrackChanged` → `reopenNoteEditSession`. Evidence: `captures/session_20260705_213626.log`.
+  - [x] **NTS-U1** — native session invariant (`test_note_edit_track_switch`, 3 cases) — task **5.5a**
+  - [ ] **NTS-I1–I6** — native stub harness: `setSelectedTrack` lifecycle, commit-on-depart, focus sync, display cache invalidation, LOOP_EDIT branch
+  - [ ] **NTS-I7–I10** — playback / `editAwareMidiEvents` coupling; selected-track preview scoping (**NTS-I8** = `cdfa032` regression); **NTS-I9** / **NTS-I10** xfail until mid-play reanchor + STOPPED→play bugs fixed
+  - [ ] **NTS-H1–H5** — HITL `note_edit_track_switch_*` scenarios + serial verifiers; register in [`HITL_TEST_SCENARIOS.md`](../../docs/Guides/HITL_TEST_SCENARIOS.md)
+- [ ] **Long-loop display — play/stop hold vs window follow:** HITL `long_loop_display_window` (5.5) currently accepts hold via indirect proof (play/stop button release `duration≥hold_track_ms`; verify mode `indirect_button_hold`). The hold gesture runs, but **`MidiButtonManager` / `MidiButtonActions` still route play/stop through normal toggle logic** — long-press release fires `CENTER_DETAILED_WINDOW_ON_PLAYHEAD` (`handleCenterDetailedWindowOnPlayhead`); sustained hold does not enter a dedicated window-follow path separate from play/stop. **Follow-up:** while play/stop is held during playback (especially in NOTE_EDIT), window scroll should track playhead without play/stop side effects; add explicit hold-layer or suppress toggle during hold; emit sparse window telemetry (`#DBG` or rate-limited `SC_DISP_WINDOW`) so verify can assert `window_start` movement without per-frame heap in `DisplayManager`. Ref: `MidiButtonActions.cpp` (play/stop long-press comment ~L73), `scripts/hitl/verify/display_window.py` hold fallback.

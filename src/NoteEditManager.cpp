@@ -216,7 +216,11 @@ void NoteEditManager::handleMidiCC(uint8_t channel, uint8_t ccNumber, uint8_t va
 }
 
 void NoteEditManager::moveNoteToPosition(Track& track, const NoteUtils::DisplayNote& currentNote, std::uint32_t targetTick) {
-    editManager.beginGeometryMutation(track, NoteEditKind::Move, true);
+    if (!editManager.beginGeometryMutation(track, NoteEditKind::Move, true)) {
+        logger.log(CAT_MIDI, LOG_WARNING,
+                   "Note move aborted: session undo snapshot unavailable (heap reserve)");
+        return;
+    }
     uint32_t fromStart = currentNote.startTick;
     const NoteEditFocus& focus = editManager.getEditSession().focus;
     if (focus.active && focus.last.pitch == currentNote.note &&
@@ -249,7 +253,11 @@ void NoteEditManager::moveNoteToPosition(Track& track, const NoteUtils::DisplayN
 void NoteEditManager::changeNoteEndWithOverlapHandling(Track& track,
                                                        const NoteUtils::DisplayNote& currentNote,
                                                        std::uint32_t targetEndTick) {
-    editManager.beginGeometryMutation(track, NoteEditKind::Length, true);
+    if (!editManager.beginGeometryMutation(track, NoteEditKind::Length, true)) {
+        logger.log(CAT_MIDI, LOG_WARNING,
+                   "Note length change aborted: session undo snapshot unavailable (heap reserve)");
+        return;
+    }
     logger.log(CAT_MIDI, LOG_DEBUG,
                "Note length change with overlap handling: pitch=%d, start=%lu, end %lu->%lu",
                currentNote.note, currentNote.startTick, currentNote.endTick, targetEndTick);
@@ -604,7 +612,7 @@ void NoteEditManager::syncSelectionFromGeometryEdit(Track& track) {
     } else {
         const int selectedIdx = editManager.getSelectedNoteIdx();
         if (selectedIdx >= 0) {
-            const std::vector<NoteUtils::DisplayNote> notes =
+            const NoteUtils::DisplayNoteVec& notes =
                 editManager.selectableDisplayNotesAtEditSelect(track);
             if (selectedIdx < static_cast<int>(notes.size())) {
                 const NoteUtils::DisplayNote& selected = notes[static_cast<size_t>(selectedIdx)];
@@ -1578,7 +1586,7 @@ std::vector<NoteUtils::DisplayNote> NoteEditManager::selectableDisplayNotesForEd
         notes.assign(cachedNotes.begin(), cachedNotes.end());
     } else {
         const NoteEditFocus& focus = editManager.getEditSession().focus;
-        const std::vector<NoteUtils::DisplayNote> filtered =
+        const NoteUtils::DisplayNoteVec filtered =
             filterSelectableDisplayNotes(track.editAwareMidiEvents(), focus,
                                          track.getMidiChannel(), loopLength);
         notes.assign(filtered.begin(), filtered.end());

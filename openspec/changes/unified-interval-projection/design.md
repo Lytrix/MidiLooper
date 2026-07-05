@@ -734,6 +734,15 @@ candidate.start < window.end && candidate.end > window.start
 - Display-wrap skip branches in `NoteMovementUtils`
 - Consumer-local modulo wrap for overlap/display/playback
 - `normalizeWrapToLinear` identifier in overlap OpenSpec tasks
+- Repeated tick-boundary `static_cast` at UIP consumer call sites (Phase 9 hygiene — helpers only)
+
+---
+
+## Type boundaries (post-migration hygiene — Phase 9)
+
+**Signed vs unsigned is intentional (D3b):** `TickInterval` / projected spans use **`int32_t`** (negative k-shifts, windows before origin). Storage ticks, loop period, and playhead phase APIs stay **`uint32_t`** (brownfield `MidiEvent`, loop headers, SD).
+
+Casts belong at the boundary, not at every call site. After Phase 6 archive, Phase 9 adds named helpers (`storageTickToIntervalStart`, `projectionCycleAnchorForPhase`, etc.) and sweeps consumers — **no type unification**, **no behavior change**. See `tasks.md` §9.
 
 ---
 

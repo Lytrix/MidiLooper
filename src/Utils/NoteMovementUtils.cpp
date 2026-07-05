@@ -10,6 +10,7 @@
 #include "Utils/NoteEditDisplaySnapshot.h"
 #include "Utils/MidiEventUtils.h"
 #include "Utils/NoteMovementUtils.h"
+#include "Utils/IntervalProjection.h"
 #include "Globals.h"
 #include "Utils/DebugSessionCapture.h"
 #include <algorithm>
@@ -18,6 +19,14 @@
 #include "Utils/NoteEditMem.h"
 
 namespace NoteMovementUtils {
+
+namespace {
+
+uint32_t storageTickToDisplayPhase(uint32_t tick, uint32_t loopLength) {
+    return IntervalProjection::tickPhaseInLoop(tick, 0, loopLength);
+}
+
+}  // namespace
 
 MidiEvent* findNoteOnForOverlapTarget(MidiEventVec& midiEvents, uint8_t channel,
                                       const NoteUtils::DisplayNote& dn, NoteId noteId);
@@ -533,7 +542,7 @@ NOTE_EDIT_MEM void findOverlaps(const std::vector<NoteUtils::DisplayNote>& curre
     (void)delta;
     const NoteEditFocus& focus = editFocus(manager);
 
-    uint32_t displayNewEnd = newEnd % loopLength;
+    uint32_t displayNewEnd = storageTickToDisplayPhase(newEnd, loopLength);
 
     for (const auto& note : currentNotes) {
         if (movingNoteId != kInvalidNoteId && note.noteId == movingNoteId) {
@@ -791,8 +800,7 @@ NOTE_EDIT_MEM MidiEvent* resolveNoteOffForEditSpan(MidiEventVec& midiEvents, Mid
         if (!evt.isNoteOff() || evt.channel != channel || evt.data.noteData.note != pitch) {
             continue;
         }
-        const uint32_t headOffTick =
-            (evt.tick >= loopLength) ? (evt.tick % loopLength) : evt.tick;
+        const uint32_t headOffTick = storageTickToDisplayPhase(evt.tick, loopLength);
         if (NoteUtils::isPreferredWrapTailForHeadOff(startTick, headOffTick, midiEvents, pitch,
                                                      channel, loopLength)) {
             logger.log(CAT_MIDI, LOG_DEBUG,
@@ -939,9 +947,7 @@ NOTE_EDIT_MEM bool isWrapHeadOffForTailOn(const MidiEventVec& midiEvents, MidiEv
     if (!noteOnEvent || !noteOffEvent || loopLength == 0) {
         return false;
     }
-    const uint32_t headOffTick =
-        (noteOffEvent->tick >= loopLength) ? (noteOffEvent->tick % loopLength)
-                                           : noteOffEvent->tick;
+    const uint32_t headOffTick = storageTickToDisplayPhase(noteOffEvent->tick, loopLength);
     return NoteUtils::isPreferredWrapTailForHeadOff(noteOnEvent->tick, headOffTick, midiEvents,
                                                     pitch, channel, loopLength);
 }
@@ -958,8 +964,7 @@ NOTE_EDIT_MEM uint32_t resolveMovingNoteLengthTicks(MidiEventVec& midiEvents, ui
         }
         return calculateNoteLength(startTick, pairedEnd, loopLength);
     }
-    const uint32_t displayFallbackEnd =
-        (fallbackEndTick >= loopLength) ? (fallbackEndTick % loopLength) : fallbackEndTick;
+    const uint32_t displayFallbackEnd = storageTickToDisplayPhase(fallbackEndTick, loopLength);
     if (fallbackEndTick > startTick && fallbackEndTick <= startTick + loopLength) {
         return fallbackEndTick - startTick;
     }
@@ -1001,8 +1006,7 @@ NOTE_EDIT_MEM MidiEvent* findNoteOffForOverlapShorten(MidiEventVec& midiEvents, 
     if (off->tick == expectedOffTick) {
         return off;
     }
-    const uint32_t displayOff =
-        (loopLength > 0 && off->tick >= loopLength) ? (off->tick % loopLength) : off->tick;
+    const uint32_t displayOff = storageTickToDisplayPhase(off->tick, loopLength);
     if (displayOff == expectedOffTick) {
         return off;
     }
@@ -1170,13 +1174,12 @@ NOTE_EDIT_MEM void finalReconstructAndSelect(Track& track,
                               uint32_t bracketTick) {
     NoteUtils::sortMidiEventsChronologically(midiEvents);
     int newSelectedIdx = -1;
-    const uint32_t displayNewEnd =
-        (newEnd >= loopLength && loopLength > 0) ? (newEnd % loopLength) : newEnd;
+    const uint32_t displayNewEnd = storageTickToDisplayPhase(newEnd, loopLength);
 
     if (manager.isNoteEditActive()) {
         const NoteEditFocus& focus = manager.getEditSession().focus;
         const EditorSelection& selection = manager.getNoteEditSessionState().selection;
-        const std::vector<NoteUtils::DisplayNote> filtered = filterSelectableDisplayNotes(
+        const NoteUtils::DisplayNoteVec filtered = filterSelectableDisplayNotes(
             midiEvents, focus, track.getMidiChannel(), loopLength);
 
         if (editorSelectionHasNote(selection)) {
@@ -1411,8 +1414,7 @@ NOTE_EDIT_MEM bool applyPitchChange(Track& track, EditManager& manager,
         }
     }
 
-    const uint32_t displayEndForResolve =
-        (noteEnd >= loopLength) ? (noteEnd % loopLength) : noteEnd;
+    const uint32_t displayEndForResolve = storageTickToDisplayPhase(noteEnd, loopLength);
 
     // Resolve the note-on, then its STRUCTURALLY PAIRED note-off (not an independent
     // tick scan): two same-pitch notes can share a start or end tick when overlapping,
@@ -1520,19 +1522,18 @@ NOTE_EDIT_MEM void moveNoteWithOverlapHandling(Track& track, EditManager& manage
     logger.log(CAT_MIDI, LOG_DEBUG, "Moving note: pitch=%d, start=%lu, end=%lu", 
               movingNotePitch, currentStart, currentEnd);
     
-    uint32_t displayCurrentEnd = (currentEnd >= loopLength) ? (currentEnd % loopLength) : currentEnd;
+    uint32_t displayCurrentEnd = storageTickToDisplayPhase(currentEnd, loopLength);
     if (focus.active && focus.last.pitch == movingNotePitch &&
         focus.last.startTick == currentStart &&
         focus.last.endTick > currentEnd) {
         currentEnd = focus.last.endTick;
-        displayCurrentEnd =
-            (currentEnd >= loopLength) ? (currentEnd % loopLength) : currentEnd;
+        displayCurrentEnd = storageTickToDisplayPhase(currentEnd, loopLength);
     }
     const uint32_t noteLen = resolveMovingNoteLengthTicks(
         midiEvents, movingNotePitch, currentStart, currentEnd, loopLength);
     uint32_t newStart = targetTick;
     uint32_t newEnd = newStart + noteLen;
-    uint32_t displayNewEnd = newEnd % loopLength;
+    uint32_t displayNewEnd = storageTickToDisplayPhase(newEnd, loopLength);
     
     logger.log(CAT_MIDI, LOG_DEBUG, "Movement: start %lu->%lu, end actual %lu (display %lu), length=%lu", 
               currentStart, newStart, newEnd, displayNewEnd, noteLen);
@@ -1616,8 +1617,7 @@ NOTE_EDIT_MEM void moveNoteWithOverlapHandling(Track& track, EditManager& manage
                                     linearStorageOff, loopLength);
         }
         const uint32_t displayEndForTelemetry =
-            (linearStorageOff >= loopLength && loopLength > 0) ? (linearStorageOff % loopLength)
-                                                               : linearStorageOff;
+            storageTickToDisplayPhase(linearStorageOff, loopLength);
         SC_DNTE(movingNotePitch, newStart, newStart,
                 displayEndForTelemetry >= newStart ? displayEndForTelemetry - newStart : noteLen,
                 manager.getSelectedNoteIdx());
@@ -1653,8 +1653,7 @@ NOTE_EDIT_MEM void moveNoteWithOverlapHandling(Track& track, EditManager& manage
     }
 
     if (focus.active && focus.movingNoteId != kInvalidNoteId) {
-        const uint32_t bracketDisplay =
-            (newStart >= loopLength && loopLength > 0) ? (newStart % loopLength) : newStart;
+        const uint32_t bracketDisplay = storageTickToDisplayPhase(newStart, loopLength);
         manager.applySelectionFromGeometryEdit(track, bracketDisplay, focus.movingNoteId);
     }
 
@@ -1695,7 +1694,7 @@ NOTE_EDIT_MEM void changeLengthWithOverlapHandling(Track& track, EditManager& ma
     uint32_t displayCurrentEnd = currentEnd;
 
     if (targetEndTick == currentEnd) {
-        manager.setBracketTick(targetEndTick % loopLength);
+        manager.setBracketTick(storageTickToDisplayPhase(targetEndTick, loopLength));
         return;
     }
 
@@ -1714,7 +1713,7 @@ NOTE_EDIT_MEM void changeLengthWithOverlapHandling(Track& track, EditManager& ma
     const uint32_t baselineStart =
         focus.active ? focus.commitBaseline.startTick : noteStart;
 
-    const uint32_t displayNewEnd = newEnd % loopLength;
+    const uint32_t displayNewEnd = storageTickToDisplayPhase(newEnd, loopLength);
 
     logger.log(CAT_MIDI, LOG_DEBUG,
               "Length change with overlap: pitch=%d, start=%lu, end %lu->%lu",

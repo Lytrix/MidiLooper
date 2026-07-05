@@ -20,8 +20,7 @@ NOTE_EDIT_MEM uint32_t movingNoteRangeDisplayEnd(const NoteEditFocus& focus, uin
   if (!focus.active || loopLength == 0) {
     return focus.movingNoteRange.end;
   }
-  const uint32_t end = focus.movingNoteRange.end;
-  return (end >= loopLength) ? (end % loopLength) : end;
+  return IntervalProjection::tickPhaseInLoop(focus.movingNoteRange.end, 0, loopLength);
 }
 
 NOTE_EDIT_MEM bool isInnerOverlapNoteInMovingNoteRange(const NoteEditFocus& focus, uint8_t pitch,
@@ -98,10 +97,7 @@ NOTE_EDIT_MEM bool isPlausibleStorageSpan(uint32_t startTick, uint32_t endTick, 
 }
 
 NOTE_EDIT_MEM bool isInflatedDisplaySpan(const NoteUtils::DisplayNote& dn, uint32_t loopLength) {
-  if (loopLength == 0 || dn.endTick < dn.startTick) {
-    return dn.endTick < dn.startTick;
-  }
-  return (dn.endTick - dn.startTick) > loopLength / 2;
+  return IntervalProjection::isInflatedDisplaySpan(dn, loopLength);
 }
 
 namespace {
@@ -789,17 +785,17 @@ std::unordered_set<NoteId> buildEditClosureNoteIds(const NoteEditFocus& focus,
   return ids;
 }
 
-NOTE_EDIT_MEM std::vector<NoteUtils::DisplayNote> filterSelectableDisplayNotes(
+NOTE_EDIT_MEM NoteUtils::DisplayNoteVec filterSelectableDisplayNotes(
     const MidiEventVec& sessionEvents, const NoteEditFocus& focus, uint8_t channel,
     uint32_t loopLength) {
   (void)channel;
-  const std::vector<NoteUtils::DisplayNote> allNotes =
-      NoteUtils::reconstructNotes(sessionEvents, loopLength, false);
+  NoteUtils::DisplayNoteVec allNotes =
+      NoteUtils::reconstructDisplayNotes(sessionEvents, loopLength, false);
   if (!focus.active || focus.overlapNotes.empty()) {
     return allNotes;
   }
 
-  std::vector<NoteUtils::DisplayNote> filtered;
+  NoteUtils::DisplayNoteVec filtered;
   filtered.reserve(allNotes.size());
   for (const NoteUtils::DisplayNote& dn : allNotes) {
     if (isExcludedFromSelectableDisplayNotes(focus, dn)) {
@@ -808,46 +804,6 @@ NOTE_EDIT_MEM std::vector<NoteUtils::DisplayNote> filterSelectableDisplayNotes(
     filtered.push_back(dn);
   }
   return filtered;
-}
-
-NOTE_EDIT_MEM NoteId noteIdFromFilteredDisplayNote(const std::vector<NoteUtils::DisplayNote>& filtered,
-                                     int filteredIndex) {
-  if (filteredIndex < 0 || filteredIndex >= static_cast<int>(filtered.size())) {
-    return kInvalidNoteId;
-  }
-  return filtered[static_cast<size_t>(filteredIndex)].noteId;
-}
-
-NOTE_EDIT_MEM int filteredDisplayNoteIndexForNoteId(const std::vector<NoteUtils::DisplayNote>& filtered,
-                                      NoteId noteId) {
-  if (noteId == kInvalidNoteId) {
-    return -1;
-  }
-  for (int i = 0; i < static_cast<int>(filtered.size()); ++i) {
-    if (filtered[static_cast<size_t>(i)].noteId == noteId) {
-      return i;
-    }
-  }
-  return -1;
-}
-
-NOTE_EDIT_MEM int filteredDisplayNoteIndexForNoteIdAndStart(const std::vector<NoteUtils::DisplayNote>& filtered,
-                                              NoteId noteId, uint32_t startTick) {
-  if (noteId == kInvalidNoteId) {
-    return -1;
-  }
-  for (int i = 0; i < static_cast<int>(filtered.size()); ++i) {
-    const NoteUtils::DisplayNote& dn = filtered[static_cast<size_t>(i)];
-    if (dn.noteId == noteId && dn.startTick == startTick) {
-      return i;
-    }
-  }
-  return -1;
-}
-
-NOTE_EDIT_MEM int filteredDisplayNoteIndexForMovingNote(const std::vector<NoteUtils::DisplayNote>& filtered,
-                                          NoteId noteId, uint32_t linearStartTick) {
-  return filteredDisplayNoteIndexForNoteIdAndStart(filtered, noteId, linearStartTick);
 }
 
 NOTE_EDIT_MEM EditPassVec buildPreCommitEditPasses(const NoteEditFocus& focus, uint8_t channel) {

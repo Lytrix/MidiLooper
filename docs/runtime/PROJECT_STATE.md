@@ -14,7 +14,7 @@ Last updated: 2026-07-05 (derived-note-overlap-logic branch)
 
 | Change | Focus |
 |--------|--------|
-| **`unified-interval-projection`** | **Now implementing** — Phases 1–4 shipped (core + Edit + Display + Playback projection); Phase 5 integration/HITL next; handoff [`unified_interval_projection_enhancement.md`](../plans/unified_interval_projection_enhancement.md) |
+| **`unified-interval-projection`** | **Now implementing** — Phases 1–4 shipped; Phase 5 grep gate + native 449/449 PASS; **5.5 HITL matrix** remaining; handoff [`unified_interval_projection_enhancement.md`](../plans/unified_interval_projection_enhancement.md) |
 | **`edit-session-action-geometry`** | **Paused** — derived overlap pipeline; blocked until UIP Phases 1–5 |
 | `set-revision-persistence` | Set revisions, overlay browser — core shipped; loop picker **4.8–4.10** paused |
 | `workspace-session-persistence` | Current workspace session model |
@@ -67,6 +67,6 @@ Full log: [DECISION_LOG.md](../DECISION_LOG.md).
 - **Capture-serial RAM budget (2026-07-04):** note-edit overlap code in FLASHMEM (`NoteEditMem.h`); deferred `#DBG`/`REVT`/`PERF` via 96 KB PSRAM ring in `DebugSessionCapture` — see [capture_serial_ram1_recovery_extmem_debug_enhancement.md](../plans/capture_serial_ram1_recovery_extmem_debug_enhancement.md)
 - Normative specs: `openspec/specs/revision-load/`, `storage-session-jobs/`, `storage-session-layout/`
 - **Next persistence layout:** `transport.bin` / `global.bin` — not started (post DEC-012)
-- **Interval projection:** `IntervalProjection` engine owns all wrap math — **`include/Utils/IntervalProjection.h`** + **`src/Utils/IntervalProjection.cpp`**; Phases 1–4 shipped (core + Edit + Display + Playback projection); `Track.projectionCycleStartTick` + queued start at grid; `PlaybackCursor` retired
+- **Interval projection:** `IntervalProjection` engine owns all wrap math — **`include/Utils/IntervalProjection.h`** + **`src/Utils/IntervalProjection.cpp`**; Phases 1–5.1–5.4 + 5.6 shipped (grep gate on D7 consumers); `Track.projectionCycleStartTick` + queued start at grid; `PlaybackCursor` retired; **5.5 HITL** pending
 - `ButtonManager` / GPIO dormant (DEC-005)
 - M8 edit + pool-budget archived to `openspec/specs/`

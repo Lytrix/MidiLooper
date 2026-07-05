@@ -11,11 +11,7 @@
 
 #include "EditPass.h"
 #include "MidiEvent.h"
-#include "MidiEvent.h"
-
-namespace NoteUtils {
-struct DisplayNote;
-}
+#include "Utils/NoteUtils.h"
 
 struct NoteBaseline {
   uint8_t pitch = 0;
@@ -163,7 +159,7 @@ EditPassVec buildPreCommitOverlapEditPasses(const NoteEditFocus& focus);
 EditPassVec buildPreCommitEditPasses(const NoteEditFocus& focus, uint8_t channel);
 
 /// NOTE_EDIT select/display inventory: session reconstruction minus Hidden and innerUnderMovingNote.
-std::vector<NoteUtils::DisplayNote> filterSelectableDisplayNotes(
+NoteUtils::DisplayNoteVec filterSelectableDisplayNotes(
     const MidiEventVec& sessionEvents, const NoteEditFocus& focus, uint8_t channel,
     uint32_t loopLength);
 
@@ -172,16 +168,44 @@ std::unordered_set<NoteId> buildEditClosureNoteIds(const NoteEditFocus& focus,
                                                  const MidiEventVec& sessionEvents,
                                                  uint8_t channel, uint32_t loopLength);
 
-NoteId noteIdFromFilteredDisplayNote(const std::vector<NoteUtils::DisplayNote>& filtered,
-                                     int filteredIndex);
+template <typename NotesVec>
+inline NoteId noteIdFromFilteredDisplayNote(const NotesVec& filtered, int filteredIndex) {
+  if (filteredIndex < 0 || filteredIndex >= static_cast<int>(filtered.size())) {
+    return kInvalidNoteId;
+  }
+  return filtered[static_cast<size_t>(filteredIndex)].noteId;
+}
 
-int filteredDisplayNoteIndexForNoteId(const std::vector<NoteUtils::DisplayNote>& filtered,
-                                    NoteId noteId);
+template <typename NotesVec>
+inline int filteredDisplayNoteIndexForNoteId(const NotesVec& filtered, NoteId noteId) {
+  if (noteId == kInvalidNoteId) {
+    return -1;
+  }
+  for (int i = 0; i < static_cast<int>(filtered.size()); ++i) {
+    if (filtered[static_cast<size_t>(i)].noteId == noteId) {
+      return i;
+    }
+  }
+  return -1;
+}
 
-int filteredDisplayNoteIndexForNoteIdAndStart(const std::vector<NoteUtils::DisplayNote>& filtered,
-                                              NoteId noteId, uint32_t startTick);
+template <typename NotesVec>
+inline int filteredDisplayNoteIndexForNoteIdAndStart(const NotesVec& filtered, NoteId noteId,
+                                                     uint32_t startTick) {
+  if (noteId == kInvalidNoteId) {
+    return -1;
+  }
+  for (int i = 0; i < static_cast<int>(filtered.size()); ++i) {
+    const NoteUtils::DisplayNote& dn = filtered[static_cast<size_t>(i)];
+    if (dn.noteId == noteId && dn.startTick == startTick) {
+      return i;
+    }
+  }
+  return -1;
+}
 
-/// Prefer the linear storage-start segment; for wrapped notes accept the wrap head (start 0 or
-/// end < start). Reject unrelated low display segments when linear start is in the loop tail.
-int filteredDisplayNoteIndexForMovingNote(const std::vector<NoteUtils::DisplayNote>& filtered,
-                                          NoteId noteId, uint32_t linearStartTick);
+template <typename NotesVec>
+inline int filteredDisplayNoteIndexForMovingNote(const NotesVec& filtered, NoteId noteId,
+                                               uint32_t linearStartTick) {
+  return filteredDisplayNoteIndexForNoteIdAndStart(filtered, noteId, linearStartTick);
+}

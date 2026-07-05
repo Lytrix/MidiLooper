@@ -95,7 +95,7 @@ void EditLengthNoteState::onEncoderTurn(EditManager& manager, Track& track, int 
     }
     NoteMovementUtils::changeLengthWithOverlapHandling(track, manager, selected, newEnd);
 
-    const std::vector<NoteUtils::DisplayNote> updatedNotes =
+    const NoteUtils::DisplayNoteVec& updatedNotes =
         manager.selectableDisplayNotesAtEditSelect(track);
     for (int i = 0; i < static_cast<int>(updatedNotes.size()); ++i) {
         if (updatedNotes[static_cast<size_t>(i)].note == notePitch &&

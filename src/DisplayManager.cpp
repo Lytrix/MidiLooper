@@ -611,14 +611,24 @@ const DisplayNoteVec& DisplayManager::resolveDisplayNotes(const Track& track, ui
 
     // NOTE_EDIT: session store (editAware) is the live edit buffer; filter for Hidden / inner overlap.
     if (editManager.getEditSessionType() == EditSessionType::Note) {
-        invalidateLiveDisplayCache();
         const uint32_t loopLength = resolveDisplayLoopLength(track, displaySlot, currentTick);
         if (editManager.isNoteEditActive() && loopLength > 0) {
             const NoteEditFocus& focus = editManager.getEditSession().focus;
-            const std::vector<DisplayNote> filtered =
-                filterSelectableDisplayNotes(track.editAwareMidiEvents(), focus,
-                                             track.getMidiChannel(), loopLength);
-            liveDisplayNotes.assign(filtered.begin(), filtered.end());
+            const uint32_t previewRevision = editManager.sessionPreviewRevision();
+            const size_t overlapCount = focus.overlapNotes.size();
+            const bool cacheHit = displaySlot == noteEditDisplayCacheSlot_ &&
+                                  previewRevision == noteEditDisplayCachePreviewRevision_ &&
+                                  loopLength == noteEditDisplayCacheLoopLength_ &&
+                                  overlapCount == noteEditDisplayCacheOverlapCount_ &&
+                                  !liveDisplayNotes.empty();
+            if (!cacheHit) {
+                liveDisplayNotes = filterSelectableDisplayNotes(track.editAwareMidiEvents(), focus,
+                                                                track.getMidiChannel(), loopLength);
+                noteEditDisplayCacheSlot_ = displaySlot;
+                noteEditDisplayCachePreviewRevision_ = previewRevision;
+                noteEditDisplayCacheLoopLength_ = loopLength;
+                noteEditDisplayCacheOverlapCount_ = overlapCount;
+            }
         } else if (loopLength > 0) {
             const auto& cachedNotes = track.getCachedNotes();
             liveDisplayNotes.assign(cachedNotes.begin(), cachedNotes.end());
@@ -771,6 +781,14 @@ void DisplayManager::invalidateLiveDisplayCache() {
     liveDisplayCacheSlot = 255;
     liveDisplayCacheTrackState = NUM_TRACK_STATES;
     liveDisplayCacheOpenNotes.clear();
+    invalidateNoteEditDisplayCache();
+}
+
+void DisplayManager::invalidateNoteEditDisplayCache() {
+    noteEditDisplayCacheSlot_ = 255;
+    noteEditDisplayCachePreviewRevision_ = UINT32_MAX;
+    noteEditDisplayCacheLoopLength_ = 0;
+    noteEditDisplayCacheOverlapCount_ = static_cast<size_t>(-1);
 }
 
 // Helper function to clear the display buffer

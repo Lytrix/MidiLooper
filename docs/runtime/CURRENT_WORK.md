@@ -16,7 +16,8 @@ Last updated: 2026-07-05 (derived-note-overlap-logic branch)
 - **Phase 1 shipped** (2026-07-05): `IntervalProjection` core engine + `test_interval_projection` (17 cases).
 - **Phase 2 shipped** (2026-07-05): Edit projection (`buildEditProjectionContext`, `projectEditIntervalsForAnalysis`); `resolveLinearNoteSpanForOverlap` delegates to engine; `test_note_edit_focus` +4 parity cases (50 total).
 - **Phase 3 shipped** (2026-07-05): Display projection (`projectDisplayNotes`, `buildCanonicalSpansFromMidi` → engine); `DisplayWindowUtils` + `DetailedWindowContext` on `TickInterval`; `test_noteutils_reconstruct` 17 cases, `test_display_window_utils` 8 cases.
-- **Phase 4 shipped** (2026-07-05): Playback projection (`projectPlaybackEventPhase`, rolling `projectionCycleStartTick`, queued start at grid); retired `PlaybackCursor` / `loopHeadWindow`; `test_interval_projection` +3 playback-order cases. **Next:** Phase 5 integration + HITL (tasks 5.1–5.6).
+- **Phase 4 shipped** (2026-07-05): Playback projection (`projectPlaybackEventPhase`, rolling `projectionCycleStartTick`, queued start at grid); retired `PlaybackCursor` / `loopHeadWindow`; `test_interval_projection` +3 playback-order cases.
+- **Phase 5 in progress** (2026-07-05): grep gate (D7 consumers → `IntervalProjection` helpers); `isInflatedDisplaySpan` moved to engine; native suite 449/449 PASS; LOOP_MIDI guide NOTE_EDIT § updated. **Remaining:** 5.5 HITL matrix.
 
 ## Paused — blocked by UIP
 

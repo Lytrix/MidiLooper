@@ -7,6 +7,7 @@
 #include "../../src/LoopEventStore.cpp"
 #include "../../src/Utils/CaptureIncrementalSanity.cpp"
 #include "../../src/Utils/LoopEventValidation.cpp"
+#include "../../src/Utils/IntervalProjection.cpp"
 #include "../../src/Utils/NoteUtils.cpp"
 
 #include "Globals.h"

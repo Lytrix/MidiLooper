@@ -71,10 +71,10 @@ public:
     void rematerializeNoteEditSessionAfterWorkspaceReload(Track& track);
     void closeNoteEditPass(Track& track);
     EditPassId commitEditAction(Track& track, EditPassVec rows);
-    void pushSessionUndoOnKindChange(Track& track, NoteEditKind kind);
+    bool pushSessionUndoOnKindChange(Track& track, NoteEditKind kind);
     void foldLiveCaptureIntoNoteEditSession(Track& track, uint32_t closeTick);
     void restoreSessionUndoEntry(Track& track, const SessionUndoEntry& entry);
-    void beginGeometryMutation(Track& track, NoteEditKind kind, bool fromFaderControl);
+    bool beginGeometryMutation(Track& track, NoteEditKind kind, bool fromFaderControl);
     bool sessionUndo(Track& track);
     bool sessionRedo(Track& track);
 
@@ -109,7 +109,7 @@ public:
     /// Remap or clear **selectedNoteIdx** when filtered inventory no longer matches **focus.last**.
     void syncSelectedNoteIdxToFilteredInventory(Track& track);
     /// Filtered select inventory during note edit; else cached notes (encoder + fader).
-    std::vector<NoteUtils::DisplayNote> selectableDisplayNotesAtEditSelect(const Track& track) const;
+    NoteUtils::DisplayNoteVec selectableDisplayNotesAtEditSelect(const Track& track) const;
     /// Live mover geometry: **focus.last** when active, else inventory at **selectedNoteIdx**.
     NoteUtils::DisplayNote liveEditDisplayNoteAtSelect(const Track& track) const;
     /// Refresh **focus.last** start/end from the live session store note-on/off pair.

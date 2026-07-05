@@ -63,8 +63,9 @@ inline bool displayNoteInfoChanged(const DisplayNoteInfoSnapshot& prior,
            prior.displayStartTick != next.displayStartTick;
 }
 
-inline int filteredDisplayNoteIndexForSelection(
-    const EditorSelection& selection, const std::vector<NoteUtils::DisplayNote>& notes) {
+template <typename NotesVec>
+inline int filteredDisplayNoteIndexForSelection(const EditorSelection& selection,
+                                                const NotesVec& notes) {
     if (!editorSelectionHasNote(selection)) {
         return -1;
     }

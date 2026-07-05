@@ -176,7 +176,7 @@ Full-loop pass over merged active capture passes (materialized flat):
 
 While **NoteEditSession** is active, **`EditManager::noteEditSession.store`** holds **linear** note-on/note-off pairs (DEC-014). The **EditSessionAction** pipeline (see [`edit-session-action-geometry`](../../openspec/changes/edit-session-action-geometry/design.md)) is the sole live mutator for overlap geometry:
 
-1. **Wrap** — display/wrapped segments are linearized before analyze (`normalizeWrapToLinear`); storage ticks stay linear.
+1. **Wrap** — display/wrapped segments are linearized via **Edit projection** (`IntervalProjection::projectEditIntervalsForAnalysis` / `resolveLinearNoteSpanForOverlap`); storage ticks stay linear.
 2. **Same pitch** — when a causing note overlaps a target on the **same pitch**, classify as **OverlapNoteOn** (mover hits target on), **OverlapNoteOff** (tail trim), or **CompleteCover** (swallow).
 3. **Cross-pitch** — time overlap across pitches stays in scope for move/length; polyphonic shorten across pitches is **deferred**.
 4. **Restore** — when constraints rebuild to baseline, explicit **RestoreNote** reinserts pairs (no scratch registry).

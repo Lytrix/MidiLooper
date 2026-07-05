@@ -5,6 +5,7 @@
 
 #include "../../src/Logger.cpp"
 #include "../../src/Utils/LoopEventValidation.cpp"
+#include "../../src/Utils/IntervalProjection.cpp"
 #include "../../src/Utils/NoteUtils.cpp"
 #include "Utils/LoopEventValidation.h"
 #include "MidiEvent.h"

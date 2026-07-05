@@ -346,7 +346,7 @@ NOTE_EDIT_MEM std::vector<CanonicalNoteSpan> buildCanonicalSpansFromMidi(const M
             uint32_t noteOffTick = evt.tick;
             const bool offWasBeyondLoop = noteOffTick >= loopLength;
             if (offWasBeyondLoop) {
-                noteOffTick = noteOffTick % loopLength;
+                noteOffTick = IntervalProjection::tickPhaseInLoop(noteOffTick, 0, loopLength);
             }
 
             if (activeNoteStacks[pitch].empty()) {
