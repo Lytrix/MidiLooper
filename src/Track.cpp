@@ -1800,7 +1800,7 @@ void Track::clearJam() {
 
 void Track::advanceJamTick(uint32_t delta) {
   if (!jamPlaybackActive || jamLength == 0) return;
-  jamTick = (jamTick + delta) % jamLength;
+  jamTick = IntervalProjection::tickPhaseInLoop(jamTick + delta, 0, jamLength);
 }
 
 uint32_t Track::getJamTick() const {
@@ -1812,7 +1812,7 @@ uint32_t Track::getJamTick() const {
 
 void Track::setJamTick(uint32_t tick) {
   noInterrupts();
-  uint32_t newTick = (jamLength > 0) ? (tick % jamLength) : 0;
+  uint32_t newTick = IntervalProjection::tickPhaseInLoop(tick, 0, jamLength);
   if (newTick != jamTick) {
     jamTick = newTick;
     getActiveLoop().nextEventIndex = 0;

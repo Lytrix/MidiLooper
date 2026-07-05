@@ -410,4 +410,11 @@ NoteUtils::DisplayNoteVec projectDisplayNotes(const std::vector<CanonicalNoteSpa
     return notes;
 }
 
+bool isInflatedDisplaySpan(const NoteUtils::DisplayNote& displayNote, uint32_t loopLength) {
+    if (loopLength == 0 || displayNote.endTick < displayNote.startTick) {
+        return displayNote.endTick < displayNote.startTick;
+    }
+    return (displayNote.endTick - displayNote.startTick) > loopLength / 2;
+}
+
 }  // namespace IntervalProjection

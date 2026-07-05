@@ -1,5 +1,6 @@
 #include "MidiLedManager.h"
 #include "Loop.h"
+#include "Utils/IntervalProjection.h"
 #include "Utils/NoteUtils.h"
 #include "TickPhase.h"
 
@@ -191,7 +192,8 @@ void MidiLedManager::updateTrackSelectLeds(uint8_t selectedTrackIndex, const boo
 uint32_t MidiLedManager::getCurrentBar(uint32_t currentTick, const Loop& loop) {
     uint32_t ticksPerBar = 16 * Config::TICKS_PER_16TH_STEP;
     uint32_t tickInLoopStorage = tickPhaseInLoop(currentTick, loop.startLoopTick, loop.loopLengthTicks);
-    uint32_t tickInLoopDisplay = (tickInLoopStorage - loop.loopStartTick + loop.loopLengthTicks) % loop.loopLengthTicks;
+    uint32_t tickInLoopDisplay = IntervalProjection::noteRelativeTick(
+        tickInLoopStorage, loop.loopStartTick, loop.loopLengthTicks);
     return tickInLoopDisplay / ticksPerBar;
 }
 
@@ -219,7 +221,7 @@ bool displayNoteStartsInRange(const NoteUtils::DisplayNote& note, uint32_t loopL
     if (loopLength == 0) {
         return false;
     }
-    const uint32_t startTick = note.startTick % loopLength;
+    const uint32_t startTick = IntervalProjection::tickPhaseInLoop(note.startTick, 0, loopLength);
     if (rangeStart < rangeEnd) {
         return startTick >= rangeStart && startTick < rangeEnd;
     }
@@ -274,8 +276,10 @@ void MidiLedManager::updateBarLeds(const Loop& loop, uint32_t currentBar) {
             lastBarVelocity[i] = BAR_VEL_NEVER_SENT;
         } else {
             // Convert display-space bar to storage-space for note lookup
-            uint32_t barStartStorage = (loop.loopStartTick + barStartDisplay) % loopLength;
-            uint32_t barEndStorage = (loop.loopStartTick + barEndDisplay) % loopLength;
+            uint32_t barStartStorage =
+                IntervalProjection::noteStorageTick(barStartDisplay, loop.loopStartTick, loopLength);
+            uint32_t barEndStorage =
+                IntervalProjection::noteStorageTick(barEndDisplay, loop.loopStartTick, loopLength);
             bool isCurrentBar = (i == currentBar && currentBar < NUM_BAR_LEDS);
             bool hasNotes = hasNoteInBar(loop, barStartStorage, barEndStorage);
             uint8_t velocity = isCurrentBar ? VEL_BAR_CURRENT : (hasNotes ? VEL_BAR_HAS_NOTES : VEL_BAR_USED);
@@ -312,7 +316,8 @@ void MidiLedManager::updateCurrentTick(Track& track, uint32_t currentTick, uint8
     
     // Position in loop relative to loop start (matches 16th/bar LED display)
     uint32_t tickInLoopStorage = tickPhaseInLoop(currentTick, displayLoop.startLoopTick, loopLength);
-    uint32_t tickInLoopDisplay = (tickInLoopStorage - displayLoop.loopStartTick + loopLength) % loopLength;
+    uint32_t tickInLoopDisplay = IntervalProjection::noteRelativeTick(
+        tickInLoopStorage, displayLoop.loopStartTick, loopLength);
     uint32_t tickInBar = tickInLoopDisplay % ticksPerBar;
     int8_t newTickStep = tickInBar / ticksPerSixteenth;
     
@@ -347,8 +352,10 @@ void MidiLedManager::analyzeAndUpdateBar(const Loop& loop, uint32_t barStartTick
     for (int i = 0; i < NUM_LEDS; i++) {
         uint32_t stepStartDisplay = barStartTickDisplay + (i * ticksPerSixteenth);
         uint32_t stepEndDisplay = barStartTickDisplay + ((i + 1) * ticksPerSixteenth);
-        uint32_t stepStartStorage = (loop.loopStartTick + stepStartDisplay) % loopLength;
-        uint32_t stepEndStorage = (loop.loopStartTick + stepEndDisplay) % loopLength;
+        uint32_t stepStartStorage =
+            IntervalProjection::noteStorageTick(stepStartDisplay, loop.loopStartTick, loopLength);
+        uint32_t stepEndStorage =
+            IntervalProjection::noteStorageTick(stepEndDisplay, loop.loopStartTick, loopLength);
         
         newLedState[i] = hasNoteInSixteenthStep(loop, stepStartStorage, stepEndStorage);
     }

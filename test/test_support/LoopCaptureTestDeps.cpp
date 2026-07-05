@@ -10,4 +10,5 @@
 uint32_t noteMinLengthTicks = Config::DEFAULT_NOTE_MIN_LENGTH_TICKS;
 bool noteMinLengthRemoveEnabled = Config::DEFAULT_NOTE_MIN_LENGTH_REMOVE_ENABLED;
 
+#include "../../src/Utils/IntervalProjection.cpp"
 #include "../../src/Utils/CaptureIncrementalSanity.cpp"

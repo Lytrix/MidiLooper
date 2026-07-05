@@ -528,7 +528,8 @@ void test_filtered_display_note_index_for_selection() {
     sel.primaryNote = 2;
     sel.bracketTick = 483;
     TEST_ASSERT_EQUAL(1, NoteEditDisplaySnapshot::filteredDisplayNoteIndexForSelection(sel, notes));
-    TEST_ASSERT_EQUAL(-1, NoteEditDisplaySnapshot::filteredDisplayNoteIndexForSelection(sel, {notes[0]}));
+    const std::vector<NoteUtils::DisplayNote> singleNote{notes[0]};
+    TEST_ASSERT_EQUAL(-1, NoteEditDisplaySnapshot::filteredDisplayNoteIndexForSelection(sel, singleNote));
 }
 
 void test_filtered_display_note_index_for_selection_wrap_segment() {

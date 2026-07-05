@@ -3,6 +3,7 @@
 
 #include "Utils/DisplayWindowUtils.h"
 #include "Globals.h"
+#include "Utils/IntervalProjection.h"
 
 namespace DisplayWindowUtils {
 
@@ -11,10 +12,7 @@ using DisplayNoteVec = NoteUtils::DisplayNoteVec;
 namespace {
 
 uint32_t normalizeTick(uint32_t tick, uint32_t loopLength) {
-  if (loopLength == 0) {
-    return 0;
-  }
-  return tick % loopLength;
+  return IntervalProjection::tickPhaseInLoop(tick, 0, loopLength);
 }
 
 TickInterval displayNoteSpanInLoop(const NoteUtils::DisplayNote& note, uint32_t loopLength) {
@@ -197,7 +195,7 @@ uint32_t resolveCenteredWindowStart(uint32_t playheadTick, uint32_t windowLength
   if (windowLength >= loopLength) {
     return 0;
   }
-  const uint32_t playhead = playheadTick % loopLength;
+  const uint32_t playhead = IntervalProjection::tickPhaseInLoop(playheadTick, 0, loopLength);
   uint32_t start =
       playhead >= windowLength / 2 ? playhead - windowLength / 2 : 0;
   if (start + windowLength > loopLength) {

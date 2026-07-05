@@ -10,9 +10,8 @@
 #include "../../src/LoopPasses.cpp"
 #include "../../src/Utils/MemoryMonitor.cpp"
 #include "../../src/Utils/LoopEventValidation.cpp"
-#include "../../src/Utils/IntervalProjection.cpp"
-#include "../../src/Loop.cpp"
 #include "../test_support/LoopCaptureTestDeps.cpp"
+#include "../../src/Loop.cpp"
 #include "Loop.h"
 #include "TrackPlaybackRuntime.h"
 

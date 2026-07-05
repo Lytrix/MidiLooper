@@ -41,15 +41,47 @@ class LongLoopDisplaySerialVerifyTests(unittest.TestCase):
             _disp_window(30, window_start=4096),
             "Detailed window centered on playhead",
             _disp_window(40, window_start=6144),
-            "phase:hold_track_start",
             _disp_window(50, window_start=6400),
             _disp_window(60, window_start=6656),
             _disp_window(70, window_start=6912),
-            "phase:hold_track_end",
         ]
-        args = SimpleNamespace(record_bars=24)
+        args = SimpleNamespace(
+            record_bars=24,
+            hold_track_ms=4000,
+            phase_markers=[
+                "entered note edit mode",
+                "phase:freeze_wait_end",
+                "phase:long_press_snap",
+                "phase:hold_track_start",
+                "phase:hold_track_end",
+            ],
+        )
         result = verify_long_loop_display_window(lines, args)
         self.assertTrue(result["ok"], result.get("issues"))
+
+    def test_ok_sparse_disp_with_indirect_hold(self) -> None:
+        """SC_DISP_WINDOW is delta-only; accept play/stop hold release like edit_minimal markers."""
+        lines = [
+            "Edit session: NOTE_EDIT (Program 1, Note 0 trigger)",
+            _disp_window(10, window_start=6302),
+            _disp_window(20, window_start=6302),
+            "[DEBUG] [BTN] Button released: Ch16 Note40, start=78090, now=82090, duration=4000",
+            "[INFO] Button press: Play/Stop (long)",
+            "Detailed window centered on playhead",
+        ]
+        args = SimpleNamespace(
+            record_bars=24,
+            hold_track_ms=4000,
+            phase_markers=[
+                "entered note edit mode",
+                "phase:long_press_snap",
+                "phase:hold_track_start",
+                "phase:hold_track_end",
+            ],
+        )
+        result = verify_long_loop_display_window(lines, args)
+        self.assertTrue(result["ok"], result.get("issues"))
+        self.assertEqual(result.get("hold_verify_mode"), "indirect_button_hold")
 
     def test_fail_when_window_moves_during_freeze(self) -> None:
         lines = [

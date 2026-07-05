@@ -7,14 +7,13 @@
 #include "../../src/Utils/NoteUtils.cpp"
 #include "../../src/Utils/LoopTickNormalize.cpp"
 #include "../../src/Utils/LoopEventValidation.cpp"
+#include "../test_support/LoopCaptureTestDeps.cpp"
 #include "../../src/NoteEditFocus.cpp"
-#include "../../src/Utils/IntervalProjection.cpp"
 #include "../../src/EditApply.cpp"
 #include "../../src/LoopPasses.cpp"
 #include "../../src/LoopEventStore.cpp"
 #include "../../src/Utils/MemoryMonitor.cpp"
 #include "../../src/Loop.cpp"
-#include "../test_support/LoopCaptureTestDeps.cpp"
 
 #include "NoteEditFocus.h"
 #include "EditApply.h"
@@ -397,7 +396,7 @@ void test_filter_excludes_hidden_overlap_note() {
   hidden.state = OverlapNoteStoreState::Hidden;
   focus.overlapNotes[hiddenRefId] = hidden;
 
-  const std::vector<NoteUtils::DisplayNote> filtered =
+  const NoteUtils::DisplayNoteVec filtered =
       filterSelectableDisplayNotes(flat, focus, 1, kLoopLength);
 
   TEST_ASSERT_EQUAL(2, static_cast<int>(filtered.size()));
@@ -427,7 +426,7 @@ void test_filter_includes_shortened_overlap_note() {
   shortened.shortenedEndTick = 495;
   focus.overlapNotes[shortenedRefId] = shortened;
 
-  const std::vector<NoteUtils::DisplayNote> filtered =
+  const NoteUtils::DisplayNoteVec filtered =
       filterSelectableDisplayNotes(flat, focus, 1, kLoopLength);
 
   bool foundShortened = false;
@@ -464,7 +463,7 @@ void test_filter_excludes_inner_under_moving_note() {
   inner.innerUnderMovingNote = true;
   focus.overlapNotes[innerRefId] = inner;
 
-  const std::vector<NoteUtils::DisplayNote> filtered =
+  const NoteUtils::DisplayNoteVec filtered =
       filterSelectableDisplayNotes(flat, focus, 1, kLoopLength);
 
   TEST_ASSERT_EQUAL(2, static_cast<int>(filtered.size()));
@@ -479,7 +478,7 @@ void test_filtered_display_note_index_for_note_ref() {
   const MidiEventVec flat = makeTwoNoteFlat(8, 104, 584, 680, 60);
   rebuildNoteEditFocusFromStore(focus, flat, 1, kLoopLength, 0);
 
-  const std::vector<NoteUtils::DisplayNote> filtered =
+  const NoteUtils::DisplayNoteVec filtered =
       filterSelectableDisplayNotes(flat, focus, 1, kLoopLength);
   TEST_ASSERT_EQUAL(2, static_cast<int>(filtered.size()));
 

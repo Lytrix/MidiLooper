@@ -167,6 +167,7 @@ private:
     const DisplayNoteVec& resolveDisplayNotes(const Track& track, uint8_t displaySlot,
                                               uint32_t currentTick);
     void invalidateLiveDisplayCache();
+    void invalidateNoteEditDisplayCache();
     DisplayNoteVec liveDisplayNotes;
     std::vector<NoteUtils::OpenNoteOn> liveDisplayCacheOpenNotes;
     size_t liveDisplayCacheEventCount = static_cast<size_t>(-1);
@@ -174,6 +175,10 @@ private:
     uint32_t liveDisplayCacheLoopLength = 0;
     uint8_t liveDisplayCacheSlot = 255;
     TrackState liveDisplayCacheTrackState = NUM_TRACK_STATES;
+    uint8_t noteEditDisplayCacheSlot_ = 255;
+    uint32_t noteEditDisplayCachePreviewRevision_ = UINT32_MAX;
+    uint32_t noteEditDisplayCacheLoopLength_ = 0;
+    size_t noteEditDisplayCacheOverlapCount_ = static_cast<size_t>(-1);
 
     static constexpr uint8_t kDisplaySlotCount = Config::MAX_LOOPS_PER_TRACK;
     uint32_t detailedWindowStartTick_[kDisplaySlotCount] = {};
