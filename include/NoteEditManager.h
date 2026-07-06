@@ -86,10 +86,12 @@ public:
                                           const EditorSelection& nextSelection,
                                           bool geometryIsDriver = false);
     bool isFaderOutboundActive() const;
-    void moveNoteToPosition(Track& track, const NoteUtils::DisplayNote& currentNote, std::uint32_t targetTick);
-    void changeNoteEndWithOverlapHandling(Track& track, const NoteUtils::DisplayNote& currentNote,
+    bool moveNoteToPosition(Track& track, const NoteUtils::DisplayNote& currentNote,
+                            std::uint32_t targetTick);
+    bool changeNoteEndWithOverlapHandling(Track& track, const NoteUtils::DisplayNote& currentNote,
                                           std::uint32_t targetEndTick);
     void refreshEditingActivity();
+    bool isLengthEditingMode() const { return lengthEditingMode; }
 
     // Main edit session switching (for mode button functionality)
     void cycleEditSession(Track& track);
@@ -140,10 +142,18 @@ private:
     uint32_t lastCoarseFaderTime = 0;
     static constexpr int16_t COARSE_MOVEMENT_THRESHOLD = 150;
     static constexpr uint32_t COARSE_STABILITY_TIME = 1000;
+    uint8_t lastUserNoteValueCc = 64;
+    uint32_t lastNoteValueFaderTime = 0;
+    static constexpr uint8_t NOTE_VALUE_MOVEMENT_THRESHOLD = 1;
+    static constexpr uint32_t NOTE_VALUE_STABILITY_TIME = 80;
     static constexpr uint32_t DRIVER_FADER_ACTIVE_MS = 2500;
     
     uint8_t lastFineCCValue = 64;
     bool fineCCInitialized = false;
+    uint8_t lastUserFineCc = 64;
+    uint32_t lastFineFaderTime = 0;
+    static constexpr uint8_t FINE_MOVEMENT_THRESHOLD = 1;
+    static constexpr uint32_t FINE_STABILITY_TIME = 80;
     uint32_t referenceStep = 0;
 
     uint32_t lastPitchbendSentTime = 0;
@@ -194,7 +204,9 @@ private:
                                     DependentFaderSendMode mode);
     bool shouldIgnoreDependentFaderInput(MidiMapping::FaderType faderType, int16_t pitchbendValue,
                                          uint8_t ccValue, Track& track);
-    void publishDependentFaderLatch(Track& track);
+    void publishDependentFaderLatch(Track& track,
+                                    MidiMapping::FaderType driverFader =
+                                        MidiMapping::FaderType::FADER_SELECT);
     void releaseEditedNoteAudition();
     void sendEditedNoteAuditionWhenTransportStopped(Track& track);
     void clearPendingSelectDependentMotorSync();
@@ -227,6 +239,8 @@ private:
     uint32_t lastDriverFaderTime = 0;
     static constexpr uint32_t FADER_UPDATE_DELAY = 1500;
     static constexpr uint32_t FEEDBACK_IGNORE_PERIOD = 1500;
+    static constexpr bool kEditedNoteAuditionEnabled = false;
+    static constexpr bool kNoteEditFaderFeedbackEnabled = false;
     
     bool lengthEditingMode = false;
     bool editedNoteAuditionHeld_ = false;

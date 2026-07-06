@@ -28,7 +28,8 @@ namespace NoteMovementUtils {
 bool applyNoteEditChange(Track& track, EditManager& manager, NoteEditChangeKind kind,
                          const NoteUtils::DisplayNote& currentNote, uint32_t targetTick,
                          int delta, uint32_t targetEndTick, uint8_t currentPitch,
-                         uint8_t newPitch, uint32_t& inOutStart, uint32_t& inOutEnd);
+                         uint8_t newPitch, uint32_t& inOutStart, uint32_t& inOutEnd,
+                         bool refreshPlaybackPreview = true);
 
 void moveNoteWithOverlapHandling(Track& track, EditManager& manager, 
                                    const NoteUtils::DisplayNote& currentNote, 
@@ -54,7 +55,8 @@ void moveNoteWithOverlapHandling(Track& track, EditManager& manager,
      */
     bool applyPitchChange(Track& track, EditManager& manager,
                           uint8_t currentNoteValue, uint8_t newNoteValue,
-                          uint32_t& noteStart, uint32_t& noteEnd);
+                          uint32_t& noteStart, uint32_t& noteEnd,
+                          bool refreshPlaybackPreview = true);
     
     /**
      * Helper functions extracted from EditStartNoteState

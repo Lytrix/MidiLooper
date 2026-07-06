@@ -20,6 +20,7 @@
 #include "Utils/DebugSessionCapture.h"
 #include "Utils/DisplayWindowUtils.h"
 #include "Utils/NoteMovementWrap.h"
+#include "Utils/NoteMovementUtils.h"
 #include "TrackStateMachine.h"
 #include "MidiButtonManager.h"
 #include "MidiConfig.h"
@@ -1073,17 +1074,24 @@ int resolveDrawHighlightIndex(const DisplayNoteVec& notes, const EditorSelection
         } else {
             bracketInWindow = bracketDisplayTick + loopLength - windowStartTick;
         }
+        const bool lengthBracket = editManager.isLengthBracketEditActive();
         for (int i = 0; i < static_cast<int>(notes.size()); ++i) {
             const DisplayNote& dn = notes[static_cast<size_t>(i)];
-            if (dn.noteId == selection.primaryNote && dn.startTick == bracketInWindow) {
+            if (dn.noteId != selection.primaryNote) {
+                continue;
+            }
+            if (lengthBracket) {
+                if (dn.endTick == bracketInWindow) {
+                    return i;
+                }
+            } else if (dn.startTick == bracketInWindow) {
                 return i;
             }
         }
         return -1;
     }
-    return filteredDisplayNoteIndexForNoteIdAndStart(notes, selection.primaryNote,
-                                                     selection.selectedTick, loopStartTick,
-                                                     loopLength);
+    return NoteEditDisplaySnapshot::filteredDisplayNoteIndexForSelection(
+        selection, notes, loopStartTick, loopLength, editManager.isLengthBracketEditActive());
 }
 
 }  // namespace
@@ -2469,15 +2477,35 @@ void DisplayManager::drawNoteInfo(uint32_t currentTick, Track& selectedTrack, ui
     int selectedIdx = -1;
     if (editManager.getEditSessionType() == EditSessionType::Note &&
         editorSelectionHasNote(selection)) {
-        selectedIdx = filteredDisplayNoteIndexForNoteIdAndStart(
-            notes, selection.primaryNote, selection.selectedTick, loopStartTick, lengthLoop);
+        selectedIdx = NoteEditDisplaySnapshot::filteredDisplayNoteIndexForSelection(
+            selection, notes, loopStartTick, lengthLoop,
+            editManager.isLengthBracketEditActive());
     } else {
         selectedIdx = editManager.getSelectedNoteIdx();
     }
     if (selectedIdx >= 0 && selectedIdx < (int)notes.size()) {
         noteToShow = &notes[static_cast<size_t>(selectedIdx)];
+        const uint32_t storageBracketTick = editManager.isLengthBracketEditActive()
+                                                ? noteToShow->endTick
+                                                : noteToShow->startTick;
         displayStartTick = NoteEditDisplaySnapshot::displayStartTickFromStorage(
-            noteToShow->startTick, loopStartTick, lengthLoop);
+            storageBracketTick, loopStartTick, lengthLoop);
+    }
+
+    DisplayNote focusDisplayFallback{};
+    if (!noteToShow && editManager.isNoteEditActive()) {
+        const NoteEditFocus& focus = editManager.getEditSession().focus;
+        if (focus.active && editorSelectionHasNote(selection) &&
+            focus.movingNoteId == selection.primaryNote) {
+            focusDisplayFallback = {focus.movingNoteId, focus.last.pitch, focus.last.velocity,
+                                    focus.last.startTick, focus.last.endTick};
+            noteToShow = &focusDisplayFallback;
+            const uint32_t storageBracketTick = editManager.isLengthBracketEditActive()
+                                                    ? focus.last.endTick
+                                                    : focus.last.startTick;
+            displayStartTick = NoteEditDisplaySnapshot::displayStartTickFromStorage(
+                storageBracketTick, loopStartTick, lengthLoop);
+        }
     }
     
     if (!noteToShow && !notes.empty()) {
@@ -2517,7 +2545,7 @@ void DisplayManager::drawNoteInfo(uint32_t currentTick, Track& selectedTrack, ui
                     (noteToShow->startTick - loopStartTick) : (noteToShow->startTick + lengthLoop - loopStartTick);
                 displayStartTick = displayStartTick % lengthLoop;
             }
-        } else {
+        } else if (!(editManager.isNoteEditActive() && editManager.getEditSession().focus.active)) {
             noteToShow = &notes.back();
             displayStartTick = (noteToShow->startTick >= loopStartTick) ?
                 (noteToShow->startTick - loopStartTick) : (noteToShow->startTick + lengthLoop - loopStartTick);
@@ -2530,12 +2558,27 @@ void DisplayManager::drawNoteInfo(uint32_t currentTick, Track& selectedTrack, ui
     char velStr[4] = "---";
     bool validNote = false;
     if (noteToShow && lengthLoop > 0) {
-        ticksToBarsBeats16thTicks2Dec(displayStartTick % lengthLoop, startStr, sizeof(startStr), true);
         uint8_t noteVal = noteToShow->note;
-        const uint32_t lenVal =
+        uint32_t lenVal =
             NoteMovementUtils::calculateNoteLength(noteToShow->startTick, noteToShow->endTick,
                                                  lengthLoop);
         uint8_t velVal = noteToShow->velocity;
+        if (editManager.isNoteEditActive()) {
+            const NoteEditFocus& focus = editManager.getEditSession().focus;
+            if (focus.active && editorSelectionHasNote(selection) &&
+                focus.movingNoteId == selection.primaryNote) {
+                noteVal = focus.last.pitch;
+                velVal = focus.last.velocity;
+                lenVal = NoteMovementUtils::calculateNoteLength(focus.last.startTick,
+                                                               focus.last.endTick, lengthLoop);
+                const uint32_t storageBracketTick = editManager.isLengthBracketEditActive()
+                                                        ? focus.last.endTick
+                                                        : focus.last.startTick;
+                displayStartTick = NoteEditDisplaySnapshot::displayStartTickFromStorage(
+                    storageBracketTick, loopStartTick, lengthLoop);
+            }
+        }
+        ticksToBarsBeats16thTicks2Dec(displayStartTick % lengthLoop, startStr, sizeof(startStr), true);
         validNote = (noteVal <= 127 && velVal <= 127 && lenVal < 10000);
         if (validNote) {
             snprintf(noteStr, sizeof(noteStr), "%3u", noteVal);
