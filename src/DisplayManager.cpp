@@ -44,7 +44,7 @@
 
 DisplayManager displayManager;
 namespace {
-MidiEventVec liveDisplayEventBuffer;
+SessionMidiEventVec liveDisplayEventBuffer;
 
 // Minimal gutter for longest line ("OVERD" = 30px) + 1px separator; content is right-aligned to display edge.
 constexpr int SIDEBAR_WIDTH = 30;
@@ -698,7 +698,9 @@ const DisplayNoteVec& DisplayManager::resolveDisplayNotes(const Track& track, ui
             const uint32_t playheadCloseTick =
                 resolvePlayheadInLoop(track, displaySlot, currentTick);
             // Playback / edit display: wrap-held tails only — not live note-on lengthening.
-            applyLiveOpenTails(openNotes, liveDisplayEventBuffer, loopLength, playheadCloseTick,
+            const MidiEventVec liveEvents(liveDisplayEventBuffer.begin(),
+                                          liveDisplayEventBuffer.end());
+            applyLiveOpenTails(openNotes, liveEvents, loopLength, playheadCloseTick,
                                liveDisplayNotes, false);
         }
     }

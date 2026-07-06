@@ -227,6 +227,8 @@ void EditManager::rebuildNoteEditFocusAtSelect(Track& track, int selectedNoteIdx
     loop.passes.materializeToEventVector( loopMidiEventsFromPasses, loopLength);
     rebuildNoteEditFocusFromStore(editSession.focus, loopMidiEventsFromPasses, channel,
                                   loopLength, selectedNoteIdx);
+    populateBaselineMapForEditClosure(editSession.focus, loopMidiEventsFromPasses,
+                                      sessionMidiEvents(), channel, loopLength);
 
     const std::vector<DisplayNote> liveNotes =
         NoteUtils::reconstructNotes(sessionMidiEvents(), loopLength, false);
@@ -282,6 +284,11 @@ void EditManager::rebuildNoteEditFocusForDisplayNote(Track& track,
     editSession.focus.movingNoteRange.start = editSession.focus.last.startTick;
     editSession.focus.movingNoteRange.end = editSession.focus.last.endTick;
     editSession.focus.active = true;
+    if (baselineNoteId != kInvalidNoteId) {
+        editSession.focus.baselineMap[baselineNoteId] = editSession.focus.commitBaseline;
+    }
+    populateBaselineMapForEditClosure(editSession.focus, loopMidiEventsFromPasses,
+                                      sessionEvents, channel, loopLength);
 }
 
 void EditManager::syncSelectedNoteIdxToFilteredInventory(Track& track) {
@@ -730,6 +737,7 @@ bool EditManager::pushSessionUndoOnKindChange(Track& track, NoteEditKind kind) {
                               editSession.store.readFlat(), track.getMidiChannel(),
                               noteEditLoopLengthTicks(track), editSession.editPassIds);
     if (!editSession.undoStack.pushEntry(entry)) {
+        editSession.store.discardFlatCache();
         trackManager.reclaimUnreferencedDisabledPasses();
         if (!editSession.undoStack.pushEntry(entry)) {
             logger.log(CAT_TRACK, LOG_WARNING,
@@ -795,15 +803,16 @@ void EditManager::foldLiveCaptureIntoNoteEditSession(Track& track, uint32_t clos
 
     SessionUndoEntry entry;
     entry.selection = sessionState.selection;
-    entry.focus = editSession.focus;
+    entry.focus = snapshotFocusForSessionUndo(editSession.focus);
     entry.editPassIdsAtPush = editSession.editPassIds;
     entry.redoEditRows = redoRows;
-    entry.redoFocus = editSession.focus;
+    entry.redoFocus = snapshotFocusForSessionUndo(editSession.focus);
     entry.redoSelection = sessionState.selection;
     entry.redoEditPassIds = editSession.editPassIds;
     entry.hasRedoPayload = true;
 
     if (!editSession.undoStack.pushEntry(entry)) {
+        editSession.store.discardFlatCache();
         trackManager.reclaimUnreferencedDisabledPasses();
         if (!editSession.undoStack.pushEntry(entry)) {
             logger.log(CAT_TRACK, LOG_WARNING,

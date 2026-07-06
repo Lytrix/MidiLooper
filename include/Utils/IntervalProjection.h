@@ -8,6 +8,7 @@
 
 #include "MidiEvent.h"
 #include "NoteEditSessionState.h"
+#include "Utils/ExternalMemoryFirstAllocator.h"
 #include "Utils/NoteUtils.h"
 
 /// Shared span primitive — interval is primary; length is derived.
@@ -60,6 +61,11 @@ struct ProjectedNoteInterval {
     uint8_t pitch = 0;
 };
 
+using CanonicalNoteSpanVec =
+    std::vector<CanonicalNoteSpan, ExternalMemoryFirstAllocator<CanonicalNoteSpan>>;
+using ProjectedIntervalVec =
+    std::vector<ProjectedNoteInterval, ExternalMemoryFirstAllocator<ProjectedNoteInterval>>;
+
 namespace IntervalProjection {
 
 /// Position in loop [0, loopLength). Signed-delta safe.
@@ -80,24 +86,20 @@ int32_t advanceProjectionCycleStartTickOnWrap(int32_t projectionCycleStartTick,
                                             uint32_t loopLengthAtWrap);
 
 // Stage 1 — pure math; bounded k shifts by loopLength; deterministic ascending k order.
-std::vector<ProjectedNoteInterval> generateEquivalentIntervals(const CanonicalNoteSpan& span,
-                                                               uint32_t loopLength,
-                                                               const ProjectionContext& context);
+ProjectedIntervalVec generateEquivalentIntervals(const CanonicalNoteSpan& span, uint32_t loopLength,
+                                                 const ProjectionContext& context);
 
 // Stage 2 — consumer-specific selection (Playback / Edit / Timeline).
-ProjectedNoteInterval selectProjectedInterval(
-    const std::vector<ProjectedNoteInterval>& candidates,  // TODO: Replace with ArrayView when common utility is introduced
-    const ProjectionContext& context);
+ProjectedNoteInterval selectProjectedInterval(const ProjectedIntervalVec& candidates,
+                                              const ProjectionContext& context);
 
 // Stage 2 — Display: every candidate intersecting window.
-std::vector<ProjectedNoteInterval> selectProjectedIntervalsForDisplay(
-    const std::vector<ProjectedNoteInterval>& candidates,  // TODO: Replace with ArrayView when common utility is introduced
-    const ProjectionContext& context);
+ProjectedIntervalVec selectProjectedIntervalsForDisplay(const ProjectedIntervalVec& candidates,
+                                                        const ProjectionContext& context);
 
 // Batch helper — generate → select per ProjectionType.
-std::vector<ProjectedNoteInterval> projectNoteIntervals(
-    const std::vector<CanonicalNoteSpan>& spans,  // TODO: Replace with ArrayView when common utility is introduced
-    const ProjectionContext& context);
+ProjectedIntervalVec projectNoteIntervals(const CanonicalNoteSpanVec& spans,
+                                          const ProjectionContext& context);
 
 /// v1 NOTE_EDIT overlap analysis window — full loop `[0, loopLength)`.
 TickInterval makeFullLoopEditAnalysisWindow(uint32_t loopLength);
@@ -113,8 +115,8 @@ ProjectedNoteInterval projectEditLinearSpan(const CanonicalNoteSpan& span,
                                             const ProjectionContext& context);
 
 /// Batch Edit projection for overlap analyze — forces `ProjectionType::Edit`.
-std::vector<ProjectedNoteInterval> projectEditIntervalsForAnalysis(
-    const std::vector<CanonicalNoteSpan>& spans, const ProjectionContext& context);
+ProjectedIntervalVec projectEditIntervalsForAnalysis(const CanonicalNoteSpanVec& spans,
+                                                     const ProjectionContext& context);
 
 /// v1 display analysis frame — full loop `[0, loopLength)`.
 TickInterval makeFullLoopDisplayWindow(uint32_t loopLength);
@@ -124,9 +126,9 @@ ProjectionContext buildDisplayProjectionContext(uint32_t loopLength, TickInterva
                                                 int32_t loopStartTick = 0);
 
 /// Display projection + rendering — Stage 2 selection, head/tail split, live open-tail.
-NoteUtils::DisplayNoteVec projectDisplayNotes(
-    const std::vector<CanonicalNoteSpan>& spans, const ProjectionContext& context,
-    uint32_t playheadTick = UINT32_MAX);
+NoteUtils::DisplayNoteVec projectDisplayNotes(const CanonicalNoteSpanVec& spans,
+                                              const ProjectionContext& context,
+                                              uint32_t playheadTick = UINT32_MAX);
 
 /// v1 playback analysis frame — full loop `[0, loopLength)`.
 TickInterval makeFullLoopPlaybackWindow(uint32_t loopLength);

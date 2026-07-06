@@ -44,7 +44,7 @@ void test_filter_display_notes_by_window_inclusion_tick_interval() {
 
 void test_head_tail_note_viewport_is_distinct_from_split() {
   constexpr uint32_t loopLength = 1536;
-  std::vector<CanonicalNoteSpan> spans;
+  CanonicalNoteSpanVec spans;
   CanonicalNoteSpan span;
   span.noteId = 1;
   span.pitch = 60;

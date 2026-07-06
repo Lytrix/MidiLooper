@@ -86,6 +86,7 @@ struct LoopPasses {
 
   void materialize(LoopEventStore& out, uint32_t loopLengthTicks = 0) const;
   void materializeToEventVector(MidiEventVec& out, uint32_t loopLengthTicks = 0) const;
+  void materializeToEventVector(SessionMidiEventVec& out, uint32_t loopLengthTicks = 0) const;
 };
 
 inline CapturePassPhase capturePassPhaseForCapturePhase(CapturePhase phase) {

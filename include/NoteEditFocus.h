@@ -11,7 +11,11 @@
 
 #include "EditPass.h"
 #include "MidiEvent.h"
+#include "Utils/ExternalMemoryFirstAllocator.h"
 #include "Utils/NoteUtils.h"
+
+template <typename T>
+using ExternalMemoryUnorderedMapAllocator = ExternalMemoryFirstAllocator<std::pair<const NoteId, T>>;
 
 struct NoteBaseline {
   uint8_t pitch = 0;
@@ -24,7 +28,8 @@ struct NoteIdHash {
   size_t operator()(NoteId id) const noexcept { return std::hash<NoteId>{}(id); }
 };
 
-using BaselineMap = std::unordered_map<NoteId, NoteBaseline, NoteIdHash>;
+using BaselineMap = std::unordered_map<NoteId, NoteBaseline, NoteIdHash, std::equal_to<NoteId>,
+                                       ExternalMemoryUnorderedMapAllocator<NoteBaseline>>;
 
 enum class OverlapNoteStoreState : uint8_t { Visible, Hidden, Shortened };
 
@@ -50,7 +55,8 @@ struct OverlapNoteRestore {
   uint32_t shortenedToTick = 0;
 };
 
-using OverlapNoteMap = std::unordered_map<NoteId, OverlapNote, NoteIdHash>;
+using OverlapNoteMap = std::unordered_map<NoteId, OverlapNote, NoteIdHash, std::equal_to<NoteId>,
+                                          ExternalMemoryUnorderedMapAllocator<OverlapNote>>;
 
 /// Tick range of the moving note on focus (start/end); used for inner overlap-note tests.
 struct MovingNoteRange {
@@ -104,10 +110,11 @@ bool resolveLinearNoteSpanForOverlap(const NoteEditFocus& focus, MidiEventVec& e
                                      uint8_t channel, const NoteUtils::DisplayNote& dn,
                                      NoteBaseline& out, uint32_t loopLength = 0);
 
-/// Read-only scan of loop MIDI events → full-loop baseline inventory.
-void rebuildNoteEditFocusFromStore(NoteEditFocus& focus, const MidiEventVec& loopMidiEvents,
-                                   uint8_t channel, uint32_t loopLength,
-                                   int selectedNoteIdx);
+/// Read-only scan of loop MIDI events → moving-note baseline for NOTE_EDIT focus.
+template <typename Alloc>
+void rebuildNoteEditFocusFromStore(NoteEditFocus& focus,
+                                   const std::vector<MidiEvent, Alloc>& loopMidiEvents,
+                                   uint8_t channel, uint32_t loopLength, int selectedNoteIdx);
 
 /// A1: length edit updates live end + moving note range only (not commitBaseline).
 void noteEditFocusApplyLengthEnd(NoteEditFocus& focus, uint32_t newEndTick);
@@ -126,24 +133,29 @@ bool isPlausibleStorageSpan(uint32_t startTick, uint32_t endTick, uint32_t loopL
 bool isInflatedDisplaySpan(const NoteUtils::DisplayNote& dn, uint32_t loopLength);
 
 /// Linear on/off span in canonical storage for noteId (not display projection).
-bool findLinearNoteSpanForNoteId(MidiEventVec& events, NoteId noteId, uint8_t channel,
-                                 NoteBaseline& outBaseline,
+template <typename Alloc>
+bool findLinearNoteSpanForNoteId(std::vector<MidiEvent, Alloc>& events, NoteId noteId,
+                                 uint8_t channel, NoteBaseline& outBaseline,
                                  uint32_t preferredStartTick = UINT32_MAX,
                                  uint32_t loopLength = 0);
 
 /// Farthest plausible note-off with matching noteId (avoids LIFO steal from same-pitch neighbors).
-MidiEvent* findLinearOffForNoteId(MidiEventVec& events, const MidiEvent& noteOn, NoteId noteId,
-                                  uint32_t loopLength);
+template <typename Alloc>
+MidiEvent* findLinearOffForNoteId(std::vector<MidiEvent, Alloc>& events, const MidiEvent& noteOn,
+                                  NoteId noteId, uint32_t loopLength);
 
 /// Refresh focus.last (and moving note range) from session store linear span.
-bool syncNoteEditFocusLinearFromSessionStore(NoteEditFocus& focus, MidiEventVec& events,
-                                            uint8_t channel, uint32_t loopLength = 0);
+template <typename Alloc>
+bool syncNoteEditFocusLinearFromSessionStore(NoteEditFocus& focus,
+                                             std::vector<MidiEvent, Alloc>& events,
+                                             uint8_t channel, uint32_t loopLength = 0);
 
 uint32_t overlapNoteEffectiveEnd(const OverlapNote& entry);
 
 /// B1: materialize Hidden/Shortened overlap notes in session store before commit (impacted refs only).
-void resolveOverlapNotesForPreCommit(MidiEventVec& sessionStoreEvents, NoteEditFocus& focus,
-                                     uint8_t channel, uint32_t loopLength);
+template <typename Alloc>
+void resolveOverlapNotesForPreCommit(std::vector<MidiEvent, Alloc>& sessionStoreEvents,
+                                     NoteEditFocus& focus, uint8_t channel, uint32_t loopLength);
 
 /// Drop overlap scratch rows that are already materialized in session store (display-wrap baselines).
 void pruneOverlapNotesBeforePreCommit(NoteEditFocus& focus, MidiEventVec& events, uint8_t channel);
@@ -159,14 +171,22 @@ EditPassVec buildPreCommitOverlapEditPasses(const NoteEditFocus& focus);
 EditPassVec buildPreCommitEditPasses(const NoteEditFocus& focus, uint8_t channel);
 
 /// NOTE_EDIT select/display inventory: session reconstruction minus Hidden and innerUnderMovingNote.
+template <typename Alloc>
 NoteUtils::DisplayNoteVec filterSelectableDisplayNotes(
-    const MidiEventVec& sessionEvents, const NoteEditFocus& focus, uint8_t channel,
-    uint32_t loopLength);
+    const std::vector<MidiEvent, Alloc>& sessionEvents, const NoteEditFocus& focus,
+    uint8_t channel, uint32_t loopLength);
 
 /// NoteIds for micro normalize scope: mover, overlap participants, same-pitch wrap interactors.
 std::unordered_set<NoteId> buildEditClosureNoteIds(const NoteEditFocus& focus,
                                                  const MidiEventVec& sessionEvents,
                                                  uint8_t channel, uint32_t loopLength);
+
+/// Committed-loop linear baselines for edit-closure note ids (moving note + wrap interactors).
+template <typename Alloc>
+void populateBaselineMapForEditClosure(NoteEditFocus& focus,
+                                       const std::vector<MidiEvent, Alloc>& committedLoopEvents,
+                                       const MidiEventVec& sessionEvents, uint8_t channel,
+                                       uint32_t loopLength);
 
 template <typename NotesVec>
 inline NoteId noteIdFromFilteredDisplayNote(const NotesVec& filtered, int filteredIndex) {

@@ -102,6 +102,10 @@ std::vector<DisplayNote> reconstructNotes(const MidiEventVec& midiEvents, uint32
 DisplayNoteVec reconstructDisplayNotes(const MidiEventVec& midiEvents, uint32_t loopLength,
                                        bool verboseLog = true);
 
+template <typename Alloc>
+DisplayNoteVec reconstructDisplayNotes(const std::vector<MidiEvent, Alloc>& midiEvents,
+                                       uint32_t loopLength, bool verboseLog = true);
+
 struct OpenNoteOn {
     uint8_t note;
     uint8_t velocity;
@@ -112,6 +116,10 @@ struct OpenNoteOn {
  * @brief Returns note-ons within loopLength that have no matching note-off yet (LIFO per pitch).
  */
 std::vector<OpenNoteOn> findOpenNoteOns(const MidiEventVec& midiEvents, uint32_t loopLength);
+
+template <typename Alloc>
+std::vector<OpenNoteOn> findOpenNoteOns(const std::vector<MidiEvent, Alloc>& midiEvents,
+                                          uint32_t loopLength);
 
 bool isWrapHeldOpenNote(const MidiEventVec& midiEvents, const OpenNoteOn& open, uint32_t loopLength);
 

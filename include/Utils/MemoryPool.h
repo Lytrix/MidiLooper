@@ -6,7 +6,7 @@
 #include <cstdint>
 #include <cstddef>
 #include "MidiEvent.h"
-#include "Utils/InternalHeapFirstAllocator.h"
+#include "Utils/ExternalMemoryFirstAllocator.h"
 
 // Forward declarations
 class Logger;
@@ -21,9 +21,9 @@ namespace MemoryPool {
  * Pre-allocates a pool of MidiEvent objects and provides fast allocation/deallocation.
  * Reduces memory fragmentation and improves performance for frequent MIDI event creation.
  *
- * Memory strategy (InternalHeapFirstAllocator):
- *   - The pool vectors are backed by InternalHeapFirstAllocator, which first tries
- *     internal heap memory and spills to external memory when needed.
+ * Memory strategy (ExternalMemoryFirstAllocator):
+ *   - The pool vectors are backed by ExternalMemoryFirstAllocator, which first tries
+ *     the external memory pool and spills to internal heap when needed.
  *   - Initial allocation is deferred: the constructor does NOT allocate any memory so
  *     that no extmem_malloc call occurs before the Teensy 4.1 PSRAM hardware is ready.
  *   - Call init() once inside Arduino setup() to trigger the first pool reservation.
@@ -33,8 +33,8 @@ private:
     static constexpr size_t INITIAL_POOL_SIZE = 1024;  // Start with 1K events
     static constexpr size_t GROWTH_FACTOR = 2;         // Double size when growing
 
-    MidiEventVec pool;
-    std::vector<bool, InternalHeapFirstAllocator<bool>> used;
+    SessionMidiEventVec pool;
+    std::vector<bool, ExternalMemoryFirstAllocator<bool>> used;
     size_t nextFreeIndex;
 
 public:

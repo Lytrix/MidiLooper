@@ -198,7 +198,9 @@ void pushEditPassRows(LoopPasses& passes, EditPassId baseId, EditPassVec rows) {
   }
 }
 
-int countMatching(const MidiEventVec& flat, bool wantOn, uint8_t pitch, uint32_t tick) {
+template <typename Alloc>
+int countMatching(const std::vector<MidiEvent, Alloc>& flat, bool wantOn, uint8_t pitch,
+                  uint32_t tick) {
   int n = 0;
   for (const MidiEvent& e : flat) {
     const bool isOn = e.isNoteOn();
@@ -605,8 +607,8 @@ void test_lengthen_commit_rematerialize_hitl_fixture() {
   loop.rematerializeEditView(session.mutStore());
   session.discardFlatCache();
 
-  const std::vector<NoteUtils::DisplayNote> notes =
-      NoteUtils::reconstructNotes(session.readFlat(), kLoopLength, false);
+  const NoteUtils::DisplayNoteVec notes =
+      NoteUtils::reconstructDisplayNotes(session.readFlat(), kLoopLength, false);
   bool foundM0 = false;
   for (const NoteUtils::DisplayNote& n : notes) {
     if (n.note == 60 && n.startTick == 8) {
@@ -638,8 +640,8 @@ void test_change_length_rematerialize_hitl_195830_ticks() {
   session.mutStore().loadFromFlat(loopMidiEventsFromTakesAndEdits);
   session.discardFlatCache();
 
-  const std::vector<NoteUtils::DisplayNote> notes =
-      NoteUtils::reconstructNotes(session.readFlat(), kLoopLength, false);
+  const NoteUtils::DisplayNoteVec notes =
+      NoteUtils::reconstructDisplayNotes(session.readFlat(), kLoopLength, false);
   bool foundM0Home = false;
   bool foundP0 = false;
   for (const NoteUtils::DisplayNote& n : notes) {

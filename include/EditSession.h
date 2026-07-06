@@ -43,6 +43,7 @@ struct NoteEditSessionUndoStack {
   size_t redoCount() const { return entries_.size() - cursor_; }
 
   bool pushEntry(const SessionUndoEntry& entry) {
+    trimUntilCanAdmit(entry);
     if (!canHeapAdmitSessionUndoEntry(entry)) {
       return false;
     }
@@ -126,15 +127,18 @@ struct NoteEditSessionUndoStack {
         break;
       }
     }
-    while (entries_.size() > Config::MIN_SESSION_UNDO_DEPTH &&
-           MemoryMonitor::getInternalHeapFreeBytes() < Config::HEAP_RESERVE_BYTES) {
-      if (!trimOneSessionUndoEntryForMemoryPressure()) {
+  }
+
+  void trimUntilCanAdmit(const SessionUndoEntry& entry) {
+    while (!entries_.empty() && !canHeapAdmitSessionUndoEntry(entry)) {
+      if (!trimOneSessionUndoEntryForMemoryPressure() &&
+          !trimOneSessionUndoEntryForDepthCap()) {
         break;
       }
     }
   }
 
-  using EntryVec = std::vector<SessionUndoEntry, InternalHeapFirstAllocator<SessionUndoEntry>>;
+  using EntryVec = std::vector<SessionUndoEntry, ExternalMemoryFirstAllocator<SessionUndoEntry>>;
   EntryVec entries_;
   size_t cursor_ = 0;
 };

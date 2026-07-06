@@ -104,10 +104,11 @@ void applyMoveToSession(NoteEditFocus& focus, MidiEventVec& flat, uint8_t channe
   }
 }
 
-bool hasDisplayNote(const MidiEventVec& flat, uint32_t loopLength, uint8_t pitch,
+template <typename Alloc>
+bool hasDisplayNote(const std::vector<MidiEvent, Alloc>& flat, uint32_t loopLength, uint8_t pitch,
                     uint32_t startTick, uint32_t endTick) {
-  const std::vector<NoteUtils::DisplayNote> notes =
-      NoteUtils::reconstructNotes(flat, loopLength, false);
+  const NoteUtils::DisplayNoteVec notes =
+      NoteUtils::reconstructDisplayNotes(flat, loopLength, false);
   for (const NoteUtils::DisplayNote& note : notes) {
     if (note.note == pitch && note.startTick == startTick && note.endTick == endTick) {
       return true;
@@ -670,6 +671,27 @@ void test_live_capture_baked_on_close_without_prior_edit_passes() {
   TEST_ASSERT_TRUE(hasDisplayNote(materialized, loop.loopLengthTicks, 12, 200, 248));
 }
 
+void test_session_undo_entry_trims_baseline_map_to_overlap_closure() {
+  NoteEditFocus focus;
+  focus.active = true;
+  focus.movingNoteId = 1;
+  focus.commitBaseline = {36, 100, 48, 96};
+  focus.last = focus.commitBaseline;
+  for (NoteId noteId = 1; noteId <= 40; ++noteId) {
+    focus.baselineMap[noteId] = {36, 100, 48, 96};
+  }
+  OverlapNote overlap;
+  overlap.noteId = 17;
+  overlap.baseline = {40, 100, 96, 144};
+  focus.overlapNotes[17] = overlap;
+
+  const NoteEditFocus snap = snapshotFocusForSessionUndo(focus);
+  TEST_ASSERT_EQUAL(2u, snap.baselineMap.size());
+  TEST_ASSERT_TRUE(snap.baselineMap.count(1) > 0);
+  TEST_ASSERT_TRUE(snap.baselineMap.count(17) > 0);
+  TEST_ASSERT_EQUAL(40u, focus.baselineMap.size());
+}
+
 int main(int argc, char** argv) {
   UNITY_BEGIN();
   RUN_TEST(test_session_undo_stack_push_entry);
@@ -687,6 +709,7 @@ int main(int argc, char** argv) {
   RUN_TEST(test_kind_boundary_add_then_move_two_entries);
   RUN_TEST(test_kind_boundary_reselect_move_pushes_again);
   RUN_TEST(test_kind_boundary_select_nav_no_push);
+  RUN_TEST(test_session_undo_entry_trims_baseline_map_to_overlap_closure);
   RUN_TEST(test_live_capture_baked_on_close_without_prior_edit_passes);
   return UNITY_END();
 }

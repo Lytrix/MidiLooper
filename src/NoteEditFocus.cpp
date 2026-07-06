@@ -214,7 +214,9 @@ NOTE_EDIT_MEM uint32_t overlapNoteEffectiveEnd(const OverlapNote& entry) {
   return entry.baseline.endTick;
 }
 
-NOTE_EDIT_MEM void rebuildNoteEditFocusFromStore(NoteEditFocus& focus, const MidiEventVec& loopMidiEvents,
+template <typename Alloc>
+NOTE_EDIT_MEM void rebuildNoteEditFocusFromStore(NoteEditFocus& focus,
+                                   const std::vector<MidiEvent, Alloc>& loopMidiEvents,
                                    uint8_t channel, uint32_t loopLength,
                                    int selectedNoteIdx) {
   (void)channel;
@@ -223,28 +225,8 @@ NOTE_EDIT_MEM void rebuildNoteEditFocusFromStore(NoteEditFocus& focus, const Mid
     return;
   }
 
-  const std::vector<NoteUtils::DisplayNote> notes =
-      NoteUtils::reconstructNotes(loopMidiEvents, loopLength, false);
-  std::unordered_set<NoteId> noteIds;
-  for (const NoteUtils::DisplayNote& dn : notes) {
-    if (dn.noteId != kInvalidNoteId) {
-      noteIds.insert(dn.noteId);
-    }
-  }
-  MidiEventVec mutableEvents = loopMidiEvents;
-  for (NoteId noteId : noteIds) {
-    NoteBaseline linear;
-    if (findLinearNoteSpanForNoteId(mutableEvents, noteId, channel, linear, UINT32_MAX,
-                                    loopLength)) {
-      focus.baselineMap[noteId] = linear;
-    }
-  }
-  for (const NoteUtils::DisplayNote& dn : notes) {
-    if (dn.noteId == kInvalidNoteId || focus.baselineMap.count(dn.noteId) > 0) {
-      continue;
-    }
-    focus.baselineMap[dn.noteId] = baselineFromDisplayNote(dn);
-  }
+  const NoteUtils::DisplayNoteVec notes =
+      NoteUtils::reconstructDisplayNotes(loopMidiEvents, loopLength, false);
 
   if (selectedNoteIdx < 0 || selectedNoteIdx >= static_cast<int>(notes.size())) {
     return;
@@ -252,6 +234,7 @@ NOTE_EDIT_MEM void rebuildNoteEditFocusFromStore(NoteEditFocus& focus, const Mid
 
   const NoteUtils::DisplayNote& selected = notes[static_cast<size_t>(selectedNoteIdx)];
   focus.movingNoteId = selected.noteId;
+  std::vector<MidiEvent, Alloc> mutableEvents = loopMidiEvents;
   NoteBaseline linearBaseline;
   if (findLinearNoteSpanForNoteId(mutableEvents, selected.noteId, channel, linearBaseline,
                                   UINT32_MAX, loopLength)) {
@@ -259,11 +242,17 @@ NOTE_EDIT_MEM void rebuildNoteEditFocusFromStore(NoteEditFocus& focus, const Mid
   } else {
     focus.commitBaseline = baselineFromDisplayNote(selected);
   }
+  focus.baselineMap[focus.movingNoteId] = focus.commitBaseline;
   focus.movingNoteRange.start = focus.commitBaseline.startTick;
   focus.movingNoteRange.end = focus.commitBaseline.endTick;
   focus.last = focus.commitBaseline;
   focus.active = true;
 }
+
+template void rebuildNoteEditFocusFromStore<InternalHeapFirstAllocator<MidiEvent>>(
+    NoteEditFocus&, const MidiEventVec&, uint8_t, uint32_t, int);
+template void rebuildNoteEditFocusFromStore<ExternalMemoryFirstAllocator<MidiEvent>>(
+    NoteEditFocus&, const SessionMidiEventVec&, uint8_t, uint32_t, int);
 
 NOTE_EDIT_MEM void noteEditFocusApplyLengthEnd(NoteEditFocus& focus, uint32_t newEndTick) {
   if (!focus.active) {
@@ -313,7 +302,10 @@ NOTE_EDIT_MEM bool noteEditFocusHasPendingLengthChange(const NoteEditFocus& focu
 
 namespace {
 
-NOTE_EDIT_MEM MidiEvent* findLinearOffForNoteOnLifo(MidiEventVec& events, MidiEvent* noteOnEvent, uint8_t pitch) {
+template <typename Alloc>
+NOTE_EDIT_MEM
+MidiEvent* findLinearOffForNoteOnLifo(std::vector<MidiEvent, Alloc>& events, MidiEvent* noteOnEvent,
+                                       uint8_t pitch) {
   if (noteOnEvent == nullptr) {
     return nullptr;
   }
@@ -343,7 +335,9 @@ NOTE_EDIT_MEM MidiEvent* findLinearOffForNoteOnLifo(MidiEventVec& events, MidiEv
   return nullptr;
 }
 
-NOTE_EDIT_MEM MidiEvent* findPlausibleOffForNoteOn(MidiEventVec& events, const MidiEvent& noteOn,
+template <typename Alloc>
+NOTE_EDIT_MEM
+MidiEvent* findPlausibleOffForNoteOn(std::vector<MidiEvent, Alloc>& events, const MidiEvent& noteOn,
                                      uint32_t loopLength) {
   const uint8_t pitch = noteOn.data.noteData.note;
   const uint32_t startTick = noteOn.tick;
@@ -375,8 +369,10 @@ NOTE_EDIT_MEM MidiEvent* findPlausibleOffForNoteOn(MidiEventVec& events, const M
 
 }  // namespace
 
-NOTE_EDIT_MEM MidiEvent* findLinearOffForNoteId(MidiEventVec& events, const MidiEvent& noteOn, NoteId noteId,
-                                  uint32_t loopLength) {
+template <typename Alloc>
+NOTE_EDIT_MEM
+MidiEvent* findLinearOffForNoteId(std::vector<MidiEvent, Alloc>& events, const MidiEvent& noteOn,
+                                  NoteId noteId, uint32_t loopLength) {
   if (noteId == kInvalidNoteId) {
     return nullptr;
   }
@@ -409,9 +405,16 @@ NOTE_EDIT_MEM MidiEvent* findLinearOffForNoteId(MidiEventVec& events, const Midi
   return findLinearOffForNoteOnLifo(events, mutableOn, noteOn.data.noteData.note);
 }
 
-NOTE_EDIT_MEM bool findLinearNoteSpanForNoteId(MidiEventVec& events, NoteId noteId, uint8_t channel,
-                                 NoteBaseline& outBaseline, uint32_t preferredStartTick,
-                                 uint32_t loopLength) {
+template MidiEvent* findLinearOffForNoteId<InternalHeapFirstAllocator<MidiEvent>>(
+    MidiEventVec&, const MidiEvent&, NoteId, uint32_t);
+template MidiEvent* findLinearOffForNoteId<ExternalMemoryFirstAllocator<MidiEvent>>(
+    SessionMidiEventVec&, const MidiEvent&, NoteId, uint32_t);
+
+template <typename Alloc>
+NOTE_EDIT_MEM
+bool findLinearNoteSpanForNoteId(std::vector<MidiEvent, Alloc>& events, NoteId noteId,
+                                 uint8_t channel, NoteBaseline& outBaseline,
+                                 uint32_t preferredStartTick, uint32_t loopLength) {
   if (noteId == kInvalidNoteId) {
     return false;
   }
@@ -465,8 +468,16 @@ NOTE_EDIT_MEM bool findLinearNoteSpanForNoteId(MidiEventVec& events, NoteId note
   return false;
 }
 
-NOTE_EDIT_MEM bool syncNoteEditFocusLinearFromSessionStore(NoteEditFocus& focus, MidiEventVec& events,
-                                            uint8_t channel, uint32_t loopLength) {
+template bool findLinearNoteSpanForNoteId<InternalHeapFirstAllocator<MidiEvent>>(
+    MidiEventVec&, NoteId, uint8_t, NoteBaseline&, uint32_t, uint32_t);
+template bool findLinearNoteSpanForNoteId<ExternalMemoryFirstAllocator<MidiEvent>>(
+    SessionMidiEventVec&, NoteId, uint8_t, NoteBaseline&, uint32_t, uint32_t);
+
+template <typename Alloc>
+NOTE_EDIT_MEM
+bool syncNoteEditFocusLinearFromSessionStore(NoteEditFocus& focus,
+                                             std::vector<MidiEvent, Alloc>& events,
+                                             uint8_t channel, uint32_t loopLength) {
   if (!focus.active) {
     return false;
   }
@@ -511,6 +522,11 @@ NOTE_EDIT_MEM bool syncNoteEditFocusLinearFromSessionStore(NoteEditFocus& focus,
   return false;
 }
 
+template bool syncNoteEditFocusLinearFromSessionStore<InternalHeapFirstAllocator<MidiEvent>>(
+    NoteEditFocus&, MidiEventVec&, uint8_t, uint32_t);
+template bool syncNoteEditFocusLinearFromSessionStore<ExternalMemoryFirstAllocator<MidiEvent>>(
+    NoteEditFocus&, SessionMidiEventVec&, uint8_t, uint32_t);
+
 namespace {
 
 NOTE_EDIT_MEM bool eventMatchesNoteEndpoint(const MidiEvent& e, uint8_t channel, uint8_t pitch,
@@ -525,8 +541,10 @@ NOTE_EDIT_MEM bool eventMatchesNoteEndpoint(const MidiEvent& e, uint8_t channel,
          (e.type == midi::NoteOn && e.data.noteData.velocity == 0);
 }
 
-NOTE_EDIT_MEM void eraseNoteEndpoint(MidiEventVec& flat, uint8_t channel, uint8_t pitch, uint32_t tick,
-                       bool wantOn) {
+template <typename Alloc>
+NOTE_EDIT_MEM
+void eraseNoteEndpoint(std::vector<MidiEvent, Alloc>& flat, uint8_t channel, uint8_t pitch,
+                         uint32_t tick, bool wantOn) {
   flat.erase(std::remove_if(flat.begin(), flat.end(),
                             [&](const MidiEvent& e) {
                               return eventMatchesNoteEndpoint(e, channel, pitch, tick, wantOn);
@@ -534,12 +552,18 @@ NOTE_EDIT_MEM void eraseNoteEndpoint(MidiEventVec& flat, uint8_t channel, uint8_
              flat.end());
 }
 
-NOTE_EDIT_MEM void eraseNotePairAtBaseline(MidiEventVec& flat, uint8_t channel, const NoteBaseline& bl) {
+template <typename Alloc>
+NOTE_EDIT_MEM
+void eraseNotePairAtBaseline(std::vector<MidiEvent, Alloc>& flat, uint8_t channel,
+                             const NoteBaseline& bl) {
   eraseNoteEndpoint(flat, channel, bl.pitch, bl.startTick, true);
   eraseNoteEndpoint(flat, channel, bl.pitch, bl.endTick, false);
 }
 
-NOTE_EDIT_MEM MidiEvent* findNoteOnAt(MidiEventVec& flat, uint8_t channel, uint8_t pitch, uint32_t startTick) {
+template <typename Alloc>
+NOTE_EDIT_MEM
+MidiEvent* findNoteOnAt(std::vector<MidiEvent, Alloc>& flat, uint8_t channel, uint8_t pitch,
+                        uint32_t startTick) {
   for (MidiEvent& e : flat) {
     if (eventMatchesNoteEndpoint(e, channel, pitch, startTick, true)) {
       return &e;
@@ -548,7 +572,9 @@ NOTE_EDIT_MEM MidiEvent* findNoteOnAt(MidiEventVec& flat, uint8_t channel, uint8
   return nullptr;
 }
 
-NOTE_EDIT_MEM MidiEvent* findNoteOffForOn(MidiEventVec& flat, uint8_t channel, uint8_t pitch,
+template <typename Alloc>
+NOTE_EDIT_MEM
+MidiEvent* findNoteOffForOn(std::vector<MidiEvent, Alloc>& flat, uint8_t channel, uint8_t pitch,
                             uint32_t startTick, uint32_t endTick) {
   (void)startTick;
   for (MidiEvent& e : flat) {
@@ -559,7 +585,9 @@ NOTE_EDIT_MEM MidiEvent* findNoteOffForOn(MidiEventVec& flat, uint8_t channel, u
   return nullptr;
 }
 
-NOTE_EDIT_MEM void insertNotePair(MidiEventVec& flat, uint8_t channel, const NoteBaseline& bl,
+template <typename Alloc>
+NOTE_EDIT_MEM
+void insertNotePair(std::vector<MidiEvent, Alloc>& flat, uint8_t channel, const NoteBaseline& bl,
                     uint32_t endTick, NoteId noteId) {
   MidiEvent noteOn = MidiEvent::NoteOn(bl.startTick, channel, bl.pitch, bl.velocity);
   noteOn.noteId = noteId;
@@ -567,13 +595,15 @@ NOTE_EDIT_MEM void insertNotePair(MidiEventVec& flat, uint8_t channel, const Not
   flat.push_back(MidiEvent::NoteOff(endTick, channel, bl.pitch, 0));
 }
 
-NOTE_EDIT_MEM void materializeShortenedOverlap(MidiEventVec& flat, uint8_t channel, const OverlapNote& entry,
-                                 uint32_t loopLength) {
+template <typename Alloc>
+NOTE_EDIT_MEM
+void materializeShortenedOverlap(std::vector<MidiEvent, Alloc>& flat, uint8_t channel,
+                                 const OverlapNote& entry, uint32_t loopLength) {
   const NoteBaseline& bl = entry.baseline;
   const uint32_t targetOff = entry.shortenedEndTick;
 
-  const std::vector<NoteUtils::DisplayNote> notes =
-      NoteUtils::reconstructNotes(flat, loopLength, false);
+  const NoteUtils::DisplayNoteVec notes =
+      NoteUtils::reconstructDisplayNotes(flat, loopLength, false);
   for (const NoteUtils::DisplayNote& dn : notes) {
     if (dn.noteId == entry.noteId ||
         (dn.note == bl.pitch && dn.startTick == bl.startTick && dn.endTick == targetOff)) {
@@ -602,8 +632,10 @@ NOTE_EDIT_MEM void materializeShortenedOverlap(MidiEventVec& flat, uint8_t chann
 
 }  // namespace
 
-NOTE_EDIT_MEM void resolveOverlapNotesForPreCommit(MidiEventVec& sessionStoreEvents, NoteEditFocus& focus,
-                                     uint8_t channel, uint32_t loopLength) {
+template <typename Alloc>
+NOTE_EDIT_MEM
+void resolveOverlapNotesForPreCommit(std::vector<MidiEvent, Alloc>& sessionStoreEvents,
+                                     NoteEditFocus& focus, uint8_t channel, uint32_t loopLength) {
   if (!focus.active || loopLength == 0) {
     return;
   }
@@ -626,6 +658,11 @@ NOTE_EDIT_MEM void resolveOverlapNotesForPreCommit(MidiEventVec& sessionStoreEve
     }
   }
 }
+
+template void resolveOverlapNotesForPreCommit<InternalHeapFirstAllocator<MidiEvent>>(
+    MidiEventVec&, NoteEditFocus&, uint8_t, uint32_t);
+template void resolveOverlapNotesForPreCommit<ExternalMemoryFirstAllocator<MidiEvent>>(
+    SessionMidiEventVec&, NoteEditFocus&, uint8_t, uint32_t);
 
 namespace {
 
@@ -745,6 +782,31 @@ NOTE_EDIT_MEM bool isExcludedFromSelectableDisplayNotes(const NoteEditFocus& foc
 
 }  // namespace
 
+template <typename Alloc>
+NOTE_EDIT_MEM void populateBaselineMapForEditClosure(
+    NoteEditFocus& focus, const std::vector<MidiEvent, Alloc>& committedLoopEvents,
+    const MidiEventVec& sessionEvents, uint8_t channel, uint32_t loopLength) {
+  if (!focus.active || loopLength == 0) {
+    return;
+  }
+  const std::unordered_set<NoteId> closure =
+      buildEditClosureNoteIds(focus, sessionEvents, channel, loopLength);
+  std::vector<MidiEvent, Alloc> mutableCommitted = committedLoopEvents;
+  for (NoteId noteId : closure) {
+    if (noteId == kInvalidNoteId || focus.baselineMap.find(noteId) != focus.baselineMap.end()) {
+      continue;
+    }
+    NoteBaseline baseline;
+    if (findLinearNoteSpanForNoteId(mutableCommitted, noteId, channel, baseline, UINT32_MAX,
+                                    loopLength)) {
+      focus.baselineMap[noteId] = baseline;
+    }
+  }
+}
+
+template void populateBaselineMapForEditClosure<InternalHeapFirstAllocator<MidiEvent>>(
+    NoteEditFocus&, const MidiEventVec&, const MidiEventVec&, uint8_t, uint32_t);
+
 std::unordered_set<NoteId> buildEditClosureNoteIds(const NoteEditFocus& focus,
                                                  const MidiEventVec& sessionEvents,
                                                  uint8_t channel, uint32_t loopLength) {
@@ -785,9 +847,11 @@ std::unordered_set<NoteId> buildEditClosureNoteIds(const NoteEditFocus& focus,
   return ids;
 }
 
-NOTE_EDIT_MEM NoteUtils::DisplayNoteVec filterSelectableDisplayNotes(
-    const MidiEventVec& sessionEvents, const NoteEditFocus& focus, uint8_t channel,
-    uint32_t loopLength) {
+template <typename Alloc>
+NOTE_EDIT_MEM
+NoteUtils::DisplayNoteVec filterSelectableDisplayNotes(
+    const std::vector<MidiEvent, Alloc>& sessionEvents, const NoteEditFocus& focus,
+    uint8_t channel, uint32_t loopLength) {
   (void)channel;
   NoteUtils::DisplayNoteVec allNotes =
       NoteUtils::reconstructDisplayNotes(sessionEvents, loopLength, false);
@@ -805,6 +869,13 @@ NOTE_EDIT_MEM NoteUtils::DisplayNoteVec filterSelectableDisplayNotes(
   }
   return filtered;
 }
+
+template NoteUtils::DisplayNoteVec filterSelectableDisplayNotes<InternalHeapFirstAllocator<MidiEvent>>(
+    const MidiEventVec&, const NoteEditFocus&, uint8_t, uint32_t);
+template NoteUtils::DisplayNoteVec
+filterSelectableDisplayNotes<ExternalMemoryFirstAllocator<MidiEvent>>(const SessionMidiEventVec&,
+                                                                      const NoteEditFocus&, uint8_t,
+                                                                      uint32_t);
 
 NOTE_EDIT_MEM EditPassVec buildPreCommitEditPasses(const NoteEditFocus& focus, uint8_t channel) {
   EditPassVec rows = buildPreCommitOverlapEditPasses(focus);

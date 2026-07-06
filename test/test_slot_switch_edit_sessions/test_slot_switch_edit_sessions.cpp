@@ -79,19 +79,20 @@ void setupLoop(Loop& loop, uint32_t loopLength, unsigned noteCount) {
   loop.nextPassId_ = 2;
 }
 
-void openNoteEditSessionStore(CowLoopEventStore& session, Loop& loop) {
+void openCowLoopEventStore(CowLoopEventStore& session, Loop& loop) {
   loop.rematerializeEditView(session.mutStore());
   loop.assignMissingNoteIdsInStore(session.mutStore());
   session.discardFlatCache();
 }
 
-void reopenNoteEditSessionStore(CowLoopEventStore& session, Loop& loop) {
+void reopenCowLoopEventStore(CowLoopEventStore& session, Loop& loop) {
   session.mutStore().clear();
   session.discardFlatCache();
-  openNoteEditSessionStore(session, loop);
+  openCowLoopEventStore(session, loop);
 }
 
-size_t countDisplayNotes(const MidiEventVec& flat, uint32_t loopLength) {
+template <typename Alloc>
+size_t countDisplayNotes(const std::vector<MidiEvent, Alloc>& flat, uint32_t loopLength) {
   return NoteUtils::reconstructDisplayNotes(flat, loopLength, false).size();
 }
 
@@ -145,10 +146,10 @@ void test_note_edit_slot_switch_rematerialises_selected_slot() {
   setupLoop(loopSlot1, kLongLoopLength, 4u);
 
   CowLoopEventStore session;
-  openNoteEditSessionStore(session, loopSlot0);
+  openCowLoopEventStore(session, loopSlot0);
   TEST_ASSERT_EQUAL(2u, countDisplayNotes(session.readFlat(), kShortLoopLength));
 
-  reopenNoteEditSessionStore(session, loopSlot1);
+  reopenCowLoopEventStore(session, loopSlot1);
   TEST_ASSERT_EQUAL(4u, countDisplayNotes(session.readFlat(), kLongLoopLength));
 }
 
@@ -187,10 +188,10 @@ void test_repeated_slot_switch_stress_preserves_pass_counts() {
   const size_t slot1Events = countMaterializedEvents(loopSlot1);
 
   CowLoopEventStore session;
-  openNoteEditSessionStore(session, loopSlot0);
+  openCowLoopEventStore(session, loopSlot0);
   for (int i = 0; i < 5; ++i) {
-    reopenNoteEditSessionStore(session, loopSlot1);
-    reopenNoteEditSessionStore(session, loopSlot0);
+    reopenCowLoopEventStore(session, loopSlot1);
+    reopenCowLoopEventStore(session, loopSlot0);
   }
 
   TEST_ASSERT_EQUAL(slot0Events, countMaterializedEvents(loopSlot0));

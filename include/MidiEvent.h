@@ -14,6 +14,7 @@
 #include "MidiConfig.h"
 #include <vector>
 #include "Utils/InternalHeapFirstAllocator.h"
+#include "Utils/ExternalMemoryFirstAllocator.h"
 
 /// Stable logical-note identity (stored on note-on **MidiEvent**).
 /// **0** means invalid / unassigned.
@@ -280,4 +281,7 @@ struct MidiEvent {
  * Use MidiEventVec everywhere instead of std::vector<MidiEvent>.
  */
 using MidiEventVec = std::vector<MidiEvent, InternalHeapFirstAllocator<MidiEvent>>;
+
+/// Cold / session / display buffers — prefer external memory pool (PSRAM on Teensy).
+using SessionMidiEventVec = std::vector<MidiEvent, ExternalMemoryFirstAllocator<MidiEvent>>;
 

@@ -50,7 +50,7 @@ void test_equivalent_intervals_900_1080_L960() {
     const ProjectionContext context = makeContext(ProjectionType::Playback, window, loopLength);
     const CanonicalNoteSpan span = makeSpan(900, 1080);
 
-    const std::vector<ProjectedNoteInterval> candidates =
+    const ProjectedIntervalVec candidates =
         IntervalProjection::generateEquivalentIntervals(span, loopLength, context);
 
     TEST_ASSERT_EQUAL(3, candidates.size());
@@ -65,7 +65,7 @@ void test_k_bounds_no_fixed_cap() {
     const ProjectionContext context = makeContext(ProjectionType::Playback, window, loopLength);
     const CanonicalNoteSpan span = makeSpan(100, 200);
 
-    const std::vector<ProjectedNoteInterval> candidates =
+    const ProjectedIntervalVec candidates =
         IntervalProjection::generateEquivalentIntervals(span, loopLength, context);
 
     TEST_ASSERT_EQUAL(5, candidates.size());
@@ -114,7 +114,7 @@ void test_selection_playback_prefers_origin() {
     context.originTick = 950;
     const CanonicalNoteSpan span = makeSpan(900, 1080);
 
-    const std::vector<ProjectedNoteInterval> candidates =
+    const ProjectedIntervalVec candidates =
         IntervalProjection::generateEquivalentIntervals(span, loopLength, context);
     const ProjectedNoteInterval selected =
         IntervalProjection::selectProjectedInterval(candidates, context);
@@ -129,7 +129,7 @@ void test_selection_playback_closest_when_origin_outside() {
     context.originTick = 130;
     const CanonicalNoteSpan span = makeSpan(900, 1080);
 
-    const std::vector<ProjectedNoteInterval> candidates =
+    const ProjectedIntervalVec candidates =
         IntervalProjection::generateEquivalentIntervals(span, loopLength, context);
     const ProjectedNoteInterval selected =
         IntervalProjection::selectProjectedInterval(candidates, context);
@@ -143,9 +143,9 @@ void test_selection_display_returns_all() {
     ProjectionContext context = makeContext(ProjectionType::Display, window, loopLength);
     const CanonicalNoteSpan span = makeSpan(900, 1080);
 
-    const std::vector<ProjectedNoteInterval> candidates =
+    const ProjectedIntervalVec candidates =
         IntervalProjection::generateEquivalentIntervals(span, loopLength, context);
-    const std::vector<ProjectedNoteInterval> selected =
+    const ProjectedIntervalVec selected =
         IntervalProjection::selectProjectedIntervalsForDisplay(candidates, context);
 
     TEST_ASSERT_EQUAL(3, selected.size());
@@ -161,7 +161,7 @@ void test_selection_edit_closest_to_origin() {
     context.originTick = 1900;
     const CanonicalNoteSpan span = makeSpan(900, 1080);
 
-    const std::vector<ProjectedNoteInterval> candidates =
+    const ProjectedIntervalVec candidates =
         IntervalProjection::generateEquivalentIntervals(span, loopLength, context);
     const ProjectedNoteInterval selected =
         IntervalProjection::selectProjectedInterval(candidates, context);
@@ -198,7 +198,7 @@ void test_note_id_invariant_all_k() {
         makeContext(ProjectionType::Playback, {-100, 2100}, loopLength);
     const CanonicalNoteSpan span = makeSpan(900, 1080);
 
-    const std::vector<ProjectedNoteInterval> candidates =
+    const ProjectedIntervalVec candidates =
         IntervalProjection::generateEquivalentIntervals(span, loopLength, context);
 
     for (const ProjectedNoteInterval& candidate : candidates) {
@@ -209,17 +209,17 @@ void test_note_id_invariant_all_k() {
 void test_project_note_intervals_batch() {
     constexpr uint32_t loopLength = 960;
     const TickInterval window{-100, 2100};
-    const std::vector<CanonicalNoteSpan> spans = {makeSpan(900, 1080)};
+    const CanonicalNoteSpanVec spans = {makeSpan(900, 1080)};
 
     ProjectionContext playbackContext = makeContext(ProjectionType::Playback, window, loopLength);
     playbackContext.originTick = 950;
-    const std::vector<ProjectedNoteInterval> playbackProjected =
+    const ProjectedIntervalVec playbackProjected =
         IntervalProjection::projectNoteIntervals(spans, playbackContext);
     TEST_ASSERT_EQUAL(1, playbackProjected.size());
     assertInterval(playbackProjected[0], 900, 1080);
 
     const ProjectionContext displayContext = makeContext(ProjectionType::Display, window, loopLength);
-    const std::vector<ProjectedNoteInterval> displayProjected =
+    const ProjectedIntervalVec displayProjected =
         IntervalProjection::projectNoteIntervals(spans, displayContext);
     TEST_ASSERT_EQUAL(3, displayProjected.size());
 }
@@ -259,8 +259,8 @@ void test_project_edit_intervals_for_analysis_batch() {
     ProjectionContext context =
         IntervalProjection::buildEditProjectionContext(selection, loopLength, window, 950);
 
-    const std::vector<CanonicalNoteSpan> spans = {makeSpan(900, 1080)};
-    const std::vector<ProjectedNoteInterval> projected =
+    const CanonicalNoteSpanVec spans = {makeSpan(900, 1080)};
+    const ProjectedIntervalVec projected =
         IntervalProjection::projectEditIntervalsForAnalysis(spans, context);
 
     TEST_ASSERT_EQUAL(1, projected.size());
@@ -271,9 +271,9 @@ void test_project_edit_intervals_for_analysis_forces_edit_type() {
     constexpr uint32_t loopLength = 960;
     ProjectionContext context = makeContext(ProjectionType::Playback, {0, 960}, loopLength);
     context.originTick = 130;
-    const std::vector<CanonicalNoteSpan> spans = {makeSpan(900, 1080)};
+    const CanonicalNoteSpanVec spans = {makeSpan(900, 1080)};
 
-    const std::vector<ProjectedNoteInterval> projected =
+    const ProjectedIntervalVec projected =
         IntervalProjection::projectEditIntervalsForAnalysis(spans, context);
 
     TEST_ASSERT_EQUAL(1, projected.size());
