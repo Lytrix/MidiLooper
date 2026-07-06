@@ -327,6 +327,11 @@ SC_MEM_ATTR void displayNoteInfo(uint8_t pitch, uint32_t storageStart, uint32_t 
                 (unsigned long)displayStart, (unsigned long)length, selectedIdx);
 }
 
+SC_MEM_ATTR void displayFrame(uint32_t frameNotes, uint32_t elapsedUs, uint32_t frameIndex) {
+  Serial.printf("#CAP,%lu,DFRAME,%lu,%lu,%lu\r\n", (unsigned long)micros(),
+                (unsigned long)frameNotes, (unsigned long)elapsedUs, (unsigned long)frameIndex);
+}
+
 SC_MEM_ATTR void storedWrapPair(uint32_t onTick, uint32_t offTick, uint8_t ch, uint8_t note) {
   Serial.printf("#CAP,%lu,WRAP,%lu,%lu,%u,%u\r\n",
                 (unsigned long)micros(), (unsigned long)onTick, (unsigned long)offTick, ch, note);

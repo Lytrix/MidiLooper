@@ -2,13 +2,21 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-07-05 (derived-note-overlap-logic branch)
+Last updated: 2026-07-06 (display boot/play freeze fix shipped)
 
 ---
 
 ## Current branch
 
 `derived-note-overlap-logic` (from `load-save-sets-loops` @ `bbc2284`)
+
+## Shipped on branch (2026-07-06)
+
+| Commit | Focus | Docs |
+|--------|--------|------|
+| `c2475f2` | Display boot/play OLED freeze — workspace refresh scope, PSRAM visual rebuild, DMA serialize, `DFRAME` capture | — |
+| `b1260ce` | Cold buffers → external memory pool; split-tier session undo admission | [`INTERNAL_HEAP_AND_EXTERNAL_MEMORY.md`](../Guides/INTERNAL_HEAP_AND_EXTERNAL_MEMORY.md), `openspec/specs/internal-heap-external-memory-routing/` |
+| `432da4d` | NOTE_EDIT fader hot path + length-mode display | [`FADER_STATE_SYSTEM.md`](../Guides/FADER_STATE_SYSTEM.md) § feedback on/off |
 
 ## Active OpenSpec
 
