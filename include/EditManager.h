@@ -117,6 +117,7 @@ public:
     /// Filtered select inventory during note edit; else cached notes (encoder + fader).
     NoteUtils::DisplayNoteVec selectableDisplayNotesAtEditSelect(const Track& track) const;
     /// Live mover geometry: **focus.last** when active, else inventory at **selectedNoteIdx**.
+    bool isLengthBracketEditActive() const;
     NoteUtils::DisplayNote liveEditDisplayNoteAtSelect(const Track& track) const;
     /// Refresh **focus.last** start/end from the live session store note-on/off pair.
     void syncNoteEditFocusLastFromSessionStore(Track& track);

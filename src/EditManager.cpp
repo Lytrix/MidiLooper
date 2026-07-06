@@ -312,12 +312,14 @@ void EditManager::syncSelectedNoteIdxToFilteredInventory(Track& track) {
 
     int matchIdx = NoteEditDisplaySnapshot::filteredDisplayNoteIndexForSelection(
         sessionState.selection, filtered, noteEditLoopStartTick(track),
-        noteEditLoopLengthTicks(track));
+        noteEditLoopLengthTicks(track),
+        sessionState.kind == NoteEditKind::Length || noteEditManager.isLengthEditingMode());
     if (matchIdx < 0 && editorSelectionHasNote(sessionState.selection)) {
         const NoteEditFocus& focus = editSession.focus;
         const uint32_t loopStartTick = noteEditLoopStartTick(track);
         if (focus.active && focus.movingNoteId == sessionState.selection.primaryNote) {
-            const bool lengthBracket = sessionState.kind == NoteEditKind::Length;
+            const bool lengthBracket =
+                sessionState.kind == NoteEditKind::Length || noteEditManager.isLengthEditingMode();
             const uint32_t storageBracketTick =
                 lengthBracket ? focus.last.endTick : focus.last.startTick;
             const uint32_t correctedTick = NoteEditDisplaySnapshot::displayStartTickFromStorage(
@@ -327,20 +329,25 @@ void EditManager::syncSelectedNoteIdxToFilteredInventory(Track& track) {
                 selectedTick = correctedTick;
             }
             matchIdx = NoteEditDisplaySnapshot::filteredDisplayNoteIndexForSelection(
-                sessionState.selection, filtered, loopStartTick, loopLength);
+                sessionState.selection, filtered, loopStartTick, loopLength, lengthBracket);
         }
     }
     if (matchIdx < 0) {
         if (editorSelectionHasNote(sessionState.selection)) {
             bool noteStillPresent = false;
-            for (const DisplayNote& dn : filtered) {
-                if (dn.noteId == sessionState.selection.primaryNote) {
+            int noteIdOnlyIdx = -1;
+            for (int i = 0; i < static_cast<int>(filtered.size()); ++i) {
+                if (filtered[static_cast<size_t>(i)].noteId == sessionState.selection.primaryNote) {
                     noteStillPresent = true;
+                    noteIdOnlyIdx = i;
                     break;
                 }
             }
             if (!noteStillPresent) {
                 setSelectedNoteIdx(-1);
+            } else if (noteIdOnlyIdx >= 0 && editSession.focus.active &&
+                       editSession.focus.movingNoteId == sessionState.selection.primaryNote) {
+                setSelectedNoteIdx(noteIdOnlyIdx);
             }
         } else if (selectedNoteIdx >= 0) {
             setSelectedNoteIdx(-1);
@@ -360,15 +367,15 @@ NoteUtils::DisplayNoteVec EditManager::selectableDisplayNotesAtEditSelect(const 
 }
 
 DisplayNote EditManager::liveEditDisplayNoteAtSelect(const Track& track) const {
-    const int idx = getSelectedNoteIdx();
-    const NoteUtils::DisplayNoteVec& notes = selectableDisplayNotesAtEditSelect(track);
-    if (idx < 0 || idx >= static_cast<int>(notes.size())) {
-        return {};
-    }
     if (isNoteEditActive() && editSession.focus.active) {
         const NoteBaseline& last = editSession.focus.last;
         return {editSession.focus.movingNoteId, last.pitch, last.velocity, last.startTick,
                 last.endTick};
+    }
+    const int idx = getSelectedNoteIdx();
+    const NoteUtils::DisplayNoteVec& notes = selectableDisplayNotesAtEditSelect(track);
+    if (idx < 0 || idx >= static_cast<int>(notes.size())) {
+        return {};
     }
     return notes[static_cast<size_t>(idx)];
 }
@@ -388,6 +395,10 @@ void EditManager::syncNoteEditFocusLastFromSessionStore(Track& track) {
 }
 
 EditManager editManager;
+
+bool EditManager::isLengthBracketEditActive() const {
+    return sessionState.kind == NoteEditKind::Length || noteEditManager.isLengthEditingMode();
+}
 
 uint32_t EditManager::noteEditLoopLengthTicks(const Track& track) const {
     if (isNoteEditActive()) {
@@ -723,6 +734,10 @@ EditPassId EditManager::commitEditAction(Track& track, EditPassVec rows) {
 }
 
 bool EditManager::pushSessionUndoOnKindChange(Track& track, NoteEditKind kind) {
+    if (kind == NoteEditKind::Pitch &&
+        (noteEditManager.isLengthEditingMode() || editSession.focus.active)) {
+        return true;
+    }
     if (!shouldPushGeometryKindUndo(lastPushedGeometryKind_, kind)) {
         return true;
     }
@@ -919,10 +934,12 @@ void EditManager::applyCycleEditKind(Track& track) {
 void EditManager::syncNoteEditSessionStateToUi(Track& track) {
   const int prevSelectedIdx = selectedNoteIdx;
   const NoteUtils::DisplayNoteVec& notes = selectableDisplayNotesAtEditSelect(track);
+  const bool lengthBracket =
+      sessionState.kind == NoteEditKind::Length || noteEditManager.isLengthEditingMode();
   if (editorSelectionHasNote(sessionState.selection)) {
     selectedNoteIdx = NoteEditDisplaySnapshot::filteredDisplayNoteIndexForSelection(
         sessionState.selection, notes, noteEditLoopStartTick(track),
-        noteEditLoopLengthTicks(track));
+        noteEditLoopLengthTicks(track), lengthBracket);
   } else {
     selectedNoteIdx = -1;
   }
@@ -1484,6 +1501,7 @@ void EditManager::cycleEditSession(Track& track) {
 }
 
 void EditManager::sendEditSessionChange(EditSessionType sessionType) {
+    const EditSessionType priorSession = editSession.sessionType;
     editSession.sessionType = sessionType;
 
     uint8_t program = MidiConfig::SessionProgram::LOOP_EDIT;
@@ -1514,8 +1532,10 @@ void EditManager::sendEditSessionChange(EditSessionType sessionType) {
 
     if (sessionType == EditSessionType::Note) {
         noteEditManager.loopEditManager.onLeaveLoopEditSession();
-        Track& track = trackManager.getSelectedTrack();
-        reopenNoteEditSession(track);
+        if (priorSession != EditSessionType::Note || !editSession.active) {
+            Track& track = trackManager.getSelectedTrack();
+            reopenNoteEditSession(track);
+        }
     }
     if (sessionType == EditSessionType::Loop) {
         noteEditManager.loopEditManager.onEnterLoopEditSession(

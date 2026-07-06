@@ -67,9 +67,15 @@ template <typename NotesVec>
 inline int filteredDisplayNoteIndexForSelection(const EditorSelection& selection,
                                                 const NotesVec& notes,
                                                 uint32_t loopStartTick = 0,
-                                                uint32_t loopLength = 0) {
+                                                uint32_t loopLength = 0,
+                                                bool lengthBracket = false) {
     if (!editorSelectionHasNote(selection)) {
         return -1;
+    }
+    if (lengthBracket) {
+        return filteredDisplayNoteIndexForNoteIdAndEnd(notes, selection.primaryNote,
+                                                       selection.selectedTick, loopStartTick,
+                                                       loopLength);
     }
     return filteredDisplayNoteIndexForNoteIdAndStart(notes, selection.primaryNote,
                                                      selection.selectedTick, loopStartTick,

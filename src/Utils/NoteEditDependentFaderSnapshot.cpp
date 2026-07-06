@@ -56,15 +56,6 @@ uint8_t lengthEditFineCcFromOffset(int32_t offsetFromAnchor) {
                    static_cast<int32_t>(127)));
 }
 
-uint8_t fineCcFromRelativeTick(uint32_t relTick, uint32_t referenceStep) {
-    const uint32_t referenceStepStartTick = referenceStep * Config::TICKS_PER_16TH_STEP;
-    const int32_t offsetFromReferenceStep =
-        static_cast<int32_t>(relTick) - static_cast<int32_t>(referenceStepStartTick);
-    return static_cast<uint8_t>(
-        clampValue(static_cast<int32_t>(64 + offsetFromReferenceStep), static_cast<int32_t>(0),
-                   static_cast<int32_t>(127)));
-}
-
 uint8_t emptyStepFineCc(uint32_t bracketRelTick) {
     const uint32_t stepStartTick =
         (bracketRelTick / Config::TICKS_PER_16TH_STEP) * Config::TICKS_PER_16TH_STEP;
@@ -158,7 +149,9 @@ NoteEditDependentFaderSnapshot buildDependentFaderSnapshot(
                 clampValue(static_cast<int32_t>(64 + offsetFromReferenceStep), static_cast<int32_t>(0),
                    static_cast<int32_t>(127)));
         } else {
-            snapshot.fineCc = fineCcFromRelativeTick(fineRelTick, input.referenceStep);
+            // Outbound F3 encodes sub-step offset within the note's 16th step — not distance
+            // from F1 bracket referenceStep (stale after geometry edit on long loops).
+            snapshot.fineCc = emptyStepFineCc(fineRelTick);
         }
         snapshot.fineValid = true;
     }

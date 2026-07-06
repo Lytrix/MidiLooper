@@ -1190,20 +1190,20 @@ NOTE_EDIT_MEM void finalReconstructAndSelect(Track& track,
             midiEvents, focus, track.getMidiChannel(), loopLength);
 
         const uint32_t loopStartTick = manager.noteEditLoopStartTick(track);
+        const bool lengthBracket = manager.isLengthBracketEditActive();
         if (editorSelectionHasNote(selection)) {
             newSelectedIdx = NoteEditDisplaySnapshot::filteredDisplayNoteIndexForSelection(
-                selection, filtered, loopStartTick, loopLength);
+                selection, filtered, loopStartTick, loopLength, lengthBracket);
             if (newSelectedIdx < 0 && focus.active &&
                 focus.movingNoteId == selection.primaryNote) {
                 EditorSelection retrySelection = selection;
-                const bool lengthBracket =
-                    manager.getNoteEditSessionState().kind == NoteEditKind::Length;
+                const bool lengthBracket = manager.isLengthBracketEditActive();
                 const uint32_t storageBracketTick =
                     lengthBracket ? focus.last.endTick : focus.last.startTick;
                 retrySelection.selectedTick = bracketDisplayTickFromStorage(
                     storageBracketTick, loopStartTick, loopLength);
                 newSelectedIdx = NoteEditDisplaySnapshot::filteredDisplayNoteIndexForSelection(
-                    retrySelection, filtered, loopStartTick, loopLength);
+                    retrySelection, filtered, loopStartTick, loopLength, lengthBracket);
                 if (newSelectedIdx >= 0) {
                     manager.applySelectionFromGeometryEdit(track, retrySelection.selectedTick,
                                                            retrySelection.primaryNote);
@@ -1256,7 +1256,7 @@ NOTE_EDIT_MEM void finalReconstructAndSelect(Track& track,
 
 NOTE_EDIT_MEM bool applyPitchChange(Track& track, EditManager& manager,
                       uint8_t currentNoteValue, uint8_t newNoteValue,
-                      uint32_t& noteStart, uint32_t& noteEnd) {
+                      uint32_t& noteStart, uint32_t& noteEnd, bool refreshPlaybackPreview) {
     if (currentNoteValue == newNoteValue) {
         return true;
     }
@@ -1279,7 +1279,7 @@ NOTE_EDIT_MEM bool applyPitchChange(Track& track, EditManager& manager,
 
     restoreOverlapNotesForPitchLaneClear(midiEvents, manager, track.getMidiChannel(),
                                          currentNoteValue, loopLength);
-    track.invalidateCaches(true);
+    track.invalidateCaches(refreshPlaybackPreview);
 
     const uint8_t channel = track.getMidiChannel();
     if (focus.active && focus.movingNoteId != kInvalidNoteId) {
@@ -1292,7 +1292,15 @@ NOTE_EDIT_MEM bool applyPitchChange(Track& track, EditManager& manager,
             focus.last.endTick = moverSpan.endTick;
         }
     }
-    auto notes = track.getCachedNotes();
+    std::vector<NoteUtils::DisplayNote> notes;
+    if (focus.active) {
+        const std::vector<NoteUtils::DisplayNote> reconstructed =
+            NoteUtils::reconstructNotes(midiEvents, loopLength);
+        notes.assign(reconstructed.begin(), reconstructed.end());
+    } else {
+        const auto& cached = track.getCachedNotes();
+        notes.assign(cached.begin(), cached.end());
+    }
     const NoteEditFocus& focusConst = editFocus(manager);
     const bool preserveInnerNotes = focusConst.active;
     const uint32_t movingNoteStart = focusConst.movingNoteRange.start;
@@ -1306,7 +1314,14 @@ NOTE_EDIT_MEM bool applyPitchChange(Track& track, EditManager& manager,
     bool mergedAdjacent = true;
     while (mergedAdjacent) {
         mergedAdjacent = false;
-        notes = track.getCachedNotes();
+        if (focus.active) {
+            const std::vector<NoteUtils::DisplayNote> reconstructed =
+                NoteUtils::reconstructNotes(midiEvents, loopLength);
+            notes.assign(reconstructed.begin(), reconstructed.end());
+        } else {
+            const auto& cached = track.getCachedNotes();
+            notes.assign(cached.begin(), cached.end());
+        }
         for (const auto& note : notes) {
             if (note.note != newNoteValue) {
                 continue;
@@ -1367,7 +1382,14 @@ NOTE_EDIT_MEM bool applyPitchChange(Track& track, EditManager& manager,
         applyShortenOrDelete(midiEvents, {}, adjacentToDelete, manager, track.getMidiChannel(),
                              loopLength, onIndex, offIndex);
         track.invalidateCaches(false);
-        notes = track.getCachedNotes();
+        if (focus.active) {
+            const std::vector<NoteUtils::DisplayNote> reconstructed =
+                NoteUtils::reconstructNotes(midiEvents, loopLength);
+            notes.assign(reconstructed.begin(), reconstructed.end());
+        } else {
+            const auto& cached = track.getCachedNotes();
+            notes.assign(cached.begin(), cached.end());
+        }
         logger.log(CAT_MIDI, LOG_DEBUG,
                    "Merged %zu suffix-adjacent same-pitch notes into moving note range %lu-%lu "
                    "before pitch change",
@@ -1375,6 +1397,8 @@ NOTE_EDIT_MEM bool applyPitchChange(Track& track, EditManager& manager,
     }
 
     std::set<std::pair<uint32_t, uint32_t>> restoredNotePositions;
+
+    bool overlapStructureChanged = !adjacentToDelete.empty();
 
     std::vector<NoteUtils::DisplayNote> otherNotesOfTargetPitch;
     for (const auto& note : notes) {
@@ -1434,6 +1458,7 @@ NOTE_EDIT_MEM bool applyPitchChange(Track& track, EditManager& manager,
                      notesToShorten, notesToDelete);
 
         if (!notesToShorten.empty() || !notesToDelete.empty()) {
+            overlapStructureChanged = true;
             auto [onIndex, offIndex] = NoteUtils::buildEventIndex(midiEvents);
             applyShortenOrDelete(midiEvents, notesToShorten, notesToDelete, manager,
                                  track.getMidiChannel(), loopLength, onIndex, offIndex);
@@ -1502,15 +1527,25 @@ NOTE_EDIT_MEM bool applyPitchChange(Track& track, EditManager& manager,
     }
     if (focus.movingNoteId != kInvalidNoteId) {
         const uint32_t loopStartTick = manager.noteEditLoopStartTick(track);
+        const bool lengthBracket = manager.isLengthBracketEditActive();
+        const uint32_t storageBracket =
+            lengthBracket ? focus.last.endTick : focus.last.startTick;
         const uint32_t bracketDisplay =
-            bracketDisplayTickFromStorage(focus.last.startTick, loopStartTick, loopLength);
+            bracketDisplayTickFromStorage(storageBracket, loopStartTick, loopLength);
         manager.applySelectionFromGeometryEdit(track, bracketDisplay, focus.movingNoteId);
-        finalReconstructAndSelect(track, midiEvents, manager, newNoteValue, noteStart,
-                                  focus.last.endTick, loopLength, bracketDisplay, true);
+        if (!overlapStructureChanged) {
+            NoteUtils::sortMidiEventsChronologically(midiEvents);
+            track.invalidateCaches(refreshPlaybackPreview);
+            displayManager.requestNoteInfoRefresh(track);
+        } else {
+            finalReconstructAndSelect(track, midiEvents, manager, newNoteValue, noteStart,
+                                      focus.last.endTick, loopLength, bracketDisplay,
+                                      refreshPlaybackPreview);
+        }
         return true;
     }
     finalReconstructAndSelect(track, midiEvents, manager, newNoteValue, noteStart,
-                              focus.last.endTick, loopLength, noteStart, true);
+                              focus.last.endTick, loopLength, noteStart, refreshPlaybackPreview);
     return true;
 }
 
@@ -1612,7 +1647,6 @@ NOTE_EDIT_MEM void moveNoteWithOverlapHandling(Track& track, EditManager& manage
     // STEP 4: Apply new shorten/delete impacts while mover is still at current position.
     applyShortenOrDelete(midiEvents, notesToShorten, notesToDelete, manager, channel, loopLength,
                          onIndex, offIndex);
-    manager.syncSelectedNoteIdxToFilteredInventory(track);
 
     // STEP 5: Move the mover using resolved pairing (LIFO, paired-at, wrap-head, open-tail).
     MidiEvent* noteOnEvent =
@@ -1812,7 +1846,6 @@ NOTE_EDIT_MEM void changeLengthWithOverlapHandling(Track& track, EditManager& ma
     auto [onIndex, offIndex] = NoteUtils::buildEventIndex(midiEvents);
     applyShortenOrDelete(midiEvents, notesToShorten, notesToDelete, manager, channel, loopLength,
                          onIndex, offIndex);
-    manager.syncSelectedNoteIdxToFilteredInventory(track);
 
     MidiEvent* noteOnEvent = findNoteOnAtStart(midiEvents, channel, notePitch, noteStart);
 
@@ -1908,7 +1941,8 @@ NOTE_EDIT_MEM void extendShortenedNotes(MidiEventVec& midiEvents,
 NOTE_EDIT_MEM bool applyNoteEditChange(Track& track, EditManager& manager, NoteEditChangeKind kind,
                          const NoteUtils::DisplayNote& currentNote, uint32_t targetTick,
                          int delta, uint32_t targetEndTick, uint8_t currentPitch,
-                         uint8_t newPitch, uint32_t& inOutStart, uint32_t& inOutEnd) {
+                         uint8_t newPitch, uint32_t& inOutStart, uint32_t& inOutEnd,
+                         bool refreshPlaybackPreview) {
     switch (kind) {
         case NoteEditChangeKind::Move:
             moveNoteWithOverlapHandling(track, manager, currentNote, targetTick, delta);
@@ -1920,7 +1954,7 @@ NOTE_EDIT_MEM bool applyNoteEditChange(Track& track, EditManager& manager, NoteE
             inOutStart = currentNote.startTick;
             inOutEnd = currentNote.endTick;
             return applyPitchChange(track, manager, currentPitch, newPitch, inOutStart,
-                                    inOutEnd);
+                                    inOutEnd, refreshPlaybackPreview);
     }
     return false;
 }

@@ -243,6 +243,28 @@ inline int filteredDisplayNoteIndexForNoteIdAndStart(const NotesVec& filtered, N
 }
 
 template <typename NotesVec>
+inline int filteredDisplayNoteIndexForNoteIdAndEnd(const NotesVec& filtered, NoteId noteId,
+                                                   uint32_t bracketDisplayTick,
+                                                   uint32_t loopStartTick = 0,
+                                                   uint32_t loopLength = 0) {
+  if (noteId == kInvalidNoteId) {
+    return -1;
+  }
+  for (int i = 0; i < static_cast<int>(filtered.size()); ++i) {
+    const NoteUtils::DisplayNote& dn = filtered[static_cast<size_t>(i)];
+    if (dn.noteId != noteId) {
+      continue;
+    }
+    const uint32_t displayEnd =
+        displayStartTickFromStorageNote(dn.endTick, loopStartTick, loopLength);
+    if (displayEnd == bracketDisplayTick) {
+      return i;
+    }
+  }
+  return -1;
+}
+
+template <typename NotesVec>
 inline int filteredDisplayNoteIndexForMovingNote(const NotesVec& filtered, NoteId noteId,
                                                uint32_t linearStartTick) {
   return filteredDisplayNoteIndexForNoteIdAndStart(filtered, noteId, linearStartTick);

@@ -790,6 +790,24 @@ void test_motor_value_changed_includes_f3_fine_cc() {
         planned, 100, 70, 60, true, true, true));
 }
 
+void test_dependent_snapshot_live_note_fine_cc_uses_step_offset_not_stale_reference_step() {
+    NoteEditDependentFaderBuildInput input{};
+    input.loopLength = 1536;
+    input.loopStartTick = 0;
+    input.selectedIdx = 27;
+    input.selectedTick = 51;
+    input.referenceStep = 1;  // stale F1 bracket from tick 51
+    input.hasLiveNote = true;
+    input.liveStartTick = 665;
+    input.liveEndTick = 857;
+    input.livePitch = 54;
+
+    const NoteEditDependentFaderSnapshot snapshot = buildDependentFaderSnapshot(input);
+    TEST_ASSERT_TRUE(snapshot.fineValid);
+    // tick 665: step 13 @ 624, offset 41 -> CC 105 (not 127 from referenceStep=1)
+    TEST_ASSERT_EQUAL_UINT8(105, snapshot.fineCc);
+}
+
 void test_dependent_snapshot_select_target_projected_phase_not_double_converted() {
     NoteEditDependentFaderBuildInput input{};
     input.loopLength = 1536;
@@ -876,6 +894,7 @@ int main(int argc, char** argv) {
     RUN_TEST(test_stale_latch_ignores_f4_wrap_echo);
     RUN_TEST(test_stale_latch_accepts_user_pitch_after_latch_refresh);
     RUN_TEST(test_dependent_snapshot_position_mode_nonzero_loop_start);
+    RUN_TEST(test_dependent_snapshot_live_note_fine_cc_uses_step_offset_not_stale_reference_step);
     RUN_TEST(test_dependent_snapshot_select_target_projected_phase_not_double_converted);
     RUN_TEST(test_motor_value_changed_includes_f3_fine_cc);
     return UNITY_END();

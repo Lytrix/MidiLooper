@@ -2,11 +2,20 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-07-05 (derived-note-overlap-logic branch)
+Last updated: 2026-07-06 (internal heap PSRAM routing)
 
 ---
 
 ## Now implementing
+
+**Internal heap PSRAM routing** — shipped 2026-07-06:
+
+- Plan: [internal_heap_psram_routing_refinement.md](../plans/internal_heap_psram_routing_refinement.md) · capture helper: `scripts/parse_memory_capture.py`
+- UIP cold vectors (`CanonicalNoteSpanVec`, `ProjectedIntervalVec`, `buildCanonicalSpansFromMidi`) → external memory pool
+- `BaselineMap` / `OverlapNoteMap` / session undo `EntryVec` → `ExternalMemoryFirstAllocator`
+- `rebuildNoteEditFocusFromStore` — `baselineMap` holds moving note only (overlap baselines via `overlapNotes` + undo snapshot)
+- `MemoryPool::globalMidiEventPool` + `DisplayManager::liveDisplayEventBuffer` → PSRAM-first
+- Native **467/467** PASS · `teensy41-capture-serial` build OK · **HITL** (F2/F3 reselect heap gate) pending on-device
 
 **Unified interval projection** — single wrap/linearization engine before derived overlap pipeline:
 
