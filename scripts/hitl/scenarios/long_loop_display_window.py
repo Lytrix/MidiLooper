@@ -93,7 +93,7 @@ def _parse_common_args(args: object) -> argparse.Namespace:
     parser.add_argument("--start-transport", action="store_true", default=True)
     parser.add_argument("--clear-before-record", action="store_true", default=True)
     parser.add_argument("--clear-press-ms", type=int, default=900)
-    parser.add_argument("--state-sync-timeout-ms", type=int, default=12000)
+    parser.add_argument("--state-sync-timeout-ms", type=int, default=8000)
     parser.add_argument("--boot-settle-ms", type=int, default=10000)
     parser.add_argument("--serial-grace-ms", type=int, default=3000)
     legacy = list(getattr(args, "legacy_args", []) or [])
@@ -175,6 +175,16 @@ def run_long_loop_display_window(args: object) -> int:
             press_ms=ns.press_ms,
         )
         time.sleep(ns.phase_wait_ms / 1000.0)
+
+        if serial_collector is not None:
+            from hitl.edit_mode_precondition import ensure_loop_edit_before_record
+
+            ensure_loop_edit_before_record(
+                out_port,
+                serial_collector,
+                press_ms=ns.press_ms,
+                phase_wait_ms=ns.phase_wait_ms,
+            )
 
         if ns.clear_before_record:
             if serial_collector is not None:
