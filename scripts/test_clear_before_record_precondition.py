@@ -49,6 +49,16 @@ class ClearBeforeRecordPreconditionTests(unittest.TestCase):
         self.assertTrue(_track_cleared_for_record(lines))
         self.assertTrue(_serial_has_clear_completed(lines))
 
+    def test_cleared_for_record_clear_log_after_stopped_recs(self) -> None:
+        """Long-loop clear: STOPPED+RECS may linger in log; clear log confirms precondition."""
+        from host_midi_automation_edit_baseline import _track_cleared_for_record as edit_cleared
+
+        lines = [
+            "#CAP,1,ST,Track,RECORDING,STOPPED,0",
+            "#CAP,2,RECS,49152,96",
+            "[INFO] MIDI: Clear Track",
+        ]
+        self.assertTrue(edit_cleared(lines))
 
 if __name__ == "__main__":
     unittest.main()

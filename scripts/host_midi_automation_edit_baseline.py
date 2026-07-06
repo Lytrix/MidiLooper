@@ -50,6 +50,7 @@ from host_midi_automation_baseline import (  # noqa: E402
     _find_midi_port,
     _send_multi_short_press,
     _send_short_press,
+    _serial_has_clear_completed,
     _wait_for_state_entry_count,
     _wait_for_transition_count,
 )
@@ -1193,11 +1194,15 @@ def _track_cleared_for_record(lines: list[str]) -> bool:
     if latest == "ARMED":
         return not _serial_suggests_loop_content(lines)
     if latest == "STOPPED":
+        if _serial_has_clear_completed(lines):
+            return True
         recs = _extract_last_recs_stop(lines)
         if recs is not None and int(recs.get("final_length", 0)) != 0:
             return False
         if _extract_revt_note_on_ticks(lines):
             return False
+        return True
+    if _serial_has_clear_completed(lines):
         return True
     return False
 
@@ -1301,6 +1306,9 @@ def _ensure_clear_to_empty(
     ):
         print("[info] Clear ignored on already-empty track; precondition satisfied")
         reached_empty = True
+    if not reached_empty and _serial_has_clear_completed(post_snap, after_index=baseline_len):
+        print("[info] Clear completed (serial log); precondition satisfied")
+        reached_empty = True
     if not reached_empty and _track_cleared_for_record(post_snap):
         latest = _latest_track_state(post_snap)
         print(
@@ -1329,6 +1337,11 @@ def _ensure_clear_to_empty(
             or _serial_has_clear_ignored_empty(post_retry)
         ):
             print("[info] Clear ignored on already-empty track after retry")
+            reached_empty = True
+        if not reached_empty and _serial_has_clear_completed(
+            post_retry, after_index=retry_baseline_len
+        ):
+            print("[info] Clear completed after retry (serial log)")
             reached_empty = True
         if not reached_empty and _track_cleared_for_record(post_retry):
             latest = _latest_track_state(post_retry)
