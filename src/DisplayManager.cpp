@@ -1060,6 +1060,19 @@ void DisplayManager::drawGridLines(uint32_t lengthLoop, int pianoRollY0, int pia
 // --- Helper: Draw all notes ---
 namespace {
 
+uint32_t resolveBracketDisplayTick(uint32_t loopStartTick, uint32_t loopLength) {
+    if (editManager.getEditSessionType() == EditSessionType::Note) {
+        const EditorSelection& selection = editManager.getNoteEditSessionState().selection;
+        if (editorSelectionHasNote(selection)) {
+            return loopLength > 0 ? selection.selectedTick % loopLength : selection.selectedTick;
+        }
+        return loopLength > 0 ? editManager.getSelectedTick() % loopLength
+                              : editManager.getSelectedTick();
+    }
+    return NoteEditDisplaySnapshot::displayStartTickFromStorage(editManager.getSelectedTick(),
+                                                                loopStartTick, loopLength);
+}
+
 int resolveDrawHighlightIndex(const DisplayNoteVec& notes, const EditorSelection& selection,
                               uint32_t loopStartTick, uint32_t loopLength,
                               bool windowRelativeTicks, uint32_t windowStartTick,
@@ -1108,9 +1121,7 @@ void DisplayManager::drawAllNotes(const Track& track, uint8_t displaySlot, uint3
     if (editManager.getEditSessionType() == EditSessionType::Note) {
         const EditorSelection& selection = editManager.getNoteEditSessionState().selection;
         const uint32_t bracketDisplayTick =
-            editorSelectionHasNote(selection)
-                ? selection.selectedTick
-                : (editManager.getSelectedTick() - jamStartTick + loopLength) % loopLength;
+            resolveBracketDisplayTick(jamStartTick, loopLength);
         selectedIdx = resolveDrawHighlightIndex(notes, selection, jamStartTick, loopLength,
                                                 windowRelativeTicks, windowStartTick,
                                                 bracketDisplayTick);
@@ -1393,9 +1404,8 @@ void DisplayManager::drawPianoRoll(uint32_t currentTick, Track& selectedTrack, u
         drawAllNotes(track, displaySlot, currentTick, detailedLength, minPitch, maxPitch, pianoRollY0,
                      pianoRollY1, useBoundedWindow, windowStart, *detailedNotes);
 
-        // Adjust bracket tick to be relative to jam start
-        uint32_t selectedTick = editManager.getSelectedTick();
-        uint32_t relativeBracketTick = (selectedTick - jamStartTick + loopLength) % loopLength;
+        // Bracket tick is projected-interval space (UIP selectedTick), not storage tick.
+        uint32_t relativeBracketTick = resolveBracketDisplayTick(jamStartTick, loopLength);
         if (useBoundedWindow) {
             if (relativeBracketTick >= windowStart &&
                 relativeBracketTick < windowStart + windowLength) {
