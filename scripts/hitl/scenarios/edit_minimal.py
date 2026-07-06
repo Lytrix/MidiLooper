@@ -175,6 +175,46 @@ def _move_target_step(layout, from_step: int, *, delta: int = 4) -> int:
     return target
 
 
+def _run_loop_seam_move_152335(
+    out_port,
+    *,
+    layout,
+    ctx,
+    pause,
+    log_prefix: str,
+) -> None:
+    """Move wrap-spanning fixture note +1 sixteenth across loop seam (152335 class)."""
+    from host_midi_automation_edit_baseline import (
+        TICKS_PER_BAR,
+        WRAP_SEAM_MOVE_STEP,
+        WRAP_SEAM_STEP,
+        _fader1_select_then_wait_for_fader2,
+        _fader2_move_to_sixteenth_step,
+    )
+
+    loop_length = int(getattr(layout, "loop_length", 0))
+    if loop_length != 2 * TICKS_PER_BAR:
+        print(
+            f"{log_prefix} skip loop-seam move (loop_length={loop_length}, need {2 * TICKS_PER_BAR})"
+        )
+        return
+
+    print(
+        f"{log_prefix} loop-seam move 152335: step {WRAP_SEAM_STEP} -> {WRAP_SEAM_MOVE_STEP}"
+    )
+    _fader1_select_then_wait_for_fader2(
+        out_port, layout=layout, fixture_step=WRAP_SEAM_STEP
+    )
+    pause()
+    _fader2_move_to_sixteenth_step(
+        out_port, layout=layout, fixture_step=WRAP_SEAM_MOVE_STEP
+    )
+    ctx.markers.append("loop_seam_move_152335")
+    ctx.markers.append(f"wrap_seam_from_step={WRAP_SEAM_STEP}")
+    ctx.markers.append(f"wrap_seam_to_step={WRAP_SEAM_MOVE_STEP}")
+    pause()
+
+
 def _run_edit_smoke(
     out_port,
     *,
@@ -240,18 +280,13 @@ def _run_edit_smoke(
 
     if empty_step is None:
         print(f"{log_prefix} skip add/delete (no empty nav slot in base seed layout)")
-        return
-
-    insert_tick = _fixture_step_tick(layout, empty_step)
-    if not _fader1_select_empty_fixture_step(
-        out_port, layout=layout, fixture_step=empty_step
-    ):
-        print(f"{log_prefix} skip add/delete (empty nav select failed)")
-        return
-
-    pause()
-    if serial_collector is not None:
-        if not _wait_for_empty_step_at_tick(
+    else:
+        insert_tick = _fixture_step_tick(layout, empty_step)
+        if not _fader1_select_empty_fixture_step(
+            out_port, layout=layout, fixture_step=empty_step
+        ):
+            print(f"{log_prefix} skip add/delete (empty nav select failed)")
+        elif serial_collector is not None and not _wait_for_empty_step_at_tick(
             serial_collector,
             tick=insert_tick,
             timeout_s=max(ns.edit_enter_timeout_s, 4.0),
@@ -260,18 +295,27 @@ def _run_edit_smoke(
                 f"{log_prefix} WARN: empty step at tick {insert_tick} not confirmed in serial; "
                 "skipping add/delete"
             )
-            return
-        ctx.markers.append(f"empty_step_tick={insert_tick}")
+        else:
+            pause()
+            if serial_collector is not None:
+                ctx.markers.append(f"empty_step_tick={insert_tick}")
+            _create_note_at_bracket(out_port, press_ms=press_ms)
+            ctx.markers.append("Created 32nd note")
+            if use_fixture_steps:
+                ctx.markers.append(f"insert_tick={insert_tick}")
+            pause()
+            time.sleep(max(ns.final_wait_ms, 500) / 1000.0)
+            _delete_selected_note(out_port, press_ms=press_ms)
+            ctx.markers.append("Deleting note")
+            pause()
 
-    _create_note_at_bracket(out_port, press_ms=press_ms)
-    ctx.markers.append("Created 32nd note")
-    if use_fixture_steps:
-        ctx.markers.append(f"insert_tick={insert_tick}")
-    pause()
-    time.sleep(max(ns.final_wait_ms, 500) / 1000.0)
-    _delete_selected_note(out_port, press_ms=press_ms)
-    ctx.markers.append("Deleting note")
-    pause()
+    _run_loop_seam_move_152335(
+        out_port,
+        layout=layout,
+        ctx=ctx,
+        pause=pause,
+        log_prefix=log_prefix,
+    )
 
 
 def _run_fixture_record_prelude(
@@ -674,6 +718,76 @@ def _inbound_fader2_pitchbend_values(lines: list[str]) -> list[int]:
     return values
 
 
+def _verify_loop_seam_move_152335(
+    lines: list[str],
+    *,
+    layout,
+    markers: Optional[list[str]] = None,
+) -> dict[str, object]:
+    """Verify wrap-spanning fixture note move across loop seam (152335 — no off@0)."""
+    from host_midi_automation_edit_baseline import (
+        TICKS_PER_BAR,
+        WRAP_SEAM_MOVE_STEP,
+        WRAP_SEAM_PITCH,
+        WRAP_SEAM_STEP,
+        _fixture_step_tick,
+        _parse_moved_note_events,
+        _parse_position_edits,
+        _pb_for_sixteenth_step,
+    )
+
+    markers = markers or []
+    issues: list[str] = []
+    loop_length = int(getattr(layout, "loop_length", 0))
+    if loop_length != 2 * TICKS_PER_BAR:
+        return {"ok": True, "skipped": True, "issues": []}
+
+    if "loop_seam_move_152335" not in markers:
+        issues.append("loop_seam_move_152335_marker_missing")
+        return {"ok": False, "issues": issues, "seam_move": False}
+
+    from_tick = _fixture_step_tick(layout, WRAP_SEAM_STEP)
+    to_tick = _fixture_step_tick(layout, WRAP_SEAM_MOVE_STEP)
+    edits = _parse_position_edits(lines)
+    seam_move = any(
+        e["old_rel"] == from_tick and e["new_rel"] == to_tick for e in edits
+    ) or any(
+        e["from_step"] == WRAP_SEAM_STEP and e["to_step"] == WRAP_SEAM_MOVE_STEP
+        for e in edits
+    )
+    if not seam_move:
+        move_pb = _pb_for_sixteenth_step(WRAP_SEAM_MOVE_STEP, layout.sixteenth_steps)
+        mo_f2 = _mo_f2_pitchbend_values(lines)
+        inbound_f2 = _inbound_fader2_pitchbend_values(lines)
+        seam_move = any(_pb_near(pb, move_pb) for pb in mo_f2 + inbound_f2)
+    if not seam_move:
+        issues.append(f"wrap_seam_move_missing:{from_tick}->{to_tick}")
+
+    for event in _parse_moved_note_events(lines):
+        if event["pitch"] != WRAP_SEAM_PITCH:
+            continue
+        if event["end"] == 0:
+            issues.append(
+                f"wrap_seam_off_at_zero:pitch={WRAP_SEAM_PITCH} start={event['start']}"
+            )
+
+    for line in lines:
+        if f"pitch={WRAP_SEAM_PITCH}" not in line:
+            continue
+        if re.search(rf"\bpitch={WRAP_SEAM_PITCH}\b.*\bend=0\b", line):
+            issues.append(f"wrap_seam_commit_off_zero:{line.strip()}")
+        if "noteOff@0" in line and str(WRAP_SEAM_PITCH) in line:
+            issues.append(f"wrap_seam_note_off_at_zero:{line.strip()}")
+
+    return {
+        "ok": not issues,
+        "issues": issues,
+        "seam_move": seam_move,
+        "from_tick": from_tick,
+        "to_tick": to_tick,
+    }
+
+
 def _verify_edit_minimal_fixture_identity(
     lines: list[str],
     *,
@@ -784,10 +898,17 @@ def _verify_edit_minimal_fixture_identity(
     if not m0_select_before_move:
         issues.append("m0_select_note_idx_missing_before_move")
 
+    seam: dict[str, object] = {"ok": True, "skipped": True}
+    if "loop_seam_move_152335" in markers:
+        seam = _verify_loop_seam_move_152335(lines, layout=layout, markers=markers)
+        if not seam.get("ok"):
+            issues.extend(seam.get("issues", []))
+
     return {
         "ok": not issues,
         "issues": issues,
         "m0_move": m0_move,
+        "loop_seam_move_152335": seam.get("seam_move"),
         "created_ticks": created_ticks,
         "length_end_tick": length_end_tick,
         "mo_f2_count": len(mo_f2),

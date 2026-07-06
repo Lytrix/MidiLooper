@@ -131,7 +131,12 @@ def verify_long_loop_display_window(lines: list[str], args: object) -> dict[str,
     snap_anchor = snap_idx if snap_idx is not None else enter_idx
 
     if enter_idx is not None and snap_anchor is not None:
-        freeze_rows = _rows_between(rows, enter_idx, snap_idx)
+        freeze_end_idx = snap_idx
+        if freeze_end_idx is None and snap_from_marker:
+            freeze_end_idx = _line_index(
+                lines, "Button Processor: Ch16 Note40 ON", after=enter_idx
+            )
+        freeze_rows = _rows_between(rows, enter_idx, freeze_end_idx)
         if len(freeze_rows) < 1:
             # SC_DISP_WINDOW emits on display deltas only — sample bounded rows near NOTE_EDIT.
             freeze_rows = [

@@ -42,6 +42,12 @@ void LoopEditManager::captureSessionBaseline(Track& track) {
 }
 
 void LoopEditManager::applyLoopStartTick(Track& track, uint32_t startTick) {
+    applyLoopStartPreview(track, startTick);
+    StorageManager::markCurrentSetLoopSlotDirty(resolveTrackIndex(track),
+                                                selectedSlotForTrack(track));
+}
+
+void LoopEditManager::applyLoopStartPreview(Track& track, uint32_t startTick) {
     Loop& loop = trackManager.getSelectedLoop(track);
     if (startTick == loop.loopStartTick) {
         return;
@@ -54,9 +60,63 @@ void LoopEditManager::applyLoopStartTick(Track& track, uint32_t startTick) {
     logger.log(CAT_TRACK, LOG_INFO, "Loop start point changed: %lu -> %lu ticks",
                static_cast<unsigned long>(oldStartTick),
                static_cast<unsigned long>(loop.loopStartTick));
-    StorageManager::markCurrentSetLoopSlotDirty(resolveTrackIndex(track),
-                                                selectedSlotForTrack(track));
     track.invalidateCaches();
+}
+
+void LoopEditManager::scheduleLoopStartSettle(uint32_t startTick) {
+    hasPendingLoopStartTick_ = true;
+    pendingLoopStartTick_ = startTick;
+    loopStartSettleUntilMs_ = millis() + LOOP_GEOMETRY_SETTLE_MS;
+}
+
+void LoopEditManager::commitPendingLoopGeometry(Track& track) {
+    if (sessionSlot_ >= Config::MAX_LOOPS_PER_TRACK) {
+        return;
+    }
+    const uint8_t slotIndex = sessionSlot_;
+    const Loop& loop = track.getLoop(sessionSlot_);
+    if (selectedSlotForTrack(track) != sessionSlot_) {
+        return;
+    }
+    if (loop.loopStartTick == sessionBaselineLoopStart_ &&
+        loop.loopLengthTicks == sessionBaselineLoopLength_) {
+        return;
+    }
+
+    const uint32_t beforeStart = sessionBaselineLoopStart_;
+    const uint32_t beforeLength = sessionBaselineLoopLength_;
+    TrackUndo::pushLoopGeometryDepartSnapshot(track, sessionSlot_, sessionBaselineLoopStart_,
+                                              sessionBaselineLoopLength_);
+    sessionBaselineLoopStart_ = loop.loopStartTick;
+    sessionBaselineLoopLength_ = loop.loopLengthTicks;
+    logger.log(CAT_TRACK, LOG_INFO,
+               "Loop geometry settled slot=%u start=%lu->%lu len=%lu->%lu (undo pushed)",
+               static_cast<unsigned>(sessionSlot_) + 1u,
+               static_cast<unsigned long>(beforeStart),
+               static_cast<unsigned long>(sessionBaselineLoopStart_),
+               static_cast<unsigned long>(beforeLength),
+               static_cast<unsigned long>(sessionBaselineLoopLength_));
+
+    StorageManager::markCurrentSetLoopSlotDirty(resolveTrackIndex(track), slotIndex);
+    scheduleDebouncedLoopEditSave();
+}
+
+void LoopEditManager::commitSettledLoopStart(Track& track) {
+    if (!hasPendingLoopStartTick_) {
+        return;
+    }
+    hasPendingLoopStartTick_ = false;
+    loopStartSettleUntilMs_ = 0;
+    pendingLoopStartTick_ = 0;
+    commitPendingLoopGeometry(track);
+}
+
+void LoopEditManager::flushPendingLoopStartSettle(Track& track) {
+    if (!hasPendingLoopStartTick_) {
+        return;
+    }
+    applyLoopStartPreview(track, pendingLoopStartTick_);
+    commitSettledLoopStart(track);
 }
 
 void LoopEditManager::applyLoopLength(Track& track, uint32_t loopLengthTicks) {
@@ -71,6 +131,12 @@ void LoopEditManager::applyLoopLength(Track& track, uint32_t loopLengthTicks) {
 }
 
 void LoopEditManager::applyLoopLengthWithWrapping(Track& track, uint32_t newLoopLength) {
+    applyLoopLengthPreview(track, newLoopLength);
+    StorageManager::markCurrentSetLoopSlotDirty(resolveTrackIndex(track),
+                                                selectedSlotForTrack(track));
+}
+
+void LoopEditManager::applyLoopLengthPreview(Track& track, uint32_t newLoopLength) {
     Loop& loop = trackManager.getSelectedLoop(track);
     if (newLoopLength == loop.loopLengthTicks) {
         return;
@@ -80,12 +146,33 @@ void LoopEditManager::applyLoopLengthWithWrapping(Track& track, uint32_t newLoop
                static_cast<unsigned long>(oldLoopLength),
                static_cast<unsigned long>(newLoopLength));
     loop.loopLengthTicks = newLoopLength;
-    StorageManager::markCurrentSetLoopSlotDirty(resolveTrackIndex(track),
-                                                selectedSlotForTrack(track));
     track.invalidateCaches();
     logger.log(CAT_TRACK, LOG_INFO,
                "Loop length updated to %lu ticks (wrapping handled dynamically)",
                static_cast<unsigned long>(loop.loopLengthTicks));
+}
+
+void LoopEditManager::scheduleLoopLengthSettle(uint32_t loopLengthTicks) {
+    pendingLoopLengthTicks_ = loopLengthTicks;
+    loopLengthSettleUntilMs_ = millis() + LOOP_GEOMETRY_SETTLE_MS;
+}
+
+void LoopEditManager::commitSettledLoopLength(Track& track) {
+    if (pendingLoopLengthTicks_ == 0) {
+        return;
+    }
+    pendingLoopLengthTicks_ = 0;
+    loopLengthSettleUntilMs_ = 0;
+    commitPendingLoopGeometry(track);
+}
+
+void LoopEditManager::flushPendingLoopLengthSettle(Track& track) {
+    if (pendingLoopLengthTicks_ == 0) {
+        return;
+    }
+    const uint32_t target = pendingLoopLengthTicks_;
+    applyLoopLengthPreview(track, target);
+    commitSettledLoopLength(track);
 }
 
 void LoopEditManager::scheduleDebouncedLoopEditSave() {
@@ -139,6 +226,11 @@ std::vector<uint32_t> LoopEditManager::buildLoopStartFaderPositions(const Track&
 void LoopEditManager::onLeaveLoopEditSession() {
     loopStartEditingTime = 0;
     loopStartEditingEnabled = false;
+    hasPendingLoopStartTick_ = false;
+    pendingLoopStartTick_ = 0;
+    loopStartSettleUntilMs_ = 0;
+    pendingLoopLengthTicks_ = 0;
+    loopLengthSettleUntilMs_ = 0;
     feedbackIgnoreUntilMs_ = millis() + LOOP_EDIT_FEEDBACK_IGNORE_MS;
     sessionSlot_ = 255;
     logger.log(CAT_MIDI, LOG_DEBUG,
@@ -158,11 +250,59 @@ void LoopEditManager::onEnterLoopEditSession(Track& track) {
                "Loop edit session entered — sent loop start/length fader feedback");
 }
 
+void LoopEditManager::flushAllPendingGeometry(Track& track) {
+    flushPendingLoopStartSettle(track);
+    flushPendingLoopLengthSettle(track);
+}
+
+bool LoopEditManager::hasPendingGeometry() const {
+    return hasPendingLoopStartTick_ || loopStartSettleUntilMs_ != 0 ||
+           pendingLoopLengthTicks_ != 0 || loopLengthSettleUntilMs_ != 0;
+}
+
+void LoopEditManager::cancelPendingGeometryPreview(Track& track) {
+    if (!isLoopEditMode() || sessionSlot_ >= Config::MAX_LOOPS_PER_TRACK) {
+        return;
+    }
+    if (hasPendingLoopStartTick_ || loopStartSettleUntilMs_ != 0) {
+        applyLoopStartPreview(track, sessionBaselineLoopStart_);
+        hasPendingLoopStartTick_ = false;
+        pendingLoopStartTick_ = 0;
+        loopStartSettleUntilMs_ = 0;
+    }
+    if (pendingLoopLengthTicks_ != 0 || loopLengthSettleUntilMs_ != 0) {
+        applyLoopLengthPreview(track, sessionBaselineLoopLength_);
+        pendingLoopLengthTicks_ = 0;
+        loopLengthSettleUntilMs_ = 0;
+    }
+}
+
+void LoopEditManager::onGlobalGeometryRestored(Track& track) {
+    if (!isLoopEditMode() || sessionSlot_ >= Config::MAX_LOOPS_PER_TRACK) {
+        return;
+    }
+    hasPendingLoopStartTick_ = false;
+    pendingLoopStartTick_ = 0;
+    loopStartSettleUntilMs_ = 0;
+    pendingLoopLengthTicks_ = 0;
+    loopLengthSettleUntilMs_ = 0;
+    const Loop& loop = track.getLoop(sessionSlot_);
+    sessionBaselineLoopStart_ = loop.loopStartTick;
+    sessionBaselineLoopLength_ = loop.loopLengthTicks;
+    feedbackIgnoreUntilMs_ = millis() + LOOP_EDIT_FEEDBACK_IGNORE_MS;
+    sendCurrentLoopStartPitchbend(track);
+    sendCurrentLoopLengthCC(track);
+    logger.log(CAT_MIDI, LOG_DEBUG,
+               "Loop geometry restored via global undo/redo — baseline and fader feedback synced");
+}
+
 void LoopEditManager::commitLoopEditOnDepart(Track& track) {
     if (!isLoopEditMode() || sessionSlot_ >= Config::MAX_LOOPS_PER_TRACK) {
         return;
     }
     flushPendingLoopEditWork(track);
+    flushPendingLoopStartSettle(track);
+    flushPendingLoopLengthSettle(track);
 
     Loop& loop = track.getLoop(sessionSlot_);
     const bool geometryChanged =
@@ -245,12 +385,11 @@ void LoopEditManager::handleLoopStartFaderInput(int16_t pitchValue, Track& track
         logger.log(CAT_MIDI, LOG_DEBUG, "Loop start fader: pitchbend=%d -> tick=%lu (significant change)", 
                    pitchValue, newLoopStartTick);
         
-        TrackUndo::pushLoopStartSnapshot(track, selectedSlotForTrack(track));
-        applyLoopStartTick(track, newLoopStartTick);
-        logger.log(CAT_MIDI, LOG_INFO, "LOOP START EDIT: Loop start moved from tick %lu to %lu", 
+        applyLoopStartPreview(track, newLoopStartTick);
+        scheduleLoopStartSettle(newLoopStartTick);
+        logger.log(CAT_MIDI, LOG_INFO, "LOOP START EDIT: Loop start preview %lu -> %lu", 
                    currentStart, newLoopStartTick);
         
-        scheduleDebouncedLoopEditSave();
         refreshLoopStartEditingActivity();
         loopStartEditingTime = millis();
         loopStartEditingEnabled = true;
@@ -342,12 +481,11 @@ void LoopEditManager::handleLoopLengthInput(uint8_t ccValue, Track& track) {
         logger.log(CAT_MIDI, LOG_INFO, "LOOP EDIT: Changing loop length from %lu bars (%lu ticks) to %lu bars (%lu ticks)", 
                    currentBars, currentLoopLength, newBars, newLoopLengthTicks);
         
-        applyLoopLengthWithWrapping(track, newLoopLengthTicks);
+        applyLoopLengthPreview(track, newLoopLengthTicks);
+        scheduleLoopLengthSettle(newLoopLengthTicks);
 
-        logger.log(CAT_MIDI, LOG_DEBUG, "Loop length updated successfully: CC=%d -> %lu bars (%lu ticks)", 
+        logger.log(CAT_MIDI, LOG_DEBUG, "Loop length preview updated: CC=%d -> %lu bars (%lu ticks)", 
                    ccValue, newBars, newLoopLengthTicks);
-        
-        scheduleDebouncedLoopEditSave();
     } else {
         logger.log(CAT_MIDI, LOG_DEBUG, "Loop length unchanged: CC=%d maps to current length (%lu bars)", 
                    ccValue, newBars);
@@ -402,8 +540,18 @@ void LoopEditManager::update() {
             logger.log(CAT_MIDI, LOG_DEBUG, "State save queued (debounced after loop edit)");
         }
     }
-    if (loopStartEditingTime > 0 && isLoopEditMode()) {
+    if (isLoopEditMode()) {
         Track& track = trackManager.getSelectedTrack();
-        updateLoopEndpointAfterGracePeriod(track);
+        if (loopStartSettleUntilMs_ != 0 &&
+            (int32_t)(millis() - loopStartSettleUntilMs_) >= 0) {
+            commitSettledLoopStart(track);
+        }
+        if (loopLengthSettleUntilMs_ != 0 &&
+            (int32_t)(millis() - loopLengthSettleUntilMs_) >= 0) {
+            commitSettledLoopLength(track);
+        }
+        if (loopStartEditingTime > 0) {
+            updateLoopEndpointAfterGracePeriod(track);
+        }
     }
 }

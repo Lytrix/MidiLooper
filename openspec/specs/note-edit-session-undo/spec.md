@@ -99,15 +99,33 @@ Overdub start during note edit SHALL NOT call **closeNoteEditPass**.
 
 ### Requirement: Session undo admission and trim
 
-Before appending a **SessionUndoEntry**, the system SHALL check heap admission for the entry payload.
+Before appending a **SessionUndoEntry**, the system SHALL check **split-tier** admission via
+`canHeapAdmitSessionUndoEntry`: internal payload against **internal heap** free plus
+**HEAP_RESERVE_BYTES**; `baselineMap` / `overlapNotes` payload against **external memory pool**
+free when PSRAM is available. External bytes SHALL NOT be folded into the internal threshold when
+the pool is available. See
+[`internal-heap-external-memory-routing`](../internal-heap-external-memory-routing/spec.md) and
+[`docs/Guides/INTERNAL_HEAP_AND_EXTERNAL_MEMORY.md`](../../../docs/Guides/INTERNAL_HEAP_AND_EXTERNAL_MEMORY.md).
+
 Under memory pressure, the system SHALL trim oldest session undo entries while keeping a configurable
-preferred depth when affordable.
+preferred depth when affordable. Trim SHALL NOT evict entries solely because internal heap dropped
+while external pool still satisfies external entry estimates.
 
-#### Scenario: Push rejected on heap pressure
+On failed push after **reclaimUnreferencedDisabledPasses**, firmware SHALL call
+**`editSession.store.discardFlatCache()`** and retry push once.
 
-- **WHEN** heap is below **HEAP_RESERVE_BYTES** plus estimated entry cost
+#### Scenario: Push rejected on internal heap pressure
+
+- **WHEN** internal heap is below **HEAP_RESERVE_BYTES** plus estimated **internal** entry cost
 - **THEN** the push SHALL fail with a logged warning
 - **AND** **NoteEditSessionUndoStack** size SHALL be unchanged
+
+#### Scenario: Push rejected on external pool pressure
+
+- **WHEN** PSRAM is available
+- **AND** external memory pool free is below estimated map storage for the entry
+- **THEN** the push SHALL fail with a logged warning
+- **AND** stack size SHALL be unchanged
 
 ### Requirement: Session undo stores EditorSelection with NoteIds
 

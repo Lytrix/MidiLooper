@@ -12,7 +12,10 @@ if str(_SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(_SCRIPT_DIR))
 
 from hitl.baseline_loop_inventory import record_layout_from_edit_fixture
-from hitl.scenarios.edit_minimal import _verify_edit_minimal_fixture_identity
+from hitl.scenarios.edit_minimal import (
+    _verify_edit_minimal_fixture_identity,
+    _verify_loop_seam_move_152335,
+)
 
 
 class EditMinimalSerialVerifyTests(unittest.TestCase):
@@ -68,6 +71,65 @@ class EditMinimalSerialVerifyTests(unittest.TestCase):
         )
         self.assertFalse(result["ok"])
         self.assertIn("delete_note_id_mismatch:create=42 delete=99", result["issues"])
+
+    def test_loop_seam_move_152335_ok(self) -> None:
+        from host_midi_automation_edit_baseline import (
+            WRAP_SEAM_MOVE_STEP,
+            WRAP_SEAM_PITCH,
+            WRAP_SEAM_STEP,
+            TICKS_PER_16TH_STEP,
+        )
+
+        from_tick = WRAP_SEAM_STEP * TICKS_PER_16TH_STEP
+        to_tick = WRAP_SEAM_MOVE_STEP * TICKS_PER_16TH_STEP
+        lines = [
+            "[1] Edit session: NOTE_EDIT",
+            "[2] #DBG select_apply bracket_tick=0 note_idx=0 slot=0 prior_slot=-1 apply=1 reason=note_changed",
+            f"[3] POSITION EDIT: Note moved from step 0 to 4 (tick 0 -> 192, relative 0 -> 192)",
+            "[4] Edit committed ChangeLength start=192 baselineEnd=288 newEnd=672",
+            f"[5] POSITION EDIT: Note moved from step {WRAP_SEAM_STEP} to {WRAP_SEAM_MOVE_STEP} "
+            f"(tick {from_tick} -> {to_tick}, relative {from_tick} -> {to_tick})",
+            f"[6] Moved note events: pitch={WRAP_SEAM_PITCH} start->{to_tick} end->1584",
+            "[7] MIDI Encoder: Long press - exited edit mode",
+        ]
+        result = _verify_edit_minimal_fixture_identity(
+            lines,
+            layout=self.layout,
+            markers=["loop_seam_move_152335", "position_edit_requested", "length_edit_requested"],
+        )
+        self.assertTrue(result.get("loop_seam_move_152335"), result)
+        seam_issues = [
+            issue
+            for issue in result.get("issues", [])
+            if issue.startswith("wrap_seam") or issue.startswith("loop_seam")
+        ]
+        self.assertEqual(seam_issues, [], result)
+
+    def test_loop_seam_move_152335_fails_off_at_zero(self) -> None:
+        from host_midi_automation_edit_baseline import (
+            WRAP_SEAM_MOVE_STEP,
+            WRAP_SEAM_PITCH,
+            WRAP_SEAM_STEP,
+            TICKS_PER_16TH_STEP,
+        )
+
+        from_tick = WRAP_SEAM_STEP * TICKS_PER_16TH_STEP
+        to_tick = WRAP_SEAM_MOVE_STEP * TICKS_PER_16TH_STEP
+        lines = [
+            "[1] Edit session: NOTE_EDIT",
+            f"[2] POSITION EDIT: Note moved from step {WRAP_SEAM_STEP} to {WRAP_SEAM_MOVE_STEP} "
+            f"(tick {from_tick} -> {to_tick}, relative {from_tick} -> {to_tick})",
+            f"[3] Moved note events: pitch={WRAP_SEAM_PITCH} start->{to_tick} end->0",
+        ]
+        result = _verify_loop_seam_move_152335(
+            lines,
+            layout=self.layout,
+            markers=["loop_seam_move_152335"],
+        )
+        self.assertFalse(result["ok"])
+        self.assertTrue(
+            any("wrap_seam_off_at_zero" in issue for issue in result["issues"])
+        )
 
 
 if __name__ == "__main__":

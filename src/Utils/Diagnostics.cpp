@@ -1,0 +1,143 @@
+//  Copyright (c)  2025 Lytrix (Eelke Jager)
+//  Licensed under the PolyForm Noncommercial 1.0.0
+
+#include "Utils/Diagnostics.h"
+
+#ifdef SESSION_CAPTURE
+
+#include <Arduino.h>
+#include <cstring>
+
+#include "EditManager.h"
+#include "EditSession.h"
+#include "LooperState.h"
+#include "TrackManager.h"
+#include "TrackState.h"
+#include "Utils/DebugSessionCapture.h"
+#include "Utils/MemoryMonitor.h"
+
+#if defined(__IMXRT1062__)
+extern "C" void* extmem_malloc(size_t size);
+extern "C" void extmem_free(void* ptr);
+#define DIAG_MEM_ATTR FLASHMEM
+#else
+#define DIAG_MEM_ATTR
+#endif
+
+namespace Diagnostics {
+
+namespace {
+
+DiagLastRecordSlot* sLastRecordSlot = nullptr;
+uint32_t sCounters[static_cast<size_t>(Counter::Count)] = {};
+
+#if defined(__IMXRT1062__)
+uint32_t readMicros() { return micros(); }
+#else
+uint32_t readMicros() { return 0; }
+#endif
+
+bool ensureLastRecordSlot() {
+  if (sLastRecordSlot != nullptr) {
+    return true;
+  }
+#if defined(__IMXRT1062__)
+  sLastRecordSlot =
+      static_cast<DiagLastRecordSlot*>(extmem_malloc(sizeof(DiagLastRecordSlot)));
+  if (sLastRecordSlot == nullptr) {
+    return false;
+  }
+  std::memset(sLastRecordSlot, 0, sizeof(DiagLastRecordSlot));
+  return true;
+#else
+  static DiagLastRecordSlot fallback{};
+  sLastRecordSlot = &fallback;
+  return true;
+#endif
+}
+
+DIAG_MEM_ATTR DiagContextSnapshot captureContextSnapshot() {
+  DiagContextSnapshot context{};
+  const Track& track = trackManager.getSelectedTrack();
+  context.trackState = static_cast<uint8_t>(track.getState());
+  context.editSession = static_cast<uint8_t>(editManager.getEditSessionType());
+  context.looperState = static_cast<uint8_t>(looperState.getLooperState());
+  if (looperState.isLoadSaveModeActive()) {
+    context.flags |= kFlagLoadSaveOverlay;
+  }
+  return context;
+}
+
+DIAG_MEM_ATTR void writeLastRecord(const DiagTraceRecord& record) {
+  if (!ensureLastRecordSlot()) {
+    return;
+  }
+  sLastRecordSlot->magic = kLastRecordMagic;
+  sLastRecordSlot->record = record;
+}
+
+DIAG_MEM_ATTR void appendTraceRecord(const DiagTraceRecord& record) {
+  writeLastRecord(record);
+#if DIAG_LEVEL >= 2
+  (void)DebugSessionCapture::appendDiagTraceRecord(&record, sizeof(record));
+#endif
+}
+
+}  // namespace
+
+DIAG_MEM_ATTR void init() {
+  (void)ensureLastRecordSlot();
+  DebugSessionCapture::initCaptureBuffer();
+  std::memset(sCounters, 0, sizeof(sCounters));
+}
+
+void emitBootCheckpoint() {
+  if (!ensureLastRecordSlot() || sLastRecordSlot->magic != kLastRecordMagic) {
+    return;
+  }
+  DebugSessionCapture::emitDiagCheckpointLine(sLastRecordSlot->record);
+  sLastRecordSlot->magic = 0;
+}
+
+void flushTraceRecords(size_t maxRecords) {
+  DebugSessionCapture::flushCaptureBuffer(maxRecords);
+}
+
+DIAG_MEM_ATTR void recordEvent(uint16_t eventId, uint32_t payload, bool includeHeapSnapshot) {
+  DiagTraceRecord record{};
+  record.micros = readMicros();
+  record.eventId = eventId;
+  record.context = captureContextSnapshot();
+  record.payload = payload;
+  if (includeHeapSnapshot) {
+    record.recordFlags |= kRecordHasHeapSnapshot;
+    record.heapFree = MemoryMonitor::getInternalHeapFreeBytes();
+    record.heapUsed = MemoryMonitor::getInternalHeapUsedBytes();
+    record.extmemFree = MemoryMonitor::getExternalMemoryPoolFreeBytes();
+  }
+  appendTraceRecord(record);
+}
+
+DIAG_MEM_ATTR void recordMemorySnapshot(uint16_t eventId, uint32_t payload) {
+  recordEvent(eventId, payload, true);
+}
+
+DIAG_MEM_ATTR void incrementCounter(Counter counter, uint32_t delta) {
+  const size_t index = static_cast<size_t>(counter);
+  if (index >= static_cast<size_t>(Counter::Count)) {
+    return;
+  }
+  sCounters[index] += delta;
+}
+
+uint32_t readCounter(Counter counter) {
+  const size_t index = static_cast<size_t>(counter);
+  if (index >= static_cast<size_t>(Counter::Count)) {
+    return 0;
+  }
+  return sCounters[index];
+}
+
+}  // namespace Diagnostics
+
+#endif  // SESSION_CAPTURE

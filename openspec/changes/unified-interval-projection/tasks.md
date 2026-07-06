@@ -12,7 +12,8 @@
 - [x] 0.7 Prior research appendix in `design.md` + [`unified_interval_projection_sequencer_prior_research_refinement.md`](../../docs/plans/unified_interval_projection_sequencer_prior_research_refinement.md)
 - [x] 0.5b LTS architecture refinement — Start/End events, capture/storage/playback split, UIP integration, PlaybackTarget, Manager vs Track
 - [x] 0.5c D23 — window is **`TickInterval`** frame; never **`ProjectedNoteInterval`**
-- [ ] 0.8 **Doc sync rule:** each phase task that adds/changes button or gesture logic includes a matching control-surface doc update (`README.md` cheat sheet + relevant `docs/Guides/control-surface/*.md`)
+- [x] 0.8 **Doc sync rule:** each phase task that adds/changes button or gesture logic includes a matching control-surface doc update (`README.md` cheat sheet + relevant `docs/Guides/control-surface/*.md`)
+- [x] 0.9 Memory routing docs — [`INTERNAL_HEAP_AND_EXTERNAL_MEMORY.md`](../../docs/Guides/INTERNAL_HEAP_AND_EXTERNAL_MEMORY.md), `openspec/specs/internal-heap-external-memory-routing/`, D25 in `design.md`
 
 ## 1. Core engine (Phase 1)
 

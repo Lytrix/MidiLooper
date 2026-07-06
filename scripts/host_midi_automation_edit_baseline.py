@@ -111,6 +111,11 @@ LONG_M0_END_FIXTURE_STEP = 14
 LONG_OVER_P0_START_STEP = 10
 # Empty step left of A@8 — move pitched note past higher A without landing on B@4.
 PAST_HIGHER_NOTE_STEP = 2
+# Loop-seam move (152335): on@1344 off@1536 on 2-bar loop; coarse move +1 sixteenth across seam.
+WRAP_SEAM_STEP = 28
+WRAP_SEAM_MOVE_STEP = 29
+WRAP_SEAM_PITCH = 55
+WRAP_SEAM_GATE_STEPS = 4
 # Recorded 2-step gate length in ticks (fixture default).
 RECORD_GATE_TICKS = 2 * TICKS_PER_16TH_STEP
 
@@ -142,6 +147,7 @@ EDIT_RECORD_FIXTURE: tuple[FixtureNote, ...] = (
     FixtureNote(18, 64),
     FixtureNote(22, 65),
     FixtureNote(26, 69),
+    FixtureNote(WRAP_SEAM_STEP, WRAP_SEAM_PITCH, gate_steps=WRAP_SEAM_GATE_STEPS),
 )
 
 # Three notes on step 8 — exercises fader-1 multi-note slot iteration.

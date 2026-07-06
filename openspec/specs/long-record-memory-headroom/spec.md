@@ -7,7 +7,7 @@ Long record/overdub passes must complete stop, persistence, and reload without R
 ### Requirement: Length-scaling buffers reside in PSRAM first
 Length-scaling, non-time-critical buffers SHALL be allocated PSRAM-first so that record length does not consume the RAM2 `malloc` heap before the PSRAM pool is used.
 
-This applies at minimum to the per-loop note cache, the per-loop playback order vector, `materializeToFlat` output buffers, and undo snapshot length-scaling vectors. The event chunk pool remains PSRAM-first (unchanged). Time-critical and small fixed-size state MAY remain in fast RAM.
+This applies at minimum to the per-loop note cache, the per-loop playback order vector, `materializeToFlat` output buffers, undo snapshot length-scaling vectors, **NoteEditFocus** maps, **NoteEditSessionUndoStack** entries, session flat cache, **DisplayManager** live display event buffer, **MemoryPool::globalMidiEventPool**, and UIP **`buildCanonicalSpansFromMidi` / `IntervalProjection`** batch temporaries. The event chunk pool remains PSRAM-first (unchanged). Time-critical and small fixed-size state MAY remain in fast RAM. Routing detail: [`internal-heap-external-memory-routing`](../internal-heap-external-memory-routing/spec.md), guide [`INTERNAL_HEAP_AND_EXTERNAL_MEMORY.md`](../../../docs/Guides/INTERNAL_HEAP_AND_EXTERNAL_MEMORY.md).
 
 #### Scenario: 64-bar record keeps RAM2 headroom
 - **WHEN** a record pass grows to 64 bars

@@ -2,11 +2,19 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-07-06 (display boot/play freeze fix + heap routing shipped)
+Last updated: 2026-07-06 (diagnostics platform Phase 0 shipped)
 
 ---
 
 ## Now implementing
+
+**Memory diagnostics platform (Phase 0)** — shipped 2026-07-06:
+
+- Facade: `Diagnostics.h` / `DiagnosticsEvents.h` / `Diagnostics.cpp` — binary trace via PSRAM ring, boot `DIAGCHK`, categorised event IDs, counters
+- NOTE_EDIT open hooks in `EditManager.cpp` + `NOTE_EDIT_OPEN_BISECT_STAGE` bisect
+- Parser: `scripts/parse_diag_trace.py` · plan: [`memory_diagnostics_optimization_enhancement.md`](../plans/memory_diagnostics_optimization_enhancement.md)
+- Native **472/472** PASS (`test_diagnostics` included)
+- **Next:** Phase 1 — flash `teensy41-capture-serial`, 64-bar record+overdub + NOTE_EDIT capture, parse DIAG timeline
 
 **Display boot/play freeze fix** — shipped 2026-07-06:
 

@@ -19,6 +19,7 @@
 #include <cstdint>
 #include <limits>
 #include "Utils/DebugSessionCapture.h"
+#include "Utils/Diagnostics.h"
 #include "Utils/MemoryMonitor.h"
 #include "Utils/HotPathTelemetry.h"
 #include "Utils/LoopStopFinalize.h"
@@ -167,6 +168,7 @@ void ensurePlaybackWindowBuilt(Track& track, Loop& loop, LoopPlaybackRuntime& ru
   if (runtime.primaryWindow.builtFromRevision == windowRevision) {
     return;
   }
+  DIAG_COUNTER_INC(PlaybackMergeRebuild);
   if (noteEditPreview) {
     const MidiEventVec& preview = editManager.sessionMidiEvents();
     runtime.primaryWindow.mergedEvents.assign(preview.begin(), preview.end());
