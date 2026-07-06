@@ -4,6 +4,7 @@
 #include "TrackUndo.h"
 #include "Track.h"
 #include "EditManager.h"
+#include "NoteEditManager.h"
 #include "StorageManager.h"
 #include "LooperState.h"
 #include "Logger.h"
@@ -15,6 +16,7 @@
 #include "Utils/MidiEventVecFnvHash.h"
 
 extern TrackManager trackManager;
+extern NoteEditManager noteEditManager;
 
 namespace {
 
@@ -171,6 +173,8 @@ bool applyUndoEntry(Track& track, UndoEntry& entry) {
             loop.loopStartTick = entry.beforeLoopStartTick;
             loop.loopLengthTicks = entry.beforeLoopLengthTicks;
             loop.invalidateCaches();
+            track.invalidateCaches();
+            noteEditManager.loopEditManager.onGlobalGeometryRestored(track);
             entry.hasRedoPayload = true;
             return true;
         case UndoEntryKind::RecordPassAdded:
@@ -238,6 +242,8 @@ bool applyRedoEntry(Track& track, UndoEntry& entry) {
             loop.loopStartTick = entry.afterLoopStartTick;
             loop.loopLengthTicks = entry.afterLoopLengthTicks;
             loop.invalidateCaches();
+            track.invalidateCaches();
+            noteEditManager.loopEditManager.onGlobalGeometryRestored(track);
             return true;
         case UndoEntryKind::RecordPassAdded:
         case UndoEntryKind::OverdubPassAdded:
@@ -340,6 +346,9 @@ void TrackUndo::beginOverdubSession(Track& track) {
 }
 
 void TrackUndo::undoOverdub(Track& track) {
+    if (noteEditManager.loopEditManager.hasPendingGeometry()) {
+        noteEditManager.loopEditManager.flushAllPendingGeometry(track);
+    }
     Loop& loop = track.getActiveLoop();
     if (loop.capture.phase == CapturePhase::Overdub && !loop.capture.store.empty()) {
         loop.discardCapture();
@@ -367,6 +376,9 @@ void TrackUndo::undoOverdub(Track& track) {
 }
 
 void TrackUndo::redoOverdub(Track& track) {
+    if (noteEditManager.loopEditManager.hasPendingGeometry()) {
+        noteEditManager.loopEditManager.cancelPendingGeometryPreview(track);
+    }
     GlobalUndoStack& stack = track.getGlobalUndoStack();
     if (!stack.canRedo()) {
         logger.log(CAT_TRACK, LOG_WARNING, "Cannot redo overdub right now");

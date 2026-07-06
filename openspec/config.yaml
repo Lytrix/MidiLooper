@@ -35,6 +35,8 @@ context: |
   - `docs/DELIVERABLE_TRACKING.md` — shipped vs next
   - `docs/plans/phase-3-multi-loop.md` — jam requirements (D13 deferred)
   - `docs/Guides/LOOP_MIDI_STORAGE_AND_VALIDATION.md` — capture/stop/undo constraints
+  - `docs/Guides/INTERNAL_HEAP_AND_EXTERNAL_MEMORY.md` — internal heap vs external memory pool routing
+  - `docs/Guides/FADER_STATE_SYSTEM.md` — NOTE_EDIT fader feedback on/off (`kNoteEditFaderFeedbackEnabled`)
   - `docs/Guides/DEFERRED_RUNTIME_PERSISTENCE.md` — deferred save FSM
 
   Conventions:

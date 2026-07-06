@@ -28,6 +28,8 @@ openspec/
 │   ├── change-length-commit-rematerialize/
 │   ├── overlap-hidden-note-select/
 │   ├── long-record-memory-headroom/
+│   ├── internal-heap-external-memory-routing/  # NOTE_EDIT cold buffers, split-tier undo admission (2026-07)
+│   ├── note-edit-fader-feedback/               # DROID motor sync when kNoteEditFaderFeedbackEnabled
 │   ├── storage-loop-io/
 │   ├── loop-event-pool-admission/
 │   ├── pass-reclaim/
@@ -151,6 +153,8 @@ Use these when debugging behavior — before trusting older `docs/plans/` export
 | `change-length-commit-rematerialize/` | ChangeLength commit path |
 | `overlap-hidden-note-select/` | filterSelectableDisplayNotes |
 | `long-record-memory-headroom/` | PSRAM-first buffers, deferred save |
+| `internal-heap-external-memory-routing/` | NOTE_EDIT cold buffers, baseline map scope, split-tier session undo admission |
+| `note-edit-fader-feedback/` | DROID outbound/inbound when `kNoteEditFaderFeedbackEnabled` |
 | `storage-loop-io/` | SD v4 loop slot I/O |
 | `loop-event-pool-admission/` | Chunk/heap admission |
 | `pass-reclaim/` | reclaimUnreferencedDisabledPasses |

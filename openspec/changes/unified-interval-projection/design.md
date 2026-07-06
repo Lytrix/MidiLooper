@@ -677,6 +677,25 @@ Same class of brownfield debt as **`PlaybackCursor`**: duplicate window fields, 
 
 **Regression (2026-07-05):** HITL base preset (2 overdubs) rebooted on 2nd run when the sort comparator called **`projectPlaybackEventPhase`** (which allocated **`std::vector`**) and record-stop omitted **`projectionCycleStartTick`** sync after truncation rewind.
 
+### D25 — UIP batch allocation tier (NOTE_EDIT / display)
+
+**Decision:** `buildCanonicalSpansFromMidi`, `IntervalProjection` batch vectors (`CanonicalNoteSpanVec`, `ProjectedIntervalVec`, equivalent-interval temps), and `NoteUtils` span-rebuild temporaries SHALL use **`ExternalMemoryFirstAllocator`** / **`SessionMidiEventVec`**. Admission gates (**`HEAP_RESERVE_BYTES`**, **`canHeapAdmitSessionUndoEntry`**) continue to use **internal heap** free only for internal payload estimates.
+
+| API | Allocator tier | Hot path? |
+|-----|----------------|-----------|
+| **`playbackEventPhase`** | None (scalar) | Yes — playback |
+| **`buildCanonicalSpansFromMidi`** | External memory pool | No — per reconstruct |
+| **`projectDisplayNotes`** / **`reconstructNotes`** | External memory pool for span temps | No — display / fader-driven reconstruct |
+| Fader CC geometry mutate | No full-loop malloc-first copy | Yes — use **`focus.last`**, session store, closure scope |
+
+**Rules:**
+
+1. Do not add default **`std::vector<MidiEvent>`** full-loop copies on fader inbound paths.
+2. **`NoteEditFocus::baselineMap`** holds edit-closure notes only; see **`internal-heap-external-memory-routing`** spec.
+3. Guide: [`docs/Guides/INTERNAL_HEAP_AND_EXTERNAL_MEMORY.md`](../../docs/Guides/INTERNAL_HEAP_AND_EXTERNAL_MEMORY.md).
+
+**Shipped (2026-07-06):** `b1260ce` + fader hot-path `432da4d`.
+
 ### D25 — Display playhead uses projection cycle on active playing slot (Phase 5 consumer)
 
 **Decision:** **`DisplayManager::resolvePlayheadInLoop`** and **`MidiLedManager`** 16th/bar position SHALL use **`tickPhaseInProjectionCycle(currentTick, projectionCycleStartTick, loopLength)`** when the **displayed slot** is the **active playing slot** and transport is **PLAYING** or **OVERDUBBING**. Display phase is then **`noteRelativeTick(storagePhase, loopStartTick, loopLength)`** — same pipeline as before, but storage phase matches **`playMidiEvents`**.

@@ -40,6 +40,8 @@ public:
   void allocateLoopsEarly();  // Call at start of setup() before other subsystems consume heap  // Initialize track manager state
   /// Preallocate per-slot playback runtime and playback order for enabled/data slots.
   void prewarmPlaybackRuntime();
+  /// Build visual cache for the selected display slot (cold path; defer from setup).
+  void prewarmSelectedDisplayVisualCache();
 
   // --- Track Selection ---
   void setSelectedTrack(uint8_t index);

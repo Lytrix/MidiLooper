@@ -16,10 +16,12 @@
  */
 #pragma once
 
-#ifdef SESSION_CAPTURE
-
 #include <cstddef>
 #include <cstdint>
+
+#include "Utils/DiagnosticsTypes.h"
+
+#ifdef SESSION_CAPTURE
 
 #include "MidiEvent.h"
 
@@ -40,6 +42,12 @@ struct PendingRevt {
 
 /** Allocate the external-memory capture ring (no-op when PSRAM unavailable). */
 SC_MEM_ATTR void initCaptureBuffer();
+
+/** True for ~3s after initCaptureBuffer — hot-path CAP lines use the ring instead of Serial. */
+bool captureBootGraceActive();
+
+/** Reset the boot-grace timer (call after long setup, before first display paints). */
+void restartCaptureBootGrace();
 
 /** Queue a deferred serial line (#DBG, PERF, …) for flushCaptureBuffer. */
 SC_MEM_ATTR void appendCaptureTextLine(const char* line);
@@ -90,6 +98,12 @@ SC_MEM_ATTR size_t flushPendingRevts(size_t maxLines = 64);
 SC_MEM_ATTR void flushAllPendingRevts();
 SC_MEM_ATTR void update(uint32_t currentTick, uint32_t ticksPerBar);
 
+/** Append a fixed-size Diagnostics::DiagTraceRecord payload to the PSRAM ring. */
+SC_MEM_ATTR bool appendDiagTraceRecord(const void* record, uint16_t recordSize);
+
+/** Emit one DIAGCHK line immediately (boot dump after fault). */
+void emitDiagCheckpointLine(const Diagnostics::DiagTraceRecord& record);
+
 }  // namespace DebugSessionCapture
 
 #define SC_SESSION_HEADER()                DebugSessionCapture::sessionHeader()
@@ -132,6 +146,13 @@ SC_MEM_ATTR void update(uint32_t currentTick, uint32_t ticksPerBar);
 #define SC_UPDATE(tick, ticksPerBar)         DebugSessionCapture::update(tick, ticksPerBar)
 
 #else  // !SESSION_CAPTURE — all capture macros compile to nothing
+
+namespace DebugSessionCapture {
+inline bool appendDiagTraceRecord(const void*, uint16_t) { return false; }
+inline void emitDiagCheckpointLine(const Diagnostics::DiagTraceRecord&) {}
+inline bool captureBootGraceActive() { return false; }
+inline void restartCaptureBootGrace() {}
+}  // namespace DebugSessionCapture
 
 #define SC_SESSION_HEADER()                ((void)0)
 #define SC_MIDI_IN(src, type, ch, d1, d2)  ((void)0)

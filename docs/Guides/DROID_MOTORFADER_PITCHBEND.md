@@ -161,5 +161,6 @@ At 120 BPM a 16th is ~125 ms; draining 4 LEDs every ~8 ms clears a 24-LED bar re
 
 - [`HITL_TEST_SCENARIOS.md`](HITL_TEST_SCENARIOS.md) — scenario catalog
 - [`MIDI_CONFIG_GUIDE.md`](MIDI_CONFIG_GUIDE.md) — channel/note remap
-- [`FADER_STATE_SYSTEM.md`](FADER_STATE_SYSTEM.md) — Teensy fader feedback / deadband
-- `openspec/changes/note-edit-fader-feedback-regression/` — fader2 feedback regression work
+- [`FADER_STATE_SYSTEM.md`](FADER_STATE_SYSTEM.md) — Teensy fader feedback / deadband; **`kNoteEditFaderFeedbackEnabled`** on vs off
+- `openspec/specs/note-edit-fader-feedback/` — normative when feedback is **on**
+- `openspec/changes/archive/2026-07-03-note-edit-fader-feedback-regression/` — regression archive

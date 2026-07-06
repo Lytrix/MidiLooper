@@ -1,8 +1,38 @@
 # note-edit-fader-feedback Specification
 
 ## Purpose
-TBD - created by archiving change note-edit-fader-feedback-regression. Update Purpose after archive.
+
+Outbound DROID motor sync and inbound echo prevention during NOTE_EDIT. Normative when
+`NoteEditManager::kNoteEditFaderFeedbackEnabled` is **true**. When **false**, geometry inbound
+and edit store behavior continue without outbound pipelines or feedback ignore windows — see
+[`docs/Guides/FADER_STATE_SYSTEM.md`](../../../docs/Guides/FADER_STATE_SYSTEM.md) § NOTE_EDIT fader feedback on vs off.
+
 ## Requirements
+
+### Requirement: Compile-time fader feedback gate
+
+`NoteEditManager` SHALL expose `kNoteEditFaderFeedbackEnabled` as a compile-time constant. When **false**, firmware SHALL NOT send NOTE_EDIT outbound fader motor sync or arm feedback ignore windows that block user inbound. When **true**, all requirements in this spec apply.
+
+#### Scenario: Feedback disabled — geometry still edits
+
+- **WHEN** `kNoteEditFaderFeedbackEnabled == false`
+- **AND** the user moves fader2 coarse during NOTE_EDIT
+- **THEN** note geometry SHALL update in the session store
+- **AND** serial SHALL NOT emit `#DBG outbound_step` pipeline stages
+
+#### Scenario: Feedback disabled — no F1 echo ignore
+
+- **WHEN** `kNoteEditFaderFeedbackEnabled == false`
+- **AND** inbound fader1 pitchbend arrives shortly after a prior user move
+- **THEN** `shouldIgnoreFaderInput` SHALL return false
+- **AND** select navigation SHALL process the sample subject to normal slot mapping
+
+#### Scenario: Feedback enabled — session open pipeline
+
+- **WHEN** `kNoteEditFaderFeedbackEnabled == true`
+- **AND** `openNoteEditSession` completes with a selected note
+- **THEN** requirements below for session entry fader feedback apply
+
 ### Requirement: NOTE_EDIT session entry fader feedback
 
 When a NOTE_EDIT session opens and a note is selected, the system SHALL send outbound DROID feedback so fader1 reflects the select bracket and faders 2–3 reflect the selected note **start** position (when `!lengthEditingMode`) within a bounded latency of **≤3200 ms** from session open (fader1 by ≤1600 ms, fader2+fader3 by ≤3200 ms).

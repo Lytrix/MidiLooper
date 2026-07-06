@@ -17,6 +17,12 @@ def _track_index(track_number_1based: int) -> int:
     return track_number_1based - 1
 
 
+def _effective_sync_timeout_s(record_bars: int, configured_ms: int) -> float:
+    """Scale state-sync waits for long-loop stop finalize + deferred save."""
+    scaled_ms = max(configured_ms, record_bars * 1000)
+    return min(scaled_ms, 120_000) / 1000.0
+
+
 def _track_select_note(track_number_1based: int) -> int:
     from host_midi_automation_baseline import TRACK_SELECT_NOTE_BASE
 
@@ -45,6 +51,17 @@ def _ensure_note_edit_entered(
             return True
         return any("entered note edit mode" in line for line in lines)
 
+    def _note_edit_entered_in_suffix(suffix: list[str]) -> bool:
+        if any("Edit session: NOTE_EDIT" in line for line in suffix):
+            return True
+        if any("entered note edit mode" in line for line in suffix):
+            return True
+        if any("EditSession opened editPass=0" in line for line in suffix):
+            return True
+        if any("MIDI Edit Mode: Short press" in line for line in suffix):
+            return True
+        return False
+
     snapshot = serial_collector.snapshot()
     if _note_edit_active(snapshot):
         print("[long-loop-display-hitl] NOTE_EDIT already active")
@@ -61,16 +78,24 @@ def _ensure_note_edit_entered(
         )
         time.sleep(max(EDIT_BUTTON_DEBOUNCE_MS, phase_wait_ms) / 1000.0)
         deadline = time.monotonic() + max(timeout_s, 0.0)
+        last_press_at = time.monotonic()
         while time.monotonic() < deadline:
             suffix = serial_collector.snapshot()[baseline:]
             if any("exited edit mode" in line for line in suffix):
                 break
-            if any("Edit session: NOTE_EDIT" in line for line in suffix):
+            if _note_edit_entered_in_suffix(suffix):
                 print("[long-loop-display-hitl] NOTE_EDIT enter confirmed")
                 return True
-            if any("entered note edit mode" in line for line in suffix):
-                print("[long-loop-display-hitl] NOTE_EDIT enter confirmed (encoder log)")
-                return True
+            if time.monotonic() - last_press_at >= 5.0:
+                print("[long-loop-display-hitl] re-press edit (no enter confirmation yet)")
+                _send_short_press(
+                    out_port,
+                    note=EDIT_BUTTON_NOTE,
+                    channel_1based=CONTROL_CHANNEL_1BASED,
+                    press_ms=press_ms,
+                )
+                last_press_at = time.monotonic()
+                time.sleep(max(EDIT_BUTTON_DEBOUNCE_MS, phase_wait_ms) / 1000.0)
             time.sleep(0.05)
     return False
 
@@ -87,6 +112,12 @@ def _parse_common_args(args: object) -> argparse.Namespace:
     parser.add_argument("--record-bars", type=int, default=24)
     parser.add_argument("--press-ms", type=int, default=120)
     parser.add_argument("--long-press-ms", type=int, default=700)
+    parser.add_argument(
+        "--play-stop-long-press-ms",
+        type=int,
+        default=3100,
+        help="Play/stop (note 40) long-press for window snap — must exceed firmware 3000ms threshold",
+    )
     parser.add_argument("--phase-wait-ms", type=int, default=500)
     parser.add_argument("--freeze-wait-ms", type=int, default=8000)
     parser.add_argument("--hold-track-ms", type=int, default=4000)
@@ -337,12 +368,17 @@ def run_long_loop_display_window(args: object) -> int:
             )
             return 1
 
+        sync_timeout_s = _effective_sync_timeout_s(ns.record_bars, ns.state_sync_timeout_ms)
+        time.sleep(0.5)
+
         expected_play = None
+        stop_baseline_len = 0
         if serial_collector is not None:
             from host_midi_automation_baseline import _count_capture_transitions
 
             counts = _count_capture_transitions(serial_collector.snapshot())
             expected_play = counts.get(("STOPPED_RECORDING", "PLAYING"), 0) + 1
+            stop_baseline_len = len(serial_collector.snapshot())
 
         print("[long-loop-display-hitl] record stop (returns to play)")
         _send_short_press(
@@ -353,15 +389,73 @@ def run_long_loop_display_window(args: object) -> int:
         )
 
         if serial_collector is not None and expected_play is not None:
-            if not _wait_for_transition_count(
+            reached_play = _wait_for_transition_count(
                 serial_collector,
                 from_state="STOPPED_RECORDING",
                 to_state="PLAYING",
                 target_count=expected_play,
-                timeout_s=ns.state_sync_timeout_ms / 1000.0,
+                timeout_s=sync_timeout_s,
                 abort=abort,
-            ):
+            )
+            if not reached_play:
+                print(
+                    "[long-loop-display-hitl] warn: STOPPED_RECORDING->PLAYING not confirmed; "
+                    "retrying record stop press"
+                )
+                _send_short_press(
+                    out_port,
+                    note=RECORD_BUTTON_NOTE,
+                    channel_1based=CONTROL_CHANNEL_1BASED,
+                    press_ms=ns.press_ms,
+                )
+                reached_play = _wait_for_transition_count(
+                    serial_collector,
+                    from_state="STOPPED_RECORDING",
+                    to_state="PLAYING",
+                    target_count=expected_play,
+                    timeout_s=sync_timeout_s,
+                    abort=abort,
+                )
+            if not reached_play:
                 print("[long-loop-display-hitl] warn: did not confirm STOPPED_RECORDING->PLAYING")
+
+            if ns.record_bars >= 48:
+                from hitl.deferred_save_idle import wait_for_deferred_save_idle
+
+                print(
+                    f"[long-loop-display-hitl] waiting for deferred save idle "
+                    f"(timeout {sync_timeout_s:.0f}s)"
+                )
+                if not wait_for_deferred_save_idle(
+                    serial_collector,
+                    after_line_index=stop_baseline_len,
+                    timeout_s=sync_timeout_s,
+                    log_prefix="[long-loop-display-hitl]",
+                ):
+                    print("[long-loop-display-hitl] warn: deferred save idle not confirmed")
+
+            playing_deadline = time.monotonic() + sync_timeout_s
+            while time.monotonic() < playing_deadline:
+                if _latest_track_state(serial_collector.snapshot()) == "PLAYING":
+                    break
+                time.sleep(0.05)
+            else:
+                print("[long-loop-display-hitl] warn: latest track state is not PLAYING before NOTE_EDIT")
+
+            from hitl.scenarios.load_save_overlay_helpers import recover_load_save_overlay
+            from host_midi_automation_edit_baseline import _send_double_press
+
+            recover_load_save_overlay(
+                out_port,
+                serial_collector,
+                press_ms=ns.press_ms,
+                gap_ms=80,
+                gesture_settle_ms=600,
+                send_double_press=_send_double_press,
+                log_prefix="[long-loop-display-hitl]",
+            )
+
+            time.sleep(2.0)
 
         time.sleep(ns.phase_wait_ms / 1000.0)
 
@@ -372,8 +466,34 @@ def run_long_loop_display_window(args: object) -> int:
                 serial_collector,
                 press_ms=ns.press_ms,
                 phase_wait_ms=ns.phase_wait_ms,
-                timeout_s=ns.state_sync_timeout_ms / 1000.0,
+                timeout_s=sync_timeout_s,
             ):
+                lines = serial_collector.snapshot()
+                out_dir = Path(getattr(args, "out_dir", Path("captures")))
+                out_dir.mkdir(parents=True, exist_ok=True)
+                stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                fail_path = out_dir / f"host_midi_hitl_long_loop_display_fail_{stamp}.log"
+                fail_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+                edit_tail = [
+                    line
+                    for line in lines[-200:]
+                    if any(
+                        token in line
+                        for token in (
+                            "Edit session",
+                            "edit mode",
+                            "Edit Mode",
+                            "EditSession",
+                            "LDSV",
+                            "NOTE_EDIT",
+                        )
+                    )
+                ]
+                print(f"[long-loop-display-hitl] serial fail log: {fail_path}")
+                if edit_tail:
+                    print("[long-loop-display-hitl] recent edit-related serial:")
+                    for line in edit_tail[-15:]:
+                        print(f"  {line}")
                 print("[long-loop-display-hitl] error: NOTE_EDIT enter not confirmed")
                 return 1
         else:
@@ -394,13 +514,14 @@ def run_long_loop_display_window(args: object) -> int:
         from host_midi_automation_edit_baseline import DISPLAY_SETTLE_MS
 
         print(
-            f"[long-loop-display-hitl] play/stop long press ({ns.long_press_ms}ms) — snap window to playhead"
+            f"[long-loop-display-hitl] play/stop long press ({ns.play_stop_long_press_ms}ms) "
+            "— snap window to playhead"
         )
         _send_long_press(
             out_port,
             note=PLAY_STOP_BUTTON_NOTE,
             channel_1based=CONTROL_CHANNEL_1BASED,
-            press_ms=ns.long_press_ms,
+            press_ms=ns.play_stop_long_press_ms,
         )
         ctx.markers.append("phase:long_press_snap")
         time.sleep(max(DISPLAY_SETTLE_MS, ns.phase_wait_ms) / 1000.0)

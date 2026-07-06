@@ -51,7 +51,15 @@ public:
     void reopenLoopEditSession(Track& track);
     /// Flush grace/debounced save and commit loop geometry on slot/track exit.
     void commitLoopEditOnDepart(Track& track);
-    
+    /// Commit any in-flight loop start/length preview before global undo/redo.
+    void flushAllPendingGeometry(Track& track);
+    /// Drop unsettled preview and restore session baseline (before global redo).
+    void cancelPendingGeometryPreview(Track& track);
+    /// True while loop start or length preview is waiting to settle.
+    bool hasPendingGeometry() const;
+    /// Realign session baseline and motor feedback after global geometry undo/redo.
+    void onGlobalGeometryRestored(Track& track);
+
     // Track change handling
     void onTrackChanged(Track& newTrack);
     
@@ -82,7 +90,15 @@ private:
     void scheduleDebouncedLoopEditSave();
 
     static constexpr uint32_t LOOP_EDIT_SAVE_DEBOUNCE_MS = 400;
+    static constexpr uint32_t LOOP_GEOMETRY_SETTLE_MS = 600;
     uint32_t pendingLoopEditSaveAtMs = 0;
+
+    bool hasPendingLoopStartTick_ = false;
+    uint32_t pendingLoopStartTick_ = 0;
+    uint32_t loopStartSettleUntilMs_ = 0;
+
+    uint32_t pendingLoopLengthTicks_ = 0;
+    uint32_t loopLengthSettleUntilMs_ = 0;
 
     static constexpr uint32_t LOOP_EDIT_FEEDBACK_IGNORE_MS = 1500;
     uint32_t feedbackIgnoreUntilMs_ = 0;
@@ -95,8 +111,17 @@ private:
     void flushPendingLoopEditWork(Track& track);
     uint8_t selectedSlotForTrack(const Track& track) const;
     void applyLoopStartTick(Track& track, uint32_t startTick);
+    void applyLoopStartPreview(Track& track, uint32_t startTick);
+    void scheduleLoopStartSettle(uint32_t startTick);
+    void commitSettledLoopStart(Track& track);
+    void flushPendingLoopStartSettle(Track& track);
     void applyLoopLength(Track& track, uint32_t loopLengthTicks);
     void applyLoopLengthWithWrapping(Track& track, uint32_t loopLengthTicks);
+    void applyLoopLengthPreview(Track& track, uint32_t loopLengthTicks);
+    void scheduleLoopLengthSettle(uint32_t loopLengthTicks);
+    void commitSettledLoopLength(Track& track);
+    void flushPendingLoopLengthSettle(Track& track);
+    void commitPendingLoopGeometry(Track& track);
 
     bool shouldIgnoreLoopFaderInput() const;
     std::vector<uint32_t> buildLoopStartFaderPositions(const Track& track) const;

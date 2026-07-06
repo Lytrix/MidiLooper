@@ -70,6 +70,17 @@ void TrackManager::prewarmPlaybackRuntime() {
   }
 }
 
+void TrackManager::prewarmSelectedDisplayVisualCache() {
+  const uint8_t trackIndex = getSelectedTrackIndex();
+  Track& track = getTrack(trackIndex);
+  const uint8_t slot = getSelectedSlotIndex(trackIndex);
+  Loop& loop = track.getLoop(slot);
+  if (!loop.hasPublishedEvents() && loop.loopLengthTicks == 0) {
+    return;
+  }
+  loop.ensureVisualCacheBuilt();
+}
+
 // Recording & Overdubbing ------------------------------------
 
 void TrackManager::startRecordingTrack(uint8_t trackIndex, uint32_t currentTick) {

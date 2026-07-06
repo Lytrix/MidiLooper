@@ -7,6 +7,7 @@
 #include "Globals.h"
 #include "Utils/MemoryMonitor.h"
 #include "Utils/DebugSessionCapture.h"
+#include "Utils/Diagnostics.h"
 #include "Logger.h"
 #include <algorithm>
 #include <chrono>
@@ -947,6 +948,7 @@ void Loop::discardPendingCapturePass() {
 }
 
 void Loop::rebuildVisualCacheFromPasses() {
+  DIAG_COUNTER_INC(VisualCacheRebuild);
   SessionMidiEventVec flat;
   passes.materializeToEventVector(flat, loopLengthTicks);
   publishedMaterializedEventCount_ = flat.size();

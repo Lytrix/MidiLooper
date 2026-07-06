@@ -2,7 +2,8 @@
 
 **Kind:** refinement  
 **Date:** 2026-07-06  
-**Build env:** `teensy41-capture-serial`
+**Build env:** `teensy41-capture-serial`  
+**Guide:** [`docs/Guides/INTERNAL_HEAP_AND_EXTERNAL_MEMORY.md`](../Guides/INTERNAL_HEAP_AND_EXTERNAL_MEMORY.md) · OpenSpec: [`openspec/specs/internal-heap-external-memory-routing/spec.md`](../../openspec/specs/internal-heap-external-memory-routing/spec.md)
 
 ## Problem
 

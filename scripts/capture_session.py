@@ -67,6 +67,8 @@ def main() -> int:
 
     ser: serial.Serial | None = None
     boot_wait_done = False
+    last_fsync_ms = 0.0
+    fsync_interval_s = 0.25
 
     with out_path.open("ab") as log:
         try:
@@ -84,7 +86,20 @@ def main() -> int:
                         continue
 
                     if not boot_wait_done:
-                        time.sleep(args.boot_wait)
+                        deadline = time.monotonic() + args.boot_wait
+                        while time.monotonic() < deadline:
+                            try:
+                                pending = ser.in_waiting
+                            except (serial.SerialException, OSError):
+                                time.sleep(0.05)
+                                continue
+                            if pending:
+                                chunk = ser.read(pending)
+                                if chunk:
+                                    log.write(chunk)
+                                    _sync_log(log)
+                            else:
+                                time.sleep(0.05)
                         boot_wait_done = True
                     else:
                         marker = (
@@ -116,7 +131,10 @@ def main() -> int:
 
                 if chunk:
                     log.write(chunk)
-                    _sync_log(log)
+                    now_s = time.monotonic()
+                    if now_s - last_fsync_ms >= fsync_interval_s:
+                        _sync_log(log)
+                        last_fsync_ms = now_s
                 else:
                     time.sleep(0.05)
         finally:

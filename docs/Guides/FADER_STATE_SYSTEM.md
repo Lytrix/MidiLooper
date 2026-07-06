@@ -1,6 +1,8 @@
 # Fader State System Documentation
 
 > **NOTE_EDIT motorized faders (2026):** Authoritative behavior for DROID motor sync, split select/geometry queues, and F1 inbound guards is in [**DROID_MOTORFADER_PITCHBEND.md**](DROID_MOTORFADER_PITCHBEND.md). Bugfix handoff: [`note_edit_geometry_f1_selection_guard_bugfix.md`](../plans/note_edit_geometry_f1_selection_guard_bugfix.md). The V2 sections below describe the generic `MidiFaderProcessor` pipeline; **timing and feedback rules for NOTE_EDIT** are owned by `NoteEditManager` (see § NOTE_EDIT motor feedback below).
+>
+> **Compile-time feedback gate:** `NoteEditManager::kNoteEditFaderFeedbackEnabled` — see § NOTE_EDIT fader feedback on vs off. Default in firmware today: **`false`** (inbound geometry works; outbound motor sync off).
 
 ## Overview
 
@@ -195,6 +197,44 @@ Queues **do not merge**. Input on one driver **cancels** the opposite pending qu
 `NoteEditManager::FEEDBACK_IGNORE_PERIOD` = **1500 ms** (not the 100 ms examples elsewhere in this file).
 
 **Capture analysis:** [`DROID_MOTORFADER_PITCHBEND.md`](DROID_MOTORFADER_PITCHBEND.md), host verifier `scripts/test_note_edit_geometry_fader1_serial_verify.py`.
+
+## NOTE_EDIT fader feedback on vs off
+
+Compile-time switches in `include/NoteEditManager.h`:
+
+| Flag | Default | Purpose |
+|------|---------|---------|
+| `kNoteEditFaderFeedbackEnabled` | `false` | Outbound DROID motor sync + inbound echo/stale-latch guards |
+| `kEditedNoteAuditionEnabled` | `false` | MIDI note preview on pitch edit when transport stopped |
+
+Set `kNoteEditFaderFeedbackEnabled = true` for production motorized DROID use and HITL fader-feedback regression (`openspec/specs/note-edit-fader-feedback`). Keep **`false`** for capture-serial geometry perf work, host logic tests, and sessions where motor echo would fight manual fader position.
+
+### When feedback is ON (`true`)
+
+| Subsystem | Behavior |
+|-----------|----------|
+| **Outbound** | `requestFaderOutbound`, `sendNoteEditSessionFaderFeedback`, motor triggers (F2–F4), F1 bracket bursts, select/geometry motor-sync queues |
+| **F1 inbound** | `shouldIgnoreFaderInput` — 1500 ms value echo + `selectFaderFeedbackIgnoreUntilMs_` after outbound F1 |
+| **F2–F4 inbound** | `shouldIgnoreDependentFaderInput` — stale-latch vs live snapshot; post-select `selectDependentSettleUntilMs_` blocks ch15 during outbound pipeline |
+| **F4 pitch** | Ignores CC during `FEEDBACK_IGNORE_PERIOD` after note select |
+| **Session open** | Full `SessionOpen` outbound pipeline (F1 → F2 → F3 → F4) per `note-edit-fader-feedback` spec |
+
+### When feedback is OFF (`false`)
+
+| Subsystem | Behavior |
+|-----------|----------|
+| **Outbound** | No MIDI to faders; `sendNoteEditSessionFaderFeedback` logs `feedback disabled` |
+| **Motor sync queues** | `scheduleSelectDependentMotorSync`, `processPendingSelectDependentMotorSync`, `processPendingGeometryDriverMotorSync` — no-ops |
+| **F1 inbound** | `shouldIgnoreFaderInput` always returns **false** — user F1 always processed (no motor-echo suppression) |
+| **F2–F4 inbound** | `shouldIgnoreDependentFaderInput` always returns **false** — no stale-latch suppression |
+| **Geometry edits** | **Unchanged** — `handleCoarseFaderInput`, `handleFineFaderInput`, `handleNoteValueFaderInput`, overlap handling, session undo |
+| **Side effects** | `applyFaderOutboundDisabledSideEffects` still runs for `SessionOpen` (clears suppress flag), `LengthModeEnter` / `LengthModeExit` (enables `startEditingEnabled`) |
+
+**Practical difference:** feedback **off** is for validating edit store, display, and heap behavior without motors moving or inbound being gated by last-sent values. Feedback **on** is required for motor/bracket alignment and for passing NOTE_EDIT fader HITL gates. F3/F4 debounce (`FINE_STABILITY_TIME`, `NOTE_VALUE_STABILITY_TIME`) and geometry guards (e.g. `geometry_driver_empty_step_ignored`) apply in **both** modes.
+
+### Audition flag (`kEditedNoteAuditionEnabled`)
+
+When `false` (default): no held note-on preview during pitch edit with transport stopped. When `true`: `sendEditedNoteAuditionWhenTransportStopped` drives a short preview note — independent of motor feedback.
 
 ## Channel Architecture (Enhanced)
 

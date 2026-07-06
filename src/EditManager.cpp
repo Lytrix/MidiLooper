@@ -31,6 +31,8 @@
 #include "Utils/SelectNavigation.h"
 #include "TickPhase.h"
 #include "Utils/ValidationUtils.h"
+#include "Utils/Diagnostics.h"
+#include "Utils/DiagnosticsEvents.h"
 #include <map>
 #include <vector>
 #include <unordered_set>
@@ -417,6 +419,10 @@ uint32_t EditManager::noteEditLoopStartTick(const Track& track) const {
     return loopLength > 0 ? track.getLoopStartTick() % loopLength : 0;
 }
 
+#ifndef NOTE_EDIT_OPEN_BISECT_STAGE
+#define NOTE_EDIT_OPEN_BISECT_STAGE 4
+#endif
+
 void EditManager::openNoteEditSession(Track& track) {
     if (editSession.active) {
         return;
@@ -428,17 +434,36 @@ void EditManager::openNoteEditSession(Track& track) {
     editSession.editPassIds.clear();
     editSession.replaceEditPassOnClose = false;
     editSession.undoStack.clear();
+    DIAG_EVENT(Diagnostics::Edit::NoteEditOpenEnter);
     loop.rematerializeEditView(editSession.store.mutStore());
+    DIAG_COUNTER_INC(Materialize);
+    DIAG_EVENT(Diagnostics::Edit::AfterRematerializeEditView);
+#if NOTE_EDIT_OPEN_BISECT_STAGE <= 0
+    return;
+#endif
     loop.assignMissingNoteIdsInStore(editSession.store.mutStore());
     loop.assignMissingNoteIds(loop.midiEvents());
     loop.assignMissingNoteIds(editSession.store.mutFlat());
+    DIAG_EVENT(Diagnostics::Edit::AfterAssignNoteIds);
+#if NOTE_EDIT_OPEN_BISECT_STAGE <= 1
+    return;
+#endif
     editSession.store.discardFlatCache();
     resetNoteEditSessionState();
+    DIAG_EVENT(Diagnostics::Edit::AfterDiscardFlatCache);
+#if NOTE_EDIT_OPEN_BISECT_STAGE <= 2
+    return;
+#endif
     noteEditManager.prepareNoteEditSessionOpen();
     enterDefaultNoteEditSessionState(track, clockManager.getCurrentTick());
+    DIAG_EVENT(Diagnostics::Edit::AfterEnterDefaultState);
+#if NOTE_EDIT_OPEN_BISECT_STAGE <= 3
+    return;
+#endif
     bumpSessionPreviewRevision();
     bumpSessionPlaybackPreviewRevision();
     noteEditManager.sendNoteEditSessionFaderFeedback(track);
+    DIAG_EVENT(Diagnostics::Edit::NoteEditOpenExit);
     logger.debug("EditSession opened editPass=0");
 }
 
@@ -455,6 +480,7 @@ void EditManager::reopenNoteEditSession(Track& track) {
     }
     editSession.sessionType = EditSessionType::Note;
     openNoteEditSession(track);
+    DIAG_COUNTER_INC(CacheInvalidateBroad);
     track.invalidateCaches();
 }
 
@@ -627,7 +653,7 @@ void EditManager::rematerializeNoteEditSessionAfterWorkspaceReload(Track& track)
         selectedNoteIdx = -1;
         hasMovedBracket = false;
     }
-    track.invalidateCaches();
+    // Loaded workspace data is authoritative; live display cache already invalidated by caller.
 }
 
 EditPassId EditManager::commitEditAction(Track& track, EditPassVec rows) {
@@ -760,6 +786,7 @@ bool EditManager::pushSessionUndoOnKindChange(Track& track, NoteEditKind kind) {
                        static_cast<unsigned>(Config::HEAP_RESERVE_BYTES +
                                              estimatedSessionUndoEntryBytes(entry)),
                        static_cast<unsigned>(MemoryMonitor::getInternalHeapFreeBytes()));
+            DIAG_COUNTER_INC(AllocatorFailure);
             return false;
         }
     }
@@ -1493,7 +1520,10 @@ void EditManager::cycleEditSession(Track& track) {
         closeNoteEditSession(track);
         track.invalidateCaches();
     } else {
-        editSession.sessionType = EditSessionType::Note;
+        sendEditSessionChange(EditSessionType::Note);
+        logger.log(CAT_TRACK, LOG_DEBUG, "Edit session cycled to: %d",
+                   static_cast<int>(EditSessionType::Note));
+        return;
     }
     sendEditSessionChange(editSession.sessionType);
     logger.log(CAT_TRACK, LOG_DEBUG, "Edit session cycled to: %d",
@@ -1529,6 +1559,10 @@ void EditManager::sendEditSessionChange(EditSessionType sessionType) {
     midiHandler.sendLedFeedbackNoteOff(triggerNote);
     logger.log(CAT_MIDI, LOG_INFO, "Edit session: %s (Program %d, Note %d trigger)",
                modeName, program, triggerNote);
+
+    if (priorSession == EditSessionType::Loop && sessionType != EditSessionType::Loop) {
+        noteEditManager.loopEditManager.commitLoopEditOnDepart(trackManager.getSelectedTrack());
+    }
 
     if (sessionType == EditSessionType::Note) {
         noteEditManager.loopEditManager.onLeaveLoopEditSession();
