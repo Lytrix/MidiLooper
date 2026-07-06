@@ -71,19 +71,32 @@ void runNoteEditMacroCommitNormalize(MidiEventVec& session, NoteEditFocus& focus
 
 }  // namespace
 
-void test_baseline_map_includes_all_store_notes_at_select() {
+void test_baseline_map_includes_moving_note_at_select() {
   NoteEditFocus focus;
   const MidiEventVec flat = makeTwoNoteFlat(8, 104, 584, 680, 60);
   rebuildNoteEditFocusFromStore(focus, flat, 1, 768, 0);
 
   TEST_ASSERT_TRUE(focus.active);
-  TEST_ASSERT_EQUAL(2, static_cast<int>(focus.baselineMap.size()));
+  TEST_ASSERT_EQUAL(1, static_cast<int>(focus.baselineMap.size()));
+  TEST_ASSERT_TRUE(focus.baselineMap.count(focus.movingNoteId) > 0);
   TEST_ASSERT_EQUAL_UINT32(8, focus.commitBaseline.startTick);
   TEST_ASSERT_EQUAL_UINT32(104, focus.commitBaseline.endTick);
   TEST_ASSERT_EQUAL_UINT8(60, focus.commitBaseline.pitch);
   TEST_ASSERT_EQUAL_UINT32(8, focus.movingNoteRange.start);
   TEST_ASSERT_EQUAL_UINT32(104, focus.movingNoteRange.end);
   TEST_ASSERT_EQUAL(0, static_cast<int>(focus.overlapNotes.size()));
+}
+
+void test_populate_baseline_map_for_edit_closure_wrap_sibling() {
+  NoteEditFocus focus;
+  const MidiEventVec flat = makeTwoNoteFlat(8, 104, 584, 680, 60);
+  rebuildNoteEditFocusFromStore(focus, flat, 1, 768, 0);
+  TEST_ASSERT_EQUAL(1, static_cast<int>(focus.baselineMap.size()));
+
+  populateBaselineMapForEditClosure(focus, flat, flat, 1, 768);
+  TEST_ASSERT_EQUAL(2, static_cast<int>(focus.baselineMap.size()));
+  TEST_ASSERT_TRUE(focus.baselineMap.count(1) > 0);
+  TEST_ASSERT_TRUE(focus.baselineMap.count(2) > 0);
 }
 
 void test_a1_length_updates_moving_note_range_not_commit_baseline() {
@@ -551,6 +564,16 @@ void test_filtered_display_note_index_for_note_id_and_start() {
   TEST_ASSERT_EQUAL(0, filteredDisplayNoteIndexForNoteIdAndStart(filtered, kWrapId, 1472u));
   TEST_ASSERT_EQUAL(1, filteredDisplayNoteIndexForNoteIdAndStart(filtered, kWrapId, 0u));
   TEST_ASSERT_EQUAL(0, filteredDisplayNoteIndexForNoteId(filtered, kWrapId));
+}
+
+void test_filtered_display_note_index_for_note_id_and_end() {
+  constexpr NoteId kNoteId = 42;
+  std::vector<NoteUtils::DisplayNote> filtered;
+  filtered.push_back({kNoteId, 60, 100, 100, 200});
+
+  TEST_ASSERT_EQUAL(0, filteredDisplayNoteIndexForNoteIdAndEnd(filtered, kNoteId, 200u));
+  TEST_ASSERT_EQUAL(-1, filteredDisplayNoteIndexForNoteIdAndEnd(filtered, kNoteId, 100u));
+  TEST_ASSERT_EQUAL(-1, filteredDisplayNoteIndexForNoteIdAndStart(filtered, kNoteId, 200u));
 }
 
 void test_filtered_display_note_index_for_moving_note_exact_start_only() {
@@ -1079,10 +1102,10 @@ void test_edit_projection_batch_selects_linear_span_for_wrapped_storage() {
   const ProjectionContext context = IntervalProjection::buildEditProjectionContext(
       selection, kLoopLength, IntervalProjection::makeFullLoopEditAnalysisWindow(kLoopLength), 49);
 
-  const std::vector<CanonicalNoteSpan> spans = {
+  const CanonicalNoteSpanVec spans = {
       {kWrapId, TickInterval{49, static_cast<int32_t>(kLoopLength - 1)}, 49, 100}};
 
-  const std::vector<ProjectedNoteInterval> projected =
+  const ProjectedIntervalVec projected =
       IntervalProjection::projectEditIntervalsForAnalysis(spans, context);
 
   TEST_ASSERT_EQUAL(1, static_cast<int>(projected.size()));
@@ -1117,9 +1140,9 @@ void test_edit_projection_parity_resolve_linear_span_baseline_map() {
   selection.selectedTick = 483;
   const ProjectionContext context = IntervalProjection::buildEditProjectionContext(
       selection, kLoopLength, IntervalProjection::makeFullLoopEditAnalysisWindow(kLoopLength), 483);
-  const std::vector<CanonicalNoteSpan> spans = {
+  const CanonicalNoteSpanVec spans = {
       {kOverlapId, TickInterval{483, 1370}, 58, 100}};
-  const std::vector<ProjectedNoteInterval> projected =
+  const ProjectedIntervalVec projected =
       IntervalProjection::projectEditIntervalsForAnalysis(spans, context);
   TEST_ASSERT_EQUAL(1, static_cast<int>(projected.size()));
   TEST_ASSERT_EQUAL_INT32(483, projected[0].interval.start);
@@ -1137,8 +1160,8 @@ void test_edit_projection_parity_wrapped_mover_linear_span() {
       selection, kLoopLength, IntervalProjection::makeFullLoopEditAnalysisWindow(kLoopLength),
       1499);
 
-  const std::vector<CanonicalNoteSpan> spans = {{kMoverId, TickInterval{1499, 1595}, 31, 100}};
-  const std::vector<ProjectedNoteInterval> projected =
+  const CanonicalNoteSpanVec spans = {{kMoverId, TickInterval{1499, 1595}, 31, 100}};
+  const ProjectedIntervalVec projected =
       IntervalProjection::projectEditIntervalsForAnalysis(spans, context);
 
   TEST_ASSERT_EQUAL(1, static_cast<int>(projected.size()));
@@ -1148,7 +1171,8 @@ void test_edit_projection_parity_wrapped_mover_linear_span() {
 
 int main(int /*argc*/, char** /*argv*/) {
   UNITY_BEGIN();
-  RUN_TEST(test_baseline_map_includes_all_store_notes_at_select);
+  RUN_TEST(test_baseline_map_includes_moving_note_at_select);
+  RUN_TEST(test_populate_baseline_map_for_edit_closure_wrap_sibling);
   RUN_TEST(test_a1_length_updates_moving_note_range_not_commit_baseline);
   RUN_TEST(test_a1_no_pending_length_when_moving_note_range_matches_baseline);
   RUN_TEST(test_inner_overlap_note_in_moving_note_range);
@@ -1165,6 +1189,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_sync_linear_focus_avoids_spurious_display_length_commit);
   RUN_TEST(test_prune_overlap_shortened_display_baseline_artifact);
   RUN_TEST(test_filtered_display_note_index_for_note_id_and_start);
+  RUN_TEST(test_filtered_display_note_index_for_note_id_and_end);
   RUN_TEST(test_filtered_display_note_index_for_moving_note_exact_start_only);
   RUN_TEST(test_filtered_display_note_index_duplicate_pitch_prefers_linear_start);
   RUN_TEST(test_filtered_display_note_index_duplicate_pitch_rejects_mispaired_low_segment);

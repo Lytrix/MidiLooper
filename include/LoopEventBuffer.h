@@ -8,9 +8,10 @@
 #include "MidiEvent.h"
 
 /// Copy-on-write wrapper for chunked loop MIDI events (Phase 4).
-class CowLoopEventStore {
+template <typename FlatVec = MidiEventVec>
+class LoopEventFlatCache {
  public:
-  CowLoopEventStore() : data_(std::make_shared<LoopEventStore>()) {}
+  LoopEventFlatCache() : data_(std::make_shared<LoopEventStore>()) {}
 
   LoopEventStore& mutStore() {
     if (data_.use_count() > 1) {
@@ -42,28 +43,26 @@ class CowLoopEventStore {
   }
 
   /// Legacy flat-vector access for edit/load paths (lazy flatten).
-  const MidiEventVec& readFlat() const {
+  const FlatVec& readFlat() const {
     if (!flatCache_) {
-      flatCache_ = std::make_shared<MidiEventVec>();
+      flatCache_ = std::make_shared<FlatVec>();
       data_->flatten(*flatCache_);
     }
     return *flatCache_;
   }
 
-  MidiEventVec& mutFlat() {
+  FlatVec& mutFlat() {
     if (data_.use_count() > 1) {
       data_ = data_->cloneShared();
     }
     if (!flatCache_) {
-      flatCache_ = std::make_shared<MidiEventVec>();
+      flatCache_ = std::make_shared<FlatVec>();
       data_->flatten(*flatCache_);
     }
-    // mutFlat() grants write access to callers, so mark dirty eagerly.
     flatDirty_ = true;
     return *flatCache_;
   }
 
-  /// True when mutFlat() was written and must be synced before take commit.
   bool isFlatDirty() const { return flatDirty_; }
 
   void syncFlatToStore() {
@@ -77,8 +76,11 @@ class CowLoopEventStore {
 
  private:
   std::shared_ptr<LoopEventStore> data_;
-  mutable std::shared_ptr<MidiEventVec> flatCache_;
+  mutable std::shared_ptr<FlatVec> flatCache_;
   bool flatDirty_ = false;
 };
+
+using CowLoopEventStore = LoopEventFlatCache<MidiEventVec>;
+using NoteEditSessionStore = LoopEventFlatCache<SessionMidiEventVec>;
 
 using MidiSnapshotRef = std::shared_ptr<const LoopEventStore>;

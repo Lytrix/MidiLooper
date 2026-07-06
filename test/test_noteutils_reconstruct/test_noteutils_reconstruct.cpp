@@ -27,7 +27,7 @@ static void assert_has_note(const std::vector<NoteUtils::DisplayNote>& notes,
 
 void test_project_display_notes_simple_span() {
     constexpr uint32_t loopLength = 48;
-    std::vector<CanonicalNoteSpan> spans;
+    CanonicalNoteSpanVec spans;
     CanonicalNoteSpan span;
     span.noteId = 1;
     span.pitch = 60;
@@ -47,7 +47,7 @@ void test_project_display_notes_simple_span() {
 
 void test_project_display_notes_head_tail_split() {
     constexpr uint32_t loopLength = 1536;
-    std::vector<CanonicalNoteSpan> spans;
+    CanonicalNoteSpanVec spans;
     CanonicalNoteSpan span;
     span.noteId = 1;
     span.pitch = 60;
@@ -70,7 +70,7 @@ void test_project_display_notes_head_tail_split() {
 
 void test_project_display_notes_open_tail_with_playhead() {
     constexpr uint32_t loopLength = 100;
-    std::vector<CanonicalNoteSpan> spans;
+    CanonicalNoteSpanVec spans;
     CanonicalNoteSpan span;
     span.noteId = 1;
     span.pitch = 60;

@@ -756,6 +756,12 @@ void Loop::mergeMaterializedPassesWithCapture(MidiEventVec& out) const {
   out = std::move(merged);
 }
 
+void Loop::mergeMaterializedPassesWithCapture(SessionMidiEventVec& out) const {
+  MidiEventVec temp;
+  mergeMaterializedPassesWithCapture(temp);
+  out.assign(temp.begin(), temp.end());
+}
+
 void Loop::removeCaptureNoteOffAt(uint8_t channel, uint8_t note, uint32_t tick) {
   if (capture.store.empty()) {
     return;

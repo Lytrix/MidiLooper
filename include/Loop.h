@@ -113,6 +113,7 @@ struct Loop {
   size_t displayEventCountHint() const;
   bool ensureCaptureEventsSorted();
   void mergeMaterializedPassesWithCapture(MidiEventVec& out) const;
+  void mergeMaterializedPassesWithCapture(SessionMidiEventVec& out) const;
   void rebuildVisualCacheFromPasses();
   void ensureVisualCacheBuilt();
   void markDisplayCachesStale();
@@ -172,7 +173,7 @@ struct Loop {
  private:
   friend class TrackUndo;
 
-  CowLoopEventStore passesMaterializedStore_;
+  LoopEventFlatCache<> passesMaterializedStore_;
   bool passesMaterializedStoreStale_ = true;
 
   void materializeEditViewFromPasses() const;

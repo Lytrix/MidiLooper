@@ -113,9 +113,8 @@ void renderProjectedIntervalToDisplayNotes(const ProjectedNoteInterval& projecte
                       endTickInclusive);
 }
 
-ProjectedNoteInterval selectPlaybackEventProjectedInterval(
-    const std::vector<ProjectedNoteInterval>& candidates, uint32_t loopLength,
-    int32_t originTick) {
+ProjectedNoteInterval selectPlaybackEventProjectedInterval(const ProjectedIntervalVec& candidates,
+                                                           uint32_t loopLength, int32_t originTick) {
     if (loopLength == 0) {
         return makeEmptyProjectedInterval();
     }
@@ -130,9 +129,9 @@ ProjectedNoteInterval selectPlaybackEventProjectedInterval(
     return IntervalProjection::selectProjectedInterval(candidates, context);
 }
 
-ProjectedNoteInterval selectSingleDisplayProjectedInterval(
-    const std::vector<ProjectedNoteInterval>& candidates, const CanonicalNoteSpan& span,
-    const ProjectionContext& context) {
+ProjectedNoteInterval selectSingleDisplayProjectedInterval(const ProjectedIntervalVec& candidates,
+                                                           const CanonicalNoteSpan& span,
+                                                           const ProjectionContext& context) {
     const ProjectedNoteInterval* storageAligned = nullptr;
     const ProjectedNoteInterval* firstIntersecting = nullptr;
     for (const ProjectedNoteInterval& candidate : candidates) {
@@ -197,10 +196,9 @@ int32_t advanceProjectionCycleStartTickOnWrap(int32_t projectionCycleStartTick,
     return projectionCycleStartTick + static_cast<int32_t>(loopLengthAtWrap);
 }
 
-std::vector<ProjectedNoteInterval> generateEquivalentIntervals(const CanonicalNoteSpan& span,
-                                                               uint32_t loopLength,
-                                                               const ProjectionContext& context) {
-    std::vector<ProjectedNoteInterval> candidates;
+ProjectedIntervalVec generateEquivalentIntervals(const CanonicalNoteSpan& span, uint32_t loopLength,
+                                                 const ProjectionContext& context) {
+    ProjectedIntervalVec candidates;
     if (loopLength == 0) {
         return candidates;
     }
@@ -232,7 +230,7 @@ std::vector<ProjectedNoteInterval> generateEquivalentIntervals(const CanonicalNo
     return candidates;
 }
 
-ProjectedNoteInterval selectProjectedInterval(const std::vector<ProjectedNoteInterval>& candidates,
+ProjectedNoteInterval selectProjectedInterval(const ProjectedIntervalVec& candidates,
                                                 const ProjectionContext& context) {
     if (candidates.empty()) {
         return makeEmptyProjectedInterval();
@@ -255,9 +253,9 @@ ProjectedNoteInterval selectProjectedInterval(const std::vector<ProjectedNoteInt
     return best != nullptr ? *best : makeEmptyProjectedInterval();
 }
 
-std::vector<ProjectedNoteInterval> selectProjectedIntervalsForDisplay(
-    const std::vector<ProjectedNoteInterval>& candidates, const ProjectionContext& context) {
-    std::vector<ProjectedNoteInterval> selected;
+ProjectedIntervalVec selectProjectedIntervalsForDisplay(const ProjectedIntervalVec& candidates,
+                                                        const ProjectionContext& context) {
+    ProjectedIntervalVec selected;
     selected.reserve(candidates.size());
     for (const ProjectedNoteInterval& candidate : candidates) {
         if (candidate.interval.intersects(context.window)) {
@@ -267,14 +265,14 @@ std::vector<ProjectedNoteInterval> selectProjectedIntervalsForDisplay(
     return selected;
 }
 
-std::vector<ProjectedNoteInterval> projectNoteIntervals(const std::vector<CanonicalNoteSpan>& spans,
+ProjectedIntervalVec projectNoteIntervals(const CanonicalNoteSpanVec& spans,
                                                         const ProjectionContext& context) {
-    std::vector<ProjectedNoteInterval> projected;
+    ProjectedIntervalVec projected;
     for (const CanonicalNoteSpan& span : spans) {
-        const std::vector<ProjectedNoteInterval> candidates =
+        const ProjectedIntervalVec candidates =
             generateEquivalentIntervals(span, context.loopLength, context);
         if (context.type == ProjectionType::Display) {
-            const std::vector<ProjectedNoteInterval> selected =
+            const ProjectedIntervalVec selected =
                 selectProjectedIntervalsForDisplay(candidates, context);
             projected.insert(projected.end(), selected.begin(), selected.end());
         } else {
@@ -307,13 +305,13 @@ ProjectionContext buildEditProjectionContext(const EditorSelection& selection, u
 
 ProjectedNoteInterval projectEditLinearSpan(const CanonicalNoteSpan& span,
                                               const ProjectionContext& context) {
-    const std::vector<ProjectedNoteInterval> candidates =
+    const ProjectedIntervalVec candidates =
         generateEquivalentIntervals(span, context.loopLength, context);
     return selectProjectedInterval(candidates, context);
 }
 
-std::vector<ProjectedNoteInterval> projectEditIntervalsForAnalysis(
-    const std::vector<CanonicalNoteSpan>& spans, const ProjectionContext& context) {
+ProjectedIntervalVec projectEditIntervalsForAnalysis(const CanonicalNoteSpanVec& spans,
+                                                     const ProjectionContext& context) {
     ProjectionContext editContext = context;
     editContext.type = ProjectionType::Edit;
     return projectNoteIntervals(spans, editContext);
@@ -385,7 +383,7 @@ uint32_t projectPlaybackEventPhase(uint32_t storageTick, const ProjectionContext
     return playbackEventPhase(storageTick, context.loopLength);
 }
 
-NoteUtils::DisplayNoteVec projectDisplayNotes(const std::vector<CanonicalNoteSpan>& spans,
+NoteUtils::DisplayNoteVec projectDisplayNotes(const CanonicalNoteSpanVec& spans,
                                               const ProjectionContext& context,
                                               uint32_t playheadTick) {
     NoteUtils::DisplayNoteVec notes;
@@ -397,7 +395,7 @@ NoteUtils::DisplayNoteVec projectDisplayNotes(const std::vector<CanonicalNoteSpa
     displayContext.type = ProjectionType::Display;
 
     for (const CanonicalNoteSpan& span : spans) {
-        const std::vector<ProjectedNoteInterval> candidates =
+        const ProjectedIntervalVec candidates =
             generateEquivalentIntervals(span, displayContext.loopLength, displayContext);
         const ProjectedNoteInterval selected =
             selectSingleDisplayProjectedInterval(candidates, span, displayContext);

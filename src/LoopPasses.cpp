@@ -118,6 +118,12 @@ void LoopPasses::materializeToEventVector(MidiEventVec& out, uint32_t loopLength
   applyActiveEditPasses(out, editPasses, loopLengthTicks);
 }
 
+void LoopPasses::materializeToEventVector(SessionMidiEventVec& out, uint32_t loopLengthTicks) const {
+  MidiEventVec temp;
+  materializeToEventVector(temp, loopLengthTicks);
+  out.assign(temp.begin(), temp.end());
+}
+
 void LoopPasses::materialize(LoopEventStore& out, uint32_t loopLengthTicks) const {
   MidiEventVec flat;
   materializeToEventVector(flat, loopLengthTicks);

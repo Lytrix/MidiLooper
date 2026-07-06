@@ -62,19 +62,20 @@ void setupLoop(Loop& loop, uint32_t loopLength, unsigned noteCount) {
   loop.nextPassId_ = 2;
 }
 
-void openNoteEditSessionStore(CowLoopEventStore& session, Loop& loop) {
+void openCowLoopEventStore(CowLoopEventStore& session, Loop& loop) {
   loop.rematerializeEditView(session.mutStore());
   loop.assignMissingNoteIdsInStore(session.mutStore());
   session.discardFlatCache();
 }
 
-void reopenNoteEditSessionStore(CowLoopEventStore& session, Loop& loop) {
+void reopenCowLoopEventStore(CowLoopEventStore& session, Loop& loop) {
   session.mutStore().clear();
   session.discardFlatCache();
-  openNoteEditSessionStore(session, loop);
+  openCowLoopEventStore(session, loop);
 }
 
-size_t countDisplayNotes(const MidiEventVec& flat, uint32_t loopLength) {
+template <typename Alloc>
+size_t countDisplayNotes(const std::vector<MidiEvent, Alloc>& flat, uint32_t loopLength) {
   return NoteUtils::reconstructDisplayNotes(flat, loopLength, false).size();
 }
 
@@ -96,7 +97,7 @@ void test_stale_note_edit_session_wrong_display_after_track_switch() {
   setupLoop(loopLong, kLongLoopLength, 4u);
 
   CowLoopEventStore session;
-  openNoteEditSessionStore(session, loopShort);
+  openCowLoopEventStore(session, loopShort);
 
   TEST_ASSERT_EQUAL(2u, countDisplayNotes(session.readFlat(), kShortLoopLength));
 
@@ -117,8 +118,8 @@ void test_reopen_note_edit_session_store_matches_new_loop() {
   setupLoop(loopLong, kLongLoopLength, 4u);
 
   CowLoopEventStore session;
-  openNoteEditSessionStore(session, loopShort);
-  reopenNoteEditSessionStore(session, loopLong);
+  openCowLoopEventStore(session, loopShort);
+  reopenCowLoopEventStore(session, loopLong);
 
   const MidiEventVec expectedFlat = materializedFlat(loopLong);
   TEST_ASSERT_EQUAL(expectedFlat.size(), session.readFlat().size());
@@ -140,8 +141,8 @@ void test_filter_selectable_display_notes_after_track_switch_reopen() {
   setupLoop(loopLong, kLongLoopLength, 4u);
 
   CowLoopEventStore session;
-  openNoteEditSessionStore(session, loopShort);
-  reopenNoteEditSessionStore(session, loopLong);
+  openCowLoopEventStore(session, loopShort);
+  reopenCowLoopEventStore(session, loopLong);
 
   NoteEditFocus focus{};
   const auto displayNotes =

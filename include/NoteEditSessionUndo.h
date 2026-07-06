@@ -24,18 +24,23 @@ struct SessionUndoEntry {
 
 size_t estimatedSessionUndoEntryBytes(const SessionUndoEntry& entry);
 bool canHeapAdmitSessionUndoEntry(const SessionUndoEntry& entry);
+NoteEditFocus snapshotFocusForSessionUndo(const NoteEditFocus& focus);
 
+template <typename Alloc>
 SessionUndoEntry buildSessionUndoEntry(const NoteEditFocus& focus, EditorSelection selection,
-                                       const MidiEventVec& sessionFlat, uint8_t channel,
-                                       uint32_t loopLength,
+                                       const std::vector<MidiEvent, Alloc>& sessionFlat,
+                                       uint8_t channel, uint32_t loopLength,
                                        const EditPassIdList& editPassIdsAtPush);
+template <typename Alloc>
 SessionUndoEntry buildSessionUndoEntryAfterLiveCaptureDuringNoteEdit(
     const NoteEditFocus& focus, EditorSelection selection,
-    const MidiEventVec& baselineStoreEvents, const MidiEventVec& sessionStoreEvents,
-    uint8_t channel, uint32_t loopLength, const EditPassIdList& editPassIdsAtPush);
-EditPassVec buildSessionStoreEditPasses(const MidiEventVec& baselineStoreEvents,
-                                        const MidiEventVec& sessionStoreEvents, uint8_t channel,
-                                        uint32_t loopLength);
+    const std::vector<MidiEvent, Alloc>& baselineStoreEvents,
+    const std::vector<MidiEvent, Alloc>& sessionStoreEvents, uint8_t channel,
+    uint32_t loopLength, const EditPassIdList& editPassIdsAtPush);
+template <typename AllocA, typename AllocB>
+EditPassVec buildSessionStoreEditPasses(const std::vector<MidiEvent, AllocA>& baselineStoreEvents,
+                                        const std::vector<MidiEvent, AllocB>& sessionStoreEvents,
+                                        uint8_t channel, uint32_t loopLength);
 
 void applySessionUndoEntry(Loop& loop, CowLoopEventStore& store, const SessionUndoEntry& entry,
                            uint32_t loopLength, const EditPassIdList& currentEditPassIds);

@@ -68,6 +68,15 @@ class LoopEventStore {
   void mergeFrom(LoopEventStore& other);
 
   void flatten(MidiEventVec& out) const;
+  template <typename Alloc>
+  void flatten(std::vector<MidiEvent, Alloc>& out) const {
+    out.clear();
+    out.reserve(size());
+    for (uint16_t id : chunkIds_) {
+      const EventChunk& c = chunk(id);
+      out.insert(out.end(), c.events, c.events + c.used);
+    }
+  }
   /// Append events from one chunk id (read-only; does not mutate id).
   static void appendChunkRefEvent(uint16_t id, MidiEventVec& out);
   static void appendChunkRefEvent(
@@ -79,6 +88,18 @@ class LoopEventStore {
   /// Count events referenced by chunk ids without flattening.
   static size_t countEventsInChunkIds(const ChunkIdList& ids);
   void loadFromFlat(const MidiEventVec& events);
+  template <typename Alloc>
+  void loadFromFlat(const std::vector<MidiEvent, Alloc>& events) {
+    clear();
+    for (const MidiEvent& evt : events) {
+      if (!append(evt)) {
+        break;
+      }
+    }
+    if (!events.empty()) {
+      lastAppendedTick_ = events.back().tick;
+    }
+  }
 
   /// Shift every event tick by delta; bumps up if any tick would go negative.
   void shiftAllTicks(int64_t delta);
