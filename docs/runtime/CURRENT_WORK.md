@@ -2,20 +2,29 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-07-06 (internal heap PSRAM routing)
+Last updated: 2026-07-06 (display boot/play freeze fix + heap routing shipped)
 
 ---
 
 ## Now implementing
 
-**Internal heap PSRAM routing** — shipped 2026-07-06:
+**Display boot/play freeze fix** — shipped 2026-07-06:
 
-- Plan: [internal_heap_psram_routing_refinement.md](../plans/internal_heap_psram_routing_refinement.md) · capture helper: `scripts/parse_memory_capture.py`
-- UIP cold vectors (`CanonicalNoteSpanVec`, `ProjectedIntervalVec`, `buildCanonicalSpansFromMidi`) → external memory pool
-- `BaselineMap` / `OverlapNoteMap` / session undo `EntryVec` → `ExternalMemoryFirstAllocator`
-- `rebuildNoteEditFocusFromStore` — `baselineMap` holds moving note only (overlap baselines via `overlapNotes` + undo snapshot)
-- `MemoryPool::globalMidiEventPool` + `DisplayManager::liveDisplayEventBuffer` → PSRAM-first
-- Native **467/467** PASS · `teensy41-capture-serial` build OK · **HITL** (F2/F3 reselect heap gate) pending on-device
+- Root cause: post-load `applyWorkspaceDisplayRefreshPending` marked all 8×8 visual caches stale after first paint, forcing internal-heap rematerialize on frame 2 under ~64 KB free; OLED DMA buffer reuse could wedge SPI after first flush
+- Fix: narrow workspace refresh (live cache + selected track only); visual cache rebuild via `SessionMidiEventVec`; DMA wait before `dmaBuffer` copy; `#CAP,DFRAME` capture telemetry
+- Validated: `session_20260706_220537.log` — 37× `DFRAME` @ 29 notes, play/stop cycle OK
+
+**Internal heap PSRAM routing** — shipped 2026-07-06 (`b1260ce`):
+
+- Guide: [`INTERNAL_HEAP_AND_EXTERNAL_MEMORY.md`](../Guides/INTERNAL_HEAP_AND_EXTERNAL_MEMORY.md) · plan: [internal_heap_psram_routing_refinement.md](../plans/internal_heap_psram_routing_refinement.md) · OpenSpec: `openspec/specs/internal-heap-external-memory-routing/`
+- UIP cold vectors, focus maps, session undo stack, session flat cache, display event buffer, global MIDI pool → external memory pool
+- Split-tier `canHeapAdmitSessionUndoEntry`; baseline map edit-closure scope
+- Native **469/469** PASS · capture-serial validated in `session_20260706_113243.log`
+
+**NOTE_EDIT fader hot path** — shipped 2026-07-06 (`432da4d`):
+
+- F3/F4 debounce, redundant reconstruct removal, pitch live overlay, length-mode display from `focus.last`, geometry empty-step guard
+- Guide: [`FADER_STATE_SYSTEM.md`](../Guides/FADER_STATE_SYSTEM.md) § feedback on vs off (`kNoteEditFaderFeedbackEnabled` default **false** for capture work)
 
 **Unified interval projection** — single wrap/linearization engine before derived overlap pipeline:
 

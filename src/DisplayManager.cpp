@@ -2646,15 +2646,11 @@ void DisplayManager::applyWorkspaceDisplayRefreshPending(uint32_t currentTick) {
     }
     workspaceDisplayRefreshPending_ = false;
     invalidateLiveDisplayCache();
-    for (uint8_t trackIndex = 0; trackIndex < trackManager.getTrackCount(); ++trackIndex) {
-        Track& track = trackManager.getTrack(trackIndex);
-        for (uint8_t slotIndex = 0; slotIndex < Config::MAX_LOOPS_PER_TRACK; ++slotIndex) {
-            track.getLoop(slotIndex).markDisplayCachesStale();
-        }
-        track.invalidateCaches();
-    }
-    editManager.rematerializeNoteEditSessionAfterWorkspaceReload(
-        trackManager.getSelectedTrack());
+    // Do not mark every track/slot visual cache stale here — that forced a full
+    // rematerialize on the next frame under ~64 KB internal heap and hung the OLED
+    // after the first good piano-roll paint (grid-only freeze).
+    Track& selectedTrack = trackManager.getSelectedTrack();
+    editManager.rematerializeNoteEditSessionAfterWorkspaceReload(selectedTrack);
     trackManager.forceLedUpdate(currentTick);
 }
 
@@ -2694,12 +2690,13 @@ void DisplayManager::update() {
     }
     loadSaveModeWasActive_ = loadSaveActive;
 
+    applyWorkspaceDisplayRefreshPending(currentTick);
+
     _display.gfx.fill_buffer(_display.api.getFrameBuffer(), 0);
 
     if (loadSaveActive) {
         drawLoadSaveView(now);
         _display.api.display();
-        applyWorkspaceDisplayRefreshPending(currentTick);
         HotPathTelemetry::recordDisplayUpdate(micros() - telemetryStartUs);
         return;
     }
@@ -2715,6 +2712,14 @@ void DisplayManager::update() {
     drawNoteInfo(displayTick, selTrack, displaySlot, frameNotes);
 
    _display.api.display();
-    applyWorkspaceDisplayRefreshPending(currentTick);
+#if defined(SESSION_CAPTURE)
+    {
+        static uint32_t dframeCounter = 0;
+        if (++dframeCounter % 30U == 0U) {
+            SC_DFRAME(static_cast<uint32_t>(frameNotes.size()),
+                      static_cast<uint32_t>(micros() - telemetryStartUs), dframeCounter);
+        }
+    }
+#endif
     HotPathTelemetry::recordDisplayUpdate(micros() - telemetryStartUs);
 }

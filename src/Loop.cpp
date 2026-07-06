@@ -947,7 +947,7 @@ void Loop::discardPendingCapturePass() {
 }
 
 void Loop::rebuildVisualCacheFromPasses() {
-  MidiEventVec flat;
+  SessionMidiEventVec flat;
   passes.materializeToEventVector(flat, loopLengthTicks);
   publishedMaterializedEventCount_ = flat.size();
   const NoteUtils::DisplayNoteVec rebuiltNotes =
