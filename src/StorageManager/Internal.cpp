@@ -39,6 +39,7 @@ StorageSession storageSession{};
 STORAGE_PERSIST_MEM void resetStorageSessionJobs() {
     storageSession.currentWorkspaceSave.pending = false;
     resetDeferredSaveJobState();
+    resetMidPassChunkPersistState();
     resetRevisionCommitJobState();
     resetRevisionLoadJobState();
     storageSession.bootRecovery = BootRecoveryJob{};

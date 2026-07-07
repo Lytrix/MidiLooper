@@ -62,6 +62,7 @@ struct MetaHeader {
 
 bool formatLoopSlotPath(char* out, size_t outSize, uint8_t trackIndex, uint8_t slotIndex);
 bool formatLoopSlotTempPath(char* out, size_t outSize, uint8_t trackIndex, uint8_t slotIndex);
+bool formatLoopSlotSealJournalPath(char* out, size_t outSize, uint8_t trackIndex, uint8_t slotIndex);
 
 bool writeMetaHeader(const StorageIo& io, const MetaHeader& header);
 bool readMetaHeader(const StorageIo& io, MetaHeader& header);
@@ -88,6 +89,7 @@ void applyLoadedSetAnchorFields(uint32_t sourceSequence, AnchorFields& anchor);
 bool ensureDirectory(const char* path);
 bool atomicRenameTempFile(const char* tempPath, const char* finalPath);
 bool verifySaveFileTokenAtPath(const char* path);
+bool removeLoopSlotSealJournal(uint8_t trackIndex, uint8_t slotIndex);
 bool patchLastActiveUnix(const char* metaPath, uint32_t lastActiveUnix);
 bool patchAnchorFields(const char* metaPath, const AnchorFields& anchor);
 #endif

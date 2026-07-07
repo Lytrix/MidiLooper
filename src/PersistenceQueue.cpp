@@ -11,11 +11,17 @@
 #endif
 
 namespace PersistenceQueue {
+
+#if defined(PIO_UNIT_TEST_NATIVE)
+uint32_t persistenceQueueTestNowMs = 0;
+#endif
+
 namespace {
 
 struct QueueState {
   ChunkPersistenceState chunkState[LoopEventStoreConfig::POOL_CHUNK_COUNT] = {};
   uint16_t sealSequence[LoopEventStoreConfig::POOL_CHUNK_COUNT] = {};
+  uint32_t queuedAtMs[LoopEventStoreConfig::POOL_CHUNK_COUNT] = {};
   uint16_t queueOrder[LoopEventStoreConfig::POOL_CHUNK_COUNT] = {};
   uint32_t nextSealSequence = 1;
   uint16_t queueHead = 0;
@@ -71,6 +77,31 @@ void queuePop(QueueState& state) {
       static_cast<uint16_t>((state.queueHead + 1) % LoopEventStoreConfig::POOL_CHUNK_COUNT);
 }
 
+bool queuePushFront(QueueState& state, uint16_t chunkId) {
+  if (queueEmpty(state)) {
+    return queuePush(state, chunkId);
+  }
+  const uint16_t prevHead = static_cast<uint16_t>(
+      (state.queueHead + LoopEventStoreConfig::POOL_CHUNK_COUNT - 1) %
+      LoopEventStoreConfig::POOL_CHUNK_COUNT);
+  if (prevHead == state.queueTail) {
+    return false;
+  }
+  state.queueHead = prevHead;
+  state.queueOrder[state.queueHead] = chunkId;
+  return true;
+}
+
+uint32_t nowMsForQueue() {
+#if defined(ARDUINO)
+  return millis();
+#elif defined(PIO_UNIT_TEST_NATIVE)
+  return ::PersistenceQueue::persistenceQueueTestNowMs;
+#else
+  return 0;
+#endif
+}
+
 uint16_t countChunksInState(const QueueState& state, ChunkPersistenceState target) {
   uint16_t count = 0;
   for (uint16_t i = 0; i < LoopEventStoreConfig::POOL_CHUNK_COUNT; ++i) {
@@ -119,6 +150,7 @@ bool admitSealedChunk(uint16_t chunkId) {
   }
   state->chunkState[chunkId] = ChunkPersistenceState::Queued;
   state->sealSequence[chunkId] = static_cast<uint16_t>(state->nextSealSequence++);
+  state->queuedAtMs[chunkId] = nowMsForQueue();
   return true;
 }
 
@@ -148,7 +180,52 @@ void markChunkPersisted(uint16_t chunkId) {
   }
   if (state->chunkState[chunkId] == ChunkPersistenceState::Writing) {
     state->chunkState[chunkId] = ChunkPersistenceState::Persisted;
+    state->queuedAtMs[chunkId] = 0;
   }
+}
+
+void requeueWritingChunk(uint16_t chunkId) {
+  QueueState* state = queueState();
+  if (state == nullptr || chunkId >= LoopEventStoreConfig::POOL_CHUNK_COUNT) {
+    return;
+  }
+  if (state->chunkState[chunkId] != ChunkPersistenceState::Writing) {
+    return;
+  }
+  state->chunkState[chunkId] = ChunkPersistenceState::Queued;
+  if (!queuePushFront(*state, chunkId)) {
+    state->chunkState[chunkId] = ChunkPersistenceState::Writing;
+  }
+}
+
+uint32_t oldestQueuedChunkAgeMs() {
+  QueueState* state = queueState();
+  if (state == nullptr) {
+    return 0;
+  }
+  const uint32_t nowMs = nowMsForQueue();
+  uint32_t oldestAgeMs = 0;
+  bool found = false;
+  for (uint16_t i = 0; i < LoopEventStoreConfig::POOL_CHUNK_COUNT; ++i) {
+    if (state->chunkState[i] != ChunkPersistenceState::Queued || state->queuedAtMs[i] == 0) {
+      continue;
+    }
+    const uint32_t ageMs =
+        nowMs >= state->queuedAtMs[i] ? nowMs - state->queuedAtMs[i] : 0;
+    if (!found || ageMs > oldestAgeMs) {
+      oldestAgeMs = ageMs;
+      found = true;
+    }
+  }
+  return oldestAgeMs;
+}
+
+uint32_t sealSequenceForChunk(uint16_t chunkId) {
+  QueueState* state = queueState();
+  if (state == nullptr || chunkId >= LoopEventStoreConfig::POOL_CHUNK_COUNT) {
+    return 0;
+  }
+  return state->sealSequence[chunkId];
 }
 
 void onChunkFreed(uint16_t chunkId) {
@@ -158,6 +235,7 @@ void onChunkFreed(uint16_t chunkId) {
   }
   state->chunkState[chunkId] = ChunkPersistenceState::NotScheduled;
   state->sealSequence[chunkId] = 0;
+  state->queuedAtMs[chunkId] = 0;
 }
 
 void resetForTests() {
@@ -170,14 +248,6 @@ void resetForTests() {
 }
 
 #if defined(PIO_UNIT_TEST_NATIVE)
-uint32_t sealSequenceForChunk(uint16_t chunkId) {
-  QueueState* state = queueState();
-  if (state == nullptr || chunkId >= LoopEventStoreConfig::POOL_CHUNK_COUNT) {
-    return 0;
-  }
-  return state->sealSequence[chunkId];
-}
-
 size_t queuedChunkIds(uint16_t* outIds, size_t maxCount) {
   QueueState* state = queueState();
   if (state == nullptr || outIds == nullptr || maxCount == 0) {

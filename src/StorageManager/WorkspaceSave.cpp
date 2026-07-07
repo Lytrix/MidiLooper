@@ -190,7 +190,11 @@ STORAGE_PERSIST_MEM bool finalizeDeferredLoopSlotTemp(uint8_t trackIndex, uint8_
     if (!CurrentSetStorage::verifySaveFileTokenAtPath(tempPath)) {
         return false;
     }
-    return CurrentSetStorage::atomicRenameTempFile(tempPath, finalPath);
+    if (!CurrentSetStorage::atomicRenameTempFile(tempPath, finalPath)) {
+        return false;
+    }
+    (void)CurrentSetStorage::removeLoopSlotSealJournal(trackIndex, slotIndex);
+    return true;
 }
 
 STORAGE_PERSIST_MEM bool shouldWriteCurrentSetLoopSlot(uint8_t trackIndex, uint8_t slotIndex) {

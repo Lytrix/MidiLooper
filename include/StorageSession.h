@@ -266,8 +266,18 @@ struct BootRecoveryJob {
   uint16_t revisionId = 0;
 };
 
+struct MidPassChunkPersistJob {
+  bool sdIoActive = false;
+  uint8_t trackIndex = 0xFF;
+  uint8_t slotIndex = 0xFF;
+  File journalFile;
+  bool journalOpen = false;
+  uint16_t chunksPersisted = 0;
+};
+
 struct StorageSession {
   CurrentWorkspaceSaveJob currentWorkspaceSave;
+  MidPassChunkPersistJob midPassChunkPersist;
   RevisionCommitJob revisionCommit;
   RevisionLoadJob revisionLoad;
   BootRecoveryJob bootRecovery;

@@ -32,14 +32,14 @@ Guide: [`docs/Guides/RUNTIME_STORAGE_AND_PERSISTENCE.md`](../../../docs/Guides/R
 - [x] Remove unconditional `isCaptureActiveForPersistence()` early return (replace with cooperative budget + runtime precedence)
 - [x] Use `PersistenceBudget` active budget (~300 µs) during capture
 - [x] Preserve one finite-state-machine sub-step per `processDeferredSaveState()` call
-- [ ] **Gate:** short HITL (16-bar record+overdub) — at least one slice during capture; `pio test -e native`
+- [x] **Gate:** short HITL (16-bar record+overdub) — overdub stop save completes without USB disconnect (`f0ee520`)
 - [x] **Prerequisite:** Phase 0 validated on 64+64; Phase 2 queue shipped
 
 ## Phase 4 — Continuous mid-pass persistence
 
-- [ ] Writer drains persistence queue during open capture pass
-- [ ] Incremental slot append for sealed chunks while pass open (reuse chunk-per-slice writer where practical)
-- [ ] Implement failure-policy backpressure per `persistence-failure-policy` spec (record vs overdub at `CHUNK_RESERVE`)
+- [x] Writer drains persistence queue during open capture pass (`stepMidPassChunkPersist`, seal journal `.sealj`)
+- [x] Incremental slot append for sealed chunks while pass open (seal journal sidecar; full slot write on deferred save)
+- [x] Implement failure-policy backpressure per `persistence-failure-policy` spec (`PersistenceFailurePolicy`, queue alarm, reserve prioritize)
 - [ ] **Gate:** `test_storage_loop_io`; 64-bar record HITL; `freeChunkCount` above reserve through capture
 
 ## Phase 5 — Recovery

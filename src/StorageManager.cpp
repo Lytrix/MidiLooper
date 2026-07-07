@@ -10,6 +10,8 @@
 #include "CurrentWorkspaceStorage.h"
 #include "PersistenceLayout.h"
 #include "PersistenceBudget.h"
+#include "PersistenceFailurePolicy.h"
+#include "PersistenceQueue.h"
 #include "SetRevisionCatalog.h"
 #include "RevisionPackedBlob.h"
 #include "RevisionCommitPolicy.h"
@@ -1601,6 +1603,30 @@ void StorageManager::processDeferredSaveState(const LooperState& state) {
                 break;
             }
             continue;
+        }
+
+        const bool otherSdIoActive =
+            storageSession.currentWorkspaceSave.sdIoActive || storageSession.revisionCommit.sdIoActive ||
+            storageSession.revisionLoad.sdIoActive || storageSession.midPassChunkPersist.sdIoActive;
+        if (PersistenceFailurePolicy::shouldRunMidPassWriter(PersistenceQueue::queueDepth(),
+                                                               otherSdIoActive)) {
+            const uint32_t currentHeap = MemoryMonitor::getInternalHeapFreeBytes();
+            if (!LoopEventStore::hasInternalHeapHeadroomForNonCriticalWork(currentHeap)) {
+                PersistenceDiagnostics::onHeapFloorBlock();
+                break;
+            }
+            PersistenceFailurePolicy::maybeEmitBackpressureTelemetry(captureActiveForScheduler);
+            const uint32_t ioStartUs = micros();
+            storageSession.midPassChunkPersist.sdIoActive = true;
+            const bool midOk = stepMidPassChunkPersist();
+            const uint32_t sliceLatencyUs = micros() - ioStartUs;
+            storageSession.midPassChunkPersist.sdIoActive = false;
+            PersistenceDiagnostics::onSliceCompleted(sliceLatencyUs);
+            if (!midOk) {
+                SC_PERSIST("mid_pass", sliceLatencyUs, 0, 0, "failed");
+                break;
+            }
+            break;
         }
 
         if (!storageSession.currentWorkspaceSave.pending && !storageSession.currentWorkspaceSave.inProgress) {
