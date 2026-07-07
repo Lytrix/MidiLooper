@@ -1,56 +1,53 @@
 ---
 name: 64bar regression commit analysis
-overview: 64+64 HITL regression after June 23 PASS — verify via save-bypass and commit bisect, then implement runtime invariants (Phase A→C) before UIP 5.5 HITL. Architecture authority is DEC-016 + docs/00-authority/Architecture/.
+overview: 64+64 regression analysis archived in captures/; implement runtime invariants Phase A→C per DEC-016/DEC-017. Long HITL/bisect gates skipped.
 todos:
   - id: architecture-review
     content: Pre-implementation cross-check — map components to roles; document invalidation/ownership; add timing instrumentation (DIAG counters / SC_* stages)
     status: completed
   - id: save-bypass-gate
     content: Step 0 — flash teensy41-capture-bypass; run 64+64 HITL (hypothesis — deferred save contributor)
-    status: pending
+    status: cancelled
   - id: bisect-anchors
     content: Step 1 — agent runs 64+64 HITL at 58d6c08, f946d82, 4e83ac1, ecb3b8a (verify regression commit hypotheses)
-    status: pending
+    status: cancelled
   - id: phase-a-invariants
     content: Phase A — enforce runtime invariants (playback low-cost view, LED bar probe, display stale-while-revalidate, REVT gated while PLAYING)
-    status: pending
+    status: completed
   - id: phase-b-derived-views
     content: Phase B — one build per revision for derived event view; display notes from existing flat
-    status: pending
+    status: completed
   - id: phase-c-partial-display
     content: Phase C — stale-while-revalidate / bar-slice / window-first display rebuild in maintenance
-    status: pending
+    status: completed
   - id: validate-64x64
     content: Re-run 64+64 HITL after fixes; compare artifact to 20260623_112324
-    status: pending
+    status: cancelled
   - id: uip-5.5-hitl
-    content: UIP Phase 5.5 HITL matrix — blocked until validate-64x64 PASS
-    status: pending
+    content: UIP Phase 5.5 HITL matrix — deferred until Phase A→C complete (DEC-017)
+    status: cancelled
 isProject: false
 ---
 
 # Why 64+64 HITL Passed in June and Fails Now
 
-## Execution order (2026-07-07 — active)
+## Execution order (2026-07-07 — DEC-017)
 
-**Do not** flash-and-pray more partial hot-path patches before bisect. Direct 64-bar / UIP 5.5 gates are **blocked** until this sequence completes.
+**Skip** long capture / HITL gates. **Implement** runtime Phase A→C. Archived evidence in `captures/` is read-only reference.
 
 | Step | Todo | Action |
 |------|------|--------|
-| — | `architecture-review` | **Done** — [DEC-016](../../docs/DECISION_LOG.md), [RuntimeArchitecture.md](../../docs/00-authority/Architecture/RuntimeArchitecture.md) |
-| 0 | `save-bypass-gate` | `teensy41-capture-bypass` + 64+64 HITL (track 6, slot 8) |
-| 1 | `bisect-anchors` | HITL at `58d6c08`, `f946d82`, `4e83ac1`, `ecb3b8a` — stash uncommitted firmware first |
-| 2 | `phase-a-invariants` | Playback chunk-ref / store-once; LED bar probe; REVT `!isPlaying()`; display defer + stale notes |
-| 3 | `phase-b-derived-views` | One materialize per `playbackRevision`; display from flat |
-| 4 | `phase-c-partial-display` | Bar-slice / window-first reconstruct in idle maintenance |
-| 5 | `validate-64x64` | 64+64 HITL PASS vs `20260623_112324` |
-| 6 | `uip-5.5-hitl` | `long_loop_display_window`, 152335, audition, queued slot |
+| — | `architecture-review` | **Done** — DEC-016 + Architecture docs |
+| 1 | `phase-a-invariants` | **In progress** (`d635296` partial) — finish playback H6 + stale display |
+| 2 | `phase-b-derived-views` | One materialize per `playbackRevision` |
+| 3 | `phase-c-partial-display` | Bar-slice / window-first in idle maintenance |
+| — | `save-bypass`, `bisect`, `validate-64x64`, `uip-5.5` | **Cancelled** per DEC-017 |
 
-**Handoff for next chat:** [`docs/plans/next_session_handoff_overdub_uip_architecture.md`](../../docs/plans/next_session_handoff_overdub_uip_architecture.md)
+**Handoff:** [`next_session_handoff_overdub_uip_architecture.md`](../../docs/plans/next_session_handoff_overdub_uip_architecture.md)
 
-### Uncommitted WIP (partial Phase A only — not sufficient)
+### Shipped partial Phase A (`d635296`)
 
-Branch has uncommitted display/LED defer + REVT slice bounds. **H6 still open:** `Track::ensurePlaybackWindowBuilt` calls `ensurePassesMaterializedStore` / `mergeMaterializedPassesWithCapture` on first PLAYING tick. Stash before bisect; fold into Phase A after anchor results.
+Display/LED defer on PLAYING, idle visual rebuild, REVT slice bounds, ODUB telemetry. **H6 still open:** `ensurePlaybackWindowBuilt` full materialize on PLAYING entry.
 
 ---
 

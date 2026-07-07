@@ -1,228 +1,162 @@
-# Next session handoff — 64-bar regression plan, runtime architecture
+# Next session handoff — Phase A playback (runtime redesign)
 
 **Kind:** handoff  
-**Date:** 2026-07-07 (updated)  
-**Branch:** `derived-note-overlap-logic` (ahead of `origin` by 3 commits)
+**Date:** 2026-07-07  
+**Branch:** `derived-note-overlap-logic` @ `d635296`  
+**Authority:** [DEC-016](../DECISION_LOG.md#dec-016-runtime-architecture-four-layer-model), [DEC-017](../DECISION_LOG.md#dec-017-skip-long-hitl-gates-implement-runtime-redesign)
 
-**Start here.** Load with [`docs/runtime/CURRENT_WORK.md`](../runtime/CURRENT_WORK.md) and [`docs/runtime/PROJECT_STATE.md`](../runtime/PROJECT_STATE.md).
-
-**Active plan:** [`64bar_regression_commit_analysis_enhancement.md`](64bar_regression_commit_analysis_enhancement.md) (full analysis + bisect anchors).
-
----
-
-## Executive summary
-
-64+64 HITL **regressed** for the current gate config (track 6 / slot 8). June 23 PASS and July 7 mixed results are **serial-proven** in `captures/` — see § Capture evidence below. Direct hot-path patches (uncommitted) are **partial Phase A only** — playback still full-materializes on first PLAYING tick (**H6**). **Do not** re-gate UIP 5.5 until validate-64x64 passes on the gate config.
-
-**Strategy:** save-bypass → commit bisect → Phase A→C runtime invariants → `validate-64x64` → UIP 5.5.
-
-**Architecture authority:** [DEC-016](../DECISION_LOG.md), [`docs/00-authority/Architecture/`](../00-authority/Architecture/).
+Load [`CURRENT_WORK.md`](../runtime/CURRENT_WORK.md) and [`RuntimeArchitecture.md`](../00-authority/Architecture/RuntimeArchitecture.md).
 
 ---
 
-## Work order (locked)
+## Next implementation step (one session)
 
-| Step | Todo ID | What to do |
-|------|---------|------------|
-| 0 | `save-bypass-gate` | Flash `teensy41-capture-bypass`, run 64+64 HITL — isolate deferred save (H4) |
-| 1 | `bisect-anchors` | `git stash` uncommitted firmware; HITL at `58d6c08`, `f946d82`, `4e83ac1`, `ecb3b8a` |
-| 2 | `phase-a-invariants` | Playback low-cost view; LED bar probe; REVT `!isPlaying()`; display stale-while-revalidate |
-| 3 | `phase-b-derived-views` | One materialize per `playbackRevision`; display notes from flat |
-| 4 | `phase-c-partial-display` | Bar-slice / window-first reconstruct in `processDeferredIdleMaintenance` |
-| 5 | `validate-64x64` | 64+64 HITL PASS on **trk 6 / slot 8**; no regression on **trk 5 / slot 0** — compare to `20260623_112324` |
-| 6 | `uip-5.5-hitl` | **Blocked until step 5** — `long_loop_display_window`, 152335, audition, queued slot |
+**Finish Phase A item 1: playback low-cost derived event view before MIDI send (H6).**
 
-`architecture-review` is **completed** (DEC-016 + Architecture docs).
+Architecture checkpoint: **scheduling/cost only** — no overdub state-machine or ownership changes. Playback must be correct before `playMidiEvents` sends; display/LED may lag.
 
 ---
 
-## Capture evidence (serial-proven)
+## Already shipped (`d635296`)
 
-Full index: [64bar_regression_commit_analysis_enhancement.md](64bar_regression_commit_analysis_enhancement.md) § Capture evidence index.
-
-| Role | Serial log | `PLAYING→ODUB` | Config |
-|------|------------|----------------|--------|
-| **Canonical PASS** | `captures/host_midi_automation_serial_20260623_112324.log` | 2 | trk 5, 64+64+64 |
-| **Canonical FAIL (gate)** | `captures/host_midi_automation_serial_20260707_032321.log` | 0 | trk 6, slot 8, 64+64 |
-| **July PASS (config)** | `captures/host_midi_automation_serial_20260707_010856.log` | 1 | trk 5, slot 0, 64+64+64 |
-| Early PASS (pre-58d6c08) | `captures/host_midi_automation_serial_20260623_004032.log` | 1 | trk 5, 64+64 |
-
-**Gap:** no 64-bar serial Jun 24 – Jul 6 — bisect still needed for per-commit proof.
-
-**Validate-64x64** must PASS on **trk 6 / slot 8** (gate) and not regress **trk 5 / slot 0** (O7).
+| Invariant | Status |
+|-----------|--------|
+| Display defer `ensureVisualCacheBuilt` on PLAYING + STOPPED_RECORDING | Done — `DisplayManager.cpp` `deferVisualRebuild` |
+| Idle visual cache rebuild | Done — `Track::processDeferredIdleMaintenance` |
+| Idle `passesMaterializedStore` seed | Done — `Track::processDeferredIdleMaintenance` |
+| Playback chunk-ref merge | Done — `ensurePlaybackWindowBuilt` → `mergeActiveCapturePasses` |
+| Visual cache chunk-ref merge (no edit passes) | Done — `Loop::rebuildVisualCacheFromPasses` |
+| LED skip when `visualCacheDirty` | Done — `MidiLedManager.cpp` |
+| REVT gated `!isPlaying()` | Done — `Track::processDeferredIdleMaintenance` |
+| Stop tail `pre_state_advance` telemetry | Done — `Track::stopRecording` |
+| ODUB stage telemetry | Done |
 
 ---
 
-## Step 0 — save bypass (start here)
+## Step 1 — Playback window (do this first)
 
-```bash
-pio run -e teensy41-capture-bypass -t upload   # ask user; PROGRAM MODE if needed
+**Problem:** First PLAYING tick after record stop calls full materialize via `midiEvents()` / `mergeMaterializedPassesWithCapture`.
 
-# Terminal 1 — serial capture
-.venv/bin/python scripts/capture_session.py --port /dev/cu.usbmodem154944801
+**File:** `src/Track.cpp` — `ensurePlaybackWindowBuilt` (anonymous namespace, ~line 160)
 
-# Terminal 2 — same gate as FAIL artifact 20260707_032321
-.venv/bin/python scripts/host_midi_hitl.py run --preset base \
-  --midi-out "Teensy" --midi-in "Teensy" \
-  --serial-port /dev/cu.usbmodem154944801 \
-  --track-number 6 --midi-channel 6 --loop-slot 8 \
-  --record-bars 64 --overdub-bars 64 --second-overdub-bars 0 \
-  --verify-serial-log captures/session_<timestamp>.log
+**Current hot path (non–NOTE_EDIT, no live capture):**
+
+```cpp
+if (loop.visualCacheDirty) {
+  loop.ensurePassesMaterializedStore();  // full materialize
+}
+const MidiEventVec& published = loop.midiEvents();
+runtime.primaryWindow.mergedEvents.assign(published.begin(), published.end());
 ```
 
-| Outcome | Next |
+**Target (DEC-016 / June PASS reference at `58d6c08`):**
+
+```cpp
+loop.mergeActiveCapturePasses(runtime.primaryWindow.mergedEvents);
+```
+
+Rules:
+
+1. When `!noteEditPreview && !loop.captureActive()` and `builtFromRevision != playbackRevision`, use **`mergeActiveCapturePasses`** (chunk-ref merge) — not `mergeMaterializedPassesWithCapture` / `ensurePassesMaterializedStore` on the path to first MIDI send.
+2. **NOTE_EDIT Tier 2** unchanged — `sessionMidiEvents()` when `noteEditPreview`.
+3. **Live capture** (`captureActive()`) may still use `mergeMaterializedPassesWithCapture` until Phase B defines store-once policy.
+4. If edit passes require full `passes.materializeToEventVector`, materialize **once per `playbackRevision`** in idle maintenance (seed `passesMaterializedStore_`), not synchronously in `ensurePlaybackWindowBuilt` on PLAYING entry.
+
+**Reference:** `git show 58d6c08:src/Track.cpp` (lines ~131–138).
+
+**After edit:** `pio test -e native` (expect 472/472). Optional: 16-bar record + play smoke on hardware — no long capture.
+
+---
+
+## Step 2 — Display stale-while-revalidate (same session if step 1 is small)
+
+**Problem:** When `deferVisualRebuild` is true and `visualCacheDirty`, display returns **empty** notes.
+
+**File:** `src/DisplayManager.cpp` ~lines 682–686
+
+**Change:** If `!needsLiveMergeForDisplay` and `visualCacheDirty`, still assign `loop.visualCache.notes` when non-empty (stale OK). Only return empty when cache was never built.
+
+**Invariant:** Window move filters interval only; full rebuild runs in idle maintenance (`Track.cpp` ~740–744).
+
+---
+
+## Step 3 — Remaining Phase A (follow-up session)
+
+| Item | File | Status |
+|------|------|--------|
+| REVT during PLAYING | `Track.cpp` `processDeferredIdleMaintenance` | Done — `!isPlaying()` gate |
+| `prewarmSelectedDisplayVisualCache` | `TrackManager.cpp:83` | Done — no-op on PLAYING / STOPPED_RECORDING |
+| `getVisualNotesForSlot` | `Track.h:278` | Done — stale read on PLAYING paths |
+| Display live-merge materialize | `DisplayManager.cpp:579,690` | Live capture/overdub only; published PLAYING uses stale-while-revalidate |
+
+---
+
+## Step 4 — Phase B (shipped 2026-07-07)
+
+| Deliverable | Implementation |
+|-------------|----------------|
+| Seed `passesMaterializedStore` once per revision | `Track::processDeferredIdleMaintenance` — store before visual cache; PLAYING + STOPPED_RECORDING |
+| Display reconstruct from flat | `Loop::rebuildVisualCacheFromPasses` → `gatherPublishedFlatForDerivedView` reads `midiEvents()` when fresh |
+| Playback reads seeded flat | `ensurePlaybackWindowBuilt` uses `midiEvents()` when `isPassesMaterializedStoreFresh()` |
+
+Native **472/472** PASS.
+
+---
+
+## Step 5 — Phase C (shipped 2026-07-07)
+
+| Deliverable | Implementation |
+|-------------|----------------|
+| Bar-slice idle rebuild | `Loop::rebuildVisualCacheIdleSlice` — 2–4 bars/slice, playhead-priority, chunk merge only |
+| No materialize on PLAYING | `ensurePassesMaterializedStore` + full `ensureVisualCacheBuilt` only when transport fully idle |
+| Window-first display read | `DisplayManager::resolveDisplayNotes` — provisional 16-bar chunk merge when cache empty on long loops |
+| `dirtyBars` on stale | `markDisplayCachesStale` marks all bars dirty; slices clear per bar |
+
+Native **472/472** PASS.
+
+---
+
+## Step 6 — Follow-up
+
+---
+
+## Acceptance (this step)
+
+- [x] `ensurePlaybackWindowBuilt` uses low-cost merge for published playback (no sync full materialize on PLAYING entry for normal record→play)
+- [x] `pio test -e native` PASS (472/472)
+- [ ] Manual: boot v6 workspace, 16-bar record → play → stop (no OLED freeze)
+- [ ] **No** new `captures/` HITL runs (DEC-017)
+
+Long-loop / 64-bar overdub re-check only after Phase A–C, if user requests.
+
+---
+
+## Key files
+
+| Concern | Path |
 |---------|------|
-| PASS (overdub ST seen) | Save is a contributor — Phase A + revisit save slice budget |
-| FAIL (same ~12-line stall, 0 ODUB) | Proceed to bisect — H4 not sole cause |
+| Playback window | `src/Track.cpp` `ensurePlaybackWindowBuilt`, `playMidiEvents` |
+| Chunk-ref merge | `src/Loop.cpp` `mergeActiveCapturePasses` |
+| Full materialize (avoid on hot path) | `Loop::materializeEditViewFromPasses`, `mergeMaterializedPassesWithCapture` |
+| Display read | `src/DisplayManager.cpp` `resolveDisplayNotes` |
+| Owner table | `docs/00-authority/Architecture/DerivedViews.md` |
 
 ---
 
-## Step 1 — bisect anchors
+## Parked (do not start)
 
-```bash
-git stash push -m "partial phase-a wip"
-git checkout <sha>
-pio run -e teensy41-capture-serial -t upload
-# run same 64+64 HITL as Step 0
-git checkout derived-note-overlap-logic
-git stash pop
-```
-
-| SHA | Expect | Tests hypothesis |
-|-----|--------|------------------|
-| `58d6c08` | PASS | Baseline O1 |
-| `f946d82` | FAIL? | H1+H2+H5 (full materialize visual cache, REVT on PLAYING) |
-| `4e83ac1` | FAIL? | H3 (LED → `ensureVisualCacheBuilt`) |
-| `ecb3b8a` | FAIL? | H1 playback (`mergeMaterializedPassesWithCapture`) |
+- Commit bisect / save-bypass / `validate-64x64` HITL (DEC-017)
+- UIP 5.5 HITL, Phase 6 overlap
+- Flash pre–Jul-6 SHAs without SD reset (storage v4 vs v6)
 
 ---
 
-## Phase A checklist (after bisect)
+## Uncommitted docs (same session arc)
 
-Uncommitted WIP covers **display/LED defer only**. Phase A is **not done** until playback is fixed.
-
-| Invariant | Status (uncommitted) | Target |
-|-----------|---------------------|--------|
-| Display defer on PLAYING | Partial | `DisplayManager` — no sync `ensureVisualCacheBuilt` |
-| Stale-while-revalidate | **Missing** | Show last `visualCache.notes` while dirty — not empty |
-| LED low-cost query | Partial | Bar-local probe — no display rebuild (`MidiLedManager`) |
-| REVT off PLAYING | **Wrong direction** | Gate `!isPlaying()` (today: slice 16 during PLAYING) |
-| Playback low-cost view | **Missing** | `ensurePlaybackWindowBuilt` — chunk-ref merge or fresh store once per revision |
-| Remaining hot calls | Open | `TrackManager.cpp:83`, `Track.h:278` `ensureVisualCacheBuilt` |
-
-Key blocker (H6):
-
-```177:186:src/Track.cpp
-    if (loop.visualCacheDirty) {
-      loop.ensurePassesMaterializedStore();
-      ...
-    }
-    const MidiEventVec& published = loop.midiEvents();
-    ...
-  } else {
-    loop.mergeMaterializedPassesWithCapture(runtime.primaryWindow.mergedEvents);
-```
-
-Reference at PASS commit: `mergeActiveCapturePasses` in `ensurePlaybackWindowBuilt` and `rebuildVisualCacheFromPasses` — see plan § Historical context.
+If committing process docs: `DECISION_LOG.md` (DEC-017), `CURRENT_WORK.md`, `PROJECT_STATE.md`, plan frontmatter — not required for firmware step 1.
 
 ---
 
-## Phase B and C (after Phase A PASS on native)
+## Agent prompt (copy to next chat)
 
-**Phase B:** Seed `passesMaterializedStore` once at stop/idle; consumers read flat / store — one build per `playbackRevision`.
-
-**Phase C:** Incremental `reconstructDisplayNotes` via `VisualCache.dirtyBars`; window-first (~16 bars) before full loop.
-
----
-
-## Step 5 — validate-64x64 pass criteria
-
-Compare to June PASS artifact `20260623_112324`:
-
-- `PLAYING → OVERDUBBING` ≥ 1
-- `PERS,result,...,ok`
-- Inbound MIDI after PLAYING (not 0)
-- Optional: `#CAP,ODUB,stage` after Phase A telemetry lands
-
----
-
-## Step 6 — UIP 5.5 (only after step 5)
-
-| Scenario | Preset |
-|----------|--------|
-| Long loop display window | `--preset long_loop_display_window` |
-| Move across boundary | `edit_minimal` / manual 152335 |
-| Playback audition | NOTE_EDIT + transport play |
-| Queued slot start | Short-press slot during play |
-
-OpenSpec: `openspec/changes/unified-interval-projection/tasks.md` § 5.5.
-
-**Phase 6** (overlap resume) blocked until 5.5 PASS.
-
----
-
-## Git state
-
-### Committed on branch
-
-| Commit | Focus |
-|--------|--------|
-| `b1260ce` | extMem routing |
-| `432da4d` | NOTE_EDIT fader hot path |
-| `d05e736` | Boot/play OLED freeze fix |
-| `d690fda` | Bracket tick after `loopStartTick` |
-| `6f77914` | Boot display partial revert — read diff before touching boot |
-
-### Uncommitted firmware (stash before bisect)
-
-`DisplayManager.cpp`, `Track.cpp`, `MidiLedManager.cpp`, `Loop.cpp`, `TrackManager.cpp`, `DebugSessionCapture.*`, HITL scripts — partial Phase A; **insufficient for validate-64x64**.
-
-### Do not commit
-
-`Archive.zip`
-
----
-
-## Architecture quick reference
-
-```
-Capture Storage → Derived Representations → Interval Projection → Runtime Request
-```
-
-- **Entry:** [`RuntimeArchitecture.md`](../00-authority/Architecture/RuntimeArchitecture.md)
-- **Owner table:** [`DerivedViews.md`](../00-authority/Architecture/DerivedViews.md)
-- **Investigation:** [`overdub_start_64bar_playing_window_regression_bugfix.md`](overdub_start_64bar_playing_window_regression_bugfix.md)
-- **Partial fixes log:** [`overdub_start_playing_window_hot_path_refinement.md`](overdub_start_playing_window_hot_path_refinement.md)
-
----
-
-## Validated vs not
-
-| Validated | Not validated |
-|-----------|---------------|
-| Native 472/472 | Bisect anchors at 64-bar (`f946d82`, `4e83ac1`, `ecb3b8a`) |
-| June PASS serial `20260623_112324` (`PLAYING→ODUB` ×2) | Per-commit 64-bar proof Jun 24 – Jul 6 (capture gap) |
-| July FAIL serial `20260707_032321` (trk 6 / slot 8) | Save-bypass gate |
-| July PASS serial `20260707_010856` (trk 5 / slot 0) — config sensitivity | UIP 5.5 matrix |
-| NOTE_EDIT faders (`session_20260706_113243.log`) | |
-| Boot/play display (`session_20260706_220537.log`) | |
-
----
-
-## Agent reminders
-
-1. Default build: `teensy41-capture-serial`; bypass env for Step 0 only.
-2. Ask before Teensy upload.
-3. `pio test -e native` before push (not required for HITL-only session).
-4. `kNoteEditFaderFeedbackEnabled = false` — see [`FADER_STATE_SYSTEM.md`](../Guides/FADER_STATE_SYSTEM.md).
-5. Do not start `edit-session-action-geometry` firmware until UIP Phase 6.
-
----
-
-## Related docs
-
-| Doc | Topic |
-|-----|--------|
-| [64bar_regression_commit_analysis_enhancement.md](64bar_regression_commit_analysis_enhancement.md) | Full bisect analysis + hypotheses |
-| [unified_interval_projection_enhancement.md](unified_interval_projection_enhancement.md) | UIP phases |
-| [derived_note_overlap_logic_handoff.md](derived_note_overlap_logic_handoff.md) | After UIP Phase 6 |
+> Implement Phase A step 1 from `docs/plans/next_session_handoff_overdub_uip_architecture.md`: fix `ensurePlaybackWindowBuilt` to use `mergeActiveCapturePasses` instead of full materialize on PLAYING entry after record stop. Then stale-while-revalidate in `DisplayManager` if time. Run `pio test -e native`. No long HITL captures.

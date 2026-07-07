@@ -22,6 +22,14 @@ namespace MemoryMonitor {
 
 namespace {
 
+uint32_t sMinEverFreeBytes = UINT32_MAX;
+
+void updateInternalHeapWatermark(uint32_t freeBytes) {
+  if (freeBytes < sMinEverFreeBytes) {
+    sMinEverFreeBytes = freeBytes;
+  }
+}
+
 void getPsramStats(size_t* totalUsed, size_t* totalFree) {
   if (totalUsed) *totalUsed = 0;
   if (totalFree) *totalFree = 0;
@@ -49,7 +57,21 @@ void getPsramStats(size_t* totalUsed, size_t* totalFree) {
 
 uint32_t getInternalHeapFreeBytes() {
   int32_t freeBytes = reinterpret_cast<char*>(&_heap_end) - __brkval;
-  return freeBytes > 0 ? static_cast<uint32_t>(freeBytes) : 0;
+  const uint32_t free = freeBytes > 0 ? static_cast<uint32_t>(freeBytes) : 0;
+  updateInternalHeapWatermark(free);
+  return free;
+}
+
+uint32_t getInternalHeapMinEverFreeBytes() {
+  if (sMinEverFreeBytes == UINT32_MAX) {
+    return getInternalHeapFreeBytes();
+  }
+  return sMinEverFreeBytes;
+}
+
+void resetInternalHeapWatermark() {
+  sMinEverFreeBytes = UINT32_MAX;
+  (void)getInternalHeapFreeBytes();
 }
 
 uint32_t getInternalHeapTotalBytes() {
@@ -92,9 +114,11 @@ void logStatus() {
   const uint32_t freeK = getInternalHeapFreeBytes() / 1024;
   const uint32_t totalK = getInternalHeapTotalBytes() / 1024;
   const uint32_t usedK = getInternalHeapUsedBytes() / 1024;
+  const uint32_t minEverK = getInternalHeapMinEverFreeBytes() / 1024;
   logger.log(CAT_GENERAL, LOG_INFO,
-             "[Memory] heap free=%lu used=%lu total=%lu KB",
-             (unsigned long)freeK, (unsigned long)usedK, (unsigned long)totalK);
+             "[Memory] heap free=%lu used=%lu total=%lu KB min_ever=%lu KB",
+             (unsigned long)freeK, (unsigned long)usedK, (unsigned long)totalK,
+             (unsigned long)minEverK);
   if (isExternalMemoryPoolAvailable()) {
     logger.log(CAT_GENERAL, LOG_INFO,
                "[Memory] psram chip=%u MB free=%lu used=%lu pool=%lu KB",
@@ -188,6 +212,8 @@ uint32_t getExternalMemoryPoolTotalBytes() { return 0; }
 uint32_t getExternalMemoryPoolFreeBytes() { return 0; }
 uint32_t getExternalMemoryPoolUsedBytes() { return 0; }
 bool isLowMemory(uint32_t) { return false; }
+uint32_t getInternalHeapMinEverFreeBytes() { return getInternalHeapFreeBytes(); }
+void resetInternalHeapWatermark() {}
 void logStatus() {}
 void logStatusAtAddedNotes(uint32_t, size_t, const void*, size_t, bool) {}
 
@@ -205,6 +231,8 @@ uint32_t getExternalMemoryPoolTotalBytes() { return 0; }
 uint32_t getExternalMemoryPoolFreeBytes() { return 0; }
 uint32_t getExternalMemoryPoolUsedBytes() { return 0; }
 bool isLowMemory(uint32_t) { return false; }
+uint32_t getInternalHeapMinEverFreeBytes() { return 0; }
+void resetInternalHeapWatermark() {}
 void logStatus() {}
 void logStatusAtAddedNotes(uint32_t, size_t, const void*, size_t, bool) {}
 

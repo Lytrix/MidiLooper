@@ -2,25 +2,30 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-07-07 (64-bar regression — bisect-first workflow)
+Last updated: 2026-07-07 (runtime redesign — DEC-017)
 
 ---
 
 ## Now implementing
 
-**64-bar overdub-start PLAYING-window regression** — direct hot-path patches insufficient (H6: playback still full-materializes on PLAYING entry). **Follow bisect-first plan** before UIP 5.5.
+**Runtime redesign (DEC-016 / DEC-017)** — implement derived-representation scheduling and consumer invariants. **Skip** long HITL/capture gates (bisect, 64+64 validate, UIP 5.5) until Phase A→C ship.
 
 | Doc | Role |
 |-----|------|
-| **Handoff (start here)** | [next_session_handoff_overdub_uip_architecture.md](../plans/next_session_handoff_overdub_uip_architecture.md) |
-| **Active plan** | [64bar_regression_commit_analysis_enhancement.md](../plans/64bar_regression_commit_analysis_enhancement.md) |
-| Investigation | [overdub_start_64bar_playing_window_regression_bugfix.md](../plans/overdub_start_64bar_playing_window_regression_bugfix.md) |
-| Partial WIP log | [overdub_start_playing_window_hot_path_refinement.md](../plans/overdub_start_playing_window_hot_path_refinement.md) |
+| **Handoff** | [next_session_handoff_overdub_uip_architecture.md](../plans/next_session_handoff_overdub_uip_architecture.md) |
 | Architecture | [RuntimeArchitecture.md](../00-authority/Architecture/RuntimeArchitecture.md) |
+| Phase plan | [64bar_regression_commit_analysis_enhancement.md](../plans/64bar_regression_commit_analysis_enhancement.md) § Phase A→C |
+| Investigation (archive) | [overdub_start_64bar_playing_window_regression_bugfix.md](../plans/overdub_start_64bar_playing_window_regression_bugfix.md) |
 
-**Work order:** save-bypass → bisect (`58d6c08`…`ecb3b8a`) → Phase A→C invariants → `validate-64x64` → UIP 5.5. Stash uncommitted firmware before bisect.
+**Work order:** Phase A (finish playback + stale display) → Phase B → Phase C.  
+**Baseline:** `d635296` — boot v6 workspace, 16-bar record; partial Phase A (display/LED defer).  
+**Phase A step 1–2 shipped (2026-07-07):** `ensurePlaybackWindowBuilt` → `mergeActiveCapturePasses`; display stale-while-revalidate + STOPPED_RECORDING defer; REVT `!isPlaying()` gate; visual cache chunk-ref merge; idle `passesMaterializedStore` seed; record-stop rewind via `assignCurrentTickSilently` (no `updateAllTracks` re-entry); playback skipped while `STOPPED_RECORDING`.  
+**Phase A step 3 + Phase B shipped (2026-07-07):** idle maintenance seeds `passesMaterializedStore` before visual cache rebuild (PLAYING + STOPPED_RECORDING); `rebuildVisualCacheFromPasses` reconstructs from seeded flat; playback window reads `midiEvents()` when store fresh; `getVisualNotesForSlot` / `prewarmSelectedDisplayVisualCache` defer sync rebuild on PLAYING paths.  
+**Phase C shipped (2026-07-07):** PLAYING idle uses `rebuildVisualCacheIdleSlice` (chunk merge + bar slices, no materialize); full store/visual rebuild only when transport idle; long-loop display provisional window from chunk merge when cache empty.  
+**HITL gate (2026-07-07):** track 2 / loop-slot 1 / 16-bar record-only — `STOPPED_RECORDING→PLAYING` PASS (`captures/host_midi_automation_baseline_20260707_144310.json`).  
+**Verify:** `pio test -e native` + track 2/slot 1/16-bar manual smoke (OLED must not freeze).
 
-Native **472/472** PASS. UIP 5.5 HITL **blocked** until 64+64 PASS.
+Native **472/472** PASS.
 
 **Memory diagnostics platform (Phase 0)** — shipped 2026-07-06:
 
@@ -28,7 +33,7 @@ Native **472/472** PASS. UIP 5.5 HITL **blocked** until 64+64 PASS.
 - NOTE_EDIT open hooks in `EditManager.cpp` + `NOTE_EDIT_OPEN_BISECT_STAGE` bisect
 - Parser: `scripts/parse_diag_trace.py` · plan: [`memory_diagnostics_optimization_enhancement.md`](../plans/memory_diagnostics_optimization_enhancement.md)
 - Native **472/472** PASS (`test_diagnostics` included)
-- **Next:** Phase 1 — flash `teensy41-capture-serial`, 64-bar record+overdub + NOTE_EDIT capture, parse DIAG timeline
+- **Next:** Phase 1 — optional short manual smoke only (DEC-017); no 64-bar capture gate
 
 **Display boot/play freeze fix** — shipped 2026-07-06:
 

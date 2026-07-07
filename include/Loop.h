@@ -76,6 +76,7 @@ struct Loop {
   bool hasPublishedEvents() const;
 
   void mergeActiveCapturePasses(MidiEventVec& out) const;
+  void mergeActiveCapturePasses(SessionMidiEventVec& out) const;
 
   MidiEventVec& midiEvents();
   const MidiEventVec& midiEvents() const;
@@ -115,6 +116,7 @@ struct Loop {
   void mergeMaterializedPassesWithCapture(MidiEventVec& out) const;
   void mergeMaterializedPassesWithCapture(SessionMidiEventVec& out) const;
   void rebuildVisualCacheFromPasses();
+  void rebuildVisualCacheIdleSlice(uint8_t maxBarsPerSlice, uint32_t priorityBar);
   void ensureVisualCacheBuilt();
   void markDisplayCachesStale();
   /// Note + visual caches only — does not disturb playback order or materialized pass view.
@@ -124,6 +126,7 @@ struct Loop {
   size_t nativeTestLiveEventCount() const { return liveEventCount(); }
   void seedRecordPassFromStore(LoopEventStore& store);
   void discardPassesMaterializedCache();
+  void discardPublishedFlatCache() { passesMaterializedStore_.discardFlatCache(); }
   void commitStopFinalizeFromStore(LoopEventStore& merged);
 
   SealOutcome sealCapture(uint32_t sealedAtTick);

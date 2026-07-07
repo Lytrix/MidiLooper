@@ -270,6 +270,12 @@ void ClockManager::setCurrentTick(uint32_t tick) {
   logger.log(CAT_CLOCK, LOG_DEBUG, "Seek: currentTick set to %lu", tick);
 }
 
+void ClockManager::assignCurrentTickSilently(uint32_t tick) {
+  noInterrupts();
+  currentTick = tick;
+  interrupts();
+}
+
 void ClockManager::toggleTransport() {
   const uint32_t now = micros();
   const bool emitTransport =

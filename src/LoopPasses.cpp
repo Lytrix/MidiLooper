@@ -125,7 +125,7 @@ void LoopPasses::materializeToEventVector(SessionMidiEventVec& out, uint32_t loo
 }
 
 void LoopPasses::materialize(LoopEventStore& out, uint32_t loopLengthTicks) const {
-  MidiEventVec flat;
+  SessionMidiEventVec flat;
   materializeToEventVector(flat, loopLengthTicks);
   out.clear();
   if (!flat.empty()) {

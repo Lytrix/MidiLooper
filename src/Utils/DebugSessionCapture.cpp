@@ -7,6 +7,7 @@
 
 #include <Arduino.h>
 #include <algorithm>
+#include <cstdarg>
 #include <cstdio>
 #include <cstring>
 
@@ -55,29 +56,42 @@ struct CaptureRing {
 
 CaptureRing sCaptureRing;
 
-bool bootGraceActiveForEmit() {
-  if (sCaptureBootUs == 0) {
+SC_MEM_ATTR bool appendCaptureRecord(CaptureRecordType type, const void* payload, uint16_t payloadLen);
+
+SC_MEM_ATTR bool queueCaptureTextLine(const char* line) {
+  if (line == nullptr) {
     return false;
   }
-  return (micros() - sCaptureBootUs) < kBootSerialGraceUs;
+  const size_t len = strnlen(line, kMaxCaptureTextBytes - 1);
+  if (len == 0) {
+    return false;
+  }
+  return appendCaptureRecord(CaptureRecordType::Text, line, static_cast<uint16_t>(len + 1));
 }
-
-SC_MEM_ATTR bool appendCaptureRecord(CaptureRecordType type, const void* payload, uint16_t payloadLen);
 
 SC_MEM_ATTR void emitCapLineOrSerial(const char* line) {
   if (line == nullptr) {
     return;
   }
-  const size_t len = strnlen(line, kMaxCaptureTextBytes - 1);
-  if (len == 0) {
+  if (queueCaptureTextLine(line)) {
     return;
   }
-  if (bootGraceActiveForEmit()) {
-    if (appendCaptureRecord(CaptureRecordType::Text, line, static_cast<uint16_t>(len + 1))) {
-      return;
-    }
-  }
   Serial.println(line);
+}
+
+SC_MEM_ATTR void emitCapPrintf(const char* fmt, ...) {
+  if (fmt == nullptr) {
+    return;
+  }
+  char line[kMaxCaptureTextBytes];
+  va_list args;
+  va_start(args, fmt);
+  const int len = vsnprintf(line, sizeof(line), fmt, args);
+  va_end(args);
+  if (len <= 0) {
+    return;
+  }
+  emitCapLineOrSerial(line);
 }
 
 bool ensureCaptureRingAllocated() {
@@ -239,37 +253,20 @@ SC_MEM_ATTR void initCaptureBuffer() {
 }
 
 SC_MEM_ATTR void appendCaptureTextLine(const char* line) {
-  if (line == nullptr) {
-    return;
-  }
-  const size_t len = strnlen(line, kMaxCaptureTextBytes - 1);
-  if (len == 0) {
-    return;
-  }
-  (void)appendCaptureRecord(CaptureRecordType::Text, line, static_cast<uint16_t>(len + 1));
+  (void)queueCaptureTextLine(line);
 }
 
 SC_MEM_ATTR void sessionHeader() {
   initCaptureBuffer();
-  char line[kMaxCaptureTextBytes];
-  const int len = snprintf(line, sizeof(line), "#CAP,%lu,HDR,v1", (unsigned long)micros());
-  if (len > 0) {
-    emitCapLineOrSerial(line);
-  }
+  emitCapPrintf("#CAP,%lu,HDR,v1", (unsigned long)micros());
 }
 
 SC_MEM_ATTR void midiIn(char src, uint8_t type, uint8_t ch, uint8_t d1, uint8_t d2) {
-  Serial.printf("#CAP,%lu,MI,%c,%u,%u,%u,%u\r\n",
-                (unsigned long)micros(), src, type, ch, d1, d2);
+  emitCapPrintf("#CAP,%lu,MI,%c,%u,%u,%u,%u\r\n", (unsigned long)micros(), src, type, ch, d1, d2);
 }
 
 SC_MEM_ATTR void midiOut(uint8_t type, uint8_t ch, uint8_t d1, uint8_t d2) {
-  char line[kMaxCaptureTextBytes];
-  const int len = snprintf(line, sizeof(line), "#CAP,%lu,MO,%u,%u,%u,%u",
-                           (unsigned long)micros(), type, ch, d1, d2);
-  if (len > 0) {
-    emitCapLineOrSerial(line);
-  }
+  emitCapPrintf("#CAP,%lu,MO,%u,%u,%u,%u", (unsigned long)micros(), type, ch, d1, d2);
 }
 
 SC_MEM_ATTR void midiOutEvent(const MidiEvent& e) {
@@ -303,85 +300,73 @@ SC_MEM_ATTR void midiOutEvent(const MidiEvent& e) {
 }
 
 SC_MEM_ATTR void ledOut(bool on, uint8_t note, uint8_t vel) {
-  char line[kMaxCaptureTextBytes];
-  const int len = snprintf(line, sizeof(line), "#CAP,%lu,LED,%d,%u,%u", (unsigned long)micros(),
-                           on ? 1 : 0, note, vel);
-  if (len > 0) {
-    emitCapLineOrSerial(line);
-  }
+  emitCapPrintf("#CAP,%lu,LED,%d,%u,%u", (unsigned long)micros(), on ? 1 : 0, note, vel);
 }
 
 SC_MEM_ATTR void gesture(uint8_t channel0, uint8_t note, int pressType) {
-  Serial.printf("#CAP,%lu,GS,%u,%u,%d\r\n",
-                (unsigned long)micros(), channel0, note, pressType);
+  emitCapPrintf("#CAP,%lu,GS,%u,%u,%d\r\n", (unsigned long)micros(), channel0, note, pressType);
 }
 
 SC_MEM_ATTR void stateTransition(const char* component, const char* from, const char* to) {
-  Serial.printf("#CAP,%lu,ST,%s,%s,%s\r\n",
-                (unsigned long)micros(), component, from, to);
+  emitCapPrintf("#CAP,%lu,ST,%s,%s,%s\r\n", (unsigned long)micros(), component, from, to);
 }
 
 SC_MEM_ATTR void bpm(float raw, float smoothed) {
-  Serial.printf("#CAP,%lu,BPM,%.3f,%.3f\r\n",
-                (unsigned long)micros(), (double)raw, (double)smoothed);
+  emitCapPrintf("#CAP,%lu,BPM,%.3f,%.3f\r\n", (unsigned long)micros(), (double)raw, (double)smoothed);
 }
 
 SC_MEM_ATTR void clockSource(const char* from, const char* to) {
-  Serial.printf("#CAP,%lu,CS,%s,%s\r\n", (unsigned long)micros(), from, to);
+  emitCapPrintf("#CAP,%lu,CS,%s,%s\r\n", (unsigned long)micros(), from, to);
 }
 
 SC_MEM_ATTR void recStart(uint8_t slot, uint32_t tick) {
-  Serial.printf("#CAP,%lu,RECA,%u,%lu\r\n",
-                (unsigned long)micros(), slot, (unsigned long)tick);
+  emitCapPrintf("#CAP,%lu,RECA,%u,%lu\r\n", (unsigned long)micros(), slot, (unsigned long)tick);
 }
 
 SC_MEM_ATTR void recStop(const char* kind, uint8_t slot, uint32_t tick, uint32_t startTick,
                          uint32_t rawLength, uint32_t finalLength, bool align) {
-  Serial.printf("#CAP,%lu,RECS,%s,%u,%lu,%lu,%lu,%lu,%d\r\n",
-                (unsigned long)micros(), kind, slot, (unsigned long)tick,
-                (unsigned long)startTick, (unsigned long)rawLength,
+  emitCapPrintf("#CAP,%lu,RECS,%s,%u,%lu,%lu,%lu,%lu,%d\r\n", (unsigned long)micros(), kind, slot,
+                (unsigned long)tick, (unsigned long)startTick, (unsigned long)rawLength,
                 (unsigned long)finalLength, align ? 1 : 0);
 }
 
 SC_MEM_ATTR void recStopStage(const char* stage, uint32_t elapsedUs, uint32_t durationUs,
                               uint32_t heapBefore, uint32_t heapAfter, size_t eventCount,
                               size_t chunkRefCount, const char* outcome) {
-  Serial.printf("#CAP,%lu,RECS,stage,%s,%lu,%lu,%lu,%lu,%lu,%lu,%s\r\n",
-                (unsigned long)micros(), stage,
-                (unsigned long)elapsedUs, (unsigned long)durationUs,
-                (unsigned long)heapBefore, (unsigned long)heapAfter,
-                (unsigned long)eventCount, (unsigned long)chunkRefCount, outcome);
+  emitCapPrintf("#CAP,%lu,RECS,stage,%s,%lu,%lu,%lu,%lu,%lu,%lu,%s\r\n", (unsigned long)micros(),
+                stage, (unsigned long)elapsedUs, (unsigned long)durationUs,
+                (unsigned long)heapBefore, (unsigned long)heapAfter, (unsigned long)eventCount,
+                (unsigned long)chunkRefCount, outcome);
 }
 
 SC_MEM_ATTR void overdubStartStage(const char* stage, uint32_t durationUs, uint32_t heapBefore,
                                    uint32_t heapAfter, const char* outcome) {
-  Serial.printf("#CAP,%lu,ODUB,stage,%s,%lu,%lu,%lu,%s\r\n",
-                (unsigned long)micros(), stage, (unsigned long)durationUs,
-                (unsigned long)heapBefore, (unsigned long)heapAfter, outcome);
+  emitCapPrintf("#CAP,%lu,ODUB,stage,%s,%lu,%lu,%lu,%s\r\n", (unsigned long)micros(), stage,
+                (unsigned long)durationUs, (unsigned long)heapBefore, (unsigned long)heapAfter,
+                outcome);
 }
 
 SC_MEM_ATTR void persistence(const char* stage, uint32_t durationUs, uint32_t heapBefore,
                              uint32_t heapAfter, const char* outcome) {
-  Serial.printf("#CAP,%lu,PERS,%s,%lu,%lu,%lu,%s\r\n",
-                (unsigned long)micros(), stage, (unsigned long)durationUs,
-                (unsigned long)heapBefore, (unsigned long)heapAfter, outcome);
+  emitCapPrintf("#CAP,%lu,PERS,%s,%lu,%lu,%lu,%s\r\n", (unsigned long)micros(), stage,
+                (unsigned long)durationUs, (unsigned long)heapBefore, (unsigned long)heapAfter,
+                outcome);
 }
 
 SC_MEM_ATTR void saveDisplayPhase(const char* phase, uint8_t rotateStep) {
-  Serial.printf("#CAP,%lu,SAVE,%s,%u\r\n",
-                (unsigned long)micros(), phase, rotateStep);
+  emitCapPrintf("#CAP,%lu,SAVE,%s,%u\r\n", (unsigned long)micros(), phase, rotateStep);
 }
 
 SC_MEM_ATTR void loadSaveMode(uint8_t active) {
-  Serial.printf("#CAP,%lu,LDSV,%u\r\n", (unsigned long)micros(), active);
+  emitCapPrintf("#CAP,%lu,LDSV,%u\r\n", (unsigned long)micros(), active);
 }
 
 SC_MEM_ATTR void overlayListSelection(uint8_t mode, uint8_t row) {
-  Serial.printf("#CAP,%lu,OVLY,sel,%u,%u\r\n", (unsigned long)micros(), mode, row);
+  emitCapPrintf("#CAP,%lu,OVLY,sel,%u,%u\r\n", (unsigned long)micros(), mode, row);
 }
 
 SC_MEM_ATTR void overlayRowConfirm(uint8_t mode, uint8_t row) {
-  Serial.printf("#CAP,%lu,OVLY,confirm,%u,%u\r\n", (unsigned long)micros(), mode, row);
+  emitCapPrintf("#CAP,%lu,OVLY,confirm,%u,%u\r\n", (unsigned long)micros(), mode, row);
 }
 
 SC_MEM_ATTR void queueStoredNoteOn(uint32_t tick, uint8_t ch, uint8_t note) {
@@ -390,68 +375,52 @@ SC_MEM_ATTR void queueStoredNoteOn(uint32_t tick, uint8_t ch, uint8_t note) {
 }
 
 SC_MEM_ATTR void recStoredNoteOn(uint32_t tick, uint8_t ch, uint8_t note) {
-  Serial.printf("#CAP,%lu,REVT,%lu,%u,%u\r\n",
-                (unsigned long)micros(), (unsigned long)tick, ch, note);
+  queueStoredNoteOn(tick, ch, note);
 }
 
 SC_MEM_ATTR void storedNoteEvent(char kind, uint32_t tick, uint8_t ch, uint8_t note) {
-  Serial.printf("#CAP,%lu,SEVT,%c,%lu,%u,%u\r\n",
-                (unsigned long)micros(), kind, (unsigned long)tick, ch, note);
+  emitCapPrintf("#CAP,%lu,SEVT,%c,%lu,%u,%u\r\n", (unsigned long)micros(), kind,
+                (unsigned long)tick, ch, note);
 }
 
 SC_MEM_ATTR void displaySnapshot(uint8_t slot, const char* trackState, uint32_t loopLen,
                                  size_t takeEvents, size_t visualNotes, size_t frameNotes,
                                  size_t bufferEvents, int published) {
-  char line[kMaxCaptureTextBytes];
-  const int len = snprintf(line, sizeof(line),
-                           "#CAP,%lu,DISP,%u,%s,%lu,%zu,%zu,%zu,%zu,%d",
-                           (unsigned long)micros(), slot, trackState, (unsigned long)loopLen,
-                           takeEvents, visualNotes, frameNotes, bufferEvents, published);
-  if (len > 0) {
-    emitCapLineOrSerial(line);
-  }
+  emitCapPrintf("#CAP,%lu,DISP,%u,%s,%lu,%zu,%zu,%zu,%zu,%d", (unsigned long)micros(), slot,
+                trackState, (unsigned long)loopLen, takeEvents, visualNotes, frameNotes,
+                bufferEvents, published);
 }
 
 SC_MEM_ATTR void displaySnapshotWindow(uint8_t slot, const char* trackState, uint32_t loopLen,
                                        size_t takeEvents, size_t visualNotes, size_t frameNotes,
                                        size_t bufferEvents, int published, uint32_t windowStartTick,
                                        uint8_t windowBars, size_t windowNoteCount) {
-  char line[kMaxCaptureTextBytes];
-  const int len = snprintf(
-      line, sizeof(line),
-      "#CAP,%lu,DISP,%u,%s,%lu,%zu,%zu,%zu,%zu,%d,%lu,%u,%zu", (unsigned long)micros(), slot,
-      trackState, (unsigned long)loopLen, takeEvents, visualNotes, frameNotes, bufferEvents,
-      published, (unsigned long)windowStartTick, windowBars, windowNoteCount);
-  if (len > 0) {
-    emitCapLineOrSerial(line);
-  }
+  emitCapPrintf("#CAP,%lu,DISP,%u,%s,%lu,%zu,%zu,%zu,%zu,%d,%lu,%u,%zu",
+                (unsigned long)micros(), slot, trackState, (unsigned long)loopLen, takeEvents,
+                visualNotes, frameNotes, bufferEvents, published, (unsigned long)windowStartTick,
+                windowBars, windowNoteCount);
 }
 
 SC_MEM_ATTR void displayNoteInfo(uint8_t pitch, uint32_t storageStart, uint32_t displayStart,
                                  uint32_t length, int selectedIdx) {
-  Serial.printf("#CAP,%lu,DNTE,%u,%lu,%lu,%lu,%d\r\n",
-                (unsigned long)micros(), pitch, (unsigned long)storageStart,
-                (unsigned long)displayStart, (unsigned long)length, selectedIdx);
+  emitCapPrintf("#CAP,%lu,DNTE,%u,%lu,%lu,%lu,%d\r\n", (unsigned long)micros(), pitch,
+                (unsigned long)storageStart, (unsigned long)displayStart, (unsigned long)length,
+                selectedIdx);
 }
 
 SC_MEM_ATTR void displayFrame(uint32_t frameNotes, uint32_t elapsedUs, uint32_t frameIndex) {
-  char line[kMaxCaptureTextBytes];
-  const int len = snprintf(line, sizeof(line), "#CAP,%lu,DFRAME,%lu,%lu,%lu",
-                           (unsigned long)micros(), (unsigned long)frameNotes,
-                           (unsigned long)elapsedUs, (unsigned long)frameIndex);
-  if (len > 0) {
-    appendCaptureTextLine(line);
-  }
+  emitCapPrintf("#CAP,%lu,DFRAME,%lu,%lu,%lu", (unsigned long)micros(), (unsigned long)frameNotes,
+                (unsigned long)elapsedUs, (unsigned long)frameIndex);
 }
 
 SC_MEM_ATTR void storedWrapPair(uint32_t onTick, uint32_t offTick, uint8_t ch, uint8_t note) {
-  Serial.printf("#CAP,%lu,WRAP,%lu,%lu,%u,%u\r\n",
-                (unsigned long)micros(), (unsigned long)onTick, (unsigned long)offTick, ch, note);
+  emitCapPrintf("#CAP,%lu,WRAP,%lu,%lu,%u,%u\r\n", (unsigned long)micros(), (unsigned long)onTick,
+                (unsigned long)offTick, ch, note);
 }
 
 SC_MEM_ATTR void captureCleanup(const char* phase, const char* kind, uint32_t count) {
-  Serial.printf("#CAP,%lu,CLN,%s,%s,%lu\r\n",
-                (unsigned long)micros(), phase, kind, (unsigned long)count);
+  emitCapPrintf("#CAP,%lu,CLN,%s,%s,%lu\r\n", (unsigned long)micros(), phase, kind,
+                (unsigned long)count);
 }
 
 void flushCaptureBuffer(size_t maxRecords) {
@@ -512,13 +481,8 @@ SC_MEM_ATTR void update(uint32_t currentTick, uint32_t ticksPerBar) {
   const uint32_t bar = currentTick / ticksPerBar;
   if (bar != lastBar) {
     lastBar = bar;
-    char line[kMaxCaptureTextBytes];
-    const int len = snprintf(line, sizeof(line), "#CAP,%lu,BAR,%lu,%lu",
-                             (unsigned long)micros(), (unsigned long)currentTick,
-                             (unsigned long)bar);
-    if (len > 0) {
-      emitCapLineOrSerial(line);
-    }
+    emitCapPrintf("#CAP,%lu,BAR,%lu,%lu", (unsigned long)micros(), (unsigned long)currentTick,
+                  (unsigned long)bar);
   }
 }
 

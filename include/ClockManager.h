@@ -53,6 +53,8 @@ public:
   void toggleTransport();
   void resetToLoopStart();
   void setCurrentTick(uint32_t tick);
+  /// Set global tick only — no track update (record-stop rewind must not re-enter updateAllTracks).
+  void assignCurrentTickSilently(uint32_t tick);
   uint32_t setLastMidiClockTime(uint32_t lastMidiClockTime);
 
 private:

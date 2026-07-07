@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <vector>
 
+#include "MidiEvent.h"
 #include "Utils/IntervalProjection.h"
 #include "Utils/NoteUtils.h"
 
@@ -48,5 +49,12 @@ uint32_t resolveCenteredWindowStart(uint32_t playheadTick, uint32_t windowLength
                                     uint32_t loopLength);
 
 TickInterval makeViewportInterval(uint32_t windowStart, uint32_t windowLength);
+
+/// Copy MIDI events whose tick lies in the half-open loop window [start, start + length).
+void filterMidiEventsToWindow(const MidiEventVec& events, MidiEventVec& out, uint32_t windowStart,
+                              uint32_t windowLength, uint32_t loopLength);
+
+void filterMidiEventsToWindow(const SessionMidiEventVec& events, SessionMidiEventVec& out,
+                              uint32_t windowStart, uint32_t windowLength, uint32_t loopLength);
 
 }  // namespace DisplayWindowUtils

@@ -43,7 +43,7 @@ struct PendingRevt {
 /** Allocate the external-memory capture ring (no-op when PSRAM unavailable). */
 SC_MEM_ATTR void initCaptureBuffer();
 
-/** True for ~3s after initCaptureBuffer — hot-path CAP lines use the ring instead of Serial. */
+/** True for ~5s after initCaptureBuffer (legacy; hot-path CAP lines always prefer the ring). */
 bool captureBootGraceActive();
 
 /** Reset the boot-grace timer (call after long setup, before first display paints). */
