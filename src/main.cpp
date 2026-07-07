@@ -26,8 +26,6 @@
 #include "LoopEventStore.h"
 #include "Utils/HotPathTelemetry.h"
 #include "Utils/DebugSessionCapture.h"
-#include "Utils/Diagnostics.h"
-#include "Utils/DiagnosticsEvents.h"
 
 void setup() {
   HotPathTelemetry::reset();
@@ -52,12 +50,8 @@ void setup() {
   // PSRAM hardware initialisation. This must happen before any Track/Loop allocations.
   MemoryPool::globalMidiEventPool.init();
   LoopEventStore::initPool();
-#if defined(SESSION_CAPTURE)
-  Diagnostics::init();
-  Diagnostics::emitBootCheckpoint();
-#endif
 
-  // Allocate Loop arrays immediately
+  // Allocate Loop arrays immediately - before USB Host, faders, etc. consume heap
   trackManager.allocateLoopsEarly();
   trackManager.prewarmPlaybackRuntime();
   MemoryMonitor::logStatus();  // Log heap after loops allocated
@@ -98,9 +92,6 @@ void setup() {
   midiHandler.setup();
   trackManager.setup();
   displayManager.setup();
-#if defined(SESSION_CAPTURE)
-  DebugSessionCapture::restartCaptureBootGrace();
-#endif
   displayManager.drawBootStatusMessage("Loading...");
   looper.setup();  // SD + loadState; setSelectedTrack triggers forceLedUpdate (midi now ready)
 
@@ -128,11 +119,13 @@ void setup() {
   logger.info("Performance monitoring initialized");
   MemoryMonitor::logStatus();  // Log heap after full setup
 
+  // Clear all bar/16th LEDs for a clean start (DROID may retain state from before disconnect)
+  trackManager.clearLeds();
+  // Send initial 16th-note LEDs on startup (otherwise only sent when switching tracks or clock runs)
+  trackManager.forceLedUpdate(clockManager.getCurrentTick());
+
   HotPathTelemetry::emitSummary("startup");
 
-#if defined(SESSION_CAPTURE)
-  DebugSessionCapture::restartCaptureBootGrace();
-#endif
   SC_SESSION_HEADER();
 }
 
@@ -190,48 +183,19 @@ void loop() {
 
   HotPathTelemetry::processDeferredSummary();
 
+  SC_CAPTURE_FLUSH(64);
+
   // Update SELECT mode for overdubbing if active
   if (editManager.getCurrentState() == editManager.getSelectNoteState()) {
     auto* selectState = static_cast<EditSelectNoteState*>(editManager.getSelectNoteState());
     selectState->updateForOverdubbing(editManager, trackManager.getSelectedTrack());
   }
 
-  // Paint OLED before USB serial drain — blocking Serial on flushCaptureBuffer wedges DMA.
+  // Render display before deferred SD slices; keep updating during SD I/O.
   if (now - lastDisplayUpdate >= LCD::DISPLAY_UPDATE_INTERVAL) {
     lastDisplayUpdate = now;
     displayManager.update();
   }
-
-#if defined(SESSION_CAPTURE)
-  {
-    static uint32_t bootMs = 0;
-    static uint32_t graceEndMs = 0;
-    static bool bootHeapSnapshotRecorded = false;
-    if (bootMs == 0) {
-      bootMs = now;
-    }
-    constexpr uint32_t kBootDiagDelayMs = 2000;
-    if (!bootHeapSnapshotRecorded && now - bootMs >= kBootDiagDelayMs &&
-        !timingCriticalTrackActive) {
-      bootHeapSnapshotRecorded = true;
-      DIAG_MEMORY(Diagnostics::Memory::HeapSnapshot);
-    }
-    size_t flushBudget = 64;
-    if (DebugSessionCapture::captureBootGraceActive()) {
-      flushBudget = 0;
-    } else {
-      if (graceEndMs == 0) {
-        graceEndMs = now;
-      }
-      if (now - graceEndMs < 1500) {
-        flushBudget = 8;
-      }
-    }
-    SC_CAPTURE_FLUSH(flushBudget);
-  }
-#else
-  (void)timingCriticalTrackActive;
-#endif
 
   for (uint8_t i = 0; i < trackManager.getTrackCount(); ++i) {
     trackManager.getTrack(i).processDeferredIdleMaintenance(now);

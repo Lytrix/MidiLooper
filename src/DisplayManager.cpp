@@ -2656,12 +2656,11 @@ void DisplayManager::applyWorkspaceDisplayRefreshPending(uint32_t currentTick) {
     }
     workspaceDisplayRefreshPending_ = false;
     invalidateLiveDisplayCache();
-    // Loop edit after workspace load: live display cache only — do not invalidate visual
-    // cache or call rematerialize here (d05e736). Note edit still reopens the session.
+    // Do not mark every track/slot visual cache stale here — that forced a full
+    // rematerialize on the next frame under ~64 KB internal heap and hung the OLED
+    // after the first good piano-roll paint (grid-only freeze).
     Track& selectedTrack = trackManager.getSelectedTrack();
-    if (editManager.getEditSessionType() == EditSessionType::Note) {
-        editManager.rematerializeNoteEditSessionAfterWorkspaceReload(selectedTrack);
-    }
+    editManager.rematerializeNoteEditSessionAfterWorkspaceReload(selectedTrack);
     trackManager.forceLedUpdate(currentTick);
 }
 
