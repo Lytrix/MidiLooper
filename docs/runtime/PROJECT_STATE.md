@@ -2,21 +2,23 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-07-07 (continuous-runtime-persistence OpenSpec scaffold)
+Last updated: 2026-07-08 (DEC-020 Phase 3 cooperative scheduler)
 
 ---
 
 ## Current branch
 
-`derived-note-overlap-logic` (from `load-save-sets-loops` @ `bbc2284`)
+`continuous-saving` (from `derived-note-overlap-logic`)
 
 **Handoff:** [next_session_handoff_overdub_uip_architecture.md](../plans/next_session_handoff_overdub_uip_architecture.md)  
-**Priority:** OpenSpec `continuous-runtime-persistence` Phase 0 diagnostics; `runtime-derived-representation-heap` M4/M5 wind-down (persistence patches parked → DEC-020)
+**Priority:** OpenSpec `continuous-runtime-persistence` Phase 4 mid-pass persistence (DEC-020); Phase 3 cooperative scheduler shipped
 
 ## Shipped on branch (recent)
 
-| Commit | Focus | Docs |
+| Commit / session | Focus | Docs |
 |--------|--------|------|
+| *(uncommitted)* | Phase 2 persistence queue + Phase 3 transport-gate removal | DEC-020 |
+| *(uncommitted)* | M5 boot load restore (DEC-021/022) recovered | DEC-021, DEC-022 |
 | `cdd9c2b` | 16-bar stop→PLAY fix; capture ring; playback extmem materialize | DEC-018 |
 | *(prior)* | Phase A step 3 + Phase B — one materialize per revision | handoff |
 | `d635296` | Partial Phase A — PLAYING defer, REVT bounds; boot + 16-bar smoke | handoff |
@@ -29,8 +31,8 @@ Last updated: 2026-07-07 (continuous-runtime-persistence OpenSpec scaffold)
 
 | Change | Focus |
 |--------|--------|
-| **`continuous-runtime-persistence`** | **Active** — invariant-driven capture-chunk persistence; Phase 0 diagnostics next (DEC-020); supersedes transport-gated save starvation fixes |
-| **`runtime-derived-representation-heap`** | M1–M3 shipped; M4 partial (`20260707_192649`); M5 steps 1–2 shipped; **persistence/stop-path patches parked** → `continuous-runtime-persistence` |
+| **`continuous-runtime-persistence`** | Phase 0–3 shipped (native); Phase 4 mid-pass persistence **next** |
+| **`runtime-derived-representation-heap`** | M5 Steps 1–1b–2 shipped (`adoptPersistedSnapshot`); lazy load + 64+64 HITL pending |
 | **`slot-selection-focus`** | **Shipped (firmware)** — orchestrator + footer extension; manual §8 pending; [`slot_selection_focus_implementation_handoff.md`](../plans/slot_selection_focus_implementation_handoff.md) |
 | **`unified-interval-projection`** | Phases 1–4 shipped; native PASS; **5.5 HITL deferred** (DEC-017) until runtime Phase A→C |
 | **`edit-session-action-geometry`** | **Paused** — derived overlap pipeline; blocked until UIP Phases 1–5 |

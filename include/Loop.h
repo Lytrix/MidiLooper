@@ -101,6 +101,9 @@ struct Loop {
   void clearEditStateDirty() { editStateDirty_ = false; }
 
   LoopSnapshotRef sharePassesSnapshot() const;
+  /// SD load: move chunk refs from snapshot into live passes (snapshot consumed).
+  void adoptPersistedSnapshot(PersistedLoopSnapshot& snapshot);
+  /// Undo restore: deep-clone passes so live loop does not alias snapshot chunks.
   void restorePassesSnapshot(const PersistedLoopSnapshot& snapshot);
 
   void beginCapture(CapturePhase phase);

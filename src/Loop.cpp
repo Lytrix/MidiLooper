@@ -537,6 +537,28 @@ LoopSnapshotRef Loop::sharePassesSnapshot() const {
   return snapshot;
 }
 
+void Loop::adoptPersistedSnapshot(PersistedLoopSnapshot& snapshot) {
+  discardPendingCapturePass();
+  discardCapture();
+  resetPassTimeline();
+  loopId = snapshot.loopId;
+  startLoopTick = snapshot.startLoopTick;
+  loopLengthTicks = snapshot.loopLengthTicks;
+  loopStartTick = snapshot.loopStartTick;
+  nextPassId_ = snapshot.nextPassId == 0 ? 1 : snapshot.nextPassId;
+  nextNoteId_ = snapshot.nextNoteId == 0 ? 1 : snapshot.nextNoteId;
+  nextMergeSequence_ = snapshot.nextMergeSequence;
+  lastPublishedPassId_ = snapshot.lastPublishedPassId;
+  lastTickInLoop = 0;
+  nextEventIndex = 0;
+  playbackOrderDirty = true;
+  passes = std::move(snapshot.passes);
+  snapshot.passes = LoopPasses{};
+  ++playbackRevision;
+  discardPassesMaterializedCache();
+  markDisplayCachesStale();
+}
+
 void Loop::restorePassesSnapshot(const PersistedLoopSnapshot& snapshot) {
   discardPendingCapturePass();
   discardCapture();
@@ -653,6 +675,7 @@ void Loop::shiftActiveCapturePassTicks(int64_t delta) {
       staging.shiftAllTicks(delta);
       LoopEventStore temp;
       temp.adoptAll(staging);
+      LoopEventStore::releaseChunkRefs(passes.recordPass.chunkRefs);
       passes.recordPass.chunkRefs.clear();
       temp.detachChunksTo(passes.recordPass.chunkRefs);
     }
@@ -671,6 +694,7 @@ void Loop::shiftActiveCapturePassTicks(int64_t delta) {
     staging.shiftAllTicks(delta);
     LoopEventStore temp;
     temp.adoptAll(staging);
+    LoopEventStore::releaseChunkRefs(pass.chunkRefs);
     pass.chunkRefs.clear();
     temp.detachChunksTo(pass.chunkRefs);
   }

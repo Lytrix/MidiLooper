@@ -558,6 +558,7 @@ void MidiButtonActions::handleSelectTrack(uint8_t trackNumber) {
 }
 
 void MidiButtonActions::handleUndo() {
+    StorageManager::restoreDeferredUndoSnapshotsBeforeUse();
     Track& track = getCurrentTrack();
     if (editManager.isNoteEditActive()) {
         if (editManager.getEditSession().undoStack.canUndo()) {

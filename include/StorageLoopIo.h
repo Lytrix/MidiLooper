@@ -58,12 +58,15 @@ bool writePersistedLoopSnapshot(const StorageIo& io, const PersistedLoopSnapshot
 /// (no nextNoteId field between nextPassId and nextMergeSequence).
 bool readPersistedLoopSnapshot(const StorageIo& io, PersistedLoopSnapshot& snapshot,
                                bool legacyDeferredHeaderWithoutNoteId = false);
+/// Advance the read cursor past a persisted loop snapshot without heap allocation.
+bool skipPersistedLoopSnapshotPayload(const StorageIo& io,
+                                      bool legacyDeferredHeaderWithoutNoteId = false);
 
 /// Byte length of loop slot file body produced by writePersistedLoopSnapshot / writeLoopPersisted.
 size_t measureLoopSnapshotSlotFileBytes(const PersistedLoopSnapshot& snapshot);
 
 struct Loop;
-void applySnapshotToLoop(Loop& loop, const PersistedLoopSnapshot& snapshot);
+void applySnapshotToLoop(Loop& loop, PersistedLoopSnapshot& snapshot);
 
 #if !defined(PIO_UNIT_TEST_NATIVE)
 size_t measureLoopSlotFileBytes(const Loop& loop);

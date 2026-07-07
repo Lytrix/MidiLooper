@@ -45,13 +45,20 @@ Length-scaling temporaries on SD load, undo restore, and pass snapshot clone SHA
 
 #### Scenario: deepCloneChunkRefs uses SessionMidiEventVec
 
-- **WHEN** `deepCloneChunkRefs` materializes chunk refs for `restorePassesSnapshot` or undo restore
+- **WHEN** `deepCloneChunkRefs` materializes chunk refs for undo restore or `sharePassesSnapshot`
 - **THEN** the flatten buffer SHALL use `SessionMidiEventVec` (or equivalent extmem-first allocator)
 - **AND** internal heap SHALL not drop by one full-loop copy per pass solely from pass clone
 
+#### Scenario: SD load adopts chunk refs without deep clone
+
+- **WHEN** `applySnapshotToLoop` runs after `readPersistedLoopSnapshot` from SD
+- **THEN** the live loop SHALL adopt snapshot `chunkRefs` via move (`adoptPersistedSnapshot`)
+- **AND** pool chunk count SHALL NOT double from an additional `deepClonePasses` on load
+- **AND** undo restore SHALL continue to use `restorePassesSnapshot` with deep clone
+
 #### Scenario: Visual cache rebuild deferred on load
 
-- **WHEN** `Loop::restorePassesSnapshot` completes after SD load or undo restore
+- **WHEN** `Loop::adoptPersistedSnapshot` or `restorePassesSnapshot` completes after SD load
 - **THEN** display visual cache MAY remain dirty until idle maintenance rebuilds it
 - **AND** boot load SHALL NOT synchronously require full-loop internal-heap materialize for display
   when Phase C stale-while-revalidate policy applies
@@ -62,3 +69,16 @@ Length-scaling temporaries on SD load, undo restore, and pass snapshot clone SHA
 - **THEN** internal heap free after load SHALL remain above `INTERNAL_HEAP_SAFETY_FLOOR_BYTES` or
   persistence admission SHALL defer until idle maintenance frees headroom
 - **AND** HITL clear-to-empty preconditions SHALL not fail solely because load exhausted internal heap
+
+#### Scenario: Load current set bundle and active loop slots at boot
+
+- **WHEN** `loadCurrentSetBundleAndActiveLoopSlots` restores the current workspace from SD
+- **THEN** the firmware SHALL read the runtime bundle (transport + slot metadata + undo metadata)
+- **AND** SHALL restore loop slot payloads only for enabled, active, and selected slots
+- **AND** SHALL queue remaining slot payloads for `processDeferredLoopSlotRestore` in idle
+
+#### Scenario: Defer undo snapshot bodies at boot
+
+- **WHEN** the runtime bundle footer contains global undo stacks with loop snapshots
+- **THEN** boot restore SHALL read undo entry metadata without loading snapshot bodies into RAM
+- **AND** SHALL hydrate snapshot bodies per track via `processDeferredUndoSnapshots` in idle or before first undo

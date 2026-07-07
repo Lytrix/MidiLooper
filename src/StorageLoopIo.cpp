@@ -380,6 +380,113 @@ bool readPersistedLoopSnapshot(const StorageIo& io, PersistedLoopSnapshot& snaps
   return readPersistedEditsTail(io, snapshot);
 }
 
+bool skipPersistedEditPassPayload(const StorageIo& io) {
+  uint8_t passTypeRaw = 0;
+  uint8_t stateRaw = 0;
+  uint8_t actionTypeRaw = 0;
+  uint8_t propertyTypeRaw = 0;
+  uint32_t addedCount = 0;
+  PassId passId = kInvalidPassId;
+  uint8_t editPassIndex = 0;
+  NoteId targetNoteId = 0;
+  uint32_t startTick = 0;
+  uint32_t endTick = 0;
+  uint8_t pitch = 0;
+  uint8_t velocity = 0;
+  if (!ioRead(io, &passId, sizeof(passId))) return false;
+  if (!ioRead(io, &passTypeRaw, sizeof(passTypeRaw))) return false;
+  if (!isValidPassTypeRaw(passTypeRaw)) return false;
+  if (!ioRead(io, &editPassIndex, sizeof(editPassIndex))) return false;
+  if (!ioRead(io, &stateRaw, sizeof(stateRaw))) return false;
+  if (!isValidEditPassStateRaw(stateRaw)) return false;
+  if (!ioRead(io, &actionTypeRaw, sizeof(actionTypeRaw))) return false;
+  if (!isValidActionTypeRaw(actionTypeRaw)) return false;
+  if (!ioRead(io, &propertyTypeRaw, sizeof(propertyTypeRaw))) return false;
+  if (!isValidPropertyTypeRaw(propertyTypeRaw)) return false;
+  if (!ioRead(io, &targetNoteId, sizeof(targetNoteId))) return false;
+  if (!ioRead(io, &startTick, sizeof(startTick))) return false;
+  if (!ioRead(io, &endTick, sizeof(endTick))) return false;
+  if (!ioRead(io, &pitch, sizeof(pitch))) return false;
+  if (!ioRead(io, &velocity, sizeof(velocity))) return false;
+  if (!ioRead(io, &addedCount, sizeof(addedCount))) return false;
+  for (uint32_t i = 0; i < addedCount; ++i) {
+    MidiEvent evt{};
+    if (!ioRead(io, &evt, sizeof(evt))) return false;
+  }
+  return true;
+}
+
+bool skipPersistedEditsTailPayload(const StorageIo& io) {
+  uint32_t nextPassId = 0;
+  uint32_t marker = 0;
+  if (!ioRead(io, &nextPassId, sizeof(nextPassId))) return false;
+  if (!ioRead(io, &marker, sizeof(marker))) return false;
+  if (marker != PERSISTED_EDITS_TAIL_MARKER) return false;
+  uint32_t editCount = 0;
+  if (!ioRead(io, &editCount, sizeof(editCount))) return false;
+  for (uint32_t i = 0; i < editCount; ++i) {
+    if (!skipPersistedEditPassPayload(io)) return false;
+  }
+  return true;
+}
+
+bool skipCapturePassSlotFilePayload(const StorageIo& io, uint32_t loopLengthTicks) {
+  CapturePassSlotFileHeader passHeader{};
+  uint32_t midiCount = 0;
+  if (!ioRead(io, &passHeader.id, sizeof(passHeader.id))) return false;
+  if (!ioRead(io, &passHeader.mergeSequence, sizeof(passHeader.mergeSequence))) return false;
+  if (!ioRead(io, &passHeader.stateRaw, sizeof(passHeader.stateRaw))) return false;
+  if (!ioRead(io, &passHeader.typeRaw, sizeof(passHeader.typeRaw))) return false;
+  if (!ioRead(io, &passHeader.sealedAtTick, sizeof(passHeader.sealedAtTick))) return false;
+  if (!ioRead(io, &midiCount, sizeof(midiCount))) return false;
+  if (midiCount > MAX_PERSISTED_CAPTURE_PASS_EVENTS) {
+    return false;
+  }
+  const uint32_t maxTick = maxPersistedEventTick(loopLengthTicks);
+  for (uint32_t i = 0; i < midiCount; ++i) {
+    MidiEvent evt{};
+    if (!ioRead(io, &evt, sizeof(evt))) return false;
+    if (evt.tick > maxTick) {
+      return false;
+    }
+  }
+  return true;
+}
+
+bool skipPersistedLoopSnapshotPayload(const StorageIo& io, bool legacyDeferredHeaderWithoutNoteId) {
+  LoopId loopId = kInvalidLoopId;
+  uint32_t startLoopTick = 0;
+  uint32_t loopLengthTicks = 0;
+  uint32_t loopStartTick = 0;
+  uint32_t nextPassId = 0;
+  uint32_t nextNoteId = 1;
+  uint32_t nextMergeSequence = 0;
+  uint32_t lastPublishedPassId = 0;
+  if (!ioRead(io, &loopId, sizeof(loopId))) return false;
+  if (!ioRead(io, &startLoopTick, sizeof(startLoopTick))) return false;
+  if (!ioRead(io, &loopLengthTicks, sizeof(loopLengthTicks))) return false;
+  if (!ioRead(io, &loopStartTick, sizeof(loopStartTick))) return false;
+  if (!ioRead(io, &nextPassId, sizeof(nextPassId))) return false;
+  if (legacyDeferredHeaderWithoutNoteId) {
+    nextNoteId = 1;
+  } else if (!ioRead(io, &nextNoteId, sizeof(nextNoteId))) {
+    return false;
+  }
+  if (!ioRead(io, &nextMergeSequence, sizeof(nextMergeSequence))) return false;
+  if (!ioRead(io, &lastPublishedPassId, sizeof(lastPublishedPassId))) return false;
+  if (loopLengthTicks >= 0x80000000u) {
+    loopLengthTicks = 0;
+  }
+  uint32_t passCount = 0;
+  if (!ioRead(io, &passCount, sizeof(passCount))) return false;
+  for (uint32_t i = 0; i < passCount; ++i) {
+    if (!skipCapturePassSlotFilePayload(io, loopLengthTicks)) {
+      return false;
+    }
+  }
+  return skipPersistedEditsTailPayload(io);
+}
+
 #if !defined(PIO_UNIT_TEST_NATIVE)
 
 #include "Loop.h"
@@ -457,6 +564,6 @@ bool readLoopPersisted(const StorageIo& io, Loop& loop) {
 
 #include "Loop.h"
 
-void applySnapshotToLoop(Loop& loop, const PersistedLoopSnapshot& snapshot) {
-  loop.restorePassesSnapshot(snapshot);
+void applySnapshotToLoop(Loop& loop, PersistedLoopSnapshot& snapshot) {
+  loop.adoptPersistedSnapshot(snapshot);
 }

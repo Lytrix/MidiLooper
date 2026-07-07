@@ -203,6 +203,14 @@ void loop() {
   }
 
   if (!timingCriticalTrackActive && !StorageManager::isRevisionLoadHeldForWorkspaceDirty()) {
+    const bool deferredLoopSlotRestorePending = StorageManager::hasPendingLoopSlotRestore();
+    StorageManager::processDeferredLoopSlotRestore();
+    StorageManager::processDeferredUndoSnapshots();
+    // Slot restore reads the full loop file synchronously; repaint so the OLED does not stick.
+    if (deferredLoopSlotRestorePending) {
+      displayManager.update();
+      lastDisplayUpdate = now;
+    }
     StorageManager::processEditAutosave(looperState.getLooperState());
     trackManager.reclaimUnreferencedDisabledPasses();
   }

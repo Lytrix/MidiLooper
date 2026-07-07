@@ -448,6 +448,11 @@ void test_revision_commit_playing_uses_active_persistence_budget() {
                            PersistenceBudget::resolveMaxPersistenceMicros(false, true));
 }
 
+void test_capture_active_uses_active_persistence_budget() {
+  TEST_ASSERT_EQUAL_UINT32(Config::maxPersistenceMicrosActive,
+                           PersistenceBudget::resolveMaxPersistenceMicros(true, false));
+}
+
 void test_revision_commit_idle_uses_unbounded_persistence_budget() {
   TEST_ASSERT_EQUAL_UINT32(Config::maxPersistenceMicrosIdle,
                            PersistenceBudget::resolveMaxPersistenceMicros(false, false));
@@ -927,6 +932,7 @@ int main(int argc, char** argv) {
   RUN_TEST(test_last_committed_sync_after_revision_commit_complete_clears_dirty);
   RUN_TEST(test_record_deferred_save_leaves_workspace_dirty_until_commit_complete);
   RUN_TEST(test_revision_commit_playing_uses_active_persistence_budget);
+  RUN_TEST(test_capture_active_uses_active_persistence_budget);
   RUN_TEST(test_revision_commit_idle_uses_unbounded_persistence_budget);
   RUN_TEST(test_persistence_slice_budget_exhausted_during_playing_commit);
   RUN_TEST(test_persistence_slice_budget_never_exhausted_when_idle);

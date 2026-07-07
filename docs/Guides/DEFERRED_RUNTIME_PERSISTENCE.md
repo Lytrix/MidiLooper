@@ -142,7 +142,7 @@ flowchart TB
 
 ## Scheduler rules (`processDeferredSaveState`)
 
-1. **No work while capture active** — returns immediately if any track is `RECORDING` or `OVERDUBBING`.
+1. **Cooperative budget during capture** — when any track is `RECORDING` or `OVERDUBBING`, persistence runs with `Config::maxPersistenceMicrosActive` (~300 µs) per main-loop call instead of a transport hard block (DEC-020 Phase 3). At most one finite-state-machine sub-step per call while capture is active.
 2. **Admission** — before `dispatch`, checks **current** `getInternalHeapFreeBytes()` via `hasInternalHeapHeadroomForNonCriticalWork`. The optional stop-path `admissionHeap` from `requestDeferredSaveState` is **telemetry only** (`PERS,request`, `PERS,defer`, `PERS,dispatch`). Below floor: `PERS,defer,...,heap_floor` and retry next idle iteration. Once `deferredSaveInProgress`, slices run to completion without re-gating.
 3. **One logical step per call** — each invocation advances at most one sub-step (header field, one chunk batch, one undo entry fragment, etc.).
 4. **Display** — `isDeferredSaveActive()` reflects active SD-I/O windows in the current slice, not whole-job queued/in-progress state.
@@ -162,7 +162,7 @@ StorageManager::processDeferredSaveState(looperState.getLooperState());
 | Phase | Visual |
 |-------|--------|
 | Idle | dots off |
-| Pending | all dim (queued, e.g. blocked during capture) |
+| Pending | all dim (queued, e.g. heap-floor deferred) |
 | InProgress | one bright dot rotates every ~200 ms |
 | Completed | all bright ≤800 ms after `PERS,result,...,ok` |
 | Failed | all mid brightness ≤800 ms after failed result |

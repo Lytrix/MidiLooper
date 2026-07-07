@@ -14,6 +14,8 @@ Persistent record of **accepted architectural and implementation decisions**. No
 
 | ID | Date | Topic | Status |
 |----|------|-------|--------|
+| [DEC-022](#dec-022-runtime-bundle-save-tail-integrity) | 2026-07-07 | Runtime bundle save tail integrity (meta temp truncate + append cursor) | Accepted |
+| [DEC-021](#dec-021-defer-inactive-loop-slot-restore-at-boot) | 2026-07-07 | Defer inactive loop slot restore + undo bodies at current set restore | Accepted |
 | [DEC-020](#dec-020-continuous-runtime-persistence-architecture) | 2026-07-07 | Continuous runtime persistence — invariant-driven capture-chunk persistence | Accepted |
 | [DEC-019](#dec-019-sd-load-path-extmem-routing-m5-spike) | 2026-07-07 | SD load path extmem routing (M5 spike) | Accepted (spike) |
 | [DEC-018](#dec-018-admission-current-heap-derived-rep-consolidation) | 2026-07-07 | Admission uses current heap; derived-rep OpenSpec consolidation | Accepted |
@@ -37,7 +39,26 @@ Persistent record of **accepted architectural and implementation decisions**. No
 
 ---
 
-<!-- Append new entries below (newest first). Next ID: DEC-021 -->
+<!-- Append new entries below (newest first). Next ID: DEC-023 -->
+
+## DEC-022 — Runtime bundle save tail integrity
+
+**Date:** 2026-07-07  
+**Owner:** M5 boot load / `continuous-runtime-persistence` gate  
+**Status:** Accepted; **shipped** 2026-07-07
+
+**Context:** Fresh record after workspace wipe failed cold boot with `Current workspace load failed` despite `runtime.bundle.bin` tail SAVE token. Deferred save reopened `runtime.bundle.bin.tmp` with `seek(file.size())` after loop-slot writes; when a prior temp file was larger than the new bundle body, footer/undo stacks appended after a stale gap — bundle parse failed silently at epilogue.
+
+**Decision:**
+
+1. **Remove** existing `runtime.bundle.bin.tmp` at `beginDeferredSaveJob` before writing.
+2. Track **`metaBundleWritePos`** on meta temp close; **reopen at that cursor**, not `File::size()`.
+3. Emit **`BOOT load_stage=…`** / `#CAP,BOOT,load_stage,…` at bundle parse failure sites.
+4. Native **`test_runtime_bundle_boot_load`** — snapshot skip round-trip + stale-gap footer regression.
+
+**Consequences:** Cold boot shows `Current workspace loaded successfully` on device. Phase 2 persistence queue (DEC-020) remains paused until full 64+64 HITL passes.
+
+---
 
 ## DEC-020 — Continuous runtime persistence architecture
 
@@ -95,18 +116,42 @@ Supersedes persistence starvation workarounds on `runtime-derived-representation
 
 ---
 
+## DEC-021 — Defer inactive loop slot restore at boot
+
+**Date:** 2026-07-07  
+**Owner:** runtime-derived-representation-heap OpenSpec change (M5)  
+**Status:** Accepted; **shipped** 2026-07-07
+
+**Context:** Cold boot stack overflow (`DACCVIOL`) during synchronous restore of all 8×8 loop slot payloads plus full undo snapshot bodies from SD. `workspace-session-persistence` had listed eager 8×8 load as a non-goal deferral; boot stack depth now requires it.
+
+**Decision:**
+
+1. **Split current set restore from SD** into two steps: (a) load current set bundle (transport + slot metadata + undo metadata), (b) restore loop slot payloads from `slots/loop_TT_SS.bin`.
+2. At boot, restore payloads only for **enabled**, **active**, and **selected** slots; queue the rest for `processDeferredLoopSlotRestore` in idle and `requestLoopSlotRestoreFromSd` on slot select.
+3. At boot, read undo stack **metadata** only (`readGlobalUndoStackMetadataFromFile`); hydrate snapshot bodies per track in idle (`processDeferredUndoSnapshots`) or before first undo.
+4. Emit `#CAP,BOOT,ram1,...` after restore; extend `stabilizeBootMemoryAfterLoad` to trim undo when heap or pool free is below reserve.
+
+**Consequences:**
+
+- Supersedes workspace-session-persistence non-goal “all 8×8 at boot” for stack safety.
+- Play entry uses `loop.midiEvents()` in `ensurePlaybackWindowBuilt`; transport start skips `updateAllTracks(0)` when no capture is pending.
+
+**References:** DEC-019, [`m5_sd_load_extmem_routing_handoff.md`](plans/m5_sd_load_extmem_routing_handoff.md), `loadCurrentSetBundleAndActiveLoopSlots`.
+
+---
+
 ## DEC-019 — SD load path extmem routing (M5 spike)
 
 **Date:** 2026-07-07  
 **Owner:** runtime-derived-representation-heap OpenSpec change  
-**Status:** Accepted (spike documented; implementation deferred to M5)
+**Status:** Accepted (spike documented); **Step 1b adopt-on-load shipped** 2026-07-07; hardware boot validation pending
 
 **Context:** M2 routed runtime published flat to `SessionMidiEventVec`. After 64+64 HITL failure, device internal heap reached 0 bytes; clear and deferred save blocked. Reboot restored broken 64+64 state via recovery checkpoints. Code review: `deepCloneChunkRefs` in `Loop.cpp` flattens each pass to internal-heap `MidiEventVec` on `restorePassesSnapshot` and undo restore; load also calls `rebuildVisualCacheFromPasses()` synchronously.
 
 **Decision:**
 
 1. **Document** load-path gap as M5 spike in OpenSpec (`spike_sd_load_extmem_routing.md`) — not part of M1–M4 ship criteria.
-2. **Target state:** pass clone and SD restore use extmem-first flat; defer visual rebuild on load per Phase C idle policy; evaluate lazy slot load at boot.
+2. **Target state:** undo pass clone uses extmem-first flat; **SD load adopts chunk refs** (`adoptPersistedSnapshot`) without deep clone; defer visual rebuild on load per Phase C idle policy; evaluate lazy slot load at boot.
 3. **M4 archive** remains gated on 64+64 HITL; quarantine + M5 implementation may be required for reliable re-test after failed long runs.
 
 **Consequences:**

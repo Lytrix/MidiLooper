@@ -6,7 +6,6 @@
 #ifdef SESSION_CAPTURE
 
 #include <Arduino.h>
-#include <algorithm>
 #include <cstdarg>
 #include <cstdio>
 #include <cstring>
@@ -109,7 +108,9 @@ SC_MEM_ATTR bool headRecordIsTierAText() {
     return false;
   }
   char line[32] = {};
-  const size_t copyLen = std::min(static_cast<size_t>(header.payloadLen), sizeof(line) - 1);
+  const size_t copyLen = static_cast<size_t>(header.payloadLen) < sizeof(line) - 1
+                             ? static_cast<size_t>(header.payloadLen)
+                             : sizeof(line) - 1;
   readBytesAt(sCaptureRing.head + sizeof(header), line, copyLen);
   line[sizeof(line) - 1] = '\0';
   return isTierATextLine(line);
@@ -561,7 +562,9 @@ void flushCaptureBuffer(size_t maxRecords) {
       }
     } else if (header.type == static_cast<uint8_t>(CaptureRecordType::Text)) {
       char line[kMaxCaptureTextBytes] = {};
-      const size_t copyLen = std::min(static_cast<size_t>(header.payloadLen), sizeof(line));
+      const size_t copyLen = static_cast<size_t>(header.payloadLen) < sizeof(line)
+                                 ? static_cast<size_t>(header.payloadLen)
+                                 : sizeof(line);
       readBytesAt(sCaptureRing.head + sizeof(header), line, copyLen);
       line[sizeof(line) - 1] = '\0';
       Serial.println(line);

@@ -53,11 +53,15 @@ M2 fixed runtime published flat; **SD load / undo restore** still flattens each 
 - [x] Spike doc: root cause, evidence, proposed direction, open questions
 - [x] Spec delta: load-path scenarios in `internal-heap-external-memory-routing`
 - [x] Cross-link [`64bar_regression_commit_analysis_enhancement.md`](../../../docs/plans/64bar_regression_commit_analysis_enhancement.md)
-- [x] **Implement** `deepCloneChunkRefs` → `SessionMidiEventVec` (or shallow chunk share if contract allows)
+- [x] **Implement** `deepCloneChunkRefs` → `SessionMidiEventVec` (undo / share only)
 - [x] **Implement** defer `rebuildVisualCacheFromPasses` on load — idle bar-slice only
-- [ ] **Evaluate** lazy slot load at boot (active track/slot first)
+- [x] **Implement** adopt-on-load — `adoptPersistedSnapshot` / `applySnapshotToLoop` (no deep clone on SD restore)
+- [x] Native: `test_sd_load_adopt` pool budget (single pool copy after load)
+- [x] **Implement** defer inactive loop slot restore at boot — `loadCurrentSetBundleAndActiveLoopSlots`, `processDeferredLoopSlotRestore`, `requestLoopSlotRestoreFromSd`
+- [x] **Implement** defer undo snapshot bodies at boot — `readGlobalUndoStackMetadataFromFile`, idle `processDeferredUndoSnapshots`
+- [x] Play entry: `ensurePlaybackWindowBuilt` uses `loop.midiEvents()`; defer `updateAllTracks(0)` on transport start when no capture pending
 - [ ] Native: load/restore heap budget test (64-bar two-pass fixture)
-- [ ] HITL: quarantine workspace → clean boot → re-run M4 64+64 gate
+- [ ] HITL: restore quarantined workspace → cold boot ×3 → play → clear → re-run M4 64+64 gate
 
 ## Docs (scaffold PR)
 

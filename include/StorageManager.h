@@ -35,6 +35,10 @@ public:
     static void processDeferredSaveState(const LooperState& state);
     static bool isDeferredSaveActive();
     static bool hasDeferredSaveWork();
+    /// True while boot-time loop slot payloads are still queued for idle restore.
+    static bool hasPendingLoopSlotRestore();
+    /// True while undo snapshot bodies are still queued for idle hydrate from the runtime bundle.
+    static bool hasPendingUndoSnapshotHydrate();
     static void requestUrgentEditSave();
     static void processEditAutosave(const LooperState& state);
     static bool saveNewSet(char* savedSetFolderOut = nullptr, size_t outSize = 0);
@@ -117,6 +121,14 @@ public:
     static void pollBootQuarantineWorkspaceBeforeLoad(uint32_t listenMs = 3000);
     static void processHitlSerialCommands();
 #endif
+    /// Idle slice: restore one deferred loop slot payload from SD (M5 stack-safe restore).
+    static void processDeferredLoopSlotRestore();
+    /// Idle slice: hydrate one track undo stack snapshot body from the runtime bundle.
+    static void processDeferredUndoSnapshots();
+    /// On slot select: load loop slot payload immediately if still deferred.
+    static void requestLoopSlotRestoreFromSd(uint8_t trackIndex, uint8_t slotIndex);
+    /// Before undo: finish deferred undo snapshot hydration when still pending.
+    static void restoreDeferredUndoSnapshotsBeforeUse();
 
 private:
     static bool loadCurrentSetFromSd(LooperState& state);
@@ -127,7 +139,7 @@ private:
     static bool loadCurrentWorkspaceAtBoot(LooperState& state);
     static bool tryLoadLatestRecoveryPoint(LooperState& state);
     static bool tryLoadNewestSavedSet(LooperState& state);
-    static bool loadCurrentSetMetaAndTracks(File& file, const char* setDir, LooperState& state,
-                                            std::vector<uint8_t>& activeLoopIndex,
-                                            uint8_t& selectedTrackIdx);
+    static bool loadCurrentSetBundleAndActiveLoopSlots(File& file, const char* setDir, LooperState& state,
+                                                       std::vector<uint8_t>& activeLoopIndex,
+                                                       uint8_t& selectedTrackIdx);
 }; 

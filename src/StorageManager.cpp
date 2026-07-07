@@ -28,10 +28,6 @@
 #include "Utils/DebugSessionCapture.h"
 #include "Utils/MemoryMonitor.h"
 #include "Utils/PersistenceDiagnostics.h"
-#if defined(SESSION_CAPTURE)
-#include "DisplayManager.h"
-#include "LooperState.h"
-#endif
 #include <SD.h>
 #include <Arduino.h>
 #include "TrackUndo.h"
@@ -60,6 +56,92 @@ namespace {
 #endif
 
 constexpr size_t kSavedSetPathCapacity = 64;
+
+struct DeferredLoopSlotRestore {
+    uint8_t track = 0;
+    uint8_t slot = 0;
+    uint8_t restorePriority = 3;
+};
+
+struct PendingLoopSlotRestoreQueue {
+    static constexpr uint16_t kCapacity =
+        static_cast<uint16_t>(Config::NUM_TRACKS * Config::MAX_LOOPS_PER_TRACK);
+    DeferredLoopSlotRestore entries[kCapacity];
+    uint16_t count = 0;
+};
+
+PendingLoopSlotRestoreQueue pendingLoopSlotRestores_{};
+char restoredSetBundlePath_[80] = {};
+std::array<uint32_t, Config::NUM_TRACKS> undoStackFileOffsets_{};
+uint8_t undoHydrateTrackIndex_ = 0;
+bool undoSnapshotsPending_ = false;
+
+bool STORAGE_PERSIST_MEM shouldRestoreLoopSlotAtBoot(uint8_t trackIndex, uint8_t slotIndex, uint8_t selectedTrackIdx,
+                                 const std::vector<uint8_t>& activeLoopIndex,
+                                 const std::vector<uint8_t>& selectedSlotIndex) {
+    if (trackManager.isSlotEnabled(trackIndex, slotIndex)) {
+        return true;
+    }
+    if (trackIndex < activeLoopIndex.size() && slotIndex == activeLoopIndex[trackIndex]) {
+        return true;
+    }
+    if (trackIndex == selectedTrackIdx && trackIndex < selectedSlotIndex.size() &&
+        slotIndex == selectedSlotIndex[trackIndex]) {
+        return true;
+    }
+    return false;
+}
+
+bool STORAGE_PERSIST_MEM loopSlotPayloadPendingOnSd(uint8_t trackIndex, uint8_t slotIndex) {
+    char loopPath[64];
+    if (!CurrentSetStorage::formatLoopSlotPath(loopPath, sizeof(loopPath), trackIndex, slotIndex)) {
+        return false;
+    }
+    return SD.exists(loopPath) && CurrentSetStorage::verifySaveFileTokenAtPath(loopPath);
+}
+
+void STORAGE_PERSIST_MEM removeDeferredLoopSlotRestore(uint8_t trackIndex, uint8_t slotIndex) {
+    for (uint16_t i = 0; i < pendingLoopSlotRestores_.count;) {
+        if (pendingLoopSlotRestores_.entries[i].track == trackIndex &&
+            pendingLoopSlotRestores_.entries[i].slot == slotIndex) {
+            for (uint16_t j = i + 1; j < pendingLoopSlotRestores_.count; ++j) {
+                pendingLoopSlotRestores_.entries[j - 1] = pendingLoopSlotRestores_.entries[j];
+            }
+            --pendingLoopSlotRestores_.count;
+        } else {
+            ++i;
+        }
+    }
+}
+
+void STORAGE_PERSIST_MEM sortPendingLoopSlotRestoresByPriority() {
+    for (uint16_t i = 1; i < pendingLoopSlotRestores_.count; ++i) {
+        const DeferredLoopSlotRestore item = pendingLoopSlotRestores_.entries[i];
+        uint16_t j = i;
+        while (j > 0 &&
+               pendingLoopSlotRestores_.entries[j - 1].restorePriority > item.restorePriority) {
+            pendingLoopSlotRestores_.entries[j] = pendingLoopSlotRestores_.entries[j - 1];
+            --j;
+        }
+        pendingLoopSlotRestores_.entries[j] = item;
+    }
+}
+
+void STORAGE_PERSIST_MEM queueDeferredLoopSlotRestore(uint8_t trackIndex, uint8_t slotIndex) {
+    if (!loopSlotPayloadPendingOnSd(trackIndex, slotIndex)) {
+        return;
+    }
+    for (uint16_t i = 0; i < pendingLoopSlotRestores_.count; ++i) {
+        const DeferredLoopSlotRestore& pending = pendingLoopSlotRestores_.entries[i];
+        if (pending.track == trackIndex && pending.slot == slotIndex) {
+            return;
+        }
+    }
+    if (pendingLoopSlotRestores_.count >= PendingLoopSlotRestoreQueue::kCapacity) {
+        return;
+    }
+    pendingLoopSlotRestores_.entries[pendingLoopSlotRestores_.count++] = {trackIndex, slotIndex, 3};
+}
 
 bool setCurrentSetLoadedFromFolder(const char* folderName) {
     if (folderName == nullptr || folderName[0] == '\0') {
@@ -1377,6 +1459,14 @@ bool StorageManager::hasDeferredSaveWork() {
 #endif
 }
 
+bool StorageManager::hasPendingLoopSlotRestore() {
+    return pendingLoopSlotRestores_.count > 0;
+}
+
+bool StorageManager::hasPendingUndoSnapshotHydrate() {
+    return undoSnapshotsPending_;
+}
+
 void StorageManager::processDeferredSaveState(const LooperState& state) {
 #if BYPASS_STOP_UNDO_SAVE
     (void)state;
@@ -1390,6 +1480,7 @@ void StorageManager::processDeferredSaveState(const LooperState& state) {
     storageSession.revisionCommit.sdIoActive = false;
     storageSession.revisionLoad.sdIoActive = false;
 
+    const bool captureActiveForScheduler = isCaptureActiveForPersistence();
     const uint32_t sliceBudgetUs = resolvePersistenceSliceBudgetUs(state);
     const uint32_t sliceStartUs = micros();
 
@@ -1454,6 +1545,9 @@ void StorageManager::processDeferredSaveState(const LooperState& state) {
                 storageSession.revisionLoad.loadAfterRevisionCommit = false;
                 dispatchRequestedRevisionLoad();
             }
+            if (captureActiveForScheduler) {
+                break;
+            }
             continue;
         }
 
@@ -1503,15 +1597,13 @@ void StorageManager::processDeferredSaveState(const LooperState& state) {
             if (storageSession.revisionLoad.inProgress) {
                 break;
             }
+            if (captureActiveForScheduler) {
+                break;
+            }
             continue;
         }
 
         if (!storageSession.currentWorkspaceSave.pending && !storageSession.currentWorkspaceSave.inProgress) {
-            break;
-        }
-
-        if (isCaptureActiveForPersistence()) {
-            PersistenceDiagnostics::onTransportGateBlock();
             break;
         }
 
@@ -1617,7 +1709,6 @@ void StorageManager::processDeferredSaveState(const LooperState& state) {
 
 #if defined(SESSION_CAPTURE)
     if ((storageSession.currentWorkspaceSave.pending || storageSession.currentWorkspaceSave.inProgress) &&
-        !isCaptureActiveForPersistence() &&
         PersistenceBudget::persistenceSliceBudgetExhausted(sliceBudgetUs, micros() - sliceStartUs)) {
         PersistenceDiagnostics::onBudgetBlock();
     }
@@ -1956,10 +2047,7 @@ CAPTURE_HITL_MEM bool StorageManager::cleanupHitlRevisionCommit() {
 }
 
 namespace {
-// Serial line accumulator must live in RAM: processHitlSerialCommands is FLASHMEM and cannot
-// access DMAMEM on IMXRT1062.
-char sHitlSerialLineBuffer[48];
-size_t sHitlSerialLineLength = 0;
+// Quarantine helpers (HITL serial dispatch lives in StorageManagerHitlSerial.cpp).
 
 CAPTURE_HITL_MEM bool renamePathOnSdIfPresent(const char* src, const char* dest) {
     if (src == nullptr || dest == nullptr || src[0] == '\0' || dest[0] == '\0') {
@@ -2015,14 +2103,6 @@ CAPTURE_HITL_MEM bool quarantineCurrentWorkspaceOnSdImpl() {
     return ok;
 }
 
-CAPTURE_HITL_MEM bool handleHitlQuarantineCommandLine(const char* line) {
-    if (line == nullptr || std::strcmp(line, "!QUARANTINE_WORKSPACE") != 0) {
-        return false;
-    }
-    (void)quarantineCurrentWorkspaceOnSdImpl();
-    return true;
-}
-
 CAPTURE_HITL_MEM void pollBootQuarantineLineFromSerial(uint32_t listenMs) {
     Serial.println(
         "[StorageManager] Boot: send !QUARANTINE_WORKSPACE now to quarantine SD workspace "
@@ -2047,7 +2127,7 @@ CAPTURE_HITL_MEM void pollBootQuarantineLineFromSerial(uint32_t listenMs) {
         }
         if (ch == '\n') {
             line[len] = '\0';
-            if (handleHitlQuarantineCommandLine(line)) {
+            if (StorageManagerInternal::handleHitlQuarantineCommandLine(line)) {
                 return;
             }
             len = 0;
@@ -2060,6 +2140,14 @@ CAPTURE_HITL_MEM void pollBootQuarantineLineFromSerial(uint32_t listenMs) {
 }
 }  // namespace
 
+CAPTURE_HITL_MEM bool StorageManagerInternal::handleHitlQuarantineCommandLine(const char* line) {
+    if (line == nullptr || std::strcmp(line, "!QUARANTINE_WORKSPACE") != 0) {
+        return false;
+    }
+    (void)StorageManager::quarantineCurrentWorkspaceOnSd();
+    return true;
+}
+
 CAPTURE_HITL_MEM bool StorageManager::quarantineCurrentWorkspaceOnSd() {
     return quarantineCurrentWorkspaceOnSdImpl();
 }
@@ -2068,109 +2156,6 @@ CAPTURE_HITL_MEM void StorageManager::pollBootQuarantineWorkspaceBeforeLoad(uint
     pollBootQuarantineLineFromSerial(listenMs);
 }
 
-CAPTURE_HITL_MEM void StorageManager::processHitlSerialCommands() {
-#if BYPASS_STOP_UNDO_SAVE
-    return;
-#else
-    while (Serial.available() > 0) {
-        const char ch = static_cast<char>(Serial.read());
-        if (ch == '\r') {
-            continue;
-        }
-        if (ch == '\n') {
-            sHitlSerialLineBuffer[sHitlSerialLineLength] = '\0';
-            if (std::strcmp(sHitlSerialLineBuffer, "!REV_COMMIT") == 0) {
-                requestCommitRevisionForHitl();
-            } else if (std::strcmp(sHitlSerialLineBuffer, "!REV_CLEANUP") == 0) {
-                cleanupHitlRevisionCommit();
-            } else if (std::strcmp(sHitlSerialLineBuffer, "!REV_NUKE_SETS") == 0) {
-                nukeHitlSetsCatalog();
-            } else if (handleHitlQuarantineCommandLine(sHitlSerialLineBuffer)) {
-                Serial.println("[StorageManager] Reboot Teensy to load empty workspace.");
-            } else if (std::strcmp(sHitlSerialLineBuffer, "!REV_LOAD_DIRTY_YES") == 0) {
-                confirmRevisionLoadAfterCommitForHitl();
-            } else if (std::strcmp(sHitlSerialLineBuffer, "!REV_LOAD_DIRTY_NO") == 0) {
-                confirmRevisionLoadDiscardWorkspaceForHitl();
-            } else if (std::strcmp(sHitlSerialLineBuffer, "!REV_LOAD_DIRTY_CANCEL") == 0) {
-                cancelRevisionLoadRequestForHitl();
-            } else if (std::strcmp(sHitlSerialLineBuffer, "!OVERLAY_SAVE") == 0) {
-                displayManager.confirmLoadSaveFocusedRow();
-            } else if (std::strcmp(sHitlSerialLineBuffer, "!OVERLAY_CONFIRM") == 0) {
-                displayManager.confirmLoadSaveFocusedRow();
-            } else if (std::strcmp(sHitlSerialLineBuffer, "!OVERLAY_ENTER") == 0) {
-                looperState.enterLoadSaveMode();
-            } else if (std::strcmp(sHitlSerialLineBuffer, "!OVERLAY_EXIT") == 0) {
-                looperState.exitLoadSaveMode();
-            } else if (std::strncmp(sHitlSerialLineBuffer, "!OVERLAY_SCROLL ", 16) == 0) {
-                const char* cursor = sHitlSerialLineBuffer + 16;
-                while (*cursor == ' ') {
-                    ++cursor;
-                }
-                int delta = 0;
-                bool negative = false;
-                if (*cursor == '-') {
-                    negative = true;
-                    ++cursor;
-                } else if (*cursor == '+') {
-                    ++cursor;
-                }
-                while (*cursor >= '0' && *cursor <= '9') {
-                    delta = delta * 10 + (*cursor - '0');
-                    ++cursor;
-                }
-                if (negative) {
-                    delta = -delta;
-                }
-                if (delta != 0) {
-                    displayManager.adjustLoadSaveListSelection(delta);
-                }
-            } else if (std::strncmp(sHitlSerialLineBuffer, "!OVERLAY_REV_HISTORY ", 21) == 0) {
-                const char* cursor = sHitlSerialLineBuffer + 21;
-                while (*cursor == ' ') {
-                    ++cursor;
-                }
-                unsigned setId = 0;
-                while (*cursor >= '0' && *cursor <= '9') {
-                    setId = setId * 10U + static_cast<unsigned>(*cursor - '0');
-                    ++cursor;
-                }
-                if (setId > 0U && setId <= 0xFFFFU) {
-                    displayManager.openRevisionHistoryFromHitl(static_cast<uint16_t>(setId));
-                }
-            } else if (std::strcmp(sHitlSerialLineBuffer, "!OVERLAY_BACK") == 0) {
-                displayManager.navigateLoadSaveOverlayBackFromHitl();
-            } else if (std::strncmp(sHitlSerialLineBuffer, "!REV_LOAD ", 10) == 0) {
-                const char* cursor = sHitlSerialLineBuffer + 10;
-                unsigned setId = 0;
-                unsigned revisionId = 0;
-                while (*cursor == ' ') {
-                    ++cursor;
-                }
-                while (*cursor >= '0' && *cursor <= '9') {
-                    setId = setId * 10U + static_cast<unsigned>(*cursor - '0');
-                    ++cursor;
-                }
-                while (*cursor == ' ') {
-                    ++cursor;
-                }
-                while (*cursor >= '0' && *cursor <= '9') {
-                    revisionId = revisionId * 10U + static_cast<unsigned>(*cursor - '0');
-                    ++cursor;
-                }
-                if (setId > 0U && setId <= 0xFFFFU && revisionId > 0U && revisionId <= 0xFFFFU) {
-                    requestLoadRevisionForHitl(static_cast<uint16_t>(setId),
-                                               static_cast<uint16_t>(revisionId));
-                }
-            }
-            sHitlSerialLineLength = 0;
-            continue;
-        }
-        if (sHitlSerialLineLength + 1 < sizeof(sHitlSerialLineBuffer)) {
-            sHitlSerialLineBuffer[sHitlSerialLineLength++] = ch;
-        }
-    }
-#endif
-}
 #endif
 
 DeferredSaveDisplayStatus StorageManager::getDeferredSaveDisplayStatus(uint32_t nowMs) {
@@ -2282,7 +2267,7 @@ void resetTracksAfterFailedLoad() {
     trackManager.setSelectedTrack(0);
 }
 
-static void stabilizeBootMemoryAfterLoad() {
+static STORAGE_PERSIST_MEM void stabilizeBootMemoryAfterLoad() {
     uint32_t freeHeap = MemoryMonitor::getInternalHeapFreeBytes();
     if (freeHeap < Config::HEAP_RESERVE_BYTES) {
         Serial.print("[StorageManager] Boot heap below reserve after load (");
@@ -2304,7 +2289,7 @@ static void stabilizeBootMemoryAfterLoad() {
     trackManager.prewarmPlaybackRuntime();
 }
 
-static bool readLoopFromCurrentSetFile(File& file, Loop& loop) {
+static STORAGE_PERSIST_MEM bool readLoopFromCurrentSetFile(File& file, Loop& loop) {
     const size_t fileSize = file.size();
     if (fileSize < sizeof(CurrentSetStorage::kSaveFileToken)) {
         return false;
@@ -2374,7 +2359,7 @@ static bool readLoopFromCurrentSetFile(File& file, Loop& loop) {
     return readRaw(file, &magic, sizeof(magic)) && magic == CurrentSetStorage::kSaveFileToken;
 }
 
-void applyLoadedTrackStateAfterLoopSlots(Track& track, TrackState loadedTrackState,
+void STORAGE_PERSIST_MEM applyLoadedTrackStateAfterLoopSlots(Track& track, TrackState loadedTrackState,
                                                 bool anySlotHasEvents, bool muted) {
     if (loadedTrackState == TRACK_RECORDING || loadedTrackState == TRACK_ARMED ||
         loadedTrackState == TRACK_STOPPED_RECORDING || loadedTrackState == TRACK_PLAYING ||
@@ -2390,7 +2375,7 @@ void applyLoadedTrackStateAfterLoopSlots(Track& track, TrackState loadedTrackSta
     }
 }
 
-bool loadLoopSlotFromCurrentSetSd(uint8_t trackIndex, uint8_t slotIndex, Track& track,
+bool STORAGE_PERSIST_MEM loadLoopSlotFromCurrentSetSd(uint8_t trackIndex, uint8_t slotIndex, Track& track,
                                          bool& anySlotHasEventsOut) {
     char loopPath[64];
     if (!CurrentSetStorage::formatLoopSlotPath(loopPath, sizeof(loopPath), trackIndex, slotIndex)) {
@@ -2536,7 +2521,8 @@ bool readCurrentSetFilePreamble(File& file, LooperState& loadedLooperStateOut,
 bool readCurrentSetFileEpilogue(File& file, uint8_t numTracks,
                                        std::vector<uint8_t>& activeLoopIndex,
                                        std::vector<uint8_t>& selectedSlotIndex,
-                                       uint8_t& selectedTrackIdxOut) {
+                                       uint8_t& selectedTrackIdxOut,
+                                       bool deferUndoSnapshotBodies) {
     if (!readRaw(file, &selectedTrackIdxOut, sizeof(selectedTrackIdxOut))) {
         return false;
     }
@@ -2569,8 +2555,18 @@ bool readCurrentSetFileEpilogue(File& file, uint8_t numTracks,
     if (footerToken != kGlobalUndoStackToken) {
         return false;
     }
+    undoSnapshotsPending_ = deferUndoSnapshotBodies;
+    undoHydrateTrackIndex_ = 0;
+    undoStackFileOffsets_.fill(0);
     for (uint8_t t = 0; t < numTracks; ++t) {
-        if (!readGlobalUndoStackFromFile(file, trackManager.getTrack(t).getGlobalUndoStack())) {
+        undoStackFileOffsets_[t] = static_cast<uint32_t>(file.position());
+        if (deferUndoSnapshotBodies) {
+            if (!readGlobalUndoStackMetadataFromFile(file,
+                                                     trackManager.getTrack(t).getGlobalUndoStack())) {
+                return false;
+            }
+        } else if (!readGlobalUndoStackFromFile(file,
+                                                trackManager.getTrack(t).getGlobalUndoStack())) {
             return false;
         }
     }
@@ -2599,7 +2595,7 @@ bool readCurrentSetFileEpilogue(File& file, uint8_t numTracks,
     return true;
 }
 
-bool applyLoadedTransportFooter(uint8_t numTracks, const std::vector<uint8_t>& activeLoopIndex,
+bool STORAGE_PERSIST_MEM applyLoadedTransportFooter(uint8_t numTracks, const std::vector<uint8_t>& activeLoopIndex,
                                        const std::vector<uint8_t>& selectedSlotIndex,
                                        uint8_t selectedTrackIdx, LooperState& state,
                                        LooperState loadedLooperState, uint32_t masterLoopLength) {
@@ -2622,10 +2618,15 @@ bool applyLoadedTransportFooter(uint8_t numTracks, const std::vector<uint8_t>& a
 
 }  // namespace StorageManagerInternal
 
-bool StorageManager::loadCurrentSetMetaAndTracks(File& file, const char* setDir, LooperState& state,
+bool STORAGE_PERSIST_MEM StorageManager::loadCurrentSetBundleAndActiveLoopSlots(File& file, const char* setDir, LooperState& state,
                                         std::vector<uint8_t>& activeLoopIndex,
                                         uint8_t& selectedTrackIdx) {
     (void)setDir;
+    pendingLoopSlotRestores_.count = 0;
+    undoSnapshotsPending_ = false;
+    undoHydrateTrackIndex_ = 0;
+    undoStackFileOffsets_.fill(0);
+
     LooperState loadedLooperState = LOOPER_IDLE;
     uint32_t masterLoopLength = 0;
     uint8_t numTracks = 0;
@@ -2633,28 +2634,71 @@ bool StorageManager::loadCurrentSetMetaAndTracks(File& file, const char* setDir,
         return false;
     }
 
-    activeLoopIndex.assign(numTracks, 0);
-    std::vector<uint8_t> selectedSlotIndex;
+    struct LoadedTrackHeader {
+        TrackState state = TRACK_EMPTY;
+        bool muted = false;
+    };
+    std::vector<LoadedTrackHeader> trackHeaders(numTracks);
+
     for (uint8_t t = 0; t < numTracks; ++t) {
         Track& track = trackManager.getTrack(t);
-        TrackState loadedTrackState = TRACK_EMPTY;
-        bool muted = false;
-        if (!readCurrentSetTrackSlotMetadata(file, t, track, loadedTrackState, muted)) {
+        if (!readCurrentSetTrackSlotMetadata(file, t, track, trackHeaders[t].state, trackHeaders[t].muted)) {
             return false;
         }
-
-        bool anySlotHasEvents = false;
-        for (uint8_t s = 0; s < Config::MAX_LOOPS_PER_TRACK; ++s) {
-            if (!loadLoopSlotFromCurrentSetSd(t, s, track, anySlotHasEvents)) {
-                return false;
-            }
-        }
-        applyLoadedTrackStateAfterLoopSlots(track, loadedTrackState, anySlotHasEvents, muted);
     }
 
-    if (!readCurrentSetFileEpilogue(file, numTracks, activeLoopIndex, selectedSlotIndex,
-                                    selectedTrackIdx)) {
+    activeLoopIndex.assign(numTracks, 0);
+    std::vector<uint8_t> selectedSlotIndex;
+    if (!readCurrentSetFileEpilogue(file, numTracks, activeLoopIndex, selectedSlotIndex, selectedTrackIdx,
+                                    true)) {
         return false;
+    }
+
+    for (uint8_t t = 0; t < numTracks; ++t) {
+        Track& track = trackManager.getTrack(t);
+        bool anySlotHasEvents = false;
+        for (uint8_t s = 0; s < Config::MAX_LOOPS_PER_TRACK; ++s) {
+            resetLoopSlotToEmpty(track.getLoop(s), s);
+            if (!loopSlotPayloadPendingOnSd(t, s)) {
+                continue;
+            }
+            anySlotHasEvents = true;
+            uint8_t restorePriority = 3;
+            if (t == selectedTrackIdx) {
+                const uint8_t activeSlot = t < activeLoopIndex.size() ? activeLoopIndex[t] : 0;
+                const uint8_t selectedSlot =
+                    t < selectedSlotIndex.size() ? selectedSlotIndex[t] : activeSlot;
+                if (s == activeSlot) {
+                    restorePriority = 0;
+                } else if (s == selectedSlot) {
+                    restorePriority = 1;
+                } else if (shouldRestoreLoopSlotAtBoot(t, s, selectedTrackIdx, activeLoopIndex,
+                                                       selectedSlotIndex)) {
+                    restorePriority = 2;
+                }
+            } else if (shouldRestoreLoopSlotAtBoot(t, s, selectedTrackIdx, activeLoopIndex,
+                                                   selectedSlotIndex)) {
+                restorePriority = 2;
+            }
+            if (pendingLoopSlotRestores_.count < PendingLoopSlotRestoreQueue::kCapacity) {
+                pendingLoopSlotRestores_.entries[pendingLoopSlotRestores_.count++] = {t, s,
+                                                                                      restorePriority};
+            }
+        }
+        applyLoadedTrackStateAfterLoopSlots(track, trackHeaders[t].state, anySlotHasEvents,
+                                            trackHeaders[t].muted);
+    }
+
+    sortPendingLoopSlotRestoresByPriority();
+
+    if (pendingLoopSlotRestores_.count > 0) {
+        const DeferredLoopSlotRestore& first = pendingLoopSlotRestores_.entries[0];
+        Serial.print("[StorageManager] Queuing loop slot restore ");
+        Serial.print(pendingLoopSlotRestores_.count);
+        Serial.print(" pending; first ");
+        Serial.print(first.track);
+        Serial.print('/');
+        Serial.println(first.slot);
     }
 
     return applyLoadedTransportFooter(numTracks, activeLoopIndex, selectedSlotIndex, selectedTrackIdx,
@@ -2692,11 +2736,77 @@ bool StorageManager::loadCurrentSetFromDirectory(const char* setDir, LooperState
         Serial.println(metaPath);
         return false;
     }
+    std::snprintf(restoredSetBundlePath_, sizeof(restoredSetBundlePath_), "%s", metaPath);
     std::vector<uint8_t> activeLoopIndex;
     uint8_t selectedTrackIdx = 0;
-    const bool ok = loadCurrentSetMetaAndTracks(file, setDir, state, activeLoopIndex, selectedTrackIdx);
+    const bool ok = loadCurrentSetBundleAndActiveLoopSlots(file, setDir, state, activeLoopIndex, selectedTrackIdx);
     file.close();
     return ok;
+}
+
+void STORAGE_PERSIST_MEM StorageManager::processDeferredLoopSlotRestore() {
+    if (pendingLoopSlotRestores_.count == 0) {
+        return;
+    }
+    const DeferredLoopSlotRestore next = pendingLoopSlotRestores_.entries[0];
+    for (uint16_t i = 1; i < pendingLoopSlotRestores_.count; ++i) {
+        pendingLoopSlotRestores_.entries[i - 1] = pendingLoopSlotRestores_.entries[i];
+    }
+    --pendingLoopSlotRestores_.count;
+    Track& track = trackManager.getTrack(next.track);
+    bool anySlotHasEvents = false;
+    Serial.print("[StorageManager] Deferred restore loop slot ");
+    Serial.print(next.track);
+    Serial.print('/');
+    Serial.println(next.slot);
+    loadLoopSlotFromCurrentSetSd(next.track, next.slot, track, anySlotHasEvents);
+}
+
+void STORAGE_PERSIST_MEM StorageManager::processDeferredUndoSnapshots() {
+    if (!undoSnapshotsPending_ || undoHydrateTrackIndex_ >= Config::NUM_TRACKS) {
+        return;
+    }
+    if (restoredSetBundlePath_[0] == '\0' || !SD.exists(restoredSetBundlePath_)) {
+        undoSnapshotsPending_ = false;
+        return;
+    }
+    File file = SD.open(restoredSetBundlePath_, FILE_READ);
+    if (!file) {
+        return;
+    }
+    const uint8_t trackIndex = undoHydrateTrackIndex_;
+    if (!file.seek(undoStackFileOffsets_[trackIndex])) {
+        file.close();
+        undoHydrateTrackIndex_++;
+        return;
+    }
+    if (!readGlobalUndoStackFromFile(file, trackManager.getTrack(trackIndex).getGlobalUndoStack())) {
+        trackManager.getTrack(trackIndex).getGlobalUndoStack().clear();
+    }
+    file.close();
+    undoHydrateTrackIndex_++;
+    if (undoHydrateTrackIndex_ >= Config::NUM_TRACKS) {
+        undoSnapshotsPending_ = false;
+    }
+}
+
+void STORAGE_PERSIST_MEM StorageManager::restoreDeferredUndoSnapshotsBeforeUse() {
+    while (undoSnapshotsPending_ && undoHydrateTrackIndex_ < Config::NUM_TRACKS) {
+        processDeferredUndoSnapshots();
+    }
+}
+
+void STORAGE_PERSIST_MEM StorageManager::requestLoopSlotRestoreFromSd(uint8_t trackIndex, uint8_t slotIndex) {
+    removeDeferredLoopSlotRestore(trackIndex, slotIndex);
+    Track& track = trackManager.getTrack(trackIndex);
+    if (track.getLoop(slotIndex).hasPublishedEvents()) {
+        return;
+    }
+    if (!loopSlotPayloadPendingOnSd(trackIndex, slotIndex)) {
+        return;
+    }
+    bool anySlotHasEvents = false;
+    loadLoopSlotFromCurrentSetSd(trackIndex, slotIndex, track, anySlotHasEvents);
 }
 
 bool StorageManager::loadCurrentWorkspaceFromSd(LooperState& state) {

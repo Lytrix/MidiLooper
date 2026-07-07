@@ -80,19 +80,31 @@ Device may reload broken 64+64 state from `MidiLooper/recovery/checkpoints/_*` e
 
 ---
 
-### Step 1 — `deepCloneChunkRefs` → extmem (do first)
+### Step 1 — `deepCloneChunkRefs` → extmem (undo / share only)
 
 **File:** `src/Loop.cpp` ~134–145
 
-**Change:** Replace `MidiEventVec flat` with `SessionMidiEventVec flat` (or route through existing extmem-first helper used by M2 merge paths).
+**Status:** Shipped — `SessionMidiEventVec` in `deepCloneChunkRefs`.
 
 **Callers (verify after edit):**
 
 - `deepCloneRecordPass` / `deepCloneOverdubPass` / `deepClonePasses`
-- `Loop::restorePassesSnapshot` (SD load)
-- `Loop::shareForSnapshot` (undo push)
+- `Loop::restorePassesSnapshot` (**undo restore only** — not SD load)
+- `Loop::sharePassesSnapshot` (undo push)
 
-**Open question (resolve before shallow-share shortcut):** Can snapshot restore **share** chunk IDs instead of re-flatten? If unsure → extmem flatten only.
+---
+
+### Step 1b — Adopt-on-load (SD restore)
+
+**Status:** Shipped — `Loop::adoptPersistedSnapshot`; `applySnapshotToLoop` moves chunk refs without deep clone.
+
+**Files:** `src/Loop.cpp`, `src/StorageLoopIo.cpp`, `include/Loop.h`, `include/StorageLoopIo.h`
+
+**Behavior:** SD read builds `chunkRefs` in a stack `PersistedLoopSnapshot`; adopt moves `passes` into the live loop (no flatten/re-chunk, no pool leak). Undo restore keeps `restorePassesSnapshot` + `deepClonePasses`.
+
+**Tests:** `test/test_sd_load_adopt` — pool chunk count not 2× after `applySnapshotToLoop`.
+
+**Open question (deferred):** Shallow chunk share for undo snapshots — not needed for SD load.
 
 **Guide:** [`LOOP_MIDI_STORAGE_AND_VALIDATION.md`](../Guides/LOOP_MIDI_STORAGE_AND_VALIDATION.md) — undo `restoreFromSnapshot` always `cloneShared()`.
 
@@ -115,13 +127,13 @@ markDisplayCachesStale();  // visualCacheDirty = true; idle slice rebuild later
 
 ---
 
-### Step 3 — Evaluate lazy slot load (optional, same or follow-up session)
+### Step 3 — Defer inactive loop slot restore (**shipped** DEC-021)
 
-**File:** `src/StorageManager.cpp` boot load — `loadCurrentSetFromDirectory` / `loadLoopSlotFromCurrentSetSd`
+**Files:** `src/StorageManager.cpp`, `src/main.cpp`, `src/TrackManager.cpp`
 
-Load active track/slot first; defer other slots until selected or idle. Reduces boot peak when 8×8 set has multiple long loops.
+`loadCurrentSetBundleAndActiveLoopSlots`: load current set bundle (metadata) then restore payloads for enabled/active/selected slots only. Inactive slots queue to `processDeferredLoopSlotRestore` (idle) or `requestLoopSlotRestoreFromSd` (slot select). Undo snapshot bodies deferred via `readGlobalUndoStackMetadataFromFile` + `processDeferredUndoSnapshots`.
 
-**Skip** if Step 1–2 alone restore enough heap for M4 gate.
+Boot telemetry: `#CAP,BOOT,ram1,<free>,<minEver>,pool,<used>,<free>,undo,<entries>`.
 
 ---
 
@@ -164,8 +176,9 @@ Target: 473+ PASS (current baseline 473/473).
 ## Acceptance checklist
 
 - [ ] Step 0: quarantine → clean boot or confirmed empty workspace
-- [ ] `deepCloneChunkRefs` uses extmem-first flat
-- [ ] `restorePassesSnapshot` does not sync full visual rebuild on SD load
+- [x] `deepCloneChunkRefs` uses extmem-first flat (undo / share)
+- [x] SD load adopts chunk refs (`adoptPersistedSnapshot`) — no deep clone on `applySnapshotToLoop`
+- [x] `restorePassesSnapshot` does not sync full visual rebuild on SD load
 - [ ] `pio test -e native` PASS
 - [ ] 64+64 HITL track 2/slot 1 PASS (or documented remaining M3 ring issue separate from clear/block)
 - [ ] Post-failure clear succeeds (heap > floor)

@@ -2,9 +2,9 @@
   "version": "2.0.0",
   "tasks": [
     {
-      "label": "PlatformIO: Build + Upload (teensy41)",
+      "label": "PlatformIO: Build + Upload (teensy41-capture-serial)",
       "type": "shell",
-      "command": "pio run -e teensy41 -t upload",
+      "command": "pio run -e teensy41-capture-serial -t upload",
       "group": {
         "kind": "build",
         "isDefault": true

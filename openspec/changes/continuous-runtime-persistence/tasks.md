@@ -14,26 +14,26 @@ Guide: [`docs/Guides/RUNTIME_STORAGE_AND_PERSISTENCE.md`](../../../docs/Guides/R
 
 ## Phase 1 — Chunk ownership and lifecycle
 
-- [ ] Introduce ChunkManager responsibilities on `LoopEventStore` (or documented extension): `Free` / `Recording` / `Sealed` runtime state per chunk
-- [ ] Enforce single mutable `Recording` tail per active capture store
-- [ ] Enforce sealed immutability — no post-seal mutation paths
-- [ ] Reference tracking for reclaim when all runtime owners release
-- [ ] **Gate:** native unit tests for seal immutability, single tail, runtime state independent of persistence state
+- [x] Introduce ChunkManager responsibilities on `LoopEventStore` (or documented extension): `Free` / `Recording` / `Sealed` runtime state per chunk
+- [x] Enforce single mutable `Recording` tail per active capture store
+- [x] Enforce sealed immutability — no post-seal mutation paths
+- [x] Reference tracking for reclaim when all runtime owners release
+- [x] **Gate:** native unit tests for seal immutability, single tail, runtime state independent of persistence state (`test_chunk_lifecycle`)
 
 ## Phase 2 — Persistence queue
 
-- [ ] Admit sealed capture chunks to persistence queue on seal (capacity trigger + pass-close tail)
-- [ ] Seal-order enqueue; exactly-once admission
-- [ ] Queue drain order = seal order
-- [ ] **Gate:** native unit tests for enqueue order, no duplicate admission
+- [x] Admit sealed capture chunks to persistence queue on seal (capacity trigger + pass-close tail)
+- [x] Seal-order enqueue; exactly-once admission
+- [x] Queue drain order = seal order
+- [x] **Gate:** native unit tests for enqueue order, no duplicate admission (`test_persistence_queue`)
 
 ## Phase 3 — Cooperative budget-driven scheduler
 
-- [ ] Remove unconditional `isCaptureActiveForPersistence()` early return (replace with cooperative budget + runtime precedence)
-- [ ] Use `PersistenceBudget` active budget (~300 µs) during capture
-- [ ] Preserve one finite-state-machine sub-step per `processDeferredSaveState()` call
+- [x] Remove unconditional `isCaptureActiveForPersistence()` early return (replace with cooperative budget + runtime precedence)
+- [x] Use `PersistenceBudget` active budget (~300 µs) during capture
+- [x] Preserve one finite-state-machine sub-step per `processDeferredSaveState()` call
 - [ ] **Gate:** short HITL (16-bar record+overdub) — at least one slice during capture; `pio test -e native`
-- [ ] **Prerequisite:** Phase 0 validated on 64+64; Phase 2 queue shipped
+- [x] **Prerequisite:** Phase 0 validated on 64+64; Phase 2 queue shipped
 
 ## Phase 4 — Continuous mid-pass persistence
 
@@ -62,6 +62,6 @@ Guide: [`docs/Guides/RUNTIME_STORAGE_AND_PERSISTENCE.md`](../../../docs/Guides/R
 
 - [x] OpenSpec change folder: proposal, design, tasks, spec deltas
 - [x] Agent guide: [`RUNTIME_STORAGE_AND_PERSISTENCE.md`](../../../docs/Guides/RUNTIME_STORAGE_AND_PERSISTENCE.md)
-- [ ] Update [`DEFERRED_RUNTIME_PERSISTENCE.md`](../../../docs/Guides/DEFERRED_RUNTIME_PERSISTENCE.md) scheduler § after Phase 3 ships
+- [x] Update [`DEFERRED_RUNTIME_PERSISTENCE.md`](../../../docs/Guides/DEFERRED_RUNTIME_PERSISTENCE.md) scheduler § after Phase 3 ships
 - [x] Register in `PROJECT_STATE.md`, `CURRENT_WORK.md`
 - [x] Park persistence patches on `runtime-derived-representation-heap/tasks.md`
