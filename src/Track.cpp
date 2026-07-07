@@ -731,6 +731,11 @@ void Track::emitStoredMidiVerification() const {
     return;
   }
 
+  const uint32_t heapBeforeMerge = MemoryMonitor::getInternalHeapFreeBytes();
+  if (!LoopEventStore::hasInternalHeapHeadroomForNonCriticalWork(heapBeforeMerge)) {
+    return;
+  }
+
   SessionMidiEventVec flat;
   loop.mergeActiveCapturePasses(flat);
   for (const MidiEvent& evt : flat) {
@@ -741,8 +746,8 @@ void Track::emitStoredMidiVerification() const {
     }
   }
 
-  if (!LoopEventStore::hasInternalHeapHeadroomForNonCriticalWork(
-          MemoryMonitor::getInternalHeapFreeBytes())) {
+  constexpr size_t kMaxWrapPairVerifyEvents = 512;
+  if (flat.size() > kMaxWrapPairVerifyEvents) {
     return;
   }
 
@@ -1334,6 +1339,7 @@ void Track::stopOverdubbing() {
   const uint32_t stopStartUs = micros();
   const uint32_t heapAtEnter = MemoryMonitor::getInternalHeapFreeBytes();
   logOverdubStopStage(loop, stopStartUs, "enter", 0, heapAtEnter, heapAtEnter, "entered");
+  SC_REC_FLUSH_PENDING_REVTS(8);
   uint32_t closeTick = UINT32_MAX;
   if (loop.loopLengthTicks > 0) {
     closeTick = tickPhaseInLoop(currentTick, loop.startLoopTick, loop.loopLengthTicks);
@@ -1370,6 +1376,13 @@ void Track::stopOverdubbing() {
       loop.commitCapturePass(CommitReason::OverdubStop, currentTick);
   logOverdubStopStage(loop, stopStartUs, "seal", micros() - sealStartUs, sealHeapBefore,
                       MemoryMonitor::getInternalHeapFreeBytes(), commitResultLabel(commitResult));
+  const uint32_t finalizeHeapBefore = MemoryMonitor::getInternalHeapFreeBytes();
+  const uint32_t finalizeStartUs = micros();
+  const CommitResult sideEffectResult =
+      finalizeCommitSideEffects(commitResult, CommitReason::OverdubStop, closeTick);
+  logOverdubStopStage(loop, stopStartUs, "finalize", micros() - finalizeStartUs,
+                      finalizeHeapBefore, MemoryMonitor::getInternalHeapFreeBytes(),
+                      commitResultLabel(sideEffectResult));
   const uint32_t stateHeapBefore = MemoryMonitor::getInternalHeapFreeBytes();
   const uint32_t stateStartUs = micros();
   setState(TRACK_PLAYING);
@@ -1380,13 +1393,6 @@ void Track::stopOverdubbing() {
   SC_REC_FLUSH_PENDING_REVTS(256);
   logOverdubStopStage(loop, stopStartUs, "flush", micros() - flushStartUs, flushHeapBefore,
                       MemoryMonitor::getInternalHeapFreeBytes(), "ok");
-  const uint32_t finalizeHeapBefore = MemoryMonitor::getInternalHeapFreeBytes();
-  const uint32_t finalizeStartUs = micros();
-  const CommitResult sideEffectResult =
-      finalizeCommitSideEffects(commitResult, CommitReason::OverdubStop, closeTick);
-  logOverdubStopStage(loop, stopStartUs, "finalize", micros() - finalizeStartUs,
-                      finalizeHeapBefore, MemoryMonitor::getInternalHeapFreeBytes(),
-                      commitResultLabel(sideEffectResult));
   logMemoryAfterOverdubStop(recordAddedNoteOnCount, loop);
   logger.logTrackEvent("Overdubbing stopped", currentTick);
   logger.info("Overdub stopped: events=%d, undo_entries=%d", static_cast<int>(loop.displayEventCountHint()),
