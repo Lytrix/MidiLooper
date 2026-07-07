@@ -12,7 +12,7 @@
 
 ## Executive summary
 
-64+64 HITL **regressed** after June 23 PASS (`58d6c08`). Direct hot-path patches (uncommitted) are **partial Phase A only** — playback still full-materializes on first PLAYING tick (**H6**). **Do not** re-gate UIP 5.5 until 64+64 passes.
+64+64 HITL **regressed** for the current gate config (track 6 / slot 8). June 23 PASS and July 7 mixed results are **serial-proven** in `captures/` — see § Capture evidence below. Direct hot-path patches (uncommitted) are **partial Phase A only** — playback still full-materializes on first PLAYING tick (**H6**). **Do not** re-gate UIP 5.5 until validate-64x64 passes on the gate config.
 
 **Strategy:** save-bypass → commit bisect → Phase A→C runtime invariants → `validate-64x64` → UIP 5.5.
 
@@ -29,10 +29,27 @@
 | 2 | `phase-a-invariants` | Playback low-cost view; LED bar probe; REVT `!isPlaying()`; display stale-while-revalidate |
 | 3 | `phase-b-derived-views` | One materialize per `playbackRevision`; display notes from flat |
 | 4 | `phase-c-partial-display` | Bar-slice / window-first reconstruct in `processDeferredIdleMaintenance` |
-| 5 | `validate-64x64` | 64+64 HITL PASS — compare to `captures/host_midi_automation_baseline_20260623_112324.json` |
+| 5 | `validate-64x64` | 64+64 HITL PASS on **trk 6 / slot 8**; no regression on **trk 5 / slot 0** — compare to `20260623_112324` |
 | 6 | `uip-5.5-hitl` | **Blocked until step 5** — `long_loop_display_window`, 152335, audition, queued slot |
 
 `architecture-review` is **completed** (DEC-016 + Architecture docs).
+
+---
+
+## Capture evidence (serial-proven)
+
+Full index: [64bar_regression_commit_analysis_enhancement.md](64bar_regression_commit_analysis_enhancement.md) § Capture evidence index.
+
+| Role | Serial log | `PLAYING→ODUB` | Config |
+|------|------------|----------------|--------|
+| **Canonical PASS** | `captures/host_midi_automation_serial_20260623_112324.log` | 2 | trk 5, 64+64+64 |
+| **Canonical FAIL (gate)** | `captures/host_midi_automation_serial_20260707_032321.log` | 0 | trk 6, slot 8, 64+64 |
+| **July PASS (config)** | `captures/host_midi_automation_serial_20260707_010856.log` | 1 | trk 5, slot 0, 64+64+64 |
+| Early PASS (pre-58d6c08) | `captures/host_midi_automation_serial_20260623_004032.log` | 1 | trk 5, 64+64 |
+
+**Gap:** no 64-bar serial Jun 24 – Jul 6 — bisect still needed for per-commit proof.
+
+**Validate-64x64** must PASS on **trk 6 / slot 8** (gate) and not regress **trk 5 / slot 0** (O7).
 
 ---
 
@@ -183,10 +200,12 @@ Capture Storage → Derived Representations → Interval Projection → Runtime 
 
 | Validated | Not validated |
 |-----------|---------------|
-| Native 472/472 | 64+64 HITL (FAIL `20260707_032321`) |
-| NOTE_EDIT faders (`session_20260706_113243.log`) | UIP 5.5 matrix |
-| Boot/play display (`session_20260706_220537.log`) | Bisect anchors |
-| | Save-bypass gate |
+| Native 472/472 | Bisect anchors at 64-bar (`f946d82`, `4e83ac1`, `ecb3b8a`) |
+| June PASS serial `20260623_112324` (`PLAYING→ODUB` ×2) | Per-commit 64-bar proof Jun 24 – Jul 6 (capture gap) |
+| July FAIL serial `20260707_032321` (trk 6 / slot 8) | Save-bypass gate |
+| July PASS serial `20260707_010856` (trk 5 / slot 0) — config sensitivity | UIP 5.5 matrix |
+| NOTE_EDIT faders (`session_20260706_113243.log`) | |
+| Boot/play display (`session_20260706_220537.log`) | |
 
 ---
 
