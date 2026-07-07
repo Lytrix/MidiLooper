@@ -6,6 +6,7 @@ Agent-oriented timeline of how record and overdub MIDI moves through capture, ex
 
 - [`docs/Guides/LOOP_MIDI_STORAGE_AND_VALIDATION.md`](../Guides/LOOP_MIDI_STORAGE_AND_VALIDATION.md) — capture lifecycle, chunk pool, undo, stop-path rules
 - [`docs/Guides/DEFERRED_RUNTIME_PERSISTENCE.md`](../Guides/DEFERRED_RUNTIME_PERSISTENCE.md) — deferred save FSM and call sites
+- [`docs/00-authority/Architecture/RuntimeArchitecture.md`](../00-authority/Architecture/RuntimeArchitecture.md) — runtime layers (storage → representations → interval → consumers)
 
 **Out of scope here (mentioned only):** NoteEditSession overlay, idle-deferred full `validateAndCleanupMidiEvents`, future [`long-loop-piano-roll-window`](../../openspec/changes/long-loop-piano-roll-window/) display navigation.
 
@@ -19,7 +20,7 @@ Agent-oriented timeline of how record and overdub MIDI moves through capture, ex
 | **passes** | Canonical timeline on `Loop`: **recordPass**, **overdubPasses[]**, **editPasses[]** |
 | **chunkRefs** | List of external-memory chunk IDs pointing at 256-event `MidiEvent` blocks |
 | **primaryWindow** | `LoopPlaybackRuntime::primaryWindow` — cached `mergedEvents` + playback metadata |
-| **visualCache** | `Loop::visualCache.notes` — `DisplayNote` list rebuilt from active capture passes |
+| **visualCache** | `Loop::visualCache.notes` — derived **display representation** rebuilt from active capture passes |
 | **play-ahead** | Sorted `playbackOrder` + `nextEventIndex` / `captureNextEventIndex` cursors |
 
 ---

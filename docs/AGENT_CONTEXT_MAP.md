@@ -63,6 +63,8 @@ Always load first:
 
 **Required**
 
+- [00-authority/Architecture/RuntimeArchitecture.md](00-authority/Architecture/RuntimeArchitecture.md) — layers and revision chain
+- [00-authority/Architecture/Playback.md](00-authority/Architecture/Playback.md)
 - [Guides/LOOP_MIDI_STORAGE_AND_VALIDATION.md](Guides/LOOP_MIDI_STORAGE_AND_VALIDATION.md) — materialize / merge paths
 - `TrackManager`, `LoopPasses` materialize APIs
 
@@ -102,6 +104,9 @@ Always load first:
 
 **Required**
 
+- [00-authority/Architecture/RuntimeArchitecture.md](00-authority/Architecture/RuntimeArchitecture.md)
+- [00-authority/Architecture/Display.md](00-authority/Architecture/Display.md)
+- [00-authority/Architecture/DerivedViews.md](00-authority/Architecture/DerivedViews.md) — representation vs interval
 - [Guides/control-surface/Display.md](Guides/control-surface/Display.md)
 - [00-authority/ARCHITECTURE_RULES.md](00-authority/ARCHITECTURE_RULES.md) — DisplayManager ownership
 - `DisplayManager` for draw entry points

@@ -2,11 +2,25 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-07-06 (diagnostics platform Phase 0 shipped)
+Last updated: 2026-07-07 (64-bar regression — bisect-first workflow)
 
 ---
 
 ## Now implementing
+
+**64-bar overdub-start PLAYING-window regression** — direct hot-path patches insufficient (H6: playback still full-materializes on PLAYING entry). **Follow bisect-first plan** before UIP 5.5.
+
+| Doc | Role |
+|-----|------|
+| **Handoff (start here)** | [next_session_handoff_overdub_uip_architecture.md](../plans/next_session_handoff_overdub_uip_architecture.md) |
+| **Active plan** | [64bar_regression_commit_analysis_enhancement.md](../plans/64bar_regression_commit_analysis_enhancement.md) |
+| Investigation | [overdub_start_64bar_playing_window_regression_bugfix.md](../plans/overdub_start_64bar_playing_window_regression_bugfix.md) |
+| Partial WIP log | [overdub_start_playing_window_hot_path_refinement.md](../plans/overdub_start_playing_window_hot_path_refinement.md) |
+| Architecture | [RuntimeArchitecture.md](../00-authority/Architecture/RuntimeArchitecture.md) |
+
+**Work order:** save-bypass → bisect (`58d6c08`…`ecb3b8a`) → Phase A→C invariants → `validate-64x64` → UIP 5.5. Stash uncommitted firmware before bisect.
+
+Native **472/472** PASS. UIP 5.5 HITL **blocked** until 64+64 PASS.
 
 **Memory diagnostics platform (Phase 0)** — shipped 2026-07-06:
 

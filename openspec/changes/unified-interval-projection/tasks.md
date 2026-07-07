@@ -14,6 +14,7 @@
 - [x] 0.5c D23 — window is **`TickInterval`** frame; never **`ProjectedNoteInterval`**
 - [x] 0.8 **Doc sync rule:** each phase task that adds/changes button or gesture logic includes a matching control-surface doc update (`README.md` cheat sheet + relevant `docs/Guides/control-surface/*.md`)
 - [x] 0.9 Memory routing docs — [`INTERNAL_HEAP_AND_EXTERNAL_MEMORY.md`](../../docs/Guides/INTERNAL_HEAP_AND_EXTERNAL_MEMORY.md), `openspec/specs/internal-heap-external-memory-routing/`, D25 in `design.md`
+- [x] 0.10 Runtime architecture docs — [`docs/00-authority/Architecture/`](../../docs/00-authority/Architecture/); 64-bar investigation split to `docs/plans/overdub_start_64bar_playing_window_regression_bugfix.md`
 
 ## 1. Core engine (Phase 1)
 

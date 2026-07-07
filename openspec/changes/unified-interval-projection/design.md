@@ -23,6 +23,8 @@ Today wrap math is duplicated:
 
 **Core principle:** Storage is global; projection is local. Changing viewport, playback window, or edit window must not require changing stored notes or downstream algorithms — only **`ProjectionContext`**.
 
+**Runtime architecture (permanent):** [docs/00-authority/Architecture/RuntimeArchitecture.md](../../docs/00-authority/Architecture/RuntimeArchitecture.md) — derived representations, interval projection, runtime requests, revision chain. Investigation docs (e.g. 64-bar PLAYING-window) stay in `docs/plans/`. **DEC-016.**
+
 ---
 
 ## Goals / Non-Goals

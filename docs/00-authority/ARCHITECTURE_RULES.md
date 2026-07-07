@@ -6,6 +6,8 @@ Authority: subordinate to [PROJECT_INTENT.md](PROJECT_INTENT.md); overrides guid
 
 Module naming reference: [Guides/CODE_STRUCTURE.md](../Guides/CODE_STRUCTURE.md). Domain vocabulary: `.cursor/rules/Naming-Vocabulary-Teensy-Looper.mdc`.
 
+**Runtime data flow** (storage → representations → interval → consumers): [Architecture/RuntimeArchitecture.md](Architecture/RuntimeArchitecture.md).
+
 **Default:** [continue implementation](#progress-bias-and-decision-ladder). Governance detects **structural** change — not approval for normal extension work.
 
 ---

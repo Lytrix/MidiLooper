@@ -2,7 +2,7 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-07-06 (diagnostics platform Phase 0 shipped)
+Last updated: 2026-07-07 (64-bar regression — bisect-first workflow)
 
 ---
 
@@ -10,21 +10,25 @@ Last updated: 2026-07-06 (diagnostics platform Phase 0 shipped)
 
 `derived-note-overlap-logic` (from `load-save-sets-loops` @ `bbc2284`)
 
+**Next session entry:** [next_session_handoff_overdub_uip_architecture.md](../plans/next_session_handoff_overdub_uip_architecture.md)  
+**Active plan:** [64bar_regression_commit_analysis_enhancement.md](../plans/64bar_regression_commit_analysis_enhancement.md)
+
 ## Shipped on branch (2026-07-06)
 
 | Commit | Focus | Docs |
 |--------|--------|------|
-| (uncommitted) | Diagnostics platform Phase 0 — `DIAG_*` trace, `DIAGCHK` boot checkpoint, NOTE_EDIT bisect hooks | [`memory_diagnostics_optimization_enhancement.md`](../plans/memory_diagnostics_optimization_enhancement.md) |
-| `c2475f2` | Display boot/play OLED freeze — workspace refresh scope, PSRAM visual rebuild, DMA serialize, `DFRAME` capture | — |
-| `b1260ce` | Cold buffers → external memory pool; split-tier session undo admission | [`INTERNAL_HEAP_AND_EXTERNAL_MEMORY.md`](../Guides/INTERNAL_HEAP_AND_EXTERNAL_MEMORY.md), `openspec/specs/internal-heap-external-memory-routing/` |
-| `432da4d` | NOTE_EDIT fader hot path + length-mode display | [`FADER_STATE_SYSTEM.md`](../Guides/FADER_STATE_SYSTEM.md) § feedback on/off |
+| (uncommitted) | Partial Phase A WIP — display/LED defer, REVT slices; **insufficient** (H6 playback materialize) | handoff + plan |
+| `6f77914` | Boot display partial revert | — |
+| `d05e736` | Display boot/play OLED freeze | — |
+| `b1260ce` | Cold buffers → external memory pool | [`INTERNAL_HEAP_AND_EXTERNAL_MEMORY.md`](../Guides/INTERNAL_HEAP_AND_EXTERNAL_MEMORY.md) |
+| `432da4d` | NOTE_EDIT fader hot path | [`FADER_STATE_SYSTEM.md`](../Guides/FADER_STATE_SYSTEM.md) |
 
 ## Active OpenSpec
 
 | Change | Focus |
 |--------|--------|
 | **`slot-selection-focus`** | **Shipped (firmware)** — orchestrator + footer extension; manual §8 pending; [`slot_selection_focus_implementation_handoff.md`](../plans/slot_selection_focus_implementation_handoff.md) |
-| **`unified-interval-projection`** | **Now implementing** — Phases 1–4 shipped; Phase 5 grep gate + native 455/455 PASS; **5.5 HITL matrix** remaining; handoff [`unified_interval_projection_enhancement.md`](../plans/unified_interval_projection_enhancement.md) |
+| **`unified-interval-projection`** | Phases 1–4 shipped; native PASS; **5.5 HITL blocked** until 64+64 PASS — handoff [`next_session_handoff_overdub_uip_architecture.md`](../plans/next_session_handoff_overdub_uip_architecture.md) |
 | **`edit-session-action-geometry`** | **Paused** — derived overlap pipeline; blocked until UIP Phases 1–5 |
 | `set-revision-persistence` | Set revisions, overlay browser — core shipped; loop picker **4.8–4.10** paused |
 | `workspace-session-persistence` | Current workspace session model |
