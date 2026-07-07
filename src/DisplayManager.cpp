@@ -28,6 +28,21 @@
 #include "SetBrowserOverlayPolicy.h"
 #include "SetRevisionCatalog.h"
 #include "RtcTime.h"
+#include "HitlDisplayBridge.h"
+
+namespace {
+
+bool shouldDeferFullDisplayVisualRebuild(const Loop& loop, uint32_t loopLength) {
+    if (StorageManager::hasPendingLoopSlotRestore() ||
+        StorageManager::hasPendingUndoSnapshotHydrate() || StorageManager::hasDeferredSaveWork()) {
+        return true;
+    }
+    const uint32_t boundedThreshold =
+        DisplayWindowUtils::kMaxDetailedWindowBars * Config::TICKS_PER_BAR;
+    return loopLength > boundedThreshold && loop.visualCacheDirty && loop.visualCache.notes.empty();
+}
+
+}  // namespace
 #include "DeferredSaveDisplayStatus.h"
 #include "LooperState.h"
 #include "SavedSetCatalog.h"
@@ -679,7 +694,8 @@ const DisplayNoteVec& DisplayManager::resolveDisplayNotes(const Track& track, ui
     const bool deferVisualRebuild =
         (track.isPlaying() || track.isStoppedRecording()) && !track.isOverdubbing() &&
         !(track.isRecording() && !track.isPlaying());
-    if (!deferVisualRebuild) {
+    const bool deferFullVisualRebuild = shouldDeferFullDisplayVisualRebuild(loop, loopLength);
+    if (!deferVisualRebuild && !deferFullVisualRebuild) {
         mutLoop.ensureVisualCacheBuilt();
     }
     const bool needsLiveMergeForDisplay =
@@ -2814,3 +2830,21 @@ void DisplayManager::update() {
 #endif
     HotPathTelemetry::recordDisplayUpdate(micros() - telemetryStartUs);
 }
+
+#if defined(SESSION_CAPTURE)
+namespace HitlDisplayBridge {
+
+void confirmLoadSaveFocusedRow() { displayManager.confirmLoadSaveFocusedRow(); }
+
+void adjustLoadSaveListSelection(int delta) { displayManager.adjustLoadSaveListSelection(delta); }
+
+void openRevisionHistoryFromHitl(uint16_t setId) {
+    displayManager.openRevisionHistoryFromHitl(setId);
+}
+
+void navigateLoadSaveOverlayBackFromHitl() {
+    displayManager.navigateLoadSaveOverlayBackFromHitl();
+}
+
+}  // namespace HitlDisplayBridge
+#endif

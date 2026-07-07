@@ -75,6 +75,9 @@ bool writeUndoLoopSnapshot(File& file, const LoopSnapshotRef& snapshot);
 bool readUndoLoopSnapshot(File& file, LoopSnapshotRef& snapshot);
 bool writeGlobalUndoStackToFile(File& file, const GlobalUndoStack& stack);
 bool readGlobalUndoStackFromFile(File& file, GlobalUndoStack& stack);
+bool readGlobalUndoStackMetadataFromFile(File& file, GlobalUndoStack& stack);
+bool skipUndoLoopSnapshot(File& file);
+void logBootLoadStageFailure(const char* stage, uint8_t track = 0xFF, uint32_t detail = 0);
 StorageIo storageIoFromFileWrite(File& file);
 StorageIo storageIoFromFileRead(File& file);
 
@@ -180,6 +183,7 @@ bool readSlotIndexEntriesFromRevisionFile(
 void resetTracksAfterFailedLoad();
 void clearCurrentSetLoadedFromFolder();
 void syncCurrentSetDirtyTrackingFromLoadedState();
+bool anyCurrentSetLoopSlotDirty();
 bool readCurrentSetFilePreamble(File& file, LooperState& loadedLooperStateOut,
                                 uint32_t& masterLoopLengthOut, uint8_t& numTracksOut);
 bool readCurrentSetTrackSlotMetadata(File& file, uint8_t trackIndex, Track& track,
@@ -191,10 +195,15 @@ void applyLoadedTrackStateAfterLoopSlots(Track& track, TrackState loadedTrackSta
 bool readCurrentSetFileEpilogue(File& file, uint8_t numTracks,
                                 std::vector<uint8_t>& activeLoopIndex,
                                 std::vector<uint8_t>& selectedSlotIndex,
-                                uint8_t& selectedTrackIdxOut);
+                                uint8_t& selectedTrackIdxOut,
+                                bool deferUndoSnapshotBodies = false);
 bool applyLoadedTransportFooter(uint8_t numTracks, const std::vector<uint8_t>& activeLoopIndex,
                                 const std::vector<uint8_t>& selectedSlotIndex,
                                 uint8_t selectedTrackIdx, LooperState& state,
                                 LooperState loadedLooperState, uint32_t masterLoopLength);
+
+#if defined(SESSION_CAPTURE)
+bool handleHitlQuarantineCommandLine(const char* line);
+#endif
 
 }  // namespace StorageManagerInternal

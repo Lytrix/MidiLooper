@@ -7,6 +7,7 @@
 
 #include "LoopEventStore.h"
 #include "LoopPasses.h"
+#include "PersistenceQueue.h"
 #include "Utils/DebugSessionCapture.h"
 #include <Arduino.h>
 
@@ -40,9 +41,8 @@ void emitDiagnosticLine(bool captureOrTransportActive, bool savePending, bool sa
   const uint16_t freeChunks = LoopEventStore::freeChunkCount();
   const uint16_t usedChunks = LoopEventStore::usedChunkCount();
   const uint16_t reserve = PassConfig::CHUNK_RESERVE;
-  const uint16_t queueDepth =
-      static_cast<uint16_t>((savePending || saveInProgress) ? 1U : 0U);
-  const uint16_t writingChunks = sdIoActive ? 1U : 0U;
+  const uint16_t queueDepth = PersistenceQueue::queueDepth();
+  const uint16_t writingChunks = PersistenceQueue::writingChunkCount();
   const uint32_t backlog = queueDepth;
   if (backlog > state.maxDeferredBacklog) {
     state.maxDeferredBacklog = backlog;

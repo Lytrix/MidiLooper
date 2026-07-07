@@ -317,7 +317,10 @@ void TrackManager::handleQuantizedStop(uint32_t currentTick) {
 // Playback Control -------------------------------------------
 
 void TrackManager::startPlayingTrack(uint8_t trackIndex) {
-  if (trackIndex < Config::NUM_TRACKS) tracks[trackIndex].startPlaying(clockManager.getCurrentTick());
+  if (trackIndex < Config::NUM_TRACKS) {
+    StorageManager::requestLoopSlotRestoreFromSd(trackIndex, tracks[trackIndex].getActiveLoopIndex());
+    tracks[trackIndex].startPlaying(clockManager.getCurrentTick());
+  }
 }
 
 void TrackManager::stopPlayingTrack(uint8_t trackIndex) {
@@ -366,6 +369,12 @@ void TrackManager::handleTransportStop() {
     }
   }
   forceLedUpdate(currentTick);
+  for (uint8_t i = 0; i < Config::NUM_TRACKS; ++i) {
+    Track& track = tracks[i];
+    if (track.loopsAllocated() && track.hasData()) {
+      StorageManager::markCurrentSetLoopSlotDirty(i, track.getActiveLoopIndex());
+    }
+  }
   StorageManager::requestDeferredSaveState(looperState.getLooperState());
 }
 
@@ -542,6 +551,7 @@ void TrackManager::setActiveLoopIndex(uint8_t trackIndex, uint8_t index) {
       return;
     }
     t.setActiveLoopIndex(index);
+    StorageManager::requestLoopSlotRestoreFromSd(trackIndex, index);
     forceLedUpdate(clockManager.getCurrentTick());
   }
 }
@@ -710,6 +720,7 @@ void TrackManager::setSelectedSlotIndex(uint8_t trackIndex, uint8_t slotIndex,
     editManager.beforeSelectedSlotChange(track);
   }
   slotStateMachine.setSelectedSlotIndex(trackIndex, slotIndex);
+  StorageManager::requestLoopSlotRestoreFromSd(trackIndex, slotIndex);
   if (syncPlayback == SyncPlayback::Yes) {
     setActiveLoopIndex(trackIndex, slotIndex);
   }

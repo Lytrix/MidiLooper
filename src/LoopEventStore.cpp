@@ -9,6 +9,7 @@
 #include <new>
 
 #include "LoopPasses.h"
+#include "PersistenceQueue.h"
 
 #if defined(ARDUINO)
 #include "Logger.h"
@@ -51,6 +52,8 @@ void extmem_free(void* ptr);
 
 EventChunk* LoopEventStore::pool_ = nullptr;
 bool LoopEventStore::poolUsed_[LoopEventStoreConfig::POOL_CHUNK_COUNT] = {};
+ChunkLifecycleState LoopEventStore::poolLifecycle_[LoopEventStoreConfig::POOL_CHUNK_COUNT] = {};
+uint16_t LoopEventStore::poolChunkRefCount_[LoopEventStoreConfig::POOL_CHUNK_COUNT] = {};
 bool LoopEventStore::poolReady_ = false;
 
 void LoopEventStore::initPool() {
@@ -65,6 +68,10 @@ void LoopEventStore::initPool() {
   }
   std::memset(pool_, 0, bytes);
   std::memset(poolUsed_, 0, sizeof(poolUsed_));
+  for (uint16_t i = 0; i < LoopEventStoreConfig::POOL_CHUNK_COUNT; ++i) {
+    poolLifecycle_[i] = ChunkLifecycleState::Free;
+    poolChunkRefCount_[i] = 0;
+  }
   poolReady_ = true;
 }
 
@@ -75,6 +82,9 @@ void LoopEventStore::resetPoolForTests() {
   pool_ = nullptr;
   poolReady_ = false;
   std::memset(poolUsed_, 0, sizeof(poolUsed_));
+  std::memset(poolLifecycle_, 0, sizeof(poolLifecycle_));
+  std::memset(poolChunkRefCount_, 0, sizeof(poolChunkRefCount_));
+  PersistenceQueue::resetForTests();
 }
 
 uint16_t LoopEventStore::usedChunkCount() {
@@ -106,6 +116,67 @@ uint32_t LoopEventStore::internalHeapSafetyFloorBytes() {
   return LoopEventStoreConfig::INTERNAL_HEAP_SAFETY_FLOOR_BYTES;
 }
 
+ChunkLifecycleState LoopEventStore::chunkLifecycleState(uint16_t id) {
+  if (id >= LoopEventStoreConfig::POOL_CHUNK_COUNT) {
+    return ChunkLifecycleState::Free;
+  }
+  return poolLifecycle_[id];
+}
+
+uint16_t LoopEventStore::chunkReferenceCount(uint16_t id) {
+  if (id >= LoopEventStoreConfig::POOL_CHUNK_COUNT) {
+    return 0;
+  }
+  return poolChunkRefCount_[id];
+}
+
+void LoopEventStore::retainChunkReference(uint16_t id) {
+  if (id >= LoopEventStoreConfig::POOL_CHUNK_COUNT) {
+    return;
+  }
+  ++poolChunkRefCount_[id];
+}
+
+void LoopEventStore::releaseChunkReference(uint16_t id) {
+  if (id >= LoopEventStoreConfig::POOL_CHUNK_COUNT || poolChunkRefCount_[id] == 0) {
+    return;
+  }
+  --poolChunkRefCount_[id];
+}
+
+void LoopEventStore::releaseChunkRefs(const ChunkIdList& refs) {
+  for (uint16_t id : refs) {
+    releaseChunkReference(id);
+    tryFreeChunk(id);
+  }
+}
+
+void LoopEventStore::sealChunk(uint16_t id) {
+  if (id >= LoopEventStoreConfig::POOL_CHUNK_COUNT ||
+      poolLifecycle_[id] != ChunkLifecycleState::Recording) {
+    return;
+  }
+  poolLifecycle_[id] = ChunkLifecycleState::Sealed;
+  PersistenceQueue::admitSealedChunk(id);
+}
+
+bool LoopEventStore::isChunkSealed(uint16_t id) {
+  return id < LoopEventStoreConfig::POOL_CHUNK_COUNT &&
+         poolLifecycle_[id] == ChunkLifecycleState::Sealed;
+}
+
+void LoopEventStore::tryFreeChunk(uint16_t id) {
+  if (id >= LoopEventStoreConfig::POOL_CHUNK_COUNT || !pool_ || poolChunkRefCount_[id] != 0) {
+    return;
+  }
+  pool_[id].used = 0;
+  pool_[id].firstTick = 0;
+  pool_[id].lastTick = 0;
+  poolUsed_[id] = false;
+  poolLifecycle_[id] = ChunkLifecycleState::Free;
+  PersistenceQueue::onChunkFreed(id);
+}
+
 uint16_t LoopEventStore::allocChunk() {
   if (!poolReady_) {
     initPool();
@@ -119,6 +190,7 @@ uint16_t LoopEventStore::allocChunk() {
       pool_[i].used = 0;
       pool_[i].firstTick = 0;
       pool_[i].lastTick = 0;
+      poolLifecycle_[i] = ChunkLifecycleState::Recording;
       return i;
     }
   }
@@ -126,16 +198,22 @@ uint16_t LoopEventStore::allocChunk() {
 }
 
 void LoopEventStore::freeChunk(uint16_t id) {
-  if (id >= LoopEventStoreConfig::POOL_CHUNK_COUNT || !pool_) {
-    return;
-  }
-  pool_[id].used = 0;
-  poolUsed_[id] = false;
+  releaseChunkReference(id);
+  tryFreeChunk(id);
 }
 
 EventChunk& LoopEventStore::chunk(uint16_t id) { return pool_[id]; }
 
 const EventChunk& LoopEventStore::chunk(uint16_t id) const { return pool_[id]; }
+
+bool LoopEventStore::hasSealedChunks() const {
+  for (uint16_t id : chunkIds_) {
+    if (isChunkSealed(id)) {
+      return true;
+    }
+  }
+  return false;
+}
 
 bool LoopEventStore::appendToTailChunk(const MidiEvent& evt) {
   if (!poolReady_) {
@@ -148,9 +226,15 @@ bool LoopEventStore::appendToTailChunk(const MidiEvent& evt) {
   uint16_t tailId = UINT16_MAX;
   if (!chunkIds_.empty()) {
     tailId = chunkIds_.back();
+    if (isChunkSealed(tailId)) {
+      tailId = UINT16_MAX;
+    } else if (chunk(tailId).used >= LoopEventStoreConfig::CHUNK_CAPACITY) {
+      sealChunk(tailId);
+      tailId = UINT16_MAX;
+    }
   }
 
-  if (tailId == UINT16_MAX || chunk(tailId).used >= LoopEventStoreConfig::CHUNK_CAPACITY) {
+  if (tailId == UINT16_MAX) {
     tailId = allocChunk();
     if (tailId == UINT16_MAX) {
 #if defined(ARDUINO)
@@ -160,6 +244,7 @@ bool LoopEventStore::appendToTailChunk(const MidiEvent& evt) {
 #endif
       return false;
     }
+    retainChunkReference(tailId);
     chunkIds_.push_back(tailId);
   }
 
@@ -187,6 +272,10 @@ bool LoopEventStore::appendToTailChunk(const MidiEvent& evt) {
     }
   }
   lastAppendedTick_ = evt.tick;
+
+  if (tail.used >= LoopEventStoreConfig::CHUNK_CAPACITY) {
+    sealChunk(tailId);
+  }
   return true;
 }
 
@@ -263,15 +352,28 @@ void LoopEventStore::clear() {
 }
 
 void LoopEventStore::detachChunksTo(ChunkIdList& dest) {
-  for (uint16_t id : dest) {
-    freeChunk(id);
-  }
+  releaseChunkRefs(dest);
   dest.clear();
-  dest.swap(chunkIds_);
-  chunkIds_.clear();
+
+  for (uint16_t id : chunkIds_) {
+    if (chunk(id).used > 0) {
+      sealChunk(id);
+    }
+  }
+
+  ChunkIdList transferred;
+  transferred.swap(chunkIds_);
+  for (uint16_t id : transferred) {
+    releaseChunkReference(id);
+  }
   eventCount_ = 0;
   markBarIndexDirty();
   lastAppendedTick_ = 0;
+
+  dest.swap(transferred);
+  for (uint16_t id : dest) {
+    retainChunkReference(id);
+  }
 }
 
 void LoopEventStore::adoptChunkIds(ChunkIdList& ids) {
@@ -428,6 +530,9 @@ void LoopEventStore::shiftAllTicks(int64_t delta) {
 
   int64_t minT = std::numeric_limits<int64_t>::max();
   for (uint16_t id : chunkIds_) {
+    if (isChunkSealed(id)) {
+      continue;
+    }
     const EventChunk& c = chunk(id);
     for (uint16_t i = 0; i < c.used; ++i) {
       const int64_t shifted = static_cast<int64_t>(c.events[i].tick) + delta;
@@ -444,6 +549,9 @@ void LoopEventStore::shiftAllTicks(int64_t delta) {
   }
 
   for (uint16_t id : chunkIds_) {
+    if (isChunkSealed(id)) {
+      continue;
+    }
     EventChunk& c = chunk(id);
     for (uint16_t i = 0; i < c.used; ++i) {
       c.events[i].tick = static_cast<uint32_t>(static_cast<int64_t>(c.events[i].tick) + total);
@@ -461,9 +569,63 @@ void LoopEventStore::dropEventsAtOrBeyondTick(uint32_t tickLimit) {
     return;
   }
 
+  if (hasSealedChunks()) {
+    bool needsRebuild = false;
+    for (uint16_t id : chunkIds_) {
+      if (!isChunkSealed(id)) {
+        continue;
+      }
+      const EventChunk& c = chunk(id);
+      bool hasKept = false;
+      bool hasDropped = false;
+      for (uint16_t i = 0; i < c.used; ++i) {
+        if (c.events[i].tick >= tickLimit) {
+          hasDropped = true;
+        } else {
+          hasKept = true;
+        }
+      }
+      if (hasKept && hasDropped) {
+        needsRebuild = true;
+        break;
+      }
+    }
+    if (needsRebuild) {
+      MidiEventVec flat;
+      flatten(flat);
+      MidiEventVec kept;
+      kept.reserve(flat.size());
+      for (const MidiEvent& evt : flat) {
+        if (evt.tick < tickLimit) {
+          kept.push_back(evt);
+        }
+      }
+      clear();
+      loadFromFlat(kept);
+      return;
+    }
+  }
+
   ChunkIdList kept;
   kept.reserve(chunkIds_.size());
   for (uint16_t id : chunkIds_) {
+    if (isChunkSealed(id)) {
+      bool allDropped = true;
+      const EventChunk& sealed = chunk(id);
+      for (uint16_t i = 0; i < sealed.used; ++i) {
+        if (sealed.events[i].tick < tickLimit) {
+          allDropped = false;
+          break;
+        }
+      }
+      if (allDropped) {
+        freeChunk(id);
+        continue;
+      }
+      kept.push_back(id);
+      continue;
+    }
+
     EventChunk& c = chunk(id);
     uint16_t write = 0;
     for (uint16_t read = 0; read < c.used; ++read) {
@@ -534,3 +696,8 @@ void LoopEventStore::rebuildBarIndex() const {
   }
   barIndexDirty_ = false;
 }
+
+#if defined(PIO_UNIT_TEST_NATIVE) && !defined(PERSISTENCE_QUEUE_CPP_INCLUDED)
+#define PERSISTENCE_QUEUE_CPP_INCLUDED
+#include "PersistenceQueue.cpp"
+#endif

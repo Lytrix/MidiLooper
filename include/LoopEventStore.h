@@ -29,6 +29,9 @@ struct EventChunk {
 using ChunkIdList = std::vector<uint16_t, InternalHeapFirstAllocator<uint16_t>>;
 using BarIndexVec = std::vector<size_t, InternalHeapFirstAllocator<size_t>>;
 
+/// Runtime chunk lifecycle (ChunkManager). Independent of persistence state.
+enum class ChunkLifecycleState : uint8_t { Free, Recording, Sealed };
+
 /// Append-only fixed-size event chunks backed by a global PSRAM pool.
 class LoopEventStore {
  public:
@@ -42,6 +45,11 @@ class LoopEventStore {
   static bool canAllocChunkWithReserve();
   static bool hasInternalHeapHeadroomForNonCriticalWork(uint32_t freeHeapBytes);
   static uint32_t internalHeapSafetyFloorBytes();
+
+  static ChunkLifecycleState chunkLifecycleState(uint16_t id);
+  static uint16_t chunkReferenceCount(uint16_t id);
+  /// Release runtime references held by a chunk-ref list (does not clear the list).
+  static void releaseChunkRefs(const ChunkIdList& refs);
 
   LoopEventStore() = default;
   LoopEventStore(const LoopEventStore&) = delete;
@@ -125,10 +133,19 @@ class LoopEventStore {
 
   static EventChunk* pool_;
   static bool poolUsed_[LoopEventStoreConfig::POOL_CHUNK_COUNT];
+  static ChunkLifecycleState poolLifecycle_[LoopEventStoreConfig::POOL_CHUNK_COUNT];
+  static uint16_t poolChunkRefCount_[LoopEventStoreConfig::POOL_CHUNK_COUNT];
   static bool poolReady_;
+
+  static void retainChunkReference(uint16_t id);
+  static void releaseChunkReference(uint16_t id);
+  static void sealChunk(uint16_t id);
+  static bool isChunkSealed(uint16_t id);
+  static void tryFreeChunk(uint16_t id);
 
   uint16_t allocChunk();
   void freeChunk(uint16_t id);
+  bool hasSealedChunks() const;
   EventChunk& chunk(uint16_t id);
   const EventChunk& chunk(uint16_t id) const;
   bool appendToTailChunk(const MidiEvent& evt);

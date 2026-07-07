@@ -213,12 +213,8 @@ void ensurePlaybackWindowBuilt(Track& track, Loop& loop, LoopPlaybackRuntime& ru
     const MidiEventVec& preview = editManager.sessionMidiEvents();
     runtime.primaryWindow.mergedEvents.assign(preview.begin(), preview.end());
   } else if (!loop.captureActive()) {
-    if (loop.isPassesMaterializedStoreFresh()) {
-      loop.passes.materializeToEventVector(runtime.primaryWindow.mergedEvents,
-                                           loop.loopLengthTicks);
-    } else {
-      loop.mergeActiveCapturePasses(runtime.primaryWindow.mergedEvents);
-    }
+    const SessionMidiEventVec& materialized = loop.midiEvents();
+    runtime.primaryWindow.mergedEvents.assign(materialized.begin(), materialized.end());
   } else {
     loop.mergeMaterializedPassesWithCapture(runtime.primaryWindow.mergedEvents);
   }
@@ -799,11 +795,20 @@ void Track::processDeferredIdleMaintenance(uint32_t nowMs) {
   if (!isPlaying() && !isRecording() && !isOverdubbing() && !isStoppedRecording()) {
     Loop& loop = getActiveLoop();
     if (loop.hasPublishedEvents()) {
-      if (!loop.isPassesMaterializedStoreFresh()) {
+      const bool bootHydrateActive = StorageManager::hasPendingLoopSlotRestore() ||
+                                     StorageManager::hasPendingUndoSnapshotHydrate();
+      const bool deferHeavyDerivedView =
+          bootHydrateActive || StorageManager::hasDeferredSaveWork();
+      if (!loop.isPassesMaterializedStoreFresh() && !deferHeavyDerivedView) {
         loop.ensurePassesMaterializedStore();
       }
       if (loop.visualCacheDirty) {
-        loop.ensureVisualCacheBuilt();
+        if (deferHeavyDerivedView) {
+          uint8_t barsPerSlice = StorageManager::hasDeferredSaveWork() ? 2 : 4;
+          loop.rebuildVisualCacheIdleSlice(barsPerSlice, 0);
+        } else {
+          loop.ensureVisualCacheBuilt();
+        }
       }
     }
   }

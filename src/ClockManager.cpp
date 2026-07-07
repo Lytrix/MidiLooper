@@ -301,7 +301,9 @@ void ClockManager::toggleTransport() {
       currentTick = 0;  // Align with Start — downbeat at tick 0
       midiHandler.sendStart();
       midiHandler.sendClock();  // First clock after Start is the downbeat (per MIDI spec)
-      trackManager.updateAllTracks(0);  // Armed record + pending actions at downbeat
+      if (trackManager.hasActiveOrPendingCapture()) {
+        trackManager.updateAllTracks(0);  // Armed record + pending actions at downbeat
+      }
     }
     if (!trackManager.hasActiveOrPendingCapture()) {
       for (uint8_t i = 0; i < Config::NUM_TRACKS; i++) {
