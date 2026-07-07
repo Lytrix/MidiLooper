@@ -7,7 +7,7 @@
 /// Scratch merge cache for one loop playback path.
 struct PlaybackWindow {
   uint32_t builtFromRevision = 0;
-  MidiEventVec mergedEvents;
+  SessionMidiEventVec mergedEvents;
 
   void clear() {
     builtFromRevision = 0;

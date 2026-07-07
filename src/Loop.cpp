@@ -4,6 +4,7 @@
 #include "Loop.h"
 #include "Utils/LoopStopFinalize.h"
 #include "Utils/CaptureIncrementalSanity.h"
+#include "Utils/IntervalProjection.h"
 #include "Globals.h"
 #include "Utils/MemoryMonitor.h"
 #include "Utils/DebugSessionCapture.h"
@@ -255,7 +256,10 @@ bool Loop::hasPublishedEvents() const {
   return false;
 }
 
-void Loop::mergeActiveCapturePasses(MidiEventVec& out) const {
+namespace {
+
+template <typename MidiEventVector>
+void mergeActiveCapturePassesInto(const LoopPasses& passes, MidiEventVector& out) {
   out.clear();
   if (passes.hasRecordPass() && passes.recordPass.state == CapturePassState::Active &&
       !passes.recordPass.chunkRefs.empty()) {
@@ -272,7 +276,7 @@ void Loop::mergeActiveCapturePasses(MidiEventVec& out) const {
               return a->mergeSequence < b->mergeSequence;
             });
   for (const OverdubPass* pass : activeOverdubs) {
-    MidiEventVec layer;
+    MidiEventVector layer;
     LoopEventStore::appendChunkRefEvents(pass->chunkRefs, layer);
     if (out.empty()) {
       out = std::move(layer);
@@ -281,13 +285,22 @@ void Loop::mergeActiveCapturePasses(MidiEventVec& out) const {
     if (layer.empty()) {
       continue;
     }
-    MidiEventVec merged;
+    MidiEventVector merged;
     merged.reserve(out.size() + layer.size());
-    std::merge(out.begin(), out.end(), layer.begin(), layer.end(),
-               std::back_inserter(merged),
+    std::merge(out.begin(), out.end(), layer.begin(), layer.end(), std::back_inserter(merged),
                [](const MidiEvent& a, const MidiEvent& b) { return a.tick < b.tick; });
     out = std::move(merged);
   }
+}
+
+}  // namespace
+
+void Loop::mergeActiveCapturePasses(MidiEventVec& out) const {
+  mergeActiveCapturePassesInto(passes, out);
+}
+
+void Loop::mergeActiveCapturePasses(SessionMidiEventVec& out) const {
+  mergeActiveCapturePassesInto(passes, out);
 }
 
 void Loop::materializeEditViewFromPasses() const {
@@ -758,9 +771,28 @@ void Loop::mergeMaterializedPassesWithCapture(MidiEventVec& out) const {
 }
 
 void Loop::mergeMaterializedPassesWithCapture(SessionMidiEventVec& out) const {
-  MidiEventVec temp;
-  mergeMaterializedPassesWithCapture(temp);
-  out.assign(temp.begin(), temp.end());
+  passes.materializeToEventVector(out, loopLengthTicks);
+  if (!captureActive() || capture.store.empty()) {
+    return;
+  }
+  const_cast<Loop*>(this)->ensureCaptureEventsSorted();
+
+  SessionMidiEventVec captureFlat;
+  capture.store.flatten(captureFlat);
+  if (out.empty()) {
+    out = std::move(captureFlat);
+    return;
+  }
+  if (captureFlat.empty()) {
+    return;
+  }
+
+  SessionMidiEventVec merged;
+  merged.reserve(out.size() + captureFlat.size());
+  std::merge(out.begin(), out.end(), captureFlat.begin(), captureFlat.end(),
+             std::back_inserter(merged),
+             [](const MidiEvent& a, const MidiEvent& b) { return a.tick < b.tick; });
+  out = std::move(merged);
 }
 
 void Loop::removeCaptureNoteOffAt(uint8_t channel, uint8_t note, uint32_t tick) {
@@ -949,10 +981,203 @@ void Loop::discardPendingCapturePass() {
   pendingVisualDelta.clear();
 }
 
+namespace {
+
+bool hasActiveEditPasses(const LoopPasses& passes) {
+  for (const EditPass& editPass : passes.editPasses) {
+    if (editPass.state == EditPassState::Active) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// Phase B: one materialize per playbackRevision — display reconstruct reads seeded flat when
+// fresh; chunk-ref merge only when store has not been seeded yet (sync callers before idle).
+template <typename MidiEventVector>
+void gatherPublishedFlatForDerivedView(const Loop& loop, MidiEventVector& flat) {
+  if (hasActiveEditPasses(loop.passes)) {
+    const MidiEventVec& materialized = loop.midiEvents();
+    flat.assign(materialized.begin(), materialized.end());
+    return;
+  }
+  if (loop.isPassesMaterializedStoreFresh()) {
+    loop.passes.materializeToEventVector(flat, loop.loopLengthTicks);
+    return;
+  }
+  loop.mergeActiveCapturePasses(flat);
+}
+
+// PLAYING idle slices: materialize to extmem when published store is fresh.
+template <typename MidiEventVector>
+void gatherChunkFlatForDisplaySlice(const Loop& loop, MidiEventVector& flat) {
+  if (hasActiveEditPasses(loop.passes)) {
+    const MidiEventVec& materialized = loop.midiEvents();
+    flat.assign(materialized.begin(), materialized.end());
+    return;
+  }
+  if (loop.isPassesMaterializedStoreFresh()) {
+    loop.passes.materializeToEventVector(flat, loop.loopLengthTicks);
+    return;
+  }
+  loop.mergeActiveCapturePasses(flat);
+}
+
+uint32_t totalVisualBarsForLoop(uint32_t loopLengthTicks) {
+  if (loopLengthTicks == 0) {
+    return 0;
+  }
+  return (loopLengthTicks + Config::TICKS_PER_BAR - 1) / Config::TICKS_PER_BAR;
+}
+
+void markAllVisualCacheBarsDirty(VisualCache& cache, uint32_t loopLengthTicks) {
+  const uint32_t totalBars = totalVisualBarsForLoop(loopLengthTicks);
+  if (totalBars == 0) {
+    cache.dirtyBars.clear();
+    return;
+  }
+  cache.dirtyBars.assign(totalBars, 1);
+}
+
+uint32_t findNextDirtyBar(const VisualBarVec& dirtyBars, uint32_t priorityBar) {
+  if (dirtyBars.empty()) {
+    return UINT32_MAX;
+  }
+  const uint32_t totalBars = static_cast<uint32_t>(dirtyBars.size());
+  const uint32_t start = priorityBar < totalBars ? priorityBar : 0;
+  for (uint32_t offset = 0; offset < totalBars; ++offset) {
+    const uint32_t bar = (start + offset) % totalBars;
+    if (dirtyBars[bar] != 0) {
+      return bar;
+    }
+  }
+  return UINT32_MAX;
+}
+
+void removeDisplayNotesOverlappingBars(DisplayNoteVec& notes, uint32_t startBar, uint32_t endBar) {
+  notes.erase(std::remove_if(notes.begin(), notes.end(),
+                             [&](const NoteUtils::DisplayNote& note) {
+                               const uint32_t endTick =
+                                   note.endTick >= note.startTick ? note.endTick : note.startTick;
+                               const uint32_t noteStartBar =
+                                   visualBarForTick(note.startTick, Config::TICKS_PER_BAR);
+                               const uint32_t noteEndBar =
+                                   visualBarForTick(endTick, Config::TICKS_PER_BAR);
+                               return noteStartBar <= endBar && noteEndBar >= startBar;
+                             }),
+                  notes.end());
+}
+
+template <typename MidiEventVector>
+void filterMidiEventsToTickWindow(const MidiEventVector& events, MidiEventVector& out,
+                                  uint32_t windowStart, uint32_t windowLength,
+                                  uint32_t loopLength) {
+  out.clear();
+  if (events.empty() || loopLength == 0 || windowLength == 0) {
+    return;
+  }
+  out.reserve(events.size());
+  for (const MidiEvent& evt : events) {
+    const uint32_t rel = IntervalProjection::tickPhaseInLoop(evt.tick, 0, loopLength);
+    const uint32_t start = IntervalProjection::tickPhaseInLoop(windowStart, 0, loopLength);
+    const uint32_t end =
+        IntervalProjection::tickPhaseInLoop(start + windowLength, 0, loopLength);
+    bool inWindow = false;
+    if (windowLength >= loopLength) {
+      inWindow = true;
+    } else if (start < end) {
+      inWindow = rel >= start && rel < end;
+    } else {
+      inWindow = rel >= start || rel < end;
+    }
+    if (inWindow) {
+      out.push_back(evt);
+    }
+  }
+}
+
+}  // namespace
+
+void Loop::rebuildVisualCacheIdleSlice(uint8_t maxBarsPerSlice, uint32_t priorityBar) {
+  if (!visualCacheDirty || loopLengthTicks == 0 || maxBarsPerSlice == 0) {
+    return;
+  }
+
+  const uint32_t totalBars = totalVisualBarsForLoop(loopLengthTicks);
+  if (totalBars == 0) {
+    visualCacheDirty = false;
+    visualCache.dirtyBars.clear();
+    return;
+  }
+  if (visualCache.dirtyBars.size() < totalBars) {
+    markAllVisualCacheBarsDirty(visualCache, loopLengthTicks);
+  }
+
+  const uint32_t startBar = findNextDirtyBar(visualCache.dirtyBars, priorityBar);
+  if (startBar == UINT32_MAX) {
+    visualCacheDirty = false;
+    visualCache.dirtyBars.clear();
+    return;
+  }
+
+  const uint32_t barsThisSlice =
+      std::min<uint32_t>(maxBarsPerSlice, totalBars - startBar);
+  const uint32_t endBar = startBar + barsThisSlice - 1;
+
+  constexpr uint32_t kPadBars = 1;
+  const uint32_t eventStartBar = startBar > kPadBars ? startBar - kPadBars : 0;
+  const uint32_t eventEndBar = std::min(endBar + kPadBars, totalBars - 1);
+  const uint32_t windowStart = eventStartBar * Config::TICKS_PER_BAR;
+  const uint32_t windowEndTick =
+      std::min((eventEndBar + 1) * Config::TICKS_PER_BAR, loopLengthTicks);
+  const uint32_t windowLength = windowEndTick > windowStart ? windowEndTick - windowStart : 0;
+  if (windowLength == 0) {
+    for (uint32_t bar = startBar; bar <= endBar; ++bar) {
+      visualCache.dirtyBars[bar] = 0;
+    }
+    return;
+  }
+
+  SessionMidiEventVec flat;
+  gatherChunkFlatForDisplaySlice(*this, flat);
+  SessionMidiEventVec windowEvents;
+  filterMidiEventsToTickWindow(flat, windowEvents, windowStart, windowLength, loopLengthTicks);
+  const NoteUtils::DisplayNoteVec sliceNotes =
+      NoteUtils::reconstructDisplayNotes(windowEvents, loopLengthTicks, false);
+
+  removeDisplayNotesOverlappingBars(visualCache.notes, startBar, endBar);
+  for (const NoteUtils::DisplayNote& note : sliceNotes) {
+    const uint32_t endTick = note.endTick >= note.startTick ? note.endTick : note.startTick;
+    const uint32_t noteStartBar = visualBarForTick(note.startTick, Config::TICKS_PER_BAR);
+    const uint32_t noteEndBar = visualBarForTick(endTick, Config::TICKS_PER_BAR);
+    if (noteStartBar <= endBar && noteEndBar >= startBar) {
+      visualCache.notes.push_back(note);
+    }
+  }
+  publishedMaterializedEventCount_ = flat.size();
+
+  for (uint32_t bar = startBar; bar <= endBar; ++bar) {
+    visualCache.dirtyBars[bar] = 0;
+  }
+
+  bool anyDirty = false;
+  for (uint8_t flag : visualCache.dirtyBars) {
+    if (flag != 0) {
+      anyDirty = true;
+      break;
+    }
+  }
+  if (!anyDirty) {
+    visualCacheDirty = false;
+    visualCache.dirtyBars.clear();
+    ++visualCache.revision;
+  }
+}
+
 void Loop::rebuildVisualCacheFromPasses() {
   DIAG_COUNTER_INC(VisualCacheRebuild);
-  materializeEditViewFromPasses();
-  const MidiEventVec& flat = midiEvents();
+  SessionMidiEventVec flat;
+  gatherPublishedFlatForDerivedView(*this, flat);
   publishedMaterializedEventCount_ = flat.size();
   const NoteUtils::DisplayNoteVec rebuiltNotes =
       NoteUtils::reconstructDisplayNotes(flat, loopLengthTicks, false);
@@ -980,6 +1205,7 @@ void Loop::ensureVisualCacheBuilt() {
 void Loop::markDisplayCachesStale() {
   invalidatePlaybackCaches();
   visualCacheDirty = true;
+  markAllVisualCacheBarsDirty(visualCache, loopLengthTicks);
 }
 
 void Loop::invalidateDisplayCaches() {

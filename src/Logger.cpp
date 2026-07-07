@@ -154,10 +154,12 @@ void Logger::log(LogCategory category, LogLevel level, const char* format, ...) 
 
 void Logger::logStateTransition(const char* component, const char* fromState, const char* toState) {
   SC_STATE(component, fromState, toState);
+#if !defined(SESSION_CAPTURE)
   if (currentLevel < LOG_DEBUG) return;
   printPrefix(LOG_DEBUG, CAT_STATE);
   Serial.printf("%s state transition: %s -> %s", component, fromState, toState);
   Serial.println();
+#endif
 }
 
 void Logger::dumpMidiEvents(const MidiEventVec& events, int trackIndex) {

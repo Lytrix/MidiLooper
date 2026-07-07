@@ -2,7 +2,7 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-07-07 (64-bar regression — bisect-first workflow)
+Last updated: 2026-07-07 (runtime redesign — DEC-017)
 
 ---
 
@@ -10,25 +10,26 @@ Last updated: 2026-07-07 (64-bar regression — bisect-first workflow)
 
 `derived-note-overlap-logic` (from `load-save-sets-loops` @ `bbc2284`)
 
-**Next session entry:** [next_session_handoff_overdub_uip_architecture.md](../plans/next_session_handoff_overdub_uip_architecture.md)  
-**Active plan:** [64bar_regression_commit_analysis_enhancement.md](../plans/64bar_regression_commit_analysis_enhancement.md)
+**Handoff:** [next_session_handoff_overdub_uip_architecture.md](../plans/next_session_handoff_overdub_uip_architecture.md)  
+**Priority:** Runtime Phase A→C (DEC-016/017) — skip long capture/HITL gates
 
-## Shipped on branch (2026-07-06)
+## Shipped on branch (recent)
 
 | Commit | Focus | Docs |
 |--------|--------|------|
-| (uncommitted) | Partial Phase A WIP — display/LED defer, REVT slices; **insufficient** (H6 playback materialize) | handoff + plan |
-| `6f77914` | Boot display partial revert | — |
+| *(uncommitted)* | Phase A step 3 + Phase B — one materialize per revision; display from seeded flat | handoff |
+| `d635296` | Partial Phase A — PLAYING defer, REVT bounds; boot + 16-bar smoke | handoff |
+| `eea4734` | Serial evidence index (archived captures) | plan |
+| `894d2ea` | Runtime architecture docs + DEC-016 | Architecture/ |
 | `d05e736` | Display boot/play OLED freeze | — |
-| `b1260ce` | Cold buffers → external memory pool | [`INTERNAL_HEAP_AND_EXTERNAL_MEMORY.md`](../Guides/INTERNAL_HEAP_AND_EXTERNAL_MEMORY.md) |
-| `432da4d` | NOTE_EDIT fader hot path | [`FADER_STATE_SYSTEM.md`](../Guides/FADER_STATE_SYSTEM.md) |
+| `b1260ce` | Cold buffers → external memory pool | INTERNAL_HEAP guide |
 
 ## Active OpenSpec
 
 | Change | Focus |
 |--------|--------|
 | **`slot-selection-focus`** | **Shipped (firmware)** — orchestrator + footer extension; manual §8 pending; [`slot_selection_focus_implementation_handoff.md`](../plans/slot_selection_focus_implementation_handoff.md) |
-| **`unified-interval-projection`** | Phases 1–4 shipped; native PASS; **5.5 HITL blocked** until 64+64 PASS — handoff [`next_session_handoff_overdub_uip_architecture.md`](../plans/next_session_handoff_overdub_uip_architecture.md) |
+| **`unified-interval-projection`** | Phases 1–4 shipped; native PASS; **5.5 HITL deferred** (DEC-017) until runtime Phase A→C |
 | **`edit-session-action-geometry`** | **Paused** — derived overlap pipeline; blocked until UIP Phases 1–5 |
 | `set-revision-persistence` | Set revisions, overlay browser — core shipped; loop picker **4.8–4.10** paused |
 | `workspace-session-persistence` | Current workspace session model |

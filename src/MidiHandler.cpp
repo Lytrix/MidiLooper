@@ -536,11 +536,13 @@ void MidiHandler::sendMidiEvent(const MidiEvent& event) {
                 }
             }
             if (!isLedChannel(event.channel) || droidMotorOutboundPriority_) {
+#if !defined(SESSION_CAPTURE)
                 logger.log(CAT_MIDI, LOG_DEBUG,
                     "OUT NoteOn  usb=%d ser=%d host=%d ch=%u note=%u vel=%u",
                     outputUSB ? 1 : 0, outputSerial ? 1 : 0, usbHostMIDI ? 1 : 0,
                     (unsigned)event.channel, (unsigned)event.data.noteData.note,
                     (unsigned)event.data.noteData.velocity);
+#endif
             }
             // Log LED updates (ch15: 0-31 tick/16th, 40-47 bar, 50-67 track/loop)
             if (event.channel == MidiConfig::Led::CHANNEL && (event.data.noteData.note <= 31 || (event.data.noteData.note >= 40 && event.data.noteData.note <= 47) || (event.data.noteData.note >= 50 && event.data.noteData.note <= 67))) {
@@ -564,11 +566,13 @@ void MidiHandler::sendMidiEvent(const MidiEvent& event) {
                 }
             }
             if (!isLedChannel(event.channel) || droidMotorOutboundPriority_) {
+#if !defined(SESSION_CAPTURE)
                 logger.log(CAT_MIDI, LOG_DEBUG,
                     "OUT NoteOff usb=%d ser=%d host=%d ch=%u note=%u vel=%u",
                     outputUSB ? 1 : 0, outputSerial ? 1 : 0, usbHostMIDI ? 1 : 0,
                     (unsigned)event.channel, (unsigned)event.data.noteData.note,
                     (unsigned)event.data.noteData.velocity);
+#endif
             }
             if (event.channel == MidiConfig::Led::CHANNEL && (event.data.noteData.note <= 31 || (event.data.noteData.note >= 40 && event.data.noteData.note <= 47) || (event.data.noteData.note >= 50 && event.data.noteData.note <= 67))) {
                 logger.log(CAT_MIDI_LED, LOG_DEBUG, "LED NoteOff ch=%d note=%d -> usb=%d serial=%d usbHost=%d",

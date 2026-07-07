@@ -117,6 +117,7 @@ void setup() {
   Serial.println("Main: Display Setup done");
 
   logger.info("Performance monitoring initialized");
+  MemoryMonitor::resetInternalHeapWatermark();
   MemoryMonitor::logStatus();  // Log heap after full setup
 
   // Clear all bar/16th LEDs for a clean start (DROID may retain state from before disconnect)

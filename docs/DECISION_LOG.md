@@ -14,6 +14,7 @@ Persistent record of **accepted architectural and implementation decisions**. No
 
 | ID | Date | Topic | Status |
 |----|------|-------|--------|
+| [DEC-017](#dec-017-skip-long-hitl-gates-implement-runtime-redesign) | 2026-07-07 | Skip long HITL/capture gates; implement runtime redesign | Accepted |
 | [DEC-016](#dec-016-runtime-architecture-four-layer-model) | 2026-07-07 | Runtime architecture four-layer model | Accepted |
 | [DEC-015](#dec-015-interval-projection-stage-1-stage-2-split) | 2026-07-05 | IntervalProjection module + Stage 1/2 split | Accepted |
 | [DEC-014](#dec-014-dual-normalization-boundaries-micro-vs-macro) | 2026-07-03 | Dual normalize micro/macro | Accepted |
@@ -33,7 +34,32 @@ Persistent record of **accepted architectural and implementation decisions**. No
 
 ---
 
-<!-- Append new entries below (newest first). Next ID: DEC-017 -->
+<!-- Append new entries below (newest first). Next ID: DEC-018 -->
+
+## DEC-017 — Skip long HITL/capture gates; implement runtime redesign
+
+**Date:** 2026-07-07  
+**Owner:** runtime architecture track (`docs/00-authority/Architecture/`, Phase A→C in [64bar_regression_commit_analysis_enhancement.md](plans/64bar_regression_commit_analysis_enhancement.md))  
+**Status:** Accepted
+
+**Context:** 64+64 commit bisect and serial capture gates are slow, unreliable across SD/firmware version mismatches, and duplicate evidence already in archived `captures/` (June PASS vs July FAIL). Partial Phase A shipped in `d635296` (boot + 16-bar record). Remaining blocker is playback materialize on PLAYING entry (H6) — an architecture/scheduling fix, not another bisect loop.
+
+**Decision:**
+
+1. **Skip** as implementation gates: save-bypass HITL, commit bisect at anchor SHAs, `validate-64x64` HITL, UIP Phase 5.5 HITL matrix — until runtime Phase A→C is complete.
+2. **Keep** archived serial evidence in `captures/` and investigation plans as **historical** reference only; do not block progress on new long captures.
+3. **Implement** runtime invariants per DEC-016: Phase A → Phase B → Phase C (see [64bar_regression_commit_analysis_enhancement.md](plans/64bar_regression_commit_analysis_enhancement.md)).
+4. **Verify** with `pio test -e native` and short manual smoke (boot, 16-bar record); re-open long HITL only after Phase C if needed.
+
+**Consequences:**
+
+- [CURRENT_WORK.md](runtime/CURRENT_WORK.md) priority is runtime redesign, not bisect.
+- Bisect helper `scripts/run_64bar_bisect_anchor.sh` is parked, not maintained.
+- UIP Phase 6 / overlap resume stays blocked until runtime phases ship.
+
+**References:** DEC-016, [next_session_handoff_overdub_uip_architecture.md](plans/next_session_handoff_overdub_uip_architecture.md), commit `d635296`.
+
+---
 
 ## DEC-016 — Runtime architecture four-layer model
 

@@ -274,8 +274,11 @@ public:
     return loop.getNoteCache().getNotes(loop.midiEvents(), loop.loopLengthTicks);
   }
   const DisplayNoteVec& getVisualNotesForSlot(uint8_t slotIndex) const {
-    Loop& loop = const_cast<Loop&>(getLoop(slotIndex));
-    loop.ensureVisualCacheBuilt();
+    const Loop& loop = getLoop(slotIndex);
+    if (!isPlaying() && !isStoppedRecording()) {
+      Loop& mutLoop = const_cast<Loop&>(loop);
+      mutLoop.ensureVisualCacheBuilt();
+    }
     return loop.visualCache.notes;
   }
   
@@ -317,10 +320,10 @@ private:
   bool deferredRecordRevtsPending = false;
   bool deferredRecordRevtChunkScan = false;
   size_t deferredRecordRevtCursor = 0;
-  MidiEventVec deferredRecordRevtEvents;
+  SessionMidiEventVec deferredRecordRevtEvents;
   ChunkIdList deferredRecordRevtChunkRefs;
   size_t deferredRecordRevtChunkCursor = 0;
-  MidiEventVec deferredRecordRevtChunkEvents;
+  SessionMidiEventVec deferredRecordRevtChunkEvents;
   size_t deferredRecordRevtChunkEventCursor = 0;
   bool deferredFullMidiValidate = false;
   uint32_t deferredValidateQueuedAtMs = 0;

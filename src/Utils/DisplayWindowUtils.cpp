@@ -223,4 +223,32 @@ bool segmentHasNotes(const DisplayNoteVec& notes, uint32_t loopLength, uint32_t 
                                                          static_cast<int32_t>(segEndTick)});
 }
 
+void filterMidiEventsToWindow(const MidiEventVec& events, MidiEventVec& out, uint32_t windowStart,
+                              uint32_t windowLength, uint32_t loopLength) {
+  out.clear();
+  if (events.empty() || loopLength == 0 || windowLength == 0) {
+    return;
+  }
+  out.reserve(events.size());
+  for (const MidiEvent& evt : events) {
+    if (tickInHalfOpenWindow(evt.tick, windowStart, windowLength, loopLength)) {
+      out.push_back(evt);
+    }
+  }
+}
+
+void filterMidiEventsToWindow(const SessionMidiEventVec& events, SessionMidiEventVec& out,
+                              uint32_t windowStart, uint32_t windowLength, uint32_t loopLength) {
+  out.clear();
+  if (events.empty() || loopLength == 0 || windowLength == 0) {
+    return;
+  }
+  out.reserve(events.size());
+  for (const MidiEvent& evt : events) {
+    if (tickInHalfOpenWindow(evt.tick, windowStart, windowLength, loopLength)) {
+      out.push_back(evt);
+    }
+  }
+}
+
 }  // namespace DisplayWindowUtils

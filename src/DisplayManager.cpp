@@ -672,7 +672,7 @@ const DisplayNoteVec& DisplayManager::resolveDisplayNotes(const Track& track, ui
 
     Loop& mutLoop = const_cast<Loop&>(loop);
     const bool deferVisualRebuild =
-        track.isPlaying() && !track.isOverdubbing() &&
+        (track.isPlaying() || track.isStoppedRecording()) && !track.isOverdubbing() &&
         !(track.isRecording() && !track.isPlaying());
     if (!deferVisualRebuild) {
         mutLoop.ensureVisualCacheBuilt();
@@ -680,8 +680,31 @@ const DisplayNoteVec& DisplayManager::resolveDisplayNotes(const Track& track, ui
     const bool needsLiveMergeForDisplay =
         loop.captureActive() || track.isRecording() || track.isOverdubbing();
     if (!needsLiveMergeForDisplay) {
-        if (!loop.visualCacheDirty) {
+        // Stale-while-revalidate: when PLAYING defers rebuild, show last visual cache until idle
+        // maintenance refreshes it — only return empty when cache was never built.
+        if (!loop.visualCacheDirty || !loop.visualCache.notes.empty()) {
             liveDisplayNotes.assign(loop.visualCache.notes.begin(), loop.visualCache.notes.end());
+            return liveDisplayNotes;
+        }
+        // Phase C: long loops — provisional window notes from chunk merge (no materialize).
+        const uint32_t boundedThreshold =
+            DisplayWindowUtils::kMaxDetailedWindowBars * Config::TICKS_PER_BAR;
+        if (loopLength > boundedThreshold) {
+            const uint8_t windowBars = DisplayWindowUtils::kMaxDetailedWindowBars;
+            const uint32_t windowLength = static_cast<uint32_t>(windowBars) * Config::TICKS_PER_BAR;
+            const uint32_t playhead = resolvePlayheadInLoop(track, displaySlot, currentTick);
+            const uint32_t windowStart =
+                DisplayWindowUtils::resolveCenteredWindowStart(playhead, windowLength, loopLength);
+            liveDisplayEventBuffer.clear();
+            mutLoop.mergeActiveCapturePasses(liveDisplayEventBuffer);
+            SessionMidiEventVec windowEvents;
+            DisplayWindowUtils::filterMidiEventsToWindow(liveDisplayEventBuffer, windowEvents,
+                                                         windowStart, windowLength, loopLength);
+            if (!windowEvents.empty()) {
+                const NoteUtils::DisplayNoteVec provisional =
+                    NoteUtils::reconstructDisplayNotes(windowEvents, loopLength, false);
+                liveDisplayNotes.assign(provisional.begin(), provisional.end());
+            }
         }
         return liveDisplayNotes;
     }

@@ -51,6 +51,12 @@ uint32_t getExternalMemoryPoolUsedBytes();
  */
 bool isLowMemory(uint32_t thresholdBytes = 10 * 1024);
 
+/** Lowest internal-heap free bytes observed since boot (updated on each free-bytes read). */
+uint32_t getInternalHeapMinEverFreeBytes();
+
+/** Reset min-ever-free tracking (call once after setup baseline). */
+void resetInternalHeapWatermark();
+
 /**
  * @brief Log current memory stats to Serial (uses Logger if available).
  */

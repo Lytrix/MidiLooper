@@ -80,6 +80,10 @@ void TrackManager::prewarmSelectedDisplayVisualCache() {
   if (!loop.hasPublishedEvents() && loop.loopLengthTicks == 0) {
     return;
   }
+  // PLAYING / stop tail: idle maintenance owns rebuild — read stale notes until then.
+  if (track.isPlaying() || track.isStoppedRecording()) {
+    return;
+  }
   loop.ensureVisualCacheBuilt();
 }
 
