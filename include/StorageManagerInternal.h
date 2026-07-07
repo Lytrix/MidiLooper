@@ -116,6 +116,8 @@ bool persistenceWriteRaw(File& file, const void* data, size_t size,
 StorageIo storageIoFromFileWriteWithRevisionPayloadCrc(File& file);
 
 void resetDeferredSaveJobState();
+void resetMidPassChunkPersistState();
+bool stepMidPassChunkPersist();
 bool beginDeferredSaveJob(const LooperState& state);
 bool stepDeferredSaveJob();
 

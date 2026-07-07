@@ -35,6 +35,15 @@ bool beginWriteQueuedChunk(uint16_t& chunkIdOut);
 /// Mark the chunk persisted and remove it from the active queue head.
 void markChunkPersisted(uint16_t chunkId);
 
+/// Return a Writing chunk to the queue head after a failed SD write.
+void requeueWritingChunk(uint16_t chunkId);
+
+/// Age in ms of the oldest Queued chunk (0 when queue empty).
+uint32_t oldestQueuedChunkAgeMs();
+
+/// Seal-order sequence assigned at admit (0 when never admitted).
+uint32_t sealSequenceForChunk(uint16_t chunkId);
+
 /// Reset persistence tracking when the pool chunk is reclaimed.
 void onChunkFreed(uint16_t chunkId);
 
@@ -42,7 +51,7 @@ void onChunkFreed(uint16_t chunkId);
 void resetForTests();
 
 #if defined(PIO_UNIT_TEST_NATIVE)
-uint32_t sealSequenceForChunk(uint16_t chunkId);
+extern uint32_t persistenceQueueTestNowMs;
 size_t queuedChunkIds(uint16_t* outIds, size_t maxCount);
 #endif
 

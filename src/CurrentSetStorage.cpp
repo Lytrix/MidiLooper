@@ -44,6 +44,17 @@ bool formatLoopSlotTempPath(char* out, size_t outSize, uint8_t trackIndex, uint8
   return written > 0 && static_cast<size_t>(written) < outSize;
 }
 
+bool formatLoopSlotSealJournalPath(char* out, size_t outSize, uint8_t trackIndex,
+                                   uint8_t slotIndex) {
+  if (out == nullptr || outSize < 40) {
+    return false;
+  }
+  const int written = std::snprintf(out, outSize, "%s/loop_%02u_%02u.sealj", kCurrentSlotsDir,
+                                    static_cast<unsigned>(trackIndex),
+                                    static_cast<unsigned>(slotIndex));
+  return written > 0 && static_cast<size_t>(written) < outSize;
+}
+
 bool writeMetaHeader(const StorageIo& io, const MetaHeader& header) {
   if (!ioWrite(io, &header.containerVersion, sizeof(header.containerVersion))) {
     return false;
@@ -187,6 +198,17 @@ bool verifySaveFileTokenAtPath(const char* path) {
                   magic == kSaveFileToken;
   file.close();
   return ok;
+}
+
+bool removeLoopSlotSealJournal(uint8_t trackIndex, uint8_t slotIndex) {
+  char journalPath[48];
+  if (!formatLoopSlotSealJournalPath(journalPath, sizeof(journalPath), trackIndex, slotIndex)) {
+    return false;
+  }
+  if (!SD.exists(journalPath)) {
+    return true;
+  }
+  return SD.remove(journalPath);
 }
 
 bool patchLastActiveUnix(const char* metaPath, uint32_t lastActiveUnix) {

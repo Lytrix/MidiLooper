@@ -2,7 +2,7 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-07-08 (DEC-020 Phase 3 cooperative scheduler)
+Last updated: 2026-07-08 (DEC-020 Phase 4 mid-pass persistence)
 
 ---
 
@@ -11,7 +11,7 @@ Last updated: 2026-07-08 (DEC-020 Phase 3 cooperative scheduler)
 `continuous-saving` (from `derived-note-overlap-logic`)
 
 **Handoff:** [next_session_handoff_overdub_uip_architecture.md](../plans/next_session_handoff_overdub_uip_architecture.md)  
-**Priority:** OpenSpec `continuous-runtime-persistence` Phase 4 mid-pass persistence (DEC-020); Phase 3 cooperative scheduler shipped
+**Priority:** OpenSpec `continuous-runtime-persistence` Phase 5 recovery (DEC-020); Phase 4 mid-pass writer shipped (native)
 
 ## Shipped on branch (recent)
 
@@ -31,7 +31,7 @@ Last updated: 2026-07-08 (DEC-020 Phase 3 cooperative scheduler)
 
 | Change | Focus |
 |--------|--------|
-| **`continuous-runtime-persistence`** | Phase 0–3 shipped (native); Phase 4 mid-pass persistence **next** |
+| **`continuous-runtime-persistence`** | Phase 0–4 shipped (native); Phase 5 recovery **next**; Phase 4 HITL gate pending |
 | **`runtime-derived-representation-heap`** | M5 Steps 1–1b–2 shipped (`adoptPersistedSnapshot`); lazy load + 64+64 HITL pending |
 | **`slot-selection-focus`** | **Shipped (firmware)** — orchestrator + footer extension; manual §8 pending; [`slot_selection_focus_implementation_handoff.md`](../plans/slot_selection_focus_implementation_handoff.md) |
 | **`unified-interval-projection`** | Phases 1–4 shipped; native PASS; **5.5 HITL deferred** (DEC-017) until runtime Phase A→C |

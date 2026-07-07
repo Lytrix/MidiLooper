@@ -2,31 +2,32 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-07-08 (DEC-020 Phase 3 cooperative scheduler)
+Last updated: 2026-07-08 (DEC-020 Phase 4 mid-pass persistence)
 
 ---
 
 ## Now implementing
 
-**OpenSpec: [`continuous-runtime-persistence`](../../openspec/changes/continuous-runtime-persistence/)** (DEC-020) — Phase 3 **shipped** (native); short HITL gate pending capture-serial build.
+**OpenSpec: [`continuous-runtime-persistence`](../../openspec/changes/continuous-runtime-persistence/)** (DEC-020) — Phase 4 **shipped** (native); HITL gate pending.
 
 | Phase | Status |
 |-------|--------|
 | **0** Diagnostics | **Complete** |
 | **1** Chunk lifecycle | **Complete** |
-| **2** Persistence queue | **Complete** — `PersistenceQueue`, `test_persistence_queue` |
-| **3** Cooperative scheduler | **Shipped** — transport gate removed; HITL gate pending |
-| **4** Mid-pass persistence | **Next** |
-| 5–6 | Pending |
+| **2** Persistence queue | **Complete** |
+| **3** Cooperative scheduler | **Complete** — overdub-stop HITL passed (`f0ee520`) |
+| **4** Mid-pass persistence | **Shipped** (native) — seal journal writer + failure policy; HITL gate pending |
+| **5** Recovery | **Next** |
+| **6** Full 64+64 HITL | Pending |
 
-**M5 boot load** (DEC-022) — cold boot passes. **Build blocker:** `teensy41-capture-serial` RAM1 overflow (~30 KB) blocks HITL validation.
+**M5 boot load** (DEC-022) — cold boot passes.
 
 | Doc | Role |
 |-----|------|
 | Agent map | [RUNTIME_STORAGE_AND_PERSISTENCE.md](../Guides/RUNTIME_STORAGE_AND_PERSISTENCE.md) |
 | OpenSpec | [continuous-runtime-persistence](../../openspec/changes/continuous-runtime-persistence/) |
 
-**Verify:** `pio test -e native` · Phase 3 HITL: 16-bar record+overdub with slice during capture
+**Verify:** `pio test -e native` (498/498) · Phase 4 HITL: 64-bar record with `#CAP,PERS,mid_pass` slices during capture; `freeChunkCount` above reserve
 
 ### Prior track (wind-down)
 
@@ -47,4 +48,4 @@ Last updated: 2026-07-08 (DEC-020 Phase 3 cooperative scheduler)
 - Bisect / save-bypass HITL gates — parked (DEC-017)
 - Workspace quarantine as substitute for load fix — valid data must load (DEC-019)
 - Note-edit continuous persistence — out of scope v1 (DEC-020)
-- Transport-gate removal before Phase 2 queue — DEC-020 phase order
+- Phase 5 journal prefix recovery — not started until Phase 4 HITL passes

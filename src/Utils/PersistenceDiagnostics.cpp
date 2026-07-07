@@ -29,11 +29,14 @@ struct State {
 State state;
 
 uint32_t dirtySaveAgeMs() {
+  const uint32_t queuedAgeMs = PersistenceQueue::oldestQueuedChunkAgeMs();
   if (state.dirtySaveRequestedAtMs == 0) {
-    return 0;
+    return queuedAgeMs;
   }
   const uint32_t nowMs = millis();
-  return nowMs >= state.dirtySaveRequestedAtMs ? nowMs - state.dirtySaveRequestedAtMs : 0;
+  const uint32_t saveAgeMs =
+      nowMs >= state.dirtySaveRequestedAtMs ? nowMs - state.dirtySaveRequestedAtMs : 0;
+  return saveAgeMs > queuedAgeMs ? saveAgeMs : queuedAgeMs;
 }
 
 void emitDiagnosticLine(bool captureOrTransportActive, bool savePending, bool saveInProgress,
