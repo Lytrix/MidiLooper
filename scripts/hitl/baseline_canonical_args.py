@@ -69,8 +69,6 @@ _SCENARIO_ONLY_FLAGS = frozenset(
         "--skip-sweep",
         "--boot-settle-ms",
         "--serial-grace-ms",
-        "--clear-before-record",
-        "--no-clear-before-record",
         "--clear-press-ms",
         "--no-start-transport",
         "--stop-press-advance-clocks",
@@ -88,8 +86,6 @@ def strip_scenario_only_legacy_args(legacy: list[str]) -> list[str]:
         if token in _SCENARIO_ONLY_FLAGS:
             if token in (
                 "--skip-sweep",
-                "--clear-before-record",
-                "--no-clear-before-record",
                 "--no-start-transport",
                 "--use-fixture-record",
             ):

@@ -13,6 +13,8 @@
 #include "EditManager.h"
 #include "PassReclaim.h"
 #include "DisplayManager.h"
+#include "Utils/DebugSessionCapture.h"
+#include "Utils/MemoryMonitor.h"
 
 TrackManager trackManager;
 
@@ -125,9 +127,7 @@ void TrackManager::startRecordingTrack(uint8_t trackIndex, uint32_t currentTick)
 }
 
 void TrackManager::stopRecordingTrack(uint8_t trackIndex) {
-  Serial.println("stopRecordingTrack called");
   if (trackIndex >= Config::NUM_TRACKS) return;
-
 
   tracks[trackIndex].stopRecording(clockManager.getCurrentTick());
   uint32_t recordedLength = tracks[trackIndex].getLoopLength();
@@ -139,9 +139,6 @@ void TrackManager::stopRecordingTrack(uint8_t trackIndex) {
   if (autoAlignEnabled) {
     tracks[trackIndex].setLoopLength(masterLoopLength);
   }
-  Serial.println("Saving state after recording");
-  StorageManager::markCurrentSetLoopSlotDirty(trackIndex, tracks[trackIndex].getActiveLoopIndex());
-  StorageManager::requestDeferredSaveState(looperState.getLooperState());
 }
 
 void TrackManager::queueRecordingTrack(uint8_t trackIndex, uint8_t slotIndex,
@@ -239,10 +236,15 @@ void TrackManager::startOverdubbingTrack(uint8_t trackIndex) {
   if (track.isOverdubbing() && loop.capture.phase == CapturePhase::Overdub) {
     return;
   }
+  const uint32_t heapAtEnter = MemoryMonitor::getInternalHeapFreeBytes();
+  SC_ODUB_STAGE("manager_enter", 0, heapAtEnter, heapAtEnter, "ok");
   const uint8_t slot = track.getActiveLoopIndex();
   slotEnabled[trackIndex][slot] = true;
   slotMuted[trackIndex][slot] = false;
+  const uint32_t startUs = micros();
   track.startOverdubbing(clockManager.getCurrentTick());
+  SC_ODUB_STAGE("manager_done", micros() - startUs, heapAtEnter,
+                MemoryMonitor::getInternalHeapFreeBytes(), "ok");
 }
 
 // Quantized Actions ------------------------------------------

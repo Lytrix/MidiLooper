@@ -176,8 +176,11 @@ void MidiHandler::handleMidiInput() {
 }
 
 void MidiHandler::handleMidiMessage(byte type, byte channel, byte data1, byte data2, InputSource source) {
-  SC_MIDI_IN(source == SOURCE_USB ? 'U' : source == SOURCE_SERIAL ? 'S' : 'H',
-             type, channel, data1, data2);
+  // Clock is high-rate (24 PPQN); skip synchronous capture to keep timing paths lean.
+  if (type != midi::Clock) {
+    SC_MIDI_IN(source == SOURCE_USB ? 'U' : source == SOURCE_SERIAL ? 'S' : 'H',
+               type, channel, data1, data2);
+  }
 
 #if defined(MIDI_USB_FADER_PROBE_PASSTHROUGH)
   if (source == SOURCE_USB) {

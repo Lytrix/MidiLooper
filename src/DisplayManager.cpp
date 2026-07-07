@@ -575,7 +575,9 @@ const DisplayNoteVec& DisplayManager::resolveDisplayNotes(const Track& track, ui
 
         if (needsFullLiveRebuild) {
             if (track.isOverdubbing()) {
-                loop.mergeMaterializedPassesWithCapture(liveDisplayEventBuffer);
+                if (loop.visualCache.notes.empty() && !loop.isPassesMaterializedStoreFresh()) {
+                    loop.mergeMaterializedPassesWithCapture(liveDisplayEventBuffer);
+                }
             } else {
                 liveDisplayEventBuffer.clear();
             }
@@ -669,15 +671,24 @@ const DisplayNoteVec& DisplayManager::resolveDisplayNotes(const Track& track, ui
     }
 
     Loop& mutLoop = const_cast<Loop&>(loop);
-    mutLoop.ensureVisualCacheBuilt();
+    const bool deferVisualRebuild =
+        track.isPlaying() && !track.isOverdubbing() &&
+        !(track.isRecording() && !track.isPlaying());
+    if (!deferVisualRebuild) {
+        mutLoop.ensureVisualCacheBuilt();
+    }
     const bool needsLiveMergeForDisplay =
         loop.captureActive() || track.isRecording() || track.isOverdubbing();
     if (!needsLiveMergeForDisplay) {
-        liveDisplayNotes.assign(loop.visualCache.notes.begin(), loop.visualCache.notes.end());
+        if (!loop.visualCacheDirty) {
+            liveDisplayNotes.assign(loop.visualCache.notes.begin(), loop.visualCache.notes.end());
+        }
         return liveDisplayNotes;
     }
 
-    mutLoop.mergeMaterializedPassesWithCapture(liveDisplayEventBuffer);
+    if (loop.visualCache.notes.empty() && !loop.isPassesMaterializedStoreFresh()) {
+        mutLoop.mergeMaterializedPassesWithCapture(liveDisplayEventBuffer);
+    }
 
     // Prefer visualCache (passes.materializeToEventVector) over reconstructing the full
     // materialized view again — after long overdub stop heap can be too low for a second
