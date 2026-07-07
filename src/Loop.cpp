@@ -877,6 +877,8 @@ CommitResult Loop::commitCapturePass(CommitReason reason, uint32_t sealedAtTick)
   const bool emitStopStage = reason == CommitReason::RecordStop ||
                              reason == CommitReason::RecordStopToStopped;
   const uint32_t commitStartUs = traceMicros();
+  const size_t stopStageEventCount = stopPathEventCount(*this);
+  const size_t stopStageChunkRefCount = stopPathChunkRefCount(*this);
   auto emitStage = [&](const char* stage, uint32_t durationUs,
                        uint32_t heapBefore, uint32_t heapAfter, const char* outcome) {
     if (!emitStopStage) {
@@ -884,7 +886,7 @@ CommitResult Loop::commitCapturePass(CommitReason reason, uint32_t sealedAtTick)
     }
     const uint32_t elapsedUs = traceMicros() - commitStartUs;
     SC_REC_STOP_STAGE(stage, elapsedUs, durationUs, heapBefore, heapAfter,
-                      stopPathEventCount(*this), stopPathChunkRefCount(*this), outcome);
+                      stopStageEventCount, stopStageChunkRefCount, outcome);
   };
 
   if (capture.store.empty()) {
@@ -949,8 +951,8 @@ void Loop::discardPendingCapturePass() {
 
 void Loop::rebuildVisualCacheFromPasses() {
   DIAG_COUNTER_INC(VisualCacheRebuild);
-  SessionMidiEventVec flat;
-  passes.materializeToEventVector(flat, loopLengthTicks);
+  materializeEditViewFromPasses();
+  const MidiEventVec& flat = midiEvents();
   publishedMaterializedEventCount_ = flat.size();
   const NoteUtils::DisplayNoteVec rebuiltNotes =
       NoteUtils::reconstructDisplayNotes(flat, loopLengthTicks, false);

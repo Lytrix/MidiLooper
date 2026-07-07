@@ -170,6 +170,9 @@ struct Loop {
 
   void clearCaptureOnNewPass();
 
+  void ensurePassesMaterializedStore() const { materializeEditViewFromPasses(); }
+  bool isPassesMaterializedStoreFresh() const { return !passesMaterializedStoreStale_; }
+
  private:
   friend class TrackUndo;
 

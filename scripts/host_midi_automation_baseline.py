@@ -807,6 +807,42 @@ def _recording_transition_baseline(lines: list[str]) -> int:
     )
 
 
+def _armed_transition_baseline(lines: list[str]) -> int:
+    return sum(
+        count
+        for (from_state, to_state), count in _count_capture_transitions(lines).items()
+        if to_state == "ARMED"
+    )
+
+
+def _send_record_arm_press(
+    out_port: mido.ports.BaseOutput,
+    *,
+    press_ms: int,
+    loop_slot: Optional[int] = None,
+) -> None:
+    """Arm/start record using the correct control-surface button.
+
+    Loop slot notes (50-57) invoke TOGGLE_RECORD_FOR_SLOT and can start record on an
+    empty slot while the track is STOPPED. Main record (36) only starts when the track
+    state is EMPTY; on STOPPED it toggles play/stop and HITL never sees RECORDING.
+    """
+    if loop_slot is not None:
+        _send_short_press(
+            out_port,
+            note=LOOP_SELECT_NOTE_BASE + (loop_slot - 1),
+            channel_1based=CONTROL_CHANNEL_1BASED,
+            press_ms=press_ms,
+        )
+        return
+    _send_short_press(
+        out_port,
+        note=RECORD_BUTTON_NOTE,
+        channel_1based=CONTROL_CHANNEL_1BASED,
+        press_ms=press_ms,
+    )
+
+
 def _serial_has_recording_started(lines: list[str], *, after_index: int = 0) -> bool:
     suffix = lines[after_index:]
     if any(",RECA," in line and "#CAP," in line for line in suffix):
@@ -828,6 +864,7 @@ def _wait_for_recording_started(
     baseline_reca: int,
     baseline_recording_transitions: int,
     baseline_latest_state: Optional[str],
+    baseline_armed_transitions: int = 0,
     timeout_s: float,
     serial_grace_s: float = 3.0,
     abort: Optional[RunAbort] = None,
@@ -842,15 +879,28 @@ def _wait_for_recording_started(
             return True
         if any("MIDI Button A: Start Recording" in line for line in suffix):
             return True
+        if any("Start Recording" in line for line in suffix):
+            return True
+        if any("armed, waiting for clock to start recording" in line for line in suffix):
+            return True
         latest = _latest_track_state(lines)
         if latest == "RECORDING" and baseline_latest_state != "RECORDING":
+            return True
+        if latest == "ARMED" and baseline_latest_state not in ("ARMED", "RECORDING"):
             return True
         recording_transitions = sum(
             count
             for (from_state, to_state), count in _count_capture_transitions(lines).items()
             if to_state == "RECORDING"
         )
-        return recording_transitions > baseline_recording_transitions
+        if recording_transitions > baseline_recording_transitions:
+            return True
+        armed_transitions = sum(
+            count
+            for (from_state, to_state), count in _count_capture_transitions(lines).items()
+            if to_state == "ARMED"
+        )
+        return armed_transitions > baseline_armed_transitions
 
     deadline = time.monotonic() + max(timeout_s, 0.0)
     while time.monotonic() < deadline:
@@ -3015,16 +3065,6 @@ def run() -> int:
                 )
                 time.sleep(args.phase_wait_ms / 1000.0)
 
-                if args.loop_slot:
-                    print(f"[track {idx}] select loop slot {args.loop_slot}")
-                    _send_short_press(
-                        out_port,
-                        note=LOOP_SELECT_NOTE_BASE + (args.loop_slot - 1),
-                        channel_1based=CONTROL_CHANNEL_1BASED,
-                        press_ms=args.press_ms,
-                    )
-                    time.sleep(args.phase_wait_ms / 1000.0)
-
                 from hitl.edit_mode_precondition import ensure_loop_edit_before_record
 
                 ensure_loop_edit_before_record(
@@ -3216,7 +3256,10 @@ def run() -> int:
                     if precondition_failures:
                         break
 
-                print(f"[track {idx}] record start")
+                print(
+                    f"[track {idx}] record start"
+                    + (f" (loop slot {args.loop_slot})" if args.loop_slot else "")
+                )
                 reached_recording = False
                 record_baseline_len = len(serial_collector.snapshot()) if serial_collector else 0
                 baseline_reca = _count_reca_markers(serial_collector.snapshot()) if serial_collector else 0
@@ -3225,14 +3268,18 @@ def run() -> int:
                     if serial_collector
                     else 0
                 )
+                baseline_armed_transitions = (
+                    _armed_transition_baseline(serial_collector.snapshot())
+                    if serial_collector
+                    else 0
+                )
                 baseline_latest_state = (
                     _latest_track_state(serial_collector.snapshot()) if serial_collector else None
                 )
-                _send_short_press(
+                _send_record_arm_press(
                     out_port,
-                    note=RECORD_BUTTON_NOTE,
-                    channel_1based=CONTROL_CHANNEL_1BASED,
                     press_ms=args.press_ms,
+                    loop_slot=args.loop_slot,
                 )
                 if serial_collector is not None:
                     timeout_s = args.state_sync_timeout_ms / 1000.0
@@ -3243,6 +3290,7 @@ def run() -> int:
                         baseline_reca=baseline_reca,
                         baseline_recording_transitions=baseline_recording_transitions,
                         baseline_latest_state=baseline_latest_state,
+                        baseline_armed_transitions=baseline_armed_transitions,
                         timeout_s=timeout_s,
                         serial_grace_s=grace_s,
                         abort=abort,
@@ -3252,7 +3300,7 @@ def run() -> int:
                         if any("MIDI Button A: Toggle Play/Stop" in line for line in fresh):
                             print(
                                 "[warn] Record press toggled play/stop (track likely not empty); "
-                                "clear may have failed — retrying clear then record"
+                                "retrying clear then record"
                             )
                             _send_short_press(
                                 out_port,
@@ -3266,13 +3314,15 @@ def run() -> int:
                             baseline_recording_transitions = _recording_transition_baseline(
                                 serial_collector.snapshot()
                             )
+                            baseline_armed_transitions = _armed_transition_baseline(
+                                serial_collector.snapshot()
+                            )
                             baseline_latest_state = _latest_track_state(serial_collector.snapshot())
                         print("[warn] Timed out waiting for recording start; retrying record press.")
-                        _send_short_press(
+                        _send_record_arm_press(
                             out_port,
-                            note=RECORD_BUTTON_NOTE,
-                            channel_1based=CONTROL_CHANNEL_1BASED,
                             press_ms=args.press_ms,
+                            loop_slot=args.loop_slot,
                         )
                         reached_recording = _wait_for_recording_started(
                             serial_collector,
@@ -3280,6 +3330,7 @@ def run() -> int:
                             baseline_reca=baseline_reca,
                             baseline_recording_transitions=baseline_recording_transitions,
                             baseline_latest_state=baseline_latest_state,
+                            baseline_armed_transitions=baseline_armed_transitions,
                             timeout_s=timeout_s,
                             serial_grace_s=grace_s,
                             abort=abort,

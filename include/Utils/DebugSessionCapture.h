@@ -73,6 +73,8 @@ SC_MEM_ATTR void recStop(const char* kind, uint8_t slot, uint32_t tick, uint32_t
 SC_MEM_ATTR void recStopStage(const char* stage, uint32_t elapsedUs, uint32_t durationUs,
                               uint32_t heapBefore, uint32_t heapAfter, size_t eventCount,
                               size_t chunkRefCount, const char* outcome);
+SC_MEM_ATTR void overdubStartStage(const char* stage, uint32_t durationUs, uint32_t heapBefore,
+                                   uint32_t heapAfter, const char* outcome);
 SC_MEM_ATTR void persistence(const char* stage, uint32_t durationUs, uint32_t heapBefore,
                              uint32_t heapAfter, const char* outcome);
 SC_MEM_ATTR void saveDisplayPhase(const char* phase, uint8_t rotateStep);
@@ -119,6 +121,8 @@ void emitDiagCheckpointLine(const Diagnostics::DiagTraceRecord& record);
                                            DebugSessionCapture::recStop(kind, slot, tick, start, raw, final, align)
 #define SC_REC_STOP_STAGE(stage, elapsedUs, durationUs, heapBefore, heapAfter, eventCount, chunkRefCount, outcome) \
                                            DebugSessionCapture::recStopStage(stage, elapsedUs, durationUs, heapBefore, heapAfter, eventCount, chunkRefCount, outcome)
+#define SC_ODUB_STAGE(stage, durationUs, heapBefore, heapAfter, outcome) \
+                                           DebugSessionCapture::overdubStartStage(stage, durationUs, heapBefore, heapAfter, outcome)
 #define SC_PERSIST(stage, durationUs, heapBefore, heapAfter, outcome) \
                                            DebugSessionCapture::persistence(stage, durationUs, heapBefore, heapAfter, outcome)
 #define SC_SAVE(phase, rotateStep)         DebugSessionCapture::saveDisplayPhase(phase, rotateStep)
@@ -165,6 +169,7 @@ inline void restartCaptureBootGrace() {}
 #define SC_REC_START(slot, tick)           ((void)0)
 #define SC_REC_STOP(kind, slot, tick, start, raw, final, align) ((void)0)
 #define SC_REC_STOP_STAGE(stage, elapsedUs, durationUs, heapBefore, heapAfter, eventCount, chunkRefCount, outcome) ((void)0)
+#define SC_ODUB_STAGE(stage, durationUs, heapBefore, heapAfter, outcome) ((void)0)
 #define SC_PERSIST(stage, durationUs, heapBefore, heapAfter, outcome) ((void)0)
 #define SC_SAVE(phase, rotateStep)         ((void)0)
 #define SC_LOADSAVE(active)                ((void)0)

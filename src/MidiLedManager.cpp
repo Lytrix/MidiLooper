@@ -240,8 +240,9 @@ bool displayNoteStartsInRange(const NoteUtils::DisplayNote& note, uint32_t loopL
 
 bool hasNoteOnInRange(const Loop& loop, uint32_t rangeStart, uint32_t rangeEnd) {
     if (loop.hasPublishedEvents()) {
-        Loop& mutLoop = const_cast<Loop&>(loop);
-        mutLoop.ensureVisualCacheBuilt();
+        if (loop.visualCacheDirty) {
+            return false;
+        }
         const uint32_t loopLength = loop.loopLengthTicks;
         for (const NoteUtils::DisplayNote& note : loop.visualCache.notes) {
             if (displayNoteStartsInRange(note, loopLength, rangeStart, rangeEnd)) {

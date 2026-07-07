@@ -353,6 +353,13 @@ SC_MEM_ATTR void recStopStage(const char* stage, uint32_t elapsedUs, uint32_t du
                 (unsigned long)eventCount, (unsigned long)chunkRefCount, outcome);
 }
 
+SC_MEM_ATTR void overdubStartStage(const char* stage, uint32_t durationUs, uint32_t heapBefore,
+                                   uint32_t heapAfter, const char* outcome) {
+  Serial.printf("#CAP,%lu,ODUB,stage,%s,%lu,%lu,%lu,%s\r\n",
+                (unsigned long)micros(), stage, (unsigned long)durationUs,
+                (unsigned long)heapBefore, (unsigned long)heapAfter, outcome);
+}
+
 SC_MEM_ATTR void persistence(const char* stage, uint32_t durationUs, uint32_t heapBefore,
                              uint32_t heapAfter, const char* outcome) {
   Serial.printf("#CAP,%lu,PERS,%s,%lu,%lu,%lu,%s\r\n",
