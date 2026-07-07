@@ -14,6 +14,9 @@ Persistent record of **accepted architectural and implementation decisions**. No
 
 | ID | Date | Topic | Status |
 |----|------|-------|--------|
+| [DEC-020](#dec-020-continuous-runtime-persistence-architecture) | 2026-07-07 | Continuous runtime persistence — invariant-driven capture-chunk persistence | Accepted |
+| [DEC-019](#dec-019-sd-load-path-extmem-routing-m5-spike) | 2026-07-07 | SD load path extmem routing (M5 spike) | Accepted (spike) |
+| [DEC-018](#dec-018-admission-current-heap-derived-rep-consolidation) | 2026-07-07 | Admission uses current heap; derived-rep OpenSpec consolidation | Accepted |
 | [DEC-017](#dec-017-skip-long-hitl-gates-implement-runtime-redesign) | 2026-07-07 | Skip long HITL/capture gates; implement runtime redesign | Accepted |
 | [DEC-016](#dec-016-runtime-architecture-four-layer-model) | 2026-07-07 | Runtime architecture four-layer model | Accepted |
 | [DEC-015](#dec-015-interval-projection-stage-1-stage-2-split) | 2026-07-05 | IntervalProjection module + Stage 1/2 split | Accepted |
@@ -34,7 +37,111 @@ Persistent record of **accepted architectural and implementation decisions**. No
 
 ---
 
-<!-- Append new entries below (newest first). Next ID: DEC-018 -->
+<!-- Append new entries below (newest first). Next ID: DEC-021 -->
+
+## DEC-020 — Continuous runtime persistence architecture
+
+**Date:** 2026-07-07  
+**Owner:** OpenSpec `continuous-runtime-persistence`  
+**Status:** Accepted
+
+### Problem
+
+64+64 HITL (`20260707_192649`) shows deferred save starved for the entire overdub window because `isCaptureActiveForPersistence()` blocks all slices during capture. Chunk pool and internal heap fill; overdub stop faults before `PERS,result`. Heap routing fixes (`runtime-derived-representation-heap`) improve seal heap but do not fix transport-gated persistence.
+
+### Decision
+
+Replace transport-gated save with **invariant-driven, cooperative budget-driven capture-chunk persistence**:
+
+- Pass ownership ≠ storage ownership; pass may stay open while chunks persist.
+- Separate lifecycles: runtime (`Free → Recording → Sealed`) vs persistence (`Not scheduled → Queued → Writing → Persisted`).
+- **ChunkManager** (`LoopEventStore`) owns sealing, refs, allocation, reclamation.
+- Persistence queue: seal-order admission, exactly-once enqueue, seal-order drain.
+- Runtime recording/playback always precede persistence; persistence is cooperative and budget-driven.
+- Memory reclaim independent of persistence completion.
+- Scope v1: append-only capture-pass storage only; note edit / undo snapshots unchanged.
+- Phased rollout: diagnostics (Phase 0) → ownership → queue → scheduler → mid-pass → recovery → HITL.
+- Park persistence/stop-path patches on `runtime-derived-representation-heap`.
+
+### Rationale
+
+Architecture checkpoint: ownership and state transitions change — not a stop-path bugfix. SD writer is already chunk-granular; gap is scheduling. Implementation guided by invariants, not ad-hoc patches.
+
+### Alternatives considered
+
+| Alternative | Rejected because |
+|-------------|------------------|
+| Remove transport gate first (scheduler before queue) | No persistable sealed-chunk work during capture until queue exists |
+| More stop-path flush/defer patches | Does not drain SD during overdub; starves pool |
+| Mandate CurrentSet v6 layout Option A | Invariants over implementation; format may evolve |
+
+### Affected modules
+
+`LoopEventStore`, `Loop.cpp`, `StorageManager`, `StorageLoopIo`, `PersistenceBudget`, `main.cpp`
+
+### Constraints created
+
+- Phase 0 diagnostics before scheduler behavior change; validate 64+64 HITL assumptions first.
+- No note-edit continuous persistence in v1.
+- Extend `StorageManager` / `LoopEventStore` — no new top-level manager classes (DEC-008).
+
+### Related OpenSpec
+
+[`openspec/changes/continuous-runtime-persistence/`](../../openspec/changes/continuous-runtime-persistence/)
+
+### Migration notes
+
+Supersedes persistence starvation workarounds on `runtime-derived-representation-heap`. Guide: [`docs/Guides/RUNTIME_STORAGE_AND_PERSISTENCE.md`](Guides/RUNTIME_STORAGE_AND_PERSISTENCE.md).
+
+---
+
+## DEC-019 — SD load path extmem routing (M5 spike)
+
+**Date:** 2026-07-07  
+**Owner:** runtime-derived-representation-heap OpenSpec change  
+**Status:** Accepted (spike documented; implementation deferred to M5)
+
+**Context:** M2 routed runtime published flat to `SessionMidiEventVec`. After 64+64 HITL failure, device internal heap reached 0 bytes; clear and deferred save blocked. Reboot restored broken 64+64 state via recovery checkpoints. Code review: `deepCloneChunkRefs` in `Loop.cpp` flattens each pass to internal-heap `MidiEventVec` on `restorePassesSnapshot` and undo restore; load also calls `rebuildVisualCacheFromPasses()` synchronously.
+
+**Decision:**
+
+1. **Document** load-path gap as M5 spike in OpenSpec (`spike_sd_load_extmem_routing.md`) — not part of M1–M4 ship criteria.
+2. **Target state:** pass clone and SD restore use extmem-first flat; defer visual rebuild on load per Phase C idle policy; evaluate lazy slot load at boot.
+3. **M4 archive** remains gated on 64+64 HITL; quarantine + M5 implementation may be required for reliable re-test after failed long runs.
+
+**Consequences:**
+
+- Spec delta ADDED scenarios under `internal-heap-external-memory-routing` (marked spike).
+- Implementation tasks tracked in `tasks.md` § M5.
+
+**References:** DEC-016, DEC-018, [`spike_sd_load_extmem_routing.md`](../../openspec/changes/runtime-derived-representation-heap/spike_sd_load_extmem_routing.md), [`64bar_regression_commit_analysis_enhancement.md`](plans/64bar_regression_commit_analysis_enhancement.md).
+
+---
+
+## DEC-018 — Admission current heap; derived-rep OpenSpec consolidation
+
+**Date:** 2026-07-07  
+**Owner:** runtime-derived-representation-heap OpenSpec change  
+**Status:** Accepted
+
+**Context:** July HITL proved 64-bar record stop→PLAY works at 8 KB RAM1 but deferred save never dispatches because `processDeferredSaveState` gates on frozen `admissionHeap` from record stop. Separately, `passesMaterializedStore_` lazy flat still uses internal heap; 64+64 verifier misses `#CAP,ST,OVERDUBBING,PLAYING` when capture ring overflows under MO burst. Cursor plans `64bar_regression_commit_analysis_b1378b37` and `heap_recovery_16bar_ebfaa9cd` were never converted to OpenSpec.
+
+**Decision:**
+
+1. **Consolidate** root-cause analysis, architecture, and tasks into OpenSpec change `runtime-derived-representation-heap` (no heap↔PSRAM FIFO).
+2. **Admission:** gate deferred-save **dispatch** on current `getInternalHeapFreeBytes()`; stop-path `admissionHeap` is telemetry only.
+3. **HITL floor:** `record_stop_min_free_ram2_bytes` default **0** (telemetry); optional warn at 12 KB — long-run PASS is heartbeat + core transitions + persistence, not stop-entry floor.
+4. **Derived reps:** published flat and playback window on `SessionMidiEventVec`; tier-A `#CAP` flush priority under long overdub.
+5. **Bisect gates** remain parked (DEC-017); re-open selective 64-bar gates after M1–M4.
+
+**Consequences:**
+
+- [`docs/plans/64bar_regression_commit_analysis_enhancement.md`](plans/64bar_regression_commit_analysis_enhancement.md) links to the OpenSpec change.
+- User-local Cursor plans marked superseded (not deleted).
+
+**References:** DEC-016, DEC-017, commit `cdd9c2b`, [`openspec/changes/runtime-derived-representation-heap/`](../../openspec/changes/runtime-derived-representation-heap/).
+
+---
 
 ## DEC-017 — Skip long HITL/capture gates; implement runtime redesign
 

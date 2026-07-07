@@ -12,22 +12,21 @@
 
 namespace {
 
-void mergeSortedMidiVectors(
-    MidiEventVec& base,
-    std::vector<MidiEvent, ExternalMemoryFirstAllocator<MidiEvent>>&& addition) {
+template <typename MidiEventVector>
+void mergeSortedMidiVectors(MidiEventVector& base, MidiEventVector&& addition) {
   if (addition.empty()) {
     return;
   }
   if (base.empty()) {
-    base.assign(addition.begin(), addition.end());
+    base = std::move(addition);
     return;
   }
-  std::vector<MidiEvent, ExternalMemoryFirstAllocator<MidiEvent>> merged;
+  MidiEventVector merged;
   merged.reserve(base.size() + addition.size());
   std::merge(base.begin(), base.end(), addition.begin(), addition.end(),
              std::back_inserter(merged),
              [](const MidiEvent& a, const MidiEvent& b) { return a.tick < b.tick; });
-  base.assign(merged.begin(), merged.end());
+  base = std::move(merged);
 }
 
 void collectActiveOverdubPassesSorted(const OverdubPassVec& overdubPasses,
@@ -45,7 +44,8 @@ void collectActiveOverdubPassesSorted(const OverdubPassVec& overdubPasses,
             });
 }
 
-void appendActiveCapturePassesToFlat(const LoopPasses& passes, MidiEventVec& out) {
+template <typename MidiEventVector>
+void appendActiveCapturePassesToFlat(const LoopPasses& passes, MidiEventVector& out) {
   if (passes.hasRecordPass() && passes.recordPass.state == CapturePassState::Active &&
       !passes.recordPass.chunkRefs.empty()) {
     LoopEventStore::appendChunkRefEvents(passes.recordPass.chunkRefs, out);
@@ -54,14 +54,15 @@ void appendActiveCapturePassesToFlat(const LoopPasses& passes, MidiEventVec& out
   std::vector<const OverdubPass*> activeOverdubs;
   collectActiveOverdubPassesSorted(passes.overdubPasses, activeOverdubs);
   for (const OverdubPass* pass : activeOverdubs) {
-    std::vector<MidiEvent, ExternalMemoryFirstAllocator<MidiEvent>> layer;
+    MidiEventVector layer;
     LoopEventStore::appendChunkRefEvents(pass->chunkRefs, layer);
     mergeSortedMidiVectors(out, std::move(layer));
   }
 }
 
-void applyActiveEditPasses(MidiEventVec& events, const EditPassVec& editPasses,
-                           uint32_t loopLengthTicks) {
+template <typename MidiEventVector>
+void applyActiveEditPassesMidi(MidiEventVector& events, const EditPassVec& editPasses,
+                               uint32_t loopLengthTicks) {
   NoteId trackedNoteId = kInvalidNoteId;
   uint32_t trackedStart = 0;
   uint32_t trackedEnd = 0;
@@ -88,10 +89,6 @@ void applyActiveEditPasses(MidiEventVec& events, const EditPassVec& editPasses,
       tracked = true;
     }
   };
-  auto applyControlChangeEditPass = [&](const EditPass& /*editPass*/) {
-    // Explicit scoped dispatch placeholder for ControlChange edit rows.
-    // Intentionally no-op until ControlChange edit apply behavior ships.
-  };
 
   for (const EditPass& editPass : editPasses) {
     if (editPass.state != EditPassState::Active) {
@@ -102,11 +99,23 @@ void applyActiveEditPasses(MidiEventVec& events, const EditPassVec& editPasses,
         applyNoteRow(editPass);
         break;
       case EditPassType::ControlChange:
-        applyControlChangeEditPass(editPass);
-        break;
       case EditPassType::Audio:
         break;
     }
+  }
+}
+
+void applyActiveEditPasses(SessionMidiEventVec& events, const EditPassVec& editPasses,
+                           uint32_t loopLengthTicks) {
+  EditPassVec activeRows;
+  activeRows.reserve(editPasses.size());
+  for (const EditPass& editPass : editPasses) {
+    if (editPass.state == EditPassState::Active && editPass.passType == EditPassType::Note) {
+      activeRows.push_back(editPass);
+    }
+  }
+  if (!activeRows.empty()) {
+    applyNoteEditPassSequence(events, activeRows, loopLengthTicks);
   }
 }
 
@@ -115,13 +124,13 @@ void applyActiveEditPasses(MidiEventVec& events, const EditPassVec& editPasses,
 void LoopPasses::materializeToEventVector(MidiEventVec& out, uint32_t loopLengthTicks) const {
   out.clear();
   appendActiveCapturePassesToFlat(*this, out);
-  applyActiveEditPasses(out, editPasses, loopLengthTicks);
+  applyActiveEditPassesMidi(out, editPasses, loopLengthTicks);
 }
 
 void LoopPasses::materializeToEventVector(SessionMidiEventVec& out, uint32_t loopLengthTicks) const {
-  MidiEventVec temp;
-  materializeToEventVector(temp, loopLengthTicks);
-  out.assign(temp.begin(), temp.end());
+  out.clear();
+  appendActiveCapturePassesToFlat(*this, out);
+  applyActiveEditPasses(out, editPasses, loopLengthTicks);
 }
 
 void LoopPasses::materialize(LoopEventStore& out, uint32_t loopLengthTicks) const {

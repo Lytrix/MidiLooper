@@ -1,6 +1,7 @@
 ---
 name: 64bar regression commit analysis
-overview: 64+64 regression analysis archived in captures/; implement runtime invariants Phase A→C per DEC-016/DEC-017. Long HITL/bisect gates skipped.
+openspec_change: runtime-derived-representation-heap
+overview: 64+64 regression analysis archived in captures/; consolidated into OpenSpec runtime-derived-representation-heap (M1–M4). Phase A→C shipped; M5 spike documents SD load internal-heap gap (deepCloneChunkRefs).
 todos:
   - id: architecture-review
     content: Pre-implementation cross-check — map components to roles; document invalidation/ownership; add timing instrumentation (DIAG counters / SC_* stages)
@@ -44,6 +45,10 @@ isProject: false
 | — | `save-bypass`, `bisect`, `validate-64x64`, `uip-5.5` | **Cancelled** per DEC-017 |
 
 **Handoff:** [`next_session_handoff_overdub_uip_architecture.md`](../../docs/plans/next_session_handoff_overdub_uip_architecture.md)
+
+**OpenSpec (active):** [`openspec/changes/runtime-derived-representation-heap/`](../../openspec/changes/runtime-derived-representation-heap/) — supersedes Cursor plans `64bar_regression_commit_analysis_b1378b37` and `heap_recovery_16bar_ebfaa9cd`.
+
+**M5 spike (2026-07-07):** SD load / pass-clone still uses internal-heap `MidiEventVec` in `deepCloneChunkRefs`; boot recovery reloads long loops into 0-byte heap, blocking clear and M4 re-runs. Documented in [`spike_sd_load_extmem_routing.md`](../../openspec/changes/runtime-derived-representation-heap/spike_sd_load_extmem_routing.md) (DEC-019). **Handoff:** [`m5_sd_load_extmem_routing_handoff.md`](m5_sd_load_extmem_routing_handoff.md). M2 fixed runtime published flat only — not load/restore.
 
 ### Shipped partial Phase A (`d635296`)
 

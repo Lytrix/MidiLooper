@@ -84,8 +84,9 @@ Always load first:
 **Required**
 
 - [00-authority/ARCHITECTURE_RULES.md](00-authority/ARCHITECTURE_RULES.md) — StorageManager ownership
+- [Guides/RUNTIME_STORAGE_AND_PERSISTENCE.md](Guides/RUNTIME_STORAGE_AND_PERSISTENCE.md) — unified RAM + SD model; continuous persistence proposal
 - [Guides/DEFERRED_RUNTIME_PERSISTENCE.md](Guides/DEFERRED_RUNTIME_PERSISTENCE.md)
-- Active OpenSpec: `openspec/changes/set-revision-persistence/`, `workspace-session-persistence/` (check `tasks.md`)
+- Active OpenSpec: `openspec/changes/continuous-runtime-persistence/` (DEC-020), `set-revision-persistence/`, `workspace-session-persistence/` (check `tasks.md`)
 - [plans/set_revision_persistence_handoff.md](plans/set_revision_persistence_handoff.md)
 
 **Optional**

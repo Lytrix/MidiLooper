@@ -2,7 +2,7 @@
 
 Agent-oriented map of how loop state is written to SD after runtime events (record/overdub stop, undo, clear, autosave). Read this before changing `StorageManager`, `StorageLoopIo`, or any call site that used to invoke synchronous `saveState()`.
 
-For the in-RAM chunk pool, capture lifecycle, and undo COW rules, see [`LOOP_MIDI_STORAGE_AND_VALIDATION.md`](LOOP_MIDI_STORAGE_AND_VALIDATION.md).
+For the unified RAM + SD mental model and proposed continuous-runtime-persistence evolution, see [`RUNTIME_STORAGE_AND_PERSISTENCE.md`](RUNTIME_STORAGE_AND_PERSISTENCE.md). For the in-RAM chunk pool, capture lifecycle, and undo COW rules, see [`LOOP_MIDI_STORAGE_AND_VALIDATION.md`](LOOP_MIDI_STORAGE_AND_VALIDATION.md).
 
 ---
 
@@ -143,7 +143,7 @@ flowchart TB
 ## Scheduler rules (`processDeferredSaveState`)
 
 1. **No work while capture active** — returns immediately if any track is `RECORDING` or `OVERDUBBING`.
-2. **Admission** — before `dispatch`, checks `hasInternalHeapHeadroomForNonCriticalWork(admissionHeap)`. Below floor: `PERS,defer,...,heap_floor` and retry next idle iteration. Once `deferredSaveInProgress`, slices run to completion without re-gating.
+2. **Admission** — before `dispatch`, checks **current** `getInternalHeapFreeBytes()` via `hasInternalHeapHeadroomForNonCriticalWork`. The optional stop-path `admissionHeap` from `requestDeferredSaveState` is **telemetry only** (`PERS,request`, `PERS,defer`, `PERS,dispatch`). Below floor: `PERS,defer,...,heap_floor` and retry next idle iteration. Once `deferredSaveInProgress`, slices run to completion without re-gating.
 3. **One logical step per call** — each invocation advances at most one sub-step (header field, one chunk batch, one undo entry fragment, etc.).
 4. **Display** — `isDeferredSaveActive()` reflects active SD-I/O windows in the current slice, not whole-job queued/in-progress state.
 5. **Dirty flags** — edit/loop dirty state clears only after **`PERS,result,...,ok`**. Failed or incomplete saves leave dirty set for retry.

@@ -206,13 +206,15 @@ std::vector<NoteUtils::OpenNoteOn> findCaptureOpenNoteOns(const Loop& loop) {
     }
     Loop& mutLoop = const_cast<Loop&>(loop);
     mutLoop.ensureCaptureEventsSorted();
-    MidiEventVec captureFlat;
+    SessionMidiEventVec captureFlat;
     loop.capture.store.flatten(captureFlat);
     return NoteUtils::findOpenNoteOns(captureFlat, loop.loopLengthTicks);
 }
 
-bool findPreferredWrapHeadOffTick(const MidiEventVec& midiEvents, const NoteUtils::OpenNoteOn& open,
-                                  uint32_t loopLength, uint32_t& headOffTickOut) {
+template <typename Alloc>
+bool findPreferredWrapHeadOffTick(const std::vector<MidiEvent, Alloc>& midiEvents,
+                                  const NoteUtils::OpenNoteOn& open, uint32_t loopLength,
+                                  uint32_t& headOffTickOut) {
     uint8_t channel = 0;
     bool channelKnown = false;
     for (const MidiEvent& evt : midiEvents) {
@@ -258,7 +260,7 @@ bool updateDisplayNoteEndFrom(DisplayNoteVec& notes, size_t regionStart, uint8_t
 }
 
 void applyCapturePlayheadTails(const std::vector<NoteUtils::OpenNoteOn>& captureOpens,
-                               const MidiEventVec& captureEvents, uint32_t loopLength,
+                               const SessionMidiEventVec& captureEvents, uint32_t loopLength,
                                uint32_t closeTick, size_t captureRegionStart,
                                DisplayNoteVec& notes) {
     const uint32_t clampedCloseTick = clampOpenNoteCloseTick(closeTick, loopLength);
@@ -315,9 +317,10 @@ void applyCapturePlayheadTails(const std::vector<NoteUtils::OpenNoteOn>& capture
     }
 }
 
+template <typename Alloc>
 void applyLiveOpenTails(const std::vector<NoteUtils::OpenNoteOn>& openNotes,
-                        const MidiEventVec& midiEvents, uint32_t loopLength, uint32_t closeTick,
-                        DisplayNoteVec& notes, bool extendHeldNotesToPlayhead) {
+                        const std::vector<MidiEvent, Alloc>& midiEvents, uint32_t loopLength,
+                        uint32_t closeTick, DisplayNoteVec& notes, bool extendHeldNotesToPlayhead) {
     const uint32_t clampedCloseTick = clampOpenNoteCloseTick(closeTick, loopLength);
     const uint32_t wrapWindow =
         loopLength > Config::TICKS_PER_BAR ? Config::TICKS_PER_BAR : loopLength;
@@ -538,10 +541,12 @@ const DisplayNoteVec& DisplayManager::resolveDisplayNotes(const Track& track, ui
 
         auto rebuildLiveDisplayNotes = [&]() {
             if (track.isOverdubbing()) {
-                const_cast<Loop&>(loop).ensureVisualCacheBuilt();
+                if (loop.visualCache.notes.empty() || loop.visualCacheDirty) {
+                    const_cast<Loop&>(loop).ensureVisualCacheBuilt();
+                }
                 liveDisplayNotes.assign(loop.visualCache.notes.begin(), loop.visualCache.notes.end());
                 committedDisplayEnd = liveDisplayNotes.size();
-                MidiEventVec captureFlat;
+                SessionMidiEventVec captureFlat;
                 Loop& mutLoop = const_cast<Loop&>(loop);
                 mutLoop.ensureCaptureEventsSorted();
                 loop.capture.store.flatten(captureFlat);
@@ -558,7 +563,7 @@ const DisplayNoteVec& DisplayManager::resolveDisplayNotes(const Track& track, ui
                                     loop.capturePreview.notes.end());
             committedDisplayEnd = 0;
             if (liveDisplayNotes.empty() && track.isRecording() && !loop.capture.store.empty()) {
-                MidiEventVec captureFlat;
+                SessionMidiEventVec captureFlat;
                 Loop& mutLoop = const_cast<Loop&>(loop);
                 mutLoop.ensureCaptureEventsSorted();
                 loop.capture.store.flatten(captureFlat);
@@ -603,7 +608,7 @@ const DisplayNoteVec& DisplayManager::resolveDisplayNotes(const Track& track, ui
         if (track.isRecording() || track.isOverdubbing()) {
             const uint32_t playheadCloseTick = resolvePlayheadInLoop(track, displaySlot, currentTick);
             if (track.isOverdubbing()) {
-                MidiEventVec captureEvents;
+                SessionMidiEventVec captureEvents;
                 const std::vector<NoteUtils::OpenNoteOn> captureOpens = findCaptureOpenNoteOns(loop);
                 if (!captureOpens.empty()) {
                     Loop& mutLoop = const_cast<Loop&>(loop);
@@ -709,8 +714,51 @@ const DisplayNoteVec& DisplayManager::resolveDisplayNotes(const Track& track, ui
         return liveDisplayNotes;
     }
 
+    const uint32_t boundedThreshold =
+        DisplayWindowUtils::kMaxDetailedWindowBars * Config::TICKS_PER_BAR;
+    if (loopLength > boundedThreshold) {
+        const uint8_t windowBars = DisplayWindowUtils::kMaxDetailedWindowBars;
+        const uint32_t windowLength = static_cast<uint32_t>(windowBars) * Config::TICKS_PER_BAR;
+        const uint32_t playhead = resolvePlayheadInLoop(track, displaySlot, currentTick);
+        const uint32_t windowStart =
+            DisplayWindowUtils::resolveCenteredWindowStart(playhead, windowLength, loopLength);
+        const bool mergeStale = liveMergePlaybackRevision_ != loop.playbackRevision ||
+                                liveMergeCaptureRevision_ != loop.captureDisplayRevision;
+        if (mergeStale || liveDisplayEventBuffer.empty()) {
+            liveDisplayEventBuffer.clear();
+            mutLoop.mergeMaterializedPassesWithCapture(liveDisplayEventBuffer);
+            liveMergePlaybackRevision_ = loop.playbackRevision;
+            liveMergeCaptureRevision_ = loop.captureDisplayRevision;
+        }
+        SessionMidiEventVec windowEvents;
+        DisplayWindowUtils::filterMidiEventsToWindow(liveDisplayEventBuffer, windowEvents, windowStart,
+                                                     windowLength, loopLength);
+        if (!windowEvents.empty()) {
+            const NoteUtils::DisplayNoteVec provisional =
+                NoteUtils::reconstructDisplayNotes(windowEvents, loopLength, false);
+            liveDisplayNotes.assign(provisional.begin(), provisional.end());
+        }
+        if (!liveDisplayEventBuffer.empty()) {
+            const std::vector<NoteUtils::OpenNoteOn> openNotes =
+                NoteUtils::findOpenNoteOns(liveDisplayEventBuffer, loopLength);
+            if (!openNotes.empty()) {
+                const uint32_t playheadCloseTick =
+                    resolvePlayheadInLoop(track, displaySlot, currentTick);
+                applyLiveOpenTails(openNotes, liveDisplayEventBuffer, loopLength, playheadCloseTick,
+                                   liveDisplayNotes, track.isRecording() || track.isOverdubbing());
+            }
+        }
+        return liveDisplayNotes;
+    }
+
     if (loop.visualCache.notes.empty() && !loop.isPassesMaterializedStoreFresh()) {
-        mutLoop.mergeMaterializedPassesWithCapture(liveDisplayEventBuffer);
+        const bool mergeStale = liveMergePlaybackRevision_ != loop.playbackRevision ||
+                                liveMergeCaptureRevision_ != loop.captureDisplayRevision;
+        if (mergeStale || liveDisplayEventBuffer.empty()) {
+            mutLoop.mergeMaterializedPassesWithCapture(liveDisplayEventBuffer);
+            liveMergePlaybackRevision_ = loop.playbackRevision;
+            liveMergeCaptureRevision_ = loop.captureDisplayRevision;
+        }
     }
 
     // Prefer visualCache (passes.materializeToEventVector) over reconstructing the full
@@ -732,10 +780,7 @@ const DisplayNoteVec& DisplayManager::resolveDisplayNotes(const Track& track, ui
         if (!openNotes.empty()) {
             const uint32_t playheadCloseTick =
                 resolvePlayheadInLoop(track, displaySlot, currentTick);
-            // Playback / edit display: wrap-held tails only — not live note-on lengthening.
-            const MidiEventVec liveEvents(liveDisplayEventBuffer.begin(),
-                                          liveDisplayEventBuffer.end());
-            applyLiveOpenTails(openNotes, liveEvents, loopLength, playheadCloseTick,
+            applyLiveOpenTails(openNotes, liveDisplayEventBuffer, loopLength, playheadCloseTick,
                                liveDisplayNotes, false);
         }
     }
@@ -863,6 +908,8 @@ void DisplayManager::invalidateLiveDisplayCache() {
     liveDisplayCacheSlot = 255;
     liveDisplayCacheTrackState = NUM_TRACK_STATES;
     liveDisplayCacheOpenNotes.clear();
+    liveMergePlaybackRevision_ = UINT32_MAX;
+    liveMergeCaptureRevision_ = 0;
     invalidateNoteEditDisplayCache();
 }
 

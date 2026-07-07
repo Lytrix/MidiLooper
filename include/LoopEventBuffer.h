@@ -82,5 +82,6 @@ class LoopEventFlatCache {
 
 using CowLoopEventStore = LoopEventFlatCache<MidiEventVec>;
 using NoteEditSessionStore = LoopEventFlatCache<SessionMidiEventVec>;
+using PublishedLoopEventStore = LoopEventFlatCache<SessionMidiEventVec>;
 
 using MidiSnapshotRef = std::shared_ptr<const LoopEventStore>;

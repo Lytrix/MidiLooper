@@ -221,6 +221,24 @@ void test_noncritical_work_deferred_when_heap_below_floor() {
   MemoryMonitor::resetNativeTestFreeHeap();
 }
 
+void test_noncritical_work_admits_when_heap_recovers_after_stop_snapshot() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  const uint32_t floor = LoopEventStore::internalHeapSafetyFloorBytes();
+  const uint32_t stopSnapshotHeap = floor - 4096u;
+  TEST_ASSERT_TRUE(stopSnapshotHeap < floor);
+
+  MemoryMonitor::setNativeTestFreeHeap(stopSnapshotHeap);
+  TEST_ASSERT_FALSE(
+      LoopEventStore::hasInternalHeapHeadroomForNonCriticalWork(stopSnapshotHeap));
+
+  MemoryMonitor::setNativeTestFreeHeap(floor + 1024u);
+  TEST_ASSERT_TRUE(
+      LoopEventStore::hasInternalHeapHeadroomForNonCriticalWork(
+          MemoryMonitor::getInternalHeapFreeBytes()));
+  MemoryMonitor::resetNativeTestFreeHeap();
+}
+
 void test_external_memory_first_buffers_report_storage_region() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
@@ -364,6 +382,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_save_note_edit_pass_rejected_when_heap_below_reserve);
   RUN_TEST(test_save_note_edit_pass_succeeds_when_heap_headroom);
   RUN_TEST(test_noncritical_work_deferred_when_heap_below_floor);
+  RUN_TEST(test_noncritical_work_admits_when_heap_recovers_after_stop_snapshot);
   RUN_TEST(test_external_memory_first_buffers_report_storage_region);
   RUN_TEST(test_trim_pressure_when_chunk_reserve_violated);
   RUN_TEST(test_trim_preserves_redo_branch_when_cursor_zero_no_pressure);

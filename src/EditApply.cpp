@@ -281,3 +281,10 @@ void applyNoteEditPassSequence(MidiEventVec& events, const EditPassVec& rows,
     }
   }
 }
+
+void applyNoteEditPassSequence(SessionMidiEventVec& events, const EditPassVec& rows,
+                               uint32_t loopLengthTicks) {
+  MidiEventVec scratch(events.begin(), events.end());
+  applyNoteEditPassSequence(scratch, rows, loopLengthTicks);
+  events.assign(scratch.begin(), scratch.end());
+}

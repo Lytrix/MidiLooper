@@ -78,8 +78,8 @@ struct Loop {
   void mergeActiveCapturePasses(MidiEventVec& out) const;
   void mergeActiveCapturePasses(SessionMidiEventVec& out) const;
 
-  MidiEventVec& midiEvents();
-  const MidiEventVec& midiEvents() const;
+  SessionMidiEventVec& midiEvents();
+  const SessionMidiEventVec& midiEvents() const;
 
   void rematerializeEditView(LoopEventStore& store) const;
 
@@ -93,6 +93,8 @@ struct Loop {
   void enableEditPasses(const EditPassIdList& ids);
   void materializeExcludingEditPassIds(const EditPassIdList& excludeIds,
                                        MidiEventVec& out) const;
+  void materializeExcludingEditPassIds(const EditPassIdList& excludeIds,
+                                       SessionMidiEventVec& out) const;
 
   void markEditStateDirty() { editStateDirty_ = true; }
   bool isEditStateDirty() const { return editStateDirty_; }
@@ -168,6 +170,7 @@ struct Loop {
   void invalidatePlaybackCaches();
 
   NoteId allocateNoteId();
+  void assignMissingNoteIds(SessionMidiEventVec& events);
   void assignMissingNoteIds(MidiEventVec& events);
   void assignMissingNoteIdsInStore(LoopEventStore& store);
 
@@ -179,7 +182,7 @@ struct Loop {
  private:
   friend class TrackUndo;
 
-  LoopEventFlatCache<> passesMaterializedStore_;
+  PublishedLoopEventStore passesMaterializedStore_;
   bool passesMaterializedStoreStale_ = true;
 
   void materializeEditViewFromPasses() const;

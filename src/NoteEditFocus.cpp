@@ -677,8 +677,10 @@ NOTE_EDIT_MEM EditPass makeNoteEditRow(EditActionType actionType, EditPropertyTy
 
 }  // namespace
 
-NOTE_EDIT_MEM void pruneOverlapNotesBeforePreCommit(NoteEditFocus& focus, MidiEventVec& events,
-                                      uint8_t channel) {
+template <typename Alloc>
+NOTE_EDIT_MEM void pruneOverlapNotesBeforePreCommit(NoteEditFocus& focus,
+                                                    std::vector<MidiEvent, Alloc>& events,
+                                                    uint8_t channel) {
   for (auto it = focus.overlapNotes.begin(); it != focus.overlapNotes.end();) {
     OverlapNote& entry = it->second;
     NoteBaseline linear;
@@ -712,6 +714,11 @@ NOTE_EDIT_MEM void pruneOverlapNotesBeforePreCommit(NoteEditFocus& focus, MidiEv
     }
   }
 }
+
+template void pruneOverlapNotesBeforePreCommit<InternalHeapFirstAllocator<MidiEvent>>(
+    NoteEditFocus&, MidiEventVec&, uint8_t);
+template void pruneOverlapNotesBeforePreCommit<ExternalMemoryFirstAllocator<MidiEvent>>(
+    NoteEditFocus&, SessionMidiEventVec&, uint8_t);
 
 NOTE_EDIT_MEM EditPassVec buildPreCommitOverlapEditPasses(const NoteEditFocus& focus) {
   EditPassVec rows;
@@ -782,16 +789,16 @@ NOTE_EDIT_MEM bool isExcludedFromSelectableDisplayNotes(const NoteEditFocus& foc
 
 }  // namespace
 
-template <typename Alloc>
+template <typename AllocA, typename AllocB>
 NOTE_EDIT_MEM void populateBaselineMapForEditClosure(
-    NoteEditFocus& focus, const std::vector<MidiEvent, Alloc>& committedLoopEvents,
-    const MidiEventVec& sessionEvents, uint8_t channel, uint32_t loopLength) {
+    NoteEditFocus& focus, const std::vector<MidiEvent, AllocA>& committedLoopEvents,
+    const std::vector<MidiEvent, AllocB>& sessionEvents, uint8_t channel, uint32_t loopLength) {
   if (!focus.active || loopLength == 0) {
     return;
   }
   const std::unordered_set<NoteId> closure =
       buildEditClosureNoteIds(focus, sessionEvents, channel, loopLength);
-  std::vector<MidiEvent, Alloc> mutableCommitted = committedLoopEvents;
+  std::vector<MidiEvent, AllocA> mutableCommitted = committedLoopEvents;
   for (NoteId noteId : closure) {
     if (noteId == kInvalidNoteId || focus.baselineMap.find(noteId) != focus.baselineMap.end()) {
       continue;
@@ -804,11 +811,16 @@ NOTE_EDIT_MEM void populateBaselineMapForEditClosure(
   }
 }
 
-template void populateBaselineMapForEditClosure<InternalHeapFirstAllocator<MidiEvent>>(
+template void populateBaselineMapForEditClosure<InternalHeapFirstAllocator<MidiEvent>,
+                                                InternalHeapFirstAllocator<MidiEvent>>(
     NoteEditFocus&, const MidiEventVec&, const MidiEventVec&, uint8_t, uint32_t);
+template void populateBaselineMapForEditClosure<InternalHeapFirstAllocator<MidiEvent>,
+                                                ExternalMemoryFirstAllocator<MidiEvent>>(
+    NoteEditFocus&, const MidiEventVec&, const SessionMidiEventVec&, uint8_t, uint32_t);
 
+template <typename Alloc>
 std::unordered_set<NoteId> buildEditClosureNoteIds(const NoteEditFocus& focus,
-                                                 const MidiEventVec& sessionEvents,
+                                                 const std::vector<MidiEvent, Alloc>& sessionEvents,
                                                  uint8_t channel, uint32_t loopLength) {
   std::unordered_set<NoteId> ids;
   if (!focus.active || loopLength == 0) {
@@ -846,6 +858,11 @@ std::unordered_set<NoteId> buildEditClosureNoteIds(const NoteEditFocus& focus,
   }
   return ids;
 }
+
+template std::unordered_set<NoteId> buildEditClosureNoteIds<InternalHeapFirstAllocator<MidiEvent>>(
+    const NoteEditFocus&, const MidiEventVec&, uint8_t, uint32_t);
+template std::unordered_set<NoteId> buildEditClosureNoteIds<ExternalMemoryFirstAllocator<MidiEvent>>(
+    const NoteEditFocus&, const SessionMidiEventVec&, uint8_t, uint32_t);
 
 template <typename Alloc>
 NOTE_EDIT_MEM

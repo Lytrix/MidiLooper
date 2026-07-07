@@ -18,6 +18,12 @@ void Looper::setup() {
   // ... any hardware or SD initialization ...
   SD.begin(BUILTIN_SDCARD); // or your SD chip select pin
 
+#if defined(BOOT_QUARANTINE_WORKSPACE) && (BOOT_QUARANTINE_WORKSPACE)
+  StorageManager::quarantineCurrentWorkspaceOnSd();
+#elif defined(SESSION_CAPTURE)
+  StorageManager::pollBootQuarantineWorkspaceBeforeLoad(3000);
+#endif
+
   // Try to load previous state
   if (!StorageManager::loadState(looperState.getLooperState())) {
       // Optionally: print a message or handle first-time setup

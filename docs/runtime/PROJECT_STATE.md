@@ -2,7 +2,7 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-07-07 (runtime redesign — DEC-017)
+Last updated: 2026-07-07 (continuous-runtime-persistence OpenSpec scaffold)
 
 ---
 
@@ -11,13 +11,14 @@ Last updated: 2026-07-07 (runtime redesign — DEC-017)
 `derived-note-overlap-logic` (from `load-save-sets-loops` @ `bbc2284`)
 
 **Handoff:** [next_session_handoff_overdub_uip_architecture.md](../plans/next_session_handoff_overdub_uip_architecture.md)  
-**Priority:** Runtime Phase A→C (DEC-016/017) — skip long capture/HITL gates
+**Priority:** OpenSpec `continuous-runtime-persistence` Phase 0 diagnostics; `runtime-derived-representation-heap` M4/M5 wind-down (persistence patches parked → DEC-020)
 
 ## Shipped on branch (recent)
 
 | Commit | Focus | Docs |
 |--------|--------|------|
-| *(uncommitted)* | Phase A step 3 + Phase B — one materialize per revision; display from seeded flat | handoff |
+| `cdd9c2b` | 16-bar stop→PLAY fix; capture ring; playback extmem materialize | DEC-018 |
+| *(prior)* | Phase A step 3 + Phase B — one materialize per revision | handoff |
 | `d635296` | Partial Phase A — PLAYING defer, REVT bounds; boot + 16-bar smoke | handoff |
 | `eea4734` | Serial evidence index (archived captures) | plan |
 | `894d2ea` | Runtime architecture docs + DEC-016 | Architecture/ |
@@ -28,6 +29,8 @@ Last updated: 2026-07-07 (runtime redesign — DEC-017)
 
 | Change | Focus |
 |--------|--------|
+| **`continuous-runtime-persistence`** | **Active** — invariant-driven capture-chunk persistence; Phase 0 diagnostics next (DEC-020); supersedes transport-gated save starvation fixes |
+| **`runtime-derived-representation-heap`** | M1–M3 shipped; M4 partial (`20260707_192649`); M5 steps 1–2 shipped; **persistence/stop-path patches parked** → `continuous-runtime-persistence` |
 | **`slot-selection-focus`** | **Shipped (firmware)** — orchestrator + footer extension; manual §8 pending; [`slot_selection_focus_implementation_handoff.md`](../plans/slot_selection_focus_implementation_handoff.md) |
 | **`unified-interval-projection`** | Phases 1–4 shipped; native PASS; **5.5 HITL deferred** (DEC-017) until runtime Phase A→C |
 | **`edit-session-action-geometry`** | **Paused** — derived overlap pipeline; blocked until UIP Phases 1–5 |

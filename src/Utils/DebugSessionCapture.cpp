@@ -43,6 +43,7 @@ struct CaptureRecordHeader {
 };
 
 constexpr size_t kCaptureRingBytes = 96 * 1024;
+constexpr size_t kCaptureRingPressureBytes = (kCaptureRingBytes * 3) / 4;
 constexpr size_t kMaxCaptureTextBytes = 192;
 
 struct CaptureRing {
@@ -55,6 +56,72 @@ struct CaptureRing {
 };
 
 CaptureRing sCaptureRing;
+
+bool readHeaderAt(size_t index, CaptureRecordHeader& headerOut);
+void readBytesAt(size_t index, void* dest, size_t len);
+
+SC_MEM_ATTR bool isTierATextLine(const char* line) {
+  if (line == nullptr || strncmp(line, "#CAP,", 5) != 0) {
+    return false;
+  }
+  const char* tagStart = strchr(line + 5, ',');
+  if (tagStart == nullptr) {
+    return false;
+  }
+  tagStart = strchr(tagStart + 1, ',');
+  if (tagStart == nullptr) {
+    return false;
+  }
+  tagStart++;
+  return strncmp(tagStart, "ST,", 3) == 0 || strncmp(tagStart, "PERS,", 5) == 0 ||
+         strncmp(tagStart, "RECS,", 5) == 0 || strncmp(tagStart, "HDR,", 4) == 0;
+}
+
+SC_MEM_ATTR bool isTierCTextLine(const char* line) {
+  if (line == nullptr || strncmp(line, "#CAP,", 5) != 0) {
+    return false;
+  }
+  const char* tagStart = strchr(line + 5, ',');
+  if (tagStart == nullptr) {
+    return false;
+  }
+  tagStart = strchr(tagStart + 1, ',');
+  if (tagStart == nullptr) {
+    return false;
+  }
+  tagStart++;
+  return strncmp(tagStart, "MO,", 3) == 0 || strncmp(tagStart, "MI,", 3) == 0;
+}
+
+SC_MEM_ATTR bool captureRingPressureHigh() {
+  return sCaptureRing.overflowPending || sCaptureRing.used >= kCaptureRingPressureBytes;
+}
+
+SC_MEM_ATTR bool headRecordIsTierAText() {
+  if (sCaptureRing.used < sizeof(CaptureRecordHeader)) {
+    return false;
+  }
+  CaptureRecordHeader header{};
+  if (!readHeaderAt(sCaptureRing.head, header)) {
+    return false;
+  }
+  if (header.type != static_cast<uint8_t>(CaptureRecordType::Text) || header.payloadLen == 0) {
+    return false;
+  }
+  char line[32] = {};
+  const size_t copyLen = std::min(static_cast<size_t>(header.payloadLen), sizeof(line) - 1);
+  readBytesAt(sCaptureRing.head + sizeof(header), line, copyLen);
+  line[sizeof(line) - 1] = '\0';
+  return isTierATextLine(line);
+}
+
+SC_MEM_ATTR bool shouldSampleMidiOutCapture() {
+  if (!captureRingPressureHigh()) {
+    return false;
+  }
+  static uint8_t sampleCounter = 0;
+  return (++sampleCounter & 7u) != 0;
+}
 
 SC_MEM_ATTR bool appendCaptureRecord(CaptureRecordType type, const void* payload, uint16_t payloadLen);
 
@@ -183,8 +250,17 @@ SC_MEM_ATTR bool appendCaptureRecord(CaptureRecordType type, const void* payload
       payloadLen,
   };
   const size_t total = recordTotalBytes(header);
+  const bool incomingTierC =
+      type == CaptureRecordType::Text && isTierCTextLine(static_cast<const char*>(payload));
   while (sCaptureRing.used + total > sCaptureRing.capacity) {
+    if (incomingTierC && headRecordIsTierAText()) {
+      return false;
+    }
+    const size_t usedBefore = sCaptureRing.used;
     discardOldestRecord();
+    if (sCaptureRing.used == usedBefore) {
+      return false;
+    }
   }
   writeBytesAt(sCaptureRing.tail, &header, sizeof(header));
   writeBytesAt(sCaptureRing.tail + sizeof(header), payload, payloadLen);
@@ -266,6 +342,9 @@ SC_MEM_ATTR void midiIn(char src, uint8_t type, uint8_t ch, uint8_t d1, uint8_t 
 }
 
 SC_MEM_ATTR void midiOut(uint8_t type, uint8_t ch, uint8_t d1, uint8_t d2) {
+  if (shouldSampleMidiOutCapture()) {
+    return;
+  }
   emitCapPrintf("#CAP,%lu,MO,%u,%u,%u,%u", (unsigned long)micros(), type, ch, d1, d2);
 }
 
@@ -346,11 +425,42 @@ SC_MEM_ATTR void overdubStartStage(const char* stage, uint32_t durationUs, uint3
                 outcome);
 }
 
+SC_MEM_ATTR void overdubStopStage(const char* stage, uint32_t elapsedUs, uint32_t durationUs,
+                                  uint32_t heapBefore, uint32_t heapAfter, size_t eventCount,
+                                  size_t chunkRefCount, const char* outcome) {
+  emitCapPrintf("#CAP,%lu,ODUB,stop,%s,%lu,%lu,%lu,%lu,%lu,%lu,%s\r\n", (unsigned long)micros(),
+                stage, (unsigned long)elapsedUs, (unsigned long)durationUs,
+                (unsigned long)heapBefore, (unsigned long)heapAfter, (unsigned long)eventCount,
+                (unsigned long)chunkRefCount, outcome);
+}
+
 SC_MEM_ATTR void persistence(const char* stage, uint32_t durationUs, uint32_t heapBefore,
                              uint32_t heapAfter, const char* outcome) {
   emitCapPrintf("#CAP,%lu,PERS,%s,%lu,%lu,%lu,%s\r\n", (unsigned long)micros(), stage,
                 (unsigned long)durationUs, (unsigned long)heapBefore, (unsigned long)heapAfter,
                 outcome);
+}
+
+SC_MEM_ATTR void persistenceDiagnostic(uint16_t freeChunks, uint16_t usedChunks, uint16_t reserve,
+                                       uint16_t queueDepth, uint16_t writingChunks,
+                                       uint32_t transportBlockCount, uint32_t heapFloorBlockCount,
+                                       uint32_t budgetBlockCount, uint32_t sliceDoneCount,
+                                       uint32_t peakWriterLatencyUs, uint32_t oldestDirtyAgeMs,
+                                       uint32_t maxDeferredBacklog, uint8_t savePending,
+                                       uint8_t saveInProgress, uint8_t captureActive) {
+  emitCapPrintf(
+      "#CAP,%lu,PERS,diag,%u,%u,%u,%u,%u,%lu,%lu,%lu,%lu,%lu,%lu,%u,%u,%u\r\n",
+      (unsigned long)micros(), freeChunks, usedChunks, reserve, queueDepth, writingChunks,
+      (unsigned long)transportBlockCount, (unsigned long)heapFloorBlockCount,
+      (unsigned long)budgetBlockCount, (unsigned long)sliceDoneCount,
+      (unsigned long)peakWriterLatencyUs, (unsigned long)oldestDirtyAgeMs,
+      (unsigned long)maxDeferredBacklog, savePending, saveInProgress, captureActive);
+}
+
+SC_MEM_ATTR void persistencePoolPressure(uint16_t freeChunks, uint16_t reserve,
+                                         uint16_t usedChunks) {
+  emitCapPrintf("#CAP,%lu,PERS,pressure,%u,%u,%u\r\n", (unsigned long)micros(), freeChunks,
+                reserve, usedChunks);
 }
 
 SC_MEM_ATTR void saveDisplayPhase(const char* phase, uint8_t rotateStep) {
@@ -428,6 +538,9 @@ void flushCaptureBuffer(size_t maxRecords) {
   if (sCaptureRing.data == nullptr || sCaptureRing.used == 0) {
     return;
   }
+  if (sCaptureRing.overflowPending && maxRecords < 256) {
+    maxRecords = 256;
+  }
 
   size_t flushed = 0;
   while (flushed < maxRecords && sCaptureRing.used >= sizeof(CaptureRecordHeader)) {
@@ -472,7 +585,7 @@ SC_MEM_ATTR size_t flushPendingRevts(size_t maxLines) {
 
 SC_MEM_ATTR void flushAllPendingRevts() {
   while (sCaptureRing.used > 0) {
-    flushCaptureBuffer(64);
+    flushCaptureBuffer(sCaptureRing.overflowPending ? 256 : 64);
   }
 }
 

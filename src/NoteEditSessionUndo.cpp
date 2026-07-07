@@ -223,6 +223,11 @@ buildSessionStoreEditPasses<ExternalMemoryFirstAllocator<MidiEvent>,
                                                                    const SessionMidiEventVec&,
                                                                    uint8_t, uint32_t);
 template EditPassVec
+buildSessionStoreEditPasses<ExternalMemoryFirstAllocator<MidiEvent>,
+                            InternalHeapFirstAllocator<MidiEvent>>(const SessionMidiEventVec&,
+                                                                   const MidiEventVec&, uint8_t,
+                                                                   uint32_t);
+template EditPassVec
 buildSessionStoreEditPasses<InternalHeapFirstAllocator<MidiEvent>,
                             ExternalMemoryFirstAllocator<MidiEvent>>(const MidiEventVec&,
                                                                    const SessionMidiEventVec&,

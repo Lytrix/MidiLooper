@@ -72,6 +72,31 @@ void clearCommittedOverlapScratchExceptHidden(NoteEditFocus& focus) {
 namespace {
 
 void logChangeLengthCommitTrace(const char* stage,
+                                const SessionMidiEventVec& flat,
+                                uint32_t loopLength,
+                                uint8_t homePitch,
+                                uint32_t homeStart) {
+    const std::vector<DisplayNote> notes =
+        NoteUtils::reconstructNotes(flat, loopLength, false);
+    for (const DisplayNote& n : notes) {
+        if (n.note == homePitch && n.startTick == homeStart) {
+            logger.log(CAT_TRACK, LOG_INFO,
+                       "commitEditAction %s: M%d start=%lu end=%lu flatEvents=%u",
+                       stage, static_cast<unsigned>(homePitch),
+                       static_cast<unsigned long>(n.startTick),
+                       static_cast<unsigned long>(n.endTick),
+                       static_cast<unsigned>(flat.size()));
+            return;
+        }
+    }
+    logger.log(CAT_TRACK, LOG_INFO,
+               "commitEditAction %s: M%d@%lu missing in recon flatEvents=%u",
+               stage, static_cast<unsigned>(homePitch),
+               static_cast<unsigned long>(homeStart),
+               static_cast<unsigned>(flat.size()));
+}
+
+void logChangeLengthCommitTrace(const char* stage,
                                 const MidiEventVec& flat,
                                 uint32_t loopLength,
                                 uint8_t homePitch,
@@ -730,7 +755,7 @@ EditPassId EditManager::commitEditAction(Track& track, EditPassVec rows) {
     }
     const MidiEventVec sessionSnapshot = editSession.store.readFlat();
     editSession.store.discardFlatCache();
-    MidiEventVec loopMidiEventsFromPasses;
+    SessionMidiEventVec loopMidiEventsFromPasses;
     loop.passes.materializeToEventVector( loopMidiEventsFromPasses,
                      loopLength);
     logChangeLengthCommitTrace("replay_flat", loopMidiEventsFromPasses,
@@ -1213,14 +1238,14 @@ MidiEventVec& EditManager::editMidiEvents(Track& track) {
     if (editSession.active) {
         return sessionMidiEvents();
     }
-    return track.getMidiEvents();
+    return track.legacyMidiEventsFromPublished();
 }
 
 const MidiEventVec& EditManager::editMidiEvents(const Track& track) const {
     if (editSession.active) {
         return sessionMidiEvents();
     }
-    return track.getMidiEvents();
+    return track.legacyMidiEventsFromPublished();
 }
 
 EditManager::EditManager() {

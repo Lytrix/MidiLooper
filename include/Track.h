@@ -227,12 +227,16 @@ public:
   bool isMuted() const;
 
   // Add to public section of Track to be able to save the events
-  MidiEventVec& getMidiEvents() { return getActiveLoop().midiEvents(); }
+  SessionMidiEventVec& getMidiEvents() { return getActiveLoop().midiEvents(); }
 
   /// Immutable access to midiEvents (for const Track)
-  const MidiEventVec& getMidiEvents() const { return getActiveLoop().midiEvents(); }
+  const SessionMidiEventVec& getMidiEvents() const { return getActiveLoop().midiEvents(); }
 
-  /// Note-edit session store when active, else loop materialized events.
+  /// Legacy internal-heap view of published events (revision-keyed copy for NOTE_EDIT APIs).
+  MidiEventVec& legacyMidiEventsFromPublished();
+  const MidiEventVec& legacyMidiEventsFromPublished() const;
+
+  /// Note-edit session store when active, else legacy published scratch.
   MidiEventVec& editAwareMidiEvents();
   const MidiEventVec& editAwareMidiEvents() const;
 
@@ -335,6 +339,8 @@ private:
   uint32_t queuedStartGridTicks = Config::TICKS_PER_16TH_STEP;
   TrackPlaybackRuntime playbackRuntime;
   GlobalUndoStack undoStack;
+  MidiEventVec publishedMidiScratch_;
+  uint32_t publishedMidiScratchRevision_ = UINT32_MAX;
   static const uint32_t TICKS_PER_BAR;
 
   void resetDeferredRecordRevts();

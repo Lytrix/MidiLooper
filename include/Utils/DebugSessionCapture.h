@@ -75,8 +75,20 @@ SC_MEM_ATTR void recStopStage(const char* stage, uint32_t elapsedUs, uint32_t du
                               size_t chunkRefCount, const char* outcome);
 SC_MEM_ATTR void overdubStartStage(const char* stage, uint32_t durationUs, uint32_t heapBefore,
                                    uint32_t heapAfter, const char* outcome);
+SC_MEM_ATTR void overdubStopStage(const char* stage, uint32_t elapsedUs, uint32_t durationUs,
+                                  uint32_t heapBefore, uint32_t heapAfter, size_t eventCount,
+                                  size_t chunkRefCount, const char* outcome);
 SC_MEM_ATTR void persistence(const char* stage, uint32_t durationUs, uint32_t heapBefore,
                              uint32_t heapAfter, const char* outcome);
+SC_MEM_ATTR void persistenceDiagnostic(uint16_t freeChunks, uint16_t usedChunks, uint16_t reserve,
+                                       uint16_t queueDepth, uint16_t writingChunks,
+                                       uint32_t transportBlockCount, uint32_t heapFloorBlockCount,
+                                       uint32_t budgetBlockCount, uint32_t sliceDoneCount,
+                                       uint32_t peakWriterLatencyUs, uint32_t oldestDirtyAgeMs,
+                                       uint32_t maxDeferredBacklog, uint8_t savePending,
+                                       uint8_t saveInProgress, uint8_t captureActive);
+SC_MEM_ATTR void persistencePoolPressure(uint16_t freeChunks, uint16_t reserve,
+                                         uint16_t usedChunks);
 SC_MEM_ATTR void saveDisplayPhase(const char* phase, uint8_t rotateStep);
 SC_MEM_ATTR void loadSaveMode(uint8_t active);
 SC_MEM_ATTR void overlayListSelection(uint8_t mode, uint8_t row);
@@ -123,8 +135,19 @@ void emitDiagCheckpointLine(const Diagnostics::DiagTraceRecord& record);
                                            DebugSessionCapture::recStopStage(stage, elapsedUs, durationUs, heapBefore, heapAfter, eventCount, chunkRefCount, outcome)
 #define SC_ODUB_STAGE(stage, durationUs, heapBefore, heapAfter, outcome) \
                                            DebugSessionCapture::overdubStartStage(stage, durationUs, heapBefore, heapAfter, outcome)
+#define SC_ODUB_STOP_STAGE(stage, elapsedUs, durationUs, heapBefore, heapAfter, eventCount, chunkRefCount, outcome) \
+                                           DebugSessionCapture::overdubStopStage(stage, elapsedUs, durationUs, heapBefore, heapAfter, eventCount, chunkRefCount, outcome)
 #define SC_PERSIST(stage, durationUs, heapBefore, heapAfter, outcome) \
                                            DebugSessionCapture::persistence(stage, durationUs, heapBefore, heapAfter, outcome)
+#define SC_PERSIST_DIAG(freeChunks, usedChunks, reserve, queueDepth, writingChunks, transportBlk, \
+                        heapBlk, budgetBlk, sliceDone, peakLatUs, dirtyAgeMs, maxBacklog, pending, \
+                        inProg, captureActive) \
+  DebugSessionCapture::persistenceDiagnostic(freeChunks, usedChunks, reserve, queueDepth, \
+                                             writingChunks, transportBlk, heapBlk, budgetBlk, \
+                                             sliceDone, peakLatUs, dirtyAgeMs, maxBacklog, pending, \
+                                             inProg, captureActive)
+#define SC_PERSIST_PRESSURE(freeChunks, reserve, usedChunks) \
+  DebugSessionCapture::persistencePoolPressure(freeChunks, reserve, usedChunks)
 #define SC_SAVE(phase, rotateStep)         DebugSessionCapture::saveDisplayPhase(phase, rotateStep)
 #define SC_LOADSAVE(active)                DebugSessionCapture::loadSaveMode(active)
 #define SC_OVERLAY_SEL(mode, row)          DebugSessionCapture::overlayListSelection(mode, row)
@@ -170,7 +193,13 @@ inline void restartCaptureBootGrace() {}
 #define SC_REC_STOP(kind, slot, tick, start, raw, final, align) ((void)0)
 #define SC_REC_STOP_STAGE(stage, elapsedUs, durationUs, heapBefore, heapAfter, eventCount, chunkRefCount, outcome) ((void)0)
 #define SC_ODUB_STAGE(stage, durationUs, heapBefore, heapAfter, outcome) ((void)0)
+#define SC_ODUB_STOP_STAGE(stage, elapsedUs, durationUs, heapBefore, heapAfter, eventCount, chunkRefCount, outcome) ((void)0)
 #define SC_PERSIST(stage, durationUs, heapBefore, heapAfter, outcome) ((void)0)
+#define SC_PERSIST_DIAG(freeChunks, usedChunks, reserve, queueDepth, writingChunks, transportBlk, \
+                        heapBlk, budgetBlk, sliceDone, peakLatUs, dirtyAgeMs, maxBacklog, pending, \
+                        inProg, captureActive) \
+  ((void)0)
+#define SC_PERSIST_PRESSURE(freeChunks, reserve, usedChunks) ((void)0)
 #define SC_SAVE(phase, rotateStep)         ((void)0)
 #define SC_LOADSAVE(active)                ((void)0)
 #define SC_OVERLAY_SEL(mode, row)          ((void)0)

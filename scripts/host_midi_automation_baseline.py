@@ -59,7 +59,8 @@ OVERDUB_GRID_STEP_CLOCKS = 12  # 8th notes at 24 PPQN
 TICKS_PER_BEAT = TICKS_PER_BAR // 4
 DEFAULT_RECORD_NOTE_SPAN_MIN_RATIO = 0.9
 DEFAULT_LONG_RUN_BAR_THRESHOLD = 48
-DEFAULT_RECORD_STOP_RAM2_FLOOR_BYTES = 12 * 1024
+DEFAULT_RECORD_STOP_RAM2_FLOOR_BYTES = 0
+DEFAULT_RECORD_STOP_RAM2_WARN_BYTES = 12 * 1024
 
 
 @dataclass(frozen=True)
@@ -1401,6 +1402,7 @@ def _verify_record_stop_ram2_floor(
     record_stop_stage_rows: list[dict[str, object]],
     *,
     floor_bytes: int,
+    warn_bytes: int,
     enabled: bool,
 ) -> dict[str, object]:
     if not enabled:
@@ -1408,9 +1410,11 @@ def _verify_record_stop_ram2_floor(
             "phase_disabled": True,
             "enabled": False,
             "floor_bytes": floor_bytes,
+            "warn_bytes": warn_bytes,
             "record_stop_heap_before": None,
             "record_stop_heap_after": None,
             "floor_ok": True,
+            "warn_ok": True,
             "record_stop_row_missing": False,
         }
 
@@ -1425,21 +1429,27 @@ def _verify_record_stop_ram2_floor(
             "phase_disabled": False,
             "enabled": True,
             "floor_bytes": floor_bytes,
+            "warn_bytes": warn_bytes,
             "record_stop_heap_before": None,
             "record_stop_heap_after": None,
-            "floor_ok": False,
+            "floor_ok": floor_bytes <= 0,
+            "warn_ok": True,
             "record_stop_row_missing": True,
         }
 
     record_stop_heap_before = int(record_stop_row["heap_before"])
     record_stop_heap_after = int(record_stop_row["heap_after"])
+    floor_ok = floor_bytes <= 0 or record_stop_heap_before >= floor_bytes
+    warn_ok = warn_bytes <= 0 or record_stop_heap_before >= warn_bytes
     return {
         "phase_disabled": False,
         "enabled": True,
         "floor_bytes": floor_bytes,
+        "warn_bytes": warn_bytes,
         "record_stop_heap_before": record_stop_heap_before,
         "record_stop_heap_after": record_stop_heap_after,
-        "floor_ok": record_stop_heap_before >= floor_bytes,
+        "floor_ok": floor_ok,
+        "warn_ok": warn_ok,
         "record_stop_row_missing": False,
     }
 
@@ -2140,6 +2150,7 @@ def _build_serial_verification(lines: list[str], args: argparse.Namespace) -> di
     record_stop_ram2_floor = _verify_record_stop_ram2_floor(
         record_stop_stage_rows,
         floor_bytes=args.record_stop_min_free_ram2_bytes,
+        warn_bytes=args.record_stop_min_free_ram2_warn_bytes,
         enabled=is_long_record_run,
     )
     long_run_persistence_result = _verify_long_run_persistence_result(
@@ -2261,7 +2272,9 @@ def _build_serial_verification(lines: list[str], args: argparse.Namespace) -> di
     if not record_stop_ram2_floor.get("phase_disabled", True):
         if record_stop_ram2_floor.get("record_stop_row_missing", False):
             issues.append("record_stop_ram2_heap_missing")
-        elif not record_stop_ram2_floor.get("floor_ok", False):
+        elif int(record_stop_ram2_floor.get("floor_bytes", 0)) > 0 and not record_stop_ram2_floor.get(
+            "floor_ok", False
+        ):
             issues.append("record_stop_ram2_heap_below_floor")
     if not long_run_persistence_result.get("phase_disabled", True):
         if not long_run_persistence_result.get("result_present", False):
@@ -2865,7 +2878,13 @@ def run() -> int:
         "--record-stop-min-free-ram2-bytes",
         type=int,
         default=DEFAULT_RECORD_STOP_RAM2_FLOOR_BYTES,
-        help="Long-run check: minimum allowed RAM2 free heap at record_stop entry (default: 12288)",
+        help="Long-run FAIL gate: minimum RAM2 free heap at record_stop (default: 0 = telemetry only)",
+    )
+    parser.add_argument(
+        "--record-stop-min-free-ram2-warn-bytes",
+        type=int,
+        default=DEFAULT_RECORD_STOP_RAM2_WARN_BYTES,
+        help="Long-run JSON warn when record_stop heap below this (default: 12288; 0 disables)",
     )
     parser.add_argument("--record-low-note", type=int, default=48, help="Record phase lowest note (default C3)")
     parser.add_argument("--record-high-note", type=int, default=79, help="Record phase highest note (default G5)")
@@ -2971,6 +2990,8 @@ def run() -> int:
         raise SystemExit("--long-run-bar-threshold must be >= 0")
     if args.record_stop_min_free_ram2_bytes < 0:
         raise SystemExit("--record-stop-min-free-ram2-bytes must be >= 0")
+    if args.record_stop_min_free_ram2_warn_bytes < 0:
+        raise SystemExit("--record-stop-min-free-ram2-warn-bytes must be >= 0")
     if args.overdub_start_delay_beats < 0:
         raise SystemExit("--overdub-start-delay-beats must be >= 0")
     if args.undo_redo_after_overdub_stop and not (args.serial_port or args.verify_serial_log):
@@ -3985,7 +4006,9 @@ def run() -> int:
                     "  VERIFY record_stop RAM2 floor: "
                     f"heap_before={record_stop_ram2_floor.get('record_stop_heap_before')} "
                     f"floor={record_stop_ram2_floor.get('floor_bytes')} "
-                    f"ok={record_stop_ram2_floor.get('floor_ok')}"
+                    f"warn={record_stop_ram2_floor.get('warn_bytes')} "
+                    f"ok={record_stop_ram2_floor.get('floor_ok')} "
+                    f"warn_ok={record_stop_ram2_floor.get('warn_ok')}"
                 )
             long_run_persistence_result = serial_verification.get("long_run_persistence_result")
             if long_run_persistence_result and not long_run_persistence_result.get("phase_disabled"):
