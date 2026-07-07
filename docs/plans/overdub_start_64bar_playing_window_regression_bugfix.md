@@ -18,18 +18,22 @@ After 64-bar record stop, device fails to reach `PLAYING → OVERDUBBING`; seria
 
 | Artifact | Role |
 |----------|------|
-| `captures/host_midi_automation_baseline_20260707_024009.json` | Pre-fix FAIL |
-| `captures/host_midi_automation_serial_20260707_024009.log` | Pre-fix serial |
-| `captures/host_midi_automation_baseline_20260623_112324.json` | June PASS reference |
+| `captures/host_midi_automation_serial_20260623_112324.log` | **Canonical PASS** — `PLAYING→OVERDUBBING` ×2, `PERS,result…ok` |
+| `captures/host_midi_automation_serial_20260707_032321.log` | **Canonical FAIL (gate)** — trk 6 / slot 8, 0 overdub transitions |
+| `captures/host_midi_automation_serial_20260707_010856.log` | July **PASS** — trk 5 / slot 0 (config sensitivity, O7) |
+| `captures/host_midi_automation_serial_20260623_004032.log` | Early PASS — before `58d6c08` |
+| `captures/host_midi_automation_baseline_20260707_024009.json` | Pre-fix FAIL JSON |
+| `captures/host_midi_automation_baseline_20260623_112324.json` | June PASS JSON |
 
-| Signal | Pre-fix FAIL | June PASS |
-|--------|--------------|-----------|
-| 64-bar record | PASS (49152 ticks) | PASS |
+Full timeline: [64bar_regression_commit_analysis_enhancement.md](64bar_regression_commit_analysis_enhancement.md) § Capture evidence index.
+
+| Signal | FAIL (`032321`, trk 6 / slot 8) | PASS (`112324`, trk 5) |
+|--------|--------------------------------|------------------------|
+| 64-bar record | completes | completes |
 | `STOPPED_RECORDING → PLAYING` | 1 | 1 |
-| `PLAYING → OVERDUBBING` | 0 | 2 |
-| `PERS,result` | 0 | 8 (`ok`) |
-| Post-stop serial tail | ~198 ms stall; no ODUB | Overdub ST ~158 s after record stop |
-| Seal heap (RAM2) | 28672 B | 16384 B |
+| `PLAYING → OVERDUBBING` | **0** | **2** |
+| `PERS,result` ok | yes (save may complete) | yes |
+| Post-PLAYING | MIDI out starts; overdub never arms | minutes of healthy PLAYING |
 
 Post-fix partial (`20260707_025841`): record PASS; device died ~99 ms after `STOPPED_RECORDING→PLAYING` (46 `#CAP`, 0 inbound MIDI, 0 `ODUB` stages). Overdub press may not have reached firmware.
 

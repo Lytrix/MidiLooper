@@ -63,7 +63,69 @@ Branch has uncommitted display/LED defer + REVT slice bounds. **H6 still open:**
 | **HITL config** | track **5**, no `--loop-slot`, `second_overdub_bars=64` (64+64+64) | track **6**, `--loop-slot 8`, `second_overdub_bars=0` |
 | **Overdub** | `PLAYING→OVERDUBBING` seen; `PERS,result,...,ok` | Stall ~12 `#CAP` lines after PLAYING; 0 `ODUB`; 0 inbound MIDI |
 
-The PASS predates every regression commit listed below (all landed **after 11:23** on June 23).
+The canonical PASS (`112324`) is after `58d6c08` (11:12) and before `5fb37a3` / `f946d82` (afternoon). Regression commits in the flowchart landed **after 11:23** on June 23.
+
+### Capture evidence index (serial-verified)
+
+Proof lives in `captures/` — parse with `host_midi_automation_serial_<stamp>.log` (grep `ST,Track` for `PLAYING→OVERDUBBING`, `PERS,result` for save completion).
+
+#### June 23 — PASS bookends (64-bar)
+
+| Started | Baseline + serial | Config | `PLAYING→ODUB` | `PERS,result ok` | Notes |
+|---------|-------------------|--------|----------------|------------------|-------|
+| 00:35 | `20260623_004032` | trk 5, 64+64, no 2nd OD | 1 | yes | Before `58d6c08` |
+| 00:41 | `20260623_004648` | trk 5, 64+64, no 2nd OD | 1 | yes | Before `58d6c08` |
+| 11:15 | **`20260623_112324`** | trk 5, 64+64+**64** | **2** | yes | **Canonical PASS** — after `58d6c08` |
+| 11:14 | `20260623_111501` | trk 5, 64+64+64 | 0 | no | **Aborted** — serial 2 lines only |
+
+PASS tail (`host_midi_automation_serial_20260623_112324.log`): `STOPPED_RECORDING→PLAYING` → `PERS,dispatch` → LED/bar updates → minutes of healthy PLAYING before overdub.
+
+#### June 23 afternoon — after `f946d82` (no 64-bar proof)
+
+| Started | Artifact | Config | `PLAYING→ODUB` | Notes |
+|---------|----------|--------|----------------|-------|
+| 15:05 | `20260623_150711` | **16-bar** only | 1 | PASS — not valid 64-bar anchor |
+
+**Gap:** no 64+64 serial capture on June 23 after 11:23.
+
+#### June 24 – July 6 — capture gap
+
+No `host_midi_automation_serial_*` for **64-bar** runs with `PLAYING→OVERDUBBING` in this window. Bisect still required to pin first failing **commit** at 64-bar.
+
+#### July 7 — config-sensitive on near-HEAD firmware
+
+| Started | Artifact | trk / slot | `PLAYING→ODUB` | `PERS ok` | Notes |
+|---------|----------|------------|----------------|-----------|-------|
+| 01:03 | **`20260707_010856`** | **5 / 0** | **1** | yes | **PASS** — REVT during PLAYING |
+| 01:22 | `20260707_012226` | 5 / 0 | 0 | yes | FAIL — stall ~763 `#CAP` lines |
+| 02:12 | `20260707_021433` | 5 / 0 | 0 | yes | FAIL |
+| 02:36 | `20260707_024009` | 6 / 8 | 0 | no | FAIL — current gate config |
+| 03:18 | **`20260707_032321`** | **6 / 8** | **0** | yes | **Canonical FAIL** — MIDI out starts, no overdub arm |
+
+FAIL tail (`host_midi_automation_serial_20260707_032321.log`): `STOPPED_RECORDING→PLAYING` → `PERS,request,queued` → some `MO,144` MIDI out → **0** `PLAYING→OVERDUBBING`.
+
+#### Commit timeline vs captures
+
+```
+Jun 23 00:35  PASS 64-bar (004032)          [before 58d6c08]
+Jun 23 11:12  commit 58d6c08
+Jun 23 11:23  PASS 64+64+64 (112324)        ← canonical proof
+Jun 23 15:08  commit 5fb37a3
+Jun 23 17:44  commit f946d82
+Jun 23 15:07  16-bar PASS only (150711)     — not 64-bar proof
+Jun 28 20:39  commit 4e83ac1
+Jul  5 19:41  commit ecb3b8a
+              (no 64-bar serial Jun24–Jul6)
+Jul  7 01:03  PASS 64-bar trk5/slot0 (010856)
+Jul  7 03:23  FAIL 64-bar trk6/slot8 (032321)
+```
+
+**Implications:**
+
+- O1/O2 are **proven** by serial logs above — bisect not needed to establish pass vs fail bookends.
+- Bisect **still required** — no per-commit 64-bar serial at `f946d82`, `4e83ac1`, `ecb3b8a`.
+- **O7 (new):** failure is **config-sensitive** — track 5 / slot 0 can PASS on July 7 while track 6 / slot 8 fails on same firmware family.
+- Validate gate should include **both** failing config (trk 6 / slot 8) and regression check on trk 5 / slot 0.
 
 ```mermaid
 flowchart TB
@@ -93,12 +155,14 @@ Design intent and **runtime invariants** — not a mandate to restore June’s e
 
 | ID | Observation | Source |
 |----|-------------|--------|
-| O1 | June 23 HITL **PASS** — `PLAYING→OVERDUBBING`, `PERS,result,...,ok` | [`captures/host_midi_automation_baseline_20260623_112324.json`](captures/host_midi_automation_baseline_20260623_112324.json) |
-| O2 | Current firmware **FAIL** — stall ~12 `#CAP` lines after `STOPPED_RECORDING→PLAYING`; 0 `ODUB`; 0 inbound MIDI after play | [`captures/host_midi_automation_baseline_20260707_032321.json`](captures/host_midi_automation_baseline_20260707_032321.json) |
+| O1 | June 23 HITL **PASS** — `PLAYING→OVERDUBBING` ×2, `PERS,result,...,ok` | [`captures/host_midi_automation_serial_20260623_112324.log`](captures/host_midi_automation_serial_20260623_112324.log) |
+| O2 | Current gate **FAIL** (trk 6 / slot 8) — `STOPPED_RECORDING→PLAYING` then 0 `PLAYING→OVERDUBBING`; MIDI out may start; overdub never arms | [`captures/host_midi_automation_serial_20260707_032321.log`](captures/host_midi_automation_serial_20260707_032321.log) |
 | O3 | 64-bar **record completes** on current firmware (49152 ticks, note pairs verified) | Same FAIL artifact |
 | O4 | Commits **after** 11:23 on June 23 changed materialization / consumer paths | Git: `f946d82`, `4e83ac1`, `ecb3b8a` (see flowchart above) |
 | O5 | `markDisplayCachesStale()` sets `visualCacheDirty` but **does not clear** `visualCache.notes` | [`Loop::markDisplayCachesStale`](src/Loop.cpp) |
 | O6 | Deferred save is **slice-based** (~300µs per loop iter while transport active), not one blocking write at stop | [`DEFERRED_RUNTIME_PERSISTENCE.md`](docs/Guides/DEFERRED_RUNTIME_PERSISTENCE.md) |
+| O7 | July 7 **PASS** on track 5 / slot 0 (`010856`) and **FAIL** on track 6 / slot 8 (`032321`) — same firmware family, different HITL config | Serial logs in `captures/` (see § Capture evidence index) |
+| O8 | **No 64-bar serial capture** Jun 24 – Jul 6 with `PLAYING→OVERDUBBING` — bisect anchors not yet run at 64-bar | `captures/host_midi_automation_baseline_202606*.json` scan |
 
 #### Hypotheses (believed contributors — **not proven** until verification)
 
