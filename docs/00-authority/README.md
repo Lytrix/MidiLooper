@@ -142,6 +142,8 @@ Do not resolve conflicts by:
 |------|------|
 | [PROJECT_INTENT.md](PROJECT_INTENT.md) | Canonical project goal and decision log |
 | [ARCHITECTURE_RULES.md](ARCHITECTURE_RULES.md) | Ownership, naming suffixes, forbidden patterns, new-abstraction checklist |
+| [Architecture/RuntimeArchitecture.md](Architecture/RuntimeArchitecture.md) | Runtime data flow: storage → derived representations → interval projection → consumers |
+| [Architecture/](Architecture/) | Child docs: Storage, DerivedViews, IntervalProjection, Playback, Display |
 | [DELIVERY_RULES.md](DELIVERY_RULES.md) | How work is tracked, verified, and shipped |
 
 ---
