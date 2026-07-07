@@ -46,6 +46,9 @@ bool wrapPairIsUnblocked(const MidiEventVec& midiEvents, uint32_t offTick, uint3
 bool isPreferredWrapTailForHeadOff(uint32_t tailOnTick, uint32_t headOffTick,
                                    const MidiEventVec& midiEvents, uint8_t pitch, uint8_t channel,
                                    uint32_t loopLength);
+bool isPreferredWrapTailForHeadOff(uint32_t tailOnTick, uint32_t headOffTick,
+                                   const SessionMidiEventVec& midiEvents, uint8_t pitch,
+                                   uint8_t channel, uint32_t loopLength);
 
 /****
  * @struct DisplayNote
@@ -78,10 +81,12 @@ public:
     CachedNoteList() : lastMidiHash(0), lastLoopLength(0), isValid(false) {}
     
     const DisplayNoteVec& getNotes(const MidiEventVec& midiEvents, uint32_t loopLength);
+    const DisplayNoteVec& getNotes(const SessionMidiEventVec& midiEvents, uint32_t loopLength);
     void invalidate() { isValid = false; }
     
 private:
     uint32_t computeMidiHash(const MidiEventVec& midiEvents);
+    uint32_t computeMidiHash(const SessionMidiEventVec& midiEvents);
 };
 
 /**
@@ -97,6 +102,8 @@ private:
  * @return Vector of paired DisplayNote entries.
  */
 std::vector<DisplayNote> reconstructNotes(const MidiEventVec& midiEvents, uint32_t loopLength,
+                                          bool verboseLog = true);
+std::vector<DisplayNote> reconstructNotes(const SessionMidiEventVec& midiEvents, uint32_t loopLength,
                                           bool verboseLog = true);
 
 DisplayNoteVec reconstructDisplayNotes(const MidiEventVec& midiEvents, uint32_t loopLength,
@@ -122,6 +129,8 @@ std::vector<OpenNoteOn> findOpenNoteOns(const std::vector<MidiEvent, Alloc>& mid
                                           uint32_t loopLength);
 
 bool isWrapHeldOpenNote(const MidiEventVec& midiEvents, const OpenNoteOn& open, uint32_t loopLength);
+bool isWrapHeldOpenNote(const SessionMidiEventVec& midiEvents, const OpenNoteOn& open,
+                        uint32_t loopLength);
 
 /**
  * @brief Fast lookup index for NoteOn/NoteOff events by (pitch<<32)|tick.
@@ -132,6 +141,7 @@ using Key = uint64_t;
 using EventIndexMap = std::unordered_map<Key, size_t>;
 using EventIndex = std::pair<EventIndexMap, EventIndexMap>;
 EventIndex buildEventIndex(const MidiEventVec& midiEvents);
+EventIndex buildEventIndex(const SessionMidiEventVec& midiEvents);
 
 /** Remove extra note-on/note-off pairs with identical pitch, start, and end (after pitch merge). */
 void removeDuplicateNotePairsAtSpan(MidiEventVec& midiEvents, uint8_t pitch, uint32_t startTick,

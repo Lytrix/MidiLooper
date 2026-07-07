@@ -64,7 +64,7 @@ const char* capturePhaseLabel(CapturePhase phase) {
 }
 
 void sortCaptureStoreByTick(LoopEventStore& store) {
-  MidiEventVec sorted;
+  SessionMidiEventVec sorted;
   store.flatten(sorted);
   std::stable_sort(sorted.begin(), sorted.end(),
                    [](const MidiEvent& a, const MidiEvent& b) { return a.tick < b.tick; });
@@ -135,7 +135,7 @@ ChunkIdList deepCloneChunkRefs(const ChunkIdList& refs) {
   if (refs.empty()) {
     return {};
   }
-  MidiEventVec flat;
+  SessionMidiEventVec flat;
   LoopEventStore::appendChunkRefEvents(refs, flat);
   LoopEventStore store;
   store.loadFromFlat(flat);
@@ -259,6 +259,23 @@ bool Loop::hasPublishedEvents() const {
 namespace {
 
 template <typename MidiEventVector>
+void mergeSortedLoopCaptureLayers(MidiEventVector& base, MidiEventVector&& addition) {
+  if (addition.empty()) {
+    return;
+  }
+  if (base.empty()) {
+    base = std::move(addition);
+    return;
+  }
+  MidiEventVector merged;
+  merged.reserve(base.size() + addition.size());
+  std::merge(base.begin(), base.end(), addition.begin(), addition.end(),
+             std::back_inserter(merged),
+             [](const MidiEvent& a, const MidiEvent& b) { return a.tick < b.tick; });
+  base = std::move(merged);
+}
+
+template <typename MidiEventVector>
 void mergeActiveCapturePassesInto(const LoopPasses& passes, MidiEventVector& out) {
   out.clear();
   if (passes.hasRecordPass() && passes.recordPass.state == CapturePassState::Active &&
@@ -278,18 +295,7 @@ void mergeActiveCapturePassesInto(const LoopPasses& passes, MidiEventVector& out
   for (const OverdubPass* pass : activeOverdubs) {
     MidiEventVector layer;
     LoopEventStore::appendChunkRefEvents(pass->chunkRefs, layer);
-    if (out.empty()) {
-      out = std::move(layer);
-      continue;
-    }
-    if (layer.empty()) {
-      continue;
-    }
-    MidiEventVector merged;
-    merged.reserve(out.size() + layer.size());
-    std::merge(out.begin(), out.end(), layer.begin(), layer.end(), std::back_inserter(merged),
-               [](const MidiEvent& a, const MidiEvent& b) { return a.tick < b.tick; });
-    out = std::move(merged);
+    mergeSortedLoopCaptureLayers(out, std::move(layer));
   }
 }
 
@@ -387,6 +393,20 @@ void Loop::enableEditPasses(const EditPassIdList& ids) {
   }
   ++playbackRevision;
   markPassDerivedStale();
+}
+
+void Loop::materializeExcludingEditPassIds(const EditPassIdList& excludeIds,
+                                           SessionMidiEventVec& out) const {
+  LoopPasses scopedPasses = passes;
+  for (EditPass& editPass : scopedPasses.editPasses) {
+    for (const EditPassId id : excludeIds) {
+      if (editPass.id == id) {
+        editPass.state = EditPassState::Disabled;
+        break;
+      }
+    }
+  }
+  scopedPasses.materializeToEventVector(out, loopLengthTicks);
 }
 
 void Loop::materializeExcludingEditPassIds(const EditPassIdList& excludeIds,
@@ -493,12 +513,12 @@ void Loop::markPassDerivedStale() {
   invalidatePlaybackCaches();
 }
 
-MidiEventVec& Loop::midiEvents() {
+SessionMidiEventVec& Loop::midiEvents() {
   materializeEditViewFromPasses();
   return passesMaterializedStore_.mutFlat();
 }
 
-const MidiEventVec& Loop::midiEvents() const {
+const SessionMidiEventVec& Loop::midiEvents() const {
   materializeEditViewFromPasses();
   return passesMaterializedStore_.readFlat();
 }
@@ -536,7 +556,6 @@ void Loop::restorePassesSnapshot(const PersistedLoopSnapshot& snapshot) {
   ++playbackRevision;
   discardPassesMaterializedCache();
   markDisplayCachesStale();
-  rebuildVisualCacheFromPasses();
 }
 
 void Loop::discardPassesMaterializedCache() {
@@ -830,6 +849,18 @@ NoteId Loop::allocateNoteId() {
   return nextNoteId_++;
 }
 
+void Loop::assignMissingNoteIds(SessionMidiEventVec& events) {
+  for (MidiEvent& evt : events) {
+    if (evt.isNoteOn() && evt.noteId == kInvalidNoteId) {
+      evt.noteId = allocateNoteId();
+      logger.log(CAT_TRACK, LOG_WARNING,
+                 "assignMissingNoteIds: assigned noteId=%lu tick=%lu pitch=%u",
+                 static_cast<unsigned long>(evt.noteId), static_cast<unsigned long>(evt.tick),
+                 static_cast<unsigned>(evt.data.noteData.note));
+    }
+  }
+}
+
 void Loop::assignMissingNoteIds(MidiEventVec& events) {
   for (MidiEvent& evt : events) {
     if (evt.isNoteOn() && evt.noteId == kInvalidNoteId) {
@@ -843,7 +874,7 @@ void Loop::assignMissingNoteIds(MidiEventVec& events) {
 }
 
 void Loop::assignMissingNoteIdsInStore(LoopEventStore& store) {
-  MidiEventVec flat;
+  SessionMidiEventVec flat;
   store.flatten(flat);
   assignMissingNoteIds(flat);
   store.clear();
@@ -997,7 +1028,7 @@ bool hasActiveEditPasses(const LoopPasses& passes) {
 template <typename MidiEventVector>
 void gatherPublishedFlatForDerivedView(const Loop& loop, MidiEventVector& flat) {
   if (hasActiveEditPasses(loop.passes)) {
-    const MidiEventVec& materialized = loop.midiEvents();
+    const SessionMidiEventVec& materialized = loop.midiEvents();
     flat.assign(materialized.begin(), materialized.end());
     return;
   }
@@ -1012,7 +1043,7 @@ void gatherPublishedFlatForDerivedView(const Loop& loop, MidiEventVector& flat) 
 template <typename MidiEventVector>
 void gatherChunkFlatForDisplaySlice(const Loop& loop, MidiEventVector& flat) {
   if (hasActiveEditPasses(loop.passes)) {
-    const MidiEventVec& materialized = loop.midiEvents();
+    const SessionMidiEventVec& materialized = loop.midiEvents();
     flat.assign(materialized.begin(), materialized.end());
     return;
   }

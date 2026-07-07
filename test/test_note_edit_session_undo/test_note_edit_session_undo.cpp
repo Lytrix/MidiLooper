@@ -86,7 +86,8 @@ OverdubPass makeOverdubPassWithNote(uint8_t channel, uint32_t startTick, uint8_t
   return pass;
 }
 
-void applyMoveToSession(NoteEditFocus& focus, MidiEventVec& flat, uint8_t channel,
+template <typename Alloc>
+void applyMoveToSession(NoteEditFocus& focus, std::vector<MidiEvent, Alloc>& flat, uint8_t channel,
                         uint32_t newStart) {
   const uint32_t len = focus.last.endTick - focus.last.startTick;
   focus.last.startTick = newStart;

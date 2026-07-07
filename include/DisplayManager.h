@@ -179,6 +179,8 @@ private:
     uint32_t liveDisplayCacheLoopLength = 0;
     uint8_t liveDisplayCacheSlot = 255;
     TrackState liveDisplayCacheTrackState = NUM_TRACK_STATES;
+    uint32_t liveMergePlaybackRevision_ = UINT32_MAX;
+    uint16_t liveMergeCaptureRevision_ = 0;
     uint8_t noteEditDisplayCacheSlot_ = 255;
     uint32_t noteEditDisplayCachePreviewRevision_ = UINT32_MAX;
     uint32_t noteEditDisplayCacheLoopLength_ = 0;

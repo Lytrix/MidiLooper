@@ -14,6 +14,8 @@ void applyNoteEditPass(MidiEventVec& events, const EditPass& editPass, uint32_t 
 /// Apply ordered note edit pass rows with move/length identity tracking.
 void applyNoteEditPassSequence(MidiEventVec& events, const EditPassVec& rows,
                                uint32_t loopLengthTicks);
+void applyNoteEditPassSequence(SessionMidiEventVec& events, const EditPassVec& rows,
+                               uint32_t loopLengthTicks);
 
 /// Find note-on index by stable **NoteId**; returns -1 if not found.
 int findNoteOnById(const MidiEventVec& events, NoteId noteId);

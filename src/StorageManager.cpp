@@ -8,6 +8,7 @@
 #include "StorageLoopIo.h"
 #include "CurrentSetStorage.h"
 #include "CurrentWorkspaceStorage.h"
+#include "PersistenceLayout.h"
 #include "PersistenceBudget.h"
 #include "SetRevisionCatalog.h"
 #include "RevisionPackedBlob.h"
@@ -26,6 +27,7 @@
 #include "Logger.h"
 #include "Utils/DebugSessionCapture.h"
 #include "Utils/MemoryMonitor.h"
+#include "Utils/PersistenceDiagnostics.h"
 #if defined(SESSION_CAPTURE)
 #include "DisplayManager.h"
 #include "LooperState.h"
@@ -1351,6 +1353,9 @@ void StorageManager::requestDeferredSaveState(const LooperState& /*state*/, uint
                                       : storageSession.currentWorkspaceSave.admissionHeap;
     storageSession.currentWorkspaceSave.urgentRequested = storageSession.currentWorkspaceSave.urgentRequested || isUrgentRequest;
     storageSession.currentWorkspaceSave.pending = true;
+    if (!alreadyPending) {
+        PersistenceDiagnostics::onDeferredSaveRequested();
+    }
     SC_PERSIST("request", 0, reportedHeap, reportedHeap,
                alreadyPending ? "already_pending" : "queued");
 }
@@ -1506,28 +1511,33 @@ void StorageManager::processDeferredSaveState(const LooperState& state) {
         }
 
         if (isCaptureActiveForPersistence()) {
+            PersistenceDiagnostics::onTransportGateBlock();
             break;
         }
 
         if (!storageSession.currentWorkspaceSave.inProgress) {
-            if (storageSession.currentWorkspaceSave.admissionHeap != UINT32_MAX &&
-                !LoopEventStore::hasInternalHeapHeadroomForNonCriticalWork(
-                    storageSession.currentWorkspaceSave.admissionHeap)) {
+            const uint32_t currentHeap = MemoryMonitor::getInternalHeapFreeBytes();
+            if (!LoopEventStore::hasInternalHeapHeadroomForNonCriticalWork(currentHeap)) {
                 if (!storageSession.currentWorkspaceSave.heapFloorDeferred) {
-                    SC_PERSIST("defer", 0, storageSession.currentWorkspaceSave.admissionHeap, storageSession.currentWorkspaceSave.admissionHeap,
-                               "heap_floor");
+                    const uint32_t admissionHeap =
+                        storageSession.currentWorkspaceSave.admissionHeap == UINT32_MAX
+                            ? currentHeap
+                            : storageSession.currentWorkspaceSave.admissionHeap;
+                    SC_PERSIST("defer", 0, admissionHeap, currentHeap, "heap_floor");
                     storageSession.currentWorkspaceSave.heapFloorDeferred = true;
                 }
+                PersistenceDiagnostics::onHeapFloorBlock();
                 break;
             }
             storageSession.currentWorkspaceSave.heapFloorDeferred = false;
         }
 
         if (!storageSession.currentWorkspaceSave.inProgress && storageSession.currentWorkspaceSave.pending) {
-            const uint32_t dispatchHeap = storageSession.currentWorkspaceSave.admissionHeap == UINT32_MAX
-                                              ? 0
-                                              : storageSession.currentWorkspaceSave.admissionHeap;
-            SC_PERSIST("dispatch", 0, dispatchHeap, dispatchHeap, "run");
+            const uint32_t dispatchHeap = MemoryMonitor::getInternalHeapFreeBytes();
+            const uint32_t admissionHeap =
+                storageSession.currentWorkspaceSave.admissionHeap == UINT32_MAX ? dispatchHeap
+                                                                                : storageSession.currentWorkspaceSave.admissionHeap;
+            SC_PERSIST("dispatch", 0, admissionHeap, dispatchHeap, "run");
             storageSession.currentWorkspaceSave.pending = false;
             storageSession.currentWorkspaceSave.startedAtUs = micros();
             storageSession.currentWorkspaceSave.heapBefore = dispatchHeap;
@@ -1562,9 +1572,11 @@ void StorageManager::processDeferredSaveState(const LooperState& state) {
         const uint32_t ioStartUs = micros();
         storageSession.currentWorkspaceSave.sdIoActive = true;
         const bool stepOk = stepDeferredSaveJob();
-        storageSession.currentWorkspaceSave.displayBlockUs += micros() - ioStartUs;
+        const uint32_t sliceLatencyUs = micros() - ioStartUs;
+        storageSession.currentWorkspaceSave.displayBlockUs += sliceLatencyUs;
         storageSession.currentWorkspaceSave.sdIoActive = false;
         emitDeferredSaveSliceTelemetry(stepOk ? "done" : "failed");
+        PersistenceDiagnostics::onSliceCompleted(sliceLatencyUs);
         if (!stepOk) {
             storageSession.currentWorkspaceSave.inProgress = false;
         }
@@ -1602,6 +1614,17 @@ void StorageManager::processDeferredSaveState(const LooperState& state) {
         }
         break;
     }
+
+#if defined(SESSION_CAPTURE)
+    if ((storageSession.currentWorkspaceSave.pending || storageSession.currentWorkspaceSave.inProgress) &&
+        !isCaptureActiveForPersistence() &&
+        PersistenceBudget::persistenceSliceBudgetExhausted(sliceBudgetUs, micros() - sliceStartUs)) {
+        PersistenceDiagnostics::onBudgetBlock();
+    }
+    PersistenceDiagnostics::maybeEmitPeriodic(
+        isCaptureActiveForPersistence(), storageSession.currentWorkspaceSave.pending,
+        storageSession.currentWorkspaceSave.inProgress, storageSession.currentWorkspaceSave.sdIoActive);
+#endif
 }
 
 void StorageManager::requestCommitRevision() {
@@ -1937,7 +1960,113 @@ namespace {
 // access DMAMEM on IMXRT1062.
 char sHitlSerialLineBuffer[48];
 size_t sHitlSerialLineLength = 0;
+
+CAPTURE_HITL_MEM bool renamePathOnSdIfPresent(const char* src, const char* dest) {
+    if (src == nullptr || dest == nullptr || src[0] == '\0' || dest[0] == '\0') {
+        return false;
+    }
+    if (!SD.exists(src)) {
+        return true;
+    }
+    if (SD.rename(src, dest)) {
+        Serial.print("[StorageManager] Quarantined: ");
+        Serial.print(src);
+        Serial.print(" -> ");
+        Serial.println(dest);
+        return true;
+    }
+    Serial.print("[StorageManager] ERROR: quarantine rename failed: ");
+    Serial.println(src);
+    return false;
+}
+
+CAPTURE_HITL_MEM bool quarantineCurrentWorkspaceOnSdImpl() {
+    const unsigned long stamp = static_cast<unsigned long>(millis());
+    char dest[72];
+    bool ok = true;
+
+    int written = std::snprintf(dest, sizeof(dest), "%s.bad.%lu", PersistenceLayout::kCurrentRoot,
+                                stamp);
+    if (written > 0 && static_cast<size_t>(written) < sizeof(dest)) {
+        ok = renamePathOnSdIfPresent(PersistenceLayout::kCurrentRoot, dest) && ok;
+    } else {
+        ok = false;
+    }
+
+    written = std::snprintf(dest, sizeof(dest), "%s/checkpoints.bad.%lu",
+                            PersistenceLayout::kRecoveryRoot, stamp);
+    if (written > 0 && static_cast<size_t>(written) < sizeof(dest)) {
+        ok = renamePathOnSdIfPresent(CurrentSetStorage::kCheckpointsDir, dest) && ok;
+    } else {
+        ok = false;
+    }
+
+    if (SD.exists(STORAGE_FILENAME)) {
+        written = std::snprintf(dest, sizeof(dest), "/state.bad.%lu", stamp);
+        if (written > 0 && static_cast<size_t>(written) < sizeof(dest)) {
+            ok = renamePathOnSdIfPresent(STORAGE_FILENAME, dest) && ok;
+        } else {
+            ok = false;
+        }
+    }
+
+    Serial.println(ok ? "[StorageManager] Workspace quarantine complete."
+                      : "[StorageManager] Workspace quarantine incomplete.");
+    return ok;
+}
+
+CAPTURE_HITL_MEM bool handleHitlQuarantineCommandLine(const char* line) {
+    if (line == nullptr || std::strcmp(line, "!QUARANTINE_WORKSPACE") != 0) {
+        return false;
+    }
+    (void)quarantineCurrentWorkspaceOnSdImpl();
+    return true;
+}
+
+CAPTURE_HITL_MEM void pollBootQuarantineLineFromSerial(uint32_t listenMs) {
+    Serial.println(
+        "[StorageManager] Boot: send !QUARANTINE_WORKSPACE now to quarantine SD workspace "
+        "(current + recovery checkpoints)");
+    char line[48];
+    size_t len = 0;
+    bool sawByte = false;
+    const uint32_t startMs = millis();
+    const uint32_t deadlineMs = startMs + listenMs;
+    while (millis() < deadlineMs) {
+        if (Serial.available() == 0) {
+            if (!sawByte && millis() - startMs >= 250) {
+                return;
+            }
+            delay(1);
+            continue;
+        }
+        sawByte = true;
+        const char ch = static_cast<char>(Serial.read());
+        if (ch == '\r') {
+            continue;
+        }
+        if (ch == '\n') {
+            line[len] = '\0';
+            if (handleHitlQuarantineCommandLine(line)) {
+                return;
+            }
+            len = 0;
+            continue;
+        }
+        if (len + 1 < sizeof(line)) {
+            line[len++] = ch;
+        }
+    }
+}
 }  // namespace
+
+CAPTURE_HITL_MEM bool StorageManager::quarantineCurrentWorkspaceOnSd() {
+    return quarantineCurrentWorkspaceOnSdImpl();
+}
+
+CAPTURE_HITL_MEM void StorageManager::pollBootQuarantineWorkspaceBeforeLoad(uint32_t listenMs) {
+    pollBootQuarantineLineFromSerial(listenMs);
+}
 
 CAPTURE_HITL_MEM void StorageManager::processHitlSerialCommands() {
 #if BYPASS_STOP_UNDO_SAVE
@@ -1956,6 +2085,8 @@ CAPTURE_HITL_MEM void StorageManager::processHitlSerialCommands() {
                 cleanupHitlRevisionCommit();
             } else if (std::strcmp(sHitlSerialLineBuffer, "!REV_NUKE_SETS") == 0) {
                 nukeHitlSetsCatalog();
+            } else if (handleHitlQuarantineCommandLine(sHitlSerialLineBuffer)) {
+                Serial.println("[StorageManager] Reboot Teensy to load empty workspace.");
             } else if (std::strcmp(sHitlSerialLineBuffer, "!REV_LOAD_DIRTY_YES") == 0) {
                 confirmRevisionLoadAfterCommitForHitl();
             } else if (std::strcmp(sHitlSerialLineBuffer, "!REV_LOAD_DIRTY_NO") == 0) {

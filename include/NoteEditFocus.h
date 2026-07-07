@@ -158,7 +158,9 @@ void resolveOverlapNotesForPreCommit(std::vector<MidiEvent, Alloc>& sessionStore
                                      NoteEditFocus& focus, uint8_t channel, uint32_t loopLength);
 
 /// Drop overlap scratch rows that are already materialized in session store (display-wrap baselines).
-void pruneOverlapNotesBeforePreCommit(NoteEditFocus& focus, MidiEventVec& events, uint8_t channel);
+template <typename Alloc>
+void pruneOverlapNotesBeforePreCommit(NoteEditFocus& focus, std::vector<MidiEvent, Alloc>& events,
+                                      uint8_t channel);
 
 /// True when overlap scratch refers to the moving note (not a restorable overlap participant).
 bool isMovingNoteOverlapScratchEntry(const NoteEditFocus& focus, NoteId noteId,
@@ -177,16 +179,17 @@ NoteUtils::DisplayNoteVec filterSelectableDisplayNotes(
     uint8_t channel, uint32_t loopLength);
 
 /// NoteIds for micro normalize scope: mover, overlap participants, same-pitch wrap interactors.
+template <typename Alloc>
 std::unordered_set<NoteId> buildEditClosureNoteIds(const NoteEditFocus& focus,
-                                                 const MidiEventVec& sessionEvents,
-                                                 uint8_t channel, uint32_t loopLength);
+                                                   const std::vector<MidiEvent, Alloc>& sessionEvents,
+                                                   uint8_t channel, uint32_t loopLength);
 
 /// Committed-loop linear baselines for edit-closure note ids (moving note + wrap interactors).
-template <typename Alloc>
+template <typename AllocA, typename AllocB>
 void populateBaselineMapForEditClosure(NoteEditFocus& focus,
-                                       const std::vector<MidiEvent, Alloc>& committedLoopEvents,
-                                       const MidiEventVec& sessionEvents, uint8_t channel,
-                                       uint32_t loopLength);
+                                       const std::vector<MidiEvent, AllocA>& committedLoopEvents,
+                                       const std::vector<MidiEvent, AllocB>& sessionEvents,
+                                       uint8_t channel, uint32_t loopLength);
 
 template <typename NotesVec>
 inline NoteId noteIdFromFilteredDisplayNote(const NotesVec& filtered, int filteredIndex) {

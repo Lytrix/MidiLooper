@@ -96,7 +96,9 @@ void moveNoteWithOverlapHandling(Track& track, EditManager& manager,
                              NoteUtils::EventIndexMap& offIndex);
     
     // Find the corresponding note-off event for a given note-on event using LIFO pairing logic
-    MidiEvent* findCorrespondingNoteOff(MidiEventVec& midiEvents, MidiEvent* noteOnEvent, uint8_t pitch, std::uint32_t startTick, std::uint32_t endTick);
+    template <typename Alloc>
+    MidiEvent* findCorrespondingNoteOff(std::vector<MidiEvent, Alloc>& midiEvents, MidiEvent* noteOnEvent,
+                                        uint8_t pitch, std::uint32_t startTick, std::uint32_t endTick);
 
     /** Pair-identified note-off at endTick for (pitch, startTick); safe when same-pitch overlap notes share ticks. */
     MidiEvent* findNoteOffPairedAt(MidiEventVec& midiEvents, uint8_t pitch, uint32_t startTick,

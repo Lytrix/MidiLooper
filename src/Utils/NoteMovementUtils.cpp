@@ -697,9 +697,10 @@ NOTE_EDIT_MEM void findOverlaps(const std::vector<NoteUtils::DisplayNote>& curre
               notesToShorten.size(), notesToDelete.size());
 }
 
-NOTE_EDIT_MEM MidiEvent* findCorrespondingNoteOff(MidiEventVec& midiEvents, MidiEvent* noteOnEvent,
-                                    uint8_t pitch, std::uint32_t startTick,
-                                    std::uint32_t endTick) {
+template <typename Alloc>
+NOTE_EDIT_MEM MidiEvent* findCorrespondingNoteOff(std::vector<MidiEvent, Alloc>& midiEvents,
+                                                  MidiEvent* noteOnEvent, uint8_t pitch,
+                                                  std::uint32_t startTick, std::uint32_t endTick) {
     (void)startTick;
     (void)endTick;
     if (noteOnEvent == nullptr) {
@@ -740,6 +741,11 @@ NOTE_EDIT_MEM MidiEvent* findCorrespondingNoteOff(MidiEventVec& midiEvents, Midi
               pitch, startTick);
     return nullptr;
 }
+
+template MidiEvent* findCorrespondingNoteOff<InternalHeapFirstAllocator<MidiEvent>>(
+    MidiEventVec&, MidiEvent*, uint8_t, std::uint32_t, std::uint32_t);
+template MidiEvent* findCorrespondingNoteOff<ExternalMemoryFirstAllocator<MidiEvent>>(
+    SessionMidiEventVec&, MidiEvent*, uint8_t, std::uint32_t, std::uint32_t);
 
 NOTE_EDIT_MEM MidiEvent* findNoteOffPairedAt(MidiEventVec& midiEvents, uint8_t pitch, uint32_t startTick,
                                uint32_t endTick) {

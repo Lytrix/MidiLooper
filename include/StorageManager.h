@@ -111,6 +111,10 @@ public:
     static void confirmRevisionLoadDiscardWorkspaceForHitl();
     static void cancelRevisionLoadRequestForHitl();
     static bool nukeHitlSetsCatalog();
+    /// Rename MidiLooper/current + recovery/checkpoints on SD (HITL / dev recovery).
+    static bool quarantineCurrentWorkspaceOnSd();
+    /// Before loadState: listen briefly for !QUARANTINE_WORKSPACE (exits early if no serial bytes).
+    static void pollBootQuarantineWorkspaceBeforeLoad(uint32_t listenMs = 3000);
     static void processHitlSerialCommands();
 #endif
 

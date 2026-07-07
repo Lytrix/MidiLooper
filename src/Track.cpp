@@ -31,6 +31,24 @@
 
 extern TrackManager trackManager;
 
+MidiEventVec& Track::legacyMidiEventsFromPublished() {
+  // Edit-path boundary only (EditManager::editMidiEvents when session inactive).
+  // Display and playback use SessionMidiEventVec via getMidiEvents().
+  Loop& loop = getActiveLoop();
+  const uint32_t revision = loop.playbackRevision;
+  if (publishedMidiScratchRevision_ != revision) {
+    loop.ensurePassesMaterializedStore();
+    const SessionMidiEventVec& published = loop.midiEvents();
+    publishedMidiScratch_.assign(published.begin(), published.end());
+    publishedMidiScratchRevision_ = revision;
+  }
+  return publishedMidiScratch_;
+}
+
+const MidiEventVec& Track::legacyMidiEventsFromPublished() const {
+  return const_cast<Track*>(this)->legacyMidiEventsFromPublished();
+}
+
 MidiEventVec& Track::editAwareMidiEvents() {
   return editManager.editMidiEvents(*this);
 }
@@ -40,6 +58,7 @@ const MidiEventVec& Track::editAwareMidiEvents() const {
 }
 
 void Track::invalidateCaches(bool refreshPlaybackPreview) {
+  publishedMidiScratchRevision_ = UINT32_MAX;
   Loop& activeLoop = getActiveLoop();
   activeLoop.invalidateCaches();
   activeLoop.playbackOrderDirty = true;
@@ -112,6 +131,27 @@ void logRecordStopStage(const Loop& loop, uint32_t stopStartUs, const char* stag
   const uint32_t elapsedUs = micros() - stopStartUs;
   SC_REC_STOP_STAGE(stage, elapsedUs, stageDurationUs, heapBefore, heapAfter,
                     stats.eventCount, stats.chunkRefCount, outcome);
+}
+
+void logOverdubStopStage(const Loop& loop, uint32_t stopStartUs, const char* stage,
+                         uint32_t stageDurationUs, uint32_t heapBefore, uint32_t heapAfter,
+                         const char* outcome, const StopPathStorageStats* cachedStats = nullptr) {
+  const StopPathStorageStats stats =
+      cachedStats ? *cachedStats : collectStopPathStorageStats(loop, false);
+  const uint32_t elapsedUs = micros() - stopStartUs;
+  SC_ODUB_STOP_STAGE(stage, elapsedUs, stageDurationUs, heapBefore, heapAfter, stats.eventCount,
+                     stats.chunkRefCount, outcome);
+}
+
+void emitOverdubStopDisplaySnapshot(Track& track, uint8_t displaySlot, uint32_t currentTick) {
+  const Loop& loop = track.getLoop(displaySlot);
+  if (LoopEventStore::hasInternalHeapHeadroomForNonCriticalWork(
+          MemoryMonitor::getInternalHeapFreeBytes())) {
+    displayManager.emitDisplayCaptureSnapshot(track, displaySlot, currentTick);
+    return;
+  }
+  SC_DISP(displaySlot, TrackStateMachine::toString(track.getState()), loop.loopLengthTicks, 0, 0, 0,
+          0, loop.hasPublishedEvents() ? 1 : 0);
 }
 
 void logMemoryAfterOverdubStop(uint32_t overdubNoteOns, const Loop& loop) {
@@ -629,7 +669,8 @@ CommitResult Track::finalizeCommitSideEffects(CommitResult result, CommitReason 
         finalizeLoopAtStop(closeTick, false);
         StorageManager::markCurrentSetLoopSlotDirty(resolveTrackIndexForPersistence(*this),
                                                     getActiveLoopIndex());
-        StorageManager::requestDeferredSaveState(looperState.getLooperState());
+        StorageManager::requestDeferredSaveState(looperState.getLooperState(),
+                                                 MemoryMonitor::getInternalHeapFreeBytes());
       } else {
         scheduleDeferredValidateOnly();
       }
@@ -654,7 +695,8 @@ CommitResult Track::finalizeCommitSideEffects(CommitResult result, CommitReason 
       if (overdubStop) {
         StorageManager::markCurrentSetLoopSlotDirty(resolveTrackIndexForPersistence(*this),
                                                     getActiveLoopIndex());
-        StorageManager::requestDeferredSaveState(looperState.getLooperState());
+        StorageManager::requestDeferredSaveState(looperState.getLooperState(),
+                                                 MemoryMonitor::getInternalHeapFreeBytes());
       }
       break;
     }
@@ -693,7 +735,7 @@ void Track::emitStoredMidiVerification() const {
     return;
   }
 
-  MidiEventVec flat;
+  SessionMidiEventVec flat;
   loop.mergeActiveCapturePasses(flat);
   for (const MidiEvent& evt : flat) {
     if (evt.isNoteOn()) {
@@ -701,6 +743,11 @@ void Track::emitStoredMidiVerification() const {
     } else if (evt.isNoteOff()) {
       SC_STORED_NOTE_EVENT('F', evt.tick, evt.channel, evt.data.noteData.note);
     }
+  }
+
+  if (!LoopEventStore::hasInternalHeapHeadroomForNonCriticalWork(
+          MemoryMonitor::getInternalHeapFreeBytes())) {
+    return;
   }
 
   for (size_t i = 0; i < flat.size(); ++i) {
@@ -1279,6 +1326,9 @@ void Track::startOverdubbing(uint32_t currentTick) {
 void Track::stopOverdubbing() {
   const uint32_t currentTick = clockManager.getCurrentTick();
   Loop& loop = getActiveLoop();
+  const uint32_t stopStartUs = micros();
+  const uint32_t heapAtEnter = MemoryMonitor::getInternalHeapFreeBytes();
+  logOverdubStopStage(loop, stopStartUs, "enter", 0, heapAtEnter, heapAtEnter, "entered");
   uint32_t closeTick = UINT32_MAX;
   if (loop.loopLengthTicks > 0) {
     closeTick = tickPhaseInLoop(currentTick, loop.startLoopTick, loop.loopLengthTicks);
@@ -1287,21 +1337,51 @@ void Track::stopOverdubbing() {
     closeOpenNotesAtLoopWrap();
     editManager.foldLiveCaptureIntoNoteEditSession(*this, closeTick);
     pendingNotes.clear();
+    const uint32_t stateHeapBefore = MemoryMonitor::getInternalHeapFreeBytes();
+    const uint32_t stateStartUs = micros();
     setState(TRACK_PLAYING);
+    logOverdubStopStage(loop, stopStartUs, "set_state", micros() - stateStartUs, stateHeapBefore,
+                        MemoryMonitor::getInternalHeapFreeBytes(), "in_edit");
+    const uint32_t flushHeapBefore = MemoryMonitor::getInternalHeapFreeBytes();
+    const uint32_t flushStartUs = micros();
+    SC_REC_FLUSH_PENDING_REVTS(256);
+    logOverdubStopStage(loop, stopStartUs, "flush", micros() - flushStartUs, flushHeapBefore,
+                        MemoryMonitor::getInternalHeapFreeBytes(), "ok");
     logMemoryAfterOverdubStop(recordAddedNoteOnCount, loop);
     logger.logTrackEvent("Overdubbing stopped", currentTick);
     logger.info("Overdub stopped (in-edit fold): events=%d, undo_entries=%d",
                 static_cast<int>(loop.displayEventCountHint()), TrackUndo::getUndoCount(*this));
     resetPlaybackState(currentTick);
-    displayManager.emitDisplayCaptureSnapshot(*this, activeLoopIndex, currentTick);
+    emitOverdubStopDisplaySnapshot(*this, activeLoopIndex, currentTick);
+    logOverdubStopStage(loop, stopStartUs, "display", 0, MemoryMonitor::getInternalHeapFreeBytes(),
+                        MemoryMonitor::getInternalHeapFreeBytes(), "ok");
     HotPathTelemetry::requestDeferredSummary("overdub_stop");
     return;
   }
   flushPendingNotesIntoCapture(closeTick);
+  const uint32_t sealHeapBefore = MemoryMonitor::getInternalHeapFreeBytes();
+  const uint32_t sealStartUs = micros();
   const CommitResult commitResult =
       loop.commitCapturePass(CommitReason::OverdubStop, currentTick);
+  logOverdubStopStage(loop, stopStartUs, "seal", micros() - sealStartUs, sealHeapBefore,
+                      MemoryMonitor::getInternalHeapFreeBytes(), commitResultLabel(commitResult));
+  const uint32_t stateHeapBefore = MemoryMonitor::getInternalHeapFreeBytes();
+  const uint32_t stateStartUs = micros();
   setState(TRACK_PLAYING);
-  finalizeCommitSideEffects(commitResult, CommitReason::OverdubStop, closeTick);
+  logOverdubStopStage(loop, stopStartUs, "set_state", micros() - stateStartUs, stateHeapBefore,
+                      MemoryMonitor::getInternalHeapFreeBytes(), "ok");
+  const uint32_t flushHeapBefore = MemoryMonitor::getInternalHeapFreeBytes();
+  const uint32_t flushStartUs = micros();
+  SC_REC_FLUSH_PENDING_REVTS(256);
+  logOverdubStopStage(loop, stopStartUs, "flush", micros() - flushStartUs, flushHeapBefore,
+                      MemoryMonitor::getInternalHeapFreeBytes(), "ok");
+  const uint32_t finalizeHeapBefore = MemoryMonitor::getInternalHeapFreeBytes();
+  const uint32_t finalizeStartUs = micros();
+  const CommitResult sideEffectResult =
+      finalizeCommitSideEffects(commitResult, CommitReason::OverdubStop, closeTick);
+  logOverdubStopStage(loop, stopStartUs, "finalize", micros() - finalizeStartUs,
+                      finalizeHeapBefore, MemoryMonitor::getInternalHeapFreeBytes(),
+                      commitResultLabel(sideEffectResult));
   logMemoryAfterOverdubStop(recordAddedNoteOnCount, loop);
   logger.logTrackEvent("Overdubbing stopped", currentTick);
   logger.info("Overdub stopped: events=%d, undo_entries=%d", static_cast<int>(loop.displayEventCountHint()),
@@ -1309,7 +1389,9 @@ void Track::stopOverdubbing() {
 
   // Preserve phase origin from record-stop rewind so playback cursor and event phase stay aligned.
   resetPlaybackState(currentTick);
-  displayManager.emitDisplayCaptureSnapshot(*this, activeLoopIndex, currentTick);
+  emitOverdubStopDisplaySnapshot(*this, activeLoopIndex, currentTick);
+  logOverdubStopStage(loop, stopStartUs, "display", 0, MemoryMonitor::getInternalHeapFreeBytes(),
+                      MemoryMonitor::getInternalHeapFreeBytes(), "ok");
   HotPathTelemetry::requestDeferredSummary("overdub_stop");
 }
 

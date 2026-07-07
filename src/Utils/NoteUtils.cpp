@@ -168,8 +168,9 @@ NOTE_EDIT_MEM bool shouldDeferLoopEndOff(const std::vector<MidiEvent, Alloc>& mi
     return false;
 }
 
-NOTE_EDIT_MEM bool isWrapHeldOpenNoteImpl(const MidiEventVec& midiEvents, const NoteUtils::OpenNoteOn& open,
-                            uint32_t loopLength) {
+template <typename Alloc>
+NOTE_EDIT_MEM bool isWrapHeldOpenNoteImpl(const std::vector<MidiEvent, Alloc>& midiEvents,
+                            const NoteUtils::OpenNoteOn& open, uint32_t loopLength) {
     if (loopLength == 0) {
         return false;
     }
@@ -228,17 +229,12 @@ NOTE_EDIT_MEM bool isWrapHeldOpenNoteImpl(const MidiEventVec& midiEvents, const 
     return isLatestTailNoteOn(midiEvents, open.tick, open.note, channel, loopLength);
 }
 
-}  // namespace
-
-NOTE_EDIT_MEM bool NoteUtils::isWrapHeldOpenNote(const MidiEventVec& midiEvents, const OpenNoteOn& open,
-                                   uint32_t loopLength) {
-    return isWrapHeldOpenNoteImpl(midiEvents, open, loopLength);
-}
-
-NOTE_EDIT_MEM bool NoteUtils::isPreferredWrapTailForHeadOff(uint32_t tailOnTick, uint32_t headOffTick,
-                                              const MidiEventVec& midiEvents, uint8_t pitch,
-                                              uint8_t channel, uint32_t loopLength) {
-    if (!isHeadTailWrappedPair(tailOnTick, headOffTick, loopLength)) {
+template <typename Alloc>
+NOTE_EDIT_MEM bool isPreferredWrapTailForHeadOffImpl(uint32_t tailOnTick, uint32_t headOffTick,
+                                                     const std::vector<MidiEvent, Alloc>& midiEvents,
+                                                     uint8_t pitch, uint8_t channel,
+                                                     uint32_t loopLength) {
+    if (!NoteUtils::isHeadTailWrappedPair(tailOnTick, headOffTick, loopLength)) {
         return false;
     }
     for (const auto& evt : midiEvents) {
@@ -249,11 +245,37 @@ NOTE_EDIT_MEM bool NoteUtils::isPreferredWrapTailForHeadOff(uint32_t tailOnTick,
             continue;
         }
         if (evt.tick > tailOnTick &&
-            isHeadTailWrappedPair(evt.tick, headOffTick, loopLength)) {
+            NoteUtils::isHeadTailWrappedPair(evt.tick, headOffTick, loopLength)) {
             return false;
         }
     }
     return true;
+}
+
+}  // namespace
+
+NOTE_EDIT_MEM bool NoteUtils::isWrapHeldOpenNote(const MidiEventVec& midiEvents, const OpenNoteOn& open,
+                                   uint32_t loopLength) {
+    return isWrapHeldOpenNoteImpl(midiEvents, open, loopLength);
+}
+
+NOTE_EDIT_MEM bool NoteUtils::isWrapHeldOpenNote(const SessionMidiEventVec& midiEvents,
+                                   const OpenNoteOn& open, uint32_t loopLength) {
+    return isWrapHeldOpenNoteImpl(midiEvents, open, loopLength);
+}
+
+NOTE_EDIT_MEM bool NoteUtils::isPreferredWrapTailForHeadOff(uint32_t tailOnTick, uint32_t headOffTick,
+                                              const MidiEventVec& midiEvents, uint8_t pitch,
+                                              uint8_t channel, uint32_t loopLength) {
+    return isPreferredWrapTailForHeadOffImpl(tailOnTick, headOffTick, midiEvents, pitch, channel,
+                                            loopLength);
+}
+
+NOTE_EDIT_MEM bool NoteUtils::isPreferredWrapTailForHeadOff(uint32_t tailOnTick, uint32_t headOffTick,
+                                              const SessionMidiEventVec& midiEvents, uint8_t pitch,
+                                              uint8_t channel, uint32_t loopLength) {
+    return isPreferredWrapTailForHeadOffImpl(tailOnTick, headOffTick, midiEvents, pitch, channel,
+                                            loopLength);
 }
 
 NOTE_EDIT_MEM bool NoteUtils::wrapPairIsUnblocked(const MidiEventVec& midiEvents, uint32_t offTick, uint32_t onTick,
@@ -274,6 +296,10 @@ NOTE_EDIT_MEM uint32_t NoteUtils::CachedNoteList::computeMidiHash(const MidiEven
     return midiEventVecFnv1aHash(midiEvents);
 }
 
+NOTE_EDIT_MEM uint32_t NoteUtils::CachedNoteList::computeMidiHash(const SessionMidiEventVec& midiEvents) {
+    return midiEventVecFnv1aHash(midiEvents);
+}
+
 const NoteUtils::DisplayNoteVec&
 NoteUtils::CachedNoteList::getNotes(const MidiEventVec& midiEvents, uint32_t loopLength) {
     uint32_t currentHash = computeMidiHash(midiEvents);
@@ -288,6 +314,22 @@ NoteUtils::CachedNoteList::getNotes(const MidiEventVec& midiEvents, uint32_t loo
     lastLoopLength = loopLength;
     isValid = true;
     
+    return cachedNotes;
+}
+
+const NoteUtils::DisplayNoteVec&
+NoteUtils::CachedNoteList::getNotes(const SessionMidiEventVec& midiEvents, uint32_t loopLength) {
+    uint32_t currentHash = computeMidiHash(midiEvents);
+
+    if (isValid && currentHash == lastMidiHash && loopLength == lastLoopLength) {
+        return cachedNotes;
+    }
+
+    cachedNotes = reconstructDisplayNotes(midiEvents, loopLength, false);
+    lastMidiHash = currentHash;
+    lastLoopLength = loopLength;
+    isValid = true;
+
     return cachedNotes;
 }
 
@@ -519,6 +561,11 @@ NOTE_EDIT_MEM std::vector<NoteUtils::DisplayNote> NoteUtils::reconstructNotes(
     return reconstructNotesImpl<std::vector<DisplayNote>>(midiEvents, loopLength, verboseLog);
 }
 
+NOTE_EDIT_MEM std::vector<NoteUtils::DisplayNote> NoteUtils::reconstructNotes(
+    const SessionMidiEventVec& midiEvents, uint32_t loopLength, bool verboseLog) {
+    return reconstructNotesImpl<std::vector<DisplayNote>>(midiEvents, loopLength, verboseLog);
+}
+
 NOTE_EDIT_MEM NoteUtils::DisplayNoteVec NoteUtils::reconstructDisplayNotes(
     const MidiEventVec& midiEvents, uint32_t loopLength, bool verboseLog) {
     return reconstructNotesImpl<DisplayNoteVec>(midiEvents, loopLength, verboseLog);
@@ -602,23 +649,40 @@ template std::vector<NoteUtils::OpenNoteOn> NoteUtils::findOpenNoteOns<ExternalM
     const SessionMidiEventVec&, uint32_t);
 
 // Build a fast lookup index for NoteOn/NoteOff events
-NoteUtils::EventIndex NoteUtils::buildEventIndex(const MidiEventVec& midiEvents) {
+namespace {
+
+template <typename Alloc>
+NoteUtils::EventIndex buildEventIndexImpl(const std::vector<MidiEvent, Alloc>& midiEvents) {
     using Key = NoteUtils::Key;
-    EventIndexMap onIndex;
-    EventIndexMap offIndex;
+    NoteUtils::EventIndexMap onIndex;
+    NoteUtils::EventIndexMap offIndex;
     onIndex.reserve(midiEvents.size());
     offIndex.reserve(midiEvents.size());
     for (size_t i = 0; i < midiEvents.size(); ++i) {
         const auto& evt = midiEvents[i];
-        bool isOn = (evt.type == midi::NoteOn && evt.data.noteData.velocity > 0);
-        bool isOff = (evt.type == midi::NoteOff || (evt.type == midi::NoteOn && evt.data.noteData.velocity == 0));
+        const bool isOn = (evt.type == midi::NoteOn && evt.data.noteData.velocity > 0);
+        const bool isOff =
+            (evt.type == midi::NoteOff || (evt.type == midi::NoteOn && evt.data.noteData.velocity == 0));
         if (isOn || isOff) {
-            Key key = ((Key)evt.data.noteData.note << 32) | evt.tick;
-            if (isOn) onIndex[key] = i;
-            else offIndex[key] = i;
+            const Key key = (static_cast<Key>(evt.data.noteData.note) << 32) | evt.tick;
+            if (isOn) {
+                onIndex[key] = i;
+            } else {
+                offIndex[key] = i;
+            }
         }
     }
     return {std::move(onIndex), std::move(offIndex)};
+}
+
+}  // namespace
+
+NoteUtils::EventIndex NoteUtils::buildEventIndex(const MidiEventVec& midiEvents) {
+    return buildEventIndexImpl(midiEvents);
+}
+
+NoteUtils::EventIndex NoteUtils::buildEventIndex(const SessionMidiEventVec& midiEvents) {
+    return buildEventIndexImpl(midiEvents);
 }
 
 namespace {
