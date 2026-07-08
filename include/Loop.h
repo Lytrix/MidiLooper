@@ -37,6 +37,7 @@ struct Loop {
   uint16_t captureNextEventIndex = 0;
   bool captureEventsSortDirty = false;
   uint16_t captureDisplayRevision = 0;
+  bool captureAppendFrozen_ = false;
   uint32_t captureDedupEventsDropped_ = 0;
 
   LoopId loopId = kInvalidLoopId;
@@ -108,6 +109,8 @@ struct Loop {
 
   void beginCapture(CapturePhase phase);
   void discardCapture();
+  void setCaptureAppendFrozen(bool frozen) { captureAppendFrozen_ = frozen; }
+  bool isCaptureAppendFrozen() const { return captureAppendFrozen_; }
   bool appendCaptureEvent(const MidiEvent& evt);
   CommitResult commitCapturePass(CommitReason reason, uint32_t sealedAtTick);
   bool setCapturePassState(PassId id, CapturePassState state);
@@ -120,6 +123,9 @@ struct Loop {
   bool ensureCaptureEventsSorted();
   void mergeMaterializedPassesWithCapture(MidiEventVec& out) const;
   void mergeMaterializedPassesWithCapture(SessionMidiEventVec& out) const;
+  /// Chunk-ref merge of published passes plus live capture (no pass materialize / capture flatten).
+  void mergeActiveCapturePassesWithCapture(MidiEventVec& out) const;
+  void mergeActiveCapturePassesWithCapture(SessionMidiEventVec& out) const;
   void rebuildVisualCacheFromPasses();
   void rebuildVisualCacheIdleSlice(uint8_t maxBarsPerSlice, uint32_t priorityBar);
   void ensureVisualCacheBuilt();
