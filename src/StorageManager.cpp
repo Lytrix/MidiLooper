@@ -750,6 +750,23 @@ bool StorageManager::isCurrentWorkspaceDirty() {
                                                      lastCommittedWorkspaceEpoch);
 }
 
+bool StorageManager::shouldQueueCurrentWorkspaceSave() {
+#if BYPASS_STOP_UNDO_SAVE
+    return false;
+#else
+    if (forceCurrentSetFullLoopWrite) {
+        return true;
+    }
+    if (anyCurrentSetLoopSlotDirty()) {
+        return true;
+    }
+    if (anyAllocatedLoopEditStateDirty()) {
+        return true;
+    }
+    return CurrentSetStorage::shouldAutoSaveBeforeLoadIntoCurrent(currentSetAnchorFields);
+#endif
+}
+
 uint32_t StorageManager::getCurrentWorkspaceEpoch() {
     return currentWorkspaceEpoch;
 }
@@ -2094,6 +2111,17 @@ CAPTURE_HITL_MEM bool renamePathOnSdIfPresent(const char* src, const char* dest)
     return false;
 }
 
+CAPTURE_HITL_MEM void quarantineCorruptRuntimeBundleOnSd() {
+    char dest[96];
+    const int written = std::snprintf(
+        dest, sizeof(dest), "%s.bad.%lu", CurrentSetStorage::kCurrentRuntimeBundlePath,
+        static_cast<unsigned long>(millis()));
+    if (written <= 0 || static_cast<size_t>(written) >= sizeof(dest)) {
+        return;
+    }
+    (void)renamePathOnSdIfPresent(CurrentSetStorage::kCurrentRuntimeBundlePath, dest);
+}
+
 CAPTURE_HITL_MEM bool quarantineCurrentWorkspaceOnSdImpl() {
     const unsigned long stamp = static_cast<unsigned long>(millis());
     char dest[72];
@@ -2680,6 +2708,8 @@ bool STORAGE_PERSIST_MEM StorageManager::loadCurrentSetBundleAndActiveLoopSlots(
         return false;
     }
 
+    Serial.println("[StorageManager] Scanning loop slot manifests on SD...");
+
     for (uint8_t t = 0; t < numTracks; ++t) {
         Track& track = trackManager.getTrack(t);
         bool anySlotHasEvents = false;
@@ -2762,11 +2792,17 @@ bool StorageManager::loadCurrentSetFromDirectory(const char* setDir, LooperState
         Serial.println(metaPath);
         return false;
     }
+    Serial.print("[StorageManager] Reading runtime bundle ");
+    Serial.println(metaPath);
     std::snprintf(restoredSetBundlePath_, sizeof(restoredSetBundlePath_), "%s", metaPath);
     std::vector<uint8_t> activeLoopIndex;
     uint8_t selectedTrackIdx = 0;
     const bool ok = loadCurrentSetBundleAndActiveLoopSlots(file, setDir, state, activeLoopIndex, selectedTrackIdx);
     file.close();
+    if (!ok && setDir != nullptr && std::strcmp(setDir, CurrentSetStorage::kCurrentSetDir) == 0) {
+        Serial.println("[StorageManager] Current runtime bundle unreadable; quarantining for recovery.");
+        quarantineCorruptRuntimeBundleOnSd();
+    }
     return ok;
 }
 
@@ -3187,6 +3223,8 @@ bool StorageManager::loadCurrentWorkspaceAtBoot(LooperState& state) {
     const bool ok = loadCurrentSetFromDirectory(CurrentSetStorage::kCurrentSetDir, state);
     if (ok) {
         Serial.println("[StorageManager] Current workspace loaded successfully.");
+    } else {
+        Serial.println("[StorageManager] Current workspace load failed.");
     }
     return ok;
 }
@@ -3325,6 +3363,8 @@ bool StorageManager::attemptBootRecoveryChain(LooperState& state) {
         return true;
     }
     Serial.println("[StorageManager] Boot recovery chain exhausted; starting empty.");
+    forceCurrentSetFullLoopWrite = false;
+    syncCurrentSetDirtyTrackingFromLoadedState();
     return false;
 }
 
@@ -3353,6 +3393,8 @@ bool StorageManager::loadState(LooperState& state) {
         if (attemptBootRecoveryChain(state)) {
             return true;
         }
+        forceCurrentSetFullLoopWrite = false;
+        syncCurrentSetDirtyTrackingFromLoadedState();
         return false;
     }
     if (SD.exists(STORAGE_FILENAME)) {
