@@ -64,13 +64,6 @@ MidiButtonActions midiButtonActions;
 
 namespace {
 
-bool trackHasAnyLoopData(const Track& track) {
-  for (uint8_t s = 0; s < ::Config::MAX_LOOPS_PER_TRACK; ++s) {
-    if (track.hasDataInSlot(s)) return true;
-  }
-  return false;
-}
-
 void restoreAudiblePlaybackAfterSlotClear(uint8_t trackIndex, Track& track, uint32_t now) {
   bool foundAudible = false;
   uint8_t newActiveSlot = 0;
@@ -92,6 +85,7 @@ void restoreAudiblePlaybackAfterSlotClear(uint8_t trackIndex, Track& track, uint
         track.resetPlaybackStateForSlot(s, now);
       }
     }
+    track.forceSetState(TRACK_STOPPED);
     track.startPlaying(now);
   } else {
     track.sendAllNotesOff();
@@ -264,7 +258,12 @@ void MidiButtonActions::executeAction(MidiButtonConfig::ActionType actionType, u
                 }
 
                 // slot == selectedSlot => clear (only when it is actually filled)
-                if (!slotHasData) return;
+                if (!slotHasData) {
+                    if (track.isRecording() || track.isOverdubbing()) {
+                        trackManager.cancelSlotSelectionHold(tidx);
+                    }
+                    return;
+                }
                 handleClearTrack();
             }
             break;
@@ -650,7 +649,7 @@ void MidiButtonActions::handleClearTrack() {
     }
 
     if (!track.hasDataInSlot(slot)) {
-        if (!trackHasAnyLoopData(track)) {
+        if (!track.hasAnySlotData()) {
             if (!track.isEmpty()) {
                 track.setState(TRACK_EMPTY);
                 logger.info("MIDI: Clear reset non-empty track state to EMPTY (no loop data)");
