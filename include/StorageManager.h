@@ -72,6 +72,8 @@ public:
     static uint16_t getRevisionLoadDisplayTargetSetId();
     static uint16_t getRevisionLoadDisplayTargetRevisionId();
     static bool isCurrentWorkspaceDirty();
+    /// True when transport-stop or autosave should queue a CurrentSet workspace write.
+    static bool shouldQueueCurrentWorkspaceSave();
     static uint32_t getCurrentWorkspaceEpoch();
     static uint32_t getLastCommittedWorkspaceEpoch();
     static uint16_t getCurrentWorkspaceDerivedSetId();
