@@ -13,6 +13,7 @@
 
 #include "MidiEvent.h"
 #include "LoopEventStore.h"
+#include "Utils/CaptureIncrementalSanity.h"
 
 namespace LoopStopFinalize {
 
@@ -230,28 +231,30 @@ inline Result finalizeWrapWindowOnStore(LoopEventStore& store,
   }
 
   // Wrapped pairs: tail note-on with head note-off (off tick < on tick).
-  for (auto it = activeTailOnIndex.begin(); it != activeTailOnIndex.end();) {
-    const MidiEvent& noteOn = store.at(it->second);
-    bool wrapped = false;
-    for (size_t j = 0; j < eventCount; ++j) {
-      const MidiEvent& evt = store.at(j);
-      if (!evt.isNoteOff() || evt.channel != noteOn.channel ||
-          evt.data.noteData.note != noteOn.data.noteData.note) {
-        continue;
+  if (eventCount <= CaptureIncrementalSanity::kMaxHotStopFlattenEvents) {
+    for (auto it = activeTailOnIndex.begin(); it != activeTailOnIndex.end();) {
+      const MidiEvent& noteOn = store.at(it->second);
+      bool wrapped = false;
+      for (size_t j = 0; j < eventCount; ++j) {
+        const MidiEvent& evt = store.at(j);
+        if (!evt.isNoteOff() || evt.channel != noteOn.channel ||
+            evt.data.noteData.note != noteOn.data.noteData.note) {
+          continue;
+        }
+        if (!inHead(evt.tick)) {
+          continue;
+        }
+        if (noteOn.tick > evt.tick &&
+            (noteOn.tick - evt.tick) > (loopLengthTicks / 2)) {
+          wrapped = true;
+          break;
+        }
       }
-      if (!inHead(evt.tick)) {
-        continue;
+      if (wrapped) {
+        it = activeTailOnIndex.erase(it);
+      } else {
+        ++it;
       }
-      if (noteOn.tick > evt.tick &&
-          (noteOn.tick - evt.tick) > (loopLengthTicks / 2)) {
-        wrapped = true;
-        break;
-      }
-    }
-    if (wrapped) {
-      it = activeTailOnIndex.erase(it);
-    } else {
-      ++it;
     }
   }
 

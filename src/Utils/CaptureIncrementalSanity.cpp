@@ -207,6 +207,9 @@ size_t removePairsShorterThanNoteMinLength(LoopEventStore& store, uint32_t loopL
   if (!enabled || minLengthTicks == 0 || store.empty()) {
     return 0;
   }
+  if (store.size() > kMaxHotStopFlattenEvents) {
+    return 0;
+  }
 
   MidiEventVec flat;
   store.flatten(flat);
@@ -274,6 +277,9 @@ size_t removePairsShorterThanNoteMinLength(LoopEventStore& store, uint32_t loopL
 
 bool verifyCaptureHotStop(const LoopEventStore& store, uint32_t loopLengthTicks) {
   if (store.empty()) {
+    return true;
+  }
+  if (store.size() > kMaxHotStopFlattenEvents) {
     return true;
   }
   MidiEventVec flat;
