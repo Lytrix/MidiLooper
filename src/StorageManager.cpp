@@ -2423,6 +2423,9 @@ void STORAGE_PERSIST_MEM applyLoadedTrackStateAfterLoopSlots(Track& track, Track
     if (loadedTrackState == TRACK_EMPTY && anySlotHasEvents) {
         loadedTrackState = TRACK_STOPPED;
     }
+    if (!anySlotHasEvents && loadedTrackState == TRACK_STOPPED) {
+        loadedTrackState = TRACK_EMPTY;
+    }
     track.forceSetState(loadedTrackState);
     if (muted != track.isMuted()) {
         track.toggleMuteTrack();
@@ -2716,6 +2719,10 @@ bool STORAGE_PERSIST_MEM StorageManager::loadCurrentSetBundleAndActiveLoopSlots(
         for (uint8_t s = 0; s < Config::MAX_LOOPS_PER_TRACK; ++s) {
             resetLoopSlotToEmpty(track.getLoop(s), s);
             if (!loopSlotPayloadPendingOnSd(t, s)) {
+                continue;
+            }
+            if (!shouldRestoreLoopSlotAtBoot(t, s, selectedTrackIdx, activeLoopIndex,
+                                             selectedSlotIndex)) {
                 continue;
             }
             anySlotHasEvents = true;
@@ -3016,6 +3023,9 @@ bool StorageManager::loadV5MonolithIntoRam(LooperState& state) {
             }
             if (loadedTrackState == TRACK_EMPTY && anySlotHasEvents) {
                 loadedTrackState = TRACK_STOPPED;
+            }
+            if (!anySlotHasEvents && loadedTrackState == TRACK_STOPPED) {
+                loadedTrackState = TRACK_EMPTY;
             }
 
             track.forceSetState(loadedTrackState);
