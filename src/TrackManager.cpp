@@ -224,7 +224,11 @@ void TrackManager::cancelPendingRecordArm(uint8_t trackIndex) {
   }
   Track& t = tracks[trackIndex];
   if (t.isArmed()) {
-    t.setState(t.hasData() ? TRACK_STOPPED : TRACK_EMPTY);
+    if (t.hasAnySlotData()) {
+      t.setState(TRACK_STOPPED);
+    } else {
+      t.setState(TRACK_EMPTY);
+    }
   }
 }
 
@@ -364,7 +368,11 @@ void TrackManager::handleTransportStop() {
       t.stopPlaying();  // sends All Notes Off internally
     } else if (t.isArmed()) {
       t.sendAllNotesOff();
-      t.setState(t.hasData() ? TRACK_STOPPED : TRACK_EMPTY);
+      if (t.hasAnySlotData()) {
+        t.setState(TRACK_STOPPED);
+      } else {
+        t.setState(TRACK_EMPTY);
+      }
     } else {
       t.sendAllNotesOff();
     }
@@ -597,6 +605,10 @@ uint8_t TrackManager::countEnabledSlots(uint8_t trackIndex) const {
 
 void TrackManager::beginSlotSelectionHold(uint8_t trackIndex, uint8_t slotIndex) {
   if (trackIndex >= Config::NUM_TRACKS || slotIndex >= Config::MAX_LOOPS_PER_TRACK) return;
+  if (tracks[trackIndex].isRecording() || tracks[trackIndex].isOverdubbing() ||
+      pendingRecord[trackIndex]) {
+    return;
+  }
   if (pendingHoldActive[trackIndex][slotIndex]) return;
 
   // First hold armed: start a fresh pending enabled set.
@@ -625,6 +637,14 @@ void TrackManager::endSlotSelectionHold(uint8_t trackIndex, uint8_t slotIndex, u
 
   pendingHoldActive[trackIndex][slotIndex] = false;
   if (pendingHoldCount[trackIndex] > 0) pendingHoldCount[trackIndex]--;
+
+  if (tracks[trackIndex].isRecording() || tracks[trackIndex].isOverdubbing() ||
+      pendingRecord[trackIndex]) {
+    if (pendingHoldCount[trackIndex] == 0) {
+      cancelSlotSelectionHold(trackIndex);
+    }
+    return;
+  }
 
   // Commit when the last held slot is released.
   if (pendingHoldCount[trackIndex] == 0) {
@@ -824,6 +844,14 @@ void TrackManager::updateAllTracks(uint32_t currentTick) {
     if (pendingMultiSlotCommit[i] &&
         currentTick != pendingMultiSlotQueuedAtTick[i] &&
         (currentTick % Config::TICKS_PER_16TH_STEP) == 0) {
+      if (tracks[i].isRecording() || tracks[i].isOverdubbing() || pendingRecord[i]) {
+        pendingMultiSlotCommit[i] = false;
+        pendingMultiSlotQueuedAtTick[i] = UINT32_MAX;
+        for (uint8_t s = 0; s < Config::MAX_LOOPS_PER_TRACK; ++s) {
+          pendingSlotEnabled[i][s] = false;
+        }
+        continue;
+      }
 
       // Apply pendingSlotEnabled -> slotEnabled and default unmute.
       bool anyEnabledUnmutedWithData = false;

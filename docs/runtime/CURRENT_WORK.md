@@ -2,11 +2,17 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-07-08 (boot USB-host defer + slot-switch hardening)
+Last updated: 2026-07-08 (slot clear + arm state fix)
 
 ---
 
 ## Now implementing
+
+### Slot clear + arm state fix (multi-slot transport)
+
+**Landed:** `Track::hasAnySlotData()` + `reconcileTransportStateAfterSlotMutation()`; slot clear no longer forces `TRACK_EMPTY` when sibling slots have data; `cancelPendingRecordArm` / empty record stop / transport-stop armed branch use any-slot semantics; layer-hold commit blocked during capture; `restoreAudiblePlaybackAfterSlotClear` sets `STOPPED` before `startPlaying`. Native: `test_slot_clear_state` (7 tests). **HITL:** reproduce `session_20260708_203611` clear slot 3 → arm → switch slot → record without reboot.
+
+---
 
 ### Boot load — USB Host defer + slot manifest scan hardening
 

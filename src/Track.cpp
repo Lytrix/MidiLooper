@@ -25,6 +25,7 @@
 #include "Utils/LoopStopFinalize.h"
 #include "Utils/LoopEventValidation.h"
 #include "Utils/NoteUtils.h"
+#include "Utils/TrackMem.h"
 #include "DisplayManager.h"
 #include "EditManager.h"
 #include "TrackManager.h"
@@ -257,6 +258,17 @@ void reanchorCaptureIndex(Loop& loop) {
   loop.captureNextEventIndex = static_cast<uint16_t>(idx);
 }
 
+TRACK_COLD_MEM void resetActiveLoopAfterEmptyCapture(Loop& loop) {
+  loop.discardCapture();
+  loop.resetPassTimeline();
+  loop.loopLengthTicks = 0;
+  loop.loopStartTick = 0;
+  loop.startLoopTick = 0;
+  loop.nextEventIndex = 0;
+  loop.lastTickInLoop = 0;
+  loop.invalidatePlaybackCaches();
+}
+
 uint8_t resolveTrackIndexForPersistence(const Track& track) {
   for (uint8_t i = 0; i < trackManager.getTrackCount(); ++i) {
     if (&trackManager.getTrack(i) == &track) {
@@ -349,6 +361,31 @@ const Loop& Track::getLoop(uint8_t index) const {
 bool Track::hasDataInSlot(uint8_t slotIndex) const {
   if (slotIndex >= Config::MAX_LOOPS_PER_TRACK) return false;
   return loopForSlot(slotIndex).hasData();
+}
+
+TRACK_COLD_MEM bool Track::hasAnySlotData() const {
+  for (uint8_t s = 0; s < Config::MAX_LOOPS_PER_TRACK; ++s) {
+    if (hasDataInSlot(s)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+TRACK_COLD_MEM void Track::reconcileTransportStateAfterSlotMutation() {
+  if (isRecording() || isOverdubbing() || isStoppedRecording()) {
+    return;
+  }
+  if (hasAnySlotData()) {
+    if (trackState == TRACK_EMPTY || trackState == TRACK_ARMED) {
+      setState(TRACK_STOPPED);
+    }
+  } else if (trackState == TRACK_ARMED || trackState == TRACK_STOPPED ||
+             trackState == TRACK_PLAYING || trackState == TRACK_OVERDUBBING) {
+    setState(TRACK_EMPTY);
+  } else if (trackState != TRACK_EMPTY) {
+    setState(TRACK_EMPTY);
+  }
 }
 
 // -------------------------
@@ -1126,20 +1163,13 @@ void Track::stopRecording(uint32_t currentTick) {
 
   // Empty record-stop: reset capture slot geometry so hasDataInSlot stays false.
   if (loop.loopLengthTicks == 0 || loop.activeCapturePassCount() == 0) {
-    loop.discardCapture();
-    loop.resetPassTimeline();
-    loop.loopLengthTicks = 0;
-    loop.loopStartTick = 0;
-    loop.startLoopTick = 0;
-    loop.nextEventIndex = 0;
-    loop.lastTickInLoop = 0;
-    loop.invalidatePlaybackCaches();
+    resetActiveLoopAfterEmptyCapture(loop);
     logRecordStopStage(loop, stopPathStartUs, "state_advance", 0, stopHeap, stopHeap,
                        "skipped_empty", &stopPathStats);
     logRecordStopStage(loop, stopPathStartUs, "save_request", 0, stopHeap, stopHeap,
                        sideEffectResult == CommitResult::Published ? "requested" : "skipped",
                        &stopPathStats);
-    setState(TRACK_EMPTY);
+    setState(hasAnySlotData() ? TRACK_STOPPED : TRACK_EMPTY);
     return;
   }
 
@@ -1167,7 +1197,7 @@ void Track::stopRecording(uint32_t currentTick) {
   }
 }
 
-void Track::stopRecordingToStopped(uint32_t currentTick) {
+TRACK_COLD_MEM void Track::stopRecordingToStopped(uint32_t currentTick) {
   if (!setState(TRACK_STOPPED_RECORDING)) return;
 
   alignLoopOriginOnNextStop = false;
@@ -1250,6 +1280,16 @@ void Track::stopRecordingToStopped(uint32_t currentTick) {
                        static_cast<unsigned long>(loop.loopLengthTicks));
 
   const uint32_t stateAdvanceHeapBefore = MemoryMonitor::getInternalHeapFreeBytes();
+  if (!loop.hasData()) {
+    resetActiveLoopAfterEmptyCapture(loop);
+    logRecordStopStage(loop, stopPathStartUs, "state_advance", 0, stateAdvanceHeapBefore,
+                       stateAdvanceHeapBefore, "skipped_empty", &stopPathStats);
+    logRecordStopStage(loop, stopPathStartUs, "save_request", 0, stateAdvanceHeapBefore,
+                       stateAdvanceHeapBefore, "skipped", &stopPathStats);
+    setState(hasAnySlotData() ? TRACK_STOPPED : TRACK_EMPTY);
+    return;
+  }
+
   const uint32_t stateAdvanceStartUs = micros();
   setState(TRACK_STOPPED);
   const uint32_t stateAdvanceDurationUs = micros() - stateAdvanceStartUs;
@@ -1487,7 +1527,7 @@ bool Track::isMuted() const {
 // Track Clear
 // -------------------------
 
-void Track::clear() {
+TRACK_COLD_MEM void Track::clear() {
     if (trackState == TRACK_EMPTY) {
         logger.debug("Track already empty; ignoring clear");
         return;
@@ -1503,7 +1543,7 @@ void Track::clear() {
 
     const size_t prunedUndo = TrackUndo::clearUndoHistoryForSlot(*this, clearedSlot);
 
-    setState(TRACK_EMPTY);
+    reconcileTransportStateAfterSlotMutation();
     alignLoopOriginOnNextStop = false;
     invalidateCaches();
     editManager.revertNoteEditSessionForLoopClear(*this);

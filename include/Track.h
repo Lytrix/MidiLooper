@@ -133,6 +133,10 @@ public:
   void noteOff(uint8_t channel, uint8_t note, uint8_t velocity, uint32_t tick);
   bool hasData() const { return getActiveLoop().hasData(); }
   bool hasDataInSlot(uint8_t slotIndex) const;
+  /// True when any slot on this track has loop data (published, length, or capture).
+  bool hasAnySlotData() const;
+  /// After slot-scoped mutation (clear, empty record stop): EMPTY only when no slot has data.
+  void reconcileTransportStateAfterSlotMutation();
 
   // Event counters
   size_t getMidiEventCount() const { return getActiveLoop().liveEventCount(); }
