@@ -1656,11 +1656,11 @@ void EditManager::onSelectedSlotChanged(Track& track, uint8_t previousSlot) {
     reenterEditSessionForFocusChange(track, previousSlot);
 }
 
-size_t EditManager::getDisplayUndoCount(const Track& track) const {
+size_t EditManager::getDisplayUndoCount(const Track& track, const Loop& loop) const {
     if (isSessionUndoDisplayActive()) {
         return editSession.undoStack.undoCount();
     }
-    return TrackUndo::getUndoCount(track);
+    return TrackUndo::undoDepthForLoop(track, loop);
 }
 
 void EditManager::setSelectedNoteIdx(int idx) {

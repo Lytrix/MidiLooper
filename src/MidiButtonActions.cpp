@@ -570,17 +570,16 @@ void MidiButtonActions::handleUndo() {
                     static_cast<unsigned>(editManager.getEditSession().undoStack.undoCount()));
         return;
     }
-    if (TrackUndo::canUndo(track)) {
-        logger.info("MIDI: Undo (entries=%d)", TrackUndo::getUndoCount(track));
-        TrackUndo::undoOverdub(track);
+    const uint8_t trackIdx = trackManager.getSelectedTrackIndex();
+    const uint8_t slotIndex = trackManager.getSelectedSlotIndex(trackIdx);
+    Loop& loop = track.getLoop(slotIndex);
+    if (TrackUndo::canUndoForLoop(track, loop)) {
+        logger.info("MIDI: Undo (entries=%d)", static_cast<int>(TrackUndo::undoDepthForLoop(track, loop)));
+        TrackUndo::undoForLoop(track, loop);
         return;
     }
-    if (TrackUndo::canUndoClearTrack(track)) {
-        logger.info("MIDI: Undo clear slot");
-        TrackUndo::undoClearTrack(track);
-        return;
-    }
-    logger.info("MIDI: No undo available (entries=%d)", TrackUndo::getUndoCount(track));
+    logger.info("MIDI: No undo available (entries=%d)",
+                static_cast<int>(TrackUndo::undoDepthForLoop(track, loop)));
 }
 
 void MidiButtonActions::handleRedo() {
@@ -596,24 +595,26 @@ void MidiButtonActions::handleRedo() {
                     static_cast<unsigned>(editManager.getEditSession().undoStack.redoCount()));
         return;
     }
-    if (TrackUndo::canRedo(track)) {
-        logger.info("MIDI: Redo (entries=%d)", TrackUndo::getRedoCount(track));
-        TrackUndo::redoOverdub(track);
+    const uint8_t trackIdx = trackManager.getSelectedTrackIndex();
+    const uint8_t slotIndex = trackManager.getSelectedSlotIndex(trackIdx);
+    Loop& loop = track.getLoop(slotIndex);
+    if (TrackUndo::canRedoForLoop(track, loop)) {
+        logger.info("MIDI: Redo (entries=%d)", static_cast<int>(TrackUndo::redoDepthForLoop(track, loop)));
+        TrackUndo::redoForLoop(track, loop);
         return;
     }
-    if (TrackUndo::canRedoClearTrack(track)) {
-        logger.info("MIDI: Redo clear slot");
-        TrackUndo::redoClearTrack(track);
-        return;
-    }
-    logger.info("MIDI: No redo available (entries=%d)", TrackUndo::getRedoCount(track));
+    logger.info("MIDI: No redo available (entries=%d)",
+                static_cast<int>(TrackUndo::redoDepthForLoop(track, loop)));
 }
 
 void MidiButtonActions::handleUndoClearTrack() {
     Track& track = getCurrentTrack();
-    if (TrackUndo::canUndoClearTrack(track)) {
+    const uint8_t trackIdx = trackManager.getSelectedTrackIndex();
+    const uint8_t slotIndex = trackManager.getSelectedSlotIndex(trackIdx);
+    Loop& loop = track.getLoop(slotIndex);
+    if (TrackUndo::canUndoClearTrackForLoop(track, loop)) {
         logger.info("MIDI Button B: Undo Clear Track");
-        TrackUndo::undoClearTrack(track);
+        TrackUndo::undoForLoop(track, loop);
     } else {
         logger.info("Nothing to undo for clear/mute.");
     }
@@ -621,9 +622,12 @@ void MidiButtonActions::handleUndoClearTrack() {
 
 void MidiButtonActions::handleRedoClearTrack() {
     Track& track = getCurrentTrack();
-    if (TrackUndo::canRedoClearTrack(track)) {
+    const uint8_t trackIdx = trackManager.getSelectedTrackIndex();
+    const uint8_t slotIndex = trackManager.getSelectedSlotIndex(trackIdx);
+    Loop& loop = track.getLoop(slotIndex);
+    if (TrackUndo::canRedoClearTrackForLoop(track, loop)) {
         logger.info("MIDI Button B: Redo Clear Track");
-        TrackUndo::redoClearTrack(track);
+        TrackUndo::redoForLoop(track, loop);
     } else {
         logger.info("Nothing to redo for clear/mute.");
     }

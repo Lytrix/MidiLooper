@@ -1617,7 +1617,8 @@ void DisplayManager::drawSidebar(Track& selectedTrack, uint8_t displaySlot) {
         default:                      strcpy(modeTop, "-");    strcpy(modeBottom, "-");     break;
     }
 
-    uint8_t undoCount = static_cast<uint8_t>(editManager.getDisplayUndoCount(selectedTrack));
+    uint8_t undoCount = static_cast<uint8_t>(
+        editManager.getDisplayUndoCount(selectedTrack, selectedTrack.getLoop(displaySlot)));
     if (undoCount > 99) undoCount = 99;
     char undoValStr[4];
     if (undoCount == 0) {

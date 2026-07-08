@@ -2,11 +2,17 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-07-08 (slot clear + arm state fix)
+Last updated: 2026-07-08 (loop-scoped undo display)
 
 ---
 
 ## Now implementing
+
+### Loop-scoped undo display (Phase 1)
+
+**Landed:** `TrackUndo::*ForLoop` filters track-wide `GlobalUndoStack` by selected loop; sidebar `U:` uses `undoDepthForLoop`; `handleUndo` / `handleRedo` gate on stack tip matching selected loop. Native: `test_global_undo_slot_scope` (5 tests). Plan: [`docs/plans/loop_undo_ownership_refinement.md`](../plans/loop_undo_ownership_refinement.md).
+
+---
 
 ### Slot clear + arm state fix (multi-slot transport)
 

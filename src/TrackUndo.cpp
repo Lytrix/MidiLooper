@@ -219,6 +219,19 @@ bool applyUndoEntry(Track& track, UndoEntry& entry) {
     return false;
 }
 
+uint8_t resolveSlotIndexForLoop(const Track& track, const Loop& loop) {
+    for (uint8_t slotIndex = 0; slotIndex < Config::MAX_LOOPS_PER_TRACK; ++slotIndex) {
+        if (&track.getLoop(slotIndex) == &loop) {
+            return slotIndex;
+        }
+    }
+    return Config::INVALID_LOOP_SLOT;
+}
+
+bool loopHasLiveOverdubCapture(const Loop& loop) {
+    return loop.capture.phase == CapturePhase::Overdub && !loop.capture.store.empty();
+}
+
 bool applyRedoEntry(Track& track, UndoEntry& entry) {
     Loop& loop = track.getLoop(entry.slotIndex);
     switch (entry.kind) {
@@ -345,20 +358,24 @@ void TrackUndo::beginOverdubSession(Track& track) {
     (void)track;
 }
 
-void TrackUndo::undoOverdub(Track& track) {
+void TrackUndo::undoForLoop(Track& track, Loop& loop) {
     if (noteEditManager.loopEditManager.hasPendingGeometry()) {
         noteEditManager.loopEditManager.flushAllPendingGeometry(track);
     }
-    Loop& loop = track.getActiveLoop();
-    if (loop.capture.phase == CapturePhase::Overdub && !loop.capture.store.empty()) {
+    const uint8_t slotIndex = resolveSlotIndexForLoop(track, loop);
+    if (slotIndex == Config::INVALID_LOOP_SLOT) {
+        return;
+    }
+    if (loopHasLiveOverdubCapture(loop)) {
         loop.discardCapture();
         loop.invalidateCaches();
         logger.logTrackEvent("Overdub capture undone", clockManager.getCurrentTick());
         return;
     }
     GlobalUndoStack& stack = track.getGlobalUndoStack();
-    if (!stack.canUndo()) {
-        logger.log(CAT_TRACK, LOG_WARNING, "Cannot undo overdub right now");
+    if (!stack.canUndo() || stack.entries[stack.cursor - 1].slotIndex != slotIndex) {
+        logger.log(CAT_TRACK, LOG_WARNING, "Cannot undo for loop slot %u right now",
+                   static_cast<unsigned>(slotIndex));
         return;
     }
     UndoEntry& entry = stack.entries[stack.cursor - 1];
@@ -370,18 +387,22 @@ void TrackUndo::undoOverdub(Track& track) {
                  static_cast<int>(entry.kind),
                  static_cast<int>(getUndoCount(track)));
     logger.logTrackEvent("Overdub undone", clockManager.getCurrentTick());
-    StorageManager::markCurrentSetLoopSlotDirty(resolveTrackIndexForPersistence(track),
-                                                track.getActiveLoopIndex());
+    StorageManager::markCurrentSetLoopSlotDirty(resolveTrackIndexForPersistence(track), slotIndex);
     StorageManager::requestDeferredSaveState(looperState.getLooperState());
 }
 
-void TrackUndo::redoOverdub(Track& track) {
+void TrackUndo::redoForLoop(Track& track, Loop& loop) {
     if (noteEditManager.loopEditManager.hasPendingGeometry()) {
         noteEditManager.loopEditManager.cancelPendingGeometryPreview(track);
     }
+    const uint8_t slotIndex = resolveSlotIndexForLoop(track, loop);
+    if (slotIndex == Config::INVALID_LOOP_SLOT) {
+        return;
+    }
     GlobalUndoStack& stack = track.getGlobalUndoStack();
-    if (!stack.canRedo()) {
-        logger.log(CAT_TRACK, LOG_WARNING, "Cannot redo overdub right now");
+    if (!stack.canRedo() || stack.entries[stack.cursor].slotIndex != slotIndex) {
+        logger.log(CAT_TRACK, LOG_WARNING, "Cannot redo for loop slot %u right now",
+                   static_cast<unsigned>(slotIndex));
         return;
     }
     UndoEntry& entry = stack.entries[stack.cursor];
@@ -393,9 +414,79 @@ void TrackUndo::redoOverdub(Track& track) {
                  static_cast<int>(entry.kind),
                  static_cast<int>(getRedoCount(track)));
     logger.logTrackEvent("Overdub redone", clockManager.getCurrentTick());
-    StorageManager::markCurrentSetLoopSlotDirty(resolveTrackIndexForPersistence(track),
-                                                track.getActiveLoopIndex());
+    StorageManager::markCurrentSetLoopSlotDirty(resolveTrackIndexForPersistence(track), slotIndex);
     StorageManager::requestDeferredSaveState(looperState.getLooperState());
+}
+
+void TrackUndo::undoOverdub(Track& track) {
+    undoForLoop(track, track.getActiveLoop());
+}
+
+void TrackUndo::redoOverdub(Track& track) {
+    redoForLoop(track, track.getActiveLoop());
+}
+
+size_t TrackUndo::undoDepthForLoop(const Track& track, const Loop& loop) {
+    const uint8_t slotIndex = resolveSlotIndexForLoop(track, loop);
+    if (slotIndex == Config::INVALID_LOOP_SLOT) {
+        return 0;
+    }
+    size_t depth = countAppliedUndoEntriesForSlot(track.getGlobalUndoStack(), slotIndex);
+    if (loopHasLiveOverdubCapture(loop)) {
+        ++depth;
+    }
+    return depth;
+}
+
+size_t TrackUndo::redoDepthForLoop(const Track& track, const Loop& loop) {
+    const uint8_t slotIndex = resolveSlotIndexForLoop(track, loop);
+    if (slotIndex == Config::INVALID_LOOP_SLOT) {
+        return 0;
+    }
+    return countRedoEntriesForSlot(track.getGlobalUndoStack(), slotIndex);
+}
+
+bool TrackUndo::canUndoForLoop(const Track& track, const Loop& loop) {
+    const uint8_t slotIndex = resolveSlotIndexForLoop(track, loop);
+    if (slotIndex == Config::INVALID_LOOP_SLOT) {
+        return false;
+    }
+    if (loopHasLiveOverdubCapture(loop)) {
+        return true;
+    }
+    const GlobalUndoStack& stack = track.getGlobalUndoStack();
+    return stack.canUndo() && stack.entries[stack.cursor - 1].slotIndex == slotIndex;
+}
+
+bool TrackUndo::canRedoForLoop(const Track& track, const Loop& loop) {
+    const uint8_t slotIndex = resolveSlotIndexForLoop(track, loop);
+    if (slotIndex == Config::INVALID_LOOP_SLOT) {
+        return false;
+    }
+    const GlobalUndoStack& stack = track.getGlobalUndoStack();
+    return stack.canRedo() && stack.entries[stack.cursor].slotIndex == slotIndex;
+}
+
+bool TrackUndo::canUndoClearTrackForLoop(const Track& track, const Loop& loop) {
+    const uint8_t slotIndex = resolveSlotIndexForLoop(track, loop);
+    if (slotIndex == Config::INVALID_LOOP_SLOT) {
+        return false;
+    }
+    const GlobalUndoStack& stack = track.getGlobalUndoStack();
+    return stack.canUndo() &&
+           stack.entries[stack.cursor - 1].kind == UndoEntryKind::ClearSlot &&
+           stack.entries[stack.cursor - 1].slotIndex == slotIndex;
+}
+
+bool TrackUndo::canRedoClearTrackForLoop(const Track& track, const Loop& loop) {
+    const uint8_t slotIndex = resolveSlotIndexForLoop(track, loop);
+    if (slotIndex == Config::INVALID_LOOP_SLOT) {
+        return false;
+    }
+    const GlobalUndoStack& stack = track.getGlobalUndoStack();
+    return stack.canRedo() &&
+           stack.entries[stack.cursor].kind == UndoEntryKind::ClearSlot &&
+           stack.entries[stack.cursor].slotIndex == slotIndex;
 }
 
 size_t TrackUndo::getUndoCount(const Track& track) {
@@ -449,11 +540,11 @@ void TrackUndo::pushClearTrackSnapshot(Track& track) {
 }
 
 void TrackUndo::undoClearTrack(Track& track) {
-    undoOverdub(track);
+    undoForLoop(track, track.getActiveLoop());
 }
 
 void TrackUndo::redoClearTrack(Track& track) {
-    redoOverdub(track);
+    redoForLoop(track, track.getActiveLoop());
 }
 
 void TrackUndo::pushLoopStartSnapshot(Track& track, uint8_t slotIndex) {
@@ -491,7 +582,7 @@ void TrackUndo::pushLoopGeometryDepartSnapshot(Track& track, uint8_t slotIndex,
 }
 
 void TrackUndo::undoLoopStart(Track& track) {
-    undoOverdub(track);
+    undoForLoop(track, track.getActiveLoop());
 }
 
 bool TrackUndo::canRedoClearTrack(const Track& track) {
