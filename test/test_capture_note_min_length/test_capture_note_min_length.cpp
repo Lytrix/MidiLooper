@@ -85,6 +85,34 @@ void test_verify_capture_hot_stop_warns_on_note_on_at_loop_length() {
   TEST_ASSERT_FALSE(passed);
 }
 
+void test_hot_stop_flatten_skipped_when_store_exceeds_budget() {
+  setupStore();
+  LoopEventStore store;
+  for (size_t i = 0; i < CaptureIncrementalSanity::kMaxHotStopFlattenEvents + 1; ++i) {
+    TEST_ASSERT_TRUE(store.append(MidiEvent::NoteOn(static_cast<uint32_t>(i), 1, 60, 100)));
+  }
+  TEST_ASSERT_EQUAL(0u, CaptureIncrementalSanity::removePairsShorterThanNoteMinLength(
+                            store, kLoopLen, 12, true));
+  TEST_ASSERT_TRUE(CaptureIncrementalSanity::verifyCaptureHotStop(store, kLoopLen));
+  TEST_ASSERT_EQUAL(CaptureIncrementalSanity::kMaxHotStopFlattenEvents + 1, store.size());
+}
+
+void test_assign_missing_note_ids_on_recording_tail_only() {
+  setupStore();
+  LoopEventStore store;
+  for (uint16_t i = 0; i < LoopEventStoreConfig::CHUNK_CAPACITY; ++i) {
+    TEST_ASSERT_TRUE(store.append(MidiEvent::NoteOn(i, 1, 60, 100)));
+  }
+  NoteId nextId = 1;
+  store.assignMissingNoteIdsOnRecordingTail([&nextId]() { return nextId++; });
+  MidiEvent tailOn = MidiEvent::NoteOn(LoopEventStoreConfig::CHUNK_CAPACITY, 1, 61, 100);
+  tailOn.noteId = kInvalidNoteId;
+  TEST_ASSERT_TRUE(store.append(tailOn));
+  store.assignMissingNoteIdsOnRecordingTail([&nextId]() { return nextId++; });
+  const MidiEvent& assigned = store.at(LoopEventStoreConfig::CHUNK_CAPACITY);
+  TEST_ASSERT_EQUAL(1u, assigned.noteId);
+}
+
 int main(int argc, char** argv) {
   UNITY_BEGIN();
   RUN_TEST(test_remove_pairs_shorter_than_min_length_removes_11t);
@@ -92,5 +120,7 @@ int main(int argc, char** argv) {
   RUN_TEST(test_remove_pairs_shorter_than_min_length_skipped_when_disabled);
   RUN_TEST(test_verify_capture_hot_stop_passes_canonical_pair);
   RUN_TEST(test_verify_capture_hot_stop_warns_on_note_on_at_loop_length);
+  RUN_TEST(test_hot_stop_flatten_skipped_when_store_exceeds_budget);
+  RUN_TEST(test_assign_missing_note_ids_on_recording_tail_only);
   return UNITY_END();
 }
