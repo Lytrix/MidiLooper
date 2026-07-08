@@ -55,6 +55,10 @@ class DisplayManager {
 public:
     DisplayManager();
     void setup();
+    /// Minimal OLED init for boot Loading screen (before SD load).
+    void beginBootOled();
+    /// Startup splash after workspace load completes.
+    void finishBootSetup();
     void update();
     void clearDisplayBuffer();
     /// Full-screen boot status (splash / SD load); pushes frame to OLED immediately.
@@ -154,6 +158,7 @@ private:
 
     uint32_t _prevDrawTick = 0;
     SSD1322 _display;
+    bool bootOledInitialized_ = false;
     // Blinker/pulse state for selected track
     float _pulsePhase = 0.0f; // 0..1
     unsigned long _lastPulseUpdate = 0;

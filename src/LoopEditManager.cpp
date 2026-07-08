@@ -206,10 +206,6 @@ std::vector<uint32_t> LoopEditManager::buildLoopStartFaderPositions(const Track&
     const uint32_t numSteps = loopLength / Config::TICKS_PER_16TH_STEP;
     const uint32_t stepCount = numSteps > 0 ? numSteps : 1;
 
-    const auto& notes = track.getVisualNotesForSlot(selectedSlotForTrack(track));
-    for (const auto& note : notes) {
-        allPositions.push_back(note.startTick % loopLength);
-    }
     for (uint32_t step = 0; step < stepCount; step++) {
         allPositions.push_back(step * Config::TICKS_PER_16TH_STEP);
     }

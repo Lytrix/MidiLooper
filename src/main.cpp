@@ -26,6 +26,7 @@
 #include "LoopEventStore.h"
 #include "Utils/HotPathTelemetry.h"
 #include "Utils/DebugSessionCapture.h"
+#include "Utils/BootTelemetry.h"
 
 void setup() {
   HotPathTelemetry::reset();
@@ -90,10 +91,16 @@ void setup() {
   logger.setCategoryEnabled(CAT_STORAGE, false);  // StorageManager v3 per-slot save progress (verbose)
 
   midiHandler.setup();
+  emitBootMilestone("usb_host", "deferred");
   trackManager.setup();
-  displayManager.setup();
+  displayManager.beginBootOled();
   displayManager.drawBootStatusMessage("Loading...");
-  looper.setup();  // SD + loadState; setSelectedTrack triggers forceLedUpdate (midi now ready)
+  looper.setup();  // SD + loadState; LED side effects suppressed until USB host ready
+
+  midiHandler.beginUsbHost();
+  emitBootMilestone("usb_host", "begin");
+
+  displayManager.finishBootSetup();
 
   // Startup policy: enter LOOP_EDIT deterministically and sync DROID explicitly.
   editManager.sendEditSessionChange(EditSessionType::Loop);
@@ -119,6 +126,12 @@ void setup() {
   logger.info("Performance monitoring initialized");
   MemoryMonitor::resetInternalHeapWatermark();
   MemoryMonitor::logStatus();  // Log heap after full setup
+  {
+    char heapDetail[16];
+    snprintf(heapDetail, sizeof(heapDetail), "%lu",
+             static_cast<unsigned long>(MemoryMonitor::getInternalHeapFreeBytes()));
+    emitBootMilestone("heap", heapDetail);
+  }
 
   // Clear all bar/16th LEDs for a clean start (DROID may retain state from before disconnect)
   trackManager.clearLeds();

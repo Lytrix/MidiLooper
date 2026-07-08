@@ -31,6 +31,9 @@ public:
 
   // --- Initialization ---
   void setup();
+  /// Device + DIN MIDI only; call before workspace SD load.
+  void beginUsbHost();
+  bool isUsbHostReady() const { return usbHostReady_; }
 
   // --- Input Handling ---
   void handleMidiInput();
@@ -107,11 +110,14 @@ private:
   void markDroidUsbHostSent();
   void queueLedUsbHostFeedback(uint8_t note, uint8_t velocityOrZero);
 
+  bool canSendUsbHostMidi() { return usbHostReady_ && static_cast<bool>(usbHostMIDI); }
+
   uint32_t lastDroidUsbHostSendMicros_ = 0;
   uint8_t ledPendingNotes_[MidiConfig::DroidUsbHost::LED_PENDING_MAX];
   uint8_t ledPendingVelocities_[MidiConfig::DroidUsbHost::LED_PENDING_MAX];
   size_t ledPendingCount_ = 0;
   bool droidMotorOutboundPriority_ = false;
+  bool usbHostReady_ = false;
 
   // --- Message Handlers ---
   void handleNoteOn(byte channel, byte note, byte velocity, uint32_t tickNow);

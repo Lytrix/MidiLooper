@@ -28,11 +28,13 @@
 #include "Globals.h"
 #include "Logger.h"
 #include "Utils/DebugSessionCapture.h"
+#include "Utils/BootTelemetry.h"
 #include "Utils/MemoryMonitor.h"
 #include "Utils/PersistenceDiagnostics.h"
 #include <SD.h>
 #include <Arduino.h>
 #include "TrackUndo.h"
+#include "TrackDisplayState.h"
 #include "Utils/MemoryPool.h"
 #include "Utils/HotPathTelemetry.h"
 #include "Utils/ExternalMemoryFirstAllocator.h"
@@ -100,6 +102,14 @@ bool STORAGE_PERSIST_MEM loopSlotPayloadPendingOnSd(uint8_t trackIndex, uint8_t 
         return false;
     }
     return SD.exists(loopPath) && CurrentSetStorage::verifySaveFileTokenAtPath(loopPath);
+}
+
+bool loopSlotManifestExistsOnSd(uint8_t trackIndex, uint8_t slotIndex) {
+    char loopPath[64];
+    if (!CurrentSetStorage::formatLoopSlotPath(loopPath, sizeof(loopPath), trackIndex, slotIndex)) {
+        return false;
+    }
+    return SD.exists(loopPath);
 }
 
 void STORAGE_PERSIST_MEM removeDeferredLoopSlotRestore(uint8_t trackIndex, uint8_t slotIndex) {
@@ -2283,6 +2293,23 @@ void syncCurrentSetDirtyTrackingFromLoadedState() {
     }
 }
 
+static void resetLoopSlotForBootManifest(Loop& loop, uint8_t slotIndex) {
+    loop.discardPendingCapturePass();
+    loop.discardCapture();
+    loop.resetPassTimeline();
+    loop.loopId = static_cast<LoopId>(slotIndex);
+    loop.startLoopTick = 0;
+    loop.loopLengthTicks = 0;
+    loop.loopStartTick = 0;
+    loop.nextPassId_ = 1;
+    loop.nextNoteId_ = 1;
+    loop.nextMergeSequence_ = 0;
+    loop.lastPublishedPassId_ = kInvalidPassId;
+    loop.lastTickInLoop = 0;
+    loop.nextEventIndex = 0;
+    loop.clearEditStateDirty();
+}
+
 static void resetLoopSlotToEmpty(Loop& loop, uint8_t slotIndex) {
     loop.discardPendingCapturePass();
     loop.discardCapture();
@@ -2411,25 +2438,6 @@ static STORAGE_PERSIST_MEM bool readLoopFromCurrentSetFile(File& file, Loop& loo
     applySnapshotToLoop(loop, snapshot);
     uint32_t magic = 0;
     return readRaw(file, &magic, sizeof(magic)) && magic == CurrentSetStorage::kSaveFileToken;
-}
-
-void STORAGE_PERSIST_MEM applyLoadedTrackStateAfterLoopSlots(Track& track, TrackState loadedTrackState,
-                                                bool anySlotHasEvents, bool muted) {
-    if (loadedTrackState == TRACK_RECORDING || loadedTrackState == TRACK_ARMED ||
-        loadedTrackState == TRACK_STOPPED_RECORDING || loadedTrackState == TRACK_PLAYING ||
-        loadedTrackState == TRACK_OVERDUBBING) {
-        loadedTrackState = anySlotHasEvents ? TRACK_STOPPED : TRACK_EMPTY;
-    }
-    if (loadedTrackState == TRACK_EMPTY && anySlotHasEvents) {
-        loadedTrackState = TRACK_STOPPED;
-    }
-    if (!anySlotHasEvents && loadedTrackState == TRACK_STOPPED) {
-        loadedTrackState = TRACK_EMPTY;
-    }
-    track.forceSetState(loadedTrackState);
-    if (muted != track.isMuted()) {
-        track.toggleMuteTrack();
-    }
 }
 
 bool STORAGE_PERSIST_MEM loadLoopSlotFromCurrentSetSd(uint8_t trackIndex, uint8_t slotIndex, Track& track,
@@ -2675,7 +2683,7 @@ bool STORAGE_PERSIST_MEM applyLoadedTransportFooter(uint8_t numTracks, const std
 
 }  // namespace StorageManagerInternal
 
-bool STORAGE_PERSIST_MEM StorageManager::loadCurrentSetBundleAndActiveLoopSlots(File& file, const char* setDir, LooperState& state,
+bool StorageManager::loadCurrentSetBundleAndActiveLoopSlots(File& file, const char* setDir, LooperState& state,
                                         std::vector<uint8_t>& activeLoopIndex,
                                         uint8_t& selectedTrackIdx) {
     (void)setDir;
@@ -2690,12 +2698,15 @@ bool STORAGE_PERSIST_MEM StorageManager::loadCurrentSetBundleAndActiveLoopSlots(
     if (!readCurrentSetFilePreamble(file, loadedLooperState, masterLoopLength, numTracks)) {
         return false;
     }
+    if (numTracks > Config::NUM_TRACKS) {
+        return false;
+    }
 
     struct LoadedTrackHeader {
         TrackState state = TRACK_EMPTY;
         bool muted = false;
     };
-    std::vector<LoadedTrackHeader> trackHeaders(numTracks);
+    LoadedTrackHeader trackHeaders[Config::NUM_TRACKS]{};
 
     for (uint8_t t = 0; t < numTracks; ++t) {
         Track& track = trackManager.getTrack(t);
@@ -2711,14 +2722,23 @@ bool STORAGE_PERSIST_MEM StorageManager::loadCurrentSetBundleAndActiveLoopSlots(
         return false;
     }
 
+    file.close();
+
     Serial.println("[StorageManager] Scanning loop slot manifests on SD...");
+    {
+        char heapDetail[16];
+        snprintf(heapDetail, sizeof(heapDetail), "%lu",
+                 static_cast<unsigned long>(MemoryMonitor::getInternalHeapFreeBytes()));
+        emitBootMilestone("ram1", heapDetail);
+    }
+    emitBootMilestone("scan", "start");
 
     for (uint8_t t = 0; t < numTracks; ++t) {
         Track& track = trackManager.getTrack(t);
         bool anySlotHasEvents = false;
         for (uint8_t s = 0; s < Config::MAX_LOOPS_PER_TRACK; ++s) {
-            resetLoopSlotToEmpty(track.getLoop(s), s);
-            if (!loopSlotPayloadPendingOnSd(t, s)) {
+            resetLoopSlotForBootManifest(track.getLoop(s), s);
+            if (!loopSlotManifestExistsOnSd(t, s)) {
                 continue;
             }
             if (!shouldRestoreLoopSlotAtBoot(t, s, selectedTrackIdx, activeLoopIndex,
@@ -2750,7 +2770,12 @@ bool STORAGE_PERSIST_MEM StorageManager::loadCurrentSetBundleAndActiveLoopSlots(
         }
         applyLoadedTrackStateAfterLoopSlots(track, trackHeaders[t].state, anySlotHasEvents,
                                             trackHeaders[t].muted);
+        char trackMilestone[8];
+        snprintf(trackMilestone, sizeof(trackMilestone), "t%u", static_cast<unsigned>(t));
+        emitBootMilestone("scan", trackMilestone);
     }
+
+    emitBootMilestone("scan", "done");
 
     sortPendingLoopSlotRestoresByPriority();
 
@@ -2805,7 +2830,9 @@ bool StorageManager::loadCurrentSetFromDirectory(const char* setDir, LooperState
     std::vector<uint8_t> activeLoopIndex;
     uint8_t selectedTrackIdx = 0;
     const bool ok = loadCurrentSetBundleAndActiveLoopSlots(file, setDir, state, activeLoopIndex, selectedTrackIdx);
-    file.close();
+    if (file) {
+        file.close();
+    }
     if (!ok && setDir != nullptr && std::strcmp(setDir, CurrentSetStorage::kCurrentSetDir) == 0) {
         Serial.println("[StorageManager] Current runtime bundle unreadable; quarantining for recovery.");
         quarantineCorruptRuntimeBundleOnSd();
@@ -3016,20 +3043,7 @@ bool StorageManager::loadV5MonolithIntoRam(LooperState& state) {
                 }
             }
 
-            if (loadedTrackState == TRACK_RECORDING || loadedTrackState == TRACK_ARMED ||
-                loadedTrackState == TRACK_STOPPED_RECORDING || loadedTrackState == TRACK_PLAYING ||
-                loadedTrackState == TRACK_OVERDUBBING) {
-                loadedTrackState = anySlotHasEvents ? TRACK_STOPPED : TRACK_EMPTY;
-            }
-            if (loadedTrackState == TRACK_EMPTY && anySlotHasEvents) {
-                loadedTrackState = TRACK_STOPPED;
-            }
-            if (!anySlotHasEvents && loadedTrackState == TRACK_STOPPED) {
-                loadedTrackState = TRACK_EMPTY;
-            }
-
-            track.forceSetState(loadedTrackState);
-            if (muted != track.isMuted()) track.toggleMuteTrack();
+            applyLoadedTrackStateAfterLoopSlots(track, loadedTrackState, anySlotHasEvents, muted);
         }
 
         if (!readRaw(file, &selectedTrackIdx, sizeof(selectedTrackIdx))) {
@@ -3379,6 +3393,12 @@ bool StorageManager::attemptBootRecoveryChain(LooperState& state) {
 }
 
 bool StorageManager::loadState(LooperState& state) {
+    trackManager.beginBootLoad();
+    emitBootMilestone("load", "start");
+    struct BootLoadScope {
+        ~BootLoadScope() { trackManager.endBootLoad(); }
+    } bootLoadScope;
+
     resetStorageSessionJobs();
     RtcTime::init();
     syncWallClockFromSdTimestampsQuick();
@@ -3396,19 +3416,26 @@ bool StorageManager::loadState(LooperState& state) {
             }
             forceCurrentSetFullLoopWrite = false;
             syncCurrentSetDirtyTrackingFromLoadedState();
+            emitBootMilestone("load", "ok");
             return true;
         }
         Serial.println("[StorageManager] Current workspace load failed; attempting boot recovery chain.");
         resetTracksAfterFailedLoad();
         if (attemptBootRecoveryChain(state)) {
+            emitBootMilestone("load", "ok");
             return true;
         }
         forceCurrentSetFullLoopWrite = false;
         syncCurrentSetDirtyTrackingFromLoadedState();
+        emitBootMilestone("load", "fail");
         return false;
     }
     if (SD.exists(STORAGE_FILENAME)) {
-        return migrateV5MonolithToCurrentSet(state);
+        const bool migrated = migrateV5MonolithToCurrentSet(state);
+        emitBootMilestone("load", migrated ? "ok" : "fail");
+        return migrated;
     }
-    return attemptBootRecoveryChain(state);
+    const bool recovered = attemptBootRecoveryChain(state);
+    emitBootMilestone("load", recovered ? "ok" : "fail");
+    return recovered;
 }
