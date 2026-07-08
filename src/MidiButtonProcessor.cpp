@@ -187,6 +187,10 @@ void MidiButtonProcessor::processPendingPresses() {
                                (int32_t)state.tapStateExpireTime - (int32_t)now);
                 }
             }
+            if ((channel0 == 15 && (note == 36 || note == 37 || note == 38)) && state.tapState == TapState::PendingShort) {
+                logger.log(CAT_BUTTON, LOG_DEBUG, "Checking button Ch%d Note%d: state=PendingShort, now=%lu, expire=%lu, should_expire=%d",
+                           channel0 + 1, note, now, state.tapStateExpireTime, (now >= state.tapStateExpireTime));
+            }
             continue;
         }
 

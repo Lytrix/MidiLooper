@@ -109,25 +109,6 @@ class LoopEventStore {
     }
   }
 
-  /// Assign note ids on the mutable recording tail only (large hot-stop path).
-  template <typename AllocateNoteIdFn>
-  void assignMissingNoteIdsOnRecordingTail(AllocateNoteIdFn&& allocateNoteId) {
-    if (chunkIds_.empty()) {
-      return;
-    }
-    const uint16_t tailId = chunkIds_.back();
-    if (isChunkSealed(tailId)) {
-      return;
-    }
-    EventChunk& tail = chunk(tailId);
-    for (uint16_t i = 0; i < tail.used; ++i) {
-      MidiEvent& evt = tail.events[i];
-      if (evt.isNoteOn() && evt.noteId == kInvalidNoteId) {
-        evt.noteId = allocateNoteId();
-      }
-    }
-  }
-
   /// Shift every event tick by delta; bumps up if any tick would go negative.
   void shiftAllTicks(int64_t delta);
   /// Drop events whose tick is >= tickLimit. Preserves event order.
