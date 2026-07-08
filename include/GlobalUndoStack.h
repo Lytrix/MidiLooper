@@ -78,3 +78,26 @@ struct GlobalUndoStack {
   size_t undoCount() const { return cursor; }
   size_t redoCount() const { return entries.size() - cursor; }
 };
+
+/// Applied undo entries for one loop slot (index < cursor).
+inline size_t countAppliedUndoEntriesForSlot(const GlobalUndoStack& stack, uint8_t slotIndex) {
+  size_t count = 0;
+  const size_t limit = stack.cursor < stack.entries.size() ? stack.cursor : stack.entries.size();
+  for (size_t i = 0; i < limit; ++i) {
+    if (stack.entries[i].slotIndex == slotIndex) {
+      ++count;
+    }
+  }
+  return count;
+}
+
+/// Redo-branch entries for one loop slot (index >= cursor).
+inline size_t countRedoEntriesForSlot(const GlobalUndoStack& stack, uint8_t slotIndex) {
+  size_t count = 0;
+  for (size_t i = stack.cursor; i < stack.entries.size(); ++i) {
+    if (stack.entries[i].slotIndex == slotIndex) {
+      ++count;
+    }
+  }
+  return count;
+}

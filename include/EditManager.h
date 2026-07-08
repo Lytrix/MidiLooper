@@ -206,10 +206,10 @@ public:
     std::map<const Track*, std::map<uint8_t, std::vector<RemovedNote>>> temporarilyRemovedNotes;
 
     /**
-     * @brief Sidebar always shows global pass undo depth (U:). Session undo during note edit
+     * @brief Sidebar shows selected-loop pass undo depth (U:). Session undo during note edit
      * is handled separately via MIDI undo while in NOTE_EDIT.
      */
-    size_t getDisplayUndoCount(const Track& track) const;
+    size_t getDisplayUndoCount(const Track& track, const Loop& loop) const;
     bool isSessionUndoDisplayActive() const;
 
 private:

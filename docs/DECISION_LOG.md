@@ -14,6 +14,7 @@ Persistent record of **accepted architectural and implementation decisions**. No
 
 | ID | Date | Topic | Status |
 |----|------|-------|--------|
+| [DEC-024](#dec-024-loop-owned-undo-ownership-direction) | 2026-07-08 | Loop-owned undo ownership direction (Phase 1 filter, Phase 2 migrate stack) | Accepted |
 | [DEC-022](#dec-022-runtime-bundle-save-tail-integrity) | 2026-07-07 | Runtime bundle save tail integrity (meta temp truncate + append cursor) | Accepted |
 | [DEC-021](#dec-021-defer-inactive-loop-slot-restore-at-boot) | 2026-07-07 | Defer inactive loop slot restore + undo bodies at current set restore | Accepted |
 | [DEC-020](#dec-020-continuous-runtime-persistence-architecture) | 2026-07-07 | Continuous runtime persistence — invariant-driven capture-chunk persistence | Accepted |
@@ -39,7 +40,26 @@ Persistent record of **accepted architectural and implementation decisions**. No
 
 ---
 
-<!-- Append new entries below (newest first). Next ID: DEC-023 -->
+<!-- Append new entries below (newest first). Next ID: DEC-025 -->
+
+## DEC-024 — Loop-owned undo ownership direction
+
+**Date:** 2026-07-08  
+**Owner:** `TrackUndo` / display sidebar / multi-loop slots  
+**Status:** Accepted — Phase 1 shipped; Phase 2 deferred
+
+**Context:** Sidebar `U:nn` showed track-wide `GlobalUndoStack.cursor` and did not update when switching loops. Multi-loop specs describe per-loop undo; Track is becoming a coordinator while Loop owns Capture, Passes, Playback, and Persistence.
+
+**Decision:**
+
+1. **Phase 1 (now):** Keep `GlobalUndoStack` on `Track`; add `TrackUndo::*ForLoop` compatibility layer — filter depth and gate undo/redo when stack tip `slotIndex` matches selected loop. Display resolves `Loop&` once.
+2. **Phase 2 (future):** Move `GlobalUndoStack` member from `Track` to `Loop`; target API `loop.undo()` / `loop.undoDepth()`. Requires design session before implementation.
+
+**Consequences:** `U:` reflects selected loop pass-undo depth. Slot/Record gestures remain thin wrappers. Phase 2 touches persistence footer, `PassReclaim`, and redo tests.
+
+**Reference:** [`docs/plans/loop_undo_ownership_refinement.md`](plans/loop_undo_ownership_refinement.md)
+
+---
 
 ## DEC-022 — Runtime bundle save tail integrity
 

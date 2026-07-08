@@ -22,6 +22,14 @@ public:
     static void beginOverdubSession(Track& track);
     static void undoOverdub(Track& track);
     static void redoOverdub(Track& track);
+    static void undoForLoop(Track& track, Loop& loop);
+    static void redoForLoop(Track& track, Loop& loop);
+    static size_t undoDepthForLoop(const Track& track, const Loop& loop);
+    static size_t redoDepthForLoop(const Track& track, const Loop& loop);
+    static bool canUndoForLoop(const Track& track, const Loop& loop);
+    static bool canRedoForLoop(const Track& track, const Loop& loop);
+    static bool canUndoClearTrackForLoop(const Track& track, const Loop& loop);
+    static bool canRedoClearTrackForLoop(const Track& track, const Loop& loop);
     static size_t getUndoCount(const Track& track);
     static size_t getRedoCount(const Track& track);
     static bool canUndo(const Track& track);

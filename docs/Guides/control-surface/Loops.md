@@ -40,8 +40,10 @@ Primary implementation paths:
 
 ## Double / Triple
 
-- **Double**: slot undo.
-- **Triple**: slot redo.
+- **Double**: undo for the **selected loop** (applies only when the global undo stack tip matches that loop).
+- **Triple**: redo for the **selected loop** (same gating).
+
+Sidebar **`U:nn`** shows applied pass-undo depth for the **selected loop**, not the whole track. During note edit, **`E:nn`** shows session undo instead.
 
 ## Hold (multi-slot selection)
 
