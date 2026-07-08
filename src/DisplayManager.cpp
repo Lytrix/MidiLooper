@@ -215,17 +215,6 @@ uint32_t clampOpenNoteCloseTick(uint32_t closeTick, uint32_t loopLength) {
     return closeTick;
 }
 
-std::vector<NoteUtils::OpenNoteOn> findCaptureOpenNoteOns(const Loop& loop) {
-    if (loop.loopLengthTicks == 0 || loop.capture.store.empty()) {
-        return {};
-    }
-    Loop& mutLoop = const_cast<Loop&>(loop);
-    mutLoop.ensureCaptureEventsSorted();
-    SessionMidiEventVec captureFlat;
-    loop.capture.store.flatten(captureFlat);
-    return NoteUtils::findOpenNoteOns(captureFlat, loop.loopLengthTicks);
-}
-
 template <typename Alloc>
 bool findPreferredWrapHeadOffTick(const std::vector<MidiEvent, Alloc>& midiEvents,
                                   const NoteUtils::OpenNoteOn& open, uint32_t loopLength,
@@ -534,6 +523,10 @@ const DisplayNoteVec& DisplayManager::resolveDisplayNotes(const Track& track, ui
     if (isLiveRecordingDisplay(track, displaySlot)) {
         const Loop& loop = track.getLoop(displaySlot);
         const uint32_t liveLoopLength = resolveDisplayLoopLength(track, displaySlot, currentTick);
+        const uint32_t boundedThreshold =
+            DisplayWindowUtils::kMaxDetailedWindowBars * Config::TICKS_PER_BAR;
+        const bool overdubLongLoop = track.isOverdubbing() && liveLoopLength > boundedThreshold;
+        if (!overdubLongLoop) {
         if (liveLoopLength == 0) {
             invalidateLiveDisplayCache();
             liveDisplayNotes.clear();
@@ -551,25 +544,20 @@ const DisplayNoteVec& DisplayManager::resolveDisplayNotes(const Track& track, ui
         const bool eventsAdded = !cacheCold && eventCount > liveDisplayCacheEventCount;
         const bool loopLengthChanged = !cacheCold && liveLoopLength != liveDisplayCacheLoopLength;
         const bool captureRevisionChanged =
-            !cacheCold && loop.captureDisplayRevision != liveDisplayCacheCaptureRevision;
+            track.isRecording()
+                ? (!cacheCold &&
+                   loop.capturePreview.revision != liveDisplayCacheCapturePreviewRevision_)
+                : (!cacheCold &&
+                   loop.captureDisplayRevision != liveDisplayCacheCaptureRevision);
         size_t committedDisplayEnd = 0;
 
         auto rebuildLiveDisplayNotes = [&]() {
             if (track.isOverdubbing()) {
-                if (loop.visualCache.notes.empty() || loop.visualCacheDirty) {
-                    const_cast<Loop&>(loop).ensureVisualCacheBuilt();
-                }
                 liveDisplayNotes.assign(loop.visualCache.notes.begin(), loop.visualCache.notes.end());
                 committedDisplayEnd = liveDisplayNotes.size();
-                SessionMidiEventVec captureFlat;
-                Loop& mutLoop = const_cast<Loop&>(loop);
-                mutLoop.ensureCaptureEventsSorted();
-                loop.capture.store.flatten(captureFlat);
-                if (!captureFlat.empty()) {
-                    NoteUtils::DisplayNoteVec captureDisplayNotes =
-                        NoteUtils::reconstructDisplayNotes(captureFlat, liveLoopLength, false);
-                    liveDisplayNotes.insert(liveDisplayNotes.end(), captureDisplayNotes.begin(),
-                                            captureDisplayNotes.end());
+                if (!loop.capturePreview.notes.empty()) {
+                    liveDisplayNotes.insert(liveDisplayNotes.end(), loop.capturePreview.notes.begin(),
+                                            loop.capturePreview.notes.end());
                 }
                 return;
             }
@@ -590,13 +578,14 @@ const DisplayNoteVec& DisplayManager::resolveDisplayNotes(const Track& track, ui
             }
         };
 
-        const bool needsFullLiveRebuild = cacheCold || contextChanged || eventsShrunk || eventsAdded ||
-                                          loopLengthChanged || captureRevisionChanged;
+        const bool needsFullLiveRebuild =
+            cacheCold || contextChanged || eventsShrunk || captureRevisionChanged ||
+            (track.isOverdubbing() && (loopLengthChanged || eventsAdded));
 
         if (needsFullLiveRebuild) {
             if (track.isOverdubbing()) {
                 if (loop.visualCache.notes.empty() && !loop.isPassesMaterializedStoreFresh()) {
-                    loop.mergeMaterializedPassesWithCapture(liveDisplayEventBuffer);
+                    loop.mergeActiveCapturePassesWithCapture(liveDisplayEventBuffer);
                 }
             } else {
                 liveDisplayEventBuffer.clear();
@@ -613,6 +602,7 @@ const DisplayNoteVec& DisplayManager::resolveDisplayNotes(const Track& track, ui
             liveDisplayCacheLoopLength = liveLoopLength;
             liveDisplayCacheEventCount = eventCount;
             liveDisplayCacheCaptureRevision = loop.captureDisplayRevision;
+            liveDisplayCacheCapturePreviewRevision_ = loop.capturePreview.revision;
         } else {
             liveDisplayCacheLoopLength = liveLoopLength;
             if (track.isRecording() || track.isOverdubbing()) {
@@ -623,13 +613,14 @@ const DisplayNoteVec& DisplayManager::resolveDisplayNotes(const Track& track, ui
         if (track.isRecording() || track.isOverdubbing()) {
             const uint32_t playheadCloseTick = resolvePlayheadInLoop(track, displaySlot, currentTick);
             if (track.isOverdubbing()) {
-                SessionMidiEventVec captureEvents;
-                const std::vector<NoteUtils::OpenNoteOn> captureOpens = findCaptureOpenNoteOns(loop);
+                Loop& mutLoop = const_cast<Loop&>(loop);
+                if (liveDisplayEventBuffer.empty()) {
+                    mutLoop.mergeActiveCapturePassesWithCapture(liveDisplayEventBuffer);
+                }
+                const std::vector<NoteUtils::OpenNoteOn> captureOpens =
+                    NoteUtils::findOpenNoteOns(liveDisplayEventBuffer, liveLoopLength);
                 if (!captureOpens.empty()) {
-                    Loop& mutLoop = const_cast<Loop&>(loop);
-                    mutLoop.ensureCaptureEventsSorted();
-                    loop.capture.store.flatten(captureEvents);
-                    applyCapturePlayheadTails(captureOpens, captureEvents, liveLoopLength,
+                    applyCapturePlayheadTails(captureOpens, liveDisplayEventBuffer, liveLoopLength,
                                               playheadCloseTick, committedDisplayEnd, liveDisplayNotes);
                 }
             } else {
@@ -639,6 +630,7 @@ const DisplayNoteVec& DisplayManager::resolveDisplayNotes(const Track& track, ui
         }
 
         return liveDisplayNotes;
+        }
     }
 
     // NOTE_EDIT: session store (editAware) is the live edit buffer; filter for Hidden / inner overlap.
@@ -742,7 +734,7 @@ const DisplayNoteVec& DisplayManager::resolveDisplayNotes(const Track& track, ui
                                 liveMergeCaptureRevision_ != loop.captureDisplayRevision;
         if (mergeStale || liveDisplayEventBuffer.empty()) {
             liveDisplayEventBuffer.clear();
-            mutLoop.mergeMaterializedPassesWithCapture(liveDisplayEventBuffer);
+            mutLoop.mergeActiveCapturePassesWithCapture(liveDisplayEventBuffer);
             liveMergePlaybackRevision_ = loop.playbackRevision;
             liveMergeCaptureRevision_ = loop.captureDisplayRevision;
         }
@@ -771,7 +763,7 @@ const DisplayNoteVec& DisplayManager::resolveDisplayNotes(const Track& track, ui
         const bool mergeStale = liveMergePlaybackRevision_ != loop.playbackRevision ||
                                 liveMergeCaptureRevision_ != loop.captureDisplayRevision;
         if (mergeStale || liveDisplayEventBuffer.empty()) {
-            mutLoop.mergeMaterializedPassesWithCapture(liveDisplayEventBuffer);
+            mutLoop.mergeActiveCapturePassesWithCapture(liveDisplayEventBuffer);
             liveMergePlaybackRevision_ = loop.playbackRevision;
             liveMergeCaptureRevision_ = loop.captureDisplayRevision;
         }
@@ -854,9 +846,10 @@ DISP_CAPTURE_MEM void DisplayManager::maybeEmitDisplayCaptureOnChange(const Trac
     const size_t takeEvents =
         (track.isRecording() && !track.isPlaying()) ? loop.capture.store.size() : frameNoteCount;
 
+    const bool liveGrowingCapture = track.isRecording() && !track.isPlaying();
     const bool changed = frameNoteCount != lastFrameNotes || displaySlot != lastSlot ||
-                         state != lastState || loopLen != lastLoopLen ||
-                         takeEvents != lastTakeEvents;
+                         state != lastState || takeEvents != lastTakeEvents ||
+                         (!liveGrowingCapture && loopLen != lastLoopLen);
     const bool regression =
         loopLen > 0 && loop.hasPublishedEvents() && frameNoteCount == 0 && takeEvents > 0;
 
@@ -920,6 +913,7 @@ void DisplayManager::invalidateForSlotChange(uint8_t trackIndex, uint8_t previou
 void DisplayManager::invalidateLiveDisplayCache() {
     liveDisplayCacheEventCount = static_cast<size_t>(-1);
     liveDisplayCacheCaptureRevision = 0;
+    liveDisplayCacheCapturePreviewRevision_ = 0;
     liveDisplayCacheLoopLength = 0;
     liveDisplayCacheSlot = 255;
     liveDisplayCacheTrackState = NUM_TRACK_STATES;
@@ -1460,8 +1454,19 @@ void DisplayManager::drawPianoRoll(uint32_t currentTick, Track& selectedTrack, u
         windowLength = static_cast<uint32_t>(windowBars) * Config::TICKS_PER_BAR;
         const uint32_t jamPos = resolvePlayheadInLoop(track, displaySlot, currentTick);
         if (shouldAutoFollowDetailedWindow(track, loopLength)) {
-            detailedWindowStartTick_[displaySlot] =
+            const uint32_t targetStart =
                 DisplayWindowUtils::resolveCenteredWindowStart(jamPos, windowLength, loopLength);
+            const uint32_t currentStart = detailedWindowStartTick_[displaySlot];
+            const uint32_t maxPanPerFrame = std::max<uint32_t>(Config::TICKS_PER_BAR * 2U, windowLength / 4U);
+            uint32_t nextStart = targetStart;
+            if (currentStart < targetStart) {
+                nextStart = std::min(targetStart, currentStart + maxPanPerFrame);
+            } else if (currentStart > targetStart) {
+                nextStart = (currentStart > maxPanPerFrame && targetStart + maxPanPerFrame < currentStart)
+                                ? currentStart - maxPanPerFrame
+                                : targetStart;
+            }
+            detailedWindowStartTick_[displaySlot] = nextStart;
         }
         windowStart = detailedWindowStartTick_[displaySlot];
         if (windowStart + windowLength > loopLength) {
