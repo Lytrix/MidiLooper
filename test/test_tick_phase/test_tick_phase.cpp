@@ -38,6 +38,14 @@ void test_tick_phase_negative_delta_stable() {
     TEST_ASSERT_EQUAL_UINT32(3839u, tickPhaseInLoop(start - 1u, start, loop));
 }
 
+void test_overdub_freeze_close_tick_uses_loop_phase() {
+    const uint32_t loopLength = 25344;
+    const uint32_t startLoopTick = 40000;
+    const uint32_t freezeAbsoluteTick = 45320;
+    const uint32_t closeTick = tickPhaseInLoop(freezeAbsoluteTick, startLoopTick, loopLength);
+    TEST_ASSERT_EQUAL_UINT32(5320u, closeTick);
+}
+
 int main(int /*argc*/, char** /*argv*/) {
     UNITY_BEGIN();
     RUN_TEST(test_tick_phase_loop_length_zero);
@@ -45,5 +53,6 @@ int main(int /*argc*/, char** /*argv*/) {
     RUN_TEST(test_tick_phase_modulo_and_signed_delta);
     RUN_TEST(test_tick_phase_uint32_wrap_start);
     RUN_TEST(test_tick_phase_negative_delta_stable);
+    RUN_TEST(test_overdub_freeze_close_tick_uses_loop_phase);
     return UNITY_END();
 }

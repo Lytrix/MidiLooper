@@ -37,6 +37,16 @@ enum class CommitReason : uint8_t {
   OverdubStopToStopped,
 };
 
+inline bool isRecordStopCommitReason(CommitReason reason) {
+  return reason == CommitReason::RecordStop ||
+         reason == CommitReason::RecordStopToStopped;
+}
+
+inline bool isOverdubStopCommitReason(CommitReason reason) {
+  return reason == CommitReason::OverdubStop ||
+         reason == CommitReason::OverdubStopToStopped;
+}
+
 namespace PassConfig {
 /// Chunks held back so playback and admission retain headroom.
 constexpr uint16_t CHUNK_RESERVE = 16;

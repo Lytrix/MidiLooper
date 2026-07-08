@@ -106,6 +106,19 @@ public:
   void startOverdubbing(uint32_t currentTick);
   void stopOverdubbing();
   void stopOverdubbingToStopped();  // Stop overdub, end in STOPPED (for MIDI Stop)
+  /// Freeze live overdub capture on record button down (close tick recorded for deferred commit).
+  void freezeOverdubCapture(uint32_t currentTick);
+  void queueOverdubStopCommit();
+  /// Abort pending deferred overdub stop (freeze flags + commit stage).
+  void cancelDeferredOverdubStop();
+  bool isOverdubCaptureFrozen() const { return overdubCaptureFrozen_; }
+  bool hasPendingOverdubStopCommit() const {
+    return overdubStopCommitStage_ != OverdubStopCommitStage::None;
+  }
+  uint32_t getOverdubFreezeCloseTickForTest() const { return overdubFreezeCloseTick_; }
+#if defined(PIO_UNIT_TEST_NATIVE)
+  void setOverdubStopCommitQueuedForTest();
+#endif
 
   // Track management
   void clear();
@@ -347,6 +360,45 @@ private:
   void queueDeferredRecordRevts();
   void processDeferredRecordRevts(size_t maxEventsPerSlice = 64);
   void flushPendingNotesIntoCapture(uint32_t closeTick);
+  enum class CommitCaptureForStopStep : uint8_t {
+    Flush,
+    Seal,
+    Finalize,
+    SealAndFinalize,
+    FlushSealAndFinalize,
+  };
+  CommitResult commitCaptureForStop(CommitReason reason, uint32_t commitTick, uint32_t closeTick,
+                                    CommitCaptureForStopStep step =
+                                        CommitCaptureForStopStep::SealAndFinalize,
+                                    CommitResult sealedResult = CommitResult::Skipped);
+  void finalizeCaptureCommitRuntime(CommitReason reason, CommitResult result,
+                                    uint32_t playbackTick, uint32_t closeTick,
+                                    uint32_t telemetryStartUs = 0);
+  void queueRecordStopCommit(uint32_t currentTick, CommitReason reason);
+  bool advanceRecordStopCommitPrep();
+  void processDeferredOverdubStop(uint32_t nowMs);
+
+  enum class OverdubStopCommitStage : uint8_t {
+    None = 0,
+    Queued,
+    NotesFlushed,
+    Sealed,
+    Finalized,
+  };
+
+  bool overdubCaptureFrozen_ = false;
+  uint32_t overdubFreezeCloseTick_ = UINT32_MAX;
+  uint32_t overdubFreezeAtMs_ = 0;
+  OverdubStopCommitStage overdubStopCommitStage_ = OverdubStopCommitStage::None;
+  uint32_t overdubStopCommitStartUs_ = 0;
+  uint32_t overdubStopCommitTick_ = 0;
+  CommitResult overdubStopLastCommitResult_ = CommitResult::Skipped;
+  CommitReason stopCommitReason_ = CommitReason::OverdubStop;
+  uint32_t recordStopRawLength_ = 0;
+  uint32_t recordStopPlaybackTick_ = 0;
+  bool recordStopAlignOrigin_ = false;
+  bool recordStopToPlaying_ = true;
+  bool deferredStoredMidiVerify_ = false;
 
   void syncSlotRefsFromPool();
 
