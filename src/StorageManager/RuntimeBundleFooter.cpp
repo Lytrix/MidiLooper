@@ -10,6 +10,16 @@
 
 namespace StorageManagerInternal {
 
+STORAGE_PERSIST_MEM bool undoStackHeaderLooksValid(uint32_t entryCount, uint32_t cursor) {
+    if (entryCount > Config::ABSOLUTE_MAX_UNDO_ENTRIES) {
+        return false;
+    }
+    if (cursor > entryCount) {
+        return false;
+    }
+    return true;
+}
+
 STORAGE_PERSIST_MEM LooperState sanitizeLooperStateForPersistence(LooperState state) {
     switch (state) {
         case LOOPER_RECORDING:
@@ -157,6 +167,13 @@ STORAGE_PERSIST_MEM bool readGlobalUndoStackMetadataFromFile(File& file, GlobalU
     if (!readRaw(file, &nextEntryId, sizeof(nextEntryId))) {
         return false;
     }
+    if (!undoStackHeaderLooksValid(entryCount, cursor)) {
+        Serial.print("[StorageManager] ERROR: undo stack header invalid (entries=");
+        Serial.print(entryCount);
+        Serial.print(" cursor=");
+        Serial.println(cursor);
+        return false;
+    }
 
     stack.clear();
     stack.nextEntryId = nextEntryId;
@@ -245,6 +262,13 @@ STORAGE_PERSIST_MEM bool readGlobalUndoStackFromFile(File& file, GlobalUndoStack
         return false;
     }
     if (!readRaw(file, &nextEntryId, sizeof(nextEntryId))) {
+        return false;
+    }
+    if (!undoStackHeaderLooksValid(entryCount, cursor)) {
+        Serial.print("[StorageManager] ERROR: undo stack header invalid (entries=");
+        Serial.print(entryCount);
+        Serial.print(" cursor=");
+        Serial.println(cursor);
         return false;
     }
 

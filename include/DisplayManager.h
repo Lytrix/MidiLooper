@@ -176,6 +176,7 @@ private:
     std::vector<NoteUtils::OpenNoteOn> liveDisplayCacheOpenNotes;
     size_t liveDisplayCacheEventCount = static_cast<size_t>(-1);
     uint16_t liveDisplayCacheCaptureRevision = 0;
+    uint32_t liveDisplayCacheCapturePreviewRevision_ = 0;
     uint32_t liveDisplayCacheLoopLength = 0;
     uint8_t liveDisplayCacheSlot = 255;
     TrackState liveDisplayCacheTrackState = NUM_TRACK_STATES;
