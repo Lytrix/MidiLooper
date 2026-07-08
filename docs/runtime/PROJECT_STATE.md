@@ -2,21 +2,19 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-07-08 (DEC-020 Phase 4 mid-pass persistence)
+Last updated: 2026-07-08 (boot USB-host defer landed; HITL pending)
 
 ---
 
 ## Current branch
 
-`continuous-saving` (from `derived-note-overlap-logic`)
-
-**Handoff:** [next_session_handoff_overdub_uip_architecture.md](../plans/next_session_handoff_overdub_uip_architecture.md)  
-**Priority:** OpenSpec `continuous-runtime-persistence` Phase 5 recovery (DEC-020); Phase 4 mid-pass writer shipped (native)
+`dec-023-recovery` — boot USB-host defer + slot-switch hardening (uncommitted)
 
 ## Shipped on branch (recent)
 
 | Commit / session | Focus | Docs |
 |--------|--------|------|
+| *(uncommitted)* | Boot USB-host defer; boot-load LED suppress; slot-switch crash hardening | — |
 | *(uncommitted)* | Phase 2 persistence queue + Phase 3 transport-gate removal | DEC-020 |
 | *(uncommitted)* | M5 boot load restore (DEC-021/022) recovered | DEC-021, DEC-022 |
 | `cdd9c2b` | 16-bar stop→PLAY fix; capture ring; playback extmem materialize | DEC-018 |

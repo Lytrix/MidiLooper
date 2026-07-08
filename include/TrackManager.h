@@ -154,6 +154,10 @@ public:
   void forceLedUpdate(uint32_t currentTick);
   void clearLeds();
 
+  /// Suppress LED/USB side effects while StorageManager applies boot load footer.
+  void beginBootLoad();
+  void endBootLoad();
+
 private:
   /// Track row + loop row (notes 60–67, 50–57). Used from updateLedsDeferred and forceLedUpdate
   /// because MidiLedManager::updateLeds / clearAllLeds can turn off loop LEDs without this pass.
@@ -190,6 +194,8 @@ private:
 
   // If set, the next pending slot switch commit replaces enabled set with the target slot only.
   bool pendingEnabledSetReplacement[Config::NUM_TRACKS] = {false};
+
+  bool bootLoadInProgress_ = false;
 
   //friend class UI; // Optional: if you have a UI or debug class needing internal access
 };

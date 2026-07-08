@@ -13,6 +13,7 @@
 #include "EditManager.h"
 #include "PassReclaim.h"
 #include "DisplayManager.h"
+#include "TrackDisplayState.h"
 #include "Utils/DebugSessionCapture.h"
 #include "Utils/MemoryMonitor.h"
 
@@ -469,12 +470,11 @@ uint32_t TrackManager::getMasterLoopLength() const {
 
 TrackState TrackManager::getTrackState(uint8_t trackIndex) const {
   if (trackIndex >= Config::NUM_TRACKS) return TRACK_STOPPED;
-  TrackState s = tracks[trackIndex].getState();
-  if (pendingRecord[trackIndex] &&
-      (s == TRACK_PLAYING || s == TRACK_OVERDUBBING)) {
-    return TRACK_ARMED;
-  }
-  return s;
+  const Track& track = tracks[trackIndex];
+  const uint8_t selectedSlot = slotStateMachine.getSelectedSlotIndex(trackIndex);
+  return resolveDisplayTrackState(
+      track.getState(), track.getSlotOpState(selectedSlot), track.hasDataInSlot(selectedSlot),
+      pendingRecord[trackIndex], isRecordingQueued(trackIndex, selectedSlot));
 }
 
 uint32_t TrackManager::getTrackLength(uint8_t trackIndex) const {
@@ -725,6 +725,9 @@ void TrackManager::setSelectedSlotIndex(uint8_t trackIndex, uint8_t slotIndex,
     setActiveLoopIndex(trackIndex, slotIndex);
   }
   if (trackIndex == selectedTrack) {
+    if (track.isEmpty() && tracks[trackIndex].hasDataInSlot(slotIndex)) {
+      tracks[trackIndex].forceSetState(TRACK_STOPPED);
+    }
     editManager.onSelectedSlotChanged(tracks[trackIndex], previousSlot);
     displayManager.invalidateForSlotChange(trackIndex, previousSlot, slotIndex);
     forceLedUpdate(clockManager.getCurrentTick());
@@ -753,6 +756,14 @@ void TrackManager::queueBarPlaybackStart(uint8_t trackIndex, int32_t storageTick
   tracks[trackIndex].queuePlaybackStartAtGrid(storageTick, queuedAtTick);
 }
 
+void TrackManager::beginBootLoad() {
+  bootLoadInProgress_ = true;
+}
+
+void TrackManager::endBootLoad() {
+  bootLoadInProgress_ = false;
+}
+
 void TrackManager::setSelectedTrack(uint8_t index) {
   if (index >= Config::NUM_TRACKS) {
     return;
@@ -762,11 +773,15 @@ void TrackManager::setSelectedTrack(uint8_t index) {
     editManager.beforeSelectedTrackChange(tracks[selectedTrack]);
   }
   selectedTrack = index;
-  forceLedUpdate(clockManager.getCurrentTick());
+  if (!bootLoadInProgress_) {
+    forceLedUpdate(clockManager.getCurrentTick());
+  }
   if (trackChanged) {
     editManager.onTrackChanged(tracks[selectedTrack]);
-    const uint8_t displaySlot = getSelectedSlotIndex(index);
-    displayManager.invalidateForSlotChange(index, displaySlot, displaySlot);
+    if (!bootLoadInProgress_) {
+      const uint8_t displaySlot = getSelectedSlotIndex(index);
+      displayManager.invalidateForSlotChange(index, displaySlot, displaySlot);
+    }
   }
 }
 
@@ -1006,6 +1021,9 @@ void TrackManager::updateLeds(uint32_t currentTick) {
 }
 
 void TrackManager::forceLedUpdate(uint32_t currentTick) {
+  if (bootLoadInProgress_) {
+    return;
+  }
   if (ledManager) {
     ledManager->forceUpdate(getSelectedTrack(), currentTick, getSelectedSlotIndex(selectedTrack));
     refreshTrackAndLoopSelectLeds();

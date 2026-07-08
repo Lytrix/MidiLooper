@@ -16,18 +16,12 @@
 #include "Utils/NoteUtils.h"    // For CachedNoteList
 #include "Utils/MemoryPool.h"   // For pooled MIDI event vectors
 #include "TrackState.h"
+#include "TrackDisplayState.h"
 #include "Loop.h"
 #include "GlobalUndoStack.h"
 #include "TrackPlaybackRuntime.h"
 #include "Slot.h"
 #include "LoopPool.h"
-
-/// Derived capture role for a loop slot (from TrackState + activeLoopIndex).
-enum class SlotOpState : uint8_t {
-  SLOT_OP_IDLE = 0,
-  SLOT_OP_RECORDING = 1,
-  SLOT_OP_OVERDUBBING = 2,
-};
 #include "Globals.h"
 
 class TrackUndo; // Forward declaration

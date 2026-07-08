@@ -1124,8 +1124,16 @@ void Track::stopRecording(uint32_t currentTick) {
                static_cast<unsigned long>(recordStartTick), static_cast<unsigned long>(rawLength),
                static_cast<unsigned long>(finalLength));
 
-  // Empty record-stop (commit skipped) clears loopLengthTicks; leave a valid state.
+  // Empty record-stop: reset capture slot geometry so hasDataInSlot stays false.
   if (loop.loopLengthTicks == 0 || loop.activeCapturePassCount() == 0) {
+    loop.discardCapture();
+    loop.resetPassTimeline();
+    loop.loopLengthTicks = 0;
+    loop.loopStartTick = 0;
+    loop.startLoopTick = 0;
+    loop.nextEventIndex = 0;
+    loop.lastTickInLoop = 0;
+    loop.invalidatePlaybackCaches();
     logRecordStopStage(loop, stopPathStartUs, "state_advance", 0, stopHeap, stopHeap,
                        "skipped_empty", &stopPathStats);
     logRecordStopStage(loop, stopPathStartUs, "save_request", 0, stopHeap, stopHeap,

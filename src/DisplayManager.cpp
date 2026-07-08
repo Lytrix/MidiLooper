@@ -1032,32 +1032,39 @@ void DisplayManager::drawTrackStatus(uint8_t selectedTrack, uint32_t currentMill
     }
 }
 
-void DisplayManager::setup() {
+void DisplayManager::beginBootOled() {
+    if (bootOledInitialized_) {
+        return;
+    }
     Serial.println("DisplayManager: Setting up SSD1322 display...");
-
-    // Initialize display
     _display.begin();
-
-    // Set buffer size and clear display
     Serial.println("DisplayManager: Setting buffer size");
     _display.gfx.set_buffer_size(DISPLAY_WIDTH, DISPLAY_HEIGHT);
     clearDisplayBuffer();
+    bootOledInitialized_ = true;
+}
 
-    // Now proceed with your drawing/demo code
+void DisplayManager::finishBootSetup() {
+    if (!bootOledInitialized_) {
+        beginBootOled();
+    }
     Serial.println("DisplayManager: Drawing startup text...");
     Serial.println("Selecting font...");
     _display.gfx.select_font(&Font5x7Fixed);
     Serial.println("Font selected.");
     Serial.println("Drawing text...");
     _display.gfx.draw_text(_display.api.getFrameBuffer(), "Midi Looper v0.4", 92, 32, 15);
-    //_display.gfx.draw_text(_display.api.getFrameBuffer(), "v0.4", 92, 40, 8);
-    //Serial.println("Text drawn.");
     _display.api.display();
     Serial.println("DisplayManager: Text sent to display");
 #if !defined(SESSION_CAPTURE)
     delay(1500);
 #endif
     clearDisplayBuffer();
+}
+
+void DisplayManager::setup() {
+    beginBootOled();
+    finishBootSetup();
 }
 
 

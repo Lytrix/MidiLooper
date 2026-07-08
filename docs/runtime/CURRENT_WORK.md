@@ -2,13 +2,49 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-07-08 (DEC-020 Phase 4 mid-pass persistence)
+Last updated: 2026-07-08 (boot USB-host defer + slot-switch hardening)
 
 ---
 
 ## Now implementing
 
-**OpenSpec: [`continuous-runtime-persistence`](../../openspec/changes/continuous-runtime-persistence/)** (DEC-020) — Phase 4 **shipped** (native); HITL gate pending.
+### Boot load — USB Host defer + slot manifest scan hardening
+
+**Landed:** defer `usbHost.begin()` until after `loadState`; suppress boot LED updates; close bundle before 8×8 manifest scan; `SD.exists`-only boot probe; light `resetLoopSlotForBootManifest`; scan off FLASHMEM; `beginBootOled` before load / `finishBootSetup` after.
+
+**HITL gate (manual):** DROID attached, cold boot ×5 — serial must show `BOOT,scan,start` → `BOOT,scan,t0`…`t7` → `BOOT,scan,done` → `BOOT,load,ok` → `#CAP,HDR,v1` on first power cycle. Then 191659 slot-switch scenario.
+
+---
+
+### Boot/display fix — slot-aware track state (DEC-020 load path)
+
+**Landed:** empty workspace load maps `TRACK_STOPPED` → `TRACK_EMPTY` when no restorable loop payloads; OLED track column uses selected-slot display state via `resolveDisplayTrackState` / `TrackManager::getTrackState`. Native: `test_track_display_state`.
+
+**Verify on hardware:** boot empty workspace → all track rows `-`; select empty slot on track with data elsewhere → `-`.
+
+---
+
+### OpenSpec: [`unified-capture-commit-owner`](../../openspec/changes/unified-capture-commit-owner/) (DEC-023)
+
+**Recovery on branch `dec-023-recovery`:** slice **1+2 FAILED** boot at workspace load (`session_20260708_173016`). Firmware at **`37f6b00`** = baseline Track/Loop + Storage quarantine/recovery helpers.
+
+**Before retrying slice 1:** quarantine SD workspace (clearing a loop ≠ removing runtime bundle). Then confirm boot reaches `Boot recovery chain exhausted` or `loaded successfully`.
+
+| Step | Commit | Contents | Status |
+|------|--------|----------|--------|
+| **0** | `40db4df` | `e40f26c` baseline | **Passed** (`session_20260708_172531`) |
+| **1+2** | `83a954b`+`4f75fdc` | Track + Loop | **FAILED** boot load — reverted |
+| **4s** | `37f6b00` | Storage quarantine/recovery only | **Landed** — test boot after quarantine |
+| **1** | `83a954b` | Track deferred commit | Retry after empty boot OK |
+| **2** | `4f75fdc` | Loop helpers | After slice 1 |
+| **3** | `50dbd05` | DisplayManager | Pending |
+| **4** | `75e5176` | TrackManager + tests | After slice 1 |
+
+**Verify:** manual record+overdub only (HITL parked) · `pio test -e native` after each slice
+
+---
+
+### OpenSpec: [`continuous-runtime-persistence`](../../openspec/changes/continuous-runtime-persistence/) (DEC-020)
 
 | Phase | Status |
 |-------|--------|
