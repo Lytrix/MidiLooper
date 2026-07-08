@@ -14,8 +14,6 @@ namespace CaptureIncrementalSanity {
 
 constexpr size_t kWrapSliceMaxEvents = 64;
 constexpr size_t kBudgetSliceMaxEvents = 32;
-/// Hot-stop flatten/min-length paths use internal heap; defer when store is larger.
-constexpr size_t kMaxHotStopFlattenEvents = 512;
 
 struct PairRepairResult {
   size_t eventsRemoved = 0;
