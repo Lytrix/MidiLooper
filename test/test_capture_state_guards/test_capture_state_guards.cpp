@@ -12,7 +12,7 @@
 #include "../../src/Utils/LoopEventValidation.cpp"
 #include "../../src/Loop.cpp"
 #include "../test_support/LoopCaptureTestDeps.cpp"
-#include "LoopPasses.h"
+#include "Loop.h"
 #include "MidiEvent.h"
 
 void test_second_overdub_begin_capture_skipped_preserves_store() {
@@ -49,74 +49,9 @@ void test_first_overdub_begin_capture_clears_store() {
                     static_cast<uint8_t>(loop.capture.phase));
 }
 
-void test_capture_append_frozen_rejects_events() {
-  LoopEventStore::resetPoolForTests();
-  LoopEventStore::initPool();
-
-  Loop loop;
-  loop.loopLengthTicks = 768;
-  loop.beginCapture(CapturePhase::Overdub);
-  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(10, 1, 60, 100)));
-  TEST_ASSERT_EQUAL(1u, loop.capture.store.size());
-
-  loop.setCaptureAppendFrozen(true);
-  TEST_ASSERT_FALSE(loop.appendCaptureEvent(MidiEvent::NoteOn(20, 1, 61, 100)));
-  TEST_ASSERT_EQUAL(1u, loop.capture.store.size());
-}
-
-void test_capture_append_frozen_cleared_on_begin_capture() {
-  LoopEventStore::resetPoolForTests();
-  LoopEventStore::initPool();
-
-  Loop loop;
-  loop.beginCapture(CapturePhase::Overdub);
-  loop.setCaptureAppendFrozen(true);
-  TEST_ASSERT_TRUE(loop.isCaptureAppendFrozen());
-
-  loop.beginCapture(CapturePhase::Overdub);
-  TEST_ASSERT_FALSE(loop.isCaptureAppendFrozen());
-}
-
-void test_capture_append_frozen_cleared_on_begin_record_capture() {
-  LoopEventStore::resetPoolForTests();
-  LoopEventStore::initPool();
-
-  Loop loop;
-  loop.beginCapture(CapturePhase::Overdub);
-  loop.setCaptureAppendFrozen(true);
-  TEST_ASSERT_TRUE(loop.isCaptureAppendFrozen());
-
-  loop.beginCapture(CapturePhase::Record);
-  TEST_ASSERT_FALSE(loop.isCaptureAppendFrozen());
-  TEST_ASSERT_EQUAL(static_cast<uint8_t>(CapturePhase::Record),
-                    static_cast<uint8_t>(loop.capture.phase));
-  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(8, 1, 60, 100)));
-  TEST_ASSERT_EQUAL(1u, loop.capture.store.size());
-  TEST_ASSERT_FALSE(loop.capturePreview.notes.empty());
-}
-
-void test_commit_reason_classifies_record_stop() {
-  TEST_ASSERT_TRUE(isRecordStopCommitReason(CommitReason::RecordStop));
-  TEST_ASSERT_TRUE(isRecordStopCommitReason(CommitReason::RecordStopToStopped));
-  TEST_ASSERT_FALSE(isRecordStopCommitReason(CommitReason::OverdubStop));
-  TEST_ASSERT_FALSE(isRecordStopCommitReason(CommitReason::OverdubStopToStopped));
-}
-
-void test_commit_reason_classifies_overdub_stop() {
-  TEST_ASSERT_TRUE(isOverdubStopCommitReason(CommitReason::OverdubStop));
-  TEST_ASSERT_TRUE(isOverdubStopCommitReason(CommitReason::OverdubStopToStopped));
-  TEST_ASSERT_FALSE(isOverdubStopCommitReason(CommitReason::RecordStop));
-  TEST_ASSERT_FALSE(isOverdubStopCommitReason(CommitReason::RecordStopToStopped));
-}
-
 int main(int /*argc*/, char** /*argv*/) {
   UNITY_BEGIN();
   RUN_TEST(test_second_overdub_begin_capture_skipped_preserves_store);
   RUN_TEST(test_first_overdub_begin_capture_clears_store);
-  RUN_TEST(test_capture_append_frozen_rejects_events);
-  RUN_TEST(test_capture_append_frozen_cleared_on_begin_capture);
-  RUN_TEST(test_capture_append_frozen_cleared_on_begin_record_capture);
-  RUN_TEST(test_commit_reason_classifies_record_stop);
-  RUN_TEST(test_commit_reason_classifies_overdub_stop);
   return UNITY_END();
 }

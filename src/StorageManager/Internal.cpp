@@ -22,8 +22,7 @@ uint32_t lastEditAutosaveMs = 0;
 bool clearEditDirtyAfterDeferredSave = false;
 bool quarantineLegacyMonolithAfterSave = false;
 CurrentSetStorage::AnchorFields currentSetAnchorFields{};
-// Incremental loop writes by default; migration/recovery paths set true explicitly.
-bool forceCurrentSetFullLoopWrite = false;
+bool forceCurrentSetFullLoopWrite = true;
 std::array<std::array<bool, Config::MAX_LOOPS_PER_TRACK>, Config::NUM_TRACKS>
     currentSetLoopSlotDirty{};
 uint32_t currentSetLastActiveUnix = 0;
@@ -148,17 +147,6 @@ STORAGE_PERSIST_MEM uint32_t resolvePersistenceSliceBudgetUs(const LooperState& 
     return PersistenceBudget::resolvePersistenceSliceBudgetUs(
         isCaptureActiveForPersistence(),
         state == LOOPER_PLAYING || state == LOOPER_OVERDUBBING || state == LOOPER_RECORDING);
-}
-
-STORAGE_PERSIST_MEM bool anyCurrentSetLoopSlotDirty() {
-    for (uint8_t track = 0; track < Config::NUM_TRACKS; ++track) {
-        for (uint8_t slot = 0; slot < Config::MAX_LOOPS_PER_TRACK; ++slot) {
-            if (currentSetLoopSlotDirty[track][slot]) {
-                return true;
-            }
-        }
-    }
-    return false;
 }
 
 }  // namespace StorageManagerInternal

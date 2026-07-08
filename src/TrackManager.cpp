@@ -124,11 +124,9 @@ void TrackManager::startRecordingTrack(uint8_t trackIndex, uint32_t currentTick)
                  trackIndex, tr.getStateName(tr.getState()));
       return;
     }
-    tr.cancelDeferredOverdubStop();
     logger.log(CAT_TRACK, LOG_INFO, "Track %d armed, waiting for clock to start recording", trackIndex);
     return;
   }
-  tracks[trackIndex].cancelDeferredOverdubStop();
   tracks[trackIndex].startRecording(currentTick);
 }
 
@@ -224,7 +222,6 @@ void TrackManager::cancelPendingRecordArm(uint8_t trackIndex) {
     pendingRecordSlot[trackIndex][s] = false;
   }
   Track& t = tracks[trackIndex];
-  t.cancelDeferredOverdubStop();
   if (t.isArmed()) {
     t.setState(t.hasData() ? TRACK_STOPPED : TRACK_EMPTY);
   }
@@ -334,10 +331,6 @@ void TrackManager::handleTransportStop() {
   uint32_t currentTick = clockManager.getCurrentTick();
   for (uint8_t i = 0; i < Config::NUM_TRACKS; ++i) {
     Track& t = tracks[i];
-    // Phase 3 record stop commit runs on STOPPED_RECORDING; do not abort mid-flight.
-    if (!(t.isStoppedRecording() && t.hasPendingOverdubStopCommit())) {
-      t.cancelDeferredOverdubStop();
-    }
     // Always clear queued quantized actions when transport stops.
     pendingRecord[i] = false;
     pendingRecordQueuedAtTick[i] = UINT32_MAX;
@@ -371,11 +364,6 @@ void TrackManager::handleTransportStop() {
     } else if (t.isArmed()) {
       t.sendAllNotesOff();
       t.setState(t.hasData() ? TRACK_STOPPED : TRACK_EMPTY);
-    } else if (t.isStoppedRecording()) {
-      t.sendAllNotesOff();
-      if (!t.hasPendingOverdubStopCommit()) {
-        t.setState(t.hasData() ? TRACK_STOPPED : TRACK_EMPTY);
-      }
     } else {
       t.sendAllNotesOff();
     }
@@ -387,9 +375,7 @@ void TrackManager::handleTransportStop() {
       StorageManager::markCurrentSetLoopSlotDirty(i, track.getActiveLoopIndex());
     }
   }
-  if (StorageManager::shouldQueueCurrentWorkspaceSave()) {
-    StorageManager::requestDeferredSaveState(looperState.getLooperState());
-  }
+  StorageManager::requestDeferredSaveState(looperState.getLooperState());
 }
 
 void TrackManager::clearTrack(uint8_t trackIndex) {
