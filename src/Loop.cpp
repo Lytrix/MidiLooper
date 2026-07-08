@@ -299,17 +299,6 @@ void mergeActiveCapturePassesInto(const LoopPasses& passes, MidiEventVector& out
   }
 }
 
-template <typename MidiEventVector>
-void mergeActiveCapturePassesWithCaptureInto(const Loop& loop, MidiEventVector& out) {
-  mergeActiveCapturePassesInto(loop.passes, out);
-  if (!loop.captureActive() || loop.capture.store.empty()) {
-    return;
-  }
-  MidiEventVector captureLayer;
-  LoopEventStore::appendChunkRefEvents(loop.capture.store.chunkIds(), captureLayer);
-  mergeSortedLoopCaptureLayers(out, std::move(captureLayer));
-}
-
 }  // namespace
 
 void Loop::mergeActiveCapturePasses(MidiEventVec& out) const {
@@ -318,14 +307,6 @@ void Loop::mergeActiveCapturePasses(MidiEventVec& out) const {
 
 void Loop::mergeActiveCapturePasses(SessionMidiEventVec& out) const {
   mergeActiveCapturePassesInto(passes, out);
-}
-
-void Loop::mergeActiveCapturePassesWithCapture(MidiEventVec& out) const {
-  mergeActiveCapturePassesWithCaptureInto(*this, out);
-}
-
-void Loop::mergeActiveCapturePassesWithCapture(SessionMidiEventVec& out) const {
-  mergeActiveCapturePassesWithCaptureInto(*this, out);
 }
 
 void Loop::materializeEditViewFromPasses() const {
@@ -744,7 +725,6 @@ void Loop::beginCapture(CapturePhase phase) {
   captureNextEventIndex = 0;
   captureEventsSortDirty = false;
   captureDedupEventsDropped_ = 0;
-  captureAppendFrozen_ = false;
   ++captureDisplayRevision;
 }
 
@@ -755,14 +735,10 @@ void Loop::discardCapture() {
   captureEventsSortDirty = false;
   capturePreview.clear();
   captureDedupEventsDropped_ = 0;
-  captureAppendFrozen_ = false;
 }
 
 bool Loop::appendCaptureEvent(const MidiEvent& evt) {
   if (capture.phase == CapturePhase::None) {
-    return false;
-  }
-  if (captureAppendFrozen_) {
     return false;
   }
   if (hasPendingCapturePass_) {
@@ -772,15 +748,12 @@ bool Loop::appendCaptureEvent(const MidiEvent& evt) {
     ++captureDedupEventsDropped_;
     return false;
   }
-  const size_t chunkCountBefore = capture.store.chunkIds().size();
   if (!capture.store.append(evt)) {
     return false;
   }
   captureEventsSortDirty = true;
   applyCaptureEventToPreview(capturePreview, evt, Config::TICKS_PER_BAR);
-  if (capture.store.chunkIds().size() > chunkCountBefore) {
-    ++captureDisplayRevision;
-  }
+  ++captureDisplayRevision;
   return true;
 }
 
@@ -1308,24 +1281,15 @@ SealOutcome Loop::sealCapture(uint32_t sealedAtTick) {
     return SealOutcome::PoolExhausted;
   }
 
-  const bool largeCaptureStore =
-      capture.store.size() > CaptureIncrementalSanity::kMaxHotStopFlattenEvents;
-  if (largeCaptureStore) {
-    captureEventsSortDirty = false;
-    capture.store.assignMissingNoteIdsOnRecordingTail(
-        [this]() -> NoteId { return allocateNoteId(); });
-  } else {
-    ensureCaptureEventsSorted();
-    assignMissingNoteIdsInStore(capture.store);
-  }
+  ensureCaptureEventsSorted();
+  assignMissingNoteIdsInStore(capture.store);
 
   const char* phaseLabel = capturePhaseLabel(capture.phase);
   uint32_t minLenPairsRemoved = 0;
   uint32_t wrapSyntheticOffs = 0;
 
   if (loopLengthTicks > 0 &&
-      (capture.phase == CapturePhase::Record || capture.phase == CapturePhase::Overdub) &&
-      !largeCaptureStore) {
+      (capture.phase == CapturePhase::Record || capture.phase == CapturePhase::Overdub)) {
     const LoopStopFinalize::Result fin =
         LoopStopFinalize::finalizeWrapWindowOnStore(capture.store, loopLengthTicks);
     wrapSyntheticOffs = static_cast<uint32_t>(fin.syntheticOffsInserted);
