@@ -55,14 +55,14 @@ class DisplayManager {
 public:
     DisplayManager();
     void setup();
-    /// Minimal OLED init for boot Loading screen (before SD load).
+    /// Minimal OLED init for boot screen (before SD load).
     void beginBootOled();
-    /// Startup splash after workspace load completes.
+    /// Mark boot setup complete; OLED stays on boot screen until hold expires in update().
     void finishBootSetup();
     void update();
     void clearDisplayBuffer();
-    /// Full-screen boot status (splash / SD load); pushes frame to OLED immediately.
-    void drawBootStatusMessage(const char* text);
+    /// Boot branding screen during SD load; pushes frame to OLED immediately.
+    void drawBootScreen();
     /// Emit #CAP DISP snapshot for HITL display verification (capture builds).
     void emitDisplayCaptureSnapshot(const Track& track, uint8_t displaySlot, uint32_t currentTick);
     void emitDisplayCaptureSnapshot(const Track& track, uint8_t displaySlot, uint32_t currentTick,
@@ -158,7 +158,9 @@ private:
 
     uint32_t _prevDrawTick = 0;
     SSD1322 _display;
-    bool bootOledInitialized_ = false;
+    bool bootScreenVisible_ = false;
+    bool bootSetupComplete_ = false;
+    unsigned long bootScreenHoldUntilMs_ = 0;
     // Blinker/pulse state for selected track
     float _pulsePhase = 0.0f; // 0..1
     unsigned long _lastPulseUpdate = 0;
