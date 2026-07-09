@@ -204,6 +204,10 @@ Load path validates the completion marker and can **quarantine** a partial file 
 
 ---
 
+## Boot load sequence
+
+Full cold-boot ordering (sync load, deferred slot restore, USB Host deferral, `BOOT,*` telemetry): **[`BOOT_LOAD.md`](BOOT_LOAD.md)**.
+
 ## Boot after long save
 
 **`stabilizeBootMemoryAfterLoad()`** (called from load):

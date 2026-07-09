@@ -6,6 +6,7 @@ Agent-oriented map of how loop MIDI lives in RAM (chunk pool + passes) and how i
 
 | Guide | Role |
 |-------|------|
+| [`BOOT_LOAD.md`](BOOT_LOAD.md) | Cold-boot phase order, SDIO vs USB Host, `BOOT,*` telemetry |
 | [`LOOP_MIDI_STORAGE_AND_VALIDATION.md`](LOOP_MIDI_STORAGE_AND_VALIDATION.md) | RAM capture, seal, passes, undo COW, hot-path constraints |
 | [`DEFERRED_RUNTIME_PERSISTENCE.md`](DEFERRED_RUNTIME_PERSISTENCE.md) | Deferred writer FSM, SAVE tokens, call sites, chunk-bounded SD write |
 | [`INTERNAL_HEAP_AND_EXTERNAL_MEMORY.md`](INTERNAL_HEAP_AND_EXTERNAL_MEMORY.md) | Internal heap vs external memory pool routing |
