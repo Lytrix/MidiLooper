@@ -14,9 +14,10 @@ Persistent record of **accepted architectural and implementation decisions**. No
 
 | ID | Date | Topic | Status |
 |----|------|-------|--------|
+| [DEC-025](#dec-025-split-focus-playing-preview-pending) | 2026-07-09 | Split focus: playing / preview / pending; committed-transition invariant | Accepted |
 | [DEC-024](#dec-024-loop-owned-undo-ownership-direction) | 2026-07-08 | Loop-owned undo ownership direction (Phase 1 filter, Phase 2 migrate stack) | Accepted |
 | [DEC-022](#dec-022-runtime-bundle-save-tail-integrity) | 2026-07-07 | Runtime bundle save tail integrity (meta temp truncate + append cursor) | Accepted |
-| [DEC-021](#dec-021-defer-inactive-loop-slot-restore-at-boot) | 2026-07-07 | Defer inactive loop slot restore + undo bodies at current set restore | Accepted |
+| [DEC-021](#dec-021-defer-inactive-loop-slot-restore-at-boot) | 2026-07-07 | Defer inactive loop slot restore + undo bodies at current set restore | Accepted; amended 2026-07-09 |
 | [DEC-020](#dec-020-continuous-runtime-persistence-architecture) | 2026-07-07 | Continuous runtime persistence — invariant-driven capture-chunk persistence | Accepted |
 | [DEC-019](#dec-019-sd-load-path-extmem-routing-m5-spike) | 2026-07-07 | SD load path extmem routing (M5 spike) | Accepted (spike) |
 | [DEC-018](#dec-018-admission-current-heap-derived-rep-consolidation) | 2026-07-07 | Admission uses current heap; derived-rep OpenSpec consolidation | Accepted |
@@ -40,7 +41,7 @@ Persistent record of **accepted architectural and implementation decisions**. No
 
 ---
 
-<!-- Append new entries below (newest first). Next ID: DEC-025 -->
+<!-- Append new entries below (newest first). Next ID: DEC-026 -->
 
 ## DEC-024 — Loop-owned undo ownership direction
 
@@ -147,7 +148,7 @@ Supersedes persistence starvation workarounds on `runtime-derived-representation
 **Decision:**
 
 1. **Split current set restore from SD** into two steps: (a) load current set bundle (transport + slot metadata + undo metadata), (b) restore loop slot payloads from `slots/loop_TT_SS.bin`.
-2. At boot, restore payloads only for **enabled**, **active**, and **selected** slots; queue the rest for `processDeferredLoopSlotRestore` in idle and `requestLoopSlotRestoreFromSd` on slot select.
+2. At boot, queue **every** track/slot with a verified SD loop payload (up to 64) into `processDeferredLoopSlotRestore`; **priority orders restore only** — admission does not depend on playback layer or saved index flags. *(Amended 2026-07-09 — [`slot-performance-interaction`](../openspec/changes/slot-performance-interaction/) D21; was: enabled/active/selected only.)*
 3. At boot, read undo stack **metadata** only (`readGlobalUndoStackMetadataFromFile`); hydrate snapshot bodies per track in idle (`processDeferredUndoSnapshots`) or before first undo.
 4. Emit `#CAP,BOOT,ram1,...` after restore; extend `stabilizeBootMemoryAfterLoad` to trim undo when heap or pool free is below reserve.
 
@@ -156,7 +157,27 @@ Supersedes persistence starvation workarounds on `runtime-derived-representation
 - Supersedes workspace-session-persistence non-goal “all 8×8 at boot” for stack safety.
 - Play entry uses `loop.midiEvents()` in `ensurePlaybackWindowBuilt`; transport start skips `updateAllTracks(0)` when no capture is pending.
 
-**References:** DEC-019, [`m5_sd_load_extmem_routing_handoff.md`](plans/m5_sd_load_extmem_routing_handoff.md), `loadCurrentSetBundleAndActiveLoopSlots`.
+**References:** DEC-019, [`m5_sd_load_extmem_routing_handoff.md`](plans/m5_sd_load_extmem_routing_handoff.md), `loadCurrentSetBundleAndActiveLoopSlots`. **Amendment:** DEC-025, [`slot-performance-interaction`](../openspec/changes/slot-performance-interaction/) D21.
+
+---
+
+## DEC-025 — Split focus: playing / preview / pending
+
+**Date:** 2026-07-09  
+**Owner:** [`slot-performance-interaction`](../openspec/changes/slot-performance-interaction/) (D18–D21)  
+**Status:** Accepted
+
+**Context:** While transport runs, slot UI mixed preview (piano roll, edit) with playing (audible MIDI, bar/16th LEDs). Boot admission for deferred restore still filtered non-active slots (DEC-021 pre-amendment).
+
+**Decision:**
+
+1. **Preview slot** = `selectedSlotIndex` (no separate `previewSlotIndex` field). Updates immediately on slot peek / launch queue.
+2. **Playing slot** = `activeLoopIndex`. While transport running, changes only via **committed playback transitions** (launch commit, capture finalize, quantized record start, layer-hold commit, post-clear restore).
+3. **Pending slot** = `pendingSlotIndex` until `SlotQuantization` commit. Performance short-press launch uses **`LoopEnd`** to preserve phrasing.
+4. **Display:** preview playhead at destination `loopStartTick`, flashing until playing catches up; **LED phase** stays on playing slot.
+5. **`slotHasLoopContent`:** true when RAM has data or SD has verified payload.
+
+**References:** [`slot-performance-interaction/design.md`](../openspec/changes/slot-performance-interaction/design.md) D18–D21, DEC-021 amendment.
 
 ---
 

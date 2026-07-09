@@ -13,17 +13,14 @@ namespace SlotIndex {
 // When a slot transition should occur.
 enum class SlotQuantization : uint8_t {
   NextGrid = 0,  // On the next 16th-step boundary
-  LoopEnd  = 1,  // When the currently playing loop wraps (tickInLoopStorage == 0)
+  LoopEnd  = 1,  // When the playing loop projection cycle wraps (same as playback wrap detection)
 };
 
 /**
- * SlotStateMachine (Phase 1):
- * - Stores per-track UI focus: `selectedSlotIndex`.
- * - Stores one pending slot switch per track with a quantization rule:
- *   `pendingSlotIndex + pendingSlotQuantization`.
- *
- * This phase focuses on quantized playback switching; recording/overdubbing
- * is still tied to the Track's active loop.
+ * SlotStateMachine:
+ * - `selectedSlotIndex` — preview slot (piano roll, edit focus) while transport runs.
+ * - `pendingSlotIndex` — queued launch target until scheduled commit.
+ * - Playing slot remains `Track::activeLoopIndex` (see TrackManager::getPlayingSlotIndex).
  */
 class SlotStateMachine {
 public:

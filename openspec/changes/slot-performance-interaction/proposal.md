@@ -42,6 +42,8 @@ Short / double / triple / long remain: record-overdub / undo / redo / clear — 
 ### Other
 
 - **`SlotActionQueue`** — `LaunchSlot`, `RestartSlot`, `MuteSlot`, `UnmuteSlot` with per-action quantisation
+- **Split focus (2026-07-09)** — playing slot vs preview slot vs MIDI-safe edit commit (see design D18–D21)
+- **Boot (DEC-021 amendment)** — queue all 64 SD loop payloads cooperatively at boot
 - Note-offs on mute, disable, delete, relaunch
 - LOOP_EDIT PlaybackWindow metadata resync while playing
 - Global undo on destructive slot ops (delete, overlay replace/clear)
@@ -59,6 +61,7 @@ Short / double / triple / long remain: record-overdub / undo / redo / clear — 
 - Overlay: **triple press**
 - Short launch/mute: **`LoopEnd`**; double restart/launch: **`NextGrid`**
 - Merge cache name: **`PlaybackMergedMidiEvents`**
+- **Preview vs playing (2026-07-09):** display + edit commit immediate on preview; LEDs/phase on playing slot until commit
 
 ## Non-Goals
 

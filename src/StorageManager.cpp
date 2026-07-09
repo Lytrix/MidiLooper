@@ -2,6 +2,7 @@
 //  Licensed under the PolyForm Noncommercial 1.0.0
 
 #include "StorageManager.h"
+#include "Utils/BootLoopSlotRestore.h"
 #include "TrackManager.h"
 #include "Loop.h"
 #include "Slot.h"
@@ -80,23 +81,7 @@ std::array<uint32_t, Config::NUM_TRACKS> undoStackFileOffsets_{};
 uint8_t undoHydrateTrackIndex_ = 0;
 bool undoSnapshotsPending_ = false;
 
-bool STORAGE_PERSIST_MEM shouldRestoreLoopSlotAtBoot(uint8_t trackIndex, uint8_t slotIndex, uint8_t selectedTrackIdx,
-                                 const std::vector<uint8_t>& activeLoopIndex,
-                                 const std::vector<uint8_t>& selectedSlotIndex) {
-    if (trackManager.isSlotEnabled(trackIndex, slotIndex)) {
-        return true;
-    }
-    if (trackIndex < activeLoopIndex.size() && slotIndex == activeLoopIndex[trackIndex]) {
-        return true;
-    }
-    if (trackIndex == selectedTrackIdx && trackIndex < selectedSlotIndex.size() &&
-        slotIndex == selectedSlotIndex[trackIndex]) {
-        return true;
-    }
-    return false;
-}
-
-bool STORAGE_PERSIST_MEM loopSlotPayloadPendingOnSd(uint8_t trackIndex, uint8_t slotIndex) {
+bool STORAGE_PERSIST_MEM StorageManager::loopSlotHasPayloadOnSd(uint8_t trackIndex, uint8_t slotIndex) {
     char loopPath[64];
     if (!CurrentSetStorage::formatLoopSlotPath(loopPath, sizeof(loopPath), trackIndex, slotIndex)) {
         return false;
@@ -140,7 +125,7 @@ void STORAGE_PERSIST_MEM sortPendingLoopSlotRestoresByPriority() {
 }
 
 void STORAGE_PERSIST_MEM queueDeferredLoopSlotRestore(uint8_t trackIndex, uint8_t slotIndex) {
-    if (!loopSlotPayloadPendingOnSd(trackIndex, slotIndex)) {
+    if (!StorageManager::loopSlotHasPayloadOnSd(trackIndex, slotIndex)) {
         return;
     }
     for (uint16_t i = 0; i < pendingLoopSlotRestores_.count; ++i) {
@@ -2733,36 +2718,19 @@ bool StorageManager::loadCurrentSetBundleAndActiveLoopSlots(File& file, const ch
     }
     emitBootMilestone("scan", "start");
 
+    // Boot restore pipeline: discover → build queue (exhaustive) → sort → process incrementally.
     for (uint8_t t = 0; t < numTracks; ++t) {
         Track& track = trackManager.getTrack(t);
         bool anySlotHasEvents = false;
         for (uint8_t s = 0; s < Config::MAX_LOOPS_PER_TRACK; ++s) {
             resetLoopSlotForBootManifest(track.getLoop(s), s);
-            if (!loopSlotManifestExistsOnSd(t, s)) {
-                continue;
-            }
-            if (!shouldRestoreLoopSlotAtBoot(t, s, selectedTrackIdx, activeLoopIndex,
-                                             selectedSlotIndex)) {
+            if (!StorageManager::loopSlotHasPayloadOnSd(t, s)) {
                 continue;
             }
             anySlotHasEvents = true;
-            uint8_t restorePriority = 3;
-            if (t == selectedTrackIdx) {
-                const uint8_t activeSlot = t < activeLoopIndex.size() ? activeLoopIndex[t] : 0;
-                const uint8_t selectedSlot =
-                    t < selectedSlotIndex.size() ? selectedSlotIndex[t] : activeSlot;
-                if (s == activeSlot) {
-                    restorePriority = 0;
-                } else if (s == selectedSlot) {
-                    restorePriority = 1;
-                } else if (shouldRestoreLoopSlotAtBoot(t, s, selectedTrackIdx, activeLoopIndex,
-                                                       selectedSlotIndex)) {
-                    restorePriority = 2;
-                }
-            } else if (shouldRestoreLoopSlotAtBoot(t, s, selectedTrackIdx, activeLoopIndex,
-                                                   selectedSlotIndex)) {
-                restorePriority = 2;
-            }
+            const uint8_t restorePriority = computeBootRestorePriority(
+                t, s, selectedTrackIdx, activeLoopIndex.data(), activeLoopIndex.size(),
+                selectedSlotIndex.data(), selectedSlotIndex.size());
             if (pendingLoopSlotRestores_.count < PendingLoopSlotRestoreQueue::kCapacity) {
                 pendingLoopSlotRestores_.entries[pendingLoopSlotRestores_.count++] = {t, s,
                                                                                       restorePriority};
@@ -2898,7 +2866,7 @@ void STORAGE_PERSIST_MEM StorageManager::requestLoopSlotRestoreFromSd(uint8_t tr
     if (track.getLoop(slotIndex).hasPublishedEvents()) {
         return;
     }
-    if (!loopSlotPayloadPendingOnSd(trackIndex, slotIndex)) {
+    if (!StorageManager::loopSlotHasPayloadOnSd(trackIndex, slotIndex)) {
         return;
     }
     bool anySlotHasEvents = false;

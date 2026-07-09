@@ -154,15 +154,6 @@ void loop() {
 
   midiHandler.processDroidUsbHostOutbound();
 
-  // LED updates (decoupled from clock path - runs in main loop)
-  static uint32_t lastLedUpdate = 0;
-  constexpr uint32_t LED_UPDATE_INTERVAL_MS = 8;
-  if (now - lastLedUpdate >= LED_UPDATE_INTERVAL_MS) {
-    lastLedUpdate = now;
-    trackManager.updateLedsDeferred();
-    midiHandler.processDroidUsbHostOutbound();
-  }
-
   // Detect clock source changes (external timeout -> internal fallback)
   clockManager.checkClockSource();
 
@@ -185,6 +176,15 @@ void loop() {
   gpioButtonManager.update();
 #endif
   looper.update();
+
+  // LED updates after transport tick / pending slot commit (same frame as loop boundary).
+  static uint32_t lastLedUpdate = 0;
+  constexpr uint32_t LED_UPDATE_INTERVAL_MS = 8;
+  if (now - lastLedUpdate >= LED_UPDATE_INTERVAL_MS) {
+    lastLedUpdate = now;
+    trackManager.updateLedsDeferred();
+    midiHandler.processDroidUsbHostOutbound();
+  }
 
   bool timingCriticalTrackActive = false;
   for (uint8_t i = 0; i < trackManager.getTrackCount(); ++i) {
@@ -226,6 +226,13 @@ void loop() {
     }
     StorageManager::processEditAutosave(looperState.getLooperState());
     trackManager.reclaimUnreferencedDisabledPasses();
+  }
+
+  static bool bootSlotLoadRefreshPending = true;
+  if (bootSlotLoadRefreshPending && !StorageManager::hasPendingLoopSlotRestore()) {
+    bootSlotLoadRefreshPending = false;
+    trackManager.onBootSlotLoadComplete();
+    midiHandler.processDroidUsbHostOutbound();
   }
 
   StorageManager::processDeferredSaveState(looperState.getLooperState());

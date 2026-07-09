@@ -27,12 +27,8 @@ uint8_t refSlotPhaseForQueue(const Track& track, uint8_t previousSlot) {
   return (rl.loopLengthTicks > 0) ? previousSlot : ::Config::INVALID_LOOP_SLOT;
 }
 
-bool slotHasDataForPlaybackSwitch(Track& track, uint8_t trackIdx, uint8_t slotIndex) {
-  if (track.hasDataInSlot(slotIndex)) {
-    return true;
-  }
-  StorageManager::requestLoopSlotRestoreFromSd(trackIdx, slotIndex);
-  return track.hasDataInSlot(slotIndex);
+bool slotHasDataForPlaybackSwitch(uint8_t trackIdx, uint8_t slotIndex) {
+  return trackManager.slotHasLoopContent(trackIdx, slotIndex, true);
 }
 
 void queuePlayingSlotSwitch(uint8_t trackIdx, Track& track, uint8_t slotIndex, uint32_t now) {
@@ -45,12 +41,15 @@ void queuePlayingSlotSwitch(uint8_t trackIdx, Track& track, uint8_t slotIndex, u
     trackManager.setSelectedSlotIndex(trackIdx, slotIndex, SyncPlayback::No);
     if (enabledCount > 1 && !editAuditionSingleSlot) {
       trackManager.setPendingEnabledSetReplacement(trackIdx, false);
-      trackManager.requestSlotSwitch(trackIdx, slotIndex, SlotQuantization::NextGrid, now);
+      trackManager.requestSlotSwitch(trackIdx, slotIndex, SlotQuantization::LoopEnd, now);
     } else {
       if (!slotEnabled || editAuditionSingleSlot) {
         trackManager.setPendingEnabledSetReplacement(trackIdx, true);
       }
-      trackManager.requestSlotSwitch(trackIdx, slotIndex, SlotQuantization::NextGrid, now);
+      trackManager.requestSlotSwitch(trackIdx, slotIndex, SlotQuantization::LoopEnd, now);
+    }
+    if (trackIdx == trackManager.getSelectedTrackIndex()) {
+      trackManager.refreshPreviewSlotFocus(trackIdx, slotIndex);
     }
   } else {
     trackManager.setPendingEnabledSetReplacement(trackIdx, false);
@@ -380,7 +379,7 @@ void MidiButtonActions::handleToggleRecordForSlot(uint8_t slotIndex) {
     uint32_t now = getCurrentTick();
     uint8_t previousSlot = track.getActiveLoopIndex();  // currently playing slot (defines phase)
     uint8_t selectedSlot = trackManager.getSelectedSlotIndex(trackIdx);
-    const bool slotHasData = slotHasDataForPlaybackSwitch(track, trackIdx, slotIndex);
+    const bool slotHasData = slotHasDataForPlaybackSwitch(trackIdx, slotIndex);
 
     // If capturing and the user selects another filled slot: commit capture first.
     if ((track.isRecording() || track.isOverdubbing()) && previousSlot != slotIndex) {
@@ -402,6 +401,12 @@ void MidiButtonActions::handleToggleRecordForSlot(uint8_t slotIndex) {
         const bool slotEnabled = trackManager.isSlotEnabled(trackIdx, slotIndex);
 
         if (slotIndex == selectedSlot) {
+            const uint8_t playingSlot = track.getActiveLoopIndex();
+            if (playingSlot != slotIndex) {
+                queuePlayingSlotSwitch(trackIdx, track, slotIndex, now);
+                logger.info("Loop %d: Reaffirmed playback switch", slotIndex + 1);
+                return;
+            }
             // Toggle mute only for this slot. Track keeps running.
             if (!slotEnabled) {
                 // Safety: keep focus slot enabled.

@@ -7,6 +7,7 @@
 #include "Logger.h"
 #include "Globals.h"
 #include "MidiConfig.h"
+#include "MidiEvent.h"
 
 class MidiLedManager {
 public:
@@ -67,16 +68,22 @@ private:
     uint8_t lastLoopSelectVelocity[MidiConfig::Led::LOOP_SELECT_LED_COUNT];
     uint8_t lastFocusSlotIndex = Config::INVALID_LOOP_SLOT;
     uint8_t lastSelectedTrackIndex = Config::INVALID_TRACK_INDEX;
+    uint32_t lastSingleBarPhase_ = UINT32_MAX;
     
     // Helper methods (loopStartTick window; projection cycle when this slot is actively playing)
     uint32_t getCurrentBar(uint32_t currentTick, const Loop& loop, const Track& track,
                            uint8_t displaySlotIndex);
     uint32_t getCurrentBarStartTick(uint32_t currentTick, const Loop& loop, const Track& track,
                                     uint8_t displaySlotIndex);
-    bool hasNoteInSixteenthStep(const Loop& loop, uint32_t stepStartStorage, uint32_t stepEndStorage);
-    bool hasNoteInBar(const Loop& loop, uint32_t barStartStorage, uint32_t barEndStorage);
+    bool hasNoteInSixteenthStep(Loop& loop, uint32_t stepStartStorage, uint32_t stepEndStorage);
+    bool hasNoteInBar(Loop& loop, uint32_t barStartStorage, uint32_t barEndStorage);
     void sendLedUpdate(uint8_t ledIndex, bool state);
-    void analyzeAndUpdateBar(const Loop& loop, uint32_t barStartTickDisplay);
-    void updateBarLeds(const Loop& loop, uint32_t currentBar);
+    void analyzeAndUpdateBar(Loop& loop, uint32_t barStartTickDisplay);
+    void updateBarLeds(Loop& loop, uint32_t currentBar);
     void clearPlaybackLedsOnly();
+    void prepareLedNoteLookup(Loop& loop);
+    bool hasNoteOnInRangeForLed(const Loop& loop, uint32_t rangeStart, uint32_t rangeEnd) const;
+
+    SessionMidiEventVec ledNoteLookupEvents_;
+    bool ledNoteLookupUsesMerge_ = false;
 }; 

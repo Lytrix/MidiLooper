@@ -15,7 +15,8 @@
 #include "DisplayManager.h"
 #include "TrackDisplayState.h"
 #include "Utils/DebugSessionCapture.h"
-#include "Utils/MemoryMonitor.h"
+#include "Utils/SlotFocusDisplay.h"
+#include "Utils/SlotLoopContent.h"
 
 TrackManager trackManager;
 
@@ -697,6 +698,39 @@ uint8_t TrackManager::getSelectedSlotIndex(uint8_t trackIndex) const {
   return slotStateMachine.getSelectedSlotIndex(trackIndex);
 }
 
+uint8_t TrackManager::getPlayingSlotIndex(uint8_t trackIndex) const {
+  return getActiveLoopIndex(trackIndex);
+}
+
+uint8_t TrackManager::getPreviewSlotIndex(uint8_t trackIndex) const {
+  return getSelectedSlotIndex(trackIndex);
+}
+
+uint8_t TrackManager::getPendingSlotIndex(uint8_t trackIndex) const {
+  return slotStateMachine.getPendingSlotIndex(trackIndex);
+}
+
+bool TrackManager::hasPendingSlotSwitch(uint8_t trackIndex) const {
+  return slotStateMachine.hasPendingSlotSwitch(trackIndex);
+}
+
+bool TrackManager::slotHasLoopContent(uint8_t trackIndex, uint8_t slotIndex, bool restoreFromSd) {
+  if (trackIndex >= Config::NUM_TRACKS || slotIndex >= Config::MAX_LOOPS_PER_TRACK) {
+    return false;
+  }
+  Track& track = tracks[trackIndex];
+  const bool hasDataInRam = track.hasDataInSlot(slotIndex);
+  const bool hasPayloadOnSd = StorageManager::loopSlotHasPayloadOnSd(trackIndex, slotIndex);
+  if (!slotHasLoopContentInRamOrSd(hasDataInRam, hasPayloadOnSd)) {
+    return false;
+  }
+  if (!hasDataInRam && restoreFromSd) {
+    StorageManager::requestLoopSlotRestoreFromSd(trackIndex, slotIndex);
+    return track.hasDataInSlot(slotIndex);
+  }
+  return true;
+}
+
 uint8_t TrackManager::getSelectedLoopIndex(uint8_t trackIndex) const {
   return getSelectedSlotIndex(trackIndex);
 }
@@ -735,8 +769,30 @@ void TrackManager::loadTransportSlotIndices(uint8_t trackIndex, uint8_t activeSl
   if (trackIndex >= Config::NUM_TRACKS) {
     return;
   }
-  tracks[trackIndex].setActiveLoopIndex(activeSlot);
   slotStateMachine.setSelectedSlotIndex(trackIndex, selectedSlot);
+  Track& track = tracks[trackIndex];
+  const uint8_t playingSlot =
+      (track.isPlaying() || track.isOverdubbing()) ? activeSlot : selectedSlot;
+  track.setActiveLoopIndex(playingSlot);
+}
+
+uint8_t TrackManager::getLedPhaseSlotIndex(uint8_t trackIndex) const {
+  if (trackIndex >= Config::NUM_TRACKS) {
+    return 0;
+  }
+  const Track& track = tracks[trackIndex];
+  if (track.isPlaying() || track.isOverdubbing()) {
+    return getPlayingSlotIndex(trackIndex);
+  }
+  return getPreviewSlotIndex(trackIndex);
+}
+
+void TrackManager::onBootSlotLoadComplete() {
+  const uint8_t trackIdx = selectedTrack;
+  const uint8_t previewSlot = getPreviewSlotIndex(trackIdx);
+  displayManager.invalidateForSlotChange(trackIdx, previewSlot, previewSlot);
+  editManager.reenterEditSessionForFocusChange(tracks[trackIdx], previewSlot);
+  forceLedUpdate(clockManager.getCurrentTick());
 }
 
 void TrackManager::setSelectedSlotIndex(uint8_t trackIndex, uint8_t slotIndex,
@@ -746,6 +802,15 @@ void TrackManager::setSelectedSlotIndex(uint8_t trackIndex, uint8_t slotIndex,
   }
   const uint8_t previousSlot = slotStateMachine.getSelectedSlotIndex(trackIndex);
   if (slotIndex == previousSlot) {
+    if (trackIndex == selectedTrack) {
+      Track& track = tracks[trackIndex];
+      const bool splitFocus =
+          track.isPlaying() && getPlayingSlotIndex(trackIndex) != slotIndex;
+      if (splitFocus || hasPendingSlotSwitch(trackIndex)) {
+        displayManager.invalidateForSlotChange(trackIndex, slotIndex, slotIndex);
+        forceLedUpdate(clockManager.getCurrentTick());
+      }
+    }
     return;
   }
   Track& track = tracks[trackIndex];
@@ -773,6 +838,13 @@ void TrackManager::requestSlotSwitch(uint8_t trackIndex,
                                       SlotQuantization quantization,
                                       uint32_t queuedAtTick) {
   slotStateMachine.requestPendingSlotSwitch(trackIndex, slotIndex, quantization, queuedAtTick);
+}
+
+void TrackManager::refreshPreviewSlotFocus(uint8_t trackIndex, uint8_t slotIndex) {
+  if (trackIndex != selectedTrack || slotIndex >= Config::MAX_LOOPS_PER_TRACK) {
+    return;
+  }
+  displayManager.invalidateForSlotChange(trackIndex, slotIndex, slotIndex);
 }
 
 void TrackManager::clearPendingSlotSwitch(uint8_t trackIndex) {
@@ -907,11 +979,15 @@ void TrackManager::updateAllTracks(uint32_t currentTick) {
       forceLedUpdate(currentTick);
     }
 
-    // Commit a pending quantized slot switch (Phase 1: playback switching only).
+    const bool audible = isTrackAudible(i);
+    const uint32_t playTick = tracks[i].getEffectivePlaybackTick(currentTick);
+
+    // Commit before playMidiEvents so lastTickInLoop still reflects the previous tick.
     if (tracks[i].isPlaying() && slotStateMachine.hasPendingSlotSwitch(i) &&
-        slotStateMachine.shouldCommitPendingSlotSwitch(i, tracks[i], currentTick)) {
+        slotStateMachine.shouldCommitPendingSlotSwitch(i, tracks[i], playTick)) {
       const uint8_t targetSlot = slotStateMachine.getPendingSlotIndex(i);
       if (targetSlot < Config::MAX_LOOPS_PER_TRACK && tracks[i].hasDataInSlot(targetSlot)) {
+        const uint8_t previousPlaying = getPlayingSlotIndex(i);
         slotStateMachine.clearPendingSlotSwitch(i);
         setActiveLoopIndex(i, targetSlot);
         const Loop& targetLoop = tracks[i].getLoop(targetSlot);
@@ -919,6 +995,13 @@ void TrackManager::updateAllTracks(uint32_t currentTick) {
         tracks[i].queuePlaybackStartAtGrid(static_cast<int32_t>(targetLoop.loopStartTick),
                                             currentTick);
         tracks[i].commitQueuedPlaybackStart(currentTick);
+
+        if (i == selectedTrack) {
+          if (targetSlot != previousPlaying) {
+            displayManager.invalidateForSlotChange(i, previousPlaying, getPreviewSlotIndex(i));
+          }
+          forceLedUpdate(currentTick);
+        }
 
         // If this slot switch came from a "select single slot" gesture, replace enabled set.
         if (pendingEnabledSetReplacement[i]) {
@@ -947,9 +1030,7 @@ void TrackManager::updateAllTracks(uint32_t currentTick) {
       pendingStop[i] = false;
     }
 
-    bool audible = isTrackAudible(i);
-    uint32_t playTick = tracks[i].getEffectivePlaybackTick(currentTick);
-    uint8_t activeSlot = tracks[i].getActiveLoopIndex();
+    const uint8_t activeSlot = tracks[i].getActiveLoopIndex();
 
     // Primary (active) slot playback.
     if (slotEnabled[i][activeSlot] && !slotMuted[i][activeSlot]) {
@@ -982,12 +1063,17 @@ void TrackManager::refreshTrackAndLoopSelectLeds() {
     }
   }
 
-  const uint8_t focusSlot = getSelectedSlotIndex(selectedTrack);
+  const uint8_t previewSlot = getPreviewSlotIndex(selectedTrack);
+  const uint8_t playingSlot = getPlayingSlotIndex(selectedTrack);
+  const bool pendingSwitch = hasPendingSlotSwitch(selectedTrack);
+  const uint8_t pendingSlot =
+      pendingSwitch ? getPendingSlotIndex(selectedTrack) : Config::INVALID_LOOP_SLOT;
+  const bool pendingPulseBright = previewPlayheadFlashVisible(millis());
   uint8_t slotVelocities[Config::MAX_LOOPS_PER_TRACK] = {0};
   Track& st = tracks[selectedTrack];
 
   for (uint8_t s = 0; s < Config::MAX_LOOPS_PER_TRACK; ++s) {
-    const bool focus = (s == focusSlot);
+    const bool focus = (s == previewSlot);
     const bool hasData = st.hasDataInSlot(s);
 
     SlotOpState opState = st.getSlotOpState(s);
@@ -1001,7 +1087,7 @@ void TrackManager::refreshTrackAndLoopSelectLeds() {
     }
 
     if (!hasData) {
-      const bool armedHere = (st.getActiveLoopIndex() == s && st.isArmed());
+      const bool armedHere = (playingSlot == s && st.isArmed());
       if (armedHere) {
         slotVelocities[s] = 80;
       } else if (focus) {
@@ -1014,41 +1100,48 @@ void TrackManager::refreshTrackAndLoopSelectLeds() {
 
     const bool enabled = slotEnabled[selectedTrack][s];
     const bool mutedSlot = slotMuted[selectedTrack][s];
+    const bool transportActive = st.isPlaying() || st.isOverdubbing();
     if (!enabled) {
       slotVelocities[s] = 32;
-    } else if (mutedSlot) {
+    } else if (mutedSlot && transportActive && s == playingSlot) {
       slotVelocities[s] = 16;
-    } else if (st.isPlaying() || st.isOverdubbing()) {
+    } else if (transportActive && s == playingSlot) {
       slotVelocities[s] = 48;
     } else {
       slotVelocities[s] = 32;
     }
   }
 
-  // UI rule: exactly one selected slot highlight.
-  if (focusSlot < Config::MAX_LOOPS_PER_TRACK) {
-    slotVelocities[focusSlot] = VEL_SELECTED_SLOT;
+  // LED precedence: pending launch pulse > preview selection > playing phase (already set).
+  for (uint8_t s = 0; s < Config::MAX_LOOPS_PER_TRACK; ++s) {
+    if (slotVelocities[s] == 96) {
+      continue;
+    }
+    if (pendingSwitch && s == pendingSlot) {
+      slotVelocities[s] = pendingPulseBright ? 96U : 64U;
+      continue;
+    }
+    if (s == previewSlot) {
+      slotVelocities[s] = VEL_SELECTED_SLOT;
+    }
   }
 
-  ledManager->updateTrackSelectLeds(selectedTrack, trackHasData, focusSlot, slotVelocities);
+  ledManager->updateTrackSelectLeds(selectedTrack, trackHasData, previewSlot, slotVelocities);
 }
 
 // Called from main loop (not clock path) - decouples LED updates from playback timing
 void TrackManager::updateLedsDeferred() {
   if (!ledManager) return;
   Track& selTrack = getSelectedTrack();
-  const uint8_t displaySlot = getSelectedSlotIndex(selectedTrack);
+  const uint8_t phaseSlot = getLedPhaseSlotIndex(selectedTrack);
   uint32_t currentTick = clockManager.getCurrentTick();
-  // LEDs for a slot use global transport phase in that slot's loop, except when jam playback
-  // is driving the active loop — then use the effective tick so the grid matches what you hear.
   uint32_t ledPhaseTick = currentTick;
-  if (selTrack.isJamPlaybackActive() && selTrack.isJamming() &&
-      displaySlot == selTrack.getActiveLoopIndex()) {
+  if (selTrack.isJamPlaybackActive() && selTrack.isJamming()) {
     ledPhaseTick = selTrack.getEffectivePlaybackTick(currentTick);
   }
-  ledManager->updateLeds(selTrack, ledPhaseTick, displaySlot);
-  if (selTrack.getLoopLengthForSlot(displaySlot) > 0) {
-    ledManager->updateCurrentTick(selTrack, ledPhaseTick, displaySlot);
+  ledManager->updateLeds(selTrack, ledPhaseTick, phaseSlot);
+  if (selTrack.getLoopLengthForSlot(phaseSlot) > 0) {
+    ledManager->updateCurrentTick(selTrack, ledPhaseTick, phaseSlot);
   }
   refreshTrackAndLoopSelectLeds();
 }
@@ -1057,7 +1150,8 @@ void TrackManager::updateLedsDeferred() {
 
 void TrackManager::updateLeds(uint32_t currentTick) {
   if (ledManager) {
-    ledManager->updateLeds(getSelectedTrack(), currentTick, getSelectedSlotIndex(selectedTrack));
+    ledManager->updateLeds(getSelectedTrack(), currentTick,
+                           getLedPhaseSlotIndex(selectedTrack));
   }
 }
 
@@ -1066,7 +1160,16 @@ void TrackManager::forceLedUpdate(uint32_t currentTick) {
     return;
   }
   if (ledManager) {
-    ledManager->forceUpdate(getSelectedTrack(), currentTick, getSelectedSlotIndex(selectedTrack));
+    Track& selTrack = getSelectedTrack();
+    const uint8_t phaseSlot = getLedPhaseSlotIndex(selectedTrack);
+    uint32_t ledPhaseTick = currentTick;
+    if (selTrack.isJamPlaybackActive() && selTrack.isJamming()) {
+      ledPhaseTick = selTrack.getEffectivePlaybackTick(currentTick);
+    }
+    ledManager->forceUpdate(selTrack, ledPhaseTick, phaseSlot);
+    if (selTrack.getLoopLengthForSlot(phaseSlot) > 0) {
+      ledManager->updateCurrentTick(selTrack, ledPhaseTick, phaseSlot);
+    }
     refreshTrackAndLoopSelectLeds();
   }
 }

@@ -77,20 +77,24 @@ Each track SHALL maintain at most one pending **performance action** with an ass
 
 ### Requirement: Short press on non-selected slot launches at loop boundary
 
-While transport is playing and the pressed slot has loop data and is not the selected slot, the system SHALL:
+While transport is playing and the pressed slot has loop data and is not the playing slot, the system SHALL:
 
-1. Run **Departure → Transition → Arrival** via `setSelectedSlotIndex(track, slot, SyncPlayback::No)` (immediate UI/editor focus)
-2. Set the destination slot's active **PlaybackWindow** to that slot's persisted window (default: full loop)
-3. Queue a `LaunchSlot` action for loop-boundary commit
-4. Treat launch as a no-op when the destination slot is already the sole active audible slot
+1. Set **preview slot** immediately for display and LOOP_EDIT fader context (SHALL NOT move **playing slot** / `activeLoopIndex`)
+2. Queue a `LaunchSlot` action for loop-boundary commit (or `NextGrid` for double)
+3. Set the destination slot's active **PlaybackWindow** to that slot's persisted window (default: full loop)
+4. Treat launch as a no-op when the destination slot is already the sole audible playing slot
 
-At commit, the system SHALL enable the target slot for playback, apply `queuePlaybackStartAtGrid` with the target slot's `loopStartTick`, and `commitQueuedPlaybackStart` per unified-interval-projection D14.
+At commit, the system SHALL set playing slot to the target, enable playback layer as required, apply `queuePlaybackStartAtGrid` with the target slot's `loopStartTick`, and `commitQueuedPlaybackStart` per unified-interval-projection D14.
 
-#### Scenario: Verse to chorus launch
+Edit session depart/commit SHALL run **immediately** when preview slot is set (existing `beforeSelectedSlotChange` lifecycle). SHALL NOT be deferred to loop boundary.
+
+#### Scenario: Verse to chorus launch with preview
 
 - **WHEN** slot 0 is playing and the user short-presses slot 1 (filled)
-- **THEN** the display and edit context switch to slot 1 immediately
-- **AND** slot 1 audio begins at the next loop boundary of the previously active material
+- **THEN** the piano roll and LOOP_EDIT context show slot 1 immediately (preview)
+- **AND** the display cursor is at slot 1's `loopStartTick` and flashes while preview ≠ playing
+- **AND** bar/16th LEDs and phase grid remain on slot 0 until loop boundary commit
+- **AND** slot 1 audio begins at the next loop boundary of the previously playing material
 
 ### Requirement: Short press on selected slot toggles mute at loop boundary
 
@@ -284,3 +288,29 @@ When PlaybackWindow metadata (`loopStartTick` or loop length) changes on the **s
 **Reason:** Long press routes to `LoopTriggerSequence` chain; clear via overlay or Record long-press.
 
 **Migration:** Remove `CLEAR_TRACK_FOR_SLOT` immediate clear path in `MidiButtonActions`.
+
+### Requirement: Preview display cursor while launch pending
+
+When preview slot differs from playing slot, the system SHALL:
+
+- Render the preview slot's loop on the piano roll
+- Position the display cursor at the preview slot's `loopStartTick` (or queued playback start tick)
+- Flash the cursor until playing slot equals preview slot at performance commit
+
+#### Scenario: Flashing cursor during queued launch
+
+- **WHEN** the user queues launch to a non-playing filled slot while transport is running
+- **THEN** the piano roll shows the preview slot's loop content
+- **AND** the cursor at `loopStartTick` flashes
+- **WHEN** the launch commits at loop boundary
+- **THEN** the cursor stops flashing and follows normal playback projection on the playing slot
+
+### Requirement: Bar and 16th LEDs follow playing slot during preview
+
+While preview slot differs from playing slot, bar-step and 16th-grid LED phase SHALL derive from the **playing** slot's loop phase, not the preview slot.
+
+#### Scenario: Jam on 16ths while previewing next loop
+
+- **WHEN** slot 0 is playing and slot 1 is previewed for launch
+- **THEN** bar/16th performance LEDs remain aligned to slot 0's phase
+- **AND** the user can use bar/16th buttons against the still-playing loop until launch commit
