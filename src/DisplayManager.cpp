@@ -966,15 +966,95 @@ void DisplayManager::clearDisplayBuffer() {
     Serial.println("DisplayManager: Display buffer displayed");
 }
 
-void DisplayManager::drawBootStatusMessage(const char* text) {
-    if (text == nullptr) {
+namespace {
+
+constexpr uint8_t kBootTitleBrightness = 12;
+constexpr int kBootFixedCharWidth = 6;
+constexpr int kBootFixedFontHeight = 7;
+constexpr unsigned long kBootScreenExtraHoldMs = 2000;
+
+int bootTitleScaleX(const char* text) {
+    const int charCount = static_cast<int>(std::strlen(text));
+    if (charCount <= 0) {
+        return 1;
+    }
+    return std::max(1, static_cast<int>(DISPLAY_WIDTH) / (charCount * kBootFixedCharWidth));
+}
+
+int bootTitleScaleY() {
+    return std::max(1, static_cast<int>(DISPLAY_HEIGHT) / kBootFixedFontHeight);
+}
+
+void drawScaledFixedMonoChar(SSD1322_GFX& gfx, uint8_t* frameBuffer, const GFXfont& font,
+                             uint8_t charCode, int x, int y, int scaleX, int scaleY,
+                             uint8_t brightness) {
+    if (charCode < font.first || charCode > font.last) {
         return;
     }
-    _display.gfx.fill_buffer(_display.api.getFrameBuffer(), 0);
-    _display.gfx.select_font(&Font5x7Fixed);
-    const int textWidth = static_cast<int>(std::strlen(text)) * 6;
-    const int x = std::max(0, (DISPLAY_WIDTH - textWidth) / 2);
-    _display.gfx.draw_text(_display.api.getFrameBuffer(), text, x, 32, 15);
+
+    const GFXglyph& glyph = font.glyph[charCode - font.first];
+    uint16_t bitmapOffset = glyph.bitmapOffset;
+    const uint8_t width = glyph.width;
+    const uint8_t height = glyph.height;
+    const int8_t xOffset = glyph.xOffset;
+    const int8_t yOffset = glyph.yOffset;
+
+    uint8_t bit = 0;
+    uint8_t bits = 0;
+    for (uint8_t yPos = 0; yPos < height; ++yPos) {
+        for (uint8_t xPos = 0; xPos < width; ++xPos) {
+            if (!(bit++ & 7)) {
+                bits = font.bitmap[bitmapOffset++];
+            }
+            if (bits & 0x80) {
+                const int pixelX = x + (xOffset + static_cast<int>(xPos)) * scaleX;
+                const int pixelY = y + (yOffset + static_cast<int>(yPos)) * scaleY;
+                gfx.draw_rect_filled(frameBuffer, static_cast<uint16_t>(pixelX),
+                                     static_cast<uint16_t>(pixelY),
+                                     static_cast<uint16_t>(pixelX + scaleX - 1),
+                                     static_cast<uint16_t>(pixelY + scaleY - 1), brightness);
+            }
+            bits <<= 1;
+        }
+    }
+}
+
+void drawScaledFixedMonoText(SSD1322_GFX& gfx, uint8_t* frameBuffer, const char* text, int x, int y,
+                             int scaleX, int scaleY, uint8_t brightness) {
+    const GFXfont& font = Font5x7FixedMono;
+    int cursorX = x;
+    while (*text != '\0') {
+        const uint8_t charCode = static_cast<uint8_t>(*text++);
+        drawScaledFixedMonoChar(gfx, frameBuffer, font, charCode, cursorX, y, scaleX, scaleY,
+                                brightness);
+        if (charCode >= font.first && charCode <= font.last) {
+            cursorX += font.glyph[charCode - font.first].xAdvance * scaleX;
+        }
+    }
+}
+
+}  // namespace
+
+void DisplayManager::drawBootScreen() {
+    uint8_t* frameBuffer = _display.api.getFrameBuffer();
+    _display.gfx.fill_buffer(frameBuffer, 0);
+
+    constexpr const char* kTitle = "OSTINATIX";
+    const int titleLen = static_cast<int>(std::strlen(kTitle));
+    const int scaleX = bootTitleScaleX(kTitle);
+    const int scaleY = bootTitleScaleY();
+    const int scaledWidth = titleLen * kBootFixedCharWidth * scaleX;
+    const int scaledHeight = kBootFixedFontHeight * scaleY;
+    const int x = std::max(0, (static_cast<int>(DISPLAY_WIDTH) - scaledWidth) / 2);
+    const int yTop = std::max(0, (static_cast<int>(DISPLAY_HEIGHT) - scaledHeight) / 2);
+    const int baselineY = yTop + scaledHeight;
+
+    drawScaledFixedMonoText(_display.gfx, frameBuffer, kTitle, x, baselineY, scaleX, scaleY,
+                            kBootTitleBrightness);
+
+    bootScreenVisible_ = true;
+    bootSetupComplete_ = false;
+    bootScreenHoldUntilMs_ = millis() + kBootScreenExtraHoldMs;
     _display.api.display();
 }
 
@@ -1060,14 +1140,8 @@ void DisplayManager::beginBootOled() {
 }
 
 void DisplayManager::finishBootSetup() {
-    Serial.println("DisplayManager: Boot setup complete — startup splash");
-    _display.gfx.select_font(&Font5x7Fixed);
-    _display.gfx.draw_text(_display.api.getFrameBuffer(), "Midi Looper v0.4", 92, 32, 15);
-    _display.api.display();
-#if !defined(SESSION_CAPTURE)
-    delay(1500);
-#endif
-    clearDisplayBuffer();
+    Serial.println("DisplayManager: Boot setup complete");
+    bootSetupComplete_ = true;
 }
 
 void DisplayManager::setup() {
@@ -1079,22 +1153,6 @@ void DisplayManager::setup() {
     // Set buffer size and clear display
     Serial.println("DisplayManager: Setting buffer size");
     _display.gfx.set_buffer_size(DISPLAY_WIDTH, DISPLAY_HEIGHT);
-    clearDisplayBuffer();
-
-    // Now proceed with your drawing/demo code
-    Serial.println("DisplayManager: Drawing startup text...");
-    Serial.println("Selecting font...");
-    _display.gfx.select_font(&Font5x7Fixed);
-    Serial.println("Font selected.");
-    Serial.println("Drawing text...");
-    _display.gfx.draw_text(_display.api.getFrameBuffer(), "Midi Looper v0.4", 92, 32, 15);
-    //_display.gfx.draw_text(_display.api.getFrameBuffer(), "v0.4", 92, 40, 8);
-    //Serial.println("Text drawn.");
-    _display.api.display();
-    Serial.println("DisplayManager: Text sent to display");
-#if !defined(SESSION_CAPTURE)
-    delay(1500);
-#endif
     clearDisplayBuffer();
 }
 
@@ -2809,6 +2867,14 @@ void DisplayManager::applyWorkspaceDisplayRefreshPending(uint32_t currentTick) {
 
 void DisplayManager::update() {
     const uint32_t telemetryStartUs = micros();
+    uint32_t now = millis();
+    if (bootScreenVisible_) {
+        if (!bootSetupComplete_ || now < bootScreenHoldUntilMs_) {
+            return;
+        }
+        bootScreenVisible_ = false;
+    }
+
     uint32_t currentTick = clockManager.getCurrentTick();
     const bool loadSaveActive = looperState.isLoadSaveModeActive();
     if (!loadSaveActive && StorageManager::consumeRevisionLoadDisplayRefreshPending()) {
@@ -2817,7 +2883,6 @@ void DisplayManager::update() {
     Track& selTrack = trackManager.getSelectedTrack();
     const uint8_t displaySlot = trackManager.getSelectedSlotIndex(trackManager.getSelectedTrackIndex());
     uint32_t displayTick = selTrack.getEffectivePlaybackTick(currentTick);
-    uint32_t now = millis();
     refreshAutoSaveBeforeLoadToast(now);
 
     if (loadSaveActive && !loadSaveModeWasActive_) {

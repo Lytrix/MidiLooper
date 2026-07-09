@@ -94,10 +94,8 @@ void setup() {
   emitBootMilestone("usb_host", "deferred");
   trackManager.setup();
   displayManager.beginBootOled();
-  displayManager.drawBootStatusMessage("Loading...");
+  displayManager.drawBootScreen();
   looper.setup();  // SD + loadState; USB host deferred until deferred slot restore finishes
-
-  displayManager.finishBootSetup();
 
   // Startup policy: enter LOOP_EDIT deterministically and sync DROID explicitly.
   editManager.sendEditSessionChange(EditSessionType::Loop);
@@ -131,6 +129,8 @@ void setup() {
   }
 
   HotPathTelemetry::emitSummary("startup");
+
+  displayManager.finishBootSetup();
 
   SC_SESSION_HEADER();
 }
