@@ -969,8 +969,10 @@ void DisplayManager::clearDisplayBuffer() {
 namespace {
 
 constexpr uint8_t kBootTitleBrightness = 12;
+constexpr uint8_t kBootVersionBrightness = 5;
 constexpr int kBootFixedCharWidth = 6;
 constexpr int kBootFixedFontHeight = 7;
+constexpr int kBootVersionRightMargin = 2;
 constexpr unsigned long kBootScreenExtraHoldMs = 2000;
 
 int bootTitleScaleX(const char* text) {
@@ -982,7 +984,8 @@ int bootTitleScaleX(const char* text) {
 }
 
 int bootTitleScaleY() {
-    return std::max(1, static_cast<int>(DISPLAY_HEIGHT) / kBootFixedFontHeight);
+    const int targetHeight = static_cast<int>(DISPLAY_HEIGHT) / 3;
+    return std::max(1, targetHeight / kBootFixedFontHeight);
 }
 
 void drawScaledFixedMonoChar(SSD1322_GFX& gfx, uint8_t* frameBuffer, const GFXfont& font,
@@ -1051,6 +1054,14 @@ void DisplayManager::drawBootScreen() {
 
     drawScaledFixedMonoText(_display.gfx, frameBuffer, kTitle, x, baselineY, scaleX, scaleY,
                             kBootTitleBrightness);
+
+    constexpr const char* kVersion = "v0.6";
+    _display.gfx.select_font(&Font5x7FixedMono);
+    const int versionWidth = static_cast<int>(std::strlen(kVersion)) * kBootFixedCharWidth;
+    const int versionX =
+        static_cast<int>(DISPLAY_WIDTH) - versionWidth - kBootVersionRightMargin;
+    _display.gfx.draw_text(frameBuffer, kVersion, static_cast<uint16_t>(versionX),
+                           static_cast<uint16_t>(DISPLAY_HEIGHT), kBootVersionBrightness);
 
     bootScreenVisible_ = true;
     bootSetupComplete_ = false;
