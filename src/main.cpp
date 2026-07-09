@@ -95,10 +95,7 @@ void setup() {
   trackManager.setup();
   displayManager.beginBootOled();
   displayManager.drawBootStatusMessage("Loading...");
-  looper.setup();  // SD + loadState; LED side effects suppressed until USB host ready
-
-  midiHandler.beginUsbHost();
-  emitBootMilestone("usb_host", "begin");
+  looper.setup();  // SD + loadState; USB host deferred until deferred slot restore finishes
 
   displayManager.finishBootSetup();
 
@@ -132,11 +129,6 @@ void setup() {
              static_cast<unsigned long>(MemoryMonitor::getInternalHeapFreeBytes()));
     emitBootMilestone("heap", heapDetail);
   }
-
-  // Clear all bar/16th LEDs for a clean start (DROID may retain state from before disconnect)
-  trackManager.clearLeds();
-  // Send initial 16th-note LEDs on startup (otherwise only sent when switching tracks or clock runs)
-  trackManager.forceLedUpdate(clockManager.getCurrentTick());
 
   HotPathTelemetry::emitSummary("startup");
 
@@ -231,6 +223,16 @@ void loop() {
   static bool bootSlotLoadRefreshPending = true;
   if (bootSlotLoadRefreshPending && !StorageManager::hasPendingLoopSlotRestore()) {
     bootSlotLoadRefreshPending = false;
+    if (!midiHandler.isUsbHostReady()) {
+      midiHandler.beginUsbHost();
+      emitBootMilestone("usb_host", "begin");
+    }
+    // DROID may retain LED state across reset; refresh after host is live, not during SDIO restore.
+    trackManager.clearLeds();
+    if (editManager.isLoopEditSession()) {
+      midiHandler.sendLedFeedbackNoteOn(100, 64);
+      midiHandler.sendLedFeedbackNoteOff(100);
+    }
     trackManager.onBootSlotLoadComplete();
     midiHandler.processDroidUsbHostOutbound();
   }

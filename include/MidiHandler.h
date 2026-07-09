@@ -31,7 +31,7 @@ public:
 
   // --- Initialization ---
   void setup();
-  /// Device + DIN MIDI only; call before workspace SD load.
+  /// Start USB Host MIDI after workspace load and deferred slot restore (avoids SDIO contention).
   void beginUsbHost();
   bool isUsbHostReady() const { return usbHostReady_; }
 

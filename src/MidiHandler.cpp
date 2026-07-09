@@ -140,6 +140,17 @@ void MidiHandler::beginUsbHost() {
   usbHostMIDI.setHandleStop(usbHostStop);
   usbHostMIDI.setHandleContinue(usbHostContinue);
   usbHostReady_ = true;
+
+  // Cold-plug: DROID may already be attached at power-on. Pump Task() so enumeration can
+  // progress without SDIO contention (beginUsbHost runs after deferred slot restore).
+  const uint32_t enumerateDeadlineMs = millis() + 300;
+  while (millis() < enumerateDeadlineMs) {
+    usbHost.Task();
+    if (static_cast<bool>(usbHostMIDI)) {
+      break;
+    }
+    yield();
+  }
 }
 
 void MidiHandler::handleMidiInput() {
