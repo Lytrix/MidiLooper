@@ -781,11 +781,21 @@ NOTE_EDIT_MEM MidiEvent* findNoteOffPairedAt(MidiEventVec& midiEvents, uint8_t p
     return nullptr;
 }
 
-NOTE_EDIT_MEM MidiEvent* findNoteOffForNoteOnAtStart(MidiEventVec& midiEvents, uint8_t pitch,
-                                       uint32_t startTick) {
+NOTE_EDIT_MEM MidiEvent* findNoteOffForNoteOnAtStart(MidiEventVec& midiEvents, uint8_t channel,
+                                       uint8_t pitch, uint32_t startTick, NoteId noteId) {
+    if (noteId != kInvalidNoteId) {
+        for (auto& evt : midiEvents) {
+            if (evt.noteId != noteId || evt.channel != channel || !evt.isNoteOn() ||
+                evt.data.noteData.velocity == 0 || evt.data.noteData.note != pitch) {
+                continue;
+            }
+            return findCorrespondingNoteOff(midiEvents, &evt, pitch, evt.tick, 0);
+        }
+    }
     for (auto& evt : midiEvents) {
         if (evt.type == midi::NoteOn && evt.data.noteData.velocity > 0 &&
-            evt.data.noteData.note == pitch && evt.tick == startTick) {
+            evt.data.noteData.note == pitch && evt.channel == channel &&
+            evt.tick == startTick) {
             return findCorrespondingNoteOff(midiEvents, &evt, pitch, startTick, 0);
         }
     }
@@ -964,12 +974,15 @@ NOTE_EDIT_MEM bool isWrapHeadOffForTailOn(const MidiEventVec& midiEvents, MidiEv
                                                     pitch, channel, loopLength);
 }
 
-NOTE_EDIT_MEM uint32_t resolveMovingNoteLengthTicks(MidiEventVec& midiEvents, uint8_t pitch, uint32_t startTick,
-                                      uint32_t fallbackEndTick, uint32_t loopLength) {
+NOTE_EDIT_MEM uint32_t resolveMovingNoteLengthTicks(MidiEventVec& midiEvents, uint8_t channel,
+                                      uint8_t pitch, uint32_t startTick,
+                                      uint32_t fallbackEndTick, uint32_t loopLength,
+                                      NoteId movingNoteId) {
     if (loopLength == 0) {
         return 0;
     }
-    if (MidiEvent* noteOffEvent = findNoteOffForNoteOnAtStart(midiEvents, pitch, startTick)) {
+    if (MidiEvent* noteOffEvent =
+            findNoteOffForNoteOnAtStart(midiEvents, channel, pitch, startTick, movingNoteId)) {
         const uint32_t pairedEnd = noteOffEvent->tick;
         if (pairedEnd > startTick && pairedEnd <= startTick + loopLength) {
             return pairedEnd - startTick;
@@ -1481,15 +1494,16 @@ NOTE_EDIT_MEM bool applyPitchChange(Track& track, EditManager& manager,
     // and an independent scan would repitch one event of an overlap note and orphan a note.
     bool noteOnUpdated = false;
     bool noteOffUpdated = false;
-    MidiEvent* noteOnEvent = findNoteOnAtStart(midiEvents, channel, currentNoteValue, noteStart);
+    MidiEvent* noteOnEvent = findNoteOnForMovingNoteEdit(midiEvents, focus, channel, currentNoteValue,
+                                                         noteStart, loopLength);
     MidiEvent* noteOffEvent = nullptr;
     if (noteOnEvent) {
         noteOffEvent = resolveMovingNoteOffForEdit(
-            midiEvents, noteOnEvent, focus.movingNoteId, channel, currentNoteValue, noteStart,
+            midiEvents, noteOnEvent, focus.movingNoteId, channel, currentNoteValue, noteOnEvent->tick,
             displayEndForResolve, loopLength);
         const bool openTailOnly =
             !noteOffEvent &&
-            isOpenTailNoteAtLoopEnd(midiEvents, channel, currentNoteValue, noteStart,
+            isOpenTailNoteAtLoopEnd(midiEvents, channel, currentNoteValue, noteOnEvent->tick,
                                     displayEndForResolve, loopLength);
         if (noteOffEvent || openTailOnly) {
             logger.log(CAT_MIDI, LOG_DEBUG,
@@ -1555,12 +1569,12 @@ NOTE_EDIT_MEM bool applyPitchChange(Track& track, EditManager& manager,
     return true;
 }
 
-NOTE_EDIT_MEM void moveNoteWithOverlapHandling(Track& track, EditManager& manager, 
-                                const NoteUtils::DisplayNote& currentNote, 
+NOTE_EDIT_MEM bool moveNoteWithOverlapHandling(Track& track, EditManager& manager,
+                                const NoteUtils::DisplayNote& currentNote,
                                 uint32_t targetTick, int delta) {
     // Session store when a note-edit session is active (matches move/length live paths).
     auto& midiEvents = track.editAwareMidiEvents();
-    uint32_t loopLength = track.getLoopLength();
+    const uint32_t loopLength = manager.noteEditLoopLengthTicks(track);
 
     logger.log(CAT_MIDI, LOG_DEBUG, "NoteMovementUtils::moveNoteWithOverlapHandling called: targetTick=%lu, delta=%d", targetTick, delta);
 
@@ -1570,7 +1584,7 @@ NOTE_EDIT_MEM void moveNoteWithOverlapHandling(Track& track, EditManager& manage
     
     if (loopLength == 0) {
         logger.log(CAT_MIDI, LOG_DEBUG, "Loop length is 0, cannot move notes");
-        return;
+        return false;
     }
 
     if (focus.active) {
@@ -1581,7 +1595,7 @@ NOTE_EDIT_MEM void moveNoteWithOverlapHandling(Track& track, EditManager& manage
     if (delta == 0) {
         logger.log(CAT_MIDI, LOG_DEBUG, "No movement (delta=0), just updating bracket position to %lu", targetTick);
         manager.setSelectedTick(targetTick);
-        return;
+        return false;
     }
     
     uint8_t movingNotePitch = currentNote.note;
@@ -1605,8 +1619,10 @@ NOTE_EDIT_MEM void moveNoteWithOverlapHandling(Track& track, EditManager& manage
         currentEnd = focus.last.endTick;
         displayCurrentEnd = storageTickToDisplayPhase(currentEnd, loopLength);
     }
+    const NoteId movingNoteId =
+        focus.active ? focus.movingNoteId : kInvalidNoteId;
     const uint32_t noteLen = resolveMovingNoteLengthTicks(
-        midiEvents, movingNotePitch, currentStart, currentEnd, loopLength);
+        midiEvents, channel, movingNotePitch, currentStart, currentEnd, loopLength, movingNoteId);
     uint32_t newStart = targetTick;
     uint32_t newEnd = newStart + noteLen;
     uint32_t displayNewEnd = storageTickToDisplayPhase(newEnd, loopLength);
@@ -1655,12 +1671,14 @@ NOTE_EDIT_MEM void moveNoteWithOverlapHandling(Track& track, EditManager& manage
                          onIndex, offIndex);
 
     // STEP 5: Move the mover using resolved pairing (LIFO, paired-at, wrap-head, open-tail).
-    MidiEvent* noteOnEvent =
-        findNoteOnAtStart(midiEvents, channel, movingNotePitch, currentStart);
+    MidiEvent* noteOnEvent = findNoteOnForMovingNoteEdit(midiEvents, focus, channel,
+                                                         movingNotePitch, currentStart,
+                                                         loopLength);
     MidiEvent* noteOffEvent = nullptr;
     if (noteOnEvent) {
+        const uint32_t resolvedStart = noteOnEvent->tick;
         noteOffEvent = resolveMovingNoteOffForEdit(
-            midiEvents, noteOnEvent, focus.movingNoteId, channel, movingNotePitch, currentStart,
+            midiEvents, noteOnEvent, focus.movingNoteId, channel, movingNotePitch, resolvedStart,
             displayCurrentEnd, loopLength);
     }
 
@@ -1698,7 +1716,7 @@ NOTE_EDIT_MEM void moveNoteWithOverlapHandling(Track& track, EditManager& manage
                 manager.getSelectedNoteIdx());
         movedNoteEvents = true;
     } else if (noteOnEvent &&
-               isOpenTailNoteAtLoopEnd(midiEvents, channel, movingNotePitch, currentStart,
+               isOpenTailNoteAtLoopEnd(midiEvents, channel, movingNotePitch, noteOnEvent->tick,
                                        displayCurrentEnd, loopLength)) {
         noteOnEvent->tick = newStart;
         if (!stillOpenTailAfterMove(newStart, noteLen, loopLength)) {
@@ -1730,12 +1748,13 @@ NOTE_EDIT_MEM void moveNoteWithOverlapHandling(Track& track, EditManager& manage
     const uint32_t loopStartTick = manager.noteEditLoopStartTick(track);
     const uint32_t bracketDisplay =
         bracketDisplayTickFromStorage(newStart, loopStartTick, loopLength);
-    if (focus.active && focus.movingNoteId != kInvalidNoteId) {
+    if (movedNoteEvents && focus.active && focus.movingNoteId != kInvalidNoteId) {
         manager.applySelectionFromGeometryEdit(track, bracketDisplay, focus.movingNoteId);
     }
 
     finalReconstructAndSelect(track, midiEvents, manager, movingNotePitch, newStart,
                               displayEndForBracket, loopLength, bracketDisplay, false);
+    return movedNoteEvents;
 }
 
 NOTE_EDIT_MEM void changeLengthWithOverlapHandling(Track& track, EditManager& manager,
@@ -1853,12 +1872,13 @@ NOTE_EDIT_MEM void changeLengthWithOverlapHandling(Track& track, EditManager& ma
     applyShortenOrDelete(midiEvents, notesToShorten, notesToDelete, manager, channel, loopLength,
                          onIndex, offIndex);
 
-    MidiEvent* noteOnEvent = findNoteOnAtStart(midiEvents, channel, notePitch, noteStart);
+    MidiEvent* noteOnEvent =
+        findNoteOnForMovingNoteEdit(midiEvents, focus, channel, notePitch, noteStart, loopLength);
 
     MidiEvent* noteOffEvent = nullptr;
     if (noteOnEvent) {
         noteOffEvent = resolveNoteOffForEditSpan(midiEvents, noteOnEvent, channel, notePitch,
-                                                 noteStart, displayCurrentEnd, loopLength);
+                                                 noteOnEvent->tick, displayCurrentEnd, loopLength);
     }
 
     if (noteOnEvent && noteOffEvent) {
@@ -1951,8 +1971,7 @@ NOTE_EDIT_MEM bool applyNoteEditChange(Track& track, EditManager& manager, NoteE
                          bool refreshPlaybackPreview) {
     switch (kind) {
         case NoteEditChangeKind::Move:
-            moveNoteWithOverlapHandling(track, manager, currentNote, targetTick, delta);
-            return true;
+            return moveNoteWithOverlapHandling(track, manager, currentNote, targetTick, delta);
         case NoteEditChangeKind::Length:
             changeLengthWithOverlapHandling(track, manager, currentNote, targetEndTick);
             return true;

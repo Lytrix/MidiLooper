@@ -144,6 +144,12 @@ template <typename Alloc>
 MidiEvent* findLinearOffForNoteId(std::vector<MidiEvent, Alloc>& events, const MidiEvent& noteOn,
                                   NoteId noteId, uint32_t loopLength);
 
+/// Live geometry edit: resolve mover note-on by NoteId first, else channel+pitch+start.
+template <typename Alloc>
+MidiEvent* findNoteOnForMovingNoteEdit(std::vector<MidiEvent, Alloc>& events,
+                                       const NoteEditFocus& focus, uint8_t channel,
+                                       uint8_t pitch, uint32_t startTick, uint32_t loopLength);
+
 /// Refresh focus.last (and moving note range) from session store linear span.
 template <typename Alloc>
 bool syncNoteEditFocusLinearFromSessionStore(NoteEditFocus& focus,

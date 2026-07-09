@@ -259,11 +259,11 @@ bool NoteEditManager::moveNoteToPosition(Track& track, const NoteUtils::DisplayN
 
     uint32_t dummyStart = currentNote.startTick;
     uint32_t dummyEnd = currentNote.endTick;
-    NoteMovementUtils::applyNoteEditChange(track, editManager, NoteMovementUtils::NoteEditChangeKind::Move,
-                                           currentNote, targetTick, static_cast<int>(tickDifference),
-                                           0, 0, 0, dummyStart, dummyEnd);
+    const bool moved = NoteMovementUtils::applyNoteEditChange(
+        track, editManager, NoteMovementUtils::NoteEditChangeKind::Move, currentNote, targetTick,
+        static_cast<int>(tickDifference), 0, 0, 0, dummyStart, dummyEnd);
     sendEditedNoteAuditionWhenTransportStopped(track);
-    return true;
+    return moved;
 }
 
 bool NoteEditManager::changeNoteEndWithOverlapHandling(Track& track,

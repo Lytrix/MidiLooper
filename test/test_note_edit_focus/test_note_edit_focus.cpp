@@ -1169,6 +1169,94 @@ void test_edit_projection_parity_wrapped_mover_linear_span() {
   TEST_ASSERT_EQUAL_INT32(1595, projected[0].interval.end);
 }
 
+void test_find_note_on_for_moving_note_edit_note_id_over_same_pitch_decoy() {
+  resetNoteIdCounter();
+  constexpr uint32_t kLoopLength = 3840;
+  constexpr uint8_t kChannel = 1;
+  constexpr uint8_t kPitch = 26;
+  constexpr NoteId kMoverId = 1;
+
+  MidiEventVec flat;
+  flat.push_back(noteOnWithNoteId(2016, 2, kPitch, 100, 99));
+  flat.push_back(MidiEvent::NoteOff(2112, 2, kPitch, 0));
+  flat.push_back(noteOnWithNoteId(2050, kChannel, kPitch, 100, kMoverId));
+  flat.push_back(MidiEvent::NoteOff(2146, kChannel, kPitch, 0));
+  flat.push_back(noteOnWithNoteId(1800, kChannel, kPitch, 100, 2));
+  flat.push_back(MidiEvent::NoteOff(1896, kChannel, kPitch, 0));
+  flat.push_back(noteOnWithNoteId(2200, kChannel, kPitch, 100, 3));
+  flat.push_back(MidiEvent::NoteOff(2296, kChannel, kPitch, 0));
+
+  NoteEditFocus focus;
+  focus.active = true;
+  focus.movingNoteId = kMoverId;
+  focus.last = {kPitch, 100, 2016, 2112};
+
+  bool legacyTickHit = false;
+  for (const MidiEvent& evt : flat) {
+    if (evt.channel == kChannel && evt.isNoteOn() && evt.data.noteData.velocity > 0 &&
+        evt.data.noteData.note == kPitch && evt.tick == focus.last.startTick) {
+      legacyTickHit = true;
+      break;
+    }
+  }
+  TEST_ASSERT_FALSE(legacyTickHit);
+
+  MidiEvent* moverOn = findNoteOnForMovingNoteEdit(flat, focus, kChannel, kPitch,
+                                                   focus.last.startTick, kLoopLength);
+  TEST_ASSERT_NOT_NULL(moverOn);
+  TEST_ASSERT_EQUAL(kMoverId, moverOn->noteId);
+  TEST_ASSERT_EQUAL_UINT32(2050u, moverOn->tick);
+}
+
+void test_find_note_on_for_moving_note_edit_note_id_channel_fallback() {
+  constexpr uint32_t kLoopLength = 3840;
+  constexpr uint8_t kTrackChannel = 5;
+  constexpr uint8_t kStoreChannel = 1;
+  constexpr uint8_t kPitch = 30;
+  constexpr NoteId kMoverId = 42;
+
+  MidiEventVec flat;
+  flat.push_back(noteOnWithNoteId(672, kStoreChannel, kPitch, 100, kMoverId));
+  flat.push_back(MidiEvent::NoteOff(768, kStoreChannel, kPitch, 0));
+
+  NoteEditFocus focus;
+  focus.active = true;
+  focus.movingNoteId = kMoverId;
+  focus.commitBaseline = {kPitch, 100, 672, 768};
+  focus.last = focus.commitBaseline;
+
+  MidiEvent* moverOn = findNoteOnForMovingNoteEdit(flat, focus, kTrackChannel, kPitch,
+                                                   focus.last.startTick, kLoopLength);
+  TEST_ASSERT_NOT_NULL(moverOn);
+  TEST_ASSERT_EQUAL(kMoverId, moverOn->noteId);
+  TEST_ASSERT_EQUAL_UINT32(672u, moverOn->tick);
+}
+
+void test_find_note_on_for_moving_note_edit_commit_baseline_preferred_start() {
+  constexpr uint32_t kLoopLength = 3840;
+  constexpr uint8_t kChannel = 5;
+  constexpr uint8_t kPitch = 30;
+  constexpr NoteId kMoverId = 42;
+
+  MidiEventVec flat;
+  flat.push_back(noteOnWithNoteId(2016, kChannel, kPitch, 100, 99));
+  flat.push_back(MidiEvent::NoteOff(2112, kChannel, kPitch, 0));
+  flat.push_back(noteOnWithNoteId(672, kChannel, kPitch, 100, kMoverId));
+  flat.push_back(MidiEvent::NoteOff(768, kChannel, kPitch, 0));
+
+  NoteEditFocus focus;
+  focus.active = true;
+  focus.movingNoteId = kMoverId;
+  focus.commitBaseline = {kPitch, 100, 672, 768};
+  focus.last = {kPitch, 100, 2016, 2112};
+
+  MidiEvent* moverOn = findNoteOnForMovingNoteEdit(flat, focus, kChannel, kPitch,
+                                                   focus.last.startTick, kLoopLength);
+  TEST_ASSERT_NOT_NULL(moverOn);
+  TEST_ASSERT_EQUAL(kMoverId, moverOn->noteId);
+  TEST_ASSERT_EQUAL_UINT32(672u, moverOn->tick);
+}
+
 int main(int /*argc*/, char** /*argv*/) {
   UNITY_BEGIN();
   RUN_TEST(test_baseline_map_includes_moving_note_at_select);
@@ -1219,5 +1307,8 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_edit_projection_batch_selects_linear_span_for_wrapped_storage);
   RUN_TEST(test_edit_projection_parity_resolve_linear_span_baseline_map);
   RUN_TEST(test_edit_projection_parity_wrapped_mover_linear_span);
+  RUN_TEST(test_find_note_on_for_moving_note_edit_note_id_over_same_pitch_decoy);
+  RUN_TEST(test_find_note_on_for_moving_note_edit_note_id_channel_fallback);
+  RUN_TEST(test_find_note_on_for_moving_note_edit_commit_baseline_preferred_start);
   return UNITY_END();
 }

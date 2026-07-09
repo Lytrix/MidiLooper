@@ -2,11 +2,22 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-07-09 (slot boot + split focus)
+Last updated: 2026-07-09 (NOTE_EDIT geometry display fix — mover lookup round 2)
 
 ---
 
 ## Now implementing
+
+### NOTE_EDIT geometry display (move/pitch bracket) — **Landed (uncommitted)**
+
+**Fix:** `findNoteOnForMovingNoteEdit` aligned with `syncNoteEditFocusLinearFromSessionStore` (commitBaseline + linearSpan.startTick + NoteId channel fallback); `moveNoteWithOverlapHandling` uses `noteEditLoopLengthTicks` and returns success; `moveNoteToPosition` propagates failure; `requestNoteInfoRefresh` invalidates note-edit display cache.
+
+| Gate | Status |
+|------|--------|
+| Native | `pio test -e native` — 540/540 |
+| HITL | Replay `session_20260709_155307` — expect `Moved note events` + bracket/highlight track coarse fader |
+
+---
 
 ### Slot boot + split focus (`slot-performance-interaction` 4b/4c) — **Landed (uncommitted)**
 

@@ -2789,6 +2789,7 @@ void DisplayManager::drawNoteInfo(uint32_t currentTick, Track& selectedTrack, ui
 }
 
 void DisplayManager::requestNoteInfoRefresh(Track& track) {
+    invalidateNoteEditDisplayCache();
     (void)track.getCachedNotes();
 }
 
