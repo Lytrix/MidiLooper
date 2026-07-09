@@ -2,6 +2,8 @@
 
 Agent-oriented rules for **where** allocations live on Teensy 4.1 and **how** admission gates use each tier. Read this before adding NOTE_EDIT temps, undo payloads, display buffers, or UIP projection vectors.
 
+> **Different axis:** this guide covers the malloc heap (internal RAM2) vs PSRAM. For **RAM1 linker overflow** (`free for local variables: -N`) — a DTCM/ITCM 32 KB bank-quantization problem solved by moving globals to `DMAMEM` — see [`.cursor/rules/Teensy-RAM1-Bank-Overflow.mdc`](../../.cursor/rules/Teensy-RAM1-Bank-Overflow.mdc).
+
 **Shipped:** 2026-07-06 (`b1260ce`). Refinement log: [`internal_heap_psram_routing_refinement.md`](../plans/internal_heap_psram_routing_refinement.md). OpenSpec: [`openspec/specs/internal-heap-external-memory-routing/spec.md`](../../openspec/specs/internal-heap-external-memory-routing/spec.md).
 
 ---
