@@ -219,6 +219,7 @@ void BarStepButtonHandler::handleNoteOn(uint8_t note, uint8_t velocity) {
         if (offsetInJam < jamLength) {
           trackRef.setJamTick(offsetInJam);
           state.didImmediateSeek = true;
+          trackManager.forceLedUpdate(clockManager.getCurrentTick());
           testLog("BarStepButton: jam seek to tick %lu (quantized 16th) [TEST POINT: jam immediate seek]", offsetInJam);
         }
       }
@@ -474,6 +475,7 @@ void BarStepButtonHandler::executeLoopEditAction(const BarStepButtonInfo& info, 
           if (offsetInJam < jamLength) {
             if (!didImmediateSeek) {
               track.setJamTick(offsetInJam);
+              trackManager.forceLedUpdate(clockManager.getCurrentTick());
               testLog("BarStepButton: jam seek to bar %d offset=%lu [TEST POINT: jam seek bar]", info.stepIndex, offsetInJam);
             }
           } else {
@@ -483,6 +485,7 @@ void BarStepButtonHandler::executeLoopEditAction(const BarStepButtonInfo& info, 
           uint32_t seekPos = info.stepIndex * Config::TICKS_PER_16TH_STEP;
           if (seekPos < track.getJamLength() && !didImmediateSeek) {
             track.setJamTick(seekPos);
+            trackManager.forceLedUpdate(clockManager.getCurrentTick());
             testLog("BarStepButton: jam seek to 16th %d [TEST POINT: jam navigate 16th]", info.stepIndex);
           }
         }

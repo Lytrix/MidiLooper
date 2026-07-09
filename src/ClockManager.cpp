@@ -269,6 +269,7 @@ void ClockManager::setCurrentTick(uint32_t tick) {
   currentTick = tick;
   interrupts();
   trackManager.updateAllTracks(tick);
+  trackManager.forceLedUpdate(tick);
   logger.log(CAT_CLOCK, LOG_DEBUG, "Seek: currentTick set to %lu", tick);
 }
 
