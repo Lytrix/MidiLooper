@@ -96,16 +96,16 @@ void test_clear_active_slot_preserves_playing_when_sibling_has_data() {
 
 void test_display_shows_empty_when_selected_slot_cleared_but_transport_stopped() {
   TEST_ASSERT_EQUAL(TRACK_EMPTY,
-                    resolveDisplayTrackState(TRACK_STOPPED, SlotOpState::SLOT_OP_IDLE, false,
+                    resolveDisplayTrackState(TRACK_STOPPED, SlotOpState::SLOT_OP_IDLE, false, false,
                                              false, false));
   TEST_ASSERT_EQUAL(TRACK_STOPPED,
-                    resolveDisplayTrackState(TRACK_STOPPED, SlotOpState::SLOT_OP_IDLE, true,
+                    resolveDisplayTrackState(TRACK_STOPPED, SlotOpState::SLOT_OP_IDLE, true, false,
                                              false, false));
 }
 
 void test_armed_display_when_record_queued_on_empty_selected_slot() {
   TEST_ASSERT_EQUAL(TRACK_ARMED, resolveDisplayTrackState(TRACK_STOPPED, SlotOpState::SLOT_OP_IDLE,
-                                                          false, false, true));
+                                                          false, false, false, true));
 }
 
 int main(int /*argc*/, char** /*argv*/) {

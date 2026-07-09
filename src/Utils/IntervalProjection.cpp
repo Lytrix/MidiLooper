@@ -188,7 +188,27 @@ uint32_t noteStorageTick(uint32_t relativeTick, uint32_t loopStartTick, uint32_t
 
 uint32_t tickPhaseInProjectionCycle(uint32_t currentTick, int32_t projectionCycleStartTick,
                                     uint32_t loopLength) {
-    return tickPhaseInLoop(currentTick, static_cast<uint32_t>(projectionCycleStartTick), loopLength);
+    if (loopLength == 0) {
+        return 0;
+    }
+    const int64_t delta =
+        static_cast<int64_t>(currentTick) - static_cast<int64_t>(projectionCycleStartTick);
+    const int64_t loop = static_cast<int64_t>(loopLength);
+    int64_t phase = delta % loop;
+    if (phase < 0) {
+        phase += loop;
+    }
+    return static_cast<uint32_t>(phase);
+}
+
+bool didDisplayPlayheadWrapBackward(uint32_t newStoragePhase, uint32_t prevStoragePhase,
+                                    uint32_t loopStartTick, uint32_t loopLength) {
+    if (loopLength == 0 || prevStoragePhase == UINT32_MAX) {
+        return false;
+    }
+    const uint32_t newDisplay = noteRelativeTick(newStoragePhase, loopStartTick, loopLength);
+    const uint32_t prevDisplay = noteRelativeTick(prevStoragePhase, loopStartTick, loopLength);
+    return newDisplay < prevDisplay;
 }
 
 int32_t advanceProjectionCycleStartTickOnWrap(int32_t projectionCycleStartTick,

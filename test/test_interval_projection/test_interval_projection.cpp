@@ -340,6 +340,60 @@ void test_display_playhead_aligns_with_projection_cycle_after_slot_commit() {
     TEST_ASSERT_EQUAL_UINT32(playbackPhase, alignedDisplay);
 }
 
+void test_tick_phase_in_projection_cycle_negative_origin() {
+    constexpr uint32_t loopLength = 3072;
+    constexpr int32_t projectionCycleStartTick = -24;
+    TEST_ASSERT_EQUAL_UINT32(24U,
+                             IntervalProjection::tickPhaseInProjectionCycle(0, projectionCycleStartTick,
+                                                                            loopLength));
+    TEST_ASSERT_EQUAL_UINT32(48U,
+                             IntervalProjection::tickPhaseInProjectionCycle(24, projectionCycleStartTick,
+                                                                            loopLength));
+}
+
+void test_transport_downbeat_display_with_loop_start_offset() {
+    // Record-stop / preserve path: projection aligned to loopStartTick, display at bar 1.
+    constexpr uint32_t loopLength = 3072;
+    constexpr uint32_t loopStartTick = 24;
+    constexpr int32_t projectionCycleStartTick = -static_cast<int32_t>(loopStartTick);
+    constexpr uint32_t currentTick = 0;
+
+    const uint32_t storagePhase = IntervalProjection::tickPhaseInProjectionCycle(
+        currentTick, projectionCycleStartTick, loopLength);
+    const uint32_t displayPhase =
+        IntervalProjection::noteRelativeTick(storagePhase, loopStartTick, loopLength);
+
+    TEST_ASSERT_EQUAL_UINT32(loopStartTick, storagePhase);
+    TEST_ASSERT_EQUAL_UINT32(0U, displayPhase);
+}
+
+void test_fresh_transport_linear_display_phase() {
+    // Fresh transport clears loopStartTick; playhead is linear storage phase.
+    constexpr uint32_t loopLength = 3072;
+    constexpr int32_t projectionCycleStartTick = 0;
+    constexpr uint32_t loopStartTick = 0;
+
+    for (uint32_t tick : {0U, 768U, 1536U, 2304U, 3071U}) {
+        const uint32_t storagePhase = IntervalProjection::tickPhaseInProjectionCycle(
+            tick, projectionCycleStartTick, loopLength);
+        const uint32_t displayPhase =
+            IntervalProjection::noteRelativeTick(storagePhase, loopStartTick, loopLength);
+        TEST_ASSERT_EQUAL_UINT32(tick, storagePhase);
+        TEST_ASSERT_EQUAL_UINT32(tick, displayPhase);
+        TEST_ASSERT_EQUAL_UINT32(tick / 768U, displayPhase / 768U);
+    }
+}
+
+void test_display_wrap_backward_only_on_musical_loop_head() {
+    constexpr uint32_t loopLength = 3072;
+    constexpr uint32_t loopStartTick = 24;
+
+    TEST_ASSERT_FALSE(IntervalProjection::didDisplayPlayheadWrapBackward(0U, 3071U, loopStartTick,
+                                                                        loopLength));
+    TEST_ASSERT_TRUE(IntervalProjection::didDisplayPlayheadWrapBackward(24U, 23U, loopStartTick,
+                                                                        loopLength));
+}
+
 int main(int /*argc*/, char** /*argv*/) {
     UNITY_BEGIN();
     RUN_TEST(test_tick_interval_intersects_spec_example);
@@ -363,5 +417,9 @@ int main(int /*argc*/, char** /*argv*/) {
     RUN_TEST(test_playback_order_linear_off_before_in_loop);
     RUN_TEST(test_build_playback_projection_context_fields);
     RUN_TEST(test_display_playhead_aligns_with_projection_cycle_after_slot_commit);
+    RUN_TEST(test_tick_phase_in_projection_cycle_negative_origin);
+    RUN_TEST(test_transport_downbeat_display_with_loop_start_offset);
+    RUN_TEST(test_fresh_transport_linear_display_phase);
+    RUN_TEST(test_display_wrap_backward_only_on_musical_loop_head);
     return UNITY_END();
 }

@@ -428,6 +428,9 @@ void MidiButtonActions::handleToggleRecordForSlot(uint8_t slotIndex) {
         return;
     }
 
+    const bool slotHasPublishedMidi = track.hasPublishedEventsInSlot(slotIndex);
+    const bool slotCanArmForRecord = !slotHasPublishedMidi;
+
     if (track.isRecording()) {
         logger.info("Loop %d: Stop Recording", slotIndex + 1);
         trackManager.stopRecordingTrack(trackIdx);
@@ -436,7 +439,7 @@ void MidiButtonActions::handleToggleRecordForSlot(uint8_t slotIndex) {
         track.stopOverdubbing();
     } else if (track.isPlaying()) {
         // Empty slot while playing => existing short-press record/queue flow.
-        if (!slotHasData) {
+        if (slotCanArmForRecord) {
             if (clockManager.shouldQuantizeRecordStart() && track.isPlaying()) {
                 if (trackManager.isRecordingQueued(trackIdx, slotIndex)) {
                     trackManager.clearQueuedRecordingTrack(trackIdx, slotIndex);
@@ -460,7 +463,7 @@ void MidiButtonActions::handleToggleRecordForSlot(uint8_t slotIndex) {
         // `slotIndex == selectedSlot` is handled above, so keep it as a safety fallback.
         logger.info("Loop %d: Live Overdub (safety fallback)", slotIndex + 1);
         trackManager.startOverdubbingTrack(trackIdx);
-    } else if (!slotHasData) {
+    } else if (slotCanArmForRecord) {
         if (handleArmedRecordPress(trackIdx)) {
             trackManager.forceLedUpdate(now);
             return;

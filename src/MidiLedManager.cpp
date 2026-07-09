@@ -385,12 +385,12 @@ void MidiLedManager::analyzeAndUpdateBar(const Loop& loop, uint32_t barStartTick
             lastLedState[i] = newLedState[i];
         }
     }
-    
-    // Debug logging
-    String ledPattern = "";
+
+    char ledPattern[NUM_LEDS + 1];
     for (int i = 0; i < NUM_LEDS; i++) {
-        ledPattern += newLedState[i] ? "1" : "0";
+        ledPattern[i] = newLedState[i] ? '1' : '0';
     }
-    logger.log(CAT_MIDI_LED, LOG_DEBUG, "LED Manager: Bar pattern (tick %lu): %s", 
-               barStartTickDisplay, ledPattern.c_str());
+    ledPattern[NUM_LEDS] = '\0';
+    logger.log(CAT_MIDI_LED, LOG_DEBUG, "LED Manager: Bar pattern (tick %lu): %s",
+               barStartTickDisplay, ledPattern);
 } 

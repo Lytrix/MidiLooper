@@ -225,6 +225,8 @@ void ClockManager::onMidiStart() {
       Track& t = trackManager.getTrack(i);
       if (t.isStopped()) {
         t.startPlaying(currentTick);
+      } else if (t.isPlaying()) {
+        t.reanchorPlaybackProjection(currentTick, false);
       }
     }
   }
@@ -310,6 +312,8 @@ void ClockManager::toggleTransport() {
         Track& t = trackManager.getTrack(i);
         if (t.isStopped()) {
           t.startPlaying(currentTick);
+        } else if (t.isPlaying()) {
+          t.reanchorPlaybackProjection(currentTick, false);
         }
       }
     }

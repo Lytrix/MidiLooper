@@ -8,6 +8,7 @@
 #include "EditPass.h"
 #include "StorageLoopIo.h"
 #include "TrackState.h"
+#include "UndoLoopGeometry.h"
 #include "Utils/InternalHeapFirstAllocator.h"
 #include "Utils/ExternalMemoryFirstAllocator.h"
 
@@ -20,12 +21,6 @@ enum class UndoEntryKind : uint8_t {
   LoopBoundaryChange = 3,
   NoteEditPassClosed = 4,
   ControlChangeEditPassClosed = 5,
-};
-
-struct UndoLoopGeometry {
-  uint32_t loopLengthTicks = 0;
-  uint32_t startLoopTick = 0;
-  uint32_t loopStartTick = 0;
 };
 
 struct UndoEntry {
