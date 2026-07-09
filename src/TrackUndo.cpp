@@ -27,7 +27,8 @@ TRACK_COLD_MEM UndoLoopGeometry captureGeometry(const Loop& loop) {
 }
 
 TRACK_COLD_MEM void applyGeometry(Loop& loop, const UndoLoopGeometry& geometry) {
-    loop.loopLengthTicks = geometry.loopLengthTicks;
+    loop.loopLengthTicks =
+        loop.reconcileLoopLengthWithPublishedContent(geometry.loopLengthTicks);
     loop.startLoopTick = geometry.startLoopTick;
     loop.loopStartTick = geometry.loopStartTick;
 }
@@ -173,7 +174,8 @@ TRACK_COLD_MEM bool applyUndoEntry(Track& track, UndoEntry& entry) {
             entry.afterLoopStartTick = loop.loopStartTick;
             entry.afterLoopLengthTicks = loop.loopLengthTicks;
             loop.loopStartTick = entry.beforeLoopStartTick;
-            loop.loopLengthTicks = entry.beforeLoopLengthTicks;
+            loop.loopLengthTicks =
+                loop.reconcileLoopLengthWithPublishedContent(entry.beforeLoopLengthTicks);
             loop.invalidateCaches();
             track.invalidateCaches();
             noteEditManager.loopEditManager.onGlobalGeometryRestored(track);
@@ -277,7 +279,8 @@ TRACK_COLD_MEM bool applyRedoEntry(Track& track, UndoEntry& entry) {
                 return false;
             }
             loop.loopStartTick = entry.afterLoopStartTick;
-            loop.loopLengthTicks = entry.afterLoopLengthTicks;
+            loop.loopLengthTicks =
+                loop.reconcileLoopLengthWithPublishedContent(entry.afterLoopLengthTicks);
             loop.invalidateCaches();
             track.invalidateCaches();
             noteEditManager.loopEditManager.onGlobalGeometryRestored(track);

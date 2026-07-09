@@ -365,7 +365,8 @@ STORAGE_PERSIST_MEM bool stepDeferredLoopPersist(File& file, const Loop& loop, b
 
     switch (storageSession.currentWorkspaceSave.loopWriteStage) {
         case DeferredLoopWriteStage::Header:
-            if (!writeDeferredLoopHeader(file, loop.loopId, loop.startLoopTick, loop.loopLengthTicks,
+            if (!writeDeferredLoopHeader(file, loop.loopId, loop.startLoopTick,
+                                         loop.reconcileLoopLengthWithPublishedContent(loop.loopLengthTicks),
                                          loop.loopStartTick, loop.nextPassId_, loop.nextNoteId_,
                                          loop.nextMergeSequence_, loop.lastPublishedPassId_,
                                          loop.passes, crcMode)) {

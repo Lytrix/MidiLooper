@@ -74,6 +74,9 @@ struct Loop {
   size_t activeCapturePassCount() const;
 
   bool hasPublishedEvents() const;
+  uint32_t findLastPublishedEventTick() const;
+  /// When published MIDI exists, never return a length below content-derived bars.
+  uint32_t reconcileLoopLengthWithPublishedContent(uint32_t candidateLengthTicks) const;
 
   void mergeActiveCapturePasses(MidiEventVec& out) const;
   void mergeActiveCapturePasses(SessionMidiEventVec& out) const;
