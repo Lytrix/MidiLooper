@@ -107,6 +107,7 @@ public:
 
   // --- Active loop slot (per track, 0-7) ---
   uint8_t getActiveLoopIndex(uint8_t trackIndex) const;
+  uint8_t getPlayingSlotIndex(uint8_t trackIndex) const;
   void setActiveLoopIndex(uint8_t trackIndex, uint8_t index);
   void setLayeredSlotHeld(uint8_t trackIndex, uint8_t slotIndex, bool held);
 
@@ -131,6 +132,10 @@ public:
 
   // --- Slot state machine (selected UI focus + pending quantized switch) ---
   uint8_t getSelectedSlotIndex(uint8_t trackIndex) const;
+  uint8_t getPreviewSlotIndex(uint8_t trackIndex) const;
+  uint8_t getPendingSlotIndex(uint8_t trackIndex) const;
+  bool hasPendingSlotSwitch(uint8_t trackIndex) const;
+  bool slotHasLoopContent(uint8_t trackIndex, uint8_t slotIndex, bool restoreFromSd);
   uint8_t getSelectedLoopIndex(uint8_t trackIndex) const;
   Loop& getSelectedLoop(uint8_t trackIndex);
   const Loop& getSelectedLoop(uint8_t trackIndex) const;
@@ -144,6 +149,12 @@ public:
                           uint8_t slotIndex,
                           SlotQuantization quantization,
                           uint32_t queuedAtTick);
+  /// Piano roll + loop LEDs when preview launch is queued or split focus is reaffirmed.
+  void refreshPreviewSlotFocus(uint8_t trackIndex, uint8_t slotIndex);
+  /// Bar/16th phase slot: playing slot while transport runs, preview slot when stopped.
+  uint8_t getLedPhaseSlotIndex(uint8_t trackIndex) const;
+  /// After deferred SD slot restores finish — display, LOOP_EDIT faders, loop row LEDs.
+  void onBootSlotLoadComplete();
   void clearPendingSlotSwitch(uint8_t trackIndex);
   /// Queue bar/16th playback restart at next grid; clears any pending slot switch (D14).
   void queueBarPlaybackStart(uint8_t trackIndex, int32_t storageTick, uint32_t queuedAtTick);

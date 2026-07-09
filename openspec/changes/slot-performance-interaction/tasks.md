@@ -43,8 +43,21 @@
 
 ## 4. LED feedback
 
-- [ ] 4.1 Pending action pulse in `refreshTrackAndLoopSelectLeds`
+- [ ] 4.1 Pending action pulse on **preview** target; phase/current-tick on **playing** slot in `refreshTrackAndLoopSelectLeds` / `MidiLedManager`
 - [ ] 4.2 Transient PlaybackWindow braces (`long-loop-piano-roll-window`)
+- [ ] 4.3 Display: flashing cursor at `loopStartTick` when preview ≠ playing (`DisplayManager`)
+
+## 4b. Split focus (playing / preview / edit commit)
+
+- [x] 4b.1 Formalise `selectedSlotIndex` as preview slot on `SlotStateMachine` (no `previewSlotIndex` field); add `getPlayingSlotIndex` / `getPreviewSlotIndex` / `getPendingSlotIndex` on `TrackManager`
+- [x] 4b.2 Preview set on launch queue; playing slot commit unchanged until `commitSlotAction`
+- [x] 4b.3 Keep immediate `beforeSelectedSlotChange` / `onSelectedSlotChanged` when preview slot is set (no deferral)
+- [x] 4b.4 `DisplayManager` binds piano roll to preview slot; `MidiLedManager` phase to playing slot
+
+## 4c. Boot load all payloads (DEC-021 amendment)
+
+- [x] 4c.1 Queue all SD loop payloads at boot; priority ordering only
+- [x] 4c.2 `TrackManager::slotHasLoopContent`; amend DEC-021 in `DECISION_LOG.md`
 
 ## 5. PlaybackWindow lifecycle (Phase 3)
 

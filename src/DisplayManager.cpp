@@ -19,6 +19,7 @@
 #include "Utils/HotPathTelemetry.h"
 #include "Utils/DebugSessionCapture.h"
 #include "Utils/DisplayWindowUtils.h"
+#include "Utils/SlotFocusDisplay.h"
 #include "Utils/NoteMovementWrap.h"
 #include "Utils/NoteMovementUtils.h"
 #include "TrackStateMachine.h"
@@ -58,10 +59,6 @@ bool shouldDeferFullDisplayVisualRebuild(const Loop& loop, uint32_t loopLength) 
 #define DISP_CAPTURE_MEM
 #endif
 
-// Placed in DMAMEM (OCRAM/RAM2), not DTCM: DisplayManager is the largest RAM1
-// variable object (~9.4 KB) and is only touched from the main loop, never the
-// MIDI-clock ISR. A real constructor initializes it at startup, so it is safe in
-// the .bss.dma (NOLOAD) region. This keeps RAM1 (DTCM) within its 3-bank budget.
 DMAMEM DisplayManager displayManager;
 namespace {
 SessionMidiEventVec liveDisplayEventBuffer;
@@ -516,9 +513,13 @@ uint32_t DisplayManager::resolvePlayheadInLoop(const Track& track, uint8_t displ
 
     const Loop& dispLoop = track.getLoop(displaySlot);
     const uint32_t loopOrigin = resolveLoopOriginTick(track, displaySlot);
+    const bool transportActive = track.isPlaying() || track.isOverdubbing();
+    if (isPreviewPlayheadPending(displaySlot, track.getActiveLoopIndex(), transportActive)) {
+        // Preview playhead: fixed at loopStartTick until playing slot catches up at launch commit.
+        return 0;
+    }
     const bool alignWithPlaybackCycle =
-        displaySlot == track.getActiveLoopIndex() &&
-        (track.isPlaying() || track.isOverdubbing());
+        displaySlot == track.getActiveLoopIndex() && transportActive;
     const uint32_t tickInLoopStorage =
         alignWithPlaybackCycle
             ? IntervalProjection::tickPhaseInProjectionCycle(
@@ -684,7 +685,15 @@ const DisplayNoteVec& DisplayManager::resolveDisplayNotes(const Track& track, ui
     const uint32_t loopLength = resolveDisplayLoopLength(track, displaySlot, currentTick);
     if (loopLength == 0 || (!loop.hasPublishedEvents() && !loop.captureActive())) {
         liveDisplayNotes.clear();
+        livePlaybackDisplaySlot_ = 255;
         return liveDisplayNotes;
+    }
+
+    if (displaySlot != livePlaybackDisplaySlot_) {
+        liveDisplayNotes.clear();
+        liveDisplayEventBuffer.clear();
+        liveMergePlaybackRevision_ = UINT32_MAX;
+        liveMergeCaptureRevision_ = 0;
     }
 
     if (editManager.isNoteEditActive()) {
@@ -706,9 +715,10 @@ const DisplayNoteVec& DisplayManager::resolveDisplayNotes(const Track& track, ui
         loop.captureActive() || track.isRecording() || track.isOverdubbing();
     if (!needsLiveMergeForDisplay) {
         // Stale-while-revalidate: when PLAYING defers rebuild, show last visual cache until idle
-        // maintenance refreshes it — only return empty when cache was never built.
-        if (!loop.visualCacheDirty || !loop.visualCache.notes.empty()) {
+        // maintenance refreshes it — never return stale notes after invalidate (dirty cache).
+        if (!loop.visualCacheDirty && !loop.visualCache.notes.empty()) {
             liveDisplayNotes.assign(loop.visualCache.notes.begin(), loop.visualCache.notes.end());
+            livePlaybackDisplaySlot_ = displaySlot;
             return liveDisplayNotes;
         }
         // Phase C: long loops — provisional window notes from chunk merge (no materialize).
@@ -730,8 +740,12 @@ const DisplayNoteVec& DisplayManager::resolveDisplayNotes(const Track& track, ui
                     NoteUtils::reconstructDisplayNotes(windowEvents, loopLength, false);
                 liveDisplayNotes.assign(provisional.begin(), provisional.end());
             }
+            livePlaybackDisplaySlot_ = displaySlot;
+            return liveDisplayNotes;
         }
-        return liveDisplayNotes;
+        if (!liveDisplayNotes.empty() && displaySlot == livePlaybackDisplaySlot_) {
+            return liveDisplayNotes;
+        }
     }
 
     const uint32_t boundedThreshold =
@@ -764,27 +778,25 @@ const DisplayNoteVec& DisplayManager::resolveDisplayNotes(const Track& track, ui
             if (!openNotes.empty()) {
                 const uint32_t playheadCloseTick =
                     resolvePlayheadInLoop(track, displaySlot, currentTick);
-                applyLiveOpenTails(openNotes, liveDisplayEventBuffer, loopLength, playheadCloseTick,
-                                   liveDisplayNotes, track.isRecording() || track.isOverdubbing());
+            applyLiveOpenTails(openNotes, liveDisplayEventBuffer, loopLength, playheadCloseTick,
+                               liveDisplayNotes, track.isRecording() || track.isOverdubbing());
             }
         }
+        livePlaybackDisplaySlot_ = displaySlot;
         return liveDisplayNotes;
     }
 
-    if (loop.visualCache.notes.empty() && !loop.isPassesMaterializedStoreFresh()) {
-        const bool mergeStale = liveMergePlaybackRevision_ != loop.playbackRevision ||
-                                liveMergeCaptureRevision_ != loop.captureDisplayRevision;
-        if (mergeStale || liveDisplayEventBuffer.empty()) {
-            mutLoop.mergeMaterializedPassesWithCapture(liveDisplayEventBuffer);
-            liveMergePlaybackRevision_ = loop.playbackRevision;
-            liveMergeCaptureRevision_ = loop.captureDisplayRevision;
-        }
+    if (loop.visualCacheDirty || liveDisplayEventBuffer.empty() ||
+        liveMergePlaybackRevision_ != loop.playbackRevision ||
+        liveMergeCaptureRevision_ != loop.captureDisplayRevision) {
+        liveDisplayEventBuffer.clear();
+        mutLoop.mergeMaterializedPassesWithCapture(liveDisplayEventBuffer);
+        liveMergePlaybackRevision_ = loop.playbackRevision;
+        liveMergeCaptureRevision_ = loop.captureDisplayRevision;
     }
 
-    // Prefer visualCache (passes.materializeToEventVector) over reconstructing the full
-    // materialized view again — after long overdub stop heap can be too low for a second
-    // RAM2-heavy reconstruct while deferred save is still running.
-    if (!loop.visualCache.notes.empty()) {
+    // Prefer visualCache when fresh — after invalidation fall through to merged events.
+    if (!loop.visualCacheDirty && !loop.visualCache.notes.empty()) {
         liveDisplayNotes.assign(loop.visualCache.notes.begin(), loop.visualCache.notes.end());
     } else if (!liveDisplayEventBuffer.empty()) {
         const NoteUtils::DisplayNoteVec reconstructed =
@@ -804,6 +816,7 @@ const DisplayNoteVec& DisplayManager::resolveDisplayNotes(const Track& track, ui
                                liveDisplayNotes, false);
         }
     }
+    livePlaybackDisplaySlot_ = displaySlot;
     return liveDisplayNotes;
 }
 
@@ -928,6 +941,9 @@ void DisplayManager::invalidateLiveDisplayCache() {
     liveDisplayCacheSlot = 255;
     liveDisplayCacheTrackState = NUM_TRACK_STATES;
     liveDisplayCacheOpenNotes.clear();
+    liveDisplayNotes.clear();
+    liveDisplayEventBuffer.clear();
+    livePlaybackDisplaySlot_ = 255;
     liveMergePlaybackRevision_ = UINT32_MAX;
     liveMergeCaptureRevision_ = 0;
     invalidateNoteEditDisplayCache();
@@ -1037,29 +1053,17 @@ void DisplayManager::drawTrackStatus(uint8_t selectedTrack, uint32_t currentMill
 }
 
 void DisplayManager::beginBootOled() {
-    if (bootOledInitialized_) {
-        return;
-    }
-    Serial.println("DisplayManager: Setting up SSD1322 display...");
+    Serial.println("DisplayManager: Early OLED init for boot load...");
     _display.begin();
-    Serial.println("DisplayManager: Setting buffer size");
     _display.gfx.set_buffer_size(DISPLAY_WIDTH, DISPLAY_HEIGHT);
     clearDisplayBuffer();
-    bootOledInitialized_ = true;
 }
 
 void DisplayManager::finishBootSetup() {
-    if (!bootOledInitialized_) {
-        beginBootOled();
-    }
-    Serial.println("DisplayManager: Drawing startup text...");
-    Serial.println("Selecting font...");
+    Serial.println("DisplayManager: Boot setup complete — startup splash");
     _display.gfx.select_font(&Font5x7Fixed);
-    Serial.println("Font selected.");
-    Serial.println("Drawing text...");
     _display.gfx.draw_text(_display.api.getFrameBuffer(), "Midi Looper v0.4", 92, 32, 15);
     _display.api.display();
-    Serial.println("DisplayManager: Text sent to display");
 #if !defined(SESSION_CAPTURE)
     delay(1500);
 #endif
@@ -1067,8 +1071,31 @@ void DisplayManager::finishBootSetup() {
 }
 
 void DisplayManager::setup() {
-    beginBootOled();
-    finishBootSetup();
+    Serial.println("DisplayManager: Setting up SSD1322 display...");
+
+    // Initialize display
+    _display.begin();
+
+    // Set buffer size and clear display
+    Serial.println("DisplayManager: Setting buffer size");
+    _display.gfx.set_buffer_size(DISPLAY_WIDTH, DISPLAY_HEIGHT);
+    clearDisplayBuffer();
+
+    // Now proceed with your drawing/demo code
+    Serial.println("DisplayManager: Drawing startup text...");
+    Serial.println("Selecting font...");
+    _display.gfx.select_font(&Font5x7Fixed);
+    Serial.println("Font selected.");
+    Serial.println("Drawing text...");
+    _display.gfx.draw_text(_display.api.getFrameBuffer(), "Midi Looper v0.4", 92, 32, 15);
+    //_display.gfx.draw_text(_display.api.getFrameBuffer(), "v0.4", 92, 40, 8);
+    //Serial.println("Text drawn.");
+    _display.api.display();
+    Serial.println("DisplayManager: Text sent to display");
+#if !defined(SESSION_CAPTURE)
+    delay(1500);
+#endif
+    clearDisplayBuffer();
 }
 
 
@@ -1524,18 +1551,24 @@ void DisplayManager::drawPianoRoll(uint32_t currentTick, Track& selectedTrack, u
             drawBracket(relativeBracketTick, detailedLength, pianoRollY1);
         }
 
+        const bool previewPlayheadPending =
+            isPreviewPlayheadPending(displaySlot, track.getActiveLoopIndex(),
+                                     track.isPlaying() || track.isOverdubbing());
+        const bool drawPlayhead =
+            !previewPlayheadPending || previewPlayheadFlashVisible(millis());
+
         if (useBoundedWindow) {
             drawOverviewStrip(loopLength, jamStartTick, windowStart, windowLength, jamPos, minPitch,
                               maxPitch, notes, kOverviewStripY0, kOverviewStripY1);
-            if (jamPos >= windowStart && jamPos < windowStart + windowLength) {
-                const float phase = displayPlayheadPhase();
+            if (drawPlayhead && jamPos >= windowStart && jamPos < windowStart + windowLength) {
+                const float phase = previewPlayheadPending ? 0.0f : displayPlayheadPhase();
                 const float relativePlayhead =
                     static_cast<float>(jamPos - windowStart) + phase;
                 const int cx = mapPlayheadTickToScreenX(relativePlayhead, detailedLength);
                 _display.gfx.draw_vline(_display.api.getFrameBuffer(), cx, pianoRollY0, pianoRollY1,
                                         PLAYHEAD_COLOR);
             }
-        } else if (jamPos < jamLength) {
+        } else if (drawPlayhead && jamPos < jamLength) {
             const float displayPlayhead = resolveDisplayPlayheadInLoop(jamPos, jamLength);
             const int cx = mapPlayheadTickToScreenX(displayPlayhead, jamLength);
             _display.gfx.draw_vline(_display.api.getFrameBuffer(), cx, pianoRollY0, pianoRollY1,
@@ -1621,8 +1654,8 @@ void DisplayManager::drawSidebar(Track& selectedTrack, uint8_t displaySlot) {
         default:                      strcpy(modeTop, "-");    strcpy(modeBottom, "-");     break;
     }
 
-    uint8_t undoCount = static_cast<uint8_t>(
-        editManager.getDisplayUndoCount(selectedTrack, selectedTrack.getLoop(displaySlot)));
+    const Loop& undoLoop = trackManager.getSelectedLoop(selectedTrack);
+    uint8_t undoCount = static_cast<uint8_t>(editManager.getDisplayUndoCount(selectedTrack, undoLoop));
     if (undoCount > 99) undoCount = 99;
     char undoValStr[4];
     if (undoCount == 0) {

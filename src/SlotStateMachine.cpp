@@ -1,8 +1,8 @@
 #include "SlotStateMachine.h"
-#include "TickPhase.h"
 
 #include "Track.h"
 #include "Globals.h"
+#include "Utils/SlotLaunchCommit.h"
 
 SlotStateMachine::SlotStateMachine() {
   for (uint8_t t = 0; t < Config::NUM_TRACKS; t++) {
@@ -75,10 +75,10 @@ bool SlotStateMachine::shouldCommitPendingSlotSwitch(uint8_t trackIndex,
     }
 
     case SlotQuantization::LoopEnd: {
-      const uint32_t loopLen = track.getLoopLength();
-      if (loopLen == 0) return false;
-      const uint32_t startLoopTick = track.getStartLoopTick();
-      return tickPhaseInLoop(currentTick, startLoopTick, loopLen) == 0;
+      const Loop& loop = track.getActiveLoop();
+      return shouldCommitLoopEndSwitch(
+          currentTick, track.getProjectionCycleStartTick(), loop.loopLengthTicks,
+          loop.loopStartTick, loop.startLoopTick, loop.lastTickInLoop);
     }
   }
 

@@ -186,6 +186,8 @@ private:
     TrackState liveDisplayCacheTrackState = NUM_TRACK_STATES;
     uint32_t liveMergePlaybackRevision_ = UINT32_MAX;
     uint16_t liveMergeCaptureRevision_ = 0;
+    /// Slot index that `liveDisplayNotes` / `liveDisplayEventBuffer` were built for (playback path).
+    uint8_t livePlaybackDisplaySlot_ = 255;
     uint8_t noteEditDisplayCacheSlot_ = 255;
     uint32_t noteEditDisplayCachePreviewRevision_ = UINT32_MAX;
     uint32_t noteEditDisplayCacheLoopLength_ = 0;

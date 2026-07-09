@@ -2,11 +2,24 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-07-09 (playhead-after-undo fix)
+Last updated: 2026-07-09 (slot boot + split focus)
 
 ---
 
 ## Now implementing
+
+### Slot boot + split focus (`slot-performance-interaction` 4b/4c) — **Landed (uncommitted)**
+
+**DEC-021 amendment + DEC-025:** exhaustive boot restore queue; `slotHasLoopContent`; playing/preview/pending split; `LoopEnd` performance launch; LED phase on playing slot; flashing preview playhead.
+
+| Gate | Status |
+|------|--------|
+| Native | `pio test -e native` — 537/537 (`test_slot_focus_policy` + loop-end commit fix) |
+| HITL | Preview slot switch: piano roll notes + metadata immediate; loop-end commit for MIDI/LEDs |
+
+OpenSpec: [`slot-performance-interaction`](../../openspec/changes/slot-performance-interaction/) tasks 4b, 4c checked off.
+
+---
 
 ### Playhead-after-undo fix (record stop + ARMED guard)
 

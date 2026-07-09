@@ -27,6 +27,7 @@ void MidiLedManager::updateLeds(Track& track, uint32_t currentTick, uint8_t disp
     if (displaySlotIndex != lastDisplaySlotIndex) {
         lastDisplaySlotIndex = displaySlotIndex;
         lastUpdateBar = UINT32_MAX;
+        lastSingleBarPhase_ = UINT32_MAX;
         hasInitialized = false;
     }
     if (loopLength == 0) {
@@ -60,9 +61,34 @@ void MidiLedManager::updateLeds(Track& track, uint32_t currentTick, uint8_t disp
     // Only update when bar index changes, or on first initialization.
     uint32_t barStartTickDisplay =
         getCurrentBarStartTick(currentTick, displayLoop, track, displaySlotIndex);
-    if (!hasInitialized || currentBar != lastUpdateBar) {
-        analyzeAndUpdateBar(displayLoop, barStartTickDisplay);
-        updateBarLeds(displayLoop, currentBar);
+    const uint32_t ticksPerBar = Config::TICKS_PER_BAR;
+    const bool singleBarLoop = loopLength > 0 && loopLength <= ticksPerBar;
+    uint32_t tickInLoopDisplay = 0;
+    if (singleBarLoop) {
+        const bool alignWithPlaybackCycle =
+            displaySlotIndex == track.getActiveLoopIndex() &&
+            (track.isPlaying() || track.isOverdubbing());
+        const uint32_t tickInLoopStorage =
+            alignWithPlaybackCycle
+                ? IntervalProjection::tickPhaseInProjectionCycle(
+                      currentTick, track.getProjectionCycleStartTick(), loopLength)
+                : tickPhaseInLoop(currentTick, displayLoop.loopStartTick, loopLength);
+        tickInLoopDisplay = IntervalProjection::noteRelativeTick(
+            tickInLoopStorage, displayLoop.loopStartTick, loopLength);
+    }
+    const bool singleBarWrapped =
+        singleBarLoop && lastSingleBarPhase_ != UINT32_MAX && tickInLoopDisplay < lastSingleBarPhase_;
+    if (singleBarLoop) {
+        lastSingleBarPhase_ = tickInLoopDisplay;
+    } else {
+        lastSingleBarPhase_ = UINT32_MAX;
+    }
+
+    if (!hasInitialized || currentBar != lastUpdateBar || singleBarWrapped) {
+        Loop& mutableLoop = const_cast<Loop&>(displayLoop);
+        prepareLedNoteLookup(mutableLoop);
+        analyzeAndUpdateBar(mutableLoop, barStartTickDisplay);
+        updateBarLeds(mutableLoop, currentBar);
         
         lastUpdateBar = currentBar;
         hasInitialized = true;
@@ -76,6 +102,7 @@ void MidiLedManager::forceUpdate(Track& track, uint32_t currentTick, uint8_t dis
     lastUpdateBar = UINT32_MAX;
     lastLoopLength = 0;
     lastLoopStartTick = UINT32_MAX;
+    lastSingleBarPhase_ = UINT32_MAX;
     lastDisplaySlotIndex = Config::INVALID_LOOP_SLOT;
     lastFocusSlotIndex = Config::INVALID_LOOP_SLOT;
     lastSelectedTrackIndex = Config::INVALID_TRACK_INDEX;
@@ -238,18 +265,18 @@ bool displayNoteStartsInRange(const NoteUtils::DisplayNote& note, uint32_t loopL
     return startTick >= rangeStart || startTick < rangeEnd;
 }
 
-bool hasNoteOnInRange(const Loop& loop, uint32_t rangeStart, uint32_t rangeEnd) {
-    if (loop.hasPublishedEvents()) {
-        if (loop.visualCacheDirty) {
-            return false;
-        }
-        const uint32_t loopLength = loop.loopLengthTicks;
-        for (const NoteUtils::DisplayNote& note : loop.visualCache.notes) {
-            if (displayNoteStartsInRange(note, loopLength, rangeStart, rangeEnd)) {
-                return true;
-            }
-        }
+}  // namespace
+
+void MidiLedManager::prepareLedNoteLookup(Loop& loop) {
+    ledNoteLookupEvents_.clear();
+    ledNoteLookupUsesMerge_ = loop.hasPublishedEvents() && loop.visualCacheDirty;
+    if (ledNoteLookupUsesMerge_) {
+        loop.mergeMaterializedPassesWithCapture(ledNoteLookupEvents_);
     }
+}
+
+bool MidiLedManager::hasNoteOnInRangeForLed(const Loop& loop, uint32_t rangeStart,
+                                            uint32_t rangeEnd) const {
     if (loop.captureActive()) {
         const size_t captureCount = loop.capture.store.size();
         for (size_t i = 0; i < captureCount; ++i) {
@@ -259,20 +286,36 @@ bool hasNoteOnInRange(const Loop& loop, uint32_t rangeStart, uint32_t rangeEnd) 
             }
         }
     }
+    if (!loop.hasPublishedEvents()) {
+        return false;
+    }
+    if (!loop.visualCacheDirty) {
+        const uint32_t loopLength = loop.loopLengthTicks;
+        for (const NoteUtils::DisplayNote& note : loop.visualCache.notes) {
+            if (displayNoteStartsInRange(note, loopLength, rangeStart, rangeEnd)) {
+                return true;
+            }
+        }
+        return false;
+    }
+    for (const MidiEvent& event : ledNoteLookupEvents_) {
+        if (noteOnInRange(event, rangeStart, rangeEnd)) {
+            return true;
+        }
+    }
     return false;
 }
 
-}  // namespace
-
-bool MidiLedManager::hasNoteInSixteenthStep(const Loop& loop, uint32_t stepStartStorage, uint32_t stepEndStorage) {
-    return hasNoteOnInRange(loop, stepStartStorage, stepEndStorage);
+bool MidiLedManager::hasNoteInSixteenthStep(Loop& loop, uint32_t stepStartStorage,
+                                            uint32_t stepEndStorage) {
+    return hasNoteOnInRangeForLed(loop, stepStartStorage, stepEndStorage);
 }
 
-bool MidiLedManager::hasNoteInBar(const Loop& loop, uint32_t barStartStorage, uint32_t barEndStorage) {
-    return hasNoteOnInRange(loop, barStartStorage, barEndStorage);
+bool MidiLedManager::hasNoteInBar(Loop& loop, uint32_t barStartStorage, uint32_t barEndStorage) {
+    return hasNoteOnInRangeForLed(loop, barStartStorage, barEndStorage);
 }
 
-void MidiLedManager::updateBarLeds(const Loop& loop, uint32_t currentBar) {
+void MidiLedManager::updateBarLeds(Loop& loop, uint32_t currentBar) {
     const uint32_t loopLength = loop.loopLengthTicks;
     const uint32_t ticksPerBar = Config::TICKS_PER_BAR;
     
@@ -361,7 +404,7 @@ void MidiLedManager::updateCurrentTick(Track& track, uint32_t currentTick, uint8
     }
 }
 
-void MidiLedManager::analyzeAndUpdateBar(const Loop& loop, uint32_t barStartTickDisplay) {
+void MidiLedManager::analyzeAndUpdateBar(Loop& loop, uint32_t barStartTickDisplay) {
     uint32_t ticksPerSixteenth = Config::TICKS_PER_16TH_STEP;
     const uint32_t loopLength = loop.loopLengthTicks;
     bool newLedState[NUM_LEDS];

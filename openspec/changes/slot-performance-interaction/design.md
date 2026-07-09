@@ -191,7 +191,100 @@ Jam **capture** scoped to window remains parked (D13).
 
 ### D17 — Interaction with slot-selection-focus
 
-**Decision:** Performance enqueue runs **after** `setSelectedSlotIndex(..., SyncPlayback::No)` for other-slot launch (UI immediate). Active switch + queued start at action commit — replaces direct `toggleSlotMuted` and `requestSlotSwitch` in `handleToggleRecordForSlot`.
+**Decision:** Performance enqueue runs **after** preview/display focus is set for other-slot launch. Playing slot switch + queued start at action commit — replaces direct `toggleSlotMuted` and `requestSlotSwitch` in `handleToggleRecordForSlot`.
+
+**Amended 2026-07-09:** D17 SHALL NOT imply a single grid commit for display, LEDs, and edit. See **D18–D21**.
+
+### D18 — Split focus: playing vs preview vs pending vs edit commit
+
+**Decision:** Slot focus has **three slot indices** plus edit lifecycle while transport is running:
+
+| Role | Code (v1) | Owns | Updates |
+|------|-----------|------|---------|
+| **Playing** | `activeLoopIndex` (`Track`) | Audible MIDI; transport phase; bar/16th jam LED phase; `BarStepButtonHandler` grid | **Committed playback transitions only** while transport running |
+| **Preview** | `selectedSlotIndex` (`SlotStateMachine`) — **no separate `previewSlotIndex` field** | Piano roll; LOOP_EDIT faders; selection highlight; edit depart/arrive | **Immediately** on user slot peek / launch queue |
+| **Pending** | `pendingSlotIndex` (`SlotStateMachine`) | Queued launch target until scheduled commit | **Immediately** on user input; becomes playing only at launch commit |
+| **Edit commit** | `EditManager` depart hooks | `commitEditSessionOnDepart` | **Immediately** when preview (`selectedSlotIndex`) changes — unchanged (`beforeSelectedSlotChange` in `setSelectedSlotIndex`) |
+
+While transport is **stopped:** preview = playing = selected (`SyncPlayback::Yes`).
+
+**Preview binding:** During playback, `selectedSlotIndex` **is** the preview slot. `pendingSlotIndex` is the queued playback target only — not a second preview index.
+
+**Terminology APIs (v1):** `TrackManager::getPlayingSlotIndex` → `activeLoopIndex`; `getPreviewSlotIndex` → `selectedSlotIndex`; `getPendingSlotIndex` → `SlotStateMachine` pending. Use in new/edited paths; legacy `getActiveLoopIndex` / `getSelectedSlotIndex` remain at untouched call sites.
+
+**Rationale:** User must peek the upcoming loop (e.g. queue for next bar) while still jamming on 16th/bar buttons tied to the **playing** slot. Collapsing preview + playback + edit to one commit is incorrect.
+
+#### Transport invariant (committed transitions)
+
+While transport is **running:**
+
+> `activeLoopIndex` is modified **only** by **committed playback state transitions**.
+> Transient UI (preview selection) **never** modifies `activeLoopIndex` directly.
+
+**May change immediately from user input:** `selectedSlotIndex` (preview), `pendingSlotIndex` (queued target).
+
+**Committed playback transitions** (may change `activeLoopIndex` while transport running):
+
+| Transition | Owner path |
+|------------|------------|
+| Performance launch commit | `TrackManager::updateAllTracks` pending-switch block (`LoopEnd` / `NextGrid` per launch policy) |
+| Quantized record start | `handleQuantizedStart` |
+| Capture finalize | `finalizeCaptureAndSelectSlot` |
+| Layer-hold commit | `endSlotSelectionHold` → `pendingMultiSlotCommit` (audit: prefer scheduler routing; interim until task 3.4) |
+| Post-clear restore | `restoreAudiblePlaybackAfterSlotClear` |
+
+Launch **timing** is policy; launch **ownership** is committed-transition paths above. Interim firmware uses `requestPendingSlotSwitch`; future `SlotActionQueue` preserves this invariant.
+
+#### Launch pipeline
+
+```text
+Button press → preview (setSelectedSlotIndex, SyncPlayback::No)
+            → pending launch (requestPendingSlotSwitch + SlotQuantization)
+            → scheduler (shouldCommitPendingSlotSwitch)
+            → launch commit (updateAllTracks)
+            → playing slot (setActiveLoopIndex + queuePlaybackStartAtGrid)
+```
+
+#### Performance launch policy — why LoopEnd
+
+Short-press **performance launch** while playing SHALL use `SlotQuantization::LoopEnd` (not `NextGrid`). Performance launch preserves the currently playing loop until its natural end — uninterrupted phrasing and intended hardware workflow. Double-press and future `SlotActionQueue` actions may use `NextGrid`.
+
+### D19 — Display preview and flashing cursor
+
+**Decision:** When preview (`selectedSlotIndex`) ≠ playing (`activeLoopIndex`):
+
+- `DisplayManager` SHALL render the **preview** slot's loop MIDI and geometry.
+- Playhead/cursor SHALL sit at the preview slot's `loopStartTick` (or queued start tick) and SHALL **flash** until playing slot catches up at commit.
+- When preview equals playing, cursor SHALL be solid (normal).
+
+**DisplayManager ownership:** `TrackManager` / `Track` own transport position for the **playing** slot. `DisplayManager` owns **preview playhead generation**. `DisplayManager` SHALL NOT derive preview playhead position from transport while preview ≠ playing.
+
+Future bar-quantised launch SHALL use the same preview model; only playback commit quantisation changes.
+
+### D20 — LEDs stay on playing slot during preview
+
+**Decision:** While preview ≠ playing:
+
+- `MidiLedManager` phase tick, current-tick indicator, and bar/16th performance grid SHALL use **`activeLoopIndex`** (playing slot), not preview.
+- Loop row LED precedence (highest wins): **pending launch pulse** → **preview selection (solid)** → **playing phase indication** → idle/muted/disabled. Recording/overdub queued-arm (96) retains existing override when applicable.
+
+### D21 — Boot load all loop payloads (DEC-021 amendment)
+
+**Decision:** At cold boot, queue **every** track/slot with an SD loop payload (up to 64) into `processDeferredLoopSlotRestore`; priority orders selected-track slots first. Admission SHALL NOT depend on playback layer or saved index flags.
+
+#### Boot restore pipeline (discovery ≠ scheduling)
+
+```text
+Discover payloads → Build restore queue (exhaustive) → Sort queue (priority only) → Process incrementally (one slot per idle slice)
+```
+
+**Boot queue invariant:** Queue construction is exhaustive. Scheduling order may change. Queue membership may not. Only `loopSlotHasPayloadOnSd` gates membership.
+
+**Boot failure policy:** Unreadable slot remains unavailable; queue processing continues; one failure never aborts remaining restores; boot always completes.
+
+**Has-data:** `TrackManager::slotHasLoopContent(track, slot, restoreFromSd)` returns true when playable data exists in RAM **or** a restorable SD payload exists. Future helpers may split loaded vs persistent; do not overload `slotHasLoopContent`.
+
+**Cross-ref:** Implementation plan [`slot_boot_focus_policy`](../../../.cursor/plans/slot_boot_focus_policy_41235c9e.plan.md); amend DEC-021 in `docs/DECISION_LOG.md`; add DEC-025 (split focus + committed-transition invariant).
 
 ---
 

@@ -1320,6 +1320,8 @@ void Loop::invalidateDisplayCaches() {
   if (noteCache_) {
     noteCache_->invalidate();
   }
+  visualCache.notes.clear();
+  visualCache.dirtyBars.clear();
   visualCacheDirty = true;
 }
 

@@ -5,8 +5,9 @@
 Primary implementation paths:
 - Mapping: [`src/Utils/MidiButtonConfig.cpp`](../../../src/Utils/MidiButtonConfig.cpp)
 - Gesture actions: [`src/MidiButtonActions.cpp`](../../../src/MidiButtonActions.cpp) (`handleToggleRecordForSlot`, `beginSlotLayerHold`, `endSlotLayerHold`)
-- Slot selection orchestrator: [`TrackManager::setSelectedSlotIndex`](../../../src/TrackManager.cpp) — Departure → Transition → Arrival on the selected track
-- Playback sync policy: default `SyncPlayback::Yes` when transport is stopped; while transport is running, selected updates immediately and active playback follows on the next grid tick (`SlotQuantization::NextGrid` / `Track::queuedStartGridTicks`, default one 16th step)
+- Slot selection orchestrator: [`TrackManager::setSelectedSlotIndex`](../../../src/TrackManager.cpp) — preview slot (`selectedSlotIndex`); playing slot (`activeLoopIndex`) commits separately while transport runs
+- **Playing / preview / pending:** preview = piano roll + edit (immediate); playing = audible MIDI + bar/16th LED phase; pending = queued launch target until commit
+- Playback sync policy: default `SyncPlayback::Yes` when transport is stopped; while transport is running, preview updates immediately and **playing** slot commits at **loop boundary** for performance launch (`SlotQuantization::LoopEnd`)
 - Pending switch logic: [`src/SlotStateMachine.cpp`](../../../src/SlotStateMachine.cpp)
 
 ## Short press
@@ -16,8 +17,9 @@ Primary implementation paths:
 - **Pressed slot has data, slot is selected**: toggle mute for that slot (track keeps running).
 - **Pressed slot has data, slot is not selected**:
   - Departure commits pending edit work (NOTE_EDIT / LOOP_EDIT) before the UI focus index changes.
-  - While transport is running (`clockManager.shouldQuantizeRecordStart()`): `setSelectedSlotIndex(..., SyncPlayback::No)` updates **selected** immediately; **active** switches at the next **`queuedStartGridTicks`** boundary (default 16th) via `requestSlotSwitch(NextGrid)`.
-  - In multi-slot mode: keep the enabled set; queue active switch at the grid.
+  - While transport is running (`clockManager.shouldQuantizeRecordStart()`): `setSelectedSlotIndex(..., SyncPlayback::No)` updates **preview** immediately; **playing** slot switches at **loop boundary** via `requestSlotSwitch(LoopEnd)`.
+  - Piano roll and edit commit follow preview immediately; bar/16th LEDs and phase grid stay on the **playing** slot until commit.
+  - In multi-slot mode: keep the enabled set; queue playing-slot switch at loop end.
   - In **LOOP_EDIT** or **NOTE_EDIT**: queue active switch with **single-slot** enabled set replacement so only the selected loop is audible for comparison.
   - In single-slot mode (non-edit): queue switch at the grid; when committed, enabled set can be replaced with that single slot.
   - On grid commit: **`projectionCycleStartTick`** resets and **`queuedStartTick`** applies once (target slot's **`loopStartTick`**).

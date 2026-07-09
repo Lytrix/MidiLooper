@@ -42,20 +42,25 @@ Transient bar/step windows SHALL NOT create new `recordPass` or `overdubPass` ro
 
 ### Requirement: Selected slot remains edit and record target
 
-Regardless of performance action queue state, **selected slot index** SHALL remain the target for:
+Regardless of performance action queue state, **preview slot** (and edit/undo display scope while playing) SHALL target the slot shown on the piano roll.
 
-- Display and encoder/fader context
-- NOTE_EDIT and LOOP_EDIT sessions
-- Record button arm/record/overdub when scoped to the selected track
-- Active **PlaybackWindow** context (persisted or transient)
+**Playing slot** (`activeLoopIndex`) SHALL drive audible MIDI and bar/16th LED phase until performance commit.
 
-Performance commits at loop boundary SHALL NOT change `selectedSlotIndex` except when the enqueued action explicitly selects a different slot (launch).
+Performance commits at loop boundary SHALL set playing slot to the launch target. Preview slot SHALL equal playing slot after commit.
 
-#### Scenario: Launch updates selection before boundary
+#### Scenario: Preview before boundary
 
-- **WHEN** the user short-presses a non-selected slot to launch
-- **THEN** `selectedSlotIndex` updates immediately for UI and edit context
-- **AND** active playback may remain on the prior slot until loop boundary commit
+- **WHEN** the user short-presses a non-playing slot to launch
+- **THEN** preview slot updates immediately for display and LOOP_EDIT context
+- **AND** playing slot and bar/16th LED phase remain on the prior slot until loop boundary commit
+- **AND** edit depart/commit on the departing slot runs immediately (existing `commitEditSessionOnDepart`)
+
+#### Scenario: Launch updates playing slot at boundary
+
+- **WHEN** a queued `LaunchSlot` commits at loop boundary
+- **THEN** playing slot updates to the launch target
+- **AND** preview slot equals playing slot
+- **AND** display cursor stops flashing and follows normal playback projection
 
 ### Requirement: Engine merge cache naming
 
