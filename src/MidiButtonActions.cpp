@@ -27,6 +27,48 @@ uint8_t refSlotPhaseForQueue(const Track& track, uint8_t previousSlot) {
   return (rl.loopLengthTicks > 0) ? previousSlot : ::Config::INVALID_LOOP_SLOT;
 }
 
+bool slotHasDataForPlaybackSwitch(Track& track, uint8_t trackIdx, uint8_t slotIndex) {
+  if (track.hasDataInSlot(slotIndex)) {
+    return true;
+  }
+  StorageManager::requestLoopSlotRestoreFromSd(trackIdx, slotIndex);
+  return track.hasDataInSlot(slotIndex);
+}
+
+void queuePlayingSlotSwitch(uint8_t trackIdx, Track& track, uint8_t slotIndex, uint32_t now) {
+  const uint8_t enabledCount = trackManager.countEnabledSlots(trackIdx);
+  const bool slotEnabled = trackManager.isSlotEnabled(trackIdx, slotIndex);
+  trackManager.clearPendingSlotSwitch(trackIdx);
+  const bool editAuditionSingleSlot =
+      editManager.isLoopEditSession() || editManager.isNoteEditActive();
+  if (clockManager.shouldQuantizeRecordStart()) {
+    trackManager.setSelectedSlotIndex(trackIdx, slotIndex, SyncPlayback::No);
+    if (enabledCount > 1 && !editAuditionSingleSlot) {
+      trackManager.setPendingEnabledSetReplacement(trackIdx, false);
+      trackManager.requestSlotSwitch(trackIdx, slotIndex, SlotQuantization::NextGrid, now);
+    } else {
+      if (!slotEnabled || editAuditionSingleSlot) {
+        trackManager.setPendingEnabledSetReplacement(trackIdx, true);
+      }
+      trackManager.requestSlotSwitch(trackIdx, slotIndex, SlotQuantization::NextGrid, now);
+    }
+  } else {
+    trackManager.setPendingEnabledSetReplacement(trackIdx, false);
+    if (enabledCount == 1) {
+      for (uint8_t s = 0; s < ::Config::MAX_LOOPS_PER_TRACK; ++s) {
+        trackManager.setSlotEnabled(trackIdx, s, (s == slotIndex));
+        trackManager.setSlotMuted(trackIdx, s, false);
+      }
+    }
+    trackManager.setSelectedSlotIndex(trackIdx, slotIndex);
+    const Loop& targetLoop = track.getLoop(slotIndex);
+    track.clearQueuedPlaybackStart();
+    track.queuePlaybackStartAtGrid(static_cast<int32_t>(targetLoop.loopStartTick), now);
+    track.commitQueuedPlaybackStart(now);
+  }
+  trackManager.forceLedUpdate(now);
+}
+
 uint32_t overlayPlayStopFirstShortAtMs = 0;
 
 void resetOverlayPlayStopPairedShort() {
@@ -338,7 +380,7 @@ void MidiButtonActions::handleToggleRecordForSlot(uint8_t slotIndex) {
     uint32_t now = getCurrentTick();
     uint8_t previousSlot = track.getActiveLoopIndex();  // currently playing slot (defines phase)
     uint8_t selectedSlot = trackManager.getSelectedSlotIndex(trackIdx);
-    const bool slotHasData = track.hasDataInSlot(slotIndex);
+    const bool slotHasData = slotHasDataForPlaybackSwitch(track, trackIdx, slotIndex);
 
     // If capturing and the user selects another filled slot: commit capture first.
     if ((track.isRecording() || track.isOverdubbing()) && previousSlot != slotIndex) {
@@ -357,7 +399,6 @@ void MidiButtonActions::handleToggleRecordForSlot(uint8_t slotIndex) {
 
     // Filled + currently playing: quantize active sync to grid when transport is running.
     if (track.isPlaying() && slotHasData) {
-        const uint8_t enabledCount = trackManager.countEnabledSlots(trackIdx);
         const bool slotEnabled = trackManager.isSlotEnabled(trackIdx, slotIndex);
 
         if (slotIndex == selectedSlot) {
@@ -379,38 +420,9 @@ void MidiButtonActions::handleToggleRecordForSlot(uint8_t slotIndex) {
             return;
         }
 
-        // Short press on a non-selected filled slot.
-        trackManager.clearPendingSlotSwitch(trackIdx);
-        const bool editAuditionSingleSlot =
-            editManager.isLoopEditSession() || editManager.isNoteEditActive();
-        if (clockManager.shouldQuantizeRecordStart()) {
-            trackManager.setSelectedSlotIndex(trackIdx, slotIndex, SyncPlayback::No);
-            if (enabledCount > 1 && !editAuditionSingleSlot) {
-                trackManager.setPendingEnabledSetReplacement(trackIdx, false);
-                trackManager.requestSlotSwitch(trackIdx, slotIndex, SlotQuantization::NextGrid,
-                                               now);
-            } else {
-                if (!slotEnabled || editAuditionSingleSlot) {
-                    trackManager.setPendingEnabledSetReplacement(trackIdx, true);
-                }
-                trackManager.requestSlotSwitch(trackIdx, slotIndex, SlotQuantization::NextGrid,
-                                               now);
-            }
-        } else {
-            trackManager.setPendingEnabledSetReplacement(trackIdx, false);
-            if (enabledCount == 1) {
-                for (uint8_t s = 0; s < ::Config::MAX_LOOPS_PER_TRACK; ++s) {
-                    trackManager.setSlotEnabled(trackIdx, s, (s == slotIndex));
-                    trackManager.setSlotMuted(trackIdx, s, false);
-                }
-            }
-            trackManager.setSelectedSlotIndex(trackIdx, slotIndex);
-            const Loop& targetLoop = track.getLoop(slotIndex);
-            track.clearQueuedPlaybackStart();
-            track.queuePlaybackStartAtGrid(static_cast<int32_t>(targetLoop.loopStartTick), now);
-            track.commitQueuedPlaybackStart(now);
-        }
-        trackManager.forceLedUpdate(now);
+        // Short press on a non-selected filled slot — queue playback, never overdub.
+        queuePlayingSlotSwitch(trackIdx, track, slotIndex, now);
+        logger.info("Loop %d: Queued playback switch", slotIndex + 1);
         return;
     }
 
@@ -459,10 +471,10 @@ void MidiButtonActions::handleToggleRecordForSlot(uint8_t slotIndex) {
             return;
         }
 
-        // This branch is reached for "filled + playing + slotHasData == true" only when
-        // `slotIndex == selectedSlot` is handled above, so keep it as a safety fallback.
-        logger.info("Loop %d: Live Overdub (safety fallback)", slotIndex + 1);
-        trackManager.startOverdubbingTrack(trackIdx);
+        // Filled slot while playing: queue playback switch (e.g. data restored after focus
+        // change). Short-press slot buttons must not enter track overdub — use OVERDUB_FOR_SLOT.
+        logger.info("Loop %d: Queued playback switch (filled slot)", slotIndex + 1);
+        queuePlayingSlotSwitch(trackIdx, track, slotIndex, now);
     } else if (slotCanArmForRecord) {
         if (handleArmedRecordPress(trackIdx)) {
             trackManager.forceLedUpdate(now);
