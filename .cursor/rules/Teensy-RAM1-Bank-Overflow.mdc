@@ -1,0 +1,66 @@
+---
+description: Diagnose and fix Teensy 4.1 RAM1 linker overflow ("free for local variables: -N") as a 32 KB bank-quantization problem
+globs: platformio.ini
+alwaysApply: false
+---
+
+# Teensy 4.1 RAM1 overflow — bank quantization
+
+When a firmware build fails with:
+
+```
+RAM1: variables:V, code:C, padding:P   free for local variables:-N
+Error program exceeds memory space
+```
+
+**Do not** guess. RAM1 is 512 KB FlexRAM = **16 banks x 32768**. The linker assigns whole banks to ITCM (code), and DTCM (variables) gets the leftover banks:
+
+```
+itcm_banks = ceil((C + P) / 32768)          # (C + P) is already a 32768 multiple
+dtcm_free  = (16 - itcm_banks) * 32768 - V  # negative == the -N you see
+```
+
+`-N` almost always means **ITCM tipped into one more 32 KB bank**, stealing a bank from DTCM — not that variables grew by `N`.
+
+## Diagnose without rebuilding
+
+The last (even failed) build leaves `firmware.elf`. Analyze it directly:
+
+```bash
+NM=~/.platformio/packages/toolchain-gccarmnoneeabi-teensy/bin/arm-none-eabi-nm
+ELF=~/Library/Caches/pio-build-250513-215524-teensy41/teensy41-capture-serial/firmware.elf
+# DTCM variables = .data (0x2000xxxx) + .bss (0x2001xxxx); .bss.dma (0x2020xxxx) is RAM2, not DTCM.
+"$NM" -C -S --radix=d "$ELF" | \
+  awk 'NF==4 && ($3~/[bBdD]/) && ($1+0)>=536870912 && ($1+0)<538968064 {printf "%8d  %s\n",$2,$4}' | \
+  sort -rn | head -40
+```
+
+The top rows are your largest DTCM globals — the relocation targets.
+
+## Fix decision tree
+
+**Prefer freeing DTCM (byte-for-byte payoff):** move large **global class objects** to `DMAMEM` (OCRAM/RAM2, which has ~490 KB free).
+
+- SAFE for class instances with a **real constructor** (it self-initializes at startup).
+- UNSAFE for POD structs relying on `{}` / zero-init: `.bss.dma` is `(NOLOAD)` and Teensy startup does **not** zero it.
+- NEVER move ISR / MIDI-clock-hot objects (`midiHandler`, `trackManager`, playback state) — DTCM is the fast path.
+- Good targets: display/UI caches, storage-session job RAM, load/save list caches.
+
+Example (fixed the -1888 case by freeing 9472 bytes):
+
+```cpp
+// src/DisplayManager.cpp
+DMAMEM DisplayManager displayManager;  // was: DisplayManager displayManager;
+```
+
+**Freeing ITCM (code) rarely helps:** `FLASHMEM` only recovers a DTCM bank if it drops `(C + P)` below the next lower 32768 multiple. If code is only a few KB into a bank, small `FLASHMEM` moves do nothing — chase DTCM instead.
+
+## Verify
+
+```bash
+pio run -e teensy41-capture-serial   # expect: free for local variables >= 0
+```
+
+Confirm the math: `(16 - itcm_banks) * 32768 - variables == reported free`.
+
+Related: [`docs/Guides/INTERNAL_HEAP_AND_EXTERNAL_MEMORY.md`](../../docs/Guides/INTERNAL_HEAP_AND_EXTERNAL_MEMORY.md) (heap tiers — a different axis: malloc RAM2 vs PSRAM, not the DTCM/ITCM linker split).

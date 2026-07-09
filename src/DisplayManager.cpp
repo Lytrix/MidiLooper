@@ -58,7 +58,11 @@ bool shouldDeferFullDisplayVisualRebuild(const Loop& loop, uint32_t loopLength) 
 #define DISP_CAPTURE_MEM
 #endif
 
-DisplayManager displayManager;
+// Placed in DMAMEM (OCRAM/RAM2), not DTCM: DisplayManager is the largest RAM1
+// variable object (~9.4 KB) and is only touched from the main loop, never the
+// MIDI-clock ISR. A real constructor initializes it at startup, so it is safe in
+// the .bss.dma (NOLOAD) region. This keeps RAM1 (DTCM) within its 3-bank budget.
+DMAMEM DisplayManager displayManager;
 namespace {
 SessionMidiEventVec liveDisplayEventBuffer;
 
