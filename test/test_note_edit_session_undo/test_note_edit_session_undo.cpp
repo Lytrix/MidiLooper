@@ -552,6 +552,37 @@ void test_kind_boundary_move_twice_one_undo_entry() {
   TEST_ASSERT_EQUAL(1u, stack.undoCount());
 }
 
+void test_kind_boundary_pitch_with_active_focus_one_undo_entry() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+
+  Loop loop;
+  loop.loopLengthTicks = 768;
+  loop.passes.recordPass = makeRecordPassWithNote(5, 10);
+  loop.nextPassId_ = 2;
+
+  NoteEditSessionUndoStack stack;
+  KindBoundaryUndoState state;
+  CowLoopEventStore session;
+  loop.rematerializeEditView(session.mutStore());
+  session.discardFlatCache();
+  NoteEditFocus focus;
+  rebuildNoteEditFocusFromStore(focus, session.readFlat(), 5, loop.loopLengthTicks, 0);
+  focus.last = focus.commitBaseline;
+  TEST_ASSERT_TRUE(focus.active);
+
+  TEST_ASSERT_TRUE(
+      pushKindBoundaryUndo(stack, state, focus, EditorSelection{}, session, 5,
+                           loop.loopLengthTicks, EditPassIdList{}, NoteEditKind::Pitch));
+  noteEditFocusApplyPitch(focus, 67, focus.last.startTick, focus.last.endTick,
+                            loop.loopLengthTicks);
+
+  TEST_ASSERT_FALSE(
+      pushKindBoundaryUndo(stack, state, focus, EditorSelection{}, session, 5,
+                           loop.loopLengthTicks, EditPassIdList{}, NoteEditKind::Pitch));
+  TEST_ASSERT_EQUAL(1u, stack.undoCount());
+}
+
 void test_kind_boundary_add_then_move_two_entries() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
@@ -707,6 +738,7 @@ int main(int argc, char** argv) {
   RUN_TEST(test_session_undo_live_capture_during_note_edit);
   RUN_TEST(test_session_live_capture_survives_pass_replay);
   RUN_TEST(test_kind_boundary_move_twice_one_undo_entry);
+  RUN_TEST(test_kind_boundary_pitch_with_active_focus_one_undo_entry);
   RUN_TEST(test_kind_boundary_add_then_move_two_entries);
   RUN_TEST(test_kind_boundary_reselect_move_pushes_again);
   RUN_TEST(test_kind_boundary_select_nav_no_push);

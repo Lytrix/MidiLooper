@@ -2357,11 +2357,8 @@ void NoteEditManager::handleNoteValueFaderInput(uint8_t ccValue, Track& track) {
     clearPendingSelectDependentMotorSync();
     releaseEditedNoteAudition();
 
-    if (lengthEditingMode) {
-        editManager.ensureNoteEditFocusForLiveEdit(track, liveNote);
-    } else if (editManager.getEditSession().focus.active) {
-        editManager.applyGeometryKindFromControl(track, NoteEditKind::Pitch, true);
-    } else if (!editManager.beginGeometryMutation(track, NoteEditKind::Pitch, true)) {
+    editManager.ensureNoteEditFocusForLiveEdit(track, liveNote);
+    if (!editManager.beginGeometryMutation(track, NoteEditKind::Pitch, true)) {
         logger.log(CAT_MIDI, LOG_WARNING,
                    "Note pitch change aborted: session undo snapshot unavailable (heap reserve)");
         return;
