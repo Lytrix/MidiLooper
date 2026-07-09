@@ -3,7 +3,16 @@
 Hardware-in-the-loop (HITL) tests drive a connected Teensy over USB MIDI and (when required) USB serial
 from the host Mac. Entry point: [`scripts/host_midi_hitl.py`](../../scripts/host_midi_hitl.py).
 
-**Firmware:** use `teensy41-capture-serial` so `#CAP`, `ST`, and track undo/redo lines are available.
+**Firmware:** use `teensy41-capture-serial` so `#CAP`, `ST`, and track undo/redo lines are available. Default HITL run assumes firmware is already on the device; pass `--build-upload` only when you changed firmware.
+
+**Serial capture modes:**
+
+| Mode | Serial | HITL flags |
+|------|--------|------------|
+| **B (preferred)** | `capture_session.py` in terminal 1 | `--follow-current-session` — no `--serial-port` |
+| **A** | Built into HITL | `--serial-port` + `--boot-settle-ms 10000` — no `capture_session.py` |
+
+Never use `--serial-port` while `capture_session.py` holds the USB serial port.
 
 **List scenario IDs:**
 
@@ -106,10 +115,12 @@ Runs canonical **`base`** record/overdub on the selected track (preset injects b
 
 Default second overdub pass is on (2 bars, C0–B1). Undo/redo after last overdub stop is on by default.
 
+**Mode B (preferred)** — start `capture_session.py` first, then:
+
 ```bash
 .venv/bin/python scripts/host_midi_hitl.py run --preset base \
   --midi-out "Teensy" --midi-in "Teensy" \
-  --serial-port /dev/cu.usbmodem154944801 \
+  --follow-current-session \
   --track-number 5 --midi-channel 5 \
   --record-bars 2 --overdub-bars 2 \
   --no-fixed-grid-notes --start-transport \
@@ -117,6 +128,23 @@ Default second overdub pass is on (2 bars, C0–B1). Undo/redo after last overdu
   --phase-wait-ms 500 --final-wait-ms 3000 --press-ms 120 \
   --undo-redo-delay-ms 3000
 ```
+
+**Mode A** — single terminal, built-in serial (no external capture):
+
+```bash
+.venv/bin/python scripts/host_midi_hitl.py run --preset base \
+  --midi-out "Teensy" --midi-in "Teensy" \
+  --serial-port /dev/cu.usbmodem154944801 \
+  --boot-settle-ms 10000 \
+  --track-number 5 --midi-channel 5 \
+  --record-bars 2 --overdub-bars 2 \
+  --no-fixed-grid-notes --start-transport \
+  --overdub-start-delay-bars 0 --overdub-start-delay-beats 1 \
+  --phase-wait-ms 500 --final-wait-ms 3000 --press-ms 120 \
+  --undo-redo-delay-ms 3000
+```
+
+Opt-in firmware flash before run: add `--build-upload` (restarts Teensy — restart capture after).
 
 Legacy entry: `scripts/host_midi_automation_baseline.py` (delegates to preset `base`).
 

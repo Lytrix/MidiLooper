@@ -27,7 +27,7 @@ import time
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 import serial
 from serial import SerialException
@@ -118,7 +118,7 @@ class RunAbort:
     """Optional hard deadline plus serial heartbeat watchdog."""
 
     run_deadline: Optional[float] = None
-    serial_collector: Optional["SerialCaptureCollector"] = None
+    serial_collector: Optional[Any] = None
     heartbeat_timeout_s: float = 20.0
 
     def check(self) -> Optional[str]:
@@ -403,11 +403,16 @@ def _stream_pattern_for_bars(
     abort: Optional[RunAbort] = None,
     emit_immediate_first_step: bool = False,
     gate_clocks: Optional[int] = None,
+    wall_clock_tempo_bpm: Optional[float] = None,
+    stream_start_monotonic: Optional[float] = None,
 ) -> tuple[int, int, int, dict[str, float]]:
     """Send note pattern until target bar count from MIDI clock.
 
     Uses incoming realtime MIDI Clock messages (`type == "clock"`, 24 PPQN).
     One 4/4 bar is 96 clock pulses.
+
+    When `wall_clock_tempo_bpm` is set, advances clocks from wall time (serial
+  transport proxy — Teensy running on external clock without USB clock echo).
     """
     if high_note < low_note:
         raise ValueError("high_note must be >= low_note")
@@ -455,8 +460,11 @@ def _stream_pattern_for_bars(
     next_step_clock = step_clocks
     immediate_step_emitted = False
     held_notes: list[tuple[int, int]] = []  # (note, off_at_clock)
-    start = time.monotonic()
+    start = stream_start_monotonic if stream_start_monotonic is not None else time.monotonic()
     jitter_samples: list[int] = []
+    seconds_per_clock: Optional[float] = None
+    if wall_clock_tempo_bpm is not None and wall_clock_tempo_bpm > 0:
+        seconds_per_clock = (60.0 / wall_clock_tempo_bpm) / 24.0
 
     while phase_clock_count < target_clocks:
         if abort is not None and abort.check() is not None:
@@ -475,15 +483,18 @@ def _stream_pattern_for_bars(
         if elapsed > max_seconds_guard:
             break
         # Fast fallback trigger: if clock never appears, don't stall the phase.
-        if clock_count_total == 0 and elapsed >= clock_start_timeout_seconds:
+        if seconds_per_clock is None and clock_count_total == 0 and elapsed >= clock_start_timeout_seconds:
             break
 
-        msg = in_port.poll()
-        if msg is None:
-            time.sleep(0.0005)
-            continue
-        if msg.type != "clock":
-            continue
+        if seconds_per_clock is not None:
+            time.sleep(seconds_per_clock)
+        else:
+            msg = in_port.poll()
+            if msg is None:
+                time.sleep(0.0005)
+                continue
+            if msg.type != "clock":
+                continue
 
         clock_count_total += 1
 
@@ -709,6 +720,29 @@ def _stream_pattern_for_seconds(
     return note_on_count, cc_count
 
 
+def _parse_cap_micros(line: str) -> Optional[int]:
+    if not line.startswith("#CAP,"):
+        return None
+    parts = line.split(",", 2)
+    if len(parts) < 2:
+        return None
+    try:
+        return int(parts[1])
+    except ValueError:
+        return None
+
+
+def _parse_disp_track_state(line: str) -> Optional[str]:
+    marker = ",DISP,"
+    if marker not in line or not line.startswith("#CAP,"):
+        return None
+    tail = line.split(marker, 1)[1]
+    parts = tail.split(",")
+    if len(parts) < 2:
+        return None
+    return parts[1].strip()
+
+
 def _count_capture_transitions(lines: list[str]) -> dict[tuple[str, str], int]:
     counts: dict[tuple[str, str], int] = {}
     for line in lines:
@@ -852,6 +886,8 @@ def _serial_has_recording_started(lines: list[str], *, after_index: int = 0) -> 
         return True
     if any("MIDI Button A: Start Recording" in line for line in suffix):
         return True
+    if _suffix_shows_disp_recording(lines, after_index=after_index):
+        return True
     latest = _latest_track_state(lines)
     if latest == "RECORDING":
         return True
@@ -883,6 +919,8 @@ def _wait_for_recording_started(
         if any("Start Recording" in line for line in suffix):
             return True
         if any("armed, waiting for clock to start recording" in line for line in suffix):
+            return True
+        if _suffix_shows_disp_recording(lines, after_index=baseline_len):
             return True
         latest = _latest_track_state(lines)
         if latest == "RECORDING" and baseline_latest_state != "RECORDING":
@@ -923,14 +961,33 @@ def _wait_for_recording_started(
 
 def _latest_track_state(lines: list[str]) -> Optional[str]:
     latest: Optional[str] = None
+    latest_ts = -1
     for line in lines:
-        if ",ST,Track," not in line:
+        state: Optional[str] = None
+        if ",ST,Track," in line:
+            tail = line.split(",ST,Track,", 1)[1]
+            parts = tail.split(",")
+            if len(parts) >= 2:
+                state = parts[1].strip()
+        else:
+            state = _parse_disp_track_state(line)
+        if state is None:
             continue
-        tail = line.split(",ST,Track,", 1)[1]
-        parts = tail.split(",")
-        if len(parts) >= 2:
-            latest = parts[1].strip()
+        ts = _parse_cap_micros(line)
+        if ts is None:
+            ts = 0
+        if ts >= latest_ts:
+            latest_ts = ts
+            latest = state
     return latest
+
+
+def _suffix_shows_disp_recording(lines: list[str], *, after_index: int = 0) -> bool:
+    for line in lines[after_index:]:
+        state = _parse_disp_track_state(line)
+        if state == "RECORDING":
+            return True
+    return False
 
 
 def _serial_suggests_loop_content(lines: list[str]) -> bool:
@@ -2424,7 +2481,7 @@ def _run_overdub_pass(
     idx: int,
     out_port: mido.ports.BaseOutput,
     in_port: mido.ports.BaseInput,
-    serial_collector: Optional["SerialCaptureCollector"],
+    serial_collector: Optional[Any],
     abort: Optional[RunAbort],
     args: argparse.Namespace,
     *,
@@ -2496,14 +2553,18 @@ def _run_overdub_pass(
     od_cc = 0
 
     if overdub_bars and args.bar_sync_from_midi_clock:
-        if not _ensure_midi_clock(
+        clock_ok, using_serial_proxy = _ensure_midi_clock_or_serial_proxy(
             in_port,
             out_port,
+            serial_collector,
+            args,
             min_clocks=24,
             timeout_s=2.0,
             abort=abort,
-        ):
+        )
+        if not clock_ok:
             return "midi clock missing before overdub phase", od_notes, od_cc, od_clock_count, od_timing, od_fallback_seconds
+        wall_clock_tempo = args.tempo_bpm if using_serial_proxy else None
         guard = max(10.0, overdub_bars * seconds_per_bar * 3.0)
         overdub_stop_advance_clocks = args.stop_press_advance_clocks
         if overdub_stop_advance_clocks <= 0:
@@ -2548,6 +2609,7 @@ def _run_overdub_pass(
                 stop_press_press_ms=args.press_ms,
                 abort=abort,
                 emit_immediate_first_step=True,
+                wall_clock_tempo_bpm=wall_clock_tempo,
             )
     else:
         od_notes, od_cc = _stream_dense_chromatic(
@@ -2621,11 +2683,99 @@ def _wait_for_transition_count(
     return False
 
 
+_STUCK_CAPTURE_STATES = frozenset({"RECORDING", "OVERDUBBING"})
+
+
+def _serial_lines_show_bpm_activity(lines: list[str], *, tail: int = 40) -> bool:
+    for line in lines[-tail:]:
+        if "#CAP," in line and ",BPM," in line:
+            return True
+    return False
+
+
+def _serial_sequencer_running(
+    collector: Any,
+    *,
+    max_silence_s: float = 4.0,
+) -> bool:
+    """True when capture_session shows recent transport ticks (#CAP,BPM)."""
+    silence = collector.seconds_since_last_line()
+    if silence is None or silence > max_silence_s:
+        return False
+    return _serial_lines_show_bpm_activity(collector.snapshot())
+
+
+def _use_serial_transport_proxy(args: argparse.Namespace, serial_collector: Any | None) -> bool:
+    if serial_collector is None or not _serial_follow_active(args):
+        return False
+    return _serial_sequencer_running(serial_collector)
+
+
+def _should_reset_transport_for_recovery(
+    *,
+    clock_present: bool,
+    serial_lines: Optional[list[str]],
+    serial_proxy_active: bool = False,
+) -> bool:
+    """Run stop→start transport recovery only when clock is missing or capture is stuck."""
+    if serial_proxy_active:
+        return False
+    if not clock_present:
+        return True
+    if serial_lines is not None:
+        latest = _latest_track_state(serial_lines)
+        if latest in _STUCK_CAPTURE_STATES:
+            return True
+    return False
+
+
+def _ensure_midi_clock_or_serial_proxy(
+    in_port: mido.ports.BaseInput,
+    out_port: mido.ports.BaseOutput,
+    serial_collector: Any | None,
+    args: argparse.Namespace,
+    *,
+    min_clocks: int,
+    timeout_s: float,
+    abort: Optional[RunAbort] = None,
+) -> tuple[bool, bool]:
+    """Return (ok, using_serial_proxy). Proxy = follow capture shows transport running without USB clock in."""
+    if _use_serial_transport_proxy(args, serial_collector):
+        return True, True
+    ok = _ensure_midi_clock(
+        in_port,
+        out_port,
+        min_clocks=min_clocks,
+        timeout_s=timeout_s,
+        abort=abort,
+    )
+    return ok, False
+
+
+def _serial_follow_active(args: argparse.Namespace) -> bool:
+    return bool(getattr(args, "follow_current_session", False) or getattr(args, "follow_serial_log", None))
+
+
+def _serial_capture_active(args: argparse.Namespace) -> bool:
+    return bool(args.serial_port or _serial_follow_active(args))
+
+
 def run() -> int:
     parser = argparse.ArgumentParser(description="Host-side MIDI automation baseline")
     parser.add_argument("--midi-out", default="Teensy", help="MIDI output port substring")
     parser.add_argument("--midi-in", default="Teensy", help="MIDI input port substring")
     parser.add_argument("--serial-port", default="", help="Optional Teensy USB serial port (capture build)")
+    parser.add_argument(
+        "--follow-current-session",
+        action="store_true",
+        help="Tail captures/.current_session log from external capture_session.py (no USB serial open)",
+    )
+    parser.add_argument(
+        "--follow-serial-log",
+        type=Path,
+        default=None,
+        help="Tail an external capture log during the run (from capture_session.py)",
+    )
     parser.add_argument("--serial-baud", type=int, default=115200, help="USB serial baud")
     parser.add_argument("--serial-log-path", type=Path, default=None, help="Optional path to save raw serial lines")
     parser.add_argument(
@@ -2994,8 +3144,15 @@ def run() -> int:
         raise SystemExit("--record-stop-min-free-ram2-warn-bytes must be >= 0")
     if args.overdub_start_delay_beats < 0:
         raise SystemExit("--overdub-start-delay-beats must be >= 0")
-    if args.undo_redo_after_overdub_stop and not (args.serial_port or args.verify_serial_log):
-        raise SystemExit("--undo-redo-after-overdub-stop requires --serial-port or --verify-serial-log")
+    if args.serial_port and _serial_follow_active(args):
+        raise SystemExit("--serial-port is mutually exclusive with --follow-current-session / --follow-serial-log")
+    if args.undo_redo_after_overdub_stop and not (
+        _serial_capture_active(args) or args.verify_serial_log
+    ):
+        raise SystemExit(
+            "--undo-redo-after-overdub-stop requires --serial-port, "
+            "--follow-current-session, --follow-serial-log, or --verify-serial-log"
+        )
 
     seconds_per_bar = (60.0 / args.tempo_bpm) * 4.0
     if args.record_bars and not args.bar_sync_from_midi_clock:
@@ -3018,7 +3175,8 @@ def run() -> int:
             f"(tempo={args.tempo_bpm:.2f} BPM)"
         )
 
-    serial_collector: Optional[SerialCaptureCollector] = None
+    serial_collector: Optional[Any] = None
+    serial_active = _serial_capture_active(args)
     if args.serial_port:
         serial_collector = SerialCaptureCollector(args.serial_port, args.serial_baud)
         serial_collector.start()
@@ -3029,6 +3187,20 @@ def run() -> int:
         else:
             time.sleep(1.5)  # Teensy serial can reset on open.
         print(f"Serial capture enabled: {args.serial_port}")
+    elif _serial_follow_active(args):
+        from hitl.serial_follow import ExternalSerialFollowCollector
+
+        follow_path = (
+            ExternalSerialFollowCollector.resolve_current_session_path(args.out_dir)
+            if args.follow_current_session
+            else args.follow_serial_log
+        )
+        if follow_path is None:
+            raise SystemExit("--follow-serial-log requires a path")
+        serial_collector = ExternalSerialFollowCollector(follow_path, out_dir=args.out_dir)
+        serial_collector.start()
+        time.sleep(0.15)
+        print(f"Serial follow enabled: {follow_path}")
     else:
         print("Serial capture disabled (no #CAP assertions).")
 
@@ -3039,9 +3211,9 @@ def run() -> int:
     abort = RunAbort(
         run_deadline=run_deadline,
         serial_collector=serial_collector,
-        heartbeat_timeout_s=args.serial_heartbeat_timeout_seconds if args.serial_port else 0.0,
+        heartbeat_timeout_s=args.serial_heartbeat_timeout_seconds if serial_active else 0.0,
     )
-    if args.serial_port and args.serial_heartbeat_timeout_seconds > 0:
+    if serial_active and args.serial_heartbeat_timeout_seconds > 0:
         print(
             "Serial heartbeat enabled: "
             f"abort after {args.serial_heartbeat_timeout_seconds:.0f}s without serial lines"
@@ -3056,7 +3228,12 @@ def run() -> int:
         with mido.open_output(midi_out_name) as out_port, mido.open_input(midi_in_name) as in_port:
             if args.start_transport:
                 # Ensure transport is running without blindly toggling it off.
-                if not _clock_seen_within(in_port, 0.5):
+                if _use_serial_transport_proxy(args, serial_collector):
+                    print(
+                        "[info] Serial #CAP,BPM shows transport running; "
+                        "skipping transport start presses (no USB MIDI clock on host)."
+                    )
+                elif not _clock_seen_within(in_port, 0.5):
                     clock_started = False
                     for attempt in range(1, 4):
                         _send_short_press(
@@ -3099,38 +3276,57 @@ def run() -> int:
                 # Recover from a prior aborted run: stop then restart transport so
                 # USB MIDI clock reaches the host again (stuck RECORDING can mute it).
                 if args.start_transport:
-                    _send_short_press(
-                        out_port,
-                        note=GLOBAL_TRANSPORT_NOTE,
-                        channel_1based=CONTROL_CHANNEL_1BASED,
-                        press_ms=args.press_ms,
-                    )
-                    time.sleep(args.phase_wait_ms / 1000.0)
-                    if not _ensure_midi_clock(
-                        in_port,
-                        out_port,
-                        min_clocks=24,
-                        timeout_s=2.0,
-                        abort=abort,
+                    serial_snap = serial_collector.snapshot() if serial_collector is not None else None
+                    clock_present = _clock_seen_within(in_port, 0.5)
+                    serial_proxy = _use_serial_transport_proxy(args, serial_collector)
+                    if serial_proxy:
+                        print(
+                            "[info] Serial transport proxy active; skipping transport reset recovery."
+                        )
+                    elif _should_reset_transport_for_recovery(
+                        clock_present=clock_present,
+                        serial_lines=serial_snap,
                     ):
-                        print("[warn] MIDI clock missing after transport stop; retrying transport start.")
-                    _send_short_press(
-                        out_port,
-                        note=GLOBAL_TRANSPORT_NOTE,
-                        channel_1based=CONTROL_CHANNEL_1BASED,
-                        press_ms=args.press_ms,
-                    )
-                    time.sleep(args.phase_wait_ms / 1000.0)
-                    if not _ensure_midi_clock(
-                        in_port,
-                        out_port,
-                        min_clocks=24,
-                        timeout_s=2.0,
-                        abort=abort,
-                    ):
-                        print("[error] MIDI clock unavailable after transport reset; aborting track run.")
-                        abort_reason = "midi clock unavailable after transport reset"
-                        break
+                        _send_short_press(
+                            out_port,
+                            note=GLOBAL_TRANSPORT_NOTE,
+                            channel_1based=CONTROL_CHANNEL_1BASED,
+                            press_ms=args.press_ms,
+                        )
+                        time.sleep(args.phase_wait_ms / 1000.0)
+                        if not _ensure_midi_clock(
+                            in_port,
+                            out_port,
+                            min_clocks=24,
+                            timeout_s=2.0,
+                            abort=abort,
+                        ):
+                            print(
+                                "[warn] MIDI clock missing after transport stop; "
+                                "retrying transport start."
+                            )
+                        _send_short_press(
+                            out_port,
+                            note=GLOBAL_TRANSPORT_NOTE,
+                            channel_1based=CONTROL_CHANNEL_1BASED,
+                            press_ms=args.press_ms,
+                        )
+                        time.sleep(args.phase_wait_ms / 1000.0)
+                        if not _ensure_midi_clock(
+                            in_port,
+                            out_port,
+                            min_clocks=24,
+                            timeout_s=2.0,
+                            abort=abort,
+                        ):
+                            print(
+                                "[error] MIDI clock unavailable after transport reset; "
+                                "aborting track run."
+                            )
+                            abort_reason = "midi clock unavailable after transport reset"
+                            break
+                    elif clock_present:
+                        print("[info] MIDI clock active; skipping transport reset recovery.")
 
                 if args.clear_before_record:
                     if (reason := abort.check()) is not None:
@@ -3282,6 +3478,7 @@ def run() -> int:
                     + (f" (loop slot {args.loop_slot})" if args.loop_slot else "")
                 )
                 reached_recording = False
+                recording_confirmed_at: Optional[float] = None
                 record_baseline_len = len(serial_collector.snapshot()) if serial_collector else 0
                 baseline_reca = _count_reca_markers(serial_collector.snapshot()) if serial_collector else 0
                 baseline_recording_transitions = (
@@ -3339,29 +3536,53 @@ def run() -> int:
                                 serial_collector.snapshot()
                             )
                             baseline_latest_state = _latest_track_state(serial_collector.snapshot())
-                        print("[warn] Timed out waiting for recording start; retrying record press.")
-                        _send_record_arm_press(
-                            out_port,
-                            press_ms=args.press_ms,
-                            loop_slot=args.loop_slot,
-                        )
-                        reached_recording = _wait_for_recording_started(
-                            serial_collector,
-                            baseline_len=record_baseline_len,
-                            baseline_reca=baseline_reca,
-                            baseline_recording_transitions=baseline_recording_transitions,
-                            baseline_latest_state=baseline_latest_state,
-                            baseline_armed_transitions=baseline_armed_transitions,
-                            timeout_s=timeout_s,
-                            serial_grace_s=grace_s,
-                            abort=abort,
-                        )
-                        if not reached_recording:
+                        if not _serial_has_recording_started(
+                            serial_collector.snapshot(), after_index=record_baseline_len
+                        ):
+                            print("[warn] Timed out waiting for recording start; retrying record press.")
+                            _send_record_arm_press(
+                                out_port,
+                                press_ms=args.press_ms,
+                                loop_slot=args.loop_slot,
+                            )
+                            reached_recording = _wait_for_recording_started(
+                                serial_collector,
+                                baseline_len=record_baseline_len,
+                                baseline_reca=baseline_reca,
+                                baseline_recording_transitions=baseline_recording_transitions,
+                                baseline_latest_state=baseline_latest_state,
+                                baseline_armed_transitions=baseline_armed_transitions,
+                                timeout_s=timeout_s,
+                                serial_grace_s=grace_s,
+                                abort=abort,
+                            )
+                        if _serial_has_recording_started(
+                            serial_collector.snapshot(), after_index=record_baseline_len
+                        ):
+                            reached_recording = True
+                            recording_confirmed_at = time.monotonic()
+                        elif not reached_recording:
                             print("[warn] Retry did not reach RECORDING.")
+                    elif recording_confirmed_at is None:
+                        recording_confirmed_at = time.monotonic()
+                if serial_collector is not None and not reached_recording:
+                    print(
+                        "[error] Record phase did not confirm RECORDING in serial capture; "
+                        "aborting track run (notes would start before capture)."
+                    )
+                    precondition_failures.append(
+                        {
+                            "track_index": idx,
+                            "step": "record_start",
+                            "reason": "recording_not_confirmed",
+                        }
+                    )
+                    abort_reason = "recording not confirmed before note stream"
+                    break
                 if serial_collector is not None and reached_recording:
                     # Serial state sync confirms capture is active; start stream immediately.
                     time.sleep(0.0)
-                else:
+                elif serial_collector is None:
                     time.sleep(min(args.phase_wait_ms, 120) / 1000.0)
 
                 rec_clock_count = 0
@@ -3372,16 +3593,25 @@ def run() -> int:
                     "mean_abs_grid_jitter_clocks": 0.0,
                 }
                 if args.record_bars and args.bar_sync_from_midi_clock:
-                    if not _ensure_midi_clock(
+                    clock_ok, using_serial_proxy = _ensure_midi_clock_or_serial_proxy(
                         in_port,
                         out_port,
+                        serial_collector,
+                        args,
                         min_clocks=24,
                         timeout_s=2.0,
                         abort=abort,
-                    ):
+                    )
+                    if not clock_ok:
                         print("[error] MIDI clock missing before record phase; aborting track run.")
                         abort_reason = "midi clock missing before record phase"
                         break
+                    if using_serial_proxy:
+                        print(
+                            "[info] Bar sync via wall-clock tempo proxy "
+                            f"({args.tempo_bpm:.1f} BPM) — Teensy clock not on USB MIDI in."
+                        )
+                    wall_clock_tempo = args.tempo_bpm if using_serial_proxy else None
                     guard = max(10.0, args.record_bars * seconds_per_bar * 3.0)
                     if getattr(args, "edit_record_fixture", False):
                         from host_midi_automation_edit_baseline import (
@@ -3425,6 +3655,8 @@ def run() -> int:
                             stop_press_advance_clocks=args.stop_press_advance_clocks,
                             abort=abort,
                             emit_immediate_first_step=True,
+                            wall_clock_tempo_bpm=wall_clock_tempo,
+                            stream_start_monotonic=recording_confirmed_at,
                         )
                 else:
                     rec_notes, rec_cc = _stream_dense_chromatic(
@@ -3807,8 +4039,9 @@ def run() -> int:
                 serial_verification["issues"].append(str(issue))
 
     assertions = {
-        "serial_capture_enabled": bool(args.serial_port),
-        "serial_error": serial_error if args.serial_port else "",
+        "serial_capture_enabled": serial_active,
+        "serial_follow_enabled": _serial_follow_active(args),
+        "serial_error": serial_error if serial_active else "",
         "serial_line_count": len(serial_lines),
         "verification_line_count": len(verification_lines),
         "reca_count": reca_count,
@@ -3840,7 +4073,7 @@ def run() -> int:
         overall_ok = False
     if precondition_failures:
         overall_ok = False
-    if args.serial_port:
+    if serial_active:
         if serial_error:
             overall_ok = False
         if not serial_lines:
@@ -3894,6 +4127,8 @@ def run() -> int:
         serial_log_path.parent.mkdir(parents=True, exist_ok=True)
         serial_log_path.write_text("\n".join(serial_lines) + ("\n" if serial_lines else ""), encoding="utf-8")
         report["serial_log_path"] = str(serial_log_path)
+    elif _serial_follow_active(args) and serial_lines:
+        report["serial_follow_line_count"] = len(serial_lines)
     report_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
 
     print("\nRun summary:")
@@ -4130,11 +4365,11 @@ def run() -> int:
                 f"reason={row['reason']}"
             )
     if not verification_lines:
-        if args.serial_port:
+        if serial_active:
             print("  Serial assertions requested but no serial lines were captured.")
         else:
-            print("  Serial assertions skipped (no --serial-port).")
-    if args.serial_port and serial_error:
+            print("  Serial assertions skipped (no serial capture).")
+    if serial_active and serial_error:
         print(f"  Serial error: {serial_error}")
     if abort_reason:
         print(f"  Abort reason: {abort_reason}")

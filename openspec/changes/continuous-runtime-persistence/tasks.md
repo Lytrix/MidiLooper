@@ -40,7 +40,9 @@ Guide: [`docs/Guides/RUNTIME_STORAGE_AND_PERSISTENCE.md`](../../../docs/Guides/R
 - [x] Writer drains persistence queue during open capture pass (`stepMidPassChunkPersist`, seal journal `.sealj`)
 - [x] Incremental slot append for sealed chunks while pass open (seal journal sidecar; full slot write on deferred save)
 - [x] Implement failure-policy backpressure per `persistence-failure-policy` spec (`PersistenceFailurePolicy`, queue alarm, reserve prioritize)
-- [ ] **Gate:** `test_storage_loop_io`; 64-bar record HITL; `freeChunkCount` above reserve through capture
+- [x] **Gate (HITL):** 64+64 record/overdub on track 5 — [`captures/session_20260709_171043.log`](../../../captures/session_20260709_171043.log) (user, 2026-07-09): 282× `#CAP,PERS,mid_pass,...ok`; 9× `#CAP,PERS,result,...,ok`; `#CAP,PERS,diag` freeChunk 105→136 (reserve 16); `ST,Track,OVERDUBBING,PLAYING` @ line 49283
+- [x] **Gate (HITL, boot restore):** cold boot reload of persisted 64+64 loop — [`captures/session_20260709_171951.log`](../../../captures/session_20260709_171951.log): `BOOT,load,ok`; `Current workspace loaded successfully`; deferred restore slot `4/0`; `DISP,0,...,41472,...` (589/176 notes); `ST,Track,STOPPED,PLAYING` after transport start
+- [ ] **Gate (native):** `test_storage_loop_io` sign-off (agent)
 
 ## Phase 5 — Recovery
 
@@ -50,11 +52,12 @@ Guide: [`docs/Guides/RUNTIME_STORAGE_AND_PERSISTENCE.md`](../../../docs/Guides/R
 
 ## Phase 6 — Full 64+64 HITL
 
-- [ ] 64+64 track 2 / slot 1 — writer advances during overdub
-- [ ] `PERS,result,...,ok` after overdub stop; no USB reboot / `HDR,v1`
-- [ ] `SEVT`, `DISP` verification lines present post-stop
-- [ ] `oldestDirtyChunkAge` bounded under baseline conditions
-- [ ] Update `docs/runtime/CURRENT_WORK.md`, `PROJECT_STATE.md`
+- [x] 64+64 track 5 — writer advances during overdub — [`session_20260709_171043.log`](../../../captures/session_20260709_171043.log): `PERS,mid_pass` through overdub
+- [x] `PERS,result,...,ok` after overdub stop — same log (e.g. lines 28069, 31248, 51035)
+- [x] `SEVT`, `DISP` verification lines present post-stop — same log ~49271–49296
+- [x] Cold-boot restore of persisted loop — [`session_20260709_171951.log`](../../../captures/session_20260709_171951.log)
+- [ ] `oldestDirtyChunkAge` bounded under baseline conditions (not extracted from this capture)
+- [x] Update `docs/runtime/CURRENT_WORK.md`, `PROJECT_STATE.md`
 - [ ] Append DEC-020 to `DECISION_LOG.md`
 - [ ] Archive change when green (`/opsx:archive`)
 

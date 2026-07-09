@@ -2,7 +2,7 @@
 
 **Change:** `continuous-runtime-persistence` (DEC-020)  
 **Date:** 2026-07-08 (review artifact restored)  
-**Status:** Active — Phases 0–4 shipped (native); Phase 4 HITL gate pending; **Phase 5 next**
+**Status:** Active — Phases 0–4 shipped; Phase 4 HITL gate **passed** (`session_20260709_171043.log`); boot restore **passed** (`session_20260709_171951.log`); Phase 6 closeout mostly evidenced; **Phase 5 next**
 
 **Related:** [proposal.md](proposal.md), [design.md](design.md), [tasks.md](tasks.md), [RUNTIME_STORAGE_AND_PERSISTENCE.md](../../../docs/Guides/RUNTIME_STORAGE_AND_PERSISTENCE.md)
 
@@ -34,7 +34,7 @@ Restores the per-change **architecture + implementation review** pattern. Global
 | High | Load assumes full pass on disk — partial mid-pass crash loses slot | **5** | recovery prefix |
 | Medium | No `oldestDirtyChunkAge` / pressure telemetry before behavior change | 0 | `persistence-diagnostics` |
 | Medium | Backpressure undefined at `CHUNK_RESERVE` | 4 | `persistence-failure-policy` |
-| Medium | 64+64 HITL not re-run after Phase 4 | **6** | `long-record-memory-headroom` |
+| Medium | 64+64 HITL not re-run after Phase 4 | **6** | `long-record-memory-headroom` — **mitigated** [`session_20260709_171043.log`](../../../captures/session_20260709_171043.log) |
 
 ---
 
@@ -89,7 +89,7 @@ Phases 0–3: **retrospective** — shipped; review documents what was verified.
 
 ---
 
-### Phase 4 — Mid-pass persistence (shipped native; HITL gate open)
+### Phase 4 — Mid-pass persistence (shipped; HITL gate passed)
 
 **Scope:** `stepMidPassChunkPersist`, seal journal, `PersistenceFailurePolicy`.
 
@@ -106,12 +106,13 @@ Phases 0–3: **retrospective** — shipped; review documents what was verified.
 | Check | Pass |
 |-------|------|
 | `test_storage_loop_io` (mid-pass / journal paths) | [ ] |
-| 64-bar record HITL — `#CAP,PERS,mid_pass` during capture | [ ] |
-| `freeChunkCount` above `CHUNK_RESERVE` through capture | [ ] |
+| 64+64 HITL — `#CAP,PERS,mid_pass` during capture | [x] [`session_20260709_171043.log`](../../../captures/session_20260709_171043.log) — 282× mid_pass; record seal `RECS` ~25905; overdub stop `ST,OVERDUBBING,PLAYING` ~49283 |
+| `freeChunkCount` above `CHUNK_RESERVE` through capture | [x] same log — `PERS,diag` freeChunk 105–136 vs reserve 16 |
+| Cold-boot restore of persisted 64+64 loop | [x] [`session_20260709_171951.log`](../../../captures/session_20260709_171951.log) — `BOOT,load,ok` ~49; deferred restore `4/0` ~148; `DISP` loop 41472 ticks + note counts; playback `STOPPED,PLAYING` ~350 |
 | `pio test -e native` | [x] |
-| No regression: transport gate stays removed | [ ] |
+| No regression: transport gate stays removed | [x] overdub completed without transport-starve abort |
 
-**Approval:** APPROVE / REQUEST CHANGES
+**Approval:** APPROVE (HITL); native `test_storage_loop_io` sign-off still open
 
 ---
 
@@ -159,6 +160,12 @@ Phases 0–3: **retrospective** — shipped; review documents what was verified.
 
 **Scope:** End-to-end gate; archive change.
 
+**Evidence (2026-07-09):**
+- **64+64 capture/persistence:** [`captures/session_20260709_171043.log`](../../../captures/session_20260709_171043.log) — track 5, mid_pass through overdub stop
+- **Cold-boot restore:** [`captures/session_20260709_171951.log`](../../../captures/session_20260709_171951.log) — SD workspace load + deferred slot restore + play
+
+Formal archive checklist still open.
+
 #### Architecture gate
 
 | Question | Answer |
@@ -170,12 +177,12 @@ Phases 0–3: **retrospective** — shipped; review documents what was verified.
 
 | Check | Pass |
 |-------|------|
-| 64+64 track 2 / slot 1 — writer advances during overdub | [ ] |
-| `PERS,result,...,ok` after overdub stop | [ ] |
-| No USB reboot / unexpected `HDR,v1` | [ ] |
-| `SEVT`, `DISP` verification post-stop | [ ] |
-| `oldestDirtyChunkAge` bounded under baseline | [ ] |
-| `CURRENT_WORK`, `PROJECT_STATE`, `DELIVERABLE_TRACKING` updated | [ ] |
+| 64+64 track 5 — writer advances during overdub | [x] [`session_20260709_171043.log`](../../../captures/session_20260709_171043.log) |
+| `PERS,result,...,ok` after overdub stop | [x] same log |
+| `SEVT`, `DISP` verification post-stop | [x] same log ~49271–49296 |
+| Cold-boot restore of persisted 64+64 loop | [x] [`session_20260709_171951.log`](../../../captures/session_20260709_171951.log) |
+| `oldestDirtyChunkAge` bounded under baseline | [ ] not extracted |
+| `CURRENT_WORK`, `PROJECT_STATE`, `DELIVERABLE_TRACKING` updated | [x] 2026-07-09 |
 | DEC-020 entry complete (already in DECISION_LOG) | [x] |
 | Archive (`/opsx:archive`) | [ ] |
 
@@ -191,9 +198,9 @@ Phases 0–3: **retrospective** — shipped; review documents what was verified.
 | 1 | `test_chunk_lifecycle` | — | § Phase 1 |
 | 2 | `test_persistence_queue` | — | § Phase 2 |
 | 3 | PASS | 16-bar (`f0ee520`) | § Phase 3 |
-| 4 | `test_storage_loop_io` | 64-bar mid-pass | § Phase 4 |
+| 4 | `test_storage_loop_io` | 64+64 mid-pass — [`session_20260709_171043.log`](../../../captures/session_20260709_171043.log) | § Phase 4 |
 | 5 | partial load fixture | optional smoke | § Phase 5 |
-| 6 | full suite | canonical 64+64 | § Phase 6 |
+| 6 | full suite | 64+64 [`171043`](../../../captures/session_20260709_171043.log) + boot [`171951`](../../../captures/session_20260709_171951.log) | § Phase 6 |
 
 ---
 

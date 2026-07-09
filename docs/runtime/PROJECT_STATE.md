@@ -2,23 +2,26 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-07-09 (slot boot + split focus landed uncommitted)
+Last updated: 2026-07-09 (DEC-020 Phase 4 HITL passed)
 
 ---
 
 ## Current branch
 
-`dec-023-recovery` — slot boot/split focus + playhead-after-undo (uncommitted)
+`continuous-saving` @ `736fa33` — recovery stack merged (boot/slot/undo/playhead/NOTE_EDIT + DEC-020 Phases 0–4)
 
 ## Shipped on branch (recent)
 
 | Commit / session | Focus | Docs |
 |--------|--------|------|
-| *(uncommitted)* | Slot boot exhaustive queue + split focus (DEC-021 amend, DEC-025) | DECISION_LOG, Loops.md |
-| *(uncommitted)* | Boot USB-host defer; boot-load LED suppress; slot-switch crash hardening | — |
-| *(uncommitted)* | Phase 2 persistence queue + Phase 3 transport-gate removal | DEC-020 |
-| *(uncommitted)* | M5 boot load restore (DEC-021/022) recovered | DEC-021, DEC-022 |
-| `cdd9c2b` | 16-bar stop→PLAY fix; capture ring; playback extmem materialize | DEC-018 |
+| `736fa33` | NOTE_EDIT move/pitch bracket — mover NoteId lookup | CURRENT_WORK |
+| `0f086f4` | Split-focus slot switching + loop-end commit (DEC-025) | Loops.md |
+| `f6b496a` | Slot short-press deferred-restore fix | — |
+| `346f7ce` | Playhead projection + undo geometry restore | — |
+| `b1d3259` | Loop-scoped undo display (DEC-024 Phase 1) | loop_undo plan |
+| `50ad01b` | Cold boot + USB Host defer + slot scan hardening | DEC-021/022 |
+| `e40f26c` | DEC-020 Phase 4 mid-pass persistence writer | DEC-020 |
+| `f0ee520` | DEC-020 Phase 3 cooperative scheduler HITL | DEC-020 |
 | *(prior)* | Phase A step 3 + Phase B — one materialize per revision | handoff |
 | `d635296` | Partial Phase A — PLAYING defer, REVT bounds; boot + 16-bar smoke | handoff |
 | `eea4734` | Serial evidence index (archived captures) | plan |
@@ -30,7 +33,7 @@ Last updated: 2026-07-09 (slot boot + split focus landed uncommitted)
 
 | Change | Focus |
 |--------|--------|
-| **`continuous-runtime-persistence`** | Phase 0–4 shipped (native); Phase 5 recovery **next**; Phase 4 HITL gate pending |
+| **`continuous-runtime-persistence`** | Phase 0–4 shipped; Phase 4 HITL **passed** (`171043` 64+64, `171951` boot restore); Phase 5 recovery **next** |
 | **`runtime-derived-representation-heap`** | M5 Steps 1–1b–2 shipped (`adoptPersistedSnapshot`); lazy load + 64+64 HITL pending |
 | **`slot-selection-focus`** | **Shipped (firmware)** — orchestrator + footer extension; manual §8 pending; [`slot_selection_focus_implementation_handoff.md`](../plans/slot_selection_focus_implementation_handoff.md) |
 | **`unified-interval-projection`** | Phases 1–4 shipped; native PASS; **5.5 HITL deferred** (DEC-017) until runtime Phase A→C |
