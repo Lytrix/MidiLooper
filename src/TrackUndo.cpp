@@ -14,23 +14,25 @@
 #include "TrackManager.h"
 #include "Utils/MemoryPool.h"
 #include "Utils/MidiEventVecFnvHash.h"
+#include "Utils/TrackMem.h"
+#include "UndoLoopGeometry.h"
 
 extern TrackManager trackManager;
 extern NoteEditManager noteEditManager;
 
 namespace {
 
-UndoLoopGeometry captureGeometry(const Loop& loop) {
+TRACK_COLD_MEM UndoLoopGeometry captureGeometry(const Loop& loop) {
     return {loop.loopLengthTicks, loop.startLoopTick, loop.loopStartTick};
 }
 
-void applyGeometry(Loop& loop, const UndoLoopGeometry& geometry) {
+TRACK_COLD_MEM void applyGeometry(Loop& loop, const UndoLoopGeometry& geometry) {
     loop.loopLengthTicks = geometry.loopLengthTicks;
     loop.startLoopTick = geometry.startLoopTick;
     loop.loopStartTick = geometry.loopStartTick;
 }
 
-void dropRedoBranch(GlobalUndoStack& stack) {
+TRACK_COLD_MEM void dropRedoBranch(GlobalUndoStack& stack) {
     if (stack.cursor >= stack.entries.size()) {
         return;
     }
@@ -38,13 +40,13 @@ void dropRedoBranch(GlobalUndoStack& stack) {
     trackManager.reclaimUnreferencedDisabledPasses();
 }
 
-void trimUndoStackForMemory(Track& track) {
+TRACK_COLD_MEM void trimUndoStackForMemory(Track& track) {
     if (trimGlobalUndoStackForMemory(track.getGlobalUndoStack()) > 0) {
         trackManager.reclaimUnreferencedDisabledPasses();
     }
 }
 
-uint8_t resolveTrackIndexForPersistence(const Track& track) {
+TRACK_COLD_MEM uint8_t resolveTrackIndexForPersistence(const Track& track) {
     for (uint8_t i = 0; i < trackManager.getTrackCount(); ++i) {
         if (&trackManager.getTrack(i) == &track) {
             return i;
@@ -53,7 +55,7 @@ uint8_t resolveTrackIndexForPersistence(const Track& track) {
     return trackManager.getSelectedTrackIndex();
 }
 
-void pushUndoEntry(Track& track, UndoEntry&& entry) {
+TRACK_COLD_MEM void pushUndoEntry(Track& track, UndoEntry&& entry) {
     GlobalUndoStack& stack = track.getGlobalUndoStack();
     dropRedoBranch(stack);
     entry.id = stack.nextEntryId++;
@@ -62,7 +64,7 @@ void pushUndoEntry(Track& track, UndoEntry&& entry) {
     trimUndoStackForMemory(track);
 }
 
-size_t eraseUndoEntriesForSlot(GlobalUndoStack& stack, uint8_t slotIndex) {
+TRACK_COLD_MEM size_t eraseUndoEntriesForSlot(GlobalUndoStack& stack, uint8_t slotIndex) {
     const size_t oldSize = stack.entries.size();
     if (oldSize == 0) {
         return 0;
@@ -101,7 +103,7 @@ size_t eraseUndoEntriesForSlot(GlobalUndoStack& stack, uint8_t slotIndex) {
     return removedTotal;
 }
 
-void restoreLoopSnapshot(Loop& loop, const LoopSnapshotRef& snapshot, const UndoLoopGeometry& geometry) {
+TRACK_COLD_MEM void restoreLoopSnapshot(Loop& loop, const LoopSnapshotRef& snapshot, const UndoLoopGeometry& geometry) {
     if (snapshot) {
         loop.restorePassesSnapshot(*snapshot);
     } else {
@@ -115,15 +117,15 @@ void restoreLoopSnapshot(Loop& loop, const LoopSnapshotRef& snapshot, const Undo
     loop.invalidateCaches();
 }
 
-bool disableCapturePass(Loop& loop, PassId passId) {
+TRACK_COLD_MEM bool disableCapturePass(Loop& loop, PassId passId) {
     return loop.setCapturePassState(passId, CapturePassState::Disabled);
 }
 
-bool enableCapturePass(Loop& loop, PassId passId) {
+TRACK_COLD_MEM bool enableCapturePass(Loop& loop, PassId passId) {
     return loop.setCapturePassState(passId, CapturePassState::Active);
 }
 
-bool setEditPassState(Loop& loop, const EditPassIdList& ids, EditPassState state,
+TRACK_COLD_MEM bool setEditPassState(Loop& loop, const EditPassIdList& ids, EditPassState state,
                       EditPassType passType) {
     if (ids.empty()) {
         return false;
@@ -152,7 +154,7 @@ bool setEditPassState(Loop& loop, const EditPassIdList& ids, EditPassState state
     return touched;
 }
 
-bool applyUndoEntry(Track& track, UndoEntry& entry) {
+TRACK_COLD_MEM bool applyUndoEntry(Track& track, UndoEntry& entry) {
     Loop& loop = track.getLoop(entry.slotIndex);
     switch (entry.kind) {
         case UndoEntryKind::ClearSlot:
@@ -178,6 +180,28 @@ bool applyUndoEntry(Track& track, UndoEntry& entry) {
             entry.hasRedoPayload = true;
             return true;
         case UndoEntryKind::RecordPassAdded:
+            entry.afterGeometry = captureGeometry(loop);
+            entry.hasRedoPayload = true;
+            if (!disableCapturePass(loop, entry.passId)) {
+                logger.log(CAT_TRACK, LOG_WARNING, "Undo failed: missing pass %lu in slot %u",
+                           static_cast<unsigned long>(entry.passId),
+                           static_cast<unsigned>(entry.slotIndex));
+                return false;
+            }
+            applyGeometry(loop, entry.beforeGeometry);
+            if (!loop.hasPublishedEvents()) {
+                track.resetLoopSlotAfterEmptyCapture(entry.slotIndex);
+            } else {
+                loop.rebuildVisualCacheFromPasses();
+            }
+            loop.invalidateCaches();
+            track.invalidateCaches();
+            if (editManager.isNoteEditActive()) {
+                loop.rematerializeEditView(editManager.getEditSession().store.mutStore());
+                editManager.getEditSession().store.discardFlatCache();
+                editManager.getEditSession().undoStack.clear();
+            }
+            return true;
         case UndoEntryKind::OverdubPassAdded:
             if (!disableCapturePass(loop, entry.passId)) {
                 logger.log(CAT_TRACK, LOG_WARNING, "Undo failed: missing pass %lu in slot %u",
@@ -219,7 +243,7 @@ bool applyUndoEntry(Track& track, UndoEntry& entry) {
     return false;
 }
 
-uint8_t resolveSlotIndexForLoop(const Track& track, const Loop& loop) {
+TRACK_COLD_MEM uint8_t resolveSlotIndexForLoop(const Track& track, const Loop& loop) {
     for (uint8_t slotIndex = 0; slotIndex < Config::MAX_LOOPS_PER_TRACK; ++slotIndex) {
         if (&track.getLoop(slotIndex) == &loop) {
             return slotIndex;
@@ -228,11 +252,11 @@ uint8_t resolveSlotIndexForLoop(const Track& track, const Loop& loop) {
     return Config::INVALID_LOOP_SLOT;
 }
 
-bool loopHasLiveOverdubCapture(const Loop& loop) {
+TRACK_COLD_MEM bool loopHasLiveOverdubCapture(const Loop& loop) {
     return loop.capture.phase == CapturePhase::Overdub && !loop.capture.store.empty();
 }
 
-bool applyRedoEntry(Track& track, UndoEntry& entry) {
+TRACK_COLD_MEM bool applyRedoEntry(Track& track, UndoEntry& entry) {
     Loop& loop = track.getLoop(entry.slotIndex);
     switch (entry.kind) {
         case UndoEntryKind::ClearSlot:
@@ -259,6 +283,27 @@ bool applyRedoEntry(Track& track, UndoEntry& entry) {
             noteEditManager.loopEditManager.onGlobalGeometryRestored(track);
             return true;
         case UndoEntryKind::RecordPassAdded:
+            if (!entry.hasRedoPayload) {
+                logger.log(CAT_TRACK, LOG_WARNING, "Redo payload missing for record pass entry %lu",
+                           static_cast<unsigned long>(entry.id));
+                return false;
+            }
+            if (!enableCapturePass(loop, entry.passId)) {
+                logger.log(CAT_TRACK, LOG_WARNING, "Redo failed: missing pass %lu in slot %u",
+                           static_cast<unsigned long>(entry.passId),
+                           static_cast<unsigned>(entry.slotIndex));
+                return false;
+            }
+            applyGeometry(loop, entry.afterGeometry);
+            loop.rebuildVisualCacheFromPasses();
+            loop.invalidateCaches();
+            track.invalidateCaches();
+            if (editManager.isNoteEditActive()) {
+                loop.rematerializeEditView(editManager.getEditSession().store.mutStore());
+                editManager.getEditSession().store.discardFlatCache();
+                editManager.getEditSession().undoStack.clear();
+            }
+            return true;
         case UndoEntryKind::OverdubPassAdded:
             if (!enableCapturePass(loop, entry.passId)) {
                 logger.log(CAT_TRACK, LOG_WARNING, "Redo failed: missing pass %lu in slot %u",
@@ -300,7 +345,7 @@ bool applyRedoEntry(Track& track, UndoEntry& entry) {
 
 }  // namespace
 
-void TrackUndo::pushRecordPassAdded(Track& track, uint8_t slotIndex, PassId passId) {
+TRACK_COLD_MEM void TrackUndo::pushRecordPassAdded(Track& track, uint8_t slotIndex, PassId passId) {
     if (slotIndex >= Config::MAX_LOOPS_PER_TRACK || passId == kInvalidPassId) {
         return;
     }
@@ -310,10 +355,18 @@ void TrackUndo::pushRecordPassAdded(Track& track, uint8_t slotIndex, PassId pass
     entry.slotIndex = slotIndex;
     entry.loopId = loop.loopId;
     entry.passId = passId;
+    if (track.hasRecordCaptureBaselineGeometry_) {
+        entry.beforeGeometry = track.recordCaptureBaselineGeometry_;
+    } else {
+        entry.beforeGeometry = captureGeometry(loop);
+    }
+    entry.afterGeometry = captureGeometry(loop);
+    track.hasRecordCaptureBaselineGeometry_ = false;
+    track.recordCaptureBaselineGeometry_ = {};
     pushUndoEntry(track, std::move(entry));
 }
 
-void TrackUndo::pushOverdubPassAdded(Track& track, uint8_t slotIndex, PassId passId) {
+TRACK_COLD_MEM void TrackUndo::pushOverdubPassAdded(Track& track, uint8_t slotIndex, PassId passId) {
     if (slotIndex >= Config::MAX_LOOPS_PER_TRACK || passId == kInvalidPassId) {
         return;
     }
@@ -326,13 +379,13 @@ void TrackUndo::pushOverdubPassAdded(Track& track, uint8_t slotIndex, PassId pas
     pushUndoEntry(track, std::move(entry));
 }
 
-void TrackUndo::pushNoteEditPassClosed(Track& track, uint8_t noteEditPassIndex,
+TRACK_COLD_MEM void TrackUndo::pushNoteEditPassClosed(Track& track, uint8_t noteEditPassIndex,
                                        EditPassIdList editPassIds) {
     pushEditPassClosed(track, noteEditPassIndex, std::move(editPassIds), EditPassType::Note,
                        track.getActiveLoopIndex());
 }
 
-void TrackUndo::pushEditPassClosed(Track& track, uint8_t editPassIndex,
+TRACK_COLD_MEM void TrackUndo::pushEditPassClosed(Track& track, uint8_t editPassIndex,
                                    EditPassIdList editPassIds, EditPassType editPassType,
                                    uint8_t slotIndex) {
     if (editPassIds.empty() || slotIndex >= Config::MAX_LOOPS_PER_TRACK) {
@@ -351,14 +404,14 @@ void TrackUndo::pushEditPassClosed(Track& track, uint8_t editPassIndex,
     pushUndoEntry(track, std::move(entry));
 }
 
-void TrackUndo::beginOverdubSession(Track& track) {
+TRACK_COLD_MEM void TrackUndo::beginOverdubSession(Track& track) {
     if (editManager.isNoteEditActive()) {
         editManager.commitAllPendingNoteEditActions(track);
     }
     (void)track;
 }
 
-void TrackUndo::undoForLoop(Track& track, Loop& loop) {
+TRACK_COLD_MEM void TrackUndo::undoForLoop(Track& track, Loop& loop) {
     if (noteEditManager.loopEditManager.hasPendingGeometry()) {
         noteEditManager.loopEditManager.flushAllPendingGeometry(track);
     }
@@ -391,7 +444,7 @@ void TrackUndo::undoForLoop(Track& track, Loop& loop) {
     StorageManager::requestDeferredSaveState(looperState.getLooperState());
 }
 
-void TrackUndo::redoForLoop(Track& track, Loop& loop) {
+TRACK_COLD_MEM void TrackUndo::redoForLoop(Track& track, Loop& loop) {
     if (noteEditManager.loopEditManager.hasPendingGeometry()) {
         noteEditManager.loopEditManager.cancelPendingGeometryPreview(track);
     }
@@ -418,15 +471,15 @@ void TrackUndo::redoForLoop(Track& track, Loop& loop) {
     StorageManager::requestDeferredSaveState(looperState.getLooperState());
 }
 
-void TrackUndo::undoOverdub(Track& track) {
+TRACK_COLD_MEM void TrackUndo::undoOverdub(Track& track) {
     undoForLoop(track, track.getActiveLoop());
 }
 
-void TrackUndo::redoOverdub(Track& track) {
+TRACK_COLD_MEM void TrackUndo::redoOverdub(Track& track) {
     redoForLoop(track, track.getActiveLoop());
 }
 
-size_t TrackUndo::undoDepthForLoop(const Track& track, const Loop& loop) {
+TRACK_COLD_MEM size_t TrackUndo::undoDepthForLoop(const Track& track, const Loop& loop) {
     const uint8_t slotIndex = resolveSlotIndexForLoop(track, loop);
     if (slotIndex == Config::INVALID_LOOP_SLOT) {
         return 0;
@@ -438,7 +491,7 @@ size_t TrackUndo::undoDepthForLoop(const Track& track, const Loop& loop) {
     return depth;
 }
 
-size_t TrackUndo::redoDepthForLoop(const Track& track, const Loop& loop) {
+TRACK_COLD_MEM size_t TrackUndo::redoDepthForLoop(const Track& track, const Loop& loop) {
     const uint8_t slotIndex = resolveSlotIndexForLoop(track, loop);
     if (slotIndex == Config::INVALID_LOOP_SLOT) {
         return 0;
@@ -446,7 +499,7 @@ size_t TrackUndo::redoDepthForLoop(const Track& track, const Loop& loop) {
     return countRedoEntriesForSlot(track.getGlobalUndoStack(), slotIndex);
 }
 
-bool TrackUndo::canUndoForLoop(const Track& track, const Loop& loop) {
+TRACK_COLD_MEM bool TrackUndo::canUndoForLoop(const Track& track, const Loop& loop) {
     const uint8_t slotIndex = resolveSlotIndexForLoop(track, loop);
     if (slotIndex == Config::INVALID_LOOP_SLOT) {
         return false;
@@ -458,7 +511,7 @@ bool TrackUndo::canUndoForLoop(const Track& track, const Loop& loop) {
     return stack.canUndo() && stack.entries[stack.cursor - 1].slotIndex == slotIndex;
 }
 
-bool TrackUndo::canRedoForLoop(const Track& track, const Loop& loop) {
+TRACK_COLD_MEM bool TrackUndo::canRedoForLoop(const Track& track, const Loop& loop) {
     const uint8_t slotIndex = resolveSlotIndexForLoop(track, loop);
     if (slotIndex == Config::INVALID_LOOP_SLOT) {
         return false;
@@ -467,7 +520,7 @@ bool TrackUndo::canRedoForLoop(const Track& track, const Loop& loop) {
     return stack.canRedo() && stack.entries[stack.cursor].slotIndex == slotIndex;
 }
 
-bool TrackUndo::canUndoClearTrackForLoop(const Track& track, const Loop& loop) {
+TRACK_COLD_MEM bool TrackUndo::canUndoClearTrackForLoop(const Track& track, const Loop& loop) {
     const uint8_t slotIndex = resolveSlotIndexForLoop(track, loop);
     if (slotIndex == Config::INVALID_LOOP_SLOT) {
         return false;
@@ -478,7 +531,7 @@ bool TrackUndo::canUndoClearTrackForLoop(const Track& track, const Loop& loop) {
            stack.entries[stack.cursor - 1].slotIndex == slotIndex;
 }
 
-bool TrackUndo::canRedoClearTrackForLoop(const Track& track, const Loop& loop) {
+TRACK_COLD_MEM bool TrackUndo::canRedoClearTrackForLoop(const Track& track, const Loop& loop) {
     const uint8_t slotIndex = resolveSlotIndexForLoop(track, loop);
     if (slotIndex == Config::INVALID_LOOP_SLOT) {
         return false;
@@ -489,15 +542,15 @@ bool TrackUndo::canRedoClearTrackForLoop(const Track& track, const Loop& loop) {
            stack.entries[stack.cursor].slotIndex == slotIndex;
 }
 
-size_t TrackUndo::getUndoCount(const Track& track) {
+TRACK_COLD_MEM size_t TrackUndo::getUndoCount(const Track& track) {
     return track.getGlobalUndoStack().undoCount();
 }
 
-size_t TrackUndo::getRedoCount(const Track& track) {
+TRACK_COLD_MEM size_t TrackUndo::getRedoCount(const Track& track) {
     return track.getGlobalUndoStack().redoCount();
 }
 
-bool TrackUndo::canUndo(const Track& track) {
+TRACK_COLD_MEM bool TrackUndo::canUndo(const Track& track) {
     const Loop& loop = track.getActiveLoop();
     if (loop.capture.phase == CapturePhase::Overdub && !loop.capture.store.empty()) {
         return true;
@@ -505,11 +558,11 @@ bool TrackUndo::canUndo(const Track& track) {
     return track.getGlobalUndoStack().canUndo();
 }
 
-bool TrackUndo::canRedo(const Track& track) {
+TRACK_COLD_MEM bool TrackUndo::canRedo(const Track& track) {
     return track.getGlobalUndoStack().canRedo();
 }
 
-size_t TrackUndo::clearUndoHistoryForSlot(Track& track, uint8_t slotIndex) {
+TRACK_COLD_MEM size_t TrackUndo::clearUndoHistoryForSlot(Track& track, uint8_t slotIndex) {
     if (slotIndex >= Config::MAX_LOOPS_PER_TRACK) {
         return 0;
     }
@@ -526,7 +579,7 @@ size_t TrackUndo::clearUndoHistoryForSlot(Track& track, uint8_t slotIndex) {
     return removed;
 }
 
-void TrackUndo::pushClearTrackSnapshot(Track& track) {
+TRACK_COLD_MEM void TrackUndo::pushClearTrackSnapshot(Track& track) {
     Loop& loop = track.getActiveLoop();
     UndoEntry entry;
     entry.kind = UndoEntryKind::ClearSlot;
@@ -539,15 +592,15 @@ void TrackUndo::pushClearTrackSnapshot(Track& track) {
     pushUndoEntry(track, std::move(entry));
 }
 
-void TrackUndo::undoClearTrack(Track& track) {
+TRACK_COLD_MEM void TrackUndo::undoClearTrack(Track& track) {
     undoForLoop(track, track.getActiveLoop());
 }
 
-void TrackUndo::redoClearTrack(Track& track) {
+TRACK_COLD_MEM void TrackUndo::redoClearTrack(Track& track) {
     redoForLoop(track, track.getActiveLoop());
 }
 
-void TrackUndo::pushLoopStartSnapshot(Track& track, uint8_t slotIndex) {
+TRACK_COLD_MEM void TrackUndo::pushLoopStartSnapshot(Track& track, uint8_t slotIndex) {
     if (slotIndex >= Config::MAX_LOOPS_PER_TRACK) {
         return;
     }
@@ -561,7 +614,7 @@ void TrackUndo::pushLoopStartSnapshot(Track& track, uint8_t slotIndex) {
     pushUndoEntry(track, std::move(entry));
 }
 
-void TrackUndo::pushLoopGeometryDepartSnapshot(Track& track, uint8_t slotIndex,
+TRACK_COLD_MEM void TrackUndo::pushLoopGeometryDepartSnapshot(Track& track, uint8_t slotIndex,
                                               uint32_t beforeLoopStartTick,
                                               uint32_t beforeLoopLengthTicks) {
     if (slotIndex >= Config::MAX_LOOPS_PER_TRACK) {
@@ -581,17 +634,17 @@ void TrackUndo::pushLoopGeometryDepartSnapshot(Track& track, uint8_t slotIndex,
     pushUndoEntry(track, std::move(entry));
 }
 
-void TrackUndo::undoLoopStart(Track& track) {
+TRACK_COLD_MEM void TrackUndo::undoLoopStart(Track& track) {
     undoForLoop(track, track.getActiveLoop());
 }
 
-bool TrackUndo::canRedoClearTrack(const Track& track) {
+TRACK_COLD_MEM bool TrackUndo::canRedoClearTrack(const Track& track) {
     const GlobalUndoStack& stack = track.getGlobalUndoStack();
     return stack.canRedo() &&
            stack.entries[stack.cursor].kind == UndoEntryKind::ClearSlot;
 }
 
-bool TrackUndo::canUndoClearTrack(const Track& track) {
+TRACK_COLD_MEM bool TrackUndo::canUndoClearTrack(const Track& track) {
     const GlobalUndoStack& stack = track.getGlobalUndoStack();
     return stack.canUndo() &&
            stack.entries[stack.cursor - 1].kind == UndoEntryKind::ClearSlot;

@@ -2,11 +2,28 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-07-08 (loop-scoped undo display)
+Last updated: 2026-07-09 (playhead-after-undo fix)
 
 ---
 
 ## Now implementing
+
+### Playhead-after-undo fix (record stop + ARMED guard)
+
+**Landed (uncommitted):** Fixes A–D from `session_20260708_233241` replay:
+
+| Fix | Behavior |
+|-----|----------|
+| **A** | `RecordPassAdded` undo restores `beforeGeometry`; empty slot → `resetLoopSlotAfterEmptyCapture` |
+| **B** | Record stop length = `min(transport-quantized, content-based)` via `computeRecordStopLengthTicks` |
+| **C** | Record start clears stale `loopLengthTicks` when slot has no published events |
+| **D** | `TRACK_ARMED` blocked when selected slot `hasPublishedEvents()`; reconcile cancels stale arm |
+
+**RAM1:** `TrackUndo` → `TRACK_COLD_MEM`; capture baseline on `Track` (not per-`Loop`). Native: `test_record_stop_length`, updated `test_track_display_state`. **HITL:** replay `session_20260708_233241` scenario after flash.
+
+**Playhead bar-skip (SD load + transport):** `startPlaying` now anchors `projectionCycleStartTick` to `loop.loopStartTick` (display origin from SD), fixes signed projection math, and detects loop wrap on display phase (not raw storage phase). Re-anchor on external MIDI Start when already playing.
+
+---
 
 ### Loop-scoped undo display (Phase 1)
 

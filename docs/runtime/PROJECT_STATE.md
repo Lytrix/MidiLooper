@@ -2,18 +2,19 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-07-08 (boot USB-host defer landed; HITL pending)
+Last updated: 2026-07-09 (playhead-after-undo fix landed uncommitted)
 
 ---
 
 ## Current branch
 
-`dec-023-recovery` — boot USB-host defer + slot-switch hardening (uncommitted)
+`dec-023-recovery` — playhead-after-undo fix + prior boot/slot hardening (uncommitted)
 
 ## Shipped on branch (recent)
 
 | Commit / session | Focus | Docs |
 |--------|--------|------|
+| *(uncommitted)* | Playhead-after-undo: geometry undo, content-based record stop, ARMED guard | CURRENT_WORK |
 | *(uncommitted)* | Boot USB-host defer; boot-load LED suppress; slot-switch crash hardening | — |
 | *(uncommitted)* | Phase 2 persistence queue + Phase 3 transport-gate removal | DEC-020 |
 | *(uncommitted)* | M5 boot load restore (DEC-021/022) recovered | DEC-021, DEC-022 |

@@ -16,5 +16,7 @@ enum class SlotOpState : uint8_t {
 TrackState normalizeLoadedTrackState(TrackState loadedTrackState, bool anySlotHasEvents);
 
 TrackState resolveDisplayTrackState(TrackState transportState, SlotOpState slotOpState,
-                                    bool selectedSlotHasData, bool pendingRecordOnTrack,
+                                    bool selectedSlotHasData,
+                                    bool selectedSlotHasPublishedEvents,
+                                    bool pendingRecordOnTrack,
                                     bool recordQueuedOnSelectedSlot);

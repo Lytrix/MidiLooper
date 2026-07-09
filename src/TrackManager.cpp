@@ -93,20 +93,26 @@ void TrackManager::prewarmSelectedDisplayVisualCache() {
 void TrackManager::startRecordingTrack(uint8_t trackIndex, uint32_t currentTick) {
   if (trackIndex >= Config::NUM_TRACKS) return;
 
+  Track& tr = tracks[trackIndex];
+  const uint8_t slot = tr.getActiveLoopIndex();
+  if (tr.hasPublishedEventsInSlot(slot)) {
+    logger.log(CAT_TRACK, LOG_WARNING,
+               "Track %d: cannot arm slot %u — slot already has published MIDI",
+               trackIndex, static_cast<unsigned>(slot) + 1u);
+    return;
+  }
+
   // Captures write into the active slot; ensure the target slot is enabled/unmuted.
   {
-    const uint8_t slot = tracks[trackIndex].getActiveLoopIndex();
     slotEnabled[trackIndex][slot] = true;
     slotMuted[trackIndex][slot] = false;
   }
 
   // Only allow recording if the clock is running (internal or external)
   if (!clockManager.shouldQuantizeRecordStart()) {
-    Track& tr = tracks[trackIndex];
     pendingRecord[trackIndex] = true;
     pendingRecordQueuedAtTick[trackIndex] = UINT32_MAX;
     pendingRecordRefSlot[trackIndex] = Config::INVALID_LOOP_SLOT;
-    uint8_t slot = tr.getActiveLoopIndex();
     for (uint8_t s = 0; s < Config::MAX_LOOPS_PER_TRACK; ++s) {
       pendingRecordSlot[trackIndex][s] = false;
     }
@@ -149,6 +155,12 @@ void TrackManager::stopRecordingTrack(uint8_t trackIndex) {
 void TrackManager::queueRecordingTrack(uint8_t trackIndex, uint8_t slotIndex,
                                        uint8_t refSlotForPhase) {
   if (trackIndex >= Config::NUM_TRACKS || slotIndex >= Config::MAX_LOOPS_PER_TRACK) return;
+  if (tracks[trackIndex].hasPublishedEventsInSlot(slotIndex)) {
+    logger.log(CAT_TRACK, LOG_WARNING,
+               "Track %d: cannot queue record on slot %u — slot already has published MIDI",
+               trackIndex, static_cast<unsigned>(slotIndex) + 1u);
+    return;
+  }
 
   // Target slot should be part of playback set while recording.
   slotEnabled[trackIndex][slotIndex] = true;
@@ -482,7 +494,8 @@ TrackState TrackManager::getTrackState(uint8_t trackIndex) const {
   const uint8_t selectedSlot = slotStateMachine.getSelectedSlotIndex(trackIndex);
   return resolveDisplayTrackState(
       track.getState(), track.getSlotOpState(selectedSlot), track.hasDataInSlot(selectedSlot),
-      pendingRecord[trackIndex], isRecordingQueued(trackIndex, selectedSlot));
+      track.hasPublishedEventsInSlot(selectedSlot), pendingRecord[trackIndex],
+      isRecordingQueued(trackIndex, selectedSlot));
 }
 
 uint32_t TrackManager::getTrackLength(uint8_t trackIndex) const {

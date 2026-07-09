@@ -77,6 +77,10 @@ public:
   void shiftMidiEvents(int32_t offset);
   uint32_t findLastEventTick() const;
   uint32_t computeLoopLengthTicks(uint32_t lastEventTick) const;
+  bool hasPublishedEventsInSlot(uint8_t slotIndex) const;
+  uint32_t quantizeTransportRecordLength(uint32_t rawLength) const;
+  uint32_t computeRecordStopLengthTicks(uint32_t rawLength, uint32_t lastEventTick) const;
+  void resetLoopSlotAfterEmptyCapture(uint8_t slotIndex);
 
   // For any notes still in pendingNotes, emit a NoteOff at offAbsTick
   void finalizePendingNotes(uint32_t offAbsTick);
@@ -93,6 +97,7 @@ public:
 
   // Playback control
   void startPlaying(uint32_t currentTick, bool preserveLoopPhaseOrigin = false);
+  void reanchorPlaybackProjection(uint32_t currentTick, bool preserveLoopPhaseOrigin = false);
   void stopPlaying();
   void togglePlayStop();
 
@@ -337,6 +342,8 @@ private:
   uint32_t queuedStartGridTicks = Config::TICKS_PER_16TH_STEP;
   TrackPlaybackRuntime playbackRuntime;
   GlobalUndoStack undoStack;
+  UndoLoopGeometry recordCaptureBaselineGeometry_{};
+  bool hasRecordCaptureBaselineGeometry_ = false;
   MidiEventVec publishedMidiScratch_;
   uint32_t publishedMidiScratchRevision_ = UINT32_MAX;
   static const uint32_t TICKS_PER_BAR;

@@ -81,6 +81,10 @@ uint32_t noteStorageTick(uint32_t relativeTick, uint32_t loopStartTick, uint32_t
 uint32_t tickPhaseInProjectionCycle(uint32_t currentTick, int32_t projectionCycleStartTick,
                                     uint32_t loopLength);
 
+/// True when display playhead crossed the loop head backward (musical wrap, not storage phase wrap).
+bool didDisplayPlayheadWrapBackward(uint32_t newStoragePhase, uint32_t prevStoragePhase,
+                                    uint32_t loopStartTick, uint32_t loopLength);
+
 /// Advance cycle origin on wrap; uses loopLength at wrap time.
 int32_t advanceProjectionCycleStartTickOnWrap(int32_t projectionCycleStartTick,
                                             uint32_t loopLengthAtWrap);

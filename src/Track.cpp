@@ -376,6 +376,16 @@ TRACK_COLD_MEM void Track::reconcileTransportStateAfterSlotMutation() {
   if (isRecording() || isOverdubbing() || isStoppedRecording()) {
     return;
   }
+  if (trackState == TRACK_ARMED && getActiveLoop().hasPublishedEvents()) {
+    armedPreRollNotes.clear();
+    for (uint8_t i = 0; i < trackManager.getTrackCount(); ++i) {
+      if (&trackManager.getTrack(i) == this) {
+        trackManager.cancelPendingRecordArm(i);
+        break;
+      }
+    }
+    return;
+  }
   if (hasAnySlotData()) {
     if (trackState == TRACK_EMPTY || trackState == TRACK_ARMED) {
       setState(TRACK_STOPPED);
@@ -475,8 +485,9 @@ void Track::forceSetState(TrackState newState) { trackState = newState; }
 
 void Track::startRecording(uint32_t currentTick) {
   Loop& loop = getActiveLoop();
-  if (isEmpty()) {
-    // Preroll target is truly empty.
+  recordCaptureBaselineGeometry_ = {loop.loopLengthTicks, loop.startLoopTick, loop.loopStartTick};
+  hasRecordCaptureBaselineGeometry_ = true;
+  if (!loop.hasPublishedEvents()) {
     loop.loopLengthTicks = 0;
     loop.loopStartTick = 0;
   }
@@ -1061,19 +1072,8 @@ void Track::stopRecording(uint32_t currentTick) {
   } else {
     logger.warning("stopRecording guard: currentTick(%lu) < startLoopTick(%lu), clamping length", currentTick, loop.startLoopTick);
   }
-  uint32_t rem       = rawLength % TICKS_PER_BAR;
-  uint32_t grace     = TICKS_PER_BAR / 2;
-
-  if (rawLength == 0) {
-      loop.loopLengthTicks = TICKS_PER_BAR;
-  } else if (rem <= grace) {
-      loop.loopLengthTicks = (rawLength / TICKS_PER_BAR) * TICKS_PER_BAR;
-      if (loop.loopLengthTicks == 0) {
-        loop.loopLengthTicks = TICKS_PER_BAR;
-      }
-  } else {
-      loop.loopLengthTicks = ((rawLength / TICKS_PER_BAR) + 1) * TICKS_PER_BAR;
-  }
+  const uint32_t lastEventTick = findLastEventTick();
+  loop.loopLengthTicks = computeRecordStopLengthTicks(rawLength, lastEventTick);
 
   if (loop.loopLengthTicks > 0) {
     if (!pendingNotes.empty()) {
@@ -1212,19 +1212,8 @@ TRACK_COLD_MEM void Track::stopRecordingToStopped(uint32_t currentTick) {
   } else {
     logger.warning("stopRecordingToStopped guard: currentTick(%lu) < startLoopTick(%lu), clamping length", currentTick, loop.startLoopTick);
   }
-  uint32_t rem       = rawLength % TICKS_PER_BAR;
-  uint32_t grace     = TICKS_PER_BAR / 2;
-
-  if (rawLength == 0) {
-      loop.loopLengthTicks = TICKS_PER_BAR;
-  } else if (rem <= grace) {
-      loop.loopLengthTicks = (rawLength / TICKS_PER_BAR) * TICKS_PER_BAR;
-      if (loop.loopLengthTicks == 0) {
-        loop.loopLengthTicks = TICKS_PER_BAR;
-      }
-  } else {
-      loop.loopLengthTicks = ((rawLength / TICKS_PER_BAR) + 1) * TICKS_PER_BAR;
-  }
+  const uint32_t lastEventTick = findLastEventTick();
+  loop.loopLengthTicks = computeRecordStopLengthTicks(rawLength, lastEventTick);
 
   if (loop.loopLengthTicks > 0) {
     if (!pendingNotes.empty()) {
@@ -1312,6 +1301,27 @@ TRACK_COLD_MEM void Track::stopRecordingToStopped(uint32_t currentTick) {
 // Start playing
 // -------------------------
 
+void Track::reanchorPlaybackProjection(uint32_t currentTick, bool preserveLoopPhaseOrigin) {
+  Loop& loop = getActiveLoop();
+  loop.nextEventIndex = 0;
+  loop.lastTickInLoop = UINT32_MAX;
+  if (!preserveLoopPhaseOrigin) {
+    loop.startLoopTick = 0;
+    // Fresh transport: play from storage tick 0; drop record-time display offset so
+    // playhead, LEDs, and playbackEventPhase share one coordinate frame.
+    loop.loopStartTick = 0;
+    projectionCycleStartTick = static_cast<int32_t>(currentTick);
+    for (uint8_t slotIndex = 0; slotIndex < Config::MAX_LOOPS_PER_TRACK; ++slotIndex) {
+      getLoop(slotIndex).lastTickInLoop = UINT32_MAX;
+    }
+  } else if (loop.loopLengthTicks > 0) {
+    const uint32_t phase =
+        tickPhaseInLoop(currentTick, loop.startLoopTick, loop.loopLengthTicks);
+    projectionCycleStartTick =
+        static_cast<int32_t>(currentTick) - static_cast<int32_t>(phase);
+  }
+}
+
 void Track::startPlaying(uint32_t currentTick, bool preserveLoopPhaseOrigin) {
   Loop& loop = getActiveLoop();
   if (loop.loopLengthTicks > 0) {
@@ -1319,17 +1329,7 @@ void Track::startPlaying(uint32_t currentTick, bool preserveLoopPhaseOrigin) {
       forceSetState(TRACK_STOPPED);
     }
     if (!setState(TRACK_PLAYING)) return;
-    if (!preserveLoopPhaseOrigin) {
-      loop.startLoopTick = 0;
-      loop.nextEventIndex = 0;
-      loop.lastTickInLoop = UINT32_MAX;
-      projectionCycleStartTick = static_cast<int32_t>(currentTick);
-    } else if (loop.loopLengthTicks > 0) {
-      const uint32_t phase =
-          tickPhaseInLoop(currentTick, loop.startLoopTick, loop.loopLengthTicks);
-      projectionCycleStartTick =
-          static_cast<int32_t>(currentTick) - static_cast<int32_t>(phase);
-    }
+    reanchorPlaybackProjection(currentTick, preserveLoopPhaseOrigin);
     logger.logTrackEvent("Playback started", currentTick);
   }
 }
@@ -1733,7 +1733,9 @@ void Track::playMidiEvents(uint32_t currentTick, bool isAudible) {
   uint32_t tickInLoop = IntervalProjection::tickPhaseInProjectionCycle(
       currentTick, projectionCycleStartTick, loop.loopLengthTicks);
 
-  if (tickInLoop < loop.lastTickInLoop && loop.lastTickInLoop != UINT32_MAX) {
+  if (IntervalProjection::didDisplayPlayheadWrapBackward(tickInLoop, loop.lastTickInLoop,
+                                                       loop.loopStartTick,
+                                                       loop.loopLengthTicks)) {
     projectionCycleStartTick = IntervalProjection::advanceProjectionCycleStartTickOnWrap(
         projectionCycleStartTick, loop.loopLengthTicks);
     loop.nextEventIndex = 0;
@@ -1850,7 +1852,9 @@ void Track::playMidiEventsForSlot(uint8_t slotIndex, uint32_t currentTick, bool 
 
   uint32_t tickInLoop = IntervalProjection::tickPhaseInProjectionCycle(
       currentTick, projectionCycleStartTick, loop.loopLengthTicks);
-  if (tickInLoop < loop.lastTickInLoop) {
+  if (IntervalProjection::didDisplayPlayheadWrapBackward(tickInLoop, loop.lastTickInLoop,
+                                                       loop.loopStartTick,
+                                                       loop.loopLengthTicks)) {
     projectionCycleStartTick = IntervalProjection::advanceProjectionCycleStartTickOnWrap(
         projectionCycleStartTick, loop.loopLengthTicks);
     loop.nextEventIndex = 0;
@@ -2113,4 +2117,40 @@ void Track::noteOff(uint8_t channel, uint8_t note, uint8_t velocity, uint32_t ti
   }
 }
 
+TRACK_COLD_MEM bool Track::hasPublishedEventsInSlot(uint8_t slotIndex) const {
+  if (slotIndex >= Config::MAX_LOOPS_PER_TRACK) {
+    return false;
+  }
+  return loopForSlot(slotIndex).hasPublishedEvents();
+}
+
+TRACK_COLD_MEM uint32_t Track::quantizeTransportRecordLength(uint32_t rawLength) const {
+  if (rawLength == 0) {
+    return TICKS_PER_BAR;
+  }
+  const uint32_t rem = rawLength % TICKS_PER_BAR;
+  const uint32_t grace = TICKS_PER_BAR / 2;
+  if (rem <= grace) {
+    const uint32_t quantized = (rawLength / TICKS_PER_BAR) * TICKS_PER_BAR;
+    return quantized == 0 ? TICKS_PER_BAR : quantized;
+  }
+  return ((rawLength / TICKS_PER_BAR) + 1) * TICKS_PER_BAR;
+}
+
+TRACK_COLD_MEM uint32_t Track::computeRecordStopLengthTicks(uint32_t rawLength,
+                                                            uint32_t lastEventTick) const {
+  const uint32_t transportLength = quantizeTransportRecordLength(rawLength);
+  if (lastEventTick == 0) {
+    return transportLength;
+  }
+  const uint32_t contentLength = computeLoopLengthTicks(lastEventTick);
+  return std::min(transportLength, contentLength);
+}
+
+TRACK_COLD_MEM void Track::resetLoopSlotAfterEmptyCapture(uint8_t slotIndex) {
+  if (slotIndex >= Config::MAX_LOOPS_PER_TRACK) {
+    return;
+  }
+  resetActiveLoopAfterEmptyCapture(loopForSlot(slotIndex));
+}
 
