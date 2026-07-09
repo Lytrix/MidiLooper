@@ -256,6 +256,58 @@ bool Loop::hasPublishedEvents() const {
   return false;
 }
 
+uint32_t Loop::findLastPublishedEventTick() const {
+  uint32_t lastTick = 0;
+  auto scanChunkRefs = [&lastTick](const ChunkIdList& chunkRefs) {
+    for (uint16_t chunkId : chunkRefs) {
+      MidiEventVec batch;
+      LoopEventStore::appendChunkRefEvent(chunkId, batch);
+      for (const MidiEvent& evt : batch) {
+        lastTick = std::max(lastTick, evt.tick);
+      }
+    }
+  };
+
+  if (passes.hasRecordPass() && passes.recordPass.state == CapturePassState::Active &&
+      !passes.recordPass.chunkRefs.empty()) {
+    scanChunkRefs(passes.recordPass.chunkRefs);
+  }
+  for (const OverdubPass& pass : passes.overdubPasses) {
+    if (pass.state == CapturePassState::Active && !pass.chunkRefs.empty()) {
+      scanChunkRefs(pass.chunkRefs);
+    }
+  }
+  return lastTick;
+}
+
+uint32_t Loop::reconcileLoopLengthWithPublishedContent(uint32_t candidateLengthTicks) const {
+  if (!hasPublishedEvents()) {
+    return candidateLengthTicks;
+  }
+  const uint32_t lastEventTick = findLastPublishedEventTick();
+  if (lastEventTick == 0) {
+    return candidateLengthTicks;
+  }
+
+  constexpr uint32_t ticksPerBar = Config::TICKS_PER_BAR;
+  const uint32_t fullBars = lastEventTick / ticksPerBar;
+  const uint32_t rem = lastEventTick % ticksPerBar;
+  const uint32_t grace = ticksPerBar / 6;
+  uint32_t contentLength = 0;
+  if (rem <= grace) {
+    contentLength = (fullBars > 0 ? fullBars : 1) * ticksPerBar;
+  } else if (lastEventTick < ticksPerBar / 2) {
+    contentLength = ticksPerBar;
+  } else {
+    contentLength = (fullBars + 1) * ticksPerBar;
+  }
+
+  if (candidateLengthTicks == 0 || candidateLengthTicks < contentLength) {
+    return contentLength;
+  }
+  return candidateLengthTicks;
+}
+
 namespace {
 
 template <typename MidiEventVector>
@@ -554,6 +606,7 @@ void Loop::adoptPersistedSnapshot(PersistedLoopSnapshot& snapshot) {
   playbackOrderDirty = true;
   passes = std::move(snapshot.passes);
   snapshot.passes = LoopPasses{};
+  loopLengthTicks = reconcileLoopLengthWithPublishedContent(loopLengthTicks);
   ++playbackRevision;
   discardPassesMaterializedCache();
   markDisplayCachesStale();

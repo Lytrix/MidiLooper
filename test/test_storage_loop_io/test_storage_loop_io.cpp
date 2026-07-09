@@ -646,6 +646,32 @@ void test_legacy_deferred_header_without_note_id_reads() {
   TEST_ASSERT_FALSE(reloadedLoop.visualCache.notes.empty());
 }
 
+void test_zero_loop_length_with_published_events_loads_and_reconciles() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+
+  PersistedLoopSnapshot original{};
+  original.loopId = 1;
+  original.loopLengthTicks = 0;
+  original.loopStartTick = 0;
+  original.nextPassId = 2;
+  original.nextNoteId = 2;
+  original.passes.recordPass = makeRecordPassWithEvents(1, 0, CapturePassState::Active, 0, 5584);
+
+  std::vector<uint8_t> buffer;
+  MemoryStorageIo mem(&buffer);
+  TEST_ASSERT_TRUE(writePersistedLoopSnapshot(mem.io(), original));
+
+  PersistedLoopSnapshot restored{};
+  mem.resetRead();
+  TEST_ASSERT_TRUE(readPersistedLoopSnapshot(mem.io(), restored));
+
+  Loop loop;
+  applySnapshotToLoop(loop, restored);
+  TEST_ASSERT_TRUE(loop.hasPublishedEvents());
+  TEST_ASSERT_EQUAL_UINT32(loop.reconcileLoopLengthWithPublishedContent(0), loop.loopLengthTicks);
+}
+
 void test_measure_loop_snapshot_slot_file_bytes_matches_buffer() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
@@ -670,6 +696,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_write_read_edits_tail_roundtrip);
   RUN_TEST(test_legacy_edit_tail_v4_rejected);
   RUN_TEST(test_legacy_deferred_header_without_note_id_reads);
+  RUN_TEST(test_zero_loop_length_with_published_events_loads_and_reconciles);
   RUN_TEST(test_apply_snapshot_preserves_start_loop_tick);
   RUN_TEST(test_truncated_edit_tail_fails_read);
   RUN_TEST(test_corrupt_scoped_edit_tail_fails_read);

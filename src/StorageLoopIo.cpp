@@ -31,8 +31,12 @@ constexpr uint32_t MAX_PERSISTED_CAPTURE_PASS_EVENTS =
 constexpr uint32_t PERSISTED_EDITS_TAIL_MARKER = 0x45505433u;  // "EPT3"
 
 uint32_t maxPersistedEventTick(uint32_t loopLengthTicks) {
-  if (loopLengthTicks == 0 || loopLengthTicks >= 0x80000000u) {
+  if (loopLengthTicks >= 0x80000000u) {
     return LoopEventStoreConfig::BAR_TICKS;
+  }
+  if (loopLengthTicks == 0) {
+    // Geometry may be zeroed while MIDI remains (e.g. LoopBoundaryChange undo); allow load then reconcile.
+    return UINT32_MAX;
   }
   return loopLengthTicks + LoopEventStoreConfig::BAR_TICKS;
 }
