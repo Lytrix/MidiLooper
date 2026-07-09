@@ -790,8 +790,7 @@ EditPassId EditManager::commitEditAction(Track& track, EditPassVec rows) {
 }
 
 bool EditManager::pushSessionUndoOnKindChange(Track& track, NoteEditKind kind) {
-    if (kind == NoteEditKind::Pitch &&
-        (noteEditManager.isLengthEditingMode() || editSession.focus.active)) {
+    if (kind == NoteEditKind::Pitch && noteEditManager.isLengthEditingMode()) {
         return true;
     }
     if (!shouldPushGeometryKindUndo(lastPushedGeometryKind_, kind)) {

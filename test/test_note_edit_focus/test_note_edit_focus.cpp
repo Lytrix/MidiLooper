@@ -1257,6 +1257,30 @@ void test_find_note_on_for_moving_note_edit_commit_baseline_preferred_start() {
   TEST_ASSERT_EQUAL_UINT32(672u, moverOn->tick);
 }
 
+void test_pitch_pre_commit_requires_active_focus() {
+  constexpr uint32_t kLoopLength = 768;
+  NoteEditFocus focus;
+  focus.active = false;
+  focus.commitBaseline = {60, 100, 384, 480};
+  focus.last = focus.commitBaseline;
+  focus.movingNoteId = 1;
+
+  noteEditFocusApplyPitch(focus, 67, 384, 480, kLoopLength);
+  EditPassVec rowsInactive = buildPreCommitEditPasses(focus, 1);
+  TEST_ASSERT_EQUAL(0, static_cast<int>(rowsInactive.size()));
+
+  const MidiEventVec flat = makeTwoNoteFlat(384, 480, 584, 680, 60);
+  rebuildNoteEditFocusFromStore(focus, flat, 1, kLoopLength, 0);
+  TEST_ASSERT_TRUE(focus.active);
+
+  noteEditFocusApplyPitch(focus, 67, focus.last.startTick, focus.last.endTick, kLoopLength);
+  const EditPassVec rowsActive = buildPreCommitEditPasses(focus, 1);
+  TEST_ASSERT_EQUAL(1, static_cast<int>(rowsActive.size()));
+  TEST_ASSERT_EQUAL(EditPropertyType::Pitch, rowsActive[0].propertyType);
+  TEST_ASSERT_EQUAL_UINT8(67, rowsActive[0].pitch);
+  TEST_ASSERT_EQUAL(focus.movingNoteId, rowsActive[0].targetNoteId);
+}
+
 int main(int /*argc*/, char** /*argv*/) {
   UNITY_BEGIN();
   RUN_TEST(test_baseline_map_includes_moving_note_at_select);
@@ -1310,5 +1334,6 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_find_note_on_for_moving_note_edit_note_id_over_same_pitch_decoy);
   RUN_TEST(test_find_note_on_for_moving_note_edit_note_id_channel_fallback);
   RUN_TEST(test_find_note_on_for_moving_note_edit_commit_baseline_preferred_start);
+  RUN_TEST(test_pitch_pre_commit_requires_active_focus);
   return UNITY_END();
 }
