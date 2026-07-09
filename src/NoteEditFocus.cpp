@@ -473,6 +473,94 @@ template bool findLinearNoteSpanForNoteId<InternalHeapFirstAllocator<MidiEvent>>
 template bool findLinearNoteSpanForNoteId<ExternalMemoryFirstAllocator<MidiEvent>>(
     SessionMidiEventVec&, NoteId, uint8_t, NoteBaseline&, uint32_t, uint32_t);
 
+namespace {
+
+template <typename Alloc>
+NOTE_EDIT_MEM MidiEvent* findNoteOnAtChannelPitchTick(std::vector<MidiEvent, Alloc>& events,
+                                                      uint8_t channel, uint8_t pitch,
+                                                      uint32_t tick) {
+  for (auto& evt : events) {
+    if (evt.channel == channel && evt.isNoteOn() && evt.data.noteData.velocity > 0 &&
+        evt.data.noteData.note == pitch && evt.tick == tick) {
+      return &evt;
+    }
+  }
+  return nullptr;
+}
+
+template <typename Alloc>
+NOTE_EDIT_MEM MidiEvent* findNoteOnForNoteIdAtTick(std::vector<MidiEvent, Alloc>& events,
+                                                   NoteId noteId, uint8_t channel, uint8_t pitch,
+                                                   uint32_t tick) {
+  for (auto& evt : events) {
+    if (evt.noteId != noteId || evt.channel != channel || !evt.isNoteOn() ||
+        evt.data.noteData.velocity == 0 || evt.data.noteData.note != pitch ||
+        evt.tick != tick) {
+      continue;
+    }
+    return &evt;
+  }
+  return nullptr;
+}
+
+template <typename Alloc>
+NOTE_EDIT_MEM MidiEvent* findNoteOnForNoteIdAnyChannel(std::vector<MidiEvent, Alloc>& events,
+                                                       NoteId noteId, uint8_t pitch) {
+  for (auto& evt : events) {
+    if (evt.noteId != noteId || !evt.isNoteOn() || evt.data.noteData.velocity == 0 ||
+        evt.data.noteData.note != pitch) {
+      continue;
+    }
+    return &evt;
+  }
+  return nullptr;
+}
+
+}  // namespace
+
+template <typename Alloc>
+NOTE_EDIT_MEM
+MidiEvent* findNoteOnForMovingNoteEdit(std::vector<MidiEvent, Alloc>& events,
+                                       const NoteEditFocus& focus, uint8_t channel,
+                                       uint8_t pitch, uint32_t startTick, uint32_t loopLength) {
+  if (focus.active && focus.movingNoteId != kInvalidNoteId) {
+    NoteBaseline linearSpan;
+    const uint32_t preferredStarts[] = {startTick, focus.commitBaseline.startTick, UINT32_MAX};
+    for (uint32_t preferredStart : preferredStarts) {
+      if (!findLinearNoteSpanForNoteId(events, focus.movingNoteId, channel, linearSpan,
+                                       preferredStart, loopLength)) {
+        continue;
+      }
+      if (MidiEvent* on =
+              findNoteOnForNoteIdAtTick(events, focus.movingNoteId, channel, pitch,
+                                        linearSpan.startTick)) {
+        return on;
+      }
+      if (MidiEvent* on = findNoteOnAtChannelPitchTick(events, channel, pitch,
+                                                        linearSpan.startTick)) {
+        return on;
+      }
+    }
+    if (MidiEvent* on = findNoteOnForNoteIdAnyChannel(events, focus.movingNoteId, pitch)) {
+      return on;
+    }
+  }
+
+  const uint32_t tickCandidates[] = {startTick, focus.active ? focus.commitBaseline.startTick : startTick,
+                                     focus.active ? focus.movingNoteRange.start : startTick};
+  for (uint32_t tick : tickCandidates) {
+    if (MidiEvent* on = findNoteOnAtChannelPitchTick(events, channel, pitch, tick)) {
+      return on;
+    }
+  }
+  return nullptr;
+}
+
+template MidiEvent* findNoteOnForMovingNoteEdit<InternalHeapFirstAllocator<MidiEvent>>(
+    MidiEventVec&, const NoteEditFocus&, uint8_t, uint8_t, uint32_t, uint32_t);
+template MidiEvent* findNoteOnForMovingNoteEdit<ExternalMemoryFirstAllocator<MidiEvent>>(
+    SessionMidiEventVec&, const NoteEditFocus&, uint8_t, uint8_t, uint32_t, uint32_t);
+
 template <typename Alloc>
 NOTE_EDIT_MEM
 bool syncNoteEditFocusLinearFromSessionStore(NoteEditFocus& focus,

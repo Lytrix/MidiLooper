@@ -347,11 +347,16 @@ void EditManager::syncSelectedNoteIdxToFilteredInventory(Track& track) {
         if (focus.active && focus.movingNoteId == sessionState.selection.primaryNote) {
             const bool lengthBracket =
                 sessionState.kind == NoteEditKind::Length || noteEditManager.isLengthEditingMode();
+            const bool geometryMutationKind =
+                sessionState.kind == NoteEditKind::Move ||
+                sessionState.kind == NoteEditKind::Pitch ||
+                sessionState.kind == NoteEditKind::Length;
             const uint32_t storageBracketTick =
                 lengthBracket ? focus.last.endTick : focus.last.startTick;
             const uint32_t correctedTick = NoteEditDisplaySnapshot::displayStartTickFromStorage(
                 storageBracketTick, loopStartTick, loopLength);
-            if (sessionState.selection.selectedTick != correctedTick) {
+            if (!geometryMutationKind &&
+                sessionState.selection.selectedTick != correctedTick) {
                 sessionState.selection.selectedTick = correctedTick;
                 selectedTick = correctedTick;
             }

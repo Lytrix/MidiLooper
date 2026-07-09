@@ -31,9 +31,9 @@ bool applyNoteEditChange(Track& track, EditManager& manager, NoteEditChangeKind 
                          uint8_t newPitch, uint32_t& inOutStart, uint32_t& inOutEnd,
                          bool refreshPlaybackPreview = true);
 
-void moveNoteWithOverlapHandling(Track& track, EditManager& manager, 
-                                   const NoteUtils::DisplayNote& currentNote, 
-                                   uint32_t targetTick, int delta);
+bool moveNoteWithOverlapHandling(Track& track, EditManager& manager,
+                                 const NoteUtils::DisplayNote& currentNote, uint32_t targetTick,
+                                 int delta);
 
     /**
      * Lengthen or shorten a note end with the same overlap-note handling as movement.
@@ -104,9 +104,10 @@ void moveNoteWithOverlapHandling(Track& track, EditManager& manager,
     MidiEvent* findNoteOffPairedAt(MidiEventVec& midiEvents, uint8_t pitch, uint32_t startTick,
                                    uint32_t endTick);
 
-    /** LIFO-paired note-off for the note-on at startTick (ignores stale expected end). */
-    MidiEvent* findNoteOffForNoteOnAtStart(MidiEventVec& midiEvents, uint8_t pitch,
-                                           uint32_t startTick);
+    /** LIFO-paired note-off for the note-on at startTick (channel + optional NoteId). */
+    MidiEvent* findNoteOffForNoteOnAtStart(MidiEventVec& midiEvents, uint8_t channel,
+                                           uint8_t pitch, uint32_t startTick,
+                                           NoteId noteId = kInvalidNoteId);
 
     /**
      * Resolve the note-off for a live edit span: LIFO pair, paired-at, then wrap-head fallback.
