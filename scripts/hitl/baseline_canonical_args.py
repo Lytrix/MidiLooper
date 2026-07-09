@@ -3,6 +3,13 @@
 from __future__ import annotations
 
 
+def canonical_external_capture_legacy_args() -> list[str]:
+    """Mode B: external capture_session.py owns USB serial; HITL tails the log."""
+    return [
+        "--follow-current-session",
+    ]
+
+
 def canonical_baseline_legacy_args() -> list[str]:
     """Bar-synced 2+2 record/overdub baseline; user legacy args should be appended to override."""
     return [

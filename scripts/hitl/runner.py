@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import argparse
 import json
+import subprocess
 import sys
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
 _SCRIPT_ROOT = Path(__file__).resolve().parent.parent
+_PROJECT_ROOT = _SCRIPT_ROOT.parent
 if str(_SCRIPT_ROOT) not in sys.path:
     sys.path.insert(0, str(_SCRIPT_ROOT))
 
@@ -77,7 +79,40 @@ def build_parser() -> argparse.ArgumentParser:
         default=0,
         help="0 = first Set row in overlay root list (after Save/Current)",
     )
+    run_parser.add_argument(
+        "--build-upload",
+        action="store_true",
+        help="Build and upload firmware before scenarios (default: assume firmware on device)",
+    )
+    run_parser.add_argument(
+        "--build-env",
+        default="teensy41-capture-serial",
+        help="PlatformIO env for --build-upload (default: teensy41-capture-serial)",
+    )
     return parser
+
+
+def _legacy_has_serial_follow(legacy: list[str]) -> bool:
+    return "--follow-current-session" in legacy or "--follow-serial-log" in legacy
+
+
+def maybe_build_upload(args: argparse.Namespace) -> int:
+    if not getattr(args, "build_upload", False):
+        return 0
+    env = getattr(args, "build_env", "teensy41-capture-serial")
+    print(
+        f"[hitl] build-upload: pio run -e {env} -t upload "
+        "(Teensy will reset — restart capture_session.py if running)"
+    )
+    result = subprocess.run(
+        ["pio", "run", "-e", env, "-t", "upload"],
+        cwd=_PROJECT_ROOT,
+    )
+    if result.returncode != 0:
+        print(f"[hitl] build-upload failed (exit {result.returncode})")
+        return result.returncode
+    print("[hitl] build-upload complete")
+    return 0
 
 
 def _read_verification_lines(args: argparse.Namespace) -> list[str]:
@@ -115,10 +150,12 @@ def run_verify_only(args: argparse.Namespace, scenario_ids: list[str]) -> int:
 
 
 def run_scenarios(args: argparse.Namespace, scenario_ids: list[str]) -> int:
-    if getattr(args, "verify_only", False) or (
-        args.verify_serial_log and not getattr(args, "serial_port", None)
-    ):
+    legacy = list(getattr(args, "legacy_args", []) or [])
+    if getattr(args, "verify_only", False):
         return run_verify_only(args, scenario_ids)
+    if args.verify_serial_log and not getattr(args, "serial_port", None):
+        if not _legacy_has_serial_follow(legacy):
+            return run_verify_only(args, scenario_ids)
 
     registry = get_registry()
     exit_code = 0
@@ -160,4 +197,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     if not args.preset and not args.scenarios:
         args.preset = "base"
         scenario_ids = resolve_scenarios(preset="base", scenario_ids=None)
+    upload_code = maybe_build_upload(args)
+    if upload_code != 0:
+        return upload_code
     return run_scenarios(args, scenario_ids)
