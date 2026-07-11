@@ -125,6 +125,18 @@ After commit, **`finalizeLoopAtStop`** runs (see below). Loop length is set on r
 
 ---
 
+## Playback wrap (same loop)
+
+**Files:** `Track::playMidiEvents`, `Track::playMidiEventsForSlot`, `IntervalProjection::shouldPlaybackEmitWrapTailEvent`
+
+On a **musical loop wrap** (display playhead crosses backward to loop head), one clock tick must emit **tail** events (`prevTickInLoop < evTick <= loopLength − 1`) before **head** events (`evTick <= tickInLoop`). Without the tail pass, a stored off@L−1 can be skipped while on@0 fires → audible retrigger.
+
+**Not** the same as **`closeOpenNotesAtLoopWrap`** (overdub **capture store** synth at L−1 for live-held notes). That helper runs on overdub **stop** paths only — not on same-loop playback wrap.
+
+**Out of scope:** slot/bar queued seek does not call **`sendAllNotesOff`** today (see `slot-performance-interaction` OpenSpec).
+
+---
+
 ## Note validation (three tiers)
 
 There are **three separate** “note correctness” mechanisms; do not conflate them.

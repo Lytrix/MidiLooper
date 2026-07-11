@@ -2,13 +2,19 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-07-09 (DEC-020 Phase 4 HITL passed)
+Last updated: 2026-07-11 (loop-wrap playback fix — native pass, HITL pending)
 
 ---
 
 ## Current branch
 
-`continuous-saving` @ `736fa33` — recovery stack merged (boot/slot/undo/playhead/NOTE_EDIT + DEC-020 Phases 0–4)
+`continuous-saving` — DEC-020 Phases 0–4 shipped; **Phase 5 paused** for loop-wrap playback bugfix (uncommitted).
+
+## In flight (uncommitted)
+
+| Area | Status |
+|------|--------|
+| Loop-wrap playback tail→head | `Track::playMidiEvents` / `playMidiEventsForSlot` — native **544/544**; user HITL (overdub through wrap, scan MO for zero `double_on` at BAR) |
 
 ## Shipped on branch (recent)
 
