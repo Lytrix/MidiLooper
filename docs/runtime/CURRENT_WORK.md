@@ -2,13 +2,28 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-07-09 (Phase 4 HITL + boot restore passed)
+Last updated: 2026-07-11 (loop-wrap playback bugfix interrupt)
 
 ---
 
 ## Now implementing
 
-### OpenSpec: [`continuous-runtime-persistence`](../../openspec/changes/continuous-runtime-persistence/) (DEC-020)
+### Bugfix: loop-wrap playback retrigger (interrupts DEC-020 Phase 5)
+
+**Scope:** `Track::playMidiEvents` / `playMidiEventsForSlot` — on same-loop wrap, emit tail events (off@L−1) before head@0; remove `closeOpenNotesAtLoopWrap` from playback wrap (overdub capture spanning notes preserved).
+
+**Evidence:** [`session_20260709_224935.log`](../../captures/session_20260709_224935.log) — MO `double_on` at BAR wrap (54-bar loop).
+
+**Out of scope this pass:** slot/bar queued seek `sendAllNotesOff`; unify pending-note flush at record/overdub stop.
+
+| Gate | Status |
+|------|--------|
+| Native | **544/544** |
+| HITL wrap | **User** — overdub through wrap; no MO `double_on` at BAR |
+
+---
+
+### OpenSpec: [`continuous-runtime-persistence`](../../openspec/changes/continuous-runtime-persistence/) (DEC-020) — **paused** until wrap fix lands
 
 **Branch:** `continuous-saving` @ `736fa33` (recovery stack merged 2026-07-09)
 
@@ -19,7 +34,7 @@ Last updated: 2026-07-09 (Phase 4 HITL + boot restore passed)
 | **2** Persistence queue | **Complete** |
 | **3** Cooperative scheduler | **Complete** — overdub-stop HITL passed (`f0ee520`) |
 | **4** Mid-pass persistence | **Shipped** — native + **HITL passed** [`session_20260709_171043.log`](../../captures/session_20260709_171043.log) (64+64); boot restore [`session_20260709_171951.log`](../../captures/session_20260709_171951.log) |
-| **5** Recovery | **Next** — longest valid prefix load + quarantine tail |
+| **5** Recovery | **Next** — longest valid prefix load + quarantine tail — [**handoff**](../plans/continuous_runtime_persistence_phase5_recovery_handoff.md) |
 | **6** Full 64+64 HITL | **Mostly evidenced** (same log) — archive checklist + `oldestDirtyChunkAge` review remain |
 
 | Gate | Owner | Status |
@@ -35,6 +50,7 @@ Last updated: 2026-07-09 (Phase 4 HITL + boot restore passed)
 | Doc | Role |
 |-----|------|
 | Agent map | [RUNTIME_STORAGE_AND_PERSISTENCE.md](../Guides/RUNTIME_STORAGE_AND_PERSISTENCE.md) |
+| **Phase 5 handoff** | [continuous_runtime_persistence_phase5_recovery_handoff.md](../plans/continuous_runtime_persistence_phase5_recovery_handoff.md) |
 | OpenSpec | [continuous-runtime-persistence](../../openspec/changes/continuous-runtime-persistence/) |
 
 ---

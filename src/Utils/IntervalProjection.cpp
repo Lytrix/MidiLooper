@@ -435,4 +435,19 @@ bool isInflatedDisplaySpan(const NoteUtils::DisplayNote& displayNote, uint32_t l
     return (displayNote.endTick - displayNote.startTick) > loopLength / 2;
 }
 
+bool shouldPlaybackEmitWrapTailEvent(uint32_t prevTickInLoop, uint32_t eventPhaseTick,
+                                     uint32_t loopLengthTicks) {
+    if (loopLengthTicks == 0 || prevTickInLoop == UINT32_MAX) {
+        return false;
+    }
+    const uint32_t tailEnd = loopLengthTicks - 1;
+    return prevTickInLoop < eventPhaseTick && eventPhaseTick <= tailEnd;
+}
+
+bool shouldPlaybackCrossEvent(uint32_t prevTickInLoop, uint32_t eventPhaseTick, uint32_t tickInLoop,
+                              bool atLoopStart) {
+    return atLoopStart ? (eventPhaseTick <= tickInLoop)
+                       : (prevTickInLoop < eventPhaseTick && eventPhaseTick <= tickInLoop);
+}
+
 }  // namespace IntervalProjection
