@@ -5,6 +5,7 @@
 #include "Utils/LoopStopFinalize.h"
 #include "Utils/CaptureIncrementalSanity.h"
 #include "Utils/IntervalProjection.h"
+#include "Utils/NoteUtils.h"
 #include "Globals.h"
 #include "Utils/MemoryMonitor.h"
 #include "Utils/DebugSessionCapture.h"
@@ -808,6 +809,81 @@ bool Loop::appendCaptureEvent(const MidiEvent& evt) {
   applyCaptureEventToPreview(capturePreview, evt, Config::TICKS_PER_BAR);
   ++captureDisplayRevision;
   return true;
+}
+
+bool Loop::removeOpenCaptureNoteOn(uint8_t channel, uint8_t note) {
+  if (!captureActive() || capture.store.empty() || loopLengthTicks == 0) {
+    return false;
+  }
+  ensureCaptureEventsSorted();
+
+  SessionMidiEventVec flat;
+  capture.store.flatten(flat);
+  if (flat.empty()) {
+    return false;
+  }
+
+  const std::vector<NoteUtils::OpenNoteOn> opens =
+      NoteUtils::findOpenNoteOns(flat, loopLengthTicks);
+  uint32_t openTick = UINT32_MAX;
+  for (const NoteUtils::OpenNoteOn& open : opens) {
+    if (open.note != note) {
+      continue;
+    }
+    for (const MidiEvent& evt : flat) {
+      if (evt.isNoteOn() && evt.channel == channel && evt.data.noteData.note == note &&
+          evt.tick == open.tick) {
+        openTick = open.tick;
+        break;
+      }
+    }
+    if (openTick != UINT32_MAX) {
+      break;
+    }
+  }
+  if (openTick == UINT32_MAX) {
+    return false;
+  }
+
+  SessionMidiEventVec kept;
+  kept.reserve(flat.size() - 1);
+  bool removed = false;
+  for (const MidiEvent& evt : flat) {
+    if (!removed && evt.isNoteOn() && evt.channel == channel &&
+        evt.data.noteData.note == note && evt.tick == openTick &&
+        evt.data.noteData.velocity > 0) {
+      removed = true;
+      continue;
+    }
+    kept.push_back(evt);
+  }
+  if (!removed) {
+    return false;
+  }
+
+  capture.store.clear();
+  if (!kept.empty()) {
+    capture.store.loadFromFlat(kept);
+  }
+  captureEventsSortDirty = false;
+  rebuildCapturePreviewFromStore(*this);
+  ++captureDisplayRevision;
+  return true;
+}
+
+bool Loop::captureHasNoteOffAfter(uint8_t channel, uint8_t note, uint32_t onTick) const {
+  if (!captureActive() || capture.store.empty()) {
+    return false;
+  }
+  SessionMidiEventVec flat;
+  capture.store.flatten(flat);
+  for (const MidiEvent& evt : flat) {
+    if (evt.isNoteOff() && evt.channel == channel && evt.data.noteData.note == note &&
+        evt.tick > onTick) {
+      return true;
+    }
+  }
+  return false;
 }
 
 size_t Loop::liveEventCount() const {
