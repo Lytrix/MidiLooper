@@ -31,6 +31,12 @@ bool slotHasDataForPlaybackSwitch(uint8_t trackIdx, uint8_t slotIndex) {
   return trackManager.slotHasLoopContent(trackIdx, slotIndex, true);
 }
 
+void ensureActiveLoopForRecord(uint8_t trackIdx, Track& track, uint8_t slotIndex) {
+  if (slotIndex != track.getActiveLoopIndex()) {
+    trackManager.setActiveLoopIndex(trackIdx, slotIndex);
+  }
+}
+
 void queuePlayingSlotSwitch(uint8_t trackIdx, Track& track, uint8_t slotIndex, uint32_t now) {
   const uint8_t enabledCount = trackManager.countEnabledSlots(trackIdx);
   const bool slotEnabled = trackManager.isSlotEnabled(trackIdx, slotIndex);
@@ -142,12 +148,6 @@ void restoreAudiblePlaybackAfterSlotClear(uint8_t trackIndex, Track& track, uint
 // - Play/Stop long-press release: center detailed window on playhead; hold tracks playhead.
 // - SAVE NEW: dedicated combo remains TBD until Set Browser UX is wired.
 // - LOAD INTO CURRENT: routed from browser selection, not a direct transport shortcut.
-
-void ensureActiveSlotForRecord(uint8_t trackIdx, Track& track, uint8_t slotIndex) {
-  if (track.getActiveLoopIndex() != slotIndex) {
-    trackManager.setActiveLoopIndex(trackIdx, slotIndex);
-  }
-}
 
 /// Armed + transport stopped: record press starts transport (DIN Start). Armed + transport running: cancel arm.
 bool handleArmedRecordPress(uint8_t trackIdx) {
@@ -468,7 +468,7 @@ void MidiButtonActions::handleToggleRecordForSlot(uint8_t slotIndex) {
                     trackManager.clearQueuedRecordingTrack(trackIdx, slotIndex);
                     logger.info("Loop %d: Immediate punch-in", slotIndex + 1);
                     track.setAlignLoopOriginOnNextStop(true);
-                    ensureActiveSlotForRecord(trackIdx, track, slotIndex);
+                    ensureActiveLoopForRecord(trackIdx, track, slotIndex);
                     trackManager.startRecordingTrack(trackIdx, now);
                 } else {
                     trackManager.queueRecordingTrack(
@@ -477,7 +477,7 @@ void MidiButtonActions::handleToggleRecordForSlot(uint8_t slotIndex) {
                 }
             } else {
                 logger.info("Loop %d: Start Recording", slotIndex + 1);
-                ensureActiveSlotForRecord(trackIdx, track, slotIndex);
+                ensureActiveLoopForRecord(trackIdx, track, slotIndex);
                 trackManager.startRecordingTrack(trackIdx, now);
             }
             trackManager.forceLedUpdate(now);
@@ -498,7 +498,7 @@ void MidiButtonActions::handleToggleRecordForSlot(uint8_t slotIndex) {
                 trackManager.clearQueuedRecordingTrack(trackIdx, slotIndex);
                 logger.info("Loop %d: Immediate punch-in", slotIndex + 1);
                 track.setAlignLoopOriginOnNextStop(true);
-                ensureActiveSlotForRecord(trackIdx, track, slotIndex);
+                ensureActiveLoopForRecord(trackIdx, track, slotIndex);
                 trackManager.startRecordingTrack(trackIdx, now);
             } else {
                 trackManager.queueRecordingTrack(
@@ -507,7 +507,7 @@ void MidiButtonActions::handleToggleRecordForSlot(uint8_t slotIndex) {
             }
         } else {
             logger.info("Loop %d: Start Recording", slotIndex + 1);
-            ensureActiveSlotForRecord(trackIdx, track, slotIndex);
+            ensureActiveLoopForRecord(trackIdx, track, slotIndex);
             trackManager.startRecordingTrack(trackIdx, now);
         }
         trackManager.forceLedUpdate(now);
@@ -547,10 +547,7 @@ void MidiButtonActions::endSlotLayerHold(uint8_t slotIndex) {
 void MidiButtonActions::handleToggleRecord() {
     Track& track = getCurrentTrack();
     uint8_t idx = trackManager.getSelectedTrackIndex();
-    uint32_t now = getCurrentTick();
-    const uint8_t selectedSlot = trackManager.getSelectedSlotIndex(idx);
-    const bool selectedSlotCanRecord = !track.hasPublishedEventsInSlot(selectedSlot);
-
+    
     if (handleArmedRecordPress(idx)) {
         return;
     }
@@ -558,16 +555,23 @@ void MidiButtonActions::handleToggleRecord() {
     if (track.isRecording()) {
         logger.info("MIDI Button A: Stop Recording");
         trackManager.stopRecordingTrack(idx);
-    } else if (track.isOverdubbing()) {
+        return;
+    }
+    if (track.isOverdubbing()) {
         logger.info("MIDI Button A: Stop Overdub");
         track.stopOverdubbing();
-    } else if (track.isPlaying()) {
+        return;
+    }
+
+    const uint8_t slot = trackManager.getSelectedSlotIndex(idx);
+    if (!track.hasPublishedEventsInSlot(slot)) {
+        handleToggleRecordForSlot(slot);
+        return;
+    }
+
+    if (track.isPlaying()) {
         logger.info("MIDI Button A: Live Overdub");
         trackManager.startOverdubbingTrack(idx);
-    } else if (selectedSlotCanRecord) {
-        ensureActiveSlotForRecord(idx, track, selectedSlot);
-        logger.info("MIDI Button A: Start Recording (slot %u)", static_cast<unsigned>(selectedSlot) + 1u);
-        trackManager.startRecordingTrack(idx, now);
     } else {
         logger.info("MIDI Button A: Toggle Play/Stop");
         track.togglePlayStop();

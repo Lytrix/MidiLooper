@@ -92,7 +92,7 @@ flowchart TB
 ## Fuller refactor (optional follow-ups)
 
 1. **LEDs / UI**: show arm explicitly via `**trackManager.isRecordingQueued(track, slot)`** (and related flags), not only `TrackState == TRACK_ARMED`.
-2. **Main record button** (`[handleToggleRecord](../../src/MidiButtonActions.cpp)`): still uses `track.isEmpty()` / immediate record; align with slot rules if desired.
+2. **Main record button** (`[handleToggleRecord](../../src/MidiButtonActions.cpp)`): **aligned** — uses `hasPublishedEventsInSlot(selectedSlot)` and delegates empty-slot arm/record to `handleToggleRecordForSlot`.
 3. **TrackStateMachine shrink**: only if you collapse global FSM into explicit transport + capture; needs save-format plan.
 4. **Storage**: if you add per-slot op state on disk, bump format version and map load → `TrackState` + queues.
 
