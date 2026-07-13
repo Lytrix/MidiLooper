@@ -112,6 +112,10 @@ struct Loop {
   void beginCapture(CapturePhase phase);
   void discardCapture();
   bool appendCaptureEvent(const MidiEvent& evt);
+  /// Remove the open capture note-on for channel/note (overdub overlap restore on stop).
+  bool removeOpenCaptureNoteOn(uint8_t channel, uint8_t note);
+  /// Returns true when the active capture contains a NoteOff for (channel,note) after onTick.
+  bool captureHasNoteOffAfter(uint8_t channel, uint8_t note, uint32_t onTick) const;
   CommitResult commitCapturePass(CommitReason reason, uint32_t sealedAtTick);
   bool setCapturePassState(PassId id, CapturePassState state);
   void resetPassTimeline();

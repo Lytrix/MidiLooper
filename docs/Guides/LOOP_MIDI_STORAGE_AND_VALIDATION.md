@@ -218,6 +218,31 @@ Playback/materialize from committed passes uses the same **paired on/off** model
 | **`validateAndCleanupMidiEvents`** | Idle fallback: remove orphan on/off; no synth insert |
 | **Q16** | **`removePairsShorterThanNoteMinLength`** + **`verifyCaptureHotStop`** on hot stop when enabled |
 
+#### Overdub stop — same-pitch overlap restore (pending-note close)
+
+**Owner:** `Track::finalizePendingNotes`
+
+When overdubbing, a performer can re-trigger a pitch that already has a published note sounding
+and then stop overdub before the performer release arrives. If stop-finalize blindly appends a
+synthetic `NoteOff` at the stop tick, canonical LIFO pairing will close the *earlier* published
+note (truncation) instead of discarding the incomplete re-trigger.
+
+Stop behavior for each pending `(channel,note)` on **overdub stop**:
+
+1. **Stale pending guard (dedup / bookkeeping mismatch)**  
+   If the active overdub capture already contains a real `NoteOff` later than the pending
+   note-on tick (same `(channel,note)`), treat `pendingNotes` as stale and **do not** append a
+   stop-time synthetic off.
+
+2. **Overlap restore**  
+   If a published same-pitch note is sounding at the pending note-on tick **or** at the stop close
+   tick, discard the open capture `NoteOn` (`Loop::removeOpenCaptureNoteOn`) and **do not** append
+   a synthetic `NoteOff`. This preserves the earlier published span.
+
+3. **Normal finalize**  
+   Otherwise, append a capture `NoteOff` at the stop close tick (same phase mapping as live
+   overdub capture) so a genuinely open held note is closed.
+
 NOTE_EDIT **32nd** hide floor (D16) applies to overlap **edit** only. Capture **NoteMinLength** is a user-global pair-span gate at stop — see [`capture_pass_note_min_length_refinement.md`](../plans/capture_pass_note_min_length_refinement.md).
 
 ---

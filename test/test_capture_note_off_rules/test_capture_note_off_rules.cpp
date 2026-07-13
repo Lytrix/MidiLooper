@@ -7,11 +7,16 @@
 
 #include "../../src/Logger.cpp"
 #include "../../src/LoopEventStore.cpp"
-#include "../../src/Utils/IntervalProjection.cpp"
 #include "../../src/Utils/NoteUtils.cpp"
 #include "../../src/Utils/LoopEventValidation.cpp"
+#include "../../src/EditApply.cpp"
+#include "../../src/LoopPasses.cpp"
+#include "../../src/Utils/MemoryMonitor.cpp"
+#include "../../src/Loop.cpp"
+#include "../test_support/LoopCaptureTestDeps.cpp"
 
 #include "LoopEventStore.h"
+#include "Loop.h"
 #include "Utils/LoopEventValidation.h"
 #include "Utils/LoopStopFinalize.h"
 #include "Utils/IntervalProjection.h"
@@ -312,6 +317,101 @@ void test_performer_release_after_stop_ignored() {
   TEST_ASSERT_EQUAL(10u, countNoteEvents(store, ch, note, false));
 }
 
+void test_remove_open_capture_note_on_drops_pending_on() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  loop.loopLengthTicks = 2304;
+  loop.beginCapture(CapturePhase::Overdub);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(1536, 4, 12, 100)));
+  TEST_ASSERT_EQUAL(1u, loop.capture.store.size());
+  TEST_ASSERT_TRUE(loop.removeOpenCaptureNoteOn(4, 12));
+  TEST_ASSERT_TRUE(loop.capture.store.empty());
+}
+
+void test_capture_has_note_off_after_detects_real_release() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  loop.loopLengthTicks = 2304;
+  loop.beginCapture(CapturePhase::Overdub);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(192, 4, 23, 100)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(384, 4, 23, 0)));
+  TEST_ASSERT_TRUE(loop.captureHasNoteOffAfter(4, 23, 192));
+  TEST_ASSERT_FALSE(loop.captureHasNoteOffAfter(4, 23, 384));
+}
+
+void test_overdub_overlap_restore_triggered_by_close_tick_inside_published_note() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  loop.loopLengthTicks = 2304;
+
+  LoopEventStore publishedStore;
+  TEST_ASSERT_TRUE(publishedStore.append(MidiEvent::NoteOn(1152, 4, 12, 100)));
+  TEST_ASSERT_TRUE(publishedStore.append(MidiEvent::NoteOff(1248, 4, 12, 0)));
+  loop.seedRecordPassFromStore(publishedStore);
+
+  loop.beginCapture(CapturePhase::Overdub);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(1344, 4, 12, 100)));
+  // Simulate overdub stop close tick inside published note (1152..1248).
+  // Restore behavior should drop the pending capture note-on (not append F@1184).
+  TEST_ASSERT_TRUE(loop.removeOpenCaptureNoteOn(4, 12));
+}
+
+void test_overdub_overlap_stop_restore_preserves_published_note() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  loop.loopLengthTicks = 2304;
+
+  LoopEventStore publishedStore;
+  append_hilt_grid_through_1920(publishedStore, 4, 12);
+  loop.seedRecordPassFromStore(publishedStore);
+
+  MidiEventVec publishedOnly;
+  loop.passes.materializeToEventVector(publishedOnly, loop.loopLengthTicks);
+  const auto notesBefore =
+      NoteUtils::reconstructNotes(publishedOnly, loop.loopLengthTicks, false);
+
+  loop.beginCapture(CapturePhase::Overdub);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(1536, 4, 12, 100)));
+  TEST_ASSERT_TRUE(loop.removeOpenCaptureNoteOn(4, 12));
+
+  MidiEventVec merged;
+  loop.mergeActiveCapturePasses(merged);
+  const auto notesAfter = NoteUtils::reconstructNotes(merged, loop.loopLengthTicks, false);
+  TEST_ASSERT_EQUAL(notesBefore.size(), notesAfter.size());
+  for (size_t i = 0; i < notesBefore.size(); ++i) {
+    TEST_ASSERT_EQUAL(notesBefore[i].note, notesAfter[i].note);
+    TEST_ASSERT_EQUAL(notesBefore[i].startTick, notesAfter[i].startTick);
+    TEST_ASSERT_EQUAL(notesBefore[i].endTick, notesAfter[i].endTick);
+  }
+}
+
+void test_overdub_stop_finalize_off_truncates_overlap_grid_note_without_restore() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  loop.loopLengthTicks = 2304;
+
+  LoopEventStore publishedStore;
+  append_hilt_grid_through_1920(publishedStore, 4, 12);
+  loop.seedRecordPassFromStore(publishedStore);
+
+  loop.beginCapture(CapturePhase::Overdub);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(1536, 4, 12, 100)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(1552, 4, 12, 0)));
+
+  MidiEventVec merged;
+  loop.mergeActiveCapturePasses(merged);
+  const auto notes = NoteUtils::reconstructNotes(merged, loop.loopLengthTicks, false);
+  auto it = std::find_if(notes.begin(), notes.end(), [](const NoteUtils::DisplayNote& n) {
+    return n.note == 12 && n.startTick == 1536 && n.endTick == 1728;
+  });
+  TEST_ASSERT_TRUE(it == notes.end());
+}
+
 int main(int /*argc*/, char** /*argv*/) {
   UNITY_BEGIN();
   RUN_TEST(test_linear_storage_off_before_on_is_valid);
@@ -327,5 +427,10 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_finalize_seal_single_tail_already_closed);
   RUN_TEST(test_finalize_seal_ownership_transition);
   RUN_TEST(test_performer_release_after_stop_ignored);
+  RUN_TEST(test_remove_open_capture_note_on_drops_pending_on);
+  RUN_TEST(test_capture_has_note_off_after_detects_real_release);
+  RUN_TEST(test_overdub_overlap_restore_triggered_by_close_tick_inside_published_note);
+  RUN_TEST(test_overdub_overlap_stop_restore_preserves_published_note);
+  RUN_TEST(test_overdub_stop_finalize_off_truncates_overlap_grid_note_without_restore);
   return UNITY_END();
 }

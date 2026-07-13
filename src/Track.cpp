@@ -25,6 +25,43 @@
 #include "Utils/LoopStopFinalize.h"
 #include "Utils/LoopEventValidation.h"
 #include "Utils/NoteUtils.h"
+
+namespace {
+
+bool isSamePitchSoundingAtTick(const NoteUtils::DisplayNoteVec& notes, uint8_t pitch,
+                               uint32_t tick) {
+  for (const NoteUtils::DisplayNote& displayNote : notes) {
+    if (displayNote.note != pitch) {
+      continue;
+    }
+    if (tick >= displayNote.startTick && tick < displayNote.endTick) {
+      return true;
+    }
+  }
+  return false;
+}
+
+bool shouldRestorePublishedOverlapOnOverdubStop(const Loop& loop, uint8_t note,
+                                                uint32_t pendingOnPhaseTick,
+                                                uint32_t closePhaseTick) {
+  if (loop.loopLengthTicks == 0 || !loop.hasPublishedEvents()) {
+    return false;
+  }
+  SessionMidiEventVec published;
+  loop.passes.materializeToEventVector(published, loop.loopLengthTicks);
+  if (published.empty()) {
+    return false;
+  }
+  const NoteUtils::DisplayNoteVec reconstructed =
+      NoteUtils::reconstructDisplayNotes(published, loop.loopLengthTicks, false);
+  if (isSamePitchSoundingAtTick(reconstructed, note, pendingOnPhaseTick)) {
+    return true;
+  }
+  return isSamePitchSoundingAtTick(reconstructed, note, closePhaseTick);
+}
+
+}  // namespace
+
 #include "Utils/IntervalProjection.h"
 #include "Utils/TrackMem.h"
 #include "DisplayManager.h"
@@ -658,6 +695,7 @@ bool Track::appendCaptureNoteOffAtPhase(uint8_t channel, uint8_t note, uint32_t 
 
 void Track::finalizePendingNotes(uint32_t offAbsTick) {
   const uint32_t phaseTick = capturePhaseTick(offAbsTick);
+  Loop& loop = getActiveLoop();
 
   std::vector<std::pair<uint8_t, uint8_t>> toClose;
   toClose.reserve(pendingNotes.size());
@@ -667,13 +705,34 @@ void Track::finalizePendingNotes(uint32_t offAbsTick) {
 
   size_t pendingFinalized = 0;
   size_t captureNoteOffsAppended = 0;
+  size_t overlapCaptureRestored = 0;
   for (const auto& key : toClose) {
     const uint8_t note = key.first;
     const uint8_t channel = key.second;
     ++pendingFinalized;
+
+    if (isOverdubbing()) {
+      const auto pendingIt = pendingNotes.find(key);
+      const uint32_t pendingOnAbsTick =
+          pendingIt != pendingNotes.end() ? pendingIt->second.startNoteTick : offAbsTick;
+      const uint32_t pendingOnPhaseTick = capturePhaseTick(pendingOnAbsTick);
+      // If a performer NoteOff already landed in capture but pending did not clear (dedup / warning),
+      // do not synthesize a stop-time off that truncates the earlier note.
+      if (loop.captureHasNoteOffAfter(channel, note, pendingOnPhaseTick)) {
+        pendingNotes.erase(key);
+        continue;
+      }
+      if (shouldRestorePublishedOverlapOnOverdubStop(loop, note, pendingOnPhaseTick, phaseTick)) {
+        if (loop.removeOpenCaptureNoteOn(channel, note)) {
+          ++overlapCaptureRestored;
+        }
+        pendingNotes.erase(key);
+        continue;
+      }
+    }
+
     if (appendCaptureNoteOffAtPhase(channel, note, phaseTick)) {
 #if defined(SESSION_CAPTURE)
-      const Loop& loop = getActiveLoop();
       uint32_t storageTick = phaseTick;
       if (loop.loopLengthTicks > 0 && storageTick >= loop.loopLengthTicks) {
         storageTick = loop.loopLengthTicks - 1;
@@ -682,13 +741,16 @@ void Track::finalizePendingNotes(uint32_t offAbsTick) {
 #endif
       pendingNotes.erase(key);
       ++captureNoteOffsAppended;
+    } else {
+      pendingNotes.erase(key);
     }
   }
 
 #if defined(SESSION_CAPTURE)
-  logger.info("Stop finalize pending: finalized=%u capture_offs=%u phase=%u",
+  logger.info("Stop finalize pending: finalized=%u capture_offs=%u overlap_restore=%u phase=%u",
               static_cast<unsigned>(pendingFinalized),
               static_cast<unsigned>(captureNoteOffsAppended),
+              static_cast<unsigned>(overlapCaptureRestored),
               phaseTick);
 #endif
 
