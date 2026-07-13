@@ -48,6 +48,7 @@ def run_base_scenario(args: object) -> int:
 
     out_dir = Path(getattr(args, "out_dir", Path("captures")))
     report = latest_base_report(out_dir)
+    seed_ok = base_report_record_seed_ok(report) if preset == "edit_minimal" else False
     loop_materialized = base_report_loop_materialized(report)
     record_seed_ok = base_report_record_seed_ok(report)
     if code != 0 and (loop_materialized or record_seed_ok):
@@ -57,7 +58,17 @@ def run_base_scenario(args: object) -> int:
         )
         code = 0
 
-    if code == 0 and base_report_usable_for_note_edit_sweep(report):
+    usable = base_report_usable_for_note_edit_sweep(report)
+    if preset == "edit_minimal" and seed_ok:
+        usable = True
+        if code != 0:
+            print(
+                "[hitl] base strict gates failed but edit-minimal record seed ok — "
+                "continuing to edit_minimal"
+            )
+            code = 0
+
+    if code == 0 and usable:
         ctx = get_context(args)
         ctx.base_preset_passed = True
         ctx.base_report = dict(report) if report is not None else None

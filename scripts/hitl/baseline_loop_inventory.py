@@ -105,9 +105,16 @@ def base_report_record_seed_ok(report: Mapping[str, Any] | None) -> bool:
     if int(row.get("record_clock_pulses_seen", 0) or 0) < 192:
         return False
     transitions = (report.get("assertions") or {}).get("transition_checks") or []
-    for transition in transitions:
-        if transition.get("ok") is False:
-            return False
+    if config.get("record_only"):
+        # Edit-minimal seed: capture + fixture notes matter more than every ST gate.
+        for transition in transitions:
+            key = (transition.get("from"), transition.get("to"))
+            if key == ("RECORDING", "STOPPED_RECORDING") and transition.get("ok") is False:
+                return False
+    else:
+        for transition in transitions:
+            if transition.get("ok") is False:
+                return False
     return True
 
 

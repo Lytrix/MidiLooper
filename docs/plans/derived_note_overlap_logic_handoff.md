@@ -88,7 +88,10 @@ pio test -e native -f test_note_edit_focus
 # HITL smoke (hardware + serial):
 .venv/bin/python scripts/host_midi_hitl.py run --preset edit_minimal \
   --midi-out "Teensy" --midi-in "Teensy" \
-  --serial-port /dev/cu.usbmodem154944801 --track 5
+  --serial-port /dev/cu.usbmodem154944801 \
+  --track-number 5 --midi-channel 5 \
+  --loop-slot 2 \
+  --phase-wait-ms 500 --final-wait-ms 3000 --press-ms 120
 
 openspec validate edit-session-action-geometry
 ```
