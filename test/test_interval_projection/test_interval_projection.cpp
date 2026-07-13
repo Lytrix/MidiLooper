@@ -340,6 +340,25 @@ void test_display_playhead_aligns_with_projection_cycle_after_slot_commit() {
     TEST_ASSERT_EQUAL_UINT32(playbackPhase, alignedDisplay);
 }
 
+void test_transport_active_capture_phase_matches_projection_cycle() {
+    // Transport-active capture (mapper B) must match playback playhead frame, not legacy startLoopTick.
+    constexpr uint32_t loopLength = 1536;
+    constexpr uint32_t startLoopTick = 1;
+    constexpr int32_t projectionCycleStartTick = 55210;
+    constexpr uint32_t currentTick = static_cast<uint32_t>(projectionCycleStartTick) + 100U;
+
+    const uint32_t capturePhase = IntervalProjection::tickPhaseInProjectionCycle(
+        currentTick, projectionCycleStartTick, loopLength);
+    const uint32_t playbackPhase = IntervalProjection::tickPhaseInProjectionCycle(
+        currentTick, projectionCycleStartTick, loopLength);
+    const uint32_t legacyCapturePhase =
+        IntervalProjection::tickPhaseInLoop(currentTick, startLoopTick, loopLength);
+
+    TEST_ASSERT_EQUAL_UINT32(100U, capturePhase);
+    TEST_ASSERT_EQUAL_UINT32(playbackPhase, capturePhase);
+    TEST_ASSERT_NOT_EQUAL(capturePhase, legacyCapturePhase);
+}
+
 void test_tick_phase_in_projection_cycle_negative_origin() {
     constexpr uint32_t loopLength = 3072;
     constexpr int32_t projectionCycleStartTick = -24;
@@ -417,6 +436,7 @@ int main(int /*argc*/, char** /*argv*/) {
     RUN_TEST(test_playback_order_linear_off_before_in_loop);
     RUN_TEST(test_build_playback_projection_context_fields);
     RUN_TEST(test_display_playhead_aligns_with_projection_cycle_after_slot_commit);
+    RUN_TEST(test_transport_active_capture_phase_matches_projection_cycle);
     RUN_TEST(test_tick_phase_in_projection_cycle_negative_origin);
     RUN_TEST(test_transport_downbeat_display_with_loop_start_offset);
     RUN_TEST(test_fresh_transport_linear_display_phase);

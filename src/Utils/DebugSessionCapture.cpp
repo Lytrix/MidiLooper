@@ -494,6 +494,16 @@ SC_MEM_ATTR void storedNoteEvent(char kind, uint32_t tick, uint8_t ch, uint8_t n
                 (unsigned long)tick, ch, note);
 }
 
+SC_MEM_ATTR void captureCoordinate(uint32_t absTick, uint32_t storageTick, uint32_t projPhase,
+                                   uint32_t displayPhase, uint32_t startLoopTick,
+                                   int32_t projectionCycleStartTick, uint32_t loopStartTick,
+                                   uint8_t ch, uint8_t note) {
+  emitCapPrintf(
+      "#CAP,%lu,COORD,abs,%u,storage,%u,proj,%u,display,%u,startLoop,%u,projStart,%d,loopStart,%u,ch,%u,note,%u\r\n",
+      (unsigned long)micros(), absTick, storageTick, projPhase, displayPhase, startLoopTick,
+      (int)projectionCycleStartTick, loopStartTick, ch, note);
+}
+
 SC_MEM_ATTR void displaySnapshot(uint8_t slot, const char* trackState, uint32_t loopLen,
                                  size_t takeEvents, size_t visualNotes, size_t frameNotes,
                                  size_t bufferEvents, int published) {

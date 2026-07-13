@@ -84,6 +84,10 @@ public:
 
   // For any notes still in pendingNotes, emit a NoteOff at offAbsTick
   void finalizePendingNotes(uint32_t offAbsTick);
+  /// Loop-relative phase for capture (overdub/stop); shared by live capture and finalize.
+  uint32_t capturePhaseTick(uint32_t absTick) const;
+  /// Append capture NoteOff at loop phase; returns false if capture inactive or append failed.
+  bool appendCaptureNoteOffAtPhase(uint8_t channel, uint8_t note, uint32_t phaseTick);
   void resetPlaybackState(uint32_t currentTick);
   /// Reset per-slot playback indices so enabling/unmuting starts at the right phase.
   void resetPlaybackStateForSlot(uint8_t slotIndex, uint32_t currentTick);
@@ -122,8 +126,6 @@ public:
   void processDeferredIdleMaintenance(uint32_t nowMs);
   /// Touch playback runtime and loop playback order for one slot (boot/load prewarm).
   void prewarmPlaybackForSlot(uint8_t slotIndex);
-  /// During overdub loop wrap: store synthetic note-off at loop end for still-open tails.
-  void closeOpenNotesAtLoopWrap();
 
   // MIDI events
   void recordMidiEvents(midi::MidiType type, byte channel, byte data1, byte data2, uint32_t currentTick);
@@ -351,7 +353,6 @@ private:
   void resetDeferredRecordRevts();
   void queueDeferredRecordRevts();
   void processDeferredRecordRevts(size_t maxEventsPerSlice = 64);
-  void flushPendingNotesIntoCapture(uint32_t closeTick);
 
   void syncSlotRefsFromPool();
 

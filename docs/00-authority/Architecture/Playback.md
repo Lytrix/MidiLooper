@@ -38,6 +38,7 @@ Playback **does not** own storage or display representations.
 1. Sort keys use precomputed `playbackEventPhase` — not allocating projection in comparator.
 2. `Loop.nextEventIndex` remains event scan index; projection cycle is separate rolling origin.
 3. Queued start (`queuedStartTick`) commits at grid — updates `projectionCycleStartTick` at commit (UIP Phase 4).
+4. **Playback is read-only** — emit MIDI and advance indices only; never append to capture, synthesize note-offs into storage, or modify `pendingNotes`. See [LOOP_MIDI_STORAGE_AND_VALIDATION.md](../../Guides/LOOP_MIDI_STORAGE_AND_VALIDATION.md) capture ownership invariants.
 
 ---
 
