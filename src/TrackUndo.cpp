@@ -65,7 +65,8 @@ TRACK_COLD_MEM void pushUndoEntry(Track& track, UndoEntry&& entry) {
     trimUndoStackForMemory(track);
 }
 
-TRACK_COLD_MEM size_t eraseUndoEntriesForSlot(GlobalUndoStack& stack, uint8_t slotIndex) {
+TRACK_COLD_MEM size_t eraseUndoEntriesForSlot(GlobalUndoStack& stack, uint8_t slotIndex,
+                                              bool preserveClearSlot) {
     const size_t oldSize = stack.entries.size();
     if (oldSize == 0) {
         return 0;
@@ -77,7 +78,9 @@ TRACK_COLD_MEM size_t eraseUndoEntriesForSlot(GlobalUndoStack& stack, uint8_t sl
     size_t removedTotal = 0;
 
     for (size_t i = 0; i < oldSize; ++i) {
-        const bool remove = stack.entries[i].slotIndex == slotIndex;
+        const bool remove = stack.entries[i].slotIndex == slotIndex &&
+                            (!preserveClearSlot ||
+                             stack.entries[i].kind != UndoEntryKind::ClearSlot);
         if (remove) {
             ++removedTotal;
             if (i < stack.cursor) {
@@ -346,11 +349,74 @@ TRACK_COLD_MEM bool applyRedoEntry(Track& track, UndoEntry& entry) {
     return false;
 }
 
+TRACK_COLD_MEM void restoreAudiblePlaybackAfterSlotClear(uint8_t trackIndex, Track& track, uint32_t now) {
+    bool foundAudible = false;
+    uint8_t newActiveSlot = 0;
+    for (uint8_t s = 0; s < Config::MAX_LOOPS_PER_TRACK; ++s) {
+        if (trackManager.isSlotEnabled(trackIndex, s) &&
+            !trackManager.isSlotMuted(trackIndex, s) &&
+            track.hasDataInSlot(s)) {
+            foundAudible = true;
+            newActiveSlot = s;
+            break;
+        }
+    }
+    if (foundAudible) {
+        trackManager.setActiveLoopIndex(trackIndex, newActiveSlot);
+        for (uint8_t s = 0; s < Config::MAX_LOOPS_PER_TRACK; ++s) {
+            if (trackManager.isSlotEnabled(trackIndex, s) &&
+                !trackManager.isSlotMuted(trackIndex, s) &&
+                track.hasDataInSlot(s)) {
+                track.resetPlaybackStateForSlot(s, now);
+            }
+        }
+        track.forceSetState(TRACK_STOPPED);
+        track.startPlaying(now);
+    } else {
+        track.sendAllNotesOff();
+    }
+}
+
+TRACK_COLD_MEM void applyClearSlotUndoSideEffects(Track& track, const UndoEntry& entry, uint8_t slotIndex) {
+    const uint8_t trackIndex = resolveTrackIndexForPersistence(track);
+    if (entry.hasSlotFlags) {
+        trackManager.setSlotEnabled(trackIndex, slotIndex, entry.beforeSlotEnabled);
+        trackManager.setSlotMuted(trackIndex, slotIndex, entry.beforeSlotMuted);
+    }
+    trackManager.setActiveLoopIndex(trackIndex, slotIndex);
+    track.invalidateCaches();
+    const uint32_t now = clockManager.getCurrentTick();
+    if (entry.hasTrackState && entry.beforeTrackState == TRACK_PLAYING) {
+        track.resetPlaybackStateForSlot(slotIndex, now);
+        track.startPlaying(now);
+    }
+    trackManager.forceLedUpdate(now);
+}
+
+TRACK_COLD_MEM void applyClearSlotRedoSideEffects(Track& track, uint8_t slotIndex) {
+    const uint8_t trackIndex = resolveTrackIndexForPersistence(track);
+    trackManager.setSlotEnabled(trackIndex, slotIndex, false);
+    trackManager.setSlotMuted(trackIndex, slotIndex, false);
+    trackManager.clearQueuedRecordingTrack(trackIndex, slotIndex);
+    trackManager.setLayeredSlotHeld(trackIndex, slotIndex, false);
+    const uint32_t now = clockManager.getCurrentTick();
+    restoreAudiblePlaybackAfterSlotClear(trackIndex, track, now);
+    trackManager.forceLedUpdate(now);
+}
+
 }  // namespace
 
 TRACK_COLD_MEM void TrackUndo::pushRecordPassAdded(Track& track, uint8_t slotIndex, PassId passId) {
     if (slotIndex >= Config::MAX_LOOPS_PER_TRACK || passId == kInvalidPassId) {
         return;
+    }
+    // Fresh record on a cleared slot supersedes prior pass and clear-slot undo checkpoints.
+    GlobalUndoStack& stack = track.getGlobalUndoStack();
+    const size_t pruned = eraseUndoEntriesForSlot(stack, slotIndex, false);
+    if (pruned > 0) {
+        logger.log(CAT_TRACK, LOG_INFO,
+                   "Record pass undo reset for slot %u: removed=%u",
+                   static_cast<unsigned>(slotIndex), static_cast<unsigned>(pruned));
     }
     const Loop& loop = track.getLoop(slotIndex);
     UndoEntry entry;
@@ -435,6 +501,7 @@ TRACK_COLD_MEM void TrackUndo::undoForLoop(Track& track, Loop& loop) {
         return;
     }
     UndoEntry& entry = stack.entries[stack.cursor - 1];
+    const UndoEntryKind entryKind = entry.kind;
     if (!applyUndoEntry(track, entry)) {
         return;
     }
@@ -442,7 +509,12 @@ TRACK_COLD_MEM void TrackUndo::undoForLoop(Track& track, Loop& loop) {
     logger.debug("Undo applied: kind=%d undo_count=%d",
                  static_cast<int>(entry.kind),
                  static_cast<int>(getUndoCount(track)));
-    logger.logTrackEvent("Overdub undone", clockManager.getCurrentTick());
+    if (entryKind == UndoEntryKind::ClearSlot) {
+        applyClearSlotUndoSideEffects(track, entry, slotIndex);
+        logger.logTrackEvent("Clear slot undone", clockManager.getCurrentTick());
+    } else {
+        logger.logTrackEvent("Overdub undone", clockManager.getCurrentTick());
+    }
     StorageManager::markCurrentSetLoopSlotDirty(resolveTrackIndexForPersistence(track), slotIndex);
     StorageManager::requestDeferredSaveState(looperState.getLooperState());
 }
@@ -462,6 +534,7 @@ TRACK_COLD_MEM void TrackUndo::redoForLoop(Track& track, Loop& loop) {
         return;
     }
     UndoEntry& entry = stack.entries[stack.cursor];
+    const UndoEntryKind entryKind = entry.kind;
     if (!applyRedoEntry(track, entry)) {
         return;
     }
@@ -469,7 +542,12 @@ TRACK_COLD_MEM void TrackUndo::redoForLoop(Track& track, Loop& loop) {
     logger.debug("Redo applied: kind=%d redo_count=%d",
                  static_cast<int>(entry.kind),
                  static_cast<int>(getRedoCount(track)));
-    logger.logTrackEvent("Overdub redone", clockManager.getCurrentTick());
+    if (entryKind == UndoEntryKind::ClearSlot) {
+        applyClearSlotRedoSideEffects(track, slotIndex);
+        logger.logTrackEvent("Clear slot redone", clockManager.getCurrentTick());
+    } else {
+        logger.logTrackEvent("Overdub redone", clockManager.getCurrentTick());
+    }
     StorageManager::markCurrentSetLoopSlotDirty(resolveTrackIndexForPersistence(track), slotIndex);
     StorageManager::requestDeferredSaveState(looperState.getLooperState());
 }
@@ -487,11 +565,14 @@ TRACK_COLD_MEM size_t TrackUndo::undoDepthForLoop(const Track& track, const Loop
     if (slotIndex == Config::INVALID_LOOP_SLOT) {
         return 0;
     }
-    size_t depth = countAppliedUndoEntriesForSlot(track.getGlobalUndoStack(), slotIndex);
     if (loopHasLiveOverdubCapture(loop)) {
-        ++depth;
+        return 1u + countAppliedPassUndoEntriesForSlot(track.getGlobalUndoStack(), slotIndex);
     }
-    return depth;
+    // Cleared slot: pass undo entries may remain for restore-on-undo but sidebar U: shows none.
+    if (!loop.hasPublishedEvents()) {
+        return 0;
+    }
+    return countAppliedPassUndoEntriesForSlot(track.getGlobalUndoStack(), slotIndex);
 }
 
 TRACK_COLD_MEM size_t TrackUndo::redoDepthForLoop(const Track& track, const Loop& loop) {
@@ -570,7 +651,7 @@ TRACK_COLD_MEM size_t TrackUndo::clearUndoHistoryForSlot(Track& track, uint8_t s
         return 0;
     }
     GlobalUndoStack& stack = track.getGlobalUndoStack();
-    const size_t removed = eraseUndoEntriesForSlot(stack, slotIndex);
+    const size_t removed = eraseUndoEntriesForSlot(stack, slotIndex, false);
     if (removed > 0) {
         logger.log(CAT_TRACK, LOG_INFO,
                    "Global undo pruned for slot %u: removed=%u remaining=%u cursor=%u",
@@ -584,14 +665,19 @@ TRACK_COLD_MEM size_t TrackUndo::clearUndoHistoryForSlot(Track& track, uint8_t s
 
 TRACK_COLD_MEM void TrackUndo::pushClearTrackSnapshot(Track& track) {
     Loop& loop = track.getActiveLoop();
+    const uint8_t slotIndex = track.getActiveLoopIndex();
+    const uint8_t trackIndex = resolveTrackIndexForPersistence(track);
     UndoEntry entry;
     entry.kind = UndoEntryKind::ClearSlot;
-    entry.slotIndex = track.getActiveLoopIndex();
+    entry.slotIndex = slotIndex;
     entry.loopId = loop.loopId;
     entry.beforeSnapshot = loop.sharePassesSnapshot();
     entry.beforeGeometry = captureGeometry(loop);
     entry.beforeTrackState = track.getState();
     entry.hasTrackState = true;
+    entry.beforeSlotEnabled = trackManager.isSlotEnabled(trackIndex, slotIndex);
+    entry.beforeSlotMuted = trackManager.isSlotMuted(trackIndex, slotIndex);
+    entry.hasSlotFlags = true;
     pushUndoEntry(track, std::move(entry));
 }
 

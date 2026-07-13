@@ -712,12 +712,13 @@ void MidiButtonActions::handleClearTrack() {
         trackManager.setActiveLoopIndex(tidx, slot);
     }
 
+    TrackUndo::pushClearTrackSnapshot(track);
+
     trackManager.setSlotEnabled(tidx, slot, false);
     trackManager.setSlotMuted(tidx, slot, false);
     trackManager.clearQueuedRecordingTrack(tidx, slot);
     trackManager.setLayeredSlotHeld(tidx, slot, false);
 
-    TrackUndo::pushClearTrackSnapshot(track);
     track.clear();
     StorageManager::markCurrentSetTrackDirty(tidx);
     StorageManager::requestDeferredSaveState(looperState.getLooperState());

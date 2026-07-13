@@ -16,7 +16,8 @@ UndoEntry makeEntry(uint8_t slotIndex, UndoEntryKind kind = UndoEntryKind::Recor
   return entry;
 }
 
-size_t eraseUndoEntriesForSlot(GlobalUndoStack& stack, uint8_t slotIndex) {
+size_t eraseUndoEntriesForSlot(GlobalUndoStack& stack, uint8_t slotIndex,
+                               bool preserveClearSlot) {
   const size_t oldSize = stack.entries.size();
   if (oldSize == 0) {
     return 0;
@@ -28,7 +29,9 @@ size_t eraseUndoEntriesForSlot(GlobalUndoStack& stack, uint8_t slotIndex) {
   size_t removedTotal = 0;
 
   for (size_t i = 0; i < oldSize; ++i) {
-    const bool remove = stack.entries[i].slotIndex == slotIndex;
+    const bool remove = stack.entries[i].slotIndex == slotIndex &&
+                        (!preserveClearSlot ||
+                         stack.entries[i].kind != UndoEntryKind::ClearSlot);
     if (remove) {
       ++removedTotal;
       if (i < stack.cursor) {
@@ -112,12 +115,67 @@ void test_erase_undo_entries_for_slot_adjusts_depth() {
   stack.entries.push_back(makeEntry(0, UndoEntryKind::OverdubPassAdded));
   stack.cursor = 3;
 
-  const size_t removed = eraseUndoEntriesForSlot(stack, 1);
+  const size_t removed = eraseUndoEntriesForSlot(stack, 1, true);
   TEST_ASSERT_EQUAL(1u, removed);
   TEST_ASSERT_EQUAL(2u, stack.entries.size());
   TEST_ASSERT_EQUAL(2u, stack.cursor);
   TEST_ASSERT_EQUAL(2u, countAppliedUndoEntriesForSlot(stack, 0));
   TEST_ASSERT_EQUAL(0u, countAppliedUndoEntriesForSlot(stack, 1));
+}
+
+void test_erase_preserves_clear_slot_entries() {
+  GlobalUndoStack stack;
+  stack.entries.push_back(makeEntry(0, UndoEntryKind::RecordPassAdded));
+  stack.entries.push_back(makeEntry(0, UndoEntryKind::ClearSlot));
+  stack.entries.push_back(makeEntry(1, UndoEntryKind::RecordPassAdded));
+  stack.cursor = 3;
+
+  const size_t removed = eraseUndoEntriesForSlot(stack, 0, true);
+  TEST_ASSERT_EQUAL(1u, removed);
+  TEST_ASSERT_EQUAL(2u, stack.entries.size());
+  TEST_ASSERT_EQUAL(2u, stack.cursor);
+  TEST_ASSERT_EQUAL(UndoEntryKind::ClearSlot, stack.entries[0].kind);
+  TEST_ASSERT_EQUAL(0u, stack.entries[0].slotIndex);
+  TEST_ASSERT_EQUAL(1u, countAppliedUndoEntriesForSlot(stack, 0));
+}
+
+void test_erase_clear_slot_still_prunes_other_slots() {
+  GlobalUndoStack stack;
+  stack.entries.push_back(makeEntry(2, UndoEntryKind::ClearSlot));
+  stack.entries.push_back(makeEntry(2, UndoEntryKind::OverdubPassAdded));
+  stack.cursor = 2;
+
+  const size_t removed = eraseUndoEntriesForSlot(stack, 2, true);
+  TEST_ASSERT_EQUAL(1u, removed);
+  TEST_ASSERT_EQUAL(1u, stack.entries.size());
+  TEST_ASSERT_EQUAL(1u, stack.cursor);
+  TEST_ASSERT_EQUAL(UndoEntryKind::ClearSlot, stack.entries[0].kind);
+}
+
+void test_pass_undo_depth_excludes_clear_slot() {
+  GlobalUndoStack stack;
+  stack.entries.push_back(makeEntry(0, UndoEntryKind::RecordPassAdded));
+  stack.entries.push_back(makeEntry(0, UndoEntryKind::OverdubPassAdded));
+  stack.entries.push_back(makeEntry(0, UndoEntryKind::ClearSlot));
+  stack.cursor = 3;
+
+  TEST_ASSERT_EQUAL(3u, countAppliedUndoEntriesForSlot(stack, 0));
+  TEST_ASSERT_EQUAL(2u, countAppliedPassUndoEntriesForSlot(stack, 0));
+}
+
+void test_pass_undo_depth_hidden_when_slot_cleared() {
+  // Sidebar U: uses pass depth only when the slot has published MIDI; cleared slots show --.
+  GlobalUndoStack stack;
+  stack.entries.push_back(makeEntry(0, UndoEntryKind::RecordPassAdded));
+  stack.entries.push_back(makeEntry(0, UndoEntryKind::OverdubPassAdded));
+  stack.cursor = 2;
+
+  TEST_ASSERT_EQUAL(2u, countAppliedPassUndoEntriesForSlot(stack, 0));
+  const bool slotHasPublishedEvents = false;
+  const size_t displayDepth = slotHasPublishedEvents
+                                  ? countAppliedPassUndoEntriesForSlot(stack, 0)
+                                  : 0u;
+  TEST_ASSERT_EQUAL(0u, displayDepth);
 }
 
 int main(int /*argc*/, char** /*argv*/) {
@@ -127,5 +185,9 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_count_redo_entries_per_slot);
   RUN_TEST(test_stack_tip_gate_blocks_other_loop);
   RUN_TEST(test_erase_undo_entries_for_slot_adjusts_depth);
+  RUN_TEST(test_erase_preserves_clear_slot_entries);
+  RUN_TEST(test_erase_clear_slot_still_prunes_other_slots);
+  RUN_TEST(test_pass_undo_depth_excludes_clear_slot);
+  RUN_TEST(test_pass_undo_depth_hidden_when_slot_cleared);
   return UNITY_END();
 }

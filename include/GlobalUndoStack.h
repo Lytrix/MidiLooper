@@ -43,6 +43,9 @@ struct UndoEntry {
   TrackState beforeTrackState = TRACK_EMPTY;
   TrackState afterTrackState = TRACK_EMPTY;
   bool hasTrackState = false;
+  bool beforeSlotEnabled = false;
+  bool beforeSlotMuted = false;
+  bool hasSlotFlags = false;
   bool hasRedoPayload = false;
 
   EditPassIdList editPassIds;
@@ -74,12 +77,40 @@ struct GlobalUndoStack {
   size_t redoCount() const { return entries.size() - cursor; }
 };
 
+/// Pass/edit/loop-boundary undo — excludes ClearSlot (sidebar U: depth).
+inline bool isPassUndoEntryKind(UndoEntryKind kind) {
+  switch (kind) {
+    case UndoEntryKind::RecordPassAdded:
+    case UndoEntryKind::OverdubPassAdded:
+    case UndoEntryKind::NoteEditPassClosed:
+    case UndoEntryKind::ControlChangeEditPassClosed:
+    case UndoEntryKind::LoopBoundaryChange:
+      return true;
+    case UndoEntryKind::ClearSlot:
+      return false;
+  }
+  return false;
+}
+
 /// Applied undo entries for one loop slot (index < cursor).
 inline size_t countAppliedUndoEntriesForSlot(const GlobalUndoStack& stack, uint8_t slotIndex) {
   size_t count = 0;
   const size_t limit = stack.cursor < stack.entries.size() ? stack.cursor : stack.entries.size();
   for (size_t i = 0; i < limit; ++i) {
     if (stack.entries[i].slotIndex == slotIndex) {
+      ++count;
+    }
+  }
+  return count;
+}
+
+/// Applied pass/edit undo depth for sidebar U: (ClearSlot excluded).
+inline size_t countAppliedPassUndoEntriesForSlot(const GlobalUndoStack& stack, uint8_t slotIndex) {
+  size_t count = 0;
+  const size_t limit = stack.cursor < stack.entries.size() ? stack.cursor : stack.entries.size();
+  for (size_t i = 0; i < limit; ++i) {
+    if (stack.entries[i].slotIndex == slotIndex &&
+        isPassUndoEntryKind(stack.entries[i].kind)) {
       ++count;
     }
   }
