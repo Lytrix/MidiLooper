@@ -72,8 +72,8 @@ void testRedoFunctionality() {
     
     std::cout << "✓ Test 2 passed" << std::endl;
     
-    // Test 3: Clearing a loop must clear undo history
-    std::cout << "Test 3: Clear removes undo history" << std::endl;
+    // Test 3: Clearing a loop preserves clear-slot undo checkpoint
+    std::cout << "Test 3: Clear preserves clear-slot undo" << std::endl;
     
     // Set up clear undo
     track.getMidiEvents() = events1;
@@ -81,8 +81,14 @@ void testRedoFunctionality() {
     assert(TrackUndo::getUndoCount(track) == 1);
     track.clear();
     assert(track.getMidiEvents().size() == 0);
-    assert(TrackUndo::getUndoCount(track) == 0);
+    assert(TrackUndo::getUndoCount(track) == 1);
     assert(TrackUndo::getRedoCount(track) == 0);
+    assert(TrackUndo::canUndoClearTrack(track) == true);
+    
+    TrackUndo::undoClearTrack(track);
+    assert(track.getMidiEvents().size() == 2);
+    assert(TrackUndo::getUndoCount(track) == 0);
+    assert(TrackUndo::getRedoCount(track) == 1);
     
     std::cout << "✓ Test 3 passed" << std::endl;
     

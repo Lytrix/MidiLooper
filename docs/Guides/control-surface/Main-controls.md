@@ -7,8 +7,8 @@
 | Press | Role |
 |-------|------|
 | Single | Record / play / overdub state machine (see below) |
-| Double | Undo overdub |
-| Triple | Redo overdub |
+| Double | Undo overdub, pass edits, and **clear-slot restore** |
+| Triple | Redo (including re-clear when applicable) |
 | Long | Clear track (with data) |
 
 **State machine (single on selected track):**

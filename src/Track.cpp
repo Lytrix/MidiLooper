@@ -1547,20 +1547,16 @@ TRACK_COLD_MEM void Track::clear() {
     }
 
     Loop& loop = getActiveLoop();
-    const uint8_t clearedSlot = activeLoopIndex;
     loop.resetPassTimeline();
     loop.discardCapture();
     loop.startLoopTick = 0;
     loop.loopLengthTicks = 0;
     loop.loopStartTick = 0;
 
-    const size_t prunedUndo = TrackUndo::clearUndoHistoryForSlot(*this, clearedSlot);
-
     reconcileTransportStateAfterSlotMutation();
     alignLoopOriginOnNextStop = false;
     invalidateCaches();
     editManager.revertNoteEditSessionForLoopClear(*this);
-    logger.log(CAT_TRACK, LOG_INFO, "Clear pruned undo entries=%u", static_cast<unsigned>(prunedUndo));
     logger.logTrackEvent("Track cleared", clockManager.getCurrentTick());
 }
 
