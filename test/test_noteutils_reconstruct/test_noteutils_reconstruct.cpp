@@ -172,6 +172,30 @@ void test_reconstruct_wrapped_tail_on_head_off_chronological() {
     assert_has_note(notes, 48, 0, 55, 100);
 }
 
+void test_reconstruct_note_off_at_wrap_zero_is_boundary_end() {
+    constexpr uint32_t loopLength = 1536;
+    MidiEventVec ev;
+    ev.push_back(MidiEvent::NoteOn(loopLength - 96, 5, 48, 100));
+    ev.push_back(MidiEvent::NoteOff(0, 5, 48, 0));
+    auto notes = NoteUtils::reconstructNotes(ev, loopLength, false);
+    TEST_ASSERT_EQUAL(1u, notes.size());
+    assert_has_note(notes, 48, loopLength - 96, loopLength - 1, 100);
+    for (const auto& n : notes) {
+        TEST_ASSERT_FALSE(n.startTick == 0u && n.endTick == 0u);
+    }
+}
+
+void test_is_wrap_held_open_note_accepts_head_off_at_zero() {
+    constexpr uint32_t loopLength = 1536;
+    MidiEventVec ev;
+    // Tail on
+    ev.push_back(MidiEvent::NoteOn(1440, 4, 30, 100));
+    // Head off at wrap
+    ev.push_back(MidiEvent::NoteOff(0, 4, 30, 0));
+    NoteUtils::OpenNoteOn open{30, 100, 1440};
+    TEST_ASSERT_TRUE(NoteUtils::isWrapHeldOpenNote(ev, open, loopLength));
+}
+
 void test_reconstruct_wrap_with_synthetic_loop_end_before_head_off() {
     constexpr uint32_t loopLength = 1536;
     MidiEventVec ev;
@@ -321,6 +345,8 @@ int main(int /*argc*/, char** /*argv*/) {
     RUN_TEST(test_reconstruct_dedupes_identical_segments);
     RUN_TEST(test_reconstruct_wrapped_tail_on_head_off);
     RUN_TEST(test_reconstruct_wrapped_tail_on_head_off_chronological);
+    RUN_TEST(test_reconstruct_note_off_at_wrap_zero_is_boundary_end);
+    RUN_TEST(test_is_wrap_held_open_note_accepts_head_off_at_zero);
     RUN_TEST(test_reconstruct_wrap_with_synthetic_loop_end_before_head_off);
     RUN_TEST(test_reconstruct_wrap_pair_blocked_by_intervening_note_on);
     RUN_TEST(test_reconstruct_adjacent_same_pitch_boundary_order);

@@ -828,7 +828,7 @@ DISP_CAPTURE_MEM void DisplayManager::emitDisplayCaptureSnapshot(const Track& tr
                                                 const DisplayNoteVec& frameNotes) {
     const Loop& loop = track.getLoop(displaySlot);
     const uint32_t loopLen = resolveDisplayLoopLength(track, displaySlot, currentTick);
-    const size_t bufferEvents =
+    const size_t bufferEventsExpr =
         (track.isRecording() && !track.isPlaying()) ? loop.capture.store.size() : frameNotes.size();
     const uint32_t boundedThreshold =
         DisplayWindowUtils::kMaxDetailedWindowBars * Config::TICKS_PER_BAR;
@@ -841,15 +841,15 @@ DISP_CAPTURE_MEM void DisplayManager::emitDisplayCaptureSnapshot(const Track& tr
         const DisplayNoteVec windowNotes = DisplayWindowUtils::filterDisplayNotesToWindow(
             frameNotes, windowStart, windowLength, loopLen);
         SC_DISP_WINDOW(displaySlot, TrackStateMachine::toString(track.getState()), loopLen,
-                       bufferEvents, loop.visualCache.notes.size(), frameNotes.size(),
-                       bufferEvents, loop.hasPublishedEvents() ? 1 : 0, windowStart, windowBars,
+                       bufferEventsExpr, loop.visualCache.notes.size(), frameNotes.size(),
+                       bufferEventsExpr, loop.hasPublishedEvents() ? 1 : 0, windowStart, windowBars,
                        windowNotes.size());
         return;
     }
 
     SC_DISP(displaySlot, TrackStateMachine::toString(track.getState()), loopLen,
-            bufferEvents, loop.visualCache.notes.size(), frameNotes.size(),
-            bufferEvents, loop.hasPublishedEvents() ? 1 : 0);
+            bufferEventsExpr, loop.visualCache.notes.size(), frameNotes.size(),
+            bufferEventsExpr, loop.hasPublishedEvents() ? 1 : 0);
 }
 
 DISP_CAPTURE_MEM void DisplayManager::emitDisplayCaptureSnapshot(const Track& track, uint8_t displaySlot,
@@ -1407,18 +1407,25 @@ void DisplayManager::drawNoteBar(const DisplayNote& e, int y, uint32_t s, uint32
     if (!isWrapped && eTick >= s) {
         // Normal note within loop boundary
         int x0 = TRACK_MARGIN + map(s, 0, lengthLoop, 0, pianoRollWidth());
-        int x1 = TRACK_MARGIN + map(eTick, 0, lengthLoop, 0, pianoRollWidth());
+        // DisplayNote.endTick is inclusive; convert to exclusive end for pixel mapping.
+        const uint32_t endExclusive = (lengthLoop > 0 && eTick >= lengthLoop - 1) ? lengthLoop
+                                                                                  : (eTick + 1);
+        int x1 = TRACK_MARGIN + map(endExclusive, 0, lengthLoop, 0, pianoRollWidth());
         if (x1 < x0) x1 = x0;
         _display.gfx.draw_rect_filled(_display.api.getFrameBuffer(), x0, y, x1, y, noteBrightness);
     } else {
         // Wrapped note: draw two segments
-        uint32_t wrappedEndTick = eTick % lengthLoop;
+        const uint32_t wrappedEndInclusive = (lengthLoop == 0) ? 0 : (eTick % lengthLoop);
+        // Inclusive->exclusive; a wrapped inclusive end at loopLength-1 means "end at boundary",
+        // so do not draw a head segment.
+        const uint32_t wrappedEndExclusive =
+            (lengthLoop > 0 && wrappedEndInclusive >= lengthLoop - 1) ? 0u : (wrappedEndInclusive + 1);
         
         // Calculate screen positions
         int x0 = TRACK_MARGIN + map(s % lengthLoop, 0, lengthLoop, 0, pianoRollWidth());
         int xEnd = TRACK_MARGIN + map(lengthLoop, 0, lengthLoop, 0, pianoRollWidth());
         int x1 = TRACK_MARGIN + map(0, 0, lengthLoop, 0, pianoRollWidth());
-        int x2 = TRACK_MARGIN + map(wrappedEndTick, 0, lengthLoop, 0, pianoRollWidth());
+        int x2 = TRACK_MARGIN + map(wrappedEndExclusive, 0, lengthLoop, 0, pianoRollWidth());
          
         // Draw from start to end of loop (segment 1)
         if (s % lengthLoop < lengthLoop) {
@@ -1426,7 +1433,7 @@ void DisplayManager::drawNoteBar(const DisplayNote& e, int y, uint32_t s, uint32
         }
         
         // Draw from 0 to wrapped endTick (segment 2)
-        if (wrappedEndTick > 0) {
+        if (wrappedEndExclusive > 0) {
             _display.gfx.draw_rect_filled(_display.api.getFrameBuffer(), x1, y, x2, y, noteBrightness);
         }
     }
@@ -2805,9 +2812,12 @@ void DisplayManager::drawNoteInfo(uint32_t currentTick, Track& selectedTrack, ui
     bool validNote = false;
     if (noteToShow && lengthLoop > 0) {
         uint8_t noteVal = noteToShow->note;
+        // Display notes can end at loop wrap: tail segment endTick == loopLength-1 but the
+        // exclusive end is loopLength. Use an exclusive-end view for the LEN readout.
+        const uint32_t endExclusive =
+            (noteToShow->endTick == lengthLoop - 1) ? lengthLoop : noteToShow->endTick;
         uint32_t lenVal =
-            NoteMovementUtils::calculateNoteLength(noteToShow->startTick, noteToShow->endTick,
-                                                 lengthLoop);
+            NoteMovementUtils::calculateNoteLength(noteToShow->startTick, endExclusive, lengthLoop);
         uint8_t velVal = noteToShow->velocity;
         if (editManager.isNoteEditActive()) {
             const NoteEditFocus& focus = editManager.getEditSession().focus;
@@ -2815,8 +2825,10 @@ void DisplayManager::drawNoteInfo(uint32_t currentTick, Track& selectedTrack, ui
                 focus.movingNoteId == selection.primaryNote) {
                 noteVal = focus.last.pitch;
                 velVal = focus.last.velocity;
+                const uint32_t focusEndExclusive =
+                    (focus.last.endTick == lengthLoop - 1) ? lengthLoop : focus.last.endTick;
                 lenVal = NoteMovementUtils::calculateNoteLength(focus.last.startTick,
-                                                               focus.last.endTick, lengthLoop);
+                                                               focusEndExclusive, lengthLoop);
                 const uint32_t storageBracketTick = editManager.isLengthBracketEditActive()
                                                         ? focus.last.endTick
                                                         : focus.last.startTick;
