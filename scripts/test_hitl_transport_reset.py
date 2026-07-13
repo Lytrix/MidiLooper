@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import argparse
 import sys
 import tempfile
 import time
@@ -14,11 +15,16 @@ if str(_SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(_SCRIPT_DIR))
 
 from hitl.serial_follow import ExternalSerialFollowCollector
+from hitl.serial_transport import (
+    resolve_wall_tempo_bpm,
+    serial_lines_show_bpm_activity,
+    serial_lines_show_transport_activity,
+    serial_sequencer_running,
+    use_serial_transport_proxy,
+)
 from host_midi_automation_baseline import (
     _latest_track_state,
     _serial_has_recording_started,
-    _serial_lines_show_bpm_activity,
-    _serial_sequencer_running,
     _should_reset_transport_for_recovery,
     _suffix_shows_disp_recording,
 )
@@ -73,15 +79,58 @@ class TransportResetRecoveryTests(unittest.TestCase):
 class SerialTransportProxyTests(unittest.TestCase):
     def test_bpm_activity_in_tail(self) -> None:
         lines = ["#CAP,1,MO,144,1,60,100", "#CAP,2,BPM,120.0,120.0"]
-        self.assertTrue(_serial_lines_show_bpm_activity(lines))
+        self.assertTrue(serial_lines_show_bpm_activity(lines))
+
+    def test_bar_activity_in_tail(self) -> None:
+        lines = ["#CAP,1,DFRAME,32,9200,120", "#CAP,2,BAR,768,1"]
+        self.assertTrue(serial_lines_show_transport_activity(lines))
 
     def test_sequencer_running_from_recent_bpm(self) -> None:
         collector = _FakeCollector(["#CAP,1,BPM,120.0,120.0"], silence_s=1.0)
-        self.assertTrue(_serial_sequencer_running(collector))
+        self.assertTrue(serial_sequencer_running(collector))
+
+    def test_sequencer_running_from_recent_bar(self) -> None:
+        collector = _FakeCollector(["#CAP,1,BAR,768,1"], silence_s=1.0)
+        self.assertTrue(serial_sequencer_running(collector))
 
     def test_sequencer_not_running_when_silent(self) -> None:
         collector = _FakeCollector(["#CAP,1,BPM,120.0,120.0"], silence_s=10.0)
-        self.assertFalse(_serial_sequencer_running(collector))
+        self.assertFalse(serial_sequencer_running(collector))
+
+    def test_mode_a_serial_port_enables_proxy(self) -> None:
+        args = argparse.Namespace(
+            serial_port="/dev/cu.usbmodemTEST",
+            follow_current_session=False,
+            follow_serial_log=None,
+        )
+        collector = _FakeCollector(["#CAP,1,BPM,118.5,118.5"], silence_s=0.5)
+        self.assertTrue(use_serial_transport_proxy(args, collector))
+
+    def test_follow_mode_still_enables_proxy(self) -> None:
+        args = argparse.Namespace(
+            serial_port=None,
+            follow_current_session=True,
+            follow_serial_log=None,
+        )
+        collector = _FakeCollector(["#CAP,1,BAR,768,2"], silence_s=0.5)
+        self.assertTrue(use_serial_transport_proxy(args, collector))
+
+    def test_no_proxy_without_serial_capture(self) -> None:
+        args = argparse.Namespace(
+            serial_port=None,
+            follow_current_session=False,
+            follow_serial_log=None,
+        )
+        collector = _FakeCollector(["#CAP,1,BPM,120.0,120.0"], silence_s=0.5)
+        self.assertFalse(use_serial_transport_proxy(args, collector))
+
+    def test_resolve_wall_tempo_prefers_serial_bpm(self) -> None:
+        collector = _FakeCollector(["#CAP,1,BPM,118.5,119.0"], silence_s=0.0)
+        self.assertEqual(resolve_wall_tempo_bpm(collector, 120.0), 119.0)
+
+    def test_resolve_wall_tempo_falls_back(self) -> None:
+        collector = _FakeCollector(["#CAP,1,ST,Track,EMPTY,PLAYING"], silence_s=0.0)
+        self.assertEqual(resolve_wall_tempo_bpm(collector, 120.0), 120.0)
 
 
 class ExternalSerialFollowCollectorTests(unittest.TestCase):

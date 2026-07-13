@@ -26,10 +26,10 @@ python3 -m pip install mido python-rtmidi pyserial
 Use capture build when you want `#CAP` state assertions (`ST`, `RECA`, `RECS`):
 
 ```bash
-pio run -e teensy41-capture -t upload
+pio run -e teensy41-capture-serial -t upload
 ```
 
-You can also run the script without serial capture assertions (MIDI drive only).
+Mode A (`--serial-port`) and Mode B (`--follow-current-session`) both enable serial transport proxy for bar pacing when USB MIDI clock is absent on the host input port.
 
 ## List ports first
 
@@ -100,8 +100,9 @@ python3 scripts/host_midi_automation_baseline.py \
 ```
 
 By default bar-based mode follows incoming MIDI clock (`24 PPQN`) so 8 bars means 8 real bars at the current running tempo.  
-Disable this with `--no-bar-sync-from-midi-clock` if you explicitly want tempo-derived seconds.
-If no MIDI clock pulses are observed in a bar-synced phase, the script falls back to tempo-based timing for that phase and marks it in the JSON report (`*_used_seconds_fallback`).
+When USB MIDI clock is not echoed to `--midi-in` but serial capture is enabled (`--serial-port` or `--follow-current-session`), the script uses a **wall-clock tempo proxy** when recent `#CAP,BPM` or `#CAP,BAR` lines show transport running. Proxy tempo prefers the latest serial BPM, then `--tempo-bpm` (default `120`).
+Disable bar sync with `--no-bar-sync-from-midi-clock` if you explicitly want tempo-derived seconds only.
+If no MIDI clock pulses are observed and serial proxy is inactive, bar-synced phases may record `0` clocks and fail (`phase_not_activated_or_no_clock`).
 Use `--max-run-seconds` to enforce a hard timeout for the full run. On timeout, the script exits with failure and still writes a report (`assertions.timed_out = true`).
 
 Default musical pattern in bar-sync mode:
@@ -144,12 +145,12 @@ To align stop actions with the intended musical boundary despite button short-pr
   - `--overdub-start-delay-beats 1`
   This keeps overdub entry from landing too early in the loop while preserving repeatable bar-synced capture.
 - The script adds a final settle delay before exit (`--final-wait-ms 1200`) so deferred button actions can complete.
-- In bar mode, the script records clock pulses seen in the JSON report (`*_clock_pulses_seen`) so you can verify phase length.
+- In bar mode, the script records clock pulses seen in the JSON report (`*_clock_pulses_seen`) so you can verify phase length. Counts come from host MIDI in or serial transport proxy pacing — not from `#CAP` clock lines.
 - Record stop returns to playback (`STOPPED_RECORDING -> PLAYING`), a second record short press enters overdub (`PLAYING -> OVERDUBBING`), and a third press exits overdub (`OVERDUBBING -> PLAYING`).
 - First-note timing validation (serial verification path):
   - `--record-first-note-max-clocks` (default `12`)
   - `--overdub-first-note-max-clocks` (default `12`)
-  - These checks enforce that first phase note-ons occur shortly after `RECORDING` / `OVERDUBBING` state entry.
+  - Offset is derived from microsecond delta between phase `ST,Track` entry and first `#CAP,MI,U` note-on, converted using serial BPM (or `--tempo-bpm`).
 
 ## Output
 

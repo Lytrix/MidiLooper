@@ -340,14 +340,21 @@ def make_workspace_dirty_again(
     log_prefix: str,
 ) -> bool:
     from hitl.deferred_save_idle import wait_for_deferred_save_idle
+    from hitl.transport_clock import wait_for_phase_clocks
     from host_midi_automation_baseline import (
         CONTROL_CHANNEL_1BASED,
         RECORD_BUTTON_NOTE,
         MIDI_CLOCKS_PER_BAR,
         _send_short_press,
-        _wait_for_clock_pulses,
     )
     from host_midi_automation_edit_baseline import _ensure_transport_running, _stop_transport_if_running
+
+    transport_args = argparse.Namespace(
+        serial_port="1" if serial_collector is not None else None,
+        follow_current_session=False,
+        follow_serial_log=None,
+        tempo_bpm=120.0,
+    )
 
     print(f"{log_prefix} make workspace dirty: {record_bars}-bar record on track {track_number}")
     _ensure_transport_running(
@@ -355,6 +362,8 @@ def make_workspace_dirty_again(
         in_port,
         press_ms=press_ms,
         phase_wait_ms=phase_wait_ms,
+        serial_collector=serial_collector,
+        transport_args=transport_args,
     )
     time.sleep(phase_wait_ms / 1000.0)
 
@@ -368,8 +377,10 @@ def make_workspace_dirty_again(
     time.sleep(phase_wait_ms / 1000.0)
 
     target_clocks = record_bars * MIDI_CLOCKS_PER_BAR
-    seen = _wait_for_clock_pulses(
+    seen = wait_for_phase_clocks(
         in_port,
+        serial_collector,
+        transport_args,
         target_clocks,
         timeout_s=max(30.0, record_bars * 6.0),
     )

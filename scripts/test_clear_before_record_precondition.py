@@ -13,7 +13,10 @@ if str(_SCRIPT_DIR) not in sys.path:
 
 from host_midi_automation_baseline import (
     _can_skip_clear_before_record,
+    _clear_undo_prune_gate_ok,
+    _count_capture_transitions,
     _latest_track_state,
+    _record_entry_to_recording_count,
     _serial_has_clear_completed,
     _track_cleared_for_record,
 )
@@ -49,6 +52,18 @@ class ClearBeforeRecordPreconditionTests(unittest.TestCase):
         self.assertTrue(_track_cleared_for_record(lines))
         self.assertTrue(_serial_has_clear_completed(lines))
 
+    def test_cleared_for_record_selected_slot_clear_log(self) -> None:
+        lines = ["[1456.072] [INFO] MIDI: Clear selected slot 2"]
+        self.assertTrue(_serial_has_clear_completed(lines))
+        self.assertTrue(_track_cleared_for_record(lines))
+
+    def test_clear_ignored_selected_slot_empty(self) -> None:
+        from host_midi_automation_baseline import _serial_has_clear_ignored_empty
+
+        lines = ["Clear ignored — selected slot is empty"]
+        self.assertTrue(_serial_has_clear_ignored_empty(lines))
+        self.assertTrue(_can_skip_clear_before_record(lines))
+
     def test_cleared_for_record_clear_log_after_stopped_recs(self) -> None:
         """Long-loop clear: STOPPED+RECS may linger in log; clear log confirms precondition."""
         from host_midi_automation_edit_baseline import _track_cleared_for_record as edit_cleared
@@ -59,6 +74,43 @@ class ClearBeforeRecordPreconditionTests(unittest.TestCase):
             "[INFO] MIDI: Clear Track",
         ]
         self.assertTrue(edit_cleared(lines))
+
+
+class RecordTransitionCountTests(unittest.TestCase):
+    def test_stopped_to_recording_counts_as_record_arm(self) -> None:
+        lines = [
+            "#CAP,1,ST,Track,STOPPED,PLAYING",
+            "#CAP,2,ST,Track,STOPPED,RECORDING",
+            "#CAP,3,ST,Track,RECORDING,STOPPED_RECORDING",
+        ]
+        counts = _count_capture_transitions(lines)
+        self.assertEqual(_record_entry_to_recording_count(counts), 1)
+        self.assertEqual(counts.get(("ARMED", "RECORDING"), 0), 0)
+
+
+class ClearUndoPruneGateTests(unittest.TestCase):
+    def test_clear_log_confirmed_exempts_missing_prune(self) -> None:
+        self.assertTrue(
+            _clear_undo_prune_gate_ok(
+                [{"track_index": 4, "result": "clear_log_confirmed"}],
+                {"found": False, "remaining_zero": False},
+            )
+        )
+
+    def test_requires_prune_when_clear_not_exempt(self) -> None:
+        self.assertFalse(
+            _clear_undo_prune_gate_ok(
+                [{"track_index": 4, "result": "no_serial_capture"}],
+                {"found": False, "remaining_zero": False},
+            )
+        )
+        self.assertTrue(
+            _clear_undo_prune_gate_ok(
+                [{"track_index": 4, "result": "no_serial_capture"}],
+                {"found": True, "remaining_zero": True},
+            )
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
