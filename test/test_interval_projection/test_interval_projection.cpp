@@ -316,6 +316,7 @@ void test_build_playback_projection_context_fields() {
 }
 
 void test_display_playhead_aligns_with_projection_cycle_after_slot_commit() {
+    // Transport-active display playhead follows storage loop phase (startLoopTick frame).
     constexpr uint32_t loopLength = 1536;
     constexpr uint32_t startLoopTick = 1;
     constexpr int32_t projectionCycleStartTick = 55210;
@@ -324,20 +325,44 @@ void test_display_playhead_aligns_with_projection_cycle_after_slot_commit() {
 
     const uint32_t playbackPhase = IntervalProjection::tickPhaseInProjectionCycle(
         currentTick, projectionCycleStartTick, loopLength);
-
-    const uint32_t legacyStoragePhase =
+    const uint32_t storagePhase =
         IntervalProjection::tickPhaseInLoop(currentTick, startLoopTick, loopLength);
-    const uint32_t legacyDisplay =
-        IntervalProjection::noteRelativeTick(legacyStoragePhase, loopStartTick, loopLength);
-
-    const uint32_t alignedStoragePhase = IntervalProjection::tickPhaseInProjectionCycle(
-        currentTick, projectionCycleStartTick, loopLength);
-    const uint32_t alignedDisplay =
-        IntervalProjection::noteRelativeTick(alignedStoragePhase, loopStartTick, loopLength);
+    const uint32_t displayPhase =
+        IntervalProjection::noteRelativeTick(storagePhase, loopStartTick, loopLength);
 
     TEST_ASSERT_EQUAL_UINT32(100U, playbackPhase);
-    TEST_ASSERT_NOT_EQUAL(playbackPhase, legacyDisplay);
-    TEST_ASSERT_EQUAL_UINT32(playbackPhase, alignedDisplay);
+    TEST_ASSERT_NOT_EQUAL(playbackPhase, displayPhase);
+    TEST_ASSERT_EQUAL_UINT32(storagePhase, displayPhase);
+}
+
+void test_record_stop_display_coordinate_frame() {
+    // Record-stop rewind: storage, projection anchor, and display share phase 248.
+    constexpr uint32_t loopLength = 3072;
+    constexpr uint32_t recordStartTick = 671000;
+    constexpr uint32_t playbackTick = recordStartTick + 248;
+    const uint32_t storagePhase =
+        IntervalProjection::tickPhaseInLoop(playbackTick, recordStartTick, loopLength);
+    const int32_t projectionCycleStartTick =
+        static_cast<int32_t>(playbackTick) - static_cast<int32_t>(storagePhase);
+    constexpr uint32_t loopStartTick = 0;
+
+    const uint32_t displayStoragePhase =
+        IntervalProjection::tickPhaseInLoop(playbackTick, recordStartTick, loopLength);
+    const uint32_t displayPhase =
+        IntervalProjection::noteRelativeTick(displayStoragePhase, loopStartTick, loopLength);
+    const uint32_t projectionPhase = IntervalProjection::tickPhaseInProjectionCycle(
+        playbackTick, projectionCycleStartTick, loopLength);
+
+    TEST_ASSERT_EQUAL_UINT32(248U, storagePhase);
+    TEST_ASSERT_EQUAL_UINT32(storagePhase, displayPhase);
+    TEST_ASSERT_EQUAL_UINT32(storagePhase, projectionPhase);
+}
+
+void test_record_stop_fresh_origin_catchup_enabled() {
+    TEST_ASSERT_TRUE(
+        IntervalProjection::isPlaybackAtLoopStart(UINT32_MAX, 0U, true));
+    TEST_ASSERT_TRUE(
+        IntervalProjection::isPlaybackAtLoopStart(UINT32_MAX, 88U, true));
 }
 
 void test_transport_active_capture_phase_matches_projection_cycle() {
@@ -413,6 +438,49 @@ void test_display_wrap_backward_only_on_musical_loop_head() {
                                                                         loopLength));
 }
 
+void test_preserve_anchor_phase_matches_projection() {
+    constexpr uint32_t loopLength = 3072;
+    constexpr uint32_t recordStartTick = 2760;
+    constexpr uint32_t playbackTick = 3072;
+    const uint32_t anchorPhase =
+        IntervalProjection::tickPhaseInLoop(playbackTick, recordStartTick, loopLength);
+    const int32_t projectionCycleStartTick =
+        static_cast<int32_t>(playbackTick) - static_cast<int32_t>(anchorPhase);
+    const uint32_t projectionPhase = IntervalProjection::tickPhaseInProjectionCycle(
+        playbackTick, projectionCycleStartTick, loopLength);
+    TEST_ASSERT_EQUAL_UINT32(anchorPhase, projectionPhase);
+    TEST_ASSERT_EQUAL_UINT32(312U, anchorPhase);
+}
+
+void test_at_loop_start_same_phase_not_retrigger() {
+    TEST_ASSERT_FALSE(
+        IntervalProjection::isPlaybackAtLoopStart(88U, 88U, true));
+    TEST_ASSERT_FALSE(
+        IntervalProjection::isPlaybackAtLoopStart(88U, 88U, false));
+    TEST_ASSERT_FALSE(
+        IntervalProjection::isPlaybackAtLoopStart(1536U, 1536U, true));
+}
+
+void test_at_loop_start_wrap_backward() {
+    TEST_ASSERT_TRUE(
+        IntervalProjection::isPlaybackAtLoopStart(UINT32_MAX, 0U, true));
+    TEST_ASSERT_TRUE(
+        IntervalProjection::isPlaybackAtLoopStart(UINT32_MAX, 88U, true));
+    TEST_ASSERT_TRUE(
+        IntervalProjection::isPlaybackAtLoopStart(2200U, 50U, true));
+    TEST_ASSERT_TRUE(
+        IntervalProjection::isPlaybackAtLoopStart(2200U, 50U, false));
+    TEST_ASSERT_FALSE(
+        IntervalProjection::isPlaybackAtLoopStart(50U, 2200U, true));
+}
+
+void test_at_loop_start_preserve_no_uint32_max_catchup() {
+    TEST_ASSERT_FALSE(
+        IntervalProjection::isPlaybackAtLoopStart(UINT32_MAX, 0U, false));
+    TEST_ASSERT_FALSE(
+        IntervalProjection::isPlaybackAtLoopStart(UINT32_MAX, 88U, false));
+}
+
 int main(int /*argc*/, char** /*argv*/) {
     UNITY_BEGIN();
     RUN_TEST(test_tick_interval_intersects_spec_example);
@@ -436,10 +504,16 @@ int main(int /*argc*/, char** /*argv*/) {
     RUN_TEST(test_playback_order_linear_off_before_in_loop);
     RUN_TEST(test_build_playback_projection_context_fields);
     RUN_TEST(test_display_playhead_aligns_with_projection_cycle_after_slot_commit);
+    RUN_TEST(test_record_stop_display_coordinate_frame);
+    RUN_TEST(test_record_stop_fresh_origin_catchup_enabled);
     RUN_TEST(test_transport_active_capture_phase_matches_projection_cycle);
     RUN_TEST(test_tick_phase_in_projection_cycle_negative_origin);
     RUN_TEST(test_transport_downbeat_display_with_loop_start_offset);
     RUN_TEST(test_fresh_transport_linear_display_phase);
     RUN_TEST(test_display_wrap_backward_only_on_musical_loop_head);
+    RUN_TEST(test_preserve_anchor_phase_matches_projection);
+    RUN_TEST(test_at_loop_start_same_phase_not_retrigger);
+    RUN_TEST(test_at_loop_start_wrap_backward);
+    RUN_TEST(test_at_loop_start_preserve_no_uint32_max_catchup);
     return UNITY_END();
 }

@@ -144,10 +144,20 @@ STORAGE_PERSIST_MEM bool isCaptureActiveForPersistence() {
     return false;
 }
 
+STORAGE_PERSIST_MEM bool isTransportActiveForPersistence() {
+    for (uint8_t trackIndex = 0; trackIndex < trackManager.getTrackCount(); ++trackIndex) {
+        const Track& track = trackManager.getTrack(trackIndex);
+        if (track.isPlaying() || track.isOverdubbing() || track.isRecording()) {
+            return true;
+        }
+    }
+    return false;
+}
+
 STORAGE_PERSIST_MEM uint32_t resolvePersistenceSliceBudgetUs(const LooperState& state) {
     return PersistenceBudget::resolvePersistenceSliceBudgetUs(
         isCaptureActiveForPersistence(),
-        state == LOOPER_PLAYING || state == LOOPER_OVERDUBBING || state == LOOPER_RECORDING);
+        isTransportActiveForPersistence());
 }
 
 STORAGE_PERSIST_MEM bool anyCurrentSetLoopSlotDirty() {

@@ -96,6 +96,7 @@ void fillSlotSummariesForTrack(uint8_t trackIndex, const Track& track,
 bool writeWorkspaceMetaAfterDeferredSave();
 
 bool isCaptureActiveForPersistence();
+bool isTransportActiveForPersistence();
 uint32_t resolvePersistenceSliceBudgetUs(const LooperState& state);
 
 void resetDeferredLoopWriteState();

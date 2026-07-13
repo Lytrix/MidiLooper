@@ -158,6 +158,8 @@ struct CurrentWorkspaceSaveJob {
   bool lastCompletedOk = false;
   uint32_t completedAtMs = 0;
   uint32_t failedAtMs = 0;
+  /// While millis() < this value, skip starting a new full workspace save during transport.
+  uint32_t deferDispatchUntilMs = 0;
   std::vector<MidiEvent, ExternalMemoryFirstAllocator<MidiEvent>> midiBatch;
   uint16_t loopSlotsWritten = 0;
   uint16_t loopSlotsSkipped = 0;

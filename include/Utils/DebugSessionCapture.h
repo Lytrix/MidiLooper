@@ -110,6 +110,12 @@ SC_MEM_ATTR void displaySnapshotWindow(uint8_t slot, const char* trackState, uin
 SC_MEM_ATTR void displayNoteInfo(uint8_t pitch, uint32_t storageStart, uint32_t displayStart,
                                  uint32_t length, int selectedIdx);
 SC_MEM_ATTR void displayFrame(uint32_t frameNotes, uint32_t elapsedUs, uint32_t frameIndex);
+SC_MEM_ATTR void playbackFrame(uint8_t slot, uint32_t currentTick, uint32_t tickInLoop,
+                               uint32_t prevTickInLoop, int32_t projectionCycleStartTick,
+                               uint32_t loopStartTick, uint32_t loopLength, uint16_t indexBefore,
+                               uint16_t indexAfter, uint16_t orderSize, uint16_t sent,
+                               uint8_t atLoopStart, uint8_t wrapDetected, uint8_t wasStale,
+                               uint32_t playbackRevision, uint32_t playbackGeneration);
 SC_MEM_ATTR void storedWrapPair(uint32_t onTick, uint32_t offTick, uint8_t ch, uint8_t note);
 SC_MEM_ATTR void captureCleanup(const char* phase, const char* kind, uint32_t count);
 SC_MEM_ATTR size_t flushPendingRevts(size_t maxLines = 64);
@@ -173,6 +179,12 @@ void emitDiagCheckpointLine(const Diagnostics::DiagTraceRecord& record);
   DebugSessionCapture::displayNoteInfo(pitch, storageStart, displayStart, length, selectedIdx)
 #define SC_DFRAME(frameNotes, elapsedUs, frameIndex) \
   DebugSessionCapture::displayFrame(frameNotes, elapsedUs, frameIndex)
+#define SC_PLAYBACK_FRAME(slot, currentTick, tickInLoop, prevTickInLoop, projStart, loopStart, \
+                          loopLen, idxBefore, idxAfter, orderSize, sent, atLoopStart, wrap, stale, \
+                          rev, gen) \
+  DebugSessionCapture::playbackFrame(slot, currentTick, tickInLoop, prevTickInLoop, projStart, \
+                                     loopStart, loopLen, idxBefore, idxAfter, orderSize, sent, \
+                                     atLoopStart, wrap, stale, rev, gen)
 #define SC_STORED_WRAP_PAIR(onTick, offTick, ch, note) DebugSessionCapture::storedWrapPair(onTick, offTick, ch, note)
 #define SC_CAPTURE_CLEANUP(phase, kind, count) DebugSessionCapture::captureCleanup(phase, kind, count)
 #define SC_REC_QUEUE_STORED_NOTE_ON(tick, ch, note) DebugSessionCapture::queueStoredNoteOn(tick, ch, note)
@@ -224,6 +236,10 @@ inline void restartCaptureBootGrace() {}
   ((void)0)
 #define SC_DNTE(pitch, storageStart, displayStart, length, selectedIdx) ((void)0)
 #define SC_DFRAME(frameNotes, elapsedUs, frameIndex) ((void)0)
+#define SC_PLAYBACK_FRAME(slot, currentTick, tickInLoop, prevTickInLoop, projStart, loopStart, \
+                          loopLen, idxBefore, idxAfter, orderSize, sent, atLoopStart, wrap, stale, \
+                          rev, gen) \
+  ((void)0)
 #define SC_STORED_WRAP_PAIR(onTick, offTick, ch, note) ((void)0)
 #define SC_CAPTURE_CLEANUP(phase, kind, count) ((void)0)
 #define SC_REC_QUEUE_STORED_NOTE_ON(tick, ch, note) ((void)0)

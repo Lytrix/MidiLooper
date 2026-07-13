@@ -1152,6 +1152,7 @@ void Track::stopRecording(uint32_t currentTick) {
   loop.lastTickInLoop = (finalLength > 0)
                             ? tickPhaseInLoop(playbackTick, recordStartTick, finalLength)
                             : 0;
+  const uint32_t storagePhaseTickAtStop = loop.lastTickInLoop;
   if (finalLength > 0) {
     projectionCycleStartTick =
         static_cast<int32_t>(playbackTick) - static_cast<int32_t>(loop.lastTickInLoop);
@@ -1185,6 +1186,7 @@ void Track::stopRecording(uint32_t currentTick) {
                      stateAdvanceHeapBefore, "enter", &stopPathStats);
   const uint32_t stateAdvanceStartUs = micros();
   startPlaying(playbackTick, true);
+  displayManager.refreshViewportAfterRecordStop(*this, activeLoopIndex, storagePhaseTickAtStop);
   const uint32_t stateAdvanceDurationUs = micros() - stateAdvanceStartUs;
   const uint32_t stateAdvanceHeapAfter = MemoryMonitor::getInternalHeapFreeBytes();
   logRecordStopStage(loop, stopPathStartUs, "state_advance", stateAdvanceDurationUs,
@@ -1197,6 +1199,7 @@ void Track::stopRecording(uint32_t currentTick) {
   if (sideEffectResult == CommitResult::Published) {
     StorageManager::markCurrentSetLoopSlotDirty(resolveTrackIndexForPersistence(*this),
                                                 getActiveLoopIndex());
+    StorageManager::deferWorkspaceSaveDispatchDuringPlayback(Config::playbackSaveDispatchGraceMs);
     StorageManager::requestDeferredSaveState(looperState.getLooperState(), stateAdvanceHeapAfter);
   }
 }

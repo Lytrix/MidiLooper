@@ -534,6 +534,21 @@ SC_MEM_ATTR void displayFrame(uint32_t frameNotes, uint32_t elapsedUs, uint32_t 
                 (unsigned long)elapsedUs, (unsigned long)frameIndex);
 }
 
+SC_MEM_ATTR void playbackFrame(uint8_t slot, uint32_t currentTick, uint32_t tickInLoop,
+                               uint32_t prevTickInLoop, int32_t projectionCycleStartTick,
+                               uint32_t loopStartTick, uint32_t loopLength, uint16_t indexBefore,
+                               uint16_t indexAfter, uint16_t orderSize, uint16_t sent,
+                               uint8_t atLoopStart, uint8_t wrapDetected, uint8_t wasStale,
+                               uint32_t playbackRevision, uint32_t playbackGeneration) {
+  emitCapPrintf("#CAP,%lu,PBF,%u,%lu,%lu,%lu,%ld,%lu,%lu,%u,%u,%u,%u,%u,%u,%u,%lu,%lu\r\n",
+                (unsigned long)micros(), slot, (unsigned long)currentTick,
+                (unsigned long)tickInLoop, (unsigned long)prevTickInLoop,
+                (long)projectionCycleStartTick, (unsigned long)loopStartTick,
+                (unsigned long)loopLength, indexBefore, indexAfter, orderSize, sent, atLoopStart,
+                wrapDetected, wasStale, (unsigned long)playbackRevision,
+                (unsigned long)playbackGeneration);
+}
+
 SC_MEM_ATTR void storedWrapPair(uint32_t onTick, uint32_t offTick, uint8_t ch, uint8_t note) {
   emitCapPrintf("#CAP,%lu,WRAP,%lu,%lu,%u,%u\r\n", (unsigned long)micros(), (unsigned long)onTick,
                 (unsigned long)offTick, ch, note);
