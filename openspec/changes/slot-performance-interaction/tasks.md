@@ -46,6 +46,8 @@
 - [ ] 4.1 Pending action pulse on **preview** target; phase/current-tick on **playing** slot in `refreshTrackAndLoopSelectLeds` / `MidiLedManager`
 - [ ] 4.2 Transient PlaybackWindow braces (`long-loop-piano-roll-window`)
 - [ ] 4.3 Display: flashing cursor at `loopStartTick` when preview ≠ playing (`DisplayManager`)
+- [ ] 4.4 Display: **dimmed reference overlay** for audible non-selected slots (D23) — tile shorter loops, segment longer loops to `L_play`
+- [ ] 4.5 Document legacy **hold layering** playback in `Loops.md` until removed; confirm **no multi-slot overdub** in spec review
 
 ## 4b. Split focus (playing / preview / edit commit)
 

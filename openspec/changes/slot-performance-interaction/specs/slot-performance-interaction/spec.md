@@ -314,3 +314,61 @@ While preview slot differs from playing slot, bar-step and 16th-grid LED phase S
 - **WHEN** slot 0 is playing and slot 1 is previewed for launch
 - **THEN** bar/16th performance LEDs remain aligned to slot 0's phase
 - **AND** the user can use bar/16th buttons against the still-playing loop until launch commit
+
+### Requirement: Multi-slot overdub is not supported
+
+The system SHALL NOT implement multi-slot overdub: live overdub capture SHALL target exactly one slot per track — the **active capture slot** (`activeLoopIndex`) — per Record-button overdub semantics.
+
+The system SHALL NOT capture overdub MIDI into multiple slots simultaneously, and SHALL NOT capture overdub into a preview/selected slot while a different slot remains the active capture target without explicit capture finalization and `activeLoopIndex` switch.
+
+Layered **playback** of multiple enabled slots (`playMidiEvents` + `playMidiEventsForSlot`) MAY remain; that is not overdub.
+
+#### Scenario: Record overdub targets active slot only
+
+- **WHEN** slot 0 and slot 1 are both enabled for playback
+- **AND** slot 1 is the active capture slot
+- **AND** the user presses Record to overdub while transport is playing
+- **THEN** overdub capture appends only to slot 1's capture store
+- **AND** slot 0 continues playback without receiving overdub events
+
+#### Scenario: No parallel overdub passes
+
+- **WHEN** the user attempts to start overdub on a second slot without stopping or finalizing capture on the first
+- **THEN** the system does not open a second parallel overdub capture path
+- **AND** behaviour follows existing single active capture session rules (`finalizeCaptureAndSelectSlot` on slot change)
+
+### Requirement: Dimmed reference overlay for playing slots on piano roll
+
+When preview/selected slot differs from the playing slot, or when multiple enabled unmuted slots are audible during playback, `DisplayManager` SHALL compose the piano roll from:
+
+1. **Primary layer** — preview/selected slot MIDI at normal brightness (edit/launch focus)
+2. **Reference layer(s)** — each other audible enabled unmuted slot at **dimmed** or semi-dimmed brightness
+
+Tiling for each reference slot SHALL use the **playing** slot loop length `L_play` (`loopLengthTicks` of `activeLoopIndex`) as the reference span:
+
+| Reference slot length `L_other` | Display rule |
+|--------------------------------|--------------|
+| `L_other < L_play` | Repeat / tile the reference slot's pattern across the visible window (or `L_play` span) as dimmed notes |
+| `L_other > L_play` | Show `L_play`-sized segments of the reference loop only, repeated as semi-dimmed notes aligned to playing phase — not the full longer loop at once |
+| `L_other == L_play` | One phase-aligned dimmed copy |
+
+The reference overlay SHALL make audible non-selected loops visible while the user edits or previews the selected slot. It SHALL NOT imply multi-slot overdub.
+
+#### Scenario: Preview launch shows playing loop dimmed underneath
+
+- **WHEN** slot 0 is playing and slot 1 is previewed for launch
+- **THEN** the piano roll primary layer shows slot 1 at normal brightness
+- **AND** slot 0's MIDI is visible as a dimmed reference overlay
+- **AND** bar/16th LEDs remain on slot 0 per playing-slot rule
+
+#### Scenario: Shorter layered loop tiles in reference overlay
+
+- **GIVEN** slot 0 (playing) has loop length 3072 ticks and slot 1 (also audible) has loop length 2304 ticks
+- **WHEN** the display renders slot 1 as a reference overlay while slot 0 is primary or playing reference
+- **THEN** slot 1's pattern is tiled/repeated across the 3072-tick reference span as dimmed notes
+
+#### Scenario: Longer layered loop shows playing-length segments
+
+- **GIVEN** slot 0 (playing) has loop length 2304 ticks and slot 1 (also audible) has loop length 3072 ticks
+- **WHEN** slot 1 is shown as a dimmed reference overlay
+- **THEN** only 2304-tick segments of slot 1 are drawn, repeated/semi-dimmed to match the playing reference length

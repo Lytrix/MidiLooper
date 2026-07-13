@@ -452,6 +452,30 @@ void test_preserve_anchor_phase_matches_projection() {
     TEST_ASSERT_EQUAL_UINT32(312U, anchorPhase);
 }
 
+void test_secondary_slot_wrap_must_not_shift_active_capture_phase() {
+    // Layered playback: secondary slot wrap must not mutate the shared projection anchor.
+    // Regression for session_20260713_182830 (768-tick / 1-bar overdub offset on slot 2).
+    constexpr uint32_t activeSlotLength = 3072;
+    constexpr uint32_t secondarySlotLength = 2304;
+    constexpr uint32_t absTick = 960;
+    int32_t anchor = 0;
+
+    const uint32_t correctPhase = IntervalProjection::tickPhaseInProjectionCycle(
+        absTick, anchor, activeSlotLength);
+    TEST_ASSERT_EQUAL_UINT32(960U, correctPhase);
+
+    const int32_t corruptedAnchor = IntervalProjection::advanceProjectionCycleStartTickOnWrap(
+        anchor, secondarySlotLength);
+    const uint32_t corruptedPhase = IntervalProjection::tickPhaseInProjectionCycle(
+        absTick, corruptedAnchor, activeSlotLength);
+    TEST_ASSERT_EQUAL_UINT32(1728U, corruptedPhase);
+    TEST_ASSERT_NOT_EQUAL(correctPhase, corruptedPhase);
+
+    const uint32_t unchangedPhase = IntervalProjection::tickPhaseInProjectionCycle(
+        absTick, anchor, activeSlotLength);
+    TEST_ASSERT_EQUAL_UINT32(correctPhase, unchangedPhase);
+}
+
 void test_at_loop_start_same_phase_not_retrigger() {
     TEST_ASSERT_FALSE(
         IntervalProjection::isPlaybackAtLoopStart(88U, 88U, true));
@@ -512,6 +536,7 @@ int main(int /*argc*/, char** /*argv*/) {
     RUN_TEST(test_fresh_transport_linear_display_phase);
     RUN_TEST(test_display_wrap_backward_only_on_musical_loop_head);
     RUN_TEST(test_preserve_anchor_phase_matches_projection);
+    RUN_TEST(test_secondary_slot_wrap_must_not_shift_active_capture_phase);
     RUN_TEST(test_at_loop_start_same_phase_not_retrigger);
     RUN_TEST(test_at_loop_start_wrap_backward);
     RUN_TEST(test_at_loop_start_preserve_no_uint32_max_catchup);

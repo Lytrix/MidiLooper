@@ -59,6 +59,30 @@ Implementation owner: **`LoopTriggerSequenceManager`**; `MidiButtonActions` disp
 
 ---
 
+## Multi-slot playback vs multi-slot overdub (locked 2026-07-13)
+
+| Capability | Status | Notes |
+|------------|--------|--------|
+| **Layered multi-slot playback** | **Shipped (legacy hold)** | `beginSlotLayerHold` / `pendingMultiSlotCommit` — multiple enabled slots audible via `playMidiEvents` + `playMidiEventsForSlot`. Removed from slot buttons when `slot-performance-interaction` gesture remap ships; until then it is the only multi-slot playback UX. |
+| **Loop-end chain (long press, non-selected)** | **Shipped** | Single-slot switch at loop boundary — not simultaneous layers. |
+| **Multi-slot overdub** | **Explicitly out of scope** | Too complex. Overdub stays on Record button, **active capture slot only**. |
+
+---
+
+## Piano roll: playing vs selected (locked 2026-07-13)
+
+When **preview/selected** ≠ **playing**, or when legacy layered playback is active:
+
+- **Primary notes:** selected/preview slot — normal brightness
+- **Reference overlay:** other audible enabled slots — **dimmed** MIDI
+- **Tiling** vs playing slot length `L_play`:
+  - Shorter other loop → repeat pattern as dimmed
+  - Longer other loop → show `L_play`-sized repeated segments semi-dimmed (not full long loop scroll)
+
+Owner: `DisplayManager` composes layers; extends split-focus (preview cursor flash + playing LEDs). See OpenSpec **D23**.
+
+---
+
 ## Quantisation split
 
 | Action | Quantisation | Why |
