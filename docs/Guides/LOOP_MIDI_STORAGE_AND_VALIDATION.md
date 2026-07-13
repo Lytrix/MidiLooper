@@ -243,6 +243,25 @@ Stop behavior for each pending `(channel,note)` on **overdub stop**:
    Otherwise, append a capture `NoteOff` at the stop close tick (same phase mapping as live
    overdub capture) so a genuinely open held note is closed.
 
+**Verification signature (SESSION_CAPTURE logs):**
+
+- **Good** (no truncation): the earlier stored note closes at its real off tick (example note 23):
+
+```text
+SEVT,N,192,4,23
+SEVT,F,384,4,23
+DNTE,23,192,192,192,...
+```
+
+- **Bad** (synthetic truncation): a stop-time off lands inside the earlier span:
+
+```text
+SEVT,N,192,4,23
+SEVT,F,312,4,23   // synthetic stop off (wrong)
+SEVT,F,384,4,23   // real off still exists
+DNTE,23,192,192,120,...
+```
+
 NOTE_EDIT **32nd** hide floor (D16) applies to overlap **edit** only. Capture **NoteMinLength** is a user-global pair-span gate at stop — see [`capture_pass_note_min_length_refinement.md`](../plans/capture_pass_note_min_length_refinement.md).
 
 ---
