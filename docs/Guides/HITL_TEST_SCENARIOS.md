@@ -197,9 +197,14 @@ Host unit test: `scripts/test_long_loop_display_serial_verify.py`.
 
 ```bash
 .venv/bin/python scripts/host_midi_hitl.py run --preset edit_minimal \
-  --midi-out "Teensy" --serial-port /dev/cu.usbmodem154944801 \
-  --track 5 --record-bars 2 --start-transport
+  --midi-out "Teensy" --midi-in "Teensy" \
+  --serial-port /dev/cu.usbmodem154944801 \
+  --track 5 --midi-channel 5 \
+  --loop-slot 2 \
+  --record-bars 2 --start-transport
 ```
+
+`--loop-slot` drives **record arm** on the Loops row (notes 50–57) during the base seed; omit it to use Record button 36 on the device-selected slot. The base phase logs `[info] --loop-slot N on track …`.
 
 Legacy entry: `scripts/host_midi_automation_edit_baseline.py`.
 

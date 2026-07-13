@@ -112,5 +112,37 @@ class ClearUndoPruneGateTests(unittest.TestCase):
         )
 
 
+class EditMinimalSeedOkTests(unittest.TestCase):
+    def test_record_only_seed_ignores_playing_transition_fail(self) -> None:
+        from hitl.baseline_loop_inventory import base_report_record_seed_ok
+
+        report = {
+            "config": {"record_only": True, "edit_record_fixture": True},
+            "per_track_stats": [
+                {
+                    "record_notes_sent": 9,
+                    "record_clock_pulses_seen": 192,
+                }
+            ],
+            "assertions": {
+                "transition_checks": [
+                    {"from": "ARMED", "to": "RECORDING", "ok": True},
+                    {"from": "RECORDING", "to": "STOPPED_RECORDING", "ok": True},
+                    {"from": "STOPPED_RECORDING", "to": "PLAYING", "ok": False},
+                ]
+            },
+        }
+        self.assertTrue(base_report_record_seed_ok(report))
+
+    def test_edit_minimal_parse_ignores_baseline_loop_slot(self) -> None:
+        from hitl.scenarios.edit_minimal import _parse_common_args
+
+        class Args:
+            legacy_args = ["--track-number", "5", "--loop-slot", "3", "--record-only"]
+
+        ns = _parse_common_args(Args())
+        self.assertEqual(ns.track_number, 5)
+
+
 if __name__ == "__main__":
     unittest.main()

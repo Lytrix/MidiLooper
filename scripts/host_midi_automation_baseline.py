@@ -664,23 +664,21 @@ def _armed_transition_baseline(lines: list[str]) -> int:
     )
 
 
-# Loop-slot row MIDI (Ch.16 notes 50-57) is intentionally disabled in HITL. Short-press
-# on an empty slot arms/starts record on device (see Loops.md); HITL uses Record
-# button (36) only for record/overdub/clear until preview/selected slot gestures ship in
-# openspec/changes/slot-performance-interaction/. Re-enable _send_loop_slot_select and
-# _prepare_loop_slot_before_clear from git history when that change is implemented.
+# Loop-slot row MIDI (Ch.16 notes 50-57): HITL uses slot short press for record arm when
+# --loop-slot is set; preview/selected-slot gestures beyond that remain in
+# openspec/changes/slot-performance-interaction/.
 LOOP_SELECT_NOTE_BASE = 50  # reserved for slot-performance revert
 
 
 def _log_loop_slot_report_only(args: Any, *, track_index: int) -> None:
-    """Record --loop-slot in logs/JSON only; no Loops-row button presses."""
+    """Log --loop-slot intent before capture (Loops-row MIDI used at record arm when set)."""
     loop_slot = int(getattr(args, "loop_slot", 0) or 0)
     if loop_slot <= 0:
         return
     print(
         f"[info] --loop-slot {loop_slot} on track {track_index} "
-        "(report only; capture uses Record button 36 — restore Loops-row select when "
-        "slot-performance-interaction OpenSpec is implemented)"
+        "(record arm uses Loops row note "
+        f"{LOOP_SELECT_NOTE_BASE + loop_slot - 1}; omit --loop-slot to use Record button 36)"
     )
 
 
@@ -768,8 +766,22 @@ def _send_record_arm_press(
     out_port: mido.ports.BaseOutput,
     *,
     press_ms: int,
+    loop_slot: Optional[int] = None,
 ) -> None:
-    """Arm/start record via main Record button (Ch.16 note 36)."""
+    """Arm/start record via main Record button or a loop-row slot short press.
+
+    When ``loop_slot`` is set (1-8), press Loops row note 50+(slot-1) so capture targets
+    that slot (``TOGGLE_RECORD_FOR_SLOT``). Otherwise use Record button (36) on the
+    device-selected slot.
+    """
+    if loop_slot is not None and loop_slot > 0:
+        _send_short_press(
+            out_port,
+            note=LOOP_SELECT_NOTE_BASE + (loop_slot - 1),
+            channel_1based=CONTROL_CHANNEL_1BASED,
+            press_ms=press_ms,
+        )
+        return
     _send_short_press(
         out_port,
         note=RECORD_BUTTON_NOTE,
@@ -2599,8 +2611,8 @@ def run() -> int:
         type=int,
         default=0,
         metavar="N",
-        help="Target loop slot 1-8 for report/JSON only (no Loops-row MIDI until "
-        "slot-performance-interaction). Capture uses Record button (36). 0 = default slot.",
+        help="Target loop slot 1-8 for record arm (Loops row notes 50-57). "
+        "0 = Record button (36) on device-selected slot.",
     )
     parser.add_argument("--record-seconds", type=float, default=3.0, help="Dense stream duration for record phase")
     parser.add_argument("--overdub-seconds", type=float, default=2.0, help="Dense stream duration for overdub phase")
@@ -3314,9 +3326,11 @@ def run() -> int:
                 baseline_latest_state = (
                     _latest_track_state(serial_collector.snapshot()) if serial_collector else None
                 )
+                record_loop_slot = args.loop_slot if args.loop_slot > 0 else None
                 _send_record_arm_press(
                     out_port,
                     press_ms=args.press_ms,
+                    loop_slot=record_loop_slot,
                 )
                 if serial_collector is not None:
                     timeout_s = args.state_sync_timeout_ms / 1000.0
@@ -3362,6 +3376,7 @@ def run() -> int:
                             _send_record_arm_press(
                                 out_port,
                                 press_ms=args.press_ms,
+                                loop_slot=record_loop_slot,
                             )
                             reached_recording = _wait_for_recording_started(
                                 serial_collector,
@@ -3542,15 +3557,51 @@ def run() -> int:
                         )
                         if not reached:
                             print("[warn] Retry did not reach STOPPED_RECORDING->PLAYING transition.")
-                            print(
-                                "[error] Record stop did not return to PLAYING; "
-                                "aborting track run (avoid overdub presses on wrong state)."
-                            )
-                            abort_reason = "record stop did not reach PLAYING"
-                            break
+                            if args.record_only:
+                                print(
+                                    "[info] record-only seed: continuing without PLAYING "
+                                    "transition (edit_minimal uses captured loop on device)."
+                                )
+                            else:
+                                print(
+                                    "[error] Record stop did not return to PLAYING; "
+                                    "aborting track run (avoid overdub presses on wrong state)."
+                                )
+                                abort_reason = "record stop did not reach PLAYING"
+                                break
                 time.sleep(args.phase_wait_ms / 1000.0)
                 if abort_reason:
                     break
+
+                if args.record_only:
+                    midi_in_messages += _drain_input_messages(in_port)
+                    per_track_stats.append(
+                        {
+                            "track_index": idx,
+                            "record_notes_sent": rec_notes,
+                            "record_cc_sent": rec_cc,
+                            "record_clock_pulses_seen": rec_clock_count,
+                            "record_used_seconds_fallback": rec_fallback_seconds,
+                            "record_grid_steps_emitted": int(rec_timing["grid_steps_emitted"]),
+                            "record_max_abs_grid_jitter_clocks": rec_timing["max_abs_grid_jitter_clocks"],
+                            "record_mean_abs_grid_jitter_clocks": rec_timing["mean_abs_grid_jitter_clocks"],
+                            "overdub_notes_sent": 0,
+                            "overdub_cc_sent": 0,
+                            "overdub_clock_pulses_seen": 0,
+                            "overdub_used_seconds_fallback": False,
+                            "overdub_grid_steps_emitted": 0,
+                            "overdub_max_abs_grid_jitter_clocks": 0.0,
+                            "overdub_mean_abs_grid_jitter_clocks": 0.0,
+                            "second_overdub_notes_sent": 0,
+                            "second_overdub_cc_sent": 0,
+                            "second_overdub_clock_pulses_seen": 0,
+                            "second_overdub_used_seconds_fallback": False,
+                            "second_overdub_grid_steps_emitted": 0,
+                            "second_overdub_max_abs_grid_jitter_clocks": 0.0,
+                            "second_overdub_mean_abs_grid_jitter_clocks": 0.0,
+                        }
+                    )
+                    continue
 
                 od2_notes = 0
                 od2_cc = 0

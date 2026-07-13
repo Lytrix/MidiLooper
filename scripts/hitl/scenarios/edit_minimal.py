@@ -59,7 +59,8 @@ def _parse_common_args(args: object) -> argparse.Namespace:
     )
     parser.add_argument("--stop-press-advance-clocks", type=int, default=0)
     legacy = list(getattr(args, "legacy_args", []) or [])
-    return parser.parse_args(legacy)
+    ns, _unknown = parser.parse_known_args(legacy)
+    return ns
 
 
 def _resolve_base_seed(

@@ -169,6 +169,20 @@ def run_scenarios(args: argparse.Namespace, scenario_ids: list[str]) -> int:
         code = spec.run(args)
         if code != 0:
             exit_code = max(exit_code, code)
+            preset = getattr(args, "preset", None)
+            if preset == "edit_minimal" and sid == "base":
+                from hitl.baseline_loop_inventory import (
+                    base_report_record_seed_ok,
+                    latest_base_report,
+                )
+
+                report = latest_base_report(getattr(args, "out_dir", Path("captures")))
+                if base_report_record_seed_ok(report):
+                    print(
+                        "[hitl] base scenario failed strict exit but edit seed ok — "
+                        "running edit_minimal"
+                    )
+                    continue
             print(f"[hitl] scenario {sid} failed (exit {code}); aborting remaining scenarios")
             break
     return exit_code
