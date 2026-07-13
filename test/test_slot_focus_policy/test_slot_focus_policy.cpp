@@ -95,6 +95,29 @@ void test_loop_end_commit_not_at_legacy_storage_phase_zero() {
                                               startLoopTick, 99U));
 }
 
+void test_playhead_storage_phase_uses_projection_on_active_slot() {
+  // session_20260713_221554: slot-1 launch at tick 26880 after commitQueuedPlaybackStart.
+  constexpr uint32_t loopLength = 4608;
+  constexpr uint32_t commitTick = 26880;
+  constexpr int32_t projectionCycleStartTick = static_cast<int32_t>(commitTick);
+  constexpr uint8_t slotIndex = 0;
+  const uint32_t phase = resolvePlayheadStoragePhase(
+      commitTick, projectionCycleStartTick, loopLength, slotIndex, slotIndex, true, commitTick, 0);
+  TEST_ASSERT_EQUAL_UINT32(0, phase);
+  const uint32_t legacyPhase = resolvePlayheadStoragePhase(
+      commitTick, projectionCycleStartTick, loopLength, slotIndex, slotIndex, false, commitTick, 0);
+  TEST_ASSERT_EQUAL_UINT32(3840, legacyPhase);
+}
+
+void test_playhead_storage_phase_inactive_slot_uses_start_loop_tick() {
+  constexpr uint32_t loopLength = 4608;
+  constexpr uint32_t currentTick = 26880;
+  constexpr int32_t projectionCycleStartTick = static_cast<int32_t>(currentTick);
+  const uint32_t phase = resolvePlayheadStoragePhase(currentTick, projectionCycleStartTick,
+                                                    loopLength, 0, 1, true, currentTick, 0);
+  TEST_ASSERT_EQUAL_UINT32(3840, phase);
+}
+
 int main(int /*argc*/, char** /*argv*/) {
   UNITY_BEGIN();
   RUN_TEST(test_boot_restore_priority_selected_track_active_slot);
@@ -111,5 +134,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_loop_end_commit_fallback_when_playback_index_uninitialized);
   RUN_TEST(test_loop_end_commit_uses_display_wrap_with_loop_start_offset);
   RUN_TEST(test_loop_end_commit_not_at_legacy_storage_phase_zero);
+  RUN_TEST(test_playhead_storage_phase_uses_projection_on_active_slot);
+  RUN_TEST(test_playhead_storage_phase_inactive_slot_uses_start_loop_tick);
   return UNITY_END();
 }
