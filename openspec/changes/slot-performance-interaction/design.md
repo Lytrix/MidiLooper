@@ -51,6 +51,7 @@ Three interaction categories:
 - Jam capture (D13)
 - Scene launch implementation
 - Per-slot track transport state machine duplicate
+- **Multi-slot overdub** — simultaneous or parallel overdub capture into multiple slots; overdub while targeting a non-active slot without making it the sole capture target. See **D22**.
 
 ---
 
@@ -285,6 +286,41 @@ Discover payloads → Build restore queue (exhaustive) → Sort queue (priority 
 **Has-data:** `TrackManager::slotHasLoopContent(track, slot, restoreFromSd)` returns true when playable data exists in RAM **or** a restorable SD payload exists. Future helpers may split loaded vs persistent; do not overload `slotHasLoopContent`.
 
 **Cross-ref:** Implementation plan [`slot_boot_focus_policy`](../../../.cursor/plans/slot_boot_focus_policy_41235c9e.plan.md); amend DEC-021 in `docs/DECISION_LOG.md`; add DEC-025 (split focus + committed-transition invariant).
+
+### D22 — Multi-slot overdub is out of scope
+
+**Decision:** The product SHALL NOT implement **multi-slot overdub** — i.e. writing live overdub capture into more than one slot per track, or overdubbing into a slot that is not the **active capture slot** (`activeLoopIndex`) while other slots remain audible.
+
+| Allowed | Not allowed |
+|---------|-------------|
+| Layered **playback** of multiple enabled slots (`playMidiEvents` + `playMidiEventsForSlot`) | Overdub capture into slot A and slot B in one gesture |
+| Record-button overdub on the **active** slot while other slots play underneath | “Overdub this preview slot” while **playing** slot stays elsewhere without `activeLoopIndex` switch + capture finalization |
+| Switch active slot at loop boundary, then overdub | Per-slot overdub buttons or parallel overdub passes |
+
+**Rationale:** Capture, undo, projection anchor, and display merge are single-slot scoped today. Multi-slot overdub multiplies coordinate-frame and undo ownership cost without a committed UX (slot buttons are performance/LTS only per D6).
+
+**Related bugfix (separate change):** When layered playback is active, secondary-slot wrap must not corrupt the active slot’s `projectionCycleStartTick` (see slot-2 overdub offset plan).
+
+### D23 — Dimmed playing-slot reference on piano roll
+
+**Decision:** When the user needs to distinguish **preview/selected** slot from **playing** slot(s), `DisplayManager` SHALL render both on the piano roll:
+
+| Layer | Source | Opacity |
+|-------|--------|---------|
+| **Primary** | **Preview/selected** slot (`selectedSlotIndex`) — edit and launch focus | Normal |
+| **Reference overlay** | Each other **audible** enabled unmuted slot (typically the **playing** slot when preview ≠ playing; includes additional layered slots when multi-slot playback is active) | **Dimmed** / semi-dimmed |
+
+**Tiling** (reference overlay vs **playing** slot loop length `L_play` = `loopLengthTicks` of `activeLoopIndex`):
+
+| Other slot length `L_other` | Overlay rule |
+|----------------------------|--------------|
+| `L_other < L_play` | Tile / repeat the other slot’s pattern across the visible window (or across `L_play` when aligned to playing phase) as dimmed notes |
+| `L_other > L_play` | Show only `L_play`-sized segments of the other loop (repeated bars of the playing slot’s length), semi-dimmed — do not draw the full longer loop at full scroll span in one pass |
+| `L_other == L_play` | One dimmed copy, phase-aligned to playing projection |
+
+**Ownership:** `DisplayManager::resolveDisplayNotes` (or a dedicated merge step) composes primary + reference layers. Playback engine unchanged. Does **not** imply multi-slot overdub.
+
+**Extends D19:** Flashing cursor remains on preview `loopStartTick`; dimmed overlay answers “what is still playing underneath?” during preview ≠ playing and during legacy multi-slot hold playback.
 
 ---
 

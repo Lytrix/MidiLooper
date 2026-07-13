@@ -535,6 +535,7 @@ void Track::startRecording(uint32_t currentTick) {
 
   // Stamp the new start tick quantized to a beat.
   loop.startLoopTick = currentTick;
+  projectionCycleStartTick = static_cast<int32_t>(currentTick);
   
   invalidateCaches();
   SC_REC_START(activeLoopIndex, currentTick);
@@ -1371,6 +1372,12 @@ void Track::startOverdubbing(uint32_t currentTick) {
   loop.beginCapture(CapturePhase::Overdub);
   SC_ODUB_STAGE("begin_capture", micros() - captureStartUs, heapAtEnter,
                 MemoryMonitor::getInternalHeapFreeBytes(), "ok");
+  if (loop.loopLengthTicks > 0) {
+    const uint32_t phase =
+        tickPhaseInLoop(currentTick, loop.startLoopTick, loop.loopLengthTicks);
+    projectionCycleStartTick =
+        static_cast<int32_t>(currentTick) - static_cast<int32_t>(phase);
+  }
   const uint32_t undoStartUs = micros();
   TrackUndo::beginOverdubSession(*this);
   SC_ODUB_STAGE("undo_session", micros() - undoStartUs, heapAtEnter,
@@ -1857,8 +1864,6 @@ void Track::playMidiEventsForSlot(uint8_t slotIndex, uint32_t currentTick, bool 
   if (IntervalProjection::didDisplayPlayheadWrapBackward(tickInLoop, loop.lastTickInLoop,
                                                        loop.loopStartTick,
                                                        loop.loopLengthTicks)) {
-    projectionCycleStartTick = IntervalProjection::advanceProjectionCycleStartTickOnWrap(
-        projectionCycleStartTick, loop.loopLengthTicks);
     loop.nextEventIndex = 0;
   }
 

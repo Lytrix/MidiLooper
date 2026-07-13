@@ -68,3 +68,10 @@ Short / double / triple / long remain: record-overdub / undo / redo / clear — 
 - Per-slot `TrackState`
 - Jam D13 capture into slot
 - Multi-window stacking
+- **Multi-slot overdub** — capturing overdub passes into more than one slot at once (or overdub on a non-active slot while others play). Too complex; overdub remains **Record button only**, scoped to the **single active capture slot** (`activeLoopIndex`). Layered **playback** of multiple enabled slots may continue; only one slot receives live overdub capture.
+
+## Layered multi-slot playback (today vs target)
+
+**Shipped today (legacy, pre-gesture-remap):** hold-to-build enabled-set (`beginSlotLayerHold` / `pendingMultiSlotCommit`) plays multiple slots via `playMidiEvents` + `playMidiEventsForSlot`. This is **playback layering only** — not overdub, not chain sequencing.
+
+**Target (`slot-performance-interaction`):** slot long-press → `LoopTriggerSequence` chain; remove hold-layering on loop buttons. Until LTS ships, document legacy hold behaviour in [`Loops.md`](../../../docs/Guides/control-surface/Loops.md) and treat layered playback as a **display + projection** concern (see design D23), not a capture feature.
