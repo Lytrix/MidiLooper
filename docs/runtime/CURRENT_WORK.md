@@ -2,24 +2,27 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-07-11 (loop-wrap playback bugfix interrupt)
+Last updated: 2026-07-13 (loop-wrap regression reverted to bc98491 — pending HITL)
 
 ---
 
 ## Now implementing
 
-### Bugfix: loop-wrap playback retrigger (interrupts DEC-020 Phase 5)
+### Bugfix: loop-wrap playback lag regression — REVERTED to `bc98491` (interrupts DEC-020 Phase 5)
 
-**Scope:** `Track::playMidiEvents` / `playMidiEventsForSlot` — on same-loop wrap, emit tail events (off@L−1) before head@0; remove `closeOpenNotesAtLoopWrap` from playback wrap (overdub capture spanning notes preserved).
+**Decision:** `19aa47a` ("Fix loop-wrap playback retrigger") and both follow-up wrap-tail rewrites (full-order scan; cursor drain) are **reverted**. `Track::playMidiEvents`, `Track::playMidiEventsForSlot`, `IntervalProjection` (`shouldPlaybackEmitWrapTailEvent` / `shouldPlaybackCrossEvent` helpers), and their tests are restored to `bc98491` — the state the user confirmed "worked perfectly." `closeOpenNotesAtLoopWrap` on overdub playback wrap is restored.
 
-**Evidence:** [`session_20260709_224935.log`](../../captures/session_20260709_224935.log) — MO `double_on` at BAR wrap (54-bar loop).
+**Proof the wrap fix regressed playback (not the active track):** during the active track's overdub, background **slots** flooded ~1 MO per main-loop frame via `playMidiEventsForSlot`, starving the loop and freezing display ≈2 s ("lag around loop wrap"). MO by channel — good [`session_20260713_115434.log`](../../captures/session_20260713_115434.log) vs bad [`session_20260713_122107.log`](../../captures/session_20260713_122107.log): ch5 (active) 212→223 unchanged; ch4 (slot) 486→**3620**; ch4 ~1 ms-gap events 278→**3422**. `19aa47a` introduced it (ch4 486→2488); cursor drain worsened it (→3622).
 
-**Out of scope this pass:** slot/bar queued seek `sendAllNotesOff`; unify pending-note flush at record/overdub stop.
+**Deferred (not reintroduced yet):** original wrap **double-on** ([`session_20260709_224935.log`](../../captures/session_20260709_224935.log) — MO `double_on` at BAR, 54-bar loop). Any future fix must NOT touch per-frame slot playback / the shared one-per-track `projectionCycleStartTick`.
+
+**Out of scope:** slot/bar queued seek `sendAllNotesOff`; unify pending-note flush at record/overdub stop; stop FSM changes.
 
 | Gate | Status |
 |------|--------|
-| Native | **544/544** |
-| HITL wrap | **User** — overdub through wrap; no MO `double_on` at BAR |
+| Native | **542/543** (known empty `test_capture_note_off_rules` suite) |
+| `teensy41-capture-serial` build | **SUCCESS** |
+| HITL wrap + stop | **User** — compare to 115434: no per-frame slot MO flood, no BAR bunching, no ~120 ms post-stop DISP lag |
 
 ---
 
