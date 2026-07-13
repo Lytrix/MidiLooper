@@ -120,6 +120,19 @@ Result: Only notes that originally started in the first bar remain
 - Preserves the "cut-off" behavior for notes that extend beyond the loop
 - Maintains note pairing integrity
 
+### Display: wrap-held head segment (`resolveWrapHeadSegment`)
+
+Wrap-held notes split into a **tail** segment (high ticks → `loopLength - 1`) and an optional **head** segment (tick `0` → inclusive end). Visibility is centralized in `NoteUtils::resolveWrapHeadSegment`:
+
+| Context | `headEndInclusive == 0` | `headEndInclusive` in `1 .. loopLength-2` |
+|---------|-------------------------|-------------------------------------------|
+| `LivePlayhead` (open note during record/overdub) | **visible** `[0..0]` — fixes 1-tick blink at playhead wrap | visible `[0..headEnd]` when `headEnd < tailOnTick`; hidden while playhead is still in the tail |
+| `CommittedHeadOff` (closed split after reconstruct) | **not visible** — end-at-boundary, tail only | visible `[0..headEnd]` |
+
+Tail-region open notes without a loop-end off yet use `isLiveWrapHeadContinuationDisplay` during live capture: when playhead wraps before `tailOnTick`, display splits tail + head even before seal classifies wrap-held storage.
+
+Piano-roll drawing uses `wrapHeadExclusiveEndForDraw` to map inclusive head ends to exclusive pixel ends (main piano roll and overview strip).
+
 ### 3. Preserve Original MIDI Data
 
 **Decision**: Never modify the original MIDI events.

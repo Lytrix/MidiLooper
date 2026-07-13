@@ -3,7 +3,9 @@
 
 #include <unity.h>
 
+#include "../../src/Logger.cpp"
 #include "../../src/Utils/IntervalProjection.cpp"
+#include "../../src/Utils/NoteUtils.cpp"
 #include "Utils/BootLoopSlotRestore.h"
 #include "Utils/SlotFocusDisplay.h"
 #include "Utils/SlotLaunchCommit.h"

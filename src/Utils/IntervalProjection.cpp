@@ -101,9 +101,11 @@ void renderProjectedIntervalToDisplayNotes(const ProjectedNoteInterval& projecte
         const uint32_t headOffInclusive = displayInclusiveEndTick(exclusiveEnd, start, loopLength);
         appendDisplayNote(out, projected.noteId, projected.pitch, velocity, startTick,
                           loopLength - 1);
-        if (headOffInclusive > 0) {
-            appendDisplayNote(out, projected.noteId, projected.pitch, velocity, 0,
-                              headOffInclusive);
+        const NoteUtils::WrapHeadSegment head = NoteUtils::resolveWrapHeadSegment(
+            loopLength, headOffInclusive, NoteUtils::WrapHeadSegmentContext::CommittedHeadOff);
+        if (head.visible) {
+            appendDisplayNote(out, projected.noteId, projected.pitch, velocity, head.startTick,
+                              head.endTickInclusive);
         }
         return;
     }

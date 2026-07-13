@@ -38,6 +38,36 @@ inline uint32_t wrapTailStartTick(uint32_t loopLength, uint32_t wrapWindowTicks 
   return loopLength > window ? loopLength - window : 0;
 }
 
+enum class WrapHeadSegmentContext {
+  LivePlayhead,
+  CommittedHeadOff,
+};
+
+struct WrapHeadSegment {
+  bool visible = false;
+  uint32_t startTick = 0;
+  uint32_t endTickInclusive = 0;
+};
+
+/// True when live capture should split tail + head because playhead wrapped before tail-on.
+inline bool isLiveWrapHeadContinuationDisplay(uint32_t tailOnTick, uint32_t closeTick,
+                                              uint32_t loopLength, bool extendHeldNotesToPlayhead) {
+  if (!extendHeldNotesToPlayhead || loopLength == 0 || closeTick >= tailOnTick) {
+    return false;
+  }
+  return tailOnTick >= wrapTailStartTick(loopLength);
+}
+
+/// Single authority for wrap-held head segment visibility (display only).
+/// For LivePlayhead, pass tailOnTick so head stays hidden while playhead is still in the tail.
+WrapHeadSegment resolveWrapHeadSegment(uint32_t loopLength, uint32_t headEndInclusive,
+                                       WrapHeadSegmentContext context,
+                                       uint32_t wrapWindowTicks = 768,
+                                       uint32_t tailOnTick = UINT32_MAX);
+
+/// Inclusive wrap-head end → exclusive end for piano-roll pixel mapping (0 = do not draw head).
+uint32_t wrapHeadExclusiveEndForDraw(uint32_t endTickInclusive, uint32_t loopLength);
+
 /// True when no same-pitch note-on exists strictly between offTick and onTick.
 bool wrapPairIsUnblocked(const MidiEventVec& midiEvents, uint32_t offTick, uint32_t onTick,
                          uint8_t pitch, uint8_t channel);

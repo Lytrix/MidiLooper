@@ -6,7 +6,9 @@
 #include "MidiEvent.h"
 #include <vector>
 
+#include "../../src/Logger.cpp"
 #include "../../src/Utils/IntervalProjection.cpp"
+#include "../../src/Utils/NoteUtils.cpp"
 #include "../../src/Utils/SelectNavigation.cpp"
 #include "Utils/SelectNavigation.h"
 #include "Utils/NoteEditDisplaySnapshot.h"

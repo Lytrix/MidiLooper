@@ -275,48 +275,76 @@ bool updateDisplayNoteEndFrom(DisplayNoteVec& notes, size_t regionStart, uint8_t
     return false;
 }
 
+void appendWrapHeldOpenNoteDisplay(DisplayNoteVec& notes, size_t regionStart,
+                                   const NoteUtils::OpenNoteOn& open, uint32_t tailEnd,
+                                   const NoteUtils::WrapHeadSegment& headSegment) {
+    if (!updateDisplayNoteEndFrom(notes, regionStart, open.note, open.tick, tailEnd)) {
+        DisplayNote tailSeg;
+        tailSeg.note = open.note;
+        tailSeg.velocity = open.velocity;
+        tailSeg.startTick = open.tick;
+        tailSeg.endTick = tailEnd;
+        notes.push_back(tailSeg);
+    }
+
+    if (!headSegment.visible) {
+        return;
+    }
+    DisplayNote headSeg;
+    headSeg.note = open.note;
+    headSeg.velocity = open.velocity;
+    headSeg.startTick = headSegment.startTick;
+    headSeg.endTick = headSegment.endTickInclusive;
+    notes.push_back(headSeg);
+}
+
+NoteUtils::WrapHeadSegment resolveWrapOpenHeadSegment(uint32_t loopLength,
+                                                      const NoteUtils::OpenNoteOn& open,
+                                                      uint32_t closeTick, bool hasCommittedHeadOff,
+                                                      uint32_t headOffTick) {
+    if (hasCommittedHeadOff) {
+        return NoteUtils::resolveWrapHeadSegment(
+            loopLength, headOffTick, NoteUtils::WrapHeadSegmentContext::CommittedHeadOff);
+    }
+    if (closeTick < open.tick) {
+        return NoteUtils::resolveWrapHeadSegment(loopLength, closeTick,
+                                                 NoteUtils::WrapHeadSegmentContext::LivePlayhead,
+                                                 768, open.tick);
+    }
+    return {};
+}
+
+bool shouldSplitLiveWrapOpenNoteDisplay(const NoteUtils::OpenNoteOn& open, uint32_t loopLength,
+                                        uint32_t closeTick, bool extendHeldNotesToPlayhead,
+                                        bool isWrapHeld) {
+    return isWrapHeld ||
+           NoteUtils::isLiveWrapHeadContinuationDisplay(open.tick, closeTick, loopLength,
+                                                        extendHeldNotesToPlayhead);
+}
+
 void applyCapturePlayheadTails(const std::vector<NoteUtils::OpenNoteOn>& captureOpens,
                                const SessionMidiEventVec& captureEvents, uint32_t loopLength,
                                uint32_t closeTick, size_t captureRegionStart,
                                DisplayNoteVec& notes) {
     const uint32_t clampedCloseTick = clampOpenNoteCloseTick(closeTick, loopLength);
-    const uint32_t wrapWindow =
-        loopLength > Config::TICKS_PER_BAR ? Config::TICKS_PER_BAR : loopLength;
-    const uint32_t headEnd = wrapWindow;
 
     for (const auto& open : captureOpens) {
-        if (NoteUtils::isWrapHeldOpenNote(captureEvents, open, loopLength)) {
+        const bool isWrapHeld =
+            NoteUtils::isWrapHeldOpenNote(captureEvents, open, loopLength);
+        if (shouldSplitLiveWrapOpenNoteDisplay(open, loopLength, clampedCloseTick, true,
+                                               isWrapHeld)) {
             uint32_t tailEnd = loopLength - 1;
             if (clampedCloseTick >= open.tick) {
                 tailEnd = std::min(clampedCloseTick, loopLength - 1);
             }
 
-            if (!updateDisplayNoteEndFrom(notes, captureRegionStart, open.note, open.tick, tailEnd)) {
-                DisplayNote tailSeg;
-                tailSeg.note = open.note;
-                tailSeg.velocity = open.velocity;
-                tailSeg.startTick = open.tick;
-                tailSeg.endTick = tailEnd;
-                notes.push_back(tailSeg);
-            }
-
-            uint32_t headEndTick = 0;
-            if (findPreferredWrapHeadOffTick(captureEvents, open, loopLength, headEndTick) &&
-                headEndTick > 0) {
-                DisplayNote headSeg;
-                headSeg.note = open.note;
-                headSeg.velocity = open.velocity;
-                headSeg.startTick = 0;
-                headSeg.endTick = headEndTick;
-                notes.push_back(headSeg);
-            } else if (clampedCloseTick > 0 && clampedCloseTick < headEnd) {
-                DisplayNote headSeg;
-                headSeg.note = open.note;
-                headSeg.velocity = open.velocity;
-                headSeg.startTick = 0;
-                headSeg.endTick = clampedCloseTick;
-                notes.push_back(headSeg);
-            }
+            uint32_t headOffTick = 0;
+            const bool hasCommittedHead =
+                isWrapHeld &&
+                findPreferredWrapHeadOffTick(captureEvents, open, loopLength, headOffTick);
+            const NoteUtils::WrapHeadSegment head = resolveWrapOpenHeadSegment(
+                loopLength, open, clampedCloseTick, hasCommittedHead, headOffTick);
+            appendWrapHeldOpenNoteDisplay(notes, captureRegionStart, open, tailEnd, head);
             continue;
         }
 
@@ -338,56 +366,33 @@ void applyLiveOpenTails(const std::vector<NoteUtils::OpenNoteOn>& openNotes,
                         const std::vector<MidiEvent, Alloc>& midiEvents, uint32_t loopLength,
                         uint32_t closeTick, DisplayNoteVec& notes, bool extendHeldNotesToPlayhead) {
     const uint32_t clampedCloseTick = clampOpenNoteCloseTick(closeTick, loopLength);
-    const uint32_t wrapWindow =
-        loopLength > Config::TICKS_PER_BAR ? Config::TICKS_PER_BAR : loopLength;
-    const uint32_t headEnd = wrapWindow;
 
     for (const auto& open : openNotes) {
-        if (NoteUtils::isWrapHeldOpenNote(midiEvents, open, loopLength)) {
-            // Held across loop wrap: tail segment at end of loop + head continuation from tick 0.
+        const bool isWrapHeld = NoteUtils::isWrapHeldOpenNote(midiEvents, open, loopLength);
+        if (shouldSplitLiveWrapOpenNoteDisplay(open, loopLength, clampedCloseTick,
+                                               extendHeldNotesToPlayhead, isWrapHeld)) {
             uint32_t tailEnd = loopLength - 1;
             if (extendHeldNotesToPlayhead && clampedCloseTick >= open.tick) {
                 tailEnd = std::min(clampedCloseTick, loopLength - 1);
             }
 
-            bool foundTail = false;
-            for (auto& note : notes) {
-                if (note.note == open.note && note.startTick == open.tick) {
-                    note.endTick = tailEnd;
-                    foundTail = true;
-                    break;
-                }
-            }
-            if (!foundTail) {
-                DisplayNote tailSeg;
-                tailSeg.note = open.note;
-                tailSeg.velocity = open.velocity;
-                tailSeg.startTick = open.tick;
-                tailSeg.endTick = tailEnd;
-                notes.push_back(tailSeg);
-            }
-
+            NoteUtils::WrapHeadSegment head;
             if (extendHeldNotesToPlayhead) {
-                if (clampedCloseTick > 0 && clampedCloseTick < headEnd) {
-                    DisplayNote headSeg;
-                    headSeg.note = open.note;
-                    headSeg.velocity = open.velocity;
-                    headSeg.startTick = 0;
-                    headSeg.endTick = clampedCloseTick;
-                    notes.push_back(headSeg);
-                }
-            } else {
                 uint32_t headOffTick = 0;
-                if (findPreferredWrapHeadOffTick(midiEvents, open, loopLength, headOffTick) &&
-                    headOffTick > 0) {
-                    DisplayNote headSeg;
-                    headSeg.note = open.note;
-                    headSeg.velocity = open.velocity;
-                    headSeg.startTick = 0;
-                    headSeg.endTick = headOffTick;
-                    notes.push_back(headSeg);
+                const bool hasCommittedHead =
+                    isWrapHeld &&
+                    findPreferredWrapHeadOffTick(midiEvents, open, loopLength, headOffTick);
+                head = resolveWrapOpenHeadSegment(loopLength, open, clampedCloseTick,
+                                                  hasCommittedHead, headOffTick);
+            } else if (isWrapHeld) {
+                uint32_t headOffTick = 0;
+                if (findPreferredWrapHeadOffTick(midiEvents, open, loopLength, headOffTick)) {
+                    head = NoteUtils::resolveWrapHeadSegment(
+                        loopLength, headOffTick,
+                        NoteUtils::WrapHeadSegmentContext::CommittedHeadOff);
                 }
             }
+            appendWrapHeldOpenNoteDisplay(notes, 0, open, tailEnd, head);
             continue;
         }
 
@@ -634,7 +639,16 @@ const DisplayNoteVec& DisplayManager::resolveDisplayNotes(const Track& track, ui
                                               playheadCloseTick, committedDisplayEnd, liveDisplayNotes);
                 }
             } else {
-                liveDisplayCacheOpenNotes.clear();
+                SessionMidiEventVec captureEvents;
+                const std::vector<NoteUtils::OpenNoteOn> captureOpens = findCaptureOpenNoteOns(loop);
+                if (!captureOpens.empty()) {
+                    Loop& mutLoop = const_cast<Loop&>(loop);
+                    mutLoop.ensureCaptureEventsSorted();
+                    loop.capture.store.flatten(captureEvents);
+                    applyCapturePlayheadTails(captureOpens, captureEvents, liveLoopLength,
+                                              playheadCloseTick, committedDisplayEnd,
+                                              liveDisplayNotes);
+                }
                 applyRecordingPreviewOpenTails(liveDisplayNotes, liveLoopLength, playheadCloseTick);
             }
         }
@@ -1418,10 +1432,8 @@ void DisplayManager::drawNoteBar(const DisplayNote& e, int y, uint32_t s, uint32
     } else {
         // Wrapped note: draw two segments
         const uint32_t wrappedEndInclusive = (lengthLoop == 0) ? 0 : (eTick % lengthLoop);
-        // Inclusive->exclusive; a wrapped inclusive end at loopLength-1 means "end at boundary",
-        // so do not draw a head segment.
         const uint32_t wrappedEndExclusive =
-            (lengthLoop > 0 && wrappedEndInclusive >= lengthLoop - 1) ? 0u : (wrappedEndInclusive + 1);
+            NoteUtils::wrapHeadExclusiveEndForDraw(wrappedEndInclusive, lengthLoop);
         
         // Calculate screen positions
         int x0 = TRACK_MARGIN + map(s % lengthLoop, 0, lengthLoop, 0, pianoRollWidth());
@@ -1487,9 +1499,11 @@ void DisplayManager::drawOverviewStrip(uint32_t fullLoopLength, uint32_t loopOri
             return;
         }
         clipDraw(startTick % fullLoopLength, fullLoopLength);
-        const uint32_t wrappedEndTick = endTick % fullLoopLength;
-        if (wrappedEndTick > 0) {
-            clipDraw(0, wrappedEndTick);
+        const uint32_t wrappedEndInclusive = endTick % fullLoopLength;
+        const uint32_t wrappedEndExclusive = NoteUtils::wrapHeadExclusiveEndForDraw(
+            wrappedEndInclusive, fullLoopLength);
+        if (wrappedEndExclusive > 0) {
+            clipDraw(0, wrappedEndExclusive);
         }
     };
 

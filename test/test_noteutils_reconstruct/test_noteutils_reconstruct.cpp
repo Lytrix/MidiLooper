@@ -332,6 +332,56 @@ void test_reconstruct_duplicate_pitch_non_overlapping_spans() {
     assert_has_note(notes, 32, 0, 43, 100);
 }
 
+void test_resolve_wrap_head_segment_live_playhead_at_zero() {
+    constexpr uint32_t loopLength = 1536;
+    const NoteUtils::WrapHeadSegment head = NoteUtils::resolveWrapHeadSegment(
+        loopLength, 0, NoteUtils::WrapHeadSegmentContext::LivePlayhead);
+    TEST_ASSERT_TRUE(head.visible);
+    TEST_ASSERT_EQUAL_UINT32(0u, head.startTick);
+    TEST_ASSERT_EQUAL_UINT32(0u, head.endTickInclusive);
+}
+
+void test_resolve_wrap_head_segment_live_playhead_hidden_before_tail_on() {
+    constexpr uint32_t loopLength = 1536;
+    constexpr uint32_t tailOnTick = 1400;
+    const NoteUtils::WrapHeadSegment head = NoteUtils::resolveWrapHeadSegment(
+        loopLength, 1500, NoteUtils::WrapHeadSegmentContext::LivePlayhead, 768, tailOnTick);
+    TEST_ASSERT_FALSE(head.visible);
+}
+
+void test_is_live_wrap_head_continuation_display_tail_open_playhead_zero() {
+    constexpr uint32_t loopLength = 1536;
+    constexpr uint32_t tailOnTick = 1400;
+    TEST_ASSERT_TRUE(NoteUtils::isLiveWrapHeadContinuationDisplay(tailOnTick, 0, loopLength, true));
+    TEST_ASSERT_FALSE(
+        NoteUtils::isLiveWrapHeadContinuationDisplay(tailOnTick, tailOnTick, loopLength, true));
+    TEST_ASSERT_FALSE(
+        NoteUtils::isLiveWrapHeadContinuationDisplay(100, 0, loopLength, true));
+}
+
+void test_resolve_wrap_head_segment_committed_head_off_at_zero() {
+    constexpr uint32_t loopLength = 1536;
+    const NoteUtils::WrapHeadSegment head = NoteUtils::resolveWrapHeadSegment(
+        loopLength, 0, NoteUtils::WrapHeadSegmentContext::CommittedHeadOff);
+    TEST_ASSERT_FALSE(head.visible);
+}
+
+void test_resolve_wrap_head_segment_committed_head_off_mid_loop() {
+    constexpr uint32_t loopLength = 1536;
+    const NoteUtils::WrapHeadSegment head = NoteUtils::resolveWrapHeadSegment(
+        loopLength, 48, NoteUtils::WrapHeadSegmentContext::CommittedHeadOff);
+    TEST_ASSERT_TRUE(head.visible);
+    TEST_ASSERT_EQUAL_UINT32(0u, head.startTick);
+    TEST_ASSERT_EQUAL_UINT32(48u, head.endTickInclusive);
+}
+
+void test_wrap_head_exclusive_end_for_draw_at_zero() {
+    constexpr uint32_t loopLength = 1536;
+    TEST_ASSERT_EQUAL_UINT32(1u, NoteUtils::wrapHeadExclusiveEndForDraw(0, loopLength));
+    TEST_ASSERT_EQUAL_UINT32(49u, NoteUtils::wrapHeadExclusiveEndForDraw(48, loopLength));
+    TEST_ASSERT_EQUAL_UINT32(0u, NoteUtils::wrapHeadExclusiveEndForDraw(loopLength - 1, loopLength));
+}
+
 int main(int /*argc*/, char** /*argv*/) {
     UNITY_BEGIN();
     RUN_TEST(test_project_display_notes_head_tail_split);
@@ -353,5 +403,11 @@ int main(int /*argc*/, char** /*argv*/) {
     RUN_TEST(test_reconstruct_record_and_overdub_pitch_ranges);
     RUN_TEST(test_reconstruct_duplicate_pitch_non_overlapping_spans);
     RUN_TEST(test_reconstruct_neighbor_wrapped_lanes_after_mover_sort);
+    RUN_TEST(test_resolve_wrap_head_segment_live_playhead_at_zero);
+    RUN_TEST(test_resolve_wrap_head_segment_live_playhead_hidden_before_tail_on);
+    RUN_TEST(test_is_live_wrap_head_continuation_display_tail_open_playhead_zero);
+    RUN_TEST(test_resolve_wrap_head_segment_committed_head_off_at_zero);
+    RUN_TEST(test_resolve_wrap_head_segment_committed_head_off_mid_loop);
+    RUN_TEST(test_wrap_head_exclusive_end_for_draw_at_zero);
     return UNITY_END();
 }
