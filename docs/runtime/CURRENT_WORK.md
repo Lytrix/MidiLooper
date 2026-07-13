@@ -2,11 +2,31 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-07-13 (overdub wrap note-off pairing fix — pending HITL)
+Last updated: 2026-07-13 (record-stop MIDI flood fix — restore 901c4d9 playback)
 
 ---
 
 ## Now implementing
+
+### Bugfix: record-stop MIDI flood — **restore baseline playback, pending HITL**
+
+**Evidence:** [`session_20260713_165557.log`](../../captures/session_20260713_165557.log) — 571 note-ons over 5 pitches in 704 ticks; BPM collapse; `RING,overflow`.
+
+**Fix:** Restored `901c4d9` playback send/anchor (`reanchorPlaybackProjection`, inline `atLoopStart`, `loop.midiEvents()` window). Kept display storage-frame playhead + persistence grace.
+
+**Plan:** [`docs/plans/record_stop_playback_hang_bugfix.md`](../plans/record_stop_playback_hang_bugfix.md) (phase 4c)
+
+| Gate | Status |
+|------|--------|
+| Native | **562/562** |
+| `teensy41-capture-serial` build | **SUCCESS** (2026-07-13) |
+| HITL / manual | **User** — record→stop→PLAYING; no MO flood; playhead bar 0 |
+
+---
+
+### Bugfix: record-stop coordinate frame (phase 4) — **superseded by 4c flood fix**
+
+---
 
 ### Bugfix: overdub wrap note-off pairing — **implemented, pending HITL**
 

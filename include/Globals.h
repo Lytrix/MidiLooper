@@ -105,6 +105,8 @@ namespace Config {
   constexpr uint32_t maxPersistenceMicrosIdle = UINT32_MAX;
   /// Cap each main loop() persistence drain so display/MIDI stay responsive when idle.
   constexpr uint32_t maxPersistenceMicrosPerLoop = 3000;
+  /// After record stop → PLAYING, defer full workspace save dispatch so OLED/MIDI stay responsive.
+  constexpr uint32_t playbackSaveDispatchGraceMs = 2000;
 }
  
 // --------------------

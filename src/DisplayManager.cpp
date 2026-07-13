@@ -518,13 +518,8 @@ uint32_t DisplayManager::resolvePlayheadInLoop(const Track& track, uint8_t displ
         // Preview playhead: fixed at loopStartTick until playing slot catches up at launch commit.
         return 0;
     }
-    const bool alignWithPlaybackCycle =
-        displaySlot == track.getActiveLoopIndex() && transportActive;
     const uint32_t tickInLoopStorage =
-        alignWithPlaybackCycle
-            ? IntervalProjection::tickPhaseInProjectionCycle(
-                  displayTick, track.getProjectionCycleStartTick(), loopLength)
-            : tickPhaseInLoop(displayTick, dispLoop.startLoopTick, loopLength);
+        tickPhaseInLoop(displayTick, dispLoop.startLoopTick, loopLength);
     return IntervalProjection::noteRelativeTick(tickInLoopStorage, loopOrigin, loopLength);
 }
 
@@ -716,7 +711,7 @@ const DisplayNoteVec& DisplayManager::resolveDisplayNotes(const Track& track, ui
     if (!needsLiveMergeForDisplay) {
         // Stale-while-revalidate: when PLAYING defers rebuild, show last visual cache until idle
         // maintenance refreshes it — never return stale notes after invalidate (dirty cache).
-        if (!loop.visualCacheDirty && !loop.visualCache.notes.empty()) {
+        if ((!loop.visualCacheDirty || deferVisualRebuild) && !loop.visualCache.notes.empty()) {
             liveDisplayNotes.assign(loop.visualCache.notes.begin(), loop.visualCache.notes.end());
             livePlaybackDisplaySlot_ = displaySlot;
             return liveDisplayNotes;
@@ -760,7 +755,11 @@ const DisplayNoteVec& DisplayManager::resolveDisplayNotes(const Track& track, ui
                                 liveMergeCaptureRevision_ != loop.captureDisplayRevision;
         if (mergeStale || liveDisplayEventBuffer.empty()) {
             liveDisplayEventBuffer.clear();
-            mutLoop.mergeMaterializedPassesWithCapture(liveDisplayEventBuffer);
+            if (loop.captureActive()) {
+                mutLoop.mergeMaterializedPassesWithCapture(liveDisplayEventBuffer);
+            } else {
+                mutLoop.mergeActiveCapturePasses(liveDisplayEventBuffer);
+            }
             liveMergePlaybackRevision_ = loop.playbackRevision;
             liveMergeCaptureRevision_ = loop.captureDisplayRevision;
         }
@@ -790,7 +789,11 @@ const DisplayNoteVec& DisplayManager::resolveDisplayNotes(const Track& track, ui
         liveMergePlaybackRevision_ != loop.playbackRevision ||
         liveMergeCaptureRevision_ != loop.captureDisplayRevision) {
         liveDisplayEventBuffer.clear();
-        mutLoop.mergeMaterializedPassesWithCapture(liveDisplayEventBuffer);
+        if (loop.captureActive()) {
+            mutLoop.mergeMaterializedPassesWithCapture(liveDisplayEventBuffer);
+        } else {
+            mutLoop.mergeActiveCapturePasses(liveDisplayEventBuffer);
+        }
         liveMergePlaybackRevision_ = loop.playbackRevision;
         liveMergeCaptureRevision_ = loop.captureDisplayRevision;
     }
@@ -932,6 +935,28 @@ void DisplayManager::invalidateForSlotChange(uint8_t trackIndex, uint8_t previou
     if (playbackActive && trackIndex == trackManager.getSelectedTrackIndex()) {
         centerDetailedWindowOnPlayhead(track, newSlot, clockManager.getCurrentTick());
     }
+}
+
+void DisplayManager::refreshViewportAfterRecordStop(Track& track, uint8_t displaySlot,
+                                                   uint32_t storagePhaseTickInLoop) {
+    invalidateLiveDisplayCache();
+    const Loop& loop = track.getLoop(displaySlot);
+    if (!loop.visualCacheDirty && !loop.visualCache.notes.empty()) {
+        liveDisplayNotes.assign(loop.visualCache.notes.begin(), loop.visualCache.notes.end());
+        livePlaybackDisplaySlot_ = displaySlot;
+    }
+    const uint32_t loopLength =
+        resolveDisplayLoopLength(track, displaySlot, clockManager.getCurrentTick());
+    const uint32_t boundedThreshold =
+        DisplayWindowUtils::kMaxDetailedWindowBars * Config::TICKS_PER_BAR;
+    if (track.isJamming() || loopLength <= boundedThreshold || displaySlot >= kDisplaySlotCount) {
+        return;
+    }
+    const uint8_t windowBars = std::min<uint8_t>(detailedWindowBars_[displaySlot],
+                                                 DisplayWindowUtils::kMaxDetailedWindowBars);
+    const uint32_t windowLength = static_cast<uint32_t>(windowBars) * Config::TICKS_PER_BAR;
+    detailedWindowStartTick_[displaySlot] = DisplayWindowUtils::resolveCenteredWindowStart(
+        storagePhaseTickInLoop, windowLength, loopLength);
 }
 
 void DisplayManager::invalidateLiveDisplayCache() {

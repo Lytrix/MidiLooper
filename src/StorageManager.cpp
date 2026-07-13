@@ -1434,12 +1434,32 @@ void StorageManager::processEditAutosave(const LooperState& state) {
     lastEditAutosaveMs = nowMs;
 }
 
+void StorageManager::deferWorkspaceSaveDispatchDuringPlayback(uint32_t graceMs) {
+#if BYPASS_STOP_UNDO_SAVE
+    (void)graceMs;
+    return;
+#else
+    const uint32_t untilMs = millis() + graceMs;
+    if (untilMs > storageSession.currentWorkspaceSave.deferDispatchUntilMs) {
+        storageSession.currentWorkspaceSave.deferDispatchUntilMs = untilMs;
+    }
+#if defined(SESSION_CAPTURE)
+    char outcome[24];
+    std::snprintf(outcome, sizeof(outcome), "until_%lu", static_cast<unsigned long>(untilMs));
+    SC_PERSIST("defer_playback", 0, 0, 0, outcome);
+#endif
+#endif
+}
+
 void StorageManager::requestDeferredSaveState(const LooperState& /*state*/, uint32_t admissionHeap,
                                               bool isUrgentRequest) {
 #if BYPASS_STOP_UNDO_SAVE
     (void)isUrgentRequest;
     return;
 #endif
+    if (isUrgentRequest) {
+        storageSession.currentWorkspaceSave.deferDispatchUntilMs = 0;
+    }
     const bool alreadyPending = storageSession.currentWorkspaceSave.pending;
     if (admissionHeap != UINT32_MAX || storageSession.currentWorkspaceSave.admissionHeap == 0) {
         storageSession.currentWorkspaceSave.admissionHeap = admissionHeap;
@@ -1663,6 +1683,11 @@ void StorageManager::processDeferredSaveState(const LooperState& state) {
         }
 
         if (!storageSession.currentWorkspaceSave.inProgress && storageSession.currentWorkspaceSave.pending) {
+            const uint32_t nowMs = millis();
+            if (isTransportActiveForPersistence() &&
+                nowMs < storageSession.currentWorkspaceSave.deferDispatchUntilMs) {
+                break;
+            }
             const uint32_t dispatchHeap = MemoryMonitor::getInternalHeapFreeBytes();
             const uint32_t admissionHeap =
                 storageSession.currentWorkspaceSave.admissionHeap == UINT32_MAX ? dispatchHeap

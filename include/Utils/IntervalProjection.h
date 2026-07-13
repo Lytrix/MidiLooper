@@ -85,6 +85,10 @@ uint32_t tickPhaseInProjectionCycle(uint32_t currentTick, int32_t projectionCycl
 bool didDisplayPlayheadWrapBackward(uint32_t newStoragePhase, uint32_t prevStoragePhase,
                                     uint32_t loopStartTick, uint32_t loopLength);
 
+/// Playback crossing policy: fresh-origin catch-up (UINT32_MAX) or backward wrap only.
+bool isPlaybackAtLoopStart(uint32_t prevTickInLoop, uint32_t tickInLoop,
+                           bool allowFreshOriginCatchUp);
+
 /// Advance cycle origin on wrap; uses loopLength at wrap time.
 int32_t advanceProjectionCycleStartTickOnWrap(int32_t projectionCycleStartTick,
                                             uint32_t loopLengthAtWrap);

@@ -1,0 +1,45 @@
+---
+description: Human-readable prose uses function names; line numbers OK for agent navigation and citations
+alwaysApply: true
+---
+
+# Reference functions in prose; lines for navigation
+
+**Readable text** (plans, rules, chat explanations, OpenSpec, reviews) should name **functions and modules** — not bare source line numbers.
+
+**Agents** may still use line numbers to read, cite, and navigate code. Pair both when helpful.
+
+## Prose for humans — use names
+
+| Prefer | Example |
+|--------|---------|
+| Function / method | `Track::playMidiEvents`, `closeOpenNotesAtLoopWrap()` |
+| Class + responsibility | `Track` playback wrap path |
+| File + symbol | [`Track.cpp`](src/Track.cpp) — `playMidiEvents` wrap block |
+| Log markers | `#CAP` `MO` at `BAR,41472,54` |
+
+| Avoid in prose alone | Why |
+|----------------------|-----|
+| “fix L1744”, “the block at line 1736” | Hard to read; stale after edits |
+| Scope items like “remove L1744” | Use `remove closeOpenNotesAtLoopWrap() from playMidiEvents wrap path` |
+
+## Agent navigation — lines are fine
+
+- **Read / grep / jump** to a line or range when locating code
+- **Code citations** (`startLine:endLine:path`) for one-click navigation
+- **`rg` on symbols** first; line numbers as a secondary pin
+
+When citing code to the user, **lead with the function name in prose**, then the citation if useful:
+
+> In `playMidiEvents`, the wrap path calls `closeOpenNotesAtLoopWrap()` after resetting indices …
+
+## Capture logs
+
+Log **artifact** line numbers are fine (`session_*.log` evidence). That is not source code.
+
+## Plans and reviews
+
+- Scope and handoffs: **symbol names**
+- Pre-implementation review: trace call sites with `rg <symbol>`; line numbers optional for the implementing agent
+
+Cross-link: [Plan-Pre-Implementation-Review.mdc](Plan-Pre-Implementation-Review.mdc).

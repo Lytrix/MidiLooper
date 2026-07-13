@@ -105,6 +105,10 @@ public:
     /// Center the bounded detailed piano-roll window on the current playhead (long-loop loops only).
     void centerDetailedWindowOnPlayhead(Track& track, uint8_t displaySlot, uint32_t currentTick);
 
+    /// After record stop: invalidate live cache and recenter viewport on post-rewind playhead.
+    void refreshViewportAfterRecordStop(Track& track, uint8_t displaySlot,
+                                        uint32_t storagePhaseTickInLoop);
+
     // Margin for piano roll, info area and note info
     static constexpr int TRACK_MARGIN = 22; 
     // Display buffer size

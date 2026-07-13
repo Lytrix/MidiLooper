@@ -211,6 +211,14 @@ bool didDisplayPlayheadWrapBackward(uint32_t newStoragePhase, uint32_t prevStora
     return newDisplay < prevDisplay;
 }
 
+bool isPlaybackAtLoopStart(uint32_t prevTickInLoop, uint32_t tickInLoop,
+                           bool allowFreshOriginCatchUp) {
+    if (prevTickInLoop == UINT32_MAX) {
+        return allowFreshOriginCatchUp;
+    }
+    return tickInLoop < prevTickInLoop;
+}
+
 int32_t advanceProjectionCycleStartTickOnWrap(int32_t projectionCycleStartTick,
                                               uint32_t loopLengthAtWrap) {
     return projectionCycleStartTick + static_cast<int32_t>(loopLengthAtWrap);

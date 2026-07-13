@@ -1,0 +1,111 @@
+---
+description: OpenSpec phase gates — ARCHITECTURE-REVIEW before firmware; block scattered stop-path helpers
+alwaysApply: true
+---
+
+# OpenSpec phase gate (implementation)
+
+When an **active** OpenSpec change under `openspec/changes/<name>/` (exclude `archive/`) has **`ARCHITECTURE-REVIEW.md`**, agents **must** complete the phase architecture gate **in the session transcript** before any firmware edit for that change.
+
+**Does not replace** [architecture-checkpoint-bugfix](architecture-checkpoint-bugfix.mdc) — both apply on stop-path / capture-commit work.
+
+Authority: [`docs/00-authority/DELIVERY_RULES.md`](docs/00-authority/DELIVERY_RULES.md) § OpenSpec phase gate.
+
+---
+
+## Mandatory load order (before firmware)
+
+1. [`docs/runtime/CURRENT_WORK.md`](docs/runtime/CURRENT_WORK.md) — confirm active change and phase
+2. `openspec/changes/<name>/ARCHITECTURE-REVIEW.md` — **§ Per-phase gates** for target phase
+3. `openspec/changes/<name>/tasks.md` — only unchecked items for **this phase**
+4. `openspec/changes/<name>/design.md` — when phase touches ownership or transitions
+
+If `ARCHITECTURE-REVIEW.md` is missing for an active change that touches ownership or stop-path behavior, **stop** and propose adding the review artifact (or run `/opsx:explore`) before coding.
+
+---
+
+## Architecture gate (post in chat before first edit)
+
+Copy the phase's **Architecture gate** table from `ARCHITECTURE-REVIEW.md` and answer explicitly:
+
+| Question | Required |
+|----------|----------|
+| **Owner module** | Which class/function owns this phase's behavior |
+| **Primary invariant** | One sentence from ARCHITECTURE-REVIEW north star or design |
+| **Ownership change?** | YES / NO — if YES without user-approved phase → **stop** (design session) |
+| **State transition change?** | YES / NO — if YES without user-approved phase → **stop** |
+| **Behavior-preserving?** | YES / NO for this phase (Phases marked preserving must stay preserving) |
+| **Reuse decision** | YES — extend `<owner>.<method>` OR NO — cite DEC-### + rationale |
+| **Phase scope** | Phase N only — list files you will touch |
+
+Also answer the two [architecture-checkpoint](architecture-checkpoint-bugfix.mdc) questions when the edit touches capture stop, commit, persistence gating, or deferred FSM paths.
+
+**Do not** edit firmware until this block is posted (unless user explicitly requests investigation-only / read-only).
+
+---
+
+## Protected paths (extra scrutiny)
+
+Any edit under these areas requires the gate above **even for bugfixes**:
+
+| Area | Examples |
+|------|----------|
+| Capture stop / commit | `Track::stopRecording`, `stopOverdubbing`, `queueOverdubStopCommit`, `processDeferredOverdubStop`, `commitCaptureForStop`, `finalizeCommitSideEffects` |
+| Loop seal | `Loop::commitCapturePass`, `finalizeLoopAtStop` |
+| Cancel / abort scatter | `cancelDeferredOverdubStop` and new `cancel*` / `abort*` on capture lifecycle |
+| Slot capture stop | `handleToggleRecordForSlot`, `finalizeCaptureAndSelectSlot` |
+| Persistence gating | `StorageManager` deferred save / recovery paths tied to capture stop |
+| Post-commit projection | `resetPlaybackState`, `projectionCycleStartTick`, `ensurePlaybackWindowBuilt`, display snapshot after stop |
+
+Read [`docs/Guides/LOOP_MIDI_STORAGE_AND_VALIDATION.md`](docs/Guides/LOOP_MIDI_STORAGE_AND_VALIDATION.md) before changing stop or commit paths.
+
+---
+
+## Forbidden without approved phase / design
+
+| Pattern | Why blocked |
+|---------|-------------|
+| New `cancel*` / `abort*` at **new** call sites | Symptom patch — route through lifecycle owner (`resetCaptureCommitSession` / Phase 4 design) |
+| Same post-stop side effect in **two** stop paths | Violates single commit owner — use shared pipeline / post-commit hook |
+| New `*Helper` / free function on stop path | Extend existing owner unless DECISION_REVIEW reuse = NO |
+| New top-level Manager or parallel FSM | Formal trigger — reassessment + DECISION_LOG |
+| Phase marked behavior-preserving but changes scheduling, telemetry contract, or HITL pass criteria | Phase violation — split to later phase or get user approval |
+| Checking off `tasks.md` phase without **Implementation review** | Gate incomplete |
+
+Extending an **existing** method on the documented owner for the **current phase scope** is allowed after the gate passes.
+
+---
+
+## Implementation review (before merge / phase checkoff)
+
+Before marking phase tasks done in `tasks.md`, complete the phase **Implementation review** checklist in `ARCHITECTURE-REVIEW.md` and use [`docs/agents/reviewer.md`](docs/agents/reviewer.md) output format.
+
+Builder sessions must include:
+
+```markdown
+## Architecture gate (Phase N)
+- Owner: ...
+- Invariant: ...
+- Ownership change: NO | YES (approved Phase N)
+- Transition change: NO | YES (approved Phase N)
+- Reuse: YES — extend ... | NO — DEC-###
+
+## Tests
+- [ ] pio test -e native
+- [ ] Phase HITL gate (if ARCHITECTURE-REVIEW requires)
+```
+
+---
+
+## Session scope
+
+- **One OpenSpec phase per session** unless user explicitly approves multiple phases.
+- Do not mix active changes (e.g. DEC-023 Phase 1 + DEC-020 Phase 5) in one implementation pass without user confirmation.
+- Symptom fixes outside the active phase → investigate and report; do not patch unless user approves scope expansion or a dedicated bugfix with checkpoint both **no**.
+
+---
+
+## When ARCHITECTURE-REVIEW.md does not exist
+
+- **Trivial bugfix** on unrelated paths: [architecture-checkpoint](architecture-checkpoint-bugfix.mdc) only.
+- **Non-trivial** or stop-path work on a change without review doc: add `ARCHITECTURE-REVIEW.md` (Phase 0 doc-only) or `/opsx:propose` before firmware.

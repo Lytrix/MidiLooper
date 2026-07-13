@@ -1,0 +1,55 @@
+---
+description: Before firmware from a plan — review plan against codebase; resolve gaps before first edit
+alwaysApply: true
+---
+
+# Plan pre-implementation review
+
+When a **plan exists** (Cursor plan, `docs/plans/*`, OpenSpec design, or approved architect output) and the next step is **implementation**, agents **must** review the plan against the codebase **before the first production edit**.
+
+**Does not replace:** [OpenSpec-Phase-Gate.mdc](OpenSpec-Phase-Gate.mdc) (phase architecture gate), [architecture-checkpoint-bugfix.mdc](architecture-checkpoint-bugfix.mdc) (bugfix ownership/transitions), or user plan approval in plan mode.
+
+## When required
+
+- User approved a plan and asked to implement, `/opsx:apply`, or builder handoff from [architect.md](docs/agents/architect.md)
+- Agent produced a plan in plan mode and user moved to execution
+
+## When skipped
+
+- Read-only investigation, log analysis, or plan-only sessions (no implementation)
+- Trivial one-line fix with no plan artifact and no ownership/transition risk (architecture-checkpoint only)
+
+## Review checklist (codebase-backed)
+
+1. **Trace owners** — `rg` / read call sites for every function/module the plan names; confirm owner and file list match reality. Reference **functions by name**, not line numbers ([Reference-Functions-Not-Lines.mdc](Reference-Functions-Not-Lines.mdc)).
+2. **Gaps** — missing hooks, untested paths, call sites the plan omits (e.g. duplicate entry points, slot-switch vs wrap).
+3. **Contradictions** — plan vs code, vs [DECISION_LOG.md](docs/DECISION_LOG.md), vs active OpenSpec `design.md` / `ARCHITECTURE-REVIEW.md`.
+4. **Decisions needing clarification** — use AskQuestion when multiple valid approaches remain; do not guess on ownership, scope, or user-visible behavior.
+5. **Test feasibility** — where tests live (`pio test -e native`), what can be host-tested vs HITL-only.
+6. **Resolved vs open** — post a short **Pre-implementation review** in chat or in the plan doc: table of resolved decisions + numbered open items implementer must pin at session start.
+
+## Output format (before first edit)
+
+```markdown
+## Pre-implementation review
+### Ready
+- …
+
+### Resolved (user / code)
+| Topic | Decision |
+
+### Open before coding
+1. …
+
+### Proceed?
+- YES — no blockers / open items are implementer pin-down only
+- NO — ask user (list blockers)
+```
+
+If **NO**, update the plan and re-review; do not edit firmware until blockers are resolved or user explicitly accepts risk.
+
+## Plan doc hygiene
+
+When the plan file lives in-repo (`docs/plans/` or `.cursor/plans/`), append or update a **Pre-implementation review** section with resolved + open items so the next session inherits context.
+
+Authority: [Agent-Context-Workflow.mdc](Agent-Context-Workflow.mdc), [DELIVERY_RULES.md](docs/00-authority/DELIVERY_RULES.md).

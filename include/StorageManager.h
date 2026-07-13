@@ -32,6 +32,8 @@ public:
     static bool loadCurrentWorkspaceFromSd(LooperState& state);
     static void requestDeferredSaveState(const LooperState& state, uint32_t admissionHeap = UINT32_MAX,
                                          bool isUrgentRequest = false);
+    /// Keep save queued but do not start full workspace dispatch until grace elapses (PLAYING path).
+    static void deferWorkspaceSaveDispatchDuringPlayback(uint32_t graceMs);
     static void processDeferredSaveState(const LooperState& state);
     static bool isDeferredSaveActive();
     static bool hasDeferredSaveWork();
