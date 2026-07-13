@@ -189,6 +189,28 @@ NOTE_EDIT_MEM bool isWrapHeldOpenNoteImpl(const std::vector<MidiEvent, Alloc>& m
         }
     }
 
+    // Prefer explicit head-off pairing: a tail note-on with a head note-off (including tick 0)
+    // should be treated as wrap-held even when no loop-end synthetic off exists yet.
+    if (channelKnown) {
+        for (const MidiEvent& evt : midiEvents) {
+            if (!evt.isNoteOff() || evt.channel != channel ||
+                evt.data.noteData.note != open.note) {
+                continue;
+            }
+            uint32_t headOffTick = evt.tick;
+            if (headOffTick >= loopLength) {
+                headOffTick %= loopLength;
+            }
+            if (headOffTick >= loopLength - 1) {
+                continue;
+            }
+            if (NoteUtils::isPreferredWrapTailForHeadOff(open.tick, headOffTick, midiEvents,
+                                                         open.note, channel, loopLength)) {
+                return true;
+            }
+        }
+    }
+
     bool hasLoopEndOff = false;
     for (const MidiEvent& evt : midiEvents) {
         if (!evt.isNoteOff() || evt.data.noteData.note != open.note) {
@@ -207,23 +229,6 @@ NOTE_EDIT_MEM bool isWrapHeldOpenNoteImpl(const std::vector<MidiEvent, Alloc>& m
 
     if (!channelKnown) {
         return isLatestTailNoteOn(midiEvents, open.tick, open.note, 0, loopLength);
-    }
-
-    for (const MidiEvent& evt : midiEvents) {
-        if (!evt.isNoteOff() || evt.channel != channel || evt.data.noteData.note != open.note) {
-            continue;
-        }
-        uint32_t headOffTick = evt.tick;
-        if (headOffTick >= loopLength) {
-            headOffTick %= loopLength;
-        }
-        if (headOffTick >= loopLength - 1) {
-            continue;
-        }
-        if (NoteUtils::isPreferredWrapTailForHeadOff(open.tick, headOffTick, midiEvents, open.note,
-                                                     channel, loopLength)) {
-            return true;
-        }
     }
 
     return isLatestTailNoteOn(midiEvents, open.tick, open.note, channel, loopLength);
@@ -482,6 +487,15 @@ NOTE_EDIT_MEM CanonicalNoteSpanVec buildCanonicalSpansFromMidi(
                                                          pitch, evt.channel, loopLength) &&
                 note.startTick >= tailStart &&
                 (!offWasBeyondLoop || allowWrapSplitForBeyondLoopOff)) {
+                // Head-off exactly at loop wrap (tick 0) represents an end-at-boundary note.
+                // Treat as tail-only (no [0..0] head segment).
+                if (noteOffTick == 0) {
+                    pushCanonicalSpan(spans, note.noteId, pitch, note.velocity,
+                                      static_cast<int32_t>(note.startTick),
+                                      exclusiveEndForLoopOff(loopLength - 1));
+                    stack.erase(stack.begin() + static_cast<std::ptrdiff_t>(pairIndex));
+                    continue;
+                }
                 pushCanonicalSpan(spans, note.noteId, pitch, note.velocity,
                                   static_cast<int32_t>(note.startTick),
                                   exclusiveEndForWrappedHeadOff(noteOffTick, loopLength), false,

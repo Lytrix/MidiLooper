@@ -935,8 +935,14 @@ void Track::emitStoredMidiVerification() const {
   for (const DisplayNote& note : reconstructed) {
     const uint32_t displayStart = IntervalProjection::noteRelativeTick(
         note.startTick, loop.loopStartTick, loop.loopLengthTicks);
-    const uint32_t length =
-        note.endTick > note.startTick ? note.endTick - note.startTick : 0;
+    // DisplayNote.endTick is a display boundary tick; when a note ends at loop wrap its tail
+    // segment ends at loopLength-1, but its exclusive end is loopLength.
+    uint32_t length = 0;
+    if (loop.loopLengthTicks > 0 && note.endTick >= note.startTick) {
+      const uint32_t endExclusive =
+          (note.endTick == loop.loopLengthTicks - 1) ? loop.loopLengthTicks : note.endTick;
+      length = endExclusive > note.startTick ? (endExclusive - note.startTick) : 0;
+    }
     SC_DNTE(note.note, note.startTick, displayStart, length, static_cast<int>(reconLogged));
     ++reconLogged;
     if (reconLogged >= 32) {
