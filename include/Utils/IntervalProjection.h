@@ -153,12 +153,4 @@ uint32_t projectPlaybackEventPhase(uint32_t storageTick, const ProjectionContext
 /// Display segment whose length exceeds half the loop is usually wrap projection, not linear span.
 bool isInflatedDisplaySpan(const NoteUtils::DisplayNote& displayNote, uint32_t loopLength);
 
-/// Wrap-frame tail pass: events strictly after `prevTickInLoop` through loop end (inclusive).
-bool shouldPlaybackEmitWrapTailEvent(uint32_t prevTickInLoop, uint32_t eventPhaseTick,
-                                     uint32_t loopLengthTicks);
-
-/// Normal forward crossed window, or wrap-frame head pass when `atLoopStart`.
-bool shouldPlaybackCrossEvent(uint32_t prevTickInLoop, uint32_t eventPhaseTick,
-                              uint32_t tickInLoop, bool atLoopStart);
-
 }  // namespace IntervalProjection

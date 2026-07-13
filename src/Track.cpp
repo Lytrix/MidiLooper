@@ -1733,9 +1733,23 @@ void Track::playMidiEvents(uint32_t currentTick, bool isAudible) {
   uint32_t tickInLoop = IntervalProjection::tickPhaseInProjectionCycle(
       currentTick, projectionCycleStartTick, loop.loopLengthTicks);
 
-  const uint32_t prevTickInLoop = loop.lastTickInLoop;
-  const bool wrappedThisFrame = IntervalProjection::didDisplayPlayheadWrapBackward(
-      tickInLoop, prevTickInLoop, loop.loopStartTick, loop.loopLengthTicks);
+  if (IntervalProjection::didDisplayPlayheadWrapBackward(tickInLoop, loop.lastTickInLoop,
+                                                       loop.loopStartTick,
+                                                       loop.loopLengthTicks)) {
+    projectionCycleStartTick = IntervalProjection::advanceProjectionCycleStartTickOnWrap(
+        projectionCycleStartTick, loop.loopLengthTicks);
+    loop.nextEventIndex = 0;
+    loop.captureNextEventIndex = 0;
+    if (isOverdubbing()) {
+      closeOpenNotesAtLoopWrap();
+    }
+    logger.trace("Loop wrapped, resetting index");
+  }
+
+  uint32_t prevTickInLoop = loop.lastTickInLoop;
+  loop.lastTickInLoop = tickInLoop;
+
+  bool atLoopStart = (prevTickInLoop == UINT32_MAX) || (tickInLoop <= prevTickInLoop);
 
   auto eventInJamRegion = [this, &loop](uint32_t evTick) -> bool {
     if (!jamPlaybackActive || jamLength == 0) return true;
@@ -1753,60 +1767,28 @@ void Track::playMidiEvents(uint32_t currentTick, bool isAudible) {
   uint8_t lastSentType = 0xFF;
 
   const PlaybackOrderVec& playbackOrder = loop.getPlaybackOrder();
-
-  auto trySendPlaybackEvent = [&](const MidiEvent& evt, uint32_t evTick) {
-    uint8_t effectiveCh = (evt.channel >= 1 && evt.channel <= 16) ? midiChannel : evt.channel;
-    uint8_t note = evt.isNoteOn() || evt.isNoteOff() ? evt.data.noteData.note : 0;
-    bool isDuplicate = (evt.isNoteOn() || evt.isNoteOff()) &&
-                       (evTick == lastSentEvTick && effectiveCh == lastSentChannel &&
-                        note == lastSentNote && evt.type == lastSentType);
-    if (!isDuplicate) {
-      sendMidiEvent(evt);
-      if (evt.isNoteOn() || evt.isNoteOff()) {
-        lastSentEvTick = evTick;
-        lastSentChannel = effectiveCh;
-        lastSentNote = note;
-        lastSentType = evt.type;
-      }
-    }
-  };
-
-  if (wrappedThisFrame) {
-    for (size_t orderIndex = 0; orderIndex < playbackOrder.size(); ++orderIndex) {
-      const MidiEvent& evt = mergedEvents[playbackOrder[orderIndex]];
-      const uint32_t evTick =
-          IntervalProjection::playbackEventPhase(evt.tick, playbackContext.loopLength);
-      if (!IntervalProjection::shouldPlaybackEmitWrapTailEvent(prevTickInLoop, evTick,
-                                                                 loop.loopLengthTicks)) {
-        continue;
-      }
-      if (eventInJamRegion(evt.tick)) {
-        trySendPlaybackEvent(evt, evTick);
-      }
-    }
-
-    projectionCycleStartTick = IntervalProjection::advanceProjectionCycleStartTickOnWrap(
-        projectionCycleStartTick, loop.loopLengthTicks);
-    loop.nextEventIndex = 0;
-    loop.captureNextEventIndex = 0;
-    logger.trace("Loop wrapped, resetting index");
-  }
-
-  loop.lastTickInLoop = tickInLoop;
-
-  const bool atLoopStart =
-      wrappedThisFrame || (prevTickInLoop == UINT32_MAX) || (tickInLoop <= prevTickInLoop);
-
   while (loop.nextEventIndex < playbackOrder.size()) {
     const MidiEvent &evt = mergedEvents[playbackOrder[loop.nextEventIndex]];
     const uint32_t evTick =
         IntervalProjection::playbackEventPhase(evt.tick, playbackContext.loopLength);
     const uint32_t evStorageTick = evt.tick;
 
-    const bool crossed = IntervalProjection::shouldPlaybackCrossEvent(
-        prevTickInLoop, evTick, tickInLoop, atLoopStart);
+    bool crossed = atLoopStart ? (evTick <= tickInLoop) : (prevTickInLoop < evTick && evTick <= tickInLoop);
     if (crossed && eventInJamRegion(evStorageTick)) {
-      trySendPlaybackEvent(evt, evTick);
+      uint8_t effectiveCh = (evt.channel >= 1 && evt.channel <= 16) ? midiChannel : evt.channel;
+      uint8_t note = evt.isNoteOn() || evt.isNoteOff() ? evt.data.noteData.note : 0;
+      bool isDuplicate = (evt.isNoteOn() || evt.isNoteOff()) &&
+                         (evTick == lastSentEvTick && effectiveCh == lastSentChannel &&
+                          note == lastSentNote && evt.type == lastSentType);
+      if (!isDuplicate) {
+        sendMidiEvent(evt);
+        if (evt.isNoteOn() || evt.isNoteOff()) {
+          lastSentEvTick = evTick;
+          lastSentChannel = effectiveCh;
+          lastSentNote = note;
+          lastSentType = evt.type;
+        }
+      }
       loop.nextEventIndex++;
     }
     else if (evTick > tickInLoop) {
@@ -1821,29 +1803,13 @@ void Track::playMidiEvents(uint32_t currentTick, bool isAudible) {
     if (loop.ensureCaptureEventsSorted()) {
       reanchorCaptureIndex(loop);
     }
-
-    if (wrappedThisFrame) {
-      for (size_t captureIndex = 0; captureIndex < loop.capture.store.size(); ++captureIndex) {
-        const MidiEvent& evt = loop.capture.store.at(captureIndex);
-        const uint32_t evTick =
-            IntervalProjection::projectPlaybackEventPhase(evt.tick, playbackContext);
-        if (!IntervalProjection::shouldPlaybackEmitWrapTailEvent(prevTickInLoop, evTick,
-                                                                   loop.loopLengthTicks)) {
-          continue;
-        }
-        if (eventInJamRegion(evt.tick)) {
-          sendMidiEvent(evt);
-        }
-      }
-    }
-
     while (loop.captureNextEventIndex < loop.capture.store.size()) {
       const MidiEvent& evt = loop.capture.store.at(loop.captureNextEventIndex);
       const uint32_t evTick =
           IntervalProjection::projectPlaybackEventPhase(evt.tick, playbackContext);
       const uint32_t evStorageTick = evt.tick;
-      const bool crossed = IntervalProjection::shouldPlaybackCrossEvent(
-          prevTickInLoop, evTick, tickInLoop, atLoopStart);
+      const bool crossed =
+          atLoopStart ? (evTick <= tickInLoop) : (prevTickInLoop < evTick && evTick <= tickInLoop);
       if (crossed && eventInJamRegion(evStorageTick)) {
         sendMidiEvent(evt);
         loop.captureNextEventIndex++;
@@ -1886,39 +1852,24 @@ void Track::playMidiEventsForSlot(uint8_t slotIndex, uint32_t currentTick, bool 
 
   uint32_t tickInLoop = IntervalProjection::tickPhaseInProjectionCycle(
       currentTick, projectionCycleStartTick, loop.loopLengthTicks);
-
-  const uint32_t prevTickInLoop = loop.lastTickInLoop;
-  const bool wrappedThisFrame = IntervalProjection::didDisplayPlayheadWrapBackward(
-      tickInLoop, prevTickInLoop, loop.loopStartTick, loop.loopLengthTicks);
-
-  const PlaybackOrderVec& playbackOrder = loop.getPlaybackOrder();
-
-  if (wrappedThisFrame) {
-    for (size_t orderIndex = 0; orderIndex < playbackOrder.size(); ++orderIndex) {
-      const MidiEvent& evt = mergedEvents[playbackOrder[orderIndex]];
-      const uint32_t evTick =
-          IntervalProjection::playbackEventPhase(evt.tick, playbackContext.loopLength);
-      if (IntervalProjection::shouldPlaybackEmitWrapTailEvent(prevTickInLoop, evTick,
-                                                               loop.loopLengthTicks)) {
-        sendMidiEvent(evt);
-      }
-    }
-
+  if (IntervalProjection::didDisplayPlayheadWrapBackward(tickInLoop, loop.lastTickInLoop,
+                                                       loop.loopStartTick,
+                                                       loop.loopLengthTicks)) {
     projectionCycleStartTick = IntervalProjection::advanceProjectionCycleStartTickOnWrap(
         projectionCycleStartTick, loop.loopLengthTicks);
     loop.nextEventIndex = 0;
   }
 
+  uint32_t prevTickInLoop = loop.lastTickInLoop;
   loop.lastTickInLoop = tickInLoop;
-  const bool atLoopStart =
-      wrappedThisFrame || (prevTickInLoop == UINT32_MAX) || (tickInLoop <= prevTickInLoop);
+  bool atLoopStart = (prevTickInLoop == UINT32_MAX) || (tickInLoop <= prevTickInLoop);
+  const PlaybackOrderVec& playbackOrder = loop.getPlaybackOrder();
 
   while (loop.nextEventIndex < playbackOrder.size()) {
     const MidiEvent &evt = mergedEvents[playbackOrder[loop.nextEventIndex]];
     const uint32_t evTick =
         IntervalProjection::playbackEventPhase(evt.tick, playbackContext.loopLength);
-    const bool crossed = IntervalProjection::shouldPlaybackCrossEvent(
-        prevTickInLoop, evTick, tickInLoop, atLoopStart);
+    bool crossed = atLoopStart ? (evTick <= tickInLoop) : (prevTickInLoop < evTick && evTick <= tickInLoop);
     if (crossed) {
       sendMidiEvent(evt);
       loop.nextEventIndex++;

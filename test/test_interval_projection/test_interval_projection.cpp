@@ -394,30 +394,6 @@ void test_display_wrap_backward_only_on_musical_loop_head() {
                                                                         loopLength));
 }
 
-void test_playback_wrap_tail_includes_loop_end_off() {
-    constexpr uint32_t loopLength = 41472;
-    const uint32_t prevTickInLoop = 41470;
-    const uint32_t tailOffTick = loopLength - 1;
-
-    TEST_ASSERT_TRUE(IntervalProjection::shouldPlaybackEmitWrapTailEvent(prevTickInLoop, tailOffTick,
-                                                                         loopLength));
-    TEST_ASSERT_FALSE(IntervalProjection::shouldPlaybackEmitWrapTailEvent(prevTickInLoop, 0U,
-                                                                          loopLength));
-    TEST_ASSERT_FALSE(IntervalProjection::shouldPlaybackEmitWrapTailEvent(prevTickInLoop, prevTickInLoop,
-                                                                          loopLength));
-}
-
-void test_playback_wrap_head_crosses_from_loop_start() {
-    constexpr uint32_t prevTickInLoop = 41471;
-    const uint32_t tickInLoop = 0;
-    const bool atLoopStart = true;
-
-    TEST_ASSERT_TRUE(IntervalProjection::shouldPlaybackCrossEvent(prevTickInLoop, 0U, tickInLoop,
-                                                                  atLoopStart));
-    TEST_ASSERT_FALSE(IntervalProjection::shouldPlaybackCrossEvent(prevTickInLoop, 41471U, tickInLoop,
-                                                                   atLoopStart));
-}
-
 int main(int /*argc*/, char** /*argv*/) {
     UNITY_BEGIN();
     RUN_TEST(test_tick_interval_intersects_spec_example);
@@ -445,7 +421,5 @@ int main(int /*argc*/, char** /*argv*/) {
     RUN_TEST(test_transport_downbeat_display_with_loop_start_offset);
     RUN_TEST(test_fresh_transport_linear_display_phase);
     RUN_TEST(test_display_wrap_backward_only_on_musical_loop_head);
-    RUN_TEST(test_playback_wrap_tail_includes_loop_end_off);
-    RUN_TEST(test_playback_wrap_head_crosses_from_loop_start);
     return UNITY_END();
 }
