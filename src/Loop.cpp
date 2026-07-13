@@ -891,37 +891,6 @@ void Loop::mergeMaterializedPassesWithCapture(SessionMidiEventVec& out) const {
   out = std::move(merged);
 }
 
-void Loop::removeCaptureNoteOffAt(uint8_t channel, uint8_t note, uint32_t tick) {
-  if (capture.store.empty()) {
-    return;
-  }
-
-  MidiEventVec flat;
-  capture.store.flatten(flat);
-  bool removed = false;
-  for (auto it = flat.begin(); it != flat.end(); ++it) {
-    if (!it->isNoteOff() || it->channel != channel || it->data.noteData.note != note ||
-        it->tick != tick) {
-      continue;
-    }
-    flat.erase(it);
-    removed = true;
-    break;
-  }
-
-  if (!removed) {
-    return;
-  }
-
-  capture.store.clear();
-  if (!flat.empty()) {
-    capture.store.loadFromFlat(flat);
-  }
-  captureEventsSortDirty = false;
-  ++captureDisplayRevision;
-  rebuildCapturePreviewFromStore(*this);
-}
-
 NoteId Loop::allocateNoteId() {
   return nextNoteId_++;
 }
@@ -1345,8 +1314,14 @@ SealOutcome Loop::sealCapture(uint32_t sealedAtTick) {
 
   if (loopLengthTicks > 0 &&
       (capture.phase == CapturePhase::Record || capture.phase == CapturePhase::Overdub)) {
+    uint32_t openTailCloseTick = UINT32_MAX;
+    if (startLoopTick != UINT32_MAX) {
+      openTailCloseTick = IntervalProjection::tickPhaseInLoop(
+          sealedAtTick, startLoopTick, loopLengthTicks);
+    }
     const LoopStopFinalize::Result fin =
-        LoopStopFinalize::finalizeWrapWindowOnStore(capture.store, loopLengthTicks);
+        LoopStopFinalize::finalizeWrapWindowOnStore(capture.store, loopLengthTicks,
+                                                    openTailCloseTick);
     wrapSyntheticOffs = static_cast<uint32_t>(fin.syntheticOffsInserted);
     minLenPairsRemoved = static_cast<uint32_t>(
         CaptureIncrementalSanity::removePairsShorterThanNoteMinLength(
@@ -1360,6 +1335,11 @@ SealOutcome Loop::sealCapture(uint32_t sealedAtTick) {
   SC_CAPTURE_CLEANUP(phaseLabel, "dedup", captureDedupEventsDropped_);
   SC_CAPTURE_CLEANUP(phaseLabel, "minlen", minLenPairsRemoved);
   SC_CAPTURE_CLEANUP(phaseLabel, "wrap_synth", wrapSyntheticOffs);
+#if defined(SESSION_CAPTURE)
+  if (wrapSyntheticOffs > 0) {
+    logger.info("Seal wrap synth offs: count=%u", wrapSyntheticOffs);
+  }
+#endif
   captureDedupEventsDropped_ = 0;
 
   const CapturePassPhase phase =

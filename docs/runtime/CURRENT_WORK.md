@@ -2,13 +2,50 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-07-13 (loop-wrap regression reverted to bc98491 — pending HITL)
+Last updated: 2026-07-13 (overdub wrap note-off pairing fix — pending HITL)
 
 ---
 
 ## Now implementing
 
-### Bugfix: loop-wrap playback lag regression — REVERTED to `bc98491` (interrupts DEC-020 Phase 5)
+### Bugfix: overdub wrap note-off pairing — **implemented, pending HITL**
+
+**Follow-up to capture ownership refactor** ([`overdub_wrap_note_off_pairing_bugfix.md`](../plans/overdub_wrap_note_off_pairing_bugfix.md)). Fixes wrong on/off pairing when notes are held across loop wrap.
+
+**Changes:** `capturePhaseTick` / `appendCaptureNoteOffAtPhase`; finalize clears pending only after append; canonical `wrappedHeadOff`; stop diagnostics; 13 native tests in `test_capture_note_off_rules`.
+
+| Gate | Status |
+|------|--------|
+| Native | **554/554** |
+| `teensy41-capture-serial` build | **SUCCESS** |
+| HITL | **User** — 132536 scenario: tail wrap pairs tail on before wrap, not N@0 |
+
+---
+
+### Bugfix: overdub wrap note-off capture ownership — **implemented, pending HITL**
+
+**Scope:** Single close pipeline for open notes at record/overdub stop; playback read-only (no mid-wrap capture mutation). Aligns live capture with `buildCanonicalSpansFromMidi` wrapped linear storage.
+
+**Changes:**
+- Removed `closeOpenNotesAtLoopWrap`, `flushPendingNotesIntoCapture`, `removeCaptureNoteOffAt`
+- `finalizePendingNotes(currentTick)` on all record/overdub stop paths (playhead close, not L-1)
+- `Loop::sealCapture` passes playhead `openTailCloseTick` to `finalizeWrapWindowOnStore`
+- Removed `recordMidiEvents` note-off repair (tick bump, L-1 removal)
+- New native suite `test_capture_note_off_rules` (7 tests)
+
+**Plan:** [`docs/plans/overdub_wrap_note_off_capture_bugfix.md`](../plans/overdub_wrap_note_off_capture_bugfix.md)
+
+**Deferred:** playback wrap `double_on` ([`session_20260709_224935.log`](../../captures/session_20260709_224935.log)) — separate plan; do not touch `playMidiEventsForSlot` / shared `projectionCycleStartTick`.
+
+| Gate | Status |
+|------|--------|
+| Native | **554/554** |
+| `teensy41-capture-serial` build | **SUCCESS** |
+| HITL wrap + capture | **User** — re-run 125437 scenario: balanced SEVT per pitch, no ch4 ghost offs, no lag regression |
+
+---
+
+### Bugfix: loop-wrap playback lag regression — REVERTED to `bc98491` (shipped `901c4d9`)
 
 **Decision:** `19aa47a` ("Fix loop-wrap playback retrigger") and both follow-up wrap-tail rewrites (full-order scan; cursor drain) are **reverted**. `Track::playMidiEvents`, `Track::playMidiEventsForSlot`, `IntervalProjection` (`shouldPlaybackEmitWrapTailEvent` / `shouldPlaybackCrossEvent` helpers), and their tests are restored to `bc98491` — the state the user confirmed "worked perfectly." `closeOpenNotesAtLoopWrap` on overdub playback wrap is restored.
 

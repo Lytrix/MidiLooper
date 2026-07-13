@@ -125,6 +125,28 @@ After commit, **`finalizeLoopAtStop`** runs (see below). Loop length is set on r
 
 ---
 
+## Capture ownership invariants (overdub wrap)
+
+**Files:** `Track::recordMidiEvents`, `Track::finalizePendingNotes`, `Track::stopRecording`, `Track::stopOverdubbing`, `Loop::sealCapture`, `NoteUtils::reconstructNotes`
+
+1. **Playback is read-only** — `Track::playMidiEvents` / `playMidiEventsForSlot` must not append capture events, synthesize note-offs, or modify `pendingNotes`.
+2. **Linear storage is not playback order** — a wrapped note may be stored as `NoteOff@head` before `NoteOn@tail` in sorted tick order; `reconstructNotes` pairs them into display segments.
+3. **Single close pipeline** — open notes close at **record/overdub stop** via `finalizePendingNotes(currentTick)` then `LoopStopFinalize::finalizeWrapWindowOnStore` in `sealCapture` with the same playhead `closeTick`. No mid-wrap capture mutation.
+4. **Shared capture phase** — transport-active overdub and record-while-playing use `Track::capturePhaseTick` → `tickPhaseInProjectionCycle` (same frame as playback playhead); punch-in record uses linear offset from `startLoopTick`; `stopOverdubbing` / finalize use the same `capturePhaseTick` for `closeTick`. Stop must not use unwrapped absolute delta + L-1 clamp. Coordinate decision: [`capture_coordinate_canonical_decision_refinement.md`](../plans/capture_coordinate_canonical_decision_refinement.md).
+5. **Finalize → seal ownership transition** — after `finalizePendingNotes` returns, each cleared pending key has a capture `NoteOff` at the same phase tick live capture would use; `sealCapture` must not close those notes again.
+6. **Wrapped head NoteOff is canonical** — when `tickRelative < prior tail NoteOn` and the key is still in `pendingNotes`, live overdub records the head off without monotonic bump. Normal pairs obey `NoteOn <= NoteOff`; wrap pairs intentionally do not.
+
+Canonical wrapped pair in capture store:
+
+```text
+NoteOn@tailTick   (e.g. 1920)
+NoteOff@headTick  (e.g. 55)   ← head < tail in linear loop-relative space
+```
+
+Tests: `test/test_capture_note_off_rules/`, `test/test_noteutils_reconstruct/`.
+
+---
+
 ## Note validation (three tiers)
 
 There are **three separate** “note correctness” mechanisms; do not conflate them.
@@ -136,8 +158,8 @@ There are **three separate** “note correctness” mechanisms; do not conflate 
 Runs on **every** record and overdub stop (after `loopLengthTicks` is known):
 
 - **`sealCapture`** on `capture.store` for **record and overdub** (before detach):
-  - `flushPendingNotesIntoCapture` before overdub commit (record uses `finalizePendingNotes` before commit).
-  - `LoopStopFinalize::finalizeWrapWindowOnStore` on the **head + tail 1-bar window**.
+  - `finalizePendingNotes(currentTick)` before commit on record and overdub stop.
+  - `LoopStopFinalize::finalizeWrapWindowOnStore` on the **head + tail 1-bar window** with playhead `closeTick`.
   - **`removePairsShorterThanNoteMinLength`** when **`noteMinLengthRemoveEnabled`**.
   - **`verifyCaptureHotStop`** — log warning only.
 - **`finalizeLoopAtStop`** — schedules deferred full validate on record stop only; **no write-back** on overdub stop (pass rows stay separate for undo).

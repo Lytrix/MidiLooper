@@ -25,12 +25,33 @@
 #include "Utils/LoopStopFinalize.h"
 #include "Utils/LoopEventValidation.h"
 #include "Utils/NoteUtils.h"
+#include "Utils/IntervalProjection.h"
 #include "Utils/TrackMem.h"
 #include "DisplayManager.h"
 #include "EditManager.h"
 #include "TrackManager.h"
 
 extern TrackManager trackManager;
+
+#if defined(SESSION_CAPTURE)
+namespace {
+
+void logOverdubCaptureCoordinate(const Track& track, uint32_t absTick, uint32_t storageTick,
+                                 uint8_t channel, uint8_t note) {
+  const Loop& loop = track.getActiveLoop();
+  if (loop.loopLengthTicks == 0) {
+    return;
+  }
+  const uint32_t projPhase = IntervalProjection::tickPhaseInProjectionCycle(
+      absTick, track.getProjectionCycleStartTick(), loop.loopLengthTicks);
+  const uint32_t displayPhase =
+      IntervalProjection::noteRelativeTick(projPhase, loop.loopStartTick, loop.loopLengthTicks);
+  SC_CAPTURE_COORD(absTick, storageTick, projPhase, displayPhase, loop.startLoopTick,
+                   track.getProjectionCycleStartTick(), loop.loopStartTick, channel, note);
+}
+
+}  // namespace
+#endif
 
 MidiEventVec& Track::legacyMidiEventsFromPublished() {
   // Edit-path boundary only (EditManager::editMidiEvents when session inactive).
@@ -599,34 +620,78 @@ void Track::invalidatePlaybackWindow(bool preserveLedger) {
   playbackRuntime.resetAll(preserveLedger);
 }
 
+uint32_t Track::capturePhaseTick(uint32_t absTick) const {
+  const Loop& loop = getActiveLoop();
+  if (loop.loopLengthTicks == 0 || loop.startLoopTick == UINT32_MAX) {
+    if (absTick >= loop.startLoopTick) {
+      return absTick - loop.startLoopTick;
+    }
+    return 0;
+  }
+  if (isOverdubbing() || (isRecording() && isPlaying())) {
+    return IntervalProjection::tickPhaseInProjectionCycle(
+        absTick, projectionCycleStartTick, loop.loopLengthTicks);
+  }
+  if (isRecording() && !isPlaying()) {
+    return absTick >= loop.startLoopTick ? absTick - loop.startLoopTick : 0;
+  }
+  return tickPhaseInLoop(absTick, loop.startLoopTick, loop.loopLengthTicks);
+}
+
+bool Track::appendCaptureNoteOffAtPhase(uint8_t channel, uint8_t note, uint32_t phaseTick) {
+  Loop& loop = getActiveLoop();
+  if (!loop.captureActive()) {
+    return false;
+  }
+  uint32_t tickRelative = phaseTick;
+  if (loop.loopLengthTicks > 0 && tickRelative >= loop.loopLengthTicks) {
+    tickRelative = loop.loopLengthTicks - 1;
+  }
+  const MidiEvent newEvt = MidiEvent::NoteOff(tickRelative, channel, note, 0);
+  if (!loop.appendCaptureEvent(newEvt)) {
+    return false;
+  }
+  ++loop.captureDisplayRevision;
+  return true;
+}
+
 void Track::finalizePendingNotes(uint32_t offAbsTick) {
-    // Temporarily pretend we're still recording so noteOff() will queue things
-    TrackState prev = trackState;
-    trackState = TRACK_RECORDING;
+  const uint32_t phaseTick = capturePhaseTick(offAbsTick);
 
-    // 1) Copy out the pending keys
-    std::vector<std::pair<uint8_t,uint8_t>> toClose;
-    toClose.reserve(pendingNotes.size());
-    for (auto const &kv : pendingNotes) {
-        toClose.push_back(kv.first);
+  std::vector<std::pair<uint8_t, uint8_t>> toClose;
+  toClose.reserve(pendingNotes.size());
+  for (const auto& kv : pendingNotes) {
+    toClose.push_back(kv.first);
+  }
+
+  size_t pendingFinalized = 0;
+  size_t captureNoteOffsAppended = 0;
+  for (const auto& key : toClose) {
+    const uint8_t note = key.first;
+    const uint8_t channel = key.second;
+    ++pendingFinalized;
+    if (appendCaptureNoteOffAtPhase(channel, note, phaseTick)) {
+#if defined(SESSION_CAPTURE)
+      const Loop& loop = getActiveLoop();
+      uint32_t storageTick = phaseTick;
+      if (loop.loopLengthTicks > 0 && storageTick >= loop.loopLengthTicks) {
+        storageTick = loop.loopLengthTicks - 1;
+      }
+      logOverdubCaptureCoordinate(*this, offAbsTick, storageTick, channel, note);
+#endif
+      pendingNotes.erase(key);
+      ++captureNoteOffsAppended;
     }
+  }
 
-    // 2) Emit a noteOff() for each key (this will record the NoteEvent
-    //    but no longer erase inside the map)
-    for (auto const &key : toClose) {
-        uint8_t note    = key.first;
-        uint8_t channel = key.second;
-        noteOff(channel, note, 0, offAbsTick);
-    }
+#if defined(SESSION_CAPTURE)
+  logger.info("Stop finalize pending: finalized=%u capture_offs=%u phase=%u",
+              static_cast<unsigned>(pendingFinalized),
+              static_cast<unsigned>(captureNoteOffsAppended),
+              phaseTick);
+#endif
 
-    // 3) Now safely clear all remaining pending notes
-    pendingNotes.clear();
-
-    // Restore the real state
-    trackState = prev;
-    
-    // OPTIMIZATION: Invalidate caches when MIDI events change
-    invalidateCaches();
+  invalidateCaches();
 }
 
 void Track::validateAndCleanupMidiEvents(uint32_t openTailCloseTick) {
@@ -666,21 +731,6 @@ void Track::finalizeLoopAtStop(uint32_t openTailCloseTick, bool scheduleDeferred
   (void)openTailCloseTick;
   deferredFullMidiValidate = scheduleDeferredFullValidate;
   deferredValidateQueuedAtMs = scheduleDeferredFullValidate ? millis() : 0;
-}
-
-void Track::flushPendingNotesIntoCapture(uint32_t closeTick) {
-  Loop& loop = getActiveLoop();
-  if (pendingNotes.empty() || loop.loopLengthTicks == 0 || !loop.captureActive()) {
-    return;
-  }
-  uint32_t offTick = loop.loopLengthTicks - 1;
-  if (closeTick != UINT32_MAX) {
-    offTick = std::min(closeTick, loop.loopLengthTicks - 1);
-  }
-  for (const auto& kv : pendingNotes) {
-    loop.capture.store.append(MidiEvent::NoteOff(offTick, kv.first.second, kv.first.first, 0));
-  }
-  pendingNotes.clear();
 }
 
 CommitResult Track::finalizeCommitSideEffects(CommitResult result, CommitReason reason,
@@ -815,6 +865,22 @@ void Track::emitStoredMidiVerification() const {
       }
     }
   }
+
+#if defined(SESSION_CAPTURE)
+  const auto reconstructed = NoteUtils::reconstructNotes(flat, loop.loopLengthTicks, false);
+  size_t reconLogged = 0;
+  for (const DisplayNote& note : reconstructed) {
+    const uint32_t displayStart = IntervalProjection::noteRelativeTick(
+        note.startTick, loop.loopStartTick, loop.loopLengthTicks);
+    const uint32_t length =
+        note.endTick > note.startTick ? note.endTick - note.startTick : 0;
+    SC_DNTE(note.note, note.startTick, displayStart, length, static_cast<int>(reconLogged));
+    ++reconLogged;
+    if (reconLogged >= 32) {
+      break;
+    }
+  }
+#endif
 }
 
 void Track::processDeferredIdleMaintenance(uint32_t nowMs) {
@@ -992,67 +1058,6 @@ void Track::processDeferredRecordRevts(size_t maxEventsPerSlice) {
   }
 }
 
-void Track::closeOpenNotesAtLoopWrap() {
-  if (!isOverdubbing()) {
-    return;
-  }
-
-  Loop& loop = getActiveLoop();
-  if (loop.loopLengthTicks == 0 || loop.capture.phase != CapturePhase::Overdub) {
-    return;
-  }
-  if (pendingNotes.empty()) {
-    return;
-  }
-
-  const uint32_t closeTick = loop.loopLengthTicks - 1;
-  MidiEventVec liveView;
-  loop.mergeMaterializedPassesWithCapture(liveView);
-
-  std::vector<MidiEvent> syntheticNoteOffs;
-  syntheticNoteOffs.reserve(pendingNotes.size());
-
-  for (const auto& kv : pendingNotes) {
-    const uint8_t note = kv.first.first;
-    const uint8_t channel = kv.first.second;
-    const PendingNote& pending = kv.second;
-
-    bool alreadyClosedAtLoopEnd = false;
-    for (const auto& evt : liveView) {
-      if (!evt.isNoteOff()) {
-        continue;
-      }
-      if (evt.channel != channel || evt.data.noteData.note != note) {
-        continue;
-      }
-      if (evt.tick == closeTick) {
-        alreadyClosedAtLoopEnd = true;
-        break;
-      }
-    }
-    if (alreadyClosedAtLoopEnd) {
-      continue;
-    }
-
-    syntheticNoteOffs.push_back(MidiEvent::NoteOff(closeTick, channel, note, 0));
-    const uint32_t onTick = tickPhaseInLoop(pending.startNoteTick, loop.startLoopTick,
-                                            loop.loopLengthTicks);
-    logger.log(CAT_MIDI, LOG_INFO,
-               "Loop-wrap synthetic note-off: note %d, channel %d, on %lu -> off %lu",
-               note, channel, onTick, closeTick);
-  }
-
-  if (syntheticNoteOffs.empty()) {
-    return;
-  }
-
-  for (const MidiEvent& off : syntheticNoteOffs) {
-    loop.appendCaptureEvent(off);
-  }
-
-  ++loop.captureDisplayRevision;
-}
-
 // -------------------------
 // Stop recording
 // -------------------------
@@ -1077,8 +1082,7 @@ void Track::stopRecording(uint32_t currentTick) {
 
   if (loop.loopLengthTicks > 0) {
     if (!pendingNotes.empty()) {
-      const uint32_t closeRel = loop.loopLengthTicks - 1;
-      finalizePendingNotes(loop.startLoopTick + closeRel);
+      finalizePendingNotes(currentTick);
     }
     // Record-stop truncation: events captured past final loop length must not
     // survive into committed playback state.
@@ -1217,8 +1221,7 @@ TRACK_COLD_MEM void Track::stopRecordingToStopped(uint32_t currentTick) {
 
   if (loop.loopLengthTicks > 0) {
     if (!pendingNotes.empty()) {
-      const uint32_t closeRel = loop.loopLengthTicks - 1;
-      finalizePendingNotes(loop.startLoopTick + closeRel);
+      finalizePendingNotes(currentTick);
     }
     // Record-stop truncation: drop overflow capture events before seal/publish.
     loop.capture.store.dropEventsAtOrBeyondTick(loop.loopLengthTicks);
@@ -1390,10 +1393,10 @@ void Track::stopOverdubbing() {
   SC_REC_FLUSH_PENDING_REVTS(8);
   uint32_t closeTick = UINT32_MAX;
   if (loop.loopLengthTicks > 0) {
-    closeTick = tickPhaseInLoop(currentTick, loop.startLoopTick, loop.loopLengthTicks);
+    closeTick = capturePhaseTick(currentTick);
   }
   if (editManager.isNoteEditActive()) {
-    closeOpenNotesAtLoopWrap();
+    finalizePendingNotes(currentTick);
     editManager.foldLiveCaptureIntoNoteEditSession(*this, closeTick);
     pendingNotes.clear();
     const uint32_t stateHeapBefore = MemoryMonitor::getInternalHeapFreeBytes();
@@ -1417,7 +1420,7 @@ void Track::stopOverdubbing() {
     HotPathTelemetry::requestDeferredSummary("overdub_stop");
     return;
   }
-  flushPendingNotesIntoCapture(closeTick);
+  finalizePendingNotes(currentTick);
   const uint32_t sealHeapBefore = MemoryMonitor::getInternalHeapFreeBytes();
   const uint32_t sealStartUs = micros();
   const CommitResult commitResult =
@@ -1460,11 +1463,11 @@ void Track::stopOverdubbingToStopped() {
   Loop& loop = getActiveLoop();
   uint32_t closeTick = UINT32_MAX;
   if (loop.loopLengthTicks > 0) {
-    closeTick = tickPhaseInLoop(currentTick, loop.startLoopTick, loop.loopLengthTicks);
+    closeTick = capturePhaseTick(currentTick);
   }
   sendAllNotesOff();
   if (editManager.isNoteEditActive()) {
-    closeOpenNotesAtLoopWrap();
+    finalizePendingNotes(currentTick);
     editManager.foldLiveCaptureIntoNoteEditSession(*this, closeTick);
     pendingNotes.clear();
     logMemoryAfterOverdubStop(recordAddedNoteOnCount, loop);
@@ -1475,7 +1478,7 @@ void Track::stopOverdubbingToStopped() {
     HotPathTelemetry::requestDeferredSummary("overdub_stop_to_stopped");
     return;
   }
-  flushPendingNotesIntoCapture(closeTick);
+  finalizePendingNotes(currentTick);
   const CommitResult commitResult =
       loop.commitCapturePass(CommitReason::OverdubStopToStopped, currentTick);
   finalizeCommitSideEffects(commitResult, CommitReason::OverdubStopToStopped, closeTick);
@@ -1561,8 +1564,8 @@ void Track::recordMidiEvents(midi::MidiType type, byte channel, byte data1, byte
 
     } else if (isOverdubbing()) {
       if (loop.loopLengthTicks == 0) return;
-      tickRelative = tickPhaseInLoop(currentTick, loop.startLoopTick, loop.loopLengthTicks);
-      
+      tickRelative = capturePhaseTick(currentTick);
+
     } else {
       return;
     }
@@ -1602,7 +1605,7 @@ void Track::recordMidiEvents(midi::MidiType type, byte channel, byte data1, byte
 
     if (!eventAdded) return;
 
-    if (type == midi::NoteOff) {
+    if (type == midi::NoteOff && isOverdubbing() && loop.loopLengthTicks > 0) {
       const LoopEventStore& capture = loop.capture.store;
       for (size_t i = capture.size(); i > 0; --i) {
         const MidiEvent& prior = capture.at(i - 1);
@@ -1611,20 +1614,13 @@ void Track::recordMidiEvents(midi::MidiType type, byte channel, byte data1, byte
           continue;
         }
         const bool wrappedHeadOff =
-            isOverdubbing() && loop.loopLengthTicks > 0 && tickRelative < prior.tick &&
+            tickRelative < prior.tick &&
             pendingNotes.find({data1, channel}) != pendingNotes.end();
         if (tickRelative <= prior.tick && !wrappedHeadOff) {
           tickRelative = prior.tick + 1;
           newEvt.tick = tickRelative;
         }
         break;
-      }
-
-      if (isOverdubbing() && loop.loopLengthTicks > 0) {
-        const uint32_t wrapWindow = std::min(Config::TICKS_PER_BAR, loop.loopLengthTicks);
-        if (tickRelative < wrapWindow) {
-          loop.removeCaptureNoteOffAt(channel, data1, loop.loopLengthTicks - 1);
-        }
       }
     }
 
@@ -1636,6 +1632,12 @@ void Track::recordMidiEvents(midi::MidiType type, byte channel, byte data1, byte
     if (!loop.appendCaptureEvent(newEvt)) {
       return;
     }
+
+#if defined(SESSION_CAPTURE)
+    if (isOverdubbing() && (type == midi::NoteOn || type == midi::NoteOff)) {
+      logOverdubCaptureCoordinate(*this, currentTick, newEvt.tick, channel, data1);
+    }
+#endif
 
     if ((isRecording() && !isPlaying()) || isOverdubbing()) {
       ++loop.captureDisplayRevision;
@@ -1740,9 +1742,6 @@ void Track::playMidiEvents(uint32_t currentTick, bool isAudible) {
         projectionCycleStartTick, loop.loopLengthTicks);
     loop.nextEventIndex = 0;
     loop.captureNextEventIndex = 0;
-    if (isOverdubbing()) {
-      closeOpenNotesAtLoopWrap();
-    }
     logger.trace("Loop wrapped, resetting index");
   }
 
@@ -2107,14 +2106,17 @@ void Track::noteOff(uint8_t channel, uint8_t note, uint8_t velocity, uint32_t ti
     auto key = std::make_pair(note, channel);
     auto it = pendingNotes.find(key);
     if (it != pendingNotes.end()) {
-      recordMidiEvents(midi::NoteOff, channel, note, 0, tick);  // Use velocity 0 to mark end
+      recordMidiEvents(midi::NoteOff, channel, note, 0, tick);
       pendingNotes.erase(it);
     } else {
       logger.log(CAT_MIDI, LOG_WARNING,
                  "NoteOff for note %d on ch %d with no matching NoteOn",
                  note, channel);
     }
+    return;
   }
+
+  // After stop/finalize: pending already closed; ignore late physical release.
 }
 
 TRACK_COLD_MEM bool Track::hasPublishedEventsInSlot(uint8_t slotIndex) const {

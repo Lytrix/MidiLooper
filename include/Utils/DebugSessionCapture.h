@@ -96,6 +96,10 @@ SC_MEM_ATTR void overlayRowConfirm(uint8_t mode, uint8_t row);
 SC_MEM_ATTR void queueStoredNoteOn(uint32_t tick, uint8_t ch, uint8_t note);
 SC_MEM_ATTR void recStoredNoteOn(uint32_t tick, uint8_t ch, uint8_t note);
 SC_MEM_ATTR void storedNoteEvent(char kind, uint32_t tick, uint8_t ch, uint8_t note);
+SC_MEM_ATTR void captureCoordinate(uint32_t absTick, uint32_t storageTick, uint32_t projPhase,
+                                   uint32_t displayPhase, uint32_t startLoopTick,
+                                   int32_t projectionCycleStartTick, uint32_t loopStartTick,
+                                   uint8_t ch, uint8_t note);
 SC_MEM_ATTR void displaySnapshot(uint8_t slot, const char* trackState, uint32_t loopLen,
                                  size_t takeEvents, size_t visualNotes, size_t frameNotes,
                                  size_t bufferEvents, int published);
@@ -154,6 +158,11 @@ void emitDiagCheckpointLine(const Diagnostics::DiagTraceRecord& record);
 #define SC_OVERLAY_CONFIRM(mode, row)      DebugSessionCapture::overlayRowConfirm(mode, row)
 #define SC_REC_STORED_NOTE_ON(tick, ch, note) DebugSessionCapture::recStoredNoteOn(tick, ch, note)
 #define SC_STORED_NOTE_EVENT(kind, tick, ch, note) DebugSessionCapture::storedNoteEvent(kind, tick, ch, note)
+#define SC_CAPTURE_COORD(absTick, storageTick, projPhase, displayPhase, startLoopTick, \
+                         projectionCycleStartTick, loopStartTick, ch, note) \
+  DebugSessionCapture::captureCoordinate(absTick, storageTick, projPhase, displayPhase, \
+                                         startLoopTick, projectionCycleStartTick, loopStartTick, \
+                                         ch, note)
 #define SC_DISP(slot, state, loopLen, take, visual, frame, buffer, published) \
   DebugSessionCapture::displaySnapshot(slot, state, loopLen, take, visual, frame, buffer, published)
 #define SC_DISP_WINDOW(slot, state, loopLen, take, visual, frame, buffer, published, wStart, wBars, \
@@ -206,6 +215,9 @@ inline void restartCaptureBootGrace() {}
 #define SC_OVERLAY_CONFIRM(mode, row)      ((void)0)
 #define SC_REC_STORED_NOTE_ON(tick, ch, note) ((void)0)
 #define SC_STORED_NOTE_EVENT(kind, tick, ch, note) ((void)0)
+#define SC_CAPTURE_COORD(absTick, storageTick, projPhase, displayPhase, startLoopTick, \
+                         projectionCycleStartTick, loopStartTick, ch, note) \
+  ((void)0)
 #define SC_DISP(slot, state, loopLen, take, visual, frame, buffer, published) ((void)0)
 #define SC_DISP_WINDOW(slot, state, loopLen, take, visual, frame, buffer, published, wStart, wBars, \
                        wNotes) \
