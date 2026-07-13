@@ -6,7 +6,9 @@
 #include "MidiEvent.h"
 #include "Utils/IntervalProjection.h"
 
+#include "../../src/Logger.cpp"
 #include "../../src/Utils/IntervalProjection.cpp"
+#include "../../src/Utils/NoteUtils.cpp"
 #include "../../src/Utils/DisplayWindowUtils.cpp"
 
 void test_make_viewport_interval() {

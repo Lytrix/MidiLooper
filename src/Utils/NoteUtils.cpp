@@ -296,6 +296,44 @@ NOTE_EDIT_MEM bool NoteUtils::wrapPairIsUnblocked(const MidiEventVec& midiEvents
     return true;
 }
 
+NOTE_EDIT_MEM NoteUtils::WrapHeadSegment NoteUtils::resolveWrapHeadSegment(uint32_t loopLength,
+                                                                 uint32_t headEndInclusive,
+                                                                 NoteUtils::WrapHeadSegmentContext context,
+                                                                 uint32_t wrapWindowTicks,
+                                                                 uint32_t tailOnTick) {
+    NoteUtils::WrapHeadSegment segment;
+    if (loopLength == 0 || loopLength < 2) {
+        return segment;
+    }
+    if (headEndInclusive >= loopLength - 1) {
+        return segment;
+    }
+    const uint32_t wrapWindow =
+        wrapWindowTicks > loopLength ? loopLength : wrapWindowTicks;
+    if (headEndInclusive >= wrapWindow) {
+        return segment;
+    }
+    if (context == NoteUtils::WrapHeadSegmentContext::LivePlayhead && tailOnTick != UINT32_MAX &&
+        headEndInclusive >= tailOnTick) {
+        return segment;
+    }
+    if (context == NoteUtils::WrapHeadSegmentContext::CommittedHeadOff && headEndInclusive == 0) {
+        return segment;
+    }
+    segment.visible = true;
+    segment.startTick = 0;
+    segment.endTickInclusive = headEndInclusive;
+    return segment;
+}
+
+NOTE_EDIT_MEM uint32_t NoteUtils::wrapHeadExclusiveEndForDraw(uint32_t endTickInclusive,
+                                                            uint32_t loopLength) {
+    if (loopLength == 0 || endTickInclusive >= loopLength - 1) {
+        return 0;
+    }
+    return endTickInclusive + 1;
+}
+
 // CachedNoteList implementation
 NOTE_EDIT_MEM uint32_t NoteUtils::CachedNoteList::computeMidiHash(const MidiEventVec& midiEvents) {
     return midiEventVecFnv1aHash(midiEvents);

@@ -9,7 +9,9 @@
 #include "NoteEditSessionState.h"
 #include "Utils/IntervalProjection.h"
 
+#include "../../src/Logger.cpp"
 #include "../../src/Utils/IntervalProjection.cpp"
+#include "../../src/Utils/NoteUtils.cpp"
 
 namespace {
 

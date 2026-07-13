@@ -6,7 +6,9 @@
 
 #include "TickPhase.h"
 
+#include "../../src/Logger.cpp"
 #include "../../src/Utils/IntervalProjection.cpp"
+#include "../../src/Utils/NoteUtils.cpp"
 
 void test_tick_phase_loop_length_zero() {
     TEST_ASSERT_EQUAL_UINT32(0, tickPhaseInLoop(5, 0, 0));
