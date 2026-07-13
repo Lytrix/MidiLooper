@@ -20,7 +20,7 @@ import time
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Callable, Optional
+from typing import Any, Callable, Optional
 
 try:
     import mido
@@ -1231,8 +1231,14 @@ def _ensure_transport_running(
     *,
     press_ms: int,
     phase_wait_ms: int,
+    serial_collector: Any | None = None,
+    transport_args: Any | None = None,
 ) -> bool:
-    """Start transport only when the host is not already receiving MIDI clock."""
+    """Start transport when USB MIDI clock is absent and serial proxy is not active."""
+    from hitl.serial_transport import use_serial_transport_proxy
+
+    if transport_args is not None and use_serial_transport_proxy(transport_args, serial_collector):
+        return True
     if _clock_seen_within(in_port, 0.5):
         return True
     for attempt in range(1, 4):
@@ -1368,9 +1374,11 @@ def _ensure_recording_started(
     press_ms: int,
     state_sync_timeout_ms: int,
     serial_grace_ms: int = 3000,
-    abort: Optional[RunAbort],
+    abort: Optional[RunAbort] = None,
 ) -> bool:
     """Arm then record: EMPTY -> ARMED (transport off), then ARMED -> RECORDING starts transport."""
+    from host_midi_automation_baseline import _send_record_arm_press
+
     snap = serial_collector.snapshot()
     baseline_reca = _count_reca_markers(snap)
     baseline_recording_transitions = _recording_transition_baseline(snap)
@@ -1384,10 +1392,8 @@ def _ensure_recording_started(
             f"latest state={latest}"
         )
 
-    _send_short_press(
+    _send_record_arm_press(
         out_port,
-        note=RECORD_BUTTON_NOTE,
-        channel_1based=CONTROL_CHANNEL_1BASED,
         press_ms=press_ms,
     )
 
@@ -1421,10 +1427,8 @@ def _ensure_recording_started(
         f"(latest={fresh_latest}, serial_lines={len(fresh)}, "
         f"reca={_count_reca_markers(fresh)}); retrying record press"
     )
-    _send_short_press(
+    _send_record_arm_press(
         out_port,
-        note=RECORD_BUTTON_NOTE,
-        channel_1based=CONTROL_CHANNEL_1BASED,
         press_ms=press_ms,
     )
     reached = _wait_for_recording_start(
@@ -4225,17 +4229,15 @@ def main() -> int:
                 )
                 return 1
         else:
-            _send_short_press(
+            from host_midi_automation_baseline import _send_record_arm_press
+
+            _send_record_arm_press(
                 out_port,
-                note=RECORD_BUTTON_NOTE,
-                channel_1based=CONTROL_CHANNEL_1BASED,
                 press_ms=args.press_ms,
             )
             time.sleep(min(args.phase_wait_ms, 120) / 1000.0)
-            _send_short_press(
+            _send_record_arm_press(
                 out_port,
-                note=RECORD_BUTTON_NOTE,
-                channel_1based=CONTROL_CHANNEL_1BASED,
                 press_ms=args.press_ms,
             )
             time.sleep(min(args.phase_wait_ms, 120) / 1000.0)

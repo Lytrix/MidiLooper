@@ -75,6 +75,21 @@ Undo/redo still runs after the **last** overdub stop (tests most recent pass).
 
 **Never mix modes:** do not pass `--serial-port` while `capture_session.py` holds the port.
 
+**Mode A serial close:** after `final_wait_ms`, the script drains trailing USB serial for up to `--serial-close-drain-ms` (default 10s) until no new lines for `--serial-close-idle-ms` (default 750ms), then snapshots and closes the port. Closing USB serial still reboots the Teensy (expected); the drain captures deferred undo/redo/`#CAP` lines from the firmware TX ring first. Increase `--serial-close-drain-ms` on long undo/redo or persistence-heavy runs if verification misses tail markers.
+
+## Clock and transport proxy
+
+Firmware **does not** log per-pulse MIDI clock (`0xF8`) in `#CAP,MI,...` lines (hot-path cost). HITL uses two separate mechanisms:
+
+| Check | Source |
+|-------|--------|
+| `*_clock_pulses_seen` (192 gates) | Host **USB MIDI in** clock poll, **or** wall-clock tempo proxy when serial capture shows transport |
+| Serial first-note offset / transitions | `#CAP` lines: `ST,Track`, `MI,U` notes, `BPM`, `BAR` |
+
+When `--serial-port` (Mode A) or `--follow-current-session` (Mode B) is active and recent `#CAP,BPM` or `#CAP,BAR` lines appear, the host paces bar-synced phases via **wall-clock tempo proxy** (prefers BPM from serial tail, else `--tempo-bpm`). Console shows `[info] Bar sync via wall-clock tempo proxy`.
+
+Shared modules: `scripts/hitl/transport_clock.py`, `scripts/hitl/serial_transport.py`, `scripts/hitl/serial_timing.py`.
+
 ## Required pass criteria
 
 The run is considered valid only when all are true:
@@ -87,10 +102,10 @@ The run is considered valid only when all are true:
 - `second_overdub_notes_sent >= 7` (2 bars × 4 beats − 1 grid tolerance)
 - serial verification reports first-note timing within thresholds:
  - `record_first_note_offset.offset_clocks <= record_first_note_max_clocks` (default `12`)
- - `overdub_first_note_offset.offset_clocks <= overdub_first_note_max_clocks` (default `12`)
- - `second_overdub_first_note_offset.offset_clocks <= overdub_first_note_max_clocks` (default `12`)
+  - `overdub_first_note_offset.offset_clocks <= overdub_first_note_max_clocks` (default `12`) — uses **capture latency** (raw offset minus `--overdub-start-delay-*` / `--second-overdub-start-delay-*` grid delay)
+ - `second_overdub_first_note_offset` capture latency clocks `<= overdub_first_note_max_clocks` (default `12`; same grid-delay subtraction as overdub)
 - transitions include:
- - `ARMED -> RECORDING` (or `EMPTY -> RECORDING` after clear)
+ - `ARMED -> RECORDING` (or `EMPTY -> RECORDING` / `STOPPED -> RECORDING` after clear + transport restart)
  - `RECORDING -> STOPPED_RECORDING`
  - `STOPPED_RECORDING -> PLAYING`
  - `PLAYING -> OVERDUBBING` (≥ 2)

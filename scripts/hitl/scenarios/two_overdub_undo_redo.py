@@ -111,6 +111,8 @@ def _build_shim(ns: argparse.Namespace, midi_channel: int) -> object:
 
 def run_two_overdub_undo_redo(args: object) -> int:
     import mido
+    from hitl.serial_transport import resolve_wall_tempo_for_proxy
+    from hitl.transport_clock import ensure_transport_clock
     from host_midi_automation_baseline import (
         CONTROL_CHANNEL_1BASED,
         RECORD_BUTTON_NOTE,
@@ -119,7 +121,6 @@ def run_two_overdub_undo_redo(args: object) -> int:
         RunAbort,
         SerialCaptureCollector,
         _count_capture_transitions,
-        _ensure_midi_clock,
         _find_midi_port,
         _run_overdub_pass,
         _send_short_press,
@@ -169,6 +170,8 @@ def run_two_overdub_undo_redo(args: object) -> int:
                 in_port,
                 press_ms=ns.press_ms,
                 phase_wait_ms=ns.phase_wait_ms,
+                serial_collector=serial_collector,
+                transport_args=ns,
             )
 
         print(f"{log_prefix} select track {ns.track_number}")
@@ -212,6 +215,8 @@ def run_two_overdub_undo_redo(args: object) -> int:
                     in_port,
                     press_ms=ns.press_ms,
                     phase_wait_ms=ns.phase_wait_ms,
+                    serial_collector=serial_collector,
+                    transport_args=ns,
                 )
 
         print(f"{log_prefix} record {ns.record_bars} bars")
@@ -234,9 +239,22 @@ def run_two_overdub_undo_redo(args: object) -> int:
             )
             pause()
 
-        if not _ensure_midi_clock(in_port, out_port, min_clocks=24, timeout_s=3.0, abort=abort):
+        ns.tempo_bpm = shim.tempo_bpm
+        clock_ok, using_serial_proxy = ensure_transport_clock(
+            in_port,
+            out_port,
+            serial_collector,
+            ns,
+            min_clocks=24,
+            timeout_s=3.0,
+            abort=abort,
+        )
+        if not clock_ok:
             print(f"{log_prefix} MIDI clock missing before record stream")
             return 1
+        wall_clock_tempo = resolve_wall_tempo_for_proxy(
+            serial_collector, ns, using_serial_proxy=using_serial_proxy
+        )
 
         guard = max(10.0, ns.record_bars * seconds_per_bar * 3.0)
         rec_notes, _rec_cc, rec_clock_count, _rec_timing = _stream_pattern_for_bars(
@@ -258,6 +276,7 @@ def run_two_overdub_undo_redo(args: object) -> int:
             stop_press_advance_clocks=0,
             abort=abort,
             emit_immediate_first_step=True,
+            wall_clock_tempo_bpm=wall_clock_tempo,
         )
         print(f"{log_prefix} record stream notes={rec_notes} clocks={rec_clock_count}")
         if rec_clock_count <= 0:

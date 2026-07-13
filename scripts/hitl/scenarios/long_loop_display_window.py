@@ -133,6 +133,8 @@ def _parse_common_args(args: object) -> argparse.Namespace:
 
 def run_long_loop_display_window(args: object) -> int:
     import mido
+    from hitl.serial_transport import resolve_wall_tempo_for_proxy
+    from hitl.transport_clock import ensure_transport_clock
     from host_midi_automation_baseline import (
         CONTROL_CHANNEL_1BASED,
         GLOBAL_TRANSPORT_NOTE,
@@ -142,7 +144,6 @@ def run_long_loop_display_window(args: object) -> int:
         RunAbort,
         SerialCaptureCollector,
         _count_reca_markers,
-        _ensure_midi_clock,
         _find_midi_port,
         _latest_track_state,
         _recording_transition_baseline,
@@ -193,6 +194,8 @@ def run_long_loop_display_window(args: object) -> int:
                 in_port,
                 press_ms=ns.press_ms,
                 phase_wait_ms=ns.phase_wait_ms,
+                serial_collector=serial_collector,
+                transport_args=ns,
             )
 
         print(
@@ -228,13 +231,16 @@ def run_long_loop_display_window(args: object) -> int:
                         press_ms=ns.press_ms,
                     )
                     time.sleep(ns.phase_wait_ms / 1000.0)
-                    if not _ensure_midi_clock(
+                    clock_ok, _using_proxy = ensure_transport_clock(
                         in_port,
                         out_port,
+                        serial_collector,
+                        ns,
                         min_clocks=24,
                         timeout_s=2.0,
                         abort=abort,
-                    ):
+                    )
+                    if not clock_ok:
                         print(
                             "[long-loop-display-hitl] MIDI clock missing after transport "
                             "start; retrying transport"
@@ -274,6 +280,8 @@ def run_long_loop_display_window(args: object) -> int:
                     in_port,
                     press_ms=ns.press_ms,
                     phase_wait_ms=ns.phase_wait_ms,
+                    serial_collector=serial_collector,
+                    transport_args=ns,
                 )
 
         print(f"[track {track_index}] record {ns.record_bars} bars")
@@ -332,9 +340,23 @@ def run_long_loop_display_window(args: object) -> int:
             print("[long-loop-display-hitl] error: record did not reach RECORDING")
             return 1
 
-        if not _ensure_midi_clock(in_port, out_port, min_clocks=24, timeout_s=3.0, abort=abort):
+        if not hasattr(ns, "tempo_bpm"):
+            ns.tempo_bpm = 120.0
+        clock_ok, using_serial_proxy = ensure_transport_clock(
+            in_port,
+            out_port,
+            serial_collector,
+            ns,
+            min_clocks=24,
+            timeout_s=3.0,
+            abort=abort,
+        )
+        if not clock_ok:
             print("[long-loop-display-hitl] MIDI clock missing before record stream")
             return 1
+        wall_clock_tempo = resolve_wall_tempo_for_proxy(
+            serial_collector, ns, using_serial_proxy=using_serial_proxy
+        )
 
         seconds_per_bar = 2.0
         guard = max(30.0, ns.record_bars * seconds_per_bar * 2.5)
@@ -357,6 +379,7 @@ def run_long_loop_display_window(args: object) -> int:
             stop_press_advance_clocks=0,
             abort=abort,
             emit_immediate_first_step=True,
+            wall_clock_tempo_bpm=wall_clock_tempo,
         )
         print(
             f"[long-loop-display-hitl] record stream notes={rec_notes} clocks={rec_clock_count}"
