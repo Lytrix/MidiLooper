@@ -4,11 +4,22 @@
 
 Primary implementation paths:
 - Mapping: [`src/Utils/MidiButtonConfig.cpp`](../../../src/Utils/MidiButtonConfig.cpp)
-- Gesture actions: [`src/MidiButtonActions.cpp`](../../../src/MidiButtonActions.cpp) (`handleToggleRecordForSlot`, `beginSlotLayerHold`, `endSlotLayerHold`)
+- Gesture actions: [`src/MidiButtonActions.cpp`](../../../src/MidiButtonActions.cpp) (`handleToggleRecord`, `handleToggleRecordForSlot`, `beginSlotLayerHold`, `endSlotLayerHold`)
 - Slot selection orchestrator: [`TrackManager::setSelectedSlotIndex`](../../../src/TrackManager.cpp) — preview slot (`selectedSlotIndex`); playing slot (`activeLoopIndex`) commits separately while transport runs
 - **Playing / preview / pending:** preview = piano roll + edit (immediate); playing = audible MIDI + bar/16th LED phase; pending = queued launch target until commit
 - Playback sync policy: default `SyncPlayback::Yes` when transport is stopped; while transport is running, preview updates immediately and **playing** slot commits at **loop boundary** for performance launch (`SlotQuantization::LoopEnd`)
 - Pending switch logic: [`src/SlotStateMachine.cpp`](../../../src/SlotStateMachine.cpp)
+
+## Button A (Record)
+
+**Short press** on the main Record button uses the **selected slot** (preview focus), not track-level `TRACK_EMPTY`:
+
+- **Selected slot has no published MIDI**: same arm / queue / punch-in rules as a **loop-row short press** on that slot (`handleToggleRecordForSlot`).
+- **Selected slot has data, track playing**: live overdub (not a playback switch — use loop-row short press for that).
+- **Selected slot has data, track stopped**: toggle play/stop.
+- **Recording / overdubbing**: stop capture (unchanged).
+
+Immediate record sets **`activeLoopIndex`** to the target slot before capture starts when preview and playing slots differ.
 
 ## Short press
 
