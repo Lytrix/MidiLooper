@@ -518,8 +518,9 @@ uint32_t DisplayManager::resolvePlayheadInLoop(const Track& track, uint8_t displ
         // Preview playhead: fixed at loopStartTick until playing slot catches up at launch commit.
         return 0;
     }
-    const uint32_t tickInLoopStorage =
-        tickPhaseInLoop(displayTick, dispLoop.startLoopTick, loopLength);
+    const uint32_t tickInLoopStorage = resolvePlayheadStoragePhase(
+        currentTick, track.getProjectionCycleStartTick(), loopLength, displaySlot,
+        track.getActiveLoopIndex(), transportActive, displayTick, dispLoop.startLoopTick);
     return IntervalProjection::noteRelativeTick(tickInLoopStorage, loopOrigin, loopLength);
 }
 
@@ -909,7 +910,7 @@ void DisplayManager::invalidateForSlotChange(uint8_t trackIndex, uint8_t previou
     invalidateLiveDisplayCache();
     Track& track = trackManager.getTrack(trackIndex);
     const uint8_t activeSlot = track.getActiveLoopIndex();
-    const bool playbackActive = track.isPlaying();
+    const bool playbackActive = track.isPlaying() || track.isOverdubbing();
 
     auto invalidateSlotDisplay = [&](uint8_t slot) {
         if (slot >= Config::MAX_LOOPS_PER_TRACK) {
@@ -932,7 +933,8 @@ void DisplayManager::invalidateForSlotChange(uint8_t trackIndex, uint8_t previou
         track.invalidateCaches();
     }
 
-    if (playbackActive && trackIndex == trackManager.getSelectedTrackIndex()) {
+    if (playbackActive && trackIndex == trackManager.getSelectedTrackIndex() &&
+        !isPreviewPlayheadPending(newSlot, activeSlot, playbackActive)) {
         centerDetailedWindowOnPlayhead(track, newSlot, clockManager.getCurrentTick());
     }
 }
