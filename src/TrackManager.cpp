@@ -55,6 +55,40 @@ TrackManager::~TrackManager() {
   delete ledManager;
 }
 
+namespace {
+
+// If the user is in the default single-slot mode (exactly one enabled slot),
+// switching the active capture slot for record should not implicitly create a layered playback set.
+// Multi-slot selection holds explicitly build layered enabled sets; those should remain intact.
+void replaceSingleEnabledSlotWithTarget(bool slotEnabled[Config::NUM_TRACKS][Config::MAX_LOOPS_PER_TRACK],
+                                       bool slotMuted[Config::NUM_TRACKS][Config::MAX_LOOPS_PER_TRACK],
+                                       uint8_t trackIndex, uint8_t targetSlot) {
+  if (trackIndex >= Config::NUM_TRACKS || targetSlot >= Config::MAX_LOOPS_PER_TRACK) {
+    return;
+  }
+  uint8_t enabledCount = 0;
+  uint8_t enabledSlot = Config::INVALID_LOOP_SLOT;
+  for (uint8_t s = 0; s < Config::MAX_LOOPS_PER_TRACK; ++s) {
+    if (slotEnabled[trackIndex][s]) {
+      enabledCount++;
+      enabledSlot = s;
+      if (enabledCount > 1) {
+        return;  // layered set already, keep as-is
+      }
+    }
+  }
+  if (enabledCount == 1 && enabledSlot != Config::INVALID_LOOP_SLOT && enabledSlot != targetSlot) {
+    for (uint8_t s = 0; s < Config::MAX_LOOPS_PER_TRACK; ++s) {
+      slotEnabled[trackIndex][s] = (s == targetSlot);
+      if (s != targetSlot) {
+        slotMuted[trackIndex][s] = false;
+      }
+    }
+  }
+}
+
+}  // namespace
+
 void TrackManager::allocateLoopsEarly() {
   for (uint8_t i = 0; i < Config::NUM_TRACKS; i++) {
     tracks[i].ensureLoopsAllocated();
@@ -105,6 +139,7 @@ void TrackManager::startRecordingTrack(uint8_t trackIndex, uint32_t currentTick)
 
   // Captures write into the active slot; ensure the target slot is enabled/unmuted.
   {
+    replaceSingleEnabledSlotWithTarget(slotEnabled, slotMuted, trackIndex, slot);
     slotEnabled[trackIndex][slot] = true;
     slotMuted[trackIndex][slot] = false;
   }
@@ -164,6 +199,7 @@ void TrackManager::queueRecordingTrack(uint8_t trackIndex, uint8_t slotIndex,
   }
 
   // Target slot should be part of playback set while recording.
+  replaceSingleEnabledSlotWithTarget(slotEnabled, slotMuted, trackIndex, slotIndex);
   slotEnabled[trackIndex][slotIndex] = true;
   slotMuted[trackIndex][slotIndex] = false;
 
