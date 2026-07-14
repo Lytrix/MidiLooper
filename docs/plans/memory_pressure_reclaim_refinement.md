@@ -41,6 +41,8 @@ isProject: false
 
 **Branch:** `feature/memory-pressure-reclaim`
 
+**Session conclusions:** [`memory_pressure_reclaim_conclusions_refinement.md`](memory_pressure_reclaim_conclusions_refinement.md) (2026-07-15)
+
 ---
 
 ## Problem
