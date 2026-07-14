@@ -2749,6 +2749,12 @@ bool readCurrentSetFileEpilogue(File& file, uint8_t numTracks,
         }
     }
     if (footerToken != kGlobalUndoStackToken) {
+        Serial.print("[StorageManager] ERROR: CurrentSet runtime bundle footer token mismatch (got=0x");
+        Serial.print(footerToken, HEX);
+        Serial.print(" expected=0x");
+        Serial.print(kGlobalUndoStackToken, HEX);
+        Serial.print(" pos=");
+        Serial.println(static_cast<unsigned long>(file.position()));
         return false;
     }
     undoSnapshotsPending_ = deferUndoSnapshotBodies;
