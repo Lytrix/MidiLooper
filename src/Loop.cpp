@@ -13,6 +13,7 @@
 #include "Logger.h"
 #include <algorithm>
 #include <chrono>
+#include <cstring>
 
 namespace {
 
@@ -1099,6 +1100,10 @@ CommitResult Loop::commitCapturePass(CommitReason reason, uint32_t sealedAtTick)
     const uint32_t elapsedUs = traceMicros() - commitStartUs;
     SC_REC_STOP_STAGE(stage, elapsedUs, durationUs, heapBefore, heapAfter,
                       stopStageEventCount, stopStageChunkRefCount, outcome);
+    if (stage != nullptr && std::strcmp(stage, "publish") == 0 && outcome != nullptr &&
+        std::strcmp(outcome, "ok") == 0) {
+      Diagnostics::emitArchitectureMetricsSnapshot();
+    }
   };
 
   if (capture.store.empty()) {
