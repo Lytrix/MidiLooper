@@ -1724,6 +1724,7 @@ void Track::recordMidiEvents(midi::MidiType type, byte channel, byte data1, byte
       logger.log(CAT_TRACK, LOG_WARNING,
                  "Capture append failed (chunk pool or memory pressure) ch=%u note=%u",
                  static_cast<unsigned>(channel), static_cast<unsigned>(data1));
+      MemoryMonitor::notifyCaptureAppendFailed(millis());
       return;
     }
 
