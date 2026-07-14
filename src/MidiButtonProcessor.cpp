@@ -178,19 +178,6 @@ void MidiButtonProcessor::processPendingPresses() {
         if (state.tapState == TapState::Idle) continue;
         if (now < state.tapStateExpireTime) {
             // Debug: show pending states that haven't expired yet
-            if (state.tapState == TapState::PendingShort) {
-                static uint32_t lastPendingDebugTime = 0;
-                if (now - lastPendingDebugTime >= 500) {
-                    lastPendingDebugTime = now;
-                    logger.log(CAT_BUTTON, LOG_DEBUG, "Pending short press: Ch%d Note%d, now=%lu, expire=%lu, remaining=%ld",
-                               channel0 + 1, note, now, state.tapStateExpireTime,
-                               (int32_t)state.tapStateExpireTime - (int32_t)now);
-                }
-            }
-            if ((channel0 == 15 && (note == 36 || note == 37 || note == 38)) && state.tapState == TapState::PendingShort) {
-                logger.log(CAT_BUTTON, LOG_DEBUG, "Checking button Ch%d Note%d: state=PendingShort, now=%lu, expire=%lu, should_expire=%d",
-                           channel0 + 1, note, now, state.tapStateExpireTime, (now >= state.tapStateExpireTime));
-            }
             continue;
         }
 
