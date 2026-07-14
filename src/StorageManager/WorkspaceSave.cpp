@@ -101,6 +101,12 @@ STORAGE_PERSIST_MEM bool writeCurrentSetMetaHeaderToOpenFile(File& file) {
     return CurrentSetStorage::writeMetaHeader(io, header);
 }
 
+STORAGE_PERSIST_MEM void closeDeferredMetaTempIfOpen() {
+    if (storageSession.currentWorkspaceSave.file) {
+        storageSession.currentWorkspaceSave.file.close();
+    }
+}
+
 STORAGE_PERSIST_MEM bool finalizeDeferredMetaTempFile() {
     if (!writeRaw(storageSession.currentWorkspaceSave.file, &CurrentSetStorage::kSaveFileToken, sizeof(CurrentSetStorage::kSaveFileToken))) {
         return false;
@@ -234,6 +240,7 @@ STORAGE_PERSIST_MEM bool beginDeferredRuntimeBundleWrite(const LooperState& stat
         return false;
     }
 
+    closeDeferredMetaTempIfOpen();
     if (SD.exists(CurrentSetStorage::kCurrentMetaTempPath)) {
         (void)SD.remove(CurrentSetStorage::kCurrentMetaTempPath);
     }
@@ -272,6 +279,7 @@ STORAGE_PERSIST_MEM bool beginDeferredRuntimeBundleWrite(const LooperState& stat
     storageSession.currentWorkspaceSave.footerWriteStage = DeferredFooterWriteStage::SelectedTrack;
     resetDeferredLoopWriteState();
     resetDeferredUndoWriteState();
+    storageSession.currentWorkspaceSave.inProgress = true;
     storageSession.currentWorkspaceSave.stage = DeferredSaveStage::CurrentSetMeta;
     return true;
 }
@@ -291,6 +299,7 @@ STORAGE_PERSIST_MEM bool beginDeferredSaveJob(const LooperState& state) {
         return false;
     }
 
+    closeDeferredMetaTempIfOpen();
     storageSession.currentWorkspaceSave.file = SD.open(CurrentSetStorage::kCurrentMetaTempPath, FILE_WRITE);
     if (!storageSession.currentWorkspaceSave.file) {
         Serial.println("[StorageManager] ERROR: Could not open CurrentSet meta temp file");
@@ -325,10 +334,10 @@ STORAGE_PERSIST_MEM bool beginDeferredSaveJob(const LooperState& state) {
     storageSession.currentWorkspaceSave.footerWriteStage = DeferredFooterWriteStage::SelectedTrack;
     resetDeferredLoopWriteState();
     resetDeferredUndoWriteState();
+    storageSession.currentWorkspaceSave.inProgress = true;
     storageSession.currentWorkspaceSave.stage = DeferredSaveStage::CurrentSetMeta;
     return true;
 }
-
 
 STORAGE_PERSIST_MEM bool selectDeferredCapturePass(const LoopPasses& passes, uint16_t cursor,
                                CapturePassSlotFileHeader& passHeader,
@@ -1098,6 +1107,11 @@ STORAGE_PERSIST_MEM bool stepDeferredSaveJob() {
                 Serial.println("[StorageManager] ERROR: Deferred save failed patching lastActiveUnix");
                 return false;
             }
+            if (!CurrentWorkspaceStorage::finalizeEpochFileHeaderCrc(
+                    CurrentSetStorage::kCurrentMetaPath)) {
+                Serial.println("[StorageManager] ERROR: Deferred save failed refreshing runtime bundle epoch CRC");
+                return false;
+            }
             currentSetLastActiveUnix = lastActiveUnix;
             if (!writeWorkspaceMetaAfterDeferredSave()) {
                 Serial.println("[StorageManager] ERROR: Deferred save failed writing workspace.bin");
@@ -1124,7 +1138,11 @@ STORAGE_PERSIST_MEM bool stepDeferredSaveJob() {
 STORAGE_PERSIST_MEM bool stepDeferredRuntimeBundleSlice(bool& bundleDoneOut) {
     bundleDoneOut = false;
     if (storageSession.currentWorkspaceSave.stage == DeferredSaveStage::Idle) {
-        bundleDoneOut = true;
+        // Finalize closed the meta temp handle; only treat as done for an active bundle write item.
+        if (storageSession.persistenceWorkItem.bundleWriteActive &&
+            !storageSession.currentWorkspaceSave.file) {
+            bundleDoneOut = true;
+        }
         return true;
     }
     if (storageSession.currentWorkspaceSave.stage == DeferredSaveStage::CurrentSetLoopSlot) {
