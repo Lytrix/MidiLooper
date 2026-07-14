@@ -10,8 +10,8 @@ todos:
     content: "Phase 1B — tryReclaimDerivedViewCachesUnderPressure at Low+; owner try* APIs; background-first; stale AND not-referenced"
     status: completed
   - id: phase-2a-pass-metadata-extmem
-    content: "Phase 2A split-tier — EditPassVec, EditPassIdList, VisualBarVec extmem; hot metadata stays internal"
-    status: completed
+    content: "Phase 2A — REVERTED (003306): blanket extmem routing; abort() crash + hot-path latency"
+    status: cancelled
   - id: phase-2b-loop-pool-extmem
     content: "Phase 2B — LoopPool loops_ in extmem (~34 KiB fixed internal heap gain)"
     status: pending
@@ -283,12 +283,11 @@ After 1A validated:
 
 **Detail:** [`memory_pressure_phase2_pass_metadata_extmem_refinement.md`](memory_pressure_phase2_pass_metadata_extmem_refinement.md)
 
-**Phase 2A — Pass metadata extmem routing (split-tier)**
+**Phase 2A — Pass metadata extmem routing (primary)**
 
-- **Cold only:** `EditPassVec`, `EditPassIdList`, `VisualBarVec` → `ExternalMemoryFirstAllocator`
-- **Hot stays internal:** `ChunkIdList`, `BarIndexVec`, `OverdubPassVec` (see 003306 failure + routing guide)
-- Detail: [`memory_pressure_phase2_pass_metadata_extmem_refinement.md`](memory_pressure_phase2_pass_metadata_extmem_refinement.md) § split-tier
-- Gate: native suite + 215312-style manual (no FATAL, overdub publish OK)
+- Route `ChunkIdList`, `BarIndexVec`, `OverdubPassVec`, `EditPassVec`, `EditPassIdList`, `VisualBarVec` → `ExternalMemoryFirstAllocator`
+- Targets internal-heap growth during long capture (axis Phase 1B does not address)
+- Native full suite gate
 
 **Phase 2B — LoopPool extmem (complementary, fixed gain)**
 
