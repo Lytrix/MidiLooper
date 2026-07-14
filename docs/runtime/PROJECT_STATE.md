@@ -2,13 +2,13 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-07-14 (memory pressure Phase 1A on `feature/memory-pressure-reclaim`)
+Last updated: 2026-07-14 (memory pressure Phase 1A+1B on `feature/memory-pressure-reclaim`)
 
 ---
 
 ## Current branch
 
-**`feature/memory-pressure-reclaim`** — Phase 1A advisory pressure FSM shipped (native 617/617; RAM1 +7392 B). Manual gate 215312 pending before Phase 1B reclaim.
+**`feature/memory-pressure-reclaim`** — Phase 1A FSM + Phase 1B Low reclaim shipped (native 617/617; RAM1 +7392 B). Manual gate pending.
 
 *(Parallel: **`feature/persistence-work-queue`** @ `8b3f93e` — B1–B5 on `dev`.)*
 
@@ -24,7 +24,7 @@ See [`docs/BRANCHING.md`](../BRANCHING.md).
 
 ## In flight (uncommitted)
 
-Memory pressure Phase 1A+1B on `feature/memory-pressure-reclaim` @ latest — manual gate pending.
+None.
 
 ## Shipped on branch (recent)
 
