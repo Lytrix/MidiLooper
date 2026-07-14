@@ -22,6 +22,7 @@
 #include "NoteEditManager.h"  // Keep temporarily for move note logic
 #include "Utils/PerformanceMonitor.h"  // Performance monitoring
 #include "Utils/MemoryMonitor.h"
+#include "Utils/MemoryPressureLevel.h"
 #include "Utils/MemoryPool.h"
 #include "LoopEventStore.h"
 #include "Utils/HotPathTelemetry.h"
@@ -142,6 +143,10 @@ void loop() {
   //Serial.println("Main: Loop");
   uint32_t now = millis();
   MemoryMonitor::updateAdvisoryPressureLevel(now);
+  const MemoryPressureLevel pressure = MemoryMonitor::getAdvisoryPressureLevel();
+  if (pressure >= MemoryPressureLevel::Low) {
+    trackManager.tryReclaimDerivedViewCachesUnderPressure(pressure);
+  }
   // Poll MIDI input
   midiHandler.handleMidiInput();
 

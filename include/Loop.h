@@ -143,6 +143,8 @@ struct Loop {
   size_t nativeTestLiveEventCount() const { return liveEventCount(); }
   void seedRecordPassFromStore(LoopEventStore& store);
   void discardPassesMaterializedCache();
+  /// Phase 1B — discard stale materialized store when owner guards pass.
+  bool tryDiscardPassesMaterializedCache();
   void discardPublishedFlatCache() { passesMaterializedStore_.discardFlatCache(); }
   void commitStopFinalizeFromStore(LoopEventStore& merged);
 

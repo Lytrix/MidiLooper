@@ -1036,6 +1036,58 @@ void Track::releasePlaybackWindowMemory() {
   playbackRuntime.resetAll(false);
 }
 
+TRACK_COLD_MEM bool Track::tryReleasePlaybackWindowMemory() {
+  if (isRecording() || isOverdubbing() || getState() == TRACK_ARMED) {
+    return false;
+  }
+
+  const uint8_t trackIndex = resolveTrackIndexForPersistence(*this);
+  const bool selected = trackManager.isSelectedTrack(*this);
+  const bool noteEditActive = editManager.isNoteEditActive();
+  const bool transportActive = isPlaying();
+  bool reclaimed = false;
+
+  for (uint8_t slot = 0; slot < Config::MAX_LOOPS_PER_TRACK; ++slot) {
+    Loop& loop = loopForSlot(slot);
+    if (!trackManager.isSlotEnabled(trackIndex, slot) && !loop.hasPublishedEvents()) {
+      continue;
+    }
+
+    LoopPlaybackRuntime& runtime = playbackRuntime.slot(slot);
+    if (runtime.primaryWindow.empty()) {
+      continue;
+    }
+
+    const bool noteEditPreview =
+        noteEditActive && selected && slot == getActiveLoopIndex();
+    if (noteEditPreview) {
+      continue;
+    }
+
+    const uint32_t windowRevision = loop.playbackRevision;
+    const bool windowStale = runtime.primaryWindow.builtFromRevision != windowRevision;
+    if (transportActive && !windowStale) {
+      continue;
+    }
+
+    runtime.primaryWindow.clear();
+    reclaimed = true;
+  }
+  return reclaimed;
+}
+
+TRACK_COLD_MEM bool Track::tryClearPublishedMidiScratch() {
+  if (editManager.isNoteEditActive() && trackManager.isSelectedTrack(*this)) {
+    return false;
+  }
+  if (publishedMidiScratch_.empty()) {
+    return false;
+  }
+  publishedMidiScratch_.clear();
+  publishedMidiScratchRevision_ = UINT32_MAX;
+  return true;
+}
+
 void Track::resetDeferredRecordRevts() {
   deferredRecordRevtsPending = false;
   deferredRecordRevtChunkScan = false;

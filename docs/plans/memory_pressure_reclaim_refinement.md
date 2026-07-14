@@ -8,7 +8,7 @@ todos:
     status: completed
   - id: phase-1b-low-reclaim
     content: "Phase 1B — tryReclaimDerivedViewCachesUnderPressure at Low+; owner try* APIs; background-first; stale AND not-referenced"
-    status: pending
+    status: completed
   - id: phase-2-critical-reclaim
     content: "Critical — undo trim, pass reclaim, optional visual defer; persistence overrides non-critical gating after reclaim"
     status: pending

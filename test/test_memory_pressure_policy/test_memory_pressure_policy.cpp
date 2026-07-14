@@ -3,8 +3,7 @@
 
 #include <unity.h>
 
-#include "../../src/Utils/MemoryPressurePolicy.cpp"
-#include "../../src/Utils/MemoryMonitor.cpp"
+#include "../test_support/MemoryMonitorNativeDeps.cpp"
 
 #include "Globals.h"
 #include "LoopPasses.h"

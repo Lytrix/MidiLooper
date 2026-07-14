@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-07-14 (Phase 1A memory pressure FSM shipped; manual gate 215312 next)
+Last updated: 2026-07-14 (Phase 1B Low reclaim shipped; manual gate next)
 
 ---
 
@@ -10,18 +10,18 @@ Last updated: 2026-07-14 (Phase 1A memory pressure FSM shipped; manual gate 2153
 
 ### Memory pressure reclaim (M6 follow-on)
 
-**Branch:** `feature/memory-pressure-reclaim` (from `dev` @ `11025ca`)  
+**Branch:** `feature/memory-pressure-reclaim`  
 **Plan:** [`docs/plans/memory_pressure_reclaim_refinement.md`](../plans/memory_pressure_reclaim_refinement.md)
 
 | Phase | Scope | Status |
 |-------|--------|--------|
-| **1A** | `MemoryPressureLevel` FSM + `#CAP,DIAG,pressure` telemetry; no reclaim | **Shipped** — native **617/617**; firmware RAM1 +7392 B |
-| **1B** | Low reclaim (`try*` owner APIs; background-first) | Next |
-| 2 | Critical undo trim + persistence inversion | Pending |
+| **1A** | Advisory FSM + `#CAP,DIAG,pressure` | **Shipped** (`f09f547`) — validated in [`session_20260714_233620.log`](../../captures/session_20260714_233620.log) |
+| **1B** | Low reclaim (`try*` owner APIs; background-first) | **Shipped** — pending manual gate |
+| 2 | Critical undo trim + persistence inversion | Next |
 | 3 | Replace scattered heap thresholds | Pending |
 | 4 | Manual gate 215312; idle defer; OpenSpec archive | Pending |
 
-**Manual gate (1A):** Re-run 215312-style session; confirm `#CAP,DIAG,pressure,Normal->Low,...` transitions with **no behavior change**.
+**Manual gate (1B):** Re-run stress session; confirm reclaim under Low without playback glitches / dropped MIDI on selected track.
 
 ---
 

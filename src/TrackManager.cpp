@@ -17,6 +17,13 @@
 #include "Utils/DebugSessionCapture.h"
 #include "Utils/SlotFocusDisplay.h"
 #include "Utils/SlotLoopContent.h"
+#include "Utils/MemoryPressureLevel.h"
+
+#if defined(__IMXRT1062__)
+#define PRESSURE_RECLAIM_MEM FLASHMEM
+#else
+#define PRESSURE_RECLAIM_MEM
+#endif
 
 TrackManager trackManager;
 
@@ -183,6 +190,70 @@ void TrackManager::releaseBackgroundPlaybackWindowMemory(uint8_t captureTrackInd
     if (i != captureTrackIndex) {
       tracks[i].releasePlaybackWindowMemory();
     }
+  }
+}
+
+namespace {
+
+uint8_t reclaimTrackPriority(uint8_t trackIndex, const TrackManager& manager, const Track& track) {
+  if (manager.isSelectedTrack(track)) {
+    return 3;
+  }
+  if (track.isRecording() || track.isOverdubbing() || track.getState() == TRACK_ARMED) {
+    return 2;
+  }
+  if (track.isPlaying()) {
+    return 1;
+  }
+  (void)trackIndex;
+  return 0;
+}
+
+}  // namespace
+
+PRESSURE_RECLAIM_MEM void TrackManager::tryReclaimDerivedViewCachesUnderPressure(MemoryPressureLevel level) {
+  if (level < MemoryPressureLevel::Low) {
+    return;
+  }
+
+  uint8_t trackOrder[Config::NUM_TRACKS];
+  for (uint8_t i = 0; i < Config::NUM_TRACKS; ++i) {
+    trackOrder[i] = i;
+  }
+  for (uint8_t i = 0; i + 1 < Config::NUM_TRACKS; ++i) {
+    for (uint8_t j = i + 1; j < Config::NUM_TRACKS; ++j) {
+      const Track& a = tracks[trackOrder[i]];
+      const Track& b = tracks[trackOrder[j]];
+      const uint8_t priA = reclaimTrackPriority(trackOrder[i], *this, a);
+      const uint8_t priB = reclaimTrackPriority(trackOrder[j], *this, b);
+      if (priB < priA) {
+        const uint8_t tmp = trackOrder[i];
+        trackOrder[i] = trackOrder[j];
+        trackOrder[j] = tmp;
+      }
+    }
+  }
+
+  for (uint8_t orderIdx = 0; orderIdx < Config::NUM_TRACKS; ++orderIdx) {
+    const uint8_t trackIndex = trackOrder[orderIdx];
+    Track& track = tracks[trackIndex];
+    const bool selected = isSelectedTrack(track);
+    const bool noteEditBlocksSelected =
+        editManager.isNoteEditActive() && selected;
+
+    for (uint8_t slot = 0; slot < Config::MAX_LOOPS_PER_TRACK; ++slot) {
+      if (noteEditBlocksSelected && slot == track.getActiveLoopIndex()) {
+        continue;
+      }
+      Loop& loop = track.loopForSlot(slot);
+      if (!isSlotEnabled(trackIndex, slot) && !loop.hasPublishedEvents()) {
+        continue;
+      }
+      (void)loop.tryDiscardPassesMaterializedCache();
+    }
+
+    (void)track.tryClearPublishedMidiScratch();
+    (void)track.tryReleasePlaybackWindowMemory();
   }
 }
 
