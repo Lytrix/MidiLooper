@@ -918,14 +918,24 @@ bool Loop::ensureCaptureEventsSorted() {
 }
 
 void Loop::mergeMaterializedPassesWithCapture(MidiEventVec& out) const {
-  passes.materializeToEventVector(out, loopLengthTicks);
-  if (!captureActive() || capture.store.empty()) {
+  gatherPublishedFlatWithCapture(out);
+}
+
+void Loop::mergeMaterializedPassesWithCapture(SessionMidiEventVec& out) const {
+  gatherPublishedFlatWithCapture(out);
+}
+
+namespace {
+
+template <typename MidiEventVector>
+void mergeCaptureStoreIntoPublishedFlat(const Loop& loop, MidiEventVector& out) {
+  if (!loop.captureActive() || loop.capture.store.empty()) {
     return;
   }
-  const_cast<Loop*>(this)->ensureCaptureEventsSorted();
+  const_cast<Loop&>(loop).ensureCaptureEventsSorted();
 
-  MidiEventVec captureFlat;
-  capture.store.flatten(captureFlat);
+  MidiEventVector captureFlat;
+  loop.capture.store.flatten(captureFlat);
   if (out.empty()) {
     out = std::move(captureFlat);
     return;
@@ -934,7 +944,7 @@ void Loop::mergeMaterializedPassesWithCapture(MidiEventVec& out) const {
     return;
   }
 
-  MidiEventVec merged;
+  MidiEventVector merged;
   merged.reserve(out.size() + captureFlat.size());
   std::merge(out.begin(), out.end(), captureFlat.begin(), captureFlat.end(),
              std::back_inserter(merged),
@@ -942,29 +952,46 @@ void Loop::mergeMaterializedPassesWithCapture(MidiEventVec& out) const {
   out = std::move(merged);
 }
 
-void Loop::mergeMaterializedPassesWithCapture(SessionMidiEventVec& out) const {
-  passes.materializeToEventVector(out, loopLengthTicks);
-  if (!captureActive() || capture.store.empty()) {
-    return;
+bool hasActiveEditPasses(const LoopPasses& passes) {
+  for (const EditPass& editPass : passes.editPasses) {
+    if (editPass.state == EditPassState::Active) {
+      return true;
+    }
   }
-  const_cast<Loop*>(this)->ensureCaptureEventsSorted();
+  return false;
+}
 
-  SessionMidiEventVec captureFlat;
-  capture.store.flatten(captureFlat);
-  if (out.empty()) {
-    out = std::move(captureFlat);
-    return;
-  }
-  if (captureFlat.empty()) {
-    return;
-  }
+}  // namespace
 
-  SessionMidiEventVec merged;
-  merged.reserve(out.size() + captureFlat.size());
-  std::merge(out.begin(), out.end(), captureFlat.begin(), captureFlat.end(),
-             std::back_inserter(merged),
-             [](const MidiEvent& a, const MidiEvent& b) { return a.tick < b.tick; });
-  out = std::move(merged);
+void Loop::gatherPublishedFlatForDerivedView(SessionMidiEventVec& flat) const {
+  if (hasActiveEditPasses(passes)) {
+    DIAG_COUNTER_INC(LegacyMidiEvents);
+    DIAG_COUNTER_INC(PlaybackFullMaterialize);
+    const SessionMidiEventVec& materialized = midiEvents();
+    flat.assign(materialized.begin(), materialized.end());
+    return;
+  }
+  if (isPassesMaterializedStoreFresh()) {
+    passes.materializeToEventVector(flat, loopLengthTicks);
+    return;
+  }
+  mergeActiveCapturePasses(flat);
+}
+
+void Loop::gatherPublishedFlatForDerivedView(MidiEventVec& flat) const {
+  SessionMidiEventVec extmemFlat;
+  gatherPublishedFlatForDerivedView(extmemFlat);
+  flat.assign(extmemFlat.begin(), extmemFlat.end());
+}
+
+void Loop::gatherPublishedFlatWithCapture(SessionMidiEventVec& flat) const {
+  gatherPublishedFlatForDerivedView(flat);
+  mergeCaptureStoreIntoPublishedFlat(*this, flat);
+}
+
+void Loop::gatherPublishedFlatWithCapture(MidiEventVec& flat) const {
+  gatherPublishedFlatForDerivedView(flat);
+  mergeCaptureStoreIntoPublishedFlat(*this, flat);
 }
 
 NoteId Loop::allocateNoteId() {
@@ -1136,46 +1163,6 @@ void Loop::discardPendingCapturePass() {
 
 namespace {
 
-bool hasActiveEditPasses(const LoopPasses& passes) {
-  for (const EditPass& editPass : passes.editPasses) {
-    if (editPass.state == EditPassState::Active) {
-      return true;
-    }
-  }
-  return false;
-}
-
-// Phase B: one materialize per playbackRevision — display reconstruct reads seeded flat when
-// fresh; chunk-ref merge only when store has not been seeded yet (sync callers before idle).
-template <typename MidiEventVector>
-void gatherPublishedFlatForDerivedView(const Loop& loop, MidiEventVector& flat) {
-  if (hasActiveEditPasses(loop.passes)) {
-    const SessionMidiEventVec& materialized = loop.midiEvents();
-    flat.assign(materialized.begin(), materialized.end());
-    return;
-  }
-  if (loop.isPassesMaterializedStoreFresh()) {
-    loop.passes.materializeToEventVector(flat, loop.loopLengthTicks);
-    return;
-  }
-  loop.mergeActiveCapturePasses(flat);
-}
-
-// PLAYING idle slices: materialize to extmem when published store is fresh.
-template <typename MidiEventVector>
-void gatherChunkFlatForDisplaySlice(const Loop& loop, MidiEventVector& flat) {
-  if (hasActiveEditPasses(loop.passes)) {
-    const SessionMidiEventVec& materialized = loop.midiEvents();
-    flat.assign(materialized.begin(), materialized.end());
-    return;
-  }
-  if (loop.isPassesMaterializedStoreFresh()) {
-    loop.passes.materializeToEventVector(flat, loop.loopLengthTicks);
-    return;
-  }
-  loop.mergeActiveCapturePasses(flat);
-}
-
 uint32_t totalVisualBarsForLoop(uint32_t loopLengthTicks) {
   if (loopLengthTicks == 0) {
     return 0;
@@ -1292,7 +1279,7 @@ void Loop::rebuildVisualCacheIdleSlice(uint8_t maxBarsPerSlice, uint32_t priorit
   }
 
   SessionMidiEventVec flat;
-  gatherChunkFlatForDisplaySlice(*this, flat);
+  gatherPublishedFlatForDerivedView(flat);
   SessionMidiEventVec windowEvents;
   filterMidiEventsToTickWindow(flat, windowEvents, windowStart, windowLength, loopLengthTicks);
   const NoteUtils::DisplayNoteVec sliceNotes =
@@ -1330,7 +1317,7 @@ void Loop::rebuildVisualCacheIdleSlice(uint8_t maxBarsPerSlice, uint32_t priorit
 void Loop::rebuildVisualCacheFromPasses() {
   DIAG_COUNTER_INC(DisplayFullRebuild);
   SessionMidiEventVec flat;
-  gatherPublishedFlatForDerivedView(*this, flat);
+  gatherPublishedFlatForDerivedView(flat);
   publishedMaterializedEventCount_ = flat.size();
   const NoteUtils::DisplayNoteVec rebuiltNotes =
       NoteUtils::reconstructDisplayNotes(flat, loopLengthTicks, false);

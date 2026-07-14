@@ -281,13 +281,9 @@ void ensurePlaybackWindowBuilt(Track& track, Loop& loop, LoopPlaybackRuntime& ru
     const MidiEventVec& preview = editManager.sessionMidiEvents();
     runtime.primaryWindow.mergedEvents.assign(preview.begin(), preview.end());
   } else if (!loop.captureActive()) {
-    DIAG_COUNTER_INC(LegacyMidiEvents);
-    DIAG_COUNTER_INC(PlaybackFullMaterialize);
-    const SessionMidiEventVec& materialized = loop.midiEvents();
-    runtime.primaryWindow.mergedEvents.assign(materialized.begin(), materialized.end());
+    loop.gatherPublishedFlatForDerivedView(runtime.primaryWindow.mergedEvents);
   } else {
-    DIAG_COUNTER_INC(PlaybackFullMaterialize);
-    loop.mergeMaterializedPassesWithCapture(runtime.primaryWindow.mergedEvents);
+    loop.gatherPublishedFlatWithCapture(runtime.primaryWindow.mergedEvents);
   }
   runtime.primaryWindow.builtFromRevision = windowRevision;
   loop.playbackOrderDirty = true;

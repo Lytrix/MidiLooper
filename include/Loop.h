@@ -80,6 +80,12 @@ struct Loop {
 
   void mergeActiveCapturePasses(MidiEventVec& out) const;
   void mergeActiveCapturePasses(SessionMidiEventVec& out) const;
+  /// DEC-016 policy owner: chunk-ref merge or extmem materialize; full materialize only when edit passes active.
+  void gatherPublishedFlatForDerivedView(SessionMidiEventVec& flat) const;
+  void gatherPublishedFlatForDerivedView(MidiEventVec& flat) const;
+  /// Published flat policy plus live capture.store merge (playback during record/overdub).
+  void gatherPublishedFlatWithCapture(SessionMidiEventVec& flat) const;
+  void gatherPublishedFlatWithCapture(MidiEventVec& flat) const;
 
   SessionMidiEventVec& midiEvents();
   const SessionMidiEventVec& midiEvents() const;
