@@ -11,7 +11,7 @@ todos:
     status: completed
   - id: phase-2a-pass-metadata-extmem
     content: "Phase 2A — ChunkIdList, pass vectors, BarIndexVec, VisualBarVec → ExternalMemoryFirstAllocator"
-    status: pending
+    status: completed
   - id: phase-2b-loop-pool-extmem
     content: "Phase 2B — LoopPool loops_ in extmem (~34 KiB fixed internal heap gain)"
     status: pending
