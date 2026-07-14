@@ -149,7 +149,7 @@ Heavy undo path is **ClearSlot** (full pass snapshots) — bounded by pass chunk
 
 | # | Lever | Expected benefit | Risk |
 |---|--------|------------------|------|
-| 1 | **2B — LoopPool extmem** | ~34 KiB fixed internal headroom | Low (slot shells; not per-note path) |
+| 1 | **2B — LoopPool extmem** | ~34 KiB fixed internal headroom | **Shipped** (`LoopPool` extmem-first) |
 | 2 | **Persist backlog** | Reduce `queue_depth=42` forcing Critical; free CPU/heap during capture | Medium (SD I/O) |
 | 3 | **Phase 1B telemetry** | Confirm Low reclaim runs / no-ops during overdub | None |
 | 4 | **Fresh workspace boot** | Baseline 86 KiB vs 57 KiB (235620 vs 004415) | Manual hygiene |

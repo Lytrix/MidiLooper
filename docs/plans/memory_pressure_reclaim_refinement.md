@@ -14,7 +14,7 @@ todos:
     status: cancelled
   - id: phase-2b-loop-pool-extmem
     content: "Phase 2B — LoopPool loops_ in extmem (~34 KiB fixed internal heap gain)"
-    status: pending
+    status: completed
   - id: phase-2c-critical-reclaim
     content: "Phase 2C — DEFERRED: Critical orchestration declined; heap-restore track instead"
     status: cancelled
