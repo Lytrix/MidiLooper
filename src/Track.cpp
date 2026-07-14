@@ -846,8 +846,10 @@ CommitResult Track::finalizeCommitSideEffects(CommitResult result, CommitReason 
           loop.passes.hasRecordPass() && loop.passes.recordPass.id == undoPassId;
       if (isRecordPass) {
         TrackUndo::pushRecordPassAdded(*this, getActiveLoopIndex(), undoPassId);
+        StorageManager::admitLoopUndoHistory(loop.loopId);
       } else if (!editManager.isNoteEditActive()) {
         TrackUndo::pushOverdubPassAdded(*this, getActiveLoopIndex(), undoPassId);
+        StorageManager::admitLoopUndoHistory(loop.loopId);
       }
       if (overdubStop) {
         StorageManager::markCurrentSetLoopSlotDirty(resolveTrackIndexForPersistence(*this),
