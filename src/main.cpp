@@ -141,6 +141,7 @@ void loop() {
   
   //Serial.println("Main: Loop");
   uint32_t now = millis();
+  MemoryMonitor::updateAdvisoryPressureLevel(now);
   // Poll MIDI input
   midiHandler.handleMidiInput();
 

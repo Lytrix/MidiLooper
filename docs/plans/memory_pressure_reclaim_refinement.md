@@ -5,7 +5,7 @@ overview: Formal MemoryPressureLevel policy (Normal / Low / Critical) with owner
 todos:
   - id: phase-1a-pressure-state-machine
     content: "Phase 1A — MemoryPressureLevel + thresholds + hysteresis + transition DIAG only; no reclaim; native threshold tests"
-    status: pending
+    status: completed
   - id: phase-1b-low-reclaim
     content: "Phase 1B — tryReclaimDerivedViewCachesUnderPressure at Low+; owner try* APIs; background-first; stale AND not-referenced"
     status: pending

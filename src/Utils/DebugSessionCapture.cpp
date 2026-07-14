@@ -424,6 +424,13 @@ SC_MEM_ATTR void architectureCounter(const char* name, uint32_t value) {
                 (unsigned long)value);
 }
 
+SC_MEM_ATTR void memoryPressureTransition(const char* transitionLabel, uint32_t heapFreeBytes,
+                                          uint16_t chunksFree, uint16_t persistQueueDepth) {
+  emitCapPrintf("#CAP,%lu,DIAG,pressure,%s,%lu,%u,%u\r\n", (unsigned long)micros(),
+                transitionLabel, (unsigned long)heapFreeBytes, (unsigned)chunksFree,
+                (unsigned)persistQueueDepth);
+}
+
 SC_MEM_ATTR void architectureTiming(const char* name, uint32_t sumMicros, uint32_t sampleCount) {
   emitCapPrintf("#CAP,%lu,DIAG,timing,%s,%lu,%lu\r\n", (unsigned long)micros(), name,
                 (unsigned long)sumMicros, (unsigned long)sampleCount);
