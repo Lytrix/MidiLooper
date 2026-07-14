@@ -56,6 +56,8 @@ public:
 
   // --- Recording ---
   void startRecordingTrack(uint8_t trackIndex, uint32_t currentTick);
+  /// Free non-capturing tracks' playback merge buffers before capture (multi-track headroom).
+  void releaseBackgroundPlaybackWindowMemory(uint8_t captureTrackIndex);
   void stopRecordingTrack(uint8_t trackIndex);
   /// Queue recording into slotIndex. refSlotForPhase is a valid slot index for loop-phase punch-in, or
   /// Config::INVALID_LOOP_SLOT for next bar line only.
@@ -94,6 +96,10 @@ public:
   bool isTrackAudible(uint8_t trackIndex) const;
   bool anyTrackSoloed() const;
   bool isTrackSoloed(uint8_t trackIndex) const;
+  /// True when any track is RECORDING or OVERDUBBING (multi-track capture gating).
+  bool anyTrackRecordingOrOverdubbing() const;
+  /// True when @p track is the UI-selected track (slot focus / display owner).
+  bool isSelectedTrack(const Track& track) const;
 
   // --- Loop Length / Sync ---
   void enableAutoAlign(bool enabled);

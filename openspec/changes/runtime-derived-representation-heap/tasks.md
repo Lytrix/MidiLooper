@@ -106,11 +106,14 @@ Persistence starvation, transport-gate workarounds, and stop-path flush/defer pa
 - [x] Incremental capture overlay via revision gating / `capturePreview`
 - [x] Replace `mergeMaterializedPassesWithCapture` in capture-active PLAYING display paths (~773, ~807)
 - [x] `MidiLedManager::prepareLedNoteLookup`: chunk merge when `visualCacheDirty` (P2 — bar-rate)
-- [ ] **Manual gate (user):** 175327-style; `DisplayFullRebuild` rate drops; `DisplayIncrementalUpdate` ↑
+- [x] **Manual gate (user):** 175327-style; `DisplayFullRebuild` rate drops; `DisplayIncrementalUpdate` ↑ (`session_20260714_212306`: +3840 incremental vs +392 full, ~10:1)
 
 ### Phase 3 — Idle gating during capture
 
-- [ ] `processDeferredIdleMaintenance`: skip full materialize/visual on non-selected tracks while any track RECORDING/OVERDUBBING
+- [x] `processDeferredIdleMaintenance`: skip full materialize/visual on non-selected tracks while any track RECORDING/OVERDUBBING
+- [x] `TrackManager::anyTrackRecordingOrOverdubbing` + `isSelectedTrack` helpers (reserved; idle defer reverted pending memory fix)
+- [ ] **Phase 3 idle defer:** re-introduce after record+multi-play manual gate passes (reverted 2026-07-14 — heap exhaustion on first NoteOn)
+- [x] **Record-start headroom:** `releaseBackgroundPlaybackWindowMemory` + live-record display without per-frame flatten
 - [ ] **Manual gate (user):** full 5-track stress (175327 config)
 
 ### Phase 4 — Close docs + scripts + exit criteria

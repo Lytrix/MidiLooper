@@ -171,6 +171,19 @@ void TrackManager::startRecordingTrack(uint8_t trackIndex, uint32_t currentTick)
     return;
   }
   tracks[trackIndex].startRecording(currentTick);
+  releaseBackgroundPlaybackWindowMemory(trackIndex);
+  reclaimUnreferencedDisabledPasses();
+}
+
+void TrackManager::releaseBackgroundPlaybackWindowMemory(uint8_t captureTrackIndex) {
+  if (captureTrackIndex >= Config::NUM_TRACKS) {
+    return;
+  }
+  for (uint8_t i = 0; i < Config::NUM_TRACKS; ++i) {
+    if (i != captureTrackIndex) {
+      tracks[i].releasePlaybackWindowMemory();
+    }
+  }
 }
 
 void TrackManager::stopRecordingTrack(uint8_t trackIndex) {
@@ -246,7 +259,7 @@ bool TrackManager::hasQueuedRecordingTrack(uint8_t trackIndex) const {
 bool TrackManager::hasActiveOrPendingCapture() const {
   for (uint8_t i = 0; i < Config::NUM_TRACKS; ++i) {
     const Track& t = tracks[i];
-    if (t.isRecording() || t.isArmed() || pendingRecord[i]) {
+    if (t.isRecording() || t.isArmed() || t.isOverdubbing() || pendingRecord[i]) {
       return true;
     }
   }
@@ -301,6 +314,8 @@ void TrackManager::startOverdubbingTrack(uint8_t trackIndex) {
   slotMuted[trackIndex][slot] = false;
   const uint32_t startUs = micros();
   track.startOverdubbing(clockManager.getCurrentTick());
+  releaseBackgroundPlaybackWindowMemory(trackIndex);
+  reclaimUnreferencedDisabledPasses();
   SC_ODUB_STAGE("manager_done", micros() - startUs, heapAtEnter,
                 MemoryMonitor::getInternalHeapFreeBytes(), "ok");
 }
@@ -489,6 +504,19 @@ bool TrackManager::anyTrackSoloed() const {
     if (soloed[i]) return true;
   }
   return false;
+}
+
+bool TrackManager::anyTrackRecordingOrOverdubbing() const {
+  for (uint8_t i = 0; i < Config::NUM_TRACKS; ++i) {
+    if (tracks[i].isRecording() || tracks[i].isOverdubbing()) {
+      return true;
+    }
+  }
+  return false;
+}
+
+bool TrackManager::isSelectedTrack(const Track& track) const {
+  return &track == &tracks[selectedTrack];
 }
 
 bool TrackManager::isTrackSoloed(uint8_t trackIndex) const {

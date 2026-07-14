@@ -1032,6 +1032,10 @@ void Track::prewarmPlaybackForSlot(uint8_t slotIndex) {
   (void)loop.getPlaybackOrder();
 }
 
+void Track::releasePlaybackWindowMemory() {
+  playbackRuntime.resetAll(false);
+}
+
 void Track::resetDeferredRecordRevts() {
   deferredRecordRevtsPending = false;
   deferredRecordRevtChunkScan = false;
@@ -1717,6 +1721,9 @@ void Track::recordMidiEvents(midi::MidiType type, byte channel, byte data1, byte
     }
 
     if (!loop.appendCaptureEvent(newEvt)) {
+      logger.log(CAT_TRACK, LOG_WARNING,
+                 "Capture append failed (chunk pool or memory pressure) ch=%u note=%u",
+                 static_cast<unsigned>(channel), static_cast<unsigned>(data1));
       return;
     }
 

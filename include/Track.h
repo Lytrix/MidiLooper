@@ -126,6 +126,8 @@ public:
   void processDeferredIdleMaintenance(uint32_t nowMs);
   /// Touch playback runtime and loop playback order for one slot (boot/load prewarm).
   void prewarmPlaybackForSlot(uint8_t slotIndex);
+  /// Drop cached playback merge buffers for all slots (frees extmem during capture).
+  void releasePlaybackWindowMemory();
 
   // MIDI events
   void recordMidiEvents(midi::MidiType type, byte channel, byte data1, byte data2, uint32_t currentTick);

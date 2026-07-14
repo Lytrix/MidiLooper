@@ -572,7 +572,9 @@ const DisplayNoteVec& DisplayManager::resolveDisplayNotes(const Track& track, ui
                                     liveTrackState != liveDisplayCacheTrackState;
         const bool eventsShrunk = !cacheCold && eventCount < liveDisplayCacheEventCount;
         const bool eventsAdded = !cacheCold && eventCount > liveDisplayCacheEventCount;
-        const bool loopLengthChanged = !cacheCold && liveLoopLength != liveDisplayCacheLoopLength;
+        const bool expandingLiveRecordLength = track.isRecording() && !track.isPlaying();
+        const bool loopLengthChanged = !cacheCold && liveLoopLength != liveDisplayCacheLoopLength &&
+                                         !expandingLiveRecordLength;
         const bool captureRevisionChanged =
             !cacheCold && loop.captureDisplayRevision != liveDisplayCacheCaptureRevision;
         size_t committedDisplayEnd = 0;
@@ -662,16 +664,6 @@ const DisplayNoteVec& DisplayManager::resolveDisplayNotes(const Track& track, ui
                                               playheadCloseTick, committedDisplayEnd, liveDisplayNotes);
                 }
             } else {
-                SessionMidiEventVec captureEvents;
-                const std::vector<NoteUtils::OpenNoteOn> captureOpens = findCaptureOpenNoteOns(loop);
-                if (!captureOpens.empty()) {
-                    Loop& mutLoop = const_cast<Loop&>(loop);
-                    mutLoop.ensureCaptureEventsSorted();
-                    loop.capture.store.flatten(captureEvents);
-                    applyCapturePlayheadTails(captureOpens, captureEvents, liveLoopLength,
-                                              playheadCloseTick, committedDisplayEnd,
-                                              liveDisplayNotes);
-                }
                 applyRecordingPreviewOpenTails(liveDisplayNotes, liveLoopLength, playheadCloseTick);
             }
         }
