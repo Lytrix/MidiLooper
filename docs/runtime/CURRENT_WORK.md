@@ -10,7 +10,7 @@ Last updated: 2026-07-14 (branch cleanup — `dev` trunk; persistence queue next
 
 ### Enhancement: CurrentSet persistence work-item queue — **next**
 
-**Branch:** `feature/persistence-work-queue` from `dev` @ `644de4f`
+**Branch:** `feature/persistence-work-queue` from `dev` @ `ec7b4a5`
 
 **Plan:** [`docs/plans/current_set_persist_work_item_queue_enhancement.md`](../plans/current_set_persist_work_item_queue_enhancement.md) — B1–B5 (admission / scheduling / serialization layering; B6 undo wire deferred to loop-owned-undo Phase 2)
 
