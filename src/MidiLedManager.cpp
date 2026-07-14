@@ -271,7 +271,7 @@ void MidiLedManager::prepareLedNoteLookup(Loop& loop) {
     ledNoteLookupEvents_.clear();
     ledNoteLookupUsesMerge_ = loop.hasPublishedEvents() && loop.visualCacheDirty;
     if (ledNoteLookupUsesMerge_) {
-        loop.mergeMaterializedPassesWithCapture(ledNoteLookupEvents_);
+        loop.gatherPublishedFlatWithCapture(ledNoteLookupEvents_);
     }
 }
 

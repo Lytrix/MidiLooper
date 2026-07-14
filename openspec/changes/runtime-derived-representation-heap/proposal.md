@@ -22,6 +22,8 @@ This change consolidates the never-shipped Cursor plan `64bar_regression_commit_
 
 Phase A→C + `cdd9c2b` capture-serial ring work is **done**; tasks mark complete with commit cites.
 
+**M6 (2026-07-14):** Complete DEC-016 derived-representation policy across runtime playback paths (legacy callsite migration — **not** streaming playback). Phase 0 audit complete; additional legacy paths documented in plan. Exit criteria: no unintended hot-path materialize, manual + HITL gates PASS. `#CAP,DIAG,heap` cancelled (~50 KB RAM1). Plan: [`docs/plans/multi_track_playback_pressure_closure_refinement.md`](../../../docs/plans/multi_track_playback_pressure_closure_refinement.md).
+
 ## Capabilities
 
 ### New Capabilities
