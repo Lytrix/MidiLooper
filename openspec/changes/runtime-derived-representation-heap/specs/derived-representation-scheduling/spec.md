@@ -1,5 +1,64 @@
 ## ADDED Requirements
 
+### Requirement: M6 completes DEC-016 migration without new playback architecture
+
+M6 SHALL treat remaining playback and display pressure as **legacy callsite migration** to the
+deferred/windowed derived-representation policy already defined in DEC-016. M6 SHALL NOT introduce
+a parallel streaming or iterator-based playback model. A Phase 0 callsite audit SHALL complete before
+runtime behaviour changes.
+
+#### Scenario: Audit gate before firmware edits
+
+- **WHEN** M6 implementation begins
+- **THEN** a materialization callsite matrix is completed and signed off
+- **AND** each callsite has documented expected behaviour (deferred, windowed, or remain materialized)
+
+#### Scenario: Primary implementation gap closed
+
+- **WHEN** a non-capture PLAYING track rebuilds its playback window on `playbackRevision` change
+- **THEN** playback window construction follows the approved DEC-016 derived-representation policy
+- **AND** does not perform unintended full materialization on the hot path
+
+### Requirement: Derived-view layer owns representation selection
+
+Runtime consumers (playback, display, LED lookup) SHALL NOT choose their own data representation
+by calling `Loop::midiEvents()` or full flatten helpers for convenience on hot paths.
+Representation selection SHALL remain owned by the derived-view layer (`gatherPublishedFlatForDerivedView`,
+`visualCache`, `capturePreview`, edit session store).
+
+#### Scenario: Hot path uses derived-view policy
+
+- **WHEN** firmware builds playback or display data during PLAYING, RECORDING, or OVERDUBBING
+- **THEN** the callsite uses deferred, windowed, or incremental derived views per DEC-016
+- **AND** any full materialization is limited to documented intentional paths (edit active, stop-path, idle seed)
+
+### Requirement: M6 exit criteria
+
+M6 SHALL be considered complete when: all playback-related callsites are audited; every intentional
+eager materialization is documented; no unintended `Loop::midiEvents()` remains on PLAYING or RECORDING
+hot paths; DEC-016 policy is consistently followed; and 64-bar multi-track HITL regression passes without
+architectural regression.
+
+#### Scenario: M6 archive gate
+
+- **WHEN** Phases A–3 merge and verification completes
+- **THEN** exit criteria in the M6 plan are checked off
+- **AND** architecture regression counters show hot-path legacy materialize at zero during stress
+- **AND** further streaming or iterator playback designs are not started unless post-M6 measurement requires them
+
+### Requirement: Architecture regression counters (M6 Phase A)
+
+On SESSION_CAPTURE builds, firmware SHALL maintain lightweight permanent counters verifying
+DEC-016 path usage, including at minimum: legacy hot-path materialize, deferred reuse, playback
+window rebuild vs reuse, display full vs incremental rebuild. Counters SHALL NOT require the
+cancelled heavy RAM1 heap telemetry approach (~50 KB).
+
+#### Scenario: Legacy path detectable after M6
+
+- **WHEN** multi-track PLAYING/OVERDUBBING stress runs after M6 Phase 1–3
+- **THEN** hot-path legacy materialize counters read zero
+- **AND** deferred reuse counters increase relative to pre-M6 baseline
+
 ### Requirement: Playback window avoids lazy internal flat on PLAYING entry
 
 When building the playback window after record or overdub stop, firmware SHALL use chunk-ref merge
@@ -54,3 +113,29 @@ on the producer hot path.
 - **THEN** serial capture includes `#CAP,...,ST,...,OVERDUBBING,PLAYING` or equivalent firmware
   transition text
 - **AND** heartbeat is not lost due to MO burst alone
+
+### Requirement: Multi-track playback uses chunk-ref merge on hot path
+
+When building the playback window for a loop that is not in live capture and has no active edit passes,
+firmware SHALL use chunk-reference merge (`mergeActiveCapturePasses`) and SHALL NOT call
+`Loop::midiEvents()` full materialize on every `playbackRevision` change per playing track.
+
+#### Scenario: Background tracks playing during capture
+
+- **WHEN** one track is RECORDING or OVERDUBBING and other tracks are PLAYING long loops
+- **THEN** each background track's playback window build uses chunk-ref merge
+- **AND** internal heap at overdub enter is not lower solely due to per-track full materialize on
+  every clock tick
+
+### Requirement: Display defers full rebuild during OVERDUBBING
+
+During OVERDUBBING, DisplayManager SHALL NOT call synchronous full-loop `ensureVisualCacheBuilt`
+on every display frame. Committed notes MAY be stale until idle maintenance or incremental overlay
+catches up.
+
+#### Scenario: Overdub with multi-track MO load
+
+- **WHEN** overdub runs with multiple tracks emitting MO and loop length ≥ 64 bars
+- **THEN** firmware does not enter a sustained `RING,overflow`-only serial tail (>10 s) while
+  transport is active
+- **AND** user can complete or stop overdub without USB reboot attributable to main-loop stall
