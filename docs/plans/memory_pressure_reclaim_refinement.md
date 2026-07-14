@@ -1,7 +1,7 @@
 ---
 name: memory pressure reclaim
 openspec_change: runtime-derived-representation-heap
-overview: Formal MemoryPressureLevel policy (Normal / Low / Critical) with ownership-driven derived-cache reclaim, pass metadata extmem routing, and persistence backpressure. Phase 2 revised — skip undo trim; route pass metadata off internal heap. Follow-on to M6 Ph 1–2 merged to dev 2026-07-14.
+overview: MemoryPressureLevel advisory FSM + Low derived-cache reclaim (1A/1B shipped). Phase 2 pass-metadata extmem PARKED (003306/004415). Next — heap restore via LoopPool extmem + persist backlog; no typedef tier moves.
 todos:
   - id: phase-1a-pressure-state-machine
     content: "Phase 1A — MemoryPressureLevel + thresholds + hysteresis + transition DIAG only; no reclaim; native threshold tests"
@@ -10,13 +10,16 @@ todos:
     content: "Phase 1B — tryReclaimDerivedViewCachesUnderPressure at Low+; owner try* APIs; background-first; stale AND not-referenced"
     status: completed
   - id: phase-2a-pass-metadata-extmem
-    content: "Phase 2A — REVERTED (003306): blanket extmem routing; abort() crash + hot-path latency"
+    content: "Phase 2A — PARKED: extmem typedef routing reverted (003306 FATAL, 004415 edit sluggish + overdub reboot)"
     status: cancelled
   - id: phase-2b-loop-pool-extmem
     content: "Phase 2B — LoopPool loops_ in extmem (~34 KiB fixed internal heap gain)"
     status: pending
   - id: phase-2c-critical-reclaim
-    content: "Phase 2C — pass reclaim + visual defer + persist override at Critical (no undo trim)"
+    content: "Phase 2C — DEFERRED: Critical orchestration declined; heap-restore track instead"
+    status: cancelled
+  - id: phase-2-heap-restore
+    content: "Heap restore — 2B LoopPool extmem + persist backlog drain; no pass/edit typedef moves"
     status: pending
   - id: phase-3-replace-scattered-thresholds
     content: "After reclaim validated — route optional work through pressure level; remove duplicate heap checks"
@@ -279,29 +282,29 @@ After 1A validated:
 
 **Gate:** no playback glitches / dropped MIDI / stale display on selected track; rebuild after reclaim OK.
 
-### Phase 2 — Pass metadata extmem + Critical reclaim (revised)
+### Phase 2 — Heap restore (revised 2026-07-15)
+
+**Pass metadata extmem is PARKED** — blanket 2A (`003306`) and split-tier 2A (`004415`, edit sluggish) reverted (`896c70d`). **Phase 2C never shipped; deferred.**
 
 **Detail:** [`memory_pressure_phase2_pass_metadata_extmem_refinement.md`](memory_pressure_phase2_pass_metadata_extmem_refinement.md)
 
-**Phase 2A — Pass metadata extmem routing (primary)**
+#### Reported heap vs usable heap
 
-- Route `ChunkIdList`, `BarIndexVec`, `OverdubPassVec`, `EditPassVec`, `EditPassIdList`, `VisualBarVec` → `ExternalMemoryFirstAllocator`
-- Targets internal-heap growth during long capture (axis Phase 1B does not address)
-- Native full suite gate
+`getInternalHeapFreeBytes()` = tail above `__brkval` (high-water break). Freed blocks are **reusable** but the metric often **does not rise** until reboot or slot clear. Gate on append failures and stop publish, not tail-free alone.
 
-**Phase 2B — LoopPool extmem (complementary, fixed gain)**
+#### Heap-restore levers (no typedef / tier moves on pass or edit vectors)
 
-- `LoopPool::loops_` via `extmem_malloc` + placement-new
-- Measured fixed gain: **34,304 B** (8×8 × `sizeof(Loop)=536`) off internal heap
-- Does **not** move pass vector growth — 2A required for dynamic pressure
+| Lever | Expected effect | UX risk |
+|-------|-----------------|---------|
+| **2B LoopPool extmem** | ~34 KiB fixed off internal heap at pool init | Low |
+| **Persist backlog drain** | 004415 Critical with `queue_depth=42`; starves capture | Medium (SD I/O) |
+| **Phase 1B Low reclaim** | Already shipped; PSRAM derived views | Low |
+| **Idle pass chunk reclaim** | Existing `reclaimUnreferencedDisabledPasses` | Low |
+| **Fresh workspace boot** | 57 KiB vs 86 KiB post-setup (004415 vs 235620) | Manual |
 
-**Phase 2C — Critical + persistence override (no undo trim)**
+**Do not pursue:** extmem routing for `ChunkIdList`, `EditPassVec`, or other pass/edit typedefs.
 
-- `reclaimUnreferencedDisabledPasses` at Critical
-- Optional visual defer (REVT, LED, non-selected visual)
-- Persistence non-critical gate override **after** reclaim in same turn
-- **Skip** `trimGlobalUndoStackForMemory` in pressure orchestration
-- Manual: 0 `Capture append failed` on 215312 config; improved internal heap floor vs 235620
+**Next implement:** **2B LoopPool extmem**, then persist queue investigation.
 
 ### Phase 3 — Replace scattered heap checks
 
