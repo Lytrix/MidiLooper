@@ -17,6 +17,7 @@
 #include "TrackUndo.h"
 #include "LooperState.h"
 #include <cstdint>
+#include <cstring>
 #include <limits>
 #include "Utils/DebugSessionCapture.h"
 #include "Utils/Diagnostics.h"
@@ -190,6 +191,9 @@ void logRecordStopStage(const Loop& loop, uint32_t stopStartUs, const char* stag
   const uint32_t elapsedUs = micros() - stopStartUs;
   SC_REC_STOP_STAGE(stage, elapsedUs, stageDurationUs, heapBefore, heapAfter,
                     stats.eventCount, stats.chunkRefCount, outcome);
+  if (stage != nullptr && std::strcmp(stage, "publish") == 0) {
+    Diagnostics::emitArchitectureMetricsSnapshot();
+  }
 }
 
 void logOverdubStopStage(const Loop& loop, uint32_t stopStartUs, const char* stage,
@@ -200,6 +204,9 @@ void logOverdubStopStage(const Loop& loop, uint32_t stopStartUs, const char* sta
   const uint32_t elapsedUs = micros() - stopStartUs;
   SC_ODUB_STOP_STAGE(stage, elapsedUs, stageDurationUs, heapBefore, heapAfter, stats.eventCount,
                      stats.chunkRefCount, outcome);
+  if (stage != nullptr && std::strcmp(stage, "display") == 0) {
+    Diagnostics::emitArchitectureMetricsSnapshot();
+  }
 }
 
 void emitOverdubStopDisplaySnapshot(Track& track, uint8_t displaySlot, uint32_t currentTick) {
@@ -265,20 +272,26 @@ void ensurePlaybackWindowBuilt(Track& track, Loop& loop, LoopPlaybackRuntime& ru
   const uint32_t windowRevision = noteEditPreview ? editManager.sessionPlaybackPreviewRevision()
                                                     : loop.playbackRevision;
   if (runtime.primaryWindow.builtFromRevision == windowRevision) {
+    DIAG_COUNTER_INC(PlaybackDeferredReuse);
     return;
   }
-  DIAG_COUNTER_INC(PlaybackMergeRebuild);
+  const uint32_t playbackBuildStartUs = micros();
+  DIAG_COUNTER_INC(PlaybackWindowRebuild);
   if (noteEditPreview) {
     const MidiEventVec& preview = editManager.sessionMidiEvents();
     runtime.primaryWindow.mergedEvents.assign(preview.begin(), preview.end());
   } else if (!loop.captureActive()) {
+    DIAG_COUNTER_INC(LegacyMidiEvents);
+    DIAG_COUNTER_INC(PlaybackFullMaterialize);
     const SessionMidiEventVec& materialized = loop.midiEvents();
     runtime.primaryWindow.mergedEvents.assign(materialized.begin(), materialized.end());
   } else {
+    DIAG_COUNTER_INC(PlaybackFullMaterialize);
     loop.mergeMaterializedPassesWithCapture(runtime.primaryWindow.mergedEvents);
   }
   runtime.primaryWindow.builtFromRevision = windowRevision;
   loop.playbackOrderDirty = true;
+  DIAG_TIMING_RECORD(PlaybackBuild, micros() - playbackBuildStartUs);
 }
 
 void rebuildPlaybackOrder(Loop& loop, const SessionMidiEventVec& mergedEvents,

@@ -30,6 +30,27 @@ namespace {
 
 DiagLastRecordSlot* sLastRecordSlot = nullptr;
 uint32_t sCounters[static_cast<size_t>(Counter::Count)] = {};
+uint32_t sTimingSumMicros[static_cast<size_t>(Timing::Count)] = {};
+uint32_t sTimingSampleCount[static_cast<size_t>(Timing::Count)] = {};
+
+constexpr const char* kCounterNames[] = {
+    "PlaybackWindowRebuild",
+    "PlaybackDeferredReuse",
+    "PlaybackFullMaterialize",
+    "LegacyMidiEvents",
+    "DisplayFullRebuild",
+    "DisplayIncrementalUpdate",
+    "Materialize",
+    "CacheInvalidateBroad",
+    "CacheInvalidateScoped",
+    "AllocatorFailure",
+    "SessionUndoPush",
+};
+
+constexpr const char* kTimingNames[] = {
+    "PlaybackBuildTime",
+    "DisplayBuildTime",
+};
 
 #if defined(__IMXRT1062__)
 uint32_t readMicros() { return micros(); }
@@ -89,6 +110,8 @@ DIAG_MEM_ATTR void init() {
   (void)ensureLastRecordSlot();
   DebugSessionCapture::initCaptureBuffer();
   std::memset(sCounters, 0, sizeof(sCounters));
+  std::memset(sTimingSumMicros, 0, sizeof(sTimingSumMicros));
+  std::memset(sTimingSampleCount, 0, sizeof(sTimingSampleCount));
 }
 
 void emitBootCheckpoint() {
@@ -130,12 +153,65 @@ DIAG_MEM_ATTR void incrementCounter(Counter counter, uint32_t delta) {
   sCounters[index] += delta;
 }
 
-uint32_t readCounter(Counter counter) {
+DIAG_MEM_ATTR uint32_t readCounter(Counter counter) {
   const size_t index = static_cast<size_t>(counter);
   if (index >= static_cast<size_t>(Counter::Count)) {
     return 0;
   }
   return sCounters[index];
+}
+
+DIAG_MEM_ATTR void recordTimingSample(Timing timing, uint32_t elapsedMicros) {
+  const size_t index = static_cast<size_t>(timing);
+  if (index >= static_cast<size_t>(Timing::Count)) {
+    return;
+  }
+  sTimingSumMicros[index] += elapsedMicros;
+  ++sTimingSampleCount[index];
+}
+
+DIAG_MEM_ATTR uint32_t readTimingSumMicros(Timing timing) {
+  const size_t index = static_cast<size_t>(timing);
+  if (index >= static_cast<size_t>(Timing::Count)) {
+    return 0;
+  }
+  return sTimingSumMicros[index];
+}
+
+DIAG_MEM_ATTR uint32_t readTimingSampleCount(Timing timing) {
+  const size_t index = static_cast<size_t>(timing);
+  if (index >= static_cast<size_t>(Timing::Count)) {
+    return 0;
+  }
+  return sTimingSampleCount[index];
+}
+
+DIAG_MEM_ATTR const char* counterName(Counter counter) {
+  const size_t index = static_cast<size_t>(counter);
+  if (index >= static_cast<size_t>(Counter::Count)) {
+    return "Unknown";
+  }
+  return kCounterNames[index];
+}
+
+DIAG_MEM_ATTR const char* timingName(Timing timing) {
+  const size_t index = static_cast<size_t>(timing);
+  if (index >= static_cast<size_t>(Timing::Count)) {
+    return "Unknown";
+  }
+  return kTimingNames[index];
+}
+
+DIAG_MEM_ATTR void emitArchitectureMetricsSnapshot() {
+  for (size_t index = 0; index < static_cast<size_t>(Counter::Count); ++index) {
+    const Counter counter = static_cast<Counter>(index);
+    DebugSessionCapture::architectureCounter(counterName(counter), sCounters[index]);
+  }
+  for (size_t index = 0; index < static_cast<size_t>(Timing::Count); ++index) {
+    const Timing timing = static_cast<Timing>(index);
+    DebugSessionCapture::architectureTiming(timingName(timing), sTimingSumMicros[index],
+                                            sTimingSampleCount[index]);
+  }
 }
 
 }  // namespace Diagnostics

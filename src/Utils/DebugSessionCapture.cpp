@@ -419,6 +419,16 @@ SC_MEM_ATTR void recStopStage(const char* stage, uint32_t elapsedUs, uint32_t du
                 (unsigned long)chunkRefCount, outcome);
 }
 
+SC_MEM_ATTR void architectureCounter(const char* name, uint32_t value) {
+  emitCapPrintf("#CAP,%lu,DIAG,counter,%s,%lu\r\n", (unsigned long)micros(), name,
+                (unsigned long)value);
+}
+
+SC_MEM_ATTR void architectureTiming(const char* name, uint32_t sumMicros, uint32_t sampleCount) {
+  emitCapPrintf("#CAP,%lu,DIAG,timing,%s,%lu,%lu\r\n", (unsigned long)micros(), name,
+                (unsigned long)sumMicros, (unsigned long)sampleCount);
+}
+
 SC_MEM_ATTR void overdubStartStage(const char* stage, uint32_t durationUs, uint32_t heapBefore,
                                    uint32_t heapAfter, const char* outcome) {
   emitCapPrintf("#CAP,%lu,ODUB,stage,%s,%lu,%lu,%lu,%s\r\n", (unsigned long)micros(), stage,
