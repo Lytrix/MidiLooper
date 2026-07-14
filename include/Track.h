@@ -128,6 +128,10 @@ public:
   void prewarmPlaybackForSlot(uint8_t slotIndex);
   /// Drop cached playback merge buffers for all slots (frees extmem during capture).
   void releasePlaybackWindowMemory();
+  /// Phase 1B — release rebuildable playback windows when not referenced this tick.
+  bool tryReleasePlaybackWindowMemory();
+  /// Phase 1B — drop revision-keyed published flat scratch when note edit does not need it.
+  bool tryClearPublishedMidiScratch();
 
   // MIDI events
   void recordMidiEvents(midi::MidiType type, byte channel, byte data1, byte data2, uint32_t currentTick);

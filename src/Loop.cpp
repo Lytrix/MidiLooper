@@ -13,6 +13,13 @@
 #include "Logger.h"
 #include <algorithm>
 #include <chrono>
+
+#if defined(__IMXRT1062__)
+#include <Arduino.h>
+#define LOOP_COLD_MEM FLASHMEM
+#else
+#define LOOP_COLD_MEM
+#endif
 #include <cstring>
 
 namespace {
@@ -639,6 +646,18 @@ void Loop::discardPassesMaterializedCache() {
   passesMaterializedStore_.mutStore().clear();
   passesMaterializedStore_.discardFlatCache();
   passesMaterializedStoreStale_ = true;
+}
+
+LOOP_COLD_MEM bool Loop::tryDiscardPassesMaterializedCache() {
+  if (!passesMaterializedStoreStale_) {
+    return false;
+  }
+  if (captureActive()) {
+    return false;
+  }
+  const bool hadStore = !passesMaterializedStore_.empty();
+  discardPassesMaterializedCache();
+  return hadStore;
 }
 
 void Loop::commitStopFinalizeFromStore(LoopEventStore& merged) {

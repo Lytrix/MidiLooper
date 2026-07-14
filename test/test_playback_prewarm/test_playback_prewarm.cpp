@@ -8,7 +8,7 @@
 #include "../../src/LoopEventStore.cpp"
 #include "../../src/EditApply.cpp"
 #include "../../src/LoopPasses.cpp"
-#include "../../src/Utils/MemoryMonitor.cpp"
+#include "../test_support/MemoryMonitorNativeDeps.cpp"
 #include "../../src/Utils/LoopEventValidation.cpp"
 #include "../test_support/LoopCaptureTestDeps.cpp"
 #include "../../src/Loop.cpp"

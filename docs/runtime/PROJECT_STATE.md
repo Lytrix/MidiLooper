@@ -24,7 +24,7 @@ See [`docs/BRANCHING.md`](../BRANCHING.md).
 
 ## In flight (uncommitted)
 
-Memory pressure Phase 1A — `MemoryPressureLevel` FSM, `#CAP,DIAG,pressure`, append-failure latch; not yet committed.
+Memory pressure Phase 1A+1B on `feature/memory-pressure-reclaim` @ latest — manual gate pending.
 
 ## Shipped on branch (recent)
 
