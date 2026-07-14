@@ -3,9 +3,9 @@
 **Kind:** Architecture + implementation plan  
 **Date:** 2026-07-14  
 **Branch:** `feature/persistence-work-queue` from `dev` @ `ec7b4a5`  
-**Status:** Approved — implement B1–B5 after architecture gate in chat (R1–R9, A1–A9, F1–F3, ownership)  
+**Status:** B1–B5 shipped — B6 deferred to loop-owned-undo Phase 2  
 **Parent plan:** [SD Write Reduction](.cursor/plans/sd_write_reduction_910f40b3.plan.md)  
-**Evidence:** [`captures/session_20260714_031454.log`](../../captures/session_20260714_031454.log) — ~8,400 `PERS,slice` lines per HITL baseline; `w1_s63` payload stats prove monolithic meta/undo sweep.
+**Evidence:** [`captures/session_20260714_031454.log`](../../captures/session_20260714_031454.log) (pre-queue baseline); B5 HITL [`captures/host_midi_automation_serial_20260714_153240.log`](../../captures/host_midi_automation_serial_20260714_153240.log) — verify-only **PASS**; ~4,675 `bundle_slice` vs ~8,517 baseline.
 
 ---
 
@@ -480,12 +480,12 @@ Empty work queue + no in-flight work → **no SD I/O**.
 | Phase | Deliverable |
 |-------|-------------|
 | **B0** | This doc ✅ |
-| **B1** | `PersistenceWorkQueue` (internal) + `PersistKey` + `test_persistence_work_queue` |
-| **B2** | Public `StorageManager::admit*` only; deprecate `mark*` / `requestDeferredSaveState` |
-| **B3** | `stepPersistenceWorkItem()` — schedule only; R9; no serialize in queue |
-| **B4** | Scheduler wiring; retire monolith |
-| **B5** | Native + HITL |
-| **B6** | DEC-024 `LoopUndoHistory` serializer wire only (type/key unchanged) |
+| **B1** | `PersistenceWorkQueue` (internal) + `PersistKey` + `test_persistence_work_queue` | **Done** |
+| **B2** | Public `StorageManager::admit*` only; deprecate `mark*` / `requestDeferredSaveState` | **Done** |
+| **B3** | `stepPersistenceWorkItem()` — schedule only; R9; no serialize in queue | **Done** |
+| **B4** | Scheduler wiring; retire monolith | **Done** |
+| **B5** | Native + HITL | **Done** — 604/604 native; Mode A HITL verify PASS (`153240`) |
+| **B6** | DEC-024 `LoopUndoHistory` serializer wire only (type/key unchanged) | **Deferred** |
 
 ### B1 sketch
 
@@ -532,11 +532,11 @@ namespace PersistenceWorkQueue {
 
 ## Verification
 
-| Gate | Criteria |
-|------|----------|
-| `pio test -e native` | `test_persistence_work_queue` — dedup, **FIFO re-admit (F2)**, key equality, lifecycle |
-| HITL | Fewer meta/undo slices; record/undo/redo/boot OK |
-| Log | vs `session_20260714_031454.log` |
+| Gate | Criteria | Result |
+|------|----------|--------|
+| `pio test -e native` | `test_persistence_work_queue`, sync-drain budget, mid-pass defer policy | **604/604** (2026-07-14) |
+| HITL | Fewer meta/undo slices; record/undo/redo/boot OK | **PASS** — [`host_midi_automation_serial_20260714_153240.log`](../../captures/host_midi_automation_serial_20260714_153240.log) |
+| Log | vs `session_20260714_031454.log` | ~4,675 vs ~8,517 `bundle_slice` lines |
 
 Telemetry: `#CAP,PERS,work,<type>,<key>,phase,ok|failed`
 

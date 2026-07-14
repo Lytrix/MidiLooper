@@ -827,7 +827,7 @@ CommitResult Track::finalizeCommitSideEffects(CommitResult result, CommitReason 
         StorageManager::markCurrentSetLoopSlotDirty(resolveTrackIndexForPersistence(*this),
                                                     getActiveLoopIndex());
         StorageManager::requestDeferredSaveState(looperState.getLooperState(),
-                                                 MemoryMonitor::getInternalHeapFreeBytes());
+                                                 MemoryMonitor::getInternalHeapFreeBytes(), true);
       } else {
         scheduleDeferredValidateOnly();
       }
@@ -846,14 +846,16 @@ CommitResult Track::finalizeCommitSideEffects(CommitResult result, CommitReason 
           loop.passes.hasRecordPass() && loop.passes.recordPass.id == undoPassId;
       if (isRecordPass) {
         TrackUndo::pushRecordPassAdded(*this, getActiveLoopIndex(), undoPassId);
+        StorageManager::admitLoopUndoHistory(loop.loopId);
       } else if (!editManager.isNoteEditActive()) {
         TrackUndo::pushOverdubPassAdded(*this, getActiveLoopIndex(), undoPassId);
+        StorageManager::admitLoopUndoHistory(loop.loopId);
       }
       if (overdubStop) {
         StorageManager::markCurrentSetLoopSlotDirty(resolveTrackIndexForPersistence(*this),
                                                     getActiveLoopIndex());
         StorageManager::requestDeferredSaveState(looperState.getLooperState(),
-                                                 MemoryMonitor::getInternalHeapFreeBytes());
+                                                 MemoryMonitor::getInternalHeapFreeBytes(), true);
       }
       break;
     }
@@ -1269,7 +1271,8 @@ void Track::stopRecording(uint32_t currentTick) {
     StorageManager::markCurrentSetLoopSlotDirty(resolveTrackIndexForPersistence(*this),
                                                 getActiveLoopIndex());
     StorageManager::deferWorkspaceSaveDispatchDuringPlayback(Config::playbackSaveDispatchGraceMs);
-    StorageManager::requestDeferredSaveState(looperState.getLooperState(), stateAdvanceHeapAfter);
+    StorageManager::requestDeferredSaveState(looperState.getLooperState(), stateAdvanceHeapAfter,
+                                             true);
   }
 }
 
@@ -1368,7 +1371,8 @@ TRACK_COLD_MEM void Track::stopRecordingToStopped(uint32_t currentTick) {
   if (sideEffectResult == CommitResult::Published) {
     StorageManager::markCurrentSetLoopSlotDirty(resolveTrackIndexForPersistence(*this),
                                                 getActiveLoopIndex());
-    StorageManager::requestDeferredSaveState(looperState.getLooperState(), stateAdvanceHeapAfter);
+    StorageManager::requestDeferredSaveState(looperState.getLooperState(), stateAdvanceHeapAfter,
+                                             true);
   }
 }
 

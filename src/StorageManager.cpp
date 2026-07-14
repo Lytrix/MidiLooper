@@ -22,6 +22,7 @@
 #include "StorageActivitySnapshot.h"
 #include "StorageSession.h"
 #include "StorageManagerInternal.h"
+#include "StorageManagerInternal/PersistenceWorkQueue.h"
 #include "BootRecoveryPolicy.h"
 #include "PersistenceSchema.h"
 #include "SavedSetCatalog.h"
@@ -158,6 +159,20 @@ bool setCurrentSetLoadedFromFolder(const char* folderName) {
 void clearAutoSaveBeforeLoadFolderPending() {
     autoSaveBeforeLoadFolderPending[0] = '\0';
     autoSaveBeforeLoadFolderPendingValid = false;
+}
+
+LoopId loopIdForPersistSlot(uint8_t trackIndex, uint8_t slotIndex) {
+    if (trackIndex >= Config::NUM_TRACKS || slotIndex >= Config::MAX_LOOPS_PER_TRACK) {
+        return kInvalidLoopId;
+    }
+    if (trackIndex >= trackManager.getTrackCount()) {
+        return static_cast<LoopId>(slotIndex);
+    }
+    Track& track = trackManager.getTrack(trackIndex);
+    if (!track.loopsAllocated()) {
+        return static_cast<LoopId>(slotIndex);
+    }
+    return track.loopIdForSlot(slotIndex);
 }
 
 void markCurrentSetMaterialChange() {
@@ -1352,6 +1367,72 @@ bool StorageManager::readCurrentSetBrowserMetadata(SavedSetCatalog::SavedSetMeta
     return true;
 }
 
+void StorageManager::admitLoopPersist(LoopId loopId) {
+#if BYPASS_STOP_UNDO_SAVE
+    (void)loopId;
+    return;
+#else
+    if (loopId == kInvalidLoopId) {
+        return;
+    }
+    PersistenceWorkQueue::admitWork(PersistWorkType::LoopPersist, persistKeyForLoop(loopId));
+#endif
+}
+
+void StorageManager::admitLoopUndoHistory(LoopId loopId) {
+#if BYPASS_STOP_UNDO_SAVE
+    (void)loopId;
+    return;
+#else
+    if (loopId == kInvalidLoopId) {
+        return;
+    }
+    PersistenceWorkQueue::admitWork(PersistWorkType::LoopUndoHistory, persistKeyForLoop(loopId));
+#endif
+}
+
+void StorageManager::admitSlotMeta(uint8_t trackIndex, uint8_t slotIndex) {
+#if BYPASS_STOP_UNDO_SAVE
+    (void)trackIndex;
+    (void)slotIndex;
+    return;
+#else
+    if (trackIndex >= Config::NUM_TRACKS || slotIndex >= Config::MAX_LOOPS_PER_TRACK) {
+        return;
+    }
+    PersistenceWorkQueue::admitWork(PersistWorkType::SlotMeta,
+                                  persistKeyForSlot(trackIndex, slotIndex));
+#endif
+}
+
+void StorageManager::admitTrackMeta(uint8_t trackIndex) {
+#if BYPASS_STOP_UNDO_SAVE
+    (void)trackIndex;
+    return;
+#else
+    if (trackIndex >= Config::NUM_TRACKS) {
+        return;
+    }
+    PersistenceWorkQueue::admitWork(PersistWorkType::TrackMeta, persistKeyForTrack(trackIndex));
+#endif
+}
+
+void StorageManager::admitWorkspaceFooter() {
+#if BYPASS_STOP_UNDO_SAVE
+    return;
+#else
+    PersistenceWorkQueue::admitWork(PersistWorkType::WorkspaceFooter, persistKeySingleton());
+#endif
+}
+
+void StorageManager::admitGlobalMeta() {
+#if BYPASS_STOP_UNDO_SAVE
+    return;
+#else
+    PersistenceWorkQueue::admitWork(PersistWorkType::GlobalMeta, persistKeySingleton());
+#endif
+}
+
 void StorageManager::markCurrentSetLoopSlotDirty(uint8_t trackIndex, uint8_t slotIndex) {
 #if BYPASS_STOP_UNDO_SAVE
     (void)trackIndex;
@@ -1359,6 +1440,8 @@ void StorageManager::markCurrentSetLoopSlotDirty(uint8_t trackIndex, uint8_t slo
     return;
 #endif
     markCurrentSetLoopSlotDirtyInternal(trackIndex, slotIndex);
+    admitSlotMeta(trackIndex, slotIndex);
+    admitLoopPersist(loopIdForPersistSlot(trackIndex, slotIndex));
 }
 
 void StorageManager::markCurrentSetTrackDirty(uint8_t trackIndex) {
@@ -1367,6 +1450,11 @@ void StorageManager::markCurrentSetTrackDirty(uint8_t trackIndex) {
     return;
 #endif
     markCurrentSetTrackDirtyInternal(trackIndex);
+    admitTrackMeta(trackIndex);
+    for (uint8_t slot = 0; slot < Config::MAX_LOOPS_PER_TRACK; ++slot) {
+        admitLoopPersist(loopIdForPersistSlot(trackIndex, slot));
+        admitSlotMeta(trackIndex, slot);
+    }
 }
 
 void StorageManager::markAllCurrentSetLoopSlotsDirty() {
@@ -1374,6 +1462,13 @@ void StorageManager::markAllCurrentSetLoopSlotsDirty() {
     return;
 #endif
     markAllCurrentSetLoopSlotsDirtyInternal();
+    for (uint8_t track = 0; track < Config::NUM_TRACKS; ++track) {
+        admitTrackMeta(track);
+        for (uint8_t slot = 0; slot < Config::MAX_LOOPS_PER_TRACK; ++slot) {
+            admitLoopPersist(loopIdForPersistSlot(track, slot));
+            admitSlotMeta(track, slot);
+        }
+    }
 }
 
 void StorageManager::processEditAutosave(const LooperState& state) {
@@ -1393,7 +1488,7 @@ void StorageManager::processEditAutosave(const LooperState& state) {
             }
             for (uint8_t s = 0; s < Config::MAX_LOOPS_PER_TRACK; ++s) {
                 if (track.getLoop(s).isEditStateDirty()) {
-                    markCurrentSetLoopSlotDirtyInternal(t, s);
+                    StorageManager::markCurrentSetLoopSlotDirty(t, s);
                 }
             }
         }
@@ -1426,7 +1521,7 @@ void StorageManager::processEditAutosave(const LooperState& state) {
         }
         for (uint8_t s = 0; s < Config::MAX_LOOPS_PER_TRACK; ++s) {
             if (track.getLoop(s).isEditStateDirty()) {
-                markCurrentSetLoopSlotDirtyInternal(t, s);
+                StorageManager::markCurrentSetLoopSlotDirty(t, s);
             }
         }
     }
@@ -1476,12 +1571,26 @@ void StorageManager::requestDeferredSaveState(const LooperState& /*state*/, uint
                alreadyPending ? "already_pending" : "queued");
 }
 
+namespace {
+
+bool hasPersistenceWorkPending() {
+#if BYPASS_STOP_UNDO_SAVE
+    return false;
+#else
+    return storageSession.currentWorkspaceSave.pending ||
+           PersistenceWorkQueue::queueDepth() > 0 || PersistenceWorkQueue::writingWorkItemCount() > 0 ||
+           storageSession.persistenceWorkItem.itemActive;
+#endif
+}
+
+}  // namespace
+
 bool StorageManager::isDeferredSaveActive() {
 #if BYPASS_STOP_UNDO_SAVE
     return false;
 #else
-    // Active only during the SD-write section of a save slice.
-    return storageSession.currentWorkspaceSave.sdIoActive;
+    return storageSession.currentWorkspaceSave.sdIoActive ||
+           storageSession.persistenceWorkItem.sdIoActive;
 #endif
 }
 
@@ -1489,7 +1598,7 @@ bool StorageManager::hasDeferredSaveWork() {
 #if BYPASS_STOP_UNDO_SAVE
     return false;
 #else
-    return storageSession.currentWorkspaceSave.pending || storageSession.currentWorkspaceSave.inProgress;
+    return hasPersistenceWorkPending();
 #endif
 }
 
@@ -1506,6 +1615,7 @@ void StorageManager::processDeferredSaveState(const LooperState& state) {
     (void)state;
     storageSession.currentWorkspaceSave.pending = false;
     resetDeferredSaveJobState();
+    resetPersistenceWorkItemJobState();
     resetRevisionCommitJobState();
     resetRevisionLoadJobState();
     return;
@@ -1524,8 +1634,7 @@ void StorageManager::processDeferredSaveState(const LooperState& state) {
     };
 
     if (storageSession.bootRecovery.pending && !storageSession.revisionLoad.pending && !storageSession.revisionLoad.inProgress &&
-        !storageSession.revisionCommit.pending && !storageSession.revisionCommit.inProgress && !storageSession.currentWorkspaceSave.pending &&
-        !storageSession.currentWorkspaceSave.inProgress) {
+        !storageSession.revisionCommit.pending && !storageSession.revisionCommit.inProgress && !hasPersistenceWorkPending()) {
         storageSession.bootRecovery.pending = false;
         storageSession.revisionLoad.setId = storageSession.bootRecovery.setId;
         storageSession.revisionLoad.revisionId = storageSession.bootRecovery.revisionId;
@@ -1540,7 +1649,7 @@ void StorageManager::processDeferredSaveState(const LooperState& state) {
 
     while (!sliceBudgetExhausted()) {
         const bool revisionBlockedByDeferredSave =
-            storageSession.revisionCommit.pending && (storageSession.currentWorkspaceSave.pending || storageSession.currentWorkspaceSave.inProgress);
+            storageSession.revisionCommit.pending && hasPersistenceWorkPending();
         const bool revisionBlockedByLoad =
             storageSession.revisionCommit.pending && (storageSession.revisionLoad.pending || storageSession.revisionLoad.inProgress);
         if (revisionBlockedByDeferredSave || revisionBlockedByLoad) {
@@ -1548,7 +1657,7 @@ void StorageManager::processDeferredSaveState(const LooperState& state) {
             if (nowMs - storageSession.revisionCommit.lastBlockedLogAtMs >= 5000U) {
                 storageSession.revisionCommit.lastBlockedLogAtMs = nowMs;
                 SC_PERSIST("rev_blocked", 0, storageSession.currentWorkspaceSave.pending ? 1U : 0U,
-                           storageSession.currentWorkspaceSave.inProgress ? 1U : 0U,
+                           hasPersistenceWorkPending() ? 1U : 0U,
                            revisionBlockedByLoad ? "load_active" : "deferred_save_active");
             }
         } else if (storageSession.revisionCommit.inProgress || storageSession.revisionCommit.pending) {
@@ -1586,7 +1695,7 @@ void StorageManager::processDeferredSaveState(const LooperState& state) {
         }
 
         const bool revisionLoadBlockedByDeferredSave =
-            storageSession.revisionLoad.pending && (storageSession.currentWorkspaceSave.pending || storageSession.currentWorkspaceSave.inProgress);
+            storageSession.revisionLoad.pending && hasPersistenceWorkPending();
         const bool revisionLoadBlockedByCommit =
             storageSession.revisionLoad.pending && (storageSession.revisionCommit.pending || storageSession.revisionCommit.inProgress);
         if (revisionLoadBlockedByDeferredSave || revisionLoadBlockedByCommit) {
@@ -1637,11 +1746,23 @@ void StorageManager::processDeferredSaveState(const LooperState& state) {
             continue;
         }
 
+        if (storageSession.currentWorkspaceSave.pending) {
+            maybeAdmitFinalizeWorkspaceAfterDrain();
+        }
+
         const bool otherSdIoActive =
             storageSession.currentWorkspaceSave.sdIoActive || storageSession.revisionCommit.sdIoActive ||
-            storageSession.revisionLoad.sdIoActive || storageSession.midPassChunkPersist.sdIoActive;
-        if (PersistenceFailurePolicy::shouldRunMidPassWriter(PersistenceQueue::queueDepth(),
-                                                               otherSdIoActive)) {
+            storageSession.revisionLoad.sdIoActive || storageSession.midPassChunkPersist.sdIoActive ||
+            storageSession.persistenceWorkItem.sdIoActive;
+        const uint16_t workQueueDepth = PersistenceWorkQueue::queueDepth();
+        const uint16_t writingWorkItemCount = PersistenceWorkQueue::writingWorkItemCount();
+        const bool deferMidPassForWorkspaceSave = PersistenceFailurePolicy::shouldDeferMidPassForWorkspaceSave(
+            storageSession.currentWorkspaceSave.pending,
+            storageSession.currentWorkspaceSave.urgentRequested, workQueueDepth,
+            writingWorkItemCount, storageSession.persistenceWorkItem.itemActive);
+        if (!deferMidPassForWorkspaceSave &&
+            PersistenceFailurePolicy::shouldRunMidPassWriter(PersistenceQueue::queueDepth(),
+                                                             otherSdIoActive)) {
             const uint32_t currentHeap = MemoryMonitor::getInternalHeapFreeBytes();
             if (!LoopEventStore::hasInternalHeapHeadroomForNonCriticalWork(currentHeap)) {
                 PersistenceDiagnostics::onHeapFloorBlock();
@@ -1661,123 +1782,40 @@ void StorageManager::processDeferredSaveState(const LooperState& state) {
             break;
         }
 
-        if (!storageSession.currentWorkspaceSave.pending && !storageSession.currentWorkspaceSave.inProgress) {
-            break;
-        }
-
-        if (!storageSession.currentWorkspaceSave.inProgress) {
+        if (PersistenceFailurePolicy::shouldRunPersistenceWorkItemWriter(
+                workQueueDepth, writingWorkItemCount, otherSdIoActive)) {
             const uint32_t currentHeap = MemoryMonitor::getInternalHeapFreeBytes();
             if (!LoopEventStore::hasInternalHeapHeadroomForNonCriticalWork(currentHeap)) {
-                if (!storageSession.currentWorkspaceSave.heapFloorDeferred) {
-                    const uint32_t admissionHeap =
-                        storageSession.currentWorkspaceSave.admissionHeap == UINT32_MAX
-                            ? currentHeap
-                            : storageSession.currentWorkspaceSave.admissionHeap;
-                    SC_PERSIST("defer", 0, admissionHeap, currentHeap, "heap_floor");
-                    storageSession.currentWorkspaceSave.heapFloorDeferred = true;
-                }
                 PersistenceDiagnostics::onHeapFloorBlock();
                 break;
             }
-            storageSession.currentWorkspaceSave.heapFloorDeferred = false;
-        }
-
-        if (!storageSession.currentWorkspaceSave.inProgress && storageSession.currentWorkspaceSave.pending) {
-            const uint32_t nowMs = millis();
-            if (isTransportActiveForPersistence() &&
-                nowMs < storageSession.currentWorkspaceSave.deferDispatchUntilMs) {
-                break;
-            }
-            const uint32_t dispatchHeap = MemoryMonitor::getInternalHeapFreeBytes();
-            const uint32_t admissionHeap =
-                storageSession.currentWorkspaceSave.admissionHeap == UINT32_MAX ? dispatchHeap
-                                                                                : storageSession.currentWorkspaceSave.admissionHeap;
-            SC_PERSIST("dispatch", 0, admissionHeap, dispatchHeap, "run");
-            storageSession.currentWorkspaceSave.pending = false;
-            storageSession.currentWorkspaceSave.startedAtUs = micros();
-            storageSession.currentWorkspaceSave.heapBefore = dispatchHeap;
-            storageSession.currentWorkspaceSave.loopSlotsWritten = 0;
-            storageSession.currentWorkspaceSave.loopSlotsSkipped = 0;
-            storageSession.currentWorkspaceSave.displayBlockUs = 0;
-            storageSession.currentWorkspaceSave.inProgress = true;
+            PersistenceFailurePolicy::maybeEmitBackpressureTelemetry(captureActiveForScheduler);
             const uint32_t ioStartUs = micros();
+            storageSession.persistenceWorkItem.sdIoActive = true;
             storageSession.currentWorkspaceSave.sdIoActive = true;
-            const bool beginOk = beginDeferredSaveJob(state);
-            storageSession.currentWorkspaceSave.displayBlockUs += micros() - ioStartUs;
+            const bool workOk = stepPersistenceWorkItem(state);
+            const uint32_t sliceLatencyUs = micros() - ioStartUs;
+            storageSession.persistenceWorkItem.sdIoActive = false;
             storageSession.currentWorkspaceSave.sdIoActive = false;
-            if (!beginOk) {
-                const uint32_t saveDurationUs = micros() - storageSession.currentWorkspaceSave.startedAtUs;
-                SC_PERSIST("result", saveDurationUs, storageSession.currentWorkspaceSave.heapBefore, storageSession.currentWorkspaceSave.heapBefore,
-                           "failed");
-                storageSession.currentWorkspaceSave.lastCompletedOk = false;
-                storageSession.currentWorkspaceSave.failedAtMs = millis();
-                storageSession.currentWorkspaceSave.completedAtMs = 0;
-                resetDeferredSaveJobState();
+            PersistenceDiagnostics::onSliceCompleted(sliceLatencyUs);
+            if (!workOk) {
+                SC_PERSIST("work", sliceLatencyUs, 0, 0, "failed");
                 break;
             }
-            storageSession.currentWorkspaceSave.urgentRequested = false;
             break;
         }
 
-        if (!storageSession.currentWorkspaceSave.inProgress) {
-            break;
-        }
-
-        emitDeferredSaveSliceTelemetry("start");
-        const uint32_t ioStartUs = micros();
-        storageSession.currentWorkspaceSave.sdIoActive = true;
-        const bool stepOk = stepDeferredSaveJob();
-        const uint32_t sliceLatencyUs = micros() - ioStartUs;
-        storageSession.currentWorkspaceSave.displayBlockUs += sliceLatencyUs;
-        storageSession.currentWorkspaceSave.sdIoActive = false;
-        emitDeferredSaveSliceTelemetry(stepOk ? "done" : "failed");
-        PersistenceDiagnostics::onSliceCompleted(sliceLatencyUs);
-        if (!stepOk) {
-            storageSession.currentWorkspaceSave.inProgress = false;
-        }
-        if (storageSession.currentWorkspaceSave.inProgress) {
-            break;
-        }
-
-        const uint32_t saveDurationUs = micros() - storageSession.currentWorkspaceSave.startedAtUs;
-        const char* resultOutcome = stepOk ? "ok" : "failed";
-        SC_PERSIST("result", saveDurationUs, storageSession.currentWorkspaceSave.heapBefore, storageSession.currentWorkspaceSave.heapBefore,
-                   resultOutcome);
-        char resultStats[72];
-        std::snprintf(resultStats, sizeof(resultStats), "w%u_s%u_db%lu",
-                      static_cast<unsigned>(storageSession.currentWorkspaceSave.loopSlotsWritten),
-                      static_cast<unsigned>(storageSession.currentWorkspaceSave.loopSlotsSkipped),
-                      static_cast<unsigned long>(storageSession.currentWorkspaceSave.displayBlockUs));
-        SC_PERSIST("result_stats", saveDurationUs, storageSession.currentWorkspaceSave.heapBefore, storageSession.currentWorkspaceSave.heapBefore,
-                   resultStats);
-        storageSession.currentWorkspaceSave.lastCompletedOk = stepOk;
-        const uint32_t resultAtMs = millis();
-        if (stepOk) {
-            storageSession.currentWorkspaceSave.completedAtMs = resultAtMs;
-            storageSession.currentWorkspaceSave.failedAtMs = 0;
-        } else {
-            storageSession.currentWorkspaceSave.failedAtMs = resultAtMs;
-            storageSession.currentWorkspaceSave.completedAtMs = 0;
-        }
-        if (stepOk && clearEditDirtyAfterDeferredSave) {
-            clearAllocatedLoopEditStateDirty();
-            clearEditDirtyAfterDeferredSave = false;
-        }
-        storageSession.currentWorkspaceSave.urgentRequested = false;
-        if (!stepOk) {
-            resetDeferredSaveJobState();
-        }
         break;
     }
 
 #if defined(SESSION_CAPTURE)
-    if ((storageSession.currentWorkspaceSave.pending || storageSession.currentWorkspaceSave.inProgress) &&
+    if (hasPersistenceWorkPending() &&
         PersistenceBudget::persistenceSliceBudgetExhausted(sliceBudgetUs, micros() - sliceStartUs)) {
         PersistenceDiagnostics::onBudgetBlock();
     }
     PersistenceDiagnostics::maybeEmitPeriodic(
         isCaptureActiveForPersistence(), storageSession.currentWorkspaceSave.pending,
-        storageSession.currentWorkspaceSave.inProgress, storageSession.currentWorkspaceSave.sdIoActive);
+        storageSession.persistenceWorkItem.itemActive, storageSession.persistenceWorkItem.sdIoActive);
 #endif
 }
 
@@ -2238,8 +2276,11 @@ DeferredSaveDisplayStatus StorageManager::getDeferredSaveDisplayStatus(uint32_t 
     return {};
 #else
     DeferredSaveDisplayInputs inputs{};
-    inputs.savePending = storageSession.currentWorkspaceSave.pending;
-    inputs.saveInProgress = storageSession.currentWorkspaceSave.inProgress;
+    inputs.savePending = storageSession.currentWorkspaceSave.pending ||
+                       PersistenceWorkQueue::queueDepth() > 0;
+    inputs.saveInProgress = storageSession.persistenceWorkItem.itemActive ||
+                            PersistenceWorkQueue::writingWorkItemCount() > 0 ||
+                            storageSession.persistenceWorkItem.sdIoActive;
     inputs.revisionCommitPending = storageSession.revisionCommit.pending;
     inputs.revisionCommitInProgress = storageSession.revisionCommit.inProgress;
     inputs.completedAtMs = storageSession.currentWorkspaceSave.completedAtMs;
@@ -2255,33 +2296,75 @@ bool StorageManager::saveState(const LooperState& state) {
     return true;
 #endif
     HotPathTelemetry::ScopedSaveState telemetryScope;
-    Serial.println("[StorageManager] Draining deferred save to SD card...");
+    Serial.println("[StorageManager] Draining persistence work queue to SD card...");
 
-    if (!storageSession.currentWorkspaceSave.inProgress) {
-        storageSession.currentWorkspaceSave.admissionHeap = UINT32_MAX;
-        storageSession.currentWorkspaceSave.urgentRequested = true;
-        const bool alreadyPending = storageSession.currentWorkspaceSave.pending;
-        storageSession.currentWorkspaceSave.pending = true;
-        SC_PERSIST("request", 0, 0, 0,
-                   alreadyPending ? "sync_drain_already_pending" : "sync_drain");
-    }
+    storageSession.currentWorkspaceSave.admissionHeap = UINT32_MAX;
+    storageSession.currentWorkspaceSave.urgentRequested = true;
+    storageSession.currentWorkspaceSave.deferDispatchUntilMs = 0;
+    const bool alreadyPending = storageSession.currentWorkspaceSave.pending;
+    storageSession.currentWorkspaceSave.pending = true;
+    SC_PERSIST("request", 0, 0, 0,
+               alreadyPending ? "sync_drain_already_pending" : "sync_drain");
 
     storageSession.currentWorkspaceSave.lastCompletedOk = false;
-    constexpr uint32_t kMaxDrainSteps = 200000u;
+
+    const SyncDrainBudget drainBudget = buildSyncDrainBudgetForSession();
     uint32_t steps = 0;
-    while ((storageSession.currentWorkspaceSave.pending || storageSession.currentWorkspaceSave.inProgress) && steps < kMaxDrainSteps) {
+    uint32_t stuckIterations = 0;
+    SyncDrainProgressSnapshot lastProgress = captureSyncDrainProgressSnapshot();
+    SyncDrainFailureReason failureReason = SyncDrainFailureReason::None;
+
+    while (hasPersistenceWorkPending()) {
+        if (steps >= drainBudget.maxSliceSteps) {
+            failureReason = SyncDrainFailureReason::ExceededSliceBudget;
+            break;
+        }
+
+        maybeAdmitFinalizeWorkspaceAfterDrain();
+        const SyncDrainProgressSnapshot beforeProgress = lastProgress;
         processDeferredSaveState(state);
         yield();
         steps++;
+
+        const SyncDrainProgressSnapshot afterProgress = captureSyncDrainProgressSnapshot();
+        if (PersistenceSyncDrainBudget::madeSyncDrainProgress(beforeProgress, afterProgress)) {
+            stuckIterations = 0;
+            lastProgress = afterProgress;
+        } else {
+            ++stuckIterations;
+            if (stuckIterations >= drainBudget.maxStuckIterations) {
+                failureReason = SyncDrainFailureReason::Stuck;
+                break;
+            }
+        }
     }
 
-    const bool completed = !storageSession.currentWorkspaceSave.pending && !storageSession.currentWorkspaceSave.inProgress;
+    const bool completed = !hasPersistenceWorkPending();
     if (!completed) {
-        Serial.println("[StorageManager] ERROR: Deferred save drain exceeded step limit");
+        if (failureReason == SyncDrainFailureReason::Stuck) {
+            Serial.printf(
+                "[StorageManager] ERROR: Persistence drain stuck after %u iterations "
+                "(max %u, expected ~%u slice steps, ~%u SD bytes)\n",
+                static_cast<unsigned>(stuckIterations),
+                static_cast<unsigned>(drainBudget.maxStuckIterations),
+                static_cast<unsigned>(drainBudget.expectedSliceSteps),
+                static_cast<unsigned>(drainBudget.estimatedSdPayloadBytes));
+        } else {
+            Serial.printf(
+                "[StorageManager] ERROR: Persistence drain exceeded slice budget after %u steps "
+                "(max %u, expected ~%u slice steps, ~%u SD bytes)\n",
+                static_cast<unsigned>(steps), static_cast<unsigned>(drainBudget.maxSliceSteps),
+                static_cast<unsigned>(drainBudget.expectedSliceSteps),
+                static_cast<unsigned>(drainBudget.estimatedSdPayloadBytes));
+        }
+        return false;
+    }
+    if (storageSession.currentWorkspaceSave.pending) {
+        Serial.println("[StorageManager] ERROR: Persistence drain left flush pending");
         return false;
     }
     if (!storageSession.currentWorkspaceSave.lastCompletedOk) {
-        Serial.println("[StorageManager] ERROR: Deferred save drain failed");
+        Serial.println("[StorageManager] ERROR: Persistence drain failed");
         return false;
     }
     Serial.println("[StorageManager] State saved successfully (v4).");
@@ -2887,6 +2970,9 @@ void STORAGE_PERSIST_MEM StorageManager::restoreDeferredUndoSnapshotsBeforeUse()
 
 void STORAGE_PERSIST_MEM StorageManager::requestLoopSlotRestoreFromSd(uint8_t trackIndex, uint8_t slotIndex) {
     removeDeferredLoopSlotRestore(trackIndex, slotIndex);
+    if (!trackManager.isSlotEnabled(trackIndex, slotIndex)) {
+        return;
+    }
     Track& track = trackManager.getTrack(trackIndex);
     if (track.getLoop(slotIndex).hasPublishedEvents()) {
         return;

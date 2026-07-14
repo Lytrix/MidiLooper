@@ -37,6 +37,13 @@ void test_should_run_mid_pass_writer_when_queue_non_empty() {
   TEST_ASSERT_FALSE(PersistenceFailurePolicy::shouldRunMidPassWriter(3, true));
 }
 
+void test_should_run_persistence_work_item_writer() {
+  TEST_ASSERT_TRUE(PersistenceFailurePolicy::shouldRunPersistenceWorkItemWriter(1, 0, false));
+  TEST_ASSERT_TRUE(PersistenceFailurePolicy::shouldRunPersistenceWorkItemWriter(0, 1, false));
+  TEST_ASSERT_FALSE(PersistenceFailurePolicy::shouldRunPersistenceWorkItemWriter(0, 0, false));
+  TEST_ASSERT_FALSE(PersistenceFailurePolicy::shouldRunPersistenceWorkItemWriter(2, 0, true));
+}
+
 void test_capture_pressure_prioritizes_persistence_at_reserve() {
   const uint16_t reserve = PassConfig::CHUNK_RESERVE;
   TEST_ASSERT_EQUAL(static_cast<int>(PersistenceFailurePolicy::CapturePressureAction::PrioritizePersistence),
@@ -97,6 +104,7 @@ int main(int argc, char** argv) {
   (void)argv;
   UNITY_BEGIN();
   RUN_TEST(test_should_run_mid_pass_writer_when_queue_non_empty);
+  RUN_TEST(test_should_run_persistence_work_item_writer);
   RUN_TEST(test_capture_pressure_prioritizes_persistence_at_reserve);
   RUN_TEST(test_queue_depth_alarm_threshold);
   RUN_TEST(test_oldest_queued_chunk_age_tracks_admit_order);

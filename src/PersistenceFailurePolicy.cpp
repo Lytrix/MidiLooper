@@ -18,6 +18,23 @@ bool shouldRunMidPassWriter(uint16_t queueDepth, bool otherSdIoActive) {
   return queueDepth > 0 && !otherSdIoActive;
 }
 
+bool shouldDeferMidPassForWorkspaceSave(bool savePending, bool urgentRequested,
+                                        uint16_t workQueueDepth, uint16_t writingWorkItemCount,
+                                        bool workItemActive) {
+  if (!savePending) {
+    return false;
+  }
+  if (urgentRequested) {
+    return true;
+  }
+  return workQueueDepth > 0 || writingWorkItemCount > 0 || workItemActive;
+}
+
+bool shouldRunPersistenceWorkItemWriter(uint16_t queueDepth, uint16_t writingWorkItemCount,
+                                        bool otherSdIoActive) {
+  return (queueDepth > 0 || writingWorkItemCount > 0) && !otherSdIoActive;
+}
+
 CapturePressureAction evaluateCapturePressure(uint16_t freeChunks, uint16_t reserve,
                                               bool isRecording, bool isOverdubbing) {
   (void)isRecording;

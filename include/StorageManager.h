@@ -7,6 +7,7 @@
 #include <vector>
 #include "DeferredSaveDisplayStatus.h"
 #include "LooperState.h"
+#include "LoopPasses.h"
 #include "RevisionLoadPolicy.h"
 #include "SavedSetCatalog.h"
 #include "SetRevisionCatalog.h"
@@ -21,17 +22,31 @@
  * @brief Manages persistent saving and loading of the looper state to non-volatile storage.
  *
  * Provides static methods to serialize the current LooperState to external memory (e.g., SD card
- * or flash) and to reload it on startup. Runtime callers should request deferred saves via
- * requestDeferredSaveState(); saveState() drains the deferred writer synchronously (maintenance /
- * explicit flush only — not for hot paths).
+ * or flash) and to reload it on startup. Domain code should admit stale persistence work via
+ * admitLoopPersist() / admitTrackMeta() / … — not markCurrentSet*Dirty(). requestDeferredSaveState()
+ * wakes the legacy deferred writer until the work-item scheduler retires the monolith (B4).
  */
 class StorageManager {
 public:
+    /// Admit stale loop payload persistence (record, overdub, undo, edit, …).
+    static void admitLoopPersist(LoopId loopId);
+    /// Admit stale loop undo history for a musical loop id (DEC-024 interim wire).
+    static void admitLoopUndoHistory(LoopId loopId);
+    /// Admit stale slot assignment / enable row (interim UI assignment).
+    static void admitSlotMeta(uint8_t trackIndex, uint8_t slotIndex);
+    /// Admit stale track header / mute state.
+    static void admitTrackMeta(uint8_t trackIndex);
+    /// Admit stale workspace footer (selection / active indices).
+    static void admitWorkspaceFooter();
+    /// Admit stale global looper meta (transport, BPM, master length).
+    static void admitGlobalMeta();
+
     static bool saveState(const LooperState& state);
     static bool loadState(LooperState& state);
     static bool loadCurrentWorkspaceFromSd(LooperState& state);
     static void requestDeferredSaveState(const LooperState& state, uint32_t admissionHeap = UINT32_MAX,
                                          bool isUrgentRequest = false);
+    /// @deprecated Domain code: use admit* + requestDeferredSaveState only at transition boundaries.
     /// Keep save queued but do not start full workspace dispatch until grace elapses (PLAYING path).
     static void deferWorkspaceSaveDispatchDuringPlayback(uint32_t graceMs);
     static void processDeferredSaveState(const LooperState& state);
@@ -66,8 +81,11 @@ public:
     static bool readSavedSetMetadataForFolder(const char* folderName,
                                               SavedSetCatalog::SavedSetMetadata& metadata);
     static bool readCurrentSetBrowserMetadata(SavedSetCatalog::SavedSetMetadata& metadata);
+    /// @deprecated Prefer admitLoopPersist() + admitSlotMeta().
     static void markCurrentSetLoopSlotDirty(uint8_t trackIndex, uint8_t slotIndex);
+    /// @deprecated Prefer admitTrackMeta() + per-loop admitLoopPersist().
     static void markCurrentSetTrackDirty(uint8_t trackIndex);
+    /// @deprecated Prefer targeted admit* at transition boundaries.
     static void markAllCurrentSetLoopSlotsDirty();
     static DeferredSaveDisplayStatus getDeferredSaveDisplayStatus(uint32_t nowMs);
     static DeferredSaveDisplayStatus getDeferredLoadDisplayStatus(uint32_t nowMs);

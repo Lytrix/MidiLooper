@@ -221,6 +221,62 @@ STORAGE_PERSIST_MEM bool trackHasCurrentSetDirtyLoopSlot(uint8_t trackIndex) {
 }
 
 
+STORAGE_PERSIST_MEM bool beginDeferredRuntimeBundleWrite(const LooperState& state) {
+    storageSession.currentWorkspaceSave.workspaceEpoch = currentWorkspaceEpoch;
+
+    if (!CurrentSetStorage::ensureDirectory(PersistenceLayout::kRoot) ||
+        !CurrentSetStorage::ensureDirectory(CurrentSetStorage::kCurrentSetDir) ||
+        !CurrentSetStorage::ensureDirectory(CurrentWorkspaceStorage::kCurrentTempDir) ||
+        !CurrentSetStorage::ensureDirectory(CurrentSetStorage::kCurrentSlotsDir) ||
+        !CurrentSetStorage::ensureDirectory(PersistenceLayout::kRecoveryRoot) ||
+        !CurrentSetStorage::ensureDirectory(CurrentSetStorage::kCheckpointsDir)) {
+        Serial.println("[StorageManager] ERROR: Could not create MidiLooper/current directories");
+        return false;
+    }
+
+    if (SD.exists(CurrentSetStorage::kCurrentMetaTempPath)) {
+        (void)SD.remove(CurrentSetStorage::kCurrentMetaTempPath);
+    }
+
+    storageSession.currentWorkspaceSave.file = SD.open(CurrentSetStorage::kCurrentMetaTempPath, FILE_WRITE);
+    if (!storageSession.currentWorkspaceSave.file) {
+        Serial.println("[StorageManager] ERROR: Could not open CurrentSet meta temp file");
+        return false;
+    }
+    storageSession.currentWorkspaceSave.file.seek(0);
+
+    if (!CurrentWorkspaceStorage::writeEpochHeaderPlaceholder(storageSession.currentWorkspaceSave.file,
+                                                              storageSession.currentWorkspaceSave.workspaceEpoch)) {
+        Serial.println("[StorageManager] ERROR: Work item bundle write failed writing epoch header");
+        storageSession.currentWorkspaceSave.file.close();
+        return false;
+    }
+
+    if (!writeCurrentSetMetaHeaderToOpenFile(storageSession.currentWorkspaceSave.file)) {
+        Serial.println("[StorageManager] ERROR: Work item bundle write failed writing CurrentSet meta header");
+        storageSession.currentWorkspaceSave.file.close();
+        return false;
+    }
+
+    storageSession.currentWorkspaceSave.stateSnapshot = state;
+    storageSession.currentWorkspaceSave.numTracks = Config::NUM_TRACKS;
+    storageSession.currentWorkspaceSave.globalHeaderStage = DeferredGlobalHeaderStage::Bpm;
+    storageSession.currentWorkspaceSave.trackCursor = 0;
+    storageSession.currentWorkspaceSave.slotCursor = 0;
+    storageSession.currentWorkspaceSave.poolCursor = 0;
+    storageSession.currentWorkspaceSave.undoTrackCursor = 0;
+    storageSession.currentWorkspaceSave.footerTrackCursor = 0;
+    storageSession.currentWorkspaceSave.trackHeaderWritten = false;
+    storageSession.currentWorkspaceSave.trackWriteStage = DeferredTrackWriteStage::TrackState;
+    storageSession.currentWorkspaceSave.slotWriteStage = DeferredSlotWriteStage::SlotEnabled;
+    storageSession.currentWorkspaceSave.footerWriteStage = DeferredFooterWriteStage::SelectedTrack;
+    resetDeferredLoopWriteState();
+    resetDeferredUndoWriteState();
+    storageSession.currentWorkspaceSave.stage = DeferredSaveStage::CurrentSetMeta;
+    return true;
+}
+
+
 STORAGE_PERSIST_MEM bool beginDeferredSaveJob(const LooperState& state) {
     ++currentWorkspaceEpoch;
     storageSession.currentWorkspaceSave.workspaceEpoch = currentWorkspaceEpoch;
@@ -808,7 +864,8 @@ STORAGE_PERSIST_MEM bool stepDeferredSaveJob() {
                 return false;
             }
 
-            if (!trackHasCurrentSetDirtyLoopSlot(storageSession.currentWorkspaceSave.trackCursor)) {
+            if (storageSession.persistenceWorkItem.skipLoopSlotStage ||
+                !trackHasCurrentSetDirtyLoopSlot(storageSession.currentWorkspaceSave.trackCursor)) {
                 storageSession.currentWorkspaceSave.loopSlotsSkipped += Config::MAX_LOOPS_PER_TRACK;
                 storageSession.currentWorkspaceSave.trackCursor++;
                 storageSession.currentWorkspaceSave.slotCursor = 0;
@@ -1026,6 +1083,10 @@ STORAGE_PERSIST_MEM bool stepDeferredSaveJob() {
                 Serial.println("[StorageManager] ERROR: Deferred save failed finalizing CurrentSet meta");
                 return false;
             }
+            if (storageSession.persistenceWorkItem.bundleWriteActive) {
+                storageSession.currentWorkspaceSave.stage = DeferredSaveStage::Idle;
+                return true;
+            }
             storageSession.currentWorkspaceSave.stage = DeferredSaveStage::CurrentSetCompletion;
             return true;
         }
@@ -1058,6 +1119,40 @@ STORAGE_PERSIST_MEM bool stepDeferredSaveJob() {
         default:
             return true;
     }
+}
+
+STORAGE_PERSIST_MEM bool stepDeferredRuntimeBundleSlice(bool& bundleDoneOut) {
+    bundleDoneOut = false;
+    if (storageSession.currentWorkspaceSave.stage == DeferredSaveStage::Idle) {
+        bundleDoneOut = true;
+        return true;
+    }
+    if (storageSession.currentWorkspaceSave.stage == DeferredSaveStage::CurrentSetLoopSlot) {
+        storageSession.currentWorkspaceSave.stage = DeferredSaveStage::Footer;
+        storageSession.currentWorkspaceSave.footerWriteStage = DeferredFooterWriteStage::SelectedTrack;
+        storageSession.currentWorkspaceSave.footerTrackCursor = 0;
+    }
+    const bool stepOk = stepDeferredSaveJob();
+    if (!stepOk) {
+        return false;
+    }
+    if (storageSession.currentWorkspaceSave.stage == DeferredSaveStage::Idle) {
+        bundleDoneOut = true;
+    }
+    return true;
+}
+
+STORAGE_PERSIST_MEM bool stepDeferredWorkspaceFinalizeSlice(bool& finalizeDoneOut) {
+    finalizeDoneOut = false;
+    if (storageSession.currentWorkspaceSave.stage != DeferredSaveStage::CurrentSetCompletion) {
+        storageSession.currentWorkspaceSave.stage = DeferredSaveStage::CurrentSetCompletion;
+    }
+    const bool stepOk = stepDeferredSaveJob();
+    if (!stepOk) {
+        return false;
+    }
+    finalizeDoneOut = storageSession.currentWorkspaceSave.stage == DeferredSaveStage::Idle;
+    return true;
 }
 
 }  // namespace StorageManagerInternal

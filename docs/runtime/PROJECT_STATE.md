@@ -2,13 +2,13 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-07-14 (branch cleanup — `dev` is integration trunk)
+Last updated: 2026-07-14 (persistence work queue B1–B5 complete; PR to `dev`)
 
 ---
 
 ## Current branch
 
-**`dev`** @ `ec7b4a5` — v3 integration (GitHub default). Feature work: `feature/persistence-work-queue` next.
+**`feature/persistence-work-queue`** @ `8b3f93e` — B1–B5 shipped; PR to **`dev`** @ `ec7b4a5`.
 
 ### Firmware lines
 
@@ -22,12 +22,16 @@ See [`docs/BRANCHING.md`](../BRANCHING.md).
 
 ## In flight (uncommitted)
 
-None on `dev` at cleanup.
+None.
 
 ## Shipped on branch (recent)
 
 | Commit / session | Focus | Docs |
 |--------|--------|------|
+| `8b3f93e` | Sync-drain budget, clear-slot restore, post-reboot undo save | persist queue plan |
+| `7a89f03` | Retire monolithic deferred save; work queue (B4) | persist queue plan |
+| `b3d066f` | `stepPersistenceWorkItem` scheduler hook (B3) | persist queue plan |
+| `3143ef0` | `StorageManager::admit*` API (B2) | persist queue plan |
 | `736fa33` | NOTE_EDIT move/pitch bracket — mover NoteId lookup | CURRENT_WORK |
 | `0f086f4` | Split-focus slot switching + loop-end commit (DEC-025) | Loops.md |
 | `f6b496a` | Slot short-press deferred-restore fix | — |

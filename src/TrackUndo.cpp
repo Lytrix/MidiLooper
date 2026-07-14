@@ -551,7 +551,9 @@ TRACK_COLD_MEM void TrackUndo::undoForLoop(Track& track, Loop& loop) {
             }
             StorageManager::markCurrentSetLoopSlotDirty(resolveTrackIndexForPersistence(track),
                                                         slotIndex);
-            StorageManager::requestDeferredSaveState(looperState.getLooperState());
+            StorageManager::admitLoopUndoHistory(loop.loopId);
+            StorageManager::requestDeferredSaveState(looperState.getLooperState(), UINT32_MAX,
+                                                     true);
             break;
         }
         logger.log(CAT_TRACK, LOG_WARNING,
@@ -613,7 +615,9 @@ TRACK_COLD_MEM void TrackUndo::redoForLoop(Track& track, Loop& loop) {
             }
             StorageManager::markCurrentSetLoopSlotDirty(resolveTrackIndexForPersistence(track),
                                                         slotIndex);
-            StorageManager::requestDeferredSaveState(looperState.getLooperState());
+            StorageManager::admitLoopUndoHistory(loop.loopId);
+            StorageManager::requestDeferredSaveState(looperState.getLooperState(), UINT32_MAX,
+                                                     true);
             break;
         }
         logger.log(CAT_TRACK, LOG_WARNING,
