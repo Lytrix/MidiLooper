@@ -19,8 +19,8 @@ bool shouldRunMidPassWriter(uint16_t queueDepth, bool otherSdIoActive) {
 }
 
 bool shouldRunPersistenceWorkItemWriter(uint16_t queueDepth, uint16_t writingWorkItemCount,
-                                        bool otherSdIoActive, bool monolithInProgress) {
-  return (queueDepth > 0 || writingWorkItemCount > 0) && !otherSdIoActive && !monolithInProgress;
+                                        bool otherSdIoActive) {
+  return (queueDepth > 0 || writingWorkItemCount > 0) && !otherSdIoActive;
 }
 
 CapturePressureAction evaluateCapturePressure(uint16_t freeChunks, uint16_t reserve,

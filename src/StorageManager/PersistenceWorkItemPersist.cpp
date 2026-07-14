@@ -10,6 +10,7 @@
 #include "StorageManagerInternal/PersistenceWorkQueue.h"
 #include "TrackManager.h"
 #include "Utils/DebugSessionCapture.h"
+#include "Utils/MemoryMonitor.h"
 #include <Arduino.h>
 #include <cstdio>
 
@@ -75,9 +76,20 @@ STORAGE_PERSIST_MEM void emitPersistenceWorkTelemetry(const PersistWorkItem& ite
 
 STORAGE_PERSIST_MEM void resetActivePersistenceWorkItem(PersistenceWorkItemJob& job) {
   job.itemActive = false;
+  job.bundleWriteActive = false;
+  job.skipLoopSlotStage = false;
   job.item = PersistWorkItem{};
   job.trackIndex = 0xFF;
   job.slotIndex = 0xFF;
+}
+
+STORAGE_PERSIST_MEM bool deferFlushForTransport() {
+  if (!storageSession.currentWorkspaceSave.pending) {
+    return false;
+  }
+  const uint32_t nowMs = millis();
+  return isTransportActiveForPersistence() &&
+         nowMs < storageSession.currentWorkspaceSave.deferDispatchUntilMs;
 }
 
 STORAGE_PERSIST_MEM bool resolveTrackSlotForLoopId(LoopId loopId, uint8_t& trackIndexOut,
@@ -132,45 +144,72 @@ STORAGE_PERSIST_MEM bool completePersistenceWorkItem(PersistenceWorkItemJob& job
   return ok;
 }
 
-STORAGE_PERSIST_MEM bool stepScheduledWorkItem(PersistenceWorkItemJob& job) {
-  switch (job.item.type) {
-    case PersistWorkType::LoopPersist:
-      return false;
-    case PersistWorkType::LoopUndoHistory:
+STORAGE_PERSIST_MEM bool isRuntimeBundleWorkType(PersistWorkType type) {
+  switch (type) {
     case PersistWorkType::GlobalMeta:
     case PersistWorkType::TrackMeta:
     case PersistWorkType::SlotMeta:
     case PersistWorkType::WorkspaceFooter:
-    case PersistWorkType::FinalizeWorkspace:
-      return completePersistenceWorkItem(job, "sched", true);
+    case PersistWorkType::LoopUndoHistory:
+      return true;
+    default:
+      return false;
   }
-  return completePersistenceWorkItem(job, "sched", false);
 }
 
-STORAGE_PERSIST_MEM bool beginPersistenceWorkItem(PersistenceWorkItemJob& job) {
+STORAGE_PERSIST_MEM bool beginPersistenceWorkItem(PersistenceWorkItemJob& job,
+                                const LooperState& state) {
   if (!PersistenceWorkQueue::beginWriteQueuedItem(job.item)) {
     return true;
   }
   job.itemActive = true;
+  job.stateSnapshot = state;
   emitPersistenceWorkTelemetry(job.item, "start", "ok");
 
-  if (job.item.type != PersistWorkType::LoopPersist) {
+  if (job.item.type == PersistWorkType::LoopPersist) {
+    if (!resolveTrackSlotForLoopId(job.item.key.loopId, job.trackIndex, job.slotIndex)) {
+      Serial.print("[StorageManager] ERROR: Work item could not resolve loopId ");
+      Serial.println(static_cast<unsigned>(job.item.key.loopId));
+      return completePersistenceWorkItem(job, "resolve", false);
+    }
+    if (!ensureWorkItemLoopDirectories()) {
+      return completePersistenceWorkItem(job, "prepare", false);
+    }
+    storageSession.currentWorkspaceSave.workspaceEpoch = currentWorkspaceEpoch;
+    resetDeferredLoopWriteState();
     return true;
   }
 
-  if (!resolveTrackSlotForLoopId(job.item.key.loopId, job.trackIndex, job.slotIndex)) {
-    Serial.print("[StorageManager] ERROR: Work item could not resolve loopId ");
-    Serial.println(static_cast<unsigned>(job.item.key.loopId));
-    return completePersistenceWorkItem(job, "resolve", false);
+  if (isRuntimeBundleWorkType(job.item.type)) {
+    if (deferFlushForTransport()) {
+      PersistenceWorkQueue::requeueWritingItem(job.item);
+      resetActivePersistenceWorkItem(job);
+      return true;
+    }
+    job.bundleWriteActive = true;
+    job.skipLoopSlotStage = true;
+    if (!beginDeferredRuntimeBundleWrite(state)) {
+      return completePersistenceWorkItem(job, "bundle_begin", false);
+    }
+    return true;
   }
 
-  if (!ensureWorkItemLoopDirectories()) {
-    return completePersistenceWorkItem(job, "prepare", false);
+  if (job.item.type == PersistWorkType::FinalizeWorkspace) {
+    if (deferFlushForTransport()) {
+      PersistenceWorkQueue::requeueWritingItem(job.item);
+      resetActivePersistenceWorkItem(job);
+      return true;
+    }
+    job.flushStartedAtUs = micros();
+    job.flushHeapBefore = MemoryMonitor::getInternalHeapFreeBytes();
+    storageSession.currentWorkspaceSave.startedAtUs = job.flushStartedAtUs;
+    storageSession.currentWorkspaceSave.heapBefore = job.flushHeapBefore;
+    ++currentWorkspaceEpoch;
+    storageSession.currentWorkspaceSave.workspaceEpoch = currentWorkspaceEpoch;
+    return true;
   }
 
-  storageSession.currentWorkspaceSave.workspaceEpoch = currentWorkspaceEpoch;
-  resetDeferredLoopWriteState();
-  return true;
+  return completePersistenceWorkItem(job, "sched", false);
 }
 
 STORAGE_PERSIST_MEM bool stepLoopPersistWorkItem(PersistenceWorkItemJob& job) {
@@ -210,6 +249,78 @@ STORAGE_PERSIST_MEM bool stepLoopPersistWorkItem(PersistenceWorkItemJob& job) {
   return completePersistenceWorkItem(job, "done", true);
 }
 
+STORAGE_PERSIST_MEM bool stepRuntimeBundleWorkItem(PersistenceWorkItemJob& job) {
+  if (!job.itemActive || !isRuntimeBundleWorkType(job.item.type)) {
+    return true;
+  }
+
+  bool bundleDone = false;
+  if (!stepDeferredRuntimeBundleSlice(bundleDone)) {
+    return completePersistenceWorkItem(job, "bundle_slice", false);
+  }
+  if (!bundleDone) {
+    emitPersistenceWorkTelemetry(job.item, "bundle_slice", "ok");
+    return true;
+  }
+
+  job.bundleWriteActive = false;
+  job.skipLoopSlotStage = false;
+  return completePersistenceWorkItem(job, "bundle_done", true);
+}
+
+STORAGE_PERSIST_MEM bool stepFinalizeWorkspaceWorkItem(PersistenceWorkItemJob& job) {
+  if (!job.itemActive || job.item.type != PersistWorkType::FinalizeWorkspace) {
+    return true;
+  }
+
+  bool finalizeDone = false;
+  if (!stepDeferredWorkspaceFinalizeSlice(finalizeDone)) {
+    storageSession.currentWorkspaceSave.pending = false;
+    storageSession.currentWorkspaceSave.lastCompletedOk = false;
+    storageSession.currentWorkspaceSave.failedAtMs = millis();
+    storageSession.currentWorkspaceSave.completedAtMs = 0;
+    const uint32_t saveDurationUs = micros() - job.flushStartedAtUs;
+    SC_PERSIST("result", saveDurationUs, job.flushHeapBefore, job.flushHeapBefore, "failed");
+    return completePersistenceWorkItem(job, "finalize", false);
+  }
+  if (!finalizeDone) {
+    emitPersistenceWorkTelemetry(job.item, "finalize_slice", "ok");
+    return true;
+  }
+
+  storageSession.currentWorkspaceSave.pending = false;
+  storageSession.currentWorkspaceSave.urgentRequested = false;
+  storageSession.currentWorkspaceSave.lastCompletedOk = true;
+  storageSession.currentWorkspaceSave.completedAtMs = millis();
+  storageSession.currentWorkspaceSave.failedAtMs = 0;
+  const uint32_t saveDurationUs = micros() - job.flushStartedAtUs;
+  SC_PERSIST("result", saveDurationUs, job.flushHeapBefore, job.flushHeapBefore, "ok");
+  if (clearEditDirtyAfterDeferredSave) {
+    for (uint8_t t = 0; t < trackManager.getTrackCount(); ++t) {
+      Track& track = trackManager.getTrack(t);
+      if (!track.loopsAllocated()) {
+        continue;
+      }
+      for (uint8_t s = 0; s < Config::MAX_LOOPS_PER_TRACK; ++s) {
+        track.getLoop(s).clearEditStateDirty();
+      }
+    }
+    clearEditDirtyAfterDeferredSave = false;
+  }
+  return completePersistenceWorkItem(job, "done", true);
+}
+
+STORAGE_PERSIST_MEM void maybeAdmitFinalizeWorkspaceAfterDrain() {
+  if (PersistenceWorkQueue::queueDepth() > 0 || PersistenceWorkQueue::writingWorkItemCount() > 0 ||
+      storageSession.persistenceWorkItem.itemActive) {
+    return;
+  }
+  if (!storageSession.currentWorkspaceSave.pending) {
+    return;
+  }
+  PersistenceWorkQueue::admitWork(PersistWorkType::FinalizeWorkspace, persistKeySingleton());
+}
+
 }  // namespace
 
 STORAGE_PERSIST_MEM void resetPersistenceWorkItemJobState() {
@@ -218,13 +329,18 @@ STORAGE_PERSIST_MEM void resetPersistenceWorkItemJobState() {
     PersistenceWorkQueue::requeueWritingItem(job.item);
   }
   job.sdIoActive = false;
+  job.bundleWriteActive = false;
+  job.skipLoopSlotStage = false;
   resetActivePersistenceWorkItem(job);
 }
 
-STORAGE_PERSIST_MEM bool stepPersistenceWorkItem() {
+STORAGE_PERSIST_MEM bool stepPersistenceWorkItem(const LooperState& state) {
 #if BYPASS_STOP_UNDO_SAVE
+  (void)state;
   return true;
 #else
+  maybeAdmitFinalizeWorkspaceAfterDrain();
+
   if (PersistenceWorkQueue::queueDepth() == 0 && PersistenceWorkQueue::writingWorkItemCount() == 0 &&
       !storageSession.persistenceWorkItem.itemActive) {
     return true;
@@ -232,18 +348,27 @@ STORAGE_PERSIST_MEM bool stepPersistenceWorkItem() {
 
   PersistenceWorkItemJob& job = storageSession.persistenceWorkItem;
   if (!job.itemActive) {
-    if (!beginPersistenceWorkItem(job)) {
+    if (!beginPersistenceWorkItem(job, state)) {
       return false;
     }
     if (!job.itemActive) {
       return true;
     }
-    if (job.item.type != PersistWorkType::LoopPersist) {
-      return stepScheduledWorkItem(job);
-    }
   }
 
-  return stepLoopPersistWorkItem(job);
+  switch (job.item.type) {
+    case PersistWorkType::LoopPersist:
+      return stepLoopPersistWorkItem(job);
+    case PersistWorkType::GlobalMeta:
+    case PersistWorkType::TrackMeta:
+    case PersistWorkType::SlotMeta:
+    case PersistWorkType::WorkspaceFooter:
+    case PersistWorkType::LoopUndoHistory:
+      return stepRuntimeBundleWorkItem(job);
+    case PersistWorkType::FinalizeWorkspace:
+      return stepFinalizeWorkspaceWorkItem(job);
+  }
+  return completePersistenceWorkItem(job, "sched", false);
 #endif
 }
 
