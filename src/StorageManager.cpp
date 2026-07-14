@@ -77,6 +77,7 @@ struct PendingLoopSlotRestoreQueue {
 };
 
 PendingLoopSlotRestoreQueue pendingLoopSlotRestores_{};
+bool workspaceFooterPersistDeferred = false;
 char restoredSetBundlePath_[80] = {};
 std::array<uint32_t, Config::NUM_TRACKS> undoStackFileOffsets_{};
 uint8_t undoHydrateTrackIndex_ = 0;
@@ -1379,15 +1380,17 @@ void StorageManager::admitLoopPersist(LoopId loopId) {
 #endif
 }
 
-void StorageManager::admitLoopUndoHistory(LoopId loopId) {
+void StorageManager::admitLoopUndoHistory(uint8_t trackIndex, uint8_t slotIndex) {
 #if BYPASS_STOP_UNDO_SAVE
-    (void)loopId;
+    (void)trackIndex;
+    (void)slotIndex;
     return;
 #else
-    if (loopId == kInvalidLoopId) {
+    if (trackIndex >= Config::NUM_TRACKS || slotIndex >= Config::MAX_LOOPS_PER_TRACK) {
         return;
     }
-    PersistenceWorkQueue::admitWork(PersistWorkType::LoopUndoHistory, persistKeyForLoop(loopId));
+    PersistenceWorkQueue::admitWork(PersistWorkType::LoopUndoHistory,
+                                    persistKeyForSlot(trackIndex, slotIndex));
 #endif
 }
 
@@ -1421,7 +1424,16 @@ void StorageManager::admitWorkspaceFooter() {
 #if BYPASS_STOP_UNDO_SAVE
     return;
 #else
+    workspaceFooterPersistDeferred = false;
     PersistenceWorkQueue::admitWork(PersistWorkType::WorkspaceFooter, persistKeySingleton());
+#endif
+}
+
+void StorageManager::requestWorkspaceFooterPersistWhenSafe() {
+#if BYPASS_STOP_UNDO_SAVE
+    return;
+#else
+    workspaceFooterPersistDeferred = true;
 #endif
 }
 
@@ -1429,6 +1441,7 @@ void StorageManager::admitGlobalMeta() {
 #if BYPASS_STOP_UNDO_SAVE
     return;
 #else
+    workspaceFooterPersistDeferred = false;
     PersistenceWorkQueue::admitWork(PersistWorkType::GlobalMeta, persistKeySingleton());
 #endif
 }
@@ -1441,7 +1454,8 @@ void StorageManager::markCurrentSetLoopSlotDirty(uint8_t trackIndex, uint8_t slo
 #endif
     markCurrentSetLoopSlotDirtyInternal(trackIndex, slotIndex);
     admitSlotMeta(trackIndex, slotIndex);
-    admitLoopPersist(loopIdForPersistSlot(trackIndex, slotIndex));
+    PersistenceWorkQueue::admitWork(PersistWorkType::LoopPersist,
+                                  persistKeyForSlot(trackIndex, slotIndex));
 }
 
 void StorageManager::markCurrentSetTrackDirty(uint8_t trackIndex) {
@@ -1452,7 +1466,8 @@ void StorageManager::markCurrentSetTrackDirty(uint8_t trackIndex) {
     markCurrentSetTrackDirtyInternal(trackIndex);
     admitTrackMeta(trackIndex);
     for (uint8_t slot = 0; slot < Config::MAX_LOOPS_PER_TRACK; ++slot) {
-        admitLoopPersist(loopIdForPersistSlot(trackIndex, slot));
+        PersistenceWorkQueue::admitWork(PersistWorkType::LoopPersist,
+                                        persistKeyForSlot(trackIndex, slot));
         admitSlotMeta(trackIndex, slot);
     }
 }
@@ -1465,7 +1480,8 @@ void StorageManager::markAllCurrentSetLoopSlotsDirty() {
     for (uint8_t track = 0; track < Config::NUM_TRACKS; ++track) {
         admitTrackMeta(track);
         for (uint8_t slot = 0; slot < Config::MAX_LOOPS_PER_TRACK; ++slot) {
-            admitLoopPersist(loopIdForPersistSlot(track, slot));
+            PersistenceWorkQueue::admitWork(PersistWorkType::LoopPersist,
+                                            persistKeyForSlot(track, slot));
             admitSlotMeta(track, slot);
         }
     }
@@ -1571,6 +1587,26 @@ void StorageManager::requestDeferredSaveState(const LooperState& /*state*/, uint
                alreadyPending ? "already_pending" : "queued");
 }
 
+namespace StorageManagerInternal {
+
+STORAGE_PERSIST_MEM void maybeAdmitDeferredWorkspaceFooter() {
+#if BYPASS_STOP_UNDO_SAVE
+    return;
+#else
+    if (!workspaceFooterPersistDeferred) {
+        return;
+    }
+    if (isCaptureActiveForPersistence() || isTransportActiveForPersistence() ||
+        anyTrackArmedOrPendingRecordForPersistence()) {
+        return;
+    }
+    workspaceFooterPersistDeferred = false;
+    StorageManager::admitWorkspaceFooter();
+#endif
+}
+
+}  // namespace StorageManagerInternal
+
 namespace {
 
 bool hasPersistenceWorkPending() {
@@ -1648,6 +1684,8 @@ void StorageManager::processDeferredSaveState(const LooperState& state) {
     stepWallClockFromSdCatalogSync(2);
 
     while (!sliceBudgetExhausted()) {
+        maybeAdmitDeferredWorkspaceFooter();
+
         const bool revisionBlockedByDeferredSave =
             storageSession.revisionCommit.pending && hasPersistenceWorkPending();
         const bool revisionBlockedByLoad =
