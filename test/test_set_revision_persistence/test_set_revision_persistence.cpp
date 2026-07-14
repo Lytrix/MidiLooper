@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "../../src/PersistenceBudget.cpp"
+#include "../../src/PersistenceFailurePolicy.cpp"
 #include "../../src/CurrentWorkspaceStorage.cpp"
 #include "../../src/PersistenceSchema.cpp"
 #include "../../src/RevisionPackedBlob.cpp"
@@ -19,6 +20,7 @@
 #include "BootRecoveryPolicy.h"
 #include "CurrentWorkspaceStorage.h"
 #include "PersistenceBudget.h"
+#include "PersistenceFailurePolicy.h"
 #include "RevisionCommitPolicy.h"
 #include "RevisionLoadPolicy.h"
 #include "StorageActivitySnapshot.h"
@@ -476,6 +478,21 @@ void test_persistence_slice_budget_idle_capped_per_loop() {
       PersistenceBudget::resolvePersistenceSliceBudgetUs(false, false));
   TEST_ASSERT_TRUE(PersistenceBudget::persistenceSliceBudgetExhausted(
       Config::maxPersistenceMicrosPerLoop, Config::maxPersistenceMicrosPerLoop));
+}
+
+void test_workspace_save_defers_mid_pass_when_work_queue_scheduled() {
+  TEST_ASSERT_FALSE(PersistenceFailurePolicy::shouldDeferMidPassForWorkspaceSave(
+      false, false, 1, 0, false));
+  TEST_ASSERT_TRUE(PersistenceFailurePolicy::shouldDeferMidPassForWorkspaceSave(
+      true, false, 1, 0, false));
+  TEST_ASSERT_TRUE(PersistenceFailurePolicy::shouldDeferMidPassForWorkspaceSave(
+      true, true, 0, 0, false));
+  TEST_ASSERT_TRUE(PersistenceFailurePolicy::shouldDeferMidPassForWorkspaceSave(
+      true, false, 0, 1, false));
+  TEST_ASSERT_TRUE(PersistenceFailurePolicy::shouldDeferMidPassForWorkspaceSave(
+      true, false, 0, 0, true));
+  TEST_ASSERT_FALSE(PersistenceFailurePolicy::shouldDeferMidPassForWorkspaceSave(
+      true, false, 0, 0, false));
 }
 
 void test_revision_commit_write_path_does_not_materialize() {
@@ -937,6 +954,7 @@ int main(int argc, char** argv) {
   RUN_TEST(test_persistence_slice_budget_exhausted_during_playing_commit);
   RUN_TEST(test_persistence_slice_budget_never_exhausted_when_idle);
   RUN_TEST(test_persistence_slice_budget_idle_capped_per_loop);
+  RUN_TEST(test_workspace_save_defers_mid_pass_when_work_queue_scheduled);
   RUN_TEST(test_revision_commit_write_path_does_not_materialize);
   RUN_TEST(test_revision_commit_loop_slot_streams_via_storage_loop_io);
   RUN_TEST(test_dirty_load_request_shows_prompt_when_workspace_dirty);

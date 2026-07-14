@@ -296,6 +296,32 @@ void resetForTests() {
   state->writingEntryIndex = kInvalidEntryIndex;
 }
 
+void visitScheduledWorkItems(PersistWorkVisitor visitor, void* context) {
+  if (visitor == nullptr) {
+    return;
+  }
+  QueueState* state = queueState();
+  if (state == nullptr) {
+    return;
+  }
+
+  if (state->writingEntryIndex != kInvalidEntryIndex &&
+      state->writingEntryIndex < kMaxWorkEntries &&
+      state->entries[state->writingEntryIndex].state == PersistWorkState::Writing) {
+    visitor(state->entries[state->writingEntryIndex].item, context);
+  }
+
+  uint16_t cursor = state->queueHead;
+  while (cursor != state->queueTail) {
+    const uint16_t entryIndex = state->queueOrder[cursor];
+    if (entryIndex < kMaxWorkEntries &&
+        state->entries[entryIndex].state == PersistWorkState::Queued) {
+      visitor(state->entries[entryIndex].item, context);
+    }
+    cursor = static_cast<uint16_t>((cursor + 1) % kMaxWorkEntries);
+  }
+}
+
 #if defined(PIO_UNIT_TEST_NATIVE)
 size_t queuedWorkItems(PersistWorkItem* outItems, size_t maxCount) {
   QueueState* state = queueState();

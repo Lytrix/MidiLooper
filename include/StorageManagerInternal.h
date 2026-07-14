@@ -17,6 +17,7 @@
 #include "SetRevisionCatalog.h"
 #include "StorageActivitySnapshot.h"
 #include "StorageLoopIo.h"
+#include "PersistenceSyncDrainBudget.h"
 #include "StorageSession.h"
 #include "TrackState.h"
 #include "MidiEvent.h"
@@ -121,6 +122,9 @@ void resetDeferredSaveJobState();
 void resetMidPassChunkPersistState();
 void resetPersistenceWorkItemJobState();
 bool stepPersistenceWorkItem(const LooperState& state);
+void maybeAdmitFinalizeWorkspaceAfterDrain();
+SyncDrainProgressSnapshot captureSyncDrainProgressSnapshot();
+SyncDrainBudget buildSyncDrainBudgetForSession();
 bool beginDeferredRuntimeBundleWrite(const LooperState& state);
 bool stepDeferredRuntimeBundleSlice(bool& bundleDoneOut);
 bool stepDeferredWorkspaceFinalizeSlice(bool& finalizeDoneOut);

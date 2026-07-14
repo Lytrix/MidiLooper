@@ -758,6 +758,9 @@ bool TrackManager::slotHasLoopContent(uint8_t trackIndex, uint8_t slotIndex, boo
     return false;
   }
   if (!hasDataInRam && restoreFromSd) {
+    if (!isSlotEnabled(trackIndex, slotIndex)) {
+      return false;
+    }
     StorageManager::requestLoopSlotRestoreFromSd(trackIndex, slotIndex);
     return track.hasDataInSlot(slotIndex);
   }
