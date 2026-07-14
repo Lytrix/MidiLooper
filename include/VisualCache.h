@@ -9,7 +9,7 @@
 #include "Utils/NoteUtils.h"
 #include "Utils/ExternalMemoryFirstAllocator.h"
 
-using VisualBarVec = std::vector<uint8_t, ExternalMemoryFirstAllocator<uint8_t>>;
+using VisualBarVec = std::vector<uint8_t>;
 using DisplayNoteVec =
     std::vector<NoteUtils::DisplayNote, ExternalMemoryFirstAllocator<NoteUtils::DisplayNote>>;
 
