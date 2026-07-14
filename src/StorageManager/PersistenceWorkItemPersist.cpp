@@ -95,32 +95,6 @@ STORAGE_PERSIST_MEM bool deferFlushForTransport() {
          nowMs < storageSession.currentWorkspaceSave.deferDispatchUntilMs;
 }
 
-STORAGE_PERSIST_MEM bool resolveTrackSlotForLoopId(LoopId loopId, uint8_t& trackIndexOut,
-                                 uint8_t& slotIndexOut) {
-  if (loopId == kInvalidLoopId) {
-    return false;
-  }
-
-  const uint8_t trackCount = trackManager.getTrackCount();
-  for (uint8_t trackIndex = 0; trackIndex < trackCount; ++trackIndex) {
-    Track& track = trackManager.getTrack(trackIndex);
-    for (uint8_t slotIndex = 0; slotIndex < Config::MAX_LOOPS_PER_TRACK; ++slotIndex) {
-      if (track.loopIdForSlot(slotIndex) == loopId) {
-        trackIndexOut = trackIndex;
-        slotIndexOut = slotIndex;
-        return true;
-      }
-    }
-  }
-
-  if (static_cast<uint8_t>(loopId) < Config::MAX_LOOPS_PER_TRACK && trackCount > 0) {
-    trackIndexOut = 0;
-    slotIndexOut = static_cast<uint8_t>(loopId);
-    return true;
-  }
-  return false;
-}
-
 STORAGE_PERSIST_MEM bool ensureWorkItemLoopDirectories() {
   return CurrentSetStorage::ensureDirectory(PersistenceLayout::kRoot) &&
          CurrentSetStorage::ensureDirectory(CurrentSetStorage::kCurrentSetDir) &&
@@ -170,9 +144,9 @@ STORAGE_PERSIST_MEM bool beginPersistenceWorkItem(PersistenceWorkItemJob& job,
   emitPersistenceWorkTelemetry(job.item, "start", "ok");
 
   if (job.item.type == PersistWorkType::LoopPersist) {
-    if (!resolveTrackSlotForLoopId(job.item.key.loopId, job.trackIndex, job.slotIndex)) {
-      Serial.print("[StorageManager] ERROR: Work item could not resolve loopId ");
-      Serial.println(static_cast<unsigned>(job.item.key.loopId));
+    if (!resolvePersistKeyToTrackSlot(job.item.key, job.trackIndex, job.slotIndex)) {
+      Serial.print("[StorageManager] ERROR: Work item could not resolve loop persist key kind ");
+      Serial.println(static_cast<unsigned>(job.item.key.kind));
       return completePersistenceWorkItem(job, "resolve", false);
     }
     if (!ensureWorkItemLoopDirectories()) {
@@ -314,6 +288,48 @@ STORAGE_PERSIST_MEM bool stepFinalizeWorkspaceWorkItem(PersistenceWorkItemJob& j
 }
 
 }  // namespace
+
+STORAGE_PERSIST_MEM bool resolveTrackSlotForLoopId(LoopId loopId, uint8_t& trackIndexOut,
+                                                   uint8_t& slotIndexOut) {
+  if (loopId == kInvalidLoopId) {
+    return false;
+  }
+
+  const uint8_t trackCount = trackManager.getTrackCount();
+  for (uint8_t trackIndex = 0; trackIndex < trackCount; ++trackIndex) {
+    Track& track = trackManager.getTrack(trackIndex);
+    for (uint8_t slotIndex = 0; slotIndex < Config::MAX_LOOPS_PER_TRACK; ++slotIndex) {
+      if (track.loopIdForSlot(slotIndex) == loopId) {
+        trackIndexOut = trackIndex;
+        slotIndexOut = slotIndex;
+        return true;
+      }
+    }
+  }
+
+  if (static_cast<uint8_t>(loopId) < Config::MAX_LOOPS_PER_TRACK && trackCount > 0) {
+    trackIndexOut = 0;
+    slotIndexOut = static_cast<uint8_t>(loopId);
+    return true;
+  }
+  return false;
+}
+
+STORAGE_PERSIST_MEM bool resolvePersistKeyToTrackSlot(const PersistKey& key, uint8_t& trackIndexOut,
+                                                      uint8_t& slotIndexOut) {
+  if (key.kind == PersistKeyKind::Slot) {
+    if (key.trackIndex >= Config::NUM_TRACKS || key.slotIndex >= Config::MAX_LOOPS_PER_TRACK) {
+      return false;
+    }
+    trackIndexOut = key.trackIndex;
+    slotIndexOut = key.slotIndex;
+    return true;
+  }
+  if (key.kind == PersistKeyKind::LoopId) {
+    return resolveTrackSlotForLoopId(key.loopId, trackIndexOut, slotIndexOut);
+  }
+  return false;
+}
 
 STORAGE_PERSIST_MEM void maybeAdmitFinalizeWorkspaceAfterDrain() {
   if (PersistenceWorkQueue::queueDepth() > 0 || PersistenceWorkQueue::writingWorkItemCount() > 0 ||

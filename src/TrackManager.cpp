@@ -865,8 +865,10 @@ void TrackManager::setSelectedSlotIndex(uint8_t trackIndex, uint8_t slotIndex,
     editManager.onSelectedSlotChanged(tracks[trackIndex], previousSlot);
     displayManager.invalidateForSlotChange(trackIndex, previousSlot, slotIndex);
     forceLedUpdate(clockManager.getCurrentTick());
-    StorageManager::admitWorkspaceFooter();
-    StorageManager::requestDeferredSaveState(looperState.getLooperState());
+    if (!bootLoadInProgress_) {
+      StorageManager::requestWorkspaceFooterPersistWhenSafe();
+      StorageManager::requestDeferredSaveState(looperState.getLooperState());
+    }
   }
 }
 
@@ -924,6 +926,10 @@ void TrackManager::setSelectedTrack(uint8_t index) {
       const uint8_t displaySlot = getSelectedSlotIndex(index);
       displayManager.invalidateForSlotChange(index, displaySlot, displaySlot);
     }
+  }
+  if (!bootLoadInProgress_ && trackChanged) {
+    StorageManager::requestWorkspaceFooterPersistWhenSafe();
+    StorageManager::requestDeferredSaveState(looperState.getLooperState());
   }
 }
 
