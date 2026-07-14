@@ -118,6 +118,7 @@ Persistence starvation, transport-gate workarounds, and stop-path flush/defer pa
 
 ### Phase 4 — Close docs + scripts + exit criteria
 
+- [ ] **Follow-on:** [`memory_pressure_reclaim_refinement.md`](../../../docs/plans/memory_pressure_reclaim_refinement.md) — `MemoryPressureLevel` + ownership-driven reclaim (branch `feature/memory-pressure-reclaim`)
 - [ ] Ship persistence row parser + baseline wiring (if not merged)
 - [ ] Update [`long_record_capture_heap_investigation_refinement.md`](../../../docs/plans/long_record_capture_heap_investigation_refinement.md) → point to M6 plan
 - [ ] Verify M6 exit criteria: audit, hot-path `rg`, **architecture counter snapshot**, manual gates, native tests
