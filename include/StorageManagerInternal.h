@@ -18,6 +18,7 @@
 #include "StorageActivitySnapshot.h"
 #include "StorageLoopIo.h"
 #include "PersistenceSyncDrainBudget.h"
+#include "StorageManagerInternal/PersistenceWorkQueue.h"
 #include "StorageSession.h"
 #include "TrackState.h"
 #include "MidiEvent.h"
@@ -98,6 +99,8 @@ bool writeWorkspaceMetaAfterDeferredSave();
 
 bool isCaptureActiveForPersistence();
 bool isTransportActiveForPersistence();
+bool anyTrackArmedOrPendingRecordForPersistence();
+void maybeAdmitDeferredWorkspaceFooter();
 uint32_t resolvePersistenceSliceBudgetUs(const LooperState& state);
 
 void resetDeferredLoopWriteState();
@@ -123,6 +126,8 @@ void resetMidPassChunkPersistState();
 void resetPersistenceWorkItemJobState();
 bool stepPersistenceWorkItem(const LooperState& state);
 void maybeAdmitFinalizeWorkspaceAfterDrain();
+bool resolvePersistKeyToTrackSlot(const PersistKey& key, uint8_t& trackIndexOut,
+                                  uint8_t& slotIndexOut);
 SyncDrainProgressSnapshot captureSyncDrainProgressSnapshot();
 SyncDrainBudget buildSyncDrainBudgetForSession();
 bool beginDeferredRuntimeBundleWrite(const LooperState& state);

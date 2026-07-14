@@ -49,7 +49,7 @@ STORAGE_PERSIST_MEM void accumulateWorkItemBudget(const PersistWorkItem& item, v
   if (item.type == PersistWorkType::LoopPersist) {
     uint8_t trackIndex = 0;
     uint8_t slotIndex = 0;
-    if (resolveTrackSlotForLoopId(item.key.loopId, trackIndex, slotIndex)) {
+    if (resolvePersistKeyToTrackSlot(item.key, trackIndex, slotIndex)) {
       loopPasses = &trackManager.getTrack(trackIndex).getLoop(slotIndex).passes;
       accum->sliceSteps += PersistenceSyncDrainBudget::estimateLoopPersistSliceSteps(*loopPasses);
       accum->sdBytes += PersistenceSyncDrainBudget::estimateLoopPersistSdBytes(*loopPasses);

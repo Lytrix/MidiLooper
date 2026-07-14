@@ -30,14 +30,16 @@ class StorageManager {
 public:
     /// Admit stale loop payload persistence (record, overdub, undo, edit, …).
     static void admitLoopPersist(LoopId loopId);
-    /// Admit stale loop undo history for a musical loop id (DEC-024 interim wire).
-    static void admitLoopUndoHistory(LoopId loopId);
+    /// Admit stale loop undo history for a track slot (DEC-024 interim wire).
+    static void admitLoopUndoHistory(uint8_t trackIndex, uint8_t slotIndex);
     /// Admit stale slot assignment / enable row (interim UI assignment).
     static void admitSlotMeta(uint8_t trackIndex, uint8_t slotIndex);
     /// Admit stale track header / mute state.
     static void admitTrackMeta(uint8_t trackIndex);
     /// Admit stale workspace footer (selection / active indices).
     static void admitWorkspaceFooter();
+    /// Queue workspace footer persist; admitted when capture, transport, and ARMED are idle.
+    static void requestWorkspaceFooterPersistWhenSafe();
     /// Admit stale global looper meta (transport, BPM, master length).
     static void admitGlobalMeta();
 
