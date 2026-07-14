@@ -72,7 +72,7 @@ This invariant holds in Phase 2 (per-loop stacks on the 1:1 pool) and must hold 
 
 ## Task 0 — Undo ownership audit (blocking)
 
-**Required before Task 1 (data model).** Codebase audit completed 2026-07-14 against `continuous-saving-stable` @ `ca40a1e`.
+**Required before Task 1 (data model).** Codebase audit completed 2026-07-14 against `dev` @ `644de4f`.
 
 ### Objective
 

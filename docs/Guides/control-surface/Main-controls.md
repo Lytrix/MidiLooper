@@ -1,5 +1,7 @@
 # Main controls (control surface)
 
+**Applies to:** v3 (`dev`) — DROID Channel 16 notes 35–48 (main + extended transport).
+
 **Main controls** strip: record/play, track switch / mute strip, edit mode, NOTELEN, global transport, extended transport — typical Channel 16 notes in the 35–48 range (exact map: [`MIDI_CONFIG_GUIDE.md`](../MIDI_CONFIG_GUIDE.md) § Main controls).
 
 ## REC/PLAY (note 36, selected track)

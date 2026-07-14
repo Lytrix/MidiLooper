@@ -1,5 +1,7 @@
 # Loops (control surface)
 
+**Applies to:** v3 (`dev`) — DROID 8×8 grid, loop row Channel 16 notes 50–57.
+
 **Loops row**: eight loop slots for the selected track (default mapping: Channel 16 notes 50-57).
 
 Primary implementation paths:

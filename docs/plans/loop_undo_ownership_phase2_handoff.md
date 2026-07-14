@@ -1,7 +1,8 @@
 # Handoff — Loop undo ownership Phase 2 (DEC-024)
 
 **Date:** 2026-07-14  
-**Branch:** `continuous-saving-stable` @ `ca40a1e`  
+**Branch:** `dev` @ `644de4f`  
+**Sequencing:** Start **after** `feature/persistence-work-queue` (B1–B5) merges to `dev`  
 **Decision:** [DEC-024](../DECISION_LOG.md#dec-024--loop-owned-undo-ownership-direction)  
 **Phase 1:** Shipped `b1d3259` — `TrackUndo::*ForLoop` filter layer on track-wide stack  
 **Phase 2:** Planning complete; **implementation not started**

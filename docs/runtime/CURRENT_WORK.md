@@ -2,11 +2,29 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-07-13 (record-stop MIDI flood fix — restore 901c4d9 playback)
+Last updated: 2026-07-14 (branch cleanup — `dev` trunk; persistence queue next)
 
 ---
 
 ## Now implementing
+
+### Enhancement: CurrentSet persistence work-item queue — **next**
+
+**Branch:** `feature/persistence-work-queue` from `dev` @ `644de4f`
+
+**Plan:** [`docs/plans/current_set_persist_work_item_queue_enhancement.md`](../plans/current_set_persist_work_item_queue_enhancement.md) — B1–B5 (admission / scheduling / serialization layering; B6 undo wire deferred to loop-owned-undo Phase 2)
+
+| Gate | Status |
+|------|--------|
+| Architecture gate | **Required** in chat before first firmware edit |
+| Native | Not started |
+| HITL | vs [`session_20260714_031454.log`](../../captures/session_20260714_031454.log) — fewer `PERS,slice` lines |
+
+**Then:** `feature/loop-owned-undo-phase2` — [`loop_undo_ownership_phase2_handoff.md`](../plans/loop_undo_ownership_phase2_handoff.md)
+
+---
+
+## Recently landed on `dev` (pre-queue)
 
 ### Bugfix: record-stop MIDI flood — **restore baseline playback, pending HITL**
 
@@ -85,7 +103,7 @@ Last updated: 2026-07-13 (record-stop MIDI flood fix — restore 901c4d9 playbac
 
 ### OpenSpec: [`continuous-runtime-persistence`](../../openspec/changes/continuous-runtime-persistence/) (DEC-020) — **paused** until wrap fix lands
 
-**Branch:** `continuous-saving` @ `736fa33` (recovery stack merged 2026-07-09)
+**Branch:** `dev` @ `644de4f` (recovery stack merged 2026-07-09)
 
 | Phase | Status |
 |-------|--------|

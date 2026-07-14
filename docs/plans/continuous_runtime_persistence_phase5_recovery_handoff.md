@@ -2,7 +2,7 @@
 
 **Kind:** handoff  
 **Date:** 2026-07-09  
-**Branch:** `continuous-saving` @ `b180ef9`  
+**Branch:** `dev` @ `644de4f`  
 **Authority:** [DEC-020](../DECISION_LOG.md#dec-020-continuous-runtime-persistence-architecture), OpenSpec [`continuous-runtime-persistence`](../../openspec/changes/continuous-runtime-persistence/)
 
 Load first: [`CURRENT_WORK.md`](../runtime/CURRENT_WORK.md), [`ARCHITECTURE-REVIEW.md` § Phase 5](../../openspec/changes/continuous-runtime-persistence/ARCHITECTURE-REVIEW.md), [`tasks.md` § Phase 5](../../openspec/changes/continuous-runtime-persistence/tasks.md), [`RUNTIME_STORAGE_AND_PERSISTENCE.md`](../Guides/RUNTIME_STORAGE_AND_PERSISTENCE.md).
@@ -206,7 +206,7 @@ Reference: [`scripts/quarantine_workspace_serial_boot.py`](../../scripts/quarant
 ```text
 Implement DEC-020 Phase 5 from docs/plans/continuous_runtime_persistence_phase5_recovery_handoff.md.
 
-Branch: continuous-saving. OpenSpec: openspec/changes/continuous-runtime-persistence/
+Branch: dev. OpenSpec: openspec/changes/continuous-runtime-persistence/
 
 Before firmware: post Phase 5 architecture gate from ARCHITECTURE-REVIEW.md (ownership + transition = YES, expected).
 

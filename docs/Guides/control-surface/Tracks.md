@@ -1,5 +1,7 @@
 # Tracks (control surface)
 
+**Applies to:** v3 (`dev`) — DROID 8×8 grid, track row.
+
 **Tracks** row: **eight** buttons on the reference grid — one **track** each (typical mapping: Channel 16 notes 60–67; confirm in [`include/MidiConfig.h`](../../../include/MidiConfig.h) and [`MidiButtonConfig.cpp`](../../../src/Utils/MidiButtonConfig.cpp)).
 
 ## Gesture model (select-primary)

@@ -1,5 +1,7 @@
 # Display (control surface)
 
+**Applies to:** v3 (`dev`) — SSD1322 piano roll + track strip on current firmware.
+
 - **256×64 OLED:** piano roll, cursors, brackets, track column.
 - **16×2 LCD:** essential status (when enabled).
 

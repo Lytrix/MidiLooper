@@ -2,7 +2,7 @@
 
 These files are **copies of plans from** `~/.cursor/plans/` so they are **versioned with the repo** and survive machine / Cursor UI changes.
 
-> **Stale handoffs:** `*_handoff.md` files may reference completed milestones (e.g. `m8-edit`, branch `refactor/timeline-data-model`). For the **live queue** use [`runtime/CURRENT_WORK.md`](../runtime/CURRENT_WORK.md) + [`PROJECT_STATE.md`](../runtime/PROJECT_STATE.md) — not [`ROADMAP.md`](../runtime/ROADMAP.md).
+> **Stale handoffs:** `*_handoff.md` files may reference completed milestones or branch names removed from **origin** during the 2026-07-14 cleanup (`load-save-sets-loops`, `continuous-saving`, etc.). **Local refs** may still exist — see [`BRANCHING.md`](../BRANCHING.md). Firmware code lives on **`dev`**. For the **live queue** use [`runtime/CURRENT_WORK.md`](../runtime/CURRENT_WORK.md) + [`PROJECT_STATE.md`](../runtime/PROJECT_STATE.md) — not [`ROADMAP.md`](../runtime/ROADMAP.md).
 
 - Filenames include a short id suffix from Cursor (e.g. `_856310b1`).
 - Frontmatter (`name`, `overview`, `todos`) is preserved.

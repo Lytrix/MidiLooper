@@ -1,5 +1,9 @@
 # MIDI configuration guide
 
+**Applies to:** v3 (`dev`) — DROID reference mapping (Channel 16 buttons, Channel 15 LEDs).
+
+**Other versions:** v1 GPIO buttons — see [main README](https://github.com/Lytrix/MidiLooper/blob/main/README.md); v2 — [midi-faders README](https://github.com/Lytrix/MidiLooper/blob/midi-faders/README.md). Branch policy: [`docs/BRANCHING.md`](../BRANCHING.md).
+
 How to remap channels, notes, and CCs for your own controller. The looper is **controller-agnostic**; DROID is the reference target, but any MIDI controller can be used if you update the config to match what your hardware sends.
 
 ---

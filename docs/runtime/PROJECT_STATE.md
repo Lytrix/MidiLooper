@@ -2,19 +2,27 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-07-11 (loop-wrap playback fix — native pass, HITL pending)
+Last updated: 2026-07-14 (branch cleanup — `dev` is integration trunk)
 
 ---
 
 ## Current branch
 
-`continuous-saving` — DEC-020 Phases 0–4 shipped; **Phase 5 paused** for loop-wrap playback bugfix (uncommitted).
+**`dev`** @ `644de4f` — v3 integration (GitHub default). Feature work: `feature/persistence-work-queue` next.
+
+### Firmware lines
+
+| Line | Branch | Role |
+|------|--------|------|
+| v1 | `main` | Frozen — 16×2, 2-button looper |
+| v2 | `midi-faders` | Frozen — iPad/DROID, no PSRAM required |
+| v3 | `dev` | Active integration |
+
+See [`docs/BRANCHING.md`](../BRANCHING.md).
 
 ## In flight (uncommitted)
 
-| Area | Status |
-|------|--------|
-| Loop-wrap playback tail→head | `Track::playMidiEvents` / `playMidiEventsForSlot` — native **544/544**; user HITL (overdub through wrap, scan MO for zero `double_on` at BAR) |
+None on `dev` at cleanup.
 
 ## Shipped on branch (recent)
 

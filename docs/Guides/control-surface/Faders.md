@@ -1,5 +1,7 @@
 # Faders (control surface)
 
+**Applies to:** v3 (`dev`) — DROID 4 motorized faders (NOTE_EDIT / LOOP_EDIT roles).
+
 Four sliders on the reference layout: note select, coarse/fine 16th, note value in **NOTE_EDIT**; loop start, loop length (CC), etc. in **LOOP_EDIT**.
 
 | Slider | NOTE_EDIT (typ.) | LOOP_EDIT (typ.) |

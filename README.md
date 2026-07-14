@@ -9,7 +9,18 @@
 This is the codebase to run a **multi-track MIDI looper** on a **Teensy 4.1** with live loop jaming manipulations, piano-roll note/cc editing, tight hardware serial timing via minijack midi outs and usb on a 192 PPQN clock with hands on control workflow. It is built for **live performance**: record and layer multiple loop slots per track, remix them by quantized slot switching into new jams **while the music never needs to stop running** to keep into the vibe of the music with undo/redo capabilities.
 
 The **base configuration** of this device is a minimal **encoder-and-4-buttons** module that must carry the full core workflow on its own (it exists physically but is currently dormant in the firmware — see [`docs/00-authority/PROJECT_INTENT.md`](docs/00-authority/PROJECT_INTENT.md) for the project goal and decision log).
-This branch drives the first **extension surface**: an **8x8 button grid with 4 motorized faders** (DROID). Underneath, everything stays **MIDI-addressable**, so another controller can be made into a dedicated controller for this midi looper by updating [`include/MidiConfig.h`](include/MidiConfig.h) to your controller setup.
+
+### Firmware versions
+
+| Version | Branch | Control surface | README |
+|---------|--------|-----------------|--------|
+| **v1** | `main` | 2 buttons + encoder, 16×2 LCD | [v1 README](https://github.com/Lytrix/MidiLooper/blob/main/README.md) |
+| **v2** | `midi-faders` | DROID / iPad MIDI, basic SD save, no PSRAM required | [v2 README](https://github.com/Lytrix/MidiLooper/blob/midi-faders/README.md) |
+| **v3** | `dev` | DROID 8×8 + 4 motorized faders, Sets/revisions, multi-slot (**this document**) | — |
+
+Branch policy and local archive refs: [`docs/BRANCHING.md`](docs/BRANCHING.md).
+
+**v3 (`dev`)** drives the DROID **extension surface**: an **8×8 button grid with 4 motorized faders**. Underneath, everything stays **MIDI-addressable**, so another controller can be made into a dedicated controller for this midi looper by updating [`include/MidiConfig.h`](include/MidiConfig.h) to your controller setup.
 
 ---
 
@@ -81,6 +92,8 @@ The **primary** action is always a **short** press; extremer edits like delete o
 ---
 
 ## Buttons
+
+This cheat sheet and all [`docs/Guides/control-surface/`](docs/Guides/control-surface/) guides apply to **v3 (`dev`)** only. v1 and v2 use different mappings — see their branch READMEs in [Firmware versions](#firmware-versions) above.
 
 The current setup is based on Droid using this config file: [`droid/midilooper_v1.ini`](droid/midilooper_v1.ini). To **remap**, edit [`include/MidiConfig.h`](include/MidiConfig.h) and [`src/Utils/MidiButtonConfig.cpp`](src/Utils/MidiButtonConfig.cpp). More info can be found in the [**MIDI config guide**](docs/Guides/MIDI_CONFIG_GUIDE.md) and the [**config summary**](docs/Guides/MIDI_CONFIG_GUIDE.md#config-summary-default-droid-mapping) for Channel 16.
 
