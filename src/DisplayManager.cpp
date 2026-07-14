@@ -18,6 +18,7 @@
 #include "MidiHandler.h"
 #include "Utils/HotPathTelemetry.h"
 #include "Utils/DebugSessionCapture.h"
+#include "Utils/Diagnostics.h"
 #include "Utils/DisplayWindowUtils.h"
 #include "Utils/SlotFocusDisplay.h"
 #include "Utils/NoteMovementWrap.h"
@@ -600,6 +601,8 @@ const DisplayNoteVec& DisplayManager::resolveDisplayNotes(const Track& track, ui
                                           loopLengthChanged || captureRevisionChanged;
 
         if (needsFullLiveRebuild) {
+            const uint32_t displayBuildStartUs = micros();
+            DIAG_COUNTER_INC(DisplayFullRebuild);
             if (track.isOverdubbing()) {
                 if (loop.visualCache.notes.empty() && !loop.isPassesMaterializedStoreFresh()) {
                     loop.mergeMaterializedPassesWithCapture(liveDisplayEventBuffer);
@@ -619,9 +622,11 @@ const DisplayNoteVec& DisplayManager::resolveDisplayNotes(const Track& track, ui
             liveDisplayCacheLoopLength = liveLoopLength;
             liveDisplayCacheEventCount = eventCount;
             liveDisplayCacheCaptureRevision = loop.captureDisplayRevision;
+            DIAG_TIMING_RECORD(DisplayBuild, micros() - displayBuildStartUs);
         } else {
             liveDisplayCacheLoopLength = liveLoopLength;
             if (track.isRecording() || track.isOverdubbing()) {
+                DIAG_COUNTER_INC(DisplayIncrementalUpdate);
                 rebuildLiveDisplayNotes();
             }
         }
@@ -727,6 +732,7 @@ const DisplayNoteVec& DisplayManager::resolveDisplayNotes(const Track& track, ui
         // Stale-while-revalidate: when PLAYING defers rebuild, show last visual cache until idle
         // maintenance refreshes it — never return stale notes after invalidate (dirty cache).
         if ((!loop.visualCacheDirty || deferVisualRebuild) && !loop.visualCache.notes.empty()) {
+            DIAG_COUNTER_INC(DisplayIncrementalUpdate);
             liveDisplayNotes.assign(loop.visualCache.notes.begin(), loop.visualCache.notes.end());
             livePlaybackDisplaySlot_ = displaySlot;
             return liveDisplayNotes;
@@ -735,6 +741,8 @@ const DisplayNoteVec& DisplayManager::resolveDisplayNotes(const Track& track, ui
         const uint32_t boundedThreshold =
             DisplayWindowUtils::kMaxDetailedWindowBars * Config::TICKS_PER_BAR;
         if (loopLength > boundedThreshold) {
+            const uint32_t displayBuildStartUs = micros();
+            DIAG_COUNTER_INC(DisplayIncrementalUpdate);
             const uint8_t windowBars = DisplayWindowUtils::kMaxDetailedWindowBars;
             const uint32_t windowLength = static_cast<uint32_t>(windowBars) * Config::TICKS_PER_BAR;
             const uint32_t playhead = resolvePlayheadInLoop(track, displaySlot, currentTick);
@@ -751,6 +759,7 @@ const DisplayNoteVec& DisplayManager::resolveDisplayNotes(const Track& track, ui
                 liveDisplayNotes.assign(provisional.begin(), provisional.end());
             }
             livePlaybackDisplaySlot_ = displaySlot;
+            DIAG_TIMING_RECORD(DisplayBuild, micros() - displayBuildStartUs);
             return liveDisplayNotes;
         }
         if (!liveDisplayNotes.empty() && displaySlot == livePlaybackDisplaySlot_) {
@@ -769,6 +778,8 @@ const DisplayNoteVec& DisplayManager::resolveDisplayNotes(const Track& track, ui
         const bool mergeStale = liveMergePlaybackRevision_ != loop.playbackRevision ||
                                 liveMergeCaptureRevision_ != loop.captureDisplayRevision;
         if (mergeStale || liveDisplayEventBuffer.empty()) {
+            const uint32_t displayBuildStartUs = micros();
+            DIAG_COUNTER_INC(DisplayFullRebuild);
             liveDisplayEventBuffer.clear();
             if (loop.captureActive()) {
                 mutLoop.mergeMaterializedPassesWithCapture(liveDisplayEventBuffer);
@@ -777,6 +788,7 @@ const DisplayNoteVec& DisplayManager::resolveDisplayNotes(const Track& track, ui
             }
             liveMergePlaybackRevision_ = loop.playbackRevision;
             liveMergeCaptureRevision_ = loop.captureDisplayRevision;
+            DIAG_TIMING_RECORD(DisplayBuild, micros() - displayBuildStartUs);
         }
         SessionMidiEventVec windowEvents;
         DisplayWindowUtils::filterMidiEventsToWindow(liveDisplayEventBuffer, windowEvents, windowStart,
@@ -803,6 +815,8 @@ const DisplayNoteVec& DisplayManager::resolveDisplayNotes(const Track& track, ui
     if (loop.visualCacheDirty || liveDisplayEventBuffer.empty() ||
         liveMergePlaybackRevision_ != loop.playbackRevision ||
         liveMergeCaptureRevision_ != loop.captureDisplayRevision) {
+        const uint32_t displayBuildStartUs = micros();
+        DIAG_COUNTER_INC(DisplayFullRebuild);
         liveDisplayEventBuffer.clear();
         if (loop.captureActive()) {
             mutLoop.mergeMaterializedPassesWithCapture(liveDisplayEventBuffer);
@@ -811,6 +825,7 @@ const DisplayNoteVec& DisplayManager::resolveDisplayNotes(const Track& track, ui
         }
         liveMergePlaybackRevision_ = loop.playbackRevision;
         liveMergeCaptureRevision_ = loop.captureDisplayRevision;
+        DIAG_TIMING_RECORD(DisplayBuild, micros() - displayBuildStartUs);
     }
 
     // Prefer visualCache when fresh — after invalidation fall through to merged events.

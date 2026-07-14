@@ -1328,7 +1328,7 @@ void Loop::rebuildVisualCacheIdleSlice(uint8_t maxBarsPerSlice, uint32_t priorit
 }
 
 void Loop::rebuildVisualCacheFromPasses() {
-  DIAG_COUNTER_INC(VisualCacheRebuild);
+  DIAG_COUNTER_INC(DisplayFullRebuild);
   SessionMidiEventVec flat;
   gatherPublishedFlatForDerivedView(*this, flat);
   publishedMaterializedEventCount_ = flat.size();
