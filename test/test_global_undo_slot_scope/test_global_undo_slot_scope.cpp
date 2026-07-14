@@ -163,6 +163,58 @@ void test_pass_undo_depth_excludes_clear_slot() {
   TEST_ASSERT_EQUAL(2u, countAppliedPassUndoEntriesForSlot(stack, 0));
 }
 
+void test_stale_undo_skip_removes_tip_for_same_slot() {
+  // Mirrors undoForLoop: failed apply drops stack tip so the next entry can run on retry.
+  GlobalUndoStack stack;
+  UndoEntry stale = makeEntry(0, UndoEntryKind::NoteEditPassClosed);
+  stale.id = 10;
+  stale.editPassIndex = 2;
+  stack.entries.push_back(makeEntry(0, UndoEntryKind::OverdubPassAdded));
+  stack.entries.push_back(std::move(stale));
+  stack.cursor = 2;
+
+  TEST_ASSERT_TRUE(stackTipMatchesSlot(stack, 0));
+  stack.entries.erase(stack.entries.begin() + static_cast<std::ptrdiff_t>(stack.cursor - 1));
+  --stack.cursor;
+
+  TEST_ASSERT_EQUAL(1u, stack.cursor);
+  TEST_ASSERT_EQUAL(1u, stack.entries.size());
+  TEST_ASSERT_EQUAL(UndoEntryKind::OverdubPassAdded, stack.entries[0].kind);
+  TEST_ASSERT_EQUAL(1u, countAppliedPassUndoEntriesForSlot(stack, 0));
+}
+
+void test_stale_redo_skip_removes_redo_tip_for_same_slot() {
+  GlobalUndoStack stack;
+  UndoEntry stale = makeEntry(0, UndoEntryKind::NoteEditPassClosed);
+  stale.id = 11;
+  stale.editPassIndex = 3;
+  stack.entries.push_back(makeEntry(0, UndoEntryKind::OverdubPassAdded));
+  stack.entries.push_back(std::move(stale));
+  stack.cursor = 1;
+
+  TEST_ASSERT_TRUE(stack.canRedo());
+  TEST_ASSERT_EQUAL(0u, stack.entries[stack.cursor].slotIndex);
+  stack.entries.erase(stack.entries.begin() + static_cast<std::ptrdiff_t>(stack.cursor));
+
+  TEST_ASSERT_EQUAL(1u, stack.cursor);
+  TEST_ASSERT_EQUAL(1u, stack.entries.size());
+  TEST_ASSERT_FALSE(stack.canRedo());
+  TEST_ASSERT_EQUAL(1u, countAppliedPassUndoEntriesForSlot(stack, 0));
+}
+
+void test_redo_branch_survives_full_undo_for_slot() {
+  GlobalUndoStack stack;
+  stack.entries.push_back(makeEntry(0, UndoEntryKind::RecordPassAdded));
+  stack.entries.push_back(makeEntry(0, UndoEntryKind::OverdubPassAdded));
+  stack.entries.push_back(makeEntry(0, UndoEntryKind::LoopBoundaryChange));
+  stack.cursor = 3;
+
+  stack.cursor = 0;
+  TEST_ASSERT_EQUAL(0u, countAppliedPassUndoEntriesForSlot(stack, 0));
+  TEST_ASSERT_EQUAL(3u, countRedoEntriesForSlot(stack, 0));
+  TEST_ASSERT_TRUE(stack.canRedo());
+}
+
 void test_pass_undo_depth_hidden_when_slot_cleared() {
   // Sidebar U: uses pass depth only when the slot has published MIDI; cleared slots show --.
   GlobalUndoStack stack;
@@ -188,6 +240,9 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_erase_preserves_clear_slot_entries);
   RUN_TEST(test_erase_clear_slot_still_prunes_other_slots);
   RUN_TEST(test_pass_undo_depth_excludes_clear_slot);
+  RUN_TEST(test_stale_undo_skip_removes_tip_for_same_slot);
+  RUN_TEST(test_stale_redo_skip_removes_redo_tip_for_same_slot);
+  RUN_TEST(test_redo_branch_survives_full_undo_for_slot);
   RUN_TEST(test_pass_undo_depth_hidden_when_slot_cleared);
   return UNITY_END();
 }
