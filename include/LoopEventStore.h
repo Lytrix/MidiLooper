@@ -9,7 +9,6 @@
 #include <vector>
 
 #include "MidiEvent.h"
-#include "Utils/InternalHeapFirstAllocator.h"
 #include "Utils/ExternalMemoryFirstAllocator.h"
 
 namespace LoopEventStoreConfig {
@@ -26,8 +25,8 @@ struct EventChunk {
   uint32_t lastTick = 0;
 };
 
-using ChunkIdList = std::vector<uint16_t, InternalHeapFirstAllocator<uint16_t>>;
-using BarIndexVec = std::vector<size_t, InternalHeapFirstAllocator<size_t>>;
+using ChunkIdList = std::vector<uint16_t, ExternalMemoryFirstAllocator<uint16_t>>;
+using BarIndexVec = std::vector<size_t, ExternalMemoryFirstAllocator<size_t>>;
 
 /// Runtime chunk lifecycle (ChunkManager). Independent of persistence state.
 enum class ChunkLifecycleState : uint8_t { Free, Recording, Sealed };
