@@ -2,25 +2,27 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-07-14 (branch cleanup — `dev` trunk; persistence queue next)
+Last updated: 2026-07-14 (persistence work queue B1–B5 shipped; PR to `dev`)
 
 ---
 
 ## Now implementing
 
-### Enhancement: CurrentSet persistence work-item queue — **next**
+### Next: loop-owned undo Phase 2 — **after persistence queue merge**
 
-**Branch:** `feature/persistence-work-queue` from `dev` @ `ec7b4a5`
+**Plan:** [`docs/plans/loop_undo_ownership_phase2_handoff.md`](../plans/loop_undo_ownership_phase2_handoff.md) — per-loop undo stacks; B6 `LoopUndoHistory` serializer wire deferred there.
 
-**Plan:** [`docs/plans/current_set_persist_work_item_queue_enhancement.md`](../plans/current_set_persist_work_item_queue_enhancement.md) — B1–B5 (admission / scheduling / serialization layering; B6 undo wire deferred to loop-owned-undo Phase 2)
+---
 
-| Gate | Status |
-|------|--------|
-| Architecture gate | **Required** in chat before first firmware edit |
-| Native | Not started |
-| HITL | vs [`session_20260714_031454.log`](../../captures/session_20260714_031454.log) — fewer `PERS,slice` lines |
+## Recently landed (persistence work queue — PR pending merge to `dev`)
 
-**Then:** `feature/loop-owned-undo-phase2` — [`loop_undo_ownership_phase2_handoff.md`](../plans/loop_undo_ownership_phase2_handoff.md)
+**Branch:** `feature/persistence-work-queue` — [`current_set_persist_work_item_queue_enhancement.md`](../plans/current_set_persist_work_item_queue_enhancement.md)
+
+| Phase | Status |
+|-------|--------|
+| B1–B4 | Work queue admission, scheduler, monolith retire |
+| B4 follow-up | Sync-drain budget, clear-slot SD-restore, urgent save / mid-pass defer |
+| B5 | **604/604** native; HITL **PASS** [`host_midi_automation_serial_20260714_153240.log`](../../captures/host_midi_automation_serial_20260714_153240.log) |
 
 ---
 
