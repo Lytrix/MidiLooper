@@ -34,7 +34,23 @@ This contradicts [`INTERNAL_HEAP_AND_EXTERNAL_MEMORY.md`](../Guides/INTERNAL_HEA
 
 **Revert:** `2e164e4` (git revert of `d5c7410`).
 
-**Revised 2A direction (future):** split-tier only — keep hot metadata internal; consider cold-only routing (`EditPassVec`, `VisualBarVec`) or LoopPool extmem (2B) after separate gate. Do **not** blanket-swap pass typedefs.
+**Phase 2A split-tier (REVERTED 2026-07-15):** commit `ed75699` reverted in `896c70d`. Manual gate [`004415`](../../captures/session_20260715_004415.log): no extmem FATAL, but same overdub-stop reboot + **NOTE_EDIT sluggish** (EditPassVec / EditPassIdList on PSRAM). Pass metadata extmem routing **parked** — do not retry typedef moves.
+
+**Phase 2C:** never shipped; **deferred** — user direction: restore heap without Critical orchestration / extmem edit paths.
+
+---
+
+## Heap restore (replacement for pass-metadata routing)
+
+Reported internal heap (`getInternalHeapFreeBytes`) tracks **high-water break**, not live reuse. Restoring *usable* headroom without UX regression:
+
+1. **LoopPool extmem (2B)** — ~34 KiB fixed; shells only, no capture/edit hot-path latency.
+2. **Persistence backlog** — 004415/003306 enter Critical with `persist_queue_depth=42`; drain or defer non-critical saves so capture is not starved while queue is deep.
+3. **Phase 1B reclaim at Low** — already shipped; extend telemetry to confirm reclaim runs when heap floor hits during overdub (may no-op if windows referenced).
+4. **Idle pass chunk reclaim** — `reclaimUnreferencedDisabledPasses` (existing); frees PSRAM chunks, not internal metadata growth.
+5. **Boot baseline** — compare fresh workspace vs crash-recovery SD load (57 KiB vs 86 KiB in 004415 vs 235620).
+
+**Not viable:** extmem typedef routing for pass or edit vectors (proven 003306 + 004415).
 
 ---
 
