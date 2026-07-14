@@ -191,9 +191,7 @@ void logRecordStopStage(const Loop& loop, uint32_t stopStartUs, const char* stag
   const uint32_t elapsedUs = micros() - stopStartUs;
   SC_REC_STOP_STAGE(stage, elapsedUs, stageDurationUs, heapBefore, heapAfter,
                     stats.eventCount, stats.chunkRefCount, outcome);
-  if (stage != nullptr && std::strcmp(stage, "publish") == 0) {
-    Diagnostics::emitArchitectureMetricsSnapshot();
-  }
+  // Record-stop publish DIAG emits from Loop::commitCapturePass (seal/publish stages live there).
 }
 
 void logOverdubStopStage(const Loop& loop, uint32_t stopStartUs, const char* stage,
