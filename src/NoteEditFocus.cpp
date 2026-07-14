@@ -842,6 +842,13 @@ namespace {
 
 NOTE_EDIT_MEM const OverlapNote* findOverlapNoteForDisplayNote(const NoteEditFocus& focus,
                                                  const NoteUtils::DisplayNote& dn) {
+  if (focus.active && focus.movingNoteId != kInvalidNoteId &&
+      dn.noteId == focus.movingNoteId) {
+    if (const OverlapNote* entry = findOverlapNoteEntry(focus, dn.noteId)) {
+      return entry;
+    }
+    return nullptr;
+  }
   if (dn.noteId != kInvalidNoteId) {
     if (const OverlapNote* entry = findOverlapNoteEntry(focus, dn.noteId)) {
       return entry;
@@ -865,6 +872,10 @@ NOTE_EDIT_MEM const OverlapNote* findOverlapNoteForDisplayNote(const NoteEditFoc
 
 NOTE_EDIT_MEM bool isExcludedFromSelectableDisplayNotes(const NoteEditFocus& focus,
                                           const NoteUtils::DisplayNote& dn) {
+  if (focus.active && focus.movingNoteId != kInvalidNoteId &&
+      dn.noteId == focus.movingNoteId) {
+    return false;
+  }
   const OverlapNote* overlap = findOverlapNoteForDisplayNote(focus, dn);
   if (overlap == nullptr) {
     return false;
