@@ -22,7 +22,7 @@ See [`docs/BRANCHING.md`](../BRANCHING.md).
 
 ## In flight (uncommitted)
 
-Runtime doc updates for B5 closeout (same PR as persistence queue).
+None.
 
 ## Shipped on branch (recent)
 
