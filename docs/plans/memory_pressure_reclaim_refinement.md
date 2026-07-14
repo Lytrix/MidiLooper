@@ -10,8 +10,8 @@ todos:
     content: "Phase 1B — tryReclaimDerivedViewCachesUnderPressure at Low+; owner try* APIs; background-first; stale AND not-referenced"
     status: completed
   - id: phase-2a-pass-metadata-extmem
-    content: "Phase 2A — ChunkIdList, pass vectors, BarIndexVec, VisualBarVec → ExternalMemoryFirstAllocator"
-    status: pending
+    content: "Phase 2A — REVERTED (003306): blanket extmem routing; abort() crash + hot-path latency"
+    status: cancelled
   - id: phase-2b-loop-pool-extmem
     content: "Phase 2B — LoopPool loops_ in extmem (~34 KiB fixed internal heap gain)"
     status: pending
