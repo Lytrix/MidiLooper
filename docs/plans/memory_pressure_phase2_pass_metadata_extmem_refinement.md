@@ -147,59 +147,20 @@ Implement **2A first** — matches 235620 failure mode (heap floor during publis
 
 ---
 
-## Phase 2A — Pass metadata extmem routing
+## Phase 2A split-tier (cold metadata only)
 
-### Typedef / alias changes
+After blanket 2A revert (§ Phase 2A failure), route **cold** vectors only:
 
-In `LoopEventStore.h`:
+| Typedef | Tier | Rationale |
+|---------|------|-----------|
+| `ChunkIdList` | **Internal** | Hot — every capture append / chunk seal |
+| `BarIndexVec` | **Internal** | Hot — bar index on append |
+| `OverdubPassVec` | **Internal** | Hot — merge/materialize iteration during playback |
+| `EditPassVec` | **External** | Cold — NOTE_EDIT commit / undo only |
+| `EditPassIdList` | **External** | Cold — undo entry pins |
+| `VisualBarVec` | **External** | Cold — display incremental rebuild |
 
-```cpp
-using ChunkIdList = std::vector<uint16_t, ExternalMemoryFirstAllocator<uint16_t>>;
-using BarIndexVec = std::vector<size_t, ExternalMemoryFirstAllocator<size_t>>;
-```
-
-In `LoopPasses.h`:
-
-```cpp
-using OverdubPassVec = std::vector<OverdubPass, ExternalMemoryFirstAllocator<OverdubPass>>;
-```
-
-In `EditPass.h`:
-
-```cpp
-using EditPassIdList = std::vector<EditPassId, ExternalMemoryFirstAllocator<EditPassId>>;
-using EditPassVec = std::vector<EditPass, ExternalMemoryFirstAllocator<EditPass>>;
-```
-
-In `VisualCache.h`:
-
-```cpp
-using VisualBarVec = std::vector<uint8_t, ExternalMemoryFirstAllocator<uint8_t>>;
-```
-
-### Files to touch
-
-| File | Change |
-|------|--------|
-| `include/LoopEventStore.h` | `ChunkIdList`, `BarIndexVec` typedefs |
-| `include/LoopPasses.h` | `OverdubPassVec` |
-| `include/EditPass.h` | `EditPassVec`, `EditPassIdList` |
-| `include/VisualCache.h` | `VisualBarVec` |
-| `include/GlobalUndoStack.h` | `EditPassIdList` on `UndoEntry` (via EditPass.h) |
-| `src/Loop.cpp` | `deepCloneChunkRefs` — no logic change; verify extmem copy |
-| Native tests | `test_loop_event_store`, `test_pool_budget`, `test_edit_apply`, `test_sd_load_adopt` |
-
-### Non-goals (Phase 2A)
-
-- Do not move `LoopEventStore` chunk **pool** metadata (already PSRAM).
-- Do not change undo semantics or pass immutability contract.
-- Do not lower `HEAP_RESERVE_BYTES` until post-routing manual gate passes.
-
-### Native verification
-
-- `pio test -e native` (full suite)
-- Existing `test_extmem_allocator` / `test_pool_budget` must pass on Teensy path
-- Optional: extend `test_loop_size_probe` with `sizeof(ChunkIdList)` capacity probe under synthetic append
+**Do not** move hot typedefs without a separate design session and HITL gate.
 
 ---
 
