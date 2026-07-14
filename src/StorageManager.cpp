@@ -22,6 +22,7 @@
 #include "StorageActivitySnapshot.h"
 #include "StorageSession.h"
 #include "StorageManagerInternal.h"
+#include "StorageManagerInternal/PersistenceWorkQueue.h"
 #include "BootRecoveryPolicy.h"
 #include "PersistenceSchema.h"
 #include "SavedSetCatalog.h"
@@ -158,6 +159,20 @@ bool setCurrentSetLoadedFromFolder(const char* folderName) {
 void clearAutoSaveBeforeLoadFolderPending() {
     autoSaveBeforeLoadFolderPending[0] = '\0';
     autoSaveBeforeLoadFolderPendingValid = false;
+}
+
+LoopId loopIdForPersistSlot(uint8_t trackIndex, uint8_t slotIndex) {
+    if (trackIndex >= Config::NUM_TRACKS || slotIndex >= Config::MAX_LOOPS_PER_TRACK) {
+        return kInvalidLoopId;
+    }
+    if (trackIndex >= trackManager.getTrackCount()) {
+        return static_cast<LoopId>(slotIndex);
+    }
+    Track& track = trackManager.getTrack(trackIndex);
+    if (!track.loopsAllocated()) {
+        return static_cast<LoopId>(slotIndex);
+    }
+    return track.loopIdForSlot(slotIndex);
 }
 
 void markCurrentSetMaterialChange() {
@@ -1352,6 +1367,72 @@ bool StorageManager::readCurrentSetBrowserMetadata(SavedSetCatalog::SavedSetMeta
     return true;
 }
 
+void StorageManager::admitLoopPersist(LoopId loopId) {
+#if BYPASS_STOP_UNDO_SAVE
+    (void)loopId;
+    return;
+#else
+    if (loopId == kInvalidLoopId) {
+        return;
+    }
+    PersistenceWorkQueue::admitWork(PersistWorkType::LoopPersist, persistKeyForLoop(loopId));
+#endif
+}
+
+void StorageManager::admitLoopUndoHistory(LoopId loopId) {
+#if BYPASS_STOP_UNDO_SAVE
+    (void)loopId;
+    return;
+#else
+    if (loopId == kInvalidLoopId) {
+        return;
+    }
+    PersistenceWorkQueue::admitWork(PersistWorkType::LoopUndoHistory, persistKeyForLoop(loopId));
+#endif
+}
+
+void StorageManager::admitSlotMeta(uint8_t trackIndex, uint8_t slotIndex) {
+#if BYPASS_STOP_UNDO_SAVE
+    (void)trackIndex;
+    (void)slotIndex;
+    return;
+#else
+    if (trackIndex >= Config::NUM_TRACKS || slotIndex >= Config::MAX_LOOPS_PER_TRACK) {
+        return;
+    }
+    PersistenceWorkQueue::admitWork(PersistWorkType::SlotMeta,
+                                  persistKeyForSlot(trackIndex, slotIndex));
+#endif
+}
+
+void StorageManager::admitTrackMeta(uint8_t trackIndex) {
+#if BYPASS_STOP_UNDO_SAVE
+    (void)trackIndex;
+    return;
+#else
+    if (trackIndex >= Config::NUM_TRACKS) {
+        return;
+    }
+    PersistenceWorkQueue::admitWork(PersistWorkType::TrackMeta, persistKeyForTrack(trackIndex));
+#endif
+}
+
+void StorageManager::admitWorkspaceFooter() {
+#if BYPASS_STOP_UNDO_SAVE
+    return;
+#else
+    PersistenceWorkQueue::admitWork(PersistWorkType::WorkspaceFooter, persistKeySingleton());
+#endif
+}
+
+void StorageManager::admitGlobalMeta() {
+#if BYPASS_STOP_UNDO_SAVE
+    return;
+#else
+    PersistenceWorkQueue::admitWork(PersistWorkType::GlobalMeta, persistKeySingleton());
+#endif
+}
+
 void StorageManager::markCurrentSetLoopSlotDirty(uint8_t trackIndex, uint8_t slotIndex) {
 #if BYPASS_STOP_UNDO_SAVE
     (void)trackIndex;
@@ -1359,6 +1440,8 @@ void StorageManager::markCurrentSetLoopSlotDirty(uint8_t trackIndex, uint8_t slo
     return;
 #endif
     markCurrentSetLoopSlotDirtyInternal(trackIndex, slotIndex);
+    admitSlotMeta(trackIndex, slotIndex);
+    admitLoopPersist(loopIdForPersistSlot(trackIndex, slotIndex));
 }
 
 void StorageManager::markCurrentSetTrackDirty(uint8_t trackIndex) {
@@ -1367,6 +1450,11 @@ void StorageManager::markCurrentSetTrackDirty(uint8_t trackIndex) {
     return;
 #endif
     markCurrentSetTrackDirtyInternal(trackIndex);
+    admitTrackMeta(trackIndex);
+    for (uint8_t slot = 0; slot < Config::MAX_LOOPS_PER_TRACK; ++slot) {
+        admitLoopPersist(loopIdForPersistSlot(trackIndex, slot));
+        admitSlotMeta(trackIndex, slot);
+    }
 }
 
 void StorageManager::markAllCurrentSetLoopSlotsDirty() {
@@ -1374,6 +1462,13 @@ void StorageManager::markAllCurrentSetLoopSlotsDirty() {
     return;
 #endif
     markAllCurrentSetLoopSlotsDirtyInternal();
+    for (uint8_t track = 0; track < Config::NUM_TRACKS; ++track) {
+        admitTrackMeta(track);
+        for (uint8_t slot = 0; slot < Config::MAX_LOOPS_PER_TRACK; ++slot) {
+            admitLoopPersist(loopIdForPersistSlot(track, slot));
+            admitSlotMeta(track, slot);
+        }
+    }
 }
 
 void StorageManager::processEditAutosave(const LooperState& state) {
@@ -1393,7 +1488,7 @@ void StorageManager::processEditAutosave(const LooperState& state) {
             }
             for (uint8_t s = 0; s < Config::MAX_LOOPS_PER_TRACK; ++s) {
                 if (track.getLoop(s).isEditStateDirty()) {
-                    markCurrentSetLoopSlotDirtyInternal(t, s);
+                    StorageManager::markCurrentSetLoopSlotDirty(t, s);
                 }
             }
         }
@@ -1426,7 +1521,7 @@ void StorageManager::processEditAutosave(const LooperState& state) {
         }
         for (uint8_t s = 0; s < Config::MAX_LOOPS_PER_TRACK; ++s) {
             if (track.getLoop(s).isEditStateDirty()) {
-                markCurrentSetLoopSlotDirtyInternal(t, s);
+                StorageManager::markCurrentSetLoopSlotDirty(t, s);
             }
         }
     }

@@ -427,11 +427,8 @@ void TrackManager::handleTransportStop() {
     }
   }
   forceLedUpdate(currentTick);
-  for (uint8_t i = 0; i < Config::NUM_TRACKS; ++i) {
-    Track& track = tracks[i];
-    if (track.loopsAllocated() && track.hasData()) {
-      StorageManager::markCurrentSetLoopSlotDirty(i, track.getActiveLoopIndex());
-    }
+  if (StorageManager::shouldQueueCurrentWorkspaceSave()) {
+    StorageManager::admitGlobalMeta();
   }
   StorageManager::requestDeferredSaveState(looperState.getLooperState());
 }
@@ -865,6 +862,7 @@ void TrackManager::setSelectedSlotIndex(uint8_t trackIndex, uint8_t slotIndex,
     editManager.onSelectedSlotChanged(tracks[trackIndex], previousSlot);
     displayManager.invalidateForSlotChange(trackIndex, previousSlot, slotIndex);
     forceLedUpdate(clockManager.getCurrentTick());
+    StorageManager::admitWorkspaceFooter();
     StorageManager::requestDeferredSaveState(looperState.getLooperState());
   }
 }
