@@ -9,7 +9,11 @@
 #include "MidiEvent.h"
 #include "NoteUtils.h"
 #include "EditManager.h"
+#if defined(PIO_UNIT_TEST_NATIVE)
+class Track;
+#else
 #include "Track.h"
+#endif
 
 namespace NoteMovementUtils {
     
@@ -104,10 +108,11 @@ bool moveNoteWithOverlapHandling(Track& track, EditManager& manager,
     MidiEvent* findNoteOffPairedAt(MidiEventVec& midiEvents, uint8_t pitch, uint32_t startTick,
                                    uint32_t endTick);
 
-    /** LIFO-paired note-off for the note-on at startTick (channel + optional NoteId). */
+    /** Note-off for the note-on at startTick; uses NoteId-linear pairing when noteId is set. */
     MidiEvent* findNoteOffForNoteOnAtStart(MidiEventVec& midiEvents, uint8_t channel,
                                            uint8_t pitch, uint32_t startTick,
-                                           NoteId noteId = kInvalidNoteId);
+                                           NoteId noteId = kInvalidNoteId,
+                                           uint32_t loopLength = 0);
 
     /**
      * Resolve the note-off for a live edit span: LIFO pair, paired-at, then wrap-head fallback.

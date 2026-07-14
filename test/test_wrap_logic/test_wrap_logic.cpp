@@ -54,6 +54,44 @@ void test_linear_storage_spans_overlap_tail_mover_vs_head_note() {
     TEST_ASSERT_TRUE(notesOverlapWithWrapPhantom(1499, 1595, 11, 61, loop));
 }
 
+void test_move_restore_adjacent_prefix_touch_is_not_overlap() {
+    // session_20260714_011558.log: mover [144,240), restored neighbor [0,144)
+    const auto linearStorageSpansOverlap = [](uint32_t start1, uint32_t end1, uint32_t start2,
+                                              uint32_t end2) {
+        return start1 < end2 && start2 < end1;
+    };
+    constexpr uint32_t newStart = 144;
+    constexpr uint32_t newEnd = 240;
+    constexpr uint32_t neighborStart = 0;
+    constexpr uint32_t neighborEnd = 144;
+    TEST_ASSERT_FALSE(
+        linearStorageSpansOverlap(newStart, newEnd, neighborStart, neighborEnd));
+    const bool oldPrefixDeleteRule =
+        (neighborEnd == newStart && neighborStart < newStart);
+    TEST_ASSERT_TRUE(oldPrefixDeleteRule);
+    const bool fixedPrefixDeleteRule =
+        (neighborStart < newStart && neighborEnd > newStart &&
+         linearStorageSpansOverlap(newStart, newEnd, neighborStart, neighborEnd));
+    TEST_ASSERT_FALSE(fixedPrefixDeleteRule);
+}
+
+void test_partial_prefix_under_mover_start_is_overlap() {
+    const auto linearStorageSpansOverlap = [](uint32_t start1, uint32_t end1, uint32_t start2,
+                                              uint32_t end2) {
+        return start1 < end2 && start2 < end1;
+    };
+    constexpr uint32_t newStart = 144;
+    constexpr uint32_t newEnd = 240;
+    constexpr uint32_t neighborStart = 48;
+    constexpr uint32_t neighborEnd = 200;
+    TEST_ASSERT_TRUE(
+        linearStorageSpansOverlap(newStart, newEnd, neighborStart, neighborEnd));
+    const bool fixedPrefixDeleteRule =
+        (neighborStart < newStart && neighborEnd > newStart &&
+         linearStorageSpansOverlap(newStart, newEnd, neighborStart, neighborEnd));
+    TEST_ASSERT_TRUE(fixedPrefixDeleteRule);
+}
+
 void test_notes_overlap_linear_span_avoids_display_wrap_false_positive() {
     constexpr uint32_t loop = 1536;
     const uint32_t moverStart = 1355;
@@ -77,6 +115,8 @@ int main(int /*argc*/, char** /*argv*/) {
     RUN_TEST(test_moving_note_range_wrap_does_not_contain_unrelated_loop_start_note);
     RUN_TEST(test_display_wrapped_tail_on_tick_inside_linear_mover_span);
     RUN_TEST(test_linear_storage_spans_overlap_tail_mover_vs_head_note);
+    RUN_TEST(test_move_restore_adjacent_prefix_touch_is_not_overlap);
+    RUN_TEST(test_partial_prefix_under_mover_start_is_overlap);
     RUN_TEST(test_notes_overlap_linear_span_avoids_display_wrap_false_positive);
     return UNITY_END();
 }

@@ -337,10 +337,31 @@ void EditManager::syncSelectedNoteIdxToFilteredInventory(Track& track) {
         return;
     }
 
-    int matchIdx = NoteEditDisplaySnapshot::filteredDisplayNoteIndexForSelection(
-        sessionState.selection, filtered, noteEditLoopStartTick(track),
-        noteEditLoopLengthTicks(track),
-        sessionState.kind == NoteEditKind::Length || noteEditManager.isLengthEditingMode());
+    const bool geometryMutationKind =
+        sessionState.kind == NoteEditKind::Move ||
+        sessionState.kind == NoteEditKind::Pitch ||
+        sessionState.kind == NoteEditKind::Length;
+    int matchIdx = -1;
+    if (geometryMutationKind && editSession.focus.active &&
+        editSession.focus.movingNoteId == sessionState.selection.primaryNote &&
+        editorSelectionHasNote(sessionState.selection)) {
+        const NoteEditFocus& focus = editSession.focus;
+        const bool lengthBracket =
+            sessionState.kind == NoteEditKind::Length || noteEditManager.isLengthEditingMode();
+        const uint32_t storageBracketTick =
+            lengthBracket ? focus.last.endTick : focus.last.startTick;
+        const uint32_t displayBracket = NoteEditDisplaySnapshot::displayStartTickFromStorage(
+            storageBracketTick, noteEditLoopStartTick(track), loopLength);
+        matchIdx = filteredDisplayNoteIndexForNoteIdAndStart(
+            filtered, focus.movingNoteId, displayBracket, noteEditLoopStartTick(track),
+            loopLength);
+    }
+    if (matchIdx < 0) {
+        matchIdx = NoteEditDisplaySnapshot::filteredDisplayNoteIndexForSelection(
+            sessionState.selection, filtered, noteEditLoopStartTick(track),
+            noteEditLoopLengthTicks(track),
+            sessionState.kind == NoteEditKind::Length || noteEditManager.isLengthEditingMode());
+    }
     if (matchIdx < 0 && editorSelectionHasNote(sessionState.selection)) {
         const NoteEditFocus& focus = editSession.focus;
         const uint32_t loopStartTick = noteEditLoopStartTick(track);
@@ -376,6 +397,13 @@ void EditManager::syncSelectedNoteIdxToFilteredInventory(Track& track) {
                 }
             }
             if (!noteStillPresent) {
+                if (editSession.focus.active &&
+                    editSession.focus.movingNoteId == sessionState.selection.primaryNote &&
+                    (sessionState.kind == NoteEditKind::Move ||
+                     sessionState.kind == NoteEditKind::Pitch ||
+                     sessionState.kind == NoteEditKind::Length)) {
+                    return;
+                }
                 setSelectedNoteIdx(-1);
             } else if (noteIdOnlyIdx >= 0 && editSession.focus.active &&
                        editSession.focus.movingNoteId == sessionState.selection.primaryNote) {

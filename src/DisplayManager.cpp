@@ -1346,10 +1346,45 @@ int resolveDrawHighlightIndex(const DisplayNoteVec& notes, const EditorSelection
                 return i;
             }
         }
+        const NoteEditFocus& focus = editManager.getEditSession().focus;
+        if (focus.active && focus.movingNoteId == selection.primaryNote) {
+            const bool lengthBracketActive = editManager.isLengthBracketEditActive();
+            const uint32_t storageBracket =
+                lengthBracketActive ? focus.last.endTick : focus.last.startTick;
+            const uint32_t displayBracket =
+                NoteEditDisplaySnapshot::displayStartTickFromStorage(storageBracket, loopStartTick,
+                                                                     loopLength);
+            if (int byBracket = filteredDisplayNoteIndexForNoteIdAndStart(
+                    notes, focus.movingNoteId, displayBracket, loopStartTick, loopLength);
+                byBracket >= 0) {
+                return byBracket;
+            }
+        }
+        if (int byNoteId = filteredDisplayNoteIndexForNoteId(notes, selection.primaryNote);
+            byNoteId >= 0) {
+            return byNoteId;
+        }
         return -1;
     }
-    return NoteEditDisplaySnapshot::filteredDisplayNoteIndexForSelection(
+    int idx = NoteEditDisplaySnapshot::filteredDisplayNoteIndexForSelection(
         selection, notes, loopStartTick, loopLength, editManager.isLengthBracketEditActive());
+    if (idx < 0) {
+        const NoteEditFocus& focus = editManager.getEditSession().focus;
+        if (focus.active && focus.movingNoteId == selection.primaryNote) {
+            const bool lengthBracket = editManager.isLengthBracketEditActive();
+            const uint32_t storageBracket =
+                lengthBracket ? focus.last.endTick : focus.last.startTick;
+            const uint32_t displayBracket =
+                NoteEditDisplaySnapshot::displayStartTickFromStorage(storageBracket, loopStartTick,
+                                                                     loopLength);
+            idx = filteredDisplayNoteIndexForNoteIdAndStart(
+                notes, focus.movingNoteId, displayBracket, loopStartTick, loopLength);
+        }
+        if (idx < 0) {
+            idx = filteredDisplayNoteIndexForNoteId(notes, selection.primaryNote);
+        }
+    }
+    return idx;
 }
 
 }  // namespace

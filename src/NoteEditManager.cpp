@@ -1927,19 +1927,20 @@ void NoteEditManager::handleSelectFaderInput(int16_t pitchValue, Track& track) {
         priorSelection.primaryNote, nextPrimaryNote, priorSelection.selectedTick,
         target.absoluteTargetTick);
 
+    const NoteEditFocus& focus = editManager.getEditSession().focus;
+    const NoteEditKind kind = editManager.getNoteEditSessionState().kind;
+    const bool geometryDriverActive =
+        currentDriverFader != MidiMapping::FaderType::FADER_SELECT &&
+        lastDriverFaderTime != 0 &&
+        (now - lastDriverFaderTime) < DRIVER_FADER_ACTIVE_MS;
+    if (geometryDriverActive && focus.active && focus.movingNoteId != kInvalidNoteId &&
+        isGeometryEditKind(kind) && kind != NoteEditKind::Select) {
+        logSelectApplyDecision(target.absoluteTargetTick, target.noteIdx, target.slotIndex, -1,
+                               false, "geometry_driver_ignored");
+        return;
+    }
+
     if (target.noteIdx < 0) {
-        const NoteEditFocus& focus = editManager.getEditSession().focus;
-        const NoteEditKind kind = editManager.getNoteEditSessionState().kind;
-        const bool geometryDriverActive =
-            currentDriverFader != MidiMapping::FaderType::FADER_SELECT &&
-            lastDriverFaderTime != 0 &&
-            (now - lastDriverFaderTime) < DRIVER_FADER_ACTIVE_MS;
-        if (geometryDriverActive && focus.active && focus.movingNoteId != kInvalidNoteId &&
-            isGeometryEditKind(kind) && kind != NoteEditKind::Select) {
-            logSelectApplyDecision(target.absoluteTargetTick, target.noteIdx, target.slotIndex, -1,
-                                   false, "geometry_driver_empty_step_ignored");
-            return;
-        }
         if (selectionChanged) {
             logSelectApplyDecision(target.absoluteTargetTick, target.noteIdx, target.slotIndex, -1,
                                    true, "empty_step");
