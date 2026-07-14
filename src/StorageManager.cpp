@@ -1746,12 +1746,23 @@ void StorageManager::processDeferredSaveState(const LooperState& state) {
             continue;
         }
 
+        if (storageSession.currentWorkspaceSave.pending) {
+            maybeAdmitFinalizeWorkspaceAfterDrain();
+        }
+
         const bool otherSdIoActive =
             storageSession.currentWorkspaceSave.sdIoActive || storageSession.revisionCommit.sdIoActive ||
             storageSession.revisionLoad.sdIoActive || storageSession.midPassChunkPersist.sdIoActive ||
             storageSession.persistenceWorkItem.sdIoActive;
-        if (PersistenceFailurePolicy::shouldRunMidPassWriter(PersistenceQueue::queueDepth(),
-                                                               otherSdIoActive)) {
+        const uint16_t workQueueDepth = PersistenceWorkQueue::queueDepth();
+        const uint16_t writingWorkItemCount = PersistenceWorkQueue::writingWorkItemCount();
+        const bool deferMidPassForWorkspaceSave = PersistenceFailurePolicy::shouldDeferMidPassForWorkspaceSave(
+            storageSession.currentWorkspaceSave.pending,
+            storageSession.currentWorkspaceSave.urgentRequested, workQueueDepth,
+            writingWorkItemCount, storageSession.persistenceWorkItem.itemActive);
+        if (!deferMidPassForWorkspaceSave &&
+            PersistenceFailurePolicy::shouldRunMidPassWriter(PersistenceQueue::queueDepth(),
+                                                             otherSdIoActive)) {
             const uint32_t currentHeap = MemoryMonitor::getInternalHeapFreeBytes();
             if (!LoopEventStore::hasInternalHeapHeadroomForNonCriticalWork(currentHeap)) {
                 PersistenceDiagnostics::onHeapFloorBlock();
@@ -1772,8 +1783,7 @@ void StorageManager::processDeferredSaveState(const LooperState& state) {
         }
 
         if (PersistenceFailurePolicy::shouldRunPersistenceWorkItemWriter(
-                PersistenceWorkQueue::queueDepth(), PersistenceWorkQueue::writingWorkItemCount(),
-                otherSdIoActive)) {
+                workQueueDepth, writingWorkItemCount, otherSdIoActive)) {
             const uint32_t currentHeap = MemoryMonitor::getInternalHeapFreeBytes();
             if (!LoopEventStore::hasInternalHeapHeadroomForNonCriticalWork(currentHeap)) {
                 PersistenceDiagnostics::onHeapFloorBlock();
@@ -2288,28 +2298,65 @@ bool StorageManager::saveState(const LooperState& state) {
     HotPathTelemetry::ScopedSaveState telemetryScope;
     Serial.println("[StorageManager] Draining persistence work queue to SD card...");
 
-    if (!hasPersistenceWorkPending()) {
-        storageSession.currentWorkspaceSave.admissionHeap = UINT32_MAX;
-        storageSession.currentWorkspaceSave.urgentRequested = true;
-        storageSession.currentWorkspaceSave.deferDispatchUntilMs = 0;
-    }
+    storageSession.currentWorkspaceSave.admissionHeap = UINT32_MAX;
+    storageSession.currentWorkspaceSave.urgentRequested = true;
+    storageSession.currentWorkspaceSave.deferDispatchUntilMs = 0;
     const bool alreadyPending = storageSession.currentWorkspaceSave.pending;
     storageSession.currentWorkspaceSave.pending = true;
     SC_PERSIST("request", 0, 0, 0,
                alreadyPending ? "sync_drain_already_pending" : "sync_drain");
 
     storageSession.currentWorkspaceSave.lastCompletedOk = false;
-    constexpr uint32_t kMaxDrainSteps = 200000u;
+
+    const SyncDrainBudget drainBudget = buildSyncDrainBudgetForSession();
     uint32_t steps = 0;
-    while (hasPersistenceWorkPending() && steps < kMaxDrainSteps) {
+    uint32_t stuckIterations = 0;
+    SyncDrainProgressSnapshot lastProgress = captureSyncDrainProgressSnapshot();
+    SyncDrainFailureReason failureReason = SyncDrainFailureReason::None;
+
+    while (hasPersistenceWorkPending()) {
+        if (steps >= drainBudget.maxSliceSteps) {
+            failureReason = SyncDrainFailureReason::ExceededSliceBudget;
+            break;
+        }
+
+        maybeAdmitFinalizeWorkspaceAfterDrain();
+        const SyncDrainProgressSnapshot beforeProgress = lastProgress;
         processDeferredSaveState(state);
         yield();
         steps++;
+
+        const SyncDrainProgressSnapshot afterProgress = captureSyncDrainProgressSnapshot();
+        if (PersistenceSyncDrainBudget::madeSyncDrainProgress(beforeProgress, afterProgress)) {
+            stuckIterations = 0;
+            lastProgress = afterProgress;
+        } else {
+            ++stuckIterations;
+            if (stuckIterations >= drainBudget.maxStuckIterations) {
+                failureReason = SyncDrainFailureReason::Stuck;
+                break;
+            }
+        }
     }
 
     const bool completed = !hasPersistenceWorkPending();
     if (!completed) {
-        Serial.println("[StorageManager] ERROR: Persistence drain exceeded step limit");
+        if (failureReason == SyncDrainFailureReason::Stuck) {
+            Serial.printf(
+                "[StorageManager] ERROR: Persistence drain stuck after %u iterations "
+                "(max %u, expected ~%u slice steps, ~%u SD bytes)\n",
+                static_cast<unsigned>(stuckIterations),
+                static_cast<unsigned>(drainBudget.maxStuckIterations),
+                static_cast<unsigned>(drainBudget.expectedSliceSteps),
+                static_cast<unsigned>(drainBudget.estimatedSdPayloadBytes));
+        } else {
+            Serial.printf(
+                "[StorageManager] ERROR: Persistence drain exceeded slice budget after %u steps "
+                "(max %u, expected ~%u slice steps, ~%u SD bytes)\n",
+                static_cast<unsigned>(steps), static_cast<unsigned>(drainBudget.maxSliceSteps),
+                static_cast<unsigned>(drainBudget.expectedSliceSteps),
+                static_cast<unsigned>(drainBudget.estimatedSdPayloadBytes));
+        }
         return false;
     }
     if (storageSession.currentWorkspaceSave.pending) {
@@ -2923,6 +2970,9 @@ void STORAGE_PERSIST_MEM StorageManager::restoreDeferredUndoSnapshotsBeforeUse()
 
 void STORAGE_PERSIST_MEM StorageManager::requestLoopSlotRestoreFromSd(uint8_t trackIndex, uint8_t slotIndex) {
     removeDeferredLoopSlotRestore(trackIndex, slotIndex);
+    if (!trackManager.isSlotEnabled(trackIndex, slotIndex)) {
+        return;
+    }
     Track& track = trackManager.getTrack(trackIndex);
     if (track.getLoop(slotIndex).hasPublishedEvents()) {
         return;

@@ -84,6 +84,9 @@ STORAGE_PERSIST_MEM void resetActivePersistenceWorkItem(PersistenceWorkItemJob& 
 }
 
 STORAGE_PERSIST_MEM bool deferFlushForTransport() {
+  if (storageSession.currentWorkspaceSave.urgentRequested) {
+    return false;
+  }
   if (!storageSession.currentWorkspaceSave.pending) {
     return false;
   }
@@ -310,6 +313,8 @@ STORAGE_PERSIST_MEM bool stepFinalizeWorkspaceWorkItem(PersistenceWorkItemJob& j
   return completePersistenceWorkItem(job, "done", true);
 }
 
+}  // namespace
+
 STORAGE_PERSIST_MEM void maybeAdmitFinalizeWorkspaceAfterDrain() {
   if (PersistenceWorkQueue::queueDepth() > 0 || PersistenceWorkQueue::writingWorkItemCount() > 0 ||
       storageSession.persistenceWorkItem.itemActive) {
@@ -320,8 +325,6 @@ STORAGE_PERSIST_MEM void maybeAdmitFinalizeWorkspaceAfterDrain() {
   }
   PersistenceWorkQueue::admitWork(PersistWorkType::FinalizeWorkspace, persistKeySingleton());
 }
-
-}  // namespace
 
 STORAGE_PERSIST_MEM void resetPersistenceWorkItemJobState() {
   PersistenceWorkItemJob& job = storageSession.persistenceWorkItem;

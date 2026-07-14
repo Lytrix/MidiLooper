@@ -75,6 +75,11 @@ void requeueWritingItem(const PersistWorkItem& item);
 
 void resetForTests();
 
+using PersistWorkVisitor = void (*)(const PersistWorkItem& item, void* context);
+
+/// Invokes visitor for each Queued or Writing work item (Writing first when present).
+void visitScheduledWorkItems(PersistWorkVisitor visitor, void* context);
+
 #if defined(PIO_UNIT_TEST_NATIVE)
 size_t queuedWorkItems(PersistWorkItem* outItems, size_t maxCount);
 #endif
