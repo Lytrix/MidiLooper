@@ -22,6 +22,8 @@ extern NoteEditManager noteEditManager;
 
 namespace {
 
+constexpr size_t kMaxStaleUndoRedoSkipPerPress = 32;
+
 TRACK_COLD_MEM UndoLoopGeometry captureGeometry(const Loop& loop) {
     return {loop.loopLengthTicks, loop.startLoopTick, loop.loopStartTick};
 }
@@ -194,11 +196,8 @@ TRACK_COLD_MEM bool applyUndoEntry(Track& track, UndoEntry& entry) {
                 return false;
             }
             applyGeometry(loop, entry.beforeGeometry);
-            if (!loop.hasPublishedEvents()) {
-                track.resetLoopSlotAfterEmptyCapture(entry.slotIndex);
-            } else {
-                loop.rebuildVisualCacheFromPasses();
-            }
+            // Keep disabled capture passes on the timeline so redo can re-enable them.
+            loop.rebuildVisualCacheFromPasses();
             loop.invalidateCaches();
             track.invalidateCaches();
             if (editManager.isNoteEditActive()) {
@@ -221,14 +220,24 @@ TRACK_COLD_MEM bool applyUndoEntry(Track& track, UndoEntry& entry) {
                 editManager.getEditSession().store.discardFlatCache();
                 editManager.getEditSession().undoStack.clear();
             }
+            entry.hasRedoPayload = true;
             return true;
         case UndoEntryKind::NoteEditPassClosed:
         case UndoEntryKind::ControlChangeEditPassClosed:
             if (entry.editPassIds.empty()) {
+                logger.log(CAT_TRACK, LOG_WARNING,
+                           "Undo failed: note edit pass undo has no editPassIds (slot=%u kind=%d)",
+                           static_cast<unsigned>(entry.slotIndex),
+                           static_cast<int>(entry.kind));
                 return false;
             }
             if (!setEditPassState(loop, entry.editPassIds, EditPassState::Disabled,
                                   entry.editPassType)) {
+                logger.log(CAT_TRACK, LOG_WARNING,
+                           "Undo failed: missing edit pass id(s) in slot %u (editPass=%u count=%u)",
+                           static_cast<unsigned>(entry.slotIndex),
+                           static_cast<unsigned>(entry.editPassIndex),
+                           static_cast<unsigned>(entry.editPassIds.size()));
                 return false;
             }
             loop.rebuildVisualCacheFromPasses();
@@ -311,6 +320,11 @@ TRACK_COLD_MEM bool applyRedoEntry(Track& track, UndoEntry& entry) {
             }
             return true;
         case UndoEntryKind::OverdubPassAdded:
+            if (!entry.hasRedoPayload) {
+                logger.log(CAT_TRACK, LOG_WARNING, "Redo payload missing for overdub pass entry %lu",
+                           static_cast<unsigned long>(entry.id));
+                return false;
+            }
             if (!enableCapturePass(loop, entry.passId)) {
                 logger.log(CAT_TRACK, LOG_WARNING, "Redo failed: missing pass %lu in slot %u",
                            static_cast<unsigned long>(entry.passId),
@@ -328,10 +342,19 @@ TRACK_COLD_MEM bool applyRedoEntry(Track& track, UndoEntry& entry) {
         case UndoEntryKind::NoteEditPassClosed:
         case UndoEntryKind::ControlChangeEditPassClosed:
             if (!entry.hasRedoPayload || entry.editPassIds.empty()) {
+                logger.log(CAT_TRACK, LOG_WARNING,
+                           "Redo failed: edit pass redo payload missing (slot=%u kind=%d)",
+                           static_cast<unsigned>(entry.slotIndex),
+                           static_cast<int>(entry.kind));
                 return false;
             }
             if (!setEditPassState(loop, entry.editPassIds, EditPassState::Active,
                                   entry.editPassType)) {
+                logger.log(CAT_TRACK, LOG_WARNING,
+                           "Redo failed: missing edit pass id(s) in slot %u (editPass=%u count=%u)",
+                           static_cast<unsigned>(entry.slotIndex),
+                           static_cast<unsigned>(entry.editPassIndex),
+                           static_cast<unsigned>(entry.editPassIds.size()));
                 return false;
             }
             loop.invalidateCaches();
@@ -495,28 +518,57 @@ TRACK_COLD_MEM void TrackUndo::undoForLoop(Track& track, Loop& loop) {
         return;
     }
     GlobalUndoStack& stack = track.getGlobalUndoStack();
-    if (!stack.canUndo() || stack.entries[stack.cursor - 1].slotIndex != slotIndex) {
+    if (!stack.canUndo()) {
         logger.log(CAT_TRACK, LOG_WARNING, "Cannot undo for loop slot %u right now",
                    static_cast<unsigned>(slotIndex));
         return;
     }
-    UndoEntry& entry = stack.entries[stack.cursor - 1];
-    const UndoEntryKind entryKind = entry.kind;
-    if (!applyUndoEntry(track, entry)) {
+    if (stack.entries[stack.cursor - 1].slotIndex != slotIndex) {
+        logger.log(CAT_TRACK, LOG_WARNING, "Cannot undo for loop slot %u right now",
+                   static_cast<unsigned>(slotIndex));
         return;
     }
-    --stack.cursor;
-    logger.debug("Undo applied: kind=%d undo_count=%d",
-                 static_cast<int>(entry.kind),
-                 static_cast<int>(getUndoCount(track)));
-    if (entryKind == UndoEntryKind::ClearSlot) {
-        applyClearSlotUndoSideEffects(track, entry, slotIndex);
-        logger.logTrackEvent("Clear slot undone", clockManager.getCurrentTick());
-    } else {
-        logger.logTrackEvent("Overdub undone", clockManager.getCurrentTick());
+
+    bool applied = false;
+    size_t staleSkipped = 0;
+    while (stack.canUndo() && staleSkipped < kMaxStaleUndoRedoSkipPerPress) {
+        UndoEntry& entry = stack.entries[stack.cursor - 1];
+        if (entry.slotIndex != slotIndex) {
+            break;
+        }
+        const UndoEntryKind entryKind = entry.kind;
+        if (applyUndoEntry(track, entry)) {
+            --stack.cursor;
+            applied = true;
+            logger.debug("Undo applied: kind=%d undo_count=%d",
+                         static_cast<int>(entry.kind),
+                         static_cast<int>(getUndoCount(track)));
+            if (entryKind == UndoEntryKind::ClearSlot) {
+                applyClearSlotUndoSideEffects(track, entry, slotIndex);
+                logger.logTrackEvent("Clear slot undone", clockManager.getCurrentTick());
+            } else {
+                logger.logTrackEvent("Overdub undone", clockManager.getCurrentTick());
+            }
+            StorageManager::markCurrentSetLoopSlotDirty(resolveTrackIndexForPersistence(track),
+                                                        slotIndex);
+            StorageManager::requestDeferredSaveState(looperState.getLooperState());
+            break;
+        }
+        logger.log(CAT_TRACK, LOG_WARNING,
+                   "Undo skipped stale entry kind=%d slot=%u entry_id=%lu",
+                   static_cast<int>(entry.kind), static_cast<unsigned>(entry.slotIndex),
+                   static_cast<unsigned long>(entry.id));
+        stack.entries.erase(stack.entries.begin() +
+                            static_cast<std::ptrdiff_t>(stack.cursor - 1));
+        --stack.cursor;
+        ++staleSkipped;
+        trackManager.reclaimUnreferencedDisabledPasses();
     }
-    StorageManager::markCurrentSetLoopSlotDirty(resolveTrackIndexForPersistence(track), slotIndex);
-    StorageManager::requestDeferredSaveState(looperState.getLooperState());
+
+    if (!applied && staleSkipped == 0) {
+        logger.log(CAT_TRACK, LOG_WARNING, "Cannot undo for loop slot %u right now",
+                   static_cast<unsigned>(slotIndex));
+    }
 }
 
 TRACK_COLD_MEM void TrackUndo::redoForLoop(Track& track, Loop& loop) {
@@ -528,28 +580,56 @@ TRACK_COLD_MEM void TrackUndo::redoForLoop(Track& track, Loop& loop) {
         return;
     }
     GlobalUndoStack& stack = track.getGlobalUndoStack();
-    if (!stack.canRedo() || stack.entries[stack.cursor].slotIndex != slotIndex) {
+    if (!stack.canRedo()) {
         logger.log(CAT_TRACK, LOG_WARNING, "Cannot redo for loop slot %u right now",
                    static_cast<unsigned>(slotIndex));
         return;
     }
-    UndoEntry& entry = stack.entries[stack.cursor];
-    const UndoEntryKind entryKind = entry.kind;
-    if (!applyRedoEntry(track, entry)) {
+    if (stack.entries[stack.cursor].slotIndex != slotIndex) {
+        logger.log(CAT_TRACK, LOG_WARNING, "Cannot redo for loop slot %u right now",
+                   static_cast<unsigned>(slotIndex));
         return;
     }
-    ++stack.cursor;
-    logger.debug("Redo applied: kind=%d redo_count=%d",
-                 static_cast<int>(entry.kind),
-                 static_cast<int>(getRedoCount(track)));
-    if (entryKind == UndoEntryKind::ClearSlot) {
-        applyClearSlotRedoSideEffects(track, slotIndex);
-        logger.logTrackEvent("Clear slot redone", clockManager.getCurrentTick());
-    } else {
-        logger.logTrackEvent("Overdub redone", clockManager.getCurrentTick());
+
+    bool applied = false;
+    size_t staleSkipped = 0;
+    while (stack.canRedo() && staleSkipped < kMaxStaleUndoRedoSkipPerPress) {
+        UndoEntry& entry = stack.entries[stack.cursor];
+        if (entry.slotIndex != slotIndex) {
+            break;
+        }
+        const UndoEntryKind entryKind = entry.kind;
+        if (applyRedoEntry(track, entry)) {
+            ++stack.cursor;
+            applied = true;
+            logger.debug("Redo applied: kind=%d redo_count=%d",
+                         static_cast<int>(entry.kind),
+                         static_cast<int>(getRedoCount(track)));
+            if (entryKind == UndoEntryKind::ClearSlot) {
+                applyClearSlotRedoSideEffects(track, slotIndex);
+                logger.logTrackEvent("Clear slot redone", clockManager.getCurrentTick());
+            } else {
+                logger.logTrackEvent("Overdub redone", clockManager.getCurrentTick());
+            }
+            StorageManager::markCurrentSetLoopSlotDirty(resolveTrackIndexForPersistence(track),
+                                                        slotIndex);
+            StorageManager::requestDeferredSaveState(looperState.getLooperState());
+            break;
+        }
+        logger.log(CAT_TRACK, LOG_WARNING,
+                   "Redo skipped stale entry kind=%d slot=%u entry_id=%lu",
+                   static_cast<int>(entry.kind), static_cast<unsigned>(entry.slotIndex),
+                   static_cast<unsigned long>(entry.id));
+        stack.entries.erase(stack.entries.begin() +
+                            static_cast<std::ptrdiff_t>(stack.cursor));
+        ++staleSkipped;
+        trackManager.reclaimUnreferencedDisabledPasses();
     }
-    StorageManager::markCurrentSetLoopSlotDirty(resolveTrackIndexForPersistence(track), slotIndex);
-    StorageManager::requestDeferredSaveState(looperState.getLooperState());
+
+    if (!applied && staleSkipped == 0) {
+        logger.log(CAT_TRACK, LOG_WARNING, "Cannot redo for loop slot %u right now",
+                   static_cast<unsigned>(slotIndex));
+    }
 }
 
 TRACK_COLD_MEM void TrackUndo::undoOverdub(Track& track) {
