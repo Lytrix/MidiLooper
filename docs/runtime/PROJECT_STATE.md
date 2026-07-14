@@ -8,7 +8,7 @@ Last updated: 2026-07-14 (branch cleanup — `dev` is integration trunk)
 
 ## Current branch
 
-**`dev`** @ `644de4f` — v3 integration (GitHub default). Feature work: `feature/persistence-work-queue` next.
+**`dev`** @ `ec7b4a5` — v3 integration (GitHub default). Feature work: `feature/persistence-work-queue` next.
 
 ### Firmware lines
 
