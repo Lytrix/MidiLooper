@@ -2,19 +2,46 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-07-14 (persistence work queue B1–B5 shipped; PR to `dev`)
+Last updated: 2026-07-14 (M6 Ph 1–2 merged to `dev`; memory pressure reclaim next)
 
 ---
 
 ## Now implementing
 
-### Next: loop-owned undo Phase 2 — **after persistence queue merge**
+### Memory pressure reclaim (M6 follow-on)
 
-**Plan:** [`docs/plans/loop_undo_ownership_phase2_handoff.md`](../plans/loop_undo_ownership_phase2_handoff.md) — per-loop undo stacks; B6 `LoopUndoHistory` serializer wire deferred there.
+**Branch:** `feature/memory-pressure-reclaim` (from `dev` @ `11025ca`)  
+**Plan:** [`docs/plans/memory_pressure_reclaim_refinement.md`](../plans/memory_pressure_reclaim_refinement.md)
+
+Formal `MemoryPressureLevel` (Normal / Low / Critical), ownership-driven derived-cache reclaim, Critical persistence inversion, M6 Ph 3 idle defer + Phase 4 closeout.
+
+| Phase | Scope |
+|-------|--------|
+| 1 | Level core + Low reclaim (playback windows, materialized discard) |
+| 2 | Critical undo trim + aggressive mid_pass |
+| 3 | Replace scattered heap thresholds |
+| 4 | Manual gate 215312 config; OpenSpec archive |
 
 ---
 
-## Recently landed (persistence work queue — PR pending merge to `dev`)
+## Recently landed (M6 Ph 1–2 — merged to `dev`)
+
+**Commits:** `50e0f6e`…`11025ca` on `dev`
+
+| Item | Status |
+|------|--------|
+| Phase A metrics | Shipped |
+| Phase 1 playback window (DEC-016 chunk merge) | Shipped |
+| Phase 2 display stale-while-revalidate | Shipped |
+| Record-start headroom + live-record display | Shipped |
+| Native | **608/608** |
+| Manual | **PASS** no crash — [`session_20260714_215312.log`](../../captures/session_20260714_215312.log) (64-bar, 7-track overdub; 42 append failures remain) |
+
+**Plan:** [`multi_track_playback_pressure_closure_refinement.md`](../plans/multi_track_playback_pressure_closure_refinement.md)
+
+---
+
+## Recently landed (persistence work queue — on `dev`)
 
 **Branch:** `feature/persistence-work-queue` — [`current_set_persist_work_item_queue_enhancement.md`](../plans/current_set_persist_work_item_queue_enhancement.md)
 
@@ -161,7 +188,7 @@ Blocked until `unified-interval-projection` Phases 1–5 complete.
 
 ### Prior: [`runtime-derived-representation-heap`](../../openspec/changes/runtime-derived-representation-heap/)
 
-M5 adopt-on-load shipped; lazy load + 64+64 HITL remain.
+M6 Ph 1–2 on `dev`; pressure reclaim + Ph 3–4 in [`memory_pressure_reclaim_refinement.md`](../plans/memory_pressure_reclaim_refinement.md).
 
 ---
 
