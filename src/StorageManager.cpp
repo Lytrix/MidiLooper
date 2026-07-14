@@ -1584,7 +1584,9 @@ bool StorageManager::hasDeferredSaveWork() {
 #if BYPASS_STOP_UNDO_SAVE
     return false;
 #else
-    return storageSession.currentWorkspaceSave.pending || storageSession.currentWorkspaceSave.inProgress;
+    return storageSession.currentWorkspaceSave.pending || storageSession.currentWorkspaceSave.inProgress ||
+           PersistenceWorkQueue::queueDepth() > 0 || PersistenceWorkQueue::writingWorkItemCount() > 0 ||
+           storageSession.persistenceWorkItem.itemActive;
 #endif
 }
 
@@ -1601,6 +1603,7 @@ void StorageManager::processDeferredSaveState(const LooperState& state) {
     (void)state;
     storageSession.currentWorkspaceSave.pending = false;
     resetDeferredSaveJobState();
+    resetPersistenceWorkItemJobState();
     resetRevisionCommitJobState();
     resetRevisionLoadJobState();
     return;
@@ -1734,7 +1737,8 @@ void StorageManager::processDeferredSaveState(const LooperState& state) {
 
         const bool otherSdIoActive =
             storageSession.currentWorkspaceSave.sdIoActive || storageSession.revisionCommit.sdIoActive ||
-            storageSession.revisionLoad.sdIoActive || storageSession.midPassChunkPersist.sdIoActive;
+            storageSession.revisionLoad.sdIoActive || storageSession.midPassChunkPersist.sdIoActive ||
+            storageSession.persistenceWorkItem.sdIoActive;
         if (PersistenceFailurePolicy::shouldRunMidPassWriter(PersistenceQueue::queueDepth(),
                                                                otherSdIoActive)) {
             const uint32_t currentHeap = MemoryMonitor::getInternalHeapFreeBytes();
@@ -1751,6 +1755,28 @@ void StorageManager::processDeferredSaveState(const LooperState& state) {
             PersistenceDiagnostics::onSliceCompleted(sliceLatencyUs);
             if (!midOk) {
                 SC_PERSIST("mid_pass", sliceLatencyUs, 0, 0, "failed");
+                break;
+            }
+            break;
+        }
+
+        if (PersistenceFailurePolicy::shouldRunPersistenceWorkItemWriter(
+                PersistenceWorkQueue::queueDepth(), PersistenceWorkQueue::writingWorkItemCount(),
+                otherSdIoActive, storageSession.currentWorkspaceSave.inProgress)) {
+            const uint32_t currentHeap = MemoryMonitor::getInternalHeapFreeBytes();
+            if (!LoopEventStore::hasInternalHeapHeadroomForNonCriticalWork(currentHeap)) {
+                PersistenceDiagnostics::onHeapFloorBlock();
+                break;
+            }
+            PersistenceFailurePolicy::maybeEmitBackpressureTelemetry(captureActiveForScheduler);
+            const uint32_t ioStartUs = micros();
+            storageSession.persistenceWorkItem.sdIoActive = true;
+            const bool workOk = stepPersistenceWorkItem();
+            const uint32_t sliceLatencyUs = micros() - ioStartUs;
+            storageSession.persistenceWorkItem.sdIoActive = false;
+            PersistenceDiagnostics::onSliceCompleted(sliceLatencyUs);
+            if (!workOk) {
+                SC_PERSIST("work", sliceLatencyUs, 0, 0, "failed");
                 break;
             }
             break;

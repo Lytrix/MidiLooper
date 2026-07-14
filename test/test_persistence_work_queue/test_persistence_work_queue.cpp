@@ -127,6 +127,19 @@ void test_requeue_writing_item_returns_to_head() {
   TEST_ASSERT_TRUE(persistWorkItemsEqual(queued[1], trackMetaItem(1)));
 }
 
+void test_writing_work_item_count_tracks_active_writer() {
+  resetQueue();
+  TEST_ASSERT_EQUAL(0u, PersistenceWorkQueue::writingWorkItemCount());
+
+  TEST_ASSERT_TRUE(PersistenceWorkQueue::admitWork(PersistWorkType::LoopPersist, persistKeyForLoop(2)));
+  PersistWorkItem item{};
+  TEST_ASSERT_TRUE(PersistenceWorkQueue::beginWriteQueuedItem(item));
+  TEST_ASSERT_EQUAL(1u, PersistenceWorkQueue::writingWorkItemCount());
+
+  PersistenceWorkQueue::markItemPersisted(item);
+  TEST_ASSERT_EQUAL(0u, PersistenceWorkQueue::writingWorkItemCount());
+}
+
 int main(int /*argc*/, char** /*argv*/) {
   UNITY_BEGIN();
   RUN_TEST(test_persist_key_equality);
@@ -135,5 +148,6 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_lifecycle_not_scheduled_to_persisted);
   RUN_TEST(test_re_admit_after_persisted_requeues_at_tail);
   RUN_TEST(test_requeue_writing_item_returns_to_head);
+  RUN_TEST(test_writing_work_item_count_tracks_active_writer);
   return UNITY_END();
 }

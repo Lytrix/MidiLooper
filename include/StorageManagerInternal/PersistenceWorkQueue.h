@@ -57,6 +57,9 @@ namespace PersistenceWorkQueue {
 
 uint16_t queueDepth();
 
+/// Items in Writing state (slice in progress).
+uint16_t writingWorkItemCount();
+
 PersistWorkState workState(PersistWorkType type, PersistKey key);
 
 /// Admit stale work. Returns true when newly queued. Re-admit while Queued/Writing is a no-op (F2).

@@ -172,6 +172,14 @@ uint16_t queueDepth() {
   return countQueued(*queueState());
 }
 
+uint16_t writingWorkItemCount() {
+  QueueState* state = queueState();
+  if (state == nullptr || state->writingEntryIndex == kInvalidEntryIndex) {
+    return 0;
+  }
+  return 1;
+}
+
 PersistWorkState workState(PersistWorkType type, PersistKey key) {
   const uint16_t index = findEntryIndex(*queueState(), type, key);
   if (index == kInvalidEntryIndex) {
