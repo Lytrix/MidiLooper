@@ -7,7 +7,7 @@ todos:
     content: "Phase 1A — MemoryPressureLevel + thresholds + hysteresis + transition DIAG only; no reclaim; native threshold tests"
     status: pending
   - id: phase-1b-low-reclaim
-    content: "Phase 1B — reclaimDerivedViewCachesUnderPressure at Low+; background-first order; stale AND not-referenced eligibility"
+    content: "Phase 1B — tryReclaimDerivedViewCachesUnderPressure at Low+; owner try* APIs; background-first; stale AND not-referenced"
     status: pending
   - id: phase-2-critical-reclaim
     content: "Critical — undo trim, pass reclaim, optional visual defer; persistence overrides non-critical gating after reclaim"
@@ -57,18 +57,31 @@ After M6 Ph 1–2, hot-path eager materialize is gone (`PlaybackFullMaterialize=
 
 | Principle | Rule |
 |-----------|------|
-| **Single ownership point** | `MemoryMonitor::resolveMemoryPressureLevel()` once per main-loop turn |
+| **Advisory, not authoritative** | `MemoryPressureLevel` **expresses system pressure** — it does not command subsystems. Each owner decides whether a reclaim action is **safe** at that level (`try*` / guard-and-skip), same as today. |
+| **Pressure computation** | `MemoryMonitor::resolveMemoryPressureLevel()` once per main-loop turn — **signal only** |
+| **Reclaim ownership stays local** | `Loop`, `Track`, `StorageManager`, `DisplayManager` retain eligibility and safety checks |
 | **Event-driven reclaim** | On pressure-level transition or revision-stale **while already at Low+** |
 | **Not periodic** | No every-N-bars eviction |
 | **Incremental rollout** | Validate state machine before reclaim; validate reclaim before threshold refactors |
 | **Rollback-friendly** | Keep `MemoryPressureLevel` even if an individual reclaim strategy is disabled |
 
+**Advisory flow (not a central command bus):**
+
+```text
+MemoryMonitor  →  MemoryPressureLevel  (advisory signal)
+                         ↓
+              subsystems consult level
+                         ↓
+              each owner: tryReclaim / defer optional work
+              (owner decides if safe — may no-op)
+```
+
 ---
 
 ## Design — `MemoryPressureLevel`
 
-**Owner:** `MemoryMonitor` (compute once per main-loop turn).  
-**Consumers:** `TrackManager`, `StorageManager`, `DisplayManager`, `PassReclaim` — query level; do not scatter `if (heap < …)` until Phase 3.
+**Signal owner:** `MemoryMonitor` (compute once per main-loop turn).  
+**Consumers (advisory):** `TrackManager`, `StorageManager`, `DisplayManager`, `PassReclaim` — **consult** level when choosing optional work or reclaim; each subsystem **may no-op** if unsafe. Do not scatter raw `if (heap < …)` until Phase 3.
 
 ```cpp
 enum class MemoryPressureLevel : uint8_t {
@@ -94,15 +107,17 @@ enum class MemoryPressureLevel : uint8_t {
 | Chunk pool | `LoopEventStore::freeChunkCount()` vs `PassConfig::CHUNK_RESERVE` |
 | Persist backlog | `PersistenceQueue::queueDepth()` (telemetry + Critical enter) |
 
-### Thresholds (initial — tune on device)
+### Thresholds (initial calibration — configuration, not architecture)
 
-| Level | Enter | Exit (hysteresis) |
-|-------|-------|-------------------|
+Values below are **starting points for Phase 1A**; expected to change based on HITL and manual capture sessions. They belong in `Config` / `Globals.h`, not in normative spec prose.
+
+| Level | Enter (initial) | Exit / hysteresis (initial) |
+|-------|-----------------|-----------------------------|
 | **Normal** | heap ≥ 64 KiB **and** chunks free > reserve + margin | — |
 | **Low** | heap 32–64 KiB **or** rising chunk pressure | Normal only when heap ≥ 80 KiB stable ≥ 500 ms |
 | **Critical** | heap < 32 KiB (`HEAP_RESERVE_BYTES`) **or** `freeChunkCount() ≤ CHUNK_RESERVE` **or** capture append failure latch | Low when heap ≥ 48 KiB **and** chunks free > reserve + margin |
 
-Add `Config::HEAP_PRESSURE_LOW_BYTES`, `HEAP_PRESSURE_NORMAL_BYTES`, `HEAP_PRESSURE_HYSTERESIS_MS` in `Globals.h`.
+Add `Config::HEAP_PRESSURE_*` constants in `Globals.h`; tune without changing subsystem ownership or advisory contract.
 
 Append-failure hook: latch Critical until chunks drain or timeout (calibrate in Phase 1A manual session).
 
@@ -163,13 +178,19 @@ Eligible for reclaim when:
 
 Ownership must stay explicit — revision numbers are a hint, not sole authority.
 
-### Low — reclaim hooks (Phase 1B; existing symbols)
+### Low — reclaim hooks (Phase 1B; try-reclaim on owner)
 
-| Action | Owner |
-|--------|-------|
-| `Track::releasePlaybackWindowMemory()` | Background tracks first; selected last |
-| `Loop::discardPassesMaterializedCache()` | Eligible loops only (no edit session; not referenced) |
-| `Track::publishedMidiScratch_.clear()` | When not in NOTE_EDIT |
+Pressure **suggests** reclaim; the owner **decides**. Prefer `try*` / bool-return APIs over blind discard:
+
+| Advisory call | Owner decides safety |
+|---------------|----------------------|
+| `Track::tryReleasePlaybackWindowMemory()` | Background tracks first; selected last; skip if window still referenced this tick |
+| `Loop::tryDiscardPassesMaterializedCache()` | No edit session; not in stop-path materialize; not referenced |
+| `Track::tryClearPublishedMidiScratch()` | Not in NOTE_EDIT |
+
+**Avoid:** `if (pressure >= Low) loop.discardPassesMaterializedCache()` with no guard inside `Loop`.
+
+**Prefer:** `if (pressure >= Low) loop.tryDiscardPassesMaterializedCache()` — returns false when unsafe.
 
 ### Critical — persistence (wording)
 
@@ -177,13 +198,13 @@ Ownership must stay explicit — revision numbers are a hint, not sole authority
 
 ```text
 Normal
-    Respect existing persistence admission gates
+    StorageManager respects existing admission gates
     (including hasInternalHeapHeadroomForNonCriticalWork).
 
 Critical
-    After reclaim actions in the same loop turn,
-    persistence MAY override non-critical gating
-    to drain mid_pass / work items.
+    StorageManager MAY tryOverrideNonCriticalPersistAdmission()
+    after other subsystems have tried reclaim in the same turn —
+    only if its own safety checks pass.
 
 NOTE_EDIT
     Continues to obey HEAP_RESERVE_BYTES regardless of pressure level.
@@ -196,19 +217,21 @@ Order in Critical: **reclaim first** → then allow mid_pass / work-item slices 
 ## Call order (main loop)
 
 ```text
-pressure = MemoryMonitor::resolveMemoryPressureLevel()   // Phase 1A
+pressure = MemoryMonitor::resolveMemoryPressureLevel()   // Phase 1A — signal only
 
-// Phase 1B+
+// Phase 1B+ — orchestration consults level; each track/loop may no-op
 if (pressure >= Low)
-  trackManager.reclaimDerivedViewCachesUnderPressure(pressure)
+  trackManager.tryReclaimDerivedViewCachesUnderPressure(pressure)
 
 // Phase 2+
 if (pressure >= Critical)
-  trackManager.reclaimUnderCriticalPressure()
+  trackManager.tryReclaimUnderCriticalPressure()
 
-// Phase 2+ — slice budget / non-critical gate override
+// Phase 2+ — StorageManager consults level; owns persist admission override
 StorageManager::processDeferredSaveState(..., pressure)
 ```
+
+`TrackManager` **coordinates** background-first order and passes `pressure` — it does **not** bypass owner safety checks.
 
 Reclaim on **level transition** or **eligible stale cache while already at Low+** — never on a bar timer.
 
@@ -243,9 +266,9 @@ Reclaim on **level transition** or **eligible stale cache while already at Low+*
 
 After 1A validated:
 
-- `TrackManager::reclaimDerivedViewCachesUnderPressure(Low)`
-- Background-first priority order
-- Stale **and** not-referenced eligibility
+- `TrackManager::tryReclaimDerivedViewCachesUnderPressure(Low)` — orchestration only
+- Owner `try*` methods on `Loop` / `Track` (materialized discard, playback window, scratch)
+- Background-first priority order; stale **and** not-referenced inside each owner
 - Main-loop hook on level transition + eligible stale while Low+
 
 **Gate:** no playback glitches / dropped MIDI / stale display on selected track; rebuild after reclaim OK.
@@ -325,7 +348,7 @@ The pressure framework remains valid even when a single reclaim action is revert
 
 ### Open before coding
 
-1. Exact threshold bytes — calibrate in Phase 1A manual session
+1. Threshold bytes — initial `Config` values; recalibrate in Phase 1A manual session (not architecture)
 2. Append-failure Critical latch duration
 3. Per-cache “not currently referenced” predicates — document in code at reclaim site
 
