@@ -3,6 +3,7 @@
 
 #include "StorageManager.h"
 #include "StorageManagerInternal.h"
+#include "StorageManagerInternal/PersistenceWorkQueue.h"
 #include "StorageActivitySnapshot.h"
 #include "RevisionLoadPolicy.h"
 #include "SetBrowserOverlayPolicy.h"
@@ -18,9 +19,12 @@ namespace StorageManagerInternal {
 
 StorageActivitySnapshot buildStorageActivitySnapshot() {
     StorageActivitySnapshot snapshot{};
-    snapshot.deferredSavePending = storageSession.currentWorkspaceSave.pending;
-    snapshot.deferredSaveInProgress = storageSession.currentWorkspaceSave.inProgress;
-    snapshot.deferredSaveSdIoActive = storageSession.currentWorkspaceSave.sdIoActive;
+    snapshot.deferredSavePending = storageSession.currentWorkspaceSave.pending ||
+                                   PersistenceWorkQueue::queueDepth() > 0;
+    snapshot.deferredSaveInProgress = storageSession.persistenceWorkItem.itemActive ||
+                                      PersistenceWorkQueue::writingWorkItemCount() > 0;
+    snapshot.deferredSaveSdIoActive = storageSession.currentWorkspaceSave.sdIoActive ||
+                                      storageSession.persistenceWorkItem.sdIoActive;
     snapshot.revisionCommitPending = storageSession.revisionCommit.pending;
     snapshot.revisionCommitInProgress = storageSession.revisionCommit.inProgress;
     snapshot.revisionCommitSdIoActive = storageSession.revisionCommit.sdIoActive;

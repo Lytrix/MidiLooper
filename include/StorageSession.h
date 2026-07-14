@@ -16,6 +16,7 @@
 #include "RevisionPackedBlob.h"
 #include "SetBrowserOverlayPolicy.h"
 #include "SetRevisionCatalog.h"
+#include "StorageManagerInternal/PersistenceWorkQueue.h"
 #include "TrackState.h"
 #include "Utils/ExternalMemoryFirstAllocator.h"
 
@@ -277,9 +278,23 @@ struct MidPassChunkPersistJob {
   uint16_t chunksPersisted = 0;
 };
 
+struct PersistenceWorkItemJob {
+  bool sdIoActive = false;
+  bool itemActive = false;
+  bool bundleWriteActive = false;
+  bool skipLoopSlotStage = false;
+  PersistWorkItem item{};
+  LooperState stateSnapshot = LOOPER_IDLE;
+  uint8_t trackIndex = 0xFF;
+  uint8_t slotIndex = 0xFF;
+  uint32_t flushStartedAtUs = 0;
+  uint32_t flushHeapBefore = 0;
+};
+
 struct StorageSession {
   CurrentWorkspaceSaveJob currentWorkspaceSave;
   MidPassChunkPersistJob midPassChunkPersist;
+  PersistenceWorkItemJob persistenceWorkItem;
   RevisionCommitJob revisionCommit;
   RevisionLoadJob revisionLoad;
   BootRecoveryJob bootRecovery;

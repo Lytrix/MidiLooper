@@ -17,6 +17,7 @@
 #include "SetRevisionCatalog.h"
 #include "StorageActivitySnapshot.h"
 #include "StorageLoopIo.h"
+#include "PersistenceSyncDrainBudget.h"
 #include "StorageSession.h"
 #include "TrackState.h"
 #include "MidiEvent.h"
@@ -103,6 +104,7 @@ void resetDeferredLoopWriteState();
 void resetDeferredUndoWriteState();
 bool writeCurrentSetMetaHeaderToOpenFile(File& file);
 bool finalizeDeferredMetaTempFile();
+bool openDeferredLoopSlotTemp(uint8_t trackIndex, uint8_t slotIndex);
 bool finalizeDeferredLoopSlotTemp(uint8_t trackIndex, uint8_t slotIndex);
 bool stepDeferredLoopPersist(File& file, const Loop& loop, bool& loopDone,
                              LoopPersistPayloadCrc crcMode = LoopPersistPayloadCrc::None);
@@ -118,6 +120,14 @@ StorageIo storageIoFromFileWriteWithRevisionPayloadCrc(File& file);
 
 void resetDeferredSaveJobState();
 void resetMidPassChunkPersistState();
+void resetPersistenceWorkItemJobState();
+bool stepPersistenceWorkItem(const LooperState& state);
+void maybeAdmitFinalizeWorkspaceAfterDrain();
+SyncDrainProgressSnapshot captureSyncDrainProgressSnapshot();
+SyncDrainBudget buildSyncDrainBudgetForSession();
+bool beginDeferredRuntimeBundleWrite(const LooperState& state);
+bool stepDeferredRuntimeBundleSlice(bool& bundleDoneOut);
+bool stepDeferredWorkspaceFinalizeSlice(bool& finalizeDoneOut);
 bool stepMidPassChunkPersist();
 bool beginDeferredSaveJob(const LooperState& state);
 bool stepDeferredSaveJob();
