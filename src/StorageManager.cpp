@@ -1823,7 +1823,9 @@ void StorageManager::processDeferredSaveState(const LooperState& state) {
         if (PersistenceFailurePolicy::shouldRunPersistenceWorkItemWriter(
                 workQueueDepth, writingWorkItemCount, otherSdIoActive)) {
             const uint32_t currentHeap = MemoryMonitor::getInternalHeapFreeBytes();
-            if (!LoopEventStore::hasInternalHeapHeadroomForNonCriticalWork(currentHeap)) {
+            if (!PersistenceFailurePolicy::hasPersistenceSliceHeadroom(
+                    currentHeap, storageSession.persistenceWorkItem.itemActive,
+                    storageSession.currentWorkspaceSave.urgentRequested)) {
                 PersistenceDiagnostics::onHeapFloorBlock();
                 break;
             }

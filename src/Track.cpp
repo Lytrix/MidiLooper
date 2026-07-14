@@ -1202,6 +1202,7 @@ void Track::stopRecording(uint32_t currentTick) {
   if (!setState(TRACK_STOPPED_RECORDING)) return;
 
   [[maybe_unused]] const bool captureAlignFlag = alignLoopOriginOnNextStop;
+  const uint8_t recordedSlotIndex = activeLoopIndex;
   Loop& loop = getActiveLoop();
   const uint32_t stopPathStartUs = micros();
   const uint32_t stopHeap = MemoryMonitor::getInternalHeapFreeBytes();
@@ -1334,8 +1335,7 @@ void Track::stopRecording(uint32_t currentTick) {
                      &stopPathStats);
   if (sideEffectResult == CommitResult::Published) {
     StorageManager::markCurrentSetLoopSlotDirty(resolveTrackIndexForPersistence(*this),
-                                                getActiveLoopIndex());
-    StorageManager::deferWorkspaceSaveDispatchDuringPlayback(Config::playbackSaveDispatchGraceMs);
+                                                recordedSlotIndex);
     StorageManager::requestDeferredSaveState(looperState.getLooperState(), stateAdvanceHeapAfter,
                                              true);
   }
@@ -1345,6 +1345,7 @@ TRACK_COLD_MEM void Track::stopRecordingToStopped(uint32_t currentTick) {
   if (!setState(TRACK_STOPPED_RECORDING)) return;
 
   alignLoopOriginOnNextStop = false;
+  const uint8_t recordedSlotIndex = activeLoopIndex;
   Loop& loop = getActiveLoop();
   const uint32_t stopPathStartUs = micros();
   const uint32_t stopHeap = MemoryMonitor::getInternalHeapFreeBytes();
@@ -1435,7 +1436,7 @@ TRACK_COLD_MEM void Track::stopRecordingToStopped(uint32_t currentTick) {
                      &stopPathStats);
   if (sideEffectResult == CommitResult::Published) {
     StorageManager::markCurrentSetLoopSlotDirty(resolveTrackIndexForPersistence(*this),
-                                                getActiveLoopIndex());
+                                                recordedSlotIndex);
     StorageManager::requestDeferredSaveState(looperState.getLooperState(), stateAdvanceHeapAfter,
                                              true);
   }
