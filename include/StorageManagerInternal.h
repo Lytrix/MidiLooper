@@ -103,6 +103,7 @@ void resetDeferredLoopWriteState();
 void resetDeferredUndoWriteState();
 bool writeCurrentSetMetaHeaderToOpenFile(File& file);
 bool finalizeDeferredMetaTempFile();
+bool openDeferredLoopSlotTemp(uint8_t trackIndex, uint8_t slotIndex);
 bool finalizeDeferredLoopSlotTemp(uint8_t trackIndex, uint8_t slotIndex);
 bool stepDeferredLoopPersist(File& file, const Loop& loop, bool& loopDone,
                              LoopPersistPayloadCrc crcMode = LoopPersistPayloadCrc::None);
@@ -118,6 +119,8 @@ StorageIo storageIoFromFileWriteWithRevisionPayloadCrc(File& file);
 
 void resetDeferredSaveJobState();
 void resetMidPassChunkPersistState();
+void resetPersistenceWorkItemJobState();
+bool stepPersistenceWorkItem();
 bool stepMidPassChunkPersist();
 bool beginDeferredSaveJob(const LooperState& state);
 bool stepDeferredSaveJob();
