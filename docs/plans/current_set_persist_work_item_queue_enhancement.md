@@ -3,7 +3,7 @@
 **Kind:** Architecture + implementation plan  
 **Date:** 2026-07-14  
 **Branch:** `feature/persistence-work-queue` from `dev` @ `ec7b4a5`  
-**Status:** Approved — implement B1–B5 after architecture gate in chat (R1–R9, A1–A9, F1–F3, ownership)  
+**Status:** B1 shipped; B2 shipped — B3 `stepPersistenceWorkItem` next  
 **Parent plan:** [SD Write Reduction](.cursor/plans/sd_write_reduction_910f40b3.plan.md)  
 **Evidence:** [`captures/session_20260714_031454.log`](../../captures/session_20260714_031454.log) — ~8,400 `PERS,slice` lines per HITL baseline; `w1_s63` payload stats prove monolithic meta/undo sweep.
 
@@ -480,9 +480,9 @@ Empty work queue + no in-flight work → **no SD I/O**.
 | Phase | Deliverable |
 |-------|-------------|
 | **B0** | This doc ✅ |
-| **B1** | `PersistenceWorkQueue` (internal) + `PersistKey` + `test_persistence_work_queue` |
-| **B2** | Public `StorageManager::admit*` only; deprecate `mark*` / `requestDeferredSaveState` |
-| **B3** | `stepPersistenceWorkItem()` — schedule only; R9; no serialize in queue |
+| **B1** | `PersistenceWorkQueue` (internal) + `PersistKey` + `test_persistence_work_queue` | **Done** |
+| **B2** | Public `StorageManager::admit*` only; deprecate `mark*` / `requestDeferredSaveState` | **Done** |
+| **B3** | `stepPersistenceWorkItem()` — schedule only; R9; no serialize in queue | **Next** |
 | **B4** | Scheduler wiring; retire monolith |
 | **B5** | Native + HITL |
 | **B6** | DEC-024 `LoopUndoHistory` serializer wire only (type/key unchanged) |
