@@ -1,5 +1,7 @@
 # Bars and 16ths (control surface)
 
+**Applies to:** v3 (`dev`) — DROID bar/16th rows, Channel 16 notes 0–15 and 17–24.
+
 **Bars** (typical: Channel 16 notes 17–24) and **16ths** (typical: notes 0–15) are used for **jam loop** entry, seek, and region selection while in **LOOP_EDIT**, and for **LED** playhead/content feedback from the Teensy.
 
 - **Behavior:** **[`../jam-bar-step-phases.md`](../jam-bar-step-phases.md)** — HOLD_ONE, HOLD_TWO, seek, double to exit, triple undo loop start.

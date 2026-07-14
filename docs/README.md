@@ -2,6 +2,8 @@
 
 The **story and layout** of the looper start at the **[root `README.md`](../README.md)** (elevator pitch → how to play → reference grid → technical links). **Guides** (current behavior) live in **[`Guides/`](Guides/)**. **Refinements** (implementation logs) live in **[`Refinements/`](Refinements/)** and may not match the code line-for-line today.
 
+**Firmware versions:** v1 = `main`, v2 = `midi-faders`, v3 = `dev` (default). See [**BRANCHING.md**](BRANCHING.md). Control-surface guides are **v3 only**.
+
 **Cursor plan exports** and phased design archives: **[`plans/`](plans/README.md)**.
 
 ## Agent context harness (governance layer)
@@ -13,6 +15,7 @@ Does **not** change firmware — process and documentation for coding agents.
 | [**00-authority/**](00-authority/README.md) | Authority hierarchy: intent → architecture → delivery |
 | [runtime/PROJECT_STATE.md](runtime/PROJECT_STATE.md) | Execution context — **load first** |
 | [runtime/CURRENT_WORK.md](runtime/CURRENT_WORK.md) | Implementation scope (now / not now) — **required before coding** |
+| [BRANCHING.md](BRANCHING.md) | v1 / v2 / v3 branches, feature workflow, local archive refs |
 | [runtime/ROADMAP.md](runtime/ROADMAP.md) | Future milestones — informational only |
 | [DECISION_LOG.md](DECISION_LOG.md) | Accepted / superseded decisions — **search before new abstractions** |
 | [templates/DECISION_REVIEW.md](templates/DECISION_REVIEW.md) | Mandatory historical review before firmware implementation |
@@ -35,8 +38,8 @@ Cursor rule: `.cursor/rules/Agent-Context-Workflow.mdc`
 | [**LOOP_MIDI_STORAGE_AND_VALIDATION.md**](Guides/LOOP_MIDI_STORAGE_AND_VALIDATION.md) | **Capture / passes (record, overdub, edit), commitCapturePass, validation tiers, undo stacks, SD v4** — read before touching Loop/Track undo or stop paths |
 | [**record_overdub_memory_display_timeline_enhancement.md**](plans/record_overdub_memory_display_timeline_enhancement.md) | **Record/overdub pipeline overview** — Mermaid timelines: capture → external memory pool (external RAM / PSRAM) → playback → OLED → deferred SD |
 | [DEFERRED_RUNTIME_PERSISTENCE.md](Guides/DEFERRED_RUNTIME_PERSISTENCE.md) | Central deferred save routing and chunk-bounded SD writer stages |
-| [MIDI_CONFIG_GUIDE.md](Guides/MIDI_CONFIG_GUIDE.md) | Remapping channels, notes, and CCs; quick reference tables |
-| [**control-surface/**](Guides/control-surface/) | Per-row notes: Scenes, Tracks, Jams, Loops, Bars/16ths, Main controls, Faders, Display |
+| [MIDI_CONFIG_GUIDE.md](Guides/MIDI_CONFIG_GUIDE.md) | Remapping channels, notes, and CCs; quick reference tables (**v3 / `dev` default DROID mapping**) |
+| [**control-surface/**](Guides/control-surface/) | Per-row notes: Scenes, Tracks, Jams, Loops, Bars/16ths, Main controls, Faders, Display (**v3 only**) |
 | [LOOP_START_EDITING.md](Guides/LOOP_START_EDITING.md) | Loop start point editing (live / fader) |
 | [FADER_STATE_SYSTEM.md](Guides/FADER_STATE_SYSTEM.md) | Fader state machine; § NOTE_EDIT motor feedback (2026) |
 | [DROID_MOTORFADER_PITCHBEND.md](Guides/DROID_MOTORFADER_PITCHBEND.md) | DROID motorized fader scale, NOTE_EDIT arm, select/geometry motor sync, HITL probe |

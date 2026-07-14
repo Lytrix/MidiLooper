@@ -1,5 +1,7 @@
 # Jams (control surface)
 
+**Applies to:** v3 (`dev`) — jam row reserved; jam capture today via Bars/16ths in LOOP_EDIT.
+
 ## Live jam behavior (today)
 
 Bar and 16th buttons in **LOOP_EDIT** drive **jam regions**, `jamTick`, HOLD_ONE / HOLD_TWO, seek, and exit gestures. Full behavior: **[`../jam-bar-step-phases.md`](../jam-bar-step-phases.md)**.

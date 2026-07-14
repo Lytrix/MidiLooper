@@ -2,6 +2,7 @@
 
 **Kind:** Architecture + implementation plan  
 **Date:** 2026-07-14  
+**Branch:** `feature/persistence-work-queue` from `dev` @ `644de4f`  
 **Status:** Approved — implement B1–B5 after architecture gate in chat (R1–R9, A1–A9, F1–F3, ownership)  
 **Parent plan:** [SD Write Reduction](.cursor/plans/sd_write_reduction_910f40b3.plan.md)  
 **Evidence:** [`captures/session_20260714_031454.log`](../../captures/session_20260714_031454.log) — ~8,400 `PERS,slice` lines per HITL baseline; `w1_s63` payload stats prove monolithic meta/undo sweep.
