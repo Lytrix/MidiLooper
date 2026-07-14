@@ -8,6 +8,34 @@
 
 **Evidence (Phase 1B):** [`session_20260714_235620.log`](../../captures/session_20260714_235620.log) — 0× `Capture append failed`; internal heap floor ~4 KiB at publish; chunk pool healthy (446+ free); Phase 1B reclaim targets PSRAM-tier derived views, not internal-heap pass metadata.
 
+**Phase 2A attempt (REVERTED):** [`session_20260715_003306.log`](../../captures/session_20260715_003306.log) — see [§ Phase 2A failure](#phase-2a-failure-reverted-2026-07-15).
+
+---
+
+## Phase 2A failure (reverted 2026-07-15)
+
+Commit `d5c7410` routed all pass metadata typedefs to `ExternalMemoryFirstAllocator`. Manual gate **003306** failed:
+
+| Signal | Log evidence |
+|--------|----------------|
+| Hard crash (×2) | `[ExternalMemoryFirstAllocator] FATAL: both external memory and internal heap are exhausted!` → `#CAPTURE_RECONNECT` reboot |
+| Crash #1 | ~20.5 s during multi-track **RECORDING** (line ~1204) |
+| Crash #2 | ~300.5 s on **Stop Overdub** — `Stop finalize pending` then immediate reboot; no `RECS,stage,publish` for overdub |
+| Capture loss | 1× `Capture append failed` at overdub stop (note 12) |
+| Timing | `COORD,abs` grew to **50688** clocks at failure vs ~1.5–2.3 Ki during early overdub |
+
+**Root cause:** `ChunkIdList` / `BarIndexVec` are **hot-path** (every capture append, bar index update). Moving them to extmem-first:
+
+1. Adds PSRAM alloc pressure competing with chunk pool + playback windows.
+2. On exhaustion, `ExternalMemoryFirstAllocator::allocate` calls **`abort()`** — not graceful append failure.
+3. PSRAM access on append/materialize path adds servicing latency → worse note timing.
+
+This contradicts [`INTERNAL_HEAP_AND_EXTERNAL_MEMORY.md`](../Guides/INTERNAL_HEAP_AND_EXTERNAL_MEMORY.md) § hot path: *"Do not move … ChunkIdList, BarIndexVec"*.
+
+**Revert:** `2e164e4` (git revert of `d5c7410`).
+
+**Revised 2A direction (future):** split-tier only — keep hot metadata internal; consider cold-only routing (`EditPassVec`, `VisualBarVec`) or LoopPool extmem (2B) after separate gate. Do **not** blanket-swap pass typedefs.
+
 ---
 
 ## Revision summary
