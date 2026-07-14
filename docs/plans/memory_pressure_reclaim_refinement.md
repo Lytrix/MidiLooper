@@ -1,7 +1,7 @@
 ---
 name: memory pressure reclaim
 openspec_change: runtime-derived-representation-heap
-overview: Formal MemoryPressureLevel policy (Normal / Low / Critical) with ownership-driven derived-cache reclaim, undo trim, and persistence backpressure. Incremental rollout — validate state machine before reclaim. Follow-on to M6 Ph 1–2 merged to dev 2026-07-14.
+overview: Formal MemoryPressureLevel policy (Normal / Low / Critical) with ownership-driven derived-cache reclaim, pass metadata extmem routing, and persistence backpressure. Phase 2 revised — skip undo trim; route pass metadata off internal heap. Follow-on to M6 Ph 1–2 merged to dev 2026-07-14.
 todos:
   - id: phase-1a-pressure-state-machine
     content: "Phase 1A — MemoryPressureLevel + thresholds + hysteresis + transition DIAG only; no reclaim; native threshold tests"
@@ -9,8 +9,14 @@ todos:
   - id: phase-1b-low-reclaim
     content: "Phase 1B — tryReclaimDerivedViewCachesUnderPressure at Low+; owner try* APIs; background-first; stale AND not-referenced"
     status: completed
-  - id: phase-2-critical-reclaim
-    content: "Critical — undo trim, pass reclaim, optional visual defer; persistence overrides non-critical gating after reclaim"
+  - id: phase-2a-pass-metadata-extmem
+    content: "Phase 2A — ChunkIdList, pass vectors, BarIndexVec, VisualBarVec → ExternalMemoryFirstAllocator"
+    status: pending
+  - id: phase-2b-loop-pool-extmem
+    content: "Phase 2B — LoopPool loops_ in extmem (~34 KiB fixed internal heap gain)"
+    status: pending
+  - id: phase-2c-critical-reclaim
+    content: "Phase 2C — pass reclaim + visual defer + persist override at Critical (no undo trim)"
     status: pending
   - id: phase-3-replace-scattered-thresholds
     content: "After reclaim validated — route optional work through pressure level; remove duplicate heap checks"
@@ -97,7 +103,7 @@ enum class MemoryPressureLevel : uint8_t {
 |-------|--------|
 | **Normal** | Full functionality — no compromises |
 | **Low** | Reclaim **rebuildable derived caches** only; preserve capture, playback, selected-track UX |
-| **Critical** | Preserve **capture and playback** before optional responsiveness; undo trim + aggressive persist drain |
+| **Critical** | Preserve **capture and playback** before optional responsiveness; pass chunk reclaim + aggressive persist drain (**no** undo trim — pass undo is O(1)) |
 
 ### Inputs (two axes → one level)
 
@@ -145,7 +151,7 @@ Phase 1A deliverable: correct transitions `Normal → Low → Critical` (and rec
 |-------|----------------|------|--------------------|-------------|
 | **Normal** | Keep all | Normal depth | Full display / LED / REVT | Respect existing admission gates |
 | **Low** | Reclaim rebuildable caches (background-first — see below) | No trim | Selected-track display; defer non-selected `visualCache` | Continue mid_pass; existing gates |
-| **Critical** | Low actions + `reclaimUnreferencedDisabledPasses()` | `trimGlobalUndoStackForMemory` (≥ `MIN_UNDO_DEPTH`) | Skip REVT; defer LED merge; non-selected visual idle off | **Override non-critical gating** after reclaim (see below) |
+| **Critical** | Low actions + `reclaimUnreferencedDisabledPasses()` | **No trim** (pass undo already O(1); ClearSlot snapshots pinned until pass reclaim) | Skip REVT; defer LED merge; non-selected visual idle off | **Override non-critical gating** after reclaim (see below) |
 
 ### Reclaim priority order (Low+)
 
@@ -273,12 +279,29 @@ After 1A validated:
 
 **Gate:** no playback glitches / dropped MIDI / stale display on selected track; rebuild after reclaim OK.
 
-### Phase 2 — Critical + persistence override
+### Phase 2 — Pass metadata extmem + Critical reclaim (revised)
 
-- Undo trim + `reclaimUnreferencedDisabledPasses`
+**Detail:** [`memory_pressure_phase2_pass_metadata_extmem_refinement.md`](memory_pressure_phase2_pass_metadata_extmem_refinement.md)
+
+**Phase 2A — Pass metadata extmem routing (primary)**
+
+- Route `ChunkIdList`, `BarIndexVec`, `OverdubPassVec`, `EditPassVec`, `EditPassIdList`, `VisualBarVec` → `ExternalMemoryFirstAllocator`
+- Targets internal-heap growth during long capture (axis Phase 1B does not address)
+- Native full suite gate
+
+**Phase 2B — LoopPool extmem (complementary, fixed gain)**
+
+- `LoopPool::loops_` via `extmem_malloc` + placement-new
+- Measured fixed gain: **34,304 B** (8×8 × `sizeof(Loop)=536`) off internal heap
+- Does **not** move pass vector growth — 2A required for dynamic pressure
+
+**Phase 2C — Critical + persistence override (no undo trim)**
+
+- `reclaimUnreferencedDisabledPasses` at Critical
 - Optional visual defer (REVT, LED, non-selected visual)
 - Persistence non-critical gate override **after** reclaim in same turn
-- Manual: 0 `Capture append failed` on 215312 config
+- **Skip** `trimGlobalUndoStackForMemory` in pressure orchestration
+- Manual: 0 `Capture append failed` on 215312 config; improved internal heap floor vs 235620
 
 ### Phase 3 — Replace scattered heap checks
 
@@ -286,7 +309,7 @@ After 1A validated:
 
 1. Route optional work through `MemoryPressureLevel`
 2. Remove duplicate threshold comparisons
-3. `overUndoMemoryPressure` delegates to level ≥ Critical
+3. `overUndoMemoryPressure` delegates to level ≥ Critical (trim remains opportunistic on push — not Critical orchestration)
 
 Keeps debugging simple: behavior proven before gate refactors.
 
