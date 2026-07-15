@@ -10,6 +10,7 @@
 #include "Utils/SlotFocusDisplay.h"
 #include "Utils/SlotLaunchCommit.h"
 #include "Utils/SlotLoopContent.h"
+#include "ActiveNoteLedger.h"
 
 void test_boot_restore_priority_selected_track_active_slot() {
   const uint8_t active[] = {1, 0};
@@ -111,6 +112,16 @@ void test_playhead_storage_phase_uses_projection_on_active_slot() {
   TEST_ASSERT_EQUAL_UINT32(3840, legacyPhase);
 }
 
+void test_active_note_ledger_orphan_off_is_inactive() {
+  ActiveNoteLedger ledger;
+  TEST_ASSERT_FALSE(ledger.isActive(3, 93));
+  ledger.noteOn(3, 92, 100, 100);
+  TEST_ASSERT_TRUE(ledger.isActive(3, 92));
+  TEST_ASSERT_FALSE(ledger.isActive(3, 93));
+  ledger.noteOff(3, 92);
+  TEST_ASSERT_FALSE(ledger.isActive(3, 92));
+}
+
 void test_playhead_storage_phase_inactive_slot_uses_start_loop_tick() {
   constexpr uint32_t loopLength = 4608;
   constexpr uint32_t currentTick = 26880;
@@ -137,6 +148,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_loop_end_commit_uses_display_wrap_with_loop_start_offset);
   RUN_TEST(test_loop_end_commit_not_at_legacy_storage_phase_zero);
   RUN_TEST(test_playhead_storage_phase_uses_projection_on_active_slot);
+  RUN_TEST(test_active_note_ledger_orphan_off_is_inactive);
   RUN_TEST(test_playhead_storage_phase_inactive_slot_uses_start_loop_tick);
   return UNITY_END();
 }
