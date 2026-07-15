@@ -47,7 +47,7 @@ void test_pass_close_tail_admitted_once() {
     TEST_ASSERT_TRUE(store.append(noteOn(i)));
   }
 
-  ChunkIdList refs;
+  CaptureChunkIdList refs;
   store.detachChunksTo(refs);
   TEST_ASSERT_EQUAL(2u, refs.size());
   TEST_ASSERT_EQUAL(2u, PersistenceQueue::queueDepth());

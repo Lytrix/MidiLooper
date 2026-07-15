@@ -29,12 +29,12 @@ void mergeSortedMidiVectors(MidiEventVector& base, MidiEventVector&& addition) {
   base = std::move(merged);
 }
 
-void collectActiveOverdubPassesSorted(const OverdubPassVec& overdubPasses,
+void collectActiveOverdubPassesSorted(const PublishedOverdubPassVec& overdubPasses,
                                       std::vector<const OverdubPass*>& out) {
   out.clear();
   out.reserve(overdubPasses.size());
   for (const OverdubPass& pass : overdubPasses) {
-    if (pass.state == CapturePassState::Active && !pass.chunkRefs.empty()) {
+    if (pass.state == CapturePassState::Active && !pass.publishedChunkIds.empty()) {
       out.push_back(&pass);
     }
   }
@@ -44,19 +44,30 @@ void collectActiveOverdubPassesSorted(const OverdubPassVec& overdubPasses,
             });
 }
 
+void mergeOverdubPassLayer(SessionMidiEventVec& out, const OverdubPass& pass) {
+  SessionMidiEventVec layer;
+  LoopEventStore::appendChunkRefEvents(pass.publishedChunkIds, layer);
+  mergeSortedMidiVectors(out, std::move(layer));
+}
+
+void mergeOverdubPassLayer(MidiEventVec& out, const OverdubPass& pass) {
+  SessionMidiEventVec extmemLayer;
+  LoopEventStore::appendChunkRefEvents(pass.publishedChunkIds, extmemLayer);
+  MidiEventVec layer(extmemLayer.begin(), extmemLayer.end());
+  mergeSortedMidiVectors(out, std::move(layer));
+}
+
 template <typename MidiEventVector>
 void appendActiveCapturePassesToFlat(const LoopPasses& passes, MidiEventVector& out) {
   if (passes.hasRecordPass() && passes.recordPass.state == CapturePassState::Active &&
-      !passes.recordPass.chunkRefs.empty()) {
-    LoopEventStore::appendChunkRefEvents(passes.recordPass.chunkRefs, out);
+      !passes.recordPass.publishedChunkIds.empty()) {
+    LoopEventStore::appendChunkRefEvents(passes.recordPass.publishedChunkIds, out);
   }
 
   std::vector<const OverdubPass*> activeOverdubs;
   collectActiveOverdubPassesSorted(passes.overdubPasses, activeOverdubs);
   for (const OverdubPass* pass : activeOverdubs) {
-    MidiEventVector layer;
-    LoopEventStore::appendChunkRefEvents(pass->chunkRefs, layer);
-    mergeSortedMidiVectors(out, std::move(layer));
+    mergeOverdubPassLayer(out, *pass);
   }
 }
 

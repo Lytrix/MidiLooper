@@ -86,3 +86,61 @@ class ExternalMemoryFirstAllocator {
     return false;
   }
 };
+
+/**
+ * Cold-path allocator for published chunk-id lists (seal / publish / SD load).
+ * Same routing as ExternalMemoryFirstAllocator but never abort() — callers
+ * must pre-check headroom and treat null allocate as failure.
+ */
+template <typename T>
+class PublishedChunkIdAllocator {
+ public:
+  using value_type = T;
+  using pointer = T*;
+  using const_pointer = const T*;
+  using reference = T&;
+  using const_reference = const T&;
+  using size_type = std::size_t;
+  using difference_type = std::ptrdiff_t;
+
+  template <typename U>
+  struct rebind {
+    using other = PublishedChunkIdAllocator<U>;
+  };
+
+  PublishedChunkIdAllocator() noexcept = default;
+
+  template <typename U>
+  PublishedChunkIdAllocator(const PublishedChunkIdAllocator<U>&) noexcept {}
+
+  T* allocate(std::size_t n) {
+    const std::size_t bytes = n * sizeof(T);
+    void* ptr = extmem_malloc(bytes);
+    if (ptr) {
+      return static_cast<T*>(ptr);
+    }
+    ptr = std::malloc(bytes);
+    return static_cast<T*>(ptr);
+  }
+
+  void deallocate(T* ptr, std::size_t /*n*/) noexcept {
+    if (!ptr) {
+      return;
+    }
+    if (isInExternalMemoryPool(ptr)) {
+      extmem_free(ptr);
+      return;
+    }
+    std::free(ptr);
+  }
+
+  template <typename U>
+  bool operator==(const PublishedChunkIdAllocator<U>&) const noexcept {
+    return true;
+  }
+
+  template <typename U>
+  bool operator!=(const PublishedChunkIdAllocator<U>&) const noexcept {
+    return false;
+  }
+};

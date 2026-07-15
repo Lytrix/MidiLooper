@@ -18,6 +18,7 @@
 #include "../../src/Utils/LoopEventValidation.cpp"
 #include "../../src/Loop.cpp"
 #include "../test_support/LoopCaptureTestDeps.cpp"
+#include "../test_support/PublishedChunkIdTestHelpers.h"
 #include "CurrentSetStorage.h"
 #include "StorageLoopIo.h"
 
@@ -72,7 +73,9 @@ PersistedLoopSnapshot makeSampleLoopSnapshot() {
   record.state = CapturePassState::Active;
   LoopEventStore capture;
   TEST_ASSERT_TRUE(capture.append(MidiEvent::NoteOn(0, 1, 60, 100)));
-  capture.detachChunksTo(record.chunkRefs);
+  PublishedChunkIdList publishedIds;
+  TEST_ASSERT_TRUE(transferCaptureStoreToPublished(capture, publishedIds));
+  record.publishedChunkIds = std::move(publishedIds);
   snapshot.passes.recordPass = std::move(record);
   return snapshot;
 }

@@ -42,9 +42,9 @@ struct CapturePassSlotFileHeader {
 };
 
 bool writeCapturePassSlotFileHeader(const StorageIo& io, const CapturePassSlotFileHeader& passHeader,
-                                   const ChunkIdList& chunkRefs);
+                                   const PublishedChunkIdList& publishedChunkIds);
 bool readCapturePassSlotFileHeader(const StorageIo& io, CapturePassSlotFileHeader& passHeader,
-                                  ChunkIdList& chunkRefs, uint32_t loopLengthTicks);
+                                  PublishedChunkIdList& publishedChunkIds, uint32_t loopLengthTicks);
 bool writePersistedEditsTail(const StorageIo& io, PassId nextPassId,
                              const EditPassVec& editPasses);
 

@@ -140,7 +140,7 @@ void rebuildCapturePreviewFromStore(Loop& loop) {
   ++loop.capturePreview.revision;
 }
 
-ChunkIdList deepCloneChunkRefs(const ChunkIdList& refs) {
+PublishedChunkIdList deepClonePublishedChunkIds(const PublishedChunkIdList& refs) {
   if (refs.empty()) {
     return {};
   }
@@ -148,20 +148,26 @@ ChunkIdList deepCloneChunkRefs(const ChunkIdList& refs) {
   LoopEventStore::appendChunkRefEvents(refs, flat);
   LoopEventStore store;
   store.loadFromFlat(flat);
-  ChunkIdList cloned;
-  store.detachChunksTo(cloned);
+  PublishedChunkIdList cloned;
+  if (!store.detachChunksToPublished(cloned)) {
+    CaptureChunkIdList captureIds;
+    store.detachChunksTo(captureIds);
+    if (!LoopEventStore::transferCaptureChunkIdsToPublished(cloned, captureIds)) {
+      LoopEventStore::releaseChunkRefs(captureIds);
+    }
+  }
   return cloned;
 }
 
 RecordPass deepCloneRecordPass(const RecordPass& pass) {
   RecordPass cloned = pass;
-  cloned.chunkRefs = deepCloneChunkRefs(pass.chunkRefs);
+  cloned.publishedChunkIds = deepClonePublishedChunkIds(pass.publishedChunkIds);
   return cloned;
 }
 
 OverdubPass deepCloneOverdubPass(const OverdubPass& pass) {
   OverdubPass cloned = pass;
-  cloned.chunkRefs = deepCloneChunkRefs(pass.chunkRefs);
+  cloned.publishedChunkIds = deepClonePublishedChunkIds(pass.publishedChunkIds);
   return cloned;
 }
 
@@ -208,15 +214,15 @@ const char* sealOutcomeLabel(SealOutcome outcome) {
 size_t stopPathChunkRefCount(const Loop& loop) {
   size_t refs = 0;
   if (loop.passes.hasRecordPass() && loop.passes.recordPass.state == CapturePassState::Active) {
-    refs += loop.passes.recordPass.chunkRefs.size();
+    refs += loop.passes.recordPass.publishedChunkIds.size();
   }
   for (const OverdubPass& pass : loop.passes.overdubPasses) {
     if (pass.state == CapturePassState::Active) {
-      refs += pass.chunkRefs.size();
+      refs += pass.publishedChunkIds.size();
     }
   }
   if (loop.hasPendingCapturePass()) {
-    refs += loop.pendingCapturePass().chunkRefs.size();
+    refs += loop.pendingCapturePass().publishedChunkIds.size();
   }
   return refs;
 }
@@ -224,15 +230,15 @@ size_t stopPathChunkRefCount(const Loop& loop) {
 size_t stopPathEventCount(const Loop& loop) {
   size_t events = 0;
   if (loop.passes.hasRecordPass() && loop.passes.recordPass.state == CapturePassState::Active) {
-    events += LoopEventStore::countEventsInChunkIds(loop.passes.recordPass.chunkRefs);
+    events += LoopEventStore::countEventsInChunkIds(loop.passes.recordPass.publishedChunkIds);
   }
   for (const OverdubPass& pass : loop.passes.overdubPasses) {
     if (pass.state == CapturePassState::Active) {
-      events += LoopEventStore::countEventsInChunkIds(pass.chunkRefs);
+      events += LoopEventStore::countEventsInChunkIds(pass.publishedChunkIds);
     }
   }
   if (loop.hasPendingCapturePass()) {
-    events += LoopEventStore::countEventsInChunkIds(loop.pendingCapturePass().chunkRefs);
+    events += LoopEventStore::countEventsInChunkIds(loop.pendingCapturePass().publishedChunkIds);
   }
   if (loop.captureActive()) {
     events += loop.capture.store.size();
@@ -254,11 +260,11 @@ uint32_t traceMicros() {
 
 bool Loop::hasPublishedEvents() const {
   if (passes.hasRecordPass() && passes.recordPass.state == CapturePassState::Active &&
-      !passes.recordPass.chunkRefs.empty()) {
+      !passes.recordPass.publishedChunkIds.empty()) {
     return true;
   }
   for (const OverdubPass& pass : passes.overdubPasses) {
-    if (pass.state == CapturePassState::Active && !pass.chunkRefs.empty()) {
+    if (pass.state == CapturePassState::Active && !pass.publishedChunkIds.empty()) {
       return true;
     }
   }
@@ -267,8 +273,8 @@ bool Loop::hasPublishedEvents() const {
 
 uint32_t Loop::findLastPublishedEventTick() const {
   uint32_t lastTick = 0;
-  auto scanChunkRefs = [&lastTick](const ChunkIdList& chunkRefs) {
-    for (uint16_t chunkId : chunkRefs) {
+  auto scanChunkRefs = [&lastTick](const PublishedChunkIdList& publishedChunkIds) {
+    for (uint16_t chunkId : publishedChunkIds) {
       MidiEventVec batch;
       LoopEventStore::appendChunkRefEvent(chunkId, batch);
       for (const MidiEvent& evt : batch) {
@@ -278,12 +284,12 @@ uint32_t Loop::findLastPublishedEventTick() const {
   };
 
   if (passes.hasRecordPass() && passes.recordPass.state == CapturePassState::Active &&
-      !passes.recordPass.chunkRefs.empty()) {
-    scanChunkRefs(passes.recordPass.chunkRefs);
+      !passes.recordPass.publishedChunkIds.empty()) {
+    scanChunkRefs(passes.recordPass.publishedChunkIds);
   }
   for (const OverdubPass& pass : passes.overdubPasses) {
-    if (pass.state == CapturePassState::Active && !pass.chunkRefs.empty()) {
-      scanChunkRefs(pass.chunkRefs);
+    if (pass.state == CapturePassState::Active && !pass.publishedChunkIds.empty()) {
+      scanChunkRefs(pass.publishedChunkIds);
     }
   }
   return lastTick;
@@ -340,12 +346,12 @@ template <typename MidiEventVector>
 void mergeActiveCapturePassesInto(const LoopPasses& passes, MidiEventVector& out) {
   out.clear();
   if (passes.hasRecordPass() && passes.recordPass.state == CapturePassState::Active &&
-      !passes.recordPass.chunkRefs.empty()) {
-    LoopEventStore::appendChunkRefEvents(passes.recordPass.chunkRefs, out);
+      !passes.recordPass.publishedChunkIds.empty()) {
+    LoopEventStore::appendChunkRefEvents(passes.recordPass.publishedChunkIds, out);
   }
   std::vector<const OverdubPass*> activeOverdubs;
   for (const OverdubPass& pass : passes.overdubPasses) {
-    if (pass.state == CapturePassState::Active && !pass.chunkRefs.empty()) {
+    if (pass.state == CapturePassState::Active && !pass.publishedChunkIds.empty()) {
       activeOverdubs.push_back(&pass);
     }
   }
@@ -355,7 +361,7 @@ void mergeActiveCapturePassesInto(const LoopPasses& passes, MidiEventVector& out
             });
   for (const OverdubPass* pass : activeOverdubs) {
     MidiEventVector layer;
-    LoopEventStore::appendChunkRefEvents(pass->chunkRefs, layer);
+    LoopEventStore::appendChunkRefEvents(pass->publishedChunkIds, layer);
     mergeSortedLoopCaptureLayers(out, std::move(layer));
   }
 }
@@ -486,20 +492,16 @@ void Loop::materializeExcludingEditPassIds(const EditPassIdList& excludeIds,
 
 void Loop::freeActiveCapturePassChunks() {
   if (passes.hasRecordPass() && passes.recordPass.state == CapturePassState::Active) {
-    LoopEventStore staging;
-    staging.adoptChunkIds(passes.recordPass.chunkRefs);
-    staging.clear();
-    passes.recordPass.chunkRefs.clear();
+    LoopEventStore::releaseChunkRefs(passes.recordPass.publishedChunkIds);
+    passes.recordPass.publishedChunkIds.clear();
     passes.recordPass.id = kInvalidPassId;
   }
   for (OverdubPass& pass : passes.overdubPasses) {
     if (pass.state != CapturePassState::Active) {
       continue;
     }
-    LoopEventStore staging;
-    staging.adoptChunkIds(pass.chunkRefs);
-    staging.clear();
-    pass.chunkRefs.clear();
+    LoopEventStore::releaseChunkRefs(pass.publishedChunkIds);
+    pass.publishedChunkIds.clear();
   }
   passes.overdubPasses.erase(
       std::remove_if(passes.overdubPasses.begin(), passes.overdubPasses.end(),
@@ -515,10 +517,8 @@ bool Loop::reclaimDisabledCapturePass(PassId id) {
   }
   if (passes.hasRecordPass() && passes.recordPass.id == id &&
       passes.recordPass.state == CapturePassState::Disabled) {
-    LoopEventStore staging;
-    staging.adoptChunkIds(passes.recordPass.chunkRefs);
-    staging.clear();
-    passes.recordPass.chunkRefs.clear();
+    LoopEventStore::releaseChunkRefs(passes.recordPass.publishedChunkIds);
+    passes.recordPass.publishedChunkIds.clear();
     passes.recordPass.id = kInvalidPassId;
     ++playbackRevision;
     markPassDerivedStale();
@@ -528,9 +528,7 @@ bool Loop::reclaimDisabledCapturePass(PassId id) {
     if (it->id != id || it->state != CapturePassState::Disabled) {
       continue;
     }
-    LoopEventStore staging;
-    staging.adoptChunkIds(it->chunkRefs);
-    staging.clear();
+    LoopEventStore::releaseChunkRefs(it->publishedChunkIds);
     passes.overdubPasses.erase(it);
     ++playbackRevision;
     markPassDerivedStale();
@@ -675,9 +673,15 @@ void Loop::commitStopFinalizeFromStore(LoopEventStore& merged) {
     }
   }
 
-  ChunkIdList refs;
-  merged.detachChunksTo(refs);
-  if (refs.empty()) {
+  CaptureChunkIdList captureIds;
+  merged.detachChunksTo(captureIds);
+  if (captureIds.empty()) {
+    return;
+  }
+
+  PublishedChunkIdList publishedIds;
+  if (!LoopEventStore::transferCaptureChunkIdsToPublished(publishedIds, captureIds)) {
+    LoopEventStore::releaseChunkRefs(captureIds);
     return;
   }
 
@@ -690,7 +694,7 @@ void Loop::commitStopFinalizeFromStore(LoopEventStore& merged) {
       nextPassId_ = rebuilt.id + 1;
     }
     rebuilt.state = CapturePassState::Active;
-    rebuilt.chunkRefs = std::move(refs);
+    rebuilt.publishedChunkIds = std::move(publishedIds);
     passes.recordPass = rebuilt;
     lastPublishedPassId_ = rebuilt.id;
   } else {
@@ -701,7 +705,7 @@ void Loop::commitStopFinalizeFromStore(LoopEventStore& merged) {
     }
     rebuilt.mergeSequence = preserveMergeSeq;
     rebuilt.state = CapturePassState::Active;
-    rebuilt.chunkRefs = std::move(refs);
+    rebuilt.publishedChunkIds = std::move(publishedIds);
     passes.overdubPasses.push_back(rebuilt);
     lastPublishedPassId_ = rebuilt.id;
   }
@@ -717,16 +721,22 @@ void Loop::seedRecordPassFromStore(LoopEventStore& store) {
     discardPassesMaterializedCache();
     return;
   }
-  ChunkIdList refs;
-  store.detachChunksTo(refs);
-  if (refs.empty()) {
+  CaptureChunkIdList captureIds;
+  store.detachChunksTo(captureIds);
+  if (captureIds.empty()) {
+    discardPassesMaterializedCache();
+    return;
+  }
+  PublishedChunkIdList publishedIds;
+  if (!LoopEventStore::transferCaptureChunkIdsToPublished(publishedIds, captureIds)) {
+    LoopEventStore::releaseChunkRefs(captureIds);
     discardPassesMaterializedCache();
     return;
   }
   RecordPass record{};
   record.id = nextPassId_++;
   record.state = CapturePassState::Active;
-  record.chunkRefs = std::move(refs);
+  record.publishedChunkIds = std::move(publishedIds);
   passes.recordPass = std::move(record);
   lastPublishedPassId_ = passes.recordPass.id;
   ++playbackRevision;
@@ -740,26 +750,29 @@ void Loop::shiftActiveCapturePassTicks(int64_t delta) {
     return;
   }
   if (passes.hasRecordPass() && passes.recordPass.state == CapturePassState::Active &&
-      !passes.recordPass.chunkRefs.empty()) {
+      !passes.recordPass.publishedChunkIds.empty()) {
     MidiEventVec flat;
-    LoopEventStore::appendChunkRefEvents(passes.recordPass.chunkRefs, flat);
+    LoopEventStore::appendChunkRefEvents(passes.recordPass.publishedChunkIds, flat);
     if (!flat.empty()) {
       LoopEventStore staging;
       staging.loadFromFlat(flat);
       staging.shiftAllTicks(delta);
       LoopEventStore temp;
       temp.adoptAll(staging);
-      LoopEventStore::releaseChunkRefs(passes.recordPass.chunkRefs);
-      passes.recordPass.chunkRefs.clear();
-      temp.detachChunksTo(passes.recordPass.chunkRefs);
+      LoopEventStore::releaseChunkRefs(passes.recordPass.publishedChunkIds);
+      passes.recordPass.publishedChunkIds.clear();
+      CaptureChunkIdList captureIds;
+      temp.detachChunksTo(captureIds);
+      LoopEventStore::transferCaptureChunkIdsToPublished(passes.recordPass.publishedChunkIds,
+                                                         captureIds);
     }
   }
   for (OverdubPass& pass : passes.overdubPasses) {
-    if (pass.state != CapturePassState::Active || pass.chunkRefs.empty()) {
+    if (pass.state != CapturePassState::Active || pass.publishedChunkIds.empty()) {
       continue;
     }
     MidiEventVec flat;
-    LoopEventStore::appendChunkRefEvents(pass.chunkRefs, flat);
+    LoopEventStore::appendChunkRefEvents(pass.publishedChunkIds, flat);
     if (flat.empty()) {
       continue;
     }
@@ -768,9 +781,11 @@ void Loop::shiftActiveCapturePassTicks(int64_t delta) {
     staging.shiftAllTicks(delta);
     LoopEventStore temp;
     temp.adoptAll(staging);
-    LoopEventStore::releaseChunkRefs(pass.chunkRefs);
-    pass.chunkRefs.clear();
-    temp.detachChunksTo(pass.chunkRefs);
+    LoopEventStore::releaseChunkRefs(pass.publishedChunkIds);
+    pass.publishedChunkIds.clear();
+    CaptureChunkIdList captureIds;
+    temp.detachChunksTo(captureIds);
+    LoopEventStore::transferCaptureChunkIdsToPublished(pass.publishedChunkIds, captureIds);
   }
   for (EditPass& editPass : passes.editPasses) {
     if (editPass.state != EditPassState::Active) {
@@ -1043,25 +1058,17 @@ void Loop::assignMissingNoteIds(MidiEventVec& events) {
 }
 
 void Loop::assignMissingNoteIdsInStore(LoopEventStore& store) {
-  SessionMidiEventVec flat;
-  store.flatten(flat);
-  assignMissingNoteIds(flat);
-  store.clear();
-  store.loadFromFlat(flat);
+  store.assignMissingNoteIdsToNoteOns([this]() { return allocateNoteId(); });
 }
 
 void Loop::resetPassTimeline() {
   discardPendingCapturePass();
   if (passes.hasRecordPass()) {
-    LoopEventStore staging;
-    staging.adoptChunkIds(passes.recordPass.chunkRefs);
-    staging.clear();
+    LoopEventStore::releaseChunkRefs(passes.recordPass.publishedChunkIds);
     passes.recordPass = RecordPass{};
   }
   for (OverdubPass& pass : passes.overdubPasses) {
-    LoopEventStore staging;
-    staging.adoptChunkIds(pass.chunkRefs);
-    staging.clear();
+    LoopEventStore::releaseChunkRefs(pass.publishedChunkIds);
   }
   passes.overdubPasses.clear();
   passes.editPasses.clear();
@@ -1177,9 +1184,7 @@ void Loop::discardPendingCapturePass() {
   if (!hasPendingCapturePass_) {
     return;
   }
-  LoopEventStore staging;
-  staging.adoptChunkIds(pendingCapturePass_.chunkRefs);
-  staging.clear();
+  LoopEventStore::releaseChunkRefs(pendingCapturePass_.publishedChunkIds);
   pendingCapturePass_ = PendingCapturePass{};
   hasPendingCapturePass_ = false;
   pendingVisualDelta.clear();
@@ -1437,9 +1442,12 @@ SealOutcome Loop::sealCapture(uint32_t sealedAtTick) {
   pendingCapturePass_.mergeSequence = nextMergeSequence_++;
   pendingCapturePass_.phase = phase;
   pendingCapturePass_.sealedAtTick = sealedAtTick;
-  capture.store.detachChunksTo(pendingCapturePass_.chunkRefs);
+  if (!capture.store.detachChunksToPublished(pendingCapturePass_.publishedChunkIds)) {
+    pendingCapturePass_ = PendingCapturePass{};
+    return SealOutcome::FailedValidation;
+  }
 
-  if (pendingCapturePass_.chunkRefs.empty()) {
+  if (pendingCapturePass_.publishedChunkIds.empty()) {
     pendingCapturePass_ = PendingCapturePass{};
     return SealOutcome::FailedValidation;
   }
@@ -1460,7 +1468,7 @@ bool Loop::publishPendingCapturePass() {
     record.id = published.id;
     record.state = CapturePassState::Active;
     record.sealedAtTick = published.sealedAtTick;
-    record.chunkRefs = std::move(published.chunkRefs);
+    record.publishedChunkIds = std::move(published.publishedChunkIds);
     passes.recordPass = std::move(record);
   } else {
     OverdubPass overdub{};
@@ -1468,7 +1476,7 @@ bool Loop::publishPendingCapturePass() {
     overdub.mergeSequence = published.mergeSequence;
     overdub.state = CapturePassState::Active;
     overdub.sealedAtTick = published.sealedAtTick;
-    overdub.chunkRefs = std::move(published.chunkRefs);
+    overdub.publishedChunkIds = std::move(published.publishedChunkIds);
     passes.overdubPasses.push_back(std::move(overdub));
   }
   lastPublishedPassId_ = published.id;

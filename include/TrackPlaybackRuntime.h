@@ -14,53 +14,29 @@ struct LoopPlaybackRuntime {
   ActiveNoteLedger ledger;
   PlaybackWindow primaryWindow;
 
-  bool isStale(uint32_t loopRevision, uint32_t trackGeneration) const {
-    return cachedLoopRevision != loopRevision || cachedTrackGeneration != trackGeneration;
-  }
+  bool isStale(uint32_t loopRevision, uint32_t trackGeneration) const;
 
-  void syncRevision(uint32_t loopRevision, uint32_t trackGeneration) {
-    cachedLoopRevision = loopRevision;
-    cachedTrackGeneration = trackGeneration;
-  }
+  void syncRevision(uint32_t loopRevision, uint32_t trackGeneration);
 
-  void reset(bool preserveLedger) {
-    primaryWindow.clear();
-    if (!preserveLedger) {
-      cachedLoopRevision = 0;
-      cachedTrackGeneration = 0;
-      ledger.clear();
-    }
-  }
+  void reset(bool preserveLedger);
 };
+
+struct LoopPlaybackRuntimeDeleter {
+  void operator()(LoopPlaybackRuntime* runtime) const noexcept;
+};
+
+using LoopPlaybackRuntimePtr = std::unique_ptr<LoopPlaybackRuntime, LoopPlaybackRuntimeDeleter>;
+
+LoopPlaybackRuntime* allocateLoopPlaybackRuntime();
 
 class TrackPlaybackRuntime {
  public:
-  void resetAll(bool preserveLedger) {
-    for (auto& rt : runtimeBySlot_) {
-      if (!rt) {
-        continue;
-      }
-      rt->reset(preserveLedger);
-    }
-  }
+  void resetAll(bool preserveLedger);
 
-  LoopPlaybackRuntime& slot(uint8_t slotIndex) {
-    std::unique_ptr<LoopPlaybackRuntime>& rt = runtimeBySlot_[slotIndex];
-    if (!rt) {
-      rt = std::unique_ptr<LoopPlaybackRuntime>(new LoopPlaybackRuntime());
-    }
-    return *rt;
-  }
+  LoopPlaybackRuntime& slot(uint8_t slotIndex);
 
-  const LoopPlaybackRuntime& slot(uint8_t slotIndex) const {
-    static const LoopPlaybackRuntime kEmpty{};
-    const std::unique_ptr<LoopPlaybackRuntime>& rt = runtimeBySlot_[slotIndex];
-    if (!rt) {
-      return kEmpty;
-    }
-    return *rt;
-  }
+  const LoopPlaybackRuntime& slot(uint8_t slotIndex) const;
 
  private:
-  std::array<std::unique_ptr<LoopPlaybackRuntime>, Config::MAX_LOOPS_PER_TRACK> runtimeBySlot_{};
+  std::array<LoopPlaybackRuntimePtr, Config::MAX_LOOPS_PER_TRACK> runtimeBySlot_{};
 };

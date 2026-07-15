@@ -12,7 +12,7 @@ void test_detach_chunks_moves_ownership() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
   LoopEventStore capture;
-  ChunkIdList detached;
+  CaptureChunkIdList detached;
 
   TEST_ASSERT_TRUE(capture.append(MidiEvent::NoteOn(10, 1, 60, 100)));
   capture.detachChunksTo(detached);
@@ -31,7 +31,7 @@ void test_adopt_chunk_ids_releases_pending_refs() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
   LoopEventStore capture;
-  ChunkIdList refs;
+  CaptureChunkIdList refs;
 
   TEST_ASSERT_TRUE(capture.append(MidiEvent::NoteOn(5, 1, 60, 100)));
   capture.detachChunksTo(refs);
@@ -54,7 +54,7 @@ void test_append_chunk_ref_events_preserves_pass_refs() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
   LoopEventStore capture;
-  ChunkIdList refs;
+  CaptureChunkIdList refs;
 
   TEST_ASSERT_TRUE(capture.append(MidiEvent::NoteOn(10, 1, 60, 100)));
   TEST_ASSERT_TRUE(capture.append(MidiEvent::NoteOn(20, 1, 64, 100)));

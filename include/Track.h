@@ -336,7 +336,7 @@ private:
   bool deferredRecordRevtChunkScan = false;
   size_t deferredRecordRevtCursor = 0;
   SessionMidiEventVec deferredRecordRevtEvents;
-  ChunkIdList deferredRecordRevtChunkRefs;
+  PublishedChunkIdList deferredRecordRevtChunkRefs;
   size_t deferredRecordRevtChunkCursor = 0;
   SessionMidiEventVec deferredRecordRevtChunkEvents;
   size_t deferredRecordRevtChunkEventCursor = 0;

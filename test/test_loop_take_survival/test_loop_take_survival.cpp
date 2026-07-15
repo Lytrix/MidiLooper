@@ -14,7 +14,7 @@
 #include "../test_support/LoopCaptureTestDeps.cpp"
 
 #include "Loop.h"
-#include "LoopEventStore.h"
+#include "../test_support/PublishedChunkIdTestHelpers.h"
 #include "MidiEvent.h"
 #include "StorageLoopIo.h"
 
@@ -148,13 +148,13 @@ void test_multi_take_flatten_matches_live_event_count() {
   LoopEventStore odStore;
   TEST_ASSERT_TRUE(odStore.append(MidiEvent::NoteOn(200, 1, 64, 90)));
   TEST_ASSERT_TRUE(odStore.append(MidiEvent::NoteOff(248, 1, 64, 0)));
-  ChunkIdList refs;
-  odStore.detachChunksTo(refs);
+  PublishedChunkIdList publishedIds;
+  TEST_ASSERT_TRUE(transferCaptureStoreToPublished(odStore, publishedIds));
   OverdubPass overdub{};
   overdub.id = 2;
   overdub.mergeSequence = 1;
   overdub.state = CapturePassState::Active;
-  overdub.chunkRefs = std::move(refs);
+  overdub.publishedChunkIds = std::move(publishedIds);
   loop.passes.overdubPasses.push_back(std::move(overdub));
 
   TEST_ASSERT_EQUAL(4u, loop.nativeTestLiveEventCount());

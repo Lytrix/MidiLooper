@@ -150,20 +150,20 @@ struct StopPathStorageStats {
 StopPathStorageStats collectStopPathStorageStats(const Loop& loop, bool includeCaptureBuffer = true) {
   StopPathStorageStats stats{};
   if (loop.passes.hasRecordPass() && loop.passes.recordPass.state == CapturePassState::Active) {
-    stats.chunkRefCount += loop.passes.recordPass.chunkRefs.size();
-    stats.eventCount += LoopEventStore::countEventsInChunkIds(loop.passes.recordPass.chunkRefs);
+    stats.chunkRefCount += loop.passes.recordPass.publishedChunkIds.size();
+    stats.eventCount += LoopEventStore::countEventsInChunkIds(loop.passes.recordPass.publishedChunkIds);
   }
   for (const OverdubPass& pass : loop.passes.overdubPasses) {
     if (pass.state != CapturePassState::Active) {
       continue;
     }
-    stats.chunkRefCount += pass.chunkRefs.size();
-    stats.eventCount += LoopEventStore::countEventsInChunkIds(pass.chunkRefs);
+    stats.chunkRefCount += pass.publishedChunkIds.size();
+    stats.eventCount += LoopEventStore::countEventsInChunkIds(pass.publishedChunkIds);
   }
   if (loop.hasPendingCapturePass()) {
     const PendingCapturePass& pending = loop.pendingCapturePass();
-    stats.chunkRefCount += pending.chunkRefs.size();
-    stats.eventCount += LoopEventStore::countEventsInChunkIds(pending.chunkRefs);
+    stats.chunkRefCount += pending.publishedChunkIds.size();
+    stats.eventCount += LoopEventStore::countEventsInChunkIds(pending.publishedChunkIds);
   }
   if (includeCaptureBuffer && loop.captureActive()) {
     stats.eventCount += loop.capture.store.size();
@@ -1112,10 +1112,10 @@ void Track::queueDeferredRecordRevts() {
   const bool hasActiveRecordPass =
       loop.passes.hasRecordPass() &&
       loop.passes.recordPass.state == CapturePassState::Active &&
-      !loop.passes.recordPass.chunkRefs.empty();
+      !loop.passes.recordPass.publishedChunkIds.empty();
   bool hasActiveOverdubPass = false;
   for (const OverdubPass& pass : loop.passes.overdubPasses) {
-    if (pass.state == CapturePassState::Active && !pass.chunkRefs.empty()) {
+    if (pass.state == CapturePassState::Active && !pass.publishedChunkIds.empty()) {
       hasActiveOverdubPass = true;
       break;
     }
@@ -1124,7 +1124,10 @@ void Track::queueDeferredRecordRevts() {
   // Fast path: record-stop baseline has one active record pass and no active overdub passes.
   if (hasActiveRecordPass && !hasActiveOverdubPass) {
     deferredRecordRevtChunkScan = true;
-    deferredRecordRevtChunkRefs = loop.passes.recordPass.chunkRefs;
+    if (!LoopEventStore::tryCopyPublishedChunkIds(deferredRecordRevtChunkRefs,
+                                                  loop.passes.recordPass.publishedChunkIds)) {
+      resetDeferredRecordRevts();
+    }
   }
 }
 

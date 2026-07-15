@@ -17,6 +17,7 @@
 #include "EditPass.h"
 #include "Loop.h"
 #include "../test_support/NoteIdTestFixtures.h"
+#include "../test_support/PublishedChunkIdTestHelpers.h"
 #include "MidiEvent.h"
 #include "LoopEventStore.h"
 #include "PassReclaim.h"
@@ -27,12 +28,12 @@ namespace {
 OverdubPass makeOverdubPass(PassId id, CapturePassState state) {
   LoopEventStore store;
   TEST_ASSERT_TRUE(store.append(MidiEvent::NoteOn(10, 1, 60, 100)));
-  ChunkIdList refs;
-  store.detachChunksTo(refs);
+  PublishedChunkIdList publishedIds;
+  TEST_ASSERT_TRUE(transferCaptureStoreToPublished(store, publishedIds));
   OverdubPass pass{};
   pass.id = id;
   pass.state = state;
-  pass.chunkRefs = std::move(refs);
+  pass.publishedChunkIds = std::move(publishedIds);
   pass.mergeSequence = id;
   return pass;
 }
@@ -40,12 +41,12 @@ OverdubPass makeOverdubPass(PassId id, CapturePassState state) {
 RecordPass makeRecordPass(PassId id) {
   LoopEventStore store;
   TEST_ASSERT_TRUE(store.append(MidiEvent::NoteOn(0, 1, 60, 100)));
-  ChunkIdList refs;
-  store.detachChunksTo(refs);
+  PublishedChunkIdList publishedIds;
+  TEST_ASSERT_TRUE(transferCaptureStoreToPublished(store, publishedIds));
   RecordPass pass{};
   pass.id = id;
   pass.state = CapturePassState::Active;
-  pass.chunkRefs = std::move(refs);
+  pass.publishedChunkIds = std::move(publishedIds);
   return pass;
 }
 

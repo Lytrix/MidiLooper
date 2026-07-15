@@ -165,10 +165,10 @@ STORAGE_PERSIST_MEM bool prepareRevisionCommitLayout() {
             size_t eventCount = 0;
             if (loop.passes.hasRecordPass()) {
                 eventCount +=
-                    LoopEventStore::countEventsInChunkIds(loop.passes.recordPass.chunkRefs);
+                    LoopEventStore::countEventsInChunkIds(loop.passes.recordPass.publishedChunkIds);
             }
             for (const OverdubPass& pass : loop.passes.overdubPasses) {
-                eventCount += LoopEventStore::countEventsInChunkIds(pass.chunkRefs);
+                eventCount += LoopEventStore::countEventsInChunkIds(pass.publishedChunkIds);
             }
             entry.noteCount =
                 static_cast<uint16_t>(eventCount > UINT16_MAX ? UINT16_MAX : eventCount / 2U);
