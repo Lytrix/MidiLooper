@@ -16,6 +16,7 @@
 #include "Loop.h"
 #include "../test_support/PublishedChunkIdTestHelpers.h"
 #include "MidiEvent.h"
+#include "PassReclaim.h"
 #include "StorageLoopIo.h"
 
 namespace {
@@ -191,6 +192,23 @@ void test_seal_overdub_preserves_record_pass() {
   TEST_ASSERT_EQUAL(2u, loop.nativeTestLiveEventCount());
 }
 
+void test_reclaim_disabled_overdub_releases_published_chunks() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  seedPublishedPair(loop);
+  simulateOverdubSealAndPublish(loop);
+  TEST_ASSERT_EQUAL(2u, LoopEventStore::usedChunkCount());
+
+  TEST_ASSERT_TRUE(loop.setCapturePassState(2, CapturePassState::Disabled));
+  SlotPassReferences refs{};
+  loop.reclaimUnreferencedDisabledPasses(refs);
+
+  TEST_ASSERT_EQUAL(0u, loop.passes.overdubPasses.size());
+  TEST_ASSERT_EQUAL(1u, LoopEventStore::usedChunkCount());
+  TEST_ASSERT_EQUAL(2u, loop.nativeTestLiveEventCount());
+}
+
 int main(int /*argc*/, char** /*argv*/) {
   UNITY_BEGIN();
   RUN_TEST(test_imported_takes_survive_invalidateCaches);
@@ -202,5 +220,6 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_commit_stop_finalize_empty_merged_preserves_takes);
   RUN_TEST(test_multi_take_flatten_matches_live_event_count);
   RUN_TEST(test_pass_snapshot_ignores_derived_flat_mutation);
+  RUN_TEST(test_reclaim_disabled_overdub_releases_published_chunks);
   return UNITY_END();
 }

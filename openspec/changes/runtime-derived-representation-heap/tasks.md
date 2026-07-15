@@ -154,12 +154,14 @@ Persistence starvation, transport-gate workarounds, and stop-path flush/defer pa
 - [x] Update `LoopPasses.cpp` cold-path helper signature
 - [x] **Gate:** `pio test -e native` (621 passed); `teensy41-capture-serial` build
 
-### Phase 3 — SD / undo / clone — **NEXT**
+### Phase 3 — SD / undo / clone — **DONE 2026-07-15**
 
-- [ ] `StorageLoopIo`, `deepClonePasses`, `adoptPersistedSnapshot` — published types only
-- [ ] **Gate:** `test_storage_loop_io`, `test_sd_load_adopt`, undo/snapshot tests
+- [x] `StorageLoopIo` read uses `detachChunksToPublished` (wire → published, no capture repatriation)
+- [x] `LoopEventStore::deepClonePublishedChunkIds` for undo/snapshot (published → published pool copy)
+- [x] `deepClonePasses` / `adoptPersistedSnapshot` / `reclaimDisabledCapturePass` on published types
+- [x] **Gate:** `test_storage_loop_io`, `test_sd_load_adopt`, `test_loop_take_survival`, `test_loop_event_store` (624 native)
 
-### Phase 4 — HITL + exit measurement
+### Phase 4 — HITL + exit measurement — **NEXT**
 
 - [ ] HITL baseline + 215312-profile manual capture; exit criterion (~5 KiB)
 - [ ] Update guides + conclusions doc; `/opsx:sync` when M7 ships

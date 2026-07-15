@@ -61,12 +61,17 @@ bool readPersistedLoopSnapshot(const StorageIo& io, PersistedLoopSnapshot& snaps
 /// Advance the read cursor past a persisted loop snapshot without heap allocation.
 bool skipPersistedLoopSnapshotPayload(const StorageIo& io,
                                       bool legacyDeferredHeaderWithoutNoteId = false);
+/// Read loop slot geometry/header only; skip capture pass and edit payloads (boot metadata hydrate).
+bool readPersistedLoopSnapshotHeader(const StorageIo& io, PersistedLoopSnapshot& snapshot,
+                                     bool legacyDeferredHeaderWithoutNoteId = false);
 
 /// Byte length of loop slot file body produced by writePersistedLoopSnapshot / writeLoopPersisted.
 size_t measureLoopSnapshotSlotFileBytes(const PersistedLoopSnapshot& snapshot);
 
 struct Loop;
 void applySnapshotToLoop(Loop& loop, PersistedLoopSnapshot& snapshot);
+/// Apply persisted geometry/ids only; leave passes unloaded until full SD restore.
+void applyLoopSlotMetadataToLoop(Loop& loop, const PersistedLoopSnapshot& metadata);
 
 #if !defined(PIO_UNIT_TEST_NATIVE)
 size_t measureLoopSlotFileBytes(const Loop& loop);

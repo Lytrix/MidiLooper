@@ -238,6 +238,31 @@ bool LOOP_EVENT_STORE_COLD_MEM LoopEventStore::tryCopyPublishedChunkIds(Publishe
   return tryAssignPublishedChunkIds(dest, src.data(), src.size());
 }
 
+bool LOOP_EVENT_STORE_COLD_MEM LoopEventStore::deepClonePublishedChunkIds(
+    PublishedChunkIdList& dest, const PublishedChunkIdList& src) {
+  releaseChunkRefs(dest);
+  dest.clear();
+  if (src.empty()) {
+    return true;
+  }
+  SessionMidiEventVec flat;
+  appendChunkRefEvents(src, flat);
+  if (flat.empty()) {
+    return false;
+  }
+  LoopEventStore staging;
+  staging.loadFromFlat(flat);
+  if (staging.empty()) {
+    return false;
+  }
+  PublishedChunkIdList cloned;
+  if (!staging.detachChunksToPublished(cloned)) {
+    return false;
+  }
+  dest = std::move(cloned);
+  return true;
+}
+
 bool LOOP_EVENT_STORE_COLD_MEM LoopEventStore::transferCaptureChunkIdsToPublished(PublishedChunkIdList& dest,
                                                         CaptureChunkIdList& src) {
   if (!tryAssignPublishedChunkIds(dest, src.data(), src.size())) {
