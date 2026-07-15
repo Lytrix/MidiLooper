@@ -116,6 +116,8 @@ public:
     void syncSelectedNoteIdxToFilteredInventory(Track& track);
     /// Filtered select inventory during note edit; else cached notes (encoder + fader).
     NoteUtils::DisplayNoteVec selectableDisplayNotesAtEditSelect(const Track& track) const;
+    /// Cached NOTE_EDIT selectable inventory (session reconstruction minus Hidden overlap).
+    NoteUtils::DisplayNoteVec filteredSelectableDisplayNotesForNoteEdit(const Track& track) const;
     /// Live mover geometry: **focus.last** when active, else inventory at **selectedNoteIdx**.
     bool isLengthBracketEditActive() const;
     NoteUtils::DisplayNote liveEditDisplayNoteAtSelect(const Track& track) const;
@@ -127,6 +129,9 @@ public:
     uint32_t sessionPreviewRevision() const { return sessionPreviewRevision_; }
     void bumpSessionPlaybackPreviewRevision();
     uint32_t sessionPlaybackPreviewRevision() const { return sessionPlaybackPreviewRevision_; }
+    void scheduleDeferredNoteEditDisplayRefresh();
+    void processDeferredNoteEditDisplayRefresh(Track& track);
+    void flushDeferredNoteEditDisplayRefresh(Track& track);
 
     /// Returns session store during note edit, else loop materialized events.
     MidiEventVec& editMidiEvents(Track& track);
@@ -215,6 +220,8 @@ public:
 private:
     size_t bakeNoteEditSessionStoreToPasses(Track& track);
     void persistActiveNoteEditSession(Track& track);
+    void invalidateNoteEditDerivedCaches();
+    const MidiEventVec& materializedLoopEventsForNoteEditFocus(Track& track);
     uint32_t selectedTick = 0;
     int selectedNoteIdx = -1; // -1 means no note selected
     NoteId lastFader1SelectNoteId = kInvalidNoteId;
@@ -228,6 +235,17 @@ private:
     bool encoderCycleNeedsAnchor_ = false;
     uint32_t sessionPreviewRevision_ = 0;
     uint32_t sessionPlaybackPreviewRevision_ = 0;
+    uint32_t noteEditFocusMaterializeLoopRevision_ = UINT32_MAX;
+    uint8_t noteEditFocusMaterializeSlot_ = 255;
+    uint32_t noteEditFocusMaterializeLoopLength_ = 0;
+    MidiEventVec noteEditFocusMaterializedLoopEvents_;
+    mutable uint32_t noteEditSelectableDisplayCachePreviewRevision_ = UINT32_MAX;
+    mutable size_t noteEditSelectableDisplayCacheOverlapCount_ = static_cast<size_t>(-1);
+    mutable uint32_t noteEditSelectableDisplayCacheLoopLength_ = 0;
+    mutable NoteUtils::DisplayNoteVec noteEditSelectableDisplayCacheNotes_;
+    bool deferredNoteEditDisplayRefreshPending_ = false;
+    uint32_t deferredNoteEditDisplayRefreshArmedAtMs_ = 0;
+    static constexpr uint32_t kDeferredNoteEditDisplayRefreshIdleMs = 80;
     // Add more states as needed
     
     // EditModeManager state

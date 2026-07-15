@@ -124,6 +124,71 @@ void test_a1_no_pending_length_when_moving_note_range_matches_baseline() {
   TEST_ASSERT_FALSE(noteEditFocusHasPendingLengthChange(focus));
 }
 
+void test_note_edit_focus_has_pending_commit_geometry_and_overlap() {
+  NoteEditFocus focus;
+  focus.active = true;
+  focus.commitBaseline = {60, 64, 100, 200};
+  focus.last = focus.commitBaseline;
+  TEST_ASSERT_FALSE(noteEditFocusHasPendingCommit(focus));
+
+  focus.last.endTick = 300;
+  TEST_ASSERT_TRUE(noteEditFocusHasPendingCommit(focus));
+  focus.last = focus.commitBaseline;
+  TEST_ASSERT_FALSE(noteEditFocusHasPendingCommit(focus));
+
+  OverlapNote hidden{};
+  hidden.noteId = 42;
+  hidden.state = OverlapNoteStoreState::Hidden;
+  hidden.preCommitEmitted = false;
+  focus.overlapNotes[42] = hidden;
+  TEST_ASSERT_TRUE(noteEditFocusHasPendingCommit(focus));
+
+  hidden.preCommitEmitted = true;
+  focus.overlapNotes[42] = hidden;
+  TEST_ASSERT_FALSE(noteEditFocusHasPendingCommit(focus));
+
+  OverlapNote shortened{};
+  shortened.noteId = 43;
+  shortened.state = OverlapNoteStoreState::Shortened;
+  shortened.baseline.endTick = 200;
+  shortened.shortenedEndTick = 150;
+  focus.overlapNotes[43] = shortened;
+  TEST_ASSERT_TRUE(noteEditFocusHasPendingCommit(focus));
+}
+
+void test_can_apply_simple_pitch_change_without_lane_collision() {
+  constexpr uint32_t kLoopLength = 1536;
+  NoteEditFocus focus;
+  focus.active = true;
+  focus.movingNoteId = 1;
+  focus.commitBaseline = {60, 64, 100, 200};
+  focus.last = focus.commitBaseline;
+  focus.movingNoteRange = {100, 200};
+
+  MidiEventVec events;
+  events.push_back(noteOnWithNoteId(100, 1, 60, 100, 1));
+  events.push_back(MidiEvent::NoteOff(200, 1, 60, 0));
+  events.push_back(noteOnWithNoteId(400, 1, 64, 100, 2));
+  events.push_back(MidiEvent::NoteOff(500, 1, 64, 0));
+
+  TEST_ASSERT_TRUE(canApplySimplePitchChange(
+      events, focus, 1, 60, 67, focus.last.startTick, focus.last.endTick, kLoopLength));
+  TEST_ASSERT_TRUE(canApplySimplePitchChange(
+      events, focus, 1, 60, 64, focus.last.startTick, focus.last.endTick, kLoopLength));
+
+  events.push_back(noteOnWithNoteId(150, 1, 64, 100, 4));
+  events.push_back(MidiEvent::NoteOff(250, 1, 64, 0));
+  TEST_ASSERT_FALSE(canApplySimplePitchChange(
+      events, focus, 1, 60, 64, focus.last.startTick, focus.last.endTick, kLoopLength));
+
+  events.pop_back();
+  events.pop_back();
+  events.push_back(noteOnWithNoteId(200, 1, 67, 100, 3));
+  events.push_back(MidiEvent::NoteOff(300, 1, 67, 0));
+  TEST_ASSERT_FALSE(canApplySimplePitchChange(
+      events, focus, 1, 60, 67, focus.last.startTick, focus.last.endTick, kLoopLength));
+}
+
 void test_inner_overlap_note_in_moving_note_range() {
   NoteEditFocus focus;
   focus.active = true;
@@ -1415,6 +1480,8 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_populate_baseline_map_for_edit_closure_wrap_sibling);
   RUN_TEST(test_a1_length_updates_moving_note_range_not_commit_baseline);
   RUN_TEST(test_a1_no_pending_length_when_moving_note_range_matches_baseline);
+  RUN_TEST(test_note_edit_focus_has_pending_commit_geometry_and_overlap);
+  RUN_TEST(test_can_apply_simple_pitch_change_without_lane_collision);
   RUN_TEST(test_inner_overlap_note_in_moving_note_range);
   RUN_TEST(test_overlap_note_effective_end_shortened_vs_hidden);
   RUN_TEST(test_shorten_under_49_ticks_classifies_as_hidden_candidate);
