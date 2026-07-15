@@ -208,6 +208,37 @@ void test_detach_chunks_to_published_seals_and_transfers() {
   LoopEventStore::releaseChunkRefs(publishedIds);
 }
 
+void test_deep_clone_published_chunk_ids_duplicates_pool() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  LoopEventStore store;
+  TEST_ASSERT_TRUE(store.append(MidiEvent::NoteOn(10, 1, 60, 100)));
+  TEST_ASSERT_TRUE(store.append(MidiEvent::NoteOn(20, 1, 64, 100)));
+
+  PublishedChunkIdList sourceIds;
+  TEST_ASSERT_TRUE(store.detachChunksToPublished(sourceIds));
+  TEST_ASSERT_EQUAL(1u, sourceIds.size());
+  TEST_ASSERT_EQUAL(static_cast<uint16_t>(1), LoopEventStore::usedChunkCount());
+
+  PublishedChunkIdList clonedIds;
+  TEST_ASSERT_TRUE(LoopEventStore::deepClonePublishedChunkIds(clonedIds, sourceIds));
+  TEST_ASSERT_EQUAL(sourceIds.size(), clonedIds.size());
+  TEST_ASSERT_NOT_EQUAL(sourceIds[0], clonedIds[0]);
+  TEST_ASSERT_EQUAL(static_cast<uint16_t>(2), LoopEventStore::usedChunkCount());
+
+  MidiEventVec sourceFlat;
+  MidiEventVec clonedFlat;
+  LoopEventStore::appendChunkRefEvents(sourceIds, sourceFlat);
+  LoopEventStore::appendChunkRefEvents(clonedIds, clonedFlat);
+  TEST_ASSERT_EQUAL(2u, sourceFlat.size());
+  TEST_ASSERT_EQUAL(2u, clonedFlat.size());
+  TEST_ASSERT_EQUAL(sourceFlat[0].tick, clonedFlat[0].tick);
+  TEST_ASSERT_EQUAL(sourceFlat[1].tick, clonedFlat[1].tick);
+
+  LoopEventStore::releaseChunkRefs(sourceIds);
+  LoopEventStore::releaseChunkRefs(clonedIds);
+}
+
 void test_assign_missing_note_ids_in_chunks() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
@@ -254,6 +285,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_first_index_for_bar_skips_empty_bar);
   RUN_TEST(test_transfer_capture_chunk_ids_to_published);
   RUN_TEST(test_detach_chunks_to_published_seals_and_transfers);
+  RUN_TEST(test_deep_clone_published_chunk_ids_duplicates_pool);
   RUN_TEST(test_assign_missing_note_ids_in_chunks);
   return UNITY_END();
 }

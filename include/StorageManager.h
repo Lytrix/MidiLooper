@@ -151,6 +151,10 @@ public:
     static void processDeferredUndoSnapshots();
     /// On slot select: load loop slot payload immediately if still deferred.
     static void requestLoopSlotRestoreFromSd(uint8_t trackIndex, uint8_t slotIndex);
+    /// Re-sort deferred boot restore queue using current track/slot focus.
+    static void reprioritizeDeferredLoopSlotRestore();
+    /// Bump focus slot to front of deferred restore and load it immediately when possible.
+    static void prioritizeLoopSlotRestoreForFocus(uint8_t trackIndex, uint8_t slotIndex);
     /// True when a verified loop-slot payload exists on SD (not yet loaded into RAM).
     static bool loopSlotHasPayloadOnSd(uint8_t trackIndex, uint8_t slotIndex);
     /// Before undo: finish deferred undo snapshot hydration when still pending.

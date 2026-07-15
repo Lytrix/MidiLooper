@@ -135,11 +135,8 @@ bool readCapturePassSlotFileHeader(const StorageIo& io, CapturePassSlotFileHeade
     if (!canStagePersistedEvent(staging.size())) return failStagingRead();
     if (!staging.append(evt)) return failStagingRead();
   }
-  CaptureChunkIdList captureIds;
-  staging.detachChunksTo(captureIds);
-  if (!LoopEventStore::transferCaptureChunkIdsToPublished(publishedChunkIds, captureIds)) {
-    LoopEventStore::releaseChunkRefs(captureIds);
-    return false;
+  if (!staging.detachChunksToPublished(publishedChunkIds)) {
+    return failStagingRead();
   }
   return true;
 }
@@ -463,33 +460,35 @@ bool skipCapturePassSlotFilePayload(const StorageIo& io, uint32_t loopLengthTick
 }
 
 bool skipPersistedLoopSnapshotPayload(const StorageIo& io, bool legacyDeferredHeaderWithoutNoteId) {
-  LoopId loopId = kInvalidLoopId;
-  uint32_t startLoopTick = 0;
-  uint32_t loopLengthTicks = 0;
-  uint32_t loopStartTick = 0;
-  uint32_t nextPassId = 0;
-  uint32_t nextNoteId = 1;
-  uint32_t nextMergeSequence = 0;
-  uint32_t lastPublishedPassId = 0;
-  if (!ioRead(io, &loopId, sizeof(loopId))) return false;
-  if (!ioRead(io, &startLoopTick, sizeof(startLoopTick))) return false;
-  if (!ioRead(io, &loopLengthTicks, sizeof(loopLengthTicks))) return false;
-  if (!ioRead(io, &loopStartTick, sizeof(loopStartTick))) return false;
-  if (!ioRead(io, &nextPassId, sizeof(nextPassId))) return false;
+  PersistedLoopSnapshot ignored{};
+  return readPersistedLoopSnapshotHeader(io, ignored, legacyDeferredHeaderWithoutNoteId);
+}
+
+bool readPersistedLoopSnapshotHeader(const StorageIo& io, PersistedLoopSnapshot& snapshot,
+                                     bool legacyDeferredHeaderWithoutNoteId) {
+  snapshot = PersistedLoopSnapshot{};
+  if (!ioRead(io, &snapshot.loopId, sizeof(snapshot.loopId))) return false;
+  if (!ioRead(io, &snapshot.startLoopTick, sizeof(snapshot.startLoopTick))) return false;
+  if (!ioRead(io, &snapshot.loopLengthTicks, sizeof(snapshot.loopLengthTicks))) return false;
+  if (!ioRead(io, &snapshot.loopStartTick, sizeof(snapshot.loopStartTick))) return false;
+  if (!ioRead(io, &snapshot.nextPassId, sizeof(snapshot.nextPassId))) return false;
   if (legacyDeferredHeaderWithoutNoteId) {
-    nextNoteId = 1;
-  } else if (!ioRead(io, &nextNoteId, sizeof(nextNoteId))) {
+    snapshot.nextNoteId = 1;
+  } else if (!ioRead(io, &snapshot.nextNoteId, sizeof(snapshot.nextNoteId))) {
     return false;
   }
-  if (!ioRead(io, &nextMergeSequence, sizeof(nextMergeSequence))) return false;
-  if (!ioRead(io, &lastPublishedPassId, sizeof(lastPublishedPassId))) return false;
-  if (loopLengthTicks >= 0x80000000u) {
-    loopLengthTicks = 0;
+  if (!ioRead(io, &snapshot.nextMergeSequence, sizeof(snapshot.nextMergeSequence))) return false;
+  if (!ioRead(io, &snapshot.lastPublishedPassId, sizeof(snapshot.lastPublishedPassId))) {
+    return false;
   }
+  if (snapshot.loopLengthTicks >= 0x80000000u) {
+    snapshot.loopLengthTicks = 0;
+  }
+
   uint32_t passCount = 0;
   if (!ioRead(io, &passCount, sizeof(passCount))) return false;
   for (uint32_t i = 0; i < passCount; ++i) {
-    if (!skipCapturePassSlotFilePayload(io, loopLengthTicks)) {
+    if (!skipCapturePassSlotFilePayload(io, snapshot.loopLengthTicks)) {
       return false;
     }
   }
@@ -575,4 +574,17 @@ bool readLoopPersisted(const StorageIo& io, Loop& loop) {
 
 void applySnapshotToLoop(Loop& loop, PersistedLoopSnapshot& snapshot) {
   loop.adoptPersistedSnapshot(snapshot);
+}
+
+void applyLoopSlotMetadataToLoop(Loop& loop, const PersistedLoopSnapshot& metadata) {
+  if (metadata.loopId != kInvalidLoopId) {
+    loop.loopId = metadata.loopId;
+  }
+  loop.startLoopTick = metadata.startLoopTick;
+  loop.loopLengthTicks = metadata.loopLengthTicks;
+  loop.loopStartTick = metadata.loopStartTick;
+  loop.nextPassId_ = metadata.nextPassId != 0 ? metadata.nextPassId : 1;
+  loop.nextNoteId_ = metadata.nextNoteId != 0 ? metadata.nextNoteId : 1;
+  loop.nextMergeSequence_ = metadata.nextMergeSequence;
+  loop.lastPublishedPassId_ = metadata.lastPublishedPassId;
 }

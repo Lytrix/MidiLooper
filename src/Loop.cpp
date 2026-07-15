@@ -140,34 +140,25 @@ void rebuildCapturePreviewFromStore(Loop& loop) {
   ++loop.capturePreview.revision;
 }
 
-PublishedChunkIdList deepClonePublishedChunkIds(const PublishedChunkIdList& refs) {
-  if (refs.empty()) {
-    return {};
-  }
-  SessionMidiEventVec flat;
-  LoopEventStore::appendChunkRefEvents(refs, flat);
-  LoopEventStore store;
-  store.loadFromFlat(flat);
-  PublishedChunkIdList cloned;
-  if (!store.detachChunksToPublished(cloned)) {
-    CaptureChunkIdList captureIds;
-    store.detachChunksTo(captureIds);
-    if (!LoopEventStore::transferCaptureChunkIdsToPublished(cloned, captureIds)) {
-      LoopEventStore::releaseChunkRefs(captureIds);
-    }
-  }
-  return cloned;
-}
-
 RecordPass deepCloneRecordPass(const RecordPass& pass) {
   RecordPass cloned = pass;
-  cloned.publishedChunkIds = deepClonePublishedChunkIds(pass.publishedChunkIds);
+  PublishedChunkIdList clonedIds;
+  if (!LoopEventStore::deepClonePublishedChunkIds(clonedIds, pass.publishedChunkIds)) {
+    cloned.publishedChunkIds.clear();
+    return cloned;
+  }
+  cloned.publishedChunkIds = std::move(clonedIds);
   return cloned;
 }
 
 OverdubPass deepCloneOverdubPass(const OverdubPass& pass) {
   OverdubPass cloned = pass;
-  cloned.publishedChunkIds = deepClonePublishedChunkIds(pass.publishedChunkIds);
+  PublishedChunkIdList clonedIds;
+  if (!LoopEventStore::deepClonePublishedChunkIds(clonedIds, pass.publishedChunkIds)) {
+    cloned.publishedChunkIds.clear();
+    return cloned;
+  }
+  cloned.publishedChunkIds = std::move(clonedIds);
   return cloned;
 }
 

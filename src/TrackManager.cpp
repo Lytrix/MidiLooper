@@ -458,7 +458,8 @@ void TrackManager::handleQuantizedStop(uint32_t currentTick) {
 
 void TrackManager::startPlayingTrack(uint8_t trackIndex) {
   if (trackIndex < Config::NUM_TRACKS) {
-    StorageManager::requestLoopSlotRestoreFromSd(trackIndex, tracks[trackIndex].getActiveLoopIndex());
+    StorageManager::prioritizeLoopSlotRestoreForFocus(trackIndex,
+                                                      tracks[trackIndex].getActiveLoopIndex());
     tracks[trackIndex].startPlaying(clockManager.getCurrentTick());
   }
 }
@@ -705,7 +706,7 @@ void TrackManager::setActiveLoopIndex(uint8_t trackIndex, uint8_t index) {
       return;
     }
     t.setActiveLoopIndex(index);
-    StorageManager::requestLoopSlotRestoreFromSd(trackIndex, index);
+    StorageManager::prioritizeLoopSlotRestoreForFocus(trackIndex, index);
     forceLedUpdate(clockManager.getCurrentTick());
   }
 }
@@ -860,7 +861,7 @@ bool TrackManager::slotHasLoopContent(uint8_t trackIndex, uint8_t slotIndex, boo
     if (!isSlotEnabled(trackIndex, slotIndex)) {
       return false;
     }
-    StorageManager::requestLoopSlotRestoreFromSd(trackIndex, slotIndex);
+    StorageManager::prioritizeLoopSlotRestoreForFocus(trackIndex, slotIndex);
     return track.hasDataInSlot(slotIndex);
   }
   return true;
@@ -953,7 +954,7 @@ void TrackManager::setSelectedSlotIndex(uint8_t trackIndex, uint8_t slotIndex,
     editManager.beforeSelectedSlotChange(track);
   }
   slotStateMachine.setSelectedSlotIndex(trackIndex, slotIndex);
-  StorageManager::requestLoopSlotRestoreFromSd(trackIndex, slotIndex);
+  StorageManager::prioritizeLoopSlotRestoreForFocus(trackIndex, slotIndex);
   if (syncPlayback == SyncPlayback::Yes) {
     setActiveLoopIndex(trackIndex, slotIndex);
   }
@@ -1021,10 +1022,9 @@ void TrackManager::setSelectedTrack(uint8_t index) {
   }
   if (trackChanged) {
     editManager.onTrackChanged(tracks[selectedTrack]);
-    if (!bootLoadInProgress_) {
-      const uint8_t displaySlot = getSelectedSlotIndex(index);
-      displayManager.invalidateForSlotChange(index, displaySlot, displaySlot);
-    }
+    const uint8_t focusSlot = getSelectedSlotIndex(index);
+    StorageManager::prioritizeLoopSlotRestoreForFocus(index, focusSlot);
+    displayManager.invalidateForSlotChange(index, focusSlot, focusSlot);
   }
   if (!bootLoadInProgress_ && trackChanged) {
     StorageManager::requestWorkspaceFooterPersistWhenSafe();

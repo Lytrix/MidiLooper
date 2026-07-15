@@ -61,6 +61,10 @@ class LoopEventStore {
   static bool tryCopyPublishedChunkIds(PublishedChunkIdList& dest,
                                        const PublishedChunkIdList& src);
 
+  /// Duplicate pool chunks for undo/snapshot isolation (published → published via staging store).
+  static bool deepClonePublishedChunkIds(PublishedChunkIdList& dest,
+                                         const PublishedChunkIdList& src);
+
   LoopEventStore() = default;
   LoopEventStore(const LoopEventStore&) = delete;
   LoopEventStore& operator=(const LoopEventStore&) = delete;

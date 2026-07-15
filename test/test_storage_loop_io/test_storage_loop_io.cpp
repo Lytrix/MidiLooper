@@ -43,6 +43,7 @@ class MemoryStorageIo {
   }
 
   void resetRead() { readPos_ = 0; }
+  size_t readPosition() const { return readPos_; }
 
  private:
   bool write(const void* data, size_t size) {
@@ -689,6 +690,52 @@ void test_measure_loop_snapshot_slot_file_bytes_matches_buffer() {
   TEST_ASSERT_EQUAL(buffer.size(), measureLoopSnapshotSlotFileBytes(snapshot));
 }
 
+void test_read_loop_snapshot_header_skips_pass_payload() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+
+  PersistedLoopSnapshot original{};
+  original.loopId = 3;
+  original.loopLengthTicks = Config::TICKS_PER_BAR * 16u;
+  original.loopStartTick = 12;
+  original.nextPassId = 4;
+  original.nextNoteId = 9;
+  original.passes.recordPass =
+      makeRecordPassWithEvents(1, 0, CapturePassState::Active, 0, Config::TICKS_PER_BAR);
+
+  std::vector<uint8_t> buffer;
+  MemoryStorageIo mem(&buffer);
+  TEST_ASSERT_TRUE(writePersistedLoopSnapshot(mem.io(), original));
+
+  PersistedLoopSnapshot headerOnly{};
+  mem.resetRead();
+  TEST_ASSERT_TRUE(readPersistedLoopSnapshotHeader(mem.io(), headerOnly));
+  TEST_ASSERT_EQUAL_UINT32(static_cast<uint32_t>(buffer.size()),
+                           static_cast<uint32_t>(mem.readPosition()));
+  TEST_ASSERT_EQUAL_UINT8(3, headerOnly.loopId);
+  TEST_ASSERT_EQUAL_UINT32(Config::TICKS_PER_BAR * 16u, headerOnly.loopLengthTicks);
+  TEST_ASSERT_EQUAL_UINT32(12, headerOnly.loopStartTick);
+  TEST_ASSERT_TRUE(headerOnly.passes.overdubPasses.empty());
+  TEST_ASSERT_FALSE(headerOnly.passes.hasRecordPass());
+}
+
+void test_apply_loop_slot_metadata_without_passes() {
+  PersistedLoopSnapshot metadata{};
+  metadata.loopId = 2;
+  metadata.loopLengthTicks = Config::TICKS_PER_BAR * 4u;
+  metadata.loopStartTick = 48;
+  metadata.nextPassId = 5;
+  metadata.nextNoteId = 7;
+
+  Loop loop;
+  applyLoopSlotMetadataToLoop(loop, metadata);
+  TEST_ASSERT_EQUAL_UINT32(Config::TICKS_PER_BAR * 4u, loop.loopLengthTicks);
+  TEST_ASSERT_EQUAL_UINT32(48, loop.loopStartTick);
+  TEST_ASSERT_EQUAL_UINT8(2, loop.loopId);
+  TEST_ASSERT_FALSE(loop.hasPublishedEvents());
+  TEST_ASSERT_TRUE(loop.hasData());
+}
+
 int main(int /*argc*/, char** /*argv*/) {
   UNITY_BEGIN();
   RUN_TEST(test_write_read_loop_snapshot_roundtrip);
@@ -707,5 +754,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_save_note_edit_pass_marks_edit_dirty);
   RUN_TEST(test_simulated_exit_flush_clears_edit_dirty);
   RUN_TEST(test_measure_loop_snapshot_slot_file_bytes_matches_buffer);
+  RUN_TEST(test_read_loop_snapshot_header_skips_pass_payload);
+  RUN_TEST(test_apply_loop_slot_metadata_without_passes);
   return UNITY_END();
 }
