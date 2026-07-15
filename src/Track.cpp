@@ -1324,6 +1324,9 @@ void Track::stopRecording(uint32_t currentTick) {
   const uint32_t stateAdvanceHeapBefore = MemoryMonitor::getInternalHeapFreeBytes();
   logRecordStopStage(loop, stopPathStartUs, "pre_state_advance", 0, stateAdvanceHeapBefore,
                      stateAdvanceHeapBefore, "enter", &stopPathStats);
+  // Silence live/held notes on the wire before loop playback catch-up; CC123 is not stored.
+  sendAllNotesOff();
+  playbackRuntime.clearAllLedgers();
   const uint32_t stateAdvanceStartUs = micros();
   startPlaying(playbackTick, true);
   displayManager.refreshViewportAfterRecordStop(*this, activeLoopIndex, storagePhaseTickAtStop);
@@ -1552,6 +1555,8 @@ void Track::stopOverdubbing() {
     pendingNotes.clear();
     const uint32_t stateHeapBefore = MemoryMonitor::getInternalHeapFreeBytes();
     const uint32_t stateStartUs = micros();
+    sendAllNotesOff();
+    resetPlaybackState(currentTick);
     setState(TRACK_PLAYING);
     logOverdubStopStage(loop, stopStartUs, "set_state", micros() - stateStartUs, stateHeapBefore,
                         MemoryMonitor::getInternalHeapFreeBytes(), "in_edit");
@@ -1564,7 +1569,6 @@ void Track::stopOverdubbing() {
     logger.logTrackEvent("Overdubbing stopped", currentTick);
     logger.info("Overdub stopped (in-edit fold): events=%d, undo_entries=%d",
                 static_cast<int>(loop.displayEventCountHint()), TrackUndo::getUndoCount(*this));
-    resetPlaybackState(currentTick);
     emitOverdubStopDisplaySnapshot(*this, activeLoopIndex, currentTick);
     logOverdubStopStage(loop, stopStartUs, "display", 0, MemoryMonitor::getInternalHeapFreeBytes(),
                         MemoryMonitor::getInternalHeapFreeBytes(), "ok");
@@ -1587,6 +1591,9 @@ void Track::stopOverdubbing() {
                       commitResultLabel(sideEffectResult));
   const uint32_t stateHeapBefore = MemoryMonitor::getInternalHeapFreeBytes();
   const uint32_t stateStartUs = micros();
+  // Wire-only silence before resuming loop playback; stored capture is unchanged.
+  sendAllNotesOff();
+  resetPlaybackState(currentTick);
   setState(TRACK_PLAYING);
   logOverdubStopStage(loop, stopStartUs, "set_state", micros() - stateStartUs, stateHeapBefore,
                       MemoryMonitor::getInternalHeapFreeBytes(), "ok");
@@ -1600,8 +1607,6 @@ void Track::stopOverdubbing() {
   logger.info("Overdub stopped: events=%d, undo_entries=%d", static_cast<int>(loop.displayEventCountHint()),
               TrackUndo::getUndoCount(*this));
 
-  // Preserve phase origin from record-stop rewind so playback cursor and event phase stay aligned.
-  resetPlaybackState(currentTick);
   emitOverdubStopDisplaySnapshot(*this, activeLoopIndex, currentTick);
   logOverdubStopStage(loop, stopStartUs, "display", 0, MemoryMonitor::getInternalHeapFreeBytes(),
                       MemoryMonitor::getInternalHeapFreeBytes(), "ok");
@@ -1931,7 +1936,7 @@ void Track::playMidiEvents(uint32_t currentTick, bool isAudible) {
                          (evTick == lastSentEvTick && effectiveCh == lastSentChannel &&
                           note == lastSentNote && evt.type == lastSentType);
       if (!isDuplicate) {
-        sendMidiEvent(evt);
+        sendMidiEvent(evt, activeLoopIndex);
         if (evt.isNoteOn() || evt.isNoteOff()) {
           lastSentEvTick = evTick;
           lastSentChannel = effectiveCh;
@@ -1961,7 +1966,7 @@ void Track::playMidiEvents(uint32_t currentTick, bool isAudible) {
       const bool crossed =
           atLoopStart ? (evTick <= tickInLoop) : (prevTickInLoop < evTick && evTick <= tickInLoop);
       if (crossed && eventInJamRegion(evStorageTick)) {
-        sendMidiEvent(evt);
+        sendMidiEvent(evt, activeLoopIndex);
         loop.captureNextEventIndex++;
       } else if (evTick > tickInLoop) {
         break;
@@ -2019,7 +2024,7 @@ void Track::playMidiEventsForSlot(uint8_t slotIndex, uint32_t currentTick, bool 
         IntervalProjection::playbackEventPhase(evt.tick, playbackContext.loopLength);
     bool crossed = atLoopStart ? (evTick <= tickInLoop) : (prevTickInLoop < evTick && evTick <= tickInLoop);
     if (crossed) {
-      sendMidiEvent(evt);
+      sendMidiEvent(evt, slotIndex);
       loop.nextEventIndex++;
     } else if (evTick > tickInLoop) {
       break;
@@ -2030,8 +2035,9 @@ void Track::playMidiEventsForSlot(uint8_t slotIndex, uint32_t currentTick, bool 
   runtime.syncRevision(loop.playbackRevision, playbackGeneration);
 }
 
-void Track::sendMidiEvent(const MidiEvent& evt) {
+void Track::sendMidiEvent(const MidiEvent& evt, uint8_t playbackSlotIndex) {
   if (trackState != TRACK_PLAYING && trackState != TRACK_OVERDUBBING) return;
+  if (playbackSlotIndex >= Config::MAX_LOOPS_PER_TRACK) return;
   isPlayingBack = true;  // Mark playback so noteOn/noteOff ignores it
   MidiEvent evtCopy = evt;
   // Per-event channel 1-16 is remapped to the track's output channel. Channel 0 is treated as
@@ -2042,6 +2048,20 @@ void Track::sendMidiEvent(const MidiEvent& evt) {
   if (isChannelMessage && (evt.channel == 0 || (evt.channel >= 1 && evt.channel <= 16))) {
     evtCopy.channel = midiChannel;
   }
+
+  LoopPlaybackRuntime& runtime = playbackRuntime.slot(playbackSlotIndex);
+  if (evt.isNoteOff()) {
+    const uint8_t note = evtCopy.data.noteData.note;
+    if (!runtime.ledger.isActive(evtCopy.channel, note)) {
+      isPlayingBack = false;
+      return;
+    }
+    runtime.ledger.noteOff(evtCopy.channel, note);
+  } else if (evt.isNoteOn()) {
+    runtime.ledger.noteOn(evtCopy.channel, evtCopy.data.noteData.note, evt.tick,
+                          evtCopy.data.noteData.velocity);
+  }
+
   // Hot path: logging every loop note at DEBUG blocks USB Serial for milliseconds and freezes the UI.
   // Use LOG_TRACE so deep MIDI tracing is opt-in (Logger at TRACE + CAT_MIDI on).
   if (evt.isNoteOn() || evt.isNoteOff()) {
@@ -2067,6 +2087,7 @@ void Track::sendAllNotesOff() {
     }
     midiHandler.sendControlChange(ch, 123, 0);
   }
+  playbackRuntime.clearAllLedgers();
   // also clear any half-open pending notes so they don't get forced later
   pendingNotes.clear();
   logger.logTrackEvent("All Notes Off sent", clockManager.getCurrentTick());

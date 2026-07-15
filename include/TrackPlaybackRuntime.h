@@ -33,6 +33,8 @@ class TrackPlaybackRuntime {
  public:
   void resetAll(bool preserveLedger);
 
+  void clearAllLedgers();
+
   LoopPlaybackRuntime& slot(uint8_t slotIndex);
 
   const LoopPlaybackRuntime& slot(uint8_t slotIndex) const;

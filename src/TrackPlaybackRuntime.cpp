@@ -65,6 +65,15 @@ TRACK_PLAYBACK_RUNTIME_COLD_MEM void TrackPlaybackRuntime::resetAll(bool preserv
   }
 }
 
+TRACK_PLAYBACK_RUNTIME_COLD_MEM void TrackPlaybackRuntime::clearAllLedgers() {
+  for (auto& rt : runtimeBySlot_) {
+    if (!rt) {
+      continue;
+    }
+    rt->ledger.clear();
+  }
+}
+
 TRACK_PLAYBACK_RUNTIME_COLD_MEM LoopPlaybackRuntime& TrackPlaybackRuntime::slot(uint8_t slotIndex) {
   LoopPlaybackRuntimePtr& rt = runtimeBySlot_[slotIndex];
   if (!rt) {
