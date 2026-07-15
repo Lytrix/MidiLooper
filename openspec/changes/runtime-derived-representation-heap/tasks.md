@@ -125,6 +125,43 @@ Persistence starvation, transport-gate workarounds, and stop-path flush/defer pa
 - [ ] Re-run `pio test -e native`; optional HITL 2+2; then M4 64+64 HITL regression
 - [ ] `/opsx:archive` when exit criteria met
 
+## M7 — Published capture / builder split (2026-07-15) — **NEXT (Phase 1 firmware)**
+
+**Plan:** [`docs/plans/published_pass_capture_builder_split_refinement.md`](../../../docs/plans/published_pass_capture_builder_split_refinement.md)  
+**Spec:** [`specs/published-capture-pass-split/spec.md`](specs/published-capture-pass-split/spec.md)  
+**Review:** [`ARCHITECTURE-REVIEW.md`](ARCHITECTURE-REVIEW.md) § M7  
+**Primary goal:** ownership split (RAM secondary). **Supersedes** reverted Phase 2A typedef routing.
+
+### Phase 0 — OpenSpec + plan (doc-only) — **DONE 2026-07-15**
+
+- [x] Spec delta `published-capture-pass-split`
+- [x] `ARCHITECTURE-REVIEW.md` M7 phase gates
+- [x] Plan doc `published_pass_capture_builder_split_refinement.md`
+- [x] Design § M7 in this change folder
+
+### Phase 1 — Type split + seal transfer — **NEXT**
+
+- [ ] `CaptureChunkIdList` / `PublishedChunkIdList` in `LoopEventStore.h`
+- [ ] `transferCaptureChunkIdsToPublished` (≤1 alloc, ≤1 copy, no temp vectors)
+- [ ] `PendingCapturePass.publishedChunkIds` at seal; publish move within published domain
+- [ ] Native: `test_loop_event_store`, `test_loop_take_survival`, `test_loop_size_probe`
+- [ ] **Gate:** `pio test -e native`; append path never uses published types
+
+### Phase 2 — `PublishedOverdubPassVec`
+
+- [ ] Migrate `LoopPasses::overdubPasses`; fix cold-path call sites (grep inventory in plan)
+- [ ] **Gate:** native + `teensy41-capture-serial` build
+
+### Phase 3 — SD / undo / clone
+
+- [ ] `StorageLoopIo`, `deepClonePasses`, `adoptPersistedSnapshot` — published types only
+- [ ] **Gate:** `test_storage_loop_io`, `test_sd_load_adopt`, undo/snapshot tests
+
+### Phase 4 — HITL + exit measurement
+
+- [ ] HITL baseline + 215312-profile manual capture; exit criterion (~5 KiB)
+- [ ] Update guides + conclusions doc; `/opsx:sync` when M7 ships
+
 ## Docs (scaffold PR)
 
 - [x] OpenSpec change folder + proposal, design, tasks, spec deltas
