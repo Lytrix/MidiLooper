@@ -19,7 +19,10 @@ todos:
     content: "Phase 2C — DEFERRED: Critical orchestration declined; heap-restore track instead"
     status: cancelled
   - id: phase-2-heap-restore
-    content: "Heap restore — 2B LoopPool extmem + persist backlog drain; no pass/edit typedef moves"
+    content: "Heap restore — 2B LoopPool extmem + persist backlog drain; M7 published pass split (Phase 0 done)"
+    status: pending
+  - id: phase-2d-published-pass-split
+    content: "M7 — CaptureChunkIdList / PublishedChunkIdList split; see published_pass_capture_builder_split_refinement.md"
     status: pending
   - id: phase-3-replace-scattered-thresholds
     content: "After reclaim validated — route optional work through pressure level; remove duplicate heap checks"
