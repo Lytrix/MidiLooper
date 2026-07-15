@@ -160,6 +160,7 @@ void NoteEditManager::update() {
     processFaderOutbound();
     processPendingSelectDependentMotorSync(trackManager.getSelectedTrack());
     processPendingGeometryDriverMotorSync(trackManager.getSelectedTrack());
+    editManager.processDeferredNoteEditDisplayRefresh(trackManager.getSelectedTrack());
 
     loopEditManager.update();
     faderHandler.update();
@@ -1806,10 +1807,8 @@ std::vector<NoteUtils::DisplayNote> NoteEditManager::selectableDisplayNotesForEd
         const auto& cachedNotes = track.getCachedNotes();
         notes.assign(cachedNotes.begin(), cachedNotes.end());
     } else {
-        const NoteEditFocus& focus = editManager.getEditSession().focus;
         const NoteUtils::DisplayNoteVec filtered =
-            filterSelectableDisplayNotes(track.editAwareMidiEvents(), focus,
-                                         track.getMidiChannel(), loopLength);
+            editManager.filteredSelectableDisplayNotesForNoteEdit(track);
         notes.assign(filtered.begin(), filtered.end());
     }
 

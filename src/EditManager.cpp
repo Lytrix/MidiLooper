@@ -140,7 +140,11 @@ void EditManager::ensureNoteEditFocusForLiveEdit(Track& track,
 }
 
 void EditManager::commitAllPendingNoteEditActions(Track& track) {
+    flushDeferredNoteEditDisplayRefresh(track);
     if (!editSession.active || !editSession.focus.active) {
+        return;
+    }
+    if (!noteEditFocusHasPendingCommit(editSession.focus)) {
         return;
     }
 
@@ -282,16 +286,14 @@ void EditManager::rebuildNoteEditFocusForDisplayNote(Track& track,
         editSession.focus.clear();
         return;
     }
-    Loop& loop = trackManager.getSelectedLoop(track);
     const uint8_t channel = track.getMidiChannel();
     const uint32_t loopLength = noteEditLoopLengthTicks(track);
     if (loopLength == 0) {
         return;
     }
 
-    MidiEventVec loopMidiEventsFromPasses;
-    loop.passes.materializeToEventVector( loopMidiEventsFromPasses, loopLength);
-    rebuildNoteEditFocusFromStore(editSession.focus, loopMidiEventsFromPasses, channel,
+    const MidiEventVec& committedLoopEvents = materializedLoopEventsForNoteEditFocus(track);
+    rebuildNoteEditFocusFromStore(editSession.focus, committedLoopEvents, channel,
                                   loopLength, -1);
 
     const NoteId baselineNoteId = findBaselineNoteIdForDisplay(editSession.focus, liveSelected);
@@ -314,7 +316,7 @@ void EditManager::rebuildNoteEditFocusForDisplayNote(Track& track,
     if (baselineNoteId != kInvalidNoteId) {
         editSession.focus.baselineMap[baselineNoteId] = editSession.focus.commitBaseline;
     }
-    populateBaselineMapForEditClosure(editSession.focus, loopMidiEventsFromPasses,
+    populateBaselineMapForEditClosure(editSession.focus, committedLoopEvents,
                                       sessionEvents, channel, loopLength);
 }
 
@@ -420,10 +422,62 @@ void EditManager::syncSelectedNoteIdxToFilteredInventory(Track& track) {
 NoteUtils::DisplayNoteVec EditManager::selectableDisplayNotesAtEditSelect(const Track& track) const {
     const uint32_t loopLength = noteEditLoopLengthTicks(track);
     if (isNoteEditActive()) {
-        return filterSelectableDisplayNotes(track.editAwareMidiEvents(), editSession.focus,
-                                            track.getMidiChannel(), loopLength);
+        return filteredSelectableDisplayNotesForNoteEdit(track);
     }
     return track.getCachedNotes();
+}
+
+NoteUtils::DisplayNoteVec EditManager::filteredSelectableDisplayNotesForNoteEdit(
+    const Track& track) const {
+    const uint32_t loopLength = noteEditLoopLengthTicks(track);
+    if (!editSession.active || loopLength == 0) {
+        return {};
+    }
+    const NoteEditFocus& focus = editSession.focus;
+    const uint32_t previewRevision = sessionPreviewRevision_;
+    const size_t overlapCount = focus.overlapNotes.size();
+    if (previewRevision == noteEditSelectableDisplayCachePreviewRevision_ &&
+        overlapCount == noteEditSelectableDisplayCacheOverlapCount_ &&
+        loopLength == noteEditSelectableDisplayCacheLoopLength_ &&
+        !noteEditSelectableDisplayCacheNotes_.empty()) {
+        return noteEditSelectableDisplayCacheNotes_;
+    }
+    noteEditSelectableDisplayCachePreviewRevision_ = previewRevision;
+    noteEditSelectableDisplayCacheOverlapCount_ = overlapCount;
+    noteEditSelectableDisplayCacheLoopLength_ = loopLength;
+    noteEditSelectableDisplayCacheNotes_ =
+        filterSelectableDisplayNotes(track.editAwareMidiEvents(), focus, track.getMidiChannel(),
+                                     loopLength);
+    return noteEditSelectableDisplayCacheNotes_;
+}
+
+void EditManager::invalidateNoteEditDerivedCaches() {
+    noteEditFocusMaterializeLoopRevision_ = UINT32_MAX;
+    noteEditFocusMaterializeSlot_ = 255;
+    noteEditFocusMaterializeLoopLength_ = 0;
+    noteEditFocusMaterializedLoopEvents_.clear();
+    noteEditSelectableDisplayCachePreviewRevision_ = UINT32_MAX;
+    noteEditSelectableDisplayCacheOverlapCount_ = static_cast<size_t>(-1);
+    noteEditSelectableDisplayCacheLoopLength_ = 0;
+    noteEditSelectableDisplayCacheNotes_.clear();
+}
+
+const MidiEventVec& EditManager::materializedLoopEventsForNoteEditFocus(Track& track) {
+    Loop& loop = trackManager.getSelectedLoop(track);
+    const uint8_t slot = trackManager.getSelectedSlotIndex(trackManager.getSelectedTrackIndex());
+    const uint32_t loopLength = noteEditLoopLengthTicks(track);
+    const uint32_t revision = loop.playbackRevision;
+    if (revision == noteEditFocusMaterializeLoopRevision_ && slot == noteEditFocusMaterializeSlot_ &&
+        loopLength == noteEditFocusMaterializeLoopLength_ &&
+        !noteEditFocusMaterializedLoopEvents_.empty()) {
+        return noteEditFocusMaterializedLoopEvents_;
+    }
+    noteEditFocusMaterializeLoopRevision_ = revision;
+    noteEditFocusMaterializeSlot_ = slot;
+    noteEditFocusMaterializeLoopLength_ = loopLength;
+    noteEditFocusMaterializedLoopEvents_.clear();
+    loop.passes.materializeToEventVector(noteEditFocusMaterializedLoopEvents_, loopLength);
+    return noteEditFocusMaterializedLoopEvents_;
 }
 
 DisplayNote EditManager::liveEditDisplayNoteAtSelect(const Track& track) const {
@@ -651,6 +705,7 @@ void EditManager::closeNoteEditSession(Track& track) {
     if (!editSession.active) {
         return;
     }
+    flushDeferredNoteEditDisplayRefresh(track);
     closeNoteEditPass(track);
     editSession.store.mutStore().clear();
     editSession.store.discardFlatCache();
@@ -958,6 +1013,9 @@ void EditManager::resetNoteEditSessionState() {
     lastPushedGeometryKind_ = NoteEditKind::Select;
     sessionPreviewRevision_ = 0;
     sessionPlaybackPreviewRevision_ = 0;
+    deferredNoteEditDisplayRefreshPending_ = false;
+    deferredNoteEditDisplayRefreshArmedAtMs_ = 0;
+    invalidateNoteEditDerivedCaches();
 }
 
 void EditManager::applySelectionFromGeometryEdit(Track& track, uint32_t selectedTick,
@@ -1264,6 +1322,34 @@ void EditManager::bumpSessionPreviewRevision() {
 
 void EditManager::bumpSessionPlaybackPreviewRevision() {
     ++sessionPlaybackPreviewRevision_;
+}
+
+void EditManager::scheduleDeferredNoteEditDisplayRefresh() {
+    deferredNoteEditDisplayRefreshPending_ = true;
+    deferredNoteEditDisplayRefreshArmedAtMs_ = millis();
+}
+
+void EditManager::flushDeferredNoteEditDisplayRefresh(Track& track) {
+    if (!deferredNoteEditDisplayRefreshPending_) {
+        return;
+    }
+    deferredNoteEditDisplayRefreshPending_ = false;
+    bumpSessionPlaybackPreviewRevision();
+    track.invalidateCaches(true);
+#ifndef PIO_UNIT_TEST_NATIVE
+    displayManager.requestNoteInfoRefresh(track);
+#endif
+}
+
+void EditManager::processDeferredNoteEditDisplayRefresh(Track& track) {
+    if (!deferredNoteEditDisplayRefreshPending_) {
+        return;
+    }
+    const uint32_t now = millis();
+    if (now - deferredNoteEditDisplayRefreshArmedAtMs_ < kDeferredNoteEditDisplayRefreshIdleMs) {
+        return;
+    }
+    flushDeferredNoteEditDisplayRefresh(track);
 }
 
 MidiEventVec& EditManager::editMidiEvents(Track& track) {
@@ -1635,6 +1721,7 @@ void EditManager::sendEditSessionChange(EditSessionType sessionType) {
 }
 
 void EditManager::commitEditSessionOnDepart(Track& track) {
+    flushDeferredNoteEditDisplayRefresh(track);
     if (isLoopEditSession()) {
         noteEditManager.loopEditManager.commitLoopEditOnDepart(track);
     }

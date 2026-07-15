@@ -126,6 +126,14 @@ void noteEditFocusApplyPitch(NoteEditFocus& focus, uint8_t newPitch, uint32_t st
 
 bool noteEditFocusHasPendingLengthChange(const NoteEditFocus& focus);
 
+/// True when pre-commit would emit moving-note and/or overlap edit pass rows.
+bool noteEditFocusHasPendingCommit(const NoteEditFocus& focus);
+
+/// True when pitch edit can update the mover pair only (no overlap lane work).
+bool canApplySimplePitchChange(MidiEventVec& sessionEvents, const NoteEditFocus& focus,
+                               uint8_t channel, uint8_t currentPitch, uint8_t targetPitch,
+                               uint32_t moverStart, uint32_t moverEnd, uint32_t loopLength);
+
 /// Reject LIFO mispairs (e.g. on@387 with off@loopLength+displayEnd).
 bool isPlausibleStorageSpan(uint32_t startTick, uint32_t endTick, uint32_t loopLength);
 
