@@ -139,20 +139,22 @@ Persistence starvation, transport-gate workarounds, and stop-path flush/defer pa
 - [x] Plan doc `published_pass_capture_builder_split_refinement.md`
 - [x] Design § M7 in this change folder
 
-### Phase 1 — Type split + seal transfer — **NEXT**
+### Phase 1 — Type split + seal transfer — **DONE 2026-07-15**
 
-- [ ] `CaptureChunkIdList` / `PublishedChunkIdList` in `LoopEventStore.h`
-- [ ] `transferCaptureChunkIdsToPublished` (≤1 alloc, ≤1 copy, no temp vectors)
-- [ ] `PendingCapturePass.publishedChunkIds` at seal; publish move within published domain
-- [ ] Native: `test_loop_event_store`, `test_loop_take_survival`, `test_loop_size_probe`
-- [ ] **Gate:** `pio test -e native`; append path never uses published types
+- [x] `CaptureChunkIdList` / `PublishedChunkIdList` in `LoopEventStore.h`
+- [x] `transferCaptureChunkIdsToPublished` + `detachChunksToPublished` (≤1 alloc, ≤1 copy)
+- [x] `PendingCapturePass.publishedChunkIds` at seal; publish move within published domain
+- [x] Reclaim/discard/clone paths use `releaseChunkRefs` (no published→capture repatriation)
+- [x] Native: `test_loop_event_store`, `test_loop_take_survival`, `test_loop_size_probe`
+- [x] **Gate:** `pio test -e native` (621 passed); `teensy41-capture-serial` build
 
-### Phase 2 — `PublishedOverdubPassVec`
+### Phase 2 — `PublishedOverdubPassVec` — **DONE 2026-07-15**
 
-- [ ] Migrate `LoopPasses::overdubPasses`; fix cold-path call sites (grep inventory in plan)
-- [ ] **Gate:** native + `teensy41-capture-serial` build
+- [x] Migrate `LoopPasses::overdubPasses` to `PublishedOverdubPassVec`
+- [x] Update `LoopPasses.cpp` cold-path helper signature
+- [x] **Gate:** `pio test -e native` (621 passed); `teensy41-capture-serial` build
 
-### Phase 3 — SD / undo / clone
+### Phase 3 — SD / undo / clone — **NEXT**
 
 - [ ] `StorageLoopIo`, `deepClonePasses`, `adoptPersistedSnapshot` — published types only
 - [ ] **Gate:** `test_storage_loop_io`, `test_sd_load_adopt`, undo/snapshot tests

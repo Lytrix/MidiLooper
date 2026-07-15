@@ -25,6 +25,7 @@
 #include "NoteEditSessionState.h"
 #include "NoteEditSessionUndo.h"
 #include "../test_support/NoteIdTestFixtures.h"
+#include "../test_support/PublishedChunkIdTestHelpers.h"
 #include "MidiEvent.h"
 
 namespace {
@@ -61,12 +62,12 @@ RecordPass makeRecordPassWithNote(uint8_t channel, uint32_t startTick) {
   LoopEventStore store;
   TEST_ASSERT_TRUE(storeAppendNoteOn(store, startTick, channel, 60, 100, 1));
   TEST_ASSERT_TRUE(store.append(MidiEvent::NoteOff(startTick + 48, channel, 60, 0)));
-  ChunkIdList refs;
-  store.detachChunksTo(refs);
+  PublishedChunkIdList publishedIds;
+  TEST_ASSERT_TRUE(transferCaptureStoreToPublished(store, publishedIds));
   RecordPass pass{};
   pass.id = 1;
   pass.state = CapturePassState::Active;
-  pass.chunkRefs = std::move(refs);
+  pass.publishedChunkIds = std::move(publishedIds);
   return pass;
 }
 
@@ -76,13 +77,13 @@ OverdubPass makeOverdubPassWithNote(uint8_t channel, uint32_t startTick, uint8_t
   LoopEventStore store;
   TEST_ASSERT_TRUE(storeAppendNoteOn(store, startTick, channel, pitch, 100, 1));
   TEST_ASSERT_TRUE(store.append(MidiEvent::NoteOff(startTick + 48, channel, pitch, 0)));
-  ChunkIdList refs;
-  store.detachChunksTo(refs);
+  PublishedChunkIdList publishedIds;
+  TEST_ASSERT_TRUE(transferCaptureStoreToPublished(store, publishedIds));
   OverdubPass pass{};
   pass.id = id;
   pass.mergeSequence = 1;
   pass.state = CapturePassState::Active;
-  pass.chunkRefs = std::move(refs);
+  pass.publishedChunkIds = std::move(publishedIds);
   return pass;
 }
 

@@ -16,6 +16,8 @@
 #include "../../src/Loop.cpp"
 #include "../test_support/LoopCaptureTestDeps.cpp"
 
+#include "../test_support/PublishedChunkIdTestHelpers.h"
+
 #include "Loop.h"
 #include "LoopEventStore.h"
 #include "StorageLoopIo.h"
@@ -25,10 +27,10 @@ namespace {
 size_t countChunksInPasses(const LoopPasses& passes) {
   size_t total = 0;
   if (passes.hasRecordPass()) {
-    total += passes.recordPass.chunkRefs.size();
+    total += passes.recordPass.publishedChunkIds.size();
   }
   for (const OverdubPass& pass : passes.overdubPasses) {
-    total += pass.chunkRefs.size();
+    total += pass.publishedChunkIds.size();
   }
   return total;
 }
@@ -38,14 +40,16 @@ RecordPass makeMultiChunkRecordPass() {
   for (uint16_t i = 0; i < LoopEventStoreConfig::CHUNK_CAPACITY + 10; ++i) {
     TEST_ASSERT_TRUE(capture.append(MidiEvent::NoteOn(i, 1, 60, 100)));
   }
-  ChunkIdList refs;
-  capture.detachChunksTo(refs);
-  TEST_ASSERT_EQUAL(2u, refs.size());
+  CaptureChunkIdList captureIds;
+  capture.detachChunksTo(captureIds);
+  TEST_ASSERT_EQUAL(2u, captureIds.size());
+  PublishedChunkIdList publishedIds;
+  TEST_ASSERT_TRUE(LoopEventStore::transferCaptureChunkIdsToPublished(publishedIds, captureIds));
 
   RecordPass pass{};
   pass.id = 1;
   pass.state = CapturePassState::Active;
-  pass.chunkRefs = std::move(refs);
+  pass.publishedChunkIds = std::move(publishedIds);
   return pass;
 }
 
@@ -81,14 +85,14 @@ void test_restore_passes_snapshot_still_deep_clones_for_undo() {
   PersistedLoopSnapshot snapshot{};
   snapshot.loopLengthTicks = 768;
   snapshot.passes.recordPass = makeMultiChunkRecordPass();
-  const ChunkIdList snapshotRefs = snapshot.passes.recordPass.chunkRefs;
+  const PublishedChunkIdList snapshotRefs = snapshot.passes.recordPass.publishedChunkIds;
 
   Loop loop;
   loop.restorePassesSnapshot(snapshot);
 
   TEST_ASSERT_TRUE(loop.passes.hasRecordPass());
-  TEST_ASSERT_EQUAL(snapshotRefs.size(), loop.passes.recordPass.chunkRefs.size());
-  TEST_ASSERT_NOT_EQUAL(snapshotRefs[0], loop.passes.recordPass.chunkRefs[0]);
+  TEST_ASSERT_EQUAL(snapshotRefs.size(), loop.passes.recordPass.publishedChunkIds.size());
+  TEST_ASSERT_NOT_EQUAL(snapshotRefs[0], loop.passes.recordPass.publishedChunkIds[0]);
   TEST_ASSERT_EQUAL(static_cast<uint16_t>(snapshotRefs.size() * 2u),
                     LoopEventStore::usedChunkCount());
 }

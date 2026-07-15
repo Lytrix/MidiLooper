@@ -20,6 +20,7 @@
 #include "StorageLoopIo.h"
 #include "Loop.h"
 #include "EditPass.h"
+#include "../test_support/PublishedChunkIdTestHelpers.h"
 #include "MidiEvent.h"
 
 namespace {
@@ -67,13 +68,13 @@ RecordPass makeRecordPassWithEvents(PassId id, uint32_t mergeSequence, CapturePa
                               uint8_t typeRaw, uint32_t tick) {
   LoopEventStore capture;
   TEST_ASSERT_TRUE(capture.append(MidiEvent::NoteOn(tick, 1, 60, 100)));
-  ChunkIdList refs;
-  capture.detachChunksTo(refs);
+  PublishedChunkIdList publishedIds;
+  TEST_ASSERT_TRUE(transferCaptureStoreToPublished(capture, publishedIds));
 
   RecordPass pass{};
   pass.id = id;
   pass.state = state;
-  pass.chunkRefs = std::move(refs);
+  pass.publishedChunkIds = std::move(publishedIds);
   (void)mergeSequence;
   (void)typeRaw;
   return pass;
@@ -83,14 +84,14 @@ OverdubPass makeOverdubPassWithEvents(PassId id, uint32_t mergeSequence, Capture
                                 uint32_t tick) {
   LoopEventStore capture;
   TEST_ASSERT_TRUE(capture.append(MidiEvent::NoteOn(tick, 1, 60, 100)));
-  ChunkIdList refs;
-  capture.detachChunksTo(refs);
+  PublishedChunkIdList publishedIds;
+  TEST_ASSERT_TRUE(transferCaptureStoreToPublished(capture, publishedIds));
 
   OverdubPass pass{};
   pass.id = id;
   pass.mergeSequence = mergeSequence;
   pass.state = state;
-  pass.chunkRefs = std::move(refs);
+  pass.publishedChunkIds = std::move(publishedIds);
   return pass;
 }
 
@@ -101,13 +102,13 @@ RecordPass makeRecordPassWithEventCount(PassId id, CapturePassState state, size_
     const uint8_t note = static_cast<uint8_t>(48u + (i % 12u));
     TEST_ASSERT_TRUE(capture.append(MidiEvent::NoteOn(tick, 1, note, 100)));
   }
-  ChunkIdList refs;
-  capture.detachChunksTo(refs);
+  PublishedChunkIdList publishedIds;
+  TEST_ASSERT_TRUE(transferCaptureStoreToPublished(capture, publishedIds));
 
   RecordPass pass{};
   pass.id = id;
   pass.state = state;
-  pass.chunkRefs = std::move(refs);
+  pass.publishedChunkIds = std::move(publishedIds);
   return pass;
 }
 
@@ -126,13 +127,13 @@ RecordPass makeRecordPassForBars(PassId id, CapturePassState state, uint32_t bar
     }
   }
 
-  ChunkIdList refs;
-  capture.detachChunksTo(refs);
+  PublishedChunkIdList publishedIds;
+  TEST_ASSERT_TRUE(transferCaptureStoreToPublished(capture, publishedIds));
 
   RecordPass pass{};
   pass.id = id;
   pass.state = state;
-  pass.chunkRefs = std::move(refs);
+  pass.publishedChunkIds = std::move(publishedIds);
   return pass;
 }
 
@@ -186,7 +187,7 @@ void test_write_read_loop_snapshot_roundtrip() {
                     static_cast<uint8_t>(restored.passes.recordPass.state));
 
   MidiEventVec flat;
-  LoopEventStore::appendChunkRefEvents(restored.passes.recordPass.chunkRefs, flat);
+  LoopEventStore::appendChunkRefEvents(restored.passes.recordPass.publishedChunkIds, flat);
   TEST_ASSERT_EQUAL(1u, flat.size());
   TEST_ASSERT_EQUAL(10u, flat[0].tick);
 }
@@ -454,7 +455,7 @@ void test_capture_pass_write_uses_chunk_stream_batch_bound() {
   TEST_ASSERT_TRUE(restored.passes.hasRecordPass());
 
   MidiEventVec flat;
-  LoopEventStore::appendChunkRefEvents(restored.passes.recordPass.chunkRefs, flat);
+  LoopEventStore::appendChunkRefEvents(restored.passes.recordPass.publishedChunkIds, flat);
   TEST_ASSERT_EQUAL(expectedEventCount, flat.size());
   TEST_ASSERT_EQUAL(0u, flat.front().tick);
   TEST_ASSERT_EQUAL(static_cast<uint32_t>(expectedEventCount - 1u), flat.back().tick);
@@ -500,7 +501,7 @@ void test_64_bar_record_snapshot_reloads_after_reboot_simulation() {
   TEST_ASSERT_EQUAL(1u, restored.passes.recordPass.id);
 
   MidiEventVec restoredFlat;
-  LoopEventStore::appendChunkRefEvents(restored.passes.recordPass.chunkRefs, restoredFlat);
+  LoopEventStore::appendChunkRefEvents(restored.passes.recordPass.publishedChunkIds, restoredFlat);
   TEST_ASSERT_EQUAL(expectedEventCount, restoredFlat.size());
   TEST_ASSERT_EQUAL(0u, restoredFlat.front().tick);
   TEST_ASSERT_EQUAL(expectedLastTick, restoredFlat.back().tick);

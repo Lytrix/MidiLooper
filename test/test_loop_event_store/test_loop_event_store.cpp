@@ -170,6 +170,63 @@ void test_first_index_for_bar_uses_bar_index() {
   TEST_ASSERT_EQUAL(3u, store.firstIndexForBar(9));
 }
 
+void test_transfer_capture_chunk_ids_to_published() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  LoopEventStore store;
+  TEST_ASSERT_TRUE(store.append(MidiEvent::NoteOn(10, 1, 60, 100)));
+  TEST_ASSERT_TRUE(store.append(MidiEvent::NoteOn(20, 1, 64, 100)));
+
+  CaptureChunkIdList captureIds;
+  store.detachChunksTo(captureIds);
+  TEST_ASSERT_EQUAL(1u, captureIds.size());
+  TEST_ASSERT_TRUE(store.empty());
+
+  PublishedChunkIdList publishedIds;
+  TEST_ASSERT_TRUE(LoopEventStore::transferCaptureChunkIdsToPublished(publishedIds, captureIds));
+  TEST_ASSERT_TRUE(captureIds.empty());
+  TEST_ASSERT_EQUAL(1u, publishedIds.size());
+
+  MidiEventVec flat;
+  LoopEventStore::appendChunkRefEvents(publishedIds, flat);
+  TEST_ASSERT_EQUAL(2u, flat.size());
+  LoopEventStore::releaseChunkRefs(publishedIds);
+}
+
+void test_detach_chunks_to_published_seals_and_transfers() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  LoopEventStore store;
+  TEST_ASSERT_TRUE(store.append(MidiEvent::NoteOn(5, 1, 60, 100)));
+
+  PublishedChunkIdList publishedIds;
+  TEST_ASSERT_TRUE(store.detachChunksToPublished(publishedIds));
+  TEST_ASSERT_TRUE(store.empty());
+  TEST_ASSERT_EQUAL(1u, publishedIds.size());
+  TEST_ASSERT_EQUAL(ChunkLifecycleState::Sealed,
+                    LoopEventStore::chunkLifecycleState(publishedIds[0]));
+  LoopEventStore::releaseChunkRefs(publishedIds);
+}
+
+void test_assign_missing_note_ids_in_chunks() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  LoopEventStore store;
+  MidiEvent on = MidiEvent::NoteOn(10, 1, 60, 100);
+  on.noteId = kInvalidNoteId;
+  TEST_ASSERT_TRUE(store.append(on));
+  TEST_ASSERT_EQUAL(1u, store.chunkIds().size());
+
+  uint32_t nextId = 100;
+  store.assignMissingNoteIdsToNoteOns([&nextId]() { return nextId++; });
+
+  MidiEventVec flat;
+  store.flatten(flat);
+  TEST_ASSERT_EQUAL(1u, flat.size());
+  TEST_ASSERT_EQUAL(100u, flat[0].noteId);
+  TEST_ASSERT_EQUAL(1u, store.chunkIds().size());
+}
+
 void test_first_index_for_bar_skips_empty_bar() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
@@ -195,5 +252,8 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_drop_events_at_or_beyond_tick_removes_overflow);
   RUN_TEST(test_first_index_for_bar_uses_bar_index);
   RUN_TEST(test_first_index_for_bar_skips_empty_bar);
+  RUN_TEST(test_transfer_capture_chunk_ids_to_published);
+  RUN_TEST(test_detach_chunks_to_published_seals_and_transfers);
+  RUN_TEST(test_assign_missing_note_ids_in_chunks);
   return UNITY_END();
 }

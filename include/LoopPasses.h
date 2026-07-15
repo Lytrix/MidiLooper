@@ -8,6 +8,7 @@
 
 #include "EditPass.h"
 #include "LoopEventStore.h"
+#include "Utils/ExternalMemoryFirstAllocator.h"
 #include "Utils/InternalHeapFirstAllocator.h"
 
 using LoopId = uint32_t;
@@ -44,7 +45,7 @@ constexpr uint16_t CHUNK_RESERVE = 16;
 
 struct RecordPass {
   PassId id = kInvalidPassId;
-  ChunkIdList chunkRefs;
+  PublishedChunkIdList publishedChunkIds;
   CapturePassState state = CapturePassState::Active;
   uint32_t sealedAtTick = 0;
 };
@@ -52,7 +53,7 @@ struct RecordPass {
 struct OverdubPass {
   PassId id = kInvalidPassId;
   uint32_t mergeSequence = 0;
-  ChunkIdList chunkRefs;
+  PublishedChunkIdList publishedChunkIds;
   CapturePassState state = CapturePassState::Active;
   uint32_t sealedAtTick = 0;
 };
@@ -61,7 +62,7 @@ struct PendingCapturePass {
   PassId id = kInvalidPassId;
   CapturePassPhase phase = CapturePassPhase::Record;
   uint32_t mergeSequence = 0;
-  ChunkIdList chunkRefs;
+  PublishedChunkIdList publishedChunkIds;
   uint32_t sealedAtTick = 0;
 };
 
@@ -71,11 +72,12 @@ struct Capture {
   CapturePhase phase = CapturePhase::None;
 };
 
-using OverdubPassVec = std::vector<OverdubPass, InternalHeapFirstAllocator<OverdubPass>>;
+using PublishedOverdubPassVec =
+    std::vector<OverdubPass, ExternalMemoryFirstAllocator<OverdubPass>>;
 
 struct LoopPasses {
   RecordPass recordPass{};
-  OverdubPassVec overdubPasses;
+  PublishedOverdubPassVec overdubPasses;
   EditPassVec editPasses;
 
   bool hasRecordPass() const { return recordPass.id != kInvalidPassId; }

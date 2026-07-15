@@ -84,7 +84,7 @@ void test_detach_chunks_to_seals_all_chunks() {
     TEST_ASSERT_TRUE(store.append(noteOn(i)));
   }
 
-  ChunkIdList refs;
+  CaptureChunkIdList refs;
   store.detachChunksTo(refs);
   TEST_ASSERT_TRUE(store.empty());
   TEST_ASSERT_EQUAL(2u, refs.size());
