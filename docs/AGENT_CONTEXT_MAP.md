@@ -13,6 +13,8 @@ Always load first:
 - [00-authority/PROJECT_INTENT.md](00-authority/PROJECT_INTENT.md)
 - [00-authority/ARCHITECTURE_RULES.md](00-authority/ARCHITECTURE_RULES.md)
 
+**Runtime orientation (agents — load early for firmware work):** [plans/runtime_process_building_blocks_overview.md](plans/runtime_process_building_blocks_overview.md) — high-level logic, owners, hard don'ts (not authority; then follow domain sections below).
+
 ---
 
 ## OpenSpec / timeline governance
