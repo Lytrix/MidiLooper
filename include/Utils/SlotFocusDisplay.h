@@ -27,3 +27,18 @@ inline uint32_t resolvePlayheadStoragePhase(uint32_t currentTick, int32_t projec
 inline bool previewPlayheadFlashVisible(uint32_t millisNow) {
   return (millisNow / 250U) % 2U == 0U;
 }
+
+/// Ticks until the playing loop's musical LoopEnd wrap (launch commit boundary).
+inline uint32_t ticksRemainingUntilLoopEndLaunch(uint32_t currentTick,
+                                                 int32_t projectionCycleStartTick,
+                                                 uint32_t loopLengthTicks,
+                                                 uint32_t loopStartTick) {
+  if (loopLengthTicks == 0) {
+    return 0;
+  }
+  const uint32_t tickInLoop = IntervalProjection::tickPhaseInProjectionCycle(
+      currentTick, projectionCycleStartTick, loopLengthTicks);
+  const uint32_t displayPhase =
+      IntervalProjection::noteRelativeTick(tickInLoop, loopStartTick, loopLengthTicks);
+  return loopLengthTicks - displayPhase;
+}

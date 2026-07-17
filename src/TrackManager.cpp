@@ -127,6 +127,10 @@ void TrackManager::prewarmSelectedDisplayVisualCache() {
   if (track.isPlaying() || track.isStoppedRecording()) {
     return;
   }
+  if (loop.shouldAvoidFullVisualRebuild(loop.loopLengthTicks)) {
+    loop.rebuildVisualCacheIdleSlice(4, 0);
+    return;
+  }
   loop.ensureVisualCacheBuilt();
 }
 
@@ -966,8 +970,15 @@ void TrackManager::setSelectedSlotIndex(uint8_t trackIndex, uint8_t slotIndex,
     displayManager.invalidateForSlotChange(trackIndex, previousSlot, slotIndex);
     forceLedUpdate(clockManager.getCurrentTick());
     if (!bootLoadInProgress_) {
+      // Selected-slot index always needs a light footer persist. A full workspace save on
+      // every preview select while playing blocks the LoopEnd launch (FinalizeWorkspace).
       StorageManager::requestWorkspaceFooterPersistWhenSafe();
-      StorageManager::requestDeferredSaveState(looperState.getLooperState());
+      const bool previewOnlyWhilePlaying =
+          syncPlayback == SyncPlayback::No &&
+          (track.isPlaying() || track.isOverdubbing());
+      if (!previewOnlyWhilePlaying) {
+        StorageManager::requestDeferredSaveState(looperState.getLooperState());
+      }
     }
   }
 }
@@ -1131,12 +1142,20 @@ void TrackManager::updateAllTracks(uint32_t currentTick) {
       if (targetSlot < Config::MAX_LOOPS_PER_TRACK && tracks[i].hasDataInSlot(targetSlot)) {
         const uint8_t previousPlaying = getPlayingSlotIndex(i);
         slotStateMachine.clearPendingSlotSwitch(i);
+        // Wire silence before swapping the audible slot (same pattern as overdub→play).
+        tracks[i].sendAllNotesOff();
+        tracks[i].ensurePlaybackMergedEventsForSlot(targetSlot);
         setActiveLoopIndex(i, targetSlot);
         const Loop& targetLoop = tracks[i].getLoop(targetSlot);
         tracks[i].clearQueuedPlaybackStart();
         tracks[i].queuePlaybackStartAtGrid(static_cast<int32_t>(targetLoop.loopStartTick),
                                             currentTick);
         tracks[i].commitQueuedPlaybackStart(currentTick);
+        logger.info("LoopEnd playback commit track=%u %u->%u start=%lu len=%lu",
+                    static_cast<unsigned>(i), static_cast<unsigned>(previousPlaying),
+                    static_cast<unsigned>(targetSlot),
+                    static_cast<unsigned long>(targetLoop.loopStartTick),
+                    static_cast<unsigned long>(targetLoop.loopLengthTicks));
 
         if (i == selectedTrack) {
           if (targetSlot != previousPlaying) {
@@ -1156,6 +1175,8 @@ void TrackManager::updateAllTracks(uint32_t currentTick) {
         }
       } else {
         // Safety: pending target no longer has loop data, cancel it.
+        logger.info("LoopEnd playback commit cancelled track=%u target=%u (no RAM data)",
+                    static_cast<unsigned>(i), static_cast<unsigned>(targetSlot));
         slotStateMachine.clearPendingSlotSwitch(i);
         pendingEnabledSetReplacement[i] = false;
       }

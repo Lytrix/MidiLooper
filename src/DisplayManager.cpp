@@ -27,21 +27,62 @@
 #include "MidiButtonManager.h"
 #include "MidiConfig.h"
 #include "StorageManager.h"
+#include "SlotLoadSession.h"
 #include "SetBrowserOverlayPolicy.h"
 #include "SetRevisionCatalog.h"
 #include "RtcTime.h"
 #include "HitlDisplayBridge.h"
 
+#if defined(__IMXRT1062__)
+#define DISP_COLD_MEM FLASHMEM
+#else
+#define DISP_COLD_MEM
+#endif
+
 namespace {
 
-bool shouldDeferFullDisplayVisualRebuild(const Loop& loop, uint32_t loopLength) {
-    if (StorageManager::hasPendingLoopSlotRestore() ||
-        StorageManager::hasPendingUndoSnapshotHydrate() || StorageManager::hasDeferredSaveWork()) {
-        return true;
+bool shouldAvoidFullVisualRebuild(const Loop& loop, uint32_t loopLength) {
+    // Long-loop policy only. Transient SD/undo/save pressure must not skip short-loop
+    // ensureVisualCacheBuilt — syncDetailedPaintWindow cannot run below the 16-bar threshold,
+    // and after invalidate that left the OLED on an empty roll after the first good paint.
+    return loop.shouldAvoidFullVisualRebuild(loopLength);
+}
+
+bool shouldDeferHeavyDisplayRebuild() {
+    return SlotLoadSession::isActive() || StorageManager::hasPendingUndoSnapshotHydrate() ||
+           StorageManager::hasDeferredSaveWork() || StorageManager::hasPendingLoopSlotRestore();
+}
+
+/// Windowed reconstruction of display notes from published (+ optional capture) events.
+DISP_COLD_MEM void rebuildDisplayNotesInWindow(Loop& mutLoop, const Loop& loop, uint32_t loopLength,
+                                               uint32_t windowStart, uint32_t windowLength,
+                                               SessionMidiEventVec& eventBuffer,
+                                               NoteUtils::DisplayNoteVec& outNotes) {
+    eventBuffer.clear();
+    if (loop.captureActive()) {
+        mutLoop.gatherPublishedEventsInWindowWithCapture(eventBuffer, windowStart, windowLength);
+    } else {
+        mutLoop.gatherPublishedEventsInWindow(eventBuffer, windowStart, windowLength);
     }
-    const uint32_t boundedThreshold =
-        DisplayWindowUtils::kMaxDetailedWindowBars * Config::TICKS_PER_BAR;
-    return loopLength > boundedThreshold && loop.visualCacheDirty && loop.visualCache.notes.empty();
+    if (!eventBuffer.empty()) {
+        const NoteUtils::DisplayNoteVec reconstructed =
+            NoteUtils::reconstructDisplayNotes(eventBuffer, loopLength, false);
+        outNotes.assign(reconstructed.begin(), reconstructed.end());
+    } else {
+        outNotes.clear();
+    }
+}
+
+/// Extra bars gathered beyond the paint window so auto-follow does not rebuild every tick.
+constexpr uint8_t kWindowedGatherMarginBars = 2;
+
+uint8_t resolveTrackIndex(const Track& track) {
+    for (uint8_t i = 0; i < trackManager.getTrackCount(); ++i) {
+        if (&trackManager.getTrack(i) == &track) {
+            return i;
+        }
+    }
+    return 255;
 }
 
 }  // namespace
@@ -537,7 +578,7 @@ uint32_t DisplayManager::resolvePlayheadInLoop(const Track& track, uint8_t displ
     const uint32_t loopOrigin = resolveLoopOriginTick(track, displaySlot);
     const bool transportActive = track.isPlaying() || track.isOverdubbing();
     if (isPreviewPlayheadPending(displaySlot, track.getActiveLoopIndex(), transportActive)) {
-        // Preview playhead: fixed at loopStartTick until playing slot catches up at launch commit.
+        // Preview playhead parks at the queued loop's launch bracket (display phase 0).
         return 0;
     }
     const uint32_t tickInLoopStorage = resolvePlayheadStoragePhase(
@@ -546,8 +587,81 @@ uint32_t DisplayManager::resolvePlayheadInLoop(const Track& track, uint8_t displ
     return IntervalProjection::noteRelativeTick(tickInLoopStorage, loopOrigin, loopLength);
 }
 
-const DisplayNoteVec& DisplayManager::resolveDisplayNotes(const Track& track, uint8_t displaySlot,
-                                                          uint32_t currentTick) {
+bool DisplayManager::syncDetailedPaintWindow(const Track& track, uint8_t displaySlot,
+                                             uint32_t currentTick, uint32_t loopLength,
+                                             uint32_t& outWindowStart, uint32_t& outWindowLength,
+                                             uint8_t& outWindowBars) {
+    const uint32_t boundedThreshold =
+        DisplayWindowUtils::kMaxDetailedWindowBars * Config::TICKS_PER_BAR;
+    if (track.isJamming() || loopLength <= boundedThreshold || displaySlot >= kDisplaySlotCount) {
+        outWindowStart = 0;
+        outWindowLength = loopLength;
+        outWindowBars = DisplayWindowUtils::kMaxDetailedWindowBars;
+        return false;
+    }
+    outWindowBars = std::min<uint8_t>(detailedWindowBars_[displaySlot],
+                                      DisplayWindowUtils::kMaxDetailedWindowBars);
+    outWindowLength = static_cast<uint32_t>(outWindowBars) * Config::TICKS_PER_BAR;
+    if (shouldAutoFollowDetailedWindow(track, loopLength)) {
+        const uint32_t playhead = resolvePlayheadInLoop(track, displaySlot, currentTick);
+        detailedWindowStartTick_[displaySlot] =
+            DisplayWindowUtils::resolveCenteredWindowStart(playhead, outWindowLength, loopLength);
+    }
+    outWindowStart = detailedWindowStartTick_[displaySlot];
+    if (outWindowStart + outWindowLength > loopLength) {
+        outWindowStart = loopLength > outWindowLength ? loopLength - outWindowLength : 0;
+        detailedWindowStartTick_[displaySlot] = outWindowStart;
+    }
+    return true;
+}
+
+DISP_COLD_MEM const DisplayNoteVec& DisplayManager::resolveWindowedDisplayNotes(
+    const Track& track, Loop& mutLoop, const Loop& loop, uint8_t displaySlot, uint32_t loopLength,
+    uint32_t windowStart, uint32_t windowLength) {
+    const uint8_t trackIndex = resolveTrackIndex(track);
+    const bool cacheHit =
+        liveWindowGatherValid_ && displaySlot == livePlaybackDisplaySlot_ &&
+        trackIndex == livePlaybackDisplayTrack_ &&
+        liveMergePlaybackRevision_ == loop.playbackRevision &&
+        liveMergeCaptureRevision_ == loop.captureDisplayRevision &&
+        liveWindowGatherLoopLength_ == loopLength && windowLength > 0 &&
+        liveWindowGatherLength_ > 0 && windowStart >= liveWindowGatherStart_ &&
+        (windowStart - liveWindowGatherStart_) + windowLength <= liveWindowGatherLength_;
+    if (cacheHit) {
+        DIAG_COUNTER_INC(DisplayIncrementalUpdate);
+        return liveDisplayNotes;
+    }
+
+    const uint32_t displayBuildStartUs = micros();
+    DIAG_COUNTER_INC(DisplayFullRebuild);
+    const uint32_t marginTicks =
+        static_cast<uint32_t>(kWindowedGatherMarginBars) * Config::TICKS_PER_BAR;
+    uint32_t gatherStart = windowStart > marginTicks ? windowStart - marginTicks : 0;
+    uint32_t gatherEnd = windowStart + windowLength + marginTicks;
+    if (gatherEnd > loopLength) {
+        gatherEnd = loopLength;
+    }
+    if (gatherStart > gatherEnd) {
+        gatherStart = 0;
+    }
+    const uint32_t gatherLength = gatherEnd - gatherStart;
+    rebuildDisplayNotesInWindow(mutLoop, loop, loopLength, gatherStart, gatherLength,
+                                liveDisplayEventBuffer, liveDisplayNotes);
+    liveMergePlaybackRevision_ = loop.playbackRevision;
+    liveMergeCaptureRevision_ = loop.captureDisplayRevision;
+    livePlaybackDisplaySlot_ = displaySlot;
+    livePlaybackDisplayTrack_ = trackIndex;
+    liveWindowGatherStart_ = gatherStart;
+    liveWindowGatherLength_ = gatherLength;
+    liveWindowGatherLoopLength_ = loopLength;
+    liveWindowGatherValid_ = true;
+    DIAG_TIMING_RECORD(DisplayBuild, micros() - displayBuildStartUs);
+    return liveDisplayNotes;
+}
+
+DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotes(const Track& track,
+                                                                            uint8_t displaySlot,
+                                                                            uint32_t currentTick) {
     if (track.isJamming()) {
         const auto& cachedNotes = track.getCachedNotes();
         liveDisplayNotes.assign(cachedNotes.begin(), cachedNotes.end());
@@ -691,16 +805,29 @@ const DisplayNoteVec& DisplayManager::resolveDisplayNotes(const Track& track, ui
                 noteEditDisplayCacheLoopLength_ = loopLength;
                 noteEditDisplayCacheOverlapCount_ = overlapCount;
             }
-        } else if (loopLength > 0) {
-            const auto& cachedNotes = track.getCachedNotes();
-            liveDisplayNotes.assign(cachedNotes.begin(), cachedNotes.end());
+        } else {
+            // NOTE_EDIT mode, session idle: never use getCachedNotes() (active loop). Preview
+            // focus can differ from activeLoopIndex while another slot is playing.
+            liveDisplayNotes.clear();
         }
         if (liveDisplayNotes.empty() && loopLength > 0) {
             const Loop& loop = track.getLoop(displaySlot);
             if (loop.hasPublishedEvents() || loop.captureActive()) {
                 Loop& mutLoop = const_cast<Loop&>(loop);
-                mutLoop.ensureVisualCacheBuilt();
-                liveDisplayNotes.assign(loop.visualCache.notes.begin(), loop.visualCache.notes.end());
+                if (!shouldAvoidFullVisualRebuild(loop, loopLength)) {
+                    mutLoop.ensureVisualCacheBuilt();
+                    liveDisplayNotes.assign(loop.visualCache.notes.begin(),
+                                            loop.visualCache.notes.end());
+                } else {
+                    uint32_t windowStart = 0;
+                    uint32_t windowLength = 0;
+                    uint8_t windowBars = 0;
+                    if (syncDetailedPaintWindow(track, displaySlot, currentTick, loopLength,
+                                                windowStart, windowLength, windowBars)) {
+                        return resolveWindowedDisplayNotes(track, mutLoop, loop, displaySlot,
+                                                           loopLength, windowStart, windowLength);
+                    }
+                }
             }
         }
         return liveDisplayNotes;
@@ -711,20 +838,32 @@ const DisplayNoteVec& DisplayManager::resolveDisplayNotes(const Track& track, ui
     if (loopLength == 0 || (!loop.hasPublishedEvents() && !loop.captureActive())) {
         liveDisplayNotes.clear();
         livePlaybackDisplaySlot_ = 255;
+        livePlaybackDisplayTrack_ = 255;
+        liveWindowGatherValid_ = false;
         return liveDisplayNotes;
     }
 
-    if (displaySlot != livePlaybackDisplaySlot_) {
+    const uint8_t trackIndex = resolveTrackIndex(track);
+    if (displaySlot != livePlaybackDisplaySlot_ || trackIndex != livePlaybackDisplayTrack_) {
+        // Slot or track context changed — drop cached notes (never paint another loop's notes).
         liveDisplayNotes.clear();
         liveDisplayEventBuffer.clear();
         liveMergePlaybackRevision_ = UINT32_MAX;
         liveMergeCaptureRevision_ = 0;
+        liveWindowGatherValid_ = false;
+        livePlaybackDisplaySlot_ = 255;
+        livePlaybackDisplayTrack_ = 255;
     }
 
     if (editManager.isNoteEditActive()) {
+        // Active note-edit session is always for the focused display slot; session store owns notes.
         invalidateLiveDisplayCache();
-        const auto& cachedNotes = track.getCachedNotes();
-        liveDisplayNotes.assign(cachedNotes.begin(), cachedNotes.end());
+        const uint32_t editLoopLength = resolveDisplayLoopLength(track, displaySlot, currentTick);
+        if (editLoopLength > 0) {
+            const NoteEditFocus& focus = editManager.getEditSession().focus;
+            liveDisplayNotes = filterSelectableDisplayNotes(track.editAwareMidiEvents(), focus,
+                                                            track.getMidiChannel(), editLoopLength);
+        }
         return liveDisplayNotes;
     }
 
@@ -732,8 +871,16 @@ const DisplayNoteVec& DisplayManager::resolveDisplayNotes(const Track& track, ui
     const bool deferVisualRebuild =
         (track.isPlaying() || track.isStoppedRecording()) && !track.isOverdubbing() &&
         !(track.isRecording() && !track.isPlaying());
-    const bool deferFullVisualRebuild = shouldDeferFullDisplayVisualRebuild(loop, loopLength);
-    if (!deferVisualRebuild && !deferFullVisualRebuild) {
+    const bool avoidFullVisualRebuild = shouldAvoidFullVisualRebuild(loop, loopLength);
+    const bool deferHeavyDisplayRebuild = shouldDeferHeavyDisplayRebuild();
+    // Architectural gate: never ensureVisualCacheBuilt when avoidFullVisualRebuild is true
+    // (long loops). Transient boot/undo/save pressure uses cached notes or windowed path.
+    if (!deferVisualRebuild && !avoidFullVisualRebuild && !deferHeavyDisplayRebuild) {
+        mutLoop.ensureVisualCacheBuilt();
+    } else if (!deferVisualRebuild && !avoidFullVisualRebuild && deferHeavyDisplayRebuild &&
+               loop.visualCacheDirty && loop.visualCache.notes.empty()) {
+        // Short loop + first paint under restore/undo pressure: still build once so frame1
+        // is not the only good frame (session_20260717_234050).
         mutLoop.ensureVisualCacheBuilt();
     }
     const bool needsLiveMergeForDisplay =
@@ -741,85 +888,51 @@ const DisplayNoteVec& DisplayManager::resolveDisplayNotes(const Track& track, ui
     if (!needsLiveMergeForDisplay) {
         // Stale-while-revalidate: when PLAYING defers rebuild, show last visual cache until idle
         // maintenance refreshes it — never return stale notes after invalidate (dirty cache).
-        if ((!loop.visualCacheDirty || deferVisualRebuild) && !loop.visualCache.notes.empty()) {
+        if (!avoidFullVisualRebuild && (!loop.visualCacheDirty || deferVisualRebuild) &&
+            !loop.visualCache.notes.empty()) {
             DIAG_COUNTER_INC(DisplayIncrementalUpdate);
             liveDisplayNotes.assign(loop.visualCache.notes.begin(), loop.visualCache.notes.end());
             livePlaybackDisplaySlot_ = displaySlot;
+            livePlaybackDisplayTrack_ = trackIndex;
             return liveDisplayNotes;
         }
-        // Phase C: long loops — provisional window notes from chunk merge (no materialize).
-        const uint32_t boundedThreshold =
-            DisplayWindowUtils::kMaxDetailedWindowBars * Config::TICKS_PER_BAR;
-        if (loopLength > boundedThreshold) {
-            const uint32_t displayBuildStartUs = micros();
+        // Prefer last live frame while deferred restore/undo is still draining.
+        if (deferHeavyDisplayRebuild && !liveDisplayNotes.empty() &&
+            displaySlot == livePlaybackDisplaySlot_ && trackIndex == livePlaybackDisplayTrack_) {
             DIAG_COUNTER_INC(DisplayIncrementalUpdate);
-            const uint8_t windowBars = DisplayWindowUtils::kMaxDetailedWindowBars;
-            const uint32_t windowLength = static_cast<uint32_t>(windowBars) * Config::TICKS_PER_BAR;
-            const uint32_t playhead = resolvePlayheadInLoop(track, displaySlot, currentTick);
-            const uint32_t windowStart =
-                DisplayWindowUtils::resolveCenteredWindowStart(playhead, windowLength, loopLength);
-            liveDisplayEventBuffer.clear();
-            mutLoop.mergeActiveCapturePasses(liveDisplayEventBuffer);
-            SessionMidiEventVec windowEvents;
-            DisplayWindowUtils::filterMidiEventsToWindow(liveDisplayEventBuffer, windowEvents,
-                                                         windowStart, windowLength, loopLength);
-            if (!windowEvents.empty()) {
-                const NoteUtils::DisplayNoteVec provisional =
-                    NoteUtils::reconstructDisplayNotes(windowEvents, loopLength, false);
-                liveDisplayNotes.assign(provisional.begin(), provisional.end());
-            }
-            livePlaybackDisplaySlot_ = displaySlot;
-            DIAG_TIMING_RECORD(DisplayBuild, micros() - displayBuildStartUs);
             return liveDisplayNotes;
         }
-        if (!liveDisplayNotes.empty() && displaySlot == livePlaybackDisplaySlot_) {
+        // Windowed reconstruction for long loops / deferred full rebuild.
+        // Use the same paint window as drawPianoRoll (detailedWindowStartTick_), not a
+        // separate centered playhead window — mismatch blanks the roll until a slot switch.
+        if (avoidFullVisualRebuild ||
+            loopLength > DisplayWindowUtils::kMaxDetailedWindowBars * Config::TICKS_PER_BAR) {
+            uint32_t windowStart = 0;
+            uint32_t windowLength = 0;
+            uint8_t windowBars = 0;
+            if (syncDetailedPaintWindow(track, displaySlot, currentTick, loopLength, windowStart,
+                                        windowLength, windowBars)) {
+                return resolveWindowedDisplayNotes(track, mutLoop, loop, displaySlot, loopLength,
+                                                   windowStart, windowLength);
+            }
+        }
+        if (!liveDisplayNotes.empty() && displaySlot == livePlaybackDisplaySlot_ &&
+            trackIndex == livePlaybackDisplayTrack_) {
             return liveDisplayNotes;
         }
     }
 
     const uint32_t boundedThreshold =
         DisplayWindowUtils::kMaxDetailedWindowBars * Config::TICKS_PER_BAR;
-    if (loopLength > boundedThreshold) {
-        const uint8_t windowBars = DisplayWindowUtils::kMaxDetailedWindowBars;
-        const uint32_t windowLength = static_cast<uint32_t>(windowBars) * Config::TICKS_PER_BAR;
-        const uint32_t playhead = resolvePlayheadInLoop(track, displaySlot, currentTick);
-        const uint32_t windowStart =
-            DisplayWindowUtils::resolveCenteredWindowStart(playhead, windowLength, loopLength);
-        const bool mergeStale = liveMergePlaybackRevision_ != loop.playbackRevision ||
-                                liveMergeCaptureRevision_ != loop.captureDisplayRevision;
-        if (mergeStale || liveDisplayEventBuffer.empty()) {
-            const uint32_t displayBuildStartUs = micros();
-            DIAG_COUNTER_INC(DisplayFullRebuild);
-            liveDisplayEventBuffer.clear();
-            if (loop.captureActive()) {
-                mutLoop.gatherPublishedFlatWithCapture(liveDisplayEventBuffer);
-            } else {
-                mutLoop.mergeActiveCapturePasses(liveDisplayEventBuffer);
-            }
-            liveMergePlaybackRevision_ = loop.playbackRevision;
-            liveMergeCaptureRevision_ = loop.captureDisplayRevision;
-            DIAG_TIMING_RECORD(DisplayBuild, micros() - displayBuildStartUs);
+    if (loopLength > boundedThreshold || avoidFullVisualRebuild) {
+        uint32_t windowStart = 0;
+        uint32_t windowLength = 0;
+        uint8_t windowBars = 0;
+        if (syncDetailedPaintWindow(track, displaySlot, currentTick, loopLength, windowStart,
+                                    windowLength, windowBars)) {
+            return resolveWindowedDisplayNotes(track, mutLoop, loop, displaySlot, loopLength,
+                                               windowStart, windowLength);
         }
-        SessionMidiEventVec windowEvents;
-        DisplayWindowUtils::filterMidiEventsToWindow(liveDisplayEventBuffer, windowEvents, windowStart,
-                                                     windowLength, loopLength);
-        if (!windowEvents.empty()) {
-            const NoteUtils::DisplayNoteVec provisional =
-                NoteUtils::reconstructDisplayNotes(windowEvents, loopLength, false);
-            liveDisplayNotes.assign(provisional.begin(), provisional.end());
-        }
-        if (!liveDisplayEventBuffer.empty()) {
-            const std::vector<NoteUtils::OpenNoteOn> openNotes =
-                NoteUtils::findOpenNoteOns(liveDisplayEventBuffer, loopLength);
-            if (!openNotes.empty()) {
-                const uint32_t playheadCloseTick =
-                    resolvePlayheadInLoop(track, displaySlot, currentTick);
-            applyLiveOpenTails(openNotes, liveDisplayEventBuffer, loopLength, playheadCloseTick,
-                               liveDisplayNotes, track.isRecording() || track.isOverdubbing());
-            }
-        }
-        livePlaybackDisplaySlot_ = displaySlot;
-        return liveDisplayNotes;
     }
 
     if (loop.visualCacheDirty || liveDisplayEventBuffer.empty() ||
@@ -831,7 +944,7 @@ const DisplayNoteVec& DisplayManager::resolveDisplayNotes(const Track& track, ui
         if (loop.captureActive()) {
             mutLoop.gatherPublishedFlatWithCapture(liveDisplayEventBuffer);
         } else {
-            mutLoop.mergeActiveCapturePasses(liveDisplayEventBuffer);
+            mutLoop.gatherPublishedEvents(liveDisplayEventBuffer);
         }
         liveMergePlaybackRevision_ = loop.playbackRevision;
         liveMergeCaptureRevision_ = loop.captureDisplayRevision;
@@ -860,6 +973,7 @@ const DisplayNoteVec& DisplayManager::resolveDisplayNotes(const Track& track, ui
         }
     }
     livePlaybackDisplaySlot_ = displaySlot;
+    livePlaybackDisplayTrack_ = trackIndex;
     return liveDisplayNotes;
 }
 
@@ -968,9 +1082,12 @@ void DisplayManager::invalidateForSlotChange(uint8_t trackIndex, uint8_t previou
 
     if (editManager.isNoteEditActive()) {
         track.invalidateCaches();
-    } else if (editManager.isLoopEditSession() || !playbackActive) {
+    } else if (!playbackActive) {
+        // Stopped: full cache invalidate on focus change is fine.
         track.invalidateCaches();
     }
+    // Playing + LOOP_EDIT preview: slot display caches already updated above — do not
+    // invalidate the active playing loop's playback/note caches (causes start hitch).
 
     if (playbackActive && trackIndex == trackManager.getSelectedTrackIndex() &&
         !isPreviewPlayheadPending(newSlot, activeSlot, playbackActive)) {
@@ -985,6 +1102,7 @@ void DisplayManager::refreshViewportAfterRecordStop(Track& track, uint8_t displa
     if (!loop.visualCacheDirty && !loop.visualCache.notes.empty()) {
         liveDisplayNotes.assign(loop.visualCache.notes.begin(), loop.visualCache.notes.end());
         livePlaybackDisplaySlot_ = displaySlot;
+        livePlaybackDisplayTrack_ = resolveTrackIndex(track);
     }
     const uint32_t loopLength =
         resolveDisplayLoopLength(track, displaySlot, clockManager.getCurrentTick());
@@ -1010,8 +1128,13 @@ void DisplayManager::invalidateLiveDisplayCache() {
     liveDisplayNotes.clear();
     liveDisplayEventBuffer.clear();
     livePlaybackDisplaySlot_ = 255;
+    livePlaybackDisplayTrack_ = 255;
     liveMergePlaybackRevision_ = UINT32_MAX;
     liveMergeCaptureRevision_ = 0;
+    liveWindowGatherStart_ = 0;
+    liveWindowGatherLength_ = 0;
+    liveWindowGatherLoopLength_ = 0;
+    liveWindowGatherValid_ = false;
     invalidateNoteEditDisplayCache();
 }
 
@@ -1166,6 +1289,26 @@ static void ticksToBarsBeats16thTicks2Dec(uint32_t ticks, char* out, size_t outS
     } else {
         snprintf(out, outSize, "%lu:%lu:%lu:%lu", bar, beat, sixteenth, ticks2dec);
     }
+}
+
+/// Duration remaining until launch: `-04:00:00:00` … `00:00:00:00` (0-based bar/beat/16th fields).
+static void ticksToLaunchCountdownBarsBeats16thTicks2Dec(uint32_t remainingTicks, char* out,
+                                                         size_t outSize) {
+    const uint32_t bar = remainingTicks / Config::TICKS_PER_BAR;
+    const uint32_t ticksInBar = remainingTicks % Config::TICKS_PER_BAR;
+    const uint32_t beat = ticksInBar / Config::TICKS_PER_QUARTER_NOTE;
+    const uint32_t ticksInBeat = ticksInBar % Config::TICKS_PER_QUARTER_NOTE;
+    const uint32_t sixteenthTicks = Config::TICKS_PER_QUARTER_NOTE / 4;
+    const uint32_t sixteenth = ticksInBeat / sixteenthTicks;
+    const uint32_t ticksIn16th = ticksInBeat % sixteenthTicks;
+    const uint32_t ticks2dec = (ticksIn16th > 99) ? 99 : ticksIn16th;
+    if (remainingTicks == 0) {
+        snprintf(out, outSize, "00:00:00:00");
+        return;
+    }
+    snprintf(out, outSize, "-%02lu:%02lu:%02lu:%02lu", static_cast<unsigned long>(bar),
+             static_cast<unsigned long>(beat), static_cast<unsigned long>(sixteenth),
+             static_cast<unsigned long>(ticks2dec));
 }
 
 void DisplayManager::drawTrackStatus(uint8_t selectedTrack, uint32_t currentMillis) {
@@ -2744,9 +2887,26 @@ void DisplayManager::drawInfoArea(uint32_t currentTick, Track& selectedTrack, ui
     // Get length of loop (selected slot when not in jam overlay)
     const uint32_t lengthLoop = selectedTrack.isJamming() ? selectedTrack.getLoopLength()
                                                           : selectedTrack.getLoopLengthForSlot(displaySlot);
-    
-    const uint32_t playheadInLoop = resolvePlayheadInLoop(selectedTrack, displaySlot, currentTick);
-    if (lengthLoop > 0) {
+
+    const bool transportActive =
+        selectedTrack.isPlaying() || selectedTrack.isOverdubbing();
+    const uint8_t playingSlot = selectedTrack.getActiveLoopIndex();
+    const uint8_t trackIdx = trackManager.getSelectedTrackIndex();
+    const bool queuedLaunchCountdown =
+        isPreviewPlayheadPending(displaySlot, playingSlot, transportActive) &&
+        trackManager.hasPendingSlotSwitch(trackIdx);
+
+    if (queuedLaunchCountdown) {
+        // Musical-time countdown until LoopEnd commit (-04:00:00:00 … 00:00:00:00).
+        const Loop& playingLoop = selectedTrack.getLoop(playingSlot);
+        const uint32_t remainingTicks = ticksRemainingUntilLoopEndLaunch(
+            currentTick, selectedTrack.getProjectionCycleStartTick(),
+            playingLoop.loopLengthTicks, playingLoop.loopStartTick);
+        ticksToLaunchCountdownBarsBeats16thTicks2Dec(remainingTicks, posStr, sizeof(posStr));
+    } else if (lengthLoop > 0) {
+        // Same playhead as the piano roll (launch bracket parks at 0 on queued preview).
+        const uint32_t playheadInLoop =
+            resolvePlayheadInLoop(selectedTrack, displaySlot, currentTick);
         ticksToBarsBeats16thTicks2Dec(playheadInLoop, posStr, sizeof(posStr), true);
     } else {
         ticksToBarsBeats16thTicks2Dec(currentTick, posStr, sizeof(posStr), true);
@@ -2765,20 +2925,34 @@ void DisplayManager::drawInfoArea(uint32_t currentTick, Track& selectedTrack, ui
 
     const MidiOutput midiOut = resolveMidiOutput();
     snprintf(midiOutLabel, sizeof(midiOutLabel), "%s", midiOutputLabel(midiOut));
-    // Draw position string
+    // Fixed sign column (1 char) so countdown '-' does not shift digits or LOOP/MID/LEN.
+    constexpr int kTimeCharW = 6;
+    constexpr int kSignColumns = 1;
+    const char* timeDigits = posStr;
+    char signChar = ' ';
+    if (posStr[0] == '-') {
+        signChar = '-';
+        timeDigits = posStr + 1;
+    }
     int x = DisplayManager::TRACK_MARGIN;
     int y = DISPLAY_HEIGHT - 12;
     _display.gfx.select_font(&Font5x7FixedMono);
-    int timeStrLen = strlen(posStr);
+    if (signChar != ' ') {
+        char signBuf[2] = {signChar, 0};
+        _display.gfx.draw_text(_display.api.getFrameBuffer(), signBuf, x, y, 5);
+    }
+    const int digitX = x + kSignColumns * kTimeCharW;
+    const int timeStrLen = static_cast<int>(strlen(timeDigits));
     for (int i = 0; i < timeStrLen; ++i) {
-        char c[2] = {posStr[i], 0};
+        char c[2] = {timeDigits[i], 0};
         // Dim ":" with 8/3 brightness, rest is 5
         uint8_t charBrightness = (c[0] == ':') ? 8/3 : 5;
-        _display.gfx.draw_text(_display.api.getFrameBuffer(), c, x + i * 6, y, charBrightness);
+        _display.gfx.draw_text(_display.api.getFrameBuffer(), c, digitX + i * kTimeCharW, y,
+                               charBrightness);
     }
 
     // Draw LOOP / MIDx / LEN fields (bottom info strip)
-    int infoX = x + timeStrLen * 6 + 6; // after time string
+    int infoX = digitX + timeStrLen * kTimeCharW + kTimeCharW; // after time string
     struct InfoField { const char* label; const char* value; bool highlight; };
     InfoField fields[] = {
         {"LOOP", loopStr, false},
@@ -2839,28 +3013,35 @@ void DisplayManager::drawNoteInfo(uint32_t currentTick, Track& selectedTrack, ui
     
     if (!noteToShow && !notes.empty()) {
         if (editManager.getCurrentState() == nullptr) {
-            const uint32_t relativeCurrentTick =
-                resolvePlayheadInLoop(selectedTrack, displaySlot, currentTick);
-            
-            for (const auto& n : notes) {
-                // Adjust note positions to be relative to loop start point
-                uint32_t s = (n.startTick >= loopStartTick) ? 
-                    (n.startTick - loopStartTick) : (n.startTick + lengthLoop - loopStartTick);
-                s = s % lengthLoop;
-                
-                uint32_t e = (n.endTick >= loopStartTick) ? 
-                    (n.endTick - loopStartTick) : (n.endTick + lengthLoop - loopStartTick);
-                e = e % lengthLoop;
-                
-                bool isPlaying = (s <= e)
-                    ? (relativeCurrentTick >= s && relativeCurrentTick < e)
-                    : (relativeCurrentTick >= s || relativeCurrentTick < e);
-                if (isPlaying) {
-                    noteToShow = &n;
-                    displayStartTick = s;
-                    lastPlayedDisplayNote = n;
-                    lastPlayedTrackIndex = currentTrackIdx;
-                    break;
+            const bool transportActive =
+                selectedTrack.isPlaying() || selectedTrack.isOverdubbing();
+            const uint8_t playingSlot = selectedTrack.getActiveLoopIndex();
+            // Destination notes + parked preview playhead (0) are not the playing loop —
+            // skip "note under playhead" matching until launch commits.
+            if (!isPreviewPlayheadPending(displaySlot, playingSlot, transportActive)) {
+                const uint32_t relativeCurrentTick =
+                    resolvePlayheadInLoop(selectedTrack, displaySlot, currentTick);
+
+                for (const auto& n : notes) {
+                    // Adjust note positions to be relative to loop start point
+                    uint32_t s = (n.startTick >= loopStartTick) ?
+                        (n.startTick - loopStartTick) : (n.startTick + lengthLoop - loopStartTick);
+                    s = s % lengthLoop;
+
+                    uint32_t e = (n.endTick >= loopStartTick) ?
+                        (n.endTick - loopStartTick) : (n.endTick + lengthLoop - loopStartTick);
+                    e = e % lengthLoop;
+
+                    bool isPlaying = (s <= e)
+                        ? (relativeCurrentTick >= s && relativeCurrentTick < e)
+                        : (relativeCurrentTick >= s || relativeCurrentTick < e);
+                    if (isPlaying) {
+                        noteToShow = &n;
+                        displayStartTick = s;
+                        lastPlayedDisplayNote = n;
+                        lastPlayedTrackIndex = currentTrackIdx;
+                        break;
+                    }
                 }
             }
             if (!noteToShow) {
@@ -2870,7 +3051,7 @@ void DisplayManager::drawNoteInfo(uint32_t currentTick, Track& selectedTrack, ui
                 } else {
                     noteToShow = &notes.back();
                 }
-                displayStartTick = (noteToShow->startTick >= loopStartTick) ? 
+                displayStartTick = (noteToShow->startTick >= loopStartTick) ?
                     (noteToShow->startTick - loopStartTick) : (noteToShow->startTick + lengthLoop - loopStartTick);
                 displayStartTick = displayStartTick % lengthLoop;
             }
@@ -2945,18 +3126,23 @@ void DisplayManager::drawNoteInfo(uint32_t currentTick, Track& selectedTrack, ui
 
     int x = DisplayManager::TRACK_MARGIN;
     int y = DISPLAY_HEIGHT;
-    // Draw the time string (ticksToBarsBeats16thTicks2Dec)
+    // Same fixed sign column as drawInfoArea so NOTE/VEL/LEN stay aligned when countdown
+    // shows/hides '-'.
+    constexpr int kTimeCharW = 6;
+    constexpr int kSignColumns = 1;
     // Highlight the time when in NOTE_EDIT mode (simplified since we use dedicated faders)
     bool isStartNote = (editManager.getEditSessionType() == EditSessionType::Note);
     _display.gfx.select_font(&Font5x7FixedMono);
-    int timeStrLen = strlen(startStr);
+    const int digitX = x + kSignColumns * kTimeCharW;
+    const int timeStrLen = static_cast<int>(strlen(startStr));
     for (int i = 0; i < timeStrLen; ++i) {
         char c[2] = {startStr[i], 0};
         uint8_t charBrightness = (c[0] == ':') ? 8/3 : (isStartNote ? 15 : 5);
-        _display.gfx.draw_text(_display.api.getFrameBuffer(), c, x + i * 6, y, charBrightness);
+        _display.gfx.draw_text(_display.api.getFrameBuffer(), c, digitX + i * kTimeCharW, y,
+                               charBrightness);
     }
     // Draw NOTE, VEL, LEN fields using drawInfoField (requested order)
-    int infoX = x + timeStrLen * 6 + 6; // after time string
+    int infoX = digitX + timeStrLen * kTimeCharW + kTimeCharW; // after time string
     struct InfoField { const char* label; const char* value; bool highlight; };
     InfoField fields[] = {
         // Keep NOTE brightness consistent even while editing (edit visuals are provided by the bracket/cursor)

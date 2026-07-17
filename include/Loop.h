@@ -80,12 +80,26 @@ struct Loop {
 
   void mergeActiveCapturePasses(MidiEventVec& out) const;
   void mergeActiveCapturePasses(SessionMidiEventVec& out) const;
-  /// DEC-016 policy owner: chunk-ref merge or extmem materialize; full materialize only when edit passes active.
+  /// Canonical published event gathering (full loop). Prefer over display-only helpers.
+  void gatherPublishedEvents(SessionMidiEventVec& out) const;
+  void gatherPublishedEvents(MidiEventVec& out) const;
+  /// Windowed published gathering — wrap-aware chunk skip + event filter.
+  void gatherPublishedEventsInWindow(SessionMidiEventVec& out, uint32_t windowStart,
+                                     uint32_t windowLength) const;
+  void gatherPublishedEventsInWindow(MidiEventVec& out, uint32_t windowStart,
+                                     uint32_t windowLength) const;
+  /// Published window plus live capture.store events in the same window.
+  void gatherPublishedEventsInWindowWithCapture(SessionMidiEventVec& out, uint32_t windowStart,
+                                                uint32_t windowLength) const;
+  /// DEC-016 policy owner — aliases gatherPublishedEvents (legacy name).
   void gatherPublishedFlatForDerivedView(SessionMidiEventVec& flat) const;
   void gatherPublishedFlatForDerivedView(MidiEventVec& flat) const;
   /// Published flat policy plus live capture.store merge (playback during record/overdub).
   void gatherPublishedFlatWithCapture(SessionMidiEventVec& flat) const;
   void gatherPublishedFlatWithCapture(MidiEventVec& flat) const;
+
+  /// True when synchronous full visual-cache rebuild should be avoided (unbounded cost).
+  bool shouldAvoidFullVisualRebuild(uint32_t loopLength) const;
 
   SessionMidiEventVec& midiEvents();
   const SessionMidiEventVec& midiEvents() const;
