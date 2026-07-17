@@ -455,11 +455,51 @@ void test_capture_pass_write_uses_chunk_stream_batch_bound() {
   TEST_ASSERT_TRUE(readPersistedLoopSnapshot(mem.io(), restored));
   TEST_ASSERT_TRUE(restored.passes.hasRecordPass());
 
+  const size_t maxReadBatchEvents = getLastPersistedCapturePassReadMaxBatchEvents();
+  TEST_ASSERT_EQUAL_UINT32(LoopEventStoreConfig::CHUNK_CAPACITY,
+                           static_cast<uint32_t>(maxReadBatchEvents));
+
   MidiEventVec flat;
   LoopEventStore::appendChunkRefEvents(restored.passes.recordPass.publishedChunkIds, flat);
   TEST_ASSERT_EQUAL(expectedEventCount, flat.size());
   TEST_ASSERT_EQUAL(0u, flat.front().tick);
   TEST_ASSERT_EQUAL(static_cast<uint32_t>(expectedEventCount - 1u), flat.back().tick);
+}
+
+void test_capture_pass_read_uses_chunk_stream_batch_bound() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  resetPersistedCapturePassWriteStatsForTest();
+
+  PersistedLoopSnapshot original{};
+  original.loopId = 10;
+  original.loopLengthTicks = 8192;
+  original.nextPassId = 2;
+  // Exactly two full batches + remainder — read max must hit CHUNK_CAPACITY.
+  const size_t expectedEventCount =
+      static_cast<size_t>(LoopEventStoreConfig::CHUNK_CAPACITY) * 2u + 5u;
+  original.passes.recordPass =
+      makeRecordPassWithEventCount(1, CapturePassState::Active, expectedEventCount);
+
+  std::vector<uint8_t> buffer;
+  MemoryStorageIo mem(&buffer);
+  TEST_ASSERT_TRUE(writePersistedLoopSnapshot(mem.io(), original));
+
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  resetPersistedCapturePassWriteStatsForTest();
+
+  PersistedLoopSnapshot restored{};
+  mem.resetRead();
+  TEST_ASSERT_TRUE(readPersistedLoopSnapshot(mem.io(), restored));
+
+  const size_t maxReadBatchEvents = getLastPersistedCapturePassReadMaxBatchEvents();
+  TEST_ASSERT_EQUAL_UINT32(LoopEventStoreConfig::CHUNK_CAPACITY,
+                           static_cast<uint32_t>(maxReadBatchEvents));
+
+  MidiEventVec flat;
+  LoopEventStore::appendChunkRefEvents(restored.passes.recordPass.publishedChunkIds, flat);
+  TEST_ASSERT_EQUAL(expectedEventCount, flat.size());
 }
 
 void test_64_bar_record_snapshot_reloads_after_reboot_simulation() {
@@ -749,6 +789,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_truncated_edit_tail_fails_read);
   RUN_TEST(test_corrupt_scoped_edit_tail_fails_read);
   RUN_TEST(test_capture_pass_write_uses_chunk_stream_batch_bound);
+  RUN_TEST(test_capture_pass_read_uses_chunk_stream_batch_bound);
   RUN_TEST(test_64_bar_record_snapshot_reloads_after_reboot_simulation);
   RUN_TEST(test_64_bar_save_completes_at_ram2_floor_with_bounded_batch);
   RUN_TEST(test_save_note_edit_pass_marks_edit_dirty);

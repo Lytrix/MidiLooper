@@ -2,42 +2,39 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-07-17 (slot queue LOOP_EDIT depart bugfix)
+Last updated: 2026-07-18 (boot windowed display device gate PASS)
 
 ---
 
 ## Now implementing
 
-### Slot queue LOOP_EDIT depart hang (hot fix)
-
-**Plan:** [`docs/plans/slot_queue_loop_edit_depart_bugfix.md`](../plans/slot_queue_loop_edit_depart_bugfix.md)  
-**Evidence:** [`captures/session_20260717_234742.log`](../../captures/session_20260717_234742.log)
-
-| Item | Status |
-|------|--------|
-| No mid-play geometry write on LOOP_EDIT depart | **In tree** |
-| Baseline sync on transport reanchor | **In tree** |
-| LoopEnd cancel log | **In tree** |
-| Native `test_slot_focus_policy` | **PASS** (full `pio test -e native` PASS) |
-| Device gate (queue slot2, commit log, no hang) | **PASS** [`session_20260718_004331`](../../captures/session_20260718_004331.log) |
-| Queued-launch musical-time countdown (`-04:00:00:00`) | **In tree** (device verify next) |
-
----
-
 ### Prioritized boot load isolation
 
-**Branch:** `feature/memory-pressure-reclaim` (docs + upcoming firmware; new branch optional before Phase 1)  
-**Plan:** [`docs/plans/prioritized_boot_load_isolation_refinement.md`](../plans/prioritized_boot_load_isolation_refinement.md)
+**Branch:** `feature/memory-pressure-reclaim`  
+**Plan:** [`docs/plans/prioritized_boot_load_isolation_refinement.md`](../plans/prioritized_boot_load_isolation_refinement.md)  
+**1C/2B plan:** [`boot_load_windowed_display_reconstruction_refinement.md`](../plans/boot_load_windowed_display_reconstruction_refinement.md)
 
 | Phase | Scope | Status |
 |-------|--------|--------|
-| **0** | Baseline captures + interference checklist | **Signed off** (2026-07-17) — [`session_20260715_134532`](../../captures/session_20260715_134532.log) blocking; [`135614`](../../captures/session_20260715_135614.log) lazy mid_pass regression |
-| **1A** | `SlotLoadSession` + mark-from-SD + `needsSlotLoad` | **Done** (native persistence/sd_load tests PASS; `teensy41-capture-serial` build SUCCESS) |
-| **1C / 2B** | Bounded published reconstruction (windowed gather + no sync full visual) | **Done** in tree — device gate next |
-| 1 device | `mid_pass` gate + display paint gate | **Next** (flash + verify) — blocked on slot-queue hot fix device gate |
-| 2 / 2B / 3 | Batch read; window-first display; lazy tiered load | Blocked on Phase 1 device |
+| **0** | Baseline captures + interference checklist | **Signed off** (2026-07-17) |
+| **1A** | `SlotLoadSession` + mark-from-SD + `needsSlotLoad` | **Done** |
+| **1B / 1C / 2B display** | Ephemeral seal + bounded published reconstruction | **Device gate PASS** [`session_20260718_010126`](../../captures/session_20260718_010126.log) — `mid_pass_during_restore=0`, continuous `DFRAME` notes, 64-bar windowed `DISP` |
+| **2** | Batch SD `ioRead` (CHUNK_CAPACITY) | **In tree** — native `test_storage_loop_io` PASS; device timing gate next vs `010126` 2.93 s |
+| **3** | Prioritized lazy / tiered load | After Phase 2 device gate |
 
-**Do not** re-enable lazy USB / background load until Phase 1 device verification passes.
+**Do not** re-enable lazy USB / background load until Phase 3 is implemented under the Phase 1 isolation invariants (now verified).
+
+---
+
+### Recently closed — Slot queue LOOP_EDIT depart
+
+**Plan:** [`docs/plans/slot_queue_loop_edit_depart_bugfix.md`](../plans/slot_queue_loop_edit_depart_bugfix.md)
+
+| Item | Status |
+|------|--------|
+| No mid-play geometry write on LOOP_EDIT depart | **PASS** |
+| Device gate (queue slot, LoopEnd commit, no hang) | **PASS** [`004331`](../../captures/session_20260718_004331.log), reconfirmed [`010126`](../../captures/session_20260718_010126.log) |
+| Queued-launch musical-time countdown | **In tree** — OLED field; LoopEnd commits present in `010126` |
 
 ---
 

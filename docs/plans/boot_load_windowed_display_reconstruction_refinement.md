@@ -2,11 +2,22 @@
 
 **Kind:** refinement  
 **Date:** 2026-07-17  
-**Status:** Device fix 2026-07-17 — paint/gather window align + gather-margin cache  
+**Status:** **Device gate PASS** (2026-07-18) — [`session_20260718_010126.log`](../../captures/session_20260718_010126.log)  
 **Cursor plan:** `.cursor/plans/display_hang_window-first_0f6f58f2.plan.md`  
 **Parent:** [`prioritized_boot_load_isolation_refinement.md`](prioritized_boot_load_isolation_refinement.md) Phase 1C + 2B
 
-## Device gate follow-up (`session_20260717_234050`)
+## Device gate — PASS (`session_20260718_010126`)
+
+| Gate | Result |
+|------|--------|
+| `verify_boot_restore_timing.py` | **PASS** — 26 restores, span **2.93 s**, `BOOT,load,ok`, `BOOT,usb_host,begin` |
+| `PERS,mid_pass` during restore | **0** (0 anywhere in capture) |
+| First paint through restore | `#CAP,DISP` at first deferred restore: **216** notes (8-bar focus); not empty |
+| Hang-after-frame1 | **Absent** — `DFRAME` keeps note counts **216 → 367 → … → 354** through ~197 s (~10–13 ms/frame) |
+| Long-loop windowed path | After LoopEnd `0->3` (`len=49152`): `DISP` 16-bar window (`…,1,0,16,323`) with **367** window notes |
+| Slot queue continuity | `LoopEnd playback commit` ×2; log ends with live `MO`/`LED`/`DFRAME` (no crash cut-off) |
+
+## Hang follow-up (fixed earlier — `session_20260717_234050`)
 
 | Symptom | Evidence | Fix |
 |---------|----------|-----|
@@ -83,6 +94,16 @@ Documented direction ([`slot_playback_window_interaction_architecture.md`](slot_
 
 For loops where `shouldAvoidFullVisualRebuild` is true, `DisplayManager::resolveDisplayNotes` must not invoke `ensureVisualCacheBuilt`.
 
-Evidence baseline: [`captures/session_20260717_220705.log`](../../captures/session_20260717_220705.log) — mid_pass=0; hang = sync full visual rebuild (`DISP` 1379 = note counts).
+| Evidence | Role |
+|----------|------|
+| [`session_20260717_220705.log`](../../captures/session_20260717_220705.log) | Baseline — mid_pass=0; hang = sync full visual (`DISP` 1379 = note counts, not ms) |
+| [`session_20260718_010126.log`](../../captures/session_20260718_010126.log) | **Sign-off** — mid_pass=0; continuous `DFRAME` notes; 64-bar windowed `DISP` |
 
-Full implementation map, todos, and out-of-scope: see Cursor plan file above.
+### Remaining (out of scope for this plan)
+
+- Parent **Phase 2** batch SD `ioRead` — **in tree**; device restore-span gate vs `010126` (~2.93 s) still open
+- Parent **Phase 3** prioritized lazy / tiered load
+- Parked playback merge window: [`playback_merged_events_window_refinement.md`](playback_merged_events_window_refinement.md)
+- Full editor migration onto `PublishedEventRange`
+
+Full implementation map and Cursor todos: see Cursor plan file above (implementation todos completed).
