@@ -465,6 +465,7 @@ Verifier runs (historical logs; no stash re-applied):
 |---------|------|--------|----------------|--------------|-------------------------------------|----------------|-------|
 | [`session_20260715_134532.log`](../captures/session_20260715_134532.log) | Blocking drain (closest to **current tree**) | 26 | 26 | (batched in setup/`loop` before USB; no per-line CAP span) | **0** (window ends at `usb_host,begin`) | ~**16.3 s** host | **17×** `#CAP,PERS,mid_pass` **after** USB for `t1:s3` — still waste; verifier does not count them |
 | [`session_20260715_135614.log`](../captures/session_20260715_135614.log) | Stashed lazy (regression) | 25 bg | 25 | **11.09 s** | **17 FAIL** | early (`BOOT,restore,interactive` then USB before drain) | mid_pass interleaved with deferred restores; DISP 352 ms then 1379 ms |
+| [`session_20260718_010126.log`](../../captures/session_20260718_010126.log) | **Phase 1+1C/2B sign-off** | 26 | 26 | **2.93 s** | **0 PASS** (0 mid_pass entire log) | after drain | Continuous `DFRAME` notes; 64-bar windowed `DISP`; see windowed plan |
 
 **Phase 1 exit gate clarification:** zero mid_pass while a load session is active **and** zero mid_pass that re-writes SD-loaded published chunks (mark-from-SD). Do not treat “PASS mid_pass_during_restore” alone as sufficient if mid_pass still labels `ok:t*:s*:` for freshly restored slots after USB.
 
@@ -538,18 +539,31 @@ Shipped in tree after 1A device evidence ([`session_20260717_215801.log`](../../
 
 Native: `test_persistence_queue` (+ ephemeral seal), `test_sd_load_adopt`, `test_persistence_failure_policy` **PASS**.
 
-**Next:** device gate — flash `teensy41-capture-serial`, capture boot, `scripts/verify_boot_restore_timing.py` expect `mid_pass_during_restore == 0`.
+#### Phase 1 + 1C/2B device gate (2026-07-18) — **PASS**
 
-### Phase 2 — Batch SD read
+Evidence: [`session_20260718_010126.log`](../../captures/session_20260718_010126.log)
 
-- Replace multiple SD reads with batched `ioRead` (extmem scratch) **inside the existing Reading state**
+| Gate | Result |
+|------|--------|
+| `verify_boot_restore_timing.py` | **PASS** — 26 restores, **2.93 s**, `mid_pass_during_restore == 0` |
+| mid_pass after USB | **0** in entire capture (not only restore window) |
+| Display paint | First `DISP` **216** notes; `DFRAME` note counts continuous (~10–13 ms) |
+| 64-bar window | `DISP` 16-bar window path after LoopEnd to `len=49152` |
+| Detail | [`boot_load_windowed_display_reconstruction_refinement.md`](boot_load_windowed_display_reconstruction_refinement.md) |
+
+**Next:** Phase 2 device timing gate — flash + boot capture; compare restore span to `010126` (~2.93 s).
+
+### Phase 2 — Batch SD read — **In tree** (2026-07-18)
+
+- `readCapturePassSlotFileHeader` / skip-capture / edit-pass payload: batched `ioRead` up to `CHUNK_CAPACITY` (256) into extmem scratch (mirrors write chunk stream)
+- Native: `test_capture_pass_read_uses_chunk_stream_batch_bound` + existing round-trips **PASS**
 - No ownership / session-scope change
+- **Device gate:** restore span shorter than [`session_20260718_010126`](../../captures/session_20260718_010126.log) baseline on comparable set; `mid_pass_during_restore == 0`
 
-### Phase 2B — Window-first display (>16 bars)
+### Phase 2B — Window-first display (>16 bars) — **Done** (shipped with 1C)
 
-- `appendChunkRefEventsInWindow` / `mergeActiveCapturePassesInWindow`
-- Playhead-priority `rebuildVisualCacheIdleSlice`
-- First paint ≤ 200 ms `#CAP,DISP` on 64-bar loop
+- Canonical `gatherPublishedEventsInWindow` / idle `rebuildVisualCacheIdleSlice` (windowed gather)
+- Device: 64-bar useful paint via windowed `DISP`; use `#CAP,DFRAME` elapsedUs (~12 ms) — do **not** treat `DISP` payload fields as milliseconds
 
 ### Phase 3 — Prioritized lazy load
 
@@ -589,8 +603,8 @@ See Cursor plan § Phase 4. Only if SD read time still unacceptable after 1–2.
 |------|-------------------|
 | Native | `pio test -e native` |
 | Boot timing | `verify_boot_restore_timing.py --follow-current-session` |
-| No mid_pass during load | `mid_pass_during_restore == 0` |
-| Long-loop first paint | 64-bar `#CAP,DISP` ≤ 200 ms (Phase 2B) |
+| No mid_pass during load | `mid_pass_during_restore == 0` — **PASS** `010126` |
+| Long-loop first paint | Windowed `DISP` + `#CAP,DFRAME` elapsedUs (~12 ms) — **PASS** `010126` (do not use DISP count fields as ms) |
 | Load telemetry | `#CAP,LOAD,outcome,*` + queue/chunk counters; no RAM1 regression |
 | HITL | `host_midi_hitl.py run --preset base` after Phase 3 |
 
@@ -598,7 +612,7 @@ See Cursor plan § Phase 4. Only if SD read time still unacceptable after 1–2.
 
 ## Summary
 
-Phase order unchanged (0 → 1 → 2 → 2B → 3). Architecture unchanged by the editorial pass.
+Phase order: 0 → 1 → **2 (next)** → 2B display done with 1C → 3. Phase 1+2B device gate **PASS** (`010126`).
 
 Document flow for readers:
 
@@ -621,7 +635,7 @@ Document flow for readers:
 | Lifecycle states | Queued → Dequeued → Reading → Validating → Publishing \| Failed → Completed |
 | Cancellation | Never cancel active session; only reorder pending queue |
 | Loading vs recovery | Loading all-or-nothing; recovery may publish partial |
-| Phase order | 0 → 1 → 2 → 2B → 3; Phase 3 blocked on Phase 1 device gate |
+| Phase order | 0 → 1 → 2 → 2B → 3; Phase 1+2B display **PASS** (`010126`); Phase 3 after Phase 2 |
 | Priority model (Phase 3) | 0 = selected track selected slot; 1 = other tracks’ selected slots; 2 = rest |
 | Publication visibility | Nothing outside loader observes slot until Publishing finishes |
 

@@ -11,6 +11,8 @@
 #include "Utils/MemoryMonitor.h"
 #include "Utils/ExternalMemoryFirstAllocator.h"
 
+#include <vector>
+
 namespace {
 
 bool ioWrite(const StorageIo& io, const void* data, size_t size) {
@@ -23,6 +25,7 @@ bool ioRead(const StorageIo& io, void* data, size_t size) {
 
 #if defined(PIO_UNIT_TEST_NATIVE)
 size_t g_lastPersistedCapturePassWriteMaxBatchEvents = 0;
+size_t g_lastPersistedCapturePassReadMaxBatchEvents = 0;
 #endif
 
 constexpr uint32_t MAX_PERSISTED_CAPTURE_PASS_EVENTS =
@@ -128,13 +131,37 @@ bool readCapturePassSlotFileHeader(const StorageIo& io, CapturePassSlotFileHeade
     return false;
   };
   const uint32_t maxTick = maxPersistedEventTick(loopLengthTicks);
-  for (uint32_t i = 0; i < midiCount; ++i) {
-    MidiEvent evt{};
-    if (!ioRead(io, &evt, sizeof(evt))) return failStagingRead();
-    if (evt.tick > maxTick) return failStagingRead();
-    if (!canStagePersistedEvent(staging.size())) return failStagingRead();
-    if (!staging.append(evt)) return failStagingRead();
+  // Phase 2: batched ioRead (mirrors writePersistedCapturePassPayloadChunkStream).
+  std::vector<MidiEvent, ExternalMemoryFirstAllocator<MidiEvent>> batch;
+  batch.reserve(LoopEventStoreConfig::CHUNK_CAPACITY);
+  size_t maxBatchEvents = 0;
+  uint32_t remaining = midiCount;
+  while (remaining > 0) {
+    const uint32_t batchCount =
+        remaining > LoopEventStoreConfig::CHUNK_CAPACITY
+            ? LoopEventStoreConfig::CHUNK_CAPACITY
+            : remaining;
+    batch.resize(batchCount);
+    if (!ioRead(io, batch.data(), static_cast<size_t>(batchCount) * sizeof(MidiEvent))) {
+      return failStagingRead();
+    }
+    if (batchCount > maxBatchEvents) {
+      maxBatchEvents = batchCount;
+    }
+    for (uint32_t i = 0; i < batchCount; ++i) {
+      const MidiEvent& evt = batch[i];
+      if (evt.tick > maxTick) return failStagingRead();
+      if (!canStagePersistedEvent(staging.size())) return failStagingRead();
+      if (!staging.append(evt)) return failStagingRead();
+    }
+    remaining -= batchCount;
+#if defined(ARDUINO)
+    yield();
+#endif
   }
+#if defined(PIO_UNIT_TEST_NATIVE)
+  g_lastPersistedCapturePassReadMaxBatchEvents = maxBatchEvents;
+#endif
   if (!staging.detachChunksToPublished(publishedChunkIds)) {
     return failStagingRead();
   }
@@ -146,8 +173,13 @@ size_t getLastPersistedCapturePassWriteMaxBatchEvents() {
   return g_lastPersistedCapturePassWriteMaxBatchEvents;
 }
 
+size_t getLastPersistedCapturePassReadMaxBatchEvents() {
+  return g_lastPersistedCapturePassReadMaxBatchEvents;
+}
+
 void resetPersistedCapturePassWriteStatsForTest() {
   g_lastPersistedCapturePassWriteMaxBatchEvents = 0;
+  g_lastPersistedCapturePassReadMaxBatchEvents = 0;
 }
 #endif
 
@@ -219,11 +251,27 @@ bool readPersistedEditPass(const StorageIo& io, EditPass& editPass) {
   editPass.actionType = static_cast<EditActionType>(actionTypeRaw);
   editPass.propertyType = static_cast<EditPropertyType>(propertyTypeRaw);
   editPass.addedEvents.clear();
+  if (addedCount == 0) {
+    return true;
+  }
+  // Batch read (CHUNK_CAPACITY), same bound as capture-pass payload.
   editPass.addedEvents.reserve(addedCount);
-  for (uint32_t i = 0; i < addedCount; ++i) {
-    MidiEvent evt{};
-    if (!ioRead(io, &evt, sizeof(evt))) return false;
-    editPass.addedEvents.push_back(evt);
+  std::vector<MidiEvent, ExternalMemoryFirstAllocator<MidiEvent>> batch;
+  batch.reserve(LoopEventStoreConfig::CHUNK_CAPACITY);
+  uint32_t remaining = addedCount;
+  while (remaining > 0) {
+    const uint32_t batchCount =
+        remaining > LoopEventStoreConfig::CHUNK_CAPACITY
+            ? LoopEventStoreConfig::CHUNK_CAPACITY
+            : remaining;
+    batch.resize(batchCount);
+    if (!ioRead(io, batch.data(), static_cast<size_t>(batchCount) * sizeof(MidiEvent))) {
+      return false;
+    }
+    for (uint32_t i = 0; i < batchCount; ++i) {
+      editPass.addedEvents.push_back(batch[i]);
+    }
+    remaining -= batchCount;
   }
   return true;
 }
@@ -415,9 +463,22 @@ bool skipPersistedEditPassPayload(const StorageIo& io) {
   if (!ioRead(io, &pitch, sizeof(pitch))) return false;
   if (!ioRead(io, &velocity, sizeof(velocity))) return false;
   if (!ioRead(io, &addedCount, sizeof(addedCount))) return false;
-  for (uint32_t i = 0; i < addedCount; ++i) {
-    MidiEvent evt{};
-    if (!ioRead(io, &evt, sizeof(evt))) return false;
+  if (addedCount == 0) {
+    return true;
+  }
+  std::vector<MidiEvent, ExternalMemoryFirstAllocator<MidiEvent>> batch;
+  batch.reserve(LoopEventStoreConfig::CHUNK_CAPACITY);
+  uint32_t remaining = addedCount;
+  while (remaining > 0) {
+    const uint32_t batchCount =
+        remaining > LoopEventStoreConfig::CHUNK_CAPACITY
+            ? LoopEventStoreConfig::CHUNK_CAPACITY
+            : remaining;
+    batch.resize(batchCount);
+    if (!ioRead(io, batch.data(), static_cast<size_t>(batchCount) * sizeof(MidiEvent))) {
+      return false;
+    }
+    remaining -= batchCount;
   }
   return true;
 }
@@ -448,13 +509,31 @@ bool skipCapturePassSlotFilePayload(const StorageIo& io, uint32_t loopLengthTick
   if (midiCount > MAX_PERSISTED_CAPTURE_PASS_EVENTS) {
     return false;
   }
+  if (midiCount == 0) {
+    return true;
+  }
   const uint32_t maxTick = maxPersistedEventTick(loopLengthTicks);
-  for (uint32_t i = 0; i < midiCount; ++i) {
-    MidiEvent evt{};
-    if (!ioRead(io, &evt, sizeof(evt))) return false;
-    if (evt.tick > maxTick) {
+  std::vector<MidiEvent, ExternalMemoryFirstAllocator<MidiEvent>> batch;
+  batch.reserve(LoopEventStoreConfig::CHUNK_CAPACITY);
+  uint32_t remaining = midiCount;
+  while (remaining > 0) {
+    const uint32_t batchCount =
+        remaining > LoopEventStoreConfig::CHUNK_CAPACITY
+            ? LoopEventStoreConfig::CHUNK_CAPACITY
+            : remaining;
+    batch.resize(batchCount);
+    if (!ioRead(io, batch.data(), static_cast<size_t>(batchCount) * sizeof(MidiEvent))) {
       return false;
     }
+    for (uint32_t i = 0; i < batchCount; ++i) {
+      if (batch[i].tick > maxTick) {
+        return false;
+      }
+    }
+    remaining -= batchCount;
+#if defined(ARDUINO)
+    yield();
+#endif
   }
   return true;
 }

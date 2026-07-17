@@ -2,13 +2,13 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-07-17 (bounded published reconstruction in tree)
+Last updated: 2026-07-18 (boot windowed display device gate PASS)
 
 ---
 
 ## Current branch
 
-**`feature/memory-pressure-reclaim`** — boot load isolation 1A–1C/2B display path in tree → **device gate**. See [CURRENT_WORK.md](CURRENT_WORK.md).
+**`feature/memory-pressure-reclaim`** — Phase 1 isolation + bounded display **device gate PASS** (`010126`). **Next:** Phase 2 batch SD read. See [CURRENT_WORK.md](CURRENT_WORK.md).
 
 *(Parallel: **`feature/persistence-work-queue`** @ `8b3f93e` — B1–B5 on `dev`.)*
 
@@ -22,17 +22,15 @@ Last updated: 2026-07-17 (bounded published reconstruction in tree)
 
 See [`docs/BRANCHING.md`](../BRANCHING.md).
 
-## In flight (uncommitted)
+## In flight
 
-- Phase 1A–1C firmware: SD staging + ephemeral seal on materialize; `bootInteractiveReady`; display defer on session only
-- Docs: boot load isolation plan + CURRENT_WORK
-- `scripts/verify_boot_restore_timing.py` (untracked)
-- **Next:** flash + boot capture; expect `mid_pass_during_restore == 0`
+- **Next implement / verify:** Phase 2 batch SD read — in tree; device restore-span gate vs `010126`
 
 ## Shipped on branch (recent)
 
 | Commit / session | Focus | Docs |
 |--------|--------|------|
+| `d87d0c6` + [`010126`](../../captures/session_20260718_010126.log) | Windowed display + queued countdown; device gate PASS | boot_load_windowed plan |
 | `8b3f93e` | Sync-drain budget, clear-slot restore, post-reboot undo save | persist queue plan |
 | `7a89f03` | Retire monolithic deferred save; work queue (B4) | persist queue plan |
 | `b3d066f` | `stepPersistenceWorkItem` scheduler hook (B3) | persist queue plan |

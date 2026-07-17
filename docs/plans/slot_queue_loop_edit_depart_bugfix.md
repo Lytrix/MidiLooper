@@ -2,8 +2,8 @@
 
 **Kind:** bugfix  
 **Date:** 2026-07-17  
-**Status:** Firmware + native done — device gate next  
-**Evidence:** [`captures/session_20260717_234742.log`](../../captures/session_20260717_234742.log)
+**Status:** **Device gate PASS** (2026-07-18)  
+**Evidence:** [`session_20260717_234742.log`](../../captures/session_20260717_234742.log) (bug); PASS [`004331`](../../captures/session_20260718_004331.log), reconfirmed [`010126`](../../captures/session_20260718_010126.log)
 
 ## Symptom
 
@@ -30,3 +30,5 @@ Playing slot1 and queueing slot2 hard-hangs near Loop 1 end. Note-info / playhea
 While a LoopEnd slot switch is pending, the bottom info time field shows **remaining musical time** until commit as `-BB:BB:SS:TT` (e.g. `-04:00:00:00` … `00:00:00:00`). Piano-roll playhead stays parked at the queued loop launch bracket (display phase 0).
 
 Helper: `ticksRemainingUntilLoopEndLaunch` in `Utils/SlotFocusDisplay.h`.
+
+**Device:** LoopEnd commits present in [`010126`](../../captures/session_20260718_010126.log) (`0->3`, `0->1`); countdown digits are OLED-only (not in serial).

@@ -50,6 +50,7 @@ bool writePersistedEditsTail(const StorageIo& io, PassId nextPassId,
 
 #if defined(PIO_UNIT_TEST_NATIVE)
 size_t getLastPersistedCapturePassWriteMaxBatchEvents();
+size_t getLastPersistedCapturePassReadMaxBatchEvents();
 void resetPersistedCapturePassWriteStatsForTest();
 #endif
 
