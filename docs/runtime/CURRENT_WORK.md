@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-07-18 (boot windowed display device gate PASS)
+Last updated: 2026-07-18 (audible boot set — Phase 3 follow-up)
 
 ---
 
@@ -18,11 +18,12 @@ Last updated: 2026-07-18 (boot windowed display device gate PASS)
 |-------|--------|--------|
 | **0** | Baseline captures + interference checklist | **Signed off** (2026-07-17) |
 | **1A** | `SlotLoadSession` + mark-from-SD + `needsSlotLoad` | **Done** |
-| **1B / 1C / 2B display** | Ephemeral seal + bounded published reconstruction | **Device gate PASS** [`session_20260718_010126`](../../captures/session_20260718_010126.log) — `mid_pass_during_restore=0`, continuous `DFRAME` notes, 64-bar windowed `DISP` |
-| **2** | Batch SD `ioRead` (CHUNK_CAPACITY) | **In tree** — native `test_storage_loop_io` PASS; device timing gate next vs `010126` 2.93 s |
-| **3** | Prioritized lazy / tiered load | After Phase 2 device gate |
+| **1B / 1C / 2B display** | Ephemeral seal + bounded published reconstruction | **Device gate PASS** [`010126`](../../captures/session_20260718_010126.log) |
+| **2** | Batch SD `ioRead` (CHUNK_CAPACITY) | **Done** (`067ab30`) — no restore-span win |
+| **3** | Early USB + focus paint | **Device gate PASS** [`012025`](../../captures/session_20260718_012025.log) (tier-0 only — Play incomplete) |
+| **3 audible set** | Sync all **active** slots (+ focus selected if split) before interactive | **In tree** — device gate next (`Boot audible sync`) |
 
-**Do not** re-enable lazy USB / background load until Phase 3 is implemented under the Phase 1 isolation invariants (now verified).
+**Play vs UI:** Playback-window plan / Phase 3b / Phase 4 do **not** unlock all-tracks-at-first-Play. Audible boot set does.
 
 ---
 

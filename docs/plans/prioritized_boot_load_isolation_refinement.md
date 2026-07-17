@@ -565,19 +565,22 @@ Evidence: [`session_20260718_010126.log`](../../captures/session_20260718_010126
 - Canonical `gatherPublishedEventsInWindow` / idle `rebuildVisualCacheIdleSlice` (windowed gather)
 - Device: 64-bar useful paint via windowed `DISP`; use `#CAP,DFRAME` elapsedUs (~12 ms) — do **not** treat `DISP` payload fields as milliseconds
 
-### Phase 3 — Prioritized lazy load
+### Phase 3 — Prioritized lazy load — **PASS** + audible-set follow-up
 
 | Priority | Slots |
 |----------|-------|
-| 0 | Selected track, **selected slot only** |
-| 1 | Selected slot on other tracks |
-| 2 | All non-selected slots |
+| 0 | **Audible boot set** — every track’s **active** slot + selected-track **selected** if split |
+| 1 | Selected slot on other tracks (background) |
+| 2 | All other slots |
 
-- Sync tier-0 only in `loadState` under stack or short-lived session + publish rules
-- Promote to **StorageManager-owned** optional `SlotLoadSession` for cooperative ~35 ms slices
-- **`bootInteractiveReady()`** = tier-0 Published; USB after that; no loading screen
-- Background queue continues; mid_pass / display gates unchanged (session-active only)
-- Reprioritize on focus; **no cancel** of active session
+**Phase 3 core (PASS [`012025`](../../captures/session_20260718_012025.log)):** early USB after sync publish; OLED gated on session-active only; mid_pass=0.
+
+**Audible boot set (2026-07-18 follow-up):** sync all priority-0 entries in `loadCurrentSetBundleAndActiveLoopSlots` so first Play hears every track with an active SD payload; focus piano roll covered when selected ≠ active. Logs: `Boot audible sync load` / `Boot audible set published count=`.
+
+**Deferred (Phase 3b):** StorageManager-owned mid-file ~35 ms Reading slices.  
+**Not required for this goal:** playback merged-events window plan; Phase 4 SD chunk index.
+
+**Device gate (audible set):** flash + boot; verifier early USB + `Boot audible`; Play immediately after first frame → all active tracks audible; background deferred continues.
 
 ### Phase 4 (optional) — v7 SD chunk index
 

@@ -2,13 +2,13 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-07-18 (boot windowed display device gate PASS)
+Last updated: 2026-07-18 (audible boot set follow-up)
 
 ---
 
 ## Current branch
 
-**`feature/memory-pressure-reclaim`** — Phase 1 isolation + bounded display **device gate PASS** (`010126`). **Next:** Phase 2 batch SD read. See [CURRENT_WORK.md](CURRENT_WORK.md).
+**`feature/memory-pressure-reclaim`** — Phase 3 PASS (`012025`); **audible boot set** in tree → device gate. See [CURRENT_WORK.md](CURRENT_WORK.md).
 
 *(Parallel: **`feature/persistence-work-queue`** @ `8b3f93e` — B1–B5 on `dev`.)*
 
@@ -24,7 +24,8 @@ See [`docs/BRANCHING.md`](../BRANCHING.md).
 
 ## In flight
 
-- **Next implement / verify:** Phase 2 batch SD read — in tree; device restore-span gate vs `010126`
+- Audible boot set: sync active slots all tracks (+ focus selected) before `bootInteractiveReady`
+- **Next:** flash + verify `Boot audible` + all-tracks Play at first frame
 
 ## Shipped on branch (recent)
 

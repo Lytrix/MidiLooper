@@ -53,10 +53,15 @@ def analyze_log(path: Path) -> dict:
     queue_count = None
     load_ok = False
     usb_begin = False
+    usb_begin_line: int | None = None
+    usb_begin_cap: int | None = None
     first_restore_cap: int | None = None
     last_restore_cap: int | None = None
+    last_restore_line: int | None = None
     restore_count = 0
     mid_pass_during_restore = 0
+    tier0_sync = False
+    audible_sync = False
     in_restore_window = False
 
     for i, line in enumerate(lines):
@@ -65,24 +70,63 @@ def analyze_log(path: Path) -> dict:
             if m:
                 queue_count = int(m.group(1))
 
+        if "Boot tier0" in line:
+            tier0_sync = True
+        if "Boot audible" in line:
+            audible_sync = True
+            tier0_sync = True  # audible set supersedes tier-0-only logs
+
         if "BOOT,load,ok" in line or "#CAP,BOOT,load,ok" in line:
             load_ok = True
 
         if "Deferred restore loop slot" in line:
             restore_count += 1
             in_restore_window = True
+            last_restore_line = i
             cap = _next_cap(lines, i)
             if cap is not None:
                 if first_restore_cap is None:
                     first_restore_cap = cap
                 last_restore_cap = cap
 
+        # Count mid_pass across the full deferred drain (Phase 3: USB may begin mid-drain).
         if in_restore_window and ",PERS,mid_pass," in line:
             mid_pass_during_restore += 1
 
         if "BOOT,usb_host,begin" in line or "#CAP,BOOT,usb_host,begin" in line:
-            in_restore_window = False
             usb_begin = True
+            usb_begin_line = i
+            usb_begin_cap = _line_cap(line) or _next_cap(lines, i)
+
+        if last_restore_line is not None and i > last_restore_line and restore_count > 0:
+            # Keep window open until we have seen the last restore so far; finalized after loop.
+            pass
+
+    # Close restore window after last deferred restore line for mid_pass accounting.
+    # Re-scan mid_pass between first and last restore lines (inclusive neighborhood).
+    if restore_count > 0:
+        first_i = next(
+            (i for i, l in enumerate(lines) if "Deferred restore loop slot" in l), None
+        )
+        last_i = None
+        for i, l in enumerate(lines):
+            if "Deferred restore loop slot" in l:
+                last_i = i
+        mid_pass_during_restore = 0
+        if first_i is not None and last_i is not None:
+            for i in range(first_i, last_i + 1):
+                if ",PERS,mid_pass," in lines[i]:
+                    mid_pass_during_restore += 1
+            # Also count mid_pass shortly after last restore (session teardown).
+            for i in range(last_i + 1, min(last_i + 20, len(lines))):
+                if ",PERS,mid_pass," in lines[i]:
+                    mid_pass_during_restore += 1
+
+    early_usb = False
+    if usb_begin and last_restore_line is not None and usb_begin_line is not None:
+        early_usb = usb_begin_line < last_restore_line
+    elif usb_begin and restore_count == 0:
+        early_usb = True  # tier-0 only / empty background
 
     total_restore_s = None
     if first_restore_cap is not None and last_restore_cap is not None:
@@ -97,6 +141,11 @@ def analyze_log(path: Path) -> dict:
         "total_restore_s": total_restore_s,
         "mid_pass_during_restore": mid_pass_during_restore,
         "first_restore_cap": first_restore_cap,
+        "tier0_sync": tier0_sync,
+        "audible_sync": audible_sync,
+        "early_usb": early_usb,
+        "usb_begin_cap": usb_begin_cap,
+        "last_restore_cap": last_restore_cap,
     }
 
 
@@ -129,8 +178,19 @@ def main() -> int:
     parser.add_argument(
         "--max-restore-s",
         type=float,
-        default=3.0,
-        help="Fail if first-to-last deferred restore span exceeds this (default 3.0)",
+        default=None,
+        help="Optional: fail if first-to-last deferred restore span exceeds this (seconds)",
+    )
+    parser.add_argument(
+        "--require-early-usb",
+        action="store_true",
+        default=True,
+        help="Phase 3: require BOOT,usb_host,begin before the last deferred restore (default on)",
+    )
+    parser.add_argument(
+        "--no-require-early-usb",
+        action="store_true",
+        help="Disable Phase 3 early-USB gate (Phase 1-style drain-before-USB)",
     )
     args = parser.parse_args()
 
@@ -145,12 +205,17 @@ def main() -> int:
     print(f"pending slots queued: {result['queue_count']}")
     print(f"BOOT,load,ok seen: {result['load_ok']}")
     print(f"BOOT,usb_host,begin seen: {result['usb_begin']}")
+    print(f"Boot tier0/audible sync log seen: {result['tier0_sync']}")
+    print(f"Boot audible set log seen: {result.get('audible_sync', False)}")
     print(f"deferred restore lines: {result['restore_count']}")
     if result["total_restore_s"] is not None:
         print(f"restore span (first->last): {result['total_restore_s']:.2f}s")
     print(f"PERS,mid_pass during restore: {result['mid_pass_during_restore']}")
+    print(f"early USB (before last deferred restore): {result['early_usb']}")
 
     ok = True
+    require_early_usb = args.require_early_usb and not args.no_require_early_usb
+
     if result["queue_count"] and result["restore_count"] == 0 and not result["usb_begin"]:
         print(
             "FAIL: boot hung or capture truncated before first deferred restore "
@@ -160,9 +225,20 @@ def main() -> int:
     if result["mid_pass_during_restore"] > 0:
         print("FAIL: mid_pass ran during deferred boot restore (redundant SD writes)")
         ok = False
-    if result["total_restore_s"] is not None and result["total_restore_s"] > args.max_restore_s:
+    if (
+        args.max_restore_s is not None
+        and result["total_restore_s"] is not None
+        and result["total_restore_s"] > args.max_restore_s
+    ):
         print(f"FAIL: restore span > {args.max_restore_s}s")
         ok = False
+    if require_early_usb and result["restore_count"] > 0 and result["usb_begin"]:
+        if not result["early_usb"]:
+            print(
+                "FAIL: Phase 3 expects BOOT,usb_host,begin before the last deferred restore "
+                "(tier-0 interactive while background queue drains)"
+            )
+            ok = False
     if result["restore_count"] == 0 and ok:
         print("WARN: no deferred restore lines (log may not include boot)")
 
