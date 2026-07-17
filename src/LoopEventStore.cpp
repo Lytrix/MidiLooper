@@ -78,6 +78,36 @@ bool LoopEventStore::poolUsed_[LoopEventStoreConfig::POOL_CHUNK_COUNT] = {};
 ChunkLifecycleState LoopEventStore::poolLifecycle_[LoopEventStoreConfig::POOL_CHUNK_COUNT] = {};
 uint16_t LoopEventStore::poolChunkRefCount_[LoopEventStoreConfig::POOL_CHUNK_COUNT] = {};
 bool LoopEventStore::poolReady_ = false;
+uint8_t LoopEventStore::sdLoadStagingDepth_ = 0;
+uint8_t LoopEventStore::ephemeralSealDepth_ = 0;
+
+void LoopEventStore::enterSdLoadStaging() {
+  if (sdLoadStagingDepth_ < 255) {
+    ++sdLoadStagingDepth_;
+  }
+}
+
+void LoopEventStore::leaveSdLoadStaging() {
+  if (sdLoadStagingDepth_ > 0) {
+    --sdLoadStagingDepth_;
+  }
+}
+
+bool LoopEventStore::isSdLoadStaging() { return sdLoadStagingDepth_ > 0; }
+
+void LoopEventStore::enterEphemeralSeal() {
+  if (ephemeralSealDepth_ < 255) {
+    ++ephemeralSealDepth_;
+  }
+}
+
+void LoopEventStore::leaveEphemeralSeal() {
+  if (ephemeralSealDepth_ > 0) {
+    --ephemeralSealDepth_;
+  }
+}
+
+bool LoopEventStore::isEphemeralSeal() { return ephemeralSealDepth_ > 0; }
 
 void LoopEventStore::initPool() {
   if (poolReady_) {
@@ -96,6 +126,8 @@ void LoopEventStore::initPool() {
     poolChunkRefCount_[i] = 0;
   }
   poolReady_ = true;
+  // Persistence tracking must not survive pool re-init (EXTMEM can outlive soft reset).
+  PersistenceQueue::resetForTests();
 }
 
 void LoopEventStore::resetPoolForTests() {
@@ -107,6 +139,8 @@ void LoopEventStore::resetPoolForTests() {
   std::memset(poolUsed_, 0, sizeof(poolUsed_));
   std::memset(poolLifecycle_, 0, sizeof(poolLifecycle_));
   std::memset(poolChunkRefCount_, 0, sizeof(poolChunkRefCount_));
+  sdLoadStagingDepth_ = 0;
+  ephemeralSealDepth_ = 0;
   PersistenceQueue::resetForTests();
 }
 
@@ -278,7 +312,13 @@ void LoopEventStore::sealChunk(uint16_t id) {
     return;
   }
   poolLifecycle_[id] = ChunkLifecycleState::Sealed;
-  PersistenceQueue::admitSealedChunk(id);
+  if (isSdLoadStaging()) {
+    (void)PersistenceQueue::markChunkPersistedFromSdLoad(id);
+  } else if (isEphemeralSeal()) {
+    // Derived-view copies must not enter mid_pass.
+  } else {
+    PersistenceQueue::admitSealedChunk(id);
+  }
 }
 
 bool LoopEventStore::isChunkSealed(uint16_t id) {
@@ -690,6 +730,20 @@ void LOOP_EVENT_STORE_COLD_MEM LoopEventStore::appendChunkRefEvents(
   for (uint16_t id : ids) {
     appendChunkRefEvent(id, out);
   }
+}
+
+bool LOOP_EVENT_STORE_COLD_MEM LoopEventStore::chunkTickSpan(uint16_t id, uint32_t& firstTick,
+                                                             uint32_t& lastTick) {
+  if (id >= LoopEventStoreConfig::POOL_CHUNK_COUNT || !pool_ || !poolUsed_[id]) {
+    return false;
+  }
+  const EventChunk& c = pool_[id];
+  if (c.used == 0) {
+    return false;
+  }
+  firstTick = c.firstTick;
+  lastTick = c.lastTick;
+  return true;
 }
 
 size_t LOOP_EVENT_STORE_COLD_MEM LoopEventStore::countEventsInChunkIds(const CaptureChunkIdList& ids) {

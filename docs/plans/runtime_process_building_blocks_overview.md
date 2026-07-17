@@ -318,7 +318,7 @@ Cold path loads workspace meta first, then restores slots one-per-idle by priori
 
 **Owner:** `StorageManager` restore; `MidiHandler::beginUsbHost` gated from `main.cpp`.
 
-**Gap:** planned `SlotLoadQueue` / `SlotLoadSession` not shipped — see [prioritized_boot_load_isolation_refinement.md](prioritized_boot_load_isolation_refinement.md).
+**Gap:** planned `SlotLoadQueue` / `SlotLoadSession` not shipped — see [prioritized_boot_load_isolation_refinement.md](prioritized_boot_load_isolation_refinement.md). **Phase 0 baseline signed off 2026-07-17**; Phase 1A next.
 
 ---
 

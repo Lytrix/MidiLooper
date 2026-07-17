@@ -2,13 +2,46 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-07-14 (Phase 1B Low reclaim shipped; manual gate next)
+Last updated: 2026-07-17 (slot queue LOOP_EDIT depart bugfix)
 
 ---
 
 ## Now implementing
 
-### Memory pressure reclaim (M6 follow-on)
+### Slot queue LOOP_EDIT depart hang (hot fix)
+
+**Plan:** [`docs/plans/slot_queue_loop_edit_depart_bugfix.md`](../plans/slot_queue_loop_edit_depart_bugfix.md)  
+**Evidence:** [`captures/session_20260717_234742.log`](../../captures/session_20260717_234742.log)
+
+| Item | Status |
+|------|--------|
+| No mid-play geometry write on LOOP_EDIT depart | **In tree** |
+| Baseline sync on transport reanchor | **In tree** |
+| LoopEnd cancel log | **In tree** |
+| Native `test_slot_focus_policy` | **PASS** (full `pio test -e native` PASS) |
+| Device gate (queue slot2, commit log, no hang) | **PASS** [`session_20260718_004331`](../../captures/session_20260718_004331.log) |
+| Queued-launch musical-time countdown (`-04:00:00:00`) | **In tree** (device verify next) |
+
+---
+
+### Prioritized boot load isolation
+
+**Branch:** `feature/memory-pressure-reclaim` (docs + upcoming firmware; new branch optional before Phase 1)  
+**Plan:** [`docs/plans/prioritized_boot_load_isolation_refinement.md`](../plans/prioritized_boot_load_isolation_refinement.md)
+
+| Phase | Scope | Status |
+|-------|--------|--------|
+| **0** | Baseline captures + interference checklist | **Signed off** (2026-07-17) — [`session_20260715_134532`](../../captures/session_20260715_134532.log) blocking; [`135614`](../../captures/session_20260715_135614.log) lazy mid_pass regression |
+| **1A** | `SlotLoadSession` + mark-from-SD + `needsSlotLoad` | **Done** (native persistence/sd_load tests PASS; `teensy41-capture-serial` build SUCCESS) |
+| **1C / 2B** | Bounded published reconstruction (windowed gather + no sync full visual) | **Done** in tree — device gate next |
+| 1 device | `mid_pass` gate + display paint gate | **Next** (flash + verify) — blocked on slot-queue hot fix device gate |
+| 2 / 2B / 3 | Batch read; window-first display; lazy tiered load | Blocked on Phase 1 device |
+
+**Do not** re-enable lazy USB / background load until Phase 1 device verification passes.
+
+---
+
+### Paused — Memory pressure reclaim (M6 follow-on)
 
 **Branch:** `feature/memory-pressure-reclaim`  
 **Plan:** [`docs/plans/memory_pressure_reclaim_refinement.md`](../plans/memory_pressure_reclaim_refinement.md)
@@ -17,9 +50,9 @@ Last updated: 2026-07-14 (Phase 1B Low reclaim shipped; manual gate next)
 |-------|--------|--------|
 | **1A** | Advisory FSM + `#CAP,DIAG,pressure` | **Shipped** (`f09f547`) — validated in [`session_20260714_233620.log`](../../captures/session_20260714_233620.log) |
 | **1B** | Low reclaim (`try*` owner APIs; background-first) | **Shipped** — pending manual gate |
-| 2 | Critical undo trim + persistence inversion | Next |
-| 3 | Replace scattered heap thresholds | Pending |
-| 4 | Manual gate 215312; idle defer; OpenSpec archive | Pending |
+| 2 | Critical undo trim + persistence inversion | Paused |
+| 3 | Replace scattered heap thresholds | Paused |
+| 4 | Manual gate 215312; idle defer; OpenSpec archive | Paused |
 
 **Manual gate (1B):** Re-run stress session; confirm reclaim under Low without playback glitches / dropped MIDI on selected track.
 

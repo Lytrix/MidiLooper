@@ -7,6 +7,7 @@
 #include "MidiHandler.h"
 #include "ClockManager.h"
 #include "StorageManager.h"
+#include "SlotLoadSession.h"
 #include "stdint.h"
 #include <unordered_map>
 #include <utility>
@@ -67,6 +68,7 @@ bool shouldRestorePublishedOverlapOnOverdubStop(const Loop& loop, uint8_t note,
 #include "Utils/TrackMem.h"
 #include "DisplayManager.h"
 #include "EditManager.h"
+#include "NoteEditManager.h"
 #include "TrackManager.h"
 
 extern TrackManager trackManager;
@@ -994,16 +996,21 @@ void Track::processDeferredIdleMaintenance(uint32_t nowMs) {
   if (!isPlaying() && !isRecording() && !isOverdubbing() && !isStoppedRecording()) {
     Loop& loop = getActiveLoop();
     if (loop.hasPublishedEvents()) {
-      const bool bootHydrateActive = StorageManager::hasPendingLoopSlotRestore() ||
-                                     StorageManager::hasPendingUndoSnapshotHydrate();
+      const bool slotLoadSessionActive = SlotLoadSession::isActive();
+      const bool bootHydrateActive =
+          slotLoadSessionActive || StorageManager::hasPendingUndoSnapshotHydrate() ||
+          StorageManager::hasPendingLoopSlotRestore();
       const bool deferHeavyDerivedView =
           bootHydrateActive || StorageManager::hasDeferredSaveWork();
-      if (!loop.isPassesMaterializedStoreFresh() && !deferHeavyDerivedView) {
+      const bool avoidFullVisual =
+          loop.shouldAvoidFullVisualRebuild(loop.loopLengthTicks) || deferHeavyDerivedView;
+      if (!loop.isPassesMaterializedStoreFresh() && !deferHeavyDerivedView && !avoidFullVisual) {
         loop.ensurePassesMaterializedStore();
       }
       if (loop.visualCacheDirty) {
-        if (deferHeavyDerivedView) {
-          uint8_t barsPerSlice = StorageManager::hasDeferredSaveWork() ? 2 : 4;
+        // Budget-driven: one idle slice per call (bars), never full ensure when avoidFullVisual.
+        uint8_t barsPerSlice = StorageManager::hasDeferredSaveWork() ? 2 : 4;
+        if (avoidFullVisual) {
           loop.rebuildVisualCacheIdleSlice(barsPerSlice, 0);
         } else {
           loop.ensureVisualCacheBuilt();
@@ -1027,9 +1034,31 @@ void Track::processDeferredIdleMaintenance(uint32_t nowMs) {
 
 void Track::prewarmPlaybackForSlot(uint8_t slotIndex) {
   ensureLoopsAllocated();
+  if (slotIndex >= Config::MAX_LOOPS_PER_TRACK) {
+    return;
+  }
   Loop& loop = loopForSlot(slotIndex);
   (void)playbackRuntime.slot(slotIndex);
   (void)loop.getPlaybackOrder();
+}
+
+void Track::ensurePlaybackMergedEventsForSlot(uint8_t slotIndex) {
+  ensureLoopsAllocated();
+  if (slotIndex >= Config::MAX_LOOPS_PER_TRACK) {
+    return;
+  }
+  Loop& loop = loopForSlot(slotIndex);
+  LoopPlaybackRuntime& runtime = playbackRuntime.slot(slotIndex);
+  (void)loop.getPlaybackOrder();
+  // Build destination merged MIDI before LoopEnd commit so launch is a cache hit.
+  if (loop.hasPublishedEvents() && loop.loopLengthTicks > 0) {
+    ensurePlaybackWindowBuilt(*this, loop, runtime);
+    if (loop.playbackOrderDirty) {
+      const uint32_t currentTick = clockManager.getCurrentTick();
+      const ProjectionContext playbackContext = makePlaybackContext(*this, loop, currentTick);
+      ::rebuildPlaybackOrder(loop, runtime.primaryWindow.mergedEvents, playbackContext);
+    }
+  }
 }
 
 void Track::releasePlaybackWindowMemory() {
@@ -1464,6 +1493,11 @@ void Track::reanchorPlaybackProjection(uint32_t currentTick, bool preserveLoopPh
     projectionCycleStartTick = static_cast<int32_t>(currentTick);
     for (uint8_t slotIndex = 0; slotIndex < Config::MAX_LOOPS_PER_TRACK; ++slotIndex) {
       getLoop(slotIndex).lastTickInLoop = UINT32_MAX;
+    }
+    // Keep LOOP_EDIT baseline aligned with the playback frame so preview depart cannot
+    // restore a stale SD loopStartTick onto the live loop (session_20260717_234742).
+    if (editManager.isLoopEditSession()) {
+      noteEditManager.loopEditManager.onGlobalGeometryRestored(*this);
     }
   } else if (loop.loopLengthTicks > 0) {
     const uint32_t phase =
@@ -1905,6 +1939,13 @@ void Track::playMidiEvents(uint32_t currentTick, bool isAudible) {
   loop.lastTickInLoop = tickInLoop;
 
   bool atLoopStart = (prevTickInLoop == UINT32_MAX) || (tickInLoop <= prevTickInLoop);
+  // After a cold re-anchor, catch up from 0..tickInLoop. Cap that window so a broken
+  // projection (e.g. loopStart mutated mid-play) cannot MIDI-flood / hang USB.
+  if (prevTickInLoop == UINT32_MAX && tickInLoop > Config::TICKS_PER_BAR) {
+    loop.nextEventIndex = 0;
+    runtime.syncRevision(loop.playbackRevision, playbackGeneration);
+    return;
+  }
 
   auto eventInJamRegion = [this, &loop](uint32_t evTick) -> bool {
     if (!jamPlaybackActive || jamLength == 0) return true;
@@ -1923,7 +1964,12 @@ void Track::playMidiEvents(uint32_t currentTick, bool isAudible) {
 
   const PlaybackOrderVec& playbackOrder = loop.getPlaybackOrder();
   while (loop.nextEventIndex < playbackOrder.size()) {
-    const MidiEvent &evt = mergedEvents[playbackOrder[loop.nextEventIndex]];
+    const size_t orderIdx = playbackOrder[loop.nextEventIndex];
+    if (orderIdx >= mergedEvents.size()) {
+      loop.playbackOrderDirty = true;
+      break;
+    }
+    const MidiEvent &evt = mergedEvents[orderIdx];
     const uint32_t evTick =
         IntervalProjection::playbackEventPhase(evt.tick, playbackContext.loopLength);
     const uint32_t evStorageTick = evt.tick;
@@ -2016,10 +2062,20 @@ void Track::playMidiEventsForSlot(uint8_t slotIndex, uint32_t currentTick, bool 
   uint32_t prevTickInLoop = loop.lastTickInLoop;
   loop.lastTickInLoop = tickInLoop;
   bool atLoopStart = (prevTickInLoop == UINT32_MAX) || (tickInLoop <= prevTickInLoop);
+  if (prevTickInLoop == UINT32_MAX && tickInLoop > Config::TICKS_PER_BAR) {
+    loop.nextEventIndex = 0;
+    runtime.syncRevision(loop.playbackRevision, playbackGeneration);
+    return;
+  }
   const PlaybackOrderVec& playbackOrder = loop.getPlaybackOrder();
 
   while (loop.nextEventIndex < playbackOrder.size()) {
-    const MidiEvent &evt = mergedEvents[playbackOrder[loop.nextEventIndex]];
+    const size_t orderIdx = playbackOrder[loop.nextEventIndex];
+    if (orderIdx >= mergedEvents.size()) {
+      loop.playbackOrderDirty = true;
+      break;
+    }
+    const MidiEvent &evt = mergedEvents[orderIdx];
     const uint32_t evTick =
         IntervalProjection::playbackEventPhase(evt.tick, playbackContext.loopLength);
     bool crossed = atLoopStart ? (evTick <= tickInLoop) : (prevTickInLoop < evTick && evTick <= tickInLoop);

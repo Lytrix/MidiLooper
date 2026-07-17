@@ -56,6 +56,10 @@ public:
     static bool hasDeferredSaveWork();
     /// True while boot-time loop slot payloads are still queued for idle restore.
     static bool hasPendingLoopSlotRestore();
+    /// True when a slot payload is not Published, not queued, and not actively loading.
+    static bool needsSlotLoad(uint8_t trackIndex, uint8_t slotIndex);
+    /// Phase 1: pending queue empty and no active SlotLoadSession. Phase 3: tier-0 Published.
+    static bool bootInteractiveReady();
     /// True while undo snapshot bodies are still queued for idle hydrate from the runtime bundle.
     static bool hasPendingUndoSnapshotHydrate();
     static void requestUrgentEditSave();

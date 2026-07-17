@@ -35,6 +35,11 @@ bool beginWriteQueuedChunk(uint16_t& chunkIdOut);
 /// Mark the chunk persisted and remove it from the active queue head.
 void markChunkPersisted(uint16_t chunkId);
 
+/// Mark a sealed chunk Persisted without mid_pass admission (SD slot load path).
+/// Purges the chunk from the persistence queue if it was Queued or Writing.
+/// Returns true when the chunk is left in Persisted state.
+bool markChunkPersistedFromSdLoad(uint16_t chunkId);
+
 /// Return a Writing chunk to the queue head after a failed SD write.
 void requeueWritingChunk(uint16_t chunkId);
 

@@ -204,7 +204,10 @@ void loop() {
   }
 
   // Render display before deferred SD slices; keep updating during SD I/O.
-  if (now - lastDisplayUpdate >= LCD::DISPLAY_UPDATE_INTERVAL) {
+  // Do not start OLED SPI/DMA immediately before a deferred slot SD read — same bus.
+  const bool deferredLoopSlotRestorePending = StorageManager::hasPendingLoopSlotRestore();
+  if (!deferredLoopSlotRestorePending &&
+      now - lastDisplayUpdate >= LCD::DISPLAY_UPDATE_INTERVAL) {
     lastDisplayUpdate = now;
     displayManager.update();
   }
@@ -214,11 +217,11 @@ void loop() {
   }
 
   if (!timingCriticalTrackActive && !StorageManager::isRevisionLoadHeldForWorkspaceDirty()) {
-    const bool deferredLoopSlotRestorePending = StorageManager::hasPendingLoopSlotRestore();
     StorageManager::processDeferredLoopSlotRestore();
     StorageManager::processDeferredUndoSnapshots();
-    // Slot restore reads the full loop file synchronously; repaint so the OLED does not stick.
-    if (deferredLoopSlotRestorePending) {
+    // Slot restore reads the full loop file synchronously; repaint after SD so the OLED
+    // does not stick on the first focus frame for the rest of the restore drain.
+    if (deferredLoopSlotRestorePending || StorageManager::hasPendingLoopSlotRestore()) {
       displayManager.update();
       lastDisplayUpdate = now;
     }
@@ -227,7 +230,7 @@ void loop() {
   }
 
   static bool bootSlotLoadRefreshPending = true;
-  if (bootSlotLoadRefreshPending && !StorageManager::hasPendingLoopSlotRestore()) {
+  if (bootSlotLoadRefreshPending && StorageManager::bootInteractiveReady()) {
     bootSlotLoadRefreshPending = false;
     if (!midiHandler.isUsbHostReady()) {
       midiHandler.beginUsbHost();

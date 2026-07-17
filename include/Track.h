@@ -126,6 +126,8 @@ public:
   void processDeferredIdleMaintenance(uint32_t nowMs);
   /// Touch playback runtime and loop playback order for one slot (boot/load prewarm).
   void prewarmPlaybackForSlot(uint8_t slotIndex);
+  /// Full merged-MIDI build for a slot (LoopEnd / NextGrid launch prep). Not for boot prewarm.
+  void ensurePlaybackMergedEventsForSlot(uint8_t slotIndex);
   /// Drop cached playback merge buffers for all slots (frees extmem during capture).
   void releasePlaybackWindowMemory();
   /// Phase 1B — release rebuildable playback windows when not referenced this tick.
@@ -292,7 +294,9 @@ public:
     const Loop& loop = getLoop(slotIndex);
     if (!isPlaying() && !isStoppedRecording()) {
       Loop& mutLoop = const_cast<Loop&>(loop);
-      mutLoop.ensureVisualCacheBuilt();
+      if (!mutLoop.shouldAvoidFullVisualRebuild(loop.loopLengthTicks)) {
+        mutLoop.ensureVisualCacheBuilt();
+      }
     }
     return loop.visualCache.notes;
   }

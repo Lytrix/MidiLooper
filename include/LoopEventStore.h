@@ -49,6 +49,16 @@ class LoopEventStore {
 
   static ChunkLifecycleState chunkLifecycleState(uint16_t id);
   static uint16_t chunkReferenceCount(uint16_t id);
+
+  /// Nested SD-load staging scope: sealChunk marks Persisted instead of admitting mid_pass.
+  static void enterSdLoadStaging();
+  static void leaveSdLoadStaging();
+  static bool isSdLoadStaging();
+
+  /// Derived-view / ephemeral seal: sealChunk does not touch PersistenceQueue.
+  static void enterEphemeralSeal();
+  static void leaveEphemeralSeal();
+  static bool isEphemeralSeal();
   /// Release runtime references held by a chunk-ref list (does not clear the list).
   static void releaseChunkRefs(const CaptureChunkIdList& refs);
   static void releaseChunkRefs(const PublishedChunkIdList& refs);
@@ -112,6 +122,8 @@ class LoopEventStore {
   static void appendChunkRefEvents(
       const PublishedChunkIdList& ids,
       std::vector<MidiEvent, ExternalMemoryFirstAllocator<MidiEvent>>& out);
+  /// Read firstTick/lastTick for a live pool chunk (false if id unused / out of range).
+  static bool chunkTickSpan(uint16_t id, uint32_t& firstTick, uint32_t& lastTick);
   /// Count events referenced by chunk ids without flattening.
   static size_t countEventsInChunkIds(const CaptureChunkIdList& ids);
   static size_t countEventsInChunkIds(const PublishedChunkIdList& ids);
@@ -168,6 +180,8 @@ class LoopEventStore {
   static ChunkLifecycleState poolLifecycle_[LoopEventStoreConfig::POOL_CHUNK_COUNT];
   static uint16_t poolChunkRefCount_[LoopEventStoreConfig::POOL_CHUNK_COUNT];
   static bool poolReady_;
+  static uint8_t sdLoadStagingDepth_;
+  static uint8_t ephemeralSealDepth_;
 
   static void retainChunkReference(uint16_t id);
   static void releaseChunkReference(uint16_t id);

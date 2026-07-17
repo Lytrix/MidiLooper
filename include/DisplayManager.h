@@ -181,6 +181,15 @@ private:
     uint32_t resolvePlayheadInLoop(const Track& track, uint8_t displaySlot, uint32_t currentTick) const;
     const DisplayNoteVec& resolveDisplayNotes(const Track& track, uint8_t displaySlot,
                                               uint32_t currentTick);
+    /// Match `drawPianoRoll` detailed-window geometry (auto-follow + clamp).
+    bool syncDetailedPaintWindow(const Track& track, uint8_t displaySlot, uint32_t currentTick,
+                                 uint32_t loopLength, uint32_t& outWindowStart,
+                                 uint32_t& outWindowLength, uint8_t& outWindowBars);
+    /// Windowed published reconstruction with gather-margin reuse across frames.
+    const DisplayNoteVec& resolveWindowedDisplayNotes(const Track& track, Loop& mutLoop,
+                                                     const Loop& loop, uint8_t displaySlot,
+                                                     uint32_t loopLength, uint32_t windowStart,
+                                                     uint32_t windowLength);
     void invalidateLiveDisplayCache();
     void invalidateNoteEditDisplayCache();
     DisplayNoteVec liveDisplayNotes;
@@ -194,6 +203,13 @@ private:
     uint16_t liveMergeCaptureRevision_ = 0;
     /// Slot index that `liveDisplayNotes` / `liveDisplayEventBuffer` were built for (playback path).
     uint8_t livePlaybackDisplaySlot_ = 255;
+    /// Track index paired with `livePlaybackDisplaySlot_` (split-focus / track switch safety).
+    uint8_t livePlaybackDisplayTrack_ = 255;
+    /// Tick range last gathered for windowed reconstruction (may include margin beyond paint window).
+    uint32_t liveWindowGatherStart_ = 0;
+    uint32_t liveWindowGatherLength_ = 0;
+    uint32_t liveWindowGatherLoopLength_ = 0;
+    bool liveWindowGatherValid_ = false;
     uint8_t noteEditDisplayCacheSlot_ = 255;
     uint32_t noteEditDisplayCachePreviewRevision_ = UINT32_MAX;
     uint32_t noteEditDisplayCacheLoopLength_ = 0;

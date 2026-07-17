@@ -1,8 +1,8 @@
 # Prioritized boot load isolation — refinement
 
 **Kind:** refinement  
-**Date:** 2026-07-15  
-**Status:** Planned (stashed lazy-load reverted; Phase 0 not started)  
+**Date:** 2026-07-15 (editorial clarity pass 2026-07-17)  
+**Status:** Phase 0 signed off 2026-07-17; ready for Phase 1A  
 **Supersedes / extends:** [`deferred_boot_load_speed_refinement.md`](deferred_boot_load_speed_refinement.md)
 
 **Context:** Stashed lazy-load improved time-to-UI (~6 s vs ~16 s in [`session_20260715_135614.log`](../captures/session_20260715_135614.log)) but **mid_pass during background load** broke normal operation. Root cause: SD load still uses the capture persistence contract while runtime schedulers run concurrently.
@@ -37,130 +37,61 @@ Everything in **Phase 1** exists to enforce this invariant.
 
 ---
 
-## Ownership model
+## Design principles (resolved 2026-07-17)
 
-```text
-SlotLoadQueue          ← pending work only (depth = not-yet-started)
-        │
-        ▼ dequeue
-SlotLoadSession        ← one active load; owns temporary loading state
-        │
-        ▼
-StorageManager         ← performs read / validate / publish orchestration
-        │
-        ▼
-LoopEventStore         ← published chunk data + persistence marks
-        │
-        ▼
-Published Slot         ← externally visible only after publication completes
-```
+1. **Only active work owns resources.** Pending queue entries are intent only. Only an active `SlotLoadSession` owns SD access, staging allocations, scheduler coordination, and runtime restrictions.
+2. **Publication is the only visibility boundary.** Nothing outside the loader may observe partially loaded data.
+3. **Lifecycle stays stable across phases.** Phase 1 and Phase 3 share the same `SlotLoadSession` lifecycle; only session storage duration changes (stack vs StorageManager-owned).
+4. **Avoid overloaded state queries.** Persistence, display, USB readiness, and background-work checks use **independent** queries — not one shared boolean.
 
-| Component | Responsibility |
-|-----------|----------------|
-| **SlotLoadQueue** | Decides **what loads next**; holds **pending** `SlotLoadRequest` entries only |
-| **SlotLoadSession** | Owns **temporary loading state** for exactly one slot load (RAII lifetime) |
-| **StorageManager** | Executes the load (source-specific readers call into shared publish path) |
-| **LoopEventStore** | Owns published chunk data; SD-load mode routes `sealChunk` → mark persisted |
-| **Recovery** | Independent policy — may publish partial when structurally consistent |
+Independent queries (do not collapse):
 
-The **source** changes (current set SD, another set, MIDI import, backup, recovery). The **destination** (slot) does not. Abstraction:
-
-```text
-Load loop  →  Publish into slot
-```
-
-not “load current set” as the top-level concept.
+| Query | Answers |
+|-------|---------|
+| `SlotLoadSession::isActive()` / session state | Is a slot load owning resources right now? |
+| `hasPendingSlotLoads()` | Is background loading work still outstanding (queue **or** active session)? |
+| `bootInteractiveReady()` | May USB / interactive UI proceed? (Phase 1: queue empty; Phase 3: tier-0 Published) |
+| `needsSlotLoad(track, slot)` | Should this address be admitted to the queue? |
 
 ---
 
-## Ownership and naming
+## Terminology glossary
 
-### Slot-oriented terminology
+| Term | Meaning |
+|------|---------|
+| **Staging** | Temporary private representation owned exclusively by `SlotLoadSession`. Invisible to runtime systems; may be discarded without affecting the destination slot. |
+| **Published** | Live runtime representation visible to the rest of the firmware (event payload adopted). Manifest / metadata-only hydrate is **not** Published. |
+| **Adopt** | Transfer ownership from staging into the published representation. |
+| **Publish** | Atomically expose the adopted representation to runtime systems. |
+| **Session** | One complete logical slot loading operation (`SlotLoadSession`). |
+| **Queue** | Pending load intent only (`SlotLoadQueue` / `SlotLoadRequest`) — no resources. |
 
-Express the pipeline in terms of **slots**, not boot or sets. The same pipeline will eventually support boot, another set, single-loop import, MIDI import, backup restore, and future formats.
+---
 
-| Responsibility | Name |
-|----------------|------|
-| Queue | **`SlotLoadQueue`** |
-| Queue entry | **`SlotLoadRequest`** |
-| Active operation | **`SlotLoadSession`** |
-| Scheduling helper | **`needsSlotLoad(track, slot)`** |
-| Priority helper | **`computeSlotLoadPriority(...)`** in **`SlotLoadPriority.h`** |
+## Loading pipeline
 
-| Current (rename in implementation) | Target |
-|-----------------------------------|--------|
-| `PendingLoopSlotRestoreQueue` | **`SlotLoadQueue`** |
-| `pendingLoopSlotRestores_` | `slotLoadQueue_` |
-| `DeferredLoopSlotRestore` | **`SlotLoadRequest`** |
-| `processDeferredLoopSlotRestore` | `processNextSlotLoad` (optional rename) |
-| `hasPendingLoopSlotRestore()` | **`hasPendingSlotLoads()`** — queue depth **or** active session |
-| `BootLoopSlotRestore.h` | **`SlotLoadPriority.h`** |
+High-level mental model for the rest of this document. Every later section explains one part of this flow.
 
-Source-specific executors (unchanged verbs where possible):
-
-- `loadLoopSlotFromCurrentSetSd(...)` — Phase 1–3
-- `loadLoopSlotFromMidiFile(...)` — future
-- `loadLoopSlotFromBackup(...)` — future
-- `recoverLoopSlot(...)` — recovery policy (DEC-020 Phase 5)
-
-Every implementation creates a **`SlotLoadSession`** internally; loading policy stays identical; only the source differs.
-
-### Queue vs active load
-
-The queue owns **pending work only**. Once a request begins executing it is **dequeued** and tracked by **`SlotLoadSession`**, not the queue.
-
-- **Queue depth** = pending `SlotLoadRequest` count only
-- **Active load** = at most one `SlotLoadSession` (or refcount if nested sources share session — prefer one session per slot)
-- Retries: re-enqueue a new `SlotLoadRequest` after **Failed** (diagnostics emitted in Failed)
-
-### Central helper: `needsSlotLoad(track, slot)`
-
-Single admission gate for boot, deferred loading, reprioritization, and future import paths.
-
-Returns **true** when the slot:
-
-1. Is **not** currently **Published**
-2. Is **not** already in **`SlotLoadQueue`**
-3. Is **not** currently being loaded (**no active `SlotLoadSession`** for that address)
-
-Replaces scattered checks (`hasPublishedEvents`, duplicate queue entries, sync + deferred double-load).
-
-### `SlotLoadSession` (Phase 1 — replaces `SdLoadGuard` + `LoadActivityGuard`)
-
-One session = one complete logical slot load. It owns temporary loading context, coordinates with the scheduler, defines publication boundaries, and restores normal runtime behavior on **Completed** or **Failed**.
-
-The loading architecture is evolving from a synchronous boot operation into a **cooperative background process** (lazy load, tiered priority, set switch, import, recovery). A session may span many `loop()` iterations and therefore interacts with display, playback, `mid_pass`, storage I/O, and future task budgeting.
-
-The lifecycle below is primarily an **architectural coordination tool** — Phase 1 may complete a session in one call path, but the session should expose explicit state so Phase 3 time-sliced loading, display budgeting, pause/resume, and progress reporting can attach without changing the model.
-
-**RAII responsibilities (Dequeued → session end):**
-
-- Enable SD loading mode on `LoopEventStore` (`sealChunk` → `markChunkPersistedFromSdLoad`)
-- Increment `activeLoadCount` (mid_pass gate, `otherSdIoActive`, display defer)
-- Track **`SlotLoadSessionState`** for scheduler coordination
-- On destruction (**Completed** or **Failed**): disable SD loading mode; decrement `activeLoadCount`
-
-**Example (sync path; same session object supports cooperative slices in Phase 3):**
-
-```cpp
-bool loadLoopSlotFromCurrentSetSd(Track& track, uint8_t slot) {
-  SlotLoadSession session(storageManager, track.index(), slot);
-  session.setState(SlotLoadSessionState::Reading);
-  readCapturePassSlotFileHeader(...);
-  session.setState(SlotLoadSessionState::Validating);
-  if (!validate()) { session.fail(); return false; }
-  session.setState(SlotLoadSessionState::Publishing);
-  adoptPersistedSnapshot();
-  markLoopPublishedChunksPersistedFromSdLoad(...);
-  publish();  // only externally visible transition
-  session.complete();
-  return true;
-}
+```text
+SlotLoadQueue
+        │
+        ▼
+SlotLoadSession
+        │
+        ▼
+Read into staging
+        │
+        ▼
+Validate staging
+        │
+        ▼
+Publish atomically
+        │
+        ▼
+Completed
 ```
 
-No explicit cleanup required — RAII on early return, validation failure, or OOM.
-
-**Phase 2 note:** Extend the existing **`SlotLoadSession`** to cover the **entire** slot load (one session per slot, not one per pass). Phase 2 adds batch read inside **Reading** state.
+Abstraction: **Load loop → Publish into slot**. The source may change (current set SD, another set, MIDI import, backup, recovery); the destination is always a slot.
 
 ---
 
@@ -198,6 +129,18 @@ No explicit cleanup required — RAII on early return, validation failure, or OO
         +---------------+
 ```
 
+### State ownership
+
+> Only **`SlotLoadSession`** owns and transitions its lifecycle state (after Dequeued). External systems **observe** `SlotLoadSessionState` but never modify it. While Queued, the request is owned by `SlotLoadQueue` and has no session yet.
+
+### Core definitions
+
+> **Staging** is temporary memory owned exclusively by `SlotLoadSession`. Objects in staging are invisible to runtime systems and may be discarded at any time without affecting the destination slot. Only the **Publishing** state may transfer staged data into the live runtime representation.
+
+> **Publishing** is the atomic transition that converts a previously private staging snapshot into the live runtime representation.
+
+> **Completed** means: the slot has been successfully Published; the session no longer owns temporary resources; scheduler restrictions are removed; runtime systems may treat the load as finished. (Telemetry, cleanup order, and deferred-work resume are implementation details of reaching Completed.)
+
 ### State responsibilities
 
 #### Queued
@@ -212,22 +155,22 @@ No explicit cleanup required — RAII on early return, validation failure, or OO
 
 **Owner:** transfers from queue → **`SlotLoadSession`**
 
-- Create session; enter loading mode; increment `activeLoadCount`
+- Create session; enter loading mode; increment activity
 - Queue no longer owns this request
 
 #### Reading
 
 **Owner:** `SlotLoadSession`
 
-- Read slot data; adopt persisted chunks; staging work
+- Read SD; parse data; allocate **staging** only
+- No adopt / live publish into the destination slot
 - May span multiple `loop()` iterations (Phase 3 cooperative slices)
-- Scheduling may defer expensive display rebuilds; suppress conflicting storage work; playback continues normally
 
 #### Validating
 
 **Owner:** `SlotLoadSession`
 
-- Validate payload, metadata, structural consistency
+- Validate **staging** payload, metadata, structural consistency
 - Destination slot remains unchanged
 - Failure exits directly to **Failed**
 
@@ -235,17 +178,22 @@ No explicit cleanup required — RAII on early return, validation failure, or OO
 
 **Owner:** `SlotLoadSession`
 
-- Atomically publish slot; finalize metadata; expose new loop
-- **Only externally visible transition** — no partial publication observable outside loader
-- Scheduling may delay display updates until publish completes
+Architectural meaning: atomic private → live transition (see definition above).
+
+Implementation consequences of that transition:
+
+- Adopt staged chunks into the live representation
+- Mark chunks persisted (`markChunkPersistedFromSdLoad`)
+- Swap published references; finalize metadata
+- Expose visibility — **only** externally visible transition
 
 #### Completed
 
 **Owner:** session teardown
 
-- Leave loading mode; decrement `activeLoadCount`; resume deferred work; remove session
-- Emit `#CAP,LOAD,outcome,published`
-- Slot fully operational
+Architectural meaning: load finished successfully (see definition above).
+
+Implementation consequences: leave loading mode; drop activity; emit `#CAP,LOAD,outcome,published`; allow selected-slot display rebuild.
 
 #### Failed
 
@@ -255,24 +203,164 @@ No explicit cleanup required — RAII on early return, validation failure, or OO
 - Emit `#CAP,LOAD,outcome,failed`
 - System state as if load never started; may re-enqueue via `needsSlotLoad` when appropriate
 
-### Scheduler interaction (coordination points)
-
-Exact decisions remain implementation-specific; lifecycle provides stable sync points:
-
-| Session state | Display | Playback | Storage |
-|---------------|---------|----------|---------|
-| **Queued** | Normal | Normal | Normal |
-| **Reading** | Defer expensive rebuilds | Normal | Slot load active |
-| **Validating** | Defer rebuilds | Normal | Slot load active |
-| **Publishing** | Delay updates until complete | Normal | Finalize publish |
-| **Completed** | Resume | Normal | Normal |
-| **Failed** | Resume | Normal | Normal |
-
-Phase 1 implements gates at **Reading/Validating/Publishing** (mid_pass suppress, `otherSdIoActive`, display defer). Phase 3 adds cooperative time-slicing within **Reading** without changing states.
-
 ### Design goal
 
-`SlotLoadSession` represents one complete logical slot loading operation regardless of source (boot, another set, single loop, MIDI import, backup, recovery). Only the reader changes; the lifecycle stays identical. Future features (time-sliced load, display budgeting, pause/resume, progress) attach to session state without new ownership concepts.
+`SlotLoadSession` represents one complete logical slot loading operation regardless of source. Only the reader changes; the lifecycle stays identical. Future features (time-sliced load, display budgeting, pause/resume, progress) attach to session state without new ownership concepts.
+
+**Same lifecycle across phases; different storage duration:**
+
+| Phase | Session storage | Behavior |
+|-------|-----------------|----------|
+| **Phase 1** | Stack RAII inside `loadLoopSlotFromCurrentSetSd` | One call runs Reading → Completed/Failed |
+| **Phase 3** | `StorageManager`-owned optional active session | Survives ~35 ms cooperative slices across `loop()` iterations |
+
+Do not pretend Phase 1 has a persistent session member — promote storage only in Phase 3.
+
+**Example (Phase 1 sync path):**
+
+```cpp
+bool loadLoopSlotFromCurrentSetSd(Track& track, uint8_t slot) {
+  SlotLoadSession session(storageManager, track.index(), slot);
+  session.setState(SlotLoadSessionState::Reading);
+  // read SD → parse into staging only (no live publish)
+  readCapturePassSlotFileHeader(...);
+  session.setState(SlotLoadSessionState::Validating);
+  if (!validateStaging()) { session.fail(); return false; }
+  session.setState(SlotLoadSessionState::Publishing);
+  adoptPersistedSnapshot();
+  markLoopPublishedChunksPersistedFromSdLoad(...);
+  publishMetadata();  // only externally visible transition
+  session.complete();
+  return true;
+}
+```
+
+**Phase 2 note:** Replace multiple SD reads with **batched reads inside the existing Reading state**. Session ownership is unchanged.
+
+---
+
+## Ownership model
+
+```text
+SlotLoadQueue          ← pending work only (depth = not-yet-started)
+        │
+        ▼ dequeue
+SlotLoadSession        ← one active load; owns staging + session state
+        │
+        ▼
+StorageManager         ← performs read / validate / publish orchestration
+        │
+        ▼
+LoopEventStore         ← published chunk data + persistence marks
+        │
+        ▼
+Published Slot         ← externally visible only after Publishing completes
+```
+
+| Component | Responsibility |
+|-----------|----------------|
+| **SlotLoadQueue** | Decides **what loads next**; holds **pending** `SlotLoadRequest` entries only |
+| **SlotLoadSession** | Owns staging and lifecycle for exactly one slot load |
+| **StorageManager** | Executes the load (source-specific readers call into shared publish path) |
+| **LoopEventStore** | Owns published chunk data; SD-load mode routes staging seals → mark persisted |
+| **Recovery** | Independent policy — may publish partial when structurally consistent |
+
+### Naming (slot-oriented)
+
+| Responsibility | Name |
+|----------------|------|
+| Queue | **`SlotLoadQueue`** |
+| Queue entry | **`SlotLoadRequest`** |
+| Active operation | **`SlotLoadSession`** |
+| Scheduling helper | **`needsSlotLoad(track, slot)`** |
+| Priority helper | **`computeSlotLoadPriority(...)`** in **`SlotLoadPriority.h`** |
+
+| Current (rename in follow-up PR) | Target |
+|----------------------------------|--------|
+| `PendingLoopSlotRestoreQueue` | **`SlotLoadQueue`** |
+| `pendingLoopSlotRestores_` | `slotLoadQueue_` |
+| `DeferredLoopSlotRestore` | **`SlotLoadRequest`** |
+| `processDeferredLoopSlotRestore` | `processNextSlotLoad` (optional rename) |
+| `hasPendingLoopSlotRestore()` | **`hasPendingSlotLoads()`** — background work only; **not** USB / mid_pass / expensive display |
+| `BootLoopSlotRestore.h` | **`SlotLoadPriority.h`** |
+
+Source-specific executors:
+
+- `loadLoopSlotFromCurrentSetSd(...)` — Phase 1–3
+- `loadLoopSlotFromMidiFile(...)` — future
+- `loadLoopSlotFromBackup(...)` — future
+- `recoverLoopSlot(...)` — recovery policy (DEC-020 Phase 5)
+
+Every implementation creates a **`SlotLoadSession`** internally; loading policy stays identical; only the source differs.
+
+### Queue vs active load
+
+The queue owns **pending work only**. Once a request begins executing it is **dequeued** and tracked by **`SlotLoadSession`**.
+
+- **Queue depth** = pending `SlotLoadRequest` count only
+- **Active load** = at most one `SlotLoadSession`
+- Retries: re-enqueue a new `SlotLoadRequest` after **Failed**
+
+### `needsSlotLoad(track, slot)`
+
+Single admission gate for boot, deferred loading, reprioritization, and future import paths.
+
+Returns **true** when the slot:
+
+1. Is **not** currently **Published** (payload not in live representation — metadata-only still needs load)
+2. Is **not** already in **`SlotLoadQueue`**
+3. Is **not** currently being loaded (**no active `SlotLoadSession`** for that address)
+
+Empty / missing SD files are not queued.
+
+---
+
+## Scheduler contract
+
+> The scheduler never manipulates loading state.
+>
+> The loading system owns `SlotLoadSession`.
+>
+> The scheduler only observes `SlotLoadSessionState` and adjusts runtime behavior accordingly.
+
+Scheduling **reacts** to loading; it does not control session transitions.
+
+| Session state | Expensive display rebuilds | Playback | mid_pass / conflicting SD |
+|---------------|----------------------------|----------|---------------------------|
+| **Queued** | **Allowed** | Normal | Normal (queue owns no resources) |
+| **Reading** | Deferred | Normal | Session active — mid_pass suppressed |
+| **Validating** | Deferred | Normal | Session active — mid_pass suppressed |
+| **Publishing** | Deferred briefly | Normal | Finalize publish |
+| **Completed** | Allowed; **selected slot may rebuild immediately** | Normal | Normal |
+| **Failed** | Allowed | Normal | Normal |
+
+**mid_pass:** suppressed **only** while `SlotLoadSession` is active — **not** while queue is merely non-empty. Same semantic Phase 1 and Phase 3.
+
+**Display:** follow session state, not queue depth. Queued background work must not freeze the piano roll. After tier-0 / focus slot Publishes, allow immediate display rebuild even if the queue still has work.
+
+Phase 3 adds cooperative time-slicing within **Reading** without changing states or gate APIs.
+
+---
+
+## Publication rule and visibility
+
+**Visibility invariant:** Nothing outside the loader may observe a slot until **Publishing** has completely finished.
+
+No component may observe:
+
+- Partially adopted chunks
+- Partially updated metadata
+- Incomplete persistence markings
+
+Preconditions before Publishing may finish:
+
+1. Payload successfully read into staging (**Reading**)
+2. Validation of staging complete (**Validating**)
+3. Chunk adoption complete (`adoptPersistedSnapshot`)
+4. Persistence correctly marked (`markChunkPersistedFromSdLoad` per chunk)
+5. Slot metadata consistent / swapped live
+
+Never publish partially loaded data.
 
 ---
 
@@ -282,9 +370,7 @@ Phase 1 implements gates at **Reading/Validating/Publishing** (mid_pass suppress
 
 **Purpose:** Read a valid loop from SD into an **empty** slot.
 
-**Guarantee:** All-or-nothing — slot is completely **Published** or unchanged.
-
-Partial publication is **never** allowed.
+**Guarantee:** All-or-nothing — slot is completely **Published** or unchanged. Partial publication is **never** allowed.
 
 ### Reloading (future / explicit path)
 
@@ -300,7 +386,7 @@ Published slot
 
 If validation fails, the previously published loop remains active.
 
-Not required for Phase 1–3 boot lazy load (empty slots at manifest scan); document for set import / revision reload alignment.
+Not required for Phase 1–3 boot lazy load (empty slots at manifest scan).
 
 ### Recovery (separate policy — DEC-020 Phase 5)
 
@@ -312,7 +398,7 @@ Not required for Phase 1–3 boot lazy load (empty slots at manifest scan); docu
 
 See [`continuous_runtime_persistence_phase5_recovery_handoff.md`](continuous_runtime_persistence_phase5_recovery_handoff.md).
 
-**Share parser helpers with loading; do not merge policies.** Loading stays all-or-nothing; recovery stays best-effort. Each path uses its own `SlotLoadSession` + policy-specific validate/publish rules.
+**Share parser helpers with loading; do not merge policies.**
 
 ---
 
@@ -326,7 +412,7 @@ finish current slot load
   → load newly selected slot next
 ```
 
-**Do not** cancel an active SD read (avoids partial slot state, abandoned staging, SD seek thrashing). Only **queued** work changes priority.
+**Do not** cancel an active SD read. Only **queued** work changes priority.
 
 ---
 
@@ -338,35 +424,13 @@ finish current slot load
 | **Validation** — bad header, event count, payload, integrity | Discard staging; slot unchanged; log diagnostics |
 | **Memory exhaustion** — `append` / pool full | Discard staging; no partial publish; log; continue per policy |
 | **User reprioritization** | Current load completes; queue reordered; no cancel |
-| **Unexpected exit** | RAII: **`SlotLoadSession`** restores SD mode + activity count |
-
----
-
-## Publication rule and visibility
-
-**Visibility invariant:** Nothing outside the loader may observe a slot until **publication has completely finished**.
-
-No component may observe:
-
-- Partially adopted chunks
-- Partially updated metadata
-- Incomplete persistence markings
-
-Publish only after:
-
-1. Payload successfully read
-2. Validation complete
-3. Chunk adoption complete (`adoptPersistedSnapshot`)
-4. Persistence queue correctly marked (`markChunkPersistedFromSdLoad` per chunk)
-5. Slot metadata consistent
-
-**Publication** is the final externally visible step. Never publish partially loaded data.
+| **Unexpected exit** | RAII / session teardown restores SD mode + activity count |
 
 ---
 
 ## Telemetry (SESSION_CAPTURE; RAM1-safe)
 
-Extend Phase 0/1 markers; **aggregate counters only** (no per-chunk strings in hot path):
+Aggregate counters only (no per-chunk strings in hot path):
 
 | Marker | Meaning |
 |--------|---------|
@@ -388,37 +452,98 @@ Verifier: keep `mid_pass_during_restore`; parse `outcome,failed` for `slot_load_
 
 ### Phase 0 — Baseline
 
-- [`verify_boot_restore_timing.py`](../scripts/verify_boot_restore_timing.py) on stashed firmware
-- Baselines: [`session_20260715_134532.log`](../captures/session_20260715_134532.log), [`session_20260715_135614.log`](../captures/session_20260715_135614.log)
+- Current-tree firmware (blocking restore as today) — **not** the reverted stashed lazy-load branch
+- Historical captures for timing comparison: [`session_20260715_134532.log`](../captures/session_20260715_134532.log), [`session_20260715_135614.log`](../captures/session_20260715_135614.log)
+- Optional: fresh capture + [`verify_boot_restore_timing.py`](../scripts/verify_boot_restore_timing.py) on current tree
 - Sign off interference checklist before Phase 1
+
+#### Phase 0 results (2026-07-17) — **SIGNED OFF**
+
+Verifier runs (historical logs; no stash re-applied):
+
+| Capture | Kind | Queued | Deferred lines | Restore span | Verifier `mid_pass_during_restore` | Host USB begin | Notes |
+|---------|------|--------|----------------|--------------|-------------------------------------|----------------|-------|
+| [`session_20260715_134532.log`](../captures/session_20260715_134532.log) | Blocking drain (closest to **current tree**) | 26 | 26 | (batched in setup/`loop` before USB; no per-line CAP span) | **0** (window ends at `usb_host,begin`) | ~**16.3 s** host | **17×** `#CAP,PERS,mid_pass` **after** USB for `t1:s3` — still waste; verifier does not count them |
+| [`session_20260715_135614.log`](../captures/session_20260715_135614.log) | Stashed lazy (regression) | 25 bg | 25 | **11.09 s** | **17 FAIL** | early (`BOOT,restore,interactive` then USB before drain) | mid_pass interleaved with deferred restores; DISP 352 ms then 1379 ms |
+
+**Phase 1 exit gate clarification:** zero mid_pass while a load session is active **and** zero mid_pass that re-writes SD-loaded published chunks (mark-from-SD). Do not treat “PASS mid_pass_during_restore” alone as sufficient if mid_pass still labels `ok:t*:s*:` for freshly restored slots after USB.
+
+#### Interference checklist (current tree — signed off)
+
+| # | Interference | Evidence / owner | Phase 1 fix |
+|---|--------------|------------------|-------------|
+| 1 | `sealChunk` always `admitSealedChunk` | [`LoopEventStore::sealChunk`](../../src/LoopEventStore.cpp) | `SlotLoadSession` → mark persisted, not admit |
+| 2 | No `markChunkPersistedFromSdLoad` | absent in tree | PersistenceQueue + post-publish mark |
+| 3 | mid_pass gate ignores slot load | [`shouldRunMidPassWriter`](../../src/PersistenceFailurePolicy.cpp) = `queueDepth && !otherSdIoActive` | Suppress only while session active |
+| 4 | Focus path sync double-load | [`prioritizeLoopSlotRestoreForFocus`](../../src/StorageManager.cpp) calls `requestLoopSlotRestoreFromSd` | `needsSlotLoad` + reprioritize only |
+| 5 | USB tied to empty restore queue | [`main.cpp`](../../src/main.cpp) `!hasPendingLoopSlotRestore()` | Introduce `bootInteractiveReady()` (P1: queue empty; P3: tier-0) |
+| 6 | Display/idle defer on queue depth | [`DisplayManager`](../../src/DisplayManager.cpp), [`Track`](../../src/Track.cpp) `hasPendingLoopSlotRestore` | Defer on session state only |
+| 7 | Full DISP after load | `#CAP,DISP` note counts (e.g. 352 then 1379) misread as ms historically; hang = sync full visual rebuild | Phase 1C/2B bounded published reconstruction |
+| 8 | mid_pass labels selected track/active slot | `ok:t1:s3` during other slot work | Isolation (1) removes need; do not expand mid_pass retarget in Phase 1 |
+
+**Phase 0 exit:** Checklist signed; proceed to Phase 1A.
 
 ### Phase 1 — SD load isolation + session + policy
 
 **1A — Invariant enforcement**
 
 - `PersistenceQueue::markChunkPersistedFromSdLoad`
-- **`SlotLoadSession`** — RAII + **`SlotLoadSessionState`** enum; gates at Reading/Validating/Publishing
+- **`SlotLoadSession`** — stack RAII + **`SlotLoadSessionState`**; Reading = staging only; Publishing = adopt + mark + visibility
 - `markLoopPublishedChunksPersistedFromSdLoad` after successful publish
-- **`needsSlotLoad(track, slot)`** — not Published, not queued, not actively loading; all admission paths use it
+- **`needsSlotLoad(track, slot)`** — not Published (payload), not queued, not actively loading
 
-**1B — Scheduler gates**
+**1B — Scheduler gates (final semantics — no Phase 3 API change later)**
 
-- `shouldRunMidPassWriter(...)` false while **`SlotLoadSession`** active or queue non-empty (per policy)
-- **`SlotLoadQueue`** rename; dequeue before session starts; queue depth = pending only
+- `shouldRunMidPassWriter` false **only** while `SlotLoadSession` is active (queue depth irrelevant)
+- Dequeue before session starts; queue depth = pending only
 - Focus reprioritize uses **`needsSlotLoad`**; finish active session before reorder
-- **`hasPendingSlotLoads()`** — pending queue **or** active session (for display defer / USB timing)
+- **`hasPendingSlotLoads()`** — background work outstanding — **not** used for USB or mid_pass
+- **`bootInteractiveReady()`** — Phase 1: queue empty; Phase 3: tier-0 Published
+- Behavioral PR only: session + gates + `needsSlotLoad`. Mechanical rename = **follow-up PR**
 
-**1C — Derived-view firewall**
+**1C — Derived-view firewall** + **2B — Window-first display**
 
-- Defer full materialize / 1379 ms DISP while **`hasPendingSlotLoads()`**
-- Audit `gatherPublishedFlatForDerivedView` paths; respect publication visibility invariant
+Shipped together as **bounded published reconstruction** ([`boot_load_windowed_display_reconstruction_refinement.md`](boot_load_windowed_display_reconstruction_refinement.md)):
 
-**Phase 1 exit:** `mid_pass_during_restore == 0`; `#CAP,LOAD,outcome,*` in captures; HITL smoke.
+- Canonical `Loop::gatherPublishedEvents` / `gatherPublishedEventsInWindow` via `PublishedEventRange`
+- `shouldAvoidFullVisualRebuild` — no `ensureVisualCacheBuilt` on display hot path when true
+- Windowed reconstruction (not “provisional”); idle slice uses windowed gather
+- Normative: `mergeActiveCapturePasses` is capture-time only for published display
+
+**Phase 1 exit:** `mid_pass_during_restore == 0` (no mid_pass during **active** session windows); `#CAP,LOAD,outcome,*` in captures; HITL smoke.
+
+#### Phase 1A progress (2026-07-17)
+
+Shipped in tree (behavioral; rename follow-up still pending):
+
+- `PersistenceQueue::markChunkPersistedFromSdLoad`
+- `LoopEventStore::enterSdLoadStaging` / `leaveSdLoadStaging` — `sealChunk` marks Persisted under staging
+- [`SlotLoadSession`](../../include/SlotLoadSession.h) stack RAII around `loadLoopSlotFromCurrentSetSd`
+- `markLoopPublishedChunksPersistedFromSdLoad` after successful read
+- `StorageManager::needsSlotLoad` + queue admission gate
+
+Native: `test_persistence_queue` + `test_sd_load_adopt` **PASS**.
+
+#### Phase 1B + 1C progress (2026-07-17)
+
+Shipped in tree after 1A device evidence ([`session_20260717_215801.log`](../../captures/session_20260717_215801.log) still showed 17× mid_pass from rematerialize):
+
+- `LoopEventStore::enterEphemeralSeal` / `leaveEphemeralSeal` — `sealChunk` does not admit mid_pass
+- `Loop::materializeEditViewFromPasses` + `rematerializeEditView` wrap materialize in ephemeral seal
+- `PersistenceQueue::resetForTests` from pool init (EXTMEM queue must not survive soft reset)
+- `StorageManager::bootInteractiveReady()` — queue empty && !session active; USB gate uses it
+- `otherSdIoActive` includes `SlotLoadSession::isActive()`
+- `prioritizeLoopSlotRestoreForFocus` — skip sync only when deferred work already pending
+- Display / Track: defer expensive rebuild on **session active** only (not queue non-empty)
+
+Native: `test_persistence_queue` (+ ephemeral seal), `test_sd_load_adopt`, `test_persistence_failure_policy` **PASS**.
+
+**Next:** device gate — flash `teensy41-capture-serial`, capture boot, `scripts/verify_boot_restore_timing.py` expect `mid_pass_during_restore == 0`.
 
 ### Phase 2 — Batch SD read
 
-- Batch `ioRead` in `readCapturePassSlotFileHeader` (extmem scratch)
-- Extend existing **`SlotLoadSession`** to cover entire slot load (one session per slot, not per pass)
+- Replace multiple SD reads with batched `ioRead` (extmem scratch) **inside the existing Reading state**
+- No ownership / session-scope change
 
 ### Phase 2B — Window-first display (>16 bars)
 
@@ -428,17 +553,16 @@ Verifier: keep `mid_pass_during_restore`; parse `outcome,failed` for `slot_load_
 
 ### Phase 3 — Prioritized lazy load
 
-**Priority** ([`SlotLoadPriority.h`](include/Utils/BootLoopSlotRestore.h) rename):
-
 | Priority | Slots |
 |----------|-------|
 | 0 | Selected track, **selected slot only** |
 | 1 | Selected slot on other tracks |
 | 2 | All non-selected slots |
 
-- Sync tier-0 only in `loadState` under **`SlotLoadSession`** + publish rules
-- Background: ~35 ms slices; one session per dequeued request
-- Interactive USB after tier-0 + isolation proven; no loading screen
+- Sync tier-0 only in `loadState` under stack or short-lived session + publish rules
+- Promote to **StorageManager-owned** optional `SlotLoadSession` for cooperative ~35 ms slices
+- **`bootInteractiveReady()`** = tier-0 Published; USB after that; no loading screen
+- Background queue continues; mid_pass / display gates unchanged (session-active only)
 - Reprioritize on focus; **no cancel** of active session
 
 ### Phase 4 (optional) — v7 SD chunk index
@@ -474,14 +598,48 @@ See Cursor plan § Phase 4. Only if SD read time still unacceptable after 1–2.
 
 ## Summary
 
-These refinements **do not change phase order** (0 → 1 → 2 → 2B → 3). They clarify:
+Phase order unchanged (0 → 1 → 2 → 2B → 3). Architecture unchanged by the editorial pass.
 
-- Core **invariant**, **loading policy**, and **publication visibility**
-- **Ownership model:** `SlotLoadQueue` → `SlotLoadSession` → StorageManager → LoopEventStore → Published slot
-- **Queue vs active load:** pending in queue; dequeued into session; lifecycle Queued → Dequeued → Reading → Validating → Publishing/Failed → Completed
-- **`SlotLoadSession`** + explicit lifecycle (cooperative-ready; sync in Phase 1)
-- **`needsSlotLoad`** — not Published, not queued, not actively loading
-- **Slot-oriented terminology** and future source extensibility
-- **State machine**, **failure handling**, **recovery vs loading**
-- **No cancel** of active session on reprioritize
-- **RAM1-safe** load telemetry including **`#CAP,LOAD,outcome,published|failed`**
+Document flow for readers:
+
+1. Context → Invariant → Policy → Principles  
+2. Glossary → **Loading pipeline** → **Lifecycle**  
+3. Ownership → **Scheduler contract** → Publication  
+4. Recovery / failure / telemetry → Phases → Verification  
+
+---
+
+## Pre-implementation review (clarity)
+
+### Ready
+
+| Topic | Decision |
+|-------|----------|
+| Invariant | SD-loaded chunks never re-enter persistence unless later modified |
+| Ownership | Queue (pending) → Session (active) → StorageManager → LoopEventStore → Published slot |
+| Naming | `SlotLoadQueue`, `SlotLoadRequest`, `SlotLoadSession`, `needsSlotLoad`, `computeSlotLoadPriority` |
+| Lifecycle states | Queued → Dequeued → Reading → Validating → Publishing \| Failed → Completed |
+| Cancellation | Never cancel active session; only reorder pending queue |
+| Loading vs recovery | Loading all-or-nothing; recovery may publish partial |
+| Phase order | 0 → 1 → 2 → 2B → 3; Phase 3 blocked on Phase 1 device gate |
+| Priority model (Phase 3) | 0 = selected track selected slot; 1 = other tracks’ selected slots; 2 = rest |
+| Publication visibility | Nothing outside loader observes slot until Publishing finishes |
+
+### Resolved (2026-07-17 open-review resolutions)
+
+| # | Topic | Decision |
+|---|-------|----------|
+| 1 | mid_pass gate | Suppress **only** while `SlotLoadSession` active — never because queue non-empty |
+| 2 | USB / interactive | Dedicated `bootInteractiveReady()` (Phase 1: queue empty; Phase 3: tier-0 Published); not `hasPendingSlotLoads()` |
+| 3 | Phase 0 baseline | Current tree + historical `session_20260715_*` logs — no stashed branch |
+| 4 | Session lifetime | Same lifecycle; Phase 1 stack RAII; Phase 3 StorageManager-owned optional session |
+| 5 | Staging vs publish | Reading = staging only; Validating = validate staging; Publishing = adopt + mark + swap |
+| 6 | Published | Payload successfully adopted into live runtime; metadata-only is not Published → `needsSlotLoad` true |
+| 7 | Phase 1 scheduler | Ship final mid_pass semantics in Phase 1 (session-active only) |
+| 8 | Rename scope | Behavioral PR first; mechanical rename follow-up PR |
+| 9 | Phase 2 wording | Batched reads inside existing Reading state — no ownership change |
+| 10 | Display defer | Follow session state; Queued allows rebuilds; selected slot may rebuild immediately after Publish |
+
+### Proceed?
+
+- **YES** — open items pinned; Phase 1 may start after Phase 0 checklist sign-off.
