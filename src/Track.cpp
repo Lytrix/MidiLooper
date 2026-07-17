@@ -996,10 +996,9 @@ void Track::processDeferredIdleMaintenance(uint32_t nowMs) {
   if (!isPlaying() && !isRecording() && !isOverdubbing() && !isStoppedRecording()) {
     Loop& loop = getActiveLoop();
     if (loop.hasPublishedEvents()) {
-      const bool slotLoadSessionActive = SlotLoadSession::isActive();
+      // Phase 3: queued background restores must not block idle visual work.
       const bool bootHydrateActive =
-          slotLoadSessionActive || StorageManager::hasPendingUndoSnapshotHydrate() ||
-          StorageManager::hasPendingLoopSlotRestore();
+          SlotLoadSession::isActive() || StorageManager::hasPendingUndoSnapshotHydrate();
       const bool deferHeavyDerivedView =
           bootHydrateActive || StorageManager::hasDeferredSaveWork();
       const bool avoidFullVisual =

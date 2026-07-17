@@ -16,6 +16,7 @@
 #include "LooperState.h"
 #include "Looper.h"
 #include "StorageManager.h"
+#include "SlotLoadSession.h"
 #include "EditManager.h"
 #include "EditStates/EditSelectNoteState.h"
 #include "Globals.h"
@@ -96,7 +97,7 @@ void setup() {
   trackManager.setup();
   displayManager.beginBootOled();
   displayManager.drawBootScreen();
-  looper.setup();  // SD + loadState; USB host deferred until deferred slot restore finishes
+  looper.setup();  // SD + loadState; USB host deferred until bootInteractiveReady (Phase 3: tier-0)
 
   // Startup policy: enter LOOP_EDIT deterministically and sync DROID explicitly.
   editManager.sendEditSessionChange(EditSessionType::Loop);
@@ -203,11 +204,10 @@ void loop() {
     selectState->updateForOverdubbing(editManager, trackManager.getSelectedTrack());
   }
 
-  // Render display before deferred SD slices; keep updating during SD I/O.
-  // Do not start OLED SPI/DMA immediately before a deferred slot SD read — same bus.
-  const bool deferredLoopSlotRestorePending = StorageManager::hasPendingLoopSlotRestore();
-  if (!deferredLoopSlotRestorePending &&
-      now - lastDisplayUpdate >= LCD::DISPLAY_UPDATE_INTERVAL) {
+  // Render display before deferred SD slices. Phase 3: skip OLED only while a SlotLoadSession
+  // owns the SD bus — queued background restores must not freeze the focus piano roll.
+  const bool slotLoadSessionActive = SlotLoadSession::isActive();
+  if (!slotLoadSessionActive && now - lastDisplayUpdate >= LCD::DISPLAY_UPDATE_INTERVAL) {
     lastDisplayUpdate = now;
     displayManager.update();
   }
@@ -216,19 +216,7 @@ void loop() {
     trackManager.getTrack(i).processDeferredIdleMaintenance(now);
   }
 
-  if (!timingCriticalTrackActive && !StorageManager::isRevisionLoadHeldForWorkspaceDirty()) {
-    StorageManager::processDeferredLoopSlotRestore();
-    StorageManager::processDeferredUndoSnapshots();
-    // Slot restore reads the full loop file synchronously; repaint after SD so the OLED
-    // does not stick on the first focus frame for the rest of the restore drain.
-    if (deferredLoopSlotRestorePending || StorageManager::hasPendingLoopSlotRestore()) {
-      displayManager.update();
-      lastDisplayUpdate = now;
-    }
-    StorageManager::processEditAutosave(looperState.getLooperState());
-    trackManager.reclaimUnreferencedDisabledPasses();
-  }
-
+  // Phase 3: start USB as soon as tier-0 is Published — before background slot restores.
   static bool bootSlotLoadRefreshPending = true;
   if (bootSlotLoadRefreshPending && StorageManager::bootInteractiveReady()) {
     bootSlotLoadRefreshPending = false;
@@ -236,7 +224,7 @@ void loop() {
       midiHandler.beginUsbHost();
       emitBootMilestone("usb_host", "begin");
     }
-    // DROID may retain LED state across reset; refresh after host is live, not during SDIO restore.
+    // DROID may retain LED state across reset; refresh after host is live.
     trackManager.clearLeds();
     if (editManager.isLoopEditSession()) {
       midiHandler.sendLedFeedbackNoteOn(100, 64);
@@ -244,6 +232,19 @@ void loop() {
     }
     trackManager.onBootSlotLoadComplete();
     midiHandler.processDroidUsbHostOutbound();
+  }
+
+  if (!timingCriticalTrackActive && !StorageManager::isRevisionLoadHeldForWorkspaceDirty()) {
+    const bool hadPendingRestore = StorageManager::hasPendingLoopSlotRestore();
+    StorageManager::processDeferredLoopSlotRestore();
+    StorageManager::processDeferredUndoSnapshots();
+    // Full-slot SD read finished; repaint so the panel does not stick on a pre-read frame.
+    if (hadPendingRestore) {
+      displayManager.update();
+      lastDisplayUpdate = now;
+    }
+    StorageManager::processEditAutosave(looperState.getLooperState());
+    trackManager.reclaimUnreferencedDisabledPasses();
   }
 
   StorageManager::processDeferredSaveState(looperState.getLooperState());

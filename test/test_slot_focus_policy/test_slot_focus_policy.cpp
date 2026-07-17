@@ -14,27 +14,48 @@
 #include "ActiveNoteLedger.h"
 
 void test_boot_restore_priority_selected_track_selected_slot() {
+  // Focus selected (split from active) is audible — priority 0.
   const uint8_t active[] = {1, 0};
   const uint8_t selected[] = {2, 0};
   TEST_ASSERT_EQUAL_UINT8(0, computeBootRestorePriority(0, 2, 0, active, 2, selected, 2));
+  TEST_ASSERT_TRUE(isAudibleBootSlot(0, 2, 0, active, 2, selected, 2));
 }
 
 void test_boot_restore_priority_selected_track_active_slot_when_split() {
+  // Active slot is always audible (Play), even when selected differs.
   const uint8_t active[] = {1, 0};
   const uint8_t selected[] = {2, 0};
-  TEST_ASSERT_EQUAL_UINT8(1, computeBootRestorePriority(0, 1, 0, active, 2, selected, 2));
+  TEST_ASSERT_EQUAL_UINT8(0, computeBootRestorePriority(0, 1, 0, active, 2, selected, 2));
+  TEST_ASSERT_TRUE(isAudibleBootSlot(0, 1, 0, active, 2, selected, 2));
 }
 
 void test_boot_restore_priority_selected_track_other_slot() {
   const uint8_t active[] = {1, 0};
   const uint8_t selected[] = {2, 0};
   TEST_ASSERT_EQUAL_UINT8(2, computeBootRestorePriority(0, 3, 0, active, 2, selected, 2));
+  TEST_ASSERT_FALSE(isAudibleBootSlot(0, 3, 0, active, 2, selected, 2));
 }
 
-void test_boot_restore_priority_other_track() {
+void test_boot_restore_priority_other_track_active_slot() {
+  // Other track active slot is audible (Play all tracks).
+  const uint8_t active[] = {1, 4};
+  const uint8_t selected[] = {2, 0};
+  TEST_ASSERT_EQUAL_UINT8(0, computeBootRestorePriority(1, 4, 0, active, 2, selected, 2));
+  TEST_ASSERT_TRUE(isAudibleBootSlot(1, 4, 0, active, 2, selected, 2));
+}
+
+void test_boot_restore_priority_other_track_selected_slot() {
+  // Other track selected (not active) is background priority 1.
+  const uint8_t active[] = {1, 4};
+  const uint8_t selected[] = {2, 0};
+  TEST_ASSERT_EQUAL_UINT8(1, computeBootRestorePriority(1, 0, 0, active, 2, selected, 2));
+  TEST_ASSERT_FALSE(isAudibleBootSlot(1, 0, 0, active, 2, selected, 2));
+}
+
+void test_boot_restore_priority_other_track_non_selected_slot() {
   const uint8_t active[] = {1, 0};
   const uint8_t selected[] = {2, 0};
-  TEST_ASSERT_EQUAL_UINT8(3, computeBootRestorePriority(1, 4, 0, active, 2, selected, 2));
+  TEST_ASSERT_EQUAL_UINT8(2, computeBootRestorePriority(1, 4, 0, active, 2, selected, 2));
 }
 
 void test_slot_has_loop_content_ram_only() {
@@ -201,7 +222,9 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_boot_restore_priority_selected_track_selected_slot);
   RUN_TEST(test_boot_restore_priority_selected_track_active_slot_when_split);
   RUN_TEST(test_boot_restore_priority_selected_track_other_slot);
-  RUN_TEST(test_boot_restore_priority_other_track);
+  RUN_TEST(test_boot_restore_priority_other_track_active_slot);
+  RUN_TEST(test_boot_restore_priority_other_track_selected_slot);
+  RUN_TEST(test_boot_restore_priority_other_track_non_selected_slot);
   RUN_TEST(test_slot_has_loop_content_ram_only);
   RUN_TEST(test_slot_has_loop_content_sd_only);
   RUN_TEST(test_slot_has_loop_content_neither);

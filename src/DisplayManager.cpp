@@ -49,8 +49,9 @@ bool shouldAvoidFullVisualRebuild(const Loop& loop, uint32_t loopLength) {
 }
 
 bool shouldDeferHeavyDisplayRebuild() {
+    // Phase 3: queued background restores must not block OLED; only an active session (SD read).
     return SlotLoadSession::isActive() || StorageManager::hasPendingUndoSnapshotHydrate() ||
-           StorageManager::hasDeferredSaveWork() || StorageManager::hasPendingLoopSlotRestore();
+           StorageManager::hasDeferredSaveWork();
 }
 
 /// Windowed reconstruction of display notes from published (+ optional capture) events.
