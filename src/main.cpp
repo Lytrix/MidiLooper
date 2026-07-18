@@ -16,6 +16,7 @@
 #include "LooperState.h"
 #include "Looper.h"
 #include "StorageManager.h"
+#include "DeferredJobScheduler.h"
 #include "SlotLoadSession.h"
 #include "LoadLoopBudget.h"
 #include "EditManager.h"
@@ -98,7 +99,7 @@ FLASHMEM __attribute__((noinline)) static void runDeferredLoadAndDisplayFrame(
   if (allowDeferredSlotRestore) {
     const uint32_t budgetUs = LoadLoopBudget::resolveLoadLoopSliceBudgetUs(
         bootSlotLoadRefreshPending, focusSlotRestoreWork, captureActive);
-    StorageManager::runDeferredFrame(budgetUs);
+    DeferredJobScheduler::runFrame(budgetUs);
     if (!focusHadCommittedPasses &&
         trackManager.getTrack(focusTrack).getLoop(focusSlot).hasCommittedPasses()) {
       deferredPlaybackPrewarmTrack = static_cast<int8_t>(focusTrack);
