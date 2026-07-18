@@ -92,6 +92,15 @@ namespace Config {
   constexpr uint16_t MIN_SESSION_UNDO_DEPTH = 4;
   /// Minimum free heap (bytes) held back for edit vectors and undo metadata.
   constexpr uint32_t HEAP_RESERVE_BYTES = 32 * 1024;
+  /// Initial calibration — memory pressure (tune via HITL; not architecture constants).
+  constexpr uint32_t HEAP_PRESSURE_NORMAL_ENTER_BYTES = 64 * 1024;
+  constexpr uint32_t HEAP_PRESSURE_LOW_EXIT_BYTES = 80 * 1024;
+  constexpr uint32_t HEAP_PRESSURE_CRITICAL_EXIT_BYTES = 48 * 1024;
+  constexpr uint32_t HEAP_PRESSURE_HYSTERESIS_MS = 500;
+  constexpr uint16_t HEAP_PRESSURE_CHUNK_MARGIN = 8;
+  constexpr uint32_t HEAP_PRESSURE_CAPTURE_APPEND_LATCH_MS = 30000;
+  /// Must match PassConfig::CHUNK_RESERVE in LoopPasses.h (avoid heavy include in pressure policy).
+  constexpr uint16_t CHUNK_POOL_RESERVE = 16;
   constexpr uint8_t  PLAYBACK_WINDOW_MIN_BARS = 2;
   constexpr uint8_t  PLAYBACK_WINDOW_MAX_BARS = 8;
   /// Above this event count, overdub undo still stores O(1) refs but logs a degraded-undo warning.

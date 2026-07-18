@@ -10,6 +10,7 @@
 #include "ClockManager.h"
 #include "MidiLedManager.h"
 #include "SlotStateMachine.h"
+#include "Utils/MemoryPressureLevel.h"
 
 /// Phase 1 playback policy for slot selection (queued start remains caller-composed).
 enum class SyncPlayback : uint8_t { No = 0, Yes = 1 };
@@ -100,6 +101,8 @@ public:
   bool anyTrackRecordingOrOverdubbing() const;
   /// True when @p track is the UI-selected track (slot focus / display owner).
   bool isSelectedTrack(const Track& track) const;
+  /// Low+ advisory reclaim — background-first; owners may no-op when unsafe.
+  void tryReclaimDerivedViewCachesUnderPressure(MemoryPressureLevel level);
 
   // --- Loop Length / Sync ---
   void enableAutoAlign(bool enabled);

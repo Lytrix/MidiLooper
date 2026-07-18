@@ -273,7 +273,7 @@ void LoopEditManager::cancelPendingGeometryPreview(Track& track) {
     }
 }
 
-void LoopEditManager::onGlobalGeometryRestored(Track& track) {
+void LoopEditManager::syncSessionBaselineFromLiveLoop(Track& track) {
     if (!isLoopEditMode() || sessionSlot_ >= Config::MAX_LOOPS_PER_TRACK) {
         return;
     }
@@ -283,19 +283,40 @@ void LoopEditManager::onGlobalGeometryRestored(Track& track) {
     pendingLoopLengthTicks_ = 0;
     loopLengthSettleUntilMs_ = 0;
     const Loop& loop = track.getLoop(sessionSlot_);
-    sessionBaselineLoopStart_ = loop.loopStartTick;
-    sessionBaselineLoopLength_ = loop.loopLengthTicks;
+    syncLoopEditBaselineFromLiveGeometry(loop.loopStartTick, loop.loopLengthTicks,
+                                         sessionBaselineLoopStart_, sessionBaselineLoopLength_);
+}
+
+void LoopEditManager::onGlobalGeometryRestored(Track& track) {
+    syncSessionBaselineFromLiveLoop(track);
+    if (!isLoopEditMode() || sessionSlot_ >= Config::MAX_LOOPS_PER_TRACK) {
+        return;
+    }
     feedbackIgnoreUntilMs_ = millis() + LOOP_EDIT_FEEDBACK_IGNORE_MS;
     sendCurrentLoopStartPitchbend(track);
     sendCurrentLoopLengthCC(track);
     logger.log(CAT_MIDI, LOG_DEBUG,
-               "Loop geometry restored via global undo/redo — baseline and fader feedback synced");
+               "Loop geometry baseline synced to live loop — fader feedback updated");
 }
 
 void LoopEditManager::commitLoopEditOnDepart(Track& track) {
     if (!isLoopEditMode() || sessionSlot_ >= Config::MAX_LOOPS_PER_TRACK) {
         return;
     }
+    // Queueing another slot while playing must not write loopStartTick/loopLengthTicks onto the
+    // live loop. Transport reanchor zeros start for the playback frame; reverting SD baseline
+    // mid-play (session_20260717_234742) breaks LoopEnd wrap detection and hangs at commit.
+    if (!mayWriteLoopGeometryOnEditDepart(track.isPlaying() || track.isOverdubbing())) {
+        // Drop pending settle without applying pending values (that would mutate the live loop).
+        hasPendingLoopStartTick_ = false;
+        pendingLoopStartTick_ = 0;
+        loopStartSettleUntilMs_ = 0;
+        pendingLoopLengthTicks_ = 0;
+        loopLengthSettleUntilMs_ = 0;
+        sessionSlot_ = 255;
+        return;
+    }
+
     flushPendingLoopEditWork(track);
     flushPendingLoopStartSettle(track);
     flushPendingLoopLengthSettle(track);

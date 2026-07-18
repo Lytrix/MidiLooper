@@ -56,6 +56,10 @@ public:
     static bool hasDeferredSaveWork();
     /// True while boot-time loop slot payloads are still queued for idle restore.
     static bool hasPendingLoopSlotRestore();
+    /// True when a slot payload is not Published, not queued, and not actively loading.
+    static bool needsSlotLoad(uint8_t trackIndex, uint8_t slotIndex);
+    /// True when boot restore queue is empty and no SlotLoadSession is active.
+    static bool bootInteractiveReady();
     /// True while undo snapshot bodies are still queued for idle hydrate from the runtime bundle.
     static bool hasPendingUndoSnapshotHydrate();
     static void requestUrgentEditSave();
@@ -151,6 +155,10 @@ public:
     static void processDeferredUndoSnapshots();
     /// On slot select: load loop slot payload immediately if still deferred.
     static void requestLoopSlotRestoreFromSd(uint8_t trackIndex, uint8_t slotIndex);
+    /// Re-sort deferred boot restore queue using current track/slot focus.
+    static void reprioritizeDeferredLoopSlotRestore();
+    /// Bump focus slot to front of deferred restore and load it immediately when possible.
+    static void prioritizeLoopSlotRestoreForFocus(uint8_t trackIndex, uint8_t slotIndex);
     /// True when a verified loop-slot payload exists on SD (not yet loaded into RAM).
     static bool loopSlotHasPayloadOnSd(uint8_t trackIndex, uint8_t slotIndex);
     /// Before undo: finish deferred undo snapshot hydration when still pending.

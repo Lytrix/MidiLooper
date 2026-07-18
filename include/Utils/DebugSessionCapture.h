@@ -79,6 +79,8 @@ SC_MEM_ATTR void overdubStopStage(const char* stage, uint32_t elapsedUs, uint32_
                                   uint32_t heapBefore, uint32_t heapAfter, size_t eventCount,
                                   size_t chunkRefCount, const char* outcome);
 SC_MEM_ATTR void architectureCounter(const char* name, uint32_t value);
+SC_MEM_ATTR void memoryPressureTransition(const char* transitionLabel, uint32_t heapFreeBytes,
+                                          uint16_t chunksFree, uint16_t persistQueueDepth);
 SC_MEM_ATTR void architectureTiming(const char* name, uint32_t sumMicros, uint32_t sampleCount);
 SC_MEM_ATTR void persistence(const char* stage, uint32_t durationUs, uint32_t heapBefore,
                              uint32_t heapAfter, const char* outcome);
@@ -194,6 +196,8 @@ void emitDiagCheckpointLine(const Diagnostics::DiagTraceRecord& record);
 #define SC_REC_FLUSH_ALL_PENDING_REVTS()     DebugSessionCapture::flushAllPendingRevts()
 #define SC_CAPTURE_FLUSH(maxRecords)         DebugSessionCapture::flushCaptureBuffer(maxRecords)
 #define SC_UPDATE(tick, ticksPerBar)         DebugSessionCapture::update(tick, ticksPerBar)
+#define SC_MEMORY_PRESSURE(transition, heapFree, chunksFree, queueDepth) \
+  DebugSessionCapture::memoryPressureTransition(transition, heapFree, chunksFree, queueDepth)
 
 #else  // !SESSION_CAPTURE — all capture macros compile to nothing
 
@@ -249,5 +253,6 @@ inline void restartCaptureBootGrace() {}
 #define SC_REC_FLUSH_ALL_PENDING_REVTS()     ((void)0)
 #define SC_CAPTURE_FLUSH(maxRecords)         ((void)0)
 #define SC_UPDATE(tick, ticksPerBar)         ((void)0)
+#define SC_MEMORY_PRESSURE(transition, heapFree, chunksFree, queueDepth) ((void)0)
 
 #endif  // SESSION_CAPTURE

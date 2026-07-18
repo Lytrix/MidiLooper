@@ -184,6 +184,42 @@ void markChunkPersisted(uint16_t chunkId) {
   }
 }
 
+bool markChunkPersistedFromSdLoad(uint16_t chunkId) {
+  QueueState* state = queueState();
+  if (state == nullptr || chunkId >= LoopEventStoreConfig::POOL_CHUNK_COUNT) {
+    return false;
+  }
+  if (LoopEventStore::chunkLifecycleState(chunkId) != ChunkLifecycleState::Sealed) {
+    return false;
+  }
+
+  const ChunkPersistenceState existing = state->chunkState[chunkId];
+  if (existing == ChunkPersistenceState::Queued || existing == ChunkPersistenceState::Writing) {
+    uint16_t kept[LoopEventStoreConfig::POOL_CHUNK_COUNT];
+    uint16_t keptCount = 0;
+    uint16_t cursor = state->queueHead;
+    while (cursor != state->queueTail && keptCount < LoopEventStoreConfig::POOL_CHUNK_COUNT) {
+      const uint16_t id = state->queueOrder[cursor];
+      if (id != chunkId) {
+        kept[keptCount++] = id;
+      }
+      cursor = static_cast<uint16_t>((cursor + 1) % LoopEventStoreConfig::POOL_CHUNK_COUNT);
+    }
+    state->queueHead = 0;
+    state->queueTail = 0;
+    for (uint16_t i = 0; i < keptCount; ++i) {
+      (void)queuePush(*state, kept[i]);
+    }
+  }
+
+  state->chunkState[chunkId] = ChunkPersistenceState::Persisted;
+  state->queuedAtMs[chunkId] = 0;
+  if (state->sealSequence[chunkId] == 0) {
+    state->sealSequence[chunkId] = static_cast<uint16_t>(state->nextSealSequence++);
+  }
+  return true;
+}
+
 void requeueWritingChunk(uint16_t chunkId) {
   QueueState* state = queueState();
   if (state == nullptr || chunkId >= LoopEventStoreConfig::POOL_CHUNK_COUNT) {

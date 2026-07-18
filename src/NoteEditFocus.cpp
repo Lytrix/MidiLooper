@@ -300,6 +300,125 @@ NOTE_EDIT_MEM bool noteEditFocusHasPendingLengthChange(const NoteEditFocus& focu
   return focus.active && focus.last.endTick != focus.commitBaseline.endTick;
 }
 
+NOTE_EDIT_MEM bool noteEditFocusHasPendingCommit(const NoteEditFocus& focus) {
+  if (!focus.active) {
+    return false;
+  }
+  for (const auto& [noteId, entry] : focus.overlapNotes) {
+    (void)noteId;
+    if (entry.state == OverlapNoteStoreState::Hidden && !entry.preCommitEmitted) {
+      return true;
+    }
+  }
+  for (const auto& [noteId, entry] : focus.overlapNotes) {
+    (void)noteId;
+    if (entry.state == OverlapNoteStoreState::Shortened &&
+        entry.shortenedEndTick != entry.baseline.endTick) {
+      return true;
+    }
+  }
+  if (focus.last.startTick != focus.commitBaseline.startTick) {
+    return true;
+  }
+  if (focus.last.endTick != focus.commitBaseline.endTick) {
+    return true;
+  }
+  return focus.last.pitch != focus.commitBaseline.pitch;
+}
+
+namespace {
+
+NOTE_EDIT_MEM bool pitchLaneClearNeedsRestore(const NoteEditFocus& focus, uint8_t clearedPitch) {
+  for (const auto& [noteId, entry] : focus.overlapNotes) {
+    (void)noteId;
+    if (entry.baseline.pitch != clearedPitch) {
+      continue;
+    }
+    if (entry.state == OverlapNoteStoreState::Visible) {
+      continue;
+    }
+    if (isMovingNoteOverlapScratchEntry(focus, noteId, entry.baseline)) {
+      continue;
+    }
+    return true;
+  }
+  return false;
+}
+
+NOTE_EDIT_MEM bool pitchLaneHasNonVisibleOverlapScratch(const NoteEditFocus& focus, uint8_t pitch) {
+  for (const auto& [noteId, entry] : focus.overlapNotes) {
+    (void)noteId;
+    if (entry.baseline.pitch != pitch) {
+      continue;
+    }
+    if (entry.state != OverlapNoteStoreState::Visible) {
+      return true;
+    }
+  }
+  return false;
+}
+
+NOTE_EDIT_MEM bool linearStorageSpansOverlapLocal(uint32_t start1, uint32_t end1, uint32_t start2,
+                                                  uint32_t end2) {
+  return start1 < end2 && start2 < end1;
+}
+
+}  // namespace
+
+NOTE_EDIT_MEM bool canApplySimplePitchChange(MidiEventVec& sessionEvents, const NoteEditFocus& focus,
+                                             uint8_t channel, uint8_t currentPitch,
+                                             uint8_t targetPitch, uint32_t moverStart,
+                                             uint32_t moverEnd, uint32_t loopLength) {
+  (void)currentPitch;
+  if (!focus.active || focus.movingNoteId == kInvalidNoteId || loopLength == 0) {
+    return false;
+  }
+  if (pitchLaneClearNeedsRestore(focus, currentPitch)) {
+    return false;
+  }
+  if (pitchLaneHasNonVisibleOverlapScratch(focus, targetPitch)) {
+    return false;
+  }
+
+  const uint32_t movingNoteStart = focus.movingNoteRange.start;
+  const uint32_t movingNoteEnd = movingNoteRangeDisplayEnd(focus, loopLength);
+  const bool preserveInnerNotes = focus.active;
+
+  for (const MidiEvent& evt : sessionEvents) {
+    if (!evt.isNoteOn() || evt.data.noteData.velocity == 0 || evt.channel != channel ||
+        evt.data.noteData.note != targetPitch || evt.noteId == kInvalidNoteId ||
+        evt.noteId == focus.movingNoteId) {
+      continue;
+    }
+    if (preserveInnerNotes && focus.movingNoteId != kInvalidNoteId) {
+      NoteBaseline probe{};
+      if (findLinearNoteSpanForNoteId(sessionEvents, evt.noteId, channel, probe, evt.tick,
+                                      loopLength)) {
+        if (isInnerOverlapNoteInMovingNoteRange(focus, probe.pitch, probe.startTick,
+                                                probe.endTick, loopLength)) {
+          continue;
+        }
+      }
+    }
+    const OverlapNote* overlapEntry = findOverlapNoteEntry(focus, evt.noteId);
+    if (overlapEntry != nullptr && overlapEntry->state != OverlapNoteStoreState::Visible) {
+      continue;
+    }
+    NoteBaseline linear;
+    if (!findLinearNoteSpanForNoteId(sessionEvents, evt.noteId, channel, linear, evt.tick,
+                                     loopLength)) {
+      continue;
+    }
+    if (linear.startTick == moverEnd) {
+      return false;
+    }
+    if (linearStorageSpansOverlapLocal(moverStart, moverEnd, linear.startTick, linear.endTick)) {
+      return false;
+    }
+  }
+  return true;
+}
+
 namespace {
 
 template <typename Alloc>

@@ -1316,6 +1316,60 @@ NOTE_EDIT_MEM void finalReconstructAndSelect(Track& track,
 #endif
 }
 
+namespace {
+
+NOTE_EDIT_MEM bool applySimplePitchChange(MidiEventVec& midiEvents, EditManager& manager,
+                                          Track& track, NoteEditFocus& focus, uint8_t channel,
+                                          uint8_t currentNoteValue, uint8_t newNoteValue,
+                                          uint32_t noteStart, uint32_t noteEnd,
+                                          uint32_t loopLength) {
+  if (focus.movingNoteId != kInvalidNoteId) {
+    NoteBaseline moverSpan;
+    if (findLinearNoteSpanForNoteId(midiEvents, focus.movingNoteId, channel, moverSpan,
+                                    focus.last.startTick, loopLength)) {
+      noteStart = moverSpan.startTick;
+      noteEnd = moverSpan.endTick;
+      focus.last.startTick = moverSpan.startTick;
+      focus.last.endTick = moverSpan.endTick;
+    }
+  }
+
+  const uint32_t displayEndForResolve = storageTickToDisplayPhase(noteEnd, loopLength);
+  MidiEvent* noteOnEvent = findNoteOnForMovingNoteEdit(midiEvents, focus, channel, currentNoteValue,
+                                                       noteStart, loopLength);
+  if (noteOnEvent == nullptr) {
+    return false;
+  }
+  MidiEvent* noteOffEvent = resolveMovingNoteOffForEdit(
+      midiEvents, noteOnEvent, focus.movingNoteId, channel, currentNoteValue, noteOnEvent->tick,
+      displayEndForResolve, loopLength);
+  const bool openTailOnly =
+      noteOffEvent == nullptr &&
+      isOpenTailNoteAtLoopEnd(midiEvents, channel, currentNoteValue, noteOnEvent->tick,
+                              displayEndForResolve, loopLength);
+  if (!noteOffEvent && !openTailOnly) {
+    return false;
+  }
+
+  noteOnEvent->data.noteData.note = newNoteValue;
+  if (noteOffEvent != nullptr) {
+    noteOffEvent->data.noteData.note = newNoteValue;
+  }
+
+  const uint32_t linearEnd = noteOffEvent != nullptr ? noteOffEvent->tick : noteEnd;
+  noteEditFocusApplyPitch(focus, newNoteValue, noteStart, linearEnd, loopLength);
+  focus.movingNoteRange.start = focus.last.startTick;
+  focus.movingNoteRange.end = focus.last.endTick;
+  focus.overlapNotes.erase(focus.movingNoteId);
+  manager.bumpSessionPreviewRevision();
+  manager.scheduleDeferredNoteEditDisplayRefresh();
+  logger.log(CAT_MIDI, LOG_DEBUG, "Note value changed successfully (simple path): %d -> %d",
+             currentNoteValue, newNoteValue);
+  return true;
+}
+
+}  // namespace
+
 NOTE_EDIT_MEM bool applyPitchChange(Track& track, EditManager& manager,
                       uint8_t currentNoteValue, uint8_t newNoteValue,
                       uint32_t& noteStart, uint32_t& noteEnd, bool refreshPlaybackPreview) {
@@ -1339,11 +1393,19 @@ NOTE_EDIT_MEM bool applyPitchChange(Track& track, EditManager& manager,
         noteEnd = focus.last.endTick;
     }
 
+    const uint8_t channel = track.getMidiChannel();
+    if (canApplySimplePitchChange(midiEvents, focus, channel, currentNoteValue, newNoteValue,
+                                  noteStart, noteEnd, loopLength) &&
+        applySimplePitchChange(midiEvents, manager, track, focus, channel, currentNoteValue,
+                               newNoteValue, noteStart, noteEnd, loopLength)) {
+        (void)refreshPlaybackPreview;
+        return true;
+    }
+
     restoreOverlapNotesForPitchLaneClear(midiEvents, manager, track.getMidiChannel(),
                                          currentNoteValue, loopLength);
     track.invalidateCaches(refreshPlaybackPreview);
 
-    const uint8_t channel = track.getMidiChannel();
     if (focus.active && focus.movingNoteId != kInvalidNoteId) {
         NoteBaseline moverSpan;
         if (findLinearNoteSpanForNoteId(midiEvents, focus.movingNoteId, channel, moverSpan,

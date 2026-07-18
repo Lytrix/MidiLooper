@@ -11,14 +11,14 @@
 #include "../../src/EditApply.cpp"
 #include "../../src/LoopPasses.cpp"
 #include "../../src/StorageLoopIo.cpp"
-#include "../../src/Utils/MemoryMonitor.cpp"
+#include "../test_support/MemoryMonitorNativeDeps.cpp"
 #include "../../src/Utils/LoopEventValidation.cpp"
 #include "../../src/Loop.cpp"
 #include "../test_support/LoopCaptureTestDeps.cpp"
 
 #include "GlobalUndoStack.h"
 #include "Loop.h"
-#include "StorageLoopIo.h"
+#include "../test_support/PublishedChunkIdTestHelpers.h"
 
 namespace {
 
@@ -34,12 +34,12 @@ RecordPass makeRecordPassWithNotes(unsigned noteCount) {
     TEST_ASSERT_TRUE(capture.append(MidiEvent::NoteOn(i * 48u, 1, 60, 100)));
     TEST_ASSERT_TRUE(capture.append(MidiEvent::NoteOff(i * 48u + 24u, 1, 60, 0)));
   }
-  ChunkIdList refs;
-  capture.detachChunksTo(refs);
+  PublishedChunkIdList publishedIds;
+  TEST_ASSERT_TRUE(transferCaptureStoreToPublished(capture, publishedIds));
   RecordPass pass{};
   pass.id = 1;
   pass.state = CapturePassState::Active;
-  pass.chunkRefs = std::move(refs);
+  pass.publishedChunkIds = std::move(publishedIds);
   return pass;
 }
 

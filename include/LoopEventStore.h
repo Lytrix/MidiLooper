@@ -26,7 +26,8 @@ struct EventChunk {
   uint32_t lastTick = 0;
 };
 
-using ChunkIdList = std::vector<uint16_t, InternalHeapFirstAllocator<uint16_t>>;
+using CaptureChunkIdList = std::vector<uint16_t, InternalHeapFirstAllocator<uint16_t>>;
+using PublishedChunkIdList = std::vector<uint16_t, PublishedChunkIdAllocator<uint16_t>>;
 using BarIndexVec = std::vector<size_t, InternalHeapFirstAllocator<size_t>>;
 
 /// Runtime chunk lifecycle (ChunkManager). Independent of persistence state.
@@ -48,8 +49,31 @@ class LoopEventStore {
 
   static ChunkLifecycleState chunkLifecycleState(uint16_t id);
   static uint16_t chunkReferenceCount(uint16_t id);
+
+  /// Nested SD-load staging scope: sealChunk marks Persisted instead of admitting mid_pass.
+  static void enterSdLoadStaging();
+  static void leaveSdLoadStaging();
+  static bool isSdLoadStaging();
+
+  /// Derived-view / ephemeral seal: sealChunk does not touch PersistenceQueue.
+  static void enterEphemeralSeal();
+  static void leaveEphemeralSeal();
+  static bool isEphemeralSeal();
   /// Release runtime references held by a chunk-ref list (does not clear the list).
-  static void releaseChunkRefs(const ChunkIdList& refs);
+  static void releaseChunkRefs(const CaptureChunkIdList& refs);
+  static void releaseChunkRefs(const PublishedChunkIdList& refs);
+
+  /// Sole internal→published chunk-id transition (≤1 alloc, ≤1 copy). Clears \p src on success.
+  static bool transferCaptureChunkIdsToPublished(PublishedChunkIdList& dest,
+                                                 CaptureChunkIdList& src);
+
+  /// Copy published chunk refs (cold path; fails without abort when memory exhausted).
+  static bool tryCopyPublishedChunkIds(PublishedChunkIdList& dest,
+                                       const PublishedChunkIdList& src);
+
+  /// Duplicate pool chunks for undo/snapshot isolation (published → published via staging store).
+  static bool deepClonePublishedChunkIds(PublishedChunkIdList& dest,
+                                         const PublishedChunkIdList& src);
 
   LoopEventStore() = default;
   LoopEventStore(const LoopEventStore&) = delete;
@@ -90,11 +114,19 @@ class LoopEventStore {
   static void appendChunkRefEvent(
       uint16_t id, std::vector<MidiEvent, ExternalMemoryFirstAllocator<MidiEvent>>& out);
   /// Append events from chunk refs (read-only; does not mutate ids).
-  static void appendChunkRefEvents(const ChunkIdList& ids, MidiEventVec& out);
+  static void appendChunkRefEvents(const CaptureChunkIdList& ids, MidiEventVec& out);
+  static void appendChunkRefEvents(const PublishedChunkIdList& ids, MidiEventVec& out);
   static void appendChunkRefEvents(
-      const ChunkIdList& ids, std::vector<MidiEvent, ExternalMemoryFirstAllocator<MidiEvent>>& out);
+      const CaptureChunkIdList& ids,
+      std::vector<MidiEvent, ExternalMemoryFirstAllocator<MidiEvent>>& out);
+  static void appendChunkRefEvents(
+      const PublishedChunkIdList& ids,
+      std::vector<MidiEvent, ExternalMemoryFirstAllocator<MidiEvent>>& out);
+  /// Read firstTick/lastTick for a live pool chunk (false if id unused / out of range).
+  static bool chunkTickSpan(uint16_t id, uint32_t& firstTick, uint32_t& lastTick);
   /// Count events referenced by chunk ids without flattening.
-  static size_t countEventsInChunkIds(const ChunkIdList& ids);
+  static size_t countEventsInChunkIds(const CaptureChunkIdList& ids);
+  static size_t countEventsInChunkIds(const PublishedChunkIdList& ids);
   void loadFromFlat(const MidiEventVec& events);
   template <typename Alloc>
   void loadFromFlat(const std::vector<MidiEvent, Alloc>& events) {
@@ -116,16 +148,28 @@ class LoopEventStore {
 
   std::shared_ptr<LoopEventStore> cloneShared() const;
 
-  const ChunkIdList& chunkIds() const { return chunkIds_; }
+  const CaptureChunkIdList& chunkIds() const { return chunkIds_; }
 
   /// Move chunk ownership out of this store into dest (this store cleared). Used by take Seal.
-  void detachChunksTo(ChunkIdList& dest);
+  void detachChunksTo(CaptureChunkIdList& dest);
 
-  /// Take ownership of chunk refs from ids (ids cleared). Used to release pending takes.
-  void adoptChunkIds(ChunkIdList& ids);
+  /// Seal and move chunk refs into published list (this store cleared). Fails without abort when
+  /// extmem and internal heap cannot admit the published vector.
+  bool detachChunksToPublished(PublishedChunkIdList& dest);
+
+  /// Take ownership of capture chunk refs from ids (ids cleared). CaptureBuilder only.
+  void adoptChunkIds(CaptureChunkIdList& ids);
+
+  /// Assign missing note ids on note-ons in place (no flatten/reload).
+  template <typename AssignNoteIdFn>
+  void assignMissingNoteIdsToNoteOns(AssignNoteIdFn assignNoteId);
 
  private:
-  ChunkIdList chunkIds_;
+  static bool hasHeadroomForPublishedChunkIdList(size_t count);
+  static bool tryAssignPublishedChunkIds(PublishedChunkIdList& dest, const uint16_t* ids,
+                                        size_t count);
+
+  CaptureChunkIdList chunkIds_;
   size_t eventCount_ = 0;
   mutable BarIndexVec barFirstIndices_;
   mutable bool barIndexDirty_ = true;
@@ -136,6 +180,8 @@ class LoopEventStore {
   static ChunkLifecycleState poolLifecycle_[LoopEventStoreConfig::POOL_CHUNK_COUNT];
   static uint16_t poolChunkRefCount_[LoopEventStoreConfig::POOL_CHUNK_COUNT];
   static bool poolReady_;
+  static uint8_t sdLoadStagingDepth_;
+  static uint8_t ephemeralSealDepth_;
 
   static void retainChunkReference(uint16_t id);
   static void releaseChunkReference(uint16_t id);
@@ -152,3 +198,16 @@ class LoopEventStore {
   void rebuildBarIndex() const;
   void markBarIndexDirty();
 };
+
+template <typename AssignNoteIdFn>
+void LoopEventStore::assignMissingNoteIdsToNoteOns(AssignNoteIdFn assignNoteId) {
+  for (uint16_t id : chunkIds_) {
+    EventChunk& ec = chunk(id);
+    for (uint16_t i = 0; i < ec.used; ++i) {
+      MidiEvent& evt = ec.events[i];
+      if (evt.isNoteOn() && evt.noteId == kInvalidNoteId) {
+        evt.noteId = assignNoteId();
+      }
+    }
+  }
+}

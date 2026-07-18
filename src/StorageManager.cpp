@@ -6,6 +6,7 @@
 #include "TrackManager.h"
 #include "Loop.h"
 #include "Slot.h"
+#include "SlotLoadSession.h"
 #include "StorageLoopIo.h"
 #include "CurrentSetStorage.h"
 #include "CurrentWorkspaceStorage.h"
@@ -126,20 +127,51 @@ void STORAGE_PERSIST_MEM sortPendingLoopSlotRestoresByPriority() {
     }
 }
 
+uint8_t STORAGE_PERSIST_MEM currentBootRestorePriority(uint8_t trackIndex, uint8_t slotIndex) {
+    const uint8_t selectedTrackIdx = trackManager.getSelectedTrackIndex();
+    uint8_t activeLoopIndex[Config::NUM_TRACKS]{};
+    uint8_t selectedSlotIndex[Config::NUM_TRACKS]{};
+    for (uint8_t t = 0; t < Config::NUM_TRACKS; ++t) {
+        activeLoopIndex[t] = trackManager.getActiveLoopIndex(t);
+        selectedSlotIndex[t] = trackManager.getSelectedSlotIndex(t);
+    }
+    return computeBootRestorePriority(trackIndex, slotIndex, selectedTrackIdx, activeLoopIndex,
+                                      Config::NUM_TRACKS, selectedSlotIndex, Config::NUM_TRACKS);
+}
+
+void STORAGE_PERSIST_MEM reprioritizeDeferredLoopSlotRestoreEntries() {
+    if (pendingLoopSlotRestores_.count == 0) {
+        return;
+    }
+    for (uint16_t i = 0; i < pendingLoopSlotRestores_.count; ++i) {
+        DeferredLoopSlotRestore& pending = pendingLoopSlotRestores_.entries[i];
+        pending.restorePriority = currentBootRestorePriority(pending.track, pending.slot);
+    }
+    sortPendingLoopSlotRestoresByPriority();
+}
+
 void STORAGE_PERSIST_MEM queueDeferredLoopSlotRestore(uint8_t trackIndex, uint8_t slotIndex) {
     if (!StorageManager::loopSlotHasPayloadOnSd(trackIndex, slotIndex)) {
         return;
     }
+    const uint8_t restorePriority = currentBootRestorePriority(trackIndex, slotIndex);
     for (uint16_t i = 0; i < pendingLoopSlotRestores_.count; ++i) {
-        const DeferredLoopSlotRestore& pending = pendingLoopSlotRestores_.entries[i];
+        DeferredLoopSlotRestore& pending = pendingLoopSlotRestores_.entries[i];
         if (pending.track == trackIndex && pending.slot == slotIndex) {
+            pending.restorePriority = restorePriority;
+            sortPendingLoopSlotRestoresByPriority();
             return;
         }
+    }
+    if (!StorageManager::needsSlotLoad(trackIndex, slotIndex)) {
+        return;
     }
     if (pendingLoopSlotRestores_.count >= PendingLoopSlotRestoreQueue::kCapacity) {
         return;
     }
-    pendingLoopSlotRestores_.entries[pendingLoopSlotRestores_.count++] = {trackIndex, slotIndex, 3};
+    pendingLoopSlotRestores_.entries[pendingLoopSlotRestores_.count++] = {trackIndex, slotIndex,
+                                                                          restorePriority};
+    sortPendingLoopSlotRestoresByPriority();
 }
 
 bool setCurrentSetLoadedFromFolder(const char* folderName) {
@@ -1639,7 +1671,36 @@ bool StorageManager::hasDeferredSaveWork() {
 }
 
 bool StorageManager::hasPendingLoopSlotRestore() {
-    return pendingLoopSlotRestores_.count > 0;
+    return pendingLoopSlotRestores_.count > 0 || SlotLoadSession::isActive();
+}
+
+bool StorageManager::needsSlotLoad(uint8_t trackIndex, uint8_t slotIndex) {
+    if (trackIndex >= Config::NUM_TRACKS || slotIndex >= Config::MAX_LOOPS_PER_TRACK) {
+        return false;
+    }
+    if (SlotLoadSession::isActiveFor(trackIndex, slotIndex)) {
+        return false;
+    }
+    if (trackIndex < trackManager.getTrackCount()) {
+        Track& track = trackManager.getTrack(trackIndex);
+        if (track.loopsAllocated() && track.getLoop(slotIndex).hasPublishedEvents()) {
+            return false;
+        }
+    }
+    for (uint16_t i = 0; i < pendingLoopSlotRestores_.count; ++i) {
+        const DeferredLoopSlotRestore& pending = pendingLoopSlotRestores_.entries[i];
+        if (pending.track == trackIndex && pending.slot == slotIndex) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool StorageManager::bootInteractiveReady() {
+    // Full queue drain before interactive: title screen + USB wait until every queued slot
+    // is Published. Do not re-derive readiness from getActiveLoopIndex() after the footer —
+    // loadTransportSlotIndices remaps active→selected while stopped.
+    return pendingLoopSlotRestores_.count == 0 && !SlotLoadSession::isActive();
 }
 
 bool StorageManager::hasPendingUndoSnapshotHydrate() {
@@ -1791,7 +1852,7 @@ void StorageManager::processDeferredSaveState(const LooperState& state) {
         const bool otherSdIoActive =
             storageSession.currentWorkspaceSave.sdIoActive || storageSession.revisionCommit.sdIoActive ||
             storageSession.revisionLoad.sdIoActive || storageSession.midPassChunkPersist.sdIoActive ||
-            storageSession.persistenceWorkItem.sdIoActive;
+            storageSession.persistenceWorkItem.sdIoActive || SlotLoadSession::isActive();
         const uint16_t workQueueDepth = PersistenceWorkQueue::queueDepth();
         const uint16_t writingWorkItemCount = PersistenceWorkQueue::writingWorkItemCount();
         const bool deferMidPassForWorkspaceSave = PersistenceFailurePolicy::shouldDeferMidPassForWorkspaceSave(
@@ -1823,7 +1884,9 @@ void StorageManager::processDeferredSaveState(const LooperState& state) {
         if (PersistenceFailurePolicy::shouldRunPersistenceWorkItemWriter(
                 workQueueDepth, writingWorkItemCount, otherSdIoActive)) {
             const uint32_t currentHeap = MemoryMonitor::getInternalHeapFreeBytes();
-            if (!LoopEventStore::hasInternalHeapHeadroomForNonCriticalWork(currentHeap)) {
+            if (!PersistenceFailurePolicy::hasPersistenceSliceHeadroom(
+                    currentHeap, storageSession.persistenceWorkItem.itemActive,
+                    storageSession.currentWorkspaceSave.urgentRequested)) {
                 PersistenceDiagnostics::onHeapFloorBlock();
                 break;
             }
@@ -2501,6 +2564,22 @@ static STORAGE_PERSIST_MEM void stabilizeBootMemoryAfterLoad() {
     trackManager.prewarmPlaybackRuntime();
 }
 
+static STORAGE_PERSIST_MEM void markPublishedChunkIdsPersistedFromSdLoad(
+    const PublishedChunkIdList& chunkIds) {
+    for (uint16_t chunkId : chunkIds) {
+        (void)PersistenceQueue::markChunkPersistedFromSdLoad(chunkId);
+    }
+}
+
+static STORAGE_PERSIST_MEM void markLoopPublishedChunksPersistedFromSdLoad(Loop& loop) {
+    if (loop.passes.hasRecordPass()) {
+        markPublishedChunkIdsPersistedFromSdLoad(loop.passes.recordPass.publishedChunkIds);
+    }
+    for (const OverdubPass& pass : loop.passes.overdubPasses) {
+        markPublishedChunkIdsPersistedFromSdLoad(pass.publishedChunkIds);
+    }
+}
+
 static STORAGE_PERSIST_MEM bool readLoopFromCurrentSetFile(File& file, Loop& loop) {
     const size_t fileSize = file.size();
     if (fileSize < sizeof(CurrentSetStorage::kSaveFileToken)) {
@@ -2571,6 +2650,93 @@ static STORAGE_PERSIST_MEM bool readLoopFromCurrentSetFile(File& file, Loop& loo
     return readRaw(file, &magic, sizeof(magic)) && magic == CurrentSetStorage::kSaveFileToken;
 }
 
+static STORAGE_PERSIST_MEM bool readLoopSlotMetadataFromCurrentSetFile(File& file,
+                                                                       PersistedLoopSnapshot& snapshotOut) {
+    const size_t fileSize = file.size();
+    if (fileSize < sizeof(CurrentSetStorage::kSaveFileToken)) {
+        return false;
+    }
+    size_t payloadOffset = 0;
+    if (CurrentWorkspaceStorage::fileStartsWithEpochHeader(file)) {
+        CurrentWorkspaceStorage::EpochFileHeader epochHeader{};
+        const StorageIo epochIo = storageIoFromFileRead(file);
+        if (!CurrentWorkspaceStorage::readEpochFileHeader(epochIo, epochHeader)) {
+            return false;
+        }
+        payloadOffset = CurrentWorkspaceStorage::kEpochFileHeaderByteSize;
+    }
+    if (fileSize < payloadOffset + sizeof(CurrentSetStorage::kSaveFileToken)) {
+        return false;
+    }
+    const size_t payloadSize = fileSize - payloadOffset - sizeof(CurrentSetStorage::kSaveFileToken);
+    if (!file.seek(payloadOffset)) {
+        return false;
+    }
+
+    class BoundedFileIo {
+     public:
+        BoundedFileIo(File& f, size_t limit) : file_(f), limit_(limit), pos_(0) {}
+
+        StorageIo io() {
+            return StorageIo{
+                [this](const void*, size_t) { return false; },
+                [this](void* data, size_t size) { return read(data, size); },
+            };
+        }
+
+     private:
+        bool read(void* data, size_t size) {
+            if (pos_ + size > limit_) {
+                return false;
+            }
+            const int bytesRead = file_.read(static_cast<uint8_t*>(data), size);
+            if (bytesRead != static_cast<int>(size)) {
+                return false;
+            }
+            pos_ += size;
+            return true;
+        }
+
+        File& file_;
+        size_t limit_;
+        size_t pos_;
+    };
+
+    BoundedFileIo bounded(file, payloadSize);
+    snapshotOut = PersistedLoopSnapshot{};
+    if (readPersistedLoopSnapshotHeader(bounded.io(), snapshotOut, false)) {
+        return true;
+    }
+    if (!file.seek(payloadOffset)) {
+        return false;
+    }
+    BoundedFileIo legacyBounded(file, payloadSize);
+    return readPersistedLoopSnapshotHeader(legacyBounded.io(), snapshotOut, true);
+}
+
+bool STORAGE_PERSIST_MEM hydrateLoopSlotMetadataFromCurrentSetSd(uint8_t trackIndex, uint8_t slotIndex,
+                                                                 Loop& loop) {
+    char loopPath[64];
+    if (!CurrentSetStorage::formatLoopSlotPath(loopPath, sizeof(loopPath), trackIndex, slotIndex)) {
+        return false;
+    }
+    if (!SD.exists(loopPath) || !CurrentSetStorage::verifySaveFileTokenAtPath(loopPath)) {
+        return false;
+    }
+    File loopFile = SD.open(loopPath, FILE_READ);
+    if (!loopFile) {
+        return false;
+    }
+    PersistedLoopSnapshot metadata{};
+    const bool readOk = readLoopSlotMetadataFromCurrentSetFile(loopFile, metadata);
+    loopFile.close();
+    if (!readOk) {
+        return false;
+    }
+    applyLoopSlotMetadataToLoop(loop, metadata);
+    return true;
+}
+
 bool STORAGE_PERSIST_MEM loadLoopSlotFromCurrentSetSd(uint8_t trackIndex, uint8_t slotIndex, Track& track,
                                          bool& anySlotHasEventsOut) {
     char loopPath[64];
@@ -2595,17 +2761,27 @@ bool STORAGE_PERSIST_MEM loadLoopSlotFromCurrentSetSd(uint8_t trackIndex, uint8_
         resetLoopSlotToEmpty(loop, slotIndex);
         return true;
     }
+
+    SlotLoadSession session(trackIndex, slotIndex);
+    session.setState(SlotLoadSessionState::Reading);
     const bool readOk = readLoopFromCurrentSetFile(loopFile, loop);
     loopFile.close();
     if (!readOk) {
+        session.fail();
         Serial.print("[StorageManager] WARN: loop read failed, treating slot as empty ");
         Serial.println(loopPath);
         resetLoopSlotToEmpty(loop, slotIndex);
         return true;
     }
+
+    session.setState(SlotLoadSessionState::Validating);
+    // readLoopFromCurrentSetFile already validated wire shape; destination still empty until adopt.
+    session.setState(SlotLoadSessionState::Publishing);
+    markLoopPublishedChunksPersistedFromSdLoad(loop);
     if (loop.hasPublishedEvents()) {
         anySlotHasEventsOut = true;
     }
+    session.complete();
     return true;
 }
 
@@ -2879,6 +3055,7 @@ bool StorageManager::loadCurrentSetBundleAndActiveLoopSlots(File& file, const ch
             if (!StorageManager::loopSlotHasPayloadOnSd(t, s)) {
                 continue;
             }
+            (void)hydrateLoopSlotMetadataFromCurrentSetSd(t, s, track.getLoop(s));
             anySlotHasEvents = true;
             const uint8_t restorePriority = computeBootRestorePriority(
                 t, s, selectedTrackIdx, activeLoopIndex.data(), activeLoopIndex.size(),
@@ -2899,6 +3076,19 @@ bool StorageManager::loadCurrentSetBundleAndActiveLoopSlots(File& file, const ch
 
     sortPendingLoopSlotRestoresByPriority();
 
+    const uint8_t focusActive =
+        selectedTrackIdx < activeLoopIndex.size() ? activeLoopIndex[selectedTrackIdx] : 0;
+    const uint8_t focusSelected =
+        selectedTrackIdx < selectedSlotIndex.size() ? selectedSlotIndex[selectedTrackIdx]
+                                                   : focusActive;
+    Serial.print("[StorageManager] Boot focus track=");
+    Serial.print(selectedTrackIdx);
+    Serial.print(" active=");
+    Serial.print(focusActive);
+    Serial.print(" selected=");
+    Serial.println(focusSelected);
+
+    // All slots stay queued; main drains under the boot title until bootInteractiveReady().
     if (pendingLoopSlotRestores_.count > 0) {
         const DeferredLoopSlotRestore& first = pendingLoopSlotRestores_.entries[0];
         Serial.print("[StorageManager] Queuing loop slot restore ");
@@ -3026,6 +3216,35 @@ void STORAGE_PERSIST_MEM StorageManager::requestLoopSlotRestoreFromSd(uint8_t tr
     }
     bool anySlotHasEvents = false;
     loadLoopSlotFromCurrentSetSd(trackIndex, slotIndex, track, anySlotHasEvents);
+}
+
+void STORAGE_PERSIST_MEM StorageManager::reprioritizeDeferredLoopSlotRestore() {
+    reprioritizeDeferredLoopSlotRestoreEntries();
+}
+
+void STORAGE_PERSIST_MEM StorageManager::prioritizeLoopSlotRestoreForFocus(uint8_t trackIndex,
+                                                                           uint8_t slotIndex) {
+    if (trackIndex >= Config::NUM_TRACKS || slotIndex >= Config::MAX_LOOPS_PER_TRACK) {
+        return;
+    }
+    if (!trackManager.isSlotEnabled(trackIndex, slotIndex)) {
+        reprioritizeDeferredLoopSlotRestoreEntries();
+        return;
+    }
+    if (trackManager.getTrack(trackIndex).getLoop(slotIndex).hasPublishedEvents()) {
+        reprioritizeDeferredLoopSlotRestoreEntries();
+        return;
+    }
+    const uint16_t pendingBefore = pendingLoopSlotRestores_.count;
+    if (StorageManager::loopSlotHasPayloadOnSd(trackIndex, slotIndex)) {
+        queueDeferredLoopSlotRestore(trackIndex, slotIndex);
+    }
+    reprioritizeDeferredLoopSlotRestoreEntries();
+    // Existing deferred work: reprioritize only — no sync double-load.
+    if (pendingBefore > 0) {
+        return;
+    }
+    requestLoopSlotRestoreFromSd(trackIndex, slotIndex);
 }
 
 bool StorageManager::loadCurrentWorkspaceFromSd(LooperState& state) {

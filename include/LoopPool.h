@@ -23,6 +23,7 @@ struct Loop;
 
 /// Per-track pool of first-class Loop timelines (distinct from the PSRAM event chunk pool).
 /// v1: fixed 1:1 mapping — pool index i owns LoopId i.
+/// Teensy: slot shells allocated in external memory pool first (~536 B × MAX_LOOPS_PER_TRACK).
 class LoopPool {
  public:
   LoopPool();

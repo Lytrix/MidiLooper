@@ -45,6 +45,8 @@ void queuePlayingSlotSwitch(uint8_t trackIdx, Track& track, uint8_t slotIndex, u
       editManager.isLoopEditSession() || editManager.isNoteEditActive();
   if (clockManager.shouldQuantizeRecordStart()) {
     trackManager.setSelectedSlotIndex(trackIdx, slotIndex, SyncPlayback::No);
+    // Pre-build destination send buffer while the current loop still plays.
+    track.ensurePlaybackMergedEventsForSlot(slotIndex);
     if (enabledCount > 1 && !editAuditionSingleSlot) {
       trackManager.setPendingEnabledSetReplacement(trackIdx, false);
       trackManager.requestSlotSwitch(trackIdx, slotIndex, SlotQuantization::LoopEnd, now);

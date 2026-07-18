@@ -126,8 +126,14 @@ public:
   void processDeferredIdleMaintenance(uint32_t nowMs);
   /// Touch playback runtime and loop playback order for one slot (boot/load prewarm).
   void prewarmPlaybackForSlot(uint8_t slotIndex);
+  /// Full merged-MIDI build for a slot (LoopEnd / NextGrid launch prep). Not for boot prewarm.
+  void ensurePlaybackMergedEventsForSlot(uint8_t slotIndex);
   /// Drop cached playback merge buffers for all slots (frees extmem during capture).
   void releasePlaybackWindowMemory();
+  /// Phase 1B — release rebuildable playback windows when not referenced this tick.
+  bool tryReleasePlaybackWindowMemory();
+  /// Phase 1B — drop revision-keyed published flat scratch when note edit does not need it.
+  bool tryClearPublishedMidiScratch();
 
   // MIDI events
   void recordMidiEvents(midi::MidiType type, byte channel, byte data1, byte data2, uint32_t currentTick);
@@ -288,7 +294,9 @@ public:
     const Loop& loop = getLoop(slotIndex);
     if (!isPlaying() && !isStoppedRecording()) {
       Loop& mutLoop = const_cast<Loop&>(loop);
-      mutLoop.ensureVisualCacheBuilt();
+      if (!mutLoop.shouldAvoidFullVisualRebuild(loop.loopLengthTicks)) {
+        mutLoop.ensureVisualCacheBuilt();
+      }
     }
     return loop.visualCache.notes;
   }
@@ -315,7 +323,7 @@ private:
   friend class TrackUndo;
   friend class StorageManager;  // Allow StorageManager to access private members for loading
   bool isPlayingBack;  // Flag to ignore playback events during overdub
-  void sendMidiEvent(const MidiEvent& evt);
+  void sendMidiEvent(const MidiEvent& evt, uint8_t playbackSlotIndex);
 
   // Track data
   bool muted;
@@ -332,7 +340,7 @@ private:
   bool deferredRecordRevtChunkScan = false;
   size_t deferredRecordRevtCursor = 0;
   SessionMidiEventVec deferredRecordRevtEvents;
-  ChunkIdList deferredRecordRevtChunkRefs;
+  PublishedChunkIdList deferredRecordRevtChunkRefs;
   size_t deferredRecordRevtChunkCursor = 0;
   SessionMidiEventVec deferredRecordRevtChunkEvents;
   size_t deferredRecordRevtChunkEventCursor = 0;

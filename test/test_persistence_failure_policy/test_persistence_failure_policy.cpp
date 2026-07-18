@@ -44,6 +44,20 @@ void test_should_run_persistence_work_item_writer() {
   TEST_ASSERT_FALSE(PersistenceFailurePolicy::shouldRunPersistenceWorkItemWriter(2, 0, true));
 }
 
+void test_has_persistence_slice_headroom() {
+  const uint32_t floor = LoopEventStoreConfig::INTERNAL_HEAP_SAFETY_FLOOR_BYTES;
+  const uint32_t belowFloor = floor - 4096U;
+
+  TEST_ASSERT_TRUE(
+      PersistenceFailurePolicy::hasPersistenceSliceHeadroom(floor, false, false));
+  TEST_ASSERT_FALSE(
+      PersistenceFailurePolicy::hasPersistenceSliceHeadroom(belowFloor, false, false));
+  TEST_ASSERT_TRUE(
+      PersistenceFailurePolicy::hasPersistenceSliceHeadroom(belowFloor, false, true));
+  TEST_ASSERT_TRUE(
+      PersistenceFailurePolicy::hasPersistenceSliceHeadroom(belowFloor, true, false));
+}
+
 void test_capture_pressure_prioritizes_persistence_at_reserve() {
   const uint16_t reserve = PassConfig::CHUNK_RESERVE;
   TEST_ASSERT_EQUAL(static_cast<int>(PersistenceFailurePolicy::CapturePressureAction::PrioritizePersistence),
@@ -105,6 +119,7 @@ int main(int argc, char** argv) {
   UNITY_BEGIN();
   RUN_TEST(test_should_run_mid_pass_writer_when_queue_non_empty);
   RUN_TEST(test_should_run_persistence_work_item_writer);
+  RUN_TEST(test_has_persistence_slice_headroom);
   RUN_TEST(test_capture_pressure_prioritizes_persistence_at_reserve);
   RUN_TEST(test_queue_depth_alarm_threshold);
   RUN_TEST(test_oldest_queued_chunk_age_tracks_admit_order);

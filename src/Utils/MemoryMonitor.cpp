@@ -3,10 +3,16 @@
 
 #include "Utils/MemoryMonitor.h"
 #if defined(__IMXRT1062__)
+#include "Globals.h"
 #include "Utils/InternalHeapFirstAllocator.h"
 #include "Utils/MemoryPool.h"
 #include "Logger.h"
 #include <Arduino.h>
+
+#include "LoopEventStore.h"
+#include "PersistenceQueue.h"
+#include "Utils/DebugSessionCapture.h"
+#include "Utils/MemoryPressurePolicy.h"
 
 #include <smalloc.h>
 
@@ -183,9 +189,83 @@ void logStatusAtAddedNotes(uint32_t addedNoteOns, size_t loopEventCount,
   }
 }
 
+#define PRESSURE_MEM FLASHMEM
+
+namespace {
+
+MemoryPressureLevel sAdvisoryLevel = MemoryPressureLevel::Normal;
+uint32_t sLowExitStableSinceMs = 0;
+bool sCaptureAppendFailedLatch = false;
+uint32_t sCaptureAppendFailedLatchSinceMs = 0;
+
+MemoryPressurePolicy::Inputs gatherPressureInputs(uint32_t nowMs) {
+  MemoryPressurePolicy::Inputs inputs{};
+  inputs.heapFreeBytes = MemoryMonitor::getInternalHeapFreeBytes();
+  inputs.chunksFree = LoopEventStore::freeChunkCount();
+  inputs.persistQueueDepth = PersistenceQueue::queueDepth();
+  (void)nowMs;
+  if (sCaptureAppendFailedLatch) {
+    inputs.captureAppendFailedLatch = true;
+  }
+  return inputs;
+}
+
+void maybeClearCaptureAppendFailedLatch(const MemoryPressurePolicy::Inputs& inputs,
+                                        uint32_t nowMs) {
+  if (!sCaptureAppendFailedLatch) {
+    return;
+  }
+  const bool headroomRecovered =
+      MemoryPressurePolicy::chunkHeadroomOk(inputs.chunksFree) &&
+      inputs.heapFreeBytes >= Config::HEAP_PRESSURE_CRITICAL_EXIT_BYTES;
+  const bool latchTimedOut =
+      sCaptureAppendFailedLatchSinceMs != 0 &&
+      nowMs - sCaptureAppendFailedLatchSinceMs >= Config::HEAP_PRESSURE_CAPTURE_APPEND_LATCH_MS;
+  if (headroomRecovered || latchTimedOut) {
+    sCaptureAppendFailedLatch = false;
+    sCaptureAppendFailedLatchSinceMs = 0;
+  }
+}
+
+PRESSURE_MEM void emitPressureTransition(MemoryPressureLevel from, MemoryPressureLevel to,
+                                         const MemoryPressurePolicy::Inputs& inputs) {
+  char transition[32];
+  MemoryPressurePolicy::formatTransitionLabel(from, to, transition, sizeof(transition));
+  SC_MEMORY_PRESSURE(transition, inputs.heapFreeBytes, inputs.chunksFree,
+                     inputs.persistQueueDepth);
+}
+
+}  // namespace
+
+PRESSURE_MEM MemoryPressureLevel getAdvisoryPressureLevel() { return sAdvisoryLevel; }
+
+PRESSURE_MEM void notifyCaptureAppendFailed(uint32_t nowMs) {
+  sCaptureAppendFailedLatch = true;
+  sCaptureAppendFailedLatchSinceMs = nowMs;
+}
+
+PRESSURE_MEM void updateAdvisoryPressureLevel(uint32_t nowMs) {
+  MemoryPressurePolicy::Inputs inputs = gatherPressureInputs(nowMs);
+  maybeClearCaptureAppendFailedLatch(inputs, nowMs);
+  inputs = gatherPressureInputs(nowMs);
+
+  const MemoryPressureLevel previous = sAdvisoryLevel;
+  sAdvisoryLevel =
+      MemoryPressurePolicy::stepLevel(previous, inputs, nowMs, sLowExitStableSinceMs);
+
+  if (sAdvisoryLevel != previous) {
+    emitPressureTransition(previous, sAdvisoryLevel, inputs);
+  }
+}
+
+#undef PRESSURE_MEM
+
 }  // namespace MemoryMonitor
 
 #elif defined(PIO_UNIT_TEST_NATIVE)
+
+#include "Globals.h"
+#include "Utils/MemoryPressurePolicy.h"
 
 namespace MemoryMonitor {
 
@@ -216,6 +296,82 @@ uint32_t getInternalHeapMinEverFreeBytes() { return getInternalHeapFreeBytes(); 
 void resetInternalHeapWatermark() {}
 void logStatus() {}
 void logStatusAtAddedNotes(uint32_t, size_t, const void*, size_t, bool) {}
+
+namespace {
+
+MemoryPressureLevel sAdvisoryLevel = MemoryPressureLevel::Normal;
+uint32_t sLowExitStableSinceMs = 0;
+bool sCaptureAppendFailedLatch = false;
+uint32_t sCaptureAppendFailedLatchSinceMs = 0;
+uint16_t g_nativeTestChunksFree = 512;
+uint16_t g_nativeTestPersistQueueDepth = 0;
+bool g_nativeTestPersistQueueOverride = false;
+
+MemoryPressurePolicy::Inputs gatherPressureInputs(uint32_t nowMs) {
+  MemoryPressurePolicy::Inputs inputs{};
+  inputs.heapFreeBytes = getInternalHeapFreeBytes();
+  inputs.chunksFree = g_nativeTestChunksFree;
+  inputs.persistQueueDepth =
+      g_nativeTestPersistQueueOverride ? g_nativeTestPersistQueueDepth : 0;
+  (void)nowMs;
+  if (sCaptureAppendFailedLatch) {
+    inputs.captureAppendFailedLatch = true;
+  }
+  return inputs;
+}
+
+void maybeClearCaptureAppendFailedLatch(const MemoryPressurePolicy::Inputs& inputs,
+                                        uint32_t nowMs) {
+  if (!sCaptureAppendFailedLatch) {
+    return;
+  }
+  const bool headroomRecovered =
+      MemoryPressurePolicy::chunkHeadroomOk(inputs.chunksFree) &&
+      inputs.heapFreeBytes >= Config::HEAP_PRESSURE_CRITICAL_EXIT_BYTES;
+  const bool latchTimedOut =
+      sCaptureAppendFailedLatchSinceMs != 0 &&
+      nowMs - sCaptureAppendFailedLatchSinceMs >= Config::HEAP_PRESSURE_CAPTURE_APPEND_LATCH_MS;
+  if (headroomRecovered || latchTimedOut) {
+    sCaptureAppendFailedLatch = false;
+    sCaptureAppendFailedLatchSinceMs = 0;
+  }
+}
+
+}  // namespace
+
+MemoryPressureLevel getAdvisoryPressureLevel() { return sAdvisoryLevel; }
+
+void notifyCaptureAppendFailed(uint32_t nowMs) {
+  sCaptureAppendFailedLatch = true;
+  sCaptureAppendFailedLatchSinceMs = nowMs;
+}
+
+void updateAdvisoryPressureLevel(uint32_t nowMs) {
+  MemoryPressurePolicy::Inputs inputs = gatherPressureInputs(nowMs);
+  maybeClearCaptureAppendFailedLatch(inputs, nowMs);
+  inputs = gatherPressureInputs(nowMs);
+
+  const MemoryPressureLevel previous = sAdvisoryLevel;
+  sAdvisoryLevel =
+      MemoryPressurePolicy::stepLevel(previous, inputs, nowMs, sLowExitStableSinceMs);
+}
+
+void setNativeTestChunksFree(uint16_t chunksFree) { g_nativeTestChunksFree = chunksFree; }
+
+void setNativeTestPersistQueueDepth(uint16_t depth) {
+  g_nativeTestPersistQueueDepth = depth;
+  g_nativeTestPersistQueueOverride = true;
+}
+
+void resetNativeTestPressureInputs() {
+  g_nativeTestChunksFree = 512;
+  g_nativeTestPersistQueueDepth = 0;
+  g_nativeTestPersistQueueOverride = false;
+  sAdvisoryLevel = MemoryPressureLevel::Normal;
+  sLowExitStableSinceMs = 0;
+  sCaptureAppendFailedLatch = false;
+  sCaptureAppendFailedLatchSinceMs = 0;
+}
 
 }  // namespace MemoryMonitor
 

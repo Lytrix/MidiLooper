@@ -125,6 +125,47 @@ Persistence starvation, transport-gate workarounds, and stop-path flush/defer pa
 - [ ] Re-run `pio test -e native`; optional HITL 2+2; then M4 64+64 HITL regression
 - [ ] `/opsx:archive` when exit criteria met
 
+## M7 — Published capture / builder split (2026-07-15) — **NEXT (Phase 1 firmware)**
+
+**Plan:** [`docs/plans/published_pass_capture_builder_split_refinement.md`](../../../docs/plans/published_pass_capture_builder_split_refinement.md)  
+**Spec:** [`specs/published-capture-pass-split/spec.md`](specs/published-capture-pass-split/spec.md)  
+**Review:** [`ARCHITECTURE-REVIEW.md`](ARCHITECTURE-REVIEW.md) § M7  
+**Primary goal:** ownership split (RAM secondary). **Supersedes** reverted Phase 2A typedef routing.
+
+### Phase 0 — OpenSpec + plan (doc-only) — **DONE 2026-07-15**
+
+- [x] Spec delta `published-capture-pass-split`
+- [x] `ARCHITECTURE-REVIEW.md` M7 phase gates
+- [x] Plan doc `published_pass_capture_builder_split_refinement.md`
+- [x] Design § M7 in this change folder
+
+### Phase 1 — Type split + seal transfer — **DONE 2026-07-15**
+
+- [x] `CaptureChunkIdList` / `PublishedChunkIdList` in `LoopEventStore.h`
+- [x] `transferCaptureChunkIdsToPublished` + `detachChunksToPublished` (≤1 alloc, ≤1 copy)
+- [x] `PendingCapturePass.publishedChunkIds` at seal; publish move within published domain
+- [x] Reclaim/discard/clone paths use `releaseChunkRefs` (no published→capture repatriation)
+- [x] Native: `test_loop_event_store`, `test_loop_take_survival`, `test_loop_size_probe`
+- [x] **Gate:** `pio test -e native` (621 passed); `teensy41-capture-serial` build
+
+### Phase 2 — `PublishedOverdubPassVec` — **DONE 2026-07-15**
+
+- [x] Migrate `LoopPasses::overdubPasses` to `PublishedOverdubPassVec`
+- [x] Update `LoopPasses.cpp` cold-path helper signature
+- [x] **Gate:** `pio test -e native` (621 passed); `teensy41-capture-serial` build
+
+### Phase 3 — SD / undo / clone — **DONE 2026-07-15**
+
+- [x] `StorageLoopIo` read uses `detachChunksToPublished` (wire → published, no capture repatriation)
+- [x] `LoopEventStore::deepClonePublishedChunkIds` for undo/snapshot (published → published pool copy)
+- [x] `deepClonePasses` / `adoptPersistedSnapshot` / `reclaimDisabledCapturePass` on published types
+- [x] **Gate:** `test_storage_loop_io`, `test_sd_load_adopt`, `test_loop_take_survival`, `test_loop_event_store` (624 native)
+
+### Phase 4 — HITL + exit measurement — **NEXT**
+
+- [ ] HITL baseline + 215312-profile manual capture; exit criterion (~5 KiB)
+- [ ] Update guides + conclusions doc; `/opsx:sync` when M7 ships
+
 ## Docs (scaffold PR)
 
 - [x] OpenSpec change folder + proposal, design, tasks, spec deltas

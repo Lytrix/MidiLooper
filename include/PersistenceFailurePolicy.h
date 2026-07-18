@@ -30,6 +30,11 @@ bool shouldDeferMidPassForWorkspaceSave(bool savePending, bool urgentRequested,
 bool shouldRunPersistenceWorkItemWriter(uint16_t queueDepth, uint16_t writingWorkItemCount,
                                         bool otherSdIoActive);
 
+/// Headroom for one persistence work-item slice (native-testable).
+/// Active slices and urgent capture-stop saves proceed below the internal-heap floor.
+bool hasPersistenceSliceHeadroom(uint32_t freeHeapBytes, bool workItemActive,
+                                 bool urgentSaveRequested);
+
 /// Policy when free chunks approach reserve during capture (native-testable).
 CapturePressureAction evaluateCapturePressure(uint16_t freeChunks, uint16_t reserve,
                                               bool isRecording, bool isOverdubbing);

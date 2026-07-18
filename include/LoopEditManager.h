@@ -15,6 +15,7 @@
 #include "Globals.h"
 #include "MidiConfig.h"
 #include "Utils/NoteUtils.h"
+#include "Utils/LoopEditDepartGeometry.h"
 
 #include "EditSession.h"
 
@@ -59,6 +60,8 @@ public:
     bool hasPendingGeometry() const;
     /// Realign session baseline and motor feedback after global geometry undo/redo.
     void onGlobalGeometryRestored(Track& track);
+    /// Align LOOP_EDIT baseline to live loop geometry (no fader I/O). Used after transport reanchor.
+    void syncSessionBaselineFromLiveLoop(Track& track);
 
     // Track change handling
     void onTrackChanged(Track& newTrack);

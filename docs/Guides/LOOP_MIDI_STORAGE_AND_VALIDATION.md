@@ -189,6 +189,22 @@ Full-loop pass over merged active capture passes (materialized flat):
 | SD load | **Not wired** — validate on load is planned; use deferred idle after boot playback |
 | Manual / legacy | Direct call (avoid on hot paths) |
 
+#### Heap tradeoff (do not reverse for load/display speed)
+
+**Shipped in `15a35b4` (2026-06-15):** stop path stopped running full-loop note-pair cleanup. It uses wrap-window `LoopStopFinalize` only and defers full `validateAndCleanupMidiEvents` to idle. That change recovered a large amount of internal free heap after stop (on the order of **~120 KiB → ~320 KiB** free in the sessions that motivated Phase 4), together with PSRAM chunk storage.
+
+**Wrong lever for slow boot / large-loop piano roll:** putting full pair validation back on record/overdub stop (or running it synchronously on every SD slot load) reintroduces that heap spike and does **not** fix first-paint latency. Full validate is **not** on the SD load path today (table above).
+
+**Where load + first piano-roll time actually go:**
+
+| Cost | Owner / path |
+|------|----------------|
+| SD read per slot | `loadLoopSlotFromCurrentSetSd` / deferred restore queue (one slot per idle today) |
+| First piano-roll paint | `Loop` visualCache rebuild + `NoteUtils::reconstructNotes` (display pairing — tier 3, not storage mutate) |
+| Avoided on load (heap) | Full `ensurePassesMaterializedStore` per restore slot — removed in `68ce6ad` after 42-slot boot exhausted RAM1 |
+
+For faster time-to-UI on large loops, follow [prioritized_boot_load_isolation_refinement.md](../plans/prioritized_boot_load_isolation_refinement.md) (slot load session, window-first display) — not reverting `15a35b4`.
+
 ### 3. Display reconstruction — not storage mutation
 
 **Files:** `src/Utils/NoteUtils.cpp`, tests in `test/test_noteutils_reconstruct/`

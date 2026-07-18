@@ -17,6 +17,13 @@
 #include "Utils/DebugSessionCapture.h"
 #include "Utils/SlotFocusDisplay.h"
 #include "Utils/SlotLoopContent.h"
+#include "Utils/MemoryPressureLevel.h"
+
+#if defined(__IMXRT1062__)
+#define PRESSURE_RECLAIM_MEM FLASHMEM
+#else
+#define PRESSURE_RECLAIM_MEM
+#endif
 
 TrackManager trackManager;
 
@@ -120,6 +127,10 @@ void TrackManager::prewarmSelectedDisplayVisualCache() {
   if (track.isPlaying() || track.isStoppedRecording()) {
     return;
   }
+  if (loop.shouldAvoidFullVisualRebuild(loop.loopLengthTicks)) {
+    loop.rebuildVisualCacheIdleSlice(4, 0);
+    return;
+  }
   loop.ensureVisualCacheBuilt();
 }
 
@@ -183,6 +194,70 @@ void TrackManager::releaseBackgroundPlaybackWindowMemory(uint8_t captureTrackInd
     if (i != captureTrackIndex) {
       tracks[i].releasePlaybackWindowMemory();
     }
+  }
+}
+
+namespace {
+
+uint8_t reclaimTrackPriority(uint8_t trackIndex, const TrackManager& manager, const Track& track) {
+  if (manager.isSelectedTrack(track)) {
+    return 3;
+  }
+  if (track.isRecording() || track.isOverdubbing() || track.getState() == TRACK_ARMED) {
+    return 2;
+  }
+  if (track.isPlaying()) {
+    return 1;
+  }
+  (void)trackIndex;
+  return 0;
+}
+
+}  // namespace
+
+PRESSURE_RECLAIM_MEM void TrackManager::tryReclaimDerivedViewCachesUnderPressure(MemoryPressureLevel level) {
+  if (level < MemoryPressureLevel::Low) {
+    return;
+  }
+
+  uint8_t trackOrder[Config::NUM_TRACKS];
+  for (uint8_t i = 0; i < Config::NUM_TRACKS; ++i) {
+    trackOrder[i] = i;
+  }
+  for (uint8_t i = 0; i + 1 < Config::NUM_TRACKS; ++i) {
+    for (uint8_t j = i + 1; j < Config::NUM_TRACKS; ++j) {
+      const Track& a = tracks[trackOrder[i]];
+      const Track& b = tracks[trackOrder[j]];
+      const uint8_t priA = reclaimTrackPriority(trackOrder[i], *this, a);
+      const uint8_t priB = reclaimTrackPriority(trackOrder[j], *this, b);
+      if (priB < priA) {
+        const uint8_t tmp = trackOrder[i];
+        trackOrder[i] = trackOrder[j];
+        trackOrder[j] = tmp;
+      }
+    }
+  }
+
+  for (uint8_t orderIdx = 0; orderIdx < Config::NUM_TRACKS; ++orderIdx) {
+    const uint8_t trackIndex = trackOrder[orderIdx];
+    Track& track = tracks[trackIndex];
+    const bool selected = isSelectedTrack(track);
+    const bool noteEditBlocksSelected =
+        editManager.isNoteEditActive() && selected;
+
+    for (uint8_t slot = 0; slot < Config::MAX_LOOPS_PER_TRACK; ++slot) {
+      if (noteEditBlocksSelected && slot == track.getActiveLoopIndex()) {
+        continue;
+      }
+      Loop& loop = track.loopForSlot(slot);
+      if (!isSlotEnabled(trackIndex, slot) && !loop.hasPublishedEvents()) {
+        continue;
+      }
+      (void)loop.tryDiscardPassesMaterializedCache();
+    }
+
+    (void)track.tryClearPublishedMidiScratch();
+    (void)track.tryReleasePlaybackWindowMemory();
   }
 }
 
@@ -387,7 +462,8 @@ void TrackManager::handleQuantizedStop(uint32_t currentTick) {
 
 void TrackManager::startPlayingTrack(uint8_t trackIndex) {
   if (trackIndex < Config::NUM_TRACKS) {
-    StorageManager::requestLoopSlotRestoreFromSd(trackIndex, tracks[trackIndex].getActiveLoopIndex());
+    StorageManager::prioritizeLoopSlotRestoreForFocus(trackIndex,
+                                                      tracks[trackIndex].getActiveLoopIndex());
     tracks[trackIndex].startPlaying(clockManager.getCurrentTick());
   }
 }
@@ -634,7 +710,7 @@ void TrackManager::setActiveLoopIndex(uint8_t trackIndex, uint8_t index) {
       return;
     }
     t.setActiveLoopIndex(index);
-    StorageManager::requestLoopSlotRestoreFromSd(trackIndex, index);
+    StorageManager::prioritizeLoopSlotRestoreForFocus(trackIndex, index);
     forceLedUpdate(clockManager.getCurrentTick());
   }
 }
@@ -789,7 +865,7 @@ bool TrackManager::slotHasLoopContent(uint8_t trackIndex, uint8_t slotIndex, boo
     if (!isSlotEnabled(trackIndex, slotIndex)) {
       return false;
     }
-    StorageManager::requestLoopSlotRestoreFromSd(trackIndex, slotIndex);
+    StorageManager::prioritizeLoopSlotRestoreForFocus(trackIndex, slotIndex);
     return track.hasDataInSlot(slotIndex);
   }
   return true;
@@ -882,7 +958,7 @@ void TrackManager::setSelectedSlotIndex(uint8_t trackIndex, uint8_t slotIndex,
     editManager.beforeSelectedSlotChange(track);
   }
   slotStateMachine.setSelectedSlotIndex(trackIndex, slotIndex);
-  StorageManager::requestLoopSlotRestoreFromSd(trackIndex, slotIndex);
+  StorageManager::prioritizeLoopSlotRestoreForFocus(trackIndex, slotIndex);
   if (syncPlayback == SyncPlayback::Yes) {
     setActiveLoopIndex(trackIndex, slotIndex);
   }
@@ -894,8 +970,15 @@ void TrackManager::setSelectedSlotIndex(uint8_t trackIndex, uint8_t slotIndex,
     displayManager.invalidateForSlotChange(trackIndex, previousSlot, slotIndex);
     forceLedUpdate(clockManager.getCurrentTick());
     if (!bootLoadInProgress_) {
+      // Selected-slot index always needs a light footer persist. A full workspace save on
+      // every preview select while playing blocks the LoopEnd launch (FinalizeWorkspace).
       StorageManager::requestWorkspaceFooterPersistWhenSafe();
-      StorageManager::requestDeferredSaveState(looperState.getLooperState());
+      const bool previewOnlyWhilePlaying =
+          syncPlayback == SyncPlayback::No &&
+          (track.isPlaying() || track.isOverdubbing());
+      if (!previewOnlyWhilePlaying) {
+        StorageManager::requestDeferredSaveState(looperState.getLooperState());
+      }
     }
   }
 }
@@ -950,10 +1033,9 @@ void TrackManager::setSelectedTrack(uint8_t index) {
   }
   if (trackChanged) {
     editManager.onTrackChanged(tracks[selectedTrack]);
-    if (!bootLoadInProgress_) {
-      const uint8_t displaySlot = getSelectedSlotIndex(index);
-      displayManager.invalidateForSlotChange(index, displaySlot, displaySlot);
-    }
+    const uint8_t focusSlot = getSelectedSlotIndex(index);
+    StorageManager::prioritizeLoopSlotRestoreForFocus(index, focusSlot);
+    displayManager.invalidateForSlotChange(index, focusSlot, focusSlot);
   }
   if (!bootLoadInProgress_ && trackChanged) {
     StorageManager::requestWorkspaceFooterPersistWhenSafe();
@@ -1060,12 +1142,20 @@ void TrackManager::updateAllTracks(uint32_t currentTick) {
       if (targetSlot < Config::MAX_LOOPS_PER_TRACK && tracks[i].hasDataInSlot(targetSlot)) {
         const uint8_t previousPlaying = getPlayingSlotIndex(i);
         slotStateMachine.clearPendingSlotSwitch(i);
+        // Wire silence before swapping the audible slot (same pattern as overdub→play).
+        tracks[i].sendAllNotesOff();
+        tracks[i].ensurePlaybackMergedEventsForSlot(targetSlot);
         setActiveLoopIndex(i, targetSlot);
         const Loop& targetLoop = tracks[i].getLoop(targetSlot);
         tracks[i].clearQueuedPlaybackStart();
         tracks[i].queuePlaybackStartAtGrid(static_cast<int32_t>(targetLoop.loopStartTick),
                                             currentTick);
         tracks[i].commitQueuedPlaybackStart(currentTick);
+        logger.info("LoopEnd playback commit track=%u %u->%u start=%lu len=%lu",
+                    static_cast<unsigned>(i), static_cast<unsigned>(previousPlaying),
+                    static_cast<unsigned>(targetSlot),
+                    static_cast<unsigned long>(targetLoop.loopStartTick),
+                    static_cast<unsigned long>(targetLoop.loopLengthTicks));
 
         if (i == selectedTrack) {
           if (targetSlot != previousPlaying) {
@@ -1085,6 +1175,8 @@ void TrackManager::updateAllTracks(uint32_t currentTick) {
         }
       } else {
         // Safety: pending target no longer has loop data, cancel it.
+        logger.info("LoopEnd playback commit cancelled track=%u target=%u (no RAM data)",
+                    static_cast<unsigned>(i), static_cast<unsigned>(targetSlot));
         slotStateMachine.clearPendingSlotSwitch(i);
         pendingEnabledSetReplacement[i] = false;
       }

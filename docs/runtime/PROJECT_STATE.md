@@ -2,13 +2,15 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-07-14 (persistence work queue B1–B5 complete; PR to `dev`)
+Last updated: 2026-07-18 (boot full drain under title)
 
 ---
 
 ## Current branch
 
-**`feature/persistence-work-queue`** @ `8b3f93e` — B1–B5 shipped; PR to **`dev`** @ `ec7b4a5`.
+**`feature/memory-pressure-reclaim`** — title until ready; boot path **full-drains** pending slot restores in one stretch. See [CURRENT_WORK.md](CURRENT_WORK.md).
+
+*(Parallel: **`feature/persistence-work-queue`** @ `8b3f93e` — B1–B5 on `dev`.)*
 
 ### Firmware lines
 
@@ -20,14 +22,16 @@ Last updated: 2026-07-14 (persistence work queue B1–B5 complete; PR to `dev`)
 
 See [`docs/BRANCHING.md`](../BRANCHING.md).
 
-## In flight (uncommitted)
+## In flight
 
-None.
+- Boot full drain under title — **committed** `af1227c` ([`boot_load_full_drain_refinement.md`](../plans/boot_load_full_drain_refinement.md))
+- **Next project (proposed):** [`unified_publish_pipeline_deferred_lazy_loading_architecture.md`](../plans/unified_publish_pipeline_deferred_lazy_loading_architecture.md) — audible-set ready + DeferredLoad; new branch
 
 ## Shipped on branch (recent)
 
 | Commit / session | Focus | Docs |
 |--------|--------|------|
+| `d87d0c6` + [`010126`](../../captures/session_20260718_010126.log) | Windowed display + queued countdown; device gate PASS | boot_load_windowed plan |
 | `8b3f93e` | Sync-drain budget, clear-slot restore, post-reboot undo save | persist queue plan |
 | `7a89f03` | Retire monolithic deferred save; work queue (B4) | persist queue plan |
 | `b3d066f` | `stepPersistenceWorkItem` scheduler hook (B3) | persist queue plan |
