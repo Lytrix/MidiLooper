@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-07-18 (Phase 1 Commit rename + Phase 2 audible-only boot)
+Last updated: 2026-07-18 (ch2: enable playing slot on transport load)
 
 ---
 
@@ -18,14 +18,14 @@ Last updated: 2026-07-18 (Phase 1 Commit rename + Phase 2 audible-only boot)
 |-------|--------|--------|
 | **0** | Freeze docs + OpenSpec + DEC-026 + rename table + PREFLIGHT | **Done** |
 | **1** | Publish→Commit rename | **Done** (`d8e8324`) — native 647 PASS |
-| **2** | Audible-only boot enqueue + ready | **In progress** |
+| **2** | Boot playback set enqueue + ready | **Fix in tree** — union(selected, active) enqueue + `loadTransportSlotIndices` enables playing slot (ch2: DISP notes but no MO when selected slot disabled in bundle) |
 | **3+** | Cooperative session / deferred on-demand | Pending |
 
-**Boot UX target:** OSTINATIX until audible slots COMMITTED; non-audible stay HEADER_READY until select/focus.
+**Boot UX target:** OSTINATIX until boot playback set COMMITTED (per-track union of file selected + file active); other payloads stay HEADER_READY until select/focus / Phase 4.
 
 ### Prioritized boot load isolation (merged to `dev`)
 
-Shipped via PR #4 on `feature/memory-pressure-reclaim`. Full-set drain superseded for interactive ready by audible-only enqueue above.
+Shipped via PR #4 on `feature/memory-pressure-reclaim`. Full-set drain superseded for interactive ready by boot playback set enqueue above.
 
 ---
 

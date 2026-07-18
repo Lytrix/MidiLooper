@@ -49,7 +49,7 @@ sequenceDiagram
 | Pool + loop RAM alloc | `MemoryPool`, `TrackManager` | Before USB Host heap use |
 | `midiHandler.setup()` | DIN MIDI only | `BOOT,usb_host,deferred` |
 | Early OLED + OSTINATIX title | `DisplayManager::beginBootOled` / `drawBootScreen` | Title held until audible drain |
-| `looper.setup()` → `loadState` | `StorageManager` | Bundle read, manifest scan, hydrate metadata all payloads, **enqueue audible only** (`isAudibleBootSlot`) |
+| `looper.setup()` → `loadState` | `StorageManager` | Bundle read, manifest scan, hydrate metadata all payloads, **enqueue boot playback set** (`isAudibleBootSlot` = per-track union of file selected + file active) |
 | `sendEditSessionChange(Loop)` | `EditManager` | PC + fader feedback to **USB device** MIDI only |
 
 `bootLoadInProgress_` suppresses `forceLedUpdate` during `loadState` only. It is cleared before `setup()` returns.
@@ -117,4 +117,4 @@ After a long loop load, `stabilizeBootMemoryAfterLoad()` may clear undo stacks w
 | `src/DisplayManager.cpp` | `drawBootScreen` / `finishBootSetup` title gate |
 | `include/Utils/BootTelemetry.h` | `BOOT,*` milestones |
 
-**History:** `50ad01b` deferred USB Host until after sync `loadState`; follow-up defers until deferred slot restore queue drains (SDIO + enumeration isolation). Full-set drain under title (`af1227c`) superseded for interactive ready by **audible-only enqueue** (`feature/deferred-lazy-load`, OpenSpec `unified-commit-lazy-slot-load` Phase 2). Non-audible slots hydrate on select/focus.
+**History:** `50ad01b` deferred USB Host until after sync `loadState`; follow-up defers until deferred slot restore queue drains (SDIO + enumeration isolation). Full-set drain under title (`af1227c`) superseded for interactive ready by **boot playback set** enqueue (`feature/deferred-lazy-load`, OpenSpec `unified-commit-lazy-slot-load` Phase 2). That set is **union(selected, active)** per track (stopped remaps `active := selected` in `loadTransportSlotIndices`, and enables the playing slot so `updateAllTracks` can emit MO). Other payloads stay HEADER_READY until select/focus / Phase 4.

@@ -2985,6 +2985,23 @@ bool STORAGE_PERSIST_MEM applyLoadedTransportFooter(uint8_t numTracks, const std
         const uint8_t selectedSlot =
             t < selectedSlotIndex.size() ? selectedSlotIndex[t] : activeSlot;
         trackManager.loadTransportSlotIndices(t, activeSlot, selectedSlot);
+        // Boot diagnostics: selected/active vs which slots are enabled for play.
+        uint8_t enabledMask = 0;
+        for (uint8_t s = 0; s < Config::MAX_LOOPS_PER_TRACK && s < 8; ++s) {
+            if (trackManager.isSlotEnabled(t, s)) {
+                enabledMask = static_cast<uint8_t>(enabledMask | (1u << s));
+            }
+        }
+        Serial.print("[StorageManager] Boot transport t=");
+        Serial.print(t);
+        Serial.print(" active=");
+        Serial.print(activeSlot);
+        Serial.print(" selected=");
+        Serial.print(selectedSlot);
+        Serial.print(" playing=");
+        Serial.print(trackManager.getActiveLoopIndex(t));
+        Serial.print(" enabledMask=0x");
+        Serial.println(enabledMask, HEX);
     }
     if (selectedTrackIdx < Config::NUM_TRACKS) {
         trackManager.setSelectedTrack(selectedTrackIdx);
@@ -3047,7 +3064,8 @@ bool StorageManager::loadCurrentSetBundleAndActiveLoopSlots(File& file, const ch
     }
     emitBootMilestone("scan", "start");
 
-    // Boot restore pipeline: discover → hydrate metadata → enqueue audible set only → sort → drain.
+    // Boot restore pipeline: discover → hydrate metadata → enqueue boot playback set → sort → drain.
+    // Boot playback set = isAudibleBootSlot (per-track union of file selected + file active).
     for (uint8_t t = 0; t < numTracks; ++t) {
         Track& track = trackManager.getTrack(t);
         bool anySlotHasEvents = false;

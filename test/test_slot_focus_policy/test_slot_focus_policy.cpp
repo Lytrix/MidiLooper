@@ -45,11 +45,11 @@ void test_boot_restore_priority_other_track_active_slot() {
 }
 
 void test_boot_restore_priority_other_track_selected_slot() {
-  // Other track selected (not active) is background priority 1.
+  // Every track's selected slot is in the boot playback set (stopped remaps active:=selected).
   const uint8_t active[] = {1, 4};
   const uint8_t selected[] = {2, 0};
-  TEST_ASSERT_EQUAL_UINT8(1, computeBootRestorePriority(1, 0, 0, active, 2, selected, 2));
-  TEST_ASSERT_FALSE(isAudibleBootSlot(1, 0, 0, active, 2, selected, 2));
+  TEST_ASSERT_EQUAL_UINT8(0, computeBootRestorePriority(1, 0, 0, active, 2, selected, 2));
+  TEST_ASSERT_TRUE(isAudibleBootSlot(1, 0, 0, active, 2, selected, 2));
 }
 
 void test_boot_restore_priority_other_track_non_selected_slot() {
