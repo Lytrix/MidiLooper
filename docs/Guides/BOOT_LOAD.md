@@ -29,16 +29,17 @@ sequenceDiagram
 
   Setup->>SD: loadState (sync bundle + manifest scan)
   SD-->>Setup: queue deferred slot restores
-  Note over Setup: BOOT,load,ok — USB host NOT started
-  Setup->>Setup: finishBootSetup, LOOP_EDIT to USB device MIDI
+  Note over Setup: BOOT,load,ok - USB host NOT started; title stays
+  Setup->>Setup: LOOP_EDIT to USB device MIDI (no finishBootSetup yet)
 
-  loop->>SD: processDeferredLoopSlotRestore (one slot per idle slice)
-  Note over Loop: DISP updates; no DROID LED outbound yet
+  loop->>SD: while-drain all pending processDeferredLoopSlotRestore
+  Note over Loop: OSTINATIX title; full drain; no piano roll
 
-  Loop->>USB: beginUsbHost when restore queue empty
+  Loop->>Loop: finishBootSetup when restore queue empty
+  Loop->>USB: beginUsbHost
   Note over USB: BOOT,usb_host,begin
   USB->>USB: Task() poll up to 300 ms (cold-plug enumerate)
-  Loop->>Loop: clearLeds, LOOP_EDIT note 100 flash, onBootSlotLoadComplete
+  Loop->>Loop: clearLeds, LOOP_EDIT note 100 flash, onBootSlotLoadComplete, first piano roll
 ```
 
 ### `setup()` (blocking, no USB Host)
@@ -47,9 +48,8 @@ sequenceDiagram
 |------|-------|-------|
 | Pool + loop RAM alloc | `MemoryPool`, `TrackManager` | Before USB Host heap use |
 | `midiHandler.setup()` | DIN MIDI only | `BOOT,usb_host,deferred` |
-| Early OLED + "Loading…" | `DisplayManager::beginBootOled` | Minimal SPI; full UI later |
+| Early OLED + OSTINATIX title | `DisplayManager::beginBootOled` / `drawBootScreen` | Title held until queue drain |
 | `looper.setup()` → `loadState` | `StorageManager` | Bundle read, manifest scan, queue restores |
-| `finishBootSetup()` | `DisplayManager` | Startup splash |
 | `sendEditSessionChange(Loop)` | `EditManager` | PC + fader feedback to **USB device** MIDI only |
 
 `bootLoadInProgress_` suppresses `forceLedUpdate` during `loadState` only. It is cleared before `setup()` returns.
@@ -57,10 +57,11 @@ sequenceDiagram
 ### `loop()` (cooperative)
 
 | Step | Gate | Notes |
-|------|------|-------|
-| Deferred slot restore | `!timingCriticalTrackActive` | One slot per call; repaint OLED after each |
+|------|-------|-------|
+| Boot slot restore | `bootSlotLoadRefreshPending` && idle | **Full drain** — while-queue `processDeferredLoopSlotRestore` under title |
+| Post-boot slot restore | idle, after ready | One slot per call (focus / idle loads) |
 | Deferred undo hydrate | same | Reads undo bodies from bundle |
-| **USB Host begin** | `!hasPendingLoopSlotRestore()` | `bootSlotLoadRefreshPending` gate in `main.cpp` |
+| **finishBootSetup + USB Host** | `bootInteractiveReady()` (queue empty && !session) | Then first piano-roll paint |
 | DROID LED refresh | after `beginUsbHost` | `clearLeds`, note 100 flash, `onBootSlotLoadComplete` |
 | Mid-pass persistence | idle transport | `PERS,mid_pass` during/after restore |
 
@@ -93,6 +94,7 @@ Emitted via `emitBootMilestone` (`include/Utils/BootTelemetry.h`). Use capture-s
 2. **Do not** call `clearLeds()` / `forceLedUpdate()` from `setup()` — run from the boot-slot-complete gate (or `onBootSlotLoadComplete`).
 3. **Do** pump `usbHost.Task()` after `begin()` for up to 300 ms when DROID is cold-plugged at power-on (`MidiHandler::beginUsbHost`).
 4. **Do** keep ch15 LED outbound queued and paced (`MidiConfig::DroidUsbHost`) — see DROID guide.
+5. **Do not** clear the boot title (`finishBootSetup`) until `bootInteractiveReady()` — piano roll only after full drain.
 
 ---
 
@@ -107,9 +109,10 @@ After a long loop load, `stabilizeBootMemoryAfterLoad()` may clear undo stacks w
 | File | Role |
 |------|------|
 | `src/main.cpp` | Setup order; `bootSlotLoadRefreshPending` gate |
-| `src/StorageManager.cpp` | `loadState`, `processDeferredLoopSlotRestore` |
+| `src/StorageManager.cpp` | `loadState`, `processDeferredLoopSlotRestore`, `bootInteractiveReady` |
 | `src/MidiHandler.cpp` | `beginUsbHost`, enumeration poll |
 | `src/TrackManager.cpp` | `beginBootLoad` / `onBootSlotLoadComplete` |
+| `src/DisplayManager.cpp` | `drawBootScreen` / `finishBootSetup` title gate |
 | `include/Utils/BootTelemetry.h` | `BOOT,*` milestones |
 
-**History:** `50ad01b` deferred USB Host until after sync `loadState`; follow-up defers until **deferred** slot restore queue drains (SDIO + enumeration isolation).
+**History:** `50ad01b` deferred USB Host until after sync `loadState`; follow-up defers until **deferred** slot restore queue drains (SDIO + enumeration isolation). Early-USB / audible sync (2026-07-18) was reverted: title + USB wait for full queue. Boot scheduling (2026-07-18): **while-drain** all pending slots under title before ready ([`boot_load_full_drain_refinement.md`](../plans/boot_load_full_drain_refinement.md)).

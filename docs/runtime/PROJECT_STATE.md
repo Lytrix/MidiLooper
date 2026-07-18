@@ -2,13 +2,13 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-07-18 (audible boot set follow-up)
+Last updated: 2026-07-18 (boot full drain under title)
 
 ---
 
 ## Current branch
 
-**`feature/memory-pressure-reclaim`** — Phase 3 PASS (`012025`); **audible boot set** in tree → device gate. See [CURRENT_WORK.md](CURRENT_WORK.md).
+**`feature/memory-pressure-reclaim`** — title until ready; boot path **full-drains** pending slot restores in one stretch. See [CURRENT_WORK.md](CURRENT_WORK.md).
 
 *(Parallel: **`feature/persistence-work-queue`** @ `8b3f93e` — B1–B5 on `dev`.)*
 
@@ -24,8 +24,8 @@ See [`docs/BRANCHING.md`](../BRANCHING.md).
 
 ## In flight
 
-- Audible boot set: sync active slots all tracks (+ focus selected) before `bootInteractiveReady`
-- **Next:** flash + verify `Boot audible` + all-tracks Play at first frame
+- Boot full drain under title ([`boot_load_full_drain_refinement.md`](../plans/boot_load_full_drain_refinement.md))
+- **Next:** flash + compare `load_ok` → `usb_host,begin` vs ~11 s baseline (`015532`)
 
 ## Shipped on branch (recent)
 

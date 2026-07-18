@@ -97,7 +97,7 @@ void setup() {
   trackManager.setup();
   displayManager.beginBootOled();
   displayManager.drawBootScreen();
-  looper.setup();  // SD + loadState; USB host deferred until bootInteractiveReady (Phase 3: tier-0)
+  looper.setup();  // SD + loadState; USB + piano roll deferred until full slot drain
 
   // Startup policy: enter LOOP_EDIT deterministically and sync DROID explicitly.
   editManager.sendEditSessionChange(EditSessionType::Loop);
@@ -132,7 +132,8 @@ void setup() {
 
   HotPathTelemetry::emitSummary("startup");
 
-  displayManager.finishBootSetup();
+  // finishBootSetup() runs in loop() with USB after bootInteractiveReady() — keep
+  // OSTINATIX title until the restore queue is empty (no piano roll during drain).
 
   SC_SESSION_HEADER();
 }
@@ -204,8 +205,8 @@ void loop() {
     selectState->updateForOverdubbing(editManager, trackManager.getSelectedTrack());
   }
 
-  // Render display before deferred SD slices. Phase 3: skip OLED only while a SlotLoadSession
-  // owns the SD bus — queued background restores must not freeze the focus piano roll.
+  // Title screen stays until bootInteractiveReady(); update() early-returns while
+  // bootSetupComplete_ is false. Skip OLED while a SlotLoadSession owns the SD bus.
   const bool slotLoadSessionActive = SlotLoadSession::isActive();
   if (!slotLoadSessionActive && now - lastDisplayUpdate >= LCD::DISPLAY_UPDATE_INTERVAL) {
     lastDisplayUpdate = now;
@@ -216,10 +217,31 @@ void loop() {
     trackManager.getTrack(i).processDeferredIdleMaintenance(now);
   }
 
-  // Phase 3: start USB as soon as tier-0 is Published — before background slot restores.
+  // Boot: drain entire restore queue under the title (no yield between slots).
+  // After boot: one slot per idle loop for focus/idle loads.
   static bool bootSlotLoadRefreshPending = true;
+  if (!timingCriticalTrackActive && !StorageManager::isRevisionLoadHeldForWorkspaceDirty()) {
+    if (bootSlotLoadRefreshPending) {
+      while (StorageManager::hasPendingLoopSlotRestore()) {
+        StorageManager::processDeferredLoopSlotRestore();
+      }
+    } else {
+      const bool hadPendingRestore = StorageManager::hasPendingLoopSlotRestore();
+      StorageManager::processDeferredLoopSlotRestore();
+      if (hadPendingRestore) {
+        displayManager.update();
+        lastDisplayUpdate = now;
+      }
+    }
+    StorageManager::processDeferredUndoSnapshots();
+    StorageManager::processEditAutosave(looperState.getLooperState());
+    trackManager.reclaimUnreferencedDisabledPasses();
+  }
+
+  // After full queue drain: clear title, start USB, allow piano roll.
   if (bootSlotLoadRefreshPending && StorageManager::bootInteractiveReady()) {
     bootSlotLoadRefreshPending = false;
+    displayManager.finishBootSetup();
     if (!midiHandler.isUsbHostReady()) {
       midiHandler.beginUsbHost();
       emitBootMilestone("usb_host", "begin");
@@ -232,19 +254,8 @@ void loop() {
     }
     trackManager.onBootSlotLoadComplete();
     midiHandler.processDroidUsbHostOutbound();
-  }
-
-  if (!timingCriticalTrackActive && !StorageManager::isRevisionLoadHeldForWorkspaceDirty()) {
-    const bool hadPendingRestore = StorageManager::hasPendingLoopSlotRestore();
-    StorageManager::processDeferredLoopSlotRestore();
-    StorageManager::processDeferredUndoSnapshots();
-    // Full-slot SD read finished; repaint so the panel does not stick on a pre-read frame.
-    if (hadPendingRestore) {
-      displayManager.update();
-      lastDisplayUpdate = now;
-    }
-    StorageManager::processEditAutosave(looperState.getLooperState());
-    trackManager.reclaimUnreferencedDisabledPasses();
+    displayManager.update();
+    lastDisplayUpdate = now;
   }
 
   StorageManager::processDeferredSaveState(looperState.getLooperState());
