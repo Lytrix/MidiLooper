@@ -46,7 +46,7 @@ bool isSamePitchSoundingAtTick(const NoteUtils::DisplayNoteVec& notes, uint8_t p
 bool shouldRestorePublishedOverlapOnOverdubStop(const Loop& loop, uint8_t note,
                                                 uint32_t pendingOnPhaseTick,
                                                 uint32_t closePhaseTick) {
-  if (loop.loopLengthTicks == 0 || !loop.hasPublishedEvents()) {
+  if (loop.loopLengthTicks == 0 || !loop.hasCommittedPasses()) {
     return false;
   }
   SessionMidiEventVec published;
@@ -152,20 +152,20 @@ struct StopPathStorageStats {
 StopPathStorageStats collectStopPathStorageStats(const Loop& loop, bool includeCaptureBuffer = true) {
   StopPathStorageStats stats{};
   if (loop.passes.hasRecordPass() && loop.passes.recordPass.state == CapturePassState::Active) {
-    stats.chunkRefCount += loop.passes.recordPass.publishedChunkIds.size();
-    stats.eventCount += LoopEventStore::countEventsInChunkIds(loop.passes.recordPass.publishedChunkIds);
+    stats.chunkRefCount += loop.passes.recordPass.committedChunkIds.size();
+    stats.eventCount += LoopEventStore::countEventsInChunkIds(loop.passes.recordPass.committedChunkIds);
   }
   for (const OverdubPass& pass : loop.passes.overdubPasses) {
     if (pass.state != CapturePassState::Active) {
       continue;
     }
-    stats.chunkRefCount += pass.publishedChunkIds.size();
-    stats.eventCount += LoopEventStore::countEventsInChunkIds(pass.publishedChunkIds);
+    stats.chunkRefCount += pass.committedChunkIds.size();
+    stats.eventCount += LoopEventStore::countEventsInChunkIds(pass.committedChunkIds);
   }
   if (loop.hasPendingCapturePass()) {
     const PendingCapturePass& pending = loop.pendingCapturePass();
-    stats.chunkRefCount += pending.publishedChunkIds.size();
-    stats.eventCount += LoopEventStore::countEventsInChunkIds(pending.publishedChunkIds);
+    stats.chunkRefCount += pending.committedChunkIds.size();
+    stats.eventCount += LoopEventStore::countEventsInChunkIds(pending.committedChunkIds);
   }
   if (includeCaptureBuffer && loop.captureActive()) {
     stats.eventCount += loop.capture.store.size();
@@ -217,7 +217,7 @@ void emitOverdubStopDisplaySnapshot(Track& track, uint8_t displaySlot, uint32_t 
     return;
   }
   SC_DISP(displaySlot, TrackStateMachine::toString(track.getState()), loop.loopLengthTicks, 0, 0, 0,
-          0, loop.hasPublishedEvents() ? 1 : 0);
+          0, loop.hasCommittedPasses() ? 1 : 0);
 }
 
 void logMemoryAfterOverdubStop(uint32_t overdubNoteOns, const Loop& loop) {
@@ -281,9 +281,9 @@ void ensurePlaybackWindowBuilt(Track& track, Loop& loop, LoopPlaybackRuntime& ru
     const MidiEventVec& preview = editManager.sessionMidiEvents();
     runtime.primaryWindow.mergedEvents.assign(preview.begin(), preview.end());
   } else if (!loop.captureActive()) {
-    loop.gatherPublishedFlatForDerivedView(runtime.primaryWindow.mergedEvents);
+    loop.gatherCommittedEventsForDerivedView(runtime.primaryWindow.mergedEvents);
   } else {
-    loop.gatherPublishedFlatWithCapture(runtime.primaryWindow.mergedEvents);
+    loop.gatherCommittedEventsWithCapture(runtime.primaryWindow.mergedEvents);
   }
   runtime.primaryWindow.builtFromRevision = windowRevision;
   loop.playbackOrderDirty = true;
@@ -443,7 +443,7 @@ TRACK_COLD_MEM void Track::reconcileTransportStateAfterSlotMutation() {
   if (isRecording() || isOverdubbing() || isStoppedRecording()) {
     return;
   }
-  if (trackState == TRACK_ARMED && getActiveLoop().hasPublishedEvents()) {
+  if (trackState == TRACK_ARMED && getActiveLoop().hasCommittedPasses()) {
     armedPreRollNotes.clear();
     for (uint8_t i = 0; i < trackManager.getTrackCount(); ++i) {
       if (&trackManager.getTrack(i) == this) {
@@ -554,7 +554,7 @@ void Track::startRecording(uint32_t currentTick) {
   Loop& loop = getActiveLoop();
   recordCaptureBaselineGeometry_ = {loop.loopLengthTicks, loop.startLoopTick, loop.loopStartTick};
   hasRecordCaptureBaselineGeometry_ = true;
-  if (!loop.hasPublishedEvents()) {
+  if (!loop.hasCommittedPasses()) {
     loop.loopLengthTicks = 0;
     loop.loopStartTick = 0;
   }
@@ -814,8 +814,8 @@ CommitResult Track::finalizeCommitSideEffects(CommitResult result, CommitReason 
                            reason == CommitReason::OverdubStopToStopped;
   const bool deferFullValidate = recordStop;
   auto scheduleDeferredValidateOnly = [&]() {
-    const bool hasPublished = loop.hasPublishedEvents() && loop.loopLengthTicks > 0;
-    deferredFullMidiValidate = deferFullValidate && hasPublished;
+    const bool hasCommittedPasses = loop.hasCommittedPasses() && loop.loopLengthTicks > 0;
+    deferredFullMidiValidate = deferFullValidate && hasCommittedPasses;
     deferredValidateQueuedAtMs = deferredFullMidiValidate ? millis() : 0;
   };
 
@@ -843,7 +843,7 @@ CommitResult Track::finalizeCommitSideEffects(CommitResult result, CommitReason 
       break;
     }
     case CommitResult::Published: {
-      const PassId undoPassId = loop.lastPublishedPassId();
+      const PassId undoPassId = loop.lastCommittedPassId();
       if (overdubStop) {
         finalizeLoopAtStop(closeTick, false);
       } else {
@@ -901,7 +901,7 @@ CommitResult Track::finalizeCommitSideEffects(CommitResult result, CommitReason 
 
 void Track::emitStoredMidiVerification() const {
   const Loop& loop = getActiveLoop();
-  if (loop.loopLengthTicks == 0 || !loop.hasPublishedEvents()) {
+  if (loop.loopLengthTicks == 0 || !loop.hasCommittedPasses()) {
     return;
   }
 
@@ -980,7 +980,7 @@ void Track::processDeferredIdleMaintenance(uint32_t nowMs) {
       (isPlaying() || isStoppedRecording()) && !isRecording() && !isOverdubbing();
   if (deferredDerivedViewMaintenance) {
     Loop& loop = getActiveLoop();
-    if (loop.hasPublishedEvents() && loop.visualCacheDirty) {
+    if (loop.hasCommittedPasses() && loop.visualCacheDirty) {
       uint8_t barsPerSlice = 4;
       if (StorageManager::hasDeferredSaveWork()) {
         barsPerSlice = 2;
@@ -995,7 +995,7 @@ void Track::processDeferredIdleMaintenance(uint32_t nowMs) {
 
   if (!isPlaying() && !isRecording() && !isOverdubbing() && !isStoppedRecording()) {
     Loop& loop = getActiveLoop();
-    if (loop.hasPublishedEvents()) {
+    if (loop.hasCommittedPasses()) {
       // Phase 3: queued background restores must not block idle visual work.
       const bool bootHydrateActive =
           SlotLoadSession::isActive() || StorageManager::hasPendingUndoSnapshotHydrate();
@@ -1050,7 +1050,7 @@ void Track::ensurePlaybackMergedEventsForSlot(uint8_t slotIndex) {
   LoopPlaybackRuntime& runtime = playbackRuntime.slot(slotIndex);
   (void)loop.getPlaybackOrder();
   // Build destination merged MIDI before LoopEnd commit so launch is a cache hit.
-  if (loop.hasPublishedEvents() && loop.loopLengthTicks > 0) {
+  if (loop.hasCommittedPasses() && loop.loopLengthTicks > 0) {
     ensurePlaybackWindowBuilt(*this, loop, runtime);
     if (loop.playbackOrderDirty) {
       const uint32_t currentTick = clockManager.getCurrentTick();
@@ -1077,7 +1077,7 @@ TRACK_COLD_MEM bool Track::tryReleasePlaybackWindowMemory() {
 
   for (uint8_t slot = 0; slot < Config::MAX_LOOPS_PER_TRACK; ++slot) {
     Loop& loop = loopForSlot(slot);
-    if (!trackManager.isSlotEnabled(trackIndex, slot) && !loop.hasPublishedEvents()) {
+    if (!trackManager.isSlotEnabled(trackIndex, slot) && !loop.hasCommittedPasses()) {
       continue;
     }
 
@@ -1104,7 +1104,7 @@ TRACK_COLD_MEM bool Track::tryReleasePlaybackWindowMemory() {
   return reclaimed;
 }
 
-TRACK_COLD_MEM bool Track::tryClearPublishedMidiScratch() {
+TRACK_COLD_MEM bool Track::tryClearCommittedMidiScratch() {
   if (editManager.isNoteEditActive() && trackManager.isSelectedTrack(*this)) {
     return false;
   }
@@ -1129,7 +1129,7 @@ void Track::resetDeferredRecordRevts() {
 
 void Track::queueDeferredRecordRevts() {
   const Loop& loop = getActiveLoop();
-  if (!loop.hasPublishedEvents()) {
+  if (!loop.hasCommittedPasses()) {
     resetDeferredRecordRevts();
     return;
   }
@@ -1140,10 +1140,10 @@ void Track::queueDeferredRecordRevts() {
   const bool hasActiveRecordPass =
       loop.passes.hasRecordPass() &&
       loop.passes.recordPass.state == CapturePassState::Active &&
-      !loop.passes.recordPass.publishedChunkIds.empty();
+      !loop.passes.recordPass.committedChunkIds.empty();
   bool hasActiveOverdubPass = false;
   for (const OverdubPass& pass : loop.passes.overdubPasses) {
-    if (pass.state == CapturePassState::Active && !pass.publishedChunkIds.empty()) {
+    if (pass.state == CapturePassState::Active && !pass.committedChunkIds.empty()) {
       hasActiveOverdubPass = true;
       break;
     }
@@ -1152,8 +1152,8 @@ void Track::queueDeferredRecordRevts() {
   // Fast path: record-stop baseline has one active record pass and no active overdub passes.
   if (hasActiveRecordPass && !hasActiveOverdubPass) {
     deferredRecordRevtChunkScan = true;
-    if (!LoopEventStore::tryCopyPublishedChunkIds(deferredRecordRevtChunkRefs,
-                                                  loop.passes.recordPass.publishedChunkIds)) {
+    if (!LoopEventStore::tryCopyCommittedChunkIds(deferredRecordRevtChunkRefs,
+                                                  loop.passes.recordPass.committedChunkIds)) {
       resetDeferredRecordRevts();
     }
   }
@@ -1165,7 +1165,7 @@ void Track::processDeferredRecordRevts(size_t maxEventsPerSlice) {
   }
 
   const Loop& loop = getActiveLoop();
-  if (!loop.hasPublishedEvents()) {
+  if (!loop.hasCommittedPasses()) {
     resetDeferredRecordRevts();
     return;
   }
@@ -1296,7 +1296,7 @@ void Track::stopRecording(uint32_t currentTick) {
       snapBar = absRecStart - remBar + TICKS_PER_BAR;
     }
     int64_t delta = (int64_t)snapBar - (int64_t)absRecStart;
-    if (delta != 0 && loop.hasPublishedEvents()) {
+    if (delta != 0 && loop.hasCommittedPasses()) {
       loop.shiftActiveCapturePassTicks(delta);
       loop.invalidatePlaybackCaches();
     }
@@ -1898,7 +1898,7 @@ void Track::playMidiEvents(uint32_t currentTick, bool isAudible) {
     return;
   }
   Loop& loop = getActiveLoop();
-  if (!isAudible || muted || !loop.hasPublishedEvents() || loop.loopLengthTicks == 0)
+  if (!isAudible || muted || !loop.hasCommittedPasses() || loop.loopLengthTicks == 0)
     return;
   LoopPlaybackRuntime& runtime = playbackRuntime.slot(activeLoopIndex);
   if (runtime.isStale(loop.playbackRevision, playbackGeneration)) {
@@ -2029,7 +2029,7 @@ void Track::playMidiEventsForSlot(uint8_t slotIndex, uint32_t currentTick, bool 
   if (!isAudible || muted) return;
 
   Loop& loop = getLoop(slotIndex);
-  if (!loop.hasPublishedEvents() || loop.loopLengthTicks == 0) return;
+  if (!loop.hasCommittedPasses() || loop.loopLengthTicks == 0) return;
   LoopPlaybackRuntime& runtime = playbackRuntime.slot(slotIndex);
   if (runtime.isStale(loop.playbackRevision, playbackGeneration)) {
     runtime.reset(true);
@@ -2344,11 +2344,11 @@ void Track::noteOff(uint8_t channel, uint8_t note, uint8_t velocity, uint32_t ti
   // After stop/finalize: pending already closed; ignore late physical release.
 }
 
-TRACK_COLD_MEM bool Track::hasPublishedEventsInSlot(uint8_t slotIndex) const {
+TRACK_COLD_MEM bool Track::hasCommittedPassesInSlot(uint8_t slotIndex) const {
   if (slotIndex >= Config::MAX_LOOPS_PER_TRACK) {
     return false;
   }
-  return loopForSlot(slotIndex).hasPublishedEvents();
+  return loopForSlot(slotIndex).hasCommittedPasses();
 }
 
 TRACK_COLD_MEM uint32_t Track::quantizeTransportRecordLength(uint32_t rawLength) const {

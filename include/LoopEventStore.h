@@ -27,7 +27,7 @@ struct EventChunk {
 };
 
 using CaptureChunkIdList = std::vector<uint16_t, InternalHeapFirstAllocator<uint16_t>>;
-using PublishedChunkIdList = std::vector<uint16_t, PublishedChunkIdAllocator<uint16_t>>;
+using CommittedChunkIdList = std::vector<uint16_t, CommittedChunkIdAllocator<uint16_t>>;
 using BarIndexVec = std::vector<size_t, InternalHeapFirstAllocator<size_t>>;
 
 /// Runtime chunk lifecycle (ChunkManager). Independent of persistence state.
@@ -61,19 +61,19 @@ class LoopEventStore {
   static bool isEphemeralSeal();
   /// Release runtime references held by a chunk-ref list (does not clear the list).
   static void releaseChunkRefs(const CaptureChunkIdList& refs);
-  static void releaseChunkRefs(const PublishedChunkIdList& refs);
+  static void releaseChunkRefs(const CommittedChunkIdList& refs);
 
   /// Sole internal→published chunk-id transition (≤1 alloc, ≤1 copy). Clears \p src on success.
-  static bool transferCaptureChunkIdsToPublished(PublishedChunkIdList& dest,
+  static bool transferCaptureChunkIdsToCommittedChunkIds(CommittedChunkIdList& dest,
                                                  CaptureChunkIdList& src);
 
   /// Copy published chunk refs (cold path; fails without abort when memory exhausted).
-  static bool tryCopyPublishedChunkIds(PublishedChunkIdList& dest,
-                                       const PublishedChunkIdList& src);
+  static bool tryCopyCommittedChunkIds(CommittedChunkIdList& dest,
+                                       const CommittedChunkIdList& src);
 
   /// Duplicate pool chunks for undo/snapshot isolation (published → published via staging store).
-  static bool deepClonePublishedChunkIds(PublishedChunkIdList& dest,
-                                         const PublishedChunkIdList& src);
+  static bool deepCloneCommittedChunkIds(CommittedChunkIdList& dest,
+                                         const CommittedChunkIdList& src);
 
   LoopEventStore() = default;
   LoopEventStore(const LoopEventStore&) = delete;
@@ -115,18 +115,18 @@ class LoopEventStore {
       uint16_t id, std::vector<MidiEvent, ExternalMemoryFirstAllocator<MidiEvent>>& out);
   /// Append events from chunk refs (read-only; does not mutate ids).
   static void appendChunkRefEvents(const CaptureChunkIdList& ids, MidiEventVec& out);
-  static void appendChunkRefEvents(const PublishedChunkIdList& ids, MidiEventVec& out);
+  static void appendChunkRefEvents(const CommittedChunkIdList& ids, MidiEventVec& out);
   static void appendChunkRefEvents(
       const CaptureChunkIdList& ids,
       std::vector<MidiEvent, ExternalMemoryFirstAllocator<MidiEvent>>& out);
   static void appendChunkRefEvents(
-      const PublishedChunkIdList& ids,
+      const CommittedChunkIdList& ids,
       std::vector<MidiEvent, ExternalMemoryFirstAllocator<MidiEvent>>& out);
   /// Read firstTick/lastTick for a live pool chunk (false if id unused / out of range).
   static bool chunkTickSpan(uint16_t id, uint32_t& firstTick, uint32_t& lastTick);
   /// Count events referenced by chunk ids without flattening.
   static size_t countEventsInChunkIds(const CaptureChunkIdList& ids);
-  static size_t countEventsInChunkIds(const PublishedChunkIdList& ids);
+  static size_t countEventsInChunkIds(const CommittedChunkIdList& ids);
   void loadFromFlat(const MidiEventVec& events);
   template <typename Alloc>
   void loadFromFlat(const std::vector<MidiEvent, Alloc>& events) {
@@ -155,7 +155,7 @@ class LoopEventStore {
 
   /// Seal and move chunk refs into published list (this store cleared). Fails without abort when
   /// extmem and internal heap cannot admit the published vector.
-  bool detachChunksToPublished(PublishedChunkIdList& dest);
+  bool detachChunksToCommittedChunkIds(CommittedChunkIdList& dest);
 
   /// Take ownership of capture chunk refs from ids (ids cleared). CaptureBuilder only.
   void adoptChunkIds(CaptureChunkIdList& ids);
@@ -165,8 +165,8 @@ class LoopEventStore {
   void assignMissingNoteIdsToNoteOns(AssignNoteIdFn assignNoteId);
 
  private:
-  static bool hasHeadroomForPublishedChunkIdList(size_t count);
-  static bool tryAssignPublishedChunkIds(PublishedChunkIdList& dest, const uint16_t* ids,
+  static bool hasHeadroomForCommittedChunkIdList(size_t count);
+  static bool tryAssignCommittedChunkIds(CommittedChunkIdList& dest, const uint16_t* ids,
                                         size_t count);
 
   CaptureChunkIdList chunkIds_;

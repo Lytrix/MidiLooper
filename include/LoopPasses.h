@@ -45,7 +45,7 @@ constexpr uint16_t CHUNK_RESERVE = 16;
 
 struct RecordPass {
   PassId id = kInvalidPassId;
-  PublishedChunkIdList publishedChunkIds;
+  CommittedChunkIdList committedChunkIds;
   CapturePassState state = CapturePassState::Active;
   uint32_t sealedAtTick = 0;
 };
@@ -53,7 +53,7 @@ struct RecordPass {
 struct OverdubPass {
   PassId id = kInvalidPassId;
   uint32_t mergeSequence = 0;
-  PublishedChunkIdList publishedChunkIds;
+  CommittedChunkIdList committedChunkIds;
   CapturePassState state = CapturePassState::Active;
   uint32_t sealedAtTick = 0;
 };
@@ -62,7 +62,7 @@ struct PendingCapturePass {
   PassId id = kInvalidPassId;
   CapturePassPhase phase = CapturePassPhase::Record;
   uint32_t mergeSequence = 0;
-  PublishedChunkIdList publishedChunkIds;
+  CommittedChunkIdList committedChunkIds;
   uint32_t sealedAtTick = 0;
 };
 

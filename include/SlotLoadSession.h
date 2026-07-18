@@ -10,7 +10,7 @@ enum class SlotLoadSessionState : uint8_t {
   Dequeued = 0,
   Reading,
   Validating,
-  Publishing,
+  Committing,
   Completed,
   Failed,
 };

@@ -30,7 +30,7 @@ TRACK_COLD_MEM UndoLoopGeometry captureGeometry(const Loop& loop) {
 
 TRACK_COLD_MEM void applyGeometry(Loop& loop, const UndoLoopGeometry& geometry) {
     loop.loopLengthTicks =
-        loop.reconcileLoopLengthWithPublishedContent(geometry.loopLengthTicks);
+        loop.reconcileLoopLengthWithCommittedPasses(geometry.loopLengthTicks);
     loop.startLoopTick = geometry.startLoopTick;
     loop.loopStartTick = geometry.loopStartTick;
 }
@@ -116,7 +116,7 @@ TRACK_COLD_MEM void restoreLoopSnapshot(Loop& loop, const LoopSnapshotRef& snaps
         loop.resetPassTimeline();
     }
     applyGeometry(loop, geometry);
-    if (!loop.hasPublishedEvents()) {
+    if (!loop.hasCommittedPasses()) {
         loop.nextEventIndex = 0;
         loop.lastTickInLoop = 0;
     }
@@ -180,7 +180,7 @@ TRACK_COLD_MEM bool applyUndoEntry(Track& track, UndoEntry& entry) {
             entry.afterLoopLengthTicks = loop.loopLengthTicks;
             loop.loopStartTick = entry.beforeLoopStartTick;
             loop.loopLengthTicks =
-                loop.reconcileLoopLengthWithPublishedContent(entry.beforeLoopLengthTicks);
+                loop.reconcileLoopLengthWithCommittedPasses(entry.beforeLoopLengthTicks);
             loop.invalidateCaches();
             track.invalidateCaches();
             noteEditManager.loopEditManager.onGlobalGeometryRestored(track);
@@ -292,7 +292,7 @@ TRACK_COLD_MEM bool applyRedoEntry(Track& track, UndoEntry& entry) {
             }
             loop.loopStartTick = entry.afterLoopStartTick;
             loop.loopLengthTicks =
-                loop.reconcileLoopLengthWithPublishedContent(entry.afterLoopLengthTicks);
+                loop.reconcileLoopLengthWithCommittedPasses(entry.afterLoopLengthTicks);
             loop.invalidateCaches();
             track.invalidateCaches();
             noteEditManager.loopEditManager.onGlobalGeometryRestored(track);
@@ -653,7 +653,7 @@ TRACK_COLD_MEM size_t TrackUndo::undoDepthForLoop(const Track& track, const Loop
         return 1u + countAppliedPassUndoEntriesForSlot(track.getGlobalUndoStack(), slotIndex);
     }
     // Cleared slot: pass undo entries may remain for restore-on-undo but sidebar U: shows none.
-    if (!loop.hasPublishedEvents()) {
+    if (!loop.hasCommittedPasses()) {
         return 0;
     }
     return countAppliedPassUndoEntriesForSlot(track.getGlobalUndoStack(), slotIndex);

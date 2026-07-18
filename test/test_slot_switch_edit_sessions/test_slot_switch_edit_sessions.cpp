@@ -16,7 +16,7 @@
 #include "../../src/Utils/LoopEventValidation.cpp"
 #include "../../src/Loop.cpp"
 #include "../test_support/LoopCaptureTestDeps.cpp"
-#include "../test_support/PublishedChunkIdTestHelpers.h"
+#include "../test_support/CommittedChunkIdTestHelpers.h"
 #include "../../src/NoteEditFocus.cpp"
 
 #include "EditSession.h"
@@ -65,12 +65,12 @@ RecordPass makeRecordPassWithNoteCount(uint32_t loopLength, unsigned noteCount) 
     appendNotePair(store, onTick, onTick + 48u, static_cast<uint8_t>(60 + i),
                    static_cast<NoteId>(i + 1u));
   }
-  PublishedChunkIdList publishedIds;
-  TEST_ASSERT_TRUE(transferCaptureStoreToPublished(store, publishedIds));
+  CommittedChunkIdList publishedIds;
+  TEST_ASSERT_TRUE(transferCaptureStoreToCommittedChunkIds(store, publishedIds));
   RecordPass pass{};
   pass.id = 1;
   pass.state = CapturePassState::Active;
-  pass.publishedChunkIds = std::move(publishedIds);
+  pass.committedChunkIds = std::move(publishedIds);
   return pass;
 }
 

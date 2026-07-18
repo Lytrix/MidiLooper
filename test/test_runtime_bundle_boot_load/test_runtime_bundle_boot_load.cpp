@@ -18,7 +18,7 @@
 
 #include "GlobalUndoStack.h"
 #include "Loop.h"
-#include "../test_support/PublishedChunkIdTestHelpers.h"
+#include "../test_support/CommittedChunkIdTestHelpers.h"
 
 namespace {
 
@@ -34,12 +34,12 @@ RecordPass makeRecordPassWithNotes(unsigned noteCount) {
     TEST_ASSERT_TRUE(capture.append(MidiEvent::NoteOn(i * 48u, 1, 60, 100)));
     TEST_ASSERT_TRUE(capture.append(MidiEvent::NoteOff(i * 48u + 24u, 1, 60, 0)));
   }
-  PublishedChunkIdList publishedIds;
-  TEST_ASSERT_TRUE(transferCaptureStoreToPublished(capture, publishedIds));
+  CommittedChunkIdList publishedIds;
+  TEST_ASSERT_TRUE(transferCaptureStoreToCommittedChunkIds(capture, publishedIds));
   RecordPass pass{};
   pass.id = 1;
   pass.state = CapturePassState::Active;
-  pass.publishedChunkIds = std::move(publishedIds);
+  pass.committedChunkIds = std::move(publishedIds);
   return pass;
 }
 

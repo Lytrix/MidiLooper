@@ -9,20 +9,20 @@
 #include "LoopEventStore.h"
 #include "MidiEvent.h"
 
-/// Thin published-chunk traversal view for consumers (display, playback, diagnostics).
+/// Thin committed-chunk traversal view for consumers (display, playback, diagnostics).
 /// Full vs windowed strategy is selected at construction; appendTo fills the output vector.
 ///
 /// Wrap-aware invariant: chunk/window intersection MUST use loop-wrap rules consistent with
 /// DisplayWindowUtils (linear firstTick/lastTick vs window is insufficient when a span wraps).
-class PublishedEventRange {
+class CommittedEventRange {
  public:
-  /// Full published traversal — appends every event from the listed chunk id lists.
-  static PublishedEventRange full(const PublishedChunkIdList* const* lists, size_t listCount,
+  /// Full committed traversal — appends every event from the listed chunk id lists.
+  static CommittedEventRange full(const CommittedChunkIdList* const* lists, size_t listCount,
                                   uint32_t loopLengthTicks);
 
-  /// Windowed published traversal — skips chunks that do not intersect the window, then
+  /// Windowed committed traversal — skips chunks that do not intersect the window, then
   /// filters events to the half-open loop window [windowStart, windowStart + windowLength).
-  static PublishedEventRange inWindow(const PublishedChunkIdList* const* lists, size_t listCount,
+  static CommittedEventRange inWindow(const CommittedChunkIdList* const* lists, size_t listCount,
                                       uint32_t loopLengthTicks, uint32_t windowStart,
                                       uint32_t windowLength);
 
@@ -34,11 +34,11 @@ class PublishedEventRange {
                                     uint32_t windowLength, uint32_t loopLengthTicks);
 
  private:
-  PublishedEventRange(const PublishedChunkIdList* const* lists, size_t listCount,
+  CommittedEventRange(const CommittedChunkIdList* const* lists, size_t listCount,
                       uint32_t loopLengthTicks, bool windowed, uint32_t windowStart,
                       uint32_t windowLength);
 
-  const PublishedChunkIdList* const* lists_ = nullptr;
+  const CommittedChunkIdList* const* lists_ = nullptr;
   size_t listCount_ = 0;
   uint32_t loopLengthTicks_ = 0;
   bool windowed_ = false;

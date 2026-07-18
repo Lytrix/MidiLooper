@@ -53,7 +53,7 @@ struct Loop {
   bool visualCacheDirty = true;
   size_t publishedMaterializedEventCount_ = 0;
   uint32_t nextMergeSequence_ = 0;
-  PassId lastPublishedPassId_ = kInvalidPassId;
+  PassId lastCommittedPassId_ = kInvalidPassId;
 
   uint32_t startLoopTick = 0;
   uint32_t loopLengthTicks = 0;
@@ -66,37 +66,37 @@ struct Loop {
   mutable bool eventIndexValid = false;
 
   bool hasData() const {
-    return hasPublishedEvents() || loopLengthTicks > 0 || !capture.store.empty();
+    return hasCommittedPasses() || loopLengthTicks > 0 || !capture.store.empty();
   }
 
   bool hasPendingCapturePass() const { return hasPendingCapturePass_; }
   const PendingCapturePass& pendingCapturePass() const { return pendingCapturePass_; }
   size_t activeCapturePassCount() const;
 
-  bool hasPublishedEvents() const;
-  uint32_t findLastPublishedEventTick() const;
+  bool hasCommittedPasses() const;
+  uint32_t findLastCommittedEventTick() const;
   /// When published MIDI exists, never return a length below content-derived bars.
-  uint32_t reconcileLoopLengthWithPublishedContent(uint32_t candidateLengthTicks) const;
+  uint32_t reconcileLoopLengthWithCommittedPasses(uint32_t candidateLengthTicks) const;
 
   void mergeActiveCapturePasses(MidiEventVec& out) const;
   void mergeActiveCapturePasses(SessionMidiEventVec& out) const;
   /// Canonical published event gathering (full loop). Prefer over display-only helpers.
-  void gatherPublishedEvents(SessionMidiEventVec& out) const;
-  void gatherPublishedEvents(MidiEventVec& out) const;
+  void gatherCommittedEvents(SessionMidiEventVec& out) const;
+  void gatherCommittedEvents(MidiEventVec& out) const;
   /// Windowed published gathering — wrap-aware chunk skip + event filter.
-  void gatherPublishedEventsInWindow(SessionMidiEventVec& out, uint32_t windowStart,
+  void gatherCommittedEventsInWindow(SessionMidiEventVec& out, uint32_t windowStart,
                                      uint32_t windowLength) const;
-  void gatherPublishedEventsInWindow(MidiEventVec& out, uint32_t windowStart,
+  void gatherCommittedEventsInWindow(MidiEventVec& out, uint32_t windowStart,
                                      uint32_t windowLength) const;
   /// Published window plus live capture.store events in the same window.
-  void gatherPublishedEventsInWindowWithCapture(SessionMidiEventVec& out, uint32_t windowStart,
+  void gatherCommittedEventsInWindowWithCapture(SessionMidiEventVec& out, uint32_t windowStart,
                                                 uint32_t windowLength) const;
-  /// DEC-016 policy owner — aliases gatherPublishedEvents (legacy name).
-  void gatherPublishedFlatForDerivedView(SessionMidiEventVec& flat) const;
-  void gatherPublishedFlatForDerivedView(MidiEventVec& flat) const;
+  /// DEC-016 policy owner — aliases gatherCommittedEvents (legacy name).
+  void gatherCommittedEventsForDerivedView(SessionMidiEventVec& flat) const;
+  void gatherCommittedEventsForDerivedView(MidiEventVec& flat) const;
   /// Published flat policy plus live capture.store merge (playback during record/overdub).
-  void gatherPublishedFlatWithCapture(SessionMidiEventVec& flat) const;
-  void gatherPublishedFlatWithCapture(MidiEventVec& flat) const;
+  void gatherCommittedEventsWithCapture(SessionMidiEventVec& flat) const;
+  void gatherCommittedEventsWithCapture(MidiEventVec& flat) const;
 
   /// True when synchronous full visual-cache rebuild should be avoided (unbounded cost).
   bool shouldAvoidFullVisualRebuild(uint32_t loopLength) const;
@@ -139,7 +139,7 @@ struct Loop {
   CommitResult commitCapturePass(CommitReason reason, uint32_t sealedAtTick);
   bool setCapturePassState(PassId id, CapturePassState state);
   void resetPassTimeline();
-  PassId lastPublishedPassId() const { return lastPublishedPassId_; }
+  PassId lastCommittedPassId() const { return lastCommittedPassId_; }
   bool captureActive() const;
   size_t liveEventCount() const;
   /// Published pass event count + active capture size; builds visual cache if needed. Display/LED only.

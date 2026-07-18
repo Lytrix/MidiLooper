@@ -269,9 +269,9 @@ bool displayNoteStartsInRange(const NoteUtils::DisplayNote& note, uint32_t loopL
 
 void MidiLedManager::prepareLedNoteLookup(Loop& loop) {
     ledNoteLookupEvents_.clear();
-    ledNoteLookupUsesMerge_ = loop.hasPublishedEvents() && loop.visualCacheDirty;
+    ledNoteLookupUsesMerge_ = loop.hasCommittedPasses() && loop.visualCacheDirty;
     if (ledNoteLookupUsesMerge_) {
-        loop.gatherPublishedFlatWithCapture(ledNoteLookupEvents_);
+        loop.gatherCommittedEventsWithCapture(ledNoteLookupEvents_);
     }
 }
 
@@ -286,7 +286,7 @@ bool MidiLedManager::hasNoteOnInRangeForLed(const Loop& loop, uint32_t rangeStar
             }
         }
     }
-    if (!loop.hasPublishedEvents()) {
+    if (!loop.hasCommittedPasses()) {
         return false;
     }
     if (!loop.visualCacheDirty) {

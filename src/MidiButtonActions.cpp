@@ -453,7 +453,7 @@ void MidiButtonActions::handleToggleRecordForSlot(uint8_t slotIndex) {
         return;
     }
 
-    const bool slotHasPublishedMidi = track.hasPublishedEventsInSlot(slotIndex);
+    const bool slotHasPublishedMidi = track.hasCommittedPassesInSlot(slotIndex);
     const bool slotCanArmForRecord = !slotHasPublishedMidi;
 
     if (track.isRecording()) {
@@ -566,7 +566,7 @@ void MidiButtonActions::handleToggleRecord() {
     }
 
     const uint8_t slot = trackManager.getSelectedSlotIndex(idx);
-    if (!track.hasPublishedEventsInSlot(slot)) {
+    if (!track.hasCommittedPassesInSlot(slot)) {
         handleToggleRecordForSlot(slot);
         return;
     }

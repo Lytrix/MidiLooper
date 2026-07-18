@@ -51,7 +51,7 @@ void poolFree(void* p) {
   std::free(p);
 }
 
-bool probePublishedChunkIdBytes(size_t count) {
+bool probeCommittedChunkIdBytes(size_t count) {
   if (count == 0) {
     return true;
   }
@@ -208,14 +208,14 @@ void LOOP_EVENT_STORE_COLD_MEM LoopEventStore::releaseChunkRefs(const CaptureChu
   }
 }
 
-void LOOP_EVENT_STORE_COLD_MEM LoopEventStore::releaseChunkRefs(const PublishedChunkIdList& refs) {
+void LOOP_EVENT_STORE_COLD_MEM LoopEventStore::releaseChunkRefs(const CommittedChunkIdList& refs) {
   for (uint16_t id : refs) {
     releaseChunkReference(id);
     tryFreeChunk(id);
   }
 }
 
-bool LOOP_EVENT_STORE_COLD_MEM LoopEventStore::hasHeadroomForPublishedChunkIdList(size_t count) {
+bool LOOP_EVENT_STORE_COLD_MEM LoopEventStore::hasHeadroomForCommittedChunkIdList(size_t count) {
   if (count == 0) {
     return true;
   }
@@ -236,20 +236,20 @@ bool LOOP_EVENT_STORE_COLD_MEM LoopEventStore::hasHeadroomForPublishedChunkIdLis
 #endif
 }
 
-bool LOOP_EVENT_STORE_COLD_MEM LoopEventStore::tryAssignPublishedChunkIds(PublishedChunkIdList& dest,
+bool LOOP_EVENT_STORE_COLD_MEM LoopEventStore::tryAssignCommittedChunkIds(CommittedChunkIdList& dest,
                                                         const uint16_t* ids, size_t count) {
   releaseChunkRefs(dest);
   dest.clear();
   if (count == 0) {
     return true;
   }
-  if (!hasHeadroomForPublishedChunkIdList(count)) {
+  if (!hasHeadroomForCommittedChunkIdList(count)) {
     return false;
   }
-  if (!probePublishedChunkIdBytes(count)) {
+  if (!probeCommittedChunkIdBytes(count)) {
     return false;
   }
-  PublishedChunkIdList built;
+  CommittedChunkIdList built;
   for (size_t i = 0; i < count; ++i) {
     built.push_back(ids[i]);
     if (built.size() != i + 1) {
@@ -262,18 +262,18 @@ bool LOOP_EVENT_STORE_COLD_MEM LoopEventStore::tryAssignPublishedChunkIds(Publis
   return true;
 }
 
-bool LOOP_EVENT_STORE_COLD_MEM LoopEventStore::tryCopyPublishedChunkIds(PublishedChunkIdList& dest,
-                                                        const PublishedChunkIdList& src) {
+bool LOOP_EVENT_STORE_COLD_MEM LoopEventStore::tryCopyCommittedChunkIds(CommittedChunkIdList& dest,
+                                                        const CommittedChunkIdList& src) {
   if (src.empty()) {
     releaseChunkRefs(dest);
     dest.clear();
     return true;
   }
-  return tryAssignPublishedChunkIds(dest, src.data(), src.size());
+  return tryAssignCommittedChunkIds(dest, src.data(), src.size());
 }
 
-bool LOOP_EVENT_STORE_COLD_MEM LoopEventStore::deepClonePublishedChunkIds(
-    PublishedChunkIdList& dest, const PublishedChunkIdList& src) {
+bool LOOP_EVENT_STORE_COLD_MEM LoopEventStore::deepCloneCommittedChunkIds(
+    CommittedChunkIdList& dest, const CommittedChunkIdList& src) {
   releaseChunkRefs(dest);
   dest.clear();
   if (src.empty()) {
@@ -289,17 +289,17 @@ bool LOOP_EVENT_STORE_COLD_MEM LoopEventStore::deepClonePublishedChunkIds(
   if (staging.empty()) {
     return false;
   }
-  PublishedChunkIdList cloned;
-  if (!staging.detachChunksToPublished(cloned)) {
+  CommittedChunkIdList cloned;
+  if (!staging.detachChunksToCommittedChunkIds(cloned)) {
     return false;
   }
   dest = std::move(cloned);
   return true;
 }
 
-bool LOOP_EVENT_STORE_COLD_MEM LoopEventStore::transferCaptureChunkIdsToPublished(PublishedChunkIdList& dest,
+bool LOOP_EVENT_STORE_COLD_MEM LoopEventStore::transferCaptureChunkIdsToCommittedChunkIds(CommittedChunkIdList& dest,
                                                         CaptureChunkIdList& src) {
-  if (!tryAssignPublishedChunkIds(dest, src.data(), src.size())) {
+  if (!tryAssignCommittedChunkIds(dest, src.data(), src.size())) {
     return false;
   }
   src.clear();
@@ -537,7 +537,7 @@ void LOOP_EVENT_STORE_COLD_MEM LoopEventStore::detachChunksTo(CaptureChunkIdList
   }
 }
 
-bool LOOP_EVENT_STORE_COLD_MEM LoopEventStore::detachChunksToPublished(PublishedChunkIdList& dest) {
+bool LOOP_EVENT_STORE_COLD_MEM LoopEventStore::detachChunksToCommittedChunkIds(CommittedChunkIdList& dest) {
   releaseChunkRefs(dest);
   dest.clear();
 
@@ -555,8 +555,8 @@ bool LOOP_EVENT_STORE_COLD_MEM LoopEventStore::detachChunksToPublished(Published
     return true;
   }
 
-  PublishedChunkIdList published;
-  if (!tryAssignPublishedChunkIds(published, chunkIds_.data(), count)) {
+  CommittedChunkIdList published;
+  if (!tryAssignCommittedChunkIds(published, chunkIds_.data(), count)) {
     return false;
   }
 
@@ -683,7 +683,7 @@ void LOOP_EVENT_STORE_COLD_MEM LoopEventStore::appendChunkRefEvents(const Captur
   }
 }
 
-void LOOP_EVENT_STORE_COLD_MEM LoopEventStore::appendChunkRefEvents(const PublishedChunkIdList& ids, MidiEventVec& out) {
+void LOOP_EVENT_STORE_COLD_MEM LoopEventStore::appendChunkRefEvents(const CommittedChunkIdList& ids, MidiEventVec& out) {
   const size_t prevSize = out.size();
   size_t extra = 0;
   for (uint16_t id : ids) {
@@ -716,7 +716,7 @@ void LOOP_EVENT_STORE_COLD_MEM LoopEventStore::appendChunkRefEvents(
 }
 
 void LOOP_EVENT_STORE_COLD_MEM LoopEventStore::appendChunkRefEvents(
-    const PublishedChunkIdList& ids,
+    const CommittedChunkIdList& ids,
     std::vector<MidiEvent, ExternalMemoryFirstAllocator<MidiEvent>>& out) {
   const size_t prevSize = out.size();
   size_t extra = 0;
@@ -758,7 +758,7 @@ size_t LOOP_EVENT_STORE_COLD_MEM LoopEventStore::countEventsInChunkIds(const Cap
 }
 
 size_t LOOP_EVENT_STORE_COLD_MEM LoopEventStore::countEventsInChunkIds(
-    const PublishedChunkIdList& ids) {
+    const CommittedChunkIdList& ids) {
   size_t total = 0;
   for (uint16_t id : ids) {
     if (id >= LoopEventStoreConfig::POOL_CHUNK_COUNT || !pool_ || !poolUsed_[id]) {

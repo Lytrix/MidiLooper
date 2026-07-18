@@ -16,14 +16,14 @@ LoopPasses makePassesWithCaptureChunks(size_t recordChunks, size_t overdubChunks
   if (recordChunks > 0) {
     passes.recordPass.id = 1;
     for (size_t i = 0; i < recordChunks; ++i) {
-      passes.recordPass.publishedChunkIds.push_back(static_cast<uint16_t>(i + 1));
+      passes.recordPass.committedChunkIds.push_back(static_cast<uint16_t>(i + 1));
     }
   }
   if (overdubChunks > 0) {
     OverdubPass overdub;
     overdub.id = 2;
     for (size_t i = 0; i < overdubChunks; ++i) {
-      overdub.publishedChunkIds.push_back(static_cast<uint16_t>(100 + i));
+      overdub.committedChunkIds.push_back(static_cast<uint16_t>(100 + i));
     }
     passes.overdubPasses.push_back(std::move(overdub));
   }

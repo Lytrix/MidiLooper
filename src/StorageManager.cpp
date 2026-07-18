@@ -1683,7 +1683,7 @@ bool StorageManager::needsSlotLoad(uint8_t trackIndex, uint8_t slotIndex) {
     }
     if (trackIndex < trackManager.getTrackCount()) {
         Track& track = trackManager.getTrack(trackIndex);
-        if (track.loopsAllocated() && track.getLoop(slotIndex).hasPublishedEvents()) {
+        if (track.loopsAllocated() && track.getLoop(slotIndex).hasCommittedPasses()) {
             return false;
         }
     }
@@ -2498,7 +2498,7 @@ static void resetLoopSlotForBootManifest(Loop& loop, uint8_t slotIndex) {
     loop.nextPassId_ = 1;
     loop.nextNoteId_ = 1;
     loop.nextMergeSequence_ = 0;
-    loop.lastPublishedPassId_ = kInvalidPassId;
+    loop.lastCommittedPassId_ = kInvalidPassId;
     loop.lastTickInLoop = 0;
     loop.nextEventIndex = 0;
     loop.clearEditStateDirty();
@@ -2515,7 +2515,7 @@ static void resetLoopSlotToEmpty(Loop& loop, uint8_t slotIndex) {
     loop.nextPassId_ = 1;
     loop.nextNoteId_ = 1;
     loop.nextMergeSequence_ = 0;
-    loop.lastPublishedPassId_ = kInvalidPassId;
+    loop.lastCommittedPassId_ = kInvalidPassId;
     loop.lastTickInLoop = 0;
     loop.nextEventIndex = 0;
     loop.clearEditStateDirty();
@@ -2564,19 +2564,19 @@ static STORAGE_PERSIST_MEM void stabilizeBootMemoryAfterLoad() {
     trackManager.prewarmPlaybackRuntime();
 }
 
-static STORAGE_PERSIST_MEM void markPublishedChunkIdsPersistedFromSdLoad(
-    const PublishedChunkIdList& chunkIds) {
+static STORAGE_PERSIST_MEM void markCommittedChunkIdsPersistedFromSdLoad(
+    const CommittedChunkIdList& chunkIds) {
     for (uint16_t chunkId : chunkIds) {
         (void)PersistenceQueue::markChunkPersistedFromSdLoad(chunkId);
     }
 }
 
-static STORAGE_PERSIST_MEM void markLoopPublishedChunksPersistedFromSdLoad(Loop& loop) {
+static STORAGE_PERSIST_MEM void markLoopCommittedChunksPersistedFromSdLoad(Loop& loop) {
     if (loop.passes.hasRecordPass()) {
-        markPublishedChunkIdsPersistedFromSdLoad(loop.passes.recordPass.publishedChunkIds);
+        markCommittedChunkIdsPersistedFromSdLoad(loop.passes.recordPass.committedChunkIds);
     }
     for (const OverdubPass& pass : loop.passes.overdubPasses) {
-        markPublishedChunkIdsPersistedFromSdLoad(pass.publishedChunkIds);
+        markCommittedChunkIdsPersistedFromSdLoad(pass.committedChunkIds);
     }
 }
 
@@ -2776,9 +2776,9 @@ bool STORAGE_PERSIST_MEM loadLoopSlotFromCurrentSetSd(uint8_t trackIndex, uint8_
 
     session.setState(SlotLoadSessionState::Validating);
     // readLoopFromCurrentSetFile already validated wire shape; destination still empty until adopt.
-    session.setState(SlotLoadSessionState::Publishing);
-    markLoopPublishedChunksPersistedFromSdLoad(loop);
-    if (loop.hasPublishedEvents()) {
+    session.setState(SlotLoadSessionState::Committing);
+    markLoopCommittedChunksPersistedFromSdLoad(loop);
+    if (loop.hasCommittedPasses()) {
         anySlotHasEventsOut = true;
     }
     session.complete();
@@ -3208,7 +3208,7 @@ void STORAGE_PERSIST_MEM StorageManager::requestLoopSlotRestoreFromSd(uint8_t tr
         return;
     }
     Track& track = trackManager.getTrack(trackIndex);
-    if (track.getLoop(slotIndex).hasPublishedEvents()) {
+    if (track.getLoop(slotIndex).hasCommittedPasses()) {
         return;
     }
     if (!StorageManager::loopSlotHasPayloadOnSd(trackIndex, slotIndex)) {
@@ -3231,7 +3231,7 @@ void STORAGE_PERSIST_MEM StorageManager::prioritizeLoopSlotRestoreForFocus(uint8
         reprioritizeDeferredLoopSlotRestoreEntries();
         return;
     }
-    if (trackManager.getTrack(trackIndex).getLoop(slotIndex).hasPublishedEvents()) {
+    if (trackManager.getTrack(trackIndex).getLoop(slotIndex).hasCommittedPasses()) {
         reprioritizeDeferredLoopSlotRestoreEntries();
         return;
     }
@@ -3380,7 +3380,7 @@ bool StorageManager::loadV5MonolithIntoRam(LooperState& state) {
                     Serial.println(p);
                     return failAfterPartialLoad();
                 }
-                if (loop.hasPublishedEvents()) {
+                if (loop.hasCommittedPasses()) {
                     anySlotHasEvents = true;
                 }
             }
