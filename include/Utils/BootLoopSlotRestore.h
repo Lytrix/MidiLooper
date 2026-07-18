@@ -3,10 +3,13 @@
 #include <cstddef>
 #include <cstdint>
 
-/// True if this slot is priority-0 for boot restore drain order:
-/// - every track's active slot, and
-/// - selected-track selected slot when it differs from active (focus piano roll).
-inline bool isAudibleBootSlot(uint8_t trackIndex, uint8_t slotIndex, uint8_t selectedTrackIdx,
+/// True if this slot must be Committed at boot for first Play / piano-roll focus.
+///
+/// While stopped, `loadTransportSlotIndices` remaps `active := selected`, so playback
+/// uses the **selected** slot. Boot must therefore restore **union(selected, active)**
+/// on every track when those slots have SD payload — not file-active alone, and not
+/// only the focus track's selected slot.
+inline bool isAudibleBootSlot(uint8_t trackIndex, uint8_t slotIndex, uint8_t /*selectedTrackIdx*/,
                               const uint8_t* activeLoopIndex, size_t activeCount,
                               const uint8_t* selectedSlotIndex, size_t selectedCount) {
   const uint8_t activeSlot =
@@ -14,20 +17,17 @@ inline bool isAudibleBootSlot(uint8_t trackIndex, uint8_t slotIndex, uint8_t sel
   if (slotIndex == activeSlot) {
     return true;
   }
-  if (trackIndex != selectedTrackIdx) {
-    return false;
-  }
   const uint8_t selectedSlot =
       trackIndex < selectedCount ? selectedSlotIndex[trackIndex] : activeSlot;
   return slotIndex == selectedSlot;
 }
 
 /// Priority for deferred loop-slot restore at boot (lower = sooner).
-/// Boot enqueue is **audible-only** (`isAudibleBootSlot`); this priority orders that set.
-/// Non-audible SD payloads stay HEADER_READY until explicitly requested at runtime.
-/// 0 = active slots all tracks + focus selected if split
-/// 1 = selected slot on other tracks (not used at boot enqueue while audible-only)
-/// 2 = all other slots (not used at boot enqueue while audible-only)
+/// Boot enqueue uses `isAudibleBootSlot` (union selected+active); this orders that set.
+/// Other SD payloads stay HEADER_READY until explicitly requested at runtime.
+/// 0 = selected and/or active (boot playback set)
+/// 1 = unused at boot enqueue (reserved)
+/// 2 = all other slots (not enqueued at boot)
 inline uint8_t computeBootRestorePriority(uint8_t trackIndex, uint8_t slotIndex,
                                           uint8_t selectedTrackIdx,
                                           const uint8_t* activeLoopIndex, size_t activeCount,

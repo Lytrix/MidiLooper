@@ -909,11 +909,23 @@ void TrackManager::loadTransportSlotIndices(uint8_t trackIndex, uint8_t activeSl
   if (trackIndex >= Config::NUM_TRACKS) {
     return;
   }
+  if (selectedSlot >= Config::MAX_LOOPS_PER_TRACK) {
+    selectedSlot = 0;
+  }
+  if (activeSlot >= Config::MAX_LOOPS_PER_TRACK) {
+    activeSlot = 0;
+  }
   slotStateMachine.setSelectedSlotIndex(trackIndex, selectedSlot);
   Track& track = tracks[trackIndex];
   const uint8_t playingSlot =
       (track.isPlaying() || track.isOverdubbing()) ? activeSlot : selectedSlot;
   track.setActiveLoopIndex(playingSlot);
+  // updateAllTracks only calls playMidiEvents when slotEnabled[playingSlot].
+  // Bundle slotEnabled can leave the selected slot disabled while another slot
+  // remains enabled — after stopped remap (active:=selected) that yields piano-roll
+  // notes with no MO. Ensure the slot that will play is enabled (do not clear
+  // other enabled layers).
+  slotEnabled[trackIndex][playingSlot] = true;
 }
 
 uint8_t TrackManager::getLedPhaseSlotIndex(uint8_t trackIndex) const {
