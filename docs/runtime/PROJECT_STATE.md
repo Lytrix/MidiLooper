@@ -2,13 +2,13 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-07-18 (boot full drain under title)
+Last updated: 2026-07-18 (deferred-lazy-load Phase 1–2)
 
 ---
 
 ## Current branch
 
-**`feature/memory-pressure-reclaim`** — title until ready; boot path **full-drains** pending slot restores in one stretch. See [CURRENT_WORK.md](CURRENT_WORK.md).
+**`feature/deferred-lazy-load`** — OpenSpec `unified-commit-lazy-slot-load`: Commit rename + audible-only boot enqueue. See [CURRENT_WORK.md](CURRENT_WORK.md).
 
 *(Parallel: **`feature/persistence-work-queue`** @ `8b3f93e` — B1–B5 on `dev`.)*
 
@@ -24,8 +24,8 @@ See [`docs/BRANCHING.md`](../BRANCHING.md).
 
 ## In flight
 
-- Boot full drain under title — **committed** `af1227c` ([`boot_load_full_drain_refinement.md`](../plans/boot_load_full_drain_refinement.md))
-- **Next project (active OpenSpec):** [`unified-commit-lazy-slot-load`](../../openspec/changes/unified-commit-lazy-slot-load/) — architecture frozen; [parent plan](../plans/unified_publish_pipeline_deferred_lazy_loading_architecture.md)
+- **Active:** OpenSpec [`unified-commit-lazy-slot-load`](../../openspec/changes/unified-commit-lazy-slot-load/) — Phase 1 rename done; Phase 2 audible-only boot (device gate vs `020628` pending)
+- Memory reclaim + boot/display stack — **merged to `dev`** (PR #4)
 
 ## Shipped on branch (recent)
 
