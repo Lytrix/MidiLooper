@@ -29,6 +29,12 @@ Last updated: 2026-07-18 (boot full drain under title)
 
 **Parked:** load-while-playing; Phase 3b mid-file slices; Phase 4 SD chunk index; playback merged-events window.
 
+### Next separate project (proposed)
+
+**Unified publish pipeline — deferred lazy loading**  
+Plan: [`docs/plans/unified_publish_pipeline_deferred_lazy_loading_architecture.md`](../plans/unified_publish_pipeline_deferred_lazy_loading_architecture.md)  
+Baseline commit: `af1227c`. New branch when starting (e.g. `feature/deferred-lazy-load`). MVP: audible-set publish → piano roll; on-demand load for other slots; DeferredLoad + load-while-playing later phases.
+
 ---
 
 ### Recently closed — Slot queue LOOP_EDIT depart
