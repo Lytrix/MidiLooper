@@ -2,40 +2,30 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-07-18 (OpenSpec `unified-commit-lazy-slot-load` opened; architecture frozen)
+Last updated: 2026-07-18 (Phase 1 Commit rename + Phase 2 audible-only boot)
 
 ---
 
 ## Now implementing
 
-### Prioritized boot load isolation
+### Unified commit — lazy slot load
 
-**Branch:** `feature/memory-pressure-reclaim`  
-**Plan:** [`docs/plans/prioritized_boot_load_isolation_refinement.md`](../plans/prioritized_boot_load_isolation_refinement.md)  
-**1C/2B plan:** [`boot_load_windowed_display_reconstruction_refinement.md`](../plans/boot_load_windowed_display_reconstruction_refinement.md)  
-**Full drain:** [`boot_load_full_drain_refinement.md`](../plans/boot_load_full_drain_refinement.md)
+**Branch:** `feature/deferred-lazy-load`  
+**OpenSpec:** [`openspec/changes/unified-commit-lazy-slot-load/`](../../openspec/changes/unified-commit-lazy-slot-load/)  
+**Architecture (frozen):** [`docs/plans/unified_publish_pipeline_deferred_lazy_loading_architecture.md`](../plans/unified_publish_pipeline_deferred_lazy_loading_architecture.md)
 
 | Phase | Scope | Status |
 |-------|--------|--------|
-| **0** | Baseline captures + interference checklist | **Signed off** (2026-07-17) |
-| **1A** | `SlotLoadSession` + mark-from-SD + `needsSlotLoad` | **Done** |
-| **1B / 1C / 2B display** | Ephemeral seal + bounded published reconstruction | **Device gate PASS** [`010126`](../../captures/session_20260718_010126.log) |
-| **2** | Batch SD `ioRead` (CHUNK_CAPACITY) | **Done** (`067ab30`) — no restore-span win |
-| **3** | Priority queue + session-gated OLED | **Kept** — priority sort during pre-ready drain |
-| **3 early USB / audible set** | Sync audible slots + USB before background drain | **Reverted** — title + USB wait for full queue drain |
-| **Full drain scheduling** | While-queue all pending slots under title before ready | **In tree** — device gate next |
+| **0** | Freeze docs + OpenSpec + DEC-026 + rename table + PREFLIGHT | **Done** |
+| **1** | Publish→Commit rename | **Done** (`d8e8324`) — native 647 PASS |
+| **2** | Audible-only boot enqueue + ready | **In progress** |
+| **3+** | Cooperative session / deferred on-demand | Pending |
 
-**Boot UX:** OSTINATIX title until `bootInteractiveReady()` (queue empty); boot path **full-drains** the restore queue in one stretch; then `finishBootSetup` + USB + piano roll.
+**Boot UX target:** OSTINATIX until audible slots COMMITTED; non-audible stay HEADER_READY until select/focus.
 
-**Parked:** load-while-playing; Phase 3b mid-file slices; Phase 4 SD chunk index; playback merged-events window.
+### Prioritized boot load isolation (merged to `dev`)
 
-### Next separate project (active OpenSpec)
-
-**Unified commit — lazy slot load**  
-OpenSpec: [`openspec/changes/unified-commit-lazy-slot-load/`](../../openspec/changes/unified-commit-lazy-slot-load/)  
-Architecture (frozen): [`docs/plans/unified_publish_pipeline_deferred_lazy_loading_architecture.md`](../plans/unified_publish_pipeline_deferred_lazy_loading_architecture.md)  
-Refinements: [scheduling](../plans/unified_publish_pipeline_bootstrap_vs_deferred_executor_refinement.md), [final review](../plans/unified_publish_pipeline_final_review_refinement.md), [Commit terminology](../plans/unified_publish_pipeline_commit_terminology_refinement.md), [Commit as verb](../plans/unified_publish_pipeline_commit_as_verb_refinement.md), [review resolutions](../plans/unified_publish_pipeline_review_resolutions_refinement.md).  
-Baseline: `af1227c`. New branch when starting implementation (e.g. `feature/deferred-lazy-load`). Run `/opsx:apply` after artifacts are complete.
+Shipped via PR #4 on `feature/memory-pressure-reclaim`. Full-set drain superseded for interactive ready by audible-only enqueue above.
 
 ---
 
