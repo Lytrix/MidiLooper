@@ -776,6 +776,46 @@ void test_apply_loop_slot_metadata_without_passes() {
   TEST_ASSERT_TRUE(loop.hasData());
 }
 
+void test_step_persisted_loop_snapshot_parse_resumes() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+
+  PersistedLoopSnapshot original{};
+  original.loopId = 11;
+  original.loopLengthTicks = Config::TICKS_PER_BAR * 4u;
+  original.nextPassId = 3;
+  original.nextNoteId = 2;
+  original.passes.recordPass =
+      makeRecordPassWithEvents(1, 0, CapturePassState::Active, 0, 0);
+  original.passes.overdubPasses.push_back(
+      makeOverdubPassWithEvents(2, 1, CapturePassState::Active, Config::TICKS_PER_BAR));
+
+  std::vector<uint8_t> buffer;
+  MemoryStorageIo mem(&buffer);
+  TEST_ASSERT_TRUE(writePersistedLoopSnapshot(mem.io(), original));
+
+  PersistedLoopSnapshot staged{};
+  PersistedLoopParseState state{};
+  uint32_t steps = 0;
+  PersistedLoopParseStepResult result = PersistedLoopParseStepResult::MoreWork;
+  while (result == PersistedLoopParseStepResult::MoreWork && steps < 64) {
+    // maxGrains=1 forces resume across calls (native micros() does not advance).
+    result = stepPersistedLoopSnapshotParse(buffer.data(), buffer.size(), staged, state, 0, 1);
+    ++steps;
+  }
+  TEST_ASSERT_EQUAL(static_cast<int>(PersistedLoopParseStepResult::Completed),
+                    static_cast<int>(result));
+  TEST_ASSERT_TRUE(steps >= 2);
+  TEST_ASSERT_EQUAL_UINT8(11, staged.loopId);
+  TEST_ASSERT_TRUE(staged.passes.hasRecordPass());
+  TEST_ASSERT_EQUAL(1, staged.passes.overdubPasses.size());
+
+  Loop loop;
+  applySnapshotToLoop(loop, staged);
+  TEST_ASSERT_TRUE(loop.hasCommittedPasses());
+  releasePersistedLoopSnapshotChunks(staged);
+}
+
 int main(int /*argc*/, char** /*argv*/) {
   UNITY_BEGIN();
   RUN_TEST(test_write_read_loop_snapshot_roundtrip);
@@ -797,5 +837,6 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_measure_loop_snapshot_slot_file_bytes_matches_buffer);
   RUN_TEST(test_read_loop_snapshot_header_skips_pass_payload);
   RUN_TEST(test_apply_loop_slot_metadata_without_passes);
+  RUN_TEST(test_step_persisted_loop_snapshot_parse_resumes);
   return UNITY_END();
 }

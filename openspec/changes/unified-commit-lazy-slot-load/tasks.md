@@ -42,18 +42,19 @@ Rename table: [`docs/plans/unified_publish_pipeline_commit_terminology_refinemen
 
 - [x] 5.1 Budget `processDeferredLoopSlotRestore` for explicitly requested slots only (priorities: audible, requested)
 - [x] 5.2 Wire select/focus unload → request restore (`prioritizeLoopSlotRestoreForFocus` / equivalent) — queue only, no sync fallback; allow non-enabled focus
-- [x] 5.3 MVP: while PLAYING, queue request and defer SD until transport idle (`timingCriticalTrackActive` gate in `main`)
+- [x] 5.3 MVP: while PLAYING, queue request and defer SD until transport idle (`timingCriticalTrackActive` gate in `main`) — superseded for loads by 6.2
 - [x] 5.4 **Gate:** select unloaded slot while stopped → COMMITTED + display; no silent full-set hydrate
 - [x] 5.5 Device capture evidence — [`session_20260718_170201.log`](../../../captures/session_20260718_170201.log): post-boot `Deferred restore` `1/0`,`1/2`,`1/3`,`2/1`,`2/2`; `DISP` slot change with notes; user: piano roll + LEDs + play OK
 
 ## 6. Phase 5+ — Later (parked until MVP green)
 
 - [ ] 6.1 Derived rebuild off Commit critical path (DERIVED_READY optional polish)
-- [x] 6.2 Load while PLAYING interactive slices (formal gate) — allow one deferred restore per loop while PLAYING; still blocked during RECORDING/OVERDUBBING
-- [x] 6.2b Phase A time-budgeted `LoadLoopJob` — `runDeferredFrame` + `LoadLoopBudget`; demote parks one in-flight job; load before display (device smoothness gate pending)
+- [x] 6.2 Load while PLAYING interactive slices — focus High while PLAYING; Low when transport idle (`canRunBackgroundLoadLoopNow`); Phase A.6 timed parse + atomic publish; A.7 finalize headroom without PSRAM walk ([`deferred_storage_commit_parse_split_enhancement.md`](../../../docs/plans/deferred_storage_commit_parse_split_enhancement.md)); fail baselines [`220005`](../../../captures/session_20260718_220005.log) / [`223713`](../../../captures/session_20260718_223713.log)
+- [x] 6.2-device **Gate:** PASS [`224607`](../../../captures/session_20260718_224607.log) — track switch while PLAYING responsive (BTN 15/15); Low parse suspended during PLAYING; clean stop → idle `LLBG,done`; vs fail [`223713`](../../../captures/session_20260718_223713.log) / smoothness [`190417`](../../../captures/session_20260718_190417.log). **A.7 follow-up in tree:** remove ~295ms `sm_malloc_stats_pool` from pass finalize headroom (re-flash to confirm parse_us drops).
+- [x] 6.2b Phase A time-budgeted `LoadLoopJob` — `runDeferredFrame` + `LoadLoopBudget`; demote parks one in-flight job; load before display
 - [ ] 6.3 Undo / import / paste documented on Commit contract (as those producers land)
 
 ## 7. Closeout
 
 - [x] 7.1 Update `CURRENT_WORK.md`, `PROJECT_STATE.md`, `DELIVERABLE_TRACKING.md`
-- [ ] 7.2 Archive change when gates pass (`/opsx:archive`) — device gate for 6.2 pending
+- [ ] 7.2 Archive change when gates pass (`/opsx:archive`) — 6.2-device PASS on [`224607`](../../../captures/session_20260718_224607.log); confirm A.7 after re-flash then archive

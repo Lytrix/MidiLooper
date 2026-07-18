@@ -131,9 +131,13 @@ Normally High preempts Low. **Exception:** if running job’s estimated remainin
 
 CAP/PERF: slice duration max/avg, steps, focus vs background, bytes progress. No hot-path Serial spam.
 
-### A.6 — applySnapshot hitch (known)
+### A.6 — applySnapshot hitch (known) — **DONE 2026-07-18**
 
-Document MVP: `applySnapshotToLoop` may exceed FocusRestoreUs once per load. Split or idle-gate in A.6 / Phase B follow-on — required before claiming “focus feels instant” for 64-bar slots ([`190417`](../../captures/session_20260718_190417.log)).
+Split LoadLoopJob Commit: timed **Parsing** via `stepPersistedLoopSnapshotParse` into job-owned `PersistedLoopSnapshot`, then one-shot **Committing** (`applySnapshotToLoop`). Evidence [`220005`](../../captures/session_20260718_220005.log): hitch was parse-dominated. See [`deferred_storage_commit_parse_split_enhancement.md`](deferred_storage_commit_parse_split_enhancement.md).
+
+### A.7 — finalize headroom PSRAM walk — **DONE 2026-07-18**
+
+`hasHeadroomForCommittedChunkIdList` called `getExternalMemoryPoolFreeBytes()` → `sm_malloc_stats_pool` (~295ms per pass finalize). Now O(1): trust external pool availability + `probeCommittedChunkIdBytes`. Serial LoadLoopJob frame lines removed (CAP only). Interactive gate [`224607`](../../captures/session_20260718_224607.log); fail [`223713`](../../captures/session_20260718_223713.log).
 
 ---
 
@@ -142,12 +146,15 @@ Document MVP: `applySnapshotToLoop` may exceed FocusRestoreUs once per load. Spl
 - [x] Public scheduling unit is µs, not KB — `LoadLoopBudget` + `runDeferredFrame`
 - [x] Focus load demoted on slot/track change without restarting SD read from 0 — `parkedLoadLoopJob_`
 - [x] Paused / demoted jobs resume from previous progress without rereading completed SD data
-- [x] Slices respect budget except documented apply one-shot (MVP overshoot logged)
-- [ ] No regression vs [`190417`](../../captures/session_20260718_190417.log) play smoothness — **device gate**
-- [ ] Tap / MIDI Start still timely — **device gate**
+- [x] Slices respect budget except documented apply one-shot (MVP overshoot logged) — **A.6/A.7:** parse sliced; finalize no longer PSRAM-stats bound; apply remains one-shot
+- [x] No regression vs [`190417`](../../captures/session_20260718_190417.log) play smoothness — **device gate** [`224607`](../../captures/session_20260718_224607.log) (buttons 15/15; Low idle while PLAYING)
+- [x] Tap / MIDI Start still timely — **device gate** [`224607`](../../captures/session_20260718_224607.log)
+- [x] While PLAYING: focus High; Low only when transport idle (`canRunBackgroundLoadLoopNow`); skipped frames keep job progress
+- [x] A.6 Commit parse split — Reading → Parsing (budgeted) → Committing (atomic)
+- [x] A.7 No PSRAM pool walk on commit-id headroom / no Serial LoadLoopJob spam
 - [x] `pio test -e native`; `teensy41-capture-serial` build
 
-**Shipped (2026-07-18):** Phase A firmware — time budgets, park/demote, load-before-display. Device gate pending.
+**Shipped (2026-07-18):** Phase A + A.6 + A.7 + device gate [`224607`](../../captures/session_20260718_224607.log).
 
 ---
 

@@ -11,6 +11,9 @@
 #include "LoopPasses.h"
 #include "EditPass.h"
 #include "MidiEvent.h"
+#include "LoopEventStore.h"
+
+#include <memory>
 
 struct StorageIo {
   std::function<bool(const void*, size_t)> write;
@@ -59,6 +62,42 @@ bool writePersistedLoopSnapshot(const StorageIo& io, const PersistedLoopSnapshot
 /// (no nextNoteId field between nextPassId and nextMergeSequence).
 bool readPersistedLoopSnapshot(const StorageIo& io, PersistedLoopSnapshot& snapshot,
                                bool legacyDeferredHeaderWithoutNoteId = false);
+
+/// Resumable parse of a buffered snapshot payload (Phase A.6). Grains:
+/// snapshot header, capture-pass header, one event batch (CHUNK_CAPACITY),
+/// edits-tail header, or one edit pass. Mid-pass batches respect \p deadlineUs
+/// so a large capture pass cannot monopolize the main loop (session_20260718_223130).
+/// \p deadlineUs == 0 means unlimited; otherwise stop when micros() >= deadlineUs.
+enum class PersistedLoopParseStepResult : uint8_t {
+  MoreWork = 0,
+  Completed = 1,
+  Failed = 2,
+};
+
+struct PersistedLoopParseState {
+  size_t pos = 0;
+  bool headerDone = false;
+  bool legacyWithoutNoteId = false;
+  bool triedLegacyFallback = false;
+  uint32_t passCount = 0;
+  uint32_t passesDone = 0;
+  bool passHeaderDone = false;
+  bool passReadyToFinalize = false;
+  CapturePassSlotFileHeader activePassHeader{};
+  uint32_t passMidiRemaining = 0;
+  std::unique_ptr<LoopEventStore> passStaging;
+  bool editsHeaderDone = false;
+  uint32_t editCount = 0;
+  uint32_t editsDone = 0;
+};
+
+PersistedLoopParseStepResult stepPersistedLoopSnapshotParse(
+    const uint8_t* data, size_t size, PersistedLoopSnapshot& snapshot,
+    PersistedLoopParseState& state, uint32_t deadlineUs = 0,
+    uint32_t maxGrains = 0);
+
+/// Release committed chunk refs owned by a staging snapshot (before discard).
+void releasePersistedLoopSnapshotChunks(PersistedLoopSnapshot& snapshot);
 /// Advance the read cursor past a persisted loop snapshot without heap allocation.
 bool skipPersistedLoopSnapshotPayload(const StorageIo& io,
                                       bool legacyDeferredHeaderWithoutNoteId = false);
