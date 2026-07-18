@@ -3,7 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 
-/// True if this slot must be Published before interactive Play (audible boot set):
+/// True if this slot is priority-0 for boot restore drain order:
 /// - every track's active slot, and
 /// - selected-track selected slot when it differs from active (focus piano roll).
 inline bool isAudibleBootSlot(uint8_t trackIndex, uint8_t slotIndex, uint8_t selectedTrackIdx,
@@ -23,8 +23,10 @@ inline bool isAudibleBootSlot(uint8_t trackIndex, uint8_t slotIndex, uint8_t sel
 }
 
 /// Priority for deferred loop-slot restore at boot (lower = sooner).
-/// 0 = audible boot set (active slots all tracks + focus selected if split)
-/// 1 = selected slot on other tracks (background)
+/// Used for drain order under the title screen; interactive starts only after the
+/// full queue is empty (not after priority-0 alone).
+/// 0 = active slots all tracks + focus selected if split
+/// 1 = selected slot on other tracks
 /// 2 = all other slots
 inline uint8_t computeBootRestorePriority(uint8_t trackIndex, uint8_t slotIndex,
                                           uint8_t selectedTrackIdx,

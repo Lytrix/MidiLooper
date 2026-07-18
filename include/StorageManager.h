@@ -58,8 +58,7 @@ public:
     static bool hasPendingLoopSlotRestore();
     /// True when a slot payload is not Published, not queued, and not actively loading.
     static bool needsSlotLoad(uint8_t trackIndex, uint8_t slotIndex);
-    /// Audible boot set Published (active slots all tracks + focus selected if split)
-    /// and no active SlotLoadSession. Background queue may still be non-empty.
+    /// True when boot restore queue is empty and no SlotLoadSession is active.
     static bool bootInteractiveReady();
     /// True while undo snapshot bodies are still queued for idle hydrate from the runtime bundle.
     static bool hasPendingUndoSnapshotHydrate();

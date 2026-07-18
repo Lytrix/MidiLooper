@@ -184,13 +184,24 @@ def main() -> int:
     parser.add_argument(
         "--require-early-usb",
         action="store_true",
-        default=True,
-        help="Phase 3: require BOOT,usb_host,begin before the last deferred restore (default on)",
+        default=False,
+        help="Phase 3 legacy: require BOOT,usb_host,begin before the last deferred restore",
     )
     parser.add_argument(
         "--no-require-early-usb",
         action="store_true",
-        help="Disable Phase 3 early-USB gate (Phase 1-style drain-before-USB)",
+        help="Deprecated alias: drain-before-USB is the default",
+    )
+    parser.add_argument(
+        "--require-drain-before-usb",
+        action="store_true",
+        default=True,
+        help="Require full deferred drain before BOOT,usb_host,begin (default on)",
+    )
+    parser.add_argument(
+        "--no-require-drain-before-usb",
+        action="store_true",
+        help="Disable drain-before-USB gate",
     )
     args = parser.parse_args()
 
@@ -215,6 +226,11 @@ def main() -> int:
 
     ok = True
     require_early_usb = args.require_early_usb and not args.no_require_early_usb
+    require_drain_before_usb = (
+        args.require_drain_before_usb
+        and not args.no_require_drain_before_usb
+        and not require_early_usb
+    )
 
     if result["queue_count"] and result["restore_count"] == 0 and not result["usb_begin"]:
         print(
@@ -237,6 +253,18 @@ def main() -> int:
             print(
                 "FAIL: Phase 3 expects BOOT,usb_host,begin before the last deferred restore "
                 "(tier-0 interactive while background queue drains)"
+            )
+            ok = False
+    if require_drain_before_usb and result["restore_count"] > 0 and result["usb_begin"]:
+        if result["early_usb"]:
+            print(
+                "FAIL: expects full deferred drain before BOOT,usb_host,begin "
+                "(title until load complete; no early USB)"
+            )
+            ok = False
+        if result.get("audible_sync"):
+            print(
+                "FAIL: Boot audible sync log present — audible early path should be reverted"
             )
             ok = False
     if result["restore_count"] == 0 and ok:

@@ -1697,34 +1697,10 @@ bool StorageManager::needsSlotLoad(uint8_t trackIndex, uint8_t slotIndex) {
 }
 
 bool StorageManager::bootInteractiveReady() {
-    // Audible boot set: every track's active slot (+ focus selected if split) must be
-    // Published (or have no SD payload) before USB / Play. Background queue may remain.
-    if (SlotLoadSession::isActive()) {
-        return false;
-    }
-    const uint8_t selectedTrackIdx = trackManager.getSelectedTrackIndex();
-    const uint8_t trackCount = trackManager.getTrackCount();
-    for (uint8_t t = 0; t < trackCount; ++t) {
-        const uint8_t activeSlot = trackManager.getActiveLoopIndex(t);
-        if (activeSlot < Config::MAX_LOOPS_PER_TRACK &&
-            StorageManager::loopSlotHasPayloadOnSd(t, activeSlot)) {
-            Track& track = trackManager.getTrack(t);
-            if (!track.loopsAllocated() || !track.getLoop(activeSlot).hasPublishedEvents()) {
-                return false;
-            }
-        }
-        if (t == selectedTrackIdx) {
-            const uint8_t selectedSlot = trackManager.getSelectedSlotIndex(t);
-            if (selectedSlot < Config::MAX_LOOPS_PER_TRACK && selectedSlot != activeSlot &&
-                StorageManager::loopSlotHasPayloadOnSd(t, selectedSlot)) {
-                Track& track = trackManager.getTrack(t);
-                if (!track.loopsAllocated() || !track.getLoop(selectedSlot).hasPublishedEvents()) {
-                    return false;
-                }
-            }
-        }
-    }
-    return true;
+    // Full queue drain before interactive: title screen + USB wait until every queued slot
+    // is Published. Do not re-derive readiness from getActiveLoopIndex() after the footer —
+    // loadTransportSlotIndices remaps active→selected while stopped.
+    return pendingLoopSlotRestores_.count == 0 && !SlotLoadSession::isActive();
 }
 
 bool StorageManager::hasPendingUndoSnapshotHydrate() {
@@ -3112,32 +3088,7 @@ bool StorageManager::loadCurrentSetBundleAndActiveLoopSlots(File& file, const ch
     Serial.print(" selected=");
     Serial.println(focusSelected);
 
-    // Audible boot set: sync-publish every priority-0 entry (active slots + focus selected)
-    // before returning from loadState. Remaining slots stay queued for deferred restore.
-    uint16_t audibleSynced = 0;
-    while (pendingLoopSlotRestores_.count > 0 &&
-           pendingLoopSlotRestores_.entries[0].restorePriority == 0) {
-        const DeferredLoopSlotRestore audible = pendingLoopSlotRestores_.entries[0];
-        for (uint16_t i = 1; i < pendingLoopSlotRestores_.count; ++i) {
-            pendingLoopSlotRestores_.entries[i - 1] = pendingLoopSlotRestores_.entries[i];
-        }
-        --pendingLoopSlotRestores_.count;
-        Track& track = trackManager.getTrack(audible.track);
-        bool anySlotHasEvents = false;
-        Serial.print("[StorageManager] Boot audible sync load ");
-        Serial.print(audible.track);
-        Serial.print('/');
-        Serial.println(audible.slot);
-        loadLoopSlotFromCurrentSetSd(audible.track, audible.slot, track, anySlotHasEvents);
-        ++audibleSynced;
-    }
-    if (audibleSynced > 0) {
-        Serial.print("[StorageManager] Boot audible set published count=");
-        Serial.print(audibleSynced);
-        Serial.print("; background pending ");
-        Serial.println(pendingLoopSlotRestores_.count);
-    }
-
+    // All slots stay queued; main drains under the boot title until bootInteractiveReady().
     if (pendingLoopSlotRestores_.count > 0) {
         const DeferredLoopSlotRestore& first = pendingLoopSlotRestores_.entries[0];
         Serial.print("[StorageManager] Queuing loop slot restore ");

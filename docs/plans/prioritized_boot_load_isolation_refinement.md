@@ -565,22 +565,24 @@ Evidence: [`session_20260718_010126.log`](../../captures/session_20260718_010126
 - Canonical `gatherPublishedEventsInWindow` / idle `rebuildVisualCacheIdleSlice` (windowed gather)
 - Device: 64-bar useful paint via windowed `DISP`; use `#CAP,DFRAME` elapsedUs (~12 ms) — do **not** treat `DISP` payload fields as milliseconds
 
-### Phase 3 — Prioritized lazy load — **PASS** + audible-set follow-up
+### Phase 3 — Prioritized lazy load — **early USB / audible set REVERTED** (2026-07-18)
 
 | Priority | Slots |
 |----------|-------|
-| 0 | **Audible boot set** — every track’s **active** slot + selected-track **selected** if split |
-| 1 | Selected slot on other tracks (background) |
+| 0 | Active slots all tracks + focus selected if split (drain order only) |
+| 1 | Selected slot on other tracks |
 | 2 | All other slots |
 
-**Phase 3 core (PASS [`012025`](../../captures/session_20260718_012025.log)):** early USB after sync publish; OLED gated on session-active only; mid_pass=0.
+**Kept:** priority sort for restore order; OLED gated on `SlotLoadSession` active only during drain; Phase 1 isolation + windowed display + Phase 2 batch `ioRead`.
 
-**Audible boot set (2026-07-18 follow-up):** sync all priority-0 entries in `loadCurrentSetBundleAndActiveLoopSlots` so first Play hears every track with an active SD payload; focus piano roll covered when selected ≠ active. Logs: `Boot audible sync load` / `Boot audible set published count=`.
+**Reverted:** audible sync publish + early USB (`audibleBootSetReady_`). Interactive path is again **full queue drain** before `bootInteractiveReady()` → `finishBootSetup()` → USB → piano roll. Title (OSTINATIX) stays until drain completes.
+
+**Historical PASS (early USB, tier-0 only):** [`012025`](../../captures/session_20260718_012025.log) — superseded by revert; Play incomplete with tier-0-only.
 
 **Deferred (Phase 3b):** StorageManager-owned mid-file ~35 ms Reading slices.  
-**Not required for this goal:** playback merged-events window plan; Phase 4 SD chunk index.
+**Not in scope:** load-while-playing; playback merged-events window; Phase 4 SD chunk index.
 
-**Device gate (audible set):** flash + boot; verifier early USB + `Boot audible`; Play immediately after first frame → all active tracks audible; background deferred continues.
+**Device gate (post-revert):** flash + boot; `verify_boot_restore_timing.py` drain-before-USB PASS; no `Boot audible` logs; no deferred restores after `usb_host,begin`; piano roll only after ready.
 
 ### Phase 4 (optional) — v7 SD chunk index
 
