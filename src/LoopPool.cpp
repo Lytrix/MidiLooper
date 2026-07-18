@@ -3,19 +3,66 @@
 
 #include "LoopPool.h"
 
+#include <cstdlib>
 #include <new>
 
 #include "Loop.h"
+#include "Utils/InternalHeapFirstAllocator.h"
 
 #ifndef PIO_UNIT_TEST_NATIVE
 static_assert(LoopPoolConfig::MAX_LOOPS_PER_TRACK == Config::MAX_LOOPS_PER_TRACK,
               "LoopPool size must match Config::MAX_LOOPS_PER_TRACK");
 #endif
 
+namespace {
+
+void destroyLoopArray(Loop* loops, size_t count) {
+  if (loops == nullptr || count == 0) {
+    return;
+  }
+  for (size_t i = 0; i < count; ++i) {
+    loops[i].~Loop();
+  }
+}
+
+Loop* allocateLoopArray(size_t count) {
+  if (count == 0) {
+    return nullptr;
+  }
+  const size_t bytes = count * sizeof(Loop);
+  void* mem = extmem_malloc(bytes);
+  if (mem == nullptr) {
+    mem = std::malloc(bytes);
+  }
+  if (mem == nullptr) {
+    return nullptr;
+  }
+
+  Loop* loops = static_cast<Loop*>(mem);
+  for (size_t i = 0; i < count; ++i) {
+    new (&loops[i]) Loop();
+  }
+  return loops;
+}
+
+void freeLoopArray(Loop* loops, size_t count) {
+  if (loops == nullptr) {
+    return;
+  }
+  destroyLoopArray(loops, count);
+  if (isInExternalMemoryPool(loops)) {
+    extmem_free(loops);
+  } else {
+    std::free(loops);
+  }
+}
+
+}  // namespace
+
 LoopPool::LoopPool() = default;
 
 LoopPool::~LoopPool() {
-  delete[] loops_;
+  freeLoopArray(loops_, LoopPoolConfig::MAX_LOOPS_PER_TRACK);
   loops_ = nullptr;
 }
 
@@ -23,7 +70,7 @@ void LoopPool::ensureInitialized() {
   if (loops_ != nullptr) {
     return;
   }
-  loops_ = new (std::nothrow) Loop[LoopPoolConfig::MAX_LOOPS_PER_TRACK];
+  loops_ = allocateLoopArray(LoopPoolConfig::MAX_LOOPS_PER_TRACK);
   if (loops_ == nullptr) {
     return;
   }

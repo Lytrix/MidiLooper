@@ -12,10 +12,11 @@
 #include "../../src/EditApply.cpp"
 #include "../../src/LoopPasses.cpp"
 #include "../../src/LoopEventStore.cpp"
-#include "../../src/Utils/MemoryMonitor.cpp"
+#include "../test_support/MemoryMonitorNativeDeps.cpp"
 #include "../../src/Utils/LoopEventValidation.cpp"
 #include "../../src/Loop.cpp"
 #include "../test_support/LoopCaptureTestDeps.cpp"
+#include "../test_support/PublishedChunkIdTestHelpers.h"
 #include "../../src/NoteEditFocus.cpp"
 
 #include "EditSession.h"
@@ -64,12 +65,12 @@ RecordPass makeRecordPassWithNoteCount(uint32_t loopLength, unsigned noteCount) 
     appendNotePair(store, onTick, onTick + 48u, static_cast<uint8_t>(60 + i),
                    static_cast<NoteId>(i + 1u));
   }
-  ChunkIdList refs;
-  store.detachChunksTo(refs);
+  PublishedChunkIdList publishedIds;
+  TEST_ASSERT_TRUE(transferCaptureStoreToPublished(store, publishedIds));
   RecordPass pass{};
   pass.id = 1;
   pass.state = CapturePassState::Active;
-  pass.chunkRefs = std::move(refs);
+  pass.publishedChunkIds = std::move(publishedIds);
   return pass;
 }
 

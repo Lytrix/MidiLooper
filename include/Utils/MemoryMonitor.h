@@ -13,6 +13,8 @@
 #include <cstdint>
 #include <cstddef>
 
+#include "Utils/MemoryPressureLevel.h"
+
 namespace MemoryMonitor {
 
 /**
@@ -75,9 +77,24 @@ void logStatusAtAddedNotes(uint32_t addedNoteOns, size_t loopEventCount = 0,
                           size_t loopChunkRefCount = 0,
                           bool loopChunkBacked = false);
 
+/**
+ * @brief Advisory pressure signal (Phase 1A — compute + telemetry only).
+ * Subsystems consult; owners decide safe actions. Updated once per main-loop turn.
+ */
+MemoryPressureLevel getAdvisoryPressureLevel();
+
+/** Sample inputs, apply hysteresis, emit DIAG on transition. No reclaim side effects. */
+void updateAdvisoryPressureLevel(uint32_t nowMs);
+
+/** Latch Critical until chunk headroom recovers or latch timeout (capture append failure). */
+void notifyCaptureAppendFailed(uint32_t nowMs);
+
 #if defined(PIO_UNIT_TEST_NATIVE)
 void setNativeTestFreeHeap(uint32_t bytes);
 void resetNativeTestFreeHeap();
+void setNativeTestChunksFree(uint16_t chunksFree);
+void setNativeTestPersistQueueDepth(uint16_t depth);
+void resetNativeTestPressureInputs();
 #endif
 
 }  // namespace MemoryMonitor

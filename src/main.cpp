@@ -16,12 +16,14 @@
 #include "LooperState.h"
 #include "Looper.h"
 #include "StorageManager.h"
+#include "SlotLoadSession.h"
 #include "EditManager.h"
 #include "EditStates/EditSelectNoteState.h"
 #include "Globals.h"
 #include "NoteEditManager.h"  // Keep temporarily for move note logic
 #include "Utils/PerformanceMonitor.h"  // Performance monitoring
 #include "Utils/MemoryMonitor.h"
+#include "Utils/MemoryPressureLevel.h"
 #include "Utils/MemoryPool.h"
 #include "LoopEventStore.h"
 #include "Utils/HotPathTelemetry.h"
@@ -95,7 +97,7 @@ void setup() {
   trackManager.setup();
   displayManager.beginBootOled();
   displayManager.drawBootScreen();
-  looper.setup();  // SD + loadState; USB host deferred until deferred slot restore finishes
+  looper.setup();  // SD + loadState; USB + piano roll deferred until full slot drain
 
   // Startup policy: enter LOOP_EDIT deterministically and sync DROID explicitly.
   editManager.sendEditSessionChange(EditSessionType::Loop);
@@ -130,7 +132,8 @@ void setup() {
 
   HotPathTelemetry::emitSummary("startup");
 
-  displayManager.finishBootSetup();
+  // finishBootSetup() runs in loop() with USB after bootInteractiveReady() — keep
+  // OSTINATIX title until the restore queue is empty (no piano roll during drain).
 
   SC_SESSION_HEADER();
 }
@@ -141,6 +144,11 @@ void loop() {
   
   //Serial.println("Main: Loop");
   uint32_t now = millis();
+  MemoryMonitor::updateAdvisoryPressureLevel(now);
+  const MemoryPressureLevel pressure = MemoryMonitor::getAdvisoryPressureLevel();
+  if (pressure >= MemoryPressureLevel::Low) {
+    trackManager.tryReclaimDerivedViewCachesUnderPressure(pressure);
+  }
   // Poll MIDI input
   midiHandler.handleMidiInput();
 
@@ -197,8 +205,10 @@ void loop() {
     selectState->updateForOverdubbing(editManager, trackManager.getSelectedTrack());
   }
 
-  // Render display before deferred SD slices; keep updating during SD I/O.
-  if (now - lastDisplayUpdate >= LCD::DISPLAY_UPDATE_INTERVAL) {
+  // Title screen stays until bootInteractiveReady(); update() early-returns while
+  // bootSetupComplete_ is false. Skip OLED while a SlotLoadSession owns the SD bus.
+  const bool slotLoadSessionActive = SlotLoadSession::isActive();
+  if (!slotLoadSessionActive && now - lastDisplayUpdate >= LCD::DISPLAY_UPDATE_INTERVAL) {
     lastDisplayUpdate = now;
     displayManager.update();
   }
@@ -207,27 +217,36 @@ void loop() {
     trackManager.getTrack(i).processDeferredIdleMaintenance(now);
   }
 
+  // Boot: drain entire restore queue under the title (no yield between slots).
+  // After boot: one slot per idle loop for focus/idle loads.
+  static bool bootSlotLoadRefreshPending = true;
   if (!timingCriticalTrackActive && !StorageManager::isRevisionLoadHeldForWorkspaceDirty()) {
-    const bool deferredLoopSlotRestorePending = StorageManager::hasPendingLoopSlotRestore();
-    StorageManager::processDeferredLoopSlotRestore();
-    StorageManager::processDeferredUndoSnapshots();
-    // Slot restore reads the full loop file synchronously; repaint so the OLED does not stick.
-    if (deferredLoopSlotRestorePending) {
-      displayManager.update();
-      lastDisplayUpdate = now;
+    if (bootSlotLoadRefreshPending) {
+      while (StorageManager::hasPendingLoopSlotRestore()) {
+        StorageManager::processDeferredLoopSlotRestore();
+      }
+    } else {
+      const bool hadPendingRestore = StorageManager::hasPendingLoopSlotRestore();
+      StorageManager::processDeferredLoopSlotRestore();
+      if (hadPendingRestore) {
+        displayManager.update();
+        lastDisplayUpdate = now;
+      }
     }
+    StorageManager::processDeferredUndoSnapshots();
     StorageManager::processEditAutosave(looperState.getLooperState());
     trackManager.reclaimUnreferencedDisabledPasses();
   }
 
-  static bool bootSlotLoadRefreshPending = true;
-  if (bootSlotLoadRefreshPending && !StorageManager::hasPendingLoopSlotRestore()) {
+  // After full queue drain: clear title, start USB, allow piano roll.
+  if (bootSlotLoadRefreshPending && StorageManager::bootInteractiveReady()) {
     bootSlotLoadRefreshPending = false;
+    displayManager.finishBootSetup();
     if (!midiHandler.isUsbHostReady()) {
       midiHandler.beginUsbHost();
       emitBootMilestone("usb_host", "begin");
     }
-    // DROID may retain LED state across reset; refresh after host is live, not during SDIO restore.
+    // DROID may retain LED state across reset; refresh after host is live.
     trackManager.clearLeds();
     if (editManager.isLoopEditSession()) {
       midiHandler.sendLedFeedbackNoteOn(100, 64);
@@ -235,6 +254,8 @@ void loop() {
     }
     trackManager.onBootSlotLoadComplete();
     midiHandler.processDroidUsbHostOutbound();
+    displayManager.update();
+    lastDisplayUpdate = now;
   }
 
   StorageManager::processDeferredSaveState(looperState.getLooperState());

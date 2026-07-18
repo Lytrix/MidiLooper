@@ -3,8 +3,9 @@
 
 #include "PersistenceFailurePolicy.h"
 
-#if defined(SESSION_CAPTURE) && defined(ARDUINO)
 #include "LoopEventStore.h"
+
+#if defined(SESSION_CAPTURE) && defined(ARDUINO)
 #include "PersistenceQueue.h"
 #include "Utils/DebugSessionCapture.h"
 #include "Utils/PersistenceDiagnostics.h"
@@ -33,6 +34,17 @@ bool shouldDeferMidPassForWorkspaceSave(bool savePending, bool urgentRequested,
 bool shouldRunPersistenceWorkItemWriter(uint16_t queueDepth, uint16_t writingWorkItemCount,
                                         bool otherSdIoActive) {
   return (queueDepth > 0 || writingWorkItemCount > 0) && !otherSdIoActive;
+}
+
+bool hasPersistenceSliceHeadroom(uint32_t freeHeapBytes, bool workItemActive,
+                                 bool urgentSaveRequested) {
+  if (workItemActive) {
+    return true;
+  }
+  if (freeHeapBytes >= LoopEventStoreConfig::INTERNAL_HEAP_SAFETY_FLOOR_BYTES) {
+    return true;
+  }
+  return urgentSaveRequested;
 }
 
 CapturePressureAction evaluateCapturePressure(uint16_t freeChunks, uint16_t reserve,

@@ -11,7 +11,7 @@
 #include "../../src/EditApply.cpp"
 #include "../../src/LoopPasses.cpp"
 #include "../../src/StorageLoopIo.cpp"
-#include "../../src/Utils/MemoryMonitor.cpp"
+#include "../test_support/MemoryMonitorNativeDeps.cpp"
 #include "../../src/Utils/LoopEventValidation.cpp"
 #include "../../src/Loop.cpp"
 #include "../test_support/LoopCaptureTestDeps.cpp"
@@ -20,6 +20,7 @@
 #include "StorageLoopIo.h"
 #include "Loop.h"
 #include "EditPass.h"
+#include "../test_support/PublishedChunkIdTestHelpers.h"
 #include "MidiEvent.h"
 
 namespace {
@@ -42,6 +43,7 @@ class MemoryStorageIo {
   }
 
   void resetRead() { readPos_ = 0; }
+  size_t readPosition() const { return readPos_; }
 
  private:
   bool write(const void* data, size_t size) {
@@ -67,13 +69,13 @@ RecordPass makeRecordPassWithEvents(PassId id, uint32_t mergeSequence, CapturePa
                               uint8_t typeRaw, uint32_t tick) {
   LoopEventStore capture;
   TEST_ASSERT_TRUE(capture.append(MidiEvent::NoteOn(tick, 1, 60, 100)));
-  ChunkIdList refs;
-  capture.detachChunksTo(refs);
+  PublishedChunkIdList publishedIds;
+  TEST_ASSERT_TRUE(transferCaptureStoreToPublished(capture, publishedIds));
 
   RecordPass pass{};
   pass.id = id;
   pass.state = state;
-  pass.chunkRefs = std::move(refs);
+  pass.publishedChunkIds = std::move(publishedIds);
   (void)mergeSequence;
   (void)typeRaw;
   return pass;
@@ -83,14 +85,14 @@ OverdubPass makeOverdubPassWithEvents(PassId id, uint32_t mergeSequence, Capture
                                 uint32_t tick) {
   LoopEventStore capture;
   TEST_ASSERT_TRUE(capture.append(MidiEvent::NoteOn(tick, 1, 60, 100)));
-  ChunkIdList refs;
-  capture.detachChunksTo(refs);
+  PublishedChunkIdList publishedIds;
+  TEST_ASSERT_TRUE(transferCaptureStoreToPublished(capture, publishedIds));
 
   OverdubPass pass{};
   pass.id = id;
   pass.mergeSequence = mergeSequence;
   pass.state = state;
-  pass.chunkRefs = std::move(refs);
+  pass.publishedChunkIds = std::move(publishedIds);
   return pass;
 }
 
@@ -101,13 +103,13 @@ RecordPass makeRecordPassWithEventCount(PassId id, CapturePassState state, size_
     const uint8_t note = static_cast<uint8_t>(48u + (i % 12u));
     TEST_ASSERT_TRUE(capture.append(MidiEvent::NoteOn(tick, 1, note, 100)));
   }
-  ChunkIdList refs;
-  capture.detachChunksTo(refs);
+  PublishedChunkIdList publishedIds;
+  TEST_ASSERT_TRUE(transferCaptureStoreToPublished(capture, publishedIds));
 
   RecordPass pass{};
   pass.id = id;
   pass.state = state;
-  pass.chunkRefs = std::move(refs);
+  pass.publishedChunkIds = std::move(publishedIds);
   return pass;
 }
 
@@ -126,13 +128,13 @@ RecordPass makeRecordPassForBars(PassId id, CapturePassState state, uint32_t bar
     }
   }
 
-  ChunkIdList refs;
-  capture.detachChunksTo(refs);
+  PublishedChunkIdList publishedIds;
+  TEST_ASSERT_TRUE(transferCaptureStoreToPublished(capture, publishedIds));
 
   RecordPass pass{};
   pass.id = id;
   pass.state = state;
-  pass.chunkRefs = std::move(refs);
+  pass.publishedChunkIds = std::move(publishedIds);
   return pass;
 }
 
@@ -186,7 +188,7 @@ void test_write_read_loop_snapshot_roundtrip() {
                     static_cast<uint8_t>(restored.passes.recordPass.state));
 
   MidiEventVec flat;
-  LoopEventStore::appendChunkRefEvents(restored.passes.recordPass.chunkRefs, flat);
+  LoopEventStore::appendChunkRefEvents(restored.passes.recordPass.publishedChunkIds, flat);
   TEST_ASSERT_EQUAL(1u, flat.size());
   TEST_ASSERT_EQUAL(10u, flat[0].tick);
 }
@@ -453,11 +455,51 @@ void test_capture_pass_write_uses_chunk_stream_batch_bound() {
   TEST_ASSERT_TRUE(readPersistedLoopSnapshot(mem.io(), restored));
   TEST_ASSERT_TRUE(restored.passes.hasRecordPass());
 
+  const size_t maxReadBatchEvents = getLastPersistedCapturePassReadMaxBatchEvents();
+  TEST_ASSERT_EQUAL_UINT32(LoopEventStoreConfig::CHUNK_CAPACITY,
+                           static_cast<uint32_t>(maxReadBatchEvents));
+
   MidiEventVec flat;
-  LoopEventStore::appendChunkRefEvents(restored.passes.recordPass.chunkRefs, flat);
+  LoopEventStore::appendChunkRefEvents(restored.passes.recordPass.publishedChunkIds, flat);
   TEST_ASSERT_EQUAL(expectedEventCount, flat.size());
   TEST_ASSERT_EQUAL(0u, flat.front().tick);
   TEST_ASSERT_EQUAL(static_cast<uint32_t>(expectedEventCount - 1u), flat.back().tick);
+}
+
+void test_capture_pass_read_uses_chunk_stream_batch_bound() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  resetPersistedCapturePassWriteStatsForTest();
+
+  PersistedLoopSnapshot original{};
+  original.loopId = 10;
+  original.loopLengthTicks = 8192;
+  original.nextPassId = 2;
+  // Exactly two full batches + remainder — read max must hit CHUNK_CAPACITY.
+  const size_t expectedEventCount =
+      static_cast<size_t>(LoopEventStoreConfig::CHUNK_CAPACITY) * 2u + 5u;
+  original.passes.recordPass =
+      makeRecordPassWithEventCount(1, CapturePassState::Active, expectedEventCount);
+
+  std::vector<uint8_t> buffer;
+  MemoryStorageIo mem(&buffer);
+  TEST_ASSERT_TRUE(writePersistedLoopSnapshot(mem.io(), original));
+
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  resetPersistedCapturePassWriteStatsForTest();
+
+  PersistedLoopSnapshot restored{};
+  mem.resetRead();
+  TEST_ASSERT_TRUE(readPersistedLoopSnapshot(mem.io(), restored));
+
+  const size_t maxReadBatchEvents = getLastPersistedCapturePassReadMaxBatchEvents();
+  TEST_ASSERT_EQUAL_UINT32(LoopEventStoreConfig::CHUNK_CAPACITY,
+                           static_cast<uint32_t>(maxReadBatchEvents));
+
+  MidiEventVec flat;
+  LoopEventStore::appendChunkRefEvents(restored.passes.recordPass.publishedChunkIds, flat);
+  TEST_ASSERT_EQUAL(expectedEventCount, flat.size());
 }
 
 void test_64_bar_record_snapshot_reloads_after_reboot_simulation() {
@@ -500,7 +542,7 @@ void test_64_bar_record_snapshot_reloads_after_reboot_simulation() {
   TEST_ASSERT_EQUAL(1u, restored.passes.recordPass.id);
 
   MidiEventVec restoredFlat;
-  LoopEventStore::appendChunkRefEvents(restored.passes.recordPass.chunkRefs, restoredFlat);
+  LoopEventStore::appendChunkRefEvents(restored.passes.recordPass.publishedChunkIds, restoredFlat);
   TEST_ASSERT_EQUAL(expectedEventCount, restoredFlat.size());
   TEST_ASSERT_EQUAL(0u, restoredFlat.front().tick);
   TEST_ASSERT_EQUAL(expectedLastTick, restoredFlat.back().tick);
@@ -688,6 +730,52 @@ void test_measure_loop_snapshot_slot_file_bytes_matches_buffer() {
   TEST_ASSERT_EQUAL(buffer.size(), measureLoopSnapshotSlotFileBytes(snapshot));
 }
 
+void test_read_loop_snapshot_header_skips_pass_payload() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+
+  PersistedLoopSnapshot original{};
+  original.loopId = 3;
+  original.loopLengthTicks = Config::TICKS_PER_BAR * 16u;
+  original.loopStartTick = 12;
+  original.nextPassId = 4;
+  original.nextNoteId = 9;
+  original.passes.recordPass =
+      makeRecordPassWithEvents(1, 0, CapturePassState::Active, 0, Config::TICKS_PER_BAR);
+
+  std::vector<uint8_t> buffer;
+  MemoryStorageIo mem(&buffer);
+  TEST_ASSERT_TRUE(writePersistedLoopSnapshot(mem.io(), original));
+
+  PersistedLoopSnapshot headerOnly{};
+  mem.resetRead();
+  TEST_ASSERT_TRUE(readPersistedLoopSnapshotHeader(mem.io(), headerOnly));
+  TEST_ASSERT_EQUAL_UINT32(static_cast<uint32_t>(buffer.size()),
+                           static_cast<uint32_t>(mem.readPosition()));
+  TEST_ASSERT_EQUAL_UINT8(3, headerOnly.loopId);
+  TEST_ASSERT_EQUAL_UINT32(Config::TICKS_PER_BAR * 16u, headerOnly.loopLengthTicks);
+  TEST_ASSERT_EQUAL_UINT32(12, headerOnly.loopStartTick);
+  TEST_ASSERT_TRUE(headerOnly.passes.overdubPasses.empty());
+  TEST_ASSERT_FALSE(headerOnly.passes.hasRecordPass());
+}
+
+void test_apply_loop_slot_metadata_without_passes() {
+  PersistedLoopSnapshot metadata{};
+  metadata.loopId = 2;
+  metadata.loopLengthTicks = Config::TICKS_PER_BAR * 4u;
+  metadata.loopStartTick = 48;
+  metadata.nextPassId = 5;
+  metadata.nextNoteId = 7;
+
+  Loop loop;
+  applyLoopSlotMetadataToLoop(loop, metadata);
+  TEST_ASSERT_EQUAL_UINT32(Config::TICKS_PER_BAR * 4u, loop.loopLengthTicks);
+  TEST_ASSERT_EQUAL_UINT32(48, loop.loopStartTick);
+  TEST_ASSERT_EQUAL_UINT8(2, loop.loopId);
+  TEST_ASSERT_FALSE(loop.hasPublishedEvents());
+  TEST_ASSERT_TRUE(loop.hasData());
+}
+
 int main(int /*argc*/, char** /*argv*/) {
   UNITY_BEGIN();
   RUN_TEST(test_write_read_loop_snapshot_roundtrip);
@@ -701,10 +789,13 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_truncated_edit_tail_fails_read);
   RUN_TEST(test_corrupt_scoped_edit_tail_fails_read);
   RUN_TEST(test_capture_pass_write_uses_chunk_stream_batch_bound);
+  RUN_TEST(test_capture_pass_read_uses_chunk_stream_batch_bound);
   RUN_TEST(test_64_bar_record_snapshot_reloads_after_reboot_simulation);
   RUN_TEST(test_64_bar_save_completes_at_ram2_floor_with_bounded_batch);
   RUN_TEST(test_save_note_edit_pass_marks_edit_dirty);
   RUN_TEST(test_simulated_exit_flush_clears_edit_dirty);
   RUN_TEST(test_measure_loop_snapshot_slot_file_bytes_matches_buffer);
+  RUN_TEST(test_read_loop_snapshot_header_skips_pass_payload);
+  RUN_TEST(test_apply_loop_slot_metadata_without_passes);
   return UNITY_END();
 }

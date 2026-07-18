@@ -154,3 +154,44 @@ M6 is complete when: (1) audit complete and intentional materialize documented; 
 - **M5:** Can pass snapshots share immutable chunk refs without per-pass internal flatten (`deepCloneChunkRefs`)?
 - **M5:** Minimum boot slot set for transport-ready vs full 8×8 eager load?
 - Bisect gates remain parked (DEC-017).
+
+## M7 — Published capture / builder split (2026-07-15)
+
+**Plan:** [`docs/plans/published_pass_capture_builder_split_refinement.md`](../../../docs/plans/published_pass_capture_builder_split_refinement.md)  
+**Spec:** [`specs/published-capture-pass-split/spec.md`](specs/published-capture-pass-split/spec.md)  
+**Review:** [`ARCHITECTURE-REVIEW.md`](ARCHITECTURE-REVIEW.md) § M7
+
+### Framing
+
+M7 is primarily an **ownership refactor**, not a memory optimization. It replaces the reverted Phase 2A approach (single `ChunkIdList` typedef → extmem) with **compiler-enforced separation**:
+
+- **CaptureBuilder** (`Capture.store`) — mutable, latency-sensitive, `CaptureChunkIdList` on internal heap.
+- **Published passes** — immutable, storage-oriented, `PublishedChunkIdList` in external memory pool.
+
+Chunk **payload** remains in the PSRAM pool (unchanged). M7 moves **pass metadata** (chunk-id lists, overdub pass vector) off internal heap where safe.
+
+### Decisions
+
+1. **One domain transition at seal** — `transferCaptureChunkIdsToPublished`; publish is a move within published types.
+2. **PendingCapturePass** — recoverable commit staging with `PublishedChunkIdList` at seal; not a second builder.
+3. **No published → capture repatriation** — except empty new capture session.
+4. **Transfer bounded** — at most one alloc + one linear copy; no temp vectors on seal.
+5. **Exit criterion** — if < ~5 KiB recovered under 215312 and no pressure improvement, stop further published-metadata migration (ownership split may still ship).
+
+### Non-goals (M7)
+
+- `EditPassVec` / `EditPassIdList` extmem (004415 sluggishness)
+- Merge sorted-index cache (profiling follow-on only)
+- Changing capture/stop FSM or persistence scheduler
+
+### Sequence
+
+| Phase | Scope |
+|-------|--------|
+| 0 | OpenSpec + plan + ARCHITECTURE-REVIEW (doc) |
+| 1 | Typedefs + seal transfer + pending/publish |
+| 2 | `PublishedOverdubPassVec` + call sites |
+| 3 | SD / undo / clone alignment |
+| 4 | HITL + exit measurement |
+
+**Related shipped fix (same branch):** urgent deferred save below heap floor (`917cb87`) — persistence; orthogonal to M7 representation split.

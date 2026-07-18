@@ -28,6 +28,13 @@ class ActiveNoteLedger {
     e.velocity = velocity;
   }
 
+  bool isActive(uint8_t channel, uint8_t note) const {
+    if (channel == 0 || channel > 16 || note > 127) {
+      return false;
+    }
+    return entries_[indexFor(channel, note)].active;
+  }
+
   void noteOff(uint8_t channel, uint8_t note) {
     if (channel == 0 || channel > 16 || note > 127) {
       return;

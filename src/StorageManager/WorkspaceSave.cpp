@@ -341,7 +341,7 @@ STORAGE_PERSIST_MEM bool beginDeferredSaveJob(const LooperState& state) {
 
 STORAGE_PERSIST_MEM bool selectDeferredCapturePass(const LoopPasses& passes, uint16_t cursor,
                                CapturePassSlotFileHeader& passHeader,
-                               const ChunkIdList*& chunkRefs) {
+                               const PublishedChunkIdList*& publishedChunkIds) {
     uint16_t overdubIndex = cursor;
     if (passes.hasRecordPass()) {
         if (cursor == 0) {
@@ -350,14 +350,14 @@ STORAGE_PERSIST_MEM bool selectDeferredCapturePass(const LoopPasses& passes, uin
             passHeader.stateRaw = static_cast<uint8_t>(passes.recordPass.state);
             passHeader.typeRaw = 0;
             passHeader.sealedAtTick = passes.recordPass.sealedAtTick;
-            chunkRefs = &passes.recordPass.chunkRefs;
+            publishedChunkIds = &passes.recordPass.publishedChunkIds;
             return true;
         }
         overdubIndex = cursor - 1;
     }
 
     if (overdubIndex >= passes.overdubPasses.size()) {
-        chunkRefs = nullptr;
+        publishedChunkIds = nullptr;
         return false;
     }
 
@@ -367,7 +367,7 @@ STORAGE_PERSIST_MEM bool selectDeferredCapturePass(const LoopPasses& passes, uin
     passHeader.stateRaw = static_cast<uint8_t>(pass.state);
     passHeader.typeRaw = 1;
     passHeader.sealedAtTick = pass.sealedAtTick;
-    chunkRefs = &pass.chunkRefs;
+    publishedChunkIds = &pass.publishedChunkIds;
     return true;
 }
 
@@ -396,7 +396,7 @@ STORAGE_PERSIST_MEM bool writeDeferredLoopHeader(File& file, LoopId loopId, uint
 }
 
 STORAGE_PERSIST_MEM bool writeDeferredCapturePassHeader(File& file, const CapturePassSlotFileHeader& passHeader,
-                                    const ChunkIdList& chunkRefs,
+                                    const PublishedChunkIdList& publishedChunkIds,
                                     LoopPersistPayloadCrc crcMode = LoopPersistPayloadCrc::None) {
     if (!persistenceWriteRaw(file, &passHeader.id, sizeof(passHeader.id), crcMode)) return false;
     if (!persistenceWriteRaw(file, &passHeader.mergeSequence, sizeof(passHeader.mergeSequence), crcMode)) {
@@ -409,7 +409,7 @@ STORAGE_PERSIST_MEM bool writeDeferredCapturePassHeader(File& file, const Captur
     }
 
     const uint32_t midiCount =
-        static_cast<uint32_t>(LoopEventStore::countEventsInChunkIds(chunkRefs));
+        static_cast<uint32_t>(LoopEventStore::countEventsInChunkIds(publishedChunkIds));
     return persistenceWriteRaw(file, &midiCount, sizeof(midiCount), crcMode);
 }
 
@@ -449,12 +449,12 @@ STORAGE_PERSIST_MEM bool stepDeferredLoopPersist(File& file, const Loop& loop, b
             }
 
             CapturePassSlotFileHeader passHeader{};
-            const ChunkIdList* chunkRefs = nullptr;
-            if (!selectDeferredCapturePass(loop.passes, storageSession.currentWorkspaceSave.capturePassCursor, passHeader, chunkRefs) ||
-                chunkRefs == nullptr) {
+            const PublishedChunkIdList* publishedChunkIds = nullptr;
+            if (!selectDeferredCapturePass(loop.passes, storageSession.currentWorkspaceSave.capturePassCursor, passHeader, publishedChunkIds) ||
+                publishedChunkIds == nullptr) {
                 return false;
             }
-            if (!writeDeferredCapturePassHeader(file, passHeader, *chunkRefs, crcMode)) {
+            if (!writeDeferredCapturePassHeader(file, passHeader, *publishedChunkIds, crcMode)) {
                 return false;
             }
             storageSession.currentWorkspaceSave.chunkCursor = 0;
@@ -464,15 +464,15 @@ STORAGE_PERSIST_MEM bool stepDeferredLoopPersist(File& file, const Loop& loop, b
 
         case DeferredLoopWriteStage::CapturePassChunk: {
             CapturePassSlotFileHeader passHeader{};
-            const ChunkIdList* chunkRefs = nullptr;
-            if (!selectDeferredCapturePass(loop.passes, storageSession.currentWorkspaceSave.capturePassCursor, passHeader, chunkRefs) ||
-                chunkRefs == nullptr) {
+            const PublishedChunkIdList* publishedChunkIds = nullptr;
+            if (!selectDeferredCapturePass(loop.passes, storageSession.currentWorkspaceSave.capturePassCursor, passHeader, publishedChunkIds) ||
+                publishedChunkIds == nullptr) {
                 return false;
             }
             (void)passHeader;
 
-            if (storageSession.currentWorkspaceSave.chunkCursor < chunkRefs->size()) {
-                const uint16_t chunkId = (*chunkRefs)[storageSession.currentWorkspaceSave.chunkCursor++];
+            if (storageSession.currentWorkspaceSave.chunkCursor < publishedChunkIds->size()) {
+                const uint16_t chunkId = (*publishedChunkIds)[storageSession.currentWorkspaceSave.chunkCursor++];
                 return writeDeferredCapturePassChunk(file, chunkId, crcMode);
             }
 
@@ -553,13 +553,13 @@ STORAGE_PERSIST_MEM bool stepDeferredLoopSnapshotPersist(File& file, const Persi
             }
 
             CapturePassSlotFileHeader passHeader{};
-            const ChunkIdList* chunkRefs = nullptr;
+            const PublishedChunkIdList* publishedChunkIds = nullptr;
             if (!selectDeferredCapturePass(snapshot.passes, storageSession.currentWorkspaceSave.capturePassCursor, passHeader,
-                                           chunkRefs) ||
-                chunkRefs == nullptr) {
+                                           publishedChunkIds) ||
+                publishedChunkIds == nullptr) {
                 return false;
             }
-            if (!writeDeferredCapturePassHeader(file, passHeader, *chunkRefs)) {
+            if (!writeDeferredCapturePassHeader(file, passHeader, *publishedChunkIds)) {
                 return false;
             }
             storageSession.currentWorkspaceSave.chunkCursor = 0;
@@ -569,16 +569,16 @@ STORAGE_PERSIST_MEM bool stepDeferredLoopSnapshotPersist(File& file, const Persi
 
         case DeferredLoopWriteStage::CapturePassChunk: {
             CapturePassSlotFileHeader passHeader{};
-            const ChunkIdList* chunkRefs = nullptr;
+            const PublishedChunkIdList* publishedChunkIds = nullptr;
             if (!selectDeferredCapturePass(snapshot.passes, storageSession.currentWorkspaceSave.capturePassCursor, passHeader,
-                                           chunkRefs) ||
-                chunkRefs == nullptr) {
+                                           publishedChunkIds) ||
+                publishedChunkIds == nullptr) {
                 return false;
             }
             (void)passHeader;
 
-            if (storageSession.currentWorkspaceSave.chunkCursor < chunkRefs->size()) {
-                const uint16_t chunkId = (*chunkRefs)[storageSession.currentWorkspaceSave.chunkCursor++];
+            if (storageSession.currentWorkspaceSave.chunkCursor < publishedChunkIds->size()) {
+                const uint16_t chunkId = (*publishedChunkIds)[storageSession.currentWorkspaceSave.chunkCursor++];
                 return writeDeferredCapturePassChunk(file, chunkId);
             }
 

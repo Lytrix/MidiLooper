@@ -47,7 +47,7 @@ void test_pass_close_tail_admitted_once() {
     TEST_ASSERT_TRUE(store.append(noteOn(i)));
   }
 
-  ChunkIdList refs;
+  CaptureChunkIdList refs;
   store.detachChunksTo(refs);
   TEST_ASSERT_EQUAL(2u, refs.size());
   TEST_ASSERT_EQUAL(2u, PersistenceQueue::queueDepth());
@@ -112,6 +112,60 @@ void test_persisted_chunk_not_re_enqueued() {
                     static_cast<int>(PersistenceQueue::chunkState(sealedId)));
 }
 
+void test_sd_load_staging_marks_persisted_without_queue() {
+  resetPool();
+  LoopEventStore::enterSdLoadStaging();
+  LoopEventStore store;
+
+  for (uint16_t i = 0; i < LoopEventStoreConfig::CHUNK_CAPACITY + 5; ++i) {
+    TEST_ASSERT_TRUE(store.append(noteOn(i)));
+  }
+  CaptureChunkIdList refs;
+  store.detachChunksTo(refs);
+  TEST_ASSERT_EQUAL(2u, refs.size());
+  TEST_ASSERT_EQUAL(0u, PersistenceQueue::queueDepth());
+  for (uint16_t id : refs) {
+    TEST_ASSERT_EQUAL(static_cast<int>(ChunkPersistenceState::Persisted),
+                      static_cast<int>(PersistenceQueue::chunkState(id)));
+  }
+  LoopEventStore::leaveSdLoadStaging();
+}
+
+void test_ephemeral_seal_does_not_enqueue_mid_pass() {
+  resetPool();
+  LoopEventStore::enterEphemeralSeal();
+  LoopEventStore store;
+
+  for (uint16_t i = 0; i < LoopEventStoreConfig::CHUNK_CAPACITY + 5; ++i) {
+    TEST_ASSERT_TRUE(store.append(noteOn(i)));
+  }
+  CaptureChunkIdList refs;
+  store.detachChunksTo(refs);
+  TEST_ASSERT_EQUAL(2u, refs.size());
+  TEST_ASSERT_EQUAL(0u, PersistenceQueue::queueDepth());
+  for (uint16_t id : refs) {
+    TEST_ASSERT_EQUAL(static_cast<int>(ChunkPersistenceState::NotScheduled),
+                      static_cast<int>(PersistenceQueue::chunkState(id)));
+  }
+  LoopEventStore::leaveEphemeralSeal();
+}
+
+void test_mark_chunk_persisted_from_sd_load_purges_queued() {
+  resetPool();
+  LoopEventStore store;
+
+  for (uint16_t i = 0; i < LoopEventStoreConfig::CHUNK_CAPACITY; ++i) {
+    TEST_ASSERT_TRUE(store.append(noteOn(i)));
+  }
+  const uint16_t sealedId = store.chunkIds().front();
+  TEST_ASSERT_EQUAL(1u, PersistenceQueue::queueDepth());
+  TEST_ASSERT_TRUE(PersistenceQueue::markChunkPersistedFromSdLoad(sealedId));
+  TEST_ASSERT_EQUAL(0u, PersistenceQueue::queueDepth());
+  TEST_ASSERT_EQUAL(static_cast<int>(ChunkPersistenceState::Persisted),
+                    static_cast<int>(PersistenceQueue::chunkState(sealedId)));
+  TEST_ASSERT_FALSE(PersistenceQueue::admitSealedChunk(sealedId));
+}
+
 void test_chunk_freed_resets_persistence_state() {
   resetPool();
   LoopEventStore store;
@@ -140,6 +194,9 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_exactly_once_admission);
   RUN_TEST(test_drain_order_matches_seal_order);
   RUN_TEST(test_persisted_chunk_not_re_enqueued);
+  RUN_TEST(test_sd_load_staging_marks_persisted_without_queue);
+  RUN_TEST(test_ephemeral_seal_does_not_enqueue_mid_pass);
+  RUN_TEST(test_mark_chunk_persisted_from_sd_load_purges_queued);
   RUN_TEST(test_chunk_freed_resets_persistence_state);
   return UNITY_END();
 }

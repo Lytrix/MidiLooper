@@ -2,25 +2,67 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-07-14 (M6 Ph 1–2 merged to `dev`; memory pressure reclaim next)
+Last updated: 2026-07-18 (boot full drain under title)
 
 ---
 
 ## Now implementing
 
-### Memory pressure reclaim (M6 follow-on)
+### Prioritized boot load isolation
 
-**Branch:** `feature/memory-pressure-reclaim` (from `dev` @ `11025ca`)  
+**Branch:** `feature/memory-pressure-reclaim`  
+**Plan:** [`docs/plans/prioritized_boot_load_isolation_refinement.md`](../plans/prioritized_boot_load_isolation_refinement.md)  
+**1C/2B plan:** [`boot_load_windowed_display_reconstruction_refinement.md`](../plans/boot_load_windowed_display_reconstruction_refinement.md)  
+**Full drain:** [`boot_load_full_drain_refinement.md`](../plans/boot_load_full_drain_refinement.md)
+
+| Phase | Scope | Status |
+|-------|--------|--------|
+| **0** | Baseline captures + interference checklist | **Signed off** (2026-07-17) |
+| **1A** | `SlotLoadSession` + mark-from-SD + `needsSlotLoad` | **Done** |
+| **1B / 1C / 2B display** | Ephemeral seal + bounded published reconstruction | **Device gate PASS** [`010126`](../../captures/session_20260718_010126.log) |
+| **2** | Batch SD `ioRead` (CHUNK_CAPACITY) | **Done** (`067ab30`) — no restore-span win |
+| **3** | Priority queue + session-gated OLED | **Kept** — priority sort during pre-ready drain |
+| **3 early USB / audible set** | Sync audible slots + USB before background drain | **Reverted** — title + USB wait for full queue drain |
+| **Full drain scheduling** | While-queue all pending slots under title before ready | **In tree** — device gate next |
+
+**Boot UX:** OSTINATIX title until `bootInteractiveReady()` (queue empty); boot path **full-drains** the restore queue in one stretch; then `finishBootSetup` + USB + piano roll.
+
+**Parked:** load-while-playing; Phase 3b mid-file slices; Phase 4 SD chunk index; playback merged-events window.
+
+### Next separate project (proposed)
+
+**Unified publish pipeline — deferred lazy loading**  
+Plan: [`docs/plans/unified_publish_pipeline_deferred_lazy_loading_architecture.md`](../plans/unified_publish_pipeline_deferred_lazy_loading_architecture.md)  
+Baseline commit: `af1227c`. New branch when starting (e.g. `feature/deferred-lazy-load`). MVP: audible-set publish → piano roll; on-demand load for other slots; DeferredLoad + load-while-playing later phases.
+
+---
+
+### Recently closed — Slot queue LOOP_EDIT depart
+
+**Plan:** [`docs/plans/slot_queue_loop_edit_depart_bugfix.md`](../plans/slot_queue_loop_edit_depart_bugfix.md)
+
+| Item | Status |
+|------|--------|
+| No mid-play geometry write on LOOP_EDIT depart | **PASS** |
+| Device gate (queue slot, LoopEnd commit, no hang) | **PASS** [`004331`](../../captures/session_20260718_004331.log), reconfirmed [`010126`](../../captures/session_20260718_010126.log) |
+| Queued-launch musical-time countdown | **In tree** — OLED field; LoopEnd commits present in `010126` |
+
+---
+
+### Paused — Memory pressure reclaim (M6 follow-on)
+
+**Branch:** `feature/memory-pressure-reclaim`  
 **Plan:** [`docs/plans/memory_pressure_reclaim_refinement.md`](../plans/memory_pressure_reclaim_refinement.md)
 
-Formal `MemoryPressureLevel` (Normal / Low / Critical), ownership-driven derived-cache reclaim, Critical persistence inversion, M6 Ph 3 idle defer + Phase 4 closeout.
+| Phase | Scope | Status |
+|-------|--------|--------|
+| **1A** | Advisory FSM + `#CAP,DIAG,pressure` | **Shipped** (`f09f547`) — validated in [`session_20260714_233620.log`](../../captures/session_20260714_233620.log) |
+| **1B** | Low reclaim (`try*` owner APIs; background-first) | **Shipped** — pending manual gate |
+| 2 | Critical undo trim + persistence inversion | Paused |
+| 3 | Replace scattered heap thresholds | Paused |
+| 4 | Manual gate 215312; idle defer; OpenSpec archive | Paused |
 
-| Phase | Scope |
-|-------|--------|
-| 1 | Level core + Low reclaim (playback windows, materialized discard) |
-| 2 | Critical undo trim + aggressive mid_pass |
-| 3 | Replace scattered heap thresholds |
-| 4 | Manual gate 215312 config; OpenSpec archive |
+**Manual gate (1B):** Re-run stress session; confirm reclaim under Low without playback glitches / dropped MIDI on selected track.
 
 ---
 

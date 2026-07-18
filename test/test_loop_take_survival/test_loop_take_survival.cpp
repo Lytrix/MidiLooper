@@ -8,14 +8,15 @@
 #include "../../src/LoopEventStore.cpp"
 #include "../../src/EditApply.cpp"
 #include "../../src/LoopPasses.cpp"
-#include "../../src/Utils/MemoryMonitor.cpp"
+#include "../test_support/MemoryMonitorNativeDeps.cpp"
 #include "../../src/Utils/LoopEventValidation.cpp"
 #include "../../src/Loop.cpp"
 #include "../test_support/LoopCaptureTestDeps.cpp"
 
 #include "Loop.h"
-#include "LoopEventStore.h"
+#include "../test_support/PublishedChunkIdTestHelpers.h"
 #include "MidiEvent.h"
+#include "PassReclaim.h"
 #include "StorageLoopIo.h"
 
 namespace {
@@ -148,13 +149,13 @@ void test_multi_take_flatten_matches_live_event_count() {
   LoopEventStore odStore;
   TEST_ASSERT_TRUE(odStore.append(MidiEvent::NoteOn(200, 1, 64, 90)));
   TEST_ASSERT_TRUE(odStore.append(MidiEvent::NoteOff(248, 1, 64, 0)));
-  ChunkIdList refs;
-  odStore.detachChunksTo(refs);
+  PublishedChunkIdList publishedIds;
+  TEST_ASSERT_TRUE(transferCaptureStoreToPublished(odStore, publishedIds));
   OverdubPass overdub{};
   overdub.id = 2;
   overdub.mergeSequence = 1;
   overdub.state = CapturePassState::Active;
-  overdub.chunkRefs = std::move(refs);
+  overdub.publishedChunkIds = std::move(publishedIds);
   loop.passes.overdubPasses.push_back(std::move(overdub));
 
   TEST_ASSERT_EQUAL(4u, loop.nativeTestLiveEventCount());
@@ -191,6 +192,23 @@ void test_seal_overdub_preserves_record_pass() {
   TEST_ASSERT_EQUAL(2u, loop.nativeTestLiveEventCount());
 }
 
+void test_reclaim_disabled_overdub_releases_published_chunks() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  seedPublishedPair(loop);
+  simulateOverdubSealAndPublish(loop);
+  TEST_ASSERT_EQUAL(2u, LoopEventStore::usedChunkCount());
+
+  TEST_ASSERT_TRUE(loop.setCapturePassState(2, CapturePassState::Disabled));
+  SlotPassReferences refs{};
+  loop.reclaimUnreferencedDisabledPasses(refs);
+
+  TEST_ASSERT_EQUAL(0u, loop.passes.overdubPasses.size());
+  TEST_ASSERT_EQUAL(1u, LoopEventStore::usedChunkCount());
+  TEST_ASSERT_EQUAL(2u, loop.nativeTestLiveEventCount());
+}
+
 int main(int /*argc*/, char** /*argv*/) {
   UNITY_BEGIN();
   RUN_TEST(test_imported_takes_survive_invalidateCaches);
@@ -202,5 +220,6 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_commit_stop_finalize_empty_merged_preserves_takes);
   RUN_TEST(test_multi_take_flatten_matches_live_event_count);
   RUN_TEST(test_pass_snapshot_ignores_derived_flat_mutation);
+  RUN_TEST(test_reclaim_disabled_overdub_releases_published_chunks);
   return UNITY_END();
 }
