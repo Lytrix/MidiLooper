@@ -7,12 +7,15 @@
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <new>
 
 #include "LoopPasses.h"
 #include "EditPass.h"
 #include "MidiEvent.h"
 #include "LoopEventStore.h"
+#include "Utils/InternalHeapFirstAllocator.h"
 
+#include <cstdlib>
 #include <memory>
 
 struct StorageIo {
@@ -86,6 +89,21 @@ struct PersistedLoopParseState {
   CapturePassSlotFileHeader activePassHeader{};
   uint32_t passMidiRemaining = 0;
   std::unique_ptr<LoopEventStore> passStaging;
+  /// Off-stack parse scratch — never stack MidiEvent[CHUNK_CAPACITY] on FLASHMEM frames.
+  /// Prefer external memory pool (internal heap is ~7KB under multi-track PLAYING).
+  struct MidiEventBatchDeleter {
+    void operator()(MidiEvent* ptr) const noexcept {
+      if (!ptr) {
+        return;
+      }
+      if (isInExternalMemoryPool(ptr)) {
+        extmem_free(ptr);
+        return;
+      }
+      std::free(ptr);
+    }
+  };
+  std::unique_ptr<MidiEvent[], MidiEventBatchDeleter> passEventBatch;
   bool editsHeaderDone = false;
   uint32_t editCount = 0;
   uint32_t editsDone = 0;

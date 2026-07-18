@@ -415,7 +415,11 @@ bool LoopEventStore::appendToTailChunk(const MidiEvent& evt) {
   ++eventCount_;
 
   if (!barIndexDirty_) {
-    if (globalIndex > 0 && evt.tick < lastAppendedTick_) {
+    // SD load staging: defer bar index — InternalHeapFirstAllocator resize under
+    // multi-track PLAYING can abort() when RAM1 is near empty (234625).
+    if (isSdLoadStaging()) {
+      barIndexDirty_ = true;
+    } else if (globalIndex > 0 && evt.tick < lastAppendedTick_) {
       barIndexDirty_ = true;
     } else {
       const uint32_t bar = evt.tick / LoopEventStoreConfig::BAR_TICKS;

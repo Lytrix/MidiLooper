@@ -266,12 +266,20 @@ bool Loop::hasCommittedPasses() const {
 
 uint32_t Loop::findLastCommittedEventTick() const {
   uint32_t lastTick = 0;
+  // Use chunk lastTick metadata only — never flatten into MidiEventVec (InternalHeap).
+  // Adopt/reconcile during focus LoadLoopJob Commit while PLAYING otherwise abort()s
+  // when RAM1 cannot hold a 256-event scratch (session_20260718_235129: silence after
+  // parse edits grain, before apply_us).
   auto scanChunkRefs = [&lastTick](const CommittedChunkIdList& committedChunkIds) {
     for (uint16_t chunkId : committedChunkIds) {
-      MidiEventVec batch;
-      LoopEventStore::appendChunkRefEvent(chunkId, batch);
-      for (const MidiEvent& evt : batch) {
-        lastTick = std::max(lastTick, evt.tick);
+      uint32_t firstTick = 0;
+      uint32_t chunkLast = 0;
+      if (!LoopEventStore::chunkTickSpan(chunkId, firstTick, chunkLast)) {
+        continue;
+      }
+      (void)firstTick;
+      if (chunkLast > lastTick) {
+        lastTick = chunkLast;
       }
     }
   };

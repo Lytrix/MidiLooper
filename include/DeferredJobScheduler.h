@@ -6,9 +6,9 @@
 #include <stdint.h>
 
 /// Phase B owner of non-realtime deferred job frame execution (DEC-027).
-/// B.1: delegates load work to StorageManager::runDeferredFrame (behavior-preserving).
+/// B.2: runFrame is the sole main-loop entry; domain step is StorageManager::stepSubmittedLoadJobs.
 class DeferredJobScheduler {
 public:
-    /// Spend up to budgetUs microseconds on deferred jobs (LoadLoopJob in B.1).
+    /// Spend up to budgetUs microseconds on deferred jobs (LoadLoopJob in Phase B).
     static void runFrame(uint32_t budgetUs);
 };

@@ -11,10 +11,19 @@
 - [x] 2.3 Native compile + `pio test -e native`; `teensy41-capture-serial` build
 - [x] 2.4 Architecture gate posted (ownership YES — approved Phase B.1 adapter)
 
+## Architecture gate (Phase B.2)
+- Owner: `DeferredJobScheduler::runFrame` → `StorageManager::stepSubmittedLoadJobs`
+- Invariant: published Loop never partially modified; load steps only via scheduler frame
+- Ownership change: YES (API rename; approved Phase B.2)
+- Transition change: NO
+- Behavior-preserving: YES
+- Reuse: YES — rename `runDeferredFrame` → `stepSubmittedLoadJobs`; no fork
+- Scope: `StorageManager.h/.cpp`, `DeferredJobScheduler.*`, docs/tasks
+
 ## 3. B.2 — Domain step API
 
-- [ ] 3.1 StorageManager exposes load-step entry used only by scheduler (rename/wrap as needed)
-- [ ] 3.2 `rg runDeferredFrame` — no stray main-loop callers outside scheduler path
+- [x] 3.1 StorageManager exposes `stepSubmittedLoadJobs` used only by scheduler
+- [x] 3.2 `rg runDeferredFrame` — no code callers outside docs/archive; `processDeferredLoopSlotRestore` routes via scheduler
 
 ## 4. B.3 — Scheduler-owned selection (optional same change)
 
@@ -23,5 +32,5 @@
 
 ## 5. Gates
 
-- [ ] 5.1 Device gate vs [`230145`](../../../captures/session_20260718_230145.log) — buttons 1:1; no ~295ms `parse_us` clusters
+- [x] 5.1 Device gate B.1 PASS [`231510`](../../../captures/session_20260718_231510.log) vs [`230145`](../../../captures/session_20260718_230145.log) — BTN 9/9; zero `parse_us`/`frame_us`; clean stop
 - [ ] 5.2 Archive when B.1–B.3 (or agreed MVP) pass

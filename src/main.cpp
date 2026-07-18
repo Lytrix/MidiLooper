@@ -31,6 +31,7 @@
 #include "Utils/HotPathTelemetry.h"
 #include "Utils/DebugSessionCapture.h"
 #include "Utils/BootTelemetry.h"
+#include <cstdio>
 
 // Keep LoadLoopJob + OLED orchestration out of ITCM — RAM1 is at the 32KB page edge.
 // noinline: a single call site would otherwise inline this into loop() and stay in ITCM.
@@ -58,26 +59,7 @@ FLASHMEM __attribute__((noinline)) static void runDeferredLoadAndDisplayFrame(
   const bool allowDeferredSlotRestore =
       slotRestoreTurnFree &&
       !StorageManager::isRevisionLoadHeldForWorkspaceDirty();
-  static int8_t deferredPlaybackPrewarmTrack = -1;
-  static uint8_t deferredPlaybackPrewarmSlot = 0;
   bool skipDisplayAfterFocusCommit = false;
-  if (deferredPlaybackPrewarmTrack >= 0) {
-    const uint8_t prewarmTrack = static_cast<uint8_t>(deferredPlaybackPrewarmTrack);
-    const uint8_t prewarmSlot = deferredPlaybackPrewarmSlot;
-    deferredPlaybackPrewarmTrack = -1;
-    skipDisplayAfterFocusCommit = true;
-#if defined(SESSION_CAPTURE) || defined(PERF_TELEMETRY)
-    Serial.print("[main] deferred playback prewarm enter ");
-    Serial.print(prewarmTrack);
-    Serial.print('/');
-    Serial.println(prewarmSlot);
-#endif
-    trackManager.getTrack(prewarmTrack).ensurePlaybackMergedEventsForSlot(prewarmSlot);
-    displayManager.invalidateLiveDisplayCache();
-#if defined(SESSION_CAPTURE) || defined(PERF_TELEMETRY)
-    Serial.println("[main] deferred playback prewarm leave");
-#endif
-  }
 
   const bool backgroundOnlyLoad =
       !bootSlotLoadRefreshPending && !focusSlotRestoreWork;
@@ -96,23 +78,54 @@ FLASHMEM __attribute__((noinline)) static void runDeferredLoadAndDisplayFrame(
     }
   }
 
-  if (allowDeferredSlotRestore) {
-    const uint32_t budgetUs = LoadLoopBudget::resolveLoadLoopSliceBudgetUs(
-        bootSlotLoadRefreshPending, focusSlotRestoreWork, captureActive);
+  // Finish focus LoadLoopJob (especially Committing) even when tap/revision hold would
+  // otherwise skip the deferred frame — 000205 starved apply after parse_leave.
+  if (allowDeferredSlotRestore || focusSlotRestoreWork) {
+    const uint32_t budgetUs =
+        allowDeferredSlotRestore
+            ? LoadLoopBudget::resolveLoadLoopSliceBudgetUs(
+                  bootSlotLoadRefreshPending, focusSlotRestoreWork, captureActive)
+            : LoadLoopBudget::FocusRestoreUs;
     DeferredJobScheduler::runFrame(budgetUs);
     if (!focusHadCommittedPasses &&
         trackManager.getTrack(focusTrack).getLoop(focusSlot).hasCommittedPasses()) {
-      deferredPlaybackPrewarmTrack = static_cast<int8_t>(focusTrack);
-      deferredPlaybackPrewarmSlot = focusSlot;
       skipDisplayAfterFocusCommit = true;
-#if defined(SESSION_CAPTURE) || defined(PERF_TELEMETRY)
-      Serial.print("[main] focus Commit; playback prewarm deferred ");
-      Serial.print(focusTrack);
-      Serial.print('/');
-      Serial.println(focusSlot);
+#if defined(SESSION_CAPTURE)
+      {
+        char line[48];
+        std::snprintf(line, sizeof(line), "#CAP,LLBG,commit_prewarm_q,%u,%u",
+                      static_cast<unsigned>(focusTrack),
+                      static_cast<unsigned>(focusSlot));
+        DebugSessionCapture::appendCaptureTextLine(line);
+      }
+#endif
+      // Same-frame windowed prewarm — buffer already freed at commit_armed; trySlot is
+      // fail-soft. Deferring to next frame raced save/reclaim (000659).
+#if defined(SESSION_CAPTURE)
+      {
+        char line[48];
+        std::snprintf(line, sizeof(line), "#CAP,LLBG,prewarm_enter,%u,%u",
+                      static_cast<unsigned>(focusTrack),
+                      static_cast<unsigned>(focusSlot));
+        DebugSessionCapture::appendCaptureTextLine(line);
+      }
+#endif
+      Track& prewarmTrackRef = trackManager.getTrack(focusTrack);
+      prewarmTrackRef.ensurePlaybackMergedEventsForSlot(focusSlot);
+      displayManager.invalidateLiveDisplayCache();
+#if defined(SESSION_CAPTURE)
+      {
+        const bool ready = prewarmTrackRef.isPlaybackWindowReadyForSlot(focusSlot);
+        char line[56];
+        std::snprintf(line, sizeof(line), "#CAP,LLBG,prewarm_leave,%u,%u,%u",
+                      static_cast<unsigned>(focusTrack),
+                      static_cast<unsigned>(focusSlot), ready ? 1u : 0u);
+        DebugSessionCapture::appendCaptureTextLine(line);
+      }
 #endif
     }
-    if (!timingCriticalTrackActive && !SlotLoadSession::isActive()) {
+    if (allowDeferredSlotRestore && !timingCriticalTrackActive &&
+        !SlotLoadSession::isActive()) {
       StorageManager::processDeferredUndoSnapshots();
       StorageManager::processEditAutosave(looperState.getLooperState());
       trackManager.reclaimUnreferencedDisabledPasses();
@@ -264,11 +277,6 @@ void loop() {
   
   //Serial.println("Main: Loop");
   uint32_t now = millis();
-  MemoryMonitor::updateAdvisoryPressureLevel(now);
-  const MemoryPressureLevel pressure = MemoryMonitor::getAdvisoryPressureLevel();
-  if (pressure >= MemoryPressureLevel::Low) {
-    trackManager.tryReclaimDerivedViewCachesUnderPressure(pressure);
-  }
   // Poll MIDI input
   midiHandler.handleMidiInput();
 
@@ -328,7 +336,15 @@ void loop() {
     trackManager.getTrack(i).processDeferredIdleMaintenance(now);
   }
 
+  // Load/Commit/prewarm before pressure reclaim — reclaim after a 64-bar Commit raced the
+  // deferred prewarm path (000659: commit_prewarm_q then silence).
   runDeferredLoadAndDisplayFrame(now, lastDisplayUpdate, timingCriticalTrackActive);
+
+  MemoryMonitor::updateAdvisoryPressureLevel(now);
+  const MemoryPressureLevel pressure = MemoryMonitor::getAdvisoryPressureLevel();
+  if (pressure >= MemoryPressureLevel::Low) {
+    trackManager.tryReclaimDerivedViewCachesUnderPressure(pressure);
+  }
 
   StorageManager::processDeferredSaveState(looperState.getLooperState());
 
