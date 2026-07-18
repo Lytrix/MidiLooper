@@ -2,7 +2,7 @@
 
 **Kind:** refinement  
 **Date:** 2026-07-15  
-**Status:** Implemented (boot UI + cooperative restore slice)
+**Status:** Implemented (boot UI + deferred LoadLoopJob slice)
 
 ## Follow-up (2026-07-15)
 
@@ -11,7 +11,7 @@ Display still froze during deferred restore (`session_20260715_121844.log`): foc
 Additional changes:
 
 1. **`prioritizeLoopSlotRestoreForFocus`** — skip `requestLoopSlotRestoreFromSd` while `isBootLoadInProgress()` or `hasPendingLoopSlotRestore()`; reprioritize queue only.
-2. **`processDeferredLoopSlotRestore`** — during boot deferred phase, drain the full restore queue in one call (no 35 ms slice); after boot, keep ~35 ms cooperative slices for idle slot loads.
+2. **`processDeferredLoopSlotRestore`** — during boot deferred phase, drain the full restore queue in one call (no 35 ms slice); after boot, keep ~35 ms deferred job slices for idle slot loads.
 3. **`markLoopPublishedChunksPersistedFromSdLoad`** — after each successful slot load, mark all published chunk IDs `Persisted` so post-boot `mid_pass` does not re-write `.sealj` for SD-loaded data.
 3. **`DisplayManager::update`** — lightweight `Loading...` view while `hasPendingLoopSlotRestore()` instead of piano-roll rebuild.
 

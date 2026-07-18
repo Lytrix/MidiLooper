@@ -1057,7 +1057,11 @@ LOOP_COLD_MEM void Loop::gatherCommittedEventsInWindow(SessionMidiEventVec& out,
     out.clear();
     return;
   }
-  if (hasActiveEditPasses(passes)) {
+  // Short loops with editPasses: full materialize then filter (cheap).
+  // Long loops: never sync-materialize the whole loop here — that hard-faults after
+  // LoadLoopJob Commit (session_20260718_210946). Chunk InWindow omits edit overlay
+  // until idle full rematerialize; playback switch stays live.
+  if (hasActiveEditPasses(passes) && !shouldAvoidFullVisualRebuild(loopLengthTicks)) {
     SessionMidiEventVec full;
     gatherCommittedEvents(full);
     DisplayWindowUtils::filterMidiEventsToWindow(full, out, windowStart, windowLength,

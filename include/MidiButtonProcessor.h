@@ -34,6 +34,8 @@ public:
     // Query button states
     bool isButtonPressed(uint8_t note, uint8_t channel) const;
     uint32_t getButtonPressStartTime(uint8_t note, uint8_t channel) const;
+    /// True while a short/double/triple tap is waiting for its expire window.
+    bool hasPendingTapAction() const;
     
     // Configuration
     void setDoubleTapWindow(uint32_t windowMs) { doubleTapWindow = windowMs; }

@@ -12,6 +12,7 @@
 #include "CurrentWorkspaceStorage.h"
 #include "PersistenceLayout.h"
 #include "PersistenceBudget.h"
+#include "LoadLoopBudget.h"
 #include "PersistenceFailurePolicy.h"
 #include "PersistenceQueue.h"
 #include "SetRevisionCatalog.h"
@@ -36,6 +37,7 @@
 #include "Utils/PersistenceDiagnostics.h"
 #include <SD.h>
 #include <Arduino.h>
+#include <utility>
 #include "TrackUndo.h"
 #include "TrackDisplayState.h"
 #include "Utils/MemoryPool.h"
@@ -67,7 +69,7 @@ constexpr size_t kSavedSetPathCapacity = 64;
 struct DeferredLoopSlotRestore {
     uint8_t track = 0;
     uint8_t slot = 0;
-    uint8_t restorePriority = 3;
+    uint16_t restorePriority = 3;
 };
 
 struct PendingLoopSlotRestoreQueue {
@@ -80,6 +82,29 @@ struct PendingLoopSlotRestoreQueue {
 PendingLoopSlotRestoreQueue pendingLoopSlotRestores_{};
 bool workspaceFooterPersistDeferred = false;
 char restoredSetBundlePath_[80] = {};
+
+/// After a completed restore attempt (success or empty/fail), do not re-enqueue.
+bool loopSlotRestoreAttempted_[Config::NUM_TRACKS][Config::MAX_LOOPS_PER_TRACK]{};
+
+/// LoadLoopJob: read SD payload in timed slices across main-loop calls,
+/// then parse/commit. At most one active + one parked (demote-on-focus).
+struct LoadLoopJob {
+    bool active = false;
+    uint8_t track = 0;
+    uint8_t slot = 0;
+    File file;
+    size_t payloadOffset = 0;
+    size_t payloadSize = 0;
+    size_t bytesRead = 0;
+    std::vector<uint8_t, ExternalMemoryFirstAllocator<uint8_t>> buffer;
+    SlotLoadSession* session = nullptr;
+};
+LoadLoopJob loadLoopJob_{};
+LoadLoopJob parkedLoadLoopJob_{};
+/// After audible boot ready, delay background fill so first transport press is not starved.
+uint32_t backgroundRestoreHoldoffUntilMs_ = 0;
+/// While true (boot title audible drain), do not park/demote — parked jobs block bootInteractiveReady.
+bool bootTitleLoadDrain_ = false;
 std::array<uint32_t, Config::NUM_TRACKS> undoStackFileOffsets_{};
 uint8_t undoHydrateTrackIndex_ = 0;
 bool undoSnapshotsPending_ = false;
@@ -127,16 +152,15 @@ void STORAGE_PERSIST_MEM sortPendingLoopSlotRestoresByPriority() {
     }
 }
 
-uint8_t STORAGE_PERSIST_MEM currentBootRestorePriority(uint8_t trackIndex, uint8_t slotIndex) {
+uint16_t STORAGE_PERSIST_MEM currentDeferredRestorePriority(uint8_t trackIndex, uint8_t slotIndex) {
     const uint8_t selectedTrackIdx = trackManager.getSelectedTrackIndex();
-    uint8_t activeLoopIndex[Config::NUM_TRACKS]{};
     uint8_t selectedSlotIndex[Config::NUM_TRACKS]{};
     for (uint8_t t = 0; t < Config::NUM_TRACKS; ++t) {
-        activeLoopIndex[t] = trackManager.getActiveLoopIndex(t);
         selectedSlotIndex[t] = trackManager.getSelectedSlotIndex(t);
     }
-    return computeBootRestorePriority(trackIndex, slotIndex, selectedTrackIdx, activeLoopIndex,
-                                      Config::NUM_TRACKS, selectedSlotIndex, Config::NUM_TRACKS);
+    return computeDeferredRestorePriority(trackIndex, slotIndex, selectedTrackIdx, selectedSlotIndex,
+                                          Config::NUM_TRACKS, Config::NUM_TRACKS,
+                                          Config::MAX_LOOPS_PER_TRACK);
 }
 
 void STORAGE_PERSIST_MEM reprioritizeDeferredLoopSlotRestoreEntries() {
@@ -145,7 +169,7 @@ void STORAGE_PERSIST_MEM reprioritizeDeferredLoopSlotRestoreEntries() {
     }
     for (uint16_t i = 0; i < pendingLoopSlotRestores_.count; ++i) {
         DeferredLoopSlotRestore& pending = pendingLoopSlotRestores_.entries[i];
-        pending.restorePriority = currentBootRestorePriority(pending.track, pending.slot);
+        pending.restorePriority = currentDeferredRestorePriority(pending.track, pending.slot);
     }
     sortPendingLoopSlotRestoresByPriority();
 }
@@ -154,7 +178,7 @@ void STORAGE_PERSIST_MEM queueDeferredLoopSlotRestore(uint8_t trackIndex, uint8_
     if (!StorageManager::loopSlotHasPayloadOnSd(trackIndex, slotIndex)) {
         return;
     }
-    const uint8_t restorePriority = currentBootRestorePriority(trackIndex, slotIndex);
+    const uint16_t restorePriority = currentDeferredRestorePriority(trackIndex, slotIndex);
     for (uint16_t i = 0; i < pendingLoopSlotRestores_.count; ++i) {
         DeferredLoopSlotRestore& pending = pendingLoopSlotRestores_.entries[i];
         if (pending.track == trackIndex && pending.slot == slotIndex) {
@@ -172,6 +196,18 @@ void STORAGE_PERSIST_MEM queueDeferredLoopSlotRestore(uint8_t trackIndex, uint8_
     pendingLoopSlotRestores_.entries[pendingLoopSlotRestores_.count++] = {trackIndex, slotIndex,
                                                                           restorePriority};
     sortPendingLoopSlotRestoresByPriority();
+}
+
+/// Enqueue every HEADER_READY SD payload for background fill (adjacent/track/forward priority).
+void STORAGE_PERSIST_MEM enqueueRemainingLoopSlotRestores() {
+    for (uint8_t t = 0; t < Config::NUM_TRACKS; ++t) {
+        for (uint8_t s = 0; s < Config::MAX_LOOPS_PER_TRACK; ++s) {
+            queueDeferredLoopSlotRestore(t, s);
+        }
+    }
+    reprioritizeDeferredLoopSlotRestoreEntries();
+    // Give transport/UI a quiet window after title clears before SD fill resumes.
+    backgroundRestoreHoldoffUntilMs_ = millis() + 2000;
 }
 
 bool setCurrentSetLoadedFromFolder(const char* folderName) {
@@ -1671,14 +1707,58 @@ bool StorageManager::hasDeferredSaveWork() {
 }
 
 bool StorageManager::hasPendingLoopSlotRestore() {
-    return pendingLoopSlotRestores_.count > 0 || SlotLoadSession::isActive();
+    return pendingLoopSlotRestores_.count > 0 || SlotLoadSession::isActive() ||
+           loadLoopJob_.active || parkedLoadLoopJob_.active;
+}
+
+bool STORAGE_PERSIST_MEM StorageManager::isFocusedLoopSlotRestoreWork() {
+    if (trackManager.getTrackCount() == 0) {
+        return false;
+    }
+    const uint8_t focusTrack = trackManager.getSelectedTrackIndex();
+    const uint8_t focusSlot = trackManager.getSelectedSlotIndex(focusTrack);
+    if (loadLoopJob_.active && loadLoopJob_.track == focusTrack &&
+        loadLoopJob_.slot == focusSlot) {
+        return true;
+    }
+    if (parkedLoadLoopJob_.active && parkedLoadLoopJob_.track == focusTrack &&
+        parkedLoadLoopJob_.slot == focusSlot) {
+        return true;
+    }
+    for (uint16_t i = 0; i < pendingLoopSlotRestores_.count; ++i) {
+        const DeferredLoopSlotRestore& entry = pendingLoopSlotRestores_.entries[i];
+        if (loopSlotRestoreAttempted_[entry.track][entry.slot]) {
+            continue;
+        }
+        if (entry.track < trackManager.getTrackCount() &&
+            trackManager.getTrack(entry.track).getLoop(entry.slot).hasCommittedPasses()) {
+            continue;
+        }
+        return entry.track == focusTrack && entry.slot == focusSlot;
+    }
+    return false;
+}
+
+void STORAGE_PERSIST_MEM StorageManager::setBootTitleLoadDrain(bool enabled) {
+    bootTitleLoadDrain_ = enabled;
 }
 
 bool StorageManager::needsSlotLoad(uint8_t trackIndex, uint8_t slotIndex) {
     if (trackIndex >= Config::NUM_TRACKS || slotIndex >= Config::MAX_LOOPS_PER_TRACK) {
         return false;
     }
+    if (loopSlotRestoreAttempted_[trackIndex][slotIndex]) {
+        return false;
+    }
     if (SlotLoadSession::isActiveFor(trackIndex, slotIndex)) {
+        return false;
+    }
+    if (loadLoopJob_.active && loadLoopJob_.track == trackIndex &&
+        loadLoopJob_.slot == slotIndex) {
+        return false;
+    }
+    if (parkedLoadLoopJob_.active && parkedLoadLoopJob_.track == trackIndex &&
+        parkedLoadLoopJob_.slot == slotIndex) {
         return false;
     }
     if (trackIndex < trackManager.getTrackCount()) {
@@ -1697,11 +1777,13 @@ bool StorageManager::needsSlotLoad(uint8_t trackIndex, uint8_t slotIndex) {
 }
 
 bool StorageManager::bootInteractiveReady() {
-    // Audible-only boot: title + USB wait until the audible restore queue is empty.
+    // Audible-only boot: title + USB wait until the audible restore queue is empty
+    // and any in-flight LoadLoopJob has committed.
     // Non-audible SD slots are not enqueued at boot (HEADER_READY metadata only).
     // Do not re-derive readiness from getActiveLoopIndex() after the footer —
     // loadTransportSlotIndices remaps active→selected while stopped.
-    return pendingLoopSlotRestores_.count == 0 && !SlotLoadSession::isActive();
+    return pendingLoopSlotRestores_.count == 0 && !SlotLoadSession::isActive() &&
+           !loadLoopJob_.active && !parkedLoadLoopJob_.active;
 }
 
 bool StorageManager::hasPendingUndoSnapshotHydrate() {
@@ -2526,6 +2608,389 @@ static void resetLoopSlotToEmpty(Loop& loop, uint8_t slotIndex) {
     loop.invalidateCaches();
 }
 
+static STORAGE_PERSIST_MEM void markLoopCommittedChunksPersistedFromSdLoad(Loop& loop);
+
+STORAGE_PERSIST_MEM void clearLoadLoopJobInstance(LoadLoopJob& job) {
+    if (job.session != nullptr) {
+        job.session->fail();
+        delete job.session;
+        job.session = nullptr;
+    }
+    if (job.file) {
+        job.file.close();
+    }
+    job.buffer.clear();
+    job.buffer.shrink_to_fit();
+    job.active = false;
+    job.bytesRead = 0;
+    job.payloadSize = 0;
+    job.payloadOffset = 0;
+}
+
+STORAGE_PERSIST_MEM void clearLoadLoopJob() {
+    clearLoadLoopJobInstance(loadLoopJob_);
+    clearLoadLoopJobInstance(parkedLoadLoopJob_);
+}
+
+STORAGE_PERSIST_MEM void swapLoadLoopJobs(LoadLoopJob& a, LoadLoopJob& b) {
+    using std::swap;
+    swap(a.active, b.active);
+    swap(a.track, b.track);
+    swap(a.slot, b.slot);
+    swap(a.file, b.file);
+    swap(a.payloadOffset, b.payloadOffset);
+    swap(a.payloadSize, b.payloadSize);
+    swap(a.bytesRead, b.bytesRead);
+    swap(a.buffer, b.buffer);
+    swap(a.session, b.session);
+}
+
+STORAGE_PERSIST_MEM void parkActiveLoadLoopJob() {
+    if (!loadLoopJob_.active) {
+        return;
+    }
+    if (parkedLoadLoopJob_.active) {
+        return;
+    }
+#if defined(SESSION_CAPTURE)
+    Serial.print("[StorageManager] LoadLoopJob park ");
+    Serial.print(loadLoopJob_.track);
+    Serial.print('/');
+    Serial.print(loadLoopJob_.slot);
+    Serial.print(" bytes=");
+    Serial.print(static_cast<unsigned long>(loadLoopJob_.bytesRead));
+    Serial.print('/');
+    Serial.println(static_cast<unsigned long>(loadLoopJob_.payloadSize));
+#endif
+    swapLoadLoopJobs(loadLoopJob_, parkedLoadLoopJob_);
+}
+
+STORAGE_PERSIST_MEM void resumeParkedLoadLoopJobIfFocus(uint8_t focusTrack, uint8_t focusSlot) {
+    if (!parkedLoadLoopJob_.active) {
+        return;
+    }
+    if (parkedLoadLoopJob_.track != focusTrack || parkedLoadLoopJob_.slot != focusSlot) {
+        return;
+    }
+    if (loadLoopJob_.active) {
+        if (LoadLoopBudget::shouldFinishActiveBeforePreempt(loadLoopJob_.bytesRead,
+                                                            loadLoopJob_.payloadSize)) {
+            return;
+        }
+        if (parkedLoadLoopJob_.active) {
+            // Active is not focus; park occupied by focus — swap so focus becomes active.
+            swapLoadLoopJobs(loadLoopJob_, parkedLoadLoopJob_);
+#if defined(SESSION_CAPTURE)
+            Serial.print("[StorageManager] LoadLoopJob resume ");
+            Serial.print(loadLoopJob_.track);
+            Serial.print('/');
+            Serial.println(loadLoopJob_.slot);
+#endif
+            return;
+        }
+    }
+    swapLoadLoopJobs(loadLoopJob_, parkedLoadLoopJob_);
+#if defined(SESSION_CAPTURE)
+    Serial.print("[StorageManager] LoadLoopJob resume ");
+    Serial.print(loadLoopJob_.track);
+    Serial.print('/');
+    Serial.println(loadLoopJob_.slot);
+#endif
+}
+
+STORAGE_PERSIST_MEM void demoteActiveLoadLoopJobForFocus(uint8_t focusTrack, uint8_t focusSlot) {
+    if (bootTitleLoadDrain_) {
+        // Audible boot must drain the queue without parking; parked jobs block title clear.
+        return;
+    }
+    if (!loadLoopJob_.active) {
+        return;
+    }
+    if (loadLoopJob_.track == focusTrack && loadLoopJob_.slot == focusSlot) {
+        return;
+    }
+    // Only demote when focus actually needs hydration. If focus is already COMMITTED,
+    // background fill must not park every non-focus job (starves UI / play button).
+    if (!StorageManager::needsSlotLoad(focusTrack, focusSlot)) {
+        bool focusQueued = false;
+        for (uint16_t i = 0; i < pendingLoopSlotRestores_.count; ++i) {
+            const DeferredLoopSlotRestore& e = pendingLoopSlotRestores_.entries[i];
+            if (e.track == focusTrack && e.slot == focusSlot) {
+                focusQueued = true;
+                break;
+            }
+        }
+        if (!focusQueued) {
+            return;
+        }
+    }
+    if (LoadLoopBudget::shouldFinishActiveBeforePreempt(loadLoopJob_.bytesRead,
+                                                        loadLoopJob_.payloadSize)) {
+        return;
+    }
+    if (parkedLoadLoopJob_.active) {
+        if (parkedLoadLoopJob_.track == focusTrack &&
+            parkedLoadLoopJob_.slot == focusSlot) {
+            swapLoadLoopJobs(loadLoopJob_, parkedLoadLoopJob_);
+#if defined(SESSION_CAPTURE)
+            Serial.print("[StorageManager] LoadLoopJob resume ");
+            Serial.print(loadLoopJob_.track);
+            Serial.print('/');
+            Serial.println(loadLoopJob_.slot);
+#endif
+        }
+        // Park occupied by another slot: finish active under budget before starting focus.
+        return;
+    }
+    parkActiveLoadLoopJob();
+}
+
+STORAGE_PERSIST_MEM void markLoopSlotRestoreAttempted(uint8_t trackIndex, uint8_t slotIndex) {
+    if (trackIndex < Config::NUM_TRACKS && slotIndex < Config::MAX_LOOPS_PER_TRACK) {
+        loopSlotRestoreAttempted_[trackIndex][slotIndex] = true;
+    }
+}
+
+STORAGE_PERSIST_MEM bool beginLoadLoopJob(uint8_t trackIndex, uint8_t slotIndex) {
+    clearLoadLoopJobInstance(loadLoopJob_);
+    char loopPath[64];
+    if (!CurrentSetStorage::formatLoopSlotPath(loopPath, sizeof(loopPath), trackIndex, slotIndex)) {
+        markLoopSlotRestoreAttempted(trackIndex, slotIndex);
+        return false;
+    }
+    Loop& loop = trackManager.getTrack(trackIndex).getLoop(slotIndex);
+    if (!SD.exists(loopPath)) {
+        resetLoopSlotToEmpty(loop, slotIndex);
+        markLoopSlotRestoreAttempted(trackIndex, slotIndex);
+        return false;
+    }
+    if (!CurrentSetStorage::verifySaveFileTokenAtPath(loopPath)) {
+        resetLoopSlotToEmpty(loop, slotIndex);
+        markLoopSlotRestoreAttempted(trackIndex, slotIndex);
+        return false;
+    }
+    File loopFile = SD.open(loopPath, FILE_READ);
+    if (!loopFile) {
+        resetLoopSlotToEmpty(loop, slotIndex);
+        markLoopSlotRestoreAttempted(trackIndex, slotIndex);
+        return false;
+    }
+
+    size_t payloadOffset = 0;
+    if (CurrentWorkspaceStorage::fileStartsWithEpochHeader(loopFile)) {
+        CurrentWorkspaceStorage::EpochFileHeader epochHeader{};
+        const StorageIo epochIo = storageIoFromFileRead(loopFile);
+        if (!CurrentWorkspaceStorage::readEpochFileHeader(epochIo, epochHeader)) {
+            loopFile.close();
+            resetLoopSlotToEmpty(loop, slotIndex);
+            markLoopSlotRestoreAttempted(trackIndex, slotIndex);
+            return false;
+        }
+        payloadOffset = CurrentWorkspaceStorage::kEpochFileHeaderByteSize;
+    }
+    const size_t fileSize = loopFile.size();
+    if (fileSize < payloadOffset + sizeof(CurrentSetStorage::kSaveFileToken)) {
+        loopFile.close();
+        resetLoopSlotToEmpty(loop, slotIndex);
+        markLoopSlotRestoreAttempted(trackIndex, slotIndex);
+        return false;
+    }
+    const size_t payloadSize = fileSize - payloadOffset - sizeof(CurrentSetStorage::kSaveFileToken);
+    if (!loopFile.seek(payloadOffset)) {
+        loopFile.close();
+        resetLoopSlotToEmpty(loop, slotIndex);
+        markLoopSlotRestoreAttempted(trackIndex, slotIndex);
+        return false;
+    }
+
+    loadLoopJob_.active = true;
+    loadLoopJob_.track = trackIndex;
+    loadLoopJob_.slot = slotIndex;
+    loadLoopJob_.file = loopFile;
+    loadLoopJob_.payloadOffset = payloadOffset;
+    loadLoopJob_.payloadSize = payloadSize;
+    loadLoopJob_.bytesRead = 0;
+    loadLoopJob_.buffer.clear();
+    loadLoopJob_.buffer.reserve(payloadSize);
+    loadLoopJob_.session = new SlotLoadSession(trackIndex, slotIndex);
+    (void)loadLoopJob_.session->advanceAfterPhaseWork();
+
+    Serial.print("[StorageManager] LoadLoopJob begin ");
+    Serial.print(trackIndex);
+    Serial.print('/');
+    Serial.print(slotIndex);
+    Serial.print(" bytes=");
+    Serial.println(static_cast<unsigned long>(payloadSize));
+    return true;
+}
+
+STORAGE_PERSIST_MEM bool popNextDeferredLoopSlotRestore(DeferredLoopSlotRestore& out) {
+    while (pendingLoopSlotRestores_.count > 0) {
+        const DeferredLoopSlotRestore& head = pendingLoopSlotRestores_.entries[0];
+        const bool done =
+            loopSlotRestoreAttempted_[head.track][head.slot] ||
+            trackManager.getTrack(head.track).getLoop(head.slot).hasCommittedPasses();
+        if (!done) {
+            out = head;
+            for (uint16_t i = 1; i < pendingLoopSlotRestores_.count; ++i) {
+                pendingLoopSlotRestores_.entries[i - 1] = pendingLoopSlotRestores_.entries[i];
+            }
+            --pendingLoopSlotRestores_.count;
+            return true;
+        }
+        for (uint16_t i = 1; i < pendingLoopSlotRestores_.count; ++i) {
+            pendingLoopSlotRestores_.entries[i - 1] = pendingLoopSlotRestores_.entries[i];
+        }
+        --pendingLoopSlotRestores_.count;
+    }
+    return false;
+}
+
+STORAGE_PERSIST_MEM void ensureActiveLoadLoopJobSelected(uint8_t focusTrack, uint8_t focusSlot) {
+    resumeParkedLoadLoopJobIfFocus(focusTrack, focusSlot);
+    demoteActiveLoadLoopJobForFocus(focusTrack, focusSlot);
+    resumeParkedLoadLoopJobIfFocus(focusTrack, focusSlot);
+
+    if (loadLoopJob_.active) {
+        return;
+    }
+
+    // Prefer finishing a parked job before opening another SD file (begin is expensive).
+    if (parkedLoadLoopJob_.active) {
+        swapLoadLoopJobs(loadLoopJob_, parkedLoadLoopJob_);
+#if defined(SESSION_CAPTURE)
+        Serial.print("[StorageManager] LoadLoopJob resume parked ");
+        Serial.print(loadLoopJob_.track);
+        Serial.print('/');
+        Serial.println(loadLoopJob_.slot);
+#endif
+        return;
+    }
+
+    reprioritizeDeferredLoopSlotRestoreEntries();
+    DeferredLoopSlotRestore next{};
+    if (!popNextDeferredLoopSlotRestore(next)) {
+        return;
+    }
+    (void)beginLoadLoopJob(next.track, next.slot);
+}
+
+STORAGE_PERSIST_MEM SlotLoadAdvanceResult commitLoadLoopJobApply() {
+    if (!loadLoopJob_.active || loadLoopJob_.session == nullptr) {
+        return SlotLoadAdvanceResult::Failed;
+    }
+    Loop& loop = trackManager.getTrack(loadLoopJob_.track).getLoop(loadLoopJob_.slot);
+
+    (void)loadLoopJob_.session->advanceAfterPhaseWork();
+
+    struct BufferIo {
+        const uint8_t* data;
+        size_t size;
+        size_t pos = 0;
+        StorageIo io() {
+            return StorageIo{[this](const void*, size_t) { return false; },
+                             [this](void* out, size_t n) {
+                                 if (pos + n > size) {
+                                     return false;
+                                 }
+                                 std::memcpy(out, data + pos, n);
+                                 pos += n;
+                                 return true;
+                             }};
+        }
+    };
+    BufferIo buffered{loadLoopJob_.buffer.data(), loadLoopJob_.buffer.size(), 0};
+    PersistedLoopSnapshot snapshot{};
+    bool readOk = readPersistedLoopSnapshot(buffered.io(), snapshot, false);
+    if (!readOk) {
+        buffered.pos = 0;
+        readOk = readPersistedLoopSnapshot(buffered.io(), snapshot, true);
+    }
+    if (!readOk) {
+        Serial.println("[StorageManager] WARN: LoadLoopJob parse failed");
+        resetLoopSlotToEmpty(loop, loadLoopJob_.slot);
+        markLoopSlotRestoreAttempted(loadLoopJob_.track, loadLoopJob_.slot);
+        clearLoadLoopJobInstance(loadLoopJob_);
+        return SlotLoadAdvanceResult::Failed;
+    }
+
+    uint32_t magic = 0;
+    if (!loadLoopJob_.file.read(reinterpret_cast<uint8_t*>(&magic), sizeof(magic)) ||
+        magic != CurrentSetStorage::kSaveFileToken) {
+        Serial.println("[StorageManager] WARN: LoadLoopJob token mismatch");
+        resetLoopSlotToEmpty(loop, loadLoopJob_.slot);
+        markLoopSlotRestoreAttempted(loadLoopJob_.track, loadLoopJob_.slot);
+        clearLoadLoopJobInstance(loadLoopJob_);
+        return SlotLoadAdvanceResult::Failed;
+    }
+
+    (void)loadLoopJob_.session->advanceAfterPhaseWork();
+#if defined(SESSION_CAPTURE) || defined(PERF_TELEMETRY)
+    const uint32_t applyStartUs = micros();
+#endif
+    applySnapshotToLoop(loop, snapshot);
+#if defined(SESSION_CAPTURE) || defined(PERF_TELEMETRY)
+    const uint32_t applyUs = micros() - applyStartUs;
+    if (applyUs > LoadLoopBudget::FocusRestoreUs) {
+        Serial.print("[StorageManager] LoadLoopJob apply overshoot us=");
+        Serial.println(applyUs);
+    }
+#endif
+    markLoopCommittedChunksPersistedFromSdLoad(loop);
+    (void)loadLoopJob_.session->advanceAfterPhaseWork();
+    markLoopSlotRestoreAttempted(loadLoopJob_.track, loadLoopJob_.slot);
+
+    Serial.print("[StorageManager] LoadLoopJob done ");
+    Serial.print(loadLoopJob_.track);
+    Serial.print('/');
+    Serial.println(loadLoopJob_.slot);
+
+    delete loadLoopJob_.session;
+    loadLoopJob_.session = nullptr;
+    if (loadLoopJob_.file) {
+        loadLoopJob_.file.close();
+    }
+    // Keep capacity until the next beginLoadLoopJob clear — shrink_to_fit on the Commit
+    // turn churns the heap while PLAYING (focus 1/3 path, session_20260718_210946).
+    loadLoopJob_.buffer.clear();
+    loadLoopJob_.active = false;
+    return SlotLoadAdvanceResult::Completed;
+}
+
+STORAGE_PERSIST_MEM SlotLoadAdvanceResult stepLoadLoopJob(uint32_t deadlineUs) {
+    if (!loadLoopJob_.active || loadLoopJob_.session == nullptr) {
+        return SlotLoadAdvanceResult::Failed;
+    }
+    Loop& loop = trackManager.getTrack(loadLoopJob_.track).getLoop(loadLoopJob_.slot);
+    uint8_t steps = 0;
+
+    while (loadLoopJob_.bytesRead < loadLoopJob_.payloadSize) {
+        if (steps > 0 && micros() >= deadlineUs) {
+            return SlotLoadAdvanceResult::MoreWork;
+        }
+        const size_t remaining = loadLoopJob_.payloadSize - loadLoopJob_.bytesRead;
+        const size_t chunk =
+            remaining > LoadLoopBudget::ReadChunkBytes ? LoadLoopBudget::ReadChunkBytes : remaining;
+        const size_t oldSize = loadLoopJob_.buffer.size();
+        loadLoopJob_.buffer.resize(oldSize + chunk);
+        const int n = loadLoopJob_.file.read(loadLoopJob_.buffer.data() + oldSize, chunk);
+        if (n != static_cast<int>(chunk)) {
+            Serial.println("[StorageManager] WARN: LoadLoopJob read failed");
+            resetLoopSlotToEmpty(loop, loadLoopJob_.slot);
+            markLoopSlotRestoreAttempted(loadLoopJob_.track, loadLoopJob_.slot);
+            clearLoadLoopJobInstance(loadLoopJob_);
+            return SlotLoadAdvanceResult::Failed;
+        }
+        loadLoopJob_.bytesRead += chunk;
+        ++steps;
+        if (micros() >= deadlineUs) {
+            return SlotLoadAdvanceResult::MoreWork;
+        }
+    }
+
+    return commitLoadLoopJobApply();
+}
+
 void resetTracksAfterFailedLoad() {
     trackManager.setMasterLoopLength(0);
     for (uint8_t t = 0; t < trackManager.getTrackCount(); ++t) {
@@ -2747,12 +3212,14 @@ bool STORAGE_PERSIST_MEM loadLoopSlotFromCurrentSetSd(uint8_t trackIndex, uint8_
     Loop& loop = track.getLoop(slotIndex);
     if (!SD.exists(loopPath)) {
         resetLoopSlotToEmpty(loop, slotIndex);
+        markLoopSlotRestoreAttempted(trackIndex, slotIndex);
         return true;
     }
     if (!CurrentSetStorage::verifySaveFileTokenAtPath(loopPath)) {
         Serial.print("[StorageManager] WARN: loop file incomplete, treating slot as empty ");
         Serial.println(loopPath);
         resetLoopSlotToEmpty(loop, slotIndex);
+        markLoopSlotRestoreAttempted(trackIndex, slotIndex);
         return true;
     }
     File loopFile = SD.open(loopPath, FILE_READ);
@@ -2760,6 +3227,7 @@ bool STORAGE_PERSIST_MEM loadLoopSlotFromCurrentSetSd(uint8_t trackIndex, uint8_
         Serial.print("[StorageManager] WARN: could not open loop file, treating slot as empty ");
         Serial.println(loopPath);
         resetLoopSlotToEmpty(loop, slotIndex);
+        markLoopSlotRestoreAttempted(trackIndex, slotIndex);
         return true;
     }
 
@@ -2773,6 +3241,7 @@ bool STORAGE_PERSIST_MEM loadLoopSlotFromCurrentSetSd(uint8_t trackIndex, uint8_
         Serial.print("[StorageManager] WARN: loop read failed, treating slot as empty ");
         Serial.println(loopPath);
         resetLoopSlotToEmpty(loop, slotIndex);
+        markLoopSlotRestoreAttempted(trackIndex, slotIndex);
         return true;
     }
 
@@ -2784,6 +3253,7 @@ bool STORAGE_PERSIST_MEM loadLoopSlotFromCurrentSetSd(uint8_t trackIndex, uint8_
         anySlotHasEventsOut = true;
     }
     (void)session.advanceAfterPhaseWork();  // Committing → Completed
+    markLoopSlotRestoreAttempted(trackIndex, slotIndex);
     return true;
 }
 
@@ -3020,6 +3490,12 @@ bool StorageManager::loadCurrentSetBundleAndActiveLoopSlots(File& file, const ch
                                         uint8_t& selectedTrackIdx) {
     (void)setDir;
     pendingLoopSlotRestores_.count = 0;
+    StorageManagerInternal::clearLoadLoopJob();
+    for (uint8_t t = 0; t < Config::NUM_TRACKS; ++t) {
+        for (uint8_t s = 0; s < Config::MAX_LOOPS_PER_TRACK; ++s) {
+            loopSlotRestoreAttempted_[t][s] = false;
+        }
+    }
     undoSnapshotsPending_ = false;
     undoHydrateTrackIndex_ = 0;
     undoStackFileOffsets_.fill(0);
@@ -3082,9 +3558,10 @@ bool StorageManager::loadCurrentSetBundleAndActiveLoopSlots(File& file, const ch
                                    selectedSlotIndex.size())) {
                 continue;
             }
-            const uint8_t restorePriority = computeBootRestorePriority(
+            const uint16_t restorePriority = computeBootRestorePriority(
                 t, s, selectedTrackIdx, activeLoopIndex.data(), activeLoopIndex.size(),
-                selectedSlotIndex.data(), selectedSlotIndex.size());
+                selectedSlotIndex.data(), selectedSlotIndex.size(), Config::NUM_TRACKS,
+                Config::MAX_LOOPS_PER_TRACK);
             if (pendingLoopSlotRestores_.count < PendingLoopSlotRestoreQueue::kCapacity) {
                 pendingLoopSlotRestores_.entries[pendingLoopSlotRestores_.count++] = {t, s,
                                                                                       restorePriority};
@@ -3113,7 +3590,8 @@ bool StorageManager::loadCurrentSetBundleAndActiveLoopSlots(File& file, const ch
     Serial.print(" selected=");
     Serial.println(focusSelected);
 
-    // Audible slots only; main drains under the boot title until bootInteractiveReady().
+    // Audible slots only; main advances one LoadLoopJob step per loop() until
+    // bootInteractiveReady(), then enqueues remaining SD slots for background fill.
     if (pendingLoopSlotRestores_.count > 0) {
         const DeferredLoopSlotRestore& first = pendingLoopSlotRestores_.entries[0];
         Serial.print("[StorageManager] Queuing audible loop slot restore ");
@@ -3175,22 +3653,91 @@ bool StorageManager::loadCurrentSetFromDirectory(const char* setDir, LooperState
     return ok;
 }
 
-void STORAGE_PERSIST_MEM StorageManager::processDeferredLoopSlotRestore() {
-    if (pendingLoopSlotRestores_.count == 0) {
+void STORAGE_PERSIST_MEM StorageManager::runDeferredFrame(uint32_t budgetUs) {
+    using StorageManagerInternal::ensureActiveLoadLoopJobSelected;
+    using StorageManagerInternal::stepLoadLoopJob;
+
+    if (budgetUs == 0) {
         return;
     }
-    const DeferredLoopSlotRestore next = pendingLoopSlotRestores_.entries[0];
-    for (uint16_t i = 1; i < pendingLoopSlotRestores_.count; ++i) {
-        pendingLoopSlotRestores_.entries[i - 1] = pendingLoopSlotRestores_.entries[i];
+    if (backgroundRestoreHoldoffUntilMs_ != 0 &&
+        millis() < backgroundRestoreHoldoffUntilMs_) {
+        return;
     }
-    --pendingLoopSlotRestores_.count;
-    Track& track = trackManager.getTrack(next.track);
-    bool anySlotHasEvents = false;
-    Serial.print("[StorageManager] Deferred restore loop slot ");
-    Serial.print(next.track);
-    Serial.print('/');
-    Serial.println(next.slot);
-    loadLoopSlotFromCurrentSetSd(next.track, next.slot, track, anySlotHasEvents);
+
+    const uint32_t frameStartUs = micros();
+    const uint32_t deadlineUs = frameStartUs + budgetUs;
+    uint8_t steps = 0;
+
+    if (trackManager.getTrackCount() == 0) {
+        return;
+    }
+    const uint8_t focusTrack = trackManager.getSelectedTrackIndex();
+    const uint8_t focusSlot = trackManager.getSelectedSlotIndex(focusTrack);
+
+    const bool hadActiveAtEntry = loadLoopJob_.active;
+    ensureActiveLoadLoopJobSelected(focusTrack, focusSlot);
+    if (!loadLoopJob_.active) {
+        return;
+    }
+    // beginLoadLoopJob (open/seek) is one full turn — do not step or chain more jobs.
+    if (!hadActiveAtEntry && loadLoopJob_.active) {
+#if defined(SESSION_CAPTURE) || defined(PERF_TELEMETRY)
+        const uint32_t elapsedUs = micros() - frameStartUs;
+        if (elapsedUs > budgetUs) {
+            Serial.print("[StorageManager] LoadLoopJob begin-only us=");
+            Serial.println(elapsedUs);
+        }
+#endif
+        return;
+    }
+
+    while (micros() < deadlineUs) {
+        if (!loadLoopJob_.active) {
+            break;
+        }
+        const SlotLoadAdvanceResult result = stepLoadLoopJob(deadlineUs);
+        ++steps;
+        // One job per frame after steps — chaining begins starves MIDI/buttons (~600ms stalls).
+        if (result != SlotLoadAdvanceResult::MoreWork) {
+            break;
+        }
+    }
+
+#if defined(SESSION_CAPTURE) || defined(PERF_TELEMETRY)
+    const uint32_t elapsedUs = micros() - frameStartUs;
+    if (steps > 0 && (elapsedUs > budgetUs || loadLoopJob_.active || parkedLoadLoopJob_.active)) {
+        Serial.print("[StorageManager] LoadLoopJob frame us=");
+        Serial.print(elapsedUs);
+        Serial.print(" budget=");
+        Serial.print(budgetUs);
+        Serial.print(" steps=");
+        Serial.print(steps);
+        if (loadLoopJob_.active) {
+            Serial.print(" active=");
+            Serial.print(loadLoopJob_.track);
+            Serial.print('/');
+            Serial.print(loadLoopJob_.slot);
+            Serial.print('@');
+            Serial.print(static_cast<unsigned long>(loadLoopJob_.bytesRead));
+            Serial.print('/');
+            Serial.print(static_cast<unsigned long>(loadLoopJob_.payloadSize));
+        }
+        if (parkedLoadLoopJob_.active) {
+            Serial.print(" parked=");
+            Serial.print(parkedLoadLoopJob_.track);
+            Serial.print('/');
+            Serial.print(parkedLoadLoopJob_.slot);
+        }
+        Serial.println();
+    }
+#endif
+}
+
+void STORAGE_PERSIST_MEM StorageManager::processDeferredLoopSlotRestore() {
+    const uint32_t budgetUs = LoadLoopBudget::resolveLoadLoopSliceBudgetUs(
+        false, StorageManager::isFocusedLoopSlotRestoreWork(), false);
+    runDeferredFrame(budgetUs);
 }
 
 void STORAGE_PERSIST_MEM StorageManager::processDeferredUndoSnapshots() {
@@ -3241,16 +3788,35 @@ void STORAGE_PERSIST_MEM StorageManager::prioritizeLoopSlotRestoreForFocus(uint8
     if (trackIndex >= Config::NUM_TRACKS || slotIndex >= Config::MAX_LOOPS_PER_TRACK) {
         return;
     }
-    // Focus/select must hydrate HEADER_READY slots even when not yet slotEnabled
-    // (preview select before layer enable).
-    if (trackManager.getTrack(trackIndex).getLoop(slotIndex).hasCommittedPasses()) {
-        reprioritizeDeferredLoopSlotRestoreEntries();
-        return;
-    }
-    if (StorageManager::loopSlotHasPayloadOnSd(trackIndex, slotIndex)) {
-        queueDeferredLoopSlotRestore(trackIndex, slotIndex);
+    // Focus path: queue only the focused slot (+ immediate neighbors). Never dump the
+    // full SD set here — that refilled the boot queue under the title (session_20260718_173340).
+    // Full background fill is only via enqueueRemainingLoopSlotRestoresFromSd() after
+    // bootInteractiveReady().
+    auto queueIfNeeded = [](uint8_t t, uint8_t s) {
+        if (!trackManager.getTrack(t).getLoop(s).hasCommittedPasses() &&
+            StorageManager::loopSlotHasPayloadOnSd(t, s)) {
+            queueDeferredLoopSlotRestore(t, s);
+        }
+    };
+    queueIfNeeded(trackIndex, slotIndex);
+    if (Config::MAX_LOOPS_PER_TRACK > 1) {
+        const uint8_t left =
+            static_cast<uint8_t>((slotIndex + Config::MAX_LOOPS_PER_TRACK - 1) %
+                                 Config::MAX_LOOPS_PER_TRACK);
+        const uint8_t right =
+            static_cast<uint8_t>((slotIndex + 1) % Config::MAX_LOOPS_PER_TRACK);
+        queueIfNeeded(trackIndex, left);
+        queueIfNeeded(trackIndex, right);
     }
     reprioritizeDeferredLoopSlotRestoreEntries();
+    if (!bootTitleLoadDrain_) {
+        StorageManagerInternal::demoteActiveLoadLoopJobForFocus(trackIndex, slotIndex);
+        StorageManagerInternal::resumeParkedLoadLoopJobIfFocus(trackIndex, slotIndex);
+    }
+}
+
+void STORAGE_PERSIST_MEM StorageManager::enqueueRemainingLoopSlotRestoresFromSd() {
+    enqueueRemainingLoopSlotRestores();
 }
 
 bool StorageManager::loadCurrentWorkspaceFromSd(LooperState& state) {

@@ -68,3 +68,17 @@ All runtime-visible loop changes occur through **Commit**. Loading is one produc
 ### Phase 5+ 
 
 Separate gates when started; not MVP.
+
+### Phase 5.2 — Load while PLAYING
+
+| Question | Answer |
+|----------|--------|
+| Owner | `main` scheduling + `processDeferredLoopSlotRestore` |
+| Primary invariant | One queued slot restore may run while PLAYING; never during RECORDING/OVERDUBBING |
+| Ownership change? | NO |
+| Transition change? | YES — hydrate while PLAYING (approved Phase 5+) |
+| Behavior-preserving? | NO vs MVP defer-until-idle |
+| Reuse | YES — extend existing deferred restore; keep one-slot-per-call |
+| Phase scope | `main.cpp` gate split; spec scenario update; device gate |
+
+---

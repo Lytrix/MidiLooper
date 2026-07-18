@@ -49,8 +49,11 @@ bool shouldAvoidFullVisualRebuild(const Loop& loop, uint32_t loopLength) {
 }
 
 bool shouldDeferHeavyDisplayRebuild() {
-    // Phase 3: queued background restores must not block OLED; only an active session (SD read).
-    return SlotLoadSession::isActive() || StorageManager::hasPendingUndoSnapshotHydrate() ||
+    // Undo hydrate / deferred save can steal the SD bus for long stretches — soft-defer
+    // full visual cache builds. Do NOT key off SlotLoadSession: LoadLoopJob can
+    // stay active across many main-loop turns and made OLED stutter (session_20260718_174018).
+    // Long loops already use the windowed / stale-while-revalidate path while PLAYING.
+    return StorageManager::hasPendingUndoSnapshotHydrate() ||
            StorageManager::hasDeferredSaveWork();
 }
 
@@ -693,15 +696,81 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotes(const
         const bool captureRevisionChanged =
             !cacheCold && loop.captureDisplayRevision != liveDisplayCacheCaptureRevision;
         size_t committedDisplayEnd = 0;
+        Loop& mutLoop = const_cast<Loop&>(loop);
 
         auto rebuildLiveDisplayNotes = [&]() {
             if (track.isOverdubbing()) {
                 // Stale-while-revalidate committed layer; live overdub notes from capturePreview.
+                // After deferred SD load, long loops leave visualCache empty by design — PLAYING
+                // uses windowed gather; overdub must match or the roll stays blank until stop
+                // (session_20260718_203824: OVERDUBBING 65-bar hasCommitted=1, notes=0).
                 if (!loop.visualCache.notes.empty()) {
                     liveDisplayNotes.assign(loop.visualCache.notes.begin(),
                                             loop.visualCache.notes.end());
+                    liveDisplayCacheCommittedNoteCount_ = liveDisplayNotes.size();
+                } else if (loop.hasCommittedPasses()) {
+                    if (shouldAvoidFullVisualRebuild(loop, liveLoopLength)) {
+                        uint32_t windowStart = 0;
+                        uint32_t windowLength = 0;
+                        uint8_t windowBars = 0;
+                        if (syncDetailedPaintWindow(track, displaySlot, currentTick, liveLoopLength,
+                                                    windowStart, windowLength, windowBars)) {
+                            const uint8_t trackIndex = resolveTrackIndex(track);
+                            const uint32_t marginTicks =
+                                static_cast<uint32_t>(kWindowedGatherMarginBars) *
+                                Config::TICKS_PER_BAR;
+                            uint32_t gatherStart =
+                                windowStart > marginTicks ? windowStart - marginTicks : 0;
+                            uint32_t gatherEnd = windowStart + windowLength + marginTicks;
+                            if (gatherEnd > liveLoopLength) {
+                                gatherEnd = liveLoopLength;
+                            }
+                            if (gatherStart > gatherEnd) {
+                                gatherStart = 0;
+                            }
+                            const uint32_t gatherLength = gatherEnd - gatherStart;
+                            const bool windowCacheHit =
+                                liveWindowGatherValid_ &&
+                                displaySlot == livePlaybackDisplaySlot_ &&
+                                trackIndex == livePlaybackDisplayTrack_ &&
+                                liveMergePlaybackRevision_ == loop.playbackRevision &&
+                                liveMergeCaptureRevision_ == loop.captureDisplayRevision &&
+                                liveWindowGatherLoopLength_ == liveLoopLength && gatherLength > 0 &&
+                                liveWindowGatherLength_ > 0 &&
+                                windowStart >= liveWindowGatherStart_ &&
+                                (windowStart - liveWindowGatherStart_) + windowLength <=
+                                    liveWindowGatherLength_ &&
+                                liveDisplayCacheCommittedNoteCount_ <= liveDisplayNotes.size();
+                            if (windowCacheHit) {
+                                liveDisplayNotes.resize(liveDisplayCacheCommittedNoteCount_);
+                            } else {
+                                rebuildDisplayNotesInWindow(mutLoop, loop, liveLoopLength,
+                                                            gatherStart, gatherLength,
+                                                            liveDisplayEventBuffer,
+                                                            liveDisplayNotes);
+                                liveMergePlaybackRevision_ = loop.playbackRevision;
+                                liveMergeCaptureRevision_ = loop.captureDisplayRevision;
+                                livePlaybackDisplaySlot_ = displaySlot;
+                                livePlaybackDisplayTrack_ = trackIndex;
+                                liveWindowGatherStart_ = gatherStart;
+                                liveWindowGatherLength_ = gatherLength;
+                                liveWindowGatherLoopLength_ = liveLoopLength;
+                                liveWindowGatherValid_ = true;
+                                liveDisplayCacheCommittedNoteCount_ = liveDisplayNotes.size();
+                            }
+                        } else {
+                            liveDisplayNotes.clear();
+                            liveDisplayCacheCommittedNoteCount_ = 0;
+                        }
+                    } else {
+                        mutLoop.ensureVisualCacheBuilt();
+                        liveDisplayNotes.assign(loop.visualCache.notes.begin(),
+                                                loop.visualCache.notes.end());
+                        liveDisplayCacheCommittedNoteCount_ = liveDisplayNotes.size();
+                    }
                 } else {
                     liveDisplayNotes.clear();
+                    liveDisplayCacheCommittedNoteCount_ = 0;
                 }
                 committedDisplayEnd = liveDisplayNotes.size();
                 liveDisplayNotes.insert(liveDisplayNotes.end(),
@@ -715,7 +784,6 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotes(const
             committedDisplayEnd = 0;
             if (liveDisplayNotes.empty() && track.isRecording() && !loop.capture.store.empty()) {
                 SessionMidiEventVec captureFlat;
-                Loop& mutLoop = const_cast<Loop&>(loop);
                 mutLoop.ensureCaptureEventsSorted();
                 loop.capture.store.flatten(captureFlat);
                 if (!captureFlat.empty()) {
@@ -733,8 +801,12 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotes(const
             const uint32_t displayBuildStartUs = micros();
             DIAG_COUNTER_INC(DisplayFullRebuild);
             if (track.isOverdubbing()) {
-                Loop& mutLoop = const_cast<Loop&>(loop);
-                if (liveDisplayEventBuffer.empty()) {
+                // Long-loop + empty visualCache: windowed rebuild fills the event buffer.
+                // Do not full-loop gather here (64-bar overdub hot-path regression).
+                const bool useWindowedCommitLayer =
+                    loop.visualCache.notes.empty() && loop.hasCommittedPasses() &&
+                    shouldAvoidFullVisualRebuild(loop, liveLoopLength);
+                if (!useWindowedCommitLayer && liveDisplayEventBuffer.empty()) {
                     if (loop.captureActive()) {
                         mutLoop.gatherCommittedEventsWithCapture(liveDisplayEventBuffer);
                     } else {
@@ -1121,6 +1193,7 @@ void DisplayManager::refreshViewportAfterRecordStop(Track& track, uint8_t displa
 
 void DisplayManager::invalidateLiveDisplayCache() {
     liveDisplayCacheEventCount = static_cast<size_t>(-1);
+    liveDisplayCacheCommittedNoteCount_ = 0;
     liveDisplayCacheCaptureRevision = 0;
     liveDisplayCacheLoopLength = 0;
     liveDisplayCacheSlot = 255;

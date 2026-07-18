@@ -102,6 +102,9 @@ public:
     /// Invalidate display caches after slot selection changes (no synchronous draw).
     void invalidateForSlotChange(uint8_t trackIndex, uint8_t previousSlot, uint8_t newSlot);
 
+    /// Drop live frame caches so the next update re-resolves notes (no slot geometry side effects).
+    void invalidateLiveDisplayCache();
+
     /// Center the bounded detailed piano-roll window on the current playhead (long-loop loops only).
     void centerDetailedWindowOnPlayhead(Track& track, uint8_t displaySlot, uint32_t currentTick);
 
@@ -190,11 +193,12 @@ private:
                                                      const Loop& loop, uint8_t displaySlot,
                                                      uint32_t loopLength, uint32_t windowStart,
                                                      uint32_t windowLength);
-    void invalidateLiveDisplayCache();
     void invalidateNoteEditDisplayCache();
     DisplayNoteVec liveDisplayNotes;
     std::vector<NoteUtils::OpenNoteOn> liveDisplayCacheOpenNotes;
     size_t liveDisplayCacheEventCount = static_cast<size_t>(-1);
+    /// Committed-layer note count in `liveDisplayNotes` before capturePreview overlay (overdub).
+    size_t liveDisplayCacheCommittedNoteCount_ = 0;
     uint16_t liveDisplayCacheCaptureRevision = 0;
     uint32_t liveDisplayCacheLoopLength = 0;
     uint8_t liveDisplayCacheSlot = 255;

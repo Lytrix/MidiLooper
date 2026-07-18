@@ -54,14 +54,14 @@ sequenceDiagram
 
 `bootLoadInProgress_` suppresses `forceLedUpdate` during `loadState` only. It is cleared before `setup()` returns.
 
-### `loop()` (cooperative)
+### `loop()` (deferred job steps)
 
 | Step | Gate | Notes |
 |------|-------|-------|
-| Boot slot restore | `bootSlotLoadRefreshPending` && idle | **Audible drain** — while-queue `processDeferredLoopSlotRestore` under title |
-| Post-boot slot restore | idle, after ready | One slot per call (focus/select enqueue; no sync load on select) |
+| Boot slot restore | `bootSlotLoadRefreshPending` && idle && turn free | **Audible only** — `runDeferredFrame(BootTitleRestoreUs)`; demote/park **disabled** until title clears |
+| Post-boot slot restore | after ready + holdoff; PLAYING allows focus/`LoadLoopJob` only | `FocusRestoreUs` / `BackgroundRestoreUs`; demote parks one in-flight job |
 | Deferred undo hydrate | same | Reads undo bodies from bundle |
-| **finishBootSetup + USB Host** | `bootInteractiveReady()` (audible queue empty && !session) | Then first piano-roll paint at COMMITTED |
+| **finishBootSetup + USB Host** | `bootInteractiveReady()` (audible queue empty && !session && !active/parked LoadLoopJob) | Then first piano-roll paint at COMMITTED |
 | DROID LED refresh | after `beginUsbHost` | `clearLeds`, note 100 flash, `onBootSlotLoadComplete` |
 | Mid-pass persistence | idle transport | `PERS,mid_pass` during/after restore |
 
@@ -109,8 +109,9 @@ After a long loop load, `stabilizeBootMemoryAfterLoad()` may clear undo stacks w
 
 | File | Role |
 |------|------|
-| `src/main.cpp` | Setup order; `bootSlotLoadRefreshPending` gate |
-| `src/StorageManager.cpp` | `loadState`, `processDeferredLoopSlotRestore`, `bootInteractiveReady` |
+| `src/main.cpp` | Setup order; `bootSlotLoadRefreshPending` gate; load frame before display |
+| `src/StorageManager.cpp` | `runDeferredFrame`, `LoadLoopJob` active+parked, `bootInteractiveReady` |
+| `include/LoadLoopBudget.h` | Focus / Background / BootTitle µs budgets |
 | `include/Utils/BootLoopSlotRestore.h` | `isAudibleBootSlot` / boot restore priority |
 | `src/MidiHandler.cpp` | `beginUsbHost`, enumeration poll |
 | `src/TrackManager.cpp` | `beginBootLoad` / `onBootSlotLoadComplete` |

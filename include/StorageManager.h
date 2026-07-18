@@ -56,6 +56,10 @@ public:
     static bool hasDeferredSaveWork();
     /// True while boot-time loop slot payloads are still queued for idle restore.
     static bool hasPendingLoopSlotRestore();
+    /// True when the in-flight, parked, or next queued restore targets the selected track/slot.
+    static bool isFocusedLoopSlotRestoreWork();
+    /// Boot title audible drain: disable demote/park so parked jobs cannot block title clear.
+    static void setBootTitleLoadDrain(bool enabled);
     /// True when a slot payload is not Published, not queued, and not actively loading.
     static bool needsSlotLoad(uint8_t trackIndex, uint8_t slotIndex);
     /// True when boot restore queue is empty and no SlotLoadSession is active.
@@ -149,15 +153,19 @@ public:
     static void pollBootQuarantineWorkspaceBeforeLoad(uint32_t listenMs = 3000);
     static void processHitlSerialCommands();
 #endif
-    /// Idle slice: restore one deferred loop slot payload from SD (M5 stack-safe restore).
+    /// Time-budgeted LoadLoopJob frame (Phase A). Advances active/parked jobs under budgetUs.
+    static void runDeferredFrame(uint32_t budgetUs);
+    /// Idle slice: restore deferred loop slot payload(s) using background budget.
     static void processDeferredLoopSlotRestore();
     /// Idle slice: hydrate one track undo stack snapshot body from the runtime bundle.
     static void processDeferredUndoSnapshots();
-    /// On slot select: load loop slot payload immediately if still deferred.
+    /// On slot select: queue loop slot payload for deferred restore (never sync-loads).
     static void requestLoopSlotRestoreFromSd(uint8_t trackIndex, uint8_t slotIndex);
-    /// Re-sort deferred boot restore queue using current track/slot focus.
+    /// Enqueue all HEADER_READY SD payloads for background fill (neighbors → track → forward).
+    static void enqueueRemainingLoopSlotRestoresFromSd();
+    /// Re-sort deferred restore queue using current track/slot focus.
     static void reprioritizeDeferredLoopSlotRestore();
-    /// Bump focus slot to front of deferred restore and load it immediately when possible.
+    /// Queue focus slot and remaining payloads for deferred restore (priority fill).
     static void prioritizeLoopSlotRestoreForFocus(uint8_t trackIndex, uint8_t slotIndex);
     /// True when a verified loop-slot payload exists on SD (not yet loaded into RAM).
     static bool loopSlotHasPayloadOnSd(uint8_t trackIndex, uint8_t slotIndex);

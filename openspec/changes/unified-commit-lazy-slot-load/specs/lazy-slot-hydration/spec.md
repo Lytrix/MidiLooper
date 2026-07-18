@@ -45,7 +45,7 @@ After interactive ready, deferred slot load SHALL honor only:
 1. Audible slots still needing Commit (normally empty after boot)
 2. Explicitly requested slots (select, focus, or equivalent user/request path)
 
-The system SHALL NOT implement speculative adjacent or Priority-3 background fill in this change.
+The system SHALL NOT implement unbounded speculative fill without priority. Background fill SHALL use focus-adjacent then focus-track then forward-track ordering (`computeDeferredRestorePriority`).
 
 #### Scenario: Select unloaded slot while stopped
 
@@ -54,12 +54,26 @@ The system SHALL NOT implement speculative adjacent or Priority-3 background fil
 - **AND** the slot reaches COMMITTED without reboot
 - **AND** display MAY paint from committed passes
 
-### Requirement: Load while transport active deferred in MVP
+The system SHALL background-fill remaining HEADER_READY SD payloads after interactive ready, ordered by:
 
-While any timing-critical track is playing, recording, or overdubbing, the system MAY queue an explicit slot-load request and SHALL defer SD load work until transport is idle. Interactive mid-play SD hydration is out of scope for this change’s MVP.
+1. Focus selected slot
+2. Left and right neighbors on the focus track (wrap)
+3. Other slots on the focus track
+4. Other tracks in forward cycle order from the selected track
 
-#### Scenario: Select unloaded during PLAYING queues
+While any track is recording or overdubbing, the system MAY queue an explicit slot-load request and SHALL defer SD load work until capture is idle.
 
-- **WHEN** the user selects an unloaded slot while a track is PLAYING
+After interactive ready, deferred restores SHALL proceed as deferred job steps: SD payload bytes MAY be read in chunks across multiple main-loop iterations (`LoadLoopJob`), then parsed and Committed. Loop length SHALL NOT gate whether a slot may restore while PLAYING.
+
+#### Scenario: Select unloaded during PLAYING hydrates via deferred job steps
+
+- **WHEN** the user selects an unloaded slot while a track is PLAYING (no record/overdub)
+- **THEN** the load request is retained and remaining payloads are enqueued for priority fill
+- **AND** SD restore MAY advance one chunk (or parse/commit) per main-loop call
+- **AND** display MAY update from COMMITTED passes without requiring transport stop
+
+#### Scenario: Select unloaded during RECORDING defers
+
+- **WHEN** the user selects an unloaded slot while any track is RECORDING or OVERDUBBING
 - **THEN** the load request is retained
-- **AND** SD restore for that slot does not run on the timing-critical path until idle (MVP)
+- **AND** SD restore for that slot does not run until capture is idle

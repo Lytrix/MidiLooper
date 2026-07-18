@@ -228,6 +228,15 @@ uint32_t MidiButtonProcessor::getButtonPressStartTime(uint8_t note, uint8_t chan
     return getButtonState(channel, note).pressStartTime;
 }
 
+bool MidiButtonProcessor::hasPendingTapAction() const {
+    for (const ButtonState& state : buttonStates) {
+        if (state.tapState != TapState::Idle) {
+            return true;
+        }
+    }
+    return false;
+}
+
 size_t MidiButtonProcessor::getButtonIndex(uint8_t channel, uint8_t note) const {
     // Convert 1-based MIDI channel to 0-based indexing
     uint8_t channelIndex = channel - 1;

@@ -14,48 +14,63 @@
 #include "ActiveNoteLedger.h"
 
 void test_boot_restore_priority_selected_track_selected_slot() {
-  // Focus selected (split from active) is audible — priority 0.
+  // Focus selected is priority 0.
   const uint8_t active[] = {1, 0};
   const uint8_t selected[] = {2, 0};
-  TEST_ASSERT_EQUAL_UINT8(0, computeBootRestorePriority(0, 2, 0, active, 2, selected, 2));
+  TEST_ASSERT_EQUAL_UINT16(
+      0, computeBootRestorePriority(0, 2, 0, active, 2, selected, 2, 2, 8));
   TEST_ASSERT_TRUE(isAudibleBootSlot(0, 2, 0, active, 2, selected, 2));
 }
 
 void test_boot_restore_priority_selected_track_active_slot_when_split() {
-  // Active slot is always audible (Play), even when selected differs.
+  // Active (not selected) on focus track is "other slot" priority 10+slot, not adjacent.
+  // Left of selected 2 is 1 → priority 1.
   const uint8_t active[] = {1, 0};
   const uint8_t selected[] = {2, 0};
-  TEST_ASSERT_EQUAL_UINT8(0, computeBootRestorePriority(0, 1, 0, active, 2, selected, 2));
+  TEST_ASSERT_EQUAL_UINT16(
+      1, computeBootRestorePriority(0, 1, 0, active, 2, selected, 2, 2, 8));
   TEST_ASSERT_TRUE(isAudibleBootSlot(0, 1, 0, active, 2, selected, 2));
 }
 
 void test_boot_restore_priority_selected_track_other_slot() {
   const uint8_t active[] = {1, 0};
   const uint8_t selected[] = {2, 0};
-  TEST_ASSERT_EQUAL_UINT8(2, computeBootRestorePriority(0, 3, 0, active, 2, selected, 2));
+  // Right of selected 2 is 3 → priority 2.
+  TEST_ASSERT_EQUAL_UINT16(
+      2, computeBootRestorePriority(0, 3, 0, active, 2, selected, 2, 2, 8));
   TEST_ASSERT_FALSE(isAudibleBootSlot(0, 3, 0, active, 2, selected, 2));
 }
 
 void test_boot_restore_priority_other_track_active_slot() {
-  // Other track active slot is audible (Play all tracks).
   const uint8_t active[] = {1, 4};
   const uint8_t selected[] = {2, 0};
-  TEST_ASSERT_EQUAL_UINT8(0, computeBootRestorePriority(1, 4, 0, active, 2, selected, 2));
+  // Track 1 forward distance 1, slot 4 → 100 + 8 + 4
+  TEST_ASSERT_EQUAL_UINT16(
+      100 + 8 + 4, computeBootRestorePriority(1, 4, 0, active, 2, selected, 2, 2, 8));
   TEST_ASSERT_TRUE(isAudibleBootSlot(1, 4, 0, active, 2, selected, 2));
 }
 
 void test_boot_restore_priority_other_track_selected_slot() {
-  // Every track's selected slot is in the boot playback set (stopped remaps active:=selected).
   const uint8_t active[] = {1, 4};
   const uint8_t selected[] = {2, 0};
-  TEST_ASSERT_EQUAL_UINT8(0, computeBootRestorePriority(1, 0, 0, active, 2, selected, 2));
+  TEST_ASSERT_EQUAL_UINT16(
+      100 + 8 + 0, computeBootRestorePriority(1, 0, 0, active, 2, selected, 2, 2, 8));
   TEST_ASSERT_TRUE(isAudibleBootSlot(1, 0, 0, active, 2, selected, 2));
 }
 
 void test_boot_restore_priority_other_track_non_selected_slot() {
   const uint8_t active[] = {1, 0};
   const uint8_t selected[] = {2, 0};
-  TEST_ASSERT_EQUAL_UINT8(2, computeBootRestorePriority(1, 4, 0, active, 2, selected, 2));
+  TEST_ASSERT_EQUAL_UINT16(
+      100 + 8 + 4, computeBootRestorePriority(1, 4, 0, active, 2, selected, 2, 2, 8));
+}
+
+void test_deferred_priority_left_right_wrap() {
+  const uint8_t selected[] = {0, 0};
+  TEST_ASSERT_EQUAL_UINT16(0, computeDeferredRestorePriority(0, 0, 0, selected, 2, 2, 8));
+  TEST_ASSERT_EQUAL_UINT16(1, computeDeferredRestorePriority(0, 7, 0, selected, 2, 2, 8));
+  TEST_ASSERT_EQUAL_UINT16(2, computeDeferredRestorePriority(0, 1, 0, selected, 2, 2, 8));
+  TEST_ASSERT_EQUAL_UINT16(10 + 5, computeDeferredRestorePriority(0, 5, 0, selected, 2, 2, 8));
 }
 
 void test_slot_has_loop_content_ram_only() {
@@ -225,6 +240,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_boot_restore_priority_other_track_active_slot);
   RUN_TEST(test_boot_restore_priority_other_track_selected_slot);
   RUN_TEST(test_boot_restore_priority_other_track_non_selected_slot);
+  RUN_TEST(test_deferred_priority_left_right_wrap);
   RUN_TEST(test_slot_has_loop_content_ram_only);
   RUN_TEST(test_slot_has_loop_content_sd_only);
   RUN_TEST(test_slot_has_loop_content_neither);

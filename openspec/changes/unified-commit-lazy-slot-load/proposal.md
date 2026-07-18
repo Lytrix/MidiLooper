@@ -15,7 +15,7 @@ Brownfield: [`docs/DELIVERABLE_TRACKING.md`](../../../docs/DELIVERABLE_TRACKING.
 - **Hydration lifecycle (architectural)** — `UNLOADED → HEADER_READY → COMMITTED → DERIVED_READY`. Storage of that lifecycle is implementation-flexible. **COMMITTED** is sufficient for playback, editor, and display (including piano roll from committed passes). **DERIVED_READY** is optional performance.
 - **Audible-first boot** — Sync-commit audible boot set only; interactive UI at COMMITTED; do not auto-enqueue remaining SD slots.
 - **On-demand deferred load** — Runtime priorities: (1) audible, (2) explicitly requested. No speculative adjacent prefetch. Load while PLAYING is deferred (MVP may queue until transport idle).
-- **MVP load path** — Existing sync `loadLoopSlotFromCurrentSetSd` remains acceptable for audible boot; cooperative `SlotLoadSession` advance is incremental, not a prerequisite for audible-only boot.
+- **MVP load path** — Existing sync `loadLoopSlotFromCurrentSetSd` remains acceptable for audible boot; deferred `SlotLoadSession` / `LoadLoopJob` advance is incremental, not a prerequisite for audible-only boot.
 
 **BREAKING:** Public C++ identifiers currently using Publish/Published for committed-pass APIs (rename pass). Serial/HITL marker strings unchanged unless a task explicitly updates them.
 
