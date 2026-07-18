@@ -182,8 +182,8 @@ void test_transfer_capture_chunk_ids_to_published() {
   TEST_ASSERT_EQUAL(1u, captureIds.size());
   TEST_ASSERT_TRUE(store.empty());
 
-  PublishedChunkIdList publishedIds;
-  TEST_ASSERT_TRUE(LoopEventStore::transferCaptureChunkIdsToPublished(publishedIds, captureIds));
+  CommittedChunkIdList publishedIds;
+  TEST_ASSERT_TRUE(LoopEventStore::transferCaptureChunkIdsToCommittedChunkIds(publishedIds, captureIds));
   TEST_ASSERT_TRUE(captureIds.empty());
   TEST_ASSERT_EQUAL(1u, publishedIds.size());
 
@@ -199,8 +199,8 @@ void test_detach_chunks_to_published_seals_and_transfers() {
   LoopEventStore store;
   TEST_ASSERT_TRUE(store.append(MidiEvent::NoteOn(5, 1, 60, 100)));
 
-  PublishedChunkIdList publishedIds;
-  TEST_ASSERT_TRUE(store.detachChunksToPublished(publishedIds));
+  CommittedChunkIdList publishedIds;
+  TEST_ASSERT_TRUE(store.detachChunksToCommittedChunkIds(publishedIds));
   TEST_ASSERT_TRUE(store.empty());
   TEST_ASSERT_EQUAL(1u, publishedIds.size());
   TEST_ASSERT_EQUAL(ChunkLifecycleState::Sealed,
@@ -215,13 +215,13 @@ void test_deep_clone_published_chunk_ids_duplicates_pool() {
   TEST_ASSERT_TRUE(store.append(MidiEvent::NoteOn(10, 1, 60, 100)));
   TEST_ASSERT_TRUE(store.append(MidiEvent::NoteOn(20, 1, 64, 100)));
 
-  PublishedChunkIdList sourceIds;
-  TEST_ASSERT_TRUE(store.detachChunksToPublished(sourceIds));
+  CommittedChunkIdList sourceIds;
+  TEST_ASSERT_TRUE(store.detachChunksToCommittedChunkIds(sourceIds));
   TEST_ASSERT_EQUAL(1u, sourceIds.size());
   TEST_ASSERT_EQUAL(static_cast<uint16_t>(1), LoopEventStore::usedChunkCount());
 
-  PublishedChunkIdList clonedIds;
-  TEST_ASSERT_TRUE(LoopEventStore::deepClonePublishedChunkIds(clonedIds, sourceIds));
+  CommittedChunkIdList clonedIds;
+  TEST_ASSERT_TRUE(LoopEventStore::deepCloneCommittedChunkIds(clonedIds, sourceIds));
   TEST_ASSERT_EQUAL(sourceIds.size(), clonedIds.size());
   TEST_ASSERT_NOT_EQUAL(sourceIds[0], clonedIds[0]);
   TEST_ASSERT_EQUAL(static_cast<uint16_t>(2), LoopEventStore::usedChunkCount());

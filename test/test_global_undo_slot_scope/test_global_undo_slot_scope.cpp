@@ -223,8 +223,8 @@ void test_pass_undo_depth_hidden_when_slot_cleared() {
   stack.cursor = 2;
 
   TEST_ASSERT_EQUAL(2u, countAppliedPassUndoEntriesForSlot(stack, 0));
-  const bool slotHasPublishedEvents = false;
-  const size_t displayDepth = slotHasPublishedEvents
+  const bool slotHasCommittedPasses = false;
+  const size_t displayDepth = slotHasCommittedPasses
                                   ? countAppliedPassUndoEntriesForSlot(stack, 0)
                                   : 0u;
   TEST_ASSERT_EQUAL(0u, displayDepth);

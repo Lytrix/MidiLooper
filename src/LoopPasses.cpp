@@ -34,7 +34,7 @@ void collectActiveOverdubPassesSorted(const PublishedOverdubPassVec& overdubPass
   out.clear();
   out.reserve(overdubPasses.size());
   for (const OverdubPass& pass : overdubPasses) {
-    if (pass.state == CapturePassState::Active && !pass.publishedChunkIds.empty()) {
+    if (pass.state == CapturePassState::Active && !pass.committedChunkIds.empty()) {
       out.push_back(&pass);
     }
   }
@@ -46,13 +46,13 @@ void collectActiveOverdubPassesSorted(const PublishedOverdubPassVec& overdubPass
 
 void mergeOverdubPassLayer(SessionMidiEventVec& out, const OverdubPass& pass) {
   SessionMidiEventVec layer;
-  LoopEventStore::appendChunkRefEvents(pass.publishedChunkIds, layer);
+  LoopEventStore::appendChunkRefEvents(pass.committedChunkIds, layer);
   mergeSortedMidiVectors(out, std::move(layer));
 }
 
 void mergeOverdubPassLayer(MidiEventVec& out, const OverdubPass& pass) {
   SessionMidiEventVec extmemLayer;
-  LoopEventStore::appendChunkRefEvents(pass.publishedChunkIds, extmemLayer);
+  LoopEventStore::appendChunkRefEvents(pass.committedChunkIds, extmemLayer);
   MidiEventVec layer(extmemLayer.begin(), extmemLayer.end());
   mergeSortedMidiVectors(out, std::move(layer));
 }
@@ -60,8 +60,8 @@ void mergeOverdubPassLayer(MidiEventVec& out, const OverdubPass& pass) {
 template <typename MidiEventVector>
 void appendActiveCapturePassesToFlat(const LoopPasses& passes, MidiEventVector& out) {
   if (passes.hasRecordPass() && passes.recordPass.state == CapturePassState::Active &&
-      !passes.recordPass.publishedChunkIds.empty()) {
-    LoopEventStore::appendChunkRefEvents(passes.recordPass.publishedChunkIds, out);
+      !passes.recordPass.committedChunkIds.empty()) {
+    LoopEventStore::appendChunkRefEvents(passes.recordPass.committedChunkIds, out);
   }
 
   std::vector<const OverdubPass*> activeOverdubs;

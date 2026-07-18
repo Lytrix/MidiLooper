@@ -6,11 +6,11 @@
 #include "LoopEventStore.h"
 
 /// Detach capture store chunk ids into a published list (seal-path transfer).
-inline bool transferCaptureStoreToPublished(LoopEventStore& store, PublishedChunkIdList& dest) {
-  if (store.detachChunksToPublished(dest)) {
+inline bool transferCaptureStoreToCommittedChunkIds(LoopEventStore& store, CommittedChunkIdList& dest) {
+  if (store.detachChunksToCommittedChunkIds(dest)) {
     return true;
   }
   CaptureChunkIdList captureIds;
   store.detachChunksTo(captureIds);
-  return LoopEventStore::transferCaptureChunkIdsToPublished(dest, captureIds);
+  return LoopEventStore::transferCaptureChunkIdsToCommittedChunkIds(dest, captureIds);
 }

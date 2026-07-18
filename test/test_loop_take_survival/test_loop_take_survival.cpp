@@ -14,7 +14,7 @@
 #include "../test_support/LoopCaptureTestDeps.cpp"
 
 #include "Loop.h"
-#include "../test_support/PublishedChunkIdTestHelpers.h"
+#include "../test_support/CommittedChunkIdTestHelpers.h"
 #include "MidiEvent.h"
 #include "PassReclaim.h"
 #include "StorageLoopIo.h"
@@ -60,7 +60,7 @@ void test_imported_takes_survive_invalidateCaches() {
   for (int i = 0; i < 5; ++i) {
     loop.invalidateCaches();
   }
-  TEST_ASSERT_TRUE(loop.hasPublishedEvents());
+  TEST_ASSERT_TRUE(loop.hasCommittedPasses());
   TEST_ASSERT_EQUAL(2u, loop.nativeTestLiveEventCount());
   TEST_ASSERT_EQUAL(kLoopLen, loop.loopLengthTicks);
 }
@@ -75,7 +75,7 @@ void test_discard_materialization_preserves_takes() {
   (void)loop.midiEvents();
   loop.discardPassesMaterializedCache();
 
-  TEST_ASSERT_TRUE(loop.hasPublishedEvents());
+  TEST_ASSERT_TRUE(loop.hasCommittedPasses());
   TEST_ASSERT_EQUAL(before, loop.nativeTestLiveEventCount());
   TEST_ASSERT_EQUAL(kLoopLen, loop.loopLengthTicks);
 }
@@ -89,7 +89,7 @@ void test_restore_empty_pass_snapshot_clears_takes() {
   PersistedLoopSnapshot empty{};
   loop.restorePassesSnapshot(empty);
 
-  TEST_ASSERT_FALSE(loop.hasPublishedEvents());
+  TEST_ASSERT_FALSE(loop.hasCommittedPasses());
   TEST_ASSERT_EQUAL(0u, loop.nativeTestLiveEventCount());
 }
 
@@ -106,7 +106,7 @@ void test_readonly_flat_access_preserves_takes() {
   loop.invalidateCaches();
 
   TEST_ASSERT_EQUAL(4u, loop.nativeTestLiveEventCount());
-  TEST_ASSERT_TRUE(loop.hasPublishedEvents());
+  TEST_ASSERT_TRUE(loop.hasCommittedPasses());
 }
 
 void test_post_overdub_stop_path_preserves_takes() {
@@ -117,7 +117,7 @@ void test_post_overdub_stop_path_preserves_takes() {
   simulateOverdubSealAndPublish(loop);
   TEST_ASSERT_EQUAL(4u, loop.nativeTestLiveEventCount());
 
-  TEST_ASSERT_TRUE(loop.hasPublishedEvents());
+  TEST_ASSERT_TRUE(loop.hasCommittedPasses());
   TEST_ASSERT_EQUAL(4u, loop.nativeTestLiveEventCount());
   TEST_ASSERT_EQUAL(kLoopLen, loop.loopLengthTicks);
   TEST_ASSERT_FALSE(loop.visualCache.notes.empty());
@@ -136,7 +136,7 @@ void test_commit_stop_finalize_empty_merged_preserves_takes() {
   LoopEventStore emptyMerged;
   loop.commitStopFinalizeFromStore(emptyMerged);
 
-  TEST_ASSERT_TRUE(loop.hasPublishedEvents());
+  TEST_ASSERT_TRUE(loop.hasCommittedPasses());
   TEST_ASSERT_EQUAL(2u, loop.nativeTestLiveEventCount());
 }
 
@@ -149,13 +149,13 @@ void test_multi_take_flatten_matches_live_event_count() {
   LoopEventStore odStore;
   TEST_ASSERT_TRUE(odStore.append(MidiEvent::NoteOn(200, 1, 64, 90)));
   TEST_ASSERT_TRUE(odStore.append(MidiEvent::NoteOff(248, 1, 64, 0)));
-  PublishedChunkIdList publishedIds;
-  TEST_ASSERT_TRUE(transferCaptureStoreToPublished(odStore, publishedIds));
+  CommittedChunkIdList publishedIds;
+  TEST_ASSERT_TRUE(transferCaptureStoreToCommittedChunkIds(odStore, publishedIds));
   OverdubPass overdub{};
   overdub.id = 2;
   overdub.mergeSequence = 1;
   overdub.state = CapturePassState::Active;
-  overdub.publishedChunkIds = std::move(publishedIds);
+  overdub.committedChunkIds = std::move(publishedIds);
   loop.passes.overdubPasses.push_back(std::move(overdub));
 
   TEST_ASSERT_EQUAL(4u, loop.nativeTestLiveEventCount());

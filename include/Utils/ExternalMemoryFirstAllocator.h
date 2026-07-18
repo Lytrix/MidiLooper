@@ -93,7 +93,7 @@ class ExternalMemoryFirstAllocator {
  * must pre-check headroom and treat null allocate as failure.
  */
 template <typename T>
-class PublishedChunkIdAllocator {
+class CommittedChunkIdAllocator {
  public:
   using value_type = T;
   using pointer = T*;
@@ -105,13 +105,13 @@ class PublishedChunkIdAllocator {
 
   template <typename U>
   struct rebind {
-    using other = PublishedChunkIdAllocator<U>;
+    using other = CommittedChunkIdAllocator<U>;
   };
 
-  PublishedChunkIdAllocator() noexcept = default;
+  CommittedChunkIdAllocator() noexcept = default;
 
   template <typename U>
-  PublishedChunkIdAllocator(const PublishedChunkIdAllocator<U>&) noexcept {}
+  CommittedChunkIdAllocator(const CommittedChunkIdAllocator<U>&) noexcept {}
 
   T* allocate(std::size_t n) {
     const std::size_t bytes = n * sizeof(T);
@@ -135,12 +135,12 @@ class PublishedChunkIdAllocator {
   }
 
   template <typename U>
-  bool operator==(const PublishedChunkIdAllocator<U>&) const noexcept {
+  bool operator==(const CommittedChunkIdAllocator<U>&) const noexcept {
     return true;
   }
 
   template <typename U>
-  bool operator!=(const PublishedChunkIdAllocator<U>&) const noexcept {
+  bool operator!=(const CommittedChunkIdAllocator<U>&) const noexcept {
     return false;
   }
 };

@@ -17,6 +17,6 @@ TrackState normalizeLoadedTrackState(TrackState loadedTrackState, bool anySlotHa
 
 TrackState resolveDisplayTrackState(TrackState transportState, SlotOpState slotOpState,
                                     bool selectedSlotHasData,
-                                    bool selectedSlotHasPublishedEvents,
+                                    bool selectedSlotHasCommittedPasses,
                                     bool pendingRecordOnTrack,
                                     bool recordQueuedOnSelectedSlot);

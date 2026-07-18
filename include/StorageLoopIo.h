@@ -26,7 +26,7 @@ struct PersistedLoopSnapshot {
   PassId nextPassId = 1;
   NoteId nextNoteId = 1;
   uint32_t nextMergeSequence = 0;
-  PassId lastPublishedPassId = kInvalidPassId;
+  PassId lastCommittedPassId = kInvalidPassId;
   LoopPasses passes;
 };
 
@@ -42,9 +42,9 @@ struct CapturePassSlotFileHeader {
 };
 
 bool writeCapturePassSlotFileHeader(const StorageIo& io, const CapturePassSlotFileHeader& passHeader,
-                                   const PublishedChunkIdList& publishedChunkIds);
+                                   const CommittedChunkIdList& committedChunkIds);
 bool readCapturePassSlotFileHeader(const StorageIo& io, CapturePassSlotFileHeader& passHeader,
-                                  PublishedChunkIdList& publishedChunkIds, uint32_t loopLengthTicks);
+                                  CommittedChunkIdList& committedChunkIds, uint32_t loopLengthTicks);
 bool writePersistedEditsTail(const StorageIo& io, PassId nextPassId,
                              const EditPassVec& editPasses);
 

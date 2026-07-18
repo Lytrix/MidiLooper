@@ -16,7 +16,7 @@
 #include "../../src/Loop.cpp"
 #include "../test_support/LoopCaptureTestDeps.cpp"
 
-#include "../test_support/PublishedChunkIdTestHelpers.h"
+#include "../test_support/CommittedChunkIdTestHelpers.h"
 
 #include "Loop.h"
 #include "LoopEventStore.h"
@@ -28,10 +28,10 @@ namespace {
 size_t countChunksInPasses(const LoopPasses& passes) {
   size_t total = 0;
   if (passes.hasRecordPass()) {
-    total += passes.recordPass.publishedChunkIds.size();
+    total += passes.recordPass.committedChunkIds.size();
   }
   for (const OverdubPass& pass : passes.overdubPasses) {
-    total += pass.publishedChunkIds.size();
+    total += pass.committedChunkIds.size();
   }
   return total;
 }
@@ -44,13 +44,13 @@ RecordPass makeMultiChunkRecordPass() {
   CaptureChunkIdList captureIds;
   capture.detachChunksTo(captureIds);
   TEST_ASSERT_EQUAL(2u, captureIds.size());
-  PublishedChunkIdList publishedIds;
-  TEST_ASSERT_TRUE(LoopEventStore::transferCaptureChunkIdsToPublished(publishedIds, captureIds));
+  CommittedChunkIdList publishedIds;
+  TEST_ASSERT_TRUE(LoopEventStore::transferCaptureChunkIdsToCommittedChunkIds(publishedIds, captureIds));
 
   RecordPass pass{};
   pass.id = 1;
   pass.state = CapturePassState::Active;
-  pass.publishedChunkIds = std::move(publishedIds);
+  pass.committedChunkIds = std::move(publishedIds);
   return pass;
 }
 
@@ -86,14 +86,14 @@ void test_restore_passes_snapshot_still_deep_clones_for_undo() {
   PersistedLoopSnapshot snapshot{};
   snapshot.loopLengthTicks = 768;
   snapshot.passes.recordPass = makeMultiChunkRecordPass();
-  const PublishedChunkIdList snapshotRefs = snapshot.passes.recordPass.publishedChunkIds;
+  const CommittedChunkIdList snapshotRefs = snapshot.passes.recordPass.committedChunkIds;
 
   Loop loop;
   loop.restorePassesSnapshot(snapshot);
 
   TEST_ASSERT_TRUE(loop.passes.hasRecordPass());
-  TEST_ASSERT_EQUAL(snapshotRefs.size(), loop.passes.recordPass.publishedChunkIds.size());
-  TEST_ASSERT_NOT_EQUAL(snapshotRefs[0], loop.passes.recordPass.publishedChunkIds[0]);
+  TEST_ASSERT_EQUAL(snapshotRefs.size(), loop.passes.recordPass.committedChunkIds.size());
+  TEST_ASSERT_NOT_EQUAL(snapshotRefs[0], loop.passes.recordPass.committedChunkIds[0]);
   TEST_ASSERT_EQUAL(static_cast<uint16_t>(snapshotRefs.size() * 2u),
                     LoopEventStore::usedChunkCount());
 }
@@ -197,7 +197,7 @@ void test_sd_read_under_staging_does_not_enqueue_mid_pass() {
 
   TEST_ASSERT_EQUAL(0u, PersistenceQueue::queueDepth());
   TEST_ASSERT_TRUE(restored.passes.hasRecordPass());
-  for (uint16_t id : restored.passes.recordPass.publishedChunkIds) {
+  for (uint16_t id : restored.passes.recordPass.committedChunkIds) {
     TEST_ASSERT_EQUAL(static_cast<int>(ChunkPersistenceState::Persisted),
                       static_cast<int>(PersistenceQueue::chunkState(id)));
   }

@@ -25,24 +25,24 @@ constexpr uint32_t kMinSlackSliceSteps = 32;
 constexpr uint32_t kMinStuckIterations = 64;
 constexpr uint32_t kMaxStuckIterations = 256;
 
-uint32_t chunkListEventBytes(const PublishedChunkIdList& publishedChunkIds) {
-  return static_cast<uint32_t>(LoopEventStore::countEventsInChunkIds(publishedChunkIds)) *
+uint32_t chunkListEventBytes(const CommittedChunkIdList& committedChunkIds) {
+  return static_cast<uint32_t>(LoopEventStore::countEventsInChunkIds(committedChunkIds)) *
          static_cast<uint32_t>(sizeof(MidiEvent));
 }
 
 uint32_t passesChunkEventBytes(const LoopPasses& passes) {
   uint32_t bytes = 0;
   if (passes.hasRecordPass()) {
-    bytes += chunkListEventBytes(passes.recordPass.publishedChunkIds);
+    bytes += chunkListEventBytes(passes.recordPass.committedChunkIds);
   }
   for (const OverdubPass& pass : passes.overdubPasses) {
-    bytes += chunkListEventBytes(pass.publishedChunkIds);
+    bytes += chunkListEventBytes(pass.committedChunkIds);
   }
   return bytes;
 }
 
-uint32_t capturePassSliceSteps(const PublishedChunkIdList& publishedChunkIds) {
-  return 1u + static_cast<uint32_t>(publishedChunkIds.size());
+uint32_t capturePassSliceSteps(const CommittedChunkIdList& committedChunkIds) {
+  return 1u + static_cast<uint32_t>(committedChunkIds.size());
 }
 
 }  // namespace
@@ -54,10 +54,10 @@ uint32_t estimateLoopPersistSliceSteps(const LoopPasses& passes) {
 
   uint32_t steps = kLoopHeaderSliceSteps + kLoopEditTailSliceSteps;
   if (passes.hasRecordPass()) {
-    steps += capturePassSliceSteps(passes.recordPass.publishedChunkIds);
+    steps += capturePassSliceSteps(passes.recordPass.committedChunkIds);
   }
   for (const OverdubPass& pass : passes.overdubPasses) {
-    steps += capturePassSliceSteps(pass.publishedChunkIds);
+    steps += capturePassSliceSteps(pass.committedChunkIds);
   }
   return steps;
 }

@@ -86,9 +86,9 @@ Phase 0 freezes each row as: **Action | Scope/object | Full identifier**.
 
 ### Do rename (committed-truth family)
 
-Proposed targets are **direction only** until Phase 0 pins exact spellings.
+**Status: FROZEN (2026-07-18)** — identifiers below are the Phase 1 rename targets. Do not invent bare `…ToCommitted` or new **Flat** names.
 
-| Current | Action | Scope / object | Proposed identifier |
+| Current | Action | Scope / object | Identifier (frozen) |
 |---------|--------|----------------|---------------------|
 | `hasPublishedEvents` | has | **committed passes** (on Loop) | `hasCommittedPasses` |
 | `hasPublishedEventsInSlot` | has | **committed passes** in slot | `hasCommittedPassesInSlot` |
@@ -104,20 +104,26 @@ Proposed targets are **direction only** until Phase 0 pins exact spellings.
 | `tryAssignPublishedChunkIds` | tryAssign | committed chunk ids | `tryAssignCommittedChunkIds` |
 | `hasHeadroomForPublishedChunkIdList` | hasHeadroomFor | committed chunk id list | `hasHeadroomForCommittedChunkIdList` |
 | `gatherPublishedEvents` | gather | **committed MIDI events** (from passes) | `gatherCommittedEvents` |
-| `gatherPublishedFlatWithCapture` | gather | committed MIDI events + capture | `gatherCommittedEventsWithCapture` (no new **Flat** identifiers) |
+| `gatherPublishedFlatWithCapture` | gather | committed MIDI events + capture | `gatherCommittedEventsWithCapture` |
 | `gatherPublishedEventsInWindow` | gather | committed MIDI events in window | `gatherCommittedEventsInWindow` |
 | `gatherPublishedEventsInWindowWithCapture` | gather | committed MIDI events in window + capture | `gatherCommittedEventsInWindowWithCapture` |
 | `PublishedEventRange` | — (type) | tick/range over committed MIDI events | `CommittedEventRange` |
 | `markLoopPublishedChunksPersistedFromSdLoad` | mark … Persisted | loop committed-pass chunks from SD load | `markLoopCommittedChunksPersistedFromSdLoad` |
-| `SlotLoadSessionState::Publishing` | — (session state) | session performing Commit | `Committing` (parallel to `Reading` / `Validating`) |
+| `SlotLoadSessionState::Publishing` | — (session state) | session performing Commit | `Committing` |
 | `tryClearPublishedMidiScratch` | tryClear | committed MIDI scratch | `tryClearCommittedMidiScratch` |
 | `reconcileLoopLengthWithPublishedContent` | reconcile | loop length with **committed passes** content | `reconcileLoopLengthWithCommittedPasses` |
-| `PublishedChunkIdTestHelpers.h` | — (file) | test helpers for committed chunk ids | `CommittedChunkIdTestHelpers.h` |
-| Prose “published pass / events” | — | **committed pass** / committed MIDI events | guides + active OpenSpec |
+| `gatherPublishedFlatForDerivedView` | gather | committed MIDI events for derived view | `gatherCommittedEventsForDerivedView` |
+| `probePublishedChunkIdBytes` | probe | committed chunk id bytes | `probeCommittedChunkIdBytes` |
+| `markPublishedChunkIdsPersistedFromSdLoad` | mark … Persisted | committed chunk ids from SD load | `markCommittedChunkIdsPersistedFromSdLoad` |
+| `findLastPublishedEventTick` | find | last committed MIDI event tick | `findLastCommittedEventTick` |
+| `collectActivePublishedChunkLists` | collect | active committed chunk id lists | `collectActiveCommittedChunkLists` |
+| `selectedSlotHasPublishedEvents` | — (param) | selected slot has committed passes | `selectedSlotHasCommittedPasses` |
+| `PublishedEventRange.h` / `.cpp` | — (files) | committed event range module | `CommittedEventRange.h` / `.cpp` |
+| `test_published_event_range/` | — (dir) | native test | `test_committed_event_range/` |
 
 **Pinned:** **Pass** is the domain object (same family as **recordPass** / **overdubPass** / **editPass** / `commitCapturePass`). Use **Pass** / **committed loop state** in identifiers when the API is about pass presence, pass id, or pass-owned content. Prefer **committed passes** over “committed events” for pass-level APIs. Use **Events** only when the API gathers or ranges over **MIDI events** materialised from those passes. Avoid bare `…ToCommitted` — name the object (`…ToCommittedChunkIds`). Do not introduce new **Flat** identifiers.
 
-Phase 0 still freezes exact spellings; do **not** invent a new domain noun beyond **Pass** / committed MIDI events. Rename table is **stable** per [review resolutions](unified_publish_pipeline_review_resolutions_refinement.md); remaining open items are isolated (legacy Flat call sites, transfer spelling).
+Do **not** invent a new domain noun beyond **Pass** / committed MIDI events.
 
 ### Do **not** rename (different meanings)
 

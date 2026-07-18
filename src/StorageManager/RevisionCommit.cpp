@@ -139,7 +139,7 @@ STORAGE_PERSIST_MEM bool prepareRevisionCommitLayout() {
     for (uint8_t trackIndex = 0; trackIndex < Config::NUM_TRACKS; ++trackIndex) {
         for (uint8_t slotIndex = 0; slotIndex < Config::MAX_LOOPS_PER_TRACK; ++slotIndex) {
             const Loop& loop = trackManager.getTrack(trackIndex).getLoop(slotIndex);
-            if (!loop.hasPublishedEvents() && !loop.passes.hasRecordPass() &&
+            if (!loop.hasCommittedPasses() && !loop.passes.hasRecordPass() &&
                 loop.passes.overdubPasses.empty()) {
                 continue;
             }
@@ -165,10 +165,10 @@ STORAGE_PERSIST_MEM bool prepareRevisionCommitLayout() {
             size_t eventCount = 0;
             if (loop.passes.hasRecordPass()) {
                 eventCount +=
-                    LoopEventStore::countEventsInChunkIds(loop.passes.recordPass.publishedChunkIds);
+                    LoopEventStore::countEventsInChunkIds(loop.passes.recordPass.committedChunkIds);
             }
             for (const OverdubPass& pass : loop.passes.overdubPasses) {
-                eventCount += LoopEventStore::countEventsInChunkIds(pass.publishedChunkIds);
+                eventCount += LoopEventStore::countEventsInChunkIds(pass.committedChunkIds);
             }
             entry.noteCount =
                 static_cast<uint16_t>(eventCount > UINT16_MAX ? UINT16_MAX : eventCount / 2U);

@@ -20,7 +20,7 @@
 #include "StorageLoopIo.h"
 #include "Loop.h"
 #include "EditPass.h"
-#include "../test_support/PublishedChunkIdTestHelpers.h"
+#include "../test_support/CommittedChunkIdTestHelpers.h"
 #include "MidiEvent.h"
 
 namespace {
@@ -69,13 +69,13 @@ RecordPass makeRecordPassWithEvents(PassId id, uint32_t mergeSequence, CapturePa
                               uint8_t typeRaw, uint32_t tick) {
   LoopEventStore capture;
   TEST_ASSERT_TRUE(capture.append(MidiEvent::NoteOn(tick, 1, 60, 100)));
-  PublishedChunkIdList publishedIds;
-  TEST_ASSERT_TRUE(transferCaptureStoreToPublished(capture, publishedIds));
+  CommittedChunkIdList publishedIds;
+  TEST_ASSERT_TRUE(transferCaptureStoreToCommittedChunkIds(capture, publishedIds));
 
   RecordPass pass{};
   pass.id = id;
   pass.state = state;
-  pass.publishedChunkIds = std::move(publishedIds);
+  pass.committedChunkIds = std::move(publishedIds);
   (void)mergeSequence;
   (void)typeRaw;
   return pass;
@@ -85,14 +85,14 @@ OverdubPass makeOverdubPassWithEvents(PassId id, uint32_t mergeSequence, Capture
                                 uint32_t tick) {
   LoopEventStore capture;
   TEST_ASSERT_TRUE(capture.append(MidiEvent::NoteOn(tick, 1, 60, 100)));
-  PublishedChunkIdList publishedIds;
-  TEST_ASSERT_TRUE(transferCaptureStoreToPublished(capture, publishedIds));
+  CommittedChunkIdList publishedIds;
+  TEST_ASSERT_TRUE(transferCaptureStoreToCommittedChunkIds(capture, publishedIds));
 
   OverdubPass pass{};
   pass.id = id;
   pass.mergeSequence = mergeSequence;
   pass.state = state;
-  pass.publishedChunkIds = std::move(publishedIds);
+  pass.committedChunkIds = std::move(publishedIds);
   return pass;
 }
 
@@ -103,13 +103,13 @@ RecordPass makeRecordPassWithEventCount(PassId id, CapturePassState state, size_
     const uint8_t note = static_cast<uint8_t>(48u + (i % 12u));
     TEST_ASSERT_TRUE(capture.append(MidiEvent::NoteOn(tick, 1, note, 100)));
   }
-  PublishedChunkIdList publishedIds;
-  TEST_ASSERT_TRUE(transferCaptureStoreToPublished(capture, publishedIds));
+  CommittedChunkIdList publishedIds;
+  TEST_ASSERT_TRUE(transferCaptureStoreToCommittedChunkIds(capture, publishedIds));
 
   RecordPass pass{};
   pass.id = id;
   pass.state = state;
-  pass.publishedChunkIds = std::move(publishedIds);
+  pass.committedChunkIds = std::move(publishedIds);
   return pass;
 }
 
@@ -128,13 +128,13 @@ RecordPass makeRecordPassForBars(PassId id, CapturePassState state, uint32_t bar
     }
   }
 
-  PublishedChunkIdList publishedIds;
-  TEST_ASSERT_TRUE(transferCaptureStoreToPublished(capture, publishedIds));
+  CommittedChunkIdList publishedIds;
+  TEST_ASSERT_TRUE(transferCaptureStoreToCommittedChunkIds(capture, publishedIds));
 
   RecordPass pass{};
   pass.id = id;
   pass.state = state;
-  pass.publishedChunkIds = std::move(publishedIds);
+  pass.committedChunkIds = std::move(publishedIds);
   return pass;
 }
 
@@ -163,7 +163,7 @@ void test_write_read_loop_snapshot_roundtrip() {
   original.nextPassId = 8;
   original.nextNoteId = 12;
   original.nextMergeSequence = 1;
-  original.lastPublishedPassId = 7;
+  original.lastCommittedPassId = 7;
   original.passes.recordPass = makeRecordPassWithEvents(7, 0, CapturePassState::Active, 0, 10);
 
   std::vector<uint8_t> buffer;
@@ -181,14 +181,14 @@ void test_write_read_loop_snapshot_roundtrip() {
   TEST_ASSERT_EQUAL(original.nextPassId, restored.nextPassId);
   TEST_ASSERT_EQUAL(original.nextNoteId, restored.nextNoteId);
   TEST_ASSERT_EQUAL(original.nextMergeSequence, restored.nextMergeSequence);
-  TEST_ASSERT_EQUAL(original.lastPublishedPassId, restored.lastPublishedPassId);
+  TEST_ASSERT_EQUAL(original.lastCommittedPassId, restored.lastCommittedPassId);
   TEST_ASSERT_TRUE(restored.passes.hasRecordPass());
   TEST_ASSERT_EQUAL(7u, restored.passes.recordPass.id);
   TEST_ASSERT_EQUAL(static_cast<uint8_t>(CapturePassState::Active),
                     static_cast<uint8_t>(restored.passes.recordPass.state));
 
   MidiEventVec flat;
-  LoopEventStore::appendChunkRefEvents(restored.passes.recordPass.publishedChunkIds, flat);
+  LoopEventStore::appendChunkRefEvents(restored.passes.recordPass.committedChunkIds, flat);
   TEST_ASSERT_EQUAL(1u, flat.size());
   TEST_ASSERT_EQUAL(10u, flat[0].tick);
 }
@@ -202,7 +202,7 @@ void test_write_read_disabled_take_preserved() {
   original.loopLengthTicks = 1536;
   original.nextPassId = 3;
   original.nextMergeSequence = 2;
-  original.lastPublishedPassId = 1;
+  original.lastCommittedPassId = 1;
   original.passes.recordPass = makeRecordPassWithEvents(1, 0, CapturePassState::Active, 0, 5);
   original.passes.overdubPasses.push_back(
       makeOverdubPassWithEvents(2, 1, CapturePassState::Disabled, 20));
@@ -292,7 +292,7 @@ void test_legacy_edit_tail_v4_rejected() {
   const uint32_t loopStartTick = 0;
   const PassId nextPassId = 2;
   const uint32_t nextMergeSequence = 0;
-  const PassId lastPublishedPassId = kInvalidPassId;
+  const PassId lastCommittedPassId = kInvalidPassId;
   const uint32_t passCount = 0;
   const uint32_t editCount = 1;
 
@@ -302,7 +302,7 @@ void test_legacy_edit_tail_v4_rejected() {
   appendRaw(buffer, loopStartTick);
   appendRaw(buffer, nextPassId);
   appendRaw(buffer, nextMergeSequence);
-  appendRaw(buffer, lastPublishedPassId);
+  appendRaw(buffer, lastCommittedPassId);
   appendRaw(buffer, passCount);
 
   // Legacy v4 edit tail (no EPT3 marker).
@@ -392,7 +392,7 @@ void test_corrupt_scoped_edit_tail_fails_read() {
   const LoopId loopId = 11;
   const uint32_t zero = 0;
   const PassId nextPassId = 2;
-  const PassId lastPublishedPassId = kInvalidPassId;
+  const PassId lastCommittedPassId = kInvalidPassId;
   const uint32_t passCount = 0;
   const uint32_t scopedMarker = 0x45505433u;  // "EPT3"
   const uint32_t editCount = 1;
@@ -409,7 +409,7 @@ void test_corrupt_scoped_edit_tail_fails_read() {
   appendRaw(buffer, zero);
   appendRaw(buffer, nextPassId);
   appendRaw(buffer, zero);
-  appendRaw(buffer, lastPublishedPassId);
+  appendRaw(buffer, lastCommittedPassId);
   appendRaw(buffer, passCount);
 
   appendRaw(buffer, nextPassId);
@@ -460,7 +460,7 @@ void test_capture_pass_write_uses_chunk_stream_batch_bound() {
                            static_cast<uint32_t>(maxReadBatchEvents));
 
   MidiEventVec flat;
-  LoopEventStore::appendChunkRefEvents(restored.passes.recordPass.publishedChunkIds, flat);
+  LoopEventStore::appendChunkRefEvents(restored.passes.recordPass.committedChunkIds, flat);
   TEST_ASSERT_EQUAL(expectedEventCount, flat.size());
   TEST_ASSERT_EQUAL(0u, flat.front().tick);
   TEST_ASSERT_EQUAL(static_cast<uint32_t>(expectedEventCount - 1u), flat.back().tick);
@@ -498,7 +498,7 @@ void test_capture_pass_read_uses_chunk_stream_batch_bound() {
                            static_cast<uint32_t>(maxReadBatchEvents));
 
   MidiEventVec flat;
-  LoopEventStore::appendChunkRefEvents(restored.passes.recordPass.publishedChunkIds, flat);
+  LoopEventStore::appendChunkRefEvents(restored.passes.recordPass.committedChunkIds, flat);
   TEST_ASSERT_EQUAL(expectedEventCount, flat.size());
 }
 
@@ -522,7 +522,7 @@ void test_64_bar_record_snapshot_reloads_after_reboot_simulation() {
   original.loopStartTick = 0;
   original.nextPassId = 2;
   original.nextMergeSequence = 1;
-  original.lastPublishedPassId = 1;
+  original.lastCommittedPassId = 1;
   original.passes.recordPass = makeRecordPassForBars(1, CapturePassState::Active, kRecordBars);
 
   std::vector<uint8_t> buffer;
@@ -542,7 +542,7 @@ void test_64_bar_record_snapshot_reloads_after_reboot_simulation() {
   TEST_ASSERT_EQUAL(1u, restored.passes.recordPass.id);
 
   MidiEventVec restoredFlat;
-  LoopEventStore::appendChunkRefEvents(restored.passes.recordPass.publishedChunkIds, restoredFlat);
+  LoopEventStore::appendChunkRefEvents(restored.passes.recordPass.committedChunkIds, restoredFlat);
   TEST_ASSERT_EQUAL(expectedEventCount, restoredFlat.size());
   TEST_ASSERT_EQUAL(0u, restoredFlat.front().tick);
   TEST_ASSERT_EQUAL(expectedLastTick, restoredFlat.back().tick);
@@ -550,7 +550,7 @@ void test_64_bar_record_snapshot_reloads_after_reboot_simulation() {
   Loop reloadedLoop;
   applySnapshotToLoop(reloadedLoop, restored);
   TEST_ASSERT_EQUAL(expectedLoopLengthTicks, reloadedLoop.loopLengthTicks);
-  TEST_ASSERT_TRUE(reloadedLoop.hasPublishedEvents());
+  TEST_ASSERT_TRUE(reloadedLoop.hasCommittedPasses());
   reloadedLoop.ensureVisualCacheBuilt();
   TEST_ASSERT_TRUE(!reloadedLoop.visualCache.notes.empty());
 
@@ -578,7 +578,7 @@ void test_64_bar_save_completes_at_ram2_floor_with_bounded_batch() {
   original.loopStartTick = 0;
   original.nextPassId = 2;
   original.nextMergeSequence = 1;
-  original.lastPublishedPassId = 1;
+  original.lastCommittedPassId = 1;
   original.passes.recordPass = makeRecordPassForBars(1, CapturePassState::Active, kRecordBars);
 
   std::vector<uint8_t> buffer;
@@ -659,7 +659,7 @@ void test_legacy_deferred_header_without_note_id_reads() {
   original.nextPassId = 2;
   original.nextNoteId = 12;
   original.nextMergeSequence = 1;
-  original.lastPublishedPassId = 1;
+  original.lastCommittedPassId = 1;
   original.passes.recordPass = makeRecordPassWithEvents(1, 0, CapturePassState::Active, 0, 10);
 
   std::vector<uint8_t> v6Buffer;
@@ -683,7 +683,7 @@ void test_legacy_deferred_header_without_note_id_reads() {
 
   Loop reloadedLoop;
   applySnapshotToLoop(reloadedLoop, restored);
-  TEST_ASSERT_TRUE(reloadedLoop.hasPublishedEvents());
+  TEST_ASSERT_TRUE(reloadedLoop.hasCommittedPasses());
   reloadedLoop.ensureVisualCacheBuilt();
   TEST_ASSERT_FALSE(reloadedLoop.visualCache.notes.empty());
 }
@@ -710,8 +710,8 @@ void test_zero_loop_length_with_published_events_loads_and_reconciles() {
 
   Loop loop;
   applySnapshotToLoop(loop, restored);
-  TEST_ASSERT_TRUE(loop.hasPublishedEvents());
-  TEST_ASSERT_EQUAL_UINT32(loop.reconcileLoopLengthWithPublishedContent(0), loop.loopLengthTicks);
+  TEST_ASSERT_TRUE(loop.hasCommittedPasses());
+  TEST_ASSERT_EQUAL_UINT32(loop.reconcileLoopLengthWithCommittedPasses(0), loop.loopLengthTicks);
 }
 
 void test_measure_loop_snapshot_slot_file_bytes_matches_buffer() {
@@ -772,7 +772,7 @@ void test_apply_loop_slot_metadata_without_passes() {
   TEST_ASSERT_EQUAL_UINT32(Config::TICKS_PER_BAR * 4u, loop.loopLengthTicks);
   TEST_ASSERT_EQUAL_UINT32(48, loop.loopStartTick);
   TEST_ASSERT_EQUAL_UINT8(2, loop.loopId);
-  TEST_ASSERT_FALSE(loop.hasPublishedEvents());
+  TEST_ASSERT_FALSE(loop.hasCommittedPasses());
   TEST_ASSERT_TRUE(loop.hasData());
 }
 

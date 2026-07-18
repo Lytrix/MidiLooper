@@ -108,10 +108,10 @@ STORAGE_PERSIST_MEM void fillSlotSummariesForTrack(uint8_t trackIndex, const Tra
         }
         size_t eventCount = 0;
         if (loop.passes.hasRecordPass()) {
-            eventCount += LoopEventStore::countEventsInChunkIds(loop.passes.recordPass.publishedChunkIds);
+            eventCount += LoopEventStore::countEventsInChunkIds(loop.passes.recordPass.committedChunkIds);
         }
         for (const OverdubPass& pass : loop.passes.overdubPasses) {
-            eventCount += LoopEventStore::countEventsInChunkIds(pass.publishedChunkIds);
+            eventCount += LoopEventStore::countEventsInChunkIds(pass.committedChunkIds);
         }
         summary.noteCount =
             static_cast<uint16_t>(eventCount > UINT16_MAX ? UINT16_MAX : eventCount / 2U);

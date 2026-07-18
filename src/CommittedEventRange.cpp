@@ -1,7 +1,7 @@
 //  Copyright (c)  2025 Lytrix (Eelke Jager)
 //  Licensed under the PolyForm Noncommercial 1.0.0
 
-#include "PublishedEventRange.h"
+#include "CommittedEventRange.h"
 
 #include "Utils/DisplayWindowUtils.h"
 
@@ -11,18 +11,18 @@
 #define PUBLISHED_RANGE_MEM
 #endif
 
-PUBLISHED_RANGE_MEM PublishedEventRange PublishedEventRange::full(
-    const PublishedChunkIdList* const* lists, size_t listCount, uint32_t loopLengthTicks) {
-  return PublishedEventRange(lists, listCount, loopLengthTicks, false, 0, 0);
+PUBLISHED_RANGE_MEM CommittedEventRange CommittedEventRange::full(
+    const CommittedChunkIdList* const* lists, size_t listCount, uint32_t loopLengthTicks) {
+  return CommittedEventRange(lists, listCount, loopLengthTicks, false, 0, 0);
 }
 
-PUBLISHED_RANGE_MEM PublishedEventRange PublishedEventRange::inWindow(
-    const PublishedChunkIdList* const* lists, size_t listCount, uint32_t loopLengthTicks,
+PUBLISHED_RANGE_MEM CommittedEventRange CommittedEventRange::inWindow(
+    const CommittedChunkIdList* const* lists, size_t listCount, uint32_t loopLengthTicks,
     uint32_t windowStart, uint32_t windowLength) {
-  return PublishedEventRange(lists, listCount, loopLengthTicks, true, windowStart, windowLength);
+  return CommittedEventRange(lists, listCount, loopLengthTicks, true, windowStart, windowLength);
 }
 
-PublishedEventRange::PublishedEventRange(const PublishedChunkIdList* const* lists, size_t listCount,
+CommittedEventRange::CommittedEventRange(const CommittedChunkIdList* const* lists, size_t listCount,
                                          uint32_t loopLengthTicks, bool windowed,
                                          uint32_t windowStart, uint32_t windowLength)
     : lists_(lists),
@@ -32,7 +32,7 @@ PublishedEventRange::PublishedEventRange(const PublishedChunkIdList* const* list
       windowStart_(windowStart),
       windowLength_(windowLength) {}
 
-PUBLISHED_RANGE_MEM bool PublishedEventRange::chunkIntersectsWindow(uint32_t firstTick,
+PUBLISHED_RANGE_MEM bool CommittedEventRange::chunkIntersectsWindow(uint32_t firstTick,
                                                                     uint32_t lastTick,
                                                                     uint32_t windowStart,
                                                                     uint32_t windowLength,
@@ -50,7 +50,7 @@ PUBLISHED_RANGE_MEM bool PublishedEventRange::chunkIntersectsWindow(uint32_t fir
 namespace {
 
 template <typename MidiEventVector>
-void appendPublishedRange(const PublishedChunkIdList* const* lists, size_t listCount,
+void appendPublishedRange(const CommittedChunkIdList* const* lists, size_t listCount,
                           uint32_t loopLengthTicks, bool windowed, uint32_t windowStart,
                           uint32_t windowLength, MidiEventVector& out) {
   out.clear();
@@ -63,7 +63,7 @@ void appendPublishedRange(const PublishedChunkIdList* const* lists, size_t listC
 
   if (!windowed) {
     for (size_t li = 0; li < listCount; ++li) {
-      const PublishedChunkIdList* list = lists[li];
+      const CommittedChunkIdList* list = lists[li];
       if (list == nullptr || list->empty()) {
         continue;
       }
@@ -75,7 +75,7 @@ void appendPublishedRange(const PublishedChunkIdList* const* lists, size_t listC
   MidiEventVector chunkEvents;
   MidiEventVector windowEvents;
   for (size_t li = 0; li < listCount; ++li) {
-    const PublishedChunkIdList* list = lists[li];
+    const CommittedChunkIdList* list = lists[li];
     if (list == nullptr || list->empty()) {
       continue;
     }
@@ -85,7 +85,7 @@ void appendPublishedRange(const PublishedChunkIdList* const* lists, size_t listC
       if (!LoopEventStore::chunkTickSpan(chunkId, firstTick, lastTick)) {
         continue;
       }
-      if (!PublishedEventRange::chunkIntersectsWindow(firstTick, lastTick, windowStart, windowLength,
+      if (!CommittedEventRange::chunkIntersectsWindow(firstTick, lastTick, windowStart, windowLength,
                                                       loopLengthTicks)) {
         continue;
       }
@@ -103,12 +103,12 @@ void appendPublishedRange(const PublishedChunkIdList* const* lists, size_t listC
 
 }  // namespace
 
-PUBLISHED_RANGE_MEM void PublishedEventRange::appendTo(SessionMidiEventVec& out) const {
+PUBLISHED_RANGE_MEM void CommittedEventRange::appendTo(SessionMidiEventVec& out) const {
   appendPublishedRange(lists_, listCount_, loopLengthTicks_, windowed_, windowStart_, windowLength_,
                        out);
 }
 
-PUBLISHED_RANGE_MEM void PublishedEventRange::appendTo(MidiEventVec& out) const {
+PUBLISHED_RANGE_MEM void CommittedEventRange::appendTo(MidiEventVec& out) const {
   appendPublishedRange(lists_, listCount_, loopLengthTicks_, windowed_, windowStart_, windowLength_,
                        out);
 }

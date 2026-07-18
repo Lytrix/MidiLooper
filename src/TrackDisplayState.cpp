@@ -20,19 +20,19 @@ TrackState normalizeLoadedTrackState(TrackState loadedTrackState, bool anySlotHa
 
 TrackState resolveDisplayTrackState(TrackState transportState, SlotOpState slotOpState,
                                     bool selectedSlotHasData,
-                                    bool selectedSlotHasPublishedEvents,
+                                    bool selectedSlotHasCommittedPasses,
                                     bool pendingRecordOnTrack,
                                     bool recordQueuedOnSelectedSlot) {
     if (slotOpState == SlotOpState::SLOT_OP_RECORDING) return TRACK_RECORDING;
     if (slotOpState == SlotOpState::SLOT_OP_OVERDUBBING) return TRACK_OVERDUBBING;
-    if (!selectedSlotHasPublishedEvents && pendingRecordOnTrack &&
+    if (!selectedSlotHasCommittedPasses && pendingRecordOnTrack &&
         (transportState == TRACK_PLAYING || transportState == TRACK_OVERDUBBING)) {
         return TRACK_ARMED;
     }
-    if (!selectedSlotHasPublishedEvents && recordQueuedOnSelectedSlot) {
+    if (!selectedSlotHasCommittedPasses && recordQueuedOnSelectedSlot) {
         return TRACK_ARMED;
     }
-    if (transportState == TRACK_ARMED && selectedSlotHasPublishedEvents) {
+    if (transportState == TRACK_ARMED && selectedSlotHasCommittedPasses) {
         return selectedSlotHasData ? TRACK_STOPPED : TRACK_EMPTY;
     }
     if (!selectedSlotHasData) {

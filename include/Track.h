@@ -77,7 +77,7 @@ public:
   void shiftMidiEvents(int32_t offset);
   uint32_t findLastEventTick() const;
   uint32_t computeLoopLengthTicks(uint32_t lastEventTick) const;
-  bool hasPublishedEventsInSlot(uint8_t slotIndex) const;
+  bool hasCommittedPassesInSlot(uint8_t slotIndex) const;
   uint32_t quantizeTransportRecordLength(uint32_t rawLength) const;
   uint32_t computeRecordStopLengthTicks(uint32_t rawLength, uint32_t lastEventTick) const;
   void resetLoopSlotAfterEmptyCapture(uint8_t slotIndex);
@@ -133,7 +133,7 @@ public:
   /// Phase 1B — release rebuildable playback windows when not referenced this tick.
   bool tryReleasePlaybackWindowMemory();
   /// Phase 1B — drop revision-keyed published flat scratch when note edit does not need it.
-  bool tryClearPublishedMidiScratch();
+  bool tryClearCommittedMidiScratch();
 
   // MIDI events
   void recordMidiEvents(midi::MidiType type, byte channel, byte data1, byte data2, uint32_t currentTick);
@@ -340,7 +340,7 @@ private:
   bool deferredRecordRevtChunkScan = false;
   size_t deferredRecordRevtCursor = 0;
   SessionMidiEventVec deferredRecordRevtEvents;
-  PublishedChunkIdList deferredRecordRevtChunkRefs;
+  CommittedChunkIdList deferredRecordRevtChunkRefs;
   size_t deferredRecordRevtChunkCursor = 0;
   SessionMidiEventVec deferredRecordRevtChunkEvents;
   size_t deferredRecordRevtChunkEventCursor = 0;

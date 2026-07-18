@@ -107,7 +107,7 @@ void TrackManager::prewarmPlaybackRuntime() {
     Track& track = tracks[t];
     track.ensureLoopsAllocated();
     for (uint8_t s = 0; s < Config::MAX_LOOPS_PER_TRACK; ++s) {
-      if (!isSlotEnabled(t, s) && !track.loopForSlot(s).hasPublishedEvents()) {
+      if (!isSlotEnabled(t, s) && !track.loopForSlot(s).hasCommittedPasses()) {
         continue;
       }
       track.prewarmPlaybackForSlot(s);
@@ -120,7 +120,7 @@ void TrackManager::prewarmSelectedDisplayVisualCache() {
   Track& track = getTrack(trackIndex);
   const uint8_t slot = getSelectedSlotIndex(trackIndex);
   Loop& loop = track.getLoop(slot);
-  if (!loop.hasPublishedEvents() && loop.loopLengthTicks == 0) {
+  if (!loop.hasCommittedPasses() && loop.loopLengthTicks == 0) {
     return;
   }
   // PLAYING / stop tail: idle maintenance owns rebuild — read stale notes until then.
@@ -141,7 +141,7 @@ void TrackManager::startRecordingTrack(uint8_t trackIndex, uint32_t currentTick)
 
   Track& tr = tracks[trackIndex];
   const uint8_t slot = tr.getActiveLoopIndex();
-  if (tr.hasPublishedEventsInSlot(slot)) {
+  if (tr.hasCommittedPassesInSlot(slot)) {
     logger.log(CAT_TRACK, LOG_WARNING,
                "Track %d: cannot arm slot %u — slot already has published MIDI",
                trackIndex, static_cast<unsigned>(slot) + 1u);
@@ -250,13 +250,13 @@ PRESSURE_RECLAIM_MEM void TrackManager::tryReclaimDerivedViewCachesUnderPressure
         continue;
       }
       Loop& loop = track.loopForSlot(slot);
-      if (!isSlotEnabled(trackIndex, slot) && !loop.hasPublishedEvents()) {
+      if (!isSlotEnabled(trackIndex, slot) && !loop.hasCommittedPasses()) {
         continue;
       }
       (void)loop.tryDiscardPassesMaterializedCache();
     }
 
-    (void)track.tryClearPublishedMidiScratch();
+    (void)track.tryClearCommittedMidiScratch();
     (void)track.tryReleasePlaybackWindowMemory();
   }
 }
@@ -279,7 +279,7 @@ void TrackManager::stopRecordingTrack(uint8_t trackIndex) {
 void TrackManager::queueRecordingTrack(uint8_t trackIndex, uint8_t slotIndex,
                                        uint8_t refSlotForPhase) {
   if (trackIndex >= Config::NUM_TRACKS || slotIndex >= Config::MAX_LOOPS_PER_TRACK) return;
-  if (tracks[trackIndex].hasPublishedEventsInSlot(slotIndex)) {
+  if (tracks[trackIndex].hasCommittedPassesInSlot(slotIndex)) {
     logger.log(CAT_TRACK, LOG_WARNING,
                "Track %d: cannot queue record on slot %u — slot already has published MIDI",
                trackIndex, static_cast<unsigned>(slotIndex) + 1u);
@@ -632,7 +632,7 @@ TrackState TrackManager::getTrackState(uint8_t trackIndex) const {
   const uint8_t selectedSlot = slotStateMachine.getSelectedSlotIndex(trackIndex);
   return resolveDisplayTrackState(
       track.getState(), track.getSlotOpState(selectedSlot), track.hasDataInSlot(selectedSlot),
-      track.hasPublishedEventsInSlot(selectedSlot), pendingRecord[trackIndex],
+      track.hasCommittedPassesInSlot(selectedSlot), pendingRecord[trackIndex],
       isRecordingQueued(trackIndex, selectedSlot));
 }
 

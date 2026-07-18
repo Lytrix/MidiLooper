@@ -61,9 +61,9 @@ DISP_COLD_MEM void rebuildDisplayNotesInWindow(Loop& mutLoop, const Loop& loop, 
                                                NoteUtils::DisplayNoteVec& outNotes) {
     eventBuffer.clear();
     if (loop.captureActive()) {
-        mutLoop.gatherPublishedEventsInWindowWithCapture(eventBuffer, windowStart, windowLength);
+        mutLoop.gatherCommittedEventsInWindowWithCapture(eventBuffer, windowStart, windowLength);
     } else {
-        mutLoop.gatherPublishedEventsInWindow(eventBuffer, windowStart, windowLength);
+        mutLoop.gatherCommittedEventsInWindow(eventBuffer, windowStart, windowLength);
     }
     if (!eventBuffer.empty()) {
         const NoteUtils::DisplayNoteVec reconstructed =
@@ -736,7 +736,7 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotes(const
                 Loop& mutLoop = const_cast<Loop&>(loop);
                 if (liveDisplayEventBuffer.empty()) {
                     if (loop.captureActive()) {
-                        mutLoop.gatherPublishedFlatWithCapture(liveDisplayEventBuffer);
+                        mutLoop.gatherCommittedEventsWithCapture(liveDisplayEventBuffer);
                     } else {
                         mutLoop.mergeActiveCapturePasses(liveDisplayEventBuffer);
                     }
@@ -813,7 +813,7 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotes(const
         }
         if (liveDisplayNotes.empty() && loopLength > 0) {
             const Loop& loop = track.getLoop(displaySlot);
-            if (loop.hasPublishedEvents() || loop.captureActive()) {
+            if (loop.hasCommittedPasses() || loop.captureActive()) {
                 Loop& mutLoop = const_cast<Loop&>(loop);
                 if (!shouldAvoidFullVisualRebuild(loop, loopLength)) {
                     mutLoop.ensureVisualCacheBuilt();
@@ -836,7 +836,7 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotes(const
 
     const Loop& loop = track.getLoop(displaySlot);
     const uint32_t loopLength = resolveDisplayLoopLength(track, displaySlot, currentTick);
-    if (loopLength == 0 || (!loop.hasPublishedEvents() && !loop.captureActive())) {
+    if (loopLength == 0 || (!loop.hasCommittedPasses() && !loop.captureActive())) {
         liveDisplayNotes.clear();
         livePlaybackDisplaySlot_ = 255;
         livePlaybackDisplayTrack_ = 255;
@@ -943,9 +943,9 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotes(const
         DIAG_COUNTER_INC(DisplayFullRebuild);
         liveDisplayEventBuffer.clear();
         if (loop.captureActive()) {
-            mutLoop.gatherPublishedFlatWithCapture(liveDisplayEventBuffer);
+            mutLoop.gatherCommittedEventsWithCapture(liveDisplayEventBuffer);
         } else {
-            mutLoop.gatherPublishedEvents(liveDisplayEventBuffer);
+            mutLoop.gatherCommittedEvents(liveDisplayEventBuffer);
         }
         liveMergePlaybackRevision_ = loop.playbackRevision;
         liveMergeCaptureRevision_ = loop.captureDisplayRevision;
@@ -997,14 +997,14 @@ DISP_CAPTURE_MEM void DisplayManager::emitDisplayCaptureSnapshot(const Track& tr
             frameNotes, windowStart, windowLength, loopLen);
         SC_DISP_WINDOW(displaySlot, TrackStateMachine::toString(track.getState()), loopLen,
                        bufferEventsExpr, loop.visualCache.notes.size(), frameNotes.size(),
-                       bufferEventsExpr, loop.hasPublishedEvents() ? 1 : 0, windowStart, windowBars,
+                       bufferEventsExpr, loop.hasCommittedPasses() ? 1 : 0, windowStart, windowBars,
                        windowNotes.size());
         return;
     }
 
     SC_DISP(displaySlot, TrackStateMachine::toString(track.getState()), loopLen,
             bufferEventsExpr, loop.visualCache.notes.size(), frameNotes.size(),
-            bufferEventsExpr, loop.hasPublishedEvents() ? 1 : 0);
+            bufferEventsExpr, loop.hasCommittedPasses() ? 1 : 0);
 }
 
 DISP_CAPTURE_MEM void DisplayManager::emitDisplayCaptureSnapshot(const Track& track, uint8_t displaySlot,
@@ -1033,7 +1033,7 @@ DISP_CAPTURE_MEM void DisplayManager::maybeEmitDisplayCaptureOnChange(const Trac
                          state != lastState || loopLen != lastLoopLen ||
                          takeEvents != lastTakeEvents;
     const bool regression =
-        loopLen > 0 && loop.hasPublishedEvents() && frameNoteCount == 0 && takeEvents > 0;
+        loopLen > 0 && loop.hasCommittedPasses() && frameNoteCount == 0 && takeEvents > 0;
 
     if (!changed && !regression) {
         return;

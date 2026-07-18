@@ -12,16 +12,16 @@ Rename table: [`docs/plans/unified_publish_pipeline_commit_terminology_refinemen
 - [x] 1.2 Open OpenSpec change `unified-commit-lazy-slot-load` (proposal, design, specs, tasks)
 - [x] 1.3 Point `CURRENT_WORK.md` / `PROJECT_STATE.md` at this change
 - [x] 1.4 Append DEC entry to `docs/DECISION_LOG.md` (Commit-centered lazy slot load)
-- [ ] 1.5 Freeze rename table rows as Action | Scope/object | Identifier (reject bare `ToCommitted` / new Flat)
-- [ ] 1.6 Complete DECISION_REVIEW + PREFLIGHT before first firmware edit
+- [x] 1.5 Freeze rename table rows as Action | Scope/object | Identifier (reject bare `ToCommitted` / new Flat)
+- [x] 1.6 Complete DECISION_REVIEW + PREFLIGHT before first firmware edit
 
 ## 2. Phase 1 — Publish → Commit rename
 
-- [ ] 2.1 Rename committed-truth APIs per terminology table (`hasCommittedPasses`, chunk-id helpers, gather*Events*, `SlotLoadSessionState::Committing`, …)
-- [ ] 2.2 Update guides / comments that describe published pass presence as committed passes
-- [ ] 2.3 Update native tests and fixtures for renamed symbols
-- [ ] 2.4 Grep gate: no remaining public Publish/Published identifiers in the committed-truth family
-- [ ] 2.5 **Gate:** `pio test -e native` PASS
+- [x] 2.1 Rename committed-truth APIs per terminology table (`hasCommittedPasses`, chunk-id helpers, gather*Events*, `SlotLoadSessionState::Committing`, …)
+- [x] 2.2 Update guides / comments that describe published pass presence as committed passes
+- [x] 2.3 Update native tests and fixtures for renamed symbols
+- [x] 2.4 Grep gate: no remaining public Publish/Published identifiers in the committed-truth family
+- [x] 2.5 **Gate:** `pio test -e native` PASS
 
 ## 3. Phase 2 — Audible-only boot (existing sync load OK)
 
