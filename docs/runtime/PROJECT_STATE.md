@@ -25,7 +25,7 @@ See [`docs/BRANCHING.md`](../BRANCHING.md).
 ## In flight
 
 - Boot full drain under title — **committed** `af1227c` ([`boot_load_full_drain_refinement.md`](../plans/boot_load_full_drain_refinement.md))
-- **Next project (proposed):** [`unified_publish_pipeline_deferred_lazy_loading_architecture.md`](../plans/unified_publish_pipeline_deferred_lazy_loading_architecture.md) — audible-set ready + DeferredLoad; new branch
+- **Next project (active OpenSpec):** [`unified-commit-lazy-slot-load`](../../openspec/changes/unified-commit-lazy-slot-load/) — architecture frozen; [parent plan](../plans/unified_publish_pipeline_deferred_lazy_loading_architecture.md)
 
 ## Shipped on branch (recent)
 

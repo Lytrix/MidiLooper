@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-07-18 (boot full drain under title)
+Last updated: 2026-07-18 (OpenSpec `unified-commit-lazy-slot-load` opened; architecture frozen)
 
 ---
 
@@ -29,11 +29,13 @@ Last updated: 2026-07-18 (boot full drain under title)
 
 **Parked:** load-while-playing; Phase 3b mid-file slices; Phase 4 SD chunk index; playback merged-events window.
 
-### Next separate project (proposed)
+### Next separate project (active OpenSpec)
 
-**Unified publish pipeline — deferred lazy loading**  
-Plan: [`docs/plans/unified_publish_pipeline_deferred_lazy_loading_architecture.md`](../plans/unified_publish_pipeline_deferred_lazy_loading_architecture.md)  
-Baseline commit: `af1227c`. New branch when starting (e.g. `feature/deferred-lazy-load`). MVP: audible-set publish → piano roll; on-demand load for other slots; DeferredLoad + load-while-playing later phases.
+**Unified commit — lazy slot load**  
+OpenSpec: [`openspec/changes/unified-commit-lazy-slot-load/`](../../openspec/changes/unified-commit-lazy-slot-load/)  
+Architecture (frozen): [`docs/plans/unified_publish_pipeline_deferred_lazy_loading_architecture.md`](../plans/unified_publish_pipeline_deferred_lazy_loading_architecture.md)  
+Refinements: [scheduling](../plans/unified_publish_pipeline_bootstrap_vs_deferred_executor_refinement.md), [final review](../plans/unified_publish_pipeline_final_review_refinement.md), [Commit terminology](../plans/unified_publish_pipeline_commit_terminology_refinement.md), [Commit as verb](../plans/unified_publish_pipeline_commit_as_verb_refinement.md), [review resolutions](../plans/unified_publish_pipeline_review_resolutions_refinement.md).  
+Baseline: `af1227c`. New branch when starting implementation (e.g. `feature/deferred-lazy-load`). Run `/opsx:apply` after artifacts are complete.
 
 ---
 
