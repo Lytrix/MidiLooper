@@ -8,7 +8,7 @@ Last updated: 2026-07-18 (deferred-lazy-load Phase 1–2)
 
 ## Current branch
 
-**`feature/deferred-lazy-load`** — OpenSpec `unified-commit-lazy-slot-load`: Commit rename + boot playback set (union selected+active). See [CURRENT_WORK.md](CURRENT_WORK.md).
+**`feature/deferred-lazy-load`** — OpenSpec `unified-commit-lazy-slot-load`: Phases 1–4 MVP done (boot audible set + on-demand select). See [CURRENT_WORK.md](CURRENT_WORK.md).
 
 *(Parallel: **`feature/persistence-work-queue`** @ `8b3f93e` — B1–B5 on `dev`.)*
 
@@ -24,7 +24,7 @@ See [`docs/BRANCHING.md`](../BRANCHING.md).
 
 ## In flight
 
-- **Active:** OpenSpec [`unified-commit-lazy-slot-load`](../../openspec/changes/unified-commit-lazy-slot-load/) — Phase 1 rename done; Phase 2 boot playback set fix (union selected+active; device gate pending)
+- **Active:** OpenSpec [`unified-commit-lazy-slot-load`](../../openspec/changes/unified-commit-lazy-slot-load/) — Phases 1–4 MVP done; Phase 5+ parked; Phase 3–4 firmware uncommitted
 - Memory reclaim + boot/display stack — **merged to `dev`** (PR #4)
 
 ## Shipped on branch (recent)

@@ -862,11 +862,9 @@ bool TrackManager::slotHasLoopContent(uint8_t trackIndex, uint8_t slotIndex, boo
     return false;
   }
   if (!hasDataInRam && restoreFromSd) {
-    if (!isSlotEnabled(trackIndex, slotIndex)) {
-      return false;
-    }
+    // Queue deferred Commit; do not block on sync SD. Payload-on-SD counts as content.
     StorageManager::prioritizeLoopSlotRestoreForFocus(trackIndex, slotIndex);
-    return track.hasDataInSlot(slotIndex);
+    return track.hasDataInSlot(slotIndex) || hasPayloadOnSd;
   }
   return true;
 }

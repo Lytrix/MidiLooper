@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-07-18 (ch2: enable playing slot on transport load)
+Last updated: 2026-07-18 (Phase 4 select-load device gate PASS — 170201)
 
 ---
 
@@ -17,11 +17,13 @@ Last updated: 2026-07-18 (ch2: enable playing slot on transport load)
 | Phase | Scope | Status |
 |-------|--------|--------|
 | **0** | Freeze docs + OpenSpec + DEC-026 + rename table + PREFLIGHT | **Done** |
-| **1** | Publish→Commit rename | **Done** (`d8e8324`) — native 647 PASS |
-| **2** | Boot playback set enqueue + ready | **Fix in tree** — union(selected, active) enqueue + `loadTransportSlotIndices` enables playing slot (ch2: DISP notes but no MO when selected slot disabled in bundle) |
-| **3+** | Cooperative session / deferred on-demand | Pending |
+| **1** | Publish→Commit rename | **Done** (`d8e8324`) |
+| **2** | Boot playback set + enable playing slot | **Done** (`1775d46`) — [`165032`](../../captures/session_20260718_165032.log) |
+| **3** | Cooperative `SlotLoadSession::advanceAfterPhaseWork` | **Done** (uncommitted with Phase 4) |
+| **4** | Deferred on-demand select restore | **Done** — gate [`170201`](../../captures/session_20260718_170201.log) |
+| **5+** | Derived / load-while-PLAYING | Parked |
 
-**Boot UX target:** OSTINATIX until boot playback set COMMITTED (per-track union of file selected + file active); other payloads stay HEADER_READY until select/focus / Phase 4.
+**MVP complete through Phase 4.** Next: commit Phase 3–4, then Phase 5+ or `/opsx:archive` when ready.
 
 ### Prioritized boot load isolation (merged to `dev`)
 
