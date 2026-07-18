@@ -13,9 +13,12 @@
 #include "LoopEventStore.h"
 #include "Utils/MemoryMonitor.h"
 #include "Utils/ExternalMemoryFirstAllocator.h"
+#include "Utils/InternalHeapFirstAllocator.h"
 
+#include <cstdlib>
 #include <cstring>
 #include <memory>
+#include <new>
 #include <vector>
 
 namespace {
@@ -57,6 +60,11 @@ bool canStagePersistedEvent(size_t stagedEventCount) {
     return false;
   }
 #if defined(ARDUINO)
+  // Chunk pool is EXTMEM. RAM1 floor is for mid_pass/capture — not SD LoadLoopJob
+  // staging under multi-track PLAYING (~7KB locals free; session_20260718_234625).
+  if (LoopEventStore::isSdLoadStaging()) {
+    return true;
+  }
   return LoopEventStore::hasInternalHeapHeadroomForNonCriticalWork(
       MemoryMonitor::getInternalHeapFreeBytes());
 #else
@@ -481,7 +489,16 @@ StorageIo STORAGE_LOOP_IO_MEM bufferIoFromParseState(const uint8_t* data, size_t
 
 bool STORAGE_LOOP_IO_MEM readSnapshotGeometryHeader(const StorageIo& io, PersistedLoopSnapshot& snapshot,
                                 bool legacyWithoutNoteId, uint32_t& passCountOut) {
-  snapshot = PersistedLoopSnapshot{};
+  releasePersistedLoopSnapshotChunks(snapshot);
+  snapshot.loopId = kInvalidLoopId;
+  snapshot.startLoopTick = 0;
+  snapshot.loopLengthTicks = 0;
+  snapshot.loopStartTick = 0;
+  snapshot.nextPassId = 1;
+  snapshot.nextNoteId = 1;
+  snapshot.nextMergeSequence = 0;
+  snapshot.lastCommittedPassId = kInvalidPassId;
+  snapshot.passes = LoopPasses{};
   if (!ioRead(io, &snapshot.loopId, sizeof(snapshot.loopId))) return false;
   if (!ioRead(io, &snapshot.startLoopTick, sizeof(snapshot.startLoopTick))) return false;
   if (!ioRead(io, &snapshot.loopLengthTicks, sizeof(snapshot.loopLengthTicks))) return false;
@@ -502,7 +519,6 @@ bool STORAGE_LOOP_IO_MEM readSnapshotGeometryHeader(const StorageIo& io, Persist
   uint32_t passCount = 0;
   if (!ioRead(io, &passCount, sizeof(passCount))) return false;
   passCountOut = passCount;
-  snapshot.passes = LoopPasses{};
   return true;
 }
 
@@ -592,6 +608,12 @@ PersistedLoopParseStepResult STORAGE_LOOP_IO_MEM stepPersistedLoopSnapshotParse(
     state.passCount = passCount;
     state.passesDone = 0;
     state.headerDone = true;
+    // Timed LoadLoopJob parse: one grain per turn — never fall through into pass/batch
+    // on the same stack frame (234625 hang after full 57KB read).
+    if (deadlineUs != 0 || maxGrains != 0) {
+      (void)grainDone();
+      return PersistedLoopParseStepResult::MoreWork;
+    }
     if (grainDone()) {
       return PersistedLoopParseStepResult::MoreWork;
     }
@@ -636,6 +658,11 @@ PersistedLoopParseStepResult STORAGE_LOOP_IO_MEM stepPersistedLoopSnapshotParse(
         return PersistedLoopParseStepResult::MoreWork;
       }
       state.passStaging = std::make_unique<LoopEventStore>();
+      // Yield after pass header + staging alloc — batch append/seal is the next turn.
+      if (deadlineUs != 0 || maxGrains != 0) {
+        (void)grainDone();
+        return PersistedLoopParseStepResult::MoreWork;
+      }
       if (grainDone()) {
         return PersistedLoopParseStepResult::MoreWork;
       }
@@ -654,7 +681,19 @@ PersistedLoopParseStepResult STORAGE_LOOP_IO_MEM stepPersistedLoopSnapshotParse(
           state.passMidiRemaining > LoopEventStoreConfig::CHUNK_CAPACITY
               ? LoopEventStoreConfig::CHUNK_CAPACITY
               : state.passMidiRemaining;
-      MidiEvent batch[LoopEventStoreConfig::CHUNK_CAPACITY];
+      if (!state.passEventBatch) {
+        const size_t bytes =
+            static_cast<size_t>(LoopEventStoreConfig::CHUNK_CAPACITY) * sizeof(MidiEvent);
+        void* raw = extmem_malloc(bytes);
+        if (!raw) {
+          raw = std::malloc(bytes);
+        }
+        if (!raw) {
+          return failAndReset();
+        }
+        state.passEventBatch.reset(static_cast<MidiEvent*>(raw));
+      }
+      MidiEvent* const batch = state.passEventBatch.get();
       if (!ioRead(io, batch, static_cast<size_t>(batchCount) * sizeof(MidiEvent))) {
         return failAndReset();
       }
@@ -705,6 +744,11 @@ PersistedLoopParseStepResult STORAGE_LOOP_IO_MEM stepPersistedLoopSnapshotParse(
     snapshot.passes.editPasses.clear();
     snapshot.passes.editPasses.reserve(editCount);
     state.editsHeaderDone = true;
+    // Timed parse: never fall through into reading all edit passes on this stack frame.
+    if (deadlineUs != 0 || maxGrains != 0) {
+      (void)grainDone();
+      return PersistedLoopParseStepResult::MoreWork;
+    }
     if (grainDone()) {
       return PersistedLoopParseStepResult::MoreWork;
     }

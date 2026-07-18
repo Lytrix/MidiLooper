@@ -18,6 +18,7 @@
 #include "TrackUndo.h"
 #include "LooperState.h"
 #include <cstdint>
+#include <cstdio>
 #include <cstring>
 #include <limits>
 #include "Utils/DebugSessionCapture.h"
@@ -1088,7 +1089,7 @@ void Track::prewarmPlaybackForSlot(uint8_t slotIndex) {
     return;
   }
   Loop& loop = loopForSlot(slotIndex);
-  (void)playbackRuntime.slot(slotIndex);
+  (void)playbackRuntime.trySlot(slotIndex);
   (void)loop.getPlaybackOrder();
 }
 
@@ -1098,16 +1099,49 @@ void Track::ensurePlaybackMergedEventsForSlot(uint8_t slotIndex) {
     return;
   }
   Loop& loop = loopForSlot(slotIndex);
-  LoopPlaybackRuntime& runtime = playbackRuntime.slot(slotIndex);
+  LoopPlaybackRuntime* runtime = playbackRuntime.trySlot(slotIndex);
+  if (runtime == nullptr) {
+#if defined(SESSION_CAPTURE)
+    char line[48];
+    std::snprintf(line, sizeof(line), "#CAP,LLBG,prewarm_fail,%u",
+                  static_cast<unsigned>(slotIndex));
+    DebugSessionCapture::appendCaptureTextLine(line);
+#endif
+    return;
+  }
+#if defined(SESSION_CAPTURE)
+  {
+    char line[48];
+    std::snprintf(line, sizeof(line), "#CAP,LLBG,prewarm_rt,%u",
+                  static_cast<unsigned>(slotIndex));
+    DebugSessionCapture::appendCaptureTextLine(line);
+  }
+#endif
   (void)loop.getPlaybackOrder();
   // Build destination merged MIDI before LoopEnd commit so launch is a cache hit.
   if (loop.hasCommittedPasses() && loop.loopLengthTicks > 0) {
+#if defined(SESSION_CAPTURE)
+    {
+      char line[48];
+      std::snprintf(line, sizeof(line), "#CAP,LLBG,prewarm_build,%u",
+                    static_cast<unsigned>(slotIndex));
+      DebugSessionCapture::appendCaptureTextLine(line);
+    }
+#endif
     const uint32_t currentTick = clockManager.getCurrentTick();
-    ensurePlaybackWindowBuilt(*this, loop, runtime, true, currentTick);
+    ensurePlaybackWindowBuilt(*this, loop, *runtime, true, currentTick);
     if (loop.playbackOrderDirty) {
       const ProjectionContext playbackContext = makePlaybackContext(*this, loop, currentTick);
-      ::rebuildPlaybackOrder(loop, runtime.primaryWindow.mergedEvents, playbackContext);
+      ::rebuildPlaybackOrder(loop, runtime->primaryWindow.mergedEvents, playbackContext);
     }
+#if defined(SESSION_CAPTURE)
+    {
+      char line[48];
+      std::snprintf(line, sizeof(line), "#CAP,LLBG,prewarm_built,%u",
+                    static_cast<unsigned>(slotIndex));
+      DebugSessionCapture::appendCaptureTextLine(line);
+    }
+#endif
   }
 }
 
@@ -1119,9 +1153,12 @@ bool Track::isPlaybackWindowReadyForSlot(uint8_t slotIndex) const {
   if (!loop.hasCommittedPasses() || loop.loopLengthTicks == 0) {
     return false;
   }
-  const LoopPlaybackRuntime& runtime = playbackRuntime.slot(slotIndex);
-  return runtime.primaryWindow.builtFromRevision == loop.playbackRevision &&
-         !runtime.primaryWindow.mergedEvents.empty();
+  const LoopPlaybackRuntime* runtime = playbackRuntime.slotIfAllocated(slotIndex);
+  if (runtime == nullptr) {
+    return false;
+  }
+  return runtime->primaryWindow.builtFromRevision == loop.playbackRevision &&
+         !runtime->primaryWindow.mergedEvents.empty();
 }
 
 void Track::releasePlaybackWindowMemory() {
@@ -1145,8 +1182,11 @@ TRACK_COLD_MEM bool Track::tryReleasePlaybackWindowMemory() {
       continue;
     }
 
-    LoopPlaybackRuntime& runtime = playbackRuntime.slot(slot);
-    if (runtime.primaryWindow.empty()) {
+    // Never allocate here — under Low pressure after a 57KB LoadLoopJob parse, trySlot can
+    // fail and slot() null-derefs (session_20260719_000205: silence after parse_leave before
+    // apply_enter on the next frame's reclaim).
+    LoopPlaybackRuntime* runtime = playbackRuntime.slotIfAllocated(slot);
+    if (runtime == nullptr || runtime->primaryWindow.empty()) {
       continue;
     }
 
@@ -1157,12 +1197,12 @@ TRACK_COLD_MEM bool Track::tryReleasePlaybackWindowMemory() {
     }
 
     const uint32_t windowRevision = loop.playbackRevision;
-    const bool windowStale = runtime.primaryWindow.builtFromRevision != windowRevision;
+    const bool windowStale = runtime->primaryWindow.builtFromRevision != windowRevision;
     if (transportActive && !windowStale) {
       continue;
     }
 
-    runtime.primaryWindow.clear();
+    runtime->primaryWindow.clear();
     reclaimed = true;
   }
   return reclaimed;

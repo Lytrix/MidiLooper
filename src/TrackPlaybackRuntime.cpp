@@ -74,15 +74,37 @@ TRACK_PLAYBACK_RUNTIME_COLD_MEM void TrackPlaybackRuntime::clearAllLedgers() {
   }
 }
 
-TRACK_PLAYBACK_RUNTIME_COLD_MEM LoopPlaybackRuntime& TrackPlaybackRuntime::slot(uint8_t slotIndex) {
+TRACK_PLAYBACK_RUNTIME_COLD_MEM LoopPlaybackRuntime* TrackPlaybackRuntime::trySlot(
+    uint8_t slotIndex) {
+  if (slotIndex >= Config::MAX_LOOPS_PER_TRACK) {
+    return nullptr;
+  }
   LoopPlaybackRuntimePtr& rt = runtimeBySlot_[slotIndex];
   if (!rt) {
     rt.reset(allocateLoopPlaybackRuntime());
   }
-  if (!rt) {
-    rt.reset(allocateLoopPlaybackRuntime());
+  return rt.get();
+}
+
+TRACK_PLAYBACK_RUNTIME_COLD_MEM LoopPlaybackRuntime* TrackPlaybackRuntime::slotIfAllocated(
+    uint8_t slotIndex) {
+  if (slotIndex >= Config::MAX_LOOPS_PER_TRACK) {
+    return nullptr;
   }
-  return *rt;
+  return runtimeBySlot_[slotIndex].get();
+}
+
+TRACK_PLAYBACK_RUNTIME_COLD_MEM const LoopPlaybackRuntime* TrackPlaybackRuntime::slotIfAllocated(
+    uint8_t slotIndex) const {
+  return const_cast<TrackPlaybackRuntime*>(this)->slotIfAllocated(slotIndex);
+}
+
+TRACK_PLAYBACK_RUNTIME_COLD_MEM LoopPlaybackRuntime& TrackPlaybackRuntime::slot(uint8_t slotIndex) {
+  // Hot path: runtime must already exist (boot/prewarm/trySlot). Deferred/cold paths
+  // must use trySlot — never embed a static LoopPlaybackRuntime fallback (ActiveNoteLedger
+  // ≈24KB would overflow RAM1; session_20260718_235713 null-deref was alloc failure).
+  LoopPlaybackRuntime* runtime = trySlot(slotIndex);
+  return *runtime;
 }
 
 TRACK_PLAYBACK_RUNTIME_COLD_MEM const LoopPlaybackRuntime& TrackPlaybackRuntime::slot(

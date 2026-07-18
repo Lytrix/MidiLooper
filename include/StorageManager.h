@@ -153,9 +153,10 @@ public:
     static void pollBootQuarantineWorkspaceBeforeLoad(uint32_t listenMs = 3000);
     static void processHitlSerialCommands();
 #endif
-    /// Time-budgeted LoadLoopJob frame (Phase A). Advances active/parked jobs under budgetUs.
-    static void runDeferredFrame(uint32_t budgetUs);
-    /// Idle slice: restore deferred loop slot payload(s) using background budget.
+    /// Domain step for submitted LoadLoopJob work under budgetUs.
+    /// Call only from DeferredJobScheduler::runFrame (Phase B.2).
+    static void stepSubmittedLoadJobs(uint32_t budgetUs);
+    /// Idle slice: restore deferred loop slot payload(s) via DeferredJobScheduler.
     static void processDeferredLoopSlotRestore();
     /// Idle slice: hydrate one track undo stack snapshot body from the runtime bundle.
     static void processDeferredUndoSnapshots();

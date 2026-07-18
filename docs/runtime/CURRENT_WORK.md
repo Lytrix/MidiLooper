@@ -15,14 +15,24 @@ Last updated: 2026-07-18 (Phase B.1 DeferredJobScheduler adapter)
 | Layer | Doc | Status |
 |-------|-----|--------|
 | **North star** | [`deferred_job_scheduler_architecture.md`](../plans/deferred_job_scheduler_architecture.md) | **Approved** (DEC-027) |
-| **Phase B plan** | [`deferred_job_scheduler_phase_b_enhancement.md`](../plans/deferred_job_scheduler_phase_b_enhancement.md) | **B.1 done**; B.2 next |
+| **Phase B plan** | [`deferred_job_scheduler_phase_b_enhancement.md`](../plans/deferred_job_scheduler_phase_b_enhancement.md) | **B.1–B.2 done**; B.3 next |
 | OpenSpec | [`deferred-job-scheduler`](../../openspec/changes/deferred-job-scheduler/) | Active |
 
 **Predecessor archived:** `openspec/changes/archive/2026-07-18-unified-commit-lazy-slot-load/` — gates [`224607`](../../captures/session_20260718_224607.log), [`230145`](../../captures/session_20260718_230145.log).
 
-**B.1 done:** `DeferredJobScheduler::runFrame` → `StorageManager::runDeferredFrame`; `main` calls scheduler.
+**B.1 gate:** PASS [`231510`](../../captures/session_20260718_231510.log).
 
-**Next:** B.2 StorageManager load-step API used only by scheduler.
+**B.2 done:** `StorageManager::stepSubmittedLoadJobs`; sole frame entry `DeferredJobScheduler::runFrame`.
+
+**Hang (233202…235129):** Parse completes through edits (`parse_enter,1,0,2,0`); die on Commit. Cause: `findLastCommittedEventTick` flattened each chunk into InternalHeap `MidiEventVec` → `abort()` under PLAYING. Fix: use `chunkTickSpan`; CAP-only apply/done; skip save while SlotLoadSession active; yield after edits header.
+
+**Hang (235713):** Commit OK (`apply_us`/`done,6,0`); die on deferred playback prewarm. Cause: `slot()` null-deref on runtime alloc fail. Fix: `trySlot` / fail-soft prewarm CAP.
+
+**Hang (001237):** Different path — Loop 1 **double** → overdub; `park 2/2` Serial then no `begin,6,0`. Cause: `ensureActiveLoadLoopJobSelected` returned early while Low parked under PLAYING, starving focus High begin; overdub on HEADER_READY 65-bar shell. Fix: begin focus High even when Low is parked; CAP-only park/resume (no Serial).
+
+**Gate PASS [`001444`](../../captures/session_20260719_001444.log):** `park,2,2,0` → `begin,6,0,57284` → `done,6,0` → `prewarm_leave,6,0,1`; further focus loads under PLAYING (`0,0` / `1,0` / `1,3`); transport stop clean. Root admission bug confirmed.
+
+**Next:** resume Phase B.3 (or archive hang notes); keep RAM1-safe reclaim/`trySlot` (link budget ~6 KB local free).
 
 ### Prioritized boot load isolation (merged to `dev`)
 

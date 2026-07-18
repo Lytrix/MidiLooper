@@ -13,7 +13,6 @@
 #endif
 
 void DEFERRED_JOB_SCHEDULER_MEM DeferredJobScheduler::runFrame(uint32_t budgetUs) {
-    // B.1 adapter: LoadLoopJob execution still lives in StorageManager.
-    // Later phases move selection/step ownership into this type.
-    StorageManager::runDeferredFrame(budgetUs);
+    // B.2: scheduler owns the frame entry; StorageManager steps submitted LoadLoopJobs.
+    StorageManager::stepSubmittedLoadJobs(budgetUs);
 }

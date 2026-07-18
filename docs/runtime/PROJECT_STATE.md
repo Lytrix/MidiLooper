@@ -24,7 +24,7 @@ See [`docs/BRANCHING.md`](../BRANCHING.md).
 
 ## In flight
 
-- **Active:** OpenSpec [`deferred-job-scheduler`](../../openspec/changes/deferred-job-scheduler/) — **B.1** thin `runFrame` adapter
+- **Active:** OpenSpec [`deferred-job-scheduler`](../../openspec/changes/deferred-job-scheduler/) — **B.1–B.2**; B.1 gate [`231510`](../../captures/session_20260718_231510.log)
 - Memory reclaim + boot/display stack — **merged to `dev`** (PR #4)
 
 ## Shipped on branch (recent)
