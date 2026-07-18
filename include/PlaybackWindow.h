@@ -7,10 +7,15 @@
 /// Scratch merge cache for one loop playback path.
 struct PlaybackWindow {
   uint32_t builtFromRevision = 0;
+  /// For long loops: tick range covered by `mergedEvents` (windowed gather).
+  uint32_t windowStartTick = 0;
+  uint32_t windowLengthTicks = 0;
   SessionMidiEventVec mergedEvents;
 
   void clear() {
     builtFromRevision = 0;
+    windowStartTick = 0;
+    windowLengthTicks = 0;
     mergedEvents.clear();
   }
 

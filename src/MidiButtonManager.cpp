@@ -136,6 +136,10 @@ uint32_t MidiButtonManager::getButtonPressStartTime(uint8_t note, uint8_t channe
     return processor.getButtonPressStartTime(note, channel);
 }
 
+bool MidiButtonManager::hasPendingTapAction() const {
+    return processor.hasPendingTapAction();
+}
+
 void MidiButtonManager::printButtonConfiguration() const {
     const auto& configs = MidiButtonConfig::Config::getButtonConfigs();
     

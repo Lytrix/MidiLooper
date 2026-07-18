@@ -37,6 +37,7 @@ public:
     // Query button states (delegated to processor)
     bool isButtonPressed(uint8_t note, uint8_t channel) const;
     uint32_t getButtonPressStartTime(uint8_t note, uint8_t channel) const;
+    bool hasPendingTapAction() const;
     
     // Statistics and debugging
     void printButtonConfiguration() const;

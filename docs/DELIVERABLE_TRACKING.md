@@ -2,7 +2,7 @@
 
 > Project goal and decision log: [00-authority/PROJECT_INTENT.md](00-authority/PROJECT_INTENT.md). This page is the single shipped-vs-next overview.
 
-## Shipped vs Next (updated Jun 2026)
+## Shipped vs Next (updated Jul 2026)
 
 **Shipped** (in firmware on `feature/track-multi-looping`):
 
@@ -16,6 +16,7 @@
 - SD persistence v4 (passes via `StorageLoopIo`) with deferred runtime save (`StorageManager::requestDeferredSaveState` / `processDeferredSaveState`); PSRAM chunk pool + PSRAM-first length-scaling allocators (`LoopEventStore`, `PsramFirstAllocator`)
 - **StorageSession persistence refactor (DEC-012, Jun 2026):** job RAM on `storageSession`; FSM split `WorkspaceSave` / `RevisionCommit` / `RevisionLoad` + `Overlay.cpp`; revision-load request vocabulary; normative specs `revision-load`, `storage-session-jobs`, `storage-session-layout`
 - DROID USB host MIDI buttons/faders (`MidiHandler`, `MidiButtonManager`, `MidiFaderManager`)
+- **Commit-centered lazy slot load (DEC-026, Jul 2026, `feature/deferred-lazy-load`):** audible-only boot Commit; on-demand select/focus restore via deferred queue (`unified-commit-lazy-slot-load` Phases 1–4). Device gates [`165032`](../captures/session_20260718_165032.log), [`170201`](../captures/session_20260718_170201.log)
 
 **Not in firmware** (docs may suggest otherwise):
 
@@ -23,6 +24,8 @@
 - Encoder + 4-button GPIO base module — `ButtonManager` exists but is never called from `main.cpp` (see intent decision 1)
 - DROID LFO pulse feedback, CC value editing, Fader3 quantization %, Fader4 pitch transpose, EEPROM config
 - 16×2 LCD — driver present, pins disabled in `Globals.h`
+- Interactive SD slot hydrate while PLAYING — **in tree** on `feature/deferred-lazy-load` (Phase 5.2); device gate pending
+- `DERIVED_READY` off Commit critical path (optional polish)
 
 ---
 

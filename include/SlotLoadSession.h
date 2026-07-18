@@ -15,7 +15,7 @@ enum class SlotLoadSessionState : uint8_t {
   Failed,
 };
 
-/// Result of one cooperative advance of a slot-load session.
+/// Result of one deferred LoadLoopJob / slot-load session advance.
 enum class SlotLoadAdvanceResult : uint8_t {
   MoreWork = 0,
   Completed,

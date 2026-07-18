@@ -2,28 +2,25 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-07-18 (Phase 4 select-load device gate PASS — 170201)
+Last updated: 2026-07-18 (Phase A LoadLoopJob time-budget + park in tree; device gate pending)
 
 ---
 
 ## Now implementing
 
-### Unified commit — lazy slot load
+### Unified commit — lazy slot load → deferred jobs
 
 **Branch:** `feature/deferred-lazy-load`  
-**OpenSpec:** [`openspec/changes/unified-commit-lazy-slot-load/`](../../openspec/changes/unified-commit-lazy-slot-load/)  
-**Architecture (frozen):** [`docs/plans/unified_publish_pipeline_deferred_lazy_loading_architecture.md`](../plans/unified_publish_pipeline_deferred_lazy_loading_architecture.md)
 
-| Phase | Scope | Status |
-|-------|--------|--------|
-| **0** | Freeze docs + OpenSpec + DEC-026 + rename table + PREFLIGHT | **Done** |
-| **1** | Publish→Commit rename | **Done** (`d8e8324`) |
-| **2** | Boot playback set + enable playing slot | **Done** (`1775d46`) — [`165032`](../../captures/session_20260718_165032.log) |
-| **3** | Cooperative `SlotLoadSession::advanceAfterPhaseWork` | **Done** (uncommitted with Phase 4) |
-| **4** | Deferred on-demand select restore | **Done** — gate [`170201`](../../captures/session_20260718_170201.log) |
-| **5+** | Derived / load-while-PLAYING | Parked |
+| Layer | Doc | Status |
+|-------|-----|--------|
+| **North star** | [`deferred_job_scheduler_architecture.md`](../plans/deferred_job_scheduler_architecture.md) | **Approved** — demote-on-focus; atomic Commit; Phase B = `DeferredJobScheduler` |
+| **Phase A (next code)** | [`deferred_storage_time_budget_scheduler_enhancement.md`](../plans/deferred_storage_time_budget_scheduler_enhancement.md) | **In tree** — time budgets + park/demote; **device gate** pending |
+| OpenSpec | `unified-commit-lazy-slot-load` | Amend or follow-on change when Phase A starts |
 
-**MVP complete through Phase 4.** Next: commit Phase 3–4, then Phase 5+ or `/opsx:archive` when ready.
+**Device baseline:** [`190417`](../../captures/session_20260718_190417.log) smooth; focus 64-bar empty→notes ~0.8s until Commit.
+
+**Display follow-up:** focus `done 1/3` crash fixed — defer prewarm one main turn ([`211430`](../../captures/session_20260718_211430.log): `deferred playback prewarm leave` + `LoopEnd playback commit track=1 1->3`). Prior fail [`210946`](../../captures/session_20260718_210946.log).
 
 ### Prioritized boot load isolation (merged to `dev`)
 

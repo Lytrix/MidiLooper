@@ -2,13 +2,13 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-07-18 (deferred-lazy-load Phase 1–2)
+Last updated: 2026-07-18 (DEC-027 DeferredJobScheduler; Phase A next)
 
 ---
 
 ## Current branch
 
-**`feature/deferred-lazy-load`** — OpenSpec `unified-commit-lazy-slot-load`: Phases 1–4 MVP done (boot audible set + on-demand select). See [CURRENT_WORK.md](CURRENT_WORK.md).
+**`feature/deferred-lazy-load`** — OpenSpec `unified-commit-lazy-slot-load` + DEC-027 Phase A: `runDeferredFrame` / `LoadLoopJob` active+parked. Device gate pending. See [CURRENT_WORK.md](CURRENT_WORK.md).
 
 *(Parallel: **`feature/persistence-work-queue`** @ `8b3f93e` — B1–B5 on `dev`.)*
 
@@ -24,7 +24,7 @@ See [`docs/BRANCHING.md`](../BRANCHING.md).
 
 ## In flight
 
-- **Active:** OpenSpec [`unified-commit-lazy-slot-load`](../../openspec/changes/unified-commit-lazy-slot-load/) — Phases 1–4 MVP done; Phase 5+ parked; Phase 3–4 firmware uncommitted
+- **Active:** OpenSpec [`unified-commit-lazy-slot-load`](../../openspec/changes/unified-commit-lazy-slot-load/) — Phases 1–4 done; Phase 5.2 load-while-PLAYING pending device gate
 - Memory reclaim + boot/display stack — **merged to `dev`** (PR #4)
 
 ## Shipped on branch (recent)

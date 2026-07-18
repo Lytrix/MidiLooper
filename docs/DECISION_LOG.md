@@ -14,6 +14,7 @@ Persistent record of **accepted architectural and implementation decisions**. No
 
 | ID | Date | Topic | Status |
 |----|------|-------|--------|
+| [DEC-027](#dec-027-deferred-job-scheduler-north-star) | 2026-07-18 | Deferred job scheduler north star (Phase A under StorageManager) | Accepted; amended vocabulary 2026-07-18 |
 | [DEC-026](#dec-026-commit-centered-lazy-slot-load) | 2026-07-18 | Commit-centered lazy slot load (audible boot + on-demand hydrate) | Accepted |
 | [DEC-025](#dec-025-split-focus-playing-preview-pending) | 2026-07-09 | Split focus: playing / preview / pending; committed-transition invariant | Accepted |
 | [DEC-024](#dec-024-loop-owned-undo-ownership-direction) | 2026-07-08 | Loop-owned undo ownership direction (Phase 1 filter, Phase 2 migrate stack) | Accepted |
@@ -42,7 +43,30 @@ Persistent record of **accepted architectural and implementation decisions**. No
 
 ---
 
-<!-- Append new entries below (newest first). Next ID: DEC-027 -->
+<!-- Append new entries below (newest first). Next ID: DEC-028 -->
+
+## DEC-027 — Deferred job scheduler north star
+
+**Date:** 2026-07-18  
+**Status:** Accepted; amended 2026-07-18 (vocabulary: `DeferredJobScheduler`, Job owns state, Workspace reserved for product)  
+**Context:** Lazy restore, deferred persistence, and future display/export work share the same interruptible shape. Byte-chunk restore alone does not scale; a second ad-hoc scheduler per domain would duplicate policy (budget, focus, demote, reclaim). Early draft names (`CooperativeScheduler`, job Workspace) collided with product Workspace and did not name scheduler scope.
+
+**Decision:**
+
+1. **North star:** **`DeferredJobScheduler`** owns execution of all non-realtime, interruptible, resumable firmware work. Domain managers submit jobs and own job logic.  
+2. **Phase A (now):** implement time-budgeted resumable **`LoadLoopJob`** under `StorageManager::runDeferredFrame()` — no new top-level scheduler type yet. See [`deferred_storage_time_budget_scheduler_enhancement.md`](plans/deferred_storage_time_budget_scheduler_enhancement.md).  
+3. **Phase B:** introduce `DeferredJobScheduler::runFrame()` and migrate execution ownership out of StorageManager (formal ownership trigger; OpenSpec before firmware).  
+4. **Focus change:** demote jobs; do not cancel (preserves SD/parser progress). Cancel only for memory pressure discard, SD failure, unload, set close.  
+5. **Commit:** atomic only — job execution state → Commit → published loop. No partial loop states. Job owns its unpublished fields until Commit (no separate Workspace/Context/Scratch type for job temp).  
+6. **Preemption policy:** High normally preempts; finish current job when estimated remaining work &lt; scheduler slice (not %-complete).  
+7. **Vocabulary:** Job; `DeferredJobScheduler`; product **Workspace** and **Slot** reserved. Avoid Workspace/Scratch/Context/Slot for scheduler resources.  
+8. **Phase A pins:** load frame before display; deferred save stays separate under StorageManager; `applySnapshot` may exceed one slice in MVP.
+
+**Consequences:** Phase A may ship without a new Manager. Phase B requires an OpenSpec change + architecture gate before `DeferredJobScheduler` lands. Extends DEC-026 Commit model; does not replace it. DEC-020 “cooperative budget-driven” persistence remains shipped history; the unified deferred owner type name is `DeferredJobScheduler`.
+
+**References:** [`deferred_job_scheduler_architecture.md`](plans/deferred_job_scheduler_architecture.md), DEC-026, DEC-020 (persistence budgets as prior art).
+
+---
 
 ## DEC-026 — Commit-centered lazy slot load
 

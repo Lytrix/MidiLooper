@@ -128,6 +128,8 @@ public:
   void prewarmPlaybackForSlot(uint8_t slotIndex);
   /// Full merged-MIDI build for a slot (LoopEnd / NextGrid launch prep). Not for boot prewarm.
   void ensurePlaybackMergedEventsForSlot(uint8_t slotIndex);
+  /// True when primary playback window matches current loop revision (safe LoopEnd activate).
+  bool isPlaybackWindowReadyForSlot(uint8_t slotIndex) const;
   /// Drop cached playback merge buffers for all slots (frees extmem during capture).
   void releasePlaybackWindowMemory();
   /// Phase 1B — release rebuildable playback windows when not referenced this tick.

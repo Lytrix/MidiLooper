@@ -1149,7 +1149,26 @@ void TrackManager::updateAllTracks(uint32_t currentTick) {
     if (tracks[i].isPlaying() && slotStateMachine.hasPendingSlotSwitch(i) &&
         slotStateMachine.shouldCommitPendingSlotSwitch(i, tracks[i], playTick)) {
       const uint8_t targetSlot = slotStateMachine.getPendingSlotIndex(i);
-      if (targetSlot < Config::MAX_LOOPS_PER_TRACK && tracks[i].hasDataInSlot(targetSlot)) {
+      if (targetSlot >= Config::MAX_LOOPS_PER_TRACK) {
+        slotStateMachine.clearPendingSlotSwitch(i);
+        pendingEnabledSetReplacement[i] = false;
+      } else if (!tracks[i].hasCommittedPassesInSlot(targetSlot)) {
+        // HEADER_READY / SD still loading: keep pending until Commit.
+        // hasDataInSlot is true from metadata length alone — launching that empty 64-bar
+        // slot then letting LoadLoopJob adopt into the *active* playing loop hard-faults
+        // on fast track→slot3 (session_20260718_205809).
+        if (!StorageManager::loopSlotHasPayloadOnSd(i, targetSlot)) {
+          logger.info("LoopEnd playback commit cancelled track=%u target=%u (no committed MIDI)",
+                      static_cast<unsigned>(i), static_cast<unsigned>(targetSlot));
+          slotStateMachine.clearPendingSlotSwitch(i);
+          pendingEnabledSetReplacement[i] = false;
+        }
+      } else if (!tracks[i].isPlaybackWindowReadyForSlot(targetSlot) &&
+                 tracks[i].getLoop(targetSlot).shouldAvoidFullVisualRebuild(
+                     tracks[i].getLoop(targetSlot).loopLengthTicks)) {
+        // Long loop just Committed: do not full-gather on the clock path (210001).
+        // Main prewarms after LoadLoopJob Commit; keep pending until window is ready.
+      } else if (tracks[i].hasDataInSlot(targetSlot)) {
         const uint8_t previousPlaying = getPlayingSlotIndex(i);
         slotStateMachine.clearPendingSlotSwitch(i);
         // Wire silence before swapping the audible slot (same pattern as overdub→play).

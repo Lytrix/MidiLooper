@@ -18,7 +18,7 @@ enum class CapturePressureAction : uint8_t {
   PrioritizePersistence,
 };
 
-/// True when the mid-pass writer may take one cooperative slice (queue non-empty, no SD conflict).
+/// True when the mid-pass writer may take one budgeted deferred slice (queue non-empty, no SD conflict).
 bool shouldRunMidPassWriter(uint16_t queueDepth, bool otherSdIoActive);
 
 /// When a workspace save is pending, prefer the work-item writer over mid-pass chunks.
@@ -26,7 +26,7 @@ bool shouldDeferMidPassForWorkspaceSave(bool savePending, bool urgentRequested,
                                         uint16_t workQueueDepth, uint16_t writingWorkItemCount,
                                         bool workItemActive);
 
-/// True when the semantic work-item writer may take one cooperative slice.
+/// True when the semantic work-item writer may take one budgeted deferred slice.
 bool shouldRunPersistenceWorkItemWriter(uint16_t queueDepth, uint16_t writingWorkItemCount,
                                         bool otherSdIoActive);
 

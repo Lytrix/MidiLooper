@@ -49,10 +49,11 @@ Rename table: [`docs/plans/unified_publish_pipeline_commit_terminology_refinemen
 ## 6. Phase 5+ — Later (parked until MVP green)
 
 - [ ] 6.1 Derived rebuild off Commit critical path (DERIVED_READY optional polish)
-- [ ] 6.2 Load while PLAYING interactive slices (formal gate)
+- [x] 6.2 Load while PLAYING interactive slices (formal gate) — allow one deferred restore per loop while PLAYING; still blocked during RECORDING/OVERDUBBING
+- [x] 6.2b Phase A time-budgeted `LoadLoopJob` — `runDeferredFrame` + `LoadLoopBudget`; demote parks one in-flight job; load before display (device smoothness gate pending)
 - [ ] 6.3 Undo / import / paste documented on Commit contract (as those producers land)
 
 ## 7. Closeout
 
-- [ ] 7.1 Update `CURRENT_WORK.md`, `PROJECT_STATE.md`, `DELIVERABLE_TRACKING.md`
-- [ ] 7.2 Archive change when gates pass (`/opsx:archive`)
+- [x] 7.1 Update `CURRENT_WORK.md`, `PROJECT_STATE.md`, `DELIVERABLE_TRACKING.md`
+- [ ] 7.2 Archive change when gates pass (`/opsx:archive`) — device gate for 6.2 pending
