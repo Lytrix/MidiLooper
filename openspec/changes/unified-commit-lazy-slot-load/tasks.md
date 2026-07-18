@@ -25,11 +25,11 @@ Rename table: [`docs/plans/unified_publish_pipeline_commit_terminology_refinemen
 
 ## 3. Phase 2 — Audible-only boot (existing sync load OK)
 
-- [ ] 3.1 Stop auto-enqueue of non-audible SD slots at boot
-- [ ] 3.2 Sync-commit audible set only (`isAudibleBootSlot`); MVP may keep `loadLoopSlotFromCurrentSetSd`
-- [ ] 3.3 Redefine `bootInteractiveReady` for audible COMMITTED (explicit flag; never remap via `getActiveLoopIndex()`)
-- [ ] 3.4 Allow piano roll / interactive UI at COMMITTED without waiting for DERIVED_READY
-- [ ] 3.5 Update `docs/Guides/BOOT_LOAD.md`
+- [x] 3.1 Stop auto-enqueue of non-audible SD slots at boot
+- [x] 3.2 Sync-commit audible set only (`isAudibleBootSlot`); MVP may keep `loadLoopSlotFromCurrentSetSd`
+- [x] 3.3 Redefine `bootInteractiveReady` for audible COMMITTED (explicit flag; never remap via `getActiveLoopIndex()`)
+- [x] 3.4 Allow piano roll / interactive UI at COMMITTED without waiting for DERIVED_READY
+- [x] 3.5 Update `docs/Guides/BOOT_LOAD.md`
 - [ ] 3.6 **Gate:** device capture — ready ≪ full-set baseline `020628`; all actives audible on first Play
 
 ## 4. Phase 3 — Cooperative SlotLoadSession (incremental)

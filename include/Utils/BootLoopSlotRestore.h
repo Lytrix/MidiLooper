@@ -23,11 +23,11 @@ inline bool isAudibleBootSlot(uint8_t trackIndex, uint8_t slotIndex, uint8_t sel
 }
 
 /// Priority for deferred loop-slot restore at boot (lower = sooner).
-/// Used for drain order under the title screen; interactive starts only after the
-/// full queue is empty (not after priority-0 alone).
+/// Boot enqueue is **audible-only** (`isAudibleBootSlot`); this priority orders that set.
+/// Non-audible SD payloads stay HEADER_READY until explicitly requested at runtime.
 /// 0 = active slots all tracks + focus selected if split
-/// 1 = selected slot on other tracks
-/// 2 = all other slots
+/// 1 = selected slot on other tracks (not used at boot enqueue while audible-only)
+/// 2 = all other slots (not used at boot enqueue while audible-only)
 inline uint8_t computeBootRestorePriority(uint8_t trackIndex, uint8_t slotIndex,
                                           uint8_t selectedTrackIdx,
                                           const uint8_t* activeLoopIndex, size_t activeCount,
