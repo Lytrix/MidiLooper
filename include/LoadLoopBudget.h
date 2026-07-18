@@ -27,8 +27,9 @@ uint32_t resolveLoadLoopSliceBudgetUs(bool bootTitle, bool focusWork, bool captu
 /// Same exhaustion rule as PersistenceBudget::persistenceSliceBudgetExhausted.
 bool loadLoopSliceBudgetExhausted(uint32_t sliceBudgetUs, uint32_t elapsedUs);
 
-/// Preemption exception: finish active job before switching focus when apply is
-/// pending or one more read chunk completes the SD payload.
+/// Preemption exception during Reading: finish active job before switching focus
+/// when apply is pending or one more read chunk completes the SD payload.
+/// Parsing may be demoted/parked; Committing must finish (caller enforces).
 bool shouldFinishActiveBeforePreempt(size_t bytesRead, size_t payloadSize,
                                      size_t chunkBytes = ReadChunkBytes);
 

@@ -12,9 +12,6 @@
 #include "PersistenceQueue.h"
 #if defined(ARDUINO)
 #include "Utils/MemoryMonitor.h"
-#endif
-
-#if defined(ARDUINO)
 #include "Logger.h"
 #endif
 
@@ -219,20 +216,18 @@ bool LOOP_EVENT_STORE_COLD_MEM LoopEventStore::hasHeadroomForCommittedChunkIdLis
   if (count == 0) {
     return true;
   }
-#if defined(PIO_UNIT_TEST_NATIVE)
+#if defined(PIO_UNIT_TEST_NATIVE) || !defined(ARDUINO)
   (void)count;
   return true;
 #else
+  // Never call getExternalMemoryPoolFreeBytes() here — sm_malloc_stats_pool walks the
+  // entire PSRAM pool (~300ms on 8MB; session_20260718_224607 parse_us ≈295ms per finalize).
+  // probeCommittedChunkIdBytes() in tryAssignCommittedChunkIds is the real alloc gate.
   const size_t bytes = count * sizeof(uint16_t);
-#if defined(ARDUINO)
-  if (MemoryMonitor::getExternalMemoryPoolFreeBytes() >= bytes) {
+  if (MemoryMonitor::isExternalMemoryPoolAvailable()) {
     return true;
   }
   return MemoryMonitor::getInternalHeapFreeBytes() >= bytes;
-#else
-  (void)bytes;
-  return true;
-#endif
 #endif
 }
 

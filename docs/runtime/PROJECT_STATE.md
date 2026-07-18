@@ -2,13 +2,13 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-07-18 (DEC-027 DeferredJobScheduler; Phase A next)
+Last updated: 2026-07-18 (Phase A.7 + 6.2-device PASS)
 
 ---
 
 ## Current branch
 
-**`feature/deferred-lazy-load`** — OpenSpec `unified-commit-lazy-slot-load` + DEC-027 Phase A: `runDeferredFrame` / `LoadLoopJob` active+parked. Device gate pending. See [CURRENT_WORK.md](CURRENT_WORK.md).
+**`feature/deferred-lazy-load`** — OpenSpec `unified-commit-lazy-slot-load`: Phase A complete (A.6 parse split, A.7 finalize headroom); **6.2-device PASS** [`224607`](../../captures/session_20260718_224607.log). Archive after A.7 re-flash confirm. See [CURRENT_WORK.md](CURRENT_WORK.md).
 
 *(Parallel: **`feature/persistence-work-queue`** @ `8b3f93e` — B1–B5 on `dev`.)*
 
@@ -24,7 +24,7 @@ See [`docs/BRANCHING.md`](../BRANCHING.md).
 
 ## In flight
 
-- **Active:** OpenSpec [`unified-commit-lazy-slot-load`](../../openspec/changes/unified-commit-lazy-slot-load/) — Phases 1–4 done; Phase 5.2 load-while-PLAYING pending device gate
+- **Active:** OpenSpec [`unified-commit-lazy-slot-load`](../../openspec/changes/unified-commit-lazy-slot-load/) — **6.2-device PASS**; archive pending A.7 confirm
 - Memory reclaim + boot/display stack — **merged to `dev`** (PR #4)
 
 ## Shipped on branch (recent)

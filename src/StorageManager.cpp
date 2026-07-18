@@ -86,10 +86,16 @@ char restoredSetBundlePath_[80] = {};
 /// After a completed restore attempt (success or empty/fail), do not re-enqueue.
 bool loopSlotRestoreAttempted_[Config::NUM_TRACKS][Config::MAX_LOOPS_PER_TRACK]{};
 
-/// LoadLoopJob: read SD payload in timed slices across main-loop calls,
-/// then parse/commit. At most one active + one parked (demote-on-focus).
+/// LoadLoopJob: read SD payload in timed slices, parse under budget into a staging
+/// snapshot (Phase A.6), then one-shot atomic Commit. At most one active + one parked.
+enum class LoadLoopJobPhase : uint8_t {
+    Reading = 0,
+    Parsing = 1,
+    Committing = 2,
+};
 struct LoadLoopJob {
     bool active = false;
+    LoadLoopJobPhase phase = LoadLoopJobPhase::Reading;
     uint8_t track = 0;
     uint8_t slot = 0;
     File file;
@@ -97,6 +103,8 @@ struct LoadLoopJob {
     size_t payloadSize = 0;
     size_t bytesRead = 0;
     std::vector<uint8_t, ExternalMemoryFirstAllocator<uint8_t>> buffer;
+    PersistedLoopSnapshot snapshot{};
+    PersistedLoopParseState parseState{};
     SlotLoadSession* session = nullptr;
 };
 LoadLoopJob loadLoopJob_{};
@@ -2619,6 +2627,9 @@ STORAGE_PERSIST_MEM void clearLoadLoopJobInstance(LoadLoopJob& job) {
     if (job.file) {
         job.file.close();
     }
+    releasePersistedLoopSnapshotChunks(job.snapshot);
+    job.parseState = PersistedLoopParseState{};
+    job.phase = LoadLoopJobPhase::Reading;
     job.buffer.clear();
     job.buffer.shrink_to_fit();
     job.active = false;
@@ -2635,6 +2646,7 @@ STORAGE_PERSIST_MEM void clearLoadLoopJob() {
 STORAGE_PERSIST_MEM void swapLoadLoopJobs(LoadLoopJob& a, LoadLoopJob& b) {
     using std::swap;
     swap(a.active, b.active);
+    swap(a.phase, b.phase);
     swap(a.track, b.track);
     swap(a.slot, b.slot);
     swap(a.file, b.file);
@@ -2642,7 +2654,25 @@ STORAGE_PERSIST_MEM void swapLoadLoopJobs(LoadLoopJob& a, LoadLoopJob& b) {
     swap(a.payloadSize, b.payloadSize);
     swap(a.bytesRead, b.bytesRead);
     swap(a.buffer, b.buffer);
+    swap(a.snapshot, b.snapshot);
+    swap(a.parseState, b.parseState);
     swap(a.session, b.session);
+}
+
+STORAGE_PERSIST_MEM bool shouldFinishLoadLoopJobBeforePreempt() {
+    if (!loadLoopJob_.active) {
+        return false;
+    }
+    // Never abandon mid-publish.
+    if (loadLoopJob_.phase == LoadLoopJobPhase::Committing) {
+        return true;
+    }
+    // Mid-parse may demote/park — snapshot + cursors travel with the job.
+    if (loadLoopJob_.phase == LoadLoopJobPhase::Parsing) {
+        return false;
+    }
+    return LoadLoopBudget::shouldFinishActiveBeforePreempt(loadLoopJob_.bytesRead,
+                                                          loadLoopJob_.payloadSize);
 }
 
 STORAGE_PERSIST_MEM void parkActiveLoadLoopJob() {
@@ -2673,8 +2703,7 @@ STORAGE_PERSIST_MEM void resumeParkedLoadLoopJobIfFocus(uint8_t focusTrack, uint
         return;
     }
     if (loadLoopJob_.active) {
-        if (LoadLoopBudget::shouldFinishActiveBeforePreempt(loadLoopJob_.bytesRead,
-                                                            loadLoopJob_.payloadSize)) {
+        if (shouldFinishLoadLoopJobBeforePreempt()) {
             return;
         }
         if (parkedLoadLoopJob_.active) {
@@ -2724,8 +2753,7 @@ STORAGE_PERSIST_MEM void demoteActiveLoadLoopJobForFocus(uint8_t focusTrack, uin
             return;
         }
     }
-    if (LoadLoopBudget::shouldFinishActiveBeforePreempt(loadLoopJob_.bytesRead,
-                                                        loadLoopJob_.payloadSize)) {
+    if (shouldFinishLoadLoopJobBeforePreempt()) {
         return;
     }
     if (parkedLoadLoopJob_.active) {
@@ -2749,6 +2777,35 @@ STORAGE_PERSIST_MEM void markLoopSlotRestoreAttempted(uint8_t trackIndex, uint8_
     if (trackIndex < Config::NUM_TRACKS && slotIndex < Config::MAX_LOOPS_PER_TRACK) {
         loopSlotRestoreAttempted_[trackIndex][slotIndex] = true;
     }
+}
+
+STORAGE_PERSIST_MEM bool loadLoopJobIsFocusSlot() {
+    if (!loadLoopJob_.active || trackManager.getTrackCount() == 0) {
+        return false;
+    }
+    return loadLoopJob_.track == trackManager.getSelectedTrackIndex() &&
+           loadLoopJob_.slot == trackManager.getSelectedSlotIndex(loadLoopJob_.track);
+}
+
+/// Frame admission for Low LoadLoopJob work (not a job lifecycle suspend).
+/// Pending-tap / OLED ordering are enforced in main before runDeferredFrame.
+/// While PLAYING with idle focus, skip Low work — parse/finalize/Serial otherwise
+/// starve buttons until freeze (session_20260718_223713).
+/// False ⇒ SKIP_THIS_FRAME: leave active/parked/queue progress; do not park.
+STORAGE_PERSIST_MEM bool canRunBackgroundLoadLoopNow() {
+    if (bootTitleLoadDrain_) {
+        return true;
+    }
+    if (StorageManager::isFocusedLoopSlotRestoreWork()) {
+        return true;
+    }
+    for (uint8_t i = 0; i < trackManager.getTrackCount(); ++i) {
+        const Track& t = trackManager.getTrack(i);
+        if (t.isRecording() || t.isOverdubbing() || t.isPlaying()) {
+            return false;
+        }
+    }
+    return true;
 }
 
 STORAGE_PERSIST_MEM bool beginLoadLoopJob(uint8_t trackIndex, uint8_t slotIndex) {
@@ -2804,6 +2861,7 @@ STORAGE_PERSIST_MEM bool beginLoadLoopJob(uint8_t trackIndex, uint8_t slotIndex)
     }
 
     loadLoopJob_.active = true;
+    loadLoopJob_.phase = LoadLoopJobPhase::Reading;
     loadLoopJob_.track = trackIndex;
     loadLoopJob_.slot = slotIndex;
     loadLoopJob_.file = loopFile;
@@ -2812,15 +2870,24 @@ STORAGE_PERSIST_MEM bool beginLoadLoopJob(uint8_t trackIndex, uint8_t slotIndex)
     loadLoopJob_.bytesRead = 0;
     loadLoopJob_.buffer.clear();
     loadLoopJob_.buffer.reserve(payloadSize);
+    releasePersistedLoopSnapshotChunks(loadLoopJob_.snapshot);
+    loadLoopJob_.parseState = PersistedLoopParseState{};
     loadLoopJob_.session = new SlotLoadSession(trackIndex, slotIndex);
     (void)loadLoopJob_.session->advanceAfterPhaseWork();
 
-    Serial.print("[StorageManager] LoadLoopJob begin ");
-    Serial.print(trackIndex);
-    Serial.print('/');
-    Serial.print(slotIndex);
-    Serial.print(" bytes=");
-    Serial.println(static_cast<unsigned long>(payloadSize));
+#if defined(SESSION_CAPTURE) || defined(PERF_TELEMETRY)
+    // Background begin/done/frame Serial stalls main ~0.5–0.7s per line and starves
+    // track-switch OLED (session_20260718_213044). Keep text logs for focus loads.
+    if (trackIndex == trackManager.getSelectedTrackIndex() &&
+        slotIndex == trackManager.getSelectedSlotIndex(trackIndex)) {
+        Serial.print("[StorageManager] LoadLoopJob begin ");
+        Serial.print(trackIndex);
+        Serial.print('/');
+        Serial.print(slotIndex);
+        Serial.print(" bytes=");
+        Serial.println(static_cast<unsigned long>(payloadSize));
+    }
+#endif
     return true;
 }
 
@@ -2851,6 +2918,11 @@ STORAGE_PERSIST_MEM void ensureActiveLoadLoopJobSelected(uint8_t focusTrack, uin
     demoteActiveLoadLoopJobForFocus(focusTrack, focusSlot);
     resumeParkedLoadLoopJobIfFocus(focusTrack, focusSlot);
 
+    if (!canRunBackgroundLoadLoopNow()) {
+        // SKIP_THIS_FRAME: keep job progress; do not park solely for admission failure.
+        return;
+    }
+
     if (loadLoopJob_.active) {
         return;
     }
@@ -2859,10 +2931,12 @@ STORAGE_PERSIST_MEM void ensureActiveLoadLoopJobSelected(uint8_t focusTrack, uin
     if (parkedLoadLoopJob_.active) {
         swapLoadLoopJobs(loadLoopJob_, parkedLoadLoopJob_);
 #if defined(SESSION_CAPTURE)
-        Serial.print("[StorageManager] LoadLoopJob resume parked ");
-        Serial.print(loadLoopJob_.track);
-        Serial.print('/');
-        Serial.println(loadLoopJob_.slot);
+        if (loadLoopJobIsFocusSlot()) {
+            Serial.print("[StorageManager] LoadLoopJob resume parked ");
+            Serial.print(loadLoopJob_.track);
+            Serial.print('/');
+            Serial.println(loadLoopJob_.slot);
+        }
 #endif
         return;
     }
@@ -2875,44 +2949,11 @@ STORAGE_PERSIST_MEM void ensureActiveLoadLoopJobSelected(uint8_t focusTrack, uin
     (void)beginLoadLoopJob(next.track, next.slot);
 }
 
-STORAGE_PERSIST_MEM SlotLoadAdvanceResult commitLoadLoopJobApply() {
+STORAGE_PERSIST_MEM SlotLoadAdvanceResult commitLoadLoopJobPublish() {
     if (!loadLoopJob_.active || loadLoopJob_.session == nullptr) {
         return SlotLoadAdvanceResult::Failed;
     }
     Loop& loop = trackManager.getTrack(loadLoopJob_.track).getLoop(loadLoopJob_.slot);
-
-    (void)loadLoopJob_.session->advanceAfterPhaseWork();
-
-    struct BufferIo {
-        const uint8_t* data;
-        size_t size;
-        size_t pos = 0;
-        StorageIo io() {
-            return StorageIo{[this](const void*, size_t) { return false; },
-                             [this](void* out, size_t n) {
-                                 if (pos + n > size) {
-                                     return false;
-                                 }
-                                 std::memcpy(out, data + pos, n);
-                                 pos += n;
-                                 return true;
-                             }};
-        }
-    };
-    BufferIo buffered{loadLoopJob_.buffer.data(), loadLoopJob_.buffer.size(), 0};
-    PersistedLoopSnapshot snapshot{};
-    bool readOk = readPersistedLoopSnapshot(buffered.io(), snapshot, false);
-    if (!readOk) {
-        buffered.pos = 0;
-        readOk = readPersistedLoopSnapshot(buffered.io(), snapshot, true);
-    }
-    if (!readOk) {
-        Serial.println("[StorageManager] WARN: LoadLoopJob parse failed");
-        resetLoopSlotToEmpty(loop, loadLoopJob_.slot);
-        markLoopSlotRestoreAttempted(loadLoopJob_.track, loadLoopJob_.slot);
-        clearLoadLoopJobInstance(loadLoopJob_);
-        return SlotLoadAdvanceResult::Failed;
-    }
 
     uint32_t magic = 0;
     if (!loadLoopJob_.file.read(reinterpret_cast<uint8_t*>(&magic), sizeof(magic)) ||
@@ -2928,39 +2969,110 @@ STORAGE_PERSIST_MEM SlotLoadAdvanceResult commitLoadLoopJobApply() {
 #if defined(SESSION_CAPTURE) || defined(PERF_TELEMETRY)
     const uint32_t applyStartUs = micros();
 #endif
-    applySnapshotToLoop(loop, snapshot);
+    applySnapshotToLoop(loop, loadLoopJob_.snapshot);
 #if defined(SESSION_CAPTURE) || defined(PERF_TELEMETRY)
     const uint32_t applyUs = micros() - applyStartUs;
-    if (applyUs > LoadLoopBudget::FocusRestoreUs) {
+    if (applyUs > LoadLoopBudget::FocusRestoreUs && loadLoopJobIsFocusSlot()) {
         Serial.print("[StorageManager] LoadLoopJob apply overshoot us=");
         Serial.println(applyUs);
     }
+#if defined(SESSION_CAPTURE)
+    {
+        char line[48];
+        std::snprintf(line, sizeof(line), "#CAP,LLBG,apply_us,%lu",
+                      static_cast<unsigned long>(applyUs));
+        DebugSessionCapture::appendCaptureTextLine(line);
+    }
 #endif
+#endif
+    // Snapshot ownership moved onto Loop — drop empty shell without releaseChunkRefs.
+    loadLoopJob_.snapshot = PersistedLoopSnapshot{};
+    loadLoopJob_.parseState = PersistedLoopParseState{};
+
     markLoopCommittedChunksPersistedFromSdLoad(loop);
     (void)loadLoopJob_.session->advanceAfterPhaseWork();
     markLoopSlotRestoreAttempted(loadLoopJob_.track, loadLoopJob_.slot);
 
-    Serial.print("[StorageManager] LoadLoopJob done ");
-    Serial.print(loadLoopJob_.track);
-    Serial.print('/');
-    Serial.println(loadLoopJob_.slot);
+#if defined(SESSION_CAPTURE) || defined(PERF_TELEMETRY)
+    if (loadLoopJobIsFocusSlot()) {
+        Serial.print("[StorageManager] LoadLoopJob done ");
+        Serial.print(loadLoopJob_.track);
+        Serial.print('/');
+        Serial.println(loadLoopJob_.slot);
+    }
+#if defined(SESSION_CAPTURE)
+    else {
+        char line[40];
+        std::snprintf(line, sizeof(line), "#CAP,LLBG,done,%u,%u",
+                      static_cast<unsigned>(loadLoopJob_.track),
+                      static_cast<unsigned>(loadLoopJob_.slot));
+        DebugSessionCapture::appendCaptureTextLine(line);
+    }
+#endif
+#endif
 
     delete loadLoopJob_.session;
     loadLoopJob_.session = nullptr;
     if (loadLoopJob_.file) {
         loadLoopJob_.file.close();
     }
-    // Keep capacity until the next beginLoadLoopJob clear — shrink_to_fit on the Commit
-    // turn churns the heap while PLAYING (focus 1/3 path, session_20260718_210946).
     loadLoopJob_.buffer.clear();
     loadLoopJob_.active = false;
+    loadLoopJob_.phase = LoadLoopJobPhase::Reading;
     return SlotLoadAdvanceResult::Completed;
+}
+
+STORAGE_PERSIST_MEM SlotLoadAdvanceResult stepLoadLoopJobParse(uint32_t deadlineUs) {
+    if (!loadLoopJob_.active || loadLoopJob_.session == nullptr) {
+        return SlotLoadAdvanceResult::Failed;
+    }
+#if defined(SESSION_CAPTURE) || defined(PERF_TELEMETRY)
+    const uint32_t parseStartUs = micros();
+#endif
+    const PersistedLoopParseStepResult result = stepPersistedLoopSnapshotParse(
+        loadLoopJob_.buffer.data(), loadLoopJob_.buffer.size(), loadLoopJob_.snapshot,
+        loadLoopJob_.parseState, deadlineUs);
+#if defined(SESSION_CAPTURE) || defined(PERF_TELEMETRY)
+    const uint32_t parseUs = micros() - parseStartUs;
+#if defined(SESSION_CAPTURE)
+    // Only log multi-ms parse grains — per-batch CAP flooded USB and starved buttons (223713).
+    if (parseUs > 10000u) {
+        char line[48];
+        std::snprintf(line, sizeof(line), "#CAP,LLBG,parse_us,%lu",
+                      static_cast<unsigned long>(parseUs));
+        DebugSessionCapture::appendCaptureTextLine(line);
+    }
+#endif
+#endif
+    if (result == PersistedLoopParseStepResult::Failed) {
+        Serial.println("[StorageManager] WARN: LoadLoopJob parse failed");
+        Loop& loop = trackManager.getTrack(loadLoopJob_.track).getLoop(loadLoopJob_.slot);
+        resetLoopSlotToEmpty(loop, loadLoopJob_.slot);
+        markLoopSlotRestoreAttempted(loadLoopJob_.track, loadLoopJob_.slot);
+        clearLoadLoopJobInstance(loadLoopJob_);
+        return SlotLoadAdvanceResult::Failed;
+    }
+    if (result == PersistedLoopParseStepResult::MoreWork) {
+        return SlotLoadAdvanceResult::MoreWork;
+    }
+    // Parse complete — publish on a later frame (one expensive op per frame).
+    loadLoopJob_.phase = LoadLoopJobPhase::Committing;
+    (void)loadLoopJob_.session->advanceAfterPhaseWork();
+    return SlotLoadAdvanceResult::MoreWork;
 }
 
 STORAGE_PERSIST_MEM SlotLoadAdvanceResult stepLoadLoopJob(uint32_t deadlineUs) {
     if (!loadLoopJob_.active || loadLoopJob_.session == nullptr) {
         return SlotLoadAdvanceResult::Failed;
     }
+
+    if (loadLoopJob_.phase == LoadLoopJobPhase::Committing) {
+        return commitLoadLoopJobPublish();
+    }
+    if (loadLoopJob_.phase == LoadLoopJobPhase::Parsing) {
+        return stepLoadLoopJobParse(deadlineUs);
+    }
+
     Loop& loop = trackManager.getTrack(loadLoopJob_.track).getLoop(loadLoopJob_.slot);
     uint8_t steps = 0;
 
@@ -2988,7 +3100,12 @@ STORAGE_PERSIST_MEM SlotLoadAdvanceResult stepLoadLoopJob(uint32_t deadlineUs) {
         }
     }
 
-    return commitLoadLoopJobApply();
+    // SD fill done — enter Parsing next frame (do not parse on the same turn as last read).
+    loadLoopJob_.phase = LoadLoopJobPhase::Parsing;
+    loadLoopJob_.parseState = PersistedLoopParseState{};
+    releasePersistedLoopSnapshotChunks(loadLoopJob_.snapshot);
+    (void)loadLoopJob_.session->advanceAfterPhaseWork();
+    return SlotLoadAdvanceResult::MoreWork;
 }
 
 void resetTracksAfterFailedLoad() {
@@ -3680,15 +3797,12 @@ void STORAGE_PERSIST_MEM StorageManager::runDeferredFrame(uint32_t budgetUs) {
     if (!loadLoopJob_.active) {
         return;
     }
+    // Idle focus + no spare-time admission: skip frame; leave job progress.
+    if (!loadLoopJobIsFocusSlot() && !canRunBackgroundLoadLoopNow()) {
+        return;
+    }
     // beginLoadLoopJob (open/seek) is one full turn — do not step or chain more jobs.
     if (!hadActiveAtEntry && loadLoopJob_.active) {
-#if defined(SESSION_CAPTURE) || defined(PERF_TELEMETRY)
-        const uint32_t elapsedUs = micros() - frameStartUs;
-        if (elapsedUs > budgetUs) {
-            Serial.print("[StorageManager] LoadLoopJob begin-only us=");
-            Serial.println(elapsedUs);
-        }
-#endif
         return;
     }
 
@@ -3696,41 +3810,41 @@ void STORAGE_PERSIST_MEM StorageManager::runDeferredFrame(uint32_t budgetUs) {
         if (!loadLoopJob_.active) {
             break;
         }
+        const LoadLoopJobPhase phaseBefore = loadLoopJob_.phase;
         const SlotLoadAdvanceResult result = stepLoadLoopJob(deadlineUs);
         ++steps;
         // One job per frame after steps — chaining begins starves MIDI/buttons (~600ms stalls).
         if (result != SlotLoadAdvanceResult::MoreWork) {
             break;
         }
+        // Phase A.6: Reading→Parsing or Parsing→Committing yields the frame (one expensive
+        // class of work per turn). Same-phase parse/read steps may continue under deadline.
+        if (loadLoopJob_.active && loadLoopJob_.phase != phaseBefore) {
+            break;
+        }
+        // One parse grain (header or event batch) per main-loop turn so MIDI/buttons
+        // are not delayed by stacking batches until the µs deadline (223130).
+        if (result == SlotLoadAdvanceResult::MoreWork &&
+            phaseBefore == LoadLoopJobPhase::Parsing) {
+            break;
+        }
     }
 
 #if defined(SESSION_CAPTURE) || defined(PERF_TELEMETRY)
     const uint32_t elapsedUs = micros() - frameStartUs;
-    if (steps > 0 && (elapsedUs > budgetUs || loadLoopJob_.active || parkedLoadLoopJob_.active)) {
-        Serial.print("[StorageManager] LoadLoopJob frame us=");
-        Serial.print(elapsedUs);
-        Serial.print(" budget=");
-        Serial.print(budgetUs);
-        Serial.print(" steps=");
-        Serial.print(steps);
-        if (loadLoopJob_.active) {
-            Serial.print(" active=");
-            Serial.print(loadLoopJob_.track);
-            Serial.print('/');
-            Serial.print(loadLoopJob_.slot);
-            Serial.print('@');
-            Serial.print(static_cast<unsigned long>(loadLoopJob_.bytesRead));
-            Serial.print('/');
-            Serial.print(static_cast<unsigned long>(loadLoopJob_.payloadSize));
-        }
-        if (parkedLoadLoopJob_.active) {
-            Serial.print(" parked=");
-            Serial.print(parkedLoadLoopJob_.track);
-            Serial.print('/');
-            Serial.print(parkedLoadLoopJob_.slot);
-        }
-        Serial.println();
+    // Never Serial-print LoadLoopJob frames — USB CDC ~0.3s/line (213044 / 223713).
+    // CAP ring only for multi-ms overshoots (focus or background).
+#if defined(SESSION_CAPTURE)
+    if (elapsedUs > 10000u && steps > 0) {
+        char line[56];
+        std::snprintf(line, sizeof(line), "#CAP,LLBG,frame_us,%lu",
+                      static_cast<unsigned long>(elapsedUs));
+        DebugSessionCapture::appendCaptureTextLine(line);
     }
+#else
+    (void)elapsedUs;
+    (void)steps;
+#endif
 #endif
 }
 

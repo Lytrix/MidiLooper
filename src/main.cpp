@@ -31,6 +31,124 @@
 #include "Utils/DebugSessionCapture.h"
 #include "Utils/BootTelemetry.h"
 
+// Keep LoadLoopJob + OLED orchestration out of ITCM — RAM1 is at the 32KB page edge.
+// noinline: a single call site would otherwise inline this into loop() and stay in ITCM.
+FLASHMEM __attribute__((noinline)) static void runDeferredLoadAndDisplayFrame(
+    uint32_t now, uint32_t& lastDisplayUpdate, bool timingCriticalTrackActive) {
+  static bool bootSlotLoadRefreshPending = true;
+  StorageManager::setBootTitleLoadDrain(bootSlotLoadRefreshPending);
+  bool captureActive = false;
+  for (uint8_t i = 0; i < trackManager.getTrackCount(); ++i) {
+    const Track& t = trackManager.getTrack(i);
+    if (t.isRecording() || t.isOverdubbing()) {
+      captureActive = true;
+      break;
+    }
+  }
+  const uint8_t focusTrack = trackManager.getSelectedTrackIndex();
+  const uint8_t focusSlot = trackManager.getSelectedSlotIndex(focusTrack);
+  const bool focusHadCommittedPasses =
+      trackManager.getTrack(focusTrack).getLoop(focusSlot).hasCommittedPasses();
+  const bool focusSlotRestoreWork = StorageManager::isFocusedLoopSlotRestoreWork();
+  // Phase 5.2: focus High while PLAYING; background Low only when transport idle
+  // (canRunBackgroundLoadLoopNow — PLAYING skips Low; 223713 freeze). Capture/tap block all.
+  const bool slotRestoreTurnFree =
+      !midiButtonManager.hasPendingTapAction() && !captureActive;
+  const bool allowDeferredSlotRestore =
+      slotRestoreTurnFree &&
+      !StorageManager::isRevisionLoadHeldForWorkspaceDirty();
+  static int8_t deferredPlaybackPrewarmTrack = -1;
+  static uint8_t deferredPlaybackPrewarmSlot = 0;
+  bool skipDisplayAfterFocusCommit = false;
+  if (deferredPlaybackPrewarmTrack >= 0) {
+    const uint8_t prewarmTrack = static_cast<uint8_t>(deferredPlaybackPrewarmTrack);
+    const uint8_t prewarmSlot = deferredPlaybackPrewarmSlot;
+    deferredPlaybackPrewarmTrack = -1;
+    skipDisplayAfterFocusCommit = true;
+#if defined(SESSION_CAPTURE) || defined(PERF_TELEMETRY)
+    Serial.print("[main] deferred playback prewarm enter ");
+    Serial.print(prewarmTrack);
+    Serial.print('/');
+    Serial.println(prewarmSlot);
+#endif
+    trackManager.getTrack(prewarmTrack).ensurePlaybackMergedEventsForSlot(prewarmSlot);
+    displayManager.invalidateLiveDisplayCache();
+#if defined(SESSION_CAPTURE) || defined(PERF_TELEMETRY)
+    Serial.println("[main] deferred playback prewarm leave");
+#endif
+  }
+
+  const bool backgroundOnlyLoad =
+      !bootSlotLoadRefreshPending && !focusSlotRestoreWork;
+  // Paint before any background-only LoadLoopJob frame (PLAYING or STOPPED fill).
+  const bool playBackgroundLoad = backgroundOnlyLoad;
+
+  // Paint before background LoadLoopJob while PLAYING (session_20260718_213044).
+  // Skip OLED only on focus Commit / focus-load session — not every SlotLoadSession.
+  if (playBackgroundLoad) {
+    const bool skipFocusLoad =
+        skipDisplayAfterFocusCommit ||
+        (focusSlotRestoreWork && SlotLoadSession::isActive());
+    if (!skipFocusLoad && now - lastDisplayUpdate >= LCD::DISPLAY_UPDATE_INTERVAL) {
+      lastDisplayUpdate = now;
+      displayManager.update();
+    }
+  }
+
+  if (allowDeferredSlotRestore) {
+    const uint32_t budgetUs = LoadLoopBudget::resolveLoadLoopSliceBudgetUs(
+        bootSlotLoadRefreshPending, focusSlotRestoreWork, captureActive);
+    StorageManager::runDeferredFrame(budgetUs);
+    if (!focusHadCommittedPasses &&
+        trackManager.getTrack(focusTrack).getLoop(focusSlot).hasCommittedPasses()) {
+      deferredPlaybackPrewarmTrack = static_cast<int8_t>(focusTrack);
+      deferredPlaybackPrewarmSlot = focusSlot;
+      skipDisplayAfterFocusCommit = true;
+#if defined(SESSION_CAPTURE) || defined(PERF_TELEMETRY)
+      Serial.print("[main] focus Commit; playback prewarm deferred ");
+      Serial.print(focusTrack);
+      Serial.print('/');
+      Serial.println(focusSlot);
+#endif
+    }
+    if (!timingCriticalTrackActive && !SlotLoadSession::isActive()) {
+      StorageManager::processDeferredUndoSnapshots();
+      StorageManager::processEditAutosave(looperState.getLooperState());
+      trackManager.reclaimUnreferencedDisabledPasses();
+    }
+  }
+
+  if (!playBackgroundLoad) {
+    const bool skipFocusLoad =
+        skipDisplayAfterFocusCommit ||
+        (focusSlotRestoreWork && SlotLoadSession::isActive());
+    if (!skipFocusLoad && now - lastDisplayUpdate >= LCD::DISPLAY_UPDATE_INTERVAL) {
+      lastDisplayUpdate = now;
+      displayManager.update();
+    }
+  }
+
+  if (bootSlotLoadRefreshPending && StorageManager::bootInteractiveReady()) {
+    bootSlotLoadRefreshPending = false;
+    StorageManager::setBootTitleLoadDrain(false);
+    StorageManager::enqueueRemainingLoopSlotRestoresFromSd();
+    displayManager.finishBootSetup();
+    if (!midiHandler.isUsbHostReady()) {
+      midiHandler.beginUsbHost();
+      emitBootMilestone("usb_host", "begin");
+    }
+    trackManager.clearLeds();
+    if (editManager.isLoopEditSession()) {
+      midiHandler.sendLedFeedbackNoteOn(100, 64);
+      midiHandler.sendLedFeedbackNoteOff(100);
+    }
+    trackManager.onBootSlotLoadComplete();
+    midiHandler.processDroidUsbHostOutbound();
+    displayManager.update();
+    lastDisplayUpdate = now;
+  }
+}
+
 void setup() {
   HotPathTelemetry::reset();
   delay(500);  // USB re-enumeration after reset
@@ -209,106 +327,7 @@ void loop() {
     trackManager.getTrack(i).processDeferredIdleMaintenance(now);
   }
 
-  // LoadLoopJob frame before display (Phase A): µs budgets, demote/park on focus.
-  static bool bootSlotLoadRefreshPending = true;
-  StorageManager::setBootTitleLoadDrain(bootSlotLoadRefreshPending);
-  bool captureActive = false;
-  for (uint8_t i = 0; i < trackManager.getTrackCount(); ++i) {
-    const Track& t = trackManager.getTrack(i);
-    if (t.isRecording() || t.isOverdubbing()) {
-      captureActive = true;
-      break;
-    }
-  }
-  const uint8_t focusTrack = trackManager.getSelectedTrackIndex();
-  const uint8_t focusSlot = trackManager.getSelectedSlotIndex(focusTrack);
-  const bool focusHadCommittedPasses =
-      trackManager.getTrack(focusTrack).getLoop(focusSlot).hasCommittedPasses();
-  const bool focusSlotRestoreWork = StorageManager::isFocusedLoopSlotRestoreWork();
-  const bool slotRestoreTurnFree =
-      !midiButtonManager.hasPendingTapAction() &&
-      (!timingCriticalTrackActive || focusSlotRestoreWork);
-  const bool allowDeferredSlotRestore =
-      slotRestoreTurnFree &&
-      !StorageManager::isRevisionLoadHeldForWorkspaceDirty();
-  // After focus Commit of a long SD slot, skip OLED on this same turn — stacking
-  // Commit + invalidateForSlotChange + update hard-faulted (session_20260718_204439 1/3).
-  // Same-turn ensurePlaybackMergedEventsForSlot after focus done 1/3 also hard-faults
-  // (session_20260718_210946); background done 1/3 without focus prewarm survives (205600).
-  static int8_t deferredPlaybackPrewarmTrack = -1;
-  static uint8_t deferredPlaybackPrewarmSlot = 0;
-  bool skipDisplayAfterFocusCommit = false;
-  if (deferredPlaybackPrewarmTrack >= 0) {
-    const uint8_t prewarmTrack = static_cast<uint8_t>(deferredPlaybackPrewarmTrack);
-    const uint8_t prewarmSlot = deferredPlaybackPrewarmSlot;
-    deferredPlaybackPrewarmTrack = -1;
-    skipDisplayAfterFocusCommit = true;
-#if defined(SESSION_CAPTURE) || defined(PERF_TELEMETRY)
-    Serial.print("[main] deferred playback prewarm enter ");
-    Serial.print(prewarmTrack);
-    Serial.print('/');
-    Serial.println(prewarmSlot);
-#endif
-    trackManager.getTrack(prewarmTrack).ensurePlaybackMergedEventsForSlot(prewarmSlot);
-    displayManager.invalidateLiveDisplayCache();
-#if defined(SESSION_CAPTURE) || defined(PERF_TELEMETRY)
-    Serial.println("[main] deferred playback prewarm leave");
-#endif
-  }
-  if (allowDeferredSlotRestore) {
-    const uint32_t budgetUs = LoadLoopBudget::resolveLoadLoopSliceBudgetUs(
-        bootSlotLoadRefreshPending, focusSlotRestoreWork, captureActive);
-    StorageManager::runDeferredFrame(budgetUs);
-    if (!focusHadCommittedPasses &&
-        trackManager.getTrack(focusTrack).getLoop(focusSlot).hasCommittedPasses()) {
-      // Schedule prewarm for the *next* main turn — not stacked on Commit teardown.
-      deferredPlaybackPrewarmTrack = static_cast<int8_t>(focusTrack);
-      deferredPlaybackPrewarmSlot = focusSlot;
-      skipDisplayAfterFocusCommit = true;
-#if defined(SESSION_CAPTURE) || defined(PERF_TELEMETRY)
-      Serial.print("[main] focus Commit; playback prewarm deferred ");
-      Serial.print(focusTrack);
-      Serial.print('/');
-      Serial.println(focusSlot);
-#endif
-    }
-    if (!timingCriticalTrackActive && !SlotLoadSession::isActive()) {
-      StorageManager::processDeferredUndoSnapshots();
-      StorageManager::processEditAutosave(looperState.getLooperState());
-      trackManager.reclaimUnreferencedDisabledPasses();
-    }
-  }
-
-  // Title screen stays until bootInteractiveReady(); update() early-returns while
-  // bootSetupComplete_ is false. Skip OLED while a SlotLoadSession owns the SD bus
-  // or on the turn focus just Committed (windowed paint runs next interval).
-  if (!skipDisplayAfterFocusCommit && !SlotLoadSession::isActive() &&
-      now - lastDisplayUpdate >= LCD::DISPLAY_UPDATE_INTERVAL) {
-    lastDisplayUpdate = now;
-    displayManager.update();
-  }
-
-  // Audible set COMMITTED: clear title, start USB, then enqueue remaining for background fill.
-  if (bootSlotLoadRefreshPending && StorageManager::bootInteractiveReady()) {
-    bootSlotLoadRefreshPending = false;
-    StorageManager::setBootTitleLoadDrain(false);
-    StorageManager::enqueueRemainingLoopSlotRestoresFromSd();
-    displayManager.finishBootSetup();
-    if (!midiHandler.isUsbHostReady()) {
-      midiHandler.beginUsbHost();
-      emitBootMilestone("usb_host", "begin");
-    }
-    // DROID may retain LED state across reset; refresh after host is live.
-    trackManager.clearLeds();
-    if (editManager.isLoopEditSession()) {
-      midiHandler.sendLedFeedbackNoteOn(100, 64);
-      midiHandler.sendLedFeedbackNoteOff(100);
-    }
-    trackManager.onBootSlotLoadComplete();
-    midiHandler.processDroidUsbHostOutbound();
-    displayManager.update();
-    lastDisplayUpdate = now;
-  }
+  runDeferredLoadAndDisplayFrame(now, lastDisplayUpdate, timingCriticalTrackActive);
 
   StorageManager::processDeferredSaveState(looperState.getLooperState());
 

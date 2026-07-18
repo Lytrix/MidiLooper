@@ -5,12 +5,17 @@
 
 #if defined(ARDUINO)
 #include <Arduino.h>
+#define STORAGE_LOOP_IO_MEM FLASHMEM
+#else
+#define STORAGE_LOOP_IO_MEM
 #endif
 
 #include "LoopEventStore.h"
 #include "Utils/MemoryMonitor.h"
 #include "Utils/ExternalMemoryFirstAllocator.h"
 
+#include <cstring>
+#include <memory>
 #include <vector>
 
 namespace {
@@ -107,7 +112,7 @@ bool writeCapturePassSlotFileHeader(const StorageIo& io, const CapturePassSlotFi
   return true;
 }
 
-bool readCapturePassSlotFileHeader(const StorageIo& io, CapturePassSlotFileHeader& passHeader,
+bool STORAGE_LOOP_IO_MEM readCapturePassSlotFileHeader(const StorageIo& io, CapturePassSlotFileHeader& passHeader,
                                   CommittedChunkIdList& committedChunkIds, uint32_t loopLengthTicks) {
   uint32_t midiCount = 0;
   if (!ioRead(io, &passHeader.id, sizeof(passHeader.id))) return false;
@@ -432,6 +437,302 @@ bool readPersistedLoopSnapshot(const StorageIo& io, PersistedLoopSnapshot& snaps
     snapshot.nextNoteId = 1;
   }
   return readPersistedEditsTail(io, snapshot);
+}
+
+void STORAGE_LOOP_IO_MEM releasePersistedLoopSnapshotChunks(PersistedLoopSnapshot& snapshot) {
+  if (snapshot.passes.hasRecordPass()) {
+    LoopEventStore::releaseChunkRefs(snapshot.passes.recordPass.committedChunkIds);
+    snapshot.passes.recordPass = RecordPass{};
+  }
+  for (OverdubPass& pass : snapshot.passes.overdubPasses) {
+    LoopEventStore::releaseChunkRefs(pass.committedChunkIds);
+  }
+  snapshot.passes.overdubPasses.clear();
+  snapshot.passes.editPasses.clear();
+  snapshot = PersistedLoopSnapshot{};
+}
+
+namespace {
+
+uint32_t parseClockUs() {
+#if defined(ARDUINO)
+  return micros();
+#else
+  return 0;
+#endif
+}
+
+bool parseBudgetExhausted(uint32_t deadlineUs) {
+  return deadlineUs != 0 && parseClockUs() >= deadlineUs;
+}
+
+StorageIo STORAGE_LOOP_IO_MEM bufferIoFromParseState(const uint8_t* data, size_t size,
+                                                     PersistedLoopParseState& state) {
+  return StorageIo{[data, size, &state](const void*, size_t) { return false; },
+                   [data, size, &state](void* out, size_t n) {
+                     if (state.pos + n > size) {
+                       return false;
+                     }
+                     std::memcpy(out, data + state.pos, n);
+                     state.pos += n;
+                     return true;
+                   }};
+}
+
+bool STORAGE_LOOP_IO_MEM readSnapshotGeometryHeader(const StorageIo& io, PersistedLoopSnapshot& snapshot,
+                                bool legacyWithoutNoteId, uint32_t& passCountOut) {
+  snapshot = PersistedLoopSnapshot{};
+  if (!ioRead(io, &snapshot.loopId, sizeof(snapshot.loopId))) return false;
+  if (!ioRead(io, &snapshot.startLoopTick, sizeof(snapshot.startLoopTick))) return false;
+  if (!ioRead(io, &snapshot.loopLengthTicks, sizeof(snapshot.loopLengthTicks))) return false;
+  if (!ioRead(io, &snapshot.loopStartTick, sizeof(snapshot.loopStartTick))) return false;
+  if (!ioRead(io, &snapshot.nextPassId, sizeof(snapshot.nextPassId))) return false;
+  if (legacyWithoutNoteId) {
+    snapshot.nextNoteId = 1;
+  } else if (!ioRead(io, &snapshot.nextNoteId, sizeof(snapshot.nextNoteId))) {
+    return false;
+  }
+  if (!ioRead(io, &snapshot.nextMergeSequence, sizeof(snapshot.nextMergeSequence))) return false;
+  if (!ioRead(io, &snapshot.lastCommittedPassId, sizeof(snapshot.lastCommittedPassId))) {
+    return false;
+  }
+  if (snapshot.loopLengthTicks >= 0x80000000u) {
+    snapshot.loopLengthTicks = 0;
+  }
+  uint32_t passCount = 0;
+  if (!ioRead(io, &passCount, sizeof(passCount))) return false;
+  passCountOut = passCount;
+  snapshot.passes = LoopPasses{};
+  return true;
+}
+
+}  // namespace
+
+PersistedLoopParseStepResult STORAGE_LOOP_IO_MEM stepPersistedLoopSnapshotParse(
+    const uint8_t* data, size_t size, PersistedLoopSnapshot& snapshot,
+    PersistedLoopParseState& state, uint32_t deadlineUs, uint32_t maxGrains) {
+  if (data == nullptr && size != 0) {
+    return PersistedLoopParseStepResult::Failed;
+  }
+
+  uint32_t grains = 0;
+  auto grainDone = [&]() -> bool {
+    ++grains;
+    if (maxGrains != 0 && grains >= maxGrains) {
+      return true;
+    }
+    return parseBudgetExhausted(deadlineUs);
+  };
+
+  auto failAndReset = [&]() {
+    if (state.passStaging) {
+      state.passStaging->clear();
+      state.passStaging.reset();
+    }
+    releasePersistedLoopSnapshotChunks(snapshot);
+    state = PersistedLoopParseState{};
+    return PersistedLoopParseStepResult::Failed;
+  };
+
+  auto finalizeActivePass = [&]() -> bool {
+    CommittedChunkIdList committedChunkIds;
+    if (state.passStaging) {
+      if (!state.passStaging->detachChunksToCommittedChunkIds(committedChunkIds)) {
+        state.passStaging->clear();
+        state.passStaging.reset();
+        return false;
+      }
+      state.passStaging.reset();
+    }
+    const CapturePassSlotFileHeader& passHeader = state.activePassHeader;
+    if (passHeader.typeRaw == 0) {
+      RecordPass record{};
+      record.id = passHeader.id;
+      record.state = static_cast<CapturePassState>(passHeader.stateRaw);
+      record.sealedAtTick = passHeader.sealedAtTick;
+      record.committedChunkIds = std::move(committedChunkIds);
+      snapshot.passes.recordPass = std::move(record);
+    } else {
+      OverdubPass overdub{};
+      overdub.id = passHeader.id;
+      overdub.mergeSequence = passHeader.mergeSequence;
+      overdub.state = static_cast<CapturePassState>(passHeader.stateRaw);
+      overdub.sealedAtTick = passHeader.sealedAtTick;
+      overdub.committedChunkIds = std::move(committedChunkIds);
+      snapshot.passes.overdubPasses.push_back(std::move(overdub));
+    }
+    state.passHeaderDone = false;
+    state.passMidiRemaining = 0;
+    state.activePassHeader = CapturePassSlotFileHeader{};
+    ++state.passesDone;
+    return true;
+  };
+
+  if (!state.headerDone) {
+    if (parseBudgetExhausted(deadlineUs)) {
+      return PersistedLoopParseStepResult::MoreWork;
+    }
+    const size_t startPos = state.pos;
+    StorageIo io = bufferIoFromParseState(data, size, state);
+    uint32_t passCount = 0;
+    if (!readSnapshotGeometryHeader(io, snapshot, state.legacyWithoutNoteId, passCount)) {
+      if (!state.legacyWithoutNoteId && !state.triedLegacyFallback) {
+        state.triedLegacyFallback = true;
+        state.legacyWithoutNoteId = true;
+        state.pos = startPos;
+        releasePersistedLoopSnapshotChunks(snapshot);
+        io = bufferIoFromParseState(data, size, state);
+        if (!readSnapshotGeometryHeader(io, snapshot, true, passCount)) {
+          return failAndReset();
+        }
+      } else {
+        return failAndReset();
+      }
+    }
+    state.passCount = passCount;
+    state.passesDone = 0;
+    state.headerDone = true;
+    if (grainDone()) {
+      return PersistedLoopParseStepResult::MoreWork;
+    }
+  }
+
+  while (state.passesDone < state.passCount) {
+    if (state.passReadyToFinalize) {
+      if (parseBudgetExhausted(deadlineUs)) {
+        return PersistedLoopParseStepResult::MoreWork;
+      }
+      if (!finalizeActivePass()) {
+        return failAndReset();
+      }
+      state.passReadyToFinalize = false;
+      // Always yield after detach/finalize — can be hundreds of ms on large passes
+      // (session_20260718_223713: ~295ms spikes after batch trains).
+      return PersistedLoopParseStepResult::MoreWork;
+    }
+
+    if (!state.passHeaderDone) {
+      if (parseBudgetExhausted(deadlineUs)) {
+        return PersistedLoopParseStepResult::MoreWork;
+      }
+      StorageIo io = bufferIoFromParseState(data, size, state);
+      CapturePassSlotFileHeader& passHeader = state.activePassHeader;
+      uint32_t midiCount = 0;
+      if (!ioRead(io, &passHeader.id, sizeof(passHeader.id)) ||
+          !ioRead(io, &passHeader.mergeSequence, sizeof(passHeader.mergeSequence)) ||
+          !ioRead(io, &passHeader.stateRaw, sizeof(passHeader.stateRaw)) ||
+          !ioRead(io, &passHeader.typeRaw, sizeof(passHeader.typeRaw)) ||
+          !ioRead(io, &passHeader.sealedAtTick, sizeof(passHeader.sealedAtTick)) ||
+          !ioRead(io, &midiCount, sizeof(midiCount))) {
+        return failAndReset();
+      }
+      if (midiCount > MAX_PERSISTED_CAPTURE_PASS_EVENTS) {
+        return failAndReset();
+      }
+      state.passMidiRemaining = midiCount;
+      state.passHeaderDone = true;
+      if (midiCount == 0) {
+        state.passReadyToFinalize = true;
+        return PersistedLoopParseStepResult::MoreWork;
+      }
+      state.passStaging = std::make_unique<LoopEventStore>();
+      if (grainDone()) {
+        return PersistedLoopParseStepResult::MoreWork;
+      }
+    }
+
+    const uint32_t maxTick = maxPersistedEventTick(snapshot.loopLengthTicks);
+    while (state.passMidiRemaining > 0) {
+      if (parseBudgetExhausted(deadlineUs)) {
+        return PersistedLoopParseStepResult::MoreWork;
+      }
+      if (!state.passStaging) {
+        return failAndReset();
+      }
+      StorageIo io = bufferIoFromParseState(data, size, state);
+      const uint32_t batchCount =
+          state.passMidiRemaining > LoopEventStoreConfig::CHUNK_CAPACITY
+              ? LoopEventStoreConfig::CHUNK_CAPACITY
+              : state.passMidiRemaining;
+      MidiEvent batch[LoopEventStoreConfig::CHUNK_CAPACITY];
+      if (!ioRead(io, batch, static_cast<size_t>(batchCount) * sizeof(MidiEvent))) {
+        return failAndReset();
+      }
+      for (uint32_t i = 0; i < batchCount; ++i) {
+        const MidiEvent& evt = batch[i];
+        if (evt.tick > maxTick) {
+          return failAndReset();
+        }
+        if (!canStagePersistedEvent(state.passStaging->size())) {
+          return failAndReset();
+        }
+        if (!state.passStaging->append(evt)) {
+          return failAndReset();
+        }
+      }
+      state.passMidiRemaining -= batchCount;
+      if (deadlineUs != 0 || maxGrains != 0) {
+        if (state.passMidiRemaining == 0) {
+          state.passReadyToFinalize = true;
+        }
+        (void)grainDone();
+        return PersistedLoopParseStepResult::MoreWork;
+      }
+    }
+
+    state.passReadyToFinalize = true;
+    return PersistedLoopParseStepResult::MoreWork;
+  }
+
+  if (!state.editsHeaderDone) {
+    if (parseBudgetExhausted(deadlineUs)) {
+      return PersistedLoopParseStepResult::MoreWork;
+    }
+    StorageIo io = bufferIoFromParseState(data, size, state);
+    if (!ioRead(io, &snapshot.nextPassId, sizeof(snapshot.nextPassId))) {
+      return failAndReset();
+    }
+    uint32_t marker = 0;
+    if (!ioRead(io, &marker, sizeof(marker)) || marker != PERSISTED_EDITS_TAIL_MARKER) {
+      return failAndReset();
+    }
+    uint32_t editCount = 0;
+    if (!ioRead(io, &editCount, sizeof(editCount))) {
+      return failAndReset();
+    }
+    state.editCount = editCount;
+    state.editsDone = 0;
+    snapshot.passes.editPasses.clear();
+    snapshot.passes.editPasses.reserve(editCount);
+    state.editsHeaderDone = true;
+    if (grainDone()) {
+      return PersistedLoopParseStepResult::MoreWork;
+    }
+  }
+
+  while (state.editsDone < state.editCount) {
+    if (parseBudgetExhausted(deadlineUs)) {
+      return PersistedLoopParseStepResult::MoreWork;
+    }
+    StorageIo io = bufferIoFromParseState(data, size, state);
+    EditPass editPass{};
+    if (!readPersistedEditPass(io, editPass)) {
+      return failAndReset();
+    }
+    snapshot.passes.editPasses.push_back(std::move(editPass));
+    ++state.editsDone;
+    if (grainDone()) {
+      return PersistedLoopParseStepResult::MoreWork;
+    }
+  }
+
+  if (snapshot.nextPassId == 0) {
+    snapshot.nextPassId = 1;
+  }
+  if (snapshot.nextNoteId == 0) {
+    snapshot.nextNoteId = 1;
+  }
+  return PersistedLoopParseStepResult::Completed;
 }
 
 bool skipPersistedEditPassPayload(const StorageIo& io) {

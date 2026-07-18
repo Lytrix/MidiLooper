@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-07-18 (Phase A LoadLoopJob time-budget + park in tree; device gate pending)
+Last updated: 2026-07-18 (Phase A.7 finalize headroom + 6.2-device PASS)
 
 ---
 
@@ -15,12 +15,17 @@ Last updated: 2026-07-18 (Phase A LoadLoopJob time-budget + park in tree; device
 | Layer | Doc | Status |
 |-------|-----|--------|
 | **North star** | [`deferred_job_scheduler_architecture.md`](../plans/deferred_job_scheduler_architecture.md) | **Approved** — demote-on-focus; atomic Commit; Phase B = `DeferredJobScheduler` |
-| **Phase A (next code)** | [`deferred_storage_time_budget_scheduler_enhancement.md`](../plans/deferred_storage_time_budget_scheduler_enhancement.md) | **In tree** — time budgets + park/demote; **device gate** pending |
-| OpenSpec | `unified-commit-lazy-slot-load` | Amend or follow-on change when Phase A starts |
+| **Phase A** | [`deferred_storage_time_budget_scheduler_enhancement.md`](../plans/deferred_storage_time_budget_scheduler_enhancement.md) | **A.6 + A.7 done**; device gate PASS |
+| OpenSpec | `unified-commit-lazy-slot-load` | **6.2-device PASS** [`224607`](../../captures/session_20260718_224607.log); archive pending A.7 re-flash confirm |
+| Plan | [`deferred_storage_commit_parse_split_enhancement.md`](../plans/deferred_storage_commit_parse_split_enhancement.md) | **In tree** |
 
-**Device baseline:** [`190417`](../../captures/session_20260718_190417.log) smooth; focus 64-bar empty→notes ~0.8s until Commit.
+**Device baseline:** PASS [`224607`](../../captures/session_20260718_224607.log). Fail: OLED [`220005`](../../captures/session_20260718_220005.log); button starve [`223713`](../../captures/session_20260718_223713.log). Smoothness ref [`190417`](../../captures/session_20260718_190417.log).
 
-**Display follow-up:** focus `done 1/3` crash fixed — defer prewarm one main turn ([`211430`](../../captures/session_20260718_211430.log): `deferred playback prewarm leave` + `LoopEnd playback commit track=1 1->3`). Prior fail [`210946`](../../captures/session_20260718_210946.log).
+**Focus Commit crash:** fixed — defer prewarm ([`211430`](../../captures/session_20260718_211430.log)).
+
+**Phase 5.2 + A.6 + A.7:** focus High while PLAYING; Low only when transport idle; parse batches + deferred finalize; no PSRAM stats walk on commit-id headroom; CAP-only LoadLoopJob overshoot telemetry.
+
+**Next:** re-flash A.7 → confirm `#CAP,LLBG,parse_us` no longer ~295ms clusters → `/opsx:archive` or Phase B.
 
 ### Prioritized boot load isolation (merged to `dev`)
 
