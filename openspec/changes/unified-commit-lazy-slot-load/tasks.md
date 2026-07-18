@@ -30,21 +30,21 @@ Rename table: [`docs/plans/unified_publish_pipeline_commit_terminology_refinemen
 - [x] 3.3 Redefine `bootInteractiveReady` for audible COMMITTED (explicit flag; never remap via `getActiveLoopIndex()`)
 - [x] 3.4 Allow piano roll / interactive UI at COMMITTED without waiting for DERIVED_READY
 - [x] 3.5 Update `docs/Guides/BOOT_LOAD.md`
-- [ ] 3.6 **Gate:** device capture — ready ≪ full-set baseline `020628`; all actives audible on first Play
+- [x] 3.6 **Gate:** device capture — ready ≪ full-set baseline `020628`; all actives audible on first Play (`session_20260718_165032` — ch2 MO after enable-playing-slot fix)
 
 ## 4. Phase 3 — Cooperative SlotLoadSession (incremental)
 
-- [ ] 4.1 Extend `SlotLoadSession` cooperative advance (internals); `Publishing` → `Committing` already renamed
-- [ ] 4.2 Optionally factor `loadLoopSlotFromCurrentSetSd` body into session steps
-- [ ] 4.3 **Gate:** `pio test -e native`; boot still uses sync audible Commit
+- [x] 4.1 Extend `SlotLoadSession` cooperative advance (internals); `Publishing` → `Committing` already renamed
+- [x] 4.2 Optionally factor `loadLoopSlotFromCurrentSetSd` body into session steps
+- [x] 4.3 **Gate:** `pio test -e native`; boot still uses sync audible Commit
 
 ## 5. Phase 4 — Deferred on-demand restore
 
-- [ ] 5.1 Budget `processDeferredLoopSlotRestore` for explicitly requested slots only (priorities: audible, requested)
-- [ ] 5.2 Wire select/focus unload → request restore (`prioritizeLoopSlotRestoreForFocus` / equivalent)
-- [ ] 5.3 MVP: while PLAYING, queue request and defer SD until transport idle
-- [ ] 5.4 **Gate:** select unloaded slot while stopped → COMMITTED + display; no silent full-set hydrate
-- [ ] 5.5 Device capture evidence
+- [x] 5.1 Budget `processDeferredLoopSlotRestore` for explicitly requested slots only (priorities: audible, requested)
+- [x] 5.2 Wire select/focus unload → request restore (`prioritizeLoopSlotRestoreForFocus` / equivalent) — queue only, no sync fallback; allow non-enabled focus
+- [x] 5.3 MVP: while PLAYING, queue request and defer SD until transport idle (`timingCriticalTrackActive` gate in `main`)
+- [x] 5.4 **Gate:** select unloaded slot while stopped → COMMITTED + display; no silent full-set hydrate
+- [x] 5.5 Device capture evidence — [`session_20260718_170201.log`](../../../captures/session_20260718_170201.log): post-boot `Deferred restore` `1/0`,`1/2`,`1/3`,`2/1`,`2/2`; `DISP` slot change with notes; user: piano roll + LEDs + play OK
 
 ## 6. Phase 5+ — Later (parked until MVP green)
 

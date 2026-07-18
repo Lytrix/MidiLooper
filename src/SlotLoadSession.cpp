@@ -57,6 +57,36 @@ void SlotLoadSession::complete() {
   finished_ = true;
 }
 
+SlotLoadAdvanceResult SlotLoadSession::advanceAfterPhaseWork() {
+  if (state_ == SlotLoadSessionState::Failed) {
+    return SlotLoadAdvanceResult::Failed;
+  }
+  if (state_ == SlotLoadSessionState::Completed) {
+    return SlotLoadAdvanceResult::Completed;
+  }
+
+  switch (state_) {
+    case SlotLoadSessionState::Dequeued:
+      setState(SlotLoadSessionState::Reading);
+      return SlotLoadAdvanceResult::MoreWork;
+    case SlotLoadSessionState::Reading:
+      setState(SlotLoadSessionState::Validating);
+      return SlotLoadAdvanceResult::MoreWork;
+    case SlotLoadSessionState::Validating:
+      setState(SlotLoadSessionState::Committing);
+      return SlotLoadAdvanceResult::MoreWork;
+    case SlotLoadSessionState::Committing:
+      complete();
+      return SlotLoadAdvanceResult::Completed;
+    case SlotLoadSessionState::Completed:
+      return SlotLoadAdvanceResult::Completed;
+    case SlotLoadSessionState::Failed:
+      return SlotLoadAdvanceResult::Failed;
+  }
+  fail();
+  return SlotLoadAdvanceResult::Failed;
+}
+
 bool SlotLoadSession::isActive() { return activeCount_ > 0; }
 
 bool SlotLoadSession::isActiveFor(uint8_t trackIndex, uint8_t slotIndex) {

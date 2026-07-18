@@ -15,9 +15,20 @@ enum class SlotLoadSessionState : uint8_t {
   Failed,
 };
 
+/// Result of one cooperative advance of a slot-load session.
+enum class SlotLoadAdvanceResult : uint8_t {
+  MoreWork = 0,
+  Completed,
+  Failed,
+};
+
 /// RAII session for one slot load. Enables SD-load staging on LoopEventStore and tracks
-/// active-load count for scheduler observation. Phase 1: stack lifetime. Phase 3: may be
-/// StorageManager-owned across cooperative slices — same lifecycle.
+/// active-load count for scheduler observation.
+///
+/// Phase 1: stack lifetime around a sync load.
+/// Phase 3: caller drives `advanceAfterPhaseWork()` between phase work units; scheduling
+/// (when to call advance) stays outside the session. Boot may still drain to completion
+/// in one call via a sync wrapper.
 class SlotLoadSession {
  public:
   SlotLoadSession(uint8_t trackIndex, uint8_t slotIndex);
@@ -29,6 +40,15 @@ class SlotLoadSession {
   void setState(SlotLoadSessionState state);
   void fail();
   void complete();
+
+  /// After the caller finishes work for the current non-terminal state, advance to the
+  /// next phase: Dequeued→Reading→Validating→Committing→Completed.
+  /// Returns MoreWork until Completed/Failed.
+  SlotLoadAdvanceResult advanceAfterPhaseWork();
+
+  bool isTerminal() const {
+    return state_ == SlotLoadSessionState::Completed || state_ == SlotLoadSessionState::Failed;
+  }
 
   SlotLoadSessionState state() const { return state_; }
   uint8_t trackIndex() const { return trackIndex_; }

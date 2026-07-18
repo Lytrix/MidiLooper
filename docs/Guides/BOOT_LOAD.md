@@ -59,7 +59,7 @@ sequenceDiagram
 | Step | Gate | Notes |
 |------|-------|-------|
 | Boot slot restore | `bootSlotLoadRefreshPending` && idle | **Audible drain** — while-queue `processDeferredLoopSlotRestore` under title |
-| Post-boot slot restore | idle, after ready | One slot per call (focus / idle loads of non-audible) |
+| Post-boot slot restore | idle, after ready | One slot per call (focus/select enqueue; no sync load on select) |
 | Deferred undo hydrate | same | Reads undo bodies from bundle |
 | **finishBootSetup + USB Host** | `bootInteractiveReady()` (audible queue empty && !session) | Then first piano-roll paint at COMMITTED |
 | DROID LED refresh | after `beginUsbHost` | `clearLeds`, note 100 flash, `onBootSlotLoadComplete` |

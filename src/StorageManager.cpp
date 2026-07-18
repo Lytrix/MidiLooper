@@ -2763,8 +2763,9 @@ bool STORAGE_PERSIST_MEM loadLoopSlotFromCurrentSetSd(uint8_t trackIndex, uint8_
         return true;
     }
 
+    // Phase 3: session FSM advances between work units; boot/revision still sync-drain.
     SlotLoadSession session(trackIndex, slotIndex);
-    session.setState(SlotLoadSessionState::Reading);
+    (void)session.advanceAfterPhaseWork();  // Dequeued → Reading
     const bool readOk = readLoopFromCurrentSetFile(loopFile, loop);
     loopFile.close();
     if (!readOk) {
@@ -2775,14 +2776,14 @@ bool STORAGE_PERSIST_MEM loadLoopSlotFromCurrentSetSd(uint8_t trackIndex, uint8_
         return true;
     }
 
-    session.setState(SlotLoadSessionState::Validating);
+    (void)session.advanceAfterPhaseWork();  // Reading → Validating
     // readLoopFromCurrentSetFile already validated wire shape; destination still empty until adopt.
-    session.setState(SlotLoadSessionState::Committing);
+    (void)session.advanceAfterPhaseWork();  // Validating → Committing
     markLoopCommittedChunksPersistedFromSdLoad(loop);
     if (loop.hasCommittedPasses()) {
         anySlotHasEventsOut = true;
     }
-    session.complete();
+    (void)session.advanceAfterPhaseWork();  // Committing → Completed
     return true;
 }
 
@@ -3227,19 +3228,8 @@ void STORAGE_PERSIST_MEM StorageManager::restoreDeferredUndoSnapshotsBeforeUse()
 }
 
 void STORAGE_PERSIST_MEM StorageManager::requestLoopSlotRestoreFromSd(uint8_t trackIndex, uint8_t slotIndex) {
-    removeDeferredLoopSlotRestore(trackIndex, slotIndex);
-    if (!trackManager.isSlotEnabled(trackIndex, slotIndex)) {
-        return;
-    }
-    Track& track = trackManager.getTrack(trackIndex);
-    if (track.getLoop(slotIndex).hasCommittedPasses()) {
-        return;
-    }
-    if (!StorageManager::loopSlotHasPayloadOnSd(trackIndex, slotIndex)) {
-        return;
-    }
-    bool anySlotHasEvents = false;
-    loadLoopSlotFromCurrentSetSd(trackIndex, slotIndex, track, anySlotHasEvents);
+    // Phase 4: explicit requests enqueue only — never sync-load on the caller path.
+    prioritizeLoopSlotRestoreForFocus(trackIndex, slotIndex);
 }
 
 void STORAGE_PERSIST_MEM StorageManager::reprioritizeDeferredLoopSlotRestore() {
@@ -3251,24 +3241,16 @@ void STORAGE_PERSIST_MEM StorageManager::prioritizeLoopSlotRestoreForFocus(uint8
     if (trackIndex >= Config::NUM_TRACKS || slotIndex >= Config::MAX_LOOPS_PER_TRACK) {
         return;
     }
-    if (!trackManager.isSlotEnabled(trackIndex, slotIndex)) {
-        reprioritizeDeferredLoopSlotRestoreEntries();
-        return;
-    }
+    // Focus/select must hydrate HEADER_READY slots even when not yet slotEnabled
+    // (preview select before layer enable).
     if (trackManager.getTrack(trackIndex).getLoop(slotIndex).hasCommittedPasses()) {
         reprioritizeDeferredLoopSlotRestoreEntries();
         return;
     }
-    const uint16_t pendingBefore = pendingLoopSlotRestores_.count;
     if (StorageManager::loopSlotHasPayloadOnSd(trackIndex, slotIndex)) {
         queueDeferredLoopSlotRestore(trackIndex, slotIndex);
     }
     reprioritizeDeferredLoopSlotRestoreEntries();
-    // Existing deferred work: reprioritize only — no sync double-load.
-    if (pendingBefore > 0) {
-        return;
-    }
-    requestLoopSlotRestoreFromSd(trackIndex, slotIndex);
 }
 
 bool StorageManager::loadCurrentWorkspaceFromSd(LooperState& state) {
