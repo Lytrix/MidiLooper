@@ -48,13 +48,13 @@ Rename table: [`docs/plans/unified_publish_pipeline_commit_terminology_refinemen
 
 ## 6. Phase 5+ — Later (parked until MVP green)
 
-- [ ] 6.1 Derived rebuild off Commit critical path (DERIVED_READY optional polish)
+- [ ] 6.1 Derived rebuild off Commit critical path (DERIVED_READY optional polish) — **parked past archive**
 - [x] 6.2 Load while PLAYING interactive slices — focus High while PLAYING; Low when transport idle (`canRunBackgroundLoadLoopNow`); Phase A.6 timed parse + atomic publish; A.7 finalize headroom without PSRAM walk ([`deferred_storage_commit_parse_split_enhancement.md`](../../../docs/plans/deferred_storage_commit_parse_split_enhancement.md)); fail baselines [`220005`](../../../captures/session_20260718_220005.log) / [`223713`](../../../captures/session_20260718_223713.log)
-- [x] 6.2-device **Gate:** PASS [`224607`](../../../captures/session_20260718_224607.log) — track switch while PLAYING responsive (BTN 15/15); Low parse suspended during PLAYING; clean stop → idle `LLBG,done`; vs fail [`223713`](../../../captures/session_20260718_223713.log) / smoothness [`190417`](../../../captures/session_20260718_190417.log). **A.7 follow-up in tree:** remove ~295ms `sm_malloc_stats_pool` from pass finalize headroom (re-flash to confirm parse_us drops).
+- [ ] 6.3 Undo / import / paste documented on Commit contract (as those producers land) — **parked past archive**
+- [x] 6.2-device **Gate:** PASS [`224607`](../../../captures/session_20260718_224607.log) (interactive); A.7 confirm [`230145`](../../../captures/session_20260718_230145.log) — zero `#CAP,LLBG,parse_us` / `frame_us`; BTN 13/13; clean stop. Fail refs [`223713`](../../../captures/session_20260718_223713.log) / [`220005`](../../../captures/session_20260718_220005.log).
 - [x] 6.2b Phase A time-budgeted `LoadLoopJob` — `runDeferredFrame` + `LoadLoopBudget`; demote parks one in-flight job; load before display
-- [ ] 6.3 Undo / import / paste documented on Commit contract (as those producers land)
 
 ## 7. Closeout
 
 - [x] 7.1 Update `CURRENT_WORK.md`, `PROJECT_STATE.md`, `DELIVERABLE_TRACKING.md`
-- [ ] 7.2 Archive change when gates pass (`/opsx:archive`) — 6.2-device PASS on [`224607`](../../../captures/session_20260718_224607.log); confirm A.7 after re-flash then archive
+- [x] 7.2 Archive change — specs synced; gates [`224607`](../../../captures/session_20260718_224607.log) + [`230145`](../../../captures/session_20260718_230145.log). Parked beyond archive: 6.1 DERIVED_READY polish; 6.3 undo/import/paste Commit docs.

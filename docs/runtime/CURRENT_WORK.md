@@ -2,34 +2,44 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-07-18 (Phase A.7 finalize headroom + 6.2-device PASS)
+Last updated: 2026-07-18 (Phase B.1 DeferredJobScheduler adapter)
 
 ---
 
 ## Now implementing
 
-### Unified commit — lazy slot load → deferred jobs
+### Deferred job scheduler (Phase B)
 
 **Branch:** `feature/deferred-lazy-load`  
 
 | Layer | Doc | Status |
 |-------|-----|--------|
-| **North star** | [`deferred_job_scheduler_architecture.md`](../plans/deferred_job_scheduler_architecture.md) | **Approved** — demote-on-focus; atomic Commit; Phase B = `DeferredJobScheduler` |
-| **Phase A** | [`deferred_storage_time_budget_scheduler_enhancement.md`](../plans/deferred_storage_time_budget_scheduler_enhancement.md) | **A.6 + A.7 done**; device gate PASS |
-| OpenSpec | `unified-commit-lazy-slot-load` | **6.2-device PASS** [`224607`](../../captures/session_20260718_224607.log); archive pending A.7 re-flash confirm |
-| Plan | [`deferred_storage_commit_parse_split_enhancement.md`](../plans/deferred_storage_commit_parse_split_enhancement.md) | **In tree** |
+| **North star** | [`deferred_job_scheduler_architecture.md`](../plans/deferred_job_scheduler_architecture.md) | **Approved** (DEC-027) |
+| **Phase B plan** | [`deferred_job_scheduler_phase_b_enhancement.md`](../plans/deferred_job_scheduler_phase_b_enhancement.md) | **B.1 done**; B.2 next |
+| OpenSpec | [`deferred-job-scheduler`](../../openspec/changes/deferred-job-scheduler/) | Active |
 
-**Device baseline:** PASS [`224607`](../../captures/session_20260718_224607.log). Fail: OLED [`220005`](../../captures/session_20260718_220005.log); button starve [`223713`](../../captures/session_20260718_223713.log). Smoothness ref [`190417`](../../captures/session_20260718_190417.log).
+**Predecessor archived:** `openspec/changes/archive/2026-07-18-unified-commit-lazy-slot-load/` — gates [`224607`](../../captures/session_20260718_224607.log), [`230145`](../../captures/session_20260718_230145.log).
 
-**Focus Commit crash:** fixed — defer prewarm ([`211430`](../../captures/session_20260718_211430.log)).
+**B.1 done:** `DeferredJobScheduler::runFrame` → `StorageManager::runDeferredFrame`; `main` calls scheduler.
 
-**Phase 5.2 + A.6 + A.7:** focus High while PLAYING; Low only when transport idle; parse batches + deferred finalize; no PSRAM stats walk on commit-id headroom; CAP-only LoadLoopJob overshoot telemetry.
-
-**Next:** re-flash A.7 → confirm `#CAP,LLBG,parse_us` no longer ~295ms clusters → `/opsx:archive` or Phase B.
+**Next:** B.2 StorageManager load-step API used only by scheduler.
 
 ### Prioritized boot load isolation (merged to `dev`)
 
-Shipped via PR #4 on `feature/memory-pressure-reclaim`. Full-set drain superseded for interactive ready by boot playback set enqueue above.
+Shipped via PR #4 on `feature/memory-pressure-reclaim`.
+
+---
+
+### Recently closed — Unified commit lazy slot load (Phase A)
+
+**Archived:** `2026-07-18-unified-commit-lazy-slot-load`  
+**Specs synced:** `lazy-slot-hydration`, `loop-commit-semantics`, `multi-loop-slots`, `playback-runtime-prewarm`, `timeline-passes`.
+
+| Item | Status |
+|------|--------|
+| A.6 parse split + A.7 PSRAM headroom fix | **PASS** [`230145`](../../captures/session_20260718_230145.log) |
+| 6.2-device interactive | **PASS** [`224607`](../../captures/session_20260718_224607.log) |
+| Parked | 6.1 DERIVED_READY; 6.3 undo/import Commit docs |
 
 ---
 
