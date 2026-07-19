@@ -23,16 +23,12 @@ class Track;
 
 /**
  * @class EditManager
- * @brief Implements the state machine for note- and parameter-edit overlays.
+ * @brief Owns live EditSession (note-edit store, focus, undo) and EditNoteState FSM.
  *
- * Coordinates EditNoteState instances (NoteState, StartNoteState, PitchNoteState) to handle
- * encoder movements and button presses for selecting notes, moving note start positions,
- * and changing note pitches. Tracks the bracket position over the piano roll, manages
- * commit-on-enter/commit-on-exit undo snapshots via TrackUndo, and delegates display
- * updates to DisplayManager for visual feedback.
- * 
- * Also includes EditModeManager and LoopManager functionality for managing edit modes
- * and loop editing operations.
+ * Coordinates EditNoteState instances (home, select, start, length, pitch) for encoder
+ * and button input. Loop geometry edit UI lives on LoopEditManager; MIDI fader/button
+ * control-surface routing lives on NoteEditManager. Display updates go through
+ * DisplayManager.
  */
 class EditManager {
 public:

@@ -22,6 +22,19 @@ Last updated: 2026-07-19 (archived deferred-job-scheduler Phase B)
 
 **Next:** confirm next CURRENT_WORK slice with user (persistence/overlay hardening, or parked large-slot display hunt).
 
+### Hygiene — codebase debt review (2026-07-19)
+
+**Plan:** [`docs/plans/codebase_hygiene_technical_debt_review.md`](../plans/codebase_hygiene_technical_debt_review.md)
+
+| Item | Status |
+|------|--------|
+| Review artifact + ranked backlog | Done |
+| Dead `Looper` transport / stub FSM | Done |
+| No-op `MidiFader*::scheduleOtherFaderUpdates` | Done |
+| `PROJECT_STATE` archive-link drift | Done |
+
+---
+
 ### Recently closed — Deferred job scheduler (Phase B)
 
 **Archived:** `2026-07-19-deferred-job-scheduler`  
