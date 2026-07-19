@@ -44,7 +44,7 @@ bool isSamePitchSoundingAtTick(const NoteUtils::DisplayNoteVec& notes, uint8_t p
   return false;
 }
 
-bool shouldRestorePublishedOverlapOnOverdubStop(const Loop& loop, uint8_t note,
+bool shouldRestoreCommittedOverlapOnOverdubStop(const Loop& loop, uint8_t note,
                                                 uint32_t pendingOnPhaseTick,
                                                 uint32_t closePhaseTick) {
   if (loop.loopLengthTicks == 0 || !loop.hasCommittedPasses()) {
@@ -94,22 +94,22 @@ void logOverdubCaptureCoordinate(const Track& track, uint32_t absTick, uint32_t 
 }  // namespace
 #endif
 
-MidiEventVec& Track::legacyMidiEventsFromPublished() {
+MidiEventVec& Track::legacyMidiEventsFromCommitted() {
   // Edit-path boundary only (EditManager::editMidiEvents when session inactive).
   // Display and playback use SessionMidiEventVec via getMidiEvents().
   Loop& loop = getActiveLoop();
   const uint32_t revision = loop.playbackRevision;
-  if (publishedMidiScratchRevision_ != revision) {
+  if (committedMidiScratchRevision_ != revision) {
     loop.materializeEditViewFromPasses();
     const SessionMidiEventVec& published = loop.midiEvents();
-    publishedMidiScratch_.assign(published.begin(), published.end());
-    publishedMidiScratchRevision_ = revision;
+    committedMidiScratch_.assign(published.begin(), published.end());
+    committedMidiScratchRevision_ = revision;
   }
-  return publishedMidiScratch_;
+  return committedMidiScratch_;
 }
 
-const MidiEventVec& Track::legacyMidiEventsFromPublished() const {
-  return const_cast<Track*>(this)->legacyMidiEventsFromPublished();
+const MidiEventVec& Track::legacyMidiEventsFromCommitted() const {
+  return const_cast<Track*>(this)->legacyMidiEventsFromCommitted();
 }
 
 MidiEventVec& Track::editAwareMidiEvents() {
@@ -121,7 +121,7 @@ const MidiEventVec& Track::editAwareMidiEvents() const {
 }
 
 void Track::invalidateCaches(bool refreshPlaybackPreview) {
-  publishedMidiScratchRevision_ = UINT32_MAX;
+  committedMidiScratchRevision_ = UINT32_MAX;
   Loop& activeLoop = getActiveLoop();
   activeLoop.invalidateCaches();
   activeLoop.playbackOrderDirty = true;
@@ -178,7 +178,7 @@ const char* commitResultLabel(CommitResult result) {
   switch (result) {
     case CommitResult::Skipped:
       return "skipped";
-    case CommitResult::Published:
+    case CommitResult::Committed:
       return "published";
     case CommitResult::SealFailed:
       return "seal_failed";
@@ -783,7 +783,7 @@ void Track::finalizePendingNotes(uint32_t offAbsTick) {
         pendingNotes.erase(key);
         continue;
       }
-      if (shouldRestorePublishedOverlapOnOverdubStop(loop, note, pendingOnPhaseTick, phaseTick)) {
+      if (shouldRestoreCommittedOverlapOnOverdubStop(loop, note, pendingOnPhaseTick, phaseTick)) {
         if (loop.removeOpenCaptureNoteOn(channel, note)) {
           ++overlapCaptureRestored;
         }
@@ -894,7 +894,7 @@ CommitResult Track::finalizeCommitSideEffects(CommitResult result, CommitReason 
       }
       break;
     }
-    case CommitResult::Published: {
+    case CommitResult::Committed: {
       const PassId undoPassId = loop.lastCommittedPassId();
       if (overdubStop) {
         finalizeLoopAtStop(closeTick, false);
@@ -939,7 +939,7 @@ CommitResult Track::finalizeCommitSideEffects(CommitResult result, CommitReason 
     deferredValidateQueuedAtMs = 0;
   }
 
-  if (result == CommitResult::Published) {
+  if (result == CommitResult::Committed) {
     invalidateCaches();
     if (recordStop) {
       queueDeferredRecordRevts();
@@ -1182,11 +1182,11 @@ TRACK_COLD_MEM bool Track::tryClearCommittedMidiScratch() {
   if (editManager.isNoteEditActive() && trackManager.isSelectedTrack(*this)) {
     return false;
   }
-  if (publishedMidiScratch_.empty()) {
+  if (committedMidiScratch_.empty()) {
     return false;
   }
-  publishedMidiScratch_.clear();
-  publishedMidiScratchRevision_ = UINT32_MAX;
+  committedMidiScratch_.clear();
+  committedMidiScratchRevision_ = UINT32_MAX;
   return true;
 }
 
@@ -1351,11 +1351,11 @@ void Track::stopRecording(uint32_t currentTick) {
 
   logRecordStopStage(loop, stopPathStartUs, "visual_cache_request", 0, finalizeHeapAfter,
                      finalizeHeapAfter,
-                     sideEffectResult == CommitResult::Published ? "deferred" : "skipped",
+                     sideEffectResult == CommitResult::Committed ? "deferred" : "skipped",
                      &stopPathStats);
 
   logRecordStopStage(loop, stopPathStartUs, "revt_queue", 0, finalizeHeapAfter, finalizeHeapAfter,
-                     sideEffectResult == CommitResult::Published ? "deferred" : "skipped",
+                     sideEffectResult == CommitResult::Committed ? "deferred" : "skipped",
                      &stopPathStats);
 
   if (alignLoopOriginOnNextStop) {
@@ -1414,7 +1414,7 @@ void Track::stopRecording(uint32_t currentTick) {
     logRecordStopStage(loop, stopPathStartUs, "state_advance", 0, stopHeap, stopHeap,
                        "skipped_empty", &stopPathStats);
     logRecordStopStage(loop, stopPathStartUs, "save_request", 0, stopHeap, stopHeap,
-                       sideEffectResult == CommitResult::Published ? "requested" : "skipped",
+                       sideEffectResult == CommitResult::Committed ? "requested" : "skipped",
                        &stopPathStats);
     setState(hasAnySlotData() ? TRACK_STOPPED : TRACK_EMPTY);
     return;
@@ -1439,9 +1439,9 @@ void Track::stopRecording(uint32_t currentTick) {
                      trackState == TRACK_PLAYING ? "ok" : "failed", &stopPathStats);
   logRecordStopStage(loop, stopPathStartUs, "save_request", 0, stateAdvanceHeapAfter,
                      stateAdvanceHeapAfter,
-                     sideEffectResult == CommitResult::Published ? "requested" : "skipped",
+                     sideEffectResult == CommitResult::Committed ? "requested" : "skipped",
                      &stopPathStats);
-  if (sideEffectResult == CommitResult::Published) {
+  if (sideEffectResult == CommitResult::Committed) {
     StorageManager::markCurrentSetLoopSlotDirty(resolveTrackIndexForPersistence(*this),
                                                 recordedSlotIndex);
     StorageManager::requestDeferredSaveState(looperState.getLooperState(), stateAdvanceHeapAfter,
@@ -1494,11 +1494,11 @@ TRACK_COLD_MEM void Track::stopRecordingToStopped(uint32_t currentTick) {
 
   logRecordStopStage(loop, stopPathStartUs, "visual_cache_request", 0, finalizeHeapAfter,
                      finalizeHeapAfter,
-                     sideEffectResult == CommitResult::Published ? "deferred" : "skipped",
+                     sideEffectResult == CommitResult::Committed ? "deferred" : "skipped",
                      &stopPathStats);
 
   logRecordStopStage(loop, stopPathStartUs, "revt_queue", 0, finalizeHeapAfter, finalizeHeapAfter,
-                     sideEffectResult == CommitResult::Published ? "deferred" : "skipped",
+                     sideEffectResult == CommitResult::Committed ? "deferred" : "skipped",
                      &stopPathStats);
 
   [[maybe_unused]] const uint32_t recordStartTickStopped = loop.startLoopTick;
@@ -1540,9 +1540,9 @@ TRACK_COLD_MEM void Track::stopRecordingToStopped(uint32_t currentTick) {
                      trackState == TRACK_STOPPED ? "ok" : "failed", &stopPathStats);
   logRecordStopStage(loop, stopPathStartUs, "save_request", 0, stateAdvanceHeapAfter,
                      stateAdvanceHeapAfter,
-                     sideEffectResult == CommitResult::Published ? "requested" : "skipped",
+                     sideEffectResult == CommitResult::Committed ? "requested" : "skipped",
                      &stopPathStats);
-  if (sideEffectResult == CommitResult::Published) {
+  if (sideEffectResult == CommitResult::Committed) {
     StorageManager::markCurrentSetLoopSlotDirty(resolveTrackIndexForPersistence(*this),
                                                 recordedSlotIndex);
     StorageManager::requestDeferredSaveState(looperState.getLooperState(), stateAdvanceHeapAfter,

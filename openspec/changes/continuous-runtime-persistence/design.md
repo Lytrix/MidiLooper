@@ -105,7 +105,7 @@ Main loop → persistence slice → yield → next iteration
 
 Reuse current `stepDeferredLoopPersist` chunk streaming where practical. Incremental append to open slot files during capture is the initial direction; journal or side-log layouts remain valid if invariants hold.
 
-Pass-close (`publishPendingCapturePass`) finalizes pass metadata only — not first byte to SD.
+Pass-close (`commitPendingCapturePass`) finalizes pass metadata only — not first byte to SD.
 
 ## Undo / copy-on-write
 

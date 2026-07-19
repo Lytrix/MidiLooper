@@ -454,8 +454,8 @@ void MidiButtonActions::handleToggleRecordForSlot(uint8_t slotIndex) {
         return;
     }
 
-    const bool slotHasPublishedMidi = track.hasCommittedPassesInSlot(slotIndex);
-    const bool slotCanArmForRecord = !slotHasPublishedMidi;
+    const bool slotHasCommittedMidi = track.hasCommittedPassesInSlot(slotIndex);
+    const bool slotCanArmForRecord = !slotHasCommittedMidi;
 
     if (track.isRecording()) {
         logger.info("Loop %d: Stop Recording", slotIndex + 1);

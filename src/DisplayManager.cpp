@@ -285,7 +285,7 @@ std::vector<NoteUtils::OpenNoteOn> findCaptureOpenNoteOns(const Loop& loop) {
     Loop& mutLoop = const_cast<Loop&>(loop);
     mutLoop.ensureCaptureEventsSorted();
     SessionMidiEventVec captureFlat;
-    loop.capture.store.flatten(captureFlat);
+    loop.capture.store.copyEventsTo(captureFlat);
     return NoteUtils::findOpenNoteOns(captureFlat, loop.loopLengthTicks);
 }
 
@@ -785,7 +785,7 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotes(const
             if (liveDisplayNotes.empty() && track.isRecording() && !loop.capture.store.empty()) {
                 SessionMidiEventVec captureFlat;
                 mutLoop.ensureCaptureEventsSorted();
-                loop.capture.store.flatten(captureFlat);
+                loop.capture.store.copyEventsTo(captureFlat);
                 if (!captureFlat.empty()) {
                     const NoteUtils::DisplayNoteVec reconstructed =
                         NoteUtils::reconstructDisplayNotes(captureFlat, liveLoopLength, false);
@@ -846,7 +846,7 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotes(const
                     SessionMidiEventVec captureEvents;
                     Loop& mutLoop = const_cast<Loop&>(loop);
                     mutLoop.ensureCaptureEventsSorted();
-                    loop.capture.store.flatten(captureEvents);
+                    loop.capture.store.copyEventsTo(captureEvents);
                     applyCapturePlayheadTails(captureOpens, captureEvents, liveLoopLength,
                                               playheadCloseTick, committedDisplayEnd, liveDisplayNotes);
                 }

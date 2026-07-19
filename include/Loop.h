@@ -5,7 +5,7 @@
  * @file Loop.h
  * @brief Per-slot loop data: MIDI events, loop geometry, playback state, undo.
  *
- * Published MIDI lives in passes (recordPass, overdubPasses). Note edits are stored
+ * committed passes MIDI lives in passes (recordPass, overdubPasses). Note edits are stored
  * in passes.editPasses and materialized via LoopPasses::materialize for playback/display.
  */
 #ifndef LOOP_H
@@ -51,7 +51,7 @@ struct Loop {
   CapturePreview capturePreview;
   VisualCacheDelta pendingVisualDelta;
   bool visualCacheDirty = true;
-  size_t publishedMaterializedEventCount_ = 0;
+  size_t materializedEventCount_ = 0;
   uint32_t nextMergeSequence_ = 0;
   PassId lastCommittedPassId_ = kInvalidPassId;
 
@@ -75,26 +75,26 @@ struct Loop {
 
   bool hasCommittedPasses() const;
   uint32_t findLastCommittedEventTick() const;
-  /// When published MIDI exists, never return a length below content-derived bars.
+  /// When committed passes MIDI exists, never return a length below content-derived bars.
   uint32_t reconcileLoopLengthWithCommittedPasses(uint32_t candidateLengthTicks) const;
 
   void mergeActiveCapturePasses(MidiEventVec& out) const;
   void mergeActiveCapturePasses(SessionMidiEventVec& out) const;
-  /// Canonical published event gathering (full loop). Prefer over display-only helpers.
+  /// Canonical committed-pass event gathering (full loop). Prefer over display-only helpers.
   void gatherCommittedEvents(SessionMidiEventVec& out) const;
   void gatherCommittedEvents(MidiEventVec& out) const;
-  /// Windowed published gathering — wrap-aware chunk skip + event filter.
+  /// Windowed committed gathering — wrap-aware chunk skip + event filter.
   void gatherCommittedEventsInWindow(SessionMidiEventVec& out, uint32_t windowStart,
                                      uint32_t windowLength) const;
   void gatherCommittedEventsInWindow(MidiEventVec& out, uint32_t windowStart,
                                      uint32_t windowLength) const;
-  /// Published window plus live capture.store events in the same window.
+  /// Committed window plus live capture.store events in the same window.
   void gatherCommittedEventsInWindowWithCapture(SessionMidiEventVec& out, uint32_t windowStart,
                                                 uint32_t windowLength) const;
   /// DEC-016 policy owner — aliases gatherCommittedEvents (legacy name).
   void gatherCommittedEventsForDerivedView(SessionMidiEventVec& flat) const;
   void gatherCommittedEventsForDerivedView(MidiEventVec& flat) const;
-  /// Published flat policy plus live capture.store merge (playback during record/overdub).
+  /// Materialized events policy plus live capture.store merge (playback during record/overdub).
   void gatherCommittedEventsWithCapture(SessionMidiEventVec& flat) const;
   void gatherCommittedEventsWithCapture(MidiEventVec& flat) const;
 
@@ -142,7 +142,7 @@ struct Loop {
   PassId lastCommittedPassId() const { return lastCommittedPassId_; }
   bool captureActive() const;
   size_t liveEventCount() const;
-  /// Published pass event count + active capture size; builds visual cache if needed. Display/LED only.
+  /// Committed pass event count + active capture size; builds visual cache if needed. Display/LED only.
   size_t displayEventCountHint() const;
   bool ensureCaptureEventsSorted();
   void mergeMaterializedPassesWithCapture(MidiEventVec& out) const;
@@ -159,11 +159,11 @@ struct Loop {
   void discardPassesMaterializedCache();
   /// Phase 1B — discard stale materialized store when owner guards pass.
   bool tryDiscardPassesMaterializedCache();
-  void discardPublishedFlatCache() { passesMaterializedStore_.discardFlatCache(); }
+  void discardPassesMaterializedEventsCache() { passesMaterializedStore_.discardEventsCache(); }
   void commitStopFinalizeFromStore(LoopEventStore& merged);
 
   SealOutcome sealCapture(uint32_t sealedAtTick);
-  bool publishPendingCapturePass();
+  bool commitPendingCapturePass();
   void discardPendingCapturePass();
 
   bool reclaimDisabledCapturePass(PassId id);
@@ -214,7 +214,7 @@ struct Loop {
  private:
   friend class TrackUndo;
 
-  PublishedLoopEventStore passesMaterializedStore_;
+  PassesMaterializedEventStore passesMaterializedStore_;
   bool passesMaterializedStoreStale_ = true;
 
   void freeActiveCapturePassChunks();

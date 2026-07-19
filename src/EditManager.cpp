@@ -555,12 +555,12 @@ void EditManager::openNoteEditSession(Track& track) {
 #endif
     loop.assignMissingNoteIdsInStore(editSession.store.mutStore());
     loop.assignMissingNoteIds(loop.midiEvents());
-    loop.assignMissingNoteIds(editSession.store.mutFlat());
+    loop.assignMissingNoteIds(editSession.store.mutEvents());
     DIAG_EVENT(Diagnostics::Edit::AfterAssignNoteIds);
 #if NOTE_EDIT_OPEN_BISECT_STAGE <= 1
     return;
 #endif
-    editSession.store.discardFlatCache();
+    editSession.store.discardEventsCache();
     resetNoteEditSessionState();
     DIAG_EVENT(Diagnostics::Edit::AfterDiscardFlatCache);
 #if NOTE_EDIT_OPEN_BISECT_STAGE <= 2
@@ -582,7 +582,7 @@ void EditManager::openNoteEditSession(Track& track) {
 void EditManager::reopenNoteEditSession(Track& track) {
     if (editSession.active) {
         editSession.store.mutStore().clear();
-        editSession.store.discardFlatCache();
+        editSession.store.discardEventsCache();
         editSession.undoStack.clear();
         editSession.editPassIds.clear();
         editSession.active = false;
@@ -621,14 +621,14 @@ size_t EditManager::bakeNoteEditSessionStoreToPasses(Track& track) {
         return 0;
     }
     Loop& loop = trackManager.getSelectedLoop(track);
-    if (editSession.store.isFlatDirty()) {
-        editSession.store.syncFlatToStore();
+    if (editSession.store.isEventsDirty()) {
+        editSession.store.syncEventsToStore();
     }
 
     MidiEventVec baselineStoreEvents;
     materializePassesExcludingEditPasses(loop, editSession.editPassIds, baselineStoreEvents);
     EditPassVec replacementRows =
-        buildSessionStoreEditPasses(baselineStoreEvents, editSession.store.readFlat(),
+        buildSessionStoreEditPasses(baselineStoreEvents, editSession.store.readEvents(),
                                     track.getMidiChannel(), noteEditLoopLengthTicks(track));
     if (replacementRows.empty()) {
         return 0;
@@ -673,7 +673,7 @@ size_t EditManager::bakeNoteEditSessionStoreToPasses(Track& track) {
     if (replacementIds.empty()) {
         trackManager.reclaimUnreferencedDisabledPasses();
         replacementRows = buildSessionStoreEditPasses(
-            baselineStoreEvents, editSession.store.readFlat(), track.getMidiChannel(),
+            baselineStoreEvents, editSession.store.readEvents(), track.getMidiChannel(),
             noteEditLoopLengthTicks(track));
         replacementIds = loop.replaceNoteEditPass(editSession.editPassIndex, staleEditPassIds,
                                                   std::move(replacementRows));
@@ -708,7 +708,7 @@ void EditManager::closeNoteEditSession(Track& track) {
     flushDeferredNoteEditDisplayRefresh(track);
     closeNoteEditPass(track);
     editSession.store.mutStore().clear();
-    editSession.store.discardFlatCache();
+    editSession.store.discardEventsCache();
     editSession.focus.clear();
     editSession.active = false;
     editSession.sessionType = EditSessionType::Loop;
@@ -728,7 +728,7 @@ void EditManager::revertNoteEditSessionForLoopClear(Track& track) {
     editSession.editPassIds.clear();
     editSession.undoStack.clear();
     editSession.store.mutStore().clear();
-    editSession.store.discardFlatCache();
+    editSession.store.discardEventsCache();
     editSession.focus.clear();
     editSession.active = false;
     editSession.editPassIndex = 0;
@@ -758,7 +758,7 @@ void EditManager::rematerializeNoteEditSessionAfterWorkspaceReload(Track& track)
     }
     if (editSession.active) {
         editSession.store.mutStore().clear();
-        editSession.store.discardFlatCache();
+        editSession.store.discardEventsCache();
         editSession.undoStack.clear();
         editSession.editPassIds.clear();
         editSession.active = false;
@@ -838,11 +838,11 @@ EditPassId EditManager::commitEditAction(Track& track, EditPassVec rows) {
     }
 
     // Drop live session flat before replay — takes + edits[] is canonical after saveNoteEditPass.
-    if (editSession.store.isFlatDirty()) {
-        editSession.store.syncFlatToStore();
+    if (editSession.store.isEventsDirty()) {
+        editSession.store.syncEventsToStore();
     }
-    const MidiEventVec sessionSnapshot = editSession.store.readFlat();
-    editSession.store.discardFlatCache();
+    const MidiEventVec sessionSnapshot = editSession.store.readEvents();
+    editSession.store.discardEventsCache();
     SessionMidiEventVec loopMidiEventsFromPasses;
     loop.passes.materializeToEventVector( loopMidiEventsFromPasses,
                      loopLength);
@@ -861,9 +861,9 @@ EditPassId EditManager::commitEditAction(Track& track, EditPassVec rows) {
         applyNoteEditPassSequence(loopMidiEventsFromPasses, sessionOverlay, loopLength);
     }
 
-    editSession.store.mutStore().loadFromFlat(loopMidiEventsFromPasses);
-    editSession.store.discardFlatCache();
-    logChangeLengthCommitTrace("session_store", editSession.store.readFlat(),
+    editSession.store.mutStore().loadFromEvents(loopMidiEventsFromPasses);
+    editSession.store.discardEventsCache();
+    logChangeLengthCommitTrace("session_store", editSession.store.readEvents(),
                                loopLength, homePitch, homeStart);
 
     logChangeLengthCommitTrace("loop_materialized", loop.midiEvents(), loopLength,
@@ -882,15 +882,15 @@ bool EditManager::pushSessionUndoOnKindChange(Track& track, NoteEditKind kind) {
     if (!editSession.active) {
         return true;
     }
-    if (editSession.store.isFlatDirty()) {
-        editSession.store.syncFlatToStore();
+    if (editSession.store.isEventsDirty()) {
+        editSession.store.syncEventsToStore();
     }
     const SessionUndoEntry entry =
         buildSessionUndoEntry(editSession.focus, sessionState.selection,
-                              editSession.store.readFlat(), track.getMidiChannel(),
+                              editSession.store.readEvents(), track.getMidiChannel(),
                               noteEditLoopLengthTicks(track), editSession.editPassIds);
     if (!editSession.undoStack.pushEntry(entry)) {
-        editSession.store.discardFlatCache();
+        editSession.store.discardEventsCache();
         trackManager.reclaimUnreferencedDisabledPasses();
         if (!editSession.undoStack.pushEntry(entry)) {
             logger.log(CAT_TRACK, LOG_WARNING,
@@ -926,15 +926,15 @@ void EditManager::foldLiveCaptureIntoNoteEditSession(Track& track, uint32_t clos
                                                           Config::TICKS_PER_BAR);
     }
 
-    if (editSession.store.isFlatDirty()) {
-        editSession.store.syncFlatToStore();
+    if (editSession.store.isEventsDirty()) {
+        editSession.store.syncEventsToStore();
     }
-    const MidiEventVec baselineStoreEvents = editSession.store.readFlat();
+    const MidiEventVec baselineStoreEvents = editSession.store.readEvents();
 
     MidiEventVec captureFlat;
-    loop.capture.store.flatten(captureFlat);
+    loop.capture.store.copyEventsTo(captureFlat);
     loop.assignMissingNoteIds(captureFlat);
-    MidiEventVec& sessionFlat = editSession.store.mutFlat();
+    MidiEventVec& sessionFlat = editSession.store.mutEvents();
     if (sessionFlat.empty()) {
         sessionFlat = std::move(captureFlat);
     } else if (!captureFlat.empty()) {
@@ -945,12 +945,12 @@ void EditManager::foldLiveCaptureIntoNoteEditSession(Track& track, uint32_t clos
                    [](const MidiEvent& a, const MidiEvent& b) { return a.tick < b.tick; });
         sessionFlat = std::move(merged);
     }
-    editSession.store.syncFlatToStore();
+    editSession.store.syncEventsToStore();
     loop.discardCapture();
     loop.discardPendingCapturePass();
 
     const EditPassVec redoRows = buildSessionStoreEditPasses(
-        baselineStoreEvents, editSession.store.readFlat(), track.getMidiChannel(), loopLength);
+        baselineStoreEvents, editSession.store.readEvents(), track.getMidiChannel(), loopLength);
     if (redoRows.empty()) {
         return;
     }
@@ -966,7 +966,7 @@ void EditManager::foldLiveCaptureIntoNoteEditSession(Track& track, uint32_t clos
     entry.hasRedoPayload = true;
 
     if (!editSession.undoStack.pushEntry(entry)) {
-        editSession.store.discardFlatCache();
+        editSession.store.discardEventsCache();
         trackManager.reclaimUnreferencedDisabledPasses();
         if (!editSession.undoStack.pushEntry(entry)) {
             logger.log(CAT_TRACK, LOG_WARNING,
@@ -1228,12 +1228,12 @@ bool EditManager::sessionUndo(Track& track) {
     if (!editSession.active || !editSession.undoStack.canUndo()) {
         return false;
     }
-    if (editSession.store.isFlatDirty()) {
-        editSession.store.syncFlatToStore();
+    if (editSession.store.isEventsDirty()) {
+        editSession.store.syncEventsToStore();
     }
     SessionUndoEntry redoPayload =
         buildSessionUndoEntry(editSession.focus, sessionState.selection,
-                              editSession.store.readFlat(), track.getMidiChannel(),
+                              editSession.store.readEvents(), track.getMidiChannel(),
                               noteEditLoopLengthTicks(track), editSession.editPassIds);
     SessionUndoEntry* entry = editSession.undoStack.popUndoTarget();
     if (entry == nullptr) {
@@ -1309,11 +1309,11 @@ bool EditManager::isSessionUndoDisplayActive() const {
 }
 
 MidiEventVec& EditManager::sessionMidiEvents() {
-    return editSession.store.mutFlat();
+    return editSession.store.mutEvents();
 }
 
 const MidiEventVec& EditManager::sessionMidiEvents() const {
-    return editSession.store.readFlat();
+    return editSession.store.readEvents();
 }
 
 void EditManager::bumpSessionPreviewRevision() {
@@ -1356,14 +1356,14 @@ MidiEventVec& EditManager::editMidiEvents(Track& track) {
     if (editSession.active) {
         return sessionMidiEvents();
     }
-    return track.legacyMidiEventsFromPublished();
+    return track.legacyMidiEventsFromCommitted();
 }
 
 const MidiEventVec& EditManager::editMidiEvents(const Track& track) const {
     if (editSession.active) {
         return sessionMidiEvents();
     }
-    return track.legacyMidiEventsFromPublished();
+    return track.legacyMidiEventsFromCommitted();
 }
 
 EditManager::EditManager() {
