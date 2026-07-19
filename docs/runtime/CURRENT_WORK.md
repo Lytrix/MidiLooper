@@ -24,7 +24,9 @@ Last updated: 2026-07-19 (archived deferred-job-scheduler Phase B)
 
 ### Hygiene — codebase debt review (2026-07-19)
 
-**Plan:** [`docs/plans/codebase_hygiene_technical_debt_review.md`](../plans/codebase_hygiene_technical_debt_review.md)
+**Plan (updated):** [`docs/plans/codebase_hygiene_technical_debt_review.md`](../plans/codebase_hygiene_technical_debt_review.md) — shipped table + remaining queue.
+
+**Branch:** `chore/codebase-hygiene-sprint1` (safe rename/layout/HITL/vocab complete).
 
 | Item | Status |
 |------|--------|
@@ -37,7 +39,9 @@ Last updated: 2026-07-19 (archived deferred-job-scheduler Phase B)
 | HITL shared helpers → `scripts/hitl/` | Done |
 | Thin `host_midi_automation_*.py` CLI shims | Done — bodies in `hitl/legacy_*_baseline.py` |
 | `PlaybackWindow` → `PlaybackMergedMidiEvents` | Done — OpenSpec slot-performance-interaction Phase −1 |
-| Vocabulary `published`/`flatten` → committed/materialize/`copyEventsTo` | Done — locked rename map in `include/`/`src/`/`test/` + Guides |
+| Vocabulary `published`/`flatten` → committed/`copyEventsTo` | Done |
+
+**Next hygiene (gated):** Track stop DRY; StorageManager `saveState` extract; optional `NoteEditManager` rename / `Take`/`audible` leftovers.
 
 ---
 

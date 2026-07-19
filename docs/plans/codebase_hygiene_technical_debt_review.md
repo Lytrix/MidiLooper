@@ -1,76 +1,91 @@
 # Codebase hygiene — technical debt review
 
-**Date:** 2026-07-19  
-**Scope:** Ranked debt across `src/`, `scripts/`, `docs/`; first safe sprint executed same session.  
-**Authority:** Operational next product work remains [CURRENT_WORK.md](../runtime/CURRENT_WORK.md). This doc is hygiene backlog only.
+**Date:** 2026-07-19 (updated end of hygiene branch)  
+**Branch:** `chore/codebase-hygiene-sprint1`  
+**Authority:** Product scope remains [CURRENT_WORK.md](../runtime/CURRENT_WORK.md). This doc is hygiene backlog only.
 
 ---
 
 ## Verdict
 
-The tree has real technical depth (passes/materialize, deferred persistence, note-edit overlap) but also concentrated god files, near-duplicate stop/playback paths, documented dead APIs, and vocabulary drift (`published` / `flatten` / `Take` vs committed / materialize / pass). Structural hygiene is uneven: `src/StorageManager/` extraction is underway; `DisplayManager`, HITL baselines, and `Utils/` remain catch-alls.
-
-**Sprint 1 (2026-07-19):** zero-behavior only — review artifact, dead `Looper` transport API, no-op fader schedule forwarders, `PROJECT_STATE` archive-link drift, `EditManager` header comment.
+Safe zero-behavior and rename hygiene on this branch is **largely complete**. Remaining debt is gated product work (Track stop DRY, StorageManager extract, `NoteEditManager` rename) or lower-priority leftovers (`Take`/`audible` vocabulary, plans purge, `PersistenceQueue` name).
 
 ---
 
-## Evidence snapshot (size)
+## Shipped on this branch
 
-| File | ~Lines |
-|------|--------|
-| [`src/StorageManager.cpp`](../../src/StorageManager.cpp) | 4568 (partial extract in [`src/StorageManager/`](../../src/StorageManager/)) |
-| [`scripts/host_midi_automation_edit_baseline.py`](../../scripts/host_midi_automation_edit_baseline.py) | 4551 |
-| [`scripts/host_midi_automation_baseline.py`](../../scripts/host_midi_automation_baseline.py) | 4303 |
-| [`src/DisplayManager.cpp`](../../src/DisplayManager.cpp) | 3345 |
-| [`src/NoteEditManager.cpp`](../../src/NoteEditManager.cpp) | 2556 |
-| [`src/Track.cpp`](../../src/Track.cpp) | 2457 |
-| [`src/Utils/NoteMovementUtils.cpp`](../../src/Utils/NoteMovementUtils.cpp) | 2094 |
+| Commit | Change |
+|--------|--------|
+| `04c603f` | Dead `Looper` transport + no-op fader schedule APIs; review artifact; `PROJECT_STATE` drift |
+| `c5758f0` | Collapse `ensurePassesMaterializedStore` → `materializeEditViewFromPasses` |
+| `30a967f` | `EditNoteHomeState` → `EditStates/`; `PersistenceWorkQueue.cpp` → `src/StorageManager/` |
+| `9c5e26c` | HITL shared helpers → `hitl/control_constants`, `midi_io`, `serial_collector`, `edit_controls`, `capture_transitions` |
+| `373566a` | Thin `host_midi_automation_*.py` CLI shims; bodies in `hitl/legacy_*_baseline.py` |
+| `f6cc7c2` | `PlaybackWindow` merge cache → `PlaybackMergedMidiEvents` (OpenSpec slot-performance-interaction Phase −1) |
+| `d35407d` | Vocabulary: `published`→`committed` / `copyEventsTo` / `readEvents` / `mutEvents` (locked map) |
 
 ---
 
-## A. Complexity / ownership hotspots
+## Evidence snapshot (size — post-hygiene)
 
-| # | Finding | Evidence | Why debt |
-|---|---------|----------|----------|
-| 1 | `StorageManager::saveState` still monolithic | Root TU + `WorkspaceSave` / `RevisionCommit` / `RevisionLoad` extracts | Highest merge/conflict and review cost |
-| 2 | Four near-clone capture stops | `Track::stopRecording`, `stopRecordingToStopped`, `stopOverdubbing`, `stopOverdubbingToStopped`; shared `finalizeCommitSideEffects` + `Loop::commitCapturePass` | High regression risk when stop rules change |
-| 3 | Edit split across three managers | `EditManager` (session/store), `NoteEditManager` (buttons/faders — name reads as edit owner), `LoopEditManager` | Callers must know which owner owns side effects |
-| 4 | `DisplayManager::resolveDisplayNotes` hotspot | Large cold path; repeated `capture.store.flatten` | Display, capture overlay, edit, windowing tangled |
-| 5 | `playMidiEvents` / `playMidiEventsForSlot` fork | Both in `Track.cpp`; wrap/index twins | Fixes land in one path and miss the other |
-| 6 | Note-edit geometry concentration | `NoteMovementUtils`, `NoteEditFocus` | Largest algorithmic surface after storage |
+| File | ~Lines | Notes |
+|------|--------|--------|
+| [`src/StorageManager.cpp`](../../src/StorageManager.cpp) | ~4568 | Still monolithic; extracts under [`src/StorageManager/`](../../src/StorageManager/) |
+| [`scripts/hitl/legacy_edit_baseline.py`](../../scripts/hitl/legacy_edit_baseline.py) | ~4448 | Was top-level edit baseline |
+| [`scripts/hitl/legacy_record_baseline.py`](../../scripts/hitl/legacy_record_baseline.py) | ~3986 | Was top-level record baseline |
+| [`scripts/host_midi_automation_baseline.py`](../../scripts/host_midi_automation_baseline.py) | **~32** | Thin shim |
+| [`scripts/host_midi_automation_edit_baseline.py`](../../scripts/host_midi_automation_edit_baseline.py) | **~32** | Thin shim |
+| [`src/DisplayManager.cpp`](../../src/DisplayManager.cpp) | ~3345 | Unchanged size |
+| [`src/NoteEditManager.cpp`](../../src/NoteEditManager.cpp) | ~2556 | Name still misleading |
+| [`src/Track.cpp`](../../src/Track.cpp) | ~2457 | Stop-path clones remain |
+| [`src/Utils/NoteMovementUtils.cpp`](../../src/Utils/NoteMovementUtils.cpp) | ~2094 | Unchanged |
+
+---
+
+## A. Complexity / ownership hotspots (still open)
+
+| # | Finding | Status |
+|---|---------|--------|
+| 1 | `StorageManager::saveState` still monolithic | **Queued** — continue extract when persistence hardening is CURRENT_WORK |
+| 2 | Four near-clone capture stops (`stopRecording` / `ToStopped` / overdub twins) | **Queued** — Track stop DRY; needs [`unified-capture-commit-owner`](../../openspec/changes/unified-capture-commit-owner/) / OpenSpec phase gate |
+| 3 | Edit split: `EditManager` vs `NoteEditManager` (misnamed) vs `LoopEditManager` | **Queued** — rename `NoteEditManager` only with approved new name (large blast radius) |
+| 4 | `DisplayManager::resolveDisplayNotes` + repeated `capture.store.copyEventsTo` | **Open** — DRY helper still useful; API no longer says flatten |
+| 5 | `playMidiEvents` / `playMidiEventsForSlot` twin wrap walks | **Queued** — behavior-preserving extract only with tests |
+| 6 | Note-edit geometry in `NoteMovementUtils` + `NoteEditFocus` | **Open** — algorithmic depth; not a rename |
 
 ---
 
 ## B. Stale / dead APIs
 
-| # | Finding | Evidence | Sprint 1 |
-|---|---------|----------|----------|
-| 7 | Dead `Looper` transport + stub FSM | `startRecording` / `stopRecording` / `startPlayback` / `stopPlayback` / `startOverdub` / `stopOverdub` / `getState` / `handleState` / `requestStateTransition` — no callers outside `Looper.cpp`; live path is `TrackManager` / `MidiButtonActions` | **Removed**; kept `setup` / `update` |
-| 8 | Empty fader schedule forwarders | `MidiFaderProcessor::scheduleOtherFaderUpdates` no-op; `MidiFaderManager` only forwards; live work is `NoteEditManager::scheduleOtherFaderUpdates` | **Removed** |
-| 9 | `Loop::ensurePassesMaterializedStore` alias | → `materializeEditViewFromPasses` | **Collapsed** (2026-07-19); public API is `materializeEditViewFromPasses` only |
-| 10 | `Track::legacyMidiEventsFromCommitted` bridge | Edit APIs still consume “legacy materialized events” | **Keep** until edit consumers move; document only |
+| # | Finding | Status |
+|---|---------|--------|
+| 7 | Dead `Looper` transport + stub FSM | **Done** — removed; kept `setup` / `update` |
+| 8 | Empty fader `scheduleOtherFaderUpdates` forwarders | **Done** — removed |
+| 9 | `ensurePassesMaterializedStore` alias | **Done** — public API is `materializeEditViewFromPasses` only |
+| 10 | `Track::legacyMidiEventsFromCommitted` bridge | **Keep** until edit consumers leave the legacy scratch path |
 
 ---
 
 ## C. DRY / scripts / naming / layout
 
-| # | Finding | Notes |
-|---|---------|-------|
-| 11 | Capture flatten copy-paste | Display / edit / loop; test-local length helpers in `test_record_stop_length` |
-| 12 | HITL baselines still ~4k lines | Thin `host_midi_hitl.py`; scenarios still import baseline modules | **Done** (2026-07-19): top-level `host_midi_automation_*.py` are thin shims; bodies in `hitl/legacy_record_baseline.py` / `legacy_edit_baseline.py` plus shared hitl helpers |
-| 13 | Vocabulary drift | `published` / `Publish*`, `flatten` / `EventVec`, `Take` in tests/telemetry, `audible` in boot restore | **Done** (2026-07-19): locked rename `published`→`committed`/`materialize`, flatten API→`copyEventsTo`/`EventVec` in `include/`/`src/`/`test/` + Guides; leftover `Take`/`audible`/local `published*` vars still deferred |
-| 14 | `PlaybackWindow` misnamed | OpenSpec / `slot-performance-interaction` → `PlaybackMergedMidiEvents` | **Done** (2026-07-19 Phase −1): struct/file + `mergedMidiEvents` field + `ensure*` / `invalidate*` / release helpers; domain `makeFullLoopPlaybackWindow` unchanged |
-| 15 | `PersistenceQueue` vs `PersistenceWorkQueue` | Chunk mid-pass vs semantic jobs — rename when persistence hardening is active |
-| 16 | Layout inconsistency | `EditNoteHomeState` outside `EditStates/`; `PersistenceWorkQueue.cpp` at `src/` root vs `StorageManagerInternal/` header | **Fixed** (2026-07-19): home state under `EditStates/`; cpp under `src/StorageManager/` |
+| # | Finding | Status |
+|---|---------|--------|
+| 11 | Capture `copyEventsTo` call-site duplication; test-local length helpers | **Open** — optional shared preview-events helper; share length helpers with `Track` |
+| 12 | HITL fat baselines | **Done** — thin CLI shims + `hitl/legacy_*` + shared modules |
+| 13 | Vocabulary `published` / `flatten` | **Done** — locked rename in code + Guides; CAP string `"published"` intentionally kept |
+| 13b | Leftover `Take` in tests/telemetry; `audible` in boot restore | **Queued** — separate small rename pass |
+| 14 | Merge-cache name `PlaybackWindow` | **Done** — `PlaybackMergedMidiEvents`; domain `makeFullLoopPlaybackWindow` unchanged |
+| 15 | `PersistenceQueue` vs `PersistenceWorkQueue` naming clash | **Queued** — rename chunk queue when persistence hardening is active |
+| 16 | `EditNoteHomeState` / `PersistenceWorkQueue.cpp` placement | **Done** |
 
 ---
 
 ## D. Docs drift
 
-| # | Finding | Sprint 1 |
-|---|---------|----------|
-| 17 | `PROJECT_STATE` § In flight pointed at live `openspec/changes/deferred-job-scheduler/` after Phase B archive | **Fixed** → archive path; Active OpenSpec table notes archive |
-| 18 | ~153 `docs/plans/` + historical `docs/Refinements/` | Authority remains CURRENT_WORK + OpenSpec; mass purge later |
+| # | Finding | Status |
+|---|---------|--------|
+| 17 | `PROJECT_STATE` deferred-job-scheduler archive link | **Done** |
+| 18 | ~153 `docs/plans/` + historical `docs/Refinements/` | **Queued** — mass purge / archive later; CURRENT_WORK + OpenSpec remain authority |
 
 ---
 
@@ -78,30 +93,34 @@ The tree has real technical depth (passes/materialize, deferred persistence, not
 
 Protected by [OpenSpec-Phase-Gate](../../.cursor/rules/OpenSpec-Phase-Gate.mdc) and [LOOP_MIDI_STORAGE_AND_VALIDATION.md](../Guides/LOOP_MIDI_STORAGE_AND_VALIDATION.md):
 
-- Capture stop / commit: `Track::stopRecording*`, `stopOverdubbing*`, `commitCaptureForStop`, `finalizeCommitSideEffects`, `Loop::commitCapturePass`, `finalizeLoopAtStop`
-- Persistence: `StorageManager::saveState`, deferred save / work queue / mid-pass chunk paths
-- Playback wrap twins: `playMidiEvents` / `playMidiEventsForSlot` (behavior-preserving extract only with tests)
-- Renaming `NoteEditManager` (large blast radius)
-- Emptying `Utils/` into domain folders (needs ownership decisions)
+- Capture stop / commit paths (`Track::stopRecording*`, `stopOverdubbing*`, `finalizeCommitSideEffects`, `Loop::commitCapturePass`, …)
+- Persistence `saveState` / work queue / mid-pass chunk paths
+- Playback wrap twins (extract only with tests)
+- Renaming `NoteEditManager` without an approved replacement name
+- Emptying `Utils/` into domain folders without ownership decisions
 
 ---
 
-## Queued hygiene slices (when CURRENT_WORK allows)
+## Next hygiene slices (priority)
 
-1. **Track stop DRY** — single parameterized stop pipeline (`record|overdub` × `playing|stopped`) extending `finalizeCommitSideEffects`; align with [`unified-capture-commit-owner`](../../openspec/changes/unified-capture-commit-owner/)
-2. Continue **StorageManager** extraction until `saveState` leaves the root TU
-3. ~~Finish **HITL** helper extraction~~ **Done** — shared helpers in `scripts/hitl/`; legacy `run()`/`main()` in `hitl/legacy_*_baseline.py`; top-level scripts are thin CLI shims
-4. ~~Spec’d rename **`PlaybackWindow` → `PlaybackMergedMidiEvents`**~~ **Done** (OpenSpec `slot-performance-interaction` Phase −1)
-5. ~~Vocabulary rename pass (`published`→`committed`, flatten API)~~ **Done** (2026-07-19) — locked map in code + Guides; not an OpenSpec change
-6. ~~Collapse `ensurePassesMaterializedStore` alias~~ **Done**; ~~move `EditNoteHomeState` into `EditStates/`~~ **Done**; ~~rehome `PersistenceWorkQueue.cpp`~~ **Done** (`src/StorageManager/`)
+1. **Track stop DRY** — parameterized `record|overdub` × `playing|stopped` via `finalizeCommitSideEffects`; align with `unified-capture-commit-owner` (gate required)
+2. **StorageManager** — continue extraction until `saveState` leaves the root TU (with persistence CURRENT_WORK)
+3. **`NoteEditManager` rename** — only after user-approved name (control-surface owner, not edit session)
+4. **`PersistenceQueue` → mid-pass/chunk-oriented name** — with persistence hardening
+5. Optional: shared capture→events helper; retire `Take`/`audible` leftovers; plans purge
+6. Optional: finish moving scenario imports off thin shims onto `hitl.legacy_*` / shared modules only
 
 ---
 
-## Sprint 1 checklist
+## Sprint checklist (this branch)
 
-- [x] This review artifact
-- [x] Remove unused `Looper` transport / stub FSM; keep `setup` / `update`
-- [x] Remove no-op `scheduleOtherFaderUpdates` on `MidiFaderProcessor` / `MidiFaderManager`
-- [x] Fix `PROJECT_STATE` deferred-job-scheduler archive link + Active OpenSpec note
-- [x] Fix stale `EditManager` header comment (`EditModeManager` / `LoopManager`)
-- [x] `pio test -e native` + `pio run -e teensy41-capture-serial` (session verify)
+- [x] Review artifact
+- [x] Dead `Looper` transport / stub FSM
+- [x] No-op fader schedule forwarders
+- [x] `PROJECT_STATE` archive-link drift + `EditManager` header comment
+- [x] Collapse `materializeEditViewFromPasses` alias
+- [x] Layout: `EditNoteHomeState`, `PersistenceWorkQueue.cpp`
+- [x] HITL helpers + thin CLI shims
+- [x] `PlaybackMergedMidiEvents` Phase −1
+- [x] Vocabulary `committed` / `copyEventsTo`
+- [x] Native tests + `teensy41-capture-serial` build (per change)
