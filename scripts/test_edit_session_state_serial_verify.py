@@ -11,14 +11,15 @@ _SCRIPT_DIR = Path(__file__).resolve().parent
 if str(_SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(_SCRIPT_DIR))
 
-from host_midi_automation_edit_baseline import (
+from hitl.control_constants import (
     SCOPED_EDIT_PASS_REDONE,
     SCOPED_EDIT_PASS_UNDONE,
+)
+from host_midi_automation_edit_baseline import (
     _verify_session_state_enter,
     _verify_session_undo_redo_routing,
     _verify_warmup_empty_nav_create,
 )
-
 
 class EditSessionStateSerialVerifyTests(unittest.TestCase):
     def test_enter_ok_select_without_cycle(self) -> None:
@@ -92,7 +93,6 @@ class EditSessionStateSerialVerifyTests(unittest.TestCase):
         result = _verify_warmup_empty_nav_create(lines)
         self.assertFalse(result["ok"])
         self.assertIn("warmup_create:notelen_action_delete", result["issues"])
-
 
 if __name__ == "__main__":
     unittest.main()

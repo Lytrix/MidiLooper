@@ -22,15 +22,11 @@ from __future__ import annotations
 import argparse
 import json
 import re
-import threading
 import time
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional
-
-import serial
-from serial import SerialException
 
 try:
     import mido
@@ -40,6 +36,42 @@ except ImportError as exc:  # pragma: no cover - import guard
         "  python3 -m pip install mido python-rtmidi pyserial"
     ) from exc
 
+from hitl.capture_transitions import (
+    _count_capture_state_entries,
+    _count_capture_transitions,
+    _latest_track_state,
+    _parse_cap_micros,
+    _parse_disp_track_state,
+    _record_entry_to_recording_count,
+    _wait_for_state_entry_count,
+    _wait_for_transition_count,
+)
+from hitl.control_constants import (
+    CONTROL_CHANNEL_1BASED,
+    DEFAULT_LONG_RUN_BAR_THRESHOLD,
+    DEFAULT_RECORD_NOTE_SPAN_MIN_RATIO,
+    DEFAULT_RECORD_STOP_RAM2_FLOOR_BYTES,
+    DEFAULT_RECORD_STOP_RAM2_WARN_BYTES,
+    GLOBAL_TRANSPORT_NOTE,
+    MIDI_CLOCKS_PER_BAR,
+    MIDI_CLOCKS_PER_BEAT,
+    OVERDUB_GRID_STEP_CLOCKS,
+    PLAY_STOP_BUTTON_NOTE,
+    RECORD_BUTTON_NOTE,
+    RECORD_GRID_STEP_CLOCKS,
+    TICKS_PER_16TH_STEP,
+    TICKS_PER_8TH_STEP,
+    TICKS_PER_BAR,
+    TICKS_PER_BEAT,
+    TRACK_SELECT_NOTE_BASE,
+)
+from hitl.midi_io import (
+    _drain_input_messages,
+    _find_midi_port,
+    _send_multi_short_press,
+    _send_short_press,
+)
+from hitl.serial_collector import RunAbort, SerialCaptureCollector, _wait_for_serial_line_idle
 from hitl.serial_timing import (
     extract_first_note_offset as _extract_first_note_offset,
     extract_phase_boundaries as _extract_phase_boundaries,
@@ -60,27 +92,6 @@ from hitl.transport_clock import (
     stream_pattern_for_bars as _stream_pattern_for_bars,
     wait_for_clock_pulses as _wait_for_clock_pulses,
 )
-
-
-TRACK_SELECT_NOTE_BASE = 60
-RECORD_BUTTON_NOTE = 36
-PLAY_STOP_BUTTON_NOTE = 40
-GLOBAL_TRANSPORT_NOTE = 39
-CONTROL_CHANNEL_1BASED = 16
-
-# Must match Config::TICKS_PER_BAR / Config::TICKS_PER_16TH_STEP in include/Globals.h.
-TICKS_PER_BAR = 768
-TICKS_PER_16TH_STEP = 48
-TICKS_PER_8TH_STEP = TICKS_PER_16TH_STEP * 2
-MIDI_CLOCKS_PER_BAR = 96
-MIDI_CLOCKS_PER_BEAT = 24
-RECORD_GRID_STEP_CLOCKS = 6  # 16th notes at 24 PPQN
-OVERDUB_GRID_STEP_CLOCKS = 12  # 8th notes at 24 PPQN
-TICKS_PER_BEAT = TICKS_PER_BAR // 4
-DEFAULT_RECORD_NOTE_SPAN_MIN_RATIO = 0.9
-DEFAULT_LONG_RUN_BAR_THRESHOLD = 48
-DEFAULT_RECORD_STOP_RAM2_FLOOR_BYTES = 0
-DEFAULT_RECORD_STOP_RAM2_WARN_BYTES = 12 * 1024
 
 
 @dataclass(frozen=True)
@@ -131,193 +142,6 @@ def _expected_transition_expectations(args: argparse.Namespace) -> tuple[Transit
         TransitionExpectation("PLAYING", "OVERDUBBING", overdub_pass_count),
         TransitionExpectation("OVERDUBBING", "PLAYING", overdub_pass_count),
     )
-
-
-@dataclass
-class RunAbort:
-    """Optional hard deadline plus serial heartbeat watchdog."""
-
-    run_deadline: Optional[float] = None
-    serial_collector: Optional[Any] = None
-    heartbeat_timeout_s: float = 20.0
-
-    def check(self) -> Optional[str]:
-        now = time.monotonic()
-        if self.run_deadline is not None and now >= self.run_deadline:
-            return "run deadline exceeded"
-        if self.serial_collector is not None and self.heartbeat_timeout_s > 0:
-            return self.serial_collector.heartbeat_abort_reason(self.heartbeat_timeout_s)
-        return None
-
-
-def _wait_for_serial_line_idle(
-    line_count_fn: Any,
-    *,
-    idle_ms: int,
-    max_drain_ms: int,
-    poll_s: float = 0.02,
-) -> int:
-    """Wait until serial line count is stable for idle_ms (USB TX / deferred #CAP flush)."""
-    if max_drain_ms <= 0:
-        return 0
-    start_len = int(line_count_fn())
-    idle_s = max(idle_ms, 0) / 1000.0
-    deadline = time.monotonic() + max(max_drain_ms, 0) / 1000.0
-    last_len = start_len
-    last_change_at = time.monotonic()
-    while time.monotonic() < deadline:
-        current_len = int(line_count_fn())
-        if current_len > last_len:
-            last_len = current_len
-            last_change_at = time.monotonic()
-        elif idle_s <= 0.0 or (time.monotonic() - last_change_at) >= idle_s:
-            break
-        time.sleep(max(poll_s, 0.001))
-    return last_len - start_len
-
-
-class SerialCaptureCollector:
-    """Collects Teensy serial lines in a background thread."""
-
-    def __init__(self, port: str, baud: int, timeout: float = 0.05) -> None:
-        self._serial = serial.Serial(port, baud, timeout=timeout)
-        self._lines: list[str] = []
-        self._lock = threading.Lock()
-        self._stop = threading.Event()
-        self._error: str = ""
-        self._last_line_at: Optional[float] = None
-        self._thread = threading.Thread(target=self._run, daemon=True)
-
-    def start(self) -> None:
-        self._thread.start()
-
-    def line_count(self) -> int:
-        with self._lock:
-            return len(self._lines)
-
-    def drain_until_idle(
-        self,
-        *,
-        idle_ms: int = 750,
-        max_drain_ms: int = 10000,
-    ) -> int:
-        """Keep the reader thread running until trailing serial lines stop arriving."""
-        return _wait_for_serial_line_idle(
-            self.line_count,
-            idle_ms=idle_ms,
-            max_drain_ms=max_drain_ms,
-        )
-
-    def stop(self) -> None:
-        self._stop.set()
-        self._thread.join(timeout=2.0)
-        self._serial.close()
-
-    def _run(self) -> None:
-        try:
-            while not self._stop.is_set():
-                raw = self._serial.readline()
-                if not raw:
-                    continue
-                line = raw.decode("utf-8", errors="replace").strip()
-                if not line:
-                    continue
-                with self._lock:
-                    self._lines.append(line)
-                    self._last_line_at = time.monotonic()
-        except SerialException as exc:
-            self._error = str(exc)
-            self._stop.set()
-
-    def snapshot(self) -> list[str]:
-        with self._lock:
-            return list(self._lines)
-
-    def error(self) -> str:
-        return self._error
-
-    def seconds_since_last_line(self) -> Optional[float]:
-        with self._lock:
-            if self._last_line_at is None:
-                return None
-            return time.monotonic() - self._last_line_at
-
-    def write_line(self, text: str) -> None:
-        payload = (text.rstrip("\n") + "\n").encode("utf-8")
-        self._serial.write(payload)
-        self._serial.flush()
-
-    def heartbeat_abort_reason(self, timeout_s: float) -> Optional[str]:
-        if self._error:
-            return f"serial read error: {self._error}"
-        with self._lock:
-            if self._last_line_at is None:
-                return None
-            elapsed = time.monotonic() - self._last_line_at
-        if elapsed > timeout_s:
-            return (
-                f"serial heartbeat lost ({elapsed:.1f}s since last line, "
-                f"limit {timeout_s:.1f}s)"
-            )
-        return None
-
-
-def _find_midi_port(name_substring: str, is_input: bool, timeout_s: float = 5.0) -> str:
-    lowered = name_substring.lower()
-    deadline = time.monotonic() + max(timeout_s, 0.0)
-    names: list[str] = []
-    while True:
-        names = mido.get_input_names() if is_input else mido.get_output_names()
-        for name in names:
-            if lowered in name.lower():
-                return name
-        if time.monotonic() >= deadline:
-            break
-        time.sleep(0.1)
-    role = "input" if is_input else "output"
-    available = "\n".join(f"  - {n}" for n in names) or "  (none)"
-    raise RuntimeError(
-        f"No MIDI {role} port matching '{name_substring}'.\nAvailable {role} ports:\n{available}"
-    )
-
-
-def _send_short_press(
-    out_port: mido.ports.BaseOutput, *, note: int, channel_1based: int, press_ms: int
-) -> None:
-    ch = channel_1based - 1
-    out_port.send(mido.Message("note_on", channel=ch, note=note, velocity=127))
-    time.sleep(max(press_ms, 1) / 1000.0)
-    out_port.send(mido.Message("note_off", channel=ch, note=note, velocity=0))
-
-
-def _send_multi_short_press(
-    out_port: mido.ports.BaseOutput,
-    *,
-    note: int,
-    channel_1based: int,
-    press_ms: int,
-    count: int,
-    gap_ms: int = 80,
-) -> None:
-    for i in range(max(count, 0)):
-        _send_short_press(
-            out_port,
-            note=note,
-            channel_1based=channel_1based,
-            press_ms=press_ms,
-        )
-        if i + 1 < count:
-            time.sleep(max(gap_ms, 1) / 1000.0)
-
-
-def _drain_input_messages(in_port: mido.ports.BaseInput) -> int:
-    count = 0
-    while True:
-        msg = in_port.poll()
-        if msg is None:
-            break
-        count += 1
-    return count
 
 
 def _stream_dense_chromatic(
@@ -494,44 +318,6 @@ def _stream_pattern_for_seconds(
     return note_on_count, cc_count
 
 
-def _parse_cap_micros(line: str) -> Optional[int]:
-    if not line.startswith("#CAP,"):
-        return None
-    parts = line.split(",", 2)
-    if len(parts) < 2:
-        return None
-    try:
-        return int(parts[1])
-    except ValueError:
-        return None
-
-
-def _parse_disp_track_state(line: str) -> Optional[str]:
-    marker = ",DISP,"
-    if marker not in line or not line.startswith("#CAP,"):
-        return None
-    tail = line.split(marker, 1)[1]
-    parts = tail.split(",")
-    if len(parts) < 2:
-        return None
-    return parts[1].strip()
-
-
-def _count_capture_transitions(lines: list[str]) -> dict[tuple[str, str], int]:
-    counts: dict[tuple[str, str], int] = {}
-    for line in lines:
-        marker = ",ST,Track,"
-        if marker not in line:
-            continue
-        tail = line.split(marker, 1)[1]
-        parts = tail.split(",")
-        if len(parts) < 2:
-            continue
-        key = (parts[0].strip(), parts[1].strip())
-        counts[key] = counts.get(key, 0) + 1
-    return counts
-
-
 def _count_capture_record_markers(lines: list[str]) -> tuple[int, int]:
     reca = 0
     recs = 0
@@ -541,31 +327,6 @@ def _count_capture_record_markers(lines: list[str]) -> tuple[int, int]:
         if "#CAP," in line and ",RECS," in line:
             recs += 1
     return reca, recs
-
-
-def _count_capture_state_entries(lines: list[str]) -> dict[str, int]:
-    counts: dict[str, int] = {}
-    for line in lines:
-        marker = ",ST,Track,"
-        if marker not in line:
-            continue
-        tail = line.split(marker, 1)[1]
-        parts = tail.split(",")
-        if len(parts) < 2:
-            continue
-        to_state = parts[1].strip()
-        counts[to_state] = counts.get(to_state, 0) + 1
-    return counts
-
-
-def _record_entry_to_recording_count(
-    transition_counts: dict[tuple[str, str], int],
-) -> int:
-    """Count record arm from ARMED, EMPTY, or STOPPED (transport restart before record)."""
-    total = 0
-    for from_state in ("ARMED", "EMPTY", "STOPPED"):
-        total += transition_counts.get((from_state, "RECORDING"), 0)
-    return total
 
 
 _CLEAR_RESULTS_EXEMPT_UNDO_PRUNE = frozenset(
@@ -869,29 +630,6 @@ def _wait_for_recording_started(
             return True
         time.sleep(0.02)
     return False
-
-
-def _latest_track_state(lines: list[str]) -> Optional[str]:
-    latest: Optional[str] = None
-    latest_ts = -1
-    for line in lines:
-        state: Optional[str] = None
-        if ",ST,Track," in line:
-            tail = line.split(",ST,Track,", 1)[1]
-            parts = tail.split(",")
-            if len(parts) >= 2:
-                state = parts[1].strip()
-        else:
-            state = _parse_disp_track_state(line)
-        if state is None:
-            continue
-        ts = _parse_cap_micros(line)
-        if ts is None:
-            ts = 0
-        if ts >= latest_ts:
-            latest_ts = ts
-            latest = state
-    return latest
 
 
 def _suffix_shows_disp_recording(lines: list[str], *, after_index: int = 0) -> bool:
@@ -2482,46 +2220,6 @@ def _run_overdub_pass(
         )
     time.sleep(args.phase_wait_ms / 1000.0)
     return None, od_notes, od_cc, od_clock_count, od_timing, od_fallback_seconds
-
-
-def _wait_for_state_entry_count(
-    collector: SerialCaptureCollector,
-    *,
-    to_state: str,
-    target_count: int,
-    timeout_s: float,
-    abort: Optional[RunAbort] = None,
-) -> bool:
-    deadline = time.monotonic() + max(timeout_s, 0.0)
-    while time.monotonic() < deadline:
-        if abort is not None and abort.check() is not None:
-            return False
-        counts = _count_capture_state_entries(collector.snapshot())
-        if counts.get(to_state, 0) >= target_count:
-            return True
-        time.sleep(0.01)
-    return False
-
-
-def _wait_for_transition_count(
-    collector: SerialCaptureCollector,
-    *,
-    from_state: str,
-    to_state: str,
-    target_count: int,
-    timeout_s: float,
-    abort: Optional[RunAbort] = None,
-) -> bool:
-    deadline = time.monotonic() + max(timeout_s, 0.0)
-    key = (from_state, to_state)
-    while time.monotonic() < deadline:
-        if abort is not None and abort.check() is not None:
-            return False
-        counts = _count_capture_transitions(collector.snapshot())
-        if counts.get(key, 0) >= target_count:
-            return True
-        time.sleep(0.01)
-    return False
 
 
 _STUCK_CAPTURE_STATES = frozenset({"RECORDING", "OVERDUBBING"})

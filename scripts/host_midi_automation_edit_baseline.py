@@ -35,8 +35,6 @@ if str(_SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(_SCRIPT_DIR))
 
 from host_midi_automation_baseline import (  # noqa: E402
-    CONTROL_CHANNEL_1BASED,
-    GLOBAL_TRANSPORT_NOTE,
     MIDI_CLOCKS_PER_BAR,
     RECORD_BUTTON_NOTE,
     RunAbort,
@@ -48,18 +46,37 @@ from host_midi_automation_baseline import (  # noqa: E402
     _ensure_midi_clock,
     _extract_revt_note_on_ticks,
     _find_midi_port,
-    _send_multi_short_press,
     _send_short_press,
     _serial_has_clear_completed,
     _wait_for_state_entry_count,
     _wait_for_transition_count,
 )
+from hitl.control_constants import (  # noqa: E402
+    CONTROL_CHANNEL_1BASED,
+    DISPLAY_SETTLE_MS,
+    EDIT_BUTTON_DEBOUNCE_MS,
+    EDIT_BUTTON_NOTE,
+    FADER_SELECT_SETTLE_MS,
+    GLOBAL_TRANSPORT_NOTE,
+    LENGTH_EDIT_NOTE,
+    NOTE_SELECTION_GRACE_MS,
+    SCOPED_EDIT_PASS_REDONE,
+    SCOPED_EDIT_PASS_UNDONE,
+    TICKS_PER_16TH_STEP,
+    TICKS_PER_BAR,
+    TICKS_PER_BEAT,
+)
+from hitl.edit_controls import (  # noqa: E402
+    _ensure_transport_running,
+    _send_double_press,
+    _send_long_press,
+    _send_triple_press,
+    _stop_transport_if_running,
+)
 
 DEFAULT_PERSISTENCE_WAIT_TIMEOUT_S = 30.0
 
 # Canonical scoped edit-pass undo serial markers (TrackUndo post-exit global undo).
-SCOPED_EDIT_PASS_UNDONE = "Scoped edit pass undone"
-SCOPED_EDIT_PASS_REDONE = "Scoped edit pass redone"
 _LEGACY_EDIT_PASS_UNDONE_MARKERS = (
     SCOPED_EDIT_PASS_UNDONE,
     "Note edit pass undone",
@@ -76,22 +93,14 @@ _SERIAL_MARKER_ALIASES: dict[str, tuple[str, ...]] = {
 }
 
 # DROID main controls (MidiConfig::Transport / LengthEdit)
-EDIT_BUTTON_NOTE = 38
-LENGTH_EDIT_NOTE = 35
 EDIT_ENTER_LOG_PATTERNS: tuple[str, ...] = (
     "MIDI Encoder: Short press - entered note edit mode",
     "Note edit: short press entered Select overlay",
 )
-FADER_SELECT_SETTLE_MS = 650
-NOTE_SELECTION_GRACE_MS = 750
 COARSE_EDIT_READY_MS = 1200
-TICKS_PER_16TH_STEP = 48
-TICKS_PER_BAR = 768
 BEATS_PER_BAR = 4
 SIXTEENTHS_PER_BEAT = 4
-TICKS_PER_BEAT = TICKS_PER_BAR // BEATS_PER_BAR
 BEAT_MOVE_STEPS = SIXTEENTHS_PER_BEAT
-DISPLAY_SETTLE_MS = 800
 M0_PITCH = 60
 B_PITCH = 64
 D_PITCH = 64
@@ -104,7 +113,6 @@ D_STEP = 18
 M0_POST_SANDWICH_STEP = 24  # last coarse move in sandwich leg
 INSERT_AFTER_DELETE_STEP = D_STEP  # legacy alias for delay-move target
 INSERT_NOTE_STEP = 1  # doc empty add-note target (step 18 often occupied after edits)
-EDIT_BUTTON_DEBOUNCE_MS = 350  # firmware double-tap window before deferred short fires
 POST_DELETE_QUIET_MS = 2500
 # Long M0 end step (edit-time length extend) must span P0@step12 before move-over-short.
 LONG_M0_END_FIXTURE_STEP = 14
@@ -386,51 +394,6 @@ class EditScenario:
     description: str
     run: Callable[..., None] = field(repr=False)
     serial_markers: tuple[str, ...] = ()
-
-
-def _send_long_press(
-    out_port: mido.ports.BaseOutput, *, note: int, channel_1based: int, press_ms: int
-) -> None:
-    ch = channel_1based - 1
-    out_port.send(mido.Message("note_on", channel=ch, note=note, velocity=127))
-    time.sleep(max(press_ms, 1) / 1000.0)
-    out_port.send(mido.Message("note_off", channel=ch, note=note, velocity=0))
-
-
-def _send_double_press(
-    out_port: mido.ports.BaseOutput,
-    *,
-    note: int,
-    channel_1based: int,
-    press_ms: int,
-    gap_ms: int = 80,
-) -> None:
-    _send_multi_short_press(
-        out_port,
-        note=note,
-        channel_1based=channel_1based,
-        press_ms=press_ms,
-        count=2,
-        gap_ms=gap_ms,
-    )
-
-
-def _send_triple_press(
-    out_port: mido.ports.BaseOutput,
-    *,
-    note: int,
-    channel_1based: int,
-    press_ms: int,
-    gap_ms: int = 80,
-) -> None:
-    _send_multi_short_press(
-        out_port,
-        note=note,
-        channel_1based=channel_1based,
-        press_ms=press_ms,
-        count=3,
-        gap_ms=gap_ms,
-    )
 
 
 def _fader1_select_nav_slot_index(
@@ -1223,57 +1186,6 @@ def _latest_track_state(lines: list[str]) -> Optional[str]:
         if len(parts) >= 2:
             latest = parts[1].strip()
     return latest
-
-
-def _ensure_transport_running(
-    out_port: mido.ports.BaseOutput,
-    in_port: mido.ports.BaseInput,
-    *,
-    press_ms: int,
-    phase_wait_ms: int,
-    serial_collector: Any | None = None,
-    transport_args: Any | None = None,
-) -> bool:
-    """Start transport when USB MIDI clock is absent and serial proxy is not active."""
-    from hitl.serial_transport import use_serial_transport_proxy
-
-    if transport_args is not None and use_serial_transport_proxy(transport_args, serial_collector):
-        return True
-    if _clock_seen_within(in_port, 0.5):
-        return True
-    for attempt in range(1, 4):
-        _send_short_press(
-            out_port,
-            note=GLOBAL_TRANSPORT_NOTE,
-            channel_1based=CONTROL_CHANNEL_1BASED,
-            press_ms=press_ms,
-        )
-        time.sleep(phase_wait_ms / 1000.0)
-        if _clock_seen_within(in_port, 1.0):
-            return True
-        print(f"[warn] No MIDI clock after transport start (attempt {attempt}/3)")
-    return _clock_seen_within(in_port, 1.0)
-
-
-def _stop_transport_if_running(
-    out_port: mido.ports.BaseOutput,
-    in_port: mido.ports.BaseInput,
-    *,
-    press_ms: int,
-    phase_wait_ms: int,
-) -> bool:
-    """Toggle transport off when the host already sees MIDI clock."""
-    if not _clock_seen_within(in_port, 0.5):
-        return False
-    print("[edit-hitl] transport stop before clear/record precondition")
-    _send_short_press(
-        out_port,
-        note=GLOBAL_TRANSPORT_NOTE,
-        channel_1based=CONTROL_CHANNEL_1BASED,
-        press_ms=press_ms,
-    )
-    time.sleep(phase_wait_ms / 1000.0)
-    return True
 
 
 def _ensure_clear_to_empty(

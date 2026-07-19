@@ -15,10 +15,8 @@ DIRTY_PROMPT_ROW = {"yes": 0, "no": 1, "cancel": 2}
 RECORD_SCROLL_NOTE = 36
 TRACK_SCROLL_NOTE = 37
 
-
 def overlay_scroll_steps_to_set_row(catalog_set_index: int) -> int:
     return ROOT_FIRST_SET_ROW + max(catalog_set_index, 0)
-
 
 def parse_overlay_watch_args(args: object) -> argparse.Namespace:
     defaults = {
@@ -63,13 +61,11 @@ def parse_overlay_watch_args(args: object) -> argparse.Namespace:
     known, _unknown = parser.parse_known_args(legacy)
     return known
 
-
 def dwell_ms(ms: int, log_prefix: str, label: str) -> None:
     if ms <= 0:
         return
     print(f"{log_prefix} >>> dwell {ms}ms — {label} <<<")
     time.sleep(ms / 1000.0)
-
 
 def wait_load_save_mode(serial_collector: object, expected: int, timeout_ms: int) -> bool:
     deadline = time.time() + timeout_ms / 1000.0
@@ -79,7 +75,6 @@ def wait_load_save_mode(serial_collector: object, expected: int, timeout_ms: int
         time.sleep(0.05)
     return last_load_save_mode_active(serial_collector.snapshot()) == expected
 
-
 def wait_serial_cap_ready(serial_collector: object, timeout_ms: int = 8000) -> bool:
     deadline = time.time() + timeout_ms / 1000.0
     while time.time() < deadline:
@@ -88,7 +83,6 @@ def wait_serial_cap_ready(serial_collector: object, timeout_ms: int = 8000) -> b
                 return True
         time.sleep(0.05)
     return False
-
 
 def wait_overlay_selection(
     serial_collector: object,
@@ -110,7 +104,6 @@ def wait_overlay_selection(
     print(f"{log_prefix} warn: timed out waiting for OVLY,sel,{mode},{row}")
     return False
 
-
 def enter_load_save_overlay(
     out_port: object,
     serial_collector: object,
@@ -121,8 +114,11 @@ def enter_load_save_overlay(
     send_double_press: object,
     log_prefix: str,
 ) -> bool:
-    from host_midi_automation_baseline import CONTROL_CHANNEL_1BASED, PLAY_STOP_BUTTON_NOTE
-    from host_midi_automation_edit_baseline import EDIT_BUTTON_NOTE
+    from hitl.control_constants import (
+        CONTROL_CHANNEL_1BASED,
+        EDIT_BUTTON_NOTE,
+        PLAY_STOP_BUTTON_NOTE,
+    )
 
     cap_ready = wait_serial_cap_ready(serial_collector, timeout_ms=5000)
     for attempt, note in enumerate((EDIT_BUTTON_NOTE, PLAY_STOP_BUTTON_NOTE), start=1):
@@ -145,7 +141,6 @@ def enter_load_save_overlay(
     print(f"{log_prefix} warn: LDSV not verified — proceeding after enter gestures")
     return True
 
-
 def exit_load_save_overlay(
     out_port: object,
     serial_collector: object,
@@ -156,8 +151,11 @@ def exit_load_save_overlay(
     send_double_press: object,
     log_prefix: str,
 ) -> None:
-    from host_midi_automation_baseline import CONTROL_CHANNEL_1BASED, PLAY_STOP_BUTTON_NOTE
-    from host_midi_automation_edit_baseline import EDIT_BUTTON_NOTE
+    from hitl.control_constants import (
+        CONTROL_CHANNEL_1BASED,
+        EDIT_BUTTON_NOTE,
+        PLAY_STOP_BUTTON_NOTE,
+    )
 
     if last_load_save_mode_active(serial_collector.snapshot()) != 1:
         return
@@ -174,7 +172,6 @@ def exit_load_save_overlay(
         if wait_load_save_mode(serial_collector, 0, max(gesture_settle_ms, 1500)):
             print(f"{log_prefix} overlay closed (LDSV=0)")
             return
-
 
 def recover_load_save_overlay(
     out_port: object,
@@ -197,7 +194,6 @@ def recover_load_save_overlay(
             send_double_press=send_double_press,
             log_prefix=log_prefix,
         )
-
 
 def midi_scroll_overlay(
     out_port: object,
@@ -227,7 +223,6 @@ def midi_scroll_overlay(
             press_ms=press_ms,
         )
         time.sleep(phase_wait_ms / 1000.0)
-
 
 def midi_scroll_to_root_row(
     out_port: object,
@@ -266,7 +261,6 @@ def midi_scroll_to_root_row(
     dwell_ms(step_dwell_ms, log_prefix, f"root row {target_row}")
     return anchor
 
-
 def midi_confirm_overlay_row(
     out_port: object,
     *,
@@ -277,7 +271,7 @@ def midi_confirm_overlay_row(
     log_prefix: str,
     action_label: str,
 ) -> None:
-    from host_midi_automation_edit_baseline import EDIT_BUTTON_NOTE
+    from hitl.control_constants import EDIT_BUTTON_NOTE
 
     print(f"{log_prefix} >>> edit short — {action_label} <<<")
     send_short_press(
@@ -287,7 +281,6 @@ def midi_confirm_overlay_row(
         press_ms=press_ms,
     )
     time.sleep(gesture_settle_ms / 1000.0)
-
 
 def midi_scroll_dirty_prompt_row(
     out_port: object,
@@ -326,7 +319,6 @@ def midi_scroll_dirty_prompt_row(
     dwell_ms(step_dwell_ms, log_prefix, f"dirty prompt {choice}")
     return anchor
 
-
 def make_workspace_dirty_again(
     out_port,
     in_port,
@@ -341,13 +333,16 @@ def make_workspace_dirty_again(
 ) -> bool:
     from hitl.deferred_save_idle import wait_for_deferred_save_idle
     from hitl.transport_clock import wait_for_phase_clocks
-    from host_midi_automation_baseline import (
+    from hitl.control_constants import (
         CONTROL_CHANNEL_1BASED,
         RECORD_BUTTON_NOTE,
         MIDI_CLOCKS_PER_BAR,
-        _send_short_press,
     )
-    from host_midi_automation_edit_baseline import _ensure_transport_running, _stop_transport_if_running
+    from hitl.midi_io import _send_short_press
+    from hitl.edit_controls import (
+        _ensure_transport_running,
+        _stop_transport_if_running,
+    )
 
     transport_args = argparse.Namespace(
         serial_port="1" if serial_collector is not None else None,

@@ -10,7 +10,6 @@ from typing import Optional
 
 from hitl.context import get_context
 
-
 def _parse_common_args(args: object) -> argparse.Namespace:
     parser = argparse.ArgumentParser(add_help=False)
     parser.add_argument("--midi-out", default="Teensy")
@@ -62,7 +61,6 @@ def _parse_common_args(args: object) -> argparse.Namespace:
     ns, _unknown = parser.parse_known_args(legacy)
     return ns
 
-
 def _resolve_base_seed(
     out_dir: Path,
     *,
@@ -100,7 +98,6 @@ def _resolve_base_seed(
     config = base_preset_config(report)
     return lines, _layout(lines, config), seed_path
 
-
 def _ensure_note_edit_entered(
     out_port,
     collector,
@@ -110,8 +107,12 @@ def _ensure_note_edit_entered(
     timeout_s: float,
     log_prefix: str,
 ) -> bool:
-    from host_midi_automation_baseline import CONTROL_CHANNEL_1BASED, _send_short_press
-    from host_midi_automation_edit_baseline import EDIT_BUTTON_DEBOUNCE_MS, EDIT_BUTTON_NOTE
+    from hitl.control_constants import (
+        CONTROL_CHANNEL_1BASED,
+        EDIT_BUTTON_DEBOUNCE_MS,
+        EDIT_BUTTON_NOTE,
+    )
+    from hitl.midi_io import _send_short_press
 
     def _note_edit_active(lines: list[str]) -> bool:
         last_toggle = -1
@@ -156,15 +157,13 @@ def _ensure_note_edit_entered(
             time.sleep(0.05)
     return False
 
-
 def _first_note_fixture_step(layout) -> Optional[int]:
-    from host_midi_automation_edit_baseline import TICKS_PER_16TH_STEP
+    from hitl.control_constants import TICKS_PER_16TH_STEP
 
     for slot in layout.nav_slots:
         if slot.note_idx >= 0:
             return slot.rel_tick // TICKS_PER_16TH_STEP
     return None
-
 
 def _move_target_step(layout, from_step: int, *, delta: int = 4) -> int:
     target = from_step + delta
@@ -175,7 +174,6 @@ def _move_target_step(layout, from_step: int, *, delta: int = 4) -> int:
         target = from_step - 1
     return target
 
-
 def _run_loop_seam_move_152335(
     out_port,
     *,
@@ -185,8 +183,8 @@ def _run_loop_seam_move_152335(
     log_prefix: str,
 ) -> None:
     """Move wrap-spanning fixture note +1 sixteenth across loop seam (152335 class)."""
+    from hitl.control_constants import TICKS_PER_BAR
     from host_midi_automation_edit_baseline import (
-        TICKS_PER_BAR,
         WRAP_SEAM_MOVE_STEP,
         WRAP_SEAM_STEP,
         _fader1_select_then_wait_for_fader2,
@@ -215,7 +213,6 @@ def _run_loop_seam_move_152335(
     ctx.markers.append(f"wrap_seam_to_step={WRAP_SEAM_MOVE_STEP}")
     pause()
 
-
 def _run_edit_smoke(
     out_port,
     *,
@@ -228,11 +225,11 @@ def _run_edit_smoke(
     press_ms: int,
     serial_collector=None,
 ) -> None:
+    from hitl.control_constants import TICKS_PER_16TH_STEP
     from host_midi_automation_edit_baseline import (
         B_STEP,
         INSERT_NOTE_STEP,
         M0_STEP,
-        TICKS_PER_16TH_STEP,
         _create_note_at_bracket,
         _delete_selected_note,
         _fader1_select_empty_fixture_step,
@@ -318,7 +315,6 @@ def _run_edit_smoke(
         log_prefix=log_prefix,
     )
 
-
 def _run_fixture_record_prelude(
     out_port,
     in_port,
@@ -331,25 +327,31 @@ def _run_fixture_record_prelude(
     pause,
 ) -> Optional[object]:
     """Legacy in-scenario EDIT_RECORD_FIXTURE record (dev fallback)."""
+    from hitl.control_constants import TICKS_PER_BAR
+    from hitl.edit_controls import (
+        _ensure_transport_running,
+        _stop_transport_if_running,
+    )
     from host_midi_automation_edit_baseline import (
         EDIT_RECORD_FIXTURE,
-        TICKS_PER_BAR,
         RecordLayout,
         _build_fixture_step_to_tick,
         _build_select_navigation_slots,
         _ensure_clear_to_empty,
         _ensure_recording_started,
-        _ensure_transport_running,
-        _stop_transport_if_running,
         _stream_fixture_record,
         _wait_for_revt_count,
     )
-    from host_midi_automation_baseline import (
+    from hitl.control_constants import (
         CONTROL_CHANNEL_1BASED,
         RECORD_BUTTON_NOTE,
-        _count_capture_transitions,
+    )
+    from hitl.midi_io import (
         _drain_input_messages,
         _send_short_press,
+    )
+    from hitl.capture_transitions import (
+        _count_capture_transitions,
         _wait_for_transition_count,
     )
 
@@ -364,7 +366,7 @@ def _run_fixture_record_prelude(
             phase_wait_ms=ns.phase_wait_ms,
         )
 
-    from host_midi_automation_baseline import TRACK_SELECT_NOTE_BASE
+    from hitl.control_constants import TRACK_SELECT_NOTE_BASE
 
     print(f"{log_prefix} select track {ns.track_number}")
     _send_short_press(
@@ -501,7 +503,6 @@ def _run_fixture_record_prelude(
     ctx.record_fixture = EDIT_RECORD_FIXTURE
     return record_layout
 
-
 def run_edit_minimal_scenario(args: object) -> int:
     ns = _parse_common_args(args)
     ctx = get_context(args)
@@ -510,17 +511,21 @@ def run_edit_minimal_scenario(args: object) -> int:
     log_prefix = "[edit-minimal-hitl]"
 
     import mido
-    from host_midi_automation_baseline import (
+    from hitl.control_constants import (
         CONTROL_CHANNEL_1BASED,
+        TRACK_SELECT_NOTE_BASE,
+    )
+    from hitl.serial_collector import (
         RunAbort,
         SerialCaptureCollector,
-        TRACK_SELECT_NOTE_BASE,
+    )
+    from hitl.midi_io import (
         _drain_input_messages,
         _find_midi_port,
         _send_short_press,
     )
-    from host_midi_automation_edit_baseline import (
-        EDIT_BUTTON_NOTE,
+    from hitl.control_constants import EDIT_BUTTON_NOTE
+    from hitl.edit_controls import (
         _ensure_transport_running,
         _send_long_press,
     )
@@ -687,10 +692,8 @@ def run_edit_minimal_scenario(args: object) -> int:
         in_port.close()
         _drain_input_messages(in_port)
 
-
 def _decode_pitchbend_wire(d1: int, d2: int) -> int:
     return (d1 | (d2 << 7)) - 8192
-
 
 def _mo_f2_pitchbend_values(lines: list[str]) -> list[int]:
     values: list[int] = []
@@ -700,10 +703,8 @@ def _mo_f2_pitchbend_values(lines: list[str]) -> list[int]:
             values.append(_decode_pitchbend_wire(int(match.group(1)), int(match.group(2))))
     return values
 
-
 def _pb_near(actual: int, expected: int, *, tolerance: int = 64) -> bool:
     return abs(actual - expected) <= tolerance
-
 
 def _inbound_fader2_pitchbend_values(lines: list[str]) -> list[int]:
     values: list[int] = []
@@ -718,7 +719,6 @@ def _inbound_fader2_pitchbend_values(lines: list[str]) -> list[int]:
             values.append(int(match.group(1)))
     return values
 
-
 def _verify_loop_seam_move_152335(
     lines: list[str],
     *,
@@ -726,8 +726,8 @@ def _verify_loop_seam_move_152335(
     markers: Optional[list[str]] = None,
 ) -> dict[str, object]:
     """Verify wrap-spanning fixture note move across loop seam (152335 — no off@0)."""
+    from hitl.control_constants import TICKS_PER_BAR
     from host_midi_automation_edit_baseline import (
-        TICKS_PER_BAR,
         WRAP_SEAM_MOVE_STEP,
         WRAP_SEAM_PITCH,
         WRAP_SEAM_STEP,
@@ -788,7 +788,6 @@ def _verify_loop_seam_move_152335(
         "to_tick": to_tick,
     }
 
-
 def _verify_edit_minimal_fixture_identity(
     lines: list[str],
     *,
@@ -796,12 +795,12 @@ def _verify_edit_minimal_fixture_identity(
     markers: Optional[list[str]] = None,
 ) -> dict[str, object]:
     """Verify move/length/add/delete targeted fixture notes by pitch + storage tick."""
+    from hitl.control_constants import TICKS_PER_16TH_STEP
     from host_midi_automation_edit_baseline import (
         B_STEP,
         INSERT_NOTE_STEP,
         M0_PITCH,
         M0_STEP,
-        TICKS_PER_16TH_STEP,
         _fixture_step_tick,
         _parse_position_edits,
         _parse_created_32nd_note_events,
@@ -914,7 +913,6 @@ def _verify_edit_minimal_fixture_identity(
         "length_end_tick": length_end_tick,
         "mo_f2_count": len(mo_f2),
     }
-
 
 def verify_edit_minimal_scenario(lines: list[str], args: object) -> dict[str, object]:
     from host_midi_automation_edit_baseline import _verify_session_state_enter

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import sys
 
-
 def run_edit_record_prelude(args: object) -> int:
     """Record prelude is bundled in edit_full / edit_minimal / edit_overdub runners."""
     preset = getattr(args, "preset", None)
@@ -16,9 +15,11 @@ def run_edit_record_prelude(args: object) -> int:
     print("[hitl] edit_record_prelude: run with edit_full, edit_minimal, or edit_overdub_during_note_edit")
     return 2
 
-
 def verify_edit_record_prelude(lines: list[str], args: object) -> dict[str, object]:
-    from host_midi_automation_baseline import _count_capture_transitions, _record_entry_to_recording_count
+    from hitl.capture_transitions import (
+        _count_capture_transitions,
+        _record_entry_to_recording_count,
+    )
 
     transitions = _count_capture_transitions(lines)
     record_ok = _record_entry_to_recording_count(transitions) >= 1

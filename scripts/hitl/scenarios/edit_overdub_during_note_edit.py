@@ -14,7 +14,6 @@ PRE_EDIT_OVERDUB_HIGH = 39  # D#2
 IN_EDIT_OVERDUB_LOW = 12  # C0
 IN_EDIT_OVERDUB_HIGH = 35  # B1
 
-
 def _parse_common_args(args: object) -> argparse.Namespace:
     parser = argparse.ArgumentParser(add_help=False)
     parser.add_argument("--midi-out", default="Teensy")
@@ -36,29 +35,39 @@ def _parse_common_args(args: object) -> argparse.Namespace:
     legacy = list(getattr(args, "legacy_args", []) or [])
     return parser.parse_args(legacy)
 
-
 def run_edit_overdub_during_note_edit(args: object) -> int:
     import mido
-    from host_midi_automation_baseline import (
+    from hitl.control_constants import (
         CONTROL_CHANNEL_1BASED,
+        EDIT_BUTTON_NOTE,
         GLOBAL_TRANSPORT_NOTE,
         MIDI_CLOCKS_PER_BAR,
         OVERDUB_GRID_STEP_CLOCKS,
         RECORD_BUTTON_NOTE,
+        TICKS_PER_BAR,
+    )
+    from hitl.serial_collector import (
         RunAbort,
         SerialCaptureCollector,
+    )
+    from hitl.midi_io import (
         _drain_input_messages,
         _find_midi_port,
-        _run_overdub_pass,
         _send_short_press,
+    )
+    from hitl.capture_transitions import (
         _wait_for_transition_count,
         _count_capture_transitions,
     )
+    from host_midi_automation_baseline import _run_overdub_pass
+    from hitl.edit_controls import (
+        _ensure_transport_running,
+        _send_long_press,
+        _stop_transport_if_running,
+    )
     from host_midi_automation_edit_baseline import (
         DEFAULT_PERSISTENCE_WAIT_TIMEOUT_S,
-        EDIT_BUTTON_NOTE,
         EDIT_RECORD_FIXTURE,
-        TICKS_PER_BAR,
         RecordLayout,
         _build_fixture_step_to_tick,
         _build_select_navigation_slots,
@@ -66,15 +75,12 @@ def run_edit_overdub_during_note_edit(args: object) -> int:
         _delete_selected_note,
         _ensure_clear_to_empty,
         _ensure_recording_started,
-        _ensure_transport_running,
         _fader1_select_empty_fixture_step,
         _fader1_select_sixteenth_step,
         _fader1_select_then_wait_for_fader2,
         _fader2_move_to_sixteenth_step,
         _send_global_redo,
         _send_global_undo,
-        _send_long_press,
-        _stop_transport_if_running,
         _stream_fixture_record,
         _toggle_length_edit_mode,
         _track_cleared_for_record,
@@ -433,7 +439,6 @@ def run_edit_overdub_during_note_edit(args: object) -> int:
         out_port.close()
         in_port.close()
         _drain_input_messages(in_port)
-
 
 def verify_edit_overdub_during_note_edit(lines: list[str], args: object) -> dict[str, object]:
     from hitl.verify.edit_overdub_during_note_edit import (
