@@ -24,8 +24,10 @@ See [`docs/BRANCHING.md`](../BRANCHING.md).
 
 ## In flight
 
-- **Active:** OpenSpec [`deferred-job-scheduler`](../../openspec/changes/deferred-job-scheduler/) — **B.1–B.2**; B.1 gate [`231510`](../../captures/session_20260718_231510.log)
+- **Next product slice:** confirm with user (persistence/overlay hardening, or parked large-slot display hunt) — see [CURRENT_WORK.md](CURRENT_WORK.md)
+- **Archived this branch:** OpenSpec [`deferred-job-scheduler`](../../openspec/changes/archive/2026-07-19-deferred-job-scheduler/) Phase B — gates B.1 [`231510`](../../captures/session_20260718_231510.log), B.3/B.4 [`022107`](../../captures/session_20260719_022107.log); specs in `openspec/specs/deferred-job-scheduler/`
 - Memory reclaim + boot/display stack — **merged to `dev`** (PR #4)
+- **Hygiene (2026-07-19):** [`codebase_hygiene_technical_debt_review.md`](../plans/codebase_hygiene_technical_debt_review.md) — dead Looper transport + no-op fader schedule APIs removed
 
 ## Shipped on branch (recent)
 
@@ -55,6 +57,7 @@ See [`docs/BRANCHING.md`](../BRANCHING.md).
 
 | Change | Focus |
 |--------|--------|
+| **`deferred-job-scheduler`** | **Archived** `openspec/changes/archive/2026-07-19-deferred-job-scheduler/`; normative `openspec/specs/deferred-job-scheduler/` |
 | **`continuous-runtime-persistence`** | Phase 0–4 shipped; Phase 4 HITL **passed** (`171043` 64+64, `171951` boot restore); Phase 5 recovery **next** |
 | **`runtime-derived-representation-heap`** | M5 Steps 1–1b–2 shipped (`adoptPersistedSnapshot`); lazy load + 64+64 HITL pending |
 | **`slot-selection-focus`** | **Shipped (firmware)** — orchestrator + footer extension; manual §8 pending; [`slot_selection_focus_implementation_handoff.md`](../plans/slot_selection_focus_implementation_handoff.md) |
