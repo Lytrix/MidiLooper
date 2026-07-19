@@ -32,10 +32,10 @@
 #include "RtcTime.h"
 #include "Globals.h"
 #include "Logger.h"
-#include "Utils/DebugSessionCapture.h"
 #include "Utils/BootTelemetry.h"
 #include "Utils/MemoryMonitor.h"
 #include "Utils/PersistenceDiagnostics.h"
+#include "Utils/DebugSessionCapture.h"
 #include <SD.h>
 #include <Arduino.h>
 #include <utility>
@@ -2706,16 +2706,6 @@ STORAGE_PERSIST_MEM void parkActiveLoadLoopJob() {
     if (parkedLoadLoopJob_.active) {
         return;
     }
-#if defined(SESSION_CAPTURE)
-    {
-        char line[56];
-        std::snprintf(line, sizeof(line), "#CAP,LLBG,park,%u,%u,%lu",
-                      static_cast<unsigned>(loadLoopJob_.track),
-                      static_cast<unsigned>(loadLoopJob_.slot),
-                      static_cast<unsigned long>(loadLoopJob_.bytesRead));
-        DebugSessionCapture::appendCaptureTextLine(line);
-    }
-#endif
     swapLoadLoopJobs(loadLoopJob_, parkedLoadLoopJob_);
 }
 
@@ -2733,28 +2723,10 @@ STORAGE_PERSIST_MEM void resumeParkedLoadLoopJobIfFocus(uint8_t focusTrack, uint
         if (parkedLoadLoopJob_.active) {
             // Active is not focus; park occupied by focus — swap so focus becomes active.
             swapLoadLoopJobs(loadLoopJob_, parkedLoadLoopJob_);
-#if defined(SESSION_CAPTURE)
-            {
-                char line[40];
-                std::snprintf(line, sizeof(line), "#CAP,LLBG,resume,%u,%u",
-                              static_cast<unsigned>(loadLoopJob_.track),
-                              static_cast<unsigned>(loadLoopJob_.slot));
-                DebugSessionCapture::appendCaptureTextLine(line);
-            }
-#endif
             return;
         }
     }
     swapLoadLoopJobs(loadLoopJob_, parkedLoadLoopJob_);
-#if defined(SESSION_CAPTURE)
-    {
-        char line[40];
-        std::snprintf(line, sizeof(line), "#CAP,LLBG,resume,%u,%u",
-                      static_cast<unsigned>(loadLoopJob_.track),
-                      static_cast<unsigned>(loadLoopJob_.slot));
-        DebugSessionCapture::appendCaptureTextLine(line);
-    }
-#endif
 }
 
 STORAGE_PERSIST_MEM void demoteActiveLoadLoopJobForFocus(uint8_t focusTrack, uint8_t focusSlot) {
@@ -2908,17 +2880,6 @@ STORAGE_PERSIST_MEM bool beginLoadLoopJob(uint8_t trackIndex, uint8_t slotIndex)
     loopFile.close();
     loadLoopJob_.file = File();
 
-#if defined(SESSION_CAPTURE) || defined(PERF_TELEMETRY)
-    // Focus begin Serial still blocks USB under load — CAP-only (233202 hang window).
-    {
-        char line[56];
-        std::snprintf(line, sizeof(line), "#CAP,LLBG,begin,%u,%u,%lu",
-                      static_cast<unsigned>(trackIndex),
-                      static_cast<unsigned>(slotIndex),
-                      static_cast<unsigned long>(payloadSize));
-        DebugSessionCapture::appendCaptureTextLine(line);
-    }
-#endif
     return true;
 }
 
@@ -3020,9 +2981,6 @@ STORAGE_PERSIST_MEM void ensureActiveLoadLoopJobSelected(uint8_t focusTrack, uin
 }
 
 STORAGE_PERSIST_MEM SlotLoadAdvanceResult commitLoadLoopJobPublish() {
-#if defined(SESSION_CAPTURE)
-    DebugSessionCapture::appendCaptureTextLine("#CAP,LLBG,apply_enter");
-#endif
     if (!loadLoopJob_.active || loadLoopJob_.session == nullptr) {
         return SlotLoadAdvanceResult::Failed;
     }
@@ -3037,25 +2995,16 @@ STORAGE_PERSIST_MEM SlotLoadAdvanceResult commitLoadLoopJobPublish() {
     }
 
     (void)loadLoopJob_.session->advanceAfterPhaseWork();
-#if defined(SESSION_CAPTURE) || defined(PERF_TELEMETRY)
+#if defined(PERF_TELEMETRY)
     const uint32_t applyStartUs = micros();
 #endif
     applySnapshotToLoop(loop, loadLoopJob_.snapshot);
-#if defined(SESSION_CAPTURE) || defined(PERF_TELEMETRY)
+#if defined(PERF_TELEMETRY)
     const uint32_t applyUs = micros() - applyStartUs;
-#if defined(SESSION_CAPTURE)
-    {
-        char line[48];
-        std::snprintf(line, sizeof(line), "#CAP,LLBG,apply_us,%lu",
-                      static_cast<unsigned long>(applyUs));
-        DebugSessionCapture::appendCaptureTextLine(line);
-    }
-#else
     if (applyUs > LoadLoopBudget::FocusRestoreUs && loadLoopJobIsFocusSlot()) {
         Serial.print("[StorageManager] LoadLoopJob apply overshoot us=");
         Serial.println(applyUs);
     }
-#endif
 #endif
     // Snapshot ownership moved onto Loop — drop empty shell without releaseChunkRefs.
     loadLoopJob_.snapshot = PersistedLoopSnapshot{};
@@ -3065,23 +3014,13 @@ STORAGE_PERSIST_MEM SlotLoadAdvanceResult commitLoadLoopJobPublish() {
     (void)loadLoopJob_.session->advanceAfterPhaseWork();
     markLoopSlotRestoreAttempted(loadLoopJob_.track, loadLoopJob_.slot);
 
-#if defined(SESSION_CAPTURE) || defined(PERF_TELEMETRY)
-#if defined(SESSION_CAPTURE)
-    {
-        char line[40];
-        std::snprintf(line, sizeof(line), "#CAP,LLBG,done,%u,%u",
-                      static_cast<unsigned>(loadLoopJob_.track),
-                      static_cast<unsigned>(loadLoopJob_.slot));
-        DebugSessionCapture::appendCaptureTextLine(line);
-    }
-#else
+#if defined(PERF_TELEMETRY)
     if (loadLoopJobIsFocusSlot()) {
         Serial.print("[StorageManager] LoadLoopJob done ");
         Serial.print(loadLoopJob_.track);
         Serial.print('/');
         Serial.println(loadLoopJob_.slot);
     }
-#endif
 #endif
 
     delete loadLoopJob_.session;
@@ -3102,36 +3041,15 @@ STORAGE_PERSIST_MEM SlotLoadAdvanceResult stepLoadLoopJobParse(uint32_t deadline
     if (!loadLoopJob_.active || loadLoopJob_.session == nullptr) {
         return SlotLoadAdvanceResult::Failed;
     }
-#if defined(SESSION_CAPTURE)
-    {
-        char line[72];
-        std::snprintf(line, sizeof(line), "#CAP,LLBG,parse_enter,%u,%u,%u,%lu",
-                      loadLoopJob_.parseState.headerDone ? 1u : 0u,
-                      loadLoopJob_.parseState.passHeaderDone ? 1u : 0u,
-                      static_cast<unsigned>(loadLoopJob_.parseState.passesDone),
-                      static_cast<unsigned long>(loadLoopJob_.parseState.passMidiRemaining));
-        DebugSessionCapture::appendCaptureTextLine(line);
-    }
-#endif
-#if defined(SESSION_CAPTURE) || defined(PERF_TELEMETRY)
+#if defined(PERF_TELEMETRY)
     const uint32_t parseStartUs = micros();
 #endif
     const PersistedLoopParseStepResult result = stepPersistedLoopSnapshotParse(
         loadLoopJob_.buffer.data(), loadLoopJob_.buffer.size(), loadLoopJob_.snapshot,
         loadLoopJob_.parseState, deadlineUs);
-#if defined(SESSION_CAPTURE) || defined(PERF_TELEMETRY)
+#if defined(PERF_TELEMETRY)
     const uint32_t parseUs = micros() - parseStartUs;
-#if defined(SESSION_CAPTURE)
-    {
-        char line[72];
-        std::snprintf(line, sizeof(line), "#CAP,LLBG,parse_leave,%lu,%u,%u,%u",
-                      static_cast<unsigned long>(parseUs),
-                      loadLoopJob_.parseState.headerDone ? 1u : 0u,
-                      static_cast<unsigned>(loadLoopJob_.parseState.passesDone),
-                      loadLoopJob_.parseState.passReadyToFinalize ? 1u : 0u);
-        DebugSessionCapture::appendCaptureTextLine(line);
-    }
-#endif
+    (void)parseUs;
 #endif
     if (result == PersistedLoopParseStepResult::Failed) {
         Serial.println("[StorageManager] WARN: LoadLoopJob parse failed");
@@ -3150,9 +3068,6 @@ STORAGE_PERSIST_MEM SlotLoadAdvanceResult stepLoadLoopJobParse(uint32_t deadline
     loadLoopJob_.buffer.shrink_to_fit();
     // Publish on a later frame (one expensive op per frame).
     loadLoopJob_.phase = LoadLoopJobPhase::Committing;
-#if defined(SESSION_CAPTURE)
-    DebugSessionCapture::appendCaptureTextLine("#CAP,LLBG,commit_armed");
-#endif
     (void)loadLoopJob_.session->advanceAfterPhaseWork();
     return SlotLoadAdvanceResult::MoreWork;
 }
@@ -3161,7 +3076,6 @@ STORAGE_PERSIST_MEM SlotLoadAdvanceResult stepLoadLoopJob(uint32_t deadlineUs) {
     if (!loadLoopJob_.active || loadLoopJob_.session == nullptr) {
         return SlotLoadAdvanceResult::Failed;
     }
-
     if (loadLoopJob_.phase == LoadLoopJobPhase::Committing) {
         return commitLoadLoopJobPublish();
     }
@@ -3210,20 +3124,7 @@ STORAGE_PERSIST_MEM SlotLoadAdvanceResult stepLoadLoopJob(uint32_t deadlineUs) {
             remaining > LoadLoopBudget::ReadChunkBytes ? LoadLoopBudget::ReadChunkBytes : remaining;
         const size_t oldSize = loadLoopJob_.buffer.size();
         loadLoopJob_.buffer.resize(oldSize + chunk);
-#if defined(SESSION_CAPTURE)
-        const uint32_t readStartUs = micros();
-#endif
         const int n = loadLoopJob_.file.read(loadLoopJob_.buffer.data() + oldSize, chunk);
-#if defined(SESSION_CAPTURE)
-        if (steps == 0) {
-            const uint32_t readUs = micros() - readStartUs;
-            char line[56];
-            std::snprintf(line, sizeof(line), "#CAP,LLBG,read_us,%lu,%lu",
-                          static_cast<unsigned long>(readUs),
-                          static_cast<unsigned long>(loadLoopJob_.bytesRead + chunk));
-            DebugSessionCapture::appendCaptureTextLine(line);
-        }
-#endif
         if (n != static_cast<int>(chunk)) {
             Serial.println("[StorageManager] WARN: LoadLoopJob read failed");
             resetLoopSlotToEmpty(loop, loadLoopJob_.slot);
@@ -3929,7 +3830,6 @@ void STORAGE_PERSIST_MEM StorageManager::stepSubmittedLoadJobs(uint32_t budgetUs
     using StorageManagerInternal::stepLoadLoopJob;
 
     const uint32_t frameStartUs = micros();
-    uint8_t steps = 0;
 
     if (trackManager.getTrackCount() == 0) {
         return;
@@ -3974,7 +3874,6 @@ void STORAGE_PERSIST_MEM StorageManager::stepSubmittedLoadJobs(uint32_t budgetUs
         }
         const LoadLoopJobPhase phaseBefore = loadLoopJob_.phase;
         const SlotLoadAdvanceResult result = stepLoadLoopJob(deadlineUs);
-        ++steps;
         // One job per frame after steps — chaining begins starves MIDI/buttons (~600ms stalls).
         if (result != SlotLoadAdvanceResult::MoreWork) {
             break;
@@ -3998,23 +3897,6 @@ void STORAGE_PERSIST_MEM StorageManager::stepSubmittedLoadJobs(uint32_t budgetUs
             break;
         }
     }
-
-#if defined(SESSION_CAPTURE) || defined(PERF_TELEMETRY)
-    const uint32_t elapsedUs = micros() - frameStartUs;
-    // Never Serial-print LoadLoopJob frames — USB CDC ~0.3s/line (213044 / 223713).
-    // CAP ring only for multi-ms overshoots (focus or background).
-#if defined(SESSION_CAPTURE)
-    if (elapsedUs > 10000u && steps > 0) {
-        char line[56];
-        std::snprintf(line, sizeof(line), "#CAP,LLBG,frame_us,%lu",
-                      static_cast<unsigned long>(elapsedUs));
-        DebugSessionCapture::appendCaptureTextLine(line);
-    }
-#else
-    (void)elapsedUs;
-    (void)steps;
-#endif
-#endif
 }
 
 void STORAGE_PERSIST_MEM StorageManager::processDeferredLoopSlotRestore() {
@@ -4106,7 +3988,9 @@ bool StorageManager::loadCurrentWorkspaceFromSd(LooperState& state) {
     return loadCurrentSetFromDirectory(CurrentSetStorage::kCurrentSetDir, state);
 }
 
-bool StorageManager::loadV5MonolithIntoRam(LooperState& state) {
+// Cold v5 migration path — keep out of ITCM so DMAMEM StorageSession does not
+// tip FlexRAM into a 14th code bank (steals a DTCM bank).
+bool STORAGE_PERSIST_MEM StorageManager::loadV5MonolithIntoRam(LooperState& state) {
     Serial.println("[StorageManager] Loading state from SD card...");
     File file = SD.open(STORAGE_FILENAME, FILE_READ);
     if (!file) {

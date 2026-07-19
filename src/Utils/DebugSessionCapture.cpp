@@ -141,10 +141,10 @@ SC_MEM_ATTR void emitCapLineOrSerial(const char* line) {
   if (line == nullptr) {
     return;
   }
-  if (queueCaptureTextLine(line)) {
-    return;
-  }
-  Serial.println(line);
+  // Never fall back to blocking Serial.println when the ring is full —
+  // that path soft-locks the main loop under PLAYING + CAP flood
+  // (session_20260719_013003 final hang after f_tel_done).
+  (void)queueCaptureTextLine(line);
 }
 
 SC_MEM_ATTR void emitCapPrintf(const char* fmt, ...) {
@@ -270,9 +270,21 @@ SC_MEM_ATTR bool appendCaptureRecord(CaptureRecordType type, const void* payload
   return true;
 }
 
+bool serialWriteRoom(size_t bytesNeeded) {
+  // USB CDC Serial.println/printf can block indefinitely when the host TX
+  // buffer is full. Under PLAYING + heavy LoadLoopJob CAP traffic that soft-
+  // locks the main loop (session_20260719_012717: f_tel_done, no f_flush_done);
+  // clock-driven bar LEDs keep moving while 16th LEDs (updateLedsDeferred) stall.
+  const int room = Serial.availableForWrite();
+  return room < 0 || static_cast<size_t>(room) >= bytesNeeded;
+}
+
 void emitOverflowNotice() {
   if (!sCaptureRing.overflowPending) {
     return;
+  }
+  if (!serialWriteRoom(48)) {
+    return;  // keep pending; never block main on overflow notice
   }
   sCaptureRing.overflowPending = false;
   Serial.printf("#CAP,%lu,RING,overflow\r\n", (unsigned long)micros());
@@ -577,12 +589,39 @@ SC_MEM_ATTR void captureCleanup(const char* phase, const char* kind, uint32_t co
 }
 
 void flushCaptureBuffer(size_t maxRecords) {
-  emitOverflowNotice();
+  // Never emit overflow via USB Serial under timing-critical budgets — 013530 logged
+  // 813× RING,overflow during PLAYING (emitOverflowNotice before tc_skip return).
+  if (maxRecords > 8) {
+    emitOverflowNotice();
+  }
   if (sCaptureRing.data == nullptr || sCaptureRing.used == 0) {
     return;
   }
-  if (sCaptureRing.overflowPending && maxRecords < 256) {
+  // Do not inflate a timing-critical budget (e.g. PLAYING flush of 8) to 256
+  // records of blocking Serial I/O. Overflow drains across later frames instead.
+  if (sCaptureRing.overflowPending && maxRecords >= 64 && maxRecords < 256) {
     maxRecords = 256;
+  }
+
+  // Timing-critical budget (PLAYING flush of 8): never call USB Serial.
+  // availableForWrite does not prevent usb_serial_write from blocking in yield()
+  // (013003). Pressure-gated skip never fired in 013315 (flush_tc_skip=0) so the
+  // next frame still Serial.println'd and soft-locked after f_flush_leave.
+  // Drop non-Tier-A head records only; leave Tier-A for idle (maxRecords>=64) drain.
+  if (maxRecords <= 8) {
+    size_t dropped = 0;
+    while (dropped < maxRecords && sCaptureRing.used >= sizeof(CaptureRecordHeader)) {
+      if (headRecordIsTierAText()) {
+        break;
+      }
+      const size_t usedBefore = sCaptureRing.used;
+      discardOldestRecord();
+      if (sCaptureRing.used >= usedBefore) {
+        break;
+      }
+      ++dropped;
+    }
+    return;
   }
 
   size_t flushed = 0;
@@ -593,6 +632,15 @@ void flushCaptureBuffer(size_t maxRecords) {
     if (header.payloadLen == 0 || total > sCaptureRing.used) {
       sCaptureRing.head = sCaptureRing.tail;
       sCaptureRing.used = 0;
+      break;
+    }
+
+    // Estimate TX bytes for this record; abort flush if USB has no room.
+    const size_t writeBytes =
+        (header.type == static_cast<uint8_t>(CaptureRecordType::Text))
+            ? static_cast<size_t>(header.payloadLen) + 2
+            : 96;
+    if (!serialWriteRoom(writeBytes)) {
       break;
     }
 
@@ -630,7 +678,11 @@ SC_MEM_ATTR size_t flushPendingRevts(size_t maxLines) {
 
 SC_MEM_ATTR void flushAllPendingRevts() {
   while (sCaptureRing.used > 0) {
+    const size_t usedBefore = sCaptureRing.used;
     flushCaptureBuffer(sCaptureRing.overflowPending ? 256 : 64);
+    if (sCaptureRing.used >= usedBefore) {
+      break;  // USB backpressure or empty progress — do not spin forever
+    }
   }
 }
 

@@ -19,7 +19,8 @@ extern EditManager editManager;
 extern ClockManager clockManager;
 extern TrackManager trackManager;
 
-BarStepButtonHandler barStepButtonHandler;
+// UI bar/step button FSM — OCRAM/RAM2. Not on the MIDI clock / ISR hot path.
+DMAMEM BarStepButtonHandler barStepButtonHandler;
 
 BarStepButtonHandler::BarStepButtonHandler()
   : testLoggingEnabled(false),

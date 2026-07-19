@@ -299,4 +299,8 @@ struct StorageSession {
   RevisionLoadJob revisionLoad;
   BootRecoveryJob bootRecovery;
   SetBrowserOverlayPolicy::NavigationState setBrowserNavigation;
+
+  /// Explicit ctor so DMAMEM placement still runs member construction
+  /// (.bss.dma is NOLOAD and is not zero-filled at startup).
+  StorageSession() = default;
 };

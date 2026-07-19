@@ -951,9 +951,9 @@ void TrackManager::setSelectedSlotIndex(uint8_t trackIndex, uint8_t slotIndex,
     return;
   }
   const uint8_t previousSlot = slotStateMachine.getSelectedSlotIndex(trackIndex);
+  Track& track = tracks[trackIndex];
   if (slotIndex == previousSlot) {
     if (trackIndex == selectedTrack) {
-      Track& track = tracks[trackIndex];
       const bool splitFocus =
           track.isPlaying() && getPlayingSlotIndex(trackIndex) != slotIndex;
       if (splitFocus || hasPendingSlotSwitch(trackIndex)) {
@@ -963,7 +963,6 @@ void TrackManager::setSelectedSlotIndex(uint8_t trackIndex, uint8_t slotIndex,
     }
     return;
   }
-  Track& track = tracks[trackIndex];
   if (trackIndex == selectedTrack) {
     editManager.beforeSelectedSlotChange(track);
   }
