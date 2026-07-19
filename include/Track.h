@@ -129,11 +129,11 @@ public:
   /// Full merged-MIDI build for a slot (LoopEnd / NextGrid launch prep). Not for boot prewarm.
   void ensurePlaybackMergedEventsForSlot(uint8_t slotIndex);
   /// True when primary playback window matches current loop revision (safe LoopEnd activate).
-  bool isPlaybackWindowReadyForSlot(uint8_t slotIndex) const;
+  bool isPlaybackMergedMidiEventsReadyForSlot(uint8_t slotIndex) const;
   /// Drop cached playback merge buffers for all slots (frees extmem during capture).
-  void releasePlaybackWindowMemory();
+  void releasePlaybackMergedMidiEventsMemory();
   /// Phase 1B — release rebuildable playback windows when not referenced this tick.
-  bool tryReleasePlaybackWindowMemory();
+  bool tryReleasePlaybackMergedMidiEventsMemory();
   /// Phase 1B — drop revision-keyed published flat scratch when note edit does not need it.
   bool tryClearCommittedMidiScratch();
 
@@ -196,7 +196,7 @@ public:
   uint32_t getEffectivePlaybackTick(uint32_t currentTick) const;
   uint32_t getPlaybackGeneration() const { return playbackGeneration; }
   void bumpPlaybackGeneration() { ++playbackGeneration; }
-  void invalidatePlaybackWindow(bool preserveLedger = false);
+  void invalidatePlaybackMergedMidiEvents(bool preserveLedger = false);
 
   /// Rolling projection cycle origin (D13) — one per track.
   int32_t getProjectionCycleStartTick() const { return projectionCycleStartTick; }

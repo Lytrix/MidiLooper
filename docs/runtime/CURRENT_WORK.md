@@ -36,8 +36,18 @@ Last updated: 2026-07-19 (archived deferred-job-scheduler Phase B)
 | `EditNoteHomeState` + `PersistenceWorkQueue` layout | Done |
 | HITL shared helpers → `scripts/hitl/` | Done |
 | Thin `host_midi_automation_*.py` CLI shims | Done — bodies in `hitl/legacy_*_baseline.py` |
+| `PlaybackWindow` → `PlaybackMergedMidiEvents` | Done — OpenSpec slot-performance-interaction Phase −1 |
 
 ---
+
+### OpenSpec — slot-performance-interaction Phase −1 (2026-07-19)
+
+Rename-only merge-cache vocabulary (no behavior change). Remaining phases stay queued.
+
+| Item | Status |
+|------|--------|
+| −1.1–−1.4 rename struct/field/APIs | Done |
+| −1.5 native tests | Done (663) |
 
 ### Recently closed — Deferred job scheduler (Phase B)
 

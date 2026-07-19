@@ -4,11 +4,11 @@
 
 ## −1. Rename merge cache (first)
 
-- [ ] −1.1 Rename `include/PlaybackWindow.h` struct → **`PlaybackMergedMidiEvents`**
-- [ ] −1.2 Rename `Track::invalidatePlaybackWindow` → **`invalidatePlaybackMergedMidiEvents`**; update call sites (`Track.cpp`, etc.)
-- [ ] −1.3 Rename `LoopPlaybackRuntime::primaryWindow` → `mergedMidiEvents` (or keep field name with new type)
-- [ ] −1.4 Update `ensurePlaybackWindowBuilt` → `ensurePlaybackMergedMidiEventsBuilt` (or equivalent)
-- [ ] −1.5 `pio test -e native` after rename-only pass
+- [x] −1.1 Rename `include/PlaybackWindow.h` struct → **`PlaybackMergedMidiEvents`**
+- [x] −1.2 Rename `Track::invalidatePlaybackWindow` → **`invalidatePlaybackMergedMidiEvents`**; update call sites (`Track.cpp`, etc.)
+- [x] −1.3 Rename `LoopPlaybackRuntime::primaryWindow` → `mergedMidiEvents`
+- [x] −1.4 Update `ensurePlaybackWindowBuilt` → `ensurePlaybackMergedMidiEventsBuilt`
+- [x] −1.5 `pio test -e native` after rename-only pass
 
 ## 0. OpenSpec and docs
 
