@@ -47,7 +47,7 @@ The tree has real technical depth (passes/materialize, deferred persistence, not
 |---|---------|----------|----------|
 | 7 | Dead `Looper` transport + stub FSM | `startRecording` / `stopRecording` / `startPlayback` / `stopPlayback` / `startOverdub` / `stopOverdub` / `getState` / `handleState` / `requestStateTransition` — no callers outside `Looper.cpp`; live path is `TrackManager` / `MidiButtonActions` | **Removed**; kept `setup` / `update` |
 | 8 | Empty fader schedule forwarders | `MidiFaderProcessor::scheduleOtherFaderUpdates` no-op; `MidiFaderManager` only forwards; live work is `NoteEditManager::scheduleOtherFaderUpdates` | **Removed** |
-| 9 | `Loop::ensurePassesMaterializedStore` alias | → `materializeEditViewFromPasses` | Queued (rename/alias collapse) |
+| 9 | `Loop::ensurePassesMaterializedStore` alias | → `materializeEditViewFromPasses` | **Collapsed** (2026-07-19); public API is `materializeEditViewFromPasses` only |
 | 10 | `Track::legacyMidiEventsFromPublished` bridge | Edit APIs still consume “legacy published flat” | **Keep** until edit consumers move; document only |
 
 ---
@@ -93,7 +93,7 @@ Protected by [OpenSpec-Phase-Gate](../../.cursor/rules/OpenSpec-Phase-Gate.mdc) 
 3. Finish **HITL** helper extraction so baseline files shrink to shims
 4. Spec’d rename **`PlaybackWindow` → `PlaybackMergedMidiEvents`** under `slot-performance-interaction`
 5. Vocabulary rename pass (`published`→`committed`, flatten API) as dedicated OpenSpec change — not drive-by
-6. Collapse `ensurePassesMaterializedStore` alias; move `EditNoteHomeState` into `EditStates/`; rehome `PersistenceWorkQueue.cpp`
+6. ~~Collapse `ensurePassesMaterializedStore` alias~~ **Done**; move `EditNoteHomeState` into `EditStates/`; rehome `PersistenceWorkQueue.cpp`
 
 ---
 
