@@ -196,9 +196,14 @@ bool markChunkPersistedFromSdLoad(uint16_t chunkId) {
   const ChunkPersistenceState existing = state->chunkState[chunkId];
   if (existing == ChunkPersistenceState::Queued || existing == ChunkPersistenceState::Writing) {
     // Keep off the call stack — POOL_CHUNK_COUNT*2 bytes under a deep FLASHMEM parse
-    // frame overflows RAM1 locals (~7KB free) and hard-faults after 64-bar read
+    // frame overflows RAM1 locals and hard-faults after 64-bar read
     // (session_20260718_234625: silence after read_us … 57284).
+    // Scratch only (written then read); DMAMEM is NOLOAD — no zero-init required.
+#if defined(ARDUINO) && defined(__IMXRT1062__)
+    DMAMEM static uint16_t kept[LoopEventStoreConfig::POOL_CHUNK_COUNT];
+#else
     static uint16_t kept[LoopEventStoreConfig::POOL_CHUNK_COUNT];
+#endif
     uint16_t keptCount = 0;
     uint16_t cursor = state->queueHead;
     while (cursor != state->queueTail && keptCount < LoopEventStoreConfig::POOL_CHUNK_COUNT) {

@@ -21,6 +21,7 @@
 #include "Utils/PressTiming.h"
 
 namespace {
+
 uint8_t refSlotPhaseForQueue(const Track& track, uint8_t previousSlot) {
   if (previousSlot >= ::Config::MAX_LOOPS_PER_TRACK) return ::Config::INVALID_LOOP_SLOT;
   const Loop& rl = track.getLoop(previousSlot);

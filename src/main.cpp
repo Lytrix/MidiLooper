@@ -90,39 +90,11 @@ FLASHMEM __attribute__((noinline)) static void runDeferredLoadAndDisplayFrame(
     if (!focusHadCommittedPasses &&
         trackManager.getTrack(focusTrack).getLoop(focusSlot).hasCommittedPasses()) {
       skipDisplayAfterFocusCommit = true;
-#if defined(SESSION_CAPTURE)
-      {
-        char line[48];
-        std::snprintf(line, sizeof(line), "#CAP,LLBG,commit_prewarm_q,%u,%u",
-                      static_cast<unsigned>(focusTrack),
-                      static_cast<unsigned>(focusSlot));
-        DebugSessionCapture::appendCaptureTextLine(line);
-      }
-#endif
       // Same-frame windowed prewarm — buffer already freed at commit_armed; trySlot is
       // fail-soft. Deferring to next frame raced save/reclaim (000659).
-#if defined(SESSION_CAPTURE)
-      {
-        char line[48];
-        std::snprintf(line, sizeof(line), "#CAP,LLBG,prewarm_enter,%u,%u",
-                      static_cast<unsigned>(focusTrack),
-                      static_cast<unsigned>(focusSlot));
-        DebugSessionCapture::appendCaptureTextLine(line);
-      }
-#endif
       Track& prewarmTrackRef = trackManager.getTrack(focusTrack);
       prewarmTrackRef.ensurePlaybackMergedEventsForSlot(focusSlot);
       displayManager.invalidateLiveDisplayCache();
-#if defined(SESSION_CAPTURE)
-      {
-        const bool ready = prewarmTrackRef.isPlaybackWindowReadyForSlot(focusSlot);
-        char line[56];
-        std::snprintf(line, sizeof(line), "#CAP,LLBG,prewarm_leave,%u,%u,%u",
-                      static_cast<unsigned>(focusTrack),
-                      static_cast<unsigned>(focusSlot), ready ? 1u : 0u);
-        DebugSessionCapture::appendCaptureTextLine(line);
-      }
-#endif
     }
     if (allowDeferredSlotRestore && !timingCriticalTrackActive &&
         !SlotLoadSession::isActive()) {

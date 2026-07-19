@@ -1101,47 +1101,17 @@ void Track::ensurePlaybackMergedEventsForSlot(uint8_t slotIndex) {
   Loop& loop = loopForSlot(slotIndex);
   LoopPlaybackRuntime* runtime = playbackRuntime.trySlot(slotIndex);
   if (runtime == nullptr) {
-#if defined(SESSION_CAPTURE)
-    char line[48];
-    std::snprintf(line, sizeof(line), "#CAP,LLBG,prewarm_fail,%u",
-                  static_cast<unsigned>(slotIndex));
-    DebugSessionCapture::appendCaptureTextLine(line);
-#endif
     return;
   }
-#if defined(SESSION_CAPTURE)
-  {
-    char line[48];
-    std::snprintf(line, sizeof(line), "#CAP,LLBG,prewarm_rt,%u",
-                  static_cast<unsigned>(slotIndex));
-    DebugSessionCapture::appendCaptureTextLine(line);
-  }
-#endif
   (void)loop.getPlaybackOrder();
   // Build destination merged MIDI before LoopEnd commit so launch is a cache hit.
   if (loop.hasCommittedPasses() && loop.loopLengthTicks > 0) {
-#if defined(SESSION_CAPTURE)
-    {
-      char line[48];
-      std::snprintf(line, sizeof(line), "#CAP,LLBG,prewarm_build,%u",
-                    static_cast<unsigned>(slotIndex));
-      DebugSessionCapture::appendCaptureTextLine(line);
-    }
-#endif
     const uint32_t currentTick = clockManager.getCurrentTick();
     ensurePlaybackWindowBuilt(*this, loop, *runtime, true, currentTick);
     if (loop.playbackOrderDirty) {
       const ProjectionContext playbackContext = makePlaybackContext(*this, loop, currentTick);
       ::rebuildPlaybackOrder(loop, runtime->primaryWindow.mergedEvents, playbackContext);
     }
-#if defined(SESSION_CAPTURE)
-    {
-      char line[48];
-      std::snprintf(line, sizeof(line), "#CAP,LLBG,prewarm_built,%u",
-                    static_cast<unsigned>(slotIndex));
-      DebugSessionCapture::appendCaptureTextLine(line);
-    }
-#endif
   }
 }
 
