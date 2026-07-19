@@ -61,7 +61,7 @@ The tree has real technical depth (passes/materialize, deferred persistence, not
 | 13 | Vocabulary drift | `published` / `Publish*`, `flatten` / `FlatVec`, `Take` in tests/telemetry, `audible` in boot restore |
 | 14 | `PlaybackWindow` misnamed | OpenSpec / `slot-performance-interaction` → `PlaybackMergedMidiEvents` when that change is CURRENT_WORK |
 | 15 | `PersistenceQueue` vs `PersistenceWorkQueue` | Chunk mid-pass vs semantic jobs — rename when persistence hardening is active |
-| 16 | Layout inconsistency | `EditNoteHomeState` outside `EditStates/`; `PersistenceWorkQueue.cpp` at `src/` root vs `StorageManagerInternal/` header |
+| 16 | Layout inconsistency | `EditNoteHomeState` outside `EditStates/`; `PersistenceWorkQueue.cpp` at `src/` root vs `StorageManagerInternal/` header | **Fixed** (2026-07-19): home state under `EditStates/`; cpp under `src/StorageManager/` | **Fixed** (2026-07-19): home state under `EditStates/`; cpp under `src/StorageManager/` |
 
 ---
 
@@ -93,7 +93,7 @@ Protected by [OpenSpec-Phase-Gate](../../.cursor/rules/OpenSpec-Phase-Gate.mdc) 
 3. Finish **HITL** helper extraction so baseline files shrink to shims
 4. Spec’d rename **`PlaybackWindow` → `PlaybackMergedMidiEvents`** under `slot-performance-interaction`
 5. Vocabulary rename pass (`published`→`committed`, flatten API) as dedicated OpenSpec change — not drive-by
-6. ~~Collapse `ensurePassesMaterializedStore` alias~~ **Done**; move `EditNoteHomeState` into `EditStates/`; rehome `PersistenceWorkQueue.cpp`
+6. ~~Collapse `ensurePassesMaterializedStore` alias~~ **Done**; ~~move `EditNoteHomeState` into `EditStates/`~~ **Done**; ~~rehome `PersistenceWorkQueue.cpp`~~ **Done** (`src/StorageManager/`)
 
 ---
 
