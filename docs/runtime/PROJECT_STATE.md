@@ -2,13 +2,13 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-07-19 (Phase B.3/B.4 selection; CAP flush park)
+Last updated: 2026-07-19 (archived deferred-job-scheduler Phase B)
 
 ---
 
 ## Current branch
 
-**`feature/deferred-lazy-load`** — OpenSpec [`deferred-job-scheduler`](../../openspec/changes/deferred-job-scheduler/) Phase B.3/B.4 (selection + native policy tests). Phase A archived `2026-07-18-unified-commit-lazy-slot-load`. See [CURRENT_WORK.md](CURRENT_WORK.md).
+**`feature/deferred-lazy-load`** — Phase B archived `openspec/changes/archive/2026-07-19-deferred-job-scheduler/`. Specs: `openspec/specs/deferred-job-scheduler/`. See [CURRENT_WORK.md](CURRENT_WORK.md).
 
 *(Parallel: **`feature/persistence-work-queue`** @ `8b3f93e` — B1–B5 on `dev`.)*
 

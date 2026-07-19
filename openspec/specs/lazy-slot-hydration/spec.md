@@ -71,7 +71,7 @@ While any track is recording or overdubbing, the system MAY queue an explicit sl
 
 After interactive ready, deferred restores SHALL proceed as deferred job steps (`LoadLoopJob`) executed through `DeferredJobScheduler::runFrame`: SD payload bytes MAY be read in chunks across multiple main-loop iterations, then parsed under a time budget, then Committed by `StorageManager`. Parse SHALL be time-sliced; finalize / commit-id headroom SHALL NOT walk the PSRAM pool via `sm_malloc_stats_pool`. Loop length SHALL NOT gate whether a slot may restore while PLAYING.
 
-Focus High `LoadLoopJob` work (focused / explicitly requested slot) SHALL advance while a track is PLAYING. Background Low `LoadLoopJob` work SHALL be skipped while any track is PLAYING (`canRunBackgroundLoadLoopNow`); skipped frames SHALL leave active/parked/queue progress intact. Device gate evidence: PASS on `session_20260718_224607.log` and A.7 confirm on `session_20260718_230145.log`.
+Focus High `LoadLoopJob` work (focused / explicitly requested slot) SHALL advance while a track is PLAYING. Background Low `LoadLoopJob` work SHALL be skipped while any track is PLAYING (`canRunBackgroundLoadLoopNow`); skipped frames SHALL leave active/parked/queue progress intact. Device gate evidence: PASS on `session_20260718_224607.log`, A.7 confirm on `session_20260718_230145.log`, Phase B confirm on `session_20260719_022107.log`.
 
 #### Scenario: Select unloaded during PLAYING hydrates via deferred job steps
 
