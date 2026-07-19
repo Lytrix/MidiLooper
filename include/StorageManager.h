@@ -153,9 +153,14 @@ public:
     static void pollBootQuarantineWorkspaceBeforeLoad(uint32_t listenMs = 3000);
     static void processHitlSerialCommands();
 #endif
+    /// Select active/parked LoadLoopJob for this frame (Phase B.3).
+    /// Call only from DeferredJobScheduler::runFrame before stepSubmittedLoadJobs.
+    /// @return true when active became true this call (begin or promote from parked).
+    static bool selectSubmittedLoadJobs();
     /// Domain step for submitted LoadLoopJob work under budgetUs.
-    /// Call only from DeferredJobScheduler::runFrame (Phase B.2).
-    static void stepSubmittedLoadJobs(uint32_t budgetUs);
+    /// Call only from DeferredJobScheduler::runFrame after selectSubmittedLoadJobs (Phase B.2/B.3).
+    /// @param activatedThisFrame result of the preceding selectSubmittedLoadJobs call.
+    static void stepSubmittedLoadJobs(uint32_t budgetUs, bool activatedThisFrame);
     /// Idle slice: restore deferred loop slot payload(s) via DeferredJobScheduler.
     static void processDeferredLoopSlotRestore();
     /// Idle slice: hydrate one track undo stack snapshot body from the runtime bundle.

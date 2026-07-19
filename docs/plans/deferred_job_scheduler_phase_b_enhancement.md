@@ -16,7 +16,8 @@ Move deferred **load** execution ownership to `DeferredJobScheduler::runFrame` w
 |------|-------|----------------------|
 | B.1 | Thin `runFrame` → domain step; `main` switches | YES — gate [`231510`](../../captures/session_20260718_231510.log) |
 | B.2 | Explicit `StorageManager::stepSubmittedLoadJobs` called only from scheduler | YES |
-| B.3 | Scheduler-owned active/parked selection | YES |
+| B.3 | Scheduler-owned active/parked selection (`selectSubmittedLoadJobs` then step) | YES |
+| B.4 | Native `LoadLoopSelectionPolicy` tests; device gate vs `230145` | YES |
 | Later | SaveLoopJob shared frame | Separate change |
 
 ## Non-goals

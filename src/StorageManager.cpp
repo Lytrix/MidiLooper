@@ -13,6 +13,7 @@
 #include "PersistenceLayout.h"
 #include "PersistenceBudget.h"
 #include "LoadLoopBudget.h"
+#include "LoadLoopSelectionPolicy.h"
 #include "DeferredJobScheduler.h"
 #include "PersistenceFailurePolicy.h"
 #include "PersistenceQueue.h"
@@ -2943,41 +2944,78 @@ STORAGE_PERSIST_MEM void ensureActiveLoadLoopJobSelected(uint8_t focusTrack, uin
 
     // Prefer finishing a parked job before opening another SD file (begin is expensive).
     if (parkedLoadLoopJob_.active) {
-        if (parkedLoadLoopJob_.track == focusTrack && parkedLoadLoopJob_.slot == focusSlot) {
-            swapLoadLoopJobs(loadLoopJob_, parkedLoadLoopJob_);
-            return;
+        const bool parkedIsFocus =
+            parkedLoadLoopJob_.track == focusTrack && parkedLoadLoopJob_.slot == focusSlot;
+        bool focusQueued = false;
+        for (uint16_t i = 0; i < pendingLoopSlotRestores_.count; ++i) {
+            const DeferredLoopSlotRestore& e = pendingLoopSlotRestores_.entries[i];
+            if (e.track == focusTrack && e.slot == focusSlot) {
+                focusQueued = true;
+                break;
+            }
         }
-        // Focus High must still begin while a Low job is parked under PLAYING.
-        // Prior bug: early return here starved focus begin after demote (session_20260719_001237:
-        // park 2/2 then Loop 1 — no begin,6,0; overdub on HEADER_READY shell).
-        DeferredLoopSlotRestore focusNext{};
-        if (popFocusDeferredLoopSlotRestore(focusTrack, focusSlot, focusNext)) {
-            (void)beginLoadLoopJob(focusNext.track, focusNext.slot);
-            return;
+        const auto action = LoadLoopSelectionPolicy::resolveParkedIdleAction(
+            parkedIsFocus, focusQueued, canRunBackgroundLoadLoopNow());
+        switch (action) {
+            case LoadLoopSelectionPolicy::ParkedIdleAction::ResumeParkedFocus:
+                swapLoadLoopJobs(loadLoopJob_, parkedLoadLoopJob_);
+                return;
+            case LoadLoopSelectionPolicy::ParkedIdleAction::BeginFocusFromQueue: {
+                // Focus High must still begin while a Low job is parked under PLAYING
+                // (session_20260719_001237).
+                DeferredLoopSlotRestore focusNext{};
+                if (popFocusDeferredLoopSlotRestore(focusTrack, focusSlot, focusNext)) {
+                    (void)beginLoadLoopJob(focusNext.track, focusNext.slot);
+                    return;
+                }
+                // Queue drained between peek and pop — same fallthrough as pre-policy path.
+                if (canRunBackgroundLoadLoopNow()) {
+                    swapLoadLoopJobs(loadLoopJob_, parkedLoadLoopJob_);
+                }
+                return;
+            }
+            case LoadLoopSelectionPolicy::ParkedIdleAction::PromoteParkedLow:
+                swapLoadLoopJobs(loadLoopJob_, parkedLoadLoopJob_);
+                return;
+            case LoadLoopSelectionPolicy::ParkedIdleAction::SkipKeepParked:
+                return;
         }
-        if (!canRunBackgroundLoadLoopNow()) {
-            // SKIP_THIS_FRAME: keep parked Low progress; do not promote Low while PLAYING.
-            return;
-        }
-        swapLoadLoopJobs(loadLoopJob_, parkedLoadLoopJob_);
         return;
     }
 
     reprioritizeDeferredLoopSlotRestoreEntries();
 
-    // Focus High may begin while PLAYING; Low only when transport idle.
+    bool focusQueued = false;
+    bool backgroundQueued = pendingLoopSlotRestores_.count > 0;
+    for (uint16_t i = 0; i < pendingLoopSlotRestores_.count; ++i) {
+        const DeferredLoopSlotRestore& e = pendingLoopSlotRestores_.entries[i];
+        if (e.track == focusTrack && e.slot == focusSlot) {
+            focusQueued = true;
+            break;
+        }
+    }
+    const auto action = LoadLoopSelectionPolicy::resolveEmptyIdleAction(
+        focusQueued, backgroundQueued, canRunBackgroundLoadLoopNow());
     DeferredLoopSlotRestore next{};
-    if (popFocusDeferredLoopSlotRestore(focusTrack, focusSlot, next)) {
-        (void)beginLoadLoopJob(next.track, next.slot);
-        return;
+    switch (action) {
+        case LoadLoopSelectionPolicy::EmptyIdleAction::BeginFocusFromQueue:
+            if (popFocusDeferredLoopSlotRestore(focusTrack, focusSlot, next)) {
+                (void)beginLoadLoopJob(next.track, next.slot);
+                return;
+            }
+            // Fall through to background only when policy still allows it.
+            if (canRunBackgroundLoadLoopNow() && popNextDeferredLoopSlotRestore(next)) {
+                (void)beginLoadLoopJob(next.track, next.slot);
+            }
+            return;
+        case LoadLoopSelectionPolicy::EmptyIdleAction::BeginBackgroundFromQueue:
+            if (popNextDeferredLoopSlotRestore(next)) {
+                (void)beginLoadLoopJob(next.track, next.slot);
+            }
+            return;
+        case LoadLoopSelectionPolicy::EmptyIdleAction::Skip:
+            return;
     }
-    if (!canRunBackgroundLoadLoopNow()) {
-        return;
-    }
-    if (!popNextDeferredLoopSlotRestore(next)) {
-        return;
-    }
-    (void)beginLoadLoopJob(next.track, next.slot);
 }
 
 STORAGE_PERSIST_MEM SlotLoadAdvanceResult commitLoadLoopJobPublish() {
@@ -3825,8 +3863,21 @@ bool StorageManager::loadCurrentSetFromDirectory(const char* setDir, LooperState
     return ok;
 }
 
-void STORAGE_PERSIST_MEM StorageManager::stepSubmittedLoadJobs(uint32_t budgetUs) {
+bool STORAGE_PERSIST_MEM StorageManager::selectSubmittedLoadJobs() {
     using StorageManagerInternal::ensureActiveLoadLoopJobSelected;
+
+    if (trackManager.getTrackCount() == 0) {
+        return false;
+    }
+    const uint8_t focusTrack = trackManager.getSelectedTrackIndex();
+    const uint8_t focusSlot = trackManager.getSelectedSlotIndex(focusTrack);
+    const bool hadActiveAtEntry = loadLoopJob_.active;
+    ensureActiveLoadLoopJobSelected(focusTrack, focusSlot);
+    return !hadActiveAtEntry && loadLoopJob_.active;
+}
+
+void STORAGE_PERSIST_MEM StorageManager::stepSubmittedLoadJobs(uint32_t budgetUs,
+                                                              bool activatedThisFrame) {
     using StorageManagerInternal::stepLoadLoopJob;
 
     const uint32_t frameStartUs = micros();
@@ -3834,11 +3885,6 @@ void STORAGE_PERSIST_MEM StorageManager::stepSubmittedLoadJobs(uint32_t budgetUs
     if (trackManager.getTrackCount() == 0) {
         return;
     }
-    const uint8_t focusTrack = trackManager.getSelectedTrackIndex();
-    const uint8_t focusSlot = trackManager.getSelectedSlotIndex(focusTrack);
-
-    const bool hadActiveAtEntry = loadLoopJob_.active;
-    ensureActiveLoadLoopJobSelected(focusTrack, focusSlot);
     if (!loadLoopJob_.active) {
         return;
     }
@@ -3862,8 +3908,8 @@ void STORAGE_PERSIST_MEM StorageManager::stepSubmittedLoadJobs(uint32_t budgetUs
     if (!loadLoopJobIsFocusSlot() && !canRunBackgroundLoadLoopNow()) {
         return;
     }
-    // beginLoadLoopJob (open/seek) is one full turn — do not step or chain more jobs.
-    if (!hadActiveAtEntry && loadLoopJob_.active) {
+    // begin/promote (open/seek or swap-in) is one full turn — do not step or chain more jobs.
+    if (activatedThisFrame) {
         return;
     }
 
