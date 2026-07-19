@@ -17,8 +17,10 @@ Move deferred **load** execution ownership to `DeferredJobScheduler::runFrame` w
 | B.1 | Thin `runFrame` → domain step; `main` switches | YES — gate [`231510`](../../captures/session_20260718_231510.log) |
 | B.2 | Explicit `StorageManager::stepSubmittedLoadJobs` called only from scheduler | YES |
 | B.3 | Scheduler-owned active/parked selection (`selectSubmittedLoadJobs` then step) | YES |
-| B.4 | Native `LoadLoopSelectionPolicy` tests; device gate vs `230145` | YES |
+| B.4 | Native `LoadLoopSelectionPolicy` tests; device gate vs `230145` | YES — [`022107`](../../captures/session_20260719_022107.log) |
 | Later | SaveLoopJob shared frame | Separate change |
+
+**Archived:** `openspec/changes/archive/2026-07-19-deferred-job-scheduler/`
 
 ## Non-goals
 
@@ -26,4 +28,6 @@ Save/display/export jobs; changing Commit; PSRAM walk regressions.
 
 ## Success
 
-Native green; device gate matches `230145` (buttons 1:1; no ~295ms parse clusters).
+Native green; device gate matches `230145` (buttons responsive; no ~295ms parse clusters).
+
+**Gates:** B.1 [`231510`](../../captures/session_20260718_231510.log); B.3/B.4 [`022107`](../../captures/session_20260719_022107.log).

@@ -42,4 +42,5 @@
 ## 5. Gates
 
 - [x] 5.1 Device gate B.1 PASS [`231510`](../../../captures/session_20260718_231510.log) vs [`230145`](../../../captures/session_20260718_230145.log) — BTN 9/9; zero `parse_us`/`frame_us`; clean stop
-- [ ] 5.2 Archive when B.1–B.3 (or agreed MVP) pass + device gate vs `230145` if required
+- [x] 5.1b Device gate B.3/B.4 PASS [`022107`](../../../captures/session_20260719_022107.log) — focus loads under PLAYING (`done 0/1`, `done 2/0`); zero `parse_us`/`frame_us`; transport stop + SAVE completed; DFRAME alive after stop
+- [x] 5.2 Archive when B.1–B.3 (or agreed MVP) pass + device gate vs `230145` if required

@@ -2,43 +2,37 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-07-19 (Phase B.3/B.4 DeferredJobScheduler selection)
+Last updated: 2026-07-19 (archived deferred-job-scheduler Phase B)
 
 ---
 
 ## Now implementing
 
-### Deferred job scheduler (Phase B)
+### Persistence / overlay (next after Phase B)
 
-**Branch:** `feature/deferred-lazy-load`  
+**Branch:** `feature/deferred-lazy-load` (Phase B archived — pick next from ROADMAP / CURRENT_WORK with user)
 
-| Layer | Doc | Status |
-|-------|-----|--------|
-| **North star** | [`deferred_job_scheduler_architecture.md`](../plans/deferred_job_scheduler_architecture.md) | **Approved** (DEC-027) |
-| **Phase B plan** | [`deferred_job_scheduler_phase_b_enhancement.md`](../plans/deferred_job_scheduler_phase_b_enhancement.md) | **B.1–B.4 code done**; device gate / archive pending |
-| OpenSpec | [`deferred-job-scheduler`](../../openspec/changes/deferred-job-scheduler/) | Active |
-
-**Predecessor archived:** `openspec/changes/archive/2026-07-18-unified-commit-lazy-slot-load/` — gates [`224607`](../../captures/session_20260718_224607.log), [`230145`](../../captures/session_20260718_230145.log).
-
-**B.1 gate:** PASS [`231510`](../../captures/session_20260718_231510.log).
-
-**B.2 done:** `StorageManager::stepSubmittedLoadJobs`; sole frame entry `DeferredJobScheduler::runFrame`.
-
-**B.3 done:** `DeferredJobScheduler::runFrame` calls `selectSubmittedLoadJobs` then `stepSubmittedLoadJobs`; idle admission via `LoadLoopSelectionPolicy`.
-
-**B.4 native:** `test_load_loop_selection_policy` (001237 focus-while-parked + PLAYING skip). Device gate vs `230145` still open before archive.
-
-**Hang (233202…235129):** Parse completes through edits (`parse_enter,1,0,2,0`); die on Commit. Cause: `findLastCommittedEventTick` flattened each chunk into InternalHeap `MidiEventVec` → `abort()` under PLAYING. Fix: use `chunkTickSpan`; CAP-only apply/done; skip save while SlotLoadSession active; yield after edits header.
-
-**Hang (235713):** Commit OK (`apply_us`/`done,6,0`); die on deferred playback prewarm. Cause: `slot()` null-deref on runtime alloc fail. Fix: `trySlot` / fail-soft prewarm CAP.
-
-**Hang (001237):** Different path — Loop 1 **double** → overdub; `park 2/2` Serial then no `begin,6,0`. Cause: `ensureActiveLoadLoopJobSelected` returned early while Low parked under PLAYING, starving focus High begin; overdub on HEADER_READY 65-bar shell. Fix: begin focus High even when Low is parked; CAP-only park/resume (no Serial).
-
-**Gate PASS [`001444`](../../captures/session_20260719_001444.log):** `park,2,2,0` → `begin,6,0,57284` → `done,6,0` → `prewarm_leave,6,0,1`; further focus loads under PLAYING (`0,0` / `1,0` / `1,3`); transport stop clean. Root admission bug confirmed.
+| Item | Status |
+|------|--------|
+| DeferredJobScheduler Phase B | **Archived** `openspec/changes/archive/2026-07-19-deferred-job-scheduler/` |
+| Specs | `openspec/specs/deferred-job-scheduler/`, updated `lazy-slot-hydration` |
+| Gates | B.1 [`231510`](../../captures/session_20260718_231510.log); B.3/B.4 [`022107`](../../captures/session_20260719_022107.log) |
 
 **Parked hang hunt:** [`persistence_overlay_large_slot_focus_restore_bugfix.md`](../plans/persistence_overlay_large_slot_focus_restore_bugfix.md) — CAP flush fix kept; unreproducible OLED/stale after focus load.
 
-**Next:** device gate B.3/B.4 vs `230145`; then archive `deferred-job-scheduler` (tasks 5.2).
+**Next:** confirm next CURRENT_WORK slice with user (persistence/overlay hardening, or parked large-slot display hunt).
+
+### Recently closed — Deferred job scheduler (Phase B)
+
+**Archived:** `2026-07-19-deferred-job-scheduler`  
+**Specs synced:** `deferred-job-scheduler` (new), `lazy-slot-hydration` (gate note).
+
+| Step | Status |
+|------|--------|
+| B.1 thin `runFrame` | PASS [`231510`](../../captures/session_20260718_231510.log) |
+| B.2 `stepSubmittedLoadJobs` | Done |
+| B.3 select then step + `LoadLoopSelectionPolicy` | Done |
+| B.4 native + device | PASS [`022107`](../../captures/session_20260719_022107.log) |
 
 ### Prioritized boot load isolation (merged to `dev`)
 

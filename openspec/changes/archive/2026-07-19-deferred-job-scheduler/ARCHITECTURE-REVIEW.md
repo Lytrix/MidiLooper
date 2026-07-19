@@ -39,5 +39,5 @@
 - [x] Architecture gate posted before firmware (B.3)
 - [x] `pio test -e native` (includes `test_load_loop_selection_policy`)
 - [x] Device gate B.1 [`231510`](../../../captures/session_20260718_231510.log)
-- [ ] Device gate B.3/B.4 vs [`230145`](../../../captures/session_20260718_230145.log) before archive
+- [x] Device gate B.3/B.4 [`022107`](../../../captures/session_20260719_022107.log) vs [`230145`](../../../captures/session_20260718_230145.log)
 - [x] Selection ownership: `DeferredJobScheduler::runFrame` → `selectSubmittedLoadJobs` → `stepSubmittedLoadJobs`
