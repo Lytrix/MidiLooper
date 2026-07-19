@@ -13,6 +13,7 @@
 #endif
 
 void DEFERRED_JOB_SCHEDULER_MEM DeferredJobScheduler::runFrame(uint32_t budgetUs) {
-    // B.2: scheduler owns the frame entry; StorageManager steps submitted LoadLoopJobs.
-    StorageManager::stepSubmittedLoadJobs(budgetUs);
+    // B.3: scheduler owns selection then step; StorageManager owns job storage/begin.
+    const bool activatedThisFrame = StorageManager::selectSubmittedLoadJobs();
+    StorageManager::stepSubmittedLoadJobs(budgetUs, activatedThisFrame);
 }

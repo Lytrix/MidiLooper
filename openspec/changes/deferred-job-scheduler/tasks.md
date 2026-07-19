@@ -25,12 +25,21 @@
 - [x] 3.1 StorageManager exposes `stepSubmittedLoadJobs` used only by scheduler
 - [x] 3.2 `rg runDeferredFrame` — no code callers outside docs/archive; `processDeferredLoopSlotRestore` routes via scheduler
 
-## 4. B.3 — Scheduler-owned selection (optional same change)
+## Architecture gate (Phase B.3)
+- Owner: `DeferredJobScheduler::runFrame` → `selectSubmittedLoadJobs` then `stepSubmittedLoadJobs`
+- Invariant: published Loop never partially modified; selection + step only via scheduler frame
+- Ownership change: YES (selection call site moves to scheduler; approved Phase B.3)
+- Transition change: NO
+- Behavior-preserving: YES (001237 focus-while-parked + Committing-before-activate-skip)
+- Reuse: YES — `LoadLoopSelectionPolicy` + existing `ensureActiveLoadLoopJobSelected` / demote/park
+- Scope: `DeferredJobScheduler.*`, `StorageManager.h/.cpp`, `LoadLoopSelectionPolicy.*`, tests/docs
 
-- [ ] 4.1 Move active/parked selection policy call sites behind scheduler (still StorageManager storage)
-- [ ] 4.2 Native tests: demote still parks; focus High while PLAYING
+## 4. B.3 — Scheduler-owned selection
+
+- [x] 4.1 Move active/parked selection policy call sites behind scheduler (still StorageManager storage)
+- [x] 4.2 Native tests: demote/parked idle + focus High while PLAYING (`test_load_loop_selection_policy`)
 
 ## 5. Gates
 
 - [x] 5.1 Device gate B.1 PASS [`231510`](../../../captures/session_20260718_231510.log) vs [`230145`](../../../captures/session_20260718_230145.log) — BTN 9/9; zero `parse_us`/`frame_us`; clean stop
-- [ ] 5.2 Archive when B.1–B.3 (or agreed MVP) pass
+- [ ] 5.2 Archive when B.1–B.3 (or agreed MVP) pass + device gate vs `230145` if required
