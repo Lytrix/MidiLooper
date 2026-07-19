@@ -7,7 +7,7 @@
 #include "EditNoteState.h"
 #include "NoteEditSessionUndo.h"
 #include "EditSession.h"
-#include "EditNoteHomeState.h"
+#include "EditStates/EditNoteHomeState.h"
 #include "EditStates/EditSelectNoteState.h"
 #include "EditStartNoteState.h"
 #include "EditLengthNoteState.h"
