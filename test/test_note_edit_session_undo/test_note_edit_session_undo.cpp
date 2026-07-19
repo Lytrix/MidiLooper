@@ -43,11 +43,11 @@ bool pushKindBoundaryUndo(NoteEditSessionUndoStack& stack, KindBoundaryUndoState
   if (!shouldPushGeometryKindUndo(state.lastPushed, kind)) {
     return false;
   }
-  if (session.isFlatDirty()) {
-    session.syncFlatToStore();
+  if (session.isEventsDirty()) {
+    session.syncEventsToStore();
   }
   const SessionUndoEntry entry =
-      buildSessionUndoEntry(focus, selection, session.readFlat(), channel, loopLength,
+      buildSessionUndoEntry(focus, selection, session.readEvents(), channel, loopLength,
                             editPassIds);
   if (!stack.pushEntry(entry)) {
     return false;
@@ -175,21 +175,21 @@ void test_session_undo_entry_matches_clone_restore() {
 
   CowLoopEventStore session;
   loop.rematerializeEditView(session.mutStore());
-  session.discardFlatCache();
+  session.discardEventsCache();
 
   NoteEditFocus focus;
-  rebuildNoteEditFocusFromStore(focus, session.readFlat(), 5, loop.loopLengthTicks, 0);
+  rebuildNoteEditFocusFromStore(focus, session.readEvents(), 5, loop.loopLengthTicks, 0);
   focus.last = focus.commitBaseline;
 
   const auto cloneSnap = session.readStore().cloneShared();
   const EditPassIdList noEditPasses{};
   const SessionUndoEntry entry =
-      buildSessionUndoEntry(focus, EditorSelection{}, session.readFlat(), 5, loop.loopLengthTicks,
+      buildSessionUndoEntry(focus, EditorSelection{}, session.readEvents(), 5, loop.loopLengthTicks,
                             noEditPasses);
 
-  MidiEventVec& flat = session.mutFlat();
+  MidiEventVec& flat = session.mutEvents();
   applyMoveToSession(focus, flat, 5, 58);
-  session.syncFlatToStore();
+  session.syncEventsToStore();
 
   CowLoopEventStore viaClone;
   viaClone.restoreFromSnapshot(cloneSnap);
@@ -211,24 +211,24 @@ void test_session_redo_entry_restores_after_state() {
 
   CowLoopEventStore session;
   loop.rematerializeEditView(session.mutStore());
-  session.discardFlatCache();
+  session.discardEventsCache();
 
   NoteEditFocus focus;
-  rebuildNoteEditFocusFromStore(focus, session.readFlat(), 5, loop.loopLengthTicks, 0);
+  rebuildNoteEditFocusFromStore(focus, session.readEvents(), 5, loop.loopLengthTicks, 0);
   focus.last = focus.commitBaseline;
   const EditPassIdList noEditPasses{};
   const SessionUndoEntry beforeEntry =
-      buildSessionUndoEntry(focus, EditorSelection{}, session.readFlat(), 5, loop.loopLengthTicks,
+      buildSessionUndoEntry(focus, EditorSelection{}, session.readEvents(), 5, loop.loopLengthTicks,
                             noEditPasses);
 
-  MidiEventVec& flat = session.mutFlat();
+  MidiEventVec& flat = session.mutEvents();
   applyMoveToSession(focus, flat, 5, 58);
-  session.syncFlatToStore();
+  session.syncEventsToStore();
   const auto movedSnap = session.readStore().cloneShared();
 
   SessionUndoEntry undoEntry = beforeEntry;
   SessionUndoEntry redoPayload =
-      buildSessionUndoEntry(focus, EditorSelection{}, session.readFlat(), 5, loop.loopLengthTicks,
+      buildSessionUndoEntry(focus, EditorSelection{}, session.readEvents(), 5, loop.loopLengthTicks,
                             noEditPasses);
   undoEntry.redoEditRows = std::move(redoPayload.editRows);
   undoEntry.redoFocus = std::move(redoPayload.focus);
@@ -377,8 +377,8 @@ void test_session_undo_move_after_add_committed_restores_insert_position() {
   TEST_ASSERT_EQUAL(2u, addId);
 
   CowLoopEventStore session;
-  loop.passes.materializeToEventVector(session.mutFlat(), loop.loopLengthTicks);
-  session.syncFlatToStore();
+  loop.passes.materializeToEventVector(session.mutEvents(), loop.loopLengthTicks);
+  session.syncEventsToStore();
 
   NoteEditFocus focus;
   focus.active = true;
@@ -389,7 +389,7 @@ void test_session_undo_move_after_add_committed_restores_insert_position() {
 
   const EditPassIdList idsAtPush{addId};
   const SessionUndoEntry entry =
-      buildSessionUndoEntry(focus, EditorSelection{}, session.readFlat(), 5, loop.loopLengthTicks,
+      buildSessionUndoEntry(focus, EditorSelection{}, session.readEvents(), 5, loop.loopLengthTicks,
                             idsAtPush);
 
   EditPass move{};
@@ -401,14 +401,14 @@ void test_session_undo_move_after_add_committed_restores_insert_position() {
   const EditPassId moveId = loop.saveNoteEditPass(0, move);
   TEST_ASSERT_EQUAL(3u, moveId);
 
-  loop.passes.materializeToEventVector(session.mutFlat(), loop.loopLengthTicks);
-  session.syncFlatToStore();
-  TEST_ASSERT_TRUE(hasDisplayNote(session.readFlat(), loop.loopLengthTicks, 72, 106, 154));
+  loop.passes.materializeToEventVector(session.mutEvents(), loop.loopLengthTicks);
+  session.syncEventsToStore();
+  TEST_ASSERT_TRUE(hasDisplayNote(session.readEvents(), loop.loopLengthTicks, 72, 106, 154));
 
   const EditPassIdList currentIds{addId, moveId};
   applySessionUndoEntry(loop, session, entry, loop.loopLengthTicks, currentIds);
-  TEST_ASSERT_TRUE(hasDisplayNote(session.readFlat(), loop.loopLengthTicks, 72, 48, 96));
-  TEST_ASSERT_FALSE(hasDisplayNote(session.readFlat(), loop.loopLengthTicks, 72, 106, 154));
+  TEST_ASSERT_TRUE(hasDisplayNote(session.readEvents(), loop.loopLengthTicks, 72, 48, 96));
+  TEST_ASSERT_FALSE(hasDisplayNote(session.readEvents(), loop.loopLengthTicks, 72, 106, 154));
 }
 
 void test_session_undo_four_kind_steps_bounded_entries() {
@@ -424,8 +424,8 @@ void test_session_undo_four_kind_steps_bounded_entries() {
   NoteEditFocus focus;
   CowLoopEventStore session;
   loop.rematerializeEditView(session.mutStore());
-  session.discardFlatCache();
-  rebuildNoteEditFocusFromStore(focus, session.readFlat(), 5, loop.loopLengthTicks, 0);
+  session.discardEventsCache();
+  rebuildNoteEditFocusFromStore(focus, session.readEvents(), 5, loop.loopLengthTicks, 0);
   focus.last = focus.commitBaseline;
 
   const NoteEditKind kinds[] = {NoteEditKind::Move, NoteEditKind::Pitch, NoteEditKind::Length,
@@ -433,13 +433,13 @@ void test_session_undo_four_kind_steps_bounded_entries() {
   size_t totalEntryBytes = 0;
   for (NoteEditKind kind : kinds) {
     const SessionUndoEntry entry = buildSessionUndoEntry(
-        focus, EditorSelection{}, session.readFlat(), 5, loop.loopLengthTicks, EditPassIdList{});
+        focus, EditorSelection{}, session.readEvents(), 5, loop.loopLengthTicks, EditPassIdList{});
     totalEntryBytes += estimatedSessionUndoEntryBytes(entry);
     TEST_ASSERT_TRUE(stack.pushEntry(entry));
     if (kind == NoteEditKind::Move) {
-      MidiEventVec& flat = session.mutFlat();
+      MidiEventVec& flat = session.mutEvents();
       applyMoveToSession(focus, flat, 5, focus.last.startTick + 48);
-      session.syncFlatToStore();
+      session.syncEventsToStore();
     } else if (kind == NoteEditKind::Pitch) {
       focus.last.pitch = 67;
       noteEditFocusApplyPitch(focus, 67, focus.last.startTick, focus.last.endTick,
@@ -468,28 +468,28 @@ void test_session_undo_live_capture_during_note_edit() {
 
   CowLoopEventStore session;
   loop.rematerializeEditView(session.mutStore());
-  session.discardFlatCache();
-  TEST_ASSERT_TRUE(hasDisplayNote(session.readFlat(), loop.loopLengthTicks, 60, 10, 58));
+  session.discardEventsCache();
+  TEST_ASSERT_TRUE(hasDisplayNote(session.readEvents(), loop.loopLengthTicks, 60, 10, 58));
 
-  const MidiEventVec baselineEvents = session.readFlat();
-  MidiEventVec& flat = session.mutFlat();
+  const MidiEventVec baselineEvents = session.readEvents();
+  MidiEventVec& flat = session.mutEvents();
   flat.push_back(MidiEvent::NoteOn(100, 5, 72, 100));
   flat.push_back(MidiEvent::NoteOff(148, 5, 72, 0));
-  session.syncFlatToStore();
-  TEST_ASSERT_TRUE(hasDisplayNote(session.readFlat(), loop.loopLengthTicks, 72, 100, 148));
+  session.syncEventsToStore();
+  TEST_ASSERT_TRUE(hasDisplayNote(session.readEvents(), loop.loopLengthTicks, 72, 100, 148));
 
   SessionUndoEntry entry;
   entry.redoEditRows =
-      buildSessionStoreEditPasses(baselineEvents, session.readFlat(), 5, loop.loopLengthTicks);
+      buildSessionStoreEditPasses(baselineEvents, session.readEvents(), 5, loop.loopLengthTicks);
   entry.hasRedoPayload = true;
   TEST_ASSERT_FALSE(entry.redoEditRows.empty());
 
   applySessionUndoEntry(loop, session, entry, loop.loopLengthTicks, EditPassIdList{});
-  TEST_ASSERT_TRUE(hasDisplayNote(session.readFlat(), loop.loopLengthTicks, 60, 10, 58));
-  TEST_ASSERT_FALSE(hasDisplayNote(session.readFlat(), loop.loopLengthTicks, 72, 100, 148));
+  TEST_ASSERT_TRUE(hasDisplayNote(session.readEvents(), loop.loopLengthTicks, 60, 10, 58));
+  TEST_ASSERT_FALSE(hasDisplayNote(session.readEvents(), loop.loopLengthTicks, 72, 100, 148));
 
   applySessionRedoEntry(loop, session, entry, loop.loopLengthTicks, EditPassIdList{});
-  TEST_ASSERT_TRUE(hasDisplayNote(session.readFlat(), loop.loopLengthTicks, 72, 100, 148));
+  TEST_ASSERT_TRUE(hasDisplayNote(session.readEvents(), loop.loopLengthTicks, 72, 100, 148));
 }
 
 void test_session_live_capture_survives_pass_replay() {
@@ -503,12 +503,12 @@ void test_session_live_capture_survives_pass_replay() {
 
   CowLoopEventStore session;
   loop.rematerializeEditView(session.mutStore());
-  session.discardFlatCache();
-  MidiEventVec& flat = session.mutFlat();
+  session.discardEventsCache();
+  MidiEventVec& flat = session.mutEvents();
   flat.push_back(MidiEvent::NoteOn(100, 5, 72, 100));
   flat.push_back(MidiEvent::NoteOff(148, 5, 72, 0));
-  session.syncFlatToStore();
-  const MidiEventVec sessionSnapshot = session.readFlat();
+  session.syncEventsToStore();
+  const MidiEventVec sessionSnapshot = session.readEvents();
 
   MidiEventVec loopMidiEventsFromPasses;
   loop.passes.materializeToEventVector(loopMidiEventsFromPasses, loop.loopLengthTicks);
@@ -535,17 +535,17 @@ void test_kind_boundary_move_twice_one_undo_entry() {
   KindBoundaryUndoState state;
   CowLoopEventStore session;
   loop.rematerializeEditView(session.mutStore());
-  session.discardFlatCache();
+  session.discardEventsCache();
   NoteEditFocus focus;
-  rebuildNoteEditFocusFromStore(focus, session.readFlat(), 5, loop.loopLengthTicks, 0);
+  rebuildNoteEditFocusFromStore(focus, session.readEvents(), 5, loop.loopLengthTicks, 0);
   focus.last = focus.commitBaseline;
 
   TEST_ASSERT_TRUE(
       pushKindBoundaryUndo(stack, state, focus, EditorSelection{}, session, 5,
                            loop.loopLengthTicks, EditPassIdList{}, NoteEditKind::Move));
-  MidiEventVec& flat = session.mutFlat();
+  MidiEventVec& flat = session.mutEvents();
   applyMoveToSession(focus, flat, 5, 58);
-  session.syncFlatToStore();
+  session.syncEventsToStore();
 
   TEST_ASSERT_FALSE(
       pushKindBoundaryUndo(stack, state, focus, EditorSelection{}, session, 5,
@@ -566,9 +566,9 @@ void test_kind_boundary_pitch_with_active_focus_one_undo_entry() {
   KindBoundaryUndoState state;
   CowLoopEventStore session;
   loop.rematerializeEditView(session.mutStore());
-  session.discardFlatCache();
+  session.discardEventsCache();
   NoteEditFocus focus;
-  rebuildNoteEditFocusFromStore(focus, session.readFlat(), 5, loop.loopLengthTicks, 0);
+  rebuildNoteEditFocusFromStore(focus, session.readEvents(), 5, loop.loopLengthTicks, 0);
   focus.last = focus.commitBaseline;
   TEST_ASSERT_TRUE(focus.active);
 
@@ -597,9 +597,9 @@ void test_kind_boundary_add_then_move_two_entries() {
   KindBoundaryUndoState state;
   CowLoopEventStore session;
   loop.rematerializeEditView(session.mutStore());
-  session.discardFlatCache();
+  session.discardEventsCache();
   NoteEditFocus focus;
-  rebuildNoteEditFocusFromStore(focus, session.readFlat(), 5, loop.loopLengthTicks, 0);
+  rebuildNoteEditFocusFromStore(focus, session.readEvents(), 5, loop.loopLengthTicks, 0);
   focus.last = focus.commitBaseline;
 
   TEST_ASSERT_TRUE(
@@ -624,17 +624,17 @@ void test_kind_boundary_reselect_move_pushes_again() {
   KindBoundaryUndoState state;
   CowLoopEventStore session;
   loop.rematerializeEditView(session.mutStore());
-  session.discardFlatCache();
+  session.discardEventsCache();
   NoteEditFocus focus;
-  rebuildNoteEditFocusFromStore(focus, session.readFlat(), 5, loop.loopLengthTicks, 0);
+  rebuildNoteEditFocusFromStore(focus, session.readEvents(), 5, loop.loopLengthTicks, 0);
   focus.last = focus.commitBaseline;
   EditorSelection selection{};
 
   TEST_ASSERT_TRUE(pushKindBoundaryUndo(stack, state, focus, selection, session, 5,
                                         loop.loopLengthTicks, EditPassIdList{},
                                         NoteEditKind::Move));
-  applyMoveToSession(focus, session.mutFlat(), 5, 58);
-  session.syncFlatToStore();
+  applyMoveToSession(focus, session.mutEvents(), 5, 58);
+  session.syncEventsToStore();
 
   EditorSelection priorSelection = selection;
   priorSelection.primaryNote = focus.movingNoteId;
@@ -663,9 +663,9 @@ void test_kind_boundary_select_nav_no_push() {
   KindBoundaryUndoState state;
   CowLoopEventStore session;
   loop.rematerializeEditView(session.mutStore());
-  session.discardFlatCache();
+  session.discardEventsCache();
   NoteEditFocus focus;
-  rebuildNoteEditFocusFromStore(focus, session.readFlat(), 5, loop.loopLengthTicks, 0);
+  rebuildNoteEditFocusFromStore(focus, session.readEvents(), 5, loop.loopLengthTicks, 0);
   focus.last = focus.commitBaseline;
 
   TEST_ASSERT_FALSE(

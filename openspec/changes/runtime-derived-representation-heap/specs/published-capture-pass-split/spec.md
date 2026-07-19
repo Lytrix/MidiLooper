@@ -48,7 +48,7 @@ allocator-domain transition).
 
 #### Scenario: Publish moves within published domain
 
-- **WHEN** `publishPendingCapturePass` commits a pending row to `RecordPass` or `OverdubPass`
+- **WHEN** `commitPendingCapturePass` commits a pending row to `RecordPass` or `OverdubPass`
 - **THEN** `publishedChunkIds` SHALL move into the pass row without re-allocating or copying
   chunk ids across allocator domains
 - **AND** `hasPendingCapturePass()` SHALL clear and `Capture.store` SHALL reset for the next session
@@ -112,7 +112,7 @@ published domain or release refs without repatriation.
 ### Requirement: Published overdub pass vector uses external memory pool
 
 `LoopPasses::overdubPasses` SHALL use an external-memory-first vector typedef
-(`PublishedOverdubPassVec`) so overdub pass row growth does not consume internal heap.
+(`CommittedOverdubPassVec`) so overdub pass row growth does not consume internal heap.
 
 `EditPassVec` and edit-metadata vectors are **out of scope** for this requirement.
 

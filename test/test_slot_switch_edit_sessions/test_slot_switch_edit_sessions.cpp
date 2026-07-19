@@ -83,12 +83,12 @@ void setupLoop(Loop& loop, uint32_t loopLength, unsigned noteCount) {
 void openCowLoopEventStore(CowLoopEventStore& session, Loop& loop) {
   loop.rematerializeEditView(session.mutStore());
   loop.assignMissingNoteIdsInStore(session.mutStore());
-  session.discardFlatCache();
+  session.discardEventsCache();
 }
 
 void reopenCowLoopEventStore(CowLoopEventStore& session, Loop& loop) {
   session.mutStore().clear();
-  session.discardFlatCache();
+  session.discardEventsCache();
   openCowLoopEventStore(session, loop);
 }
 
@@ -148,10 +148,10 @@ void test_note_edit_slot_switch_rematerialises_selected_slot() {
 
   CowLoopEventStore session;
   openCowLoopEventStore(session, loopSlot0);
-  TEST_ASSERT_EQUAL(2u, countDisplayNotes(session.readFlat(), kShortLoopLength));
+  TEST_ASSERT_EQUAL(2u, countDisplayNotes(session.readEvents(), kShortLoopLength));
 
   reopenCowLoopEventStore(session, loopSlot1);
-  TEST_ASSERT_EQUAL(4u, countDisplayNotes(session.readFlat(), kLongLoopLength));
+  TEST_ASSERT_EQUAL(4u, countDisplayNotes(session.readEvents(), kLongLoopLength));
 }
 
 void test_loop_edit_slot_geometry_differs_between_slots() {

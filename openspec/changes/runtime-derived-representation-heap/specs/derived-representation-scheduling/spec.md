@@ -77,7 +77,7 @@ after stop.
 
 - **WHEN** `isPassesMaterializedStoreFresh()` is true at PLAYING entry
 - **THEN** `ensurePlaybackWindowBuilt` materializes into `SessionMidiEventVec`
-- **AND** does not call `discardPublishedFlatCache()` immediately before reading flat
+- **AND** does not call `discardPassesMaterializedEventsCache()` immediately before reading flat
 
 ### Requirement: One full materialize per playback revision off hot path
 

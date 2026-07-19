@@ -134,7 +134,7 @@ public:
   void releasePlaybackMergedMidiEventsMemory();
   /// Phase 1B — release rebuildable playback windows when not referenced this tick.
   bool tryReleasePlaybackMergedMidiEventsMemory();
-  /// Phase 1B — drop revision-keyed published flat scratch when note edit does not need it.
+  /// Phase 1B — drop revision-keyed materialized events scratch when note edit does not need it.
   bool tryClearCommittedMidiScratch();
 
   // MIDI events
@@ -150,7 +150,7 @@ public:
   void noteOff(uint8_t channel, uint8_t note, uint8_t velocity, uint32_t tick);
   bool hasData() const { return getActiveLoop().hasData(); }
   bool hasDataInSlot(uint8_t slotIndex) const;
-  /// True when any slot on this track has loop data (published, length, or capture).
+  /// True when any slot on this track has loop data (committed, length, or capture).
   bool hasAnySlotData() const;
   /// After slot-scoped mutation (clear, empty record stop): EMPTY only when no slot has data.
   void reconcileTransportStateAfterSlotMutation();
@@ -247,11 +247,11 @@ public:
   /// Immutable access to midiEvents (for const Track)
   const SessionMidiEventVec& getMidiEvents() const { return getActiveLoop().midiEvents(); }
 
-  /// Legacy internal-heap view of published events (revision-keyed copy for NOTE_EDIT APIs).
-  MidiEventVec& legacyMidiEventsFromPublished();
-  const MidiEventVec& legacyMidiEventsFromPublished() const;
+  /// Legacy internal-heap view of committed/materialized events (revision-keyed copy for NOTE_EDIT APIs).
+  MidiEventVec& legacyMidiEventsFromCommitted();
+  const MidiEventVec& legacyMidiEventsFromCommitted() const;
 
-  /// Note-edit session store when active, else legacy published scratch.
+  /// Note-edit session store when active, else legacy committed scratch.
   MidiEventVec& editAwareMidiEvents();
   const MidiEventVec& editAwareMidiEvents() const;
 
@@ -358,8 +358,8 @@ private:
   GlobalUndoStack undoStack;
   UndoLoopGeometry recordCaptureBaselineGeometry_{};
   bool hasRecordCaptureBaselineGeometry_ = false;
-  MidiEventVec publishedMidiScratch_;
-  uint32_t publishedMidiScratchRevision_ = UINT32_MAX;
+  MidiEventVec committedMidiScratch_;
+  uint32_t committedMidiScratchRevision_ = UINT32_MAX;
   static const uint32_t TICKS_PER_BAR;
 
   void resetDeferredRecordRevts();

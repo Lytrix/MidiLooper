@@ -13,7 +13,7 @@ void test_loop_size_probe() {
   std::printf("sizeof(VisualCache)=%zu\n", sizeof(VisualCache));
   std::printf("sizeof(CaptureChunkIdList)=%zu\n", sizeof(CaptureChunkIdList));
   std::printf("sizeof(CommittedChunkIdList)=%zu\n", sizeof(CommittedChunkIdList));
-  std::printf("sizeof(PublishedOverdubPassVec)=%zu\n", sizeof(PublishedOverdubPassVec));
+  std::printf("sizeof(CommittedOverdubPassVec)=%zu\n", sizeof(CommittedOverdubPassVec));
   std::printf("loop_pool_bytes=%zu\n", (size_t)Config::NUM_TRACKS * Config::MAX_LOOPS_PER_TRACK * sizeof(Loop));
   TEST_ASSERT_TRUE(sizeof(Loop) > 0);
 }

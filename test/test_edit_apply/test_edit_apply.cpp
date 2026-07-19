@@ -544,9 +544,9 @@ void test_add_note_rematerialize_session_store() {
 
   CowLoopEventStore session;
   loop.rematerializeEditView(session.mutStore());
-  session.discardFlatCache();
+  session.discardEventsCache();
 
-  const auto& flat = session.readFlat();
+  const auto& flat = session.readEvents();
   TEST_ASSERT_EQUAL(4u, flat.size());
   TEST_ASSERT_EQUAL(1, countMatching(flat, true, 60, 10));
   TEST_ASSERT_EQUAL(1, countMatching(flat, true, 60, 48));
@@ -609,10 +609,10 @@ void test_lengthen_commit_rematerialize_hitl_fixture() {
 
   CowLoopEventStore session;
   loop.rematerializeEditView(session.mutStore());
-  session.discardFlatCache();
+  session.discardEventsCache();
 
   const NoteUtils::DisplayNoteVec notes =
-      NoteUtils::reconstructDisplayNotes(session.readFlat(), kLoopLength, false);
+      NoteUtils::reconstructDisplayNotes(session.readEvents(), kLoopLength, false);
   bool foundM0 = false;
   for (const NoteUtils::DisplayNote& n : notes) {
     if (n.note == 60 && n.startTick == 8) {
@@ -638,14 +638,14 @@ void test_change_length_rematerialize_hitl_195830_ticks() {
 
   // commitEditAction: discard live flat, replay takes+edits, load session store (matches firmware).
   CowLoopEventStore session;
-  session.discardFlatCache();
+  session.discardEventsCache();
   MidiEventVec loopMidiEventsFromTakesAndEdits;
   loop.passes.materializeToEventVector(loopMidiEventsFromTakesAndEdits, kLoopLength);
-  session.mutStore().loadFromFlat(loopMidiEventsFromTakesAndEdits);
-  session.discardFlatCache();
+  session.mutStore().loadFromEvents(loopMidiEventsFromTakesAndEdits);
+  session.discardEventsCache();
 
   const NoteUtils::DisplayNoteVec notes =
-      NoteUtils::reconstructDisplayNotes(session.readFlat(), kLoopLength, false);
+      NoteUtils::reconstructDisplayNotes(session.readEvents(), kLoopLength, false);
   bool foundM0Home = false;
   bool foundP0 = false;
   for (const NoteUtils::DisplayNote& n : notes) {
@@ -662,7 +662,7 @@ void test_change_length_rematerialize_hitl_195830_ticks() {
   TEST_ASSERT_TRUE(foundP0);
 
   int offAt712 = 0;
-  for (const MidiEvent& e : session.readFlat()) {
+  for (const MidiEvent& e : session.readEvents()) {
     if (e.isNoteOff() && e.channel == 5 && e.data.noteData.note == 60 && e.tick == 712) {
       offAt712++;
     }
@@ -852,8 +852,8 @@ void test_session_undo_move_back_insert_before_save_note_edit_pass() {
   loop.nextPassId_ = 2;
 
   CowLoopEventStore session;
-  loop.passes.materializeToEventVector(session.mutFlat(), loop.loopLengthTicks);
-  session.syncFlatToStore();
+  loop.passes.materializeToEventVector(session.mutEvents(), loop.loopLengthTicks);
+  session.syncEventsToStore();
 
   NoteEditFocus focus;
   focus.active = true;
@@ -863,13 +863,13 @@ void test_session_undo_move_back_insert_before_save_note_edit_pass() {
   focus.movingNoteRange = {8, 104};
 
   const SessionUndoEntry entry =
-      buildSessionUndoEntry(focus, EditorSelection{}, session.readFlat(), 1,
+      buildSessionUndoEntry(focus, EditorSelection{}, session.readEvents(), 1,
                             loop.loopLengthTicks, EditPassIdList{});
 
   focus.last.startTick = 496;
   focus.last.endTick = 1168;
   noteEditFocusApplyMoveEnd(focus, focus.last.startTick, focus.last.endTick);
-  MidiEventVec& flat = session.mutFlat();
+  MidiEventVec& flat = session.mutEvents();
   for (MidiEvent& evt : flat) {
     if (evt.isNoteOn() && evt.channel == 1 && evt.data.noteData.note == 60 && evt.tick == 8) {
       evt.tick = 496;
@@ -878,12 +878,12 @@ void test_session_undo_move_back_insert_before_save_note_edit_pass() {
       evt.tick = 1168;
     }
   }
-  session.syncFlatToStore();
-  TEST_ASSERT_EQUAL(1, countMatching(session.readFlat(), true, 60, 496));
+  session.syncEventsToStore();
+  TEST_ASSERT_EQUAL(1, countMatching(session.readEvents(), true, 60, 496));
 
   SessionUndoEntry undoEntry = entry;
   SessionUndoEntry redoPayload =
-      buildSessionUndoEntry(focus, EditorSelection{}, session.readFlat(), 1,
+      buildSessionUndoEntry(focus, EditorSelection{}, session.readEvents(), 1,
                             loop.loopLengthTicks, EditPassIdList{});
   undoEntry.redoEditRows = std::move(redoPayload.editRows);
   undoEntry.redoFocus = std::move(redoPayload.focus);
@@ -891,11 +891,11 @@ void test_session_undo_move_back_insert_before_save_note_edit_pass() {
   undoEntry.hasRedoPayload = true;
 
   applySessionUndoEntry(loop, session, undoEntry, loop.loopLengthTicks, EditPassIdList{});
-  TEST_ASSERT_EQUAL(1, countMatching(session.readFlat(), true, 60, 8));
-  TEST_ASSERT_EQUAL(0, countMatching(session.readFlat(), true, 60, 496));
+  TEST_ASSERT_EQUAL(1, countMatching(session.readEvents(), true, 60, 8));
+  TEST_ASSERT_EQUAL(0, countMatching(session.readEvents(), true, 60, 496));
 
   applySessionRedoEntry(loop, session, undoEntry, loop.loopLengthTicks, EditPassIdList{});
-  TEST_ASSERT_EQUAL(1, countMatching(session.readFlat(), true, 60, 496));
+  TEST_ASSERT_EQUAL(1, countMatching(session.readEvents(), true, 60, 496));
 }
 
 int main(int /*argc*/, char** /*argv*/) {

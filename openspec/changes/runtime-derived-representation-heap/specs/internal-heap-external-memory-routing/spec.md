@@ -8,7 +8,7 @@ internal `malloc`.
 
 **Capture pass chunk-id metadata:** `LoopEventStore::chunkIds_` (CaptureBuilder) SHALL remain on
 the internal heap (`CaptureChunkIdList`). Published pass chunk-id lists (`PublishedChunkIdList`) and
-`PublishedOverdubPassVec` SHALL use the external memory pool per
+`CommittedOverdubPassVec` SHALL use the external memory pool per
 [`published-capture-pass-split/spec.md`](../published-capture-pass-split/spec.md) (M7). Do **not**
 route active capture builder lists through extmem-first allocators.
 

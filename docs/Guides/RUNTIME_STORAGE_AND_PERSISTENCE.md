@@ -152,7 +152,7 @@ Every architectural part should have a clear owner. Use this table before moving
 
 - **Playback and recording** own timing correctness; persistence **reads** sealed chunks but never blocks them.
 - **Persistence completion** does not imply **memory reclaim** — runtime reference holders (`LoopPasses`, playback, undo) must release first.
-- **Pass-close** (`publishPendingCapturePass`) owns pass metadata finalization, not first-byte-to-SD.
+- **Pass-close** (`commitPendingCapturePass`) owns pass metadata finalization, not first-byte-to-SD.
 
 ---
 
@@ -228,7 +228,7 @@ Each **loop slot** (`Loop`) holds live capture and committed passes. Detail: [`L
 | `passesMaterializedStore_` | `Loop` | Derived materialized MIDI cache (not canonical) |
 | Chunk pool | `LoopEventStore` | Allocation, chunk storage in PSRAM (512 × 256 events) |
 
-**Pass stop today:** `sealCapture()` → `publishPendingCapturePass()` → chunk refs on `LoopPasses`. Seal happens at **pass** boundary only.
+**Pass stop today:** `sealCapture()` → `commitPendingCapturePass()` → chunk refs on `LoopPasses`. Seal happens at **pass** boundary only.
 
 **Pool:** 512 chunks × 256 events (`include/LoopEventStore.h`).
 

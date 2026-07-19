@@ -202,7 +202,7 @@ TRACK_COLD_MEM bool applyUndoEntry(Track& track, UndoEntry& entry) {
             track.invalidateCaches();
             if (editManager.isNoteEditActive()) {
                 loop.rematerializeEditView(editManager.getEditSession().store.mutStore());
-                editManager.getEditSession().store.discardFlatCache();
+                editManager.getEditSession().store.discardEventsCache();
                 editManager.getEditSession().undoStack.clear();
             }
             return true;
@@ -217,7 +217,7 @@ TRACK_COLD_MEM bool applyUndoEntry(Track& track, UndoEntry& entry) {
             loop.invalidateCaches();
             if (editManager.isNoteEditActive()) {
                 loop.rematerializeEditView(editManager.getEditSession().store.mutStore());
-                editManager.getEditSession().store.discardFlatCache();
+                editManager.getEditSession().store.discardEventsCache();
                 editManager.getEditSession().undoStack.clear();
             }
             entry.hasRedoPayload = true;
@@ -244,7 +244,7 @@ TRACK_COLD_MEM bool applyUndoEntry(Track& track, UndoEntry& entry) {
             loop.invalidateCaches();
             if (editManager.isNoteEditActive()) {
                 loop.rematerializeEditView(editManager.getEditSession().store.mutStore());
-                editManager.getEditSession().store.discardFlatCache();
+                editManager.getEditSession().store.discardEventsCache();
                 editManager.getEditSession().undoStack.clear();
             }
             entry.hasRedoPayload = true;
@@ -315,7 +315,7 @@ TRACK_COLD_MEM bool applyRedoEntry(Track& track, UndoEntry& entry) {
             track.invalidateCaches();
             if (editManager.isNoteEditActive()) {
                 loop.rematerializeEditView(editManager.getEditSession().store.mutStore());
-                editManager.getEditSession().store.discardFlatCache();
+                editManager.getEditSession().store.discardEventsCache();
                 editManager.getEditSession().undoStack.clear();
             }
             return true;
@@ -335,7 +335,7 @@ TRACK_COLD_MEM bool applyRedoEntry(Track& track, UndoEntry& entry) {
             loop.invalidateCaches();
             if (editManager.isNoteEditActive()) {
                 loop.rematerializeEditView(editManager.getEditSession().store.mutStore());
-                editManager.getEditSession().store.discardFlatCache();
+                editManager.getEditSession().store.discardEventsCache();
                 editManager.getEditSession().undoStack.clear();
             }
             return true;
@@ -360,7 +360,7 @@ TRACK_COLD_MEM bool applyRedoEntry(Track& track, UndoEntry& entry) {
             loop.invalidateCaches();
             if (editManager.isNoteEditActive()) {
                 loop.rematerializeEditView(editManager.getEditSession().store.mutStore());
-                editManager.getEditSession().store.discardFlatCache();
+                editManager.getEditSession().store.discardEventsCache();
                 editManager.getEditSession().undoStack.clear();
             }
             logger.log(CAT_TRACK, LOG_INFO, "Scoped edit pass redone session=%u editPass=%u edits=%u",

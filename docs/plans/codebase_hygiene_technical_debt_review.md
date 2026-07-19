@@ -48,7 +48,7 @@ The tree has real technical depth (passes/materialize, deferred persistence, not
 | 7 | Dead `Looper` transport + stub FSM | `startRecording` / `stopRecording` / `startPlayback` / `stopPlayback` / `startOverdub` / `stopOverdub` / `getState` / `handleState` / `requestStateTransition` — no callers outside `Looper.cpp`; live path is `TrackManager` / `MidiButtonActions` | **Removed**; kept `setup` / `update` |
 | 8 | Empty fader schedule forwarders | `MidiFaderProcessor::scheduleOtherFaderUpdates` no-op; `MidiFaderManager` only forwards; live work is `NoteEditManager::scheduleOtherFaderUpdates` | **Removed** |
 | 9 | `Loop::ensurePassesMaterializedStore` alias | → `materializeEditViewFromPasses` | **Collapsed** (2026-07-19); public API is `materializeEditViewFromPasses` only |
-| 10 | `Track::legacyMidiEventsFromPublished` bridge | Edit APIs still consume “legacy published flat” | **Keep** until edit consumers move; document only |
+| 10 | `Track::legacyMidiEventsFromCommitted` bridge | Edit APIs still consume “legacy materialized events” | **Keep** until edit consumers move; document only |
 
 ---
 
@@ -58,7 +58,7 @@ The tree has real technical depth (passes/materialize, deferred persistence, not
 |---|---------|-------|
 | 11 | Capture flatten copy-paste | Display / edit / loop; test-local length helpers in `test_record_stop_length` |
 | 12 | HITL baselines still ~4k lines | Thin `host_midi_hitl.py`; scenarios still import baseline modules | **Done** (2026-07-19): top-level `host_midi_automation_*.py` are thin shims; bodies in `hitl/legacy_record_baseline.py` / `legacy_edit_baseline.py` plus shared hitl helpers |
-| 13 | Vocabulary drift | `published` / `Publish*`, `flatten` / `FlatVec`, `Take` in tests/telemetry, `audible` in boot restore |
+| 13 | Vocabulary drift | `published` / `Publish*`, `flatten` / `EventVec`, `Take` in tests/telemetry, `audible` in boot restore | **Done** (2026-07-19): locked rename `published`→`committed`/`materialize`, flatten API→`copyEventsTo`/`EventVec` in `include/`/`src/`/`test/` + Guides; leftover `Take`/`audible`/local `published*` vars still deferred |
 | 14 | `PlaybackWindow` misnamed | OpenSpec / `slot-performance-interaction` → `PlaybackMergedMidiEvents` | **Done** (2026-07-19 Phase −1): struct/file + `mergedMidiEvents` field + `ensure*` / `invalidate*` / release helpers; domain `makeFullLoopPlaybackWindow` unchanged |
 | 15 | `PersistenceQueue` vs `PersistenceWorkQueue` | Chunk mid-pass vs semantic jobs — rename when persistence hardening is active |
 | 16 | Layout inconsistency | `EditNoteHomeState` outside `EditStates/`; `PersistenceWorkQueue.cpp` at `src/` root vs `StorageManagerInternal/` header | **Fixed** (2026-07-19): home state under `EditStates/`; cpp under `src/StorageManager/` |
@@ -92,7 +92,7 @@ Protected by [OpenSpec-Phase-Gate](../../.cursor/rules/OpenSpec-Phase-Gate.mdc) 
 2. Continue **StorageManager** extraction until `saveState` leaves the root TU
 3. ~~Finish **HITL** helper extraction~~ **Done** — shared helpers in `scripts/hitl/`; legacy `run()`/`main()` in `hitl/legacy_*_baseline.py`; top-level scripts are thin CLI shims
 4. ~~Spec’d rename **`PlaybackWindow` → `PlaybackMergedMidiEvents`**~~ **Done** (OpenSpec `slot-performance-interaction` Phase −1)
-5. Vocabulary rename pass (`published`→`committed`, flatten API) as dedicated OpenSpec change — not drive-by
+5. ~~Vocabulary rename pass (`published`→`committed`, flatten API)~~ **Done** (2026-07-19) — locked map in code + Guides; not an OpenSpec change
 6. ~~Collapse `ensurePassesMaterializedStore` alias~~ **Done**; ~~move `EditNoteHomeState` into `EditStates/`~~ **Done**; ~~rehome `PersistenceWorkQueue.cpp`~~ **Done** (`src/StorageManager/`)
 
 ---

@@ -37,6 +37,7 @@ Last updated: 2026-07-19 (archived deferred-job-scheduler Phase B)
 | HITL shared helpers → `scripts/hitl/` | Done |
 | Thin `host_midi_automation_*.py` CLI shims | Done — bodies in `hitl/legacy_*_baseline.py` |
 | `PlaybackWindow` → `PlaybackMergedMidiEvents` | Done — OpenSpec slot-performance-interaction Phase −1 |
+| Vocabulary `published`/`flatten` → committed/materialize/`copyEventsTo` | Done — locked rename map in `include/`/`src/`/`test/` + Guides |
 
 ---
 

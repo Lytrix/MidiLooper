@@ -17,9 +17,9 @@
 
 ## M2 — Published flat extmem
 
-- [x] `passesMaterializedStore_` → `PublishedLoopEventStore` (`SessionMidiEventVec`)
+- [x] `passesMaterializedStore_` → `PassesMaterializedEventStore` (`SessionMidiEventVec`)
 - [x] `Loop::midiEvents()` / `Track::getMidiEvents()` → `SessionMidiEventVec&`
-- [x] `Track::legacyMidiEventsFromPublished()` revision-keyed boundary for `editAwareMidiEvents()`
+- [x] `Track::legacyMidiEventsFromCommitted()` revision-keyed boundary for `editAwareMidiEvents()`
 - [x] Playback/commit paths materialize to `SessionMidiEventVec` where fresh
 
 ## M3 — Capture ring long runs
@@ -148,9 +148,9 @@ Persistence starvation, transport-gate workarounds, and stop-path flush/defer pa
 - [x] Native: `test_loop_event_store`, `test_loop_take_survival`, `test_loop_size_probe`
 - [x] **Gate:** `pio test -e native` (621 passed); `teensy41-capture-serial` build
 
-### Phase 2 — `PublishedOverdubPassVec` — **DONE 2026-07-15**
+### Phase 2 — `CommittedOverdubPassVec` — **DONE 2026-07-15**
 
-- [x] Migrate `LoopPasses::overdubPasses` to `PublishedOverdubPassVec`
+- [x] Migrate `LoopPasses::overdubPasses` to `CommittedOverdubPassVec`
 - [x] Update `LoopPasses.cpp` cold-path helper signature
 - [x] **Gate:** `pio test -e native` (621 passed); `teensy41-capture-serial` build
 

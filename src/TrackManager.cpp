@@ -143,7 +143,7 @@ void TrackManager::startRecordingTrack(uint8_t trackIndex, uint32_t currentTick)
   const uint8_t slot = tr.getActiveLoopIndex();
   if (tr.hasCommittedPassesInSlot(slot)) {
     logger.log(CAT_TRACK, LOG_WARNING,
-               "Track %d: cannot arm slot %u — slot already has published MIDI",
+               "Track %d: cannot arm slot %u — slot already has committed passes MIDI",
                trackIndex, static_cast<unsigned>(slot) + 1u);
     return;
   }
@@ -281,7 +281,7 @@ void TrackManager::queueRecordingTrack(uint8_t trackIndex, uint8_t slotIndex,
   if (trackIndex >= Config::NUM_TRACKS || slotIndex >= Config::MAX_LOOPS_PER_TRACK) return;
   if (tracks[trackIndex].hasCommittedPassesInSlot(slotIndex)) {
     logger.log(CAT_TRACK, LOG_WARNING,
-               "Track %d: cannot queue record on slot %u — slot already has published MIDI",
+               "Track %d: cannot queue record on slot %u — slot already has committed passes MIDI",
                trackIndex, static_cast<unsigned>(slotIndex) + 1u);
     return;
   }

@@ -22,7 +22,7 @@ flowchart LR
     IN[MIDI in] --> captureStore[capture.store]
   end
   subgraph passes [Committed passes]
-    captureStore -->|sealCapture + publishPendingCapturePass| recordPass[recordPass / overdubPasses]
+    captureStore -->|sealCapture + commitPendingCapturePass| recordPass[recordPass / overdubPasses]
     saveEdit[saveNoteEditPass] --> editPasses[editPasses]
   end
   subgraph materialized [Materialized view]
@@ -73,7 +73,7 @@ flowchart LR
 | `detachChunksTo` | O(chunks) | `sealCapture` — move capture chunks into `pendingCapturePass_` |
 | `adoptChunkIds` / `adoptAll` | O(chunks) | Stop finalize, load, undo restore paths |
 | `cloneShared()` | O(events) | Undo restore (deep copy on apply) |
-| `flatten` / `loadFromFlat` | O(events) | SD save/load, materialize, cold validate |
+| `copyEventsTo` / `loadFromEvents` | O(events) | SD save/load, materialize, cold validate |
 | `usedChunkCount` / `freeChunkCount` | O(1) | Pool-budget admission and undo pressure |
 | `canAllocChunkWithReserve()` | O(1) | `sealCapture` — true when `freeChunkCount() > CHUNK_RESERVE` |
 
@@ -97,12 +97,12 @@ flowchart LR
   - `LoopPasses` materialize merge temporaries
   - `GlobalUndoStack` entry vector (`UndoEntryVec`)
   - display note storage (`VisualCache.notes`, `CapturePreview.notes`, `DisplayManager::liveDisplayNotes`)
-  - **NOTE_EDIT (2026-07):** `NoteEditFocus` maps, `NoteEditSessionUndoStack`, session `flatCache_`, `DisplayManager::liveDisplayEventBuffer`, `MemoryPool::globalMidiEventPool`, UIP span/projection temps — see [`INTERNAL_HEAP_AND_EXTERNAL_MEMORY.md`](INTERNAL_HEAP_AND_EXTERNAL_MEMORY.md)
+  - **NOTE_EDIT (2026-07):** `NoteEditFocus` maps, `NoteEditSessionUndoStack`, session `eventsCache_`, `DisplayManager::liveDisplayEventBuffer`, `MemoryPool::globalMidiEventPool`, UIP span/projection temps — see [`INTERNAL_HEAP_AND_EXTERNAL_MEMORY.md`](INTERNAL_HEAP_AND_EXTERNAL_MEMORY.md)
 - During live record display, `DisplayManager::resolveDisplayNotes` reads the incrementally maintained `CapturePreview.notes` and open tails instead of flattening the whole capture store each frame. `SC_DISP` capture telemetry reports direct event counts without building a frame-only `MidiEventVec`.
 
 **Copy-on-write wrapper (`CowLoopEventStore`):**
 
-- `mutStore()` / `mutFlat()` clone the backing store when `shared_ptr` use count &gt; 1.
+- `mutStore()` / `mutEvents()` clone the backing store when `shared_ptr` use count &gt; 1.
 - `shareForSnapshot()` returns the live store ref for undo/redo history (O(1) push; COW on live `mutStore()`).
 - `restoreFromSnapshot(snap)` always **`snap->cloneShared()`** — never a shallow struct copy. `LoopEventStore` copy ctor is deleted to enforce this.
 
@@ -116,7 +116,7 @@ flowchart LR
 2. **`appendCaptureEvent`** — writes to `capture.store`; dedupes near-duplicates and (on overdub) against merged capture passes in a tick window.
 3. **`commitCapturePass`** at record/overdub stop:
    - **`sealCapture`** — wrap-window finalize on record capture; detach chunks into **`pendingCapturePass_`** (routes record vs overdub via `effectiveCapturePassPhase`).
-   - **`publishPendingCapturePass`** — append to **recordPass** or **overdubPasses[]**; clear live capture.
+   - **`commitPendingCapturePass`** — append to **recordPass** or **overdubPasses[]**; clear live capture.
    - On publish: **`finalizeLoopAtStop`** + **`pushRecordPassAdded`** / **`pushOverdubPassAdded`** on global undo stack.
 4. **`discardCapture`** — undo open overdub capture (session still open).
 5. **`discardPendingCapturePass`** — rollback failed seal/publish.
@@ -319,7 +319,7 @@ While **NoteEditSession** is active, `handleUndo` / `handleRedo` prefer session 
 **E:** entries (pool-budget §9): **`SessionUndoEntry`** = **`editRows`** (scoped pre-commit **editPass** rows) + **`NoteEditFocus`** + **`NoteEditSelection`**. Pushed at geometry-kind boundaries via **`pushSessionUndoOnKindChange`** (not per fader tick). Restore: materialize from **passes** (excluding post-push committed **editPass** ids) + **`applyNoteEditPassSequence`** + focus/selection replay — no **`cloneShared`** per step.
 
 - Depth target **`Config::PREFERRED_SESSION_UNDO_DEPTH`** (32); pressure trim keeps at least **`MIN_SESSION_UNDO_DEPTH`** (4).
-- Push checks **split-tier** admission via **`canHeapAdmitSessionUndoEntry`**: internal payload vs **`HEAP_RESERVE_BYTES`** + internal heap free; `baselineMap` / `overlapNotes` vs external memory pool free when PSRAM is available. Failed push after reclaim: **`discardFlatCache()`** + one retry.
+- Push checks **split-tier** admission via **`canHeapAdmitSessionUndoEntry`**: internal payload vs **`HEAP_RESERVE_BYTES`** + internal heap free; `baselineMap` / `overlapNotes` vs external memory pool free when PSRAM is available. Failed push after reclaim: **`discardEventsCache()`** + one retry.
 
 Committed **editPass** rows store canonical **EditPass** row fields (SD v5); live **NoteEditSession.store** is materialized from **passes**; **E:** stack stores edit-scope metadata only.
 
