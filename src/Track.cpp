@@ -100,7 +100,7 @@ MidiEventVec& Track::legacyMidiEventsFromPublished() {
   Loop& loop = getActiveLoop();
   const uint32_t revision = loop.playbackRevision;
   if (publishedMidiScratchRevision_ != revision) {
-    loop.ensurePassesMaterializedStore();
+    loop.materializeEditViewFromPasses();
     const SessionMidiEventVec& published = loop.midiEvents();
     publishedMidiScratch_.assign(published.begin(), published.end());
     publishedMidiScratchRevision_ = revision;
@@ -1056,7 +1056,7 @@ void Track::processDeferredIdleMaintenance(uint32_t nowMs) {
       const bool avoidFullVisual =
           loop.shouldAvoidFullVisualRebuild(loop.loopLengthTicks) || deferHeavyDerivedView;
       if (!loop.isPassesMaterializedStoreFresh() && !deferHeavyDerivedView && !avoidFullVisual) {
-        loop.ensurePassesMaterializedStore();
+        loop.materializeEditViewFromPasses();
       }
       if (loop.visualCacheDirty) {
         // Budget-driven: one idle slice per call (bars), never full ensure when avoidFullVisual.

@@ -201,7 +201,7 @@ Full-loop pass over merged active capture passes (materialized flat):
 |------|----------------|
 | SD read per slot | `loadLoopSlotFromCurrentSetSd` / deferred restore queue (one slot per idle today) |
 | First piano-roll paint | `Loop` visualCache rebuild + `NoteUtils::reconstructNotes` (display pairing — tier 3, not storage mutate) |
-| Avoided on load (heap) | Full `ensurePassesMaterializedStore` per restore slot — removed in `68ce6ad` after 42-slot boot exhausted RAM1 |
+| Avoided on load (heap) | Full `materializeEditViewFromPasses` per restore slot — removed in `68ce6ad` after 42-slot boot exhausted RAM1 |
 
 For faster time-to-UI on large loops, follow [prioritized_boot_load_isolation_refinement.md](../plans/prioritized_boot_load_isolation_refinement.md) (slot load session, window-first display) — not reverting `15a35b4`.
 

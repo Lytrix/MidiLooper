@@ -207,7 +207,8 @@ struct Loop {
 
   void clearCaptureOnNewPass();
 
-  void ensurePassesMaterializedStore() const { materializeEditViewFromPasses(); }
+  /// Rebuild passesMaterializedStore_ from committed passes when stale.
+  void materializeEditViewFromPasses() const;
   bool isPassesMaterializedStoreFresh() const { return !passesMaterializedStoreStale_; }
 
  private:
@@ -216,7 +217,6 @@ struct Loop {
   PublishedLoopEventStore passesMaterializedStore_;
   bool passesMaterializedStoreStale_ = true;
 
-  void materializeEditViewFromPasses() const;
   void freeActiveCapturePassChunks();
   void markPassDerivedStale();
 
