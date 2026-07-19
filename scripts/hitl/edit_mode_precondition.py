@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Optional
 
 if TYPE_CHECKING:
     import mido
-    from host_midi_automation_baseline import SerialCaptureCollector
+    from hitl.serial_collector import SerialCaptureCollector
 
 
 def last_edit_session_kind(lines: list[str]) -> str | None:
@@ -72,12 +72,13 @@ def ensure_loop_edit_before_record(
         print("[hitl] not in NOTE_EDIT; skipping edit precondition")
         return True
 
-    from host_midi_automation_baseline import CONTROL_CHANNEL_1BASED, _send_short_press
-    from host_midi_automation_edit_baseline import (
+    from hitl.control_constants import (
+        CONTROL_CHANNEL_1BASED,
         EDIT_BUTTON_DEBOUNCE_MS,
         EDIT_BUTTON_NOTE,
-        _send_long_press,
     )
+    from hitl.midi_io import _send_short_press
+    from hitl.edit_controls import _send_long_press
 
     print("[hitl] exit NOTE_EDIT before record")
     baseline = len(snapshot)

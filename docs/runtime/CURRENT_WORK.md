@@ -32,6 +32,9 @@ Last updated: 2026-07-19 (archived deferred-job-scheduler Phase B)
 | Dead `Looper` transport / stub FSM | Done |
 | No-op `MidiFader*::scheduleOtherFaderUpdates` | Done |
 | `PROJECT_STATE` archive-link drift | Done |
+| Collapse `ensurePassesMaterializedStore` alias | Done |
+| `EditNoteHomeState` + `PersistenceWorkQueue` layout | Done |
+| HITL shared helpers → `scripts/hitl/` | Partial — baselines still hold `run()` |
 
 ---
 

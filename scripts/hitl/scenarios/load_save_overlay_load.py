@@ -53,7 +53,6 @@ _REV_LOAD_DIRTY_YES_RE = re.compile(
 ROOT_FIRST_SET_ROW = 2
 _DIRTY_PROMPT_ROW = DIRTY_PROMPT_ROW
 
-
 def _parse_overlay_load_args(args: object) -> argparse.Namespace:
     parser = argparse.ArgumentParser(add_help=False)
     parser.add_argument("--midi-out", default="Teensy")
@@ -104,16 +103,13 @@ def _parse_overlay_load_args(args: object) -> argparse.Namespace:
     legacy = list(getattr(args, "legacy_args", []) or [])
     return parser.parse_args(legacy)
 
-
 def _track_select_note(track_number_1based: int) -> int:
-    from host_midi_automation_baseline import TRACK_SELECT_NOTE_BASE
+    from hitl.control_constants import TRACK_SELECT_NOTE_BASE
 
     return TRACK_SELECT_NOTE_BASE + (track_number_1based - 1)
 
-
 def _overlay_scroll_steps_to_set_row(catalog_set_index: int) -> int:
     return ROOT_FIRST_SET_ROW + max(catalog_set_index, 0)
-
 
 def _wait_serial_any_line(serial_collector: object, timeout_ms: int = 12000) -> bool:
     deadline = time.time() + timeout_ms / 1000.0
@@ -125,17 +121,18 @@ def _wait_serial_any_line(serial_collector: object, timeout_ms: int = 12000) -> 
         time.sleep(0.05)
     return bool(serial_collector.snapshot())
 
-
 def run_load_save_overlay_load(args: object) -> int:
-    from host_midi_automation_baseline import (
+    from hitl.control_constants import (
         CONTROL_CHANNEL_1BASED,
-        SerialCaptureCollector,
+        EDIT_BUTTON_NOTE,
+    )
+    from hitl.serial_collector import SerialCaptureCollector
+    from hitl.midi_io import (
         _drain_input_messages,
         _find_midi_port,
         _send_short_press,
     )
-    from host_midi_automation_edit_baseline import (
-        EDIT_BUTTON_NOTE,
+    from hitl.edit_controls import (
         _ensure_transport_running,
         _send_double_press,
         _stop_transport_if_running,

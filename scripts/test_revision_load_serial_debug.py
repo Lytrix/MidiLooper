@@ -4,8 +4,7 @@
 import sys
 import time
 
-from host_midi_automation_baseline import SerialCaptureCollector
-
+from hitl.serial_collector import SerialCaptureCollector
 
 def main() -> int:
     port = sys.argv[1] if len(sys.argv) > 1 else "/dev/cu.usbmodem154944801"
@@ -41,7 +40,6 @@ def main() -> int:
     print("timeout")
     collector.stop()
     return 2
-
 
 if __name__ == "__main__":
     raise SystemExit(main())

@@ -11,16 +11,17 @@ _SCRIPT_DIR = Path(__file__).resolve().parent
 if str(_SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(_SCRIPT_DIR))
 
-from host_midi_automation_baseline import (
-    _can_skip_clear_before_record,
-    _clear_undo_prune_gate_ok,
+from hitl.capture_transitions import (
     _count_capture_transitions,
     _latest_track_state,
     _record_entry_to_recording_count,
+)
+from host_midi_automation_baseline import (
+    _can_skip_clear_before_record,
+    _clear_undo_prune_gate_ok,
     _serial_has_clear_completed,
     _track_cleared_for_record,
 )
-
 
 class ClearBeforeRecordPreconditionTests(unittest.TestCase):
     def test_skip_when_latest_empty(self) -> None:
@@ -75,7 +76,6 @@ class ClearBeforeRecordPreconditionTests(unittest.TestCase):
         ]
         self.assertTrue(edit_cleared(lines))
 
-
 class RecordTransitionCountTests(unittest.TestCase):
     def test_stopped_to_recording_counts_as_record_arm(self) -> None:
         lines = [
@@ -86,7 +86,6 @@ class RecordTransitionCountTests(unittest.TestCase):
         counts = _count_capture_transitions(lines)
         self.assertEqual(_record_entry_to_recording_count(counts), 1)
         self.assertEqual(counts.get(("ARMED", "RECORDING"), 0), 0)
-
 
 class ClearUndoPruneGateTests(unittest.TestCase):
     def test_clear_log_confirmed_exempts_missing_prune(self) -> None:
@@ -110,7 +109,6 @@ class ClearUndoPruneGateTests(unittest.TestCase):
                 {"found": True, "remaining_zero": True},
             )
         )
-
 
 class EditMinimalSeedOkTests(unittest.TestCase):
     def test_record_only_seed_ignores_playing_transition_fail(self) -> None:
@@ -142,7 +140,6 @@ class EditMinimalSeedOkTests(unittest.TestCase):
 
         ns = _parse_common_args(Args())
         self.assertEqual(ns.track_number, 5)
-
 
 if __name__ == "__main__":
     unittest.main()
