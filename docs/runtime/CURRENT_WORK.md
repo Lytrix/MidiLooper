@@ -34,7 +34,8 @@ Last updated: 2026-07-19 (archived deferred-job-scheduler Phase B)
 | `PROJECT_STATE` archive-link drift | Done |
 | Collapse `ensurePassesMaterializedStore` alias | Done |
 | `EditNoteHomeState` + `PersistenceWorkQueue` layout | Done |
-| HITL shared helpers → `scripts/hitl/` | Partial — baselines still hold `run()` |
+| HITL shared helpers → `scripts/hitl/` | Done |
+| Thin `host_midi_automation_*.py` CLI shims | Done — bodies in `hitl/legacy_*_baseline.py` |
 
 ---
 

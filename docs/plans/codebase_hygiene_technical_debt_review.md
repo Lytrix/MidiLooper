@@ -57,7 +57,7 @@ The tree has real technical depth (passes/materialize, deferred persistence, not
 | # | Finding | Notes |
 |---|---------|-------|
 | 11 | Capture flatten copy-paste | Display / edit / loop; test-local length helpers in `test_record_stop_length` |
-| 12 | HITL baselines still ~4k lines | Thin `host_midi_hitl.py`; scenarios still import baseline modules | **Partial** (2026-07-19): shared helpers → `hitl/control_constants`, `midi_io`, `serial_collector`, `edit_controls`, `capture_transitions`; baselines re-export (−302/−88 lines); `run()` still in baselines |
+| 12 | HITL baselines still ~4k lines | Thin `host_midi_hitl.py`; scenarios still import baseline modules | **Done** (2026-07-19): top-level `host_midi_automation_*.py` are thin shims; bodies in `hitl/legacy_record_baseline.py` / `legacy_edit_baseline.py` plus shared hitl helpers |
 | 13 | Vocabulary drift | `published` / `Publish*`, `flatten` / `FlatVec`, `Take` in tests/telemetry, `audible` in boot restore |
 | 14 | `PlaybackWindow` misnamed | OpenSpec / `slot-performance-interaction` → `PlaybackMergedMidiEvents` when that change is CURRENT_WORK |
 | 15 | `PersistenceQueue` vs `PersistenceWorkQueue` | Chunk mid-pass vs semantic jobs — rename when persistence hardening is active |
@@ -90,7 +90,7 @@ Protected by [OpenSpec-Phase-Gate](../../.cursor/rules/OpenSpec-Phase-Gate.mdc) 
 
 1. **Track stop DRY** — single parameterized stop pipeline (`record|overdub` × `playing|stopped`) extending `finalizeCommitSideEffects`; align with [`unified-capture-commit-owner`](../../openspec/changes/unified-capture-commit-owner/)
 2. Continue **StorageManager** extraction until `saveState` leaves the root TU
-3. Finish **HITL** helper extraction — **partial**: shared constants/IO/collector/edit-controls/transitions in `scripts/hitl/`; next: move `run()` bodies so baselines become thin CLI shims only
+3. ~~Finish **HITL** helper extraction~~ **Done** — shared helpers in `scripts/hitl/`; legacy `run()`/`main()` in `hitl/legacy_*_baseline.py`; top-level scripts are thin CLI shims
 4. Spec’d rename **`PlaybackWindow` → `PlaybackMergedMidiEvents`** under `slot-performance-interaction`
 5. Vocabulary rename pass (`published`→`committed`, flatten API) as dedicated OpenSpec change — not drive-by
 6. ~~Collapse `ensurePassesMaterializedStore` alias~~ **Done**; ~~move `EditNoteHomeState` into `EditStates/`~~ **Done**; ~~rehome `PersistenceWorkQueue.cpp`~~ **Done** (`src/StorageManager/`)
