@@ -61,7 +61,7 @@ The tree has real technical depth (passes/materialize, deferred persistence, not
 | 13 | Vocabulary drift | `published` / `Publish*`, `flatten` / `FlatVec`, `Take` in tests/telemetry, `audible` in boot restore |
 | 14 | `PlaybackWindow` misnamed | OpenSpec / `slot-performance-interaction` → `PlaybackMergedMidiEvents` when that change is CURRENT_WORK |
 | 15 | `PersistenceQueue` vs `PersistenceWorkQueue` | Chunk mid-pass vs semantic jobs — rename when persistence hardening is active |
-| 16 | Layout inconsistency | `EditNoteHomeState` outside `EditStates/`; `PersistenceWorkQueue.cpp` at `src/` root vs `StorageManagerInternal/` header | **Fixed** (2026-07-19): home state under `EditStates/`; cpp under `src/StorageManager/` | **Fixed** (2026-07-19): home state under `EditStates/`; cpp under `src/StorageManager/` |
+| 16 | Layout inconsistency | `EditNoteHomeState` outside `EditStates/`; `PersistenceWorkQueue.cpp` at `src/` root vs `StorageManagerInternal/` header | **Fixed** (2026-07-19): home state under `EditStates/`; cpp under `src/StorageManager/` |
 
 ---
 
