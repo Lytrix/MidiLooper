@@ -264,7 +264,7 @@ void reanchorPlaybackIndex(Loop& loop, const SessionMidiEventVec& mergedEvents, 
   loop.nextEventIndex = static_cast<uint16_t>(idx);
 }
 
-void ensurePlaybackWindowBuilt(Track& track, Loop& loop, LoopPlaybackRuntime& runtime,
+void ensurePlaybackMergedMidiEventsBuilt(Track& track, Loop& loop, LoopPlaybackRuntime& runtime,
                                bool /*allowHeavyBuild*/, uint32_t currentTick) {
   // Projection boundary (linear-loop-tick-storage): mergedEvents are read-only input to
   // playback order + MIDI send. NOTE_EDIT uses session store (Tier 2) — full replace, no
@@ -287,15 +287,15 @@ void ensurePlaybackWindowBuilt(Track& track, Loop& loop, LoopPlaybackRuntime& ru
   }
 
   if (!longLoop) {
-    if (runtime.primaryWindow.builtFromRevision == windowRevision) {
+    if (runtime.mergedMidiEvents.builtFromRevision == windowRevision) {
       DIAG_COUNTER_INC(PlaybackDeferredReuse);
       return;
     }
-  } else if (runtime.primaryWindow.builtFromRevision == windowRevision &&
-             !runtime.primaryWindow.empty() &&
-             runtime.primaryWindow.windowLengthTicks > 0) {
-    const uint32_t winStart = runtime.primaryWindow.windowStartTick;
-    const uint32_t winEnd = winStart + runtime.primaryWindow.windowLengthTicks;
+  } else if (runtime.mergedMidiEvents.builtFromRevision == windowRevision &&
+             !runtime.mergedMidiEvents.empty() &&
+             runtime.mergedMidiEvents.windowLengthTicks > 0) {
+    const uint32_t winStart = runtime.mergedMidiEvents.windowStartTick;
+    const uint32_t winEnd = winStart + runtime.mergedMidiEvents.windowLengthTicks;
     const uint32_t margin = Config::TICKS_PER_BAR / 2;
     if (playhead + margin >= winStart && playhead < winEnd) {
       DIAG_COUNTER_INC(PlaybackDeferredReuse);
@@ -305,12 +305,12 @@ void ensurePlaybackWindowBuilt(Track& track, Loop& loop, LoopPlaybackRuntime& ru
 
   playbackWindowBuildInProgress = true;
   const uint32_t playbackBuildStartUs = micros();
-  DIAG_COUNTER_INC(PlaybackWindowRebuild);
+  DIAG_COUNTER_INC(PlaybackMergedMidiEventsRebuild);
   if (noteEditPreview) {
     const MidiEventVec& preview = editManager.sessionMidiEvents();
-    runtime.primaryWindow.mergedEvents.assign(preview.begin(), preview.end());
-    runtime.primaryWindow.windowStartTick = 0;
-    runtime.primaryWindow.windowLengthTicks = loop.loopLengthTicks;
+    runtime.mergedMidiEvents.mergedEvents.assign(preview.begin(), preview.end());
+    runtime.mergedMidiEvents.windowStartTick = 0;
+    runtime.mergedMidiEvents.windowLengthTicks = loop.loopLengthTicks;
   } else if (longLoop) {
     // Two bars centered on playhead — enough for LoopEnd launch + clock catch-up.
     constexpr uint32_t kPlaybackWindowBars = 2;
@@ -320,23 +320,23 @@ void ensurePlaybackWindowBuilt(Track& track, Loop& loop, LoopPlaybackRuntime& ru
       winStart = loop.loopLengthTicks > winLen ? loop.loopLengthTicks - winLen : 0;
     }
     if (loop.captureActive()) {
-      loop.gatherCommittedEventsInWindowWithCapture(runtime.primaryWindow.mergedEvents, winStart,
+      loop.gatherCommittedEventsInWindowWithCapture(runtime.mergedMidiEvents.mergedEvents, winStart,
                                                     winLen);
     } else {
-      loop.gatherCommittedEventsInWindow(runtime.primaryWindow.mergedEvents, winStart, winLen);
+      loop.gatherCommittedEventsInWindow(runtime.mergedMidiEvents.mergedEvents, winStart, winLen);
     }
-    runtime.primaryWindow.windowStartTick = winStart;
-    runtime.primaryWindow.windowLengthTicks = winLen;
+    runtime.mergedMidiEvents.windowStartTick = winStart;
+    runtime.mergedMidiEvents.windowLengthTicks = winLen;
   } else if (!loop.captureActive()) {
-    loop.gatherCommittedEventsForDerivedView(runtime.primaryWindow.mergedEvents);
-    runtime.primaryWindow.windowStartTick = 0;
-    runtime.primaryWindow.windowLengthTicks = loop.loopLengthTicks;
+    loop.gatherCommittedEventsForDerivedView(runtime.mergedMidiEvents.mergedEvents);
+    runtime.mergedMidiEvents.windowStartTick = 0;
+    runtime.mergedMidiEvents.windowLengthTicks = loop.loopLengthTicks;
   } else {
-    loop.gatherCommittedEventsWithCapture(runtime.primaryWindow.mergedEvents);
-    runtime.primaryWindow.windowStartTick = 0;
-    runtime.primaryWindow.windowLengthTicks = loop.loopLengthTicks;
+    loop.gatherCommittedEventsWithCapture(runtime.mergedMidiEvents.mergedEvents);
+    runtime.mergedMidiEvents.windowStartTick = 0;
+    runtime.mergedMidiEvents.windowLengthTicks = loop.loopLengthTicks;
   }
-  runtime.primaryWindow.builtFromRevision = windowRevision;
+  runtime.mergedMidiEvents.builtFromRevision = windowRevision;
   loop.playbackOrderDirty = true;
   DIAG_TIMING_RECORD(PlaybackBuild, micros() - playbackBuildStartUs);
   playbackWindowBuildInProgress = false;
@@ -688,7 +688,7 @@ uint32_t Track::computeLoopLengthTicks(uint32_t lastTick) const {
 void Track::resetPlaybackState(uint32_t currentTick) {
   Loop& loop = getActiveLoop();
   loop.nextEventIndex = 0;
-  invalidatePlaybackWindow(true);
+  invalidatePlaybackMergedMidiEvents(true);
   if (loop.loopLengthTicks == 0) {
     loop.lastTickInLoop = 0;
     projectionCycleStartTick = static_cast<int32_t>(currentTick);
@@ -711,10 +711,10 @@ void Track::resetPlaybackStateForSlot(uint8_t slotIndex, uint32_t currentTick) {
     projectionCycleStartTick = static_cast<int32_t>(currentTick) - static_cast<int32_t>(phase);
   }
   loop.lastTickInLoop = phase;
-  invalidatePlaybackWindow(true);
+  invalidatePlaybackMergedMidiEvents(true);
 }
 
-void Track::invalidatePlaybackWindow(bool preserveLedger) {
+void Track::invalidatePlaybackMergedMidiEvents(bool preserveLedger) {
   bumpPlaybackGeneration();
   playbackRuntime.resetAll(preserveLedger);
 }
@@ -1107,15 +1107,15 @@ void Track::ensurePlaybackMergedEventsForSlot(uint8_t slotIndex) {
   // Build destination merged MIDI before LoopEnd commit so launch is a cache hit.
   if (loop.hasCommittedPasses() && loop.loopLengthTicks > 0) {
     const uint32_t currentTick = clockManager.getCurrentTick();
-    ensurePlaybackWindowBuilt(*this, loop, *runtime, true, currentTick);
+    ensurePlaybackMergedMidiEventsBuilt(*this, loop, *runtime, true, currentTick);
     if (loop.playbackOrderDirty) {
       const ProjectionContext playbackContext = makePlaybackContext(*this, loop, currentTick);
-      ::rebuildPlaybackOrder(loop, runtime->primaryWindow.mergedEvents, playbackContext);
+      ::rebuildPlaybackOrder(loop, runtime->mergedMidiEvents.mergedEvents, playbackContext);
     }
   }
 }
 
-bool Track::isPlaybackWindowReadyForSlot(uint8_t slotIndex) const {
+bool Track::isPlaybackMergedMidiEventsReadyForSlot(uint8_t slotIndex) const {
   if (slotIndex >= Config::MAX_LOOPS_PER_TRACK || !loopsAllocated()) {
     return false;
   }
@@ -1127,15 +1127,15 @@ bool Track::isPlaybackWindowReadyForSlot(uint8_t slotIndex) const {
   if (runtime == nullptr) {
     return false;
   }
-  return runtime->primaryWindow.builtFromRevision == loop.playbackRevision &&
-         !runtime->primaryWindow.mergedEvents.empty();
+  return runtime->mergedMidiEvents.builtFromRevision == loop.playbackRevision &&
+         !runtime->mergedMidiEvents.mergedEvents.empty();
 }
 
-void Track::releasePlaybackWindowMemory() {
+void Track::releasePlaybackMergedMidiEventsMemory() {
   playbackRuntime.resetAll(false);
 }
 
-TRACK_COLD_MEM bool Track::tryReleasePlaybackWindowMemory() {
+TRACK_COLD_MEM bool Track::tryReleasePlaybackMergedMidiEventsMemory() {
   if (isRecording() || isOverdubbing() || getState() == TRACK_ARMED) {
     return false;
   }
@@ -1156,7 +1156,7 @@ TRACK_COLD_MEM bool Track::tryReleasePlaybackWindowMemory() {
     // fail and slot() null-derefs (session_20260719_000205: silence after parse_leave before
     // apply_enter on the next frame's reclaim).
     LoopPlaybackRuntime* runtime = playbackRuntime.slotIfAllocated(slot);
-    if (runtime == nullptr || runtime->primaryWindow.empty()) {
+    if (runtime == nullptr || runtime->mergedMidiEvents.empty()) {
       continue;
     }
 
@@ -1167,12 +1167,12 @@ TRACK_COLD_MEM bool Track::tryReleasePlaybackWindowMemory() {
     }
 
     const uint32_t windowRevision = loop.playbackRevision;
-    const bool windowStale = runtime->primaryWindow.builtFromRevision != windowRevision;
+    const bool windowStale = runtime->mergedMidiEvents.builtFromRevision != windowRevision;
     if (transportActive && !windowStale) {
       continue;
     }
 
-    runtime->primaryWindow.clear();
+    runtime->mergedMidiEvents.clear();
     reclaimed = true;
   }
   return reclaimed;
@@ -1422,7 +1422,7 @@ void Track::stopRecording(uint32_t currentTick) {
 
   // Return to playback after record-stop. Overdub starts on the next explicit
   // record press from PLAYING (record -> play -> overdub -> play flow).
-  playbackRuntime.slot(activeLoopIndex).primaryWindow.clear();
+  playbackRuntime.slot(activeLoopIndex).mergedMidiEvents.clear();
   const uint32_t stateAdvanceHeapBefore = MemoryMonitor::getInternalHeapFreeBytes();
   logRecordStopStage(loop, stopPathStartUs, "pre_state_advance", 0, stateAdvanceHeapBefore,
                      stateAdvanceHeapBefore, "enter", &stopPathStats);
@@ -1916,9 +1916,9 @@ void Track::rebuildPlaybackOrder() {
   Loop& loop = getActiveLoop();
   LoopPlaybackRuntime& runtime = playbackRuntime.slot(activeLoopIndex);
   const uint32_t currentTick = clockManager.getCurrentTick();
-  ensurePlaybackWindowBuilt(*this, loop, runtime, true, currentTick);
+  ensurePlaybackMergedMidiEventsBuilt(*this, loop, runtime, true, currentTick);
   const ProjectionContext playbackContext = makePlaybackContext(*this, loop, currentTick);
-  ::rebuildPlaybackOrder(loop, runtime.primaryWindow.mergedEvents, playbackContext);
+  ::rebuildPlaybackOrder(loop, runtime.mergedMidiEvents.mergedEvents, playbackContext);
 }
 
 void Track::queuePlaybackStartAtGrid(int32_t startTick, uint32_t queuedAtTick) {
@@ -1982,8 +1982,8 @@ void Track::playMidiEvents(uint32_t currentTick, bool isAudible) {
     runtime.syncRevision(loop.playbackRevision, playbackGeneration);
   }
 
-  ensurePlaybackWindowBuilt(*this, loop, runtime, false, currentTick);
-  const SessionMidiEventVec& mergedEvents = runtime.primaryWindow.mergedEvents;
+  ensurePlaybackMergedMidiEventsBuilt(*this, loop, runtime, false, currentTick);
+  const SessionMidiEventVec& mergedEvents = runtime.mergedMidiEvents.mergedEvents;
   if (mergedEvents.empty()) {
     return;
   }
@@ -2111,8 +2111,8 @@ void Track::playMidiEventsForSlot(uint8_t slotIndex, uint32_t currentTick, bool 
     runtime.syncRevision(loop.playbackRevision, playbackGeneration);
   }
 
-  ensurePlaybackWindowBuilt(*this, loop, runtime, false, currentTick);
-  const SessionMidiEventVec& mergedEvents = runtime.primaryWindow.mergedEvents;
+  ensurePlaybackMergedMidiEventsBuilt(*this, loop, runtime, false, currentTick);
+  const SessionMidiEventVec& mergedEvents = runtime.mergedMidiEvents.mergedEvents;
   if (mergedEvents.empty()) {
     return;
   }

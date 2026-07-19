@@ -27,7 +27,7 @@
 namespace Diagnostics {
 
 enum class Counter : uint8_t {
-  PlaybackWindowRebuild = 0,
+  PlaybackMergedMidiEventsRebuild = 0,
   PlaybackDeferredReuse,
   PlaybackFullMaterialize,
   LegacyMidiEvents,

@@ -25,7 +25,7 @@ void LoopPlaybackRuntime::syncRevision(uint32_t loopRevision, uint32_t trackGene
 }
 
 void LoopPlaybackRuntime::reset(bool preserveLedger) {
-  primaryWindow.clear();
+  mergedMidiEvents.clear();
   if (!preserveLedger) {
     cachedLoopRevision = 0;
     cachedTrackGeneration = 0;
