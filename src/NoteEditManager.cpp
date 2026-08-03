@@ -1000,7 +1000,7 @@ NOTE_EDIT_MEM void NoteEditManager::prepareNoteEditSessionOpen() {
 }
 
 NOTE_EDIT_MEM void NoteEditManager::syncReferenceStepFromSelectedTick(uint32_t selectedTick) {
-    referenceStep = selectedTick / Config::TICKS_PER_16TH_STEP;
+    editManager.syncReferenceStepFromSelectedTick(selectedTick);
 }
 
 NOTE_EDIT_MEM void NoteEditManager::scheduleNoteSelectFaderSync(Track& track) {
@@ -1075,7 +1075,7 @@ NoteEditDependentFaderBuildInput NoteEditManager::makeDependentFaderBuildInput(
     input.selectedTick = editManager.getSelectedTick();
     input.lengthEditingMode = lengthEditingMode;
     input.lengthFineAnchorEndTick = lengthFineAnchorEndTick;
-    input.referenceStep = referenceStep;
+    input.referenceStep = editManager.getReferenceStep();
 
     if (selectTarget != nullptr && selectTarget->valid) {
         input.selectTarget.active = true;
@@ -1605,45 +1605,12 @@ NOTE_EDIT_MEM NoteEditManager::Fader1SelectTarget NoteEditManager::resolveFader1
 
 std::vector<NoteUtils::DisplayNote> NoteEditManager::selectableDisplayNotesForEditUi(
     const Track& track) const {
-    const uint8_t trackIndex = trackManager.getSelectedTrackIndex();
-    const uint8_t displaySlot = trackManager.getSelectedSlotIndex(trackIndex);
-    const uint32_t loopLength = editManager.isNoteEditActive()
-                                    ? editManager.noteEditLoopLengthTicks(track)
-                                    : track.getLoopLengthForSlot(displaySlot);
-    NoteUtils::DisplayNoteVec notes;
-    if (!editManager.isNoteEditActive() || loopLength == 0) {
-        const auto& cachedNotes = track.getCachedNotes();
-        notes.assign(cachedNotes.begin(), cachedNotes.end());
-    } else {
-        const NoteUtils::DisplayNoteVec filtered =
-            editManager.filteredSelectableDisplayNotesForNoteEdit(track);
-        notes.assign(filtered.begin(), filtered.end());
-    }
-
-    if (displayManager_ != nullptr && loopLength > 0) {
-        const uint32_t currentTick = clockManager.getCurrentTick();
-        const DetailedWindowContext window =
-            displayManager_->resolveDetailedWindow(track, displaySlot, currentTick);
-        if (window.active) {
-            notes = DisplayWindowUtils::filterDisplayNotesByWindowInclusion(notes, window.window,
-                                                                            loopLength);
-        }
-    }
-    return std::vector<NoteUtils::DisplayNote>(notes.begin(), notes.end());
+    return editManager.selectableDisplayNotesForEditUi(track);
 }
 
 std::vector<SelectNavigation::SelectNavSlot> NoteEditManager::buildSelectNavigationSlots(
     const Track& track, uint32_t selectedTick, bool includeSelectedTickIfMissing) const {
-    const uint32_t loopLength = editManager.isNoteEditActive()
-                                    ? editManager.noteEditLoopLengthTicks(track)
-                                    : track.getLoopLength();
-    const std::vector<NoteUtils::DisplayNote> notes = selectableDisplayNotesForEditUi(track);
-    return SelectNavigation::buildSelectNavigationSlots(
-        loopLength,
-        editManager.noteEditLoopStartTick(track),
-        notes,
-        selectedTick,
-        includeSelectedTickIfMissing);
+    return editManager.buildSelectNavigationSlots(track, selectedTick, includeSelectedTickIfMissing);
 }
 
 NOTE_EDIT_MEM void NoteEditManager::syncMotorsFromSelectTarget(
@@ -1818,14 +1785,14 @@ NOTE_EDIT_MEM bool NoteEditManager::applyNoteSelectFromFader1Pitchbend(Track& tr
         resetLengthEditingModeOnNoteSelect();
         lastUserNoteValueCc = notes[static_cast<size_t>(noteIdx)].note;
         lastNoteValueFaderTime = 0;
-        referenceStep = absoluteTargetTick / Config::TICKS_PER_16TH_STEP;
+        editManager.setReferenceStep(absoluteTargetTick / Config::TICKS_PER_16TH_STEP);
         noteSelectionTime = millis();
         currentDriverFader = MidiMapping::FaderType::FADER_SELECT;
     } else {
         editManager.commitAllPendingNoteEditActions(track);
         editManager.rebuildNoteEditFocusAtSelect(track, -1);
         editManager.applySelectNav(track, absoluteTargetTick, kInvalidNoteId, false, false);
-        referenceStep = absoluteTargetTick / Config::TICKS_PER_16TH_STEP;
+        editManager.setReferenceStep(absoluteTargetTick / Config::TICKS_PER_16TH_STEP);
         startEditingEnabled = true;
         logger.log(CAT_MIDI, LOG_DEBUG, "Select fader: selected empty step at tick %lu (no note)",
                    absoluteTargetTick);
@@ -1937,7 +1904,7 @@ NOTE_EDIT_MEM void NoteEditManager::handleCoarseFaderInput(int16_t pitchValue, T
                         ? SelectNavigation::noteRelativeTick(liveAfterLength.endTick, loopStartPhase,
                                                              loopLength)
                         : SelectNavigation::displayPhaseTick(liveAfterLength.endTick, loopLength);
-                referenceStep = lengthFineAnchorEndTick / ticksPerStep;
+                editManager.setReferenceStep(lengthFineAnchorEndTick / ticksPerStep);
             }
         } else {
             // POSITION EDIT MODE: Move the note START position in 16th step increments
@@ -1973,7 +1940,7 @@ NOTE_EDIT_MEM void NoteEditManager::handleCoarseFaderInput(int16_t pitchValue, T
                        currentSixteenthStep, targetSixteenthStep, currentNoteStartTick, targetTick, relativeStartTick, relativeTargetTick);
             
             // Store the target step as reference for fine adjustments
-            referenceStep = targetSixteenthStep;
+            editManager.setReferenceStep(targetSixteenthStep);
             geometryApplied = moveNoteToPosition(track, currentNote, targetTick);
         }
 
@@ -2059,7 +2026,7 @@ NOTE_EDIT_MEM void NoteEditManager::handleFineFaderInput(uint8_t ccValue, Track&
                                                      loopLength)
                 : SelectNavigation::displayPhaseTick(currentNoteStartTick, loopLength);
         
-        uint32_t sixteenthStepStartTick = referenceStep * Config::TICKS_PER_16TH_STEP;
+        uint32_t sixteenthStepStartTick = editManager.getReferenceStep() * Config::TICKS_PER_16TH_STEP;
         int32_t offset = static_cast<int32_t>(ccValue) - 64;
         int32_t relativeTargetStartTickSigned =
             static_cast<int32_t>(sixteenthStepStartTick) + offset;
@@ -2318,7 +2285,7 @@ NOTE_EDIT_MEM void NoteEditManager::toggleLengthEditingMode() {
             const uint32_t relEnd = liveNote.endTick % loopLength;
             editManager.setSelectedTick(relEnd);
             lengthFineAnchorEndTick = relEnd;
-            referenceStep = relEnd / Config::TICKS_PER_16TH_STEP;
+            editManager.setReferenceStep(relEnd / Config::TICKS_PER_16TH_STEP);
             editManager.beginGeometryMutation(track, NoteEditKind::Length, false);
         }
     } else {
@@ -2335,7 +2302,7 @@ NOTE_EDIT_MEM void NoteEditManager::toggleLengthEditingMode() {
         if (loopLength > 0) {
             const uint32_t relStart = liveNote.startTick % loopLength;
             editManager.setSelectedTick(relStart);
-            referenceStep = relStart / Config::TICKS_PER_16TH_STEP;
+            editManager.setReferenceStep(relStart / Config::TICKS_PER_16TH_STEP);
         }
         if (editManager.getSelectedNoteIdx() >= 0) {
             editManager.beginGeometryMutation(track, NoteEditKind::Move, false);

@@ -28,6 +28,7 @@
 #include "DisplayManager.h"
 #include "Utils/NoteMovementUtils.h"
 #include "Utils/NoteEditDisplaySnapshot.h"
+#include "Utils/DisplayWindowUtils.h"
 #include "Utils/SelectNavigation.h"
 #include "TickPhase.h"
 #include "Utils/ValidationUtils.h"
@@ -330,7 +331,7 @@ void EditManager::syncSelectedNoteIdxToFilteredInventory(Track& track) {
     }
 
     const std::vector<DisplayNote> filtered =
-        noteEditManager.selectableDisplayNotesForEditUi(track);
+        selectableDisplayNotesForEditUi(track);
 
     if (!editorSelectionHasNote(sessionState.selection)) {
         if (selectedNoteIdx >= 0) {
@@ -1182,7 +1183,7 @@ void EditManager::enterDefaultNoteEditSessionState(Track& track, uint32_t transp
     sessionState.selection.loopId = trackManager.getSelectedLoop(track).loopId;
     syncNoteEditSessionStateToUi(track);
     if (selectedNoteIdx >= 0) {
-        noteEditManager.syncReferenceStepFromSelectedTick(selectedTick);
+        syncReferenceStepFromSelectedTick(selectedTick);
     }
 }
 
@@ -1403,7 +1404,7 @@ void EditManager::onButtonPress(Track& track) {
 }
 
 void EditManager::selectClosestNote(Track& track, uint32_t startTick) {
-    const auto notes = noteEditManager.selectableDisplayNotesForEditUi(track);
+    const auto notes = selectableDisplayNotesForEditUi(track);
     const uint32_t loopLength = noteEditLoopLengthTicks(track);
     const uint32_t loopStartTick = noteEditLoopStartTick(track);
     if (notes.empty() || loopLength == 0) {
@@ -1442,7 +1443,7 @@ void EditManager::selectNoteAtBracket(Track& track, uint32_t startTick) {
     }
     const uint32_t loopStartTick = noteEditLoopStartTick(track);
     const uint32_t bracket = SelectNavigation::displayPhaseTick(startTick, loopLength);
-    const auto notes = noteEditManager.selectableDisplayNotesForEditUi(track);
+    const auto notes = selectableDisplayNotesForEditUi(track);
     for (int i = 0; i < static_cast<int>(notes.size()); ++i) {
         const uint32_t noteDisplay =
             displayStartTickFromStorageNote(notes[static_cast<size_t>(i)].startTick, loopStartTick,
@@ -1468,14 +1469,14 @@ void EditManager::stepSelectNavSlot(Track& track, int delta) {
     }
     const uint32_t loopLength = noteEditLoopLengthTicks(track);
     const std::vector<SelectNavigation::SelectNavSlot> slots =
-        noteEditManager.buildSelectNavigationSlots(track, selectedTick, true);
+        buildSelectNavigationSlots(track, selectedTick, true);
     if (slots.empty()) {
         return;
     }
 
     const EditorSelection& sel = sessionState.selection;
     int slotIdx = SelectNavigation::findSlotIndexForNoteId(
-        slots, noteEditManager.selectableDisplayNotesForEditUi(track), sel.primaryNote,
+        slots, selectableDisplayNotesForEditUi(track), sel.primaryNote,
         selectedTick, loopLength);
     if (slotIdx < 0) {
         slotIdx = 0;
@@ -1489,7 +1490,7 @@ void EditManager::stepSelectNavSlot(Track& track, int delta) {
 
     const SelectNavigation::SelectNavSlot& slot = slots[static_cast<size_t>(slotIdx)];
     const uint32_t absoluteBracket = slot.relativeTick;
-    const auto notes = noteEditManager.selectableDisplayNotesForEditUi(track);
+    const auto notes = selectableDisplayNotesForEditUi(track);
     const int noteIdx = SelectNavigation::resolveNoteIdxAtSlot(slot);
     if (noteIdx >= 0 && noteIdx < static_cast<int>(notes.size())) {
         commitAllPendingNoteEditActions(track);
@@ -1550,7 +1551,7 @@ void EditManager::moveBracket(int delta, const Track& track, uint32_t ticksPerSt
     if (loopLength == 0) {
         return;
     }
-    const auto notes = noteEditManager.selectableDisplayNotesForEditUi(track);
+    const auto notes = selectableDisplayNotesForEditUi(track);
     const uint32_t loopStartTick = noteEditLoopStartTick(track);
 
     const uint32_t SNAP_WINDOW = 24;
@@ -2011,5 +2012,45 @@ bool EditManager::changeNoteEndWithOverlapHandling(Track& track,
                currentNote.note, currentNote.startTick, currentNote.endTick, targetEndTick);
     NoteMovementUtils::changeLengthWithOverlapHandling(track, *this, currentNote, targetEndTick);
     return true;
+}
+
+std::vector<NoteUtils::DisplayNote> EditManager::selectableDisplayNotesForEditUi(
+    const Track& track) const {
+    const uint8_t trackIndex = trackManager.getSelectedTrackIndex();
+    const uint8_t displaySlot = trackManager.getSelectedSlotIndex(trackIndex);
+    const uint32_t loopLength = isNoteEditActive() ? noteEditLoopLengthTicks(track)
+                                                   : track.getLoopLengthForSlot(displaySlot);
+    NoteUtils::DisplayNoteVec notes;
+    if (!isNoteEditActive() || loopLength == 0) {
+        const auto& cachedNotes = track.getCachedNotes();
+        notes.assign(cachedNotes.begin(), cachedNotes.end());
+    } else {
+        const NoteUtils::DisplayNoteVec filtered = filteredSelectableDisplayNotesForNoteEdit(track);
+        notes.assign(filtered.begin(), filtered.end());
+    }
+
+    if (loopLength > 0) {
+        const uint32_t currentTick = clockManager.getCurrentTick();
+        const DetailedWindowContext window =
+            displayManager.resolveDetailedWindow(track, displaySlot, currentTick);
+        if (window.active) {
+            notes = DisplayWindowUtils::filterDisplayNotesByWindowInclusion(notes, window.window,
+                                                                            loopLength);
+        }
+    }
+    return std::vector<NoteUtils::DisplayNote>(notes.begin(), notes.end());
+}
+
+std::vector<SelectNavigation::SelectNavSlot> EditManager::buildSelectNavigationSlots(
+    const Track& track, uint32_t selectedTick, bool includeSelectedTickIfMissing) const {
+    const uint32_t loopLength = isNoteEditActive() ? noteEditLoopLengthTicks(track)
+                                                   : track.getLoopLength();
+    const std::vector<NoteUtils::DisplayNote> notes = selectableDisplayNotesForEditUi(track);
+    return SelectNavigation::buildSelectNavigationSlots(
+        loopLength, noteEditLoopStartTick(track), notes, selectedTick, includeSelectedTickIfMissing);
+}
+
+void EditManager::syncReferenceStepFromSelectedTick(uint32_t selectedTick) {
+    referenceStep_ = selectedTick / Config::TICKS_PER_16TH_STEP;
 }
 

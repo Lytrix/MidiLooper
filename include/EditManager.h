@@ -15,6 +15,7 @@
 #include "NoteEditSessionState.h"
 #include "MidiEvent.h"
 #include "MidiConfig.h"
+#include "Utils/SelectNavigation.h"
 #include <vector>
 #include <map>
 
@@ -101,6 +102,14 @@ public:
                             uint32_t targetTick);
     bool changeNoteEndWithOverlapHandling(Track& track, const NoteUtils::DisplayNote& currentNote,
                                           uint32_t targetEndTick);
+
+    /// Windowed selectable inventory for NOTE_EDIT UI (session filter + display window).
+    std::vector<NoteUtils::DisplayNote> selectableDisplayNotesForEditUi(const Track& track) const;
+    std::vector<SelectNavigation::SelectNavSlot> buildSelectNavigationSlots(
+        const Track& track, uint32_t selectedTick, bool includeSelectedTickIfMissing = true) const;
+    void syncReferenceStepFromSelectedTick(uint32_t selectedTick);
+    uint32_t getReferenceStep() const { return referenceStep_; }
+    void setReferenceStep(uint32_t step) { referenceStep_ = step; }
 
     void syncNoteEditSessionStateToUi(Track& track);
     void enterDefaultNoteEditSessionState(Track& track, uint32_t startTick);
@@ -228,6 +237,7 @@ private:
     const MidiEventVec& materializedLoopEventsForNoteEditFocus(Track& track);
     uint32_t selectedTick = 0;
     int selectedNoteIdx = -1; // -1 means no note selected
+    uint32_t referenceStep_ = 0;
     NoteId lastFader1SelectNoteId = kInvalidNoteId;
     bool hasMovedBracket = false; // true if the bracket has been moved since entering edit mode
 
