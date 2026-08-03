@@ -278,15 +278,15 @@ std::vector<NoteUtils::OpenNoteOn> findCaptureOpenNoteOnsFromPreview(const Loop&
     return opens;
 }
 
-std::vector<NoteUtils::OpenNoteOn> findCaptureOpenNoteOns(const Loop& loop) {
-    if (loop.loopLengthTicks == 0 || loop.capture.store.empty()) {
-        return {};
+/// Sort capture store if needed, then copy into out (clears out). Shared by live display paths.
+void copySortedCaptureEvents(const Loop& loop, SessionMidiEventVec& out) {
+    if (loop.capture.store.empty()) {
+        out.clear();
+        return;
     }
     Loop& mutLoop = const_cast<Loop&>(loop);
     mutLoop.ensureCaptureEventsSorted();
-    SessionMidiEventVec captureFlat;
-    loop.capture.store.copyEventsTo(captureFlat);
-    return NoteUtils::findOpenNoteOns(captureFlat, loop.loopLengthTicks);
+    loop.capture.store.copyEventsTo(out);
 }
 
 template <typename Alloc>
@@ -784,8 +784,7 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotes(const
             committedDisplayEnd = 0;
             if (liveDisplayNotes.empty() && track.isRecording() && !loop.capture.store.empty()) {
                 SessionMidiEventVec captureFlat;
-                mutLoop.ensureCaptureEventsSorted();
-                loop.capture.store.copyEventsTo(captureFlat);
+                copySortedCaptureEvents(loop, captureFlat);
                 if (!captureFlat.empty()) {
                     const NoteUtils::DisplayNoteVec reconstructed =
                         NoteUtils::reconstructDisplayNotes(captureFlat, liveLoopLength, false);
@@ -844,9 +843,7 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotes(const
                     findCaptureOpenNoteOnsFromPreview(loop);
                 if (!captureOpens.empty()) {
                     SessionMidiEventVec captureEvents;
-                    Loop& mutLoop = const_cast<Loop&>(loop);
-                    mutLoop.ensureCaptureEventsSorted();
-                    loop.capture.store.copyEventsTo(captureEvents);
+                    copySortedCaptureEvents(loop, captureEvents);
                     applyCapturePlayheadTails(captureOpens, captureEvents, liveLoopLength,
                                               playheadCloseTick, committedDisplayEnd, liveDisplayNotes);
                 }

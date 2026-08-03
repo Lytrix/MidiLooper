@@ -50,7 +50,7 @@ Safe zero-behavior and rename hygiene on this branch is **largely complete**. Re
 | 1 | `StorageManager::saveState` still monolithic | **Queued** — continue extract when persistence hardening is CURRENT_WORK |
 | 2 | Four near-clone capture stops (`stopRecording` / `ToStopped` / overdub twins) | **Done** — `commitCaptureForStop` / `prepareRecordStop` / `handleNoteEditFold`; [`track_stop_dry_refinement.md`](track_stop_dry_refinement.md) |
 | 3 | Edit split: `EditManager` vs `NoteEditManager` (misnamed) vs `LoopEditManager` | **Queued** — rename `NoteEditManager` only with approved new name (large blast radius) |
-| 4 | `DisplayManager::resolveDisplayNotes` + repeated `capture.store.copyEventsTo` | **Open** — DRY helper still useful; API no longer says flatten |
+| 4 | `DisplayManager::resolveDisplayNotes` + repeated `capture.store.copyEventsTo` | **Done** — `copySortedCaptureEvents`; removed unused `findCaptureOpenNoteOns` |
 | 5 | `playMidiEvents` / `playMidiEventsForSlot` twin wrap walks | **Queued** — behavior-preserving extract only with tests |
 | 6 | Note-edit geometry in `NoteMovementUtils` + `NoteEditFocus` | **Open** — algorithmic depth; not a rename |
 
@@ -71,7 +71,7 @@ Safe zero-behavior and rename hygiene on this branch is **largely complete**. Re
 
 | # | Finding | Status |
 |---|---------|--------|
-| 11 | Capture `copyEventsTo` call-site duplication; test-local length helpers | **Open** — optional shared preview-events helper; share length helpers with `Track` |
+| 11 | Capture `copyEventsTo` call-site duplication; test-local length helpers | **Partial** — display uses `copySortedCaptureEvents`; test length helpers still open |
 | 12 | HITL fat baselines | **Done** — thin CLI shims + `hitl/legacy_*` + shared modules |
 | 13 | Vocabulary `published` / `flatten` | **Done** — locked rename in code + Guides; CAP string `"published"` intentionally kept |
 | 13b | Leftover `Take` in tests/telemetry; `audible` in boot restore | **Done** — `isBootPlaybackSlot`, `restorePlaybackAfterSlotClear`, `sourceEventCount` / `loopMidiEventsFromPasses` |
@@ -107,7 +107,7 @@ Protected by [OpenSpec-Phase-Gate](../../.cursor/rules/OpenSpec-Phase-Gate.mdc) 
 1. **StorageManager** — continue extraction until `saveState` leaves the root TU (with persistence CURRENT_WORK)
 2. **`NoteEditManager` rename** — only after user-approved name (control-surface owner, not edit session)
 3. **`PersistenceQueue` → mid-pass/chunk-oriented name** — with persistence hardening
-4. Optional: shared capture→events helper; plans purge
+4. Optional: test-local length helpers shared with `Track`; plans purge
 5. Optional: finish moving scenario imports off thin shims onto `hitl.legacy_*` / shared modules only
 
 ---
@@ -125,4 +125,5 @@ Protected by [OpenSpec-Phase-Gate](../../.cursor/rules/OpenSpec-Phase-Gate.mdc) 
 - [x] Vocabulary `committed` / `copyEventsTo`
 - [x] Track stop DRY (`commitCaptureForStop` / `prepareRecordStop` / `handleNoteEditFold`)
 - [x] Vocab leftovers: `Take` / boot `audible` → playback / passes / `sourceEventCount`
+- [x] Display `copySortedCaptureEvents` DRY (+ drop unused `findCaptureOpenNoteOns`)
 - [x] Native tests + `teensy41-capture-serial` build (per change)

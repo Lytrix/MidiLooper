@@ -42,6 +42,7 @@ Last updated: 2026-07-19 (archived deferred-job-scheduler Phase B)
 | Vocabulary `published`/`flatten` → committed/`copyEventsTo` | Done |
 | Track stop DRY (`commitCaptureForStop` / prep / fold) | Done — [`track_stop_dry_refinement.md`](../plans/track_stop_dry_refinement.md) |
 | Vocab 13b `Take` / boot `audible` | Done — `isBootPlaybackSlot`, `restorePlaybackAfterSlotClear`, `sourceEventCount` |
+| Display `copySortedCaptureEvents` | Done |
 
 **Next hygiene (gated):** StorageManager `saveState` extract; optional `NoteEditManager` rename. Leave `isTrackAudible` / `playMidiEvents(..., isAudible)` for a later pass (runtime output flag).
 
