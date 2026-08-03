@@ -1,5 +1,7 @@
 # Track stop DRY refinement
 
+**Status:** Done (shipped on `chore/codebase-hygiene-sprint1`)
+
 Behavior-preserving extraction of shared stop helpers on `Track`. Ownership boundaries unchanged; `Loop::commitCapturePass` remains sole seal authority.
 
 ## Helpers

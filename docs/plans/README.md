@@ -13,6 +13,20 @@ These files are **copies of plans from** `~/.cursor/plans/` so they are **versio
 
 ---
 
+## Hygiene sprint (`chore/codebase-hygiene-sprint1`)
+
+In-repo refinement/bugfix plans for the hygiene branch (all **Status: Done**). Mass archive of historical Cursor exports under this folder is still optional — see review item 18.
+
+| File | Topic |
+|------|--------|
+| [codebase_hygiene_technical_debt_review.md](codebase_hygiene_technical_debt_review.md) | Backlog + shipped table (authority for remaining queue) |
+| [track_stop_dry_refinement.md](track_stop_dry_refinement.md) | `commitCaptureForStop` / `prepareRecordStop` / `handleNoteEditFold` |
+| [playback_cursor_advance_dry_refinement.md](playback_cursor_advance_dry_refinement.md) | `playCommittedLoopMidi` + `advancePlaybackCursor` |
+| [record_stop_length_shared_helpers_refinement.md](record_stop_length_shared_helpers_refinement.md) | Shared `RecordStopLength` |
+| [clear_slot_rearm_after_playing_clear_bugfix.md](clear_slot_rearm_after_playing_clear_bugfix.md) | Re-arm after clear while playing (`1cb7ffa`) |
+
+---
+
 ## Jam / bar-step / multi-loop
 
 | File | Topic |

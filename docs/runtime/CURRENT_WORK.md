@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-07-19 (archived deferred-job-scheduler Phase B)
+Last updated: 2026-08-03 (hygiene sprint plans Status: Done; clear-slot re-arm shipped)
 
 ---
 
@@ -22,31 +22,23 @@ Last updated: 2026-07-19 (archived deferred-job-scheduler Phase B)
 
 **Next:** confirm next CURRENT_WORK slice with user (persistence/overlay hardening, or parked large-slot display hunt).
 
-### Hygiene — codebase debt review (2026-07-19)
+### Hygiene — codebase debt review (sprint complete)
 
-**Plan (updated):** [`docs/plans/codebase_hygiene_technical_debt_review.md`](../plans/codebase_hygiene_technical_debt_review.md) — shipped table + remaining queue.
+**Plan:** [`docs/plans/codebase_hygiene_technical_debt_review.md`](../plans/codebase_hygiene_technical_debt_review.md) — safe hygiene **complete**; gated leftovers remain.
 
-**Branch:** `chore/codebase-hygiene-sprint1` (safe rename/layout/HITL/vocab complete).
+**Branch:** `chore/codebase-hygiene-sprint1`
 
 | Item | Status |
 |------|--------|
-| Review artifact + ranked backlog | Done |
-| Dead `Looper` transport / stub FSM | Done |
-| No-op `MidiFader*::scheduleOtherFaderUpdates` | Done |
-| `PROJECT_STATE` archive-link drift | Done |
-| Collapse `ensurePassesMaterializedStore` alias | Done |
-| `EditNoteHomeState` + `PersistenceWorkQueue` layout | Done |
-| HITL shared helpers → `scripts/hitl/` | Done |
-| Thin `host_midi_automation_*.py` CLI shims | Done — bodies in `hitl/legacy_*_baseline.py` |
-| `PlaybackWindow` → `PlaybackMergedMidiEvents` | Done — OpenSpec slot-performance-interaction Phase −1 |
-| Vocabulary `published`/`flatten` → committed/`copyEventsTo` | Done |
-| Track stop DRY (`commitCaptureForStop` / prep / fold) | Done — [`track_stop_dry_refinement.md`](../plans/track_stop_dry_refinement.md) |
-| Vocab 13b `Take` / boot `audible` | Done — `isBootPlaybackSlot`, `restorePlaybackAfterSlotClear`, `sourceEventCount` |
+| Review + dead Looper / fader stubs / layout / HITL / vocab / merge-cache rename | Done |
+| Track stop DRY | Done — [`track_stop_dry_refinement.md`](../plans/track_stop_dry_refinement.md) |
 | Display `copySortedCaptureEvents` | Done |
-| Playback cursor advance DRY (`playCommittedLoopMidi`) | Done — [`playback_cursor_advance_dry_refinement.md`](../plans/playback_cursor_advance_dry_refinement.md) |
-| Shared `RecordStopLength` helpers | Done — [`record_stop_length_shared_helpers_refinement.md`](../plans/record_stop_length_shared_helpers_refinement.md) |
+| Playback cursor advance DRY | Done — [`playback_cursor_advance_dry_refinement.md`](../plans/playback_cursor_advance_dry_refinement.md) |
+| Shared `RecordStopLength` | Done — [`record_stop_length_shared_helpers_refinement.md`](../plans/record_stop_length_shared_helpers_refinement.md) |
+| Clear-slot re-arm after playing clear | Done — [`clear_slot_rearm_after_playing_clear_bugfix.md`](../plans/clear_slot_rearm_after_playing_clear_bugfix.md) (`1cb7ffa`) |
+| Plans hygiene (Status Done + README index; no mass purge) | Done |
 
-**Next hygiene (gated):** StorageManager `saveState` extract; optional `NoteEditManager` rename. Leave `isTrackAudible` / `playMidiEvents(..., isAudible)` for a later pass (runtime output flag).
+**Next hygiene (gated / optional):** StorageManager `saveState` extract; `NoteEditManager` rename (approved name); `PersistenceQueue` rename; mass `docs/plans/` purge; leave `isTrackAudible` for later.
 
 ---
 

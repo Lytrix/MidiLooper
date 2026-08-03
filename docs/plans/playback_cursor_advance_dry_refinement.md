@@ -1,5 +1,7 @@
 # Playback cursor advance DRY
 
+**Status:** Done (shipped on `chore/codebase-hygiene-sprint1`)
+
 Behavior-preserving DRY of `Track::playMidiEvents` / `playMidiEventsForSlot`.
 
 ## Architecture

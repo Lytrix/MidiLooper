@@ -1,6 +1,6 @@
 # Codebase hygiene — technical debt review
 
-**Date:** 2026-07-19 (updated end of hygiene branch)  
+**Date:** 2026-07-19 (updated 2026-08-03 — plans hygiene)  
 **Branch:** `chore/codebase-hygiene-sprint1`  
 **Authority:** Product scope remains [CURRENT_WORK.md](../runtime/CURRENT_WORK.md). This doc is hygiene backlog only.
 
@@ -8,7 +8,9 @@
 
 ## Verdict
 
-Safe zero-behavior and rename hygiene on this branch is **largely complete**. Remaining debt is gated product work (StorageManager extract, `NoteEditManager` rename) or lower-priority leftovers (plans purge, `PersistenceQueue` name, runtime `isTrackAudible`).
+Safe zero-behavior and rename hygiene on this branch is **complete**. Remaining debt is gated product work (StorageManager extract, `NoteEditManager` rename, `PersistenceQueue` name) or optional leftovers (mass `docs/plans/` purge, runtime `isTrackAudible`, HITL shim import polish).
+
+Sprint refinement plans are marked **Status: Done** (see [plans README — Hygiene sprint](README.md#hygiene-sprint-chorecodebase-hygiene-sprint1)). Mass archive of ~150 historical Cursor plans is **not** done in this pass.
 
 ---
 
@@ -23,7 +25,11 @@ Safe zero-behavior and rename hygiene on this branch is **largely complete**. Re
 | `373566a` | Thin `host_midi_automation_*.py` CLI shims; bodies in `hitl/legacy_*_baseline.py` |
 | `f6cc7c2` | `PlaybackWindow` merge cache → `PlaybackMergedMidiEvents` (OpenSpec slot-performance-interaction Phase −1) |
 | `d35407d` | Vocabulary: `published`→`committed` / `copyEventsTo` / `readEvents` / `mutEvents` (locked map) |
-| *(pending)* | Track stop DRY: `commitCaptureForStop` / `prepareRecordStop` / `handleNoteEditFold` |
+| `cbf2b7a` | Track stop DRY + Take/audible boot vocabulary |
+| `443c4be` | Display `copySortedCaptureEvents` |
+| `5730d44` | `playCommittedLoopMidi` + `advancePlaybackCursor` |
+| `6a4822f` | Shared `RecordStopLength` |
+| `1cb7ffa` | Clear-slot re-arm after playing clear |
 
 ---
 
@@ -86,7 +92,7 @@ Safe zero-behavior and rename hygiene on this branch is **largely complete**. Re
 | # | Finding | Status |
 |---|---------|--------|
 | 17 | `PROJECT_STATE` deferred-job-scheduler archive link | **Done** |
-| 18 | ~153 `docs/plans/` + historical `docs/Refinements/` | **Queued** — mass purge / archive later; CURRENT_WORK + OpenSpec remain authority |
+| 18 | ~157 `docs/plans/` + historical `docs/Refinements/` | **Partial** — hygiene sprint plans marked Done + indexed in [README.md](README.md#hygiene-sprint-chorecodebase-hygiene-sprint1); mass purge/move of historical Cursor exports still queued |
 
 ---
 
@@ -96,7 +102,6 @@ Protected by [OpenSpec-Phase-Gate](../../.cursor/rules/OpenSpec-Phase-Gate.mdc) 
 
 - Capture stop / commit paths (`Track::stopRecording*`, `stopOverdubbing*`, `finalizeCommitSideEffects`, `Loop::commitCapturePass`, …)
 - Persistence `saveState` / work queue / mid-pass chunk paths
-- Playback wrap twins (extract only with tests)
 - Renaming `NoteEditManager` without an approved replacement name
 - Emptying `Utils/` into domain folders without ownership decisions
 
@@ -107,7 +112,7 @@ Protected by [OpenSpec-Phase-Gate](../../.cursor/rules/OpenSpec-Phase-Gate.mdc) 
 1. **StorageManager** — continue extraction until `saveState` leaves the root TU (with persistence CURRENT_WORK)
 2. **`NoteEditManager` rename** — only after user-approved name (control-surface owner, not edit session)
 3. **`PersistenceQueue` → mid-pass/chunk-oriented name** — with persistence hardening
-4. Optional: plans purge
+4. Optional: mass `docs/plans/` purge / archive of historical Cursor exports (item 18 remainder)
 5. Optional: finish moving scenario imports off thin shims onto `hitl.legacy_*` / shared modules only
 
 ---
@@ -128,4 +133,6 @@ Protected by [OpenSpec-Phase-Gate](../../.cursor/rules/OpenSpec-Phase-Gate.mdc) 
 - [x] Display `copySortedCaptureEvents` DRY (+ drop unused `findCaptureOpenNoteOns`)
 - [x] Playback cursor advance DRY (`playCommittedLoopMidi` + `PlaybackCursorAdvance`)
 - [x] Shared `RecordStopLength` helpers (Track + native tests)
+- [x] Clear-slot re-arm after playing clear ([`clear_slot_rearm_after_playing_clear_bugfix.md`](clear_slot_rearm_after_playing_clear_bugfix.md))
+- [x] Plans hygiene (Status: Done on sprint plans + README index; no mass purge)
 - [x] Native tests + `teensy41-capture-serial` build (per change)
