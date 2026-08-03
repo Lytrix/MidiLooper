@@ -221,6 +221,19 @@ bool isPlaybackAtLoopStart(uint32_t prevTickInLoop, uint32_t tickInLoop,
     return tickInLoop < prevTickInLoop;
 }
 
+bool isPlaybackCatchUpWindow(uint32_t prevTickInLoop, uint32_t tickInLoop) {
+    return (prevTickInLoop == UINT32_MAX) || (tickInLoop <= prevTickInLoop);
+}
+
+bool didPlaybackEventCross(bool atLoopStart, uint32_t prevTickInLoop, uint32_t evTick,
+                           uint32_t tickInLoop) {
+    // Intentionally preserves playback semantics (<= at loop start). Not isPlaybackAtLoopStart().
+    if (atLoopStart) {
+        return evTick <= tickInLoop;
+    }
+    return prevTickInLoop < evTick && evTick <= tickInLoop;
+}
+
 int32_t advanceProjectionCycleStartTickOnWrap(int32_t projectionCycleStartTick,
                                               uint32_t loopLengthAtWrap) {
     return projectionCycleStartTick + static_cast<int32_t>(loopLengthAtWrap);

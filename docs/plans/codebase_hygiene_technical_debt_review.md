@@ -51,7 +51,7 @@ Safe zero-behavior and rename hygiene on this branch is **largely complete**. Re
 | 2 | Four near-clone capture stops (`stopRecording` / `ToStopped` / overdub twins) | **Done** — `commitCaptureForStop` / `prepareRecordStop` / `handleNoteEditFold`; [`track_stop_dry_refinement.md`](track_stop_dry_refinement.md) |
 | 3 | Edit split: `EditManager` vs `NoteEditManager` (misnamed) vs `LoopEditManager` | **Queued** — rename `NoteEditManager` only with approved new name (large blast radius) |
 | 4 | `DisplayManager::resolveDisplayNotes` + repeated `capture.store.copyEventsTo` | **Done** — `copySortedCaptureEvents`; removed unused `findCaptureOpenNoteOns` |
-| 5 | `playMidiEvents` / `playMidiEventsForSlot` twin wrap walks | **Queued** — behavior-preserving extract only with tests |
+| 5 | `playMidiEvents` / `playMidiEventsForSlot` twin wrap walks | **Done** — `playCommittedLoopMidi` + `advancePlaybackCursor`; [`playback_cursor_advance_dry_refinement.md`](playback_cursor_advance_dry_refinement.md) |
 | 6 | Note-edit geometry in `NoteMovementUtils` + `NoteEditFocus` | **Open** — algorithmic depth; not a rename |
 
 ---
@@ -126,4 +126,5 @@ Protected by [OpenSpec-Phase-Gate](../../.cursor/rules/OpenSpec-Phase-Gate.mdc) 
 - [x] Track stop DRY (`commitCaptureForStop` / `prepareRecordStop` / `handleNoteEditFold`)
 - [x] Vocab leftovers: `Take` / boot `audible` → playback / passes / `sourceEventCount`
 - [x] Display `copySortedCaptureEvents` DRY (+ drop unused `findCaptureOpenNoteOns`)
+- [x] Playback cursor advance DRY (`playCommittedLoopMidi` + `PlaybackCursorAdvance`)
 - [x] Native tests + `teensy41-capture-serial` build (per change)

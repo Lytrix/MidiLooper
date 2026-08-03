@@ -66,6 +66,7 @@ bool shouldRestoreCommittedOverlapOnOverdubStop(const Loop& loop, uint8_t note,
 }  // namespace
 
 #include "Utils/IntervalProjection.h"
+#include "Utils/PlaybackCursorAdvance.h"
 #include "Utils/TrackMem.h"
 #include "DisplayManager.h"
 #include "EditManager.h"
@@ -375,6 +376,54 @@ void reanchorCaptureIndex(Loop& loop) {
     ++idx;
   }
   loop.captureNextEventIndex = static_cast<uint16_t>(idx);
+}
+
+struct MergedPlaybackStreamCtx {
+  const PlaybackOrderVec* order = nullptr;
+  const SessionMidiEventVec* merged = nullptr;
+};
+
+size_t mergedPlaybackStreamSize(const void* ctx) {
+  return static_cast<const MergedPlaybackStreamCtx*>(ctx)->order->size();
+}
+
+bool mergedPlaybackStreamValid(const void* ctx, uint16_t cursor) {
+  const auto* stream = static_cast<const MergedPlaybackStreamCtx*>(ctx);
+  if (static_cast<size_t>(cursor) >= stream->order->size()) {
+    return true;
+  }
+  return (*stream->order)[cursor] < stream->merged->size();
+}
+
+const MidiEvent& mergedPlaybackStreamEventAt(const void* ctx, uint16_t cursor) {
+  const auto* stream = static_cast<const MergedPlaybackStreamCtx*>(ctx);
+  return (*stream->merged)[(*stream->order)[cursor]];
+}
+
+uint32_t mergedPlaybackStreamPhase(const MidiEvent& evt, const ProjectionContext& playbackContext) {
+  return IntervalProjection::playbackEventPhase(evt.tick, playbackContext.loopLength);
+}
+
+size_t capturePlaybackStreamSize(const void* ctx) {
+  return static_cast<const Loop*>(ctx)->capture.store.size();
+}
+
+const MidiEvent& capturePlaybackStreamEventAt(const void* ctx, uint16_t cursor) {
+  return static_cast<const Loop*>(ctx)->capture.store.at(cursor);
+}
+
+uint32_t capturePlaybackStreamPhase(const MidiEvent& evt, const ProjectionContext& playbackContext) {
+  return IntervalProjection::projectPlaybackEventPhase(evt.tick, playbackContext);
+}
+
+PlaybackEventStream makeMergedPlaybackStream(MergedPlaybackStreamCtx& ctx) {
+  return PlaybackEventStream{&ctx, mergedPlaybackStreamSize, mergedPlaybackStreamValid,
+                             mergedPlaybackStreamEventAt, mergedPlaybackStreamPhase};
+}
+
+PlaybackEventStream makeCapturePlaybackStream(Loop& loop) {
+  return PlaybackEventStream{&loop, capturePlaybackStreamSize, nullptr,
+                             capturePlaybackStreamEventAt, capturePlaybackStreamPhase};
 }
 
 TRACK_COLD_MEM void resetActiveLoopAfterEmptyCapture(Loop& loop) {
@@ -1967,201 +2016,139 @@ void Track::commitQueuedPlaybackStart(uint32_t commitTick) {
   clearQueuedPlaybackStart();
 }
 
+struct PlaybackJamFilterCtx {
+  const Track* track = nullptr;
+  const Loop* loop = nullptr;
+};
+
+void playbackCursorAdvanceSend(void* ctx, const MidiEvent& evt, uint8_t slotIndex) {
+  static_cast<Track*>(ctx)->sendMidiEvent(evt, slotIndex);
+}
+
+bool playbackCursorAdvanceJamFilter(void* ctx, uint32_t storageTick) {
+  const auto* jam = static_cast<const PlaybackJamFilterCtx*>(ctx);
+  return jam->track->isStorageTickInJamRegion(storageTick, *jam->loop);
+}
+
+bool Track::isStorageTickInJamRegion(uint32_t evTick, const Loop& loop) const {
+  if (!jamPlaybackActive || jamLength == 0) {
+    return true;
+  }
+  if (jamStartTick == UINT32_MAX) {
+    return true;
+  }
+  const uint32_t jamEnd = jamStartTick + jamLength;
+  if (jamEnd <= loop.loopLengthTicks) {
+    return evTick >= jamStartTick && evTick < jamEnd;
+  }
+  return (evTick >= jamStartTick) || (evTick < jamEnd - loop.loopLengthTicks);
+}
+
+void Track::playCommittedLoopMidi(uint8_t slotIndex, uint32_t currentTick,
+                                  PlaybackMidiTarget target) {
+  const bool isActive = (target == PlaybackMidiTarget::ActiveSlot);
+  Loop& loop = getLoop(slotIndex);
+  LoopPlaybackRuntime& runtime = playbackRuntime.slot(slotIndex);
+
+  if (runtime.isStale(loop.playbackRevision, playbackGeneration)) {
+    runtime.reset(true);
+    loop.nextEventIndex = 0;
+    if (isActive) {
+      loop.captureNextEventIndex = 0;
+    }
+    runtime.syncRevision(loop.playbackRevision, playbackGeneration);
+  }
+
+  ensurePlaybackMergedMidiEventsBuilt(*this, loop, runtime, false, currentTick);
+  const SessionMidiEventVec& mergedEvents = runtime.mergedMidiEvents.mergedEvents;
+  if (mergedEvents.empty()) {
+    return;
+  }
+
+  ProjectionContext playbackContext = makePlaybackContext(*this, loop, currentTick);
+  if (loop.playbackOrderDirty) {
+    ::rebuildPlaybackOrder(loop, mergedEvents, playbackContext);
+    reanchorPlaybackIndex(loop, mergedEvents, loop.getPlaybackOrder(), playbackContext);
+  }
+
+  const uint32_t tickInLoop = IntervalProjection::tickPhaseInProjectionCycle(
+      currentTick, projectionCycleStartTick, loop.loopLengthTicks);
+
+  if (IntervalProjection::didDisplayPlayheadWrapBackward(tickInLoop, loop.lastTickInLoop,
+                                                       loop.loopStartTick, loop.loopLengthTicks)) {
+    if (isActive) {
+      projectionCycleStartTick = IntervalProjection::advanceProjectionCycleStartTickOnWrap(
+          projectionCycleStartTick, loop.loopLengthTicks);
+      loop.nextEventIndex = 0;
+      loop.captureNextEventIndex = 0;
+      logger.trace("Loop wrapped, resetting index");
+    } else {
+      loop.nextEventIndex = 0;
+    }
+  }
+
+  const uint32_t prevTickInLoop = loop.lastTickInLoop;
+  loop.lastTickInLoop = tickInLoop;
+  const bool atLoopStart =
+      IntervalProjection::isPlaybackCatchUpWindow(prevTickInLoop, tickInLoop);
+
+  if (prevTickInLoop == UINT32_MAX && tickInLoop > Config::TICKS_PER_BAR) {
+    loop.nextEventIndex = 0;
+    runtime.syncRevision(loop.playbackRevision, playbackGeneration);
+    return;
+  }
+
+  PlaybackTickFrame frame{&playbackContext, tickInLoop, prevTickInLoop, atLoopStart};
+  MergedPlaybackStreamCtx mergedCtx{&loop.getPlaybackOrder(), &mergedEvents};
+  PlaybackCursorAdvanceState mergedAdvance{&loop.nextEventIndex, &loop.playbackOrderDirty};
+  const PlaybackEmitPolicy mergedPolicy =
+      isActive ? PlaybackEmitPolicy::ActiveCommitted : PlaybackEmitPolicy::LayeredSlot;
+  PlaybackJamFilterCtx jamCtx{this, &loop};
+  (void)advancePlaybackCursor(
+      mergedAdvance, frame, mergedPolicy, makeMergedPlaybackStream(mergedCtx),
+      playbackCursorAdvanceSend, this, slotIndex,
+      isActive ? playbackCursorAdvanceJamFilter : nullptr, isActive ? &jamCtx : nullptr, midiChannel);
+
+  if (isActive && loop.capture.phase == CapturePhase::Overdub && !loop.capture.store.empty()) {
+    if (loop.ensureCaptureEventsSorted()) {
+      reanchorCaptureIndex(loop);
+    }
+    PlaybackCursorAdvanceState captureAdvance{&loop.captureNextEventIndex, nullptr};
+    (void)advancePlaybackCursor(
+        captureAdvance, frame, PlaybackEmitPolicy::ActiveCaptureOverdub,
+        makeCapturePlaybackStream(loop), playbackCursorAdvanceSend, this, slotIndex,
+        playbackCursorAdvanceJamFilter, &jamCtx, midiChannel);
+  }
+
+  runtime.syncRevision(loop.playbackRevision, playbackGeneration);
+}
+
 void Track::playMidiEvents(uint32_t currentTick, bool isAudible) {
   if (isStoppedRecording()) {
     return;
   }
   Loop& loop = getActiveLoop();
-  if (!isAudible || muted || !loop.hasCommittedPasses() || loop.loopLengthTicks == 0)
-    return;
-  LoopPlaybackRuntime& runtime = playbackRuntime.slot(activeLoopIndex);
-  if (runtime.isStale(loop.playbackRevision, playbackGeneration)) {
-    runtime.reset(true);
-    loop.nextEventIndex = 0;
-    loop.captureNextEventIndex = 0;
-    runtime.syncRevision(loop.playbackRevision, playbackGeneration);
-  }
-
-  ensurePlaybackMergedMidiEventsBuilt(*this, loop, runtime, false, currentTick);
-  const SessionMidiEventVec& mergedEvents = runtime.mergedMidiEvents.mergedEvents;
-  if (mergedEvents.empty()) {
+  if (!isAudible || muted || !loop.hasCommittedPasses() || loop.loopLengthTicks == 0) {
     return;
   }
-
-  const ProjectionContext playbackContext = makePlaybackContext(*this, loop, currentTick);
-
-  if (loop.playbackOrderDirty) {
-    ::rebuildPlaybackOrder(loop, mergedEvents, playbackContext);
-    reanchorPlaybackIndex(loop, mergedEvents, loop.getPlaybackOrder(), playbackContext);
-  }
-
-  uint32_t tickInLoop = IntervalProjection::tickPhaseInProjectionCycle(
-      currentTick, projectionCycleStartTick, loop.loopLengthTicks);
-
-  if (IntervalProjection::didDisplayPlayheadWrapBackward(tickInLoop, loop.lastTickInLoop,
-                                                       loop.loopStartTick,
-                                                       loop.loopLengthTicks)) {
-    projectionCycleStartTick = IntervalProjection::advanceProjectionCycleStartTickOnWrap(
-        projectionCycleStartTick, loop.loopLengthTicks);
-    loop.nextEventIndex = 0;
-    loop.captureNextEventIndex = 0;
-    logger.trace("Loop wrapped, resetting index");
-  }
-
-  uint32_t prevTickInLoop = loop.lastTickInLoop;
-  loop.lastTickInLoop = tickInLoop;
-
-  bool atLoopStart = (prevTickInLoop == UINT32_MAX) || (tickInLoop <= prevTickInLoop);
-  // After a cold re-anchor, catch up from 0..tickInLoop. Cap that window so a broken
-  // projection (e.g. loopStart mutated mid-play) cannot MIDI-flood / hang USB.
-  if (prevTickInLoop == UINT32_MAX && tickInLoop > Config::TICKS_PER_BAR) {
-    loop.nextEventIndex = 0;
-    runtime.syncRevision(loop.playbackRevision, playbackGeneration);
-    return;
-  }
-
-  auto eventInJamRegion = [this, &loop](uint32_t evTick) -> bool {
-    if (!jamPlaybackActive || jamLength == 0) return true;
-    if (jamStartTick == UINT32_MAX) return true;
-    uint32_t jamEnd = jamStartTick + jamLength;
-    if (jamEnd <= loop.loopLengthTicks) {
-      return evTick >= jamStartTick && evTick < jamEnd;
-    }
-    return (evTick >= jamStartTick) || (evTick < jamEnd - loop.loopLengthTicks);
-  };
-
-  uint32_t lastSentEvTick = UINT32_MAX;
-  uint8_t lastSentChannel = 0;
-  uint8_t lastSentNote = 0;
-  uint8_t lastSentType = 0xFF;
-
-  const PlaybackOrderVec& playbackOrder = loop.getPlaybackOrder();
-  while (loop.nextEventIndex < playbackOrder.size()) {
-    const size_t orderIdx = playbackOrder[loop.nextEventIndex];
-    if (orderIdx >= mergedEvents.size()) {
-      loop.playbackOrderDirty = true;
-      break;
-    }
-    const MidiEvent &evt = mergedEvents[orderIdx];
-    const uint32_t evTick =
-        IntervalProjection::playbackEventPhase(evt.tick, playbackContext.loopLength);
-    const uint32_t evStorageTick = evt.tick;
-
-    bool crossed = atLoopStart ? (evTick <= tickInLoop) : (prevTickInLoop < evTick && evTick <= tickInLoop);
-    if (crossed && eventInJamRegion(evStorageTick)) {
-      uint8_t effectiveCh = (evt.channel >= 1 && evt.channel <= 16) ? midiChannel : evt.channel;
-      uint8_t note = evt.isNoteOn() || evt.isNoteOff() ? evt.data.noteData.note : 0;
-      bool isDuplicate = (evt.isNoteOn() || evt.isNoteOff()) &&
-                         (evTick == lastSentEvTick && effectiveCh == lastSentChannel &&
-                          note == lastSentNote && evt.type == lastSentType);
-      if (!isDuplicate) {
-        sendMidiEvent(evt, activeLoopIndex);
-        if (evt.isNoteOn() || evt.isNoteOff()) {
-          lastSentEvTick = evTick;
-          lastSentChannel = effectiveCh;
-          lastSentNote = note;
-          lastSentType = evt.type;
-        }
-      }
-      loop.nextEventIndex++;
-    }
-    else if (evTick > tickInLoop) {
-      break;
-    }
-    else {
-      loop.nextEventIndex++;
-    }
-  }
-
-  if (loop.capture.phase == CapturePhase::Overdub && !loop.capture.store.empty()) {
-    if (loop.ensureCaptureEventsSorted()) {
-      reanchorCaptureIndex(loop);
-    }
-    while (loop.captureNextEventIndex < loop.capture.store.size()) {
-      const MidiEvent& evt = loop.capture.store.at(loop.captureNextEventIndex);
-      const uint32_t evTick =
-          IntervalProjection::projectPlaybackEventPhase(evt.tick, playbackContext);
-      const uint32_t evStorageTick = evt.tick;
-      const bool crossed =
-          atLoopStart ? (evTick <= tickInLoop) : (prevTickInLoop < evTick && evTick <= tickInLoop);
-      if (crossed && eventInJamRegion(evStorageTick)) {
-        sendMidiEvent(evt, activeLoopIndex);
-        loop.captureNextEventIndex++;
-      } else if (evTick > tickInLoop) {
-        break;
-      } else {
-        loop.captureNextEventIndex++;
-      }
-    }
-  }
-  runtime.syncRevision(loop.playbackRevision, playbackGeneration);
+  playCommittedLoopMidi(activeLoopIndex, currentTick, PlaybackMidiTarget::ActiveSlot);
 }
 
 void Track::playMidiEventsForSlot(uint8_t slotIndex, uint32_t currentTick, bool isAudible) {
-  if (slotIndex >= Config::MAX_LOOPS_PER_TRACK) return;
-  if (isStoppedRecording()) return;
-  if (!isAudible || muted) return;
-
+  if (slotIndex >= Config::MAX_LOOPS_PER_TRACK) {
+    return;
+  }
+  if (isStoppedRecording()) {
+    return;
+  }
+  if (!isAudible || muted) {
+    return;
+  }
   Loop& loop = getLoop(slotIndex);
-  if (!loop.hasCommittedPasses() || loop.loopLengthTicks == 0) return;
-  LoopPlaybackRuntime& runtime = playbackRuntime.slot(slotIndex);
-  if (runtime.isStale(loop.playbackRevision, playbackGeneration)) {
-    runtime.reset(true);
-    loop.nextEventIndex = 0;
-    runtime.syncRevision(loop.playbackRevision, playbackGeneration);
-  }
-
-  ensurePlaybackMergedMidiEventsBuilt(*this, loop, runtime, false, currentTick);
-  const SessionMidiEventVec& mergedEvents = runtime.mergedMidiEvents.mergedEvents;
-  if (mergedEvents.empty()) {
+  if (!loop.hasCommittedPasses() || loop.loopLengthTicks == 0) {
     return;
   }
-
-  const ProjectionContext playbackContext = makePlaybackContext(*this, loop, currentTick);
-
-  if (loop.playbackOrderDirty) {
-    ::rebuildPlaybackOrder(loop, mergedEvents, playbackContext);
-    reanchorPlaybackIndex(loop, mergedEvents, loop.getPlaybackOrder(), playbackContext);
-  }
-
-  uint32_t tickInLoop = IntervalProjection::tickPhaseInProjectionCycle(
-      currentTick, projectionCycleStartTick, loop.loopLengthTicks);
-  if (IntervalProjection::didDisplayPlayheadWrapBackward(tickInLoop, loop.lastTickInLoop,
-                                                       loop.loopStartTick,
-                                                       loop.loopLengthTicks)) {
-    loop.nextEventIndex = 0;
-  }
-
-  uint32_t prevTickInLoop = loop.lastTickInLoop;
-  loop.lastTickInLoop = tickInLoop;
-  bool atLoopStart = (prevTickInLoop == UINT32_MAX) || (tickInLoop <= prevTickInLoop);
-  if (prevTickInLoop == UINT32_MAX && tickInLoop > Config::TICKS_PER_BAR) {
-    loop.nextEventIndex = 0;
-    runtime.syncRevision(loop.playbackRevision, playbackGeneration);
-    return;
-  }
-  const PlaybackOrderVec& playbackOrder = loop.getPlaybackOrder();
-
-  while (loop.nextEventIndex < playbackOrder.size()) {
-    const size_t orderIdx = playbackOrder[loop.nextEventIndex];
-    if (orderIdx >= mergedEvents.size()) {
-      loop.playbackOrderDirty = true;
-      break;
-    }
-    const MidiEvent &evt = mergedEvents[orderIdx];
-    const uint32_t evTick =
-        IntervalProjection::playbackEventPhase(evt.tick, playbackContext.loopLength);
-    bool crossed = atLoopStart ? (evTick <= tickInLoop) : (prevTickInLoop < evTick && evTick <= tickInLoop);
-    if (crossed) {
-      sendMidiEvent(evt, slotIndex);
-      loop.nextEventIndex++;
-    } else if (evTick > tickInLoop) {
-      break;
-    } else {
-      loop.nextEventIndex++;
-    }
-  }
-  runtime.syncRevision(loop.playbackRevision, playbackGeneration);
+  playCommittedLoopMidi(slotIndex, currentTick, PlaybackMidiTarget::LayeredSlot);
 }
 
 void Track::sendMidiEvent(const MidiEvent& evt, uint8_t playbackSlotIndex) {
