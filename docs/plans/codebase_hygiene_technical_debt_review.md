@@ -55,7 +55,7 @@ Sprint refinement plans are marked **Status: Done** (see [plans README — Hygie
 |---|---------|--------|
 | 1 | `StorageManager::saveState` still monolithic | **Queued** — continue extract when persistence hardening is CURRENT_WORK |
 | 2 | Four near-clone capture stops (`stopRecording` / `ToStopped` / overdub twins) | **Done** — `commitCaptureForStop` / `prepareRecordStop` / `handleNoteEditFold`; [`track_stop_dry_refinement.md`](track_stop_dry_refinement.md) |
-| 3 | Edit split: `EditManager` vs `NoteEditManager` (misnamed) vs `LoopEditManager` | **Queued** — rename `NoteEditManager` only with approved new name (large blast radius) |
+| 3 | Edit split: `EditManager` vs `NoteEditManager` (misnamed god-object) vs `LoopEditManager` | **Active** — [`note_edit_control_surface_split_refinement.md`](note_edit_control_surface_split_refinement.md) on `chore/note-edit-control-surface-split`; rename Phase 5b after extraction |
 | 4 | `DisplayManager::resolveDisplayNotes` + repeated `capture.store.copyEventsTo` | **Done** — `copySortedCaptureEvents`; removed unused `findCaptureOpenNoteOns` |
 | 5 | `playMidiEvents` / `playMidiEventsForSlot` twin wrap walks | **Done** — `playCommittedLoopMidi` + `advancePlaybackCursor`; [`playback_cursor_advance_dry_refinement.md`](playback_cursor_advance_dry_refinement.md) |
 | 6 | Note-edit geometry in `NoteMovementUtils` + `NoteEditFocus` | **Open** — algorithmic depth; not a rename |
@@ -110,7 +110,7 @@ Protected by [OpenSpec-Phase-Gate](../../.cursor/rules/OpenSpec-Phase-Gate.mdc) 
 ## Next hygiene slices (priority)
 
 1. **StorageManager** — continue extraction until `saveState` leaves the root TU (with persistence CURRENT_WORK)
-2. **`NoteEditManager` rename** — only after user-approved name (control-surface owner, not edit session)
+2. **Note edit control-surface split** — [`note_edit_control_surface_split_refinement.md`](note_edit_control_surface_split_refinement.md) (rename sub-step Phase 5b)
 3. **`PersistenceQueue` → mid-pass/chunk-oriented name** — with persistence hardening
 4. Optional: mass `docs/plans/` purge / archive of historical Cursor exports (item 18 remainder)
 5. Optional: finish moving scenario imports off thin shims onto `hitl.legacy_*` / shared modules only
