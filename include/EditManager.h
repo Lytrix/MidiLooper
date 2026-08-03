@@ -263,6 +263,8 @@ private:
     EditEventListener* editEventListener_ = nullptr;
     EditorSelection selectionChangePrior_{};
     bool selectionChangeRequestFaderSync_ = false;
+    /** Suppress SelectionChanged surface events while reopening NOTE_EDIT (SessionOpen owns motor sync). */
+    bool deferSelectionSurfaceEvents_ = false;
     bool sessionOpenedIncludesMidi_ = false;
     bool sessionOpenedIncludesFaderFeedback_ = false;
     EditSession editSession;

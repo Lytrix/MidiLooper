@@ -23,6 +23,9 @@
 #include "NoteEditSessionState.h"
 #include "EditEvent.h"
 
+struct BarStepButtonInfo;
+enum class BarStepPressType;
+
 class DisplayManager;
 
 /**
@@ -55,8 +58,20 @@ public:
     void handleFineFaderInput(uint8_t ccValue, Track& track);
     void handleNoteValueFaderInput(uint8_t ccValue, Track& track);
 
-    // Edit mode methods (must be public for MidiButtonActions)
-    void cycleEditMode(Track& track);
+    // Main edit session switching (for mode button functionality)
+    void cycleEditSession(Track& track);
+    void onTrackChanged(Track& newTrack);
+
+    // NOTE_EDIT physical ingress (Phase 8) — buttons, bar-step, GPIO encoder hold
+    void handleCycleNoteEditType(Track& track);
+    void handleExitEditMode(Track& track);
+    void handleDeleteSelectedNote(Track& track);
+    void handleCreateNoteAtBracket(Track& track);
+    void handleDeleteOrCreateNoteAtBracket(Track& track);
+    void handleBarStepNoteEditGesture(Track& track, const BarStepButtonInfo& info,
+                                      BarStepPressType pressType);
+    void updateGpioEncoderButtonHold(bool encoderButtonHeld);
+
     void processEncoderMovement(int rawDelta);
     void toggleLengthEditingMode();
     /** Force position-edit routing when opening or closing a note-edit session. */
@@ -76,10 +91,8 @@ public:
                                           bool geometryIsDriver = false);
     bool isFaderOutboundActive() const;
     void refreshEditingActivity();
-
-    // Main edit session switching (for mode button functionality)
-    void cycleEditSession(Track& track);
-    void onTrackChanged(Track& newTrack);
+    /** Run SessionOpen outbound pipeline to completion (blocking). */
+    void drainFaderOutboundUntilIdle();
 
 private:
     static int16_t loopTickToCoarsePitchbend(uint32_t tick, uint32_t loopLength);
@@ -197,7 +210,7 @@ private:
     void processPendingSelectDependentMotorSync(Track& track);
     void processPendingGeometryDriverMotorSync(Track& track);
     void syncSelectionFromGeometryEdit(Track& track);
-    void syncMotorsFromSelectTarget(Track& track, const Fader1SelectTarget& target,
+    bool syncMotorsFromSelectTarget(Track& track, const Fader1SelectTarget& target,
                                     const NoteEditFaderOutbound::PlanFlags& plan);
     bool sendDependentFadersParallelTimedBurst(Track& track,
                                                const NoteEditFaderOutbound::PlanFlags& plan,
@@ -205,7 +218,9 @@ private:
     bool sendCoarseFaderPosition(Track& track);
     bool sendFineFaderPosition(Track& track);
     bool sendNoteValueFaderPosition(Track& track);
-    void armSelectDependentSettle(uint32_t sentAt);
+    void armSelectDependentSettle(uint32_t sentAt,
+                                uint32_t durationMs = SELECT_DEPENDENT_SETTLE_MS);
+    void syncDependentFaderTrackingFromOutboundLatch();
     void recordFaderInputForValidation(MidiMapping::FaderType faderType, int16_t pitchbendValue,
                                        uint8_t ccValue);
     void enableStartEditing();
@@ -238,6 +253,11 @@ private:
     uint8_t editedNoteAuditionPitch_ = 0;
     uint32_t lastLengthModeToggleTime = 0;
     static constexpr uint32_t LENGTH_MODE_DEBOUNCE_TIME = 100;
+
+    bool gpioEncoderButtonWasHeld_ = false;
+    uint32_t gpioEncoderButtonHoldStartMs_ = 0;
+    bool gpioEncoderPitchEditActive_ = false;
+    static constexpr uint32_t kGpioEncoderHoldDelayMs = 250;
 
 public:
     void setFaderProcessor(MidiFaderProcessor* processor) { faderProcessor = processor; }

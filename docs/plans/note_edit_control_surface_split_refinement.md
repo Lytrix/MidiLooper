@@ -373,19 +373,20 @@ Update: `EditManager`, `EditSelectNoteState`.
 
 ---
 
-### Optional Phase 8 — Architectural north star (future extension)
+### Optional Phase 8 — NOTE_EDIT physical ingress consolidation
 
-Not required to close Phases 1–7. Implement when NOTE_EDIT physical ingress consolidation is the active slice.
+**Status:** Done (2026-08-03) — `672` native tests pass; `teensy41-capture-serial` build OK
 
 **North-star goal:** route **all NOTE_EDIT physical interaction** through `ControlSurfaceManager`.
 
-Examples (non-exhaustive): button presses, encoder movement, MIDI faders, future hardware controls.
-
-- `MidiButtonActions`, `MidiFaderActions`, `GpioButtonManager` NOTE_EDIT paths delegate through `ControlSurfaceManager`
-- Internal `ButtonInput` / `FaderInput` / `EncoderInput` modules (or `src/ControlSurface/` folder)
+- [x] `MidiButtonActions` NOTE_EDIT paths delegate (`handleCycleNoteEditType`, delete/create, `cycleEditSession`)
+- [x] `GpioButtonManager` encoder hold + BUTTON_C `cycleEditSession` delegate
+- [x] `BarStepButtonHandler` note-edit gestures delegate
+- [x] `src/ControlSurface/NoteEditButtonIngress.cpp`, `NoteEditEncoderIngress.cpp`
+- [x] `MidiFaderActions` / `MidiHandler` — already routed (Phase 4)
 - **Out of scope:** record/overdub/transport button semantics; LED manager consolidation
 
-**Tests (when implemented):** native + HITL `edit_minimal` + motor probe; GPIO encoder smoke
+**Tests:** `pio test -e native`; `pio run -e teensy41-capture-serial` (HITL `edit_minimal` + motor probe optional)
 
 ---
 

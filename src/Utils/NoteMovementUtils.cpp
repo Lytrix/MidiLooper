@@ -1274,33 +1274,56 @@ NOTE_EDIT_MEM void finalReconstructAndSelect(Track& track,
         }
     }
 
-    if (newSelectedIdx >= 0) {
-        const int oldSelectedIdx = manager.getSelectedNoteIdx();
-        manager.setSelectedNoteIdx(newSelectedIdx);
-        logger.log(CAT_MIDI, LOG_DEBUG, "Updated selectedNoteIdx: %d -> %d (note at new position)",
-                   oldSelectedIdx, newSelectedIdx);
-        if (manager.isNoteEditActive() &&
-            editorSelectionHasNote(manager.getNoteEditSessionState().selection)) {
-            manager.setSelectedTick(manager.getNoteEditSessionState().selection.selectedTick);
-        } else {
-            manager.setSelectedTick(selectedTick);
-        }
-    } else if (manager.isNoteEditActive()) {
-        if (editorSelectionHasNote(manager.getNoteEditSessionState().selection)) {
-            logger.log(CAT_MIDI, LOG_DEBUG,
-                       "Keeping selectedNoteIdx %d (moving note not in filtered list)",
-                       manager.getSelectedNoteIdx());
-            manager.setSelectedTick(manager.getNoteEditSessionState().selection.selectedTick);
+    const bool noteEditActive = manager.isNoteEditActive();
+    bool geometrySelectionFromFocus = false;
+    if (noteEditActive) {
+        const NoteEditKind sessionKind = manager.getNoteEditSessionState().kind;
+        const bool geometryMutation =
+            isGeometryEditKind(sessionKind) && sessionKind != NoteEditKind::Select;
+        const NoteEditFocus& focus = manager.getEditSession().focus;
+        const EditorSelection& selection = manager.getNoteEditSessionState().selection;
+        geometrySelectionFromFocus =
+            geometryMutation && focus.active && editorSelectionHasNote(selection) &&
+            focus.movingNoteId == selection.primaryNote;
+    }
+
+    if (!geometrySelectionFromFocus) {
+        if (newSelectedIdx >= 0) {
+            const int oldSelectedIdx = manager.getSelectedNoteIdx();
+            manager.setSelectedNoteIdx(newSelectedIdx);
+            logger.log(CAT_MIDI, LOG_DEBUG, "Updated selectedNoteIdx: %d -> %d (note at new position)",
+                       oldSelectedIdx, newSelectedIdx);
+            if (noteEditActive &&
+                editorSelectionHasNote(manager.getNoteEditSessionState().selection)) {
+                manager.setSelectedTick(manager.getNoteEditSessionState().selection.selectedTick);
+            } else {
+                manager.setSelectedTick(selectedTick);
+            }
+        } else if (noteEditActive) {
+            if (editorSelectionHasNote(manager.getNoteEditSessionState().selection)) {
+                logger.log(CAT_MIDI, LOG_DEBUG,
+                           "Keeping selectedNoteIdx %d (moving note not in filtered list)",
+                           manager.getSelectedNoteIdx());
+                manager.setSelectedTick(manager.getNoteEditSessionState().selection.selectedTick);
+            } else {
+                logger.log(CAT_MIDI, LOG_DEBUG, "Warning: Could not find moved note in filtered list");
+                manager.setSelectedTick(selectedTick);
+            }
         } else {
             logger.log(CAT_MIDI, LOG_DEBUG, "Warning: Could not find moved note in filtered list");
             manager.setSelectedTick(selectedTick);
         }
+        manager.syncSelectedNoteIdxToFilteredInventory(track);
     } else {
-        logger.log(CAT_MIDI, LOG_DEBUG, "Warning: Could not find moved note in filtered list");
-        manager.setSelectedTick(selectedTick);
+        const NoteEditFocus& focus = manager.getEditSession().focus;
+        const uint32_t loopStartTick = manager.noteEditLoopStartTick(track);
+        const bool lengthBracket = manager.isLengthBracketEditActive();
+        const uint32_t storageBracketTick =
+            lengthBracket ? focus.last.endTick : focus.last.startTick;
+        const uint32_t displayBracket = bracketDisplayTickFromStorage(
+            storageBracketTick, loopStartTick, loopLength);
+        manager.applySelectionFromGeometryEdit(track, displayBracket, focus.movingNoteId);
     }
-
-    manager.syncSelectedNoteIdxToFilteredInventory(track);
     track.invalidateCaches(refreshPlaybackPreview);
 #ifndef PIO_UNIT_TEST_NATIVE
     displayManager.requestNoteInfoRefresh(track);

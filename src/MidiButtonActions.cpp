@@ -12,8 +12,6 @@
 #include "LooperState.h"
 #include "Logger.h"
 #include "ControlSurfaceManager.h"
-#include "NoteEditSessionState.h"
-#include "EditStates/EditSelectNoteState.h"
 #include "TrackUndo.h"
 #include "Loop.h"
 #include "DisplayManager.h"
@@ -771,130 +769,28 @@ void MidiButtonActions::handleMuteTrack(uint8_t trackNumber) {
 
 void MidiButtonActions::handleCycleEditMode() {
     Track& track = getCurrentTrack();
-    editManager.cycleEditSession(track);
+    controlSurfaceManager.cycleEditSession(track);
     logger.info("MIDI Edit Mode: Short press - cycled LOOP_EDIT ↔ NOTE_EDIT");
 }
 
 void MidiButtonActions::handleCycleNoteEditType() {
-    Track& track = getCurrentTrack();
-    const bool wasInEditOverlay = editManager.getCurrentState() != nullptr;
-
-    if (editManager.getEditSessionType() != EditSessionType::Note) {
-        editManager.sendEditSessionChange(EditSessionType::Note);
-    }
-
-    if (!shouldCycleNoteEditTypeOnShortPress(wasInEditOverlay)) {
-        if (!editManager.isNoteEditActive()) {
-            editManager.openNoteEditSession(track);
-        } else if (editManager.getCurrentState() == nullptr) {
-            editManager.enterDefaultNoteEditSessionState(track, clockManager.getCurrentTick());
-        }
-        logger.info("MIDI Encoder: Short press - entered note edit mode");
-        return;
-    }
-
-    editManager.cycleNoteEditType(track);
+    controlSurfaceManager.handleCycleNoteEditType(getCurrentTrack());
 }
 
 void MidiButtonActions::handleExitEditMode() {
-    Track& track = getCurrentTrack();
-    // Match the exact logic from the original Encoder button long press
-    logger.info("MIDI Encoder: Long press - exited edit mode");
-    editManager.exitEditMode(track);
+    controlSurfaceManager.handleExitEditMode(getCurrentTrack());
 }
 
 void MidiButtonActions::handleDeleteNote() {
-    Track& track = getCurrentTrack();
-    const auto filteredStd = editManager.selectableDisplayNotesForEditUi(track);
-    const NoteUtils::DisplayNoteVec filtered(filteredStd.begin(), filteredStd.end());
-    editManager.deleteSelectedNote(track, filtered);
+    controlSurfaceManager.handleDeleteSelectedNote(getCurrentTrack());
 }
-
-namespace {
-
-constexpr uint32_t kBracketSnapWindow = 24;
-
-bool hasNoteNearBracket(const Track& track, uint32_t selectedTick) {
-    const uint32_t loopLength = track.getLoopLength();
-    if (loopLength == 0) {
-        return false;
-    }
-    const uint32_t bracket = selectedTick % loopLength;
-    const auto& notes = track.getCachedNotes();
-    for (const auto& n : notes) {
-        const uint32_t noteTick = n.startTick % loopLength;
-        const uint32_t dist = std::min((noteTick + loopLength - bracket) % loopLength,
-                                       (bracket + loopLength - noteTick) % loopLength);
-        if (dist <= kBracketSnapWindow) {
-            return true;
-        }
-    }
-    return false;
-}
-
-}  // namespace
 
 void MidiButtonActions::handleCreateNoteAtBracket() {
-    Track& track = getCurrentTrack();
-    if (editManager.getCurrentState() == nullptr) {
-        logger.info("Create note ignored (not in edit mode)");
-        return;
-    }
-    if (!editManager.isNoteEditActive()) {
-        editManager.openNoteEditSession(track);
-    }
-    uint32_t loopLength = track.getLoopLength();
-    if (loopLength == 0) return;
-
-    uint32_t selectedTick = editManager.getSelectedTick() % loopLength;
-    if (hasNoteNearBracket(track, selectedTick)) {
-        logger.info("Create note ignored (note at bracket)");
-        return;
-    }
-
-    editManager.setSelectedNoteIdx(-1);
-    editManager.beginGeometryMutation(track, NoteEditKind::Add, false);
-    const std::array<MidiEvent, 2> created =
-        EditSelectNoteState::createNoteAtTick(track, selectedTick);
-    EditPass add{};
-    add.passType = EditPassType::Note;
-    add.actionType = EditActionType::Create;
-    add.propertyType = EditPropertyType::None;
-    add.addedEvents.push_back(created[0]);
-    add.addedEvents.push_back(created[1]);
-    const EditPassId id = editManager.commitEditAction(track, EditPassVec{add});
-    if (id == kInvalidEditPassId) {
-        logger.info("Create note failed (edit session commit rejected)");
-        return;
-    }
-    editManager.setSelectedTick(selectedTick);
-    track.invalidateCaches();
-    editManager.selectNoteAtBracket(track, selectedTick);
+    controlSurfaceManager.handleCreateNoteAtBracket(getCurrentTrack());
 }
 
 void MidiButtonActions::handleDeleteOrCreateNote() {
-    Track& track = getCurrentTrack();
-    if (editManager.getCurrentState() == nullptr) {
-        logger.info("NOTELEN double: ignored (not in edit mode)");
-        return;
-    }
-    if (editManager.getSelectedNoteIdx() >= 0 ||
-        editManager.getLastFader1SelectNoteId() != kInvalidNoteId) {
-        logger.info("NOTELEN double: delete selected note");
-        handleDeleteNote();
-        return;
-    }
-    uint32_t loopLength = track.getLoopLength();
-    if (loopLength == 0) {
-        return;
-    }
-    const uint32_t selectedTick = editManager.getSelectedTick() % loopLength;
-    if (hasNoteNearBracket(track, selectedTick)) {
-        logger.info("NOTELEN double: ignored (note at bracket, none selected)");
-        return;
-    }
-    logger.info("NOTELEN double: create note at bracket");
-    handleCreateNoteAtBracket();
+    controlSurfaceManager.handleDeleteOrCreateNoteAtBracket(getCurrentTrack());
 }
 
 void MidiButtonActions::handleResetToLoopStart() {
