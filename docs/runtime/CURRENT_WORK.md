@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-07-19 (archived deferred-job-scheduler Phase B)
+Last updated: 2026-08-03 (note-edit control-surface split complete)
 
 ---
 
@@ -21,6 +21,50 @@ Last updated: 2026-07-19 (archived deferred-job-scheduler Phase B)
 **Parked hang hunt:** [`persistence_overlay_large_slot_focus_restore_bugfix.md`](../plans/persistence_overlay_large_slot_focus_restore_bugfix.md) — CAP flush fix kept; unreproducible OLED/stale after focus load.
 
 **Next:** confirm next CURRENT_WORK slice with user (persistence/overlay hardening, or parked large-slot display hunt).
+
+### Hygiene — codebase debt review (sprint complete)
+
+**Plan:** [`docs/plans/codebase_hygiene_technical_debt_review.md`](../plans/codebase_hygiene_technical_debt_review.md) — safe hygiene **complete**; gated leftovers remain.
+
+**Branch:** `chore/codebase-hygiene-sprint1`
+
+| Item | Status |
+|------|--------|
+| Review + dead Looper / fader stubs / layout / HITL / vocab / merge-cache rename | Done |
+| Track stop DRY | Done — [`track_stop_dry_refinement.md`](../plans/track_stop_dry_refinement.md) |
+| Display `copySortedCaptureEvents` | Done |
+| Playback cursor advance DRY | Done — [`playback_cursor_advance_dry_refinement.md`](../plans/playback_cursor_advance_dry_refinement.md) |
+| Shared `RecordStopLength` | Done — [`record_stop_length_shared_helpers_refinement.md`](../plans/record_stop_length_shared_helpers_refinement.md) |
+| Clear-slot re-arm after playing clear | Done — [`clear_slot_rearm_after_playing_clear_bugfix.md`](../plans/clear_slot_rearm_after_playing_clear_bugfix.md) (`1cb7ffa`) |
+| Plans hygiene (Status Done + README index; no mass purge) | Done |
+
+**Next hygiene (gated / optional):** StorageManager `saveState` extract; `PersistenceQueue` rename; mass `docs/plans/` purge; leave `isTrackAudible` for later.
+
+### Note edit control-surface split — **complete**
+
+**Branch:** `chore/note-edit-control-surface-split` (`d3505db`)  
+**Plan:** [`docs/plans/note_edit_control_surface_split_refinement.md`](../plans/note_edit_control_surface_split_refinement.md)
+
+| Item | Status |
+|------|--------|
+| Phases 0–4 (split, edit events, surface extraction) | Done |
+| Phase 5 unnest `LoopEditManager` | Done |
+| Phase 6 rename `ControlSurfaceManager` | Done (`d3505db`) |
+| Phase 7 docs + hygiene closeout | Done (`c244280`) |
+| Phase 8 NOTE_EDIT physical ingress | Done (uncommitted) |
+
+**Supersedes:** rename-only `NoteEditManager` plan (removed with `chore/rename-note-edit-manager` branch).
+
+---
+
+### OpenSpec — slot-performance-interaction Phase −1 (2026-07-19)
+
+Rename-only merge-cache vocabulary (no behavior change). Remaining phases stay queued.
+
+| Item | Status |
+|------|--------|
+| −1.1–−1.4 rename struct/field/APIs | Done |
+| −1.5 native tests | Done (663) |
 
 ### Recently closed — Deferred job scheduler (Phase B)
 

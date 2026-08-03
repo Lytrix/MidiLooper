@@ -11,9 +11,7 @@
 #include "StorageManager.h"
 #include "LooperState.h"
 #include "Logger.h"
-#include "NoteEditManager.h"
-#include "NoteEditSessionState.h"
-#include "EditStates/EditSelectNoteState.h"
+#include "ControlSurfaceManager.h"
 #include "TrackUndo.h"
 #include "Loop.h"
 #include "DisplayManager.h"
@@ -107,26 +105,26 @@ extern EditManager editManager;
 extern ClockManager clockManager;
 extern MidiHandler midiHandler;
 extern Logger logger;
-extern NoteEditManager noteEditManager;
+extern ControlSurfaceManager controlSurfaceManager;
 
 // Global instance
 MidiButtonActions midiButtonActions;
 
 namespace {
 
-void restoreAudiblePlaybackAfterSlotClear(uint8_t trackIndex, Track& track, uint32_t now) {
-  bool foundAudible = false;
+void restorePlaybackAfterSlotClear(uint8_t trackIndex, Track& track, uint32_t now) {
+  bool foundPlaybackSlot = false;
   uint8_t newActiveSlot = 0;
   for (uint8_t s = 0; s < ::Config::MAX_LOOPS_PER_TRACK; ++s) {
     if (trackManager.isSlotEnabled(trackIndex, s) &&
         !trackManager.isSlotMuted(trackIndex, s) &&
         track.hasDataInSlot(s)) {
-      foundAudible = true;
+      foundPlaybackSlot = true;
       newActiveSlot = s;
       break;
     }
   }
-  if (foundAudible) {
+  if (foundPlaybackSlot) {
     trackManager.setActiveLoopIndex(trackIndex, newActiveSlot);
     for (uint8_t s = 0; s < ::Config::MAX_LOOPS_PER_TRACK; ++s) {
       if (trackManager.isSlotEnabled(trackIndex, s) &&
@@ -139,6 +137,11 @@ void restoreAudiblePlaybackAfterSlotClear(uint8_t trackIndex, Track& track, uint
     track.startPlaying(now);
   } else {
     track.sendAllNotesOff();
+    // Clear of the last enabled playing slot must not leave TRACK_PLAYING on empty RAM —
+    // otherwise record press takes the mute-toggle path (session_20260803_170251).
+    if (track.isPlaying()) {
+      track.forceSetState(TRACK_STOPPED);
+    }
   }
 }
 
@@ -406,6 +409,8 @@ void MidiButtonActions::handleToggleRecordForSlot(uint8_t slotIndex) {
     }
 
     // Filled + currently playing: quantize active sync to grid when transport is running.
+    // Use SD-aware content for switch-to-other-slot; mute-toggle requires RAM data so a
+    // just-cleared slot (SD payload still present until deferred save) can re-arm.
     if (track.isPlaying() && slotHasData) {
         const bool slotEnabled = trackManager.isSlotEnabled(trackIdx, slotIndex);
 
@@ -416,28 +421,32 @@ void MidiButtonActions::handleToggleRecordForSlot(uint8_t slotIndex) {
                 logger.info("Loop %d: Reaffirmed playback switch", slotIndex + 1);
                 return;
             }
-            // Toggle mute only for this slot. Track keeps running.
-            if (!slotEnabled) {
-                // Safety: keep focus slot enabled.
-                trackManager.setSlotEnabled(trackIdx, slotIndex, true);
-                trackManager.setSlotMuted(trackIdx, slotIndex, false);
-                track.resetPlaybackStateForSlot(slotIndex, now);
+            if (!track.hasDataInSlot(slotIndex)) {
+                // Fall through to record-arm path.
             } else {
-                trackManager.toggleSlotMuted(trackIdx, slotIndex);
-                const bool nowMuted = trackManager.isSlotMuted(trackIdx, slotIndex);
-                if (!nowMuted) {
-                    // Align playback indices when unmuting.
+                // Toggle mute only for this slot. Track keeps running.
+                if (!slotEnabled) {
+                    // Safety: keep focus slot enabled.
+                    trackManager.setSlotEnabled(trackIdx, slotIndex, true);
+                    trackManager.setSlotMuted(trackIdx, slotIndex, false);
                     track.resetPlaybackStateForSlot(slotIndex, now);
+                } else {
+                    trackManager.toggleSlotMuted(trackIdx, slotIndex);
+                    const bool nowMuted = trackManager.isSlotMuted(trackIdx, slotIndex);
+                    if (!nowMuted) {
+                        // Align playback indices when unmuting.
+                        track.resetPlaybackStateForSlot(slotIndex, now);
+                    }
                 }
+                trackManager.forceLedUpdate(now);
+                return;
             }
-            trackManager.forceLedUpdate(now);
+        } else {
+            // Short press on a non-selected filled slot — queue playback, never overdub.
+            queuePlayingSlotSwitch(trackIdx, track, slotIndex, now);
+            logger.info("Loop %d: Queued playback switch", slotIndex + 1);
             return;
         }
-
-        // Short press on a non-selected filled slot — queue playback, never overdub.
-        queuePlayingSlotSwitch(trackIdx, track, slotIndex, now);
-        logger.info("Loop %d: Queued playback switch", slotIndex + 1);
-        return;
     }
 
     // Otherwise: fall back to the existing immediate record/start toggle behavior
@@ -454,8 +463,8 @@ void MidiButtonActions::handleToggleRecordForSlot(uint8_t slotIndex) {
         return;
     }
 
-    const bool slotHasPublishedMidi = track.hasCommittedPassesInSlot(slotIndex);
-    const bool slotCanArmForRecord = !slotHasPublishedMidi;
+    const bool slotHasCommittedMidi = track.hasCommittedPassesInSlot(slotIndex);
+    const bool slotCanArmForRecord = !slotHasCommittedMidi;
 
     if (track.isRecording()) {
         logger.info("Loop %d: Stop Recording", slotIndex + 1);
@@ -727,7 +736,7 @@ void MidiButtonActions::handleClearTrack() {
     StorageManager::requestDeferredSaveState(looperState.getLooperState());
     logger.info("MIDI: Clear selected slot %u", static_cast<unsigned>(slot) + 1u);
 
-    restoreAudiblePlaybackAfterSlotClear(tidx, track, now);
+    restorePlaybackAfterSlotClear(tidx, track, now);
 }
 
 void MidiButtonActions::handleSoloTrack(uint8_t trackNumber) {
@@ -760,128 +769,28 @@ void MidiButtonActions::handleMuteTrack(uint8_t trackNumber) {
 
 void MidiButtonActions::handleCycleEditMode() {
     Track& track = getCurrentTrack();
-    editManager.cycleEditSession(track);
+    controlSurfaceManager.cycleEditSession(track);
     logger.info("MIDI Edit Mode: Short press - cycled LOOP_EDIT ↔ NOTE_EDIT");
 }
 
 void MidiButtonActions::handleCycleNoteEditType() {
-    Track& track = getCurrentTrack();
-    const bool wasInEditOverlay = editManager.getCurrentState() != nullptr;
-
-    if (editManager.getEditSessionType() != EditSessionType::Note) {
-        editManager.sendEditSessionChange(EditSessionType::Note);
-    }
-
-    if (!shouldCycleNoteEditTypeOnShortPress(wasInEditOverlay)) {
-        if (!editManager.isNoteEditActive()) {
-            editManager.openNoteEditSession(track);
-        } else if (editManager.getCurrentState() == nullptr) {
-            editManager.enterDefaultNoteEditSessionState(track, clockManager.getCurrentTick());
-        }
-        logger.info("MIDI Encoder: Short press - entered note edit mode");
-        return;
-    }
-
-    editManager.cycleNoteEditType(track);
+    controlSurfaceManager.handleCycleNoteEditType(getCurrentTrack());
 }
 
 void MidiButtonActions::handleExitEditMode() {
-    Track& track = getCurrentTrack();
-    // Match the exact logic from the original Encoder button long press
-    logger.info("MIDI Encoder: Long press - exited edit mode");
-    editManager.exitEditMode(track);
+    controlSurfaceManager.handleExitEditMode(getCurrentTrack());
 }
 
 void MidiButtonActions::handleDeleteNote() {
-    Track& track = getCurrentTrack();
-    noteEditManager.deleteSelectedNote(track);
+    controlSurfaceManager.handleDeleteSelectedNote(getCurrentTrack());
 }
-
-namespace {
-
-constexpr uint32_t kBracketSnapWindow = 24;
-
-bool hasNoteNearBracket(const Track& track, uint32_t selectedTick) {
-    const uint32_t loopLength = track.getLoopLength();
-    if (loopLength == 0) {
-        return false;
-    }
-    const uint32_t bracket = selectedTick % loopLength;
-    const auto& notes = track.getCachedNotes();
-    for (const auto& n : notes) {
-        const uint32_t noteTick = n.startTick % loopLength;
-        const uint32_t dist = std::min((noteTick + loopLength - bracket) % loopLength,
-                                       (bracket + loopLength - noteTick) % loopLength);
-        if (dist <= kBracketSnapWindow) {
-            return true;
-        }
-    }
-    return false;
-}
-
-}  // namespace
 
 void MidiButtonActions::handleCreateNoteAtBracket() {
-    Track& track = getCurrentTrack();
-    if (editManager.getCurrentState() == nullptr) {
-        logger.info("Create note ignored (not in edit mode)");
-        return;
-    }
-    if (!editManager.isNoteEditActive()) {
-        editManager.openNoteEditSession(track);
-    }
-    uint32_t loopLength = track.getLoopLength();
-    if (loopLength == 0) return;
-
-    uint32_t selectedTick = editManager.getSelectedTick() % loopLength;
-    if (hasNoteNearBracket(track, selectedTick)) {
-        logger.info("Create note ignored (note at bracket)");
-        return;
-    }
-
-    editManager.setSelectedNoteIdx(-1);
-    editManager.beginGeometryMutation(track, NoteEditKind::Add, false);
-    const std::array<MidiEvent, 2> created =
-        EditSelectNoteState::createNoteAtTick(track, selectedTick);
-    EditPass add{};
-    add.passType = EditPassType::Note;
-    add.actionType = EditActionType::Create;
-    add.propertyType = EditPropertyType::None;
-    add.addedEvents.push_back(created[0]);
-    add.addedEvents.push_back(created[1]);
-    const EditPassId id = editManager.commitEditAction(track, EditPassVec{add});
-    if (id == kInvalidEditPassId) {
-        logger.info("Create note failed (edit session commit rejected)");
-        return;
-    }
-    editManager.setSelectedTick(selectedTick);
-    track.invalidateCaches();
-    editManager.selectNoteAtBracket(track, selectedTick);
+    controlSurfaceManager.handleCreateNoteAtBracket(getCurrentTrack());
 }
 
 void MidiButtonActions::handleDeleteOrCreateNote() {
-    Track& track = getCurrentTrack();
-    if (editManager.getCurrentState() == nullptr) {
-        logger.info("NOTELEN double: ignored (not in edit mode)");
-        return;
-    }
-    if (editManager.getSelectedNoteIdx() >= 0 ||
-        editManager.getLastFader1SelectNoteId() != kInvalidNoteId) {
-        logger.info("NOTELEN double: delete selected note");
-        handleDeleteNote();
-        return;
-    }
-    uint32_t loopLength = track.getLoopLength();
-    if (loopLength == 0) {
-        return;
-    }
-    const uint32_t selectedTick = editManager.getSelectedTick() % loopLength;
-    if (hasNoteNearBracket(track, selectedTick)) {
-        logger.info("NOTELEN double: ignored (note at bracket, none selected)");
-        return;
-    }
-    logger.info("NOTELEN double: create note at bracket");
-    handleCreateNoteAtBracket();
+    controlSurfaceManager.handleDeleteOrCreateNoteAtBracket(getCurrentTrack());
 }
 
 void MidiButtonActions::handleResetToLoopStart() {
@@ -975,7 +884,7 @@ uint32_t MidiButtonActions::getCurrentTick() {
 }
 
 void MidiButtonActions::handleToggleLengthEditMode() {
-    noteEditManager.toggleLengthEditingMode();
+    controlSurfaceManager.toggleLengthEditingMode();
 }
 
 bool MidiButtonActions::isValidTrackNumber(uint8_t trackNumber) {

@@ -63,15 +63,15 @@ class LoopEventStore {
   static void releaseChunkRefs(const CaptureChunkIdList& refs);
   static void releaseChunkRefs(const CommittedChunkIdList& refs);
 
-  /// Sole internal→published chunk-id transition (≤1 alloc, ≤1 copy). Clears \p src on success.
+  /// Sole internal→committed chunk-id transition (≤1 alloc, ≤1 copy). Clears \p src on success.
   static bool transferCaptureChunkIdsToCommittedChunkIds(CommittedChunkIdList& dest,
                                                  CaptureChunkIdList& src);
 
-  /// Copy published chunk refs (cold path; fails without abort when memory exhausted).
+  /// Copy committed chunk refs (cold path; fails without abort when memory exhausted).
   static bool tryCopyCommittedChunkIds(CommittedChunkIdList& dest,
                                        const CommittedChunkIdList& src);
 
-  /// Duplicate pool chunks for undo/snapshot isolation (published → published via staging store).
+  /// Duplicate pool chunks for undo/snapshot isolation (committed → committed via staging store).
   static bool deepCloneCommittedChunkIds(CommittedChunkIdList& dest,
                                          const CommittedChunkIdList& src);
 
@@ -96,12 +96,12 @@ class LoopEventStore {
   /// Move chunk ownership from other into this (other cleared). O(chunks).
   void adoptAll(LoopEventStore& other);
 
-  /// Merge tick-sorted events from other into this via chunk append (no flatten). O(events).
+  /// Merge tick-sorted events from other into this via chunk append (no copyEventsTo). O(events).
   void mergeFrom(LoopEventStore& other);
 
-  void flatten(MidiEventVec& out) const;
+  void copyEventsTo(MidiEventVec& out) const;
   template <typename Alloc>
-  void flatten(std::vector<MidiEvent, Alloc>& out) const {
+  void copyEventsTo(std::vector<MidiEvent, Alloc>& out) const {
     out.clear();
     out.reserve(size());
     for (uint16_t id : chunkIds_) {
@@ -124,12 +124,12 @@ class LoopEventStore {
       std::vector<MidiEvent, ExternalMemoryFirstAllocator<MidiEvent>>& out);
   /// Read firstTick/lastTick for a live pool chunk (false if id unused / out of range).
   static bool chunkTickSpan(uint16_t id, uint32_t& firstTick, uint32_t& lastTick);
-  /// Count events referenced by chunk ids without flattening.
+  /// Count events referenced by chunk ids without copyEventsTo.
   static size_t countEventsInChunkIds(const CaptureChunkIdList& ids);
   static size_t countEventsInChunkIds(const CommittedChunkIdList& ids);
-  void loadFromFlat(const MidiEventVec& events);
+  void loadFromEvents(const MidiEventVec& events);
   template <typename Alloc>
-  void loadFromFlat(const std::vector<MidiEvent, Alloc>& events) {
+  void loadFromEvents(const std::vector<MidiEvent, Alloc>& events) {
     clear();
     for (const MidiEvent& evt : events) {
       if (!append(evt)) {
@@ -153,14 +153,14 @@ class LoopEventStore {
   /// Move chunk ownership out of this store into dest (this store cleared). Used by take Seal.
   void detachChunksTo(CaptureChunkIdList& dest);
 
-  /// Seal and move chunk refs into published list (this store cleared). Fails without abort when
-  /// extmem and internal heap cannot admit the published vector.
+  /// Seal and move chunk refs into committed list (this store cleared). Fails without abort when
+  /// extmem and internal heap cannot admit the committed vector.
   bool detachChunksToCommittedChunkIds(CommittedChunkIdList& dest);
 
   /// Take ownership of capture chunk refs from ids (ids cleared). CaptureBuilder only.
   void adoptChunkIds(CaptureChunkIdList& ids);
 
-  /// Assign missing note ids on note-ons in place (no flatten/reload).
+  /// Assign missing note ids on note-ons in place (no copyEventsTo/reload).
   template <typename AssignNoteIdFn>
   void assignMissingNoteIdsToNoteOns(AssignNoteIdFn assignNoteId);
 

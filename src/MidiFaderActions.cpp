@@ -4,9 +4,9 @@
 #include "MidiFaderActions.h"
 #include "Logger.h"
 #include "TrackManager.h"
-#include "NoteEditManager.h"
+#include "ControlSurfaceManager.h"
 
-extern NoteEditManager noteEditManager;
+extern ControlSurfaceManager controlSurfaceManager;
 
 MidiFaderActions::MidiFaderActions() {
 }
@@ -67,25 +67,25 @@ void MidiFaderActions::handleChangeNoteValue(uint8_t ccValue) {
 }
 
 void MidiFaderActions::handleSelectFaderInput(int16_t pitchbendValue, Track& track) {
-    // Delegate to the existing NoteEditManager logic for note selection
+    // Delegate to the existing ControlSurfaceManager logic for note selection
     logger.log(CAT_MIDI, LOG_DEBUG, "Executing fader action: type=1 fader=1 pitchbend=%d cc=0", pitchbendValue);
-    noteEditManager.handleSelectFaderInput(pitchbendValue, track);
+    controlSurfaceManager.handleSelectFaderInput(pitchbendValue, track);
 }
 
 void MidiFaderActions::handleCoarseFaderInput(int16_t pitchbendValue, Track& track) {
-    // Delegate to the existing NoteEditManager logic for coarse movement
+    // Delegate to the existing ControlSurfaceManager logic for coarse movement
     logger.log(CAT_MIDI, LOG_DEBUG, "Executing fader action: type=2 fader=2 pitchbend=%d cc=0", pitchbendValue);
-    noteEditManager.handleCoarseFaderInput(pitchbendValue, track);
+    controlSurfaceManager.handleCoarseFaderInput(pitchbendValue, track);
 }
 
 void MidiFaderActions::handleFineFaderInput(uint8_t ccValue, Track& track) {
-    // Delegate to the existing NoteEditManager logic for fine movement
+    // Delegate to the existing ControlSurfaceManager logic for fine movement
     logger.log(CAT_MIDI, LOG_DEBUG, "Executing fader action: type=3 fader=3 pitchbend=0 cc=%d", ccValue);
-    noteEditManager.handleFineFaderInput(ccValue, track);
+    controlSurfaceManager.handleFineFaderInput(ccValue, track);
 }
 
 void MidiFaderActions::handleNoteValueFaderInput(uint8_t ccValue, Track& track) {
-    // Delegate to the existing NoteEditManager logic for note value changes
+    // Delegate to the existing ControlSurfaceManager logic for note value changes
     logger.log(CAT_MIDI, LOG_DEBUG, "Executing fader action: type=4 fader=4 pitchbend=0 cc=%d", ccValue);
-    noteEditManager.handleNoteValueFaderInput(ccValue, track);
+    controlSurfaceManager.handleNoteValueFaderInput(ccValue, track);
 } 

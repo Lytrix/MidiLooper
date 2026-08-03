@@ -76,11 +76,11 @@ const char* capturePhaseLabel(CapturePhase phase) {
 
 void sortCaptureStoreByTick(LoopEventStore& store) {
   SessionMidiEventVec sorted;
-  store.flatten(sorted);
+  store.copyEventsTo(sorted);
   std::stable_sort(sorted.begin(), sorted.end(),
                    [](const MidiEvent& a, const MidiEvent& b) { return a.tick < b.tick; });
   store.clear();
-  store.loadFromFlat(sorted);
+  store.loadFromEvents(sorted);
 }
 
 void markPreviewSpan(CapturePreview& preview, uint32_t startTick, uint32_t endTick, uint32_t ticksPerBar) {
@@ -128,7 +128,7 @@ void applyCaptureEventToPreview(CapturePreview& preview, const MidiEvent& evt, u
 
 void rebuildCapturePreviewFromStore(Loop& loop) {
   MidiEventVec flat;
-  loop.capture.store.flatten(flat);
+  loop.capture.store.copyEventsTo(flat);
   const NoteUtils::DisplayNoteVec rebuiltNotes =
       NoteUtils::reconstructDisplayNotes(flat, loop.loopLengthTicks, false);
   loop.capturePreview.notes.assign(rebuiltNotes.begin(), rebuiltNotes.end());
@@ -266,7 +266,7 @@ bool Loop::hasCommittedPasses() const {
 
 uint32_t Loop::findLastCommittedEventTick() const {
   uint32_t lastTick = 0;
-  // Use chunk lastTick metadata only — never flatten into MidiEventVec (InternalHeap).
+  // Use chunk lastTick metadata only — never copyEventsTo into MidiEventVec (InternalHeap).
   // Adopt/reconcile during focus LoadLoopJob Commit while PLAYING otherwise abort()s
   // when RAM1 cannot hold a 256-event scratch (session_20260718_235129: silence after
   // parse edits grain, before apply_us).
@@ -379,16 +379,16 @@ void Loop::mergeActiveCapturePasses(SessionMidiEventVec& out) const {
 
 void Loop::materializeEditViewFromPasses() const {
   Loop* self = const_cast<Loop*>(this);
-  const bool storeEmptyPublished =
+  const bool storeEmptyMaterialized =
       self->hasCommittedPasses() && self->passesMaterializedStore_.readStore().empty() &&
       self->passes.editPasses.empty();
-  if (!passesMaterializedStoreStale_ && !storeEmptyPublished) {
+  if (!passesMaterializedStoreStale_ && !storeEmptyMaterialized) {
     return;
   }
   LoopEventStore::enterEphemeralSeal();
   passes.materialize(self->passesMaterializedStore_.mutStore(), self->loopLengthTicks);
   LoopEventStore::leaveEphemeralSeal();
-  self->passesMaterializedStore_.discardFlatCache();
+  self->passesMaterializedStore_.discardEventsCache();
   self->passesMaterializedStoreStale_ = false;
 }
 
@@ -579,12 +579,12 @@ void Loop::markPassDerivedStale() {
 
 SessionMidiEventVec& Loop::midiEvents() {
   materializeEditViewFromPasses();
-  return passesMaterializedStore_.mutFlat();
+  return passesMaterializedStore_.mutEvents();
 }
 
 const SessionMidiEventVec& Loop::midiEvents() const {
   materializeEditViewFromPasses();
-  return passesMaterializedStore_.readFlat();
+  return passesMaterializedStore_.readEvents();
 }
 
 LoopSnapshotRef Loop::sharePassesSnapshot() const {
@@ -647,7 +647,7 @@ void Loop::restorePassesSnapshot(const PersistedLoopSnapshot& snapshot) {
 
 void Loop::discardPassesMaterializedCache() {
   passesMaterializedStore_.mutStore().clear();
-  passesMaterializedStore_.discardFlatCache();
+  passesMaterializedStore_.discardEventsCache();
   passesMaterializedStoreStale_ = true;
 }
 
@@ -760,7 +760,7 @@ void Loop::shiftActiveCapturePassTicks(int64_t delta) {
     LoopEventStore::appendChunkRefEvents(passes.recordPass.committedChunkIds, flat);
     if (!flat.empty()) {
       LoopEventStore staging;
-      staging.loadFromFlat(flat);
+      staging.loadFromEvents(flat);
       staging.shiftAllTicks(delta);
       LoopEventStore temp;
       temp.adoptAll(staging);
@@ -782,7 +782,7 @@ void Loop::shiftActiveCapturePassTicks(int64_t delta) {
       continue;
     }
     LoopEventStore staging;
-    staging.loadFromFlat(flat);
+    staging.loadFromEvents(flat);
     staging.shiftAllTicks(delta);
     LoopEventStore temp;
     temp.adoptAll(staging);
@@ -858,7 +858,7 @@ bool Loop::removeOpenCaptureNoteOn(uint8_t channel, uint8_t note) {
   ensureCaptureEventsSorted();
 
   SessionMidiEventVec flat;
-  capture.store.flatten(flat);
+  capture.store.copyEventsTo(flat);
   if (flat.empty()) {
     return false;
   }
@@ -903,7 +903,7 @@ bool Loop::removeOpenCaptureNoteOn(uint8_t channel, uint8_t note) {
 
   capture.store.clear();
   if (!kept.empty()) {
-    capture.store.loadFromFlat(kept);
+    capture.store.loadFromEvents(kept);
   }
   captureEventsSortDirty = false;
   rebuildCapturePreviewFromStore(*this);
@@ -916,7 +916,7 @@ bool Loop::captureHasNoteOffAfter(uint8_t channel, uint8_t note, uint32_t onTick
     return false;
   }
   SessionMidiEventVec flat;
-  capture.store.flatten(flat);
+  capture.store.copyEventsTo(flat);
   for (const MidiEvent& evt : flat) {
     if (evt.isNoteOff() && evt.channel == channel && evt.data.noteData.note == note &&
         evt.tick > onTick) {
@@ -937,7 +937,7 @@ size_t Loop::liveEventCount() const {
 }
 
 size_t Loop::displayEventCountHint() const {
-  size_t count = publishedMaterializedEventCount_;
+  size_t count = materializedEventCount_;
   if (captureActive()) {
     count += capture.store.size();
   }
@@ -968,14 +968,14 @@ void Loop::mergeMaterializedPassesWithCapture(SessionMidiEventVec& out) const {
 namespace {
 
 template <typename MidiEventVector>
-void mergeCaptureStoreIntoPublishedFlat(const Loop& loop, MidiEventVector& out) {
+void mergeCaptureStoreIntoMaterializedEvents(const Loop& loop, MidiEventVector& out) {
   if (!loop.captureActive() || loop.capture.store.empty()) {
     return;
   }
   const_cast<Loop&>(loop).ensureCaptureEventsSorted();
 
   MidiEventVector captureFlat;
-  loop.capture.store.flatten(captureFlat);
+  loop.capture.store.copyEventsTo(captureFlat);
   if (out.empty()) {
     out = std::move(captureFlat);
     return;
@@ -1104,7 +1104,7 @@ LOOP_COLD_MEM void Loop::gatherCommittedEventsInWindowWithCapture(SessionMidiEve
   }
   SessionMidiEventVec captureFlat;
   const_cast<Loop*>(this)->ensureCaptureEventsSorted();
-  capture.store.flatten(captureFlat);
+  capture.store.copyEventsTo(captureFlat);
   SessionMidiEventVec captureWindow;
   DisplayWindowUtils::filterMidiEventsToWindow(captureFlat, captureWindow, windowStart, windowLength,
                                                loopLengthTicks);
@@ -1139,12 +1139,12 @@ LOOP_COLD_MEM void Loop::gatherCommittedEventsForDerivedView(MidiEventVec& flat)
 
 LOOP_COLD_MEM void Loop::gatherCommittedEventsWithCapture(SessionMidiEventVec& flat) const {
   gatherCommittedEvents(flat);
-  mergeCaptureStoreIntoPublishedFlat(*this, flat);
+  mergeCaptureStoreIntoMaterializedEvents(*this, flat);
 }
 
 LOOP_COLD_MEM void Loop::gatherCommittedEventsWithCapture(MidiEventVec& flat) const {
   gatherCommittedEvents(flat);
-  mergeCaptureStoreIntoPublishedFlat(*this, flat);
+  mergeCaptureStoreIntoMaterializedEvents(*this, flat);
 }
 
 NoteId Loop::allocateNoteId() {
@@ -1201,7 +1201,7 @@ void Loop::resetPassTimeline() {
   pendingVisualDelta.clear();
   visualCacheDirty = true;
   passesMaterializedStore_.mutStore().clear();
-  passesMaterializedStore_.discardFlatCache();
+  passesMaterializedStore_.discardEventsCache();
   passesMaterializedStoreStale_ = true;
 }
 
@@ -1271,7 +1271,7 @@ CommitResult Loop::commitCapturePass(CommitReason reason, uint32_t sealedAtTick)
 
   const uint32_t publishHeapBefore = MemoryMonitor::getInternalHeapFreeBytes();
   const uint32_t publishStartUs = traceMicros();
-  if (!publishPendingCapturePass()) {
+  if (!commitPendingCapturePass()) {
     const uint32_t publishDurationUs = traceMicros() - publishStartUs;
     const uint32_t publishHeapAfter = MemoryMonitor::getInternalHeapFreeBytes();
     emitStage("publish", publishDurationUs, publishHeapBefore, publishHeapAfter, "failed");
@@ -1282,7 +1282,7 @@ CommitResult Loop::commitCapturePass(CommitReason reason, uint32_t sealedAtTick)
   emitStage("publish", publishDurationUs, publishHeapBefore, publishHeapAfter, "ok");
 
   markPassDerivedStale();
-  return CommitResult::Published;
+  return CommitResult::Committed;
 }
 
 size_t Loop::activeCapturePassCount() const {
@@ -1462,7 +1462,7 @@ LOOP_COLD_MEM void Loop::rebuildVisualCacheFromPasses() {
   DIAG_COUNTER_INC(DisplayFullRebuild);
   SessionMidiEventVec flat;
   gatherCommittedEvents(flat);
-  publishedMaterializedEventCount_ = flat.size();
+  materializedEventCount_ = flat.size();
   const NoteUtils::DisplayNoteVec rebuiltNotes =
       NoteUtils::reconstructDisplayNotes(flat, loopLengthTicks, false);
   visualCache.notes.assign(rebuiltNotes.begin(), rebuiltNotes.end());
@@ -1572,7 +1572,7 @@ SealOutcome Loop::sealCapture(uint32_t sealedAtTick) {
   return SealOutcome::Ok;
 }
 
-bool Loop::publishPendingCapturePass() {
+bool Loop::commitPendingCapturePass() {
   if (!hasPendingCapturePass_) {
     return false;
   }
@@ -1622,7 +1622,7 @@ void Loop::invalidateCaches() {
 
 void Loop::invalidatePlaybackCaches() {
   playbackOrderDirty = true;
-  passesMaterializedStore_.discardFlatCache();
+  passesMaterializedStore_.discardEventsCache();
   if (noteCache_) {
     noteCache_->invalidate();
   }

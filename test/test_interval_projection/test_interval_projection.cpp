@@ -507,6 +507,33 @@ void test_at_loop_start_preserve_no_uint32_max_catchup() {
         IntervalProjection::isPlaybackAtLoopStart(UINT32_MAX, 88U, false));
 }
 
+void test_playback_catch_up_window_differs_from_at_loop_start() {
+    TEST_ASSERT_TRUE(IntervalProjection::isPlaybackCatchUpWindow(88U, 88U));
+    TEST_ASSERT_FALSE(IntervalProjection::isPlaybackAtLoopStart(88U, 88U, true));
+    TEST_ASSERT_TRUE(IntervalProjection::isPlaybackCatchUpWindow(UINT32_MAX, 5U));
+    TEST_ASSERT_TRUE(IntervalProjection::isPlaybackCatchUpWindow(2200U, 50U));
+}
+
+void test_did_playback_event_cross_mid_interval() {
+    TEST_ASSERT_FALSE(
+        IntervalProjection::didPlaybackEventCross(false, 15U, 10U, 25U));
+    TEST_ASSERT_TRUE(
+        IntervalProjection::didPlaybackEventCross(false, 15U, 20U, 25U));
+    TEST_ASSERT_FALSE(
+        IntervalProjection::didPlaybackEventCross(false, 15U, 30U, 25U));
+}
+
+void test_did_playback_event_cross_loop_start_catch_up() {
+    TEST_ASSERT_TRUE(
+        IntervalProjection::didPlaybackEventCross(true, 95U, 0U, 5U));
+    TEST_ASSERT_TRUE(
+        IntervalProjection::didPlaybackEventCross(true, 95U, 2U, 5U));
+    TEST_ASSERT_TRUE(
+        IntervalProjection::didPlaybackEventCross(true, 95U, 5U, 5U));
+    TEST_ASSERT_FALSE(
+        IntervalProjection::didPlaybackEventCross(true, 95U, 6U, 5U));
+}
+
 int main(int /*argc*/, char** /*argv*/) {
     UNITY_BEGIN();
     RUN_TEST(test_tick_interval_intersects_spec_example);
@@ -542,5 +569,8 @@ int main(int /*argc*/, char** /*argv*/) {
     RUN_TEST(test_at_loop_start_same_phase_not_retrigger);
     RUN_TEST(test_at_loop_start_wrap_backward);
     RUN_TEST(test_at_loop_start_preserve_no_uint32_max_catchup);
+    RUN_TEST(test_playback_catch_up_window_differs_from_at_loop_start);
+    RUN_TEST(test_did_playback_event_cross_mid_interval);
+    RUN_TEST(test_did_playback_event_cross_loop_start_catch_up);
     return UNITY_END();
 }

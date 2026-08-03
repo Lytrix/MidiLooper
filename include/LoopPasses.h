@@ -29,7 +29,7 @@ enum class SealOutcome : uint8_t {
   PoolExhausted,
 };
 
-enum class CommitResult : uint8_t { Skipped, Published, SealFailed };
+enum class CommitResult : uint8_t { Skipped, Committed, SealFailed };
 
 enum class CommitReason : uint8_t {
   RecordStop,
@@ -72,12 +72,12 @@ struct Capture {
   CapturePhase phase = CapturePhase::None;
 };
 
-using PublishedOverdubPassVec =
+using CommittedOverdubPassVec =
     std::vector<OverdubPass, ExternalMemoryFirstAllocator<OverdubPass>>;
 
 struct LoopPasses {
   RecordPass recordPass{};
-  PublishedOverdubPassVec overdubPasses;
+  CommittedOverdubPassVec overdubPasses;
   EditPassVec editPasses;
 
   bool hasRecordPass() const { return recordPass.id != kInvalidPassId; }

@@ -41,6 +41,8 @@ public:
     
     // Loop length editing
     void handleLoopLengthInput(uint8_t ccValue, Track& track);
+    /** DROID motor fader2 may report loop length on ch14 pitchbend instead of ch16/CC101. */
+    void handleLoopLengthPitchbend(int16_t pitchValue, Track& track);
     void sendCurrentLoopLengthCC(Track& track);
     void sendCurrentLoopStartPitchbend(Track& track);
 
@@ -129,5 +131,7 @@ private:
     bool shouldIgnoreLoopFaderInput() const;
     std::vector<uint32_t> buildLoopStartFaderPositions(const Track& track) const;
 };
+
+extern LoopEditManager loopEditManager;
 
 #endif // LOOP_EDIT_MANAGER_H 

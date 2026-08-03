@@ -41,8 +41,12 @@ TrackState transportAfterEmptyRecordStop(bool anySlotHasData) {
   return anySlotHasData ? TRACK_STOPPED : TRACK_EMPTY;
 }
 
-TrackState transportAfterClearActiveSlot(bool anySlotHasData, TrackState priorTransport) {
+TrackState transportAfterClearActiveSlot(bool anySlotHasData, TrackState priorTransport,
+                                         bool activeSlotHasData) {
   if (anySlotHasData) {
+    if (priorTransport == TRACK_PLAYING && !activeSlotHasData) {
+      return TRACK_STOPPED;
+    }
     if (priorTransport == TRACK_PLAYING || priorTransport == TRACK_OVERDUBBING) {
       return priorTransport;
     }
@@ -85,13 +89,16 @@ void test_empty_record_stop_with_sibling_data_stays_stopped() {
   TEST_ASSERT_EQUAL(TRACK_EMPTY, transportAfterEmptyRecordStop(false));
 }
 
-void test_clear_active_slot_preserves_playing_when_sibling_has_data() {
-  TEST_ASSERT_EQUAL(TRACK_PLAYING,
-                    transportAfterClearActiveSlot(true, TRACK_PLAYING));
+void test_clear_active_slot_stops_playing_when_active_empty() {
+  // Sibling still has data, but cleared active has none — must leave PLAYING (re-arm).
   TEST_ASSERT_EQUAL(TRACK_STOPPED,
-                    transportAfterClearActiveSlot(true, TRACK_STOPPED));
+                    transportAfterClearActiveSlot(true, TRACK_PLAYING, false));
+  TEST_ASSERT_EQUAL(TRACK_PLAYING,
+                    transportAfterClearActiveSlot(true, TRACK_PLAYING, true));
+  TEST_ASSERT_EQUAL(TRACK_STOPPED,
+                    transportAfterClearActiveSlot(true, TRACK_STOPPED, false));
   TEST_ASSERT_EQUAL(TRACK_EMPTY,
-                    transportAfterClearActiveSlot(false, TRACK_PLAYING));
+                    transportAfterClearActiveSlot(false, TRACK_PLAYING, false));
 }
 
 void test_display_shows_empty_when_selected_slot_cleared_but_transport_stopped() {
@@ -114,7 +121,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_any_slot_has_data_false_when_all_empty);
   RUN_TEST(test_cancel_arm_with_sibling_data_goes_stopped_not_empty);
   RUN_TEST(test_empty_record_stop_with_sibling_data_stays_stopped);
-  RUN_TEST(test_clear_active_slot_preserves_playing_when_sibling_has_data);
+  RUN_TEST(test_clear_active_slot_stops_playing_when_active_empty);
   RUN_TEST(test_display_shows_empty_when_selected_slot_cleared_but_transport_stopped);
   RUN_TEST(test_armed_display_when_record_queued_on_empty_selected_slot);
   return UNITY_END();

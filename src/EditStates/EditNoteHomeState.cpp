@@ -1,7 +1,7 @@
 //  Copyright (c)  2025 Lytrix (Eelke Jager)
 //  Licensed under the PolyForm Noncommercial 1.0.0
 
-#include "EditNoteHomeState.h"
+#include "EditStates/EditNoteHomeState.h"
 #include "EditManager.h"
 #include "Track.h"
 #include "Logger.h"

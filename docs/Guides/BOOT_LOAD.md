@@ -48,8 +48,8 @@ sequenceDiagram
 |------|-------|-------|
 | Pool + loop RAM alloc | `MemoryPool`, `TrackManager` | Before USB Host heap use |
 | `midiHandler.setup()` | DIN MIDI only | `BOOT,usb_host,deferred` |
-| Early OLED + OSTINATIX title | `DisplayManager::beginBootOled` / `drawBootScreen` | Title held until audible drain |
-| `looper.setup()` → `loadState` | `StorageManager` | Bundle read, manifest scan, hydrate metadata all payloads, **enqueue boot playback set** (`isAudibleBootSlot` = per-track union of file selected + file active) |
+| Early OLED + OSTINATIX title | `DisplayManager::beginBootOled` / `drawBootScreen` | Title held until boot playback drain |
+| `looper.setup()` → `loadState` | `StorageManager` | Bundle read, manifest scan, hydrate metadata all payloads, **enqueue boot playback set** (`isBootPlaybackSlot` = per-track union of file selected + file active) |
 | `sendEditSessionChange(Loop)` | `EditManager` | PC + fader feedback to **USB device** MIDI only |
 
 `bootLoadInProgress_` suppresses `forceLedUpdate` during `loadState` only. It is cleared before `setup()` returns.
@@ -58,10 +58,10 @@ sequenceDiagram
 
 | Step | Gate | Notes |
 |------|-------|-------|
-| Boot slot restore | `bootSlotLoadRefreshPending` && idle && turn free | **Audible only** — `DeferredJobScheduler::runFrame(BootTitleRestoreUs)`; demote/park **disabled** until title clears |
+| Boot slot restore | `bootSlotLoadRefreshPending` && idle && turn free | **Boot playback set only** — `DeferredJobScheduler::runFrame(BootTitleRestoreUs)`; demote/park **disabled** until title clears |
 | Post-boot slot restore | after ready + holdoff; PLAYING allows focus/`LoadLoopJob` only | `FocusRestoreUs` / `BackgroundRestoreUs`; demote parks one in-flight job |
 | Deferred undo hydrate | same | Reads undo bodies from bundle |
-| **finishBootSetup + USB Host** | `bootInteractiveReady()` (audible queue empty && !session && !active/parked LoadLoopJob) | Then first piano-roll paint at COMMITTED |
+| **finishBootSetup + USB Host** | `bootInteractiveReady()` (boot playback queue empty && !session && !active/parked LoadLoopJob) | Then first piano-roll paint at COMMITTED |
 | DROID LED refresh | after `beginUsbHost` | `clearLeds`, note 100 flash, `onBootSlotLoadComplete` |
 | Mid-pass persistence | idle transport | `PERS,mid_pass` during/after restore |
 
@@ -112,7 +112,7 @@ After a long loop load, `stabilizeBootMemoryAfterLoad()` may clear undo stacks w
 | `src/main.cpp` | Setup order; `bootSlotLoadRefreshPending` gate; load frame before display |
 | `src/StorageManager.cpp` | `stepSubmittedLoadJobs` (via `DeferredJobScheduler::runFrame`), `LoadLoopJob` active+parked, `bootInteractiveReady` |
 | `include/LoadLoopBudget.h` | Focus / Background / BootTitle µs budgets |
-| `include/Utils/BootLoopSlotRestore.h` | `isAudibleBootSlot` / boot restore priority |
+| `include/Utils/BootLoopSlotRestore.h` | `isBootPlaybackSlot` / boot restore priority |
 | `src/MidiHandler.cpp` | `beginUsbHost`, enumeration poll |
 | `src/TrackManager.cpp` | `beginBootLoad` / `onBootSlotLoadComplete` |
 | `src/DisplayManager.cpp` | `drawBootScreen` / `finishBootSetup` title gate |

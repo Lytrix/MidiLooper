@@ -232,7 +232,7 @@ While transport is **running:**
 | Quantized record start | `handleQuantizedStart` |
 | Capture finalize | `finalizeCaptureAndSelectSlot` |
 | Layer-hold commit | `endSlotSelectionHold` → `pendingMultiSlotCommit` (audit: prefer scheduler routing; interim until task 3.4) |
-| Post-clear restore | `restoreAudiblePlaybackAfterSlotClear` |
+| Post-clear restore | `restorePlaybackAfterSlotClear` |
 
 Launch **timing** is policy; launch **ownership** is committed-transition paths above. Interim firmware uses `requestPendingSlotSwitch`; future `SlotActionQueue` preserves this invariant.
 

@@ -534,19 +534,19 @@ SC_MEM_ATTR void captureCoordinate(uint32_t absTick, uint32_t storageTick, uint3
 }
 
 SC_MEM_ATTR void displaySnapshot(uint8_t slot, const char* trackState, uint32_t loopLen,
-                                 size_t takeEvents, size_t visualNotes, size_t frameNotes,
+                                 size_t sourceEventCount, size_t visualNotes, size_t frameNotes,
                                  size_t bufferEvents, int published) {
   emitCapPrintf("#CAP,%lu,DISP,%u,%s,%lu,%zu,%zu,%zu,%zu,%d", (unsigned long)micros(), slot,
-                trackState, (unsigned long)loopLen, takeEvents, visualNotes, frameNotes,
+                trackState, (unsigned long)loopLen, sourceEventCount, visualNotes, frameNotes,
                 bufferEvents, published);
 }
 
 SC_MEM_ATTR void displaySnapshotWindow(uint8_t slot, const char* trackState, uint32_t loopLen,
-                                       size_t takeEvents, size_t visualNotes, size_t frameNotes,
+                                       size_t sourceEventCount, size_t visualNotes, size_t frameNotes,
                                        size_t bufferEvents, int published, uint32_t windowStartTick,
                                        uint8_t windowBars, size_t windowNoteCount) {
   emitCapPrintf("#CAP,%lu,DISP,%u,%s,%lu,%zu,%zu,%zu,%zu,%d,%lu,%u,%zu",
-                (unsigned long)micros(), slot, trackState, (unsigned long)loopLen, takeEvents,
+                (unsigned long)micros(), slot, trackState, (unsigned long)loopLen, sourceEventCount,
                 visualNotes, frameNotes, bufferEvents, published, (unsigned long)windowStartTick,
                 windowBars, windowNoteCount);
 }

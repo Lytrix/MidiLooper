@@ -43,8 +43,7 @@ public:
     // Access to processor for external coordination
     MidiFaderProcessor& getProcessor() { return processor; }
     
-    // Fader update control
-    void scheduleOtherFaderUpdates(MidiMapping::FaderType driverFader);
+    // Sent-time / ignore-window bookkeeping (cross-fader schedule lives on ControlSurfaceManager)
     void markFaderSent(MidiMapping::FaderType faderType);
     
     // Statistics and debugging

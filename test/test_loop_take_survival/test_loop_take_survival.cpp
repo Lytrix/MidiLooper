@@ -23,7 +23,7 @@ namespace {
 
 constexpr uint32_t kLoopLen = Config::TICKS_PER_BAR * 8;
 
-void seedPublishedPair(Loop& loop) {
+void seedCommittedPair(Loop& loop) {
   LoopEventStore store;
   TEST_ASSERT_TRUE(store.append(MidiEvent::NoteOn(10, 1, 60, 100)));
   TEST_ASSERT_TRUE(store.append(MidiEvent::NoteOff(58, 1, 60, 0)));
@@ -36,7 +36,7 @@ void simulateOverdubSealAndPublish(Loop& loop) {
   TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(200, 1, 64, 90)));
   TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(248, 1, 64, 0)));
   TEST_ASSERT_EQUAL(SealOutcome::Ok, loop.sealCapture(0));
-  TEST_ASSERT_TRUE(loop.publishPendingCapturePass());
+  TEST_ASSERT_TRUE(loop.commitPendingCapturePass());
   loop.rebuildVisualCacheFromPasses();
   loop.invalidateCaches();
 }
@@ -54,7 +54,7 @@ void test_imported_takes_survive_invalidateCaches() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
   Loop loop;
-  seedPublishedPair(loop);
+  seedCommittedPair(loop);
   TEST_ASSERT_EQUAL(2u, loop.nativeTestLiveEventCount());
 
   for (int i = 0; i < 5; ++i) {
@@ -69,7 +69,7 @@ void test_discard_materialization_preserves_takes() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
   Loop loop;
-  seedPublishedPair(loop);
+  seedCommittedPair(loop);
   loop.discardPassesMaterializedCache();
   const size_t before = loop.nativeTestLiveEventCount();
   (void)loop.midiEvents();
@@ -84,7 +84,7 @@ void test_restore_empty_pass_snapshot_clears_takes() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
   Loop loop;
-  seedPublishedPair(loop);
+  seedCommittedPair(loop);
 
   PersistedLoopSnapshot empty{};
   loop.restorePassesSnapshot(empty);
@@ -97,7 +97,7 @@ void test_readonly_flat_access_preserves_takes() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
   Loop loop;
-  seedPublishedPair(loop);
+  seedCommittedPair(loop);
   simulateOverdubSealAndPublish(loop);
   TEST_ASSERT_EQUAL(4u, loop.nativeTestLiveEventCount());
 
@@ -113,7 +113,7 @@ void test_post_overdub_stop_path_preserves_takes() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
   Loop loop;
-  seedPublishedPair(loop);
+  seedCommittedPair(loop);
   simulateOverdubSealAndPublish(loop);
   TEST_ASSERT_EQUAL(4u, loop.nativeTestLiveEventCount());
 
@@ -131,7 +131,7 @@ void test_commit_stop_finalize_empty_merged_preserves_takes() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
   Loop loop;
-  seedPublishedPair(loop);
+  seedCommittedPair(loop);
 
   LoopEventStore emptyMerged;
   loop.commitStopFinalizeFromStore(emptyMerged);
@@ -144,7 +144,7 @@ void test_multi_take_flatten_matches_live_event_count() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
   Loop loop;
-  seedPublishedPair(loop);
+  seedCommittedPair(loop);
 
   LoopEventStore odStore;
   TEST_ASSERT_TRUE(odStore.append(MidiEvent::NoteOn(200, 1, 64, 90)));
@@ -168,7 +168,7 @@ void test_pass_snapshot_ignores_derived_flat_mutation() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
   Loop loop;
-  seedPublishedPair(loop);
+  seedCommittedPair(loop);
   const auto before = loop.sharePassesSnapshot();
   TEST_ASSERT_EQUAL(2u, snapshotEventCount(before));
 
@@ -184,7 +184,7 @@ void test_seal_overdub_preserves_record_pass() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
   Loop loop;
-  seedPublishedPair(loop);
+  seedCommittedPair(loop);
   simulateOverdubSealAndPublish(loop);
 
   TEST_ASSERT_TRUE(loop.setCapturePassState(2, CapturePassState::Disabled));
@@ -196,7 +196,7 @@ void test_reclaim_disabled_overdub_releases_published_chunks() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
   Loop loop;
-  seedPublishedPair(loop);
+  seedCommittedPair(loop);
   simulateOverdubSealAndPublish(loop);
   TEST_ASSERT_EQUAL(2u, LoopEventStore::usedChunkCount());
 

@@ -89,6 +89,13 @@ bool didDisplayPlayheadWrapBackward(uint32_t newStoragePhase, uint32_t prevStora
 bool isPlaybackAtLoopStart(uint32_t prevTickInLoop, uint32_t tickInLoop,
                            bool allowFreshOriginCatchUp);
 
+/// Fresh-origin catch-up or backward wrap for MIDI send (uses <=). Not isPlaybackAtLoopStart.
+bool isPlaybackCatchUpWindow(uint32_t prevTickInLoop, uint32_t tickInLoop);
+
+/// True when a playback-order event phase crossed the playhead this tick.
+bool didPlaybackEventCross(bool atLoopStart, uint32_t prevTickInLoop, uint32_t evTick,
+                           uint32_t tickInLoop);
+
 /// Advance cycle origin on wrap; uses loopLength at wrap time.
 int32_t advanceProjectionCycleStartTickOnWrap(int32_t projectionCycleStartTick,
                                             uint32_t loopLengthAtWrap);

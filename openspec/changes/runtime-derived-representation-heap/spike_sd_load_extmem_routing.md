@@ -33,7 +33,7 @@ ChunkIdList deepCloneChunkRefs(const ChunkIdList& refs) {
   MidiEventVec flat;
   LoopEventStore::appendChunkRefEvents(refs, flat);
   LoopEventStore store;
-  store.loadFromFlat(flat);
+  store.loadFromEvents(flat);
   ChunkIdList cloned;
   store.detachChunksTo(cloned);
   return cloned;

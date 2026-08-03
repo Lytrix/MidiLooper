@@ -11,7 +11,7 @@
 #include "Logger.h"
 #include "Utils/NoteUtils.h"
 #include "TickPhase.h"
-#include "NoteEditManager.h"
+#include "ControlSurfaceManager.h"
 #include "NoteEditFocus.h"
 #include "NoteEditSessionState.h"
 #include "Utils/NoteEditDisplaySnapshot.h"
@@ -278,15 +278,15 @@ std::vector<NoteUtils::OpenNoteOn> findCaptureOpenNoteOnsFromPreview(const Loop&
     return opens;
 }
 
-std::vector<NoteUtils::OpenNoteOn> findCaptureOpenNoteOns(const Loop& loop) {
-    if (loop.loopLengthTicks == 0 || loop.capture.store.empty()) {
-        return {};
+/// Sort capture store if needed, then copy into out (clears out). Shared by live display paths.
+void copySortedCaptureEvents(const Loop& loop, SessionMidiEventVec& out) {
+    if (loop.capture.store.empty()) {
+        out.clear();
+        return;
     }
     Loop& mutLoop = const_cast<Loop&>(loop);
     mutLoop.ensureCaptureEventsSorted();
-    SessionMidiEventVec captureFlat;
-    loop.capture.store.flatten(captureFlat);
-    return NoteUtils::findOpenNoteOns(captureFlat, loop.loopLengthTicks);
+    loop.capture.store.copyEventsTo(out);
 }
 
 template <typename Alloc>
@@ -784,8 +784,7 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotes(const
             committedDisplayEnd = 0;
             if (liveDisplayNotes.empty() && track.isRecording() && !loop.capture.store.empty()) {
                 SessionMidiEventVec captureFlat;
-                mutLoop.ensureCaptureEventsSorted();
-                loop.capture.store.flatten(captureFlat);
+                copySortedCaptureEvents(loop, captureFlat);
                 if (!captureFlat.empty()) {
                     const NoteUtils::DisplayNoteVec reconstructed =
                         NoteUtils::reconstructDisplayNotes(captureFlat, liveLoopLength, false);
@@ -844,9 +843,7 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotes(const
                     findCaptureOpenNoteOnsFromPreview(loop);
                 if (!captureOpens.empty()) {
                     SessionMidiEventVec captureEvents;
-                    Loop& mutLoop = const_cast<Loop&>(loop);
-                    mutLoop.ensureCaptureEventsSorted();
-                    loop.capture.store.flatten(captureEvents);
+                    copySortedCaptureEvents(loop, captureEvents);
                     applyCapturePlayheadTails(captureOpens, captureEvents, liveLoopLength,
                                               playheadCloseTick, committedDisplayEnd, liveDisplayNotes);
                 }
@@ -1092,20 +1089,20 @@ DISP_CAPTURE_MEM void DisplayManager::maybeEmitDisplayCaptureOnChange(const Trac
     static uint8_t lastSlot = 255;
     static TrackState lastState = NUM_TRACK_STATES;
     static uint32_t lastLoopLen = 0;
-    static size_t lastTakeEvents = static_cast<size_t>(-1);
+    static size_t lastSourceEventCount = static_cast<size_t>(-1);
 
     const Loop& loop = track.getLoop(displaySlot);
     const TrackState state = track.getState();
     const uint32_t loopLen = resolveDisplayLoopLength(track, displaySlot, currentTick);
     const size_t frameNoteCount = frameNotes.size();
-    const size_t takeEvents =
+    const size_t sourceEventCount =
         (track.isRecording() && !track.isPlaying()) ? loop.capture.store.size() : frameNoteCount;
 
     const bool changed = frameNoteCount != lastFrameNotes || displaySlot != lastSlot ||
                          state != lastState || loopLen != lastLoopLen ||
-                         takeEvents != lastTakeEvents;
+                         sourceEventCount != lastSourceEventCount;
     const bool regression =
-        loopLen > 0 && loop.hasCommittedPasses() && frameNoteCount == 0 && takeEvents > 0;
+        loopLen > 0 && loop.hasCommittedPasses() && frameNoteCount == 0 && sourceEventCount > 0;
 
     if (!changed && !regression) {
         return;
@@ -1124,7 +1121,7 @@ DISP_CAPTURE_MEM void DisplayManager::maybeEmitDisplayCaptureOnChange(const Trac
     lastSlot = displaySlot;
     lastState = state;
     lastLoopLen = loopLen;
-    lastTakeEvents = takeEvents;
+    lastSourceEventCount = sourceEventCount;
     emitDisplayCaptureSnapshot(track, displaySlot, currentTick, frameNotes);
 }
 

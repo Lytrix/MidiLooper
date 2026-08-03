@@ -37,22 +37,20 @@ _REV_LOAD_COMPLETE_RE = re.compile(
     r"#CAP,\d+,PERS,rev_load_complete,\d+,\d+,\d+,S\d{4}_v\d{4}\b"
 )
 
-
 def _track_select_note(track_number_1based: int) -> int:
-    from host_midi_automation_baseline import TRACK_SELECT_NOTE_BASE
+    from hitl.control_constants import TRACK_SELECT_NOTE_BASE
 
     return TRACK_SELECT_NOTE_BASE + (track_number_1based - 1)
 
-
 def run_revision_load_dirty(args: object) -> int:
-    from host_midi_automation_baseline import (
-        CONTROL_CHANNEL_1BASED,
-        SerialCaptureCollector,
+    from hitl.control_constants import CONTROL_CHANNEL_1BASED
+    from hitl.serial_collector import SerialCaptureCollector
+    from hitl.midi_io import (
         _drain_input_messages,
         _find_midi_port,
         _send_short_press,
     )
-    from host_midi_automation_edit_baseline import _send_double_press
+    from hitl.edit_controls import _send_double_press
 
     choice = str(getattr(args, "dirty_prompt_choice", "") or "").lower()
     if choice not in DIRTY_PROMPT_ROW:
@@ -326,16 +324,13 @@ def run_revision_load_dirty(args: object) -> int:
         in_port.close()
         _drain_input_messages(in_port)
 
-
 def run_revision_load_dirty_yes(args: object) -> int:
     setattr(args, "dirty_prompt_choice", "yes")
     return run_revision_load_dirty(args)
 
-
 def run_revision_load_dirty_no(args: object) -> int:
     setattr(args, "dirty_prompt_choice", "no")
     return run_revision_load_dirty(args)
-
 
 def run_revision_load_dirty_cancel(args: object) -> int:
     setattr(args, "dirty_prompt_choice", "cancel")

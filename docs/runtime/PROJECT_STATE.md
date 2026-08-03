@@ -2,13 +2,15 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-07-19 (archived deferred-job-scheduler Phase B)
+Last updated: 2026-08-03 (note-edit control-surface split complete)
 
 ---
 
 ## Current branch
 
-**`feature/deferred-lazy-load`** — Phase B archived `openspec/changes/archive/2026-07-19-deferred-job-scheduler/`. Specs: `openspec/specs/deferred-job-scheduler/`. See [CURRENT_WORK.md](CURRENT_WORK.md).
+**`chore/note-edit-control-surface-split`** — Phases 0–8 complete (Phase 7 `c244280`, Phase 8 uncommitted): `NoteEditManager` → `ControlSurfaceManager`, NOTE_EDIT physical ingress consolidated. See [CURRENT_WORK.md](CURRENT_WORK.md).
+
+**`feature/deferred-lazy-load`** — Phase B archived `openspec/changes/archive/2026-07-19-deferred-job-scheduler/`. Specs: `openspec/specs/deferred-job-scheduler/`.
 
 *(Parallel: **`feature/persistence-work-queue`** @ `8b3f93e` — B1–B5 on `dev`.)*
 
@@ -24,8 +26,11 @@ See [`docs/BRANCHING.md`](../BRANCHING.md).
 
 ## In flight
 
-- **Active:** OpenSpec [`deferred-job-scheduler`](../../openspec/changes/deferred-job-scheduler/) — **B.1–B.2**; B.1 gate [`231510`](../../captures/session_20260718_231510.log)
+- **Note-edit control-surface split:** **complete** on `chore/note-edit-control-surface-split` — Phases 0–8; see [note_edit_control_surface_split_refinement.md](../plans/note_edit_control_surface_split_refinement.md)
+- **Next product slice:** confirm with user (persistence/overlay hardening, or parked large-slot display hunt) — see [CURRENT_WORK.md](CURRENT_WORK.md)
+- **Archived this branch:** OpenSpec [`deferred-job-scheduler`](../../openspec/changes/archive/2026-07-19-deferred-job-scheduler/) Phase B — gates B.1 [`231510`](../../captures/session_20260718_231510.log), B.3/B.4 [`022107`](../../captures/session_20260719_022107.log); specs in `openspec/specs/deferred-job-scheduler/`
 - Memory reclaim + boot/display stack — **merged to `dev`** (PR #4)
+- **Hygiene (`chore/codebase-hygiene-sprint1`):** safe debt **complete** — see [`codebase_hygiene_technical_debt_review.md`](../plans/codebase_hygiene_technical_debt_review.md); sprint plans Status Done + [README index](../plans/README.md#hygiene-sprint-chorecodebase-hygiene-sprint1)
 
 ## Shipped on branch (recent)
 
@@ -55,6 +60,7 @@ See [`docs/BRANCHING.md`](../BRANCHING.md).
 
 | Change | Focus |
 |--------|--------|
+| **`deferred-job-scheduler`** | **Archived** `openspec/changes/archive/2026-07-19-deferred-job-scheduler/`; normative `openspec/specs/deferred-job-scheduler/` |
 | **`continuous-runtime-persistence`** | Phase 0–4 shipped; Phase 4 HITL **passed** (`171043` 64+64, `171951` boot restore); Phase 5 recovery **next** |
 | **`runtime-derived-representation-heap`** | M5 Steps 1–1b–2 shipped (`adoptPersistedSnapshot`); lazy load + 64+64 HITL pending |
 | **`slot-selection-focus`** | **Shipped (firmware)** — orchestrator + footer extension; manual §8 pending; [`slot_selection_focus_implementation_handoff.md`](../plans/slot_selection_focus_implementation_handoff.md) |

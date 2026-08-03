@@ -11,7 +11,7 @@ audible-first prewarm scope updated in **unified-commit-lazy-slot-load**.
 Per-slot **LoopPlaybackRuntime** objects and per-loop **playbackOrder** storage SHALL be allocated
 during setup or state load prewarm — not on the first **playMidiEvents** call after transport start.
 
-Prewarm at boot SHALL cover tracks/slots that are enabled for audible boot or already COMMITTED.
+Prewarm at boot SHALL cover tracks/slots that are enabled for boot playback or already COMMITTED.
 Prewarm SHALL NOT require every SD payload slot to be loaded before transport may start after
 audible-first interactive ready.
 

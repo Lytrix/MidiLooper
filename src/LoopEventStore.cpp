@@ -280,7 +280,7 @@ bool LOOP_EVENT_STORE_COLD_MEM LoopEventStore::deepCloneCommittedChunkIds(
     return false;
   }
   LoopEventStore staging;
-  staging.loadFromFlat(flat);
+  staging.loadFromEvents(flat);
   if (staging.empty()) {
     return false;
   }
@@ -639,7 +639,7 @@ void LoopEventStore::mergeFrom(LoopEventStore& other) {
   adoptAll(merged);
 }
 
-void LoopEventStore::flatten(MidiEventVec& out) const {
+void LoopEventStore::copyEventsTo(MidiEventVec& out) const {
   out.clear();
   out.reserve(size());
   for (uint16_t id : chunkIds_) {
@@ -768,7 +768,7 @@ size_t LOOP_EVENT_STORE_COLD_MEM LoopEventStore::countEventsInChunkIds(
   return total;
 }
 
-void LoopEventStore::loadFromFlat(const MidiEventVec& events) {
+void LoopEventStore::loadFromEvents(const MidiEventVec& events) {
   clear();
   for (const MidiEvent& evt : events) {
     if (!append(evt)) {
@@ -849,7 +849,7 @@ void LoopEventStore::dropEventsAtOrBeyondTick(uint32_t tickLimit) {
     }
     if (needsRebuild) {
       MidiEventVec flat;
-      flatten(flat);
+      copyEventsTo(flat);
       MidiEventVec kept;
       kept.reserve(flat.size());
       for (const MidiEvent& evt : flat) {
@@ -858,7 +858,7 @@ void LoopEventStore::dropEventsAtOrBeyondTick(uint32_t tickLimit) {
         }
       }
       clear();
-      loadFromFlat(kept);
+      loadFromEvents(kept);
       return;
     }
   }

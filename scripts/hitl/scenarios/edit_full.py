@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import sys
 
-
 def run_edit_full_scenario(args: object) -> int:
     import host_midi_automation_edit_baseline as edit_baseline
 
@@ -16,7 +15,6 @@ def run_edit_full_scenario(args: object) -> int:
     finally:
         sys.argv = old_argv
 
-
 def verify_edit_full_scenario(lines: list[str], args: object) -> dict[str, object]:
     import host_midi_automation_edit_baseline as edit_baseline
 
@@ -25,7 +23,7 @@ def verify_edit_full_scenario(lines: list[str], args: object) -> dict[str, objec
         _verify_edit_serial,
         _verify_live_record_display,
     )
-    from host_midi_automation_baseline import (
+    from hitl.capture_transitions import (
         _count_capture_state_entries,
         _count_capture_transitions,
     )

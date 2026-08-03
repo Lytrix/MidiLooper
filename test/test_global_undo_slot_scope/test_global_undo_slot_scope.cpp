@@ -216,7 +216,7 @@ void test_redo_branch_survives_full_undo_for_slot() {
 }
 
 void test_pass_undo_depth_hidden_when_slot_cleared() {
-  // Sidebar U: uses pass depth only when the slot has published MIDI; cleared slots show --.
+  // Sidebar U: uses pass depth only when the slot has committed passes MIDI; cleared slots show --.
   GlobalUndoStack stack;
   stack.entries.push_back(makeEntry(0, UndoEntryKind::RecordPassAdded));
   stack.entries.push_back(makeEntry(0, UndoEntryKind::OverdubPassAdded));

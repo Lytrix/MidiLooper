@@ -22,7 +22,7 @@
 #include "EditManager.h"
 #include "EditStates/EditSelectNoteState.h"
 #include "Globals.h"
-#include "NoteEditManager.h"  // Keep temporarily for move note logic
+#include "ControlSurfaceManager.h"
 #include "Utils/PerformanceMonitor.h"  // Performance monitoring
 #include "Utils/MemoryMonitor.h"
 #include "Utils/MemoryPressureLevel.h"
@@ -179,9 +179,10 @@ void setup() {
   barStepButtonHandler.setTestLoggingEnabled(false);
   logger.setCategoryEnabled(CAT_BAR_STEP_BUTTON, false);
   
-  // Connect NoteEditManager to MidiFaderProcessor
-  noteEditManager.setFaderProcessor(&midiFaderManager.getProcessor());
-  noteEditManager.setDisplayManager(&displayManager);
+  // Connect ControlSurfaceManager to MidiFaderProcessor
+  controlSurfaceManager.setFaderProcessor(&midiFaderManager.getProcessor());
+  controlSurfaceManager.setDisplayManager(&displayManager);
+  editManager.setEditEventListener(&controlSurfaceManager);
   
   // Keep old manager temporarily for move note logic
   //midiButtonManager.setup();
@@ -205,7 +206,7 @@ void setup() {
   looper.setup();  // SD + loadState; USB + piano roll deferred until full slot drain
 
   // Startup policy: enter LOOP_EDIT deterministically and sync DROID explicitly.
-  editManager.sendEditSessionChange(EditSessionType::Loop);
+  editManager.sendEditSessionChange(EditSessionType::Loop, true);
 
   for (uint8_t i = 0; i < trackManager.getTrackCount(); ++i) {
     TrackState state = trackManager.getTrack(i).getState();
@@ -271,7 +272,7 @@ void loop() {
   
   barStepButtonHandler.update();
   
-  noteEditManager.update();
+  controlSurfaceManager.update();
 #if defined(ENABLE_GPIO_BUTTONS)
   gpioButtonManager.update();
 #endif

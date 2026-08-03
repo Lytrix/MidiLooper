@@ -40,7 +40,6 @@ _REV_LOAD_DIRTY_PROMPT_RE = re.compile(
     r"#CAP,\d+,PERS,rev_load_dirty_prompt,\d+,\d+,\d+,shown\b"
 )
 
-
 def _parse_overlay_scroll_args(args: object):
     watch_ns = parse_overlay_watch_args(args)
     parser = __import__("argparse").ArgumentParser(add_help=False)
@@ -60,22 +59,20 @@ def _parse_overlay_scroll_args(args: object):
         watch_ns.overlay_root_dwell_ms = 12000 if extra.overlay_scroll_only else 5000
     return watch_ns
 
-
 # Re-export for load_save_overlay_load.py
 _wait_load_save_mode = wait_load_save_mode
 _wait_overlay_selection = wait_overlay_selection
 _wait_serial_cap_ready = wait_serial_cap_ready
 
-
 def run_load_save_overlay_scroll(args: object) -> int:
-    from host_midi_automation_baseline import (
-        CONTROL_CHANNEL_1BASED,
-        SerialCaptureCollector,
+    from hitl.control_constants import CONTROL_CHANNEL_1BASED
+    from hitl.serial_collector import SerialCaptureCollector
+    from hitl.midi_io import (
         _drain_input_messages,
         _find_midi_port,
         _send_short_press,
     )
-    from host_midi_automation_edit_baseline import _send_double_press
+    from hitl.edit_controls import _send_double_press
 
     ns = _parse_overlay_scroll_args(args)
     ctx = get_context(args)
@@ -380,7 +377,6 @@ def run_load_save_overlay_scroll(args: object) -> int:
         out_port.close()
         in_port.close()
         _drain_input_messages(in_port)
-
 
 def run_load_save_overlay_scroll_only(args: object) -> int:
     legacy = list(getattr(args, "legacy_args", []) or [])

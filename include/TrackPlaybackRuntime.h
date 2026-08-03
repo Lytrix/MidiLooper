@@ -6,13 +6,13 @@
 
 #include "ActiveNoteLedger.h"
 #include "Globals.h"
-#include "PlaybackWindow.h"
+#include "PlaybackMergedMidiEvents.h"
 
 struct LoopPlaybackRuntime {
   uint32_t cachedLoopRevision = 0;
   uint32_t cachedTrackGeneration = 0;
   ActiveNoteLedger ledger;
-  PlaybackWindow primaryWindow;
+  PlaybackMergedMidiEvents mergedMidiEvents;
 
   bool isStale(uint32_t loopRevision, uint32_t trackGeneration) const;
 

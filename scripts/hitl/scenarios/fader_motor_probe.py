@@ -15,7 +15,6 @@ from hitl.fader_motor_probe import (
     run_fader_motor_probe,
 )
 
-
 def _parse_args(args: object) -> argparse.Namespace:
     parser = argparse.ArgumentParser(add_help=False)
     parser.add_argument("--midi-out", default="Teensy")
@@ -65,7 +64,6 @@ def _parse_args(args: object) -> argparse.Namespace:
     legacy = list(getattr(args, "legacy_args", []) or [])
     return parser.parse_args(legacy)
 
-
 def _resolve_percent_steps(ns: argparse.Namespace) -> tuple[int, ...]:
     if ns.percent_steps:
         parts = [p.strip() for p in str(ns.percent_steps).split(",") if p.strip()]
@@ -76,13 +74,10 @@ def _resolve_percent_steps(ns: argparse.Namespace) -> tuple[int, ...]:
 
     return DEFAULT_PROBE_PERCENTS
 
-
 def run_fader_motor_probe_scenario(args: object) -> int:
     import mido
-    from host_midi_automation_baseline import (
-        SerialCaptureCollector,
-        _find_midi_port,
-    )
+    from hitl.serial_collector import SerialCaptureCollector
+    from hitl.midi_io import _find_midi_port
     from hitl.fader_motor_probe import drain_pitchbend_echoes, motor_channels_for_fader
 
     ns = _parse_args(args)
@@ -150,7 +145,6 @@ def run_fader_motor_probe_scenario(args: object) -> int:
         if serial_collector is not None:
             serial_collector.stop()
 
-
 def run_fader_motor_sweep_scenario(args: object) -> int:
     """Quarter sweep preset: 0 % → 25 % → 50 % → 75 % → 100 %."""
     legacy = list(getattr(args, "legacy_args", []) or [])
@@ -158,7 +152,6 @@ def run_fader_motor_sweep_scenario(args: object) -> int:
         legacy.append("--sweep-quarters")
     setattr(args, "legacy_args", legacy)
     return run_fader_motor_probe_scenario(args)
-
 
 def verify_fader_motor_probe_scenario(lines: list[str], args: object) -> dict[str, object]:
     from hitl.verify.fader_motor_probe import verify_fader_motor_probe

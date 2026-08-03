@@ -15,7 +15,6 @@ from hitl.verify.load_save_display import (
     verify_load_save_display,
 )
 
-
 def _parse_common_args(args: object) -> argparse.Namespace:
     parser = argparse.ArgumentParser(add_help=False)
     parser.add_argument("--midi-out", default="Teensy")
@@ -32,14 +31,12 @@ def _parse_common_args(args: object) -> argparse.Namespace:
     legacy = list(getattr(args, "legacy_args", []) or [])
     return parser.parse_args(legacy)
 
-
 def _track_select_note(track_number_1based: int) -> int:
-    from host_midi_automation_baseline import TRACK_SELECT_NOTE_BASE
+    from hitl.control_constants import TRACK_SELECT_NOTE_BASE
 
     if not (1 <= track_number_1based <= 8):
         raise ValueError(f"track-number must be 1-8, got {track_number_1based}")
     return TRACK_SELECT_NOTE_BASE + (track_number_1based - 1)
-
 
 def _wait_load_save_mode(
     serial_collector: object,
@@ -53,7 +50,6 @@ def _wait_load_save_mode(
         time.sleep(0.05)
     return last_load_save_mode_active(serial_collector.snapshot()) == expected
 
-
 def _wait_serial_cap_ready(serial_collector: object, timeout_ms: int = 8000) -> bool:
     deadline = time.time() + timeout_ms / 1000.0
     while time.time() < deadline:
@@ -62,7 +58,6 @@ def _wait_serial_cap_ready(serial_collector: object, timeout_ms: int = 8000) -> 
                 return True
         time.sleep(0.05)
     return False
-
 
 def _sync_load_save_overlay_closed(
     out_port: object,
@@ -101,18 +96,19 @@ def _sync_load_save_overlay_closed(
     if last_load_save_mode_active(serial_collector.snapshot()) == 1:
         print("[load-save-display-hitl] warn: overlay still open after sync")
 
-
 def run_load_save_display(args: object) -> int:
     import mido
-    from host_midi_automation_baseline import (
+    from hitl.control_constants import (
         CONTROL_CHANNEL_1BASED,
         PLAY_STOP_BUTTON_NOTE,
-        SerialCaptureCollector,
+    )
+    from hitl.serial_collector import SerialCaptureCollector
+    from hitl.midi_io import (
         _drain_input_messages,
         _find_midi_port,
         _send_short_press,
     )
-    from host_midi_automation_edit_baseline import (
+    from hitl.edit_controls import (
         _ensure_transport_running,
         _send_double_press,
     )

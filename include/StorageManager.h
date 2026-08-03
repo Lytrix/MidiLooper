@@ -58,9 +58,9 @@ public:
     static bool hasPendingLoopSlotRestore();
     /// True when the in-flight, parked, or next queued restore targets the selected track/slot.
     static bool isFocusedLoopSlotRestoreWork();
-    /// Boot title audible drain: disable demote/park so parked jobs cannot block title clear.
+    /// Boot title playback drain: disable demote/park so parked jobs cannot block title clear.
     static void setBootTitleLoadDrain(bool enabled);
-    /// True when a slot payload is not Published, not queued, and not actively loading.
+    /// True when a slot payload is not committed, not queued, and not actively loading.
     static bool needsSlotLoad(uint8_t trackIndex, uint8_t slotIndex);
     /// True when boot restore queue is empty and no SlotLoadSession is active.
     static bool bootInteractiveReady();

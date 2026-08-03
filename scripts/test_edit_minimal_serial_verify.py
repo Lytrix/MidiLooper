@@ -17,7 +17,6 @@ from hitl.scenarios.edit_minimal import (
     _verify_loop_seam_move_152335,
 )
 
-
 class EditMinimalSerialVerifyTests(unittest.TestCase):
     def setUp(self) -> None:
         self.layout = record_layout_from_edit_fixture({"record_bars": 2, "edit_record_fixture": True})
@@ -73,11 +72,11 @@ class EditMinimalSerialVerifyTests(unittest.TestCase):
         self.assertIn("delete_note_id_mismatch:create=42 delete=99", result["issues"])
 
     def test_loop_seam_move_152335_ok(self) -> None:
+        from hitl.control_constants import TICKS_PER_16TH_STEP
         from host_midi_automation_edit_baseline import (
             WRAP_SEAM_MOVE_STEP,
             WRAP_SEAM_PITCH,
             WRAP_SEAM_STEP,
-            TICKS_PER_16TH_STEP,
         )
 
         from_tick = WRAP_SEAM_STEP * TICKS_PER_16TH_STEP
@@ -106,11 +105,11 @@ class EditMinimalSerialVerifyTests(unittest.TestCase):
         self.assertEqual(seam_issues, [], result)
 
     def test_loop_seam_move_152335_fails_off_at_zero(self) -> None:
+        from hitl.control_constants import TICKS_PER_16TH_STEP
         from host_midi_automation_edit_baseline import (
             WRAP_SEAM_MOVE_STEP,
             WRAP_SEAM_PITCH,
             WRAP_SEAM_STEP,
-            TICKS_PER_16TH_STEP,
         )
 
         from_tick = WRAP_SEAM_STEP * TICKS_PER_16TH_STEP
@@ -130,7 +129,6 @@ class EditMinimalSerialVerifyTests(unittest.TestCase):
         self.assertTrue(
             any("wrap_seam_off_at_zero" in issue for issue in result["issues"])
         )
-
 
 if __name__ == "__main__":
     unittest.main()

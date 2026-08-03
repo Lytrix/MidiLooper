@@ -105,10 +105,10 @@ SC_MEM_ATTR void captureCoordinate(uint32_t absTick, uint32_t storageTick, uint3
                                    int32_t projectionCycleStartTick, uint32_t loopStartTick,
                                    uint8_t ch, uint8_t note);
 SC_MEM_ATTR void displaySnapshot(uint8_t slot, const char* trackState, uint32_t loopLen,
-                                 size_t takeEvents, size_t visualNotes, size_t frameNotes,
+                                 size_t sourceEventCount, size_t visualNotes, size_t frameNotes,
                                  size_t bufferEvents, int published);
 SC_MEM_ATTR void displaySnapshotWindow(uint8_t slot, const char* trackState, uint32_t loopLen,
-                                       size_t takeEvents, size_t visualNotes, size_t frameNotes,
+                                       size_t sourceEventCount, size_t visualNotes, size_t frameNotes,
                                        size_t bufferEvents, int published, uint32_t windowStartTick,
                                        uint8_t windowBars, size_t windowNoteCount);
 SC_MEM_ATTR void displayNoteInfo(uint8_t pitch, uint32_t storageStart, uint32_t displayStart,

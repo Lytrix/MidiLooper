@@ -207,7 +207,7 @@ Always load first:
 
 - [Guides/MOVE_NOTE_LOGIC.md](Guides/MOVE_NOTE_LOGIC.md)
 - [Guides/LOOP_MIDI_STORAGE_AND_VALIDATION.md](Guides/LOOP_MIDI_STORAGE_AND_VALIDATION.md)
-- `EditManager`, `NoteEditManager`, `EditStates/`
+- `EditManager`, `ControlSurfaceManager`, `EditStates/`
 - `.cursor/rules/Naming-Vocabulary-Teensy-Looper.mdc`
 - `.cursor/rules/HITL-Edit-Test-Flow.mdc`
 

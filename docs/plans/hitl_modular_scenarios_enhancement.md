@@ -15,8 +15,9 @@ Composable hardware-in-the-loop automation lives under [`scripts/hitl/`](../../s
 | `scripts/hitl/verify/*.py` | Serial log verifiers |
 | `scripts/test_*_serial_verify.py` | Host unit tests for verifiers (no Teensy) |
 
-Legacy `host_midi_automation_baseline.py` and `host_midi_automation_edit_baseline.py` delegate to presets
-`base` and `edit_full`.
+Legacy `host_midi_automation_baseline.py` and `host_midi_automation_edit_baseline.py` are thin CLI shims
+over `hitl.legacy_record_baseline` / `hitl.legacy_edit_baseline` and still accept presets
+`base` and `edit_full` via `host_midi_hitl.py`.
 
 ## Adding a scenario
 

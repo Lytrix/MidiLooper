@@ -23,12 +23,12 @@ Standalone **Handler** classes (e.g. `BarStepButtonHandler`) process events in o
 | Module | Role |
 |--------|------|
 | `TrackManager` | Selected track, track states, quantization, LED defer |
-| `Track` | Loop slots, **Take** / **Capture** ([storage & validation guide](LOOP_MIDI_STORAGE_AND_VALIDATION.md)), playback, record/overdub |
+| `Track` | Loop slots, **passes** / **Capture** ([storage & validation guide](LOOP_MIDI_STORAGE_AND_VALIDATION.md)), playback, record/overdub |
 | `ClockManager` | Timing, MIDI clock, bar/tick |
 | `MidiHandler` | MIDI I/O and routing |
 | `MidiLedManager` | LED feedback to controller (e.g. bar/step, track/loop rows) |
 | `MidiButtonManager` / `MidiButtonProcessor` / `MidiButtonActions` | Gesture detection and actions |
-| `NoteEditManager` / `EditManager` / `EditNoteState` | Note edit UI and piano roll (`EditStates/` overlays); `NoteEditManager` owns NOTE_EDIT fader inbound guards and select/geometry motor-sync queues |
+| `ControlSurfaceManager` / `EditManager` / `EditNoteState` | Note edit UI and piano roll (`EditStates/` overlays); `ControlSurfaceManager` owns NOTE_EDIT fader inbound guards and select/geometry motor-sync queues |
 | `DisplayManager` | Piano roll and track status display |
 
 For deeper implementation history, see **[`docs/Refinements/`](../README.md#refinements)**. For loop MIDI memory, validation, and undo behavior, see **[`LOOP_MIDI_STORAGE_AND_VALIDATION.md`](LOOP_MIDI_STORAGE_AND_VALIDATION.md)**. For internal heap vs external memory pool routing, see **[`INTERNAL_HEAP_AND_EXTERNAL_MEMORY.md`](INTERNAL_HEAP_AND_EXTERNAL_MEMORY.md)**. For DROID motor fader sync during NOTE_EDIT, see **[`DROID_MOTORFADER_PITCHBEND.md`](DROID_MOTORFADER_PITCHBEND.md)** and **[`FADER_STATE_SYSTEM.md`](FADER_STATE_SYSTEM.md)** (feedback on/off).

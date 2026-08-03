@@ -1,8 +1,8 @@
 //  Copyright (c)  2025 Lytrix (Eelke Jager)
 //  Licensed under the PolyForm Noncommercial 1.0.0
 
-#ifndef NOTE_EDIT_MANAGER_H
-#define NOTE_EDIT_MANAGER_H
+#ifndef CONTROL_SURFACE_MANAGER_H
+#define CONTROL_SURFACE_MANAGER_H
 
 #include <Arduino.h>
 #include <cstdint>
@@ -14,7 +14,6 @@
 #include "MidiFaderProcessor.h"
 #include "Track.h"
 #include "Logger.h"
-#include "LoopEditManager.h"
 #include "MidiConfig.h"
 #include "Utils/SelectNavigation.h"
 #include "Utils/NoteEditFaderMotorTiming.h"
@@ -22,20 +21,24 @@
 #include "Utils/NoteEditFaderSelectSync.h"
 #include "Utils/NoteEditDependentFaderSnapshot.h"
 #include "NoteEditSessionState.h"
+#include "EditEvent.h"
+
+struct BarStepButtonInfo;
+enum class BarStepPressType;
 
 class DisplayManager;
 
 /**
- * @class NoteEditManager
- * @brief Manages MIDI note-based button logic and fader control.
+ * @class ControlSurfaceManager
+ * @brief Coordinates NOTE_EDIT control-surface ingress and egress (MIDI faders/buttons, motor feedback).
  *
- * This class serves as the main interface for MIDI control, delegating to specialized handlers:
- * - MidiButtonHandler for button press/release logic
- * - MidiFaderHandler for fader control
+ * Delegates to MidiButtonManager / MidiFaderManager for hardware I/O; edit state lives on EditManager.
  */
-class NoteEditManager {
+class ControlSurfaceManager : public EditEventListener {
 public:
-    NoteEditManager();
+    ControlSurfaceManager();
+    
+    void onEditEvent(EditEvent event) override;
     
     // Specialized handlers
     MidiButtonManager buttonHandler;
@@ -55,19 +58,21 @@ public:
     void handleFineFaderInput(uint8_t ccValue, Track& track);
     void handleNoteValueFaderInput(uint8_t ccValue, Track& track);
 
-    /** One nav slot per note (multiple per 16th when notes share a step) or empty grid step. */
-    std::vector<SelectNavigation::SelectNavSlot> buildSelectNavigationSlots(
-        const Track& track, uint32_t selectedTick, bool includeSelectedTickIfMissing = true) const;
-    /// NOTE_EDIT UI list: filtered (+ window when long loop) when session active, else cached copy.
-    std::vector<NoteUtils::DisplayNote> selectableDisplayNotesForEditUi(const Track& track) const;
+    // Main edit session switching (for mode button functionality)
+    void cycleEditSession(Track& track);
+    void onTrackChanged(Track& newTrack);
 
-    // Loop editing is now handled by LoopEditManager
-    LoopEditManager loopEditManager;
+    // NOTE_EDIT physical ingress (Phase 8) — buttons, bar-step, GPIO encoder hold
+    void handleCycleNoteEditType(Track& track);
+    void handleExitEditMode(Track& track);
+    void handleDeleteSelectedNote(Track& track);
+    void handleCreateNoteAtBracket(Track& track);
+    void handleDeleteOrCreateNoteAtBracket(Track& track);
+    void handleBarStepNoteEditGesture(Track& track, const BarStepButtonInfo& info,
+                                      BarStepPressType pressType);
+    void updateGpioEncoderButtonHold(bool encoderButtonHeld);
 
-    // Edit mode methods (must be public for MidiButtonActions)
-    void cycleEditMode(Track& track);
     void processEncoderMovement(int rawDelta);
-    void deleteSelectedNote(Track& track);
     void toggleLengthEditingMode();
     /** Force position-edit routing when opening or closing a note-edit session. */
     void resetLengthEditingModeOnSessionBoundary();
@@ -78,7 +83,6 @@ public:
     void prepareNoteEditSessionOpen();
     /** NOTE_EDIT session entry: grace period + deferred selectnote fader sync. */
     void sendNoteEditSessionFaderFeedback(Track& track);
-    void syncReferenceStepFromSelectedTick(uint32_t selectedTick);
     /** GPIO / bar-step note select: fader1 bracket + dependent refresh. */
     void scheduleNoteSelectFaderSync(Track& track);
     /** Queue F2/F3/F4 motor sync after F1 idle, or F1 bracket sync after geometry fader idle. */
@@ -86,16 +90,9 @@ public:
                                           const EditorSelection& nextSelection,
                                           bool geometryIsDriver = false);
     bool isFaderOutboundActive() const;
-    bool moveNoteToPosition(Track& track, const NoteUtils::DisplayNote& currentNote,
-                            std::uint32_t targetTick);
-    bool changeNoteEndWithOverlapHandling(Track& track, const NoteUtils::DisplayNote& currentNote,
-                                          std::uint32_t targetEndTick);
     void refreshEditingActivity();
-    bool isLengthEditingMode() const { return lengthEditingMode; }
-
-    // Main edit session switching (for mode button functionality)
-    void cycleEditSession(Track& track);
-    void onTrackChanged(Track& newTrack);
+    /** Run SessionOpen outbound pipeline to completion (blocking). */
+    void drainFaderOutboundUntilIdle();
 
 private:
     static int16_t loopTickToCoarsePitchbend(uint32_t tick, uint32_t loopLength);
@@ -154,7 +151,6 @@ private:
     uint32_t lastFineFaderTime = 0;
     static constexpr uint8_t FINE_MOVEMENT_THRESHOLD = 1;
     static constexpr uint32_t FINE_STABILITY_TIME = 80;
-    uint32_t referenceStep = 0;
 
     uint32_t lastPitchbendSentTime = 0;
     uint32_t lastSelectnoteSentTime = 0;
@@ -208,13 +204,13 @@ private:
                                     MidiMapping::FaderType driverFader =
                                         MidiMapping::FaderType::FADER_SELECT);
     void releaseEditedNoteAudition();
-    void sendEditedNoteAuditionWhenTransportStopped(Track& track);
+    void sendEditedNoteAuditionWhenTransportStopped(Track& track, int16_t pitchOverride = -1);
     void clearPendingSelectDependentMotorSync();
     void clearPendingGeometryDriverMotorSync();
     void processPendingSelectDependentMotorSync(Track& track);
     void processPendingGeometryDriverMotorSync(Track& track);
     void syncSelectionFromGeometryEdit(Track& track);
-    void syncMotorsFromSelectTarget(Track& track, const Fader1SelectTarget& target,
+    bool syncMotorsFromSelectTarget(Track& track, const Fader1SelectTarget& target,
                                     const NoteEditFaderOutbound::PlanFlags& plan);
     bool sendDependentFadersParallelTimedBurst(Track& track,
                                                const NoteEditFaderOutbound::PlanFlags& plan,
@@ -222,13 +218,22 @@ private:
     bool sendCoarseFaderPosition(Track& track);
     bool sendFineFaderPosition(Track& track);
     bool sendNoteValueFaderPosition(Track& track);
-    void armSelectDependentSettle(uint32_t sentAt);
+    void armSelectDependentSettle(uint32_t sentAt,
+                                uint32_t durationMs = SELECT_DEPENDENT_SETTLE_MS);
+    void syncDependentFaderTrackingFromOutboundLatch();
     void recordFaderInputForValidation(MidiMapping::FaderType faderType, int16_t pitchbendValue,
                                        uint8_t ccValue);
     void enableStartEditing();
     void armChannel15FaderFeedbackIgnore(uint32_t sentAt);
     void armCoarseFaderFeedbackIgnore(uint32_t sentAt);
     void armChannel15CcFaderFeedbackIgnore(uint32_t sentAt);
+    
+    void handleSessionOpenedEvent(Track& track);
+    void handleSessionClosedEvent(Track& track);
+    void handleLengthModeChangedEvent(Track& track);
+    void handleSelectionChangedEvent(Track& track);
+    void handleGeometryChangedEvent(Track& track);
+    void sendEditSessionMidi(EditSessionType sessionType);
     
     static constexpr uint32_t FADER2_PROTECTION_PERIOD = 2000;
     
@@ -239,17 +244,20 @@ private:
     uint32_t lastDriverFaderTime = 0;
     static constexpr uint32_t FADER_UPDATE_DELAY = 1500;
     static constexpr uint32_t FEEDBACK_IGNORE_PERIOD = 1500;
-    static constexpr bool kEditedNoteAuditionEnabled = false;
-    static constexpr bool kNoteEditFaderFeedbackEnabled = false;
+    static constexpr bool kEditedNoteAuditionEnabled = true;
+    static constexpr bool kNoteEditFaderFeedbackEnabled = true;
     
-    bool lengthEditingMode = false;
     bool editedNoteAuditionHeld_ = false;
     bool editedNoteAuditionTransportWasRunning_ = false;
     uint8_t editedNoteAuditionChannel_ = 0;
     uint8_t editedNoteAuditionPitch_ = 0;
-    uint32_t lengthFineAnchorEndTick = 0;
     uint32_t lastLengthModeToggleTime = 0;
     static constexpr uint32_t LENGTH_MODE_DEBOUNCE_TIME = 100;
+
+    bool gpioEncoderButtonWasHeld_ = false;
+    uint32_t gpioEncoderButtonHoldStartMs_ = 0;
+    bool gpioEncoderPitchEditActive_ = false;
+    static constexpr uint32_t kGpioEncoderHoldDelayMs = 250;
 
 public:
     void setFaderProcessor(MidiFaderProcessor* processor) { faderProcessor = processor; }
@@ -276,6 +284,6 @@ public:
 
 };
 
-extern NoteEditManager noteEditManager;
+extern ControlSurfaceManager controlSurfaceManager;
 
-#endif // NOTE_EDIT_MANAGER_H
+#endif // CONTROL_SURFACE_MANAGER_H

@@ -11,7 +11,6 @@ from typing import Optional
 
 from hitl.context import get_context
 
-
 def _parse_scenario_args(args: object) -> argparse.Namespace:
     parser = argparse.ArgumentParser(add_help=False)
     parser.add_argument("--midi-out", default="Teensy")
@@ -42,7 +41,6 @@ def _parse_scenario_args(args: object) -> argparse.Namespace:
     legacy = list(getattr(args, "legacy_args", []) or [])
     ns, _unknown = parser.parse_known_args(legacy)
     return ns
-
 
 def _resolve_base_seed(
     out_dir: Path,
@@ -90,7 +88,6 @@ def _resolve_base_seed(
         raise FileNotFoundError("base report has no serial_log_path")
     lines = serial_path.read_text(encoding="utf-8", errors="replace").splitlines()
     return lines, base_preset_config(report), serial_path
-
 
 def _require_ok_base_seed(
     out_dir: Path,
@@ -148,7 +145,6 @@ def _require_ok_base_seed(
     )
     return seed_lines, base_config, seed_path
 
-
 def _pick_toggle_slots(layout) -> tuple[int, int] | None:
     note_slots = [
         (index, slot)
@@ -163,18 +159,17 @@ def _pick_toggle_slots(layout) -> tuple[int, int] | None:
                 return note_slots[left][0], note_slots[right][0]
     return None
 
-
 def _slow_fader1_sweep(
     out_port,
     *,
     layout,
     dwell_ms: int,
 ) -> None:
-    from host_midi_automation_edit_baseline import (
+    from hitl.control_constants import (
         FADER_SELECT_SETTLE_MS,
         NOTE_SELECTION_GRACE_MS,
-        _fader1_select_nav_slot_index,
     )
+    from host_midi_automation_edit_baseline import _fader1_select_nav_slot_index
 
     count = layout.nav_slot_count
     per_slot_settle_ms = FADER_SELECT_SETTLE_MS + max(
@@ -189,7 +184,6 @@ def _slow_fader1_sweep(
         _fader1_select_nav_slot_index(out_port, layout=layout, slot_index=slot_index)
         if extra_dwell_ms > 0:
             time.sleep(extra_dwell_ms / 1000.0)
-
 
 def _two_note_toggle(
     out_port,
@@ -215,12 +209,15 @@ def _two_note_toggle(
         if cycle == 0 or (cycle + 1) % 2 == 0:
             print(f"[select-dependent-faders] toggle progress {cycle + 1}/{cycles}")
 
-
 def _ensure_note_edit_entered(
     out_port, collector, *, press_ms: int, phase_wait_ms: int, timeout_s: float
 ) -> bool:
-    from host_midi_automation_baseline import CONTROL_CHANNEL_1BASED, _send_short_press
-    from host_midi_automation_edit_baseline import EDIT_BUTTON_DEBOUNCE_MS, EDIT_BUTTON_NOTE
+    from hitl.control_constants import (
+        CONTROL_CHANNEL_1BASED,
+        EDIT_BUTTON_DEBOUNCE_MS,
+        EDIT_BUTTON_NOTE,
+    )
+    from hitl.midi_io import _send_short_press
 
     def _last_toggle(lines: list[str]) -> tuple[int, str] | None:
         last_index = -1
@@ -266,16 +263,15 @@ def _ensure_note_edit_entered(
             time.sleep(0.05)
     return False
 
-
 def run_note_edit_select_dependent_faders(args: object) -> int:
     import mido
-    from host_midi_automation_baseline import (
-        CONTROL_CHANNEL_1BASED,
-        SerialCaptureCollector,
+    from hitl.control_constants import CONTROL_CHANNEL_1BASED
+    from hitl.serial_collector import SerialCaptureCollector
+    from hitl.midi_io import (
         _find_midi_port,
         _send_short_press,
     )
-    from host_midi_automation_edit_baseline import _ensure_transport_running
+    from hitl.edit_controls import _ensure_transport_running
     from hitl.baseline_loop_inventory import (
         materialized_note_pairs_from_base_seed,
         nav_slot_stats,
@@ -414,7 +410,6 @@ def run_note_edit_select_dependent_faders(args: object) -> int:
             serial_collector.stop()
         out_port.close()
         in_port.close()
-
 
 def verify_note_edit_select_dependent_faders(lines: list[str], args: object) -> dict[str, object]:
     from hitl.verify.note_edit_select_dependent_faders import (

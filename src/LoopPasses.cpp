@@ -29,7 +29,7 @@ void mergeSortedMidiVectors(MidiEventVector& base, MidiEventVector&& addition) {
   base = std::move(merged);
 }
 
-void collectActiveOverdubPassesSorted(const PublishedOverdubPassVec& overdubPasses,
+void collectActiveOverdubPassesSorted(const CommittedOverdubPassVec& overdubPasses,
                                       std::vector<const OverdubPass*>& out) {
   out.clear();
   out.reserve(overdubPasses.size());
@@ -149,6 +149,6 @@ void LoopPasses::materialize(LoopEventStore& out, uint32_t loopLengthTicks) cons
   materializeToEventVector(flat, loopLengthTicks);
   out.clear();
   if (!flat.empty()) {
-    out.loadFromFlat(flat);
+    out.loadFromEvents(flat);
   }
 }

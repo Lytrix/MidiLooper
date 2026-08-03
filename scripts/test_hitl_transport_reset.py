@@ -22,13 +22,12 @@ from hitl.serial_transport import (
     serial_sequencer_running,
     use_serial_transport_proxy,
 )
+from hitl.capture_transitions import _latest_track_state
 from host_midi_automation_baseline import (
-    _latest_track_state,
     _serial_has_recording_started,
     _should_reset_transport_for_recovery,
     _suffix_shows_disp_recording,
 )
-
 
 class _FakeCollector:
     def __init__(self, lines: list[str], silence_s: float | None) -> None:
@@ -40,7 +39,6 @@ class _FakeCollector:
 
     def seconds_since_last_line(self) -> float | None:
         return self._silence_s
-
 
 class TransportResetRecoveryTests(unittest.TestCase):
     def test_skip_when_clock_present_and_idle(self) -> None:
@@ -74,7 +72,6 @@ class TransportResetRecoveryTests(unittest.TestCase):
                 serial_proxy_active=True,
             )
         )
-
 
 class SerialTransportProxyTests(unittest.TestCase):
     def test_bpm_activity_in_tail(self) -> None:
@@ -131,7 +128,6 @@ class SerialTransportProxyTests(unittest.TestCase):
     def test_resolve_wall_tempo_falls_back(self) -> None:
         collector = _FakeCollector(["#CAP,1,ST,Track,EMPTY,PLAYING"], silence_s=0.0)
         self.assertEqual(resolve_wall_tempo_bpm(collector, 120.0), 120.0)
-
 
 class ExternalSerialFollowCollectorTests(unittest.TestCase):
     def test_tails_growing_log(self) -> None:
@@ -203,7 +199,6 @@ class ExternalSerialFollowCollectorTests(unittest.TestCase):
             resolved = ExternalSerialFollowCollector.resolve_current_session_path(base)
             self.assertEqual(resolved.resolve(), log_path.resolve())
 
-
 class RecordingSerialEvidenceTests(unittest.TestCase):
     def test_latest_track_state_prefers_newer_disp(self) -> None:
         lines = [
@@ -216,7 +211,6 @@ class RecordingSerialEvidenceTests(unittest.TestCase):
         lines = ["#CAP,1,ST,Track,EMPTY,PLAYING", "#CAP,2,DISP,0,RECORDING,1,0,0,0,0,0"]
         self.assertTrue(_suffix_shows_disp_recording(lines, after_index=1))
         self.assertTrue(_serial_has_recording_started(lines, after_index=1))
-
 
 if __name__ == "__main__":
     unittest.main()
