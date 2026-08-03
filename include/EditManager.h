@@ -7,6 +7,7 @@
 #include "EditNoteState.h"
 #include "NoteEditSessionUndo.h"
 #include "EditSession.h"
+#include "EditEvent.h"
 #include "EditStates/EditNoteHomeState.h"
 #include "EditStates/EditSelectNoteState.h"
 #include "EditStartNoteState.h"
@@ -110,6 +111,16 @@ public:
     void syncReferenceStepFromSelectedTick(uint32_t selectedTick);
     uint32_t getReferenceStep() const { return referenceStep_; }
     void setReferenceStep(uint32_t step) { referenceStep_ = step; }
+
+    void setEditEventListener(EditEventListener* listener) { editEventListener_ = listener; }
+    bool isLengthEditingMode() const { return lengthEditingMode_; }
+    uint32_t lengthFineAnchorEndTick() const { return lengthFineAnchorEndTick_; }
+    void setLengthFineAnchorEndTick(uint32_t tick) { lengthFineAnchorEndTick_ = tick; }
+    void toggleLengthEditMode(Track& track);
+    void clearLengthEditingMode(bool emitEvent = true);
+    void clearLengthEditingModeOnNoteSelect();
+    const EditorSelection& selectionChangePrior() const { return selectionChangePrior_; }
+    bool selectionChangeRequestFaderSync() const { return selectionChangeRequestFaderSync_; }
 
     void syncNoteEditSessionStateToUi(Track& track);
     void enterDefaultNoteEditSessionState(Track& track, uint32_t startTick);
@@ -235,14 +246,20 @@ private:
     void persistActiveNoteEditSession(Track& track);
     void invalidateNoteEditDerivedCaches();
     const MidiEventVec& materializedLoopEventsForNoteEditFocus(Track& track);
+    void emitEditEvent(EditEvent event);
     uint32_t selectedTick = 0;
     int selectedNoteIdx = -1; // -1 means no note selected
     uint32_t referenceStep_ = 0;
+    bool lengthEditingMode_ = false;
+    uint32_t lengthFineAnchorEndTick_ = 0;
     NoteId lastFader1SelectNoteId = kInvalidNoteId;
     bool hasMovedBracket = false; // true if the bracket has been moved since entering edit mode
 
     EditNoteState* currentState = nullptr;
     EditNoteState* previousState = nullptr;
+    EditEventListener* editEventListener_ = nullptr;
+    EditorSelection selectionChangePrior_{};
+    bool selectionChangeRequestFaderSync_ = false;
     EditSession editSession;
     NoteEditSessionState sessionState;
     NoteEditKind lastPushedGeometryKind_ = NoteEditKind::Select;

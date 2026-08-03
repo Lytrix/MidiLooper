@@ -22,6 +22,7 @@
 #include "Utils/NoteEditFaderSelectSync.h"
 #include "Utils/NoteEditDependentFaderSnapshot.h"
 #include "NoteEditSessionState.h"
+#include "EditEvent.h"
 
 class DisplayManager;
 
@@ -33,9 +34,11 @@ class DisplayManager;
  * - MidiButtonHandler for button press/release logic
  * - MidiFaderHandler for fader control
  */
-class NoteEditManager {
+class NoteEditManager : public EditEventListener {
 public:
     NoteEditManager();
+    
+    void onEditEvent(EditEvent event) override;
     
     // Specialized handlers
     MidiButtonManager buttonHandler;
@@ -91,7 +94,6 @@ public:
     bool changeNoteEndWithOverlapHandling(Track& track, const NoteUtils::DisplayNote& currentNote,
                                           std::uint32_t targetEndTick);
     void refreshEditingActivity();
-    bool isLengthEditingMode() const { return lengthEditingMode; }
 
     // Main edit session switching (for mode button functionality)
     void cycleEditSession(Track& track);
@@ -229,6 +231,9 @@ private:
     void armCoarseFaderFeedbackIgnore(uint32_t sentAt);
     void armChannel15CcFaderFeedbackIgnore(uint32_t sentAt);
     
+    void handleLengthModeChangedEvent(Track& track);
+    void handleSelectionChangedEvent(Track& track);
+    
     static constexpr uint32_t FADER2_PROTECTION_PERIOD = 2000;
     
     MidiFaderProcessor* faderProcessor = nullptr;
@@ -241,12 +246,10 @@ private:
     static constexpr bool kEditedNoteAuditionEnabled = false;
     static constexpr bool kNoteEditFaderFeedbackEnabled = true;
     
-    bool lengthEditingMode = false;
     bool editedNoteAuditionHeld_ = false;
     bool editedNoteAuditionTransportWasRunning_ = false;
     uint8_t editedNoteAuditionChannel_ = 0;
     uint8_t editedNoteAuditionPitch_ = 0;
-    uint32_t lengthFineAnchorEndTick = 0;
     uint32_t lastLengthModeToggleTime = 0;
     static constexpr uint32_t LENGTH_MODE_DEBOUNCE_TIME = 100;
 

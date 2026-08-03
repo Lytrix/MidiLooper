@@ -446,7 +446,7 @@ NOTE_EDIT_MEM void NoteEditManager::syncSelectionFromGeometryEdit(Track& track) 
     const uint32_t loopStartTick = editManager.noteEditLoopStartTick(track);
     if (focus.active && focus.movingNoteId != kInvalidNoteId) {
         primaryNote = focus.movingNoteId;
-        selectedTick = lengthEditingMode
+        selectedTick = editManager.isLengthEditingMode()
                           ? NoteEditDisplaySnapshot::displayStartTickFromStorage(
                                 focus.last.endTick, loopStartTick, loopLength)
                           : NoteEditDisplaySnapshot::displayStartTickFromStorage(
@@ -459,7 +459,7 @@ NOTE_EDIT_MEM void NoteEditManager::syncSelectionFromGeometryEdit(Track& track) 
             if (selectedIdx < static_cast<int>(notes.size())) {
                 const NoteUtils::DisplayNote& selected = notes[static_cast<size_t>(selectedIdx)];
                 primaryNote = selected.noteId;
-                selectedTick = lengthEditingMode
+                selectedTick = editManager.isLengthEditingMode()
                                   ? NoteEditDisplaySnapshot::displayStartTickFromStorage(
                                         selected.endTick, loopStartTick, loopLength)
                                   : NoteEditDisplaySnapshot::displayStartTickFromStorage(
@@ -1073,8 +1073,8 @@ NoteEditDependentFaderBuildInput NoteEditManager::makeDependentFaderBuildInput(
     input.loopStartTick = editManager.noteEditLoopStartTick(track);
     input.selectedIdx = editManager.getSelectedNoteIdx();
     input.selectedTick = editManager.getSelectedTick();
-    input.lengthEditingMode = lengthEditingMode;
-    input.lengthFineAnchorEndTick = lengthFineAnchorEndTick;
+    input.lengthEditingMode = editManager.isLengthEditingMode();
+    input.lengthFineAnchorEndTick = editManager.lengthFineAnchorEndTick();
     input.referenceStep = editManager.getReferenceStep();
 
     if (selectTarget != nullptr && selectTarget->valid) {
@@ -1824,14 +1824,14 @@ NOTE_EDIT_MEM void NoteEditManager::handleCoarseFaderInput(int16_t pitchValue, T
         return;
     }
 
-    if (lengthEditingMode) {
+    if (editManager.isLengthEditingMode()) {
         editManager.syncNoteEditFocusLastFromSessionStore(track);
     }
     
     // Movement filtering - prevent jitter from rescheduling updates
     uint32_t now = millis();
     if constexpr (kNoteEditFaderFeedbackEnabled) {
-        if (!lengthEditingMode &&
+        if (!editManager.isLengthEditingMode() &&
             (now - noteSelectionTime) < static_cast<uint32_t>(FEEDBACK_IGNORE_PERIOD)) {
             logger.log(CAT_MIDI, LOG_DEBUG,
                        "Coarse fader: ignoring input during post-select routing settle");
@@ -1850,7 +1850,7 @@ NOTE_EDIT_MEM void NoteEditManager::handleCoarseFaderInput(int16_t pitchValue, T
         clearPendingSelectDependentMotorSync();
         
         logger.log(CAT_MIDI, LOG_DEBUG, "Coarse fader: significant movement (delta=%d, time=%lu ms) - %s mode", 
-                   movementDelta, timeSinceLastMovement, lengthEditingMode ? "LENGTH EDIT" : "POSITION EDIT");
+                   movementDelta, timeSinceLastMovement, editManager.isLengthEditingMode() ? "LENGTH EDIT" : "POSITION EDIT");
         releaseEditedNoteAudition();
     } else {
         logger.log(CAT_MIDI, LOG_DEBUG, "Coarse fader: ignoring small movement (delta=%d, time=%lu ms)", 
@@ -1878,7 +1878,7 @@ NOTE_EDIT_MEM void NoteEditManager::handleCoarseFaderInput(int16_t pitchValue, T
         }
         
         bool geometryApplied = false;
-        if (lengthEditingMode) {
+        if (editManager.isLengthEditingMode()) {
             const uint32_t ticksPerStep = Config::TICKS_PER_16TH_STEP;
             const uint32_t minNoteDuration = ticksPerStep;
 
@@ -1899,12 +1899,13 @@ NOTE_EDIT_MEM void NoteEditManager::handleCoarseFaderInput(int16_t pitchValue, T
             if (geometryApplied) {
                 const NoteUtils::DisplayNote liveAfterLength =
                     editManager.liveEditDisplayNoteAtSelect(track);
-                lengthFineAnchorEndTick =
+                editManager.setLengthFineAnchorEndTick(
                     focusActive
                         ? SelectNavigation::noteRelativeTick(liveAfterLength.endTick, loopStartPhase,
                                                              loopLength)
-                        : SelectNavigation::displayPhaseTick(liveAfterLength.endTick, loopLength);
-                editManager.setReferenceStep(lengthFineAnchorEndTick / ticksPerStep);
+                        : SelectNavigation::displayPhaseTick(liveAfterLength.endTick, loopLength));
+                editManager.setReferenceStep(editManager.lengthFineAnchorEndTick() /
+                                             Config::TICKS_PER_16TH_STEP);
             }
         } else {
             // POSITION EDIT MODE: Move the note START position in 16th step increments
@@ -1997,10 +1998,10 @@ NOTE_EDIT_MEM void NoteEditManager::handleFineFaderInput(uint8_t ccValue, Track&
     }
         
     bool geometryApplied = false;
-    if (lengthEditingMode) {
+    if (editManager.isLengthEditingMode()) {
         const uint32_t ticksPerStep = Config::TICKS_PER_16TH_STEP;
         const uint32_t minNoteDuration = ticksPerStep;
-        const uint32_t anchorTick = lengthFineAnchorEndTick;
+        const uint32_t anchorTick = editManager.lengthFineAnchorEndTick();
         const int32_t fineOffset = lengthEditFineOffsetFromCc(ccValue);
 
         int32_t relativeTargetEndSigned = static_cast<int32_t>(anchorTick) + fineOffset;
@@ -2053,7 +2054,7 @@ NOTE_EDIT_MEM void NoteEditManager::handleFineFaderInput(uint8_t ccValue, Track&
     }
         
     logger.log(CAT_MIDI, LOG_DEBUG, "Fine fader: CC=%d - %s mode", 
-               ccValue, lengthEditingMode ? "LENGTH EDIT" : "POSITION EDIT");
+               ccValue, editManager.isLengthEditingMode() ? "LENGTH EDIT" : "POSITION EDIT");
         
     if (geometryApplied) {
         lastUserFineCc = ccValue;
@@ -2238,17 +2239,18 @@ NOTE_EDIT_MEM void NoteEditManager::handleFaderInput(MidiMapping::FaderType fade
 NOTE_EDIT_MEM void NoteEditManager::resetLengthEditingModeOnSessionBoundary() {
     resetSelectNavSlotApplyState();
     suppressSelectDependentMotorSync_ = false;
-    if (!lengthEditingMode) {
+    const bool wasLength = editManager.isLengthEditingMode();
+    editManager.clearLengthEditingMode(false);
+    if (!wasLength) {
         return;
     }
-    lengthEditingMode = false;
     currentDriverFader = MidiMapping::FaderType::FADER_SELECT;
     logger.info("[MIDI] Length editing mode DISABLED (edit session boundary)");
 }
 
 NOTE_EDIT_MEM void NoteEditManager::resetLengthEditingModeOnNoteSelect() {
-    if (lengthEditingMode) {
-        lengthEditingMode = false;
+    if (editManager.isLengthEditingMode()) {
+        editManager.clearLengthEditingModeOnNoteSelect();
         logger.info("[MIDI] Length editing mode DISABLED (note select)");
     }
     currentDriverFader = MidiMapping::FaderType::FADER_SELECT;
@@ -2262,65 +2264,63 @@ NOTE_EDIT_MEM void NoteEditManager::resetLengthEditingModeOnNoteSelect() {
 
 NOTE_EDIT_MEM void NoteEditManager::toggleLengthEditingMode() {
     uint32_t now = millis();
-    
-    // Debounce protection
+
     if (now - lastLengthModeToggleTime < LENGTH_MODE_DEBOUNCE_TIME) {
         logger.log(CAT_MIDI, LOG_DEBUG, "Length mode toggle ignored (debounce protection)");
         return;
     }
     lastLengthModeToggleTime = now;
-    
-    const bool enabling = !lengthEditingMode;
-    lengthEditingMode = enabling;
-    
+
     Track& track = trackManager.getSelectedTrack();
-    
-    if (lengthEditingMode) {
-        logger.info("[MIDI] Length editing mode ENABLED");
-        logger.info("[MIDI] Faders 1, 2 & 3 now control NOTE END position (length editing)");
-        editManager.syncNoteEditFocusLastFromSessionStore(track);
-        const uint32_t loopLength = track.getLoopLength();
-        if (editManager.getSelectedNoteIdx() >= 0 && loopLength > 0) {
-            const NoteUtils::DisplayNote liveNote = editManager.liveEditDisplayNoteAtSelect(track);
-            const uint32_t relEnd = liveNote.endTick % loopLength;
-            editManager.setSelectedTick(relEnd);
-            lengthFineAnchorEndTick = relEnd;
-            editManager.setReferenceStep(relEnd / Config::TICKS_PER_16TH_STEP);
-            editManager.beginGeometryMutation(track, NoteEditKind::Length, false);
-        }
-    } else {
+    const bool wasLength = editManager.isLengthEditingMode();
+    editManager.toggleLengthEditMode(track);
+    if (wasLength && !editManager.isLengthEditingMode()) {
         currentDriverFader = MidiMapping::FaderType::FADER_SELECT;
         lastDriverFaderTime = now;
         lastUserCoarseFaderValue = 0;
         lastCoarseFaderTime = 0;
-        logger.info("[MIDI] Length editing mode DISABLED");
-        logger.info("[MIDI] Faders 1, 2 & 3 now control NOTE START position (position editing)");
-        editManager.commitAllPendingNoteEditActions(track);
-        editManager.syncNoteEditFocusLastFromSessionStore(track);
-        const NoteUtils::DisplayNote liveNote = editManager.liveEditDisplayNoteAtSelect(track);
-        const uint32_t loopLength = track.getLoopLength();
-        if (loopLength > 0) {
-            const uint32_t relStart = liveNote.startTick % loopLength;
-            editManager.setSelectedTick(relStart);
-            editManager.setReferenceStep(relStart / Config::TICKS_PER_16TH_STEP);
-        }
-        if (editManager.getSelectedNoteIdx() >= 0) {
-            editManager.beginGeometryMutation(track, NoteEditKind::Move, false);
-        }
     }
+}
 
+NOTE_EDIT_MEM void NoteEditManager::onEditEvent(EditEvent event) {
+    Track& track = trackManager.getSelectedTrack();
+    switch (event) {
+        case EditEvent::LengthModeChanged:
+            handleLengthModeChangedEvent(track);
+            break;
+        case EditEvent::SelectionChanged:
+            handleSelectionChangedEvent(track);
+            break;
+        default:
+            break;
+    }
+}
+
+NOTE_EDIT_MEM void NoteEditManager::handleLengthModeChangedEvent(Track& track) {
     const std::vector<NoteUtils::DisplayNote> notes = selectableDisplayNotesForEditUi(track);
     const int selectedIdx = editManager.getSelectedNoteIdx();
-    if (!notes.empty() && selectedIdx >= 0 && selectedIdx < static_cast<int>(notes.size())) {
-        if (lengthEditingMode) {
-            requestFaderOutbound(NoteEditFaderOutbound::Trigger::LengthModeEnter);
-        } else {
-            requestFaderOutbound(NoteEditFaderOutbound::Trigger::LengthModeExit);
-        }
-        lastUserCoarseFaderValue =
-            midiFaderManager.getFaderState(MidiMapping::FaderType::FADER_COARSE).lastSentPitchbend;
-        lastCoarseFaderTime = millis();
+    if (notes.empty() || selectedIdx < 0 || selectedIdx >= static_cast<int>(notes.size())) {
+        return;
     }
+    if (editManager.isLengthEditingMode()) {
+        requestFaderOutbound(NoteEditFaderOutbound::Trigger::LengthModeEnter);
+    } else {
+        requestFaderOutbound(NoteEditFaderOutbound::Trigger::LengthModeExit);
+    }
+    lastUserCoarseFaderValue =
+        midiFaderManager.getFaderState(MidiMapping::FaderType::FADER_COARSE).lastSentPitchbend;
+    lastCoarseFaderTime = millis();
+    (void)track;
+}
+
+NOTE_EDIT_MEM void NoteEditManager::handleSelectionChangedEvent(Track& track) {
+    const EditorSelection& prior = editManager.selectionChangePrior();
+    const EditorSelection& next = editManager.getNoteEditSessionState().selection;
+    if (editManager.selectionChangeRequestFaderSync()) {
+        scheduleNoteSelectFaderSync(track);
+        return;
+    }
+    scheduleSelectDependentMotorSync(track, prior, next);
 }
 
 NOTE_EDIT_MEM void NoteEditManager::onTrackChanged(Track& newTrack) {
