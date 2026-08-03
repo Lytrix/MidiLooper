@@ -69,10 +69,10 @@ void test_move_restore_adjacent_prefix_touch_is_not_overlap() {
     const bool oldPrefixDeleteRule =
         (neighborEnd == newStart && neighborStart < newStart);
     TEST_ASSERT_TRUE(oldPrefixDeleteRule);
-    const bool fixedPrefixDeleteRule =
+    const bool partialPrefixOverlap =
         (neighborStart < newStart && neighborEnd > newStart &&
          linearStorageSpansOverlap(newStart, newEnd, neighborStart, neighborEnd));
-    TEST_ASSERT_FALSE(fixedPrefixDeleteRule);
+    TEST_ASSERT_FALSE(partialPrefixOverlap);
 }
 
 void test_partial_prefix_under_mover_start_is_overlap() {
@@ -86,10 +86,10 @@ void test_partial_prefix_under_mover_start_is_overlap() {
     constexpr uint32_t neighborEnd = 200;
     TEST_ASSERT_TRUE(
         linearStorageSpansOverlap(newStart, newEnd, neighborStart, neighborEnd));
-    const bool fixedPrefixDeleteRule =
+    const bool partialPrefixOverlap =
         (neighborStart < newStart && neighborEnd > newStart &&
          linearStorageSpansOverlap(newStart, newEnd, neighborStart, neighborEnd));
-    TEST_ASSERT_TRUE(fixedPrefixDeleteRule);
+    TEST_ASSERT_TRUE(partialPrefixOverlap);
 }
 
 void test_notes_overlap_linear_span_avoids_display_wrap_false_positive() {

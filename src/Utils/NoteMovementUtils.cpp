@@ -577,18 +577,9 @@ NOTE_EDIT_MEM void findOverlaps(const std::vector<NoteUtils::DisplayNote>& curre
             continue;
         }
 
-        // Prefix overlap only when the neighbor span actually intersects the mover target
-        // (half-open storage). Adjacent touch (noteLinearEnd == newStart) is not overlap —
-        // deleting there caused restore-then-rehide churn (session_20260714_011558.log).
-        if (noteLinearStart < newStart && noteLinearEnd > newStart &&
-            linearStorageSpansOverlap(newStart, newEnd, noteLinearStart, noteLinearEnd)) {
-            notesToDelete.push_back(note);
-            logger.log(CAT_MIDI, LOG_DEBUG,
-                      "Will delete prefix note under mover start: pitch=%d, linear %lu-%lu "
-                      "(mover %lu-%lu)",
-                      note.note, noteLinearStart, noteLinearEnd, newStart, newEnd);
-            continue;
-        }
+        // Adjacent touch (noteLinearEnd == newStart) is not overlap — linearStorageSpansOverlap
+        // is false there (session_20260714_011558 restore churn). Partial prefix under mover
+        // start is overlap and is shortened (or deleted only when trim < 16th) below.
 
         bool overlaps = false;
         if (noteLinearEnd >= noteLinearStart && newEnd >= newStart) {
@@ -1431,9 +1422,9 @@ NOTE_EDIT_MEM bool applyPitchChange(Track& track, EditManager& manager,
     const uint32_t movingNoteEnd = movingNoteRangeDisplayEnd(focusConst, loopLength);
 
     // Merge suffix-adjacent same-target-pitch notes into the moving note end before overlap
-    // resolution. Prefix spans that truly underlap mover start are deleted via findOverlaps
-    // (linear overlap only — adjacent touch is not overlap). Skip inner overlap notes inside
-    // the moving note range.
+    // resolution. Prefix spans under mover start are shortened via findOverlaps (deleted only
+    // when trim < 16th; adjacent touch is not overlap). Skip inner overlap notes inside the
+    // moving note range.
     // Compare linear storage ticks only — display start/end must not be mixed with linear noteEnd.
     std::vector<NoteUtils::DisplayNote> adjacentToDelete;
     bool mergedAdjacent = true;
