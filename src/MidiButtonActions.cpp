@@ -114,19 +114,19 @@ MidiButtonActions midiButtonActions;
 
 namespace {
 
-void restoreAudiblePlaybackAfterSlotClear(uint8_t trackIndex, Track& track, uint32_t now) {
-  bool foundAudible = false;
+void restorePlaybackAfterSlotClear(uint8_t trackIndex, Track& track, uint32_t now) {
+  bool foundPlaybackSlot = false;
   uint8_t newActiveSlot = 0;
   for (uint8_t s = 0; s < ::Config::MAX_LOOPS_PER_TRACK; ++s) {
     if (trackManager.isSlotEnabled(trackIndex, s) &&
         !trackManager.isSlotMuted(trackIndex, s) &&
         track.hasDataInSlot(s)) {
-      foundAudible = true;
+      foundPlaybackSlot = true;
       newActiveSlot = s;
       break;
     }
   }
-  if (foundAudible) {
+  if (foundPlaybackSlot) {
     trackManager.setActiveLoopIndex(trackIndex, newActiveSlot);
     for (uint8_t s = 0; s < ::Config::MAX_LOOPS_PER_TRACK; ++s) {
       if (trackManager.isSlotEnabled(trackIndex, s) &&
@@ -727,7 +727,7 @@ void MidiButtonActions::handleClearTrack() {
     StorageManager::requestDeferredSaveState(looperState.getLooperState());
     logger.info("MIDI: Clear selected slot %u", static_cast<unsigned>(slot) + 1u);
 
-    restoreAudiblePlaybackAfterSlotClear(tidx, track, now);
+    restorePlaybackAfterSlotClear(tidx, track, now);
 }
 
 void MidiButtonActions::handleSoloTrack(uint8_t trackNumber) {

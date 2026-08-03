@@ -372,19 +372,19 @@ TRACK_COLD_MEM bool applyRedoEntry(Track& track, UndoEntry& entry) {
     return false;
 }
 
-TRACK_COLD_MEM void restoreAudiblePlaybackAfterSlotClear(uint8_t trackIndex, Track& track, uint32_t now) {
-    bool foundAudible = false;
+TRACK_COLD_MEM void restorePlaybackAfterSlotClear(uint8_t trackIndex, Track& track, uint32_t now) {
+    bool foundPlaybackSlot = false;
     uint8_t newActiveSlot = 0;
     for (uint8_t s = 0; s < Config::MAX_LOOPS_PER_TRACK; ++s) {
         if (trackManager.isSlotEnabled(trackIndex, s) &&
             !trackManager.isSlotMuted(trackIndex, s) &&
             track.hasDataInSlot(s)) {
-            foundAudible = true;
+            foundPlaybackSlot = true;
             newActiveSlot = s;
             break;
         }
     }
-    if (foundAudible) {
+    if (foundPlaybackSlot) {
         trackManager.setActiveLoopIndex(trackIndex, newActiveSlot);
         for (uint8_t s = 0; s < Config::MAX_LOOPS_PER_TRACK; ++s) {
             if (trackManager.isSlotEnabled(trackIndex, s) &&
@@ -423,7 +423,7 @@ TRACK_COLD_MEM void applyClearSlotRedoSideEffects(Track& track, uint8_t slotInde
     trackManager.clearQueuedRecordingTrack(trackIndex, slotIndex);
     trackManager.setLayeredSlotHeld(trackIndex, slotIndex, false);
     const uint32_t now = clockManager.getCurrentTick();
-    restoreAudiblePlaybackAfterSlotClear(trackIndex, track, now);
+    restorePlaybackAfterSlotClear(trackIndex, track, now);
     trackManager.forceLedUpdate(now);
 }
 

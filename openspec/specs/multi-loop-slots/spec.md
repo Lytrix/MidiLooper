@@ -90,7 +90,7 @@ Selecting or focusing a loop slot that still needs SD load SHALL request slot hy
 
 ### Requirement: Boot interactive ready is audible-scoped
 
-`bootInteractiveReady` (or its successor) SHALL become true when the audible boot set is COMMITTED and boot load work for that set is complete — not when the entire SD payload set is COMMITTED.
+`bootInteractiveReady` (or its successor) SHALL become true when the boot playback set is COMMITTED and boot load work for that set is complete — not when the entire SD payload set is COMMITTED.
 
 #### Scenario: Ready with unloaded non-audible slots
 

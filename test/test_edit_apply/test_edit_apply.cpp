@@ -639,9 +639,9 @@ void test_change_length_rematerialize_hitl_195830_ticks() {
   // commitEditAction: discard live flat, replay takes+edits, load session store (matches firmware).
   CowLoopEventStore session;
   session.discardEventsCache();
-  MidiEventVec loopMidiEventsFromTakesAndEdits;
-  loop.passes.materializeToEventVector(loopMidiEventsFromTakesAndEdits, kLoopLength);
-  session.mutStore().loadFromEvents(loopMidiEventsFromTakesAndEdits);
+  MidiEventVec loopMidiEventsFromPasses;
+  loop.passes.materializeToEventVector(loopMidiEventsFromPasses, kLoopLength);
+  session.mutStore().loadFromEvents(loopMidiEventsFromPasses);
   session.discardEventsCache();
 
   const NoteUtils::DisplayNoteVec notes =

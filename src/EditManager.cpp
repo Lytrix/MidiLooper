@@ -251,7 +251,7 @@ void EditManager::rebuildNoteEditFocusAtSelect(Track& track, int selectedNoteIdx
     const uint8_t channel = track.getMidiChannel();
     const uint32_t loopLength = noteEditLoopLengthTicks(track);
 
-    // commitBaseline / baselineMap come from committed Takes + Edits replay, not the live
+    // commitBaseline / baselineMap come from committed passes materialize, not the live
     // session preview — otherwise a pending length preview (e.g. end 680) becomes baseline
     // on fader-1 reselect and the next ChangeLength commit is a no-op on rematerialize.
     MidiEventVec loopMidiEventsFromPasses;

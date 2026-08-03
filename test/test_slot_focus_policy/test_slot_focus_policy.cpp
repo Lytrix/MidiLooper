@@ -19,7 +19,7 @@ void test_boot_restore_priority_selected_track_selected_slot() {
   const uint8_t selected[] = {2, 0};
   TEST_ASSERT_EQUAL_UINT16(
       0, computeBootRestorePriority(0, 2, 0, active, 2, selected, 2, 2, 8));
-  TEST_ASSERT_TRUE(isAudibleBootSlot(0, 2, 0, active, 2, selected, 2));
+  TEST_ASSERT_TRUE(isBootPlaybackSlot(0, 2, 0, active, 2, selected, 2));
 }
 
 void test_boot_restore_priority_selected_track_active_slot_when_split() {
@@ -29,7 +29,7 @@ void test_boot_restore_priority_selected_track_active_slot_when_split() {
   const uint8_t selected[] = {2, 0};
   TEST_ASSERT_EQUAL_UINT16(
       1, computeBootRestorePriority(0, 1, 0, active, 2, selected, 2, 2, 8));
-  TEST_ASSERT_TRUE(isAudibleBootSlot(0, 1, 0, active, 2, selected, 2));
+  TEST_ASSERT_TRUE(isBootPlaybackSlot(0, 1, 0, active, 2, selected, 2));
 }
 
 void test_boot_restore_priority_selected_track_other_slot() {
@@ -38,7 +38,7 @@ void test_boot_restore_priority_selected_track_other_slot() {
   // Right of selected 2 is 3 → priority 2.
   TEST_ASSERT_EQUAL_UINT16(
       2, computeBootRestorePriority(0, 3, 0, active, 2, selected, 2, 2, 8));
-  TEST_ASSERT_FALSE(isAudibleBootSlot(0, 3, 0, active, 2, selected, 2));
+  TEST_ASSERT_FALSE(isBootPlaybackSlot(0, 3, 0, active, 2, selected, 2));
 }
 
 void test_boot_restore_priority_other_track_active_slot() {
@@ -47,7 +47,7 @@ void test_boot_restore_priority_other_track_active_slot() {
   // Track 1 forward distance 1, slot 4 → 100 + 8 + 4
   TEST_ASSERT_EQUAL_UINT16(
       100 + 8 + 4, computeBootRestorePriority(1, 4, 0, active, 2, selected, 2, 2, 8));
-  TEST_ASSERT_TRUE(isAudibleBootSlot(1, 4, 0, active, 2, selected, 2));
+  TEST_ASSERT_TRUE(isBootPlaybackSlot(1, 4, 0, active, 2, selected, 2));
 }
 
 void test_boot_restore_priority_other_track_selected_slot() {
@@ -55,7 +55,7 @@ void test_boot_restore_priority_other_track_selected_slot() {
   const uint8_t selected[] = {2, 0};
   TEST_ASSERT_EQUAL_UINT16(
       100 + 8 + 0, computeBootRestorePriority(1, 0, 0, active, 2, selected, 2, 2, 8));
-  TEST_ASSERT_TRUE(isAudibleBootSlot(1, 0, 0, active, 2, selected, 2));
+  TEST_ASSERT_TRUE(isBootPlaybackSlot(1, 0, 0, active, 2, selected, 2));
 }
 
 void test_boot_restore_priority_other_track_non_selected_slot() {

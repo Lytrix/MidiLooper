@@ -121,6 +121,8 @@ public:
                           bool scheduleDeferredFullValidate = true);
   CommitResult finalizeCommitSideEffects(CommitResult result, CommitReason reason,
                                          uint32_t closeTick);
+  /// Seal capture then shared finalize only — never transport, playback, editor, or pending buffers.
+  CommitResult commitCaptureForStop(CommitReason reason, uint32_t commitTick, uint32_t closeTick);
   void emitStoredMidiVerification() const;
   /// Idle maintenance: deferred full validate + session REVT flush (non-blocking stop path).
   void processDeferredIdleMaintenance(uint32_t nowMs);
@@ -365,6 +367,14 @@ private:
   void resetDeferredRecordRevts();
   void queueDeferredRecordRevts();
   void processDeferredRecordRevts(size_t maxEventsPerSlice = 64);
+
+  /// Record-stop prep: raw length → clamp → finalizePendingNotes → dropEvents (exact order).
+  /// Returns rawLength for truncation rewind. guardLabel is the caller name for the clamp warning.
+  uint32_t prepareRecordStop(uint32_t currentTick, const char* guardLabel);
+
+  /// In-edit overdub fold. true = stop fully completed; caller must return immediately.
+  bool handleNoteEditFold(bool endInPlaying, uint32_t currentTick, uint32_t closeTick,
+                          uint32_t stopStartUs);
 
   void syncSlotRefsFromPool();
 

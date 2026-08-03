@@ -1092,20 +1092,20 @@ DISP_CAPTURE_MEM void DisplayManager::maybeEmitDisplayCaptureOnChange(const Trac
     static uint8_t lastSlot = 255;
     static TrackState lastState = NUM_TRACK_STATES;
     static uint32_t lastLoopLen = 0;
-    static size_t lastTakeEvents = static_cast<size_t>(-1);
+    static size_t lastSourceEventCount = static_cast<size_t>(-1);
 
     const Loop& loop = track.getLoop(displaySlot);
     const TrackState state = track.getState();
     const uint32_t loopLen = resolveDisplayLoopLength(track, displaySlot, currentTick);
     const size_t frameNoteCount = frameNotes.size();
-    const size_t takeEvents =
+    const size_t sourceEventCount =
         (track.isRecording() && !track.isPlaying()) ? loop.capture.store.size() : frameNoteCount;
 
     const bool changed = frameNoteCount != lastFrameNotes || displaySlot != lastSlot ||
                          state != lastState || loopLen != lastLoopLen ||
-                         takeEvents != lastTakeEvents;
+                         sourceEventCount != lastSourceEventCount;
     const bool regression =
-        loopLen > 0 && loop.hasCommittedPasses() && frameNoteCount == 0 && takeEvents > 0;
+        loopLen > 0 && loop.hasCommittedPasses() && frameNoteCount == 0 && sourceEventCount > 0;
 
     if (!changed && !regression) {
         return;
@@ -1124,7 +1124,7 @@ DISP_CAPTURE_MEM void DisplayManager::maybeEmitDisplayCaptureOnChange(const Trac
     lastSlot = displaySlot;
     lastState = state;
     lastLoopLen = loopLen;
-    lastTakeEvents = takeEvents;
+    lastSourceEventCount = sourceEventCount;
     emitDisplayCaptureSnapshot(track, displaySlot, currentTick, frameNotes);
 }
 
