@@ -27,7 +27,7 @@ See [`docs/BRANCHING.md`](../BRANCHING.md).
 - **Next product slice:** confirm with user (persistence/overlay hardening, or parked large-slot display hunt) — see [CURRENT_WORK.md](CURRENT_WORK.md)
 - **Archived this branch:** OpenSpec [`deferred-job-scheduler`](../../openspec/changes/archive/2026-07-19-deferred-job-scheduler/) Phase B — gates B.1 [`231510`](../../captures/session_20260718_231510.log), B.3/B.4 [`022107`](../../captures/session_20260719_022107.log); specs in `openspec/specs/deferred-job-scheduler/`
 - Memory reclaim + boot/display stack — **merged to `dev`** (PR #4)
-- **Hygiene (2026-07-19):** [`codebase_hygiene_technical_debt_review.md`](../plans/codebase_hygiene_technical_debt_review.md) — dead Looper transport + no-op fader schedule APIs removed
+- **Hygiene (`chore/codebase-hygiene-sprint1`):** safe debt **complete** — see [`codebase_hygiene_technical_debt_review.md`](../plans/codebase_hygiene_technical_debt_review.md); sprint plans Status Done + [README index](../plans/README.md#hygiene-sprint-chorecodebase-hygiene-sprint1)
 
 ## Shipped on branch (recent)
 

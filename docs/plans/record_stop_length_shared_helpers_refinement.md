@@ -1,5 +1,7 @@
 # Record stop length shared helpers
 
+**Status:** Done (shipped on `chore/codebase-hygiene-sprint1`)
+
 Behavior-preserving extraction of pure record-stop length math from `Track` into [`RecordStopLength`](../../include/Utils/RecordStopLength.h).
 
 ## Helpers
