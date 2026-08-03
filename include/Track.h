@@ -392,6 +392,15 @@ private:
 
   void rebuildPlaybackOrder();
 
+  enum class PlaybackMidiTarget { ActiveSlot, LayeredSlot };
+
+  void playCommittedLoopMidi(uint8_t slotIndex, uint32_t currentTick, PlaybackMidiTarget target);
+
+  bool isStorageTickInJamRegion(uint32_t storageTick, const Loop& loop) const;
+
+  friend void playbackCursorAdvanceSend(void* ctx, const MidiEvent& evt, uint8_t slotIndex);
+  friend bool playbackCursorAdvanceJamFilter(void* ctx, uint32_t storageTick);
+
 };
 
 #include "TrackUndo.h"
