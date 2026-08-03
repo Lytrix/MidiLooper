@@ -71,7 +71,7 @@ Safe zero-behavior and rename hygiene on this branch is **largely complete**. Re
 
 | # | Finding | Status |
 |---|---------|--------|
-| 11 | Capture `copyEventsTo` call-site duplication; test-local length helpers | **Partial** — display uses `copySortedCaptureEvents`; test length helpers still open |
+| 11 | Capture `copyEventsTo` call-site duplication; test-local length helpers | **Done** — display `copySortedCaptureEvents`; `RecordStopLength` shared with Track + [`record_stop_length_shared_helpers_refinement.md`](record_stop_length_shared_helpers_refinement.md) |
 | 12 | HITL fat baselines | **Done** — thin CLI shims + `hitl/legacy_*` + shared modules |
 | 13 | Vocabulary `published` / `flatten` | **Done** — locked rename in code + Guides; CAP string `"published"` intentionally kept |
 | 13b | Leftover `Take` in tests/telemetry; `audible` in boot restore | **Done** — `isBootPlaybackSlot`, `restorePlaybackAfterSlotClear`, `sourceEventCount` / `loopMidiEventsFromPasses` |
@@ -107,7 +107,7 @@ Protected by [OpenSpec-Phase-Gate](../../.cursor/rules/OpenSpec-Phase-Gate.mdc) 
 1. **StorageManager** — continue extraction until `saveState` leaves the root TU (with persistence CURRENT_WORK)
 2. **`NoteEditManager` rename** — only after user-approved name (control-surface owner, not edit session)
 3. **`PersistenceQueue` → mid-pass/chunk-oriented name** — with persistence hardening
-4. Optional: test-local length helpers shared with `Track`; plans purge
+4. Optional: plans purge
 5. Optional: finish moving scenario imports off thin shims onto `hitl.legacy_*` / shared modules only
 
 ---
@@ -127,4 +127,5 @@ Protected by [OpenSpec-Phase-Gate](../../.cursor/rules/OpenSpec-Phase-Gate.mdc) 
 - [x] Vocab leftovers: `Take` / boot `audible` → playback / passes / `sourceEventCount`
 - [x] Display `copySortedCaptureEvents` DRY (+ drop unused `findCaptureOpenNoteOns`)
 - [x] Playback cursor advance DRY (`playCommittedLoopMidi` + `PlaybackCursorAdvance`)
+- [x] Shared `RecordStopLength` helpers (Track + native tests)
 - [x] Native tests + `teensy41-capture-serial` build (per change)

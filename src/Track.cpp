@@ -67,6 +67,7 @@ bool shouldRestoreCommittedOverlapOnOverdubStop(const Loop& loop, uint8_t note,
 
 #include "Utils/IntervalProjection.h"
 #include "Utils/PlaybackCursorAdvance.h"
+#include "Utils/RecordStopLength.h"
 #include "Utils/TrackMem.h"
 #include "DisplayManager.h"
 #include "EditManager.h"
@@ -226,16 +227,6 @@ void logMemoryAfterOverdubStop(uint32_t overdubNoteOns, const Loop& loop) {
   const StopPathStorageStats stats = collectStopPathStorageStats(loop, false);
   MemoryMonitor::logStatusAtAddedNotes(overdubNoteOns, stats.eventCount, nullptr,
                                        stats.chunkRefCount, stats.chunkRefCount > 0);
-}
-
-/// When record-stop snaps length shorter than raw capture, rewind the global tick so playhead
-/// lands in bar 1 at the same beat position as in the truncated bar (keeps all tracks in sync).
-uint32_t computeTruncationRewindTicks(uint32_t rawLength, uint32_t finalLength) {
-  if (finalLength == 0 || rawLength <= finalLength) {
-    return 0;
-  }
-  const uint32_t positionInBar = rawLength % Config::TICKS_PER_BAR;
-  return rawLength - positionInBar;
 }
 
 ProjectionContext makePlaybackContext(const Track& track, const Loop& loop, uint32_t currentTick) {
@@ -718,20 +709,7 @@ uint32_t Track::findLastEventTick() const {
 }
 
 uint32_t Track::computeLoopLengthTicks(uint32_t lastTick) const {
-    uint32_t fullBars = lastTick / TICKS_PER_BAR;
-    uint32_t rem      = lastTick % TICKS_PER_BAR;
-    uint32_t grace    = TICKS_PER_BAR / 6;  // More generous grace window
-
-    if (rem <= grace) {
-        return (fullBars > 0 ? fullBars : 1) * TICKS_PER_BAR;
-    }
-
-    // Special case: very short pass (accidental press?)
-    if (lastTick < TICKS_PER_BAR / 2) {
-        return TICKS_PER_BAR;
-    }
-
-    return (fullBars + 1) * TICKS_PER_BAR;
+  return RecordStopLength::computeLoopLengthTicks(lastTick);
 }
 
 void Track::resetPlaybackState(uint32_t currentTick) {
@@ -1484,7 +1462,8 @@ void Track::stopRecording(uint32_t currentTick) {
   uint32_t finalLength = loop.loopLengthTicks;
 
   uint32_t playbackTick = currentTick;
-  const uint32_t rewindTicks = computeTruncationRewindTicks(rawLength, finalLength);
+  const uint32_t rewindTicks =
+      RecordStopLength::computeTruncationRewindTicks(rawLength, finalLength);
   if (rewindTicks > 0) {
     playbackTick = currentTick - rewindTicks;
     clockManager.assignCurrentTickSilently(playbackTick);
@@ -1589,7 +1568,8 @@ TRACK_COLD_MEM void Track::stopRecordingToStopped(uint32_t currentTick) {
   [[maybe_unused]] const uint32_t recordStartTickStopped = loop.startLoopTick;
   loop.nextEventIndex = 0;
   uint32_t playbackTick = currentTick;
-  const uint32_t rewindTicks = computeTruncationRewindTicks(rawLength, loop.loopLengthTicks);
+  const uint32_t rewindTicks =
+      RecordStopLength::computeTruncationRewindTicks(rawLength, loop.loopLengthTicks);
   if (rewindTicks > 0) {
     playbackTick = currentTick - rewindTicks;
     clockManager.assignCurrentTickSilently(playbackTick);
@@ -2413,26 +2393,12 @@ TRACK_COLD_MEM bool Track::hasCommittedPassesInSlot(uint8_t slotIndex) const {
 }
 
 TRACK_COLD_MEM uint32_t Track::quantizeTransportRecordLength(uint32_t rawLength) const {
-  if (rawLength == 0) {
-    return TICKS_PER_BAR;
-  }
-  const uint32_t rem = rawLength % TICKS_PER_BAR;
-  const uint32_t grace = TICKS_PER_BAR / 2;
-  if (rem <= grace) {
-    const uint32_t quantized = (rawLength / TICKS_PER_BAR) * TICKS_PER_BAR;
-    return quantized == 0 ? TICKS_PER_BAR : quantized;
-  }
-  return ((rawLength / TICKS_PER_BAR) + 1) * TICKS_PER_BAR;
+  return RecordStopLength::quantizeTransportRecordLength(rawLength);
 }
 
 TRACK_COLD_MEM uint32_t Track::computeRecordStopLengthTicks(uint32_t rawLength,
                                                             uint32_t lastEventTick) const {
-  const uint32_t transportLength = quantizeTransportRecordLength(rawLength);
-  if (lastEventTick == 0) {
-    return transportLength;
-  }
-  const uint32_t contentLength = computeLoopLengthTicks(lastEventTick);
-  return std::min(transportLength, contentLength);
+  return RecordStopLength::computeRecordStopLengthTicks(rawLength, lastEventTick);
 }
 
 TRACK_COLD_MEM void Track::resetLoopSlotAfterEmptyCapture(uint8_t slotIndex) {
