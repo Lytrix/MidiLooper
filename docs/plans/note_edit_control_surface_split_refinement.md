@@ -339,6 +339,8 @@ Update: `EditManager`, `EditSelectNoteState`.
 
 ### Phase 5 — Unnest `LoopEditManager`
 
+**Status:** Done (2026-08-03) — `671` native tests pass; `teensy41-capture-serial` build OK
+
 - Peer global `loopEditManager` (match `editManager` pattern)
 - Update: `EditManager`, `TrackUndo`, `Track`
 

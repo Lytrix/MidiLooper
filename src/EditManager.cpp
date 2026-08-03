@@ -15,6 +15,7 @@
 #include "Utils/NoteUtils.h"
 #include "MidiConfig.h"
 #include "NoteEditManager.h"
+#include "LoopEditManager.h"
 #include "NoteEditFocus.h"
 #include "NoteEditSessionUndo.h"
 #include "EditApply.h"
@@ -1663,7 +1664,7 @@ void EditManager::cycleEditSession(Track& track) {
                    static_cast<int>(EditSessionType::Note));
         return;
     }
-    sendEditSessionChange(editSession.sessionType);
+    sendEditSessionChange(EditSessionType::Loop, true);
     logger.log(CAT_TRACK, LOG_DEBUG, "Edit session cycled to: %d",
                static_cast<int>(editSession.sessionType));
 }
@@ -1683,11 +1684,11 @@ void EditManager::sendEditSessionChange(EditSessionType sessionType, bool notify
 
     bool reopenedNoteSession = false;
     if (priorSession == EditSessionType::Loop && sessionType != EditSessionType::Loop) {
-        noteEditManager.loopEditManager.commitLoopEditOnDepart(trackManager.getSelectedTrack());
+        loopEditManager.commitLoopEditOnDepart(trackManager.getSelectedTrack());
     }
 
     if (sessionType == EditSessionType::Note) {
-        noteEditManager.loopEditManager.onLeaveLoopEditSession();
+        loopEditManager.onLeaveLoopEditSession();
         if (priorSession != EditSessionType::Note || !editSession.active) {
             Track& track = trackManager.getSelectedTrack();
             reopenNoteEditSession(track);
@@ -1695,7 +1696,7 @@ void EditManager::sendEditSessionChange(EditSessionType sessionType, bool notify
         }
     }
     if (sessionType == EditSessionType::Loop) {
-        noteEditManager.loopEditManager.onEnterLoopEditSession(trackManager.getSelectedTrack());
+        loopEditManager.onEnterLoopEditSession(trackManager.getSelectedTrack());
     }
 
     const bool sessionTypeChanged = priorSession != sessionType;
@@ -1713,7 +1714,7 @@ void EditManager::sendEditSessionChange(EditSessionType sessionType, bool notify
 void EditManager::commitEditSessionOnDepart(Track& track) {
     flushDeferredNoteEditDisplayRefresh(track);
     if (isLoopEditSession()) {
-        noteEditManager.loopEditManager.commitLoopEditOnDepart(track);
+        loopEditManager.commitLoopEditOnDepart(track);
     }
     if (editSession.active) {
         persistActiveNoteEditSession(track);
@@ -1727,7 +1728,7 @@ void EditManager::commitEditSessionOnDepart(Track& track) {
 void EditManager::reenterEditSessionForFocusChange(Track& track, uint8_t /*previousSlot*/) {
     switch (editSession.sessionType) {
         case EditSessionType::Loop:
-            noteEditManager.loopEditManager.reopenLoopEditSession(track);
+            loopEditManager.reopenLoopEditSession(track);
             logger.log(CAT_TRACK, LOG_DEBUG, "LOOP_EDIT session refreshed for focus change");
             break;
         case EditSessionType::Note:

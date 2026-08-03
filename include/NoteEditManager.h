@@ -14,7 +14,6 @@
 #include "MidiFaderProcessor.h"
 #include "Track.h"
 #include "Logger.h"
-#include "LoopEditManager.h"
 #include "MidiConfig.h"
 #include "Utils/SelectNavigation.h"
 #include "Utils/NoteEditFaderMotorTiming.h"
@@ -57,10 +56,6 @@ public:
     void handleCoarseFaderInput(int16_t pitchValue, Track& track);
     void handleFineFaderInput(uint8_t ccValue, Track& track);
     void handleNoteValueFaderInput(uint8_t ccValue, Track& track);
-
-    /** One nav slot per note (multiple per 16th when notes share a step) or empty grid step. */
-    // Loop editing is now handled by LoopEditManager
-    LoopEditManager loopEditManager;
 
     // Edit mode methods (must be public for MidiButtonActions)
     void cycleEditMode(Track& track);

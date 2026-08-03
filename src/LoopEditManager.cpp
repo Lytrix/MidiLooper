@@ -22,6 +22,8 @@ uint8_t resolveTrackIndex(const Track& track) {
 
 }  // namespace
 
+LoopEditManager loopEditManager(midiHandler);
+
 LoopEditManager::LoopEditManager(MidiHandler& midiHandler) 
     : midiHandler(midiHandler) {
 }
@@ -476,6 +478,13 @@ void LoopEditManager::updateLoopEndpointAfterGracePeriod(Track& track) {
         loopStartEditingTime = 0;
         loopStartEditingEnabled = false;
     }
+}
+
+void LoopEditManager::handleLoopLengthPitchbend(int16_t pitchValue, Track& track) {
+    const int16_t clamped = MidiConfig::Pitchbend::clampLogical(pitchValue);
+    const uint8_t ccValue = static_cast<uint8_t>(
+        map(clamped, MidiConfig::Pitchbend::MIN, MidiConfig::Pitchbend::MAX, 0, 127));
+    handleLoopLengthInput(ccValue, track);
 }
 
 void LoopEditManager::handleLoopLengthInput(uint8_t ccValue, Track& track) {
