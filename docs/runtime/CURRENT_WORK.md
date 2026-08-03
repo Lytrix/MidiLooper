@@ -50,8 +50,8 @@ Last updated: 2026-08-03 (note-edit control-surface split complete)
 | Phases 0–4 (split, edit events, surface extraction) | Done |
 | Phase 5 unnest `LoopEditManager` | Done |
 | Phase 6 rename `ControlSurfaceManager` | Done (`d3505db`) |
-| Phase 7 docs + hygiene closeout | Done |
-| Optional Phase 8 (full physical ingress) | Not scheduled |
+| Phase 7 docs + hygiene closeout | Done (`c244280`) |
+| Phase 8 NOTE_EDIT physical ingress | Done (uncommitted) |
 
 **Supersedes:** rename-only `NoteEditManager` plan (removed with `chore/rename-note-edit-manager` branch).
 

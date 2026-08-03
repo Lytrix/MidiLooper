@@ -293,10 +293,6 @@ NOTE_EDIT_MEM void ControlSurfaceManager::processEncoderMovement(int rawDelta) {
     }
 }
 
-NOTE_EDIT_MEM void ControlSurfaceManager::cycleEditMode(Track& track) {
-    editManager.cycleEditSession(track);
-}
-
 NOTE_EDIT_MEM void ControlSurfaceManager::cycleEditSession(Track& track) {
     const EditSessionType priorSession = editManager.getEditSessionType();
     editManager.cycleEditSession(track);
@@ -309,9 +305,11 @@ NOTE_EDIT_MEM void ControlSurfaceManager::scheduleOtherFaderUpdates(MidiMapping:
     Track& track = trackManager.getSelectedTrack();
 
     switch (driverFader) {
+        case MidiMapping::FaderType::FADER_NOTE_VALUE:
+            publishDependentFaderLatch(track, driverFader);
+            break;
         case MidiMapping::FaderType::FADER_COARSE:
         case MidiMapping::FaderType::FADER_FINE:
-        case MidiMapping::FaderType::FADER_NOTE_VALUE:
             syncSelectionFromGeometryEdit(track);
             publishDependentFaderLatch(track, driverFader);
             break;
@@ -593,12 +591,12 @@ NOTE_EDIT_MEM void ControlSurfaceManager::processPendingSelectDependentMotorSync
     const char* reason = (!plan.coarse && plan.noteValue) ? "display_pitch_changed_same_bracket"
                                                           : "display_note_changed";
 
-    logSelectMotorSyncDecision(target.noteIdx, -1, true, reason, lastUserSelectFaderValue,
+    const bool sent = syncMotorsFromSelectTarget(track, target, plan);
+    logSelectMotorSyncDecision(target.noteIdx, -1, sent, reason, lastUserSelectFaderValue,
                                priorMotorSyncF1Pitch, sinceSyncMs, planned.coarsePitchbend,
                                planned.valid ? static_cast<int>(planned.noteValueCc) : -1,
                                priorF2Pb, priorF4Cc, motorValueChanged);
     (void)priorSelection;
-    syncMotorsFromSelectTarget(track, target, plan);
 }
 
 NOTE_EDIT_MEM void ControlSurfaceManager::processPendingGeometryDriverMotorSync(Track& track) {
@@ -621,12 +619,28 @@ NOTE_EDIT_MEM void ControlSurfaceManager::processPendingGeometryDriverMotorSync(
     sendFader1MotorTimedBurst(track);
 }
 
-NOTE_EDIT_MEM void ControlSurfaceManager::armSelectDependentSettle(uint32_t sentAt) {
-    selectDependentSettleUntilMs_ = sentAt + SELECT_DEPENDENT_SETTLE_MS;
+NOTE_EDIT_MEM void ControlSurfaceManager::armSelectDependentSettle(uint32_t sentAt,
+                                                                 uint32_t durationMs) {
+    const uint32_t until = sentAt + durationMs;
+    if (until > selectDependentSettleUntilMs_) {
+        selectDependentSettleUntilMs_ = until;
+    }
     selectDependentSettleBlockLogged_ = false;
 #if defined(SESSION_CAPTURE)
     logger.info("#DBG select_dependent_settle until_ms=%lu", selectDependentSettleUntilMs_);
 #endif
+}
+
+NOTE_EDIT_MEM void ControlSurfaceManager::syncDependentFaderTrackingFromOutboundLatch() {
+    const uint32_t now = millis();
+    lastUserCoarseFaderValue =
+        midiFaderManager.getFaderState(MidiMapping::FaderType::FADER_COARSE).lastSentPitchbend;
+    lastCoarseFaderTime = now;
+    lastUserFineCc = midiFaderManager.getFaderState(MidiMapping::FaderType::FADER_FINE).lastSentCC;
+    lastFineFaderTime = now;
+    lastUserNoteValueCc =
+        midiFaderManager.getFaderState(MidiMapping::FaderType::FADER_NOTE_VALUE).lastSentCC;
+    lastNoteValueFaderTime = now;
 }
 
 NOTE_EDIT_MEM void ControlSurfaceManager::recordFaderInputForValidation(MidiMapping::FaderType faderType,
@@ -743,6 +757,11 @@ NOTE_EDIT_MEM void ControlSurfaceManager::requestFaderOutbound(NoteEditFaderOutb
         trigger == NoteEditFaderOutbound::Trigger::NoteSelectWithFader1) {
         startEditingEnabled = false;
     }
+    if (trigger == NoteEditFaderOutbound::Trigger::LengthModeEnter ||
+        trigger == NoteEditFaderOutbound::Trigger::LengthModeExit) {
+        startEditingEnabled = false;
+        armSelectDependentSettle(millis(), FEEDBACK_IGNORE_PERIOD);
+    }
     outboundStep_ = NoteEditFaderOutbound::nextEnabledStep(NoteEditFaderOutbound::Step::Idle,
                                                              outboundPlan_);
     outboundStepStartedMs_ = millis();
@@ -774,25 +793,41 @@ NOTE_EDIT_MEM void ControlSurfaceManager::sendFader1BracketFeedback(Track& track
     if (editManager.getEditSessionType() != EditSessionType::Note) {
         return;
     }
+    int16_t targetPitchbend = 0;
+    if (!EditSelectNoteState::resolveTargetPitchbend(editManager, track, targetPitchbend)) {
+        return;
+    }
+
     const bool pipelineActive = isFaderOutboundActive();
+    const bool sessionOpenOutbound =
+        pipelineActive &&
+        activeOutboundTrigger_ == NoteEditFaderOutbound::Trigger::SessionOpen;
     if (!pipelineActive) {
         midiHandler.setDroidMotorOutboundPriority(true);
     }
-    EditSelectNoteState::sendTargetPitchbend(editManager, track);
     const uint32_t sentAt = millis();
+    armSelectFaderFeedbackIgnore(sentAt, FEEDBACK_IGNORE_PERIOD);
+    if (sessionOpenOutbound) {
+        midiHandler.sendPitchBend(PITCHBEND_SELECT_CHANNEL, targetPitchbend);
+    }
+    NoteEditFaderMotorTiming::runMotorFaderBurst(
+        [&]() { midiHandler.sendPitchBend(PITCHBEND_SELECT_CHANNEL, targetPitchbend); },
+        [&]() { midiHandler.sendNoteOn(PITCHBEND_SELECT_CHANNEL, 0, 127); },
+        [&]() { midiHandler.sendNoteOff(PITCHBEND_SELECT_CHANNEL, 0, 0); });
     lastSelectnoteSentTime = sentAt;
     auto& selectState = midiFaderManager.getFaderStateMutable(MidiMapping::FaderType::FADER_SELECT);
+    selectState.lastSentPitchbend = targetPitchbend;
     selectState.lastSentTime = sentAt;
-    outboundSentFader1Pitchbend_ = selectState.lastSentPitchbend;
-    if (updateNavStateFromOutbound) {
-        lastUserSelectFaderValue = selectState.lastSentPitchbend;
+    outboundSentFader1Pitchbend_ = targetPitchbend;
+    if (updateNavStateFromOutbound || sessionOpenOutbound) {
+        lastUserSelectFaderValue = targetPitchbend;
         lastSelectFaderTime = sentAt;
     }
-    armSelectFaderFeedbackIgnore(sentAt, FEEDBACK_IGNORE_PERIOD);
     logOutboundStep("SEND_F1");
     if (!pipelineActive) {
         midiHandler.setDroidMotorOutboundPriority(false);
     }
+    (void)track;
 }
 
 NOTE_EDIT_MEM bool ControlSurfaceManager::sendFader1MotorTimedBurst(Track& track) {
@@ -838,6 +873,7 @@ NOTE_EDIT_MEM void ControlSurfaceManager::completeOutboundPipelineAtDone(Track& 
     }
     if (completedTrigger == NoteEditFaderOutbound::Trigger::LengthModeEnter ||
         completedTrigger == NoteEditFaderOutbound::Trigger::LengthModeExit) {
+        syncDependentFaderTrackingFromOutboundLatch();
         startEditingEnabled = true;
     }
     logOutboundStep("DONE");
@@ -1106,13 +1142,19 @@ NOTE_EDIT_MEM bool ControlSurfaceManager::sendDependentFaderSnapshot(
     (void)track;
     const uint32_t now = millis();
     bool sentAny = false;
+    const bool outboundForcesDependentMotorPosition =
+        activeOutboundTrigger_ == NoteEditFaderOutbound::Trigger::LengthModeEnter ||
+        activeOutboundTrigger_ == NoteEditFaderOutbound::Trigger::LengthModeExit ||
+        activeOutboundTrigger_ == NoteEditFaderOutbound::Trigger::SessionOpen;
     const bool skipDependentMotorPositionForAudition =
-        kEditedNoteAuditionEnabled && editedNoteAuditionHeld_;
+        kEditedNoteAuditionEnabled && editedNoteAuditionHeld_ &&
+        !outboundForcesDependentMotorPosition;
 
     if (plan.coarse && snapshot.coarseValid) {
         bool skipCoarsePitchbendForAudition = false;
         if constexpr (kEditedNoteAuditionEnabled) {
-            skipCoarsePitchbendForAudition = editedNoteAuditionHeld_;
+            skipCoarsePitchbendForAudition =
+                editedNoteAuditionHeld_ && !outboundForcesDependentMotorPosition;
         }
         if (!skipCoarsePitchbendForAudition) {
             midiHandler.sendPitchBend(PITCHBEND_START_CHANNEL, snapshot.coarsePitchbend);
@@ -1126,7 +1168,8 @@ NOTE_EDIT_MEM bool ControlSurfaceManager::sendDependentFaderSnapshot(
     if (plan.fine && snapshot.fineValid) {
         bool skipFineCcForAudition = false;
         if constexpr (kEditedNoteAuditionEnabled) {
-            skipFineCcForAudition = editedNoteAuditionHeld_;
+            skipFineCcForAudition =
+                editedNoteAuditionHeld_ && !outboundForcesDependentMotorPosition;
         }
         if (!skipFineCcForAudition) {
             midiHandler.sendControlChange(FINE_CC_CHANNEL, FINE_CC_NUMBER, snapshot.fineCc);
@@ -1154,10 +1197,16 @@ NOTE_EDIT_MEM bool ControlSurfaceManager::sendDependentFaderSnapshot(
     }
 
     if (!sentAny) {
-        return false;
-    }
-
-    if (mode == DependentFaderSendMode::ValueOnly) {
+        if (mode == DependentFaderSendMode::ValueOnly) {
+            return false;
+        }
+        const bool hasMotorPlan = (plan.coarse && snapshot.coarseValid) ||
+                                  (plan.fine && snapshot.fineValid) ||
+                                  (plan.noteValue && snapshot.valid);
+        if (!hasMotorPlan) {
+            return false;
+        }
+    } else if (mode == DependentFaderSendMode::ValueOnly) {
         return true;
     }
 
@@ -1597,21 +1646,25 @@ NOTE_EDIT_MEM ControlSurfaceManager::Fader1SelectTarget ControlSurfaceManager::r
     return target;
 }
 
-NOTE_EDIT_MEM void ControlSurfaceManager::syncMotorsFromSelectTarget(
+NOTE_EDIT_MEM bool ControlSurfaceManager::syncMotorsFromSelectTarget(
     Track& track, const Fader1SelectTarget& target,
     const NoteEditFaderOutbound::PlanFlags& plan) {
     if constexpr (!kNoteEditFaderFeedbackEnabled) {
         (void)track;
         (void)target;
         (void)plan;
-        return;
+        return false;
     }
     const uint32_t loopLength = track.getLoopLength();
     if (loopLength == 0 || !target.valid) {
-        return;
+        return false;
     }
     if (!plan.coarse && !plan.fine && !plan.noteValue) {
-        return;
+        return false;
+    }
+
+    if constexpr (kEditedNoteAuditionEnabled) {
+        releaseEditedNoteAudition();
     }
 
     midiHandler.setDroidMotorOutboundPriority(true);
@@ -1619,7 +1672,8 @@ NOTE_EDIT_MEM void ControlSurfaceManager::syncMotorsFromSelectTarget(
     logger.info("#DBG select_motor_sync mode=SELECT_SYNC sequence=parallel_timed_burst");
 #endif
 
-    if (sendDependentFadersParallelTimedBurst(track, plan, &target)) {
+    const bool sent = sendDependentFadersParallelTimedBurst(track, plan, &target);
+    if (sent) {
         const uint32_t sentAt = millis();
         lastSelectMotorSyncMs_ = sentAt;
         lastMotorSyncF1Pitch_ = lastUserSelectFaderValue;
@@ -1633,6 +1687,7 @@ NOTE_EDIT_MEM void ControlSurfaceManager::syncMotorsFromSelectTarget(
     }
 
     midiHandler.setDroidMotorOutboundPriority(false);
+    return sent;
 }
 
 NOTE_EDIT_MEM bool ControlSurfaceManager::sendDependentFadersParallelTimedBurst(
@@ -1782,9 +1837,6 @@ NOTE_EDIT_MEM bool ControlSurfaceManager::applyNoteSelectFromFader1Pitchbend(Tra
                    absoluteTargetTick);
         releaseEditedNoteAudition();
     }
-    if constexpr (kEditedNoteAuditionEnabled) {
-        sendEditedNoteAuditionWhenTransportStopped(track);
-    }
     return true;
 }
 
@@ -1850,7 +1902,6 @@ NOTE_EDIT_MEM void ControlSurfaceManager::handleCoarseFaderInput(int16_t pitchVa
     
     if (selectedIdx >= 0 && selectedIdx < (int)notes.size()) {
         NoteUtils::DisplayNote currentNote = editManager.liveEditDisplayNoteAtSelect(track);
-        const uint8_t auditionPitch = currentNote.note;
         uint32_t currentNoteStartTick = currentNote.startTick;
         const uint32_t loopStartTick = editManager.noteEditLoopStartTick(track);
         const uint32_t loopStartPhase = loopStartTick % loopLength;
@@ -1881,7 +1932,6 @@ NOTE_EDIT_MEM void ControlSurfaceManager::handleCoarseFaderInput(int16_t pitchVa
                        pitchValue, targetEndTick, relativeEndTick);
             geometryApplied =
                 editManager.changeNoteEndWithOverlapHandling(track, currentNote, targetEndTick);
-            sendEditedNoteAuditionWhenTransportStopped(track, static_cast<int16_t>(auditionPitch));
             if (geometryApplied) {
                 const NoteUtils::DisplayNote liveAfterLength =
                     editManager.liveEditDisplayNoteAtSelect(track);
@@ -1929,7 +1979,6 @@ NOTE_EDIT_MEM void ControlSurfaceManager::handleCoarseFaderInput(int16_t pitchVa
             // Store the target step as reference for fine adjustments
             editManager.setReferenceStep(targetSixteenthStep);
             geometryApplied = editManager.moveNoteToPosition(track, currentNote, targetTick);
-            sendEditedNoteAuditionWhenTransportStopped(track, static_cast<int16_t>(auditionPitch));
         }
 
         if (geometryApplied) {
@@ -1980,7 +2029,6 @@ NOTE_EDIT_MEM void ControlSurfaceManager::handleFineFaderInput(uint8_t ccValue, 
     if (loopLength == 0) return;
 
     NoteUtils::DisplayNote currentNote = editManager.liveEditDisplayNoteAtSelect(track);
-    const uint8_t auditionPitch = currentNote.note;
     const uint32_t loopStartTick = editManager.noteEditLoopStartTick(track);
     const uint32_t loopStartPhase = loopStartTick % loopLength;
     const bool focusActive = editManager.getEditSession().focus.active;
@@ -2013,7 +2061,6 @@ NOTE_EDIT_MEM void ControlSurfaceManager::handleFineFaderInput(uint8_t ccValue, 
                    anchorTick, fineOffset, targetEndTick);
         geometryApplied =
             editManager.changeNoteEndWithOverlapHandling(track, currentNote, targetEndTick);
-        sendEditedNoteAuditionWhenTransportStopped(track, static_cast<int16_t>(auditionPitch));
     } else {
         const uint32_t currentNoteStartTick = currentNote.startTick;
         const uint32_t relativeStartTick =
@@ -2046,7 +2093,6 @@ NOTE_EDIT_MEM void ControlSurfaceManager::handleFineFaderInput(uint8_t ccValue, 
                    relativeStartTick, relativeTargetStartTick, currentNoteStartTick,
                    targetStartTick);
         geometryApplied = editManager.moveNoteToPosition(track, currentNote, targetStartTick);
-        sendEditedNoteAuditionWhenTransportStopped(track, static_cast<int16_t>(auditionPitch));
     }
         
     logger.log(CAT_MIDI, LOG_DEBUG, "Fine fader: CC=%d - %s mode", 
@@ -2157,6 +2203,12 @@ NOTE_EDIT_MEM void ControlSurfaceManager::handleNoteValueFaderInput(uint8_t ccVa
 
 NOTE_EDIT_MEM void ControlSurfaceManager::handleFaderInput(MidiMapping::FaderType faderType, int16_t pitchbendValue, uint8_t ccValue) {
     Track& track = trackManager.getSelectedTrack();
+    if constexpr (kNoteEditFaderFeedbackEnabled) {
+        if (faderType != MidiMapping::FaderType::FADER_SELECT && isFaderOutboundActive()) {
+            recordFaderInputForValidation(faderType, pitchbendValue, ccValue);
+            return;
+        }
+    }
     const bool ignoreInput =
         faderType == MidiMapping::FaderType::FADER_SELECT
             ? shouldIgnoreFaderInput(faderType, pitchbendValue, ccValue)
@@ -2299,6 +2351,17 @@ NOTE_EDIT_MEM void ControlSurfaceManager::onEditEvent(EditEvent event) {
     }
 }
 
+NOTE_EDIT_MEM void ControlSurfaceManager::drainFaderOutboundUntilIdle() {
+    if constexpr (!kNoteEditFaderFeedbackEnabled) {
+        return;
+    }
+    uint8_t guard = 0;
+    while (isFaderOutboundActive() && guard < 32) {
+        processFaderOutbound();
+        ++guard;
+    }
+}
+
 NOTE_EDIT_MEM void ControlSurfaceManager::sendEditSessionMidi(EditSessionType sessionType) {
     uint8_t program = MidiConfig::SessionProgram::LOOP_EDIT;
     uint8_t triggerNote = 0;
@@ -2334,6 +2397,7 @@ NOTE_EDIT_MEM void ControlSurfaceManager::handleSessionOpenedEvent(Track& track)
     if (editManager.sessionOpenedIncludesFaderFeedback() && editManager.isNoteEditActive()) {
         prepareNoteEditSessionOpen();
         sendNoteEditSessionFaderFeedback(track);
+        drainFaderOutboundUntilIdle();
     }
 }
 
@@ -2354,14 +2418,12 @@ NOTE_EDIT_MEM void ControlSurfaceManager::handleLengthModeChangedEvent(Track& tr
     if (notes.empty() || selectedIdx < 0 || selectedIdx >= static_cast<int>(notes.size())) {
         return;
     }
+    releaseEditedNoteAudition();
     if (editManager.isLengthEditingMode()) {
         requestFaderOutbound(NoteEditFaderOutbound::Trigger::LengthModeEnter);
     } else {
         requestFaderOutbound(NoteEditFaderOutbound::Trigger::LengthModeExit);
     }
-    lastUserCoarseFaderValue =
-        midiFaderManager.getFaderState(MidiMapping::FaderType::FADER_COARSE).lastSentPitchbend;
-    lastCoarseFaderTime = millis();
     (void)track;
 }
 

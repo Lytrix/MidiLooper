@@ -113,41 +113,11 @@ void GpioButtonManager::update() {
         }
     }
 
-    static bool wasEncoderButtonHeld = false;
-    static uint32_t encoderButtonHoldStart = 0;
-    static bool pitchEditActive = false;
-    constexpr uint32_t kEncoderHoldDelay = 250;
     bool encoderButtonHeld = false;
     if (buttons.size() > BUTTON_ENCODER) {
         encoderButtonHeld = buttons[BUTTON_ENCODER].read() == LOW;
     }
-    if (encoderButtonHeld && !wasEncoderButtonHeld) {
-        encoderButtonHoldStart = now;
-    }
-    if (encoderButtonHeld && (now - encoderButtonHoldStart >= kEncoderHoldDelay) &&
-        !looperState.isLoadSaveModeActive() &&
-        (editManager.getNoteEditSessionState().kind == NoteEditKind::Select ||
-         editManager.getNoteEditSessionState().kind == NoteEditKind::Move)) {
-        if (!pitchEditActive) {
-            editManager.applyGeometryKindFromControl(trackManager.getSelectedTrack(),
-                                                     NoteEditKind::Pitch, false);
-            editManager.syncNoteEditSessionStateToUi(trackManager.getSelectedTrack());
-            pitchEditActive = true;
-        }
-    }
-    if (!encoderButtonHeld && wasEncoderButtonHeld) {
-        if (editManager.getNoteEditSessionState().kind == NoteEditKind::Pitch) {
-            editManager.applySelectNav(trackManager.getSelectedTrack(),
-                                       editManager.getSelectedTick(),
-                                       editManager.getLastFader1SelectNoteId());
-            if (editManager.getSelectedNoteIdx() >= 0) {
-                controlSurfaceManager.scheduleNoteSelectFaderSync(trackManager.getSelectedTrack());
-            }
-        }
-        encoderButtonHoldStart = 0;
-        pitchEditActive = false;
-    }
-    wasEncoderButtonHeld = encoderButtonHeld;
+    controlSurfaceManager.updateGpioEncoderButtonHold(encoderButtonHeld);
 
     const long newEncoderPos = gpioEncoder.read() / 4;
     const int rawDelta = static_cast<int>(newEncoderPos - encoderPosition);
@@ -240,7 +210,7 @@ void GpioButtonManager::handleButton(ButtonId button, ButtonAction action) {
         case BUTTON_C:
             switch (action) {
                 case BUTTON_SHORT_PRESS:
-                    editManager.cycleEditSession(trackManager.getSelectedTrack());
+                    controlSurfaceManager.cycleEditSession(trackManager.getSelectedTrack());
                     break;
                 default:
                     break;

@@ -8,7 +8,7 @@ Last updated: 2026-08-03 (note-edit control-surface split complete)
 
 ## Current branch
 
-**`chore/note-edit-control-surface-split`** — Phases 0–7 complete (`d3505db`): `NoteEditManager` → `ControlSurfaceManager`, audition/pitch fixes. See [CURRENT_WORK.md](CURRENT_WORK.md).
+**`chore/note-edit-control-surface-split`** — Phases 0–8 complete (Phase 7 `c244280`, Phase 8 uncommitted): `NoteEditManager` → `ControlSurfaceManager`, NOTE_EDIT physical ingress consolidated. See [CURRENT_WORK.md](CURRENT_WORK.md).
 
 **`feature/deferred-lazy-load`** — Phase B archived `openspec/changes/archive/2026-07-19-deferred-job-scheduler/`. Specs: `openspec/specs/deferred-job-scheduler/`.
 
@@ -26,7 +26,7 @@ See [`docs/BRANCHING.md`](../BRANCHING.md).
 
 ## In flight
 
-- **Note-edit control-surface split:** **complete** on `chore/note-edit-control-surface-split` (`d3505db`) — see [note_edit_control_surface_split_refinement.md](../plans/note_edit_control_surface_split_refinement.md)
+- **Note-edit control-surface split:** **complete** on `chore/note-edit-control-surface-split` — Phases 0–8; see [note_edit_control_surface_split_refinement.md](../plans/note_edit_control_surface_split_refinement.md)
 - **Next product slice:** confirm with user (persistence/overlay hardening, or parked large-slot display hunt) — see [CURRENT_WORK.md](CURRENT_WORK.md)
 - **Archived this branch:** OpenSpec [`deferred-job-scheduler`](../../openspec/changes/archive/2026-07-19-deferred-job-scheduler/) Phase B — gates B.1 [`231510`](../../captures/session_20260718_231510.log), B.3/B.4 [`022107`](../../captures/session_20260719_022107.log); specs in `openspec/specs/deferred-job-scheduler/`
 - Memory reclaim + boot/display stack — **merged to `dev`** (PR #4)

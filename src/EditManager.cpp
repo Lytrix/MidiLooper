@@ -577,7 +577,6 @@ void EditManager::openNoteEditSession(Track& track) {
 #endif
     bumpSessionPreviewRevision();
     bumpSessionPlaybackPreviewRevision();
-    emitSessionOpenedToSurface(false, true);
     DIAG_EVENT(Diagnostics::Edit::NoteEditOpenExit);
     logger.debug("EditSession opened editPass=0");
 }
@@ -594,7 +593,9 @@ void EditManager::reopenNoteEditSession(Track& track) {
         hasMovedBracket = false;
     }
     editSession.sessionType = EditSessionType::Note;
+    deferSelectionSurfaceEvents_ = true;
     openNoteEditSession(track);
+    deferSelectionSurfaceEvents_ = false;
     DIAG_COUNTER_INC(CacheInvalidateBroad);
     track.invalidateCaches();
 }
@@ -1025,6 +1026,10 @@ void EditManager::resetNoteEditSessionState() {
 
 void EditManager::applySelectionFromGeometryEdit(Track& track, uint32_t selectedTick,
                                                  NoteId primaryNote) {
+    const bool selectionChanged =
+        sessionState.selection.selectedTick != selectedTick ||
+        sessionState.selection.primaryNote != primaryNote ||
+        !editorSelectionHasNote(sessionState.selection);
     sessionState.selection.selectedTick = selectedTick;
     sessionState.selection.primaryNote = primaryNote;
     sessionState.selection.selectedNotes.clear();
@@ -1033,7 +1038,11 @@ void EditManager::applySelectionFromGeometryEdit(Track& track, uint32_t selected
     }
     sessionState.selection.trackId = static_cast<TrackId>(trackManager.getSelectedTrackIndex());
     sessionState.selection.loopId = trackManager.getSelectedLoop(track).loopId;
+    if (!selectionChanged) {
+        return;
+    }
     syncGeometrySelectionToUi(track);
+    syncSelectedNoteIdxToFilteredInventory(track);
 }
 
 void EditManager::syncGeometrySelectionToUi(Track& track) {
@@ -1061,7 +1070,7 @@ void EditManager::applySelectNav(Track& track, uint32_t selectedTick, NoteId pri
 
     const bool selectionIdentityChanged =
         editorSelectionTargetChanged(priorSelection, selectedTick, primaryNote);
-    if (selectionIdentityChanged && primaryNote != kInvalidNoteId) {
+    if (selectionIdentityChanged && primaryNote != kInvalidNoteId && !deferSelectionSurfaceEvents_) {
         selectionChangePrior_ = priorSelection;
         selectionChangeRequestFaderSync_ = requestFaderSync;
         emitEditEvent(EditEvent::SelectionChanged);
@@ -1517,6 +1526,7 @@ void EditManager::enterEditMode(EditNoteState* newState, uint32_t startTick) {
     controlSurfaceManager.resetLengthEditingModeOnSessionBoundary();
     if (!editSession.active) {
         openNoteEditSession(track);
+        emitSessionOpenedToSurface(false, true);
     }
     setState(newState, track, startTick);
 }
@@ -1623,6 +1633,7 @@ void EditManager::exitPitchEditMode(Track& track) {
 void EditManager::cycleNoteEditType(Track& track) {
     if (!editSession.active) {
         openNoteEditSession(track);
+        emitSessionOpenedToSurface(false, true);
     }
     applyCycleEditKind(track);
     logger.log(CAT_TRACK, LOG_DEBUG, "Note edit type cycled to kind=%d",
@@ -1708,7 +1719,7 @@ void EditManager::sendEditSessionChange(EditSessionType sessionType, bool notify
         emitEditEvent(EditEvent::SessionClosed);
     }
     if (reopenedNoteSession && sessionTypeChanged) {
-        emitSessionOpenedToSurface(true, false);
+        emitSessionOpenedToSurface(true, true);
     } else if (sessionTypeChanged || notifySurfaceMidi) {
         emitSessionOpenedToSurface(sessionTypeChanged || notifySurfaceMidi, false);
     }
@@ -2079,11 +2090,19 @@ void EditManager::toggleLengthEditMode(Track& track) {
         const uint32_t loopLength = track.getLoopLength();
         if (getSelectedNoteIdx() >= 0 && loopLength > 0) {
             const NoteUtils::DisplayNote liveNote = liveEditDisplayNoteAtSelect(track);
+            const uint32_t loopStartTick = noteEditLoopStartTick(track);
             const uint32_t relEnd = liveNote.endTick % loopLength;
             setSelectedTick(relEnd);
             lengthFineAnchorEndTick_ = relEnd;
             setReferenceStep(relEnd / Config::TICKS_PER_16TH_STEP);
             beginGeometryMutation(track, NoteEditKind::Length, false);
+            if (editorSelectionHasNote(sessionState.selection)) {
+                const uint32_t displayEndBracket =
+                    NoteEditDisplaySnapshot::displayStartTickFromStorage(liveNote.endTick,
+                                                                         loopStartTick, loopLength);
+                applySelectionFromGeometryEdit(track, displayEndBracket,
+                                               sessionState.selection.primaryNote);
+            }
         }
     } else {
         logger.info("[MIDI] Length editing mode DISABLED");
@@ -2093,9 +2112,17 @@ void EditManager::toggleLengthEditMode(Track& track) {
         const NoteUtils::DisplayNote liveNote = liveEditDisplayNoteAtSelect(track);
         const uint32_t loopLength = track.getLoopLength();
         if (loopLength > 0) {
+            const uint32_t loopStartTick = noteEditLoopStartTick(track);
             const uint32_t relStart = liveNote.startTick % loopLength;
             setSelectedTick(relStart);
             setReferenceStep(relStart / Config::TICKS_PER_16TH_STEP);
+            if (editorSelectionHasNote(sessionState.selection)) {
+                const uint32_t displayStartBracket =
+                    NoteEditDisplaySnapshot::displayStartTickFromStorage(liveNote.startTick,
+                                                                           loopStartTick, loopLength);
+                applySelectionFromGeometryEdit(track, displayStartBracket,
+                                               sessionState.selection.primaryNote);
+            }
         }
         if (getSelectedNoteIdx() >= 0) {
             beginGeometryMutation(track, NoteEditKind::Move, false);
