@@ -8,7 +8,7 @@
 
 ## Verdict
 
-Safe zero-behavior and rename hygiene on this branch is **largely complete**. Remaining debt is gated product work (Track stop DRY, StorageManager extract, `NoteEditManager` rename) or lower-priority leftovers (`Take`/`audible` vocabulary, plans purge, `PersistenceQueue` name).
+Safe zero-behavior and rename hygiene on this branch is **largely complete**. Remaining debt is gated product work (StorageManager extract, `NoteEditManager` rename) or lower-priority leftovers (plans purge, `PersistenceQueue` name, runtime `isTrackAudible`).
 
 ---
 
@@ -23,6 +23,7 @@ Safe zero-behavior and rename hygiene on this branch is **largely complete**. Re
 | `373566a` | Thin `host_midi_automation_*.py` CLI shims; bodies in `hitl/legacy_*_baseline.py` |
 | `f6cc7c2` | `PlaybackWindow` merge cache → `PlaybackMergedMidiEvents` (OpenSpec slot-performance-interaction Phase −1) |
 | `d35407d` | Vocabulary: `published`→`committed` / `copyEventsTo` / `readEvents` / `mutEvents` (locked map) |
+| *(pending)* | Track stop DRY: `commitCaptureForStop` / `prepareRecordStop` / `handleNoteEditFold` |
 
 ---
 
@@ -37,7 +38,7 @@ Safe zero-behavior and rename hygiene on this branch is **largely complete**. Re
 | [`scripts/host_midi_automation_edit_baseline.py`](../../scripts/host_midi_automation_edit_baseline.py) | **~32** | Thin shim |
 | [`src/DisplayManager.cpp`](../../src/DisplayManager.cpp) | ~3345 | Unchanged size |
 | [`src/NoteEditManager.cpp`](../../src/NoteEditManager.cpp) | ~2556 | Name still misleading |
-| [`src/Track.cpp`](../../src/Track.cpp) | ~2457 | Stop-path clones remain |
+| [`src/Track.cpp`](../../src/Track.cpp) | ~2457 | Stop-path DRY via `commitCaptureForStop` / prep / fold |
 | [`src/Utils/NoteMovementUtils.cpp`](../../src/Utils/NoteMovementUtils.cpp) | ~2094 | Unchanged |
 
 ---
@@ -47,7 +48,7 @@ Safe zero-behavior and rename hygiene on this branch is **largely complete**. Re
 | # | Finding | Status |
 |---|---------|--------|
 | 1 | `StorageManager::saveState` still monolithic | **Queued** — continue extract when persistence hardening is CURRENT_WORK |
-| 2 | Four near-clone capture stops (`stopRecording` / `ToStopped` / overdub twins) | **Queued** — Track stop DRY; needs [`unified-capture-commit-owner`](../../openspec/changes/unified-capture-commit-owner/) / OpenSpec phase gate |
+| 2 | Four near-clone capture stops (`stopRecording` / `ToStopped` / overdub twins) | **Done** — `commitCaptureForStop` / `prepareRecordStop` / `handleNoteEditFold`; [`track_stop_dry_refinement.md`](track_stop_dry_refinement.md) |
 | 3 | Edit split: `EditManager` vs `NoteEditManager` (misnamed) vs `LoopEditManager` | **Queued** — rename `NoteEditManager` only with approved new name (large blast radius) |
 | 4 | `DisplayManager::resolveDisplayNotes` + repeated `capture.store.copyEventsTo` | **Open** — DRY helper still useful; API no longer says flatten |
 | 5 | `playMidiEvents` / `playMidiEventsForSlot` twin wrap walks | **Queued** — behavior-preserving extract only with tests |
@@ -73,7 +74,7 @@ Safe zero-behavior and rename hygiene on this branch is **largely complete**. Re
 | 11 | Capture `copyEventsTo` call-site duplication; test-local length helpers | **Open** — optional shared preview-events helper; share length helpers with `Track` |
 | 12 | HITL fat baselines | **Done** — thin CLI shims + `hitl/legacy_*` + shared modules |
 | 13 | Vocabulary `published` / `flatten` | **Done** — locked rename in code + Guides; CAP string `"published"` intentionally kept |
-| 13b | Leftover `Take` in tests/telemetry; `audible` in boot restore | **Queued** — separate small rename pass |
+| 13b | Leftover `Take` in tests/telemetry; `audible` in boot restore | **Done** — `isBootPlaybackSlot`, `restorePlaybackAfterSlotClear`, `sourceEventCount` / `loopMidiEventsFromPasses` |
 | 14 | Merge-cache name `PlaybackWindow` | **Done** — `PlaybackMergedMidiEvents`; domain `makeFullLoopPlaybackWindow` unchanged |
 | 15 | `PersistenceQueue` vs `PersistenceWorkQueue` naming clash | **Queued** — rename chunk queue when persistence hardening is active |
 | 16 | `EditNoteHomeState` / `PersistenceWorkQueue.cpp` placement | **Done** |
@@ -103,12 +104,11 @@ Protected by [OpenSpec-Phase-Gate](../../.cursor/rules/OpenSpec-Phase-Gate.mdc) 
 
 ## Next hygiene slices (priority)
 
-1. **Track stop DRY** — parameterized `record|overdub` × `playing|stopped` via `finalizeCommitSideEffects`; align with `unified-capture-commit-owner` (gate required)
-2. **StorageManager** — continue extraction until `saveState` leaves the root TU (with persistence CURRENT_WORK)
-3. **`NoteEditManager` rename** — only after user-approved name (control-surface owner, not edit session)
-4. **`PersistenceQueue` → mid-pass/chunk-oriented name** — with persistence hardening
-5. Optional: shared capture→events helper; retire `Take`/`audible` leftovers; plans purge
-6. Optional: finish moving scenario imports off thin shims onto `hitl.legacy_*` / shared modules only
+1. **StorageManager** — continue extraction until `saveState` leaves the root TU (with persistence CURRENT_WORK)
+2. **`NoteEditManager` rename** — only after user-approved name (control-surface owner, not edit session)
+3. **`PersistenceQueue` → mid-pass/chunk-oriented name** — with persistence hardening
+4. Optional: shared capture→events helper; plans purge
+5. Optional: finish moving scenario imports off thin shims onto `hitl.legacy_*` / shared modules only
 
 ---
 
@@ -123,4 +123,6 @@ Protected by [OpenSpec-Phase-Gate](../../.cursor/rules/OpenSpec-Phase-Gate.mdc) 
 - [x] HITL helpers + thin CLI shims
 - [x] `PlaybackMergedMidiEvents` Phase −1
 - [x] Vocabulary `committed` / `copyEventsTo`
+- [x] Track stop DRY (`commitCaptureForStop` / `prepareRecordStop` / `handleNoteEditFold`)
+- [x] Vocab leftovers: `Take` / boot `audible` → playback / passes / `sourceEventCount`
 - [x] Native tests + `teensy41-capture-serial` build (per change)

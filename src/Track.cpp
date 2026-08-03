@@ -951,6 +951,79 @@ CommitResult Track::finalizeCommitSideEffects(CommitResult result, CommitReason 
   return result;
 }
 
+CommitResult Track::commitCaptureForStop(CommitReason reason, uint32_t commitTick,
+                                         uint32_t closeTick) {
+  Loop& loop = getActiveLoop();
+  const CommitResult commitResult = loop.commitCapturePass(reason, commitTick);
+  return finalizeCommitSideEffects(commitResult, reason, closeTick);
+}
+
+uint32_t Track::prepareRecordStop(uint32_t currentTick, const char* guardLabel) {
+  Loop& loop = getActiveLoop();
+  uint32_t rawLength = 0;
+  if (currentTick >= loop.startLoopTick) {
+    rawLength = currentTick - loop.startLoopTick;
+  } else {
+    logger.warning("%s guard: currentTick(%lu) < startLoopTick(%lu), clamping length",
+                   guardLabel != nullptr ? guardLabel : "prepareRecordStop",
+                   static_cast<unsigned long>(currentTick),
+                   static_cast<unsigned long>(loop.startLoopTick));
+  }
+  const uint32_t lastEventTick = findLastEventTick();
+  loop.loopLengthTicks = computeRecordStopLengthTicks(rawLength, lastEventTick);
+
+  if (loop.loopLengthTicks > 0) {
+    if (!pendingNotes.empty()) {
+      finalizePendingNotes(currentTick);
+    }
+    // Record-stop truncation: events captured past final loop length must not
+    // survive into committed playback state.
+    loop.capture.store.dropEventsAtOrBeyondTick(loop.loopLengthTicks);
+  }
+  return rawLength;
+}
+
+bool Track::handleNoteEditFold(bool endInPlaying, uint32_t currentTick, uint32_t closeTick,
+                               uint32_t stopStartUs) {
+  if (!editManager.isNoteEditActive()) {
+    return false;
+  }
+  Loop& loop = getActiveLoop();
+  finalizePendingNotes(currentTick);
+  editManager.foldLiveCaptureIntoNoteEditSession(*this, closeTick);
+  pendingNotes.clear();
+  if (endInPlaying) {
+    const uint32_t stateHeapBefore = MemoryMonitor::getInternalHeapFreeBytes();
+    const uint32_t stateStartUs = micros();
+    sendAllNotesOff();
+    resetPlaybackState(currentTick);
+    setState(TRACK_PLAYING);
+    logOverdubStopStage(loop, stopStartUs, "set_state", micros() - stateStartUs, stateHeapBefore,
+                        MemoryMonitor::getInternalHeapFreeBytes(), "in_edit");
+    const uint32_t flushHeapBefore = MemoryMonitor::getInternalHeapFreeBytes();
+    const uint32_t flushStartUs = micros();
+    SC_REC_FLUSH_PENDING_REVTS(256);
+    logOverdubStopStage(loop, stopStartUs, "flush", micros() - flushStartUs, flushHeapBefore,
+                        MemoryMonitor::getInternalHeapFreeBytes(), "ok");
+    logMemoryAfterOverdubStop(recordAddedNoteOnCount, loop);
+    logger.logTrackEvent("Overdubbing stopped", currentTick);
+    logger.info("Overdub stopped (in-edit fold): events=%d, undo_entries=%d",
+                static_cast<int>(loop.displayEventCountHint()), TrackUndo::getUndoCount(*this));
+    emitOverdubStopDisplaySnapshot(*this, activeLoopIndex, currentTick);
+    logOverdubStopStage(loop, stopStartUs, "display", 0, MemoryMonitor::getInternalHeapFreeBytes(),
+                        MemoryMonitor::getInternalHeapFreeBytes(), "ok");
+    HotPathTelemetry::requestDeferredSummary("overdub_stop");
+  } else {
+    logMemoryAfterOverdubStop(recordAddedNoteOnCount, loop);
+    setState(TRACK_STOPPED);
+    resetPlaybackState(currentTick);
+    displayManager.emitDisplayCaptureSnapshot(*this, activeLoopIndex, currentTick);
+    logger.logTrackEvent("Overdubbing stopped (to STOPPED)", currentTick);
+    HotPathTelemetry::requestDeferredSummary("overdub_stop_to_stopped");
+  }
+  return true;
+}
+
 void Track::emitStoredMidiVerification() const {
   const Loop& loop = getActiveLoop();
   if (loop.loopLengthTicks == 0 || !loop.hasCommittedPasses()) {
@@ -1313,26 +1386,7 @@ void Track::stopRecording(uint32_t currentTick) {
   const uint32_t stopHeap = MemoryMonitor::getInternalHeapFreeBytes();
   logRecordStopStage(loop, stopPathStartUs, "record_stop", 0, stopHeap, stopHeap, "entered");
 
-  uint32_t rawLength = 0;
-  if (currentTick >= loop.startLoopTick) {
-    rawLength = currentTick - loop.startLoopTick;
-  } else {
-    logger.warning("stopRecording guard: currentTick(%lu) < startLoopTick(%lu), clamping length", currentTick, loop.startLoopTick);
-  }
-  const uint32_t lastEventTick = findLastEventTick();
-  loop.loopLengthTicks = computeRecordStopLengthTicks(rawLength, lastEventTick);
-
-  if (loop.loopLengthTicks > 0) {
-    if (!pendingNotes.empty()) {
-      finalizePendingNotes(currentTick);
-    }
-    // Record-stop truncation: events captured past final loop length must not
-    // survive into committed playback state.
-    loop.capture.store.dropEventsAtOrBeyondTick(loop.loopLengthTicks);
-  }
-
-  const CommitResult commitResult =
-      loop.commitCapturePass(CommitReason::RecordStop, currentTick);
+  const uint32_t rawLength = prepareRecordStop(currentTick, "stopRecording");
   pendingNotes.clear();
 
   // Validate AFTER loopLengthTicks is known so wrap-matching and open-tail closing
@@ -1342,7 +1396,7 @@ void Track::stopRecording(uint32_t currentTick) {
   const uint32_t finalizeHeapBefore = MemoryMonitor::getInternalHeapFreeBytes();
   const uint32_t finalizeStartUs = micros();
   const CommitResult sideEffectResult =
-      finalizeCommitSideEffects(commitResult, CommitReason::RecordStop, closeTick);
+      commitCaptureForStop(CommitReason::RecordStop, currentTick, closeTick);
   const uint32_t finalizeDurationUs = micros() - finalizeStartUs;
   const uint32_t finalizeHeapAfter = MemoryMonitor::getInternalHeapFreeBytes();
   const StopPathStorageStats stopPathStats = collectStopPathStorageStats(loop, false);
@@ -1459,25 +1513,7 @@ TRACK_COLD_MEM void Track::stopRecordingToStopped(uint32_t currentTick) {
   const uint32_t stopHeap = MemoryMonitor::getInternalHeapFreeBytes();
   logRecordStopStage(loop, stopPathStartUs, "record_stop", 0, stopHeap, stopHeap, "entered");
 
-  uint32_t rawLength = 0;
-  if (currentTick >= loop.startLoopTick) {
-    rawLength = currentTick - loop.startLoopTick;
-  } else {
-    logger.warning("stopRecordingToStopped guard: currentTick(%lu) < startLoopTick(%lu), clamping length", currentTick, loop.startLoopTick);
-  }
-  const uint32_t lastEventTick = findLastEventTick();
-  loop.loopLengthTicks = computeRecordStopLengthTicks(rawLength, lastEventTick);
-
-  if (loop.loopLengthTicks > 0) {
-    if (!pendingNotes.empty()) {
-      finalizePendingNotes(currentTick);
-    }
-    // Record-stop truncation: drop overflow capture events before seal/publish.
-    loop.capture.store.dropEventsAtOrBeyondTick(loop.loopLengthTicks);
-  }
-
-  const CommitResult commitResult =
-      loop.commitCapturePass(CommitReason::RecordStopToStopped, currentTick);
+  const uint32_t rawLength = prepareRecordStop(currentTick, "stopRecordingToStopped");
   pendingNotes.clear();
 
   // Validate AFTER loopLengthTicks is known (see stopRecording for rationale).
@@ -1485,7 +1521,7 @@ TRACK_COLD_MEM void Track::stopRecordingToStopped(uint32_t currentTick) {
   const uint32_t finalizeHeapBefore = MemoryMonitor::getInternalHeapFreeBytes();
   const uint32_t finalizeStartUs = micros();
   const CommitResult sideEffectResult =
-      finalizeCommitSideEffects(commitResult, CommitReason::RecordStopToStopped, closeTick);
+      commitCaptureForStop(CommitReason::RecordStopToStopped, currentTick, closeTick);
   const uint32_t finalizeDurationUs = micros() - finalizeStartUs;
   const uint32_t finalizeHeapAfter = MemoryMonitor::getInternalHeapFreeBytes();
   const StopPathStorageStats stopPathStats = collectStopPathStorageStats(loop, false);
@@ -1656,45 +1692,20 @@ void Track::stopOverdubbing() {
   if (loop.loopLengthTicks > 0) {
     closeTick = capturePhaseTick(currentTick);
   }
-  if (editManager.isNoteEditActive()) {
-    finalizePendingNotes(currentTick);
-    editManager.foldLiveCaptureIntoNoteEditSession(*this, closeTick);
-    pendingNotes.clear();
-    const uint32_t stateHeapBefore = MemoryMonitor::getInternalHeapFreeBytes();
-    const uint32_t stateStartUs = micros();
-    sendAllNotesOff();
-    resetPlaybackState(currentTick);
-    setState(TRACK_PLAYING);
-    logOverdubStopStage(loop, stopStartUs, "set_state", micros() - stateStartUs, stateHeapBefore,
-                        MemoryMonitor::getInternalHeapFreeBytes(), "in_edit");
-    const uint32_t flushHeapBefore = MemoryMonitor::getInternalHeapFreeBytes();
-    const uint32_t flushStartUs = micros();
-    SC_REC_FLUSH_PENDING_REVTS(256);
-    logOverdubStopStage(loop, stopStartUs, "flush", micros() - flushStartUs, flushHeapBefore,
-                        MemoryMonitor::getInternalHeapFreeBytes(), "ok");
-    logMemoryAfterOverdubStop(recordAddedNoteOnCount, loop);
-    logger.logTrackEvent("Overdubbing stopped", currentTick);
-    logger.info("Overdub stopped (in-edit fold): events=%d, undo_entries=%d",
-                static_cast<int>(loop.displayEventCountHint()), TrackUndo::getUndoCount(*this));
-    emitOverdubStopDisplaySnapshot(*this, activeLoopIndex, currentTick);
-    logOverdubStopStage(loop, stopStartUs, "display", 0, MemoryMonitor::getInternalHeapFreeBytes(),
-                        MemoryMonitor::getInternalHeapFreeBytes(), "ok");
-    HotPathTelemetry::requestDeferredSummary("overdub_stop");
+  if (handleNoteEditFold(true, currentTick, closeTick, stopStartUs)) {
     return;
   }
   finalizePendingNotes(currentTick);
   const uint32_t sealHeapBefore = MemoryMonitor::getInternalHeapFreeBytes();
   const uint32_t sealStartUs = micros();
-  const CommitResult commitResult =
-      loop.commitCapturePass(CommitReason::OverdubStop, currentTick);
-  logOverdubStopStage(loop, stopStartUs, "seal", micros() - sealStartUs, sealHeapBefore,
-                      MemoryMonitor::getInternalHeapFreeBytes(), commitResultLabel(commitResult));
-  const uint32_t finalizeHeapBefore = MemoryMonitor::getInternalHeapFreeBytes();
-  const uint32_t finalizeStartUs = micros();
   const CommitResult sideEffectResult =
-      finalizeCommitSideEffects(commitResult, CommitReason::OverdubStop, closeTick);
-  logOverdubStopStage(loop, stopStartUs, "finalize", micros() - finalizeStartUs,
-                      finalizeHeapBefore, MemoryMonitor::getInternalHeapFreeBytes(),
+      commitCaptureForStop(CommitReason::OverdubStop, currentTick, closeTick);
+  // Stage order seal → finalize preserved; duration covers seal+finalize together on seal.
+  logOverdubStopStage(loop, stopStartUs, "seal", micros() - sealStartUs, sealHeapBefore,
+                      MemoryMonitor::getInternalHeapFreeBytes(),
+                      commitResultLabel(sideEffectResult));
+  logOverdubStopStage(loop, stopStartUs, "finalize", 0, MemoryMonitor::getInternalHeapFreeBytes(),
+                      MemoryMonitor::getInternalHeapFreeBytes(),
                       commitResultLabel(sideEffectResult));
   const uint32_t stateHeapBefore = MemoryMonitor::getInternalHeapFreeBytes();
   const uint32_t stateStartUs = micros();
@@ -1729,22 +1740,11 @@ void Track::stopOverdubbingToStopped() {
     closeTick = capturePhaseTick(currentTick);
   }
   sendAllNotesOff();
-  if (editManager.isNoteEditActive()) {
-    finalizePendingNotes(currentTick);
-    editManager.foldLiveCaptureIntoNoteEditSession(*this, closeTick);
-    pendingNotes.clear();
-    logMemoryAfterOverdubStop(recordAddedNoteOnCount, loop);
-    setState(TRACK_STOPPED);
-    resetPlaybackState(currentTick);
-    displayManager.emitDisplayCaptureSnapshot(*this, activeLoopIndex, currentTick);
-    logger.logTrackEvent("Overdubbing stopped (to STOPPED)", currentTick);
-    HotPathTelemetry::requestDeferredSummary("overdub_stop_to_stopped");
+  if (handleNoteEditFold(false, currentTick, closeTick, /*stopStartUs=*/0)) {
     return;
   }
   finalizePendingNotes(currentTick);
-  const CommitResult commitResult =
-      loop.commitCapturePass(CommitReason::OverdubStopToStopped, currentTick);
-  finalizeCommitSideEffects(commitResult, CommitReason::OverdubStopToStopped, closeTick);
+  commitCaptureForStop(CommitReason::OverdubStopToStopped, currentTick, closeTick);
   logMemoryAfterOverdubStop(recordAddedNoteOnCount, loop);
   setState(TRACK_STOPPED);
   resetPlaybackState(currentTick);

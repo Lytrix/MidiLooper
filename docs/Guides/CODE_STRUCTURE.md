@@ -23,7 +23,7 @@ Standalone **Handler** classes (e.g. `BarStepButtonHandler`) process events in o
 | Module | Role |
 |--------|------|
 | `TrackManager` | Selected track, track states, quantization, LED defer |
-| `Track` | Loop slots, **Take** / **Capture** ([storage & validation guide](LOOP_MIDI_STORAGE_AND_VALIDATION.md)), playback, record/overdub |
+| `Track` | Loop slots, **passes** / **Capture** ([storage & validation guide](LOOP_MIDI_STORAGE_AND_VALIDATION.md)), playback, record/overdub |
 | `ClockManager` | Timing, MIDI clock, bar/tick |
 | `MidiHandler` | MIDI I/O and routing |
 | `MidiLedManager` | LED feedback to controller (e.g. bar/step, track/loop rows) |

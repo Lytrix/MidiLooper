@@ -106,7 +106,7 @@ public:
     /// Clear focus only (`selectedNoteIdx == -1`). Do **not** pass a filtered or unfiltered list index —
     /// use **rebuildNoteEditFocusForDisplayNote** for fader-1 select (C14).
     void rebuildNoteEditFocusAtSelect(Track& track, int selectedNoteIdx);
-    /// Fader-1 select: baseline from Takes+Edits; **focus.last** from live **DisplayNote** (filtered index safe).
+    /// Fader-1 select: baseline from passes materialize; **focus.last** from live **DisplayNote** (filtered index safe).
     void rebuildNoteEditFocusForDisplayNote(Track& track, const NoteUtils::DisplayNote& liveSelected);
     /// Remap or clear **selectedNoteIdx** when filtered inventory no longer matches **focus.last**.
     void syncSelectedNoteIdxToFilteredInventory(Track& track);
