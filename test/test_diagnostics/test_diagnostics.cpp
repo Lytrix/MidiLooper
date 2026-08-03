@@ -22,7 +22,7 @@ void test_trace_record_size_stable() {
 }
 
 void test_architecture_counter_enum_layout() {
-  TEST_ASSERT_EQUAL(0, static_cast<int>(Diagnostics::Counter::PlaybackWindowRebuild));
+  TEST_ASSERT_EQUAL(0, static_cast<int>(Diagnostics::Counter::PlaybackMergedMidiEventsRebuild));
   TEST_ASSERT_EQUAL(1, static_cast<int>(Diagnostics::Counter::PlaybackDeferredReuse));
   TEST_ASSERT_EQUAL(2, static_cast<int>(Diagnostics::Counter::PlaybackFullMaterialize));
   TEST_ASSERT_EQUAL(3, static_cast<int>(Diagnostics::Counter::LegacyMidiEvents));

@@ -112,12 +112,12 @@ struct LoadLoopJob {
 };
 LoadLoopJob loadLoopJob_{};
 LoadLoopJob parkedLoadLoopJob_{};
-/// After audible boot ready, delay background fill so first transport press is not starved.
+/// After boot playback ready, delay background fill so first transport press is not starved.
 uint32_t backgroundRestoreHoldoffUntilMs_ = 0;
 /// After LoadLoopJob Commit, block deferred save briefly so SD work cannot race the
 /// post-commit prewarm frame (session_20260719_000659: silence after commit_prewarm_q).
 uint32_t postLoadLoopCommitSaveHoldoffUntilMs_ = 0;
-/// While true (boot title audible drain), do not park/demote — parked jobs block bootInteractiveReady.
+/// While true (boot title playback drain), do not park/demote — parked jobs block bootInteractiveReady.
 bool bootTitleLoadDrain_ = false;
 std::array<uint32_t, Config::NUM_TRACKS> undoStackFileOffsets_{};
 uint8_t undoHydrateTrackIndex_ = 0;
@@ -1795,9 +1795,9 @@ bool StorageManager::needsSlotLoad(uint8_t trackIndex, uint8_t slotIndex) {
 }
 
 bool StorageManager::bootInteractiveReady() {
-    // Audible-only boot: title + USB wait until the audible restore queue is empty
+    // Playback-only boot: title + USB wait until the boot playback restore queue is empty
     // and any in-flight LoadLoopJob has committed.
-    // Non-audible SD slots are not enqueued at boot (HEADER_READY metadata only).
+    // Non-playback SD slots are not enqueued at boot (HEADER_READY metadata only).
     // Do not re-derive readiness from getActiveLoopIndex() after the footer —
     // loadTransportSlotIndices remaps active→selected while stopped.
     return pendingLoopSlotRestores_.count == 0 && !SlotLoadSession::isActive() &&
@@ -2732,7 +2732,7 @@ STORAGE_PERSIST_MEM void resumeParkedLoadLoopJobIfFocus(uint8_t focusTrack, uint
 
 STORAGE_PERSIST_MEM void demoteActiveLoadLoopJobForFocus(uint8_t focusTrack, uint8_t focusSlot) {
     if (bootTitleLoadDrain_) {
-        // Audible boot must drain the queue without parking; parked jobs block title clear.
+        // Boot playback drain must empty the queue without parking; parked jobs block title clear.
         return;
     }
     if (!loadLoopJob_.active) {
@@ -3752,7 +3752,7 @@ bool StorageManager::loadCurrentSetBundleAndActiveLoopSlots(File& file, const ch
     emitBootMilestone("scan", "start");
 
     // Boot restore pipeline: discover → hydrate metadata → enqueue boot playback set → sort → drain.
-    // Boot playback set = isAudibleBootSlot (per-track union of file selected + file active).
+    // Boot playback set = isBootPlaybackSlot (per-track union of file selected + file active).
     for (uint8_t t = 0; t < numTracks; ++t) {
         Track& track = trackManager.getTrack(t);
         bool anySlotHasEvents = false;
@@ -3763,7 +3763,7 @@ bool StorageManager::loadCurrentSetBundleAndActiveLoopSlots(File& file, const ch
             }
             (void)hydrateLoopSlotMetadataFromCurrentSetSd(t, s, track.getLoop(s));
             anySlotHasEvents = true;
-            if (!isAudibleBootSlot(t, s, selectedTrackIdx, activeLoopIndex.data(),
+            if (!isBootPlaybackSlot(t, s, selectedTrackIdx, activeLoopIndex.data(),
                                    activeLoopIndex.size(), selectedSlotIndex.data(),
                                    selectedSlotIndex.size())) {
                 continue;
@@ -3800,11 +3800,11 @@ bool StorageManager::loadCurrentSetBundleAndActiveLoopSlots(File& file, const ch
     Serial.print(" selected=");
     Serial.println(focusSelected);
 
-    // Audible slots only; main advances one LoadLoopJob step per loop() until
+    // Boot playback slots only; main advances one LoadLoopJob step per loop() until
     // bootInteractiveReady(), then enqueues remaining SD slots for background fill.
     if (pendingLoopSlotRestores_.count > 0) {
         const DeferredLoopSlotRestore& first = pendingLoopSlotRestores_.entries[0];
-        Serial.print("[StorageManager] Queuing audible loop slot restore ");
+        Serial.print("[StorageManager] Queuing boot playback loop slot restore ");
         Serial.print(pendingLoopSlotRestores_.count);
         Serial.print(" pending; first ");
         Serial.print(first.track);

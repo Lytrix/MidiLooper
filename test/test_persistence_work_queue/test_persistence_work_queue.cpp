@@ -3,7 +3,7 @@
 
 #include <unity.h>
 
-#include "../../src/PersistenceWorkQueue.cpp"
+#include "../../src/StorageManager/PersistenceWorkQueue.cpp"
 
 #include "StorageManagerInternal/PersistenceWorkQueue.h"
 

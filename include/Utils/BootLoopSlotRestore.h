@@ -9,9 +9,9 @@
 /// uses the **selected** slot. Boot must therefore restore **union(selected, active)**
 /// on every track when those slots have SD payload — not file-active alone, and not
 /// only the focus track's selected slot.
-inline bool isAudibleBootSlot(uint8_t trackIndex, uint8_t slotIndex, uint8_t /*selectedTrackIdx*/,
-                              const uint8_t* activeLoopIndex, size_t activeCount,
-                              const uint8_t* selectedSlotIndex, size_t selectedCount) {
+inline bool isBootPlaybackSlot(uint8_t trackIndex, uint8_t slotIndex, uint8_t /*selectedTrackIdx*/,
+                               const uint8_t* activeLoopIndex, size_t activeCount,
+                               const uint8_t* selectedSlotIndex, size_t selectedCount) {
   const uint8_t activeSlot =
       trackIndex < activeCount ? activeLoopIndex[trackIndex] : static_cast<uint8_t>(0);
   if (slotIndex == activeSlot) {
@@ -22,7 +22,7 @@ inline bool isAudibleBootSlot(uint8_t trackIndex, uint8_t slotIndex, uint8_t /*s
   return slotIndex == selectedSlot;
 }
 
-/// Deferred restore priority (lower = sooner). Used for boot audible ordering and
+/// Deferred restore priority (lower = sooner). Used for boot playback ordering and
 /// post-boot background fill of remaining HEADER_READY slots.
 ///
 /// Focus track (selectedTrackIdx):
@@ -71,7 +71,7 @@ inline uint16_t computeDeferredRestorePriority(uint8_t trackIndex, uint8_t slotI
                                slotIndex);
 }
 
-/// Alias for boot audible-set sort (same priority model as runtime fill).
+/// Alias for boot playback-set sort (same priority model as runtime fill).
 inline uint16_t computeBootRestorePriority(uint8_t trackIndex, uint8_t slotIndex,
                                            uint8_t selectedTrackIdx,
                                            const uint8_t* /*activeLoopIndex*/, size_t /*activeCount*/,

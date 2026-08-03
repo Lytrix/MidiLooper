@@ -58,6 +58,10 @@ namespace Channels {
 constexpr uint8_t RECORD_EXCLUDE_MIN = 16;
 constexpr uint8_t RECORD_EXCLUDE_MAX = 16;
 
+// --- MIDI thru exclusion (DROID control plane ch13-16) ---
+constexpr uint8_t THRU_EXCLUDE_MIN = 13;
+constexpr uint8_t THRU_EXCLUDE_MAX = 16;
+
 // --- LED feedback (excluded from All Notes Off) ---
 constexpr uint8_t LED_CHANNEL_MIN = 15;
 constexpr uint8_t LED_CHANNEL_MAX = 15;

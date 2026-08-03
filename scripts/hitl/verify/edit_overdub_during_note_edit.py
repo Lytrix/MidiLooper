@@ -5,10 +5,9 @@ from __future__ import annotations
 import re
 from typing import Optional
 
-
 def verify_edit_overdub_during_note_edit(lines: list[str], args: object) -> dict[str, object]:
-    from host_midi_automation_baseline import _count_capture_transitions
-    from host_midi_automation_edit_baseline import SCOPED_EDIT_PASS_UNDONE
+    from hitl.capture_transitions import _count_capture_transitions
+    from hitl.control_constants import SCOPED_EDIT_PASS_UNDONE
 
     transitions = _count_capture_transitions(lines)
     issues: list[str] = []

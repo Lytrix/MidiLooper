@@ -6,16 +6,18 @@ import json
 from pathlib import Path
 from typing import Any, Mapping
 
-from host_midi_automation_baseline import (
+from hitl.control_constants import (
     MIDI_CLOCKS_PER_BAR,
     OVERDUB_GRID_STEP_CLOCKS,
+    TICKS_PER_16TH_STEP,
+    TICKS_PER_BAR,
+)
+from host_midi_automation_baseline import (
     _extract_phase_boundaries,
     _extract_sevt_events,
 )
 from host_midi_automation_edit_baseline import (
-    TICKS_PER_BAR,
     RecordLayout,
-    TICKS_PER_16TH_STEP,
     _build_select_navigation_slots,
     _extract_last_recs_stop,
     _extract_revt_notes,
@@ -35,13 +37,11 @@ def latest_base_report(captures_dir: Path) -> dict[str, Any] | None:
             continue
     return None
 
-
 def serial_log_from_base_report(report: Mapping[str, Any]) -> Path | None:
     serial_path = report.get("serial_log_path")
     if serial_path and Path(serial_path).is_file():
         return Path(serial_path)
     return None
-
 
 def base_preset_config(report: Mapping[str, Any] | None) -> dict[str, Any]:
     if report is None:
@@ -49,13 +49,11 @@ def base_preset_config(report: Mapping[str, Any] | None) -> dict[str, Any]:
     config = report.get("config")
     return dict(config) if isinstance(config, dict) else {}
 
-
 def base_report_ok(report: Mapping[str, Any] | None) -> bool:
     """True when host_midi_automation_baseline JSON reports overall_ok."""
     if report is None:
         return False
     return bool(report.get("overall_ok"))
-
 
 def base_report_loop_materialized(report: Mapping[str, Any] | None) -> bool:
     """True when base produced a 2+2 overdub loop usable for NOTE_EDIT fader sweep.
@@ -89,7 +87,6 @@ def base_report_loop_materialized(report: Mapping[str, Any] | None) -> bool:
             return False
     return True
 
-
 def base_report_record_seed_ok(report: Mapping[str, Any] | None) -> bool:
     """True when base record-only produced a 2-bar loop (edit_minimal seed)."""
     if report is None:
@@ -117,7 +114,6 @@ def base_report_record_seed_ok(report: Mapping[str, Any] | None) -> bool:
                 return False
     return True
 
-
 def base_report_usable_for_note_edit_sweep(report: Mapping[str, Any] | None) -> bool:
     if base_report_ok(report):
         return True
@@ -126,10 +122,8 @@ def base_report_usable_for_note_edit_sweep(report: Mapping[str, Any] | None) -> 
         return base_report_record_seed_ok(report)
     return base_report_loop_materialized(report)
 
-
 def _phase_clock_to_storage_tick(phase_clock: int) -> int:
     return phase_clock * TICKS_PER_BAR // MIDI_CLOCKS_PER_BAR
-
 
 def overdub_pass_pairs_from_base_config(
     config: Mapping[str, Any],
@@ -189,7 +183,6 @@ def overdub_pass_pairs_from_base_config(
             next_step_clock += step_clocks
     return pairs
 
-
 def materialized_note_pairs_from_base_seed(
     lines: list[str],
     config: Mapping[str, Any],
@@ -238,7 +231,6 @@ def materialized_note_pairs_from_base_seed(
     pairs.sort(key=lambda item: (item[0], item[1]))
     return loop_length, pairs
 
-
 def nav_slot_stats(note_pairs: list[tuple[int, int]], *, loop_length: int) -> dict[str, int]:
     nav_slots = _build_select_navigation_slots(
         note_pairs, loop_length=loop_length, loop_start=0
@@ -256,7 +248,6 @@ def nav_slot_stats(note_pairs: list[tuple[int, int]], *, loop_length: int) -> di
         "max_notes_per_sixteenth_step": max_per_step,
     }
 
-
 def record_layout_from_base_seed(
     lines: list[str],
     config: Mapping[str, Any],
@@ -272,14 +263,13 @@ def record_layout_from_base_seed(
         nav_slots=nav_slots,
     )
 
-
 def record_layout_from_edit_fixture(
     config: Mapping[str, Any],
 ) -> "RecordLayout":
     """Nav layout for EDIT_RECORD_FIXTURE (edit_minimal base seed)."""
+    from hitl.control_constants import TICKS_PER_BAR
     from host_midi_automation_edit_baseline import (
         EDIT_RECORD_FIXTURE,
-        TICKS_PER_BAR,
         RecordLayout,
         _build_fixture_step_to_tick,
         _build_select_navigation_slots,
@@ -302,7 +292,6 @@ def record_layout_from_edit_fixture(
             loop_start=0,
         ),
     )
-
 
 def record_layout_for_base_seed(
     lines: list[str],

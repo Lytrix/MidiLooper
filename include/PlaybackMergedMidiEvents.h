@@ -4,8 +4,8 @@
 
 #include "MidiEvent.h"
 
-/// Scratch merge cache for one loop playback path.
-struct PlaybackWindow {
+/// Scratch merge cache for one loop playback path (not the musical PlaybackWindow domain object).
+struct PlaybackMergedMidiEvents {
   uint32_t builtFromRevision = 0;
   /// For long loops: tick range covered by `mergedEvents` (windowed gather).
   uint32_t windowStartTick = 0;

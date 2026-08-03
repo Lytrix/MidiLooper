@@ -106,10 +106,6 @@ MidiFaderProcessor::FaderState& MidiFaderManager::getFaderStateMutable(MidiMappi
     return processor.getFaderStateMutable(faderType);
 }
 
-void MidiFaderManager::scheduleOtherFaderUpdates(MidiMapping::FaderType driverFader) {
-    processor.scheduleOtherFaderUpdates(driverFader);
-}
-
 void MidiFaderManager::markFaderSent(MidiMapping::FaderType faderType) {
     processor.markFaderSent(faderType);
 }

@@ -827,6 +827,27 @@ void test_dependent_snapshot_select_target_projected_phase_not_double_converted(
     TEST_ASSERT_EQUAL_UINT8(50, snapshot.noteValueCc);
 }
 
+void test_dependent_snapshot_length_mode_maps_coarse_to_end_tick() {
+    NoteEditDependentFaderBuildInput input{};
+    input.loopLength = 3072;
+    input.loopStartTick = 0;
+    input.lengthEditingMode = true;
+    input.lengthFineAnchorEndTick = 1247;
+    input.selectedIdx = 0;
+    input.hasLiveNote = true;
+    input.liveStartTick = 930;
+    input.liveEndTick = 1247;
+    input.livePitch = 40;
+
+    const NoteEditDependentFaderSnapshot snapshot = buildDependentFaderSnapshot(input);
+    TEST_ASSERT_TRUE(snapshot.coarseValid);
+    TEST_ASSERT_TRUE(snapshot.fineValid);
+    const int16_t expected =
+        NoteEditLengthFaderMapping::loopTickToCoarsePitchbend(1247, 3072);
+    TEST_ASSERT_EQUAL_INT16(expected, snapshot.coarsePitchbend);
+    TEST_ASSERT_EQUAL_UINT8(64, snapshot.fineCc);
+}
+
 int main(int argc, char** argv) {
     (void)argc;
     (void)argv;
@@ -896,6 +917,7 @@ int main(int argc, char** argv) {
     RUN_TEST(test_dependent_snapshot_position_mode_nonzero_loop_start);
     RUN_TEST(test_dependent_snapshot_live_note_fine_cc_uses_step_offset_not_stale_reference_step);
     RUN_TEST(test_dependent_snapshot_select_target_projected_phase_not_double_converted);
+    RUN_TEST(test_dependent_snapshot_length_mode_maps_coarse_to_end_tick);
     RUN_TEST(test_motor_value_changed_includes_f3_fine_cc);
     return UNITY_END();
 }

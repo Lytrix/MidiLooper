@@ -252,7 +252,7 @@ void test_assign_missing_note_ids_in_chunks() {
   store.assignMissingNoteIdsToNoteOns([&nextId]() { return nextId++; });
 
   MidiEventVec flat;
-  store.flatten(flat);
+  store.copyEventsTo(flat);
   TEST_ASSERT_EQUAL(1u, flat.size());
   TEST_ASSERT_EQUAL(100u, flat[0].noteId);
   TEST_ASSERT_EQUAL(1u, store.chunkIds().size());

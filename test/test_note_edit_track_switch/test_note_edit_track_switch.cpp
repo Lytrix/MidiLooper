@@ -66,12 +66,12 @@ void setupLoop(Loop& loop, uint32_t loopLength, unsigned noteCount) {
 void openCowLoopEventStore(CowLoopEventStore& session, Loop& loop) {
   loop.rematerializeEditView(session.mutStore());
   loop.assignMissingNoteIdsInStore(session.mutStore());
-  session.discardFlatCache();
+  session.discardEventsCache();
 }
 
 void reopenCowLoopEventStore(CowLoopEventStore& session, Loop& loop) {
   session.mutStore().clear();
-  session.discardFlatCache();
+  session.discardEventsCache();
   openCowLoopEventStore(session, loop);
 }
 
@@ -100,9 +100,9 @@ void test_stale_note_edit_session_wrong_display_after_track_switch() {
   CowLoopEventStore session;
   openCowLoopEventStore(session, loopShort);
 
-  TEST_ASSERT_EQUAL(2u, countDisplayNotes(session.readFlat(), kShortLoopLength));
+  TEST_ASSERT_EQUAL(2u, countDisplayNotes(session.readEvents(), kShortLoopLength));
 
-  const size_t staleDisplayCount = countDisplayNotes(session.readFlat(), kLongLoopLength);
+  const size_t staleDisplayCount = countDisplayNotes(session.readEvents(), kLongLoopLength);
   const size_t expectedLongTrackCount = countDisplayNotes(materializedFlat(loopLong), kLongLoopLength);
 
   TEST_ASSERT_EQUAL(4u, expectedLongTrackCount);
@@ -123,12 +123,12 @@ void test_reopen_note_edit_session_store_matches_new_loop() {
   reopenCowLoopEventStore(session, loopLong);
 
   const MidiEventVec expectedFlat = materializedFlat(loopLong);
-  TEST_ASSERT_EQUAL(expectedFlat.size(), session.readFlat().size());
-  TEST_ASSERT_EQUAL(4u, countDisplayNotes(session.readFlat(), kLongLoopLength));
+  TEST_ASSERT_EQUAL(expectedFlat.size(), session.readEvents().size());
+  TEST_ASSERT_EQUAL(4u, countDisplayNotes(session.readEvents(), kLongLoopLength));
 
   for (size_t i = 0; i < expectedFlat.size(); ++i) {
-    TEST_ASSERT_EQUAL(expectedFlat[i].tick, session.readFlat()[i].tick);
-    TEST_ASSERT_EQUAL(expectedFlat[i].data.noteData.note, session.readFlat()[i].data.noteData.note);
+    TEST_ASSERT_EQUAL(expectedFlat[i].tick, session.readEvents()[i].tick);
+    TEST_ASSERT_EQUAL(expectedFlat[i].data.noteData.note, session.readEvents()[i].data.noteData.note);
   }
 }
 
@@ -147,7 +147,7 @@ void test_filter_selectable_display_notes_after_track_switch_reopen() {
 
   NoteEditFocus focus{};
   const auto displayNotes =
-      filterSelectableDisplayNotes(session.readFlat(), focus, kChannel, kLongLoopLength);
+      filterSelectableDisplayNotes(session.readEvents(), focus, kChannel, kLongLoopLength);
   TEST_ASSERT_EQUAL(4u, displayNotes.size());
 }
 

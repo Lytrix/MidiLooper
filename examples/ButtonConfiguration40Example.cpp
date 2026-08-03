@@ -69,6 +69,6 @@ void setup() {
 }
 
 void loop() {
-    // Main loop - actual MIDI handling is done by the NoteEditManager
+    // Main loop - actual MIDI handling is done by the ControlSurfaceManager
     delay(100);
 } 

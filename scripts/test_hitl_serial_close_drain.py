@@ -13,8 +13,7 @@ _SCRIPT_DIR = Path(__file__).resolve().parent
 if str(_SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(_SCRIPT_DIR))
 
-from host_midi_automation_baseline import _wait_for_serial_line_idle
-
+from hitl.serial_collector import _wait_for_serial_line_idle
 
 class SerialCloseDrainTests(unittest.TestCase):
     def test_returns_immediately_when_already_idle(self) -> None:
@@ -25,7 +24,7 @@ class SerialCloseDrainTests(unittest.TestCase):
         count = {"n": 0}
 
         def bump_later() -> None:
-            time.sleep(0.08)
+            time.sleep(0.03)
             count["n"] = 3
 
         threading.Thread(target=bump_later, daemon=True).start()
@@ -38,7 +37,8 @@ class SerialCloseDrainTests(unittest.TestCase):
         )
         elapsed = time.monotonic() - started
         self.assertEqual(added, 3)
-        self.assertGreaterEqual(elapsed, 0.14)
+        # bump at ~30ms + idle 80ms after last growth
+        self.assertGreaterEqual(elapsed, 0.10)
         self.assertLess(elapsed, 1.5)
 
     def test_respects_max_drain_cap(self) -> None:
@@ -53,7 +53,6 @@ class SerialCloseDrainTests(unittest.TestCase):
         self.assertEqual(added, 0)
         self.assertGreaterEqual(elapsed, 0.10)
         self.assertLess(elapsed, 0.35)
-
 
 if __name__ == "__main__":
     unittest.main()

@@ -19,7 +19,7 @@ namespace {
 void reloadStoreFromFlat(LoopEventStore& store, const MidiEventVec& flat) {
   store.clear();
   if (!flat.empty()) {
-    store.loadFromFlat(flat);
+    store.loadFromEvents(flat);
   }
 }
 
@@ -46,7 +46,7 @@ PairRepairResult repairCompletedPair(LoopEventStore& store, const MidiEvent& clo
   }
 
   MidiEventVec flat;
-  store.flatten(flat);
+  store.copyEventsTo(flat);
   if (flat.empty()) {
     return result;
   }
@@ -130,7 +130,7 @@ SliceResult repairWrapWindowSlice(LoopEventStore& store, uint32_t loopLengthTick
   };
 
   MidiEventVec flat;
-  store.flatten(flat);
+  store.copyEventsTo(flat);
   if (flat.empty()) {
     return result;
   }
@@ -177,7 +177,7 @@ SliceResult processBudgetSlice(LoopEventStore& store, uint32_t loopLengthTicks, 
   }
 
   MidiEventVec flat;
-  store.flatten(flat);
+  store.copyEventsTo(flat);
   if (flat.empty()) {
     cursor = 0;
     return result;
@@ -209,7 +209,7 @@ size_t removePairsShorterThanNoteMinLength(LoopEventStore& store, uint32_t loopL
   }
 
   MidiEventVec flat;
-  store.flatten(flat);
+  store.copyEventsTo(flat);
   if (flat.empty()) {
     return 0;
   }
@@ -277,7 +277,7 @@ bool verifyCaptureHotStop(const LoopEventStore& store, uint32_t loopLengthTicks)
     return true;
   }
   MidiEventVec flat;
-  store.flatten(flat);
+  store.copyEventsTo(flat);
   const LoopEventValidation::LoopEventValidationResult result =
       LoopEventValidation::validateLoopEvents(flat, loopLengthTicks,
                                                 LoopEventValidation::kCanonicalInvariantMask);

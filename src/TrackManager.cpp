@@ -9,7 +9,7 @@
 #include "LooperState.h"
 #include "Logger.h"
 #include "MidiHandler.h"
-#include "NoteEditManager.h"
+#include "ControlSurfaceManager.h"
 #include "EditManager.h"
 #include "PassReclaim.h"
 #include "DisplayManager.h"
@@ -143,7 +143,7 @@ void TrackManager::startRecordingTrack(uint8_t trackIndex, uint32_t currentTick)
   const uint8_t slot = tr.getActiveLoopIndex();
   if (tr.hasCommittedPassesInSlot(slot)) {
     logger.log(CAT_TRACK, LOG_WARNING,
-               "Track %d: cannot arm slot %u — slot already has published MIDI",
+               "Track %d: cannot arm slot %u — slot already has committed passes MIDI",
                trackIndex, static_cast<unsigned>(slot) + 1u);
     return;
   }
@@ -182,17 +182,17 @@ void TrackManager::startRecordingTrack(uint8_t trackIndex, uint32_t currentTick)
     return;
   }
   tracks[trackIndex].startRecording(currentTick);
-  releaseBackgroundPlaybackWindowMemory(trackIndex);
+  releaseBackgroundPlaybackMergedMidiEventsMemory(trackIndex);
   reclaimUnreferencedDisabledPasses();
 }
 
-void TrackManager::releaseBackgroundPlaybackWindowMemory(uint8_t captureTrackIndex) {
+void TrackManager::releaseBackgroundPlaybackMergedMidiEventsMemory(uint8_t captureTrackIndex) {
   if (captureTrackIndex >= Config::NUM_TRACKS) {
     return;
   }
   for (uint8_t i = 0; i < Config::NUM_TRACKS; ++i) {
     if (i != captureTrackIndex) {
-      tracks[i].releasePlaybackWindowMemory();
+      tracks[i].releasePlaybackMergedMidiEventsMemory();
     }
   }
 }
@@ -257,7 +257,7 @@ PRESSURE_RECLAIM_MEM void TrackManager::tryReclaimDerivedViewCachesUnderPressure
     }
 
     (void)track.tryClearCommittedMidiScratch();
-    (void)track.tryReleasePlaybackWindowMemory();
+    (void)track.tryReleasePlaybackMergedMidiEventsMemory();
   }
 }
 
@@ -281,7 +281,7 @@ void TrackManager::queueRecordingTrack(uint8_t trackIndex, uint8_t slotIndex,
   if (trackIndex >= Config::NUM_TRACKS || slotIndex >= Config::MAX_LOOPS_PER_TRACK) return;
   if (tracks[trackIndex].hasCommittedPassesInSlot(slotIndex)) {
     logger.log(CAT_TRACK, LOG_WARNING,
-               "Track %d: cannot queue record on slot %u — slot already has published MIDI",
+               "Track %d: cannot queue record on slot %u — slot already has committed passes MIDI",
                trackIndex, static_cast<unsigned>(slotIndex) + 1u);
     return;
   }
@@ -389,7 +389,7 @@ void TrackManager::startOverdubbingTrack(uint8_t trackIndex) {
   slotMuted[trackIndex][slot] = false;
   const uint32_t startUs = micros();
   track.startOverdubbing(clockManager.getCurrentTick());
-  releaseBackgroundPlaybackWindowMemory(trackIndex);
+  releaseBackgroundPlaybackMergedMidiEventsMemory(trackIndex);
   reclaimUnreferencedDisabledPasses();
   SC_ODUB_STAGE("manager_done", micros() - startUs, heapAtEnter,
                 MemoryMonitor::getInternalHeapFreeBytes(), "ok");
@@ -1162,7 +1162,7 @@ void TrackManager::updateAllTracks(uint32_t currentTick) {
           slotStateMachine.clearPendingSlotSwitch(i);
           pendingEnabledSetReplacement[i] = false;
         }
-      } else if (!tracks[i].isPlaybackWindowReadyForSlot(targetSlot) &&
+      } else if (!tracks[i].isPlaybackMergedMidiEventsReadyForSlot(targetSlot) &&
                  tracks[i].getLoop(targetSlot).shouldAvoidFullVisualRebuild(
                      tracks[i].getLoop(targetSlot).loopLengthTicks)) {
         // Long loop just Committed: do not full-gather on the clock path (210001).

@@ -8,24 +8,24 @@
 #include "MidiEvent.h"
 
 /// Copy-on-write wrapper for chunked loop MIDI events (Phase 4).
-template <typename FlatVec = MidiEventVec>
-class LoopEventFlatCache {
+template <typename EventVec = MidiEventVec>
+class LoopEventVectorCache {
  public:
-  LoopEventFlatCache() : data_(std::make_shared<LoopEventStore>()) {}
+  LoopEventVectorCache() : data_(std::make_shared<LoopEventStore>()) {}
 
   LoopEventStore& mutStore() {
     if (data_.use_count() > 1) {
       data_ = data_->cloneShared();
     }
-    flatCache_.reset();
-    flatDirty_ = false;
+    eventsCache_.reset();
+    eventsDirty_ = false;
     return *data_;
   }
 
   /// Drop stale flat cache without syncing back to the chunk store.
-  void discardFlatCache() {
-    flatCache_.reset();
-    flatDirty_ = false;
+  void discardEventsCache() {
+    eventsCache_.reset();
+    eventsDirty_ = false;
   }
 
   const LoopEventStore& readStore() const { return *data_; }
@@ -38,50 +38,50 @@ class LoopEventFlatCache {
 
   void restoreFromSnapshot(const std::shared_ptr<const LoopEventStore>& snap) {
     data_ = snap ? snap->cloneShared() : std::make_shared<LoopEventStore>();
-    flatCache_.reset();
-    flatDirty_ = false;
+    eventsCache_.reset();
+    eventsDirty_ = false;
   }
 
-  /// Legacy flat-vector access for edit/load paths (lazy flatten).
-  const FlatVec& readFlat() const {
-    if (!flatCache_) {
-      flatCache_ = std::make_shared<FlatVec>();
-      data_->flatten(*flatCache_);
+  /// Legacy event-vector access for edit/load paths (lazy copyEventsTo).
+  const EventVec& readEvents() const {
+    if (!eventsCache_) {
+      eventsCache_ = std::make_shared<EventVec>();
+      data_->copyEventsTo(*eventsCache_);
     }
-    return *flatCache_;
+    return *eventsCache_;
   }
 
-  FlatVec& mutFlat() {
+  EventVec& mutEvents() {
     if (data_.use_count() > 1) {
       data_ = data_->cloneShared();
     }
-    if (!flatCache_) {
-      flatCache_ = std::make_shared<FlatVec>();
-      data_->flatten(*flatCache_);
+    if (!eventsCache_) {
+      eventsCache_ = std::make_shared<EventVec>();
+      data_->copyEventsTo(*eventsCache_);
     }
-    flatDirty_ = true;
-    return *flatCache_;
+    eventsDirty_ = true;
+    return *eventsCache_;
   }
 
-  bool isFlatDirty() const { return flatDirty_; }
+  bool isEventsDirty() const { return eventsDirty_; }
 
-  void syncFlatToStore() {
-    if (!flatDirty_ || !flatCache_) {
+  void syncEventsToStore() {
+    if (!eventsDirty_ || !eventsCache_) {
       return;
     }
     data_ = std::make_shared<LoopEventStore>();
-    data_->loadFromFlat(*flatCache_);
-    flatDirty_ = false;
+    data_->loadFromEvents(*eventsCache_);
+    eventsDirty_ = false;
   }
 
  private:
   std::shared_ptr<LoopEventStore> data_;
-  mutable std::shared_ptr<FlatVec> flatCache_;
-  bool flatDirty_ = false;
+  mutable std::shared_ptr<EventVec> eventsCache_;
+  bool eventsDirty_ = false;
 };
 
-using CowLoopEventStore = LoopEventFlatCache<MidiEventVec>;
-using NoteEditSessionStore = LoopEventFlatCache<SessionMidiEventVec>;
-using PublishedLoopEventStore = LoopEventFlatCache<SessionMidiEventVec>;
+using CowLoopEventStore = LoopEventVectorCache<MidiEventVec>;
+using NoteEditSessionStore = LoopEventVectorCache<SessionMidiEventVec>;
+using PassesMaterializedEventStore = LoopEventVectorCache<SessionMidiEventVec>;
 
 using MidiSnapshotRef = std::shared_ptr<const LoopEventStore>;

@@ -17,7 +17,6 @@
 #include "Utils/NoteUtils.h"
 #include "Utils/ValidationUtils.h"
 #include "Utils/SelectNavigation.h"
-#include "NoteEditManager.h"
 #include <algorithm>
 
 void EditSelectNoteState::onEnter(EditManager& manager, Track& track, uint32_t startTick) {
@@ -228,7 +227,7 @@ bool EditSelectNoteState::resolveTargetPitchbend(EditManager& manager, Track& tr
 
     const uint32_t loopStartTick = editManager.noteEditLoopStartTick(track);
     const std::vector<SelectNavigation::SelectNavSlot> slots =
-        noteEditManager.buildSelectNavigationSlots(track, selectedTick, true);
+        manager.buildSelectNavigationSlots(track, selectedTick, true);
 
     logger.log(CAT_MIDI, LOG_DEBUG, "Target pitchbend: Final navigation slots: %lu", slots.size());
 
@@ -237,7 +236,7 @@ bool EditSelectNoteState::resolveTargetPitchbend(EditManager& manager, Track& tr
     }
 
     const EditorSelection& sel = manager.getNoteEditSessionState().selection;
-    const auto navNotes = noteEditManager.selectableDisplayNotesForEditUi(track);
+    const auto navNotes = manager.selectableDisplayNotesForEditUi(track);
     const int currentPosIndex = SelectNavigation::findSlotIndexForNoteId(
         slots, navNotes, sel.primaryNote, selectedTick, loopLength);
 

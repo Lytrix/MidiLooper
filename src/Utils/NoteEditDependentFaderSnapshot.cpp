@@ -10,6 +10,7 @@
 #include "MidiConfig.h"
 #include "Utils/NoteEditLengthFaderMapping.h"
 #include "Utils/SelectNavigation.h"
+#include "Utils/NoteEditMem.h"
 
 namespace {
 
@@ -68,7 +69,7 @@ uint8_t emptyStepFineCc(uint32_t bracketRelTick) {
 
 }  // namespace
 
-NoteEditDependentFaderSnapshot buildDependentFaderSnapshot(
+NOTE_EDIT_MEM NoteEditDependentFaderSnapshot buildDependentFaderSnapshot(
     const NoteEditDependentFaderBuildInput& input) {
     NoteEditDependentFaderSnapshot snapshot;
     if (input.loopLength == 0) {
@@ -171,7 +172,7 @@ NoteEditDependentFaderSnapshot buildDependentFaderSnapshot(
 
 namespace NoteEditDependentFaderFeedback {
 
-bool shouldIgnoreStaleLatch(int inboundValue, int lastSentValue, int liveSnapshotValue,
+NOTE_EDIT_MEM bool shouldIgnoreStaleLatch(int inboundValue, int lastSentValue, int liveSnapshotValue,
                             int tolerance, bool focusActive, bool snapshotValid) {
     if (!focusActive || !snapshotValid || lastSentValue < 0) {
         return false;
@@ -181,7 +182,7 @@ bool shouldIgnoreStaleLatch(int inboundValue, int lastSentValue, int liveSnapsho
     return latchDiff <= tolerance && liveDiff > tolerance;
 }
 
-bool motorValueChanged(const NoteEditDependentFaderSnapshot& planned, int16_t priorF2Pitchbend,
+NOTE_EDIT_MEM bool motorValueChanged(const NoteEditDependentFaderSnapshot& planned, int16_t priorF2Pitchbend,
                        uint8_t priorFineCc, int priorF4Cc, bool planCoarse, bool planFine,
                        bool planNoteValue) {
     if (planCoarse && planned.coarseValid && planned.coarsePitchbend != priorF2Pitchbend) {

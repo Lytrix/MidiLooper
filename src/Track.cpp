@@ -44,7 +44,7 @@ bool isSamePitchSoundingAtTick(const NoteUtils::DisplayNoteVec& notes, uint8_t p
   return false;
 }
 
-bool shouldRestorePublishedOverlapOnOverdubStop(const Loop& loop, uint8_t note,
+bool shouldRestoreCommittedOverlapOnOverdubStop(const Loop& loop, uint8_t note,
                                                 uint32_t pendingOnPhaseTick,
                                                 uint32_t closePhaseTick) {
   if (loop.loopLengthTicks == 0 || !loop.hasCommittedPasses()) {
@@ -66,10 +66,12 @@ bool shouldRestorePublishedOverlapOnOverdubStop(const Loop& loop, uint8_t note,
 }  // namespace
 
 #include "Utils/IntervalProjection.h"
+#include "Utils/PlaybackCursorAdvance.h"
+#include "Utils/RecordStopLength.h"
 #include "Utils/TrackMem.h"
 #include "DisplayManager.h"
 #include "EditManager.h"
-#include "NoteEditManager.h"
+#include "LoopEditManager.h"
 #include "TrackManager.h"
 
 extern TrackManager trackManager;
@@ -94,22 +96,22 @@ void logOverdubCaptureCoordinate(const Track& track, uint32_t absTick, uint32_t 
 }  // namespace
 #endif
 
-MidiEventVec& Track::legacyMidiEventsFromPublished() {
+MidiEventVec& Track::legacyMidiEventsFromCommitted() {
   // Edit-path boundary only (EditManager::editMidiEvents when session inactive).
   // Display and playback use SessionMidiEventVec via getMidiEvents().
   Loop& loop = getActiveLoop();
   const uint32_t revision = loop.playbackRevision;
-  if (publishedMidiScratchRevision_ != revision) {
-    loop.ensurePassesMaterializedStore();
+  if (committedMidiScratchRevision_ != revision) {
+    loop.materializeEditViewFromPasses();
     const SessionMidiEventVec& published = loop.midiEvents();
-    publishedMidiScratch_.assign(published.begin(), published.end());
-    publishedMidiScratchRevision_ = revision;
+    committedMidiScratch_.assign(published.begin(), published.end());
+    committedMidiScratchRevision_ = revision;
   }
-  return publishedMidiScratch_;
+  return committedMidiScratch_;
 }
 
-const MidiEventVec& Track::legacyMidiEventsFromPublished() const {
-  return const_cast<Track*>(this)->legacyMidiEventsFromPublished();
+const MidiEventVec& Track::legacyMidiEventsFromCommitted() const {
+  return const_cast<Track*>(this)->legacyMidiEventsFromCommitted();
 }
 
 MidiEventVec& Track::editAwareMidiEvents() {
@@ -121,7 +123,7 @@ const MidiEventVec& Track::editAwareMidiEvents() const {
 }
 
 void Track::invalidateCaches(bool refreshPlaybackPreview) {
-  publishedMidiScratchRevision_ = UINT32_MAX;
+  committedMidiScratchRevision_ = UINT32_MAX;
   Loop& activeLoop = getActiveLoop();
   activeLoop.invalidateCaches();
   activeLoop.playbackOrderDirty = true;
@@ -178,7 +180,7 @@ const char* commitResultLabel(CommitResult result) {
   switch (result) {
     case CommitResult::Skipped:
       return "skipped";
-    case CommitResult::Published:
+    case CommitResult::Committed:
       return "published";
     case CommitResult::SealFailed:
       return "seal_failed";
@@ -227,16 +229,6 @@ void logMemoryAfterOverdubStop(uint32_t overdubNoteOns, const Loop& loop) {
                                        stats.chunkRefCount, stats.chunkRefCount > 0);
 }
 
-/// When record-stop snaps length shorter than raw capture, rewind the global tick so playhead
-/// lands in bar 1 at the same beat position as in the truncated bar (keeps all tracks in sync).
-uint32_t computeTruncationRewindTicks(uint32_t rawLength, uint32_t finalLength) {
-  if (finalLength == 0 || rawLength <= finalLength) {
-    return 0;
-  }
-  const uint32_t positionInBar = rawLength % Config::TICKS_PER_BAR;
-  return rawLength - positionInBar;
-}
-
 ProjectionContext makePlaybackContext(const Track& track, const Loop& loop, uint32_t currentTick) {
   return IntervalProjection::buildPlaybackProjectionContext(
       loop.loopLengthTicks,
@@ -264,7 +256,7 @@ void reanchorPlaybackIndex(Loop& loop, const SessionMidiEventVec& mergedEvents, 
   loop.nextEventIndex = static_cast<uint16_t>(idx);
 }
 
-void ensurePlaybackWindowBuilt(Track& track, Loop& loop, LoopPlaybackRuntime& runtime,
+void ensurePlaybackMergedMidiEventsBuilt(Track& track, Loop& loop, LoopPlaybackRuntime& runtime,
                                bool /*allowHeavyBuild*/, uint32_t currentTick) {
   // Projection boundary (linear-loop-tick-storage): mergedEvents are read-only input to
   // playback order + MIDI send. NOTE_EDIT uses session store (Tier 2) — full replace, no
@@ -287,15 +279,15 @@ void ensurePlaybackWindowBuilt(Track& track, Loop& loop, LoopPlaybackRuntime& ru
   }
 
   if (!longLoop) {
-    if (runtime.primaryWindow.builtFromRevision == windowRevision) {
+    if (runtime.mergedMidiEvents.builtFromRevision == windowRevision) {
       DIAG_COUNTER_INC(PlaybackDeferredReuse);
       return;
     }
-  } else if (runtime.primaryWindow.builtFromRevision == windowRevision &&
-             !runtime.primaryWindow.empty() &&
-             runtime.primaryWindow.windowLengthTicks > 0) {
-    const uint32_t winStart = runtime.primaryWindow.windowStartTick;
-    const uint32_t winEnd = winStart + runtime.primaryWindow.windowLengthTicks;
+  } else if (runtime.mergedMidiEvents.builtFromRevision == windowRevision &&
+             !runtime.mergedMidiEvents.empty() &&
+             runtime.mergedMidiEvents.windowLengthTicks > 0) {
+    const uint32_t winStart = runtime.mergedMidiEvents.windowStartTick;
+    const uint32_t winEnd = winStart + runtime.mergedMidiEvents.windowLengthTicks;
     const uint32_t margin = Config::TICKS_PER_BAR / 2;
     if (playhead + margin >= winStart && playhead < winEnd) {
       DIAG_COUNTER_INC(PlaybackDeferredReuse);
@@ -305,12 +297,12 @@ void ensurePlaybackWindowBuilt(Track& track, Loop& loop, LoopPlaybackRuntime& ru
 
   playbackWindowBuildInProgress = true;
   const uint32_t playbackBuildStartUs = micros();
-  DIAG_COUNTER_INC(PlaybackWindowRebuild);
+  DIAG_COUNTER_INC(PlaybackMergedMidiEventsRebuild);
   if (noteEditPreview) {
     const MidiEventVec& preview = editManager.sessionMidiEvents();
-    runtime.primaryWindow.mergedEvents.assign(preview.begin(), preview.end());
-    runtime.primaryWindow.windowStartTick = 0;
-    runtime.primaryWindow.windowLengthTicks = loop.loopLengthTicks;
+    runtime.mergedMidiEvents.mergedEvents.assign(preview.begin(), preview.end());
+    runtime.mergedMidiEvents.windowStartTick = 0;
+    runtime.mergedMidiEvents.windowLengthTicks = loop.loopLengthTicks;
   } else if (longLoop) {
     // Two bars centered on playhead — enough for LoopEnd launch + clock catch-up.
     constexpr uint32_t kPlaybackWindowBars = 2;
@@ -320,23 +312,23 @@ void ensurePlaybackWindowBuilt(Track& track, Loop& loop, LoopPlaybackRuntime& ru
       winStart = loop.loopLengthTicks > winLen ? loop.loopLengthTicks - winLen : 0;
     }
     if (loop.captureActive()) {
-      loop.gatherCommittedEventsInWindowWithCapture(runtime.primaryWindow.mergedEvents, winStart,
+      loop.gatherCommittedEventsInWindowWithCapture(runtime.mergedMidiEvents.mergedEvents, winStart,
                                                     winLen);
     } else {
-      loop.gatherCommittedEventsInWindow(runtime.primaryWindow.mergedEvents, winStart, winLen);
+      loop.gatherCommittedEventsInWindow(runtime.mergedMidiEvents.mergedEvents, winStart, winLen);
     }
-    runtime.primaryWindow.windowStartTick = winStart;
-    runtime.primaryWindow.windowLengthTicks = winLen;
+    runtime.mergedMidiEvents.windowStartTick = winStart;
+    runtime.mergedMidiEvents.windowLengthTicks = winLen;
   } else if (!loop.captureActive()) {
-    loop.gatherCommittedEventsForDerivedView(runtime.primaryWindow.mergedEvents);
-    runtime.primaryWindow.windowStartTick = 0;
-    runtime.primaryWindow.windowLengthTicks = loop.loopLengthTicks;
+    loop.gatherCommittedEventsForDerivedView(runtime.mergedMidiEvents.mergedEvents);
+    runtime.mergedMidiEvents.windowStartTick = 0;
+    runtime.mergedMidiEvents.windowLengthTicks = loop.loopLengthTicks;
   } else {
-    loop.gatherCommittedEventsWithCapture(runtime.primaryWindow.mergedEvents);
-    runtime.primaryWindow.windowStartTick = 0;
-    runtime.primaryWindow.windowLengthTicks = loop.loopLengthTicks;
+    loop.gatherCommittedEventsWithCapture(runtime.mergedMidiEvents.mergedEvents);
+    runtime.mergedMidiEvents.windowStartTick = 0;
+    runtime.mergedMidiEvents.windowLengthTicks = loop.loopLengthTicks;
   }
-  runtime.primaryWindow.builtFromRevision = windowRevision;
+  runtime.mergedMidiEvents.builtFromRevision = windowRevision;
   loop.playbackOrderDirty = true;
   DIAG_TIMING_RECORD(PlaybackBuild, micros() - playbackBuildStartUs);
   playbackWindowBuildInProgress = false;
@@ -375,6 +367,54 @@ void reanchorCaptureIndex(Loop& loop) {
     ++idx;
   }
   loop.captureNextEventIndex = static_cast<uint16_t>(idx);
+}
+
+struct MergedPlaybackStreamCtx {
+  const PlaybackOrderVec* order = nullptr;
+  const SessionMidiEventVec* merged = nullptr;
+};
+
+size_t mergedPlaybackStreamSize(const void* ctx) {
+  return static_cast<const MergedPlaybackStreamCtx*>(ctx)->order->size();
+}
+
+bool mergedPlaybackStreamValid(const void* ctx, uint16_t cursor) {
+  const auto* stream = static_cast<const MergedPlaybackStreamCtx*>(ctx);
+  if (static_cast<size_t>(cursor) >= stream->order->size()) {
+    return true;
+  }
+  return (*stream->order)[cursor] < stream->merged->size();
+}
+
+const MidiEvent& mergedPlaybackStreamEventAt(const void* ctx, uint16_t cursor) {
+  const auto* stream = static_cast<const MergedPlaybackStreamCtx*>(ctx);
+  return (*stream->merged)[(*stream->order)[cursor]];
+}
+
+uint32_t mergedPlaybackStreamPhase(const MidiEvent& evt, const ProjectionContext& playbackContext) {
+  return IntervalProjection::playbackEventPhase(evt.tick, playbackContext.loopLength);
+}
+
+size_t capturePlaybackStreamSize(const void* ctx) {
+  return static_cast<const Loop*>(ctx)->capture.store.size();
+}
+
+const MidiEvent& capturePlaybackStreamEventAt(const void* ctx, uint16_t cursor) {
+  return static_cast<const Loop*>(ctx)->capture.store.at(cursor);
+}
+
+uint32_t capturePlaybackStreamPhase(const MidiEvent& evt, const ProjectionContext& playbackContext) {
+  return IntervalProjection::projectPlaybackEventPhase(evt.tick, playbackContext);
+}
+
+PlaybackEventStream makeMergedPlaybackStream(MergedPlaybackStreamCtx& ctx) {
+  return PlaybackEventStream{&ctx, mergedPlaybackStreamSize, mergedPlaybackStreamValid,
+                             mergedPlaybackStreamEventAt, mergedPlaybackStreamPhase};
+}
+
+PlaybackEventStream makeCapturePlaybackStream(Loop& loop) {
+  return PlaybackEventStream{&loop, capturePlaybackStreamSize, nullptr,
+                             capturePlaybackStreamEventAt, capturePlaybackStreamPhase};
 }
 
 TRACK_COLD_MEM void resetActiveLoopAfterEmptyCapture(Loop& loop) {
@@ -507,6 +547,10 @@ TRACK_COLD_MEM void Track::reconcileTransportStateAfterSlotMutation() {
   }
   if (hasAnySlotData()) {
     if (trackState == TRACK_EMPTY || trackState == TRACK_ARMED) {
+      setState(TRACK_STOPPED);
+    } else if (trackState == TRACK_PLAYING && !getActiveLoop().hasData()) {
+      // Cleared the playing slot while other slots still have data — do not stay PLAYING
+      // on empty active (blocks re-arm; session_20260803_170251).
       setState(TRACK_STOPPED);
     }
   } else if (trackState == TRACK_ARMED || trackState == TRACK_STOPPED ||
@@ -669,26 +713,13 @@ uint32_t Track::findLastEventTick() const {
 }
 
 uint32_t Track::computeLoopLengthTicks(uint32_t lastTick) const {
-    uint32_t fullBars = lastTick / TICKS_PER_BAR;
-    uint32_t rem      = lastTick % TICKS_PER_BAR;
-    uint32_t grace    = TICKS_PER_BAR / 6;  // More generous grace window
-
-    if (rem <= grace) {
-        return (fullBars > 0 ? fullBars : 1) * TICKS_PER_BAR;
-    }
-
-    // Special case: very short pass (accidental press?)
-    if (lastTick < TICKS_PER_BAR / 2) {
-        return TICKS_PER_BAR;
-    }
-
-    return (fullBars + 1) * TICKS_PER_BAR;
+  return RecordStopLength::computeLoopLengthTicks(lastTick);
 }
 
 void Track::resetPlaybackState(uint32_t currentTick) {
   Loop& loop = getActiveLoop();
   loop.nextEventIndex = 0;
-  invalidatePlaybackWindow(true);
+  invalidatePlaybackMergedMidiEvents(true);
   if (loop.loopLengthTicks == 0) {
     loop.lastTickInLoop = 0;
     projectionCycleStartTick = static_cast<int32_t>(currentTick);
@@ -711,10 +742,10 @@ void Track::resetPlaybackStateForSlot(uint8_t slotIndex, uint32_t currentTick) {
     projectionCycleStartTick = static_cast<int32_t>(currentTick) - static_cast<int32_t>(phase);
   }
   loop.lastTickInLoop = phase;
-  invalidatePlaybackWindow(true);
+  invalidatePlaybackMergedMidiEvents(true);
 }
 
-void Track::invalidatePlaybackWindow(bool preserveLedger) {
+void Track::invalidatePlaybackMergedMidiEvents(bool preserveLedger) {
   bumpPlaybackGeneration();
   playbackRuntime.resetAll(preserveLedger);
 }
@@ -783,7 +814,7 @@ void Track::finalizePendingNotes(uint32_t offAbsTick) {
         pendingNotes.erase(key);
         continue;
       }
-      if (shouldRestorePublishedOverlapOnOverdubStop(loop, note, pendingOnPhaseTick, phaseTick)) {
+      if (shouldRestoreCommittedOverlapOnOverdubStop(loop, note, pendingOnPhaseTick, phaseTick)) {
         if (loop.removeOpenCaptureNoteOn(channel, note)) {
           ++overlapCaptureRestored;
         }
@@ -894,7 +925,7 @@ CommitResult Track::finalizeCommitSideEffects(CommitResult result, CommitReason 
       }
       break;
     }
-    case CommitResult::Published: {
+    case CommitResult::Committed: {
       const PassId undoPassId = loop.lastCommittedPassId();
       if (overdubStop) {
         finalizeLoopAtStop(closeTick, false);
@@ -939,7 +970,7 @@ CommitResult Track::finalizeCommitSideEffects(CommitResult result, CommitReason 
     deferredValidateQueuedAtMs = 0;
   }
 
-  if (result == CommitResult::Published) {
+  if (result == CommitResult::Committed) {
     invalidateCaches();
     if (recordStop) {
       queueDeferredRecordRevts();
@@ -949,6 +980,79 @@ CommitResult Track::finalizeCommitSideEffects(CommitResult result, CommitReason 
     }
   }
   return result;
+}
+
+CommitResult Track::commitCaptureForStop(CommitReason reason, uint32_t commitTick,
+                                         uint32_t closeTick) {
+  Loop& loop = getActiveLoop();
+  const CommitResult commitResult = loop.commitCapturePass(reason, commitTick);
+  return finalizeCommitSideEffects(commitResult, reason, closeTick);
+}
+
+uint32_t Track::prepareRecordStop(uint32_t currentTick, const char* guardLabel) {
+  Loop& loop = getActiveLoop();
+  uint32_t rawLength = 0;
+  if (currentTick >= loop.startLoopTick) {
+    rawLength = currentTick - loop.startLoopTick;
+  } else {
+    logger.warning("%s guard: currentTick(%lu) < startLoopTick(%lu), clamping length",
+                   guardLabel != nullptr ? guardLabel : "prepareRecordStop",
+                   static_cast<unsigned long>(currentTick),
+                   static_cast<unsigned long>(loop.startLoopTick));
+  }
+  const uint32_t lastEventTick = findLastEventTick();
+  loop.loopLengthTicks = computeRecordStopLengthTicks(rawLength, lastEventTick);
+
+  if (loop.loopLengthTicks > 0) {
+    if (!pendingNotes.empty()) {
+      finalizePendingNotes(currentTick);
+    }
+    // Record-stop truncation: events captured past final loop length must not
+    // survive into committed playback state.
+    loop.capture.store.dropEventsAtOrBeyondTick(loop.loopLengthTicks);
+  }
+  return rawLength;
+}
+
+bool Track::handleNoteEditFold(bool endInPlaying, uint32_t currentTick, uint32_t closeTick,
+                               uint32_t stopStartUs) {
+  if (!editManager.isNoteEditActive()) {
+    return false;
+  }
+  Loop& loop = getActiveLoop();
+  finalizePendingNotes(currentTick);
+  editManager.foldLiveCaptureIntoNoteEditSession(*this, closeTick);
+  pendingNotes.clear();
+  if (endInPlaying) {
+    const uint32_t stateHeapBefore = MemoryMonitor::getInternalHeapFreeBytes();
+    const uint32_t stateStartUs = micros();
+    sendAllNotesOff();
+    resetPlaybackState(currentTick);
+    setState(TRACK_PLAYING);
+    logOverdubStopStage(loop, stopStartUs, "set_state", micros() - stateStartUs, stateHeapBefore,
+                        MemoryMonitor::getInternalHeapFreeBytes(), "in_edit");
+    const uint32_t flushHeapBefore = MemoryMonitor::getInternalHeapFreeBytes();
+    const uint32_t flushStartUs = micros();
+    SC_REC_FLUSH_PENDING_REVTS(256);
+    logOverdubStopStage(loop, stopStartUs, "flush", micros() - flushStartUs, flushHeapBefore,
+                        MemoryMonitor::getInternalHeapFreeBytes(), "ok");
+    logMemoryAfterOverdubStop(recordAddedNoteOnCount, loop);
+    logger.logTrackEvent("Overdubbing stopped", currentTick);
+    logger.info("Overdub stopped (in-edit fold): events=%d, undo_entries=%d",
+                static_cast<int>(loop.displayEventCountHint()), TrackUndo::getUndoCount(*this));
+    emitOverdubStopDisplaySnapshot(*this, activeLoopIndex, currentTick);
+    logOverdubStopStage(loop, stopStartUs, "display", 0, MemoryMonitor::getInternalHeapFreeBytes(),
+                        MemoryMonitor::getInternalHeapFreeBytes(), "ok");
+    HotPathTelemetry::requestDeferredSummary("overdub_stop");
+  } else {
+    logMemoryAfterOverdubStop(recordAddedNoteOnCount, loop);
+    setState(TRACK_STOPPED);
+    resetPlaybackState(currentTick);
+    displayManager.emitDisplayCaptureSnapshot(*this, activeLoopIndex, currentTick);
+    logger.logTrackEvent("Overdubbing stopped (to STOPPED)", currentTick);
+    HotPathTelemetry::requestDeferredSummary("overdub_stop_to_stopped");
+  }
+  return true;
 }
 
 void Track::emitStoredMidiVerification() const {
@@ -1056,7 +1160,7 @@ void Track::processDeferredIdleMaintenance(uint32_t nowMs) {
       const bool avoidFullVisual =
           loop.shouldAvoidFullVisualRebuild(loop.loopLengthTicks) || deferHeavyDerivedView;
       if (!loop.isPassesMaterializedStoreFresh() && !deferHeavyDerivedView && !avoidFullVisual) {
-        loop.ensurePassesMaterializedStore();
+        loop.materializeEditViewFromPasses();
       }
       if (loop.visualCacheDirty) {
         // Budget-driven: one idle slice per call (bars), never full ensure when avoidFullVisual.
@@ -1107,15 +1211,15 @@ void Track::ensurePlaybackMergedEventsForSlot(uint8_t slotIndex) {
   // Build destination merged MIDI before LoopEnd commit so launch is a cache hit.
   if (loop.hasCommittedPasses() && loop.loopLengthTicks > 0) {
     const uint32_t currentTick = clockManager.getCurrentTick();
-    ensurePlaybackWindowBuilt(*this, loop, *runtime, true, currentTick);
+    ensurePlaybackMergedMidiEventsBuilt(*this, loop, *runtime, true, currentTick);
     if (loop.playbackOrderDirty) {
       const ProjectionContext playbackContext = makePlaybackContext(*this, loop, currentTick);
-      ::rebuildPlaybackOrder(loop, runtime->primaryWindow.mergedEvents, playbackContext);
+      ::rebuildPlaybackOrder(loop, runtime->mergedMidiEvents.mergedEvents, playbackContext);
     }
   }
 }
 
-bool Track::isPlaybackWindowReadyForSlot(uint8_t slotIndex) const {
+bool Track::isPlaybackMergedMidiEventsReadyForSlot(uint8_t slotIndex) const {
   if (slotIndex >= Config::MAX_LOOPS_PER_TRACK || !loopsAllocated()) {
     return false;
   }
@@ -1127,15 +1231,15 @@ bool Track::isPlaybackWindowReadyForSlot(uint8_t slotIndex) const {
   if (runtime == nullptr) {
     return false;
   }
-  return runtime->primaryWindow.builtFromRevision == loop.playbackRevision &&
-         !runtime->primaryWindow.mergedEvents.empty();
+  return runtime->mergedMidiEvents.builtFromRevision == loop.playbackRevision &&
+         !runtime->mergedMidiEvents.mergedEvents.empty();
 }
 
-void Track::releasePlaybackWindowMemory() {
+void Track::releasePlaybackMergedMidiEventsMemory() {
   playbackRuntime.resetAll(false);
 }
 
-TRACK_COLD_MEM bool Track::tryReleasePlaybackWindowMemory() {
+TRACK_COLD_MEM bool Track::tryReleasePlaybackMergedMidiEventsMemory() {
   if (isRecording() || isOverdubbing() || getState() == TRACK_ARMED) {
     return false;
   }
@@ -1156,7 +1260,7 @@ TRACK_COLD_MEM bool Track::tryReleasePlaybackWindowMemory() {
     // fail and slot() null-derefs (session_20260719_000205: silence after parse_leave before
     // apply_enter on the next frame's reclaim).
     LoopPlaybackRuntime* runtime = playbackRuntime.slotIfAllocated(slot);
-    if (runtime == nullptr || runtime->primaryWindow.empty()) {
+    if (runtime == nullptr || runtime->mergedMidiEvents.empty()) {
       continue;
     }
 
@@ -1167,12 +1271,12 @@ TRACK_COLD_MEM bool Track::tryReleasePlaybackWindowMemory() {
     }
 
     const uint32_t windowRevision = loop.playbackRevision;
-    const bool windowStale = runtime->primaryWindow.builtFromRevision != windowRevision;
+    const bool windowStale = runtime->mergedMidiEvents.builtFromRevision != windowRevision;
     if (transportActive && !windowStale) {
       continue;
     }
 
-    runtime->primaryWindow.clear();
+    runtime->mergedMidiEvents.clear();
     reclaimed = true;
   }
   return reclaimed;
@@ -1182,11 +1286,11 @@ TRACK_COLD_MEM bool Track::tryClearCommittedMidiScratch() {
   if (editManager.isNoteEditActive() && trackManager.isSelectedTrack(*this)) {
     return false;
   }
-  if (publishedMidiScratch_.empty()) {
+  if (committedMidiScratch_.empty()) {
     return false;
   }
-  publishedMidiScratch_.clear();
-  publishedMidiScratchRevision_ = UINT32_MAX;
+  committedMidiScratch_.clear();
+  committedMidiScratchRevision_ = UINT32_MAX;
   return true;
 }
 
@@ -1313,26 +1417,7 @@ void Track::stopRecording(uint32_t currentTick) {
   const uint32_t stopHeap = MemoryMonitor::getInternalHeapFreeBytes();
   logRecordStopStage(loop, stopPathStartUs, "record_stop", 0, stopHeap, stopHeap, "entered");
 
-  uint32_t rawLength = 0;
-  if (currentTick >= loop.startLoopTick) {
-    rawLength = currentTick - loop.startLoopTick;
-  } else {
-    logger.warning("stopRecording guard: currentTick(%lu) < startLoopTick(%lu), clamping length", currentTick, loop.startLoopTick);
-  }
-  const uint32_t lastEventTick = findLastEventTick();
-  loop.loopLengthTicks = computeRecordStopLengthTicks(rawLength, lastEventTick);
-
-  if (loop.loopLengthTicks > 0) {
-    if (!pendingNotes.empty()) {
-      finalizePendingNotes(currentTick);
-    }
-    // Record-stop truncation: events captured past final loop length must not
-    // survive into committed playback state.
-    loop.capture.store.dropEventsAtOrBeyondTick(loop.loopLengthTicks);
-  }
-
-  const CommitResult commitResult =
-      loop.commitCapturePass(CommitReason::RecordStop, currentTick);
+  const uint32_t rawLength = prepareRecordStop(currentTick, "stopRecording");
   pendingNotes.clear();
 
   // Validate AFTER loopLengthTicks is known so wrap-matching and open-tail closing
@@ -1342,7 +1427,7 @@ void Track::stopRecording(uint32_t currentTick) {
   const uint32_t finalizeHeapBefore = MemoryMonitor::getInternalHeapFreeBytes();
   const uint32_t finalizeStartUs = micros();
   const CommitResult sideEffectResult =
-      finalizeCommitSideEffects(commitResult, CommitReason::RecordStop, closeTick);
+      commitCaptureForStop(CommitReason::RecordStop, currentTick, closeTick);
   const uint32_t finalizeDurationUs = micros() - finalizeStartUs;
   const uint32_t finalizeHeapAfter = MemoryMonitor::getInternalHeapFreeBytes();
   const StopPathStorageStats stopPathStats = collectStopPathStorageStats(loop, false);
@@ -1351,11 +1436,11 @@ void Track::stopRecording(uint32_t currentTick) {
 
   logRecordStopStage(loop, stopPathStartUs, "visual_cache_request", 0, finalizeHeapAfter,
                      finalizeHeapAfter,
-                     sideEffectResult == CommitResult::Published ? "deferred" : "skipped",
+                     sideEffectResult == CommitResult::Committed ? "deferred" : "skipped",
                      &stopPathStats);
 
   logRecordStopStage(loop, stopPathStartUs, "revt_queue", 0, finalizeHeapAfter, finalizeHeapAfter,
-                     sideEffectResult == CommitResult::Published ? "deferred" : "skipped",
+                     sideEffectResult == CommitResult::Committed ? "deferred" : "skipped",
                      &stopPathStats);
 
   if (alignLoopOriginOnNextStop) {
@@ -1381,7 +1466,8 @@ void Track::stopRecording(uint32_t currentTick) {
   uint32_t finalLength = loop.loopLengthTicks;
 
   uint32_t playbackTick = currentTick;
-  const uint32_t rewindTicks = computeTruncationRewindTicks(rawLength, finalLength);
+  const uint32_t rewindTicks =
+      RecordStopLength::computeTruncationRewindTicks(rawLength, finalLength);
   if (rewindTicks > 0) {
     playbackTick = currentTick - rewindTicks;
     clockManager.assignCurrentTickSilently(playbackTick);
@@ -1414,7 +1500,7 @@ void Track::stopRecording(uint32_t currentTick) {
     logRecordStopStage(loop, stopPathStartUs, "state_advance", 0, stopHeap, stopHeap,
                        "skipped_empty", &stopPathStats);
     logRecordStopStage(loop, stopPathStartUs, "save_request", 0, stopHeap, stopHeap,
-                       sideEffectResult == CommitResult::Published ? "requested" : "skipped",
+                       sideEffectResult == CommitResult::Committed ? "requested" : "skipped",
                        &stopPathStats);
     setState(hasAnySlotData() ? TRACK_STOPPED : TRACK_EMPTY);
     return;
@@ -1422,7 +1508,7 @@ void Track::stopRecording(uint32_t currentTick) {
 
   // Return to playback after record-stop. Overdub starts on the next explicit
   // record press from PLAYING (record -> play -> overdub -> play flow).
-  playbackRuntime.slot(activeLoopIndex).primaryWindow.clear();
+  playbackRuntime.slot(activeLoopIndex).mergedMidiEvents.clear();
   const uint32_t stateAdvanceHeapBefore = MemoryMonitor::getInternalHeapFreeBytes();
   logRecordStopStage(loop, stopPathStartUs, "pre_state_advance", 0, stateAdvanceHeapBefore,
                      stateAdvanceHeapBefore, "enter", &stopPathStats);
@@ -1439,9 +1525,9 @@ void Track::stopRecording(uint32_t currentTick) {
                      trackState == TRACK_PLAYING ? "ok" : "failed", &stopPathStats);
   logRecordStopStage(loop, stopPathStartUs, "save_request", 0, stateAdvanceHeapAfter,
                      stateAdvanceHeapAfter,
-                     sideEffectResult == CommitResult::Published ? "requested" : "skipped",
+                     sideEffectResult == CommitResult::Committed ? "requested" : "skipped",
                      &stopPathStats);
-  if (sideEffectResult == CommitResult::Published) {
+  if (sideEffectResult == CommitResult::Committed) {
     StorageManager::markCurrentSetLoopSlotDirty(resolveTrackIndexForPersistence(*this),
                                                 recordedSlotIndex);
     StorageManager::requestDeferredSaveState(looperState.getLooperState(), stateAdvanceHeapAfter,
@@ -1459,25 +1545,7 @@ TRACK_COLD_MEM void Track::stopRecordingToStopped(uint32_t currentTick) {
   const uint32_t stopHeap = MemoryMonitor::getInternalHeapFreeBytes();
   logRecordStopStage(loop, stopPathStartUs, "record_stop", 0, stopHeap, stopHeap, "entered");
 
-  uint32_t rawLength = 0;
-  if (currentTick >= loop.startLoopTick) {
-    rawLength = currentTick - loop.startLoopTick;
-  } else {
-    logger.warning("stopRecordingToStopped guard: currentTick(%lu) < startLoopTick(%lu), clamping length", currentTick, loop.startLoopTick);
-  }
-  const uint32_t lastEventTick = findLastEventTick();
-  loop.loopLengthTicks = computeRecordStopLengthTicks(rawLength, lastEventTick);
-
-  if (loop.loopLengthTicks > 0) {
-    if (!pendingNotes.empty()) {
-      finalizePendingNotes(currentTick);
-    }
-    // Record-stop truncation: drop overflow capture events before seal/publish.
-    loop.capture.store.dropEventsAtOrBeyondTick(loop.loopLengthTicks);
-  }
-
-  const CommitResult commitResult =
-      loop.commitCapturePass(CommitReason::RecordStopToStopped, currentTick);
+  const uint32_t rawLength = prepareRecordStop(currentTick, "stopRecordingToStopped");
   pendingNotes.clear();
 
   // Validate AFTER loopLengthTicks is known (see stopRecording for rationale).
@@ -1485,7 +1553,7 @@ TRACK_COLD_MEM void Track::stopRecordingToStopped(uint32_t currentTick) {
   const uint32_t finalizeHeapBefore = MemoryMonitor::getInternalHeapFreeBytes();
   const uint32_t finalizeStartUs = micros();
   const CommitResult sideEffectResult =
-      finalizeCommitSideEffects(commitResult, CommitReason::RecordStopToStopped, closeTick);
+      commitCaptureForStop(CommitReason::RecordStopToStopped, currentTick, closeTick);
   const uint32_t finalizeDurationUs = micros() - finalizeStartUs;
   const uint32_t finalizeHeapAfter = MemoryMonitor::getInternalHeapFreeBytes();
   const StopPathStorageStats stopPathStats = collectStopPathStorageStats(loop, false);
@@ -1494,17 +1562,18 @@ TRACK_COLD_MEM void Track::stopRecordingToStopped(uint32_t currentTick) {
 
   logRecordStopStage(loop, stopPathStartUs, "visual_cache_request", 0, finalizeHeapAfter,
                      finalizeHeapAfter,
-                     sideEffectResult == CommitResult::Published ? "deferred" : "skipped",
+                     sideEffectResult == CommitResult::Committed ? "deferred" : "skipped",
                      &stopPathStats);
 
   logRecordStopStage(loop, stopPathStartUs, "revt_queue", 0, finalizeHeapAfter, finalizeHeapAfter,
-                     sideEffectResult == CommitResult::Published ? "deferred" : "skipped",
+                     sideEffectResult == CommitResult::Committed ? "deferred" : "skipped",
                      &stopPathStats);
 
   [[maybe_unused]] const uint32_t recordStartTickStopped = loop.startLoopTick;
   loop.nextEventIndex = 0;
   uint32_t playbackTick = currentTick;
-  const uint32_t rewindTicks = computeTruncationRewindTicks(rawLength, loop.loopLengthTicks);
+  const uint32_t rewindTicks =
+      RecordStopLength::computeTruncationRewindTicks(rawLength, loop.loopLengthTicks);
   if (rewindTicks > 0) {
     playbackTick = currentTick - rewindTicks;
     clockManager.assignCurrentTickSilently(playbackTick);
@@ -1540,9 +1609,9 @@ TRACK_COLD_MEM void Track::stopRecordingToStopped(uint32_t currentTick) {
                      trackState == TRACK_STOPPED ? "ok" : "failed", &stopPathStats);
   logRecordStopStage(loop, stopPathStartUs, "save_request", 0, stateAdvanceHeapAfter,
                      stateAdvanceHeapAfter,
-                     sideEffectResult == CommitResult::Published ? "requested" : "skipped",
+                     sideEffectResult == CommitResult::Committed ? "requested" : "skipped",
                      &stopPathStats);
-  if (sideEffectResult == CommitResult::Published) {
+  if (sideEffectResult == CommitResult::Committed) {
     StorageManager::markCurrentSetLoopSlotDirty(resolveTrackIndexForPersistence(*this),
                                                 recordedSlotIndex);
     StorageManager::requestDeferredSaveState(looperState.getLooperState(), stateAdvanceHeapAfter,
@@ -1570,7 +1639,7 @@ void Track::reanchorPlaybackProjection(uint32_t currentTick, bool preserveLoopPh
     // Keep LOOP_EDIT baseline aligned with the playback frame so preview depart cannot
     // restore a stale SD loopStartTick onto the live loop (session_20260717_234742).
     if (editManager.isLoopEditSession()) {
-      noteEditManager.loopEditManager.onGlobalGeometryRestored(*this);
+      loopEditManager.onGlobalGeometryRestored(*this);
     }
   } else if (loop.loopLengthTicks > 0) {
     const uint32_t phase =
@@ -1656,45 +1725,20 @@ void Track::stopOverdubbing() {
   if (loop.loopLengthTicks > 0) {
     closeTick = capturePhaseTick(currentTick);
   }
-  if (editManager.isNoteEditActive()) {
-    finalizePendingNotes(currentTick);
-    editManager.foldLiveCaptureIntoNoteEditSession(*this, closeTick);
-    pendingNotes.clear();
-    const uint32_t stateHeapBefore = MemoryMonitor::getInternalHeapFreeBytes();
-    const uint32_t stateStartUs = micros();
-    sendAllNotesOff();
-    resetPlaybackState(currentTick);
-    setState(TRACK_PLAYING);
-    logOverdubStopStage(loop, stopStartUs, "set_state", micros() - stateStartUs, stateHeapBefore,
-                        MemoryMonitor::getInternalHeapFreeBytes(), "in_edit");
-    const uint32_t flushHeapBefore = MemoryMonitor::getInternalHeapFreeBytes();
-    const uint32_t flushStartUs = micros();
-    SC_REC_FLUSH_PENDING_REVTS(256);
-    logOverdubStopStage(loop, stopStartUs, "flush", micros() - flushStartUs, flushHeapBefore,
-                        MemoryMonitor::getInternalHeapFreeBytes(), "ok");
-    logMemoryAfterOverdubStop(recordAddedNoteOnCount, loop);
-    logger.logTrackEvent("Overdubbing stopped", currentTick);
-    logger.info("Overdub stopped (in-edit fold): events=%d, undo_entries=%d",
-                static_cast<int>(loop.displayEventCountHint()), TrackUndo::getUndoCount(*this));
-    emitOverdubStopDisplaySnapshot(*this, activeLoopIndex, currentTick);
-    logOverdubStopStage(loop, stopStartUs, "display", 0, MemoryMonitor::getInternalHeapFreeBytes(),
-                        MemoryMonitor::getInternalHeapFreeBytes(), "ok");
-    HotPathTelemetry::requestDeferredSummary("overdub_stop");
+  if (handleNoteEditFold(true, currentTick, closeTick, stopStartUs)) {
     return;
   }
   finalizePendingNotes(currentTick);
   const uint32_t sealHeapBefore = MemoryMonitor::getInternalHeapFreeBytes();
   const uint32_t sealStartUs = micros();
-  const CommitResult commitResult =
-      loop.commitCapturePass(CommitReason::OverdubStop, currentTick);
-  logOverdubStopStage(loop, stopStartUs, "seal", micros() - sealStartUs, sealHeapBefore,
-                      MemoryMonitor::getInternalHeapFreeBytes(), commitResultLabel(commitResult));
-  const uint32_t finalizeHeapBefore = MemoryMonitor::getInternalHeapFreeBytes();
-  const uint32_t finalizeStartUs = micros();
   const CommitResult sideEffectResult =
-      finalizeCommitSideEffects(commitResult, CommitReason::OverdubStop, closeTick);
-  logOverdubStopStage(loop, stopStartUs, "finalize", micros() - finalizeStartUs,
-                      finalizeHeapBefore, MemoryMonitor::getInternalHeapFreeBytes(),
+      commitCaptureForStop(CommitReason::OverdubStop, currentTick, closeTick);
+  // Stage order seal → finalize preserved; duration covers seal+finalize together on seal.
+  logOverdubStopStage(loop, stopStartUs, "seal", micros() - sealStartUs, sealHeapBefore,
+                      MemoryMonitor::getInternalHeapFreeBytes(),
+                      commitResultLabel(sideEffectResult));
+  logOverdubStopStage(loop, stopStartUs, "finalize", 0, MemoryMonitor::getInternalHeapFreeBytes(),
+                      MemoryMonitor::getInternalHeapFreeBytes(),
                       commitResultLabel(sideEffectResult));
   const uint32_t stateHeapBefore = MemoryMonitor::getInternalHeapFreeBytes();
   const uint32_t stateStartUs = micros();
@@ -1729,22 +1773,11 @@ void Track::stopOverdubbingToStopped() {
     closeTick = capturePhaseTick(currentTick);
   }
   sendAllNotesOff();
-  if (editManager.isNoteEditActive()) {
-    finalizePendingNotes(currentTick);
-    editManager.foldLiveCaptureIntoNoteEditSession(*this, closeTick);
-    pendingNotes.clear();
-    logMemoryAfterOverdubStop(recordAddedNoteOnCount, loop);
-    setState(TRACK_STOPPED);
-    resetPlaybackState(currentTick);
-    displayManager.emitDisplayCaptureSnapshot(*this, activeLoopIndex, currentTick);
-    logger.logTrackEvent("Overdubbing stopped (to STOPPED)", currentTick);
-    HotPathTelemetry::requestDeferredSummary("overdub_stop_to_stopped");
+  if (handleNoteEditFold(false, currentTick, closeTick, /*stopStartUs=*/0)) {
     return;
   }
   finalizePendingNotes(currentTick);
-  const CommitResult commitResult =
-      loop.commitCapturePass(CommitReason::OverdubStopToStopped, currentTick);
-  finalizeCommitSideEffects(commitResult, CommitReason::OverdubStopToStopped, closeTick);
+  commitCaptureForStop(CommitReason::OverdubStopToStopped, currentTick, closeTick);
   logMemoryAfterOverdubStop(recordAddedNoteOnCount, loop);
   setState(TRACK_STOPPED);
   resetPlaybackState(currentTick);
@@ -1916,9 +1949,9 @@ void Track::rebuildPlaybackOrder() {
   Loop& loop = getActiveLoop();
   LoopPlaybackRuntime& runtime = playbackRuntime.slot(activeLoopIndex);
   const uint32_t currentTick = clockManager.getCurrentTick();
-  ensurePlaybackWindowBuilt(*this, loop, runtime, true, currentTick);
+  ensurePlaybackMergedMidiEventsBuilt(*this, loop, runtime, true, currentTick);
   const ProjectionContext playbackContext = makePlaybackContext(*this, loop, currentTick);
-  ::rebuildPlaybackOrder(loop, runtime.primaryWindow.mergedEvents, playbackContext);
+  ::rebuildPlaybackOrder(loop, runtime.mergedMidiEvents.mergedEvents, playbackContext);
 }
 
 void Track::queuePlaybackStartAtGrid(int32_t startTick, uint32_t queuedAtTick) {
@@ -1967,201 +2000,139 @@ void Track::commitQueuedPlaybackStart(uint32_t commitTick) {
   clearQueuedPlaybackStart();
 }
 
+struct PlaybackJamFilterCtx {
+  const Track* track = nullptr;
+  const Loop* loop = nullptr;
+};
+
+void playbackCursorAdvanceSend(void* ctx, const MidiEvent& evt, uint8_t slotIndex) {
+  static_cast<Track*>(ctx)->sendMidiEvent(evt, slotIndex);
+}
+
+bool playbackCursorAdvanceJamFilter(void* ctx, uint32_t storageTick) {
+  const auto* jam = static_cast<const PlaybackJamFilterCtx*>(ctx);
+  return jam->track->isStorageTickInJamRegion(storageTick, *jam->loop);
+}
+
+bool Track::isStorageTickInJamRegion(uint32_t evTick, const Loop& loop) const {
+  if (!jamPlaybackActive || jamLength == 0) {
+    return true;
+  }
+  if (jamStartTick == UINT32_MAX) {
+    return true;
+  }
+  const uint32_t jamEnd = jamStartTick + jamLength;
+  if (jamEnd <= loop.loopLengthTicks) {
+    return evTick >= jamStartTick && evTick < jamEnd;
+  }
+  return (evTick >= jamStartTick) || (evTick < jamEnd - loop.loopLengthTicks);
+}
+
+void Track::playCommittedLoopMidi(uint8_t slotIndex, uint32_t currentTick,
+                                  PlaybackMidiTarget target) {
+  const bool isActive = (target == PlaybackMidiTarget::ActiveSlot);
+  Loop& loop = getLoop(slotIndex);
+  LoopPlaybackRuntime& runtime = playbackRuntime.slot(slotIndex);
+
+  if (runtime.isStale(loop.playbackRevision, playbackGeneration)) {
+    runtime.reset(true);
+    loop.nextEventIndex = 0;
+    if (isActive) {
+      loop.captureNextEventIndex = 0;
+    }
+    runtime.syncRevision(loop.playbackRevision, playbackGeneration);
+  }
+
+  ensurePlaybackMergedMidiEventsBuilt(*this, loop, runtime, false, currentTick);
+  const SessionMidiEventVec& mergedEvents = runtime.mergedMidiEvents.mergedEvents;
+  if (mergedEvents.empty()) {
+    return;
+  }
+
+  ProjectionContext playbackContext = makePlaybackContext(*this, loop, currentTick);
+  if (loop.playbackOrderDirty) {
+    ::rebuildPlaybackOrder(loop, mergedEvents, playbackContext);
+    reanchorPlaybackIndex(loop, mergedEvents, loop.getPlaybackOrder(), playbackContext);
+  }
+
+  const uint32_t tickInLoop = IntervalProjection::tickPhaseInProjectionCycle(
+      currentTick, projectionCycleStartTick, loop.loopLengthTicks);
+
+  if (IntervalProjection::didDisplayPlayheadWrapBackward(tickInLoop, loop.lastTickInLoop,
+                                                       loop.loopStartTick, loop.loopLengthTicks)) {
+    if (isActive) {
+      projectionCycleStartTick = IntervalProjection::advanceProjectionCycleStartTickOnWrap(
+          projectionCycleStartTick, loop.loopLengthTicks);
+      loop.nextEventIndex = 0;
+      loop.captureNextEventIndex = 0;
+      logger.trace("Loop wrapped, resetting index");
+    } else {
+      loop.nextEventIndex = 0;
+    }
+  }
+
+  const uint32_t prevTickInLoop = loop.lastTickInLoop;
+  loop.lastTickInLoop = tickInLoop;
+  const bool atLoopStart =
+      IntervalProjection::isPlaybackCatchUpWindow(prevTickInLoop, tickInLoop);
+
+  if (prevTickInLoop == UINT32_MAX && tickInLoop > Config::TICKS_PER_BAR) {
+    loop.nextEventIndex = 0;
+    runtime.syncRevision(loop.playbackRevision, playbackGeneration);
+    return;
+  }
+
+  PlaybackTickFrame frame{&playbackContext, tickInLoop, prevTickInLoop, atLoopStart};
+  MergedPlaybackStreamCtx mergedCtx{&loop.getPlaybackOrder(), &mergedEvents};
+  PlaybackCursorAdvanceState mergedAdvance{&loop.nextEventIndex, &loop.playbackOrderDirty};
+  const PlaybackEmitPolicy mergedPolicy =
+      isActive ? PlaybackEmitPolicy::ActiveCommitted : PlaybackEmitPolicy::LayeredSlot;
+  PlaybackJamFilterCtx jamCtx{this, &loop};
+  (void)advancePlaybackCursor(
+      mergedAdvance, frame, mergedPolicy, makeMergedPlaybackStream(mergedCtx),
+      playbackCursorAdvanceSend, this, slotIndex,
+      isActive ? playbackCursorAdvanceJamFilter : nullptr, isActive ? &jamCtx : nullptr, midiChannel);
+
+  if (isActive && loop.capture.phase == CapturePhase::Overdub && !loop.capture.store.empty()) {
+    if (loop.ensureCaptureEventsSorted()) {
+      reanchorCaptureIndex(loop);
+    }
+    PlaybackCursorAdvanceState captureAdvance{&loop.captureNextEventIndex, nullptr};
+    (void)advancePlaybackCursor(
+        captureAdvance, frame, PlaybackEmitPolicy::ActiveCaptureOverdub,
+        makeCapturePlaybackStream(loop), playbackCursorAdvanceSend, this, slotIndex,
+        playbackCursorAdvanceJamFilter, &jamCtx, midiChannel);
+  }
+
+  runtime.syncRevision(loop.playbackRevision, playbackGeneration);
+}
+
 void Track::playMidiEvents(uint32_t currentTick, bool isAudible) {
   if (isStoppedRecording()) {
     return;
   }
   Loop& loop = getActiveLoop();
-  if (!isAudible || muted || !loop.hasCommittedPasses() || loop.loopLengthTicks == 0)
-    return;
-  LoopPlaybackRuntime& runtime = playbackRuntime.slot(activeLoopIndex);
-  if (runtime.isStale(loop.playbackRevision, playbackGeneration)) {
-    runtime.reset(true);
-    loop.nextEventIndex = 0;
-    loop.captureNextEventIndex = 0;
-    runtime.syncRevision(loop.playbackRevision, playbackGeneration);
-  }
-
-  ensurePlaybackWindowBuilt(*this, loop, runtime, false, currentTick);
-  const SessionMidiEventVec& mergedEvents = runtime.primaryWindow.mergedEvents;
-  if (mergedEvents.empty()) {
+  if (!isAudible || muted || !loop.hasCommittedPasses() || loop.loopLengthTicks == 0) {
     return;
   }
-
-  const ProjectionContext playbackContext = makePlaybackContext(*this, loop, currentTick);
-
-  if (loop.playbackOrderDirty) {
-    ::rebuildPlaybackOrder(loop, mergedEvents, playbackContext);
-    reanchorPlaybackIndex(loop, mergedEvents, loop.getPlaybackOrder(), playbackContext);
-  }
-
-  uint32_t tickInLoop = IntervalProjection::tickPhaseInProjectionCycle(
-      currentTick, projectionCycleStartTick, loop.loopLengthTicks);
-
-  if (IntervalProjection::didDisplayPlayheadWrapBackward(tickInLoop, loop.lastTickInLoop,
-                                                       loop.loopStartTick,
-                                                       loop.loopLengthTicks)) {
-    projectionCycleStartTick = IntervalProjection::advanceProjectionCycleStartTickOnWrap(
-        projectionCycleStartTick, loop.loopLengthTicks);
-    loop.nextEventIndex = 0;
-    loop.captureNextEventIndex = 0;
-    logger.trace("Loop wrapped, resetting index");
-  }
-
-  uint32_t prevTickInLoop = loop.lastTickInLoop;
-  loop.lastTickInLoop = tickInLoop;
-
-  bool atLoopStart = (prevTickInLoop == UINT32_MAX) || (tickInLoop <= prevTickInLoop);
-  // After a cold re-anchor, catch up from 0..tickInLoop. Cap that window so a broken
-  // projection (e.g. loopStart mutated mid-play) cannot MIDI-flood / hang USB.
-  if (prevTickInLoop == UINT32_MAX && tickInLoop > Config::TICKS_PER_BAR) {
-    loop.nextEventIndex = 0;
-    runtime.syncRevision(loop.playbackRevision, playbackGeneration);
-    return;
-  }
-
-  auto eventInJamRegion = [this, &loop](uint32_t evTick) -> bool {
-    if (!jamPlaybackActive || jamLength == 0) return true;
-    if (jamStartTick == UINT32_MAX) return true;
-    uint32_t jamEnd = jamStartTick + jamLength;
-    if (jamEnd <= loop.loopLengthTicks) {
-      return evTick >= jamStartTick && evTick < jamEnd;
-    }
-    return (evTick >= jamStartTick) || (evTick < jamEnd - loop.loopLengthTicks);
-  };
-
-  uint32_t lastSentEvTick = UINT32_MAX;
-  uint8_t lastSentChannel = 0;
-  uint8_t lastSentNote = 0;
-  uint8_t lastSentType = 0xFF;
-
-  const PlaybackOrderVec& playbackOrder = loop.getPlaybackOrder();
-  while (loop.nextEventIndex < playbackOrder.size()) {
-    const size_t orderIdx = playbackOrder[loop.nextEventIndex];
-    if (orderIdx >= mergedEvents.size()) {
-      loop.playbackOrderDirty = true;
-      break;
-    }
-    const MidiEvent &evt = mergedEvents[orderIdx];
-    const uint32_t evTick =
-        IntervalProjection::playbackEventPhase(evt.tick, playbackContext.loopLength);
-    const uint32_t evStorageTick = evt.tick;
-
-    bool crossed = atLoopStart ? (evTick <= tickInLoop) : (prevTickInLoop < evTick && evTick <= tickInLoop);
-    if (crossed && eventInJamRegion(evStorageTick)) {
-      uint8_t effectiveCh = (evt.channel >= 1 && evt.channel <= 16) ? midiChannel : evt.channel;
-      uint8_t note = evt.isNoteOn() || evt.isNoteOff() ? evt.data.noteData.note : 0;
-      bool isDuplicate = (evt.isNoteOn() || evt.isNoteOff()) &&
-                         (evTick == lastSentEvTick && effectiveCh == lastSentChannel &&
-                          note == lastSentNote && evt.type == lastSentType);
-      if (!isDuplicate) {
-        sendMidiEvent(evt, activeLoopIndex);
-        if (evt.isNoteOn() || evt.isNoteOff()) {
-          lastSentEvTick = evTick;
-          lastSentChannel = effectiveCh;
-          lastSentNote = note;
-          lastSentType = evt.type;
-        }
-      }
-      loop.nextEventIndex++;
-    }
-    else if (evTick > tickInLoop) {
-      break;
-    }
-    else {
-      loop.nextEventIndex++;
-    }
-  }
-
-  if (loop.capture.phase == CapturePhase::Overdub && !loop.capture.store.empty()) {
-    if (loop.ensureCaptureEventsSorted()) {
-      reanchorCaptureIndex(loop);
-    }
-    while (loop.captureNextEventIndex < loop.capture.store.size()) {
-      const MidiEvent& evt = loop.capture.store.at(loop.captureNextEventIndex);
-      const uint32_t evTick =
-          IntervalProjection::projectPlaybackEventPhase(evt.tick, playbackContext);
-      const uint32_t evStorageTick = evt.tick;
-      const bool crossed =
-          atLoopStart ? (evTick <= tickInLoop) : (prevTickInLoop < evTick && evTick <= tickInLoop);
-      if (crossed && eventInJamRegion(evStorageTick)) {
-        sendMidiEvent(evt, activeLoopIndex);
-        loop.captureNextEventIndex++;
-      } else if (evTick > tickInLoop) {
-        break;
-      } else {
-        loop.captureNextEventIndex++;
-      }
-    }
-  }
-  runtime.syncRevision(loop.playbackRevision, playbackGeneration);
+  playCommittedLoopMidi(activeLoopIndex, currentTick, PlaybackMidiTarget::ActiveSlot);
 }
 
 void Track::playMidiEventsForSlot(uint8_t slotIndex, uint32_t currentTick, bool isAudible) {
-  if (slotIndex >= Config::MAX_LOOPS_PER_TRACK) return;
-  if (isStoppedRecording()) return;
-  if (!isAudible || muted) return;
-
+  if (slotIndex >= Config::MAX_LOOPS_PER_TRACK) {
+    return;
+  }
+  if (isStoppedRecording()) {
+    return;
+  }
+  if (!isAudible || muted) {
+    return;
+  }
   Loop& loop = getLoop(slotIndex);
-  if (!loop.hasCommittedPasses() || loop.loopLengthTicks == 0) return;
-  LoopPlaybackRuntime& runtime = playbackRuntime.slot(slotIndex);
-  if (runtime.isStale(loop.playbackRevision, playbackGeneration)) {
-    runtime.reset(true);
-    loop.nextEventIndex = 0;
-    runtime.syncRevision(loop.playbackRevision, playbackGeneration);
-  }
-
-  ensurePlaybackWindowBuilt(*this, loop, runtime, false, currentTick);
-  const SessionMidiEventVec& mergedEvents = runtime.primaryWindow.mergedEvents;
-  if (mergedEvents.empty()) {
+  if (!loop.hasCommittedPasses() || loop.loopLengthTicks == 0) {
     return;
   }
-
-  const ProjectionContext playbackContext = makePlaybackContext(*this, loop, currentTick);
-
-  if (loop.playbackOrderDirty) {
-    ::rebuildPlaybackOrder(loop, mergedEvents, playbackContext);
-    reanchorPlaybackIndex(loop, mergedEvents, loop.getPlaybackOrder(), playbackContext);
-  }
-
-  uint32_t tickInLoop = IntervalProjection::tickPhaseInProjectionCycle(
-      currentTick, projectionCycleStartTick, loop.loopLengthTicks);
-  if (IntervalProjection::didDisplayPlayheadWrapBackward(tickInLoop, loop.lastTickInLoop,
-                                                       loop.loopStartTick,
-                                                       loop.loopLengthTicks)) {
-    loop.nextEventIndex = 0;
-  }
-
-  uint32_t prevTickInLoop = loop.lastTickInLoop;
-  loop.lastTickInLoop = tickInLoop;
-  bool atLoopStart = (prevTickInLoop == UINT32_MAX) || (tickInLoop <= prevTickInLoop);
-  if (prevTickInLoop == UINT32_MAX && tickInLoop > Config::TICKS_PER_BAR) {
-    loop.nextEventIndex = 0;
-    runtime.syncRevision(loop.playbackRevision, playbackGeneration);
-    return;
-  }
-  const PlaybackOrderVec& playbackOrder = loop.getPlaybackOrder();
-
-  while (loop.nextEventIndex < playbackOrder.size()) {
-    const size_t orderIdx = playbackOrder[loop.nextEventIndex];
-    if (orderIdx >= mergedEvents.size()) {
-      loop.playbackOrderDirty = true;
-      break;
-    }
-    const MidiEvent &evt = mergedEvents[orderIdx];
-    const uint32_t evTick =
-        IntervalProjection::playbackEventPhase(evt.tick, playbackContext.loopLength);
-    bool crossed = atLoopStart ? (evTick <= tickInLoop) : (prevTickInLoop < evTick && evTick <= tickInLoop);
-    if (crossed) {
-      sendMidiEvent(evt, slotIndex);
-      loop.nextEventIndex++;
-    } else if (evTick > tickInLoop) {
-      break;
-    } else {
-      loop.nextEventIndex++;
-    }
-  }
-  runtime.syncRevision(loop.playbackRevision, playbackGeneration);
+  playCommittedLoopMidi(slotIndex, currentTick, PlaybackMidiTarget::LayeredSlot);
 }
 
 void Track::sendMidiEvent(const MidiEvent& evt, uint8_t playbackSlotIndex) {
@@ -2426,26 +2397,12 @@ TRACK_COLD_MEM bool Track::hasCommittedPassesInSlot(uint8_t slotIndex) const {
 }
 
 TRACK_COLD_MEM uint32_t Track::quantizeTransportRecordLength(uint32_t rawLength) const {
-  if (rawLength == 0) {
-    return TICKS_PER_BAR;
-  }
-  const uint32_t rem = rawLength % TICKS_PER_BAR;
-  const uint32_t grace = TICKS_PER_BAR / 2;
-  if (rem <= grace) {
-    const uint32_t quantized = (rawLength / TICKS_PER_BAR) * TICKS_PER_BAR;
-    return quantized == 0 ? TICKS_PER_BAR : quantized;
-  }
-  return ((rawLength / TICKS_PER_BAR) + 1) * TICKS_PER_BAR;
+  return RecordStopLength::quantizeTransportRecordLength(rawLength);
 }
 
 TRACK_COLD_MEM uint32_t Track::computeRecordStopLengthTicks(uint32_t rawLength,
                                                             uint32_t lastEventTick) const {
-  const uint32_t transportLength = quantizeTransportRecordLength(rawLength);
-  if (lastEventTick == 0) {
-    return transportLength;
-  }
-  const uint32_t contentLength = computeLoopLengthTicks(lastEventTick);
-  return std::min(transportLength, contentLength);
+  return RecordStopLength::computeRecordStopLengthTicks(rawLength, lastEventTick);
 }
 
 TRACK_COLD_MEM void Track::resetLoopSlotAfterEmptyCapture(uint8_t slotIndex) {

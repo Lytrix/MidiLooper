@@ -36,7 +36,7 @@ When below floor at dispatch: emit `PERS,defer,...,heap_floor` once, retry next 
 
 ### 2. Published flat on extmem
 
-`Loop::passesMaterializedStore_` SHALL use `LoopEventFlatCache<SessionMidiEventVec>`. `Loop::midiEvents()` returns `SessionMidiEventVec&`. `mergeActiveCapturePassesInto` temporaries inherit the output vector allocator.
+`Loop::passesMaterializedStore_` SHALL use `LoopEventVectorCache<SessionMidiEventVec>`. `Loop::midiEvents()` returns `SessionMidiEventVec&`. `mergeActiveCapturePassesInto` temporaries inherit the output vector allocator.
 
 `editAwareMidiEvents()` returns `SessionMidiEventVec&` — session store (`CowLoopEventStore`) also uses `SessionMidiEventVec` so the API is uniform. Functions that require internal heap copy at boundary do so explicitly (rare).
 
@@ -190,7 +190,7 @@ Chunk **payload** remains in the PSRAM pool (unchanged). M7 moves **pass metadat
 |-------|--------|
 | 0 | OpenSpec + plan + ARCHITECTURE-REVIEW (doc) |
 | 1 | Typedefs + seal transfer + pending/publish |
-| 2 | `PublishedOverdubPassVec` + call sites |
+| 2 | `CommittedOverdubPassVec` + call sites |
 | 3 | SD / undo / clone alignment |
 | 4 | HITL + exit measurement |
 

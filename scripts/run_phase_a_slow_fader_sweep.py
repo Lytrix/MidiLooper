@@ -17,7 +17,6 @@ _ROOT = _SCRIPT_DIR.parent
 if str(_SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(_SCRIPT_DIR))
 
-
 def _resolve_base_seed(
     args: argparse.Namespace,
 ) -> tuple[list[str], dict, Path | None]:
@@ -45,7 +44,6 @@ def _resolve_base_seed(
         raise FileNotFoundError("base report has no serial_log_path")
     lines = serial_path.read_text(encoding="utf-8", errors="replace").splitlines()
     return lines, base_preset_config(report), serial_path
-
 
 def _run_base_seed(args: argparse.Namespace) -> tuple[list[str], dict]:
     captures_dir = args.out_dir
@@ -87,7 +85,6 @@ def _run_base_seed(args: argparse.Namespace) -> tuple[list[str], dict]:
     print("[phase-a-sweep] base seed done — entering NOTE_EDIT for fader sweep")
     return seed_lines, config
 
-
 def _last_note_edit_toggle_index(lines: list[str]) -> tuple[int, str] | None:
     last_index = -1
     last_kind = ""
@@ -102,7 +99,6 @@ def _last_note_edit_toggle_index(lines: list[str]) -> tuple[int, str] | None:
         return None
     return last_index, last_kind
 
-
 def _note_edit_enter_seen_in_lines(lines: list[str]) -> bool:
     toggle = _last_note_edit_toggle_index(lines)
     if toggle is None:
@@ -113,11 +109,9 @@ def _note_edit_enter_seen_in_lines(lines: list[str]) -> bool:
     tail = lines[_index : _index + 40]
     return not any("exited edit mode" in line for line in tail)
 
-
 def _already_in_note_edit(lines: list[str]) -> bool:
     toggle = _last_note_edit_toggle_index(lines)
     return toggle is not None and toggle[1] == "NOTE_EDIT"
-
 
 def _wait_for_note_edit_enter(
     collector,
@@ -133,7 +127,6 @@ def _wait_for_note_edit_enter(
         time.sleep(0.05)
     return False
 
-
 def _note_edit_recently_exited(lines: list[str]) -> bool:
     from host_midi_automation_edit_baseline import _find_edit_enter_index
 
@@ -148,7 +141,6 @@ def _note_edit_recently_exited(lines: list[str]) -> bool:
         return True
     return exit_idx > enter_idx
 
-
 def _ensure_note_edit_entered(
     out_port: mido.ports.BaseOutput,
     collector,
@@ -157,8 +149,12 @@ def _ensure_note_edit_entered(
     phase_wait_ms: int,
     enter_timeout_s: float,
 ) -> bool:
-    from host_midi_automation_baseline import CONTROL_CHANNEL_1BASED, _send_short_press
-    from host_midi_automation_edit_baseline import EDIT_BUTTON_DEBOUNCE_MS, EDIT_BUTTON_NOTE
+    from hitl.control_constants import (
+        CONTROL_CHANNEL_1BASED,
+        EDIT_BUTTON_DEBOUNCE_MS,
+        EDIT_BUTTON_NOTE,
+    )
+    from hitl.midi_io import _send_short_press
 
     snapshot = collector.snapshot()
     if _already_in_note_edit(snapshot):
@@ -194,18 +190,17 @@ def _ensure_note_edit_entered(
         print("[phase-a-sweep] NOTE_EDIT enter not seen in serial")
     return False
 
-
 def _slow_fader1_sweep(
     out_port: mido.ports.BaseOutput,
     *,
     layout,
     slot_dwell_ms: int,
 ) -> None:
-    from host_midi_automation_edit_baseline import (
+    from hitl.control_constants import (
         FADER_SELECT_SETTLE_MS,
         NOTE_SELECTION_GRACE_MS,
-        _fader1_select_nav_slot_index,
     )
+    from host_midi_automation_edit_baseline import _fader1_select_nav_slot_index
     from hitl.fader_motor_probe import arm_note_edit_session
 
     arm_note_edit_session(out_port, step_label="phase_a_sweep")
@@ -225,19 +220,18 @@ def _slow_fader1_sweep(
         if extra_dwell_ms > 0:
             time.sleep(extra_dwell_ms / 1000.0)
 
-
 def _run_sweep_phase(
     args: argparse.Namespace,
     seed_lines: list[str],
     base_config: dict,
 ) -> int:
-    from host_midi_automation_baseline import (
-        CONTROL_CHANNEL_1BASED,
-        SerialCaptureCollector,
+    from hitl.control_constants import CONTROL_CHANNEL_1BASED
+    from hitl.serial_collector import SerialCaptureCollector
+    from hitl.midi_io import (
         _find_midi_port,
         _send_short_press,
     )
-    from host_midi_automation_edit_baseline import _ensure_transport_running
+    from hitl.edit_controls import _ensure_transport_running
     from hitl.baseline_loop_inventory import (
         materialized_note_pairs_from_base_seed,
         nav_slot_stats,
@@ -333,11 +327,9 @@ def _run_sweep_phase(
         out_port.close()
         in_port.close()
 
-
 def run_sweep(args: argparse.Namespace) -> int:
     seed_lines, config = _run_base_seed(args)
     return _run_sweep_phase(args, seed_lines, config)
-
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
@@ -381,7 +373,6 @@ def build_parser() -> argparse.ArgumentParser:
     )
     return parser
 
-
 def main() -> int:
     args = build_parser().parse_args()
     try:
@@ -393,7 +384,6 @@ def main() -> int:
     except FileNotFoundError as exc:
         print(f"[phase-a-sweep] {exc}", file=sys.stderr)
         return 1
-
 
 if __name__ == "__main__":
     raise SystemExit(main())

@@ -44,7 +44,6 @@ OVERDUB_PASSES: tuple[dict[str, object], ...] = (
     },
 )
 
-
 def _parse_common_args(args: object) -> argparse.Namespace:
     parser = argparse.ArgumentParser(add_help=False)
     parser.add_argument("--midi-out", default="Teensy")
@@ -69,9 +68,8 @@ def _parse_common_args(args: object) -> argparse.Namespace:
     legacy = list(getattr(args, "legacy_args", []) or [])
     return parser.parse_args(legacy)
 
-
 def _build_shim(ns: argparse.Namespace, midi_channel: int) -> object:
-    from host_midi_automation_baseline import OVERDUB_GRID_STEP_CLOCKS
+    from hitl.control_constants import OVERDUB_GRID_STEP_CLOCKS
 
     class _ArgsShim:
         pass
@@ -108,33 +106,42 @@ def _build_shim(ns: argparse.Namespace, midi_channel: int) -> object:
     shim.overdub_step_clocks = OVERDUB_GRID_STEP_CLOCKS
     return shim
 
-
 def run_two_overdub_undo_redo(args: object) -> int:
     import mido
     from hitl.serial_transport import resolve_wall_tempo_for_proxy
     from hitl.transport_clock import ensure_transport_clock
-    from host_midi_automation_baseline import (
+    from hitl.control_constants import (
         CONTROL_CHANNEL_1BASED,
         RECORD_BUTTON_NOTE,
         RECORD_GRID_STEP_CLOCKS,
         TRACK_SELECT_NOTE_BASE,
+    )
+    from hitl.serial_collector import (
         RunAbort,
         SerialCaptureCollector,
-        _count_capture_transitions,
+    )
+    from hitl.midi_io import (
         _find_midi_port,
-        _run_overdub_pass,
         _send_short_press,
-        _stream_pattern_for_bars,
+    )
+    from hitl.capture_transitions import (
+        _count_capture_transitions,
         _wait_for_transition_count,
+    )
+    from host_midi_automation_baseline import (
+        _run_overdub_pass,
+        _stream_pattern_for_bars,
+    )
+    from hitl.edit_controls import (
+        _ensure_transport_running,
+        _stop_transport_if_running,
     )
     from host_midi_automation_edit_baseline import (
         _ensure_clear_to_empty,
         _ensure_recording_started,
-        _ensure_transport_running,
         _latest_track_state,
         _send_global_redo,
         _send_global_undo,
-        _stop_transport_if_running,
     )
 
     ns = _parse_common_args(args)
@@ -201,7 +208,7 @@ def run_two_overdub_undo_redo(args: object) -> int:
                     print(f"{log_prefix} clear failed")
                     return 1
             else:
-                from host_midi_automation_edit_baseline import _send_long_press
+                from hitl.edit_controls import _send_long_press
 
                 _send_long_press(
                     out_port,

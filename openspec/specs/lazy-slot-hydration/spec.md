@@ -1,6 +1,6 @@
 ## Purpose
 
-Audible-first boot Commit and on-demand deferred slot hydration so interactive ready does not
+Boot-playback-first Commit and on-demand deferred slot hydration so interactive ready does not
 require full-set SD drain. Shipped in **unified-commit-lazy-slot-load** (device gate
 `session_20260718_224607.log`; A.7 confirm `session_20260718_230145.log`).
 
@@ -21,21 +21,21 @@ The system SHALL NOT require a dedicated stored enum field for this lifecycle; i
 
 #### Scenario: Interactive ready does not require DERIVED_READY
 
-- **WHEN** audible boot slots reach COMMITTED
+- **WHEN** boot playback slots reach COMMITTED
 - **THEN** interactive UI (including piano roll) MAY proceed
 - **AND** DERIVED_READY MAY still be pending
 
-### Requirement: Audible-first boot Commit
+### Requirement: Boot-playback-first Commit
 
-At cold boot, the system SHALL sync-commit the audible boot set (`isAudibleBootSlot`) before declaring interactive ready. The system SHALL NOT require every SD payload slot to reach COMMITTED before interactive ready. Boot SHALL NOT use the runtime deferred load scheduler for audible restore.
+At cold boot, the system SHALL sync-commit the boot playback set (`isBootPlaybackSlot`) before declaring interactive ready. The system SHALL NOT require every SD payload slot to reach COMMITTED before interactive ready. Boot SHALL NOT use the runtime deferred load scheduler for boot playback restore.
 
-MVP MAY perform audible sync Commit via the existing `loadLoopSlotFromCurrentSetSd` path.
+MVP MAY perform boot playback sync Commit via the existing `loadLoopSlotFromCurrentSetSd` path.
 
-#### Scenario: Non-audible slots stay unloaded after boot ready
+#### Scenario: Non-playback slots stay unloaded after boot ready
 
-- **WHEN** boot completes interactive ready for a set with SD payloads beyond the audible set
-- **THEN** audible slots are COMMITTED
-- **AND** non-audible payload slots MAY remain UNLOADED or HEADER_READY
+- **WHEN** boot completes interactive ready for a set with SD payloads beyond the boot playback set
+- **THEN** boot playback slots are COMMITTED
+- **AND** non-playback payload slots MAY remain UNLOADED or HEADER_READY
 - **AND** those slots are NOT auto-enqueued for background full-set drain
 
 #### Scenario: Boot ready faster than full-set drain baseline

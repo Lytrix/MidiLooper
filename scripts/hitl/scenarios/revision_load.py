@@ -28,7 +28,6 @@ _REVISION_JOB_FAILED_RE = re.compile(
     r"\[StorageManager\] ERROR: Revision validate"
 )
 
-
 def _parse_common_args(args: object) -> argparse.Namespace:
     parser = argparse.ArgumentParser(add_help=False)
     parser.add_argument("--midi-out", default="Teensy")
@@ -73,12 +72,10 @@ def _parse_common_args(args: object) -> argparse.Namespace:
     known, _unknown = parser.parse_known_args(legacy)
     return known
 
-
 def _track_select_note(track_number_1based: int) -> int:
-    from host_midi_automation_baseline import TRACK_SELECT_NOTE_BASE
+    from hitl.control_constants import TRACK_SELECT_NOTE_BASE
 
     return TRACK_SELECT_NOTE_BASE + (track_number_1based - 1)
-
 
 def _wait_for_pattern_after(
     collector,
@@ -115,7 +112,6 @@ def _wait_for_pattern_after(
         time.sleep(0.05)
     return None
 
-
 def _wait_for_serial_activity(
     collector,
     *,
@@ -129,7 +125,6 @@ def _wait_for_serial_activity(
         time.sleep(0.1)
     print(f"{log_prefix} warn: no serial lines before nuke (continuing)")
     return False
-
 
 def _request_sets_nuke(
     collector,
@@ -167,12 +162,14 @@ def _request_sets_nuke(
         time.sleep(0.05)
     return False
 
-
 def run_revision_load(args: object) -> int:
-    from host_midi_automation_edit_baseline import _ensure_transport_running, _stop_transport_if_running
-    from host_midi_automation_baseline import (
-        CONTROL_CHANNEL_1BASED,
-        SerialCaptureCollector,
+    from hitl.edit_controls import (
+        _ensure_transport_running,
+        _stop_transport_if_running,
+    )
+    from hitl.control_constants import CONTROL_CHANNEL_1BASED
+    from hitl.serial_collector import SerialCaptureCollector
+    from hitl.midi_io import (
         _drain_input_messages,
         _find_midi_port,
         _send_short_press,

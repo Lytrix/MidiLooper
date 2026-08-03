@@ -29,7 +29,7 @@
 | Concern | Primary location |
 |---------|------------------|
 | Capture append (hot) | `Loop::appendCaptureEvent`, `LoopEventStore::append` |
-| Seal / publish | `Loop::sealCapture`, `publishPendingCapturePass`, `commitCapturePass` |
+| Seal / publish | `Loop::sealCapture`, `commitPendingCapturePass`, `commitCapturePass` |
 | Pending staging | `PendingCapturePass`, `hasPendingCapturePass`, `discardPendingCapturePass` |
 | Published passes | `LoopPasses::recordPass`, `overdubPasses`, `LoopPasses::materialize` |
 | Transfer (sole domain cross) | `transferCaptureChunkIdsToPublished` (Phase 1) |
@@ -49,7 +49,7 @@
 | **Ownership change?** | **NO** — representation split at existing boundaries |
 | **State transition change?** | **NO** — same seal → pending → publish → clear builder |
 | **Behavior-preserving?** | **YES** |
-| **Reuse decision** | **YES** — extend `sealCapture` / `publishPendingCapturePass` |
+| **Reuse decision** | **YES** — extend `sealCapture` / `commitPendingCapturePass` |
 
 | Implementation review | |
 |-----------------------|---|
@@ -63,7 +63,7 @@
 
 ### Phase 1 — Type split + seal transfer — **NEXT**
 
-**Scope:** `CaptureChunkIdList`, `PublishedChunkIdList`, transfer helper, pending at seal, publish move; **not** `PublishedOverdubPassVec` yet.
+**Scope:** `CaptureChunkIdList`, `PublishedChunkIdList`, transfer helper, pending at seal, publish move; **not** `CommittedOverdubPassVec` yet.
 
 #### Architecture gate
 
@@ -74,7 +74,7 @@
 | Ownership change? | **NO** |
 | Transition change? | **NO** |
 | Behavior-preserving? | **YES** |
-| Reuse | **YES** — extend `sealCapture`, `publishPendingCapturePass` |
+| Reuse | **YES** — extend `sealCapture`, `commitPendingCapturePass` |
 | Phase scope | `LoopEventStore.h/cpp`, `LoopPasses.h`, `Loop.cpp` + native tests |
 
 #### Implementation review (before checkoff)
@@ -88,7 +88,7 @@
 
 ---
 
-### Phase 2 — `PublishedOverdubPassVec` + call sites
+### Phase 2 — `CommittedOverdubPassVec` + call sites
 
 #### Architecture gate
 

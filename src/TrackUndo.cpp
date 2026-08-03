@@ -4,7 +4,7 @@
 #include "TrackUndo.h"
 #include "Track.h"
 #include "EditManager.h"
-#include "NoteEditManager.h"
+#include "LoopEditManager.h"
 #include "StorageManager.h"
 #include "LooperState.h"
 #include "Logger.h"
@@ -18,7 +18,6 @@
 #include "UndoLoopGeometry.h"
 
 extern TrackManager trackManager;
-extern NoteEditManager noteEditManager;
 
 namespace {
 
@@ -183,7 +182,7 @@ TRACK_COLD_MEM bool applyUndoEntry(Track& track, UndoEntry& entry) {
                 loop.reconcileLoopLengthWithCommittedPasses(entry.beforeLoopLengthTicks);
             loop.invalidateCaches();
             track.invalidateCaches();
-            noteEditManager.loopEditManager.onGlobalGeometryRestored(track);
+            loopEditManager.onGlobalGeometryRestored(track);
             entry.hasRedoPayload = true;
             return true;
         case UndoEntryKind::RecordPassAdded:
@@ -202,7 +201,7 @@ TRACK_COLD_MEM bool applyUndoEntry(Track& track, UndoEntry& entry) {
             track.invalidateCaches();
             if (editManager.isNoteEditActive()) {
                 loop.rematerializeEditView(editManager.getEditSession().store.mutStore());
-                editManager.getEditSession().store.discardFlatCache();
+                editManager.getEditSession().store.discardEventsCache();
                 editManager.getEditSession().undoStack.clear();
             }
             return true;
@@ -217,7 +216,7 @@ TRACK_COLD_MEM bool applyUndoEntry(Track& track, UndoEntry& entry) {
             loop.invalidateCaches();
             if (editManager.isNoteEditActive()) {
                 loop.rematerializeEditView(editManager.getEditSession().store.mutStore());
-                editManager.getEditSession().store.discardFlatCache();
+                editManager.getEditSession().store.discardEventsCache();
                 editManager.getEditSession().undoStack.clear();
             }
             entry.hasRedoPayload = true;
@@ -244,7 +243,7 @@ TRACK_COLD_MEM bool applyUndoEntry(Track& track, UndoEntry& entry) {
             loop.invalidateCaches();
             if (editManager.isNoteEditActive()) {
                 loop.rematerializeEditView(editManager.getEditSession().store.mutStore());
-                editManager.getEditSession().store.discardFlatCache();
+                editManager.getEditSession().store.discardEventsCache();
                 editManager.getEditSession().undoStack.clear();
             }
             entry.hasRedoPayload = true;
@@ -295,7 +294,7 @@ TRACK_COLD_MEM bool applyRedoEntry(Track& track, UndoEntry& entry) {
                 loop.reconcileLoopLengthWithCommittedPasses(entry.afterLoopLengthTicks);
             loop.invalidateCaches();
             track.invalidateCaches();
-            noteEditManager.loopEditManager.onGlobalGeometryRestored(track);
+            loopEditManager.onGlobalGeometryRestored(track);
             return true;
         case UndoEntryKind::RecordPassAdded:
             if (!entry.hasRedoPayload) {
@@ -315,7 +314,7 @@ TRACK_COLD_MEM bool applyRedoEntry(Track& track, UndoEntry& entry) {
             track.invalidateCaches();
             if (editManager.isNoteEditActive()) {
                 loop.rematerializeEditView(editManager.getEditSession().store.mutStore());
-                editManager.getEditSession().store.discardFlatCache();
+                editManager.getEditSession().store.discardEventsCache();
                 editManager.getEditSession().undoStack.clear();
             }
             return true;
@@ -335,7 +334,7 @@ TRACK_COLD_MEM bool applyRedoEntry(Track& track, UndoEntry& entry) {
             loop.invalidateCaches();
             if (editManager.isNoteEditActive()) {
                 loop.rematerializeEditView(editManager.getEditSession().store.mutStore());
-                editManager.getEditSession().store.discardFlatCache();
+                editManager.getEditSession().store.discardEventsCache();
                 editManager.getEditSession().undoStack.clear();
             }
             return true;
@@ -360,7 +359,7 @@ TRACK_COLD_MEM bool applyRedoEntry(Track& track, UndoEntry& entry) {
             loop.invalidateCaches();
             if (editManager.isNoteEditActive()) {
                 loop.rematerializeEditView(editManager.getEditSession().store.mutStore());
-                editManager.getEditSession().store.discardFlatCache();
+                editManager.getEditSession().store.discardEventsCache();
                 editManager.getEditSession().undoStack.clear();
             }
             logger.log(CAT_TRACK, LOG_INFO, "Scoped edit pass redone session=%u editPass=%u edits=%u",
@@ -372,19 +371,19 @@ TRACK_COLD_MEM bool applyRedoEntry(Track& track, UndoEntry& entry) {
     return false;
 }
 
-TRACK_COLD_MEM void restoreAudiblePlaybackAfterSlotClear(uint8_t trackIndex, Track& track, uint32_t now) {
-    bool foundAudible = false;
+TRACK_COLD_MEM void restorePlaybackAfterSlotClear(uint8_t trackIndex, Track& track, uint32_t now) {
+    bool foundPlaybackSlot = false;
     uint8_t newActiveSlot = 0;
     for (uint8_t s = 0; s < Config::MAX_LOOPS_PER_TRACK; ++s) {
         if (trackManager.isSlotEnabled(trackIndex, s) &&
             !trackManager.isSlotMuted(trackIndex, s) &&
             track.hasDataInSlot(s)) {
-            foundAudible = true;
+            foundPlaybackSlot = true;
             newActiveSlot = s;
             break;
         }
     }
-    if (foundAudible) {
+    if (foundPlaybackSlot) {
         trackManager.setActiveLoopIndex(trackIndex, newActiveSlot);
         for (uint8_t s = 0; s < Config::MAX_LOOPS_PER_TRACK; ++s) {
             if (trackManager.isSlotEnabled(trackIndex, s) &&
@@ -397,6 +396,9 @@ TRACK_COLD_MEM void restoreAudiblePlaybackAfterSlotClear(uint8_t trackIndex, Tra
         track.startPlaying(now);
     } else {
         track.sendAllNotesOff();
+        if (track.isPlaying()) {
+            track.forceSetState(TRACK_STOPPED);
+        }
     }
 }
 
@@ -423,7 +425,7 @@ TRACK_COLD_MEM void applyClearSlotRedoSideEffects(Track& track, uint8_t slotInde
     trackManager.clearQueuedRecordingTrack(trackIndex, slotIndex);
     trackManager.setLayeredSlotHeld(trackIndex, slotIndex, false);
     const uint32_t now = clockManager.getCurrentTick();
-    restoreAudiblePlaybackAfterSlotClear(trackIndex, track, now);
+    restorePlaybackAfterSlotClear(trackIndex, track, now);
     trackManager.forceLedUpdate(now);
 }
 
@@ -504,8 +506,8 @@ TRACK_COLD_MEM void TrackUndo::beginOverdubSession(Track& track) {
 }
 
 TRACK_COLD_MEM void TrackUndo::undoForLoop(Track& track, Loop& loop) {
-    if (noteEditManager.loopEditManager.hasPendingGeometry()) {
-        noteEditManager.loopEditManager.flushAllPendingGeometry(track);
+    if (loopEditManager.hasPendingGeometry()) {
+        loopEditManager.flushAllPendingGeometry(track);
     }
     const uint8_t slotIndex = resolveSlotIndexForLoop(track, loop);
     if (slotIndex == Config::INVALID_LOOP_SLOT) {
@@ -574,8 +576,8 @@ TRACK_COLD_MEM void TrackUndo::undoForLoop(Track& track, Loop& loop) {
 }
 
 TRACK_COLD_MEM void TrackUndo::redoForLoop(Track& track, Loop& loop) {
-    if (noteEditManager.loopEditManager.hasPendingGeometry()) {
-        noteEditManager.loopEditManager.cancelPendingGeometryPreview(track);
+    if (loopEditManager.hasPendingGeometry()) {
+        loopEditManager.cancelPendingGeometryPreview(track);
     }
     const uint8_t slotIndex = resolveSlotIndexForLoop(track, loop);
     if (slotIndex == Config::INVALID_LOOP_SLOT) {

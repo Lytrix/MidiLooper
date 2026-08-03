@@ -50,7 +50,7 @@ PUBLISHED_RANGE_MEM bool CommittedEventRange::chunkIntersectsWindow(uint32_t fir
 namespace {
 
 template <typename MidiEventVector>
-void appendPublishedRange(const CommittedChunkIdList* const* lists, size_t listCount,
+void appendCommittedRange(const CommittedChunkIdList* const* lists, size_t listCount,
                           uint32_t loopLengthTicks, bool windowed, uint32_t windowStart,
                           uint32_t windowLength, MidiEventVector& out) {
   out.clear();
@@ -104,11 +104,11 @@ void appendPublishedRange(const CommittedChunkIdList* const* lists, size_t listC
 }  // namespace
 
 PUBLISHED_RANGE_MEM void CommittedEventRange::appendTo(SessionMidiEventVec& out) const {
-  appendPublishedRange(lists_, listCount_, loopLengthTicks_, windowed_, windowStart_, windowLength_,
+  appendCommittedRange(lists_, listCount_, loopLengthTicks_, windowed_, windowStart_, windowLength_,
                        out);
 }
 
 PUBLISHED_RANGE_MEM void CommittedEventRange::appendTo(MidiEventVec& out) const {
-  appendPublishedRange(lists_, listCount_, loopLengthTicks_, windowed_, windowStart_, windowLength_,
+  appendCommittedRange(lists_, listCount_, loopLengthTicks_, windowed_, windowStart_, windowLength_,
                        out);
 }

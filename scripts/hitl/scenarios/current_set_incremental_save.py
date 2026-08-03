@@ -15,7 +15,6 @@ from hitl.verify.current_set_incremental_save import (
     verify_current_set_incremental_save,
 )
 
-
 def _parse_common_args(args: object) -> argparse.Namespace:
     parser = argparse.ArgumentParser(add_help=False)
     parser.add_argument("--midi-out", default="Teensy")
@@ -41,7 +40,6 @@ def _parse_common_args(args: object) -> argparse.Namespace:
     legacy = list(getattr(args, "legacy_args", []) or [])
     return parser.parse_args(legacy)
 
-
 def _wait_for_persistence_after_line(
     collector,
     *,
@@ -56,26 +54,31 @@ def _wait_for_persistence_after_line(
         time.sleep(0.05)
     return False
 
-
 def run_current_set_incremental_save(args: object) -> int:
     import mido
-    from host_midi_automation_baseline import (
+    from hitl.control_constants import (
         CONTROL_CHANNEL_1BASED,
         RECORD_BUTTON_NOTE,
+        TRACK_SELECT_NOTE_BASE,
+    )
+    from hitl.serial_collector import (
         RunAbort,
         SerialCaptureCollector,
-        TRACK_SELECT_NOTE_BASE,
+    )
+    from hitl.midi_io import (
         _drain_input_messages,
         _find_midi_port,
         _send_short_press,
-        _wait_for_transition_count,
+    )
+    from hitl.capture_transitions import _wait_for_transition_count
+    from hitl.edit_controls import (
+        _ensure_transport_running,
+        _stop_transport_if_running,
     )
     from host_midi_automation_edit_baseline import (
         EDIT_RECORD_FIXTURE,
         _ensure_clear_to_empty,
         _ensure_recording_started,
-        _ensure_transport_running,
-        _stop_transport_if_running,
         _stream_fixture_record,
     )
 

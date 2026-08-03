@@ -14,7 +14,7 @@ namespace LoadLoopBudget {
 constexpr uint32_t FocusRestoreUs = 1200;
 /// Background / demoted load slice.
 constexpr uint32_t BackgroundRestoreUs = 250;
-/// Boot title audible-set drain slice.
+/// Boot title playback-set drain slice.
 constexpr uint32_t BootTitleRestoreUs = 5000;
 
 /// Internal SD read size per timed step (not the public scheduling unit).

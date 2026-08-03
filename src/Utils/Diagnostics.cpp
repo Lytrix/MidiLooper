@@ -34,7 +34,7 @@ uint32_t sTimingSumMicros[static_cast<size_t>(Timing::Count)] = {};
 uint32_t sTimingSampleCount[static_cast<size_t>(Timing::Count)] = {};
 
 constexpr const char* kCounterNames[] = {
-    "PlaybackWindowRebuild",
+    "PlaybackMergedMidiEventsRebuild",
     "PlaybackDeferredReuse",
     "PlaybackFullMaterialize",
     "LegacyMidiEvents",

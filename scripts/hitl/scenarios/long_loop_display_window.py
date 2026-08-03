@@ -11,23 +11,19 @@ from typing import Optional
 
 from hitl.context import get_context
 
-
 def _track_index(track_number_1based: int) -> int:
     """0-based track index — matches host_midi_automation_baseline first_track_index."""
     return track_number_1based - 1
-
 
 def _effective_sync_timeout_s(record_bars: int, configured_ms: int) -> float:
     """Scale state-sync waits for long-loop stop finalize + deferred save."""
     scaled_ms = max(configured_ms, record_bars * 1000)
     return min(scaled_ms, 120_000) / 1000.0
 
-
 def _track_select_note(track_number_1based: int) -> int:
-    from host_midi_automation_baseline import TRACK_SELECT_NOTE_BASE
+    from hitl.control_constants import TRACK_SELECT_NOTE_BASE
 
     return TRACK_SELECT_NOTE_BASE + _track_index(track_number_1based)
-
 
 def _ensure_note_edit_entered(
     out_port,
@@ -37,8 +33,12 @@ def _ensure_note_edit_entered(
     phase_wait_ms: int,
     timeout_s: float = 12.0,
 ) -> bool:
-    from host_midi_automation_edit_baseline import EDIT_BUTTON_DEBOUNCE_MS, EDIT_BUTTON_NOTE
-    from host_midi_automation_baseline import CONTROL_CHANNEL_1BASED, _send_short_press
+    from hitl.control_constants import (
+        CONTROL_CHANNEL_1BASED,
+        EDIT_BUTTON_DEBOUNCE_MS,
+        EDIT_BUTTON_NOTE,
+    )
+    from hitl.midi_io import _send_short_press
 
     def _note_edit_active(lines: list[str]) -> bool:
         last_kind = ""
@@ -99,7 +99,6 @@ def _ensure_note_edit_entered(
             time.sleep(0.05)
     return False
 
-
 def _parse_common_args(args: object) -> argparse.Namespace:
     parser = argparse.ArgumentParser(add_help=False)
     parser.add_argument("--midi-out", default="Teensy")
@@ -130,35 +129,42 @@ def _parse_common_args(args: object) -> argparse.Namespace:
     legacy = list(getattr(args, "legacy_args", []) or [])
     return parser.parse_args(legacy)
 
-
 def run_long_loop_display_window(args: object) -> int:
     import mido
     from hitl.serial_transport import resolve_wall_tempo_for_proxy
     from hitl.transport_clock import ensure_transport_clock
-    from host_midi_automation_baseline import (
+    from hitl.control_constants import (
         CONTROL_CHANNEL_1BASED,
+        EDIT_BUTTON_NOTE,
         GLOBAL_TRANSPORT_NOTE,
         PLAY_STOP_BUTTON_NOTE,
         RECORD_BUTTON_NOTE,
         RECORD_GRID_STEP_CLOCKS,
+    )
+    from hitl.serial_collector import (
         RunAbort,
         SerialCaptureCollector,
-        _count_reca_markers,
+    )
+    from hitl.midi_io import (
         _find_midi_port,
-        _latest_track_state,
-        _recording_transition_baseline,
         _send_short_press,
-        _stream_pattern_for_bars,
-        _wait_for_recording_started,
+    )
+    from hitl.capture_transitions import (
+        _latest_track_state,
         _wait_for_transition_count,
     )
-    from host_midi_automation_edit_baseline import (
-        EDIT_BUTTON_NOTE,
-        _ensure_clear_to_empty,
+    from host_midi_automation_baseline import (
+        _count_reca_markers,
+        _recording_transition_baseline,
+        _stream_pattern_for_bars,
+        _wait_for_recording_started,
+    )
+    from hitl.edit_controls import (
         _ensure_transport_running,
         _send_long_press,
         _stop_transport_if_running,
     )
+    from host_midi_automation_edit_baseline import _ensure_clear_to_empty
 
     ns = _parse_common_args(args)
     ctx = get_context(args)
@@ -397,7 +403,7 @@ def run_long_loop_display_window(args: object) -> int:
         expected_play = None
         stop_baseline_len = 0
         if serial_collector is not None:
-            from host_midi_automation_baseline import _count_capture_transitions
+            from hitl.capture_transitions import _count_capture_transitions
 
             counts = _count_capture_transitions(serial_collector.snapshot())
             expected_play = counts.get(("STOPPED_RECORDING", "PLAYING"), 0) + 1
@@ -466,7 +472,7 @@ def run_long_loop_display_window(args: object) -> int:
                 print("[long-loop-display-hitl] warn: latest track state is not PLAYING before NOTE_EDIT")
 
             from hitl.scenarios.load_save_overlay_helpers import recover_load_save_overlay
-            from host_midi_automation_edit_baseline import _send_double_press
+            from hitl.edit_controls import _send_double_press
 
             recover_load_save_overlay(
                 out_port,
@@ -534,7 +540,7 @@ def run_long_loop_display_window(args: object) -> int:
         time.sleep(ns.freeze_wait_ms / 1000.0)
         ctx.markers.append("phase:freeze_wait_end")
 
-        from host_midi_automation_edit_baseline import DISPLAY_SETTLE_MS
+        from hitl.control_constants import DISPLAY_SETTLE_MS
 
         print(
             f"[long-loop-display-hitl] play/stop long press ({ns.play_stop_long_press_ms}ms) "
@@ -622,10 +628,9 @@ def run_long_loop_display_window(args: object) -> int:
             serial_collector.stop()
         out_port.close()
         in_port.close()
-        from host_midi_automation_baseline import _drain_input_messages
+        from hitl.midi_io import _drain_input_messages
 
         _drain_input_messages(in_port)
-
 
 def verify_long_loop_display_window(lines: list[str], args: object) -> dict[str, object]:
     from hitl.verify.display_window import verify_long_loop_display_window as _verify

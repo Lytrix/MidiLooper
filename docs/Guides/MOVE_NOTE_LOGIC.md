@@ -8,7 +8,7 @@ The move note system in this MIDI looper handles the complex task of moving note
 - **Centralized in NoteMovementUtils**: All overlap handling logic moved to `NoteMovementUtils.cpp`
 - **Cached Note Performance**: Uses `Track::getCachedNotes()` for optimal performance
 - **Stable Note Identity**: Maintains moving note identity across operations
-- **Integration Points**: Works with `EditManager`, `EditStates`, and `NoteEditManager`
+- **Integration Points**: Works with `EditManager`, `EditStates`, and `ControlSurfaceManager`
 
 ## Key Concepts
 
@@ -68,8 +68,8 @@ When overlaps occur:
 - `EditPitchNoteState` - Handles pitch changes
 - `EditSelectNoteState` - Handles note selection with cached notes
 
-#### 4. NoteEditManager (Fader Integration)
-**Location**: `src/NoteEditManager.cpp`
+#### 4. ControlSurfaceManager (Fader Integration)
+**Location**: `src/ControlSurfaceManager.cpp`
 **Responsibilities**:
 - Integrates fader input with movement system
 - Maintains stable note identity during fader operations
@@ -83,8 +83,8 @@ When overlaps occur:
 ### 1. Movement Initiation
 **Entry Points**:
 - **EditState movements**: `EditStartNoteState::moveNoteToPosition()`
-- **Fader movements**: `NoteEditManager::handleCoarseFaderInput()`
-- **Direct calls**: `NoteEditManager::moveNoteToPosition()`
+- **Fader movements**: `ControlSurfaceManager::handleCoarseFaderInput()`
+- **Direct calls**: `EditManager::moveNoteToPosition()` (via surface → edit operation)
 
 **Initialization**:
 ```cpp
@@ -239,7 +239,7 @@ const auto& notes = track.getCachedNotes();  // O(1) if cached
 ### Current System Integration
 - **EditManager**: Manages moving note identity and state
 - **EditStates**: Trigger movements and maintain state consistency
-- **NoteEditManager**: Integrates fader input with movement logic
+- **ControlSurfaceManager**: Integrates fader input with movement logic (delegates geometry to `EditManager`)
 - **Track**: Provides cached notes and MIDI event access
 - **NoteMovementUtils**: Centralized overlap handling and movement logic
 - **DisplayManager**: Uses cached notes for efficient rendering

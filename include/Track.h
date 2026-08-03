@@ -121,6 +121,8 @@ public:
                           bool scheduleDeferredFullValidate = true);
   CommitResult finalizeCommitSideEffects(CommitResult result, CommitReason reason,
                                          uint32_t closeTick);
+  /// Seal capture then shared finalize only — never transport, playback, editor, or pending buffers.
+  CommitResult commitCaptureForStop(CommitReason reason, uint32_t commitTick, uint32_t closeTick);
   void emitStoredMidiVerification() const;
   /// Idle maintenance: deferred full validate + session REVT flush (non-blocking stop path).
   void processDeferredIdleMaintenance(uint32_t nowMs);
@@ -129,12 +131,12 @@ public:
   /// Full merged-MIDI build for a slot (LoopEnd / NextGrid launch prep). Not for boot prewarm.
   void ensurePlaybackMergedEventsForSlot(uint8_t slotIndex);
   /// True when primary playback window matches current loop revision (safe LoopEnd activate).
-  bool isPlaybackWindowReadyForSlot(uint8_t slotIndex) const;
+  bool isPlaybackMergedMidiEventsReadyForSlot(uint8_t slotIndex) const;
   /// Drop cached playback merge buffers for all slots (frees extmem during capture).
-  void releasePlaybackWindowMemory();
+  void releasePlaybackMergedMidiEventsMemory();
   /// Phase 1B — release rebuildable playback windows when not referenced this tick.
-  bool tryReleasePlaybackWindowMemory();
-  /// Phase 1B — drop revision-keyed published flat scratch when note edit does not need it.
+  bool tryReleasePlaybackMergedMidiEventsMemory();
+  /// Phase 1B — drop revision-keyed materialized events scratch when note edit does not need it.
   bool tryClearCommittedMidiScratch();
 
   // MIDI events
@@ -150,7 +152,7 @@ public:
   void noteOff(uint8_t channel, uint8_t note, uint8_t velocity, uint32_t tick);
   bool hasData() const { return getActiveLoop().hasData(); }
   bool hasDataInSlot(uint8_t slotIndex) const;
-  /// True when any slot on this track has loop data (published, length, or capture).
+  /// True when any slot on this track has loop data (committed, length, or capture).
   bool hasAnySlotData() const;
   /// After slot-scoped mutation (clear, empty record stop): EMPTY only when no slot has data.
   void reconcileTransportStateAfterSlotMutation();
@@ -196,7 +198,7 @@ public:
   uint32_t getEffectivePlaybackTick(uint32_t currentTick) const;
   uint32_t getPlaybackGeneration() const { return playbackGeneration; }
   void bumpPlaybackGeneration() { ++playbackGeneration; }
-  void invalidatePlaybackWindow(bool preserveLedger = false);
+  void invalidatePlaybackMergedMidiEvents(bool preserveLedger = false);
 
   /// Rolling projection cycle origin (D13) — one per track.
   int32_t getProjectionCycleStartTick() const { return projectionCycleStartTick; }
@@ -247,11 +249,11 @@ public:
   /// Immutable access to midiEvents (for const Track)
   const SessionMidiEventVec& getMidiEvents() const { return getActiveLoop().midiEvents(); }
 
-  /// Legacy internal-heap view of published events (revision-keyed copy for NOTE_EDIT APIs).
-  MidiEventVec& legacyMidiEventsFromPublished();
-  const MidiEventVec& legacyMidiEventsFromPublished() const;
+  /// Legacy internal-heap view of committed/materialized events (revision-keyed copy for NOTE_EDIT APIs).
+  MidiEventVec& legacyMidiEventsFromCommitted();
+  const MidiEventVec& legacyMidiEventsFromCommitted() const;
 
-  /// Note-edit session store when active, else legacy published scratch.
+  /// Note-edit session store when active, else legacy committed scratch.
   MidiEventVec& editAwareMidiEvents();
   const MidiEventVec& editAwareMidiEvents() const;
 
@@ -358,13 +360,21 @@ private:
   GlobalUndoStack undoStack;
   UndoLoopGeometry recordCaptureBaselineGeometry_{};
   bool hasRecordCaptureBaselineGeometry_ = false;
-  MidiEventVec publishedMidiScratch_;
-  uint32_t publishedMidiScratchRevision_ = UINT32_MAX;
+  MidiEventVec committedMidiScratch_;
+  uint32_t committedMidiScratchRevision_ = UINT32_MAX;
   static const uint32_t TICKS_PER_BAR;
 
   void resetDeferredRecordRevts();
   void queueDeferredRecordRevts();
   void processDeferredRecordRevts(size_t maxEventsPerSlice = 64);
+
+  /// Record-stop prep: raw length → clamp → finalizePendingNotes → dropEvents (exact order).
+  /// Returns rawLength for truncation rewind. guardLabel is the caller name for the clamp warning.
+  uint32_t prepareRecordStop(uint32_t currentTick, const char* guardLabel);
+
+  /// In-edit overdub fold. true = stop fully completed; caller must return immediately.
+  bool handleNoteEditFold(bool endInPlaying, uint32_t currentTick, uint32_t closeTick,
+                          uint32_t stopStartUs);
 
   void syncSlotRefsFromPool();
 
@@ -381,6 +391,15 @@ private:
   bool transitionState(TrackState newState);  // Internal state transition method
 
   void rebuildPlaybackOrder();
+
+  enum class PlaybackMidiTarget { ActiveSlot, LayeredSlot };
+
+  void playCommittedLoopMidi(uint8_t slotIndex, uint32_t currentTick, PlaybackMidiTarget target);
+
+  bool isStorageTickInJamRegion(uint32_t storageTick, const Loop& loop) const;
+
+  friend void playbackCursorAdvanceSend(void* ctx, const MidiEvent& evt, uint8_t slotIndex);
+  friend bool playbackCursorAdvanceJamFilter(void* ctx, uint32_t storageTick);
 
 };
 

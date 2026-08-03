@@ -267,10 +267,10 @@ void applySessionEditRows(Loop& loop, CowLoopEventStore& store, const EditPassVe
       editPassIdsCommittedAfterBaseline(currentEditPassIds, baselineEditPassIds);
   MidiEventVec flat;
   loop.materializeExcludingEditPassIds(passesToExclude, flat);
-  store.mutStore().loadFromFlat(flat);
-  store.discardFlatCache();
-  applyNoteEditPassSequence(store.mutFlat(), rows, loopLength);
-  store.syncFlatToStore();
+  store.mutStore().loadFromEvents(flat);
+  store.discardEventsCache();
+  applyNoteEditPassSequence(store.mutEvents(), rows, loopLength);
+  store.syncEventsToStore();
 }
 
 }  // namespace
@@ -296,8 +296,8 @@ bool sessionUndoStoresMatch(const LoopEventStore& a, const LoopEventStore& b) {
   }
   MidiEventVec flatA;
   MidiEventVec flatB;
-  a.flatten(flatA);
-  b.flatten(flatB);
+  a.copyEventsTo(flatA);
+  b.copyEventsTo(flatB);
   if (flatA.size() != flatB.size()) {
     return false;
   }

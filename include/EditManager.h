@@ -7,7 +7,8 @@
 #include "EditNoteState.h"
 #include "NoteEditSessionUndo.h"
 #include "EditSession.h"
-#include "EditNoteHomeState.h"
+#include "EditEvent.h"
+#include "EditStates/EditNoteHomeState.h"
 #include "EditStates/EditSelectNoteState.h"
 #include "EditStartNoteState.h"
 #include "EditLengthNoteState.h"
@@ -15,6 +16,7 @@
 #include "NoteEditSessionState.h"
 #include "MidiEvent.h"
 #include "MidiConfig.h"
+#include "Utils/SelectNavigation.h"
 #include <vector>
 #include <map>
 
@@ -23,16 +25,12 @@ class Track;
 
 /**
  * @class EditManager
- * @brief Implements the state machine for note- and parameter-edit overlays.
+ * @brief Owns live EditSession (note-edit store, focus, undo) and EditNoteState FSM.
  *
- * Coordinates EditNoteState instances (NoteState, StartNoteState, PitchNoteState) to handle
- * encoder movements and button presses for selecting notes, moving note start positions,
- * and changing note pitches. Tracks the bracket position over the piano roll, manages
- * commit-on-enter/commit-on-exit undo snapshots via TrackUndo, and delegates display
- * updates to DisplayManager for visual feedback.
- * 
- * Also includes EditModeManager and LoopManager functionality for managing edit modes
- * and loop editing operations.
+ * Coordinates EditNoteState instances (home, select, start, length, pitch) for encoder
+ * and button input. Loop geometry edit UI lives on LoopEditManager; MIDI fader/button
+ * control-surface routing lives on ControlSurfaceManager. Display updates go through
+ * DisplayManager.
  */
 class EditManager {
 public:
@@ -67,7 +65,10 @@ public:
     const EditSession& getEditSession() const { return editSession; }
     EditSessionType getEditSessionType() const { return editSession.sessionType; }
     void cycleEditSession(Track& track);
-    void sendEditSessionChange(EditSessionType sessionType);
+    void sendEditSessionChange(EditSessionType sessionType, bool notifySurfaceMidi = false);
+    void emitSessionOpenedToSurface(bool includeMidi, bool includeNoteFaderFeedback = false);
+    bool sessionOpenedIncludesMidi() const { return sessionOpenedIncludesMidi_; }
+    bool sessionOpenedIncludesFaderFeedback() const { return sessionOpenedIncludesFaderFeedback_; }
     void openNoteEditSession(Track& track);
     void reopenNoteEditSession(Track& track);
     void closeNoteEditSession(Track& track);
@@ -98,6 +99,32 @@ public:
     void applyGeometryKindFromControl(Track& track, NoteEditKind kind, bool fromFaderControl);
     void applyUndoRedoLanding(Track& track);
     void resetNoteEditSessionState();
+
+    /// Edit operations (moved from ControlSurfaceManager — Phase 1).
+    bool deleteSelectedNote(Track& track, const NoteUtils::DisplayNoteVec& filteredNotes);
+    bool moveNoteToPosition(Track& track, const NoteUtils::DisplayNote& currentNote,
+                            uint32_t targetTick);
+    bool changeNoteEndWithOverlapHandling(Track& track, const NoteUtils::DisplayNote& currentNote,
+                                          uint32_t targetEndTick);
+
+    /// Windowed selectable inventory for NOTE_EDIT UI (session filter + display window).
+    std::vector<NoteUtils::DisplayNote> selectableDisplayNotesForEditUi(const Track& track) const;
+    std::vector<SelectNavigation::SelectNavSlot> buildSelectNavigationSlots(
+        const Track& track, uint32_t selectedTick, bool includeSelectedTickIfMissing = true) const;
+    void syncReferenceStepFromSelectedTick(uint32_t selectedTick);
+    uint32_t getReferenceStep() const { return referenceStep_; }
+    void setReferenceStep(uint32_t step) { referenceStep_ = step; }
+
+    void setEditEventListener(EditEventListener* listener) { editEventListener_ = listener; }
+    bool isLengthEditingMode() const { return lengthEditingMode_; }
+    uint32_t lengthFineAnchorEndTick() const { return lengthFineAnchorEndTick_; }
+    void setLengthFineAnchorEndTick(uint32_t tick) { lengthFineAnchorEndTick_ = tick; }
+    void toggleLengthEditMode(Track& track);
+    void clearLengthEditingMode(bool emitEvent = true);
+    void clearLengthEditingModeOnNoteSelect();
+    const EditorSelection& selectionChangePrior() const { return selectionChangePrior_; }
+    bool selectionChangeRequestFaderSync() const { return selectionChangeRequestFaderSync_; }
+
     void syncNoteEditSessionStateToUi(Track& track);
     void enterDefaultNoteEditSessionState(Track& track, uint32_t startTick);
     /// Pre-commit resolve + single saveEdit at fader-1 reselect / exit / overdub start.
@@ -110,7 +137,7 @@ public:
     /// Clear focus only (`selectedNoteIdx == -1`). Do **not** pass a filtered or unfiltered list index —
     /// use **rebuildNoteEditFocusForDisplayNote** for fader-1 select (C14).
     void rebuildNoteEditFocusAtSelect(Track& track, int selectedNoteIdx);
-    /// Fader-1 select: baseline from Takes+Edits; **focus.last** from live **DisplayNote** (filtered index safe).
+    /// Fader-1 select: baseline from passes materialize; **focus.last** from live **DisplayNote** (filtered index safe).
     void rebuildNoteEditFocusForDisplayNote(Track& track, const NoteUtils::DisplayNote& liveSelected);
     /// Remap or clear **selectedNoteIdx** when filtered inventory no longer matches **focus.last**.
     void syncSelectedNoteIdxToFilteredInventory(Track& track);
@@ -222,13 +249,24 @@ private:
     void persistActiveNoteEditSession(Track& track);
     void invalidateNoteEditDerivedCaches();
     const MidiEventVec& materializedLoopEventsForNoteEditFocus(Track& track);
+    void emitEditEvent(EditEvent event);
     uint32_t selectedTick = 0;
     int selectedNoteIdx = -1; // -1 means no note selected
+    uint32_t referenceStep_ = 0;
+    bool lengthEditingMode_ = false;
+    uint32_t lengthFineAnchorEndTick_ = 0;
     NoteId lastFader1SelectNoteId = kInvalidNoteId;
     bool hasMovedBracket = false; // true if the bracket has been moved since entering edit mode
 
     EditNoteState* currentState = nullptr;
     EditNoteState* previousState = nullptr;
+    EditEventListener* editEventListener_ = nullptr;
+    EditorSelection selectionChangePrior_{};
+    bool selectionChangeRequestFaderSync_ = false;
+    /** Suppress SelectionChanged surface events while reopening NOTE_EDIT (SessionOpen owns motor sync). */
+    bool deferSelectionSurfaceEvents_ = false;
+    bool sessionOpenedIncludesMidi_ = false;
+    bool sessionOpenedIncludesFaderFeedback_ = false;
     EditSession editSession;
     NoteEditSessionState sessionState;
     NoteEditKind lastPushedGeometryKind_ = NoteEditKind::Select;
