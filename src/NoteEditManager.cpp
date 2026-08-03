@@ -228,41 +228,7 @@ void NoteEditManager::handleMidiCC(uint8_t channel, uint8_t ccNumber, uint8_t va
 bool NoteEditManager::moveNoteToPosition(Track& track, const NoteUtils::DisplayNote& currentNote,
                                          std::uint32_t targetTick) {
     releaseEditedNoteAudition();
-    const NoteEditFocus& focus = editManager.getEditSession().focus;
-    uint32_t fromStart = currentNote.startTick;
-    if (focus.active && focus.last.pitch == currentNote.note &&
-        focus.last.startTick == currentNote.startTick) {
-        fromStart = focus.last.startTick;
-    }
-    if (fromStart == targetTick) {
-        return false;
-    }
-    if (!editManager.beginGeometryMutation(track, NoteEditKind::Move, true)) {
-        logger.log(CAT_MIDI, LOG_WARNING,
-                   "Note move aborted: session undo snapshot unavailable (heap reserve)");
-        return false;
-    }
-    const int32_t tickDifference =
-        static_cast<int32_t>(targetTick) - static_cast<int32_t>(fromStart);
-
-    logger.log(CAT_MIDI, LOG_DEBUG,
-               "Note movement with overlap handling: from=%lu to=%lu difference=%ld overlapNotes=%zu",
-               fromStart, targetTick, tickDifference,
-               editManager.getEditSession().focus.overlapNotes.size());
-
-    editManager.ensureNoteEditFocusForLiveEdit(track, currentNote);
-    if (focus.active) {
-        logger.log(CAT_MIDI, LOG_DEBUG, "Overlap move bridge: pitch=%d, start=%lu, end=%lu",
-                   focus.last.pitch,
-                   static_cast<unsigned long>(focus.last.startTick),
-                   static_cast<unsigned long>(focus.last.endTick));
-    }
-
-    uint32_t dummyStart = currentNote.startTick;
-    uint32_t dummyEnd = currentNote.endTick;
-    const bool moved = NoteMovementUtils::applyNoteEditChange(
-        track, editManager, NoteMovementUtils::NoteEditChangeKind::Move, currentNote, targetTick,
-        static_cast<int>(tickDifference), 0, 0, 0, dummyStart, dummyEnd);
+    const bool moved = editManager.moveNoteToPosition(track, currentNote, targetTick);
     sendEditedNoteAuditionWhenTransportStopped(track);
     return moved;
 }
@@ -271,24 +237,10 @@ bool NoteEditManager::changeNoteEndWithOverlapHandling(Track& track,
                                                        const NoteUtils::DisplayNote& currentNote,
                                                        std::uint32_t targetEndTick) {
     releaseEditedNoteAudition();
-    const NoteEditFocus& focus = editManager.getEditSession().focus;
-    const uint32_t currentEnd =
-        focus.active ? focus.last.endTick : currentNote.endTick;
-    if (currentEnd == targetEndTick) {
-        return false;
-    }
-    if (!editManager.beginGeometryMutation(track, NoteEditKind::Length, true)) {
-        logger.log(CAT_MIDI, LOG_WARNING,
-                   "Note length change aborted: session undo snapshot unavailable (heap reserve)");
-        return false;
-    }
-    logger.log(CAT_MIDI, LOG_DEBUG,
-               "Note length change with overlap handling: pitch=%d, start=%lu, end %lu->%lu",
-               currentNote.note, currentNote.startTick, currentNote.endTick, targetEndTick);
-    NoteMovementUtils::changeLengthWithOverlapHandling(track, editManager, currentNote,
-                                                       targetEndTick);
+    const bool changed =
+        editManager.changeNoteEndWithOverlapHandling(track, currentNote, targetEndTick);
     sendEditedNoteAuditionWhenTransportStopped(track);
-    return true;
+    return changed;
 }
 
 void NoteEditManager::processEncoderMovement(int rawDelta) {
@@ -360,157 +312,12 @@ void NoteEditManager::cycleEditSession(Track& track) {
 }
 
 void NoteEditManager::deleteSelectedNote(Track& track) {
-    if (editManager.getSelectedNoteIdx() < 0 &&
-        editManager.getLastFader1SelectNoteId() == kInvalidNoteId) {
-        logger.info("MIDI Encoder: No note selected for deletion");
+    const std::vector<NoteUtils::DisplayNote> filteredStd = selectableDisplayNotesForEditUi(track);
+    NoteUtils::DisplayNoteVec filteredNotes(filteredStd.begin(), filteredStd.end());
+    if (!editManager.deleteSelectedNote(track, filteredNotes)) {
         return;
     }
-
-    const uint32_t loopLength = track.getLoopLength();
-    if (loopLength == 0) return;
-
-    const std::vector<NoteUtils::DisplayNote> filteredNotes =
-        selectableDisplayNotesForEditUi(track);
-    const NoteEditFocus& focus = editManager.getEditSession().focus;
-    const EditorSelection& selection = editManager.getNoteEditSessionState().selection;
-
-    int selectedIdx = editManager.getSelectedNoteIdx();
-    NoteId deleteTargetNoteId = kInvalidNoteId;
-    if (editorSelectionHasNote(selection)) {
-        deleteTargetNoteId = selection.primaryNote;
-    } else if (editManager.getLastFader1SelectNoteId() != kInvalidNoteId) {
-        deleteTargetNoteId = editManager.getLastFader1SelectNoteId();
-    }
-    if (deleteTargetNoteId != kInvalidNoteId) {
-        const uint32_t selectedTick = editorSelectionHasNote(selection)
-                                         ? selection.selectedTick
-                                         : UINT32_MAX;
-        selectedIdx = selectedTick != UINT32_MAX
-                          ? filteredDisplayNoteIndexForNoteIdAndStart(
-                                filteredNotes, deleteTargetNoteId, selectedTick,
-                                editManager.noteEditLoopStartTick(track),
-                                editManager.noteEditLoopLengthTicks(track))
-                          : -1;
-    }
-    if (selectedIdx < 0 || selectedIdx >= static_cast<int>(filteredNotes.size())) {
-        logger.info("MIDI Encoder: Selected note index out of range");
-        return;
-    }
-    if (deleteTargetNoteId == kInvalidNoteId) {
-        deleteTargetNoteId = noteIdFromFilteredDisplayNote(filteredNotes, selectedIdx);
-    }
-
-    const NoteUtils::DisplayNote selectedNote = filteredNotes[static_cast<size_t>(selectedIdx)];
-
-    const bool noteEditActive = editManager.isNoteEditActive();
-    editManager.beginGeometryMutation(track, NoteEditKind::Delete, false);
-    const bool deleteTargetDiffersFromFocus =
-        noteEditActive && focus.active && focus.movingNoteId != deleteTargetNoteId;
-    if (deleteTargetDiffersFromFocus) {
-        editManager.commitPendingOverlapNoteEdits(track);
-        editManager.rebuildNoteEditFocusForDisplayNote(track, selectedNote);
-    } else if (noteEditActive && !focus.active) {
-        editManager.rebuildNoteEditFocusForDisplayNote(track, selectedNote);
-    }
-    editManager.commitAllPendingNoteEditActions(track);
-
-    uint8_t notePitch = selectedNote.note;
-    uint32_t noteStart = selectedNote.startTick;
-    uint32_t noteEnd = selectedNote.endTick;
-    const std::vector<NoteUtils::DisplayNote> notesAfter =
-        selectableDisplayNotesForEditUi(track);
-    const int refreshedIdx =
-        editorSelectionHasNote(selection)
-            ? filteredDisplayNoteIndexForNoteIdAndStart(
-                  notesAfter, deleteTargetNoteId, selection.selectedTick,
-                  editManager.noteEditLoopStartTick(track),
-                  editManager.noteEditLoopLengthTicks(track))
-            : -1;
-    if (refreshedIdx >= 0 && refreshedIdx < static_cast<int>(notesAfter.size())) {
-        const NoteUtils::DisplayNote& refreshed = notesAfter[static_cast<size_t>(refreshedIdx)];
-        notePitch = refreshed.note;
-        noteStart = refreshed.startTick;
-        noteEnd = refreshed.endTick;
-    } else {
-        for (const NoteUtils::DisplayNote& n : notesAfter) {
-            if (n.noteId == deleteTargetNoteId) {
-                notePitch = n.note;
-                noteStart = n.startTick;
-                noteEnd = n.endTick;
-                break;
-            }
-        }
-    }
-
-    logger.info("MIDI Encoder: Deleting note noteId=%lu pitch=%d, start=%lu, end=%lu",
-                static_cast<unsigned long>(deleteTargetNoteId), notePitch, noteStart, noteEnd);
-
-    auto& midiEvents = track.editAwareMidiEvents();
-    MidiEvent* noteOnEvent = nullptr;
-    for (MidiEvent& e : midiEvents) {
-        if (e.type == midi::NoteOn && e.data.noteData.velocity > 0 &&
-            e.data.noteData.note == notePitch && e.tick == noteStart) {
-            noteOnEvent = &e;
-            break;
-        }
-    }
-
-    MidiEvent* noteOffEvent = nullptr;
-    if (noteOnEvent != nullptr) {
-        noteOffEvent = NoteMovementUtils::findCorrespondingNoteOff(
-            midiEvents, noteOnEvent, notePitch, noteStart, noteEnd);
-    }
-
-    int deletedCount = 0;
-    auto eraseByPointer = [&](MidiEvent* needle) {
-        if (needle == nullptr) {
-            return;
-        }
-        for (auto it = midiEvents.begin(); it != midiEvents.end(); ++it) {
-            if (&(*it) == needle) {
-                midiEvents.erase(it);
-                ++deletedCount;
-                return;
-            }
-        }
-    };
-    if (noteOnEvent != nullptr || noteOffEvent != nullptr) {
-        eraseByPointer(noteOffEvent);
-        eraseByPointer(noteOnEvent);
-    } else {
-        auto it = midiEvents.begin();
-        while (it != midiEvents.end()) {
-            const bool matchOn =
-                (it->type == midi::NoteOn && it->data.noteData.velocity > 0 &&
-                 it->data.noteData.note == notePitch && it->tick == noteStart);
-            const bool matchOff =
-                ((it->type == midi::NoteOff ||
-                  (it->type == midi::NoteOn && it->data.noteData.velocity == 0)) &&
-                 it->data.noteData.note == notePitch && it->tick == noteEnd);
-            if (matchOn || matchOff) {
-                it = midiEvents.erase(it);
-                ++deletedCount;
-            } else {
-                ++it;
-            }
-        }
-    }
-
-    logger.info("MIDI Encoder: Deleted %d MIDI events for note", deletedCount);
-
-    EditPass del{};
-    del.passType = EditPassType::Note;
-    del.actionType = EditActionType::Delete;
-    del.propertyType = EditPropertyType::None;
-    del.targetNoteId = deleteTargetNoteId;
-    editManager.commitEditAction(track, EditPassVec{del});
-    track.invalidateCaches();
-
-    editManager.setSelectedNoteIdx(-1);
-    editManager.rebuildNoteEditFocusAtSelect(track, -1);
     resetLengthEditingModeOnNoteSelect();
-
-    logger.info("MIDI Encoder: Note deleted, maintaining current edit mode");
     releaseEditedNoteAudition();
 }
 
