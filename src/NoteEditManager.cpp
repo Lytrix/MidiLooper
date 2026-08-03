@@ -7,6 +7,7 @@
 #include "Globals.h"
 #include "Utils/SelectNavigation.h"
 #include "NoteEditManager.h"
+#include "LoopEditManager.h"
 
 #include "ClockManager.h"
 #include "ClockManager.h"
@@ -136,9 +137,7 @@ NOTE_EDIT_MEM uint8_t lengthEditFineCcFromOffset(int32_t offsetFromAnchor) {
 
 }  // namespace
 
-NOTE_EDIT_MEM NoteEditManager::NoteEditManager() 
-    : loopEditManager(midiHandler) {
-}
+NOTE_EDIT_MEM NoteEditManager::NoteEditManager() = default;
 
 // Delegate MIDI note handling to V2 system
 NOTE_EDIT_MEM void NoteEditManager::handleMidiNote(uint8_t channel, uint8_t note, uint8_t velocity, bool isNoteOn) {
@@ -196,6 +195,12 @@ NOTE_EDIT_MEM void NoteEditManager::handleMidiPitchbend(uint8_t channel, int16_t
             return;
         }
     } else if (channel == PITCHBEND_START_CHANNEL) {  // Fader 2 coarse (channel 14)
+        if (editManager.getEditSessionType() == EditSessionType::Loop) {
+            loopEditManager.handleLoopLengthPitchbend(pitchValue, trackManager.getSelectedTrack());
+            logger.log(CAT_MIDI, LOG_DEBUG,
+                       "Pitchbend ch=%d routed to loop length fader (LOOP_EDIT mode)", channel);
+            return;
+        }
         handleFaderInput(MidiMapping::FaderType::FADER_COARSE, pitchValue, 0);
         return;
     }
@@ -209,6 +214,12 @@ NOTE_EDIT_MEM void NoteEditManager::handleMidiCC(uint8_t channel, uint8_t ccNumb
     
     // Check for loop length control first
     if (channel == MidiConfig::LoopEdit::LENGTH_CC_CHANNEL && ccNumber == MidiConfig::LoopEdit::LENGTH_CC_NUMBER) {
+        loopEditManager.handleLoopLengthInput(value, trackManager.getSelectedTrack());
+        return;
+    }
+
+    if (editManager.getEditSessionType() == EditSessionType::Loop &&
+        channel == FINE_CC_CHANNEL && ccNumber == FINE_CC_NUMBER) {
         loopEditManager.handleLoopLengthInput(value, trackManager.getSelectedTrack());
         return;
     }

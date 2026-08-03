@@ -4,7 +4,7 @@
 #include "TrackUndo.h"
 #include "Track.h"
 #include "EditManager.h"
-#include "NoteEditManager.h"
+#include "LoopEditManager.h"
 #include "StorageManager.h"
 #include "LooperState.h"
 #include "Logger.h"
@@ -18,7 +18,6 @@
 #include "UndoLoopGeometry.h"
 
 extern TrackManager trackManager;
-extern NoteEditManager noteEditManager;
 
 namespace {
 
@@ -183,7 +182,7 @@ TRACK_COLD_MEM bool applyUndoEntry(Track& track, UndoEntry& entry) {
                 loop.reconcileLoopLengthWithCommittedPasses(entry.beforeLoopLengthTicks);
             loop.invalidateCaches();
             track.invalidateCaches();
-            noteEditManager.loopEditManager.onGlobalGeometryRestored(track);
+            loopEditManager.onGlobalGeometryRestored(track);
             entry.hasRedoPayload = true;
             return true;
         case UndoEntryKind::RecordPassAdded:
@@ -295,7 +294,7 @@ TRACK_COLD_MEM bool applyRedoEntry(Track& track, UndoEntry& entry) {
                 loop.reconcileLoopLengthWithCommittedPasses(entry.afterLoopLengthTicks);
             loop.invalidateCaches();
             track.invalidateCaches();
-            noteEditManager.loopEditManager.onGlobalGeometryRestored(track);
+            loopEditManager.onGlobalGeometryRestored(track);
             return true;
         case UndoEntryKind::RecordPassAdded:
             if (!entry.hasRedoPayload) {
@@ -507,8 +506,8 @@ TRACK_COLD_MEM void TrackUndo::beginOverdubSession(Track& track) {
 }
 
 TRACK_COLD_MEM void TrackUndo::undoForLoop(Track& track, Loop& loop) {
-    if (noteEditManager.loopEditManager.hasPendingGeometry()) {
-        noteEditManager.loopEditManager.flushAllPendingGeometry(track);
+    if (loopEditManager.hasPendingGeometry()) {
+        loopEditManager.flushAllPendingGeometry(track);
     }
     const uint8_t slotIndex = resolveSlotIndexForLoop(track, loop);
     if (slotIndex == Config::INVALID_LOOP_SLOT) {
@@ -577,8 +576,8 @@ TRACK_COLD_MEM void TrackUndo::undoForLoop(Track& track, Loop& loop) {
 }
 
 TRACK_COLD_MEM void TrackUndo::redoForLoop(Track& track, Loop& loop) {
-    if (noteEditManager.loopEditManager.hasPendingGeometry()) {
-        noteEditManager.loopEditManager.cancelPendingGeometryPreview(track);
+    if (loopEditManager.hasPendingGeometry()) {
+        loopEditManager.cancelPendingGeometryPreview(track);
     }
     const uint8_t slotIndex = resolveSlotIndexForLoop(track, loop);
     if (slotIndex == Config::INVALID_LOOP_SLOT) {

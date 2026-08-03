@@ -71,7 +71,7 @@ bool shouldRestoreCommittedOverlapOnOverdubStop(const Loop& loop, uint8_t note,
 #include "Utils/TrackMem.h"
 #include "DisplayManager.h"
 #include "EditManager.h"
-#include "NoteEditManager.h"
+#include "LoopEditManager.h"
 #include "TrackManager.h"
 
 extern TrackManager trackManager;
@@ -1639,7 +1639,7 @@ void Track::reanchorPlaybackProjection(uint32_t currentTick, bool preserveLoopPh
     // Keep LOOP_EDIT baseline aligned with the playback frame so preview depart cannot
     // restore a stale SD loopStartTick onto the live loop (session_20260717_234742).
     if (editManager.isLoopEditSession()) {
-      noteEditManager.loopEditManager.onGlobalGeometryRestored(*this);
+      loopEditManager.onGlobalGeometryRestored(*this);
     }
   } else if (loop.loopLengthTicks > 0) {
     const uint32_t phase =
