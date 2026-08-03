@@ -24,6 +24,7 @@ In-repo refinement/bugfix plans for the hygiene branch (all **Status: Done**). M
 | [playback_cursor_advance_dry_refinement.md](playback_cursor_advance_dry_refinement.md) | `playCommittedLoopMidi` + `advancePlaybackCursor` |
 | [record_stop_length_shared_helpers_refinement.md](record_stop_length_shared_helpers_refinement.md) | Shared `RecordStopLength` |
 | [clear_slot_rearm_after_playing_clear_bugfix.md](clear_slot_rearm_after_playing_clear_bugfix.md) | Re-arm after clear while playing (`1cb7ffa`) |
+| [note_edit_control_surface_split_refinement.md](note_edit_control_surface_split_refinement.md) | Split `NoteEditManager` god-object; rename in Phase 5b |
 
 ---
 

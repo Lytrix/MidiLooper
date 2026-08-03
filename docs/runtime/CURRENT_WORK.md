@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-03 (hygiene sprint plans Status: Done; clear-slot re-arm shipped)
+Last updated: 2026-08-03 (note-edit control-surface split plan)
 
 ---
 
@@ -38,7 +38,21 @@ Last updated: 2026-08-03 (hygiene sprint plans Status: Done; clear-slot re-arm s
 | Clear-slot re-arm after playing clear | Done — [`clear_slot_rearm_after_playing_clear_bugfix.md`](../plans/clear_slot_rearm_after_playing_clear_bugfix.md) (`1cb7ffa`) |
 | Plans hygiene (Status Done + README index; no mass purge) | Done |
 
-**Next hygiene (gated / optional):** StorageManager `saveState` extract; `NoteEditManager` rename (approved name); `PersistenceQueue` rename; mass `docs/plans/` purge; leave `isTrackAudible` for later.
+**Next hygiene (gated / optional):** StorageManager `saveState` extract; `PersistenceQueue` rename; mass `docs/plans/` purge; leave `isTrackAudible` for later.
+
+### Note edit control-surface split (design lock)
+
+**Branch:** `chore/note-edit-control-surface-split`  
+**Plan:** [`docs/plans/note_edit_control_surface_split_refinement.md`](../plans/note_edit_control_surface_split_refinement.md) — structural split; **rename is Phase 5b only**. **Do not code until Phase 0 boundary approved.**
+
+| Item | Status |
+|------|--------|
+| Hygiene sprint merged to local `dev` | Done |
+| Split plan (phases + call-site inventory) | Done |
+| Phase 0 boundary + architecture gate | **Blocked on user** |
+| Phases 1–5 implementation | Queued |
+
+**Supersedes:** rename-only `NoteEditManager` plan (removed with `chore/rename-note-edit-manager` branch).
 
 ---
 
