@@ -2,7 +2,7 @@
 
 High-level runtime map for **agents and humans**: who owns what, how data flows, and which invariants must not be broken. **Not architecture authority** — depth lives in [RuntimeArchitecture.md](../00-authority/Architecture/RuntimeArchitecture.md), Guides, and OpenSpec.
 
-Last updated: 2026-07-16
+Last updated: 2026-08-03
 
 Format: building blocks, owner, up to ~5 sentences of fit; diagrams and overviews may be multiple per section.
 
@@ -39,12 +39,12 @@ Sessions budget long work. Persistence is queued + budgeted — never SD from th
 |-------------|------------|-----------------|
 | Record / overdub / stop | [Capture](#capture--record--overdub) | `Loop` timeline; `Track` stop/commit |
 | MIDI out / playhead | [Playback](#playback) | `Track` |
-| Note move / pitch / overlap | [Note edit](#note-edit) | `EditManager` |
+| Note move / pitch / overlap | [Note edit](#note-edit) | `EditManager` (geometry); `ControlSurfaceManager` (NOTE_EDIT fader ingress) |
 | Undo / redo | [Undo](#undo--redo) | session stack then `GlobalUndoStack` |
 | Piano roll / OLED | [Display](#display--derived-views) | `Loop` builds; `DisplayManager` draws |
 | Multi-loop / select | [Slots](#slots--focus) | `TrackManager` activate; `LoopPool` lifetime |
 | Clock / arm / quantize | [Transport](#transport--clock) | `ClockManager` |
-| Buttons / faders / MIDI in | [Input](#input) | `MidiHandler` + action managers |
+| Buttons / faders / MIDI in | [Input](#input) | `MidiHandler` + action managers; NOTE_EDIT faders → `ControlSurfaceManager` |
 | SD save / Current workspace | [Persistence](#persistence) | `StorageManager` only |
 | Boot / load slots | [Boot](#boot--slot-restore) | `StorageManager` restore |
 | Validate / rebuild off hot path | [Idle](#idle--budgets) | `Track::processDeferredIdleMaintenance` |
@@ -227,11 +227,11 @@ Derived event representation (materialized passes ± active capture; NOTE_EDIT u
 
 ## Note edit
 
-**Building blocks:** `EditManager` / `NoteEditSession`, `NoteEditFocus` + overlap notes, `EditApply`, fader/button FSM (`EditNoteState`)
+**Building blocks:** `EditManager` / `NoteEditSession`, `ControlSurfaceManager` (NOTE_EDIT hardware), `NoteEditFocus` + overlap notes, `EditApply`, fader/button FSM (`EditNoteState`)
 
 Faders drive geometry on the live session store; committed rows become `passes.editPasses[]`. Materialize overlays editPasses onto capture passes for playback and display. Consumers still go through Runtime Request (session store or materialized passes × interval), not raw chunk walks.
 
-**Owner:** `EditManager` owns live RAM and session lifecycle.
+**Owner:** `EditManager` owns live RAM, session lifecycle, and edit geometry. `ControlSurfaceManager` owns NOTE_EDIT hardware ingress/egress (faders, motor sync, audition) and reacts to `EditEvent` notifications — no edit state.
 
 **Gap:** derived overlap / move geometry pipeline (`edit-session-action-geometry`) still paused behind UIP HITL.
 
@@ -286,9 +286,9 @@ Clock owns global tick (internal BPM or external MIDI clock). Tracks consume tic
 
 ## Input
 
-**Building blocks:** `MidiHandler`, `MidiButtonManager` / `MidiFaderManager`, `NoteEditManager`, `GpioButtonManager`, `MidiLedManager`
+**Building blocks:** `MidiHandler`, `MidiButtonManager` / `MidiFaderManager`, `ControlSurfaceManager`, `GpioButtonManager`, `MidiLedManager`
 
-USB MIDI and GPIO become actions (record, undo, edit faders) that mutate Track / EditManager / TrackManager. LEDs consume display/event hints; they do not own storage.
+USB MIDI and GPIO become actions (record, undo, edit faders) that mutate Track / EditManager / TrackManager. NOTE_EDIT fader CC/pitchbend routes through `ControlSurfaceManager` into `EditManager` edit operations. LEDs consume display/event hints; they do not own storage.
 
 **Owner:** `MidiHandler` routes raw MIDI; managers own action parse.
 

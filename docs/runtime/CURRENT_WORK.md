@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-03 (note-edit control-surface split plan)
+Last updated: 2026-08-03 (note-edit control-surface split complete)
 
 ---
 
@@ -40,21 +40,18 @@ Last updated: 2026-08-03 (note-edit control-surface split plan)
 
 **Next hygiene (gated / optional):** StorageManager `saveState` extract; `PersistenceQueue` rename; mass `docs/plans/` purge; leave `isTrackAudible` for later.
 
-### Note edit control-surface split (design lock)
+### Note edit control-surface split — **complete**
 
-**Branch:** `chore/note-edit-control-surface-split`  
-**Plan:** [`docs/plans/note_edit_control_surface_split_refinement.md`](../plans/note_edit_control_surface_split_refinement.md) — structural split; **rename is Phase 5b only**. **Do not code until Phase 0 boundary approved.**
+**Branch:** `chore/note-edit-control-surface-split` (`d3505db`)  
+**Plan:** [`docs/plans/note_edit_control_surface_split_refinement.md`](../plans/note_edit_control_surface_split_refinement.md)
 
 | Item | Status |
 |------|--------|
-| Hygiene sprint merged to local `dev` | Done |
-| Split plan (phases + call-site inventory) | Done |
-| Phase 0 boundary + architecture gate | Done |
-| Phase 1 edit operations on `EditManager` | Done (`671` native) |
-| Phases 2–4 implementation | Done |
-| Phase 5 unnest `LoopEditManager` | Done (`671` native) |
-| Phase 6 rename `ControlSurfaceManager` | Done (`671` native) |
-| Phase 7 (docs + hygiene closeout) | Queued |
+| Phases 0–4 (split, edit events, surface extraction) | Done |
+| Phase 5 unnest `LoopEditManager` | Done |
+| Phase 6 rename `ControlSurfaceManager` | Done (`d3505db`) |
+| Phase 7 docs + hygiene closeout | Done |
+| Optional Phase 8 (full physical ingress) | Not scheduled |
 
 **Supersedes:** rename-only `NoteEditManager` plan (removed with `chore/rename-note-edit-manager` branch).
 

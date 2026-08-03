@@ -8,7 +8,7 @@
 
 ## Verdict
 
-Safe zero-behavior and rename hygiene on this branch is **complete**. Remaining debt is gated product work (StorageManager extract, `NoteEditManager` rename, `PersistenceQueue` name) or optional leftovers (mass `docs/plans/` purge, runtime `isTrackAudible`, HITL shim import polish).
+Safe zero-behavior and rename hygiene on this branch is **complete**. Remaining debt is gated product work (StorageManager extract, `PersistenceQueue` name) or optional leftovers (mass `docs/plans/` purge, runtime `isTrackAudible`, HITL shim import polish).
 
 Sprint refinement plans are marked **Status: Done** (see [plans README — Hygiene sprint](README.md#hygiene-sprint-chorecodebase-hygiene-sprint1)). Mass archive of ~150 historical Cursor plans is **not** done in this pass.
 
@@ -43,7 +43,7 @@ Sprint refinement plans are marked **Status: Done** (see [plans README — Hygie
 | [`scripts/host_midi_automation_baseline.py`](../../scripts/host_midi_automation_baseline.py) | **~32** | Thin shim |
 | [`scripts/host_midi_automation_edit_baseline.py`](../../scripts/host_midi_automation_edit_baseline.py) | **~32** | Thin shim |
 | [`src/DisplayManager.cpp`](../../src/DisplayManager.cpp) | ~3345 | Unchanged size |
-| [`src/NoteEditManager.cpp`](../../src/NoteEditManager.cpp) | ~2556 | Name still misleading |
+| [`src/ControlSurfaceManager.cpp`](../../src/ControlSurfaceManager.cpp) | ~2370 | NOTE_EDIT control surface (fader ingress/egress, motor sync); edit state on `EditManager` |
 | [`src/Track.cpp`](../../src/Track.cpp) | ~2457 | Stop-path DRY via `commitCaptureForStop` / prep / fold |
 | [`src/Utils/NoteMovementUtils.cpp`](../../src/Utils/NoteMovementUtils.cpp) | ~2094 | Unchanged |
 
@@ -55,7 +55,7 @@ Sprint refinement plans are marked **Status: Done** (see [plans README — Hygie
 |---|---------|--------|
 | 1 | `StorageManager::saveState` still monolithic | **Queued** — continue extract when persistence hardening is CURRENT_WORK |
 | 2 | Four near-clone capture stops (`stopRecording` / `ToStopped` / overdub twins) | **Done** — `commitCaptureForStop` / `prepareRecordStop` / `handleNoteEditFold`; [`track_stop_dry_refinement.md`](track_stop_dry_refinement.md) |
-| 3 | Edit split: `EditManager` vs `NoteEditManager` (misnamed god-object) vs `LoopEditManager` | **Active** — [`note_edit_control_surface_split_refinement.md`](note_edit_control_surface_split_refinement.md) on `chore/note-edit-control-surface-split`; rename Phase 5b after extraction |
+| 3 | Edit split: `EditManager` vs `ControlSurfaceManager` vs `LoopEditManager` | **Done** — [`note_edit_control_surface_split_refinement.md`](note_edit_control_surface_split_refinement.md) Phases 0–7 (`d3505db` on `chore/note-edit-control-surface-split`) |
 | 4 | `DisplayManager::resolveDisplayNotes` + repeated `capture.store.copyEventsTo` | **Done** — `copySortedCaptureEvents`; removed unused `findCaptureOpenNoteOns` |
 | 5 | `playMidiEvents` / `playMidiEventsForSlot` twin wrap walks | **Done** — `playCommittedLoopMidi` + `advancePlaybackCursor`; [`playback_cursor_advance_dry_refinement.md`](playback_cursor_advance_dry_refinement.md) |
 | 6 | Note-edit geometry in `NoteMovementUtils` + `NoteEditFocus` | **Open** — algorithmic depth; not a rename |
@@ -102,7 +102,7 @@ Protected by [OpenSpec-Phase-Gate](../../.cursor/rules/OpenSpec-Phase-Gate.mdc) 
 
 - Capture stop / commit paths (`Track::stopRecording*`, `stopOverdubbing*`, `finalizeCommitSideEffects`, `Loop::commitCapturePass`, …)
 - Persistence `saveState` / work queue / mid-pass chunk paths
-- Renaming `NoteEditManager` without an approved replacement name
+- Re-expanding `ControlSurfaceManager` with edit mutations or session state (see [`note_edit_control_surface_split_refinement.md`](note_edit_control_surface_split_refinement.md) ownership contracts)
 - Emptying `Utils/` into domain folders without ownership decisions
 
 ---
@@ -110,10 +110,9 @@ Protected by [OpenSpec-Phase-Gate](../../.cursor/rules/OpenSpec-Phase-Gate.mdc) 
 ## Next hygiene slices (priority)
 
 1. **StorageManager** — continue extraction until `saveState` leaves the root TU (with persistence CURRENT_WORK)
-2. **Note edit control-surface split** — [`note_edit_control_surface_split_refinement.md`](note_edit_control_surface_split_refinement.md) (rename sub-step Phase 5b)
-3. **`PersistenceQueue` → mid-pass/chunk-oriented name** — with persistence hardening
-4. Optional: mass `docs/plans/` purge / archive of historical Cursor exports (item 18 remainder)
-5. Optional: finish moving scenario imports off thin shims onto `hitl.legacy_*` / shared modules only
+2. **`PersistenceQueue` → mid-pass/chunk-oriented name** — with persistence hardening
+3. Optional: mass `docs/plans/` purge / archive of historical Cursor exports (item 18 remainder)
+4. Optional: finish moving scenario imports off thin shims onto `hitl.legacy_*` / shared modules only
 
 ---
 
