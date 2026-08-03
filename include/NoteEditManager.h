@@ -240,7 +240,7 @@ private:
     static constexpr uint32_t FADER_UPDATE_DELAY = 1500;
     static constexpr uint32_t FEEDBACK_IGNORE_PERIOD = 1500;
     static constexpr bool kEditedNoteAuditionEnabled = false;
-    static constexpr bool kNoteEditFaderFeedbackEnabled = false;
+    static constexpr bool kNoteEditFaderFeedbackEnabled = true;
     
     bool lengthEditingMode = false;
     bool editedNoteAuditionHeld_ = false;
