@@ -49,8 +49,9 @@ Last updated: 2026-08-03 (note-edit control-surface split plan)
 |------|--------|
 | Hygiene sprint merged to local `dev` | Done |
 | Split plan (phases + call-site inventory) | Done |
-| Phase 0 boundary + architecture gate | **Blocked on user** |
-| Phases 1–5 implementation | Queued |
+| Phase 0 boundary + architecture gate | Done |
+| Phase 1 edit operations on `EditManager` | Done (`671` native) |
+| Phases 2–5 implementation | Queued |
 
 **Supersedes:** rename-only `NoteEditManager` plan (removed with `chore/rename-note-edit-manager` branch).
 

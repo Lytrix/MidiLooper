@@ -94,6 +94,14 @@ public:
     void applyGeometryKindFromControl(Track& track, NoteEditKind kind, bool fromFaderControl);
     void applyUndoRedoLanding(Track& track);
     void resetNoteEditSessionState();
+
+    /// Edit operations (moved from NoteEditManager — Phase 1).
+    bool deleteSelectedNote(Track& track, const NoteUtils::DisplayNoteVec& filteredNotes);
+    bool moveNoteToPosition(Track& track, const NoteUtils::DisplayNote& currentNote,
+                            uint32_t targetTick);
+    bool changeNoteEndWithOverlapHandling(Track& track, const NoteUtils::DisplayNote& currentNote,
+                                          uint32_t targetEndTick);
+
     void syncNoteEditSessionStateToUi(Track& track);
     void enterDefaultNoteEditSessionState(Track& track, uint32_t startTick);
     /// Pre-commit resolve + single saveEdit at fader-1 reselect / exit / overdub start.
