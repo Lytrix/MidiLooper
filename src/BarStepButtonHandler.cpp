@@ -10,6 +10,7 @@
 #include "NoteEditManager.h"
 #include "LoopEditManager.h"
 #include "EditManager.h"
+#include "Utils/NoteUtils.h"
 #include "TrackUndo.h"
 #include "Utils/PressTiming.h"
 #include <cstdarg>
@@ -597,7 +598,9 @@ void BarStepButtonHandler::executeNoteEditAction(const BarStepButtonInfo& info, 
     case BarStepPressType::DOUBLE_PRESS:
       if (noteAtStep()) {
         testLog("BarStepButton NoteEdit: delete at 16th %d", info.stepIndex);
-        noteEditManager.deleteSelectedNote(track);
+        const auto filteredStd = editManager.selectableDisplayNotesForEditUi(track);
+        const NoteUtils::DisplayNoteVec filtered(filteredStd.begin(), filteredStd.end());
+        editManager.deleteSelectedNote(track, filtered);
       } else {
         testLog("BarStepButton NoteEdit: create at 16th %d tick=%lu", info.stepIndex, stepTick);
         editManager.setSelectedNoteIdx(-1);

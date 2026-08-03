@@ -805,7 +805,9 @@ void MidiButtonActions::handleExitEditMode() {
 
 void MidiButtonActions::handleDeleteNote() {
     Track& track = getCurrentTrack();
-    noteEditManager.deleteSelectedNote(track);
+    const auto filteredStd = editManager.selectableDisplayNotesForEditUi(track);
+    const NoteUtils::DisplayNoteVec filtered(filteredStd.begin(), filteredStd.end());
+    editManager.deleteSelectedNote(track, filtered);
 }
 
 namespace {

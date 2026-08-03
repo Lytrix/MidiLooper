@@ -59,18 +59,12 @@ public:
     void handleNoteValueFaderInput(uint8_t ccValue, Track& track);
 
     /** One nav slot per note (multiple per 16th when notes share a step) or empty grid step. */
-    std::vector<SelectNavigation::SelectNavSlot> buildSelectNavigationSlots(
-        const Track& track, uint32_t selectedTick, bool includeSelectedTickIfMissing = true) const;
-    /// NOTE_EDIT UI list: filtered (+ window when long loop) when session active, else cached copy.
-    std::vector<NoteUtils::DisplayNote> selectableDisplayNotesForEditUi(const Track& track) const;
-
     // Loop editing is now handled by LoopEditManager
     LoopEditManager loopEditManager;
 
     // Edit mode methods (must be public for MidiButtonActions)
     void cycleEditMode(Track& track);
     void processEncoderMovement(int rawDelta);
-    void deleteSelectedNote(Track& track);
     void toggleLengthEditingMode();
     /** Force position-edit routing when opening or closing a note-edit session. */
     void resetLengthEditingModeOnSessionBoundary();
@@ -81,7 +75,6 @@ public:
     void prepareNoteEditSessionOpen();
     /** NOTE_EDIT session entry: grace period + deferred selectnote fader sync. */
     void sendNoteEditSessionFaderFeedback(Track& track);
-    void syncReferenceStepFromSelectedTick(uint32_t selectedTick);
     /** GPIO / bar-step note select: fader1 bracket + dependent refresh. */
     void scheduleNoteSelectFaderSync(Track& track);
     /** Queue F2/F3/F4 motor sync after F1 idle, or F1 bracket sync after geometry fader idle. */
@@ -89,10 +82,6 @@ public:
                                           const EditorSelection& nextSelection,
                                           bool geometryIsDriver = false);
     bool isFaderOutboundActive() const;
-    bool moveNoteToPosition(Track& track, const NoteUtils::DisplayNote& currentNote,
-                            std::uint32_t targetTick);
-    bool changeNoteEndWithOverlapHandling(Track& track, const NoteUtils::DisplayNote& currentNote,
-                                          std::uint32_t targetEndTick);
     void refreshEditingActivity();
 
     // Main edit session switching (for mode button functionality)
@@ -231,8 +220,12 @@ private:
     void armCoarseFaderFeedbackIgnore(uint32_t sentAt);
     void armChannel15CcFaderFeedbackIgnore(uint32_t sentAt);
     
+    void handleSessionOpenedEvent(Track& track);
+    void handleSessionClosedEvent(Track& track);
     void handleLengthModeChangedEvent(Track& track);
     void handleSelectionChangedEvent(Track& track);
+    void handleGeometryChangedEvent(Track& track);
+    void sendEditSessionMidi(EditSessionType sessionType);
     
     static constexpr uint32_t FADER2_PROTECTION_PERIOD = 2000;
     

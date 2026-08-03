@@ -65,7 +65,10 @@ public:
     const EditSession& getEditSession() const { return editSession; }
     EditSessionType getEditSessionType() const { return editSession.sessionType; }
     void cycleEditSession(Track& track);
-    void sendEditSessionChange(EditSessionType sessionType);
+    void sendEditSessionChange(EditSessionType sessionType, bool notifySurfaceMidi = false);
+    void emitSessionOpenedToSurface(bool includeMidi, bool includeNoteFaderFeedback = false);
+    bool sessionOpenedIncludesMidi() const { return sessionOpenedIncludesMidi_; }
+    bool sessionOpenedIncludesFaderFeedback() const { return sessionOpenedIncludesFaderFeedback_; }
     void openNoteEditSession(Track& track);
     void reopenNoteEditSession(Track& track);
     void closeNoteEditSession(Track& track);
@@ -260,6 +263,8 @@ private:
     EditEventListener* editEventListener_ = nullptr;
     EditorSelection selectionChangePrior_{};
     bool selectionChangeRequestFaderSync_ = false;
+    bool sessionOpenedIncludesMidi_ = false;
+    bool sessionOpenedIncludesFaderFeedback_ = false;
     EditSession editSession;
     NoteEditSessionState sessionState;
     NoteEditKind lastPushedGeometryKind_ = NoteEditKind::Select;

@@ -574,7 +574,7 @@ void EditManager::openNoteEditSession(Track& track) {
 #endif
     bumpSessionPreviewRevision();
     bumpSessionPlaybackPreviewRevision();
-    noteEditManager.sendNoteEditSessionFaderFeedback(track);
+    emitSessionOpenedToSurface(false, true);
     DIAG_EVENT(Diagnostics::Edit::NoteEditOpenExit);
     logger.debug("EditSession opened editPass=0");
 }
@@ -1217,10 +1217,7 @@ void EditManager::applyUndoRedoLanding(Track& track) {
     }
 
     noteEditManager.resetLengthEditingModeOnNoteSelect();
-    applySelectNav(track, bracket, primaryNote);
-    if (primaryNote != kInvalidNoteId) {
-        noteEditManager.scheduleNoteSelectFaderSync(track);
-    }
+    applySelectNav(track, bracket, primaryNote, primaryNote != kInvalidNoteId);
 }
 
 bool EditManager::sessionUndo(Track& track) {
@@ -1672,36 +1669,20 @@ void EditManager::cycleEditSession(Track& track) {
                static_cast<int>(editSession.sessionType));
 }
 
-void EditManager::sendEditSessionChange(EditSessionType sessionType) {
+void EditManager::emitSessionOpenedToSurface(bool includeMidi, bool includeNoteFaderFeedback) {
+    sessionOpenedIncludesMidi_ = includeMidi;
+    sessionOpenedIncludesFaderFeedback_ = includeNoteFaderFeedback;
+    emitEditEvent(EditEvent::SessionOpened);
+}
+
+void EditManager::sendEditSessionChange(EditSessionType sessionType, bool notifySurfaceMidi) {
     const EditSessionType priorSession = editSession.sessionType;
+    if (sessionType == EditSessionType::ControlChange) {
+        return;
+    }
     editSession.sessionType = sessionType;
 
-    uint8_t program = MidiConfig::SessionProgram::LOOP_EDIT;
-    uint8_t triggerNote = 0;
-    const char* modeName = "LOOP_EDIT";
-
-    switch (sessionType) {
-        case EditSessionType::Loop:
-            program = MidiConfig::SessionProgram::LOOP_EDIT;
-            triggerNote = 100;
-            modeName = "LOOP_EDIT";
-            break;
-        case EditSessionType::Note:
-            program = MidiConfig::SessionProgram::NOTE_EDIT;
-            triggerNote = 0;
-            modeName = "NOTE_EDIT";
-            break;
-        case EditSessionType::ControlChange:
-            return;
-    }
-
-    midiHandler.sendProgramChange(MidiConfig::PROGRAM_CHANGE_CHANNEL, program);
-    midiHandler.sendLedFeedbackNoteOn(triggerNote, 64);
-    delay(10);
-    midiHandler.sendLedFeedbackNoteOff(triggerNote);
-    logger.log(CAT_MIDI, LOG_INFO, "Edit session: %s (Program %d, Note %d trigger)",
-               modeName, program, triggerNote);
-
+    bool reopenedNoteSession = false;
     if (priorSession == EditSessionType::Loop && sessionType != EditSessionType::Loop) {
         noteEditManager.loopEditManager.commitLoopEditOnDepart(trackManager.getSelectedTrack());
     }
@@ -1711,11 +1692,22 @@ void EditManager::sendEditSessionChange(EditSessionType sessionType) {
         if (priorSession != EditSessionType::Note || !editSession.active) {
             Track& track = trackManager.getSelectedTrack();
             reopenNoteEditSession(track);
+            reopenedNoteSession = true;
         }
     }
     if (sessionType == EditSessionType::Loop) {
-        noteEditManager.loopEditManager.onEnterLoopEditSession(
-            trackManager.getSelectedTrack());
+        noteEditManager.loopEditManager.onEnterLoopEditSession(trackManager.getSelectedTrack());
+    }
+
+    const bool sessionTypeChanged = priorSession != sessionType;
+    if (sessionTypeChanged &&
+        (priorSession == EditSessionType::Note || priorSession == EditSessionType::Loop)) {
+        emitEditEvent(EditEvent::SessionClosed);
+    }
+    if (reopenedNoteSession && sessionTypeChanged) {
+        emitSessionOpenedToSurface(true, false);
+    } else if (sessionTypeChanged || notifySurfaceMidi) {
+        emitSessionOpenedToSurface(sessionTypeChanged || notifySurfaceMidi, false);
     }
 }
 
@@ -1742,7 +1734,7 @@ void EditManager::reenterEditSessionForFocusChange(Track& track, uint8_t /*previ
         case EditSessionType::Note:
             if (editSession.active) {
                 reopenNoteEditSession(track);
-                noteEditManager.sendNoteEditSessionFaderFeedback(track);
+                emitSessionOpenedToSurface(false, true);
                 logger.log(CAT_TRACK, LOG_DEBUG, "NOTE_EDIT session reopened for focus change");
             }
             break;
@@ -1952,6 +1944,7 @@ bool EditManager::deleteSelectedNote(Track& track,
     rebuildNoteEditFocusAtSelect(track, -1);
 
     logger.info("MIDI Encoder: Note deleted, maintaining current edit mode");
+    emitEditEvent(EditEvent::GeometryChanged);
     return true;
 }
 
