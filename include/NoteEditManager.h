@@ -154,7 +154,6 @@ private:
     uint32_t lastFineFaderTime = 0;
     static constexpr uint8_t FINE_MOVEMENT_THRESHOLD = 1;
     static constexpr uint32_t FINE_STABILITY_TIME = 80;
-    uint32_t referenceStep = 0;
 
     uint32_t lastPitchbendSentTime = 0;
     uint32_t lastSelectnoteSentTime = 0;
