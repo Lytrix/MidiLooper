@@ -1,6 +1,6 @@
 # Note edit control-surface split
 
-**Status:** Implementation-ready — Phase 0 inventory + sign-off before coding  
+**Status:** Complete — Phases 0–7 shipped (`d3505db` on `chore/note-edit-control-surface-split`)  
 **Branch:** `chore/note-edit-control-surface-split`  
 **Kind:** Structural refinement (behavior-preserving per phase)  
 **Supersedes:** rename-only `note_edit_manager_rename_refinement.md` (removed)
@@ -363,9 +363,11 @@ Update: `EditManager`, `EditSelectNoteState`.
 
 ### Phase 7 — Documentation + hygiene closeout
 
-- Update [`codebase_hygiene_technical_debt_review.md`](codebase_hygiene_technical_debt_review.md) item 3
-- Update [`runtime_process_building_blocks_overview.md`](runtime_process_building_blocks_overview.md)
-- `CURRENT_WORK` / `PROJECT_STATE`
+**Status:** Done (2026-08-03) — `672` native tests pass; refactor **complete** (`d3505db`)
+
+- [x] Update [`codebase_hygiene_technical_debt_review.md`](codebase_hygiene_technical_debt_review.md) item 3
+- [x] Update [`runtime_process_building_blocks_overview.md`](runtime_process_building_blocks_overview.md)
+- [x] `CURRENT_WORK` / `PROJECT_STATE`
 
 **Refactor complete after Phase 7.**
 
