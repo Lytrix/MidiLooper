@@ -397,6 +397,9 @@ TRACK_COLD_MEM void restorePlaybackAfterSlotClear(uint8_t trackIndex, Track& tra
         track.startPlaying(now);
     } else {
         track.sendAllNotesOff();
+        if (track.isPlaying()) {
+            track.forceSetState(TRACK_STOPPED);
+        }
     }
 }
 

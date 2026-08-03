@@ -139,6 +139,11 @@ void restorePlaybackAfterSlotClear(uint8_t trackIndex, Track& track, uint32_t no
     track.startPlaying(now);
   } else {
     track.sendAllNotesOff();
+    // Clear of the last enabled playing slot must not leave TRACK_PLAYING on empty RAM —
+    // otherwise record press takes the mute-toggle path (session_20260803_170251).
+    if (track.isPlaying()) {
+      track.forceSetState(TRACK_STOPPED);
+    }
   }
 }
 
@@ -406,6 +411,8 @@ void MidiButtonActions::handleToggleRecordForSlot(uint8_t slotIndex) {
     }
 
     // Filled + currently playing: quantize active sync to grid when transport is running.
+    // Use SD-aware content for switch-to-other-slot; mute-toggle requires RAM data so a
+    // just-cleared slot (SD payload still present until deferred save) can re-arm.
     if (track.isPlaying() && slotHasData) {
         const bool slotEnabled = trackManager.isSlotEnabled(trackIdx, slotIndex);
 
@@ -416,28 +423,32 @@ void MidiButtonActions::handleToggleRecordForSlot(uint8_t slotIndex) {
                 logger.info("Loop %d: Reaffirmed playback switch", slotIndex + 1);
                 return;
             }
-            // Toggle mute only for this slot. Track keeps running.
-            if (!slotEnabled) {
-                // Safety: keep focus slot enabled.
-                trackManager.setSlotEnabled(trackIdx, slotIndex, true);
-                trackManager.setSlotMuted(trackIdx, slotIndex, false);
-                track.resetPlaybackStateForSlot(slotIndex, now);
+            if (!track.hasDataInSlot(slotIndex)) {
+                // Fall through to record-arm path.
             } else {
-                trackManager.toggleSlotMuted(trackIdx, slotIndex);
-                const bool nowMuted = trackManager.isSlotMuted(trackIdx, slotIndex);
-                if (!nowMuted) {
-                    // Align playback indices when unmuting.
+                // Toggle mute only for this slot. Track keeps running.
+                if (!slotEnabled) {
+                    // Safety: keep focus slot enabled.
+                    trackManager.setSlotEnabled(trackIdx, slotIndex, true);
+                    trackManager.setSlotMuted(trackIdx, slotIndex, false);
                     track.resetPlaybackStateForSlot(slotIndex, now);
+                } else {
+                    trackManager.toggleSlotMuted(trackIdx, slotIndex);
+                    const bool nowMuted = trackManager.isSlotMuted(trackIdx, slotIndex);
+                    if (!nowMuted) {
+                        // Align playback indices when unmuting.
+                        track.resetPlaybackStateForSlot(slotIndex, now);
+                    }
                 }
+                trackManager.forceLedUpdate(now);
+                return;
             }
-            trackManager.forceLedUpdate(now);
+        } else {
+            // Short press on a non-selected filled slot — queue playback, never overdub.
+            queuePlayingSlotSwitch(trackIdx, track, slotIndex, now);
+            logger.info("Loop %d: Queued playback switch", slotIndex + 1);
             return;
         }
-
-        // Short press on a non-selected filled slot — queue playback, never overdub.
-        queuePlayingSlotSwitch(trackIdx, track, slotIndex, now);
-        logger.info("Loop %d: Queued playback switch", slotIndex + 1);
-        return;
     }
 
     // Otherwise: fall back to the existing immediate record/start toggle behavior

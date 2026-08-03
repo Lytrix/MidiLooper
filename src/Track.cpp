@@ -548,6 +548,10 @@ TRACK_COLD_MEM void Track::reconcileTransportStateAfterSlotMutation() {
   if (hasAnySlotData()) {
     if (trackState == TRACK_EMPTY || trackState == TRACK_ARMED) {
       setState(TRACK_STOPPED);
+    } else if (trackState == TRACK_PLAYING && !getActiveLoop().hasData()) {
+      // Cleared the playing slot while other slots still have data — do not stay PLAYING
+      // on empty active (blocks re-arm; session_20260803_170251).
+      setState(TRACK_STOPPED);
     }
   } else if (trackState == TRACK_ARMED || trackState == TRACK_STOPPED ||
              trackState == TRACK_PLAYING || trackState == TRACK_OVERDUBBING) {
