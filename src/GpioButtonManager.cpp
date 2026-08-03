@@ -6,7 +6,7 @@
 #include "TrackManager.h"
 #include "GpioButtonManager.h"
 #include "MidiButtonActions.h"
-#include "NoteEditManager.h"
+#include "ControlSurfaceManager.h"
 #include "EditManager.h"
 #include "NoteEditSessionState.h"
 #include "LooperState.h"
@@ -141,7 +141,7 @@ void GpioButtonManager::update() {
                                        editManager.getSelectedTick(),
                                        editManager.getLastFader1SelectNoteId());
             if (editManager.getSelectedNoteIdx() >= 0) {
-                noteEditManager.scheduleNoteSelectFaderSync(trackManager.getSelectedTrack());
+                controlSurfaceManager.scheduleNoteSelectFaderSync(trackManager.getSelectedTrack());
             }
         }
         encoderButtonHoldStart = 0;
@@ -155,7 +155,7 @@ void GpioButtonManager::update() {
         if (looperState.isLoadSaveModeActive()) {
             displayManager.adjustLoadSaveListSelection(rawDelta);
         } else {
-            noteEditManager.processEncoderMovement(rawDelta);
+            controlSurfaceManager.processEncoderMovement(rawDelta);
         }
         encoderPosition = newEncoderPos;
     }

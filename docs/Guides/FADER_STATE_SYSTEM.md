@@ -1,8 +1,8 @@
 # Fader State System Documentation
 
-> **NOTE_EDIT motorized faders (2026):** Authoritative behavior for DROID motor sync, split select/geometry queues, and F1 inbound guards is in [**DROID_MOTORFADER_PITCHBEND.md**](DROID_MOTORFADER_PITCHBEND.md). Bugfix handoff: [`note_edit_geometry_f1_selection_guard_bugfix.md`](../plans/note_edit_geometry_f1_selection_guard_bugfix.md). The V2 sections below describe the generic `MidiFaderProcessor` pipeline; **timing and feedback rules for NOTE_EDIT** are owned by `NoteEditManager` (see § NOTE_EDIT motor feedback below).
+> **NOTE_EDIT motorized faders (2026):** Authoritative behavior for DROID motor sync, split select/geometry queues, and F1 inbound guards is in [**DROID_MOTORFADER_PITCHBEND.md**](DROID_MOTORFADER_PITCHBEND.md). Bugfix handoff: [`note_edit_geometry_f1_selection_guard_bugfix.md`](../plans/note_edit_geometry_f1_selection_guard_bugfix.md). The V2 sections below describe the generic `MidiFaderProcessor` pipeline; **timing and feedback rules for NOTE_EDIT** are owned by `ControlSurfaceManager` (see § NOTE_EDIT motor feedback below).
 >
-> **Compile-time feedback gate:** `NoteEditManager::kNoteEditFaderFeedbackEnabled` — see § NOTE_EDIT fader feedback on vs off. Default in firmware today: **`false`** (inbound geometry works; outbound motor sync off).
+> **Compile-time feedback gate:** `ControlSurfaceManager::kNoteEditFaderFeedbackEnabled` — see § NOTE_EDIT fader feedback on vs off. Default in firmware today: **`false`** (inbound geometry works; outbound motor sync off).
 
 ## Overview
 
@@ -38,7 +38,7 @@ The Fader State System is a modular, configuration-driven architecture that mana
 **Location**: `src/MidiFaderActions.cpp`
 **Responsibilities**:
 - Executes fader-triggered actions
-- Delegates to NoteEditManager for complex operations
+- Delegates to ControlSurfaceManager for complex operations
 - Handles action parameter processing
 - Maintains separation between input and business logic
 
@@ -154,17 +154,17 @@ void executeAction(MidiFaderConfig::ActionType action,
 ```
 
 ### 4. Business Logic Delegation
-**Clean Separation**: Actions delegate to NoteEditManager for complex operations:
+**Clean Separation**: Actions delegate to ControlSurfaceManager for complex operations:
 ```cpp
 void handleSelectFaderInput(int16_t pitchbendValue, Track& track) {
-    // Delegate to existing NoteEditManager logic
-    noteEditManager.handleSelectFaderInput(pitchbendValue, track);
+    // Delegate to existing ControlSurfaceManager logic
+    controlSurfaceManager.handleSelectFaderInput(pitchbendValue, track);
 }
 ```
 
-## NOTE_EDIT motor feedback (`NoteEditManager`, 2026)
+## NOTE_EDIT motor feedback (`ControlSurfaceManager`, 2026)
 
-During **NOTE_EDIT**, fader inbound/outbound for motorized DROID faders is **not** the generic `MidiFaderProcessor::shouldIgnoreFaderInput` blanket ignore. `NoteEditManager` owns feedback prevention and motor sync.
+During **NOTE_EDIT**, fader inbound/outbound for motorized DROID faders is **not** the generic `MidiFaderProcessor::shouldIgnoreFaderInput` blanket ignore. `ControlSurfaceManager` owns feedback prevention and motor sync.
 
 ### Split motor-sync queues
 
@@ -194,13 +194,13 @@ Queues **do not merge**. Input on one driver **cancels** the opposite pending qu
 | Value echo | `NoteEditFaderSelectSync::shouldIgnoreSelectFaderEcho` — inbound within **1500 ms** of last send and delta ≤ `SELECT_MOVEMENT_THRESHOLD` (100) |
 | Armed window | `selectFaderFeedbackIgnoreUntilMs_` after `sendFader1BracketFeedback` / `sendFader1MotorTimedBurst` — inbound F1 ignored until window expires (catches motor landing off-threshold) |
 
-`NoteEditManager::FEEDBACK_IGNORE_PERIOD` = **1500 ms** (not the 100 ms examples elsewhere in this file).
+`ControlSurfaceManager::FEEDBACK_IGNORE_PERIOD` = **1500 ms** (not the 100 ms examples elsewhere in this file).
 
 **Capture analysis:** [`DROID_MOTORFADER_PITCHBEND.md`](DROID_MOTORFADER_PITCHBEND.md), host verifier `scripts/test_note_edit_geometry_fader1_serial_verify.py`.
 
 ## NOTE_EDIT fader feedback on vs off
 
-Compile-time switches in `include/NoteEditManager.h`:
+Compile-time switches in `include/ControlSurfaceManager.h`:
 
 | Flag | Default | Purpose |
 |------|---------|---------|
@@ -270,7 +270,7 @@ struct FaderConfig {
 
 ### Optimized Ignore Periods
 
-> **Superseded for NOTE_EDIT:** see § NOTE_EDIT motor feedback above. `NoteEditManager` uses **1500 ms** `FEEDBACK_IGNORE_PERIOD` plus value-echo and `selectFaderFeedbackIgnoreUntilMs_`. The 100 ms example below is **not** current NOTE_EDIT behavior.
+> **Superseded for NOTE_EDIT:** see § NOTE_EDIT motor feedback above. `ControlSurfaceManager` uses **1500 ms** `FEEDBACK_IGNORE_PERIOD` plus value-echo and `selectFaderFeedbackIgnoreUntilMs_`. The 100 ms example below is **not** current NOTE_EDIT behavior.
 
 ```cpp
 // Generic MidiFaderProcessor examples — do not use for NOTE_EDIT motor sync

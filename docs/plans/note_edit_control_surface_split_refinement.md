@@ -350,6 +350,8 @@ Update: `EditManager`, `EditSelectNoteState`.
 
 ### Phase 6 — Rename (mechanical)
 
+**Status:** Done (2026-08-03) — `671` native tests pass; `teensy41-capture-serial` build OK
+
 - `NoteEditManager` → **`ControlSurfaceManager`**
 - Files: `include/ControlSurfaceManager.h`, `src/ControlSurfaceManager.cpp`
 - Global: `controlSurfaceManager`

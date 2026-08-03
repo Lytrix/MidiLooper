@@ -189,6 +189,26 @@ void test_can_apply_simple_pitch_change_without_lane_collision() {
       events, focus, 1, 60, 67, focus.last.startTick, focus.last.endTick, kLoopLength));
 }
 
+void test_can_apply_simple_pitch_change_blocks_inner_overlap_on_target_lane() {
+  constexpr uint32_t kLoopLength = 3072;
+  NoteEditFocus focus;
+  focus.active = true;
+  focus.movingNoteId = 1;
+  focus.commitBaseline = {12, 64, 26, 218};
+  focus.last = focus.commitBaseline;
+  focus.last.pitch = 60;
+  focus.movingNoteRange = {26, 218};
+
+  MidiEventVec events;
+  events.push_back(noteOnWithNoteId(26, 1, 60, 100, 1));
+  events.push_back(MidiEvent::NoteOff(218, 1, 60, 0));
+  events.push_back(noteOnWithNoteId(26, 1, 59, 100, 2));
+  events.push_back(MidiEvent::NoteOff(144, 1, 59, 0));
+
+  TEST_ASSERT_FALSE(canApplySimplePitchChange(
+      events, focus, 1, 60, 59, focus.last.startTick, focus.last.endTick, kLoopLength));
+}
+
 void test_inner_overlap_note_in_moving_note_range() {
   NoteEditFocus focus;
   focus.active = true;
@@ -1482,6 +1502,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_a1_no_pending_length_when_moving_note_range_matches_baseline);
   RUN_TEST(test_note_edit_focus_has_pending_commit_geometry_and_overlap);
   RUN_TEST(test_can_apply_simple_pitch_change_without_lane_collision);
+  RUN_TEST(test_can_apply_simple_pitch_change_blocks_inner_overlap_on_target_lane);
   RUN_TEST(test_inner_overlap_note_in_moving_note_range);
   RUN_TEST(test_overlap_note_effective_end_shortened_vs_hidden);
   RUN_TEST(test_shorten_under_49_ticks_classifies_as_hidden_candidate);

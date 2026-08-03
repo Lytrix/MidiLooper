@@ -21,7 +21,7 @@ void MidiFaderProcessor::setup() {
 }
 
 void MidiFaderProcessor::update() {
-    // NOTE: Scheduled update processing disabled - all cross-updates now handled by NoteEditManager
+    // NOTE: Scheduled update processing disabled - all cross-updates now handled by ControlSurfaceManager
     // This eliminates the dual scheduling system that was causing conflicts
 }
 
@@ -92,7 +92,7 @@ void MidiFaderProcessor::processFaderInput(MidiMapping::FaderType faderType, int
         movementCallback(faderType, pitchbendValue, ccValue);
     }
     
-    // NOTE: Removed automatic scheduling - let NoteEditManager handle cross-updates
+    // NOTE: Removed automatic scheduling - let ControlSurfaceManager handle cross-updates
     // This prevents dual scheduling system conflicts
     
     logger.log(CAT_MIDI, LOG_DEBUG, "Fader %d input processed: driver fader set", (int)faderType);

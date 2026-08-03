@@ -1,8 +1,8 @@
 //  Copyright (c)  2025 Lytrix (Eelke Jager)
 //  Licensed under the PolyForm Noncommercial 1.0.0
 
-#ifndef NOTE_EDIT_MANAGER_H
-#define NOTE_EDIT_MANAGER_H
+#ifndef CONTROL_SURFACE_MANAGER_H
+#define CONTROL_SURFACE_MANAGER_H
 
 #include <Arduino.h>
 #include <cstdint>
@@ -26,16 +26,14 @@
 class DisplayManager;
 
 /**
- * @class NoteEditManager
- * @brief Manages MIDI note-based button logic and fader control.
+ * @class ControlSurfaceManager
+ * @brief Coordinates NOTE_EDIT control-surface ingress and egress (MIDI faders/buttons, motor feedback).
  *
- * This class serves as the main interface for MIDI control, delegating to specialized handlers:
- * - MidiButtonHandler for button press/release logic
- * - MidiFaderHandler for fader control
+ * Delegates to MidiButtonManager / MidiFaderManager for hardware I/O; edit state lives on EditManager.
  */
-class NoteEditManager : public EditEventListener {
+class ControlSurfaceManager : public EditEventListener {
 public:
-    NoteEditManager();
+    ControlSurfaceManager();
     
     void onEditEvent(EditEvent event) override;
     
@@ -193,7 +191,7 @@ private:
                                     MidiMapping::FaderType driverFader =
                                         MidiMapping::FaderType::FADER_SELECT);
     void releaseEditedNoteAudition();
-    void sendEditedNoteAuditionWhenTransportStopped(Track& track);
+    void sendEditedNoteAuditionWhenTransportStopped(Track& track, int16_t pitchOverride = -1);
     void clearPendingSelectDependentMotorSync();
     void clearPendingGeometryDriverMotorSync();
     void processPendingSelectDependentMotorSync(Track& track);
@@ -231,7 +229,7 @@ private:
     uint32_t lastDriverFaderTime = 0;
     static constexpr uint32_t FADER_UPDATE_DELAY = 1500;
     static constexpr uint32_t FEEDBACK_IGNORE_PERIOD = 1500;
-    static constexpr bool kEditedNoteAuditionEnabled = false;
+    static constexpr bool kEditedNoteAuditionEnabled = true;
     static constexpr bool kNoteEditFaderFeedbackEnabled = true;
     
     bool editedNoteAuditionHeld_ = false;
@@ -266,6 +264,6 @@ public:
 
 };
 
-extern NoteEditManager noteEditManager;
+extern ControlSurfaceManager controlSurfaceManager;
 
-#endif // NOTE_EDIT_MANAGER_H
+#endif // CONTROL_SURFACE_MANAGER_H

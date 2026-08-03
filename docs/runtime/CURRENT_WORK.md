@@ -53,7 +53,8 @@ Last updated: 2026-08-03 (note-edit control-surface split plan)
 | Phase 1 edit operations on `EditManager` | Done (`671` native) |
 | Phases 2–4 implementation | Done |
 | Phase 5 unnest `LoopEditManager` | Done (`671` native) |
-| Phases 6–7 (rename + docs) | Queued |
+| Phase 6 rename `ControlSurfaceManager` | Done (`671` native) |
+| Phase 7 (docs + hygiene closeout) | Queued |
 
 **Supersedes:** rename-only `NoteEditManager` plan (removed with `chore/rename-note-edit-manager` branch).
 

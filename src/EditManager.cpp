@@ -14,7 +14,7 @@
 #include "Logger.h"
 #include "Utils/NoteUtils.h"
 #include "MidiConfig.h"
-#include "NoteEditManager.h"
+#include "ControlSurfaceManager.h"
 #include "LoopEditManager.h"
 #include "NoteEditFocus.h"
 #include "NoteEditSessionUndo.h"
@@ -268,14 +268,15 @@ void EditManager::rebuildNoteEditFocusAtSelect(Track& track, int selectedNoteIdx
     if (selectedNoteIdx >= 0 &&
         selectedNoteIdx < static_cast<int>(liveNotes.size())) {
         const DisplayNote& live = liveNotes[static_cast<size_t>(selectedNoteIdx)];
+        editSession.focus.last = {live.note, live.velocity, live.startTick, live.endTick};
         const NoteId noteId = editSession.focus.movingNoteId;
         MidiEventVec& sessionEvents = sessionMidiEvents();
         NoteBaseline linearBaseline;
         if (noteId != kInvalidNoteId &&
-            findLinearNoteSpanForNoteId(sessionEvents, noteId, channel, linearBaseline)) {
-            editSession.focus.last = linearBaseline;
-        } else {
-            editSession.focus.last = {live.note, live.velocity, live.startTick, live.endTick};
+            findLinearNoteSpanForNoteId(sessionEvents, noteId, channel, linearBaseline,
+                                        live.startTick, loopLength)) {
+            editSession.focus.last.startTick = linearBaseline.startTick;
+            editSession.focus.last.endTick = linearBaseline.endTick;
         }
         editSession.focus.movingNoteRange.start = editSession.focus.last.startTick;
         editSession.focus.movingNoteRange.end = editSession.focus.last.endTick;
@@ -301,16 +302,18 @@ void EditManager::rebuildNoteEditFocusForDisplayNote(Track& track,
     const NoteId baselineNoteId = findBaselineNoteIdForDisplay(editSession.focus, liveSelected);
     editSession.focus.movingNoteId = baselineNoteId;
 
+    editSession.focus.commitBaseline = {liveSelected.note, liveSelected.velocity,
+                                        liveSelected.startTick, liveSelected.endTick};
+    editSession.focus.last = editSession.focus.commitBaseline;
     MidiEventVec& sessionEvents = sessionMidiEvents();
     NoteBaseline linearBaseline;
     if (baselineNoteId != kInvalidNoteId &&
-        findLinearNoteSpanForNoteId(sessionEvents, baselineNoteId, channel, linearBaseline)) {
-        editSession.focus.commitBaseline = linearBaseline;
-        editSession.focus.last = linearBaseline;
-    } else {
-        editSession.focus.commitBaseline = {liveSelected.note, liveSelected.velocity,
-                                          liveSelected.startTick, liveSelected.endTick};
-        editSession.focus.last = editSession.focus.commitBaseline;
+        findLinearNoteSpanForNoteId(sessionEvents, baselineNoteId, channel, linearBaseline,
+                                    liveSelected.startTick, loopLength)) {
+        editSession.focus.commitBaseline.startTick = linearBaseline.startTick;
+        editSession.focus.commitBaseline.endTick = linearBaseline.endTick;
+        editSession.focus.last.startTick = linearBaseline.startTick;
+        editSession.focus.last.endTick = linearBaseline.endTick;
     }
     editSession.focus.movingNoteRange.start = editSession.focus.last.startTick;
     editSession.focus.movingNoteRange.end = editSession.focus.last.endTick;
@@ -723,7 +726,7 @@ void EditManager::revertNoteEditSessionForLoopClear(Track& track) {
         return;
     }
 
-    noteEditManager.resetLengthEditingModeOnSessionBoundary();
+    controlSurfaceManager.resetLengthEditingModeOnSessionBoundary();
     editSession.replaceEditPassOnClose = false;
     editSession.editPassIds.clear();
     editSession.undoStack.clear();
@@ -1216,7 +1219,7 @@ void EditManager::applyUndoRedoLanding(Track& track) {
         }
     }
 
-    noteEditManager.resetLengthEditingModeOnNoteSelect();
+    controlSurfaceManager.resetLengthEditingModeOnNoteSelect();
     applySelectNav(track, bracket, primaryNote, primaryNote != kInvalidNoteId);
 }
 
@@ -1511,7 +1514,7 @@ void EditManager::switchToNextState(Track& track) {
 
 void EditManager::enterEditMode(EditNoteState* newState, uint32_t startTick) {
     auto& track = trackManager.getSelectedTrack();
-    noteEditManager.resetLengthEditingModeOnSessionBoundary();
+    controlSurfaceManager.resetLengthEditingModeOnSessionBoundary();
     if (!editSession.active) {
         openNoteEditSession(track);
     }
@@ -1519,7 +1522,7 @@ void EditManager::enterEditMode(EditNoteState* newState, uint32_t startTick) {
 }
 
 void EditManager::exitEditMode(Track& track) {
-    noteEditManager.resetLengthEditingModeOnSessionBoundary();
+    controlSurfaceManager.resetLengthEditingModeOnSessionBoundary();
     syncNoteEditFocusLastFromSessionStore(track);
     commitAllPendingNoteEditActions(track);
 
@@ -1643,7 +1646,7 @@ void EditManager::persistActiveNoteEditSession(Track& track) {
 
 void EditManager::cycleEditSession(Track& track) {
     if (editSession.sessionType == EditSessionType::Note) {
-        noteEditManager.resetLengthEditingModeOnSessionBoundary();
+        controlSurfaceManager.resetLengthEditingModeOnSessionBoundary();
         syncNoteEditFocusLastFromSessionStore(track);
         trackManager.reclaimUnreferencedDisabledPasses();
         commitAllPendingNoteEditActions(track);

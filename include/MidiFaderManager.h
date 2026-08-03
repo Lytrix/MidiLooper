@@ -43,7 +43,7 @@ public:
     // Access to processor for external coordination
     MidiFaderProcessor& getProcessor() { return processor; }
     
-    // Sent-time / ignore-window bookkeeping (cross-fader schedule lives on NoteEditManager)
+    // Sent-time / ignore-window bookkeeping (cross-fader schedule lives on ControlSurfaceManager)
     void markFaderSent(MidiMapping::FaderType faderType);
     
     // Statistics and debugging
