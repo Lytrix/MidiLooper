@@ -566,7 +566,6 @@ void EditManager::openNoteEditSession(Track& track) {
 #if NOTE_EDIT_OPEN_BISECT_STAGE <= 2
     return;
 #endif
-    noteEditManager.prepareNoteEditSessionOpen();
     enterDefaultNoteEditSessionState(track, clockManager.getCurrentTick());
     DIAG_EVENT(Diagnostics::Edit::AfterEnterDefaultState);
 #if NOTE_EDIT_OPEN_BISECT_STAGE <= 3
