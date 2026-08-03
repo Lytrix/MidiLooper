@@ -29,7 +29,7 @@ class Track;
  *
  * Coordinates EditNoteState instances (home, select, start, length, pitch) for encoder
  * and button input. Loop geometry edit UI lives on LoopEditManager; MIDI fader/button
- * control-surface routing lives on NoteEditManager. Display updates go through
+ * control-surface routing lives on ControlSurfaceManager. Display updates go through
  * DisplayManager.
  */
 class EditManager {
@@ -100,7 +100,7 @@ public:
     void applyUndoRedoLanding(Track& track);
     void resetNoteEditSessionState();
 
-    /// Edit operations (moved from NoteEditManager — Phase 1).
+    /// Edit operations (moved from ControlSurfaceManager — Phase 1).
     bool deleteSelectedNote(Track& track, const NoteUtils::DisplayNoteVec& filteredNotes);
     bool moveNoteToPosition(Track& track, const NoteUtils::DisplayNote& currentNote,
                             uint32_t targetTick);

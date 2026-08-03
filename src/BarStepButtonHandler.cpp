@@ -7,7 +7,7 @@
 #include "Logger.h"
 #include "ClockManager.h"
 #include "TrackManager.h"
-#include "NoteEditManager.h"
+#include "ControlSurfaceManager.h"
 #include "LoopEditManager.h"
 #include "EditManager.h"
 #include "Utils/NoteUtils.h"
@@ -15,7 +15,7 @@
 #include "Utils/PressTiming.h"
 #include <cstdarg>
 
-extern NoteEditManager noteEditManager;
+extern ControlSurfaceManager controlSurfaceManager;
 extern EditManager editManager;
 extern ClockManager clockManager;
 extern TrackManager trackManager;
@@ -591,7 +591,7 @@ void BarStepButtonHandler::executeNoteEditAction(const BarStepButtonInfo& info, 
       testLog("BarStepButton NoteEdit: seek 16th %d tick=%lu idx=%d",
               info.stepIndex, stepTick, editManager.getSelectedNoteIdx());
       if (editManager.getSelectedNoteIdx() >= 0) {
-        noteEditManager.scheduleNoteSelectFaderSync(track);
+        controlSurfaceManager.scheduleNoteSelectFaderSync(track);
       }
       break;
 

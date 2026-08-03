@@ -11,7 +11,7 @@
 #include "StorageManager.h"
 #include "LooperState.h"
 #include "Logger.h"
-#include "NoteEditManager.h"
+#include "ControlSurfaceManager.h"
 #include "NoteEditSessionState.h"
 #include "EditStates/EditSelectNoteState.h"
 #include "TrackUndo.h"
@@ -107,7 +107,7 @@ extern EditManager editManager;
 extern ClockManager clockManager;
 extern MidiHandler midiHandler;
 extern Logger logger;
-extern NoteEditManager noteEditManager;
+extern ControlSurfaceManager controlSurfaceManager;
 
 // Global instance
 MidiButtonActions midiButtonActions;
@@ -988,7 +988,7 @@ uint32_t MidiButtonActions::getCurrentTick() {
 }
 
 void MidiButtonActions::handleToggleLengthEditMode() {
-    noteEditManager.toggleLengthEditingMode();
+    controlSurfaceManager.toggleLengthEditingMode();
 }
 
 bool MidiButtonActions::isValidTrackNumber(uint8_t trackNumber) {

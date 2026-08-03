@@ -22,7 +22,7 @@
 #include "EditManager.h"
 #include "EditStates/EditSelectNoteState.h"
 #include "Globals.h"
-#include "NoteEditManager.h"  // Keep temporarily for move note logic
+#include "ControlSurfaceManager.h"
 #include "Utils/PerformanceMonitor.h"  // Performance monitoring
 #include "Utils/MemoryMonitor.h"
 #include "Utils/MemoryPressureLevel.h"
@@ -179,10 +179,10 @@ void setup() {
   barStepButtonHandler.setTestLoggingEnabled(false);
   logger.setCategoryEnabled(CAT_BAR_STEP_BUTTON, false);
   
-  // Connect NoteEditManager to MidiFaderProcessor
-  noteEditManager.setFaderProcessor(&midiFaderManager.getProcessor());
-  noteEditManager.setDisplayManager(&displayManager);
-  editManager.setEditEventListener(&noteEditManager);
+  // Connect ControlSurfaceManager to MidiFaderProcessor
+  controlSurfaceManager.setFaderProcessor(&midiFaderManager.getProcessor());
+  controlSurfaceManager.setDisplayManager(&displayManager);
+  editManager.setEditEventListener(&controlSurfaceManager);
   
   // Keep old manager temporarily for move note logic
   //midiButtonManager.setup();
@@ -272,7 +272,7 @@ void loop() {
   
   barStepButtonHandler.update();
   
-  noteEditManager.update();
+  controlSurfaceManager.update();
 #if defined(ENABLE_GPIO_BUTTONS)
   gpioButtonManager.update();
 #endif

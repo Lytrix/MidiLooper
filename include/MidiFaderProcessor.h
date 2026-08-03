@@ -71,7 +71,7 @@ public:
     // Callback management
     void setFaderMovementCallback(FaderMovementCallback callback) { movementCallback = callback; }
     
-    // Sent-time / ignore-window bookkeeping (cross-fader schedule lives on NoteEditManager)
+    // Sent-time / ignore-window bookkeeping (cross-fader schedule lives on ControlSurfaceManager)
     void markFaderSent(MidiMapping::FaderType faderType);
     
     // Configuration

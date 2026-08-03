@@ -11,7 +11,7 @@
 #include "Logger.h"
 #include "Utils/NoteUtils.h"
 #include "TickPhase.h"
-#include "NoteEditManager.h"
+#include "ControlSurfaceManager.h"
 #include "NoteEditFocus.h"
 #include "NoteEditSessionState.h"
 #include "Utils/NoteEditDisplaySnapshot.h"

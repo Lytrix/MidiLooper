@@ -9,7 +9,7 @@
 #include "LooperState.h"
 #include "Logger.h"
 #include "MidiHandler.h"
-#include "NoteEditManager.h"
+#include "ControlSurfaceManager.h"
 #include "EditManager.h"
 #include "PassReclaim.h"
 #include "DisplayManager.h"

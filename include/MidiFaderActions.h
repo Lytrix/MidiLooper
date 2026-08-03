@@ -50,7 +50,7 @@ private:
     void handleMoveNoteFine(uint8_t ccValue);
     void handleChangeNoteValue(uint8_t ccValue);
     
-    // Helper methods for delegating to NoteEditManager
+    // Helper methods for delegating to ControlSurfaceManager
     void handleSelectFaderInput(int16_t pitchbendValue, Track& track);
     void handleCoarseFaderInput(int16_t pitchbendValue, Track& track);
     void handleFineFaderInput(uint8_t ccValue, Track& track);

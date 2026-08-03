@@ -12,7 +12,7 @@
 #include "MidiFaderManager.h"
 #include "BarStepButtonHandler.h"
 #include "MidiConfig.h"
-#include "NoteEditManager.h"
+#include "ControlSurfaceManager.h"
 #include "Utils/DebugSessionCapture.h"
 #include "LooperState.h"
 
@@ -46,6 +46,10 @@ bool isMotorFaderUsbHostServiceMessage(uint8_t type, uint8_t channel, uint8_t da
 bool isDroidFaderFeedbackOnlyPitchbend(uint8_t channel) {
   return channel == MidiConfig::Fader::COARSE_CHANNEL ||
          channel == MidiConfig::Fader::SELECT_CHANNEL;
+}
+
+bool isMidiThruExcludedChannel(byte channel) {
+  return channel >= MidiConfig::THRU_EXCLUDE_MIN && channel <= MidiConfig::THRU_EXCLUDE_MAX;
 }
 
 bool isDroidFaderFeedbackOnlyControlChange(uint8_t channel, uint8_t cc) {
@@ -224,12 +228,12 @@ void MidiHandler::handleMidiMessage(byte type, byte channel, byte data1, byte da
     }
   }
 
-  // MIDI Thru: pass channel messages to USB/Serial/USB-host on the selected track channel — except
-  // record-control plane (ch16) and DROID fader+LED plane (ch15), which must never be remapped.
+  // MIDI Thru: pass channel messages to USB/Serial/USB-host on the selected track channel —
+  // except DROID control plane (ch13-16), which must never be remapped onto track output.
   uint8_t outCh = trackManager.getSelectedTrack().getMidiChannel();
   bool isChannelMessage = (type == midi::NoteOn || type == midi::NoteOff || type == midi::ControlChange ||
                            type == midi::PitchBend || type == midi::AfterTouchChannel || type == midi::ProgramChange);
-  if (isChannelMessage && !isControlChannel(channel) && channel != MidiConfig::Channels::FADER) {
+  if (isChannelMessage && !isMidiThruExcludedChannel(channel)) {
     sendMidiThru(type, outCh, data1, data2);
   }
 
@@ -485,7 +489,7 @@ void MidiHandler::handleNoteOff(byte channel, byte note, byte velocity, uint32_t
 
 void MidiHandler::handleControlChange(byte channel, byte control, byte value, uint32_t tickNow) {
   if (!looperState.isLoadSaveModeActive()) {
-    noteEditManager.handleMidiCC(channel, control, value);
+    controlSurfaceManager.handleMidiCC(channel, control, value);
   }
 
   // Route to track recording (skip control channels 13-16)
@@ -499,7 +503,7 @@ void MidiHandler::handlePitchBend(byte channel, int pitchValue, uint32_t tickNow
       MidiConfig::Pitchbend::unsignedToLogical(static_cast<uint16_t>(pitchValue));
 
   if (!looperState.isLoadSaveModeActive()) {
-    noteEditManager.handleMidiPitchbend(channel, signedPitchValue);
+    controlSurfaceManager.handleMidiPitchbend(channel, signedPitchValue);
   }
 
   // Route to track recording (skip control channels 13-16)
@@ -795,7 +799,7 @@ void MidiHandler::usbHostNoteOff(uint8_t channel, uint8_t note, uint8_t velocity
 
 void MidiHandler::usbHostControlChange(uint8_t channel, uint8_t control, uint8_t value) {
   if (instance) {
-    // Single path: handleControlChange routes to NoteEditManager + track recording (no duplicate CC).
+    // Single path: handleControlChange routes to ControlSurfaceManager + track recording (no duplicate CC).
     instance->handleMidiMessage(midi::ControlChange, channel, control, value, SOURCE_USB_HOST);
   }
 }

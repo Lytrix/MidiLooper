@@ -380,29 +380,15 @@ NOTE_EDIT_MEM bool canApplySimplePitchChange(MidiEventVec& sessionEvents, const 
     return false;
   }
 
-  const uint32_t movingNoteStart = focus.movingNoteRange.start;
-  const uint32_t movingNoteEnd = movingNoteRangeDisplayEnd(focus, loopLength);
-  const bool preserveInnerNotes = focus.active;
-
   for (const MidiEvent& evt : sessionEvents) {
     if (!evt.isNoteOn() || evt.data.noteData.velocity == 0 || evt.channel != channel ||
         evt.data.noteData.note != targetPitch || evt.noteId == kInvalidNoteId ||
         evt.noteId == focus.movingNoteId) {
       continue;
     }
-    if (preserveInnerNotes && focus.movingNoteId != kInvalidNoteId) {
-      NoteBaseline probe{};
-      if (findLinearNoteSpanForNoteId(sessionEvents, evt.noteId, channel, probe, evt.tick,
-                                      loopLength)) {
-        if (isInnerOverlapNoteInMovingNoteRange(focus, probe.pitch, probe.startTick,
-                                                probe.endTick, loopLength)) {
-          continue;
-        }
-      }
-    }
     const OverlapNote* overlapEntry = findOverlapNoteEntry(focus, evt.noteId);
     if (overlapEntry != nullptr && overlapEntry->state != OverlapNoteStoreState::Visible) {
-      continue;
+      return false;
     }
     NoteBaseline linear;
     if (!findLinearNoteSpanForNoteId(sessionEvents, evt.noteId, channel, linear, evt.tick,
@@ -651,25 +637,36 @@ MidiEvent* findNoteOnForMovingNoteEdit(std::vector<MidiEvent, Alloc>& events,
         continue;
       }
       if (MidiEvent* on =
-              findNoteOnForNoteIdAtTick(events, focus.movingNoteId, channel, pitch,
+              findNoteOnForNoteIdAtTick(events, focus.movingNoteId, channel, linearSpan.pitch,
                                         linearSpan.startTick)) {
         return on;
       }
-      if (MidiEvent* on = findNoteOnAtChannelPitchTick(events, channel, pitch,
-                                                        linearSpan.startTick)) {
-        return on;
-      }
     }
-    if (MidiEvent* on = findNoteOnForNoteIdAnyChannel(events, focus.movingNoteId, pitch)) {
+    if (MidiEvent* on = findNoteOnForNoteIdAnyChannel(events, focus.movingNoteId, focus.last.pitch)) {
       return on;
     }
   }
 
-  const uint32_t tickCandidates[] = {startTick, focus.active ? focus.commitBaseline.startTick : startTick,
-                                     focus.active ? focus.movingNoteRange.start : startTick};
-  for (uint32_t tick : tickCandidates) {
-    if (MidiEvent* on = findNoteOnAtChannelPitchTick(events, channel, pitch, tick)) {
-      return on;
+  const uint8_t pitchCandidates[] = {pitch, focus.active ? focus.last.pitch : pitch,
+                                     focus.active ? focus.commitBaseline.pitch : pitch};
+  for (uint8_t pitchCandidate : pitchCandidates) {
+    const uint32_t tickCandidates[] = {startTick, focus.active ? focus.commitBaseline.startTick : startTick,
+                                       focus.active ? focus.movingNoteRange.start : startTick};
+    for (uint32_t tick : tickCandidates) {
+      if (MidiEvent* on = findNoteOnForNoteIdAtTick(events, focus.movingNoteId, channel,
+                                                    pitchCandidate, tick)) {
+        return on;
+      }
+    }
+  }
+
+  if (!focus.active || focus.movingNoteId == kInvalidNoteId) {
+    const uint32_t tickCandidates[] = {startTick, focus.active ? focus.commitBaseline.startTick : startTick,
+                                       focus.active ? focus.movingNoteRange.start : startTick};
+    for (uint32_t tick : tickCandidates) {
+      if (MidiEvent* on = findNoteOnAtChannelPitchTick(events, channel, pitch, tick)) {
+        return on;
+      }
     }
   }
   return nullptr;
@@ -690,13 +687,30 @@ bool syncNoteEditFocusLinearFromSessionStore(NoteEditFocus& focus,
   }
   NoteBaseline linearSpan;
   if (focus.movingNoteId != kInvalidNoteId &&
-      (findLinearNoteSpanForNoteId(events, focus.movingNoteId, channel, linearSpan,
-                                   focus.last.startTick, loopLength) ||
-       findLinearNoteSpanForNoteId(events, focus.movingNoteId, channel, linearSpan,
-                                   focus.commitBaseline.startTick, loopLength) ||
-       findLinearNoteSpanForNoteId(events, focus.movingNoteId, channel, linearSpan, UINT32_MAX,
-                                   loopLength))) {
-    focus.last = linearSpan;
+      findLinearNoteSpanForNoteId(events, focus.movingNoteId, channel, linearSpan,
+                                  focus.last.startTick, loopLength)) {
+    focus.last.startTick = linearSpan.startTick;
+    focus.last.endTick = linearSpan.endTick;
+    focus.last.pitch = linearSpan.pitch;
+    focus.last.velocity = linearSpan.velocity;
+    focus.movingNoteRange.start = linearSpan.startTick;
+    focus.movingNoteRange.end = linearSpan.endTick;
+    return true;
+  }
+  if (focus.movingNoteId != kInvalidNoteId &&
+      findLinearNoteSpanForNoteId(events, focus.movingNoteId, channel, linearSpan,
+                                  focus.commitBaseline.startTick, loopLength)) {
+    focus.last.startTick = linearSpan.startTick;
+    focus.last.endTick = linearSpan.endTick;
+    focus.movingNoteRange.start = linearSpan.startTick;
+    focus.movingNoteRange.end = linearSpan.endTick;
+    return true;
+  }
+  if (focus.movingNoteId != kInvalidNoteId &&
+      findLinearNoteSpanForNoteId(events, focus.movingNoteId, channel, linearSpan, UINT32_MAX,
+                                  loopLength)) {
+    focus.last.startTick = linearSpan.startTick;
+    focus.last.endTick = linearSpan.endTick;
     focus.movingNoteRange.start = linearSpan.startTick;
     focus.movingNoteRange.end = linearSpan.endTick;
     return true;
