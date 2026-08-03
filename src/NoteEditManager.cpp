@@ -226,24 +226,6 @@ NOTE_EDIT_MEM void NoteEditManager::handleMidiCC(uint8_t channel, uint8_t ccNumb
                FINE_CC_CHANNEL, FINE_CC_NUMBER, NOTE_VALUE_CC_CHANNEL, NOTE_VALUE_CC_NUMBER);
 }
 
-NOTE_EDIT_MEM bool NoteEditManager::moveNoteToPosition(Track& track, const NoteUtils::DisplayNote& currentNote,
-                                         std::uint32_t targetTick) {
-    releaseEditedNoteAudition();
-    const bool moved = editManager.moveNoteToPosition(track, currentNote, targetTick);
-    sendEditedNoteAuditionWhenTransportStopped(track);
-    return moved;
-}
-
-NOTE_EDIT_MEM bool NoteEditManager::changeNoteEndWithOverlapHandling(Track& track,
-                                                       const NoteUtils::DisplayNote& currentNote,
-                                                       std::uint32_t targetEndTick) {
-    releaseEditedNoteAudition();
-    const bool changed =
-        editManager.changeNoteEndWithOverlapHandling(track, currentNote, targetEndTick);
-    sendEditedNoteAuditionWhenTransportStopped(track);
-    return changed;
-}
-
 NOTE_EDIT_MEM void NoteEditManager::processEncoderMovement(int rawDelta) {
     if (rawDelta == 0) {
         return;
@@ -310,16 +292,6 @@ NOTE_EDIT_MEM void NoteEditManager::cycleEditSession(Track& track) {
     if (priorSession == EditSessionType::Note) {
         releaseEditedNoteAudition();
     }
-}
-
-NOTE_EDIT_MEM void NoteEditManager::deleteSelectedNote(Track& track) {
-    const std::vector<NoteUtils::DisplayNote> filteredStd = selectableDisplayNotesForEditUi(track);
-    NoteUtils::DisplayNoteVec filteredNotes(filteredStd.begin(), filteredStd.end());
-    if (!editManager.deleteSelectedNote(track, filteredNotes)) {
-        return;
-    }
-    resetLengthEditingModeOnNoteSelect();
-    releaseEditedNoteAudition();
 }
 
 NOTE_EDIT_MEM void NoteEditManager::scheduleOtherFaderUpdates(MidiMapping::FaderType driverFader) {
@@ -532,7 +504,7 @@ NOTE_EDIT_MEM void NoteEditManager::scheduleSelectDependentMotorSync(Track& trac
         return;
     }
 
-    const std::vector<NoteUtils::DisplayNote> notes = selectableDisplayNotesForEditUi(track);
+    const std::vector<NoteUtils::DisplayNote> notes = editManager.selectableDisplayNotesForEditUi(track);
     const uint32_t loopStartTick = editManager.noteEditLoopStartTick(track);
     const uint32_t loopLength = editManager.noteEditLoopLengthTicks(track);
     int noteIdx = -1;
@@ -967,7 +939,7 @@ NOTE_EDIT_MEM int NoteEditManager::selectNavSlotIndexForPitchbend(Track& track, 
         return -1;
     }
     const std::vector<SelectNavigation::SelectNavSlot> slots =
-        buildSelectNavigationSlots(track, editManager.getSelectedTick(), true);
+        editManager.buildSelectNavigationSlots(track, editManager.getSelectedTick(), true);
     if (slots.empty()) {
         return -1;
     }
@@ -997,10 +969,6 @@ NOTE_EDIT_MEM void NoteEditManager::prepareNoteEditSessionOpen() {
     clearPendingSelectDependentMotorSync();
     clearPendingGeometryDriverMotorSync();
     startEditingEnabled = false;
-}
-
-NOTE_EDIT_MEM void NoteEditManager::syncReferenceStepFromSelectedTick(uint32_t selectedTick) {
-    editManager.syncReferenceStepFromSelectedTick(selectedTick);
 }
 
 NOTE_EDIT_MEM void NoteEditManager::scheduleNoteSelectFaderSync(Track& track) {
@@ -1082,7 +1050,7 @@ NoteEditDependentFaderBuildInput NoteEditManager::makeDependentFaderBuildInput(
         input.selectTarget.absoluteTargetTick = selectTarget->absoluteTargetTick;
         input.selectTarget.noteIdx = selectTarget->noteIdx;
         if (selectTarget->noteIdx >= 0) {
-            const std::vector<NoteUtils::DisplayNote> notes = selectableDisplayNotesForEditUi(track);
+            const std::vector<NoteUtils::DisplayNote> notes = editManager.selectableDisplayNotesForEditUi(track);
             if (selectTarget->noteIdx < static_cast<int>(notes.size())) {
                 const NoteUtils::DisplayNote& note =
                     notes[static_cast<size_t>(selectTarget->noteIdx)];
@@ -1589,7 +1557,7 @@ NOTE_EDIT_MEM NoteEditManager::Fader1SelectTarget NoteEditManager::resolveFader1
         return target;
     }
     const std::vector<SelectNavigation::SelectNavSlot> slots =
-        buildSelectNavigationSlots(track, editManager.getSelectedTick(), true);
+        editManager.buildSelectNavigationSlots(track, editManager.getSelectedTick(), true);
     if (slots.empty()) {
         return target;
     }
@@ -1601,16 +1569,6 @@ NOTE_EDIT_MEM NoteEditManager::Fader1SelectTarget NoteEditManager::resolveFader1
     target.noteIdx = SelectNavigation::resolveNoteIdxAtSlot(slot);
     target.valid = true;
     return target;
-}
-
-std::vector<NoteUtils::DisplayNote> NoteEditManager::selectableDisplayNotesForEditUi(
-    const Track& track) const {
-    return editManager.selectableDisplayNotesForEditUi(track);
-}
-
-std::vector<SelectNavigation::SelectNavSlot> NoteEditManager::buildSelectNavigationSlots(
-    const Track& track, uint32_t selectedTick, bool includeSelectedTickIfMissing) const {
-    return editManager.buildSelectNavigationSlots(track, selectedTick, includeSelectedTickIfMissing);
 }
 
 NOTE_EDIT_MEM void NoteEditManager::syncMotorsFromSelectTarget(
@@ -1691,7 +1649,7 @@ NOTE_EDIT_MEM void NoteEditManager::handleSelectFaderInput(int16_t pitchValue, T
     const EditorSelection& priorSelection = editManager.getNoteEditSessionState().selection;
     NoteId nextPrimaryNote = kInvalidNoteId;
     if (target.noteIdx >= 0) {
-        const std::vector<NoteUtils::DisplayNote> notes = selectableDisplayNotesForEditUi(track);
+        const std::vector<NoteUtils::DisplayNote> notes = editManager.selectableDisplayNotesForEditUi(track);
         if (target.noteIdx < static_cast<int>(notes.size())) {
             nextPrimaryNote = noteIdFromFilteredDisplayNote(notes, target.noteIdx);
         }
@@ -1744,7 +1702,7 @@ NOTE_EDIT_MEM bool NoteEditManager::applyNoteSelectFromFader1Pitchbend(Track& tr
     }
 
     const std::vector<SelectNavigation::SelectNavSlot> slots =
-        buildSelectNavigationSlots(track, editManager.getSelectedTick(), true);
+        editManager.buildSelectNavigationSlots(track, editManager.getSelectedTick(), true);
 
     if (slots.empty() || posIndex < 0 || posIndex >= static_cast<int>(slots.size())) {
         return false;
@@ -1752,7 +1710,7 @@ NOTE_EDIT_MEM bool NoteEditManager::applyNoteSelectFromFader1Pitchbend(Track& tr
 
     const SelectNavigation::SelectNavSlot& slot = slots[static_cast<size_t>(posIndex)];
     const uint32_t absoluteTargetTick = slot.relativeTick;
-    const std::vector<NoteUtils::DisplayNote> notes = selectableDisplayNotesForEditUi(track);
+    const std::vector<NoteUtils::DisplayNote> notes = editManager.selectableDisplayNotesForEditUi(track);
     const int noteIdx = SelectNavigation::resolveNoteIdxAtSlot(slot);
 
     (void)pitchValue;
@@ -1861,7 +1819,7 @@ NOTE_EDIT_MEM void NoteEditManager::handleCoarseFaderInput(int16_t pitchValue, T
     uint32_t loopLength = track.getLoopLength();
     if (loopLength == 0) return;
     
-    const std::vector<NoteUtils::DisplayNote> notes = selectableDisplayNotesForEditUi(track);
+    const std::vector<NoteUtils::DisplayNote> notes = editManager.selectableDisplayNotesForEditUi(track);
     int selectedIdx = editManager.getSelectedNoteIdx();
     
     if (selectedIdx >= 0 && selectedIdx < (int)notes.size()) {
@@ -1894,8 +1852,10 @@ NOTE_EDIT_MEM void NoteEditManager::handleCoarseFaderInput(int16_t pitchValue, T
             logger.log(CAT_MIDI, LOG_DEBUG,
                        "LENGTH EDIT: pitchbend %d -> tick %lu (was %lu)",
                        pitchValue, targetEndTick, relativeEndTick);
+            releaseEditedNoteAudition();
             geometryApplied =
-                changeNoteEndWithOverlapHandling(track, currentNote, targetEndTick);
+                editManager.changeNoteEndWithOverlapHandling(track, currentNote, targetEndTick);
+            sendEditedNoteAuditionWhenTransportStopped(track);
             if (geometryApplied) {
                 const NoteUtils::DisplayNote liveAfterLength =
                     editManager.liveEditDisplayNoteAtSelect(track);
@@ -1942,7 +1902,9 @@ NOTE_EDIT_MEM void NoteEditManager::handleCoarseFaderInput(int16_t pitchValue, T
             
             // Store the target step as reference for fine adjustments
             editManager.setReferenceStep(targetSixteenthStep);
-            geometryApplied = moveNoteToPosition(track, currentNote, targetTick);
+            releaseEditedNoteAudition();
+            geometryApplied = editManager.moveNoteToPosition(track, currentNote, targetTick);
+            sendEditedNoteAuditionWhenTransportStopped(track);
         }
 
         if (geometryApplied) {
@@ -2017,8 +1979,10 @@ NOTE_EDIT_MEM void NoteEditManager::handleFineFaderInput(uint8_t ccValue, Track&
         logger.log(CAT_MIDI, LOG_DEBUG,
                    "LENGTH EDIT (fine): anchor %lu offset %ld -> tick %lu",
                    anchorTick, fineOffset, targetEndTick);
+        releaseEditedNoteAudition();
         geometryApplied =
-            changeNoteEndWithOverlapHandling(track, currentNote, targetEndTick);
+            editManager.changeNoteEndWithOverlapHandling(track, currentNote, targetEndTick);
+        sendEditedNoteAuditionWhenTransportStopped(track);
     } else {
         const uint32_t currentNoteStartTick = currentNote.startTick;
         const uint32_t relativeStartTick =
@@ -2050,7 +2014,9 @@ NOTE_EDIT_MEM void NoteEditManager::handleFineFaderInput(uint8_t ccValue, Track&
                    "POSITION EDIT: Fine adjustment from relative tick %lu to %lu (absolute %lu -> %lu)", 
                    relativeStartTick, relativeTargetStartTick, currentNoteStartTick,
                    targetStartTick);
-        geometryApplied = moveNoteToPosition(track, currentNote, targetStartTick);
+        releaseEditedNoteAudition();
+        geometryApplied = editManager.moveNoteToPosition(track, currentNote, targetStartTick);
+        sendEditedNoteAuditionWhenTransportStopped(track);
     }
         
     logger.log(CAT_MIDI, LOG_DEBUG, "Fine fader: CC=%d - %s mode", 
@@ -2285,19 +2251,77 @@ NOTE_EDIT_MEM void NoteEditManager::toggleLengthEditingMode() {
 NOTE_EDIT_MEM void NoteEditManager::onEditEvent(EditEvent event) {
     Track& track = trackManager.getSelectedTrack();
     switch (event) {
+        case EditEvent::SessionOpened:
+            handleSessionOpenedEvent(track);
+            break;
+        case EditEvent::SessionClosed:
+            handleSessionClosedEvent(track);
+            break;
         case EditEvent::LengthModeChanged:
             handleLengthModeChangedEvent(track);
             break;
         case EditEvent::SelectionChanged:
             handleSelectionChangedEvent(track);
             break;
+        case EditEvent::GeometryChanged:
+            handleGeometryChangedEvent(track);
+            break;
         default:
             break;
     }
 }
 
+NOTE_EDIT_MEM void NoteEditManager::sendEditSessionMidi(EditSessionType sessionType) {
+    uint8_t program = MidiConfig::SessionProgram::LOOP_EDIT;
+    uint8_t triggerNote = 0;
+    const char* modeName = "LOOP_EDIT";
+
+    switch (sessionType) {
+        case EditSessionType::Loop:
+            program = MidiConfig::SessionProgram::LOOP_EDIT;
+            triggerNote = 100;
+            modeName = "LOOP_EDIT";
+            break;
+        case EditSessionType::Note:
+            program = MidiConfig::SessionProgram::NOTE_EDIT;
+            triggerNote = 0;
+            modeName = "NOTE_EDIT";
+            break;
+        case EditSessionType::ControlChange:
+            return;
+    }
+
+    midiHandler.sendProgramChange(MidiConfig::PROGRAM_CHANGE_CHANNEL, program);
+    midiHandler.sendLedFeedbackNoteOn(triggerNote, 64);
+    delay(10);
+    midiHandler.sendLedFeedbackNoteOff(triggerNote);
+    logger.log(CAT_MIDI, LOG_INFO, "Edit session: %s (Program %d, Note %d trigger)",
+               modeName, program, triggerNote);
+}
+
+NOTE_EDIT_MEM void NoteEditManager::handleSessionOpenedEvent(Track& track) {
+    if (editManager.sessionOpenedIncludesMidi()) {
+        sendEditSessionMidi(editManager.getEditSessionType());
+    }
+    if (editManager.sessionOpenedIncludesFaderFeedback() && editManager.isNoteEditActive()) {
+        prepareNoteEditSessionOpen();
+        sendNoteEditSessionFaderFeedback(track);
+    }
+}
+
+NOTE_EDIT_MEM void NoteEditManager::handleSessionClosedEvent(Track& track) {
+    releaseEditedNoteAudition();
+    (void)track;
+}
+
+NOTE_EDIT_MEM void NoteEditManager::handleGeometryChangedEvent(Track& track) {
+    resetLengthEditingModeOnNoteSelect();
+    releaseEditedNoteAudition();
+    (void)track;
+}
+
 NOTE_EDIT_MEM void NoteEditManager::handleLengthModeChangedEvent(Track& track) {
-    const std::vector<NoteUtils::DisplayNote> notes = selectableDisplayNotesForEditUi(track);
+    const std::vector<NoteUtils::DisplayNote> notes = editManager.selectableDisplayNotesForEditUi(track);
     const int selectedIdx = editManager.getSelectedNoteIdx();
     if (notes.empty() || selectedIdx < 0 || selectedIdx >= static_cast<int>(notes.size())) {
         return;

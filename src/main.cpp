@@ -206,7 +206,7 @@ void setup() {
   looper.setup();  // SD + loadState; USB + piano roll deferred until full slot drain
 
   // Startup policy: enter LOOP_EDIT deterministically and sync DROID explicitly.
-  editManager.sendEditSessionChange(EditSessionType::Loop);
+  editManager.sendEditSessionChange(EditSessionType::Loop, true);
 
   for (uint8_t i = 0; i < trackManager.getTrackCount(); ++i) {
     TrackState state = trackManager.getTrack(i).getState();
