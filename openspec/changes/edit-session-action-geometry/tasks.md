@@ -28,10 +28,10 @@
 
 ## 2. Action builder (Phase 2)
 
-- [ ] 2.1 Add `buildEditSessionActions(constrainedGeometry, editedGeometry, transactionBaseline, liveStore)` — **edit session action builder** + **omit actions that would not change live store**; **Invariant — Constrained Geometry Authority**
-- [ ] 2.2 Deterministic **edit session action apply** order: **RestoreNote** → **ShortenNote** → **HideNote** → causing note geometry actions
-- [ ] 2.3 Native `test/test_edit_session_action_builder/`
-- [ ] 2.4 Log hook (debug): relationship → action mapping when `SESSION_CAPTURE`
+- [x] 2.1 Add `buildEditSessionActions(constrainedGeometry, editedGeometry, transactionBaseline, liveStore)` — **edit session action builder** + **omit actions that would not change live store**; **Invariant — Constrained Geometry Authority**
+- [x] 2.2 Deterministic **edit session action apply** order: **RestoreNote** → **ShortenNote** → **HideNote** → causing note geometry actions
+- [x] 2.3 Native `test/test_edit_session_action_builder/`
+- [x] 2.4 Log hook (debug): relationship → action mapping when `SESSION_CAPTURE`
 
 ## 3. Apply (Phase 3)
 
