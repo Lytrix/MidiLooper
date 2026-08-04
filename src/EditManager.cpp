@@ -280,6 +280,7 @@ void EditManager::rebuildNoteEditFocusAtSelect(Track& track, int selectedNoteIdx
         }
         editSession.focus.movingNoteRange.start = editSession.focus.last.startTick;
         editSession.focus.movingNoteRange.end = editSession.focus.last.endTick;
+        evictOverlapScratchForSelectedNote(editSession.focus, noteId);
     }
 }
 
@@ -301,6 +302,7 @@ void EditManager::rebuildNoteEditFocusForDisplayNote(Track& track,
 
     const NoteId baselineNoteId = findBaselineNoteIdForDisplay(editSession.focus, liveSelected);
     editSession.focus.movingNoteId = baselineNoteId;
+    evictOverlapScratchForSelectedNote(editSession.focus, baselineNoteId);
 
     editSession.focus.commitBaseline = {liveSelected.note, liveSelected.velocity,
                                         liveSelected.startTick, liveSelected.endTick};

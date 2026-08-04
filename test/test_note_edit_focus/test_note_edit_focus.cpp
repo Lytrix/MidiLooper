@@ -796,6 +796,72 @@ void test_is_moving_note_overlap_scratch_entry() {
   TEST_ASSERT_FALSE(isMovingNoteOverlapScratchEntry(focus, 79, {79, 100, 1490, 1535}));
 }
 
+void test_evict_overlap_scratch_when_overlap_target_selected() {
+  constexpr NoteId kOverlapId = 10;
+  constexpr NoteId kOtherOverlapId = 11;
+  NoteEditFocus focus;
+  focus.active = true;
+
+  OverlapNote shortened{};
+  shortened.noteId = kOverlapId;
+  shortened.baseline = {67, 100, 426, 619};
+  shortened.state = OverlapNoteStoreState::Shortened;
+  shortened.shortenedEndTick = 569;
+  focus.overlapNotes[kOverlapId] = shortened;
+
+  OverlapNote hidden{};
+  hidden.noteId = kOtherOverlapId;
+  hidden.baseline = {60, 100, 619, 907};
+  hidden.state = OverlapNoteStoreState::Hidden;
+  focus.overlapNotes[kOtherOverlapId] = hidden;
+
+  TEST_ASSERT_TRUE(evictOverlapScratchForSelectedNote(focus, kOverlapId));
+  TEST_ASSERT_EQUAL(1, static_cast<int>(focus.overlapNotes.size()));
+  TEST_ASSERT_NULL(findOverlapNoteEntry(focus, kOverlapId));
+  TEST_ASSERT_NOT_NULL(findOverlapNoteEntry(focus, kOtherOverlapId));
+
+  TEST_ASSERT_FALSE(evictOverlapScratchForSelectedNote(focus, kInvalidNoteId));
+  TEST_ASSERT_FALSE(evictOverlapScratchForSelectedNote(focus, kOverlapId));
+}
+
+void test_select_overlap_target_evicts_shortened_scratch_session_log() {
+  // session_20260804_180228 @519.5s: pitch=67 start=426 shortened to 569; select then move must not
+  // leave overlapNotes self-collision on the mover.
+  constexpr NoteId kOverlapId = 67;
+  constexpr uint32_t kLoopLength = 1536;
+  NoteEditFocus focus;
+  focus.active = true;
+  focus.movingNoteId = kOverlapId;
+
+  OverlapNote shortened{};
+  shortened.noteId = kOverlapId;
+  shortened.baseline = {67, 100, 426, 619};
+  shortened.state = OverlapNoteStoreState::Shortened;
+  shortened.shortenedEndTick = 569;
+  focus.overlapNotes[kOverlapId] = shortened;
+
+  focus.commitBaseline = {67, 100, 426, 898};
+  focus.last = focus.commitBaseline;
+  focus.movingNoteRange = {426, 898};
+  focus.baselineMap[kOverlapId] = {67, 100, 426, 619};
+
+  TEST_ASSERT_TRUE(evictOverlapScratchForSelectedNote(focus, kOverlapId));
+  TEST_ASSERT_EQUAL(0, static_cast<int>(focus.overlapNotes.size()));
+  TEST_ASSERT_FALSE(noteEditFocusHasPendingCommit(focus));
+
+  MidiEventVec session;
+  MidiEvent on = MidiEvent::NoteOn(426, 1, 67, 100);
+  on.noteId = kOverlapId;
+  session.push_back(on);
+  session.push_back(MidiEvent::NoteOff(898, 1, 67, 0));
+
+  NoteBaseline linear{};
+  TEST_ASSERT_TRUE(
+      findLinearNoteSpanForNoteId(session, kOverlapId, 1, linear, 426, kLoopLength));
+  TEST_ASSERT_EQUAL_UINT32(426u, linear.startTick);
+  TEST_ASSERT_EQUAL_UINT32(898u, linear.endTick);
+}
+
 void test_pitch_linear_focus_no_spurious_length_after_sync() {
   constexpr NoteId kNoteId = 32;
   constexpr uint32_t kLoopLength = 1536;
@@ -1528,6 +1594,8 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_is_plausible_storage_span_rejects_lifo_mispair);
   RUN_TEST(test_find_linear_note_span_rejects_mispaired_off);
   RUN_TEST(test_is_moving_note_overlap_scratch_entry);
+  RUN_TEST(test_evict_overlap_scratch_when_overlap_target_selected);
+  RUN_TEST(test_select_overlap_target_evicts_shortened_scratch_session_log);
   RUN_TEST(test_pitch_linear_focus_no_spurious_length_after_sync);
   RUN_TEST(test_linear_baseline_for_overlap_restore_rejects_display_wrap_end);
   RUN_TEST(test_baseline_map_prefers_linear_span_over_wrap_projection);
