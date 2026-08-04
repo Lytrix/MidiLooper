@@ -57,6 +57,10 @@ _VERIFIER_REGISTRY: dict[str, VerifierFn] = {
 }
 
 
+def register_verifier(verifier_id: str, fn: VerifierFn) -> None:
+    _VERIFIER_REGISTRY[verifier_id] = fn
+
+
 def get_verifier(verifier_id: str | None) -> VerifierFn:
     if verifier_id is None:
         return _verifier_stub
@@ -91,12 +95,12 @@ def get_layered_registry() -> dict[str, LayeredScenarioSpec]:
 
 
 def _build_layered_registry() -> dict[str, LayeredScenarioSpec]:
-    from hitl.scenarios.layered_stubs import (
-        run_edit_minimal_stub,
-        run_long_loop_display_window_stub,
-        run_record_overdub_stub,
-        run_record_seed_stub,
-        run_slot_queued_start_stub,
+    from hitl.scenarios.layered import (
+        run_edit_minimal,
+        run_long_loop_display_window,
+        run_record_overdub,
+        run_record_seed,
+        run_slot_queued_start,
     )
 
     return {
@@ -105,38 +109,45 @@ def _build_layered_registry() -> dict[str, LayeredScenarioSpec]:
             description="Clear slot and record seed loop",
             tags=("record",),
             verifier_id="capture",
-            run=run_record_seed_stub,
+            run=run_record_seed,
         ),
         "record_overdub": LayeredScenarioSpec(
             id="record_overdub",
             description="Record seed plus overdub passes",
             tags=("record",),
             verifier_id="capture",
-            run=run_record_overdub_stub,
+            run=run_record_overdub,
         ),
         "edit_minimal": LayeredScenarioSpec(
             id="edit_minimal",
             description="Note edit smoke after record seed",
             tags=("edit",),
             verifier_id="playback",
-            run=run_edit_minimal_stub,
+            run=run_edit_minimal,
         ),
         "long_loop_display_window": LayeredScenarioSpec(
             id="long_loop_display_window",
             description="Long loop display window behaviour",
             tags=("display",),
             verifier_id="display",
-            run=run_long_loop_display_window_stub,
+            run=run_long_loop_display_window,
         ),
         "slot_queued_start": LayeredScenarioSpec(
             id="slot_queued_start",
             description="Queued slot switch playback",
             tags=("slot",),
             verifier_id="playback",
-            run=run_slot_queued_start_stub,
+            run=run_slot_queued_start,
         ),
     }
 
 
-def register_verifier(verifier_id: str, fn: VerifierFn) -> None:
-    _VERIFIER_REGISTRY[verifier_id] = fn
+def _register_default_verifiers() -> None:
+    from hitl.verify import capture, display, playback
+
+    register_verifier("capture", capture.verify_capture)
+    register_verifier("playback", playback.verify_playback)
+    register_verifier("display", display.verify_display)
+
+
+_register_default_verifiers()

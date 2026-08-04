@@ -13,11 +13,24 @@ from hitl.session import HitlSession, open_midi_session
 def build_session(config: HitlConfig) -> HitlSession:
     if config.verify_only:
         return HitlSession(out_port=None, in_port=None, collector=None)
-    return open_midi_session(
+
+    session = open_midi_session(
         midi_out_name=config.midi_out_name,
         midi_in_name=config.midi_in_name,
         serial_port=config.serial_port,
     )
+    if config.uses_external_serial_capture:
+        from hitl.serial_follow import ExternalSerialFollowCollector
+
+        follow_path = (
+            config.follow_serial_log
+            if config.follow_serial_log is not None
+            else ExternalSerialFollowCollector.resolve_current_session_path(config.out_dir)
+        )
+        collector = ExternalSerialFollowCollector(follow_path, out_dir=config.out_dir)
+        collector.start()
+        session.collector = collector
+    return session
 
 
 def action_context(config: HitlConfig, session: HitlSession) -> ActionContext:

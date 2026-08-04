@@ -4,7 +4,7 @@ from __future__ import annotations
 
 
 def canonical_external_capture_legacy_args() -> list[str]:
-    """Mode B: external capture_session.py owns USB serial; HITL tails the log."""
+    """Tail captures/.current_session while a separate process owns USB serial."""
     return [
         "--follow-current-session",
     ]
@@ -55,8 +55,6 @@ def canonical_edit_minimal_base_legacy_args() -> list[str]:
         "3000",
         "--press-ms",
         "120",
-        "--track",
-        "5",
     ]
 
 

@@ -2,13 +2,13 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-08-04 (HITL CLI rebuild Phase 0)
+Last updated: 2026-08-04 (HITL CLI rebuild Phase 2 — device gate pending)
 
 ---
 
 ## Current branch
 
-**Active work:** HITL CLI rebuild Phase 1 — see [CURRENT_WORK.md](CURRENT_WORK.md).
+**Active work:** HITL CLI rebuild Phase 2 — see [CURRENT_WORK.md](CURRENT_WORK.md).
 
 **`chore/note-edit-control-surface-split`** — Phases 0–8 complete (merged). See [CURRENT_WORK.md](CURRENT_WORK.md).
 
@@ -28,7 +28,7 @@ See [`docs/BRANCHING.md`](../BRANCHING.md).
 
 ## In flight
 
-- **HITL CLI rebuild:** Phase 1 complete — layered foundation in `scripts/hitl/`; Phase 2 scenarios + `uip_5_5` gate next
+- **HITL CLI rebuild:** Phase 2 — managed dual-session default (`hitl/managed_capture.py`); device `uip_5_5` PASS pending
 - **Note-edit control-surface split:** **complete** on `chore/note-edit-control-surface-split` — Phases 0–8; see [note_edit_control_surface_split_refinement.md](../plans/note_edit_control_surface_split_refinement.md)
 - **Next product slice:** confirm with user (persistence/overlay hardening, or parked large-slot display hunt) — see [CURRENT_WORK.md](CURRENT_WORK.md)
 - **Archived this branch:** OpenSpec [`deferred-job-scheduler`](../../openspec/changes/archive/2026-07-19-deferred-job-scheduler/) Phase B — gates B.1 [`231510`](../../captures/session_20260718_231510.log), B.3/B.4 [`022107`](../../captures/session_20260719_022107.log); specs in `openspec/specs/deferred-job-scheduler/`

@@ -50,6 +50,7 @@ def open_midi_session(
     in_name = _find_midi_port(midi_in_name, is_input=True)
     out_port = mido.open_output(out_name)
     in_port = mido.open_input(in_name)
+    collector = None
     if serial_port:
         from hitl.serial_collector import SerialCaptureCollector
 
