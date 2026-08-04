@@ -219,7 +219,7 @@ void test_compute_shortened_end_tick_uses_causing_start_minus_one() {
   TEST_ASSERT_EQUAL_UINT32(1535u, computeShortenedEndTick(interaction, 1536));
 }
 
-void test_analyze_cross_pitch_inner_is_complete_cover() {
+void test_analyze_cross_pitch_inner_is_omitted() {
   constexpr NoteId kCausing = 9;
   constexpr NoteId kInner = 1;
   EditedGeometry geometry{};
@@ -236,7 +236,31 @@ void test_analyze_cross_pitch_inner_is_complete_cover() {
   const std::vector<CausingTargetPair, InternalHeapFirstAllocator<CausingTargetPair>> pairs = {
       {kCausing, kInner}};
   const auto interactions = analyzeEditSessionInteractions(pairs, geometry, baseline);
+  TEST_ASSERT_EQUAL(0, static_cast<int>(interactions.size()));
+}
+
+void test_analyze_pitch_change_destination_lane_in_scope() {
+  constexpr NoteId kCausing = 9;
+  constexpr NoteId kDestLane = 2;
+  constexpr NoteId kSourceLane = 1;
+  EditedGeometry geometry{};
+  geometry.selection.primaryNote = kCausing;
+  geometry.selection.selectedNotes.push_back(kCausing);
+  EditedNoteSpan causing{};
+  causing.noteId = kCausing;
+  // Pitch change: edited span is now pitch 16; destination-lane note at 16 is in scope.
+  causing.span = {16, 100, 144, 336};
+  geometry.causingSpans.push_back(causing);
+
+  BaselineMap baseline;
+  baseline[kDestLane] = {16, 100, 144, 192};
+  baseline[kSourceLane] = {13, 100, 144, 192};
+
+  const std::vector<CausingTargetPair, InternalHeapFirstAllocator<CausingTargetPair>> pairs = {
+      {kCausing, kDestLane}, {kCausing, kSourceLane}};
+  const auto interactions = analyzeEditSessionInteractions(pairs, geometry, baseline);
   TEST_ASSERT_EQUAL(1, static_cast<int>(interactions.size()));
+  TEST_ASSERT_EQUAL_UINT32(kDestLane, interactions[0].targetNoteId);
   TEST_ASSERT_EQUAL(static_cast<int>(InteractionType::CompleteCover),
                     static_cast<int>(interactions[0].type));
 }
@@ -269,7 +293,8 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_analyze_start_abut_is_overlap_note_off_not_boundary);
   RUN_TEST(test_analyze_end_touch_is_overlap_note_on_not_boundary);
   RUN_TEST(test_analyze_exact_same_span_is_complete_cover);
-  RUN_TEST(test_analyze_cross_pitch_inner_is_complete_cover);
+  RUN_TEST(test_analyze_cross_pitch_inner_is_omitted);
+  RUN_TEST(test_analyze_pitch_change_destination_lane_in_scope);
   RUN_TEST(test_group_interactions_by_target_orders_deterministically);
   RUN_TEST(test_compute_shortened_end_tick_uses_causing_start_minus_one);
   RUN_TEST(test_project_note_baseline_for_edit_analysis_wrap_parity);

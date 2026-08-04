@@ -211,6 +211,12 @@ analyzeEditSessionInteractions(
       continue;
     }
 
+    // D21 / Q14: Hide/Shorten only on the mover's current pitch lane. Edited causing span
+    // pitch makes the lane follow pitch changes; cross-pitch time overlap is omitted.
+    if (targetBaseline->pitch != causingSpan->pitch) {
+      continue;
+    }
+
     const uint32_t causingStart = causingSpan->startTick;
     const uint32_t causingEnd = causingSpan->endTick;
     const uint32_t targetStart = targetBaseline->startTick;
