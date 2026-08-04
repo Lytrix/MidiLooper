@@ -35,12 +35,12 @@
 
 ## 3. Apply (Phase 3)
 
-- [ ] 3.1 Add `applyEditSessionActions()` — **edit session action apply**; sole **live store** writer for geometry; includes **boundary split** sub-step (D10)
-- [ ] 3.2 Reuse pair helpers from `NoteEditFocus` / movement utils (extract, do not duplicate LIFO)
-- [ ] 3.3 Wire existing invariant gates after apply (micro closure + macro if test harness commits)
-- [ ] 3.4 Native `test/test_apply_edit_session_actions/` — 144458, 152335, hide+shorten+restore combinations
-- [ ] 3.5 **`EditorSelection`** sync after apply (replace index-only **`finalReconstructAndSelect`** paths incrementally)
-- [ ] 3.6 After **`applyEditSessionActions`**, call **`track.invalidateCaches()`** so **`sessionPreviewRevision_`** refreshes NOTE_EDIT playback audition (loop-wrap-projection Tier 2). **Brownfield today:** `NoteMovementUtils` geometry paths already call this; pipeline must not drop it
+- [x] 3.1 Add `applyEditSessionActions()` — **edit session action apply**; sole **live store** writer for geometry; includes **boundary split** sub-step (D10)
+- [x] 3.2 Reuse pair helpers from `NoteEditFocus` / movement utils (extract, do not duplicate LIFO)
+- [x] 3.3 Wire existing invariant gates after apply (micro closure + macro if test harness commits)
+- [x] 3.4 Native `test/test_apply_edit_session_actions/` — 144458, 152335, hide+shorten+restore combinations
+- [x] 3.5 **`EditorSelection`** sync after apply (replace index-only **`finalReconstructAndSelect`** paths incrementally)
+- [x] 3.6 After **`applyEditSessionActions`**, call **`track.invalidateCaches()`** so **`sessionPreviewRevision_`** refreshes NOTE_EDIT playback audition (loop-wrap-projection Tier 2). **Brownfield today:** `NoteMovementUtils` geometry paths already call this; pipeline must not drop it
 
 ## 4. Wire NOTE_EDIT geometry (Phase 4)
 
