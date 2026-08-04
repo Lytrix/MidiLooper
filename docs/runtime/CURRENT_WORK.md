@@ -2,13 +2,13 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-04 (HITL CLI rebuild Phase 3 — port remainder)
+Last updated: 2026-08-04 (HITL CLI rebuild Phase 3 — base + edit_full only)
 
 ---
 
 ## Now implementing
 
-### HITL CLI rebuild — Phase 3 port remainder
+### HITL CLI rebuild — Phase 3 (`base` + `edit_full` only)
 
 **OpenSpec:** [`openspec/changes/hitl-cli-rebuild/`](../../openspec/changes/hitl-cli-rebuild/)  
 **Plan:** [`docs/plans/hitl_cli_rebuild_enhancement.md`](../plans/hitl_cli_rebuild_enhancement.md)
@@ -17,13 +17,15 @@ Last updated: 2026-08-04 (HITL CLI rebuild Phase 3 — port remainder)
 |-------|--------|
 | 0 — inventory + doc scaffold | **Done** (2026-08-04) |
 | 1 — foundation (`HITL_ARCHITECTURE.md`, layered runner, actions, flows) | **Done** (2026-08-04) |
-| 2 — core scenarios + `uip_5_5` (UIP **5.5** gate) | **Done** (2026-08-04) |
-| 3 — port remainder + delete legacy | **In progress** — 3.1 layered wrappers for four scenarios landed |
+| 2 — core scenarios + UIP 5.5 (historical) | **Done** (2026-08-04) |
+| 3 — layered **`base`** + **`edit_full`** only | **In progress** — 3.2 bridge stabilized (2026-08-04); next: 3.3 device PASS |
 | 4–5 — corpus docs, archive | Pending |
 
-**Phase 3.1 layered presets (new):** `two_overdub_undo_redo`, `edit_overdub_during_note_edit`, `note_edit_select_dependent_faders`, `current_set_incremental_save` — use `--layered --preset <name>`.
+**Layered presets (active):** `base` (`record_overdub`), `edit_full`. Do **not** wire `edit_minimal`, `revision_*`, `load_save_*`, `fader_motor_*`, etc. in this change.
 
-**Still Phase 3:** wire `revision_*`, `load_save_*`, `fader_motor_*`; delete legacy monoliths when `rg` gate empty.
+**Phase 3.2 done:** `LayeredLegacyBridge.edit_full_args` includes slot targets + Mode B follow; `run_edit_baseline(..., owns_resources=False)` reuses layered MIDI/serial without opening a second collector; host tests in [`scripts/test_edit_full_layered.py`](../../scripts/test_edit_full_layered.py).
+
+**Phase 3 exit:** Mode B device PASS for `--layered --preset base` and `--layered --preset edit_full`. Keep `legacy_edit_baseline` bridge until `edit_full` no longer needs it.
 
 ---
 
@@ -305,7 +307,11 @@ Phases 1–3 prototype **reverted** at `40db4df` (boot bisect). Storage boot rec
 
 ### Derived note overlap (`edit-session-action-geometry`)
 
-Blocked until `unified-interval-projection` Phases 1–5 complete.
+**Phase 1 complete** (2026-08-04): native types, orchestrator, analyze, group-by-target, `resolveConstrainedGeometry` + tests.
+
+**Next:** Phase 2 — `buildEditSessionActions` + native tests.
+
+Handoff: [`derived_note_overlap_logic_handoff.md`](../plans/derived_note_overlap_logic_handoff.md)
 
 ### Prior: [`runtime-derived-representation-heap`](../../openspec/changes/runtime-derived-representation-heap/)
 

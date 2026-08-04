@@ -14,7 +14,7 @@ Persistent record of **accepted architectural and implementation decisions**. No
 
 | ID | Date | Topic | Status |
 |----|------|-------|--------|
-| [DEC-027](#dec-027-deferred-job-scheduler-north-star) | 2026-07-18 | Deferred job scheduler north star (Phase A under StorageManager) | Accepted; amended vocabulary 2026-07-18 |
+| [DEC-028](#dec-028-editsessionaction-geometry-pipeline-phase-1-native) | 2026-08-04 | EditSessionAction geometry pipeline Phase 1 native | Accepted |
 | [DEC-026](#dec-026-commit-centered-lazy-slot-load) | 2026-07-18 | Commit-centered lazy slot load (audible boot + on-demand hydrate) | Accepted |
 | [DEC-025](#dec-025-split-focus-playing-preview-pending) | 2026-07-09 | Split focus: playing / preview / pending; committed-transition invariant | Accepted |
 | [DEC-024](#dec-024-loop-owned-undo-ownership-direction) | 2026-07-08 | Loop-owned undo ownership direction (Phase 1 filter, Phase 2 migrate stack) | Accepted |
@@ -43,7 +43,21 @@ Persistent record of **accepted architectural and implementation decisions**. No
 
 ---
 
-<!-- Append new entries below (newest first). Next ID: DEC-028 -->
+<!-- Append new entries below (newest first). Next ID: DEC-029 -->
+
+## DEC-028 — EditSessionAction geometry pipeline (Phase 1 native)
+
+**Date:** 2026-08-04  
+**Status:** Accepted  
+**OpenSpec:** [`edit-session-action-geometry`](../../openspec/changes/edit-session-action-geometry/)
+
+**Decision:** Implement Phase 1 as pure native modules — `EditSessionAction` types, D17 orchestrator helpers, `analyzeEditSessionInteractions`, `groupEditSessionInteractionsByTarget`, `resolveConstrainedGeometry` — without wiring `NoteMovementUtils` yet. Brownfield `overlapNotes` guards remain until Phase 4 retires scratch.
+
+**Rationale:** Derived geometry pipeline needs testable analyze/resolve boundaries before replacing imperative restore-first paths. UIP Edit projection (`IntervalProjection`) is the D20 pre-analyze hook — no `normalizeWrapToLinear` module.
+
+**Tests:** `test_edit_session_interaction`, `test_resolve_constrained_geometry`.
+
+---
 
 ## DEC-027 — Deferred job scheduler north star
 
