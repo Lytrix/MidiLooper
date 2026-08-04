@@ -1,14 +1,14 @@
 # Tasks — edit-session-action-geometry
 
-> **BLOCKED** by [`unified-interval-projection`](../unified-interval-projection/) Phases 1–5 + HITL. Do not start firmware until UIP Phase 6 sync. Edit projection replaces task **1.2a** `normalizeWrapToLinear`.
+> **Active** — UIP Phases 1–5 code shipped ([`unified-interval-projection`](../unified-interval-projection/)); Phase 6 doc sync complete (2026-08-04). Pre-analysis (D20) uses shipped **Edit projection** (`buildEditProjectionContext`, `projectEditIntervalsForAnalysis`) — not a new `normalizeWrapToLinear` module.
 
 ## 0. OpenSpec and docs
 
-- [ ] 0.1 `proposal.md`, `design.md`, delta specs, `tasks.md` (this change)
-- [ ] 0.2 Handoff [`docs/plans/note_edit_session_action_geometry_enhancement.md`](../../docs/plans/note_edit_session_action_geometry_enhancement.md)
-- [ ] 0.3 Mark [`note_edit_overlap_invariant_matrix_enhancement.md`](../../docs/plans/note_edit_overlap_invariant_matrix_enhancement.md) superseded
-- [ ] 0.4 User approval of D1–D22 + **`EditSessionAction`** / **`InteractionType`** vocabulary
-- [ ] 0.5 Append DECISION_LOG when implementation starts
+- [x] 0.1 `proposal.md`, `design.md`, delta specs, `tasks.md` (this change)
+- [x] 0.2 Handoff [`docs/plans/note_edit_session_action_geometry_enhancement.md`](../../docs/plans/note_edit_session_action_geometry_enhancement.md)
+- [x] 0.3 Mark [`note_edit_overlap_invariant_matrix_enhancement.md`](../../docs/plans/note_edit_overlap_invariant_matrix_enhancement.md) superseded
+- [x] 0.4 User approval of D1–D22 + **`EditSessionAction`** / **`InteractionType`** vocabulary (2026-08-04)
+- [x] 0.5 Append DECISION_LOG when implementation starts
 - [ ] 0.7 Prior art decisions → [`edit_session_action_geometry_prior_art_refinement.md`](../../docs/plans/edit_session_action_geometry_prior_art_refinement.md)
 - [ ] 0.8 LOOP_MIDI guide NOTE_EDIT pairing paragraph (Q10)
 - [ ] 0.9 Park follow-on OpenSpec **`capture-pass-boundary-materialization`** (Q9 + Q16 NoteMinLength hot stop)
@@ -16,15 +16,15 @@
 
 ## 1. Types + relationship analysis (Phase 1)
 
-- [ ] 1.1 Add `include/EditSessionAction.h` — **`InteractionType`** (no **None**), **`EditSessionInteraction`**, **`TargetNoteInteractionGroup`**, **`EditSessionInteractionsByTarget`**, **`ConstrainedNoteGeometry`**, action types
-- [ ] 1.2 Add D17 **orchestrator** helpers: **`isSelectedNote`**, **`isIntraSelectionPair`**, **`geometryChangedThisTick`**, **`determineChangedCausingNotes`**, **`determineEligiblePairs`** — NOT inside analyze
-- [ ] 1.2a Add **`normalizeWrapToLinear`** — linear spans for mover, targets (including wrapped notes) before analyze (D20)
-- [ ] 1.3 Add `analyzeEditSessionInteractions(changedCausingNotes, …)` — pure geometry; one **`InteractionType`** per eligible **(causing, target)** pair; positive graph only
-- [ ] 1.4 Add `groupEditSessionInteractionsByTarget()` in `EditSessionInteraction.cpp` — ephemeral; full regroup each tick (D15)
-- [ ] 1.5 Add `determineConstrainedGeometryTargetNoteIds()` + `resolveConstrainedGeometry(..., noteMinLengthTicks, noteMinLengthRemoveEnabled)` — **constrained geometry target notes** scope + **combine precedence**; no action types
-- [ ] 1.6 Native `test/test_edit_session_interaction/` — D17; D20; D21 pitch-lane scope; Add=Move logic; geometry parity fixtures; same-tick boundary; no **None** enum
-- [ ] 1.7 Native `test/test_resolve_constrained_geometry/` — B+C then B gone (rebuild, not remove)
-- [ ] 1.8 No storage mutation in analyze / group-by-target / resolver
+- [x] 1.1 Add `include/EditSessionAction.h` — **`InteractionType`** (no **None**), **`EditSessionInteraction`**, **`TargetNoteInteractionGroup`**, **`EditSessionInteractionsByTarget`**, **`ConstrainedNoteGeometry`**, action types
+- [x] 1.2 Add D17 **orchestrator** helpers: **`isSelectedNote`**, **`isIntraSelectionPair`**, **`geometryChangedThisTick`**, **`determineChangedCausingNotes`**, **`determineEligiblePairs`** — NOT inside analyze
+- [x] 1.2a Wire **Edit projection** (D20) — **`buildEditProjectionContext`** + **`projectEditIntervalsForAnalysis`** ([`IntervalProjection`](../../../include/Utils/IntervalProjection.h)) for linear causing/target spans before analyze; no new `normalizeWrapToLinear` module
+- [x] 1.3 Add `analyzeEditSessionInteractions(changedCausingNotes, …)` — pure geometry; one **`InteractionType`** per eligible **(causing, target)** pair; positive graph only
+- [x] 1.4 Add `groupEditSessionInteractionsByTarget()` in `EditSessionInteraction.cpp` — ephemeral; full regroup each tick (D15)
+- [x] 1.5 Add `determineConstrainedGeometryTargetNoteIds()` + `resolveConstrainedGeometry(..., noteMinLengthTicks, noteMinLengthRemoveEnabled)` — **constrained geometry target notes** scope + **combine precedence**; no action types
+- [x] 1.6 Native `test/test_edit_session_interaction/` — D17; D20; D21 pitch-lane scope; Add=Move logic; geometry parity fixtures; same-tick boundary; no **None** enum
+- [x] 1.7 Native `test/test_resolve_constrained_geometry/` — B+C then B gone (rebuild, not remove)
+- [x] 1.8 No storage mutation in analyze / group-by-target / resolver
 
 ## 2. Action builder (Phase 2)
 
@@ -73,7 +73,7 @@
 | Move away → restore | (pair omitted) | Restore | pair reinserted | 144458 |
 | Add note on overlap | OverlapNoteOn/Off | Hide/Shorten | pair removed/shortened | native |
 | Delete causing note | (pair omitted) | Restore | hidden target restored | native |
-| Wrap target pre-analyze | D20 linearize | same table | linear off | 152335 |
+| Wrap target pre-analyze | D20 Edit projection | same table | linear off | 152335 |
 | Same-pitch multi-select lengthen | — | deferred (selected-to-selected overlap) | — | — |
 | Selected-to-selected skip | skip all | no interaction | — | native |
 | Selection derive not store | `isSelectedNote` | no extra fields | — | native |
@@ -84,7 +84,7 @@
 | Pitch change source lane restore | D21 | Restore | P0 targets | 144458 |
 | Same-tick on/off boundary | BoundaryTouch | split | off → on−1 | native |
 | Geometry parity fixtures | all types | — | — | native |
-| Lytrix wrap helpers port | D20 | — | linear length | native |
+| Edit projection wrap parity | D20 | — | linear length | native |
 | Poly shorten cross-pitch | — | deferred | — | — |
 
 ## Operator checklist (post wire)
