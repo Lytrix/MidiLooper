@@ -106,3 +106,41 @@ def run_slot_queued_start(ctx: ScenarioContext) -> ScenarioResult:
     time.sleep(max(phase_ms * 4, 2000) / 1000.0)
 
     return _result(ctx, exit_code=0, flow="slot_queued_start")
+
+
+def run_two_overdub_undo_redo(ctx: ScenarioContext) -> ScenarioResult:
+    from hitl.scenarios.two_overdub_undo_redo import run_two_overdub_undo_redo
+
+    bridge = _bridge(ctx)
+    args = bridge.two_overdub_undo_redo_args(ctx)
+    code = run_two_overdub_undo_redo(args)
+    return _result(ctx, exit_code=code, flow="two_overdub_undo_redo")
+
+
+def run_edit_overdub_during_note_edit(ctx: ScenarioContext) -> ScenarioResult:
+    from hitl.scenarios.edit_overdub_during_note_edit import run_edit_overdub_during_note_edit
+
+    bridge = _bridge(ctx)
+    args = bridge.edit_overdub_during_note_edit_args(ctx)
+    code = run_edit_overdub_during_note_edit(args)
+    return _result(ctx, exit_code=code, flow="edit_overdub_during_note_edit")
+
+
+def run_note_edit_select_dependent_faders(ctx: ScenarioContext) -> ScenarioResult:
+    from hitl.scenarios.note_edit_select_dependent_faders import (
+        run_note_edit_select_dependent_faders,
+    )
+
+    bridge = _bridge(ctx)
+    args = bridge.note_edit_select_dependent_faders_args(ctx)
+    code = run_note_edit_select_dependent_faders(args)
+    return _result(ctx, exit_code=code, flow="note_edit_select_dependent_faders")
+
+
+def run_current_set_incremental_save(ctx: ScenarioContext) -> ScenarioResult:
+    from hitl.scenarios.current_set_incremental_save import run_current_set_incremental_save
+
+    bridge = _bridge(ctx)
+    args = bridge.current_set_incremental_save_args(ctx)
+    code = run_current_set_incremental_save(args)
+    return _result(ctx, exit_code=code, flow="current_set_incremental_save")

@@ -86,6 +86,58 @@ class LayeredLegacyBridge:
         ]
         return self.args_for(ctx, scenario_flags=flags, preset="long_loop_display_window")
 
+    def two_overdub_undo_redo_args(self, ctx: ScenarioContext) -> SimpleNamespace:
+        flags = canonical_baseline_legacy_args() + self._slot_target_flags() + [
+            "--overdub-passes",
+            "2",
+            "--state-sync-timeout-ms",
+            "12000",
+        ]
+        if self.config.follow_current_session:
+            flags.append("--follow-current-session")
+        return self.args_for(ctx, scenario_flags=flags, preset="two_overdub_undo_redo")
+
+    def edit_overdub_during_note_edit_args(self, ctx: ScenarioContext) -> SimpleNamespace:
+        flags = canonical_baseline_legacy_args() + self._slot_target_flags() + [
+            "--start-transport",
+            "--clear-before-record",
+        ]
+        if self.config.follow_current_session:
+            flags.append("--follow-current-session")
+        return self.args_for(ctx, scenario_flags=flags, preset="edit_overdub_during_note_edit")
+
+    def note_edit_select_dependent_faders_args(self, ctx: ScenarioContext) -> SimpleNamespace:
+        flags = self._slot_target_flags() + [
+            "--post-seed-settle-ms",
+            "3500",
+            "--dwell-ms",
+            "800",
+            "--toggle-dwell-ms",
+            "800",
+            "--toggle-cycles",
+            "6",
+            "--press-ms",
+            str(self.config.press_ms),
+            "--phase-wait-ms",
+            str(self.config.phase_wait_ms),
+        ]
+        return self.args_for(ctx, scenario_flags=flags, preset="note_edit_select_dependent_faders")
+
+    def current_set_incremental_save_args(self, ctx: ScenarioContext) -> SimpleNamespace:
+        flags = self._slot_target_flags() + [
+            "--record-bars",
+            str(self.config.record_bars),
+            "--deferred-save-wait-ms",
+            "3000",
+            "--press-ms",
+            str(self.config.press_ms),
+            "--phase-wait-ms",
+            str(self.config.phase_wait_ms),
+        ]
+        if self.config.follow_current_session:
+            flags.append("--follow-current-session")
+        return self.args_for(ctx, scenario_flags=flags, preset="current_set_incremental_save")
+
     def _slot_target_flags(self) -> list[str]:
         from hitl.layered_cli import slot_target_legacy_flags
 
