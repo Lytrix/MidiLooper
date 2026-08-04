@@ -1774,7 +1774,7 @@ NOTE_EDIT_MEM bool moveNoteWithOverlapHandling(Track& track, EditManager& manage
     const NoteBaseline editedSpan{movingNotePitch, focus.last.velocity, newStart, linearNewEnd};
     const bool pipelineApplied =
         runEditSessionGeometryPipelineForCausingNote(track, manager, focus.movingNoteId, editedSpan,
-                                                     focus.last, targetTick, movingNotePitch,
+                                                     focus.last, targetTick, std::nullopt,
                                                      false);
 
     bool movedNoteEvents = pipelineApplied;

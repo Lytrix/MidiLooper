@@ -487,6 +487,42 @@ NOTE_EDIT_MEM void applyBoundarySplitForEditSession(MidiEventVec& liveStore, uin
   }
 }
 
+NOTE_EDIT_MEM void ensureBaselineMapEntryForEditSessionAction(NoteEditFocus& focus,
+                                                              const EditSessionAction& action) {
+  if (!focus.active || action.targetNoteId == kInvalidNoteId ||
+      action.targetNoteId == focus.movingNoteId) {
+    return;
+  }
+  if (focus.baselineMap.find(action.targetNoteId) != focus.baselineMap.end()) {
+    return;
+  }
+  focus.baselineMap[action.targetNoteId] = {action.pitch, action.velocity, action.startTick,
+                                              action.endTick};
+}
+
+NOTE_EDIT_MEM void ensureBaselineMapBeforeShortenApply(NoteEditFocus& focus,
+                                                       const EditSessionAction& action,
+                                                       const MidiEventVec& liveStore,
+                                                       uint8_t channel) {
+  if (!focus.active || action.targetNoteId == kInvalidNoteId ||
+      action.targetNoteId == focus.movingNoteId) {
+    return;
+  }
+  const auto it = focus.baselineMap.find(action.targetNoteId);
+  if (it != focus.baselineMap.end() && it->second.endTick > action.endTick) {
+    return;
+  }
+  NoteBaseline liveFull{};
+  NoteId resolvedId = action.targetNoteId;
+  if (readLiveLinearSpan(liveStore, action.targetNoteId, channel, liveFull) ||
+      readLiveLinearSpanForPitchStart(liveStore, channel, action.pitch, action.startTick,
+                                      resolvedId, liveFull)) {
+    const NoteId mapId =
+        resolvedId != kInvalidNoteId ? resolvedId : action.targetNoteId;
+    focus.baselineMap[mapId] = liveFull;
+  }
+}
+
 NOTE_EDIT_MEM void applyEditSessionActions(const EditSessionActions& actions, MidiEventVec& liveStore,
                              NoteEditFocus& focus, uint8_t channel, uint32_t loopLength) {
   for (const EditSessionAction& action : actions) {
@@ -495,9 +531,11 @@ NOTE_EDIT_MEM void applyEditSessionActions(const EditSessionActions& actions, Mi
         applyRestoreNote(action, liveStore, focus, channel, loopLength);
         break;
       case EditSessionActionType::ShortenNote:
+        ensureBaselineMapBeforeShortenApply(focus, action, liveStore, channel);
         applyShortenNote(action, liveStore, focus, channel, loopLength);
         break;
       case EditSessionActionType::HideNote:
+        ensureBaselineMapEntryForEditSessionAction(focus, action);
         applyHideNote(action, liveStore, focus, channel, loopLength);
         break;
       case EditSessionActionType::MoveNote:

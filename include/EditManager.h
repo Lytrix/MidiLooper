@@ -244,11 +244,13 @@ public:
     size_t getDisplayUndoCount(const Track& track, const Loop& loop) const;
     bool isSessionUndoDisplayActive() const;
 
+    /// Committed loop MIDI (passes materialized), cached for note-edit baseline discovery (D21).
+    const MidiEventVec& materializedLoopEventsForNoteEditFocus(Track& track);
+
 private:
     size_t bakeNoteEditSessionStoreToPasses(Track& track);
     void persistActiveNoteEditSession(Track& track);
     void invalidateNoteEditDerivedCaches();
-    const MidiEventVec& materializedLoopEventsForNoteEditFocus(Track& track);
     void emitEditEvent(EditEvent event);
     uint32_t selectedTick = 0;
     int selectedNoteIdx = -1; // -1 means no note selected

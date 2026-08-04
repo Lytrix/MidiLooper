@@ -905,6 +905,87 @@ void test_cross_pitch_complete_cover_hide_and_restore_on_leave() {
   TEST_ASSERT_EQUAL_UINT32(192u, innerSpan.endTick);
 }
 
+void test_log_scenario_cross_pitch_hide_when_moving_right() {
+  // session_20260805_011000: enrich + Hide apply for cross-pitch @144 when mover covers 144–240.
+  constexpr uint32_t loopLength = 384;
+  constexpr NoteId kHead12 = 77;
+  constexpr NoteId kMoverId = 79;
+  constexpr NoteId kCross93 = 3;
+  constexpr NoteId kCross96 = 5;
+
+  MidiEventVec committed;
+  committed.push_back(noteOnWithNoteId(0, kChannel, 12, 100, kHead12));
+  committed.push_back(MidiEvent::NoteOff(192, kChannel, 12, 0));
+  committed.push_back(noteOnWithNoteId(96, kChannel, 12, 100, kMoverId));
+  committed.push_back(MidiEvent::NoteOff(192, kChannel, 12, 0));
+  committed.push_back(noteOnWithNoteId(144, kChannel, 93, 100, kCross93));
+  committed.push_back(MidiEvent::NoteOff(192, kChannel, 93, 0));
+  committed.push_back(noteOnWithNoteId(144, kChannel, 96, 100, kCross96));
+  committed.push_back(MidiEvent::NoteOff(192, kChannel, 96, 0));
+
+  MidiEventVec store = committed;
+
+  NoteEditFocus focus;
+  focus.active = true;
+  focus.movingNoteId = kMoverId;
+  focus.commitBaseline = {12, 100, 96, 192};
+  focus.last = focus.commitBaseline;
+  focus.movingNoteRange = {96, 192};
+  focus.baselineMap[kMoverId] = focus.commitBaseline;
+  focus.baselineMap[kHead12] = {12, 100, 0, 192};
+
+  enrichBaselineMapFromCommittedAndLive(focus.baselineMap, committed, store, kMoverId, kChannel,
+                                      loopLength);
+  TEST_ASSERT_TRUE(focus.baselineMap.count(kCross93) > 0);
+  TEST_ASSERT_TRUE(focus.baselineMap.count(kCross96) > 0);
+
+  EditorSelection selection{};
+  selection.primaryNote = kMoverId;
+  selection.selectedNotes.push_back(kMoverId);
+
+  EditedGeometry edited{};
+  edited.selection = selection;
+  EditedNoteSpan causing{};
+  causing.noteId = kMoverId;
+  causing.span = {12, 100, 144, 240};
+  edited.causingSpans.push_back(causing);
+
+  ConstrainedNoteGeometry hidden93{};
+  hidden93.noteId = kCross93;
+  hidden93.visible = false;
+  hidden93.pitch = 93;
+  hidden93.startTick = 144;
+  hidden93.endTick = 192;
+  ConstrainedNoteGeometry hidden96{};
+  hidden96.noteId = kCross96;
+  hidden96.visible = false;
+  hidden96.pitch = 96;
+  hidden96.startTick = 144;
+  hidden96.endTick = 192;
+
+  const EditSessionActions actions =
+      buildEditSessionActions({hidden93, hidden96}, edited, focus.baselineMap, store, kChannel,
+                              focus, loopLength);
+  TEST_ASSERT_TRUE(
+      actionsContainTypeForNote(actions, EditSessionActionType::HideNote, kCross93));
+  TEST_ASSERT_TRUE(
+      actionsContainTypeForNote(actions, EditSessionActionType::HideNote, kCross96));
+  TEST_ASSERT_TRUE(
+      actionsContainTypeForNote(actions, EditSessionActionType::MoveNote, kMoverId));
+
+  applyEditSessionActions(actions, store, focus, kChannel, loopLength);
+  TEST_ASSERT_FALSE(liveStoreHasNotePair(store, kCross93, kChannel));
+  TEST_ASSERT_FALSE(liveStoreHasNotePair(store, kCross96, kChannel));
+  TEST_ASSERT_TRUE(liveStoreHasNotePair(store, kHead12, kChannel));
+  TEST_ASSERT_TRUE(liveStoreHasNotePair(store, kMoverId, kChannel));
+
+  NoteBaseline moverSpan{};
+  TEST_ASSERT_TRUE(
+      findLinearNoteSpanForNoteId(store, kMoverId, kChannel, moverSpan, 144, loopLength));
+  TEST_ASSERT_EQUAL_UINT32(144u, moverSpan.startTick);
+  TEST_ASSERT_EQUAL_UINT32(240u, moverSpan.endTick);
+}
+
 void test_same_pitch_left_neighbor_shorten_and_restore_on_leave() {
   constexpr uint32_t loopLength = 2304;
   constexpr NoteId kLeftId = 2;
@@ -996,6 +1077,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_builder_emits_change_length_when_store_shortened_but_focus_matches_causing);
   RUN_TEST(test_move_over_inner_overlap_keeps_mover_length_in_store);
   RUN_TEST(test_cross_pitch_complete_cover_hide_and_restore_on_leave);
+  RUN_TEST(test_log_scenario_cross_pitch_hide_when_moving_right);
   RUN_TEST(test_same_pitch_left_neighbor_shorten_and_restore_on_leave);
   return UNITY_END();
 }

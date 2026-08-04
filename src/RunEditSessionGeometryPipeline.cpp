@@ -4,14 +4,21 @@
 #include "RunEditSessionGeometryPipeline.h"
 
 #include <algorithm>
+#include <unordered_set>
 
 #include "ApplyEditSessionActions.h"
+#include "EditManager.h"
 #include "EditSessionActionBuilder.h"
 #include "EditSessionInteraction.h"
 #include "EditSessionLiveStoreSpan.h"
 #include "Globals.h"
 #include "ResolveConstrainedGeometry.h"
+#include "TrackManager.h"
 #include "Utils/NoteEditMem.h"
+
+#if defined(SESSION_CAPTURE)
+#include "Logger.h"
+#endif
 
 namespace {
 
@@ -37,34 +44,27 @@ NOTE_EDIT_MEM EditedGeometry projectEditedGeometryForAnalysis(const EditedGeomet
   return projected;
 }
 
-NOTE_EDIT_MEM void enrichBaselineMapFromLiveStore(BaselineMap& baselineMap, MidiEventVec& liveStore,
-                                                  NoteId movingNoteId, uint8_t channel,
-                                                  uint32_t loopLength) {
-  for (const MidiEvent& evt : liveStore) {
-    if (evt.channel != channel || !evt.isNoteOn() || evt.data.noteData.velocity == 0 ||
-        evt.noteId == kInvalidNoteId || evt.noteId == movingNoteId) {
-      continue;
-    }
-    if (baselineMap.find(evt.noteId) != baselineMap.end()) {
-      continue;
-    }
-    NoteBaseline span{};
-    if (findLinearNoteSpanForNoteId(liveStore, evt.noteId, channel, span, evt.tick, loopLength)) {
-      baselineMap[evt.noteId] = span;
-    }
-  }
-}
-
 NOTE_EDIT_MEM std::vector<NoteId, InternalHeapFirstAllocator<NoteId>> collectCandidateTargetNoteIds(
-    const BaselineMap& transactionBaseline, NoteId movingNoteId) {
-  std::vector<NoteId, InternalHeapFirstAllocator<NoteId>> candidates;
+    const BaselineMap& transactionBaseline, const MidiEventVec& liveStore, NoteId movingNoteId,
+    uint8_t channel) {
+  std::unordered_set<NoteId> idSet;
   for (const auto& [noteId, baseline] : transactionBaseline) {
     (void)baseline;
     if (noteId == kInvalidNoteId || noteId == movingNoteId) {
       continue;
     }
-    candidates.push_back(noteId);
+    idSet.insert(noteId);
   }
+  for (const MidiEvent& evt : liveStore) {
+    if (evt.channel != channel || !evt.isNoteOn() || evt.data.noteData.velocity == 0) {
+      continue;
+    }
+    if (evt.noteId == kInvalidNoteId || evt.noteId == movingNoteId) {
+      continue;
+    }
+    idSet.insert(evt.noteId);
+  }
+  std::vector<NoteId, InternalHeapFirstAllocator<NoteId>> candidates(idSet.begin(), idSet.end());
   sortNoteIdVector(candidates);
   return candidates;
 }
@@ -93,8 +93,14 @@ NOTE_EDIT_MEM bool runEditSessionGeometryPipeline(
 
   // D21: full-loop baseline — discover every live note missing from baselineMap so
   // cross-pitch overlap targets participate in analyze/restore (not same-pitch lane only).
-  enrichBaselineMapFromLiveStore(focus.baselineMap, liveStore, focus.movingNoteId, channel,
-                                 loopLength);
+  // Transaction baseline comes from committed materialize, not the mutating session store.
+  Loop& loop = trackManager.getSelectedLoop(track);
+  loop.assignMissingNoteIds(liveStore);
+  stampNoteIdsOntoPairedNoteOffs(liveStore, channel);
+
+  const MidiEventVec& committedEvents = manager.materializedLoopEventsForNoteEditFocus(track);
+  enrichBaselineMapFromCommittedAndLive(focus.baselineMap, committedEvents, liveStore,
+                                        focus.movingNoteId, channel, loopLength);
   (void)overlapPitchLane;
 
   const BaselineMap& transactionBaseline = focus.baselineMap;
@@ -107,7 +113,7 @@ NOTE_EDIT_MEM bool runEditSessionGeometryPipeline(
   }
 
   const std::vector<NoteId, InternalHeapFirstAllocator<NoteId>> candidateTargetNoteIds =
-      collectCandidateTargetNoteIds(transactionBaseline, focus.movingNoteId);
+      collectCandidateTargetNoteIds(transactionBaseline, liveStore, focus.movingNoteId, channel);
 
   const std::vector<CausingTargetPair, InternalHeapFirstAllocator<CausingTargetPair>> eligiblePairs =
       determineEligiblePairs(selection, changedCausingNotes, candidateTargetNoteIds);
@@ -139,6 +145,14 @@ NOTE_EDIT_MEM bool runEditSessionGeometryPipeline(
   }
 
 #if defined(SESSION_CAPTURE)
+  logger.log(CAT_MIDI, LOG_DEBUG,
+             "GeometryPipeline: baselineMap=%u candidates=%u pairs=%u interactions=%u "
+             "constrained=%u actions=%u",
+             static_cast<unsigned>(transactionBaseline.size()),
+             static_cast<unsigned>(candidateTargetNoteIds.size()),
+             static_cast<unsigned>(eligiblePairs.size()),
+             static_cast<unsigned>(interactions.size()),
+             static_cast<unsigned>(constrained.size()), static_cast<unsigned>(actions.size()));
   logEditSessionActions(actions);
 #endif
 
@@ -165,6 +179,10 @@ NOTE_EDIT_MEM bool runEditSessionGeometryPipelineForCausingNote(
   if (selectionTick.has_value()) {
     editedGeometry.selection.selectedTick = selectionTick.value();
   }
+  // Geometry drivers edit focus.movingNoteId; fader-1 browse may leave selection on another note.
+  editedGeometry.selection.primaryNote = causingNoteId;
+  editedGeometry.selection.selectedNotes.clear();
+  editedGeometry.selection.selectedNotes.push_back(causingNoteId);
 
   EditedNoteSpan causingSpan{};
   causingSpan.noteId = causingNoteId;
