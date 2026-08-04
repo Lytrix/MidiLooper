@@ -31,7 +31,7 @@
 
 ## Phase 3 — Port remainder + delete legacy
 
-- [ ] 3.1 Port `two_overdub_undo_redo`, `edit_overdub_during_note_edit`, `note_edit_select_dependent_faders`, `current_set_incremental_save`
+- [x] 3.1 Port `two_overdub_undo_redo`, `edit_overdub_during_note_edit`, `note_edit_select_dependent_faders`, `current_set_incremental_save` (layered registry + bridge)
 - [ ] 3.2 Wire `revision_*`, `load_save_*`, `fader_motor_*` to new contexts
 - [ ] 3.3 Delete legacy monoliths + shims; drop `edit_full` preset
 - [ ] 3.4 Protocol regex grep gate passes

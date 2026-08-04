@@ -43,6 +43,22 @@ LAYERED_PRESETS: dict[str, PresetSpec] = {
         ),
         tags=("uip", "gate"),
     ),
+    "two_overdub_undo_redo": PresetSpec(
+        scenario_ids=("two_overdub_undo_redo",),
+        tags=("record", "undo"),
+    ),
+    "edit_overdub_during_note_edit": PresetSpec(
+        scenario_ids=("edit_overdub_during_note_edit",),
+        tags=("edit", "overdub"),
+    ),
+    "note_edit_select_dependent_faders": PresetSpec(
+        scenario_ids=("record_seed", "note_edit_select_dependent_faders"),
+        tags=("edit", "motor"),
+    ),
+    "current_set_incremental_save": PresetSpec(
+        scenario_ids=("current_set_incremental_save",),
+        tags=("persistence",),
+    ),
 }
 
 
@@ -54,6 +70,7 @@ _VERIFIER_REGISTRY: dict[str, VerifierFn] = {
     "capture": _verifier_stub,
     "playback": _verifier_stub,
     "display": _verifier_stub,
+    "scenario": _verifier_stub,
 }
 
 
@@ -96,11 +113,15 @@ def get_layered_registry() -> dict[str, LayeredScenarioSpec]:
 
 def _build_layered_registry() -> dict[str, LayeredScenarioSpec]:
     from hitl.scenarios.layered import (
+        run_current_set_incremental_save,
         run_edit_minimal,
+        run_edit_overdub_during_note_edit,
         run_long_loop_display_window,
+        run_note_edit_select_dependent_faders,
         run_record_overdub,
         run_record_seed,
         run_slot_queued_start,
+        run_two_overdub_undo_redo,
     )
 
     return {
@@ -139,15 +160,44 @@ def _build_layered_registry() -> dict[str, LayeredScenarioSpec]:
             verifier_id="playback",
             run=run_slot_queued_start,
         ),
+        "two_overdub_undo_redo": LayeredScenarioSpec(
+            id="two_overdub_undo_redo",
+            description="Record + two overdub passes + undo/redo chain",
+            tags=("record", "undo"),
+            verifier_id="scenario",
+            run=run_two_overdub_undo_redo,
+        ),
+        "edit_overdub_during_note_edit": LayeredScenarioSpec(
+            id="edit_overdub_during_note_edit",
+            description="Overdub during note edit with scoped undo",
+            tags=("edit", "overdub"),
+            verifier_id="scenario",
+            run=run_edit_overdub_during_note_edit,
+        ),
+        "note_edit_select_dependent_faders": LayeredScenarioSpec(
+            id="note_edit_select_dependent_faders",
+            description="NOTE_EDIT F1 sweep and F2–F4 motor toggle",
+            tags=("edit", "motor"),
+            verifier_id="scenario",
+            run=run_note_edit_select_dependent_faders,
+        ),
+        "current_set_incremental_save": LayeredScenarioSpec(
+            id="current_set_incremental_save",
+            description="Transport-stop idle save vs record-stop incremental write",
+            tags=("persistence",),
+            verifier_id="scenario",
+            run=run_current_set_incremental_save,
+        ),
     }
 
 
 def _register_default_verifiers() -> None:
-    from hitl.verify import capture, display, playback
+    from hitl.verify import capture, display, playback, scenarios
 
     register_verifier("capture", capture.verify_capture)
     register_verifier("playback", playback.verify_playback)
     register_verifier("display", display.verify_display)
+    register_verifier("scenario", scenarios.verify_scenario)
 
 
 _register_default_verifiers()

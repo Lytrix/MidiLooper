@@ -2,13 +2,13 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-04 (HITL CLI rebuild Phase 2 — device gate pending)
+Last updated: 2026-08-04 (HITL CLI rebuild Phase 3 — port remainder)
 
 ---
 
 ## Now implementing
 
-### HITL CLI rebuild — Phase 2 device gate
+### HITL CLI rebuild — Phase 3 port remainder
 
 **OpenSpec:** [`openspec/changes/hitl-cli-rebuild/`](../../openspec/changes/hitl-cli-rebuild/)  
 **Plan:** [`docs/plans/hitl_cli_rebuild_enhancement.md`](../plans/hitl_cli_rebuild_enhancement.md)
@@ -17,12 +17,13 @@ Last updated: 2026-08-04 (HITL CLI rebuild Phase 2 — device gate pending)
 |-------|--------|
 | 0 — inventory + doc scaffold | **Done** (2026-08-04) |
 | 1 — foundation (`HITL_ARCHITECTURE.md`, layered runner, actions, flows) | **Done** (2026-08-04) |
-| 2 — core scenarios + `uip_5_5` (UIP **5.5** gate) | **In progress** — code landed; managed dual-session default; device PASS pending |
-| 3–5 — port remainder, corpus docs, archive | Pending |
+| 2 — core scenarios + `uip_5_5` (UIP **5.5** gate) | **Done** (2026-08-04) |
+| 3 — port remainder + delete legacy | **In progress** — 3.1 layered wrappers for four scenarios landed |
+| 4–5 — corpus docs, archive | Pending |
 
-**Run layered preset (managed dual-session):** `host_midi_hitl.py run --layered --preset uip_5_5 --midi-out Teensy --midi-in Teensy --track 5 --midi-channel 5` — spawns `capture_session.py` automatically; no second terminal.
+**Phase 3.1 layered presets (new):** `two_overdub_undo_redo`, `edit_overdub_during_note_edit`, `note_edit_select_dependent_faders`, `current_set_incremental_save` — use `--layered --preset <name>`.
 
-**UIP gate:** preset `uip_5_5` unblocks [`edit-session-action-geometry`](../plans/note_edit_session_action_geometry_enhancement.md) and UIP task 5.5.
+**Still Phase 3:** wire `revision_*`, `load_save_*`, `fader_motor_*`; delete legacy monoliths when `rg` gate empty.
 
 ---
 
