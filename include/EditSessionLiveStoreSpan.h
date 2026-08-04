@@ -12,3 +12,5 @@ bool readLiveLinearSpan(const MidiEventVec& liveStore, NoteId noteId, uint8_t ch
                         NoteBaseline& out);
 
 bool liveStoreHasNotePair(const MidiEventVec& liveStore, NoteId noteId, uint8_t channel);
+
+void sortNoteIdVector(std::vector<NoteId, InternalHeapFirstAllocator<NoteId>>& ids);

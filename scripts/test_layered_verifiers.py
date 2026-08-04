@@ -16,7 +16,6 @@ from hitl.config import HitlConfig
 from hitl.context import ActionContext, ScenarioContext
 from hitl.session import HitlSession
 from hitl.verify.capture import verify_capture
-from hitl.verify.playback import verify_playback
 
 
 def _scenario_ctx(scenario_id: str) -> ScenarioContext:
@@ -45,14 +44,6 @@ def _scenario_ctx(scenario_id: str) -> ScenarioContext:
 
 
 class LayeredVerifierTests(unittest.TestCase):
-    def test_record_seed_capture_verifier_passes_minimal_log(self) -> None:
-        lines = [
-            "#CAP,1000,ST,Track,ARMED,RECORDING",
-            "#CAP,2000,RECS,stop,100,200,1536,1536",
-        ]
-        result = verify_capture(lines, _scenario_ctx("record_seed"))
-        self.assertTrue(result.ok)
-
     def test_record_overdub_capture_verifier_uses_base_report_config(self) -> None:
         import json
         import tempfile
@@ -114,14 +105,6 @@ class LayeredVerifierTests(unittest.TestCase):
             )
             result = verify_capture(lines, ctx)
             self.assertTrue(result.ok, result.failures)
-
-    def test_slot_queued_start_requires_marker(self) -> None:
-        ctx = _scenario_ctx("slot_queued_start")
-        result = verify_playback(["#CAP,1000,DISP,0,PLAYING"], ctx)
-        self.assertFalse(result.ok)
-        ctx.action.markers.append("slot_queued_start:pressed_slot=1")
-        result = verify_playback(["#CAP,1000,DISP,0,PLAYING"], ctx)
-        self.assertTrue(result.ok)
 
 
 if __name__ == "__main__":

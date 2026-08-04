@@ -19,6 +19,7 @@
 #include "../../src/Utils/IntervalProjection.cpp"
 #include "../../src/Utils/SelectNavigation.cpp"
 #include "../../src/NoteEditFocus.cpp"
+#include "../../src/EditSessionLiveStoreSpan.cpp"
 #include "../../src/Utils/NoteUtils.cpp"
 #include "../../src/Logger.cpp"
 #include "../../src/Utils/DisplayWindowUtils.cpp"

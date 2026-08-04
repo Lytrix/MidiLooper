@@ -90,7 +90,7 @@ It answers: *“Where do the selected notes sit right now, according to the user
 | Part | Source (NOTE_EDIT v1) | Role |
 |------|----------------------|------|
 | **Selection** | **`EditorSelection`** — `selectedNotes`, **`primaryNote`**, `bracketTick`, track/loop scope | Which notes are in the editing domain; who is the active driver |
-| **Causing spans** | One **linear** **`NoteBaseline`** per **`NoteId`** in `selectedNotes` — pitch, velocity, `startTick`, `endTick` | Spans the user is driving this tick; fed to **`normalizeWrapToLinear`** then analyze |
+| **Causing spans** | One **linear** **`NoteBaseline`** per **`NoteId`** in `selectedNotes` — pitch, velocity, `startTick`, `endTick` | Spans the user is driving this tick; fed through **Edit projection** (D20) then analyze |
 
 **Causing span authority per note:**
 
@@ -112,12 +112,12 @@ It answers: *“Where do the selected notes sit right now, according to the user
 | **Overlap targets** (non-selected notes) | User did not move them; desired state comes from **`ConstrainedNoteGeometry`**, not from edited geometry |
 | **Prior latch** | Frame-to-frame delta detection — orchestrator only (D17) |
 
-**Pipeline use:** Orchestrator builds edited geometry → **`normalizeWrapToLinear`** → analyze compares causing spans against baseline + candidate targets in the analysis window (v1: full loop). Edited geometry does **not** include overlap side-effects (hide/shorten/restore) — those emerge from the pipeline.
+**Pipeline use:** Orchestrator builds edited geometry → **Edit projection** (D20) → analyze compares causing spans against baseline + candidate targets in the analysis window (v1: full loop). Edited geometry does **not** include overlap side-effects (hide/shorten/restore) — those emerge from the pipeline.
 
 ```cpp
 struct EditedNoteSpan {
   NoteId noteId;
-  NoteBaseline span;  // linear ticks; post-normalizeWrapToLinear for analyze input
+  NoteBaseline span;  // linear ticks; post-Edit-projection for analyze input
 };
 
 struct EditedGeometry {
@@ -202,7 +202,7 @@ Transaction baseline (full loop v1) ── immutable per edit driver (D19)
 Edited geometry (selection + causing spans — see design § Edited geometry)
         │
         ▼
-normalizeWrapToLinear()              ← D20: linear spans before analyze
+Edit projection (D20)                  ← buildEditProjectionContext + projectEditIntervalsForAnalysis
         │
 EditSession orchestrator             ← D17: determine changed causing notes + eligible pairs
         │                              (selection domain; no logic inside analyzer)
@@ -313,7 +313,7 @@ Pairs with **no** overlap are **omitted** from analyze output — no **`Interact
 
 **Add:** treated like **Move** on the same pitch — standard **InteractionType** classify (**OverlapNoteOn** / **OverlapNoteOff** / **CompleteCover**); no special block or invalid-pair allowance.
 
-**Pre-analysis (D20):** **`normalizeWrapToLinear`** resolves display/wrap segments to **linear** **`NoteBaseline`** spans for the mover, each candidate target, and **wrapped targets** before **`analyzeEditSessionInteractions`**. Wrap logic is not deferred into classify.
+**Pre-analysis (D20):** **Edit projection** via **`buildEditProjectionContext`** + **`projectEditIntervalsForAnalysis`** ([`IntervalProjection`](../../../include/Utils/IntervalProjection.h)) resolves display/wrap segments to **linear** **`NoteBaseline`** spans for the mover, each candidate target, and **wrapped targets** before **`analyzeEditSessionInteractions`**. Wrap logic is not deferred into classify.
 
 **Analyzer boundary:** **`analyzeEditSessionInteractions`** MUST NOT read encoder latches, edit gestures, or prior-frame session state. See **D17**.
 
@@ -385,7 +385,7 @@ Session undo may still align with kind changes in firmware; **overlap authority*
 
 ### D20 — Wrap resolution before analysis
 
-**Decision:** **`normalizeWrapToLinear`** runs **before** **`analyzeEditSessionInteractions`**. Targets may be **wrapped** display notes; analysis and **`causingSpan`** / **`baselineSpan`** use **linear** ticks only. **`wraps`** on **`EditSessionInteraction`** flags trim math that still depends on mover-relative wrap after linearization.
+**Decision:** **Edit projection** (**`buildEditProjectionContext`** + **`projectEditIntervalsForAnalysis`**) runs **before** **`analyzeEditSessionInteractions`**. Targets may be **wrapped** display notes; analysis and **`causingSpan`** / **`baselineSpan`** use **linear** ticks only. **`wraps`** on **`EditSessionInteraction`** flags trim math that still depends on mover-relative wrap after linearization. Shipped in [`IntervalProjection`](../../../include/Utils/IntervalProjection.h) (UIP Phase 2) — no separate **`normalizeWrapToLinear`** module.
 
 ### D15 — Group interactions by target note (no *Set* suffix)
 
@@ -820,7 +820,7 @@ using EditSessionActions = std::vector<EditSessionAction>;
 - Analysis window (this change): **full loop** (D11 deferred)
 - **Add/Delete** trigger same interaction pipeline (D17)
 - **`movingNoteRange`**: **retired**
-- **Wrap:** **`normalizeWrapToLinear`** before analyze (D20)
+- **Wrap:** **Edit projection** before analyze (D20)
 - **Interaction grouping:** ephemeral **`EditSessionInteractionsByTarget`** (D15); avoid **\*Set** suffix (CurrentSet/SavedSet)
 - **Constrained geometry resolution (D16):** **`resolveConstrainedGeometry`** — central algorithm; no **Constraint** type
 - **Derived geometry philosophy:** visibility and actions derived per tick — no overlap scratch state machines

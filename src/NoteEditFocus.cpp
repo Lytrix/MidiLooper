@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <unordered_set>
 
+#include "EditSessionLiveStoreSpan.h"
 #include "Utils/IntervalProjection.h"
 #include "Utils/NoteMovementWrap.h"
 #include "Utils/LoopTickNormalize.h"
@@ -275,6 +276,7 @@ NOTE_EDIT_MEM void noteEditFocusApplyMoveEnd(NoteEditFocus& focus, uint32_t newS
   }
   focus.last.startTick = newStart;
   focus.last.endTick = newEnd;
+  focus.movingNoteRange.start = newStart;
   focus.movingNoteRange.end = newEnd;
 }
 
@@ -352,6 +354,30 @@ NOTE_EDIT_MEM bool pitchLaneClearNeedsRestore(const NoteEditFocus& focus, uint8_
   return false;
 }
 
+/// Phase 4 geometry pipeline hides/shortens without writing overlapNotes scratch. Leaving that
+/// pitch must take the full path so RestoreNote can reinsert/extend from baselineMap.
+NOTE_EDIT_MEM bool baselineMapPitchLaneNeedsRestore(const NoteEditFocus& focus,
+                                                    const MidiEventVec& liveStore, uint8_t channel,
+                                                    uint8_t clearedPitch) {
+  for (const auto& [noteId, baseline] : focus.baselineMap) {
+    if (noteId == kInvalidNoteId || noteId == focus.movingNoteId) {
+      continue;
+    }
+    if (baseline.pitch != clearedPitch) {
+      continue;
+    }
+    NoteBaseline live{};
+    if (!readLiveLinearSpan(liveStore, noteId, channel, live)) {
+      return true;
+    }
+    if (live.pitch != baseline.pitch || live.startTick != baseline.startTick ||
+        live.endTick != baseline.endTick) {
+      return true;
+    }
+  }
+  return false;
+}
+
 NOTE_EDIT_MEM bool pitchLaneHasNonVisibleOverlapScratch(const NoteEditFocus& focus, uint8_t pitch) {
   for (const auto& [noteId, entry] : focus.overlapNotes) {
     (void)noteId;
@@ -376,11 +402,13 @@ NOTE_EDIT_MEM bool canApplySimplePitchChange(MidiEventVec& sessionEvents, const 
                                              uint8_t channel, uint8_t currentPitch,
                                              uint8_t targetPitch, uint32_t moverStart,
                                              uint32_t moverEnd, uint32_t loopLength) {
-  (void)currentPitch;
   if (!focus.active || focus.movingNoteId == kInvalidNoteId || loopLength == 0) {
     return false;
   }
   if (pitchLaneClearNeedsRestore(focus, currentPitch)) {
+    return false;
+  }
+  if (baselineMapPitchLaneNeedsRestore(focus, sessionEvents, channel, currentPitch)) {
     return false;
   }
   if (pitchLaneHasNonVisibleOverlapScratch(focus, targetPitch)) {
@@ -488,9 +516,13 @@ MidiEvent* findLinearOffForNoteId(std::vector<MidiEvent, Alloc>& events, const M
   if (noteId == kInvalidNoteId) {
     return nullptr;
   }
+  const uint8_t pitch = noteOn.data.noteData.note;
   MidiEvent* farthestOff = nullptr;
   for (auto& evt : events) {
     if (!evt.isNoteOff() || evt.noteId != noteId || evt.tick <= noteOn.tick) {
+      continue;
+    }
+    if (evt.data.noteData.note != pitch) {
       continue;
     }
     if (loopLength > 0 && !isPlausibleStorageSpan(noteOn.tick, evt.tick, loopLength)) {
@@ -545,11 +577,10 @@ bool findLinearNoteSpanForNoteId(std::vector<MidiEvent, Alloc>& events, NoteId n
       noteOffEvent = findLinearOffForNoteId(events, evt, evt.noteId, loopLength);
     }
     if (noteOffEvent == nullptr) {
-      if (loopLength > 0) {
-        noteOffEvent = findPlausibleOffForNoteOn(events, evt, loopLength);
-      } else {
-        noteOffEvent = findLinearOffForNoteOnLifo(events, &evt, evt.data.noteData.note);
-      }
+      // LIFO pitch pairing — never nearest-off (findPlausibleOffForNoteOn), which attaches a
+      // same-pitch left neighbor's shortened end to the mover while spans overlap in-store
+      // (session_20260804_220842 display end theft).
+      noteOffEvent = findLinearOffForNoteOnLifo(events, &evt, evt.data.noteData.note);
     }
     if (noteOffEvent == nullptr) {
       return false;
@@ -724,28 +755,30 @@ bool syncNoteEditFocusLinearFromSessionStore(NoteEditFocus& focus,
   }
   const uint32_t startCandidates[] = {focus.last.startTick, focus.commitBaseline.startTick};
   for (uint32_t startTick : startCandidates) {
-    for (auto& evt : events) {
-      if (evt.channel != channel) {
-        continue;
-      }
-      if (!evt.isNoteOn() || evt.data.noteData.velocity == 0 ||
-          evt.data.noteData.note != focus.last.pitch || evt.tick != startTick) {
-        continue;
-      }
-      MidiEvent* noteOffEvent =
-          findLinearOffForNoteOnLifo(events, &evt, focus.last.pitch);
-      if (noteOffEvent == nullptr) {
-        continue;
-      }
-      focus.last.startTick = startTick;
-      focus.last.endTick = noteOffEvent->tick;
-      focus.movingNoteRange.start = startTick;
-      if (focus.movingNoteRange.end <= focus.last.startTick ||
-          focus.last.endTick > focus.movingNoteRange.end) {
-        focus.movingNoteRange.end = focus.last.endTick;
-      }
-      return true;
+    MidiEvent* noteOnEvent =
+        findNoteOnAtChannelPitchTick(events, channel, focus.last.pitch, startTick);
+    if (noteOnEvent == nullptr) {
+      continue;
     }
+    MidiEvent* noteOffEvent = nullptr;
+    if (focus.movingNoteId != kInvalidNoteId) {
+      noteOffEvent =
+          findLinearOffForNoteId(events, *noteOnEvent, focus.movingNoteId, loopLength);
+    }
+    if (noteOffEvent == nullptr) {
+      noteOffEvent = findLinearOffForNoteOnLifo(events, noteOnEvent, focus.last.pitch);
+    }
+    if (noteOffEvent == nullptr) {
+      continue;
+    }
+    focus.last.startTick = startTick;
+    focus.last.endTick = noteOffEvent->tick;
+    focus.movingNoteRange.start = startTick;
+    if (focus.movingNoteRange.end <= focus.last.startTick ||
+        focus.last.endTick > focus.movingNoteRange.end) {
+      focus.movingNoteRange.end = focus.last.endTick;
+    }
+    return true;
   }
   return false;
 }
@@ -754,6 +787,42 @@ template bool syncNoteEditFocusLinearFromSessionStore<InternalHeapFirstAllocator
     NoteEditFocus&, MidiEventVec&, uint8_t, uint32_t);
 template bool syncNoteEditFocusLinearFromSessionStore<ExternalMemoryFirstAllocator<MidiEvent>>(
     NoteEditFocus&, SessionMidiEventVec&, uint8_t, uint32_t);
+
+template <typename Alloc>
+NOTE_EDIT_MEM void stampNoteIdsOntoPairedNoteOffs(std::vector<MidiEvent, Alloc>& events,
+                                                  uint8_t channel) {
+  std::vector<MidiEvent*> activeNoteOnStack;
+  for (MidiEvent& evt : events) {
+    if (evt.channel != channel) {
+      continue;
+    }
+    const uint8_t pitch = evt.data.noteData.note;
+    if (evt.isNoteOn() && evt.data.noteData.velocity > 0) {
+      activeNoteOnStack.push_back(&evt);
+      continue;
+    }
+    if (!evt.isNoteOff()) {
+      continue;
+    }
+    for (int stackIndex = static_cast<int>(activeNoteOnStack.size()) - 1; stackIndex >= 0;
+         --stackIndex) {
+      MidiEvent* candidateOn = activeNoteOnStack[static_cast<size_t>(stackIndex)];
+      if (candidateOn->data.noteData.note != pitch || evt.tick <= candidateOn->tick) {
+        continue;
+      }
+      activeNoteOnStack.erase(activeNoteOnStack.begin() + stackIndex);
+      if (evt.noteId == kInvalidNoteId && candidateOn->noteId != kInvalidNoteId) {
+        evt.noteId = candidateOn->noteId;
+      }
+      break;
+    }
+  }
+}
+
+template void stampNoteIdsOntoPairedNoteOffs<InternalHeapFirstAllocator<MidiEvent>>(MidiEventVec&,
+                                                                                    uint8_t);
+template void stampNoteIdsOntoPairedNoteOffs<ExternalMemoryFirstAllocator<MidiEvent>>(
+    SessionMidiEventVec&, uint8_t);
 
 namespace {
 
@@ -1074,26 +1143,15 @@ std::unordered_set<NoteId> buildEditClosureNoteIds(const NoteEditFocus& focus,
       ids.insert(noteId);
     }
   }
+  // Full pitch-lane closure: every same-pitch note can become an overlap target when the
+  // mover travels across the lane (edit-session-action-geometry v1 full-loop baseline).
   const uint8_t pitch = focus.last.pitch;
-  const uint32_t wrapMargin =
-      std::min(LoopTickNormalize::kDefaultWrapWindowTicks, loopLength);
-
   for (const MidiEvent& onEvt : sessionEvents) {
     if (!onEvt.isNoteOn() || onEvt.data.noteData.velocity == 0 || onEvt.channel != channel ||
-        onEvt.noteId == kInvalidNoteId || onEvt.data.noteData.note != pitch ||
-        ids.count(onEvt.noteId) > 0) {
+        onEvt.noteId == kInvalidNoteId || onEvt.data.noteData.note != pitch) {
       continue;
     }
-    for (const MidiEvent& offEvt : sessionEvents) {
-      if (!offEvt.isNoteOff() || offEvt.channel != channel ||
-          offEvt.data.noteData.note != pitch) {
-        continue;
-      }
-      if (NoteUtils::isHeadTailWrappedPair(onEvt.tick, offEvt.tick, loopLength, wrapMargin)) {
-        ids.insert(onEvt.noteId);
-        break;
-      }
-    }
+    ids.insert(onEvt.noteId);
   }
   return ids;
 }
@@ -1133,8 +1191,59 @@ filterSelectableDisplayNotes<ExternalMemoryFirstAllocator<MidiEvent>>(const Sess
                                                                       const NoteEditFocus&, uint8_t,
                                                                       uint32_t);
 
-NOTE_EDIT_MEM EditPassVec buildPreCommitEditPasses(const NoteEditFocus& focus, uint8_t channel) {
-  EditPassVec rows = buildPreCommitOverlapEditPasses(focus);
+NOTE_EDIT_MEM EditPassVec buildPreCommitBaselineLiveDiffOverlapPasses(
+    const NoteEditFocus& focus, const MidiEventVec& sessionEvents, uint8_t channel,
+    uint32_t loopLength) {
+  EditPassVec rows;
+  if (!focus.active) {
+    return rows;
+  }
+  (void)loopLength;
+
+  for (const auto& [noteId, baseline] : focus.baselineMap) {
+    if (noteId == kInvalidNoteId || noteId == focus.movingNoteId) {
+      continue;
+    }
+    NoteBaseline live{};
+    MidiEventVec& mutableEvents = const_cast<MidiEventVec&>(sessionEvents);
+    const bool hasLive =
+        findLinearNoteSpanForNoteId(mutableEvents, noteId, channel, live, UINT32_MAX, loopLength);
+    if (!hasLive) {
+      EditPass row = makeNoteEditRow(EditActionType::Delete, EditPropertyType::None);
+      row.targetNoteId = noteId;
+      rows.push_back(row);
+      continue;
+    }
+    if (live.pitch != baseline.pitch) {
+      continue;
+    }
+    if (live.startTick != baseline.startTick) {
+      EditPass row = makeNoteEditRow(EditActionType::Update, EditPropertyType::NoteRange);
+      row.targetNoteId = noteId;
+      row.startTick = live.startTick;
+      row.endTick = live.endTick;
+      rows.push_back(row);
+    } else if (live.endTick != baseline.endTick) {
+      EditPass row = makeNoteEditRow(EditActionType::Update, EditPropertyType::Length);
+      row.targetNoteId = noteId;
+      row.startTick = baseline.startTick;
+      row.endTick = live.endTick;
+      rows.push_back(row);
+    }
+  }
+  return rows;
+}
+
+NOTE_EDIT_MEM EditPassVec buildPreCommitEditPasses(const NoteEditFocus& focus, uint8_t channel,
+                                                   const MidiEventVec* sessionStoreEvents,
+                                                   uint32_t loopLength) {
+  EditPassVec rows;
+  if (sessionStoreEvents != nullptr && loopLength > 0) {
+    rows = buildPreCommitBaselineLiveDiffOverlapPasses(focus, *sessionStoreEvents, channel,
+                                                       loopLength);
+  } else {
+    rows = buildPreCommitOverlapEditPasses(focus);
+  }
   if (!focus.active) {
     return rows;
   }

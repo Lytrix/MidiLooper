@@ -7,7 +7,7 @@ Within a single NOTE_EDIT geometry update, the system SHALL:
 1. Read **transaction baseline** (**`baselineMap`**, **`commitBaseline`**) as immutable input for the current **edit driver** (D19)
 2. Read **edited geometry** — **`EditorSelection`** + linear causing spans (`focus.last` for **`primaryNote`**; see **`edit-session-action-geometry`** spec § Edited geometry)
 3. **Orchestrator** — determine changed causing notes and eligible pairs (D17)
-4. Run **`normalizeWrapToLinear`** (D20) before analysis
+4. Run **Edit projection** (D20) — **`buildEditProjectionContext`** + **`projectEditIntervalsForAnalysis`** — before analysis
 5. Run **`analyzeEditSessionInteractions`** (pure; supplied causing inputs only)
 6. Run **`groupEditSessionInteractionsByTarget`** (ephemeral; grouped per target)
 7. Run **`resolveConstrainedGeometry`** (pure)

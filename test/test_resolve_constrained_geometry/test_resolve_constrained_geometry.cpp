@@ -114,11 +114,74 @@ void test_determine_constrained_targets_includes_restore_candidate() {
   liveStore.push_back(on);
   liveStore.push_back(MidiEvent::NoteOff(150, 1, 60, 0));
 
+  EditorSelection selection{};
+  selection.primaryNote = 1;
+  selection.selectedNotes = {1};
+  EditedGeometry edited{};
+  EditedNoteSpan causing{};
+  causing.noteId = 1;
+  causing.span = {60, 100, 0, 100};
+  edited.causingSpans.push_back(causing);
+
   const EditSessionInteractionsByTarget emptyGrouped;
-  const auto targets = determineConstrainedGeometryTargetNoteIds(emptyGrouped, baseline, liveStore,
-                                                                 1, kLoopLength);
+  const auto targets = determineConstrainedGeometryTargetNoteIds(
+      emptyGrouped, baseline, liveStore, 1, kLoopLength, selection, edited);
   TEST_ASSERT_EQUAL(1, static_cast<int>(targets.size()));
   TEST_ASSERT_EQUAL_UINT32(kTarget, targets[0]);
+}
+
+void test_determine_constrained_targets_excludes_selected_moved_causing_note() {
+  // session_20260804_215203: after move, mover live span differs from select-time
+  // baselineMap; restore-candidate scan must not snap the causing note back.
+  constexpr NoteId kMover = 1;
+  constexpr NoteId kOverlap = 2;
+  constexpr uint32_t kLoopLength = 1536;
+
+  BaselineMap baseline;
+  baseline[kMover] = {64, 100, 906, 1055};
+  baseline[kOverlap] = {65, 100, 906, 1001};
+
+  MidiEventVec liveStore;
+  MidiEvent moverOn = MidiEvent::NoteOn(1098, 1, 64, 100);
+  moverOn.noteId = kMover;
+  liveStore.push_back(moverOn);
+  MidiEvent moverOff = MidiEvent::NoteOff(1247, 1, 64, 0);
+  moverOff.noteId = kMover;
+  liveStore.push_back(moverOff);
+
+  EditorSelection selection{};
+  selection.primaryNote = kMover;
+  selection.selectedNotes = {kMover};
+  EditedGeometry edited{};
+  EditedNoteSpan causing{};
+  causing.noteId = kMover;
+  causing.span = {64, 100, 1098, 1247};
+  edited.causingSpans.push_back(causing);
+
+  const EditSessionInteractionsByTarget emptyGrouped;
+  const auto targets = determineConstrainedGeometryTargetNoteIds(
+      emptyGrouped, baseline, liveStore, 1, kLoopLength, selection, edited);
+  TEST_ASSERT_EQUAL(1, static_cast<int>(targets.size()));
+  TEST_ASSERT_EQUAL_UINT32(kOverlap, targets[0]);
+}
+
+void test_resolve_start_abut_overlap_note_off_shortens_one_tick() {
+  // session_20260804_225119: causingStart == baseline.end → Shorten to causingStart-1, not
+  // full baseline Restore (+2 jump on 1-tick leave).
+  const NoteBaseline baseline{60, 100, 0, 144};
+  EditSessionInteraction startAbut{};
+  startAbut.type = InteractionType::OverlapNoteOff;
+  startAbut.causingNoteId = 20;
+  startAbut.targetNoteId = 10;
+  startAbut.baselineSpan = baseline;
+  startAbut.causingSpan = {60, 100, 144, 240};
+  const std::vector<EditSessionInteraction, InternalHeapFirstAllocator<EditSessionInteraction>>
+      incoming = {startAbut};
+  const ConstrainedNoteGeometry geometry =
+      resolveConstrainedGeometry(10, baseline, incoming, 1536, 12, true);
+  TEST_ASSERT_TRUE(geometry.visible);
+  TEST_ASSERT_EQUAL_UINT32(0u, geometry.startTick);
+  TEST_ASSERT_EQUAL_UINT32(143u, geometry.endTick);
 }
 
 int main(int /*argc*/, char** /*argv*/) {
@@ -129,5 +192,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_resolve_baseline_equivalent_when_causing_gone);
   RUN_TEST(test_group_rebuild_when_one_causing_removed);
   RUN_TEST(test_determine_constrained_targets_includes_restore_candidate);
+  RUN_TEST(test_determine_constrained_targets_excludes_selected_moved_causing_note);
+  RUN_TEST(test_resolve_start_abut_overlap_note_off_shortens_one_tick);
   return UNITY_END();
 }

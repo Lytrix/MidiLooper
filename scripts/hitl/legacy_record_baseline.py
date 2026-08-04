@@ -527,6 +527,383 @@ def _stop_transport_before_clear(
     return False
 
 
+def _prepare_deferred_save_before_clear(
+    out_port: mido.ports.BaseOutput,
+    in_port: mido.ports.BaseInput,
+    serial_collector: Optional[Any],
+    args: Any,
+    *,
+    press_ms: int,
+    phase_wait_ms: int,
+    after_index: int = 0,
+    abort: RunAbort,
+) -> bool:
+    """Stop transport or wait on recent save activity before clear long press.
+
+    Only waits when the serial *tail* shows active save work (not the full follow-session
+    log). On timeout, logs a warning and returns True so clear can still be attempted.
+    """
+    del in_port
+    if serial_collector is None:
+        return True
+
+    from hitl.deferred_save_idle import (
+        deferred_save_active_in_suffix,
+        wait_for_deferred_save_idle_if_active,
+    )
+
+    lines = serial_collector.snapshot()
+    save_wait_anchor = len(lines)
+
+    if serial_global_transport_running(lines, after_index=after_index):
+        print("[info] transport stop before clear long press")
+        _send_short_press(
+            out_port,
+            note=GLOBAL_TRANSPORT_NOTE,
+            channel_1based=CONTROL_CHANNEL_1BASED,
+            press_ms=press_ms,
+        )
+        time.sleep(phase_wait_ms / 1000.0)
+        save_wait_anchor = len(serial_collector.snapshot())
+    elif not deferred_save_active_in_suffix(lines, after_index=after_index):
+        return True
+    else:
+        save_wait_anchor = after_index
+
+    save_drain_s = max(getattr(args, "deferred_save_wait_ms", 3000), 0) / 1000.0
+    if not wait_for_deferred_save_idle_if_active(
+        serial_collector,
+        after_line_index=save_wait_anchor,
+        log_prefix="[clear-precondition]",
+        abort=abort,
+        max_timeout_s=save_drain_s,
+    ):
+        print(
+            "[warn] deferred save still active after "
+            f"{save_drain_s:.0f}s — attempting clear anyway"
+        )
+    return True
+
+
+def _sleep_until_monotonic(target_mono: float, abort: RunAbort) -> bool:
+    while time.monotonic() < target_mono:
+        if abort.check() is not None:
+            return False
+        remaining = target_mono - time.monotonic()
+        time.sleep(min(max(remaining, 0.0), 0.005))
+    return True
+
+
+def _stream_fixture_record_wall_scheduled(
+    out_port: mido.ports.BaseOutput,
+    *,
+    fixture: tuple[Any, ...],
+    target_bars: int,
+    midi_channel_1based: int,
+    record_start_mono: float,
+    bpm: float,
+    stop_press_advance_clocks: int = 0,
+    press_ms: int = 120,
+    abort: RunAbort,
+) -> tuple[int, int, bool]:
+    """Emit fixture notes on absolute wall-time grid from transport record start.
+
+    Returns ``(note_on_count, clocks, record_stop_sent)``. Record stop is scheduled at
+    ``target_bars`` minus button debounce lead so the device stops at 2 bars, not after.
+    """
+    from hitl.control_constants import TICKS_PER_16TH_STEP, TICKS_PER_BAR
+    from hitl.serial_tick_anchor import (
+        TICKS_PER_CLOCK,
+        record_button_lead_seconds,
+        ticks_per_second_from_bpm,
+    )
+
+    ch = midi_channel_1based - 1
+    tps = ticks_per_second_from_bpm(bpm)
+    if tps <= 0:
+        return 0, 0, False
+
+    fixture_by_step: dict[int, list[Any]] = {}
+    for note in fixture:
+        fixture_by_step.setdefault(note.step, []).append(note)
+    for step_notes in fixture_by_step.values():
+        step_notes.sort(key=lambda n: n.pitch)
+
+    end_tick = target_bars * TICKS_PER_BAR
+    if stop_press_advance_clocks > 0:
+        end_tick = max(TICKS_PER_CLOCK, end_tick - stop_press_advance_clocks * TICKS_PER_CLOCK)
+    stop_lead_s = record_button_lead_seconds(press_ms=press_ms)
+    stop_mono = record_start_mono + end_tick / tps - stop_lead_s
+
+    print(
+        "[info] Fixture record via transport wall-time schedule "
+        f"({bpm:.1f} BPM, stop_at={end_tick} ticks lead={stop_lead_s:.3f}s)."
+    )
+
+    note_on_count = 0
+    stop_sent = False
+    pending_offs: list[tuple[float, int]] = []
+
+    def _emit_due_offs(now_mono: float) -> None:
+        nonlocal pending_offs
+        still: list[tuple[float, int]] = []
+        for off_mono, pitch in pending_offs:
+            if now_mono >= off_mono:
+                out_port.send(mido.Message("note_off", channel=ch, note=pitch, velocity=0))
+            else:
+                still.append((off_mono, pitch))
+        pending_offs = still
+
+    def _maybe_send_record_stop(now_mono: float) -> None:
+        nonlocal stop_sent
+        if stop_sent or now_mono < stop_mono:
+            return
+        _send_short_press(
+            out_port,
+            note=RECORD_BUTTON_NOTE,
+            channel_1based=CONTROL_CHANNEL_1BASED,
+            press_ms=press_ms,
+        )
+        stop_sent = True
+
+    for step in sorted(fixture_by_step):
+        step_tick = step * TICKS_PER_16TH_STEP
+        target_mono = record_start_mono + step_tick / tps
+        if not _sleep_until_monotonic(target_mono, abort):
+            break
+        now_mono = time.monotonic()
+        _emit_due_offs(now_mono)
+        for entry in fixture_by_step[step]:
+            out_port.send(mido.Message("note_on", channel=ch, note=entry.pitch, velocity=98))
+            note_on_count += 1
+            gate_ticks = entry.gate_steps * TICKS_PER_16TH_STEP
+            pending_offs.append((target_mono + gate_ticks / tps, entry.pitch))
+        _maybe_send_record_stop(now_mono)
+
+    if not stop_sent:
+        if _sleep_until_monotonic(stop_mono, abort):
+            _maybe_send_record_stop(time.monotonic())
+
+    _emit_due_offs(time.monotonic())
+
+    elapsed_s = max(0.0, time.monotonic() - record_start_mono)
+    clocks = int(elapsed_s * (bpm / 60.0) * 24.0)
+    return note_on_count, clocks, stop_sent
+
+
+def _stream_fixture_record_serial_anchored(
+    out_port: mido.ports.BaseOutput,
+    serial_collector: Any,
+    *,
+    fixture: tuple[Any, ...],
+    target_bars: int,
+    midi_channel_1based: int,
+    reca_start_tick: int,
+    bpm: float,
+    step_clocks: int = 6,
+    stop_press_advance_clocks: int = 0,
+    press_ms: int = 120,
+    abort: RunAbort,
+) -> tuple[int, int]:
+    """Emit fixture notes paced to Teensy transport via #CAP,BAR tick extrapolation."""
+    from host_midi_automation_edit_baseline import _emit_fixture_steps_for_clock
+
+    from hitl.control_constants import TICKS_PER_BAR
+    from hitl.serial_tick_anchor import TICKS_PER_CLOCK, TransportTickAnchor
+
+    ch = midi_channel_1based - 1
+    fixture_by_step: dict[int, list[Any]] = {}
+    for note in fixture:
+        fixture_by_step.setdefault(note.step, []).append(note)
+    for step_notes in fixture_by_step.values():
+        step_notes.sort(key=lambda n: n.pitch)
+
+    target_clocks = target_bars * MIDI_CLOCKS_PER_BAR
+    end_transport_tick = reca_start_tick + target_bars * TICKS_PER_BAR
+    stop_trigger_clock: Optional[int] = None
+    if stop_press_advance_clocks > 0:
+        stop_trigger_clock = max(1, target_clocks - stop_press_advance_clocks)
+
+    anchor = TransportTickAnchor.from_collector(
+        serial_collector,
+        bpm,
+        fallback_tick=reca_start_tick,
+    )
+    phase_clock = 0
+    note_on_count = 0
+    held: list[tuple[int, int]] = []
+    next_emit_step = 0
+    immediate_emitted = False
+    stop_sent = False
+
+    print(
+        "[info] Fixture record via serial transport tick anchor "
+        f"(RECA start={reca_start_tick}, {bpm:.1f} BPM)."
+    )
+
+    while anchor.estimated_tick() < end_transport_tick:
+        if abort.check() is not None:
+            break
+        anchor.refresh(serial_collector)
+        est_tick = anchor.estimated_tick()
+        transport_offset = max(0, est_tick - reca_start_tick)
+        target_phase_clock = min(target_clocks, transport_offset // TICKS_PER_CLOCK)
+        if phase_clock < target_phase_clock:
+            phase_clock += 1
+            if not immediate_emitted:
+                step_notes, next_emit_step, held = _emit_fixture_steps_for_clock(
+                    phase_clock=phase_clock,
+                    step_clocks=step_clocks,
+                    target_bars=target_bars,
+                    fixture_by_step=fixture_by_step,
+                    next_emit_step=0,
+                    out_port=out_port,
+                    ch=ch,
+                    held=held,
+                )
+                note_on_count += step_notes
+                immediate_emitted = True
+            else:
+                added, next_emit_step, held = _emit_fixture_steps_for_clock(
+                    phase_clock=phase_clock,
+                    step_clocks=step_clocks,
+                    target_bars=target_bars,
+                    fixture_by_step=fixture_by_step,
+                    next_emit_step=next_emit_step,
+                    out_port=out_port,
+                    ch=ch,
+                    held=held,
+                )
+                note_on_count += added
+
+            if (
+                stop_trigger_clock is not None
+                and not stop_sent
+                and phase_clock >= stop_trigger_clock
+            ):
+                _send_short_press(
+                    out_port,
+                    note=RECORD_BUTTON_NOTE,
+                    channel_1based=CONTROL_CHANNEL_1BASED,
+                    press_ms=press_ms,
+                )
+                stop_sent = True
+
+        time.sleep(0.002)
+
+    for note, _off_at in held:
+        out_port.send(mido.Message("note_off", channel=ch, note=note, velocity=0))
+
+    return note_on_count, phase_clock
+
+
+def _stream_fixture_record_bars(
+    out_port: mido.ports.BaseOutput,
+    in_port: mido.ports.BaseInput,
+    serial_collector: Optional[Any],
+    args: Any,
+    *,
+    fixture: tuple[Any, ...],
+    target_bars: int,
+    midi_channel_1based: int,
+    abort: RunAbort,
+    recording_confirmed_at: Optional[float] = None,
+    record_schedule_start_mono: Optional[float] = None,
+    skip_clock_preamble: bool = False,
+) -> tuple[int, int, bool, bool]:
+    """Bar-synced edit fixture record (shared by base+edit_record_fixture and edit_full).
+
+    Returns ``(note_on_count, clocks, stream_ok, record_stop_sent)``.
+    """
+    using_serial_proxy = False
+    wall_clock_tempo: Optional[float] = None
+    if skip_clock_preamble and serial_collector is not None:
+        using_serial_proxy = _use_serial_transport_proxy(args, serial_collector)
+        if using_serial_proxy:
+            wall_clock_tempo = _resolve_wall_tempo_for_proxy(
+                serial_collector, args, using_serial_proxy=True
+            )
+            clock_ok = True
+        else:
+            clock_ok = _clock_seen_within(in_port, 0.5)
+    else:
+        clock_ok, using_serial_proxy = _ensure_midi_clock_or_serial_proxy(
+            in_port,
+            out_port,
+            serial_collector,
+            args,
+            min_clocks=24,
+            timeout_s=2.0,
+            abort=abort,
+        )
+        if clock_ok:
+            wall_clock_tempo = _resolve_wall_tempo_for_proxy(
+                serial_collector, args, using_serial_proxy=using_serial_proxy
+            )
+    if not clock_ok:
+        print("[error] MIDI clock / serial transport proxy missing before fixture record.")
+        return 0, 0, False, False
+
+    proxy_bpm = wall_clock_tempo or float(getattr(args, "tempo_bpm", 120.0) or 120.0)
+    if using_serial_proxy:
+        print(
+            "[info] Bar sync via wall-clock tempo proxy "
+            f"({proxy_bpm:.1f} BPM) — Teensy clock not on USB MIDI in."
+        )
+
+    if record_schedule_start_mono is not None:
+        rec_notes, rec_clocks, stop_sent = _stream_fixture_record_wall_scheduled(
+            out_port,
+            fixture=fixture,
+            target_bars=target_bars,
+            midi_channel_1based=midi_channel_1based,
+            record_start_mono=record_schedule_start_mono,
+            bpm=proxy_bpm,
+            stop_press_advance_clocks=int(getattr(args, "stop_press_advance_clocks", 0) or 0),
+            press_ms=args.press_ms,
+            abort=abort,
+        )
+        return rec_notes, rec_clocks, True, stop_sent
+
+    if using_serial_proxy and serial_collector is not None:
+        from hitl.serial_tick_anchor import parse_record_start_tick
+
+        reca_start = parse_record_start_tick(serial_collector.snapshot())
+        if reca_start is not None:
+            rec_notes, rec_clocks = _stream_fixture_record_serial_anchored(
+                out_port,
+                serial_collector,
+                fixture=fixture,
+                target_bars=target_bars,
+                midi_channel_1based=midi_channel_1based,
+                reca_start_tick=reca_start,
+                bpm=proxy_bpm,
+                stop_press_advance_clocks=int(
+                    getattr(args, "stop_press_advance_clocks", 0) or 0
+                ),
+                press_ms=args.press_ms,
+                abort=abort,
+            )
+            return rec_notes, rec_clocks, True, False
+
+    from host_midi_automation_edit_baseline import _stream_fixture_record
+
+    rec_notes, rec_clocks = _stream_fixture_record(
+        out_port,
+        in_port,
+        fixture=fixture,
+        target_bars=target_bars,
+        midi_channel_1based=midi_channel_1based,
+        stop_press_advance_clocks=int(getattr(args, "stop_press_advance_clocks", 0) or 0),
+        press_ms=args.press_ms,
+        abort=abort,
+        wall_clock_tempo_bpm=wall_clock_tempo,
+        emit_immediate_first_step=True,
+        stream_start_monotonic=recording_confirmed_at,
+    )
+    return rec_notes, rec_clocks, True, False
+
+
 def _ensure_transport_stopped_before_record_arm(
     out_port: mido.ports.BaseOutput,
     in_port: mido.ports.BaseInput,
@@ -596,8 +973,17 @@ def _run_record_arm_until_capturing(
     track_baseline_len: int,
     record_loop_slot: Optional[int],
     abort: RunAbort,
-) -> bool:
-    """Stop transport, arm, start transport, and confirm RECORDING before note stream."""
+    wait_for_recording_confirm: bool = True,
+) -> tuple[bool, Optional[float]]:
+    """Stop transport, arm, start transport; optionally confirm RECORDING before note stream.
+
+    Returns ``(reached_recording, record_schedule_start_mono)``. When transport was started,
+    ``record_schedule_start_mono`` is the wall-time anchor for fixture grid scheduling
+    (transport short-press debounce model). Callers that stream fixture notes immediately
+    should pass ``wait_for_recording_confirm=False`` so the grid is not delayed by serial sync.
+    """
+    from hitl.serial_tick_anchor import transport_record_start_monotonic
+
     _ensure_transport_stopped_before_record_arm(
         out_port,
         in_port,
@@ -611,7 +997,7 @@ def _run_record_arm_until_capturing(
     if serial_collector is None:
         _send_record_arm_press(out_port, press_ms=args.press_ms, loop_slot=record_loop_slot)
         time.sleep(args.phase_wait_ms / 1000.0)
-        return _restart_transport_after_clear(
+        ok, press_sent = _restart_transport_after_clear(
             out_port,
             in_port,
             serial_collector,
@@ -620,6 +1006,10 @@ def _run_record_arm_until_capturing(
             phase_wait_ms=args.phase_wait_ms,
             abort=abort,
         )
+        if not ok or press_sent is None:
+            return False, None
+        schedule = transport_record_start_monotonic(press_sent, press_ms=args.press_ms)
+        return True, schedule
 
     timeout_s = args.state_sync_timeout_ms / 1000.0
     grace_s = max(getattr(args, "serial_grace_ms", 0), 0) / 1000.0
@@ -642,10 +1032,10 @@ def _run_record_arm_until_capturing(
             abort=abort,
         )
     if not armed:
-        return False
+        return False, None
 
     transport_baseline_len = len(serial_collector.snapshot())
-    if not _restart_transport_after_clear(
+    ok, press_sent = _restart_transport_after_clear(
         out_port,
         in_port,
         serial_collector,
@@ -653,14 +1043,22 @@ def _run_record_arm_until_capturing(
         press_ms=args.press_ms,
         phase_wait_ms=args.phase_wait_ms,
         abort=abort,
-    ):
-        return False
-    return _confirm_recording_after_transport_start(
+        minimal_settle=not wait_for_recording_confirm,
+    )
+    if not ok or press_sent is None:
+        return False, None
+    schedule = transport_record_start_monotonic(press_sent, press_ms=args.press_ms)
+
+    if not wait_for_recording_confirm:
+        return True, schedule
+
+    confirmed = _confirm_recording_after_transport_start(
         serial_collector,
         transport_baseline_len=transport_baseline_len,
         timeout_s=timeout_s + grace_s,
         abort=abort,
     )
+    return confirmed, schedule if confirmed else None
 
 
 def _restart_transport_after_clear(
@@ -672,7 +1070,8 @@ def _restart_transport_after_clear(
     press_ms: int,
     phase_wait_ms: int,
     abort: Optional[RunAbort],
-) -> bool:
+    minimal_settle: bool = False,
+) -> tuple[bool, Optional[float]]:
     """Start global transport after record arm so the armed slot begins capturing."""
     print("[info] transport start after record arm")
     _send_short_press(
@@ -681,7 +1080,11 @@ def _restart_transport_after_clear(
         channel_1based=CONTROL_CHANNEL_1BASED,
         press_ms=press_ms,
     )
-    time.sleep(phase_wait_ms / 1000.0)
+    transport_press_sent_mono = time.monotonic()
+    if minimal_settle:
+        time.sleep(max(press_ms, 0) / 1000.0)
+    else:
+        time.sleep(phase_wait_ms / 1000.0)
     clock_ok, using_serial_proxy = _ensure_midi_clock_or_serial_proxy(
         in_port,
         out_port,
@@ -696,14 +1099,14 @@ def _restart_transport_after_clear(
             "[error] MIDI clock / serial transport proxy missing after transport restart; "
             "aborting track run."
         )
-        return False
+        return False, None
     if using_serial_proxy:
         proxy_bpm = _resolve_wall_tempo_for_proxy(serial_collector, args, using_serial_proxy=True)
         print(
             "[info] Transport running after clear via wall-clock tempo proxy "
             f"({(proxy_bpm or args.tempo_bpm):.1f} BPM)."
         )
-    return True
+    return True, transport_press_sent_mono
 
 
 def _send_record_arm_press(
@@ -985,7 +1388,7 @@ def _run_clear_before_record(
         "(long press record/overdub)"
     )
 
-    stopped_transport = _stop_transport_before_clear(
+    _prepare_deferred_save_before_clear(
         out_port,
         in_port,
         serial_collector,
@@ -993,37 +1396,10 @@ def _run_clear_before_record(
         press_ms=args.press_ms,
         phase_wait_ms=args.phase_wait_ms,
         after_index=track_baseline_len,
+        abort=abort,
     )
-    save_anchor_len = len(serial_collector.snapshot()) if serial_collector is not None else 0
 
     if serial_collector is not None:
-        from hitl.deferred_save_idle import (
-            deferred_save_idle_in_suffix,
-            wait_for_deferred_save_idle,
-        )
-
-        save_drain_s = max(getattr(args, "deferred_save_wait_ms", 120000), 0) / 1000.0
-        if not deferred_save_idle_in_suffix(
-            serial_collector.snapshot(),
-            after_index=save_anchor_len if stopped_transport else track_baseline_len,
-        ):
-            print(
-                "[info] waiting for deferred save idle before clear long press "
-                f"(up to {save_drain_s:.0f}s)"
-            )
-            if not wait_for_deferred_save_idle(
-                serial_collector,
-                after_line_index=save_anchor_len if stopped_transport else track_baseline_len,
-                timeout_s=save_drain_s,
-                log_prefix="[clear-precondition]",
-                abort=abort,
-            ):
-                print(
-                    "[error] deferred save did not finish before clear; "
-                    "long press would be aborted by firmware"
-                )
-                return False, "deferred_save_not_idle"
-
         state_counts = _count_capture_state_entries(serial_collector.snapshot())
         expected_empty_count = state_counts.get("EMPTY", 0) + 1
         press_baseline_len = len(serial_collector.snapshot())
@@ -3345,10 +3721,12 @@ def run() -> int:
 
                 print(f"[track {_user_track_number(idx)}] record start")
                 recording_confirmed_at: Optional[float] = None
+                record_schedule_start: Optional[float] = None
                 record_baseline_len = len(serial_collector.snapshot()) if serial_collector else 0
                 record_loop_slot = args.loop_slot if args.loop_slot > 0 else None
+                edit_fixture = getattr(args, "edit_record_fixture", False)
 
-                reached_recording = _run_record_arm_until_capturing(
+                reached_recording, record_schedule_start = _run_record_arm_until_capturing(
                     out_port,
                     in_port,
                     serial_collector,
@@ -3356,8 +3734,9 @@ def run() -> int:
                     track_baseline_len=track_baseline_len,
                     record_loop_slot=record_loop_slot,
                     abort=abort,
+                    wait_for_recording_confirm=not edit_fixture,
                 )
-                if serial_collector is not None and reached_recording:
+                if serial_collector is not None and reached_recording and not edit_fixture:
                     recording_confirmed_at = time.monotonic()
                 if serial_collector is not None and not reached_recording:
                     print(
@@ -3381,6 +3760,7 @@ def run() -> int:
 
                 rec_clock_count = 0
                 rec_fallback_seconds = False
+                fixture_record_stop_sent = False
                 rec_timing = {
                     "grid_steps_emitted": 0.0,
                     "max_abs_grid_jitter_clocks": 0.0,
@@ -3411,27 +3791,30 @@ def run() -> int:
                         )
                     guard = max(10.0, args.record_bars * seconds_per_bar * 3.0)
                     if getattr(args, "edit_record_fixture", False):
-                        from host_midi_automation_edit_baseline import (
-                            EDIT_RECORD_FIXTURE,
-                            _stream_fixture_record,
-                        )
+                        from host_midi_automation_edit_baseline import EDIT_RECORD_FIXTURE
 
-                        rec_notes, rec_clock_count = _stream_fixture_record(
+                        rec_notes, rec_clock_count, stream_ok, record_stop_sent = _stream_fixture_record_bars(
                             out_port,
                             in_port,
+                            serial_collector,
+                            args,
                             fixture=EDIT_RECORD_FIXTURE,
                             target_bars=args.record_bars,
                             midi_channel_1based=args.midi_channel,
-                            stop_press_advance_clocks=args.stop_press_advance_clocks,
-                            press_ms=args.press_ms,
                             abort=abort,
+                            record_schedule_start_mono=record_schedule_start,
+                            skip_clock_preamble=True,
                         )
+                        if not stream_ok:
+                            abort_reason = "midi clock missing before record phase"
+                            break
                         rec_cc = 0
                         rec_timing = {
                             "grid_steps_emitted": float(rec_notes),
                             "max_abs_grid_jitter_clocks": 0.0,
                             "mean_abs_grid_jitter_clocks": 0.0,
                         }
+                        fixture_record_stop_sent = record_stop_sent
                     else:
                         rec_notes, rec_cc, rec_clock_count, rec_timing = _stream_pattern_for_bars(
                             out_port,
@@ -3479,15 +3862,19 @@ def run() -> int:
                     abort_reason = "record phase saw 0 midi clock pulses"
                     break
 
-                time.sleep(max(args.post_stream_settle_ms, 0) / 1000.0)
+                if not (edit_fixture and fixture_record_stop_sent):
+                    time.sleep(max(args.post_stream_settle_ms, 0) / 1000.0)
                 print(f"[track {_user_track_number(idx)}] record stop (returns to play)")
                 record_stop_baseline_len = len(serial_collector.snapshot()) if serial_collector else 0
-                _send_short_press(
-                    out_port,
-                    note=RECORD_BUTTON_NOTE,
-                    channel_1based=CONTROL_CHANNEL_1BASED,
-                    press_ms=args.press_ms,
-                )
+                if not (edit_fixture and fixture_record_stop_sent):
+                    _send_short_press(
+                        out_port,
+                        note=RECORD_BUTTON_NOTE,
+                        channel_1based=CONTROL_CHANNEL_1BASED,
+                        press_ms=args.press_ms,
+                    )
+                elif serial_collector is not None:
+                    print("[info] Record stop already sent during wall-time fixture stream; waiting for PLAYING.")
                 if serial_collector is not None:
                     from hitl.capture_transitions import _wait_for_playing_after_record_stop
 

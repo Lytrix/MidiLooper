@@ -15,6 +15,7 @@
 #include "TrackManager.h"
 #include "Utils/NoteEditMem.h"
 #include "Utils/NoteUtils.h"
+#include "Utils/SelectNavigation.h"
 
 namespace {
 
@@ -25,10 +26,13 @@ NOTE_EDIT_MEM bool hasNoteNearBracket(const Track& track, uint32_t selectedTick)
     if (loopLength == 0) {
         return false;
     }
-    const uint32_t bracket = selectedTick % loopLength;
+    const uint32_t loopStartTick = track.getLoopStartTick();
+    const uint32_t bracket =
+        SelectNavigation::displayPhaseTick(selectedTick, loopLength);
     const auto& notes = track.getCachedNotes();
     for (const auto& n : notes) {
-        const uint32_t noteTick = n.startTick % loopLength;
+        const uint32_t noteTick =
+            SelectNavigation::noteRelativeTick(n.startTick, loopStartTick, loopLength);
         const uint32_t dist = std::min((noteTick + loopLength - bracket) % loopLength,
                                        (bracket + loopLength - noteTick) % loopLength);
         if (dist <= kBracketSnapWindow) {
@@ -95,10 +99,16 @@ NOTE_EDIT_MEM void ControlSurfaceManager::handleCreateNoteAtBracket(Track& track
         return;
     }
 
+    const uint32_t loopStartTick = track.getLoopStartTick();
+    const uint32_t bracketRel =
+        SelectNavigation::displayPhaseTick(selectedTick, loopLength);
+    const uint32_t storageTick =
+        SelectNavigation::noteStorageTick(bracketRel, loopStartTick, loopLength);
+
     editManager.setSelectedNoteIdx(-1);
     editManager.beginGeometryMutation(track, NoteEditKind::Add, false);
     const std::array<MidiEvent, 2> created =
-        EditSelectNoteState::createNoteAtTick(track, selectedTick);
+        EditSelectNoteState::createNoteAtTick(track, storageTick);
     EditPass add{};
     add.passType = EditPassType::Note;
     add.actionType = EditActionType::Create;
@@ -112,7 +122,7 @@ NOTE_EDIT_MEM void ControlSurfaceManager::handleCreateNoteAtBracket(Track& track
     }
     editManager.setSelectedTick(selectedTick);
     track.invalidateCaches();
-    editManager.selectNoteAtBracket(track, selectedTick);
+    editManager.selectNoteAtBracket(track, bracketRel);
     scheduleNoteSelectFaderSync(track);
 }
 

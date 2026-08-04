@@ -15,6 +15,7 @@
 #include "Globals.h"
 #include "MidiConfig.h"
 #include "Utils/NoteUtils.h"
+#include "Utils/SelectNavigation.h"
 #include "Utils/ValidationUtils.h"
 #include "Utils/SelectNavigation.h"
 #include <algorithm>
@@ -83,9 +84,16 @@ void EditSelectNoteState::onButtonPress(EditManager& manager, Track& track) {
         // No note at this position - create a 32nd note
         logger.info("EditSelectNoteState: No note found, creating 32nd note at tick %lu", selectedTick);
         
+        const uint32_t loopLength = track.getLoopLength();
+        const uint32_t loopStartTick = track.getLoopStartTick();
+        const uint32_t bracketRel =
+            SelectNavigation::displayPhaseTick(selectedTick, loopLength);
+        const uint32_t storageTick =
+            SelectNavigation::noteStorageTick(bracketRel, loopStartTick, loopLength);
+
         // Push undo snapshot before creating note
         manager.beginGeometryMutation(track, NoteEditKind::Add, false);
-        const std::array<MidiEvent, 2> created = createDefaultNote(track, selectedTick);
+        const std::array<MidiEvent, 2> created = createDefaultNote(track, storageTick);
         EditPass add{};
         add.passType = EditPassType::Note;
         add.actionType = EditActionType::Create;
@@ -96,7 +104,7 @@ void EditSelectNoteState::onButtonPress(EditManager& manager, Track& track) {
         track.invalidateCaches();
 
         // Select the newly created note and enter start note editing
-        manager.selectNoteAtBracket(track, selectedTick);
+        manager.selectNoteAtBracket(track, bracketRel);
         manager.setState(manager.getStartNoteState(), track, selectedTick);
     }
 }

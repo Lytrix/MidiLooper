@@ -9,6 +9,7 @@
 #include "../../src/Utils/LoopEventValidation.cpp"
 #include "../test_support/LoopCaptureTestDeps.cpp"
 #include "../../src/NoteEditFocus.cpp"
+#include "../../src/EditSessionLiveStoreSpan.cpp"
 #include "../../src/EditApply.cpp"
 #include "../../src/LoopPasses.cpp"
 #include "../../src/LoopEventStore.cpp"
@@ -97,6 +98,26 @@ void test_populate_baseline_map_for_edit_closure_wrap_sibling() {
   TEST_ASSERT_EQUAL(2, static_cast<int>(focus.baselineMap.size()));
   TEST_ASSERT_TRUE(focus.baselineMap.count(1) > 0);
   TEST_ASSERT_TRUE(focus.baselineMap.count(2) > 0);
+}
+
+void test_populate_baseline_map_includes_linear_same_pitch_neighbor() {
+  // session_20260804_210819: mover at 907 must see neighbor at 666 on pitch 64 as overlap candidate.
+  NoteEditFocus focus;
+  MidiEventVec flat;
+  flat.push_back(noteOnWithNoteId(666, 1, 64, 100, 3));
+  MidiEvent neighborOff = MidiEvent::NoteOff(815, 1, 64, 0);
+  flat.push_back(neighborOff);
+  flat.push_back(noteOnWithNoteId(907, 1, 64, 100, 4));
+  MidiEvent moverOff = MidiEvent::NoteOff(1098, 1, 64, 0);
+  flat.push_back(moverOff);
+
+  rebuildNoteEditFocusFromStore(focus, flat, 1, 2400, 1);
+  TEST_ASSERT_EQUAL_UINT32(4u, focus.movingNoteId);
+  populateBaselineMapForEditClosure(focus, flat, flat, 1, 2400);
+  TEST_ASSERT_TRUE(focus.baselineMap.count(3) > 0);
+  TEST_ASSERT_TRUE(focus.baselineMap.count(4) > 0);
+  TEST_ASSERT_EQUAL_UINT32(666u, focus.baselineMap[3].startTick);
+  TEST_ASSERT_EQUAL_UINT32(815u, focus.baselineMap[3].endTick);
 }
 
 void test_a1_length_updates_moving_note_range_not_commit_baseline() {
@@ -207,6 +228,39 @@ void test_can_apply_simple_pitch_change_blocks_inner_overlap_on_target_lane() {
 
   TEST_ASSERT_FALSE(canApplySimplePitchChange(
       events, focus, 1, 60, 59, focus.last.startTick, focus.last.endTick, kLoopLength));
+}
+
+void test_can_apply_simple_pitch_change_blocks_when_baseline_map_lane_needs_restore() {
+  // session_20260804_213759: pipeline Hide on pitch 65 leaves overlapNotes empty; leaving
+  // 65→64 took the simple path and never RestoreNote'd the hidden overlap note.
+  constexpr uint32_t kLoopLength = 1536;
+  constexpr NoteId kMoverId = 1;
+  constexpr NoteId kOverlapId = 2;
+
+  NoteEditFocus focus;
+  focus.active = true;
+  focus.movingNoteId = kMoverId;
+  focus.commitBaseline = {64, 100, 906, 1055};
+  focus.last = {65, 100, 906, 1055};
+  focus.movingNoteRange = {906, 1055};
+  focus.baselineMap[kMoverId] = focus.commitBaseline;
+  focus.baselineMap[kOverlapId] = {65, 100, 906, 1001};
+
+  MidiEventVec events;
+  // Mover still on pitch 65; overlap note hidden (removed from live store).
+  events.push_back(noteOnWithNoteId(906, 1, 65, 100, kMoverId));
+  events.push_back(MidiEvent::NoteOff(1055, 1, 65, 0));
+  events.back().noteId = kMoverId;
+
+  TEST_ASSERT_FALSE(canApplySimplePitchChange(
+      events, focus, 1, 65, 64, focus.last.startTick, focus.last.endTick, kLoopLength));
+
+  // After RestoreNote, live matches baselineMap → simple path allowed again.
+  events.push_back(noteOnWithNoteId(906, 1, 65, 100, kOverlapId));
+  events.push_back(MidiEvent::NoteOff(1001, 1, 65, 0));
+  events.back().noteId = kOverlapId;
+  TEST_ASSERT_TRUE(canApplySimplePitchChange(
+      events, focus, 1, 65, 64, focus.last.startTick, focus.last.endTick, kLoopLength));
 }
 
 void test_inner_overlap_note_in_moving_note_range() {
@@ -1026,6 +1080,54 @@ void test_find_linear_off_for_note_id_ignores_same_pitch_neighbor_off() {
   TEST_ASSERT_EQUAL_UINT32(1595u, off->tick);
 }
 
+void test_find_linear_off_for_note_id_ignores_cross_pitch_same_note_id_off() {
+  // session_20260804_205144.log: mover pitch 65 @1050 must not pair to pitch 64 off @1289.
+  constexpr NoteId kSharedId = 42;
+  constexpr uint32_t kLoopLength = 2400;
+  MidiEventVec session;
+  MidiEvent moverOn = MidiEvent::NoteOn(1050, 1, 65, 100);
+  moverOn.noteId = kSharedId;
+  session.push_back(moverOn);
+  MidiEvent moverOff = MidiEvent::NoteOff(1145, 1, 65, 0);
+  moverOff.noteId = kSharedId;
+  session.push_back(moverOff);
+  MidiEvent strayOff = MidiEvent::NoteOff(1289, 1, 64, 0);
+  strayOff.noteId = kSharedId;
+  session.push_back(strayOff);
+
+  MidiEvent* off = findLinearOffForNoteId(session, moverOn, kSharedId, kLoopLength);
+  TEST_ASSERT_NOT_NULL(off);
+  TEST_ASSERT_EQUAL_UINT32(1145u, off->tick);
+  TEST_ASSERT_EQUAL_UINT8(65, off->data.noteData.note);
+}
+
+void test_sync_linear_focus_ignores_cross_pitch_same_note_id_off() {
+  constexpr NoteId kSharedId = 42;
+  constexpr uint32_t kLoopLength = 2400;
+  NoteEditFocus focus;
+  focus.active = true;
+  focus.movingNoteId = kSharedId;
+  focus.commitBaseline = {65, 100, 1050, 1145};
+  focus.last = focus.commitBaseline;
+  focus.movingNoteRange = {1050, 1145};
+
+  MidiEventVec session;
+  MidiEvent moverOn = MidiEvent::NoteOn(1050, 1, 65, 100);
+  moverOn.noteId = kSharedId;
+  session.push_back(moverOn);
+  MidiEvent moverOff = MidiEvent::NoteOff(1145, 1, 65, 0);
+  moverOff.noteId = kSharedId;
+  session.push_back(moverOff);
+  MidiEvent strayOff = MidiEvent::NoteOff(1289, 1, 64, 0);
+  strayOff.noteId = kSharedId;
+  session.push_back(strayOff);
+
+  TEST_ASSERT_TRUE(syncNoteEditFocusLinearFromSessionStore(focus, session, 1, kLoopLength));
+  TEST_ASSERT_EQUAL_UINT32(1050u, focus.last.startTick);
+  TEST_ASSERT_EQUAL_UINT32(1145u, focus.last.endTick);
+  TEST_ASSERT_EQUAL_UINT8(65, focus.last.pitch);
+}
+
 void test_moving_note_linear_span_ignores_neighbor_lifo_off() {
   // session_20260714_023305.log @190.131: restored neighbor 240-336 must not shorten mover 288-432.
   constexpr uint32_t kLoopLength = 2304;
@@ -1564,11 +1666,13 @@ int main(int /*argc*/, char** /*argv*/) {
   UNITY_BEGIN();
   RUN_TEST(test_baseline_map_includes_moving_note_at_select);
   RUN_TEST(test_populate_baseline_map_for_edit_closure_wrap_sibling);
+  RUN_TEST(test_populate_baseline_map_includes_linear_same_pitch_neighbor);
   RUN_TEST(test_a1_length_updates_moving_note_range_not_commit_baseline);
   RUN_TEST(test_a1_no_pending_length_when_moving_note_range_matches_baseline);
   RUN_TEST(test_note_edit_focus_has_pending_commit_geometry_and_overlap);
   RUN_TEST(test_can_apply_simple_pitch_change_without_lane_collision);
   RUN_TEST(test_can_apply_simple_pitch_change_blocks_inner_overlap_on_target_lane);
+  RUN_TEST(test_can_apply_simple_pitch_change_blocks_when_baseline_map_lane_needs_restore);
   RUN_TEST(test_inner_overlap_note_in_moving_note_range);
   RUN_TEST(test_overlap_note_effective_end_shortened_vs_hidden);
   RUN_TEST(test_shorten_under_49_ticks_classifies_as_hidden_candidate);
@@ -1604,6 +1708,8 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_linear_baseline_for_overlap_restore_shortened_keeps_original_end);
   RUN_TEST(test_linear_baseline_for_overlap_restore_hidden_uses_hide_snapshot_not_session);
   RUN_TEST(test_find_linear_off_for_note_id_ignores_same_pitch_neighbor_off);
+  RUN_TEST(test_find_linear_off_for_note_id_ignores_cross_pitch_same_note_id_off);
+  RUN_TEST(test_sync_linear_focus_ignores_cross_pitch_same_note_id_off);
   RUN_TEST(test_moving_note_linear_span_ignores_neighbor_lifo_off);
   RUN_TEST(test_resolve_linear_note_span_for_overlap_prefers_baseline_map);
   RUN_TEST(test_find_linear_note_span_mover_length_ignores_neighbor_off);

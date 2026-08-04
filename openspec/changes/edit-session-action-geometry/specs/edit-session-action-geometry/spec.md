@@ -6,7 +6,7 @@ Live geometry edits (`EditSessionType::Note` first; Loop and ControlChange later
 
 1. **Transaction baseline** — immutable **`baselineMap`** per **edit driver**; full loop in this change
 2. **Edited geometry** — **`EditorSelection`** plus one **linear `NoteBaseline` causing span** per selected note this tick (`focus.last` for **`primaryNote`**; see design § Edited geometry)
-3. **`normalizeWrapToLinear`** — linear spans before analysis
+3. **Edit projection** (D20) — **`buildEditProjectionContext`** + **`projectEditIntervalsForAnalysis`** produce linear spans before analysis
 4. **Edit session geometry orchestrator** — determine **changed causing notes** and **eligible overlap pairs**; MUST NOT delegate selection or latch logic to analyze
 5. **`analyzeEditSessionInteractions`** — pure geometry facts for supplied causing notes; **positive interaction graph** only (omit non-overlapping pairs; no **None** enum)
 6. **`groupEditSessionInteractionsByTarget`** — group interactions **per target `NoteId`**; ephemeral; MUST NOT persist across ticks
@@ -113,7 +113,7 @@ The system MUST NOT use a restore-first prelude or persistent overlap scratch as
 #### Scenario: Geometry parity classify fixtures
 
 - **WHEN** native parity fixtures run (internal swallow, head-on overlap, tail overlap, external cover, no overlap)
-- **THEN** **`InteractionType`** matches the locked classify order after **`normalizeWrapToLinear`**
+- **THEN** **`InteractionType`** matches the locked classify order after **Edit projection** (D20)
 
 #### Scenario: Selected set is one editing domain
 
@@ -146,7 +146,7 @@ The system MUST NOT use a restore-first prelude or persistent overlap scratch as
 
 - **GIVEN** target **A** is a wrapped display note
 - **WHEN** analyze runs
-- **THEN** **`normalizeWrapToLinear`** has produced linear **`baselineSpan`** for **A** before **`InteractionType`** is classified
+- **THEN** **Edit projection** has produced linear **`baselineSpan`** for **A** before **`InteractionType`** is classified
 
 #### Scenario: Causing selected, target not selected
 
@@ -175,6 +175,16 @@ Interaction analysis SHALL emit **only positive geometry facts**.
 - **WHEN** `analyzeEditSessionInteractions` runs for **B**
 - **THEN** no **`EditSessionInteraction`** exists for **(B, A)**
 - **AND** absence of the pair is sufficient for downstream restore — no **None** sentinel
+
+#### Scenario: Start-abut leave stays OverlapNoteOff
+
+- **GIVEN** left target **A** baseline ends at tick **T**
+- **AND** causing note **B** starts at tick **T** (start-abut)
+- **WHEN** `analyzeEditSessionInteractions` classifies **(B, A)**
+- **THEN** **`InteractionType`** is **OverlapNoteOff** (not **BoundaryTouch**)
+- **AND** **`computeShortenedEndTick`** is **T − 1**
+- **AND** resolve/builder emit **ShortenNote** to **T − 1** rather than full-baseline **RestoreNote**
+- **AND** full restore occurs only when **B.startTick > T** (pair omitted)
 
 ### Requirement: Interactions grouped by target
 

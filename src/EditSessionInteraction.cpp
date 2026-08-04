@@ -5,9 +5,12 @@
 
 #include <algorithm>
 
+#include "EditSessionLiveStoreSpan.h"
+#include "Utils/NoteEditMem.h"
+
 namespace {
 
-const NoteBaseline* findCausingSpan(NoteId noteId, const EditedGeometry& editedGeometry) {
+NOTE_EDIT_MEM const NoteBaseline* findCausingSpan(NoteId noteId, const EditedGeometry& editedGeometry) {
   for (const EditedNoteSpan& entry : editedGeometry.causingSpans) {
     if (entry.noteId == noteId) {
       return &entry.span;
@@ -16,19 +19,78 @@ const NoteBaseline* findCausingSpan(NoteId noteId, const EditedGeometry& editedG
   return nullptr;
 }
 
-const NoteBaseline* findBaselineSpan(NoteId noteId, const BaselineMap& transactionBaseline) {
+NOTE_EDIT_MEM const NoteBaseline* findBaselineSpan(NoteId noteId, const BaselineMap& transactionBaseline) {
   const auto it = transactionBaseline.find(noteId);
   return it == transactionBaseline.end() ? nullptr : &it->second;
 }
 
-bool baselineSpansEqual(const NoteBaseline& left, const NoteBaseline& right) {
+NOTE_EDIT_MEM bool baselineSpansEqual(const NoteBaseline& left, const NoteBaseline& right) {
   return left.pitch == right.pitch && left.velocity == right.velocity &&
          left.startTick == right.startTick && left.endTick == right.endTick;
 }
 
+NOTE_EDIT_MEM bool causingTargetPairBefore(const CausingTargetPair& left,
+                                           const CausingTargetPair& right) {
+  if (left.causingNoteId != right.causingNoteId) {
+    return left.causingNoteId < right.causingNoteId;
+  }
+  return left.targetNoteId < right.targetNoteId;
+}
+
+NOTE_EDIT_MEM void sortCausingTargetPairs(
+    std::vector<CausingTargetPair, InternalHeapFirstAllocator<CausingTargetPair>>& pairs) {
+  for (size_t i = 1; i < pairs.size(); ++i) {
+    const CausingTargetPair key = pairs[i];
+    size_t j = i;
+    while (j > 0 && causingTargetPairBefore(key, pairs[j - 1])) {
+      pairs[j] = pairs[j - 1];
+      --j;
+    }
+    pairs[j] = key;
+  }
+}
+
+NOTE_EDIT_MEM bool editSessionInteractionBefore(const EditSessionInteraction& left,
+                                                const EditSessionInteraction& right) {
+  return left.causingNoteId < right.causingNoteId;
+}
+
+NOTE_EDIT_MEM void sortIncomingInteractions(
+    std::vector<EditSessionInteraction, InternalHeapFirstAllocator<EditSessionInteraction>>&
+        incoming) {
+  for (size_t i = 1; i < incoming.size(); ++i) {
+    const EditSessionInteraction key = incoming[i];
+    size_t j = i;
+    while (j > 0 && editSessionInteractionBefore(key, incoming[j - 1])) {
+      incoming[j] = incoming[j - 1];
+      --j;
+    }
+    incoming[j] = key;
+  }
+}
+
+NOTE_EDIT_MEM bool targetInteractionGroupBefore(const TargetNoteInteractionGroup& left,
+                                                const TargetNoteInteractionGroup& right) {
+  return left.targetNoteId < right.targetNoteId;
+}
+
+NOTE_EDIT_MEM void sortTargetInteractionGroups(
+    std::vector<TargetNoteInteractionGroup,
+                 InternalHeapFirstAllocator<TargetNoteInteractionGroup>>& groups) {
+  for (size_t i = 1; i < groups.size(); ++i) {
+    const TargetNoteInteractionGroup key = groups[i];
+    size_t j = i;
+    while (j > 0 && targetInteractionGroupBefore(key, groups[j - 1])) {
+      groups[j] = groups[j - 1];
+      --j;
+    }
+    groups[j] = key;
+  }
+}
+
 }  // namespace
 
-bool isSelectedNote(NoteId noteId, const EditorSelection& selection) {
+NOTE_EDIT_MEM bool isSelectedNote(NoteId noteId, const EditorSelection& selection) {
   if (noteId == kInvalidNoteId) {
     return false;
   }
@@ -40,18 +102,18 @@ bool isSelectedNote(NoteId noteId, const EditorSelection& selection) {
   return false;
 }
 
-bool isIntraSelectionPair(NoteId causingNoteId, NoteId targetNoteId,
+NOTE_EDIT_MEM bool isIntraSelectionPair(NoteId causingNoteId, NoteId targetNoteId,
                             const EditorSelection& selection) {
   return isSelectedNote(causingNoteId, selection) && isSelectedNote(targetNoteId, selection);
 }
 
-bool geometryChangedThisTick(NoteId causingNoteId, const NoteBaseline& priorLatch,
+NOTE_EDIT_MEM bool geometryChangedThisTick(NoteId causingNoteId, const NoteBaseline& priorLatch,
                              const NoteBaseline& currentSpan) {
   (void)causingNoteId;
   return !baselineSpansEqual(priorLatch, currentSpan);
 }
 
-std::vector<NoteId, InternalHeapFirstAllocator<NoteId>> determineChangedCausingNotes(
+NOTE_EDIT_MEM std::vector<NoteId, InternalHeapFirstAllocator<NoteId>> determineChangedCausingNotes(
     const EditorSelection& selection, const EditedGeometry& editedGeometry,
     const std::unordered_map<NoteId, NoteBaseline, NoteIdHash>& priorLatchByNoteId) {
   std::vector<NoteId, InternalHeapFirstAllocator<NoteId>> changed;
@@ -65,11 +127,11 @@ std::vector<NoteId, InternalHeapFirstAllocator<NoteId>> determineChangedCausingN
       changed.push_back(entry.noteId);
     }
   }
-  std::sort(changed.begin(), changed.end());
+  sortNoteIdVector(changed);
   return changed;
 }
 
-std::vector<CausingTargetPair, InternalHeapFirstAllocator<CausingTargetPair>>
+NOTE_EDIT_MEM std::vector<CausingTargetPair, InternalHeapFirstAllocator<CausingTargetPair>>
 determineEligiblePairs(const EditorSelection& selection,
                        const std::vector<NoteId, InternalHeapFirstAllocator<NoteId>>&
                            changedCausingNoteIds,
@@ -90,30 +152,30 @@ determineEligiblePairs(const EditorSelection& selection,
       pairs.push_back(CausingTargetPair{causingNoteId, targetNoteId});
     }
   }
-  std::sort(pairs.begin(), pairs.end(),
-            [](const CausingTargetPair& left, const CausingTargetPair& right) {
-              if (left.causingNoteId != right.causingNoteId) {
-                return left.causingNoteId < right.causingNoteId;
-              }
-              return left.targetNoteId < right.targetNoteId;
-            });
+  sortCausingTargetPairs(pairs);
   return pairs;
 }
 
-bool linearSpansOverlapForAnalysis(uint32_t causingStart, uint32_t causingEnd,
+NOTE_EDIT_MEM bool linearSpansOverlapForAnalysis(uint32_t causingStart, uint32_t causingEnd,
                                    uint32_t targetStart, uint32_t targetEnd) {
-  return causingStart < targetEnd && targetStart < causingEnd;
+  // Inclusive on both edges:
+  // - causingEnd == targetStart → OverlapNoteOn (session_20260804_223208 packed end|start Hide)
+  // - causingStart == targetEnd → OverlapNoteOff (session_20260804_225119: start-abut must keep
+  //   shorten-to-causingStart-1; BoundaryTouch+full Restore jumped +2 ticks on a 1-tick leave)
+  return causingStart <= targetEnd && targetStart <= causingEnd;
 }
 
-bool isBoundaryTouchForAnalysis(uint32_t causingStart, uint32_t causingEnd, uint32_t targetStart,
+NOTE_EDIT_MEM bool isBoundaryTouchForAnalysis(uint32_t causingStart, uint32_t causingEnd, uint32_t targetStart,
                                 uint32_t targetEnd) {
   if (linearSpansOverlapForAnalysis(causingStart, causingEnd, targetStart, targetEnd)) {
     return false;
   }
+  // Linear adjacent notes are inclusive-overlap above. BoundaryTouch remains for non-overlapping
+  // pairs that still share an edge after projection/wrap edge cases.
   return causingStart == targetEnd || causingEnd == targetStart;
 }
 
-InteractionType classifyEditSessionInteraction(uint32_t causingStart, uint32_t causingEnd,
+NOTE_EDIT_MEM InteractionType classifyEditSessionInteraction(uint32_t causingStart, uint32_t causingEnd,
                                                uint32_t targetStart, uint32_t targetEnd) {
   if (!linearSpansOverlapForAnalysis(causingStart, causingEnd, targetStart, targetEnd)) {
     return InteractionType::BoundaryTouch;
@@ -127,14 +189,16 @@ InteractionType classifyEditSessionInteraction(uint32_t causingStart, uint32_t c
     return InteractionType::OverlapNoteOn;
   }
 
-  if (targetStart < causingStart && targetEnd > causingStart) {
+  // Left neighbor: includes start-abut (targetEnd == causingStart) so leave stays 1 tick/step
+  // via Shorten to causingStart-1 instead of BoundaryTouch Restore to full baseline.
+  if (targetStart < causingStart && targetEnd >= causingStart) {
     return InteractionType::OverlapNoteOff;
   }
 
   return InteractionType::OverlapNoteOff;
 }
 
-std::vector<EditSessionInteraction, InternalHeapFirstAllocator<EditSessionInteraction>>
+NOTE_EDIT_MEM std::vector<EditSessionInteraction, InternalHeapFirstAllocator<EditSessionInteraction>>
 analyzeEditSessionInteractions(
     const std::vector<CausingTargetPair, InternalHeapFirstAllocator<CausingTargetPair>>&
         eligiblePairs,
@@ -169,7 +233,7 @@ analyzeEditSessionInteractions(
   return out;
 }
 
-EditSessionInteractionsByTarget groupEditSessionInteractionsByTarget(
+NOTE_EDIT_MEM EditSessionInteractionsByTarget groupEditSessionInteractionsByTarget(
     const std::vector<EditSessionInteraction, InternalHeapFirstAllocator<EditSessionInteraction>>&
         interactions) {
   EditSessionInteractionsByTarget grouped;
@@ -190,20 +254,14 @@ EditSessionInteractionsByTarget groupEditSessionInteractionsByTarget(
   }
 
   for (TargetNoteInteractionGroup& group : grouped.groups) {
-    std::sort(group.incoming.begin(), group.incoming.end(),
-              [](const EditSessionInteraction& left, const EditSessionInteraction& right) {
-                return left.causingNoteId < right.causingNoteId;
-              });
+    sortIncomingInteractions(group.incoming);
   }
 
-  std::sort(grouped.groups.begin(), grouped.groups.end(),
-            [](const TargetNoteInteractionGroup& left, const TargetNoteInteractionGroup& right) {
-              return left.targetNoteId < right.targetNoteId;
-            });
+  sortTargetInteractionGroups(grouped.groups);
   return grouped;
 }
 
-uint32_t computeShortenedEndTick(const EditSessionInteraction& interaction, uint32_t loopLength) {
+NOTE_EDIT_MEM uint32_t computeShortenedEndTick(const EditSessionInteraction& interaction, uint32_t loopLength) {
   (void)interaction;
   const uint32_t causingStart = interaction.causingSpan.startTick;
   if (causingStart == 0) {
@@ -212,7 +270,7 @@ uint32_t computeShortenedEndTick(const EditSessionInteraction& interaction, uint
   return causingStart - 1;
 }
 
-NoteBaseline projectNoteBaselineForEditAnalysis(const EditorSelection& selection,
+NOTE_EDIT_MEM NoteBaseline projectNoteBaselineForEditAnalysis(const EditorSelection& selection,
                                                 const NoteBaseline& baseline, NoteId noteId,
                                                 uint32_t loopLength) {
   const TickInterval window = IntervalProjection::makeFullLoopEditAnalysisWindow(loopLength);

@@ -5,14 +5,14 @@ from __future__ import annotations
 import sys
 
 def run_edit_record_prelude(args: object) -> int:
-    """Record prelude is bundled in edit_full / edit_minimal / edit_overdub runners."""
+    """Record prelude is bundled in edit_full runner."""
     preset = getattr(args, "preset", None)
     scenarios = getattr(args, "scenarios", None) or ""
-    if preset in (None, "edit_full", "edit_minimal", "edit_overdub_during_note_edit"):
+    if preset in (None, "edit_full"):
         return 0
-    if any(s in scenarios for s in ("edit_full", "edit_minimal", "edit_overdub_during_note_edit")):
+    if "edit_full" in scenarios:
         return 0
-    print("[hitl] edit_record_prelude: run with edit_full, edit_minimal, or edit_overdub_during_note_edit")
+    print("[hitl] edit_record_prelude: run with edit_full preset")
     return 2
 
 def verify_edit_record_prelude(lines: list[str], args: object) -> dict[str, object]:

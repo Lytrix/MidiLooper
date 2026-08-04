@@ -7,9 +7,11 @@
 
 #include <algorithm>
 
+#include "Utils/NoteEditMem.h"
+
 namespace {
 
-bool liveStoreLinearSpanDiffersFromBaseline(NoteId noteId, const NoteBaseline& baseline,
+NOTE_EDIT_MEM bool liveStoreLinearSpanDiffersFromBaseline(NoteId noteId, const NoteBaseline& baseline,
                                               const MidiEventVec& liveStore, uint8_t channel,
                                               uint32_t loopLength) {
   (void)loopLength;
@@ -21,7 +23,7 @@ bool liveStoreLinearSpanDiffersFromBaseline(NoteId noteId, const NoteBaseline& b
          live.endTick != baseline.endTick;
 }
 
-bool hasIncomingInteraction(NoteId targetNoteId,
+NOTE_EDIT_MEM bool hasIncomingInteraction(NoteId targetNoteId,
                             const EditSessionInteractionsByTarget& grouped) {
   for (const TargetNoteInteractionGroup& group : grouped.groups) {
     if (group.targetNoteId == targetNoteId) {
@@ -31,7 +33,21 @@ bool hasIncomingInteraction(NoteId targetNoteId,
   return false;
 }
 
-const std::vector<EditSessionInteraction, InternalHeapFirstAllocator<EditSessionInteraction>>*
+NOTE_EDIT_MEM bool isCausingNoteInEditedGeometry(NoteId noteId, const EditedGeometry& editedGeometry) {
+  for (const EditedNoteSpan& causing : editedGeometry.causingSpans) {
+    if (causing.noteId == noteId) {
+      return true;
+    }
+  }
+  return false;
+}
+
+NOTE_EDIT_MEM bool isResolveTargetExcluded(NoteId noteId, const EditorSelection& selection,
+                                           const EditedGeometry& editedGeometry) {
+  return isSelectedNote(noteId, selection) || isCausingNoteInEditedGeometry(noteId, editedGeometry);
+}
+
+NOTE_EDIT_MEM const std::vector<EditSessionInteraction, InternalHeapFirstAllocator<EditSessionInteraction>>*
 incomingForTarget(NoteId targetNoteId, const EditSessionInteractionsByTarget& grouped) {
   for (const TargetNoteInteractionGroup& group : grouped.groups) {
     if (group.targetNoteId == targetNoteId) {
@@ -41,16 +57,16 @@ incomingForTarget(NoteId targetNoteId, const EditSessionInteractionsByTarget& gr
   return nullptr;
 }
 
-bool interactionHasCompleteHidePrecedence(const EditSessionInteraction& interaction) {
+NOTE_EDIT_MEM bool interactionHasCompleteHidePrecedence(const EditSessionInteraction& interaction) {
   return interaction.type == InteractionType::OverlapNoteOn ||
          interaction.type == InteractionType::CompleteCover;
 }
 
-bool interactionIsOverlapNoteOff(const EditSessionInteraction& interaction) {
+NOTE_EDIT_MEM bool interactionIsOverlapNoteOff(const EditSessionInteraction& interaction) {
   return interaction.type == InteractionType::OverlapNoteOff;
 }
 
-bool interactionsAreBoundaryTouchOnly(
+NOTE_EDIT_MEM bool interactionsAreBoundaryTouchOnly(
     const std::vector<EditSessionInteraction, InternalHeapFirstAllocator<EditSessionInteraction>>&
         incoming) {
   if (incoming.empty()) {
@@ -66,15 +82,28 @@ bool interactionsAreBoundaryTouchOnly(
 
 }  // namespace
 
-std::vector<NoteId, InternalHeapFirstAllocator<NoteId>> determineConstrainedGeometryTargetNoteIds(
+NOTE_EDIT_MEM std::vector<NoteId, InternalHeapFirstAllocator<NoteId>> determineConstrainedGeometryTargetNoteIds(
     const EditSessionInteractionsByTarget& grouped, const BaselineMap& transactionBaseline,
-    const MidiEventVec& liveStore, uint8_t channel, uint32_t loopLength) {
+    const MidiEventVec& liveStore, uint8_t channel, uint32_t loopLength,
+    const EditorSelection& selection, const EditedGeometry& editedGeometry) {
   std::vector<NoteId, InternalHeapFirstAllocator<NoteId>> targets;
   for (const TargetNoteInteractionGroup& group : grouped.groups) {
+    // Causing/selected notes are edited via edited geometry, never resolve targets.
+    if (isResolveTargetExcluded(group.targetNoteId, selection, editedGeometry)) {
+      continue;
+    }
     targets.push_back(group.targetNoteId);
   }
 
   for (const auto& [noteId, baseline] : transactionBaseline) {
+    if (noteId == kInvalidNoteId) {
+      continue;
+    }
+    // After move/length, the mover differs from select-time baselineMap; that is causing-note
+    // geometry, not an overlap restore candidate (session_20260804_215203).
+    if (isResolveTargetExcluded(noteId, selection, editedGeometry)) {
+      continue;
+    }
     if (hasIncomingInteraction(noteId, grouped)) {
       continue;
     }
@@ -83,12 +112,12 @@ std::vector<NoteId, InternalHeapFirstAllocator<NoteId>> determineConstrainedGeom
     }
   }
 
-  std::sort(targets.begin(), targets.end());
+  sortNoteIdVector(targets);
   targets.erase(std::unique(targets.begin(), targets.end()), targets.end());
   return targets;
 }
 
-ConstrainedNoteGeometry resolveConstrainedGeometry(
+NOTE_EDIT_MEM ConstrainedNoteGeometry resolveConstrainedGeometry(
     NoteId targetNoteId, const NoteBaseline& baseline,
     const std::vector<EditSessionInteraction, InternalHeapFirstAllocator<EditSessionInteraction>>&
         incomingInteractionsForTarget,
@@ -147,14 +176,15 @@ ConstrainedNoteGeometry resolveConstrainedGeometry(
   return geometry;
 }
 
-std::vector<ConstrainedNoteGeometry, InternalHeapFirstAllocator<ConstrainedNoteGeometry>>
+NOTE_EDIT_MEM std::vector<ConstrainedNoteGeometry, InternalHeapFirstAllocator<ConstrainedNoteGeometry>>
 resolveAllConstrainedGeometry(
     const EditSessionInteractionsByTarget& grouped, const BaselineMap& transactionBaseline,
     const MidiEventVec& liveStore, uint8_t channel, uint32_t loopLength,
-    uint32_t noteMinLengthTicks, bool noteMinLengthRemoveEnabled) {
+    uint32_t noteMinLengthTicks, bool noteMinLengthRemoveEnabled,
+    const EditorSelection& selection, const EditedGeometry& editedGeometry) {
   const std::vector<NoteId, InternalHeapFirstAllocator<NoteId>> targetIds =
       determineConstrainedGeometryTargetNoteIds(grouped, transactionBaseline, liveStore, channel,
-                                                loopLength);
+                                                loopLength, selection, editedGeometry);
 
   std::vector<ConstrainedNoteGeometry, InternalHeapFirstAllocator<ConstrainedNoteGeometry>> out;
   for (NoteId targetNoteId : targetIds) {

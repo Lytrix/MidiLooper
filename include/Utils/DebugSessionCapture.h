@@ -113,6 +113,8 @@ SC_MEM_ATTR void displaySnapshotWindow(uint8_t slot, const char* trackState, uin
                                        uint8_t windowBars, size_t windowNoteCount);
 SC_MEM_ATTR void displayNoteInfo(uint8_t pitch, uint32_t storageStart, uint32_t displayStart,
                                  uint32_t length, int selectedIdx);
+SC_MEM_ATTR void editSessionAction(uint8_t actionType, uint32_t noteId, uint32_t startTick,
+                                   uint32_t endTick, uint8_t pitch);
 SC_MEM_ATTR void displayFrame(uint32_t frameNotes, uint32_t elapsedUs, uint32_t frameIndex);
 SC_MEM_ATTR void playbackFrame(uint8_t slot, uint32_t currentTick, uint32_t tickInLoop,
                                uint32_t prevTickInLoop, int32_t projectionCycleStartTick,
@@ -181,6 +183,8 @@ void emitDiagCheckpointLine(const Diagnostics::DiagTraceRecord& record);
                                              published, wStart, wBars, wNotes)
 #define SC_DNTE(pitch, storageStart, displayStart, length, selectedIdx) \
   DebugSessionCapture::displayNoteInfo(pitch, storageStart, displayStart, length, selectedIdx)
+#define SC_ESA(actionType, noteId, startTick, endTick, pitch) \
+  DebugSessionCapture::editSessionAction(actionType, noteId, startTick, endTick, pitch)
 #define SC_DFRAME(frameNotes, elapsedUs, frameIndex) \
   DebugSessionCapture::displayFrame(frameNotes, elapsedUs, frameIndex)
 #define SC_PLAYBACK_FRAME(slot, currentTick, tickInLoop, prevTickInLoop, projStart, loopStart, \
@@ -241,6 +245,7 @@ inline void restartCaptureBootGrace() {}
                        wNotes) \
   ((void)0)
 #define SC_DNTE(pitch, storageStart, displayStart, length, selectedIdx) ((void)0)
+#define SC_ESA(actionType, noteId, startTick, endTick, pitch) ((void)0)
 #define SC_DFRAME(frameNotes, elapsedUs, frameIndex) ((void)0)
 #define SC_PLAYBACK_FRAME(slot, currentTick, tickInLoop, prevTickInLoop, projStart, loopStart, \
                           loopLen, idxBefore, idxAfter, orderSize, sent, atLoopStart, wrap, stale, \

@@ -7,12 +7,15 @@
 #include <vector>
 
 #include "EditSessionAction.h"
+#include "EditSessionInteraction.h"
 #include "MidiEvent.h"
 #include "NoteEditFocus.h"
+#include "NoteEditSessionState.h"
 
 std::vector<NoteId, InternalHeapFirstAllocator<NoteId>> determineConstrainedGeometryTargetNoteIds(
     const EditSessionInteractionsByTarget& grouped, const BaselineMap& transactionBaseline,
-    const MidiEventVec& liveStore, uint8_t channel, uint32_t loopLength);
+    const MidiEventVec& liveStore, uint8_t channel, uint32_t loopLength,
+    const EditorSelection& selection, const EditedGeometry& editedGeometry);
 
 ConstrainedNoteGeometry resolveConstrainedGeometry(
     NoteId targetNoteId, const NoteBaseline& baseline,
@@ -24,4 +27,5 @@ std::vector<ConstrainedNoteGeometry, InternalHeapFirstAllocator<ConstrainedNoteG
 resolveAllConstrainedGeometry(
     const EditSessionInteractionsByTarget& grouped, const BaselineMap& transactionBaseline,
     const MidiEventVec& liveStore, uint8_t channel, uint32_t loopLength,
-    uint32_t noteMinLengthTicks, bool noteMinLengthRemoveEnabled);
+    uint32_t noteMinLengthTicks, bool noteMinLengthRemoveEnabled,
+    const EditorSelection& selection, const EditedGeometry& editedGeometry);

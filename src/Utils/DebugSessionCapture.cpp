@@ -558,6 +558,12 @@ SC_MEM_ATTR void displayNoteInfo(uint8_t pitch, uint32_t storageStart, uint32_t 
                 selectedIdx);
 }
 
+SC_MEM_ATTR void editSessionAction(uint8_t actionType, uint32_t noteId, uint32_t startTick,
+                                   uint32_t endTick, uint8_t pitch) {
+  emitCapPrintf("#CAP,%lu,ESA,%u,%lu,%lu,%lu,%u\r\n", (unsigned long)micros(), actionType,
+                (unsigned long)noteId, (unsigned long)startTick, (unsigned long)endTick, pitch);
+}
+
 SC_MEM_ATTR void displayFrame(uint32_t frameNotes, uint32_t elapsedUs, uint32_t frameIndex) {
   emitCapPrintf("#CAP,%lu,DFRAME,%lu,%lu,%lu", (unsigned long)micros(), (unsigned long)frameNotes,
                 (unsigned long)elapsedUs, (unsigned long)frameIndex);

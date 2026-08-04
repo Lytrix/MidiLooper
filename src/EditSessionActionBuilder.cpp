@@ -6,25 +6,26 @@
 #include <algorithm>
 
 #include "EditSessionLiveStoreSpan.h"
+#include "Utils/NoteEditMem.h"
 
 #if defined(SESSION_CAPTURE)
-#include "Logger.h"
+#include "Utils/DebugSessionCapture.h"
 #endif
 
 namespace {
 
-bool baselineSpansEqual(const NoteBaseline& left, const NoteBaseline& right) {
+NOTE_EDIT_MEM bool baselineSpansEqual(const NoteBaseline& left, const NoteBaseline& right) {
   return left.pitch == right.pitch && left.velocity == right.velocity &&
          left.startTick == right.startTick && left.endTick == right.endTick;
 }
 
-bool constrainedMatchesBaseline(const ConstrainedNoteGeometry& constrained,
+NOTE_EDIT_MEM bool constrainedMatchesBaseline(const ConstrainedNoteGeometry& constrained,
                                 const NoteBaseline& baseline) {
   return constrained.visible && constrained.startTick == baseline.startTick &&
          constrained.endTick == baseline.endTick && constrained.pitch == baseline.pitch;
 }
 
-EditSessionAction makeAction(EditSessionActionType type, NoteId noteId, const NoteBaseline& span) {
+NOTE_EDIT_MEM EditSessionAction makeAction(EditSessionActionType type, NoteId noteId, const NoteBaseline& span) {
   EditSessionAction action{};
   action.type = type;
   action.targetNoteId = noteId;
@@ -35,7 +36,7 @@ EditSessionAction makeAction(EditSessionActionType type, NoteId noteId, const No
   return action;
 }
 
-int actionTypeSortRank(EditSessionActionType type) {
+NOTE_EDIT_MEM int actionTypeSortRank(EditSessionActionType type) {
   switch (type) {
     case EditSessionActionType::RestoreNote:
       return 0;
@@ -53,11 +54,47 @@ int actionTypeSortRank(EditSessionActionType type) {
   return 6;
 }
 
-void appendOverlapTargetActions(
+NOTE_EDIT_MEM bool editSessionActionBefore(const EditSessionAction& left,
+                                           const EditSessionAction& right) {
+  const int leftRank = actionTypeSortRank(left.type);
+  const int rightRank = actionTypeSortRank(right.type);
+  if (leftRank != rightRank) {
+    return leftRank < rightRank;
+  }
+  return left.targetNoteId < right.targetNoteId;
+}
+
+NOTE_EDIT_MEM void sortEditSessionActions(EditSessionActions& actions) {
+  for (size_t i = 1; i < actions.size(); ++i) {
+    const EditSessionAction key = actions[i];
+    size_t j = i;
+    while (j > 0 && editSessionActionBefore(key, actions[j - 1])) {
+      actions[j] = actions[j - 1];
+      --j;
+    }
+    actions[j] = key;
+  }
+}
+
+NOTE_EDIT_MEM bool causingSpanCompletelyCoversBaseline(const EditedGeometry& editedGeometry,
+                                                       const NoteBaseline& baseline) {
+  for (const EditedNoteSpan& causing : editedGeometry.causingSpans) {
+    if (causing.span.pitch != baseline.pitch) {
+      continue;
+    }
+    if (baseline.startTick >= causing.span.startTick &&
+        baseline.endTick <= causing.span.endTick) {
+      return true;
+    }
+  }
+  return false;
+}
+
+NOTE_EDIT_MEM void appendOverlapTargetActions(
     const std::vector<ConstrainedNoteGeometry, InternalHeapFirstAllocator<ConstrainedNoteGeometry>>&
         constrainedGeometry,
-    const BaselineMap& transactionBaseline, const MidiEventVec& liveStore, uint8_t channel,
-    EditSessionActions& actions) {
+    const EditedGeometry& editedGeometry, const BaselineMap& transactionBaseline,
+    const MidiEventVec& liveStore, uint8_t channel, EditSessionActions& actions) {
   for (const ConstrainedNoteGeometry& constrained : constrainedGeometry) {
     const auto baselineIt = transactionBaseline.find(constrained.noteId);
     if (baselineIt == transactionBaseline.end()) {
@@ -77,8 +114,26 @@ void appendOverlapTargetActions(
       continue;
     }
 
+    // After CompleteCover Hide, L→R that only OverlapNoteOff-shortens must reinsert the
+    // stub (≥ noteMinLengthTicks). ShortenNote no-ops when the pair is absent
+    // (session_20260804_220842). Never reinsert while a causing span still 100% covers the
+    // baseline (session_20260804_223208).
+    if (!livePresent) {
+      if (causingSpanCompletelyCoversBaseline(editedGeometry, baseline)) {
+        continue;
+      }
+      const NoteBaseline reinsert{constrained.pitch, baseline.velocity, constrained.startTick,
+                                  constrained.endTick};
+      actions.push_back(makeAction(EditSessionActionType::RestoreNote, constrained.noteId,
+                                   reinsert));
+      continue;
+    }
+
     if (constrainedMatchesBaseline(constrained, baseline)) {
-      if (!livePresent || !liveReadable || !baselineSpansEqual(live, baseline)) {
+      if (!liveReadable || !baselineSpansEqual(live, baseline)) {
+        if (causingSpanCompletelyCoversBaseline(editedGeometry, baseline)) {
+          continue;
+        }
         actions.push_back(makeAction(EditSessionActionType::RestoreNote, constrained.noteId,
                                      baseline));
       }
@@ -96,18 +151,56 @@ void appendOverlapTargetActions(
   }
 }
 
-void appendCausingNoteActions(const EditedGeometry& editedGeometry, const MidiEventVec& liveStore,
-                              uint8_t channel, EditSessionActions& actions) {
+NOTE_EDIT_MEM bool readStoreLinearBaseline(MidiEventVec& liveStore, NoteId noteId, uint8_t channel,
+                                           uint32_t preferredStartTick, uint32_t loopLength,
+                                           NoteBaseline& out) {
+  if (findLinearNoteSpanForNoteId(liveStore, noteId, channel, out, preferredStartTick,
+                                  loopLength)) {
+    return true;
+  }
+  if (preferredStartTick != UINT32_MAX &&
+      findLinearNoteSpanForNoteId(liveStore, noteId, channel, out, UINT32_MAX, loopLength)) {
+    return true;
+  }
+  return false;
+}
+
+NOTE_EDIT_MEM bool causingNoteHasOrphanOnForAction(const NoteEditFocus& focus,
+                                                   MidiEventVec& liveStore, NoteId noteId,
+                                                   uint8_t channel, uint32_t loopLength) {
+  if (!focus.active || focus.movingNoteId != noteId) {
+    return false;
+  }
+  return findNoteOnForMovingNoteEdit(liveStore, focus, channel, focus.last.pitch,
+                                     focus.last.startTick, loopLength) != nullptr;
+}
+
+NOTE_EDIT_MEM void appendCausingNoteActions(const EditedGeometry& editedGeometry,
+                                            MidiEventVec& liveStore, const NoteEditFocus& focus,
+                                            uint8_t channel, uint32_t loopLength,
+                                            EditSessionActions& actions) {
   for (const EditedNoteSpan& causing : editedGeometry.causingSpans) {
-    NoteBaseline live{};
-    const bool liveReadable =
-        readLiveLinearSpan(liveStore, causing.noteId, channel, live);
-    if (!liveReadable) {
+    NoteBaseline storeSpan{};
+    const bool hasStoreSpan = readStoreLinearBaseline(liveStore, causing.noteId, channel,
+                                                      causing.span.startTick, loopLength, storeSpan);
+
+    // Store is authoritative for skip. focus.last fallback is only for orphan-on emit
+    // (session_20260804_231426) — never skip when the live store span still differs.
+    if (hasStoreSpan && baselineSpansEqual(causing.span, storeSpan)) {
       continue;
     }
-    if (baselineSpansEqual(causing.span, live)) {
-      continue;
+
+    if (!hasStoreSpan) {
+      if (!causingNoteHasOrphanOnForAction(focus, liveStore, causing.noteId, channel,
+                                           loopLength)) {
+        continue;
+      }
+      if (baselineSpansEqual(causing.span, focus.last)) {
+        continue;
+      }
     }
+
+    const NoteBaseline& live = hasStoreSpan ? storeSpan : focus.last;
 
     if (causing.span.pitch != live.pitch) {
       actions.push_back(makeAction(EditSessionActionType::ChangePitch, causing.noteId,
@@ -130,34 +223,25 @@ void appendCausingNoteActions(const EditedGeometry& editedGeometry, const MidiEv
 }  // namespace
 
 #if defined(SESSION_CAPTURE)
-void logEditSessionActions(const EditSessionActions& actions) {
+NOTE_EDIT_MEM void logEditSessionActions(const EditSessionActions& actions) {
   for (const EditSessionAction& action : actions) {
-    logger.log(CAT_MIDI, LOG_DEBUG,
-                 "EditSessionAction: type=%u noteId=%lu start=%lu end=%lu pitch=%u",
-                 static_cast<unsigned>(action.type), static_cast<unsigned long>(action.targetNoteId),
-                 static_cast<unsigned long>(action.startTick),
-                 static_cast<unsigned long>(action.endTick), static_cast<unsigned>(action.pitch));
+    SC_ESA(static_cast<uint8_t>(action.type), static_cast<uint32_t>(action.targetNoteId),
+           action.startTick, action.endTick, action.pitch);
   }
 }
 #endif
 
-EditSessionActions buildEditSessionActions(
+NOTE_EDIT_MEM EditSessionActions buildEditSessionActions(
     const std::vector<ConstrainedNoteGeometry, InternalHeapFirstAllocator<ConstrainedNoteGeometry>>&
         constrainedGeometry,
     const EditedGeometry& editedGeometry, const BaselineMap& transactionBaseline,
-    const MidiEventVec& liveStore, uint8_t channel) {
+    MidiEventVec& liveStore, uint8_t channel, const NoteEditFocus& focus,
+    uint32_t loopLength) {
   EditSessionActions actions;
-  appendOverlapTargetActions(constrainedGeometry, transactionBaseline, liveStore, channel, actions);
-  appendCausingNoteActions(editedGeometry, liveStore, channel, actions);
+  appendOverlapTargetActions(constrainedGeometry, editedGeometry, transactionBaseline, liveStore,
+                             channel, actions);
+  appendCausingNoteActions(editedGeometry, liveStore, focus, channel, loopLength, actions);
 
-  std::sort(actions.begin(), actions.end(),
-            [](const EditSessionAction& left, const EditSessionAction& right) {
-              const int leftRank = actionTypeSortRank(left.type);
-              const int rightRank = actionTypeSortRank(right.type);
-              if (leftRank != rightRank) {
-                return leftRank < rightRank;
-              }
-              return left.targetNoteId < right.targetNoteId;
-            });
+  sortEditSessionActions(actions);
   return actions;
 }

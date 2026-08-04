@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import time
+from pathlib import Path
 from typing import Optional
 
 from hitl.context import get_context
@@ -29,11 +30,22 @@ def _parse_common_args(args: object) -> argparse.Namespace:
     parser.add_argument("--final-wait-ms", type=int, default=3000)
     parser.add_argument("--undo-redo-delay-ms", type=int, default=3000)
     parser.add_argument("--state-sync-timeout-ms", type=int, default=8000)
+    parser.add_argument(
+        "--post-seed-settle-ms",
+        type=int,
+        default=3500,
+        help="Wait after record_seed before overdub (SD reload)",
+    )
+    parser.add_argument(
+        "--use-fixture-record",
+        action="store_true",
+        help="Dev only: skip record_seed and record EDIT_RECORD_FIXTURE in-scenario",
+    )
     parser.add_argument("--start-transport", action="store_true")
     parser.add_argument("--clear-before-record", action="store_true", default=True)
     parser.add_argument("--clear-press-ms", type=int, default=900)
     legacy = list(getattr(args, "legacy_args", []) or [])
-    return parser.parse_args(legacy)
+    return parser.parse_known_args(legacy)[0]
 
 def run_edit_overdub_during_note_edit(args: object) -> int:
     import mido
@@ -91,9 +103,22 @@ def run_edit_overdub_during_note_edit(args: object) -> int:
 
     ns = _parse_common_args(args)
     ctx = get_context(args)
+    out_dir = Path(getattr(args, "out_dir", Path("captures")))
     midi_channel = ns.midi_channel if ns.midi_channel is not None else ns.track_number
     ctx.midi_channel = midi_channel
     ctx.record_bars = ns.record_bars
+
+    use_base_seed = not ns.use_fixture_record
+    record_layout = None
+    if use_base_seed:
+        from hitl.scenarios.edit_minimal import _resolve_base_seed
+
+        try:
+            _seed_lines, record_layout, seed_path = _resolve_base_seed(out_dir, ctx=ctx)
+        except (FileNotFoundError, RuntimeError) as exc:
+            print(f"[edit-overdub-hitl] {exc}")
+            return 1
+        print(f"[edit-overdub-hitl] using edit record seed: {seed_path}")
 
     class _ArgsShim:
         pass
@@ -134,140 +159,172 @@ def run_edit_overdub_during_note_edit(args: object) -> int:
             serial_collector = SerialCaptureCollector(ns.serial_port, baud=ns.serial_baud)
             serial_collector.start()
 
+        if use_base_seed and ns.post_seed_settle_ms > 0:
+            print(
+                f"[edit-overdub-hitl] post-seed settle {ns.post_seed_settle_ms}ms "
+                "(after edit record seed; loop reload from SD)"
+            )
+            time.sleep(ns.post_seed_settle_ms / 1000.0)
+
         track_index = ns.track_number - 1
-        if ns.start_transport:
-            if not _ensure_transport_running(
-                out_port,
-                in_port,
-                press_ms=ns.press_ms,
-                phase_wait_ms=ns.phase_wait_ms,
-            ):
-                print("[edit-overdub-hitl] warn: MIDI clock missing before track select")
 
-        _send_short_press(
-            out_port,
-            note=60 + track_index,
-            channel_1based=CONTROL_CHANNEL_1BASED,
-            press_ms=ns.press_ms,
-        )
-        pause()
-
-        if ns.start_transport:
-            if _stop_transport_if_running(
-                out_port,
-                in_port,
-                press_ms=ns.press_ms,
-                phase_wait_ms=ns.phase_wait_ms,
-            ):
-                drained = _drain_input_messages(in_port)
-                if drained:
-                    print(f"[edit-overdub-hitl] drained {drained} stale MIDI messages")
-
-        if ns.clear_before_record and serial_collector is not None:
-            snap = serial_collector.snapshot()
-            if not _can_skip_clear_for_record(snap):
-                if not _ensure_clear_to_empty(
+        if use_base_seed:
+            if record_layout is None:
+                print("[edit-overdub-hitl] no record layout from seed")
+                return 1
+            if ns.start_transport:
+                if not _ensure_transport_running(
                     out_port,
-                    serial_collector,
-                    clear_press_ms=ns.clear_press_ms,
-                    state_sync_timeout_ms=ns.state_sync_timeout_ms,
-                    abort=abort,
+                    in_port,
+                    press_ms=ns.press_ms,
+                    phase_wait_ms=ns.phase_wait_ms,
                 ):
-                    return 1
-                if not _track_cleared_for_record(serial_collector.snapshot()):
-                    print(
-                        f"[edit-overdub-hitl] clear failed latest="
-                        f"{_latest_track_state(serial_collector.snapshot())}"
-                    )
-                    return 1
+                    print("[edit-overdub-hitl] warn: MIDI clock missing before track select")
+            from hitl.control_constants import TRACK_SELECT_NOTE_BASE
 
-        if ns.start_transport:
             _send_short_press(
                 out_port,
-                note=GLOBAL_TRANSPORT_NOTE,
+                note=TRACK_SELECT_NOTE_BASE + track_index,
+                channel_1based=CONTROL_CHANNEL_1BASED,
+                press_ms=ns.press_ms,
+            )
+            pause()
+            ctx.record_layout = record_layout
+            ctx.record_fixture = EDIT_RECORD_FIXTURE
+        else:
+            if ns.start_transport:
+                if not _ensure_transport_running(
+                    out_port,
+                    in_port,
+                    press_ms=ns.press_ms,
+                    phase_wait_ms=ns.phase_wait_ms,
+                ):
+                    print("[edit-overdub-hitl] warn: MIDI clock missing before track select")
+
+            _send_short_press(
+                out_port,
+                note=60 + track_index,
                 channel_1based=CONTROL_CHANNEL_1BASED,
                 press_ms=ns.press_ms,
             )
             pause()
 
-        if serial_collector is not None:
-            if not _ensure_recording_started(
-                out_port,
-                serial_collector,
-                press_ms=ns.press_ms,
-                state_sync_timeout_ms=ns.state_sync_timeout_ms,
-                abort=abort,
-            ):
-                return 1
-        else:
-            _send_short_press(
-                out_port,
-                note=RECORD_BUTTON_NOTE,
-                channel_1based=CONTROL_CHANNEL_1BASED,
-                press_ms=ns.press_ms,
-            )
-            time.sleep(0.12)
-            _send_short_press(
-                out_port,
-                note=RECORD_BUTTON_NOTE,
-                channel_1based=CONTROL_CHANNEL_1BASED,
-                press_ms=ns.press_ms,
-            )
+            if ns.start_transport:
+                if _stop_transport_if_running(
+                    out_port,
+                    in_port,
+                    press_ms=ns.press_ms,
+                    phase_wait_ms=ns.phase_wait_ms,
+                ):
+                    drained = _drain_input_messages(in_port)
+                    if drained:
+                        print(f"[edit-overdub-hitl] drained {drained} stale MIDI messages")
 
-        note_count, _ = _stream_fixture_record(
-            out_port,
-            in_port,
-            fixture=EDIT_RECORD_FIXTURE,
-            target_bars=ns.record_bars,
-            midi_channel_1based=midi_channel,
-            stop_press_advance_clocks=0,
-            press_ms=ns.press_ms,
-            abort=abort,
-        )
-        if note_count < len(EDIT_RECORD_FIXTURE):
-            return 1
-        _send_short_press(
-            out_port,
-            note=RECORD_BUTTON_NOTE,
-            channel_1based=CONTROL_CHANNEL_1BASED,
-            press_ms=ns.press_ms,
-        )
-        if serial_collector is not None:
-            counts = _count_capture_transitions(serial_collector.snapshot())
-            expected_play = counts.get(("STOPPED_RECORDING", "PLAYING"), 0) + 1
-            _wait_for_transition_count(
-                serial_collector,
-                from_state="STOPPED_RECORDING",
-                to_state="PLAYING",
-                target_count=expected_play,
-                timeout_s=ns.state_sync_timeout_ms / 1000.0,
-                abort=abort,
-            )
-        if ns.start_transport:
-            _ensure_transport_running(
+            if ns.clear_before_record and serial_collector is not None:
+                snap = serial_collector.snapshot()
+                if not _can_skip_clear_for_record(snap):
+                    if not _ensure_clear_to_empty(
+                        out_port,
+                        serial_collector,
+                        clear_press_ms=ns.clear_press_ms,
+                        state_sync_timeout_ms=ns.state_sync_timeout_ms,
+                        abort=abort,
+                    ):
+                        return 1
+                    if not _track_cleared_for_record(serial_collector.snapshot()):
+                        print(
+                            f"[edit-overdub-hitl] clear failed latest="
+                            f"{_latest_track_state(serial_collector.snapshot())}"
+                        )
+                        return 1
+
+            if ns.start_transport:
+                _send_short_press(
+                    out_port,
+                    note=GLOBAL_TRANSPORT_NOTE,
+                    channel_1based=CONTROL_CHANNEL_1BASED,
+                    press_ms=ns.press_ms,
+                )
+                pause()
+
+            if serial_collector is not None:
+                if not _ensure_recording_started(
+                    out_port,
+                    serial_collector,
+                    press_ms=ns.press_ms,
+                    state_sync_timeout_ms=ns.state_sync_timeout_ms,
+                    abort=abort,
+                ):
+                    return 1
+            else:
+                _send_short_press(
+                    out_port,
+                    note=RECORD_BUTTON_NOTE,
+                    channel_1based=CONTROL_CHANNEL_1BASED,
+                    press_ms=ns.press_ms,
+                )
+                time.sleep(0.12)
+                _send_short_press(
+                    out_port,
+                    note=RECORD_BUTTON_NOTE,
+                    channel_1based=CONTROL_CHANNEL_1BASED,
+                    press_ms=ns.press_ms,
+                )
+
+            note_count, _ = _stream_fixture_record(
                 out_port,
                 in_port,
+                fixture=EDIT_RECORD_FIXTURE,
+                target_bars=ns.record_bars,
+                midi_channel_1based=midi_channel,
+                stop_press_advance_clocks=0,
                 press_ms=ns.press_ms,
-                phase_wait_ms=ns.phase_wait_ms,
+                abort=abort,
             )
-        pause()
+            if note_count < len(EDIT_RECORD_FIXTURE):
+                return 1
+            _send_short_press(
+                out_port,
+                note=RECORD_BUTTON_NOTE,
+                channel_1based=CONTROL_CHANNEL_1BASED,
+                press_ms=ns.press_ms,
+            )
+            if serial_collector is not None:
+                counts = _count_capture_transitions(serial_collector.snapshot())
+                expected_play = counts.get(("STOPPED_RECORDING", "PLAYING"), 0) + 1
+                _wait_for_transition_count(
+                    serial_collector,
+                    from_state="STOPPED_RECORDING",
+                    to_state="PLAYING",
+                    target_count=expected_play,
+                    timeout_s=ns.state_sync_timeout_ms / 1000.0,
+                    abort=abort,
+                )
+            if ns.start_transport:
+                _ensure_transport_running(
+                    out_port,
+                    in_port,
+                    press_ms=ns.press_ms,
+                    phase_wait_ms=ns.phase_wait_ms,
+                )
+            pause()
 
-        record_layout = RecordLayout(
-            loop_start=0,
-            loop_length=ns.record_bars * TICKS_PER_BAR,
-            step_to_tick=_build_fixture_step_to_tick(
-                [(n.step * 48, n.pitch) for n in EDIT_RECORD_FIXTURE],
-                EDIT_RECORD_FIXTURE,
-                loop_length=ns.record_bars * TICKS_PER_BAR,
-            ),
-            nav_slots=_build_select_navigation_slots(
-                [(n.step * 48, n.pitch) for n in EDIT_RECORD_FIXTURE],
-                loop_length=ns.record_bars * TICKS_PER_BAR,
+            record_layout = RecordLayout(
                 loop_start=0,
-            ),
-        )
-        ctx.record_layout = record_layout
-        ctx.record_fixture = EDIT_RECORD_FIXTURE
+                loop_length=ns.record_bars * TICKS_PER_BAR,
+                step_to_tick=_build_fixture_step_to_tick(
+                    [(n.step * 48, n.pitch) for n in EDIT_RECORD_FIXTURE],
+                    EDIT_RECORD_FIXTURE,
+                    loop_length=ns.record_bars * TICKS_PER_BAR,
+                ),
+                nav_slots=_build_select_navigation_slots(
+                    [(n.step * 48, n.pitch) for n in EDIT_RECORD_FIXTURE],
+                    loop_length=ns.record_bars * TICKS_PER_BAR,
+                    loop_start=0,
+                ),
+            )
+            ctx.record_layout = record_layout
+            ctx.record_fixture = EDIT_RECORD_FIXTURE
 
         seconds_per_bar = 60.0 / shim.tempo_bpm * 4.0
         print("[edit-overdub-hitl] pre-edit overdub pass")

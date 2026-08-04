@@ -307,9 +307,11 @@ Phases 1–3 prototype **reverted** at `40db4df` (boot bisect). Storage boot rec
 
 ### Derived note overlap (`edit-session-action-geometry`)
 
-**Phase 3 complete** (2026-08-04): `applyEditSessionActions` + boundary split + native tests (`test_apply_edit_session_actions`).
+**Phase 4 wired** (2026-08-04): `runEditSessionGeometryPipeline` in move/length/pitch paths; baseline-vs-live pre-commit rows.
 
-**Next:** Phase 4 — wire NOTE_EDIT geometry through pipeline; retire `overlapNotes`.
+**Remaining Phase 4:** 4.3a Add/Delete, 4.5 retire `overlapNotes`, 4.5b `filterSelectableDisplayNotes`.
+
+**Next:** Phase 4 closeout or Phase 5 HITL matrix.
 
 Handoff: [`derived_note_overlap_logic_handoff.md`](../plans/derived_note_overlap_logic_handoff.md)
 

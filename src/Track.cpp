@@ -680,6 +680,9 @@ void Track::startRecording(uint32_t currentTick) {
   projectionCycleStartTick = static_cast<int32_t>(currentTick);
   
   invalidateCaches();
+  // Prewarm playback runtime while heap headroom is higher than at record-stop tail;
+  // stopRecording must not be the first trySlot on this slot (null-deref on alloc failure).
+  prewarmPlaybackForSlot(activeLoopIndex);
   SC_REC_START(activeLoopIndex, currentTick);
   logger.logTrackEvent("Recording started", currentTick, "startLoopTick=%lu loopStart=0",
                        static_cast<unsigned long>(loop.startLoopTick));
@@ -1508,13 +1511,12 @@ void Track::stopRecording(uint32_t currentTick) {
 
   // Return to playback after record-stop. Overdub starts on the next explicit
   // record press from PLAYING (record -> play -> overdub -> play flow).
-  playbackRuntime.slot(activeLoopIndex).mergedMidiEvents.clear();
   const uint32_t stateAdvanceHeapBefore = MemoryMonitor::getInternalHeapFreeBytes();
   logRecordStopStage(loop, stopPathStartUs, "pre_state_advance", 0, stateAdvanceHeapBefore,
                      stateAdvanceHeapBefore, "enter", &stopPathStats);
   // Silence live/held notes on the wire before loop playback catch-up; CC123 is not stored.
   sendAllNotesOff();
-  playbackRuntime.clearAllLedgers();
+  resetPlaybackState(playbackTick);
   const uint32_t stateAdvanceStartUs = micros();
   startPlaying(playbackTick, true);
   displayManager.refreshViewportAfterRecordStop(*this, activeLoopIndex, storagePhaseTickAtStop);

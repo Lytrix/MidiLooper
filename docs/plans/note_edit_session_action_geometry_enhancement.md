@@ -1,14 +1,14 @@
 # Handoff — EditSessionAction geometry pipeline
 
-**Date:** 2026-07-04 (post architecture review)  
+**Date:** 2026-07-04 (post architecture review) · **0.4 approved:** 2026-08-04  
 **OpenSpec:** [`openspec/changes/edit-session-action-geometry/`](../../openspec/changes/edit-session-action-geometry/)  
-**Status:** Design locked — awaiting user sign-off (task 0.4) before implementation
+**Status:** **0.4 approved** — Phase 1 native implementation next (Edit projection via UIP; no `normalizeWrapToLinear`)
 
 ---
 
 ## One-line goal
 
-**Transaction baseline + current edited geometry → correct live store state.** Derived geometry each tick — no overlap scratch state. Orchestrator → wrap-linearize → analyze (positive graph) → **group by target** → **`resolveConstrainedGeometry`** (central algorithm) → **edit session action builder** → **edit session action apply**. No persistent registry, no restore history, no **`overlapNotes`**.
+**Transaction baseline + current edited geometry → correct live store state.** Derived geometry each tick — no overlap scratch state. Orchestrator → **Edit projection** → analyze (positive graph) → **group by target** → **`resolveConstrainedGeometry`** (central algorithm) → **edit session action builder** → **edit session action apply**. No persistent registry, no restore history, no **`overlapNotes`**.
 
 ---
 
@@ -29,7 +29,7 @@
 | 4 | One action per causing **`NoteId`**; **`primaryNote`** = UI/bracket only |
 | 5 | **`movingNoteRange`** **retired** |
 | 6 | **BoundaryTouch** — analyze only for edit; capture pass refinement deferred |
-| 7 | **`normalizeWrapToLinear`** before analyze; wrapped targets supported |
+| 7 | **Edit projection** (D20) before analyze; wrapped targets supported |
 | 8 | **Orchestrator owns selection** — changed causing notes + **eligible overlap pairs**; **analyzer is pure geometry** |
 | 9 | **Edit session action builder** — four inputs; overlap targets from **`ConstrainedNoteGeometry`**; causing notes from **edited geometry**; **must not read interactions** |
 | 10 | **`ResolutionPolicy`** stays removed |
@@ -63,7 +63,7 @@ Transaction baseline (immutable per edit driver)
 Edited geometry
         │
         ▼
-normalizeWrapToLinear()
+Edit projection (D20)
         │
 Edit session geometry orchestrator
         │
@@ -198,7 +198,7 @@ HITL: **base + 2× overdub** captured loop.
 | New | Role |
 |-----|------|
 | `include/EditSessionAction.h` | Types |
-| `src/EditSessionInteraction.cpp` | **`analyzeEditSessionInteractions`**, **`normalizeWrapToLinear`**, **`groupEditSessionInteractionsByTarget`**, **`determineConstrainedGeometryTargetNoteIds`** |
+| `src/EditSessionInteraction.cpp` | **`analyzeEditSessionInteractions`**, Edit projection wiring, **`groupEditSessionInteractionsByTarget`**, **`determineConstrainedGeometryTargetNoteIds`** |
 | `src/ResolveConstrainedGeometry.cpp` | **`resolveConstrainedGeometry`** |
 | `src/EditSessionActionBuilder.cpp` | **`buildEditSessionActions`** (edit session action builder) |
 | `src/ApplyEditSessionActions.cpp` | **`applyEditSessionActions`** |

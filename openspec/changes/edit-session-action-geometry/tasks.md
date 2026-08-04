@@ -31,7 +31,7 @@
 - [x] 2.1 Add `buildEditSessionActions(constrainedGeometry, editedGeometry, transactionBaseline, liveStore)` — **edit session action builder** + **omit actions that would not change live store**; **Invariant — Constrained Geometry Authority**
 - [x] 2.2 Deterministic **edit session action apply** order: **RestoreNote** → **ShortenNote** → **HideNote** → causing note geometry actions
 - [x] 2.3 Native `test/test_edit_session_action_builder/`
-- [x] 2.4 Log hook (debug): relationship → action mapping when `SESSION_CAPTURE`
+- [x] 2.4 Log hook: `#CAP,…,ESA,…` per **`EditSessionAction`** when `SESSION_CAPTURE` (`logEditSessionActions` from geometry pipeline)
 
 ## 3. Apply (Phase 3)
 
@@ -44,15 +44,16 @@
 
 ## 4. Wire NOTE_EDIT geometry (Phase 4)
 
-- [ ] 4.1 Replace `moveNoteWithOverlapHandling` body with pipeline
-- [ ] 4.2 Replace `changeLengthWithOverlapHandling` body with pipeline
-- [ ] 4.3 Replace pitch overlap path in `applyPitchChange` with pipeline
+- [x] 4.1 Replace `moveNoteWithOverlapHandling` body with pipeline
+- [x] 4.2 Replace `changeLengthWithOverlapHandling` body with pipeline
+- [x] 4.3 Replace pitch overlap path in `applyPitchChange` with pipeline
 - [ ] 4.3a Wire Add/Delete geometry through pipeline (selected new note → causing; delete causing → restore via rebuild)
-- [ ] 4.4 Retire restore-first calls, adjacent merge, **`allowSharedEndCoexistence`**, **`movingNoteRange`**
+- [x] 4.4 Retire restore-first calls, adjacent merge, **`allowSharedEndCoexistence`**, **`movingNoteRange`** (restore-first + findOverlaps on move/length/pitch overlap; adjacent merge retained on pitch until follow-up)
 - [ ] 4.5 Remove **`overlapNotes`**; no persistent constraint store (D5, D15)
-- [ ] 4.5a Replace **`buildPreCommitEditPasses`** / **`buildPreCommitOverlapEditPasses`** with **transaction baseline compared to final live store** → one **`noteEditPass` batch**
+- [x] 4.5a Replace **`buildPreCommitEditPasses`** / **`buildPreCommitOverlapEditPasses`** with **transaction baseline compared to final live store** → one **`noteEditPass` batch**
 - [ ] 4.5b Update **`filterSelectableDisplayNotes`** / edit closure to derive hidden from live store compared to baseline, not **`overlapNotes`**
-- [ ] 4.6 `pio test -e native` full suite
+- [x] 4.6 `pio test -e native` full suite; overlap move/length/highlight fixes (session_20260804_231426–233713)
+- [x] 4.7 Session capture **`ESA`** lines for hide/shorten/restore audit on `teensy41-capture-serial`
 
 ## 5. HITL + archive (Phase 5)
 

@@ -9,6 +9,7 @@
 #include "NoteEditSessionState.h"
 
 #include "../../src/EditSessionInteraction.cpp"
+#include "../../src/EditSessionLiveStoreSpan.cpp"
 #include "../../src/Logger.cpp"
 #include "../../src/Utils/IntervalProjection.cpp"
 #include "../../src/Utils/NoteUtils.cpp"
@@ -118,6 +119,20 @@ void test_analyze_omits_non_overlapping_pair() {
 }
 
 void test_analyze_boundary_touch_adjacent_prefix() {
+  // Fully clear of the left baseline (gap ≥ 1): no inclusive overlap, no BoundaryTouch edge.
+  constexpr NoteId kCausing = 1;
+  constexpr NoteId kTarget = 2;
+  const EditedGeometry geometry = makeEditedGeometry(kCausing, 145, 241, 60);
+  const BaselineMap baseline = makeTargetBaseline(kTarget, 0, 144, 60);
+  const std::vector<CausingTargetPair, InternalHeapFirstAllocator<CausingTargetPair>> pairs = {
+      {kCausing, kTarget}};
+  const auto interactions = analyzeEditSessionInteractions(pairs, geometry, baseline);
+  TEST_ASSERT_EQUAL(0, static_cast<int>(interactions.size()));
+}
+
+void test_analyze_start_abut_is_overlap_note_off_not_boundary() {
+  // session_20260804_225119: causingStart == left baseline end must stay OverlapNoteOff so
+  // Shorten ends at causingStart-1. BoundaryTouch+full Restore jumped +2 on a 1-tick leave.
   constexpr NoteId kCausing = 1;
   constexpr NoteId kTarget = 2;
   const EditedGeometry geometry = makeEditedGeometry(kCausing, 144, 240, 60);
@@ -126,7 +141,36 @@ void test_analyze_boundary_touch_adjacent_prefix() {
       {kCausing, kTarget}};
   const auto interactions = analyzeEditSessionInteractions(pairs, geometry, baseline);
   TEST_ASSERT_EQUAL(1, static_cast<int>(interactions.size()));
-  TEST_ASSERT_EQUAL(static_cast<int>(InteractionType::BoundaryTouch),
+  TEST_ASSERT_EQUAL(static_cast<int>(InteractionType::OverlapNoteOff),
+                    static_cast<int>(interactions[0].type));
+  TEST_ASSERT_EQUAL_UINT32(143u, computeShortenedEndTick(interactions[0], 1536));
+}
+
+void test_analyze_end_touch_is_overlap_note_on_not_boundary() {
+  // session_20260804_223208: packed same-length notes abut end|start — must Hide, not
+  // BoundaryTouch + boundary-split death spiral.
+  constexpr NoteId kCausing = 1;
+  constexpr NoteId kTarget = 2;
+  const EditedGeometry geometry = makeEditedGeometry(kCausing, 1098, 1194, 65);
+  const BaselineMap baseline = makeTargetBaseline(kTarget, 1194, 1289, 65);
+  const std::vector<CausingTargetPair, InternalHeapFirstAllocator<CausingTargetPair>> pairs = {
+      {kCausing, kTarget}};
+  const auto interactions = analyzeEditSessionInteractions(pairs, geometry, baseline);
+  TEST_ASSERT_EQUAL(1, static_cast<int>(interactions.size()));
+  TEST_ASSERT_EQUAL(static_cast<int>(InteractionType::OverlapNoteOn),
+                    static_cast<int>(interactions[0].type));
+}
+
+void test_analyze_exact_same_span_is_complete_cover() {
+  constexpr NoteId kCausing = 1;
+  constexpr NoteId kTarget = 2;
+  const EditedGeometry geometry = makeEditedGeometry(kCausing, 1098, 1193, 65);
+  const BaselineMap baseline = makeTargetBaseline(kTarget, 1098, 1193, 65);
+  const std::vector<CausingTargetPair, InternalHeapFirstAllocator<CausingTargetPair>> pairs = {
+      {kCausing, kTarget}};
+  const auto interactions = analyzeEditSessionInteractions(pairs, geometry, baseline);
+  TEST_ASSERT_EQUAL(1, static_cast<int>(interactions.size()));
+  TEST_ASSERT_EQUAL(static_cast<int>(InteractionType::CompleteCover),
                     static_cast<int>(interactions[0].type));
 }
 
@@ -188,6 +232,9 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_analyze_overlap_note_on_tail_hide);
   RUN_TEST(test_analyze_omits_non_overlapping_pair);
   RUN_TEST(test_analyze_boundary_touch_adjacent_prefix);
+  RUN_TEST(test_analyze_start_abut_is_overlap_note_off_not_boundary);
+  RUN_TEST(test_analyze_end_touch_is_overlap_note_on_not_boundary);
+  RUN_TEST(test_analyze_exact_same_span_is_complete_cover);
   RUN_TEST(test_group_interactions_by_target_orders_deterministically);
   RUN_TEST(test_compute_shortened_end_tick_uses_causing_start_minus_one);
   RUN_TEST(test_project_note_baseline_for_edit_analysis_wrap_parity);
