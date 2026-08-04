@@ -132,6 +132,12 @@ bool noteEditFocusHasPendingLengthChange(const NoteEditFocus& focus);
 /// True when pre-commit would emit moving-note and/or overlap edit pass rows.
 bool noteEditFocusHasPendingCommit(const NoteEditFocus& focus);
 
+/// Phase 4 geometry: overlap hide/shorten via baselineMap + live store (overlapNotes scratch empty).
+template <typename Alloc>
+bool noteEditFocusHasPendingBaselineMapDiff(const NoteEditFocus& focus,
+                                            const std::vector<MidiEvent, Alloc>& sessionEvents,
+                                            uint8_t channel, uint32_t loopLength);
+
 /// True when pitch edit can update the mover pair only (no overlap lane work).
 bool canApplySimplePitchChange(MidiEventVec& sessionEvents, const NoteEditFocus& focus,
                                uint8_t channel, uint8_t currentPitch, uint8_t targetPitch,
@@ -215,6 +221,12 @@ void populateBaselineMapForEditClosure(NoteEditFocus& focus,
                                        const std::vector<MidiEvent, AllocA>& committedLoopEvents,
                                        const std::vector<MidiEvent, AllocB>& sessionEvents,
                                        uint8_t channel, uint32_t loopLength);
+
+/// D21: discover cross-pitch overlap targets — committed transaction baseline, live fallback.
+void enrichBaselineMapFromCommittedAndLive(BaselineMap& baselineMap,
+                                           const MidiEventVec& committedEvents,
+                                           MidiEventVec& liveStore, NoteId movingNoteId,
+                                           uint8_t channel, uint32_t loopLength);
 
 template <typename NotesVec>
 inline NoteId noteIdFromFilteredDisplayNote(const NotesVec& filtered, int filteredIndex) {

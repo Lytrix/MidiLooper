@@ -309,6 +309,71 @@ NOTE_EDIT_MEM bool noteEditFocusHasPendingLengthChange(const NoteEditFocus& focu
   return focus.active && focus.last.endTick != focus.commitBaseline.endTick;
 }
 
+namespace {
+
+template <typename Alloc>
+NOTE_EDIT_MEM bool readLiveBaselineForOverlapDiff(const std::vector<MidiEvent, Alloc>& sessionEvents,
+                                                  NoteId noteId, const NoteBaseline& baseline,
+                                                  uint8_t channel, uint32_t loopLength,
+                                                  NoteBaseline& out) {
+  std::vector<MidiEvent, Alloc>& mutableEvents =
+      const_cast<std::vector<MidiEvent, Alloc>&>(sessionEvents);
+  if (noteId != kInvalidNoteId &&
+      findLinearNoteSpanForNoteId(mutableEvents, noteId, channel, out, UINT32_MAX, loopLength)) {
+    return true;
+  }
+  NoteId resolvedId = kInvalidNoteId;
+  for (const MidiEvent& evt : sessionEvents) {
+    if (evt.channel != channel || !evt.isNoteOn() || evt.data.noteData.velocity == 0) {
+      continue;
+    }
+    if (evt.data.noteData.note == baseline.pitch && evt.tick == baseline.startTick &&
+        evt.noteId != kInvalidNoteId) {
+      resolvedId = evt.noteId;
+      break;
+    }
+  }
+  if (resolvedId == kInvalidNoteId) {
+    resolvedId = noteId;
+  }
+  return findLinearNoteSpanForNoteId(mutableEvents, resolvedId, channel, out, baseline.startTick,
+                                     loopLength);
+}
+
+}  // namespace
+
+template <typename Alloc>
+NOTE_EDIT_MEM bool noteEditFocusHasPendingBaselineMapDiff(
+    const NoteEditFocus& focus, const std::vector<MidiEvent, Alloc>& sessionEvents,
+    uint8_t channel, uint32_t loopLength) {
+  if (!focus.active || loopLength == 0) {
+    return false;
+  }
+  for (const auto& [noteId, baseline] : focus.baselineMap) {
+    if (noteId == kInvalidNoteId || noteId == focus.movingNoteId) {
+      continue;
+    }
+    NoteBaseline live{};
+    const bool hasLive =
+        readLiveBaselineForOverlapDiff(sessionEvents, noteId, baseline, channel, loopLength, live);
+    if (!hasLive) {
+      return true;
+    }
+    if (live.pitch != baseline.pitch) {
+      continue;
+    }
+    if (live.startTick != baseline.startTick || live.endTick != baseline.endTick) {
+      return true;
+    }
+  }
+  return false;
+}
+
+template bool noteEditFocusHasPendingBaselineMapDiff<InternalHeapFirstAllocator<MidiEvent>>(
+    const NoteEditFocus&, const MidiEventVec&, uint8_t, uint32_t);
+template bool noteEditFocusHasPendingBaselineMapDiff<ExternalMemoryFirstAllocator<MidiEvent>>(
+    const NoteEditFocus&, const SessionMidiEventVec&, uint8_t, uint32_t);
+
 NOTE_EDIT_MEM bool noteEditFocusHasPendingCommit(const NoteEditFocus& focus) {
   if (!focus.active) {
     return false;
@@ -1097,6 +1162,87 @@ NOTE_EDIT_MEM bool isExcludedFromSelectableDisplayNotes(const NoteEditFocus& foc
 
 }  // namespace
 
+NOTE_EDIT_MEM void enrichBaselineMapFromCommittedAndLive(BaselineMap& baselineMap,
+                                                         const MidiEventVec& committedEvents,
+                                                         MidiEventVec& liveStore,
+                                                         NoteId movingNoteId, uint8_t channel,
+                                                         uint32_t loopLength) {
+  if (loopLength == 0) {
+    return;
+  }
+  MidiEventVec mutableCommitted = committedEvents;
+
+  const auto insertIfMissing = [&](NoteId noteId, const NoteBaseline& span) {
+    if (noteId == kInvalidNoteId || noteId == movingNoteId) {
+      return;
+    }
+    if (baselineMap.find(noteId) != baselineMap.end()) {
+      return;
+    }
+    baselineMap[noteId] = span;
+  };
+
+  const auto resolveCommittedBaselineByPitchStart = [&](uint8_t pitch, uint32_t startTick,
+                                                        NoteBaseline& out) -> bool {
+    return findCommittedLinearSpanForPitchStart(mutableCommitted, channel, pitch, startTick,
+                                                loopLength, out);
+  };
+
+  // Live session store owns canonical noteIds (assignMissingNoteIds on session open). Pass
+  // materialize noteIds can differ — always key baselineMap from live pitch+start identity.
+  for (const MidiEvent& evt : liveStore) {
+    if (evt.channel != channel || !evt.isNoteOn() || evt.data.noteData.velocity == 0) {
+      continue;
+    }
+    if (evt.noteId == movingNoteId) {
+      continue;
+    }
+
+    NoteId mapNoteId = evt.noteId;
+    NoteBaseline liveSpan{};
+    if (mapNoteId != kInvalidNoteId &&
+        readLiveLinearSpan(liveStore, mapNoteId, channel, liveSpan)) {
+      // use mapNoteId + liveSpan
+    } else if (readLiveLinearSpanForPitchStart(liveStore, channel, evt.data.noteData.note,
+                                               evt.tick, mapNoteId, liveSpan)) {
+      // use pitch+start resolution
+    } else {
+      continue;
+    }
+    if (mapNoteId == kInvalidNoteId) {
+      mapNoteId =
+          findLiveNoteIdForPitchStart(liveStore, channel, liveSpan.pitch, liveSpan.startTick);
+    }
+    if (mapNoteId == kInvalidNoteId || mapNoteId == movingNoteId) {
+      continue;
+    }
+
+    NoteBaseline baseline{};
+    if (resolveCommittedBaselineByPitchStart(liveSpan.pitch, liveSpan.startTick, baseline)) {
+      insertIfMissing(mapNoteId, baseline);
+    } else {
+      insertIfMissing(mapNoteId, liveSpan);
+    }
+  }
+
+  // Drop pass-materialize ids that are not present in the live session store (stale keys break
+  // Hide/Shorten because appendOverlapTargetActions requires liveStoreHasNotePair).
+  std::unordered_set<NoteId> liveNoteIds;
+  for (const MidiEvent& evt : liveStore) {
+    if (evt.channel == channel && evt.isNoteOn() && evt.data.noteData.velocity > 0 &&
+        evt.noteId != kInvalidNoteId) {
+      liveNoteIds.insert(evt.noteId);
+    }
+  }
+  for (auto it = baselineMap.begin(); it != baselineMap.end();) {
+    if (it->first != movingNoteId && liveNoteIds.find(it->first) == liveNoteIds.end()) {
+      it = baselineMap.erase(it);
+    } else {
+      ++it;
+    }
+  }
+}
+
 template <typename AllocA, typename AllocB>
 NOTE_EDIT_MEM void populateBaselineMapForEditClosure(
     NoteEditFocus& focus, const std::vector<MidiEvent, AllocA>& committedLoopEvents,
@@ -1205,9 +1351,8 @@ NOTE_EDIT_MEM EditPassVec buildPreCommitBaselineLiveDiffOverlapPasses(
       continue;
     }
     NoteBaseline live{};
-    MidiEventVec& mutableEvents = const_cast<MidiEventVec&>(sessionEvents);
     const bool hasLive =
-        findLinearNoteSpanForNoteId(mutableEvents, noteId, channel, live, UINT32_MAX, loopLength);
+        readLiveBaselineForOverlapDiff(sessionEvents, noteId, baseline, channel, loopLength, live);
     if (!hasLive) {
       EditPass row = makeNoteEditRow(EditActionType::Delete, EditPropertyType::None);
       row.targetNoteId = noteId;

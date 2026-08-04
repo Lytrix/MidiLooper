@@ -68,6 +68,17 @@ void test_determine_changed_causing_notes_uses_prior_latch() {
   TEST_ASSERT_EQUAL_UINT32(5u, changed[0]);
 }
 
+void test_determine_changed_causing_notes_skips_unselected_causing() {
+  EditorSelection selection{};
+  selection.primaryNote = 99;
+  selection.selectedNotes = {99};
+  EditedGeometry geometry = makeEditedGeometry(5, 120, 336, 26);
+  std::unordered_map<NoteId, NoteBaseline, NoteIdHash> prior;
+  prior[5] = {26, 100, 360, 576};
+  const auto changed = determineChangedCausingNotes(selection, geometry, prior);
+  TEST_ASSERT_EQUAL(0, static_cast<int>(changed.size()));
+}
+
 void test_analyze_complete_cover_internal_swallow() {
   constexpr NoteId kCausing = 1;
   constexpr NoteId kTarget = 2;
@@ -249,6 +260,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_orchestrator_skips_intra_selection_pair);
   RUN_TEST(test_geometry_changed_this_tick_detects_span_delta);
   RUN_TEST(test_determine_changed_causing_notes_uses_prior_latch);
+  RUN_TEST(test_determine_changed_causing_notes_skips_unselected_causing);
   RUN_TEST(test_analyze_complete_cover_internal_swallow);
   RUN_TEST(test_analyze_overlap_note_off_head_trim);
   RUN_TEST(test_analyze_overlap_note_on_tail_hide);

@@ -146,10 +146,6 @@ void EditManager::commitAllPendingNoteEditActions(Track& track) {
     if (!editSession.active || !editSession.focus.active) {
         return;
     }
-    if (!noteEditFocusHasPendingCommit(editSession.focus)) {
-        return;
-    }
-
     const uint8_t channel = track.getMidiChannel();
     const uint32_t loopLength = noteEditLoopLengthTicks(track);
     if (loopLength == 0) {
@@ -157,6 +153,13 @@ void EditManager::commitAllPendingNoteEditActions(Track& track) {
     }
 
     MidiEventVec& sessionStoreEvents = sessionMidiEvents();
+    const bool hasPendingMoverCommit = noteEditFocusHasPendingCommit(editSession.focus);
+    const bool hasPendingOverlapCommit =
+        noteEditFocusHasPendingBaselineMapDiff(editSession.focus, sessionStoreEvents, channel,
+                                               loopLength);
+    if (!hasPendingMoverCommit && !hasPendingOverlapCommit) {
+        return;
+    }
     pruneOverlapNotesBeforePreCommit(editSession.focus, sessionStoreEvents, channel);
     resolveOverlapNotesForPreCommit(sessionStoreEvents, editSession.focus, channel, loopLength);
 

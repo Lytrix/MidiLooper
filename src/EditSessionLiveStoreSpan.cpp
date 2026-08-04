@@ -97,6 +97,107 @@ NOTE_EDIT_MEM bool readLiveLinearSpan(const MidiEventVec& liveStore, NoteId note
   return true;
 }
 
+NOTE_EDIT_MEM bool findCommittedLinearSpanForPitchStart(MidiEventVec& committedEvents,
+                                                          uint8_t channel, uint8_t pitch,
+                                                          uint32_t startTick, uint32_t loopLength,
+                                                          NoteBaseline& out) {
+  const MidiEvent* noteOn = nullptr;
+  for (const MidiEvent& evt : committedEvents) {
+    if (evt.channel == channel && evt.isNoteOn() && evt.data.noteData.velocity > 0 &&
+        evt.data.noteData.note == pitch && evt.tick == startTick) {
+      noteOn = &evt;
+      break;
+    }
+  }
+  if (noteOn == nullptr) {
+    return false;
+  }
+
+  uint32_t offTick = 0;
+  if (!findLifoOffTickForNoteOn(committedEvents, *noteOn, offTick)) {
+    return false;
+  }
+  if (offTick <= startTick) {
+    return false;
+  }
+  if (loopLength > 0 && offTick > startTick + loopLength) {
+    return false;
+  }
+  out.pitch = pitch;
+  out.velocity = noteOn->data.noteData.velocity;
+  out.startTick = startTick;
+  out.endTick = offTick;
+  return true;
+}
+
+NOTE_EDIT_MEM NoteId findLiveNoteIdForPitchStart(const MidiEventVec& liveStore, uint8_t channel,
+                                                 uint8_t pitch, uint32_t startTick) {
+  for (const MidiEvent& evt : liveStore) {
+    if (evt.channel != channel || !evt.isNoteOn() || evt.data.noteData.velocity == 0) {
+      continue;
+    }
+    if (evt.data.noteData.note == pitch && evt.tick == startTick &&
+        evt.noteId != kInvalidNoteId) {
+      return evt.noteId;
+    }
+  }
+  return kInvalidNoteId;
+}
+
+NOTE_EDIT_MEM bool readLiveLinearSpanForPitchStart(const MidiEventVec& liveStore, uint8_t channel,
+                                                   uint8_t pitch, uint32_t startTick,
+                                                   NoteId& outNoteId, NoteBaseline& out) {
+  const MidiEvent* noteOn = nullptr;
+  for (const MidiEvent& event : liveStore) {
+    if (event.channel != channel || !event.isNoteOn() || event.data.noteData.velocity == 0) {
+      continue;
+    }
+    if (event.data.noteData.note == pitch && event.tick == startTick) {
+      noteOn = &event;
+      break;
+    }
+  }
+  if (noteOn == nullptr) {
+    return false;
+  }
+  outNoteId = noteOn->noteId;
+  if (outNoteId != kInvalidNoteId &&
+      readLiveLinearSpan(liveStore, outNoteId, channel, out)) {
+    return true;
+  }
+
+  const MidiEvent* taggedOff = nullptr;
+  for (const MidiEvent& event : liveStore) {
+    if (!event.isNoteOff() || event.channel != channel || event.tick <= noteOn->tick ||
+        event.data.noteData.note != pitch) {
+      continue;
+    }
+    if (event.noteId != kInvalidNoteId && event.noteId != outNoteId) {
+      continue;
+    }
+    if (taggedOff == nullptr || event.tick > taggedOff->tick) {
+      taggedOff = &event;
+    }
+  }
+  if (taggedOff != nullptr) {
+    out.pitch = pitch;
+    out.velocity = noteOn->data.noteData.velocity;
+    out.startTick = startTick;
+    out.endTick = taggedOff->tick;
+    return true;
+  }
+
+  uint32_t lifoOffTick = 0;
+  if (!findLifoOffTickForNoteOn(liveStore, *noteOn, lifoOffTick)) {
+    return false;
+  }
+  out.pitch = pitch;
+  out.velocity = noteOn->data.noteData.velocity;
+  out.startTick = startTick;
+  out.endTick = lifoOffTick;
+  return true;
+}
+
 NOTE_EDIT_MEM bool liveStoreHasNotePair(const MidiEventVec& liveStore, NoteId noteId, uint8_t channel) {
   NoteBaseline span{};
   return readLiveLinearSpan(liveStore, noteId, channel, span);

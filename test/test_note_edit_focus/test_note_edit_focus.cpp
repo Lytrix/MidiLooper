@@ -88,6 +88,119 @@ void test_baseline_map_includes_moving_note_at_select() {
   TEST_ASSERT_EQUAL(0, static_cast<int>(focus.overlapNotes.size()));
 }
 
+void test_enrich_baseline_map_discovers_cross_pitch_log_scenario() {
+  constexpr uint32_t loopLength = 384;
+  constexpr uint8_t channel = 1;
+  constexpr NoteId kHead12 = 77;
+  constexpr NoteId kMoverId = 79;
+  constexpr NoteId kCross93 = 3;
+  constexpr NoteId kCross96 = 5;
+
+  MidiEventVec committed;
+  committed.push_back(noteOnWithNoteId(0, channel, 12, 100, kHead12));
+  committed.push_back(MidiEvent::NoteOff(192, channel, 12, 0));
+  committed.push_back(noteOnWithNoteId(96, channel, 12, 100, kMoverId));
+  committed.push_back(MidiEvent::NoteOff(192, channel, 12, 0));
+  committed.push_back(noteOnWithNoteId(144, channel, 93, 100, kCross93));
+  committed.push_back(MidiEvent::NoteOff(192, channel, 93, 0));
+  committed.push_back(noteOnWithNoteId(144, channel, 96, 100, kCross96));
+  committed.push_back(MidiEvent::NoteOff(192, channel, 96, 0));
+
+  MidiEventVec store = committed;
+
+  NoteEditFocus focus;
+  focus.active = true;
+  focus.movingNoteId = kMoverId;
+  focus.commitBaseline = {12, 100, 96, 192};
+  focus.last = focus.commitBaseline;
+  focus.baselineMap[kMoverId] = focus.commitBaseline;
+  focus.baselineMap[kHead12] = {12, 100, 0, 192};
+
+  enrichBaselineMapFromCommittedAndLive(focus.baselineMap, committed, store, kMoverId, channel,
+                                        loopLength);
+  TEST_ASSERT_TRUE(focus.baselineMap.count(kCross93) > 0);
+  TEST_ASSERT_TRUE(focus.baselineMap.count(kCross96) > 0);
+  TEST_ASSERT_EQUAL_UINT32(144u, focus.baselineMap[kCross93].startTick);
+  TEST_ASSERT_EQUAL_UINT32(192u, focus.baselineMap[kCross93].endTick);
+}
+
+void test_enrich_baseline_map_maps_committed_pitch_start_via_live_note_id() {
+  // Record-pass materialize may lack noteId on note-ons; session store has stable ids.
+  constexpr uint32_t loopLength = 2304;
+  constexpr uint8_t channel = 1;
+  constexpr NoteId kMoverId = 78;
+  constexpr NoteId kCross93 = 4;
+
+  MidiEvent committedOn = MidiEvent::NoteOn(144, channel, 93, 100);
+  committedOn.noteId = kInvalidNoteId;
+  MidiEvent committedOff = MidiEvent::NoteOff(192, channel, 93, 0);
+
+  MidiEventVec committed;
+  committed.push_back(committedOn);
+  committed.push_back(committedOff);
+  committed.push_back(noteOnWithNoteId(360, channel, 26, 100, kMoverId));
+  committed.push_back(MidiEvent::NoteOff(576, channel, 26, 0));
+
+  MidiEventVec store;
+  store.push_back(noteOnWithNoteId(144, channel, 93, 100, kCross93));
+  MidiEvent liveOff = MidiEvent::NoteOff(192, channel, 93, 0);
+  liveOff.noteId = kCross93;
+  store.push_back(liveOff);
+  store.push_back(noteOnWithNoteId(360, channel, 26, 100, kMoverId));
+  MidiEvent moverOff = MidiEvent::NoteOff(576, channel, 26, 0);
+  moverOff.noteId = kMoverId;
+  store.push_back(moverOff);
+
+  NoteEditFocus focus;
+  focus.active = true;
+  focus.movingNoteId = kMoverId;
+  focus.baselineMap[kMoverId] = {26, 100, 360, 576};
+
+  enrichBaselineMapFromCommittedAndLive(focus.baselineMap, committed, store, kMoverId, channel,
+                                        loopLength);
+  TEST_ASSERT_TRUE(focus.baselineMap.count(kCross93) > 0);
+  TEST_ASSERT_EQUAL_UINT32(144u, focus.baselineMap[kCross93].startTick);
+  TEST_ASSERT_EQUAL_UINT32(192u, focus.baselineMap[kCross93].endTick);
+}
+
+void test_enrich_baseline_map_prefers_live_note_id_over_pass_materialize_id() {
+  // Session store re-assigns noteIds on open; pass materialize keeps older ids.
+  constexpr uint32_t loopLength = 2304;
+  constexpr uint8_t channel = 1;
+  constexpr NoteId kMoverId = 78;
+  constexpr NoteId kPassCrossId = 3;
+  constexpr NoteId kLiveCrossId = 99;
+
+  MidiEventVec committed;
+  committed.push_back(noteOnWithNoteId(144, channel, 93, 100, kPassCrossId));
+  committed.push_back(MidiEvent::NoteOff(192, channel, 93, 0));
+  committed.push_back(noteOnWithNoteId(360, channel, 13, 100, kMoverId));
+  committed.push_back(MidiEvent::NoteOff(576, channel, 13, 0));
+
+  MidiEventVec store;
+  store.push_back(noteOnWithNoteId(144, channel, 93, 100, kLiveCrossId));
+  MidiEvent liveOff = MidiEvent::NoteOff(192, channel, 93, 0);
+  liveOff.noteId = kLiveCrossId;
+  store.push_back(liveOff);
+  store.push_back(noteOnWithNoteId(360, channel, 13, 100, kMoverId));
+  MidiEvent moverOff = MidiEvent::NoteOff(576, channel, 13, 0);
+  moverOff.noteId = kMoverId;
+  store.push_back(moverOff);
+
+  NoteEditFocus focus;
+  focus.active = true;
+  focus.movingNoteId = kMoverId;
+  focus.baselineMap[kMoverId] = {13, 100, 360, 576};
+  focus.baselineMap[kPassCrossId] = {93, 100, 144, 192};
+
+  enrichBaselineMapFromCommittedAndLive(focus.baselineMap, committed, store, kMoverId, channel,
+                                        loopLength);
+  TEST_ASSERT_EQUAL(0, static_cast<int>(focus.baselineMap.count(kPassCrossId)));
+  TEST_ASSERT_TRUE(focus.baselineMap.count(kLiveCrossId) > 0);
+  TEST_ASSERT_EQUAL_UINT32(144u, focus.baselineMap[kLiveCrossId].startTick);
+  TEST_ASSERT_EQUAL_UINT32(192u, focus.baselineMap[kLiveCrossId].endTick);
+}
+
 void test_populate_baseline_map_for_edit_closure_wrap_sibling() {
   NoteEditFocus focus;
   const MidiEventVec flat = makeTwoNoteFlat(8, 104, 584, 680, 60);
@@ -1638,6 +1751,36 @@ void test_find_note_on_for_moving_note_edit_commit_baseline_preferred_start() {
   TEST_ASSERT_EQUAL_UINT32(672u, moverOn->tick);
 }
 
+void test_baseline_map_diff_pending_commit_when_mover_unchanged() {
+  constexpr uint32_t loopLength = 2304;
+  constexpr uint8_t channel = 1;
+  constexpr NoteId kInnerId = 3;
+  constexpr NoteId kMoverId = 9;
+
+  NoteEditFocus focus;
+  focus.active = true;
+  focus.movingNoteId = kMoverId;
+  focus.commitBaseline = {23, 100, 192, 384};
+  focus.last = focus.commitBaseline;
+  focus.movingNoteRange = {192, 384};
+  focus.baselineMap[kInnerId] = {93, 100, 144, 192};
+  focus.baselineMap[kMoverId] = focus.commitBaseline;
+
+  MidiEventVec store;
+  store.push_back(noteOnWithNoteId(192, channel, 23, 100, kMoverId));
+  store.push_back(MidiEvent::NoteOff(384, channel, 23, 0));
+
+  TEST_ASSERT_FALSE(noteEditFocusHasPendingCommit(focus));
+  TEST_ASSERT_TRUE(
+      noteEditFocusHasPendingBaselineMapDiff(focus, store, channel, loopLength));
+
+  const EditPassVec rows = buildPreCommitEditPasses(focus, channel, &store, loopLength);
+  TEST_ASSERT_EQUAL(1, static_cast<int>(rows.size()));
+  TEST_ASSERT_EQUAL(static_cast<int>(EditActionType::Delete),
+                    static_cast<int>(rows[0].actionType));
+  TEST_ASSERT_EQUAL(kInnerId, rows[0].targetNoteId);
+}
+
 void test_pitch_pre_commit_requires_active_focus() {
   constexpr uint32_t kLoopLength = 768;
   NoteEditFocus focus;
@@ -1665,6 +1808,9 @@ void test_pitch_pre_commit_requires_active_focus() {
 int main(int /*argc*/, char** /*argv*/) {
   UNITY_BEGIN();
   RUN_TEST(test_baseline_map_includes_moving_note_at_select);
+  RUN_TEST(test_enrich_baseline_map_discovers_cross_pitch_log_scenario);
+  RUN_TEST(test_enrich_baseline_map_maps_committed_pitch_start_via_live_note_id);
+  RUN_TEST(test_enrich_baseline_map_prefers_live_note_id_over_pass_materialize_id);
   RUN_TEST(test_populate_baseline_map_for_edit_closure_wrap_sibling);
   RUN_TEST(test_populate_baseline_map_includes_linear_same_pitch_neighbor);
   RUN_TEST(test_a1_length_updates_moving_note_range_not_commit_baseline);
@@ -1728,6 +1874,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_find_note_on_for_moving_note_edit_note_id_over_same_pitch_decoy);
   RUN_TEST(test_find_note_on_for_moving_note_edit_note_id_channel_fallback);
   RUN_TEST(test_find_note_on_for_moving_note_edit_commit_baseline_preferred_start);
+  RUN_TEST(test_baseline_map_diff_pending_commit_when_mover_unchanged);
   RUN_TEST(test_pitch_pre_commit_requires_active_focus);
   return UNITY_END();
 }

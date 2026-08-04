@@ -9,7 +9,7 @@
 #include "Utils/NoteEditMem.h"
 
 #if defined(SESSION_CAPTURE)
-#include "Utils/DebugSessionCapture.h"
+#include "Logger.h"
 #endif
 
 namespace {
@@ -101,15 +101,23 @@ NOTE_EDIT_MEM void appendOverlapTargetActions(
       continue;
     }
     const NoteBaseline& baseline = baselineIt->second;
-    const bool livePresent = liveStoreHasNotePair(liveStore, constrained.noteId, channel);
+    NoteId liveNoteId = constrained.noteId;
+    if (!liveStoreHasNotePair(liveStore, liveNoteId, channel)) {
+      const NoteId resolvedId =
+          findLiveNoteIdForPitchStart(liveStore, channel, baseline.pitch, baseline.startTick);
+      if (resolvedId != kInvalidNoteId &&
+          liveStoreHasNotePair(liveStore, resolvedId, channel)) {
+        liveNoteId = resolvedId;
+      }
+    }
+    const bool livePresent = liveStoreHasNotePair(liveStore, liveNoteId, channel);
     NoteBaseline live{};
     const bool liveReadable =
-        livePresent && readLiveLinearSpan(liveStore, constrained.noteId, channel, live);
+        livePresent && readLiveLinearSpan(liveStore, liveNoteId, channel, live);
 
     if (!constrained.visible) {
       if (livePresent) {
-        actions.push_back(makeAction(EditSessionActionType::HideNote, constrained.noteId,
-                                     baseline));
+        actions.push_back(makeAction(EditSessionActionType::HideNote, liveNoteId, baseline));
       }
       continue;
     }
@@ -124,8 +132,7 @@ NOTE_EDIT_MEM void appendOverlapTargetActions(
       }
       const NoteBaseline reinsert{constrained.pitch, baseline.velocity, constrained.startTick,
                                   constrained.endTick};
-      actions.push_back(makeAction(EditSessionActionType::RestoreNote, constrained.noteId,
-                                   reinsert));
+      actions.push_back(makeAction(EditSessionActionType::RestoreNote, liveNoteId, reinsert));
       continue;
     }
 
@@ -134,8 +141,7 @@ NOTE_EDIT_MEM void appendOverlapTargetActions(
         if (causingSpanCompletelyCoversBaseline(editedGeometry, baseline)) {
           continue;
         }
-        actions.push_back(makeAction(EditSessionActionType::RestoreNote, constrained.noteId,
-                                     baseline));
+        actions.push_back(makeAction(EditSessionActionType::RestoreNote, liveNoteId, baseline));
       }
       continue;
     }
@@ -144,8 +150,7 @@ NOTE_EDIT_MEM void appendOverlapTargetActions(
       const NoteBaseline shortened{constrained.pitch, baseline.velocity, constrained.startTick,
                                    constrained.endTick};
       if (!liveReadable || live.endTick != constrained.endTick) {
-        actions.push_back(makeAction(EditSessionActionType::ShortenNote, constrained.noteId,
-                                     shortened));
+        actions.push_back(makeAction(EditSessionActionType::ShortenNote, liveNoteId, shortened));
       }
     }
   }
@@ -225,8 +230,11 @@ NOTE_EDIT_MEM void appendCausingNoteActions(const EditedGeometry& editedGeometry
 #if defined(SESSION_CAPTURE)
 NOTE_EDIT_MEM void logEditSessionActions(const EditSessionActions& actions) {
   for (const EditSessionAction& action : actions) {
-    SC_ESA(static_cast<uint8_t>(action.type), static_cast<uint32_t>(action.targetNoteId),
-           action.startTick, action.endTick, action.pitch);
+    logger.log(CAT_MIDI, LOG_DEBUG,
+                 "EditSessionAction: type=%u noteId=%lu start=%lu end=%lu pitch=%u",
+                 static_cast<unsigned>(action.type), static_cast<unsigned long>(action.targetNoteId),
+                 static_cast<unsigned long>(action.startTick),
+                 static_cast<unsigned long>(action.endTick), static_cast<unsigned>(action.pitch));
   }
 }
 #endif
