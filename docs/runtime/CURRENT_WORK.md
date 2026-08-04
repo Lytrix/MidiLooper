@@ -2,11 +2,27 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-03 (note-edit control-surface split complete)
+Last updated: 2026-08-04 (HITL CLI rebuild Phase 0 complete)
 
 ---
 
 ## Now implementing
+
+### HITL CLI rebuild — Phase 1 next
+
+**OpenSpec:** [`openspec/changes/hitl-cli-rebuild/`](../../openspec/changes/hitl-cli-rebuild/)  
+**Plan:** [`docs/plans/hitl_cli_rebuild_enhancement.md`](../plans/hitl_cli_rebuild_enhancement.md)
+
+| Phase | Status |
+|-------|--------|
+| 0 — inventory + doc scaffold | **Done** (2026-08-04) |
+| 1 — foundation (`HITL_ARCHITECTURE.md`, runner, actions, flows) | **Next** |
+| 2 — core scenarios + `uip_5_5` (UIP **5.5** gate) | Pending |
+| 3–5 — port remainder, corpus docs, archive | Pending |
+
+**UIP gate:** preset `uip_5_5` unblocks [`edit-session-action-geometry`](../plans/note_edit_session_action_geometry_enhancement.md) and UIP task 5.5.
+
+---
 
 ### Persistence / overlay (next after Phase B)
 

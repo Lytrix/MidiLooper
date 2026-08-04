@@ -2,13 +2,15 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-08-03 (note-edit control-surface split complete)
+Last updated: 2026-08-04 (HITL CLI rebuild Phase 0)
 
 ---
 
 ## Current branch
 
-**`chore/note-edit-control-surface-split`** — Phases 0–8 complete (Phase 7 `c244280`, Phase 8 uncommitted): `NoteEditManager` → `ControlSurfaceManager`, NOTE_EDIT physical ingress consolidated. See [CURRENT_WORK.md](CURRENT_WORK.md).
+**Active work:** HITL CLI rebuild Phase 1 — see [CURRENT_WORK.md](CURRENT_WORK.md).
+
+**`chore/note-edit-control-surface-split`** — Phases 0–8 complete (merged). See [CURRENT_WORK.md](CURRENT_WORK.md).
 
 **`feature/deferred-lazy-load`** — Phase B archived `openspec/changes/archive/2026-07-19-deferred-job-scheduler/`. Specs: `openspec/specs/deferred-job-scheduler/`.
 
@@ -26,6 +28,7 @@ See [`docs/BRANCHING.md`](../BRANCHING.md).
 
 ## In flight
 
+- **HITL CLI rebuild:** Phase 0 complete — OpenSpec [`hitl-cli-rebuild`](../../openspec/changes/hitl-cli-rebuild/); Phase 1 foundation next; UIP **5.5** gate in Phase 2
 - **Note-edit control-surface split:** **complete** on `chore/note-edit-control-surface-split` — Phases 0–8; see [note_edit_control_surface_split_refinement.md](../plans/note_edit_control_surface_split_refinement.md)
 - **Next product slice:** confirm with user (persistence/overlay hardening, or parked large-slot display hunt) — see [CURRENT_WORK.md](CURRENT_WORK.md)
 - **Archived this branch:** OpenSpec [`deferred-job-scheduler`](../../openspec/changes/archive/2026-07-19-deferred-job-scheduler/) Phase B — gates B.1 [`231510`](../../captures/session_20260718_231510.log), B.3/B.4 [`022107`](../../captures/session_20260719_022107.log); specs in `openspec/specs/deferred-job-scheduler/`
@@ -60,6 +63,7 @@ See [`docs/BRANCHING.md`](../BRANCHING.md).
 
 | Change | Focus |
 |--------|--------|
+| **`hitl-cli-rebuild`** | **Phase 0 done** — full CLI rebuild; UIP 5.5 gate Phase 2; [`hitl_cli_rebuild_enhancement.md`](../plans/hitl_cli_rebuild_enhancement.md) |
 | **`deferred-job-scheduler`** | **Archived** `openspec/changes/archive/2026-07-19-deferred-job-scheduler/`; normative `openspec/specs/deferred-job-scheduler/` |
 | **`continuous-runtime-persistence`** | Phase 0–4 shipped; Phase 4 HITL **passed** (`171043` 64+64, `171951` boot restore); Phase 5 recovery **next** |
 | **`runtime-derived-representation-heap`** | M5 Steps 1–1b–2 shipped (`adoptPersistedSnapshot`); lazy load + 64+64 HITL pending |
