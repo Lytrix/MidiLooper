@@ -37,15 +37,30 @@ NOTE_EDIT_MEM EditedGeometry projectEditedGeometryForAnalysis(const EditedGeomet
   return projected;
 }
 
-NOTE_EDIT_MEM std::vector<NoteId, InternalHeapFirstAllocator<NoteId>> collectCandidateTargetNoteIds(
-    const BaselineMap& transactionBaseline, NoteId movingNoteId,
-    std::optional<uint8_t> overlapPitchLane) {
-  std::vector<NoteId, InternalHeapFirstAllocator<NoteId>> candidates;
-  for (const auto& [noteId, baseline] : transactionBaseline) {
-    if (noteId == kInvalidNoteId || noteId == movingNoteId) {
+NOTE_EDIT_MEM void enrichBaselineMapFromLiveStore(BaselineMap& baselineMap, MidiEventVec& liveStore,
+                                                  NoteId movingNoteId, uint8_t channel,
+                                                  uint32_t loopLength) {
+  for (const MidiEvent& evt : liveStore) {
+    if (evt.channel != channel || !evt.isNoteOn() || evt.data.noteData.velocity == 0 ||
+        evt.noteId == kInvalidNoteId || evt.noteId == movingNoteId) {
       continue;
     }
-    if (overlapPitchLane.has_value() && baseline.pitch != overlapPitchLane.value()) {
+    if (baselineMap.find(evt.noteId) != baselineMap.end()) {
+      continue;
+    }
+    NoteBaseline span{};
+    if (findLinearNoteSpanForNoteId(liveStore, evt.noteId, channel, span, evt.tick, loopLength)) {
+      baselineMap[evt.noteId] = span;
+    }
+  }
+}
+
+NOTE_EDIT_MEM std::vector<NoteId, InternalHeapFirstAllocator<NoteId>> collectCandidateTargetNoteIds(
+    const BaselineMap& transactionBaseline, NoteId movingNoteId) {
+  std::vector<NoteId, InternalHeapFirstAllocator<NoteId>> candidates;
+  for (const auto& [noteId, baseline] : transactionBaseline) {
+    (void)baseline;
+    if (noteId == kInvalidNoteId || noteId == movingNoteId) {
       continue;
     }
     candidates.push_back(noteId);
@@ -76,27 +91,11 @@ NOTE_EDIT_MEM bool runEditSessionGeometryPipeline(
     return false;
   }
 
-  // Capture any same-pitch live notes missing from baselineMap (select-time closure may
-  // have been narrower before pitch-lane full closure; mid-driver discovery uses current
-  // live span as the immutable baseline for the rest of this edit driver).
-  if (overlapPitchLane.has_value()) {
-    const uint8_t pitchLane = overlapPitchLane.value();
-    for (const MidiEvent& evt : liveStore) {
-      if (evt.channel != channel || !evt.isNoteOn() || evt.data.noteData.velocity == 0 ||
-          evt.data.noteData.note != pitchLane || evt.noteId == kInvalidNoteId ||
-          evt.noteId == focus.movingNoteId) {
-        continue;
-      }
-      if (focus.baselineMap.find(evt.noteId) != focus.baselineMap.end()) {
-        continue;
-      }
-      NoteBaseline span{};
-      if (findLinearNoteSpanForNoteId(liveStore, evt.noteId, channel, span, evt.tick,
-                                      loopLength)) {
-        focus.baselineMap[evt.noteId] = span;
-      }
-    }
-  }
+  // D21: full-loop baseline — discover every live note missing from baselineMap so
+  // cross-pitch overlap targets participate in analyze/restore (not same-pitch lane only).
+  enrichBaselineMapFromLiveStore(focus.baselineMap, liveStore, focus.movingNoteId, channel,
+                                 loopLength);
+  (void)overlapPitchLane;
 
   const BaselineMap& transactionBaseline = focus.baselineMap;
   const EditorSelection& selection = editedGeometry.selection;
@@ -108,7 +107,7 @@ NOTE_EDIT_MEM bool runEditSessionGeometryPipeline(
   }
 
   const std::vector<NoteId, InternalHeapFirstAllocator<NoteId>> candidateTargetNoteIds =
-      collectCandidateTargetNoteIds(transactionBaseline, focus.movingNoteId, overlapPitchLane);
+      collectCandidateTargetNoteIds(transactionBaseline, focus.movingNoteId);
 
   const std::vector<CausingTargetPair, InternalHeapFirstAllocator<CausingTargetPair>> eligiblePairs =
       determineEligiblePairs(selection, changedCausingNotes, candidateTargetNoteIds);

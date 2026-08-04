@@ -62,6 +62,16 @@ NoteEditFocus makeMovingFocus(NoteId movingId, uint8_t pitch, uint32_t start, ui
   return focus;
 }
 
+bool actionsContainTypeForNote(const EditSessionActions& actions, EditSessionActionType type,
+                               NoteId noteId) {
+  for (const EditSessionAction& action : actions) {
+    if (action.type == type && action.targetNoteId == noteId) {
+      return true;
+    }
+  }
+  return false;
+}
+
 }  // namespace
 
 void test_apply_restore_hidden_neighbor_144458() {
@@ -825,6 +835,147 @@ void test_move_over_inner_overlap_keeps_mover_length_in_store() {
   TEST_ASSERT_TRUE(foundMover);
 }
 
+void test_cross_pitch_complete_cover_hide_and_restore_on_leave() {
+  constexpr uint32_t loopLength = 2304;
+  constexpr NoteId kInnerId = 1;
+  constexpr NoteId kMoverId = 9;
+
+  MidiEventVec store;
+  store.push_back(noteOnWithNoteId(144, kChannel, 93, 100, kInnerId));
+  MidiEvent innerOff = MidiEvent::NoteOff(192, kChannel, 93, 0);
+  innerOff.noteId = kInnerId;
+  store.push_back(innerOff);
+  store.push_back(noteOnWithNoteId(192, kChannel, 23, 100, kMoverId));
+  MidiEvent moverOff = MidiEvent::NoteOff(384, kChannel, 23, 0);
+  moverOff.noteId = kMoverId;
+  store.push_back(moverOff);
+
+  NoteEditFocus focus = makeMovingFocus(kMoverId, 23, 192, 384);
+  focus.baselineMap[kInnerId] = {93, 100, 144, 192};
+  focus.baselineMap[kMoverId] = {23, 100, 192, 384};
+
+  EditedGeometry overInner{};
+  overInner.selection.primaryNote = kMoverId;
+  overInner.selection.selectedNotes.push_back(kMoverId);
+  EditedNoteSpan causingOver{};
+  causingOver.noteId = kMoverId;
+  causingOver.span = {23, 100, 144, 336};
+  overInner.causingSpans.push_back(causingOver);
+
+  ConstrainedNoteGeometry innerHidden{};
+  innerHidden.noteId = kInnerId;
+  innerHidden.visible = false;
+  innerHidden.pitch = 93;
+  innerHidden.startTick = 144;
+  innerHidden.endTick = 192;
+
+  const EditSessionActions overActions =
+      buildEditSessionActions({innerHidden}, overInner, focus.baselineMap, store, kChannel, focus,
+                              loopLength);
+  TEST_ASSERT_TRUE(
+      actionsContainTypeForNote(overActions, EditSessionActionType::HideNote, kInnerId));
+  applyEditSessionActions(overActions, store, focus, kChannel, loopLength);
+  TEST_ASSERT_FALSE(liveStoreHasNotePair(store, kInnerId, kChannel));
+
+  EditedGeometry leaveInner{};
+  leaveInner.selection = overInner.selection;
+  EditedNoteSpan causingLeave{};
+  causingLeave.noteId = kMoverId;
+  causingLeave.span = {23, 100, 144, 336};
+  leaveInner.causingSpans.push_back(causingLeave);
+
+  ConstrainedNoteGeometry innerRestore{};
+  innerRestore.noteId = kInnerId;
+  innerRestore.visible = true;
+  innerRestore.pitch = 93;
+  innerRestore.startTick = 144;
+  innerRestore.endTick = 192;
+
+  const EditSessionActions leaveActions =
+      buildEditSessionActions({innerRestore}, leaveInner, focus.baselineMap, store, kChannel,
+                              focus, loopLength);
+  TEST_ASSERT_TRUE(
+      actionsContainTypeForNote(leaveActions, EditSessionActionType::RestoreNote, kInnerId));
+  applyEditSessionActions(leaveActions, store, focus, kChannel, loopLength);
+
+  NoteBaseline innerSpan{};
+  TEST_ASSERT_TRUE(
+      findLinearNoteSpanForNoteId(store, kInnerId, kChannel, innerSpan, 144, loopLength));
+  TEST_ASSERT_EQUAL_UINT32(144u, innerSpan.startTick);
+  TEST_ASSERT_EQUAL_UINT32(192u, innerSpan.endTick);
+}
+
+void test_same_pitch_left_neighbor_shorten_and_restore_on_leave() {
+  constexpr uint32_t loopLength = 2304;
+  constexpr NoteId kLeftId = 2;
+  constexpr NoteId kMoverId = 9;
+
+  MidiEventVec store;
+  store.push_back(noteOnWithNoteId(576, kChannel, 12, 100, kLeftId));
+  MidiEvent leftOff = MidiEvent::NoteOff(720, kChannel, 12, 0);
+  leftOff.noteId = kLeftId;
+  store.push_back(leftOff);
+  store.push_back(noteOnWithNoteId(720, kChannel, 12, 100, kMoverId));
+  MidiEvent moverOff = MidiEvent::NoteOff(864, kChannel, 12, 0);
+  moverOff.noteId = kMoverId;
+  store.push_back(moverOff);
+
+  NoteEditFocus focus = makeMovingFocus(kMoverId, 12, 720, 864);
+  focus.baselineMap[kLeftId] = {12, 100, 576, 720};
+  focus.baselineMap[kMoverId] = {12, 100, 720, 864};
+
+  EditedGeometry ontoLeft{};
+  ontoLeft.selection.primaryNote = kMoverId;
+  ontoLeft.selection.selectedNotes.push_back(kMoverId);
+  EditedNoteSpan causingOnto{};
+  causingOnto.noteId = kMoverId;
+  causingOnto.span = {12, 100, 672, 816};
+  ontoLeft.causingSpans.push_back(causingOnto);
+
+  ConstrainedNoteGeometry leftShortened{};
+  leftShortened.noteId = kLeftId;
+  leftShortened.visible = true;
+  leftShortened.pitch = 12;
+  leftShortened.startTick = 576;
+  leftShortened.endTick = 671;
+
+  const EditSessionActions ontoActions =
+      buildEditSessionActions({leftShortened}, ontoLeft, focus.baselineMap, store, kChannel, focus,
+                              loopLength);
+  TEST_ASSERT_TRUE(
+      actionsContainTypeForNote(ontoActions, EditSessionActionType::ShortenNote, kLeftId));
+  applyEditSessionActions(ontoActions, store, focus, kChannel, loopLength);
+
+  NoteBaseline leftSpan{};
+  TEST_ASSERT_TRUE(
+      findLinearNoteSpanForNoteId(store, kLeftId, kChannel, leftSpan, 576, loopLength));
+  TEST_ASSERT_EQUAL_UINT32(671u, leftSpan.endTick);
+
+  EditedGeometry leaveLeft{};
+  leaveLeft.selection = ontoLeft.selection;
+  EditedNoteSpan causingLeave{};
+  causingLeave.noteId = kMoverId;
+  causingLeave.span = {12, 100, 672, 816};
+  leaveLeft.causingSpans.push_back(causingLeave);
+
+  ConstrainedNoteGeometry leftRestore{};
+  leftRestore.noteId = kLeftId;
+  leftRestore.visible = true;
+  leftRestore.pitch = 12;
+  leftRestore.startTick = 576;
+  leftRestore.endTick = 720;
+
+  const EditSessionActions leaveActions =
+      buildEditSessionActions({leftRestore}, leaveLeft, focus.baselineMap, store, kChannel, focus,
+                              loopLength);
+  TEST_ASSERT_TRUE(
+      actionsContainTypeForNote(leaveActions, EditSessionActionType::RestoreNote, kLeftId));
+  applyEditSessionActions(leaveActions, store, focus, kChannel, loopLength);
+  TEST_ASSERT_TRUE(
+      findLinearNoteSpanForNoteId(store, kLeftId, kChannel, leftSpan, 576, loopLength));
+  TEST_ASSERT_EQUAL_UINT32(720u, leftSpan.endTick);
+}
+
 int main(int /*argc*/, char** /*argv*/) {
   UNITY_BEGIN();
   RUN_TEST(test_apply_restore_hidden_neighbor_144458);
@@ -844,5 +995,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_builder_emits_move_when_mover_on_has_no_off_but_focus_last_does);
   RUN_TEST(test_builder_emits_change_length_when_store_shortened_but_focus_matches_causing);
   RUN_TEST(test_move_over_inner_overlap_keeps_mover_length_in_store);
+  RUN_TEST(test_cross_pitch_complete_cover_hide_and_restore_on_leave);
+  RUN_TEST(test_same_pitch_left_neighbor_shorten_and_restore_on_leave);
   return UNITY_END();
 }
