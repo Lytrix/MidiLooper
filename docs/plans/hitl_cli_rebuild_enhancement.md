@@ -7,7 +7,7 @@ todos:
     status: completed
   - id: p1-foundation
     content: "Phase 1 — Migration: extract HITL_ARCHITECTURE.md, bootstrap, runner, actions, flows, protocol, import gates"
-    status: pending
+    status: completed
   - id: p2-flows-scenarios
     content: "Phase 2 — Migration: core scenarios + uip_5_5 preset + device HITL (UIP 5.5 gate)"
     status: pending
@@ -831,16 +831,17 @@ Migration phases are **scheduling only**. Implementation authority during migrat
 
 ## Phase 1 — Foundation
 
-1. **Extract Part I** → [`docs/Architecture/HITL_ARCHITECTURE.md`](../Architecture/HITL_ARCHITECTURE.md) (initial version; this doc retains staging copy until Phase 5 archive).
-2. `HitlConfig`, `cli.py`, `bootstrap.py`, `session.py`, `ActionContext`, `ScenarioContext`, `ScenarioResult`, `VerificationResult` + `VerificationFailure` diagnostics.
-3. `runner.py` orchestration skeleton (calls `spec.run` directly — **no `ScenarioRunner`**), `reporting.py` (report JSON; full bundle in Phase 4).
-4. Declarative `ScenarioSpec` / `PresetSpec` + verifier lookup in `registry.py`.
-5. `actions/*`, `serial/protocol.py` (ST + RECS first).
-6. Stateless `flows/record_seed.py`.
-7. `test_hitl_import_gate.py` (scenarios + flows rules).
-8. `test_hitl_actions.py`, `test_verification_result.py`.
+**Status:** complete (2026-08-04).
 
-**Exit:** host unit tests green; import gates pass; `HITL_ARCHITECTURE.md` exists as canonical architecture reference.
+1. **Extract Part I** → [`docs/Architecture/HITL_ARCHITECTURE.md`](../Architecture/HITL_ARCHITECTURE.md).
+2. `HitlConfig`, `bootstrap.py`, `session.py`, `ActionContext`, `ScenarioContext`, `ScenarioResult`, `VerificationResult` + `VerificationFailure`.
+3. `foundation_runner.py` orchestration (`run_layered_preset`); `reporting.py` skeleton.
+4. `layered_registry.py` — `LayeredScenarioSpec`, `PresetSpec`, verifier lookup (parallel to legacy `registry.py`).
+5. `actions/*`, `serial/protocol.py` (ST + RECS).
+6. Skeleton `flows/*` + `scenarios/layered_stubs.py`.
+7. Host tests: `test_hitl_import_gate.py`, `test_hitl_actions.py`, `test_verification_result.py`, `test_serial_protocol.py`, `test_foundation_runner.py`.
+
+**Exit:** `pio test -e native` green; Python HITL tests pass via `.venv/bin/python -m unittest` in `scripts/`. Legacy `runner.py` unchanged until Phase 3.
 
 ---
 

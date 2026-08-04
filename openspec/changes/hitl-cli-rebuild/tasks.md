@@ -13,15 +13,15 @@
 
 ## Phase 1 — Foundation
 
-- [ ] 1.1 Extract Part I → `docs/Architecture/HITL_ARCHITECTURE.md`
-- [ ] 1.2 `HitlConfig`, `cli.py`, `bootstrap.py`, `session.py`, contexts, types
-- [ ] 1.3 `runner.py` (no `ScenarioRunner`), `reporting.py` skeleton
-- [ ] 1.4 `registry.py` — `ScenarioSpec`, `PresetSpec`, verifier lookup
-- [ ] 1.5 `actions/*`, `serial/protocol.py` (ST + RECS)
-- [ ] 1.6 `flows/record_seed.py`
-- [ ] 1.7 `test_hitl_import_gate.py`, `test_hitl_actions.py`, `test_verification_result.py`
+- [x] 1.1 Extract Part I → `docs/Architecture/HITL_ARCHITECTURE.md`
+- [x] 1.2 `HitlConfig`, `bootstrap.py`, `session.py`, contexts, types
+- [x] 1.3 `foundation_runner.py` (no `ScenarioRunner`), `reporting.py` skeleton
+- [x] 1.4 `layered_registry.py` — `LayeredScenarioSpec`, `PresetSpec`, verifier lookup
+- [x] 1.5 `actions/*`, `serial/protocol.py` (ST + RECS)
+- [x] 1.6 `flows/record_seed.py` (+ skeleton flows)
+- [x] 1.7 `test_hitl_import_gate.py`, `test_hitl_actions.py`, `test_verification_result.py`, `test_serial_protocol.py`, `test_foundation_runner.py`
 
-**Exit:** `pio test -e native` green; `HITL_ARCHITECTURE.md` canonical.
+**Exit:** `pio test -e native` green; Python HITL tests pass; `HITL_ARCHITECTURE.md` canonical. Legacy `runner.py` unchanged until Phase 3.
 
 ## Phase 2 — Core scenarios (UIP 5.5 gate)
 
