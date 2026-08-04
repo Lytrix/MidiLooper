@@ -28,6 +28,27 @@ class ExtractPhaseBoundariesTests(unittest.TestCase):
         self.assertEqual(bounds["overdub_start_ts"], 3000)
         self.assertEqual(bounds["overdub_stop_ts"], 4000)
 
+    def test_overdub_windows_from_human_logs_when_st_missing(self) -> None:
+        lines = [
+            "#CAP,1000,ST,Track,ARMED,RECORDING",
+            "#CAP,2000,ST,Track,RECORDING,STOPPED_RECORDING",
+            "[1841.970] [DEBUG] [TRACK] Overdubbing started @ tick 702",
+            "[1847.139] [DEBUG] [TRACK] Overdubbing stopped @ tick 2677",
+        ]
+        bounds = extract_phase_boundaries(lines)
+        self.assertEqual(bounds["overdub_start_ts"], 1841970000)
+        self.assertEqual(bounds["overdub_stop_ts"], 1847139000)
+
+    def test_record_boundaries_from_human_wall_clock(self) -> None:
+        lines = [
+            "[1836.133] [DEBUG] [TRACK] Recording started @ tick 0",
+            "[1840.889] [INFO] Record stop truncation rewind: raw=1827 final=1536 playbackTick=291",
+            "[1840.890] [DEBUG] [TRACK] Recording stopped @ tick 291 (recStart=0 length=1536)",
+        ]
+        bounds = extract_phase_boundaries(lines)
+        self.assertEqual(bounds["record_start_ts"], 1836133000)
+        self.assertEqual(bounds["record_stop_ts"], 1840890000)
+
 
 class ExtractFirstNoteOffsetTests(unittest.TestCase):
     def test_offset_from_us_delta_at_120_bpm(self) -> None:

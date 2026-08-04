@@ -16,28 +16,41 @@ from hitl.config import HitlConfig
 from hitl.foundation_runner import run_layered_preset
 
 
+def _test_config(**overrides: object) -> HitlConfig:
+    base = dict(
+        preset=None,
+        scenario_ids=("record_seed",),
+        track_number=5,
+        loop_slot=1,
+        midi_channel=5,
+        record_bars=2,
+        overdub_bars=2,
+        midi_out_name="Teensy",
+        midi_in_name="Teensy",
+        serial_port=None,
+        verify_serial_log=None,
+        verify_only=True,
+        out_dir=Path("captures"),
+        managed_capture=False,
+    )
+    base.update(overrides)
+    return HitlConfig(**base)
+
+
 class FoundationRunnerTests(unittest.TestCase):
-    def test_verify_only_preset_writes_report(self) -> None:
+    def test_verify_only_record_seed_writes_report(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             log_path = Path(tmp) / "serial.log"
             log_path.write_text(
-                "#CAP,1000,ST,Track,ARMED,RECORDING\n",
+                "\n".join(
+                    [
+                        "#CAP,1000,ST,Track,ARMED,RECORDING",
+                        "#CAP,2000,RECS,stop,100,200,1536,1536",
+                    ]
+                ),
                 encoding="utf-8",
             )
-            config = HitlConfig(
-                preset="base",
-                scenario_ids=(),
-                track_number=5,
-                midi_channel=5,
-                record_bars=2,
-                overdub_bars=2,
-                midi_out_name="Teensy",
-                midi_in_name="Teensy",
-                serial_port=None,
-                verify_serial_log=log_path,
-                verify_only=True,
-                out_dir=Path(tmp),
-            )
+            config = _test_config(verify_serial_log=log_path, out_dir=Path(tmp))
             code = run_layered_preset(config)
             self.assertEqual(code, 0)
             reports = list(Path(tmp).glob("host_midi_hitl_*.json"))

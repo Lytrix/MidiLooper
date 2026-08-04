@@ -10,7 +10,7 @@ todos:
     status: completed
   - id: p2-flows-scenarios
     content: "Phase 2 — Migration: core scenarios + uip_5_5 preset + device HITL (UIP 5.5 gate)"
-    status: pending
+    status: in_progress
   - id: p3-port-delete
     content: "Phase 3 — Migration: port remaining scenarios; delete legacy"
     status: pending
@@ -849,13 +849,17 @@ Migration phases are **scheduling only**. Implementation authority during migrat
 
 | Scenario | Flow | Verifier |
 |----------|------|----------|
-| `record_seed` | `flows.record_seed` | `verify.capture` |
-| `record_overdub` | `flows.record_overdub` | `verify.capture` ([HITL-Test-Flow](../../.cursor/rules/HITL-Test-Flow.mdc)) |
-| `edit_minimal` | `flows.note_edit_smoke` | `verify.capture` + `verify.playback` |
-| `long_loop_display_window` | `flows.long_loop_display` | `verify.display` |
-| `slot_queued_start` | `flows.queued_switch` | `verify.playback` |
+| `record_seed` | `scenarios/layered` → legacy `run_base_scenario` | `verify.capture` |
+| `record_overdub` | `scenarios/layered` → legacy `run_base_scenario` | `verify.capture` ([HITL-Test-Flow](../../.cursor/rules/HITL-Test-Flow.mdc)) |
+| `edit_minimal` | `scenarios/layered` → legacy `run_edit_minimal_scenario` | `verify.playback` |
+| `long_loop_display_window` | `scenarios/layered` → legacy `run_long_loop_display_window` | `verify.display` |
+| `slot_queued_start` | `scenarios/layered` (slot short-press) | `verify.playback` |
 
-**Exit:** Mode B HITL PASS on preset `uip_5_5`; check off UIP **5.5**.
+**Status:** code landed (2026-08-04); managed dual-session default; device PASS on `uip_5_5` pending.
+
+**CLI:** `host_midi_hitl.py run --layered --preset uip_5_5 …` — spawns `capture_session.py` + HITL (no manual second terminal). Legacy path unchanged without `--layered`.
+
+**Exit:** device HITL PASS on preset `uip_5_5`; check off UIP **5.5**.
 
 ---
 

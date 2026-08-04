@@ -25,9 +25,9 @@
 
 ## Phase 2 — Core scenarios (UIP 5.5 gate)
 
-- [ ] 2.1 `record_seed`, `record_overdub`, `edit_minimal`, `long_loop_display_window`, `slot_queued_start`
-- [ ] 2.2 Presets `base`, `edit_minimal`, `uip_5_5`
-- [ ] 2.3 Mode B HITL PASS on `uip_5_5`; check off UIP **5.5**
+- [x] 2.1 `record_seed`, `record_overdub`, `edit_minimal`, `long_loop_display_window`, `slot_queued_start`
+- [x] 2.2 Presets `base`, `edit_minimal`, `uip_5_5` + `--layered` CLI on `host_midi_hitl`
+- [x] 2.3 Mode B HITL PASS on `uip_5_5`; check off UIP **5.5**
 
 ## Phase 3 — Port remainder + delete legacy
 

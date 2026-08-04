@@ -53,6 +53,22 @@ def serial_lines_show_bpm_activity(lines: list[str], *, tail: int = 40) -> bool:
     return False
 
 
+def serial_global_transport_running(lines: list[str], *, after_index: int = 0) -> bool:
+    """True when human transport logs show started after the last stop since ``after_index``."""
+    started_at = -1
+    stopped_at = -1
+    for index, line in enumerate(lines):
+        if index < after_index:
+            continue
+        if "Transport started" in line:
+            started_at = index
+        elif "Transport stopped" in line:
+            stopped_at = index
+    if started_at >= 0 and started_at > stopped_at:
+        return True
+    return False
+
+
 def serial_sequencer_running(
     collector: Any,
     *,

@@ -2,13 +2,13 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-04 (HITL CLI rebuild Phase 0 complete)
+Last updated: 2026-08-04 (HITL CLI rebuild Phase 2 — device gate pending)
 
 ---
 
 ## Now implementing
 
-### HITL CLI rebuild — Phase 2 next
+### HITL CLI rebuild — Phase 2 device gate
 
 **OpenSpec:** [`openspec/changes/hitl-cli-rebuild/`](../../openspec/changes/hitl-cli-rebuild/)  
 **Plan:** [`docs/plans/hitl_cli_rebuild_enhancement.md`](../plans/hitl_cli_rebuild_enhancement.md)
@@ -17,8 +17,10 @@ Last updated: 2026-08-04 (HITL CLI rebuild Phase 0 complete)
 |-------|--------|
 | 0 — inventory + doc scaffold | **Done** (2026-08-04) |
 | 1 — foundation (`HITL_ARCHITECTURE.md`, layered runner, actions, flows) | **Done** (2026-08-04) |
-| 2 — core scenarios + `uip_5_5` (UIP **5.5** gate) | **Next** |
+| 2 — core scenarios + `uip_5_5` (UIP **5.5** gate) | **In progress** — code landed; managed dual-session default; device PASS pending |
 | 3–5 — port remainder, corpus docs, archive | Pending |
+
+**Run layered preset (managed dual-session):** `host_midi_hitl.py run --layered --preset uip_5_5 --midi-out Teensy --midi-in Teensy --track 5 --midi-channel 5` — spawns `capture_session.py` automatically; no second terminal.
 
 **UIP gate:** preset `uip_5_5` unblocks [`edit-session-action-geometry`](../plans/note_edit_session_action_geometry_enhancement.md) and UIP task 5.5.
 

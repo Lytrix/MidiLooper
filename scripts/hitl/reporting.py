@@ -26,6 +26,9 @@ def write_scenario_report(
     payload = {
         "schema_version": 1,
         "scenario_id": scenario_id,
+        "track_number": scenario_ctx.action.config.track_number,
+        "loop_slot": scenario_ctx.action.config.loop_slot,
+        "midi_channel": scenario_ctx.action.config.midi_channel,
         "passed": verification.ok,
         "verification": _verification_to_dict(verification),
         "observations": {} if result is None else result.observations,

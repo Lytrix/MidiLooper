@@ -23,6 +23,7 @@ def _action_context() -> ActionContext:
         preset="base",
         scenario_ids=("record_overdub",),
         track_number=5,
+        loop_slot=2,
         midi_channel=5,
         record_bars=2,
         overdub_bars=2,
