@@ -12,8 +12,8 @@ todos:
     content: "Phase 2 — Migration: core scenarios + uip_5_5 preset + device HITL (UIP 5.5 gate)"
     status: in_progress
   - id: p3-port-delete
-    content: "Phase 3 — Migration: port remaining scenarios; delete legacy"
-    status: pending
+    content: "Phase 3 — Migration: layered base + edit_full only (device PASS); defer other ports / legacy delete"
+    status: in_progress
   - id: p4-docs-reports
     content: "Phase 4 — Migration: capture bundles, HITL_DEVELOPER_GUIDE + REGRESSION_WORKFLOW, slim HITL-Test-Flow.mdc"
     status: pending
@@ -823,7 +823,7 @@ Migration phases are **scheduling only**. Implementation authority during migrat
 | Phase | Scenarios |
 |-------|-----------|
 | **2** | `record_seed`, `record_overdub`, `edit_minimal`, `long_loop_display_window`, `slot_queued_start` |
-| **3** | `two_overdub_undo_redo`, `edit_overdub_during_note_edit`, `note_edit_select_dependent_faders`, `current_set_incremental_save`, `revision_*`, `load_save_*`, `fader_motor_*` |
+| **3** | `edit_overdub_during_note_edit`, `note_edit_select_dependent_faders`, `current_set_incremental_save`, `revision_*`, `load_save_*`, `fader_motor_*` |
 
 **Exit:** inventory + OpenSpec stub committed; zero production code changes.
 
@@ -863,15 +863,16 @@ Migration phases are **scheduling only**. Implementation authority during migrat
 
 ---
 
-## Phase 3 — Port remainder + delete legacy
+## Phase 3 — Layered presets: `base` + `edit_full` only
 
-Port: `two_overdub_undo_redo`, `edit_overdub_during_note_edit`, `note_edit_select_dependent_faders`, `current_set_incremental_save`; wire `revision_*`, `load_save_*`, `fader_motor_*` to new contexts.
+**Scope lock (2026-08-04):** Active layered presets are **only** `base` (`record_overdub`) and `edit_full`. Authority: [`openspec/changes/hitl-cli-rebuild/tasks.md`](../../openspec/changes/hitl-cli-rebuild/tasks.md).
 
-**Delete:** `legacy_*`, `host_midi_automation_*`, `scenarios/base.py`, `edit_full.py`, `edit_record_prelude.py`.
+- Stabilize layered `edit_full` (bridge → `legacy_edit_baseline`; Mode B managed capture).
+- Device PASS: `--layered --preset base` and `--layered --preset edit_full`.
+- Do **not** wire `revision_*`, `load_save_*`, `fader_motor_*`, `edit_minimal`, etc. in this phase.
+- Do **not** delete legacy monoliths or drop `edit_full` while the suite still bridges to `legacy_edit_baseline`.
 
-**Drop:** `edit_full` preset.
-
-**Exit:** `rg 'legacy_record_baseline|legacy_edit_baseline|host_midi_automation' scripts/` → empty; protocol regex grep gate passes.
+**Exit:** both layered presets green on device; protocol grep gate for owned paths.
 
 ---
 
@@ -912,8 +913,9 @@ After functional migration and UIP 5.5 gate:
 
 ## What we are not doing
 
-- Legacy compatibility layer.
-- `edit_full` overlap matrix (deferred to `edit-session-action-geometry`).
+- Additional layered presets beyond `base` + `edit_full` in this migration.
+- Dropping the `edit_full` preset or deleting `legacy_*` before the `edit_full` bridge is retired.
+- Immediate full overlap-matrix redesign (optional later: `edit-session-action-geometry` D14).
 - Firmware / `#CAP` contract changes.
 - God modules (`bootstrap`, `flows` package).
 - Speculative abstractions per §12.1 (`ScenarioRunner`, plugin system, generic execution framework, service locator).

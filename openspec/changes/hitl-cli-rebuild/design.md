@@ -1,7 +1,7 @@
 # Design — hitl-cli-rebuild
 
 **Date:** 2026-08-04  
-**Status:** Phase 0 complete — implementation starts Phase 1  
+**Status:** Phase 3 in progress — active layered presets locked to `base` + `edit_full`  
 **Architecture (canonical after Phase 1):** [`docs/Architecture/HITL_ARCHITECTURE.md`](../../../docs/Architecture/HITL_ARCHITECTURE.md)  
 **Staging copy (until archive):** [`docs/plans/hitl_cli_rebuild_enhancement.md`](../../../docs/plans/hitl_cli_rebuild_enhancement.md) Part I
 
@@ -64,17 +64,24 @@ Full table: [`docs/plans/hitl_cli_rebuild_enhancement.md`](../../../docs/plans/h
 
 ---
 
-## Presets (target)
+## Presets (active — Phase 3 scope lock)
 
-| Preset | Scenarios |
-|--------|-----------|
-| `base` | `record_overdub` |
-| `edit_minimal` | `record_seed`, `edit_minimal` |
-| `uip_5_5` | `record_seed`, `edit_minimal`, `long_loop_display_window`, `slot_queued_start` |
+Only these layered presets are in scope for the remainder of this change:
+
+| Preset | Scenarios | Notes |
+|--------|-----------|--------|
+| `base` | `record_overdub` | Record/overdub baseline regression gate |
+| `edit_full` | `edit_full` | Full note-edit overlap suite (still bridged to `legacy_edit_baseline` until extract/delete is safe) |
+
+**Parked / not layered in this change:** `edit_minimal`, `uip_5_5`, `revision_*`, `load_save_*`, `fader_motor_*`, and other Phase 2–3 ports. Re-add as separate work after `base` + `edit_full` are green on device.
+
+Phase 2 still completed `edit_minimal` / `uip_5_5` historically; they are **not** active layered targets going forward under this scope lock.
 
 ---
 
-## Delete list (Phase 3)
+## Delete list (deferred past Phase 3 device gate)
+
+Do **not** delete while `edit_full` still calls `legacy_edit_baseline`:
 
 - `scripts/hitl/legacy_record_baseline.py`
 - `scripts/hitl/legacy_edit_baseline.py`
@@ -84,4 +91,4 @@ Full table: [`docs/plans/hitl_cli_rebuild_enhancement.md`](../../../docs/plans/h
 - `scripts/hitl/scenarios/edit_full.py`
 - `scripts/hitl/scenarios/edit_record_prelude.py`
 
-Drop `edit_full` preset.
+**Keep** the `edit_full` preset (no longer planned for drop in this change).

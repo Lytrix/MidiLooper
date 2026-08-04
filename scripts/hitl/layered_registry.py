@@ -30,35 +30,7 @@ class PresetSpec:
 
 LAYERED_PRESETS: dict[str, PresetSpec] = {
     "base": PresetSpec(scenario_ids=("record_overdub",), tags=("record",)),
-    "edit_minimal": PresetSpec(
-        scenario_ids=("record_seed", "edit_minimal"),
-        tags=("edit",),
-    ),
-    "uip_5_5": PresetSpec(
-        scenario_ids=(
-            "record_seed",
-            "edit_minimal",
-            "long_loop_display_window",
-            "slot_queued_start",
-        ),
-        tags=("uip", "gate"),
-    ),
-    "two_overdub_undo_redo": PresetSpec(
-        scenario_ids=("two_overdub_undo_redo",),
-        tags=("record", "undo"),
-    ),
-    "edit_overdub_during_note_edit": PresetSpec(
-        scenario_ids=("edit_overdub_during_note_edit",),
-        tags=("edit", "overdub"),
-    ),
-    "note_edit_select_dependent_faders": PresetSpec(
-        scenario_ids=("record_seed", "note_edit_select_dependent_faders"),
-        tags=("edit", "motor"),
-    ),
-    "current_set_incremental_save": PresetSpec(
-        scenario_ids=("current_set_incremental_save",),
-        tags=("persistence",),
-    ),
+    "edit_full": PresetSpec(scenario_ids=("edit_full",), tags=("edit",)),
 }
 
 
@@ -68,8 +40,6 @@ def _verifier_stub(_lines: list[str], _ctx: ScenarioContext) -> VerificationResu
 
 _VERIFIER_REGISTRY: dict[str, VerifierFn] = {
     "capture": _verifier_stub,
-    "playback": _verifier_stub,
-    "display": _verifier_stub,
     "scenario": _verifier_stub,
 }
 
@@ -112,26 +82,9 @@ def get_layered_registry() -> dict[str, LayeredScenarioSpec]:
 
 
 def _build_layered_registry() -> dict[str, LayeredScenarioSpec]:
-    from hitl.scenarios.layered import (
-        run_current_set_incremental_save,
-        run_edit_minimal,
-        run_edit_overdub_during_note_edit,
-        run_long_loop_display_window,
-        run_note_edit_select_dependent_faders,
-        run_record_overdub,
-        run_record_seed,
-        run_slot_queued_start,
-        run_two_overdub_undo_redo,
-    )
+    from hitl.scenarios.layered import run_edit_full, run_record_overdub
 
     return {
-        "record_seed": LayeredScenarioSpec(
-            id="record_seed",
-            description="Clear slot and record seed loop",
-            tags=("record",),
-            verifier_id="capture",
-            run=run_record_seed,
-        ),
         "record_overdub": LayeredScenarioSpec(
             id="record_overdub",
             description="Record seed plus overdub passes",
@@ -139,64 +92,20 @@ def _build_layered_registry() -> dict[str, LayeredScenarioSpec]:
             verifier_id="capture",
             run=run_record_overdub,
         ),
-        "edit_minimal": LayeredScenarioSpec(
-            id="edit_minimal",
-            description="Note edit smoke after record seed",
+        "edit_full": LayeredScenarioSpec(
+            id="edit_full",
+            description="Full note-edit overlap suite",
             tags=("edit",),
-            verifier_id="playback",
-            run=run_edit_minimal,
-        ),
-        "long_loop_display_window": LayeredScenarioSpec(
-            id="long_loop_display_window",
-            description="Long loop display window behaviour",
-            tags=("display",),
-            verifier_id="display",
-            run=run_long_loop_display_window,
-        ),
-        "slot_queued_start": LayeredScenarioSpec(
-            id="slot_queued_start",
-            description="Queued slot switch playback",
-            tags=("slot",),
-            verifier_id="playback",
-            run=run_slot_queued_start,
-        ),
-        "two_overdub_undo_redo": LayeredScenarioSpec(
-            id="two_overdub_undo_redo",
-            description="Record + two overdub passes + undo/redo chain",
-            tags=("record", "undo"),
             verifier_id="scenario",
-            run=run_two_overdub_undo_redo,
-        ),
-        "edit_overdub_during_note_edit": LayeredScenarioSpec(
-            id="edit_overdub_during_note_edit",
-            description="Overdub during note edit with scoped undo",
-            tags=("edit", "overdub"),
-            verifier_id="scenario",
-            run=run_edit_overdub_during_note_edit,
-        ),
-        "note_edit_select_dependent_faders": LayeredScenarioSpec(
-            id="note_edit_select_dependent_faders",
-            description="NOTE_EDIT F1 sweep and F2–F4 motor toggle",
-            tags=("edit", "motor"),
-            verifier_id="scenario",
-            run=run_note_edit_select_dependent_faders,
-        ),
-        "current_set_incremental_save": LayeredScenarioSpec(
-            id="current_set_incremental_save",
-            description="Transport-stop idle save vs record-stop incremental write",
-            tags=("persistence",),
-            verifier_id="scenario",
-            run=run_current_set_incremental_save,
+            run=run_edit_full,
         ),
     }
 
 
 def _register_default_verifiers() -> None:
-    from hitl.verify import capture, display, playback, scenarios
+    from hitl.verify import capture, scenarios
 
     register_verifier("capture", capture.verify_capture)
-    register_verifier("playback", playback.verify_playback)
-    register_verifier("display", display.verify_display)
     register_verifier("scenario", scenarios.verify_scenario)
 
 

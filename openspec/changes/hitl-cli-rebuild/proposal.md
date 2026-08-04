@@ -6,11 +6,12 @@ Rebuild `host_midi_hitl` as a layered framework with explicit ownership, a regre
 
 ## What changes
 
-- Delete legacy monoliths and CLI shims after porting scenarios
-- New layers: `actions/`, `flows/`, `verify/`, `serial/protocol.py`, `registry.py`, `runner.py`, `reporting.py`
+- Layered foundation + runner (`actions/`, `flows/`, `verify/`, `serial/protocol.py`, registries, reporting)
+- **Active layered presets (scope lock):** `base` (`record_overdub`) and `edit_full` only
 - Declarative presets compose scenarios (no `--record-only` flags)
-- Capture bundles on pass (`schema_version`, immutable corpus)
+- Capture bundles on pass (`schema_version`, immutable corpus) for those presets
 - Long-lived docs: `HITL_ARCHITECTURE.md`, `HITL_DEVELOPER_GUIDE.md`, `HITL_REGRESSION_WORKFLOW.md`
+- Legacy monolith delete only after `edit_full` no longer depends on `legacy_edit_baseline`
 
 ## Architecture authority
 
@@ -24,20 +25,23 @@ Major post-migration HITL architecture changes: OpenSpec change + DEC per §12.5
 
 ## Non-goals
 
-- Legacy compatibility shims
-- `edit_full` overlap matrix (deferred to `edit-session-action-geometry`)
+- Wiring additional layered presets (`edit_minimal`, `revision_*`, `load_save_*`, `fader_motor_*`, `uip_5_5`, …) in this change
+- Dropping the `edit_full` preset
+- Immediate delete of `legacy_*` / `host_midi_automation_*` while `edit_full` still bridges to them
 - Firmware / `#CAP` contract changes
 - `ScenarioRunner`, plugin system, generic execution framework (until concrete need)
+
+**Note:** Deeper overlap-matrix fixture work (live `base` + 2× overdub capture, per-interaction presets) may still land later under `edit-session-action-geometry` D14; this change keeps a working layered `edit_full` bridge.
 
 ## Gates
 
 | Phase | Gate |
 |-------|------|
 | 1 | `pio test -e native` green; import gates pass |
-| 2 | Mode B HITL PASS on preset `uip_5_5`; UIP **5.5** checked off |
-| 3 | No `legacy_*` / `host_midi_automation_*` in `scripts/` |
-| 4 | Capture bundles + long-lived guides |
-| 5 | Migration artifacts archived |
+| 2 | Mode B HITL PASS on preset `uip_5_5`; UIP **5.5** checked off (historical) |
+| 3 | Layered presets = `base` + `edit_full` only; both PASS on device (Mode B) |
+| 4 | Capture bundles + long-lived guides for `base` / `edit_full` |
+| 5 | Migration artifacts archived (legacy delete only if no longer required) |
 
 ## References
 

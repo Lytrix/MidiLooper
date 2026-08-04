@@ -1626,6 +1626,71 @@ int resolveDrawHighlightIndex(const DisplayNoteVec& notes, const EditorSelection
     return idx;
 }
 
+uint32_t storageOffToDisplayInclusiveEnd(uint32_t storageStart, uint32_t storageOffTick,
+                                         uint32_t loopLength) {
+    if (loopLength == 0 || storageOffTick <= storageStart) {
+        return storageOffTick;
+    }
+    if (storageOffTick > loopLength) {
+        const uint32_t wrapped = storageOffTick % loopLength;
+        return wrapped == 0 ? loopLength - 1 : wrapped - 1;
+    }
+    return storageOffTick - 1;
+}
+
+void storageSpanToDisplayTicks(uint32_t storageStart, uint32_t storageOffTick, uint32_t jamStartTick,
+                               uint32_t loopLength, bool windowRelativeTicks,
+                               uint32_t windowStartTick, uint32_t& outStart,
+                               uint32_t& outEndInclusive) {
+    const uint32_t inclusiveEnd =
+        storageOffToDisplayInclusiveEnd(storageStart, storageOffTick, loopLength);
+    uint32_t loopRelStart = NoteEditDisplaySnapshot::displayStartTickFromStorage(
+        storageStart, jamStartTick, loopLength);
+    uint32_t loopRelEnd = NoteEditDisplaySnapshot::displayStartTickFromStorage(
+        inclusiveEnd, jamStartTick, loopLength);
+    if (!windowRelativeTicks) {
+        outStart = loopRelStart;
+        outEndInclusive = loopRelEnd;
+        return;
+    }
+    uint32_t relStart = loopRelStart;
+    if (relStart < windowStartTick) {
+        relStart += loopLength;
+    }
+    outStart = relStart - windowStartTick;
+    uint32_t relEnd = loopRelEnd;
+    if (relEnd < windowStartTick) {
+        relEnd += loopLength;
+    }
+    if (relEnd < relStart) {
+        relEnd += loopLength;
+    }
+    outEndInclusive = relEnd - windowStartTick;
+}
+
+bool shouldDrawFocusGeometryHighlight(const EditorSelection& selection, NoteId& outMovingNoteId,
+                                    uint8_t& outPitch, uint32_t& outStorageStart,
+                                    uint32_t& outStorageOffTick) {
+    if (editManager.getEditSessionType() != EditSessionType::Note ||
+        !editManager.isNoteEditActive()) {
+        return false;
+    }
+    const NoteEditKind sessionKind = editManager.getNoteEditSessionState().kind;
+    if (!isGeometryEditKind(sessionKind) || sessionKind == NoteEditKind::Select) {
+        return false;
+    }
+    const NoteEditFocus& focus = editManager.getEditSession().focus;
+    if (!focus.active || !editorSelectionHasNote(selection) ||
+        focus.movingNoteId != selection.primaryNote) {
+        return false;
+    }
+    outMovingNoteId = focus.movingNoteId;
+    outPitch = focus.last.pitch;
+    outStorageStart = focus.last.startTick;
+    outStorageOffTick = focus.last.endTick;
+    return true;
+}
+
 }  // namespace
 
 void DisplayManager::drawAllNotes(const Track& track, uint8_t displaySlot, uint32_t currentTick,
@@ -1637,6 +1702,11 @@ void DisplayManager::drawAllNotes(const Track& track, uint8_t displaySlot, uint3
     const uint32_t jamStartTick = track.isJamming() ? track.getJamStartTick()
                                                     : resolveLoopOriginTick(track, displaySlot);
     int selectedIdx = -1;
+    bool drawFocusGeometryHighlight = false;
+    NoteId focusMovingNoteId = kInvalidNoteId;
+    uint8_t focusHighlightPitch = 0;
+    uint32_t focusHighlightStorageStart = 0;
+    uint32_t focusHighlightStorageOffTick = 0;
     if (editManager.getEditSessionType() == EditSessionType::Note) {
         const EditorSelection& selection = editManager.getNoteEditSessionState().selection;
         const uint32_t bracketDisplayTick =
@@ -1644,13 +1714,19 @@ void DisplayManager::drawAllNotes(const Track& track, uint8_t displaySlot, uint3
         selectedIdx = resolveDrawHighlightIndex(notes, selection, jamStartTick, loopLength,
                                                 windowRelativeTicks, windowStartTick,
                                                 bracketDisplayTick);
+        drawFocusGeometryHighlight =
+            shouldDrawFocusGeometryHighlight(selection, focusMovingNoteId, focusHighlightPitch,
+                                             focusHighlightStorageStart,
+                                             focusHighlightStorageOffTick);
     } else {
         selectedIdx = editManager.getSelectedNoteIdx();
     }
 
     for (int i = 0; i < (int)notes.size(); i++) {
         const auto& n = notes[i];
-        int noteBrightness = (i == selectedIdx) ? HIGHLIGHT_COLOR : 7;
+        const bool indexHighlight =
+            !drawFocusGeometryHighlight && i == selectedIdx;
+        int noteBrightness = indexHighlight ? HIGHLIGHT_COLOR : 7;
 
         uint32_t adjustedStartTick;
         uint32_t adjustedEndTick;
@@ -1673,6 +1749,30 @@ void DisplayManager::drawAllNotes(const Track& track, uint8_t displaySlot, uint3
         y = constrain(y, pianoRollY0, pianoRollY1);
 
         drawNoteBar(n, y, adjustedStartTick, adjustedEndTick, lengthLoop, noteBrightness);
+    }
+
+    if (drawFocusGeometryHighlight) {
+        uint32_t adjustedStartTick = 0;
+        uint32_t adjustedEndInclusive = 0;
+        storageSpanToDisplayTicks(focusHighlightStorageStart, focusHighlightStorageOffTick,
+                                jamStartTick, loopLength, windowRelativeTicks, windowStartTick,
+                                adjustedStartTick, adjustedEndInclusive);
+        const bool skipFocusBar =
+            (!windowRelativeTicks && adjustedStartTick >= lengthLoop &&
+             adjustedEndInclusive >= lengthLoop) ||
+            (windowRelativeTicks && adjustedStartTick >= lengthLoop);
+        if (!skipFocusBar) {
+            DisplayNote focusBar{};
+            focusBar.noteId = focusMovingNoteId;
+            focusBar.note = focusHighlightPitch;
+            focusBar.velocity = 0;
+            focusBar.startTick = adjustedStartTick;
+            focusBar.endTick = adjustedEndInclusive;
+            int y = map(focusHighlightPitch, minPitch, maxPitch, pianoRollY1, pianoRollY0);
+            y = constrain(y, pianoRollY0, pianoRollY1);
+            drawNoteBar(focusBar, y, adjustedStartTick, adjustedEndInclusive, lengthLoop,
+                        HIGHLIGHT_COLOR);
+        }
     }
 }
 

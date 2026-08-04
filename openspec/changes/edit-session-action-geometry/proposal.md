@@ -14,7 +14,7 @@ Brownfield: [`NoteEditFocus`](../../../include/NoteEditFocus.h), [`EditorSelecti
 
 ## What Changes
 
-- **`EditSessionAction` pipeline** — `normalizeWrapToLinear` → `analyzeEditSessionInteractions` → `groupEditSessionInteractionsByTarget` → `resolveConstrainedGeometry` → `buildEditSessionActions` → `applyEditSessionActions`
+- **`EditSessionAction` pipeline** — Edit projection (`buildEditProjectionContext`, `projectEditIntervalsForAnalysis`) → `analyzeEditSessionInteractions` → `groupEditSessionInteractionsByTarget` → `resolveConstrainedGeometry` → `buildEditSessionActions` → `applyEditSessionActions`
 - **Recompute, not unwind** — interactions regrouped by target each tick; restore when constrained geometry matches baseline
 - **Transaction baseline** — **`baselineMap`** at **edit driver boundary** (primary driver **`NoteId`**); v1 full loop; **`overlapNotes` removed**
 - **Macro commit** — one **`noteEditPass` batch** with **`EditPass` row per changed `NoteId`** (baseline diff)

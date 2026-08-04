@@ -37,7 +37,7 @@ Replace `/dev/cu.usbmodem154944801` with your port (`pio device list`).
 | Kind | Meaning |
 |------|---------|
 | **Preset** | Named bundle of one or more scenarios (`--preset base`) |
-| **Scenario** | Single composable phase script (`--scenarios two_overdub_undo_redo`) |
+| **Scenario** | Single composable phase script (`--scenarios edit_overdub_during_note_edit`) |
 
 Presets are defined in [`scripts/hitl/registry.py`](../../scripts/hitl/registry.py) (`PRESET_SCENARIOS`).
 
@@ -51,9 +51,8 @@ Presets are defined in [`scripts/hitl/registry.py`](../../scripts/hitl/registry.
 | `edit_record_prelude` | `edit_full`, `edit_minimal` | 2-bar fixture record for edit suites | Recommended | Record transitions |
 | `edit_minimal` | `edit_minimal` | Prelude → enter edit → add/delete/move/length → exit | Recommended | Session enter subset |
 | `edit_full` | `edit_full` | Prelude → full note-edit overlap suite | Recommended | Legacy edit baseline gates |
-| `edit_overdub_during_note_edit` | `edit_overdub_during_note_edit` | Record → overdub → edit → in-edit overdub → **E:** session undo/redo → exit → global undo | **Yes** | `verify_edit_overdub_during_note_edit` |
+| `edit_overdub_during_note_edit` | `edit_overdub_during_note_edit` | **record_seed** (EDIT_RECORD_FIXTURE) → overdub → edit → in-edit overdub → **E:** session undo/redo → exit → global undo | **Yes** | `verify_edit_overdub_during_note_edit` |
 | `long_loop_display_window` | `long_loop_display_window` | 24+ bar record → NOTE_EDIT window freeze → play/stop long-press snap → hold-to-track | **Yes** | `verify_long_loop_display_window` |
-| `two_overdub_undo_redo` | `two_overdub_undo_redo` | Record → **2** overdub passes → global undo ×3 (display **empty**) → global redo ×3 | **Yes** | `verify_two_overdub_undo_redo` |
 | `revision_commit_save` | `revision_commit_save` | Transport stop (current epoch) → `!REV_COMMIT` → `!REV_CLEANUP` (no catalog pollution) | **Yes** | `verify_revision_commit_save` |
 | `revision_load` | `revision_load` | Transport stop → `!REV_COMMIT` → `!REV_LOAD` → `!REV_CLEANUP` | **Yes** | `verify_revision_load` |
 | `revision_load_record` | `base`, `revision_load_post_record` | Base record/overdub → commit → load (loop data) | **Yes** | `verify_revision_load` |
@@ -148,29 +147,6 @@ Opt-in firmware flash before run: add `--build-upload` (restarts Teensy — rest
 
 Legacy entry: `scripts/host_midi_automation_baseline.py` (delegates to preset `base`).
 
-### `two_overdub_undo_redo` (global undo/redo + EMPTY)
-
-Stack: **record + 2 overdubs**. Global undo ×3 disables both overdubs then the record pass (piano roll shows **no notes**). Global redo ×3 restores all layers (redo branch preservation).
-
-| Overdub | MIDI range | Notes |
-|---------|------------|-------|
-| 1 | 24–39 | C1–D#2 |
-| 2 | 12–35 | C0–B1 |
-
-```bash
-.venv/bin/python scripts/host_midi_hitl.py run --preset two_overdub_undo_redo \
-  --midi-out "Teensy" --midi-in "Teensy" \
-  --serial-port /dev/cu.usbmodem154944801 \
-  --track-number 5 --midi-channel 5 \
-  --record-bars 2 --overdub-bars 2 \
-  --start-transport --phase-wait-ms 500 --final-wait-ms 3000 --press-ms 120 \
-  --undo-redo-delay-ms 3000
-```
-
-Pass criteria (serial): `Overdub undone` ×3, `Overdub redone` ×3, `PLAYING→OVERDUBBING` ×2, first `#CAP DISP` after undo chain has **frame_notes=0**, after redo chain **frame_notes>0**.
-
-Host unit test: `scripts/test_two_overdub_undo_redo_serial_verify.py`.
-
 ### `long_loop_display_window`
 
 Loop must be **> 16 bars** for bounded detailed window.
@@ -210,13 +186,12 @@ Legacy entry: `scripts/host_midi_automation_edit_baseline.py`.
 
 ### `edit_overdub_during_note_edit`
 
+Layered preset runs **`record_seed`** (2-bar `EDIT_RECORD_FIXTURE` via the proven clear/arm path) then the edit+overdub body. Legacy `--preset edit_overdub_during_note_edit` runs the same two phases (`base` seed + body).
+
 ```bash
-.venv/bin/python scripts/host_midi_hitl.py run --preset edit_overdub_during_note_edit \
+.venv/bin/python scripts/host_midi_hitl.py run --layered --preset edit_overdub_during_note_edit \
   --midi-out "Teensy" --midi-in "Teensy" \
-  --serial-port /dev/cu.usbmodem154944801 \
-  --track-number 5 --record-bars 2 --overdub-bars 2 \
-  --start-transport --phase-wait-ms 500 --press-ms 120 \
-  --undo-redo-delay-ms 3000
+  --track-number 5 --loop-slot 2 --midi-channel 5
 ```
 
 **E:** session undo after in-edit overdub targets the in-edit overdub layer only. Pre-edit overdub stays.

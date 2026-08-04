@@ -16,7 +16,8 @@ EditSessionActions buildEditSessionActions(
     const std::vector<ConstrainedNoteGeometry, InternalHeapFirstAllocator<ConstrainedNoteGeometry>>&
         constrainedGeometry,
     const EditedGeometry& editedGeometry, const BaselineMap& transactionBaseline,
-    const MidiEventVec& liveStore, uint8_t channel);
+    MidiEventVec& liveStore, uint8_t channel, const NoteEditFocus& focus,
+    uint32_t loopLength);
 
 #if defined(SESSION_CAPTURE)
 void logEditSessionActions(const EditSessionActions& actions);

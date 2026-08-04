@@ -167,6 +167,11 @@ bool syncNoteEditFocusLinearFromSessionStore(NoteEditFocus& focus,
                                              std::vector<MidiEvent, Alloc>& events,
                                              uint8_t channel, uint32_t loopLength = 0);
 
+/// Session-open pairing aid: stamp each note-on's noteId onto its LIFO-paired note-off when the
+/// off still has kInvalidNoteId. Safe only on non-overlapping same-pitch stores (canonical MIDI).
+template <typename Alloc>
+void stampNoteIdsOntoPairedNoteOffs(std::vector<MidiEvent, Alloc>& events, uint8_t channel);
+
 uint32_t overlapNoteEffectiveEnd(const OverlapNote& entry);
 
 /// B1: materialize Hidden/Shortened overlap notes in session store before commit (impacted refs only).
@@ -187,7 +192,10 @@ bool isMovingNoteOverlapScratchEntry(const NoteEditFocus& focus, NoteId noteId,
 EditPassVec buildPreCommitOverlapEditPasses(const NoteEditFocus& focus);
 
 /// B1: ordered edit pass rows per pre-commit emission (skip no-ops).
-EditPassVec buildPreCommitEditPasses(const NoteEditFocus& focus, uint8_t channel);
+/// When @p sessionStoreEvents is set, overlap target rows derive from baseline vs live store.
+EditPassVec buildPreCommitEditPasses(const NoteEditFocus& focus, uint8_t channel,
+                                     const MidiEventVec* sessionStoreEvents = nullptr,
+                                     uint32_t loopLength = 0);
 
 /// NOTE_EDIT select/display inventory: session reconstruction minus Hidden and innerUnderMovingNote.
 template <typename Alloc>

@@ -184,7 +184,8 @@ void EditManager::commitAllPendingNoteEditActions(Track& track) {
                    static_cast<unsigned>(macroInvariantResult.firstFailure));
     }
 
-    EditPassVec rows = buildPreCommitEditPasses(editSession.focus, channel);
+    EditPassVec rows =
+        buildPreCommitEditPasses(editSession.focus, channel, &sessionStoreEvents, loopLength);
     if (rows.empty()) {
         return;
     }
@@ -562,6 +563,7 @@ void EditManager::openNoteEditSession(Track& track) {
     loop.assignMissingNoteIdsInStore(editSession.store.mutStore());
     loop.assignMissingNoteIds(loop.midiEvents());
     loop.assignMissingNoteIds(editSession.store.mutEvents());
+    stampNoteIdsOntoPairedNoteOffs(editSession.store.mutEvents(), track.getMidiChannel());
     DIAG_EVENT(Diagnostics::Edit::AfterAssignNoteIds);
 #if NOTE_EDIT_OPEN_BISECT_STAGE <= 1
     return;
