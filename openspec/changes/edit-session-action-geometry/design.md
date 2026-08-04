@@ -305,11 +305,11 @@ Pairs with **no** overlap are **omitted** from analyze output — no **`Interact
 
 **Analysis scope:** All notes in the analysis window (v1: **full loop**). Applies to **Move**, **Length**, **Pitch**, **Add**, and **Delete** edit steps.
 
-**Cross-pitch and pitch-lane scope (D21):** Overlap evaluation is **not** limited to the causing note’s current pitch only.
+**Cross-pitch and pitch-lane scope (D21 / Q14):** Overlap **Hide / Shorten** evaluation is gated to the **mover’s current pitch lane**.
 
-- **Destination pitch lane:** all notes on the pitch the causing note **moves onto** (move/length/add).
-- **Source pitch lane:** on **pitch change**, all notes on the pitch lane the causing note **leaves** that were **mutated earlier under the same edit driver** (hidden/shortened by this causing note) must be re-evaluated for **RestoreNote** via rebuild.
-- **Cross-pitch time overlap** (different pitches, overlapping ticks) stays **in scope** for move/length where brownfield requires it; **polyphonic shorten across pitches** is **deferred** (see Q14 decision).
+- **Destination pitch lane:** all notes on the pitch of the **edited causing span** (move/length/add/pitch). Because analyze receives the *edited* causing span, gating on `causingSpan.pitch == targetBaseline.pitch` makes the lane follow a pitch change automatically (e.g. 13 → 16 puts every pitch-16 note in scope).
+- **Source pitch lane:** on **pitch change**, notes on the pitch the causing note **leaves** that were **mutated earlier under the same edit driver** (hidden/shortened) restore via the pitch-independent **overlap restore candidate** path (omitted pairs + baseline vs live), which requires a **full-loop transaction baseline**.
+- **Q14 — polyphonic shorten across pitches:** **Deferred / out of scope.** Different pitches with overlapping ticks do **not** emit Hide/Shorten interactions. Cross-pitch time overlap is not treated as monophonic step-lane behaviour.
 
 **Add:** treated like **Move** on the same pitch — standard **InteractionType** classify (**OverlapNoteOn** / **OverlapNoteOff** / **CompleteCover**); no special block or invalid-pair allowance.
 
