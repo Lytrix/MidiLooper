@@ -395,6 +395,10 @@ NOTE_EDIT_MEM void restoreOverlapNotesNoLongerOverlapping(MidiEventVec& midiEven
             appendUniqueRestoreCandidate(notesToRestore, restore);
         } else if (isInnerOverlapNoteInMovingNoteRange(manager, restore.pitch, restore.startTick,
                                                         overlapNoteEnd, loopLength)) {
+            if (entry.state == OverlapNoteStoreState::Hidden) {
+                entry.innerUnderMovingNote = true;
+                continue;
+            }
             appendUniqueRestoreCandidate(notesToRestore, restore);
             entry.state = OverlapNoteStoreState::Visible;
             entry.innerUnderMovingNote = true;
@@ -1743,6 +1747,9 @@ NOTE_EDIT_MEM bool moveNoteWithOverlapHandling(Track& track, EditManager& manage
     }
     const NoteId movingNoteId =
         focus.active ? focus.movingNoteId : kInvalidNoteId;
+    if (focus.active) {
+        evictOverlapScratchForSelectedNote(editFocus(manager), movingNoteId);
+    }
     const uint32_t noteLen = resolveMovingNoteLengthTicks(
         midiEvents, channel, movingNotePitch, currentStart, currentEnd, loopLength, movingNoteId);
     uint32_t newStart = targetTick;
@@ -1888,6 +1895,10 @@ NOTE_EDIT_MEM void changeLengthWithOverlapHandling(Track& track, EditManager& ma
     manager.syncNoteEditFocusLastFromSessionStore(track);
     const uint8_t channel = track.getMidiChannel();
     const NoteEditFocus& focus = editFocus(manager);
+
+    if (focus.active && focus.movingNoteId != kInvalidNoteId) {
+        evictOverlapScratchForSelectedNote(editFocus(manager), focus.movingNoteId);
+    }
 
     if (loopLength == 0) {
         logger.log(CAT_MIDI, LOG_DEBUG, "Loop length is 0, cannot change note length");

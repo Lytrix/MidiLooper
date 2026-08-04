@@ -95,6 +95,9 @@ bool isInnerOverlapNoteInMovingNoteRange(const NoteEditFocus& focus, uint8_t pit
 OverlapNote* findOverlapNoteEntry(NoteEditFocus& focus, NoteId noteId);
 const OverlapNote* findOverlapNoteEntry(const NoteEditFocus& focus, NoteId noteId);
 
+/// When an overlap target becomes the selected causing note, drop its scratch row (driver boundary).
+bool evictOverlapScratchForSelectedNote(NoteEditFocus& focus, NoteId selectedNoteId);
+
 NoteId findBaselineNoteIdForDisplay(const NoteEditFocus& focus,
                                     const NoteUtils::DisplayNote& dn);
 

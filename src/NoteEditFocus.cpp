@@ -47,6 +47,13 @@ NOTE_EDIT_MEM const OverlapNote* findOverlapNoteEntry(const NoteEditFocus& focus
   return it == focus.overlapNotes.end() ? nullptr : &it->second;
 }
 
+NOTE_EDIT_MEM bool evictOverlapScratchForSelectedNote(NoteEditFocus& focus, NoteId selectedNoteId) {
+  if (selectedNoteId == kInvalidNoteId) {
+    return false;
+  }
+  return focus.overlapNotes.erase(selectedNoteId) > 0;
+}
+
 NOTE_EDIT_MEM NoteId findBaselineNoteIdForDisplay(const NoteEditFocus& focus,
                                     const NoteUtils::DisplayNote& dn) {
   if (dn.noteId != kInvalidNoteId && focus.baselineMap.find(dn.noteId) != focus.baselineMap.end()) {
