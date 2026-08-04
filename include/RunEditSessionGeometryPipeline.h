@@ -20,7 +20,7 @@ class EditManager;
 #endif
 
 /// Run analyze → resolve → build → apply for one geometry tick.
-/// @param overlapPitchLane When set, only baseline notes on this MIDI pitch are overlap targets.
+/// @param overlapPitchLane Reserved for future pitch-lane scoping; candidates use full baselineMap.
 bool runEditSessionGeometryPipeline(
     Track& track, EditManager& manager, const EditedGeometry& editedGeometry,
     const std::unordered_map<NoteId, NoteBaseline, NoteIdHash>& priorLatchByNoteId,
