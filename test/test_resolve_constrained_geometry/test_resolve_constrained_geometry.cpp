@@ -11,6 +11,7 @@
 #include "../../src/Logger.cpp"
 #include "../../src/Utils/IntervalProjection.cpp"
 #include "../../src/Utils/NoteUtils.cpp"
+#include "../../src/EditSessionLiveStoreSpan.cpp"
 #include "../../src/EditSessionInteraction.cpp"
 #include "../../src/ResolveConstrainedGeometry.cpp"
 
