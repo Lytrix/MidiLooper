@@ -1295,7 +1295,7 @@ EDIT_MANAGER_IMPL_MEM void EditManager::processKindBoundaryUndoWarm(Track& track
 #endif
 }
 
-EDIT_MANAGER_IMPL_MEM void EditManager::foldLiveCaptureIntoNoteEditSession(Track& track, uint32_t closeTick) {
+EDIT_MANAGER_IMPL_MEM void EditManager::foldLiveCaptureIntoNoteEditSession(Track& track) {
     if (!editSession.active) {
         return;
     }
@@ -1305,13 +1305,6 @@ EDIT_MANAGER_IMPL_MEM void EditManager::foldLiveCaptureIntoNoteEditSession(Track
         loop.discardCapture();
         loop.discardPendingCapturePass();
         return;
-    }
-
-    loop.ensureCaptureEventsSorted();
-
-    if (loopLength > 0) {
-        (void)LoopStopFinalize::finalizeWrapWindowOnStore(loop.capture.store, loopLength, closeTick,
-                                                          Config::TICKS_PER_BAR);
     }
 
     if (editSession.store.isEventsDirty()) {
@@ -2582,6 +2575,10 @@ EDIT_MANAGER_IMPL_MEM void EditManager::toggleLengthEditMode(Track& track) {
         commitAllPendingNoteEditActions(track);
         syncNoteEditFocusLastFromSessionStore(track);
         const NoteUtils::DisplayNote liveNote = liveEditDisplayNoteAtSelect(track);
+        if (getSelectedNoteIdx() >= 0) {
+            // Switch kind before bracket/display sync so isLengthBracketEditActive() is false.
+            beginGeometryMutation(track, NoteEditKind::Move, false);
+        }
         const uint32_t loopLength = track.getLoopLength();
         if (loopLength > 0) {
             const uint32_t loopStartTick = noteEditLoopStartTick(track);
@@ -2597,7 +2594,7 @@ EDIT_MANAGER_IMPL_MEM void EditManager::toggleLengthEditMode(Track& track) {
             }
         }
         if (getSelectedNoteIdx() >= 0) {
-            beginGeometryMutation(track, NoteEditKind::Move, false);
+            syncGeometrySelectionToUi(track);
         }
     }
     emitEditEvent(EditEvent::LengthModeChanged);

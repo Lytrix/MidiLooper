@@ -27,6 +27,7 @@
 #include "Utils/ExternalMemoryFirstAllocator.h"
 #include "Globals.h"
 #include "PassReclaim.h"
+#include "Utils/LoopStopFinalize.h"
 
 class Track;
 
@@ -163,6 +164,8 @@ struct Loop {
   void commitStopFinalizeFromStore(LoopEventStore& merged);
 
   SealOutcome sealCapture(uint32_t sealedAtTick);
+  /// Wrap-window synthetic note-offs on live capture.store (record/overdub stop policy).
+  LoopStopFinalize::Result finalizeCaptureWrapWindowAtStop(uint32_t stopAbsTick);
   bool commitPendingCapturePass();
   void discardPendingCapturePass();
 

@@ -129,8 +129,8 @@ def build_parser() -> argparse.ArgumentParser:
     run_parser.add_argument(
         "--capture-boot-wait",
         type=float,
-        default=0.0,
-        help="Boot settle seconds passed to capture_session.py (default: 0)",
+        default=10.0,
+        help="Boot settle seconds passed to capture_session.py (default: 10)",
     )
     run_parser.add_argument(
         "--no-managed-capture",
