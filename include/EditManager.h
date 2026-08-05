@@ -152,6 +152,15 @@ public:
     /// Cached NOTE_EDIT selectable inventory (session reconstruction minus Hidden overlap).
     NoteUtils::DisplayNoteVec filteredSelectableDisplayNotesForNoteEdit(const Track& track) const;
     void invalidateProjectedNoteEditDisplayCache() const;
+    uint32_t noteEditDisplayInvalidateEpoch() const { return noteEditDisplayInvalidateEpoch_; }
+    uint32_t noteEditDisplayPaintedEpoch() const { return noteEditDisplayPaintedEpoch_; }
+    bool noteEditDisplayRefreshPending() const {
+        return noteEditDisplayPaintedEpoch_ < noteEditDisplayInvalidateEpoch_;
+    }
+    bool shouldForceNoteEditDisplayUpdate() const {
+        return noteEditDisplayImmediatePaintRequested_ || noteEditDisplayRefreshPending();
+    }
+    void markNoteEditDisplayPainted();
     /// Live mover geometry: **focus.last** only when it matches `EditorSelection.primaryNote`.
     bool isLengthBracketEditActive() const;
     NoteUtils::DisplayNote liveEditDisplayNoteAtSelect(const Track& track) const;
@@ -293,6 +302,9 @@ private:
     mutable uint32_t noteEditSelectableDisplayCacheLoopLength_ = 0;
     mutable uint32_t noteEditSelectableDisplayCachePlaybackRevision_ = UINT32_MAX;
     mutable NoteUtils::DisplayNoteVec noteEditSelectableDisplayCacheNotes_;
+    mutable uint32_t noteEditDisplayInvalidateEpoch_ = 0;
+    mutable uint32_t noteEditDisplayPaintedEpoch_ = 0;
+    mutable bool noteEditDisplayImmediatePaintRequested_ = false;
     bool deferredNoteEditDisplayRefreshPending_ = false;
     uint32_t deferredNoteEditDisplayRefreshArmedAtMs_ = 0;
     static constexpr uint32_t kDeferredNoteEditDisplayRefreshIdleMs = 80;

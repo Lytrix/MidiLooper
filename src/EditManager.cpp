@@ -457,9 +457,11 @@ void EditManager::rebuildNoteEditFocusAtSelect(Track& track, int selectedNoteIdx
         NoteBaseline linearBaseline;
         if (noteId != kInvalidNoteId &&
             findLinearNoteSpanForNoteId(sessionEvents, noteId, channel, linearBaseline,
-                                        live.startTick, loopLength)) {
+                                        UINT32_MAX, loopLength)) {
             editSession.focus.last.startTick = linearBaseline.startTick;
             editSession.focus.last.endTick = linearBaseline.endTick;
+            editSession.focus.last.pitch = linearBaseline.pitch;
+            editSession.focus.last.velocity = linearBaseline.velocity;
         }
         editSession.focus.movingNoteRange.start = editSession.focus.last.startTick;
         editSession.focus.movingNoteRange.end = editSession.focus.last.endTick;
@@ -491,14 +493,24 @@ void EditManager::rebuildNoteEditFocusForDisplayNote(Track& track,
                                         liveSelected.startTick, liveSelected.endTick};
     editSession.focus.last = editSession.focus.commitBaseline;
     MidiEventVec& sessionEvents = sessionMidiEvents();
-    NoteBaseline linearBaseline;
+    MidiEventVec committedMutable(committedLoopEvents.begin(), committedLoopEvents.end());
+    NoteBaseline committedBaseline;
     if (baselineNoteId != kInvalidNoteId &&
-        findLinearNoteSpanForNoteId(sessionEvents, baselineNoteId, channel, linearBaseline,
-                                    liveSelected.startTick, loopLength)) {
-        editSession.focus.commitBaseline.startTick = linearBaseline.startTick;
-        editSession.focus.commitBaseline.endTick = linearBaseline.endTick;
-        editSession.focus.last.startTick = linearBaseline.startTick;
-        editSession.focus.last.endTick = linearBaseline.endTick;
+        findLinearNoteSpanForNoteId(committedMutable, baselineNoteId, channel, committedBaseline,
+                                    UINT32_MAX, loopLength)) {
+        editSession.focus.commitBaseline.pitch = committedBaseline.pitch;
+        editSession.focus.commitBaseline.velocity = committedBaseline.velocity;
+        editSession.focus.commitBaseline.startTick = committedBaseline.startTick;
+        editSession.focus.commitBaseline.endTick = committedBaseline.endTick;
+    }
+    NoteBaseline liveBaseline;
+    if (baselineNoteId != kInvalidNoteId &&
+        findLinearNoteSpanForNoteId(sessionEvents, baselineNoteId, channel, liveBaseline,
+                                    UINT32_MAX, loopLength)) {
+        editSession.focus.last.pitch = liveBaseline.pitch;
+        editSession.focus.last.velocity = liveBaseline.velocity;
+        editSession.focus.last.startTick = liveBaseline.startTick;
+        editSession.focus.last.endTick = liveBaseline.endTick;
     }
     editSession.focus.movingNoteRange.start = editSession.focus.last.startTick;
     editSession.focus.movingNoteRange.end = editSession.focus.last.endTick;
@@ -657,11 +669,18 @@ NoteUtils::DisplayNoteVec EditManager::filteredSelectableDisplayNotesForNoteEdit
 }
 
 void EditManager::invalidateProjectedNoteEditDisplayCache() const {
+    ++noteEditDisplayInvalidateEpoch_;
+    noteEditDisplayImmediatePaintRequested_ = true;
     noteEditSelectableDisplayCachePreviewRevision_ = UINT32_MAX;
     noteEditSelectableDisplayCacheFingerprint_ = static_cast<uint32_t>(-1);
     noteEditSelectableDisplayCacheLoopLength_ = 0;
     noteEditSelectableDisplayCachePlaybackRevision_ = UINT32_MAX;
     noteEditSelectableDisplayCacheNotes_.clear();
+}
+
+void EditManager::markNoteEditDisplayPainted() {
+    noteEditDisplayPaintedEpoch_ = noteEditDisplayInvalidateEpoch_;
+    noteEditDisplayImmediatePaintRequested_ = false;
 }
 
 void EditManager::invalidateNoteEditDerivedCaches() {

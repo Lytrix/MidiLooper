@@ -33,6 +33,16 @@
 #include "Utils/BootTelemetry.h"
 #include <cstdio>
 
+// noinline: a single call site would otherwise inline this into loop() and stay in ITCM.
+FLASHMEM __attribute__((noinline)) static void maybeUpdateDisplayForNoteEditSelection(
+    uint32_t now, uint32_t& lastDisplayUpdate) {
+  if (!editManager.shouldForceNoteEditDisplayUpdate()) {
+    return;
+  }
+  lastDisplayUpdate = now;
+  displayManager.update();
+}
+
 // Keep LoadLoopJob + OLED orchestration out of ITCM — RAM1 is at the 32KB page edge.
 // noinline: a single call site would otherwise inline this into loop() and stay in ITCM.
 FLASHMEM __attribute__((noinline)) static void runDeferredLoadAndDisplayFrame(
@@ -72,7 +82,8 @@ FLASHMEM __attribute__((noinline)) static void runDeferredLoadAndDisplayFrame(
     const bool skipFocusLoad =
         skipDisplayAfterFocusCommit ||
         (focusSlotRestoreWork && SlotLoadSession::isActive());
-    if (!skipFocusLoad && now - lastDisplayUpdate >= LCD::DISPLAY_UPDATE_INTERVAL) {
+    if (!skipFocusLoad && (editManager.shouldForceNoteEditDisplayUpdate() ||
+                           now - lastDisplayUpdate >= LCD::DISPLAY_UPDATE_INTERVAL)) {
       lastDisplayUpdate = now;
       displayManager.update();
     }
@@ -108,7 +119,8 @@ FLASHMEM __attribute__((noinline)) static void runDeferredLoadAndDisplayFrame(
     const bool skipFocusLoad =
         skipDisplayAfterFocusCommit ||
         (focusSlotRestoreWork && SlotLoadSession::isActive());
-    if (!skipFocusLoad && now - lastDisplayUpdate >= LCD::DISPLAY_UPDATE_INTERVAL) {
+    if (!skipFocusLoad && (editManager.shouldForceNoteEditDisplayUpdate() ||
+                           now - lastDisplayUpdate >= LCD::DISPLAY_UPDATE_INTERVAL)) {
       lastDisplayUpdate = now;
       displayManager.update();
     }
@@ -273,6 +285,7 @@ void loop() {
   barStepButtonHandler.update();
   
   controlSurfaceManager.update();
+  maybeUpdateDisplayForNoteEditSelection(now, lastDisplayUpdate);
 #if defined(ENABLE_GPIO_BUTTONS)
   gpioButtonManager.update();
 #endif
@@ -312,6 +325,8 @@ void loop() {
   // Load/Commit/prewarm before pressure reclaim — reclaim after a 64-bar Commit raced the
   // deferred prewarm path (000659: commit_prewarm_q then silence).
   runDeferredLoadAndDisplayFrame(now, lastDisplayUpdate, timingCriticalTrackActive);
+
+  controlSurfaceManager.processDeferredFaderMotorSync();
 
   MemoryMonitor::updateAdvisoryPressureLevel(now);
   const MemoryPressureLevel pressure = MemoryMonitor::getAdvisoryPressureLevel();

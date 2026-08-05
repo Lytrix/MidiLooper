@@ -158,8 +158,6 @@ NOTE_EDIT_MEM void ControlSurfaceManager::update() {
     }
 
     processFaderOutbound();
-    processPendingSelectDependentMotorSync(trackManager.getSelectedTrack());
-    processPendingGeometryDriverMotorSync(trackManager.getSelectedTrack());
     editManager.processDeferredNoteEditDisplayRefresh(trackManager.getSelectedTrack());
 
     loopEditManager.update();
@@ -415,6 +413,27 @@ NOTE_EDIT_MEM void ControlSurfaceManager::clearGeometryRelatchCycleEligibility()
     geometryRelatchConsumed_ = false;
 }
 
+NOTE_EDIT_MEM uint32_t ControlSurfaceManager::liveMovingNoteDisplayBracketForF1Sync(
+    const Track& track) const {
+    const NoteEditFocus& focus = editManager.getEditSession().focus;
+    if (!focus.active || focus.movingNoteId == kInvalidNoteId) {
+        return UINT32_MAX;
+    }
+    const NoteEditKind kind = editManager.getNoteEditSessionState().kind;
+    if (!isGeometryEditKind(kind) || kind == NoteEditKind::Select) {
+        return UINT32_MAX;
+    }
+    const uint32_t loopLength = track.getLoopLength();
+    if (loopLength == 0) {
+        return UINT32_MAX;
+    }
+    const uint32_t loopStartTick = editManager.noteEditLoopStartTick(track);
+    const uint32_t storageBracket =
+        editManager.isLengthEditingMode() ? focus.last.endTick : focus.last.startTick;
+    return NoteEditDisplaySnapshot::displayStartTickFromStorage(storageBracket, loopStartTick,
+                                                                loopLength);
+}
+
 NOTE_EDIT_MEM void ControlSurfaceManager::finishSelectApplyFromFader1Teardown() {
     clearSelectionRelatchAfterGeometry();
     clearPendingGeometryDriverMotorSync();
@@ -466,8 +485,21 @@ NOTE_EDIT_MEM void ControlSurfaceManager::preemptGeometryHoldForSelectNavigation
 #endif
 }
 
+NOTE_EDIT_MEM void ControlSurfaceManager::processDeferredFaderMotorSync() {
+    if constexpr (!kNoteEditFaderFeedbackEnabled) {
+        return;
+    }
+    Track& track = trackManager.getSelectedTrack();
+    processPendingSelectDependentMotorSync(track);
+    const uint32_t now = millis();
+    if (pendingGeometryDriverMotorSyncValid_ && !isGeometryDriverActive(now)) {
+        processPendingGeometryDriverMotorSync(track, true);
+    }
+}
+
 NOTE_EDIT_MEM void ControlSurfaceManager::clearPendingSelectDependentMotorSync() {
     pendingSelectDriverMotorSyncValid_ = false;
+    pendingSelectDependentMotorRequiredPaintEpoch_ = 0;
     pendingSelectMotorTarget_ = {};
     pendingSelectMotorPlan_ = {};
     pendingSelectMotorPriorSelection_ = {};
@@ -475,6 +507,7 @@ NOTE_EDIT_MEM void ControlSurfaceManager::clearPendingSelectDependentMotorSync()
 
 NOTE_EDIT_MEM void ControlSurfaceManager::clearPendingGeometryDriverMotorSync() {
     pendingGeometryDriverMotorSyncValid_ = false;
+    pendingGeometryMotorRequiredPaintEpoch_ = 0;
 }
 
 NOTE_EDIT_MEM void ControlSurfaceManager::syncSelectionFromGeometryEdit(Track& track) {
@@ -513,18 +546,25 @@ NOTE_EDIT_MEM void ControlSurfaceManager::syncSelectionFromGeometryEdit(Track& t
         }
     }
 
-    if (priorSelection.selectedTick == selectedTick) {
-        if (editorSelectionTargetChanged(priorSelection, selectedTick, primaryNote)) {
-            editManager.setSelectedTick(selectedTick);
-            editManager.applySelectionFromGeometryEdit(track, selectedTick, primaryNote);
-        }
+    if (priorSelection.selectedTick != selectedTick ||
+        editorSelectionTargetChanged(priorSelection, selectedTick, primaryNote)) {
+        editManager.setSelectedTick(selectedTick);
+        editManager.applySelectionFromGeometryEdit(track, selectedTick, primaryNote);
+    }
+
+    const bool bracketChangedForF1 = selectedTick != lastGeometryF1SyncedBracketTick_;
+    if (!bracketChangedForF1) {
         return;
     }
 
-    editManager.setSelectedTick(selectedTick);
-    editManager.applySelectionFromGeometryEdit(track, selectedTick, primaryNote);
-    scheduleSelectDependentMotorSync(track, priorSelection,
-                                     editManager.getNoteEditSessionState().selection, true);
+    syncSelectFaderTrackingFromLogicalBracket(track);
+    EditorSelection motorPrior = priorSelection;
+    if (lastGeometryF1SyncedBracketTick_ != UINT32_MAX) {
+        motorPrior.selectedTick = lastGeometryF1SyncedBracketTick_;
+    }
+    const EditorSelection& nextSelection = editManager.getNoteEditSessionState().selection;
+    scheduleSelectDependentMotorSync(track, motorPrior, nextSelection, true);
+    lastGeometryF1SyncedBracketTick_ = selectedTick;
 }
 
 NOTE_EDIT_MEM void ControlSurfaceManager::scheduleSelectDependentMotorSync(Track& track,
@@ -552,6 +592,7 @@ NOTE_EDIT_MEM void ControlSurfaceManager::scheduleSelectDependentMotorSync(Track
             return;
         }
         pendingGeometryDriverMotorSyncValid_ = true;
+        pendingGeometryMotorRequiredPaintEpoch_ = editManager.noteEditDisplayInvalidateEpoch();
         (void)track;
 #if defined(SESSION_CAPTURE)
         logger.info("#DBG selection_motor_sync scheduled=1 driver=geometry f1=1 bracket_tick=%lu",
@@ -605,12 +646,14 @@ NOTE_EDIT_MEM void ControlSurfaceManager::scheduleSelectDependentMotorSync(Track
         pendingSelectDriverMotorSyncValid_ = true;
     }
     pendingSelectMotorTarget_ = target;
+    pendingSelectDependentMotorRequiredPaintEpoch_ = editManager.noteEditDisplayInvalidateEpoch();
     (void)track;
 #if defined(SESSION_CAPTURE)
     logger.info("#DBG selection_motor_sync scheduled=1 driver=select f1=0 f2=%d f4=%d note_idx=%d "
-                "bracket_tick=%lu",
+                "bracket_tick=%lu paint_epoch=%lu",
                 plan.coarse ? 1 : 0, plan.noteValue ? 1 : 0, noteIdx,
-                static_cast<unsigned long>(nextSelection.selectedTick));
+                static_cast<unsigned long>(nextSelection.selectedTick),
+                static_cast<unsigned long>(pendingSelectDependentMotorRequiredPaintEpoch_));
 #endif
 }
 
@@ -627,6 +670,12 @@ NOTE_EDIT_MEM void ControlSurfaceManager::processPendingSelectDependentMotorSync
     const uint32_t now = millis();
     if (!NoteEditFaderMotorTiming::shouldFlushSelectDependentMotorSync(
             now, lastMotorSyncDriverInputMs_, pendingSelectDriverMotorSyncValid_)) {
+        return;
+    }
+    if (editManager.noteEditDisplayPaintedEpoch() < pendingSelectDependentMotorRequiredPaintEpoch_) {
+        return;
+    }
+    if (!NoteEditFaderMotorTiming::selectDependentSettleExpired(now, selectDependentSettleUntilMs_)) {
         return;
     }
 
@@ -663,8 +712,11 @@ NOTE_EDIT_MEM void ControlSurfaceManager::processPendingSelectDependentMotorSync
     (void)priorSelection;
 }
 
-NOTE_EDIT_MEM void ControlSurfaceManager::processPendingGeometryDriverMotorSync(Track& track) {
+NOTE_EDIT_MEM void ControlSurfaceManager::processPendingGeometryDriverMotorSync(Track& track,
+                                                                                bool forceFlush) {
     if constexpr (!kNoteEditFaderFeedbackEnabled) {
+        (void)track;
+        (void)forceFlush;
         return;
     }
     if (!pendingGeometryDriverMotorSyncValid_ || suppressSelectDependentMotorSync_) {
@@ -674,8 +726,12 @@ NOTE_EDIT_MEM void ControlSurfaceManager::processPendingGeometryDriverMotorSync(
         return;
     }
     const uint32_t now = millis();
-    if (!NoteEditFaderMotorTiming::shouldFlushSelectDependentMotorSync(
+    if (!forceFlush &&
+        !NoteEditFaderMotorTiming::shouldFlushSelectDependentMotorSync(
             now, lastMotorSyncDriverInputMs_, pendingGeometryDriverMotorSyncValid_)) {
+        return;
+    }
+    if (editManager.noteEditDisplayPaintedEpoch() < pendingGeometryMotorRequiredPaintEpoch_) {
         return;
     }
 
@@ -683,12 +739,24 @@ NOTE_EDIT_MEM void ControlSurfaceManager::processPendingGeometryDriverMotorSync(
     sendFader1MotorTimedBurst(track);
 }
 
+NOTE_EDIT_MEM void ControlSurfaceManager::syncSelectFaderTrackingFromLogicalBracket(Track& track) {
+    if constexpr (!kNoteEditFaderFeedbackEnabled) {
+        (void)track;
+        return;
+    }
+    int16_t targetPitchbend = 0;
+    if (!EditSelectNoteState::resolveTargetPitchbend(editManager, track, targetPitchbend)) {
+        return;
+    }
+    const uint32_t sentAt = millis();
+    lastUserSelectFaderValue = targetPitchbend;
+    lastSelectFaderTime = sentAt;
+    armSelectFaderFeedbackIgnore(sentAt, FEEDBACK_IGNORE_PERIOD);
+}
+
 NOTE_EDIT_MEM void ControlSurfaceManager::armSelectDependentSettle(uint32_t sentAt,
                                                                  uint32_t durationMs) {
-    const uint32_t until = sentAt + durationMs;
-    if (until > selectDependentSettleUntilMs_) {
-        selectDependentSettleUntilMs_ = until;
-    }
+    selectDependentSettleUntilMs_ = sentAt + durationMs;
     selectDependentSettleBlockLogged_ = false;
 #if defined(SESSION_CAPTURE)
     logger.info("#DBG select_dependent_settle until_ms=%lu", selectDependentSettleUntilMs_);
@@ -886,6 +954,10 @@ NOTE_EDIT_MEM void ControlSurfaceManager::sendFader1BracketFeedback(Track& track
     if (updateNavStateFromOutbound || sessionOpenOutbound) {
         lastUserSelectFaderValue = targetPitchbend;
         lastSelectFaderTime = sentAt;
+        const uint32_t loopLength = track.getLoopLength();
+        if (loopLength > 0) {
+            lastGeometryF1SyncedBracketTick_ = editManager.getSelectedTick() % loopLength;
+        }
     }
     logOutboundStep("SEND_F1");
     if (!pipelineActive) {
@@ -1079,6 +1151,7 @@ NOTE_EDIT_MEM void ControlSurfaceManager::prepareNoteEditSessionOpen() {
     suppressSelectDependentMotorSync_ = true;
     clearPendingSelectDependentMotorSync();
     clearPendingGeometryDriverMotorSync();
+    lastGeometryF1SyncedBracketTick_ = UINT32_MAX;
     startEditingEnabled = false;
 }
 
@@ -1771,15 +1844,11 @@ NOTE_EDIT_MEM void ControlSurfaceManager::handleSelectFaderInput(int16_t pitchVa
 
     const uint32_t now = millis();
     const Fader1SelectTarget navigationTarget = resolveFader1SelectTarget(track, pitchValue);
-    if (navigationTarget.valid && fader1SelectTargetChangesSelection(navigationTarget)) {
+    if (navigationTarget.valid &&
+        NoteEditFaderSelectSync::shouldClearSelectFaderNavigationGatesOnTargetChange(
+            fader1SelectTargetChangesSelection(navigationTarget), now,
+            selectDependentSettleUntilMs_)) {
         clearSelectFaderNavigationGates();
-    }
-
-    if constexpr (kNoteEditFaderFeedbackEnabled) {
-        if (selectDependentSettleUntilMs_ != 0 && now < selectDependentSettleUntilMs_) {
-            logSelectSlot(-1, pitchValue, true, "settle");
-            return;
-        }
     }
 
     const int slotIndex = selectNavSlotIndexForPitchbend(track, pitchValue);
@@ -1962,6 +2031,8 @@ NOTE_EDIT_MEM bool ControlSurfaceManager::applyNoteSelectFromFader1Pitchbend(Tra
 
         const NoteId selectNoteId = noteIdFromFilteredDisplayNote(notes, noteIdx);
         editManager.cancelPendingDeleteForSelectNote(selectNoteId);
+        const uint32_t preservedF1Bracket = liveMovingNoteDisplayBracketForF1Sync(track);
+        editManager.syncNoteEditFocusLastFromSessionStore(track);
         editManager.commitAllPendingNoteEditActions(track);
         const std::vector<NoteUtils::DisplayNote> notesAfterCommit =
             editManager.selectableDisplayNotesForEditUi(track);
@@ -1984,24 +2055,40 @@ NOTE_EDIT_MEM bool ControlSurfaceManager::applyNoteSelectFromFader1Pitchbend(Tra
             editManager.rebuildNoteEditFocusAtSelect(track, -1);
             editManager.applySelectNav(track, absoluteTargetTick, kInvalidNoteId, false, false);
             editManager.setReferenceStep(absoluteTargetTick / Config::TICKS_PER_16TH_STEP);
+            if (preservedF1Bracket != UINT32_MAX) {
+                lastGeometryF1SyncedBracketTick_ = preservedF1Bracket;
+            }
             startEditingEnabled = true;
             releaseEditedNoteAudition();
             finishSelectApplyFromFader1Teardown();
             return true;
         }
-        editManager.rebuildNoteEditFocusForDisplayNote(
-            track, notesAfterCommit[static_cast<size_t>(postCommitNoteIdx)]);
-        editManager.applySelectNav(track, absoluteTargetTick, selectNoteId, false, false);
+        const uint32_t loopStartTick = editManager.noteEditLoopStartTick(track);
+        const NoteUtils::DisplayNote& selectedNote =
+            notesAfterCommit[static_cast<size_t>(postCommitNoteIdx)];
+        const uint32_t bracketTick =
+            NoteEditFaderSelectSync::noteSelectBracketTickFromDisplayNote(
+                selectedNote, loopStartTick, loopLength, editManager.isLengthEditingMode());
+        editManager.rebuildNoteEditFocusForDisplayNote(track, selectedNote);
+        editManager.applySelectNav(track, bracketTick, selectNoteId, false, false);
         resetLengthEditingModeOnNoteSelect();
-        lastUserNoteValueCc = notesAfterCommit[static_cast<size_t>(postCommitNoteIdx)].note;
+        lastUserNoteValueCc = selectedNote.note;
         lastNoteValueFaderTime = 0;
-        editManager.setReferenceStep(absoluteTargetTick / Config::TICKS_PER_16TH_STEP);
+        editManager.setReferenceStep(bracketTick / Config::TICKS_PER_16TH_STEP);
+        lastGeometryF1SyncedBracketTick_ = bracketTick;
+        armSelectDependentSettle(millis());
         finishSelectApplyFromFader1Teardown();
     } else {
+        const uint32_t preservedF1Bracket = liveMovingNoteDisplayBracketForF1Sync(track);
+        editManager.syncNoteEditFocusLastFromSessionStore(track);
         editManager.commitAllPendingNoteEditActions(track);
         editManager.rebuildNoteEditFocusAtSelect(track, -1);
         editManager.applySelectNav(track, absoluteTargetTick, kInvalidNoteId, false, false);
         editManager.setReferenceStep(absoluteTargetTick / Config::TICKS_PER_16TH_STEP);
+        if (preservedF1Bracket != UINT32_MAX) {
+            lastGeometryF1SyncedBracketTick_ = preservedF1Bracket;
+        }
+        armSelectDependentSettle(millis());
         startEditingEnabled = true;
         logger.log(CAT_MIDI, LOG_DEBUG, "Select fader: selected empty step at tick %lu (no note)",
                    absoluteTargetTick);
@@ -2184,9 +2271,13 @@ NOTE_EDIT_MEM void ControlSurfaceManager::handleCoarseFaderInput(int16_t pitchVa
             clearSelectionRelatchAfterGeometry();
             clearGeometryRelatchCycleEligibility();
             refreshEditingActivity();
+            const bool geometryDriverWasIdle = !isGeometryDriverActive(now);
             this->currentDriverFader = MidiMapping::FaderType::FADER_COARSE;
             this->lastDriverFaderTime = millis();
             scheduleOtherFaderUpdates(MidiMapping::FaderType::FADER_COARSE);
+            if (geometryDriverWasIdle && pendingGeometryDriverMotorSyncValid_) {
+                processPendingGeometryDriverMotorSync(track, true);
+            }
         }
         // NOTE: Fader 2 (COARSE) now uses 500ms grace period to update fader 1
         // This prevents erratic movement and allows proper settling time
