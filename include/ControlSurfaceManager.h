@@ -246,15 +246,12 @@ private:
     void armCoarseFaderFeedbackIgnore(uint32_t sentAt);
     void armChannel15CcFaderFeedbackIgnore(uint32_t sentAt);
 
-    static constexpr uint32_t kPlayingGeometryMinIntervalMs = 30;
     enum class PendingPlayingGeometryType : uint8_t { None = 0, Move, Pitch, Length };
-    uint32_t lastPlayingGeometryAppliedMs_ = 0;
     PendingPlayingGeometryType pendingPlayingGeometryType_ = PendingPlayingGeometryType::None;
     NoteUtils::DisplayNote pendingPlayingGeometryNote_{};
     uint32_t pendingPlayingGeometryTargetTick_ = 0;
     uint8_t pendingPlayingGeometryPitchNew_ = 0;
     uint8_t pendingPlayingGeometryPitchCurrent_ = 0;
-    bool tryConsumePlayingGeometrySlot(uint32_t now);
     void queuePendingPlayingMove(const NoteUtils::DisplayNote& note, uint32_t targetTick);
     void queuePendingPlayingLength(const NoteUtils::DisplayNote& note, uint32_t targetEndTick);
     void queuePendingPlayingPitch(const NoteUtils::DisplayNote& note, uint8_t currentPitch,
