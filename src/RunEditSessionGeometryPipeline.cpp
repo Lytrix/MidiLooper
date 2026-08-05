@@ -13,7 +13,6 @@
 #include "EditSessionLiveStoreSpan.h"
 #include "Globals.h"
 #include "ResolveConstrainedGeometry.h"
-#include "TrackManager.h"
 #include "Utils/NoteEditMem.h"
 
 #if defined(SESSION_CAPTURE)
@@ -91,11 +90,21 @@ NOTE_EDIT_MEM bool runEditSessionGeometryPipeline(
     return false;
   }
 
-  // Transaction baseline is immutable for this edit driver (D19) — snapshotted at
-  // rebuildNoteEditFocus* via populateBaselineMapForEditClosure. Do not enrich or prune here.
-  Loop& loop = trackManager.getSelectedLoop(track);
-  loop.assignMissingNoteIds(liveStore);
+  // noteIds are assigned once in openNoteEditSession — never mint mid-edit (Delete rows
+  // must resolve against capture-pass materialize). Stamp offs only.
   stampNoteIdsOntoPairedNoteOffs(liveStore, channel);
+#if defined(SESSION_CAPTURE)
+  for (const MidiEvent& evt : liveStore) {
+    if (evt.channel == channel && evt.isNoteOn() && evt.data.noteData.velocity > 0 &&
+        evt.noteId == kInvalidNoteId) {
+      logger.log(CAT_MIDI, LOG_WARNING,
+                 "GeometryPipeline: note-on missing noteId tick=%lu pitch=%u (session open "
+                 "should have assigned)",
+                 static_cast<unsigned long>(evt.tick),
+                 static_cast<unsigned>(evt.data.noteData.note));
+    }
+  }
+#endif
   (void)overlapPitchLane;
 
   const BaselineMap& transactionBaseline = focus.baselineMap;
