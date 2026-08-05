@@ -79,8 +79,8 @@ Gates consult **internal heap free** plus tier-specific estimates. They do **not
 1. Estimate **internal** bytes: `SessionUndoEntry` struct, `editRows`, `addedEvents`, redo payload.
 2. Estimate **external** bytes: `focus.baselineMap`, `focus.overlapNotes` (and redo focus maps).
 3. Require `getInternalHeapFreeBytes() >= HEAP_RESERVE_BYTES + internalBytes`.
-4. If PSRAM available: require `getExternalMemoryPoolFreeBytes() >= externalBytes` (external bytes are **not** added to the internal threshold).
-5. If PSRAM **unavailable**: add external estimate to internal requirement (native tests / no chip).
+4. If PSRAM **unavailable**: add external estimate to internal requirement (native tests / no chip).
+5. If PSRAM **available**: **do not** call `getExternalMemoryPoolFreeBytes()` on the geometry / kind-boundary push hot path — `sm_malloc_stats_pool` walks the full pool (~300 ms on 8 MiB). Same rule as `LoopEventStore::hasHeadroomForCommittedChunkIdList`: optimistic extmem admit; `push_back` is the real alloc gate. Idle / stopped diagnostics (`logStatus`, 60 s main-loop interval) may walk the pool.
 
 **Do not** post-push trim session undo based only on internal heap when entries live in the external pool — that falsely evicted depth at ~32 steps before the split.
 

@@ -252,6 +252,7 @@ private:
     uint32_t pendingPlayingGeometryTargetTick_ = 0;
     uint8_t pendingPlayingGeometryPitchNew_ = 0;
     uint8_t pendingPlayingGeometryPitchCurrent_ = 0;
+    uint32_t pendingPlayingGeometryQueuedAtMs_ = 0;
     void queuePendingPlayingMove(const NoteUtils::DisplayNote& note, uint32_t targetTick);
     void queuePendingPlayingLength(const NoteUtils::DisplayNote& note, uint32_t targetEndTick);
     void queuePendingPlayingPitch(const NoteUtils::DisplayNote& note, uint8_t currentPitch,

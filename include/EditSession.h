@@ -16,6 +16,10 @@
 #include "NoteEditSessionState.h"
 #include "Utils/InternalHeapFirstAllocator.h"
 
+#if defined(SESSION_CAPTURE)
+#include <Arduino.h>
+#endif
+
 enum class EditSessionType : uint8_t { Loop, Note, ControlChange };
 
 inline EditPassType passTypeForSession(EditSessionType session) {
@@ -43,14 +47,50 @@ struct NoteEditSessionUndoStack {
   size_t redoCount() const { return entries_.size() - cursor_; }
 
   bool pushEntry(const SessionUndoEntry& entry) {
+    SessionUndoEntry copy = entry;
+    return pushEntry(std::move(copy));
+  }
+
+  bool pushEntry(SessionUndoEntry&& entry) {
+#if defined(SESSION_CAPTURE)
+    const uint32_t totalStartUs = micros();
+    uint32_t phaseStartUs = totalStartUs;
+    const size_t stackSizeBefore = entries_.size();
+    const size_t entryBaselineCount = entry.focus.baselineMap.size();
+    const size_t entryEditRowCount = entry.editRows.size();
+#endif
     trimUntilCanAdmit(entry);
+#if defined(SESSION_CAPTURE)
+    logUndoPushPhase("trim_until_admit", phaseStartUs, stackSizeBefore, cursor_);
+    phaseStartUs = micros();
+#endif
     if (!canHeapAdmitSessionUndoEntry(entry)) {
+#if defined(SESSION_CAPTURE)
+      logUndoPushPhase("admit_fail", phaseStartUs, entries_.size(), cursor_, entryBaselineCount);
+      logUndoPushPhase("total", totalStartUs, entries_.size(), cursor_, entryEditRowCount);
+#endif
       return false;
     }
+#if defined(SESSION_CAPTURE)
+    logUndoPushPhase("admit_ok", phaseStartUs, entries_.size(), cursor_, entryBaselineCount);
+    phaseStartUs = micros();
+#endif
     dropRedoBranch();
-    entries_.push_back(entry);
+#if defined(SESSION_CAPTURE)
+    logUndoPushPhase("drop_redo", phaseStartUs, entries_.size(), cursor_);
+    phaseStartUs = micros();
+#endif
+    entries_.push_back(std::move(entry));
+#if defined(SESSION_CAPTURE)
+    logUndoPushPhase("push_back", phaseStartUs, entries_.size(), cursor_);
+    phaseStartUs = micros();
+#endif
     cursor_ = entries_.size();
     trimHistory();
+#if defined(SESSION_CAPTURE)
+    logUndoPushPhase("trim_history", phaseStartUs, entries_.size(), cursor_);
+    logUndoPushPhase("total", totalStartUs, entries_.size(), cursor_, entryEditRowCount);
+#endif
     return true;
   }
 

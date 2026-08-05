@@ -14,6 +14,16 @@
 #include "Logger.h"
 #endif
 
+#if defined(SESSION_CAPTURE)
+void logUndoPushPhase(const char* phase, uint32_t phaseStartUs, size_t stackSize, size_t cursor,
+                      size_t entryBaselineCount) {
+  const uint32_t nowUs = micros();
+  logger.info("#CAP,%lu,UNDO_PUSH,%s,%lu,%zu,%zu,%zu", static_cast<unsigned long>(nowUs), phase,
+              static_cast<unsigned long>(nowUs - phaseStartUs), stackSize, cursor,
+              entryBaselineCount);
+}
+#endif
+
 namespace {
 
 #if defined(SESSION_CAPTURE)
@@ -122,10 +132,12 @@ bool canHeapAdmitSessionUndoEntry(const SessionUndoEntry& entry) {
   size_t internalNeeded = Config::HEAP_RESERVE_BYTES + internalBytes;
   if (!MemoryMonitor::isExternalMemoryPoolAvailable()) {
     internalNeeded += externalBytes;
-  } else if (externalBytes > 0 &&
-             MemoryMonitor::getExternalMemoryPoolFreeBytes() < externalBytes) {
-    return false;
   }
+  // When PSRAM is available, external payload (baselineMap / overlapNotes) lives in the
+  // extmem pool. Do not call getExternalMemoryPoolFreeBytes() here — sm_malloc_stats_pool
+  // walks the entire pool (~300ms on 8MB; see LoopEventStore::hasHeadroomForCommittedChunkIdList
+  // and main.cpp idle-only logStatus). push_back is the real alloc gate; failed push runs
+  // reclaim + discardFlatCache + one retry on idle-adjacent paths.
   return MemoryMonitor::getInternalHeapFreeBytes() >= internalNeeded;
 }
 
