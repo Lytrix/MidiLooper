@@ -77,6 +77,8 @@ public:
     /// Rebuild session store from loop passes after workspace revision load replaced RAM.
     void rematerializeNoteEditSessionAfterWorkspaceReload(Track& track);
     void closeNoteEditPass(Track& track);
+    /// Push **NoteEditPassClosed** when committed **editPass** rows have become durable (SD, depart).
+    void markCurrentEditBatchDurable(Track& track);
     EditPassId commitEditAction(Track& track, EditPassVec rows);
     bool pushSessionUndoOnKindChange(Track& track, NoteEditKind kind);
     void foldLiveCaptureIntoNoteEditSession(Track& track, uint32_t closeTick);

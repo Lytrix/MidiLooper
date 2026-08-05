@@ -152,6 +152,9 @@ struct EditSession {
   bool active = false;
   bool replaceEditPassOnClose = false;
   EditPassIdList editPassIds;
+  /// Global undo (U:) already pushed for these committed **editPass** ids while session stays open.
+  EditPassIdList durableCheckpointedEditPassIds;
+  bool durableCheckpointCreated = false;
   /// Rows accumulated by applyEditSessionActions for the open noteEditPass batch.
   EditPassVec applyOwnedEditPassRows;
 

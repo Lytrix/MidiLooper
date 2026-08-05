@@ -2,11 +2,23 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-05 (edit-session-action-geometry archived)
+Last updated: 2026-08-05 (note edit undo reboot fix)
 
 ---
 
 ## Now implementing
+
+### Note edit undo after reboot — **in progress**
+
+**Plan:** [`.cursor/plans/note_edit_undo_reboot_58ef9394.plan.md`](../../.cursor/plans/note_edit_undo_reboot_58ef9394.plan.md)
+
+| Item | Status |
+|------|--------|
+| Global undo **STK1** scoped-edit serialization round-trip | Done |
+| `EditManager::markCurrentEditBatchDurable` + autosave/depart call sites | Done |
+| Native tests (serialization, A/B/C checkpoint order) | Done |
+| LOOP_MIDI durability invariant + **E:** vs **U:** docs | Done |
+| HITL reboot-during-NOTE_EDIT | **PASS** — [`session_20260805_212234.log`](../../captures/session_20260805_212234.log): durable checkpoint + `LoopPersist` + post-reboot **U:** restored prior state |
 
 ### Edit HITL from scratch — parked
 

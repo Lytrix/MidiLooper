@@ -10,6 +10,117 @@
 
 namespace StorageManagerInternal {
 
+static bool writeScopedEditUndoExtension(File& file, const UndoEntry& entry) {
+    switch (entry.kind) {
+        case UndoEntryKind::NoteEditPassClosed:
+        case UndoEntryKind::ControlChangeEditPassClosed: {
+            if (!writeRaw(file, &entry.editPassIndex, sizeof(entry.editPassIndex))) {
+                return false;
+            }
+            const uint8_t editPassTypeRaw = static_cast<uint8_t>(entry.editPassType);
+            if (!writeRaw(file, &editPassTypeRaw, sizeof(editPassTypeRaw))) {
+                return false;
+            }
+            const uint16_t count = static_cast<uint16_t>(entry.editPassIds.size());
+            if (!writeRaw(file, &count, sizeof(count))) {
+                return false;
+            }
+            for (const EditPassId id : entry.editPassIds) {
+                if (!writeRaw(file, &id, sizeof(id))) {
+                    return false;
+                }
+            }
+            return true;
+        }
+        default:
+            return true;
+    }
+}
+
+static bool readScopedEditUndoExtension(File& file, UndoEntry& entry, bool scopedEditExtension) {
+    if (!scopedEditExtension) {
+        return true;
+    }
+    switch (entry.kind) {
+        case UndoEntryKind::NoteEditPassClosed:
+        case UndoEntryKind::ControlChangeEditPassClosed: {
+            uint8_t editPassTypeRaw = 0;
+            uint16_t count = 0;
+            if (!readRaw(file, &entry.editPassIndex, sizeof(entry.editPassIndex))) {
+                return false;
+            }
+            if (!readRaw(file, &editPassTypeRaw, sizeof(editPassTypeRaw))) {
+                return false;
+            }
+            entry.editPassType = static_cast<EditPassType>(editPassTypeRaw);
+            if (!readRaw(file, &count, sizeof(count))) {
+                return false;
+            }
+            entry.editPassIds.clear();
+            entry.editPassIds.reserve(count);
+            for (uint16_t i = 0; i < count; ++i) {
+                EditPassId id = kInvalidEditPassId;
+                if (!readRaw(file, &id, sizeof(id))) {
+                    return false;
+                }
+                entry.editPassIds.push_back(id);
+            }
+            return true;
+        }
+        default:
+            return true;
+    }
+}
+
+static bool skipScopedEditUndoExtension(File& file, UndoEntryKind kind, bool scopedEditExtension) {
+    if (!scopedEditExtension) {
+        return true;
+    }
+    switch (kind) {
+        case UndoEntryKind::NoteEditPassClosed:
+        case UndoEntryKind::ControlChangeEditPassClosed: {
+            uint8_t editPassIndex = 0;
+            uint8_t editPassTypeRaw = 0;
+            uint16_t count = 0;
+            if (!readRaw(file, &editPassIndex, sizeof(editPassIndex))) {
+                return false;
+            }
+            if (!readRaw(file, &editPassTypeRaw, sizeof(editPassTypeRaw))) {
+                return false;
+            }
+            if (!readRaw(file, &count, sizeof(count))) {
+                return false;
+            }
+            for (uint16_t i = 0; i < count; ++i) {
+                EditPassId id = kInvalidEditPassId;
+                if (!readRaw(file, &id, sizeof(id))) {
+                    return false;
+                }
+            }
+            return true;
+        }
+        default:
+            return true;
+    }
+}
+
+static bool readScopedEditExtensionHeader(File& file, bool& scopedEditExtension) {
+    scopedEditExtension = false;
+    const size_t pos = file.position();
+    uint32_t maybeToken = 0;
+    if (!readRaw(file, &maybeToken, sizeof(maybeToken))) {
+        return false;
+    }
+    if (maybeToken == kGlobalUndoStackScopedEditExtensionToken) {
+        scopedEditExtension = true;
+        return true;
+    }
+    if (!file.seek(pos)) {
+        return false;
+    }
+    return true;
+}
+
 STORAGE_PERSIST_MEM bool undoStackHeaderLooksValid(uint32_t entryCount, uint32_t cursor) {
     if (entryCount > Config::ABSOLUTE_MAX_UNDO_ENTRIES) {
         return false;
@@ -78,6 +189,10 @@ STORAGE_PERSIST_MEM bool writeGlobalUndoStackToFile(File& file, const GlobalUndo
     if (!writeRaw(file, &nextEntryId, sizeof(nextEntryId))) {
         return false;
     }
+    if (!writeRaw(file, &kGlobalUndoStackScopedEditExtensionToken,
+                  sizeof(kGlobalUndoStackScopedEditExtensionToken))) {
+        return false;
+    }
 
     for (const UndoEntry& entry : stack.entries) {
         uint8_t kind = static_cast<uint8_t>(entry.kind);
@@ -137,6 +252,9 @@ STORAGE_PERSIST_MEM bool writeGlobalUndoStackToFile(File& file, const GlobalUndo
         if (!writeRaw(file, &entry.hasRedoPayload, sizeof(entry.hasRedoPayload))) {
             return false;
         }
+        if (!writeScopedEditUndoExtension(file, entry)) {
+            return false;
+        }
     }
 
     return true;
@@ -172,6 +290,11 @@ STORAGE_PERSIST_MEM bool readGlobalUndoStackMetadataFromFile(File& file, GlobalU
         Serial.print(entryCount);
         Serial.print(" cursor=");
         Serial.println(cursor);
+        return false;
+    }
+
+    bool scopedEditExtension = false;
+    if (!readScopedEditExtensionHeader(file, scopedEditExtension)) {
         return false;
     }
 
@@ -239,6 +362,10 @@ STORAGE_PERSIST_MEM bool readGlobalUndoStackMetadataFromFile(File& file, GlobalU
             return false;
         }
 
+        if (!readScopedEditUndoExtension(file, entry, scopedEditExtension)) {
+            return false;
+        }
+
         entry.beforeTrackState = static_cast<TrackState>(beforeTrackStateRaw);
         entry.afterTrackState = static_cast<TrackState>(afterTrackStateRaw);
         stack.entries.push_back(std::move(entry));
@@ -269,6 +396,11 @@ STORAGE_PERSIST_MEM bool readGlobalUndoStackFromFile(File& file, GlobalUndoStack
         Serial.print(entryCount);
         Serial.print(" cursor=");
         Serial.println(cursor);
+        return false;
+    }
+
+    bool scopedEditExtension = false;
+    if (!readScopedEditExtensionHeader(file, scopedEditExtension)) {
         return false;
     }
 
@@ -333,6 +465,10 @@ STORAGE_PERSIST_MEM bool readGlobalUndoStackFromFile(File& file, GlobalUndoStack
             return false;
         }
         if (!readRaw(file, &entry.hasRedoPayload, sizeof(entry.hasRedoPayload))) {
+            return false;
+        }
+
+        if (!readScopedEditUndoExtension(file, entry, scopedEditExtension)) {
             return false;
         }
 
