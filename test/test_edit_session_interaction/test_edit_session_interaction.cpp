@@ -279,9 +279,160 @@ void test_project_note_baseline_for_edit_analysis_wrap_parity() {
   TEST_ASSERT_EQUAL_UINT32(1080u, linear.endTick);
 }
 
+namespace {
+
+MidiEvent taggedNoteOn(uint32_t tick, uint8_t channel, uint8_t pitch, NoteId noteId) {
+  MidiEvent evt = MidiEvent::NoteOn(tick, channel, pitch, 100);
+  evt.noteId = noteId;
+  return evt;
+}
+
+bool scopeContains(const NoteIdList& scope, NoteId noteId) {
+  return std::find(scope.begin(), scope.end(), noteId) != scope.end();
+}
+
+}  // namespace
+
+/// Evaluation scope keeps only the mover's lane. Cross-lane notes cost nothing per tick and
+/// can never produce a Hide or Shorten anyway (Q14).
+void test_evaluation_scope_excludes_cross_lane_notes() {
+  constexpr uint8_t kChannel = 5;
+  constexpr NoteId kMoverId = 9;
+  constexpr NoteId kSameLaneId = 2;
+  constexpr NoteId kCrossLaneId = 3;
+
+  BaselineMap baseline;
+  baseline[kMoverId] = {13, 100, 480, 528};
+  baseline[kSameLaneId] = {13, 100, 144, 192};
+  baseline[kCrossLaneId] = {85, 100, 144, 192};
+
+  MidiEventVec liveStore;
+  liveStore.push_back(taggedNoteOn(480, kChannel, 13, kMoverId));
+  liveStore.push_back(taggedNoteOn(144, kChannel, 13, kSameLaneId));
+  liveStore.push_back(taggedNoteOn(144, kChannel, 85, kCrossLaneId));
+
+  const NoteIdList noneChanged;
+  const NoteIdList scope =
+      collectEvaluationScopeNoteIds(baseline, liveStore, noneChanged, kMoverId, 13);
+  TEST_ASSERT_EQUAL(1, static_cast<int>(scope.size()));
+  TEST_ASSERT_TRUE(scopeContains(scope, kSameLaneId));
+  TEST_ASSERT_FALSE(scopeContains(scope, kCrossLaneId));
+  TEST_ASSERT_FALSE(scopeContains(scope, kMoverId));
+}
+
+/// Without a lane the scope is every note — pre-lane behaviour is preserved.
+void test_evaluation_scope_without_lane_includes_all_notes() {
+  constexpr uint8_t kChannel = 5;
+  constexpr NoteId kMoverId = 9;
+
+  BaselineMap baseline;
+  baseline[kMoverId] = {13, 100, 480, 528};
+  baseline[2] = {13, 100, 144, 192};
+  baseline[3] = {85, 100, 144, 192};
+
+  MidiEventVec liveStore;
+  const NoteIdList noneChanged;
+  const NoteIdList scope =
+      collectEvaluationScopeNoteIds(baseline, liveStore, noneChanged, kMoverId, std::nullopt);
+  TEST_ASSERT_EQUAL(2, static_cast<int>(scope.size()));
+  TEST_ASSERT_TRUE(scopeContains(scope, 2));
+  TEST_ASSERT_TRUE(scopeContains(scope, 3));
+}
+
+/// Source-lane restore after a pitch change: the note hidden on lane 13 is absent from the live
+/// store and off the new lane 16, so only its changedOverlapNoteIds membership keeps it in
+/// scope. Without the sticky rule the restore action could never be generated.
+void test_evaluation_scope_keeps_hidden_source_lane_note_after_pitch_change() {
+  constexpr uint8_t kChannel = 5;
+  constexpr NoteId kMoverId = 9;
+  constexpr NoteId kHiddenOnSourceLane = 2;
+  constexpr NoteId kDestLaneId = 4;
+
+  BaselineMap baseline;
+  baseline[kMoverId] = {13, 100, 144, 336};
+  baseline[kHiddenOnSourceLane] = {13, 100, 192, 240};
+  baseline[kDestLaneId] = {16, 100, 600, 700};
+
+  // Hidden note is gone from the live store; mover now sounds on lane 16.
+  MidiEventVec liveStore;
+  liveStore.push_back(taggedNoteOn(144, kChannel, 16, kMoverId));
+  liveStore.push_back(taggedNoteOn(600, kChannel, 16, kDestLaneId));
+
+  NoteIdList changed;
+  changed.push_back(kHiddenOnSourceLane);
+
+  const NoteIdList scope =
+      collectEvaluationScopeNoteIds(baseline, liveStore, changed, kMoverId, 16);
+  TEST_ASSERT_TRUE(scopeContains(scope, kDestLaneId));
+  TEST_ASSERT_TRUE(scopeContains(scope, kHiddenOnSourceLane));
+
+  // The projected baseline must carry both the sticky note and the mover, or resolve and build
+  // cannot emit the restore.
+  EditorSelection selection{};
+  selection.primaryNote = kMoverId;
+  selection.selectedNotes.push_back(kMoverId);
+  const BaselineMap projected = projectTransactionBaselineForEvaluationScope(
+      selection, baseline, scope, kMoverId, 2304);
+  TEST_ASSERT_EQUAL(3, static_cast<int>(projected.size()));
+  TEST_ASSERT_TRUE(projected.count(kMoverId) > 0);
+  TEST_ASSERT_TRUE(projected.count(kHiddenOnSourceLane) > 0);
+  TEST_ASSERT_TRUE(projected.count(kDestLaneId) > 0);
+}
+
+/// Materialized record/overdub passes carry the MIDI channel played at record time, which need
+/// not equal the track's output channel. Scope membership is NoteId + pitch lane, so a same-pitch
+/// overlap stays visible no matter which channel its events carry (session_20260805_030517:
+/// candidates=0 hid every overlap while the store held 70 notes).
+void test_evaluation_scope_ignores_store_channel() {
+  constexpr NoteId kMoverId = 9;
+  constexpr NoteId kSameLaneId = 2;
+
+  BaselineMap baseline;
+  baseline[kMoverId] = {26, 100, 1968, 2160};
+  baseline[kSameLaneId] = {26, 100, 2016, 2112};
+
+  // Store events recorded on channel 5; the track now reports channel 2.
+  MidiEventVec liveStore;
+  liveStore.push_back(taggedNoteOn(1968, 5, 26, kMoverId));
+  liveStore.push_back(taggedNoteOn(2016, 5, 26, kSameLaneId));
+
+  const NoteIdList noneChanged;
+  const NoteIdList scope =
+      collectEvaluationScopeNoteIds(baseline, liveStore, noneChanged, kMoverId, 26);
+  TEST_ASSERT_EQUAL(1, static_cast<int>(scope.size()));
+  TEST_ASSERT_TRUE(scopeContains(scope, kSameLaneId));
+}
+
+/// The projected baseline drops out-of-scope notes but always keeps the mover.
+void test_projected_baseline_drops_cross_lane_keeps_mover() {
+  constexpr NoteId kMoverId = 9;
+  BaselineMap baseline;
+  baseline[kMoverId] = {13, 100, 480, 528};
+  baseline[2] = {13, 100, 144, 192};
+  baseline[3] = {85, 100, 144, 192};
+
+  NoteIdList scope;
+  scope.push_back(2);
+
+  EditorSelection selection{};
+  selection.primaryNote = kMoverId;
+  selection.selectedNotes.push_back(kMoverId);
+  const BaselineMap projected =
+      projectTransactionBaselineForEvaluationScope(selection, baseline, scope, kMoverId, 2304);
+  TEST_ASSERT_EQUAL(2, static_cast<int>(projected.size()));
+  TEST_ASSERT_TRUE(projected.count(kMoverId) > 0);
+  TEST_ASSERT_TRUE(projected.count(2) > 0);
+  TEST_ASSERT_EQUAL(0, static_cast<int>(projected.count(3)));
+}
+
 int main(int /*argc*/, char** /*argv*/) {
   UNITY_BEGIN();
   RUN_TEST(test_orchestrator_skips_intra_selection_pair);
+  RUN_TEST(test_evaluation_scope_excludes_cross_lane_notes);
+  RUN_TEST(test_evaluation_scope_without_lane_includes_all_notes);
+  RUN_TEST(test_evaluation_scope_keeps_hidden_source_lane_note_after_pitch_change);
+  RUN_TEST(test_evaluation_scope_ignores_store_channel);
+  RUN_TEST(test_projected_baseline_drops_cross_lane_keeps_mover);
   RUN_TEST(test_geometry_changed_this_tick_detects_span_delta);
   RUN_TEST(test_determine_changed_causing_notes_uses_prior_latch);
   RUN_TEST(test_determine_changed_causing_notes_skips_unselected_causing);

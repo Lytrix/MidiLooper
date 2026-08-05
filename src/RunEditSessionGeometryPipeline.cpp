@@ -21,17 +21,6 @@
 
 namespace {
 
-NOTE_EDIT_MEM BaselineMap projectTransactionBaselineForAnalysis(const EditorSelection& selection,
-                                                   const BaselineMap& transactionBaseline,
-                                                   uint32_t loopLength) {
-  BaselineMap projected;
-  for (const auto& [noteId, baseline] : transactionBaseline) {
-    projected[noteId] =
-        projectNoteBaselineForEditAnalysis(selection, baseline, noteId, loopLength);
-  }
-  return projected;
-}
-
 NOTE_EDIT_MEM EditedGeometry projectEditedGeometryForAnalysis(const EditedGeometry& editedGeometry,
                                                 uint32_t loopLength) {
   EditedGeometry projected = editedGeometry;
@@ -41,31 +30,6 @@ NOTE_EDIT_MEM EditedGeometry projectEditedGeometryForAnalysis(const EditedGeomet
                                            loopLength);
   }
   return projected;
-}
-
-NOTE_EDIT_MEM std::vector<NoteId, InternalHeapFirstAllocator<NoteId>> collectCandidateTargetNoteIds(
-    const BaselineMap& transactionBaseline, const MidiEventVec& liveStore, NoteId movingNoteId,
-    uint8_t channel) {
-  std::unordered_set<NoteId> idSet;
-  for (const auto& [noteId, baseline] : transactionBaseline) {
-    (void)baseline;
-    if (noteId == kInvalidNoteId || noteId == movingNoteId) {
-      continue;
-    }
-    idSet.insert(noteId);
-  }
-  for (const MidiEvent& evt : liveStore) {
-    if (evt.channel != channel || !evt.isNoteOn() || evt.data.noteData.velocity == 0) {
-      continue;
-    }
-    if (evt.noteId == kInvalidNoteId || evt.noteId == movingNoteId) {
-      continue;
-    }
-    idSet.insert(evt.noteId);
-  }
-  std::vector<NoteId, InternalHeapFirstAllocator<NoteId>> candidates(idSet.begin(), idSet.end());
-  sortNoteIdVector(candidates);
-  return candidates;
 }
 
 }  // namespace
@@ -92,11 +56,15 @@ NOTE_EDIT_MEM bool runEditSessionGeometryPipeline(
 
   // noteIds are assigned once in openNoteEditSession — never mint mid-edit (Delete rows
   // must resolve against capture-pass materialize). Stamp offs only.
-  stampNoteIdsOntoPairedNoteOffs(liveStore, channel);
+  stampNoteIdsOntoPairedNoteOffs(liveStore);
 #if defined(SESSION_CAPTURE)
+  size_t liveNoteOnCount = 0;
   for (const MidiEvent& evt : liveStore) {
-    if (evt.channel == channel && evt.isNoteOn() && evt.data.noteData.velocity > 0 &&
-        evt.noteId == kInvalidNoteId) {
+    if (!evt.isNoteOn() || evt.data.noteData.velocity == 0) {
+      continue;
+    }
+    ++liveNoteOnCount;
+    if (evt.noteId == kInvalidNoteId) {
       logger.log(CAT_MIDI, LOG_WARNING,
                  "GeometryPipeline: note-on missing noteId tick=%lu pitch=%u (session open "
                  "should have assigned)",
@@ -105,7 +73,6 @@ NOTE_EDIT_MEM bool runEditSessionGeometryPipeline(
     }
   }
 #endif
-  (void)overlapPitchLane;
 
   const BaselineMap& transactionBaseline = focus.baselineMap;
   const EditorSelection& selection = editedGeometry.selection;
@@ -116,14 +83,17 @@ NOTE_EDIT_MEM bool runEditSessionGeometryPipeline(
     return false;
   }
 
-  const std::vector<NoteId, InternalHeapFirstAllocator<NoteId>> candidateTargetNoteIds =
-      collectCandidateTargetNoteIds(transactionBaseline, liveStore, focus.movingNoteId, channel);
+  // Sorted candidate targets and the projected baseline come from one scope list, so candidate
+  // pairing and projection can never disagree about what this tick evaluates.
+  const NoteIdList evaluationScope =
+      collectEvaluationScopeNoteIds(transactionBaseline, liveStore, focus.changedOverlapNoteIds,
+                                    focus.movingNoteId, overlapPitchLane);
 
   const std::vector<CausingTargetPair, InternalHeapFirstAllocator<CausingTargetPair>> eligiblePairs =
-      determineEligiblePairs(selection, changedCausingNotes, candidateTargetNoteIds);
+      determineEligiblePairs(selection, changedCausingNotes, evaluationScope);
 
-  const BaselineMap projectedBaseline =
-      projectTransactionBaselineForAnalysis(selection, transactionBaseline, loopLength);
+  const BaselineMap projectedBaseline = projectTransactionBaselineForEvaluationScope(
+      selection, transactionBaseline, evaluationScope, focus.movingNoteId, loopLength);
   const EditedGeometry projectedEdited =
       projectEditedGeometryForAnalysis(editedGeometry, loopLength);
 
@@ -152,10 +122,13 @@ NOTE_EDIT_MEM bool runEditSessionGeometryPipeline(
 
 #if defined(SESSION_CAPTURE)
   logger.log(CAT_MIDI, LOG_DEBUG,
-             "GeometryPipeline: baselineMap=%u candidates=%u pairs=%u interactions=%u "
-             "constrained=%u actions=%u",
+             "GeometryPipeline: storeNoteOns=%u baselineMap=%u lane=%d changed=%u candidates=%u "
+             "pairs=%u interactions=%u constrained=%u actions=%u",
+             static_cast<unsigned>(liveNoteOnCount),
              static_cast<unsigned>(transactionBaseline.size()),
-             static_cast<unsigned>(candidateTargetNoteIds.size()),
+             overlapPitchLane.has_value() ? static_cast<int>(overlapPitchLane.value()) : -1,
+             static_cast<unsigned>(focus.changedOverlapNoteIds.size()),
+             static_cast<unsigned>(evaluationScope.size()),
              static_cast<unsigned>(eligiblePairs.size()),
              static_cast<unsigned>(interactions.size()),
              static_cast<unsigned>(constrained.size()), static_cast<unsigned>(actions.size()));

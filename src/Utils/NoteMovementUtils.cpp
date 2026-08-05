@@ -1772,9 +1772,10 @@ NOTE_EDIT_MEM bool moveNoteWithOverlapHandling(Track& track, EditManager& manage
         displayFocusEndTickForMove(newStart, noteLen, loopLength);
 
     const NoteBaseline editedSpan{movingNotePitch, focus.last.velocity, newStart, linearNewEnd};
+    // Overlap scope is the mover's own lane — a move never changes pitch (Q14).
     const bool pipelineApplied =
         runEditSessionGeometryPipelineForCausingNote(track, manager, focus.movingNoteId, editedSpan,
-                                                     focus.last, targetTick, std::nullopt,
+                                                     focus.last, targetTick, movingNotePitch,
                                                      false);
 
     bool movedNoteEvents = pipelineApplied;

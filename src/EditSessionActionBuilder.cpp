@@ -94,7 +94,8 @@ NOTE_EDIT_MEM void appendOverlapTargetActions(
     const std::vector<ConstrainedNoteGeometry, InternalHeapFirstAllocator<ConstrainedNoteGeometry>>&
         constrainedGeometry,
     const EditedGeometry& editedGeometry, const BaselineMap& transactionBaseline,
-    const MidiEventVec& liveStore, uint8_t channel, EditSessionActions& actions) {
+    const MidiEventVec& liveStore, uint8_t channel, const NoteEditFocus& focus,
+    EditSessionActions& actions) {
   for (const ConstrainedNoteGeometry& constrained : constrainedGeometry) {
     const auto baselineIt = transactionBaseline.find(constrained.noteId);
     if (baselineIt == transactionBaseline.end()) {
@@ -105,7 +106,7 @@ NOTE_EDIT_MEM void appendOverlapTargetActions(
     if (!liveStoreHasNotePair(liveStore, liveNoteId, channel)) {
       const NoteId resolvedId =
           findLiveNoteIdForPitchStart(liveStore, channel, baseline.pitch, baseline.startTick);
-      if (resolvedId != kInvalidNoteId &&
+      if (resolvedId != kInvalidNoteId && resolvedId != focus.movingNoteId &&
           liveStoreHasNotePair(liveStore, resolvedId, channel)) {
         liveNoteId = resolvedId;
       }
@@ -247,7 +248,7 @@ NOTE_EDIT_MEM EditSessionActions buildEditSessionActions(
     uint32_t loopLength) {
   EditSessionActions actions;
   appendOverlapTargetActions(constrainedGeometry, editedGeometry, transactionBaseline, liveStore,
-                             channel, actions);
+                             channel, focus, actions);
   appendCausingNoteActions(editedGeometry, liveStore, focus, channel, loopLength, actions);
 
   sortEditSessionActions(actions);

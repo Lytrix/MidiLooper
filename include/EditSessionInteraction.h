@@ -4,10 +4,12 @@
 #pragma once
 
 #include <cstdint>
+#include <optional>
 #include <unordered_map>
 #include <vector>
 
 #include "EditSessionAction.h"
+#include "MidiEvent.h"
 #include "NoteEditFocus.h"
 #include "Utils/IntervalProjection.h"
 
@@ -24,6 +26,25 @@ bool geometryChangedThisTick(NoteId causingNoteId, const NoteBaseline& priorLatc
 std::vector<NoteId, InternalHeapFirstAllocator<NoteId>> determineChangedCausingNotes(
     const EditorSelection& selection, const EditedGeometry& editedGeometry,
     const std::unordered_map<NoteId, NoteBaseline, NoteIdHash>& priorLatchByNoteId);
+
+/// Single source of truth for which notes one geometry tick may evaluate: the mover's current
+/// pitch lane, plus every note the pipeline already hid or shortened under this edit driver.
+/// The sticky part matters after a pitch change — a note hidden on the source lane must stay in
+/// scope so it can still be restored, which is why the transaction baseline stays full-loop.
+/// Candidate pairing and baseline projection both consume this one sorted list, so the two
+/// cannot disagree about scope. Without a lane the scope is every note (pre-lane behaviour).
+/// Membership is NoteId + pitch lane; the track's output channel is not an identity key.
+NoteIdList collectEvaluationScopeNoteIds(const BaselineMap& transactionBaseline,
+                                         const MidiEventVec& liveStore,
+                                         const NoteIdList& changedOverlapNoteIds,
+                                         NoteId movingNoteId,
+                                         std::optional<uint8_t> overlapPitchLane);
+
+/// Projects only the notes in `evaluationScope`, plus the mover, which resolve and build need.
+BaselineMap projectTransactionBaselineForEvaluationScope(const EditorSelection& selection,
+                                                        const BaselineMap& transactionBaseline,
+                                                        const NoteIdList& evaluationScope,
+                                                        NoteId movingNoteId, uint32_t loopLength);
 
 std::vector<CausingTargetPair, InternalHeapFirstAllocator<CausingTargetPair>>
 determineEligiblePairs(const EditorSelection& selection,

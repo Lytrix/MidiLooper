@@ -12,6 +12,7 @@
 #include "EditPass.h"
 #include "MidiEvent.h"
 #include "Utils/ExternalMemoryFirstAllocator.h"
+#include "Utils/InternalHeapFirstAllocator.h"
 #include "Utils/NoteUtils.h"
 
 template <typename T>
@@ -58,6 +59,12 @@ struct OverlapNoteRestore {
 using OverlapNoteMap = std::unordered_map<NoteId, OverlapNote, NoteIdHash, std::equal_to<NoteId>,
                                           ExternalMemoryUnorderedMapAllocator<OverlapNote>>;
 
+/// Sorted, unique NoteId list. Reuses the geometry pipeline's existing vector instantiation
+/// instead of adding a std::unordered_set — RAM1/ITCM has under 1.4 KB of headroom before a
+/// whole 32 KB block flips (docs/plans/capture_serial_ram1_recovery_extmem_debug_enhancement.md),
+/// and these lists hold a handful of ids, so linear search costs nothing measurable.
+using NoteIdList = std::vector<NoteId, InternalHeapFirstAllocator<NoteId>>;
+
 /// Tick range of the moving note on focus (start/end); used for inner overlap-note tests.
 struct MovingNoteRange {
   uint32_t start = 0;
@@ -72,6 +79,13 @@ struct NoteEditFocus {
   NoteBaseline last{};
   BaselineMap baselineMap;
   OverlapNoteMap overlapNotes;
+  /// Overlap notes the geometry pipeline hid or shortened under the current edit driver.
+  /// Transient session state: only geometry actions write it, it is cleared at the edit driver
+  /// boundary and session end, and it is never persisted to storage. It travels with the focus in
+  /// session undo snapshots (like `baselineMap` / `overlapNotes`) so a note hidden several steps
+  /// back keeps its Delete authority across undo. Membership plus absence from the live store is
+  /// what authorises a pre-commit Delete row — see `buildPreCommitBaselineLiveDiffOverlapPasses`.
+  NoteIdList changedOverlapNoteIds;
 
   void clear() {
     active = false;
@@ -81,6 +95,7 @@ struct NoteEditFocus {
     last = {};
     baselineMap.clear();
     overlapNotes.clear();
+    changedOverlapNoteIds.clear();
   }
 };
 
@@ -94,6 +109,11 @@ bool isInnerOverlapNoteInMovingNoteRange(const NoteEditFocus& focus, uint8_t pit
 
 OverlapNote* findOverlapNoteEntry(NoteEditFocus& focus, NoteId noteId);
 const OverlapNote* findOverlapNoteEntry(const NoteEditFocus& focus, NoteId noteId);
+
+/// Delete authority for `changedOverlapNoteIds` — see the member comment on `NoteEditFocus`.
+bool hasChangedOverlapNote(const NoteEditFocus& focus, NoteId noteId);
+void recordChangedOverlapNote(NoteEditFocus& focus, NoteId noteId);
+void forgetChangedOverlapNote(NoteEditFocus& focus, NoteId noteId);
 
 /// When an overlap target becomes the selected causing note, drop its scratch row (driver boundary).
 bool evictOverlapScratchForSelectedNote(NoteEditFocus& focus, NoteId selectedNoteId);
@@ -175,8 +195,9 @@ bool syncNoteEditFocusLinearFromSessionStore(NoteEditFocus& focus,
 
 /// Session-open pairing aid: stamp each note-on's noteId onto its LIFO-paired note-off when the
 /// off still has kInvalidNoteId. Safe only on non-overlapping same-pitch stores (canonical MIDI).
+/// Pairs within each event's own channel — the track's output channel is not an identity key.
 template <typename Alloc>
-void stampNoteIdsOntoPairedNoteOffs(std::vector<MidiEvent, Alloc>& events, uint8_t channel);
+void stampNoteIdsOntoPairedNoteOffs(std::vector<MidiEvent, Alloc>& events);
 
 uint32_t overlapNoteEffectiveEnd(const OverlapNote& entry);
 
