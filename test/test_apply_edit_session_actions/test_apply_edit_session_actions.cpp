@@ -835,14 +835,15 @@ void test_move_over_inner_overlap_keeps_mover_length_in_store() {
   TEST_ASSERT_TRUE(foundMover);
 }
 
-void test_cross_pitch_complete_cover_hide_and_restore_on_leave() {
+void test_same_pitch_complete_cover_hide_and_restore_on_leave() {
+  // Q14: CompleteCover Hide/Restore on the mover's pitch lane only.
   constexpr uint32_t loopLength = 2304;
   constexpr NoteId kInnerId = 1;
   constexpr NoteId kMoverId = 9;
 
   MidiEventVec store;
-  store.push_back(noteOnWithNoteId(144, kChannel, 93, 100, kInnerId));
-  MidiEvent innerOff = MidiEvent::NoteOff(192, kChannel, 93, 0);
+  store.push_back(noteOnWithNoteId(144, kChannel, 23, 100, kInnerId));
+  MidiEvent innerOff = MidiEvent::NoteOff(192, kChannel, 23, 0);
   innerOff.noteId = kInnerId;
   store.push_back(innerOff);
   store.push_back(noteOnWithNoteId(192, kChannel, 23, 100, kMoverId));
@@ -851,7 +852,7 @@ void test_cross_pitch_complete_cover_hide_and_restore_on_leave() {
   store.push_back(moverOff);
 
   NoteEditFocus focus = makeMovingFocus(kMoverId, 23, 192, 384);
-  focus.baselineMap[kInnerId] = {93, 100, 144, 192};
+  focus.baselineMap[kInnerId] = {23, 100, 144, 192};
   focus.baselineMap[kMoverId] = {23, 100, 192, 384};
 
   EditedGeometry overInner{};
@@ -865,7 +866,7 @@ void test_cross_pitch_complete_cover_hide_and_restore_on_leave() {
   ConstrainedNoteGeometry innerHidden{};
   innerHidden.noteId = kInnerId;
   innerHidden.visible = false;
-  innerHidden.pitch = 93;
+  innerHidden.pitch = 23;
   innerHidden.startTick = 144;
   innerHidden.endTick = 192;
 
@@ -876,18 +877,33 @@ void test_cross_pitch_complete_cover_hide_and_restore_on_leave() {
       actionsContainTypeForNote(overActions, EditSessionActionType::HideNote, kInnerId));
   applyEditSessionActions(overActions, store, focus, kChannel, loopLength);
   TEST_ASSERT_FALSE(liveStoreHasNotePair(store, kInnerId, kChannel));
+  TEST_ASSERT_TRUE(focus.baselineMap.count(kInnerId) > 0);
+
+  // Relocate mover off the inner's baseline start so pitch+start resolve cannot confuse
+  // the hidden noteId with the mover pair.
+  for (MidiEvent& evt : store) {
+    if (evt.noteId != kMoverId) {
+      continue;
+    }
+    if (evt.isNoteOn() && evt.data.noteData.velocity > 0) {
+      evt.tick = 400;
+    } else if (evt.isNoteOff()) {
+      evt.tick = 592;
+    }
+  }
+  focus.last = {23, 100, 400, 592};
 
   EditedGeometry leaveInner{};
   leaveInner.selection = overInner.selection;
   EditedNoteSpan causingLeave{};
   causingLeave.noteId = kMoverId;
-  causingLeave.span = {23, 100, 144, 336};
+  causingLeave.span = {23, 100, 400, 592};
   leaveInner.causingSpans.push_back(causingLeave);
 
   ConstrainedNoteGeometry innerRestore{};
   innerRestore.noteId = kInnerId;
   innerRestore.visible = true;
-  innerRestore.pitch = 93;
+  innerRestore.pitch = 23;
   innerRestore.startTick = 144;
   innerRestore.endTick = 192;
 
@@ -905,13 +921,12 @@ void test_cross_pitch_complete_cover_hide_and_restore_on_leave() {
   TEST_ASSERT_EQUAL_UINT32(192u, innerSpan.endTick);
 }
 
-void test_log_scenario_cross_pitch_hide_when_moving_right() {
-  // session_20260805_011000: enrich + Hide apply for cross-pitch @144 when mover covers 144–240.
+void test_log_scenario_same_pitch_hide_when_moving_right() {
+  // Q14: Hide only same pitch lane. Mover covers head neighbor on pitch 12.
   constexpr uint32_t loopLength = 384;
   constexpr NoteId kHead12 = 77;
   constexpr NoteId kMoverId = 79;
   constexpr NoteId kCross93 = 3;
-  constexpr NoteId kCross96 = 5;
 
   MidiEventVec committed;
   committed.push_back(noteOnWithNoteId(0, kChannel, 12, 100, kHead12));
@@ -920,8 +935,6 @@ void test_log_scenario_cross_pitch_hide_when_moving_right() {
   committed.push_back(MidiEvent::NoteOff(192, kChannel, 12, 0));
   committed.push_back(noteOnWithNoteId(144, kChannel, 93, 100, kCross93));
   committed.push_back(MidiEvent::NoteOff(192, kChannel, 93, 0));
-  committed.push_back(noteOnWithNoteId(144, kChannel, 96, 100, kCross96));
-  committed.push_back(MidiEvent::NoteOff(192, kChannel, 96, 0));
 
   MidiEventVec store = committed;
 
@@ -933,11 +946,11 @@ void test_log_scenario_cross_pitch_hide_when_moving_right() {
   focus.movingNoteRange = {96, 192};
   focus.baselineMap[kMoverId] = focus.commitBaseline;
   focus.baselineMap[kHead12] = {12, 100, 0, 192};
+  focus.baselineMap[kCross93] = {93, 100, 144, 192};
 
-  enrichBaselineMapFromCommittedAndLive(focus.baselineMap, committed, store, kMoverId, kChannel,
-                                      loopLength);
+  populateBaselineMapForEditClosure(focus, committed, store, kChannel, loopLength);
+  TEST_ASSERT_TRUE(focus.baselineMap.count(kHead12) > 0);
   TEST_ASSERT_TRUE(focus.baselineMap.count(kCross93) > 0);
-  TEST_ASSERT_TRUE(focus.baselineMap.count(kCross96) > 0);
 
   EditorSelection selection{};
   selection.primaryNote = kMoverId;
@@ -947,42 +960,44 @@ void test_log_scenario_cross_pitch_hide_when_moving_right() {
   edited.selection = selection;
   EditedNoteSpan causing{};
   causing.noteId = kMoverId;
-  causing.span = {12, 100, 144, 240};
+  causing.span = {12, 100, 0, 240};
   edited.causingSpans.push_back(causing);
 
-  ConstrainedNoteGeometry hidden93{};
-  hidden93.noteId = kCross93;
-  hidden93.visible = false;
-  hidden93.pitch = 93;
-  hidden93.startTick = 144;
-  hidden93.endTick = 192;
-  ConstrainedNoteGeometry hidden96{};
-  hidden96.noteId = kCross96;
-  hidden96.visible = false;
-  hidden96.pitch = 96;
-  hidden96.startTick = 144;
-  hidden96.endTick = 192;
+  ConstrainedNoteGeometry hiddenHead{};
+  hiddenHead.noteId = kHead12;
+  hiddenHead.visible = false;
+  hiddenHead.pitch = 12;
+  hiddenHead.startTick = 0;
+  hiddenHead.endTick = 192;
+  // Cross-pitch constrained geometry must not be produced by resolve (Q14); builder would
+  // hide if fed one — verify baseline still holds cross-pitch for restore path only.
+  ConstrainedNoteGeometry crossVisible{};
+  crossVisible.noteId = kCross93;
+  crossVisible.visible = true;
+  crossVisible.pitch = 93;
+  crossVisible.startTick = 144;
+  crossVisible.endTick = 192;
 
   const EditSessionActions actions =
-      buildEditSessionActions({hidden93, hidden96}, edited, focus.baselineMap, store, kChannel,
-                              focus, loopLength);
+      buildEditSessionActions({hiddenHead, crossVisible}, edited, focus.baselineMap, store,
+                              kChannel, focus, loopLength);
   TEST_ASSERT_TRUE(
+      actionsContainTypeForNote(actions, EditSessionActionType::HideNote, kHead12));
+  TEST_ASSERT_FALSE(
       actionsContainTypeForNote(actions, EditSessionActionType::HideNote, kCross93));
-  TEST_ASSERT_TRUE(
-      actionsContainTypeForNote(actions, EditSessionActionType::HideNote, kCross96));
   TEST_ASSERT_TRUE(
       actionsContainTypeForNote(actions, EditSessionActionType::MoveNote, kMoverId));
 
   applyEditSessionActions(actions, store, focus, kChannel, loopLength);
-  TEST_ASSERT_FALSE(liveStoreHasNotePair(store, kCross93, kChannel));
-  TEST_ASSERT_FALSE(liveStoreHasNotePair(store, kCross96, kChannel));
-  TEST_ASSERT_TRUE(liveStoreHasNotePair(store, kHead12, kChannel));
+  TEST_ASSERT_FALSE(liveStoreHasNotePair(store, kHead12, kChannel));
+  TEST_ASSERT_TRUE(liveStoreHasNotePair(store, kCross93, kChannel));
+  TEST_ASSERT_TRUE(focus.baselineMap.count(kHead12) > 0);
   TEST_ASSERT_TRUE(liveStoreHasNotePair(store, kMoverId, kChannel));
 
   NoteBaseline moverSpan{};
   TEST_ASSERT_TRUE(
-      findLinearNoteSpanForNoteId(store, kMoverId, kChannel, moverSpan, 144, loopLength));
-  TEST_ASSERT_EQUAL_UINT32(144u, moverSpan.startTick);
+      findLinearNoteSpanForNoteId(store, kMoverId, kChannel, moverSpan, 0, loopLength));
+  TEST_ASSERT_EQUAL_UINT32(0u, moverSpan.startTick);
   TEST_ASSERT_EQUAL_UINT32(240u, moverSpan.endTick);
 }
 
@@ -1076,8 +1091,8 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_builder_emits_move_when_mover_on_has_no_off_but_focus_last_does);
   RUN_TEST(test_builder_emits_change_length_when_store_shortened_but_focus_matches_causing);
   RUN_TEST(test_move_over_inner_overlap_keeps_mover_length_in_store);
-  RUN_TEST(test_cross_pitch_complete_cover_hide_and_restore_on_leave);
-  RUN_TEST(test_log_scenario_cross_pitch_hide_when_moving_right);
+  RUN_TEST(test_same_pitch_complete_cover_hide_and_restore_on_leave);
+  RUN_TEST(test_log_scenario_same_pitch_hide_when_moving_right);
   RUN_TEST(test_same_pitch_left_neighbor_shorten_and_restore_on_leave);
   return UNITY_END();
 }

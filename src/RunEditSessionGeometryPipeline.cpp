@@ -91,16 +91,11 @@ NOTE_EDIT_MEM bool runEditSessionGeometryPipeline(
     return false;
   }
 
-  // D21: full-loop baseline — discover every live note missing from baselineMap so
-  // cross-pitch overlap targets participate in analyze/restore (not same-pitch lane only).
-  // Transaction baseline comes from committed materialize, not the mutating session store.
+  // Transaction baseline is immutable for this edit driver (D19) — snapshotted at
+  // rebuildNoteEditFocus* via populateBaselineMapForEditClosure. Do not enrich or prune here.
   Loop& loop = trackManager.getSelectedLoop(track);
   loop.assignMissingNoteIds(liveStore);
   stampNoteIdsOntoPairedNoteOffs(liveStore, channel);
-
-  const MidiEventVec& committedEvents = manager.materializedLoopEventsForNoteEditFocus(track);
-  enrichBaselineMapFromCommittedAndLive(focus.baselineMap, committedEvents, liveStore,
-                                        focus.movingNoteId, channel, loopLength);
   (void)overlapPitchLane;
 
   const BaselineMap& transactionBaseline = focus.baselineMap;

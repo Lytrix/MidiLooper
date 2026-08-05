@@ -1162,87 +1162,6 @@ NOTE_EDIT_MEM bool isExcludedFromSelectableDisplayNotes(const NoteEditFocus& foc
 
 }  // namespace
 
-NOTE_EDIT_MEM void enrichBaselineMapFromCommittedAndLive(BaselineMap& baselineMap,
-                                                         const MidiEventVec& committedEvents,
-                                                         MidiEventVec& liveStore,
-                                                         NoteId movingNoteId, uint8_t channel,
-                                                         uint32_t loopLength) {
-  if (loopLength == 0) {
-    return;
-  }
-  MidiEventVec mutableCommitted = committedEvents;
-
-  const auto insertIfMissing = [&](NoteId noteId, const NoteBaseline& span) {
-    if (noteId == kInvalidNoteId || noteId == movingNoteId) {
-      return;
-    }
-    if (baselineMap.find(noteId) != baselineMap.end()) {
-      return;
-    }
-    baselineMap[noteId] = span;
-  };
-
-  const auto resolveCommittedBaselineByPitchStart = [&](uint8_t pitch, uint32_t startTick,
-                                                        NoteBaseline& out) -> bool {
-    return findCommittedLinearSpanForPitchStart(mutableCommitted, channel, pitch, startTick,
-                                                loopLength, out);
-  };
-
-  // Live session store owns canonical noteIds (assignMissingNoteIds on session open). Pass
-  // materialize noteIds can differ — always key baselineMap from live pitch+start identity.
-  for (const MidiEvent& evt : liveStore) {
-    if (evt.channel != channel || !evt.isNoteOn() || evt.data.noteData.velocity == 0) {
-      continue;
-    }
-    if (evt.noteId == movingNoteId) {
-      continue;
-    }
-
-    NoteId mapNoteId = evt.noteId;
-    NoteBaseline liveSpan{};
-    if (mapNoteId != kInvalidNoteId &&
-        readLiveLinearSpan(liveStore, mapNoteId, channel, liveSpan)) {
-      // use mapNoteId + liveSpan
-    } else if (readLiveLinearSpanForPitchStart(liveStore, channel, evt.data.noteData.note,
-                                               evt.tick, mapNoteId, liveSpan)) {
-      // use pitch+start resolution
-    } else {
-      continue;
-    }
-    if (mapNoteId == kInvalidNoteId) {
-      mapNoteId =
-          findLiveNoteIdForPitchStart(liveStore, channel, liveSpan.pitch, liveSpan.startTick);
-    }
-    if (mapNoteId == kInvalidNoteId || mapNoteId == movingNoteId) {
-      continue;
-    }
-
-    NoteBaseline baseline{};
-    if (resolveCommittedBaselineByPitchStart(liveSpan.pitch, liveSpan.startTick, baseline)) {
-      insertIfMissing(mapNoteId, baseline);
-    } else {
-      insertIfMissing(mapNoteId, liveSpan);
-    }
-  }
-
-  // Drop pass-materialize ids that are not present in the live session store (stale keys break
-  // Hide/Shorten because appendOverlapTargetActions requires liveStoreHasNotePair).
-  std::unordered_set<NoteId> liveNoteIds;
-  for (const MidiEvent& evt : liveStore) {
-    if (evt.channel == channel && evt.isNoteOn() && evt.data.noteData.velocity > 0 &&
-        evt.noteId != kInvalidNoteId) {
-      liveNoteIds.insert(evt.noteId);
-    }
-  }
-  for (auto it = baselineMap.begin(); it != baselineMap.end();) {
-    if (it->first != movingNoteId && liveNoteIds.find(it->first) == liveNoteIds.end()) {
-      it = baselineMap.erase(it);
-    } else {
-      ++it;
-    }
-  }
-}
-
 template <typename AllocA, typename AllocB>
 NOTE_EDIT_MEM void populateBaselineMapForEditClosure(
     NoteEditFocus& focus, const std::vector<MidiEvent, AllocA>& committedLoopEvents,
@@ -1250,17 +1169,35 @@ NOTE_EDIT_MEM void populateBaselineMapForEditClosure(
   if (!focus.active || loopLength == 0) {
     return;
   }
+  // Transaction baseline is frozen at edit-driver boundary (D19). Insert-if-missing only —
+  // never prune from live-store presence (hidden notes must keep their baseline entry).
   const std::unordered_set<NoteId> closure =
       buildEditClosureNoteIds(focus, sessionEvents, channel, loopLength);
   std::vector<MidiEvent, AllocA> mutableCommitted = committedLoopEvents;
+  // Pass materialize noteIds can differ from session-store ids — resolve committed span by
+  // live pitch+start when noteId lookup fails.
+  std::vector<MidiEvent, AllocB> mutableSession = sessionEvents;
   for (NoteId noteId : closure) {
     if (noteId == kInvalidNoteId || focus.baselineMap.find(noteId) != focus.baselineMap.end()) {
       continue;
     }
-    NoteBaseline baseline;
+    NoteBaseline baseline{};
     if (findLinearNoteSpanForNoteId(mutableCommitted, noteId, channel, baseline, UINT32_MAX,
                                     loopLength)) {
       focus.baselineMap[noteId] = baseline;
+      continue;
+    }
+    NoteBaseline liveSpan{};
+    if (!findLinearNoteSpanForNoteId(mutableSession, noteId, channel, liveSpan, UINT32_MAX,
+                                     loopLength)) {
+      continue;
+    }
+    // AllocA for committed is always InternalHeapFirstAllocator (MidiEventVec) at call sites.
+    if (findCommittedLinearSpanForPitchStart(mutableCommitted, channel, liveSpan.pitch,
+                                             liveSpan.startTick, loopLength, baseline)) {
+      focus.baselineMap[noteId] = baseline;
+    } else {
+      focus.baselineMap[noteId] = liveSpan;
     }
   }
 }
@@ -1289,15 +1226,21 @@ std::unordered_set<NoteId> buildEditClosureNoteIds(const NoteEditFocus& focus,
       ids.insert(noteId);
     }
   }
-  // Full pitch-lane closure: every same-pitch note can become an overlap target when the
-  // mover travels across the lane (edit-session-action-geometry v1 full-loop baseline).
-  const uint8_t pitch = focus.last.pitch;
+  // Full-loop transaction baseline (D19 / D21): every live noteId participates so restore
+  // candidates survive pitch changes. Analyze still pitch-gates Hide/Shorten (Q14).
   for (const MidiEvent& onEvt : sessionEvents) {
     if (!onEvt.isNoteOn() || onEvt.data.noteData.velocity == 0 || onEvt.channel != channel ||
-        onEvt.noteId == kInvalidNoteId || onEvt.data.noteData.note != pitch) {
+        onEvt.noteId == kInvalidNoteId) {
       continue;
     }
     ids.insert(onEvt.noteId);
+  }
+  // BaselineMap keys that are already frozen (including notes hidden from live store).
+  for (const auto& [noteId, baseline] : focus.baselineMap) {
+    (void)baseline;
+    if (noteId != kInvalidNoteId) {
+      ids.insert(noteId);
+    }
   }
   return ids;
 }
