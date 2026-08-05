@@ -432,23 +432,6 @@ NOTE_EDIT_MEM bool noteEditFocusHasPendingCommit(const NoteEditFocus& focus) {
 
 namespace {
 
-NOTE_EDIT_MEM bool pitchLaneClearNeedsRestore(const NoteEditFocus& focus, uint8_t clearedPitch) {
-  for (const auto& [noteId, entry] : focus.overlapNotes) {
-    (void)noteId;
-    if (entry.baseline.pitch != clearedPitch) {
-      continue;
-    }
-    if (entry.state == OverlapNoteStoreState::Visible) {
-      continue;
-    }
-    if (isMovingNoteOverlapScratchEntry(focus, noteId, entry.baseline)) {
-      continue;
-    }
-    return true;
-  }
-  return false;
-}
-
 /// Phase 4 geometry pipeline hides/shortens without writing overlapNotes scratch. Leaving that
 /// pitch must take the full path so RestoreNote can reinsert/extend from baselineMap.
 NOTE_EDIT_MEM bool baselineMapPitchLaneNeedsRestore(const NoteEditFocus& focus,
@@ -473,19 +456,6 @@ NOTE_EDIT_MEM bool baselineMapPitchLaneNeedsRestore(const NoteEditFocus& focus,
   return false;
 }
 
-NOTE_EDIT_MEM bool pitchLaneHasNonVisibleOverlapScratch(const NoteEditFocus& focus, uint8_t pitch) {
-  for (const auto& [noteId, entry] : focus.overlapNotes) {
-    (void)noteId;
-    if (entry.baseline.pitch != pitch) {
-      continue;
-    }
-    if (entry.state != OverlapNoteStoreState::Visible) {
-      return true;
-    }
-  }
-  return false;
-}
-
 NOTE_EDIT_MEM bool linearStorageSpansOverlapLocal(uint32_t start1, uint32_t end1, uint32_t start2,
                                                   uint32_t end2) {
   return start1 < end2 && start2 < end1;
@@ -500,13 +470,10 @@ NOTE_EDIT_MEM bool canApplySimplePitchChange(MidiEventVec& sessionEvents, const 
   if (!focus.active || focus.movingNoteId == kInvalidNoteId || loopLength == 0) {
     return false;
   }
-  if (pitchLaneClearNeedsRestore(focus, currentPitch)) {
-    return false;
-  }
   if (baselineMapPitchLaneNeedsRestore(focus, sessionEvents, channel, currentPitch)) {
     return false;
   }
-  if (pitchLaneHasNonVisibleOverlapScratch(focus, targetPitch)) {
+  if (baselineMapPitchLaneNeedsRestore(focus, sessionEvents, channel, targetPitch)) {
     return false;
   }
 
@@ -515,10 +482,6 @@ NOTE_EDIT_MEM bool canApplySimplePitchChange(MidiEventVec& sessionEvents, const 
         evt.data.noteData.note != targetPitch || evt.noteId == kInvalidNoteId ||
         evt.noteId == focus.movingNoteId) {
       continue;
-    }
-    const OverlapNote* overlapEntry = findOverlapNoteEntry(focus, evt.noteId);
-    if (overlapEntry != nullptr && overlapEntry->state != OverlapNoteStoreState::Visible) {
-      return false;
     }
     NoteBaseline linear;
     if (!findLinearNoteSpanForNoteId(sessionEvents, evt.noteId, channel, linear, evt.tick,
@@ -533,6 +496,29 @@ NOTE_EDIT_MEM bool canApplySimplePitchChange(MidiEventVec& sessionEvents, const 
     }
   }
   return true;
+}
+
+NOTE_EDIT_MEM void recordBaselinePitchLaneRestoreOverlapCandidates(NoteEditFocus& focus,
+                                                                   const MidiEventVec& liveStore,
+                                                                   uint8_t channel,
+                                                                   uint8_t pitch) {
+  for (const auto& [noteId, baseline] : focus.baselineMap) {
+    if (noteId == kInvalidNoteId || noteId == focus.movingNoteId) {
+      continue;
+    }
+    if (baseline.pitch != pitch) {
+      continue;
+    }
+    NoteBaseline live{};
+    if (!readLiveLinearSpan(liveStore, noteId, channel, live)) {
+      recordChangedOverlapNote(focus, noteId);
+      continue;
+    }
+    if (live.pitch != baseline.pitch || live.startTick != baseline.startTick ||
+        live.endTick != baseline.endTick) {
+      recordChangedOverlapNote(focus, noteId);
+    }
+  }
 }
 
 namespace {

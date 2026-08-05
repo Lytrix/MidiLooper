@@ -163,6 +163,12 @@ bool canApplySimplePitchChange(MidiEventVec& sessionEvents, const NoteEditFocus&
                                uint8_t channel, uint8_t currentPitch, uint8_t targetPitch,
                                uint32_t moverStart, uint32_t moverEnd, uint32_t loopLength);
 
+/// Sticky overlap candidates on a pitch lane so the geometry pipeline can RestoreNote when leaving
+/// that lane (replaces legacy overlapNotes scratch restore before pitch change).
+void recordBaselinePitchLaneRestoreOverlapCandidates(NoteEditFocus& focus,
+                                                     const MidiEventVec& liveStore,
+                                                     uint8_t channel, uint8_t pitch);
+
 /// Reject LIFO mispairs (e.g. on@387 with off@loopLength+displayEnd).
 bool isPlausibleStorageSpan(uint32_t startTick, uint32_t endTick, uint32_t loopLength);
 

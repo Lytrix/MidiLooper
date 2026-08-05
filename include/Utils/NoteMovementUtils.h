@@ -49,12 +49,12 @@ bool moveNoteWithOverlapHandling(Track& track, EditManager& manager,
                                          uint32_t targetEndTick);
 
     /**
-     * Apply a pitch change using the same overlap-note hide/restore path as movement.
+     * Apply a pitch change using the edit-session geometry pipeline for overlap hide/restore.
      *
      * @param currentNoteValue Existing pitch of the moving note
      * @param newNoteValue Target pitch for the moving note
-     * @param noteStart In/out moving note start tick (may expand through adjacent merge)
-     * @param noteEnd In/out moving note end tick (may expand through adjacent merge)
+     * @param noteStart In/out moving note start tick
+     * @param noteEnd In/out moving note end tick
      * @return true when both note-on and note-off were updated to the new pitch
      */
     bool applyPitchChange(Track& track, EditManager& manager,
@@ -74,15 +74,6 @@ bool moveNoteWithOverlapHandling(Track& track, EditManager& manager,
     bool isNoteWithinMovingNoteRange(uint32_t noteStart, uint32_t noteEnd,
                                      uint32_t movingNoteStart, uint32_t movingNoteEnd,
                                      uint32_t loopLength);
-    
-    void applyShortenOrDelete(MidiEventVec& midiEvents,
-                             const std::vector<std::pair<NoteUtils::DisplayNote, uint32_t>>& notesToShorten,
-                             const std::vector<NoteUtils::DisplayNote>& notesToDelete,
-                             EditManager& manager,
-                             uint8_t channel,
-                             uint32_t loopLength,
-                             NoteUtils::EventIndexMap& onIndex,
-                             NoteUtils::EventIndexMap& offIndex);
     
     // Find the corresponding note-off event for a given note-on event using LIFO pairing logic
     template <typename Alloc>
