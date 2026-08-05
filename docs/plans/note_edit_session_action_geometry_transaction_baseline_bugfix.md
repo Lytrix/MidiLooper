@@ -34,7 +34,7 @@ Moving notes works. Shortened / hidden / removed overlapping notes do not commit
 | 3 | noteId assign only at session open | Done |
 | 4 | Resolve on projected baseline; clamp inverted spans | Done |
 | 5 | Retire `overlapNotes` from commit/filter (4.5 / 4.5b); apply LIFO fallbacks kept behind regression tests | Done |
-| 6 | Native + device verification | Pending |
+| 6 | Native + device verification | Native **742/742**; `teensy41-capture-serial` **SUCCESS** — device HITL pending user flash |
 
 ## Out of scope
 

@@ -160,10 +160,11 @@
 
 | Gate | Pass |
 |------|------|
-| `pio test -e native` | [ ] |
-| Device: stable `flatEvents` | [ ] |
-| Device: `type=1` / `type=2` on same-pitch overlap | [ ] |
-| Device: no `non-canonical store` / `missing in recon` | [ ] |
+| `pio test -e native` | [x] 742/742 (2026-08-05) |
+| `teensy41-capture-serial` build | [x] SUCCESS |
+| Device: stable `flatEvents` | [ ] pending user flash + re-run |
+| Device: `type=1` / `type=2` on same-pitch overlap | [ ] pending user flash + re-run |
+| Device: no `non-canonical store` / `missing in recon` | [ ] pending user flash + re-run |
 
 ---
 
