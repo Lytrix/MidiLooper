@@ -35,6 +35,9 @@
 #include "Utils/ValidationUtils.h"
 #include "Utils/Diagnostics.h"
 #include "Utils/DiagnosticsEvents.h"
+#include "RunEditSessionGeometryPipeline.h"
+#include "RunEditSessionGeometryPipelineDriver.h"
+#include "EditSessionLiveStoreSpan.h"
 #include <map>
 #include <vector>
 #include <unordered_set>
@@ -1793,6 +1796,49 @@ void EditManager::resetSelection() {
     clearLastFader1SelectNoteId();
 }
 
+void EditManager::applyCreatedNoteOverlapGeometry(Track& track,
+                                                  const DisplayNote& createdNote) {
+    if (!editSession.active || createdNote.noteId == kInvalidNoteId) {
+        return;
+    }
+    const uint32_t loopLength = noteEditLoopLengthTicks(track);
+    if (loopLength == 0) {
+        return;
+    }
+
+    rebuildNoteEditFocusForDisplayNote(track, createdNote);
+    const uint32_t bracketTick = createdNote.startTick % loopLength;
+    applySelectionFromGeometryEdit(track, bracketTick, createdNote.noteId);
+
+    const uint8_t channel = track.getMidiChannel();
+    NoteBaseline editedSpan{};
+    if (!findLinearNoteSpanForNoteId(sessionMidiEvents(), createdNote.noteId, channel, editedSpan,
+                                     createdNote.startTick, loopLength)) {
+        editedSpan = {createdNote.note, createdNote.velocity, createdNote.startTick,
+                      createdNote.endTick};
+    }
+
+    NoteBaseline priorLatch{};
+    runEditSessionGeometryPipelineForCausingNote(track, *this, createdNote.noteId, editedSpan,
+                                                priorLatch, bracketTick, createdNote.note);
+}
+
+void EditManager::applyDeleteNoteOverlapRestore(Track& track) {
+    if (!editSession.active || !editSession.focus.active) {
+        return;
+    }
+    if (editSession.focus.changedOverlapNoteIds.empty()) {
+        return;
+    }
+
+    EditedGeometry editedGeometry{};
+    editedGeometry.selection = sessionState.selection;
+
+    std::unordered_map<NoteId, NoteBaseline, NoteIdHash> priorLatchByNoteId;
+    runEditSessionGeometryPipeline(track, *this, editedGeometry, priorLatchByNoteId, std::nullopt,
+                                 true);
+}
+
 bool EditManager::deleteSelectedNote(Track& track,
                                      const NoteUtils::DisplayNoteVec& filteredNotes) {
     if (selectedNoteIdx < 0 && lastFader1SelectNoteId == kInvalidNoteId) {
@@ -1928,6 +1974,8 @@ bool EditManager::deleteSelectedNote(Track& track,
     }
 
     logger.info("MIDI Encoder: Deleted %d MIDI events for note", deletedCount);
+
+    applyDeleteNoteOverlapRestore(track);
 
     EditPass del{};
     del.passType = EditPassType::Note;

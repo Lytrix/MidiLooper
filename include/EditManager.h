@@ -102,6 +102,8 @@ public:
 
     /// Edit operations (moved from ControlSurfaceManager — Phase 1).
     bool deleteSelectedNote(Track& track, const NoteUtils::DisplayNoteVec& filteredNotes);
+    /// After **Create** — run geometry pipeline with the new note as causing (same-pitch overlap).
+    void applyCreatedNoteOverlapGeometry(Track& track, const NoteUtils::DisplayNote& createdNote);
     bool moveNoteToPosition(Track& track, const NoteUtils::DisplayNote& currentNote,
                             uint32_t targetTick);
     bool changeNoteEndWithOverlapHandling(Track& track, const NoteUtils::DisplayNote& currentNote,
@@ -250,6 +252,8 @@ public:
 private:
     size_t bakeNoteEditSessionStoreToPasses(Track& track);
     void persistActiveNoteEditSession(Track& track);
+    /// After **Delete** — restore overlap notes the removed causing note had hidden or shortened.
+    void applyDeleteNoteOverlapRestore(Track& track);
     void invalidateNoteEditDerivedCaches();
     void emitEditEvent(EditEvent event);
     uint32_t selectedTick = 0;
