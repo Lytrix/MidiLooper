@@ -11,6 +11,17 @@ import serial
 from serial import SerialException
 
 
+def serial_line_resets_heartbeat(line: str) -> bool:
+    """Return False for keepalive lines that must not mask HITL stalls."""
+    if ",DFRAME," in line:
+        return False
+    if ",PERS,work," in line:
+        return False
+    if ",PERS,mid_pass," in line:
+        return False
+    return True
+
+
 @dataclass
 class RunAbort:
     """Optional hard deadline plus serial heartbeat watchdog."""
@@ -64,9 +75,11 @@ class SerialCaptureCollector:
         self._stop = threading.Event()
         self._error: str = ""
         self._last_line_at: Optional[float] = None
+        self._started_at = time.monotonic()
         self._thread = threading.Thread(target=self._run, daemon=True)
 
     def start(self) -> None:
+        self._started_at = time.monotonic()
         self._thread.start()
 
     def line_count(self) -> int:
@@ -102,7 +115,8 @@ class SerialCaptureCollector:
                     continue
                 with self._lock:
                     self._lines.append(line)
-                    self._last_line_at = time.monotonic()
+                    if serial_line_resets_heartbeat(line):
+                        self._last_line_at = time.monotonic()
         except SerialException as exc:
             self._error = str(exc)
             self._stop.set()
@@ -128,13 +142,22 @@ class SerialCaptureCollector:
     def heartbeat_abort_reason(self, timeout_s: float) -> Optional[str]:
         if self._error:
             return f"serial read error: {self._error}"
+        now = time.monotonic()
         with self._lock:
-            if self._last_line_at is None:
-                return None
-            elapsed = time.monotonic() - self._last_line_at
+            last_at = self._last_line_at
+            started_at = self._started_at
+        if last_at is None:
+            elapsed = now - started_at
+            if elapsed > timeout_s:
+                return (
+                    f"serial capture: no meaningful lines within {elapsed:.1f}s "
+                    f"(limit {timeout_s:.1f}s)"
+                )
+            return None
+        elapsed = now - last_at
         if elapsed > timeout_s:
             return (
-                f"serial heartbeat lost ({elapsed:.1f}s since last line, "
+                f"serial heartbeat lost ({elapsed:.1f}s since last meaningful line, "
                 f"limit {timeout_s:.1f}s)"
             )
         return None

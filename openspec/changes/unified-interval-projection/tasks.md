@@ -72,8 +72,8 @@
 
 ## 6. Unblock overlap (Phase 6)
 
-- [ ] 6.1 Sync `edit-session-action-geometry` delta specs — step 3 = Edit projection; remove task 1.2a `normalizeWrapToLinear`
-- [ ] 6.2 Sync `edit-session-action-geometry/design.md` D20 → Edit projection reference
+- [x] 6.1 Sync `edit-session-action-geometry` delta specs — step 3 = Edit projection; remove task 1.2a `normalizeWrapToLinear` (2026-08-04)
+- [x] 6.2 Sync `edit-session-action-geometry/design.md` D20 → Edit projection reference (2026-08-04)
 - [ ] 6.3 Resume [`derived_note_overlap_logic_handoff.md`](../../docs/plans/derived_note_overlap_logic_handoff.md) at Phase 1 types
 - [ ] 6.4 `/opsx:archive` → `openspec/specs/unified-interval-projection/`; absorb `loop-wrap-projection` alias language
 

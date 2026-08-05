@@ -1,8 +1,8 @@
 # Prior art — EditSessionAction geometry
 
 **Date:** 2026-07-04  
-**OpenSpec:** [`openspec/changes/edit-session-action-geometry/`](../../openspec/changes/edit-session-action-geometry/)  
-**Status:** Decisions recorded (Q1–Q16)
+**OpenSpec:** archived [`openspec/changes/archive/2026-08-05-edit-session-action-geometry/`](../../openspec/changes/archive/2026-08-05-edit-session-action-geometry/) — normative [`openspec/specs/edit-session-action-geometry/`](../../openspec/specs/edit-session-action-geometry/)  
+**Status:** **Complete** — doc tasks 0.7/0.8 checked in OpenSpec `tasks.md` (2026-08-05). HITL evidence: manual PASS for tasks 4.7h / 4.8i (pitch-lane gate, same-pitch overlap Hide/Shorten).
 
 ---
 
@@ -83,7 +83,7 @@ Capture **NoteMinLength** is a **third tier** (hot stop) — separate from both.
 
 ## Patched artifacts
 
-- [`design.md`](../../openspec/changes/edit-session-action-geometry/design.md)
+- [`design.md`](../../openspec/changes/archive/2026-08-05-edit-session-action-geometry/design.md)
 - [`LOOP_MIDI_STORAGE_AND_VALIDATION.md`](../Guides/LOOP_MIDI_STORAGE_AND_VALIDATION.md)
 - [`capture_pass_note_min_length_refinement.md`](capture_pass_note_min_length_refinement.md)
 - `include/Globals.h` — `DEFAULT_NOTE_MIN_LENGTH_*`, `noteMinLengthTicks`, `noteMinLengthRemoveEnabled`
@@ -94,7 +94,7 @@ Implementation of `removePairsShorterThanNoteMinLength` → capture follow-on Op
 
 ## Architecture review additions (2026-07-04 post-review)
 
-Recorded in [`design.md`](../../openspec/changes/edit-session-action-geometry/design.md) — summary:
+Recorded in [`design.md`](../../openspec/changes/archive/2026-08-05-edit-session-action-geometry/design.md) — summary:
 
 | # | Topic | Decision |
 |---|-------|----------|

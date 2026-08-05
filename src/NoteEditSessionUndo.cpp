@@ -63,12 +63,14 @@ size_t estimatedSessionUndoInternalBytes(const SessionUndoEntry& entry) {
     bytes += row.addedEvents.size() * sizeof(MidiEvent);
   }
   bytes += entry.editPassIdsAtPush.size() * sizeof(EditPassId);
+  bytes += entry.focus.changedOverlapNoteIds.size() * sizeof(NoteId);
   if (entry.hasRedoPayload) {
     bytes += entry.redoEditRows.size() * sizeof(EditPass);
     for (const EditPass& row : entry.redoEditRows) {
       bytes += row.addedEvents.size() * sizeof(MidiEvent);
     }
     bytes += entry.redoEditPassIds.size() * sizeof(EditPassId);
+    bytes += entry.redoFocus.changedOverlapNoteIds.size() * sizeof(NoteId);
   }
   return bytes;
 }
@@ -120,7 +122,9 @@ SessionUndoEntry buildSessionUndoEntry(const NoteEditFocus& focus, EditorSelecti
   std::vector<MidiEvent, Alloc> resolvedFlat = sessionFlat;
   NoteEditFocus focusCopy = focus;
   resolveOverlapNotesForPreCommit(resolvedFlat, focusCopy, channel, loopLength);
-  entry.editRows = buildPreCommitEditPasses(focusCopy, channel);
+  MidiEventVec flatForBaselineDiff(resolvedFlat.begin(), resolvedFlat.end());
+  entry.editRows =
+      buildPreCommitEditPasses(focusCopy, channel, &flatForBaselineDiff, loopLength);
   return entry;
 }
 

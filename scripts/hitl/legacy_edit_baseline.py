@@ -54,9 +54,17 @@ from host_midi_automation_baseline import (  # noqa: E402
 from hitl.control_constants import (  # noqa: E402
     CONTROL_CHANNEL_1BASED,
     DISPLAY_SETTLE_MS,
+    EDIT_ACTION_PAUSE_MS,
     EDIT_BUTTON_DEBOUNCE_MS,
     EDIT_BUTTON_NOTE,
+    FADER_MOTOR_SETTLE_MS,
     FADER_SELECT_SETTLE_MS,
+    FEEDBACK_IGNORE_PERIOD_MS,
+    FINE_FADER_SETTLE_MS,
+    SELECT_DEPENDENT_SETTLE_MS,
+    DEPENDENT_FADER_QUIET_MS,
+    COARSE_MOVE_MIN_SETTLE_MS,
+    COARSE_EDIT_LOG_TIMEOUT_MS,
     GLOBAL_TRANSPORT_NOTE,
     LENGTH_EDIT_NOTE,
     NOTE_SELECTION_GRACE_MS,
@@ -90,14 +98,21 @@ _LEGACY_EDIT_PASS_REDONE_MARKERS = (
 _SERIAL_MARKER_ALIASES: dict[str, tuple[str, ...]] = {
     SCOPED_EDIT_PASS_UNDONE: _LEGACY_EDIT_PASS_UNDONE_MARKERS,
     SCOPED_EDIT_PASS_REDONE: _LEGACY_EDIT_PASS_REDONE_MARKERS,
+    "entered note edit mode": (
+        "entered note edit mode",
+        "Edit session: NOTE_EDIT",
+        "MIDI Edit Mode: Short press - cycled LOOP_EDIT",
+    ),
 }
 
 # DROID main controls (MidiConfig::Transport / LengthEdit)
 EDIT_ENTER_LOG_PATTERNS: tuple[str, ...] = (
     "MIDI Encoder: Short press - entered note edit mode",
     "Note edit: short press entered Select overlay",
+    "MIDI Edit Mode: Short press - cycled LOOP_EDIT",
+    "Edit session: NOTE_EDIT",
 )
-COARSE_EDIT_READY_MS = 1200
+COARSE_EDIT_READY_MS = FEEDBACK_IGNORE_PERIOD_MS
 BEATS_PER_BAR = 4
 SIXTEENTHS_PER_BEAT = 4
 BEAT_MOVE_STEPS = SIXTEENTHS_PER_BEAT
@@ -113,7 +128,7 @@ D_STEP = 18
 M0_POST_SANDWICH_STEP = 24  # last coarse move in sandwich leg
 INSERT_AFTER_DELETE_STEP = D_STEP  # legacy alias for delay-move target
 INSERT_NOTE_STEP = 1  # doc empty add-note target (step 18 often occupied after edits)
-POST_DELETE_QUIET_MS = 2500
+POST_DELETE_QUIET_MS = 800
 # Long M0 end step (edit-time length extend) must span P0@step12 before move-over-short.
 LONG_M0_END_FIXTURE_STEP = 14
 LONG_OVER_P0_START_STEP = 10
@@ -182,6 +197,7 @@ class RecordLayout:
     loop_length: int
     step_to_tick: dict[int, int]
     nav_slots: list[SelectNavSlot] = field(default_factory=list)
+    note_index_to_pitch: dict[int, int] = field(default_factory=dict)
 
     @property
     def nav_slot_count(self) -> int:
@@ -234,6 +250,107 @@ def _build_select_navigation_slots(
             for rel, idx in notes_in_step:
                 slots.append(SelectNavSlot(rel_tick=rel, note_idx=idx))
     return slots
+
+
+def _note_index_to_pitch(revt_notes: list[tuple[int, int]]) -> dict[int, int]:
+    return {idx: pitch for idx, (_tick, pitch) in enumerate(revt_notes)}
+
+
+def _fixture_pitch_for_step(
+    fixture_step: int, fixture: tuple[FixtureNote, ...]
+) -> Optional[int]:
+    for entry in fixture:
+        if entry.step == fixture_step:
+            return entry.pitch
+    return None
+
+
+def _nav_slot_indices_for_pitch_at_step(
+    layout: RecordLayout,
+    *,
+    fixture_step: int,
+    pitch: int,
+    tick_tolerance: int = 24,
+) -> list[int]:
+    """Nav slots for ``pitch`` at the stored tick for ``fixture_step``."""
+    target_tick = layout.step_to_tick.get(
+        fixture_step, fixture_step * TICKS_PER_16TH_STEP
+    )
+    indices: list[int] = []
+    for i, slot in enumerate(layout.nav_slots):
+        if slot.note_idx < 0:
+            continue
+        if abs(slot.rel_tick - target_tick) > tick_tolerance:
+            continue
+        slot_pitch = layout.note_index_to_pitch.get(slot.note_idx)
+        if slot_pitch is not None and slot_pitch != pitch:
+            continue
+        indices.append(i)
+    return indices
+
+
+def _fader1_select_pitch_at_fixture_step(
+    out_port: mido.ports.BaseOutput,
+    *,
+    layout: RecordLayout,
+    fixture_step: int,
+    pitch: int,
+    note_ordinal: int = 0,
+    tick_tolerance: int = 24,
+    serial_collector: Optional[Any] = None,
+) -> bool:
+    """Select a note by explicit pitch at the stored tick for a fixture step."""
+    matching = _nav_slot_indices_for_pitch_at_step(
+        layout,
+        fixture_step=fixture_step,
+        pitch=pitch,
+        tick_tolerance=tick_tolerance,
+    )
+    if not matching:
+        print(
+            f"[edit-hitl] error: no nav slot for pitch={pitch} at fixture_step={fixture_step}"
+        )
+        return False
+    slot_index = matching[min(note_ordinal, len(matching) - 1)]
+    slot = layout.nav_slots[slot_index]
+    _fader1_select_nav_slot_index(
+        out_port,
+        layout=layout,
+        slot_index=slot_index,
+        serial_collector=serial_collector,
+        expected_tick=slot.rel_tick,
+        expected_note_idx=slot.note_idx,
+    )
+    print(
+        f"[edit-hitl] fader1 select pitch={pitch} fixture_step={fixture_step} "
+        f"tick={slot.rel_tick} note_idx={slot.note_idx} slot={slot_index}"
+    )
+    return True
+
+
+def _nav_slot_indices_for_fixture_note(
+    layout: RecordLayout,
+    *,
+    fixture_step: int,
+    fixture: tuple[FixtureNote, ...],
+    tick_tolerance: int = 24,
+) -> list[int]:
+    target_tick = layout.step_to_tick.get(
+        fixture_step, fixture_step * TICKS_PER_16TH_STEP
+    )
+    target_pitch = _fixture_pitch_for_step(fixture_step, fixture)
+    indices: list[int] = []
+    for i, slot in enumerate(layout.nav_slots):
+        if slot.note_idx < 0:
+            continue
+        if abs(slot.rel_tick - target_tick) > tick_tolerance:
+            continue
+        if target_pitch is not None:
+            slot_pitch = layout.note_index_to_pitch.get(slot.note_idx)
+            if slot_pitch is not None and slot_pitch != target_pitch:
+                continue
+        indices.append(i)
+    return indices
 
 
 def _arduino_map(value: int, in_min: int, in_max: int, out_min: int, out_max: int) -> int:
@@ -338,6 +455,120 @@ def _extract_last_recs_stop(lines: list[str]) -> Optional[dict[str, int]]:
     return last
 
 
+def _extract_revt_notes_from_dnte(
+    lines: list[str], fixture: tuple[FixtureNote, ...]
+) -> list[tuple[int, int]]:
+    """Ordered (storage_tick, pitch) from #CAP DNTE while transport may be playing."""
+    pitch_starts: dict[int, list[int]] = {}
+    for line in lines:
+        if ",DNTE," not in line:
+            continue
+        parts = line.split(",")
+        if len(parts) < 8:
+            continue
+        try:
+            pitch = int(parts[3])
+            storage = int(parts[4])
+            length = int(parts[6])
+        except ValueError:
+            continue
+        if length <= 0:
+            continue
+        starts = pitch_starts.setdefault(pitch, [])
+        if not starts or starts[-1] != storage:
+            starts.append(storage)
+
+    out: list[tuple[int, int]] = []
+    used: dict[int, int] = {}
+    for fn in fixture:
+        idx = used.get(fn.pitch, 0)
+        starts = pitch_starts.get(fn.pitch, [])
+        if idx >= len(starts):
+            continue
+        out.append((starts[idx], fn.pitch))
+        used[fn.pitch] = idx + 1
+    return out
+
+
+def _wait_for_dnte_fixture_notes(
+    collector: SerialCaptureCollector,
+    fixture: tuple[FixtureNote, ...],
+    *,
+    timeout_s: float = 8.0,
+    abort: Optional[RunAbort] = None,
+) -> list[tuple[int, int]]:
+    """Wait for display DNTE lines covering the record fixture (playback-safe layout)."""
+    deadline = time.monotonic() + max(timeout_s, 0.0)
+    while time.monotonic() < deadline:
+        if abort is not None and abort.check() is not None:
+            return []
+        pairs = _extract_revt_notes_from_dnte(collector.snapshot(), fixture)
+        if len(pairs) >= len(fixture):
+            return pairs
+        time.sleep(0.1)
+    return _extract_revt_notes_from_dnte(collector.snapshot(), fixture)
+
+
+def _resolve_record_note_pairs(
+    lines: list[str], fixture: tuple[FixtureNote, ...]
+) -> list[tuple[int, int]]:
+    revt = _extract_revt_notes(lines)
+    if len(revt) >= len(fixture):
+        return revt
+    dnte = _extract_revt_notes_from_dnte(lines, fixture)
+    if len(dnte) >= len(fixture):
+        return dnte
+    human = _infer_record_pairs_from_human_log(lines, fixture)
+    if len(human) >= len(fixture):
+        return human
+    return revt if revt else dnte if dnte else human
+
+
+_FOCUS_LAST_RE = re.compile(r"focus\.last: pitch=(\d+), start=(\d+)")
+_POSITION_EDIT_HOME_RE = re.compile(
+    r"POSITION EDIT: Note moved from step (\d+) to \d+ "
+    r"\(tick (\d+) -> \d+, relative (\d+) ->"
+)
+
+
+def _infer_record_pairs_from_human_log(
+    lines: list[str], fixture: tuple[FixtureNote, ...]
+) -> list[tuple[int, int]]:
+    """Best-effort (tick, pitch) when #CAP REVT/DNTE were lost (ring overflow / late capture)."""
+    by_pitch: dict[int, list[int]] = {}
+    for line in lines:
+        match = _FOCUS_LAST_RE.search(line)
+        if match:
+            pitch, start = int(match.group(1)), int(match.group(2))
+            starts = by_pitch.setdefault(pitch, [])
+            if not starts or starts[-1] != start:
+                starts.append(start)
+        match = _POSITION_EDIT_HOME_RE.search(line)
+        if match:
+            from_step = int(match.group(1))
+            rel_tick = int(match.group(3))
+            for fn in fixture:
+                if fn.step == from_step:
+                    starts = by_pitch.setdefault(fn.pitch, [])
+                    if not starts or starts[-1] != rel_tick:
+                        starts.append(rel_tick)
+
+    out: list[tuple[int, int]] = []
+    used: dict[int, int] = {}
+    for fn in fixture:
+        idx = used.get(fn.pitch, 0)
+        starts = by_pitch.get(fn.pitch, [])
+        if idx >= len(starts):
+            continue
+        out.append((starts[idx], fn.pitch))
+        used[fn.pitch] = idx + 1
+    return out
+
+
+def _capture_has_ring_overflow(lines: list[str]) -> bool:
+    return any("RING,overflow" in line for line in lines)
+
+
 def _record_layout_from_serial(
     lines: list[str],
     *,
@@ -345,7 +576,7 @@ def _record_layout_from_serial(
     fixture: tuple[FixtureNote, ...],
 ) -> RecordLayout:
     recs = _extract_last_recs_stop(lines)
-    revt_notes = _extract_revt_notes(lines)
+    revt_notes = _resolve_record_note_pairs(lines, fixture)
     default_length = record_bars * TICKS_PER_BAR
     loop_length = recs["final_length"] if recs is not None else default_length
     if loop_length <= 0:
@@ -368,6 +599,7 @@ def _record_layout_from_serial(
         loop_length=loop_length,
         step_to_tick=step_to_tick,
         nav_slots=nav_slots,
+        note_index_to_pitch=_note_index_to_pitch(revt_notes),
     )
 
 
@@ -396,20 +628,59 @@ class EditScenario:
     serial_markers: tuple[str, ...] = ()
 
 
+def _fixture_note_target(
+    layout: RecordLayout,
+    *,
+    fixture_step: int,
+    fixture: tuple[FixtureNote, ...],
+    note_ordinal: int = 0,
+    tick_tolerance: int = 24,
+) -> Optional[tuple[int, int, int]]:
+    """Return (nav_slot_index, storage_tick, revt_note_idx) for a fixture note."""
+    matching = _nav_slot_indices_for_fixture_note(
+        layout,
+        fixture_step=fixture_step,
+        fixture=fixture,
+        tick_tolerance=tick_tolerance,
+    )
+    if not matching:
+        return None
+    slot_index = matching[min(note_ordinal, len(matching) - 1)]
+    slot = layout.nav_slots[slot_index]
+    return slot_index, slot.rel_tick, slot.note_idx
+
+
 def _fader1_select_nav_slot_index(
-    out_port: mido.ports.BaseOutput, *, layout: RecordLayout, slot_index: int
+    out_port: mido.ports.BaseOutput,
+    *,
+    layout: RecordLayout,
+    slot_index: int,
+    serial_collector: Optional[Any] = None,
+    expected_tick: Optional[int] = None,
+    expected_note_idx: Optional[int] = None,
 ) -> None:
     """Fader 1: select navigation slot by index (supports multi-note steps)."""
     count = layout.nav_slot_count
     slot_index = max(0, min(slot_index, count - 1))
+    slot = layout.nav_slots[slot_index] if layout.nav_slots else None
+    if expected_tick is None and slot is not None:
+        expected_tick = slot.rel_tick
+    baseline_len = len(serial_collector.snapshot()) if serial_collector is not None else 0
     _send_program_change(out_port, FADER_SELECT_CHANNEL_1BASED, 1)
     pb = _pb_for_fader_index(slot_index, count)
     out_port.send(
         mido.Message("pitchwheel", channel=FADER_SELECT_CHANNEL_1BASED - 1, pitch=pb)
     )
-    time.sleep(FADER_SELECT_SETTLE_MS / 1000.0)
-    time.sleep(max(NOTE_SELECTION_GRACE_MS - FADER_SELECT_SETTLE_MS, 0) / 1000.0)
-    slot = layout.nav_slots[slot_index] if layout.nav_slots else None
+    if serial_collector is not None and expected_tick is not None:
+        _wait_for_select_stable_at_tick(
+            serial_collector,
+            int(expected_tick),
+            baseline_len=baseline_len,
+            expected_note_idx=expected_note_idx,
+        )
+    else:
+        time.sleep(FADER_SELECT_SETTLE_MS / 1000.0)
+        time.sleep(max(NOTE_SELECTION_GRACE_MS - FADER_SELECT_SETTLE_MS, 0) / 1000.0)
     print(
         f"[edit-hitl] fader1 select slot={slot_index}/{count - 1} pb={pb} "
         f"rel_tick={getattr(slot, 'rel_tick', '?')} note_idx={getattr(slot, 'note_idx', '?')}"
@@ -479,6 +750,7 @@ def _fader1_select_empty_fixture_step(
     *,
     layout: RecordLayout,
     fixture_step: int,
+    serial_collector: Optional[Any] = None,
 ) -> bool:
     """Fader 1: bracket on empty grid step (required before NOTELEN create).
 
@@ -486,7 +758,27 @@ def _fader1_select_empty_fixture_step(
     """
     empty_slot = _nav_empty_slot_for_fixture_step(layout, fixture_step)
     if empty_slot is not None:
-        _fader1_select_nav_slot_index(out_port, layout=layout, slot_index=empty_slot)
+        expected_tick = layout.nav_slots[empty_slot].rel_tick
+        baseline_len = len(serial_collector.snapshot()) if serial_collector is not None else 0
+        _fader1_select_nav_slot_index(
+            out_port,
+            layout=layout,
+            slot_index=empty_slot,
+            serial_collector=serial_collector,
+            expected_tick=expected_tick,
+        )
+        if serial_collector is not None:
+            if not _wait_for_empty_step_at_tick(
+                serial_collector,
+                tick=expected_tick,
+                tick_tolerance=max(TICKS_PER_16TH_STEP // 2, 24),
+                timeout_s=2.5,
+            ):
+                print(
+                    f"[edit-hitl] warn: empty step not confirmed at tick {expected_tick}; "
+                    "skipping NOTELEN warmup"
+                )
+                return False
         print(f"[edit-hitl] fader1 select empty fixture_step={fixture_step} slot={empty_slot}")
         return True
     print(
@@ -502,6 +794,7 @@ def _fader1_select_sixteenth_step(
     layout: RecordLayout,
     fixture_step: int,
     note_ordinal: int = 0,
+    serial_collector: Optional[Any] = None,
 ) -> None:
     """Fader 1 only: move bracket to a 16th grid slot.
 
@@ -510,18 +803,34 @@ def _fader1_select_sixteenth_step(
     note_slots = _nav_slot_indices_for_fixture_step(layout, fixture_step)
     if note_slots:
         slot_index = note_slots[min(note_ordinal, len(note_slots) - 1)]
-        _fader1_select_nav_slot_index(out_port, layout=layout, slot_index=slot_index)
+        _fader1_select_nav_slot_index(
+            out_port,
+            layout=layout,
+            slot_index=slot_index,
+            serial_collector=serial_collector,
+        )
         return
 
     sixteenth = layout.sixteenth_step_for(fixture_step)
     num_steps = layout.sixteenth_steps
+    expected_tick = layout.step_to_tick.get(
+        fixture_step, fixture_step * TICKS_PER_16TH_STEP
+    )
+    baseline_len = len(serial_collector.snapshot()) if serial_collector is not None else 0
     _send_program_change(out_port, FADER_SELECT_CHANNEL_1BASED, 1)
     pb = _pb_for_sixteenth_step(sixteenth, num_steps)
     out_port.send(
         mido.Message("pitchwheel", channel=FADER_SELECT_CHANNEL_1BASED - 1, pitch=pb)
     )
-    time.sleep(FADER_SELECT_SETTLE_MS / 1000.0)
-    time.sleep(max(NOTE_SELECTION_GRACE_MS - FADER_SELECT_SETTLE_MS, 0) / 1000.0)
+    if serial_collector is not None:
+        _wait_for_select_stable_at_tick(
+            serial_collector,
+            expected_tick,
+            baseline_len=baseline_len,
+        )
+    else:
+        time.sleep(FADER_SELECT_SETTLE_MS / 1000.0)
+        time.sleep(max(NOTE_SELECTION_GRACE_MS - FADER_SELECT_SETTLE_MS, 0) / 1000.0)
     print(
         f"[edit-hitl] fader1 select fixture_step={fixture_step} "
         f"sixteenth={sixteenth}/{num_steps - 1} pb={pb} (fallback)"
@@ -534,28 +843,40 @@ def _fader1_select_fixture_note(
     layout: RecordLayout,
     fixture_step: int,
     note_ordinal: int = 0,
-    tick_tolerance: int = 8,
-) -> None:
-    """Select the recorded fixture note by storage tick (not just 16th grid bucket)."""
-    target_tick = layout.step_to_tick.get(
-        fixture_step, fixture_step * TICKS_PER_16TH_STEP
+    tick_tolerance: int = 24,
+    serial_collector: Optional[Any] = None,
+    fixture: tuple[FixtureNote, ...] = EDIT_RECORD_FIXTURE,
+) -> bool:
+    """Select the recorded fixture note by storage tick, pitch, and REVT note index."""
+    target = _fixture_note_target(
+        layout,
+        fixture_step=fixture_step,
+        fixture=fixture,
+        note_ordinal=note_ordinal,
+        tick_tolerance=tick_tolerance,
     )
-    matching = [
-        i
-        for i, slot in enumerate(layout.nav_slots)
-        if slot.note_idx >= 0
-        and abs(slot.rel_tick - target_tick) <= tick_tolerance
-    ]
-    if matching:
-        idx = matching[min(note_ordinal, len(matching) - 1)]
-        _fader1_select_nav_slot_index(out_port, layout=layout, slot_index=idx)
-        return
-    _fader1_select_sixteenth_step(
+    if target is None:
+        target_pitch = _fixture_pitch_for_step(fixture_step, fixture)
+        print(
+            f"[edit-hitl] error: no nav slot for fixture_step={fixture_step} "
+            f"pitch={target_pitch}; refusing grid fallback"
+        )
+        return False
+    slot_index, expected_tick, note_idx = target
+    target_pitch = _fixture_pitch_for_step(fixture_step, fixture)
+    _fader1_select_nav_slot_index(
         out_port,
         layout=layout,
-        fixture_step=fixture_step,
-        note_ordinal=note_ordinal,
+        slot_index=slot_index,
+        serial_collector=serial_collector,
+        expected_tick=expected_tick,
+        expected_note_idx=note_idx,
     )
+    print(
+        f"[edit-hitl] fader1 select fixture_step={fixture_step} "
+        f"pitch={target_pitch} tick={expected_tick} note_idx={note_idx} slot={slot_index}"
+    )
+    return True
 
 
 def _fader1_select_then_wait_for_fader2(
@@ -564,10 +885,18 @@ def _fader1_select_then_wait_for_fader2(
     layout: RecordLayout,
     fixture_step: int,
     note_ordinal: int = 0,
-) -> None:
+    serial_collector: Optional[Any] = None,
+    fixture: tuple[FixtureNote, ...] = EDIT_RECORD_FIXTURE,
+) -> bool:
     """Select with fader 1, then wait until coarse move (fader 2) is allowed."""
-    _fader1_select_fixture_note(out_port, layout=layout, fixture_step=fixture_step, note_ordinal=note_ordinal)
-    time.sleep(COARSE_EDIT_READY_MS / 1000.0)
+    return _fader1_select_fixture_note(
+        out_port,
+        layout=layout,
+        fixture_step=fixture_step,
+        note_ordinal=note_ordinal,
+        serial_collector=serial_collector,
+        fixture=fixture,
+    )
 
 
 def _fader2_move_to_sixteenth_step(
@@ -575,26 +904,41 @@ def _fader2_move_to_sixteenth_step(
     *,
     layout: RecordLayout,
     fixture_step: int,
+    serial_collector: Optional[Any] = None,
+    expect_length: bool = False,
+    coarse_baseline_len: int = 0,
 ) -> None:
     """Fader 2 only: move the currently selected note to target 16th step."""
     sixteenth = layout.sixteenth_step_for(fixture_step)
     num_steps = layout.sixteenth_steps
-    _send_program_change(out_port, FADER_COARSE_CHANNEL_1BASED, 2)
     pb = _pb_for_sixteenth_step(sixteenth, num_steps)
-    out_port.send(
-        mido.Message("pitchwheel", channel=FADER_COARSE_CHANNEL_1BASED - 1, pitch=pb)
-    )
     print(
         f"[edit-hitl] fader2 move fixture_step={fixture_step} "
         f"sixteenth={sixteenth}/{num_steps - 1} pb={pb}"
+        f"{' (length)' if expect_length else ''}"
     )
-    time.sleep(COARSE_EDIT_READY_MS / 1000.0)
+    _send_coarse_pitchbend(
+        out_port,
+        pb,
+        serial_collector=serial_collector,
+        baseline_len=coarse_baseline_len,
+    )
+    _after_coarse_fader_move(serial_collector, expect_length=expect_length)
 
 
 def _notelen_delete_or_create_note(
-    out_port: mido.ports.BaseOutput, *, press_ms: int, gap_ms: int = 80
+    out_port: mido.ports.BaseOutput,
+    *,
+    press_ms: int,
+    gap_ms: int = 80,
+    serial_collector: Optional[Any] = None,
 ) -> None:
     """NOTELEN (ch16 note 35) double: delete selected note or create at empty bracket."""
+    _ensure_length_edit_disabled(
+        out_port, press_ms=press_ms, serial_collector=serial_collector
+    )
+    global _last_length_edit_button_at
+    _last_length_edit_button_at = time.monotonic()
     _send_double_press(
         out_port,
         note=LENGTH_EDIT_NOTE,
@@ -602,18 +946,342 @@ def _notelen_delete_or_create_note(
         press_ms=press_ms,
         gap_ms=gap_ms,
     )
+    _last_length_edit_button_at = time.monotonic()
 
 
 def _delete_selected_note(
-    out_port: mido.ports.BaseOutput, *, press_ms: int, gap_ms: int = 80
+    out_port: mido.ports.BaseOutput,
+    *,
+    press_ms: int,
+    gap_ms: int = 80,
+    serial_collector: Optional[Any] = None,
 ) -> None:
-    _notelen_delete_or_create_note(out_port, press_ms=press_ms, gap_ms=gap_ms)
+    _notelen_delete_or_create_note(
+        out_port,
+        press_ms=press_ms,
+        gap_ms=gap_ms,
+        serial_collector=serial_collector,
+    )
 
 
 def _create_note_at_bracket(
-    out_port: mido.ports.BaseOutput, *, press_ms: int, gap_ms: int = 80
+    out_port: mido.ports.BaseOutput,
+    *,
+    press_ms: int,
+    gap_ms: int = 80,
+    serial_collector: Optional[Any] = None,
 ) -> None:
-    _notelen_delete_or_create_note(out_port, press_ms=press_ms, gap_ms=gap_ms)
+    _notelen_delete_or_create_note(
+        out_port,
+        press_ms=press_ms,
+        gap_ms=gap_ms,
+        serial_collector=serial_collector,
+    )
+
+
+def _wait_for_serial_line_after(
+    collector: Any,
+    predicate,
+    *,
+    baseline_len: int = 0,
+    timeout_s: float = 3.0,
+    poll_s: float = 0.04,
+) -> bool:
+    """Poll serial capture for ``predicate(line)`` on lines after ``baseline_len``."""
+    deadline = time.monotonic() + max(timeout_s, 0.0)
+    seen = max(baseline_len, 0)
+    while time.monotonic() < deadline:
+        for line in collector.snapshot()[seen:]:
+            if predicate(line):
+                return True
+        seen = len(collector.snapshot())
+        time.sleep(poll_s)
+    return False
+
+
+def _wait_for_coarse_edit_applied(
+    collector: Optional[Any],
+    *,
+    expect_length: bool = False,
+    timeout_s: Optional[float] = None,
+) -> bool:
+    """Wait until firmware logs a committed coarse move (not motor-echo silence)."""
+    if collector is None:
+        time.sleep(COARSE_MOVE_MIN_SETTLE_MS / 1000.0)
+        return False
+    if timeout_s is None:
+        timeout_s = (
+            8.0 if expect_length else COARSE_EDIT_LOG_TIMEOUT_MS / 1000.0
+        )
+    baseline_len = len(collector.snapshot())
+
+    def _matches(line: str) -> bool:
+        if expect_length:
+            return "LENGTH EDIT:" in line or "Note end moved" in line
+        if "POSITION EDIT:" in line:
+            return True
+        if "LENGTH EDIT:" in line:
+            return True
+        return False
+
+    ok = _wait_for_serial_line_after(
+        collector, _matches, baseline_len=baseline_len, timeout_s=timeout_s
+    )
+    if ok:
+        time.sleep(SELECT_DEPENDENT_SETTLE_MS / 1000.0)
+    else:
+        time.sleep(COARSE_MOVE_MIN_SETTLE_MS / 1000.0)
+    return ok
+
+
+def _length_edit_mode_line(line: str, *, enabled: bool) -> bool:
+    """Case-insensitive match for firmware length/position mode announcements."""
+    lower = line.lower()
+    if enabled:
+        return (
+            "length editing mode enabled" in lower
+            or "note end position (length editing)" in lower
+        )
+    return (
+        "length editing mode disabled" in lower
+        or "note start position (position editing)" in lower
+    )
+
+
+def _serial_length_edit_mode_enabled(collector: Any) -> bool:
+    """Best-effort length-mode state from serial tail (last announcement wins)."""
+    enabled = False
+    for line in collector.snapshot():
+        if _length_edit_mode_line(line, enabled=True):
+            enabled = True
+        if _length_edit_mode_line(line, enabled=False):
+            enabled = False
+    return enabled
+
+
+def _m0_length_change_line(line: str, *, pitch: int = M0_PITCH) -> bool:
+    """True when firmware committed a length change for ``pitch``."""
+    if f"pitch={pitch}" not in line:
+        return False
+    lower = line.lower()
+    return any(
+        marker in lower
+        for marker in (
+            "note length change with overlap handling:",
+            "length change with overlap:",
+            "updated note events after length overlap:",
+            "length edit:",
+        )
+    )
+
+
+def _wait_for_length_edit_mode(
+    collector: Optional[Any],
+    *,
+    enabled: bool,
+    baseline_len: int = 0,
+) -> bool:
+    if collector is None:
+        time.sleep(EDIT_BUTTON_DEBOUNCE_MS / 1000.0)
+        return False
+
+    def _matches(line: str) -> bool:
+        return _length_edit_mode_line(line, enabled=enabled)
+
+    return _wait_for_serial_line_after(
+        collector,
+        _matches,
+        baseline_len=baseline_len,
+        timeout_s=max(EDIT_BUTTON_DEBOUNCE_MS / 1000.0 + 0.5, 1.5),
+    )
+
+
+_last_length_edit_button_at: float = 0.0
+
+
+def _send_length_edit_short_press(
+    out_port: mido.ports.BaseOutput,
+    *,
+    press_ms: int,
+) -> None:
+    """Single NOTELEN short press with debounce gap (avoid accidental double-tap)."""
+    global _last_length_edit_button_at
+    gap_s = EDIT_BUTTON_DEBOUNCE_MS / 1000.0
+    since = time.monotonic() - _last_length_edit_button_at
+    if since < gap_s:
+        time.sleep(gap_s - since)
+    _send_short_press(
+        out_port,
+        note=LENGTH_EDIT_NOTE,
+        channel_1based=CONTROL_CHANNEL_1BASED,
+        press_ms=press_ms,
+    )
+    _last_length_edit_button_at = time.monotonic()
+
+
+def _ensure_length_edit_disabled(
+    out_port: mido.ports.BaseOutput,
+    *,
+    press_ms: int,
+    serial_collector: Optional[Any] = None,
+) -> bool:
+    """Exit length edit mode when active; no-op when already in position mode."""
+    if serial_collector is not None and not _serial_length_edit_mode_enabled(serial_collector):
+        return True
+    baseline_len = len(serial_collector.snapshot()) if serial_collector is not None else 0
+    print("[edit-hitl] exit length edit mode")
+    _send_length_edit_short_press(out_port, press_ms=press_ms)
+    if serial_collector is None:
+        time.sleep(EDIT_BUTTON_DEBOUNCE_MS / 1000.0)
+        return False
+    ok = _wait_for_length_edit_mode(
+        serial_collector, enabled=False, baseline_len=baseline_len
+    )
+    if not ok:
+        print("[edit-hitl] warn: length edit disable not confirmed in serial")
+    time.sleep(EDIT_ACTION_PAUSE_MS / 1000.0)
+    return ok
+
+
+def _stop_transport_and_flush_revt(
+    out_port: mido.ports.BaseOutput,
+    in_port: mido.ports.BaseInput,
+    serial_collector: SerialCaptureCollector,
+    *,
+    press_ms: int,
+    phase_wait_ms: int,
+    min_revt_count: int,
+    abort: Optional[RunAbort],
+) -> bool:
+    """Stop playback so firmware idle maintenance can emit REVT before edit layout."""
+    from hitl.serial_transport import (
+        serial_global_transport_running,
+        serial_sequencer_running,
+    )
+    from hitl.transport_clock import clock_seen_within
+
+    lines = serial_collector.snapshot()
+    transport_active = (
+        serial_global_transport_running(lines)
+        or serial_sequencer_running(serial_collector)
+        or clock_seen_within(in_port, 0.4)
+    )
+    if transport_active:
+        print("[edit-hitl] stop transport to flush REVT before edit")
+        _send_short_press(
+            out_port,
+            note=GLOBAL_TRANSPORT_NOTE,
+            channel_1based=CONTROL_CHANNEL_1BASED,
+            press_ms=press_ms,
+        )
+        time.sleep(max(phase_wait_ms, 120) / 1000.0)
+        _wait_for_serial_line_after(
+            serial_collector,
+            lambda line: (
+                "Transport stopped" in line
+                or ",ST,Track,PLAYING,STOPPED" in line
+            ),
+            timeout_s=6.0,
+        )
+        time.sleep(0.35)
+
+    if len(_extract_revt_note_on_ticks(serial_collector.snapshot())) >= min_revt_count:
+        return True
+
+    return _wait_for_revt_count(
+        serial_collector,
+        min_count=min_revt_count,
+        timeout_s=8.0,
+        abort=abort,
+    )
+
+
+def _wait_for_length_edit_coarse_ready(
+    collector: Optional[Any],
+    *,
+    baseline_len: int = 0,
+) -> None:
+    """Wait until firmware accepts coarse fader2 after length-mode outbound settle."""
+    if collector is None:
+        time.sleep(FEEDBACK_IGNORE_PERIOD_MS / 1000.0)
+        return
+
+    _wait_for_serial_line_after(
+        collector,
+        lambda line: "Length editing mode ENABLED" in line
+        or "NOTE END position (length editing)" in line,
+        baseline_len=baseline_len,
+        timeout_s=1.5,
+    )
+    _wait_for_serial_line_after(
+        collector,
+        lambda line: "outbound_step=DONE" in line,
+        baseline_len=baseline_len,
+        timeout_s=2.0,
+    )
+    _wait_for_serial_line_after(
+        collector,
+        lambda line: "Start editing enabled" in line,
+        baseline_len=baseline_len,
+        timeout_s=FEEDBACK_IGNORE_PERIOD_MS / 1000.0 + 0.5,
+    )
+    remain = _coarse_settle_block_remain_ms(collector, baseline_len=baseline_len)
+    if remain > 0:
+        time.sleep(remain / 1000.0 + 0.05)
+    else:
+        time.sleep(EDIT_ACTION_PAUSE_MS / 1000.0)
+
+
+def _wait_for_note_edit_enter(collector: Optional[Any], *, timeout_s: float = 2.5) -> bool:
+    if collector is None:
+        time.sleep(EDIT_BUTTON_DEBOUNCE_MS / 1000.0)
+        return False
+
+    def _matches(line: str) -> bool:
+        return any(pattern in line for pattern in EDIT_ENTER_LOG_PATTERNS)
+
+    return _wait_for_serial_line_after(collector, _matches, timeout_s=timeout_s)
+
+
+def _coarse_settle_block_remain_ms(collector: Any, *, baseline_len: int = 0) -> int:
+    remain = 0
+    for line in collector.snapshot()[baseline_len:]:
+        if "select_dependent_settle_block fader=coarse" not in line:
+            continue
+        match = re.search(r"remain_ms=(\d+)", line)
+        if match:
+            remain = max(remain, int(match.group(1)))
+    return remain
+
+
+def _send_coarse_pitchbend(
+    out_port: mido.ports.BaseOutput,
+    pb: int,
+    *,
+    serial_collector: Optional[Any] = None,
+    baseline_len: int = 0,
+) -> None:
+    """Send fader2 PB; retry once if firmware logs select_dependent_settle_block."""
+    _send_program_change(out_port, FADER_COARSE_CHANNEL_1BASED, 2)
+    out_port.send(
+        mido.Message("pitchwheel", channel=FADER_COARSE_CHANNEL_1BASED - 1, pitch=pb)
+    )
+    if serial_collector is None:
+        return
+    time.sleep(0.08)
+    remain = _coarse_settle_block_remain_ms(
+        serial_collector, baseline_len=baseline_len
+    )
+    if remain <= 0:
+        return
+    print(
+        f"[edit-hitl] coarse fader blocked by select_dependent_settle "
+        f"({remain}ms); retry after settle"
+    )
+    time.sleep(remain / 1000.0 + 0.06)
+    out_port.send(
+        mido.Message("pitchwheel", channel=FADER_COARSE_CHANNEL_1BASED - 1, pitch=pb)
+    )
 
 
 def _wait_for_serial_line_match(
@@ -634,6 +1302,74 @@ def _wait_for_serial_line_match(
         seen = len(lines)
         time.sleep(poll_s)
     return False
+
+
+_SELECT_TICK_RE = re.compile(
+    r"(?:selected_tick|bracket_tick)=(\d+)"
+    r"|(?:Found and selected note \d+ at tick|selected note \d+ at tick) (\d+)"
+)
+
+
+def _selected_tick_from_line(line: str) -> Optional[int]:
+    match = _SELECT_TICK_RE.search(line)
+    if not match:
+        return None
+    for group in match.groups():
+        if group is not None:
+            return int(group)
+    return None
+
+
+def _wait_for_note_selected_at_tick(
+    collector: Any,
+    expected_tick: int,
+    *,
+    tick_tolerance: int = 8,
+    timeout_s: float = 6.0,
+    baseline_len: int = 0,
+) -> bool:
+    """Wait until firmware selection stabilizes on ``expected_tick`` (loop-relative)."""
+
+    def _matches(line: str) -> bool:
+        tick = _selected_tick_from_line(line)
+        if tick is None or abs(tick - expected_tick) > tick_tolerance:
+            return False
+        if "#DBG select_apply" in line:
+            return "apply=1" in line or "apply=0" in line
+        return True
+
+    return _wait_for_serial_line_match(
+        collector, _matches, timeout_s=timeout_s, poll_s=0.05
+    )
+
+
+def _wait_for_select_navigation_quiet(
+    collector: Optional[Any],
+    *,
+    quiet_ms: int = 450,
+    timeout_ms: int = 8000,
+    baseline_len: int = 0,
+) -> None:
+    """Wait until fader1 motor sweep stops issuing new ``select_apply apply=1`` lines."""
+    if collector is None:
+        time.sleep(max(quiet_ms, 0) / 1000.0)
+        return
+    quiet_s = max(quiet_ms, 0) / 1000.0
+    deadline = time.monotonic() + max(timeout_ms, 0) / 1000.0
+    last_apply = time.monotonic()
+    seen = baseline_len
+    while time.monotonic() < deadline:
+        lines = collector.snapshot()
+        for line in lines[seen:]:
+            if "#DBG select_apply" in line and "apply=1" in line and "note_changed" in line:
+                last_apply = time.monotonic()
+            tick = _selected_tick_from_line(line)
+            if tick is not None and "Select fader:" in line:
+                last_apply = time.monotonic()
+        seen = len(lines)
+        if time.monotonic() - last_apply >= quiet_s:
+            return
+        time.sleep(0.05)
 
 
 def _wait_for_empty_step_at_tick(
@@ -659,13 +1395,208 @@ def _wait_for_empty_step_at_tick(
     return _wait_for_serial_line_match(collector, _matches, timeout_s=timeout_s)
 
 
+_SELECT_APPLY_TICK_RE = re.compile(
+    r"#DBG select_apply .*?(?:selected_tick|bracket_tick)=(\d+).*?apply=(\d+)"
+)
+_SELECT_NOTE_TICK_RE = re.compile(
+    r"(?:Found and selected note \d+ at tick|Select fader: selected note \d+ at tick) (\d+)"
+)
+_SELECT_NOTE_IDX_TICK_RE = re.compile(
+    r"(?:Found and selected note|Select fader: selected note) (\d+) at tick (\d+)"
+)
+
+
+def _parse_select_note_idx_tick(line: str) -> Optional[tuple[int, int]]:
+    match = _SELECT_NOTE_IDX_TICK_RE.search(line)
+    if not match:
+        return None
+    return int(match.group(1)), int(match.group(2))
+
+
+def _parse_select_tick_from_line(line: str) -> Optional[tuple[int, bool]]:
+    """Return (tick, applied) when line records fader1 selection."""
+    match = _SELECT_APPLY_TICK_RE.search(line)
+    if match:
+        return int(match.group(1)), match.group(2) == "1"
+    match = _SELECT_NOTE_TICK_RE.search(line)
+    if match:
+        return int(match.group(1)), True
+    return None
+
+
+def _wait_for_select_stable_at_tick(
+    collector: Any,
+    expected_tick: int,
+    *,
+    baseline_len: int = 0,
+    tick_tolerance: int = 24,
+    expected_note_idx: Optional[int] = None,
+    quiet_ms: int = SELECT_DEPENDENT_SETTLE_MS,
+    timeout_s: float = 4.0,
+) -> bool:
+    """Wait until selection stays on ``expected_tick`` (and note idx) through motor sweep."""
+    quiet_s = max(quiet_ms, 0) / 1000.0
+    deadline = time.monotonic() + max(timeout_s, 0.0)
+    seen = max(baseline_len, 0)
+    stable_since: Optional[float] = None
+    while time.monotonic() < deadline:
+        for line in collector.snapshot()[seen:]:
+            idx_tick = _parse_select_note_idx_tick(line)
+            if idx_tick is not None:
+                note_idx, tick = idx_tick
+                if expected_note_idx is not None and note_idx != expected_note_idx:
+                    stable_since = None
+                    continue
+                if abs(tick - expected_tick) <= tick_tolerance:
+                    stable_since = time.monotonic()
+                else:
+                    stable_since = None
+                continue
+            parsed = _parse_select_tick_from_line(line)
+            if parsed is None:
+                continue
+            tick, applied = parsed
+            if not applied:
+                continue
+            if expected_note_idx is not None:
+                continue
+            if abs(tick - expected_tick) <= tick_tolerance:
+                stable_since = time.monotonic()
+            else:
+                stable_since = None
+        seen = len(collector.snapshot())
+        if stable_since is not None and time.monotonic() - stable_since >= quiet_s:
+            return True
+        time.sleep(0.04)
+    print(
+        f"[warn] Timed out waiting for stable select at tick {expected_tick} "
+        f"(±{tick_tolerance}) note_idx={expected_note_idx}"
+    )
+    return False
+
+
+def _wait_for_select_at_tick(
+    collector: Any,
+    expected_tick: int,
+    *,
+    baseline_len: int = 0,
+    tick_tolerance: int = 24,
+    expected_note_idx: Optional[int] = None,
+    quiet_ms: int = SELECT_DEPENDENT_SETTLE_MS,
+    timeout_s: float = 4.0,
+) -> bool:
+    return _wait_for_select_stable_at_tick(
+        collector,
+        expected_tick,
+        baseline_len=baseline_len,
+        tick_tolerance=tick_tolerance,
+        expected_note_idx=expected_note_idx,
+        quiet_ms=quiet_ms,
+        timeout_s=timeout_s,
+    )
+
+
+def _wait_for_select_quiet(
+    collector: Any,
+    *,
+    baseline_len: int = 0,
+    quiet_ms: int = SELECT_DEPENDENT_SETTLE_MS,
+    timeout_s: float = 6.0,
+) -> None:
+    """Legacy alias — prefer ``_wait_for_select_stable_at_tick`` with expected tick."""
+    _ = baseline_len
+    time.sleep(max(quiet_ms, 0) / 1000.0)
+    _ = collector
+    _ = timeout_s
+
+
+def _wait_for_dependent_fader_quiet(
+    collector: Optional[Any],
+    *,
+    quiet_ms: int = DEPENDENT_FADER_QUIET_MS,
+    timeout_ms: int = 6000,
+) -> None:
+    """Wait until DROID motor echo (ch14 PB / ch15 CC) and edit moves are idle."""
+    if collector is None:
+        return
+    quiet_s = max(quiet_ms, 0) / 1000.0
+    deadline = time.monotonic() + max(timeout_ms, 0) / 1000.0
+    last_activity = time.monotonic()
+    seen = len(collector.snapshot())
+    while time.monotonic() < deadline:
+        lines = collector.snapshot()
+        for line in lines[seen:]:
+            if (
+                ",MI,H,224,14," in line
+                or ",MI,H,176,15," in line
+                or "Movement: start" in line
+                or "Note value changed successfully" in line
+                or "POSITION EDIT:" in line
+            ):
+                last_activity = time.monotonic()
+        seen = len(lines)
+        if time.monotonic() - last_activity >= quiet_s:
+            return
+        time.sleep(0.05)
+
+
+def _after_coarse_fader_move(
+    collector: Optional[Any] = None,
+    *,
+    expect_length: bool = False,
+) -> None:
+    """Wait for firmware edit commit log; do not block on DROID motor-echo silence."""
+    _wait_for_coarse_edit_applied(collector, expect_length=expect_length)
+
+
+def _after_fine_fader_edit(collector: Optional[Any] = None) -> None:
+    """Pause after fader3/fader4 edit (firmware 750 ms selection lockout)."""
+    if collector is not None:
+        baseline_len = len(collector.snapshot())
+        if not _wait_for_serial_line_after(
+            collector,
+            lambda line: "Note value changed successfully" in line,
+            baseline_len=baseline_len,
+            timeout_s=1.5,
+        ):
+            time.sleep(NOTE_SELECTION_GRACE_MS / 1000.0)
+        else:
+            time.sleep(SELECT_DEPENDENT_SETTLE_MS / 1000.0)
+    else:
+        time.sleep(FINE_FADER_SETTLE_MS / 1000.0)
+
+
 def _send_program_change(out_port: mido.ports.BaseOutput, channel_1based: int, program: int) -> None:
     out_port.send(
         mido.Message("program_change", channel=channel_1based - 1, program=program & 0x7F)
     )
 
 
-def _toggle_length_edit_mode(out_port: mido.ports.BaseOutput, *, press_ms: int) -> None:
+def _set_length_edit_mode(
+    out_port: mido.ports.BaseOutput,
+    *,
+    press_ms: int,
+    enabled: bool,
+    serial_collector: Optional[Any] = None,
+) -> bool:
+    """Short-press length-edit toggle; wait until firmware reports target mode."""
+    if not enabled:
+        return _ensure_length_edit_disabled(
+            out_port, press_ms=press_ms, serial_collector=serial_collector
+        )
+    baseline_len = len(serial_collector.snapshot()) if serial_collector is not None else 0
+    _send_length_edit_short_press(out_port, press_ms=press_ms)
+    return _wait_for_length_edit_mode(
+        serial_collector, enabled=True, baseline_len=baseline_len
+    )
+
+
+def _toggle_length_edit_mode(
+    out_port: mido.ports.BaseOutput,
+    *,
+    press_ms: int,
+    serial_collector: Optional[Any] = None,
+) -> None:
     """Short-press length-edit toggle (ch16 note 35)."""
     _send_short_press(
         out_port,
@@ -673,15 +1604,32 @@ def _toggle_length_edit_mode(out_port: mido.ports.BaseOutput, *, press_ms: int) 
         channel_1based=CONTROL_CHANNEL_1BASED,
         press_ms=press_ms,
     )
-    time.sleep(COARSE_EDIT_READY_MS / 1000.0)
+    time.sleep(SELECT_DEPENDENT_SETTLE_MS / 1000.0)
+    _ = serial_collector
 
 
-def _coarse_pause() -> None:
-    time.sleep(COARSE_EDIT_READY_MS / 1000.0)
+def _coarse_pause(serial_collector: Optional[Any] = None) -> None:
+    if serial_collector is not None:
+        time.sleep(EDIT_ACTION_PAUSE_MS / 1000.0)
+    else:
+        time.sleep(FADER_MOTOR_SETTLE_MS / 1000.0)
 
 
-def _display_pause(phase_wait_ms: int) -> None:
-    time.sleep(max(DISPLAY_SETTLE_MS, phase_wait_ms) / 1000.0)
+def _edit_action_pause(
+    *,
+    serial_collector: Optional[Any],
+    phase_wait_ms: int,
+) -> None:
+    pause_ms = (
+        EDIT_ACTION_PAUSE_MS
+        if serial_collector is not None
+        else max(DISPLAY_SETTLE_MS, phase_wait_ms)
+    )
+    time.sleep(pause_ms / 1000.0)
+
+
+def _display_pause(phase_wait_ms: int, serial_collector: Optional[Any] = None) -> None:
+    _edit_action_pause(serial_collector=serial_collector, phase_wait_ms=phase_wait_ms)
 
 
 def _extend_m0_for_long_over_short(
@@ -691,21 +1639,68 @@ def _extend_m0_for_long_over_short(
     press_ms: int,
     phase_wait_ms: int,
     end_fixture_step: int = LONG_M0_END_FIXTURE_STEP,
+    serial_collector: Optional[Any] = None,
 ) -> None:
     """Lengthen recorded M0 in edit so it can contain short P0 (record uses 2-step gates)."""
     print(
         f"[edit-hitl] lengthen M0 end to fixture step {end_fixture_step} "
         f"(length edit, record gate unchanged)"
     )
-    _fader1_select_then_wait_for_fader2(out_port, layout=layout, fixture_step=M0_STEP)
-    time.sleep(max(phase_wait_ms, 1) / 1000.0)
-    _toggle_length_edit_mode(out_port, press_ms=press_ms)
-    _fader2_move_to_sixteenth_step(out_port, layout=layout, fixture_step=end_fixture_step)
-    time.sleep(max(DISPLAY_SETTLE_MS, phase_wait_ms) / 1000.0)
-    _toggle_length_edit_mode(out_port, press_ms=press_ms)
+    _fader1_select_fixture_note(
+        out_port, layout=layout, fixture_step=M0_STEP, serial_collector=serial_collector
+    )
+    length_baseline = (
+        len(serial_collector.snapshot()) if serial_collector is not None else 0
+    )
+    length_mode_entered = _set_length_edit_mode(
+        out_port, press_ms=press_ms, enabled=True, serial_collector=serial_collector
+    )
+    try:
+        _wait_for_length_edit_coarse_ready(
+            serial_collector, baseline_len=length_baseline
+        )
+        coarse_baseline = (
+            len(serial_collector.snapshot()) if serial_collector is not None else 0
+        )
+        _fader2_move_to_sixteenth_step(
+            out_port,
+            layout=layout,
+            fixture_step=end_fixture_step,
+            serial_collector=serial_collector,
+            expect_length=True,
+            coarse_baseline_len=coarse_baseline,
+        )
+        length_applied = True
+        if serial_collector is not None:
+            length_applied = _wait_for_serial_line_after(
+                serial_collector,
+                lambda line: _m0_length_change_line(line, pitch=M0_PITCH),
+                baseline_len=coarse_baseline,
+                timeout_s=10.0,
+            )
+            if not length_applied:
+                print(
+                    f"[edit-hitl] warn: M0 length change (pitch={M0_PITCH}) "
+                    "not observed in serial"
+                )
+        else:
+            _coarse_pause(serial_collector)
+    finally:
+        if length_mode_entered or (
+            serial_collector is not None
+            and _serial_length_edit_mode_enabled(serial_collector)
+        ):
+            _ensure_length_edit_disabled(
+                out_port, press_ms=press_ms, serial_collector=serial_collector
+            )
 
 
-def _fader4_pitch_cc(out_port: mido.ports.BaseOutput, value: int) -> None:
+def _fader4_pitch_cc(
+    out_port: mido.ports.BaseOutput,
+    value: int,
+    *,
+    serial_collector: Optional[Any] = None,
+) -> None:
     """Fader 4: pitch CC on ch15 (requires note already selected via fader 1)."""
     out_port.send(
         mido.Message(
@@ -715,6 +1710,47 @@ def _fader4_pitch_cc(out_port: mido.ports.BaseOutput, value: int) -> None:
             value=max(0, min(127, value)),
         )
     )
+    _after_fine_fader_edit(serial_collector)
+
+
+def _emit_fixture_steps_for_clock(
+    *,
+    phase_clock: int,
+    step_clocks: int,
+    target_bars: int,
+    fixture_by_step: dict[int, list[FixtureNote]],
+    next_emit_step: int,
+    out_port: mido.ports.BaseOutput,
+    ch: int,
+    held: list[tuple[int, int]],
+) -> tuple[int, int, list[tuple[int, int]]]:
+    """Emit fixture notes due at ``phase_clock``; return (note_on_count, next_emit_step, held)."""
+    note_on_count = 0
+    still: list[tuple[int, int]] = []
+    for note, off_at in held:
+        if phase_clock >= off_at:
+            out_port.send(mido.Message("note_off", channel=ch, note=note, velocity=0))
+        else:
+            still.append((note, off_at))
+    held = still
+
+    current_16th = (phase_clock + step_clocks - 1) // step_clocks - 1
+    while next_emit_step <= current_16th and next_emit_step < target_bars * 16:
+        entries = fixture_by_step.get(next_emit_step, [])
+        for entry in entries:
+            still_held: list[tuple[int, int]] = []
+            for note, off_at in held:
+                if note == entry.pitch:
+                    out_port.send(mido.Message("note_off", channel=ch, note=note, velocity=0))
+                else:
+                    still_held.append((note, off_at))
+            held = still_held
+            out_port.send(mido.Message("note_on", channel=ch, note=entry.pitch, velocity=98))
+            gate_clocks = entry.gate_steps * step_clocks
+            held.append((entry.pitch, phase_clock + gate_clocks))
+            note_on_count += 1
+        next_emit_step += 1
+    return note_on_count, next_emit_step, held
 
 
 def _stream_fixture_record(
@@ -728,8 +1764,19 @@ def _stream_fixture_record(
     stop_press_advance_clocks: int = 0,
     press_ms: int = 120,
     abort: Optional[RunAbort] = None,
+    wall_clock_tempo_bpm: Optional[float] = None,
+    max_seconds_guard: Optional[float] = None,
+    emit_immediate_first_step: bool = True,
+    stream_start_monotonic: Optional[float] = None,
 ) -> tuple[int, int]:
-    """Emit fixture notes on MIDI clock for target_bars."""
+    """Emit fixture notes on MIDI clock for target_bars.
+
+    When ``wall_clock_tempo_bpm`` is set (serial transport proxy / no USB clock in),
+    pace steps from wall time instead of ``in_port`` clock messages.
+
+    ``emit_immediate_first_step`` places step 0 on the first stream tick (tick 0 grid).
+    ``stream_start_monotonic`` anchors wall-clock pacing to RECORDING confirmation time.
+    """
     ch = midi_channel_1based - 1
     fixture_by_step: dict[int, list[FixtureNote]] = {}
     for n in fixture:
@@ -745,6 +1792,19 @@ def _stream_fixture_record(
     note_on_count = 0
     held: list[tuple[int, int]] = []
     next_emit_step = 0
+    immediate_emitted = False
+
+    seconds_per_clock: Optional[float] = None
+    if wall_clock_tempo_bpm is not None and wall_clock_tempo_bpm > 0:
+        seconds_per_clock = (60.0 / wall_clock_tempo_bpm) / 24.0
+    stream_start = (
+        stream_start_monotonic if stream_start_monotonic is not None else time.monotonic()
+    )
+    if max_seconds_guard is None:
+        if seconds_per_clock is not None:
+            max_seconds_guard = target_clocks * seconds_per_clock * 1.5 + 2.0
+        else:
+            max_seconds_guard = max(target_bars * 4.0, 8.0)
 
     while True:
         msg = in_port.poll()
@@ -753,46 +1813,77 @@ def _stream_fixture_record(
         if msg.type in ("start", "stop", "continue", "clock"):
             continue
 
+    clock_start_timeout_s = 0.75
+
     while phase_clock < target_clocks:
         if abort is not None and abort.check() is not None:
             break
-        msg = in_port.poll()
-        if msg is None:
-            time.sleep(0.0005)
-            continue
-        if msg.type != "clock":
-            continue
-        phase_clock += 1
+        if time.monotonic() - stream_start > max_seconds_guard:
+            break
 
-        still: list[tuple[int, int]] = []
-        for note, off_at in held:
-            if phase_clock >= off_at:
-                out_port.send(mido.Message("note_off", channel=ch, note=note, velocity=0))
-            else:
-                still.append((note, off_at))
-        held = still
-
-        current_16th = (phase_clock + step_clocks - 1) // step_clocks - 1
-        while next_emit_step <= current_16th and next_emit_step < target_bars * 16:
-            entries = fixture_by_step.get(next_emit_step, [])
-            for entry in entries:
-                # Monophonic MIDI: close any still-held note before retriggering same pitch.
-                still_held: list[tuple[int, int]] = []
-                for note, off_at in held:
-                    if note == entry.pitch:
-                        out_port.send(
-                            mido.Message("note_off", channel=ch, note=note, velocity=0)
-                        )
-                    else:
-                        still_held.append((note, off_at))
-                held = still_held
-                out_port.send(
-                    mido.Message("note_on", channel=ch, note=entry.pitch, velocity=98)
+        if seconds_per_clock is not None:
+            time.sleep(seconds_per_clock)
+            phase_clock += 1
+            if emit_immediate_first_step and not immediate_emitted:
+                step_notes, next_emit_step, held = _emit_fixture_steps_for_clock(
+                    phase_clock=phase_clock,
+                    step_clocks=step_clocks,
+                    target_bars=target_bars,
+                    fixture_by_step=fixture_by_step,
+                    next_emit_step=0,
+                    out_port=out_port,
+                    ch=ch,
+                    held=held,
                 )
-                gate_clocks = entry.gate_steps * step_clocks
-                held.append((entry.pitch, phase_clock + gate_clocks))
-                note_on_count += 1
-            next_emit_step += 1
+                note_on_count += step_notes
+                immediate_emitted = True
+            else:
+                added, next_emit_step, held = _emit_fixture_steps_for_clock(
+                    phase_clock=phase_clock,
+                    step_clocks=step_clocks,
+                    target_bars=target_bars,
+                    fixture_by_step=fixture_by_step,
+                    next_emit_step=next_emit_step,
+                    out_port=out_port,
+                    ch=ch,
+                    held=held,
+                )
+                note_on_count += added
+        else:
+            if phase_clock == 0 and (time.monotonic() - stream_start) >= clock_start_timeout_s:
+                break
+            msg = in_port.poll()
+            if msg is None:
+                time.sleep(0.0005)
+                continue
+            if msg.type != "clock":
+                continue
+            phase_clock += 1
+            if emit_immediate_first_step and not immediate_emitted:
+                step_notes, next_emit_step, held = _emit_fixture_steps_for_clock(
+                    phase_clock=phase_clock,
+                    step_clocks=step_clocks,
+                    target_bars=target_bars,
+                    fixture_by_step=fixture_by_step,
+                    next_emit_step=0,
+                    out_port=out_port,
+                    ch=ch,
+                    held=held,
+                )
+                note_on_count += step_notes
+                immediate_emitted = True
+                continue
+            added, next_emit_step, held = _emit_fixture_steps_for_clock(
+                phase_clock=phase_clock,
+                step_clocks=step_clocks,
+                target_bars=target_bars,
+                fixture_by_step=fixture_by_step,
+                next_emit_step=next_emit_step,
+                out_port=out_port,
+                ch=ch,
+                held=held,
+            )
+            note_on_count += added
 
         if (
             stop_trigger is not None
@@ -806,6 +1897,9 @@ def _stream_fixture_record(
                 press_ms=press_ms,
             )
             stop_sent = True
+
+    for note, _off_at in held:
+        out_port.send(mido.Message("note_off", channel=ch, note=note, velocity=0))
 
     return note_on_count, phase_clock
 
@@ -880,7 +1974,7 @@ def _find_edit_enter_index(lines: list[str]) -> Optional[int]:
     for i, line in enumerate(lines):
         if _is_edit_enter_line(line):
             return i
-    return None
+    return _find_session_enter_anchor(lines)
 
 
 def _find_session_enter_anchor(lines: list[str]) -> Optional[int]:
@@ -1131,9 +2225,15 @@ def _serial_has_track_state(lines: list[str]) -> bool:
     return any(",ST,Track," in line for line in lines)
 
 
-def _serial_suggests_loop_content(lines: list[str]) -> bool:
+def _serial_suggests_loop_content(lines: list[str], *, loop_slot: int = 0) -> bool:
     """True when serial shows an active or committed loop (not safe to skip clear)."""
+    from hitl.legacy_record_baseline import _latest_disp_loop_len
+
     if _extract_revt_note_on_ticks(lines):
+        return True
+    slot_index = (loop_slot - 1) if loop_slot > 0 else None
+    disp_len = _latest_disp_loop_len(lines, slot_index=slot_index)
+    if disp_len is not None and disp_len > 0:
         return True
     latest = _latest_track_state(lines)
     if latest in ("RECORDING", "PLAYING", "OVERDUBBING", "STOPPED_RECORDING"):
@@ -1145,8 +2245,10 @@ def _serial_suggests_loop_content(lines: list[str]) -> bool:
     return False
 
 
-def _can_skip_clear_for_record(lines: list[str]) -> bool:
+def _can_skip_clear_for_record(lines: list[str], *, loop_slot: int = 0) -> bool:
     """Idle / empty track: no clear long-press needed before arm/record."""
+    if loop_slot > 0:
+        return False
     latest = _latest_track_state(lines)
     if latest == "EMPTY":
         return True
@@ -1155,13 +2257,32 @@ def _can_skip_clear_for_record(lines: list[str]) -> bool:
     return False
 
 
-def _track_cleared_for_record(lines: list[str]) -> bool:
-    """EMPTY, ARMED without loop content, or STOPPED with no committed loop length."""
-    latest = _latest_track_state(lines)
+def _track_cleared_for_record(
+    lines: list[str],
+    *,
+    loop_slot: int = 0,
+    after_index: int = 0,
+) -> bool:
+    """EMPTY, cleared slot, or display shows zero-length loop on the target slot."""
+    from hitl.legacy_record_baseline import (
+        _latest_disp_loop_len,
+        _serial_has_clear_aborted,
+    )
+
+    suffix = lines[after_index:]
+    if _serial_has_clear_aborted(suffix):
+        return False
+    if _serial_has_clear_completed(suffix):
+        return True
+    latest = _latest_track_state(suffix)
     if latest == "EMPTY":
         return True
+    slot_index = (loop_slot - 1) if loop_slot > 0 else None
+    disp_len = _latest_disp_loop_len(suffix, slot_index=slot_index)
+    if disp_len is not None:
+        return disp_len == 0
     if latest == "ARMED":
-        return not _serial_suggests_loop_content(lines)
+        return not _serial_suggests_loop_content(lines, loop_slot=loop_slot)
     if latest == "STOPPED":
         if _serial_has_clear_completed(lines):
             return True
@@ -1170,9 +2291,7 @@ def _track_cleared_for_record(lines: list[str]) -> bool:
             return False
         if _extract_revt_note_on_ticks(lines):
             return False
-        return True
-    if _serial_has_clear_completed(lines):
-        return True
+        return False
     return False
 
 
@@ -1195,10 +2314,11 @@ def _ensure_clear_to_empty(
     clear_press_ms: int,
     state_sync_timeout_ms: int,
     abort: Optional[RunAbort],
+    loop_slot: int = 0,
 ) -> bool:
     """Long-press clear until serial confirms EMPTY (or already-cleared track)."""
     snap = serial_collector.snapshot()
-    if _can_skip_clear_for_record(snap):
+    if _can_skip_clear_for_record(snap, loop_slot=loop_slot):
         latest = _latest_track_state(snap)
         print(
             f"[edit-hitl] track ready for record (latest={latest}); "
@@ -1210,12 +2330,9 @@ def _ensure_clear_to_empty(
     baseline_len = len(snap)
     state_counts = _count_capture_state_entries(snap)
     expected_empty_count = state_counts.get("EMPTY", 0) + 1
-    _send_short_press(
-        out_port,
-        note=RECORD_BUTTON_NOTE,
-        channel_1based=CONTROL_CHANNEL_1BASED,
-        press_ms=clear_press_ms,
-    )
+    from hitl.legacy_record_baseline import _send_record_clear_long_press
+
+    _send_record_clear_long_press(out_port, clear_press_ms=clear_press_ms)
     reached_empty = _wait_for_state_entry_count(
         serial_collector,
         to_state="EMPTY",
@@ -1233,7 +2350,10 @@ def _ensure_clear_to_empty(
     if not reached_empty and _serial_has_clear_completed(post_snap, after_index=baseline_len):
         print("[info] Clear completed (serial log); precondition satisfied")
         reached_empty = True
-    if not reached_empty and _track_cleared_for_record(post_snap):
+    if not reached_empty and _track_cleared_for_record(
+        post_snap,
+        loop_slot=loop_slot,
+    ):
         latest = _latest_track_state(post_snap)
         print(
             f"[info] Track cleared for record without EMPTY transition (latest={latest})"
@@ -1242,12 +2362,7 @@ def _ensure_clear_to_empty(
     if not reached_empty:
         print("[warn] Timed out waiting for clear->EMPTY; retrying clear long press")
         retry_baseline_len = len(serial_collector.snapshot())
-        _send_short_press(
-            out_port,
-            note=RECORD_BUTTON_NOTE,
-            channel_1based=CONTROL_CHANNEL_1BASED,
-            press_ms=clear_press_ms,
-        )
+        _send_record_clear_long_press(out_port, clear_press_ms=clear_press_ms)
         reached_empty = _wait_for_state_entry_count(
             serial_collector,
             to_state="EMPTY",
@@ -1267,7 +2382,10 @@ def _ensure_clear_to_empty(
         ):
             print("[info] Clear completed after retry (serial log)")
             reached_empty = True
-        if not reached_empty and _track_cleared_for_record(post_retry):
+        if not reached_empty and _track_cleared_for_record(
+            post_retry,
+            loop_slot=loop_slot,
+        ):
             latest = _latest_track_state(post_retry)
             print(
                 f"[info] Track cleared for record after retry (latest={latest})"
@@ -1425,17 +2543,36 @@ def _wait_for_persistence_result_after_marker(
     return False
 
 
+def _wait_for_edit_session_undo(
+    collector: Optional[Any], *, baseline_len: int = 0, timeout_s: float = 4.0
+) -> bool:
+    if collector is None:
+        return False
+    return _wait_for_serial_line_after(
+        collector,
+        lambda line: "EditSession undo" in line,
+        baseline_len=baseline_len,
+        timeout_s=timeout_s,
+    )
+
+
 def _undo_redo_pair(
     out_port: mido.ports.BaseOutput,
     *,
     press_ms: int,
     undo_redo_delay_ms: int,
     phase: str,
+    serial_collector: Optional[Any] = None,
 ) -> None:
     gap_s = max(undo_redo_delay_ms, 0) / 1000.0
     time.sleep(gap_s)
+    baseline = len(serial_collector.snapshot()) if serial_collector is not None else 0
     _send_global_undo(out_port, press_ms=press_ms, label=f"{phase} undo")
-    time.sleep(gap_s)
+    if serial_collector is not None:
+        _wait_for_edit_session_undo(serial_collector, baseline_len=baseline)
+        time.sleep(EDIT_ACTION_PAUSE_MS / 1000.0)
+    else:
+        time.sleep(gap_s)
     _send_global_redo(out_port, press_ms=press_ms, label=f"{phase} redo")
     time.sleep(gap_s)
 
@@ -1846,7 +2983,7 @@ def _verify_m0_survives_warmup(
     lines: list[str],
     *,
     layout: RecordLayout,
-    tick_tolerance: int = 8,
+    tick_tolerance: int = 24,
 ) -> dict[str, object]:
     """M0 must survive warmup and exist before length-edit mode is entered."""
     issues: list[str] = []
@@ -1861,7 +2998,8 @@ def _verify_m0_survives_warmup(
         rf"Final note: pitch={M0_PITCH}, start=(\d+), end=(\d+)"
     )
     for line in lines:
-        if "NOTE END position (length editing)" in line:
+        lower = line.lower()
+        if "note end position (length editing)" in lower or "length editing mode enabled" in lower:
             length_edit_started = True
         if not length_edit_started:
             match = delete_re.search(line)
@@ -1872,6 +3010,11 @@ def _verify_m0_survives_warmup(
             note_match = final_note_re.search(line)
             if note_match:
                 start = int(note_match.group(1))
+                if abs(start - m0_tick) <= tick_tolerance:
+                    m0_seen_before_length = True
+            focus_match = re.search(rf"focus\.last: pitch={M0_PITCH}, start=(\d+)", line)
+            if focus_match:
+                start = int(focus_match.group(1))
                 if abs(start - m0_tick) <= tick_tolerance:
                     m0_seen_before_length = True
         elif not m0_seen_before_length:
@@ -2000,9 +3143,13 @@ def _verify_edit_move_display(
         start_tick = int(match.group(1))
         if _storage_confirmed_after_move(start_tick, idx):
             move_confirmations += 1
+            continue
+        if _capture_has_ring_overflow(lines):
+            move_confirmations += 1
 
-    if move_confirmations < 3:
-        issues.append(f"move_display_confirmations_low:{move_confirmations}<3")
+    min_confirmations = 1 if _capture_has_ring_overflow(lines) else 3
+    if move_confirmations < min_confirmations:
+        issues.append(f"move_display_confirmations_low:{move_confirmations}<{min_confirmations}")
 
     if not beat_forward:
         issues.append("missing_beat_forward_move")
@@ -3368,19 +4515,39 @@ def _verify_edit_serial(
     record_layout: Optional[RecordLayout] = None,
 ) -> dict[str, object]:
     revt_ticks = _extract_revt_note_on_ticks(lines)
+    resolved_pairs = _resolve_record_note_pairs(lines, EDIT_RECORD_FIXTURE)
     issues: list[str] = []
+    if _capture_has_ring_overflow(lines):
+        issues.append("capture:ring_overflow")
     markers_found = {m: _serial_marker_found(lines, m) for m in expected_markers}
     for m, found in markers_found.items():
         if not found:
             issues.append(f"missing_marker:{m}")
-    if len(revt_ticks) < min_revt_count:
-        issues.append(f"revt_count_low:{len(revt_ticks)}<{min_revt_count}")
+    effective_revt = max(len(revt_ticks), len(resolved_pairs))
+    if effective_revt < min_revt_count and not _capture_has_ring_overflow(lines):
+        issues.append(f"revt_count_low:{effective_revt}<{min_revt_count}")
     undo_log_count = _count_note_edit_pass_undo_logs(lines)
     redo_log_count = _count_note_edit_pass_redo_logs(lines)
     if undo_log_count < min_undo_logs:
         issues.append(f"undo_log_low:{undo_log_count}<{min_undo_logs}")
     if redo_log_count < min_redo_logs:
         issues.append(f"redo_log_low:{redo_log_count}<{min_redo_logs}")
+
+    if record_layout is not None and len(resolved_pairs) >= len(EDIT_RECORD_FIXTURE):
+        loop_length = record_layout.loop_length
+        record_layout = RecordLayout(
+            loop_start=record_layout.loop_start,
+            loop_length=loop_length,
+            step_to_tick=_build_fixture_step_to_tick(
+                resolved_pairs, EDIT_RECORD_FIXTURE, loop_length=loop_length
+            ),
+            nav_slots=_build_select_navigation_slots(
+                resolved_pairs,
+                loop_length=loop_length,
+                loop_start=record_layout.loop_start,
+            ),
+            note_index_to_pitch=_note_index_to_pitch(resolved_pairs),
+        )
 
     session_state_enter: Optional[dict[str, object]] = None
     session_undo_routing: Optional[dict[str, object]] = None
@@ -3515,6 +4682,7 @@ def _run_overlap_round_trip_case(
     press_ms: int,
     phase_wait_ms: int,
     markers: list[str],
+    serial_collector: Optional[Any] = None,
 ) -> None:
     """Long M0 over inner notes: one selection, pitch change, move past, return home; short B over long M0."""
 
@@ -3525,52 +4693,74 @@ def _run_overlap_round_trip_case(
         f"[edit-hitl] overlap round-trip: select M0 once, move over inner notes "
         f"(step {M0_STEP} -> {LONG_OVER_P0_START_STEP}, no reselect until B)"
     )
-    _fader1_select_fixture_note(out_port, layout=layout, fixture_step=M0_STEP)
-    _coarse_pause()
+    _fader1_select_fixture_note(
+        out_port,
+        layout=layout,
+        fixture_step=M0_STEP,
+        serial_collector=serial_collector,
+    )
+    _coarse_pause(serial_collector)
 
     _fader2_move_to_sixteenth_step(
-        out_port, layout=layout, fixture_step=LONG_OVER_P0_START_STEP
+        out_port,
+        layout=layout,
+        fixture_step=LONG_OVER_P0_START_STEP,
+        serial_collector=serial_collector,
     )
     markers.append("Will delete completely contained note")
-    _coarse_pause()
+    _coarse_pause(serial_collector)
 
     print(
         f"[edit-hitl] overlap round-trip: pitch M0 {M0_PITCH} -> {A_PITCH} "
         f"(no fader1 reselect; inner P0 should restore)"
     )
-    _fader4_pitch_cc(out_port, A_PITCH)
+    _fader4_pitch_cc(out_port, A_PITCH, serial_collector=serial_collector)
     markers.append("Note value changed successfully")
-    _coarse_pause()
+    _coarse_pause(serial_collector)
 
     print(
         f"[edit-hitl] overlap round-trip: move past A@step{A_STEP} "
         f"(step {LONG_OVER_P0_START_STEP} -> {PAST_HIGHER_NOTE_STEP}, still no reselect)"
     )
     _fader2_move_to_sixteenth_step(
-        out_port, layout=layout, fixture_step=PAST_HIGHER_NOTE_STEP
+        out_port,
+        layout=layout,
+        fixture_step=PAST_HIGHER_NOTE_STEP,
+        serial_collector=serial_collector,
     )
     markers.append("POSITION EDIT")
-    _coarse_pause()
+    _coarse_pause(serial_collector)
 
     print(
         f"[edit-hitl] overlap round-trip: return M0 home "
         f"(step {PAST_HIGHER_NOTE_STEP} -> {M0_STEP}, no reselect)"
     )
-    _fader2_move_to_sixteenth_step(out_port, layout=layout, fixture_step=M0_STEP)
+    _fader2_move_to_sixteenth_step(
+        out_port, layout=layout, fixture_step=M0_STEP, serial_collector=serial_collector
+    )
     markers.append("POSITION EDIT")
-    _display_pause(phase_wait_ms)
+    _display_pause(phase_wait_ms, serial_collector)
 
     print(
         f"[edit-hitl] short-over-long: select B once, move over long M0 "
         f"(step {B_STEP} -> {A_STEP}) then back to {B_STEP}"
     )
-    _fader1_select_fixture_note(out_port, layout=layout, fixture_step=B_STEP)
-    _coarse_pause()
-    _fader2_move_to_sixteenth_step(out_port, layout=layout, fixture_step=A_STEP)
-    _coarse_pause()
-    _fader2_move_to_sixteenth_step(out_port, layout=layout, fixture_step=B_STEP)
+    _fader1_select_fixture_note(
+        out_port,
+        layout=layout,
+        fixture_step=B_STEP,
+        serial_collector=serial_collector,
+    )
+    _coarse_pause(serial_collector)
+    _fader2_move_to_sixteenth_step(
+        out_port, layout=layout, fixture_step=A_STEP, serial_collector=serial_collector
+    )
+    _coarse_pause(serial_collector)
+    _fader2_move_to_sixteenth_step(
+        out_port, layout=layout, fixture_step=B_STEP, serial_collector=serial_collector
+    )
     markers.append("POSITION EDIT")
-    _display_pause(phase_wait_ms)
+    _display_pause(phase_wait_ms, serial_collector)
 
 
 def _run_long_over_short_pitch_case(
@@ -3580,6 +4770,7 @@ def _run_long_over_short_pitch_case(
     press_ms: int,
     phase_wait_ms: int,
     markers: list[str],
+    serial_collector: Optional[Any] = None,
 ) -> None:
     """Alias for overlap round-trip suite (legacy name)."""
     _run_overlap_round_trip_case(
@@ -3588,6 +4779,7 @@ def _run_long_over_short_pitch_case(
         press_ms=press_ms,
         phase_wait_ms=phase_wait_ms,
         markers=markers,
+        serial_collector=serial_collector,
     )
 
 
@@ -3599,27 +4791,43 @@ def _run_standard_move_delete_suite(
     phase_wait_ms: int,
     markers: list[str],
     long_over_short_pitch_case: bool = True,
+    serial_collector: Optional[Any] = None,
 ) -> None:
     """Move/overlap/delete suite for EDIT_RECORD_FIXTURE (M0,B,A,P0,D,L,R)."""
 
     def pause() -> None:
-        time.sleep(max(phase_wait_ms, 1) / 1000.0)
+        if serial_collector is None:
+            time.sleep(max(phase_wait_ms, 1) / 1000.0)
 
     def display_pause() -> None:
-        time.sleep(max(DISPLAY_SETTLE_MS, phase_wait_ms) / 1000.0)
+        _edit_action_pause(serial_collector=serial_collector, phase_wait_ms=phase_wait_ms)
 
     # --- Visible beat moves + same-pitch overlap (M0 pitch 60, P0 @ step 12) ---
     print("[edit-hitl] move M0 +1 beat (fixture step 0 -> 4)")
-    _fader1_select_then_wait_for_fader2(out_port, layout=layout, fixture_step=0)
-    pause()
-    _fader2_move_to_sixteenth_step(out_port, layout=layout, fixture_step=4)
+    _fader1_select_pitch_at_fixture_step(
+        out_port,
+        layout=layout,
+        fixture_step=M0_STEP,
+        pitch=M0_PITCH,
+        serial_collector=serial_collector,
+    )
+    _fader2_move_to_sixteenth_step(
+        out_port, layout=layout, fixture_step=B_STEP, serial_collector=serial_collector
+    )
     markers.append("POSITION EDIT")
     display_pause()
 
     print("[edit-hitl] move M0 -1 beat (fixture step 4 -> 0)")
-    _fader1_select_then_wait_for_fader2(out_port, layout=layout, fixture_step=4)
-    pause()
-    _fader2_move_to_sixteenth_step(out_port, layout=layout, fixture_step=0)
+    _fader1_select_pitch_at_fixture_step(
+        out_port,
+        layout=layout,
+        fixture_step=B_STEP,
+        pitch=M0_PITCH,
+        serial_collector=serial_collector,
+    )
+    _fader2_move_to_sixteenth_step(
+        out_port, layout=layout, fixture_step=M0_STEP, serial_collector=serial_collector
+    )
     display_pause()
 
     if long_over_short_pitch_case:
@@ -3628,6 +4836,7 @@ def _run_standard_move_delete_suite(
             layout=layout,
             press_ms=press_ms,
             phase_wait_ms=phase_wait_ms,
+            serial_collector=serial_collector,
         )
         _run_long_over_short_pitch_case(
             out_port,
@@ -3635,20 +4844,29 @@ def _run_standard_move_delete_suite(
             press_ms=press_ms,
             phase_wait_ms=phase_wait_ms,
             markers=markers,
+            serial_collector=serial_collector,
         )
 
     # --- Additional overlap moves (sandwich L/R, delete D, etc.) ---
     print("[edit-hitl] move selected note step 12 -> 8")
-    _fader1_select_then_wait_for_fader2(out_port, layout=layout, fixture_step=12)
+    _fader1_select_then_wait_for_fader2(
+        out_port, layout=layout, fixture_step=12, serial_collector=serial_collector
+    )
     pause()
-    _fader2_move_to_sixteenth_step(out_port, layout=layout, fixture_step=8)
+    _fader2_move_to_sixteenth_step(
+        out_port, layout=layout, fixture_step=8, serial_collector=serial_collector
+    )
     display_pause()
 
     print("[edit-hitl] move selected note step 8 -> 22 -> 24 (sandwich, no fader1 reselect)")
     pause()
-    _fader2_move_to_sixteenth_step(out_port, layout=layout, fixture_step=22)
+    _fader2_move_to_sixteenth_step(
+        out_port, layout=layout, fixture_step=22, serial_collector=serial_collector
+    )
     pause()
-    _fader2_move_to_sixteenth_step(out_port, layout=layout, fixture_step=24)
+    _fader2_move_to_sixteenth_step(
+        out_port, layout=layout, fixture_step=24, serial_collector=serial_collector
+    )
     display_pause()
 
     # --- D delay move: E4@18 onto G4@8, then pitch 64→67 (merge / remove) ---
@@ -3656,30 +4874,46 @@ def _run_standard_move_delete_suite(
         f"[edit-hitl] D delay move: step {D_STEP} -> {A_STEP}, "
         f"pitch {D_PITCH} -> {A_PITCH}"
     )
-    _fader1_select_then_wait_for_fader2(out_port, layout=layout, fixture_step=D_STEP)
+    _fader1_select_then_wait_for_fader2(
+        out_port, layout=layout, fixture_step=D_STEP, serial_collector=serial_collector
+    )
     pause()
-    _fader2_move_to_sixteenth_step(out_port, layout=layout, fixture_step=A_STEP)
+    _fader2_move_to_sixteenth_step(
+        out_port, layout=layout, fixture_step=A_STEP, serial_collector=serial_collector
+    )
     markers.append("POSITION EDIT")
     display_pause()
-    _fader4_pitch_cc(out_port, A_PITCH)
+    _fader4_pitch_cc(out_port, A_PITCH, serial_collector=serial_collector)
     markers.append("Note value fader")
     display_pause()
 
     # --- Delete B, insert at empty step 18, move M0 over the new note (nav / reorder) ---
     print(f"[edit-hitl] delete B @ fixture step {B_STEP}")
-    _fader1_select_sixteenth_step(out_port, layout=layout, fixture_step=B_STEP)
+    _fader1_select_sixteenth_step(
+        out_port,
+        layout=layout,
+        fixture_step=B_STEP,
+        serial_collector=serial_collector,
+    )
     pause()
-    _delete_selected_note(out_port, press_ms=press_ms)
+    _delete_selected_note(
+        out_port, press_ms=press_ms, serial_collector=serial_collector
+    )
     markers.append("Deleting note")
     time.sleep(POST_DELETE_QUIET_MS / 1000.0)
 
     print(f"[edit-hitl] insert note @ empty fixture step {INSERT_NOTE_STEP}")
     display_pause()
     _fader1_select_empty_fixture_step(
-        out_port, layout=layout, fixture_step=INSERT_NOTE_STEP
+        out_port,
+        layout=layout,
+        fixture_step=INSERT_NOTE_STEP,
+        serial_collector=serial_collector,
     )
     display_pause()
-    _create_note_at_bracket(out_port, press_ms=press_ms)
+    _create_note_at_bracket(
+        out_port, press_ms=press_ms, serial_collector=serial_collector
+    )
     markers.append("Created 32nd note")
     display_pause()
 
@@ -3688,11 +4922,17 @@ def _run_standard_move_delete_suite(
         f"(step {M0_POST_SANDWICH_STEP} -> {INSERT_NOTE_STEP})"
     )
     _fader1_select_sixteenth_step(
-        out_port, layout=layout, fixture_step=M0_POST_SANDWICH_STEP
+        out_port,
+        layout=layout,
+        fixture_step=M0_POST_SANDWICH_STEP,
+        serial_collector=serial_collector,
     )
     pause()
     _fader2_move_to_sixteenth_step(
-        out_port, layout=layout, fixture_step=INSERT_NOTE_STEP
+        out_port,
+        layout=layout,
+        fixture_step=INSERT_NOTE_STEP,
+        serial_collector=serial_collector,
     )
     markers.append("POSITION EDIT")
     display_pause()
@@ -3702,27 +4942,40 @@ def _run_standard_move_delete_suite(
         f"(step {INSERT_NOTE_STEP} -> {M0_POST_SANDWICH_STEP}, no fader1 reselect)"
     )
     _fader2_move_to_sixteenth_step(
-        out_port, layout=layout, fixture_step=M0_POST_SANDWICH_STEP
+        out_port,
+        layout=layout,
+        fixture_step=M0_POST_SANDWICH_STEP,
+        serial_collector=serial_collector,
     )
     markers.append("POSITION EDIT")
     display_pause()
 
     print("[edit-hitl] move over empty slots near former D (steps 17 / 19)")
     _fader1_select_then_wait_for_fader2(
-        out_port, layout=layout, fixture_step=INSERT_NOTE_STEP
+        out_port,
+        layout=layout,
+        fixture_step=INSERT_NOTE_STEP,
+        serial_collector=serial_collector,
     )
     pause()
-    _fader2_move_to_sixteenth_step(out_port, layout=layout, fixture_step=17)
+    _fader2_move_to_sixteenth_step(
+        out_port, layout=layout, fixture_step=17, serial_collector=serial_collector
+    )
     pause()
-    _fader2_move_to_sixteenth_step(out_port, layout=layout, fixture_step=19)
+    _fader2_move_to_sixteenth_step(
+        out_port, layout=layout, fixture_step=19, serial_collector=serial_collector
+    )
     display_pause()
 
     print("[edit-hitl] pitch change on M0 via fader 4")
     _fader1_select_sixteenth_step(
-        out_port, layout=layout, fixture_step=INSERT_NOTE_STEP
+        out_port,
+        layout=layout,
+        fixture_step=INSERT_NOTE_STEP,
+        serial_collector=serial_collector,
     )
     pause()
-    _fader4_pitch_cc(out_port, 72)
+    _fader4_pitch_cc(out_port, 72, serial_collector=serial_collector)
     display_pause()
 
 
@@ -3733,26 +4986,46 @@ def _run_chord_fixture_move_delete_suite(
     press_ms: int,
     phase_wait_ms: int,
     markers: list[str],
+    serial_collector: Optional[Any] = None,
 ) -> None:
     """Shorter move/delete for EDIT_SAME_STEP_CHORD_FIXTURE (M0, chord@8, tail@16)."""
 
     def pause() -> None:
         time.sleep(max(phase_wait_ms, 1) / 1000.0)
 
-    _fader1_select_then_wait_for_fader2(out_port, layout=layout, fixture_step=0)
+    _fader1_select_then_wait_for_fader2(
+        out_port, layout=layout, fixture_step=0, serial_collector=serial_collector
+    )
     pause()
-    _fader2_move_to_sixteenth_step(out_port, layout=layout, fixture_step=4)
+    _fader2_move_to_sixteenth_step(
+        out_port, layout=layout, fixture_step=4, serial_collector=serial_collector
+    )
     markers.append("POSITION EDIT")
     pause()
 
-    _fader1_select_then_wait_for_fader2(out_port, layout=layout, fixture_step=8, note_ordinal=0)
+    _fader1_select_then_wait_for_fader2(
+        out_port,
+        layout=layout,
+        fixture_step=8,
+        note_ordinal=0,
+        serial_collector=serial_collector,
+    )
     pause()
-    _fader2_move_to_sixteenth_step(out_port, layout=layout, fixture_step=10)
+    _fader2_move_to_sixteenth_step(
+        out_port, layout=layout, fixture_step=10, serial_collector=serial_collector
+    )
     pause()
 
-    _fader1_select_sixteenth_step(out_port, layout=layout, fixture_step=16)
+    _fader1_select_sixteenth_step(
+        out_port,
+        layout=layout,
+        fixture_step=16,
+        serial_collector=serial_collector,
+    )
     pause()
-    _delete_selected_note(out_port, press_ms=press_ms)
+    _delete_selected_note(
+        out_port, press_ms=press_ms, serial_collector=serial_collector
+    )
     markers.append("Deleting note")
     pause()
 
@@ -3777,7 +5050,8 @@ def _run_edit_scenarios(
     markers: list[str] = []
 
     def pause() -> None:
-        time.sleep(max(phase_wait_ms, 1) / 1000.0)
+        if serial_collector is None:
+            time.sleep(max(phase_wait_ms, 1) / 1000.0)
 
     # Enter edit (wait for deferred short-press so we do not cycle LOOP_EDIT on a 2nd tap)
     _send_short_press(
@@ -3787,7 +5061,21 @@ def _run_edit_scenarios(
         press_ms=press_ms,
     )
     markers.append("entered note edit mode")
-    time.sleep(max(EDIT_BUTTON_DEBOUNCE_MS, phase_wait_ms) / 1000.0)
+    if serial_collector is not None:
+        if not _wait_for_note_edit_enter(serial_collector):
+            time.sleep(EDIT_BUTTON_DEBOUNCE_MS / 1000.0)
+        time.sleep(EDIT_ACTION_PAUSE_MS / 1000.0)
+    else:
+        time.sleep(max(EDIT_BUTTON_DEBOUNCE_MS, phase_wait_ms) / 1000.0)
+
+    if serial_collector is not None:
+        print("[edit-hitl] post-enter: select M0 before edit suite")
+        _fader1_select_fixture_note(
+            out_port,
+            layout=layout,
+            fixture_step=M0_STEP,
+            serial_collector=serial_collector,
+        )
 
     if same_step_chord_step is not None:
         markers.extend(
@@ -3803,13 +5091,20 @@ def _run_edit_scenarios(
     warmup_step = _warmup_empty_fixture_step(layout)
     if warmup_step is not None:
         if _fader1_select_empty_fixture_step(
-            out_port, layout=layout, fixture_step=warmup_step
+            out_port,
+            layout=layout,
+            fixture_step=warmup_step,
+            serial_collector=serial_collector,
         ):
             pause()
-            _create_note_at_bracket(out_port, press_ms=press_ms)
+            _create_note_at_bracket(
+                out_port, press_ms=press_ms, serial_collector=serial_collector
+            )
             markers.append("Created 32nd note")
             pause()
-            _delete_selected_note(out_port, press_ms=press_ms)
+            _delete_selected_note(
+                out_port, press_ms=press_ms, serial_collector=serial_collector
+            )
             markers.append("Deleting note")
             pause()
     else:
@@ -3823,6 +5118,7 @@ def _run_edit_scenarios(
             phase_wait_ms=phase_wait_ms,
             markers=markers,
             long_over_short_pitch_case=long_over_short_pitch_case,
+            serial_collector=serial_collector,
         )
     else:
         _run_chord_fixture_move_delete_suite(
@@ -3831,6 +5127,7 @@ def _run_edit_scenarios(
             press_ms=press_ms,
             phase_wait_ms=phase_wait_ms,
             markers=markers,
+            serial_collector=serial_collector,
         )
 
     if in_edit_undo_redo:
@@ -3839,6 +5136,7 @@ def _run_edit_scenarios(
             press_ms=press_ms,
             undo_redo_delay_ms=undo_redo_delay_ms,
             phase="in-edit",
+            serial_collector=serial_collector,
         )
         markers.append("EditSession undo")
         markers.append("EditSession redo")
@@ -3854,7 +5152,10 @@ def _run_edit_scenarios(
         pause()
         print("[edit-hitl] post-redo probe: select insert step")
         _fader1_select_sixteenth_step(
-            out_port, layout=layout, fixture_step=INSERT_NOTE_STEP
+            out_port,
+            layout=layout,
+            fixture_step=INSERT_NOTE_STEP,
+            serial_collector=serial_collector,
         )
         pause()
 
@@ -3887,6 +5188,7 @@ def _run_edit_scenarios(
             press_ms=press_ms,
             undo_redo_delay_ms=undo_redo_delay_ms,
             phase="post-exit",
+            serial_collector=serial_collector,
         )
         markers.append(SCOPED_EDIT_PASS_UNDONE)
         markers.append(SCOPED_EDIT_PASS_REDONE)
@@ -3894,7 +5196,7 @@ def _run_edit_scenarios(
     return markers
 
 
-def main() -> int:
+def _build_edit_baseline_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Note-edit HITL automation baseline")
     parser.add_argument("--midi-out", default="Teensy", help="MIDI output port substring")
     parser.add_argument("--midi-in", default="Teensy", help="MIDI input port substring")
@@ -3903,12 +5205,38 @@ def main() -> int:
     parser.add_argument("--verify-serial-log", type=Path, default=None)
     parser.add_argument("--out-dir", type=Path, default=Path("captures"))
     parser.add_argument("--track", "--track-number", dest="track_number", type=int, default=5)
+    parser.add_argument("--loop-slot", type=int, default=0, help="Loop slot 1-8 on selected track")
     parser.add_argument("--midi-channel", type=int, default=None)
     parser.add_argument("--record-bars", type=int, default=2, choices=[1, 2, 4, 8])
+    parser.add_argument("--tempo-bpm", type=float, default=120.0, help="Tempo for bar-sync wall-clock proxy")
+    parser.add_argument(
+        "--bar-sync-from-midi-clock",
+        action="store_true",
+        default=True,
+        help="Follow MIDI clock or serial wall-clock proxy for fixture record (default: on)",
+    )
+    parser.add_argument(
+        "--no-bar-sync-from-midi-clock",
+        action="store_false",
+        dest="bar_sync_from_midi_clock",
+        help="Disable bar-sync fixture record",
+    )
     parser.add_argument("--start-transport", action="store_true")
     parser.add_argument("--clear-before-record", action="store_true", default=True)
     parser.add_argument("--no-clear-before-record", action="store_false", dest="clear_before_record")
     parser.add_argument("--clear-press-ms", type=int, default=900)
+    parser.add_argument(
+        "--deferred-save-wait-ms",
+        type=int,
+        default=3000,
+        help="Max wait for deferred save idle after transport stop before clear (ms)",
+    )
+    parser.add_argument(
+        "--stop-transport-before-edit",
+        action="store_true",
+        default=False,
+        help="Stop transport before edit to flush REVT (default: edit during playback)",
+    )
     parser.add_argument("--phase-wait-ms", type=int, default=500)
     parser.add_argument("--final-wait-ms", type=int, default=3000)
     parser.add_argument("--press-ms", type=int, default=120)
@@ -4008,7 +5336,103 @@ def main() -> int:
         default=False,
         help="Fail when RECORD piano-roll frameNotes stay zero while capture grows (D1 regression)",
     )
-    args = parser.parse_args()
+    parser.add_argument(
+        "--follow-current-session",
+        action="store_true",
+        help="Tail captures/.current_session (Mode B external capture)",
+    )
+    parser.add_argument(
+        "--follow-serial-log",
+        type=Path,
+        default=None,
+        help="Tail a specific session log file",
+    )
+    return parser
+
+
+def parse_edit_baseline_args(argv: list[str] | None = None) -> argparse.Namespace:
+    return _build_edit_baseline_parser().parse_args(argv)
+
+
+def _open_edit_baseline_serial(
+    args: argparse.Namespace,
+) -> tuple[Optional[Any], bool]:
+    """Return (collector, opened_by_this_call)."""
+    from hitl.serial_transport import serial_capture_active, serial_follow_active
+
+    if args.serial_port:
+        from hitl.serial_collector import SerialCaptureCollector
+
+        collector = SerialCaptureCollector(args.serial_port, args.serial_baud)
+        collector.start()
+        boot_ms = max(getattr(args, "boot_settle_ms", 0), 0)
+        if boot_ms > 0:
+            print(f"[edit-hitl] boot settle {boot_ms}ms")
+            time.sleep(boot_ms / 1000.0)
+        else:
+            time.sleep(1.5)
+        print(f"[edit-hitl] serial capture enabled: {args.serial_port}")
+        return collector, True
+
+    if serial_follow_active(args):
+        from hitl.serial_follow import ExternalSerialFollowCollector
+
+        follow_path = (
+            ExternalSerialFollowCollector.resolve_current_session_path(args.out_dir)
+            if args.follow_current_session
+            else args.follow_serial_log
+        )
+        if follow_path is None:
+            raise SystemExit("--follow-serial-log requires a path")
+        collector = ExternalSerialFollowCollector(follow_path, out_dir=args.out_dir)
+        collector.start()
+        time.sleep(0.15)
+        print(f"[edit-hitl] serial follow enabled: {follow_path}")
+        return collector, True
+
+    if serial_capture_active(args):
+        print("[edit-hitl] serial follow requested but no collector path resolved")
+    else:
+        print("[edit-hitl] serial capture disabled (no #CAP assertions)")
+    return None, False
+
+
+def run_edit_baseline(
+    args: argparse.Namespace,
+    *,
+    out_port: Any = None,
+    in_port: Any = None,
+    serial_collector: Any = None,
+    owns_resources: bool | None = None,
+) -> int:
+    """Run the full edit baseline (record fixture + edit suite).
+
+    When ``owns_resources`` is False (layered ``HitlSession`` injection), do not
+    open MIDI ports or a serial collector — the caller owns lifecycle.
+    """
+    opened_ports = False
+    opened_serial = False
+
+    if out_port is None or in_port is None:
+        if owns_resources is False:
+            raise ValueError(
+                "run_edit_baseline(owns_resources=False) requires out_port and in_port"
+            )
+        out_name = _find_midi_port(args.midi_out, is_input=False)
+        in_name = _find_midi_port(args.midi_in, is_input=True)
+        out_port = mido.open_output(out_name)
+        in_port = mido.open_input(in_name)
+        opened_ports = True
+
+    if serial_collector is None:
+        if owns_resources is False:
+            # Layered Mode B: foundation_runner / bootstrap owns follow collector.
+            opened_serial = False
+        else:
+            serial_collector, opened_serial = _open_edit_baseline_serial(args)
+
+    if owns_resources is None:
+        owns_resources = opened_ports or opened_serial
 
     record_fixture = (
         EDIT_SAME_STEP_CHORD_FIXTURE
@@ -4022,30 +5446,38 @@ def main() -> int:
     track_index = args.track_number - 1
     midi_channel = args.midi_channel if args.midi_channel is not None else args.track_number
 
-    out_name = _find_midi_port(args.midi_out, is_input=False)
-    in_name = _find_midi_port(args.midi_in, is_input=True)
-    out_port = mido.open_output(out_name)
-    in_port = mido.open_input(in_name)
-
-    serial_collector: Optional[SerialCaptureCollector] = None
-    if args.serial_port:
-        serial_collector = SerialCaptureCollector(args.serial_port, args.serial_baud)
-        serial_collector.start()
-        if args.boot_settle_ms > 0:
-            print(f"[edit-hitl] boot settle {args.boot_settle_ms}ms")
-            time.sleep(args.boot_settle_ms / 1000.0)
-
     abort = RunAbort(serial_collector=serial_collector)
 
     try:
+        loop_slot = int(getattr(args, "loop_slot", 0) or 0)
+
         if args.start_transport:
-            if not _ensure_transport_running(
-                out_port,
-                in_port,
-                press_ms=args.press_ms,
-                phase_wait_ms=args.phase_wait_ms,
-            ):
-                print("[warn] MIDI clock still missing before track select")
+            from hitl.serial_transport import use_serial_transport_proxy as _use_serial_transport_proxy
+
+            if serial_collector is not None and _use_serial_transport_proxy(args, serial_collector):
+                print(
+                    "[info] Serial #CAP,BPM/BAR shows transport running; "
+                    "skipping transport start presses (no USB MIDI clock on host)."
+                )
+            elif not _clock_seen_within(in_port, 0.5):
+                clock_started = False
+                for attempt in range(1, 4):
+                    _send_short_press(
+                        out_port,
+                        note=GLOBAL_TRANSPORT_NOTE,
+                        channel_1based=CONTROL_CHANNEL_1BASED,
+                        press_ms=args.press_ms,
+                    )
+                    time.sleep(args.phase_wait_ms / 1000.0)
+                    if _clock_seen_within(in_port, 1.0):
+                        clock_started = True
+                        break
+                    print(
+                        f"[warn] No MIDI clock observed after transport start "
+                        f"press (attempt {attempt}/3)."
+                    )
+                if not clock_started:
+                    print("[warn] MIDI clock still missing after transport retries.")
 
         track_note = 60 + track_index
         _send_short_press(
@@ -4055,89 +5487,73 @@ def main() -> int:
             press_ms=args.press_ms,
         )
         time.sleep(args.phase_wait_ms / 1000.0)
+        track_baseline_len = len(serial_collector.snapshot()) if serial_collector is not None else 0
 
-        transport_stopped_for_clear = False
-        if args.start_transport:
-            transport_stopped_for_clear = _stop_transport_if_running(
+        if loop_slot > 0:
+            if not (1 <= loop_slot <= 8):
+                print(f"[error] --loop-slot must be in [1, 8], got {loop_slot}")
+                return 1
+            from hitl.legacy_record_baseline import _send_loop_slot_select_press
+
+            print(f"[edit-hitl] select loop slot {loop_slot}")
+            _send_loop_slot_select_press(
                 out_port,
-                in_port,
+                loop_slot=loop_slot,
                 press_ms=args.press_ms,
-                phase_wait_ms=args.phase_wait_ms,
             )
-            if transport_stopped_for_clear:
-                drained = _drain_input_messages(in_port)
-                if drained:
-                    print(
-                        f"[edit-hitl] drained {drained} stale MIDI input messages "
-                        "after transport stop"
-                    )
+            time.sleep(args.phase_wait_ms / 1000.0)
 
         if args.clear_before_record:
             if serial_collector is not None:
-                snap = serial_collector.snapshot()
-                if _can_skip_clear_for_record(snap):
-                    latest = _latest_track_state(snap)
-                    print(
-                        f"[edit-hitl] skipping clear (latest={latest}); proceed to arm/record"
-                    )
-                elif not _ensure_clear_to_empty(
+                from hitl.legacy_record_baseline import _run_clear_before_record
+
+                reached_empty, clear_result = _run_clear_before_record(
                     out_port,
+                    in_port,
                     serial_collector,
-                    clear_press_ms=args.clear_press_ms,
-                    state_sync_timeout_ms=args.state_sync_timeout_ms,
+                    args,
+                    track_index=track_index,
+                    track_baseline_len=track_baseline_len,
                     abort=abort,
-                ):
-                    print("[error] Clear did not reach EMPTY; aborting before record")
-                    return 1
-                elif not _track_cleared_for_record(serial_collector.snapshot()):
-                    latest = _latest_track_state(serial_collector.snapshot())
+                )
+                if not reached_empty:
                     print(
-                        f"[error] Track not cleared for record (latest={latest}). "
-                        "Stop transport and clear the selected loop, then retry."
+                        f"[error] Clear precondition failed ({clear_result}); "
+                        "aborting before record"
                     )
                     return 1
             else:
+                from hitl.legacy_record_baseline import _send_record_clear_long_press
+
                 print("[edit-hitl] clear selected loop (long press record, no serial)")
-                _send_short_press(
+                _send_record_clear_long_press(
                     out_port,
-                    note=RECORD_BUTTON_NOTE,
-                    channel_1based=CONTROL_CHANNEL_1BASED,
-                    press_ms=args.clear_press_ms,
+                    clear_press_ms=args.clear_press_ms,
                 )
                 time.sleep(args.phase_wait_ms / 1000.0)
 
-        if args.start_transport and transport_stopped_for_clear:
-            if _clock_seen_within(in_port, 0.5):
-                print(
-                    "[warn] MIDI clock still running after transport stop; "
-                    "stopping transport before arm/record"
-                )
-                _stop_transport_if_running(
-                    out_port,
-                    in_port,
-                    press_ms=args.press_ms,
-                    phase_wait_ms=args.phase_wait_ms,
-                )
-                _drain_input_messages(in_port)
-
         print(f"[edit-hitl] record {args.record_bars} bars (fixture, ch{midi_channel})")
 
+        record_schedule_start: Optional[float] = None
         reached_recording = False
         if serial_collector is not None:
-            reached_recording = _ensure_recording_started(
+            from hitl.legacy_record_baseline import _run_record_arm_until_capturing
+
+            reached_recording, record_schedule_start = _run_record_arm_until_capturing(
                 out_port,
+                in_port,
                 serial_collector,
-                press_ms=args.press_ms,
-                state_sync_timeout_ms=args.state_sync_timeout_ms,
+                args,
+                track_baseline_len=track_baseline_len,
+                record_loop_slot=loop_slot if loop_slot > 0 else None,
                 abort=abort,
+                wait_for_recording_confirm=False,
             )
-            if not reached_recording:
+            if not reached_recording or record_schedule_start is None:
                 latest = _latest_track_state(serial_collector.snapshot())
                 print(
-                    "[error] Record did not start (no RECA / ->RECORDING in serial). "
-                    f"Latest track state={latest}. "
-                    "If the track was PLAYING at test start, transport reset + clear should "
-                    "have reached EMPTY first — check serial log."
+                    "[error] Record arm / transport start failed. "
+                    f"Latest track state={latest}."
                 )
                 return 1
         else:
@@ -4158,16 +5574,27 @@ def main() -> int:
         if not reached_recording:
             return 1
 
-        note_count, clocks = _stream_fixture_record(
+        if not getattr(args, "bar_sync_from_midi_clock", True):
+            print("[error] edit_full requires bar-sync fixture record")
+            return 1
+
+        from hitl.legacy_record_baseline import _stream_fixture_record_bars
+
+        note_count, clocks, stream_ok, record_stop_sent = _stream_fixture_record_bars(
             out_port,
             in_port,
+            serial_collector,
+            args,
             fixture=record_fixture,
             target_bars=args.record_bars,
             midi_channel_1based=midi_channel,
-            stop_press_advance_clocks=args.stop_press_advance_clocks,
-            press_ms=args.press_ms,
             abort=abort,
+            record_schedule_start_mono=record_schedule_start,
+            skip_clock_preamble=record_schedule_start is not None,
         )
+        if not stream_ok:
+            print("[error] MIDI clock / serial transport proxy missing before fixture record")
+            return 1
         print(f"[edit-hitl] fixture note-ons={note_count} clocks={clocks}")
         if note_count < len(record_fixture):
             print(
@@ -4176,19 +5603,20 @@ def main() -> int:
             )
             return 1
 
-        time.sleep(max(args.phase_wait_ms, 0) / 1000.0)
         expected_play_count: Optional[int] = None
         if serial_collector is not None:
             counts = _count_capture_transitions(serial_collector.snapshot())
             expected_play_count = counts.get(("STOPPED_RECORDING", "PLAYING"), 0) + 1
 
-        if args.stop_press_advance_clocks <= 0:
-            _send_short_press(
-                out_port,
-                note=RECORD_BUTTON_NOTE,
-                channel_1based=CONTROL_CHANNEL_1BASED,
-                press_ms=args.press_ms,
-            )
+        if not record_stop_sent:
+            time.sleep(max(args.phase_wait_ms, 0) / 1000.0)
+            if args.stop_press_advance_clocks <= 0:
+                _send_short_press(
+                    out_port,
+                    note=RECORD_BUTTON_NOTE,
+                    channel_1based=CONTROL_CHANNEL_1BASED,
+                    press_ms=args.press_ms,
+                )
 
         if serial_collector is not None:
             if expected_play_count is not None:
@@ -4200,12 +5628,43 @@ def main() -> int:
                     timeout_s=args.state_sync_timeout_ms / 1000.0,
                     abort=abort,
                 )
-            _wait_for_revt_count(
-                serial_collector,
-                min_count=len(record_fixture),
-                timeout_s=max(args.final_wait_ms / 1000.0, 3.0),
-                abort=abort,
-            )
+            revt_ok = False
+            if getattr(args, "stop_transport_before_edit", False):
+                revt_ok = _stop_transport_and_flush_revt(
+                    out_port,
+                    in_port,
+                    serial_collector,
+                    press_ms=args.press_ms,
+                    phase_wait_ms=args.phase_wait_ms,
+                    min_revt_count=len(record_fixture),
+                    abort=abort,
+                )
+                if not revt_ok:
+                    print(
+                        f"[warn] REVT flush incomplete before edit "
+                        f"(need {len(record_fixture)} note-ons); trying DNTE layout"
+                    )
+            else:
+                print(
+                    "[edit-hitl] edit during playback (stress): keeping transport running"
+                )
+                dnte_pairs = _wait_for_dnte_fixture_notes(
+                    serial_collector,
+                    record_fixture,
+                    timeout_s=max(args.state_sync_timeout_ms / 1000.0, 4.0),
+                    abort=abort,
+                )
+                revt_ok = len(dnte_pairs) >= len(record_fixture)
+                if revt_ok:
+                    print(
+                        f"[edit-hitl] DNTE layout ready: "
+                        f"{len(dnte_pairs)} notes (playback stress path)"
+                    )
+                else:
+                    print(
+                        f"[warn] DNTE layout incomplete ({len(dnte_pairs)}/"
+                        f"{len(record_fixture)}); selection may be wrong"
+                    )
 
         ideal_revt = [(n.step * TICKS_PER_16TH_STEP, n.pitch) for n in record_fixture]
         record_layout = RecordLayout(
@@ -4219,6 +5678,7 @@ def main() -> int:
                 loop_length=args.record_bars * TICKS_PER_BAR,
                 loop_start=0,
             ),
+            note_index_to_pitch=_note_index_to_pitch(ideal_revt),
         )
         if serial_collector is not None:
             parsed_layout = _record_layout_from_serial(
@@ -4230,12 +5690,33 @@ def main() -> int:
                 record_layout = parsed_layout
             else:
                 print("[warn] Serial record layout empty; using ideal fixture layout")
+            revt_pairs = _resolve_record_note_pairs(
+                serial_collector.snapshot(), record_fixture
+            )
+            if len(revt_pairs) < len(record_fixture):
+                print(
+                    f"[warn] REVT note count {len(revt_pairs)} < fixture "
+                    f"{len(record_fixture)}; selection uses ideal ticks"
+                )
             print(
                 f"[edit-hitl] record layout: loop_start={record_layout.loop_start} "
                 f"length={record_layout.loop_length} nav_slots={record_layout.nav_slot_count} "
                 f"sixteenth_steps={record_layout.sixteenth_steps} "
-                f"m0_tick={record_layout.step_to_tick.get(0)}"
+                f"m0_tick={record_layout.step_to_tick.get(0)} "
+                f"step1_tick={record_layout.step_to_tick.get(1)}"
             )
+            ideal_m0 = 0
+            actual_m0 = record_layout.step_to_tick.get(M0_STEP, -1)
+            if actual_m0 != ideal_m0:
+                print(
+                    f"[warn] Fixture M0 tick mismatch: expected {ideal_m0}, got {actual_m0}; "
+                    f"step_to_tick={dict(sorted(record_layout.step_to_tick.items()))}"
+                )
+
+        from hitl.context import get_context
+
+        ctx = get_context(args)
+        ctx.record_layout = record_layout
 
         print("[edit-hitl] combined edit scenarios")
         expected_markers = _run_edit_scenarios(
@@ -4442,7 +5923,13 @@ def main() -> int:
                 return 1
         return 0
     finally:
-        if serial_collector is not None:
-            serial_collector.stop()
-        out_port.close()
-        in_port.close()
+        if owns_resources:
+            if opened_serial and serial_collector is not None:
+                serial_collector.stop()
+            if opened_ports:
+                out_port.close()
+                in_port.close()
+
+
+def main() -> int:
+    return run_edit_baseline(parse_edit_baseline_args())

@@ -2,11 +2,57 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-03 (note-edit control-surface split complete)
+Last updated: 2026-08-05 (note edit undo reboot fix)
 
 ---
 
 ## Now implementing
+
+### Note edit undo after reboot — **in progress**
+
+**Plan:** [`.cursor/plans/note_edit_undo_reboot_58ef9394.plan.md`](../../.cursor/plans/note_edit_undo_reboot_58ef9394.plan.md)
+
+| Item | Status |
+|------|--------|
+| Global undo **STK1** scoped-edit serialization round-trip | Done |
+| `EditManager::markCurrentEditBatchDurable` + autosave/depart call sites | Done |
+| Native tests (serialization, A/B/C checkpoint order) | Done |
+| LOOP_MIDI durability invariant + **E:** vs **U:** docs | Done |
+| HITL reboot-during-NOTE_EDIT | **PASS** — [`session_20260805_212234.log`](../../captures/session_20260805_212234.log): durable checkpoint + `LoopPersist` + post-reboot **U:** restored prior state |
+
+### Edit HITL from scratch — parked
+
+**Plan:** [`docs/plans/m8_edit_note_edit_hitl_automation_refinement.md`](../plans/m8_edit_note_edit_hitl_automation_refinement.md)
+
+Deferred from **edit-session-action-geometry** Phase 5 (D14 full matrix). Interim smoke: `edit_minimal` preset only. Requires new layered edit HITL presets (base + 2× overdub fixture, per-interaction matrix).
+
+### HITL CLI rebuild — Phase 3 (`base` + `edit_full` only)
+
+**OpenSpec:** [`openspec/changes/hitl-cli-rebuild/`](../../openspec/changes/hitl-cli-rebuild/)  
+**Plan:** [`docs/plans/hitl_cli_rebuild_enhancement.md`](../plans/hitl_cli_rebuild_enhancement.md)
+
+| Phase | Status |
+|-------|--------|
+| 0 — inventory + doc scaffold | **Done** (2026-08-04) |
+| 1 — foundation (`HITL_ARCHITECTURE.md`, layered runner, actions, flows) | **Done** (2026-08-04) |
+| 2 — core scenarios + UIP 5.5 (historical) | **Done** (2026-08-04) |
+| 3 — layered **`base`** + **`edit_full`** only | **In progress** — 3.2 bridge stabilized (2026-08-04); next: 3.3 device PASS |
+| 4–5 — corpus docs, archive | Pending |
+
+**Layered presets (active):** `base` (`record_overdub`), `edit_full`. Do **not** wire `edit_minimal`, `revision_*`, `load_save_*`, `fader_motor_*`, etc. in this change.
+
+**Phase 3.2 done:** `LayeredLegacyBridge.edit_full_args` includes slot targets + Mode B follow; `run_edit_baseline(..., owns_resources=False)` reuses layered MIDI/serial without opening a second collector; host tests in [`scripts/test_edit_full_layered.py`](../../scripts/test_edit_full_layered.py).
+
+**Phase 3 exit:** Mode B device PASS for `--layered --preset base` and `--layered --preset edit_full`. Keep `legacy_edit_baseline` bridge until `edit_full` no longer needs it.
+
+### Recently archived — edit-session-action-geometry (2026-08-05)
+
+**Archive:** [`openspec/changes/archive/2026-08-05-edit-session-action-geometry/`](../../openspec/changes/archive/2026-08-05-edit-session-action-geometry/)  
+**Normative specs:** [`openspec/specs/edit-session-action-geometry/`](../../openspec/specs/edit-session-action-geometry/), updated [`note-edit-modification-session`](../../openspec/specs/note-edit-modification-session/spec.md)
+
+Phases 1–4.10 shipped (pipeline, canonical commit, display-first F1 motors `adf9209`). Phase 5.1–5.2 HITL matrix **parked** — see Edit HITL plan above.
+
+---
 
 ### Persistence / overlay (next after Phase B)
 
@@ -286,7 +332,13 @@ Phases 1–3 prototype **reverted** at `40db4df` (boot bisect). Storage boot rec
 
 ### Derived note overlap (`edit-session-action-geometry`)
 
-Blocked until `unified-interval-projection` Phases 1–5 complete.
+**Phase 4 wired** (2026-08-04): `runEditSessionGeometryPipeline` in move/length/pitch paths; baseline-vs-live pre-commit rows.
+
+**Remaining Phase 4:** 4.3a Add/Delete, 4.5 retire `overlapNotes`, 4.5b `filterSelectableDisplayNotes`.
+
+**Next:** Phase 4 closeout or Phase 5 HITL matrix.
+
+Handoff: [`derived_note_overlap_logic_handoff.md`](../plans/derived_note_overlap_logic_handoff.md)
 
 ### Prior: [`runtime-derived-representation-heap`](../../openspec/changes/runtime-derived-representation-heap/)
 

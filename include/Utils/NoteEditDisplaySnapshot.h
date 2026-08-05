@@ -82,4 +82,28 @@ inline int filteredDisplayNoteIndexForSelection(const EditorSelection& selection
                                                      loopLength);
 }
 
+/// Identity-first NOTE_EDIT highlight index: primaryNote + focus.last, then selection tick.
+template <typename NotesVec>
+inline int resolveNoteEditHighlightIndex(const EditorSelection& selection,
+                                         const NotesVec& notes, const NoteEditFocus& focus,
+                                         uint32_t loopStartTick, uint32_t loopLength,
+                                         bool lengthBracket) {
+    if (!editorSelectionHasNote(selection) || loopLength == 0) {
+        return -1;
+    }
+    if (focus.active && focus.movingNoteId == selection.primaryNote) {
+        const uint32_t storageBracket =
+            lengthBracket ? focus.last.endTick : focus.last.startTick;
+        const uint32_t displayBracket =
+            displayStartTickFromStorage(storageBracket, loopStartTick, loopLength);
+        if (int byFocus = filteredDisplayNoteIndexForNoteIdAndStart(
+                notes, focus.movingNoteId, displayBracket, loopStartTick, loopLength);
+            byFocus >= 0) {
+            return byFocus;
+        }
+    }
+    return filteredDisplayNoteIndexForSelection(selection, notes, loopStartTick, loopLength,
+                                                lengthBracket);
+}
+
 }  // namespace NoteEditDisplaySnapshot

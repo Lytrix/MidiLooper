@@ -13,6 +13,7 @@
 #include "../../src/Loop.cpp"
 #include "../test_support/LoopCaptureTestDeps.cpp"
 #include "../../src/NoteEditFocus.cpp"
+#include "../../src/EditSessionLiveStoreSpan.cpp"
 #include "../../src/NoteEditSessionUndo.cpp"
 
 #include "EditApply.h"

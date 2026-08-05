@@ -214,10 +214,6 @@ private:
     uint32_t liveWindowGatherLength_ = 0;
     uint32_t liveWindowGatherLoopLength_ = 0;
     bool liveWindowGatherValid_ = false;
-    uint8_t noteEditDisplayCacheSlot_ = 255;
-    uint32_t noteEditDisplayCachePreviewRevision_ = UINT32_MAX;
-    uint32_t noteEditDisplayCacheLoopLength_ = 0;
-    size_t noteEditDisplayCacheOverlapCount_ = static_cast<size_t>(-1);
 
     static constexpr uint8_t kDisplaySlotCount = Config::MAX_LOOPS_PER_TRACK;
     uint32_t detailedWindowStartTick_[kDisplaySlotCount] = {};

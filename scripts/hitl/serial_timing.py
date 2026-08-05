@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Optional
 
+from hitl.capture_transitions import _phase_ts_from_marker_line
 from hitl.serial_transport import parse_latest_bpm
 
 MIDI_CLOCKS_PER_BAR = 96
@@ -51,6 +52,38 @@ def extract_phase_boundaries(lines: list[str]) -> dict[str, Optional[int]]:
         ):
             overdub_sessions.append((open_overdub_start, ts))
             open_overdub_start = None
+
+    human_overdub_starts: list[int] = []
+    human_overdub_stops: list[int] = []
+    for index, line in enumerate(lines):
+        if boundaries["record_start_ts"] is None and "Recording started" in line:
+            ts = _phase_ts_from_marker_line(lines, index)
+            if ts is not None:
+                boundaries["record_start_ts"] = ts
+        if boundaries["record_stop_ts"] is None and "Recording stopped" in line:
+            ts = _phase_ts_from_marker_line(lines, index)
+            if ts is not None:
+                boundaries["record_stop_ts"] = ts
+        if "Overdubbing started" in line:
+            ts = _phase_ts_from_marker_line(lines, index)
+            if ts is not None:
+                human_overdub_starts.append(ts)
+        if "Overdubbing stopped" in line:
+            ts = _phase_ts_from_marker_line(lines, index)
+            if ts is not None:
+                human_overdub_stops.append(ts)
+
+    if not overdub_sessions and human_overdub_starts:
+        for start_ts in human_overdub_starts:
+            stop_ts = None
+            for candidate in human_overdub_stops:
+                if candidate > start_ts:
+                    stop_ts = candidate
+                    break
+            if stop_ts is not None:
+                overdub_sessions.append((start_ts, stop_ts))
+                human_overdub_stops.remove(stop_ts)
+
     if overdub_sessions:
         boundaries["overdub_start_ts"] = overdub_sessions[0][0]
         boundaries["overdub_stop_ts"] = overdub_sessions[0][1]
