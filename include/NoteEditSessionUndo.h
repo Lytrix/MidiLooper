@@ -26,6 +26,11 @@ size_t estimatedSessionUndoEntryBytes(const SessionUndoEntry& entry);
 bool canHeapAdmitSessionUndoEntry(const SessionUndoEntry& entry);
 NoteEditFocus snapshotFocusForSessionUndo(const NoteEditFocus& focus);
 
+#if defined(SESSION_CAPTURE)
+void logUndoPushPhase(const char* phase, uint32_t phaseStartUs, size_t stackSize, size_t cursor,
+                      size_t entryBaselineCount = 0);
+#endif
+
 template <typename Alloc>
 SessionUndoEntry buildSessionUndoEntry(const NoteEditFocus& focus, EditorSelection selection,
                                        const std::vector<MidiEvent, Alloc>& sessionFlat,
