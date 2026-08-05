@@ -74,7 +74,7 @@ Milestone after phases **0–7**: root TU **~1500 LOC**.
 
 ## Phase 0 — Deferred workspace save extract
 
-**Status:** WIP on `refactor/storagemanager` (uncommitted).
+**Status:** Done on `refactor/storagemanager` (`63cce36`).
 
 **New files**
 
@@ -95,6 +95,8 @@ Milestone after phases **0–7**: root TU **~1500 LOC**.
 ---
 
 ## Phase 1 — `LoadLoopJob.cpp` (~780 LOC)
+
+**Status:** Done on `refactor/storagemanager` (after Phase 0).
 
 **Priority:** Highest — largest cohesive FSM; same deferred-job pattern as workspace save.
 
