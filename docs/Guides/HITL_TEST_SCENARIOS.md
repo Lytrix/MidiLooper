@@ -276,12 +276,29 @@ Hardware steps from [`firmware_ownership_lifetime_review.md`](../plans/firmware_
 |----|--------|--------|
 | **MT-P0** | Materialize stale after loop-length change with committed editPass | Conditional PASS — `session_20260805_222144.log` |
 | **MT-P1-undo** | **E:** vs **U:** routing during NOTE_EDIT (session-gated; no global fallthrough) | **PASS** — `session_20260806_003023.log` |
-| **MT-P1-fold** | Unified wrap finalize (seal + in-edit fold) | Pending |
+| **MT-P1-fold** | Unified wrap finalize (seal + in-edit fold) | Pending — layered **`base`** PASS + manual fold on slot 1 |
 | **MT-P1-display-audition** | NOTE_EDIT geometry while PLAYING (no hang) | In progress |
 | **MT-P5-recovery** | Phase 5 longest valid prefix load | Blocked — Phase 5 code |
 | **MT-hygiene** | Smoke after doc-only / low-risk | Optional |
 
 **MT-P1-undo quick check:** enter NOTE_EDIT → two geometry actions → drain **E:** → press global undo while still in edit → serial must show `No session undo available` and **not** `Scoped edit pass undone` → exit edit → global undo must run.
+
+**MT-P1-fold (after P1 fold firmware):**
+
+1. **Regression gate:** layered **`base`** PASS — [`HITL-Test-Flow.mdc`](../../.cursor/rules/HITL-Test-Flow.mdc). With `capture_session.py` already running:
+
+```bash
+.venv/bin/python scripts/host_midi_hitl.py run --layered --preset base \
+  --no-managed-capture \
+  --follow-current-session \
+  --midi-out "Teensy" --midi-in "Teensy" \
+  --track-number 5 --loop-slot 1 --midi-channel 5
+```
+
+2. **Manual fold** on the same slot: NOTE_EDIT → in-edit overdub stop near loop end → **E:** undo/redo of overdub layer only → exit → global undo.
+3. Archive capture as `captures/MT-P1_fold_in_edit_overdub_<date>.log`.
+
+`--preset edit_overdub_during_note_edit` is **not** registered in `registry.py`; do not use it until wired.
 
 ---
 

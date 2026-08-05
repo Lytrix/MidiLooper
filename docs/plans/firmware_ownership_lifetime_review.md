@@ -13,7 +13,7 @@ todos:
     status: completed
   - id: p1-fold-wrap
     content: Unify wrap finalize ownership (seal + fold) + manual MT-P1-fold
-    status: pending
+    status: in_progress
   - id: audit-dual-revision
     content: "(merged into p1-display-audition)"
     status: cancelled
@@ -119,17 +119,15 @@ With active editPasses, `gatherCommittedEvents` copies from `midiEvents()`, whic
 
 ---
 
-### P1 — In-edit fold duplicates wrap finalize ownership
+### P1 — In-edit fold duplicates wrap finalize ownership — **unified 2026-08-06**
 
 **Invariant (guide):** After `finalizePendingNotes`, seal must not re-close those notes via a second owner story.
 
-**Normal path:** pending close → `sealCapture` → `finalizeWrapWindowOnStore`.
+**Normal path:** pending close → `sealCapture` → `Loop::finalizeCaptureWrapWindowAtStop`.
 
-**Fold path:** `finalizePendingNotes` then `foldLiveCaptureIntoNoteEditSession` which **also** calls `LoopStopFinalize::finalizeWrapWindowOnStore` on `capture.store` ([`EditManager.cpp`](src/EditManager.cpp)).
+**Fold path:** `finalizePendingNotes` → same `Loop::finalizeCaptureWrapWindowAtStop` in `Track::handleNoteEditFold` → `foldLiveCaptureIntoNoteEditSession` (merge only; no wrap finalize).
 
-**Risk:** Parallel close pipelines; mostly idempotent today, hard to reason about when wrap rules change.
-
-**Enforce at:** One wrap-finalize owner shared by seal and fold (extend existing `LoopStopFinalize` / stop prep — do not add a third helper). Fold should call the same post-pending policy as seal, not a sibling call site.
+**Remaining gate:** **MT-P1-fold** — layered **`base`** HITL PASS + manual in-edit overdub fold on slot 1 (see § MT-P1-fold).
 
 ---
 
@@ -283,26 +281,43 @@ pio test -e native
 
 **Covers:** P1 unified wrap finalize between `sealCapture` and `foldLiveCaptureIntoNoteEditSession`.
 
-**Primary preset:**
+**Regression gate (automated):** layered **`base`** preset — same entry as [HITL-Test-Flow.mdc](.cursor/rules/HITL-Test-Flow.mdc). Requires serial capture and baseline JSON **PASS** (transitions, undo/redo after overdub stop, capture cleanup `wrap_synth` ok).
+
+**Mode B** — `capture_session.py` already running (do **not** spawn a second capture):
 
 ```bash
-.venv/bin/python scripts/host_midi_hitl.py run --layered --preset edit_overdub_during_note_edit \
-  --midi-out "Teensy" --midi-in "Teensy" --track 5 --midi-channel 5
+.venv/bin/python scripts/host_midi_hitl.py run --layered --preset base \
+  --no-managed-capture \
+  --follow-current-session \
+  --midi-out "Teensy" --midi-in "Teensy" \
+  --track-number 5 --loop-slot 1 --midi-channel 5
 ```
 
-**Additional manual (wrap stress):**
+**Mode A** — single shell, managed capture (one command, no external capture):
 
-1. 2-bar loop; record notes with **note-on in last 1/8 bar** and **sustain across wrap**.
-2. Enter NOTE_EDIT; start **in-edit overdub**; add 2–4 notes in bar 2; stop overdub **near loop end** (last beat).
-3. **E: undo** in-edit overdub layer only — pre-edit overdub and record layers unchanged (per HITL scenario doc).
-4. **E: redo**; exit NOTE_EDIT; global undo disables folded content correctly.
+```bash
+.venv/bin/python scripts/host_midi_hitl.py run --layered --preset base \
+  --midi-out "Teensy" --midi-in "Teensy" \
+  --track-number 5 --loop-slot 1 --midi-channel 5
+```
+
+Do **not** pass `--follow-current-session` without `--no-managed-capture` — the runner will still spawn `capture_session.py` and fight the existing capture (Teensy reboot / serial follow desync).
+
+**Fold-specific manual** (after baseline PASS on the same slot, or on an existing loop):
+
+1. Enter NOTE_EDIT on slot 1.
+2. Start **in-edit overdub**; add 2–4 notes in bar 2; stop overdub **near loop end** (wrap stress).
+3. **E:** undo in-edit overdub layer only — record + pre-edit overdub unchanged.
+4. **E:** redo; exit NOTE_EDIT; global undo disables folded content correctly.
 
 **Pass criteria:**
 
-- Verifier `verify_edit_overdub_during_note_edit` PASS.
+- Baseline report `captures/host_midi_automation_baseline_*.json` — **Result: PASS**.
+- Serial: in-edit overdub stop logs fold path; no duplicate note-offs at same tick for same pitch.
 - No stuck notes after in-edit overdub stop (listen + host MIDI in).
-- Serial: fold path logs present; no double-close artifacts (duplicate note-offs at same tick for same pitch).
-- Session undo restores exact pre-overdub session store; redo restores overdub layer.
+- Session undo restores pre-overdub session store; redo restores overdub layer.
+
+**Not wired:** `--preset edit_overdub_during_note_edit` is **not** registered in `scripts/hitl/registry.py` (use baseline + manual fold above).
 
 **Capture label:** `MT-P1_fold_in_edit_overdub_<date>.log`
 
@@ -383,7 +398,7 @@ Each item is **not done** until its **MT-*** manual test PASS is logged in `capt
 1. **P0 fix:** `Loop::invalidateCaches` materialize stale → **MT-P0 conditional PASS** (`session_20260805_222144.log`).
 2. **P1-display-audition:** defer playback rebuild while PLAYING → **MT-P1-display-audition** (in progress).
 3. **P1 docs:** LOOP_MIDI + ARCHITECTURE_RULES undo routing — **done**; **MT-P1-undo** **PASS** (`session_20260806_003023.log`).
-4. **P1 fold:** single wrap-finalize path → **MT-P1-fold**.
+4. **P1 fold:** single wrap-finalize path → **MT-P1-fold** (layered **`base`** + manual fold).
 5. **Phase 5:** longest-prefix recovery → **MT-P5-recovery**.
 6. **Hygiene:** doc/spec sync → **MT-hygiene** smoke.
 

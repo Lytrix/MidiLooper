@@ -1501,6 +1501,22 @@ void Loop::invalidateDisplayCaches() {
   visualCacheDirty = true;
 }
 
+LoopStopFinalize::Result Loop::finalizeCaptureWrapWindowAtStop(uint32_t stopAbsTick) {
+  if (capture.store.empty() || loopLengthTicks == 0) {
+    return {};
+  }
+  if (capture.phase != CapturePhase::Record && capture.phase != CapturePhase::Overdub) {
+    return {};
+  }
+  uint32_t openTailCloseTick = UINT32_MAX;
+  if (startLoopTick != UINT32_MAX) {
+    openTailCloseTick = IntervalProjection::tickPhaseInLoop(stopAbsTick, startLoopTick,
+                                                            loopLengthTicks);
+  }
+  return LoopStopFinalize::finalizeWrapWindowOnStore(capture.store, loopLengthTicks,
+                                                     openTailCloseTick);
+}
+
 SealOutcome Loop::sealCapture(uint32_t sealedAtTick) {
   if (hasPendingCapturePass_) {
     return SealOutcome::AlreadyPending;
@@ -1521,14 +1537,7 @@ SealOutcome Loop::sealCapture(uint32_t sealedAtTick) {
 
   if (loopLengthTicks > 0 &&
       (capture.phase == CapturePhase::Record || capture.phase == CapturePhase::Overdub)) {
-    uint32_t openTailCloseTick = UINT32_MAX;
-    if (startLoopTick != UINT32_MAX) {
-      openTailCloseTick = IntervalProjection::tickPhaseInLoop(
-          sealedAtTick, startLoopTick, loopLengthTicks);
-    }
-    const LoopStopFinalize::Result fin =
-        LoopStopFinalize::finalizeWrapWindowOnStore(capture.store, loopLengthTicks,
-                                                    openTailCloseTick);
+    const LoopStopFinalize::Result fin = finalizeCaptureWrapWindowAtStop(sealedAtTick);
     wrapSyntheticOffs = static_cast<uint32_t>(fin.syntheticOffsInserted);
     minLenPairsRemoved = static_cast<uint32_t>(
         CaptureIncrementalSanity::removePairsShorterThanNoteMinLength(

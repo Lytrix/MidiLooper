@@ -1033,12 +1033,18 @@ uint32_t Track::prepareRecordStop(uint32_t currentTick, const char* guardLabel) 
 
 bool Track::handleNoteEditFold(bool endInPlaying, uint32_t currentTick, uint32_t closeTick,
                                uint32_t stopStartUs) {
+  (void)closeTick;
   if (!editManager.isNoteEditActive()) {
     return false;
   }
   Loop& loop = getActiveLoop();
   finalizePendingNotes(currentTick);
-  editManager.foldLiveCaptureIntoNoteEditSession(*this, closeTick);
+  if (!loop.capture.store.empty() && loop.loopLengthTicks > 0) {
+    loop.ensureCaptureEventsSorted();
+    loop.assignMissingNoteIdsInStore(loop.capture.store);
+    loop.finalizeCaptureWrapWindowAtStop(currentTick);
+  }
+  editManager.foldLiveCaptureIntoNoteEditSession(*this);
   pendingNotes.clear();
   if (endInPlaying) {
     const uint32_t stateHeapBefore = MemoryMonitor::getInternalHeapFreeBytes();
