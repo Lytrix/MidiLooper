@@ -41,6 +41,7 @@
 #include <Arduino.h>
 #include <utility>
 #include "TrackUndo.h"
+#include "EditManager.h"
 #include "TrackDisplayState.h"
 #include "Utils/MemoryPool.h"
 #include "Utils/HotPathTelemetry.h"
@@ -1579,6 +1580,9 @@ void StorageManager::processEditAutosave(const LooperState& state) {
     if (urgentEditSavePending) {
         urgentEditSavePending = false;
         clearEditDirtyAfterDeferredSave = true;
+        if (editManager.isNoteEditActive()) {
+            editManager.markCurrentEditBatchDurable(trackManager.getSelectedTrack());
+        }
         for (uint8_t t = 0; t < trackManager.getTrackCount(); ++t) {
             Track& track = trackManager.getTrack(t);
             if (!track.loopsAllocated()) {
@@ -1612,6 +1616,9 @@ void StorageManager::processEditAutosave(const LooperState& state) {
         return;
     }
     clearEditDirtyAfterDeferredSave = true;
+    if (editManager.isNoteEditActive()) {
+        editManager.markCurrentEditBatchDurable(trackManager.getSelectedTrack());
+    }
     for (uint8_t t = 0; t < trackManager.getTrackCount(); ++t) {
         Track& track = trackManager.getTrack(t);
         if (!track.loopsAllocated()) {
@@ -3221,12 +3228,18 @@ void resetTracksAfterFailedLoad() {
 static STORAGE_PERSIST_MEM void stabilizeBootMemoryAfterLoad() {
     uint32_t freeHeap = MemoryMonitor::getInternalHeapFreeBytes();
     if (freeHeap < Config::HEAP_RESERVE_BYTES) {
-        Serial.print("[StorageManager] Boot heap below reserve after load (");
-        Serial.print(freeHeap);
-        Serial.println(" B); clearing undo stacks");
+        size_t clearedUndoEntries = 0;
         for (uint8_t t = 0; t < trackManager.getTrackCount(); ++t) {
+            clearedUndoEntries +=
+                trackManager.getTrack(t).getGlobalUndoStack().undoCount();
             trackManager.getTrack(t).getGlobalUndoStack().clear();
         }
+        Serial.print("[StorageManager] Boot heap recovery: heap=");
+        Serial.print(freeHeap / 1024u);
+        Serial.print(" KB reserve=");
+        Serial.print(Config::HEAP_RESERVE_BYTES / 1024u);
+        Serial.print(" KB clearedUndoEntries=");
+        Serial.println(clearedUndoEntries);
         freeHeap = MemoryMonitor::getInternalHeapFreeBytes();
     }
 
