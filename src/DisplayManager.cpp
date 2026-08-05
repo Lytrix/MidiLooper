@@ -3180,7 +3180,11 @@ void DisplayManager::drawNoteInfo(uint32_t currentTick, Track& selectedTrack, ui
 
 void DisplayManager::requestNoteInfoRefresh(Track& track) {
     invalidateNoteEditDisplayCache();
-    (void)track.getCachedNotes();
+    // NOTE_EDIT piano roll uses projectedNoteEditDisplayNotes — avoid getCachedNotes() here
+    // (full loop materialize stalls the OLED path during live edit).
+    if (editManager.getEditSessionType() != EditSessionType::Note) {
+        (void)track.getCachedNotes();
+    }
 }
 
 void DisplayManager::applyWorkspaceDisplayRefreshPending(uint32_t currentTick) {

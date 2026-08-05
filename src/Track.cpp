@@ -122,27 +122,41 @@ const MidiEventVec& Track::editAwareMidiEvents() const {
   return editManager.editMidiEvents(*this);
 }
 
-void Track::invalidateCaches(bool refreshPlaybackPreview) {
+void Track::invalidateLoopDerivedCaches() {
   committedMidiScratchRevision_ = UINT32_MAX;
   Loop& activeLoop = getActiveLoop();
   activeLoop.invalidateCaches();
   activeLoop.playbackOrderDirty = true;
-  if (editManager.isNoteEditActive()) {
-    for (uint8_t trackIndex = 0; trackIndex < Config::NUM_TRACKS; ++trackIndex) {
-      if (&trackManager.getTrack(trackIndex) != this) {
-        continue;
-      }
-      const uint8_t selectedSlot = trackManager.getSelectedSlotIndex(trackIndex);
-      if (selectedSlot != activeLoopIndex) {
-        getLoop(selectedSlot).invalidateCaches();
-      }
-      break;
+  if (!editManager.isNoteEditActive()) {
+    return;
+  }
+  for (uint8_t trackIndex = 0; trackIndex < Config::NUM_TRACKS; ++trackIndex) {
+    if (&trackManager.getTrack(trackIndex) != this) {
+      continue;
     }
+    const uint8_t selectedSlot = trackManager.getSelectedSlotIndex(trackIndex);
+    if (selectedSlot != activeLoopIndex) {
+      getLoop(selectedSlot).invalidateCaches();
+    }
+    break;
+  }
+}
+
+void Track::invalidateCaches(bool refreshPlaybackPreview) {
+  if (editManager.isNoteEditActive()) {
+    // Session-store overlay only — committed loop visual cache stays valid until bake.
     editManager.bumpSessionPreviewRevision();
     if (refreshPlaybackPreview) {
-      editManager.bumpSessionPlaybackPreviewRevision();
+      if (isPlaying()) {
+        editManager.scheduleDeferredNoteEditDisplayRefresh();
+      } else {
+        editManager.bumpSessionPlaybackPreviewRevision();
+        getActiveLoop().playbackOrderDirty = true;
+      }
     }
+    return;
   }
+  invalidateLoopDerivedCaches();
 }
 
 namespace {
@@ -1019,12 +1033,18 @@ uint32_t Track::prepareRecordStop(uint32_t currentTick, const char* guardLabel) 
 
 bool Track::handleNoteEditFold(bool endInPlaying, uint32_t currentTick, uint32_t closeTick,
                                uint32_t stopStartUs) {
+  (void)closeTick;
   if (!editManager.isNoteEditActive()) {
     return false;
   }
   Loop& loop = getActiveLoop();
   finalizePendingNotes(currentTick);
-  editManager.foldLiveCaptureIntoNoteEditSession(*this, closeTick);
+  if (!loop.capture.store.empty() && loop.loopLengthTicks > 0) {
+    loop.ensureCaptureEventsSorted();
+    loop.assignMissingNoteIdsInStore(loop.capture.store);
+    loop.finalizeCaptureWrapWindowAtStop(currentTick);
+  }
+  editManager.foldLiveCaptureIntoNoteEditSession(*this);
   pendingNotes.clear();
   if (endInPlaying) {
     const uint32_t stateHeapBefore = MemoryMonitor::getInternalHeapFreeBytes();

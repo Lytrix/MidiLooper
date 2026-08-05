@@ -15,13 +15,53 @@
 
 #include "Loop.h"
 #include "../test_support/CommittedChunkIdTestHelpers.h"
+#include "../test_support/NoteIdTestFixtures.h"
+#include "EditPass.h"
 #include "MidiEvent.h"
 #include "PassReclaim.h"
 #include "StorageLoopIo.h"
 
 namespace {
 
+using namespace NoteIdTestFixtures;
+
 constexpr uint32_t kLoopLen = Config::TICKS_PER_BAR * 8;
+
+RecordPass makeRecordPassWithNote(PassId id, uint32_t tick, uint8_t channel = 1) {
+  LoopEventStore store;
+  TEST_ASSERT_TRUE(storeAppendNoteOn(store, tick, channel, 60, 100, 1));
+  TEST_ASSERT_TRUE(store.append(MidiEvent::NoteOff(tick + 10, channel, 60, 0)));
+  CommittedChunkIdList publishedIds;
+  TEST_ASSERT_TRUE(transferCaptureStoreToCommittedChunkIds(store, publishedIds));
+  RecordPass pass{};
+  pass.id = id;
+  pass.state = CapturePassState::Active;
+  pass.committedChunkIds = std::move(publishedIds);
+  return pass;
+}
+
+EditPass makePitchRow(NoteId targetNoteId, uint32_t start, uint32_t end, uint8_t pitch) {
+  EditPass row{};
+  row.passType = EditPassType::Note;
+  row.actionType = EditActionType::Update;
+  row.propertyType = EditPropertyType::Pitch;
+  row.targetNoteId = targetNoteId;
+  row.startTick = start;
+  row.endTick = end;
+  row.pitch = pitch;
+  return row;
+}
+
+template <typename EventVec>
+int countNoteOns(const EventVec& flat, uint8_t pitch) {
+  int count = 0;
+  for (const MidiEvent& evt : flat) {
+    if (evt.isNoteOn() && evt.data.noteData.note == pitch) {
+      ++count;
+    }
+  }
+  return count;
+}
 
 void seedCommittedPair(Loop& loop) {
   LoopEventStore store;
@@ -192,6 +232,31 @@ void test_seal_overdub_preserves_record_pass() {
   TEST_ASSERT_EQUAL(2u, loop.nativeTestLiveEventCount());
 }
 
+void test_invalidateCaches_marks_materialize_stale_after_loop_length_change() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  loop.loopLengthTicks = 768;
+  loop.passes.recordPass = makeRecordPassWithNote(1, 10);
+  loop.nextPassId_ = 2;
+  (void)loop.saveNoteEditPass(0, makePitchRow(1, 10, 20, 67));
+
+  (void)loop.midiEvents();
+  TEST_ASSERT_TRUE(loop.isPassesMaterializedStoreFresh());
+
+  loop.loopLengthTicks = 384;
+  loop.invalidateCaches();
+  TEST_ASSERT_FALSE(loop.isPassesMaterializedStoreFresh());
+
+  MidiEventVec expected;
+  loop.passes.materializeToEventVector(expected, loop.loopLengthTicks);
+  SessionMidiEventVec gathered;
+  loop.gatherCommittedEvents(gathered);
+  TEST_ASSERT_EQUAL(expected.size(), gathered.size());
+  TEST_ASSERT_EQUAL(1, countNoteOns(expected, 67));
+  TEST_ASSERT_EQUAL(1, countNoteOns(gathered, 67));
+}
+
 void test_reclaim_disabled_overdub_releases_published_chunks() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
@@ -220,6 +285,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_commit_stop_finalize_empty_merged_preserves_takes);
   RUN_TEST(test_multi_take_flatten_matches_live_event_count);
   RUN_TEST(test_pass_snapshot_ignores_derived_flat_mutation);
+  RUN_TEST(test_invalidateCaches_marks_materialize_stale_after_loop_length_change);
   RUN_TEST(test_reclaim_disabled_overdub_releases_published_chunks);
   return UNITY_END();
 }

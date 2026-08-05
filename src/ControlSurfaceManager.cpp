@@ -39,6 +39,10 @@
 #include "MidiFaderProcessor.h"
 #include "Utils/NoteEditMem.h"
 
+#if defined(SESSION_CAPTURE)
+#include <Arduino.h>
+#endif
+
 ControlSurfaceManager controlSurfaceManager;
 
 #if defined(SWAP_FADER1_FADER2_TEST)
@@ -55,6 +59,29 @@ static LogFaderChannelSwap s_logFaderChannelSwap;
 #endif
 
 namespace {
+
+#if defined(SESSION_CAPTURE)
+void logGeomApplyQueue(uint8_t kind, uint32_t targetField, bool transportRunning) {
+    logger.info("#CAP,%lu,GEOM_APPLY,queue,%u,%lu,%u,0", static_cast<unsigned long>(micros()),
+                static_cast<unsigned>(kind), static_cast<unsigned long>(targetField),
+                transportRunning ? 1u : 0u);
+}
+
+void logGeomApplyDequeue(uint32_t queueAgeMs, uint8_t kind) {
+    logger.info("#CAP,%lu,GEOM_APPLY,dequeue,%lu,%u,0,0", static_cast<unsigned long>(micros()),
+                static_cast<unsigned long>(queueAgeMs), static_cast<unsigned>(kind));
+}
+
+void logGeomApplyDone(bool applied, uint32_t displayRevision) {
+    logger.info("#CAP,%lu,GEOM_APPLY,done,%u,%lu,0,0", static_cast<unsigned long>(micros()),
+                applied ? 1u : 0u, static_cast<unsigned long>(displayRevision));
+}
+
+void logGeomApplySkip(uint8_t reasonCode) {
+    logger.info("#CAP,%lu,GEOM_APPLY,skip,%u,0,0,0", static_cast<unsigned long>(micros()),
+                static_cast<unsigned>(reasonCode));
+}
+#endif
 
 NOTE_EDIT_MEM void applyLengthEndTargetRules(uint32_t noteStart, uint32_t currentEnd, uint32_t loopLength,
                                uint32_t minNoteDuration, uint32_t& targetEndTick) {
@@ -158,7 +185,10 @@ NOTE_EDIT_MEM void ControlSurfaceManager::update() {
     }
 
     processFaderOutbound();
-    editManager.processDeferredNoteEditDisplayRefresh(trackManager.getSelectedTrack());
+    Track& selectedTrack = trackManager.getSelectedTrack();
+    processPendingPlayingGeometry(selectedTrack);
+    editManager.processDeferredNoteEditDisplayRefresh(selectedTrack);
+    editManager.processKindBoundaryUndoWarm(selectedTrack);
 
     loopEditManager.update();
     faderHandler.update();
@@ -300,6 +330,9 @@ NOTE_EDIT_MEM void ControlSurfaceManager::cycleEditSession(Track& track) {
 }
 
 NOTE_EDIT_MEM void ControlSurfaceManager::scheduleOtherFaderUpdates(MidiMapping::FaderType driverFader) {
+    if (editManager.isNoteEditActive() && clockManager.isTransportRunning()) {
+        return;
+    }
     Track& track = trackManager.getSelectedTrack();
 
     switch (driverFader) {
@@ -557,14 +590,12 @@ NOTE_EDIT_MEM void ControlSurfaceManager::syncSelectionFromGeometryEdit(Track& t
         return;
     }
 
-    syncSelectFaderTrackingFromLogicalBracket(track);
     EditorSelection motorPrior = priorSelection;
     if (lastGeometryF1SyncedBracketTick_ != UINT32_MAX) {
         motorPrior.selectedTick = lastGeometryF1SyncedBracketTick_;
     }
     const EditorSelection& nextSelection = editManager.getNoteEditSessionState().selection;
     scheduleSelectDependentMotorSync(track, motorPrior, nextSelection, true);
-    lastGeometryF1SyncedBracketTick_ = selectedTick;
 }
 
 NOTE_EDIT_MEM void ControlSurfaceManager::scheduleSelectDependentMotorSync(Track& track,
@@ -736,7 +767,13 @@ NOTE_EDIT_MEM void ControlSurfaceManager::processPendingGeometryDriverMotorSync(
     }
 
     clearPendingGeometryDriverMotorSync();
-    sendFader1MotorTimedBurst(track);
+    syncSelectFaderTrackingFromLogicalBracket(track);
+    if (sendFader1MotorTimedBurst(track)) {
+        const uint32_t loopLength = track.getLoopLength();
+        if (loopLength > 0) {
+            lastGeometryF1SyncedBracketTick_ = editManager.getSelectedTick() % loopLength;
+        }
+    }
 }
 
 NOTE_EDIT_MEM void ControlSurfaceManager::syncSelectFaderTrackingFromLogicalBracket(Track& track) {
@@ -2098,6 +2135,186 @@ NOTE_EDIT_MEM bool ControlSurfaceManager::applyNoteSelectFromFader1Pitchbend(Tra
     return true;
 }
 
+NOTE_EDIT_MEM void ControlSurfaceManager::queuePendingPlayingMove(const NoteUtils::DisplayNote& note,
+                                                                  uint32_t targetTick) {
+    pendingPlayingGeometryType_ = PendingPlayingGeometryType::Move;
+    pendingPlayingGeometryNote_ = note;
+    pendingPlayingGeometryTargetTick_ = targetTick;
+    pendingPlayingGeometryQueuedAtMs_ = millis();
+#if defined(SESSION_CAPTURE)
+    logGeomApplyQueue(static_cast<uint8_t>(PendingPlayingGeometryType::Move), targetTick,
+                      clockManager.isTransportRunning());
+#endif
+}
+
+NOTE_EDIT_MEM void ControlSurfaceManager::queuePendingPlayingLength(const NoteUtils::DisplayNote& note,
+                                                                    uint32_t targetEndTick) {
+    pendingPlayingGeometryType_ = PendingPlayingGeometryType::Length;
+    pendingPlayingGeometryNote_ = note;
+    pendingPlayingGeometryTargetTick_ = targetEndTick;
+    pendingPlayingGeometryQueuedAtMs_ = millis();
+#if defined(SESSION_CAPTURE)
+    logGeomApplyQueue(static_cast<uint8_t>(PendingPlayingGeometryType::Length), targetEndTick,
+                      clockManager.isTransportRunning());
+#endif
+}
+
+NOTE_EDIT_MEM void ControlSurfaceManager::queuePendingPlayingPitch(const NoteUtils::DisplayNote& note,
+                                                                   uint8_t currentPitch,
+                                                                   uint8_t newPitch) {
+    pendingPlayingGeometryType_ = PendingPlayingGeometryType::Pitch;
+    pendingPlayingGeometryNote_ = note;
+    pendingPlayingGeometryPitchCurrent_ = currentPitch;
+    pendingPlayingGeometryPitchNew_ = newPitch;
+    pendingPlayingGeometryQueuedAtMs_ = millis();
+#if defined(SESSION_CAPTURE)
+    logGeomApplyQueue(static_cast<uint8_t>(PendingPlayingGeometryType::Pitch), newPitch,
+                      clockManager.isTransportRunning());
+#endif
+}
+
+NOTE_EDIT_MEM void ControlSurfaceManager::finishGeometryDriverSideEffects(
+    Track& track, uint32_t now, MidiMapping::FaderType driverFader) {
+    clearSelectionRelatchAfterGeometry();
+    clearGeometryRelatchCycleEligibility();
+    refreshEditingActivity();
+    currentDriverFader = driverFader;
+    lastDriverFaderTime = now;
+
+    switch (driverFader) {
+        case MidiMapping::FaderType::FADER_COARSE:
+        case MidiMapping::FaderType::FADER_FINE:
+            syncSelectionFromGeometryEdit(track);
+            if (!clockManager.isTransportRunning()) {
+                publishDependentFaderLatch(track, driverFader);
+            }
+            break;
+        case MidiMapping::FaderType::FADER_NOTE_VALUE:
+            if (!clockManager.isTransportRunning()) {
+                publishDependentFaderLatch(track, driverFader);
+            }
+            break;
+        default:
+            break;
+    }
+
+    if (driverFader == MidiMapping::FaderType::FADER_COARSE &&
+        !clockManager.isTransportRunning()) {
+        const bool geometryDriverWasIdle = !isGeometryDriverActive(now);
+        if (geometryDriverWasIdle && pendingGeometryDriverMotorSyncValid_) {
+            processPendingGeometryDriverMotorSync(track, true);
+        }
+    }
+}
+
+NOTE_EDIT_MEM bool ControlSurfaceManager::applyPlayingPitchGeometry(Track& track,
+                                                                    const NoteUtils::DisplayNote& liveNote,
+                                                                    uint8_t currentPitch,
+                                                                    uint8_t newPitch,
+                                                                    bool refreshPlaybackPreview) {
+#if defined(SESSION_CAPTURE)
+    const uint32_t focusStartUs = micros();
+#endif
+    editManager.ensureNoteEditFocusForLiveEdit(track, liveNote);
+#if defined(SESSION_CAPTURE)
+    logger.info("#CAP,%lu,GEOM_APPLY,focus,%lu,%u,0,0", static_cast<unsigned long>(micros()),
+                static_cast<unsigned long>(micros() - focusStartUs),
+                static_cast<unsigned>(NoteEditKind::Pitch));
+    const uint32_t undoStartUs = micros();
+#endif
+    if (!editManager.beginGeometryMutation(track, NoteEditKind::Pitch, true)) {
+#if defined(SESSION_CAPTURE)
+        logger.info("#CAP,%lu,GEOM_APPLY,undo,fail,%lu,%u,0", static_cast<unsigned long>(micros()),
+                    static_cast<unsigned long>(micros() - undoStartUs),
+                    static_cast<unsigned>(NoteEditKind::Pitch));
+#endif
+        logger.log(CAT_MIDI, LOG_WARNING,
+                   "Note pitch change aborted: session undo snapshot unavailable (heap reserve)");
+        return false;
+    }
+#if defined(SESSION_CAPTURE)
+    logger.info("#CAP,%lu,GEOM_APPLY,undo,ok,%lu,%u,0", static_cast<unsigned long>(micros()),
+                static_cast<unsigned long>(micros() - undoStartUs),
+                static_cast<unsigned>(NoteEditKind::Pitch));
+    const uint32_t pipelineStartUs = micros();
+#endif
+
+    NoteUtils::DisplayNote pitchTarget = liveNote;
+    pitchTarget.startTick = liveNote.startTick;
+    pitchTarget.endTick = liveNote.endTick;
+    const bool pitchUpdated = NoteMovementUtils::applyNoteEditChange(
+        track, editManager, NoteMovementUtils::NoteEditChangeKind::Pitch, pitchTarget, 0, 0, 0,
+        currentPitch, newPitch, pitchTarget.startTick, pitchTarget.endTick, refreshPlaybackPreview);
+#if defined(SESSION_CAPTURE)
+    logger.info("#CAP,%lu,GEOM_APPLY,pipeline,%lu,%u,%u,0", static_cast<unsigned long>(micros()),
+                static_cast<unsigned long>(micros() - pipelineStartUs), pitchUpdated ? 1u : 0u,
+                static_cast<unsigned>(NoteEditKind::Pitch));
+#endif
+    if (!pitchUpdated) {
+        return false;
+    }
+
+    NoteEditFocus& focus = editManager.getEditSession().focus;
+    if (focus.active && focus.movingNoteId != kInvalidNoteId) {
+        focus.baselineMap[focus.movingNoteId] = focus.last;
+    }
+    return true;
+}
+
+NOTE_EDIT_MEM void ControlSurfaceManager::processPendingPlayingGeometry(Track& track) {
+    if (pendingPlayingGeometryType_ == PendingPlayingGeometryType::None) {
+        return;
+    }
+    if (!clockManager.isTransportRunning()) {
+#if defined(SESSION_CAPTURE)
+        logGeomApplySkip(1);
+#endif
+        pendingPlayingGeometryType_ = PendingPlayingGeometryType::None;
+        return;
+    }
+    const uint32_t queueAgeMs =
+        pendingPlayingGeometryQueuedAtMs_ > 0 ? millis() - pendingPlayingGeometryQueuedAtMs_ : 0;
+#if defined(SESSION_CAPTURE)
+    logGeomApplyDequeue(queueAgeMs,
+                        static_cast<uint8_t>(pendingPlayingGeometryType_));
+#endif
+    editManager.processKindBoundaryUndoWarm(track);
+    const uint32_t now = millis();
+
+    const PendingPlayingGeometryType kind = pendingPlayingGeometryType_;
+    pendingPlayingGeometryType_ = PendingPlayingGeometryType::None;
+    pendingPlayingGeometryQueuedAtMs_ = 0;
+
+    bool applied = false;
+    MidiMapping::FaderType driverFader = MidiMapping::FaderType::FADER_COARSE;
+    switch (kind) {
+        case PendingPlayingGeometryType::Move:
+            applied = editManager.moveNoteToPosition(track, pendingPlayingGeometryNote_,
+                                                     pendingPlayingGeometryTargetTick_);
+            driverFader = MidiMapping::FaderType::FADER_COARSE;
+            break;
+        case PendingPlayingGeometryType::Length:
+            applied = editManager.changeNoteEndWithOverlapHandling(
+                track, pendingPlayingGeometryNote_, pendingPlayingGeometryTargetTick_);
+            driverFader = MidiMapping::FaderType::FADER_COARSE;
+            break;
+        case PendingPlayingGeometryType::Pitch:
+            applied = applyPlayingPitchGeometry(track, pendingPlayingGeometryNote_,
+                                                pendingPlayingGeometryPitchCurrent_,
+                                                pendingPlayingGeometryPitchNew_, true);
+            driverFader = MidiMapping::FaderType::FADER_NOTE_VALUE;
+            break;
+        case PendingPlayingGeometryType::None:
+            break;
+    }
+    if (applied) {
+        finishGeometryDriverSideEffects(track, now, driverFader);
+    }
+#if defined(SESSION_CAPTURE)
+    logGeomApplyDone(applied, editManager.sessionPreviewRevision());
+#endif
+}
+
 NOTE_EDIT_MEM void ControlSurfaceManager::handleCoarseFaderInput(int16_t pitchValue, Track& track) {
     // Only process fader input when in NOTE_EDIT mode
     if (editManager.getEditSessionType() != EditSessionType::Note) {
@@ -2216,6 +2433,10 @@ NOTE_EDIT_MEM void ControlSurfaceManager::handleCoarseFaderInput(int16_t pitchVa
             logger.log(CAT_MIDI, LOG_DEBUG,
                        "LENGTH EDIT: pitchbend %d -> tick %lu (was %lu)",
                        pitchValue, targetEndTick, relativeEndTick);
+            if (clockManager.isTransportRunning()) {
+                queuePendingPlayingLength(currentNote, targetEndTick);
+                return;
+            }
             geometryApplied =
                 editManager.changeNoteEndWithOverlapHandling(track, currentNote, targetEndTick);
             if (geometryApplied) {
@@ -2264,20 +2485,15 @@ NOTE_EDIT_MEM void ControlSurfaceManager::handleCoarseFaderInput(int16_t pitchVa
             
             // Store the target step as reference for fine adjustments
             editManager.setReferenceStep(targetSixteenthStep);
+            if (clockManager.isTransportRunning()) {
+                queuePendingPlayingMove(currentNote, targetTick);
+                return;
+            }
             geometryApplied = editManager.moveNoteToPosition(track, currentNote, targetTick);
         }
 
         if (geometryApplied) {
-            clearSelectionRelatchAfterGeometry();
-            clearGeometryRelatchCycleEligibility();
-            refreshEditingActivity();
-            const bool geometryDriverWasIdle = !isGeometryDriverActive(now);
-            this->currentDriverFader = MidiMapping::FaderType::FADER_COARSE;
-            this->lastDriverFaderTime = millis();
-            scheduleOtherFaderUpdates(MidiMapping::FaderType::FADER_COARSE);
-            if (geometryDriverWasIdle && pendingGeometryDriverMotorSyncValid_) {
-                processPendingGeometryDriverMotorSync(track, true);
-            }
+            finishGeometryDriverSideEffects(track, now, MidiMapping::FaderType::FADER_COARSE);
         }
         // NOTE: Fader 2 (COARSE) now uses 500ms grace period to update fader 1
         // This prevents erratic movement and allows proper settling time
@@ -2351,6 +2567,10 @@ NOTE_EDIT_MEM void ControlSurfaceManager::handleFineFaderInput(uint8_t ccValue, 
         logger.log(CAT_MIDI, LOG_DEBUG,
                    "LENGTH EDIT (fine): anchor %lu offset %ld -> tick %lu",
                    anchorTick, fineOffset, targetEndTick);
+        if (clockManager.isTransportRunning()) {
+            queuePendingPlayingLength(currentNote, targetEndTick);
+            return;
+        }
         geometryApplied =
             editManager.changeNoteEndWithOverlapHandling(track, currentNote, targetEndTick);
     } else {
@@ -2384,6 +2604,10 @@ NOTE_EDIT_MEM void ControlSurfaceManager::handleFineFaderInput(uint8_t ccValue, 
                    "POSITION EDIT: Fine adjustment from relative tick %lu to %lu (absolute %lu -> %lu)", 
                    relativeStartTick, relativeTargetStartTick, currentNoteStartTick,
                    targetStartTick);
+        if (clockManager.isTransportRunning()) {
+            queuePendingPlayingMove(currentNote, targetStartTick);
+            return;
+        }
         geometryApplied = editManager.moveNoteToPosition(track, currentNote, targetStartTick);
     }
         
@@ -2391,14 +2615,9 @@ NOTE_EDIT_MEM void ControlSurfaceManager::handleFineFaderInput(uint8_t ccValue, 
                ccValue, editManager.isLengthEditingMode() ? "LENGTH EDIT" : "POSITION EDIT");
         
     if (geometryApplied) {
-        clearSelectionRelatchAfterGeometry();
-        clearGeometryRelatchCycleEligibility();
-        refreshEditingActivity();
-        this->currentDriverFader = MidiMapping::FaderType::FADER_FINE;
-        this->lastDriverFaderTime = millis();
-        lastMotorSyncDriverInputMs_ = millis();
+        finishGeometryDriverSideEffects(track, now, MidiMapping::FaderType::FADER_FINE);
+        lastMotorSyncDriverInputMs_ = now;
         clearPendingSelectDependentMotorSync();
-        scheduleOtherFaderUpdates(MidiMapping::FaderType::FADER_FINE);
     }
 }
 
@@ -2466,35 +2685,18 @@ NOTE_EDIT_MEM void ControlSurfaceManager::handleNoteValueFaderInput(uint8_t ccVa
     clearPendingSelectDependentMotorSync();
     releaseEditedNoteAudition();
 
-    editManager.ensureNoteEditFocusForLiveEdit(track, liveNote);
-    if (!editManager.beginGeometryMutation(track, NoteEditKind::Pitch, true)) {
-        logger.log(CAT_MIDI, LOG_WARNING,
-                   "Note pitch change aborted: session undo snapshot unavailable (heap reserve)");
+    if (clockManager.isTransportRunning()) {
+        queuePendingPlayingPitch(liveNote, currentNoteValue, newNoteValue);
+        return;
+    }
+    const bool refreshPlaybackPreview = !clockManager.isTransportRunning();
+    if (!applyPlayingPitchGeometry(track, liveNote, currentNoteValue, newNoteValue,
+                                   refreshPlaybackPreview)) {
         return;
     }
 
-    NoteUtils::DisplayNote pitchTarget = liveNote;
-    pitchTarget.startTick = noteStart;
-    pitchTarget.endTick = noteEnd;
-    const bool pitchUpdated = NoteMovementUtils::applyNoteEditChange(
-        track, editManager, NoteMovementUtils::NoteEditChangeKind::Pitch, pitchTarget, 0, 0, 0,
-        currentNoteValue, newNoteValue, noteStart, noteEnd, false);
-    if (!pitchUpdated) {
-        return;
-    }
-
-    NoteEditFocus& focus = editManager.getEditSession().focus;
-    if (focus.active && focus.movingNoteId != kInvalidNoteId) {
-        focus.baselineMap[focus.movingNoteId] = focus.last;
-    }
-
-    refreshEditingActivity();
-    clearSelectionRelatchAfterGeometry();
-    clearGeometryRelatchCycleEligibility();
-    this->currentDriverFader = MidiMapping::FaderType::FADER_NOTE_VALUE;
-    this->lastDriverFaderTime = millis();
+    finishGeometryDriverSideEffects(track, now, MidiMapping::FaderType::FADER_NOTE_VALUE);
     sendEditedNoteAuditionWhenTransportStopped(track, static_cast<int16_t>(newNoteValue));
-    scheduleOtherFaderUpdates(MidiMapping::FaderType::FADER_NOTE_VALUE);
 }
 
 NOTE_EDIT_MEM void ControlSurfaceManager::handleFaderInput(MidiMapping::FaderType faderType, int16_t pitchbendValue, uint8_t ccValue) {
