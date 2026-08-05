@@ -32,6 +32,7 @@
 | High | Resolve uses unprojected baseline while analyze uses projected → inverted spans → `LinearNoteOff` (check=2) | 4 | `resolveAllConstrainedGeometry` |
 | High | Session-tagged apply/builder fallbacks paper over LIFO ambiguity | 5 | `ApplyEditSessionActions` / `EditSessionActionBuilder` |
 | Medium | `overlapNotes` still drives display filter / legacy commit while pipeline writes none | 5 | OpenSpec 4.5 / 4.5b |
+| High | Active `NoteEditFocus` can keep driving a prior note after `EditorSelection.primaryNote` changes | D19a bugfix | `EditManager::liveEditDisplayNoteAtSelect` / `ensureNoteEditFocusForLiveEdit` |
 
 ---
 
@@ -159,6 +160,29 @@
 
 ---
 
+### D19a Bugfix — Single edit driver identity
+
+**Scope:** Enforce **`EditorSelection.primaryNote`** as the single edit driver identity. **`NoteEditFocus`** may provide `focus.last` only when `focus.movingNoteId == selection.primaryNote`; otherwise live geometry paths rebuild focus for the selected note before producing edited geometry.
+
+| Architecture gate | Answer |
+|-------------------|--------|
+| Owner module | `EditManager::liveEditDisplayNoteAtSelect`; `EditManager::ensureNoteEditFocusForLiveEdit` |
+| Primary invariant | `EditorSelection.primaryNote` is the edit driver; `NoteEditFocus` is subordinate driver state |
+| Ownership change? | **NO** — enforces D19 / D19a |
+| State transition change? | **NO** |
+| Behavior-preserving? | **NO** — intentional bugfix for stale focus driving the wrong note |
+| Reuse decision | YES — extend existing select/focus rebuild paths |
+| Phase scope | `EditManager.*`; native focus/selection tests |
+
+| Implementation review | |
+|-------------------------|--|
+| Live fader read ignores stale focus | [x] |
+| Live edit entry rebuilds stale focus for selected primary note | [x] |
+| Future multi-note domain remains `EditorSelection.selectedNotes` | [x] |
+| `pio test -e native` | [x] 766/766 |
+
+---
+
 ### Phase 7 — Delete-row authority (`changedOverlapNoteIds`)
 
 **Scope:** A pre-commit `Delete` row requires positive evidence that the geometry pipeline hid the
@@ -178,9 +202,14 @@ note. An unresolved baseline entry is preserved and warned about, never deleted.
 |-------------------------|--|
 | Unresolved baseline entry warns, emits no Delete | [x] `test_unresolved_baseline_entry_emits_no_delete_row` |
 | Hidden note still emits Delete | [x] `test_hidden_note_baseline_survives_for_pre_commit_delete` |
+| Hidden overlap same start as mover emits Delete, not mover Length | [x] `test_hidden_overlap_same_start_as_mover_emits_delete_not_length` |
+| Stale live overlap mismatch without geometry authority emits no Length row | [x] `test_unchanged_overlap_live_mismatch_emits_no_length_row` |
+| Committed overlap Delete clears restore authority | [x] `test_committed_overlap_delete_clears_focus_restore_authority` |
+| Committed overlap Update promotes shortened baseline | [x] `test_committed_overlap_update_promotes_shortened_focus_baseline` |
+| Session 134610 shorten+hide pre-commit rows | [x] `test_session_134610_shortened_overlap_commit_rows` |
 | Hide then restore leaves nothing pending | [x] `test_restored_overlap_note_leaves_no_pending_delete` |
 | End-to-end through real writers | [x] `test_same_pitch_complete_cover_hide_and_restore_on_leave` |
-| `pio test -e native` | [x] 752/752 |
+| `pio test -e native`; `teensy41-capture-serial` build | [x] 773/773; SUCCESS |
 
 **Evidence:** `captures/session_20260805_020716.log` — `take_only flatEvents=172` vs
 `replay_flat flatEvents=148`, a twelve-note gap after edit-pass replay.
@@ -193,6 +222,12 @@ gap counts **all** edit passes on the loop, including rows persisted by earlier 
 not isolate the current session. Positive evidence that no Delete row was emitted is the **absence**
 of pre-commit `Delete` rows and unresolved-baseline warnings, as in
 `captures/session_20260805_030517.log`.
+
+**D19b correction:** `captures/session_20260805_120601.log` shows the mover on pitch 23
+covering a same-pitch overlap target that shares the mover's live start after the cover. The
+pre-commit baseline/live reader must not resolve that hidden target to `focus.movingNoteId`; it
+must return "not live" so `changedOverlapNoteIds` emits the authorized `Delete` row instead of a
+spurious mover-shaped `Length` row.
 
 ---
 
@@ -352,6 +387,84 @@ particular: one extra `std::unordered_*` type in a hot translation unit is enoug
 | Device: stable `flatEvents` | [ ] pending user flash + re-run |
 | Device: `type=1` / `type=2` on same-pitch overlap | [ ] pending user flash + re-run |
 | Device: no `non-canonical store` / `missing in recon` | [ ] pending user flash + re-run |
+
+---
+
+## Phase A — Single display projection (2026-08-05)
+
+**Plan:** [`docs/plans/note_edit_display_commit_stream_refactor_refinement.md`](../../../docs/plans/note_edit_display_commit_stream_refactor_refinement.md)  
+**Evidence:** `captures/session_20260805_141706.log` — geometry `ShortenNote` / `HideNote` rows apply to the live
+store, but OLED/DNTE still derive mover and overlap geometry through parallel paths.
+
+| Architecture gate | Answer |
+|-------------------|--------|
+| Owner module | `NoteEditFocus::projectNoteEditDisplayNotes` (projection); `EditManager::projectedNoteEditDisplayNotes` (cache + consumers) |
+| Primary invariant | One live geometry stream (`applyEditSessionActions` + session store) feeds one display projection for active note edit |
+| Ownership change? | **YES** — approved Phase A; display projection moves out of `DisplayManager` / movement telemetry side channels |
+| State transition change? | **NO** |
+| Behavior-preserving? | **NO** — intentional; overlap notes must show live shortened/hidden geometry without reselect |
+| Reuse decision | YES — extend `filterSelectableDisplayNotes` rules into `projectNoteEditDisplayNotes`; collapse duplicate caches into `EditManager` |
+| Phase scope | `NoteEditFocus.*`, `EditManager.*`, `DisplayManager.*`, `NoteMovementUtils.cpp`, `test_note_edit_focus` |
+
+| Implementation review | |
+|-------------------------|--|
+| `projectNoteEditDisplayNotes` is the sole projection producer | [x] |
+| `DisplayManager` is paint-only (no duplicate cache, no `focus.last` overlay bar) | [x] |
+| Movement-side `SC_DNTE` removed | [x] |
+| Pitch 22/23 overlap projection native tests | [x] |
+| `pio test -e native` | [x] 777/777 |
+
+**Out of scope for Phase A:** apply-owned `editPass` rows (Phase B), retiring `buildPreCommitBaselineLiveDiffOverlapPasses` (Phase C).
+
+---
+
+## Commit stream review (Phase 4.9 — 2026-08-05)
+
+**Plan:** [`docs/plans/note_edit_commit_stream_review_refinement.md`](../../../docs/plans/note_edit_commit_stream_review_refinement.md)  
+**Evidence:** `captures/session_20260805_134610.log`
+
+| Question | Answer |
+|----------|--------|
+| Interim commit authority | `buildPreCommitEditPasses` (code today) |
+| Target commit authority | **Superseded by Phase 4.10f** — canonical post-apply session state diff |
+| Refactor scope now | Diagnostics only — row-level `NOTE_EDIT pre-commit row` logging; no further pre-commit heuristics without HITL proof |
+| Next implementation | Phase 4.10f canonical commit serialization |
+
+| Gate | Pass |
+|------|------|
+| Authority decision documented | [x] |
+| Row-level commit logging (`SESSION_CAPTURE`) | [x] `logPreCommitEditPassRows` in `EditManager.cpp` |
+| Native regression `session_20260805_134610` | [x] `test_session_134610_shortened_overlap_commit_rows` |
+| HITL re-run with new logs | [ ] pending user flash |
+
+---
+
+## Phase 4.10f — Canonical commit serialization
+
+**Plan:** [`docs/plans/note_edit_singular_commit_pipeline_refinement.md`](../../../docs/plans/note_edit_singular_commit_pipeline_refinement.md)  
+**Evidence:** `captures/session_20260805_171134.log` — commit serializes overlap
+`Delete noteId=31` plus mover `NoteRange noteId=36`, then selection resolves to an unrelated
+pitch-60 note at tick 960 and empty-step deselect clears focus without a deselect
+`SelectionChanged` path.
+
+| Architecture gate | Answer |
+|-------------------|--------|
+| Owner module | `commitAllPendingNoteEditActions` orchestrates commit; canonical row builder lives beside existing `buildPreCommitEditPasses` / baseline-live diff helpers |
+| Primary invariant | Commit is pure serialization of canonical post-apply `NoteEditSession.store` relative to transaction baseline |
+| Ownership change? | **YES** — approved Phase 4.10f; persistence authority moves away from `applyOwnedEditPassRows` to canonical state diff |
+| State transition change? | **YES** — approved Phase 4.10f for selection resolution only; empty-step deselect becomes a first-class selection consumer transition, not a commit-row source |
+| Behavior-preserving? | **NO** — intentional fix for action-history / state-diff divergence and deselect highlight drift |
+| Reuse decision | YES — extend existing `buildPreCommitEditPasses` / baseline-live diff path; apply-owned rows become parity diagnostics only |
+| Phase scope | `EditManager.*`, `NoteEditFocus.*`, `ApplyOwnedEditPassRows.*`, `ControlSurfaceManager.cpp`, OpenSpec docs, `test_note_edit_focus`, `test_apply_edit_session_actions`, selection/fader feedback tests |
+
+| Implementation review | |
+|-------------------------|--|
+| OpenSpec authority updated: canonical state diff wins | [x] |
+| `commitAllPendingNoteEditActions` always uses canonical rows | [x] |
+| Apply-owned rows cannot affect persistence | [x] `test_canonical_commit_rows_do_not_depend_on_apply_owned_diagnostic_rows` |
+| Empty-step deselect resolves selection/display consistently | [x] `test_empty_step_deselect_is_selection_target_change` |
+| `session_20260805_171134` native regression | [x] `test_session_171134_canonical_commit_rows_from_final_session_store` |
+| `pio test -e native`; `teensy41-capture-serial` build | [x] 797/797; SUCCESS |
 
 ---
 

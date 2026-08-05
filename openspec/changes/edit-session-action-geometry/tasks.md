@@ -96,8 +96,69 @@
 - [x] 4.8f `pio test -e native` — 763/763; `teensy41-capture-serial` build SUCCESS,
       ITCM headroom 836 bytes after remaining channel-gated baseline/live-store readers and
       simple pitch gate / mover-remap guard were fixed
-- [ ] 4.8g HITL re-run: same-pitch overlap must now produce `Hide` / `Shorten`; expect
+- [x] 4.8g/D19a Enforce **`EditorSelection.primaryNote`** as the single edit driver identity:
+      **`liveEditDisplayNoteAtSelect`** ignores stale focus, **`ensureNoteEditFocusForLiveEdit`**
+      rebuilds active focus when it belongs to a prior primary note, and
+      **`EditorSelection.selectedNotes`** remains the future multi-note edit domain
+- [x] 4.8h/D19b Prevent pre-commit overlap diff from resolving a hidden same-pitch,
+      same-start overlap target to the mover; `changedOverlapNoteIds` now emits the authorized
+      `Delete` row instead of a mover-shaped `Length` row (`pio test -e native` 767/767;
+      `teensy41-capture-serial` build SUCCESS)
+- [x] 4.8j/D19c Gate pre-commit overlap `Update` rows on `changedOverlapNoteIds` as well as
+      `Delete` rows; stale live-store overlap length after move/deselect/reselect no longer emits
+      a persisted `Length` row (`test_unchanged_overlap_live_mismatch_emits_no_length_row`)
+- [x] 4.8k/D19d Clear committed overlap `Delete` targets from `NoteEditFocus.baselineMap`,
+      `overlapNotes`, and `changedOverlapNoteIds` after `commitEditAction` succeeds; a deleted
+      overlap can no longer restore when the previous selected note moves away again
+      (`test_committed_overlap_delete_clears_focus_restore_authority`)
+- [x] 4.8l/D19e Promote committed overlap `Update` rows into `NoteEditFocus.baselineMap` and clear
+      their `overlapNotes` / `changedOverlapNoteIds` authority after `commitEditAction` succeeds;
+      committed shortened overlaps become the active baseline for later moves
+      (`test_committed_overlap_update_promotes_shortened_focus_baseline`)
+- [x] 4.9 Commit stream review (`docs/plans/note_edit_commit_stream_review_refinement.md`):
+      authority decision (interim `buildPreCommitEditPasses`; former target apply-owned `editPass`
+      rows superseded by 4.10f canonical commit serialization);
+      row-level `NOTE_EDIT pre-commit row` logging before `commitEditAction`; native regression
+      `test_session_134610_shortened_overlap_commit_rows` from `session_20260805_134610.log`
+- [ ] 4.8i HITL re-run: same-pitch overlap must now produce `Hide` / `Shorten`; expect
       `storeNoteOns` ≈ note count and `candidates` > 0 on the mover's lane
+
+## 4.10 Display/commit stream refactor (Phase A/B/C)
+
+**Plan:** [`docs/plans/note_edit_display_commit_stream_refactor_refinement.md`](../../docs/plans/note_edit_display_commit_stream_refactor_refinement.md)
+
+### Phase A — single display projection (complete)
+
+- [x] 4.10a Add `projectNoteEditDisplayNotes` as the sole active note-edit display projection producer
+- [x] 4.10b Collapse duplicate display caches into `EditManager::projectedNoteEditDisplayNotes`; make `DisplayManager` paint-only
+- [x] 4.10c Remove movement-side `SC_DNTE` and `drawAllNotes` `focus.last` overlay bar
+- [x] 4.10d Native pitch 22/23 overlap projection tests + `pio test -e native`
+
+### Phase B — apply-owned editPass rows (complete)
+
+- [x] 4.10e Record apply-owned `editPass` rows in `applyEditSessionActions`; drain at `commitAllPendingNoteEditActions`
+- [x] 4.10e1 `verifyEditSessionStoreInvariant` + `enforceEditSessionStoreInvariant` after apply
+- [x] 4.10e2 Native pitch-71 loop-end regression (`session_20260805_144520`)
+
+### Phase C — canonical commit serialization (complete)
+
+- [x] 4.10f Make canonical post-apply `NoteEditSession.store` the only commit authority:
+      `commitAllPendingNoteEditActions` serializes `EditPass` rows from transaction baseline
+      compared with canonical session state; apply-owned rows are diagnostics / parity validation
+      only and never persistence authority
+- [x] 4.10f1 Add `SESSION_CAPTURE` parity diagnostics comparing canonical rows with
+      apply-owned rows while migration lands; canonical output always wins
+- [x] 4.10f2 Native regression from `session_20260805_171134.log`: mover `noteId=36`,
+      overlap `noteId=31`, select/deselect/reselect after move; committed rows must match
+      canonical state, not action coalescing history
+- [x] 4.10f3 Selection resolution: empty-step deselect refreshes display/surface state as a
+      first-class selection transition, without participating in commit-row generation
+
+### Phase D — pitch change uses apply ownership (pending)
+
+- [x] 4.10g Remove active-session `applySimplePitchChange` bypass; route pitch edits through `runEditSessionGeometryPipelineForCausingNote`
+- [x] 4.10h Add pitch-change overlap regressions from `session_20260805_151910.log`
+- [x] 4.10i Verify full projected `DisplayNoteVec` after pitch change has no non-overlap top-lane loop-end spans
 
 ## 5. HITL + archive (Phase 5)
 

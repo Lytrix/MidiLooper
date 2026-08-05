@@ -91,11 +91,15 @@ NOTE_EDIT_MEM bool runEditSessionGeometryPipeline(
       collectEvaluationScopeNoteIds(transactionBaseline, liveStore, focus.changedOverlapNoteIds,
                                     focus.movingNoteId, overlapPitchLane);
 
+  ensureBaselineMapEntriesForEvaluationScope(focus, evaluationScope, liveStore, channel);
+  const BaselineMap& transactionBaselineAfterEnsure = focus.baselineMap;
+
   const std::vector<CausingTargetPair, InternalHeapFirstAllocator<CausingTargetPair>> eligiblePairs =
       determineEligiblePairs(selection, changedCausingNotes, evaluationScope);
 
   const BaselineMap projectedBaseline = projectTransactionBaselineForEvaluationScope(
-      selection, transactionBaseline, evaluationScope, focus.movingNoteId, loopLength);
+      selection, transactionBaselineAfterEnsure, evaluationScope, focus.movingNoteId,
+      loopLength);
   const EditedGeometry projectedEdited =
       projectEditedGeometryForAnalysis(editedGeometry, loopLength);
 
@@ -112,7 +116,7 @@ NOTE_EDIT_MEM bool runEditSessionGeometryPipeline(
                      InternalHeapFirstAllocator<ConstrainedNoteGeometry>> constrained =
       resolveAllConstrainedGeometry(grouped, projectedBaseline, liveStore, channel, loopLength,
                                     noteMinLengthTicks, noteMinLengthRemoveEnabled, selection,
-                                    projectedEdited);
+                                    projectedEdited, focus.changedOverlapNoteIds);
 
   const EditSessionActions actions =
       buildEditSessionActions(constrained, projectedEdited, projectedBaseline, liveStore,
@@ -127,7 +131,7 @@ NOTE_EDIT_MEM bool runEditSessionGeometryPipeline(
              "GeometryPipeline: storeNoteOns=%u baselineMap=%u lane=%d changed=%u candidates=%u "
              "pairs=%u interactions=%u constrained=%u actions=%u",
              static_cast<unsigned>(liveNoteOnCount),
-             static_cast<unsigned>(transactionBaseline.size()),
+             static_cast<unsigned>(transactionBaselineAfterEnsure.size()),
              overlapPitchLane.has_value() ? static_cast<int>(overlapPitchLane.value()) : -1,
              static_cast<unsigned>(focus.changedOverlapNoteIds.size()),
              static_cast<unsigned>(evaluationScope.size()),
@@ -137,7 +141,8 @@ NOTE_EDIT_MEM bool runEditSessionGeometryPipeline(
   logEditSessionActions(actions);
 #endif
 
-  applyEditSessionActions(actions, liveStore, focus, channel, loopLength);
+  applyEditSessionActions(actions, liveStore, focus, channel, loopLength,
+                          &manager.getEditSession().applyOwnedEditPassRows);
   track.invalidateCaches(refreshPlaybackPreview);
   return true;
 }

@@ -4,6 +4,7 @@
 #include "NoteEditFocus.h"
 
 #include <algorithm>
+#include <unordered_map>
 #include <unordered_set>
 
 #include "EditSessionLiveStoreSpan.h"
@@ -19,6 +20,17 @@
 
 NOTE_EDIT_MEM NoteBaseline baselineFromDisplayNote(const NoteUtils::DisplayNote& dn) {
   return NoteBaseline{dn.note, dn.velocity, dn.startTick, dn.endTick};
+}
+
+NOTE_EDIT_MEM uint32_t noteEditDisplayCacheFingerprint(const NoteEditFocus& focus) {
+  uint32_t fp = static_cast<uint32_t>(focus.changedOverlapNoteIds.size());
+  fp ^= focus.last.startTick + (focus.last.endTick << 1);
+  fp ^= static_cast<uint32_t>(focus.last.pitch) << 16;
+  fp ^= static_cast<uint32_t>(focus.overlapNotes.size()) << 8;
+  for (NoteId noteId : focus.changedOverlapNoteIds) {
+    fp ^= static_cast<uint32_t>(noteId) * 0x9E3779B9u;
+  }
+  return fp;
 }
 
 NOTE_EDIT_MEM uint32_t movingNoteRangeDisplayEnd(const NoteEditFocus& focus, uint32_t loopLength) {
@@ -69,6 +81,28 @@ NOTE_EDIT_MEM void forgetChangedOverlapNote(NoteEditFocus& focus, NoteId noteId)
                             focus.changedOverlapNoteIds.end(), noteId);
   if (it != focus.changedOverlapNoteIds.end()) {
     focus.changedOverlapNoteIds.erase(it);
+  }
+}
+
+NOTE_EDIT_MEM void applyCommittedOverlapUpdateToFocus(NoteEditFocus& focus, NoteId noteId,
+                                                      const NoteBaseline& baseline) {
+  if (noteId == kInvalidNoteId || noteId == focus.movingNoteId) {
+    return;
+  }
+  focus.baselineMap[noteId] = baseline;
+  focus.overlapNotes.erase(noteId);
+  forgetChangedOverlapNote(focus, noteId);
+}
+
+NOTE_EDIT_MEM void clearCommittedOverlapDeleteIdsFromFocus(NoteEditFocus& focus,
+                                                           const NoteIdList& noteIds) {
+  for (NoteId noteId : noteIds) {
+    if (noteId == kInvalidNoteId || noteId == focus.movingNoteId) {
+      continue;
+    }
+    focus.baselineMap.erase(noteId);
+    focus.overlapNotes.erase(noteId);
+    forgetChangedOverlapNote(focus, noteId);
   }
 }
 
@@ -339,7 +373,7 @@ template <typename Alloc>
 NOTE_EDIT_MEM bool readLiveBaselineForOverlapDiff(const std::vector<MidiEvent, Alloc>& sessionEvents,
                                                   NoteId noteId, const NoteBaseline& baseline,
                                                   uint8_t channel, uint32_t loopLength,
-                                                  NoteBaseline& out) {
+                                                  NoteId movingNoteId, NoteBaseline& out) {
   std::vector<MidiEvent, Alloc>& mutableEvents =
       const_cast<std::vector<MidiEvent, Alloc>&>(sessionEvents);
   if (noteId != kInvalidNoteId &&
@@ -372,6 +406,9 @@ NOTE_EDIT_MEM bool readLiveBaselineForOverlapDiff(const std::vector<MidiEvent, A
   if (resolvedId == kInvalidNoteId) {
     resolvedId = noteId;
   }
+  if (movingNoteId != kInvalidNoteId && resolvedId == movingNoteId) {
+    return false;
+  }
   return findLinearNoteSpanForNoteId(mutableEvents, resolvedId, channel, out, baseline.startTick,
                                      loopLength);
 }
@@ -391,7 +428,8 @@ NOTE_EDIT_MEM bool noteEditFocusHasPendingBaselineMapDiff(
     }
     NoteBaseline live{};
     const bool hasLive =
-        readLiveBaselineForOverlapDiff(sessionEvents, noteId, baseline, channel, loopLength, live);
+        readLiveBaselineForOverlapDiff(sessionEvents, noteId, baseline, channel, loopLength,
+                                       focus.movingNoteId, live);
     if (!hasLive) {
       // Same rule as the pre-commit diff — an unresolved entry emits no row, so it must not
       // mark the session dirty either.
@@ -401,6 +439,9 @@ NOTE_EDIT_MEM bool noteEditFocusHasPendingBaselineMapDiff(
       continue;
     }
     if (live.pitch != baseline.pitch) {
+      continue;
+    }
+    if (!hasChangedOverlapNote(focus, noteId)) {
       continue;
     }
     if (live.startTick != baseline.startTick || live.endTick != baseline.endTick) {
@@ -602,7 +643,7 @@ MidiEvent* findLinearOffForNoteId(std::vector<MidiEvent, Alloc>& events, const M
     return nullptr;
   }
   const uint8_t pitch = noteOn.data.noteData.note;
-  MidiEvent* farthestOff = nullptr;
+  MidiEvent* nearestTaggedOff = nullptr;
   for (auto& evt : events) {
     if (!evt.isNoteOff() || evt.channel != noteOn.channel || evt.noteId != noteId ||
         evt.tick <= noteOn.tick) {
@@ -614,12 +655,12 @@ MidiEvent* findLinearOffForNoteId(std::vector<MidiEvent, Alloc>& events, const M
     if (loopLength > 0 && !isPlausibleStorageSpan(noteOn.tick, evt.tick, loopLength)) {
       continue;
     }
-    if (farthestOff == nullptr || evt.tick > farthestOff->tick) {
-      farthestOff = &evt;
+    if (nearestTaggedOff == nullptr || evt.tick < nearestTaggedOff->tick) {
+      nearestTaggedOff = &evt;
     }
   }
-  if (farthestOff != nullptr) {
-    return farthestOff;
+  if (nearestTaggedOff != nullptr) {
+    return nearestTaggedOff;
   }
   MidiEvent* mutableOn = nullptr;
   for (auto& evt : events) {
@@ -1204,47 +1245,210 @@ template std::unordered_set<NoteId> buildEditClosureNoteIds<InternalHeapFirstAll
 template std::unordered_set<NoteId> buildEditClosureNoteIds<ExternalMemoryFirstAllocator<MidiEvent>>(
     const NoteEditFocus&, const SessionMidiEventVec&, uint8_t, uint32_t);
 
+namespace {
+
+NOTE_EDIT_MEM void sortNoteIdList(NoteIdList& ids) {
+  for (size_t i = 1; i < ids.size(); ++i) {
+    const NoteId key = ids[i];
+    size_t j = i;
+    while (j > 0 && ids[j - 1] > key) {
+      ids[j] = ids[j - 1];
+      --j;
+    }
+    ids[j] = key;
+  }
+}
+
+NOTE_EDIT_MEM bool displayNoteOrderBefore(const NoteUtils::DisplayNote& left,
+                                         const NoteUtils::DisplayNote& right) {
+  if (left.startTick != right.startTick) {
+    return left.startTick < right.startTick;
+  }
+  if (left.note != right.note) {
+    return left.note < right.note;
+  }
+  return left.noteId < right.noteId;
+}
+
+}  // namespace
+
+NOTE_EDIT_MEM NoteIdList collectProjectionParticipantNoteIds(const NoteEditFocus& focus) {
+  NoteIdList participants;
+  if (focus.movingNoteId != kInvalidNoteId) {
+    participants.push_back(focus.movingNoteId);
+  }
+  for (NoteId noteId : focus.changedOverlapNoteIds) {
+    if (noteId == kInvalidNoteId) {
+      continue;
+    }
+    if (std::find(participants.begin(), participants.end(), noteId) == participants.end()) {
+      participants.push_back(noteId);
+    }
+  }
+  sortNoteIdList(participants);
+  return participants;
+}
+
 template <typename Alloc>
-NOTE_EDIT_MEM
-NoteUtils::DisplayNoteVec filterSelectableDisplayNotes(
+NOTE_EDIT_MEM NoteUtils::DisplayNoteVec projectNoteEditDisplayNotes(
+    const NoteUtils::DisplayNoteVec& committedBaseNotes,
     const std::vector<MidiEvent, Alloc>& sessionEvents, const NoteEditFocus& focus,
     uint8_t channel, uint32_t loopLength) {
-  NoteUtils::DisplayNoteVec allNotes =
-      NoteUtils::reconstructDisplayNotes(sessionEvents, loopLength, false);
   if (!focus.active || loopLength == 0) {
-    return allNotes;
+    return committedBaseNotes;
   }
 
-  // Hidden notes are absent from the live store (pipeline Hide / baseline-diff Delete).
-  // Defensive filter: drop any reconstructed note whose baselineMap entry has no live pair.
-  NoteUtils::DisplayNoteVec filtered;
-  filtered.reserve(allNotes.size());
-  for (const NoteUtils::DisplayNote& dn : allNotes) {
-    if (dn.noteId != kInvalidNoteId && dn.noteId == focus.movingNoteId) {
-      filtered.push_back(dn);
+  NoteIdList participants = collectProjectionParticipantNoteIds(focus);
+  std::unordered_set<NoteId> committedIds;
+  committedIds.reserve(committedBaseNotes.size());
+  for (const NoteUtils::DisplayNote& dn : committedBaseNotes) {
+    if (dn.noteId != kInvalidNoteId) {
+      committedIds.insert(dn.noteId);
+    }
+  }
+  for (const MidiEvent& evt : sessionEvents) {
+    if (!evt.isNoteOn() || evt.data.noteData.velocity == 0 || evt.noteId == kInvalidNoteId) {
+      continue;
+    }
+    if (committedIds.find(evt.noteId) != committedIds.end()) {
+      continue;
+    }
+    if (focus.baselineMap.find(evt.noteId) != focus.baselineMap.end()) {
+      continue;
+    }
+    if (std::find(participants.begin(), participants.end(), evt.noteId) == participants.end()) {
+      participants.push_back(evt.noteId);
+    }
+  }
+  sortNoteIdList(participants);
+
+  std::unordered_set<NoteId> hiddenParticipants;
+  std::vector<MidiEvent, Alloc>& mutableEvents =
+      const_cast<std::vector<MidiEvent, Alloc>&>(sessionEvents);
+  for (NoteId noteId : participants) {
+    if (noteId == kInvalidNoteId || noteId == focus.movingNoteId) {
+      continue;
+    }
+    NoteBaseline live{};
+    if (!findLinearNoteSpanForNoteId(mutableEvents, noteId, channel, live, UINT32_MAX,
+                                     loopLength)) {
+      hiddenParticipants.insert(noteId);
+    }
+  }
+
+  NoteUtils::DisplayNoteVec result;
+  result.reserve(committedBaseNotes.size());
+  for (const NoteUtils::DisplayNote& dn : committedBaseNotes) {
+    if (dn.noteId != kInvalidNoteId && hiddenParticipants.count(dn.noteId) > 0) {
       continue;
     }
     if (dn.noteId != kInvalidNoteId &&
-        focus.baselineMap.find(dn.noteId) != focus.baselineMap.end()) {
+        std::find(participants.begin(), participants.end(), dn.noteId) == participants.end() &&
+        hasChangedOverlapNote(focus, dn.noteId)) {
       NoteBaseline live{};
-      std::vector<MidiEvent, Alloc>& mutableEvents =
-          const_cast<std::vector<MidiEvent, Alloc>&>(sessionEvents);
       if (!findLinearNoteSpanForNoteId(mutableEvents, dn.noteId, channel, live, dn.startTick,
                                        loopLength)) {
         continue;
       }
     }
-    filtered.push_back(dn);
+    result.push_back(dn);
   }
-  return filtered;
+
+  std::unordered_map<NoteId, size_t> indexById;
+  indexById.reserve(result.size());
+  for (size_t i = 0; i < result.size(); ++i) {
+    if (result[i].noteId != kInvalidNoteId) {
+      indexById[result[i].noteId] = i;
+    }
+  }
+
+  bool needsSort = false;
+  for (NoteId noteId : participants) {
+    if (noteId == kInvalidNoteId || hiddenParticipants.count(noteId) > 0) {
+      continue;
+    }
+
+    NoteUtils::DisplayNote participantDn{};
+    participantDn.noteId = noteId;
+    if (noteId == focus.movingNoteId) {
+      participantDn.note = focus.last.pitch;
+      participantDn.velocity = focus.last.velocity;
+      participantDn.startTick = focus.last.startTick;
+      participantDn.endTick = focus.last.endTick;
+    } else {
+      NoteBaseline live{};
+      if (!findLinearNoteSpanForNoteId(mutableEvents, noteId, channel, live, UINT32_MAX,
+                                       loopLength)) {
+        continue;
+      }
+      participantDn.note = live.pitch;
+      participantDn.velocity = live.velocity;
+      participantDn.startTick = live.startTick;
+      participantDn.endTick = live.endTick;
+    }
+
+    const auto it = indexById.find(noteId);
+    if (it != indexById.end()) {
+      const uint32_t oldStart = result[it->second].startTick;
+      result[it->second] = participantDn;
+      if (oldStart != participantDn.startTick) {
+        needsSort = true;
+      }
+      continue;
+    }
+
+    size_t bindIdx = result.size();
+    const auto baselineIt = focus.baselineMap.find(noteId);
+    if (baselineIt != focus.baselineMap.end()) {
+      const NoteBaseline& baseline = baselineIt->second;
+      for (size_t i = 0; i < result.size(); ++i) {
+        if (result[i].noteId != kInvalidNoteId) {
+          continue;
+        }
+        if (result[i].note == baseline.pitch && result[i].startTick == baseline.startTick &&
+            result[i].endTick == baseline.endTick) {
+          bindIdx = i;
+          break;
+        }
+      }
+    }
+    if (bindIdx < result.size()) {
+      const uint32_t oldStart = result[bindIdx].startTick;
+      result[bindIdx] = participantDn;
+      indexById[noteId] = bindIdx;
+      if (oldStart != participantDn.startTick) {
+        needsSort = true;
+      }
+      continue;
+    }
+
+    result.push_back(participantDn);
+    indexById[noteId] = result.size() - 1;
+    needsSort = true;
+  }
+
+  if (needsSort) {
+    for (size_t i = 1; i < result.size(); ++i) {
+      const NoteUtils::DisplayNote key = result[i];
+      size_t j = i;
+      while (j > 0 && displayNoteOrderBefore(key, result[j - 1])) {
+        result[j] = result[j - 1];
+        --j;
+      }
+      result[j] = key;
+    }
+  }
+
+  return result;
 }
 
-template NoteUtils::DisplayNoteVec filterSelectableDisplayNotes<InternalHeapFirstAllocator<MidiEvent>>(
-    const MidiEventVec&, const NoteEditFocus&, uint8_t, uint32_t);
+template NoteUtils::DisplayNoteVec projectNoteEditDisplayNotes<InternalHeapFirstAllocator<MidiEvent>>(
+    const NoteUtils::DisplayNoteVec&, const MidiEventVec&, const NoteEditFocus&, uint8_t,
+    uint32_t);
 template NoteUtils::DisplayNoteVec
-filterSelectableDisplayNotes<ExternalMemoryFirstAllocator<MidiEvent>>(const SessionMidiEventVec&,
-                                                                      const NoteEditFocus&, uint8_t,
-                                                                      uint32_t);
+projectNoteEditDisplayNotes<ExternalMemoryFirstAllocator<MidiEvent>>(
+    const NoteUtils::DisplayNoteVec&, const SessionMidiEventVec&, const NoteEditFocus&, uint8_t,
+    uint32_t);
 
 NOTE_EDIT_MEM EditPassVec buildPreCommitBaselineLiveDiffOverlapPasses(
     const NoteEditFocus& focus, const MidiEventVec& sessionEvents, uint8_t channel,
@@ -1261,7 +1465,8 @@ NOTE_EDIT_MEM EditPassVec buildPreCommitBaselineLiveDiffOverlapPasses(
     }
     NoteBaseline live{};
     const bool hasLive =
-        readLiveBaselineForOverlapDiff(sessionEvents, noteId, baseline, channel, loopLength, live);
+        readLiveBaselineForOverlapDiff(sessionEvents, noteId, baseline, channel, loopLength,
+                                       focus.movingNoteId, live);
     if (!hasLive) {
       // Delete authority: only a note the geometry pipeline hid may be removed. An unresolved
       // baseline entry (pass-materialize noteId vs session-store noteId) is preserved and
@@ -1283,6 +1488,9 @@ NOTE_EDIT_MEM EditPassVec buildPreCommitBaselineLiveDiffOverlapPasses(
       continue;
     }
     if (live.pitch != baseline.pitch) {
+      continue;
+    }
+    if (!hasChangedOverlapNote(focus, noteId)) {
       continue;
     }
     if (live.startTick != baseline.startTick) {

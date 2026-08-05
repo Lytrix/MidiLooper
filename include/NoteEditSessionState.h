@@ -78,6 +78,11 @@ inline bool editorSelectionSameNoteTarget(const EditorSelection& sel, NoteId not
   return sel.primaryNote == noteId;
 }
 
+/// True when the active focus driver matches the selected edit driver.
+inline bool editorSelectionMatchesDriverNote(const EditorSelection& sel, NoteId driverNote) {
+  return editorSelectionHasNote(sel) && sel.primaryNote == driverNote;
+}
+
 /// True when bracket, hasNote, or **NoteId** changed (not list index).
 inline bool editorSelectionTargetChanged(const EditorSelection& prior, uint32_t nextBracket,
                                          NoteId nextPrimaryNote) {

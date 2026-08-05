@@ -379,9 +379,39 @@ Session undo may still align with kind changes in firmware; **overlap authority*
 
 **Terminology:** Prefer **edit driver boundary** over “edit step boundary” — “step” overloads with macro/micro and **NoteEditKind**.
 
+### D19a — Single edit driver identity
+
+**Decision:** **`EditorSelection.primaryNote`** is the single edit driver identity. **`NoteEditFocus`** stores transaction state for that driver (**`movingNoteId`**, **`commitBaseline`**, **`last`**, **`baselineMap`**, changed overlap targets), but it is not an independent selector. An active focus is valid for live geometry only when **`focus.movingNoteId == EditorSelection.primaryNote`**.
+
+**Rationale:** Display, fader, and geometry pipeline must agree on the same **`NoteId`**. If a user-driven select changes **`EditorSelection.primaryNote`** while **`NoteEditFocus`** still holds a prior driver, live faders must rebuild or ignore the stale focus before deriving edited geometry. Otherwise the display can show one note while the geometry pipeline moves another note.
+
+**Future multi-note editing:** **`EditorSelection.selectedNotes`** remains the edit domain and **`primaryNote`** remains the active driver. **`NoteEditFocus.last`** is the primary note causing span; other selected notes get causing spans from the live store until multi-selected geometry transforms are explicitly implemented. Do not merge **`EditorSelection`** and **`NoteEditFocus`** into one object, and do not add a second persistent driver registry.
+
 ### D18 — Macro commit: one **`noteEditPass` batch**, row per changed note
 
 **Decision:** **Geometry tick path** runs the full pipeline each geometry update. **Note edit pass commit path** **`commitAllPendingNoteEditActions`** produces **one `noteEditPass` batch** containing **`EditPass` rows for every changed `NoteId`** — mover, overlap targets (hide/shorten/restore), add, delete, lengthen, wrap — derived from **transaction baseline compared to final live store**. **`overlapNotes`** is not the row source.
+
+### D18a — Canonical commit serialization
+
+**Decision:** Commit is a pure serialization of canonical post-apply **live store** relative to the
+transaction baseline. The canonical post-apply **`NoteEditSession.store`** is the source of truth for
+NOTE_EDIT persistence; apply-owned rows are diagnostics / parity validation only.
+
+**Consumer independence invariant:** Projection, Commit, Selection, and Undo are independent
+consumers of canonical edit state. No consumer derives its state from another consumer:
+
+- **Projection** reads canonical session state plus **`EditorSelection`** to render display state.
+- **Commit** compares transaction baseline against canonical session state to produce **`EditPass`** rows.
+- **Selection** resolves logical **`EditorSelection`** onto projected display state.
+- **Undo** replays committed **`EditPass`** rows.
+
+**Apply-owned rows:** **`applyOwnedEditPassRows`** MAY remain during migration for diagnostics and
+parity logging, but MUST NOT influence canonical edit state, projection, selection, persistence, or
+undo. Canonical commit output always wins over parity diagnostics.
+
+**Migration exit:** remove apply-owned parity comparison after native regressions and HITL captures
+show no unexpected canonical/apply-owned divergence and no production code depends on
+apply-owned rows for persistence decisions.
 
 ### D20 — Wrap resolution before analysis
 

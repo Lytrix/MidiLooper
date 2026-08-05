@@ -2,11 +2,37 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-04 (HITL CLI rebuild Phase 3 — base + edit_full only)
+Last updated: 2026-08-05 (note edit singular commit pipeline side-slice)
 
 ---
 
 ## Now implementing
+
+### Note edit singular commit pipeline — Phase 4.10f complete
+
+**OpenSpec:** [`openspec/changes/edit-session-action-geometry/`](../../openspec/changes/edit-session-action-geometry/)  
+**Plan:** [`docs/plans/note_edit_singular_commit_pipeline_refinement.md`](../plans/note_edit_singular_commit_pipeline_refinement.md)
+
+| Item | Status |
+|------|--------|
+| Canonical commit authority | Done — `commitAllPendingNoteEditActions` serializes from transaction baseline compared with canonical `NoteEditSession.store` |
+| Apply-owned rows | Diagnostics / `SESSION_CAPTURE` parity only; never persistence authority |
+| Empty-step deselect | Done — selection target change emits the selection resolution path and refreshes note info |
+| Native + build | PASS — `pio test -e native` 797/797; `pio run -e teensy41-capture-serial` SUCCESS |
+
+**Next:** user flash + HITL repro for `session_20260805_171134` move-overlap-deselect-reselect.
+
+### Note edit select relatch after geometry — **done** (2026-08-05)
+
+**Plan:** [`docs/plans/note_edit_select_relatch_after_geometry_refinement.md`](../plans/note_edit_select_relatch_after_geometry_refinement.md)  
+**Evidence:** [`captures/session_20260805_174222.log`](../../captures/session_20260805_174222.log)
+
+| Item | Status |
+|------|--------|
+| Selection Relatch state in ControlSurface | Done — divergent select suspended after geometry hold expires; F1 motor relatch via existing burst/settle |
+| Native + build | PASS — `pio test -e native` 802/802; `pio run -e teensy41-capture-serial` SUCCESS |
+
+**Next:** flash + HITL repro of 174222 (coarse move, scrub select during/after hold — expect motor return, no drifted empty-step commit).
 
 ### HITL CLI rebuild — Phase 3 (`base` + `edit_full` only)
 

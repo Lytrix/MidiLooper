@@ -80,12 +80,19 @@ NOTE_EDIT_MEM bool interactionsAreBoundaryTouchOnly(
   return true;
 }
 
+NOTE_EDIT_MEM bool isChangedOverlapParticipant(NoteId noteId,
+                                               const NoteIdList& changedOverlapNoteIds) {
+  return std::find(changedOverlapNoteIds.begin(), changedOverlapNoteIds.end(), noteId) !=
+         changedOverlapNoteIds.end();
+}
+
 }  // namespace
 
 NOTE_EDIT_MEM std::vector<NoteId, InternalHeapFirstAllocator<NoteId>> determineConstrainedGeometryTargetNoteIds(
     const EditSessionInteractionsByTarget& grouped, const BaselineMap& transactionBaseline,
     const MidiEventVec& liveStore, uint8_t channel, uint32_t loopLength,
-    const EditorSelection& selection, const EditedGeometry& editedGeometry) {
+    const EditorSelection& selection, const EditedGeometry& editedGeometry,
+    const NoteIdList& changedOverlapNoteIds) {
   std::vector<NoteId, InternalHeapFirstAllocator<NoteId>> targets;
   for (const TargetNoteInteractionGroup& group : grouped.groups) {
     // Causing/selected notes are edited via edited geometry, never resolve targets.
@@ -105,6 +112,9 @@ NOTE_EDIT_MEM std::vector<NoteId, InternalHeapFirstAllocator<NoteId>> determineC
       continue;
     }
     if (hasIncomingInteraction(noteId, grouped)) {
+      continue;
+    }
+    if (!isChangedOverlapParticipant(noteId, changedOverlapNoteIds)) {
       continue;
     }
     if (liveStoreLinearSpanDiffersFromBaseline(noteId, baseline, liveStore, channel, loopLength)) {
@@ -187,10 +197,12 @@ resolveAllConstrainedGeometry(
     const EditSessionInteractionsByTarget& grouped, const BaselineMap& transactionBaseline,
     const MidiEventVec& liveStore, uint8_t channel, uint32_t loopLength,
     uint32_t noteMinLengthTicks, bool noteMinLengthRemoveEnabled,
-    const EditorSelection& selection, const EditedGeometry& editedGeometry) {
+    const EditorSelection& selection, const EditedGeometry& editedGeometry,
+    const NoteIdList& changedOverlapNoteIds) {
   const std::vector<NoteId, InternalHeapFirstAllocator<NoteId>> targetIds =
       determineConstrainedGeometryTargetNoteIds(grouped, transactionBaseline, liveStore, channel,
-                                                loopLength, selection, editedGeometry);
+                                                loopLength, selection, editedGeometry,
+                                                changedOverlapNoteIds);
 
   std::vector<ConstrainedNoteGeometry, InternalHeapFirstAllocator<ConstrainedNoteGeometry>> out;
   for (NoteId targetNoteId : targetIds) {

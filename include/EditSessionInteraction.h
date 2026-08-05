@@ -46,6 +46,11 @@ BaselineMap projectTransactionBaselineForEvaluationScope(const EditorSelection& 
                                                         const NoteIdList& evaluationScope,
                                                         NoteId movingNoteId, uint32_t loopLength);
 
+/// Insert missing evaluation-scope spans into focus.baselineMap from the live store (D19).
+void ensureBaselineMapEntriesForEvaluationScope(NoteEditFocus& focus,
+                                                const NoteIdList& evaluationScope,
+                                                const MidiEventVec& liveStore, uint8_t channel);
+
 std::vector<CausingTargetPair, InternalHeapFirstAllocator<CausingTargetPair>>
 determineEligiblePairs(const EditorSelection& selection,
                        const std::vector<NoteId, InternalHeapFirstAllocator<NoteId>>&
