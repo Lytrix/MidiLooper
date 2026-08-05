@@ -1638,7 +1638,8 @@ EDIT_MANAGER_IMPL_MEM void EditManager::flushDeferredNoteEditDisplayRefresh(Trac
     }
     deferredNoteEditDisplayRefreshPending_ = false;
     bumpSessionPlaybackPreviewRevision();
-    track.invalidateCaches(true);
+    // Playback revision already bumped; avoid re-deferring while transport is active.
+    track.invalidateCaches(false);
 #ifndef PIO_UNIT_TEST_NATIVE
     displayManager.requestNoteInfoRefresh(track);
 #endif

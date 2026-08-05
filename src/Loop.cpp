@@ -1618,6 +1618,7 @@ void Loop::invalidateCaches() {
   eventIndexValid = false;
   visualCacheDirty = true;
   playbackOrderDirty = true;
+  passesMaterializedStoreStale_ = true;
 }
 
 void Loop::invalidatePlaybackCaches() {

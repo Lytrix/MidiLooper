@@ -140,7 +140,15 @@ void Track::invalidateCaches(bool refreshPlaybackPreview) {
     }
     editManager.bumpSessionPreviewRevision();
     if (refreshPlaybackPreview) {
-      editManager.bumpSessionPlaybackPreviewRevision();
+      // While transport is running, defer playback merged rebuild off the clock path.
+      // Rapid geometry edits otherwise bump sessionPlaybackPreviewRevision_ every fader
+      // tick and force ensurePlaybackMergedMidiEventsBuilt + rebuildPlaybackOrder on MIDI
+      // clock (session_20260805_222144 hang/crash under NOTE_EDIT + PLAYING).
+      if (isPlaying()) {
+        editManager.scheduleDeferredNoteEditDisplayRefresh();
+      } else {
+        editManager.bumpSessionPlaybackPreviewRevision();
+      }
     }
   }
 }
