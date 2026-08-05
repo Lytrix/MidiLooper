@@ -10,6 +10,23 @@
 
 namespace {
 
+NOTE_EDIT_MEM MidiEvent* findNoteOnByNoteId(MidiEventVec& liveStore, NoteId noteId,
+                                            uint8_t preferredChannel) {
+  MidiEvent* fallback = nullptr;
+  for (MidiEvent& evt : liveStore) {
+    if (evt.noteId != noteId || !evt.isNoteOn() || evt.data.noteData.velocity == 0) {
+      continue;
+    }
+    if (evt.channel == preferredChannel) {
+      return &evt;
+    }
+    if (fallback == nullptr) {
+      fallback = &evt;
+    }
+  }
+  return fallback;
+}
+
 NOTE_EDIT_MEM bool eraseNotePairByNoteId(MidiEventVec& liveStore, NoteId noteId, uint8_t channel,
                            uint32_t loopLength, NoteId movingNoteId) {
   // Resolve the live pair first (noteId-tagged off, else LIFO via findLinearOffForNoteId).
@@ -17,10 +34,12 @@ NOTE_EDIT_MEM bool eraseNotePairByNoteId(MidiEventVec& liveStore, NoteId noteId,
   // (MidiEvent contract); leaving them behind orphans an end tick that the mover then
   // pairs to when bridging two close neighbors (session_20260804_222039).
   size_t onIndex = SIZE_MAX;
+  MidiEvent* noteOnForIndex = findNoteOnByNoteId(liveStore, noteId, channel);
+  if (noteOnForIndex == nullptr) {
+    return false;
+  }
   for (size_t i = 0; i < liveStore.size(); ++i) {
-    const MidiEvent& evt = liveStore[i];
-    if (evt.channel == channel && evt.noteId == noteId && evt.isNoteOn() &&
-        evt.data.noteData.velocity > 0) {
+    if (&liveStore[i] == noteOnForIndex) {
       onIndex = i;
       break;
     }
@@ -39,14 +58,7 @@ NOTE_EDIT_MEM bool eraseNotePairByNoteId(MidiEventVec& liveStore, NoteId noteId,
   // Never erase the mover's only linear off (often untagged). Hide would orphan the mover
   // and leave the overlap target's on open → loopLength-1 (session_20260804_230007).
   if (noteOff != nullptr && movingNoteId != kInvalidNoteId && movingNoteId != noteId) {
-    MidiEvent* moverOn = nullptr;
-    for (MidiEvent& evt : liveStore) {
-      if (evt.channel == channel && evt.noteId == movingNoteId && evt.isNoteOn() &&
-          evt.data.noteData.velocity > 0) {
-        moverOn = &evt;
-        break;
-      }
-    }
+    MidiEvent* moverOn = findNoteOnByNoteId(liveStore, movingNoteId, channel);
     if (moverOn != nullptr) {
       MidiEvent* moverOff =
           findLinearOffForNoteId(liveStore, *moverOn, movingNoteId, loopLength);
@@ -103,14 +115,7 @@ NOTE_EDIT_MEM bool offIsUnsafeToReuseForOverlapTarget(MidiEventVec& liveStore, M
     // Tagged to a third note — do not rewrite.
     return true;
   }
-  MidiEvent* moverOn = nullptr;
-  for (MidiEvent& evt : liveStore) {
-    if (evt.channel == channel && evt.noteId == focus.movingNoteId && evt.isNoteOn() &&
-        evt.data.noteData.velocity > 0) {
-      moverOn = &evt;
-      break;
-    }
-  }
+  MidiEvent* moverOn = findNoteOnByNoteId(liveStore, focus.movingNoteId, channel);
   if (moverOn == nullptr) {
     return false;
   }
@@ -121,15 +126,21 @@ NOTE_EDIT_MEM bool offIsUnsafeToReuseForOverlapTarget(MidiEventVec& liveStore, M
 
 NOTE_EDIT_MEM MidiEvent* findNoteOnForNoteId(MidiEventVec& liveStore, NoteId noteId, uint8_t channel,
                                uint8_t pitch, uint32_t startTick) {
+  MidiEvent* fallback = nullptr;
   for (MidiEvent& evt : liveStore) {
-    if (evt.noteId != noteId || evt.channel != channel || !evt.isNoteOn() ||
+    if (evt.noteId != noteId || !evt.isNoteOn() ||
         evt.data.noteData.velocity == 0 || evt.data.noteData.note != pitch ||
         evt.tick != startTick) {
       continue;
     }
-    return &evt;
+    if (evt.channel == channel) {
+      return &evt;
+    }
+    if (fallback == nullptr) {
+      fallback = &evt;
+    }
   }
-  return nullptr;
+  return fallback;
 }
 
 NOTE_EDIT_MEM bool resolveNotePairForAction(MidiEventVec& liveStore, const NoteEditFocus& focus, NoteId noteId,
@@ -153,13 +164,7 @@ NOTE_EDIT_MEM bool resolveNotePairForAction(MidiEventVec& liveStore, const NoteE
     noteOn = findNoteOnForMovingNoteEdit(liveStore, focus, channel, pitch,
                                          focus.commitBaseline.startTick, loopLength);
   } else {
-    for (MidiEvent& evt : liveStore) {
-      if (evt.noteId == noteId && evt.channel == channel && evt.isNoteOn() &&
-          evt.data.noteData.velocity > 0) {
-        noteOn = &evt;
-        break;
-      }
-    }
+    noteOn = findNoteOnByNoteId(liveStore, noteId, channel);
   }
 
   if (noteOn == nullptr) {
@@ -174,13 +179,7 @@ NOTE_EDIT_MEM void applyRestoreNote(const EditSessionAction& action, MidiEventVe
                                     const NoteEditFocus& focus, uint8_t channel,
                                     uint32_t loopLength) {
   MidiEvent* noteOn = nullptr;
-  for (MidiEvent& evt : liveStore) {
-    if (evt.channel == channel && evt.noteId == action.targetNoteId && evt.isNoteOn() &&
-        evt.data.noteData.velocity > 0) {
-      noteOn = &evt;
-      break;
-    }
-  }
+  noteOn = findNoteOnByNoteId(liveStore, action.targetNoteId, channel);
 
   MidiEvent* noteOff = nullptr;
   if (noteOn != nullptr) {
@@ -192,7 +191,7 @@ NOTE_EDIT_MEM void applyRestoreNote(const EditSessionAction& action, MidiEventVe
     // restoring a left neighbor while moving L→R over a right neighbor
     // (session_20260804_215743).
     for (MidiEvent& evt : liveStore) {
-      if (!evt.isNoteOff() || evt.channel != channel ||
+      if (!evt.isNoteOff() || evt.channel != noteOn->channel ||
           evt.data.noteData.note != action.pitch || evt.tick <= noteOn->tick) {
         continue;
       }
@@ -244,7 +243,7 @@ NOTE_EDIT_MEM void applyRestoreNote(const EditSessionAction& action, MidiEventVe
     noteOn->data.noteData.note = action.pitch;
     noteOn->data.noteData.velocity = action.velocity;
     noteOn->noteId = action.targetNoteId;
-    MidiEvent offEvt = MidiEvent::NoteOff(action.endTick, channel, action.pitch, 0);
+    MidiEvent offEvt = MidiEvent::NoteOff(action.endTick, noteOn->channel, action.pitch, 0);
     offEvt.noteId = action.targetNoteId;
     liveStore.push_back(offEvt);
     return;
@@ -263,13 +262,7 @@ NOTE_EDIT_MEM void applyShortenNote(const EditSessionAction& action, MidiEventVe
   MidiEvent* noteOn = findNoteOnForNoteId(liveStore, action.targetNoteId, channel, action.pitch,
                                           action.startTick);
   if (noteOn == nullptr) {
-    for (MidiEvent& evt : liveStore) {
-      if (evt.noteId == action.targetNoteId && evt.channel == channel && evt.isNoteOn() &&
-          evt.data.noteData.velocity > 0) {
-        noteOn = &evt;
-        break;
-      }
-    }
+    noteOn = findNoteOnByNoteId(liveStore, action.targetNoteId, channel);
   }
   if (noteOn == nullptr) {
     return;
@@ -291,7 +284,7 @@ NOTE_EDIT_MEM void applyShortenNote(const EditSessionAction& action, MidiEventVe
       baselineEnd = baselineIt->second.endTick;
     }
     for (MidiEvent& evt : liveStore) {
-      if (!evt.isNoteOff() || evt.channel != channel ||
+      if (!evt.isNoteOff() || evt.channel != noteOn->channel ||
           evt.data.noteData.note != noteOn->data.noteData.note || evt.tick <= noteOn->tick) {
         continue;
       }
@@ -329,13 +322,13 @@ NOTE_EDIT_MEM void applyShortenNote(const EditSessionAction& action, MidiEventVe
     return;
   }
   for (MidiEvent& evt : liveStore) {
-    if (evt.isNoteOff() && evt.channel == channel && evt.noteId == action.targetNoteId &&
+    if (evt.isNoteOff() && evt.channel == noteOn->channel && evt.noteId == action.targetNoteId &&
         evt.data.noteData.note == action.pitch) {
       evt.tick = action.endTick;
       return;
     }
   }
-  MidiEvent offEvt = MidiEvent::NoteOff(action.endTick, channel, action.pitch, 0);
+  MidiEvent offEvt = MidiEvent::NoteOff(action.endTick, noteOn->channel, action.pitch, 0);
   offEvt.noteId = action.targetNoteId;
   liveStore.push_back(offEvt);
 }
@@ -355,19 +348,13 @@ NOTE_EDIT_MEM void applyMoveNote(const EditSessionAction& action, MidiEventVec& 
     // remnant off (tick < note-on) when present; never claim a later untagged neighbor off.
     // Also never claim an earlier off that an earlier same-pitch note-on can own — that
     // orphans the neighbor open to loopLength-1 (session_20260804_224309).
-    for (MidiEvent& evt : liveStore) {
-      if (evt.noteId == action.targetNoteId && evt.channel == channel && evt.isNoteOn() &&
-          evt.data.noteData.velocity > 0) {
-        noteOn = &evt;
-        break;
-      }
-    }
+    noteOn = findNoteOnByNoteId(liveStore, action.targetNoteId, channel);
     if (noteOn == nullptr) {
       return;
     }
     MidiEvent* wrapHeadOff = nullptr;
     for (MidiEvent& evt : liveStore) {
-      if (!evt.isNoteOff() || evt.channel != channel ||
+      if (!evt.isNoteOff() || evt.channel != noteOn->channel ||
           evt.data.noteData.note != action.pitch || evt.tick >= noteOn->tick) {
         continue;
       }
@@ -376,7 +363,8 @@ NOTE_EDIT_MEM void applyMoveNote(const EditSessionAction& action, MidiEventVec& 
       }
       bool earlierOnOwnsOff = false;
       for (const MidiEvent& onEvt : liveStore) {
-        if (onEvt.channel != channel || !onEvt.isNoteOn() || onEvt.data.noteData.velocity == 0 ||
+        if (onEvt.channel != noteOn->channel || !onEvt.isNoteOn() ||
+            onEvt.data.noteData.velocity == 0 ||
             onEvt.data.noteData.note != action.pitch || &onEvt == noteOn) {
           continue;
         }
@@ -398,7 +386,7 @@ NOTE_EDIT_MEM void applyMoveNote(const EditSessionAction& action, MidiEventVec& 
       wrapHeadOff->data.noteData.note = action.pitch;
       wrapHeadOff->noteId = action.targetNoteId;
     } else {
-      MidiEvent offEvt = MidiEvent::NoteOff(action.endTick, channel, action.pitch, 0);
+      MidiEvent offEvt = MidiEvent::NoteOff(action.endTick, noteOn->channel, action.pitch, 0);
       offEvt.noteId = action.targetNoteId;
       liveStore.push_back(offEvt);
     }
@@ -460,8 +448,9 @@ NOTE_EDIT_MEM void syncFocusAfterApply(NoteEditFocus& focus, MidiEventVec& liveS
 }  // namespace
 
 NOTE_EDIT_MEM void applyBoundarySplitForEditSession(MidiEventVec& liveStore, uint8_t channel) {
+  (void)channel;
   for (MidiEvent& offEvt : liveStore) {
-    if (!offEvt.isNoteOff() || offEvt.channel != channel) {
+    if (!offEvt.isNoteOff()) {
       continue;
     }
     const uint32_t offTick = offEvt.tick;
@@ -471,7 +460,8 @@ NOTE_EDIT_MEM void applyBoundarySplitForEditSession(MidiEventVec& liveStore, uin
 
     bool anotherOnAtTick = false;
     for (const MidiEvent& onEvt : liveStore) {
-      if (!onEvt.isNoteOn() || onEvt.channel != channel || onEvt.data.noteData.velocity == 0) {
+      if (!onEvt.isNoteOn() || onEvt.channel != offEvt.channel ||
+          onEvt.data.noteData.velocity == 0) {
         continue;
       }
       if (onEvt.tick != offTick) {
@@ -490,6 +480,21 @@ NOTE_EDIT_MEM void applyBoundarySplitForEditSession(MidiEventVec& liveStore, uin
 NOTE_EDIT_MEM void applyEditSessionActions(const EditSessionActions& actions, MidiEventVec& liveStore,
                              NoteEditFocus& focus, uint8_t channel, uint32_t loopLength) {
   for (const EditSessionAction& action : actions) {
+    // Geometry actions are the only writers of changedOverlapNoteIds. Membership is what
+    // authorises a pre-commit Delete row, so a baseline lookup miss can never remove a note.
+    if (action.targetNoteId != kInvalidNoteId && action.targetNoteId != focus.movingNoteId) {
+      switch (action.type) {
+        case EditSessionActionType::ShortenNote:
+        case EditSessionActionType::HideNote:
+          recordChangedOverlapNote(focus, action.targetNoteId);
+          break;
+        case EditSessionActionType::RestoreNote:
+          forgetChangedOverlapNote(focus, action.targetNoteId);
+          break;
+        default:
+          break;
+      }
+    }
     switch (action.type) {
       case EditSessionActionType::RestoreNote:
         applyRestoreNote(action, liveStore, focus, channel, loopLength);

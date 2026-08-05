@@ -89,6 +89,25 @@ void test_read_live_linear_span_ignores_nested_same_pitch_neighbor_off() {
   TEST_ASSERT_EQUAL_UINT32(300u, span.endTick);
 }
 
+void test_read_live_linear_span_resolves_across_store_channel() {
+  constexpr NoteId kNoteId = 91;
+  constexpr uint8_t kStoreChannel = 5;
+  constexpr uint8_t kTrackChannel = 2;
+  MidiEventVec liveStore;
+  MidiEvent on = MidiEvent::NoteOn(912, kStoreChannel, 25, 100);
+  on.noteId = kNoteId;
+  liveStore.push_back(on);
+  MidiEvent off = MidiEvent::NoteOff(1008, kStoreChannel, 25, 0);
+  off.noteId = kNoteId;
+  liveStore.push_back(off);
+
+  NoteBaseline span{};
+  TEST_ASSERT_TRUE(readLiveLinearSpan(liveStore, kNoteId, kTrackChannel, span));
+  TEST_ASSERT_EQUAL_UINT32(912u, span.startTick);
+  TEST_ASSERT_EQUAL_UINT32(1008u, span.endTick);
+  TEST_ASSERT_EQUAL_UINT8(25u, span.pitch);
+}
+
 void test_builder_emits_hide_when_constrained_not_visible() {
   constexpr NoteId kTarget = 11;
   const NoteBaseline baseline{62, 100, 50, 150};
@@ -247,6 +266,40 @@ void test_builder_emits_change_pitch_for_pitch_delta() {
   TEST_ASSERT_EQUAL_UINT8(65, actions[0].pitch);
 }
 
+void test_builder_does_not_remap_hidden_overlap_target_to_mover() {
+  // session_20260805_034926: hidden short target and moving long note can share pitch+start.
+  // Target recovery must not resolve that live note to the selected mover and emit HideNote for it.
+  constexpr NoteId kHiddenTarget = 84;
+  constexpr NoteId kMover = 88;
+
+  ConstrainedNoteGeometry hiddenTarget{};
+  hiddenTarget.noteId = kHiddenTarget;
+  hiddenTarget.visible = false;
+
+  BaselineMap baseline;
+  baseline[kHiddenTarget] = {30, 100, 1488, 1535};
+
+  MidiEventVec liveStore = makeLivePair(kMover, 30, 1488, 1727);
+
+  NoteEditFocus focus;
+  focus.active = true;
+  focus.movingNoteId = kMover;
+  focus.last = {30, 100, 1488, 1727};
+  focus.commitBaseline = {30, 100, 1536, 1775};
+
+  const NoteBaseline editedMover{30, 100, 1440, 1679};
+  const EditedGeometry geometry = makeEditedGeometry(kMover, editedMover);
+
+  const EditSessionActions actions =
+      buildEditSessionActions({hiddenTarget}, geometry, baseline, liveStore, kChannel, focus,
+                              kLoopLength);
+
+  TEST_ASSERT_EQUAL(1, static_cast<int>(actions.size()));
+  TEST_ASSERT_EQUAL(static_cast<int>(EditSessionActionType::MoveNote),
+                    static_cast<int>(actions[0].type));
+  TEST_ASSERT_EQUAL_UINT32(kMover, actions[0].targetNoteId);
+}
+
 void test_builder_orders_restore_shorten_hide_before_causing_actions() {
   constexpr NoteId kRestore = 30;
   constexpr NoteId kShorten = 31;
@@ -309,6 +362,7 @@ int main(int /*argc*/, char** /*argv*/) {
   UNITY_BEGIN();
   RUN_TEST(test_builder_emits_restore_when_live_differs_from_baseline);
   RUN_TEST(test_read_live_linear_span_ignores_nested_same_pitch_neighbor_off);
+  RUN_TEST(test_read_live_linear_span_resolves_across_store_channel);
   RUN_TEST(test_builder_emits_hide_when_constrained_not_visible);
   RUN_TEST(test_builder_omits_hide_when_live_already_absent);
   RUN_TEST(test_builder_emits_shorten_when_constrained_end_shortened);
@@ -317,6 +371,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_builder_emits_move_note_for_causing_start_change);
   RUN_TEST(test_builder_emits_change_length_for_end_only_delta);
   RUN_TEST(test_builder_emits_change_pitch_for_pitch_delta);
+  RUN_TEST(test_builder_does_not_remap_hidden_overlap_target_to_mover);
   RUN_TEST(test_builder_orders_restore_shorten_hide_before_causing_actions);
   return UNITY_END();
 }

@@ -63,12 +63,14 @@ size_t estimatedSessionUndoInternalBytes(const SessionUndoEntry& entry) {
     bytes += row.addedEvents.size() * sizeof(MidiEvent);
   }
   bytes += entry.editPassIdsAtPush.size() * sizeof(EditPassId);
+  bytes += entry.focus.changedOverlapNoteIds.size() * sizeof(NoteId);
   if (entry.hasRedoPayload) {
     bytes += entry.redoEditRows.size() * sizeof(EditPass);
     for (const EditPass& row : entry.redoEditRows) {
       bytes += row.addedEvents.size() * sizeof(MidiEvent);
     }
     bytes += entry.redoEditPassIds.size() * sizeof(EditPassId);
+    bytes += entry.redoFocus.changedOverlapNoteIds.size() * sizeof(NoteId);
   }
   return bytes;
 }

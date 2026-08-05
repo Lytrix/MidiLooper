@@ -13,6 +13,10 @@
 #include "Utils/NoteUtils.h"
 #include "Utils/NoteEditMem.h"
 
+#if defined(SESSION_CAPTURE)
+#include "Logger.h"
+#endif
+
 NOTE_EDIT_MEM NoteBaseline baselineFromDisplayNote(const NoteUtils::DisplayNote& dn) {
   return NoteBaseline{dn.note, dn.velocity, dn.startTick, dn.endTick};
 }
@@ -46,6 +50,26 @@ NOTE_EDIT_MEM OverlapNote* findOverlapNoteEntry(NoteEditFocus& focus, NoteId not
 NOTE_EDIT_MEM const OverlapNote* findOverlapNoteEntry(const NoteEditFocus& focus, NoteId noteId) {
   const auto it = focus.overlapNotes.find(noteId);
   return it == focus.overlapNotes.end() ? nullptr : &it->second;
+}
+
+NOTE_EDIT_MEM bool hasChangedOverlapNote(const NoteEditFocus& focus, NoteId noteId) {
+  return std::find(focus.changedOverlapNoteIds.begin(), focus.changedOverlapNoteIds.end(),
+                   noteId) != focus.changedOverlapNoteIds.end();
+}
+
+NOTE_EDIT_MEM void recordChangedOverlapNote(NoteEditFocus& focus, NoteId noteId) {
+  if (noteId == kInvalidNoteId || hasChangedOverlapNote(focus, noteId)) {
+    return;
+  }
+  focus.changedOverlapNoteIds.push_back(noteId);
+}
+
+NOTE_EDIT_MEM void forgetChangedOverlapNote(NoteEditFocus& focus, NoteId noteId) {
+  const auto it = std::find(focus.changedOverlapNoteIds.begin(),
+                            focus.changedOverlapNoteIds.end(), noteId);
+  if (it != focus.changedOverlapNoteIds.end()) {
+    focus.changedOverlapNoteIds.erase(it);
+  }
 }
 
 NOTE_EDIT_MEM bool evictOverlapScratchForSelectedNote(NoteEditFocus& focus, NoteId selectedNoteId) {
@@ -334,6 +358,18 @@ NOTE_EDIT_MEM bool readLiveBaselineForOverlapDiff(const std::vector<MidiEvent, A
     }
   }
   if (resolvedId == kInvalidNoteId) {
+    for (const MidiEvent& evt : sessionEvents) {
+      if (!evt.isNoteOn() || evt.data.noteData.velocity == 0) {
+        continue;
+      }
+      if (evt.data.noteData.note == baseline.pitch && evt.tick == baseline.startTick &&
+          evt.noteId != kInvalidNoteId) {
+        resolvedId = evt.noteId;
+        break;
+      }
+    }
+  }
+  if (resolvedId == kInvalidNoteId) {
     resolvedId = noteId;
   }
   return findLinearNoteSpanForNoteId(mutableEvents, resolvedId, channel, out, baseline.startTick,
@@ -357,7 +393,12 @@ NOTE_EDIT_MEM bool noteEditFocusHasPendingBaselineMapDiff(
     const bool hasLive =
         readLiveBaselineForOverlapDiff(sessionEvents, noteId, baseline, channel, loopLength, live);
     if (!hasLive) {
-      return true;
+      // Same rule as the pre-commit diff — an unresolved entry emits no row, so it must not
+      // mark the session dirty either.
+      if (hasChangedOverlapNote(focus, noteId)) {
+        return true;
+      }
+      continue;
     }
     if (live.pitch != baseline.pitch) {
       continue;
@@ -470,7 +511,7 @@ NOTE_EDIT_MEM bool canApplySimplePitchChange(MidiEventVec& sessionEvents, const 
   }
 
   for (const MidiEvent& evt : sessionEvents) {
-    if (!evt.isNoteOn() || evt.data.noteData.velocity == 0 || evt.channel != channel ||
+    if (!evt.isNoteOn() || evt.data.noteData.velocity == 0 ||
         evt.data.noteData.note != targetPitch || evt.noteId == kInvalidNoteId ||
         evt.noteId == focus.movingNoteId) {
       continue;
@@ -505,6 +546,9 @@ MidiEvent* findLinearOffForNoteOnLifo(std::vector<MidiEvent, Alloc>& events, Mid
   }
   std::vector<MidiEvent*> activeNoteOnStack;
   for (auto& evt : events) {
+    if (evt.channel != noteOnEvent->channel) {
+      continue;
+    }
     const bool isNoteOn =
         evt.isNoteOn() && evt.data.noteData.velocity > 0 && evt.data.noteData.note == pitch;
     const bool isNoteOff = evt.isNoteOff() && evt.data.noteData.note == pitch;
@@ -538,7 +582,8 @@ MidiEvent* findPlausibleOffForNoteOn(std::vector<MidiEvent, Alloc>& events, cons
   MidiEvent* nearestInLoop = nullptr;
   MidiEvent* nearestBeyondLoop = nullptr;
   for (auto& evt : events) {
-    if (!evt.isNoteOff() || evt.data.noteData.note != pitch || evt.tick <= startTick) {
+    if (!evt.isNoteOff() || evt.channel != noteOn.channel || evt.data.noteData.note != pitch ||
+        evt.tick <= startTick) {
       continue;
     }
     if (!isPlausibleStorageSpan(startTick, evt.tick, loopLength)) {
@@ -573,7 +618,8 @@ MidiEvent* findLinearOffForNoteId(std::vector<MidiEvent, Alloc>& events, const M
   const uint8_t pitch = noteOn.data.noteData.note;
   MidiEvent* farthestOff = nullptr;
   for (auto& evt : events) {
-    if (!evt.isNoteOff() || evt.noteId != noteId || evt.tick <= noteOn.tick) {
+    if (!evt.isNoteOff() || evt.channel != noteOn.channel || evt.noteId != noteId ||
+        evt.tick <= noteOn.tick) {
       continue;
     }
     if (evt.data.noteData.note != pitch) {
@@ -591,8 +637,9 @@ MidiEvent* findLinearOffForNoteId(std::vector<MidiEvent, Alloc>& events, const M
   }
   MidiEvent* mutableOn = nullptr;
   for (auto& evt : events) {
-    if (evt.noteId == noteId && evt.isNoteOn() && evt.data.noteData.velocity > 0 &&
-        evt.tick == noteOn.tick && evt.data.noteData.note == noteOn.data.noteData.note) {
+    if (evt.noteId == noteId && evt.channel == noteOn.channel && evt.isNoteOn() &&
+        evt.data.noteData.velocity > 0 && evt.tick == noteOn.tick &&
+        evt.data.noteData.note == noteOn.data.noteData.note) {
       mutableOn = &evt;
       break;
     }
@@ -616,8 +663,11 @@ bool findLinearNoteSpanForNoteId(std::vector<MidiEvent, Alloc>& events, NoteId n
   if (noteId == kInvalidNoteId) {
     return false;
   }
-  auto tryNoteOn = [&](MidiEvent& evt) -> bool {
-    if (evt.noteId != noteId || evt.channel != channel) {
+  auto tryNoteOn = [&](MidiEvent& evt, bool requireChannel) -> bool {
+    if (evt.noteId != noteId) {
+      return false;
+    }
+    if (requireChannel && evt.channel != channel) {
       return false;
     }
     if (!evt.isNoteOn() || evt.data.noteData.velocity == 0) {
@@ -650,15 +700,18 @@ bool findLinearNoteSpanForNoteId(std::vector<MidiEvent, Alloc>& events, NoteId n
     return true;
   };
 
-  if (preferredStartTick != UINT32_MAX) {
-    for (MidiEvent& evt : events) {
-      if (tryNoteOn(evt)) {
-        return true;
-      }
+  for (MidiEvent& evt : events) {
+    if (tryNoteOn(evt, true)) {
+      return true;
     }
   }
+  // Recorded passes carry the MIDI channel played at record time, which need not equal the
+  // track's output channel. NoteId identifies the note in the materialized session store on its
+  // own, so fall back to a channel-independent match rather than reporting the note missing —
+  // a miss here makes the note invisible to the geometry pipeline (session_20260805_030517:
+  // baselineMap=1, candidates=0 with a same-pitch overlap present).
   for (MidiEvent& evt : events) {
-    if (tryNoteOn(evt)) {
+    if (tryNoteOn(evt, false)) {
       return true;
     }
   }
@@ -843,13 +896,12 @@ template bool syncNoteEditFocusLinearFromSessionStore<ExternalMemoryFirstAllocat
     NoteEditFocus&, SessionMidiEventVec&, uint8_t, uint32_t);
 
 template <typename Alloc>
-NOTE_EDIT_MEM void stampNoteIdsOntoPairedNoteOffs(std::vector<MidiEvent, Alloc>& events,
-                                                  uint8_t channel) {
+NOTE_EDIT_MEM void stampNoteIdsOntoPairedNoteOffs(std::vector<MidiEvent, Alloc>& events) {
+  // Pairs within each event's own channel, not only the track's output channel: recorded passes
+  // carry the channel played at record time, and an unstamped note-off leaves the note
+  // unresolvable by NoteId for the whole geometry pipeline.
   std::vector<MidiEvent*> activeNoteOnStack;
   for (MidiEvent& evt : events) {
-    if (evt.channel != channel) {
-      continue;
-    }
     const uint8_t pitch = evt.data.noteData.note;
     if (evt.isNoteOn() && evt.data.noteData.velocity > 0) {
       activeNoteOnStack.push_back(&evt);
@@ -861,7 +913,8 @@ NOTE_EDIT_MEM void stampNoteIdsOntoPairedNoteOffs(std::vector<MidiEvent, Alloc>&
     for (int stackIndex = static_cast<int>(activeNoteOnStack.size()) - 1; stackIndex >= 0;
          --stackIndex) {
       MidiEvent* candidateOn = activeNoteOnStack[static_cast<size_t>(stackIndex)];
-      if (candidateOn->data.noteData.note != pitch || evt.tick <= candidateOn->tick) {
+      if (candidateOn->data.noteData.note != pitch || candidateOn->channel != evt.channel ||
+          evt.tick <= candidateOn->tick) {
         continue;
       }
       activeNoteOnStack.erase(activeNoteOnStack.begin() + stackIndex);
@@ -873,10 +926,9 @@ NOTE_EDIT_MEM void stampNoteIdsOntoPairedNoteOffs(std::vector<MidiEvent, Alloc>&
   }
 }
 
-template void stampNoteIdsOntoPairedNoteOffs<InternalHeapFirstAllocator<MidiEvent>>(MidiEventVec&,
-                                                                                    uint8_t);
+template void stampNoteIdsOntoPairedNoteOffs<InternalHeapFirstAllocator<MidiEvent>>(MidiEventVec&);
 template void stampNoteIdsOntoPairedNoteOffs<ExternalMemoryFirstAllocator<MidiEvent>>(
-    SessionMidiEventVec&, uint8_t);
+    SessionMidiEventVec&);
 
 namespace {
 
@@ -1145,7 +1197,7 @@ std::unordered_set<NoteId> buildEditClosureNoteIds(const NoteEditFocus& focus,
   // Full-loop transaction baseline (D19 / D21): every live noteId participates so restore
   // candidates survive pitch changes. Analyze still pitch-gates Hide/Shorten (Q14).
   for (const MidiEvent& onEvt : sessionEvents) {
-    if (!onEvt.isNoteOn() || onEvt.data.noteData.velocity == 0 || onEvt.channel != channel ||
+    if (!onEvt.isNoteOn() || onEvt.data.noteData.velocity == 0 ||
         onEvt.noteId == kInvalidNoteId) {
       continue;
     }
@@ -1225,6 +1277,20 @@ NOTE_EDIT_MEM EditPassVec buildPreCommitBaselineLiveDiffOverlapPasses(
     const bool hasLive =
         readLiveBaselineForOverlapDiff(sessionEvents, noteId, baseline, channel, loopLength, live);
     if (!hasLive) {
+      // Delete authority: only a note the geometry pipeline hid may be removed. An unresolved
+      // baseline entry (pass-materialize noteId vs session-store noteId) is preserved and
+      // reported — a lookup miss must never destroy a note.
+      if (!hasChangedOverlapNote(focus, noteId)) {
+#if defined(SESSION_CAPTURE)
+        logger.log(CAT_TRACK, LOG_WARNING,
+                   "NOTE_EDIT pre-commit: baseline noteId=%lu pitch=%u start=%lu unresolved in "
+                   "live store; preserved (no Delete row)",
+                   static_cast<unsigned long>(noteId),
+                   static_cast<unsigned>(baseline.pitch),
+                   static_cast<unsigned long>(baseline.startTick));
+#endif
+        continue;
+      }
       EditPass row = makeNoteEditRow(EditActionType::Delete, EditPropertyType::None);
       row.targetNoteId = noteId;
       rows.push_back(row);

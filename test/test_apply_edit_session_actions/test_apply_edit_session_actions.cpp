@@ -204,6 +204,43 @@ void test_apply_hide_shorten_restore_combo() {
   TEST_ASSERT_TRUE(hasNoteOnAt(store, 200, kChannel, 60));
 }
 
+void test_apply_hide_removes_store_channel_target() {
+  constexpr uint32_t loopLength = 2304;
+  constexpr uint8_t kStoreChannel = 5;
+  constexpr NoteId kTargetId = 91;
+  constexpr NoteId kMoverId = 78;
+
+  MidiEventVec store;
+  store.push_back(noteOnWithNoteId(912, kStoreChannel, 25, 100, kTargetId));
+  MidiEvent targetOff = MidiEvent::NoteOff(1008, kStoreChannel, 25, 0);
+  targetOff.noteId = kTargetId;
+  store.push_back(targetOff);
+  store.push_back(noteOnWithNoteId(960, kStoreChannel, 25, 100, kMoverId));
+  MidiEvent moverOff = MidiEvent::NoteOff(1344, kStoreChannel, 25, 0);
+  moverOff.noteId = kMoverId;
+  store.push_back(moverOff);
+
+  NoteEditFocus focus = makeMovingFocus(kMoverId, 25, 960, 1344);
+  focus.baselineMap[kTargetId] = {25, 100, 912, 1008};
+  focus.baselineMap[kMoverId] = focus.commitBaseline;
+
+  EditSessionActions actions;
+  EditSessionAction hide{};
+  hide.type = EditSessionActionType::HideNote;
+  hide.targetNoteId = kTargetId;
+  hide.startTick = 912;
+  hide.endTick = 1008;
+  hide.pitch = 25;
+  hide.velocity = 100;
+  actions.push_back(hide);
+
+  applyEditSessionActions(actions, store, focus, kChannel, loopLength);
+
+  TEST_ASSERT_FALSE(liveStoreHasNotePair(store, kTargetId, kChannel));
+  TEST_ASSERT_TRUE(liveStoreHasNotePair(store, kMoverId, kChannel));
+  TEST_ASSERT_TRUE(hasChangedOverlapNote(focus, kTargetId));
+}
+
 void test_apply_boundary_split_same_tick() {
   MidiEventVec store;
   store.push_back(noteOnWithNoteId(100, kChannel, 60, 100, 1));
@@ -878,6 +915,10 @@ void test_same_pitch_complete_cover_hide_and_restore_on_leave() {
   applyEditSessionActions(overActions, store, focus, kChannel, loopLength);
   TEST_ASSERT_FALSE(liveStoreHasNotePair(store, kInnerId, kChannel));
   TEST_ASSERT_TRUE(focus.baselineMap.count(kInnerId) > 0);
+  // Hide records Delete authority; the missing live span alone must never authorise removal.
+  TEST_ASSERT_TRUE(hasChangedOverlapNote(focus, kInnerId));
+  TEST_ASSERT_TRUE(
+      noteEditFocusHasPendingBaselineMapDiff(focus, store, kChannel, loopLength));
 
   // Relocate mover off the inner's baseline start so pitch+start resolve cannot confuse
   // the hidden noteId with the mover pair.
@@ -919,6 +960,13 @@ void test_same_pitch_complete_cover_hide_and_restore_on_leave() {
       findLinearNoteSpanForNoteId(store, kInnerId, kChannel, innerSpan, 144, loopLength));
   TEST_ASSERT_EQUAL_UINT32(144u, innerSpan.startTick);
   TEST_ASSERT_EQUAL_UINT32(192u, innerSpan.endTick);
+  // Restore withdraws Delete authority — nothing left pending for the inner note.
+  TEST_ASSERT_FALSE(hasChangedOverlapNote(focus, kInnerId));
+  for (const EditPass& row : buildPreCommitEditPasses(focus, kChannel, &store, loopLength)) {
+    if (row.actionType == EditActionType::Delete) {
+      TEST_ASSERT_NOT_EQUAL(kInnerId, row.targetNoteId);
+    }
+  }
 }
 
 void test_log_scenario_same_pitch_hide_when_moving_right() {
@@ -1077,6 +1125,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_apply_restore_hidden_neighbor_144458);
   RUN_TEST(test_apply_loop_seam_move_152335);
   RUN_TEST(test_apply_hide_shorten_restore_combo);
+  RUN_TEST(test_apply_hide_removes_store_channel_target);
   RUN_TEST(test_apply_boundary_split_same_tick);
   RUN_TEST(test_apply_syncs_focus_last_after_move);
   RUN_TEST(test_apply_restore_extends_shortened_neighbor_end);

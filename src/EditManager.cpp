@@ -542,7 +542,7 @@ void EditManager::openNoteEditSession(Track& track) {
     loop.assignMissingNoteIdsInStore(editSession.store.mutStore());
     loop.assignMissingNoteIds(loop.midiEvents());
     loop.assignMissingNoteIds(editSession.store.mutEvents());
-    stampNoteIdsOntoPairedNoteOffs(editSession.store.mutEvents(), track.getMidiChannel());
+    stampNoteIdsOntoPairedNoteOffs(editSession.store.mutEvents());
     DIAG_EVENT(Diagnostics::Edit::AfterAssignNoteIds);
 #if NOTE_EDIT_OPEN_BISECT_STAGE <= 1
     return;

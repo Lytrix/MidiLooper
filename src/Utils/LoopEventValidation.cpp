@@ -6,8 +6,10 @@
 #include <climits>
 #include <unordered_map>
 #include <utility>
+#include <vector>
 
 #include "LoopEventStore.h"
+#include "Utils/LoopValidationMem.h"
 #include "Utils/NoteUtils.h"
 
 namespace LoopEventValidation {
@@ -43,50 +45,131 @@ bool checkNoteOnInLoopRange(const MidiEventVec& events, uint32_t loopLength) {
   return true;
 }
 
-bool checkLinearNoteOff(const MidiEventVec& events, uint32_t loopLength) {
-  if (loopLength == 0) {
-    return true;
-  }
-  for (const MidiEvent& onEvt : events) {
-    if (!onEvt.isNoteOn() || onEvt.data.noteData.velocity == 0) {
+namespace {
+
+/// Judges one note-on against the note-off it belongs to. @p wrapWindowTicks is only meaningful
+/// for the head/tail wrap check; the linear-off check ignores it.
+using NotePairViolationFn = bool (*)(const MidiEvent& onEvt, const MidiEvent& offEvt,
+                                     uint32_t loopLength, uint32_t wrapWindowTicks);
+
+/// Walks canonical note-on/note-off pairs and reports the first pair @p violates rejects.
+///
+/// Canonical pairing only — a note-off is judged against the note-on it actually belongs to,
+/// never against every same channel/pitch off in the vector. Without pairing, two sequential
+/// notes on one pitch (A 100→200, B 500→600) match the pair (on B, off A) and report a
+/// violation that does not exist. Shared by every pair-shape invariant so one pairing scheme
+/// serves them all (and one instantiation stays in flash).
+LOOP_VALIDATION_MEM bool validateCanonicalNotePairs(const MidiEventVec& events, uint32_t loopLength,
+                                                    uint32_t wrapWindowTicks,
+                                                    NotePairViolationFn violatesPair) {
+  const size_t count = events.size();
+  std::vector<bool> pairedOn(count, false);
+  std::vector<bool> pairedOff(count, false);
+
+  const auto violates = [&](const MidiEvent& onEvt, const MidiEvent& offEvt) {
+    return violatesPair(onEvt, offEvt, loopLength, wrapWindowTicks);
+  };
+
+  const auto sameNote = [](const MidiEvent& a, const MidiEvent& b) {
+    return a.channel == b.channel && a.data.noteData.note == b.data.noteData.note;
+  };
+
+  const auto isSoundingNoteOn = [](const MidiEvent& evt) {
+    return evt.isNoteOn() && evt.data.noteData.velocity > 0;
+  };
+
+  // Pass 1 — explicit noteId on both sides is the strongest pairing signal and is order
+  // independent (stampNoteIdsOntoPairedNoteOffs guarantees it for the session store).
+  for (size_t i = 0; i < count; ++i) {
+    const MidiEvent& onEvt = events[i];
+    if (!isSoundingNoteOn(onEvt) || onEvt.noteId == kInvalidNoteId) {
       continue;
     }
-    for (const MidiEvent& offEvt : events) {
-      if (!offEvt.isNoteOff() || offEvt.channel != onEvt.channel ||
-          offEvt.data.noteData.note != onEvt.data.noteData.note) {
+    for (size_t j = 0; j < count; ++j) {
+      const MidiEvent& offEvt = events[j];
+      if (pairedOff[j] || !offEvt.isNoteOff() || offEvt.noteId != onEvt.noteId ||
+          !sameNote(onEvt, offEvt)) {
         continue;
       }
-      if (NoteUtils::isWrappedLoopNotePair(onEvt.tick, offEvt.tick, loopLength)) {
+      pairedOn[i] = true;
+      pairedOff[j] = true;
+      if (violates(onEvt, offEvt)) {
         return false;
       }
-      if (offEvt.tick < onEvt.tick && offEvt.tick < loopLength) {
+      break;
+    }
+  }
+
+  // Pass 2 — untagged pairs: each note-off claims the nearest preceding unpaired note-on on its
+  // own lane, which is the LIFO order NoteUtils::orderSamePitchNoteOffsForLifo establishes.
+  for (size_t i = 0; i < count; ++i) {
+    const MidiEvent& offEvt = events[i];
+    if (!offEvt.isNoteOff() || pairedOff[i]) {
+      continue;
+    }
+    for (size_t k = i; k-- > 0;) {
+      const MidiEvent& onEvt = events[k];
+      if (pairedOn[k] || !isSoundingNoteOn(onEvt) || !sameNote(onEvt, offEvt)) {
+        continue;
+      }
+      pairedOn[k] = true;
+      pairedOff[i] = true;
+      if (violates(onEvt, offEvt)) {
         return false;
       }
+      break;
+    }
+  }
+
+  // Pass 3 — a still-open note-on plus an unmatched off of the same note is a stored wrap pair,
+  // which canonical linear storage forbids. An off with no note-on at all is left for
+  // checkOrphanNoteOff.
+  for (size_t i = 0; i < count; ++i) {
+    const MidiEvent& onEvt = events[i];
+    if (pairedOn[i] || !isSoundingNoteOn(onEvt)) {
+      continue;
+    }
+    for (size_t j = 0; j < count; ++j) {
+      const MidiEvent& offEvt = events[j];
+      if (pairedOff[j] || !offEvt.isNoteOff() || !sameNote(onEvt, offEvt)) {
+        continue;
+      }
+      pairedOff[j] = true;
+      if (violates(onEvt, offEvt)) {
+        return false;
+      }
+      break;
     }
   }
   return true;
 }
 
-bool checkNoWrappedPairStorage(const MidiEventVec& events, uint32_t loopLength,
-                               uint32_t wrapWindowTicks) {
+}  // namespace
+
+LOOP_VALIDATION_MEM bool checkLinearNoteOff(const MidiEventVec& events, uint32_t loopLength) {
   if (loopLength == 0) {
     return true;
   }
-  for (const MidiEvent& onEvt : events) {
-    if (!onEvt.isNoteOn() || onEvt.data.noteData.velocity == 0) {
-      continue;
-    }
-    for (const MidiEvent& offEvt : events) {
-      if (!offEvt.isNoteOff() || offEvt.channel != onEvt.channel ||
-          offEvt.data.noteData.note != onEvt.data.noteData.note) {
-        continue;
-      }
-      if (NoteUtils::isHeadTailWrappedPair(onEvt.tick, offEvt.tick, loopLength, wrapWindowTicks)) {
-        return false;
-      }
-    }
+  return validateCanonicalNotePairs(
+      events, loopLength, 0,
+      [](const MidiEvent& onEvt, const MidiEvent& offEvt, uint32_t loopLen, uint32_t) {
+        if (NoteUtils::isWrappedLoopNotePair(onEvt.tick, offEvt.tick, loopLen)) {
+          return true;
+        }
+        return offEvt.tick < onEvt.tick && offEvt.tick < loopLen;
+      });
+}
+
+LOOP_VALIDATION_MEM bool checkNoWrappedPairStorage(const MidiEventVec& events, uint32_t loopLength,
+                                                   uint32_t wrapWindowTicks) {
+  if (loopLength == 0) {
+    return true;
   }
-  return true;
+  return validateCanonicalNotePairs(
+      events, loopLength, wrapWindowTicks,
+      [](const MidiEvent& onEvt, const MidiEvent& offEvt, uint32_t loopLen, uint32_t wrapWindow) {
+        return NoteUtils::isHeadTailWrappedPair(onEvt.tick, offEvt.tick, loopLen, wrapWindow);
+      });
 }
 
 bool checkDerivedLength(const MidiEventVec& events, uint32_t loopLength) {

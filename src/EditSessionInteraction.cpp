@@ -131,6 +131,63 @@ NOTE_EDIT_MEM std::vector<NoteId, InternalHeapFirstAllocator<NoteId>> determineC
   return changed;
 }
 
+NOTE_EDIT_MEM NoteIdList collectEvaluationScopeNoteIds(const BaselineMap& transactionBaseline,
+                                                      const MidiEventVec& liveStore,
+                                                      const NoteIdList& changedOverlapNoteIds,
+                                                      NoteId movingNoteId,
+                                                      std::optional<uint8_t> overlapPitchLane) {
+  NoteIdList scope;
+  const auto inLane = [&](uint8_t pitch) {
+    return !overlapPitchLane.has_value() || pitch == overlapPitchLane.value();
+  };
+  const auto isSticky = [&](NoteId noteId) {
+    return std::find(changedOverlapNoteIds.begin(), changedOverlapNoteIds.end(), noteId) !=
+           changedOverlapNoteIds.end();
+  };
+  const auto addToScope = [&](NoteId noteId, uint8_t pitch) {
+    if (noteId == kInvalidNoteId || noteId == movingNoteId) {
+      return;
+    }
+    if (!inLane(pitch) && !isSticky(noteId)) {
+      return;
+    }
+    if (std::find(scope.begin(), scope.end(), noteId) == scope.end()) {
+      scope.push_back(noteId);
+    }
+  };
+
+  for (const auto& [noteId, baseline] : transactionBaseline) {
+    addToScope(noteId, baseline.pitch);
+  }
+  // Scope membership is NoteId + pitch lane only. The track's output channel is not an identity
+  // key: materialized record/overdub passes carry the channel played at record time, so gating on
+  // it hid every same-pitch overlap from analyze (session_20260805_030517: candidates=0).
+  for (const MidiEvent& evt : liveStore) {
+    if (!evt.isNoteOn() || evt.data.noteData.velocity == 0) {
+      continue;
+    }
+    addToScope(evt.noteId, evt.data.noteData.note);
+  }
+  sortNoteIdVector(scope);
+  return scope;
+}
+
+NOTE_EDIT_MEM BaselineMap projectTransactionBaselineForEvaluationScope(
+    const EditorSelection& selection, const BaselineMap& transactionBaseline,
+    const NoteIdList& evaluationScope, NoteId movingNoteId, uint32_t loopLength) {
+  BaselineMap projected;
+  for (const auto& [noteId, baseline] : transactionBaseline) {
+    if (noteId != movingNoteId &&
+        std::find(evaluationScope.begin(), evaluationScope.end(), noteId) ==
+            evaluationScope.end()) {
+      continue;
+    }
+    projected[noteId] =
+        projectNoteBaselineForEditAnalysis(selection, baseline, noteId, loopLength);
+  }
+  return projected;
+}
+
 NOTE_EDIT_MEM std::vector<CausingTargetPair, InternalHeapFirstAllocator<CausingTargetPair>>
 determineEligiblePairs(const EditorSelection& selection,
                        const std::vector<NoteId, InternalHeapFirstAllocator<NoteId>>&

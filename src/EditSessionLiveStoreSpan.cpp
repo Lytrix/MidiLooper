@@ -18,6 +18,9 @@ NOTE_EDIT_MEM bool findLifoOffTickForNoteOn(const MidiEventVec& events, const Mi
   const uint8_t pitch = noteOn.data.noteData.note;
   std::vector<const MidiEvent*> activeNoteOnStack;
   for (const MidiEvent& evt : events) {
+    if (evt.channel != noteOn.channel) {
+      continue;
+    }
     const bool isNoteOn =
         evt.isNoteOn() && evt.data.noteData.velocity > 0 && evt.data.noteData.note == pitch;
     const bool isNoteOff = evt.isNoteOff() && evt.data.noteData.note == pitch;
@@ -60,13 +63,21 @@ NOTE_EDIT_MEM bool readLiveLinearSpan(const MidiEventVec& liveStore, NoteId note
     }
   }
   if (noteOn == nullptr) {
+    for (const MidiEvent& event : liveStore) {
+      if (event.noteId == noteId && event.isNoteOn() && event.data.noteData.velocity > 0) {
+        noteOn = &event;
+        break;
+      }
+    }
+  }
+  if (noteOn == nullptr) {
     return false;
   }
 
   // Prefer noteId-tagged offs when present (RestoreNote / stamped apply paths).
   const MidiEvent* taggedOff = nullptr;
   for (const MidiEvent& event : liveStore) {
-    if (!event.isNoteOff() || event.channel != channel || event.noteId != noteId ||
+    if (!event.isNoteOff() || event.channel != noteOn->channel || event.noteId != noteId ||
         event.tick <= noteOn->tick ||
         event.data.noteData.note != noteOn->data.noteData.note) {
       continue;
@@ -110,6 +121,15 @@ NOTE_EDIT_MEM bool findCommittedLinearSpanForPitchStart(MidiEventVec& committedE
     }
   }
   if (noteOn == nullptr) {
+    for (const MidiEvent& evt : committedEvents) {
+      if (evt.isNoteOn() && evt.data.noteData.velocity > 0 && evt.data.noteData.note == pitch &&
+          evt.tick == startTick) {
+        noteOn = &evt;
+        break;
+      }
+    }
+  }
+  if (noteOn == nullptr) {
     return false;
   }
 
@@ -141,6 +161,15 @@ NOTE_EDIT_MEM NoteId findLiveNoteIdForPitchStart(const MidiEventVec& liveStore, 
       return evt.noteId;
     }
   }
+  for (const MidiEvent& evt : liveStore) {
+    if (!evt.isNoteOn() || evt.data.noteData.velocity == 0) {
+      continue;
+    }
+    if (evt.data.noteData.note == pitch && evt.tick == startTick &&
+        evt.noteId != kInvalidNoteId) {
+      return evt.noteId;
+    }
+  }
   return kInvalidNoteId;
 }
 
@@ -158,6 +187,17 @@ NOTE_EDIT_MEM bool readLiveLinearSpanForPitchStart(const MidiEventVec& liveStore
     }
   }
   if (noteOn == nullptr) {
+    for (const MidiEvent& event : liveStore) {
+      if (!event.isNoteOn() || event.data.noteData.velocity == 0) {
+        continue;
+      }
+      if (event.data.noteData.note == pitch && event.tick == startTick) {
+        noteOn = &event;
+        break;
+      }
+    }
+  }
+  if (noteOn == nullptr) {
     return false;
   }
   outNoteId = noteOn->noteId;
@@ -168,7 +208,7 @@ NOTE_EDIT_MEM bool readLiveLinearSpanForPitchStart(const MidiEventVec& liveStore
 
   const MidiEvent* taggedOff = nullptr;
   for (const MidiEvent& event : liveStore) {
-    if (!event.isNoteOff() || event.channel != channel || event.tick <= noteOn->tick ||
+    if (!event.isNoteOff() || event.channel != noteOn->channel || event.tick <= noteOn->tick ||
         event.data.noteData.note != pitch) {
       continue;
     }

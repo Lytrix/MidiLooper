@@ -54,6 +54,51 @@
 - [x] 4.5b Update **`filterSelectableDisplayNotes`** / edit closure to derive hidden from live store compared to baseline, not **`overlapNotes`**
 - [x] 4.6 `pio test -e native` full suite
 
+## 4.7 Commit corruption + evaluation scope (Phases 7-9)
+
+- [x] 4.7a Add **`changedOverlapNoteIds`** (`NoteIdList`) to **`NoteEditFocus`** with
+      **`recordChangedOverlapNote`** / **`forgetChangedOverlapNote`** / **`hasChangedOverlapNote`**;
+      written only by geometry actions in **`applyEditSessionActions`**; cleared by `focus.clear()`
+      at the D19 driver boundary and session end
+- [x] 4.7b Gate the `Delete` row in **`buildPreCommitBaselineLiveDiffOverlapPasses`** and
+      **`noteEditFocusHasPendingBaselineMapDiff`** on **`changedOverlapNoteIds`**; preserve and warn
+      on an unresolved baseline entry (was: silently deleted 12 notes per commit)
+- [x] 4.7c Pair note-on to its own note-off in **`checkLinearNoteOff`** (noteId, else LIFO nearest
+      preceding on, else leftover open vs leftover off) — removes the false `check=2` on any loop
+      with two notes on one pitch
+- [x] 4.7d Add **`collectEvaluationScopeNoteIds`** and
+      **`projectTransactionBaselineForEvaluationScope`** to **`EditSessionInteraction`**; one scope
+      list feeds both **`determineEligiblePairs`** and baseline projection
+- [x] 4.7e Honour **`overlapPitchLane`** in **`runEditSessionGeometryPipeline`**; pass
+      **`movingNotePitch`** from the move call site in **`NoteMovementUtils`** (pitch and length
+      call sites already passed a lane)
+- [x] 4.7f `pio test -e native` — 752/752; `teensy41-capture-serial` build SUCCESS
+- [x] 4.7g Move **`checkLinearNoteOff`** to flash via **`LOOP_VALIDATION_MEM`**
+      (`include/Utils/LoopValidationMem.h`) — ITCM headroom back to 964 bytes
+- [ ] 4.7h HITL re-run with a take that has **two notes on one pitch** so the pitch-lane gate can
+      produce `Hide` / `Shorten`; confirm no `non-canonical store`. Note: `missing in recon` is a
+      **home start tick** probe from `logChangeLengthCommitTrace` and is expected after a move — it
+      is not a corruption signal
+
+## 4.8 Note edit identity is `NoteId`, not the track MIDI channel (Phase 10)
+
+- [x] 4.8a Try the track channel first, then fall back to a channel-independent **`NoteId`** match in
+      **`findLinearNoteSpanForNoteId`** — materialized passes carry the channel played at record
+      time, so an output-channel gate left `baselineMap=1`
+- [x] 4.8b Pair within **each event's own** channel in **`stampNoteIdsOntoPairedNoteOffs`** instead of
+      only the track channel; drop the now-dead `channel` parameter
+- [x] 4.8c Drop the channel filter from **`collectEvaluationScopeNoteIds`** (was `candidates=0` with a
+      same-pitch overlap present); drop the dead `channel` parameter
+- [x] 4.8d Extract **`validateCanonicalNotePairs`** and route **`checkNoWrappedPairStorage`** through
+      it — `check=4` had the same unpaired all-pairs flaw as `check=2`
+- [x] 4.8e Drop the channel filter from the missing-noteId diagnostic; lead the pipeline line with
+      **`storeNoteOns=`** so store size and scope size are distinguishable in capture
+- [x] 4.8f `pio test -e native` — 763/763; `teensy41-capture-serial` build SUCCESS,
+      ITCM headroom 836 bytes after remaining channel-gated baseline/live-store readers and
+      simple pitch gate / mover-remap guard were fixed
+- [ ] 4.8g HITL re-run: same-pitch overlap must now produce `Hide` / `Shorten`; expect
+      `storeNoteOns` ≈ note count and `candidates` > 0 on the mover's lane
+
 ## 5. HITL + archive (Phase 5)
 
 - [ ] 5.1 Capture **base + 2× overdub** loop fixture; HITL per-interaction presets (D14)
