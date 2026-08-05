@@ -7,9 +7,11 @@
 
 #include "EditSessionInteraction.h"
 #include "NoteEditSessionState.h"
+#include "ResolveConstrainedGeometry.h"
 
 #include "../../src/EditSessionInteraction.cpp"
 #include "../../src/EditSessionLiveStoreSpan.cpp"
+#include "../../src/ResolveConstrainedGeometry.cpp"
 #include "../../src/Logger.cpp"
 #include "../../src/Utils/IntervalProjection.cpp"
 #include "../../src/Utils/NoteUtils.cpp"
@@ -425,6 +427,74 @@ void test_projected_baseline_drops_cross_lane_keeps_mover() {
   TEST_ASSERT_EQUAL(0, static_cast<int>(projected.count(3)));
 }
 
+/// Add (Create): new selected note is causing input — same-pitch overlap uses standard classify.
+void test_add_note_same_pitch_overlap_complete_cover() {
+  constexpr NoteId kNewNoteId = 50;
+  constexpr NoteId kNeighborId = 2;
+
+  EditorSelection selection{};
+  selection.primaryNote = kNewNoteId;
+  selection.selectedNotes.push_back(kNewNoteId);
+
+  EditedGeometry geometry{};
+  geometry.selection = selection;
+  EditedNoteSpan causing{};
+  causing.noteId = kNewNoteId;
+  causing.span = {60, 80, 100, 200};
+  geometry.causingSpans.push_back(causing);
+
+  BaselineMap baseline;
+  baseline[kNeighborId] = {60, 100, 120, 180};
+
+  const std::vector<NoteId, InternalHeapFirstAllocator<NoteId>> changed = {kNewNoteId};
+  const std::vector<NoteId, InternalHeapFirstAllocator<NoteId>> targets = {kNeighborId};
+  const auto pairs = determineEligiblePairs(selection, changed, targets);
+  const auto interactions = analyzeEditSessionInteractions(pairs, geometry, baseline);
+  TEST_ASSERT_EQUAL(1, static_cast<int>(interactions.size()));
+  TEST_ASSERT_EQUAL(InteractionType::CompleteCover, interactions[0].type);
+  TEST_ASSERT_EQUAL_UINT32(kNeighborId, interactions[0].targetNoteId);
+}
+
+/// Delete: causing note omitted from edited geometry — hidden overlap is a restore candidate.
+void test_delete_causing_restore_candidate_without_incoming() {
+  constexpr uint8_t kChannel = 5;
+  constexpr NoteId kDeletedCausingId = 9;
+  constexpr NoteId kHiddenNeighborId = 2;
+  constexpr uint32_t loopLength = 384;
+
+  NoteEditFocus focus{};
+  focus.active = true;
+  focus.movingNoteId = kDeletedCausingId;
+  focus.baselineMap[kDeletedCausingId] = {60, 100, 100, 200};
+  focus.baselineMap[kHiddenNeighborId] = {60, 100, 120, 180};
+  focus.changedOverlapNoteIds.push_back(kHiddenNeighborId);
+
+  EditorSelection selection{};
+  selection.primaryNote = kDeletedCausingId;
+  selection.selectedNotes.push_back(kDeletedCausingId);
+
+  EditedGeometry editedGeometry{};
+  editedGeometry.selection = selection;
+
+  EditSessionInteractionsByTarget grouped{};
+  MidiEventVec liveStore;
+  // Causing deleted; neighbor still hidden from prior Hide.
+
+  const std::vector<NoteId, InternalHeapFirstAllocator<NoteId>> targetIds =
+      determineConstrainedGeometryTargetNoteIds(grouped, focus.baselineMap, liveStore, kChannel,
+                                                loopLength, selection, editedGeometry);
+  TEST_ASSERT_EQUAL(1, static_cast<int>(targetIds.size()));
+  TEST_ASSERT_EQUAL_UINT32(kHiddenNeighborId, targetIds[0]);
+
+  const std::vector<EditSessionInteraction, InternalHeapFirstAllocator<EditSessionInteraction>>
+      emptyIncoming;
+  const ConstrainedNoteGeometry constrained = resolveConstrainedGeometry(
+      kHiddenNeighborId, focus.baselineMap[kHiddenNeighborId], emptyIncoming, loopLength, 0, false);
+  TEST_ASSERT_TRUE(constrained.visible);
+  TEST_ASSERT_EQUAL_UINT32(120u, constrained.startTick);
+  TEST_ASSERT_EQUAL_UINT32(180u, constrained.endTick);
+}
+
 int main(int /*argc*/, char** /*argv*/) {
   UNITY_BEGIN();
   RUN_TEST(test_orchestrator_skips_intra_selection_pair);
@@ -433,6 +503,8 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_evaluation_scope_keeps_hidden_source_lane_note_after_pitch_change);
   RUN_TEST(test_evaluation_scope_ignores_store_channel);
   RUN_TEST(test_projected_baseline_drops_cross_lane_keeps_mover);
+  RUN_TEST(test_add_note_same_pitch_overlap_complete_cover);
+  RUN_TEST(test_delete_causing_restore_candidate_without_incoming);
   RUN_TEST(test_geometry_changed_this_tick_detects_span_delta);
   RUN_TEST(test_determine_changed_causing_notes_uses_prior_latch);
   RUN_TEST(test_determine_changed_causing_notes_skips_unselected_causing);

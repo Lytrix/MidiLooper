@@ -109,6 +109,13 @@ NOTE_EDIT_MEM void ControlSurfaceManager::handleCreateNoteAtBracket(Track& track
     editManager.beginGeometryMutation(track, NoteEditKind::Add, false);
     const std::array<MidiEvent, 2> created =
         EditSelectNoteState::createNoteAtTick(track, storageTick);
+    NoteUtils::DisplayNote createdDisplay{};
+    createdDisplay.noteId = created[0].noteId;
+    createdDisplay.note = created[0].data.noteData.note;
+    createdDisplay.velocity = created[0].data.noteData.velocity;
+    createdDisplay.startTick = created[0].tick;
+    createdDisplay.endTick = created[1].tick;
+    editManager.applyCreatedNoteOverlapGeometry(track, createdDisplay);
     EditPass add{};
     add.passType = EditPassType::Note;
     add.actionType = EditActionType::Create;

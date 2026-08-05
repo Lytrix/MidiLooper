@@ -18,7 +18,7 @@
 #include "Utils/SelectNavigation.h"
 #include "Utils/ValidationUtils.h"
 #include "Utils/SelectNavigation.h"
-#include <algorithm>
+#include "Utils/ValidationUtils.h"
 
 void EditSelectNoteState::onEnter(EditManager& manager, Track& track, uint32_t startTick) {
     logger.debug("EditSelectNoteState::onEnter at tick %lu", startTick);
@@ -94,6 +94,13 @@ void EditSelectNoteState::onButtonPress(EditManager& manager, Track& track) {
         // Push undo snapshot before creating note
         manager.beginGeometryMutation(track, NoteEditKind::Add, false);
         const std::array<MidiEvent, 2> created = createDefaultNote(track, storageTick);
+        NoteUtils::DisplayNote createdDisplay{};
+        createdDisplay.noteId = created[0].noteId;
+        createdDisplay.note = created[0].data.noteData.note;
+        createdDisplay.velocity = created[0].data.noteData.velocity;
+        createdDisplay.startTick = created[0].tick;
+        createdDisplay.endTick = created[1].tick;
+        manager.applyCreatedNoteOverlapGeometry(track, createdDisplay);
         EditPass add{};
         add.passType = EditPassType::Note;
         add.actionType = EditActionType::Create;

@@ -79,7 +79,9 @@ NOTE_EDIT_MEM bool runEditSessionGeometryPipeline(
 
   const std::vector<NoteId, InternalHeapFirstAllocator<NoteId>> changedCausingNotes =
       determineChangedCausingNotes(selection, editedGeometry, priorLatchByNoteId);
-  if (changedCausingNotes.empty()) {
+  const bool overlapRestoreOnly =
+      changedCausingNotes.empty() && !focus.changedOverlapNoteIds.empty();
+  if (changedCausingNotes.empty() && !overlapRestoreOnly) {
     return false;
   }
 
