@@ -19,6 +19,7 @@
 #include "StorageLoopIo.h"
 #include "PersistenceSyncDrainBudget.h"
 #include "StorageManagerInternal/PersistenceWorkQueue.h"
+#include "SlotLoadSession.h"
 #include "StorageSession.h"
 #include "TrackState.h"
 #include "MidiEvent.h"
@@ -154,6 +155,38 @@ bool hasPersistenceWorkPending();
 bool deferredSaveBlockedByActiveSlotLoadSd();
 bool deferredSaveBlockedByPostLoadCommitHoldoff();
 void stepWallClockFromSdCatalogSync(uint8_t maxSetsPerSlice);
+
+struct DeferredLoopSlotRestore {
+    uint8_t track = 0;
+    uint8_t slot = 0;
+    uint16_t restorePriority = 3;
+};
+
+void clearLoadLoopJob();
+void demoteActiveLoadLoopJobForFocus(uint8_t focusTrack, uint8_t focusSlot);
+void resumeParkedLoadLoopJobIfFocus(uint8_t focusTrack, uint8_t focusSlot);
+void ensureActiveLoadLoopJobSelected(uint8_t focusTrack, uint8_t focusSlot);
+SlotLoadAdvanceResult stepLoadLoopJob(uint32_t deadlineUs);
+
+bool anyLoadLoopJobActive();
+bool loadLoopJobHasOpenSdFile();
+bool isActiveLoadLoopJobFor(uint8_t trackIndex, uint8_t slotIndex);
+bool isParkedLoadLoopJobFor(uint8_t trackIndex, uint8_t slotIndex);
+void setBootTitleLoadDrain(bool enabled);
+bool getBootTitleLoadDrain();
+void armBackgroundRestoreHoldoff(uint32_t delayMs);
+
+void markLoopSlotRestoreAttempted(uint8_t trackIndex, uint8_t slotIndex);
+bool isLoopSlotRestoreAttempted(uint8_t trackIndex, uint8_t slotIndex);
+bool popNextDeferredLoopSlotRestore(DeferredLoopSlotRestore& out);
+bool popFocusDeferredLoopSlotRestore(uint8_t focusTrack, uint8_t focusSlot,
+                                     DeferredLoopSlotRestore& out);
+void reprioritizeDeferredLoopSlotRestoreEntries();
+bool isDeferredLoopSlotRestoreQueued(uint8_t trackIndex, uint8_t slotIndex);
+uint16_t pendingLoopSlotRestoreCount();
+
+void resetLoopSlotToEmpty(Loop& loop, uint8_t slotIndex);
+void markLoopCommittedChunksPersistedFromSdLoad(Loop& loop);
 
 void resetRevisionCommitJobState();
 uint32_t resolveMaxPersistenceMicros(const LooperState& state);
