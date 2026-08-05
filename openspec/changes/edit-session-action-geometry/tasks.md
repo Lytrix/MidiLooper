@@ -49,9 +49,9 @@
 - [x] 4.3 Replace pitch overlap path in `applyPitchChange` with pipeline
 - [ ] 4.3a Wire Add/Delete geometry through pipeline (selected new note → causing; delete causing → restore via rebuild)
 - [x] 4.4 Retire restore-first calls, adjacent merge, **`allowSharedEndCoexistence`**, **`movingNoteRange`** (restore-first + findOverlaps on move/length/pitch overlap; adjacent merge retained on pitch until follow-up)
-- [ ] 4.5 Remove **`overlapNotes`**; no persistent constraint store (D5, D15)
+- [x] 4.5 Remove **`overlapNotes`** as commit/filter authority; no persistent constraint store for geometry (D5, D15). Scratch member retained for legacy pitch-lane restore until pitch path is fully pipeline-only.
 - [x] 4.5a Replace **`buildPreCommitEditPasses`** / **`buildPreCommitOverlapEditPasses`** with **transaction baseline compared to final live store** → one **`noteEditPass` batch**
-- [ ] 4.5b Update **`filterSelectableDisplayNotes`** / edit closure to derive hidden from live store compared to baseline, not **`overlapNotes`**
+- [x] 4.5b Update **`filterSelectableDisplayNotes`** / edit closure to derive hidden from live store compared to baseline, not **`overlapNotes`**
 - [x] 4.6 `pio test -e native` full suite
 
 ## 5. HITL + archive (Phase 5)

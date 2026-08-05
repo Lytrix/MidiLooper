@@ -120,7 +120,9 @@ SessionUndoEntry buildSessionUndoEntry(const NoteEditFocus& focus, EditorSelecti
   std::vector<MidiEvent, Alloc> resolvedFlat = sessionFlat;
   NoteEditFocus focusCopy = focus;
   resolveOverlapNotesForPreCommit(resolvedFlat, focusCopy, channel, loopLength);
-  entry.editRows = buildPreCommitEditPasses(focusCopy, channel);
+  MidiEventVec flatForBaselineDiff(resolvedFlat.begin(), resolvedFlat.end());
+  entry.editRows =
+      buildPreCommitEditPasses(focusCopy, channel, &flatForBaselineDiff, loopLength);
   return entry;
 }
 

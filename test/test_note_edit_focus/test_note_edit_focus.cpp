@@ -305,24 +305,19 @@ void test_note_edit_focus_has_pending_commit_geometry_and_overlap() {
   focus.last = focus.commitBaseline;
   TEST_ASSERT_FALSE(noteEditFocusHasPendingCommit(focus));
 
-  OverlapNote hidden{};
-  hidden.noteId = 42;
-  hidden.state = OverlapNoteStoreState::Hidden;
-  hidden.preCommitEmitted = false;
-  focus.overlapNotes[42] = hidden;
+  focus.last.pitch = 67;
   TEST_ASSERT_TRUE(noteEditFocusHasPendingCommit(focus));
-
-  hidden.preCommitEmitted = true;
-  focus.overlapNotes[42] = hidden;
+  focus.last = focus.commitBaseline;
   TEST_ASSERT_FALSE(noteEditFocusHasPendingCommit(focus));
 
-  OverlapNote shortened{};
-  shortened.noteId = 43;
-  shortened.state = OverlapNoteStoreState::Shortened;
-  shortened.baseline.endTick = 200;
-  shortened.shortenedEndTick = 150;
-  focus.overlapNotes[43] = shortened;
-  TEST_ASSERT_TRUE(noteEditFocusHasPendingCommit(focus));
+  // Overlap pending is baselineMap vs live (not overlapNotes scratch).
+  focus.movingNoteId = 9;
+  focus.baselineMap[42] = {60, 64, 50, 80};
+  focus.baselineMap[9] = focus.commitBaseline;
+  MidiEventVec store;
+  store.push_back(noteOnWithNoteId(100, 1, 60, 64, 9));
+  store.push_back(MidiEvent::NoteOff(200, 1, 60, 0));
+  TEST_ASSERT_TRUE(noteEditFocusHasPendingBaselineMapDiff(focus, store, 1, 768));
 }
 
 void test_can_apply_simple_pitch_change_without_lane_collision() {
@@ -452,23 +447,23 @@ void test_pre_commit_edit_change_order_delete_shorten_move_length_pitch() {
   focus.commitBaseline = {60, 64, 496, 1168};
   focus.last = {60, 64, 520, 1200};
   focus.movingNoteId = 1;
+  focus.baselineMap[1] = focus.commitBaseline;
 
   constexpr NoteId overlapHiddenId = 10;
   constexpr NoteId overlapShortId = 11;
-  OverlapNote hiddenEntry{};
-  hiddenEntry.noteId = overlapHiddenId;
-  hiddenEntry.baseline = {60, 64, 400, 688};
-  hiddenEntry.state = OverlapNoteStoreState::Hidden;
-  focus.overlapNotes[overlapHiddenId] = hiddenEntry;
+  focus.baselineMap[overlapHiddenId] = {60, 64, 300, 350};
+  focus.baselineMap[overlapShortId] = {60, 64, 400, 688};
 
-  OverlapNote shortenedEntry{};
-  shortenedEntry.noteId = overlapShortId;
-  shortenedEntry.baseline = {60, 64, 592, 688};
-  shortenedEntry.state = OverlapNoteStoreState::Shortened;
-  shortenedEntry.shortenedEndTick = 495;
-  focus.overlapNotes[overlapShortId] = shortenedEntry;
+  // Live store: hidden absent; shortened end 495; mover still at commit baseline ticks.
+  MidiEventVec store;
+  store.push_back(noteOnWithNoteId(400, 1, 60, 64, overlapShortId));
+  store.push_back(MidiEvent::NoteOff(495, 1, 60, 0));
+  store.back().noteId = overlapShortId;
+  store.push_back(noteOnWithNoteId(496, 1, 60, 64, 1));
+  store.push_back(MidiEvent::NoteOff(1168, 1, 60, 0));
+  store.back().noteId = 1;
 
-  const EditPassVec rows = buildPreCommitEditPasses(focus, 1);
+  const EditPassVec rows = buildPreCommitEditPasses(focus, 1, &store, 1536);
   TEST_ASSERT_EQUAL(3, static_cast<int>(rows.size()));
   TEST_ASSERT_EQUAL(static_cast<int>(EditActionType::Delete),
                     static_cast<int>(rows[0].actionType));
@@ -576,15 +571,17 @@ void test_build_pre_commit_changes_replay_lengthen_delete_pitch() {
   focus.last = {67, 64, 8, 680};
   focus.movingNoteId = 1;
   focus.movingNoteRange = {8, 680};
+  focus.baselineMap[1] = focus.commitBaseline;
 
   constexpr NoteId overlapHiddenId = 12;
-  OverlapNote hidden{};
-  hidden.noteId = overlapHiddenId;
-  hidden.baseline = {60, 64, 584, 680};
-  hidden.state = OverlapNoteStoreState::Hidden;
-  focus.overlapNotes[overlapHiddenId] = hidden;
+  focus.baselineMap[overlapHiddenId] = {60, 64, 584, 680};
 
-  const EditPassVec rows = buildPreCommitEditPasses(focus, 1);
+  MidiEventVec sessionStore;
+  sessionStore.push_back(noteOnWithNoteId(8, 1, 60, 64, 1));
+  sessionStore.push_back(MidiEvent::NoteOff(680, 1, 60, 0));
+  sessionStore.back().noteId = 1;
+
+  const EditPassVec rows = buildPreCommitEditPasses(focus, 1, &sessionStore, kLoopLength);
   TEST_ASSERT_EQUAL(2, static_cast<int>(rows.size()));
 
   LoopEventStore store;
@@ -673,6 +670,7 @@ void test_reselect_keeps_commit_baseline_with_pending_length() {
 }
 
 void test_filter_excludes_hidden_overlap_note() {
+  // Hidden notes are erased from the live store; baselineMap retains them for restore/commit.
   constexpr uint32_t kLoopLength = 1536;
   NoteEditFocus focus;
   focus.active = true;
@@ -680,21 +678,14 @@ void test_filter_excludes_hidden_overlap_note() {
   focus.movingNoteRange = {8, 680};
 
   MidiEventVec flat;
-  flat.push_back(MidiEvent::NoteOn(8, 1, 67, 100));
+  flat.push_back(noteOnWithNoteId(8, 1, 67, 100, 1));
   flat.push_back(MidiEvent::NoteOff(680, 1, 67, 0));
-  flat.push_back(MidiEvent::NoteOn(200, 1, 64, 100));
+  flat.push_back(noteOnWithNoteId(200, 1, 64, 100, 2));
   flat.push_back(MidiEvent::NoteOff(400, 1, 64, 0));
-  flat.push_back(MidiEvent::NoteOn(584, 1, 60, 100));
-  flat.push_back(MidiEvent::NoteOff(680, 1, 60, 0));
+  // Pitch-60 note already hidden (absent from store).
 
   rebuildNoteEditFocusFromStore(focus, flat, 1, kLoopLength, 0);
-
-  constexpr NoteId hiddenRefId = 12;
-  OverlapNote hidden{};
-  hidden.noteId = hiddenRefId;
-  hidden.baseline = {60, 64, 584, 680};
-  hidden.state = OverlapNoteStoreState::Hidden;
-  focus.overlapNotes[hiddenRefId] = hidden;
+  focus.baselineMap[12] = {60, 64, 584, 680};
 
   const NoteUtils::DisplayNoteVec filtered =
       filterSelectableDisplayNotes(flat, focus, 1, kLoopLength);
@@ -717,14 +708,7 @@ void test_filter_includes_shortened_overlap_note() {
   flat.push_back(MidiEvent::NoteOff(495, 1, 60, 0));
 
   rebuildNoteEditFocusFromStore(focus, flat, 1, kLoopLength, 0);
-
-  constexpr NoteId shortenedRefId = 10;
-  OverlapNote shortened{};
-  shortened.noteId = shortenedRefId;
-  shortened.baseline = {60, 64, 400, 688};
-  shortened.state = OverlapNoteStoreState::Shortened;
-  shortened.shortenedEndTick = 495;
-  focus.overlapNotes[shortenedRefId] = shortened;
+  populateBaselineMapForEditClosure(focus, flat, flat, 1, kLoopLength);
 
   const NoteUtils::DisplayNoteVec filtered =
       filterSelectableDisplayNotes(flat, focus, 1, kLoopLength);
@@ -739,6 +723,7 @@ void test_filter_includes_shortened_overlap_note() {
 }
 
 void test_filter_excludes_inner_under_moving_note() {
+  // Q14: cross-pitch notes under the mover stay selectable (no Hide/Shorten).
   constexpr uint32_t kLoopLength = 1536;
   NoteEditFocus focus;
   focus.active = true;
@@ -746,34 +731,31 @@ void test_filter_excludes_inner_under_moving_note() {
   focus.movingNoteRange = {8, 680};
 
   MidiEventVec flat;
-  flat.push_back(MidiEvent::NoteOn(8, 1, 67, 100));
+  flat.push_back(noteOnWithNoteId(8, 1, 67, 100, 1));
   flat.push_back(MidiEvent::NoteOff(680, 1, 67, 0));
-  flat.push_back(MidiEvent::NoteOn(392, 1, 60, 100));
+  flat.push_back(noteOnWithNoteId(392, 1, 60, 100, 2));
   flat.push_back(MidiEvent::NoteOff(488, 1, 60, 0));
-  flat.push_back(MidiEvent::NoteOn(584, 1, 60, 100));
+  flat.push_back(noteOnWithNoteId(584, 1, 60, 100, 3));
   flat.push_back(MidiEvent::NoteOff(680, 1, 60, 0));
 
   rebuildNoteEditFocusFromStore(focus, flat, 1, kLoopLength, 0);
-
-  constexpr NoteId innerRefId = 12;
-  OverlapNote inner{};
-  inner.noteId = innerRefId;
-  inner.baseline = {60, 64, 584, 680};
-  inner.state = OverlapNoteStoreState::Visible;
-  inner.innerUnderMovingNote = true;
-  focus.overlapNotes[innerRefId] = inner;
+  populateBaselineMapForEditClosure(focus, flat, flat, 1, kLoopLength);
 
   const NoteUtils::DisplayNoteVec filtered =
       filterSelectableDisplayNotes(flat, focus, 1, kLoopLength);
 
-  TEST_ASSERT_EQUAL(2, static_cast<int>(filtered.size()));
+  TEST_ASSERT_EQUAL(3, static_cast<int>(filtered.size()));
+  bool foundInner = false;
   for (const NoteUtils::DisplayNote& dn : filtered) {
-    TEST_ASSERT_FALSE(dn.note == 60 && dn.startTick == 584);
+    if (dn.note == 60 && dn.startTick == 584) {
+      foundInner = true;
+    }
   }
+  TEST_ASSERT_TRUE(foundInner);
 }
 
 void test_filter_includes_moving_note_when_hidden_overlap_baseline_matches() {
-  // session_20260714_012932.log: mover at 576-624 after absorbing restored neighbor at same span.
+  // Mover remains selectable when a same-span neighbor is hidden (absent) in baselineMap.
   constexpr uint32_t kLoopLength = 2304;
   constexpr uint8_t channel = 1;
   constexpr NoteId kMoverId = 3;
@@ -788,11 +770,7 @@ void test_filter_includes_moving_note_when_hidden_overlap_baseline_matches() {
   rebuildNoteEditFocusFromStore(focus, flat, channel, kLoopLength, 0);
   TEST_ASSERT_EQUAL(kMoverId, focus.movingNoteId);
 
-  OverlapNote hidden{};
-  hidden.noteId = kHiddenId;
-  hidden.baseline = {60, 100, 576, 624};
-  hidden.state = OverlapNoteStoreState::Hidden;
-  focus.overlapNotes[kHiddenId] = hidden;
+  focus.baselineMap[kHiddenId] = {60, 100, 576, 624};
   focus.last = {60, 100, 576, 624};
 
   const NoteUtils::DisplayNoteVec filtered =
