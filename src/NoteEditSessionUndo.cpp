@@ -9,7 +9,40 @@
 #include "Utils/MemoryMonitor.h"
 #include "Utils/NoteUtils.h"
 
+#if defined(SESSION_CAPTURE)
+#include <Arduino.h>
+#include "Logger.h"
+#endif
+
+#if defined(SESSION_CAPTURE)
+void logUndoPushPhase(const char* phase, uint32_t phaseStartUs, size_t stackSize, size_t cursor,
+                      size_t entryBaselineCount) {
+  const uint32_t nowUs = micros();
+  logger.info("#CAP,%lu,UNDO_PUSH,%s,%lu,%zu,%zu,%zu", static_cast<unsigned long>(nowUs), phase,
+              static_cast<unsigned long>(nowUs - phaseStartUs), stackSize, cursor,
+              entryBaselineCount);
+}
+#endif
+
 namespace {
+
+#if defined(SESSION_CAPTURE)
+void logUndoWarmPhase(const char* phase, uint32_t phaseStartUs, size_t baselineCount,
+                      size_t sessionEventCount, uint8_t extraFlags = 0) {
+  const uint32_t nowUs = micros();
+  logger.info("#CAP,%lu,UNDO_WARM,phase,%s,%lu,%zu,%zu,%u", static_cast<unsigned long>(nowUs),
+              phase, static_cast<unsigned long>(nowUs - phaseStartUs), baselineCount,
+              sessionEventCount, static_cast<unsigned>(extraFlags));
+}
+
+void logUndoWarmSummary(const char* kind, uint32_t totalStartUs, size_t baselineCount,
+                        size_t sessionEventCount, size_t editRowCount) {
+  const uint32_t nowUs = micros();
+  logger.info("#CAP,%lu,UNDO_WARM,%s,total,%lu,%zu,%zu,%zu", static_cast<unsigned long>(nowUs),
+              kind, static_cast<unsigned long>(nowUs - totalStartUs), baselineCount,
+              sessionEventCount, editRowCount);
+}
+#endif
 
 constexpr size_t kBaselineMapEntryOverheadBytes = 40;
 constexpr size_t kOverlapNoteMapEntryOverheadBytes = 48;
@@ -99,10 +132,12 @@ bool canHeapAdmitSessionUndoEntry(const SessionUndoEntry& entry) {
   size_t internalNeeded = Config::HEAP_RESERVE_BYTES + internalBytes;
   if (!MemoryMonitor::isExternalMemoryPoolAvailable()) {
     internalNeeded += externalBytes;
-  } else if (externalBytes > 0 &&
-             MemoryMonitor::getExternalMemoryPoolFreeBytes() < externalBytes) {
-    return false;
   }
+  // When PSRAM is available, external payload (baselineMap / overlapNotes) lives in the
+  // extmem pool. Do not call getExternalMemoryPoolFreeBytes() here — sm_malloc_stats_pool
+  // walks the entire pool (~300ms on 8MB; see LoopEventStore::hasHeadroomForCommittedChunkIdList
+  // and main.cpp idle-only logStatus). push_back is the real alloc gate; failed push runs
+  // reclaim + discardFlatCache + one retry on idle-adjacent paths.
   return MemoryMonitor::getInternalHeapFreeBytes() >= internalNeeded;
 }
 
@@ -111,20 +146,74 @@ SessionUndoEntry buildSessionUndoEntry(const NoteEditFocus& focus, EditorSelecti
                                        const std::vector<MidiEvent, Alloc>& sessionFlat,
                                        uint8_t channel, uint32_t loopLength,
                                        const EditPassIdList& editPassIdsAtPush) {
+#if defined(SESSION_CAPTURE)
+  const uint32_t totalStartUs = micros();
+  const size_t baselineCount = focus.baselineMap.size();
+  const size_t sessionEventCount = sessionFlat.size();
+#endif
+
+  uint32_t phaseStartUs = 0;
+#if defined(SESSION_CAPTURE)
+  phaseStartUs = micros();
+#endif
   SessionUndoEntry entry;
   entry.selection = selection;
   entry.focus = snapshotFocusForSessionUndo(focus);
   entry.editPassIdsAtPush = editPassIdsAtPush;
+#if defined(SESSION_CAPTURE)
+  logUndoWarmPhase("focus_snap", phaseStartUs, baselineCount, sessionEventCount);
+#endif
   if (!focus.active || loopLength == 0) {
+#if defined(SESSION_CAPTURE)
+    logUndoWarmSummary("build", totalStartUs, baselineCount, sessionEventCount, 0);
+#endif
     return entry;
   }
 
+#if defined(SESSION_CAPTURE)
+  phaseStartUs = micros();
+#endif
+  const bool needsBaselineMapDiff =
+      noteEditFocusHasPendingBaselineMapDiff(focus, sessionFlat, channel, loopLength);
+  const bool needsOverlapResolve = needsBaselineMapDiff && !focus.overlapNotes.empty();
+#if defined(SESSION_CAPTURE)
+  logUndoWarmPhase("baseline_probe", phaseStartUs, baselineCount, sessionEventCount,
+                   needsBaselineMapDiff ? 1U : 0U);
+#endif
+
   std::vector<MidiEvent, Alloc> resolvedFlat = sessionFlat;
   NoteEditFocus focusCopy = focus;
-  resolveOverlapNotesForPreCommit(resolvedFlat, focusCopy, channel, loopLength);
-  MidiEventVec flatForBaselineDiff(resolvedFlat.begin(), resolvedFlat.end());
+  if (needsOverlapResolve) {
+#if defined(SESSION_CAPTURE)
+    phaseStartUs = micros();
+#endif
+    resolveOverlapNotesForPreCommit(resolvedFlat, focusCopy, channel, loopLength);
+#if defined(SESSION_CAPTURE)
+    logUndoWarmPhase("overlap_resolve", phaseStartUs, baselineCount, sessionEventCount);
+#endif
+  }
+
+  const MidiEventVec* baselineDiffSource = nullptr;
+  MidiEventVec flatForBaselineDiff;
+  if (needsBaselineMapDiff) {
+#if defined(SESSION_CAPTURE)
+    phaseStartUs = micros();
+#endif
+    flatForBaselineDiff.assign(resolvedFlat.begin(), resolvedFlat.end());
+#if defined(SESSION_CAPTURE)
+    logUndoWarmPhase("flat_copy", phaseStartUs, baselineCount, sessionEventCount);
+#endif
+    baselineDiffSource = &flatForBaselineDiff;
+  }
+#if defined(SESSION_CAPTURE)
+  phaseStartUs = micros();
+#endif
   entry.editRows =
-      buildPreCommitEditPasses(focusCopy, channel, &flatForBaselineDiff, loopLength);
+      buildPreCommitEditPasses(focusCopy, channel, baselineDiffSource, loopLength);
+#if defined(SESSION_CAPTURE)
+  logUndoWarmPhase("edit_rows", phaseStartUs, baselineCount, sessionEventCount);
+  logUndoWarmSummary("build", totalStartUs, baselineCount, sessionEventCount, entry.editRows.size());
+#endif
   return entry;
 }
 

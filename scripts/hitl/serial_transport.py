@@ -36,11 +36,24 @@ def parse_latest_bpm(lines: list[str], *, tail: int = 80) -> Optional[float]:
 
 
 def serial_lines_show_transport_activity(lines: list[str], *, tail: int = 40) -> bool:
-    """True when tail shows sequencer activity via #CAP BPM (external) or BAR (any clock)."""
+    """True when tail shows live capture / sequencer activity on the serial stream.
+
+    Prefer #CAP,BPM / #CAP,BAR when present. Also accept #CAP,DFRAME (continuous while
+    transport runs), #CAP,MI/MO (button + note traffic), and #CAP,ST (state transitions).
+    """
     for line in lines[-tail:]:
         if "#CAP," not in line:
             continue
-        if ",BPM," in line or ",BAR," in line:
+        if (
+            ",BPM," in line
+            or ",BAR," in line
+            or ",DFRAME," in line
+            or ",MI," in line
+            or ",MO," in line
+            or ",ST," in line
+            or ",RECA," in line
+            or ",RECS," in line
+        ):
             return True
     return False
 
@@ -74,11 +87,19 @@ def serial_sequencer_running(
     *,
     max_silence_s: float = 4.0,
 ) -> bool:
-    """True when capture shows recent transport ticks (#CAP,BPM or #CAP,BAR)."""
+    """True when capture shows recent sequencer ticks (#CAP,BPM, BAR, DFRAME, etc.).
+
+    Tail activity is checked first: #CAP,DFRAME does not advance the serial heartbeat
+    (see serial_line_resets_heartbeat), so a long wall-clock phase can leave
+    seconds_since_last_line() stale even while DFRAME lines keep flowing.
+    """
+    lines = collector.snapshot()
+    if serial_lines_show_transport_activity(lines):
+        return True
     silence = collector.seconds_since_last_line()
     if silence is None or silence > max_silence_s:
         return False
-    return serial_lines_show_transport_activity(collector.snapshot())
+    return False
 
 
 def use_serial_transport_proxy(args: argparse.Namespace, serial_collector: Any | None) -> bool:

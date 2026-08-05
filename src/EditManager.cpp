@@ -47,9 +47,32 @@
 #include <unordered_set>
 #include <cmath>
 
+#if defined(SESSION_CAPTURE)
+#include <Arduino.h>
+#endif
+
 using DisplayNote = NoteUtils::DisplayNote;
 
 namespace {
+#if defined(SESSION_CAPTURE)
+void logGeomApplyUndo(bool ok, uint32_t elapsedUs, NoteEditKind kind) {
+    logger.info("#CAP,%lu,GEOM_APPLY,undo,%s,%lu,%u,0", static_cast<unsigned long>(micros()),
+                ok ? "ok" : "fail", static_cast<unsigned long>(elapsedUs),
+                static_cast<unsigned>(kind));
+}
+
+void logGeomApplyFocus(uint32_t elapsedUs, NoteEditKind kind) {
+    logger.info("#CAP,%lu,GEOM_APPLY,focus,%lu,%u,0,0", static_cast<unsigned long>(micros()),
+                static_cast<unsigned long>(elapsedUs), static_cast<unsigned>(kind));
+}
+
+void logGeomApplyPipeline(uint32_t elapsedUs, bool applied, NoteEditKind kind) {
+    logger.info("#CAP,%lu,GEOM_APPLY,pipeline,%lu,%u,%u,0", static_cast<unsigned long>(micros()),
+                static_cast<unsigned long>(elapsedUs), applied ? 1u : 0u,
+                static_cast<unsigned>(kind));
+}
+#endif
+
 #if defined(__IMXRT1062__)
 #define EDIT_MANAGER_IMPL_MEM NOTE_EDIT_MEM
 #else
@@ -1178,17 +1201,43 @@ EDIT_MANAGER_IMPL_MEM bool EditManager::pushSessionUndoOnKindChange(Track& track
     if (!editSession.active) {
         return true;
     }
-    if (editSession.store.isEventsDirty()) {
-        editSession.store.syncEventsToStore();
+    SessionUndoEntry entry;
+    if (kindBoundaryUndoCacheValid_ &&
+        kindBoundaryUndoCacheRevision_ == sessionPreviewRevision_) {
+        kindBoundaryUndoCacheValid_ = false;
+#if defined(SESSION_CAPTURE)
+        logger.info("#CAP,%lu,UNDO_WARM,push,cache_hit,0,%zu,%u",
+                    static_cast<unsigned long>(micros()),
+                    editSession.focus.baselineMap.size(),
+                    static_cast<unsigned>(kind));
+#endif
+        entry = std::move(kindBoundaryUndoCache_);
+    } else {
+#if defined(SESSION_CAPTURE)
+        const uint32_t readStartUs = micros();
+#endif
+        const auto& sessionFlat = editSession.store.readEvents();
+#if defined(SESSION_CAPTURE)
+        logger.info("#CAP,%lu,UNDO_WARM,phase,read_events,%lu,%zu,%zu,0",
+                    static_cast<unsigned long>(micros()),
+                    static_cast<unsigned long>(micros() - readStartUs),
+                    editSession.focus.baselineMap.size(), sessionFlat.size());
+        const uint32_t buildStartUs = micros();
+#endif
+        entry = buildSessionUndoEntry(editSession.focus, sessionState.selection, sessionFlat,
+                                    track.getMidiChannel(), noteEditLoopLengthTicks(track),
+                                    editSession.editPassIds);
+#if defined(SESSION_CAPTURE)
+        logger.info("#CAP,%lu,UNDO_WARM,push,cache_miss,%lu,%zu,%u",
+                    static_cast<unsigned long>(micros()),
+                    static_cast<unsigned long>(micros() - buildStartUs),
+                    editSession.focus.baselineMap.size(), static_cast<unsigned>(kind));
+#endif
     }
-    const SessionUndoEntry entry =
-        buildSessionUndoEntry(editSession.focus, sessionState.selection,
-                              editSession.store.readEvents(), track.getMidiChannel(),
-                              noteEditLoopLengthTicks(track), editSession.editPassIds);
-    if (!editSession.undoStack.pushEntry(entry)) {
+    if (!editSession.undoStack.pushEntry(std::move(entry))) {
         editSession.store.discardEventsCache();
         trackManager.reclaimUnreferencedDisabledPasses();
-        if (!editSession.undoStack.pushEntry(entry)) {
+        if (!editSession.undoStack.pushEntry(std::move(entry))) {
             logger.log(CAT_TRACK, LOG_WARNING,
                        "Session undo push rejected: heap below reserve (need=%u free=%u)",
                        static_cast<unsigned>(Config::HEAP_RESERVE_BYTES +
@@ -1199,11 +1248,54 @@ EDIT_MANAGER_IMPL_MEM bool EditManager::pushSessionUndoOnKindChange(Track& track
         }
     }
     lastPushedGeometryKind_ = kind;
+    kindBoundaryUndoCacheValid_ = false;
     (void)track;
     return true;
 }
 
-EDIT_MANAGER_IMPL_MEM void EditManager::foldLiveCaptureIntoNoteEditSession(Track& track, uint32_t closeTick) {
+EDIT_MANAGER_IMPL_MEM void EditManager::scheduleKindBoundaryUndoWarm() {
+    kindBoundaryUndoWarmPending_ = true;
+    kindBoundaryUndoCacheValid_ = false;
+}
+
+EDIT_MANAGER_IMPL_MEM void EditManager::processKindBoundaryUndoWarm(Track& track) {
+    if (!kindBoundaryUndoWarmPending_) {
+        return;
+    }
+    kindBoundaryUndoWarmPending_ = false;
+    if (!editSession.active || lastPushedGeometryKind_ != NoteEditKind::Select) {
+        return;
+    }
+    if (!editorSelectionHasNote(sessionState.selection)) {
+        return;
+    }
+#if defined(SESSION_CAPTURE)
+    const uint32_t warmStartUs = micros();
+    const uint32_t readStartUs = micros();
+#endif
+    const auto& sessionFlat = editSession.store.readEvents();
+#if defined(SESSION_CAPTURE)
+    logger.info("#CAP,%lu,UNDO_WARM,phase,read_events,%lu,%zu,%zu,0",
+                static_cast<unsigned long>(micros()),
+                static_cast<unsigned long>(micros() - readStartUs),
+                editSession.focus.baselineMap.size(), sessionFlat.size());
+#endif
+    kindBoundaryUndoCache_ =
+        buildSessionUndoEntry(editSession.focus, sessionState.selection, sessionFlat,
+                              track.getMidiChannel(), noteEditLoopLengthTicks(track),
+                              editSession.editPassIds);
+    kindBoundaryUndoCacheValid_ = true;
+    kindBoundaryUndoCacheRevision_ = sessionPreviewRevision_;
+#if defined(SESSION_CAPTURE)
+    logger.info("#CAP,%lu,UNDO_WARM,warm,complete,%lu,%zu,%zu,%u",
+                static_cast<unsigned long>(micros()),
+                static_cast<unsigned long>(micros() - warmStartUs),
+                editSession.focus.baselineMap.size(), sessionFlat.size(),
+                static_cast<unsigned>(kindBoundaryUndoCache_.editRows.size()));
+#endif
+}
+
+EDIT_MANAGER_IMPL_MEM void EditManager::foldLiveCaptureIntoNoteEditSession(Track& track) {
     if (!editSession.active) {
         return;
     }
@@ -1213,13 +1305,6 @@ EDIT_MANAGER_IMPL_MEM void EditManager::foldLiveCaptureIntoNoteEditSession(Track
         loop.discardCapture();
         loop.discardPendingCapturePass();
         return;
-    }
-
-    loop.ensureCaptureEventsSorted();
-
-    if (loopLength > 0) {
-        (void)LoopStopFinalize::finalizeWrapWindowOnStore(loop.capture.store, loopLength, closeTick,
-                                                          Config::TICKS_PER_BAR);
     }
 
     if (editSession.store.isEventsDirty()) {
@@ -1261,10 +1346,10 @@ EDIT_MANAGER_IMPL_MEM void EditManager::foldLiveCaptureIntoNoteEditSession(Track
     entry.redoEditPassIds = editSession.editPassIds;
     entry.hasRedoPayload = true;
 
-    if (!editSession.undoStack.pushEntry(entry)) {
+    if (!editSession.undoStack.pushEntry(std::move(entry))) {
         editSession.store.discardEventsCache();
         trackManager.reclaimUnreferencedDisabledPasses();
-        if (!editSession.undoStack.pushEntry(entry)) {
+        if (!editSession.undoStack.pushEntry(std::move(entry))) {
             logger.log(CAT_TRACK, LOG_WARNING,
                        "Session live capture undo push rejected: heap below reserve (need=%u free=%u)",
                        static_cast<unsigned>(Config::HEAP_RESERVE_BYTES +
@@ -1313,6 +1398,9 @@ EDIT_MANAGER_IMPL_MEM void EditManager::resetNoteEditSessionState() {
     sessionPlaybackPreviewRevision_ = 0;
     deferredNoteEditDisplayRefreshPending_ = false;
     deferredNoteEditDisplayRefreshArmedAtMs_ = 0;
+    kindBoundaryUndoCacheValid_ = false;
+    kindBoundaryUndoWarmPending_ = false;
+    kindBoundaryUndoCacheRevision_ = UINT32_MAX;
     invalidateNoteEditDerivedCaches();
 }
 
@@ -1330,6 +1418,7 @@ EDIT_MANAGER_IMPL_MEM void EditManager::applySelectionFromGeometryEdit(Track& tr
     }
     sessionState.selection.trackId = static_cast<TrackId>(trackManager.getSelectedTrackIndex());
     sessionState.selection.loopId = trackManager.getSelectedLoop(track).loopId;
+    this->selectedTick = sessionState.selection.selectedTick;
     if (!selectionChanged) {
         return;
     }
@@ -1357,6 +1446,7 @@ EDIT_MANAGER_IMPL_MEM void EditManager::applySelectNav(Track& track, uint32_t se
     sessionState.selection.loopId = trackManager.getSelectedLoop(track).loopId;
     if (shouldResetGeometryKindUndoOnSelectChange(priorSelection, primaryNote)) {
         lastPushedGeometryKind_ = NoteEditKind::Select;
+        scheduleKindBoundaryUndoWarm();
     }
     const bool selectionIdentityChanged =
         editorSelectionTargetChanged(priorSelection, selectedTick, primaryNote);
@@ -1620,7 +1710,7 @@ EDIT_MANAGER_IMPL_MEM const MidiEventVec& EditManager::sessionMidiEvents() const
 
 EDIT_MANAGER_IMPL_MEM void EditManager::bumpSessionPreviewRevision() {
     ++sessionPreviewRevision_;
-    invalidateNoteEditDerivedCaches();
+    invalidateProjectedNoteEditDisplayCache();
 }
 
 EDIT_MANAGER_IMPL_MEM void EditManager::bumpSessionPlaybackPreviewRevision() {
@@ -1638,10 +1728,8 @@ EDIT_MANAGER_IMPL_MEM void EditManager::flushDeferredNoteEditDisplayRefresh(Trac
     }
     deferredNoteEditDisplayRefreshPending_ = false;
     bumpSessionPlaybackPreviewRevision();
-    track.invalidateCaches(true);
-#ifndef PIO_UNIT_TEST_NATIVE
-    displayManager.requestNoteInfoRefresh(track);
-#endif
+    track.getActiveLoop().playbackOrderDirty = true;
+    track.invalidatePlaybackCaches();
 }
 
 EDIT_MANAGER_IMPL_MEM void EditManager::processDeferredNoteEditDisplayRefresh(Track& track) {
@@ -1649,7 +1737,7 @@ EDIT_MANAGER_IMPL_MEM void EditManager::processDeferredNoteEditDisplayRefresh(Tr
         return;
     }
     const uint32_t now = millis();
-    if (now - deferredNoteEditDisplayRefreshArmedAtMs_ < kDeferredNoteEditDisplayRefreshIdleMs) {
+    if (now - deferredNoteEditDisplayRefreshArmedAtMs_ < kDeferredNoteEditPlaybackRefreshIdleMs) {
         return;
     }
     flushDeferredNoteEditDisplayRefresh(track);
@@ -2314,11 +2402,21 @@ EDIT_MANAGER_IMPL_MEM bool EditManager::moveNoteToPosition(Track& track, const N
     if (fromStart == targetTick) {
         return false;
     }
+#if defined(SESSION_CAPTURE)
+    const uint32_t undoStartUs = micros();
+#endif
     if (!beginGeometryMutation(track, NoteEditKind::Move, true)) {
+#if defined(SESSION_CAPTURE)
+        logGeomApplyUndo(false, micros() - undoStartUs, NoteEditKind::Move);
+#endif
         logger.log(CAT_MIDI, LOG_WARNING,
                    "Note move aborted: session undo snapshot unavailable (heap reserve)");
         return false;
     }
+#if defined(SESSION_CAPTURE)
+    logGeomApplyUndo(true, micros() - undoStartUs, NoteEditKind::Move);
+    const uint32_t focusStartUs = micros();
+#endif
     const int32_t tickDifference =
         static_cast<int32_t>(targetTick) - static_cast<int32_t>(fromStart);
 
@@ -2327,6 +2425,10 @@ EDIT_MANAGER_IMPL_MEM bool EditManager::moveNoteToPosition(Track& track, const N
                fromStart, targetTick, tickDifference, editSession.focus.overlapNotes.size());
 
     ensureNoteEditFocusForLiveEdit(track, currentNote);
+#if defined(SESSION_CAPTURE)
+    logGeomApplyFocus(micros() - focusStartUs, NoteEditKind::Move);
+    const uint32_t pipelineStartUs = micros();
+#endif
     if (focus.active) {
         logger.log(CAT_MIDI, LOG_DEBUG, "Overlap move bridge: pitch=%d, start=%lu, end=%lu",
                    focus.last.pitch, static_cast<unsigned long>(focus.last.startTick),
@@ -2335,9 +2437,13 @@ EDIT_MANAGER_IMPL_MEM bool EditManager::moveNoteToPosition(Track& track, const N
 
     uint32_t dummyStart = currentNote.startTick;
     uint32_t dummyEnd = currentNote.endTick;
-    return NoteMovementUtils::applyNoteEditChange(
+    const bool applied = NoteMovementUtils::applyNoteEditChange(
         track, *this, NoteMovementUtils::NoteEditChangeKind::Move, currentNote, targetTick,
         static_cast<int>(tickDifference), 0, 0, 0, dummyStart, dummyEnd);
+#if defined(SESSION_CAPTURE)
+    logGeomApplyPipeline(micros() - pipelineStartUs, applied, NoteEditKind::Move);
+#endif
+    return applied;
 }
 
 EDIT_MANAGER_IMPL_MEM bool EditManager::changeNoteEndWithOverlapHandling(Track& track,
@@ -2348,15 +2454,33 @@ EDIT_MANAGER_IMPL_MEM bool EditManager::changeNoteEndWithOverlapHandling(Track& 
     if (currentEnd == targetEndTick) {
         return false;
     }
+#if defined(SESSION_CAPTURE)
+    const uint32_t undoStartUs = micros();
+#endif
     if (!beginGeometryMutation(track, NoteEditKind::Length, true)) {
+#if defined(SESSION_CAPTURE)
+        logGeomApplyUndo(false, micros() - undoStartUs, NoteEditKind::Length);
+#endif
         logger.log(CAT_MIDI, LOG_WARNING,
                    "Note length change aborted: session undo snapshot unavailable (heap reserve)");
         return false;
     }
+#if defined(SESSION_CAPTURE)
+    logGeomApplyUndo(true, micros() - undoStartUs, NoteEditKind::Length);
+    const uint32_t focusStartUs = micros();
+#endif
     logger.log(CAT_MIDI, LOG_DEBUG,
                "Note length change with overlap handling: pitch=%d, start=%lu, end %lu->%lu",
                currentNote.note, currentNote.startTick, currentNote.endTick, targetEndTick);
+    ensureNoteEditFocusForLiveEdit(track, currentNote);
+#if defined(SESSION_CAPTURE)
+    logGeomApplyFocus(micros() - focusStartUs, NoteEditKind::Length);
+    const uint32_t pipelineStartUs = micros();
+#endif
     NoteMovementUtils::changeLengthWithOverlapHandling(track, *this, currentNote, targetEndTick);
+#if defined(SESSION_CAPTURE)
+    logGeomApplyPipeline(micros() - pipelineStartUs, true, NoteEditKind::Length);
+#endif
     return true;
 }
 
@@ -2451,6 +2575,10 @@ EDIT_MANAGER_IMPL_MEM void EditManager::toggleLengthEditMode(Track& track) {
         commitAllPendingNoteEditActions(track);
         syncNoteEditFocusLastFromSessionStore(track);
         const NoteUtils::DisplayNote liveNote = liveEditDisplayNoteAtSelect(track);
+        if (getSelectedNoteIdx() >= 0) {
+            // Switch kind before bracket/display sync so isLengthBracketEditActive() is false.
+            beginGeometryMutation(track, NoteEditKind::Move, false);
+        }
         const uint32_t loopLength = track.getLoopLength();
         if (loopLength > 0) {
             const uint32_t loopStartTick = noteEditLoopStartTick(track);
@@ -2466,7 +2594,7 @@ EDIT_MANAGER_IMPL_MEM void EditManager::toggleLengthEditMode(Track& track) {
             }
         }
         if (getSelectedNoteIdx() >= 0) {
-            beginGeometryMutation(track, NoteEditKind::Move, false);
+            syncGeometrySelectionToUi(track);
         }
     }
     emitEditEvent(EditEvent::LengthModeChanged);

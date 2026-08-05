@@ -310,11 +310,13 @@ NOTE_EDIT **32nd** hide floor (D16) applies to overlap **edit** only. Capture **
 
 `beginOverdubSession` commits pending note-edit actions when entering overdub while editing; it does **not** call **closeNoteEditPass** or push capture-pass undo. In-edit overdub stop folds capture into **NoteEditSession.store** and pushes one **E:** entry (live capture **`redoEditRows`**); no **OverdubPassAdded** until edit exit.
 
+**Wrap finalize (record/overdub stop):** `Loop::finalizeCaptureWrapWindowAtStop` is the single owner for wrap-window synthetic note-offs on **capture.store** — used by **`sealCapture`** (normal stop) and **`Track::handleNoteEditFold`** (in-edit overdub stop) before merge into **NoteEditSession.store**. **`foldLiveCaptureIntoNoteEditSession`** merges only; it does not run a second wrap pass.
+
 **Important:** clear-slot snapshot entries capture a deep-cloned pass snapshot (`PersistedLoopSnapshot`) so undo/redo never aliases live chunk refs.
 
 ### In-edit session undo (`NoteEditSessionUndoStack`)
 
-While **NoteEditSession** is active, `handleUndo` / `handleRedo` prefer session undo (`NoteEditSession undo` / `redo` logs) before the global stack.
+While **NoteEditSession** is active, `handleUndo` / `handleRedo` are **session-gated** — only the **E:** stack is consulted; there is **no fallthrough** to **U:** (global pass undo) until NOTE_EDIT exits.
 
 **Redo branch:** undo only moves the stack **cursor**; entries after the cursor stay until a **new** geometry push (`pushEntry`) or global **`pushUndoEntry`** (new pass). Triple-press redo walks the cursor forward through those entries.
 
@@ -325,15 +327,23 @@ While **NoteEditSession** is active, `handleUndo` / `handleRedo` prefer session 
 
 Committed **editPass** rows store canonical **EditPass** row fields (SD v5); live **NoteEditSession.store** is materialized from **passes**; **E:** stack stores edit-scope metadata only.
 
-**E:** vs **U:** during NOTE_EDIT — **E:** = `NoteEditSessionUndoStack` (geometry/session RAM). **U:** = global stack pass undo; sidebar **U:** counts applied pass entries for the slot. Mid-session autosave calls **`markCurrentEditBatchDurable`** so reboot after interrupted NOTE_EDIT still has **U:** depth and undo can disable persisted **editPass** rows.
+**E:** vs **U:** during NOTE_EDIT — **E:** = `NoteEditSessionUndoStack` (geometry/session RAM). **U:** = global stack pass undo; sidebar **U:** counts applied pass entries for the slot. Mid-session autosave calls **`markCurrentEditBatchDurable`** so reboot after interrupted NOTE_EDIT still has **U:** depth and undo can disable persisted **editPass** rows — but **U:** is **not** reachable via the undo button while NOTE_EDIT remains active (session-gated routing below).
 
-### Routing (`handleUndo`)
+### Routing (`handleUndo` / `handleRedo`)
 
-1. **NoteEditSession** undo if active and session stack non-empty
-2. **Global undo** (`undoOverdub` — any `UndoEntryKind` at cursor)
-3. **Clear-slot undo** (`canUndoClearTrack` — top entry is **ClearSlot**)
+**While NOTE_EDIT active** (`isNoteEditActive()`):
 
-Hardware **Button A double-press** calls `undoOverdub` directly. MIDI record double-tap uses `handleUndo()`.
+1. If **E:** stack non-empty → session undo/redo (`EditSession undo` / `redo` logs); return.
+2. Else → log `No session undo available` / `No session redo available`; return. **Do not** pop **U:** (no `Scoped edit pass undone`, no capture-pass disable).
+
+**While NOTE_EDIT inactive:**
+
+1. Global undo/redo for the selected slot via `TrackUndo::undoForLoop` / `redoForLoop` — any `UndoEntryKind` at stack cursor for that slot (**RecordPassAdded**, **OverdubPassAdded**, **NoteEditPassClosed**, **LoopBoundaryChange**, **ClearSlot**, …).
+2. Open overdub capture: if `capture.phase == Overdub` and capture non-empty, undo discards live capture (`discardCapture`) without popping the stack (handled inside the global undo path).
+
+**Separate ingress:** `handleUndoClearTrack` / `handleRedoClearTrack` — only when the top global entry is **ClearSlot** for the slot (Button B double-press).
+
+GPIO **Button A double-press** and MIDI record double-tap call `handleUndo()`. `TrackUndo::undoOverdub` is a test/legacy helper — not the product undo ingress.
 
 **Slot clear** prunes global undo entries for that slot (`clearUndoHistoryForSlot` in `Track::clear()`).
 

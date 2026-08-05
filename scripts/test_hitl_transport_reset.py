@@ -82,6 +82,14 @@ class SerialTransportProxyTests(unittest.TestCase):
         lines = ["#CAP,1,DFRAME,32,9200,120", "#CAP,2,BAR,768,1"]
         self.assertTrue(serial_lines_show_transport_activity(lines))
 
+    def test_dframe_activity_in_tail(self) -> None:
+        lines = ["#CAP,1,MI,U,144,1,60,100", "#CAP,2,DFRAME,0,9270,33120"]
+        self.assertTrue(serial_lines_show_transport_activity(lines))
+
+    def test_sequencer_running_from_recent_dframe(self) -> None:
+        collector = _FakeCollector(["#CAP,1,DFRAME,0,9270,33120"], silence_s=0.5)
+        self.assertTrue(serial_sequencer_running(collector))
+
     def test_sequencer_running_from_recent_bpm(self) -> None:
         collector = _FakeCollector(["#CAP,1,BPM,120.0,120.0"], silence_s=1.0)
         self.assertTrue(serial_sequencer_running(collector))
@@ -91,8 +99,16 @@ class SerialTransportProxyTests(unittest.TestCase):
         self.assertTrue(serial_sequencer_running(collector))
 
     def test_sequencer_not_running_when_silent(self) -> None:
-        collector = _FakeCollector(["#CAP,1,BPM,120.0,120.0"], silence_s=10.0)
+        collector = _FakeCollector(["[info] Transport started"], silence_s=10.0)
         self.assertFalse(serial_sequencer_running(collector))
+
+    def test_sequencer_running_when_dframe_tail_despite_stale_heartbeat(self) -> None:
+        collector = _FakeCollector(["#CAP,1,DFRAME,0,9270,33120"], silence_s=30.0)
+        self.assertTrue(serial_sequencer_running(collector))
+
+    def test_mi_activity_in_tail(self) -> None:
+        lines = ["#CAP,1,MI,U,144,16,36,127"]
+        self.assertTrue(serial_lines_show_transport_activity(lines))
 
     def test_mode_a_serial_port_enables_proxy(self) -> None:
         args = argparse.Namespace(
