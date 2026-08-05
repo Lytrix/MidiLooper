@@ -61,6 +61,15 @@ void test_reset_geometry_undo_on_note_target_change() {
   TEST_ASSERT_FALSE(shouldResetGeometryKindUndoOnSelectChange(none, noteB));
 }
 
+void test_empty_step_deselect_is_selection_target_change() {
+  EditorSelection prior{};
+  prior.primaryNote = 36;
+  prior.selectedTick = 1248;
+  prior.selectedNotes.push_back(36);
+
+  TEST_ASSERT_TRUE(editorSelectionTargetChanged(prior, 1248, kInvalidNoteId));
+}
+
 void test_entity_id_invalid_sentinels() {
   TEST_ASSERT_EQUAL(0u, kInvalidNoteId);
   TEST_ASSERT_EQUAL(UINT32_MAX, kInvalidTrackId);
@@ -81,6 +90,7 @@ int main(int argc, char** argv) {
   RUN_TEST(test_should_not_cycle_when_overlay_inactive);
   RUN_TEST(test_should_cycle_when_overlay_active);
   RUN_TEST(test_reset_geometry_undo_on_note_target_change);
+  RUN_TEST(test_empty_step_deselect_is_selection_target_change);
   RUN_TEST(test_entity_id_invalid_sentinels);
   RUN_TEST(test_move_after_reselect_pushes_fresh_geometry_undo);
   return UNITY_END();

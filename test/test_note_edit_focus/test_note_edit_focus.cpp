@@ -9,6 +9,10 @@
 #include "../../src/Utils/LoopEventValidation.cpp"
 #include "../test_support/LoopCaptureTestDeps.cpp"
 #include "../../src/NoteEditFocus.cpp"
+#include "../../src/EditSessionLiveStoreSpan.cpp"
+#include "../../src/ApplyEditSessionActions.cpp"
+#include "../../src/ApplyOwnedEditPassRows.cpp"
+#include "../../src/EditSessionStoreInvariant.cpp"
 #include "../../src/EditApply.cpp"
 #include "../../src/LoopPasses.cpp"
 #include "../../src/LoopEventStore.cpp"
@@ -17,6 +21,8 @@
 
 #include "../test_support/CommittedChunkIdTestHelpers.h"
 #include "EditApply.h"
+#include "ApplyEditSessionActions.h"
+#include "EditSessionAction.h"
 #include "EditPass.h"
 #include "LoopPasses.h"
 #include "Loop.h"
@@ -87,6 +93,464 @@ void test_baseline_map_includes_moving_note_at_select() {
   TEST_ASSERT_EQUAL(0, static_cast<int>(focus.overlapNotes.size()));
 }
 
+void test_populate_baseline_full_loop_includes_cross_pitch() {
+  constexpr uint32_t loopLength = 384;
+  constexpr uint8_t channel = 1;
+  constexpr NoteId kHead12 = 77;
+  constexpr NoteId kMoverId = 79;
+  constexpr NoteId kCross93 = 3;
+  constexpr NoteId kCross96 = 5;
+
+  MidiEventVec committed;
+  committed.push_back(noteOnWithNoteId(0, channel, 12, 100, kHead12));
+  committed.push_back(MidiEvent::NoteOff(192, channel, 12, 0));
+  committed.push_back(noteOnWithNoteId(96, channel, 12, 100, kMoverId));
+  committed.push_back(MidiEvent::NoteOff(192, channel, 12, 0));
+  committed.push_back(noteOnWithNoteId(144, channel, 93, 100, kCross93));
+  committed.push_back(MidiEvent::NoteOff(192, channel, 93, 0));
+  committed.push_back(noteOnWithNoteId(144, channel, 96, 100, kCross96));
+  committed.push_back(MidiEvent::NoteOff(192, channel, 96, 0));
+
+  MidiEventVec store = committed;
+
+  NoteEditFocus focus;
+  focus.active = true;
+  focus.movingNoteId = kMoverId;
+  focus.commitBaseline = {12, 100, 96, 192};
+  focus.last = focus.commitBaseline;
+  focus.baselineMap[kMoverId] = focus.commitBaseline;
+
+  populateBaselineMapForEditClosure(focus, committed, store, channel, loopLength);
+  TEST_ASSERT_TRUE(focus.baselineMap.count(kHead12) > 0);
+  TEST_ASSERT_TRUE(focus.baselineMap.count(kCross93) > 0);
+  TEST_ASSERT_TRUE(focus.baselineMap.count(kCross96) > 0);
+  TEST_ASSERT_EQUAL_UINT32(144u, focus.baselineMap[kCross93].startTick);
+  TEST_ASSERT_EQUAL_UINT32(192u, focus.baselineMap[kCross93].endTick);
+}
+
+void test_populate_baseline_includes_store_channel_notes() {
+  // session_20260805_033545: storeNoteOns=73 but baselineMap=1 because closure still filtered
+  // live noteIds by the track output channel. The edit session store's NoteId is the identity key.
+  constexpr uint32_t loopLength = 2304;
+  constexpr uint8_t trackChannel = 2;
+  constexpr uint8_t storeChannel = 5;
+  constexpr NoteId kMoverId = 78;
+  constexpr NoteId kOverlapId = 91;
+
+  MidiEventVec committed;
+  committed.push_back(noteOnWithNoteId(912, storeChannel, 25, 100, kOverlapId));
+  committed.push_back(MidiEvent::NoteOff(1008, storeChannel, 25, 0));
+  committed.push_back(noteOnWithNoteId(960, storeChannel, 25, 100, kMoverId));
+  committed.push_back(MidiEvent::NoteOff(1344, storeChannel, 25, 0));
+
+  MidiEventVec store = committed;
+
+  NoteEditFocus focus;
+  focus.active = true;
+  focus.movingNoteId = kMoverId;
+  focus.commitBaseline = {25, 100, 960, 1344};
+  focus.last = focus.commitBaseline;
+  focus.baselineMap[kMoverId] = focus.commitBaseline;
+
+  populateBaselineMapForEditClosure(focus, committed, store, trackChannel, loopLength);
+
+  TEST_ASSERT_TRUE(focus.baselineMap.count(kOverlapId) > 0);
+  TEST_ASSERT_EQUAL_UINT32(912u, focus.baselineMap[kOverlapId].startTick);
+  TEST_ASSERT_EQUAL_UINT32(1008u, focus.baselineMap[kOverlapId].endTick);
+}
+
+void test_populate_baseline_maps_committed_pitch_start_via_live_note_id() {
+  // Record-pass materialize may lack noteId on note-ons; session store has stable ids.
+  constexpr uint32_t loopLength = 2304;
+  constexpr uint8_t channel = 1;
+  constexpr NoteId kMoverId = 78;
+  constexpr NoteId kCross93 = 4;
+
+  MidiEvent committedOn = MidiEvent::NoteOn(144, channel, 93, 100);
+  committedOn.noteId = kInvalidNoteId;
+  MidiEvent committedOff = MidiEvent::NoteOff(192, channel, 93, 0);
+
+  MidiEventVec committed;
+  committed.push_back(committedOn);
+  committed.push_back(committedOff);
+  committed.push_back(noteOnWithNoteId(360, channel, 26, 100, kMoverId));
+  committed.push_back(MidiEvent::NoteOff(576, channel, 26, 0));
+
+  MidiEventVec store;
+  store.push_back(noteOnWithNoteId(144, channel, 93, 100, kCross93));
+  MidiEvent liveOff = MidiEvent::NoteOff(192, channel, 93, 0);
+  liveOff.noteId = kCross93;
+  store.push_back(liveOff);
+  store.push_back(noteOnWithNoteId(360, channel, 26, 100, kMoverId));
+  MidiEvent moverOff = MidiEvent::NoteOff(576, channel, 26, 0);
+  moverOff.noteId = kMoverId;
+  store.push_back(moverOff);
+
+  NoteEditFocus focus;
+  focus.active = true;
+  focus.movingNoteId = kMoverId;
+  focus.baselineMap[kMoverId] = {26, 100, 360, 576};
+
+  populateBaselineMapForEditClosure(focus, committed, store, channel, loopLength);
+  TEST_ASSERT_TRUE(focus.baselineMap.count(kCross93) > 0);
+  TEST_ASSERT_EQUAL_UINT32(144u, focus.baselineMap[kCross93].startTick);
+  TEST_ASSERT_EQUAL_UINT32(192u, focus.baselineMap[kCross93].endTick);
+}
+
+void test_populate_baseline_keys_by_live_note_id_not_pass_id() {
+  // Driver-boundary snapshot keys from live store; pass-only ids are never inserted.
+  constexpr uint32_t loopLength = 2304;
+  constexpr uint8_t channel = 1;
+  constexpr NoteId kMoverId = 78;
+  constexpr NoteId kPassCrossId = 3;
+  constexpr NoteId kLiveCrossId = 99;
+
+  MidiEventVec committed;
+  committed.push_back(noteOnWithNoteId(144, channel, 93, 100, kPassCrossId));
+  committed.push_back(MidiEvent::NoteOff(192, channel, 93, 0));
+  committed.push_back(noteOnWithNoteId(360, channel, 13, 100, kMoverId));
+  committed.push_back(MidiEvent::NoteOff(576, channel, 13, 0));
+
+  MidiEventVec store;
+  store.push_back(noteOnWithNoteId(144, channel, 93, 100, kLiveCrossId));
+  MidiEvent liveOff = MidiEvent::NoteOff(192, channel, 93, 0);
+  liveOff.noteId = kLiveCrossId;
+  store.push_back(liveOff);
+  store.push_back(noteOnWithNoteId(360, channel, 13, 100, kMoverId));
+  MidiEvent moverOff = MidiEvent::NoteOff(576, channel, 13, 0);
+  moverOff.noteId = kMoverId;
+  store.push_back(moverOff);
+
+  NoteEditFocus focus;
+  focus.active = true;
+  focus.movingNoteId = kMoverId;
+  focus.baselineMap[kMoverId] = {13, 100, 360, 576};
+  // Fresh driver boundary clears stale pass ids — simulate clear + mover seed only.
+  focus.baselineMap.clear();
+  focus.baselineMap[kMoverId] = {13, 100, 360, 576};
+
+  populateBaselineMapForEditClosure(focus, committed, store, channel, loopLength);
+  TEST_ASSERT_EQUAL(0, static_cast<int>(focus.baselineMap.count(kPassCrossId)));
+  TEST_ASSERT_TRUE(focus.baselineMap.count(kLiveCrossId) > 0);
+  TEST_ASSERT_EQUAL_UINT32(144u, focus.baselineMap[kLiveCrossId].startTick);
+  TEST_ASSERT_EQUAL_UINT32(192u, focus.baselineMap[kLiveCrossId].endTick);
+}
+
+void test_hidden_note_baseline_survives_for_pre_commit_delete() {
+  // Hide removes the live pair; immutable baseline must still yield a Delete row.
+  constexpr uint32_t loopLength = 2304;
+  constexpr uint8_t channel = 1;
+  constexpr NoteId kInnerId = 3;
+  constexpr NoteId kMoverId = 9;
+
+  NoteEditFocus focus;
+  focus.active = true;
+  focus.movingNoteId = kMoverId;
+  focus.commitBaseline = {23, 100, 144, 336};
+  focus.last = focus.commitBaseline;
+  focus.baselineMap[kInnerId] = {23, 100, 192, 240};
+  focus.baselineMap[kMoverId] = focus.commitBaseline;
+  // The pipeline hid this note, which is what authorises the Delete row.
+  recordChangedOverlapNote(focus, kInnerId);
+
+  MidiEventVec store;
+  store.push_back(noteOnWithNoteId(144, channel, 23, 100, kMoverId));
+  store.push_back(MidiEvent::NoteOff(336, channel, 23, 0));
+  // Inner hidden — absent from live store; baseline entry must remain.
+  TEST_ASSERT_TRUE(focus.baselineMap.count(kInnerId) > 0);
+  TEST_ASSERT_TRUE(
+      noteEditFocusHasPendingBaselineMapDiff(focus, store, channel, loopLength));
+
+  const EditPassVec rows = buildPreCommitEditPasses(focus, channel, &store, loopLength);
+  TEST_ASSERT_EQUAL(1, static_cast<int>(rows.size()));
+  TEST_ASSERT_EQUAL(static_cast<int>(EditActionType::Delete),
+                    static_cast<int>(rows[0].actionType));
+  TEST_ASSERT_EQUAL(kInnerId, rows[0].targetNoteId);
+
+  // Re-populate must not erase the hidden note's baseline (insert-if-missing only).
+  populateBaselineMapForEditClosure(focus, store, store, channel, loopLength);
+  TEST_ASSERT_TRUE(focus.baselineMap.count(kInnerId) > 0);
+  TEST_ASSERT_EQUAL_UINT32(192u, focus.baselineMap[kInnerId].startTick);
+  TEST_ASSERT_EQUAL_UINT32(240u, focus.baselineMap[kInnerId].endTick);
+}
+
+void test_hidden_overlap_same_start_as_mover_emits_delete_not_length() {
+  constexpr uint32_t loopLength = 2304;
+  constexpr uint8_t channel = 1;
+  constexpr NoteId kHiddenId = 84;
+  constexpr NoteId kMoverId = 87;
+
+  NoteEditFocus focus;
+  focus.active = true;
+  focus.movingNoteId = kMoverId;
+  focus.commitBaseline = {23, 100, 672, 837};
+  focus.last = {23, 100, 288, 453};
+  focus.baselineMap[kHiddenId] = {23, 100, 288, 383};
+  focus.baselineMap[kMoverId] = focus.commitBaseline;
+  recordChangedOverlapNote(focus, kHiddenId);
+
+  MidiEventVec store;
+  store.push_back(noteOnWithNoteId(288, channel, 23, 100, kMoverId));
+  store.push_back(MidiEvent::NoteOff(453, channel, 23, 0));
+
+  TEST_ASSERT_TRUE(noteEditFocusHasPendingBaselineMapDiff(focus, store, channel, loopLength));
+
+  const EditPassVec rows = buildPreCommitEditPasses(focus, channel, &store, loopLength);
+  TEST_ASSERT_EQUAL(2, static_cast<int>(rows.size()));
+  TEST_ASSERT_EQUAL(static_cast<int>(EditActionType::Delete),
+                    static_cast<int>(rows[0].actionType));
+  TEST_ASSERT_EQUAL(kHiddenId, rows[0].targetNoteId);
+  TEST_ASSERT_EQUAL(static_cast<int>(EditActionType::Update),
+                    static_cast<int>(rows[1].actionType));
+  TEST_ASSERT_EQUAL(static_cast<int>(EditPropertyType::NoteRange),
+                    static_cast<int>(rows[1].propertyType));
+  TEST_ASSERT_EQUAL(kMoverId, rows[1].targetNoteId);
+}
+
+void test_unchanged_overlap_live_mismatch_emits_no_length_row() {
+  // session_20260805_123427.log: after move/deselect/reselect, stale live overlap length
+  // at start=288 emitted a pre-commit Length row even though geometry no longer marked the
+  // overlap changed. Only changedOverlapNoteIds authorizes overlap update rows.
+  constexpr uint32_t loopLength = 2304;
+  constexpr uint8_t channel = 1;
+  constexpr NoteId kOverlapId = 82;
+  constexpr NoteId kMoverId = 68;
+
+  NoteEditFocus focus;
+  focus.active = true;
+  focus.movingNoteId = kMoverId;
+  focus.commitBaseline = {82, 100, 672, 1151};
+  focus.last = focus.commitBaseline;
+  focus.baselineMap[kOverlapId] = {23, 100, 288, 719};
+  focus.baselineMap[kMoverId] = focus.commitBaseline;
+  TEST_ASSERT_TRUE(focus.changedOverlapNoteIds.empty());
+
+  MidiEventVec store;
+  store.push_back(noteOnWithNoteId(288, channel, 23, 100, kOverlapId));
+  MidiEvent staleOverlapOff = MidiEvent::NoteOff(431, channel, 23, 0);
+  staleOverlapOff.noteId = kOverlapId;
+  store.push_back(staleOverlapOff);
+  store.push_back(noteOnWithNoteId(672, channel, 82, 100, kMoverId));
+  MidiEvent moverOff = MidiEvent::NoteOff(1151, channel, 82, 0);
+  moverOff.noteId = kMoverId;
+  store.push_back(moverOff);
+
+  TEST_ASSERT_FALSE(noteEditFocusHasPendingBaselineMapDiff(focus, store, channel, loopLength));
+  const EditPassVec rows = buildPreCommitEditPasses(focus, channel, &store, loopLength);
+  TEST_ASSERT_EQUAL(0, static_cast<int>(rows.size()));
+}
+
+void test_committed_overlap_delete_clears_focus_restore_authority() {
+  // session_20260805_124222.log: committed hidden overlap noteId=68 reappeared after
+  // moving noteId=70 away because the deleted note stayed in focus.baselineMap.
+  constexpr NoteId kHiddenId = 68;
+  constexpr NoteId kMoverId = 70;
+
+  NoteEditFocus focus;
+  focus.active = true;
+  focus.movingNoteId = kMoverId;
+  focus.commitBaseline = {23, 100, 288, 431};
+  focus.last = {23, 100, 432, 575};
+  focus.baselineMap[kHiddenId] = {23, 100, 288, 431};
+  focus.baselineMap[kMoverId] = focus.commitBaseline;
+
+  OverlapNote hidden;
+  hidden.noteId = kHiddenId;
+  hidden.baseline = focus.baselineMap[kHiddenId];
+  hidden.state = OverlapNoteStoreState::Hidden;
+  hidden.preCommitEmitted = true;
+  focus.overlapNotes[kHiddenId] = hidden;
+  recordChangedOverlapNote(focus, kHiddenId);
+
+  NoteIdList committedDeletes;
+  committedDeletes.push_back(kHiddenId);
+  committedDeletes.push_back(kMoverId);
+  committedDeletes.push_back(kInvalidNoteId);
+  clearCommittedOverlapDeleteIdsFromFocus(focus, committedDeletes);
+
+  TEST_ASSERT_EQUAL(0, static_cast<int>(focus.baselineMap.count(kHiddenId)));
+  TEST_ASSERT_EQUAL(0, static_cast<int>(focus.overlapNotes.count(kHiddenId)));
+  TEST_ASSERT_FALSE(hasChangedOverlapNote(focus, kHiddenId));
+  TEST_ASSERT_TRUE(focus.baselineMap.count(kMoverId) > 0);
+}
+
+void test_committed_overlap_update_promotes_shortened_focus_baseline() {
+  // session_20260805_131133.log: a shortened overlap must become the new committed baseline
+  // after macro commit; otherwise later ticks keep stale changed-overlap authority.
+  constexpr NoteId kOverlapId = 86;
+  constexpr NoteId kMoverId = 71;
+
+  NoteEditFocus focus;
+  focus.active = true;
+  focus.movingNoteId = kMoverId;
+  focus.commitBaseline = {23, 100, 1296, 1487};
+  focus.last = focus.commitBaseline;
+  focus.baselineMap[kOverlapId] = {23, 100, 1230, 1325};
+  focus.baselineMap[kMoverId] = focus.commitBaseline;
+
+  OverlapNote shortened;
+  shortened.noteId = kOverlapId;
+  shortened.baseline = focus.baselineMap[kOverlapId];
+  shortened.state = OverlapNoteStoreState::Shortened;
+  shortened.shortenedEndTick = 1247;
+  focus.overlapNotes[kOverlapId] = shortened;
+  recordChangedOverlapNote(focus, kOverlapId);
+
+  const NoteBaseline committedShortened{23, 100, 1230, 1247};
+  applyCommittedOverlapUpdateToFocus(focus, kOverlapId, committedShortened);
+
+  TEST_ASSERT_TRUE(focus.baselineMap.count(kOverlapId) > 0);
+  TEST_ASSERT_EQUAL_UINT32(1230u, focus.baselineMap[kOverlapId].startTick);
+  TEST_ASSERT_EQUAL_UINT32(1247u, focus.baselineMap[kOverlapId].endTick);
+  TEST_ASSERT_EQUAL(0, static_cast<int>(focus.overlapNotes.count(kOverlapId)));
+  TEST_ASSERT_FALSE(hasChangedOverlapNote(focus, kOverlapId));
+  TEST_ASSERT_TRUE(focus.baselineMap.count(kMoverId) > 0);
+}
+
+void test_session_134610_shortened_overlap_commit_rows() {
+  // session_20260805_134610.log: ShortenNote noteId=87 (192-239) + MoveNote noteId=71
+  // (240-431) on pitch 22; first commit must persist overlap Length with targetNoteId=87,
+  // then a second hide on the promoted shortened overlap must yield a Delete row.
+  constexpr uint32_t loopLength = 1536;
+  constexpr uint8_t channel = 1;
+  constexpr NoteId kOverlapId = 87;
+  constexpr NoteId kMoverId = 71;
+
+  NoteEditFocus focus;
+  focus.active = true;
+  focus.movingNoteId = kMoverId;
+  focus.commitBaseline = {22, 100, 288, 479};
+  focus.last = {22, 100, 240, 431};
+  focus.baselineMap[kOverlapId] = {22, 100, 192, 287};
+  focus.baselineMap[kMoverId] = focus.commitBaseline;
+  recordChangedOverlapNote(focus, kOverlapId);
+
+  MidiEventVec store;
+  store.push_back(noteOnWithNoteId(192, channel, 22, 100, kOverlapId));
+  MidiEvent overlapOff = MidiEvent::NoteOff(239, channel, 22, 0);
+  overlapOff.noteId = kOverlapId;
+  store.push_back(overlapOff);
+  store.push_back(noteOnWithNoteId(240, channel, 22, 100, kMoverId));
+  MidiEvent moverOff = MidiEvent::NoteOff(431, channel, 22, 0);
+  moverOff.noteId = kMoverId;
+  store.push_back(moverOff);
+
+  TEST_ASSERT_TRUE(noteEditFocusHasPendingBaselineMapDiff(focus, store, channel, loopLength));
+  const EditPassVec rows = buildPreCommitEditPasses(focus, channel, &store, loopLength);
+  TEST_ASSERT_EQUAL(2, static_cast<int>(rows.size()));
+
+  TEST_ASSERT_EQUAL(static_cast<int>(EditActionType::Update),
+                    static_cast<int>(rows[0].actionType));
+  TEST_ASSERT_EQUAL(static_cast<int>(EditPropertyType::Length),
+                    static_cast<int>(rows[0].propertyType));
+  TEST_ASSERT_EQUAL(kOverlapId, rows[0].targetNoteId);
+  TEST_ASSERT_EQUAL_UINT32(192u, rows[0].startTick);
+  TEST_ASSERT_EQUAL_UINT32(239u, rows[0].endTick);
+
+  TEST_ASSERT_EQUAL(static_cast<int>(EditActionType::Update),
+                    static_cast<int>(rows[1].actionType));
+  TEST_ASSERT_EQUAL(static_cast<int>(EditPropertyType::NoteRange),
+                    static_cast<int>(rows[1].propertyType));
+  TEST_ASSERT_EQUAL(kMoverId, rows[1].targetNoteId);
+  TEST_ASSERT_EQUAL_UINT32(240u, rows[1].startTick);
+  TEST_ASSERT_EQUAL_UINT32(431u, rows[1].endTick);
+
+  const NoteBaseline committedShortened{22, 100, 192, 239};
+  applyCommittedOverlapUpdateToFocus(focus, kOverlapId, committedShortened);
+  focus.commitBaseline = focus.last;
+  TEST_ASSERT_FALSE(hasChangedOverlapNote(focus, kOverlapId));
+
+  recordChangedOverlapNote(focus, kOverlapId);
+  store.clear();
+  store.push_back(noteOnWithNoteId(240, channel, 22, 100, kMoverId));
+  moverOff = MidiEvent::NoteOff(431, channel, 22, 0);
+  moverOff.noteId = kMoverId;
+  store.push_back(moverOff);
+
+  const EditPassVec hideRows = buildPreCommitEditPasses(focus, channel, &store, loopLength);
+  TEST_ASSERT_EQUAL(1, static_cast<int>(hideRows.size()));
+  TEST_ASSERT_EQUAL(static_cast<int>(EditActionType::Delete),
+                    static_cast<int>(hideRows[0].actionType));
+  TEST_ASSERT_EQUAL(kOverlapId, hideRows[0].targetNoteId);
+}
+
+/// Delete authority — an unresolved baseline entry is preserved, never deleted.
+/// Regression for session_20260805_020716: the full-loop baseline turned every noteId lookup
+/// miss into a Delete row, so edit passes stripped 12 notes off the take
+/// (take_only flatEvents=172 vs replay_flat flatEvents=148).
+void test_unresolved_baseline_entry_emits_no_delete_row() {
+  constexpr uint32_t loopLength = 2304;
+  constexpr uint8_t channel = 1;
+  constexpr NoteId kMoverId = 9;
+  constexpr NoteId kPresentA = 3;
+  constexpr NoteId kUnresolvedB = 4;
+  constexpr NoteId kPresentC = 5;
+
+  NoteEditFocus focus;
+  focus.active = true;
+  focus.movingNoteId = kMoverId;
+  focus.commitBaseline = {23, 100, 144, 336};
+  focus.last = focus.commitBaseline;
+  focus.baselineMap[kMoverId] = focus.commitBaseline;
+  focus.baselineMap[kPresentA] = {30, 100, 480, 528};
+  focus.baselineMap[kUnresolvedB] = {31, 100, 720, 768};
+  focus.baselineMap[kPresentC] = {32, 100, 960, 1008};
+
+  // Live store holds A and C but not B. Nothing was hidden by the pipeline.
+  MidiEventVec store;
+  store.push_back(noteOnWithNoteId(144, channel, 23, 100, kMoverId));
+  store.push_back(MidiEvent::NoteOff(336, channel, 23, 0));
+  store.push_back(noteOnWithNoteId(480, channel, 30, 100, kPresentA));
+  store.push_back(MidiEvent::NoteOff(528, channel, 30, 0));
+  store.push_back(noteOnWithNoteId(960, channel, 32, 100, kPresentC));
+  store.push_back(MidiEvent::NoteOff(1008, channel, 32, 0));
+
+  TEST_ASSERT_TRUE(focus.changedOverlapNoteIds.empty());
+  TEST_ASSERT_FALSE(noteEditFocusHasPendingBaselineMapDiff(focus, store, channel, loopLength));
+
+  const EditPassVec rows = buildPreCommitEditPasses(focus, channel, &store, loopLength);
+  for (const EditPass& row : rows) {
+    TEST_ASSERT_NOT_EQUAL(static_cast<int>(EditActionType::Delete),
+                          static_cast<int>(row.actionType));
+  }
+  // B keeps its baseline entry — diagnostics must not remove data.
+  TEST_ASSERT_TRUE(focus.baselineMap.count(kUnresolvedB) > 0);
+}
+
+/// Restore erases the id, so a note that was hidden then restored leaves nothing pending.
+void test_restored_overlap_note_leaves_no_pending_delete() {
+  constexpr uint32_t loopLength = 2304;
+  constexpr uint8_t channel = 1;
+  constexpr NoteId kMoverId = 9;
+  constexpr NoteId kInnerId = 3;
+
+  NoteEditFocus focus;
+  focus.active = true;
+  focus.movingNoteId = kMoverId;
+  focus.commitBaseline = {23, 100, 144, 336};
+  focus.last = focus.commitBaseline;
+  focus.baselineMap[kMoverId] = focus.commitBaseline;
+  focus.baselineMap[kInnerId] = {23, 100, 192, 240};
+  recordChangedOverlapNote(focus, kInnerId);
+
+  MidiEventVec store;
+  store.push_back(noteOnWithNoteId(144, channel, 23, 100, kMoverId));
+  store.push_back(MidiEvent::NoteOff(336, channel, 23, 0));
+  TEST_ASSERT_TRUE(noteEditFocusHasPendingBaselineMapDiff(focus, store, channel, loopLength));
+
+  // Restore puts the pair back and clears the id.
+  forgetChangedOverlapNote(focus, kInnerId);
+  store.push_back(noteOnWithNoteId(192, channel, 23, 100, kInnerId));
+  store.push_back(MidiEvent::NoteOff(240, channel, 23, 0));
+
+  TEST_ASSERT_FALSE(noteEditFocusHasPendingBaselineMapDiff(focus, store, channel, loopLength));
+  const EditPassVec rows = buildPreCommitEditPasses(focus, channel, &store, loopLength);
+  for (const EditPass& row : rows) {
+    TEST_ASSERT_NOT_EQUAL(static_cast<int>(EditActionType::Delete),
+                          static_cast<int>(row.actionType));
+  }
+}
+
 void test_populate_baseline_map_for_edit_closure_wrap_sibling() {
   NoteEditFocus focus;
   const MidiEventVec flat = makeTwoNoteFlat(8, 104, 584, 680, 60);
@@ -97,6 +561,26 @@ void test_populate_baseline_map_for_edit_closure_wrap_sibling() {
   TEST_ASSERT_EQUAL(2, static_cast<int>(focus.baselineMap.size()));
   TEST_ASSERT_TRUE(focus.baselineMap.count(1) > 0);
   TEST_ASSERT_TRUE(focus.baselineMap.count(2) > 0);
+}
+
+void test_populate_baseline_map_includes_linear_same_pitch_neighbor() {
+  // session_20260804_210819: mover at 907 must see neighbor at 666 on pitch 64 as overlap candidate.
+  NoteEditFocus focus;
+  MidiEventVec flat;
+  flat.push_back(noteOnWithNoteId(666, 1, 64, 100, 3));
+  MidiEvent neighborOff = MidiEvent::NoteOff(815, 1, 64, 0);
+  flat.push_back(neighborOff);
+  flat.push_back(noteOnWithNoteId(907, 1, 64, 100, 4));
+  MidiEvent moverOff = MidiEvent::NoteOff(1098, 1, 64, 0);
+  flat.push_back(moverOff);
+
+  rebuildNoteEditFocusFromStore(focus, flat, 1, 2400, 1);
+  TEST_ASSERT_EQUAL_UINT32(4u, focus.movingNoteId);
+  populateBaselineMapForEditClosure(focus, flat, flat, 1, 2400);
+  TEST_ASSERT_TRUE(focus.baselineMap.count(3) > 0);
+  TEST_ASSERT_TRUE(focus.baselineMap.count(4) > 0);
+  TEST_ASSERT_EQUAL_UINT32(666u, focus.baselineMap[3].startTick);
+  TEST_ASSERT_EQUAL_UINT32(815u, focus.baselineMap[3].endTick);
 }
 
 void test_a1_length_updates_moving_note_range_not_commit_baseline() {
@@ -136,24 +620,20 @@ void test_note_edit_focus_has_pending_commit_geometry_and_overlap() {
   focus.last = focus.commitBaseline;
   TEST_ASSERT_FALSE(noteEditFocusHasPendingCommit(focus));
 
-  OverlapNote hidden{};
-  hidden.noteId = 42;
-  hidden.state = OverlapNoteStoreState::Hidden;
-  hidden.preCommitEmitted = false;
-  focus.overlapNotes[42] = hidden;
+  focus.last.pitch = 67;
   TEST_ASSERT_TRUE(noteEditFocusHasPendingCommit(focus));
-
-  hidden.preCommitEmitted = true;
-  focus.overlapNotes[42] = hidden;
+  focus.last = focus.commitBaseline;
   TEST_ASSERT_FALSE(noteEditFocusHasPendingCommit(focus));
 
-  OverlapNote shortened{};
-  shortened.noteId = 43;
-  shortened.state = OverlapNoteStoreState::Shortened;
-  shortened.baseline.endTick = 200;
-  shortened.shortenedEndTick = 150;
-  focus.overlapNotes[43] = shortened;
-  TEST_ASSERT_TRUE(noteEditFocusHasPendingCommit(focus));
+  // Overlap pending is baselineMap vs live (not overlapNotes scratch).
+  focus.movingNoteId = 9;
+  focus.baselineMap[42] = {60, 64, 50, 80};
+  focus.baselineMap[9] = focus.commitBaseline;
+  recordChangedOverlapNote(focus, 42);
+  MidiEventVec store;
+  store.push_back(noteOnWithNoteId(100, 1, 60, 64, 9));
+  store.push_back(MidiEvent::NoteOff(200, 1, 60, 0));
+  TEST_ASSERT_TRUE(noteEditFocusHasPendingBaselineMapDiff(focus, store, 1, 768));
 }
 
 void test_can_apply_simple_pitch_change_without_lane_collision() {
@@ -209,6 +689,63 @@ void test_can_apply_simple_pitch_change_blocks_inner_overlap_on_target_lane() {
       events, focus, 1, 60, 59, focus.last.startTick, focus.last.endTick, kLoopLength));
 }
 
+void test_can_apply_simple_pitch_change_blocks_store_channel_target_lane() {
+  constexpr uint32_t kLoopLength = 768;
+  constexpr uint8_t kTrackChannel = 1;
+  constexpr uint8_t kStoreChannel = 5;
+  NoteEditFocus focus;
+  focus.active = true;
+  focus.movingNoteId = 1;
+  focus.commitBaseline = {60, 100, 100, 200};
+  focus.last = focus.commitBaseline;
+  focus.movingNoteRange = {100, 200};
+  focus.baselineMap[1] = focus.commitBaseline;
+  focus.baselineMap[2] = {64, 100, 150, 250};
+
+  MidiEventVec events;
+  events.push_back(noteOnWithNoteId(100, kStoreChannel, 60, 100, 1));
+  events.push_back(MidiEvent::NoteOff(200, kStoreChannel, 60, 0));
+  events.push_back(noteOnWithNoteId(150, kStoreChannel, 64, 100, 2));
+  events.push_back(MidiEvent::NoteOff(250, kStoreChannel, 64, 0));
+
+  TEST_ASSERT_FALSE(canApplySimplePitchChange(
+      events, focus, kTrackChannel, 60, 64, focus.last.startTick, focus.last.endTick,
+      kLoopLength));
+}
+
+void test_can_apply_simple_pitch_change_blocks_when_baseline_map_lane_needs_restore() {
+  // session_20260804_213759: pipeline Hide on pitch 65 leaves overlapNotes empty; leaving
+  // 65→64 took the simple path and never RestoreNote'd the hidden overlap note.
+  constexpr uint32_t kLoopLength = 1536;
+  constexpr NoteId kMoverId = 1;
+  constexpr NoteId kOverlapId = 2;
+
+  NoteEditFocus focus;
+  focus.active = true;
+  focus.movingNoteId = kMoverId;
+  focus.commitBaseline = {64, 100, 906, 1055};
+  focus.last = {65, 100, 906, 1055};
+  focus.movingNoteRange = {906, 1055};
+  focus.baselineMap[kMoverId] = focus.commitBaseline;
+  focus.baselineMap[kOverlapId] = {65, 100, 906, 1001};
+
+  MidiEventVec events;
+  // Mover still on pitch 65; overlap note hidden (removed from live store).
+  events.push_back(noteOnWithNoteId(906, 1, 65, 100, kMoverId));
+  events.push_back(MidiEvent::NoteOff(1055, 1, 65, 0));
+  events.back().noteId = kMoverId;
+
+  TEST_ASSERT_FALSE(canApplySimplePitchChange(
+      events, focus, 1, 65, 64, focus.last.startTick, focus.last.endTick, kLoopLength));
+
+  // After RestoreNote, live matches baselineMap → simple path allowed again.
+  events.push_back(noteOnWithNoteId(906, 1, 65, 100, kOverlapId));
+  events.push_back(MidiEvent::NoteOff(1001, 1, 65, 0));
+  events.back().noteId = kOverlapId;
+  TEST_ASSERT_TRUE(canApplySimplePitchChange(
+      events, focus, 1, 65, 64, focus.last.startTick, focus.last.endTick, kLoopLength));
+}
+
 void test_inner_overlap_note_in_moving_note_range() {
   NoteEditFocus focus;
   focus.active = true;
@@ -250,23 +787,25 @@ void test_pre_commit_edit_change_order_delete_shorten_move_length_pitch() {
   focus.commitBaseline = {60, 64, 496, 1168};
   focus.last = {60, 64, 520, 1200};
   focus.movingNoteId = 1;
+  focus.baselineMap[1] = focus.commitBaseline;
 
   constexpr NoteId overlapHiddenId = 10;
   constexpr NoteId overlapShortId = 11;
-  OverlapNote hiddenEntry{};
-  hiddenEntry.noteId = overlapHiddenId;
-  hiddenEntry.baseline = {60, 64, 400, 688};
-  hiddenEntry.state = OverlapNoteStoreState::Hidden;
-  focus.overlapNotes[overlapHiddenId] = hiddenEntry;
+  focus.baselineMap[overlapHiddenId] = {60, 64, 300, 350};
+  focus.baselineMap[overlapShortId] = {60, 64, 400, 688};
+  recordChangedOverlapNote(focus, overlapHiddenId);
+  recordChangedOverlapNote(focus, overlapShortId);
 
-  OverlapNote shortenedEntry{};
-  shortenedEntry.noteId = overlapShortId;
-  shortenedEntry.baseline = {60, 64, 592, 688};
-  shortenedEntry.state = OverlapNoteStoreState::Shortened;
-  shortenedEntry.shortenedEndTick = 495;
-  focus.overlapNotes[overlapShortId] = shortenedEntry;
+  // Live store: hidden absent; shortened end 495; mover still at commit baseline ticks.
+  MidiEventVec store;
+  store.push_back(noteOnWithNoteId(400, 1, 60, 64, overlapShortId));
+  store.push_back(MidiEvent::NoteOff(495, 1, 60, 0));
+  store.back().noteId = overlapShortId;
+  store.push_back(noteOnWithNoteId(496, 1, 60, 64, 1));
+  store.push_back(MidiEvent::NoteOff(1168, 1, 60, 0));
+  store.back().noteId = 1;
 
-  const EditPassVec rows = buildPreCommitEditPasses(focus, 1);
+  const EditPassVec rows = buildPreCommitEditPasses(focus, 1, &store, 1536);
   TEST_ASSERT_EQUAL(3, static_cast<int>(rows.size()));
   TEST_ASSERT_EQUAL(static_cast<int>(EditActionType::Delete),
                     static_cast<int>(rows[0].actionType));
@@ -374,15 +913,18 @@ void test_build_pre_commit_changes_replay_lengthen_delete_pitch() {
   focus.last = {67, 64, 8, 680};
   focus.movingNoteId = 1;
   focus.movingNoteRange = {8, 680};
+  focus.baselineMap[1] = focus.commitBaseline;
 
   constexpr NoteId overlapHiddenId = 12;
-  OverlapNote hidden{};
-  hidden.noteId = overlapHiddenId;
-  hidden.baseline = {60, 64, 584, 680};
-  hidden.state = OverlapNoteStoreState::Hidden;
-  focus.overlapNotes[overlapHiddenId] = hidden;
+  focus.baselineMap[overlapHiddenId] = {60, 64, 584, 680};
+  recordChangedOverlapNote(focus, overlapHiddenId);
 
-  const EditPassVec rows = buildPreCommitEditPasses(focus, 1);
+  MidiEventVec sessionStore;
+  sessionStore.push_back(noteOnWithNoteId(8, 1, 60, 64, 1));
+  sessionStore.push_back(MidiEvent::NoteOff(680, 1, 60, 0));
+  sessionStore.back().noteId = 1;
+
+  const EditPassVec rows = buildPreCommitEditPasses(focus, 1, &sessionStore, kLoopLength);
   TEST_ASSERT_EQUAL(2, static_cast<int>(rows.size()));
 
   LoopEventStore store;
@@ -471,6 +1013,7 @@ void test_reselect_keeps_commit_baseline_with_pending_length() {
 }
 
 void test_filter_excludes_hidden_overlap_note() {
+  // Hidden notes are erased from the live store; baselineMap retains them for restore/commit.
   constexpr uint32_t kLoopLength = 1536;
   NoteEditFocus focus;
   focus.active = true;
@@ -478,21 +1021,14 @@ void test_filter_excludes_hidden_overlap_note() {
   focus.movingNoteRange = {8, 680};
 
   MidiEventVec flat;
-  flat.push_back(MidiEvent::NoteOn(8, 1, 67, 100));
+  flat.push_back(noteOnWithNoteId(8, 1, 67, 100, 1));
   flat.push_back(MidiEvent::NoteOff(680, 1, 67, 0));
-  flat.push_back(MidiEvent::NoteOn(200, 1, 64, 100));
+  flat.push_back(noteOnWithNoteId(200, 1, 64, 100, 2));
   flat.push_back(MidiEvent::NoteOff(400, 1, 64, 0));
-  flat.push_back(MidiEvent::NoteOn(584, 1, 60, 100));
-  flat.push_back(MidiEvent::NoteOff(680, 1, 60, 0));
+  // Pitch-60 note already hidden (absent from store).
 
   rebuildNoteEditFocusFromStore(focus, flat, 1, kLoopLength, 0);
-
-  constexpr NoteId hiddenRefId = 12;
-  OverlapNote hidden{};
-  hidden.noteId = hiddenRefId;
-  hidden.baseline = {60, 64, 584, 680};
-  hidden.state = OverlapNoteStoreState::Hidden;
-  focus.overlapNotes[hiddenRefId] = hidden;
+  focus.baselineMap[12] = {60, 64, 584, 680};
 
   const NoteUtils::DisplayNoteVec filtered =
       filterSelectableDisplayNotes(flat, focus, 1, kLoopLength);
@@ -515,14 +1051,7 @@ void test_filter_includes_shortened_overlap_note() {
   flat.push_back(MidiEvent::NoteOff(495, 1, 60, 0));
 
   rebuildNoteEditFocusFromStore(focus, flat, 1, kLoopLength, 0);
-
-  constexpr NoteId shortenedRefId = 10;
-  OverlapNote shortened{};
-  shortened.noteId = shortenedRefId;
-  shortened.baseline = {60, 64, 400, 688};
-  shortened.state = OverlapNoteStoreState::Shortened;
-  shortened.shortenedEndTick = 495;
-  focus.overlapNotes[shortenedRefId] = shortened;
+  populateBaselineMapForEditClosure(focus, flat, flat, 1, kLoopLength);
 
   const NoteUtils::DisplayNoteVec filtered =
       filterSelectableDisplayNotes(flat, focus, 1, kLoopLength);
@@ -536,7 +1065,54 @@ void test_filter_includes_shortened_overlap_note() {
   TEST_ASSERT_TRUE(foundShortened);
 }
 
+void test_filter_shortened_overlap_uses_live_span_when_reconstruct_mispairs() {
+  // session_20260805_140106: overlap noteId=87 shortened to 192-239; reconstruct may LIFO-pair
+  // to a stale untagged off and report length 95 on the display list.
+  constexpr uint32_t kLoopLength = 1536;
+  constexpr uint8_t channel = 1;
+  constexpr NoteId kOverlapId = 87;
+  constexpr NoteId kMoverId = 72;
+
+  NoteEditFocus focus;
+  focus.active = true;
+  focus.movingNoteId = kMoverId;
+  focus.last = {22, 100, 240, 335};
+  focus.commitBaseline = {22, 100, 288, 479};
+  focus.baselineMap[kOverlapId] = {22, 100, 192, 287};
+  focus.baselineMap[kMoverId] = focus.commitBaseline;
+  recordChangedOverlapNote(focus, kOverlapId);
+
+  MidiEventVec store;
+  store.push_back(noteOnWithNoteId(192, channel, 22, 100, kOverlapId));
+  MidiEvent overlapOff = MidiEvent::NoteOff(239, channel, 22, 0);
+  overlapOff.noteId = kOverlapId;
+  store.push_back(overlapOff);
+  store.push_back(MidiEvent::NoteOff(287, channel, 22, 0));
+  store.push_back(noteOnWithNoteId(240, channel, 22, 100, kMoverId));
+  MidiEvent moverOff = MidiEvent::NoteOff(335, channel, 22, 0);
+  moverOff.noteId = kMoverId;
+  store.push_back(moverOff);
+
+  const NoteUtils::DisplayNoteVec filtered =
+      filterSelectableDisplayNotes(store, focus, channel, kLoopLength);
+
+  bool foundShortenedOverlap = false;
+  for (const NoteUtils::DisplayNote& dn : filtered) {
+    if (dn.noteId == kOverlapId) {
+      TEST_ASSERT_EQUAL_UINT32(192u, dn.startTick);
+      TEST_ASSERT_EQUAL_UINT32(239u, dn.endTick);
+      foundShortenedOverlap = true;
+    }
+    if (dn.noteId == kMoverId) {
+      TEST_ASSERT_EQUAL_UINT32(240u, dn.startTick);
+      TEST_ASSERT_EQUAL_UINT32(335u, dn.endTick);
+    }
+  }
+  TEST_ASSERT_TRUE(foundShortenedOverlap);
+}
+
 void test_filter_excludes_inner_under_moving_note() {
+  // Q14: cross-pitch notes under the mover stay selectable (no Hide/Shorten).
   constexpr uint32_t kLoopLength = 1536;
   NoteEditFocus focus;
   focus.active = true;
@@ -544,34 +1120,31 @@ void test_filter_excludes_inner_under_moving_note() {
   focus.movingNoteRange = {8, 680};
 
   MidiEventVec flat;
-  flat.push_back(MidiEvent::NoteOn(8, 1, 67, 100));
+  flat.push_back(noteOnWithNoteId(8, 1, 67, 100, 1));
   flat.push_back(MidiEvent::NoteOff(680, 1, 67, 0));
-  flat.push_back(MidiEvent::NoteOn(392, 1, 60, 100));
+  flat.push_back(noteOnWithNoteId(392, 1, 60, 100, 2));
   flat.push_back(MidiEvent::NoteOff(488, 1, 60, 0));
-  flat.push_back(MidiEvent::NoteOn(584, 1, 60, 100));
+  flat.push_back(noteOnWithNoteId(584, 1, 60, 100, 3));
   flat.push_back(MidiEvent::NoteOff(680, 1, 60, 0));
 
   rebuildNoteEditFocusFromStore(focus, flat, 1, kLoopLength, 0);
-
-  constexpr NoteId innerRefId = 12;
-  OverlapNote inner{};
-  inner.noteId = innerRefId;
-  inner.baseline = {60, 64, 584, 680};
-  inner.state = OverlapNoteStoreState::Visible;
-  inner.innerUnderMovingNote = true;
-  focus.overlapNotes[innerRefId] = inner;
+  populateBaselineMapForEditClosure(focus, flat, flat, 1, kLoopLength);
 
   const NoteUtils::DisplayNoteVec filtered =
       filterSelectableDisplayNotes(flat, focus, 1, kLoopLength);
 
-  TEST_ASSERT_EQUAL(2, static_cast<int>(filtered.size()));
+  TEST_ASSERT_EQUAL(3, static_cast<int>(filtered.size()));
+  bool foundInner = false;
   for (const NoteUtils::DisplayNote& dn : filtered) {
-    TEST_ASSERT_FALSE(dn.note == 60 && dn.startTick == 584);
+    if (dn.note == 60 && dn.startTick == 584) {
+      foundInner = true;
+    }
   }
+  TEST_ASSERT_TRUE(foundInner);
 }
 
 void test_filter_includes_moving_note_when_hidden_overlap_baseline_matches() {
-  // session_20260714_012932.log: mover at 576-624 after absorbing restored neighbor at same span.
+  // Mover remains selectable when a same-span neighbor is hidden (absent) in baselineMap.
   constexpr uint32_t kLoopLength = 2304;
   constexpr uint8_t channel = 1;
   constexpr NoteId kMoverId = 3;
@@ -586,11 +1159,7 @@ void test_filter_includes_moving_note_when_hidden_overlap_baseline_matches() {
   rebuildNoteEditFocusFromStore(focus, flat, channel, kLoopLength, 0);
   TEST_ASSERT_EQUAL(kMoverId, focus.movingNoteId);
 
-  OverlapNote hidden{};
-  hidden.noteId = kHiddenId;
-  hidden.baseline = {60, 100, 576, 624};
-  hidden.state = OverlapNoteStoreState::Hidden;
-  focus.overlapNotes[kHiddenId] = hidden;
+  focus.baselineMap[kHiddenId] = {60, 100, 576, 624};
   focus.last = {60, 100, 576, 624};
 
   const NoteUtils::DisplayNoteVec filtered =
@@ -784,6 +1353,48 @@ void test_find_linear_note_span_rejects_mispaired_off() {
   TEST_ASSERT_EQUAL_UINT32(436u, linear.endTick);
 }
 
+/// Materialized passes carry the channel played at record time. A span lookup that misses because
+/// the track now reports a different output channel makes the note invisible to the whole geometry
+/// pipeline (session_20260805_030517: baselineMap=1). NoteId resolves it on its own.
+void test_find_linear_note_span_resolves_across_store_channel() {
+  constexpr uint32_t kLoopLength = 2304;
+  constexpr NoteId kNoteId = 62;
+  MidiEventVec session;
+  MidiEvent on = MidiEvent::NoteOn(2016, 5, 26, 100);
+  on.noteId = kNoteId;
+  session.push_back(on);
+  MidiEvent off = MidiEvent::NoteOff(2112, 5, 26, 0);
+  off.noteId = kNoteId;
+  session.push_back(off);
+
+  NoteBaseline linear{};
+  TEST_ASSERT_TRUE(
+      findLinearNoteSpanForNoteId(session, kNoteId, 2, linear, UINT32_MAX, kLoopLength));
+  TEST_ASSERT_EQUAL_UINT32(2016u, linear.startTick);
+  TEST_ASSERT_EQUAL_UINT32(2112u, linear.endTick);
+  TEST_ASSERT_EQUAL_UINT8(26u, linear.pitch);
+}
+
+/// Note-offs must receive their note-on's id regardless of the track's output channel, otherwise
+/// nothing downstream can pair the note by NoteId.
+void test_stamp_note_ids_pairs_within_store_channel() {
+  MidiEventVec session;
+  MidiEvent onA = MidiEvent::NoteOn(0, 5, 26, 100);
+  onA.noteId = 11;
+  session.push_back(onA);
+  MidiEvent onB = MidiEvent::NoteOn(48, 9, 26, 100);
+  onB.noteId = 12;
+  session.push_back(onB);
+  session.push_back(MidiEvent::NoteOff(96, 9, 26, 0));
+  session.push_back(MidiEvent::NoteOff(144, 5, 26, 0));
+
+  stampNoteIdsOntoPairedNoteOffs(session);
+
+  // Each off takes the id of the note-on on its own channel, never across channels.
+  TEST_ASSERT_EQUAL_UINT32(12u, session[2].noteId);
+  TEST_ASSERT_EQUAL_UINT32(11u, session[3].noteId);
+}
+
 void test_is_moving_note_overlap_scratch_entry() {
   NoteEditFocus focus;
   focus.active = true;
@@ -794,6 +1405,72 @@ void test_is_moving_note_overlap_scratch_entry() {
   TEST_ASSERT_TRUE(isMovingNoteOverlapScratchEntry(focus, 32, {94, 100, 1424, 191}));
   TEST_ASSERT_TRUE(isMovingNoteOverlapScratchEntry(focus, kInvalidNoteId, {94, 100, 1424, 191}));
   TEST_ASSERT_FALSE(isMovingNoteOverlapScratchEntry(focus, 79, {79, 100, 1490, 1535}));
+}
+
+void test_evict_overlap_scratch_when_overlap_target_selected() {
+  constexpr NoteId kOverlapId = 10;
+  constexpr NoteId kOtherOverlapId = 11;
+  NoteEditFocus focus;
+  focus.active = true;
+
+  OverlapNote shortened{};
+  shortened.noteId = kOverlapId;
+  shortened.baseline = {67, 100, 426, 619};
+  shortened.state = OverlapNoteStoreState::Shortened;
+  shortened.shortenedEndTick = 569;
+  focus.overlapNotes[kOverlapId] = shortened;
+
+  OverlapNote hidden{};
+  hidden.noteId = kOtherOverlapId;
+  hidden.baseline = {60, 100, 619, 907};
+  hidden.state = OverlapNoteStoreState::Hidden;
+  focus.overlapNotes[kOtherOverlapId] = hidden;
+
+  TEST_ASSERT_TRUE(evictOverlapScratchForSelectedNote(focus, kOverlapId));
+  TEST_ASSERT_EQUAL(1, static_cast<int>(focus.overlapNotes.size()));
+  TEST_ASSERT_NULL(findOverlapNoteEntry(focus, kOverlapId));
+  TEST_ASSERT_NOT_NULL(findOverlapNoteEntry(focus, kOtherOverlapId));
+
+  TEST_ASSERT_FALSE(evictOverlapScratchForSelectedNote(focus, kInvalidNoteId));
+  TEST_ASSERT_FALSE(evictOverlapScratchForSelectedNote(focus, kOverlapId));
+}
+
+void test_select_overlap_target_evicts_shortened_scratch_session_log() {
+  // session_20260804_180228 @519.5s: pitch=67 start=426 shortened to 569; select then move must not
+  // leave overlapNotes self-collision on the mover.
+  constexpr NoteId kOverlapId = 67;
+  constexpr uint32_t kLoopLength = 1536;
+  NoteEditFocus focus;
+  focus.active = true;
+  focus.movingNoteId = kOverlapId;
+
+  OverlapNote shortened{};
+  shortened.noteId = kOverlapId;
+  shortened.baseline = {67, 100, 426, 619};
+  shortened.state = OverlapNoteStoreState::Shortened;
+  shortened.shortenedEndTick = 569;
+  focus.overlapNotes[kOverlapId] = shortened;
+
+  focus.commitBaseline = {67, 100, 426, 898};
+  focus.last = focus.commitBaseline;
+  focus.movingNoteRange = {426, 898};
+  focus.baselineMap[kOverlapId] = {67, 100, 426, 619};
+
+  TEST_ASSERT_TRUE(evictOverlapScratchForSelectedNote(focus, kOverlapId));
+  TEST_ASSERT_EQUAL(0, static_cast<int>(focus.overlapNotes.size()));
+  TEST_ASSERT_FALSE(noteEditFocusHasPendingCommit(focus));
+
+  MidiEventVec session;
+  MidiEvent on = MidiEvent::NoteOn(426, 1, 67, 100);
+  on.noteId = kOverlapId;
+  session.push_back(on);
+  session.push_back(MidiEvent::NoteOff(898, 1, 67, 0));
+
+  NoteBaseline linear{};
+  TEST_ASSERT_TRUE(
+      findLinearNoteSpanForNoteId(session, kOverlapId, 1, linear, 426, kLoopLength));
+  TEST_ASSERT_EQUAL_UINT32(426u, linear.startTick);
+  TEST_ASSERT_EQUAL_UINT32(898u, linear.endTick);
 }
 
 void test_pitch_linear_focus_no_spurious_length_after_sync() {
@@ -958,6 +1635,85 @@ void test_find_linear_off_for_note_id_ignores_same_pitch_neighbor_off() {
   MidiEvent* off = findLinearOffForNoteId(session, moverOn, kMoverId, kLoopLength);
   TEST_ASSERT_NOT_NULL(off);
   TEST_ASSERT_EQUAL_UINT32(1595u, off->tick);
+}
+
+void test_find_linear_off_for_note_id_prefers_nearest_same_pitch_duplicate_off() {
+  // session_20260805_122352.log: after overlap restore+move, a stale tagged off at the prior
+  // mover end must not inflate focus.last or move length when a nearer off exists.
+  constexpr NoteId kMoverId = 68;
+  constexpr uint32_t kLoopLength = 2304;
+  MidiEventVec session;
+  MidiEvent moverOn = MidiEvent::NoteOn(288, 1, 23, 100);
+  moverOn.noteId = kMoverId;
+  session.push_back(moverOn);
+  MidiEvent liveOff = MidiEvent::NoteOff(383, 1, 23, 0);
+  liveOff.noteId = kMoverId;
+  session.push_back(liveOff);
+  MidiEvent staleOff = MidiEvent::NoteOff(431, 1, 23, 0);
+  staleOff.noteId = kMoverId;
+  session.push_back(staleOff);
+
+  MidiEvent* off = findLinearOffForNoteId(session, moverOn, kMoverId, kLoopLength);
+  TEST_ASSERT_NOT_NULL(off);
+  TEST_ASSERT_EQUAL_UINT32(383u, off->tick);
+
+  NoteEditFocus focus;
+  focus.active = true;
+  focus.movingNoteId = kMoverId;
+  focus.commitBaseline = {23, 100, 1344, 1439};
+  focus.last = {23, 100, 288, 431};
+  focus.movingNoteRange = {288, 431};
+  TEST_ASSERT_TRUE(syncNoteEditFocusLinearFromSessionStore(focus, session, 1, kLoopLength));
+  TEST_ASSERT_EQUAL_UINT32(288u, focus.last.startTick);
+  TEST_ASSERT_EQUAL_UINT32(383u, focus.last.endTick);
+}
+
+void test_find_linear_off_for_note_id_ignores_cross_pitch_same_note_id_off() {
+  // session_20260804_205144.log: mover pitch 65 @1050 must not pair to pitch 64 off @1289.
+  constexpr NoteId kSharedId = 42;
+  constexpr uint32_t kLoopLength = 2400;
+  MidiEventVec session;
+  MidiEvent moverOn = MidiEvent::NoteOn(1050, 1, 65, 100);
+  moverOn.noteId = kSharedId;
+  session.push_back(moverOn);
+  MidiEvent moverOff = MidiEvent::NoteOff(1145, 1, 65, 0);
+  moverOff.noteId = kSharedId;
+  session.push_back(moverOff);
+  MidiEvent strayOff = MidiEvent::NoteOff(1289, 1, 64, 0);
+  strayOff.noteId = kSharedId;
+  session.push_back(strayOff);
+
+  MidiEvent* off = findLinearOffForNoteId(session, moverOn, kSharedId, kLoopLength);
+  TEST_ASSERT_NOT_NULL(off);
+  TEST_ASSERT_EQUAL_UINT32(1145u, off->tick);
+  TEST_ASSERT_EQUAL_UINT8(65, off->data.noteData.note);
+}
+
+void test_sync_linear_focus_ignores_cross_pitch_same_note_id_off() {
+  constexpr NoteId kSharedId = 42;
+  constexpr uint32_t kLoopLength = 2400;
+  NoteEditFocus focus;
+  focus.active = true;
+  focus.movingNoteId = kSharedId;
+  focus.commitBaseline = {65, 100, 1050, 1145};
+  focus.last = focus.commitBaseline;
+  focus.movingNoteRange = {1050, 1145};
+
+  MidiEventVec session;
+  MidiEvent moverOn = MidiEvent::NoteOn(1050, 1, 65, 100);
+  moverOn.noteId = kSharedId;
+  session.push_back(moverOn);
+  MidiEvent moverOff = MidiEvent::NoteOff(1145, 1, 65, 0);
+  moverOff.noteId = kSharedId;
+  session.push_back(moverOff);
+  MidiEvent strayOff = MidiEvent::NoteOff(1289, 1, 64, 0);
+  strayOff.noteId = kSharedId;
+  session.push_back(strayOff);
+
+  TEST_ASSERT_TRUE(syncNoteEditFocusLinearFromSessionStore(focus, session, 1, kLoopLength));
+  TEST_ASSERT_EQUAL_UINT32(1050u, focus.last.startTick);
+  TEST_ASSERT_EQUAL_UINT32(1145u, focus.last.endTick);
+  TEST_ASSERT_EQUAL_UINT8(65, focus.last.pitch);
 }
 
 void test_moving_note_linear_span_ignores_neighbor_lifo_off() {
@@ -1470,6 +2226,166 @@ void test_find_note_on_for_moving_note_edit_commit_baseline_preferred_start() {
   TEST_ASSERT_EQUAL_UINT32(672u, moverOn->tick);
 }
 
+void test_baseline_map_diff_pending_commit_when_mover_unchanged() {
+  constexpr uint32_t loopLength = 2304;
+  constexpr uint8_t channel = 1;
+  constexpr NoteId kInnerId = 3;
+  constexpr NoteId kMoverId = 9;
+
+  NoteEditFocus focus;
+  focus.active = true;
+  focus.movingNoteId = kMoverId;
+  focus.commitBaseline = {23, 100, 192, 384};
+  focus.last = focus.commitBaseline;
+  focus.movingNoteRange = {192, 384};
+  focus.baselineMap[kInnerId] = {93, 100, 144, 192};
+  focus.baselineMap[kMoverId] = focus.commitBaseline;
+  recordChangedOverlapNote(focus, kInnerId);
+
+  MidiEventVec store;
+  store.push_back(noteOnWithNoteId(192, channel, 23, 100, kMoverId));
+  store.push_back(MidiEvent::NoteOff(384, channel, 23, 0));
+
+  TEST_ASSERT_FALSE(noteEditFocusHasPendingCommit(focus));
+  TEST_ASSERT_TRUE(
+      noteEditFocusHasPendingBaselineMapDiff(focus, store, channel, loopLength));
+
+  const EditPassVec rows = buildPreCommitEditPasses(focus, channel, &store, loopLength);
+  TEST_ASSERT_EQUAL(1, static_cast<int>(rows.size()));
+  TEST_ASSERT_EQUAL(static_cast<int>(EditActionType::Delete),
+                    static_cast<int>(rows[0].actionType));
+  TEST_ASSERT_EQUAL(kInnerId, rows[0].targetNoteId);
+}
+
+void test_baseline_map_diff_reads_store_channel_live_span() {
+  constexpr uint32_t loopLength = 2304;
+  constexpr uint8_t trackChannel = 2;
+  constexpr uint8_t storeChannel = 5;
+  constexpr NoteId kOverlapId = 91;
+  constexpr NoteId kMoverId = 78;
+
+  NoteEditFocus focus;
+  focus.active = true;
+  focus.movingNoteId = kMoverId;
+  focus.commitBaseline = {25, 100, 960, 1344};
+  focus.last = focus.commitBaseline;
+  focus.baselineMap[kOverlapId] = {25, 100, 912, 1008};
+  focus.baselineMap[kMoverId] = focus.commitBaseline;
+  recordChangedOverlapNote(focus, kOverlapId);
+
+  MidiEventVec store;
+  store.push_back(noteOnWithNoteId(912, storeChannel, 25, 100, kOverlapId));
+  MidiEvent shortenedOff = MidiEvent::NoteOff(959, storeChannel, 25, 0);
+  shortenedOff.noteId = kOverlapId;
+  store.push_back(shortenedOff);
+  store.push_back(noteOnWithNoteId(960, storeChannel, 25, 100, kMoverId));
+  MidiEvent moverOff = MidiEvent::NoteOff(1344, storeChannel, 25, 0);
+  moverOff.noteId = kMoverId;
+  store.push_back(moverOff);
+
+  TEST_ASSERT_TRUE(
+      noteEditFocusHasPendingBaselineMapDiff(focus, store, trackChannel, loopLength));
+
+  const EditPassVec rows = buildPreCommitEditPasses(focus, trackChannel, &store, loopLength);
+  TEST_ASSERT_EQUAL(1, static_cast<int>(rows.size()));
+  TEST_ASSERT_EQUAL(static_cast<int>(EditActionType::Update),
+                    static_cast<int>(rows[0].actionType));
+  TEST_ASSERT_EQUAL(EditPropertyType::Length, rows[0].propertyType);
+  TEST_ASSERT_EQUAL(kOverlapId, rows[0].targetNoteId);
+  TEST_ASSERT_EQUAL_UINT32(959u, rows[0].endTick);
+}
+
+void test_session_171134_canonical_commit_rows_from_final_session_store() {
+  // session_20260805_171134: commit must serialize what the edit became, not the
+  // apply-owned action history. Mover noteId=36 moved left; overlap noteId=31 is hidden.
+  constexpr uint32_t loopLength = 3072;
+  constexpr uint8_t channel = 1;
+  constexpr NoteId kOverlapId = 31;
+  constexpr NoteId kMoverId = 36;
+
+  NoteEditFocus focus;
+  focus.active = true;
+  focus.movingNoteId = kMoverId;
+  focus.commitBaseline = {12, 100, 1488, 1679};
+  focus.last = {12, 100, 1248, 1439};
+  focus.baselineMap[kOverlapId] = {12, 100, 1296, 1391};
+  focus.baselineMap[kMoverId] = focus.commitBaseline;
+  recordChangedOverlapNote(focus, kOverlapId);
+
+  MidiEventVec store;
+  store.push_back(noteOnWithNoteId(1248, channel, 12, 100, kMoverId));
+  MidiEvent moverOff = MidiEvent::NoteOff(1439, channel, 12, 0);
+  moverOff.noteId = kMoverId;
+  store.push_back(moverOff);
+
+  TEST_ASSERT_TRUE(noteEditFocusHasPendingBaselineMapDiff(focus, store, channel, loopLength));
+
+  const EditPassVec rows = buildPreCommitEditPasses(focus, channel, &store, loopLength);
+  TEST_ASSERT_EQUAL(2, static_cast<int>(rows.size()));
+  TEST_ASSERT_EQUAL(static_cast<int>(EditActionType::Delete),
+                    static_cast<int>(rows[0].actionType));
+  TEST_ASSERT_EQUAL(kOverlapId, rows[0].targetNoteId);
+  TEST_ASSERT_EQUAL(static_cast<int>(EditActionType::Update),
+                    static_cast<int>(rows[1].actionType));
+  TEST_ASSERT_EQUAL(EditPropertyType::NoteRange, rows[1].propertyType);
+  TEST_ASSERT_EQUAL(kMoverId, rows[1].targetNoteId);
+  TEST_ASSERT_EQUAL_UINT32(1248u, rows[1].startTick);
+  TEST_ASSERT_EQUAL_UINT32(1439u, rows[1].endTick);
+}
+
+void test_focus_rebuild_pending_after_pitch_move_stale_display_hint_session_193016() {
+  // session_20260805_193016: pitch change + coarse move left session store at 2303/pitch 12 while
+  // display cache still pointed at the pre-move tick; stale preferredStartTick missed the live span
+  // and rebuild aligned commitBaseline to stale display, dropping pending commit on deselect.
+  constexpr NoteId kMoverId = 36;
+  constexpr uint32_t loopLength = 3072;
+
+  MidiEventVec committed;
+  MidiEvent committedOn = MidiEvent::NoteOn(1583, 1, 26, 100);
+  committedOn.noteId = kMoverId;
+  committed.push_back(committedOn);
+  committed.push_back(MidiEvent::NoteOff(1774, 1, 26, 0));
+
+  MidiEventVec session;
+  MidiEvent liveOn = MidiEvent::NoteOn(2303, 1, 12, 100);
+  liveOn.noteId = kMoverId;
+  session.push_back(liveOn);
+  session.push_back(MidiEvent::NoteOff(2494, 1, 12, 0));
+
+  NoteBaseline committedSpan;
+  TEST_ASSERT_TRUE(
+      findLinearNoteSpanForNoteId(committed, kMoverId, 1, committedSpan, UINT32_MAX, loopLength));
+  NoteBaseline liveSpan;
+  TEST_ASSERT_TRUE(
+      findLinearNoteSpanForNoteId(session, kMoverId, 1, liveSpan, UINT32_MAX, loopLength));
+  TEST_ASSERT_FALSE(
+      findLinearNoteSpanForNoteId(session, kMoverId, 1, liveSpan, 1583, loopLength));
+
+  NoteEditFocus focus;
+  focus.active = true;
+  focus.movingNoteId = kMoverId;
+  focus.commitBaseline = committedSpan;
+  focus.last = liveSpan;
+  focus.baselineMap[kMoverId] = committedSpan;
+  focus.movingNoteRange.start = liveSpan.startTick;
+  focus.movingNoteRange.end = liveSpan.endTick;
+
+  TEST_ASSERT_TRUE(noteEditFocusHasPendingCommit(focus));
+
+  const EditPassVec rows = buildPreCommitEditPasses(focus, 1, &session, loopLength);
+  TEST_ASSERT_EQUAL(2, static_cast<int>(rows.size()));
+  const auto noteRangeIt = std::find_if(rows.begin(), rows.end(), [](const EditPass& row) {
+    return row.targetNoteId == kMoverId && row.propertyType == EditPropertyType::NoteRange;
+  });
+  const auto pitchIt = std::find_if(rows.begin(), rows.end(), [](const EditPass& row) {
+    return row.targetNoteId == kMoverId && row.propertyType == EditPropertyType::Pitch;
+  });
+  TEST_ASSERT_TRUE(noteRangeIt != rows.end());
+  TEST_ASSERT_TRUE(pitchIt != rows.end());
+  TEST_ASSERT_EQUAL_UINT32(2303u, noteRangeIt->startTick);
+  TEST_ASSERT_EQUAL_UINT8(12, pitchIt->pitch);
+}
+
 void test_pitch_pre_commit_requires_active_focus() {
   constexpr uint32_t kLoopLength = 768;
   NoteEditFocus focus;
@@ -1494,15 +2410,503 @@ void test_pitch_pre_commit_requires_active_focus() {
   TEST_ASSERT_EQUAL(focus.movingNoteId, rowsActive[0].targetNoteId);
 }
 
+void test_project_pitch23_shortened_overlap_after_apply_actions() {
+  // session_20260805_141706: ShortenNote noteId=83 (192-239) + MoveNote noteId=89 (240-431).
+  constexpr uint32_t kLoopLength = 1536;
+  constexpr uint8_t channel = 1;
+  constexpr NoteId kOverlapId = 83;
+  constexpr NoteId kMoverId = 89;
+
+  NoteEditFocus focus;
+  focus.active = true;
+  focus.movingNoteId = kMoverId;
+  focus.commitBaseline = {23, 100, 336, 527};
+  focus.last = {23, 100, 288, 479};
+  focus.baselineMap[kOverlapId] = {23, 100, 192, 287};
+  focus.baselineMap[kMoverId] = focus.commitBaseline;
+
+  MidiEventVec store;
+  store.push_back(noteOnWithNoteId(192, channel, 23, 100, kOverlapId));
+  store.push_back(MidiEvent::NoteOff(287, channel, 23, 0));
+  store.push_back(noteOnWithNoteId(288, channel, 23, 100, kMoverId));
+  store.push_back(MidiEvent::NoteOff(479, channel, 23, 0));
+  const NoteUtils::DisplayNoteVec committedBase =
+      NoteUtils::reconstructDisplayNotes(store, kLoopLength, false);
+
+  EditSessionActions actions;
+  EditSessionAction shorten{};
+  shorten.type = EditSessionActionType::ShortenNote;
+  shorten.targetNoteId = kOverlapId;
+  shorten.startTick = 192;
+  shorten.endTick = 239;
+  shorten.pitch = 23;
+  actions.push_back(shorten);
+  EditSessionAction move{};
+  move.type = EditSessionActionType::MoveNote;
+  move.targetNoteId = kMoverId;
+  move.startTick = 240;
+  move.endTick = 431;
+  move.pitch = 23;
+  actions.push_back(move);
+  applyEditSessionActions(actions, store, focus, channel, kLoopLength);
+
+  const NoteUtils::DisplayNoteVec projected =
+      projectNoteEditDisplayNotes(committedBase, store, focus, channel, kLoopLength);
+
+  bool foundShortenedOverlap = false;
+  for (const NoteUtils::DisplayNote& dn : projected) {
+    if (dn.noteId == kOverlapId) {
+      TEST_ASSERT_EQUAL_UINT32(192u, dn.startTick);
+      TEST_ASSERT_EQUAL_UINT32(239u, dn.endTick);
+      foundShortenedOverlap = true;
+    }
+    if (dn.noteId == kMoverId) {
+      TEST_ASSERT_EQUAL_UINT32(240u, dn.startTick);
+      TEST_ASSERT_EQUAL_UINT32(431u, dn.endTick);
+    }
+  }
+  TEST_ASSERT_TRUE(foundShortenedOverlap);
+}
+
+void test_project_pitch22_hidden_overlap_after_apply_actions() {
+  // session_20260805_141706: HideNote noteId=87 + MoveNote noteId=72 on pitch 22.
+  constexpr uint32_t kLoopLength = 1536;
+  constexpr uint8_t channel = 1;
+  constexpr NoteId kOverlapId = 87;
+  constexpr NoteId kMoverId = 72;
+
+  NoteEditFocus focus;
+  focus.active = true;
+  focus.movingNoteId = kMoverId;
+  focus.commitBaseline = {22, 100, 240, 479};
+  focus.last = {22, 100, 192, 431};
+  focus.baselineMap[kOverlapId] = {22, 100, 192, 287};
+  focus.baselineMap[kMoverId] = focus.commitBaseline;
+
+  MidiEventVec store;
+  store.push_back(noteOnWithNoteId(192, channel, 22, 100, kOverlapId));
+  store.push_back(MidiEvent::NoteOff(287, channel, 22, 0));
+  store.push_back(noteOnWithNoteId(240, channel, 22, 100, kMoverId));
+  store.push_back(MidiEvent::NoteOff(479, channel, 22, 0));
+  const NoteUtils::DisplayNoteVec committedBase =
+      NoteUtils::reconstructDisplayNotes(store, kLoopLength, false);
+
+  EditSessionActions actions;
+  EditSessionAction hide{};
+  hide.type = EditSessionActionType::HideNote;
+  hide.targetNoteId = kOverlapId;
+  hide.startTick = 192;
+  hide.endTick = 239;
+  hide.pitch = 22;
+  actions.push_back(hide);
+  EditSessionAction move{};
+  move.type = EditSessionActionType::MoveNote;
+  move.targetNoteId = kMoverId;
+  move.startTick = 192;
+  move.endTick = 431;
+  move.pitch = 22;
+  actions.push_back(move);
+  applyEditSessionActions(actions, store, focus, channel, kLoopLength);
+
+  const NoteUtils::DisplayNoteVec projected =
+      projectNoteEditDisplayNotes(committedBase, store, focus, channel, kLoopLength);
+
+  for (const NoteUtils::DisplayNote& dn : projected) {
+    TEST_ASSERT_FALSE(dn.noteId == kOverlapId);
+    if (dn.noteId == kMoverId) {
+      TEST_ASSERT_EQUAL_UINT32(192u, dn.startTick);
+      TEST_ASSERT_EQUAL_UINT32(431u, dn.endTick);
+    }
+  }
+}
+
+void test_project_untouched_same_pitch_neighbor_keeps_reconstruction_not_live_span() {
+  // session_20260805_143545: after overlap shorten on pitch 12, untouched same-pitch grid notes
+  // must not inherit the mover's distant off via findLinearNoteSpan live overlay.
+  constexpr uint32_t kLoopLength = 3072;
+  constexpr uint8_t channel = 1;
+  constexpr NoteId kOverlapId = 74;
+  constexpr NoteId kMoverId = 76;
+  constexpr NoteId kGridId = 99;
+
+  NoteEditFocus focus;
+  focus.active = true;
+  focus.movingNoteId = kMoverId;
+  focus.last = {12, 100, 2160, 2351};
+  focus.commitBaseline = {12, 100, 2160, 2351};
+  focus.baselineMap[kOverlapId] = {12, 100, 2112, 2495};
+  focus.baselineMap[kMoverId] = focus.commitBaseline;
+  focus.baselineMap[kGridId] = {12, 100, 2208, 2255};
+  recordChangedOverlapNote(focus, kOverlapId);
+
+  MidiEventVec store;
+  store.push_back(noteOnWithNoteId(2112, channel, 12, 100, kOverlapId));
+  MidiEvent overlapOff = MidiEvent::NoteOff(2159, channel, 12, 0);
+  overlapOff.noteId = kOverlapId;
+  store.push_back(overlapOff);
+  store.push_back(noteOnWithNoteId(2160, channel, 12, 100, kMoverId));
+  MidiEvent moverOff = MidiEvent::NoteOff(2351, channel, 12, 0);
+  moverOff.noteId = kMoverId;
+  store.push_back(moverOff);
+  store.push_back(noteOnWithNoteId(2208, channel, 12, 100, kGridId));
+  MidiEvent gridOff = MidiEvent::NoteOff(2255, channel, 12, 0);
+  gridOff.noteId = kGridId;
+  store.push_back(gridOff);
+
+  const NoteUtils::DisplayNoteVec committedBase =
+      NoteUtils::reconstructDisplayNotes(store, kLoopLength, false);
+
+  const NoteUtils::DisplayNoteVec projected =
+      projectNoteEditDisplayNotes(committedBase, store, focus, channel, kLoopLength);
+
+  bool foundGrid = false;
+  for (const NoteUtils::DisplayNote& dn : projected) {
+    if (dn.noteId == kGridId) {
+      TEST_ASSERT_EQUAL_UINT32(2208u, dn.startTick);
+      TEST_ASSERT_EQUAL_UINT32(2255u, dn.endTick);
+      foundGrid = true;
+    }
+  }
+  TEST_ASSERT_TRUE(foundGrid);
+}
+
+void test_project_pitch_restore_does_not_append_committed_overlap_161117() {
+  // session_20260805_161117: restored committed noteId=40 must not append when committed base
+  // lacks stable NoteId match (visual-cache note without id).
+  constexpr uint32_t kLoopLength = 3072;
+  constexpr uint8_t channel = 1;
+  constexpr NoteId kMoverId = 23;
+  constexpr NoteId kRestoredId = 40;
+
+  NoteUtils::DisplayNoteVec committedBase;
+  committedBase.push_back({kInvalidNoteId, 30, 100, 0, 3071});
+  committedBase.push_back({kMoverId, 29, 100, 1296, 1487});
+
+  NoteEditFocus focus;
+  focus.active = true;
+  focus.movingNoteId = kMoverId;
+  focus.commitBaseline = {29, 100, 1296, 1487};
+  focus.last = {29, 100, 1296, 1487};
+  focus.baselineMap[kRestoredId] = {30, 100, 0, 3071};
+  focus.baselineMap[kMoverId] = focus.commitBaseline;
+  recordChangedOverlapNote(focus, kRestoredId);
+
+  MidiEventVec store;
+  store.push_back(noteOnWithNoteId(0, channel, 30, 100, kRestoredId));
+  MidiEvent off40 = MidiEvent::NoteOff(3071, channel, 30, 0);
+  off40.noteId = kRestoredId;
+  store.push_back(off40);
+  store.push_back(noteOnWithNoteId(1296, channel, 29, 100, kMoverId));
+  MidiEvent off23 = MidiEvent::NoteOff(1487, channel, 29, 0);
+  off23.noteId = kMoverId;
+  store.push_back(off23);
+
+  const NoteUtils::DisplayNoteVec projected =
+      projectNoteEditDisplayNotes(committedBase, store, focus, channel, kLoopLength);
+  TEST_ASSERT_EQUAL(committedBase.size(), projected.size());
+  bool foundRestored = false;
+  for (const NoteUtils::DisplayNote& dn : projected) {
+    if (dn.noteId == kRestoredId) {
+      foundRestored = true;
+      TEST_ASSERT_EQUAL_UINT8(30, dn.note);
+      TEST_ASSERT_EQUAL_UINT32(0u, dn.startTick);
+      TEST_ASSERT_EQUAL_UINT32(3071u, dn.endTick);
+    }
+  }
+  TEST_ASSERT_TRUE(foundRestored);
+}
+
+void test_project_non_participant_baseline_note_is_copied_when_live_lookup_misses_161117() {
+  // session_20260805_161117: non-participant baseline notes must copy from committed base when
+  // live session-store lookup misses (display shrink regression while browsing).
+  constexpr uint32_t kLoopLength = 3072;
+  constexpr uint8_t channel = 1;
+  constexpr NoteId kMoverId = 23;
+  constexpr NoteId kStableId = 55;
+
+  NoteUtils::DisplayNoteVec committedBase;
+  committedBase.push_back({kStableId, 12, 100, 1152, 1343});
+  committedBase.push_back({kMoverId, 29, 100, 1296, 1487});
+
+  NoteEditFocus focus;
+  focus.active = true;
+  focus.movingNoteId = kMoverId;
+  focus.commitBaseline = {29, 100, 1296, 1487};
+  focus.last = {29, 100, 1296, 1487};
+  focus.baselineMap[kStableId] = {12, 100, 1152, 1343};
+  focus.baselineMap[kMoverId] = focus.commitBaseline;
+
+  MidiEventVec store;
+  store.push_back(noteOnWithNoteId(1296, channel, 29, 100, kMoverId));
+  MidiEvent off23 = MidiEvent::NoteOff(1487, channel, 29, 0);
+  off23.noteId = kMoverId;
+  store.push_back(off23);
+
+  const NoteUtils::DisplayNoteVec projected =
+      projectNoteEditDisplayNotes(committedBase, store, focus, channel, kLoopLength);
+  TEST_ASSERT_EQUAL(committedBase.size(), projected.size());
+  bool foundStable = false;
+  for (const NoteUtils::DisplayNote& dn : projected) {
+    if (dn.noteId == kStableId) {
+      foundStable = true;
+      TEST_ASSERT_EQUAL_UINT8(12, dn.note);
+      TEST_ASSERT_EQUAL_UINT32(1152u, dn.startTick);
+      TEST_ASSERT_EQUAL_UINT32(1343u, dn.endTick);
+    }
+  }
+  TEST_ASSERT_TRUE(foundStable);
+}
+
+void test_project_hidden_changed_overlap_not_selectable_when_live_lookup_misses_162324() {
+  // session_20260805_162324: overlap hidden via HideNote must not remain selectable from
+  // committed base when live session-store lookup misses (reselect commit would Delete it).
+  constexpr uint32_t kLoopLength = 3072;
+  constexpr uint8_t channel = 1;
+  constexpr NoteId kMoverId = 31;
+  constexpr NoteId kHiddenId = 26;
+
+  NoteUtils::DisplayNoteVec committedBase;
+  committedBase.push_back({kHiddenId, 26, 100, 1248, 1343});
+  committedBase.push_back({kMoverId, 26, 100, 1296, 1391});
+
+  NoteEditFocus focus;
+  focus.active = true;
+  focus.movingNoteId = kMoverId;
+  focus.commitBaseline = {26, 100, 1296, 1391};
+  focus.last = {26, 100, 1200, 1295};
+  focus.baselineMap[kHiddenId] = {26, 100, 1248, 1343};
+  focus.baselineMap[kMoverId] = focus.commitBaseline;
+  recordChangedOverlapNote(focus, kHiddenId);
+
+  MidiEventVec store;
+  store.push_back(noteOnWithNoteId(1200, channel, 26, 100, kMoverId));
+  MidiEvent off31 = MidiEvent::NoteOff(1295, channel, 26, 0);
+  off31.noteId = kMoverId;
+  store.push_back(off31);
+
+  const NoteUtils::DisplayNoteVec projected =
+      projectNoteEditDisplayNotes(committedBase, store, focus, channel, kLoopLength);
+  for (const NoteUtils::DisplayNote& dn : projected) {
+    TEST_ASSERT_FALSE(dn.noteId == kHiddenId);
+  }
+  bool foundMover = false;
+  for (const NoteUtils::DisplayNote& dn : projected) {
+    if (dn.noteId == kMoverId) {
+      foundMover = true;
+      TEST_ASSERT_EQUAL_UINT32(1200u, dn.startTick);
+      TEST_ASSERT_EQUAL_UINT32(1295u, dn.endTick);
+    }
+  }
+  TEST_ASSERT_TRUE(foundMover);
+}
+
+void test_session_163142_highlight_resolver_prefers_mover_over_shortened_overlap() {
+  // session_20260805_163142: after commit, stale selectedTick (overlap display start) must not
+  // win over focus.last mover span on the same pitch lane.
+  constexpr uint32_t kLoopLength = 3072;
+  constexpr uint32_t kLoopStart = 960;
+  constexpr NoteId kOverlapId = 34;
+  constexpr NoteId kMoverId = 37;
+
+  NoteEditFocus focus;
+  focus.active = true;
+  focus.movingNoteId = kMoverId;
+  focus.last = {30, 100, 2256, 2351};
+  focus.commitBaseline = focus.last;
+
+  EditorSelection selection;
+  selection.primaryNote = kMoverId;
+  selection.selectedTick = 1248;
+  selection.selectedNotes.push_back(kMoverId);
+
+  std::vector<NoteUtils::DisplayNote> filtered;
+  filtered.push_back({10, 12, 100, 1920, 2015});
+  filtered.push_back({kOverlapId, 30, 100, 2208, 2255});
+  filtered.push_back({kMoverId, 30, 100, 2256, 2351});
+
+  const int byStaleTick = NoteEditDisplaySnapshot::filteredDisplayNoteIndexForSelection(
+      selection, filtered, kLoopStart, kLoopLength, false);
+  TEST_ASSERT_EQUAL(-1, byStaleTick);
+
+  const int byFocus = NoteEditDisplaySnapshot::resolveNoteEditHighlightIndex(
+      selection, filtered, focus, kLoopStart, kLoopLength, false);
+  TEST_ASSERT_EQUAL(2, byFocus);
+  TEST_ASSERT_EQUAL(kMoverId, filtered[static_cast<size_t>(byFocus)].noteId);
+  TEST_ASSERT_EQUAL_UINT32(2256u, filtered[static_cast<size_t>(byFocus)].startTick);
+  TEST_ASSERT_EQUAL_UINT32(95u,
+                           filtered[static_cast<size_t>(byFocus)].endTick -
+                               filtered[static_cast<size_t>(byFocus)].startTick);
+}
+
+void test_session_163142_moving_note_index_uses_loop_origin_display_bracket() {
+  constexpr uint32_t kLoopLength = 3072;
+  constexpr uint32_t kLoopStart = 960;
+  constexpr NoteId kMoverId = 37;
+
+  std::vector<NoteUtils::DisplayNote> filtered;
+  filtered.push_back({34, 30, 100, 2208, 2255});
+  filtered.push_back({kMoverId, 30, 100, 2256, 2351});
+
+  TEST_ASSERT_EQUAL(1, filteredDisplayNoteIndexForMovingNote(filtered, kMoverId, 2256u,
+                                                              kLoopStart, kLoopLength));
+}
+
+void test_project_post_commit_no_phantom_note_153954() {
+  // session_20260805_153954: commit rows target noteId=35 length and noteId=31 move only, but full
+  // session-store reconstruction grows the display list by one phantom note on pitch 12.
+  constexpr uint32_t kLoopLength = 3072;
+  constexpr uint8_t channel = 1;
+  constexpr NoteId kMoverId = 31;
+  constexpr NoteId kLengthId = 35;
+  constexpr NoteId kOverlapId = 23;
+  constexpr NoteId kGridId = 99;
+  constexpr NoteId kPitch71Id = 41;
+
+  MidiEventVec committedEvents;
+  committedEvents.push_back(noteOnWithNoteId(1776, channel, 12, 100, kOverlapId));
+  MidiEvent off23 = MidiEvent::NoteOff(1967, channel, 12, 0);
+  off23.noteId = kOverlapId;
+  committedEvents.push_back(off23);
+  committedEvents.push_back(noteOnWithNoteId(1920, channel, 12, 100, kMoverId));
+  MidiEvent off31 = MidiEvent::NoteOff(2016, channel, 12, 0);
+  off31.noteId = kMoverId;
+  committedEvents.push_back(off31);
+  committedEvents.push_back(noteOnWithNoteId(2208, channel, 12, 100, kGridId));
+  MidiEvent off99 = MidiEvent::NoteOff(2255, channel, 12, 0);
+  off99.noteId = kGridId;
+  committedEvents.push_back(off99);
+  committedEvents.push_back(noteOnWithNoteId(2304, channel, 12, 100, kLengthId));
+  MidiEvent off35 = MidiEvent::NoteOff(2496, channel, 12, 0);
+  off35.noteId = kLengthId;
+  committedEvents.push_back(off35);
+  committedEvents.push_back(noteOnWithNoteId(720, channel, 71, 100, kPitch71Id));
+  MidiEvent off71 = MidiEvent::NoteOff(767, channel, 71, 0);
+  off71.noteId = kPitch71Id;
+  committedEvents.push_back(off71);
+
+  const NoteUtils::DisplayNoteVec committedBase =
+      NoteUtils::reconstructDisplayNotes(committedEvents, kLoopLength, false);
+
+  NoteEditFocus focus;
+  focus.active = true;
+  focus.movingNoteId = kMoverId;
+  focus.commitBaseline = {12, 100, 1920, 2016};
+  focus.last = {12, 100, 2352, 2447};
+  focus.baselineMap[kOverlapId] = {12, 100, 1776, 1967};
+  focus.baselineMap[kMoverId] = focus.commitBaseline;
+  focus.baselineMap[kLengthId] = {12, 100, 2304, 2496};
+  focus.baselineMap[kGridId] = {12, 100, 2208, 2255};
+  focus.baselineMap[kPitch71Id] = {71, 100, 720, 767};
+  recordChangedOverlapNote(focus, kLengthId);
+
+  MidiEventVec store = committedEvents;
+
+  EditSessionActions actions;
+  EditSessionAction changeLength{};
+  changeLength.type = EditSessionActionType::ChangeLength;
+  changeLength.targetNoteId = kLengthId;
+  changeLength.startTick = 2304;
+  changeLength.endTick = 2351;
+  changeLength.pitch = 12;
+  changeLength.velocity = 100;
+  actions.push_back(changeLength);
+  EditSessionAction move{};
+  move.type = EditSessionActionType::MoveNote;
+  move.targetNoteId = kMoverId;
+  move.startTick = 2352;
+  move.endTick = 2447;
+  move.pitch = 12;
+  move.velocity = 100;
+  actions.push_back(move);
+  applyEditSessionActions(actions, store, focus, channel, kLoopLength);
+  // Untagged same-pitch pair in the mutable store inflates full reconstruction without a committed
+  // visual-cache counterpart (session_153954 class phantom).
+  store.push_back(MidiEvent::NoteOn(2064, channel, 12, 100));
+  store.push_back(MidiEvent::NoteOff(2111, channel, 12, 0));
+
+  const NoteUtils::DisplayNoteVec fullRecon =
+      NoteUtils::reconstructDisplayNotes(store, kLoopLength, false);
+  TEST_ASSERT_GREATER_THAN(committedBase.size(), fullRecon.size());
+
+  const NoteUtils::DisplayNoteVec legacyProjected =
+      projectNoteEditDisplayNotes(store, focus, channel, kLoopLength);
+  TEST_ASSERT_GREATER_THAN(committedBase.size(), legacyProjected.size());
+
+  const NoteUtils::DisplayNoteVec projected =
+      projectNoteEditDisplayNotes(committedBase, store, focus, channel, kLoopLength);
+  TEST_ASSERT_EQUAL(committedBase.size(), projected.size());
+
+  for (const NoteUtils::DisplayNote& committed : committedBase) {
+    if (committed.noteId == kMoverId || committed.noteId == kLengthId) {
+      continue;
+    }
+    bool found = false;
+    for (const NoteUtils::DisplayNote& dn : projected) {
+      if (dn.noteId != committed.noteId) {
+        continue;
+      }
+      found = true;
+      TEST_ASSERT_EQUAL_UINT8(committed.note, dn.note);
+      TEST_ASSERT_EQUAL_UINT32(committed.startTick, dn.startTick);
+      TEST_ASSERT_EQUAL_UINT32(committed.endTick, dn.endTick);
+      TEST_ASSERT_TRUE(dn.endTick < kLoopLength);
+    }
+    TEST_ASSERT_TRUE(found);
+  }
+
+  bool foundLength = false;
+  bool foundMover = false;
+  for (const NoteUtils::DisplayNote& dn : projected) {
+    if (dn.noteId == kLengthId) {
+      foundLength = true;
+      TEST_ASSERT_EQUAL_UINT32(2304u, dn.startTick);
+      TEST_ASSERT_EQUAL_UINT32(2351u, dn.endTick);
+    }
+    if (dn.noteId == kMoverId) {
+      foundMover = true;
+      TEST_ASSERT_EQUAL_UINT32(2352u, dn.startTick);
+      TEST_ASSERT_EQUAL_UINT32(2447u, dn.endTick);
+    }
+  }
+  TEST_ASSERT_TRUE(foundLength);
+  TEST_ASSERT_TRUE(foundMover);
+}
+
+void test_display_fingerprint_changes_when_overlap_geometry_changes() {
+  NoteEditFocus focus;
+  focus.active = true;
+  focus.movingNoteId = 72;
+  focus.last = {22, 100, 240, 335};
+  const uint32_t fpBefore = noteEditDisplayCacheFingerprint(focus);
+  recordChangedOverlapNote(focus, 87);
+  const uint32_t fpAfter = noteEditDisplayCacheFingerprint(focus);
+  TEST_ASSERT_NOT_EQUAL(fpBefore, fpAfter);
+}
+
 int main(int /*argc*/, char** /*argv*/) {
   UNITY_BEGIN();
   RUN_TEST(test_baseline_map_includes_moving_note_at_select);
+  RUN_TEST(test_populate_baseline_full_loop_includes_cross_pitch);
+  RUN_TEST(test_populate_baseline_includes_store_channel_notes);
+  RUN_TEST(test_populate_baseline_maps_committed_pitch_start_via_live_note_id);
+  RUN_TEST(test_populate_baseline_keys_by_live_note_id_not_pass_id);
+  RUN_TEST(test_hidden_note_baseline_survives_for_pre_commit_delete);
+  RUN_TEST(test_hidden_overlap_same_start_as_mover_emits_delete_not_length);
+  RUN_TEST(test_unchanged_overlap_live_mismatch_emits_no_length_row);
+  RUN_TEST(test_committed_overlap_delete_clears_focus_restore_authority);
+  RUN_TEST(test_committed_overlap_update_promotes_shortened_focus_baseline);
+  RUN_TEST(test_session_134610_shortened_overlap_commit_rows);
+  RUN_TEST(test_unresolved_baseline_entry_emits_no_delete_row);
+  RUN_TEST(test_restored_overlap_note_leaves_no_pending_delete);
   RUN_TEST(test_populate_baseline_map_for_edit_closure_wrap_sibling);
+  RUN_TEST(test_populate_baseline_map_includes_linear_same_pitch_neighbor);
   RUN_TEST(test_a1_length_updates_moving_note_range_not_commit_baseline);
   RUN_TEST(test_a1_no_pending_length_when_moving_note_range_matches_baseline);
   RUN_TEST(test_note_edit_focus_has_pending_commit_geometry_and_overlap);
   RUN_TEST(test_can_apply_simple_pitch_change_without_lane_collision);
   RUN_TEST(test_can_apply_simple_pitch_change_blocks_inner_overlap_on_target_lane);
+  RUN_TEST(test_can_apply_simple_pitch_change_blocks_store_channel_target_lane);
+  RUN_TEST(test_can_apply_simple_pitch_change_blocks_when_baseline_map_lane_needs_restore);
   RUN_TEST(test_inner_overlap_note_in_moving_note_range);
   RUN_TEST(test_overlap_note_effective_end_shortened_vs_hidden);
   RUN_TEST(test_shorten_under_49_ticks_classifies_as_hidden_candidate);
@@ -1513,6 +2917,17 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_filter_excludes_hidden_overlap_note);
   RUN_TEST(test_filter_includes_moving_note_when_hidden_overlap_baseline_matches);
   RUN_TEST(test_filter_includes_shortened_overlap_note);
+  RUN_TEST(test_filter_shortened_overlap_uses_live_span_when_reconstruct_mispairs);
+  RUN_TEST(test_project_pitch23_shortened_overlap_after_apply_actions);
+  RUN_TEST(test_project_pitch22_hidden_overlap_after_apply_actions);
+  RUN_TEST(test_project_untouched_same_pitch_neighbor_keeps_reconstruction_not_live_span);
+  RUN_TEST(test_project_pitch_restore_does_not_append_committed_overlap_161117);
+  RUN_TEST(test_project_non_participant_baseline_note_is_copied_when_live_lookup_misses_161117);
+  RUN_TEST(test_project_hidden_changed_overlap_not_selectable_when_live_lookup_misses_162324);
+  RUN_TEST(test_session_163142_highlight_resolver_prefers_mover_over_shortened_overlap);
+  RUN_TEST(test_session_163142_moving_note_index_uses_loop_origin_display_bracket);
+  RUN_TEST(test_project_post_commit_no_phantom_note_153954);
+  RUN_TEST(test_display_fingerprint_changes_when_overlap_geometry_changes);
   RUN_TEST(test_filter_excludes_inner_under_moving_note);
   RUN_TEST(test_filtered_display_note_index_for_note_ref);
   RUN_TEST(test_sync_linear_focus_avoids_spurious_display_length_commit);
@@ -1527,7 +2942,11 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_selection_index_geometry_move_prefers_focus_display_bracket);
   RUN_TEST(test_is_plausible_storage_span_rejects_lifo_mispair);
   RUN_TEST(test_find_linear_note_span_rejects_mispaired_off);
+  RUN_TEST(test_find_linear_note_span_resolves_across_store_channel);
+  RUN_TEST(test_stamp_note_ids_pairs_within_store_channel);
   RUN_TEST(test_is_moving_note_overlap_scratch_entry);
+  RUN_TEST(test_evict_overlap_scratch_when_overlap_target_selected);
+  RUN_TEST(test_select_overlap_target_evicts_shortened_scratch_session_log);
   RUN_TEST(test_pitch_linear_focus_no_spurious_length_after_sync);
   RUN_TEST(test_linear_baseline_for_overlap_restore_rejects_display_wrap_end);
   RUN_TEST(test_baseline_map_prefers_linear_span_over_wrap_projection);
@@ -1536,6 +2955,9 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_linear_baseline_for_overlap_restore_shortened_keeps_original_end);
   RUN_TEST(test_linear_baseline_for_overlap_restore_hidden_uses_hide_snapshot_not_session);
   RUN_TEST(test_find_linear_off_for_note_id_ignores_same_pitch_neighbor_off);
+  RUN_TEST(test_find_linear_off_for_note_id_prefers_nearest_same_pitch_duplicate_off);
+  RUN_TEST(test_find_linear_off_for_note_id_ignores_cross_pitch_same_note_id_off);
+  RUN_TEST(test_sync_linear_focus_ignores_cross_pitch_same_note_id_off);
   RUN_TEST(test_moving_note_linear_span_ignores_neighbor_lifo_off);
   RUN_TEST(test_resolve_linear_note_span_for_overlap_prefers_baseline_map);
   RUN_TEST(test_find_linear_note_span_mover_length_ignores_neighbor_off);
@@ -1554,6 +2976,10 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_find_note_on_for_moving_note_edit_note_id_over_same_pitch_decoy);
   RUN_TEST(test_find_note_on_for_moving_note_edit_note_id_channel_fallback);
   RUN_TEST(test_find_note_on_for_moving_note_edit_commit_baseline_preferred_start);
+  RUN_TEST(test_baseline_map_diff_pending_commit_when_mover_unchanged);
+  RUN_TEST(test_baseline_map_diff_reads_store_channel_live_span);
+  RUN_TEST(test_session_171134_canonical_commit_rows_from_final_session_store);
+  RUN_TEST(test_focus_rebuild_pending_after_pitch_move_stale_display_hint_session_193016);
   RUN_TEST(test_pitch_pre_commit_requires_active_focus);
   return UNITY_END();
 }

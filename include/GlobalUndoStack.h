@@ -19,6 +19,8 @@ enum class UndoEntryKind : uint8_t {
   OverdubPassAdded = 1,
   ClearSlot = 2,
   LoopBoundaryChange = 3,
+  /// Scoped edit batch is independently undoable on the global stack (U:). Does **not** mean
+  /// the NOTE_EDIT UI session ended — checkpoints may occur mid-session when edits become durable.
   NoteEditPassClosed = 4,
   ControlChangeEditPassClosed = 5,
 };
@@ -57,6 +59,9 @@ using UndoEntryVec = std::vector<UndoEntry, ExternalMemoryFirstAllocator<UndoEnt
 
 /// On-disk token before per-track undo stacks in `runtime.bundle.bin` footer (wire bytes: "GUS3").
 constexpr uint32_t kGlobalUndoStackToken = 0x33535547UL;
+/// Optional undo-stack header extension before entries (wire bytes: "STK1") — scoped-edit fields
+/// on **NoteEditPassClosed** / **ControlChangeEditPassClosed** rows. Legacy stacks omit this token.
+constexpr uint32_t kGlobalUndoStackScopedEditExtensionToken = 0x314B5453UL;
 /// Optional footer extension before `selectedSlotIndex[]` (wire bytes: "SLOT").
 constexpr uint32_t kFooterSelectedSlotExtensionToken = 0x534C4F54UL;
 

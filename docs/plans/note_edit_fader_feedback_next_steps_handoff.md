@@ -119,7 +119,7 @@ Firmware: `noteRelativeTick` in `sendCoarseFaderPosition` **shipped**; `sendFine
 
 | Step | Remove |
 |------|--------|
-| §12.1 | `sendStartNotePitchbend`, `performSelectnoteFaderUpdate`, `sendSelectnoteFaderUpdate`, `sendFaderUpdate`, `sendFaderPosition`, `syncMotorsForDisplaySelection`, `drainDependentFaderOutboundUntilDone` |
+| §12.1 | `sendStartNotePitchbend`, `performSelectnoteFaderUpdate`, `sendSelectnoteFaderUpdate`, `sendFaderUpdate`, `sendFaderPosition`, `syncMotorsForDisplaySelection`, `drainDependentFaderOutboundUntilDone` — **removed from `src/`** (2026-08); see `scheduleSelectDependentMotorSync` / `processDeferredFaderMotorSync` |
 | §12.2 | `lastSelectnoteSentTime`, duplicate `PITCHBEND_IGNORE_PERIOD`, `faderHandler`, `faderProcessor`, `markFaderSent` |
 | §12.3 | `Trigger::NoteSelectDependent`, `Trigger::Fader1BracketOnly`, unreachable `scheduleOtherFaderUpdates(FADER_SELECT)` |
 | §12.4 | Index-only gate helpers in `NoteEditFaderOutboundPlan.h`; migrate tests to `shouldApplySelectionOnNoteIdChange` |

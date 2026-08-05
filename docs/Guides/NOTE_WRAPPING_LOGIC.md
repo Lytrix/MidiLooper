@@ -208,6 +208,19 @@ Gracefully handles malformed MIDI data where note-off events don't have correspo
 
 ## Integration Points
 
+### NOTE_EDIT live geometry (not display wrap)
+
+Display reconstruction in this guide is **read-only** for piano roll / LEDs. **NOTE_EDIT** overlap hide, shorten, and restore during move / length / pitch uses a separate pipeline that mutates **linear** pairs in **`NoteEditSession.store`**:
+
+- Normative spec: [`openspec/specs/edit-session-action-geometry/spec.md`](../../openspec/specs/edit-session-action-geometry/spec.md)
+- Design narrative: archived [`openspec/changes/archive/2026-08-05-edit-session-action-geometry/design.md`](../../openspec/changes/archive/2026-08-05-edit-session-action-geometry/design.md)
+- Movement guide: [`MOVE_NOTE_LOGIC.md`](MOVE_NOTE_LOGIC.md)
+- Storage / pairing: [`LOOP_MIDI_STORAGE_AND_VALIDATION.md`](LOOP_MIDI_STORAGE_AND_VALIDATION.md) § NOTE_EDIT live store
+
+**Edit projection (D20)** linearizes spans before overlap analysis; that is independent of the display wrap rules in §2 above.
+
+**HITL regression matrix (D14):** full per-interaction device matrix is **parked** — see [`m8_edit_note_edit_hitl_automation_refinement.md`](../plans/m8_edit_note_edit_hitl_automation_refinement.md). Interim smoke: `edit_minimal` preset only.
+
 ### Display System
 - **File**: `DisplayManager.cpp`
 - **Method**: `drawNoteBar()`

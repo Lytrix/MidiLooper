@@ -14,21 +14,14 @@ Transition verification is always required for baseline validation in this repos
 
 Preferred entry point: `host_midi_hitl.py run --preset base` (legacy `host_midi_automation_baseline.py` delegates to the same preset). See [`docs/plans/hitl_modular_scenarios_enhancement.md`](docs/plans/hitl_modular_scenarios_enhancement.md).
 
-### Mode B — two terminals (preferred)
+### Default — managed dual-session (one command)
 
-Terminal 1 — external serial capture (owns USB serial):
-
-```bash
-.venv/bin/python scripts/capture_session.py --port /dev/cu.usbmodem154944801 --boot-wait 12
-```
-
-Terminal 2 — MIDI only; tail the capture log (no `--serial-port`):
+`host_midi_hitl` **spawns `capture_session.py` and HITL** as two background processes. You do **not** open a second terminal or pass `--follow-current-session`.
 
 ```bash
 .venv/bin/python scripts/host_midi_hitl.py run --preset base \
  --midi-out "Teensy" --midi-in "Teensy" \
- --follow-current-session \
- --track-number 5 --midi-channel 5 \
+ --track-number 5 --loop-slot 1 --midi-channel 5 \
  --record-bars 2 --overdub-bars 2 \
  --no-fixed-grid-notes --start-transport \
  --overdub-start-delay-bars 0 --overdub-start-delay-beats 1 \
@@ -36,7 +29,25 @@ Terminal 2 — MIDI only; tail the capture log (no `--serial-port`):
  --undo-redo-delay-ms 3000
 ```
 
-After Ctrl+C on capture, verify-only replay:
+Capture defaults: `--capture-port /dev/cu.usbmodem154944801` (no boot wait by default; pass `--capture-boot-wait N` if needed). Console prefixes: `[hitl-capture]` / `[capture]` for the capture process, `[hitl]` / scenario logs for MIDI.
+
+Layered first smoke (`record_overdub` only):
+
+```bash
+.venv/bin/python scripts/host_midi_hitl.py run --layered --preset base \
+  --midi-out "Teensy" --midi-in "Teensy" \
+  --track-number 5 --loop-slot 1 --midi-channel 5
+```
+
+Layered UIP gate preset:
+
+```bash
+.venv/bin/python scripts/host_midi_hitl.py run --layered --preset uip_5_5 \
+  --midi-out "Teensy" --midi-in "Teensy" \
+  --track-number 5 --loop-slot 1 --midi-channel 5
+```
+
+Verify-only replay (no device, no capture spawn):
 
 ```bash
 .venv/bin/python scripts/host_midi_hitl.py run --preset base \
@@ -44,12 +55,13 @@ After Ctrl+C on capture, verify-only replay:
  --track-number 5 --midi-channel 5 --record-bars 2 --overdub-bars 2
 ```
 
-### Mode A — single terminal (built-in serial)
+### Opt-in — built-in serial (single process)
 
-Do **not** run `capture_session.py` at the same time.
+Pass `--no-managed-capture` and `--serial-port`. Do **not** run `capture_session.py` at the same time.
 
 ```bash
 .venv/bin/python scripts/host_midi_hitl.py run --preset base \
+ --no-managed-capture \
  --midi-out "Teensy" --midi-in "Teensy" \
  --serial-port /dev/cu.usbmodem154944801 \
  --boot-settle-ms 10000 \
@@ -73,9 +85,9 @@ an optional hard cap.
 
 Undo/redo still runs after the **last** overdub stop (tests most recent pass).
 
-**Never mix modes:** do not pass `--serial-port` while `capture_session.py` holds the port.
+**Never mix capture owners:** do not pass `--serial-port` on a managed run (default). Use `--no-managed-capture` first.
 
-**Mode A serial close:** after `final_wait_ms`, the script drains trailing USB serial for up to `--serial-close-drain-ms` (default 10s) until no new lines for `--serial-close-idle-ms` (default 750ms), then snapshots and closes the port. Closing USB serial still reboots the Teensy (expected); the drain captures deferred undo/redo/`#CAP` lines from the firmware TX ring first. Increase `--serial-close-drain-ms` on long undo/redo or persistence-heavy runs if verification misses tail markers.
+**Built-in serial close:** after `final_wait_ms`, the script drains trailing USB serial for up to `--serial-close-drain-ms` (default 10s) until no new lines for `--serial-close-idle-ms` (default 750ms), then snapshots and closes the port. Closing USB serial still reboots the Teensy (expected); the drain captures deferred undo/redo/`#CAP` lines from the firmware TX ring first. Increase `--serial-close-drain-ms` on long undo/redo or persistence-heavy runs if verification misses tail markers.
 
 ## Clock and transport proxy
 
@@ -86,7 +98,7 @@ Firmware **does not** log per-pulse MIDI clock (`0xF8`) in `#CAP,MI,...` lines (
 | `*_clock_pulses_seen` (192 gates) | Host **USB MIDI in** clock poll, **or** wall-clock tempo proxy when serial capture shows transport |
 | Serial first-note offset / transitions | `#CAP` lines: `ST,Track`, `MI,U` notes, `BPM`, `BAR` |
 
-When `--serial-port` (Mode A) or `--follow-current-session` (Mode B) is active and recent `#CAP,BPM` or `#CAP,BAR` lines appear, the host paces bar-synced phases via **wall-clock tempo proxy** (prefers BPM from serial tail, else `--tempo-bpm`). Console shows `[info] Bar sync via wall-clock tempo proxy`.
+When managed capture (default) or `--serial-port` is active and recent `#CAP,BPM` or `#CAP,BAR` lines appear, the host paces bar-synced phases via **wall-clock tempo proxy** (prefers BPM from serial tail, else `--tempo-bpm`). Console shows `[info] Bar sync via wall-clock tempo proxy`.
 
 Shared modules: `scripts/hitl/transport_clock.py`, `scripts/hitl/serial_transport.py`, `scripts/hitl/serial_timing.py`.
 
@@ -118,15 +130,15 @@ The run is considered valid only when all are true:
 
 Serial capture must run at the same time as the test for every validated baseline run.
 
-**Mode B (preferred):** `capture_session.py` in terminal 1; HITL with `--follow-current-session` in terminal 2; optional `--verify-serial-log` replay after capture stops.
+**Default:** managed dual-session — `host_midi_hitl` spawns `capture_session.py` automatically.
 
-**Mode A:** built-in `--serial-port` on HITL only (no external capture).
+**Opt-in built-in serial:** `--no-managed-capture` + `--serial-port` (no external capture).
 
 Do not treat a run as verified if serial capture failed (`Device not configured`), transition lines are missing, or first-note timing checks fail.
 
 ## Upload/build behavior for this flow
 
 - **Default:** HITL does not build or upload. Flash manually when firmware changed: `pio run -e teensy41-capture-serial -t upload`
-- **Opt-in:** pass `--build-upload` to `host_midi_hitl.py` (upload resets Teensy — restart `capture_session.py` afterward)
+- **Opt-in:** pass `--build-upload` to `host_midi_hitl.py` (upload resets Teensy; managed capture restarts on the next run)
 - Do not upload automatically unless the user confirms or passes `--build-upload`
 - If USB/MIDI disappears, check `pio device list` and retry only after ports are visible again

@@ -43,6 +43,14 @@ inline bool shouldFlushSelectDependentMotorSync(uint32_t nowMs, uint32_t lastSel
     return (nowMs - lastSelectFaderTimeMs) >= kSelectFaderMotorIdleMs;
 }
 
+inline bool noteEditDisplayPaintedForMotorSync(uint32_t paintedEpoch, uint32_t requiredPaintEpoch) {
+    return paintedEpoch >= requiredPaintEpoch;
+}
+
+inline bool selectDependentSettleExpired(uint32_t nowMs, uint32_t settleUntilMs) {
+    return settleUntilMs == 0 || nowMs >= settleUntilMs;
+}
+
 /**
  * DROID motorfader burst: three position sends (12-tick gaps), notegate on with the third,
  * short note (24 ticks) for fast motor refresh. Matches Ableton-validated fader2/3/4 clips.

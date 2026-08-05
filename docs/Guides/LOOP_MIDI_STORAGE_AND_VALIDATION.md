@@ -49,7 +49,9 @@ flowchart LR
 
 - **`LoopPasses::materialize()`** — merge active capture passes, then overlay active **editPasses** in storage order (`EditPassType::Note` apply path; explicit `ControlChange` no-op stub until CC edit apply ships).
 - **`saveNoteEditPass()`** — one committed **editPass** row; may share a **noteEditPassIndex** batch.
-- **`closeNoteEditPass()`** — note-edit exit / overdub-while-editing boundary; pushes **NoteEditPassClosed** for all **editPass** ids in the closed batch.
+- **`closeNoteEditPass()`** — note-edit exit / overdub-while-editing boundary; pushes **NoteEditPassClosed** for **editPass** ids not yet checkpointed on the global stack.
+- **`markCurrentEditBatchDurable()`** — mid-session durability boundary (autosave, slot depart); pushes **NoteEditPassClosed** for newly committed ids while **NoteEditSession** stays open. **NoteEditPassClosed** means the batch is independently undoable (**U:**), not that NOTE_EDIT ended.
+- **Durability invariant:** any **editPass** row persisted outside active **NoteEditSession** RAM must have a matching global undo entry with **`editPassIds`** (runtime bundle **STK1** extension serializes `editPassIndex`, `editPassType`, ids).
 - **§0.6.1 record routing** — at most one **recordPass** per slot; a second record stop routes to **overdubPass** (`effectiveCapturePassPhase` in `sealCapture`).
 - **SD v5** — `StorageLoopIo` writes **passes** to each **slot file** (slot file layout for capture passes + **editPasses** tail); `autosaveIntervalMs` (5 min) + urgent flush on note-edit exit when dirty.
 
@@ -213,7 +215,7 @@ For faster time-to-UI on large loops, follow [prioritized_boot_load_isolation_re
 
 ### NOTE_EDIT live store — pairing and overlap (EditSessionAction)
 
-While **NoteEditSession** is active, **`EditManager::noteEditSession.store`** holds **linear** note-on/note-off pairs (DEC-014). The **EditSessionAction** pipeline (see [`edit-session-action-geometry`](../../openspec/changes/edit-session-action-geometry/design.md)) is the sole live mutator for overlap geometry:
+While **NoteEditSession** is active, **`EditManager::noteEditSession.store`** holds **linear** note-on/note-off pairs (DEC-014). The **EditSessionAction** pipeline (see [`edit-session-action-geometry`](../../openspec/specs/edit-session-action-geometry/spec.md)) is the sole live mutator for overlap geometry:
 
 1. **Wrap** — display/wrapped segments are linearized via **Edit projection** (`IntervalProjection::projectEditIntervalsForAnalysis` / `resolveLinearNoteSpanForOverlap`); storage ticks stay linear.
 2. **Same pitch** — when a causing note overlaps a target on the **same pitch**, classify as **OverlapNoteOn** (mover hits target on), **OverlapNoteOff** (tail trim), or **CompleteCover** (swallow).
@@ -291,7 +293,7 @@ NOTE_EDIT **32nd** hide floor (D16) applies to overlap **edit** only. Capture **
 | `UndoEntryKind` | Push | Undo action |
 |-----------------|------|-------------|
 | **RecordPassAdded** / **OverdubPassAdded** | `commitCapturePass` publish | `setCapturePassState(Disabled)` |
-| **NoteEditPassClosed** / **ControlChangeEditPassClosed** | close scoped edit-pass batch | set referenced `editPasses[]` rows to **Disabled** |
+| **NoteEditPassClosed** / **ControlChangeEditPassClosed** | `closeNoteEditPass`, `markCurrentEditBatchDurable` | set referenced `editPasses[]` rows to **Disabled** |
 | **ClearSlot** | long-press clear (`pushClearTrackSnapshot`) | restore `beforeSnapshot` + geometry + track state |
 | **LoopBoundaryChange** | loop-start edit | restore prior loop start/length |
 
@@ -322,6 +324,8 @@ While **NoteEditSession** is active, `handleUndo` / `handleRedo` prefer session 
 - Push checks **split-tier** admission via **`canHeapAdmitSessionUndoEntry`**: internal payload vs **`HEAP_RESERVE_BYTES`** + internal heap free; `baselineMap` / `overlapNotes` vs external memory pool free when PSRAM is available. Failed push after reclaim: **`discardEventsCache()`** + one retry.
 
 Committed **editPass** rows store canonical **EditPass** row fields (SD v5); live **NoteEditSession.store** is materialized from **passes**; **E:** stack stores edit-scope metadata only.
+
+**E:** vs **U:** during NOTE_EDIT — **E:** = `NoteEditSessionUndoStack` (geometry/session RAM). **U:** = global stack pass undo; sidebar **U:** counts applied pass entries for the slot. Mid-session autosave calls **`markCurrentEditBatchDurable`** so reboot after interrupted NOTE_EDIT still has **U:** depth and undo can disable persisted **editPass** rows.
 
 ### Routing (`handleUndo`)
 

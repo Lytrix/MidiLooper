@@ -15,9 +15,10 @@
 #include "Globals.h"
 #include "MidiConfig.h"
 #include "Utils/NoteUtils.h"
+#include "Utils/SelectNavigation.h"
 #include "Utils/ValidationUtils.h"
 #include "Utils/SelectNavigation.h"
-#include <algorithm>
+#include "Utils/ValidationUtils.h"
 
 void EditSelectNoteState::onEnter(EditManager& manager, Track& track, uint32_t startTick) {
     logger.debug("EditSelectNoteState::onEnter at tick %lu", startTick);
@@ -83,9 +84,23 @@ void EditSelectNoteState::onButtonPress(EditManager& manager, Track& track) {
         // No note at this position - create a 32nd note
         logger.info("EditSelectNoteState: No note found, creating 32nd note at tick %lu", selectedTick);
         
+        const uint32_t loopLength = track.getLoopLength();
+        const uint32_t loopStartTick = track.getLoopStartTick();
+        const uint32_t bracketRel =
+            SelectNavigation::displayPhaseTick(selectedTick, loopLength);
+        const uint32_t storageTick =
+            SelectNavigation::noteStorageTick(bracketRel, loopStartTick, loopLength);
+
         // Push undo snapshot before creating note
         manager.beginGeometryMutation(track, NoteEditKind::Add, false);
-        const std::array<MidiEvent, 2> created = createDefaultNote(track, selectedTick);
+        const std::array<MidiEvent, 2> created = createDefaultNote(track, storageTick);
+        NoteUtils::DisplayNote createdDisplay{};
+        createdDisplay.noteId = created[0].noteId;
+        createdDisplay.note = created[0].data.noteData.note;
+        createdDisplay.velocity = created[0].data.noteData.velocity;
+        createdDisplay.startTick = created[0].tick;
+        createdDisplay.endTick = created[1].tick;
+        manager.applyCreatedNoteOverlapGeometry(track, createdDisplay);
         EditPass add{};
         add.passType = EditPassType::Note;
         add.actionType = EditActionType::Create;
@@ -96,7 +111,7 @@ void EditSelectNoteState::onButtonPress(EditManager& manager, Track& track) {
         track.invalidateCaches();
 
         // Select the newly created note and enter start note editing
-        manager.selectNoteAtBracket(track, selectedTick);
+        manager.selectNoteAtBracket(track, bracketRel);
         manager.setState(manager.getStartNoteState(), track, selectedTick);
     }
 }
@@ -225,7 +240,6 @@ bool EditSelectNoteState::resolveTargetPitchbend(EditManager& manager, Track& tr
         return false;
     }
 
-    const uint32_t loopStartTick = editManager.noteEditLoopStartTick(track);
     const std::vector<SelectNavigation::SelectNavSlot> slots =
         manager.buildSelectNavigationSlots(track, selectedTick, true);
 
@@ -237,8 +251,14 @@ bool EditSelectNoteState::resolveTargetPitchbend(EditManager& manager, Track& tr
 
     const EditorSelection& sel = manager.getNoteEditSessionState().selection;
     const auto navNotes = manager.selectableDisplayNotesForEditUi(track);
-    const int currentPosIndex = SelectNavigation::findSlotIndexForNoteId(
-        slots, navNotes, sel.primaryNote, selectedTick, loopLength);
+    int currentPosIndex = -1;
+    if (editorSelectionHasNote(sel)) {
+        currentPosIndex = SelectNavigation::findSlotIndexForNoteId(
+            slots, navNotes, sel.primaryNote, selectedTick, loopLength);
+    } else {
+        currentPosIndex =
+            SelectNavigation::findSlotIndexForSelection(slots, -1, selectedTick, loopLength);
+    }
 
     if (currentPosIndex < 0) {
         logger.log(CAT_MIDI, LOG_DEBUG,

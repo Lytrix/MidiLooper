@@ -177,8 +177,30 @@ Queues **do not merge**. Input on one driver **cancels** the opposite pending qu
 
 ### Live F1 select (Select kind)
 
-- `handleSelectFaderInput` → `applyNoteSelectFromFader1Pitchbend` → `applySelectNav(..., requestFaderSync=false)` → schedules **select-dependent** motor sync (F2+F3+F4), not full outbound pipeline restart.
+- `handleSelectFaderInput` → `applyNoteSelectFromFader1Pitchbend` → `applySelectNav(..., requestFaderSync=false)` → `armSelectDependentSettle` (resets 450 ms settle on each select change).
+- Motor sync for F2–F4 is **deferred** to `processDeferredFaderMotorSync` in `main.cpp` (after display frame), not flushed from `ControlSurfaceManager::update()`.
 - Motor sync fires on **`EditorSelection.primaryNote`** / `NoteId` change, not list-index-only shifts.
+
+### Select-dependent motor sync (display-first, 2026-08)
+
+After F1 note select, F2–F4 motors wait until display and settle gates pass. **F1 input is never blocked by settle** (regression fix: blocking F1 caused 450 ms sluggish select in `session_20260805_201251.log`).
+
+| Gate | Constant | Scope |
+|------|----------|--------|
+| F1 idle before dependent flush | `kSelectFaderMotorIdleMs` (300 ms) | Motor flush only |
+| Select-dependent settle | `SELECT_DEPENDENT_SETTLE_MS` (450 ms) | F2–F4 motor flush + dependent inbound stale-latch; **not** F1 |
+| Display paint epoch | `noteEditDisplayInvalidateEpoch_` / `noteEditDisplayPaintedEpoch_` | Motors flush only after display painted since selection |
+
+**Main loop order** (`main.cpp`):
+
+1. `controlSurfaceManager.update()`
+2. `maybeUpdateDisplayForNoteEditSelection` when `shouldForceNoteEditDisplayUpdate()`
+3. `runDeferredLoadAndDisplayFrame` (display paint)
+4. `processDeferredFaderMotorSync` — runs `processPendingSelectDependentMotorSync` when all gates pass
+
+**Scheduling:** `scheduleSelectDependentMotorSync` arms pending flush + required paint epoch; does not send motors immediately on select.
+
+See [`note_edit_select_relatch_after_geometry_refinement.md`](../plans/note_edit_select_relatch_after_geometry_refinement.md) for geometry-hold relatch (orthogonal to settle).
 
 ### Geometry edit kinds (Move / Length / Pitch / Add / Delete)
 

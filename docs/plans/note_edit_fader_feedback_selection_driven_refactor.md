@@ -8,6 +8,8 @@
 **Build env:** `teensy41-capture-serial`  
 **Capture port:** `/dev/cu.usbmodem154944801`
 
+> **2026-08 doc note:** `syncMotorsForDisplaySelection` and `drainDependentFaderOutboundUntilDone` were **removed** from `src/`. Current select motor path: `scheduleSelectDependentMotorSync` → `processDeferredFaderMotorSync` in `main.cpp` (see [`FADER_STATE_SYSTEM.md`](../Guides/FADER_STATE_SYSTEM.md) § Select-dependent motor sync).
+
 ---
 
 ## Status summary

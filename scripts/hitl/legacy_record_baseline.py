@@ -39,13 +39,22 @@ except ImportError as exc:  # pragma: no cover - import guard
 from hitl.capture_transitions import (
     _count_capture_state_entries,
     _count_capture_transitions,
+    _count_human_log_transition_events,
+    _effective_transition_actual,
+    _extract_recs_lengths_from_human_logs,
+    _is_cap_only_serial_issue,
     _latest_track_state,
+    _merge_transition_counts_with_evidence,
     _parse_cap_micros,
     _parse_disp_track_state,
     _record_entry_to_recording_count,
+    _serial_capture_sparse_for_verification,
+    _wait_for_armed_state,
+    _wait_for_recording_active,
     _wait_for_state_entry_count,
     _wait_for_transition_count,
 )
+from hitl.persistence_rows import extract_persistence_heap_rows
 from hitl.control_constants import (
     CONTROL_CHANNEL_1BASED,
     DEFAULT_LONG_RUN_BAR_THRESHOLD,
@@ -68,6 +77,7 @@ from hitl.control_constants import (
 from hitl.midi_io import (
     _drain_input_messages,
     _find_midi_port,
+    _send_long_press,
     _send_multi_short_press,
     _send_short_press,
 )
@@ -81,6 +91,7 @@ from hitl.serial_transport import (
     resolve_wall_tempo_for_proxy as _resolve_wall_tempo_for_proxy,
     serial_capture_active as _serial_capture_active,
     serial_follow_active as _serial_follow_active,
+    serial_global_transport_running,
     serial_lines_show_bpm_activity as _serial_lines_show_bpm_activity,
     serial_sequencer_running as _serial_sequencer_running,
     use_serial_transport_proxy as _use_serial_transport_proxy,
@@ -326,6 +337,12 @@ def _count_capture_record_markers(lines: list[str]) -> tuple[int, int]:
             reca += 1
         if "#CAP," in line and ",RECS," in line:
             recs += 1
+    if reca == 0 or recs == 0:
+        events = _count_human_log_transition_events(lines)
+        if reca == 0:
+            reca = events["record_entry"]
+        if recs == 0:
+            recs = events["recording_stopped"]
     return reca, recs
 
 
@@ -392,6 +409,13 @@ def _serial_has_clear_ignored_empty(lines: list[str], *, after_index: int = 0) -
     return False
 
 
+def _serial_has_clear_aborted(lines: list[str], *, after_index: int = 0) -> bool:
+    for line in lines[after_index:]:
+        if "Clear aborted" in line:
+            return True
+    return False
+
+
 def _serial_has_clear_completed(lines: list[str], *, after_index: int = 0) -> bool:
     for line in lines[after_index:]:
         if "MIDI: Clear Track" in line:
@@ -431,15 +455,47 @@ def _armed_transition_baseline(lines: list[str]) -> int:
 LOOP_SELECT_NOTE_BASE = 50  # reserved for slot-performance revert
 
 
+def _user_track_number(track_index: int) -> int:
+    """User-facing track row (1-based). Loop variables use 0-based track_index."""
+    return track_index + 1
+
+
 def _log_loop_slot_report_only(args: Any, *, track_index: int) -> None:
-    """Log --loop-slot intent before capture (Loops-row MIDI used at record arm when set)."""
+    """Log --loop-slot intent before capture."""
     loop_slot = int(getattr(args, "loop_slot", 0) or 0)
     if loop_slot <= 0:
         return
+    track_number = _user_track_number(track_index)
     print(
-        f"[info] --loop-slot {loop_slot} on track {track_index} "
-        "(record arm uses Loops row note "
-        f"{LOOP_SELECT_NOTE_BASE + loop_slot - 1}; omit --loop-slot to use Record button 36)"
+        f"[info] --loop-slot {loop_slot} on track {track_number} "
+        f"(select Loops row note {LOOP_SELECT_NOTE_BASE + loop_slot - 1} before clear; "
+        "record/overdub long press clears selected slot)"
+    )
+
+
+def _send_loop_slot_select_press(
+    out_port: mido.ports.BaseOutput,
+    *,
+    loop_slot: int,
+    press_ms: int,
+) -> None:
+    if loop_slot <= 0:
+        return
+    _send_short_press(
+        out_port,
+        note=LOOP_SELECT_NOTE_BASE + (loop_slot - 1),
+        channel_1based=CONTROL_CHANNEL_1BASED,
+        press_ms=press_ms,
+    )
+
+
+def _send_record_clear_long_press(out_port: mido.ports.BaseOutput, *, clear_press_ms: int) -> None:
+    """Long-press Record/Overdub (note 36) to clear the selected loop slot."""
+    _send_long_press(
+        out_port,
+        note=RECORD_BUTTON_NOTE,
+        channel_1based=CONTROL_CHANNEL_1BASED,
+        press_ms=clear_press_ms,
     )
 
 
@@ -451,25 +507,432 @@ def _stop_transport_before_clear(
     *,
     press_ms: int,
     phase_wait_ms: int,
+    after_index: int = 0,
 ) -> bool:
-    """Stop global transport before clear (clear while PLAYING leaves slot empty but not EMPTY).
+    """Stop global transport before clear (only when serial shows transport running).
 
     Returns True when a transport-stop press was sent (caller must restart before record).
     """
+    lines = serial_collector.snapshot() if serial_collector is not None else []
+    if serial_global_transport_running(lines, after_index=after_index):
+        print("[info] transport stop before clear long press")
+        _send_short_press(
+            out_port,
+            note=GLOBAL_TRANSPORT_NOTE,
+            channel_1based=CONTROL_CHANNEL_1BASED,
+            press_ms=press_ms,
+        )
+        time.sleep(phase_wait_ms / 1000.0)
+        return True
+    return False
+
+
+def _prepare_deferred_save_before_clear(
+    out_port: mido.ports.BaseOutput,
+    in_port: mido.ports.BaseInput,
+    serial_collector: Optional[Any],
+    args: Any,
+    *,
+    press_ms: int,
+    phase_wait_ms: int,
+    after_index: int = 0,
+    abort: RunAbort,
+) -> bool:
+    """Stop transport or wait on recent save activity before clear long press.
+
+    Only waits when the serial *tail* shows active save work (not the full follow-session
+    log). On timeout, logs a warning and returns True so clear can still be attempted.
+    """
+    del in_port
+    if serial_collector is None:
+        return True
+
+    from hitl.deferred_save_idle import (
+        deferred_save_active_in_suffix,
+        wait_for_deferred_save_idle_if_active,
+    )
+
+    lines = serial_collector.snapshot()
+    save_wait_anchor = len(lines)
+
+    if serial_global_transport_running(lines, after_index=after_index):
+        print("[info] transport stop before clear long press")
+        _send_short_press(
+            out_port,
+            note=GLOBAL_TRANSPORT_NOTE,
+            channel_1based=CONTROL_CHANNEL_1BASED,
+            press_ms=press_ms,
+        )
+        time.sleep(phase_wait_ms / 1000.0)
+        save_wait_anchor = len(serial_collector.snapshot())
+    elif not deferred_save_active_in_suffix(lines, after_index=after_index):
+        return True
+    else:
+        save_wait_anchor = after_index
+
+    save_drain_s = max(getattr(args, "deferred_save_wait_ms", 3000), 0) / 1000.0
+    if not wait_for_deferred_save_idle_if_active(
+        serial_collector,
+        after_line_index=save_wait_anchor,
+        log_prefix="[clear-precondition]",
+        abort=abort,
+        max_timeout_s=save_drain_s,
+    ):
+        print(
+            "[warn] deferred save still active after "
+            f"{save_drain_s:.0f}s — attempting clear anyway"
+        )
+    return True
+
+
+def _sleep_until_monotonic(target_mono: float, abort: RunAbort) -> bool:
+    while time.monotonic() < target_mono:
+        if abort.check() is not None:
+            return False
+        remaining = target_mono - time.monotonic()
+        time.sleep(min(max(remaining, 0.0), 0.005))
+    return True
+
+
+def _stream_fixture_record_wall_scheduled(
+    out_port: mido.ports.BaseOutput,
+    *,
+    fixture: tuple[Any, ...],
+    target_bars: int,
+    midi_channel_1based: int,
+    record_start_mono: float,
+    bpm: float,
+    stop_press_advance_clocks: int = 0,
+    press_ms: int = 120,
+    abort: RunAbort,
+) -> tuple[int, int, bool]:
+    """Emit fixture notes on absolute wall-time grid from transport record start.
+
+    Returns ``(note_on_count, clocks, record_stop_sent)``. Record stop is scheduled at
+    ``target_bars`` minus button debounce lead so the device stops at 2 bars, not after.
+    """
+    from hitl.control_constants import TICKS_PER_16TH_STEP, TICKS_PER_BAR
+    from hitl.serial_tick_anchor import (
+        TICKS_PER_CLOCK,
+        record_button_lead_seconds,
+        ticks_per_second_from_bpm,
+    )
+
+    ch = midi_channel_1based - 1
+    tps = ticks_per_second_from_bpm(bpm)
+    if tps <= 0:
+        return 0, 0, False
+
+    fixture_by_step: dict[int, list[Any]] = {}
+    for note in fixture:
+        fixture_by_step.setdefault(note.step, []).append(note)
+    for step_notes in fixture_by_step.values():
+        step_notes.sort(key=lambda n: n.pitch)
+
+    end_tick = target_bars * TICKS_PER_BAR
+    if stop_press_advance_clocks > 0:
+        end_tick = max(TICKS_PER_CLOCK, end_tick - stop_press_advance_clocks * TICKS_PER_CLOCK)
+    stop_lead_s = record_button_lead_seconds(press_ms=press_ms)
+    stop_mono = record_start_mono + end_tick / tps - stop_lead_s
+
+    print(
+        "[info] Fixture record via transport wall-time schedule "
+        f"({bpm:.1f} BPM, stop_at={end_tick} ticks lead={stop_lead_s:.3f}s)."
+    )
+
+    note_on_count = 0
+    stop_sent = False
+    pending_offs: list[tuple[float, int]] = []
+
+    def _emit_due_offs(now_mono: float) -> None:
+        nonlocal pending_offs
+        still: list[tuple[float, int]] = []
+        for off_mono, pitch in pending_offs:
+            if now_mono >= off_mono:
+                out_port.send(mido.Message("note_off", channel=ch, note=pitch, velocity=0))
+            else:
+                still.append((off_mono, pitch))
+        pending_offs = still
+
+    def _maybe_send_record_stop(now_mono: float) -> None:
+        nonlocal stop_sent
+        if stop_sent or now_mono < stop_mono:
+            return
+        _send_short_press(
+            out_port,
+            note=RECORD_BUTTON_NOTE,
+            channel_1based=CONTROL_CHANNEL_1BASED,
+            press_ms=press_ms,
+        )
+        stop_sent = True
+
+    for step in sorted(fixture_by_step):
+        step_tick = step * TICKS_PER_16TH_STEP
+        target_mono = record_start_mono + step_tick / tps
+        if not _sleep_until_monotonic(target_mono, abort):
+            break
+        now_mono = time.monotonic()
+        _emit_due_offs(now_mono)
+        for entry in fixture_by_step[step]:
+            out_port.send(mido.Message("note_on", channel=ch, note=entry.pitch, velocity=98))
+            note_on_count += 1
+            gate_ticks = entry.gate_steps * TICKS_PER_16TH_STEP
+            pending_offs.append((target_mono + gate_ticks / tps, entry.pitch))
+        _maybe_send_record_stop(now_mono)
+
+    if not stop_sent:
+        if _sleep_until_monotonic(stop_mono, abort):
+            _maybe_send_record_stop(time.monotonic())
+
+    _emit_due_offs(time.monotonic())
+
+    elapsed_s = max(0.0, time.monotonic() - record_start_mono)
+    clocks = int(elapsed_s * (bpm / 60.0) * 24.0)
+    return note_on_count, clocks, stop_sent
+
+
+def _stream_fixture_record_serial_anchored(
+    out_port: mido.ports.BaseOutput,
+    serial_collector: Any,
+    *,
+    fixture: tuple[Any, ...],
+    target_bars: int,
+    midi_channel_1based: int,
+    reca_start_tick: int,
+    bpm: float,
+    step_clocks: int = 6,
+    stop_press_advance_clocks: int = 0,
+    press_ms: int = 120,
+    abort: RunAbort,
+) -> tuple[int, int]:
+    """Emit fixture notes paced to Teensy transport via #CAP,BAR tick extrapolation."""
+    from host_midi_automation_edit_baseline import _emit_fixture_steps_for_clock
+
+    from hitl.control_constants import TICKS_PER_BAR
+    from hitl.serial_tick_anchor import TICKS_PER_CLOCK, TransportTickAnchor
+
+    ch = midi_channel_1based - 1
+    fixture_by_step: dict[int, list[Any]] = {}
+    for note in fixture:
+        fixture_by_step.setdefault(note.step, []).append(note)
+    for step_notes in fixture_by_step.values():
+        step_notes.sort(key=lambda n: n.pitch)
+
+    target_clocks = target_bars * MIDI_CLOCKS_PER_BAR
+    end_transport_tick = reca_start_tick + target_bars * TICKS_PER_BAR
+    stop_trigger_clock: Optional[int] = None
+    if stop_press_advance_clocks > 0:
+        stop_trigger_clock = max(1, target_clocks - stop_press_advance_clocks)
+
+    anchor = TransportTickAnchor.from_collector(
+        serial_collector,
+        bpm,
+        fallback_tick=reca_start_tick,
+    )
+    phase_clock = 0
+    note_on_count = 0
+    held: list[tuple[int, int]] = []
+    next_emit_step = 0
+    immediate_emitted = False
+    stop_sent = False
+
+    print(
+        "[info] Fixture record via serial transport tick anchor "
+        f"(RECA start={reca_start_tick}, {bpm:.1f} BPM)."
+    )
+
+    while anchor.estimated_tick() < end_transport_tick:
+        if abort.check() is not None:
+            break
+        anchor.refresh(serial_collector)
+        est_tick = anchor.estimated_tick()
+        transport_offset = max(0, est_tick - reca_start_tick)
+        target_phase_clock = min(target_clocks, transport_offset // TICKS_PER_CLOCK)
+        if phase_clock < target_phase_clock:
+            phase_clock += 1
+            if not immediate_emitted:
+                step_notes, next_emit_step, held = _emit_fixture_steps_for_clock(
+                    phase_clock=phase_clock,
+                    step_clocks=step_clocks,
+                    target_bars=target_bars,
+                    fixture_by_step=fixture_by_step,
+                    next_emit_step=0,
+                    out_port=out_port,
+                    ch=ch,
+                    held=held,
+                )
+                note_on_count += step_notes
+                immediate_emitted = True
+            else:
+                added, next_emit_step, held = _emit_fixture_steps_for_clock(
+                    phase_clock=phase_clock,
+                    step_clocks=step_clocks,
+                    target_bars=target_bars,
+                    fixture_by_step=fixture_by_step,
+                    next_emit_step=next_emit_step,
+                    out_port=out_port,
+                    ch=ch,
+                    held=held,
+                )
+                note_on_count += added
+
+            if (
+                stop_trigger_clock is not None
+                and not stop_sent
+                and phase_clock >= stop_trigger_clock
+            ):
+                _send_short_press(
+                    out_port,
+                    note=RECORD_BUTTON_NOTE,
+                    channel_1based=CONTROL_CHANNEL_1BASED,
+                    press_ms=press_ms,
+                )
+                stop_sent = True
+
+        time.sleep(0.002)
+
+    for note, _off_at in held:
+        out_port.send(mido.Message("note_off", channel=ch, note=note, velocity=0))
+
+    return note_on_count, phase_clock
+
+
+def _stream_fixture_record_bars(
+    out_port: mido.ports.BaseOutput,
+    in_port: mido.ports.BaseInput,
+    serial_collector: Optional[Any],
+    args: Any,
+    *,
+    fixture: tuple[Any, ...],
+    target_bars: int,
+    midi_channel_1based: int,
+    abort: RunAbort,
+    recording_confirmed_at: Optional[float] = None,
+    record_schedule_start_mono: Optional[float] = None,
+    skip_clock_preamble: bool = False,
+) -> tuple[int, int, bool, bool]:
+    """Bar-synced edit fixture record (shared by base+edit_record_fixture and edit_full).
+
+    Returns ``(note_on_count, clocks, stream_ok, record_stop_sent)``.
+    """
+    using_serial_proxy = False
+    wall_clock_tempo: Optional[float] = None
+    if skip_clock_preamble and serial_collector is not None:
+        using_serial_proxy = _use_serial_transport_proxy(args, serial_collector)
+        if using_serial_proxy:
+            wall_clock_tempo = _resolve_wall_tempo_for_proxy(
+                serial_collector, args, using_serial_proxy=True
+            )
+            clock_ok = True
+        else:
+            clock_ok = _clock_seen_within(in_port, 0.5)
+    else:
+        clock_ok, using_serial_proxy = _ensure_midi_clock_or_serial_proxy(
+            in_port,
+            out_port,
+            serial_collector,
+            args,
+            min_clocks=24,
+            timeout_s=2.0,
+            abort=abort,
+        )
+        if clock_ok:
+            wall_clock_tempo = _resolve_wall_tempo_for_proxy(
+                serial_collector, args, using_serial_proxy=using_serial_proxy
+            )
+    if not clock_ok:
+        print("[error] MIDI clock / serial transport proxy missing before fixture record.")
+        return 0, 0, False, False
+
+    proxy_bpm = wall_clock_tempo or float(getattr(args, "tempo_bpm", 120.0) or 120.0)
+    if using_serial_proxy:
+        print(
+            "[info] Bar sync via wall-clock tempo proxy "
+            f"({proxy_bpm:.1f} BPM) — Teensy clock not on USB MIDI in."
+        )
+
+    if record_schedule_start_mono is not None:
+        rec_notes, rec_clocks, stop_sent = _stream_fixture_record_wall_scheduled(
+            out_port,
+            fixture=fixture,
+            target_bars=target_bars,
+            midi_channel_1based=midi_channel_1based,
+            record_start_mono=record_schedule_start_mono,
+            bpm=proxy_bpm,
+            stop_press_advance_clocks=int(getattr(args, "stop_press_advance_clocks", 0) or 0),
+            press_ms=args.press_ms,
+            abort=abort,
+        )
+        return rec_notes, rec_clocks, True, stop_sent
+
+    if using_serial_proxy and serial_collector is not None:
+        from hitl.serial_tick_anchor import parse_record_start_tick
+
+        reca_start = parse_record_start_tick(serial_collector.snapshot())
+        if reca_start is not None:
+            rec_notes, rec_clocks = _stream_fixture_record_serial_anchored(
+                out_port,
+                serial_collector,
+                fixture=fixture,
+                target_bars=target_bars,
+                midi_channel_1based=midi_channel_1based,
+                reca_start_tick=reca_start,
+                bpm=proxy_bpm,
+                stop_press_advance_clocks=int(
+                    getattr(args, "stop_press_advance_clocks", 0) or 0
+                ),
+                press_ms=args.press_ms,
+                abort=abort,
+            )
+            return rec_notes, rec_clocks, True, False
+
+    from host_midi_automation_edit_baseline import _stream_fixture_record
+
+    rec_notes, rec_clocks = _stream_fixture_record(
+        out_port,
+        in_port,
+        fixture=fixture,
+        target_bars=target_bars,
+        midi_channel_1based=midi_channel_1based,
+        stop_press_advance_clocks=int(getattr(args, "stop_press_advance_clocks", 0) or 0),
+        press_ms=args.press_ms,
+        abort=abort,
+        wall_clock_tempo_bpm=wall_clock_tempo,
+        emit_immediate_first_step=True,
+        stream_start_monotonic=recording_confirmed_at,
+    )
+    return rec_notes, rec_clocks, True, False
+
+
+def _ensure_transport_stopped_before_record_arm(
+    out_port: mido.ports.BaseOutput,
+    in_port: mido.ports.BaseInput,
+    serial_collector: Optional[Any],
+    args: Any,
+    *,
+    press_ms: int,
+    phase_wait_ms: int,
+    after_index: int = 0,
+) -> bool:
+    """Stop transport so record arm uses the manual ARMED→transport→RECORDING path."""
     from hitl.serial_transport import use_serial_transport_proxy
 
-    latest: Optional[str] = None
-    if serial_collector is not None:
-        latest = _latest_track_state(serial_collector.snapshot())
+    lines = serial_collector.snapshot() if serial_collector is not None else []
+    suffix_latest = _latest_track_state(lines, after_index=after_index) if lines else None
 
-    should_stop = _clock_seen_within(in_port, 0.5)
-    if not should_stop and serial_collector is not None:
-        should_stop = use_serial_transport_proxy(args, serial_collector)
-    if latest in ("PLAYING", "OVERDUBBING", "RECORDING", "STOPPED_RECORDING"):
+    should_stop = serial_global_transport_running(lines, after_index=0)
+    if not should_stop:
+        should_stop = serial_global_transport_running(lines, after_index=after_index)
+    if suffix_latest in ("PLAYING", "OVERDUBBING", "RECORDING", "STOPPED_RECORDING", "ARMED"):
         should_stop = True
+    if not should_stop and getattr(args, "start_transport", False):
+        if _clock_seen_within(in_port, 0.5):
+            should_stop = True
+        elif serial_collector is not None and use_serial_transport_proxy(args, serial_collector):
+            should_stop = True
     if not should_stop:
         return False
-    print("[info] transport stop before clear long press")
+    print("[info] transport stop before record arm (control-surface flow)")
     _send_short_press(
         out_port,
         note=GLOBAL_TRANSPORT_NOTE,
@@ -478,6 +941,124 @@ def _stop_transport_before_clear(
     )
     time.sleep(phase_wait_ms / 1000.0)
     return True
+
+
+def _confirm_recording_after_transport_start(
+    serial_collector: Any,
+    *,
+    transport_baseline_len: int,
+    timeout_s: float,
+    abort: RunAbort,
+) -> bool:
+    """Confirm RECORDING using lines captured before transport-start was sent."""
+    from hitl.capture_transitions import _serial_has_recording_active, _wait_for_recording_active
+
+    lines = serial_collector.snapshot()
+    if _serial_has_recording_active(lines, after_index=transport_baseline_len):
+        return True
+    return _wait_for_recording_active(
+        serial_collector,
+        baseline_len=transport_baseline_len,
+        timeout_s=timeout_s,
+        abort=abort,
+    )
+
+
+def _run_record_arm_until_capturing(
+    out_port: mido.ports.BaseOutput,
+    in_port: mido.ports.BaseInput,
+    serial_collector: Optional[Any],
+    args: Any,
+    *,
+    track_baseline_len: int,
+    record_loop_slot: Optional[int],
+    abort: RunAbort,
+    wait_for_recording_confirm: bool = True,
+) -> tuple[bool, Optional[float]]:
+    """Stop transport, arm, start transport; optionally confirm RECORDING before note stream.
+
+    Returns ``(reached_recording, record_schedule_start_mono)``. When transport was started,
+    ``record_schedule_start_mono`` is the wall-time anchor for fixture grid scheduling
+    (transport short-press debounce model). Callers that stream fixture notes immediately
+    should pass ``wait_for_recording_confirm=False`` so the grid is not delayed by serial sync.
+    """
+    from hitl.serial_tick_anchor import transport_record_start_monotonic
+
+    _ensure_transport_stopped_before_record_arm(
+        out_port,
+        in_port,
+        serial_collector,
+        args,
+        press_ms=args.press_ms,
+        phase_wait_ms=args.phase_wait_ms,
+        after_index=track_baseline_len,
+    )
+
+    if serial_collector is None:
+        _send_record_arm_press(out_port, press_ms=args.press_ms, loop_slot=record_loop_slot)
+        time.sleep(args.phase_wait_ms / 1000.0)
+        ok, press_sent = _restart_transport_after_clear(
+            out_port,
+            in_port,
+            serial_collector,
+            args,
+            press_ms=args.press_ms,
+            phase_wait_ms=args.phase_wait_ms,
+            abort=abort,
+        )
+        if not ok or press_sent is None:
+            return False, None
+        schedule = transport_record_start_monotonic(press_sent, press_ms=args.press_ms)
+        return True, schedule
+
+    timeout_s = args.state_sync_timeout_ms / 1000.0
+    grace_s = max(getattr(args, "serial_grace_ms", 0), 0) / 1000.0
+
+    arm_baseline_len = len(serial_collector.snapshot())
+    _send_record_arm_press(out_port, press_ms=args.press_ms, loop_slot=record_loop_slot)
+    armed = _wait_for_armed_state(
+        serial_collector,
+        baseline_len=arm_baseline_len,
+        timeout_s=timeout_s,
+        abort=abort,
+    )
+    if not armed:
+        print("[warn] Timed out waiting for ARMED; retrying record arm press.")
+        _send_record_arm_press(out_port, press_ms=args.press_ms, loop_slot=record_loop_slot)
+        armed = _wait_for_armed_state(
+            serial_collector,
+            baseline_len=arm_baseline_len,
+            timeout_s=timeout_s,
+            abort=abort,
+        )
+    if not armed:
+        return False, None
+
+    transport_baseline_len = len(serial_collector.snapshot())
+    ok, press_sent = _restart_transport_after_clear(
+        out_port,
+        in_port,
+        serial_collector,
+        args,
+        press_ms=args.press_ms,
+        phase_wait_ms=args.phase_wait_ms,
+        abort=abort,
+        minimal_settle=not wait_for_recording_confirm,
+    )
+    if not ok or press_sent is None:
+        return False, None
+    schedule = transport_record_start_monotonic(press_sent, press_ms=args.press_ms)
+
+    if not wait_for_recording_confirm:
+        return True, schedule
+
+    confirmed = _confirm_recording_after_transport_start(
+        serial_collector,
+        transport_baseline_len=transport_baseline_len,
+        timeout_s=timeout_s + grace_s,
+        abort=abort,
+    )
+    return confirmed, schedule if confirmed else None
 
 
 def _restart_transport_after_clear(
@@ -489,16 +1070,21 @@ def _restart_transport_after_clear(
     press_ms: int,
     phase_wait_ms: int,
     abort: Optional[RunAbort],
-) -> bool:
-    """Resume global transport after stop-before-clear so record/overdub have a running clock."""
-    print("[info] transport start after clear (before record)")
+    minimal_settle: bool = False,
+) -> tuple[bool, Optional[float]]:
+    """Start global transport after record arm so the armed slot begins capturing."""
+    print("[info] transport start after record arm")
     _send_short_press(
         out_port,
         note=GLOBAL_TRANSPORT_NOTE,
         channel_1based=CONTROL_CHANNEL_1BASED,
         press_ms=press_ms,
     )
-    time.sleep(phase_wait_ms / 1000.0)
+    transport_press_sent_mono = time.monotonic()
+    if minimal_settle:
+        time.sleep(max(press_ms, 0) / 1000.0)
+    else:
+        time.sleep(phase_wait_ms / 1000.0)
     clock_ok, using_serial_proxy = _ensure_midi_clock_or_serial_proxy(
         in_port,
         out_port,
@@ -513,14 +1099,14 @@ def _restart_transport_after_clear(
             "[error] MIDI clock / serial transport proxy missing after transport restart; "
             "aborting track run."
         )
-        return False
+        return False, None
     if using_serial_proxy:
         proxy_bpm = _resolve_wall_tempo_for_proxy(serial_collector, args, using_serial_proxy=True)
         print(
             "[info] Transport running after clear via wall-clock tempo proxy "
             f"({(proxy_bpm or args.tempo_bpm):.1f} BPM)."
         )
-    return True
+    return True, transport_press_sent_mono
 
 
 def _send_record_arm_press(
@@ -529,11 +1115,11 @@ def _send_record_arm_press(
     press_ms: int,
     loop_slot: Optional[int] = None,
 ) -> None:
-    """Arm/start record via main Record button or a loop-row slot short press.
+    """Arm an empty slot via DROID control-surface presses (transport must be stopped).
 
-    When ``loop_slot`` is set (1-8), press Loops row note 50+(slot-1) so capture targets
-    that slot (``TOGGLE_RECORD_FOR_SLOT``). Otherwise use Record button (36) on the
-    device-selected slot.
+    When ``loop_slot`` is set (1-8), press the Loops row note 50+(slot-1) to select that
+    slot and arm it. Otherwise press the main Record button (36) on the device-selected
+    slot. Transport start is a separate step after ARMED is confirmed.
     """
     if loop_slot is not None and loop_slot > 0:
         _send_short_press(
@@ -640,44 +1226,263 @@ def _suffix_shows_disp_recording(lines: list[str], *, after_index: int = 0) -> b
     return False
 
 
-def _serial_suggests_loop_content(lines: list[str]) -> bool:
+def _latest_disp_loop_len(
+    lines: list[str],
+    *,
+    slot_index: Optional[int] = None,
+    after_index: int = 0,
+) -> Optional[int]:
+    """Return loop length ticks from the latest #CAP DISP row (optional slot filter)."""
+    latest_ts = -1
+    latest_len: Optional[int] = None
+    for line in lines[after_index:]:
+        if ",DISP," not in line:
+            continue
+        parts = line.split(",")
+        if len(parts) < 6:
+            continue
+        try:
+            ts = int(parts[1])
+            slot = int(parts[3])
+            loop_len = int(parts[5])
+        except ValueError:
+            continue
+        if slot_index is not None and slot != slot_index:
+            continue
+        if ts >= latest_ts:
+            latest_ts = ts
+            latest_len = loop_len
+    return latest_len
+
+
+def _serial_suggests_loop_content(
+    lines: list[str],
+    *,
+    loop_slot: int = 0,
+    after_index: int = 0,
+) -> bool:
     if _extract_revt_note_on_ticks(lines):
         return True
-    latest = _latest_track_state(lines)
+    slot_index = (loop_slot - 1) if loop_slot > 0 else None
+    disp_len = _latest_disp_loop_len(lines, slot_index=slot_index, after_index=after_index)
+    if disp_len is not None and disp_len > 0:
+        return True
+    if loop_slot <= 0:
+        any_len = _latest_disp_loop_len(lines, after_index=after_index)
+        if any_len is not None and any_len > 0:
+            return True
+    latest = _latest_track_state(lines[after_index:])
     if latest in ("RECORDING", "PLAYING", "OVERDUBBING", "STOPPED_RECORDING"):
         return True
     if latest == "STOPPED":
-        for line in lines:
+        for line in lines[after_index:]:
             if ",RECS," in line and "#CAP," in line:
                 return True
     return False
 
 
-def _can_skip_clear_before_record(lines: list[str]) -> bool:
+def _can_skip_clear_before_record(
+    lines: list[str],
+    *,
+    loop_slot: int = 0,
+    after_index: int = 0,
+) -> bool:
     """Track already empty/idle — no clear long-press needed.
 
-    Requires positive serial evidence. Missing #CAP ST lines (fresh USB open, capture
-  flush lag) is not treated as empty — the slot may still hold SD-loaded loop data.
+    When ``loop_slot`` is set, never skip: the target slot must be selected and cleared
+    explicitly. Only inspect lines from ``after_index`` so bootstrap tail from prior
+  sessions cannot satisfy the precondition.
     """
-    latest = _latest_track_state(lines)
+    if loop_slot > 0:
+        return False
+    suffix = lines[after_index:]
+    if not suffix:
+        return False
+    latest = _latest_track_state(suffix)
     if latest == "EMPTY":
         return True
-    if _serial_has_clear_ignored_empty(lines):
+    if _serial_has_clear_ignored_empty(suffix):
         return True
     return False
 
 
-def _track_cleared_for_record(lines: list[str]) -> bool:
-    latest = _latest_track_state(lines)
+def _track_cleared_for_record(
+    lines: list[str],
+    *,
+    loop_slot: int = 0,
+    after_index: int = 0,
+) -> bool:
+    suffix = lines[after_index:]
+    if _serial_has_clear_aborted(suffix):
+        return False
+    if _serial_has_clear_completed(suffix):
+        return True
+    latest = _latest_track_state(suffix)
     if latest == "EMPTY":
         return True
+    slot_index = (loop_slot - 1) if loop_slot > 0 else None
+    disp_len = _latest_disp_loop_len(suffix, slot_index=slot_index)
+    if disp_len is not None:
+        return disp_len == 0
     if latest == "ARMED":
-        return not _serial_suggests_loop_content(lines)
-    if latest == "STOPPED" and not _serial_suggests_loop_content(lines):
-        return True
-    if _serial_has_clear_completed(lines):
-        return True
+        return not _serial_suggests_loop_content(suffix, loop_slot=loop_slot)
     return False
+
+
+def _evaluate_clear_precondition(
+    lines: list[str],
+    *,
+    loop_slot: int,
+    after_index: int,
+) -> tuple[bool, str]:
+    """Return (satisfied, result_code) for clear-before-record."""
+    suffix = lines[after_index:]
+    if _serial_has_clear_aborted(suffix):
+        return False, "clear_aborted"
+    if _serial_has_clear_ignored_empty(suffix):
+        return True, "already_empty_ignored"
+    if _serial_has_clear_completed(suffix):
+        return True, "clear_log_confirmed"
+    if _track_cleared_for_record(suffix, loop_slot=loop_slot):
+        latest = _latest_track_state(suffix)
+        if latest == "EMPTY":
+            return True, "empty_transition"
+        return True, "cleared_without_empty_transition"
+    return False, ""
+
+
+def _run_clear_before_record(
+    out_port: mido.ports.BaseOutput,
+    in_port: mido.ports.BaseInput,
+    serial_collector: Optional[Any],
+    args: Any,
+    *,
+    track_index: int,
+    track_baseline_len: int,
+    abort: RunAbort,
+) -> tuple[bool, str]:
+    """Select slot, stop transport, drain deferred save, long-press clear."""
+    target_loop_slot = int(getattr(args, "loop_slot", 0) or 0)
+    if serial_collector is not None and _can_skip_clear_before_record(
+        serial_collector.snapshot(),
+        loop_slot=target_loop_slot,
+        after_index=track_baseline_len,
+    ):
+        print("[info] Track already empty or idle; skipping clear long press.")
+        return True, "already_empty_skip"
+
+    if target_loop_slot > 0:
+        print(
+            f"[track {_user_track_number(track_index)}] select loop slot "
+            f"{target_loop_slot} before clear"
+        )
+        _send_loop_slot_select_press(
+            out_port,
+            loop_slot=target_loop_slot,
+            press_ms=args.press_ms,
+        )
+        time.sleep(args.phase_wait_ms / 1000.0)
+
+    print(
+        f"[track {_user_track_number(track_index)}] clear selected loop "
+        "(long press record/overdub)"
+    )
+
+    _prepare_deferred_save_before_clear(
+        out_port,
+        in_port,
+        serial_collector,
+        args,
+        press_ms=args.press_ms,
+        phase_wait_ms=args.phase_wait_ms,
+        after_index=track_baseline_len,
+        abort=abort,
+    )
+
+    if serial_collector is not None:
+        state_counts = _count_capture_state_entries(serial_collector.snapshot())
+        expected_empty_count = state_counts.get("EMPTY", 0) + 1
+        press_baseline_len = len(serial_collector.snapshot())
+        _send_record_clear_long_press(
+            out_port,
+            clear_press_ms=args.clear_press_ms,
+        )
+        reached_empty = _wait_for_state_entry_count(
+            serial_collector,
+            to_state="EMPTY",
+            target_count=expected_empty_count,
+            timeout_s=args.state_sync_timeout_ms / 1000.0,
+            abort=abort,
+        )
+        post_snap = serial_collector.snapshot()
+        satisfied, result = _evaluate_clear_precondition(
+            post_snap,
+            loop_slot=target_loop_slot,
+            after_index=press_baseline_len,
+        )
+        if satisfied:
+            if result == "already_empty_ignored":
+                print(
+                    "[info] Clear ignored on already-empty track; "
+                    "treating clear precondition as satisfied."
+                )
+            elif result == "clear_log_confirmed":
+                print("[info] Clear completed (serial log); precondition satisfied")
+            elif result == "cleared_without_empty_transition":
+                latest = _latest_track_state(post_snap[press_baseline_len:])
+                print(
+                    f"[info] Track cleared for record without EMPTY transition "
+                    f"(latest={latest})"
+                )
+            return True, result if result else ("empty_transition" if reached_empty else "")
+
+        if _serial_has_clear_aborted(post_snap, after_index=press_baseline_len):
+            print("[error] Clear aborted in firmware (deferred save or slot busy)")
+            return False, "clear_aborted"
+
+        print("[warn] Timed out waiting for clear->EMPTY transition; retrying clear long press.")
+        retry_baseline_len = len(serial_collector.snapshot())
+        _send_record_clear_long_press(
+            out_port,
+            clear_press_ms=args.clear_press_ms,
+        )
+        _wait_for_state_entry_count(
+            serial_collector,
+            to_state="EMPTY",
+            target_count=expected_empty_count,
+            timeout_s=args.state_sync_timeout_ms / 1000.0,
+            abort=abort,
+        )
+        post_retry = serial_collector.snapshot()
+        satisfied, result = _evaluate_clear_precondition(
+            post_retry,
+            loop_slot=target_loop_slot,
+            after_index=retry_baseline_len,
+        )
+        if satisfied:
+            if result == "already_empty_ignored":
+                print(
+                    "[info] Clear ignored on already-empty track; "
+                    "treating clear precondition as satisfied."
+                )
+            elif result == "clear_log_confirmed":
+                print("[info] Clear completed after retry (serial log)")
+            elif result == "cleared_without_empty_transition":
+                latest = _latest_track_state(post_retry[retry_baseline_len:])
+                print(
+                    f"[info] Track cleared for record after retry (latest={latest})"
+                )
+            return True, result if result else "empty_transition"
+        if _serial_has_clear_aborted(post_retry, after_index=retry_baseline_len):
+            print("[error] Clear aborted after retry")
+            return False, "clear_aborted"
+        return False, "clear_not_confirmed"
+
+    _send_record_clear_long_press(
+        out_port,
+        clear_press_ms=args.clear_press_ms,
+    )
+    return True, "no_serial_capture"
 
 
 def _verify_phase_note_pairs(
@@ -942,31 +1747,7 @@ def _summarize_record_stop_stages(
 
 
 def _extract_persistence_rows(lines: list[str]) -> list[dict[str, object]]:
-    rows: list[dict[str, object]] = []
-    for line in lines:
-        if ",PERS," not in line:
-            continue
-        parts = line.split(",")
-        if len(parts) < 8:
-            continue
-        try:
-            ts = int(parts[1])
-            duration_us = int(parts[4])
-            heap_before = int(parts[5])
-            heap_after = int(parts[6])
-        except ValueError:
-            continue
-        rows.append(
-            {
-                "timestamp": ts,
-                "stage": parts[3].strip(),
-                "duration_us": duration_us,
-                "heap_before": heap_before,
-                "heap_after": heap_after,
-                "outcome": parts[7].strip(),
-            }
-        )
-    return rows
+    return extract_persistence_heap_rows(lines)
 
 
 def _summarize_persistence_handoff(
@@ -1742,7 +2523,54 @@ def _verify_capture_cleanup(
     }
 
 
-def _build_serial_verification(lines: list[str], args: argparse.Namespace) -> dict[str, object]:
+def _runtime_stats_pass_baseline(
+    per_track_stats: list[dict[str, object]],
+    args: argparse.Namespace,
+) -> bool:
+    if not per_track_stats:
+        return False
+    for row in per_track_stats:
+        rec_notes = int(row.get("record_notes_sent", 0) or 0)
+        od_notes = int(row.get("overdub_notes_sent", 0) or 0)
+        rec_clocks = int(row.get("record_clock_pulses_seen", 0) or 0)
+        od_clocks = int(row.get("overdub_clock_pulses_seen", 0) or 0)
+        od2_notes = int(row.get("second_overdub_notes_sent", 0) or 0)
+        od2_clocks = int(row.get("second_overdub_clock_pulses_seen", 0) or 0)
+        if args.record_bars and args.bar_sync_from_midi_clock:
+            if getattr(args, "edit_record_fixture", False):
+                from host_midi_automation_edit_baseline import EDIT_RECORD_FIXTURE
+
+                expected_record_notes_min = len(EDIT_RECORD_FIXTURE)
+            else:
+                expected_record_notes_min = max(1, args.record_bars * 16 - 1)
+            expected_record_clocks = args.record_bars * MIDI_CLOCKS_PER_BAR
+            if rec_clocks <= 0 or rec_notes < expected_record_notes_min or rec_clocks != expected_record_clocks:
+                return False
+        if (not args.record_only) and args.overdub_bars and args.bar_sync_from_midi_clock:
+            expected_overdub_notes_min = _expected_overdub_notes_min(args.overdub_bars, OVERDUB_GRID_STEP_CLOCKS)
+            expected_overdub_clocks = args.overdub_bars * MIDI_CLOCKS_PER_BAR
+            if od_clocks <= 0 or od_notes < expected_overdub_notes_min or od_clocks != expected_overdub_clocks:
+                return False
+        if getattr(args, "second_overdub_bars", 0) and args.bar_sync_from_midi_clock:
+            expected_second_overdub_notes_min = _expected_overdub_notes_min(
+                args.second_overdub_bars, args.second_overdub_step_clocks
+            )
+            expected_second_overdub_clocks = args.second_overdub_bars * MIDI_CLOCKS_PER_BAR
+            if (
+                od2_clocks <= 0
+                or od2_notes < expected_second_overdub_notes_min
+                or od2_clocks != expected_second_overdub_clocks
+            ):
+                return False
+    return True
+
+
+def _build_serial_verification(
+    lines: list[str],
+    args: argparse.Namespace,
+    *,
+    per_track_stats: Optional[list[dict[str, object]]] = None,
+) -> dict[str, object]:
     record_only = bool(getattr(args, "record_only", False))
     boundaries = _extract_phase_boundaries(lines)
     record_stop_stage_rows = _extract_record_stop_stage_rows(lines)
@@ -1794,6 +2622,8 @@ def _build_serial_verification(lines: list[str], args: argparse.Namespace) -> di
             high_note=args.overdub_high_note,
         )
     recs_lengths = _extract_recs_lengths(lines)
+    if not recs_lengths:
+        recs_lengths = _extract_recs_lengths_from_human_logs(lines)
     record_loop_length: Optional[dict[str, object]] = None
     record_note_span: Optional[dict[str, object]] = None
     stored_record_grid: Optional[dict[str, object]] = None
@@ -2012,6 +2842,12 @@ def _build_serial_verification(lines: list[str], args: argparse.Namespace) -> di
         for issue in display_verification.get("issues", []):
             if issue not in issues:
                 issues.append(str(issue))
+    cap_sparse = _serial_capture_sparse_for_verification(lines)
+    runtime_ok = _runtime_stats_pass_baseline(per_track_stats or [], args)
+    verification_mode = "cap_full"
+    if cap_sparse and runtime_ok:
+        verification_mode = "runtime_human_log"
+        issues = [issue for issue in issues if not _is_cap_only_serial_issue(issue)]
     return {
         "boundaries": boundaries,
         "record_phase": record,
@@ -2033,7 +2869,11 @@ def _build_serial_verification(lines: list[str], args: argparse.Namespace) -> di
         "second_overdub_first_note_offset": second_overdub_first_note_offset,
         "stored_second_overdub_span": stored_second_overdub_span,
         "recs_lengths": recs_lengths,
+        "verification_mode": verification_mode,
+        "cap_sparse": cap_sparse,
+        "runtime_stats_ok": runtime_ok,
         "issues": issues,
+        "ok": len(issues) == 0,
     }
 
 
@@ -2064,41 +2904,40 @@ def _run_overdub_pass(
 ) -> tuple[Optional[str], int, int, int, dict[str, float], bool]:
     """Start overdub, stream pattern, stop overdub."""
 
-    print(f"[track {idx}] {pass_label} start")
+    print(f"[track {_user_track_number(idx)}] {pass_label} start")
     reached_overdub = False
-    expected_overdub_count = None
-    if serial_collector is not None:
-        counts = _count_capture_transitions(serial_collector.snapshot())
-        expected_overdub_count = counts.get(("PLAYING", "OVERDUBBING"), 0) + 1
+    overdub_baseline_len = len(serial_collector.snapshot()) if serial_collector is not None else 0
     _send_short_press(
         out_port,
         note=RECORD_BUTTON_NOTE,
         channel_1based=CONTROL_CHANNEL_1BASED,
         press_ms=args.press_ms,
     )
-    if serial_collector is not None and expected_overdub_count is not None:
-        reached_overdub = _wait_for_transition_count(
+    if serial_collector is not None:
+        from hitl.capture_transitions import _wait_for_overdubbing_active
+
+        timeout_s = args.state_sync_timeout_ms / 1000.0
+        reached_overdub = _wait_for_overdubbing_active(
             serial_collector,
-            from_state="PLAYING",
-            to_state="OVERDUBBING",
-            target_count=expected_overdub_count,
-            timeout_s=args.state_sync_timeout_ms / 1000.0,
+            baseline_len=overdub_baseline_len,
+            timeout_s=timeout_s,
             abort=abort,
         )
         if not reached_overdub:
-            print(f"[warn] Timed out waiting for PLAYING->OVERDUBBING ({pass_label}); retrying overdub start press.")
+            print(
+                f"[warn] Timed out waiting for PLAYING->OVERDUBBING ({pass_label}); "
+                "retrying overdub start press."
+            )
             _send_short_press(
                 out_port,
                 note=RECORD_BUTTON_NOTE,
                 channel_1based=CONTROL_CHANNEL_1BASED,
                 press_ms=args.press_ms,
             )
-            reached_overdub = _wait_for_transition_count(
+            reached_overdub = _wait_for_overdubbing_active(
                 serial_collector,
-                from_state="PLAYING",
-                to_state="OVERDUBBING",
-                target_count=expected_overdub_count,
-                timeout_s=args.state_sync_timeout_ms / 1000.0,
+                baseline_len=overdub_baseline_len,
+                timeout_s=timeout_s,
                 abort=abort,
             )
             if not reached_overdub:
@@ -2119,7 +2958,7 @@ def _run_overdub_pass(
     od_notes = 0
     od_cc = 0
 
-    if serial_collector is not None and expected_overdub_count is not None and not reached_overdub:
+    if serial_collector is not None and not reached_overdub:
         return (
             f"{pass_label} transition not confirmed",
             od_notes,
@@ -2210,7 +3049,7 @@ def _run_overdub_pass(
         return abort.check(), od_notes, od_cc, od_clock_count, od_timing, od_fallback_seconds
 
     time.sleep(max(args.post_stream_settle_ms, 0) / 1000.0)
-    print(f"[track {idx}] {pass_label} stop")
+    print(f"[track {_user_track_number(idx)}] {pass_label} stop")
     if od_timing.get("stop_press_sent_during_stream", 0.0) <= 0.0:
         _send_short_press(
             out_port,
@@ -2363,6 +3202,15 @@ def run() -> int:
         type=int,
         default=900,
         help="Long-press duration for clear command (milliseconds)",
+    )
+    parser.add_argument(
+        "--deferred-save-wait-ms",
+        type=int,
+        default=120000,
+        help=(
+            "Max wait for deferred CurrentSet save to finish before clear long press "
+            "(transport stop queues persistence)"
+        ),
     )
     parser.add_argument(
         "--phase-wait-ms",
@@ -2756,7 +3604,7 @@ def run() -> int:
                 if (reason := abort.check()) is not None:
                     abort_reason = reason
                     break
-                print(f"[track {idx}] select")
+                print(f"[track {_user_track_number(idx)}] select")
                 _send_short_press(
                     out_port,
                     note=TRACK_SELECT_NOTE_BASE + idx,
@@ -2764,6 +3612,7 @@ def run() -> int:
                     press_ms=args.press_ms,
                 )
                 time.sleep(args.phase_wait_ms / 1000.0)
+                track_baseline_len = len(serial_collector.snapshot()) if serial_collector else 0
 
                 _log_loop_slot_report_only(args, track_index=idx)
 
@@ -2836,132 +3685,15 @@ def run() -> int:
                     if (reason := abort.check()) is not None:
                         abort_reason = reason
                         break
-                    print(f"[track {idx}] clear selected loop (long press)")
-                    reached_empty = False
-                    clear_result = ""
-                    pre_clear_snap = (
-                        serial_collector.snapshot() if serial_collector is not None else []
+                    reached_empty, clear_result = _run_clear_before_record(
+                        out_port,
+                        in_port,
+                        serial_collector,
+                        args,
+                        track_index=idx,
+                        track_baseline_len=track_baseline_len,
+                        abort=abort,
                     )
-                    if serial_collector is not None and _can_skip_clear_before_record(
-                        pre_clear_snap
-                    ):
-                        print(
-                            "[info] Track already empty or idle; skipping clear long press."
-                        )
-                        reached_empty = True
-                        clear_result = "already_empty_skip"
-                    stopped_transport_for_clear = False
-                    if not reached_empty:
-                        stopped_transport_for_clear = _stop_transport_before_clear(
-                            out_port,
-                            in_port,
-                            serial_collector,
-                            args,
-                            press_ms=args.press_ms,
-                            phase_wait_ms=args.phase_wait_ms,
-                        )
-                    expected_empty_count = None
-                    clear_baseline_len = len(pre_clear_snap)
-                    if not reached_empty:
-                        if serial_collector is not None:
-                            state_counts = _count_capture_state_entries(
-                                serial_collector.snapshot()
-                            )
-                            expected_empty_count = state_counts.get("EMPTY", 0) + 1
-                        _send_short_press(
-                            out_port,
-                            note=RECORD_BUTTON_NOTE,
-                            channel_1based=CONTROL_CHANNEL_1BASED,
-                            press_ms=args.clear_press_ms,
-                        )
-                    if (
-                        not reached_empty
-                        and serial_collector is not None
-                        and expected_empty_count is not None
-                    ):
-                        reached_empty = _wait_for_state_entry_count(
-                            serial_collector,
-                            to_state="EMPTY",
-                            target_count=expected_empty_count,
-                            timeout_s=args.state_sync_timeout_ms / 1000.0,
-                            abort=abort,
-                        )
-                        clear_result = "empty_transition" if reached_empty else ""
-                        post_snap = serial_collector.snapshot()
-                        if not reached_empty and _serial_has_clear_ignored_empty(
-                            post_snap, after_index=clear_baseline_len
-                        ):
-                            print(
-                                "[info] Clear ignored on already-empty track; "
-                                "treating clear precondition as satisfied."
-                            )
-                            reached_empty = True
-                            clear_result = "already_empty_ignored"
-                        if not reached_empty and _serial_has_clear_completed(
-                            post_snap, after_index=clear_baseline_len
-                        ):
-                            print("[info] Clear completed (serial log); precondition satisfied")
-                            reached_empty = True
-                            clear_result = "clear_log_confirmed"
-                        if not reached_empty and _track_cleared_for_record(post_snap):
-                            latest = _latest_track_state(post_snap)
-                            print(
-                                f"[info] Track cleared for record without EMPTY transition "
-                                f"(latest={latest})"
-                            )
-                            reached_empty = True
-                            clear_result = "cleared_without_empty_transition"
-                        if not reached_empty:
-                            print("[warn] Timed out waiting for clear->EMPTY transition; retrying clear long press.")
-                            retry_baseline_len = len(serial_collector.snapshot())
-                            _send_short_press(
-                                out_port,
-                                note=RECORD_BUTTON_NOTE,
-                                channel_1based=CONTROL_CHANNEL_1BASED,
-                                press_ms=args.clear_press_ms,
-                            )
-                            reached_empty = _wait_for_state_entry_count(
-                                serial_collector,
-                                to_state="EMPTY",
-                                target_count=expected_empty_count,
-                                timeout_s=args.state_sync_timeout_ms / 1000.0,
-                                abort=abort,
-                            )
-                            if reached_empty:
-                                clear_result = "empty_transition"
-                            post_retry = serial_collector.snapshot()
-                            if not reached_empty and _serial_has_clear_ignored_empty(
-                                post_retry, after_index=retry_baseline_len
-                            ):
-                                print(
-                                    "[info] Clear ignored on already-empty track; "
-                                    "treating clear precondition as satisfied."
-                                )
-                                reached_empty = True
-                                clear_result = "already_empty_ignored"
-                            if not reached_empty and _serial_has_clear_completed(
-                                post_retry, after_index=retry_baseline_len
-                            ):
-                                print("[info] Clear completed after retry (serial log)")
-                                reached_empty = True
-                                clear_result = "clear_log_confirmed"
-                            if not reached_empty and _track_cleared_for_record(post_retry):
-                                latest = _latest_track_state(post_retry)
-                                print(
-                                    f"[info] Track cleared for record after retry "
-                                    f"(latest={latest})"
-                                )
-                                reached_empty = True
-                                clear_result = "cleared_without_empty_transition"
-                    elif not reached_empty:
-                        _send_short_press(
-                            out_port,
-                            note=RECORD_BUTTON_NOTE,
-                            channel_1based=CONTROL_CHANNEL_1BASED,
-                            press_ms=args.clear_press_ms,
-                        )
-                        reached_empty = True
-                        clear_result = "no_serial_capture"
                     if reached_empty and clear_result:
                         clear_precondition_results.append(
                             {
@@ -2970,132 +3702,42 @@ def run() -> int:
                             }
                         )
                     if not reached_empty:
-                            print("[warn] Retry did not reach EMPTY after clear long press.")
-                            precondition_failures.append(
-                                {
-                                    "track_index": idx,
-                                    "step": "clear_to_empty",
-                                    "reason": "clear_not_confirmed",
-                                }
-                            )
-                            print(
-                                f"[error] Preconditions failed on track {idx}: "
-                                "clear step did not confirm EMPTY state. Aborting run."
-                            )
-                            break
+                        print("[warn] Clear precondition did not confirm EMPTY / clear completed.")
+                        precondition_failures.append(
+                            {
+                                "track_index": idx,
+                                "step": "clear_to_empty",
+                                "reason": clear_result or "clear_not_confirmed",
+                            }
+                        )
+                        print(
+                            f"[error] Preconditions failed on track {_user_track_number(idx)}: "
+                            "clear step did not confirm EMPTY state. Aborting run."
+                        )
+                        break
                     time.sleep(args.phase_wait_ms / 1000.0)
                     if precondition_failures:
                         break
-                    if stopped_transport_for_clear:
-                        if not _restart_transport_after_clear(
-                            out_port,
-                            in_port,
-                            serial_collector,
-                            args,
-                            press_ms=args.press_ms,
-                            phase_wait_ms=args.phase_wait_ms,
-                            abort=abort,
-                        ):
-                            precondition_failures.append(
-                                {
-                                    "track_index": idx,
-                                    "step": "transport_restart_after_clear",
-                                    "reason": "clock_missing_after_restart",
-                                }
-                            )
-                            abort_reason = "transport restart after clear failed"
-                            break
 
-                print(f"[track {idx}] record start")
-                reached_recording = False
+                print(f"[track {_user_track_number(idx)}] record start")
                 recording_confirmed_at: Optional[float] = None
+                record_schedule_start: Optional[float] = None
                 record_baseline_len = len(serial_collector.snapshot()) if serial_collector else 0
-                baseline_reca = _count_reca_markers(serial_collector.snapshot()) if serial_collector else 0
-                baseline_recording_transitions = (
-                    _recording_transition_baseline(serial_collector.snapshot())
-                    if serial_collector
-                    else 0
-                )
-                baseline_armed_transitions = (
-                    _armed_transition_baseline(serial_collector.snapshot())
-                    if serial_collector
-                    else 0
-                )
-                baseline_latest_state = (
-                    _latest_track_state(serial_collector.snapshot()) if serial_collector else None
-                )
                 record_loop_slot = args.loop_slot if args.loop_slot > 0 else None
-                _send_record_arm_press(
+                edit_fixture = getattr(args, "edit_record_fixture", False)
+
+                reached_recording, record_schedule_start = _run_record_arm_until_capturing(
                     out_port,
-                    press_ms=args.press_ms,
-                    loop_slot=record_loop_slot,
+                    in_port,
+                    serial_collector,
+                    args,
+                    track_baseline_len=track_baseline_len,
+                    record_loop_slot=record_loop_slot,
+                    abort=abort,
+                    wait_for_recording_confirm=not edit_fixture,
                 )
-                if serial_collector is not None:
-                    timeout_s = args.state_sync_timeout_ms / 1000.0
-                    grace_s = max(getattr(args, "serial_grace_ms", 0), 0) / 1000.0
-                    reached_recording = _wait_for_recording_started(
-                        serial_collector,
-                        baseline_len=record_baseline_len,
-                        baseline_reca=baseline_reca,
-                        baseline_recording_transitions=baseline_recording_transitions,
-                        baseline_latest_state=baseline_latest_state,
-                        baseline_armed_transitions=baseline_armed_transitions,
-                        timeout_s=timeout_s,
-                        serial_grace_s=grace_s,
-                        abort=abort,
-                    )
-                    if not reached_recording:
-                        fresh = serial_collector.snapshot()[record_baseline_len:]
-                        if any("MIDI Button A: Toggle Play/Stop" in line for line in fresh):
-                            print(
-                                "[warn] Record press toggled play/stop (track likely not empty); "
-                                "retrying clear then record"
-                            )
-                            _send_short_press(
-                                out_port,
-                                note=RECORD_BUTTON_NOTE,
-                                channel_1based=CONTROL_CHANNEL_1BASED,
-                                press_ms=args.clear_press_ms,
-                            )
-                            time.sleep(args.state_sync_timeout_ms / 1000.0)
-                            record_baseline_len = len(serial_collector.snapshot())
-                            baseline_reca = _count_reca_markers(serial_collector.snapshot())
-                            baseline_recording_transitions = _recording_transition_baseline(
-                                serial_collector.snapshot()
-                            )
-                            baseline_armed_transitions = _armed_transition_baseline(
-                                serial_collector.snapshot()
-                            )
-                            baseline_latest_state = _latest_track_state(serial_collector.snapshot())
-                        if not _serial_has_recording_started(
-                            serial_collector.snapshot(), after_index=record_baseline_len
-                        ):
-                            print("[warn] Timed out waiting for recording start; retrying record press.")
-                            _send_record_arm_press(
-                                out_port,
-                                press_ms=args.press_ms,
-                                loop_slot=record_loop_slot,
-                            )
-                            reached_recording = _wait_for_recording_started(
-                                serial_collector,
-                                baseline_len=record_baseline_len,
-                                baseline_reca=baseline_reca,
-                                baseline_recording_transitions=baseline_recording_transitions,
-                                baseline_latest_state=baseline_latest_state,
-                                baseline_armed_transitions=baseline_armed_transitions,
-                                timeout_s=timeout_s,
-                                serial_grace_s=grace_s,
-                                abort=abort,
-                            )
-                        if _serial_has_recording_started(
-                            serial_collector.snapshot(), after_index=record_baseline_len
-                        ):
-                            reached_recording = True
-                            recording_confirmed_at = time.monotonic()
-                        elif not reached_recording:
-                            print("[warn] Retry did not reach RECORDING.")
-                    elif recording_confirmed_at is None:
-                        recording_confirmed_at = time.monotonic()
+                if serial_collector is not None and reached_recording and not edit_fixture:
+                    recording_confirmed_at = time.monotonic()
                 if serial_collector is not None and not reached_recording:
                     print(
                         "[error] Record phase did not confirm RECORDING in serial capture; "
@@ -3118,6 +3760,7 @@ def run() -> int:
 
                 rec_clock_count = 0
                 rec_fallback_seconds = False
+                fixture_record_stop_sent = False
                 rec_timing = {
                     "grid_steps_emitted": 0.0,
                     "max_abs_grid_jitter_clocks": 0.0,
@@ -3148,27 +3791,30 @@ def run() -> int:
                         )
                     guard = max(10.0, args.record_bars * seconds_per_bar * 3.0)
                     if getattr(args, "edit_record_fixture", False):
-                        from host_midi_automation_edit_baseline import (
-                            EDIT_RECORD_FIXTURE,
-                            _stream_fixture_record,
-                        )
+                        from host_midi_automation_edit_baseline import EDIT_RECORD_FIXTURE
 
-                        rec_notes, rec_clock_count = _stream_fixture_record(
+                        rec_notes, rec_clock_count, stream_ok, record_stop_sent = _stream_fixture_record_bars(
                             out_port,
                             in_port,
+                            serial_collector,
+                            args,
                             fixture=EDIT_RECORD_FIXTURE,
                             target_bars=args.record_bars,
                             midi_channel_1based=args.midi_channel,
-                            stop_press_advance_clocks=args.stop_press_advance_clocks,
-                            press_ms=args.press_ms,
                             abort=abort,
+                            record_schedule_start_mono=record_schedule_start,
+                            skip_clock_preamble=True,
                         )
+                        if not stream_ok:
+                            abort_reason = "midi clock missing before record phase"
+                            break
                         rec_cc = 0
                         rec_timing = {
                             "grid_steps_emitted": float(rec_notes),
                             "max_abs_grid_jitter_clocks": 0.0,
                             "mean_abs_grid_jitter_clocks": 0.0,
                         }
+                        fixture_record_stop_sent = record_stop_sent
                     else:
                         rec_notes, rec_cc, rec_clock_count, rec_timing = _stream_pattern_for_bars(
                             out_port,
@@ -3216,25 +3862,27 @@ def run() -> int:
                     abort_reason = "record phase saw 0 midi clock pulses"
                     break
 
-                time.sleep(max(args.post_stream_settle_ms, 0) / 1000.0)
-                print(f"[track {idx}] record stop (returns to play)")
-                expected_play_count = None
+                if not (edit_fixture and fixture_record_stop_sent):
+                    time.sleep(max(args.post_stream_settle_ms, 0) / 1000.0)
+                print(f"[track {_user_track_number(idx)}] record stop (returns to play)")
+                record_stop_baseline_len = len(serial_collector.snapshot()) if serial_collector else 0
+                if not (edit_fixture and fixture_record_stop_sent):
+                    _send_short_press(
+                        out_port,
+                        note=RECORD_BUTTON_NOTE,
+                        channel_1based=CONTROL_CHANNEL_1BASED,
+                        press_ms=args.press_ms,
+                    )
+                elif serial_collector is not None:
+                    print("[info] Record stop already sent during wall-time fixture stream; waiting for PLAYING.")
                 if serial_collector is not None:
-                    counts = _count_capture_transitions(serial_collector.snapshot())
-                    expected_play_count = counts.get(("STOPPED_RECORDING", "PLAYING"), 0) + 1
-                _send_short_press(
-                    out_port,
-                    note=RECORD_BUTTON_NOTE,
-                    channel_1based=CONTROL_CHANNEL_1BASED,
-                    press_ms=args.press_ms,
-                )
-                if serial_collector is not None and expected_play_count is not None:
-                    reached = _wait_for_transition_count(
+                    from hitl.capture_transitions import _wait_for_playing_after_record_stop
+
+                    timeout_s = args.state_sync_timeout_ms / 1000.0
+                    reached = _wait_for_playing_after_record_stop(
                         serial_collector,
-                        from_state="STOPPED_RECORDING",
-                        to_state="PLAYING",
-                        target_count=expected_play_count,
-                        timeout_s=args.state_sync_timeout_ms / 1000.0,
+                        baseline_len=record_stop_baseline_len,
+                        timeout_s=timeout_s,
                         abort=abort,
                     )
                     if not reached:
@@ -3245,12 +3893,10 @@ def run() -> int:
                             channel_1based=CONTROL_CHANNEL_1BASED,
                             press_ms=args.press_ms,
                         )
-                        reached = _wait_for_transition_count(
+                        reached = _wait_for_playing_after_record_stop(
                             serial_collector,
-                            from_state="STOPPED_RECORDING",
-                            to_state="PLAYING",
-                            target_count=expected_play_count,
-                            timeout_s=args.state_sync_timeout_ms / 1000.0,
+                            baseline_len=record_stop_baseline_len,
+                            timeout_s=timeout_s,
                             abort=abort,
                         )
                         if not reached:
@@ -3375,7 +4021,7 @@ def run() -> int:
                     if args.undo_redo_after_overdub_stop:
                         undo_redo_gap_s = max(args.undo_redo_delay_ms, 0) / 1000.0
                         time.sleep(undo_redo_gap_s)
-                        print(f"[track {idx}] undo after overdub stop (double press)")
+                        print(f"[track {_user_track_number(idx)}] undo after overdub stop (double press)")
                         _send_multi_short_press(
                             out_port,
                             note=RECORD_BUTTON_NOTE,
@@ -3384,7 +4030,7 @@ def run() -> int:
                             count=2,
                         )
                         time.sleep(undo_redo_gap_s)
-                        print(f"[track {idx}] redo after overdub stop (triple press)")
+                        print(f"[track {_user_track_number(idx)}] redo after overdub stop (triple press)")
                         _send_multi_short_press(
                             out_port,
                             note=RECORD_BUTTON_NOTE,
@@ -3394,7 +4040,7 @@ def run() -> int:
                         )
                         time.sleep(args.phase_wait_ms / 1000.0)
                     if args.stop_after_overdub:
-                        print(f"[track {idx}] transport stop")
+                        print(f"[track {_user_track_number(idx)}] transport stop")
                         _send_short_press(
                             out_port,
                             note=GLOBAL_TRANSPORT_NOTE,
@@ -3472,7 +4118,8 @@ def run() -> int:
     if not verification_lines and args.verify_serial_log is not None and args.verify_serial_log.exists():
         verification_lines = args.verify_serial_log.read_text(encoding="utf-8", errors="replace").splitlines()
 
-    transition_counts = _count_capture_transitions(verification_lines)
+    transition_counts = _merge_transition_counts_with_evidence(verification_lines)
+    st_transition_counts = _count_capture_transitions(verification_lines)
     reca_count, recs_count = _count_capture_record_markers(verification_lines)
     cap_lines_count = sum(1 for l in verification_lines if "#CAP," in l)
     undo_log_count = sum(1 for l in verification_lines if "Overdub undone" in l)
@@ -3610,22 +4257,31 @@ def run() -> int:
     transition_checks = []
     for expectation in _expected_transition_expectations(args):
         key = (expectation.from_state, expectation.to_state)
-        actual = transition_counts.get(key, 0)
-        # After clear, first record can start from EMPTY or STOPPED (transport restart), not only ARMED.
+        st_actual = st_transition_counts.get(key, 0)
         if expectation.from_state == "ARMED" and expectation.to_state == "RECORDING":
-            actual = _record_entry_to_recording_count(transition_counts)
+            st_actual = _record_entry_to_recording_count(st_transition_counts)
+        actual = _effective_transition_actual(
+            expectation.from_state,
+            expectation.to_state,
+            transition_counts,
+        )
         target = expectation.per_track_min * expected_min
         transition_checks.append(
             {
                 "from": expectation.from_state,
                 "to": expectation.to_state,
                 "actual": actual,
+                "st_actual": st_actual,
                 "expected_min": target,
                 "ok": actual >= target if verification_lines else None,
             }
         )
 
-    serial_verification = _build_serial_verification(verification_lines, args) if verification_lines else None
+    serial_verification = (
+        _build_serial_verification(verification_lines, args, per_track_stats=per_track_stats)
+        if verification_lines
+        else None
+    )
     if serial_verification is not None:
         capture_cleanup = _verify_capture_cleanup(verification_lines, args, per_track_stats)
         serial_verification["capture_cleanup"] = capture_cleanup
@@ -3744,7 +4400,14 @@ def run() -> int:
                 f"remaining={clear_undo_prune.get('remaining')}"
             )
         for row in transition_checks:
-            print(f"  ST {row['from']}->{row['to']}: {row['actual']} (min {row['expected_min']})")
+            st_actual = row.get("st_actual", row["actual"])
+            if st_actual != row["actual"]:
+                print(
+                    f"  {row['from']}->{row['to']}: {row['actual']} "
+                    f"(ST {st_actual}, min {row['expected_min']})"
+                )
+            else:
+                print(f"  ST {row['from']}->{row['to']}: {row['actual']} (min {row['expected_min']})")
         if serial_verification is not None:
             rv = serial_verification["record_phase"]
             ov = serial_verification["overdub_phase"]
@@ -3952,6 +4615,12 @@ def run() -> int:
                         f"epoch={row.get('epoch_events')} visual={row.get('visual_notes')} "
                         f"buffer={row.get('buffer_events')}"
                     )
+            verify_mode = serial_verification.get("verification_mode")
+            if verify_mode == "runtime_human_log":
+                print(
+                    "  VERIFY mode: runtime+human log "
+                    "(CAP capture sparse; host MIDI gates authoritative)"
+                )
             if serial_verification["issues"]:
                 print(f"  VERIFY issues: {', '.join(serial_verification['issues'])}")
     if phase_note_failures:

@@ -3,8 +3,42 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional
+
+from hitl.config import HitlConfig
+from hitl.session import HitlSession
+
+
+@dataclass
+class ActionContext:
+    session: HitlSession
+    config: HitlConfig
+
+    @property
+    def out_port(self) -> Any:
+        return self.session.out_port
+
+    @property
+    def in_port(self) -> Any:
+        return self.session.in_port
+
+    @property
+    def collector(self) -> Any:
+        return self.session.collector
+
+    @property
+    def markers(self) -> list[str]:
+        return self.session.markers
+
+
+@dataclass
+class ScenarioContext:
+    action: ActionContext
+    scenario_id: str
+    out_dir: Path
+    started_at: datetime
 
 
 @dataclass

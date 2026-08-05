@@ -32,13 +32,22 @@ def _find_midi_port(name_substring: str, is_input: bool, timeout_s: float = 5.0)
     )
 
 
-def _send_short_press(
+def _send_long_press(
     out_port: mido.ports.BaseOutput, *, note: int, channel_1based: int, press_ms: int
 ) -> None:
+    """Hold a control-surface note for long-press actions (clear, etc.)."""
     ch = channel_1based - 1
     out_port.send(mido.Message("note_on", channel=ch, note=note, velocity=127))
     time.sleep(max(press_ms, 1) / 1000.0)
     out_port.send(mido.Message("note_off", channel=ch, note=note, velocity=0))
+
+
+def _send_short_press(
+    out_port: mido.ports.BaseOutput, *, note: int, channel_1based: int, press_ms: int
+) -> None:
+    _send_long_press(
+        out_port, note=note, channel_1based=channel_1based, press_ms=press_ms
+    )
 
 
 def _send_multi_short_press(

@@ -2,13 +2,15 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-08-03 (note-edit control-surface split complete)
+Last updated: 2026-08-05 (edit-session-action-geometry archived)
 
 ---
 
 ## Current branch
 
-**`chore/note-edit-control-surface-split`** — Phases 0–8 complete (Phase 7 `c244280`, Phase 8 uncommitted): `NoteEditManager` → `ControlSurfaceManager`, NOTE_EDIT physical ingress consolidated. See [CURRENT_WORK.md](CURRENT_WORK.md).
+**Active work:** HITL CLI rebuild Phase 3 and parked edit HITL matrix — see [CURRENT_WORK.md](CURRENT_WORK.md).
+
+**`chore/note-edit-control-surface-split`** — Phases 0–8 complete (merged). See [CURRENT_WORK.md](CURRENT_WORK.md).
 
 **`feature/deferred-lazy-load`** — Phase B archived `openspec/changes/archive/2026-07-19-deferred-job-scheduler/`. Specs: `openspec/specs/deferred-job-scheduler/`.
 
@@ -26,6 +28,8 @@ See [`docs/BRANCHING.md`](../BRANCHING.md).
 
 ## In flight
 
+- **HITL CLI rebuild:** Phase 3 — layered presets locked to `base` + `edit_full`; stabilize device PASS; other ports deferred
+- **Edit-session-action-geometry:** **Archived** 2026-08-05 → `openspec/specs/edit-session-action-geometry/`; Phase 5 HITL matrix parked (`m8_edit_note_edit_hitl_automation_refinement.md`)
 - **Note-edit control-surface split:** **complete** on `chore/note-edit-control-surface-split` — Phases 0–8; see [note_edit_control_surface_split_refinement.md](../plans/note_edit_control_surface_split_refinement.md)
 - **Next product slice:** confirm with user (persistence/overlay hardening, or parked large-slot display hunt) — see [CURRENT_WORK.md](CURRENT_WORK.md)
 - **Archived this branch:** OpenSpec [`deferred-job-scheduler`](../../openspec/changes/archive/2026-07-19-deferred-job-scheduler/) Phase B — gates B.1 [`231510`](../../captures/session_20260718_231510.log), B.3/B.4 [`022107`](../../captures/session_20260719_022107.log); specs in `openspec/specs/deferred-job-scheduler/`
@@ -60,12 +64,13 @@ See [`docs/BRANCHING.md`](../BRANCHING.md).
 
 | Change | Focus |
 |--------|--------|
+| **`hitl-cli-rebuild`** | **Phase 1 done** — `foundation_runner`, `layered_registry`, actions/flows/protocol; Phase 2 UIP gate |
 | **`deferred-job-scheduler`** | **Archived** `openspec/changes/archive/2026-07-19-deferred-job-scheduler/`; normative `openspec/specs/deferred-job-scheduler/` |
 | **`continuous-runtime-persistence`** | Phase 0–4 shipped; Phase 4 HITL **passed** (`171043` 64+64, `171951` boot restore); Phase 5 recovery **next** |
 | **`runtime-derived-representation-heap`** | M5 Steps 1–1b–2 shipped (`adoptPersistedSnapshot`); lazy load + 64+64 HITL pending |
 | **`slot-selection-focus`** | **Shipped (firmware)** — orchestrator + footer extension; manual §8 pending; [`slot_selection_focus_implementation_handoff.md`](../plans/slot_selection_focus_implementation_handoff.md) |
-| **`unified-interval-projection`** | Phases 1–4 shipped; native PASS; **5.5 HITL deferred** (DEC-017) until runtime Phase A→C |
-| **`edit-session-action-geometry`** | **Paused** — derived overlap pipeline; blocked until UIP Phases 1–5 |
+| **`unified-interval-projection`** | Phases 1–5 code shipped; native PASS; **5.5 HITL deferred** (DEC-017); Phase **6.1–6.2** synced with geometry (2026-08-04) |
+| **`edit-session-action-geometry`** | **Archived** 2026-08-05 — normative `openspec/specs/edit-session-action-geometry/` |
 | `set-revision-persistence` | Set revisions, overlay browser — core shipped; loop picker **4.8–4.10** paused |
 | `workspace-session-persistence` | Current workspace session model |
 | `load-save-overlay-display-regression` | Overlay display fixes |
@@ -91,11 +96,10 @@ Parked (not active): `currentset-savedset-storage-layout`
 - Base module (encoder + 4 GPIO) capable in principle; DROID is extension only
 - Governance docs do not change firmware by themselves
 - Do not implement from [ROADMAP.md](ROADMAP.md) — scope is [CURRENT_WORK.md](CURRENT_WORK.md) only
-- **`edit-session-action-geometry` firmware blocked** until `unified-interval-projection` Phases 1–5 complete
+- **`edit-session-action-geometry`** — Phase 0 complete; Phase 1 native next (not blocked by UIP code)
 
 ## Current blockers
 
-- `edit-session-action-geometry` → blocked by `unified-interval-projection`
 - `currentset-savedset-storage-layout` parked until revision model stable — see CURRENT_WORK
 
 ## Accepted decisions (summary)
