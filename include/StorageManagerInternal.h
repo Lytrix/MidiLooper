@@ -185,6 +185,18 @@ void reprioritizeDeferredLoopSlotRestoreEntries();
 bool isDeferredLoopSlotRestoreQueued(uint8_t trackIndex, uint8_t slotIndex);
 uint16_t pendingLoopSlotRestoreCount();
 
+void clearPendingLoopSlotRestoresAtBoot();
+void resetAllLoopSlotRestoreAttempted();
+bool appendBootLoopSlotRestore(uint8_t trackIndex, uint8_t slotIndex, uint16_t restorePriority);
+void sortPendingLoopSlotRestoreQueue();
+bool peekFirstPendingLoopSlotRestore(DeferredLoopSlotRestore& out);
+void setRestoredSetBundlePath(const char* path);
+
+void resetBootUndoHydrateState();
+
+bool hydrateLoopSlotMetadataFromCurrentSetSd(uint8_t trackIndex, uint8_t slotIndex, Loop& loop);
+
+void resetLoopSlotForBootManifest(Loop& loop, uint8_t slotIndex);
 void resetLoopSlotToEmpty(Loop& loop, uint8_t slotIndex);
 void markLoopCommittedChunksPersistedFromSdLoad(Loop& loop);
 
@@ -273,6 +285,7 @@ bool applyLoadedTransportFooter(uint8_t numTracks, const std::vector<uint8_t>& a
 
 #if defined(SESSION_CAPTURE)
 bool handleHitlQuarantineCommandLine(const char* line);
+void quarantineCorruptRuntimeBundleOnSd();
 #endif
 
 }  // namespace StorageManagerInternal
