@@ -268,6 +268,23 @@ Run `pio test -e native` before push/merge. Run relevant HITL preset when changi
 
 ---
 
+## Manual regression (firmware invariant review)
+
+Hardware steps from [`firmware_ownership_lifetime_review.md`](../plans/firmware_ownership_lifetime_review.md). Archive capture as `captures/MT-<id>_<date>.log`.
+
+| ID | Covers | Status |
+|----|--------|--------|
+| **MT-P0** | Materialize stale after loop-length change with committed editPass | Conditional PASS — `session_20260805_222144.log` |
+| **MT-P1-undo** | **E:** vs **U:** routing during NOTE_EDIT (session-gated; no global fallthrough) | **PASS** — `session_20260806_003023.log` |
+| **MT-P1-fold** | Unified wrap finalize (seal + in-edit fold) | Pending |
+| **MT-P1-display-audition** | NOTE_EDIT geometry while PLAYING (no hang) | In progress |
+| **MT-P5-recovery** | Phase 5 longest valid prefix load | Blocked — Phase 5 code |
+| **MT-hygiene** | Smoke after doc-only / low-risk | Optional |
+
+**MT-P1-undo quick check:** enter NOTE_EDIT → two geometry actions → drain **E:** → press global undo while still in edit → serial must show `No session undo available` and **not** `Scoped edit pass undone` → exit edit → global undo must run.
+
+---
+
 ## Related docs
 
 - Implementation notes: [`docs/plans/hitl_modular_scenarios_enhancement.md`](../plans/hitl_modular_scenarios_enhancement.md)

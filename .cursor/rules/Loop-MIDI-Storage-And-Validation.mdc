@@ -17,7 +17,7 @@ Related guides: [`NOTE_WRAPPING_LOGIC.md`](docs/Guides/NOTE_WRAPPING_LOGIC.md) (
 - **Stop path:** `finalizeLoopAtStop` + `LoopStopFinalize` (wrap window only). Do **not** call full `validateAndCleanupMidiEvents` on record/overdub stop.
 - **Full validate:** deferred via `processDeferredIdleMaintenance` when transport idle, or on SD load — not on stop.
 - **Undo snapshots:** push `shareForSnapshot()` ref (O(1)); **`restoreFromSnapshot` always `cloneShared()`** — never shallow-copy chunk IDs into live state.
-- **Undo routing:** NoteEditSession undo before global stack in `handleUndo`; capture-pass undo via **RecordPassAdded** / **OverdubPassAdded**; **NoteEditPassClosed** before clear-slot undo when applicable.
+- **Undo routing:** While NOTE_EDIT active, `handleUndo` is session-gated (**E:** only — no **U:** fallthrough). After exit, **U:** via global stack (**RecordPassAdded** / **OverdubPassAdded** / **NoteEditPassClosed** / …). **ClearSlot** via `handleUndoClearTrack` when applicable.
 - **Overdub entry:** `beginOverdubSession` only — closes open **noteEditPass** when editing; no extra capture-pass undo at overdub start.
 - **After flat edits:** `invalidateCaches()` so materialized view and note cache stay in sync.
 - **SD:** v4 **passes** via `StorageLoopIo`; chunk IDs in-RAM only until format version bump.

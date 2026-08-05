@@ -10,7 +10,7 @@ todos:
     status: in_progress
   - id: p1-undo-docs
     content: Align LOOP_MIDI + ARCHITECTURE_RULES undo routing with handleUndo + manual MT-P1-undo
-    status: pending
+    status: completed
   - id: p1-fold-wrap
     content: Unify wrap finalize ownership (seal + fold) + manual MT-P1-fold
     status: pending
@@ -105,20 +105,17 @@ With active editPasses, `gatherCommittedEvents` copies from `midiEvents()`, whic
 
 ---
 
-### P1 — Undo routing contract drift (docs vs firmware)
+### P1 — Undo routing contract drift (docs vs firmware) — **docs aligned 2026-08-06**
 
 **Firmware:** `MidiButtonActions::handleUndo` — while `isNoteEditActive()`, if session stack empty → **return** (no global fallthrough). Same for redo.
 
-**Guide / rules say “prefer before” / numbered fallthrough:**
+**Docs (fixed):** [`LOOP_MIDI_STORAGE_AND_VALIDATION.md`](docs/Guides/LOOP_MIDI_STORAGE_AND_VALIDATION.md) routing §, [`ARCHITECTURE_RULES.md`](docs/00-authority/ARCHITECTURE_RULES.md), and [`Loop-MIDI-Storage-And-Validation.mdc`](.cursor/rules/Loop-MIDI-Storage-And-Validation.mdc) now describe session-gated routing (no **U:** fallthrough while NOTE_EDIT active).
 
-- [`LOOP_MIDI_STORAGE_AND_VALIDATION.md`](docs/Guides/LOOP_MIDI_STORAGE_AND_VALIDATION.md) routing §: (1) session if non-empty (2) global …
-- [`ARCHITECTURE_RULES.md`](docs/00-authority/ARCHITECTURE_RULES.md): “session undo before global stack”
-
-**Product effect:** Mid-session durable **NoteEditPassClosed** (**U:**) cannot be undone via the undo button until NOTE_EDIT exits — matching OpenSpec “session undo does not pop global” spirit, **contradicting** guide step 2 fallthrough.
+**Product effect:** Mid-session durable **NoteEditPassClosed** (**U:**) cannot be undone via the undo button until NOTE_EDIT exits — matches OpenSpec “session undo does not pop global” spirit.
 
 **Invariant:** One product contract for E: vs U: during NOTE_EDIT.
 
-**Enforce at:** Single authority — update guide + ARCHITECTURE_RULES to match `handleUndo` (session-gated, no fallthrough), **or** change `handleUndo` if fallthrough is intended. Prefer **docs → code** unless product wants U: reachable mid-session.
+**Remaining gate:** **MT-P1-undo** manual HITL — **PASS** `session_20260806_003023.log` (gate step: `No session undo available` while NOTE_EDIT active).
 
 ---
 
@@ -385,7 +382,7 @@ Each item is **not done** until its **MT-*** manual test PASS is logged in `capt
 
 1. **P0 fix:** `Loop::invalidateCaches` materialize stale → **MT-P0 conditional PASS** (`session_20260805_222144.log`).
 2. **P1-display-audition:** defer playback rebuild while PLAYING → **MT-P1-display-audition** (in progress).
-3. **P1 docs:** LOOP_MIDI + ARCHITECTURE_RULES undo routing → **MT-P1-undo**.
+3. **P1 docs:** LOOP_MIDI + ARCHITECTURE_RULES undo routing — **done**; **MT-P1-undo** **PASS** (`session_20260806_003023.log`).
 4. **P1 fold:** single wrap-finalize path → **MT-P1-fold**.
 5. **Phase 5:** longest-prefix recovery → **MT-P5-recovery**.
 6. **Hygiene:** doc/spec sync → **MT-hygiene** smoke.
