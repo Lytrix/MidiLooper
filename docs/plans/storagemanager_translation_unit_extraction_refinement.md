@@ -137,6 +137,8 @@ Milestone after phases **0–7**: root TU **~1500 LOC**.
 
 ## Phase 2 — `CurrentSetBootLoad.cpp` (~670 LOC)
 
+**Status:** Done on `refactor/storagemanager`.
+
 **Priority:** Second — separates **boot / sync** slot load from **runtime deferred** `LoadLoopJob`.
 
 ### Move
